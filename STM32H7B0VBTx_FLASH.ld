@@ -70,6 +70,7 @@ __DTCMRAM_LENGTH__  = 128K;
 __RAM_UC_LENGTH__   = 300K;
 __RAM_CORE_LENGTH__ = 0K;
 __RAM_EMU_LENGTH__  = 1024K - __RAM_UC_LENGTH__ - __RAM_CORE_LENGTH__;
+__RAM_FCEUMM_MAPPER_LENGTH__ = 48K; /* Current FCEUMM mapper code */
 __AHBRAM_LENGTH__   = 128K;
 __FLASH_LENGTH__    = DEFINED(__FLASH_LENGTH__) ? __FLASH_LENGTH__ : 128k;
 
@@ -81,11 +82,10 @@ __RAM_START__       = 0x24000000;
 __RAM_UC_START__    = __RAM_START__;
 __RAM_CORE_START__  = __RAM_START__ + __RAM_UC_LENGTH__;
 __RAM_EMU_START__   = __RAM_CORE_START__ + __RAM_CORE_LENGTH__;
+__RAM_FCEUMM_START__ = __RAM_EMU_START__ + __RAM_FCEUMM_MAPPER_LENGTH__;
 
 __RAM_EMU_END__     = __RAM_EMU_START__ + __RAM_EMU_LENGTH__;
 __RAM_END__         = __RAM_START__ + 1024K;
-
-INCLUDE build/cacheflash.ld
 
 /****
  * External Flash Layout
@@ -97,24 +97,16 @@ INCLUDE build/cacheflash.ld
  *            |                                  |
  *            +----------------------------------+  __EXTFLASH_START__
  *            |                                  |
- *            |   Executable emulator data and   |
- *            |         constant ROM data        |
+ *            |   FrogFS image (frogfs.bin)      |
  *            |                                  |
- *            +----------------------------------+
- *            |                                  |
- *            |         Possibly Unused          |
- *            |                                  |
- *            +----------------------------------+  __EXTFLASH_END__ __CACHEFLASH_START__
- *            |                                  |
- *            |          Reserved space          |
- *            |    to decompress Roms not        |
- *            |         fitting in RAM           |
- *            +----------------------------------+  __CACHEFLASH_END__ __EXTFLASH_END__
+ *            +----------------------------------+  __EXTFLASH_END__
  */
-__EXTFLASH_LENGTH__ = __EXTFLASH_TOTAL_LENGTH__ - __CACHEFLASH_LENGTH__;
+__EXTFLASH_LENGTH__ = __EXTFLASH_TOTAL_LENGTH__;
 __EXTFLASH_END__ = __EXTFLASH_START__ + __EXTFLASH_LENGTH__;
-__CACHEFLASH_START__ = __EXTFLASH_END__;
-__CACHEFLASH_END__   = __CACHEFLASH_START__ + __CACHEFLASH_LENGTH__;
+
+/* scripts/size.sh: no ELF-linked payload in external flash (FrogFS is a separate binary). */
+__extflash_start__ = __EXTFLASH_START__;
+__extflash_end__ = __EXTFLASH_START__;
 
 
 __INTFLASH__ = DEFINED(__INTFLASH__) ? __INTFLASH__ : 0x08000000;
@@ -129,12 +121,15 @@ MEMORY
   RAM_UC   (xrw) : ORIGIN = __RAM_UC_START__, LENGTH = __RAM_UC_LENGTH__
   RAM      (xrw) : ORIGIN = __RAM_CORE_START__, LENGTH = __RAM_CORE_LENGTH__
   RAM_EMU  (xrw) : ORIGIN = __RAM_EMU_START__, LENGTH = __RAM_EMU_LENGTH__
+  RAM_FCEUMM (xrw) : ORIGIN = __RAM_FCEUMM_START__, LENGTH = __RAM_EMU_LENGTH__ - __RAM_FCEUMM_MAPPER_LENGTH__
   AHBRAM   (xrw) : ORIGIN = 0x30000000, LENGTH =  __AHBRAM_LENGTH__
 
   /* FLASH */
   FLASH      (xr ) : ORIGIN = __INTFLASH__,          LENGTH =  __FLASH_LENGTH__
-  EXTFLASH   (xr ) : ORIGIN = __EXTFLASH_START__,  LENGTH = __EXTFLASH_LENGTH__
-  CACHEFLASH (xr ) : ORIGIN = __CACHEFLASH_START__,  LENGTH = __CACHEFLASH_LENGTH__
+  CORES      (x  ) : ORIGIN = 0x0,                 LENGTH = 0xFFFFFFFF
+  RODATA     (x  ) : ORIGIN = 0xCAFE0000,          LENGTH = 0xFFFFFFFF
+  PICO8_CODE (x  ) : ORIGIN = 0xBEEF0000,          LENGTH = 512K
+  EXTFLASH   (xr ) : ORIGIN = __EXTFLASH_START__,  LENGTH = 32M
 }
 
 
@@ -151,19 +146,12 @@ SECTIONS
     . = ALIGN(4);
   } > ITCMRAM
 
-  /* Copied from flash to ram at boot */
-  _sitcram_hot = LOADADDR(._itcram_hot);
   ._itcram_hot :
   {
     __itcram_hot_start__ = .;
-    . = ALIGN(4);
-    *(.itcram_hot_data)
-    . = ALIGN(4);
-    *(.itcram_hot_text)
-    . = ALIGN(4);
     __itcram_hot_end__ = .;
     __itcram_end__ = .;
-  } >ITCMRAM AT> EXTFLASH
+  } >ITCMRAM
 
   /* Uncached and unbuffered memory for the LCD framebuffers */
   ._ram_uc (NOLOAD) :
@@ -175,64 +163,80 @@ SECTIONS
     __ram_uc_end__ = .;
   } > RAM_UC
 
-  /* Data that should be copied from extflash to axiram */
-  /* used by the startup to initialize data */
-  _siramdata = LOADADDR(._ram_exec);
-  __extflash_start__ = LOADADDR(._ram_exec);
-  ._ram_exec :
-  {
-    __ram_start__ = .;
-    __ram_exec_start__ = .;
+  .sd_fonts_cp1251_greybeard : {
     . = ALIGN(4);
-    _sram_text = .;
-    *(.ram_text)
-    _eram_text = .;
-    _sram_data = .;
-    *(.ram_data)
-    _eram_data = .;
-    __ram_exec_end__ = .;
-  } >RAM AT> EXTFLASH
+    KEEP(*(.sd_fonts_cp1251_greybeard))
+  } > CORES
 
-  ._extflash :
-  {
+  .sd_fonts_cp1251_sans_serif_bold : {
     . = ALIGN(4);
-    __extflash_font_start__ = .;
-    *(.extflash_font)
+    KEEP(*(.sd_fonts_cp1251_sans_serif_bold))
+  } > CORES
+
+  .sd_fonts_cp1251_sans_serif : {
     . = ALIGN(4);
-    __extflash_font_end__ = .;
-    __extflash_emu_data_start__ = .;
-    *(.extflash_emu_data)
+    KEEP(*(.sd_fonts_cp1251_sans_serif))
+  } > CORES
+
+  .sd_fonts_cp1251_serif_bold : {
     . = ALIGN(4);
-    __extflash_emu_data_end__ = .;
-    __extflash_logo_data_start__ = .;
-    *(.extflash_logo)
+    KEEP(*(.sd_fonts_cp1251_serif_bold))
+  } > CORES
+
+  .sd_fonts_cp1251_serif : {
     . = ALIGN(4);
-    __extflash_logo_data_end__ = .;
-    __extflash_global_data_start__ = .;
-    *(.extflash_global)
+    KEEP(*(.sd_fonts_cp1251_serif))
+  } > CORES
+
+  .sd_fonts_cp1252_greybeard : {
     . = ALIGN(4);
-    __extflash_global_data_end__ = .;
-    __extflash_nes_start__ = .;
-    build/core/logo*.o (.text .text* .rodata .rodata*)
+    KEEP(*(.sd_fonts_cp1252_greybeard))
+  } > CORES
+
+  .sd_fonts_cp1252_haeberli12 : {
     . = ALIGN(4);
-    build/core/header*.o (.text .text* .rodata .rodata*)
+    KEEP(*(.sd_fonts_cp1252_haeberli12))
+  } > CORES
+
+  .sd_fonts_cp1252_rock12 : {
     . = ALIGN(4);
-    __extflash_end_start__ = .;
+    KEEP(*(.sd_fonts_cp1252_rock12))
+  } > CORES
+
+  .sd_fonts_cp1252_sans_serif_bold : {
     . = ALIGN(4);
-    __extflash_text_start__ = .;
-    *(.extflash_text)
+    KEEP(*(.sd_fonts_cp1252_sans_serif_bold))
+  } > CORES
+
+  .sd_fonts_cp1252_sans_serif : {
     . = ALIGN(4);
-    __extflash_text_end__ = .;
-    __extflash_data_start__ = .;
+    KEEP(*(.sd_fonts_cp1252_sans_serif))
+  } > CORES
+
+  .sd_fonts_cp1252_serif_bold : {
     . = ALIGN(4);
-    *(.extflash_data)
+    KEEP(*(.sd_fonts_cp1252_serif_bold))
+  } > CORES
+
+  .sd_fonts_cp1252_serif_cjk : {
     . = ALIGN(4);
-    __extflash_data_end__ = .;
-    . = ALIGN(4K);
-    __extflash_game_rom_start__ = .;
-    *(.extflash_game_rom)
-    __extflash_game_rom_end__ = .;
-  } > EXTFLASH
+    KEEP(*(.sd_fonts_cp1252_serif_cjk))
+  } > CORES
+
+  .sd_fonts_cp1252_serif : {
+    . = ALIGN(4);
+    KEEP(*(.sd_fonts_cp1252_serif))
+  } > CORES
+
+  .sd_fonts_cp1252_unbalanced : {
+    . = ALIGN(4);
+    KEEP(*(.sd_fonts_cp1252_unbalanced))
+  } > CORES
+
+  .overlay_graphics : {
+    . = ALIGN(4);
+    KEEP(*(.sdcard_logo))
+  } > CORES
 
   .overlay_nes __RAM_EMU_START__ : {
     . = ALIGN(4);
@@ -240,7 +244,7 @@ SECTIONS
     build/nes/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_NES_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_NES_LOAD_START = LOADADDR(.overlay_nes);
   _OVERLAY_NES_SIZE = SIZEOF(.overlay_nes);
 
@@ -259,13 +263,13 @@ SECTIONS
   _OVERLAY_NES_BSS_SIZE = SIZEOF(.overlay_nes_bss);
   _NES_ROM_UNPACK_BUFFER_SIZE = __RAM_EMU_START__ + __RAM_EMU_LENGTH__ - _NES_ROM_UNPACK_BUFFER;
 
-  .overlay_nes_fceu __RAM_EMU_START__ : {
+  .overlay_nes_fceu __RAM_FCEUMM_START__ : {
     . = ALIGN(4);
     __ram_emu_nes_fceu_start__ = .;
     build/nes_fceu/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_NES_FCEU_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_NES_FCEU_LOAD_START = LOADADDR(.overlay_nes_fceu);
   _OVERLAY_NES_FCEU_SIZE = SIZEOF(.overlay_nes_fceu);
 
@@ -287,10 +291,13 @@ SECTIONS
   .overlay_tgb __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_tgb_start__ = .;
+    __init_array_tgb_start__ = .;
+    KEEP(build/tgbdual/*.o(.init_array*))
+    __init_array_tgb_end__ = .;
     build/tgbdual/*.o (.data .data* .text .text* .text.* .rodata .rodata* .ARM.extab.text.* .ARM.exidx.text.* )
     . = ALIGN(4);
     _OVERLAY_TGB_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_TGB_LOAD_START = LOADADDR(.overlay_tgb);
   _OVERLAY_TGB_SIZE = SIZEOF(.overlay_tgb);
 
@@ -312,7 +319,7 @@ SECTIONS
       build/smsplusgx/*.o (.data .data* .text .text* .rodata .rodata*)
       . = ALIGN(4);
       _OVERLAY_SMS_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_SMS_LOAD_START = LOADADDR(.overlay_sms);
   _OVERLAY_SMS_SIZE = SIZEOF(.overlay_sms);
 
@@ -334,7 +341,7 @@ SECTIONS
       build/pce/*.o (.data .data* .text .text* .rodata .rodata*)
       . = ALIGN(4);
       _OVERLAY_PCE_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_PCE_LOAD_START = LOADADDR(.overlay_pce);
   _OVERLAY_PCE_SIZE = SIZEOF(.overlay_pce);
 
@@ -360,7 +367,7 @@ SECTIONS
     build/msx/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_MSX_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_MSX_LOAD_START = LOADADDR(.overlay_msx);
   _OVERLAY_MSX_SIZE = SIZEOF(.overlay_msx);
   .overlay_msx_bss _OVERLAY_MSX_LOAD_END : {
@@ -383,7 +390,7 @@ SECTIONS
     build/wsv/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_WSV_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_WSV_LOAD_START = LOADADDR(.overlay_wsv);
   _OVERLAY_WSV_SIZE = SIZEOF(.overlay_wsv);
   .overlay_wsv_bss _OVERLAY_WSV_LOAD_END : {
@@ -404,7 +411,7 @@ SECTIONS
     build/gw/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_GW_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_GW_LOAD_START = LOADADDR(.overlay_gw);
   _OVERLAY_GW_SIZE = SIZEOF(.overlay_gw);
 
@@ -426,7 +433,7 @@ SECTIONS
     build/md/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_MD_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_MD_LOAD_START = LOADADDR(.overlay_md);
   _OVERLAY_MD_SIZE = SIZEOF(.overlay_md);
 
@@ -445,10 +452,13 @@ SECTIONS
 .overlay_a2600 __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_a2600_start__ = .;
+    __init_array_a2600_start__ = .;
+    KEEP(build/a2600/*.o(.init_array*))
+    __init_array_a2600_end__ = .;
     build/a2600/*.o (.data .data* .text .text* .rodata .rodata* .ARM.extab.text.* .ARM.exidx.text.*)
     . = ALIGN(4);
     _OVERLAY_A2600_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_A2600_LOAD_START = LOADADDR(.overlay_a2600);
   _OVERLAY_A2600_SIZE = SIZEOF(.overlay_a2600);
 
@@ -470,7 +480,7 @@ SECTIONS
     build/a7800/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_A7800_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_A7800_LOAD_START = LOADADDR(.overlay_a7800);
   _OVERLAY_A7800_SIZE = SIZEOF(.overlay_a7800);
 
@@ -492,7 +502,7 @@ SECTIONS
     build/amstrad/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_AMSTRAD_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_AMSTRAD_LOAD_START = LOADADDR(.overlay_amstrad);
   _OVERLAY_AMSTRAD_SIZE = SIZEOF(.overlay_amstrad);
 
@@ -511,10 +521,13 @@ SECTIONS
   .overlay_zelda3 __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_zelda3_start__ = .;
-    build/zelda3/*.o (.data .data* .text .text* .rodata .rodata*)
+    _ZELDA3_MAIN_CODE_START = .;
+    build/zelda3/main_zelda3.o (.data .data* .text .text* .rodata .rodata*)
+    _ZELDA3_MAIN_CODE_END = .;
+    build/zelda3/*.o (.data .data* .text .text* .noreloc)
     . = ALIGN(4);
     _OVERLAY_ZELDA3_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_ZELDA3_LOAD_START = LOADADDR(.overlay_zelda3);
   _OVERLAY_ZELDA3_SIZE = SIZEOF(.overlay_zelda3);
 
@@ -530,13 +543,21 @@ SECTIONS
   }
   _OVERLAY_ZELDA3_BSS_SIZE = SIZEOF(.overlay_zelda3_bss);
 
+  .rodata_zelda3 :
+  {
+    . = ALIGN(4);
+    __rodata_zelda3_start__ = .;
+    build/zelda3/*.o (.rodata .rodata*)
+    __rodata_zelda3_end__ = .;
+  } > RODATA
+
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_smw_start__ = .;
     build/smw/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_SMW_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_SMW_LOAD_START = LOADADDR(.overlay_smw);
   _OVERLAY_SMW_SIZE = SIZEOF(.overlay_smw);
 
@@ -558,7 +579,7 @@ SECTIONS
     build/videopac/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_VIDEOPAC_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_VIDEOPAC_LOAD_START = LOADADDR(.overlay_videopac);
   _OVERLAY_VIDEOPAC_SIZE = SIZEOF(.overlay_videopac);
 
@@ -580,7 +601,7 @@ SECTIONS
     build/celeste/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_CELESTE_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_CELESTE_LOAD_START = LOADADDR(.overlay_celeste);
   _OVERLAY_CELESTE_SIZE = SIZEOF(.overlay_celeste);
 
@@ -596,13 +617,20 @@ SECTIONS
   }
   _OVERLAY_CELESTE_BSS_SIZE = SIZEOF(.overlay_celeste_bss);
 
+  /* PICO-8 stub overlay → RAM.
+     The GPL build only includes the install-prompt stub (main_pico8_stub.c).
+     The real engine is loaded from /cores/pico8.bin at runtime, replacing
+     this stub in memory. See docs/PICO8_EXTERNAL_MODULE.md. */
   .overlay_pico8 __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_pico8_start__ = .;
-    build/pico8/*.o (.data .data* .text .text* .rodata .rodata*)
+    KEEP(*(.pico8_entry))
+    _PICO8_MAIN_CODE_START = .;
+    build/pico8/main_pico8_stub.o (.text .text* .data .data* .rodata .rodata*)
+    _PICO8_MAIN_CODE_END = .;
     . = ALIGN(4);
     _OVERLAY_PICO8_LOAD_END = .;
-  } AT> EXTFLASH
+  }
   _OVERLAY_PICO8_LOAD_START = LOADADDR(.overlay_pico8);
   _OVERLAY_PICO8_SIZE = SIZEOF(.overlay_pico8);
 
@@ -624,7 +652,7 @@ SECTIONS
     build/tama/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_TAMA_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_TAMA_LOAD_START = LOADADDR(.overlay_tama);
   _OVERLAY_TAMA_SIZE = SIZEOF(.overlay_tama);
 
@@ -640,48 +668,32 @@ SECTIONS
   }
   _OVERLAY_TAMA_BSS_SIZE = SIZEOF(.overlay_tama_bss);
 
-  .overlay_pico8 __RAM_EMU_START__ : {
+  .overlay_pkmini __RAM_EMU_START__ : {
     . = ALIGN(4);
-    __ram_emu_pico8_start__ = .;
-    KEEP(*(.pico8_entry))
-    _PICO8_MAIN_CODE_START = .;
-    build/pico8/main_pico8_stub.o (.text .text* .data .data* .rodata .rodata*)
-    _PICO8_MAIN_CODE_END = .;
-    build/pico8/*.o (.data .data* .text .text* .rodata .rodata*)
+    __ram_emu_pkmini_start__ = .;
+    build/pkmini/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
-    _OVERLAY_PICO8_LOAD_END = .;
-  } AT> EXTFLASH
-  _OVERLAY_PICO8_LOAD_START = LOADADDR(.overlay_pico8);
-  _OVERLAY_PICO8_SIZE = SIZEOF(.overlay_pico8);
+    _OVERLAY_PKMINI_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_PKMINI_LOAD_START = LOADADDR(.overlay_pkmini);
+  _OVERLAY_PKMINI_SIZE = SIZEOF(.overlay_pkmini);
 
-  .overlay_pico8_bss _OVERLAY_PICO8_LOAD_END : {
+  .overlay_pkmini_bss _OVERLAY_PKMINI_LOAD_END : {
     . = ALIGN(4);
-    _OVERLAY_PICO8_BSS_START = .;
-    build/pico8/*.o (.bss .bss*)
+    _OVERLAY_PKMINI_BSS_START = .;
+    build/pkmini/*.o (.bss .bss*)
     . = ALIGN(4);
-    build/pico8/*.o (COMMON)
-    __ram_emu_pico8_end__ = .;
-    _OVERLAY_PICO8_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_PICO8_BSS_END) < __RAM_EMU_END__, "Error: PICO8 BSS overflow");
+    build/pkmini/*.o (COMMON)
+    __ram_emu_pkmini_end__ = .;
+    _OVERLAY_PKMINI_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_PKMINI_BSS_END) < __RAM_EMU_END__, "Error: PKMINI BSS overflow");
   }
-  _OVERLAY_PICO8_BSS_SIZE = SIZEOF(.overlay_pico8_bss);
-
-  /* Place this symbol after the last overlay definition */
-  .overlay_end : {
-    __extflash_end__ = .;
-  } AT> EXTFLASH
+  _OVERLAY_PKMINI_BSS_SIZE = SIZEOF(.overlay_pkmini_bss);
 
   ._ram_space_check_md : {
     . = . + SIZEOF(.overlay_md);
     . = . + SIZEOF(.overlay_md_bss);
   } >RAM_EMU
-
-  ._cacheflash (NOLOAD) :
-  {
-    __cacheflash_start__ = .;
-    *(.cacheflash)
-    __cacheflash_end__ = .;
-  } > CACHEFLASH
 
   ._ram (NOLOAD) :
   {

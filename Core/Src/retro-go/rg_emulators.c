@@ -192,6 +192,7 @@ uint32_t pico8_code_flash_size = 0;
  * in a memory region to point to the actual QSPI XIP flash address.
  */
 #define PICO8_CODE_BASE 0xBEEF0000
+#define PICO8_CODE_CACHE_SIZE (128 * 1024u)
 
 static int PatchPico8Region(uint32_t *start, uint32_t *end, int32_t offset, uint32_t code_size)
 {
@@ -208,15 +209,18 @@ static int PatchPico8Region(uint32_t *start, uint32_t *end, int32_t offset, uint
 }
 
 /**
- * Pico8CacheCodeToFlash - Cache pico8.ro to flash with sentinel patching.
- * Uses RAM_EMU as temp buffer: cache file → copy flash to RAM → patch → reprogram.
- * Safe for re-caching: checks if flash content is already patched (no sentinel refs remain).
+ * Pico8CacheCodeToFlash - Cache pico8.ro to XIP flash with sentinel patching.
+ *
+ * With SD card, /cores/pico8.ro is copied into the normal flash cache and
+ * patched in place. With FrogFS, the source file is read-only inside the
+ * FrogFS image, so the patched copy is written to a dedicated cache window at
+ * the end of the firmware extflash payload region.
  */
 static uint8_t *Pico8CacheCodeToFlash(uint32_t *code_size_out)
 {
   printf("P8: caching pico8.ro to flash...\n");
 
-  /* Step 1: Cache the file to flash normally */
+  /* Step 1: Cache or map the source file. */
   uint8_t *code_addr = odroid_overlay_cache_file_in_flash("/cores/pico8.ro", code_size_out, false);
   if (!code_addr) {
     printf("P8: pico8.ro cache FAILED (not found on SD?)\n");
@@ -231,7 +235,27 @@ static uint8_t *Pico8CacheCodeToFlash(uint32_t *code_size_out)
   printf("P8: pico8.ro cached at %p, size=%lu, offset=%ld\n",
          code_addr, (unsigned long)*code_size_out, (long)offset);
 
-  /* Step 2: Copy flash content to RAM_EMU (temp buffer, will be overwritten by pico8.bin later) */
+  uint8_t *target_addr = code_addr;
+#if SD_CARD == 0
+  if (*code_size_out > PICO8_CODE_CACHE_SIZE) {
+    printf("P8: pico8.ro too large for FrogFS XIP cache (%lu > %lu)\n",
+           (unsigned long)*code_size_out, (unsigned long)PICO8_CODE_CACHE_SIZE);
+    return NULL;
+  }
+
+  uintptr_t cache_start = ((uintptr_t)&__EXTFLASH_END__ - PICO8_CODE_CACHE_SIZE) & ~(uintptr_t)0xFFFu;
+  if (cache_start < (uintptr_t)&__EXTFLASH_START__) {
+    printf("P8: FrogFS XIP cache does not fit in extflash payload region\n");
+    return NULL;
+  }
+
+  target_addr = (uint8_t *)cache_start;
+  offset = (int32_t)((uint32_t)target_addr - PICO8_CODE_BASE);
+  printf("P8: FrogFS source is read-only; patching copy to XIP cache at %p, offset=%ld\n",
+         target_addr, (long)offset);
+#endif
+
+  /* Step 2: Copy source content to RAM_EMU (temp buffer, overwritten by pico8.bin later). */
   printf("P8: copying %lu bytes from flash to RAM for patching...\n",
          (unsigned long)*code_size_out);
   uint8_t *ram_buf = (uint8_t *)__RAM_EMU_START__;
@@ -243,9 +267,13 @@ static uint8_t *Pico8CacheCodeToFlash(uint32_t *code_size_out)
                                  offset, *code_size_out);
   printf("P8: patched %d sentinel refs in code blob\n", patched);
 
-  if (patched > 0) {
-    /* Step 4: Reprogram the patched content back to flash */
-    uint32_t flash_offset = (uint32_t)code_addr - (uint32_t)&__EXTFLASH_BASE__;
+  if (patched > 0
+#if SD_CARD == 0
+      || target_addr != code_addr
+#endif
+      ) {
+    /* Step 4: Program the patched content to XIP flash. */
+    uint32_t flash_offset = (uint32_t)target_addr - (uint32_t)&__EXTFLASH_BASE__;
     uint32_t erase_size = (*code_size_out + 4095) & ~4095u;  /* Round up to 4KB */
 
     printf("P8: reprogramming flash at offset 0x%08lX, erase=%lu, prog=%lu\n",
@@ -258,14 +286,14 @@ static uint8_t *Pico8CacheCodeToFlash(uint32_t *code_size_out)
     OSPI_EnableMemoryMappedMode();
 
     /* Step 5: Verify first word was patched correctly */
-    uint32_t first_word = *(uint32_t *)code_addr;
+    uint32_t first_word = *(uint32_t *)target_addr;
     printf("P8: flash reprogram done. first word: 0x%08lX\n",
            (unsigned long)first_word);
   } else {
     printf("P8: no sentinel refs found (already patched from previous boot)\n");
   }
 
-  return code_addr;
+  return target_addr;
 }
 
 const unsigned char *ROM_DATA = NULL;
@@ -742,8 +770,10 @@ void emulator_show_file_info(retro_emulator_file_t *file)
         {-1, curr_lang->s_File, filename_value, 0, NULL},
         {-1, curr_lang->s_Type, type_value, 0, NULL},
         {-1, curr_lang->s_Size, size_value, 0, NULL},
+#if SD_CARD != 0 // Can't delete file on FrogFS
         ODROID_DIALOG_CHOICE_SEPARATOR,
         {10, curr_lang->s_Delete_Rom_File, "", no_delete ? -1 : 1, NULL},
+#endif
         ODROID_DIALOG_CHOICE_SEPARATOR,
         {1, curr_lang->s_Close, "", 1, NULL},
         ODROID_DIALOG_CHOICE_LAST
@@ -1125,6 +1155,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 
     // Copy game data from SD card to flash if needed
     // dsk files are read from sd card, do not copy them in flash
+    // With FrogFS, this maps the file directly from external flash
     if ((newfile->system->game_data_type != NO_GAME_DATA) && (strcasecmp(newfile->ext, "dsk") !=0)) {
         newfile->address = odroid_overlay_cache_file_in_flash(newfile->path, &(newfile->size), newfile->system->game_data_type == GAME_DATA_BYTESWAP_16);
         ROM_DATA = newfile->address;
@@ -1142,9 +1173,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
     itc_init();
     ram_start = 0;
     // some pointers were freed, set them to null
-#if SD_CARD == 1
     rg_reset_logo_buffers();
-#endif
 
     // Refresh watchdog here in case previous actions did not refresh it
     wdog_refresh();
@@ -1238,6 +1267,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_AMSTRAD_SIZE);
         app_main_amstrad(load_state, start_paused, save_slot);
       }
+#if 0
     } else if(strcmp(system_name, "Philips Vectrex") == 0)  {
 #ifdef ENABLE_EMULATOR_VIDEOPAC
       if (load_core_bin_with_header("/cores/videopac.bin", (uint8_t *)&__RAM_EMU_START__)) {
@@ -1245,6 +1275,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_VIDEOPAC_SIZE);
         app_main_videopac(load_state, start_paused, save_slot);
       }
+#endif
 #endif
     } else if(strcmp(system_name, "Homebrew") == 0)  {
       if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
@@ -1261,18 +1292,6 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_SMW_SIZE);
             app_main_smw(load_state, start_paused, save_slot);
         }
-#if 0
-        uint32_t* ram_start = (uint32_t *)&__RAM_EMU_START__;
-        uint32_t initial_sp = ram_start[0];
-        uint32_t entry_point = ram_start[1];
-
-        __disable_irq();
-        __set_MSP(initial_sp);
-        SCB->VTOR = 0x24000000;
-
-        func* app_entry = (func*)entry_point;
-        app_entry();
-#endif
       }
     } else if(strcmp(system_name, "Tamagotchi") == 0) {
       if (load_core_bin_with_header("/cores/tama.bin", (uint8_t *)&__RAM_EMU_START__)) {

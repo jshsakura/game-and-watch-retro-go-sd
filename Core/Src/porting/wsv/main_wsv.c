@@ -487,7 +487,7 @@ size_t wsv_getromdata(unsigned char **data) {
         *data = (unsigned char *)ROM_DATA;
         return ROM_DATA_LENGTH;
     }
-#elif SD_CARD == 1
+#else
     ram_start = (uint32_t)&_OVERLAY_WSV_BSS_END;
     uint32_t size = ACTIVE_FILE->size;
     if (size > ram_get_free_size()) {

@@ -2,8 +2,6 @@
 
 #include <stdint.h>
 
-extern uint8_t __CACHEFLASH_START__;
-extern uint8_t __CACHEFLASH_END__;
 extern uint8_t __EXTFLASH_START__;
 extern uint8_t __EXTFLASH_END__;
 extern uint8_t __EXTFLASH_BASE__;
@@ -25,8 +23,6 @@ extern uint32_t __ram_exec_end__;
 extern uint32_t _sitcram_hot;
 extern uint32_t __itcram_hot_start__;
 extern uint32_t __itcram_hot_end__;
-extern uint8_t __cacheflash_start__;
-extern uint8_t __cacheflash_end__;
 
 
 // If this is not an array the compiler might put in a memory_chk with dest_size 1...

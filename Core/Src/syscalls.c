@@ -1,13 +1,21 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <sys/time.h>
 #include <unistd.h>
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
 #include "rg_rtc.h"
+#if SD_CARD == 1
 #include "ff.h"
+#else
+#include "rg_frogfs.h"
+#endif
+
+#if SD_CARD == 1
 
 extern uint32_t log_idx;
 extern char logbuf[1024 * 4];
@@ -360,6 +368,260 @@ int __wrap_fflush(int file) {
 
     return 0;
 }
+
+#else
+
+extern uint32_t log_idx;
+extern char logbuf[1024 * 4];
+
+typedef struct {
+    frogfs_fh_t *file;
+    int is_open;
+} FrogFSFile;
+
+#define MAX_OPEN_FILES 10
+#define FROGFS_FD_OFFSET 3
+
+static FrogFSFile file_table[MAX_OPEN_FILES];
+
+void init_file_table(void)
+{
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        file_table[i].is_open = 0;
+    }
+}
+
+static int find_free_slot(void)
+{
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        if (!file_table[i].is_open)
+            return i;
+    }
+    return -1;
+}
+
+static const char *normalize_frogfs_path(const char *name, char *buffer, size_t buffer_size)
+{
+    if (!name || !buffer || buffer_size < 2)
+        return NULL;
+
+    if (name[0] == '/')
+        return name;
+
+    int written = snprintf(buffer, buffer_size, "/%s", name);
+    if (written < 0 || (size_t)written >= buffer_size)
+        return NULL;
+
+    return buffer;
+}
+
+int _open(const char *name, int flags, int mode)
+{
+    (void)mode;
+
+    if ((flags & O_ACCMODE) != O_RDONLY || (flags & (O_CREAT | O_TRUNC | O_APPEND))) {
+        errno = EROFS;
+        return -1;
+    }
+
+    frogfs_fs_t *fs = rg_frogfs_get();
+    if (!fs) {
+        errno = ENODEV;
+        return -1;
+    }
+
+    char normalized_name[PATH_MAX];
+    const char *frogfs_name = normalize_frogfs_path(name, normalized_name, sizeof(normalized_name));
+    if (!frogfs_name) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    const frogfs_entry_t *entry = frogfs_get_entry(fs, frogfs_name);
+    if (!entry || !frogfs_is_file(entry)) {
+        errno = ENOENT;
+        return -1;
+    }
+
+    int slot = find_free_slot();
+    if (slot == -1) {
+        errno = ENFILE;
+        return -1;
+    }
+
+    frogfs_fh_t *file = frogfs_open(fs, entry, 0);
+    if (!file) {
+        errno = EIO;
+        return -1;
+    }
+
+    file_table[slot].file = file;
+    file_table[slot].is_open = 1;
+    return slot + FROGFS_FD_OFFSET;
+}
+
+int _close(int file)
+{
+    file -= FROGFS_FD_OFFSET;
+    if (file < 0 || file >= MAX_OPEN_FILES || !file_table[file].is_open) {
+        errno = EBADF;
+        return -1;
+    }
+
+    frogfs_close(file_table[file].file);
+    file_table[file].file = NULL;
+    file_table[file].is_open = 0;
+    return 0;
+}
+
+int _write(int file, char *ptr, int len)
+{
+    if (file == STDOUT_FILENO || file == STDERR_FILENO)
+    {
+        uint32_t idx = log_idx;
+        if (idx + len + 1 > sizeof(logbuf))
+            idx = 0;
+
+        memcpy(&logbuf[idx], ptr, len);
+        idx += len;
+        logbuf[idx] = '\0';
+
+        log_idx = idx;
+        return len;
+    }
+
+    errno = EROFS;
+    return -1;
+}
+
+int _read(int file, char *ptr, int len)
+{
+    file -= FROGFS_FD_OFFSET;
+    if (file < 0 || file >= MAX_OPEN_FILES || !file_table[file].is_open) {
+        errno = EBADF;
+        return -1;
+    }
+
+    return frogfs_read(file_table[file].file, ptr, len);
+}
+
+off_t _lseek(int file, off_t offset, int whence)
+{
+    file -= FROGFS_FD_OFFSET;
+    if (file < 0 || file >= MAX_OPEN_FILES || !file_table[file].is_open) {
+        errno = EBADF;
+        return -1;
+    }
+
+    ssize_t pos = frogfs_seek(file_table[file].file, offset, whence);
+    if (pos < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    return pos;
+}
+
+int _fstat(int file, struct stat *st)
+{
+    file -= FROGFS_FD_OFFSET;
+    if (file < 0 || file >= MAX_OPEN_FILES || !file_table[file].is_open) {
+        errno = EBADF;
+        return -1;
+    }
+
+    ssize_t pos = frogfs_tell(file_table[file].file);
+    ssize_t size = frogfs_seek(file_table[file].file, 0, SEEK_END);
+    if (pos < 0 || size < 0) {
+        errno = EIO;
+        return -1;
+    }
+    frogfs_seek(file_table[file].file, pos, SEEK_SET);
+
+    memset(st, 0, sizeof(*st));
+    st->st_size = size;
+    st->st_mode = S_IFREG;
+    return 0;
+}
+
+int stat(const char *path, struct stat *st)
+{
+    frogfs_fs_t *fs = rg_frogfs_get();
+    if (!fs) {
+        errno = ENODEV;
+        return -1;
+    }
+
+    const frogfs_entry_t *entry = frogfs_get_entry(fs, path);
+    if (!entry) {
+        errno = ENOENT;
+        return -1;
+    }
+
+    frogfs_stat_t frog_stat;
+    frogfs_stat(fs, entry, &frog_stat);
+
+    memset(st, 0, sizeof(*st));
+    st->st_size = frog_stat.size;
+    st->st_mode = frogfs_is_dir(entry) ? S_IFDIR : S_IFREG;
+    return 0;
+}
+
+int _feof(int file)
+{
+    file -= FROGFS_FD_OFFSET;
+    if (file < 0 || file >= MAX_OPEN_FILES || !file_table[file].is_open) {
+        errno = EBADF;
+        return -1;
+    }
+
+    ssize_t pos = frogfs_tell(file_table[file].file);
+    ssize_t size = frogfs_seek(file_table[file].file, 0, SEEK_END);
+    if (pos < 0 || size < 0) {
+        errno = EIO;
+        return -1;
+    }
+    frogfs_seek(file_table[file].file, pos, SEEK_SET);
+    return pos >= size;
+}
+
+int mkdir(const char *path, mode_t mode)
+{
+    (void)path;
+    (void)mode;
+    errno = EROFS;
+    return -1;
+}
+
+int rmdir(const char *path)
+{
+    (void)path;
+    errno = EROFS;
+    return -1;
+}
+
+int _unlink(const char *path)
+{
+    (void)path;
+    errno = EROFS;
+    return -1;
+}
+
+int __wrap_fflush(int file)
+{
+    if (file == STDOUT_FILENO || file == STDERR_FILENO)
+        return 0;
+
+    file -= FROGFS_FD_OFFSET;
+    if (file < 0 || file >= MAX_OPEN_FILES || !file_table[file].is_open) {
+        errno = EBADF;
+        return -1;
+    }
+
+    return 0;
+}
+
+#endif
 
 int _gettimeofday(struct timeval *tv, void *tzvp)
 {

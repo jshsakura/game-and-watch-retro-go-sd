@@ -56,7 +56,6 @@
 
 static uint8_t curr_font = 0;
 
-#if SD_CARD == 1
 #define FONT_DATA_CP1251_GREYBEARD __attribute__((section(".sd_fonts_cp1251_greybeard")))
 #define FONT_DATA_CP1251_SANS_SERIF_BOLD __attribute__((section(".sd_fonts_cp1251_sans_serif_bold")))
 #define FONT_DATA_CP1251_SANS_SERIF __attribute__((section(".sd_fonts_cp1251_sans_serif")))
@@ -73,45 +72,7 @@ static uint8_t curr_font = 0;
 #define FONT_DATA_CP1252_SERIF __attribute__((section(".sd_fonts_cp1252_serif")))
 #define FONT_DATA_CP1252_UNBALANCED __attribute__((section(".sd_fonts_cp1252_unbalanced")))
 
-#elif ((BIG_BANK == 1) && (EXTFLASH_SIZE <= 16*1024*1024))
-#define FONT_DATA_CP1251_GREYBEARD
-#define FONT_DATA_CP1251_SANS_SERIF_BOLD
-#define FONT_DATA_CP1251_SANS_SERIF
-#define FONT_DATA_CP1251_SERIF_BOLD
-#define FONT_DATA_CP1251_SERIF
-
-#define FONT_DATA_CP1252_GREYBEARD
-#define FONT_DATA_CP1252_HAEBERLI12
-#define FONT_DATA_CP1252_ROCK12
-#define FONT_DATA_CP1252_SANS_SERIF_BOLD
-#define FONT_DATA_CP1252_SANS_SERIF
-#define FONT_DATA_CP1252_SERIF_BOLD
-#define FONT_DATA_CP1252_SERIF_CJK
-#define FONT_DATA_CP1252_SERIF
-#define FONT_DATA_CP1252_UNBALANCED
-#else
-#define FONT_DATA_CP1251_GREYBEARD __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1251_SANS_SERIF_BOLD __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1251_SANS_SERIF __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1251_SERIF_BOLD __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1251_SERIF __attribute__((section(".extflash_font")))
-
-#define FONT_DATA_CP1252_GREYBEARD __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1252_HAEBERLI12 __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1252_ROCK12 __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1252_SANS_SERIF_BOLD __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1252_SANS_SERIF __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1252_SERIF_BOLD __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1252_SERIF_CJK __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1252_SERIF __attribute__((section(".extflash_font")))
-#define FONT_DATA_CP1252_UNBALANCED __attribute__((section(".extflash_font")))
-#endif
-
-#if ((BIG_BANK == 1) && (EXTFLASH_SIZE <= 16*1024*1024)) || SD_CARD == 1
 #define LANG_DATA
-#else
-#define LANG_DATA __attribute__((section(".extflash_emu_data")))
-#endif
 
 #include "fonts/font_cp1252_Serif.h"
 
@@ -125,21 +86,6 @@ static uint8_t curr_font = 0;
 #include "fonts/font_cp1252_rock12.h"
 #include "fonts/font_cp1252_haeberli12.h"
 #endif
-
-#if SD_CARD == 0
-#if INCLUDED_JA_JP == 1
-#include "fonts/font_cp932_ja_jp.h"
-#endif
-#if INCLUDED_ZH_CN == 1
-#include "fonts/font_cp936_zh_cn.h"
-#endif
-#if INCLUDED_KO_KR == 1
-#include "fonts/font_cp949_ko_kr.h"
-#endif
-#if INCLUDED_ZH_TW == 1
-#include "fonts/font_cp950_zh_tw.h"
-#endif
-#endif // SD_CARD == 0
 
 #if INCLUDED_RU_RU == 1
 #include "fonts/font_cp1251_Serif.h"
@@ -419,67 +365,6 @@ uint8_t get_font() {
     return curr_font;
 }
 
-#if SD_CARD == 0
-#if SINGLE_FONT
-const char *gui_fonts[9] = {
-    font_cp1252_Serif, font_cp1252_Serif, font_cp1252_Serif,
-    font_cp1252_Serif, font_cp1252_Serif, font_cp1252_Serif,
-    font_cp1252_Serif, font_cp1252_Serif, font_cp1252_Serif,
-    };
-#else
-const char *gui_fonts[9] = {
-    font_cp1252_Serif,    font_cp1252_Serif_Bold,    font_cp1252_Serif_CJK,
-    font_cp1252_Sans_serif,    font_cp1252_Sans_serif_Bold,    font_cp1252_Greybeard,
-    font_cp1252_Unbalanced,    font_cp1252_rock12,    font_cp1252_haeberli12,
-    };
-#endif
-
-#if INCLUDED_JA_JP == 1
-/*const char *ja_jp_fonts[9] = {
-    font_cp932_ja_jp,    font_cp932_ja_jp,    font_cp932_ja_jp,
-    font_cp932_ja_jp,    font_cp932_ja_jp,    font_cp932_ja_jp,
-    font_cp932_ja_jp,    font_cp932_ja_jp,    font_cp932_ja_jp,
-    };*/
-#endif
-#if INCLUDED_ZH_CN == 1
-const char *zh_cn_fonts[9] = {
-    font_cp936_zh_cn,    font_cp936_zh_cn,    font_cp936_zh_cn,
-    font_cp936_zh_cn,    font_cp936_zh_cn,    font_cp936_zh_cn,
-    font_cp936_zh_cn,    font_cp936_zh_cn,    font_cp936_zh_cn,
-    };
-#endif
-#if INCLUDED_KO_KR == 1
-const char *ko_kr_fonts[9] = {
-    font_cp949_ko_kr,    font_cp949_ko_kr,    font_cp949_ko_kr,
-    font_cp949_ko_kr,    font_cp949_ko_kr,    font_cp949_ko_kr,
-    font_cp949_ko_kr,    font_cp949_ko_kr,    font_cp949_ko_kr,
-    };
-#endif
-#if INCLUDED_ZH_TW == 1
-const char *zh_tw_fonts[9] = {
-    font_cp950_zh_tw,    font_cp950_zh_tw,    font_cp950_zh_tw,
-    font_cp950_zh_tw,    font_cp950_zh_tw,    font_cp950_zh_tw,
-    font_cp950_zh_tw,    font_cp950_zh_tw,    font_cp950_zh_tw,
-    };
-#endif
-#if INCLUDED_RU_RU == 1
-#if SINGLE_FONT
-const char *cp1251_fonts[9] = {
-    font_cp1251_Serif, font_cp1251_Serif, font_cp1251_Serif,
-    font_cp1251_Serif, font_cp1251_Serif, font_cp1251_Serif,
-    font_cp1251_Serif, font_cp1251_Serif, font_cp1251_Serif,
-    };
-#else
-const char *cp1251_fonts[9] = {
-    font_cp1251_Serif,    font_cp1251_Serif_Bold,    font_cp1251_Serif,
-    font_cp1251_Sans_serif,    font_cp1251_Sans_serif_Bold,    font_cp1251_Greybeard,
-    font_cp1251_Serif_Bold,    font_cp1251_Serif_Bold,    font_cp1251_Serif_Bold,
-    };
-#endif
-#endif
-#endif
-
-
 #include "rg_i18n_en_us.c"
 
 #if INCLUDED_ES_ES == 1
@@ -583,31 +468,10 @@ static int utf8_decode(const char *str, uint32_t *codepoint) {
     return 0;
 }
 
-#if SD_CARD == 1
 int i18n_get_char_width(uint32_t codepoint) {
     FontEntry *entry = get_font_data(codepoint);
     return entry ? entry->width : 0;
 }
-#else
-int i18n_get_char_width(uint32_t codepoint)
-{
-    char *font;
-    if (codepoint < 0x100) {
-        font = gui_fonts[curr_font];
-        return font[codepoint]; // Basic Latin (ASCII) characters
-    } else if (codepoint >= 0x410 && codepoint <= 0x44F) {
-        codepoint = codepoint - 0x410 + 0xC0; // 0x400 utf8 codepoint is 0x80 in cp1251 font
-        font = cp1251_fonts[curr_font];
-        return font[codepoint]; // Cyrillic characters
-    } else if (codepoint >= 0x4E00 && codepoint <= 0x9FFF) {
-        return 12; // CJK Unified Ideographs
-    } else if (codepoint >= 0x1100 && codepoint <= 0x11FF) {
-        return 12; // Hangul Jamo
-    } else {
-        return 8; // Default width for other Unicode characters
-    }
-}
-#endif
 
 int i18n_get_text_height()
 {

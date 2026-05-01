@@ -45,7 +45,11 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
 #include "gui.h"
 #include "rg_rtc.h"
 #include "rg_i18n.h"
+#include "rg_storage.h"
 #include "gw_flash_alloc.h"
+#if SD_CARD == 0
+#include "rg_frogfs.h"
+#endif
 #if CHEAT_CODES == 1
 #include "main_msx.h"
 #include "main_gb_tgbdual.h"
@@ -1702,6 +1706,23 @@ void odroid_overlay_draw_progress_bar(const char *header, uint8_t progress)
 
 uint8_t *odroid_overlay_cache_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap)
 {
+#if SD_CARD == 0
+    (void)byte_swap;
+    const uint8_t *data = NULL;
+    uint32_t file_size = 0;
+
+    if (!rg_frogfs_get_file_data(file_path, &data, &file_size)) {
+        printf("FrogFS: failed to map file '%s'\n", file_path);
+        if (file_size_p)
+            *file_size_p = 0;
+        return NULL;
+    }
+
+    if (file_size_p)
+        *file_size_p = file_size;
+
+    return (uint8_t *)data;
+#else
     void progress_cb(uint32_t total_size, uint32_t total_processed, uint8_t progress)
     {
         if (lcd_is_swap_pending())
@@ -1714,6 +1735,7 @@ uint8_t *odroid_overlay_cache_file_in_flash(const char *file_path, uint32_t *fil
     }
 
     return store_file_in_flash(file_path, file_size_p, byte_swap, progress_cb);
+#endif
 }
 
 size_t odroid_overlay_cache_file_in_ram(const char *file_path, uint8_t *dest_address)
@@ -1723,6 +1745,7 @@ size_t odroid_overlay_cache_file_in_ram(const char *file_path, uint8_t *dest_add
 
 size_t odroid_overlay_cache_file_in_ram_with_offset(const char *file_path, uint8_t *dest_address, uint32_t offset)
 {
+#if SD_CARD == 1
     void progress_cb(uint32_t total_size, uint32_t total_processed, uint8_t progress)
     {
         // Hacky debounce to handle multiple cached files in a row without transparency artifacts
@@ -1748,6 +1771,10 @@ size_t odroid_overlay_cache_file_in_ram_with_offset(const char *file_path, uint8
     }
 
     return rg_storage_copy_file_to_ram_with_offset((char *)file_path, dest_address, offset, progress_cb);
+#else
+    /* FrogFS: fopen/read/lseek are wired in syscalls; no UI progress (copy from flash is fast). */
+    return rg_storage_copy_file_to_ram_with_offset((char *)file_path, dest_address, offset, NULL);
+#endif
 }
 
 #endif

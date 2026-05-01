@@ -66,9 +66,7 @@ enum {
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
-#if SD_CARD == 1
 void rg_reset_logo_buffers();
-#endif
 retro_logo_image *rg_get_logo(int16_t logo_index);
 
 extern const retro_logo_image logo_rgo;
@@ -95,6 +93,7 @@ extern const retro_logo_image header_zelda3;
 extern const retro_logo_image header_smw;
 extern const retro_logo_image header_homebrew;
 extern const retro_logo_image header_tama;
+extern const retro_logo_image header_pkmini;
 extern const retro_logo_image header_pico8;
 
 extern const retro_logo_image pad_sg1000;
@@ -113,6 +112,7 @@ extern const retro_logo_image pad_a7800;
 extern const retro_logo_image pad_amstrad;
 extern const retro_logo_image pad_snes;
 extern const retro_logo_image pad_tama;
+extern const retro_logo_image pad_pkmini;
 
 extern const retro_logo_image logo_coleco;
 extern const retro_logo_image logo_nintendo;

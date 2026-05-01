@@ -237,19 +237,6 @@ uint32_t GW_GetBootButtons(void)
   return boot_buttons;
 }
 
-#if SD_CARD == 0
-// Workaround for being able to run with -D_FORTIFY_SOURCE=1
-static void memcpy_no_check(uint32_t *dst, uint32_t *src, size_t len)
-{
-  assert((len & 0b11) == 0);
-
-  uint32_t *end = dst + len / 4;
-  while (dst != end) {
-    *(dst++) = *(src++);
-  }
-}
-#endif
-
 void wdog_enable()
 {
   MX_WWDG1_Init();
@@ -279,14 +266,6 @@ int main(void)
   for(int i = 0; i < 1000000; i++) {
     __NOP();
   }
-#endif
-
-#if SD_CARD == 0
-  // Nullpointer redzone
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnonnull"
-  memset(0x0, '\x41', (size_t)&__NULLPTR_LENGTH__);
-#pragma GCC diagnostic pop
 #endif
 
   // Reset the log write pointer
@@ -402,26 +381,6 @@ int main(void)
   // Initialize the external flash
 
   OSPI_Init(&hospi1);
-
-  // ITCM hot code copy happens in main_pico8.c (loaded from SD card)
-
-  #if SD_CARD == 0
-  // Copy instructions and data from extflash to axiram
-  void *copy_areas[3];
-
-  copy_areas[0] = &_siramdata;  // 0x90000000
-  copy_areas[1] = &__ram_exec_start__;  // 0x24000000
-  copy_areas[2] = &__ram_exec_end__;  // 0x24000000 + length
-  memcpy_no_check(copy_areas[1], copy_areas[0], copy_areas[2] - copy_areas[1]);
-
-  // Copy ITCRAM HOT section
-  static uint32_t copy_areas2[4] __attribute__((used));
-  copy_areas2[0] = (uint32_t) &_sitcram_hot;
-  copy_areas2[1] = (uint32_t) &__itcram_hot_start__;
-  copy_areas2[2] = (uint32_t) &__itcram_hot_end__;
-  copy_areas2[3] = copy_areas2[2] - copy_areas2[1];
-  memcpy_no_check((uint32_t *) copy_areas2[1], (uint32_t *) copy_areas2[0], copy_areas2[3]);
-#endif
 
   bq24072_init();
 

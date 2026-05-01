@@ -151,6 +151,7 @@ static const persistent_config_t persistent_config_default = {
 
 persistent_config_t persistent_config_ram;
 
+#if SD_CARD == 1
 static bool file_exists(const char *file_path) {
     FILINFO fno;
     FRESULT res;
@@ -163,9 +164,17 @@ static bool file_exists(const char *file_path) {
         return false;
     }
 }
+#endif
 
 void odroid_settings_init()
 {
+#if SD_CARD == 0
+    memset(&persistent_config_ram, 0, sizeof(persistent_config_t));
+    odroid_settings_reset();
+    curr_colors = (colors_t *)(&gui_colors[odroid_settings_colors_get()]);
+    set_font(odroid_settings_font_get());
+    curr_lang = (lang_t *)gui_lang[odroid_settings_lang_get()];
+#else
     FIL file;
     UINT bytes_read;
 
@@ -210,10 +219,15 @@ void odroid_settings_init()
     set_font(odroid_settings_font_get());
     //set lang
     curr_lang = (lang_t *)gui_lang[odroid_settings_lang_get()];
+#endif
 }
 
 void odroid_settings_commit()
 {
+#if SD_CARD == 0
+    persistent_config_ram.crc32 = 0;
+    persistent_config_ram.crc32 = crc32_le(0, (unsigned char *) &persistent_config_ram, sizeof(persistent_config_t));
+#else
     FIL file;
     FRESULT fr;
     UINT bytes_write;
@@ -229,10 +243,15 @@ void odroid_settings_commit()
             f_close(&file);
         }
     }
+#endif
 }
 
+#if CHEAT_CODES == 1
 static void odroid_settings_delete_cheat_state_files()
 {
+#if SD_CARD == 0
+    return;
+#else
     DIR dir, subdir;
     FILINFO fno, subfno;
     FRESULT res, subres;
@@ -266,7 +285,9 @@ static void odroid_settings_delete_cheat_state_files()
         }
         f_closedir(&dir);
     }
+#endif
 }
+#endif
 
 void odroid_settings_reset()
 {

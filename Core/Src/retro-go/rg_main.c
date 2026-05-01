@@ -35,11 +35,13 @@
 
 static bool GLOBAL_DATA main_menu_cpu_oc_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
+#if SD_CARD == 1
     if (sdcard_hw_type == SDCARD_HW_OSPI1) {
         // Current SD Card design over OSPI1 crash with overclocking,
         // do not allow oc with it until a new flex PCB fix that
         sprintf(option->value, "%s", curr_lang->s_CPU_Overclock_0);
     } else {
+#endif
         int cpu_oc = odroid_settings_cpu_oc_level_get();
         if (event == ODROID_DIALOG_PREV) {
             if (cpu_oc > 0)
@@ -68,7 +70,9 @@ static bool GLOBAL_DATA main_menu_cpu_oc_cb(odroid_dialog_choice_t *option, odro
             sprintf(option->value, "%s", curr_lang->s_CPU_Overclock_0);
             break;
         }
+#if SD_CARD == 1
     }
+#endif
     return event == ODROID_DIALOG_ENTER;
 }
 
@@ -998,10 +1002,12 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     // Initialize GUI colors based on OFW type
     gui_init_colors();
 
+#if SD_CARD == 1
     sdcard_init();
     if (fs_mounted == false) {
         sdcard_error_screen();
     }
+#endif
 
     // Re-initialize system now that the filesystem is mounted
     odroid_system_init(ODROID_APPID_LAUNCHER, 32000);

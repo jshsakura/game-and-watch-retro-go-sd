@@ -1,3 +1,8 @@
+#ifndef AMSTRAD_CATALOG_H
+#define AMSTRAD_CATALOG_H
+
+#include "cap32.h"
+
 #define CAT_MAX_ENTRY 64
 #define CAT_NAME_SIZE 20
 
@@ -25,3 +30,5 @@ typedef struct {
 extern catalogue_info_t catalogue;
 
 int catalog_probe(t_drive *drive, unsigned char user);
+
+#endif /* AMSTRAD_CATALOG_H */

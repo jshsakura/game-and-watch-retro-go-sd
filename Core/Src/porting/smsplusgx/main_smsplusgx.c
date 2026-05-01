@@ -150,7 +150,7 @@ load_rom_from_flash(uint8_t emu_engine)
         cart.rom = (uint8 *)ROM_DATA;
         cart.size = ROM_DATA_LENGTH;
     }
-#elif SD_CARD == 1
+#else
     ram_start = (uint32_t)&_OVERLAY_SMS_BSS_END;
     uint32_t size = ACTIVE_FILE->size;
     if (size > ram_get_free_size()) {
@@ -163,6 +163,9 @@ load_rom_from_flash(uint8_t emu_engine)
     }
     cart.size = size;
 #endif
+    if (cart.rom == NULL) {
+        return 0;
+    }
     cart.sram = sram;
     cart.pages = cart.size / 0x4000;
     cart.crc = crc32_le(0, cart.rom, cart.size);
@@ -181,14 +184,9 @@ load_rom_from_flash(uint8_t emu_engine)
 
     if (sms.console == CONSOLE_COLECO)
     {
-#if SD_CARD == 1
         coleco.rom = (uint8*)ahb_malloc(0x2000); // 8KB bios
         printf("Loading Coleco BIOS %p\n", coleco.rom);
         odroid_sdcard_read_file("/bios/coleco/coleco.bin", coleco.rom, 0x2000);
-#else
-        extern const unsigned char ColecoVision_BIOS[];
-        coleco.rom = (uint8*)ColecoVision_BIOS;
-#endif
     }
     return 1;
 }

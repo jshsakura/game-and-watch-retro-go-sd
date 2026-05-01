@@ -341,9 +341,9 @@ pce_osd_getromdata(unsigned char **data)
 {
     /* src pointer to the ROM data in the external flash (raw or LZ4) */
 #ifndef GNW_DISABLE_COMPRESSION
-    const unsigned char *src = ROM_DATA;
     unsigned char *dest = (unsigned char *)&_PCE_ROM_UNPACK_BUFFER;
     uint32_t available_size = (uint32_t)&_PCE_ROM_UNPACK_BUFFER_SIZE;
+    const unsigned char *src = ROM_DATA;
     if(strcmp(ROM_EXT, "lzma") == 0){
         size_t n_decomp_bytes;
         n_decomp_bytes = lzma_inflate(dest, available_size, src, ROM_DATA_LENGTH);
@@ -351,11 +351,7 @@ pce_osd_getromdata(unsigned char **data)
         return n_decomp_bytes;
     }
     else
-    {
-        *data = (unsigned char *)ROM_DATA;
-        return ROM_DATA_LENGTH;
-    }
-#elif SD_CARD == 1
+#endif
     ram_start = (uint32_t)&_OVERLAY_PCE_BSS_END;
     uint32_t size = ACTIVE_FILE->size;
     if (size > ram_get_free_size()) {
@@ -367,12 +363,14 @@ pce_osd_getromdata(unsigned char **data)
         }
     }
     return size;
-#endif
 }
 
 void LoadCartPCE() {
     int offset;
     size_t rom_length = pce_osd_getromdata(&PCE.ROM);
+    if (rom_length == 0 || PCE.ROM == NULL) {
+        return;
+    }
     offset = rom_length & 0x1fff;
     PCE.ROM_SIZE = (rom_length - offset) / 0x2000;
     PCE.ROM_DATA = PCE.ROM + offset;

@@ -243,11 +243,7 @@ int odroid_overlay_draw_text_line(uint16_t x_pos, uint16_t y_pos, uint16_t width
 
 /* USER CODE END Private defines */
 
-#if ((BIG_BANK == 1) && (EXTFLASH_SIZE <= 16*1024*1024)) || SD_CARD >= 1
 #define GLOBAL_DATA __attribute__((section(".intflash_global")))
-#else
-#define GLOBAL_DATA __attribute__((section(".extflash_global")))
-#endif
 
 #ifdef __cplusplus
 }

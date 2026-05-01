@@ -7,141 +7,22 @@
 #if !defined(BIG_BANK)
 #define BIG_BANK 1
 #endif
-#if SD_CARD == 1
+#define MAX_LOGO_COUNT 100
 #define LOGO_DATA      __attribute__((section(".sdcard_logo")))
 #define GFX_DATA       __attribute__((section(".intflash_logo")))
 #define INT_LOGO_DATA  __attribute__((section(".intflash_logo")))
 #define INT_LOGO_COUNT 3
-#elif (BIG_BANK == 1) && (EXTFLASH_SIZE <= 16*1024*1024)
-#define LOGO_DATA __attribute__((section(".intflash_logo")))
-#define GFX_DATA  __attribute__((section(".intflash_logo")))
-#else
-#define LOGO_DATA __attribute__((section(".extflash_logo")))
-#define GFX_DATA  __attribute__((section(".extflash_logo")))
-#endif
 
-#ifndef INT_LOGO_DATA
-#define INT_LOGO_DATA LOGO_DATA
-#endif
-
-#ifndef INT_LOGO_COUNT
-#define INT_LOGO_COUNT 0
-#endif
-
-#if SD_CARD == 1
-
-#define MAX_LOGO_COUNT 100
 static retro_logo_image** logo_image_cache;
 
 void rg_reset_logo_buffers() {
     logo_image_cache = NULL;
 }
-#endif
 
 retro_logo_image *rg_get_logo(int16_t logo_index) {
     if (logo_index < 0)
         return NULL;
-#if SD_CARD == 0
-    switch (logo_index) {
-        case RG_LOGO_RGO:
-            return (retro_logo_image *)&logo_rgo;
-        case RG_LOGO_RGW:
-            return (retro_logo_image *)&logo_rgw;
-//        case RG_LOGO_FLASH:
-//            return (retro_logo_image *)&logo_flash;
-        case RG_LOGO_HEADER_SG1000:
-            return (retro_logo_image *)&header_sg1000;
-        case RG_LOGO_HEADER_COL:
-            return (retro_logo_image *)&header_col;
-        case RG_LOGO_HEADER_GB:
-            return (retro_logo_image *)&header_gb;
-        case RG_LOGO_HEADER_GBC:
-            return (retro_logo_image *)&header_gbc;
-        case RG_LOGO_HEADER_GG:
-            return (retro_logo_image *)&header_gg;
-        case RG_LOGO_HEADER_NES:
-            return (retro_logo_image *)&header_nes;
-        case RG_LOGO_HEADER_PCE:
-            return (retro_logo_image *)&header_pce;
-        case RG_LOGO_HEADER_SMS:
-            return (retro_logo_image *)&header_sms;
-        case RG_LOGO_HEADER_GW:
-            return (retro_logo_image *)&header_gw;
-        case RG_LOGO_HEADER_MSX:
-            return (retro_logo_image *)&header_msx;
-        case RG_LOGO_HEADER_WSV:
-            return (retro_logo_image *)&header_wsv;
-        case RG_LOGO_HEADER_GEN:
-            return (retro_logo_image *)&header_gen;
-        case RG_LOGO_HEADER_A2600:
-            return (retro_logo_image *)&header_a2600;
-        case RG_LOGO_HEADER_A7800:
-            return (retro_logo_image *)&header_a7800;
-        case RG_LOGO_HEADER_AMSTRAD:
-            return (retro_logo_image *)&header_amstrad;
-        case RG_LOGO_HEADER_PICO8:
-            return (retro_logo_image *)&header_pico8;
-        case RG_LOGO_HEADER_TAMA:
-            return (retro_logo_image *)&header_tama;
-        case RG_LOGO_HEADER_PKMINI:
-            return (retro_logo_image *)&header_pkmini;
-        case RG_LOGO_HEADER_PICO8:
-            return (retro_logo_image *)&header_pico8;
-        case RG_LOGO_PAD_SG1000:
-            return (retro_logo_image *)&pad_sg1000;
-        case RG_LOGO_PAD_COL:
-            return (retro_logo_image *)&pad_col;
-        case RG_LOGO_PAD_GB:
-            return (retro_logo_image *)&pad_gb;
-        case RG_LOGO_PAD_GG:
-            return (retro_logo_image *)&pad_gg;
-        case RG_LOGO_PAD_NES:
-            return (retro_logo_image *)&pad_nes;
-        case RG_LOGO_PAD_PCE:
-            return (retro_logo_image *)&pad_pce;
-        case RG_LOGO_PAD_SMS:
-            return (retro_logo_image *)&pad_sms;
-        case RG_LOGO_PAD_GW:
-            return (retro_logo_image *)&pad_gw;
-        case RG_LOGO_PAD_MSX:
-            return (retro_logo_image *)&pad_msx;
-        case RG_LOGO_PAD_WSV:
-            return (retro_logo_image *)&pad_wsv;
-        case RG_LOGO_PAD_GEN:
-            return (retro_logo_image *)&pad_gen;
-        case RG_LOGO_PAD_A2600:
-            return (retro_logo_image *)&pad_a2600;
-        case RG_LOGO_PAD_A7800:
-            return (retro_logo_image *)&pad_a7800;
-        case RG_LOGO_PAD_AMSTRAD:
-            return (retro_logo_image *)&pad_amstrad;
-        case RG_LOGO_PAD_SNES:
-            return (retro_logo_image *)&pad_snes;
-        case RG_LOGO_PAD_TAMA:
-            return (retro_logo_image *)&pad_tama;
-        case RG_LOGO_PAD_PKMINI:
-            return (retro_logo_image *)&pad_pkmini;
-        case RG_LOGO_COLECO:
-            return (retro_logo_image *)&logo_coleco;
-        case RG_LOGO_NINTENDO:
-            return (retro_logo_image *)&logo_nintendo;
-        case RG_LOGO_SEGA:
-            return (retro_logo_image *)&logo_sega;
-        case RG_LOGO_PCE:
-            return (retro_logo_image *)&logo_pce;
-        case RG_LOGO_MICROSOFT:
-            return (retro_logo_image *)&logo_microsoft;
-        case RG_LOGO_WATARA:
-            return (retro_logo_image *)&logo_watara;
-        case RG_LOGO_ATARI:
-            return (retro_logo_image *)&logo_atari;
-        case RG_LOGO_AMSTRAD:
-            return (retro_logo_image *)&logo_amstrad;
-        case RG_LOGO_TAMA:
-            return (retro_logo_image *)&logo_tama;
-    }
-    return NULL;
-#else
+
     // Logos always included in internal flash.
     // Must be at beginning of the logo list.
     switch (logo_index) {
@@ -195,7 +76,6 @@ retro_logo_image *rg_get_logo(int16_t logo_index) {
 
     fclose(file);
     return logo_image_cache[logo_index];
-#endif
 }
 
 #pragma GCC push_options

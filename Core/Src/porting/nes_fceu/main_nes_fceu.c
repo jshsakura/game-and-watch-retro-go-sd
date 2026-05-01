@@ -85,11 +85,6 @@ struct st_palettes {
    unsigned int data[64];
 };
 
-#if SD_CARD == 0
-static struct st_palettes palettes[] __attribute__((section(".extflash_emu_data"))) = {
-#include "fceu_palettes.h"
-};
-#else // Palettes data will be loaded from file
 #define PALETTE_FILENAME "/bios/nes/palettes.bin"
 static uint16_t palettes_count;
 static struct st_palettes palette;
@@ -133,15 +128,10 @@ static int load_palette(int index, struct st_palettes *palette) {
     fclose(file);
     return 1;
 }
-#endif
 
 void setCustomPalette(uint16_t palette_idx) {
-#if SD_CARD == 0
-      unsigned *palette_data = palettes[palette_idx].data;
-#else
       load_palette(palette_idx, &palette);
       unsigned *palette_data = palette.data;
-#endif
       for (int i = 0; i < 64; i++ )
       {
          unsigned data = palette_data[i];
@@ -601,7 +591,7 @@ static size_t nes_getromdata(unsigned char **data)
 
         return ROM_DATA_LENGTH;
     }
-#elif SD_CARD == 1
+#else
     ram_start = (uint32_t)&_OVERLAY_NES_FCEU_BSS_END;
     uint32_t size = 0;
     size = ACTIVE_FILE->size;
@@ -619,17 +609,6 @@ static size_t nes_getromdata(unsigned char **data)
 
 static bool palette_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
-#if SD_CARD == 0
-    int max = sizeof(palettes) / sizeof(palettes[0]) - 1;
-
-    if (event == ODROID_DIALOG_PREV) palette_index = palette_index > 0 ? palette_index - 1 : max;
-    if (event == ODROID_DIALOG_NEXT) palette_index = palette_index < max ? palette_index + 1 : 0;
-
-    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
-        setCustomPalette(palette_index);
-    }
-    sprintf(option->value, "%10s", palettes[palette_index].name);
-#else
     if (palettes_count > 0) {
         int max = palettes_count - 1;
 
@@ -644,7 +623,7 @@ static bool palette_update_cb(odroid_dialog_choice_t *option, odroid_dialog_even
     } else {
         option->value = '\0';
     }
-#endif
+
     return event == ODROID_DIALOG_ENTER;
 }
 
@@ -888,9 +867,7 @@ int app_main_nes_fceu(uint8_t load_state, uint8_t start_paused, int8_t save_slot
 
     XBuf = nes_framebuffer;
 
-#if SD_CARD == 1
     palettes_count = get_palettes_count();
-#endif
 
     FCEUI_Initialize();
 

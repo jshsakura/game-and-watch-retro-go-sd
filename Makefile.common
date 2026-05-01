@@ -21,8 +21,11 @@ LARGE_FLASH ?= 0
 SD_CARD ?= 1
 
 # Configure where data is stored in the external flash by
-# setting EXTFLASH_OFFSET. Useful if the first 1MB are to be preserved.
+# setting EXTFLASH_OFFSET. Useful if the first 1MB/4MB are to be preserved.
 EXTFLASH_OFFSET ?= 0
+
+FROGFS_IMAGE ?= $(BUILD_DIR)/frogfs.bin
+FROGFS_BUILD_DIR ?= $(BUILD_DIR)/frogfs
 
 SINGLE_FONT ?= 0
 
@@ -111,7 +114,15 @@ EXTFLASH_END = $(shell echo $$(($(EXTFLASH_OFFSET) + $(EXTFLASH_SIZE))))
 
 EXTFLASH_FORCE_SPI ?= 0
 
+# Linker / FrogFS: length of the Retro-Go region (__EXTFLASH_START__ … __EXTFLASH_END__);
+# equals EXTFLASH_SIZE (partition after OFW), not chip size minus offset.
 EXTFLASH_TOTAL_LENGTH := $(EXTFLASH_SIZE)
+
+ifeq ($(SD_CARD),0)
+ifeq ($(shell [ $(EXTFLASH_OFFSET) -ge 0 -a $(EXTFLASH_SIZE) -gt 0 ] && echo true),)
+$(error FrogFS build needs EXTFLASH_OFFSET >= 0 and EXTFLASH_SIZE > 0 (partition size after offset, see EXTFLASH_SIZE_MB))
+endif
+endif
 
 ENABLE_SCREENSHOT ?= 1
 # Set to 1 to add game genie support
@@ -121,9 +132,7 @@ ifeq ($(GAME_GENIE),1)
 endif
 
 ifeq ($(CHEAT_CODES),1)
-	ifeq ($(SD_CARD),1)
-		MAX_CHEAT_CODES = 13
-	endif
+	MAX_CHEAT_CODES = 13
 endif
 
 # Compress supported ROMs by default. Set to 0 to disable.
@@ -248,6 +257,17 @@ C_SOURCES += Core/Src/gw_timer.c
 C_SOURCES += Core/src/softspi.c
 C_DEFS += -DGNW_DISABLE_COMPRESSION
 EXTFLASH_TOTAL_LENGTH = 0
+else
+FROGFS_DIR := Core/Src/porting/lib/frogfs
+FATFS_C_SOURCES :=
+C_SOURCES += \
+Core/Src/retro-go/rg_frogfs.c \
+$(FROGFS_DIR)/src/frogfs.c \
+$(FROGFS_DIR)/src/decomp_raw.c
+C_INCLUDES += \
+-I$(FROGFS_DIR)/include \
+-I$(FROGFS_DIR)/src
+C_DEFS += -DGNW_DISABLE_COMPRESSION # not supported for now
 endif
 
 #######################################
@@ -586,8 +606,14 @@ LIBDIR +=
 LDFLAGS += $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) $(CXXLIBS) -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref -Wl,--gc-sections
 LDFLAGS += -Wl,--wrap=fflush
 
-# default action: build all
-all: CheckTools CheckDirtySubmodules $(BUILD_DIR) $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET)_extflash.bin $(BUILD_DIR)/$(TARGET)_intflash.bin $(BUILD_DIR)/$(TARGET)_intflash2.bin
+# default action: build all (FrogFS has no gw_*_extflash.bin payload — flash frogfs.bin instead)
+all: CheckTools CheckDirtySubmodules $(BUILD_DIR) $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET)_intflash.bin $(BUILD_DIR)/$(TARGET)_intflash2.bin
+ifneq ($(SD_CARD),0)
+all: $(BUILD_DIR)/$(TARGET)_extflash.bin
+endif
+ifeq ($(SD_CARD),0)
+all: $(FROGFS_IMAGE)
+endif
 
 #######################################
 # build the application
@@ -732,9 +758,6 @@ $(BUILD_DIR)/%.o: %.s Makefile.common Makefile | $(BUILD_DIR)
 $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile PrepareFceummMappers $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
 	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
-ifeq ($(SD_CARD), 0)
-	$(V)./scripts/extflash_size.sh $@
-endif
 
 $(BUILD_DIR)/core/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC core ] $(notdir $<)
@@ -1029,19 +1052,22 @@ flash_intflash: $(BUILD_DIR)/$(TARGET)_intflash.bin
 .PHONY: flash_intflash
 
 
-flash_extflash: $(BUILD_DIR)/$(TARGET)_extflash.bin
+flash_extflash:
 ifeq ($(SD_CARD), 0)
-	@$(GNWMANAGER) flash ext $< --offset=$(EXTFLASH_OFFSET) -- start $(INTFLASH_ADDRESS)
+	@$(MAKE) --no-print-directory $(FROGFS_IMAGE)
+	$(GNWMANAGER) flash ext $(FROGFS_IMAGE) --offset=$(EXTFLASH_OFFSET) \
+		-- start $(INTFLASH_ADDRESS)
 endif
 .PHONY: flash_extflash
 
 # Programs both the external and internal flash.
-flash: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin $(BUILD_DIR)/$(TARGET)_extflash.bin
+flash: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin $(if $(filter-out 0,$(SD_CARD)),$(BUILD_DIR)/$(TARGET)_extflash.bin,)
 ifeq ($(SD_CARD), 0)
-	@$(GNWMANAGER) flash $(INTFLASH_ADDRESS) $(BUILD_DIR)/$(TARGET)_intflash.bin \
-		-- flash ext $(BUILD_DIR)/$(TARGET)_extflash.bin --offset=$(EXTFLASH_OFFSET) \
+	@$(MAKE) --no-print-directory $(FROGFS_IMAGE)
+	$(GNWMANAGER) flash $(INTFLASH_ADDRESS) $(BUILD_DIR)/$(TARGET)_intflash.bin \
+		-- flash ext $(FROGFS_IMAGE) --offset=$(EXTFLASH_OFFSET) \
 		-- start $(INTFLASH_ADDRESS) \
-		$(RESET_DBGMCU_CMD)
+		$(RESET_DBGMCU_CMD);
 else
 	@$(GNWMANAGER) flash $(INTFLASH_ADDRESS) $(BUILD_DIR)/$(TARGET)_intflash.bin \
 		-- start $(INTFLASH_ADDRESS) \
@@ -1166,6 +1192,16 @@ create_sd_data: create_sd_folders prepare_msx_bios_files $(MAPPER_BINS) $(BUILD_
 
 	@$(V)cp build/gw_retro_go_intflash.bin $(SD_FOLDER)/update_bank2.bin
 	@$(MAKE) --no-print-directory $(UNICODE_FONT_BINS)
+
+$(FROGFS_IMAGE): create_sd_data scripts/gen_frogfs_image.py $(FROGFS_DIR)/tools/mkfrogfs.py
+	$(V)$(PYTHON3) scripts/gen_frogfs_image.py \
+		--sd-content $(SD_FOLDER) \
+		--output $@ \
+		--build-dir $(FROGFS_BUILD_DIR) \
+		--reserve-size $(EXTFLASH_TOTAL_LENGTH)
+
+frogfs_image: $(FROGFS_IMAGE)
+.PHONY: frogfs_image
 
 flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin create_sd_data
 	$(eval MAPPERS_SDPUSH := $(foreach mapper,$(MAPPER_NAMES),-- sdpush --file $(MAPPERS_DIR)/mapper_$(mapper).bin --dest-path "/cores/mappers/"))
@@ -1346,7 +1382,7 @@ help:
 	@echo "  dump_screenshot   - Downloads the stored screenshot."
 	@echo "  flash             - Programs the internal and external flash"
 	@echo "  flash_all         - Alias for 'flash' (deprecated)"
-	@echo "  flash_extflash    - Only programs the external flash"
+	@echo "  flash_extflash    - Flash FrogFS image only (SD_CARD=0; respects EXTFLASH_OFFSET)"
 	@echo "  flash_intflash    - Only programs the internal flash"
 	@echo "  gdb               - Starts gdb and attaches to gdbserver"
 	@echo "  gdb_intflash      - Flashes intflash and then starts gdb and attaches to gdbserver"

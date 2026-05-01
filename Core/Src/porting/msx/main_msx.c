@@ -14,6 +14,7 @@
 
 #include "common.h"
 #include "rom_manager.h"
+#include "odroid_overlay.h"
 #include "gw_lcd.h"
 #include "gw_ofw.h"
 #include "rg_i18n.h"
@@ -1671,7 +1672,14 @@ static void insertGame() {
                 else
 #endif
                 {
-                    mapper = GuessROM((uint8_t *)ROM_DATA,ROM_DATA_LENGTH);
+                    uint32_t rom_size;
+                    uint8_t *rom_data = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &rom_size, false);
+                    if (rom_data == NULL) {
+                        return;
+                    }
+                    if (rom_data != NULL) {
+                        mapper = GuessROM(rom_data, rom_size);
+                    }
                 }
             }
             if (!controls_found) {
