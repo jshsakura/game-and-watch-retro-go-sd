@@ -54,7 +54,8 @@ def copy_file(fs, src, dst):
     set_file_time(fs, dst, src)
 
 
-def copy_tree(fs, src, dest):
+def copy_tree(fs, src, dest, exclude_relpaths=None):
+    exclude_relpaths = exclude_relpaths or frozenset()
     copied_files = 0
     fs.makedirs("/" + dest, exist_ok=True)
 
@@ -63,6 +64,8 @@ def copy_tree(fs, src, dest):
             continue
 
         rel_path = path.relative_to(src).as_posix()
+        if rel_path in exclude_relpaths:
+            continue
         fs_path = "/" + dest if not rel_path else "/" + dest + "/" + rel_path
 
         if path.is_dir():
@@ -71,6 +74,23 @@ def copy_tree(fs, src, dest):
             copy_file(fs, path, fs_path)
             copied_files += 1
 
+    return copied_files
+
+
+def copy_tree_cores_filtered(fs, src, dest, active_systems, sd_cores_pack):
+    """Copy only core blobs referenced by non-empty roms/<system>/ trees."""
+    copied_files = 0
+    for path in sorted(src.rglob("*")):
+        if path.name == ".DS_Store":
+            continue
+        rel_path = path.relative_to(src).as_posix()
+        if path.is_dir():
+            continue
+        if not sd_cores_pack.core_relative_path_allowed(rel_path, active_systems):
+            continue
+        fs_path = "/" + dest if not rel_path else "/" + dest + "/" + rel_path
+        copy_file(fs, path, fs_path)
+        copied_files += 1
     return copied_files
 
 
@@ -91,6 +111,16 @@ def main():
         action="append",
         default=[],
         help="Top-level sd_content directory to include. May be repeated. Defaults to cores.",
+    )
+    parser.add_argument(
+        "--roms-dir",
+        default="roms",
+        help="Project ROM tree (merged with sd_content/roms) used to pick which cores to pack",
+    )
+    parser.add_argument(
+        "--no-cores-filter",
+        action="store_true",
+        help="Copy the entire sd_content/cores tree (disable ROM-based selection).",
     )
     args = parser.parse_args()
 
@@ -121,6 +151,18 @@ def main():
         print(f"No LittleFS input directories found in {sd_content}", file=sys.stderr)
         return 1
 
+    scripts_dir = str(repo / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import sd_cores_pack  # noqa: E402
+
+    project_roms = (repo / args.roms_dir).resolve()
+    sd_roms_tree = sd_content / "roms"
+    active_systems = sd_cores_pack.active_system_dirnames_from_roms_trees(
+        project_roms if project_roms.is_dir() else None,
+        sd_roms_tree if sd_roms_tree.is_dir() else None,
+    )
+
     build_dir.mkdir(parents=True, exist_ok=True)
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -145,7 +187,24 @@ def main():
         fs.format()
         fs.mount()
         for src, dest in collect_dirs:
-            copied_files += copy_tree(fs, src, dest)
+            if dest == "cores" and not args.no_cores_filter:
+                n = copy_tree_cores_filtered(
+                    fs,
+                    src,
+                    dest,
+                    active_systems,
+                    sd_cores_pack,
+                )
+                copied_files += n
+                sys_msg = ", ".join(sorted(active_systems)) if active_systems else "(no ROM folders)"
+                print(f"LittleFS /cores: packed for systems [{sys_msg}] ({n} files)")
+            else:
+                excl = (
+                    sd_cores_pack.LITTLEFS_EXCLUDE_CORE_RELPATHS
+                    if dest == "cores"
+                    else frozenset()
+                )
+                copied_files += copy_tree(fs, src, dest, exclude_relpaths=excl)
         fs.unmount()
     except Exception:
         try:

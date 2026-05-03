@@ -80,19 +80,6 @@ GNUBOY_C_SOURCES =
 TGBDUAL_C_SOURCES = 
 TGBDUAL_CXX_SOURCES = 
 
-ifeq ($(FORCE_GNUBOY),1)
-GNUBOY_C_SOURCES += \
-Core/Src/porting/gb/main_gb.c \
-retro-go-stm32/gnuboy-go/components/gnuboy/gnuboy_cpu.c \
-retro-go-stm32/gnuboy-go/components/gnuboy/gnuboy_debug.c \
-retro-go-stm32/gnuboy-go/components/gnuboy/gnuboy_emu.c \
-retro-go-stm32/gnuboy-go/components/gnuboy/gnuboy_hw.c \
-retro-go-stm32/gnuboy-go/components/gnuboy/gnuboy_lcd.c \
-retro-go-stm32/gnuboy-go/components/gnuboy/gnuboy_loader.c \
-retro-go-stm32/gnuboy-go/components/gnuboy/gnuboy_mem.c \
-retro-go-stm32/gnuboy-go/components/gnuboy/gnuboy_rtc.c \
-retro-go-stm32/gnuboy-go/components/gnuboy/gnuboy_sound.c
-else
 CORE_TGBDUAL = external/tgbdual-go
 
 TGBDUAL_CXX_SOURCES += \
@@ -105,85 +92,9 @@ $(CORE_TGBDUAL)/gb_core/tgbdual_gb.cpp \
 $(CORE_TGBDUAL)/gb_core/tgbdual_lcd.cpp \
 $(CORE_TGBDUAL)/gb_core/tgbdual_mbc.cpp \
 $(CORE_TGBDUAL)/gb_core/tgbdual_rom.cpp
-endif
 
 NES_C_SOURCES = 
 
-ifeq ($(FORCE_NOFRENDO),1)
-NES_C_SOURCES += \
-Core/Src/porting/nes/main_nes.c \
-Core/Src/porting/nes/nofrendo_stm32.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/cpu/dis6502.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/cpu/nes6502.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map000.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map001.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map002.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map003.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map004.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map005.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map007.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map008.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map009.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map010.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map011.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map015.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map016.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map018.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map019.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map021.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map020.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map022.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map023.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map024.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map030.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map032.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map033.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map034.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map040.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map041.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map042.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map046.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map050.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map064.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map065.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map066.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map070.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map071.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map073.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map074.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map075.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map076.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map078.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map079.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map085.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map087.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map093.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map094.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map119.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map160.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map162.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map185.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map191.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map192.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map193.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map194.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map195.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map228.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map206.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map229.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map231.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map252.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/mappers/map253.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/nes/nes_apu.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/nes/game_genie.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/nes/nes_input.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/nes/nes_mem.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/nes/nes_mmc.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/nes/nes_ppu.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/nes/nes_rom.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/nes/nes_state.c \
-retro-go-stm32/nofrendo-go/components/nofrendo/nes/nes.c
-else
 NES_FCEU_C_SOURCES = 
 CORE_FCEUMM = external/fceumm-go
 NES_FCEU_C_SOURCES += \
@@ -485,7 +396,6 @@ $(CORE_FCEUMM)/src/palette.c \
 $(CORE_FCEUMM)/src/ppu.c \
 $(CORE_FCEUMM)/src/video.c \
 $(CORE_FCEUMM)/src/x6502.c
-endif
 
 SMSPLUSGX_C_SOURCES = 
 

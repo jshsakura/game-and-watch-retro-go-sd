@@ -392,18 +392,13 @@ On MSX system, you can enable/disable cheats while playing. Just press the Pause
 
 ## NES Emulator
 
-NES emulation was done using nofrendo-go emulator, it doesn't have the best compatibility but has good performances.
-To handle eveything that is not or badly emulated by nofrendo, fceumm emulator has been ported too.
-fceumm has very good compatibility but it's using more CPU power, currently about 65-85% of CPU depending on games, disks games (FDS) are taking even more CPU power (about 95%).
-Due to the large amount of mappers supported by fceumm, it's not possible to embbed all mappers codes in the G&W memory, so the parsing proccess is listing mappers used by games in the rom/nes folder so only needed mappers are loaded in the G&W. If you are using too much different mappers in the games you have selected, you will have runtime problems. The maximum number of mappers you can use will depends on embedded mappers, but basically it should fit most needs.
+NES emulation uses **fceumm** (FCEUmm). It has very good compatibility but uses significant CPU: typically about 65–85% depending on games; FDS titles can reach about 95%.
 
 Mappers compatibility is basically the same as fceumm version from 01/01/2023. Testing all mappers is not possible, so some mappers that could try to allocate too much ram will probably crash. If you find any mapper that crash, please report on discord support, or by opening a ticket on github.
 
 As Game & Watch CPU is not able to emulate YM2413 at 48kHz, mapper 85 (VRC-7) sound will play at 18kHz instead of 48kHz.
 
 FDS support requires you to put the FDS firmware in `/bios/nes/disksys.rom` file
-
-Note that you can force nofrendo-go usage instead of fceumm by adding FORCE_NOFRENDO=1 option in your make command
 
 ## MSX Emulator
 

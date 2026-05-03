@@ -15,7 +15,6 @@
 #include "gw_lcd.h"
 #include "main.h"
 #include "main_gb_tgbdual.h"
-#include "main_nes.h"
 #include "main_nes_fceu.h"
 #include "main_smsplusgx.h"
 #include "main_pce.h"
@@ -1190,19 +1189,11 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             app_main_gb_tgbdual(load_state, start_paused, save_slot);
         }
     } else if(strcmp(system_name, "Nintendo Entertainment System") == 0) {
-#if FORCE_NOFRENDO == 1
-        if (load_core_bin_with_header("/cores/nes.bin", (uint8_t *)&__RAM_EMU_START__)) {
-            memset(&_OVERLAY_NES_BSS_START, 0x0, (size_t)&_OVERLAY_NES_BSS_SIZE);
-            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_NES_SIZE);
-            app_main_nes(load_state, start_paused, save_slot);
-        }
-#else
         if (load_core_bin_with_header("/cores/nes_fceu.bin", (uint8_t *)&__RAM_FCEUMM_START__)) {
             memset(&_OVERLAY_NES_FCEU_BSS_START, 0x0, (size_t)&_OVERLAY_NES_FCEU_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_NES_FCEU_SIZE);
             app_main_nes_fceu(load_state, start_paused, save_slot);
         }
-#endif
     } else if(strcmp(system_name, "Sega Master System") == 0 ||
               strcmp(system_name, "Sega Game Gear") == 0     ||
               strcmp(system_name, "Sega SG-1000") == 0       ||

@@ -48,10 +48,6 @@ DISABLE_SPLASH_SCREEN ?= 0
 # Force max CPU overclock during boot (will reset to configured value after boot)
 ENABLE_BOOT_OC ?= 0
 
-# Default NES emulator is fceumm
-FORCE_NOFRENDO ?= 0 
-NOFRENDO_PARAM := --nofrendo=$(FORCE_NOFRENDO)
-
 # Configure external flash size by setting EXTFLASH_SIZE
 ifeq ($(LARGE_FLASH),1)
 	# 16MB
@@ -545,7 +541,6 @@ C_DEFS +=  \
 -DENABLE_SCREENSHOT=$(ENABLE_SCREENSHOT) \
 -DSD_CARD=$(SD_CARD) \
 -DCHEAT_CODES=$(CHEAT_CODES) \
--DFORCE_NOFRENDO=$(FORCE_NOFRENDO) \
 -DDISABLE_SPLASH_SCREEN=$(DISABLE_SPLASH_SCREEN) \
 -DENABLE_BOOT_OC=$(ENABLE_BOOT_OC) \
 -DTARGET_GNW \
@@ -1221,7 +1216,6 @@ create_sd_data: create_sd_folders prepare_msx_bios_files $(MAPPER_BINS) $(BUILD_
 	@$(PYTHON3) tools/gen_fceu_palettes_table.py $(SD_FOLDER)/bios/nes/palettes.bin
 	@$(PYTHON3) external/stella2014-go/convert_defprops.py external/stella2014-go/stella/src/emucore/DefProps.hxx $(CORES_DIR)/a2600_defprops.bin
 	@$(PYTHON3) external/blueMSX-go/create_compact_database_file.py external/blueMSX-go/system/bluemsx/Databases/msxromdb.xml $(SD_FOLDER)/bios/msx/msxromdb.bin
-	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_nes,$(CORES_DIR)/nes.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_nes_fceu,$(CORES_DIR)/nes_fceu.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_tgb,$(CORES_DIR)/tgb.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_sms,$(CORES_DIR)/sms.bin)
@@ -1272,7 +1266,7 @@ $(FROGFS_IMAGE): create_sd_data scripts/gen_frogfs_image.py tools/gencovers.py e
 frogfs_image: $(FROGFS_IMAGE)
 .PHONY: frogfs_image
 
-$(LITTLEFS_IMAGE): create_sd_data scripts/gen_littlefs_image.py
+$(LITTLEFS_IMAGE): create_sd_data scripts/gen_littlefs_image.py scripts/sd_cores_pack.py
 	$(V)$(PYTHON3) scripts/gen_littlefs_image.py \
 		--sd-content $(SD_FOLDER) \
 		--output $@ \
@@ -1286,7 +1280,6 @@ littlefs_image: $(LITTLEFS_IMAGE)
 flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin create_sd_data
 	$(eval MAPPERS_SDPUSH := $(foreach mapper,$(MAPPER_NAMES),-- sdpush --file $(MAPPERS_DIR)/mapper_$(mapper).bin --dest-path "/cores/mappers/"))
 	@$(GNWMANAGER) flash $(INTFLASH_ADDRESS) $(BUILD_DIR)/$(TARGET)_intflash.bin \
-		-- sdpush --file $(CORES_DIR)/nes.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/nes_fceu.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/tgb.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/sms.bin --dest-path "/cores/" \
@@ -1398,6 +1391,8 @@ help:
 	@echo "                        Defaults to placing the partition at the end of flash."
 	@echo "						   This value is offset from EXTFLASH_OFFSET."
 	@echo "  LITTLEFS_BLOCK_SIZE - Sets the generated littleFS image block/erase size in bytes. Defaults to 4096."
+	@echo "                        Only core binaries needed for non-empty roms/<system>/ folders are packed (see scripts/sd_cores_pack.py);"
+	@echo "                        use gen_littlefs_image.py --no-cores-filter to pack all of sd_content/cores."
 	@echo "  EXTFLASH_OFFSET     - Places the data at an offset in the external flash (useful for dual boot)"
 	@echo "                        For SD_CARD=0, EXTFLASH_OFFSET+EXTFLASH_SIZE must be a power of two (bytes)."
 	@echo "  INTFLASH_BANK       - Sets the internal flash bank. Valid values {1,2} (default=1)."
@@ -1428,7 +1423,6 @@ help:
 	@echo "                        Retro-Go must be in Bank 1."
 	@echo "  SHARED_HIBERNATE_SAVESTATE - Set to 1 to enable a separate savestate for off/on (default=0)"
 	@echo "  DISABLE_SPLASH_SCREEN - Set to 1 to disable the slash screen animation at startup (default=0)"
-	@echo "  FORCE_NOFRENDO      - Set to 1 to force use of previous nofrendo-go emulator instead of fceumm (default=0)"
 	@echo ""
 	@echo "Current configuration:"
 	@echo "  EXTFLASH_FORCE_SPI=$(EXTFLASH_FORCE_SPI)"
