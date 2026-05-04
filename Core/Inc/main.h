@@ -130,6 +130,7 @@ uint32_t GW_GetBootButtons(void);
 void wdog_refresh(void);
 void MX_SPI1_Init(void);
 void app_logo(void);
+void app_sleep_logo(void);
 void app_sleep_transition(bool show_logo, bool standby);
 void app_animate_lcd_brightness(uint8_t initial, uint8_t target, uint8_t step);
 uint16_t get_darken_pixel_d(uint16_t color, uint16_t color1, uint16_t darken);

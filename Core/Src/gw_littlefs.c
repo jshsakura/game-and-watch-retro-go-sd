@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 #include "gw_littlefs.h"
+#include "gw_sleep.h"
 #include "porting/lib/littlefs/lfs.h"
 #include "tamp/compressor.h"
 #include "tamp/decompressor.h"
@@ -265,7 +266,7 @@ static void corrupt_filesystem_screen(void){
         }
     }
     app_sleep_logo();
-    GW_EnterDeepSleep();
+    GW_EnterDeepSleep(true, NULL, NULL);
 }
 
 /*************************
