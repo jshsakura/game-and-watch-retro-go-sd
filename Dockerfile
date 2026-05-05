@@ -37,7 +37,7 @@ RUN ARCH=$(uname -m) && \
 
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --upgrade pip && \
-    /opt/venv/bin/pip install pillow lz4 tqdm numpy gnwmanager pyyaml
+    /opt/venv/bin/pip install pillow lz4 tqdm numpy gnwmanager pyyaml littlefs-python
 
 RUN useradd -m docker && echo "docker:docker" | chpasswd && \
     chown docker:docker /opt && \
