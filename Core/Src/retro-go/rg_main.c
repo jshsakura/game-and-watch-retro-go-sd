@@ -153,6 +153,7 @@ static bool GLOBAL_DATA colors_update_cb(odroid_dialog_choice_t *option, odroid_
         odroid_settings_colors_set(colors);
     }
     curr_colors = (colors_t *)(&gui_colors[colors]);
+    gui_apply_colors_to_overlay_clut();
     option->value[0] = 0;
     option->value[10] = 0;
     memcpy(option->value + 2, curr_colors, sizeof(colors_t));

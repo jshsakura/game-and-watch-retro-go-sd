@@ -143,6 +143,36 @@ colors_t *curr_colors = (colors_t *)(&gui_colors[0]);
 
 int gui_colors_count = 26;
 
+/* Push the 4 RGB565 colors of the active theme into the LUT8 overlay
+ * CLUT range so the menu renders with the exact yellow/green/etc. the
+ * user picked, instead of nearest-matching them against the cart's
+ * palette. No-op when the LCD is in RGB565 mode. Call after changing
+ * curr_colors (config load + theme nav). */
+void gui_apply_colors_to_overlay_clut(void)
+{
+    /* Don't gate on LCD mode — lcd_set_overlay_clut() stores the colors
+     * for later if not yet in LUT8 (e.g. during early config load before
+     * PICO-8 has switched the LCD). */
+    if (curr_colors == NULL) return;
+    const uint16_t rgb565[4] = {
+        curr_colors->bg_c, curr_colors->main_c,
+        curr_colors->sel_c, curr_colors->dis_c,
+    };
+    uint32_t rgb888[4];
+    for (int i = 0; i < 4; i++) {
+        uint16_t c = rgb565[i];
+        /* RGB565 → RGB888 with bit-replication for full 0..255 range. */
+        uint32_t r5 = (c >> 11) & 0x1F;
+        uint32_t g6 = (c >>  5) & 0x3F;
+        uint32_t b5 = (c      ) & 0x1F;
+        uint32_t r8 = (r5 << 3) | (r5 >> 2);
+        uint32_t g8 = (g6 << 2) | (g6 >> 4);
+        uint32_t b8 = (b5 << 3) | (b5 >> 2);
+        rgb888[i] = (r8 << 16) | (g8 << 8) | b8;
+    }
+    lcd_set_overlay_clut(rgb888, 4);
+}
+
 static char str_buffer[128];
 
 retro_gui_t gui;

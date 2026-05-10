@@ -85,32 +85,24 @@ int odroid_overlay_get_font_width()
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color)
 {
-    uint16_t *dst_img = lcd_get_active_buffer();
     retro_logo_image *logo = rg_get_logo(logo_idx);
     if (logo == NULL) return;
 
     int w = (logo->width + 7) / 8;
+    lcd_pen_t pen = lcd_pen(color);
     for (int i = 0; i < w; i++)
         for (int y = 0; y < logo->height; y++)
         {
             const char glyph = logo->logo[y * w + i];
-            //for (int x = 0; x < 8; x++)
-            if (glyph & 0x80)
-                dst_img[(y + y_pos) * 320 + i * 8 + 0 + x_pos] = color;
-            if (glyph & 0x40)
-                dst_img[(y + y_pos) * 320 + i * 8 + 1 + x_pos] = color;
-            if (glyph & 0x20)
-                dst_img[(y + y_pos) * 320 + i * 8 + 2 + x_pos] = color;
-            if (glyph & 0x10)
-                dst_img[(y + y_pos) * 320 + i * 8 + 3 + x_pos] = color;
-            if (glyph & 0x08)
-                dst_img[(y + y_pos) * 320 + i * 8 + 4 + x_pos] = color;
-            if (glyph & 0x04)
-                dst_img[(y + y_pos) * 320 + i * 8 + 5 + x_pos] = color;
-            if (glyph & 0x02)
-                dst_img[(y + y_pos) * 320 + i * 8 + 6 + x_pos] = color;
-            if (glyph & 0x01)
-                dst_img[(y + y_pos) * 320 + i * 8 + 7 + x_pos] = color;
+            int base = (y + y_pos) * 320 + i * 8 + x_pos;
+            if (glyph & 0x80) lcd_pen_set(&pen, base + 0);
+            if (glyph & 0x40) lcd_pen_set(&pen, base + 1);
+            if (glyph & 0x20) lcd_pen_set(&pen, base + 2);
+            if (glyph & 0x10) lcd_pen_set(&pen, base + 3);
+            if (glyph & 0x08) lcd_pen_set(&pen, base + 4);
+            if (glyph & 0x04) lcd_pen_set(&pen, base + 5);
+            if (glyph & 0x02) lcd_pen_set(&pen, base + 6);
+            if (glyph & 0x01) lcd_pen_set(&pen, base + 7);
         }
 };
 
@@ -119,20 +111,19 @@ int odroid_overlay_draw_text_line(uint16_t x_pos, uint16_t y_pos, uint16_t width
     int font_height = 8;
     int font_width = 8;
     int text_len = strlen(text);
-    uint16_t *fb = lcd_get_active_buffer();
-
-    for (int i = 0; i < (width / font_width); i++)
-    {
+    lcd_pen_t fg = lcd_pen(color);
+    lcd_pen_t bg = lcd_pen(color_bg);
+    for (int i = 0; i < (width / font_width); i++) {
         const char *glyph = font8x8_basic[(i < text_len) ? text[i] : ' '];
         int px = x_pos + i * font_width;
-        for (int y = 0; y < font_height; y++)
-        {
+        for (int y = 0; y < font_height; y++) {
             int row = (y_pos + y) * ODROID_SCREEN_WIDTH + px;
-            for (int x = 0; x < 8; x++)
-                fb[row + x] = (glyph[y] & (1 << x)) ? color : color_bg;
+            for (int x = 0; x < 8; x++) {
+                if (glyph[y] & (1 << x)) lcd_pen_set(&fg, row + x);
+                else                     lcd_pen_set(&bg, row + x);
+            }
         }
     }
-
     return font_height;
 }
 
@@ -207,26 +198,16 @@ void odroid_overlay_draw_rect(int x, int y, int width, int height, int border, u
     if (width < border || height < border)
         return;
 
-    uint16_t *fb = lcd_get_active_buffer();
-    if (!fb)
-        return;
-
-    // Top and bottom edges
+    lcd_pen_t pen = lcd_pen(color);
+    /* Top + bottom horizontal borders (full width). */
     for (int by = 0; by < border; by++) {
-        uint16_t *top = &fb[(y + by) * ODROID_SCREEN_WIDTH + x];
-        uint16_t *bot = &fb[(y + height - border + by) * ODROID_SCREEN_WIDTH + x];
-        for (int bx = 0; bx < width; bx++) {
-            top[bx] = color;
-            bot[bx] = color;
-        }
+        lcd_pen_run(&pen, (y + by) * ODROID_SCREEN_WIDTH + x, width);
+        lcd_pen_run(&pen, (y + height - border + by) * ODROID_SCREEN_WIDTH + x, width);
     }
-    // Left and right edges
+    /* Left + right vertical borders (between the horizontal ones). */
     for (int by = 0; by < height; by++) {
-        uint16_t *row = &fb[(y + by) * ODROID_SCREEN_WIDTH];
-        for (int bx = 0; bx < border; bx++) {
-            row[x + bx] = color;
-            row[x + width - border + bx] = color;
-        }
+        lcd_pen_run(&pen, (y + by) * ODROID_SCREEN_WIDTH + x, border);
+        lcd_pen_run(&pen, (y + by) * ODROID_SCREEN_WIDTH + x + width - border, border);
     }
 }
 
@@ -238,37 +219,31 @@ void odroid_overlay_draw_fill_rect(int x, int y, int width, int height, uint16_t
     if (!odroid_overlay_clip_rect_to_lcd(&x, &y, &width, &height))
         return;
 
-    uint16_t *fb = lcd_get_active_buffer();
-    if (!fb)
-        return;
-
+    lcd_pen_t pen = lcd_pen(color);
     for (int row = y; row < y + height; row++) {
-        uint16_t *dst = &fb[row * ODROID_SCREEN_WIDTH + x];
-        for (int col = 0; col < width; col++)
-            dst[col] = color;
+        lcd_pen_run(&pen, row * ODROID_SCREEN_WIDTH + x, width);
     }
 }
 
-static void draw_clock_digit(uint16_t *fb, const uint8_t clock, uint16_t px, uint16_t py, uint16_t color)
+static void draw_clock_digit(const uint8_t clock, uint16_t px, uint16_t py, uint16_t color)
 {
     static const unsigned char *CLOCK_DIGITS[] = {img_clock_00, img_clock_01, img_clock_02, img_clock_03, img_clock_04, img_clock_05, img_clock_06, img_clock_07, img_clock_08, img_clock_09};
     const unsigned char *img = CLOCK_DIGITS[clock];
+    lcd_pen_t pen = lcd_pen(color);
     for (uint8_t y = 0; y < 10; y++)
         for (uint8_t x = 0; x < 6; x++)
             if (img[y] & (1 << (7 - x)))
-                fb[px + x + GW_LCD_WIDTH * (py + y)] = color;
+                lcd_pen_set(&pen, px + x + GW_LCD_WIDTH * (py + y));
 };
 
 void odroid_overlay_clock(int x_pos, int y_pos)
 {
-    uint16_t *dst_img = lcd_get_active_buffer();
-
 #ifdef RETRO_LCD_CLOCK_ARTIFACTS
     uint16_t color = get_darken_pixel(curr_colors->main_c, 75);
-    draw_clock_digit(dst_img, 8, x_pos + 30, y_pos, color);
-    draw_clock_digit(dst_img, 8, x_pos + 22, y_pos, color);
-    draw_clock_digit(dst_img, 8, x_pos + 8, y_pos, color);
-    draw_clock_digit(dst_img, 8, x_pos, y_pos, color);
+    draw_clock_digit(8, x_pos + 30, y_pos, color);
+    draw_clock_digit(8, x_pos + 22, y_pos, color);
+    draw_clock_digit(8, x_pos + 8, y_pos, color);
+    draw_clock_digit(8, x_pos, y_pos, color);
 
     color = (GW_GetCurrentSubSeconds() <= 127) ? curr_colors->sel_c : color;
 #else
@@ -280,10 +255,10 @@ void odroid_overlay_clock(int x_pos, int y_pos)
 
     int minute = GW_GetCurrentMinute();
     int hour = GW_GetCurrentHour();
-    draw_clock_digit(dst_img, minute % 10, x_pos + 30, y_pos, curr_colors->sel_c);
-    draw_clock_digit(dst_img, minute / 10, x_pos + 22, y_pos, curr_colors->sel_c);
-    draw_clock_digit(dst_img, hour % 10, x_pos + 8, y_pos, curr_colors->sel_c);
-    draw_clock_digit(dst_img, hour / 10, x_pos, y_pos, curr_colors->sel_c);
+    draw_clock_digit(minute % 10, x_pos + 30, y_pos, curr_colors->sel_c);
+    draw_clock_digit(minute / 10, x_pos + 22, y_pos, curr_colors->sel_c);
+    draw_clock_digit(hour % 10, x_pos + 8, y_pos, curr_colors->sel_c);
+    draw_clock_digit(hour / 10, x_pos, y_pos, curr_colors->sel_c);
 };
 
 void odroid_overlay_draw_battery(odroid_battery_state_t battery, int x_pos, int y_pos)
@@ -330,9 +305,6 @@ void odroid_overlay_draw_battery(odroid_battery_state_t battery, int x_pos, int 
     odroid_overlay_draw_rect(x_pos + 17, y_pos + 3, 1, 4, 1, color_empty);
     odroid_overlay_draw_rect(x_pos + 18, y_pos + 2, 1, 6, 1, color_border);
     odroid_overlay_draw_rect(x_pos + 19, y_pos + 3, 1, 4, 1, color_border);
-    //odroid_overlay_draw_fill_rect(x_pos + 1, y_pos + 1, width_empty, 8, color_empty);
-    //odroid_overlay_draw_fill_rect(x_pos + 2, y_pos + 2, width_fill, 6, color_fill);
-    pixel_t *dest = lcd_get_active_buffer();
 
     switch (battery_state)
     {
@@ -341,20 +313,20 @@ void odroid_overlay_draw_battery(odroid_battery_state_t battery, int x_pos, int 
         odroid_overlay_draw_fill_rect(x_pos + 2, y_pos + 2, width_fill, 6, (battery_state == ODROID_BATTERY_CHARGE_STATE_BATTERY_MISSING) ? 0x00 : 0x07E0);
         if ((get_elapsed_time() % 1000) < 800)
         {
+            lcd_pen_t pen_white = lcd_pen(0xFFFF);
+            lcd_pen_t pen_empty = lcd_pen(color_empty);
             for (int y = 0; y < 10; y++)
             {
                 for (int x = 0; x < 8; x++)
                 {
+                    int off = (y_pos + y) * ODROID_SCREEN_WIDTH + x_pos + 5 + x;
                     if (IMG_C[y] & (0x80 >> x))
-                    {
-                        dest[(y_pos + y) * ODROID_SCREEN_WIDTH + x_pos + 5 + x] = 0x0FFFF;
-                    }
+                        lcd_pen_set(&pen_white, off);
                     else if (IMG_C_OUT[y] & (0x80 >> x))
-                        dest[(y_pos + y) * ODROID_SCREEN_WIDTH + x_pos + 5 + x] = color_empty;
+                        lcd_pen_set(&pen_empty, off);
                 };
             };
         };
-        //
         break;
     case ODROID_BATTERY_CHARGE_STATE_DISCHARGING:
         odroid_overlay_draw_fill_rect(x_pos + 2, y_pos + 2, width_fill, 6, color_fill);
@@ -592,8 +564,18 @@ uint16_t get_shined_pixel(uint16_t color, uint16_t shined)
 __attribute__((optimize("unroll-loops")))
 void odroid_overlay_darken_all()
 {
-    uint16_t *dst_img = lcd_get_active_buffer();
+    /* LUT8 mode: each pixel is a 1-byte CLUT index. lcd_set_clut() programs
+     * a darkened twin of every entry into slots [count..2*count), so just OR
+     * LCD_DARKEN_BIT into each pixel and the LTDC's own CLUT does the dim
+     * lookup at scanout — exact RGB darkening, no nearest-match approximation. */
+    if (lcd_get_mode() == LCD_MODE_LUT8) {
+        uint8_t *fb = (uint8_t *)lcd_get_active_buffer();
+        size_t n = lcd_get_frame_size();
+        for (size_t i = 0; i < n; i++) fb[i] |= LCD_DARKEN_BIT;
+        return;
+    }
 
+    uint16_t *dst_img = lcd_get_active_buffer();
     for (int y = 0; y < ODROID_SCREEN_HEIGHT; y++)
         for (int x = 0; x < ODROID_SCREEN_WIDTH; x++)
             dst_img[y * ODROID_SCREEN_WIDTH + x] = get_darken_pixel(dst_img[y * ODROID_SCREEN_WIDTH + x], 40);

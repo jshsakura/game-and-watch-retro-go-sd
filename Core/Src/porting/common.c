@@ -266,7 +266,7 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
                 odroid_audio_mute(true);
                 lcd_sleep_while_swap_pending();
                 fs_file_t *file = fs_open("SCREENSHOT", FS_WRITE, FS_COMPRESS);
-                fs_write(file, lcd_get_inactive_buffer(), sizeof(framebuffer1));
+                fs_write(file, lcd_get_inactive_buffer(), lcd_get_frame_size());
                 fs_close(file);
                 set_ingame_overlay(INGAME_OVERLAY_SC);
                 odroid_audio_mute(false);
@@ -537,82 +537,86 @@ static const uint8_t ROUND[] = {  // This is the top/left of a 8-pixel radius ci
 #define IMG_W 24
 
 
+/* Mode-agnostic via lcd_pen_t — handles both RGB565 and LUT8. The fb
+ * argument is unused (the pen captures lcd_get_active_buffer() itself);
+ * it's kept on the signature for back-compat with existing call sites. */
+
 __attribute__((optimize("unroll-loops")))
 static void draw_img(pixel_t *fb, const uint8_t *img, uint16_t x, uint16_t y){
+    (void)fb;
+    lcd_pen_t pen = lcd_pen(OVERLAY_COLOR_565);
     uint16_t idx = 0;
     for(uint8_t i=0; i < IMG_H; i++) {
         for(uint8_t j=0; j < IMG_W; j++) {
             if(img[idx / 8] & (1 << (7 - idx % 8))){
-                fb[x + j +  GW_LCD_WIDTH * (y + i)] = OVERLAY_COLOR_565;
+                lcd_pen_set(&pen, x + j + GW_LCD_WIDTH * (y + i));
             }
             idx++;
         }
     }
 }
 
-#define DARKEN_MASK_565 0x7BEF  // Mask off the MSb of each color
-#define DARKEN_ADD_565 0x2104  // value of 4-red, 8-green, 4-blue to add back in a little gray, especially on black backgrounds
-static inline void darken_pixel(pixel_t *p){
-    // Quickly divide all colors by 2
-    *p = ((*p >> 1) & DARKEN_MASK_565) + DARKEN_ADD_565;
-}
-
 __attribute__((optimize("unroll-loops")))
 static void draw_rectangle(pixel_t *fb, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2){
+    (void)fb;
+    lcd_pen_t pen = lcd_pen(OVERLAY_COLOR_565);
     for(uint16_t i=y1; i < y2; i++){
-        for(uint16_t j=x1; j < x2; j++){
-            fb[j + GW_LCD_WIDTH * i] = OVERLAY_COLOR_565;
-        }
+        lcd_pen_run(&pen, x1 + GW_LCD_WIDTH * i, x2 - x1);
     }
 }
 
 __attribute__((optimize("unroll-loops")))
 static void draw_darken_rectangle(pixel_t *fb, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2){
+    (void)fb;
+    lcd_pen_t pen = lcd_pen(0); /* color unused for darken — pen carries mode */
     for(uint16_t i=y1; i < y2; i++){
         for(uint16_t j=x1; j < x2; j++){
-            darken_pixel(&fb[j + GW_LCD_WIDTH * i]);
+            lcd_pen_darken(&pen, j + GW_LCD_WIDTH * i);
         }
     }
 }
 
 __attribute__((optimize("unroll-loops")))
 void draw_darken_rounded_rectangle(pixel_t *fb, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2){
+    (void)fb;
     // *1 is inclusive, *2 is exclusive
     uint16_t h = y2 - y1;
     uint16_t w = x2 - x1;
     if (w < 16 || h < 16) {
         // Draw not rounded rectangle
-        draw_darken_rectangle(fb, x1, y1, x2, y2);
+        draw_darken_rectangle(NULL, x1, y1, x2, y2);
         return;
     }
 
+    lcd_pen_t pen = lcd_pen(0); /* mode-only pen, color irrelevant for darken */
+
     // Draw upper left round
     for(uint8_t i=0; i < 8; i++) for(uint8_t j=0; j < 8; j++)
-        if(ROUND[i] & (1 << (7 - j))) darken_pixel(&fb[x1 + j + GW_LCD_WIDTH * (y1 + i)]);
+        if(ROUND[i] & (1 << (7 - j))) lcd_pen_darken(&pen, x1 + j + GW_LCD_WIDTH * (y1 + i));
 
     // Draw upper right round
     for(uint8_t i=0; i < 8; i++) for(uint8_t j=0; j < 8; j++)
-        if(ROUND[i] & (1 << (7 - j))) darken_pixel(&fb[x2 - j - 1 + GW_LCD_WIDTH * (y1 + i)]);
+        if(ROUND[i] & (1 << (7 - j))) lcd_pen_darken(&pen, x2 - j - 1 + GW_LCD_WIDTH * (y1 + i));
 
     // Draw lower left round
     for(uint8_t i=0; i < 8; i++) for(uint8_t j=0; j < 8; j++)
-        if(ROUND[i] & (1 << (7 - j))) darken_pixel(&fb[x1 + j + GW_LCD_WIDTH * (y2 - i - 1)]);
+        if(ROUND[i] & (1 << (7 - j))) lcd_pen_darken(&pen, x1 + j + GW_LCD_WIDTH * (y2 - i - 1));
 
     // Draw lower right round
     for(uint8_t i=0; i < 8; i++) for(uint8_t j=0; j < 8; j++)
-        if(ROUND[i] & (1 <<  (7 - j))) darken_pixel(&fb[x2 - j - 1 + GW_LCD_WIDTH * (y2 - i - 1)]);
+        if(ROUND[i] & (1 <<  (7 - j))) lcd_pen_darken(&pen, x2 - j - 1 + GW_LCD_WIDTH * (y2 - i - 1));
 
     // Draw upper rectangle
     for(uint16_t i=x1+8; i < x2 - 8; i++) for(uint8_t j=0; j < 8; j++)
-        darken_pixel(&fb[ i + GW_LCD_WIDTH * (y1 + j)]);
+        lcd_pen_darken(&pen, i + GW_LCD_WIDTH * (y1 + j));
 
     // Draw central rectangle
     for(uint16_t i=x1; i < x2; i++) for(uint16_t j=y1+8; j < y2-8; j++)
-        darken_pixel(&fb[i+GW_LCD_WIDTH * j]);
+        lcd_pen_darken(&pen, i + GW_LCD_WIDTH * j);
 
     // Draw lower rectangle
     for(uint16_t i=x1+8; i < x2 - 8; i++) for(uint8_t j=0; j < 8; j++)
-        darken_pixel(&fb[ i + GW_LCD_WIDTH * (y2 - j - 1)]);
+        lcd_pen_darken(&pen, i + GW_LCD_WIDTH * (y2 - j - 1));
 }
 
 #define INGAME_OVERLAY_X 265

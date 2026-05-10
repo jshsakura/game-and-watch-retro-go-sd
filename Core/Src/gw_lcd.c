@@ -5,16 +5,23 @@
 #include "stm32h7xx_hal.h"
 #include "main.h"
 
-#if GW_LCD_MODE_LUT8
-uint8_t framebuffer1[GW_LCD_WIDTH * GW_LCD_HEIGHT];
-uint8_t framebuffer2[GW_LCD_WIDTH * GW_LCD_HEIGHT];
-#else
-uint16_t framebuffer1[GW_LCD_WIDTH * GW_LCD_HEIGHT];
-uint16_t framebuffer2[GW_LCD_WIDTH * GW_LCD_HEIGHT];
-#endif // GW_LCD_MODE_LUT8
+/* Linker-defined .lcd_pool region (RAM_UC, 300K). Sized for the largest
+ * supported mode; the C side carves it into framebuffer1/framebuffer2 here.
+ * Declared as `uint8_t[]` so pointer-arithmetic on it is byte-stride.
+ * Initialisers below are address constants resolved at link time, so no
+ * boot-order issue — pointers are valid from the first instruction. */
+extern uint8_t __lcd_pool_start__[];
+extern uint8_t __lcd_pool_end__[];
 
-uint16_t *fb1 = framebuffer1;
-uint16_t *fb2 = framebuffer2;
+pixel_t *framebuffer1 = (pixel_t *)__lcd_pool_start__;
+pixel_t *framebuffer2 = (pixel_t *)(__lcd_pool_start__ + GW_LCD_FRAME_SIZE);
+
+/* LTDC-side framebuffer pointers — same as framebuffer1/2 by default but
+ * lcd_set_buffers() lets callers redirect the hardware to alternative
+ * buffers (used by the welcome/error screen flows). Initialised from the
+ * linker symbol so they're valid before lcd_init runs. */
+uint16_t *fb1 = (uint16_t *)__lcd_pool_start__;
+uint16_t *fb2 = (uint16_t *)(__lcd_pool_start__ + GW_LCD_FRAME_SIZE);
 
 extern LTDC_HandleTypeDef hltdc;
 
@@ -100,19 +107,20 @@ void lcd_deinit(SPI_HandleTypeDef *spi) {
 
 void *lcd_clear_active_buffer() {
   void *buffer = lcd_get_active_buffer();
-  memset(buffer, 0, sizeof(framebuffer1));
+  memset(buffer, 0, lcd_get_frame_size());
   return buffer;
 }
 
 void *lcd_clear_inactive_buffer() {
   void *buffer = lcd_get_inactive_buffer();
-  memset(buffer, 0, sizeof(framebuffer1));
+  memset(buffer, 0, lcd_get_frame_size());
   return buffer;
 }
 
 void lcd_clear_buffers() {
-  memset(fb1, 0, sizeof(framebuffer1));
-  memset(fb2, 0, sizeof(framebuffer2));
+  size_t fs = lcd_get_frame_size();
+  memset(framebuffer1, 0, fs);
+  memset(framebuffer2, 0, fs);
 }
 
 void lcd_init(SPI_HandleTypeDef *spi, LTDC_HandleTypeDef *ltdc, lcd_init_flags_t flags) {
@@ -210,7 +218,7 @@ void lcd_sync(void)
   void *inactive = lcd_get_inactive_buffer();
 
   if (active != inactive) {
-    memcpy(inactive, active, sizeof(framebuffer1));
+    memcpy(inactive, active, lcd_get_frame_size());
   }
 }
 
@@ -220,18 +228,18 @@ void lcd_clone(void)
   void *inactive = lcd_get_inactive_buffer();
 
   if (active != inactive) {
-    memcpy(active, inactive, sizeof(framebuffer1));
+    memcpy(active, inactive, lcd_get_frame_size());
   }
 }
 
 void* lcd_get_active_buffer(void)
 {
-  return active_framebuffer ? fb2 : fb1;
+  return active_framebuffer ? framebuffer2 : framebuffer1;
 }
 
 void* lcd_get_inactive_buffer(void)
 {
-  return active_framebuffer ? fb1 : fb2;
+  return active_framebuffer ? framebuffer1 : framebuffer2;
 }
 
 void lcd_reset_active_buffer(void)
@@ -244,6 +252,200 @@ void lcd_set_buffers(uint16_t *buf1, uint16_t *buf2)
 {
   fb1 = buf1;
   fb2 = buf2;
+}
+
+/* ----- LCD pool layout / mode switching (Phase 2) -----
+ *
+ * RGB565 mode: 2 framebuffers x 154K = 300K, fills the pool, no bonus.
+ * LUT8 mode:   2 framebuffers x 77K  = 154K, leaves 154K of bonus.
+ *
+ * `current_lcd_mode` tracks the active layout so lcd_get_bonus_pool reports
+ * the right region. Initialised to RGB565 to match the static-init layout
+ * of framebuffer1/2 + fb1/2 set up at the top of this file. */
+static lcd_mode_t current_lcd_mode = LCD_MODE_RGB565;
+
+void lcd_setup_framebuffers(lcd_mode_t mode)
+{
+  uint8_t *base = __lcd_pool_start__;
+  size_t fb_size_bytes;
+  uint32_t pixel_format;
+
+  if (mode == LCD_MODE_LUT8) {
+    fb_size_bytes = (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT * 1);  /* 1 byte/px */
+    pixel_format  = LTDC_PIXEL_FORMAT_L8;
+  } else {
+    fb_size_bytes = (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);  /* RGB565 */
+    pixel_format  = LTDC_PIXEL_FORMAT_RGB565;
+  }
+
+  /* Clear both framebuffer regions BEFORE the format change. Until
+   * HAL_LTDC_Reload() takes effect at the next vsync the LTDC keeps
+   * reading the old data; if we leave stale RGB565 bytes in place and
+   * then switch to LUT8 mode, those bytes get reinterpreted as CLUT
+   * indices and the screen flashes garbage colors briefly. Zeroing the
+   * framebuffer means the transition is smoothly black-to-black (zero
+   * is black in both RGB565 and CLUT idx 0 on PICO-8's palette). Clear
+   * the union of the two modes' framebuffer footprints (= max stride),
+   * never the bonus region — PICO-8's pool may live there. */
+  {
+    size_t old_fb = (current_lcd_mode == LCD_MODE_LUT8)
+        ? (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT * 1)
+        : (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
+    size_t footprint = 2 * (fb_size_bytes > old_fb ? fb_size_bytes : old_fb);
+    memset(base, 0, footprint);
+  }
+
+  /* Repoint pointers. pixel_t is the build-time default; in LUT8 mode the
+   * caller works with the framebuffer as uint8_t* via cast. fb1/fb2 are
+   * what the LTDC peripheral reads — must match the framebuffer layout. */
+  framebuffer1 = (pixel_t *)(base);
+  framebuffer2 = (pixel_t *)(base + fb_size_bytes);
+  fb1 = (uint16_t *)(base);
+  fb2 = (uint16_t *)(base + fb_size_bytes);
+
+  current_lcd_mode = mode;
+  active_framebuffer = 0;
+
+  /* Push to LTDC: change format and source address, then reload at vsync. */
+  HAL_LTDC_SetPixelFormat(&hltdc, pixel_format, 0);
+  HAL_LTDC_SetAddress(&hltdc, (uint32_t)fb1, 0);
+  HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
+}
+
+void lcd_get_bonus_pool(uint8_t **out_ptr, size_t *out_size)
+{
+  if (current_lcd_mode == LCD_MODE_LUT8) {
+    /* 2 LUT8 framebuffers occupy the lower 154K; the rest is bonus. */
+    size_t fb_block = 2 * (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT);
+    if (out_ptr)  *out_ptr  = __lcd_pool_start__ + fb_block;
+    if (out_size) *out_size = (size_t)((uintptr_t)__lcd_pool_end__ -
+                                       (uintptr_t)__lcd_pool_start__) - fb_block;
+  } else {
+    if (out_ptr)  *out_ptr  = NULL;
+    if (out_size) *out_size = 0;
+  }
+}
+
+/* Active CLUT staged for HAL_LTDC_ConfigCLUT and reused by lcd_pack_color()
+ * for nearest-match RGB→index lookups.
+ *
+ * Layout (sized to fit DTCM BSS budget — bumped only by ~16 bytes vs the
+ * cart-only 64-entry baseline):
+ *   [0..32)         cart palette entries (count ≤ 32)
+ *   [32..64)        cart palette darkened twins (LCD_DARKEN_BIT path)
+ *   [64..64+OMAX)   Retro-Go overlay theme entries (LCD_OVERLAY_CLUT_BASE)
+ *
+ * No darkened-twin slots for the overlay — see gw_lcd.h for rationale.
+ * Setting LCD_DARKEN_BIT (0x20) on a cart pixel byte switches it to the
+ * darker twin; the LTDC's CLUT does the lookup at scanout. */
+#define LCD_CLUT_CACHE_MAX     32
+#define LCD_EXTENDED_CLUT_MAX  (LCD_CLUT_CACHE_MAX * 2 + LCD_OVERLAY_CLUT_MAX)
+static uint32_t active_clut[LCD_EXTENDED_CLUT_MAX];
+static uint16_t active_clut_count   = 0;   /* cart entries in [0..count); twins at [count..2*count) */
+static uint16_t overlay_clut_count  = 0;   /* overlay entries in [BASE..BASE+count) */
+
+/* Push the entire populated range to the LTDC. The HAL writes index =
+ * counter, so we always send slot 0 onward. Determine how far we need
+ * to go from whichever range is populated. */
+static void clut_push(void)
+{
+  int total = (int)(2u * active_clut_count);
+  if (overlay_clut_count > 0) {
+    int overlay_end = LCD_OVERLAY_CLUT_BASE + overlay_clut_count;
+    if (overlay_end > total) total = overlay_end;
+  }
+  if (total <= 0) return;
+  HAL_LTDC_ConfigCLUT(&hltdc, active_clut, total, 0);
+  HAL_LTDC_EnableCLUT(&hltdc, 0);
+}
+
+/* Compute and store a 40%-darkened twin of `e` (RGB888) at slot `idx`. */
+static void clut_store_dark_twin(int idx, uint32_t e)
+{
+  int keep = 100 - LCD_DARKEN_PERCENT;
+  uint32_t r = (((e >> 16) & 0xFF) * keep) / 100;
+  uint32_t g = (((e >>  8) & 0xFF) * keep) / 100;
+  uint32_t b = (((e      ) & 0xFF) * keep) / 100;
+  active_clut[idx] = (r << 16) | (g << 8) | b;
+}
+
+void lcd_set_clut(const uint32_t *clut, uint16_t count)
+{
+  if (current_lcd_mode != LCD_MODE_LUT8 || clut == NULL || count == 0) return;
+  if (count > LCD_CLUT_CACHE_MAX) count = LCD_CLUT_CACHE_MAX;
+
+  /* Cart palette → [0..count); darkened twins → [count..2*count). */
+  for (uint16_t i = 0; i < count; i++) {
+    active_clut[i] = clut[i];
+    clut_store_dark_twin(count + i, clut[i]);
+  }
+  active_clut_count = count;
+  clut_push();
+}
+
+void lcd_set_overlay_clut(const uint32_t *colors, uint16_t count)
+{
+  if (colors == NULL) return;
+  if (count > LCD_OVERLAY_CLUT_MAX) count = LCD_OVERLAY_CLUT_MAX;
+
+  /* Always store the values (so they survive a later mode switch into
+   * LUT8). Push to hardware only if we're already in LUT8 — otherwise
+   * the next lcd_set_clut() call from the cart will pick them up via
+   * clut_push() since active_clut[] is already populated. */
+  for (uint16_t i = 0; i < count; i++) {
+    active_clut[LCD_OVERLAY_CLUT_BASE + i] = colors[i];
+  }
+  overlay_clut_count = count;
+  if (current_lcd_mode == LCD_MODE_LUT8) clut_push();
+}
+
+uint16_t lcd_pack_color(uint16_t rgb565)
+{
+  if (current_lcd_mode != LCD_MODE_LUT8) return rgb565;
+  if (active_clut_count == 0 && overlay_clut_count == 0) return 0;
+
+  /* Decode RGB565 → RGB888 components for distance comparison. */
+  int r = ((rgb565 >> 11) & 0x1F) * 255 / 31;
+  int g = ((rgb565 >>  5) & 0x3F) * 255 / 63;
+  int b = ((rgb565      ) & 0x1F) * 255 / 31;
+
+  int best_dist = 0x7FFFFFFF;
+  int best_idx  = 0;
+
+  /* Scan overlay first — exact-match menu colors win (distance 0). */
+  for (uint16_t i = 0; i < overlay_clut_count; i++) {
+    uint32_t e = active_clut[LCD_OVERLAY_CLUT_BASE + i];
+    int er = (int)((e >> 16) & 0xFF);
+    int eg = (int)((e >>  8) & 0xFF);
+    int eb = (int)((e      ) & 0xFF);
+    int dr = r - er, dg = g - eg, db = b - eb;
+    int d  = dr*dr + dg*dg + db*db;
+    if (d < best_dist) { best_dist = d; best_idx = LCD_OVERLAY_CLUT_BASE + (int)i; }
+  }
+  /* Then cart palette. The darkened twins are NOT searched — they're for
+   * the +LCD_DARKEN_BIT OR path, not direct color matching. */
+  for (uint16_t i = 0; i < active_clut_count; i++) {
+    uint32_t e = active_clut[i];
+    int er = (int)((e >> 16) & 0xFF);
+    int eg = (int)((e >>  8) & 0xFF);
+    int eb = (int)((e      ) & 0xFF);
+    int dr = r - er, dg = g - eg, db = b - eb;
+    int d  = dr*dr + dg*dg + db*db;
+    if (d < best_dist) { best_dist = d; best_idx = (int)i; }
+  }
+  return (uint16_t)(best_idx & 0xFF);
+}
+
+int lcd_get_mode(void)
+{
+  return (int)current_lcd_mode;
+}
+
+size_t lcd_get_frame_size(void)
+{
+  return (current_lcd_mode == LCD_MODE_LUT8)
+      ? (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT)            /* 1 byte/pixel */
+      : (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);       /* RGB565 */
 }
 
 void lcd_wait_for_vblank(void)

@@ -136,13 +136,18 @@ SECTIONS
     __itcram_end__ = .;
   } > ITCMRAM
 
-  /* Uncached and unbuffered memory for the LCD framebuffers */
+  /* Uncached and unbuffered LCD framebuffer pool. Sized for the largest
+   * supported mode (2x RGB565 framebuffers = 300K). lcd_setup_framebuffers()
+   * carves it up at boot via __lcd_pool_start__; in LUT8 mode the upper
+   * ~154K is freed as a "bonus pool" (lcd_get_bonus_pool()) that PICO-8
+   * folds into its TLSF allocator via g_platform.scratch_base/size. */
   ._ram_uc (NOLOAD) :
   {
     __ram_uc_start__ = .;
-    . = ALIGN(4);
-    *(.lcd1)
-    *(.lcd2)
+    . = ALIGN(16);
+    __lcd_pool_start__ = .;
+    . = . + __RAM_UC_LENGTH__;
+    __lcd_pool_end__ = .;
     __ram_uc_end__ = .;
   } > RAM_UC
 
@@ -586,11 +591,18 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_CELESTE_BSS_SIZE = SIZEOF(.overlay_celeste_bss);
 
-  /* PICO-8 stub overlay → RAM.
+  /* PICO-8 stub overlay → RAM, placed at HIGH end of RAM_EMU.
      The GPL build only includes the install-prompt stub (main_pico8_stub.c).
      The real engine is loaded from /cores/pico8.bin at runtime, replacing
-     this stub in memory. See docs/PICO8_EXTERNAL_MODULE.md. */
-  .overlay_pico8 __RAM_EMU_START__ : {
+     this stub in memory.
+
+     Stub is tiny but the SAME VMA must be used for the runtime-loaded
+     pico8.bin so the engine's link-time RAM references resolve correctly.
+     Keep _PICO8_HIGH_RESERVE in sync with the SD repo's linker script. */
+  _PICO8_HIGH_RESERVE = 168 * 1024;
+  __overlay_pico8_vma = __RAM_EMU_END__ - _PICO8_HIGH_RESERVE;
+
+  .overlay_pico8 __overlay_pico8_vma : {
     . = ALIGN(4);
     __ram_emu_pico8_start__ = .;
     KEEP(*(.pico8_entry))

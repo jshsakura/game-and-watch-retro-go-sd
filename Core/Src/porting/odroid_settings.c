@@ -194,6 +194,7 @@ void odroid_settings_init()
     }
     //set colors;
     curr_colors = (colors_t *)(&gui_colors[persistent_config_ram.colors]);
+    gui_apply_colors_to_overlay_clut();
     //set font
     set_font(odroid_settings_font_get());
     //set lang
