@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stddef.h>  /* offsetof — used by i18n_load_language */
 #include <math.h>
 
 #if !defined (INCLUDED_ZH_CN)
@@ -445,6 +446,210 @@ const lang_t *gui_lang[] = {
 
 lang_t *curr_lang = &lang_en_us;
 const int gui_lang_count = sizeof(gui_lang) / sizeof(*gui_lang);
+
+/* ──── SD-backed i18n: runtime-loaded language strings ────────────────────
+ *
+ * Per-language string data lives in /lang/xx_xx.bin on the SD card (built
+ * by tools/gen_i18n_bin.py). At app init we open the file for the active
+ * language, malloc a small buffer, read the strings into it, then
+ * populate the 215 `s_XXX` pointers in lang_active to point inside the
+ * buffer. curr_lang is then set to &lang_active.
+ *
+ * en_us stays baked (lang_en_us) as a guaranteed fallback when the SD
+ * card has no /lang/xx_xx.bin or the file is corrupt. The 10 other
+ * lang_xx_xx static structs will be removed in a follow-up commit once
+ * this loader is verified.
+ *
+ * Binary format (matches tools/gen_i18n_bin.py):
+ *   [0]            u32 magic = 'I18N' (0x4E383149)
+ *   [4]            u16 version = 1
+ *   [6]            u16 count
+ *   [8]            u32 offsets[count]   (relative to start of strings)
+ *   [8 + 4*count]  null-terminated UTF-8 strings, concatenated
+ */
+#define I18N_BIN_MAGIC   0x4E383149u
+#define I18N_BIN_VERSION 1
+
+typedef struct {
+    uint32_t    codepage;
+    const char *bin_path;       /* e.g. "/lang/de_de.bin" */
+    const char *display_name;   /* shown in lang menu BEFORE .bin load */
+    int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt,
+                                 uint16_t day, uint16_t month,
+                                 const char *weekday, uint16_t hour,
+                                 uint16_t minutes, uint16_t seconds);
+    int (*fmtDate)(char *outstr, const char *datefmt,
+                   uint16_t day, uint16_t month, uint16_t year,
+                   const char *weekday);
+    int (*fmtTime)(char *outstr, const char *timefmt,
+                   uint16_t hour, uint16_t minutes, uint16_t seconds);
+} lang_metadata_t;
+
+/* Order MUST match gui_lang[] above so external lang_idx maps to the
+ * same entry in both arrays. */
+static const lang_metadata_t lang_metadata[] = {
+    { 1252, "/lang/en_us.bin", "English",
+      en_us_fmt_Title_Date_Format, en_us_fmt_Date, en_us_fmt_Time },
+#if INCLUDED_ES_ES == 1
+    { 1252, "/lang/es_es.bin", "Español",
+      es_es_fmt_Title_Date_Format, es_es_fmt_Date, es_es_fmt_Time },
+#endif
+#if INCLUDED_PT_PT == 1
+    { 1252, "/lang/pt_pt.bin", "Português",
+      pt_pt_fmt_Title_Date_Format, pt_pt_fmt_Date, pt_pt_fmt_Time },
+#endif
+#if INCLUDED_FR_FR == 1
+    { 1252, "/lang/fr_fr.bin", "Français",
+      fr_fr_fmt_Title_Date_Format, fr_fr_fmt_Date, fr_fr_fmt_Time },
+#endif
+#if INCLUDED_IT_IT == 1
+    { 1252, "/lang/it_it.bin", "Italiano",
+      it_it_fmt_Title_Date_Format, it_it_fmt_Date, it_it_fmt_Time },
+#endif
+#if INCLUDED_DE_DE == 1
+    { 1252, "/lang/de_de.bin", "Deutsch",
+      de_de_fmt_Title_Date_Format, de_de_fmt_Date, de_de_fmt_Time },
+#endif
+#if INCLUDED_RU_RU == 1
+    { 1251, "/lang/ru_ru.bin", "Русский",
+      ru_ru_fmt_Title_Date_Format, ru_ru_fmt_Date, ru_ru_fmt_Time },
+#endif
+#if INCLUDED_ZH_CN == 1
+    {  936, "/lang/zh_cn.bin", "简体中文",
+      zh_cn_fmt_Title_Date_Format, zh_cn_fmt_Date, zh_cn_fmt_Time },
+#endif
+#if INCLUDED_ZH_TW == 1
+    {  950, "/lang/zh_tw.bin", "繁體中文",
+      zh_tw_fmt_Title_Date_Format, zh_tw_fmt_Date, zh_tw_fmt_Time },
+#endif
+#if INCLUDED_KO_KR == 1
+    {  949, "/lang/ko_kr.bin", "한국어",
+      ko_kr_fmt_Title_Date_Format, ko_kr_fmt_Date, ko_kr_fmt_Time },
+#endif
+#if INCLUDED_JA_JP == 1
+    {  932, "/lang/ja_jp.bin", "日本語",
+      ja_jp_fmt_Title_Date_Format, ja_jp_fmt_Date, ja_jp_fmt_Time },
+#endif
+};
+
+/* The 215 s_XXX fields in lang_t are contiguous `const char *` pointers
+ * starting at &lang_t.s_LangUI (codepage precedes them, fn pointers
+ * follow). Treating that region as a flat const-char-pointer array lets
+ * the loader assign by index without naming each field. */
+#define LANG_T_STRING_COUNT \
+    ((offsetof(lang_t, fmt_Title_Date_Format) - offsetof(lang_t, s_LangUI)) \
+     / sizeof(const char *))
+
+static lang_t  lang_active;
+static char   *lang_active_strings_buf = NULL;
+static size_t  lang_active_strings_size = 0;
+
+/* Load /lang/xx_xx.bin for `idx` (offset into gui_lang[] / lang_metadata).
+ * On success returns &lang_active (caller may set curr_lang to it).
+ * On any error returns &lang_en_us (baked fallback). */
+lang_t *i18n_load_language(int idx)
+{
+    const int n = (int)(sizeof(lang_metadata) / sizeof(*lang_metadata));
+    if (idx < 0 || idx >= n) {
+        fprintf(stderr, "i18n_load: idx=%d out of range, falling back to en_us\n", idx);
+        return &lang_en_us;
+    }
+    const lang_metadata_t *m = &lang_metadata[idx];
+
+    FILE *f = fopen(m->bin_path, "rb");
+    if (!f) {
+        fprintf(stderr, "i18n_load: cannot open '%s' (SD missing?) — using en_us\n",
+                m->bin_path);
+        return &lang_en_us;
+    }
+
+    uint32_t magic = 0;
+    uint16_t version = 0, count = 0;
+    if (fread(&magic, 4, 1, f) != 1 || magic != I18N_BIN_MAGIC) {
+        fprintf(stderr, "i18n_load: '%s' bad magic 0x%08lx — using en_us\n",
+                m->bin_path, (unsigned long)magic);
+        fclose(f);
+        return &lang_en_us;
+    }
+    if (fread(&version, 2, 1, f) != 1 || version != I18N_BIN_VERSION) {
+        fprintf(stderr, "i18n_load: '%s' bad version %u — using en_us\n",
+                m->bin_path, version);
+        fclose(f);
+        return &lang_en_us;
+    }
+    if (fread(&count, 2, 1, f) != 1 || count > LANG_T_STRING_COUNT + 4) {
+        /* +4 allows minor field-count drift; refuse anything wildly off. */
+        fprintf(stderr, "i18n_load: '%s' bad count %u (expected %u) — using en_us\n",
+                m->bin_path, count, (unsigned)LANG_T_STRING_COUNT);
+        fclose(f);
+        return &lang_en_us;
+    }
+
+    /* Read offset table (stack — 215*4 = 860 bytes, within budget). */
+    uint32_t offsets[LANG_T_STRING_COUNT];
+    const uint16_t to_read = count < LANG_T_STRING_COUNT ? count : LANG_T_STRING_COUNT;
+    if (fread(offsets, 4, to_read, f) != to_read) {
+        fprintf(stderr, "i18n_load: '%s' short read of offsets — using en_us\n",
+                m->bin_path);
+        fclose(f);
+        return &lang_en_us;
+    }
+    /* Skip any extra offsets if the .bin has MORE entries than lang_t. */
+    if (count > LANG_T_STRING_COUNT)
+        fseek(f, (count - LANG_T_STRING_COUNT) * 4L, SEEK_CUR);
+
+    /* Determine strings section size by seeking to end. */
+    long header_end = ftell(f);
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    long strings_size = file_size - header_end;
+    if (strings_size <= 0 || strings_size > 32 * 1024) {
+        fprintf(stderr, "i18n_load: '%s' implausible strings size %ld — using en_us\n",
+                m->bin_path, strings_size);
+        fclose(f);
+        return &lang_en_us;
+    }
+    fseek(f, header_end, SEEK_SET);
+
+    /* (Re)allocate the strings buffer. */
+    char *buf = realloc(lang_active_strings_buf, (size_t)strings_size);
+    if (!buf) {
+        fprintf(stderr, "i18n_load: '%s' OOM allocating %ld bytes — using en_us\n",
+                m->bin_path, strings_size);
+        fclose(f);
+        return &lang_en_us;
+    }
+    lang_active_strings_buf = buf;
+    lang_active_strings_size = (size_t)strings_size;
+
+    if (fread(buf, 1, (size_t)strings_size, f) != (size_t)strings_size) {
+        fprintf(stderr, "i18n_load: '%s' short read of strings — using en_us\n",
+                m->bin_path);
+        fclose(f);
+        return &lang_en_us;
+    }
+    fclose(f);
+
+    /* Populate lang_active. Start from baked en_us so any field missing
+     * from the .bin still has a sane (English) pointer. */
+    memcpy(&lang_active, &lang_en_us, sizeof(lang_t));
+    lang_active.codepage              = m->codepage;
+    lang_active.fmt_Title_Date_Format = m->fmt_Title_Date_Format;
+    lang_active.fmtDate               = m->fmtDate;
+    lang_active.fmtTime               = m->fmtTime;
+
+    const char **strings = (const char **)&lang_active.s_LangUI;
+    for (uint16_t i = 0; i < to_read; i++) {
+        if (offsets[i] < (uint32_t)strings_size)
+            strings[i] = buf + offsets[i];
+        /* else: keep the en_us fallback we memcpy'd above */
+    }
+
+    printf("i18n_load: '%s' loaded %u strings (%ld bytes)\n",
+           m->bin_path, to_read, strings_size);
+    return &lang_active;
+}
+
 
 static int utf8_decode(const char *str, uint32_t *codepoint) {
     if (!str || !codepoint) return 0;

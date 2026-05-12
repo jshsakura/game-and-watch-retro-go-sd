@@ -18,6 +18,15 @@ extern lang_t* curr_lang;
 extern const lang_t* gui_lang[];
 extern const int gui_lang_count;
 
+/* Load a language's strings from /lang/xx_xx.bin (built by
+ * tools/gen_i18n_bin.py). On success returns a pointer to a static
+ * RAM-resident lang_t whose s_XXX fields point into a malloc'd buffer
+ * holding the SD-loaded strings. On any error (file missing, bad
+ * magic, OOM, etc.) returns the baked en_us fallback. Caller should
+ * assign the result to curr_lang. Safe to call repeatedly; each call
+ * realloc()s the strings buffer in place. */
+lang_t *i18n_load_language(int idx);
+
 int i18n_get_text_height();
 
 int  i18n_get_text_width(const char *text);
