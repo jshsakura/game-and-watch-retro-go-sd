@@ -334,8 +334,7 @@ static void run_gwenesis_emulation(void)
             if (hint_counter == 0) {
               hint_counter = (int)REG10_LINE_COUNTER;
               hint_pending = 1;
-              if (REG0_LINE_INTERRUPT &&
-                  (gwenesis_vdp_status & STATUS_VIRQPENDING) == 0)
+              if (REG0_LINE_INTERRUPT)
                 m68k_update_irq(4);
             } else {
               hint_counter--;

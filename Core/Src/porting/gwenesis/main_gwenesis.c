@@ -499,7 +499,7 @@ void gwenesis_save_local_data(FILE *file) {
   fwrite((unsigned char *)&PAD_B_def, 4, 1, file);
   fwrite((unsigned char *)&PAD_C_def, 4, 1, file);
   fwrite((unsigned char *)&gwenesis_lpfilter, 4, 1, file);
-  /* v2: active region code (0=USA, 1=Europe, 2=Japan) */
+  // v2: active region code (0=USA, 1=Europe, 2=Japan)
   fwrite((unsigned char *)&gwenesis_pending_region, 4, 1, file);
 }
 
@@ -839,8 +839,7 @@ int app_main_gwenesis(uint8_t load_state, uint8_t start_paused, int8_t save_slot
         if (hint_counter == 0) {
           hint_counter = (int)REG10_LINE_COUNTER;
           hint_pending = 1;
-          if (REG0_LINE_INTERRUPT &&
-              (gwenesis_vdp_status & STATUS_VIRQPENDING) == 0)
+          if (REG0_LINE_INTERRUPT)
             m68k_update_irq(4);
         } else {
           hint_counter--;
