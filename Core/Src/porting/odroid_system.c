@@ -266,8 +266,22 @@ bool odroid_system_emu_screenshot(const char *filename)
 
     size_t written = fwrite(data, 1, size, file);
 
+    /* In LUT8 mode, append the active cart CLUT (RGB565) so the savestate
+     * preview can be converted to RGB565 when shown from the game list
+     * (which runs the LCD in RGB565). Fixed footer size keeps file-size
+     * detection unambiguous: LUT8+CLUT = 76800+64, plain RGB565 = 153600. */
+    if (lcd_get_mode() == LCD_MODE_LUT8) {
+        uint16_t clut[LCD_SCREENSHOT_CLUT_ENTRIES];
+        lcd_get_clut_rgb565(clut);
+        size_t cw = fwrite(clut, 1, LCD_SCREENSHOT_CLUT_BYTES, file);
+        if (cw != LCD_SCREENSHOT_CLUT_BYTES) {
+            fclose(file);
+            return false;
+        }
+    }
+
     fclose(file);
-    
+
     if (written != size) {
         return false;
     }

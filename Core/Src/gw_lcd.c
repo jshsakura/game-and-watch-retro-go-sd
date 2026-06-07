@@ -383,6 +383,21 @@ static void clut_store_dark_twin(int idx, uint32_t e)
   active_clut[idx] = (r << 16) | (g << 8) | b;
 }
 
+void lcd_get_clut_rgb565(uint16_t *out)
+{
+  if (out == NULL) return;
+  uint16_t n = active_clut_count;
+  if (n > LCD_SCREENSHOT_CLUT_ENTRIES) n = LCD_SCREENSHOT_CLUT_ENTRIES;
+  for (uint16_t i = 0; i < n; i++) {
+    uint32_t e = active_clut[i];
+    uint8_t r = (uint8_t)((e >> 16) & 0xFF);
+    uint8_t g = (uint8_t)((e >>  8) & 0xFF);
+    uint8_t b = (uint8_t)((e      ) & 0xFF);
+    out[i] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+  }
+  for (uint16_t i = n; i < LCD_SCREENSHOT_CLUT_ENTRIES; i++) out[i] = 0;
+}
+
 void lcd_set_clut(const uint32_t *clut, uint16_t count)
 {
   if (current_lcd_mode != LCD_MODE_LUT8 || clut == NULL || count == 0) return;

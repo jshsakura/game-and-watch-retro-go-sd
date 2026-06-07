@@ -100,6 +100,18 @@ void lcd_get_bonus_pool(uint8_t **out_ptr, size_t *out_size);
  * entries internally so lcd_pack_color() can do nearest-match lookups. */
 void lcd_set_clut(const uint32_t *clut, uint16_t count);
 
+/* Fixed-size snapshot of the active cart CLUT as RGB565, used by the
+ * savestate-screenshot loader to convert a LUT8 preview to RGB565 when
+ * the menu's framebuffer is in RGB565 mode.
+ *
+ * Writes exactly LCD_SCREENSHOT_CLUT_ENTRIES uint16_t entries into `out`:
+ * cart slots [0..active_count) are filled with their RGB565 equivalent;
+ * the remaining slots up to LCD_SCREENSHOT_CLUT_ENTRIES are zero-padded
+ * so the on-disk size is constant regardless of cart palette size. */
+#define LCD_SCREENSHOT_CLUT_ENTRIES  32
+#define LCD_SCREENSHOT_CLUT_BYTES    (LCD_SCREENSHOT_CLUT_ENTRIES * 2)
+void lcd_get_clut_rgb565(uint16_t *out);
+
 /* Reserved CLUT range for Retro-Go menu/overlay colors. The cart palette
  * uses [0..32) + darkened twins at [32..64); we reserve [64..64+MAX) for
  * the active theme's colors. No darkened twins are stored for the menu —

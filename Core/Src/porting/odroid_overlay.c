@@ -1428,6 +1428,54 @@ static bool show_cheat_dialog()
 }
 #endif
 
+/* Darken an RGB565 color by LCD_DARKEN_PERCENT — mirrors clut_store_dark_twin
+ * in gw_lcd.c so we can reconstruct the [count..2*count) darkened-twin range
+ * from the embedded cart CLUT during LUT8→RGB565 preview conversion. */
+static inline uint16_t darken_rgb565(uint16_t c)
+{
+    const int keep = 100 - LCD_DARKEN_PERCENT;
+    int r = (c >> 11) & 0x1F;
+    int g = (c >>  5) & 0x3F;
+    int b = (c      ) & 0x1F;
+    r = (r * keep) / 100;
+    g = (g * keep) / 100;
+    b = (b * keep) / 100;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+static void preview_blit_lut8_to_rgb565(FILE *file, const uint16_t clut[LCD_SCREENSHOT_CLUT_ENTRIES])
+{
+    uint8_t row[GW_LCD_WIDTH];
+    uint16_t *dst = (uint16_t *)lcd_get_active_buffer();
+    for (int y = 0; y < GW_LCD_HEIGHT; y++) {
+        if (fread(row, 1, GW_LCD_WIDTH, file) != GW_LCD_WIDTH) return;
+        for (int x = 0; x < GW_LCD_WIDTH; x++) {
+            uint8_t idx = row[x];
+            uint16_t color;
+            if (idx < LCD_SCREENSHOT_CLUT_ENTRIES) {
+                color = clut[idx];
+            } else if (idx < 2 * LCD_SCREENSHOT_CLUT_ENTRIES) {
+                color = darken_rgb565(clut[idx - LCD_SCREENSHOT_CLUT_ENTRIES]);
+            } else {
+                color = 0;
+            }
+            *dst++ = color;
+        }
+    }
+}
+
+static void preview_blit_rgb565_to_lut8(FILE *file)
+{
+    uint16_t row[GW_LCD_WIDTH];
+    uint8_t *dst = (uint8_t *)lcd_get_active_buffer();
+    for (int y = 0; y < GW_LCD_HEIGHT; y++) {
+        if (fread(row, sizeof(uint16_t), GW_LCD_WIDTH, file) != GW_LCD_WIDTH) return;
+        for (int x = 0; x < GW_LCD_WIDTH; x++) {
+            *dst++ = (uint8_t)(lcd_pack_color(row[x]) & 0xFF);
+        }
+    }
+}
+
 static bool show_preview_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
     if (event == ODROID_DIALOG_FOCUS_GAINED)
@@ -1438,7 +1486,32 @@ static bool show_preview_cb(odroid_dialog_choice_t *option, odroid_dialog_event_
             FILE *file = fopen(slot->preview,"rb");
             if (file != NULL) {
                 size_t frame_size = lcd_get_frame_size();
-                fread(lcd_get_active_buffer(), 1, frame_size, file);
+                int    mode       = lcd_get_mode();
+                const size_t LUT8_PIX = (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT;
+                const size_t LUT8_EXT = LUT8_PIX + LCD_SCREENSHOT_CLUT_BYTES;
+                const size_t RGB_PIX  = LUT8_PIX * 2;
+
+                fseek(file, 0, SEEK_END);
+                long fsz = ftell(file);
+                fseek(file, 0, SEEK_SET);
+
+                if ((size_t)fsz == frame_size) {
+                    fread(lcd_get_active_buffer(), 1, frame_size, file);
+                } else if (mode == LCD_MODE_RGB565 && (size_t)fsz == LUT8_EXT) {
+                    /* LUT8 screenshot with embedded CLUT → convert to RGB565 */
+                    uint16_t clut[LCD_SCREENSHOT_CLUT_ENTRIES];
+                    fseek(file, (long)LUT8_PIX, SEEK_SET);
+                    fread(clut, 1, LCD_SCREENSHOT_CLUT_BYTES, file);
+                    fseek(file, 0, SEEK_SET);
+                    preview_blit_lut8_to_rgb565(file, clut);
+                } else if (mode == LCD_MODE_LUT8 && (size_t)fsz == RGB_PIX) {
+                    /* RGB565 screenshot viewed in LUT8 mode → nearest-CLUT lookup */
+                    preview_blit_rgb565_to_lut8(file);
+                } else {
+                    /* Unknown format or legacy LUT8 file without embedded CLUT.
+                     * Leave the framebuffer untouched rather than blit garbled
+                     * bytes; previous preview stays visible. */
+                }
                 memcpy(lcd_get_inactive_buffer(), lcd_get_active_buffer(), frame_size);
                 fclose(file);
             }
