@@ -20,7 +20,12 @@
 #include "appid.h"
 #include "rg_storage.h"
 #include "odroid_overlay.h"
+#include "rg_i18n.h"
 #include "main_media.h"
+
+// Localized strings with English fallback (in case a language lacks the key).
+#define MEDIA_HINT  ((curr_lang && curr_lang->s_media_hint)  ? curr_lang->s_media_hint  : "A:Open  B:Back")
+#define MEDIA_EMPTY ((curr_lang && curr_lang->s_media_empty) ? curr_lang->s_media_empty : "(empty)")
 
 #define MEDIA_ROOT      "/media"
 #define MAX_ENTRIES     256
@@ -123,7 +128,7 @@ static void draw(void)
 
     if (entry_count == 0) {
         odroid_overlay_draw_text(4, LIST_TOP + 4, GW_LCD_WIDTH - 8,
-            "(empty)", COLOR_TEXT, COLOR_BG);
+            MEDIA_EMPTY, COLOR_TEXT, COLOR_BG);
     }
 
     for (int row = 0; row < VISIBLE_ROWS; row++) {
@@ -147,7 +152,7 @@ static void draw(void)
     }
 
     odroid_overlay_draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
-        "A:open   B:back", COLOR_HEADER, COLOR_BG);
+        MEDIA_HINT, COLOR_HEADER, COLOR_BG);
 }
 
 void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)

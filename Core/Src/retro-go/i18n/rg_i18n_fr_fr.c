@@ -279,6 +279,9 @@ const lang_t lang_fr_fr LANG_DATA = {
     .s_Title_Date_Format = "%02d-%02d %s %02d:%02d:%02d",
     .s_Date_Format = "%02d.%02d.20%02d %s",
     .s_Time_Format = "%02d:%02d:%02d",
+    // Media browser (homebrew document/media viewer)
+    .s_media_hint = "A:Ouvrir  B:Retour",
+    .s_media_empty = "(vide)",
     .fmt_Title_Date_Format = fr_fr_fmt_Title_Date_Format,
     .fmtDate = fr_fr_fmt_Date,
     .fmtTime = fr_fr_fmt_Time,

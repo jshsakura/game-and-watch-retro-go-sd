@@ -271,6 +271,9 @@ const lang_t lang_ru_ru LANG_DATA = {
     .s_Title_Date_Format = "%02d-%02d %s %02d:%02d:%02d",
     .s_Date_Format = "%02d.%02d.20%02d %s",
     .s_Time_Format = "%02d:%02d:%02d",
+    // Media browser (homebrew document/media viewer)
+    .s_media_hint = "A:Открыть  B:Назад",
+    .s_media_empty = "(пусто)",
     .fmt_Title_Date_Format = ru_ru_fmt_Title_Date_Format,
     .fmtDate = ru_ru_fmt_Date,
     .fmtTime = ru_ru_fmt_Time,
