@@ -51,11 +51,11 @@ const lang_t lang_ko_kr LANG_DATA = {
     // Core\Src\porting\pkmini\main_pkmini.c ==============================
     .s_pkmini_LCD_Filter = "LCD 필터",
     .s_pkmini_LCD_Mode = "LCD 모드",
-    .s_pkmini_Piezo_Filter = "피에조 필터",
-    .s_pkmini_Low_Pass_Filter = "저역 통과 필터",
+    .s_pkmini_Piezo_Filter = "Piezo 필터",
+    .s_pkmini_Low_Pass_Filter = "Low Pass 필터",
     // PokeMini palette names
     .s_pkmini_palette_Default = "기본",
-    .s_pkmini_palette_Old = "구식",
+    .s_pkmini_palette_Old = "올드",
     .s_pkmini_palette_BlackWhite = "흑백",
     .s_pkmini_palette_Green = "녹색",
     .s_pkmini_palette_InvertedGreen = "반전 녹색",
@@ -230,7 +230,7 @@ const lang_t lang_ko_kr LANG_DATA = {
     .s_CPU_Overclock_2 = "최대",
 #if INTFLASH_BANK == 2
     .s_Reboot = "재부팅",
-    .s_Original_system = "원래 시스템",
+    .s_Original_system = "순정 펌웨어",
     .s_Confirm_Reboot = "재부팅 하시겠습니까?",
 #endif
     .s_Second_Unit = "초",
