@@ -1066,6 +1066,7 @@ MEDIA_C_INCLUDES += \
 -ICore/Inc \
 -ICore/Inc/retro-go \
 -ICore/Inc/porting/media \
+-ICore/Src/porting/lib \
 -Iretro-go-stm32/components/odroid \
 -I./
 

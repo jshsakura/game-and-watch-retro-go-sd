@@ -1,11 +1,12 @@
 // Media Browser - homebrew app for game-and-watch-retro-go-sd
 //
 // Browse the SD "/media" folder like a file explorer and open files with viewers.
-//   Browser:   D-pad move, A = enter folder / open .txt, B = up / exit at root
+//   Browser:   D-pad move, A = enter folder / open .txt|.jpg, B = up / exit at root
 //   Text view: Up/Left = prev page, Down/Right/A = next page, B = back
+//   Image view: B = back
 //
-// Implemented: folder browser (inc.1), .txt viewer (inc.2).
-// Planned: .png/.jpg image viewer, .epub reader, .avi MJPEG player.
+// Implemented: folder browser (inc.1), .txt viewer (inc.2), .jpg viewer (inc.3).
+// Planned: .png viewer, .epub reader, .mp3 + cover art, .avi MJPEG player.
 // See docs/MEDIA_BROWSER.md for the full roadmap.
 
 #include <odroid_system.h>
@@ -20,6 +21,7 @@
 #include "rg_storage.h"
 #include "odroid_overlay.h"
 #include "rg_i18n.h"
+#include "hw_jpeg_decoder.h"
 #include "main_media.h"
 
 // Localized strings with English fallback (in case a language lacks the key).
@@ -308,6 +310,89 @@ static void view_text(const char *path)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Image viewer (increment 3): JPG via the STM32 hardware JPEG codec.
+// Shown at native size, centered. Images larger than the screen are reported
+// instead of decoded (decode-to-frame would overflow the framebuffer).
+// PNG support follows in a later step.
+// ---------------------------------------------------------------------------
+
+#define JPEG_WORK_SIZE  (256 * 1024)
+static uint8_t g_scratch[JPEG_WORK_SIZE];
+
+// Load a whole file into text_buf (the shared file buffer); returns byte count.
+static int load_file(const char *path, int cap)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return 0;
+    int n = (int)fread(text_buf, 1, cap, f);
+    fclose(f);
+    return n < 0 ? 0 : n;
+}
+
+static void draw_center_msg(const char *msg)
+{
+    lcd_clear_active_buffer();
+    odroid_overlay_draw_text(4, GW_LCD_HEIGHT / 2 - 6, GW_LCD_WIDTH - 8,
+        msg, COLOR_TEXT, COLOR_BG);
+    odroid_overlay_draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
+        "B", COLOR_HEADER, COLOR_BG);
+    lcd_swap();
+}
+
+static void show_jpeg(const char *path)
+{
+    int n = load_file(path, TEXT_BUF_MAX);
+    if (n <= 0) {
+        draw_center_msg("read error");
+        return;
+    }
+
+    JPEG_DecodeToFrameInit((uint32_t)g_scratch, JPEG_WORK_SIZE);
+
+    uint32_t w = 0, h = 0;
+    if (JPEG_DecodeGetSize((uint32_t)text_buf, &w, &h) != 0) {
+        JPEG_DecodeDeInit();
+        draw_center_msg("not a JPEG");
+        return;
+    }
+    if (w == 0 || h == 0 || w > GW_LCD_WIDTH || h > GW_LCD_HEIGHT) {
+        JPEG_DecodeDeInit();
+        char m[48];
+        snprintf(m, sizeof(m), "too large: %lux%lu", (unsigned long)w, (unsigned long)h);
+        draw_center_msg(m);
+        return;
+    }
+
+    lcd_clear_active_buffer();
+    uint16_t x = (GW_LCD_WIDTH - w) / 2;
+    uint16_t y = (GW_LCD_HEIGHT - h) / 2;
+    JPEG_DecodeToFrame((uint32_t)text_buf, (uint32_t)lcd_get_active_buffer(), x, y, 255);
+    JPEG_DecodeDeInit();
+
+    odroid_overlay_draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
+        "B", COLOR_HEADER, COLOR_BG);
+    lcd_swap();
+}
+
+// Show an image and wait for B to return to the browser.
+static void view_image(const char *path)
+{
+    show_jpeg(path);
+
+    odroid_gamepad_state_t joy, prev;
+    odroid_input_read_gamepad(&prev);
+    while (true) {
+        wdog_refresh();
+        odroid_input_read_gamepad(&joy);
+        if (joy.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])
+            return;
+        prev = joy;
+        lcd_wait_for_vblank();
+    }
+}
+
 void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)load_state;
@@ -340,19 +425,28 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
                 media_entry_t *e = &entries[cursor];
                 if (e->is_dir) {
                     enter_dir(e->name);
-                } else if (has_ext(e->name, ".txt")) {
+                } else {
                     char path[PATH_MAX_LEN];
                     if (strcmp(cur_path, "/") == 0)
                         snprintf(path, sizeof(path), "/%s", e->name);
                     else
                         snprintf(path, sizeof(path), "%s/%s", cur_path, e->name);
-                    view_text(path);
-                    // resync input so a button still held on exit isn't re-fired here
-                    odroid_input_read_gamepad(&joy);
-                    prev = joy;
-                    continue;
+
+                    bool opened = true;
+                    if (has_ext(e->name, ".txt"))
+                        view_text(path);
+                    else if (has_ext(e->name, ".jpg") || has_ext(e->name, ".jpeg"))
+                        view_image(path);
+                    else
+                        opened = false;   // unsupported type (more in later increments)
+
+                    if (opened) {
+                        // resync input so a button still held on exit isn't re-fired here
+                        odroid_input_read_gamepad(&joy);
+                        prev = joy;
+                        continue;
+                    }
                 }
-                // other file types are handled in later increments
             }
         }
 
