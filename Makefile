@@ -800,7 +800,7 @@ Core/Src/porting/celeste/main_celeste.c
 
 MEDIA_C_SOURCES = \
 Core/Src/porting/media/main_media.c \
-retro-go-stm32/components/lupng/lupng.c \
+Core/Src/porting/media/lupng_shim.c \
 retro-go-stm32/components/lupng/miniz.c
 
 # PICO-8 stub only — the engine is distributed separately as binary files
