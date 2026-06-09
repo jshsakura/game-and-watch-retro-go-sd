@@ -52,7 +52,7 @@
 #define COLOR_HEADER    0x07FF  // cyan   (path + hints)
 
 // Text viewer (increment 2)
-#define TEXT_BUF_MAX    (160 * 1024)  // max file bytes loaded (truncated beyond)
+#define TEXT_BUF_MAX    (128 * 1024)  // max file bytes loaded (truncated beyond)
 #define VIEW_ROWS       ((GW_LCD_HEIGHT - FOOTER_HEIGHT) / ROW_HEIGHT)
 #define VIEW_USABLE_W   (GW_LCD_WIDTH - 8)
 
@@ -132,14 +132,21 @@ static void move_cursor(int delta)
         scroll = cursor - VISIBLE_ROWS + 1;
 }
 
+// All on-screen text goes through i18n so CJK (Korean) renders correctly; the
+// plain odroid_overlay_draw_text uses an ASCII-only 8x8 font.
+static int draw_text(uint16_t x, uint16_t y, uint16_t w, const char *t, uint16_t color, uint16_t bg)
+{
+    return i18n_draw_text_line(x, y, w, t, color, bg, 0);
+}
+
 static void draw(void)
 {
     lcd_clear_active_buffer();
 
-    odroid_overlay_draw_text(4, 2, GW_LCD_WIDTH - 8, cur_path, COLOR_HEADER, COLOR_BG);
+    draw_text(4, 2, GW_LCD_WIDTH - 8, cur_path, COLOR_HEADER, COLOR_BG);
 
     if (entry_count == 0) {
-        odroid_overlay_draw_text(4, LIST_TOP + 4, GW_LCD_WIDTH - 8,
+        draw_text(4, LIST_TOP + 4, GW_LCD_WIDTH - 8,
             MEDIA_EMPTY, COLOR_TEXT, COLOR_BG);
     }
 
@@ -160,10 +167,10 @@ static void draw(void)
         else
             snprintf(line, sizeof(line), " %s", e->name);
 
-        odroid_overlay_draw_text(4, y, GW_LCD_WIDTH - 8, line, fg, bg);
+        draw_text(4, y, GW_LCD_WIDTH - 8, line, fg, bg);
     }
 
-    odroid_overlay_draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
+    draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
         MEDIA_HINT, COLOR_HEADER, COLOR_BG);
 }
 
@@ -263,7 +270,7 @@ static int render_page(int start)
             p  += blen;
         }
         line[li] = '\0';
-        odroid_overlay_draw_text(4, 2 + r * ROW_HEIGHT, GW_LCD_WIDTH - 8,
+        draw_text(4, 2 + r * ROW_HEIGHT, GW_LCD_WIDTH - 8,
             line, COLOR_TEXT, COLOR_BG);
     }
 
@@ -271,7 +278,7 @@ static int render_page(int start)
     int pct = text_len ? (int)((long)(start + consumed) * 100 / text_len) : 100;
     char foot[32];
     snprintf(foot, sizeof(foot), "B   %d%%", pct);
-    odroid_overlay_draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
+    draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
         foot, COLOR_HEADER, COLOR_BG);
     return consumed;
 }
@@ -323,7 +330,7 @@ static void view_text(const char *path)
 // PNG support follows in a later step.
 // ---------------------------------------------------------------------------
 
-#define SCRATCH_MAX     (320 * 1024)  // JPEG work buffer / PNG decode pool
+#define SCRATCH_MAX     (352 * 1024)  // JPEG work buffer / PNG decode pool
 static uint8_t g_scratch[SCRATCH_MAX];
 
 // Load a whole file into text_buf (the shared file buffer); returns byte count.
@@ -340,9 +347,9 @@ static int load_file(const char *path, int cap)
 static void draw_center_msg(const char *msg)
 {
     lcd_clear_active_buffer();
-    odroid_overlay_draw_text(4, GW_LCD_HEIGHT / 2 - 6, GW_LCD_WIDTH - 8,
+    draw_text(4, GW_LCD_HEIGHT / 2 - 6, GW_LCD_WIDTH - 8,
         msg, COLOR_TEXT, COLOR_BG);
-    odroid_overlay_draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
+    draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
         "B", COLOR_HEADER, COLOR_BG);
     lcd_swap();
 }
@@ -377,7 +384,7 @@ static void show_jpeg(const char *path)
     JPEG_DecodeToFrame((uint32_t)text_buf, (uint32_t)lcd_get_active_buffer(), x, y, 255);
     JPEG_DecodeDeInit();
 
-    odroid_overlay_draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
+    draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
         "B", COLOR_HEADER, COLOR_BG);
     lcd_swap();
 }
@@ -417,15 +424,23 @@ static void blit_rgb_centered(const uint8_t *px, int w, int h, int ch)
 {
     lcd_clear_active_buffer();
     uint16_t *fb = lcd_get_active_buffer();
-    int dw = w < GW_LCD_WIDTH  ? w : GW_LCD_WIDTH;
-    int dh = h < GW_LCD_HEIGHT ? h : GW_LCD_HEIGHT;
-    int ox = (GW_LCD_WIDTH  - dw) / 2;
-    int oy = (GW_LCD_HEIGHT - dh) / 2;
-    for (int y = 0; y < dh; y++) {
-        const uint8_t *row = px + (size_t)y * w * ch;
+
+    // scale down to fit the screen, keeping aspect ratio (no upscaling)
+    int tw = w, th = h;
+    if (tw > GW_LCD_WIDTH)  { th = th * GW_LCD_WIDTH  / tw; tw = GW_LCD_WIDTH;  }
+    if (th > GW_LCD_HEIGHT) { tw = tw * GW_LCD_HEIGHT / th; th = GW_LCD_HEIGHT; }
+    if (tw < 1) tw = 1;
+    if (th < 1) th = 1;
+    int ox = (GW_LCD_WIDTH  - tw) / 2;
+    int oy = (GW_LCD_HEIGHT - th) / 2;
+
+    for (int y = 0; y < th; y++) {
+        int sy = y * h / th;
+        const uint8_t *row = px + (size_t)sy * w * ch;
         uint16_t *dst = fb + (size_t)(oy + y) * GW_LCD_WIDTH + ox;
-        for (int x = 0; x < dw; x++) {
-            const uint8_t *p = row + (size_t)x * ch;
+        for (int x = 0; x < tw; x++) {
+            int sx = x * w / tw;
+            const uint8_t *p = row + (size_t)sx * ch;
             dst[x] = (uint16_t)(((p[0] >> 3) << 11) | ((p[1] >> 2) << 5) | (p[2] >> 3));
         }
     }
@@ -451,7 +466,7 @@ static void show_png(const char *path)
     if (img->depth != 8 || img->channels < 3) { draw_center_msg("unsupported PNG"); return; }
 
     blit_rgb_centered(img->data, img->width, img->height, img->channels);
-    odroid_overlay_draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
+    draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
         "B", COLOR_HEADER, COLOR_BG);
     lcd_swap();
 }
@@ -548,19 +563,41 @@ static bool mp3_decode_frame(void)
     }
 }
 
-// Produce n mono 48 kHz samples; fills silence and flags g_mp3_eof at the end.
-static void mp3_produce(int16_t *out, int n)
+// Decoded-PCM ring (48 kHz mono), shared with the AVI player. Decoupling the SD
+// read + decode from the audio-buffer fill prevents the periodic (~1/s) stutter
+// caused by a large MP3 input refill landing on an audio deadline.
+#define VRING_SIZE  8192            // must be a power of two
+#define VRING_MASK  (VRING_SIZE - 1)
+static int16_t g_vring[VRING_SIZE];
+static int     g_vr_head, g_vr_tail, g_vr_count;
+
+static void vring_push(int16_t s)
 {
-    for (int k = 0; k < n; k++) {
+    if (g_vr_count >= VRING_SIZE) return;
+    g_vring[g_vr_head] = s;
+    g_vr_head = (g_vr_head + 1) & VRING_MASK;
+    g_vr_count++;
+}
+
+static int16_t vring_pull(void)
+{
+    if (g_vr_count == 0) return 0;
+    int16_t s = g_vring[g_vr_tail];
+    g_vr_tail = (g_vr_tail + 1) & VRING_MASK;
+    g_vr_count--;
+    return s;
+}
+
+// Decode + resample ahead into the ring until it holds >= target samples.
+static void mp3_pump(int target)
+{
+    while (g_vr_count < target && !g_mp3_eof) {
         while ((g_mp3_phase >> 16) >= (uint32_t)g_mp3_frame_n) {
             g_mp3_phase -= (uint32_t)g_mp3_frame_n << 16;
-            if (!mp3_decode_frame()) {
-                g_mp3_eof = true;
-                for (; k < n; k++) out[k] = 0;
-                return;
-            }
+            if (!mp3_decode_frame()) { g_mp3_eof = true; break; }
         }
-        out[k] = g_mp3_mono[g_mp3_phase >> 16];
+        if (g_mp3_eof) break;
+        vring_push(g_mp3_mono[g_mp3_phase >> 16]);
         g_mp3_phase += g_mp3_step;
     }
 }
@@ -622,13 +659,15 @@ static void view_mp3(const char *path)
 
     common_emu_state.skip_frames = 0;
     common_emu_state.pause_frames = 0;
+    g_vr_head = g_vr_tail = g_vr_count = 0;
     audio_start_playing(AUDIO_BUFFER_LENGTH);
+    mp3_pump(VRING_SIZE - 1152);     // prefill the ring before playback starts
 
     bool paused = false;
     odroid_gamepad_state_t joy, prev;
     odroid_input_read_gamepad(&prev);
 
-    while (!g_mp3_eof) {
+    while (true) {
         wdog_refresh();
         odroid_input_read_gamepad(&joy);
         if (joy.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])
@@ -637,17 +676,24 @@ static void view_mp3(const char *path)
             paused = !paused;
         prev = joy;
 
+        // Fill the audio buffer from the ring first (fast)...
         int16_t *buf = audio_get_active_buffer();
         int len = audio_get_buffer_length();
-        if (paused || g_mp3_fp == NULL) {
-            for (int i = 0; i < len; i++) buf[i] = 0;
-        } else {
-            mp3_produce(buf, len);
-            int32_t vol = common_emu_sound_get_volume();
-            for (int i = 0; i < len; i++)
-                buf[i] = (int16_t)((buf[i] * vol) >> 8);
+        int32_t vol = common_emu_sound_get_volume();
+        for (int i = 0; i < len; i++) {
+            int16_t s = (paused || g_mp3_fp == NULL || g_vr_count == 0) ? 0 : vring_pull();
+            buf[i] = (int16_t)((s * vol) >> 8);
         }
+
+        // ...then refill the ring behind it (SD read + decode happen here, so a
+        // periodic large refill can't land on the audio deadline).
+        if (!paused)
+            mp3_pump(VRING_SIZE - 1152);
+
         common_emu_sound_sync(false);
+
+        if (g_mp3_eof && g_vr_count == 0)
+            break;
     }
 
     audio_stop_playing();
@@ -662,15 +708,10 @@ static void view_mp3(const char *path)
 // B = back. Produce files with the ffmpeg recipe in docs/MEDIA_BROWSER.md.
 // ---------------------------------------------------------------------------
 
-#define VRING_SIZE  8192            // must be a power of two
-#define VRING_MASK  (VRING_SIZE - 1)
-
 static FILE     *g_vid_fp;
 static long      g_movi_end;
 static uint32_t  g_va_rate, g_va_step, g_va_phase;  // audio resample (in->48k)
 static int       g_va_channels;
-static int16_t   g_vring[VRING_SIZE];
-static int       g_vr_head, g_vr_tail, g_vr_count;
 static uint8_t   g_apcm[4096];
 static int16_t   g_amono[2048];
 
@@ -679,23 +720,6 @@ static uint32_t favi_u32(void)
     uint8_t b[4];
     if (fread(b, 1, 4, g_vid_fp) != 4) return 0;
     return (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
-}
-
-static void vring_push(int16_t s)
-{
-    if (g_vr_count >= VRING_SIZE) return;
-    g_vring[g_vr_head] = s;
-    g_vr_head = (g_vr_head + 1) & VRING_MASK;
-    g_vr_count++;
-}
-
-static int16_t vring_pull(void)
-{
-    if (g_vr_count == 0) return 0;
-    int16_t s = g_vring[g_vr_tail];
-    g_vr_tail = (g_vr_tail + 1) & VRING_MASK;
-    g_vr_count--;
-    return s;
 }
 
 // push m mono input samples, resampled (nearest) from g_va_rate to 48 kHz
