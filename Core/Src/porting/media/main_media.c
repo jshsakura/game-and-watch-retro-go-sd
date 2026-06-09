@@ -25,9 +25,11 @@
 #include "rg_i18n.h"
 #include "hw_jpeg_decoder.h"
 #include "lupng.h"
+#include "tjpgd.h"
 #include "minimp3.h"
 #include "gw_audio.h"
 #include "common.h"
+#include "gui.h"
 #include "main_media.h"
 
 // Localized strings with English fallback (in case a language lacks the key).
@@ -525,6 +527,7 @@ static int       g_mp3_frame_n;   // mono samples currently in g_mp3_mono
 static uint32_t  g_mp3_phase;     // 16.16 read index within the current frame
 static uint32_t  g_mp3_step;      // (in_rate << 16) / 48000
 static bool      g_mp3_eof;       // decode reached end of stream
+static int       g_mp3_bitrate;   // kbps of the last decoded frame
 
 static void mp3_refill(void)
 {
@@ -565,6 +568,8 @@ static bool mp3_decode_frame(void)
             g_mp3_frame_n = samples;
             if (info.hz > 0)
                 g_mp3_step = ((uint32_t)info.hz << 16) / AUDIO_SAMPLE_RATE;
+            if (info.bitrate_kbps > 0)
+                g_mp3_bitrate = info.bitrate_kbps;
             return true;
         }
         // samples == 0: skipped junk/ID3 (frame_bytes>0) or out of data
@@ -651,10 +656,9 @@ static bool find_cover(const char *mp3path, char *out, size_t outsz, bool *is_pn
     return false;
 }
 
-// Read the ID3v2 APIC frame (embedded album art) into text_buf and display it.
-// Returns true if art was found and shown. Large JPEG art that won't fit RAM is
-// reported as "not shown" so the caller can fall back.
-static bool show_embedded_cover(const char *path)
+// Read the ID3v2 APIC frame (embedded album art) into text_buf. Returns the
+// number of image bytes loaded (0 if none) and sets *is_png_out.
+static int extract_id3_art(const char *path, bool *is_png_out)
 {
     FILE *f = fopen(path, "rb");
     if (!f) return false;
@@ -712,27 +716,177 @@ static bool show_embedded_cover(const char *path)
         pos = fdata + (long)fsize;
     }
     fclose(f);
-    if (!found) return false;
-
-    bool ok = is_png ? show_png_buf(img_n) : show_jpeg_buf(img_n);
-    if (ok) lcd_swap();
-    return ok;
+    if (!found) return 0;
+    *is_png_out = is_png;
+    return img_n;
 }
 
-static void view_mp3(const char *path)
-{
-    char cover[PATH_MAX_LEN];
-    bool is_png = false;
-    if (show_embedded_cover(path)) {
-        // embedded album art shown
-    } else if (find_cover(path, cover, sizeof(cover), &is_png)) {
-        if (is_png) show_png(cover);
-        else        show_jpeg(cover);
-    } else {
-        const char *name = strrchr(path, '/');
-        draw_center_msg(name ? name + 1 : path);
-    }
+// ===========================================================================
+// Music player: iPod-style now-playing screen (cover + title + progress bar),
+// sequential / shuffle playback, skip, pause, auto-advance to the next track.
+// ===========================================================================
 
+static uint32_t g_rng = 0x9e3779b9u;
+static uint32_t rng(void) { g_rng ^= g_rng << 13; g_rng ^= g_rng >> 17; g_rng ^= g_rng << 5; return g_rng; }
+
+static void fill_rect(int x, int y, int w, int h, uint16_t c)
+{
+    uint16_t *fb = lcd_get_active_buffer();
+    for (int j = 0; j < h; j++) {
+        int yy = y + j; if (yy < 0 || yy >= GW_LCD_HEIGHT) continue;
+        uint16_t *row = fb + yy * GW_LCD_WIDTH;
+        for (int i = 0; i < w; i++) { int xx = x + i; if (xx >= 0 && xx < GW_LCD_WIDTH) row[xx] = c; }
+    }
+}
+
+// Decode the track's cover (embedded ID3, else sidecar) to the active buffer
+// (no swap). Returns true if a cover was drawn.
+// --- Scaled JPEG decode (TJpgDec): cover art of ANY size fits in ~8 KB of RAM
+// by decoding at 1/1..1/8 scale, unlike the full-res hardware decoder. ---
+typedef struct { const uint8_t *data; size_t size, pos; } jpg_src_t;
+
+static size_t jpg_in(JDEC *jd, uint8_t *buf, size_t len)
+{
+    jpg_src_t *s = (jpg_src_t *)jd->device;
+    size_t avail = s->size - s->pos;
+    if (len > avail) len = avail;
+    if (buf) memcpy(buf, s->data + s->pos, len);
+    s->pos += len;
+    return len;
+}
+
+static int g_jpg_ox, g_jpg_oy;
+static int jpg_out(JDEC *jd, void *bitmap, JRECT *rect)
+{
+    (void)jd;
+    uint16_t *fb = lcd_get_active_buffer();
+    const uint16_t *src = (const uint16_t *)bitmap;
+    for (int y = rect->top; y <= rect->bottom; y++) {
+        int dy = g_jpg_oy + y;
+        for (int x = rect->left; x <= rect->right; x++) {
+            uint16_t px = *src++;
+            int dx = g_jpg_ox + x;
+            if ((unsigned)dx < (unsigned)GW_LCD_WIDTH && (unsigned)dy < (unsigned)GW_LCD_HEIGHT)
+                fb[dy * GW_LCD_WIDTH + dx] = px;
+        }
+    }
+    return 1;
+}
+
+// Decode the JPEG in text_buf (n bytes), down-scaled to fit and centered, to the
+// active buffer (no swap). Returns true on success.
+static bool tjpgd_cover(int n)
+{
+    static uint8_t pool[8 * 1024];
+    JDEC jd;
+    jpg_src_t src = { (const uint8_t *)text_buf, (size_t)n, 0 };
+    if (jd_prepare(&jd, jpg_in, pool, sizeof(pool), &src) != JDR_OK)
+        return false;
+    uint8_t sc = 0;
+    while (sc < 3 && ((jd.width >> sc) > GW_LCD_WIDTH || (jd.height >> sc) > GW_LCD_HEIGHT))
+        sc++;
+    g_jpg_ox = (GW_LCD_WIDTH  - (int)(jd.width  >> sc)) / 2;
+    g_jpg_oy = (GW_LCD_HEIGHT - (int)(jd.height >> sc)) / 2;
+    lcd_clear_active_buffer();
+    return jd_decomp(&jd, jpg_out, sc) == JDR_OK;
+}
+
+static bool cover_to_active(const char *path)
+{
+    bool is_png = false;
+    int n = extract_id3_art(path, &is_png);
+    if (n > 0 && (is_png ? show_png_buf(n) : tjpgd_cover(n)))
+        return true;
+
+    char cover[PATH_MAX_LEN];
+    if (find_cover(path, cover, sizeof(cover), &is_png)) {
+        n = load_file(cover, TEXT_BUF_MAX);
+        if (n > 0 && (is_png ? show_png_buf(n) : tjpgd_cover(n)))
+            return true;
+    }
+    return false;
+}
+
+// Draw the static background (cover, or a clean placeholder) into BOTH buffers.
+static void draw_player_bg(const char *path)
+{
+    for (int i = 0; i < 2; i++) {
+        if (!cover_to_active(path))
+            fill_rect(0, 0, GW_LCD_WIDTH, GW_LCD_HEIGHT, curr_colors->bg_c);  // themed bg
+        lcd_swap();
+    }
+}
+
+// Now-playing panel over the cover, drawn in the current UI theme colours:
+// title, progress bar with elapsed/remaining time, and the shuffle indicator.
+static void draw_now_playing(const char *name, int sec, int total, bool paused, bool shuffle)
+{
+    uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c;
+    uint16_t acc = curr_colors->sel_c, dim = curr_colors->dis_c;
+
+    int ph = 46, py = GW_LCD_HEIGHT - ph;
+    fill_rect(0, py, GW_LCD_WIDTH, ph, bg);          // themed panel
+    fill_rect(0, py, GW_LCD_WIDTH, 1, acc);          // accent line
+
+    char line[160];
+    snprintf(line, sizeof(line), "%s%s", paused ? "II " : "> ", name);
+    draw_text(8, py + 4, GW_LCD_WIDTH - 16, line, fg, bg);
+
+    int bx = 8, bw = GW_LCD_WIDTH - 16, by = py + 22, bh = 4;
+    fill_rect(bx, by, bw, bh, dim);                  // track
+    int frac = total > 0 ? sec * bw / total : 0;
+    if (frac > bw) frac = bw;
+    if (frac < 0) frac = 0;
+    fill_rect(bx, by, frac, bh, acc);                // elapsed
+    fill_rect(bx + frac - 1, by - 2, 3, bh + 4, fg); // knob
+
+    char t[40];
+    int rem = total > sec ? total - sec : 0;
+    snprintf(t, sizeof(t), "%d:%02d", sec / 60, sec % 60);
+    draw_text(8, py + 30, 64, t, dim, bg);
+    snprintf(t, sizeof(t), "-%d:%02d", rem / 60, rem % 60);
+    draw_text(GW_LCD_WIDTH - 60, py + 30, 56, t, dim, bg);
+    if (shuffle)
+        draw_text(GW_LCD_WIDTH / 2 - 28, py + 30, 70, "SHUFFLE", acc, bg);
+
+    lcd_swap();
+}
+
+static int find_mp3(int from, int dir)
+{
+    for (int i = from; i >= 0 && i < entry_count; i += dir)
+        if (!entries[i].is_dir && has_ext(entries[i].name, ".mp3")) return i;
+    return -1;
+}
+static int count_mp3(void)
+{
+    int c = 0;
+    for (int i = 0; i < entry_count; i++)
+        if (!entries[i].is_dir && has_ext(entries[i].name, ".mp3")) c++;
+    return c;
+}
+static int nth_mp3(int n)
+{
+    for (int i = 0; i < entry_count; i++)
+        if (!entries[i].is_dir && has_ext(entries[i].name, ".mp3"))
+            if (n-- == 0) return i;
+    return -1;
+}
+static int pick_next(int cur, bool shuffle)
+{
+    if (shuffle) { int c = count_mp3(); return c > 0 ? nth_mp3((int)(rng() % (uint32_t)c)) : -1; }
+    return find_mp3(cur + 1, 1);
+}
+
+static void track_path(char *out, size_t outsz, int idx)
+{
+    if (strcmp(cur_path, "/") == 0) snprintf(out, outsz, "/%s", entries[idx].name);
+    else snprintf(out, outsz, "%s/%s", cur_path, entries[idx].name);
+}
+
+static void track_open(const char *path)
+{
+    if (g_mp3_fp) fclose(g_mp3_fp);
     g_mp3_fp = fopen(path, "rb");
     mp3dec_init(&g_mp3);
     g_mp3_in_len = g_mp3_in_pos = 0;
@@ -741,44 +895,79 @@ static void view_mp3(const char *path)
     g_mp3_phase = 0;
     g_mp3_step = ((uint32_t)44100 << 16) / AUDIO_SAMPLE_RATE;
     g_mp3_eof = false;
+    g_mp3_bitrate = 0;
+}
 
+static int estimate_total_sec(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fclose(f);
+    if (g_mp3_bitrate <= 0 || sz <= 0) return 0;
+    return (int)((long long)sz * 8 / ((long long)g_mp3_bitrate * 1000));
+}
+
+static void music_player(int start_idx)
+{
+    g_rng ^= dma_counter + (uint32_t)start_idx + 1u;
     common_emu_state.skip_frames = 0;
     common_emu_state.pause_frames = 0;
-    g_vr_head = g_vr_tail = g_vr_count = 0;
     audio_start_playing(AUDIO_BUFFER_LENGTH);
-    mp3_pump(VRING_SIZE - 1152);     // prefill the ring before playback starts
 
-    bool paused = false;
+    int idx = start_idx, total_sec = 0, last_sec = -1;
+    bool reload = true, paused = false, shuffle = false;
+    uint32_t played = 0;
+    char path[PATH_MAX_LEN];
+    const char *name = "";
+
     odroid_gamepad_state_t joy, prev;
     odroid_input_read_gamepad(&prev);
 
     while (true) {
+        if (reload) {
+            reload = false; paused = false; last_sec = -1; played = 0;
+            track_path(path, sizeof(path), idx);
+            const char *s = strrchr(path, '/'); name = s ? s + 1 : path;
+            track_open(path);
+            g_vr_head = g_vr_tail = g_vr_count = 0;
+            mp3_pump(VRING_SIZE - 1152);
+            total_sec = estimate_total_sec(path);
+            draw_player_bg(path);
+        }
+
         wdog_refresh();
         odroid_input_read_gamepad(&joy);
-        if (joy.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])
-            break;
-        if (joy.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A])
-            paused = !paused;
+        #define P(b) (joy.values[b] && !prev.values[b])
+        if (P(ODROID_INPUT_B)) break;
+        if (P(ODROID_INPUT_A)) { paused = !paused; last_sec = -1; }
+        if (P(ODROID_INPUT_UP)) { shuffle = !shuffle; last_sec = -1; }
+        if (P(ODROID_INPUT_RIGHT)) { int n = pick_next(idx, shuffle); if (n >= 0) { idx = n; reload = true; } }
+        if (P(ODROID_INPUT_LEFT))  { int n = find_mp3(idx - 1, -1);   if (n >= 0) { idx = n; reload = true; } }
+        #undef P
         prev = joy;
+        if (reload) continue;
 
-        // Fill the audio buffer from the ring first (fast)...
         int16_t *buf = audio_get_active_buffer();
         int len = audio_get_buffer_length();
         int32_t vol = common_emu_sound_get_volume();
         for (int i = 0; i < len; i++) {
-            int16_t s = (paused || g_mp3_fp == NULL || g_vr_count == 0) ? 0 : vring_pull();
-            buf[i] = (int16_t)((s * vol) >> 8);
+            int16_t sm = (paused || g_mp3_fp == NULL || g_vr_count == 0) ? 0 : vring_pull();
+            buf[i] = (int16_t)((sm * vol) >> 8);
         }
+        if (!paused) { played += len; mp3_pump(VRING_SIZE - 1152); }
 
-        // ...then refill the ring behind it (SD read + decode happen here, so a
-        // periodic large refill can't land on the audio deadline).
-        if (!paused)
-            mp3_pump(VRING_SIZE - 1152);
+        int sec = (int)(played / AUDIO_SAMPLE_RATE);
+        if (sec != last_sec) { last_sec = sec; draw_now_playing(name, sec, total_sec, paused, shuffle); }
 
         common_emu_sound_sync(false);
 
-        if (g_mp3_eof && g_vr_count == 0)
-            break;
+        if (g_mp3_eof && g_vr_count == 0) {
+            int n = pick_next(idx, shuffle);
+            if (n >= 0) { idx = n; reload = true; }
+            else break;
+        }
     }
 
     audio_stop_playing();
@@ -1014,32 +1203,12 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
                 media_entry_t *e = &entries[cursor];
                 if (e->is_dir) {
                     enter_dir(e->name);
-                } else {
-                    char path[PATH_MAX_LEN];
-                    if (strcmp(cur_path, "/") == 0)
-                        snprintf(path, sizeof(path), "/%s", e->name);
-                    else
-                        snprintf(path, sizeof(path), "%s/%s", cur_path, e->name);
-
-                    bool opened = true;
-                    if (has_ext(e->name, ".txt"))
-                        view_text(path);
-                    else if (has_ext(e->name, ".jpg") || has_ext(e->name, ".jpeg") ||
-                             has_ext(e->name, ".png"))
-                        view_image(path);
-                    else if (has_ext(e->name, ".mp3"))
-                        view_mp3(path);
-                    else if (has_ext(e->name, ".avi"))
-                        view_avi(path);
-                    else
-                        opened = false;   // unsupported type (more in later increments)
-
-                    if (opened) {
-                        // resync input so a button still held on exit isn't re-fired here
-                        odroid_input_read_gamepad(&joy);
-                        prev = joy;
-                        continue;
-                    }
+                } else if (has_ext(e->name, ".mp3")) {
+                    music_player(cursor);
+                    // resync input so a button still held on exit isn't re-fired here
+                    odroid_input_read_gamepad(&joy);
+                    prev = joy;
+                    continue;
                 }
             }
         }

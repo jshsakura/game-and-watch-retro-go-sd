@@ -1150,7 +1150,7 @@ create_sd_data: create_sd_folders prepare_msx_bios_files $(MAPPER_BINS) $(BUILD_
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_pkmini,$(CORES_DIR)/pkmini.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_pico8,$(CORES_DIR)/pico8_stub.bin)
 	@$(CP) -O binary --only-section=.overlay_celeste $(BUILD_DIR)/$(TARGET).elf $(HOMEBREWS_FOLDER)/celeste.bin
-	@$(CP) -O binary --only-section=.overlay_media $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Media.bin"
+	@$(CP) -O binary --only-section=.overlay_media $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Music.bin"
 	@$(CP) -O binary --only-section=.overlay_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Zelda 3.bin"
 	@$(CP) -O binary --only-section=.rodata_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/zelda3.ro"
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
@@ -1196,7 +1196,7 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(CORES_DIR)/pkmini.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/logo.bin --dest-path "/cores/" \
 		-- sdpush --file $(HOMEBREWS_FOLDER)/celeste.bin --dest-path "/roms/homebrew/" \
-		-- sdpush --file "$(HOMEBREWS_FOLDER)/Media.bin" --dest-path "/roms/homebrew/" \
+		-- sdpush --file "$(HOMEBREWS_FOLDER)/Music.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Super Mario World.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Zelda 3.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/zelda3.ro" --dest-path "/roms/homebrew/" \
