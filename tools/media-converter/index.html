@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G&amp;W Media Converter</title>
+<style>
+  :root { --bg:#11141a; --card:#1b2029; --fg:#e6e9ef; --mut:#8b93a3; --acc:#3fb6ff; --ok:#46d369; --err:#ff5c66; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:20px; text-align:center; border-bottom:1px solid #222; }
+  header h1 { margin:0 0 4px; font-size:20px; }
+  header p { margin:0; color:var(--mut); }
+  main { max-width:860px; margin:0 auto; padding:20px; }
+  .drop { border:2px dashed #2c3340; border-radius:12px; padding:36px; text-align:center; color:var(--mut);
+          transition:.15s; cursor:pointer; }
+  .drop.hover { border-color:var(--acc); color:var(--fg); background:#161b22; }
+  .opts { display:flex; gap:16px; flex-wrap:wrap; margin:16px 0; align-items:center; }
+  .opts label { color:var(--mut); }
+  select, input[type=range] { background:var(--card); color:var(--fg); border:1px solid #2c3340; border-radius:6px; padding:5px; }
+  .list { margin-top:18px; display:flex; flex-direction:column; gap:10px; }
+  .item { background:var(--card); border:1px solid #232a35; border-radius:10px; padding:12px 14px;
+          display:flex; align-items:center; gap:12px; }
+  .item .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item .kind { font-size:11px; padding:2px 8px; border-radius:20px; background:#222a36; color:var(--mut); }
+  .item .status { font-size:12px; color:var(--mut); min-width:110px; text-align:right; }
+  .item .status.ok { color:var(--ok); } .item .status.err { color:var(--err); }
+  a.dl { color:var(--acc); text-decoration:none; font-weight:600; }
+  .recipe { margin-top:26px; background:#0c0f14; border:1px solid #232a35; border-radius:10px; padding:14px; }
+  .recipe code { color:var(--acc); white-space:pre-wrap; word-break:break-all; font-size:12px; }
+  .note { color:var(--mut); font-size:12px; margin-top:8px; }
+  button.clear { background:none; border:1px solid #2c3340; color:var(--mut); border-radius:6px; padding:6px 12px; cursor:pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Game &amp; Watch — Media Converter</h1>
+  <p>이미지 / 텍스트 / 영상을 G&amp;W Media 뷰어용으로 변환합니다. SD <code>/media</code> 에 넣으세요.</p>
+</header>
+<main>
+  <div id="drop" class="drop">
+    파일을 끌어다 놓거나 클릭해서 선택<br>
+    <span class="note">이미지(jpg/png/webp/…) · 텍스트(txt) · 영상(mp4/mkv/mov/…)</span>
+    <input id="file" type="file" multiple hidden
+           accept="image/*,video/*,.txt,text/plain">
+  </div>
+
+  <div class="opts">
+    <span><label>이미지 출력</label>
+      <select id="imgFmt">
+        <option value="image/jpeg">JPG (권장·HW 디코드)</option>
+        <option value="image/png">PNG</option>
+      </select>
+    </span>
+    <span><label>JPG 품질</label> <input id="imgQ" type="range" min="0.5" max="0.95" step="0.05" value="0.85"></span>
+    <button class="clear" id="clearBtn">목록 비우기</button>
+  </div>
+
+  <div id="list" class="list"></div>
+
+  <div class="recipe">
+    <div class="note">영상은 아래 ffmpeg 레시피와 동일하게 변환합니다 (브라우저 내 ffmpeg.wasm):</div>
+    <code>ffmpeg -i in.mp4 -c:v mjpeg -q:v 5 -vf scale=w=320:h=240:force_original_aspect_ratio=decrease:force_divisible_by=16,format=yuv420p,scale=src_range=1:dst_range=1 -r 30 -c:a pcm_s16le -ac 1 -ar 24000 out.avi</code>
+    <div class="note">• 이미지는 320×240 안에 맞춰 축소(비율 유지) · 텍스트는 인코딩 자동감지 후 UTF-8 저장(EUC-KR 지원) · 영상 변환은 처음 한 번 ffmpeg.wasm(~30MB)을 받습니다.</div>
+  </div>
+</main>
+
+<!-- ffmpeg.wasm (single-thread core: no COOP/COEP headers required) -->
+<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+<script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<script>
+const TARGET_W = 320, TARGET_H = 240;
+const VIDEO_RECIPE = [
+  '-c:v','mjpeg','-q:v','5',
+  '-vf','scale=w=320:h=240:force_original_aspect_ratio=decrease:force_divisible_by=16,format=yuv420p,scale=src_range=1:dst_range=1',
+  '-r','30','-c:a','pcm_s16le','-ac','1','-ar','24000'
+];
+
+const dropEl = document.getElementById('drop');
+const fileEl = document.getElementById('file');
+const listEl = document.getElementById('list');
+const imgFmtEl = document.getElementById('imgFmt');
+const imgQEl  = document.getElementById('imgQ');
+document.getElementById('clearBtn').onclick = () => listEl.innerHTML = '';
+
+// ---- drag & drop / picker ----
+dropEl.onclick = () => fileEl.click();
+fileEl.onchange = () => handleFiles(fileEl.files);
+['dragenter','dragover'].forEach(e => dropEl.addEventListener(e, ev => { ev.preventDefault(); dropEl.classList.add('hover'); }));
+['dragleave','drop'].forEach(e => dropEl.addEventListener(e, ev => { ev.preventDefault(); dropEl.classList.remove('hover'); }));
+dropEl.addEventListener('drop', ev => handleFiles(ev.dataTransfer.files));
+
+function classify(file) {
+  const n = file.name.toLowerCase();
+  if (file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|heic|avif)$/.test(n)) return 'image';
+  if (file.type.startsWith('video/') || /\.(mp4|mkv|mov|avi|webm|m4v|flv|wmv)$/.test(n)) return 'video';
+  if (file.type.startsWith('text/')  || /\.(txt|log|md|csv)$/.test(n)) return 'text';
+  return 'unknown';
+}
+
+function baseName(name) { return name.replace(/\.[^.]+$/, ''); }
+
+async function handleFiles(files) {
+  for (const file of files) {
+    const kind = classify(file);
+    const row = addRow(file, kind);
+    try {
+      let out;
+      if (kind === 'image')       out = await convertImage(file);
+      else if (kind === 'text')   out = await convertText(file);
+      else if (kind === 'video')  out = await convertVideo(file, p => setStatus(row, `변환 ${Math.round(p*100)}%`));
+      else { setStatus(row, '지원 안 함', 'err'); continue; }
+      finishRow(row, out);
+    } catch (e) {
+      console.error(e);
+      setStatus(row, 'failed: ' + (e.message || e), 'err');
+    }
+  }
+}
+
+// ---- UI rows ----
+function addRow(file, kind) {
+  const row = document.createElement('div');
+  row.className = 'item';
+  row.innerHTML = `<span class="kind">${kind}</span>
+    <span class="name">${file.name}</span>
+    <span class="status">대기 중…</span>`;
+  listEl.appendChild(row);
+  return row;
+}
+function setStatus(row, text, cls='') { const s = row.querySelector('.status'); s.textContent = text; s.className = 'status ' + cls; }
+function finishRow(row, out) {
+  const url = URL.createObjectURL(out.blob);
+  const s = row.querySelector('.status');
+  s.className = 'status ok';
+  s.innerHTML = `${(out.blob.size/1024).toFixed(0)} KB · <a class="dl" href="${url}" download="${out.name}">다운로드</a>`;
+}
+
+// ---- image ----
+function loadImage(file) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = URL.createObjectURL(file);
+  });
+}
+async function convertImage(file) {
+  const img = await loadImage(file);
+  let w = img.naturalWidth, h = img.naturalHeight;
+  const scale = Math.min(1, TARGET_W / w, TARGET_H / h); // only shrink
+  w = Math.max(1, Math.round(w * scale));
+  h = Math.max(1, Math.round(h * scale));
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, w, h);
+  const fmt = imgFmtEl.value;
+  const q = parseFloat(imgQEl.value);
+  const blob = await new Promise(r => cv.toBlob(r, fmt, q));
+  const ext = fmt === 'image/png' ? 'png' : 'jpg';
+  return { blob, name: baseName(file.name) + '.' + ext };
+}
+
+// ---- text (encoding auto-detect -> UTF-8) ----
+async function convertText(file) {
+  const buf = await file.arrayBuffer();
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    // not valid UTF-8 -> most Korean legacy files are EUC-KR / CP949
+    try { text = new TextDecoder('euc-kr').decode(buf); }
+    catch { text = new TextDecoder('utf-8').decode(buf); } // last resort, lossy
+  }
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip BOM
+  const blob = new Blob([new TextEncoder().encode(text)], { type: 'text/plain;charset=utf-8' });
+  return { blob, name: baseName(file.name) + '.txt' };
+}
+
+// ---- video (ffmpeg.wasm) ----
+let ffmpeg = null, ffmpegLoading = null;
+async function ensureFFmpeg(onLog) {
+  if (ffmpeg) return ffmpeg;
+  if (!ffmpegLoading) ffmpegLoading = (async () => {
+    const { FFmpeg } = window.FFmpegWASM;
+    const { toBlobURL } = window.FFmpegUtil;
+    const f = new FFmpeg();
+    const core = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+    await f.load({
+      coreURL: await toBlobURL(`${core}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${core}/ffmpeg-core.wasm`, 'application/wasm'),
+    });
+    ffmpeg = f;
+    return f;
+  })();
+  return ffmpegLoading;
+}
+async function convertVideo(file, onProgress) {
+  onProgress && onProgress(0);
+  const { fetchFile } = window.FFmpegUtil;
+  const f = await ensureFFmpeg();
+  const handler = ({ progress }) => onProgress && onProgress(Math.min(0.99, progress || 0));
+  f.on('progress', handler);
+  const inName = 'in_' + Math.random().toString(36).slice(2) + '.bin';
+  const outName = 'out.avi';
+  try {
+    await f.writeFile(inName, await fetchFile(file));
+    await f.exec(['-i', inName, ...VIDEO_RECIPE, outName]);
+    const data = await f.readFile(outName);
+    await f.deleteFile(inName); await f.deleteFile(outName);
+    const blob = new Blob([data.buffer], { type: 'video/avi' });
+    return { blob, name: baseName(file.name) + '.avi' };
+  } finally {
+    f.off('progress', handler);
+  }
+}
+</script>
+</body>
+</html>
