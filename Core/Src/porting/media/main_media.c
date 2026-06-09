@@ -1,12 +1,11 @@
 // Media Browser - homebrew app for game-and-watch-retro-go-sd
 //
-// Increment 1 (this file): browse the SD "/media" folder like a file explorer.
-//   - D-pad up/down: move cursor, left/right: page
-//   - A: enter a folder
-//   - B: go to the parent folder, or exit to the launcher at the root
+// Browse the SD "/media" folder like a file explorer and open files with viewers.
+//   Browser:   D-pad move, A = enter folder / open .txt, B = up / exit at root
+//   Text view: Up/Left = prev page, Down/Right/A = next page, B = back
 //
-// Later increments dispatch by file extension to dedicated viewers:
-//   .txt/.epub -> document reader, .png/.jpg -> image viewer, .avi -> MJPEG player.
+// Implemented: folder browser (inc.1), .txt viewer (inc.2).
+// Planned: .png/.jpg image viewer, .epub reader, .avi MJPEG player.
 // See docs/MEDIA_BROWSER.md for the full roadmap.
 
 #include <odroid_system.h>
@@ -43,6 +42,11 @@
 #define COLOR_DIR       0xFD20  // orange (folders)
 #define COLOR_SEL_BG    0x4208  // dark gray (selected row)
 #define COLOR_HEADER    0x07FF  // cyan   (path + hints)
+
+// Text viewer (increment 2)
+#define TEXT_BUF_MAX    (256 * 1024)  // max file bytes loaded (truncated beyond)
+#define VIEW_ROWS       ((GW_LCD_HEIGHT - FOOTER_HEIGHT) / ROW_HEIGHT)
+#define VIEW_USABLE_W   (GW_LCD_WIDTH - 8)
 
 typedef struct {
     char name[NAME_MAX_LEN];
@@ -155,6 +159,155 @@ static void draw(void)
         MEDIA_HINT, COLOR_HEADER, COLOR_BG);
 }
 
+// ---------------------------------------------------------------------------
+// Text viewer (increment 2): page through a .txt file.
+// Manual char-level wrapping + per-line draw, because i18n_draw_text mishandles
+// '\n' and i18n_draw_text_line truncates rather than wraps.
+// ---------------------------------------------------------------------------
+
+static char text_buf[TEXT_BUF_MAX];
+static int  text_len;
+
+static bool has_ext(const char *name, const char *ext)
+{
+    size_t ln = strlen(name), le = strlen(ext);
+    if (ln < le)
+        return false;
+    const char *s = name + ln - le;
+    for (size_t i = 0; i < le; i++) {
+        char a = s[i], b = ext[i];
+        if (a >= 'A' && a <= 'Z') a += 32;
+        if (b >= 'A' && b <= 'Z') b += 32;
+        if (a != b)
+            return false;
+    }
+    return true;
+}
+
+static int utf8_len(unsigned char c)
+{
+    if (c < 0x80)           return 1;
+    if ((c & 0xE0) == 0xC0) return 2;
+    if ((c & 0xF0) == 0xE0) return 3;
+    if ((c & 0xF8) == 0xF0) return 4;
+    return 1;
+}
+
+// Read file into text_buf, dropping '\r' and mapping other control chars
+// (tab etc.) to spaces. Returns sanitized length; oversized files are truncated.
+static int load_text_file(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return 0;
+    int n = (int)fread(text_buf, 1, TEXT_BUF_MAX - 1, f);
+    fclose(f);
+    if (n < 0)
+        n = 0;
+
+    int w = 0;
+    for (int i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)text_buf[i];
+        if (c == '\r')
+            continue;
+        else if (c == '\n')
+            text_buf[w++] = '\n';
+        else if (c < 0x20)
+            text_buf[w++] = ' ';
+        else
+            text_buf[w++] = (char)c;
+    }
+    text_buf[w] = '\0';
+    return w;
+}
+
+static int char_px_width(const char *p, int blen)
+{
+    char ch[8];
+    memcpy(ch, p, blen);
+    ch[blen] = '\0';
+    return i18n_get_text_width(ch);
+}
+
+// Draw one page starting at byte offset `start`; returns bytes consumed.
+static int render_page(int start)
+{
+    lcd_clear_active_buffer();
+
+    const char *base = text_buf + start;
+    const char *p = base;
+    char line[256];
+
+    for (int r = 0; r < VIEW_ROWS && *p; r++) {
+        int li = 0, w = 0;
+        while (*p) {
+            unsigned char c = (unsigned char)*p;
+            if (c == '\n') { p++; break; }      // end of line, consume newline
+            int blen = utf8_len(c);
+            int cw = char_px_width(p, blen);
+            if (w + cw > VIEW_USABLE_W)
+                break;                          // doesn't fit -> wrap (keep char)
+            if (li + blen >= (int)sizeof(line) - 1)
+                break;
+            memcpy(line + li, p, blen);
+            li += blen;
+            w  += cw;
+            p  += blen;
+        }
+        line[li] = '\0';
+        odroid_overlay_draw_text(4, 2 + r * ROW_HEIGHT, GW_LCD_WIDTH - 8,
+            line, COLOR_TEXT, COLOR_BG);
+    }
+
+    int consumed = (int)(p - base);
+    int pct = text_len ? (int)((long)(start + consumed) * 100 / text_len) : 100;
+    char foot[32];
+    snprintf(foot, sizeof(foot), "B   %d%%", pct);
+    odroid_overlay_draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
+        foot, COLOR_HEADER, COLOR_BG);
+    return consumed;
+}
+
+static void view_text(const char *path)
+{
+    static int back[2048];   // visited page-start offsets (static: keep off the stack)
+    int back_n = 0;
+    int top = 0, last_top = -1, consumed = 0;
+
+    text_len = load_text_file(path);
+
+    odroid_gamepad_state_t joy, prev;
+    odroid_input_read_gamepad(&prev);   // ignore buttons still held from entering
+
+    while (true) {
+        wdog_refresh();
+        odroid_input_read_gamepad(&joy);
+        #define VP(b) (joy.values[b] && !prev.values[b])
+
+        if (VP(ODROID_INPUT_B))
+            return;
+
+        if (top != last_top) {
+            consumed = render_page(top);
+            lcd_swap();
+            last_top = top;
+        }
+
+        bool more = (top + consumed) < text_len;
+        if ((VP(ODROID_INPUT_DOWN) || VP(ODROID_INPUT_RIGHT) || VP(ODROID_INPUT_A)) && more) {
+            if (back_n < 2048)
+                back[back_n++] = top;
+            top += consumed;
+        } else if ((VP(ODROID_INPUT_UP) || VP(ODROID_INPUT_LEFT)) && back_n > 0) {
+            top = back[--back_n];
+        }
+
+        #undef VP
+        prev = joy;
+        lcd_wait_for_vblank();
+    }
+}
+
 void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)load_state;
@@ -183,9 +336,24 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         if (PRESSED(ODROID_INPUT_RIGHT)) move_cursor(VISIBLE_ROWS);
 
         if (PRESSED(ODROID_INPUT_A)) {
-            if (entry_count > 0 && entries[cursor].is_dir)
-                enter_dir(entries[cursor].name);
-            // file open is handled in later increments (dispatch by extension)
+            if (entry_count > 0) {
+                media_entry_t *e = &entries[cursor];
+                if (e->is_dir) {
+                    enter_dir(e->name);
+                } else if (has_ext(e->name, ".txt")) {
+                    char path[PATH_MAX_LEN];
+                    if (strcmp(cur_path, "/") == 0)
+                        snprintf(path, sizeof(path), "/%s", e->name);
+                    else
+                        snprintf(path, sizeof(path), "%s/%s", cur_path, e->name);
+                    view_text(path);
+                    // resync input so a button still held on exit isn't re-fired here
+                    odroid_input_read_gamepad(&joy);
+                    prev = joy;
+                    continue;
+                }
+                // other file types are handled in later increments
+            }
         }
 
         if (PRESSED(ODROID_INPUT_B)) {
