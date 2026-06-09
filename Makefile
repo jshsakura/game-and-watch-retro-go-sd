@@ -799,7 +799,9 @@ $(CORE_CCLESTE)/celeste_audio.c \
 Core/Src/porting/celeste/main_celeste.c
 
 MEDIA_C_SOURCES = \
-Core/Src/porting/media/main_media.c
+Core/Src/porting/media/main_media.c \
+retro-go-stm32/components/lupng/lupng.c \
+retro-go-stm32/components/lupng/miniz.c
 
 # PICO-8 stub only — the engine is distributed separately as binary files
 # (pico8.bin, pico8.ro, pico8_itcm.bin) placed on the SD card under /cores/.
@@ -1067,6 +1069,7 @@ MEDIA_C_INCLUDES += \
 -ICore/Inc/retro-go \
 -ICore/Inc/porting/media \
 -ICore/Src/porting/lib \
+-Iretro-go-stm32/components/lupng \
 -Iretro-go-stm32/components/odroid \
 -I./
 

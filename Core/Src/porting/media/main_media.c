@@ -1,12 +1,12 @@
 // Media Browser - homebrew app for game-and-watch-retro-go-sd
 //
 // Browse the SD "/media" folder like a file explorer and open files with viewers.
-//   Browser:   D-pad move, A = enter folder / open .txt|.jpg, B = up / exit at root
+//   Browser:   D-pad move, A = enter folder / open .txt|.jpg|.png, B = up / exit
 //   Text view: Up/Left = prev page, Down/Right/A = next page, B = back
 //   Image view: B = back
 //
-// Implemented: folder browser (inc.1), .txt viewer (inc.2), .jpg viewer (inc.3).
-// Planned: .png viewer, .epub reader, .mp3 + cover art, .avi MJPEG player.
+// Implemented: folder browser (inc.1), .txt viewer (inc.2), .jpg/.png viewer (inc.3).
+// Planned: .epub reader, .mp3 + cover art, .avi MJPEG player.
 // See docs/MEDIA_BROWSER.md for the full roadmap.
 
 #include <odroid_system.h>
@@ -22,6 +22,7 @@
 #include "odroid_overlay.h"
 #include "rg_i18n.h"
 #include "hw_jpeg_decoder.h"
+#include "lupng.h"
 #include "main_media.h"
 
 // Localized strings with English fallback (in case a language lacks the key).
@@ -46,7 +47,7 @@
 #define COLOR_HEADER    0x07FF  // cyan   (path + hints)
 
 // Text viewer (increment 2)
-#define TEXT_BUF_MAX    (256 * 1024)  // max file bytes loaded (truncated beyond)
+#define TEXT_BUF_MAX    (192 * 1024)  // max file bytes loaded (truncated beyond)
 #define VIEW_ROWS       ((GW_LCD_HEIGHT - FOOTER_HEIGHT) / ROW_HEIGHT)
 #define VIEW_USABLE_W   (GW_LCD_WIDTH - 8)
 
@@ -317,8 +318,8 @@ static void view_text(const char *path)
 // PNG support follows in a later step.
 // ---------------------------------------------------------------------------
 
-#define JPEG_WORK_SIZE  (256 * 1024)
-static uint8_t g_scratch[JPEG_WORK_SIZE];
+#define SCRATCH_MAX     (320 * 1024)  // JPEG work buffer / PNG decode pool
+static uint8_t g_scratch[SCRATCH_MAX];
 
 // Load a whole file into text_buf (the shared file buffer); returns byte count.
 static int load_file(const char *path, int cap)
@@ -349,7 +350,7 @@ static void show_jpeg(const char *path)
         return;
     }
 
-    JPEG_DecodeToFrameInit((uint32_t)g_scratch, JPEG_WORK_SIZE);
+    JPEG_DecodeToFrameInit((uint32_t)g_scratch, SCRATCH_MAX);
 
     uint32_t w = 0, h = 0;
     if (JPEG_DecodeGetSize((uint32_t)text_buf, &w, &h) != 0) {
@@ -376,10 +377,87 @@ static void show_jpeg(const char *path)
     lcd_swap();
 }
 
+// --- PNG support (lupng + miniz) via a bump allocator over g_scratch, so we
+// don't depend on the tiny libc heap. ---
+static size_t g_scratch_off;
+
+static void *scratch_alloc(size_t size, void *u)
+{
+    (void)u;
+    size = (size + 3u) & ~(size_t)3u;
+    if (g_scratch_off + size > SCRATCH_MAX)
+        return NULL;
+    void *p = g_scratch + g_scratch_off;
+    g_scratch_off += size;
+    return p;
+}
+
+static void scratch_free(void *p, void *u) { (void)p; (void)u; }  // reclaimed in bulk
+
+typedef struct { const uint8_t *data; size_t size, pos; } mem_reader_t;
+
+static size_t mem_read(void *out, size_t size, size_t count, void *u)
+{
+    mem_reader_t *r = (mem_reader_t *)u;
+    size_t want = size * count;
+    size_t avail = r->size - r->pos;
+    if (want > avail) want = avail;
+    memcpy(out, r->data + r->pos, want);
+    r->pos += want;
+    return size ? want / size : 0;
+}
+
+// Blit an 8-bit RGB(A) image to the framebuffer, centered and clipped to screen.
+static void blit_rgb_centered(const uint8_t *px, int w, int h, int ch)
+{
+    lcd_clear_active_buffer();
+    uint16_t *fb = lcd_get_active_buffer();
+    int dw = w < GW_LCD_WIDTH  ? w : GW_LCD_WIDTH;
+    int dh = h < GW_LCD_HEIGHT ? h : GW_LCD_HEIGHT;
+    int ox = (GW_LCD_WIDTH  - dw) / 2;
+    int oy = (GW_LCD_HEIGHT - dh) / 2;
+    for (int y = 0; y < dh; y++) {
+        const uint8_t *row = px + (size_t)y * w * ch;
+        uint16_t *dst = fb + (size_t)(oy + y) * GW_LCD_WIDTH + ox;
+        for (int x = 0; x < dw; x++) {
+            const uint8_t *p = row + (size_t)x * ch;
+            dst[x] = (uint16_t)(((p[0] >> 3) << 11) | ((p[1] >> 2) << 5) | (p[2] >> 3));
+        }
+    }
+}
+
+static void show_png(const char *path)
+{
+    int n = load_file(path, TEXT_BUF_MAX);
+    if (n <= 0) { draw_center_msg("read error"); return; }
+
+    mem_reader_t rd = { (const uint8_t *)text_buf, (size_t)n, 0 };
+    g_scratch_off = 0;
+
+    LuUserContext uc;
+    luUserContextInitDefault(&uc);
+    uc.readProc = mem_read;       uc.readProcUserPtr = &rd;
+    uc.allocProc = scratch_alloc; uc.allocProcUserPtr = NULL;
+    uc.freeProc = scratch_free;   uc.freeProcUserPtr = NULL;
+    uc.warnProc = NULL;
+
+    LuImage *img = luPngReadUC(&uc);
+    if (!img) { draw_center_msg("PNG too big / invalid"); return; }
+    if (img->depth != 8 || img->channels < 3) { draw_center_msg("unsupported PNG"); return; }
+
+    blit_rgb_centered(img->data, img->width, img->height, img->channels);
+    odroid_overlay_draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
+        "B", COLOR_HEADER, COLOR_BG);
+    lcd_swap();
+}
+
 // Show an image and wait for B to return to the browser.
 static void view_image(const char *path)
 {
-    show_jpeg(path);
+    if (has_ext(path, ".png"))
+        show_png(path);
+    else
+        show_jpeg(path);
 
     odroid_gamepad_state_t joy, prev;
     odroid_input_read_gamepad(&prev);
@@ -435,7 +513,8 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
                     bool opened = true;
                     if (has_ext(e->name, ".txt"))
                         view_text(path);
-                    else if (has_ext(e->name, ".jpg") || has_ext(e->name, ".jpeg"))
+                    else if (has_ext(e->name, ".jpg") || has_ext(e->name, ".jpeg") ||
+                             has_ext(e->name, ".png"))
                         view_image(path);
                     else
                         opened = false;   // unsupported type (more in later increments)
