@@ -354,28 +354,23 @@ static void draw_center_msg(const char *msg)
     lcd_swap();
 }
 
-static void show_jpeg(const char *path)
+// Decode a JPEG already in text_buf (n bytes) to the active framebuffer (no
+// swap). Returns false (drawing nothing) if it isn't a decodable, screen-sized
+// JPEG. Large JPEGs can't be downscaled on this hardware (work + output buffers
+// scale with image size and overrun RAM).
+static bool show_jpeg_buf(int n)
 {
-    int n = load_file(path, TEXT_BUF_MAX);
-    if (n <= 0) {
-        draw_center_msg("read error");
-        return;
-    }
+    if (n <= 0) return false;
 
     JPEG_DecodeToFrameInit((uint32_t)g_scratch, SCRATCH_MAX);
-
     uint32_t w = 0, h = 0;
     if (JPEG_DecodeGetSize((uint32_t)text_buf, &w, &h) != 0) {
         JPEG_DecodeDeInit();
-        draw_center_msg("not a JPEG");
-        return;
+        return false;
     }
     if (w == 0 || h == 0 || w > GW_LCD_WIDTH || h > GW_LCD_HEIGHT) {
         JPEG_DecodeDeInit();
-        char m[48];
-        snprintf(m, sizeof(m), "too large: %lux%lu", (unsigned long)w, (unsigned long)h);
-        draw_center_msg(m);
-        return;
+        return false;
     }
 
     lcd_clear_active_buffer();
@@ -383,7 +378,16 @@ static void show_jpeg(const char *path)
     uint16_t y = (GW_LCD_HEIGHT - h) / 2;
     JPEG_DecodeToFrame((uint32_t)text_buf, (uint32_t)lcd_get_active_buffer(), x, y, 255);
     JPEG_DecodeDeInit();
+    return true;
+}
 
+static void show_jpeg(const char *path)
+{
+    int n = load_file(path, TEXT_BUF_MAX);
+    if (!show_jpeg_buf(n)) {
+        draw_center_msg("이미지를 열 수 없음 (너무 크거나 손상)");
+        return;
+    }
     draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
         "B", COLOR_HEADER, COLOR_BG);
     lcd_swap();
@@ -446,10 +450,11 @@ static void blit_rgb_centered(const uint8_t *px, int w, int h, int ch)
     }
 }
 
-static void show_png(const char *path)
+// Decode a PNG already in text_buf (n bytes) to the active framebuffer (no
+// swap, downscaled to fit). Returns false if it can't be decoded.
+static bool show_png_buf(int n)
 {
-    int n = load_file(path, TEXT_BUF_MAX);
-    if (n <= 0) { draw_center_msg("read error"); return; }
+    if (n <= 0) return false;
 
     mem_reader_t rd = { (const uint8_t *)text_buf, (size_t)n, 0 };
     g_scratch_off = 0;
@@ -462,10 +467,20 @@ static void show_png(const char *path)
     uc.warnProc = NULL;
 
     LuImage *img = luPngReadUC(&uc);
-    if (!img) { draw_center_msg("PNG too big / invalid"); return; }
-    if (img->depth != 8 || img->channels < 3) { draw_center_msg("unsupported PNG"); return; }
+    if (!img) return false;
+    if (img->depth != 8 || img->channels < 3) return false;
 
     blit_rgb_centered(img->data, img->width, img->height, img->channels);
+    return true;
+}
+
+static void show_png(const char *path)
+{
+    int n = load_file(path, TEXT_BUF_MAX);
+    if (!show_png_buf(n)) {
+        draw_center_msg("PNG을 열 수 없음 (너무 크거나 미지원)");
+        return;
+    }
     draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
         "B", COLOR_HEADER, COLOR_BG);
     lcd_swap();
@@ -636,11 +651,81 @@ static bool find_cover(const char *mp3path, char *out, size_t outsz, bool *is_pn
     return false;
 }
 
+// Read the ID3v2 APIC frame (embedded album art) into text_buf and display it.
+// Returns true if art was found and shown. Large JPEG art that won't fit RAM is
+// reported as "not shown" so the caller can fall back.
+static bool show_embedded_cover(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+
+    uint8_t hdr[10];
+    if (fread(hdr, 1, 10, f) != 10 || memcmp(hdr, "ID3", 3) != 0) { fclose(f); return false; }
+    int ver = hdr[3];   // 3 = ID3v2.3, 4 = ID3v2.4
+    uint32_t tagsize = ((uint32_t)(hdr[6] & 0x7f) << 21) | ((uint32_t)(hdr[7] & 0x7f) << 14) |
+                       ((uint32_t)(hdr[8] & 0x7f) << 7) | (uint32_t)(hdr[9] & 0x7f);
+    long tag_end = 10 + (long)tagsize;
+
+    bool found = false, is_png = false;
+    int img_n = 0;
+    long pos = 10;
+
+    while (pos + 10 <= tag_end) {
+        if (fseek(f, pos, SEEK_SET) != 0) break;
+        uint8_t fh[10];
+        if (fread(fh, 1, 10, f) != 10) break;
+        if (fh[0] == 0) break;   // padding region
+
+        uint32_t fsize = (ver >= 4)
+            ? (((uint32_t)(fh[4] & 0x7f) << 21) | ((uint32_t)(fh[5] & 0x7f) << 14) |
+               ((uint32_t)(fh[6] & 0x7f) << 7) | (uint32_t)(fh[7] & 0x7f))
+            : (((uint32_t)fh[4] << 24) | ((uint32_t)fh[5] << 16) |
+               ((uint32_t)fh[6] << 8) | (uint32_t)fh[7]);
+        long fdata = pos + 10;
+
+        if (memcmp(fh, "APIC", 4) == 0 && fsize > 10 && fsize < 8u * 1024 * 1024) {
+            fseek(f, fdata, SEEK_SET);
+            long consumed = 0;
+            int enc = fgetc(f); consumed++;                          // text encoding
+            while (consumed < (long)fsize && fgetc(f) != 0) consumed++;  // MIME string
+            consumed++;                                              // MIME null
+            (void)fgetc(f); consumed++;                              // picture type
+            if (enc == 1 || enc == 2) {                              // UTF-16 desc: double null
+                int z = 0;
+                while (consumed < (long)fsize) { int c = fgetc(f); consumed++; if (c == 0) { if (++z == 2) break; } else z = 0; }
+            } else {                                                 // latin1/utf8 desc: single null
+                while (consumed < (long)fsize && fgetc(f) != 0) consumed++;
+                consumed++;
+            }
+            long isz = (long)fsize - consumed;
+            if (isz > 8) {
+                long lim = isz < (long)TEXT_BUF_MAX ? isz : (long)TEXT_BUF_MAX;
+                img_n = (int)fread(text_buf, 1, (size_t)lim, f);
+                if (img_n > 8) {
+                    uint8_t *b = (uint8_t *)text_buf;
+                    is_png = (b[0] == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G');
+                    found = true;
+                }
+            }
+            break;   // first APIC only
+        }
+        pos = fdata + (long)fsize;
+    }
+    fclose(f);
+    if (!found) return false;
+
+    bool ok = is_png ? show_png_buf(img_n) : show_jpeg_buf(img_n);
+    if (ok) lcd_swap();
+    return ok;
+}
+
 static void view_mp3(const char *path)
 {
     char cover[PATH_MAX_LEN];
     bool is_png = false;
-    if (find_cover(path, cover, sizeof(cover), &is_png)) {
+    if (show_embedded_cover(path)) {
+        // embedded album art shown
+    } else if (find_cover(path, cover, sizeof(cover), &is_png)) {
         if (is_png) show_png(cover);
         else        show_jpeg(cover);
     } else {
