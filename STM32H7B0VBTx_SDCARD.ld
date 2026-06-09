@@ -611,6 +611,28 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_CELESTE_BSS_SIZE = SIZEOF(.overlay_celeste_bss);
 
+  .overlay_media __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_media_start__ = .;
+    build/media/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_MEDIA_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_MEDIA_LOAD_START = LOADADDR(.overlay_media);
+  _OVERLAY_MEDIA_SIZE = SIZEOF(.overlay_media);
+
+  .overlay_media_bss _OVERLAY_MEDIA_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_MEDIA_BSS_START = .;
+    build/media/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/media/*.o (COMMON)
+    __ram_emu_media_end__ = .;
+    _OVERLAY_MEDIA_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_MEDIA_BSS_END) < __RAM_EMU_END__, "Error: MEDIA BSS overflow");
+  }
+  _OVERLAY_MEDIA_BSS_SIZE = SIZEOF(.overlay_media_bss);
+
   /* PICO-8 stub overlay → RAM.
      The GPL build only includes the install-prompt stub (main_pico8_stub.c).
      The real engine is loaded from /cores/pico8.bin at runtime, replacing

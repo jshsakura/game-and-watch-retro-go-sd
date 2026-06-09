@@ -293,6 +293,9 @@ const lang_t lang_ko_kr LANG_DATA = {
     .s_Title_Date_Format = "%02d-%02d %s %02d:%02d:%02d",
     .s_Date_Format = "%02d.%02d.20%02d %s",
     .s_Time_Format = "%02d:%02d:%02d",
+    // Media browser (homebrew document/media viewer)
+    .s_media_hint = "A:열기  B:뒤로",
+    .s_media_empty = "(비어 있음)",
     .fmt_Title_Date_Format = ko_kr_fmt_Title_Date_Format,
     .fmtDate = ko_kr_fmt_Date,
     .fmtTime = ko_kr_fmt_Time,

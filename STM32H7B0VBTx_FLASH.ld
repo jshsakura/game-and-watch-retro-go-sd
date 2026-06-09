@@ -596,6 +596,28 @@ SECTIONS
   }
   _OVERLAY_CELESTE_BSS_SIZE = SIZEOF(.overlay_celeste_bss);
 
+  .overlay_media __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_media_start__ = .;
+    build/media/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_MEDIA_LOAD_END = .;
+  } AT> EXTFLASH
+  _OVERLAY_MEDIA_LOAD_START = LOADADDR(.overlay_media);
+  _OVERLAY_MEDIA_SIZE = SIZEOF(.overlay_media);
+
+  .overlay_media_bss _OVERLAY_MEDIA_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_MEDIA_BSS_START = .;
+    build/media/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/media/*.o (COMMON)
+    __ram_emu_media_end__ = .;
+    _OVERLAY_MEDIA_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_MEDIA_BSS_END) < __RAM_EMU_END__, "Error: MEDIA BSS overflow");
+  }
+  _OVERLAY_MEDIA_BSS_SIZE = SIZEOF(.overlay_media_bss);
+
   .overlay_pico8 __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_pico8_start__ = .;

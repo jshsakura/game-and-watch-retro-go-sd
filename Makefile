@@ -798,6 +798,12 @@ $(CORE_CCLESTE)/celeste.c \
 $(CORE_CCLESTE)/celeste_audio.c \
 Core/Src/porting/celeste/main_celeste.c
 
+MEDIA_C_SOURCES = \
+Core/Src/porting/media/main_media.c \
+Core/Src/porting/media/media_lupng.c \
+Core/Src/porting/media/media_minimp3.c \
+retro-go-stm32/components/lupng/miniz.c
+
 # PICO-8 stub only — the engine is distributed separately as binary files
 # (pico8.bin, pico8.ro, pico8_itcm.bin) placed on the SD card under /cores/.
 # The stub is built as pico8_stub.bin; rg_emulators.c loads pico8.bin first
@@ -1059,6 +1065,16 @@ CELESTE_C_INCLUDES +=  \
 -I$(CORE_CCLESTE)\
 -I./
 
+MEDIA_C_INCLUDES += \
+-ICore/Inc \
+-ICore/Inc/retro-go \
+-ICore/Inc/porting \
+-ICore/Inc/porting/media \
+-ICore/Src/porting/lib \
+-Iretro-go-stm32/components/lupng \
+-Iretro-go-stm32/components/odroid \
+-I./
+
 PICO8_C_INCLUDES = \
 -ICore/Inc \
 -ICore/Src/porting/lib \
@@ -1087,7 +1103,7 @@ include Makefile.common
 
 $(BUILD_DIR)/$(TARGET)_extflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)
-	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_a2600 -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini $< $(BUILD_DIR)/$(TARGET)_extflash.bin
+	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_a2600 -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_media -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini $< $(BUILD_DIR)/$(TARGET)_extflash.bin
 
 $(BUILD_DIR)/$(TARGET)_intflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)
