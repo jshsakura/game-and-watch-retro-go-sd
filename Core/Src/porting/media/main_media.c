@@ -4,9 +4,10 @@
 //   Browser:   D-pad move, A = enter folder / open .txt|.jpg|.png, B = up / exit
 //   Text view: Up/Left = prev page, Down/Right/A = next page, B = back
 //   Image view: B = back
+//   MP3 play:  A = pause, B = back (shows cover art if found, else file name)
 //
-// Implemented: folder browser (inc.1), .txt viewer (inc.2), .jpg/.png viewer (inc.3).
-// Planned: .epub reader, .mp3 + cover art, .avi MJPEG player.
+// Implemented: browser (1), .txt (2), .jpg/.png (3), .mp3 + cover art (4).
+// Planned: .epub reader, .avi MJPEG player.
 // See docs/MEDIA_BROWSER.md for the full roadmap.
 
 #include <odroid_system.h>
@@ -23,6 +24,9 @@
 #include "rg_i18n.h"
 #include "hw_jpeg_decoder.h"
 #include "lupng.h"
+#include "minimp3.h"
+#include "gw_audio.h"
+#include "common.h"
 #include "main_media.h"
 
 // Localized strings with English fallback (in case a language lacks the key).
@@ -471,6 +475,184 @@ static void view_image(const char *path)
     }
 }
 
+// ---------------------------------------------------------------------------
+// MP3 player (increment 4): streaming decode via minimp3, fed to the SAI audio
+// DMA (downmixed to mono, nearest-neighbour resampled to 48 kHz). A sidecar
+// cover image is shown if present, else the file name. A = pause, B = back.
+// ---------------------------------------------------------------------------
+
+#define MP3_IN_BUF  (16 * 1024)
+
+static mp3dec_t  g_mp3;
+static FILE     *g_mp3_fp;
+static uint8_t   g_mp3_in[MP3_IN_BUF];
+static int       g_mp3_in_len, g_mp3_in_pos;
+static bool      g_mp3_file_eof;
+static int16_t   g_mp3_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
+static int16_t   g_mp3_mono[MINIMP3_MAX_SAMPLES_PER_FRAME];
+static int       g_mp3_frame_n;   // mono samples currently in g_mp3_mono
+static uint32_t  g_mp3_phase;     // 16.16 read index within the current frame
+static uint32_t  g_mp3_step;      // (in_rate << 16) / 48000
+static bool      g_mp3_eof;       // decode reached end of stream
+
+static void mp3_refill(void)
+{
+    if (g_mp3_in_pos > 0) {
+        int remain = g_mp3_in_len - g_mp3_in_pos;
+        if (remain > 0)
+            memmove(g_mp3_in, g_mp3_in + g_mp3_in_pos, remain);
+        g_mp3_in_len = remain;
+        g_mp3_in_pos = 0;
+    }
+    if (!g_mp3_file_eof) {
+        int space = MP3_IN_BUF - g_mp3_in_len;
+        int got = space > 0 ? (int)fread(g_mp3_in + g_mp3_in_len, 1, space, g_mp3_fp) : 0;
+        if (got <= 0) g_mp3_file_eof = true;
+        else          g_mp3_in_len += got;
+    }
+}
+
+// Decode one MP3 frame into g_mp3_mono; returns false at end of stream.
+static bool mp3_decode_frame(void)
+{
+    for (;;) {
+        if ((g_mp3_in_len - g_mp3_in_pos) < 2048 && !g_mp3_file_eof)
+            mp3_refill();
+
+        mp3dec_frame_info_t info;
+        int samples = mp3dec_decode_frame(&g_mp3, g_mp3_in + g_mp3_in_pos,
+                                          g_mp3_in_len - g_mp3_in_pos, g_mp3_pcm, &info);
+        g_mp3_in_pos += info.frame_bytes;
+
+        if (samples > 0) {
+            if (info.channels >= 2)
+                for (int i = 0; i < samples; i++)
+                    g_mp3_mono[i] = (int16_t)(((int)g_mp3_pcm[2*i] + g_mp3_pcm[2*i+1]) / 2);
+            else
+                for (int i = 0; i < samples; i++)
+                    g_mp3_mono[i] = g_mp3_pcm[i];
+            g_mp3_frame_n = samples;
+            if (info.hz > 0)
+                g_mp3_step = ((uint32_t)info.hz << 16) / AUDIO_SAMPLE_RATE;
+            return true;
+        }
+        // samples == 0: skipped junk/ID3 (frame_bytes>0) or out of data
+        if (info.frame_bytes == 0) {
+            if (g_mp3_file_eof)
+                return false;
+            mp3_refill();
+            if ((g_mp3_in_len - g_mp3_in_pos) == 0)
+                return false;
+        }
+    }
+}
+
+// Produce n mono 48 kHz samples; fills silence and flags g_mp3_eof at the end.
+static void mp3_produce(int16_t *out, int n)
+{
+    for (int k = 0; k < n; k++) {
+        while ((g_mp3_phase >> 16) >= (uint32_t)g_mp3_frame_n) {
+            g_mp3_phase -= (uint32_t)g_mp3_frame_n << 16;
+            if (!mp3_decode_frame()) {
+                g_mp3_eof = true;
+                for (; k < n; k++) out[k] = 0;
+                return;
+            }
+        }
+        out[k] = g_mp3_mono[g_mp3_phase >> 16];
+        g_mp3_phase += g_mp3_step;
+    }
+}
+
+static bool file_exists(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    fclose(f);
+    return true;
+}
+
+// Find a cover image beside the track (same-name .jpg/.png, or cover/folder.*).
+static bool find_cover(const char *mp3path, char *out, size_t outsz, bool *is_png)
+{
+    char base[PATH_MAX_LEN];
+    snprintf(base, sizeof(base), "%s", mp3path);
+    char *dot = strrchr(base, '.');
+    if (dot) {
+        *dot = '\0';
+        snprintf(out, outsz, "%s.jpg", base);
+        if (file_exists(out)) { *is_png = false; return true; }
+        snprintf(out, outsz, "%s.png", base);
+        if (file_exists(out)) { *is_png = true; return true; }
+    }
+    char dir[PATH_MAX_LEN];
+    snprintf(dir, sizeof(dir), "%s", mp3path);
+    char *slash = strrchr(dir, '/');
+    if (slash) *slash = '\0'; else dir[0] = '\0';
+
+    static const char *names[] = { "cover.jpg", "folder.jpg", "cover.png" };
+    for (int i = 0; i < 3; i++) {
+        snprintf(out, outsz, "%s/%s", dir, names[i]);
+        if (file_exists(out)) { *is_png = (strstr(names[i], ".png") != NULL); return true; }
+    }
+    return false;
+}
+
+static void view_mp3(const char *path)
+{
+    char cover[PATH_MAX_LEN];
+    bool is_png = false;
+    if (find_cover(path, cover, sizeof(cover), &is_png)) {
+        if (is_png) show_png(cover);
+        else        show_jpeg(cover);
+    } else {
+        const char *name = strrchr(path, '/');
+        draw_center_msg(name ? name + 1 : path);
+    }
+
+    g_mp3_fp = fopen(path, "rb");
+    mp3dec_init(&g_mp3);
+    g_mp3_in_len = g_mp3_in_pos = 0;
+    g_mp3_file_eof = (g_mp3_fp == NULL);
+    g_mp3_frame_n = 0;
+    g_mp3_phase = 0;
+    g_mp3_step = ((uint32_t)44100 << 16) / AUDIO_SAMPLE_RATE;
+    g_mp3_eof = false;
+
+    common_emu_state.skip_frames = 0;
+    common_emu_state.pause_frames = 0;
+    audio_start_playing(AUDIO_BUFFER_LENGTH);
+
+    bool paused = false;
+    odroid_gamepad_state_t joy, prev;
+    odroid_input_read_gamepad(&prev);
+
+    while (!g_mp3_eof) {
+        wdog_refresh();
+        odroid_input_read_gamepad(&joy);
+        if (joy.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])
+            break;
+        if (joy.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A])
+            paused = !paused;
+        prev = joy;
+
+        int16_t *buf = audio_get_active_buffer();
+        int len = audio_get_buffer_length();
+        if (paused || g_mp3_fp == NULL) {
+            for (int i = 0; i < len; i++) buf[i] = 0;
+        } else {
+            mp3_produce(buf, len);
+            int32_t vol = common_emu_sound_get_volume();
+            for (int i = 0; i < len; i++)
+                buf[i] = (int16_t)((buf[i] * vol) >> 8);
+        }
+        common_emu_sound_sync(false);
+    }
+
+    audio_stop_playing();
+    if (g_mp3_fp) { fclose(g_mp3_fp); g_mp3_fp = NULL; }
+}
+
 void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)load_state;
@@ -516,6 +698,8 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
                     else if (has_ext(e->name, ".jpg") || has_ext(e->name, ".jpeg") ||
                              has_ext(e->name, ".png"))
                         view_image(path);
+                    else if (has_ext(e->name, ".mp3"))
+                        view_mp3(path);
                     else
                         opened = false;   // unsupported type (more in later increments)
 
