@@ -41,7 +41,7 @@
 #define NAME_MAX_LEN    128
 #define PATH_MAX_LEN    256
 
-#define ROW_HEIGHT      16
+#define ROW_HEIGHT      34
 #define HEADER_HEIGHT   20
 #define FOOTER_HEIGHT   16
 #define LIST_TOP        HEADER_HEIGHT
@@ -70,11 +70,32 @@ static int  scroll;   // index of the first visible row
 static char cur_path[PATH_MAX_LEN];
 static char g_root[PATH_MAX_LEN] = "/music";  // chosen at startup (/music or /media)
 
+// Rich list: per-track metadata (album-art thumbnail + duration), cached and
+// decoded lazily for the visible rows.
+#define THUMB_SZ  28
+#define META_N    16
+typedef struct {
+    int  idx;                            // entry index this slot describes
+    bool valid, has_art;
+    int  dur;                            // seconds (0 = unknown)
+    uint16_t art[THUMB_SZ * THUMB_SZ];   // RGB565 thumbnail
+} track_meta_t;
+static track_meta_t g_meta[META_N];
+static int g_meta_clock;
+
+static bool has_ext(const char *name, const char *ext);              // defined later
+static void fill_rect(int x, int y, int w, int h, uint16_t c);       // defined later
+static const track_meta_t *meta_get(int entry_idx);                 // defined later
+
 static int scandir_cb(const rg_scandir_t *file, void *arg)
 {
     (void)arg;
     if (entry_count >= MAX_ENTRIES)
         return RG_SCANDIR_STOP;
+
+    // music browser: only folders and .mp3 files
+    if (!file->is_dir && !has_ext(file->basename, ".mp3"))
+        return RG_SCANDIR_CONTINUE;
 
     media_entry_t *e = &entries[entry_count++];
     strncpy(e->name, file->basename, NAME_MAX_LEN - 1);
@@ -88,6 +109,7 @@ static bool scan_current(void)
     entry_count = 0;
     cursor = 0;
     scroll = 0;
+    for (int i = 0; i < META_N; i++) g_meta[i].valid = false;   // folder changed
     return rg_storage_scandir(cur_path, scandir_cb, NULL,
         RG_SCANDIR_FILES | RG_SCANDIR_DIRS | RG_SCANDIR_SORT);
 }
@@ -144,37 +166,64 @@ static int draw_text(uint16_t x, uint16_t y, uint16_t w, const char *t, uint16_t
 
 static void draw(void)
 {
-    lcd_clear_active_buffer();
+    uint16_t bgc = curr_colors->bg_c, fgc = curr_colors->main_c;
+    uint16_t selc = curr_colors->sel_c, dimc = curr_colors->dis_c;
 
-    draw_text(4, 2, GW_LCD_WIDTH - 8, cur_path, COLOR_HEADER, COLOR_BG);
+    fill_rect(0, 0, GW_LCD_WIDTH, GW_LCD_HEIGHT, bgc);
 
-    if (entry_count == 0) {
-        draw_text(4, LIST_TOP + 4, GW_LCD_WIDTH - 8,
-            MEDIA_EMPTY, COLOR_TEXT, COLOR_BG);
-    }
+    // header: current folder + divider
+    draw_text(6, 3, GW_LCD_WIDTH - 12, cur_path, selc, bgc);
+    fill_rect(0, HEADER_HEIGHT - 1, GW_LCD_WIDTH, 1, dimc);
+
+    if (entry_count == 0)
+        draw_text(6, LIST_TOP + 10, GW_LCD_WIDTH - 12, MEDIA_EMPTY, fgc, bgc);
 
     for (int row = 0; row < VISIBLE_ROWS; row++) {
         int idx = scroll + row;
-        if (idx >= entry_count)
-            break;
+        if (idx >= entry_count) break;
 
         media_entry_t *e = &entries[idx];
-        uint16_t y  = LIST_TOP + row * ROW_HEIGHT;
-        bool selected = (idx == cursor);
-        uint16_t bg = selected ? COLOR_SEL_BG : COLOR_BG;
-        uint16_t fg = e->is_dir ? COLOR_DIR : COLOR_TEXT;
+        int y = LIST_TOP + row * ROW_HEIGHT;
+        bool sel = (idx == cursor);
+        uint16_t rbg = sel ? selc : bgc;
+        uint16_t txt = sel ? bgc  : fgc;
+        uint16_t sub = sel ? bgc  : dimc;
+        if (sel) fill_rect(0, y, GW_LCD_WIDTH, ROW_HEIGHT, selc);
 
-        char line[NAME_MAX_LEN + 4];
-        if (e->is_dir)
-            snprintf(line, sizeof(line), "[%s]", e->name);
-        else
-            snprintf(line, sizeof(line), " %s", e->name);
+        int tx = 6, ty = y + (ROW_HEIGHT - THUMB_SZ) / 2;
 
-        draw_text(4, y, GW_LCD_WIDTH - 8, line, fg, bg);
+        if (e->is_dir) {
+            fill_rect(tx, ty + 4, THUMB_SZ, THUMB_SZ - 8, sub);   // folder glyph
+            draw_text(tx + THUMB_SZ + 8, y + 10,
+                GW_LCD_WIDTH - (tx + THUMB_SZ + 8) - 8, e->name, txt, rbg);
+        } else {
+            const track_meta_t *m = meta_get(idx);
+
+            char t[NAME_MAX_LEN];
+            snprintf(t, sizeof(t), "%s", e->name);
+            char *dot = strrchr(t, '.'); if (dot) *dot = '\0';
+            draw_text(tx + THUMB_SZ + 8, y + 5,
+                GW_LCD_WIDTH - (tx + THUMB_SZ + 8) - 52, t, txt, rbg);
+
+            char d[16];
+            if (m->dur > 0) snprintf(d, sizeof(d), "%d:%02d", m->dur / 60, m->dur % 60);
+            else            snprintf(d, sizeof(d), "--:--");
+            draw_text(GW_LCD_WIDTH - 48, y + 18, 44, d, sub, rbg);
+
+            uint16_t *fb = lcd_get_active_buffer();   // thumbnail last (on top)
+            if (m->has_art) {
+                for (int j = 0; j < THUMB_SZ; j++)
+                    for (int i = 0; i < THUMB_SZ; i++)
+                        fb[(ty + j) * GW_LCD_WIDTH + (tx + i)] = m->art[j * THUMB_SZ + i];
+            } else {
+                fill_rect(tx, ty, THUMB_SZ, THUMB_SZ, sub);
+            }
+        }
     }
 
-    draw_text(4, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 8,
-        MEDIA_HINT, COLOR_HEADER, COLOR_BG);
+    fill_rect(0, GW_LCD_HEIGHT - FOOTER_HEIGHT, GW_LCD_WIDTH, FOOTER_HEIGHT, bgc);
+    draw_text(6, GW_LCD_HEIGHT - FOOTER_HEIGHT + 1, GW_LCD_WIDTH - 12,
+        "A:Play   <>:Track   B:Back", dimc, bgc);
 }
 
 // ---------------------------------------------------------------------------
@@ -1170,6 +1219,98 @@ static void view_avi(const char *path)
     JPEG_DecodeDeInit();
     audio_stop_playing();
     if (g_vid_fp) { fclose(g_vid_fp); g_vid_fp = NULL; }
+}
+
+// --- album-art thumbnails: decode a cover JPEG (in text_buf) into a THUMB box ---
+static uint16_t *g_thumb_dst;
+static int g_thumb_sw, g_thumb_sh;
+
+static int jpg_thumb_out(JDEC *jd, void *bitmap, JRECT *rect)
+{
+    (void)jd;
+    const uint16_t *src = (const uint16_t *)bitmap;
+    for (int y = rect->top; y <= rect->bottom; y++)
+        for (int x = rect->left; x <= rect->right; x++) {
+            uint16_t px = *src++;
+            int tx = g_thumb_sw > 0 ? x * THUMB_SZ / g_thumb_sw : 0;
+            int ty = g_thumb_sh > 0 ? y * THUMB_SZ / g_thumb_sh : 0;
+            if (tx < THUMB_SZ && ty < THUMB_SZ) g_thumb_dst[ty * THUMB_SZ + tx] = px;
+        }
+    return 1;
+}
+
+static bool jpeg_to_thumb(int n, uint16_t *out)
+{
+    static uint8_t pool[8 * 1024];
+    JDEC jd;
+    jpg_src_t src = { (const uint8_t *)text_buf, (size_t)n, 0 };
+    if (jd_prepare(&jd, jpg_in, pool, sizeof(pool), &src) != JDR_OK)
+        return false;
+    uint8_t sc = 0;
+    while (sc < 3 && ((jd.width >> sc) > THUMB_SZ * 4 || (jd.height >> sc) > THUMB_SZ * 4)) sc++;
+    g_thumb_sw = jd.width >> sc; g_thumb_sh = jd.height >> sc; g_thumb_dst = out;
+    memset(out, 0, THUMB_SZ * THUMB_SZ * sizeof(uint16_t));
+    return jd_decomp(&jd, jpg_thumb_out, sc) == JDR_OK;
+}
+
+// Estimate track length (seconds) from the first frame's bitrate and file size.
+static int read_duration(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t h[10];
+    long off = 0;
+    if (fread(h, 1, 10, f) == 10 && memcmp(h, "ID3", 3) == 0)
+        off = 10 + (long)(((uint32_t)(h[6] & 0x7f) << 21) | ((uint32_t)(h[7] & 0x7f) << 14) |
+                          ((uint32_t)(h[8] & 0x7f) << 7) | (uint32_t)(h[9] & 0x7f));
+    fseek(f, off, SEEK_SET);
+    int got = (int)fread(g_mp3_in, 1, 4096, f);    // reuse the player input buffer
+    fclose(f);
+    if (got <= 0) return 0;
+
+    mp3dec_init(&g_mp3);
+    mp3dec_frame_info_t info;
+    int pos = 0, br = 0;
+    while (pos < got) {
+        int s = mp3dec_decode_frame(&g_mp3, g_mp3_in + pos, got - pos, g_mp3_pcm, &info);
+        pos += info.frame_bytes;
+        if (info.frame_bytes == 0) break;
+        if (s > 0 && info.bitrate_kbps > 0) { br = info.bitrate_kbps; break; }
+    }
+    if (br <= 0) return 0;
+    return (int)((long long)(sz - off) * 8 / ((long long)br * 1000));
+}
+
+// Lazily fetch (and cache) a track's thumbnail + duration.
+static const track_meta_t *meta_get(int entry_idx)
+{
+    for (int i = 0; i < META_N; i++)
+        if (g_meta[i].valid && g_meta[i].idx == entry_idx) return &g_meta[i];
+
+    track_meta_t *m = &g_meta[g_meta_clock];
+    g_meta_clock = (g_meta_clock + 1) % META_N;
+    m->idx = entry_idx; m->valid = true; m->has_art = false; m->dur = 0;
+
+    char path[PATH_MAX_LEN];
+    track_path(path, sizeof(path), entry_idx);
+    m->dur = read_duration(path);
+
+    bool is_png = false;
+    int n = extract_id3_art(path, &is_png);
+    if (n > 0 && !is_png) {
+        m->has_art = jpeg_to_thumb(n, m->art);
+    } else {
+        char cov[PATH_MAX_LEN];
+        bool ip = false;
+        if (find_cover(path, cov, sizeof(cov), &ip) && !ip) {
+            n = load_file(cov, TEXT_BUF_MAX);
+            if (n > 0) m->has_art = jpeg_to_thumb(n, m->art);
+        }
+    }
+    return m;
 }
 
 void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
