@@ -59,6 +59,80 @@ static void ui_rect(int x, int y, int w, int h, uint16_t c)
     ui_fill(x + w - 1, y, 1, h, c);
 }
 
+static void ui_px(int x, int y, uint16_t c)
+{
+    if (x >= 0 && x < SCR_W && y >= 0 && y < SCR_H) {
+        uint16_t *fb = lcd_get_active_buffer();
+        fb[y * SCR_W + x] = c;
+    }
+}
+
+// Paint the four corner cut-outs of a rect with `c`, giving a radius-`r` round.
+static void round_corners(int x, int y, int w, int h, int r, uint16_t c)
+{
+    for (int j = 0; j < r; j++)
+        for (int i = 0; i < r; i++) {
+            int dx = r - i, dy = r - j;
+            if (dx * dx + dy * dy > r * r) {
+                ui_px(x + i, y + j, c);
+                ui_px(x + w - 1 - i, y + j, c);
+                ui_px(x + i, y + h - 1 - j, c);
+                ui_px(x + w - 1 - i, y + h - 1 - j, c);
+            }
+        }
+}
+
+// Save the four r×r corners of a rect (before drawing something over it).
+static void corners_save(int x, int y, int w, int h, int r, uint16_t *b)
+{
+    uint16_t *fb = lcd_get_active_buffer();
+    #define GETP(px, py) (((px) >= 0 && (px) < SCR_W && (py) >= 0 && (py) < SCR_H) ? fb[(py) * SCR_W + (px)] : 0)
+    for (int j = 0; j < r; j++)
+        for (int i = 0; i < r; i++) {
+            int k = j * r + i;
+            b[0 * r * r + k] = GETP(x + i, y + j);
+            b[1 * r * r + k] = GETP(x + w - 1 - i, y + j);
+            b[2 * r * r + k] = GETP(x + i, y + h - 1 - j);
+            b[3 * r * r + k] = GETP(x + w - 1 - i, y + h - 1 - j);
+        }
+    #undef GETP
+}
+
+// Restore the corner pixels that fall OUTSIDE radius r (rounds the rect by
+// putting the saved background back over the square corners).
+static void corners_round_restore(int x, int y, int w, int h, int r, const uint16_t *b)
+{
+    for (int j = 0; j < r; j++)
+        for (int i = 0; i < r; i++) {
+            int dx = r - i, dy = r - j;
+            if (dx * dx + dy * dy <= r * r) continue;
+            int k = j * r + i;
+            ui_px(x + i, y + j, b[0 * r * r + k]);
+            ui_px(x + w - 1 - i, y + j, b[1 * r * r + k]);
+            ui_px(x + i, y + h - 1 - j, b[2 * r * r + k]);
+            ui_px(x + w - 1 - i, y + h - 1 - j, b[3 * r * r + k]);
+        }
+}
+
+// A rounded outline (used for the cover frame).
+static void ui_rrect(int x, int y, int w, int h, int r, uint16_t c)
+{
+    ui_fill(x + r, y, w - 2 * r, 1, c);
+    ui_fill(x + r, y + h - 1, w - 2 * r, 1, c);
+    ui_fill(x, y + r, 1, h - 2 * r, c);
+    ui_fill(x + w - 1, y + r, 1, h - 2 * r, c);
+    for (int j = 0; j < r; j++)
+        for (int i = 0; i < r; i++) {
+            int dx = r - i, dy = r - j, d = dx * dx + dy * dy;
+            if (d <= r * r && d > (r - 1) * (r - 1)) {
+                ui_px(x + i, y + j, c);
+                ui_px(x + w - 1 - i, y + j, c);
+                ui_px(x + i, y + h - 1 - j, c);
+                ui_px(x + w - 1 - i, y + h - 1 - j, c);
+            }
+        }
+}
+
 int ui_text(int x, int y, int w, const char *t, uint16_t fg, uint16_t bg)
 {
     return i18n_draw_text_line(x, y, w, t, fg, bg, 0);
@@ -155,6 +229,51 @@ static void draw_vol_bar(int x, int y, int w, int vol)
     if (f > 0) ui_fill(x, y, f, 3, curr_colors->sel_c);
 }
 
+// --- language-neutral function icons (so hints need no translated words) -----
+
+static void icon_speaker(int x, int y, uint16_t c)
+{
+    ui_fill(x, y + 3, 3, 4, c);                       // body
+    for (int cx = 0; cx < 4; cx++) {                  // cone
+        int hh = 2 + cx * 2;
+        ui_fill(x + 3 + cx, y + 5 - hh / 2, 1, hh, c);
+    }
+    ui_px(x + 8, y + 3, c); ui_px(x + 9, y + 2, c);   // waves
+    ui_px(x + 8, y + 6, c); ui_px(x + 9, y + 7, c);
+}
+
+static void icon_menu(int x, int y, uint16_t c)       // hamburger
+{
+    ui_fill(x, y + 1, 11, 2, c);
+    ui_fill(x, y + 5, 11, 2, c);
+    ui_fill(x, y + 9, 11, 2, c);
+}
+
+// folder icon centered in an sz×sz cell
+static void icon_folder(int x, int y, int sz, uint16_t c)
+{
+    int w = sz - 4, h = sz - 12, ox = x + 2, oy = y + (sz - h) / 2 + 2;
+    ui_fill(ox, oy - 3, w / 2, 3, c);                 // tab
+    ui_fill(ox, oy, w, h, c);                         // body
+    ui_px(ox + w / 2, oy - 3, c);
+}
+
+static void icon_shuffle(int x, int y, uint16_t c)
+{
+    for (int i = 0; i < 8; i++) { ui_px(x + 1 + i, y + 1 + i, c); ui_px(x + 1 + i, y + 8 - i, c); }
+    ui_px(x + 7, y, c); ui_px(x + 9, y, c); ui_px(x + 9, y + 2, c);     // arrow tips
+    ui_px(x + 7, y + 9, c); ui_px(x + 9, y + 9, c); ui_px(x + 9, y + 7, c);
+}
+
+static void icon_repeat(int x, int y, uint16_t c)
+{
+    ui_fill(x + 1, y + 1, 8, 1, c);                   // top
+    ui_fill(x + 8, y + 1, 1, 6, c);                   // right
+    ui_fill(x + 2, y + 7, 7, 1, c);                   // bottom
+    ui_fill(x + 1, y + 3, 1, 4, c);                   // left
+    ui_px(x + 2, y - 1, c); ui_px(x + 3, y, c); ui_px(x + 3, y + 2, c);  // arrowhead
+}
+
 // Copy `s` into `out`, truncating with a trailing ".." if it is wider than maxw.
 static void ui_ellipsize(char *out, int cap, const char *s, int maxw)
 {
@@ -183,7 +302,7 @@ static void ui_ellipsize(char *out, int cap, const char *s, int maxw)
     snprintf(out + o, cap - o, "..");
 }
 
-static void draw_player_hints(void);   // defined with hint_row below (static layer)
+static void draw_player_hints(void);   // defined with chip_row below (static layer)
 
 // --- now-playing: static layer ----------------------------------------------
 
@@ -196,8 +315,12 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
     draw_vbg();
     bool has_cover = cover_render_backdrop(cover_n, cover_is_png);
 
-    // cover card: soft shadow, art (or placeholder), thin light frame
-    ui_fill(CARD_X + 3, CARD_Y + CARD_SZ + 1, CARD_SZ, 3, ui_dim(bg, 2, 5));   // soft shadow
+    // cover card: rounded, soft shadow, art (or placeholder), thin light frame
+    const int RX = CARD_X - 1, RY = CARD_Y - 1, RW = CARD_SZ + 2, RH = CARD_SZ + 2, R = 9;
+    static uint16_t cbuf[4 * 9 * 9];
+    corners_save(RX, RY, RW, RH, R, cbuf);                                     // remember backdrop
+
+    ui_fill(CARD_X + 4, CARD_Y + CARD_SZ + 2, CARD_SZ - 8, 3, ui_dim(bg, 2, 5)); // soft shadow
     bool card = has_cover && cover_render_card(cover_n, cover_is_png,
                                                CARD_X, CARD_Y, CARD_SZ, CARD_SZ);
     if (!card) {
@@ -206,7 +329,8 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
         ui_text_t(CARD_X + (CARD_SZ - nw) / 2, CARD_Y + CARD_SZ / 2 - 6,
                   nw + 2, "\xE2\x99\xAA", ui_mix(bg, main_c, 7));
     }
-    ui_rect(CARD_X - 1, CARD_Y - 1, CARD_SZ + 2, CARD_SZ + 2, ui_mix(main_c, bg, 9));  // soft frame
+    ui_rrect(RX, RY, RW, RH, R, ui_mix(main_c, bg, 9));                         // rounded frame
+    corners_round_restore(RX, RY, RW, RH, R, cbuf);                            // round off square corners
 
     // title (faux-bold) + "artist · album", both ellipsized to fit
     char buf[256];
@@ -231,25 +355,47 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
 
 // --- now-playing: dynamic layer ---------------------------------------------
 
-typedef struct { const char *key; const char *label; } hint_t;
+// Language-neutral hint chips: a universal button label (A/B/PAUSE/GAME/TIME or
+// the ◀▶ ▲▼ d-pad glyphs) + an optional drawn function icon. No translated text,
+// so the bar works in every language and never overflows.
+enum { ICN_NONE = 0, ICN_PLAY, ICN_NOTE, ICN_SPEAKER, ICN_MENU };
+typedef struct { const char *key; int icon; } chip_t;
 
-static void hint_row(int y, const hint_t *h, int n, uint16_t keyc, uint16_t labc, uint16_t sepc)
+static int chip_icon_w(int icon)
 {
-    const char *sep = " \xC2\xB7 ";          // " · "
-    int sepw = i18n_get_text_width(sep);
+    if (icon == ICN_NONE) return 0;
+    if (icon == ICN_NOTE) return i18n_get_text_width("\xE2\x99\xAA");   // ♪
+    return 12;
+}
+
+static void chip_icon_draw(int icon, int x, int y, uint16_t c)
+{
+    switch (icon) {
+        case ICN_PLAY:    icon_play(x, y + 1, 9, 10, c); break;
+        case ICN_NOTE:    ui_text_t(x, y, 14, "\xE2\x99\xAA", c); break;
+        case ICN_SPEAKER: icon_speaker(x, y + 1, c); break;
+        case ICN_MENU:    icon_menu(x, y, c); break;
+        default: break;
+    }
+}
+
+static void chip_row(int y, const chip_t *h, int n, uint16_t keyc, uint16_t iconc, uint16_t sepc)
+{
+    const int GAP = 10;       // between chips
     int total = 0;
     for (int i = 0; i < n; i++) {
-        total += i18n_get_text_width(h[i].key) + 3 + i18n_get_text_width(h[i].label);
-        if (i) total += sepw;
+        int iw = chip_icon_w(h[i].icon);
+        total += i18n_get_text_width(h[i].key) + (iw ? 4 + iw : 0) + (i ? GAP : 0);
     }
     int x = (SCR_W - total) / 2;
     if (x < 2) x = 2;
+    (void)sepc;
     for (int i = 0; i < n; i++) {
-        if (i) { ui_text_t(x, y, sepw + 2, sep, sepc); x += sepw; }
+        if (i) x += GAP;
         int kw = i18n_get_text_width(h[i].key);
-        ui_text_t(x, y, kw + 2, h[i].key, keyc); x += kw + 3;
-        int lw = i18n_get_text_width(h[i].label);
-        ui_text_t(x, y, lw + 2, h[i].label, labc); x += lw;
+        ui_text_t(x, y, kw + 2, h[i].key, keyc); x += kw;
+        int iw = chip_icon_w(h[i].icon);
+        if (iw) { x += 4; chip_icon_draw(h[i].icon, x, y, iconc); x += iw; }
     }
 }
 
@@ -281,12 +427,10 @@ void ui_player_dynamic(const player_state_t *ps)
     rx -= 10;
     rx -= 13; ui_text(rx, 4, 14, "\xE2\x99\xA5", ps->favorite ? accent : ui_dim(dim, 1, 2), bg);   // ♥
     if (ps->repeat != REPEAT_OFF) {
-        const char *r = ps->repeat == REPEAT_ONE ? "\xEB\xB0\x98\xEB\xB3\xB51" : "\xEB\xB0\x98\xEB\xB3\xB5"; // 반복 / 반복1
-        rx -= 8 + i18n_get_text_width(r); ui_text(rx, 4, 40, r, muted, bg);
+        rx -= 8 + 11; icon_repeat(rx, 5, muted);
+        if (ps->repeat == REPEAT_ONE) { ui_text(rx + 11, 4, 8, "1", muted, bg); rx -= 6; }
     }
-    if (ps->shuffle) {
-        rx -= 8 + i18n_get_text_width("\xEC\x85\x94\xED\x94\x8C"); ui_text(rx, 4, 30, "\xEC\x85\x94\xED\x94\x8C", muted, bg); // 셔플
-    }
+    if (ps->shuffle) { rx -= 8 + 11; icon_shuffle(rx, 5, muted); }
 
     // ---- transport sub-region (above the static hint bar) ----
     ui_fill(0, PANEL_Y, SCR_W, HINT_DIV - PANEL_Y, bg);
@@ -298,6 +442,7 @@ void ui_player_dynamic(const player_state_t *ps)
     int fillw = (int)(frac * PROG_W);
     ui_fill(PROG_X, PROG_Y, PROG_W, 3, ui_dim(dim, 1, 2));     // track
     ui_fill(PROG_X, PROG_Y, fillw, 3, accent);                 // elapsed
+    dot(PROG_X + fillw, PROG_Y + 1, 6, ui_mix(accent, bg, 9)); // knob glow
     dot(PROG_X + fillw, PROG_Y + 1, 4, scrubbing ? main_c : accent);  // knob
 
     char t[16];
@@ -316,13 +461,13 @@ static void draw_player_hints(void)
 {
     uint16_t bg = curr_colors->bg_c;
     uint16_t accent = curr_colors->sel_c, dim = curr_colors->dis_c;
-    static const hint_t line1[] = {
-        { "A", "\xEC\x9E\xAC\xEC\x83\x9D" },                                     // 재생
-        { "\xE2\x97\x80\xE2\x96\xB6", "\xEA\xB3\xA1" },                          // ◀▶ 곡
-        { "\xE2\x96\xB2\xE2\x96\xBC", "\xEC\x9D\x8C\xEB\x9F\x89" },               // ▲▼ 음량
-        { "PAUSE", "\xEB\xA9\x94\xEB\x89\xB4" },                                 // 메뉴
+    static const chip_t chips[] = {
+        { "A", ICN_PLAY },
+        { "\xE2\x97\x80\xE2\x96\xB6", ICN_NOTE },     // ◀▶  track
+        { "\xE2\x96\xB2\xE2\x96\xBC", ICN_SPEAKER },  // ▲▼  volume
+        { "PAUSE", ICN_MENU },
     };
-    hint_row(HINT1_Y, line1, 4, ui_mix(accent, bg, 10), ui_mix(dim, bg, 12), ui_mix(dim, bg, 5));
+    chip_row(HINT1_Y, chips, 4, ui_mix(accent, bg, 9), ui_mix(dim, bg, 10), 0);
 }
 
 // --- browser list -----------------------------------------------------------
@@ -386,14 +531,15 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
             continue;
         }
         if (it.kind == LIST_DIR) {
-            ui_fill(tx, ty + 5, TH, TH - 10, sub);             // folder glyph
+            icon_folder(tx, ty, TH, sel ? bg : ui_mix(accent, fg, 8));
             ui_text(tx + TH + 8, y + (RH - 12) / 2, right - (tx + TH + 8), it.title, txt, rbg);
             continue;
         }
 
-        // track row: thumb, title, artist, duration, heart
+        // track row: thumb (rounded), title, artist, duration, heart
         if (it.art && it.art_sz > 0) blit_thumb(it.art, it.art_sz, tx, ty);
         else ui_fill(tx, ty, TH, TH, ui_mix(rbg, sub, 6));
+        round_corners(tx, ty, TH, TH, 5, rbg);
 
         int dw = it.duration && it.duration[0] ? i18n_get_text_width(it.duration) : 0;
         int textx = tx + TH + 8;
@@ -424,13 +570,11 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
     // footer hint
     ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, LIST_FOOTER_H, bg);
     ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, 1, ui_mix(dim, bg, 5));
-    static const hint_t fh[] = {
-        { "A", "\xEC\x9E\xAC\xEC\x83\x9D" },                                     // 재생
-        { "\xE2\x96\xB2\xE2\x96\xBC", "\xEC\x9D\xB4\xEB\x8F\x99" },               // ▲▼ 이동
-        { "\xE2\x97\x80\xE2\x96\xB6", "\xED\x8E\x98\xEC\x9D\xB4\xEC\xA7\x80" },   // ◀▶ 페이지
-        { "B", "\xEB\x92\xA4\xEB\xA1\x9C" },                                     // 뒤로
+    static const chip_t fh[] = {
+        { "A", ICN_PLAY }, { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE },     // ▲▼
+        { "\xE2\x97\x80\xE2\x96\xB6", ICN_NONE }, { "B", ICN_NONE },     // ◀▶
     };
-    hint_row(SCR_H - LIST_FOOTER_H + 2, fh, 4, ui_mix(accent, bg, 10), ui_mix(dim, bg, 12), ui_mix(dim, bg, 5));
+    chip_row(SCR_H - LIST_FOOTER_H + 2, fh, 4, ui_mix(accent, bg, 9), ui_mix(dim, bg, 10), 0);
 }
 
 // --- info screen ------------------------------------------------------------
@@ -489,12 +633,9 @@ void ui_info_draw(const player_state_t *ps)
         info_row(&y, "File size", v);
     }
 
-    static const hint_t hints[] = {
-        { "GAME", "\xEB\x8B\xAB\xEA\xB8\xB0" },   // 닫기 (cycle back)
-        { "B", "\xEB\xAA\xA9\xEB\xA1\x9D" },      // 목록
-    };
+    static const chip_t hints[] = { { "GAME", ICN_NONE }, { "B", ICN_NONE } };
     ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(curr_colors->dis_c, bg, 8));
-    hint_row(226, hints, 2, ui_mix(accent,bg,10), curr_colors->dis_c, ui_mix(curr_colors->dis_c, bg, 6));
+    chip_row(226, hints, 2, ui_mix(accent, bg, 9), ui_mix(curr_colors->dis_c, bg, 10), 0);
 }
 
 // --- lyrics (parser in media_lyrics.c) --------------------------------------
@@ -525,11 +666,7 @@ void ui_lyrics_draw(const player_state_t *ps, const lyrics_t *ly, int top_line, 
         else     ui_text_center_t(y, txt, soft);
     }
 
-    static const hint_t hints[] = {
-        { "\xE2\x96\xB2\xE2\x96\xBC", "\xEC\x8A\xA4\xED\x81\xAC\xEB\xA1\xA4" }, // ▲▼ 스크롤
-        { "GAME", "\xEB\x8B\xAB\xEA\xB8\xB0" },                                // 닫기
-        { "B", "\xEB\xAA\xA9\xEB\xA1\x9D" },                                   // 목록
-    };
+    static const chip_t hints[] = { { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE }, { "GAME", ICN_NONE }, { "B", ICN_NONE } };
     ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(curr_colors->dis_c, bg, 8));
-    hint_row(226, hints, 3, ui_mix(accent,bg,10), curr_colors->dis_c, ui_mix(curr_colors->dis_c, bg, 6));
+    chip_row(226, hints, 3, ui_mix(accent, bg, 9), ui_mix(curr_colors->dis_c, bg, 10), 0);
 }
