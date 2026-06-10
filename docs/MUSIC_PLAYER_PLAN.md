@@ -1,8 +1,43 @@
 # Music Player — plan / resume notes
 
 Branch `feat/music-player` (fork PR #2). Goal: a **complete, native-feeling MP3
-player** ("마치 원래부터 그런 용도로 나온 제품처럼"). All code in
-`Core/Src/porting/media/main_media.c`.
+player** ("마치 원래부터 그런 용도로 나온 제품처럼"), beautiful, with commercial-MP3
+features, max performance on weak HW, and on-screen button hints always shown.
+
+## Session 2 — full rewrite + modular split (host-tested, pending CI)
+Split the 1375-line monolith into cohesive modules (all <800 lines):
+- `media_id3.{h,c}` — ID3v2.2/2.3/2.4 reader: title/artist/album/album-artist/
+  composer/genre/year/track/comment + **USLT lyrics** + APIC cover, all decoded
+  to **UTF-8** (latin1/UTF-16±BOM/UTF-16BE/UTF-8). `id3_read_lrc` for sidecar.
+- `media_audio.{h,c}` — minimp3 decode + ring + pump + **seek** + duration.
+- `media_cover.{h,c}` — dimmed full-screen **backdrop** + crisp **card** + thumb.
+- `media_lyrics.{h,c}` — pure LRC/USLT parser (synced highlight). **host-tested.**
+- `media_ui.{h,c}` — primitives + now-playing (backdrop+card+faux-bold title +
+  artist·album) + info screen + lyrics view + **always-on hint bar**.
+- `main_media.c` — browser, favourites (SD-persisted), playlist, player loop.
+
+Done from the TODO below: 1 (controls), 2 (seek), 8 (beautiful design),
+9 (lyrics), 10 (full metadata + info screen). Plus **favourites** (★ shortcut,
+heart, persisted to `<root>/.favourites`), **repeat off/all/one**, **player menu**
+(PAUSE → favourite/repeat/shuffle/brightness/info/lyrics via odroid_overlay_dialog),
+**volume** (▲▼), **screen-off** (POWER), **always-on hint bar**.
+
+Perf: hint bar moved to the per-track STATIC layer (no per-frame text-width
+measuring); dynamic layer repaints only the top bar + transport strip; list-row
+metadata cached (16 slots). Glyphs ▲▼◀▶ (Geometric) / ♥♪ (Misc Symbols) come
+from the i18n font; play/pause/knob/volume-pips drawn geometrically.
+
+Tests (`tests/run.sh`, host gcc, red-green): media_id3 (encoding/synchsafe/APIC)
++ media_lyrics (LRC/synced) — **38 checks green**. All modules pass host
+`-fsyntax-only` (caught + fixed a `void*`-indexing bug in the knob drawer).
+
+Controls: A play/pause · ▲▼ volume · ◀▶ tap=track / hold=seek-scrub · TIME
+shuffle · GAME cycle view (now-playing→info→lyrics) · PAUSE menu · POWER
+screen-off · B list. Still TODO: 4 (launcher icon), 6 (verify on device),
+non-blocking menu (audio currently gates during the overlay dialog).
+
+## Original plan
+All code in `Core/Src/porting/media/main_media.c`.
 
 ## Current state — CI green (run 27252121106, commit 951045aa)
 - Homebrew app **"Music"** (renamed from Media). Scans **`/music`** (falls back to `/media`).
