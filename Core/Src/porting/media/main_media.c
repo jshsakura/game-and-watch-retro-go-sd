@@ -27,6 +27,7 @@
 #include "media_id3.h"
 #include "media_audio.h"
 #include "media_cover.h"
+#include "media_cache.h"
 #include "media_ui.h"
 
 #define MAX_ENTRIES   384   // per-folder cap; shares the MEDIA RAM region with code
@@ -81,6 +82,11 @@ static track_meta_t g_meta[META_N];
 static int g_meta_clock;
 static media_tags_t g_scan_tags;     // scratch for list metadata
 
+// background SD-thumbnail prefetch: walk the folder while idle, warming the
+// on-disk cache one track at a time so the list "fills in" without scrolling.
+static int      g_prefetch;          // next entry index to warm (>= entry_count = done)
+static uint16_t g_pf_thumb[THUMB_SZ * THUMB_SZ];
+
 static bool has_ext(const char *name, const char *ext);
 static const track_meta_t *meta_get(int entry_idx);
 
@@ -108,7 +114,7 @@ static void meta_invalidate(void)
 
 static bool scan_folder(void)
 {
-    entry_count = cursor = scroll = 0;
+    entry_count = cursor = scroll = 0; g_prefetch = 0;
     meta_invalidate();
     bool ok = rg_storage_scandir(cur_path, scandir_cb, NULL,
         RG_SCANDIR_FILES | RG_SCANDIR_DIRS | RG_SCANDIR_SORT);
@@ -132,7 +138,7 @@ static const char *base_name(const char *p)
 
 static void scan_favourites(void)
 {
-    entry_count = cursor = scroll = 0;
+    entry_count = cursor = scroll = 0; g_prefetch = 0;
     meta_invalidate();
     for (int i = 0; i < g_fav_count && entry_count < MAX_ENTRIES; i++) {
         media_entry_t *e = &entries[entry_count++];
@@ -333,6 +339,19 @@ static const track_meta_t *meta_get(int entry_idx)
     m->dur = audio_quick_duration(path);
     m->has_art = cover_thumb(path, m->art, THUMB_SZ);
     return m;
+}
+
+// Warm one track's thumbnail into the SD cache, then advance. Called only while
+// idle. cover_thumb is cheap for already-cached tracks (a small read, no decode)
+// so this walks the whole folder once and then stops at g_prefetch==entry_count.
+static void prefetch_step(void)
+{
+    if (g_prefetch >= entry_count) return;
+    int idx = g_prefetch++;
+    if (!is_track(idx)) return;
+    char path[PATH_MAX_LEN];
+    entry_track_path(idx, path, sizeof(path));
+    cover_thumb(path, g_pf_thumb, THUMB_SZ);   // decodes+caches on miss; fast on hit
 }
 
 // When fast-scrolling we skip the (file-I/O heavy) metadata decode and show the
@@ -668,6 +687,7 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         fav_load();
         scan_folder();
     }
+    cache_init(g_root);              // persistent SD thumbnail cache under <root>/.mthumb
 
     odroid_gamepad_state_t joy, prev;
     memset(&prev, 0, sizeof(prev));
@@ -725,6 +745,11 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         g_list_busy = settle > 0;
 
         if (dirty) { draw_list(); lcd_swap(); dirty = false; }
+
+        // idle: gradually warm the SD thumbnail cache so the list fills in even
+        // without scrolling (and re-visits are instant). One track per frame.
+        if (!moved && settle == 0) prefetch_step();
+
         lcd_wait_for_vblank();
     }
 }
