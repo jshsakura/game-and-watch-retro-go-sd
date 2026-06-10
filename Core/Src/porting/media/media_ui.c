@@ -290,6 +290,7 @@ static void draw_vol_pips(int x, int y, int vol)
 }
 
 // language-neutral function icons
+// Feather "volume-2": speaker body + cone + two sound arcs.
 static void icon_speaker(int x, int y, uint16_t c)
 {
     ui_fill(x, y + 3, 3, 4, c);                       // body
@@ -297,8 +298,19 @@ static void icon_speaker(int x, int y, uint16_t c)
         int hh = 2 + cx * 2;
         ui_fill(x + 3 + cx, y + 5 - hh / 2, 1, hh, c);
     }
-    ui_px(x + 8, y + 3, c); ui_px(x + 9, y + 2, c);   // waves
-    ui_px(x + 8, y + 6, c); ui_px(x + 9, y + 7, c);
+    ui_px(x + 8, y + 2, c); ui_px(x + 9, y + 3, c);   // inner arc
+    ui_px(x + 9, y + 4, c); ui_px(x + 9, y + 5, c);
+    ui_px(x + 8, y + 6, c);
+}
+
+// Feather "skip-forward"/track: a filled triangle nudged by an end bar.
+static void icon_track(int x, int y, uint16_t c)
+{
+    for (int i = 0; i < 6; i++) {                      // right triangle
+        int hh = 9 - i; if (hh < 1) hh = 1;
+        ui_fill(x + i, y + (9 - hh) / 2 + 1, 1, hh, c);
+    }
+    ui_fill(x + 7, y + 1, 2, 9, c);                    // end bar
 }
 
 static void icon_menu(int x, int y, uint16_t c)       // hamburger
@@ -308,14 +320,6 @@ static void icon_menu(int x, int y, uint16_t c)       // hamburger
     ui_fill(x, y + 9, 11, 2, c);
 }
 
-// crisp drawn music note (replaces the font ♪ glyph for a consistent icon set)
-static void icon_note(int x, int y, uint16_t c)
-{
-    ui_fill(x + 6, y, 2, 8, c);          // stem
-    ui_fill(x + 7, y, 3, 3, c);          // flag
-    ui_fill(x + 1, y + 6, 6, 4, c);      // note head
-    ui_px(x, y + 7, c); ui_px(x, y + 8, c);
-}
 
 // folder icon centered in an sz×sz cell
 static void icon_folder(int x, int y, int sz, uint16_t c)
@@ -438,7 +442,7 @@ void ui_player_spin(void)
 
 // --- now-playing: dynamic layer ---------------------------------------------
 
-enum { ICN_NONE = 0, ICN_PLAY, ICN_NOTE, ICN_SPEAKER, ICN_MENU };
+enum { ICN_NONE = 0, ICN_PLAY, ICN_TRACK, ICN_SPEAKER, ICN_MENU };
 typedef struct { const char *key; int icon; } chip_t;
 
 static int chip_icon_w(int icon)
@@ -451,7 +455,7 @@ static void chip_icon_draw(int icon, int x, int y, uint16_t c)
 {
     switch (icon) {
         case ICN_PLAY:    icon_play(x, y + 1, 9, 10, c); break;
-        case ICN_NOTE:    icon_note(x, y, c); break;
+        case ICN_TRACK:   icon_track(x, y, c); break;
         case ICN_SPEAKER: icon_speaker(x, y + 1, c); break;
         case ICN_MENU:    icon_menu(x, y, c); break;
         default: break;
@@ -568,7 +572,7 @@ static void draw_player_hints(void)
     uint16_t accent = curr_colors->sel_c;
     static const chip_t chips[] = {
         { "A", ICN_PLAY },
-        { "\xE2\x97\x80\xE2\x96\xB6", ICN_NOTE },     // ◀▶  track
+        { "\xE2\x97\x80\xE2\x96\xB6", ICN_TRACK },    // ◀▶  track
         { "\xE2\x96\xB2\xE2\x96\xBC", ICN_SPEAKER },  // ▲▼  volume
         { "PAUSE", ICN_MENU },
     };
