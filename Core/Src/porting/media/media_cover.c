@@ -8,11 +8,16 @@
 #include <stdio.h>
 #include <string.h>
 
-#define IMG_BUF_MAX   (256 * 1024)   // raw cover bytes (JPEG/PNG) - increased to support larger cover arts
-#define SCRATCH_MAX   (352 * 1024)   // PNG decode pool
+#define IMG_BUF_MAX   (128 * 1024)   // raw cover bytes (JPEG/PNG) read from SD
+#define SCRATCH_MAX   (352 * 1024)   // PNG inflate pool — also lent to JPEG as its
+                                     // work area (see JPEG_WORK_SZ); the two decoders
+                                     // never run at once, so they share this buffer.
+#define JPEG_WORK_SZ  (32 * 1024)    // tjpgd work area, carved from g_scratch
 
 static uint8_t g_img[IMG_BUF_MAX];
 static uint8_t g_scratch[SCRATCH_MAX];
+
+_Static_assert(JPEG_WORK_SZ <= SCRATCH_MAX, "JPEG work area must fit in g_scratch");
 
 // --- sidecar lookup ---------------------------------------------------------
 
@@ -106,10 +111,11 @@ static int jpg_out(JDEC *jd, void *bitmap, JRECT *rect)
 // Decode g_img (n bytes), scaled to fit (bw,bh), centered in the box at (bx,by).
 static bool jpeg_to_box(int n, int bx, int by, int bw, int bh)
 {
-    static uint8_t pool[24 * 1024]; // Increased from 8KB to 24KB to handle images with large headers/quantization tables
     JDEC jd;
     jpg_src_t src = { g_img, (size_t)n, 0 };
-    if (jd_prepare(&jd, jpg_in, pool, sizeof(pool), &src) != JDR_OK)
+    // Borrow g_scratch as the tjpgd work area — PNG decode (its only other user)
+    // never runs concurrently with JPEG decode.
+    if (jd_prepare(&jd, jpg_in, g_scratch, JPEG_WORK_SZ, &src) != JDR_OK)
         return false;
     uint8_t sc = 0;
     while (sc < 3 && (((int)jd.width >> sc) > bw || ((int)jd.height >> sc) > bh))
@@ -250,10 +256,10 @@ static int jpg_thumb_out(JDEC *jd, void *bitmap, JRECT *rect)
 
 static bool jpeg_to_thumb(int n, uint16_t *out, int sz)
 {
-    static uint8_t pool[24 * 1024]; // Increased from 8KB to 24KB to handle images with large headers/quantization tables
     JDEC jd;
     jpg_src_t src = { g_img, (size_t)n, 0 };
-    if (jd_prepare(&jd, jpg_in, pool, sizeof(pool), &src) != JDR_OK)
+    // Same shared work area as jpeg_to_box() — see note there.
+    if (jd_prepare(&jd, jpg_in, g_scratch, JPEG_WORK_SZ, &src) != JDR_OK)
         return false;
     uint8_t sc = 0;
     while (sc < 3 && (((int)jd.width >> sc) > sz * 4 || ((int)jd.height >> sc) > sz * 4)) sc++;
