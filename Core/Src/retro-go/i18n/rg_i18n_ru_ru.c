@@ -25,6 +25,13 @@ const lang_t lang_ru_ru LANG_DATA = {
     .codepage = 1251,
     .s_LangUI = "Язык",
     .s_LangName = "Russian",
+    .s_music = "Музыка",
+    .s_favorite = "Избранное",
+    .s_repeat = "Повтор",
+    .s_shuffle = "Случайно",
+    .s_brightness = "Яркость",
+    .s_info = "Сведения",
+    .s_lyrics = "Текст",
 
     // Core\Src\porting\nes-fceu\main_nes_fceu.c ===========================
     .s_Crop_Vertical_Overscan = "Crop Vertical Overscan",

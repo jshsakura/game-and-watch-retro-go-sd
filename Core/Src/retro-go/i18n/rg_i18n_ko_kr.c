@@ -22,6 +22,13 @@ const lang_t lang_ko_kr LANG_DATA = {
     .codepage = 949,
     .s_LangUI = "언어",
     .s_LangName = "Korean",
+    .s_music = "음악",
+    .s_favorite = "즐겨찾기",
+    .s_repeat = "반복",
+    .s_shuffle = "셔플",
+    .s_brightness = "밝기",
+    .s_info = "정보",
+    .s_lyrics = "가사",
     //한국어
     // If you can translate, please feed back the translation results to me, thank you
     // translate by  Augen(히힛마스터):

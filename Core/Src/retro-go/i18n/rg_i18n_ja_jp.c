@@ -24,6 +24,13 @@ const lang_t lang_ja_jp LANG_DATA = {
     .codepage = 932,
     .s_LangUI = "言語",
     .s_LangName = "Japanese",
+    .s_music = "音楽",
+    .s_favorite = "お気に入り",
+    .s_repeat = "リピート",
+    .s_shuffle = "シャッフル",
+    .s_brightness = "明るさ",
+    .s_info = "情報",
+    .s_lyrics = "歌詞",
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "パレット",
     //=====================================================================

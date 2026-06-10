@@ -25,6 +25,13 @@ const lang_t lang_es_es LANG_DATA = {
     .codepage = 1252,
     .s_LangUI = "Idioma",
     .s_LangName = "Spanish",
+    .s_music = "Música",
+    .s_favorite = "Favorito",
+    .s_repeat = "Repetir",
+    .s_shuffle = "Aleatorio",
+    .s_brightness = "Brillo",
+    .s_info = "Info",
+    .s_lyrics = "Letras",
 
     // Core\Src\porting\nes-fceu\main_nes_fceu.c ===========================
     .s_Crop_Vertical_Overscan = "Cortar sobrebarrido Vertical",

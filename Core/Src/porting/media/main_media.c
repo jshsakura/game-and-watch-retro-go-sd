@@ -48,6 +48,9 @@ enum { MENU_INFO = 1, MENU_LYRICS = 2, MENU_CLOSE = 3 };
 #define HOLD_MS     300        // press longer than this => seek-scrub
 #define SCRUB_STEP  0.010f     // fraction per frame while scrubbing
 
+// i18n string with an English fallback when a language lacks the key.
+#define TR(field, fallback) ((curr_lang && curr_lang->field) ? curr_lang->field : (fallback))
+
 typedef struct {
     char name[NAME_MAX_LEN];
     bool is_dir;
@@ -114,7 +117,7 @@ static bool scan_folder(void)
         for (int i = entry_count; i > 0; i--) entries[i] = entries[i - 1];
         entry_count++;
         media_entry_t *e = &entries[0];
-        snprintf(e->name, NAME_MAX_LEN, "\xE2\x98\x85 \xEC\xA6\x90\xEA\xB2\xA8\xEC\xB0\xBE\xEA\xB8\xB0 (%d)", g_fav_count);
+        snprintf(e->name, NAME_MAX_LEN, "\xE2\x98\x85 %s (%d)", TR(s_favorite, "Favorites"), g_fav_count);
         e->is_dir = false; e->is_special = true;
     }
     return ok;
@@ -374,9 +377,9 @@ static void list_item_at(int idx, list_item_t *out)
 
 static void draw_list(void)
 {
-    const char *head = (g_mode == MODE_FAV)
-        ? "\xE2\x98\x85 \xEC\xA6\x90\xEA\xB2\xA8\xEC\xB0\xBE\xEA\xB8\xB0"   // ★ 즐겨찾기
-        : cur_path;
+    static char favhead[64];
+    snprintf(favhead, sizeof(favhead), "\xE2\x98\x85 %s", TR(s_favorite, "Favorites"));
+    const char *head = (g_mode == MODE_FAV) ? favhead : cur_path;
     list_view_t v = {
         .header = head, .count = entry_count, .cursor = cursor, .scroll = scroll,
         .visible_rows = LIST_VISIBLE_ROWS, .row_h = LIST_ROW_H, .busy = g_list_busy,
@@ -391,11 +394,15 @@ static void draw_list(void)
 static player_state_t *g_ps;
 static int  g_cover_n;
 static bool g_cover_png;
+// Toggle values use language-neutral symbols: ● on / ○ off, ●1 = repeat-one.
+#define SYM_ON   "\xE2\x97\x8F"   // ●
+#define SYM_OFF  "\xE2\x97\x8B"   // ○
+
 static char fav_v[20], rep_v[20], shf_v[20], bri_v[8];
 
-static void set_fav_v(void)  { snprintf(fav_v, sizeof(fav_v), "%s", g_ps->favorite ? "\xE2\x99\xA5 \xEC\xBC\x9C\xEC\xA7\x90" : "\xEA\xBA\xBC\xEC\xA7\x90"); }
-static void set_rep_v(void)  { const char *s = g_ps->repeat == REPEAT_ALL ? "\xEC\xA0\x84\xEC\xB2\xB4" : g_ps->repeat == REPEAT_ONE ? "\xED\x95\x9C\xEA\xB3\xA1" : "\xEB\x81\x84\xEA\xB8\xB0"; snprintf(rep_v, sizeof(rep_v), "%s", s); }
-static void set_shf_v(void)  { snprintf(shf_v, sizeof(shf_v), "%s", g_ps->shuffle ? "\xEC\xBC\x9C\xEC\xA7\x90" : "\xEA\xBA\xBC\xEC\xA7\x90"); }
+static void set_fav_v(void)  { snprintf(fav_v, sizeof(fav_v), "%s", g_ps->favorite ? SYM_ON : SYM_OFF); }
+static void set_rep_v(void)  { snprintf(rep_v, sizeof(rep_v), "%s", g_ps->repeat == REPEAT_ALL ? SYM_ON : g_ps->repeat == REPEAT_ONE ? SYM_ON "1" : SYM_OFF); }
+static void set_shf_v(void)  { snprintf(shf_v, sizeof(shf_v), "%s", g_ps->shuffle ? SYM_ON : SYM_OFF); }
 static void set_bri_v(void)  { snprintf(bri_v, sizeof(bri_v), "%d", lcd_backlight_get()); }
 
 static bool fav_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t r)
@@ -444,18 +451,18 @@ static int open_menu(player_state_t *ps)
     g_ps = ps;
     set_fav_v(); set_rep_v(); set_shf_v(); set_bri_v();
     odroid_dialog_choice_t choices[] = {
-        { 10, "\xEC\xA6\x90\xEA\xB2\xA8\xEC\xB0\xBE\xEA\xB8\xB0", fav_v, 1, fav_cb },   // 즐겨찾기
-        { 11, "\xEB\xB0\x98\xEB\xB3\xB5", rep_v, 1, rep_cb },                          // 반복
-        { 12, "\xEC\x85\x94\xED\x94\x8C", shf_v, 1, shf_cb },                          // 셔플
-        { 13, "\xEB\xB0\x9D\xEA\xB8\xB0", bri_v, 1, bri_cb },                          // 밝기
+        { 10, TR(s_favorite,   "Favorite"),   fav_v, 1, fav_cb },
+        { 11, TR(s_repeat,     "Repeat"),     rep_v, 1, rep_cb },
+        { 12, TR(s_shuffle,    "Shuffle"),    shf_v, 1, shf_cb },
+        { 13, TR(s_brightness, "Brightness"), bri_v, 1, bri_cb },
         ODROID_DIALOG_CHOICE_SEPARATOR,
-        { MENU_INFO,   "\xEC\xA0\x95\xEB\xB3\xB4", (char *)"", 1, NULL },              // 정보
-        { MENU_LYRICS, "\xEA\xB0\x80\xEC\x82\xAC", (char *)"", 1, NULL },              // 가사
+        { MENU_INFO,   TR(s_info,   "Info"),   (char *)"", 1, NULL },
+        { MENU_LYRICS, TR(s_lyrics, "Lyrics"), (char *)"", 1, NULL },
         ODROID_DIALOG_CHOICE_SEPARATOR,
-        { MENU_CLOSE,  "\xEB\x8B\xAB\xEA\xB8\xB0", (char *)"", 1, NULL },              // 닫기
+        { MENU_CLOSE,  TR(s_Close,  "Close"),  (char *)"", 1, NULL },
         ODROID_DIALOG_CHOICE_LAST,
     };
-    return odroid_overlay_dialog("\xEC\x9D\x8C\xEC\x95\x85", choices, 0, player_repaint, 0);  // 음악
+    return odroid_overlay_dialog(TR(s_music, "Music"), choices, 0, player_repaint, 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,13 @@ const lang_t lang_zh_tw LANG_DATA = {
     .codepage = 950,
     .s_LangUI = "語言",
     .s_LangName = "Traditional Chinese",
+    .s_music = "音樂",
+    .s_favorite = "收藏",
+    .s_repeat = "重複",
+    .s_shuffle = "隨機",
+    .s_brightness = "亮度",
+    .s_info = "資訊",
+    .s_lyrics = "歌詞",
     
     // Core\Src\porting\nes-fceu\main_nes_fceu.c ===========================
    .s_Crop_Vertical_Overscan = "垂直過掃描裁切",

@@ -25,6 +25,13 @@ const lang_t lang_pt_pt LANG_DATA = {
     .codepage = 1252,
     .s_LangUI = "Idioma",
     .s_LangName = "Portuguese",
+    .s_music = "Música",
+    .s_favorite = "Favorito",
+    .s_repeat = "Repetir",
+    .s_shuffle = "Aleatório",
+    .s_brightness = "Brilho",
+    .s_info = "Info",
+    .s_lyrics = "Letras",
 
     // Core\Src\porting\nes-fceu\main_nes_fceu.c ===========================
     .s_Crop_Vertical_Overscan = "Cortar Overscan Vertical",

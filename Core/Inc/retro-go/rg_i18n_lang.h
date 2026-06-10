@@ -267,5 +267,14 @@ typedef struct
     // const char *fmtDate(outstr,datefmt,day,month,year,weekday) sprintf(outstr,datefmt,day,month,year,weekday)
     const int (*fmtTime)(char *outstr, const char *timefmt, uint16_t hour, uint16_t minutes, uint16_t seconds);
     //=====================================================================
+    // Core\Src\porting\media\main_media.c (Music app) =====================
+    const char *s_music;
+    const char *s_favorite;
+    const char *s_repeat;
+    const char *s_shuffle;
+    const char *s_brightness;
+    const char *s_info;
+    const char *s_lyrics;
+    //=====================================================================
     //           ------------ end ---------------
 } lang_t;
