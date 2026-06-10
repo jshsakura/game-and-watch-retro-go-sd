@@ -308,6 +308,15 @@ static void icon_menu(int x, int y, uint16_t c)       // hamburger
     ui_fill(x, y + 9, 11, 2, c);
 }
 
+// crisp drawn music note (replaces the font ♪ glyph for a consistent icon set)
+static void icon_note(int x, int y, uint16_t c)
+{
+    ui_fill(x + 6, y, 2, 8, c);          // stem
+    ui_fill(x + 7, y, 3, 3, c);          // flag
+    ui_fill(x + 1, y + 6, 6, 4, c);      // note head
+    ui_px(x, y + 7, c); ui_px(x, y + 8, c);
+}
+
 // folder icon centered in an sz×sz cell
 static void icon_folder(int x, int y, int sz, uint16_t c)
 {
@@ -435,39 +444,61 @@ typedef struct { const char *key; int icon; } chip_t;
 static int chip_icon_w(int icon)
 {
     if (icon == ICN_NONE) return 0;
-    if (icon == ICN_NOTE) return i18n_get_text_width("\xE2\x99\xAA");   // ♪
-    return 12;
+    return 11;
 }
 
 static void chip_icon_draw(int icon, int x, int y, uint16_t c)
 {
     switch (icon) {
         case ICN_PLAY:    icon_play(x, y + 1, 9, 10, c); break;
-        case ICN_NOTE:    ui_text_t(x, y, 14, "\xE2\x99\xAA", c); break;
+        case ICN_NOTE:    icon_note(x, y, c); break;
         case ICN_SPEAKER: icon_speaker(x, y + 1, c); break;
         case ICN_MENU:    icon_menu(x, y, c); break;
         default: break;
     }
 }
 
-static void chip_row(int y, const chip_t *h, int n, uint16_t keyc, uint16_t iconc, uint16_t sepc)
+// Draw a centered row of button hints. Each chip is the button label rendered
+// as a little keycap (when kh>0) followed by the function icon, e.g. [Ⓐ]▶.
+// kh==0 falls back to plain text (for the short list footer with no room).
+static void chip_row_k(int y, const chip_t *h, int n, uint16_t keyc, uint16_t iconc, int kh)
 {
-    const int GAP = 10;       // between chips
+    const int GAP  = 9;                 // between chips
+    const int PADX = (kh > 0) ? 5 : 0;  // keycap horizontal padding
+    uint16_t bg = curr_colors->bg_c, accent = curr_colors->sel_c;
+    uint16_t surface = ui_player_surface();
+    uint16_t cap_fill = ui_mix(bg, accent, 3);
+    uint16_t cap_brd  = ui_mix(accent, bg, 6);
+
     int total = 0;
     for (int i = 0; i < n; i++) {
         int iw = chip_icon_w(h[i].icon);
-        total += i18n_get_text_width(h[i].key) + (iw ? 4 + iw : 0) + (i ? GAP : 0);
+        total += i18n_get_text_width(h[i].key) + 2 * PADX + (iw ? 4 + iw : 0) + (i ? GAP : 0);
     }
     int x = (SCR_W - total) / 2;
     if (x < 2) x = 2;
-    (void)sepc;
+
+    int cy = y - 2;
     for (int i = 0; i < n; i++) {
         if (i) x += GAP;
-        int kw = i18n_get_text_width(h[i].key);
-        ui_text_t(x, y, kw + 2, h[i].key, keyc); x += kw;
+        int tw = i18n_get_text_width(h[i].key);
+        int kw = tw + 2 * PADX;
+        if (kh > 0) {                       // keycap behind the label
+            ui_fill(x, cy, kw, kh, cap_fill);
+            round_corners(x, cy, kw, kh, 4, surface);
+            ui_rrect(x, cy, kw, kh, 4, cap_brd);
+        }
+        ui_text_t(x + PADX, y, tw + 2, h[i].key, keyc);
+        x += kw;
         int iw = chip_icon_w(h[i].icon);
         if (iw) { x += 4; chip_icon_draw(h[i].icon, x, y, iconc); x += iw; }
     }
+}
+
+static void chip_row(int y, const chip_t *h, int n, uint16_t keyc, uint16_t iconc, uint16_t sepc)
+{
+    (void)sepc;
+    chip_row_k(y, h, n, keyc, iconc, 0);    // plain text (legacy callers / footer)
 }
 
 static void fmt_time(char *out, int n, int sec)
@@ -541,8 +572,8 @@ static void draw_player_hints(void)
         { "\xE2\x96\xB2\xE2\x96\xBC", ICN_SPEAKER },  // ▲▼  volume
         { "PAUSE", ICN_MENU },
     };
-    // bright key labels + accent icons — the hint bar was nearly invisible before
-    chip_row(HINT1_Y, chips, 4, ui_mix(main_c, bg, 2), accent, 0);
+    // bright key labels in keycaps + accent function icons
+    chip_row_k(HINT1_Y, chips, 4, ui_mix(main_c, bg, 1), accent, 16);
 }
 
 // --- browser list -----------------------------------------------------------
