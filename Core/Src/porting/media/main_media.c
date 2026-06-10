@@ -93,6 +93,9 @@ static int scandir_cb(const rg_scandir_t *file, void *arg)
 {
     (void)arg;
     if (entry_count >= MAX_ENTRIES) return RG_SCANDIR_STOP;
+    // hide hidden/system entries: the thumbnail cache (.mthumb), .favourites,
+    // macOS AppleDouble (._*) / .DS_Store, etc. — only music + real folders show.
+    if (file->basename[0] == '.') return RG_SCANDIR_CONTINUE;
     if (!file->is_dir && !has_ext(file->basename, ".mp3")) return RG_SCANDIR_CONTINUE;
     media_entry_t *e = &entries[entry_count++];
     strncpy(e->name, file->basename, NAME_MAX_LEN - 1);
@@ -315,10 +318,19 @@ static long file_size(const char *p)
     return s;
 }
 
-static const track_meta_t *meta_get(int entry_idx)
+// Cache-only lookup (no decode/evict). Lets the list keep showing full detail
+// for already-seen rows while scrolling, instead of blanking to the file name.
+static const track_meta_t *meta_peek(int entry_idx)
 {
     for (int i = 0; i < META_N; i++)
         if (g_meta[i].valid && g_meta[i].idx == entry_idx) return &g_meta[i];
+    return NULL;
+}
+
+static const track_meta_t *meta_get(int entry_idx)
+{
+    const track_meta_t *cached = meta_peek(entry_idx);
+    if (cached) return cached;
 
     track_meta_t *m = &g_meta[g_meta_clock];
     g_meta_clock = (g_meta_clock + 1) % META_N;
@@ -359,22 +371,21 @@ static void list_item_at(int idx, list_item_t *out)
     if (e->is_dir)     { out->kind = LIST_DIR;     out->title = e->name; return; }
 
     out->kind = LIST_TRACK;
+    out->art_sz = THUMB_SZ;
     char p[PATH_MAX_LEN];
     entry_track_path(idx, p, sizeof(p));
     out->fav = fav_is(p);
 
-    if (g_list_busy) {                      // fast scroll: name only, no decode
-        out->title = strip_ext(e->name, title, sizeof(title));
-        out->art_sz = THUMB_SZ;
-        return;
-    }
+    // While fast-scrolling, use only already-cached metadata (no decode) so the
+    // list stays smooth AND cached rows keep their detail instead of blinking;
+    // uncached rows show the bare name and fill in once movement settles.
+    const track_meta_t *m = g_list_busy ? meta_peek(idx) : meta_get(idx);
+    if (!m) { out->title = strip_ext(e->name, title, sizeof(title)); return; }
 
-    const track_meta_t *m = meta_get(idx);
     out->title = m->title[0] ? m->title : strip_ext(e->name, title, sizeof(title));
     out->subtitle = m->artist;
     if (m->dur > 0) { snprintf(dur, sizeof(dur), "%d:%02d", m->dur / 60, m->dur % 60); out->duration = dur; }
     out->art = m->has_art ? m->art : NULL;
-    out->art_sz = THUMB_SZ;
 }
 
 static void draw_list(void)
@@ -480,6 +491,17 @@ static void player_repaint(void)
 static int open_menu(player_state_t *ps)
 {
     g_ps = ps;
+
+    // The dialog is a blocking modal, so the player loop (which refills the audio
+    // DMA) is suspended while it's open. Flush silence into both DMA half-buffers
+    // first so playback goes cleanly quiet instead of looping the last fragment;
+    // music resumes from the same spot on close (the position never advanced).
+    for (int k = 0; k < 2; k++) {
+        int16_t *b = audio_get_active_buffer();
+        memset(b, 0, (size_t)audio_get_buffer_length() * sizeof(int16_t));
+        common_emu_sound_sync(false);
+    }
+
     set_fav_v(); set_rep_v(); set_shf_v(); set_bri_v();
     odroid_dialog_choice_t choices[] = {
         { 10, TR(s_favorite,   "Favorite"),   fav_v, 1, fav_cb },
@@ -694,7 +716,7 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     memset(&prev, 0, sizeof(prev));
     lcd_clear_buffers();
 
-    bool dirty = true;
+    bool dirty = true, screen_off = false;
     int  settle = 0, held_dir = 0;
     uint32_t held_t0 = 0, held_last = 0;
 
@@ -702,6 +724,16 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         wdog_refresh();
         odroid_input_read_gamepad(&joy);
         #define PRESSED(b) (joy.values[b] && !prev.values[b])
+
+        // screen-off (POWER): blank the backlight; any key wakes it.
+        if (screen_off) {
+            bool any = false;
+            for (int b = 0; b < ODROID_INPUT_MAX; b++) if (PRESSED(b)) { any = true; break; }
+            if (any) { lcd_backlight_on(); screen_off = false; dirty = true; }
+            prev = joy;
+            lcd_wait_for_vblank();
+            continue;
+        }
         bool moved = false;
 
         // vertical navigation with hold-to-repeat (accelerating)
@@ -739,11 +771,16 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             else if (!go_parent()) odroid_system_switch_app(APPID_LAUNCHER);  // noreturn
             dirty = true;
         }
+
+        if (PRESSED(ODROID_INPUT_POWER)) {           // blank the screen until any key
+            screen_off = true; lcd_backlight_off();
+            prev = joy; lcd_wait_for_vblank(); continue;
+        }
         #undef PRESSED
 
         prev = joy;
-        if (settle > 0 && --settle == 0) dirty = true;   // settled -> upgrade rows to full metadata
-        g_list_busy = settle > 0;
+        if (settle > 0 && --settle == 0) dirty = true;   // settled -> decode any new rows
+        g_list_busy = settle > 0;                         // meta_peek keeps cached rows from blinking
 
         if (dirty) { draw_list(); lcd_swap(); dirty = false; }
 
