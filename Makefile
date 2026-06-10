@@ -808,6 +808,7 @@ Core/Src/porting/media/media_ui.c \
 Core/Src/porting/media/media_lupng.c \
 Core/Src/porting/media/media_minimp3.c \
 Core/Src/porting/media/tjpgd.c \
+Core/Src/porting/media/progjpeg.c \
 retro-go-stm32/components/lupng/miniz.c
 
 # PICO-8 stub only — the engine is distributed separately as binary files

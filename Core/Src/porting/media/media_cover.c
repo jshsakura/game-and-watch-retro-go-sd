@@ -5,6 +5,7 @@
 #include "gw_lcd.h"
 #include "tjpgd.h"
 #include "lupng.h"
+#include "progjpeg.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -144,6 +145,41 @@ static int jpg_out(JDEC *jd, void *bitmap, JRECT *rect)
     return 1;
 }
 
+// Forward decls (defined below in the PNG section).
+static void blit_rgb_box(const uint8_t *px, int w, int h, int ch,
+                         int bx, int by, int bw, int bh);
+static void scale_rgb_to_thumb(const uint8_t *px, int w, int h, int ch,
+                               uint16_t *out, int sz);
+
+// --- progressive-JPEG fallback (DC-only 1/8-resolution preview) -------------
+// TJpgDec rejects progressive JPEGs (JDR_FMT3). progjpeg reconstructs a small
+// 1/8-res preview from the first DC scan — plenty for the 112/34px card/thumb.
+
+static int pj_file_get(void *u)
+{
+    jpg_src_t *s = (jpg_src_t *)u;
+    if (s->remain <= 0) return -1;
+    int c = fgetc(s->f);
+    if (c < 0) return -1;
+    s->remain--;
+    return c;
+}
+
+// Decode the located progressive cover into g_scratch as RGB888. The baseline
+// decoder is dead by now, so g_scratch is free as the output buffer.
+static bool prog_decode(uint8_t **rgb, int *w, int *h)
+{
+    long remain; FILE *f = cover_open(&remain);
+    if (!f) return false;
+    jpg_src_t fs = { f, remain };
+    PjSource src = { pj_file_get, &fs };
+    int ok = pj_decode_dc(&src, g_scratch, SCRATCH_MAX, w, h);
+    fclose(f);
+    if (!ok) return false;
+    *rgb = g_scratch;
+    return true;
+}
+
 // Stream-decode the located JPEG cover, scaled to fit (bw,bh), centered at (bx,by).
 static bool jpeg_to_box(int n, int bx, int by, int bw, int bh)
 {
@@ -155,7 +191,18 @@ static bool jpeg_to_box(int n, int bx, int by, int bw, int bh)
     jpg_src_t src = { f, remain };
     // Borrow g_scratch as the tjpgd work area — PNG decode (its only other user)
     // never runs concurrently with JPEG decode.
-    if (jd_prepare(&jd, jpg_in, g_scratch, JPEG_WORK_SZ, &src) != JDR_OK) { fclose(f); return false; }
+    int pr = jd_prepare(&jd, jpg_in, g_scratch, JPEG_WORK_SZ, &src);
+    if (pr != JDR_OK) {
+        fclose(f);
+        if (pr == JDR_FMT3) {                  // progressive → DC preview fallback
+            uint8_t *rgb; int w, h;
+            if (prog_decode(&rgb, &w, &h)) {
+                blit_rgb_box(rgb, w, h, 3, bx, by, bw, bh);
+                return true;
+            }
+        }
+        return false;
+    }
     uint8_t sc = 0;
     while (sc < 3 && (((int)jd.width >> sc) > bw || ((int)jd.height >> sc) > bh))
         sc++;
@@ -224,6 +271,20 @@ static void blit_rgb_box(const uint8_t *px, int w, int h, int ch,
             if (dx < 0 || dx >= GW_LCD_WIDTH) continue;
             const uint8_t *p = row + (size_t)(x * w / tw) * ch;
             dst[x] = (uint16_t)(((p[0] >> 3) << 11) | ((p[1] >> 2) << 5) | (p[2] >> 3));
+        }
+    }
+}
+
+// Nearest-scale an 8-bit RGB(A) image into an sz×sz RGB565 thumbnail.
+static void scale_rgb_to_thumb(const uint8_t *px, int w, int h, int ch,
+                               uint16_t *out, int sz)
+{
+    for (int y = 0; y < sz; y++) {
+        int sy = y * h / sz;
+        const uint8_t *row = px + (size_t)sy * w * ch;
+        for (int x = 0; x < sz; x++) {
+            const uint8_t *p = row + (size_t)(x * w / sz) * ch;
+            out[y * sz + x] = (uint16_t)(((p[0] >> 3) << 11) | ((p[1] >> 2) << 5) | (p[2] >> 3));
         }
     }
 }
@@ -309,7 +370,15 @@ static bool jpeg_to_thumb(int n, uint16_t *out, int sz)
     JDEC jd;
     jpg_src_t src = { f, remain };
     // Same shared work area as jpeg_to_box() — see note there.
-    if (jd_prepare(&jd, jpg_in, g_scratch, JPEG_WORK_SZ, &src) != JDR_OK) { fclose(f); return false; }
+    int pr = jd_prepare(&jd, jpg_in, g_scratch, JPEG_WORK_SZ, &src);
+    if (pr != JDR_OK) {
+        fclose(f);
+        if (pr == JDR_FMT3) {                  // progressive → DC preview fallback
+            uint8_t *rgb; int w, h;
+            if (prog_decode(&rgb, &w, &h)) { scale_rgb_to_thumb(rgb, w, h, 3, out, sz); return true; }
+        }
+        return false;
+    }
     uint8_t sc = 0;
     while (sc < 3 && (((int)jd.width >> sc) > sz * 4 || ((int)jd.height >> sc) > sz * 4)) sc++;
     g_thumb_sw = (int)jd.width >> sc;
@@ -342,16 +411,7 @@ static bool png_to_thumb(int n, uint16_t *out, int sz)
     if (!img) return false;
     if (img->depth != 8 || img->channels < 3) return false;
 
-    int w = img->width, h = img->height, ch = img->channels;
-    for (int y = 0; y < sz; y++) {
-        int sy = y * h / sz;
-        const uint8_t *row = img->data + (size_t)sy * w * ch;
-        for (int x = 0; x < sz; x++) {
-            int sx = x * w / sz;
-            const uint8_t *p = row + (size_t)sx * ch;
-            out[y * sz + x] = (uint16_t)(((p[0] >> 3) << 11) | ((p[1] >> 2) << 5) | (p[2] >> 3));
-        }
-    }
+    scale_rgb_to_thumb(img->data, img->width, img->height, img->channels, out, sz);
     return true;
 }
 
