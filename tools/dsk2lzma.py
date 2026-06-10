@@ -129,7 +129,7 @@ if (os.path.getsize(sys.argv[1]) > 2*1024*1024) :
     lzmaArray = analyzeIdeDsk(ideFile,sys.argv[1])
     print("IDE HDD image")
     if len(lzmaArray) > 0 :
-        outFile = sys.argv[1]+".cdk"
+        outFile = os.path.splitext(sys.argv[1])[0] + ".cdk"
         print("File converted, saving "+outFile)
         newfile=open(outFile,'wb')
         newfile.write(lzmaArray)
@@ -145,7 +145,7 @@ print("Opening "+sys.argv[1])
 dskFile = open(sys.argv[1], 'rb')
 lzmaArray = analyzeRawDsk(dskFile,sys.argv[1])
 if len(lzmaArray) > 0 :
-    outFile = sys.argv[1]+".cdk"
+    outFile = os.path.splitext(sys.argv[1])[0] + ".cdk"
     print("File converted, saving "+outFile)
     newfile=open(outFile,'wb')
     newfile.write(lzmaArray)

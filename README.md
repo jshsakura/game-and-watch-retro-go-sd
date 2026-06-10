@@ -392,18 +392,13 @@ On MSX system, you can enable/disable cheats while playing. Just press the Pause
 
 ## NES Emulator
 
-NES emulation was done using nofrendo-go emulator, it doesn't have the best compatibility but has good performances.
-To handle eveything that is not or badly emulated by nofrendo, fceumm emulator has been ported too.
-fceumm has very good compatibility but it's using more CPU power, currently about 65-85% of CPU depending on games, disks games (FDS) are taking even more CPU power (about 95%).
-Due to the large amount of mappers supported by fceumm, it's not possible to embbed all mappers codes in the G&W memory, so the parsing proccess is listing mappers used by games in the rom/nes folder so only needed mappers are loaded in the G&W. If you are using too much different mappers in the games you have selected, you will have runtime problems. The maximum number of mappers you can use will depends on embedded mappers, but basically it should fit most needs.
+NES emulation uses **fceumm** (FCEUmm). It has very good compatibility but uses significant CPU: typically about 65–85% depending on games; FDS titles can reach about 95%.
 
 Mappers compatibility is basically the same as fceumm version from 01/01/2023. Testing all mappers is not possible, so some mappers that could try to allocate too much ram will probably crash. If you find any mapper that crash, please report on discord support, or by opening a ticket on github.
 
 As Game & Watch CPU is not able to emulate YM2413 at 48kHz, mapper 85 (VRC-7) sound will play at 18kHz instead of 48kHz.
 
 FDS support requires you to put the FDS firmware in `/bios/nes/disksys.rom` file
-
-Note that you can force nofrendo-go usage instead of fceumm by adding FORCE_NOFRENDO=1 option in your make command
 
 ## MSX Emulator
 
@@ -589,6 +584,50 @@ If the game requires to load other carts put them in a ".multicarts" subfolder. 
 If you want to have the official carts covers use the specific python toolpico8covers.py. More details in the [Tools](#tools) section.
 
 ## Developer info
+
+### Local build, flash, and SD-card workflow
+
+For development on macOS/Linux without Docker you need `arm-none-eabi-gcc` v10+ (tested against 15.2.rel1) and the Python `requirements.txt` (`python3 -m pip install -r requirements.txt`, which installs `gnwmanager`).
+
+#### One-time per-device setup
+
+The device needs SylverB's bootloader in bank 1, with Retro-Go-SD in bank 2. Without it, the firmware-update flow that creates the SD card directory tree (`/cores`, `/bios`, `/roms/homebrew`, …) cannot run.
+
+```bash
+# Install the bootloader to bank 1 (one-time):
+gnwmanager flash-bootloader bank1
+```
+
+The `Makefile` defaults `INTFLASH_BANK=2` to match that bootloader. Pass `make INTFLASH_BANK=1` only if you installed without it.
+
+#### First-time SD-card bootstrap
+
+A freshly formatted (exFAT or FAT32) SD card lacks the directories `sdpush` needs as parents; the bootloader creates them when it unpacks `retro-go_update.bin`:
+
+```bash
+make release_sdpush GNW_TARGET=mario
+```
+
+Wait for the launcher menu to appear on the device before running any other `gnwmanager` command, or the extraction is interrupted and aborted.
+
+#### Fast-iteration workflow
+
+Once the directory tree exists, flash the firmware and regenerate the SD content locally:
+
+```bash
+make flash create_sd_data GNW_TARGET=mario
+```
+
+`create_sd_data` writes the SD files under `sd_content/`. Push only the ones you changed instead of re-sending every core, e.g.:
+
+```bash
+gnwmanager sdpush --file sd_content/cores/nes.bin --dest-path /cores/
+```
+
+#### Common gotchas
+
+- **Debug-probe `BAD_DECOMPRESS`.** Some CMSIS-DAP probes drop LZMA chunks at gnwmanager's default speed. Lower it with `make GNWMANAGER="gnwmanager --frequency 1000000"`.
+- **Stale objects after toggling a `-D` flag.** Make doesn't track `-D` changes, so toggling `CHEAT_CODES`/`COVERFLOW`/etc. between builds mixes definitions and causes link errors. Run `make clean` when you change one.
 
 ### Build and flash using Docker
 

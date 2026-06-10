@@ -1,7 +1,3 @@
-#if !defined (INCLUDED_ES_ES)
-#define INCLUDED_ES_ES 1
-#endif
-#if INCLUDED_ES_ES == 1
 //#include "rg_i18n_lang.h"
 //Stand Spanish
 
@@ -21,6 +17,8 @@ int es_es_fmt_Time(char *outstr, const char *timefmt, uint16_t hour, uint16_t mi
     return sprintf(outstr, timefmt, hour, minutes, seconds);
 };
 
+// do not compile this part, it will be parsed by a script to create a bin file with language content
+#ifdef DO_NOT_COMPILE
 const lang_t lang_es_es LANG_DATA = {
     .codepage = 1252,
     .s_LangUI = "Idioma",
@@ -96,6 +94,7 @@ const lang_t lang_es_es LANG_DATA = {
     .s_md_Option_OFF = "\x5",
     .s_md_AudioFilter = "Filtro de audio",
     .s_md_VideoUpscaler = "Sobreescalar video",
+    .s_md_Region = "Región",
     //=====================================================================
 
     // Core\Src\porting\md\main_wsv.c ================================

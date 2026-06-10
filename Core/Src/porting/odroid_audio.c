@@ -11,7 +11,7 @@ uint8_t audio_level = ODROID_AUDIO_VOLUME_MAX;
 // they are defined inorder to be synchronized with LCD VSYNC
 // doing this ther is no frame drop due to dual buffer (VSYNC MODE)
 #define MD_AUDIO_FREQ_NTSC 53267
-#define MD_AUDIO_FREQ_PAL 52781
+#define MD_AUDIO_FREQ_PAL 53050   // 1061 ech./frame * 50 Hz (= GWENESIS_AUDIO_FREQ_PAL)
 
 // NOT sync with VSYNC TODO
 #define GW_AUDIO_FREQUENCY 32768
@@ -151,23 +151,23 @@ static void set_audio_frequency(uint32_t frequency)
         /* config to get custom AUDIO Frequency foor MEGADRIVE PAL */
     }
     /*
-    DIVM2=20, DIVN2=117, FRACN2=4566 DIVP2=7 =>
-    52480.97011021,-diff=0.00041600Hz -error=0.00000079% DIVM2=20, DIVN2=117,
-    FRACN2=4565 DIVP2=7 => 52480.91561454,+diff=0.05407968Hz +error=0.00010305%
-    VCO input: 3.20 MHz
-    VCO output: 376.18 MHz
+    PAL = 1061 ech./frame * 50 Hz = 53050 Hz
+    DIVM2=25, DIVN2=148, FRACN2=4566 DIVP2=7 =>
+    53056.20465960 Hz, +diff=6.20465960Hz +error=0.01169587%
+    VCO input: 2.56 MHz
+    VCO output: 380.31 MHz
     */
     /* The audio clock frequency is derived directly */
     /* SAI mode is MCKDIV mode */
     else if (frequency == MD_AUDIO_FREQ_PAL) {
-        PeriphClkInitStruct.PLL2.PLL2M = 20;
-        PeriphClkInitStruct.PLL2.PLL2N = 117;
+        PeriphClkInitStruct.PLL2.PLL2M = 25;
+        PeriphClkInitStruct.PLL2.PLL2N = 148;
         PeriphClkInitStruct.PLL2.PLL2P = 7;
         PeriphClkInitStruct.PLL2.PLL2Q = 2;
         PeriphClkInitStruct.PLL2.PLL2R = 5;
         PeriphClkInitStruct.PLL2.PLL2RGE = RCC_PLL2VCIRANGE_1;
         PeriphClkInitStruct.PLL2.PLL2VCOSEL = RCC_PLL2VCOWIDE;
-        PeriphClkInitStruct.PLL2.PLL2FRACN = 5000;
+        PeriphClkInitStruct.PLL2.PLL2FRACN = 4566;
 
     } else if (frequency == 44100) {
         PeriphClkInitStruct.PLL2.PLL2M = 18;

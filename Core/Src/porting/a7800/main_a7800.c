@@ -119,24 +119,29 @@ static void *Screenshot()
 }
 
 static size_t getromdata(unsigned char **data) {
+    ram_start = (uint32_t)&_OVERLAY_A7800_BSS_END;
 #ifndef GNW_DISABLE_COMPRESSION
-    /* src pointer to the ROM data in the external flash (raw or LZ4) */
-    const unsigned char *src = ROM_DATA;
+#if SD_CARD == 1
+#error "Roms compression is not supported on SD Card"
+#else
+    uint32_t src_size = 0;
+    const unsigned char *src = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &src_size, false);
     unsigned char *dest = (unsigned char *)rom_memory;
 
-    if(strcmp(ROM_EXT, "lzma") == 0){
+    if(strcmp(ACTIVE_FILE->ext, "lzma") == 0){
         size_t n_decomp_bytes;
-        n_decomp_bytes = lzma_inflate(dest, ROM_BUFF_LENGTH, src, ROM_DATA_LENGTH);
+        n_decomp_bytes = lzma_inflate(dest, ROM_BUFF_LENGTH, src, src_size);
         *data = dest;
+        ram_start += n_decomp_bytes;
         return n_decomp_bytes;
     }
     else
     {
-        *data = (unsigned char *)ROM_DATA;
-        return ROM_DATA_LENGTH;
+        *data = (unsigned char *)src;
+        return src_size;
     }
-#elif SD_CARD == 1
-    ram_start = (uint32_t)&_OVERLAY_A7800_BSS_END;
+#endif
+#else
     uint32_t size = ACTIVE_FILE->size;
     if (size > ram_get_free_size()) {
         *data = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);

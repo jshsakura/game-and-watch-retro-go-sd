@@ -330,17 +330,21 @@ HEX = $(CP) -O ihex
 BIN = $(CP) -O binary -S
 
 C_DEFS =  \
--DIS_LITTLE_ENDIAN -DFCEU_VERSION_NUMERIC=9813 -DTARGET_GNW -DFCEU_NO_MALLOC -DLINUX_EMU -DFCEU_LOW_RAM -DENABLE_EMULATOR_NES -DFORCE_NOFRENDO=0 -DNES_MAPPER_NSF -DSD_CARD=1
+-DIS_LITTLE_ENDIAN -DFCEU_VERSION_NUMERIC=9813 -DTARGET_GNW -DFCEU_NO_MALLOC -DLINUX_EMU -DFCEU_LOW_RAM -DENABLE_EMULATOR_NES -DNES_MAPPER_NSF -DSD_CARD=1
 
 #-DFCEU_ENABLE_GAMEGENIE_ROM -DCHEAT_CODES=1
 
 C_INCLUDES =  \
 -I. \
+-I./nes-fceumm \
 -I../Core/Inc/porting/nes_fceu \
+-I../retro-go-stm32/components/odroid/ \
+-I../Core/Src/porting/lib \
+-I../Core/Inc \
+-I../Core/Inc/retro-go \
+-I../Core/Inc/porting \
 -I$(CORE_FCEUMM)/src/ \
 -I$(CORE_FCEUMM)/src/drivers/libretro/libretro-common/include \
--I../retro-go-stm32/components/odroid \
--I./nes-fceumm \
 -I/opt/homebrew/include/
 
 

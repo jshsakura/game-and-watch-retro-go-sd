@@ -27,6 +27,8 @@
 #include "gw_ofw.h"
 #if SD_CARD == 1
 #include "gw_flash_alloc.h"
+#else
+#include "gw_littlefs.h"
 #endif
 
 #if !defined(COVERFLOW)
@@ -35,11 +37,13 @@
 
 static bool GLOBAL_DATA main_menu_cpu_oc_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
+#if SD_CARD == 1
     if (sdcard_hw_type == SDCARD_HW_OSPI1) {
         // Current SD Card design over OSPI1 crash with overclocking,
         // do not allow oc with it until a new flex PCB fix that
         sprintf(option->value, "%s", curr_lang->s_CPU_Overclock_0);
     } else {
+#endif
         int cpu_oc = odroid_settings_cpu_oc_level_get();
         if (event == ODROID_DIALOG_PREV) {
             if (cpu_oc > 0)
@@ -68,7 +72,9 @@ static bool GLOBAL_DATA main_menu_cpu_oc_cb(odroid_dialog_choice_t *option, odro
             sprintf(option->value, "%s", curr_lang->s_CPU_Overclock_0);
             break;
         }
+#if SD_CARD == 1
     }
+#endif
     return event == ODROID_DIALOG_ENTER;
 }
 
@@ -147,6 +153,7 @@ static bool GLOBAL_DATA colors_update_cb(odroid_dialog_choice_t *option, odroid_
         odroid_settings_colors_set(colors);
     }
     curr_colors = (colors_t *)(&gui_colors[colors]);
+    gui_apply_colors_to_overlay_clut();
     option->value[0] = 0;
     option->value[10] = 0;
     memcpy(option->value + 2, curr_colors, sizeof(colors_t));
@@ -193,8 +200,20 @@ static bool GLOBAL_DATA lang_update_cb(odroid_dialog_choice_t *option, odroid_di
         lang = odroid_settings_get_next_lang(lang);
         odroid_settings_lang_set(lang);
     }
-    curr_lang = (lang_t *)gui_lang[lang];
-    sprintf(option->value, "%s", curr_lang->s_LangName);
+    /* Switch curr_lang so the OTHER options' value callbacks (which
+     * dereference curr_lang->s_X each redraw, e.g. to format an ON/OFF
+     * state) live-update as the user navigates languages.
+     *
+     * Captured options[i].label pointers from the dialog's local
+     * choices array stay valid because i18n_load_language() caches
+     * each language's strings buffer per-idx and never frees it for
+     * the session — even after the user has cycled through every
+     * language in the menu. */
+    curr_lang = i18n_load_language(lang);
+    /* Use the baked native name from lang_metadata for the lang
+     * option's own value so it reads correctly even when this
+     * language's /lang/xx_xx.bin is missing. */
+    sprintf(option->value, "%s", i18n_lang_display_name(lang));
     return event == ODROID_DIALOG_ENTER;
 }
 
@@ -964,6 +983,24 @@ void GLOBAL_DATA app_sleep_transition(bool show_logo, bool slow) {
     app_animate_lcd_brightness(odroid_display_get_backlight_raw(), 0, slow ? 1 : 2);
 }
 
+void GLOBAL_DATA app_sleep_logo()
+{
+    for (int i = 10; i <= 100; i+=2)
+    {
+        lcd_sleep_while_swap_pending();
+        odroid_overlay_draw_fill_rect(0, 0, ODROID_SCREEN_WIDTH, ODROID_SCREEN_HEIGHT, curr_colors->bg_c);
+        odroid_overlay_draw_logo((ODROID_SCREEN_WIDTH - logo_gnw.width) / 2, 90,(retro_logo_image *)(&logo_gnw),
+            get_darken_pixel_d(curr_colors->sel_c, curr_colors->bg_c, 110 - i));
+
+        odroid_overlay_draw_logo((ODROID_SCREEN_WIDTH - logo_rgo.width) / 2, 174, (retro_logo_image *)(&logo_rgo), 
+           get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 110 - i));
+
+        lcd_swap();
+        wdog_refresh();
+        HAL_Delay(i / 10);
+    }
+}
+
 void GLOBAL_DATA app_main(uint8_t boot_mode)
 {
     lcd_set_buffers(framebuffer1, framebuffer2);
@@ -998,10 +1035,15 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     // Initialize GUI colors based on OFW type
     gui_init_colors();
 
+#if SD_CARD == 1
     sdcard_init();
     if (fs_mounted == false) {
         sdcard_error_screen();
     }
+#else
+    // Initialize the littleFS filesystem
+    fs_init();
+#endif
 
     // Re-initialize system now that the filesystem is mounted
     odroid_system_init(ODROID_APPID_LAUNCHER, 32000);

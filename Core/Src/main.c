@@ -237,19 +237,6 @@ uint32_t GW_GetBootButtons(void)
   return boot_buttons;
 }
 
-#if SD_CARD == 0
-// Workaround for being able to run with -D_FORTIFY_SOURCE=1
-static void memcpy_no_check(uint32_t *dst, uint32_t *src, size_t len)
-{
-  assert((len & 0b11) == 0);
-
-  uint32_t *end = dst + len / 4;
-  while (dst != end) {
-    *(dst++) = *(src++);
-  }
-}
-#endif
-
 void wdog_enable()
 {
   MX_WWDG1_Init();
@@ -275,18 +262,14 @@ int main(void)
   uint8_t trigger_wdt_bsod = 0;
   uint8_t boot_mode = BOOT_MODE_APP;
 
+#ifdef REMOTE_INPUT
+  *(volatile uint32_t *)SRAM_REMOTE_INPUT_ADDR = 0;
+#endif
+
 #if 0
   for(int i = 0; i < 1000000; i++) {
     __NOP();
   }
-#endif
-
-#if SD_CARD == 0
-  // Nullpointer redzone
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnonnull"
-  memset(0x0, '\x41', (size_t)&__NULLPTR_LENGTH__);
-#pragma GCC diagnostic pop
 #endif
 
   // Reset the log write pointer
@@ -402,26 +385,6 @@ int main(void)
   // Initialize the external flash
 
   OSPI_Init(&hospi1);
-
-  // ITCM hot code copy happens in main_pico8.c (loaded from SD card)
-
-  #if SD_CARD == 0
-  // Copy instructions and data from extflash to axiram
-  void *copy_areas[3];
-
-  copy_areas[0] = &_siramdata;  // 0x90000000
-  copy_areas[1] = &__ram_exec_start__;  // 0x24000000
-  copy_areas[2] = &__ram_exec_end__;  // 0x24000000 + length
-  memcpy_no_check(copy_areas[1], copy_areas[0], copy_areas[2] - copy_areas[1]);
-
-  // Copy ITCRAM HOT section
-  static uint32_t copy_areas2[4] __attribute__((used));
-  copy_areas2[0] = (uint32_t) &_sitcram_hot;
-  copy_areas2[1] = (uint32_t) &__itcram_hot_start__;
-  copy_areas2[2] = (uint32_t) &__itcram_hot_end__;
-  copy_areas2[3] = copy_areas2[2] - copy_areas2[1];
-  memcpy_no_check((uint32_t *) copy_areas2[1], (uint32_t *) copy_areas2[0], copy_areas2[3]);
-#endif
 
   bq24072_init();
 
@@ -1337,43 +1300,84 @@ __attribute__((optimize("-O0"))) static void MPU_Config(void)
     HAL_MPU_ConfigRegion(&MPU_InitStruct);
   }
 
-  /* Uncached areas lead to unalignment issues. Only protect the first 256+32+8+4 kB */
-  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-  MPU_InitStruct.Number = MPU_REGION_NUMBER3;
-  MPU_InitStruct.BaseAddress = 0x24000000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_256KB;
-  MPU_InitStruct.SubRegionDisable = 0x0;
-  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-
-  // 0x24000000 -> +256kB
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
-
-  // 0x24000000 + 256kB -> +32kB
-  MPU_InitStruct.Number = MPU_REGION_NUMBER4;
-  MPU_InitStruct.BaseAddress = 0x24000000 + 256 * 1024;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_32KB;
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
-
-  // 0x24000000 + 256kB + 32kB -> +8kB
-  MPU_InitStruct.Number = MPU_REGION_NUMBER5;
-  MPU_InitStruct.BaseAddress = 0x24000000 + (256 + 32) * 1024;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_8KB;
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
-
-  // 0x24000000 + 256kB + 32kB + 8kB -> +4kB
-  MPU_InitStruct.Number = MPU_REGION_NUMBER6;
-  MPU_InitStruct.BaseAddress = 0x24000000 + (256 + 32 + 8) * 1024;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_4KB;
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+  /* LCD pool MPU coverage: by default (RGB565 mode) all 300 KB at
+   * 0x24000000 are uncached/non-bufferable for LTDC framebuffer
+   * coherence. mpu_set_lcd_pool_uncached_range() recomputes regions
+   * 3..6 to cover the current framebuffer footprint; called once
+   * here for boot defaults, then re-called from gw_lcd.c whenever
+   * the LCD mode changes. */
+  mpu_set_lcd_pool_uncached_range(300 * 1024);  /* full 300 KB = RGB565 */
 
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_HFNMI_PRIVDEF);
 
+}
+
+/* Reconfigure regions 3..6 so they cover exactly `framebuffer_bytes`
+ * starting at 0x24000000 as uncached + non-bufferable. Everything past
+ * that within the AXI SRAM region defaults to Normal cacheable, which
+ * is what we want for the LCD bonus area (freed in LUT8 mode) and for
+ * RAM_EMU above it.
+ *
+ * Power-of-2 decomposition is hand-coded for the two sizes we use:
+ *   300 KB (RGB565) → 256 + 32 + 8 + 4
+ *   154 KB (LUT8  ) → 128 + 16 + 8 + 2
+ * Both consume exactly 4 MPU regions (3..6), so the live count never
+ * changes. Caller is responsible for HAL_MPU_Disable/Enable bracket.
+ *
+ * IMPORTANT: this function does NOT disable/enable the MPU — when called
+ * during MPU_Config(), the MPU is already disabled; when called later
+ * from lcd_setup_framebuffers() the caller must wrap it. */
+void mpu_set_lcd_pool_uncached_range(uint32_t framebuffer_bytes)
+{
+  MPU_Region_InitTypeDef MPU_InitStruct = {0};
+  MPU_InitStruct.Enable           = MPU_REGION_ENABLE;
+  MPU_InitStruct.SubRegionDisable = 0x0;
+  MPU_InitStruct.TypeExtField     = MPU_TEX_LEVEL0;
+  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+  MPU_InitStruct.DisableExec      = MPU_INSTRUCTION_ACCESS_ENABLE;
+  MPU_InitStruct.IsShareable      = MPU_ACCESS_NOT_SHAREABLE;
+  MPU_InitStruct.IsCacheable      = MPU_ACCESS_NOT_CACHEABLE;
+  MPU_InitStruct.IsBufferable     = MPU_ACCESS_NOT_BUFFERABLE;
+
+  /* Region 6 is the last; its size is implied by where region 5 ends. */
+  uint32_t r3_size_kb, r4_size_kb, r5_size_kb;
+  uint32_t r3_enum, r4_enum, r5_enum, r6_enum;
+  if (framebuffer_bytes >= 300 * 1024) {
+    /* RGB565 (or larger) — full LCD pool uncached, sums to 300 KB. */
+    r3_size_kb = 256; r3_enum = MPU_REGION_SIZE_256KB;
+    r4_size_kb =  32; r4_enum = MPU_REGION_SIZE_32KB;
+    r5_size_kb =   8; r5_enum = MPU_REGION_SIZE_8KB;
+                      r6_enum = MPU_REGION_SIZE_4KB;
+  } else {
+    /* LUT8 — exactly 154 KB framebuffer footprint, leaves the 146 KB
+     * bonus area cacheable by default (CPU sees engine-accessible
+     * memory as Normal Write-back). */
+    r3_size_kb = 128; r3_enum = MPU_REGION_SIZE_128KB;
+    r4_size_kb =  16; r4_enum = MPU_REGION_SIZE_16KB;
+    r5_size_kb =   8; r5_enum = MPU_REGION_SIZE_8KB;
+                      r6_enum = MPU_REGION_SIZE_2KB;
+  }
+
+  MPU_InitStruct.Number      = MPU_REGION_NUMBER3;
+  MPU_InitStruct.BaseAddress = 0x24000000;
+  MPU_InitStruct.Size        = r3_enum;
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  MPU_InitStruct.Number      = MPU_REGION_NUMBER4;
+  MPU_InitStruct.BaseAddress = 0x24000000 + r3_size_kb * 1024u;
+  MPU_InitStruct.Size        = r4_enum;
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  MPU_InitStruct.Number      = MPU_REGION_NUMBER5;
+  MPU_InitStruct.BaseAddress = 0x24000000 + (r3_size_kb + r4_size_kb) * 1024u;
+  MPU_InitStruct.Size        = r5_enum;
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  MPU_InitStruct.Number      = MPU_REGION_NUMBER6;
+  MPU_InitStruct.BaseAddress = 0x24000000 + (r3_size_kb + r4_size_kb + r5_size_kb) * 1024u;
+  MPU_InitStruct.Size        = r6_enum;
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
 }
 
 /**

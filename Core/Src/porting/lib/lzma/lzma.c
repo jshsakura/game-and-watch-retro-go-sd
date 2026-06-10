@@ -1,5 +1,6 @@
 #include "lzma.h"
 #include "assert.h"
+#include <stdio.h>
 
 
 static void *SzAlloc(ISzAllocPtr p, size_t size) {

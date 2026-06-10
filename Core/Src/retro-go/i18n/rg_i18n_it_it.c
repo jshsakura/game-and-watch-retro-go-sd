@@ -1,7 +1,3 @@
-#if !defined (INCLUDED_IT_IT)
-#define INCLUDED_IT_IT 1
-#endif
-#if INCLUDED_IT_IT == 1
 //#include "rg_i18n_lang.h"
 // Stand Italian
 // Created by SantX27, checked by MrPalloncini
@@ -21,6 +17,8 @@ int it_it_fmt_Time(char *outstr, const char *timefmt, uint16_t hour, uint16_t mi
     return sprintf(outstr, timefmt, hour, minutes, seconds);
 };
 
+// do not compile this part, it will be parsed by a script to create a bin file with language content
+#ifdef DO_NOT_COMPILE
 const lang_t lang_it_it LANG_DATA = {
     .codepage = 1252,
     .s_LangUI = "Lingua",
@@ -96,6 +94,7 @@ const lang_t lang_it_it LANG_DATA = {
     .s_md_Option_OFF = "\x5",
     .s_md_AudioFilter = "Audio Filter",
     .s_md_VideoUpscaler = "Video Upscaler",
+    .s_md_Region = "Regione",
     //=====================================================================
 
     // Core\Src\porting\md\main_wsv.c ================================

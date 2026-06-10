@@ -235,4 +235,15 @@ const gw_firmware_abi_t g_firmware_abi = {
     .dtcm_p8ram_start          = NULL,  /* no longer a fixed section — use dtcm_malloc */
 
     .dtcm_malloc               = malloc,
+
+    .odroid_system_emu_load_state = odroid_system_emu_load_state,
+    .odroid_audio_mute            = odroid_audio_mute,
+
+    /* lcd_setup_framebuffers takes lcd_mode_t (enum); ABI exposes it as
+     * `int` so the header doesn't need to leak the enum / pull in the
+     * heavy gw_lcd.h. The cast is safe — enum and int are interchangeable
+     * for parameter passing in C. */
+    .lcd_setup_framebuffers       = (void (*)(int))lcd_setup_framebuffers,
+    .lcd_get_bonus_pool           = lcd_get_bonus_pool,
+    .lcd_set_clut                 = lcd_set_clut,
 };

@@ -15,8 +15,21 @@ void set_font(uint8_t font_index);
 uint8_t get_font();
 
 extern lang_t* curr_lang;
-extern const lang_t* gui_lang[];
 extern const int gui_lang_count;
+
+/* Load a language's strings from /lang/xx_xx.bin (built by
+ * tools/gen_i18n_bin.py). On success returns a pointer to a static
+ * RAM-resident lang_t whose s_XXX fields point into a per-idx cached
+ * buffer (loaded once per session, never freed). On any error (file
+ * missing, bad magic, OOM, etc.) returns the baked en_us fallback.
+ * Caller should assign the result to curr_lang. Safe to call from
+ * the redraw loop; only the first request for each idx does SD I/O. */
+lang_t *i18n_load_language(int idx);
+
+/* Native display name for the language at `idx` ("English", "Deutsch",
+ * "日本語", etc.). Safe to call before any SD i/o — used by the menu
+ * to list available languages without loading their strings. */
+const char *i18n_lang_display_name(int idx);
 
 int i18n_get_text_height();
 

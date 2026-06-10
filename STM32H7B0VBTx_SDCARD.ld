@@ -67,6 +67,7 @@ _Min_Stack_Size = 24 * 1024; /* required amount of stack */
 __NULLPTR_LENGTH__  = 0x0;
 __ITCMRAM_LENGTH__  = 64K;
 __DTCMRAM_LENGTH__  = 128K;
+__REMOTE_INPUT_RESERVE__ = DEFINED(REMOTE_INPUT) ? REMOTE_INPUT * 12 : 0;
 __RAM_UC_LENGTH__   = 300K; /* framebuffer : 2 x 320 x 240 x 16 bits */
 __RAM_EMU_LENGTH__  = 1024K - __RAM_UC_LENGTH__;
 __AHBRAM_LENGTH__   = 128K;
@@ -75,8 +76,9 @@ __FLASH2_LENGTH__   = 256K; /* Bank 2 */
 __RAM_FCEUMM_MAPPER_LENGTH__ = 48K; /* Current FCEUMM mapper code */
 
 /* Usefull only for round robin flash allocator */
+__EXTFLASH_OFFSET__ = DEFINED(__EXTFLASH_OFFSET__) ? __EXTFLASH_OFFSET__ : 0;  /* bytes reserved at the bottom by the chainloader */
 __EXTFLASH_BASE__ = 0x90000000;  /* Beginning of addressable extflash addresses */
-__EXTFLASH_START__ = __EXTFLASH_BASE__;  /* Beginning of where we're going to store emulator and rom data */
+__EXTFLASH_START__ = __EXTFLASH_BASE__ + __EXTFLASH_OFFSET__;  /* Beginning of where we're going to store emulator and rom data (respect the reserved offset, matching STM32H7B0VBTx_FLASH.ld) */
 
 __RAM_START__       = 0x24000000;
 __RAM_UC_START__    = __RAM_START__;
@@ -136,13 +138,18 @@ SECTIONS
     __itcram_end__ = .;
   } > ITCMRAM
 
-  /* Uncached and unbuffered memory for the LCD framebuffers */
+  /* Uncached and unbuffered LCD framebuffer pool. Sized for the largest
+   * supported mode (2x RGB565 framebuffers = 300K). lcd_setup_framebuffers()
+   * carves it up at boot via __lcd_pool_start__; in LUT8 mode the upper
+   * ~154K is freed as a "bonus pool" (lcd_get_bonus_pool()) that PICO-8
+   * folds into its TLSF allocator via g_platform.scratch_base/size. */
   ._ram_uc (NOLOAD) :
   {
     __ram_uc_start__ = .;
-    . = ALIGN(4);
-    *(.lcd1)
-    *(.lcd2)
+    . = ALIGN(16);
+    __lcd_pool_start__ = .;
+    . = . + __RAM_UC_LENGTH__;
+    __lcd_pool_end__ = .;
     __ram_uc_end__ = .;
   } > RAM_UC
 
@@ -225,31 +232,6 @@ SECTIONS
     . = ALIGN(4);
     KEEP(*(.sd_fonts_unicode_kanji))
   } > CORES
-
-  .overlay_nes __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_nes_start__ = .;
-    build/nes/*.o (.data .data* .text .text* .rodata .rodata*)
-    . = ALIGN(4);
-    _OVERLAY_NES_LOAD_END = .;
-  } AT > CORES
-  _OVERLAY_NES_LOAD_START = LOADADDR(.overlay_nes);
-  _OVERLAY_NES_SIZE = SIZEOF(.overlay_nes);
-
-  .overlay_nes_bss _OVERLAY_NES_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_NES_BSS_START = .;
-    build/nes/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/nes/*.o (COMMON)
-    . = ALIGN(4);
-    _NES_ROM_UNPACK_BUFFER = .;
-    _OVERLAY_NES_BSS_END = .;
-    __ram_emu_nes_end__ = .;
-    ASSERT(ABSOLUTE(_OVERLAY_NES_BSS_END) < __RAM_EMU_END__, "Error: NES BSS overflow");
-  }
-  _OVERLAY_NES_BSS_SIZE = SIZEOF(.overlay_nes_bss);
-  _NES_ROM_UNPACK_BUFFER_SIZE = __RAM_EMU_START__ + __RAM_EMU_LENGTH__ - _NES_ROM_UNPACK_BUFFER;
 
 INCLUDE build/fceumm_mappers.ld
 
@@ -633,11 +615,36 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_MEDIA_BSS_SIZE = SIZEOF(.overlay_media_bss);
 
-  /* PICO-8 stub overlay → RAM.
+  /* PICO-8 stub overlay → RAM, placed at HIGH end of RAM_EMU.
      The GPL build only includes the install-prompt stub (main_pico8_stub.c).
      The real engine is loaded from /cores/pico8.bin at runtime, replacing
-     this stub in memory. See docs/PICO8_EXTERNAL_MODULE.md. */
-  .overlay_pico8 __RAM_EMU_START__ : {
+     this stub in memory.
+
+     Stub is tiny but the SAME VMA must be used for the runtime-loaded
+     pico8.bin so the engine's link-time RAM references resolve correctly.
+
+     Layout — engine lives at the LOW end of the LCD bonus area:
+       __RAM_UC_START__              = 0x24000000
+       _PICO8_FB_OFFSET (LUT8 fb)    = 0x025800   (154 KB)
+       __overlay_pico8_vma           = 0x24026800
+       engine end (BSS_END, varies)
+       TLSF main pool starts here, runs to __RAM_EMU_END__ = 0x24100000
+
+     The LCD MUST be in LUT8 mode when pico8.bin is loaded into this
+     range, otherwise the load overwrites the active RGB565 framebuffer.
+     rg_emulators.c calls lcd_setup_framebuffers(LCD_MODE_LUT8) before
+     load_core_bin_with_header("/cores/pico8.bin", ...).
+
+     Why a fixed low-end address: GPL never has to know the engine's
+     size. The engine's own entry trampoline zeroes BSS at startup
+     (equivalent of crt0), and the SD-side main_pico8.c computes the
+     TLSF pool from _OVERLAY_PICO8_BSS_END..__RAM_EMU_END__. So the
+     engine can grow freely without anyone rebuilding GPL — only the
+     SD binaries need updating. */
+  _PICO8_FB_OFFSET = 2 * 320 * 240;          /* LUT8 framebuffer = 154 KB */
+  __overlay_pico8_vma = __RAM_UC_START__ + _PICO8_FB_OFFSET;
+
+  .overlay_pico8 __overlay_pico8_vma : {
     . = ALIGN(4);
     __ram_emu_pico8_start__ = .;
     KEEP(*(.pico8_entry))
@@ -658,7 +665,8 @@ INCLUDE build/fceumm_mappers.ld
     build/pico8/*.o (COMMON)
     __ram_emu_pico8_end__ = .;
     _OVERLAY_PICO8_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_PICO8_BSS_END) < __RAM_EMU_END__, "Error: PICO8 BSS overflow");
+    ASSERT(ABSOLUTE(_OVERLAY_PICO8_BSS_END) <= __RAM_EMU_END__,
+           "Error: PICO8 engine + BSS would overflow RAM_EMU and leave no room for the TLSF pool");
   }
   _OVERLAY_PICO8_BSS_SIZE = SIZEOF(.overlay_pico8_bss);
 
@@ -867,9 +875,10 @@ INCLUDE build/fceumm_mappers.ld
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_stack :
   {
-    /* Pad the unused area between the last symbol and the start of the redzone */
+    /* Pad the unused area between the last symbol and the start of the redzone.
+       We reserve space at the top of DTCMRAM for boot magic and remote input if enabled. */
     __dtc_padding_start__ = .;
-    . = . + __DTCMRAM_LENGTH__ - (_Min_Stack_Size + _Stack_Redzone_Size) - (__dtc_padding_start__ - __dtcram_start__);
+    . = . + __DTCMRAM_LENGTH__ - __REMOTE_INPUT_RESERVE__ - (_Min_Stack_Size + _Stack_Redzone_Size) - (__dtc_padding_start__ - __dtcram_start__);
     __dtc_padding_end__ = .;
 
     _stack_redzone = .;
@@ -877,6 +886,7 @@ INCLUDE build/fceumm_mappers.ld
     _stack_bottom = .;
     . = . + _Min_Stack_Size;
     _stack_top = .;
+    . = . + __REMOTE_INPUT_RESERVE__;
     __dtcram_end__ = .;
   } >DTCMRAM
 

@@ -4,7 +4,6 @@
 #include "main.h"
 #include "bilinear.h"
 #include "gw_lcd.h"
-#include "gw_flash.h"
 #include "gw_linker.h"
 #include "gw_buttons.h"
 #include "shared.h"
@@ -52,17 +51,6 @@ unsigned int crc32_le(unsigned int crc, unsigned char const * buf,unsigned int l
 #define SMSROM_RAM_BUFFER_LENGTH (60*1024)
 static uint8_t *ROMinRAM_DATA;
 
-static const uint8_t IMG_DISKETTE[] = {
-    0x00, 0x00, 0x00, 0x3F, 0xFF, 0xE0, 0x7C, 0x00,
-    0x70, 0x7C, 0x03, 0x78, 0x7C, 0x03, 0x7C, 0x7C,
-    0x03, 0x7E, 0x7C, 0x00, 0x7E, 0x7F, 0xFF, 0xFE,
-    0x7F, 0xFF, 0xFE, 0x7F, 0xFF, 0xFE, 0x7F, 0xFF,
-    0xFE, 0x7F, 0xFF, 0xFE, 0x7F, 0xFF, 0xFE, 0x7E,
-    0x00, 0x7E, 0x7C, 0x00, 0x3E, 0x7C, 0x00, 0x3E,
-    0x7D, 0xFF, 0xBE, 0x7C, 0x00, 0x3E, 0x7C, 0x00,
-    0x3E, 0x7D, 0xFF, 0xBE, 0x7C, 0x00, 0x3E, 0x7C,
-    0x00, 0x3E, 0x3F, 0xFF, 0xFC, 0x00, 0x00, 0x00,
-};
 #endif
 
 static void blit_console();
@@ -74,83 +62,33 @@ load_rom_from_flash(uint8_t emu_engine)
     /* check if it's compressed */
 
 #ifndef GNW_DISABLE_COMPRESSION
-    if (strcmp(ROM_EXT, "lzma") == 0)
+#if SD_CARD == 1
+#error "Roms compression is not supported on SD Card"
+#else
+    uint32_t src_size = 0;
+    const uint8_t *src = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &src_size, false);
+    if (src == NULL || src_size == 0) {
+        return 0;
+    }
+    if (strcmp(ACTIVE_FILE->ext, "lzma") == 0)
     {
         /* it can fit in ITC RAM */
         if ((emu_engine == SMSPLUSGX_ENGINE_COLECO) || (emu_engine == SMSPLUSGX_ENGINE_SG1000))
         {
             size_t n_decomp_bytes;
             ROMinRAM_DATA = itc_malloc(SMSROM_RAM_BUFFER_LENGTH);
-            n_decomp_bytes = lzma_inflate((uint8 *)ROMinRAM_DATA, SMSROM_RAM_BUFFER_LENGTH, (uint8 *)ROM_DATA, ROM_DATA_LENGTH);
+            n_decomp_bytes = lzma_inflate((uint8 *)ROMinRAM_DATA, SMSROM_RAM_BUFFER_LENGTH, (uint8 *)src, src_size);
             cart.rom = (uint8 *)ROMinRAM_DATA;
             cart.size = (uint32_t)n_decomp_bytes;
-        }
-        /* it can't fit in ITC RAM */
-        else
-        {
-            //   assert ( (&__CACHEFLASH_END__ - &__CACHEFLASH_START__) > 0);
-            /* check header  */
-            //assert(memcmp((uint8 *)ROM_DATA, "SMS+", 4) == 0);
-            unsigned int nb_banks = 0;
-            unsigned int lzma_bank_size = 0;
-            unsigned int lzma_bank_offset = 0;
-            unsigned int uncompressed_rom_size = 0;
-            memcpy(&nb_banks, &ROM_DATA[4], sizeof(nb_banks));
-            lzma_bank_offset = 4 + 4 + 4 * nb_banks;
-            for (int i = 0; i < nb_banks; i++)
-            {
-                wdog_refresh();
-                memcpy(&lzma_bank_size, &ROM_DATA[8 + 4 * i], sizeof(lzma_bank_size));
-                lcd_clear_inactive_buffer();
-                uint16_t *dest = lcd_get_inactive_buffer();
-                /* uncompressed in lcd framebuffer */
-                size_t n_decomp_bytes;
-                n_decomp_bytes = lzma_inflate((uint8 *)lcd_get_active_buffer(), 2 * 320 * 240, &ROM_DATA[lzma_bank_offset], lzma_bank_size);
-
-                //assert (  (&__CACHEFLASH_END__ - &__CACHEFLASH_START__) >= ( (uint32_t)n_decomp_bytes + uncompressed_rom_size) );
-                int diff = memcmp((void *)(&__CACHEFLASH_START__ + uncompressed_rom_size), (uint8 *)lcd_get_active_buffer(), n_decomp_bytes);
-                if (diff != 0)
-                {
-                wdog_refresh();
-                OSPI_DisableMemoryMappedMode();
-                    /* display diskette during flash erase */
-                    uint16_t idx = 0;
-                    for(uint8_t i=0; i < 24; i++) {
-                        for(uint8_t j=0; j < 24; j++) {
-                            if(IMG_DISKETTE[idx / 8] & (1 << (7 - idx % 8))){
-                                dest[286 + j +  GW_LCD_WIDTH * (10 + i)] = 0xFFFF;
-                            }
-                            idx++;
-                        }
-                    }
-                    /* erase the trunk */
-                    OSPI_EraseSync((&__CACHEFLASH_START__ - &__EXTFLASH_BASE__)+uncompressed_rom_size, (uint32_t)n_decomp_bytes);
-
-                    /* erase diskette during flash program */
-                    for (short y = 0; y < 24; y++) {
-                    uint16_t *dest_row = &dest[(y + 10) * GW_LCD_WIDTH + 286];
-                    memset(dest_row,0x0 , 24 * sizeof(uint16_t));
-                    }
-                    /* program the trunk */
-                    wdog_refresh();
-                    OSPI_Program((&__CACHEFLASH_START__ - &__EXTFLASH_BASE__)+uncompressed_rom_size, (uint8 *)lcd_get_active_buffer(), (uint32_t)n_decomp_bytes);
-                    OSPI_EnableMemoryMappedMode();
-                    wdog_refresh();
-                }
-                lzma_bank_offset += lzma_bank_size;
-                uncompressed_rom_size += (uint32_t)n_decomp_bytes;
-            }
-            /* set the rom pointer and size */
-            cart.rom = &__CACHEFLASH_START__;
-            cart.size = uncompressed_rom_size;
         }
     }
     else
     {
-        cart.rom = (uint8 *)ROM_DATA;
-        cart.size = ROM_DATA_LENGTH;
+        cart.rom = (uint8 *)src;
+        cart.size = src_size;
     }
-#elif SD_CARD == 1
+#endif
+#else
     ram_start = (uint32_t)&_OVERLAY_SMS_BSS_END;
     uint32_t size = ACTIVE_FILE->size;
     if (size > ram_get_free_size()) {
@@ -163,6 +101,9 @@ load_rom_from_flash(uint8_t emu_engine)
     }
     cart.size = size;
 #endif
+    if (cart.rom == NULL) {
+        return 0;
+    }
     cart.sram = sram;
     cart.pages = cart.size / 0x4000;
     cart.crc = crc32_le(0, cart.rom, cart.size);
@@ -181,14 +122,9 @@ load_rom_from_flash(uint8_t emu_engine)
 
     if (sms.console == CONSOLE_COLECO)
     {
-#if SD_CARD == 1
         coleco.rom = (uint8*)ahb_malloc(0x2000); // 8KB bios
         printf("Loading Coleco BIOS %p\n", coleco.rom);
         odroid_sdcard_read_file("/bios/coleco/coleco.bin", coleco.rom, 0x2000);
-#else
-        extern const unsigned char ColecoVision_BIOS[];
-        coleco.rom = (uint8*)ColecoVision_BIOS;
-#endif
     }
     return 1;
 }

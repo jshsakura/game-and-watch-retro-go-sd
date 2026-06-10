@@ -2,11 +2,12 @@
 
 #include <stdint.h>
 
-extern uint8_t __CACHEFLASH_START__;
-extern uint8_t __CACHEFLASH_END__;
 extern uint8_t __EXTFLASH_START__;
 extern uint8_t __EXTFLASH_END__;
 extern uint8_t __EXTFLASH_BASE__;
+extern uint8_t __EXTFLASH_OFFSET__;  // Bytes reserved at the bottom of extflash by the chainloader (its --defsym value). Read as (uint32_t)&__EXTFLASH_OFFSET__.
+extern uint8_t __FILESYSTEM_START__;
+extern uint8_t __FILESYSTEM_END__;
 extern uint32_t __INTFLASH__;  // From linker, usually value 0x08000000 for bank 1, or 0x08100000 for bank 2
 
 extern uint8_t __NULLPTR_LENGTH__;
@@ -25,8 +26,6 @@ extern uint32_t __ram_exec_end__;
 extern uint32_t _sitcram_hot;
 extern uint32_t __itcram_hot_start__;
 extern uint32_t __itcram_hot_end__;
-extern uint8_t __cacheflash_start__;
-extern uint8_t __cacheflash_end__;
 
 
 // If this is not an array the compiler might put in a memory_chk with dest_size 1...
@@ -143,9 +142,6 @@ extern uint8_t _ITCM_WSWAN_SIZE;
 extern void * _OVERLAY_WSWAN_BSS_START[];
 extern void * _OVERLAY_WSWAN_BSS_END[];
 extern uint8_t _OVERLAY_WSWAN_BSS_SIZE;
-
-extern uint8_t *_NES_ROM_UNPACK_BUFFER;
-extern uint8_t _NES_ROM_UNPACK_BUFFER_SIZE;
 
 extern void * _MSX_ROM_UNPACK_BUFFER[];
 extern uint8_t _MSX_ROM_UNPACK_BUFFER_SIZE;

@@ -14,6 +14,7 @@
 
 #include "common.h"
 #include "rom_manager.h"
+#include "odroid_overlay.h"
 #include "gw_lcd.h"
 #include "gw_ofw.h"
 #include "rg_i18n.h"
@@ -92,6 +93,7 @@ int msx_button_select_key = EC_CTRL;
 static bool show_disk_icon = false;
 static char current_disk_path[PROP_MAXPATH] = {0};
 #define MSX_DISK_EXTENSION "dsk"
+#define MSX_DISK_EXTENSION_COMPRESSED "cdk"
 
 static int selected_key_index = 0;
 
@@ -120,7 +122,7 @@ static const uint8_t volume_table[ODROID_AUDIO_VOLUME_MAX + 1] = {
 
 #ifndef GNW_DISABLE_COMPRESSION
 /* Compression management */
-static size_t rom_decompress_size;
+size_t msx_rom_decompress_size;
 #endif
 
 /* Framebuffer management */
@@ -1083,12 +1085,33 @@ static void createMsxMachine(int msxType) {
 
     // We need to know which kind of media we will load to
     // load correct configuration
-    if (0 == strcmp(ACTIVE_FILE->ext,MSX_DISK_EXTENSION)) {
+    if (0 == strcmp(ACTIVE_FILE->ext, MSX_DISK_EXTENSION_COMPRESSED)) {
+        strcpy(current_disk_path, ACTIVE_FILE->path);
+        uint8_t cdk_header[8];
+        FILE *file = fopen(ACTIVE_FILE->path, "rb");
+        if (file == NULL) {
+            printf("Failed to open disk image file\n");
+            return;
+        }
+        fread(cdk_header, 1, sizeof(cdk_header), file);
+        fclose(file);
+        printf("cdk_header: %02X %02X %02X %02X %02X %02X %02X %02X\n", cdk_header[0], cdk_header[1], cdk_header[2], cdk_header[3], cdk_header[4], cdk_header[5], cdk_header[6], cdk_header[7]);
+        printf("count %x\n", cdk_header[4]+(cdk_header[5]<<8)+(cdk_header[6]<<16)+(cdk_header[7]<<24));
+        if (cdk_header[4]+(cdk_header[5]<<8)+(cdk_header[6]<<16)+(cdk_header[7]<<24) <= 0x288) {
+            printf("Compressed MSX_GAME_DISK\n");
+            msx_game_type = MSX_GAME_DISK;
+        } else {
+            printf("Compressed MSX_GAME_HDIDE\n");
+            msx_game_type = MSX_GAME_HDIDE;
+        }
+    } else if (0 == strcmp(ACTIVE_FILE->ext, MSX_DISK_EXTENSION)) {
         strcpy(current_disk_path, ACTIVE_FILE->path);
         // Find if file is disk image or IDE HDD image
         if (ACTIVE_FILE->size <= 720*1024) {
+            printf("MSX_GAME_DISK\n");
             msx_game_type = MSX_GAME_DISK;
         } else {
+            printf("MSX_GAME_HDIDE\n");
             msx_game_type = MSX_GAME_HDIDE;
         }
     } else {
@@ -1665,13 +1688,20 @@ static void insertGame() {
             printf("Rom Mapper %d\n",mapper);
             if (mapper == ROM_UNKNOWN) {
 #ifndef GNW_DISABLE_COMPRESSION
-                if(strcmp(ROM_EXT, "lzma") == 0) {
-                    mapper = GuessROM((unsigned char *)&_MSX_ROM_UNPACK_BUFFER,rom_decompress_size);
+                if(strcmp(ACTIVE_FILE->ext, "lzma") == 0) {
+                    mapper = GuessROM((unsigned char *)&_MSX_ROM_UNPACK_BUFFER,msx_rom_decompress_size);
                 }
                 else
 #endif
                 {
-                    mapper = GuessROM((uint8_t *)ROM_DATA,ROM_DATA_LENGTH);
+                    uint32_t rom_size;
+                    uint8_t *rom_data = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &rom_size, false);
+                    if (rom_data == NULL) {
+                        return;
+                    }
+                    if (rom_data != NULL) {
+                        mapper = GuessROM(rom_data, rom_size);
+                    }
                 }
             }
             if (!controls_found) {
@@ -1705,6 +1735,7 @@ static void insertGame() {
         }
         case MSX_GAME_DISK:
         {
+            printf("insertDiskette msx game type %d path %s\n", msx_game_type, current_disk_path);
             insertDiskette(properties, 0, current_disk_path, NULL, -1);
 
             // We load SCC-I cartridge for disk games requiring it
@@ -1974,7 +2005,7 @@ void app_main_msx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     audio_clear_buffers();
 
     // Get game info from sha1 and database file
-    if (!msx_get_game_info(ACTIVE_FILE->path, &game_info)) {
+    if (!msx_get_game_info(ACTIVE_FILE, &game_info)) {
         game_info.mapper = ROM_UNKNOWN;
         game_info.button_profile = 0x7F;
         game_info.ctrl_required = false;
@@ -1982,25 +2013,10 @@ void app_main_msx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         printf("Game info found mapper %d profile %d ctrl %d\n", game_info.mapper, game_info.button_profile, game_info.ctrl_required);
     }
 
-#ifndef GNW_DISABLE_COMPRESSION
 /* To reserve correct amount of RAM for decompressing game   */
     /* We have to decompress game ROM in ram now (if compressed) */
     /* It will allow to correctly dynamically allocate ram for   */
     /* different usages (like MSX RAM)                           */
-    if(strcmp(ROM_EXT, "lzma") == 0)
-    {
-        unsigned char *dest = (unsigned char *)&_MSX_ROM_UNPACK_BUFFER;
-        rom_decompress_size = lzma_inflate((unsigned char *)&_MSX_ROM_UNPACK_BUFFER,
-                                           (uint32_t)&_MSX_ROM_UNPACK_BUFFER_SIZE,
-                                           (uint8_t *)ROM_DATA,
-                                           ROM_DATA_LENGTH);
-        ram_start = (uint32_t)dest + rom_decompress_size;
-    }
-    else
-#endif
-    {
-        ram_start = (uint32_t)&_MSX_ROM_UNPACK_BUFFER;
-    }
 
     setupEmulatorRessources(selected_msx_index);
 

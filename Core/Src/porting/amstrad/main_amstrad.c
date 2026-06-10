@@ -19,6 +19,7 @@
 #define AUDIO_BUFFER_LENGTH_AMSTRAD  (AMSTRAD_SAMPLE_RATE / AMSTRAD_FPS)
 
 #define AMSTRAD_DISK_EXTENSION "dsk"
+#define AMSTRAD_COMPRESSED_DISK_EXTENSION "cdk"
 
 static void blit(uint8_t *src_fb, uint16_t *framebuffer);
 
@@ -194,18 +195,11 @@ static char controls_name[10];
 static int selected_controls_index = 0;
 
 static char disk_name[128];
-//static int selected_disk_index = 0;
 static char current_disk_path[255] = {0};
 
-#if SD_CARD == 1
 char DISKA_NAME[256] = "\0";
 char DISKB_NAME[256] = "\0";
 char cart_name[16] = "\0";
-#else
-char DISKA_NAME[16] = "\0";
-char DISKB_NAME[16] = "\0";
-char cart_name[16] = "\0";
-#endif
 int emu_status;
 
 static odroid_gamepad_state_t previous_joystick_state;
@@ -1085,29 +1079,12 @@ void app_main_amstrad(uint8_t load_state, uint8_t start_paused, int8_t save_slot
     capmain(0, NULL);
     amstrad_set_audio_buffer((int8_t *)soundBuffer, sizeof(soundBuffer));
 
-#if SD_CARD != 1
-    if (0 == strcmp(ACTIVE_FILE->ext, AMSTRAD_DISK_EXTENSION))
-    {
-        if (selected_disk_index == -1) {
-            const rom_system_t *amstrad_system = rom_manager_system(&rom_mgr, "Amstrad CPC");
-            selected_disk_index = rom_get_index_for_file_ext(amstrad_system, ACTIVE_FILE);
-            disk_load_result = attach_disk_buffer((char *)ROM_DATA, 0);
-            printf("attach_disk_buffer %d\n", disk_load_result);
-        } else {
-            retro_emulator_file_t *disk_file = NULL;
-            const rom_system_t *amstrad_system = rom_manager_system(&rom_mgr, "Amstrad CPC");
-            disk_file = (retro_emulator_file_t *)rom_get_ext_file_at_index(amstrad_system,AMSTRAD_DISK_EXTENSION,selected_disk_index);
-            disk_load_result = attach_disk_buffer((char *)disk_file->address, 0);
-            printf("attach_disk_buffer %d\n", disk_load_result);
-        }
-    }
-#else
-    if (0 == strcmp(ACTIVE_FILE->ext, AMSTRAD_DISK_EXTENSION))
+    if (0 == strcmp(ACTIVE_FILE->ext, AMSTRAD_DISK_EXTENSION) ||
+        0 == strcmp(ACTIVE_FILE->ext, AMSTRAD_COMPRESSED_DISK_EXTENSION))
     {
         strcpy(current_disk_path, ACTIVE_FILE->path);
         attach_disk(current_disk_path, 0);
     }
-#endif
 
     cap32_set_palette(selected_palette_index);
 

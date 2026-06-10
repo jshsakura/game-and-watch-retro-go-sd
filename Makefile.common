@@ -20,9 +20,39 @@ LARGE_FLASH ?= 0
 # Set to 0 to disable sd card support
 SD_CARD ?= 1
 
+# Docker image for reproducible ARM builds (see targets docker, docker_build).
+RELEASE_VERSION ?= v1.5
+CONTAINER_NAME ?= retro-go-sd
+DOCKER_REPOSITORY ?= sylverb/retro-go-sd-builder
+DOCKER_IMAGE ?= $(DOCKER_REPOSITORY):$(RELEASE_VERSION)
+DOCKER_RUN := docker run --rm -it \
+    --network host \
+    --name $(CONTAINER_NAME) \
+    --hostname $(CONTAINER_NAME) \
+    --add-host $(CONTAINER_NAME):127.0.0.1 \
+    --user $(shell id -u):$(shell id -g) \
+    -v $(CURDIR):/opt/workdir \
+    --device=/dev/bus/usb \
+    $(DOCKER_IMAGE)
+
+# Set DOCKER=1 to run build/flash/release targets inside the container rather than locally.
+# docker_build and docker_shell are always Docker-specific and unaffected by this flag.
+DOCKER ?= 0
+# Forward all user-specified variables to the inner make, minus DOCKER itself.
+_DOCKER_FWDVARS := $(filter-out DOCKER=%,$(MAKEOVERRIDES))
+
+# Docker bulid args
+ARM_COMPILER_VERSION ?= 13.3.rel1
+
 # Configure where data is stored in the external flash by
-# setting EXTFLASH_OFFSET. Useful if the first 1MB are to be preserved.
+# setting EXTFLASH_OFFSET. Useful if the first 1MB/4MB are to be preserved.
 EXTFLASH_OFFSET ?= 0
+
+FROGFS_IMAGE ?= $(BUILD_DIR)/frogfs.bin
+FROGFS_BUILD_DIR ?= $(BUILD_DIR)/frogfs
+LITTLEFS_IMAGE ?= $(BUILD_DIR)/littlefs.bin
+LITTLEFS_BUILD_DIR ?= $(BUILD_DIR)/littlefs
+LITTLEFS_BLOCK_SIZE ?= 4096
 
 SINGLE_FONT ?= 0
 
@@ -41,10 +71,6 @@ DISABLE_SPLASH_SCREEN ?= 0
 
 # Force max CPU overclock during boot (will reset to configured value after boot)
 ENABLE_BOOT_OC ?= 0
-
-# Default NES emulator is fceumm
-FORCE_NOFRENDO ?= 0 
-NOFRENDO_PARAM := --nofrendo=$(FORCE_NOFRENDO)
 
 # Configure external flash size by setting EXTFLASH_SIZE
 ifeq ($(LARGE_FLASH),1)
@@ -100,7 +126,11 @@ INTFLASH_BANK = 1
 endif
 endif
 
-GNWMANAGER = gnwmanager
+# Configure address where Retro-Go looks for Original Firmware metadata.
+# Defaults to Bank 1 (0x08000000).
+OFW_ADDRESS ?= 0x08000000
+
+GNWMANAGER ?= gnwmanager
 
 # Configure external flash size in MB (Megabytes)
 EXTFLASH_SIZE_MB ?= 1
@@ -111,7 +141,65 @@ EXTFLASH_END = $(shell echo $$(($(EXTFLASH_OFFSET) + $(EXTFLASH_SIZE))))
 
 EXTFLASH_FORCE_SPI ?= 0
 
+# Linker / FrogFS: length of the Retro-Go region (__EXTFLASH_START__ … __EXTFLASH_END__);
+# equals EXTFLASH_SIZE (partition after OFW), not chip size minus offset.
 EXTFLASH_TOTAL_LENGTH := $(EXTFLASH_SIZE)
+
+ifeq ($(SD_CARD),0)
+ifeq ($(shell [ $(EXTFLASH_OFFSET) -ge 0 -a $(EXTFLASH_SIZE) -gt 0 ] && echo true),)
+$(error FrogFS build needs EXTFLASH_OFFSET >= 0 and EXTFLASH_SIZE > 0 (partition size after offset, see EXTFLASH_SIZE_MB))
+endif
+# External flash map: offset + partition length must end on a power-of-two boundary (common chip / tooling layout).
+ifneq ($(shell end=$$(($(EXTFLASH_OFFSET) + $(EXTFLASH_SIZE))); \
+	if [ $$end -gt 0 ] && [ $$((end & (end - 1))) -eq 0 ]; then echo 1; else echo 0; fi),1)
+$(error EXTFLASH_OFFSET + EXTFLASH_SIZE must be a power of two (bytes). \
+	END=$$(($(EXTFLASH_OFFSET) + $(EXTFLASH_SIZE))) ($(shell echo $$(($(EXTFLASH_OFFSET) + $(EXTFLASH_SIZE))))) is not 2^n. \
+	Example with 4 MiB offset: use EXTFLASH_SIZE_MB=252 so END=256 MiB.)
+endif
+endif
+
+# Heuristic: if not set; 10% of your extflash should be good for filesystem.
+# Rounded down to the nearest 4096.
+FILESYSTEM_SIZE := $(shell \
+					if [ -z "$$FILESYSTEM_SIZE" ]; then \
+						echo $$(($(EXTFLASH_SIZE) / 10 / 4096 * 4096)); \
+					else \
+						echo $$FILESYSTEM_SIZE; \
+					fi)
+FILESYSTEM_OFFSET ?= $(shell echo $$(($(EXTFLASH_SIZE) - $(FILESYSTEM_SIZE))))
+FILESYSTEM_END = $(shell echo $$(($(FILESYSTEM_OFFSET) + $(FILESYSTEM_SIZE))))
+FILESYSTEM_OFFSET_FROM_END ?= $(shell echo $$(($(EXTFLASH_SIZE) - $(FILESYSTEM_END))))
+FILESYSTEM_FLASH_OFFSET := $(shell echo $$(($(EXTFLASH_OFFSET) + $(FILESYSTEM_OFFSET))))
+
+
+# Check to see if the filesystem is within specified extflash
+FILESYSTEM_START_IN_EXTFLASH_RANGE := $(shell \
+	if [ $(FILESYSTEM_OFFSET) -ge $(EXTFLASH_OFFSET) \
+		     -a $(FILESYSTEM_OFFSET) -lt $(EXTFLASH_END) ]; then \
+        echo "1"; \
+    else \
+        echo "0"; \
+    fi)
+
+FILESYSTEM_END_IN_EXTFLASH_RANGE := $(shell \
+	if [ $(FILESYSTEM_END) -gt $(EXTFLASH_OFFSET) \
+		     -a $(FILESYSTEM_END) -le $(EXTFLASH_END) ]; then \
+        echo "1"; \
+    else \
+        echo "0"; \
+    fi)
+
+ifneq ($(FILESYSTEM_START_IN_EXTFLASH_RANGE), $(FILESYSTEM_END_IN_EXTFLASH_RANGE))
+$(error Filesystem partition must be completely inside, or outside of EXTFLASH_SIZE.)
+endif
+FILESYSTEM_IN_EXTFLASH_RANGE = $(FILESYSTEM_START_IN_EXTFLASH_RANGE)
+
+# If the filesystem is external, we don't need to include it in size computation.
+ifeq ($(FILESYSTEM_IN_EXTFLASH_RANGE),0)
+EXTFLASH_TOTAL_LENGTH := $(EXTFLASH_SIZE)
+else ifeq ($(FILESYSTEM_START_IN_EXTFLASH_RANGE),1)
+EXTFLASH_TOTAL_LENGTH := $(shell echo $$(($(EXTFLASH_SIZE) - $(FILESYSTEM_SIZE))))
+endif
 
 ENABLE_SCREENSHOT ?= 1
 # Set to 1 to add game genie support
@@ -124,6 +212,9 @@ ifeq ($(CHEAT_CODES),1)
 	ifeq ($(SD_CARD),1)
 		MAX_CHEAT_CODES = 13
 	endif
+else
+	# blueMSX-go SlotManager.c (TARGET_GNW path) references MAX_CHEAT_CODES unconditionally.
+	MAX_CHEAT_CODES ?= 1
 endif
 
 # Compress supported ROMs by default. Set to 0 to disable.
@@ -166,6 +257,7 @@ FR_FR ?= 1
 IT_IT ?= 1
 RU_RU ?= 1
 DE_DE ?= 1
+NO_NB ?= 1
 ZH_CN ?= 0
 ZH_TW ?= 0
 KO_KR ?= 0
@@ -206,6 +298,9 @@ else ifeq ($(CODEPAGE), 12521)
 else ifeq ($(CODEPAGE), 12525)
 	DE_DE = 1
 	SCODEPAGE = "iso-8859-1"
+else ifeq ($(CODEPAGE), 12526)
+	NO_NB = 1
+	SCODEPAGE = "iso-8859-1"
 else
     SCODEPAGE = "iso-8859-1"
 endif
@@ -231,6 +326,8 @@ else ifeq ($(UICODEPAGE), 12521)
 	RU_RU = 1
 else ifeq ($(UICODEPAGE), 12525)
 	DE_DE = 1
+else ifeq ($(UICODEPAGE), 12526)
+	NO_NB = 1
 endif
 
 ROMINFOCODE ?= $(SCODEPAGE)
@@ -248,6 +345,23 @@ C_SOURCES += Core/Src/gw_timer.c
 C_SOURCES += Core/src/softspi.c
 C_DEFS += -DGNW_DISABLE_COMPRESSION
 EXTFLASH_TOTAL_LENGTH = 0
+TAMP_C_SOURCES :=
+else
+# External flash layout: FrogFS + LittleFS (RW) + Tamp; not used with on-device SD reader.
+FATFS_C_SOURCES :=
+C_SOURCES += $(FROGFS_C_SOURCES) \
+             $(LITTLEFS_C_SOURCES) \
+			 Core/Src/gw_littlefs.c
+C_DEFS += -DLFS_NO_MALLOC
+C_INCLUDES += \
+-I$(FROGFS_DIR)/include \
+-I$(FROGFS_DIR)/src \
+-ICore/Src/porting/lib/littlefs/ \
+-ICore/Src/porting/lib/tamp/tamp/_c_src
+# LZMA ROM payloads (FrogFS --rom-compression) need inflate; COMPRESS=0 disables to save code size.
+ifeq ($(COMPRESS),0)
+C_DEFS += -DGNW_DISABLE_COMPRESSION
+endif
 endif
 
 #######################################
@@ -284,11 +398,55 @@ Core/Src/retro-go/i18n/rg_i18n.c \
 Core/Src/retro-go/rg_logos.c
 
 # Version and URL for the STM32CubeH7 SDK
-SDK_VERSION ?= v1.11.1
+SDK_VERSION ?= v1.13.0
 SDK_URL ?= https://raw.githubusercontent.com/STMicroelectronics/STM32CubeH7
+
+# Submodule repos (used from v1.12.0+)
+# Check https://htmlpreview.github.io/?https://github.com/STMicroelectronics/STM32CubeH7/blob/master/Release_Notes.html
+# page to find about new releases and Drivers version section to find correct
+# CMSIS_DEVICE_VERSION (STM32H7xx CMSIS) and HAL_DRIVER_VERSION (STM32H7xx HAL)
+CMSIS_DEVICE_VERSION ?= v1.10.7
+CMSIS_DEVICE_URL ?= https://raw.githubusercontent.com/STMicroelectronics/cmsis-device-h7
+
+HAL_DRIVER_VERSION ?= v1.11.6
+HAL_DRIVER_URL ?= https://raw.githubusercontent.com/STMicroelectronics/stm32h7xx-hal-driver
 
 # Local path for the SDK
 SDK_DIR ?= Drivers
+
+# Paths for submodule directories (used in download rules and sentinels)
+HAL_DRIVER_DIR   := Drivers/STM32H7xx_HAL_Driver
+CMSIS_DEVICE_DIR := Drivers/CMSIS/Device/ST/STM32H7xx
+
+# Sentinel files to detect SDK version changes
+SDK_SENTINEL       := $(SDK_DIR)/.sdk_version
+HAL_SENTINEL       := $(HAL_DRIVER_DIR)/.hal_version
+CMSIS_DEV_SENTINEL := $(CMSIS_DEVICE_DIR)/.cmsis_device_version
+
+$(SDK_SENTINEL): FORCE
+	$(V)mkdir -p $(SDK_DIR)
+	$(V)if [ "$$(cat $@ 2>/dev/null)" != "$(SDK_VERSION)" ]; then \
+		$(ECHO) "SDK version mismatch, re-downloading..."; \
+		rm -f $(filter-out $(HAL_DRIVER_DIR)/% $(CMSIS_DEVICE_DIR)/%,\
+		      $(filter $(SDK_DIR)/%,$(SDK_HEADERS) $(SDK_C_SOURCES) $(SDK_ASM_SOURCES))); \
+		echo "$(SDK_VERSION)" > $@; \
+	fi
+
+$(HAL_SENTINEL): FORCE
+	$(V)mkdir -p $(HAL_DRIVER_DIR)
+	$(V)if [ "$$(cat $@ 2>/dev/null)" != "$(HAL_DRIVER_VERSION)" ]; then \
+		$(ECHO) "HAL Driver version mismatch, re-downloading..."; \
+		rm -f $(filter $(HAL_DRIVER_DIR)/%,$(SDK_HEADERS) $(SDK_C_SOURCES)); \
+		echo "$(HAL_DRIVER_VERSION)" > $@; \
+	fi
+
+$(CMSIS_DEV_SENTINEL): FORCE
+	$(V)mkdir -p $(CMSIS_DEVICE_DIR)
+	$(V)if [ "$$(cat $@ 2>/dev/null)" != "$(CMSIS_DEVICE_VERSION)" ]; then \
+		$(ECHO) "CMSIS Device version mismatch, re-downloading..."; \
+		rm -f $(filter $(CMSIS_DEVICE_DIR)/%,$(SDK_HEADERS) $(SDK_C_SOURCES) $(SDK_ASM_SOURCES)); \
+		echo "$(CMSIS_DEVICE_VERSION)" > $@; \
+	fi
 
 
 # SDK C sources
@@ -331,16 +489,16 @@ Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_wwdg.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal.c \
 
 
-# SDK ASM sources
-SDK_ASM_SOURCES =  \
-Drivers/CMSIS/Device/ST/STM32H7xx/Source/Templates/gcc/startup_stm32h7b0xx.s \
-Core/Src/memcpy-armv7m.s
+# SDK ASM sources (downloaded from repos, not project files)
+SDK_ASM_SOURCES = \
+Drivers/CMSIS/Device/ST/STM32H7xx/Source/Templates/gcc/startup_stm32h7b0xx.s
 
 # SDK headers
 SDK_HEADERS = \
 Drivers/CMSIS/Device/ST/STM32H7xx/Include/stm32h7b0xx.h \
 Drivers/CMSIS/Device/ST/STM32H7xx/Include/stm32h7xx.h \
 Drivers/CMSIS/Device/ST/STM32H7xx/Include/system_stm32h7xx.h \
+Drivers/CMSIS/Include/cachel1_armv7.h \
 Drivers/CMSIS/Include/cmsis_compiler.h \
 Drivers/CMSIS/Include/cmsis_gcc.h \
 Drivers/CMSIS/Include/cmsis_version.h \
@@ -442,6 +600,7 @@ C_DEFS +=  \
 -DINTERNAL_CORE_BIN_HEADER_VERSION=$(INTERNAL_CORE_BIN_HEADER_VERSION) \
 -DINTFLASH_BANK=$(INTFLASH_BANK) \
 -DINTFLASH_ADDRESS=$(INTFLASH_ADDRESS) \
+-DOFW_ADDRESS=$(OFW_ADDRESS) \
 -DBIG_BANK=$(BIG_BANK) \
 -DEXTFLASH_SIZE=$(EXTFLASH_SIZE) \
 -DMSX_USE_BANK_2=$(MSX_USE_BANK_2) \
@@ -453,6 +612,7 @@ C_DEFS +=  \
 -DINCLUDED_FR_FR=$(FR_FR) \
 -DINCLUDED_IT_IT=$(IT_IT) \
 -DINCLUDED_DE_DE=$(DE_DE) \
+-DINCLUDED_NO_NB=$(NO_NB) \
 -DINCLUDED_RU_RU=$(RU_RU) \
 -DINCLUDED_ZH_CN=$(ZH_CN) \
 -DINCLUDED_ZH_TW=$(ZH_TW) \
@@ -466,11 +626,9 @@ C_DEFS +=  \
 -DSTM32H7B0xx \
 -DIS_LITTLE_ENDIAN \
 -DDEBUG_RG_ALLOC \
--DLFS_NO_MALLOC \
 -DENABLE_SCREENSHOT=$(ENABLE_SCREENSHOT) \
 -DSD_CARD=$(SD_CARD) \
 -DCHEAT_CODES=$(CHEAT_CODES) \
--DFORCE_NOFRENDO=$(FORCE_NOFRENDO) \
 -DDISABLE_SPLASH_SCREEN=$(DISABLE_SPLASH_SCREEN) \
 -DENABLE_BOOT_OC=$(ENABLE_BOOT_OC) \
 -DTARGET_GNW \
@@ -491,6 +649,11 @@ C_DEFS +=  \
 
 ifdef MAX_CHEAT_CODES
 C_DEFS += -DMAX_CHEAT_CODES=$(MAX_CHEAT_CODES)
+endif
+
+REMOTE_INPUT ?= 0
+ifeq ($(REMOTE_INPUT), 1)
+C_DEFS += -DREMOTE_INPUT
 endif
 
 # AS includes
@@ -559,6 +722,8 @@ CXXFLAGS = $(CFLAGS) $(CXX_INCLUDES) \
 LDFLAGS += -Wl,--defsym=__EXTFLASH_OFFSET__=$(EXTFLASH_OFFSET)
 LDFLAGS += -Wl,--defsym=__EXTFLASH_TOTAL_LENGTH__=$(EXTFLASH_TOTAL_LENGTH)
 LDFLAGS += -Wl,--defsym=ENABLE_SCREENSHOT=$(ENABLE_SCREENSHOT)
+LDFLAGS += -Wl,--defsym=__FILESYSTEM_OFFSET__=$(FILESYSTEM_OFFSET)
+LDFLAGS += -Wl,--defsym=__FILESYSTEM_LENGTH__=$(FILESYSTEM_SIZE)
 
 LDFLAGS += -Wl,--defsym=__INTFLASH__=$(INTFLASH_ADDRESS)
 
@@ -569,6 +734,7 @@ else
 endif
 
 LDFLAGS += -Wl,--defsym=__FLASH_LENGTH__=$(FLASH_LENGTH)
+LDFLAGS += -Wl,--defsym=REMOTE_INPUT=$(REMOTE_INPUT)
 
 #######################################
 # LDFLAGS
@@ -587,8 +753,19 @@ LIBDIR +=
 LDFLAGS += $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) $(CXXLIBS) -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref -Wl,--gc-sections
 LDFLAGS += -Wl,--wrap=fflush
 
-# default action: build all
-all: CheckTools CheckDirtySubmodules $(BUILD_DIR) $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET)_extflash.bin $(BUILD_DIR)/$(TARGET)_intflash.bin $(BUILD_DIR)/$(TARGET)_intflash2.bin
+# default action: build all (FrogFS has no gw_*_extflash.bin payload — flash frogfs.bin instead)
+ifeq ($(DOCKER),1)
+all: FORCE
+	$(V)$(DOCKER_RUN) $(MAKE) -j$$(nproc) all $(_DOCKER_FWDVARS) CHECK_DIRTY_SUBMODULE=0
+else
+all: CheckTools CheckDirtySubmodules $(BUILD_DIR) $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET)_intflash.bin $(BUILD_DIR)/$(TARGET)_intflash2.bin
+ifneq ($(SD_CARD),0)
+all: $(BUILD_DIR)/$(TARGET)_extflash.bin
+endif
+ifeq ($(SD_CARD),0)
+all: $(FROGFS_IMAGE)
+endif
+endif
 
 #######################################
 # build the application
@@ -596,6 +773,7 @@ all: CheckTools CheckDirtySubmodules $(BUILD_DIR) $(BUILD_DIR)/$(TARGET).elf $(B
 # list of objects
 OBJECTS = $(addprefix $(BUILD_DIR)/core/,$(notdir $(C_SOURCES:.c=.o) $(SDK_C_SOURCES:.c=.o)))
 FATFS_OBJECTS = $(addprefix $(BUILD_DIR)/fatfs/,$(notdir $(FATFS_C_SOURCES:.c=.o)))
+TAMP_OBJECTS = $(addprefix $(BUILD_DIR)/tamp/,$(notdir $(TAMP_C_SOURCES:.c=.o)))
 TGBDUAL_OBJECTS = $(addprefix $(BUILD_DIR)/tgbdual/,$(notdir $(TGBDUAL_C_SOURCES:.c=.o)))
 NES_OBJECTS = $(addprefix $(BUILD_DIR)/nes/,$(notdir $(NES_C_SOURCES:.c=.o)))
 NES_FCEU_OBJECTS = $(addprefix $(BUILD_DIR)/nes_fceu/,$(notdir $(NES_FCEU_C_SOURCES:.c=.o)))
@@ -618,7 +796,7 @@ PICO8_OBJECTS = $(addprefix $(BUILD_DIR)/pico8/,$(notdir $(patsubst %.cpp,%.o,$(
 TAMA_OBJECTS = $(addprefix $(BUILD_DIR)/tama/,$(notdir $(TAMA_C_SOURCES:.c=.o)))
 PKMINI_OBJECTS = $(addprefix $(BUILD_DIR)/pkmini/,$(notdir $(PKMINI_C_SOURCES:.c=.o)))
 
-vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(CELESTE_C_SOURCES) $(MEDIA_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
+vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(TAMP_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(CELESTE_C_SOURCES) $(MEDIA_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
 # Guard empty lists: vpath with empty path resets the pattern's search path.
 # The GPL stub build has no PICO8_CXX_SOURCES, so only emit these when non-empty.
 ifneq ($(strip $(PICO8_CXX_SOURCES)),)
@@ -647,6 +825,7 @@ vpath %.cxx $(sort $(dir $(A2600_CXX_SOURCES) ))
 
 # list of ASM program objects
 OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(SDK_ASM_SOURCES:.s=.o)))
+OBJECTS += $(BUILD_DIR)/memcpy-armv7m.o
 vpath %.s $(sort $(dir $(SDK_ASM_SOURCES)))
 
 # function used to generate prerequisite rules for SDK objects
@@ -684,14 +863,20 @@ CheckDirtySubmodules:
 endif
 .PHONY: CheckDirtySubmodules
 
-PrepareFceummMappers:
+# The fceumm mappers .ld file is INCLUDEd from $(LDSCRIPT). Generating it
+# as a real file target (rather than a recipe-with-no-output) means make
+# only regenerates it when the script or board sources actually change —
+# which in turn stops the ELF from relinking on every invocation.
+$(BUILD_DIR)/fceumm_mappers.ld: external/fceumm-go/gen_mappers_ld.py \
+                                $(wildcard external/fceumm-go/src/boards/*.c) \
+                                | $(BUILD_DIR)
 	$(V)$(PYTHON3) external/fceumm-go/gen_mappers_ld.py
 
 ifeq (${CHECK_TOOLS},1)
 CheckTools:
 	@# Check that the tools in the toolchain exist
 	$(V)/usr/bin/env bash -c " \
-		for tool in $(CC) $(CP) $(SZ) $(GDB) $(DUMP); do \
+		for tool in $(CC) $(CP) $(SZ) $(DUMP); do \
 		which \$$tool 2> /dev/null > /dev/null || \
 		( \
 			echo -e \"\nCannot find \$$tool\n\" && \
@@ -731,20 +916,29 @@ $(BUILD_DIR)/%.o: %.s Makefile.common Makefile | $(BUILD_DIR)
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(MEDIA_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile PrepareFceummMappers $(LDSCRIPT)
+$(BUILD_DIR)/memcpy-armv7m.o: Core/Src/memcpy-armv7m.s Makefile.common Makefile | $(BUILD_DIR)
+	$(V)$(ECHO) [ AS ] $(notdir $<)
+	$(V)$(AS) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(MEDIA_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
-	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(MEDIA_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
-ifeq ($(SD_CARD), 0)
-	$(V)./scripts/extflash_size.sh $@
-endif
+	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(MEDIA_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
 
 $(BUILD_DIR)/core/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC core ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/core/$(notdir $(<:.c=.lst)) $< -o $@
 
+ifeq ($(SD_CARD), 1)
 $(BUILD_DIR)/fatfs/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC FatFs ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(FATFS_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/fatfs/$(notdir $(<:.c=.lst)) $< -o $@
+endif
+
+ifneq ($(SD_CARD), 1)
+$(TAMP_OBJECTS): $(BUILD_DIR)/tamp/%.o: $(TAMP_DIR)tamp/%.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+	$(V)$(ECHO) [ CC tamp ] $(notdir $<)
+	$(V)$(CC) -c $(CFLAGS) $(TAMP_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/tamp/$(notdir $(<:.c=.lst)) $< -o $@
+endif
 
 $(BUILD_DIR)/nes/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC nes ] $(notdir $<)
@@ -967,6 +1161,7 @@ $(BUILD_DIR):
 	$(V)mkdir $@/core
 	$(V)mkdir $@/cores
 	$(V)mkdir $@/fatfs
+	$(V)mkdir $@/tamp
 	$(V)mkdir $@/nes
 	$(V)mkdir $@/nes_fceu
 	$(V)mkdir $@/tgbdual
@@ -1031,28 +1226,48 @@ start:  # Start code located at INTFLASH_ADDRESS
 .PHONY: start
 
 
+ifeq ($(DOCKER),1)
+flash_intflash: FORCE
+	$(V)$(DOCKER_RUN) $(MAKE) flash_intflash $(_DOCKER_FWDVARS) CHECK_DIRTY_SUBMODULE=0
+else
 flash_intflash: $(BUILD_DIR)/$(TARGET)_intflash.bin
 	$(GNWMANAGER) flash $(INTFLASH_ADDRESS) $< -- start $(INTFLASH_ADDRESS)
+endif
 .PHONY: flash_intflash
 
 
-flash_extflash: $(BUILD_DIR)/$(TARGET)_extflash.bin
+ifeq ($(DOCKER),1)
+flash_extflash: FORCE
+	$(V)$(DOCKER_RUN) $(MAKE) flash_extflash $(_DOCKER_FWDVARS) CHECK_DIRTY_SUBMODULE=0
+else
+flash_extflash:
 ifeq ($(SD_CARD), 0)
-	@$(GNWMANAGER) flash ext $< --offset=$(EXTFLASH_OFFSET) -- start $(INTFLASH_ADDRESS)
+	@$(MAKE) --no-print-directory $(FROGFS_IMAGE) $(LITTLEFS_IMAGE)
+	$(GNWMANAGER) flash ext $(FROGFS_IMAGE) --offset=$(EXTFLASH_OFFSET) \
+		-- flash ext $(LITTLEFS_IMAGE) --offset=$(FILESYSTEM_FLASH_OFFSET) \
+		-- start $(INTFLASH_ADDRESS)
+endif
 endif
 .PHONY: flash_extflash
 
 # Programs both the external and internal flash.
-flash: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin $(BUILD_DIR)/$(TARGET)_extflash.bin
+ifeq ($(DOCKER),1)
+flash: FORCE
+	$(V)$(DOCKER_RUN) $(MAKE) flash $(_DOCKER_FWDVARS) CHECK_DIRTY_SUBMODULE=0
+else
+flash: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin $(if $(filter-out 0,$(SD_CARD)),$(BUILD_DIR)/$(TARGET)_extflash.bin,)
 ifeq ($(SD_CARD), 0)
-	@$(GNWMANAGER) flash $(INTFLASH_ADDRESS) $(BUILD_DIR)/$(TARGET)_intflash.bin \
-		-- flash ext $(BUILD_DIR)/$(TARGET)_extflash.bin --offset=$(EXTFLASH_OFFSET) \
+	@$(MAKE) --no-print-directory $(FROGFS_IMAGE) $(LITTLEFS_IMAGE)
+	$(GNWMANAGER) flash $(INTFLASH_ADDRESS) $(BUILD_DIR)/$(TARGET)_intflash.bin \
+		-- flash ext $(FROGFS_IMAGE) --offset=$(EXTFLASH_OFFSET) \
+		-- flash ext $(LITTLEFS_IMAGE) --offset=$(FILESYSTEM_FLASH_OFFSET) \
 		-- start $(INTFLASH_ADDRESS) \
-		$(RESET_DBGMCU_CMD)
+		$(RESET_DBGMCU_CMD);
 else
 	@$(GNWMANAGER) flash $(INTFLASH_ADDRESS) $(BUILD_DIR)/$(TARGET)_intflash.bin \
 		-- start $(INTFLASH_ADDRESS) \
 		$(RESET_DBGMCU_CMD)
+endif
 endif
 .PHONY: flash
 
@@ -1061,8 +1276,65 @@ SD_FOLDER := sd_content
 CORES_DIR := $(SD_FOLDER)/cores
 FONTS_DIR := $(SD_FOLDER)/fonts
 UNICODE_FONT_SOURCE ?= assets/fonts/fusion-pixel-12px-monospaced-zh_hant.ttf
-UNICODE_FONT_SCRIPTS := greek math_operators geometric misc_symbols cjk_punct hiragana katakana cjk hangul fullwidth
+# tools/gen_unicode_bin.py --script names → /fonts/unicode_<name>.bin (trimmed by active UI langs)
+UNICODE_FONT_SCRIPTS := greek math_operators geometric misc_symbols
+ifneq ($(filter 1,$(ZH_CN) $(ZH_TW) $(JA_JP) $(KO_KR)),)
+# CJK Unified Ideographs (kanji / hanzi / hanja) + punctuation/fullwidth blocks
+UNICODE_FONT_SCRIPTS += cjk_punct fullwidth cjk
+endif
+ifeq ($(JA_JP),1)
+UNICODE_FONT_SCRIPTS += hiragana katakana
+endif
+ifeq ($(KO_KR),1)
+UNICODE_FONT_SCRIPTS += hangul
+endif
 UNICODE_FONT_BINS := $(addprefix $(FONTS_DIR)/unicode_, $(addsuffix .bin, $(UNICODE_FONT_SCRIPTS)))
+
+# Per-language translation blobs (sd_content/lang/xx_xx.bin), generated by
+# tools/gen_i18n_bin.py from each rg_i18n_xx_xx.c. The runtime loader in
+# rg_i18n.c reads them lazily — see i18n_load_language(). en_us is NOT
+# generated here: the baked lang_en_us struct in rodata is always the
+# active English source (the runtime loader short-circuits the en_us idx
+# straight to &lang_en_us). Saves an SD read per English selection and
+# keeps the build artifacts minimal. The rest are gated by the same
+# INCLUDED_* flags that drive which lang_xx_xx.c files compile in.
+LANG_DIR := $(SD_FOLDER)/lang
+LANG_BIN_NAMES :=
+ifeq ($(ES_ES),1)
+LANG_BIN_NAMES += es_es
+endif
+ifeq ($(PT_PT),1)
+LANG_BIN_NAMES += pt_pt
+endif
+ifeq ($(FR_FR),1)
+LANG_BIN_NAMES += fr_fr
+endif
+ifeq ($(IT_IT),1)
+LANG_BIN_NAMES += it_it
+endif
+ifeq ($(DE_DE),1)
+LANG_BIN_NAMES += de_de
+endif
+ifeq ($(NO_NB),1)
+LANG_BIN_NAMES += no_nb
+endif
+ifeq ($(RU_RU),1)
+LANG_BIN_NAMES += ru_ru
+endif
+ifeq ($(ZH_CN),1)
+LANG_BIN_NAMES += zh_cn
+endif
+ifeq ($(ZH_TW),1)
+LANG_BIN_NAMES += zh_tw
+endif
+ifeq ($(KO_KR),1)
+LANG_BIN_NAMES += ko_kr
+endif
+ifeq ($(JA_JP),1)
+LANG_BIN_NAMES += ja_jp
+endif
+LANG_BINS := $(addprefix $(LANG_DIR)/, $(addsuffix .bin, $(LANG_BIN_NAMES)))
+
 MAPPERS_DIR := $(CORES_DIR)/mappers
 HOMEBREWS_FOLDER := $(SD_FOLDER)/roms/homebrew
 RELEASE_FOLDER := release
@@ -1086,7 +1358,7 @@ define EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER
 	rm -f "$$tmp_file"
 endef
 
-$(MAPPERS_DIR)/mapper_%.bin: $(BUILD_DIR)/$(TARGET).elf
+$(MAPPERS_DIR)/mapper_%.bin: $(BUILD_DIR)/$(TARGET).elf | create_sd_folders
 	@$(CP) -O binary --only-section=.overlay_nes_fceu_$* $< $@
 
 MAPPER_BINS := $(addprefix $(MAPPERS_DIR)/mapper_, $(addsuffix .bin, $(MAPPER_NAMES)))
@@ -1095,6 +1367,7 @@ create_sd_folders:
 	$(V)mkdir -p $(SD_FOLDER)
 	$(V)mkdir -p $(CORES_DIR)
 	$(V)mkdir -p $(FONTS_DIR)
+	$(V)mkdir -p $(LANG_DIR)
 	$(V)mkdir -p $(CORES_DIR)
 	$(V)mkdir -p $(MAPPERS_DIR)
 	$(V)mkdir -p $(SD_FOLDER)/bios
@@ -1127,13 +1400,47 @@ $(FONTS_DIR)/unicode_%.bin: $(UNICODE_FONT_SOURCE) tools/gen_unicode_bin.py | cr
 	@echo "Generating $@ from $(UNICODE_FONT_SOURCE)"
 	@$(PYTHON3) tools/gen_unicode_bin.py "$(UNICODE_FONT_SOURCE)" --script "$*" -o "$@"
 
-create_sd_data: create_sd_folders prepare_msx_bios_files $(MAPPER_BINS) $(BUILD_DIR)/$(TARGET)_intflash.bin
+# Per-language translation blob: rg_i18n_xx_xx.c (+ en_us fallback +
+# struct layout from rg_i18n_lang.h) → sd_content/lang/xx_xx.bin
+$(LANG_DIR)/%.bin: Core/Src/retro-go/i18n/rg_i18n_%.c \
+                   Core/Src/retro-go/i18n/rg_i18n_en_us.c \
+                   Core/Inc/retro-go/rg_i18n_lang.h \
+                   tools/gen_i18n_bin.py | create_sd_folders
+	@echo "Generating $@"
+	@$(PYTHON3) tools/gen_i18n_bin.py \
+		--header Core/Inc/retro-go/rg_i18n_lang.h \
+		--en-us Core/Src/retro-go/i18n/rg_i18n_en_us.c \
+		--lang Core/Src/retro-go/i18n/rg_i18n_$*.c \
+		--output $@
+
+SD_CONTENT_STAMP := $(BUILD_DIR)/.sd_content.stamp
+
+# `create_sd_data` used to be a recipe with no output file, so every
+# `make flash_sd` / `make release` re-ran ~50 objcopy --only-section
+# extractions and a handful of Python helpers even when the ELF hadn't
+# changed. The stamp file gates all of that work on the actual inputs:
+# the ELF, the per-mapper bins, and the Python scripts that generate
+# fixed tables. create_sd_folders and prepare_msx_bios_files stay
+# order-only — they're phony, so listing them as normal prereqs would
+# defeat the stamp.
+create_sd_data: $(SD_CONTENT_STAMP)
+.PHONY: create_sd_data
+
+$(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
+                     $(BUILD_DIR)/$(TARGET)_intflash.bin \
+                     $(MAPPER_BINS) \
+                     external/fceumm-go/gen_mappers_table.py \
+                     external/fceumm-go/gen_ines_database.py \
+                     tools/gen_fceu_palettes_table.py \
+                     external/stella2014-go/convert_defprops.py \
+                     external/blueMSX-go/create_compact_database_file.py \
+                     Makefile.common Makefile \
+                     | create_sd_folders prepare_msx_bios_files
 	@$(PYTHON3) external/fceumm-go/gen_mappers_table.py $(MAPPERS_DIR)/mappers_table.bin
 	@$(PYTHON3) external/fceumm-go/gen_ines_database.py $(MAPPERS_DIR)/ines_correct.bin
 	@$(PYTHON3) tools/gen_fceu_palettes_table.py $(SD_FOLDER)/bios/nes/palettes.bin
 	@$(PYTHON3) external/stella2014-go/convert_defprops.py external/stella2014-go/stella/src/emucore/DefProps.hxx $(CORES_DIR)/a2600_defprops.bin
 	@$(PYTHON3) external/blueMSX-go/create_compact_database_file.py external/blueMSX-go/system/bluemsx/Databases/msxromdb.xml $(SD_FOLDER)/bios/msx/msxromdb.bin
-	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_nes,$(CORES_DIR)/nes.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_nes_fceu,$(CORES_DIR)/nes_fceu.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_tgb,$(CORES_DIR)/tgb.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_sms,$(CORES_DIR)/sms.bin)
@@ -1155,13 +1462,19 @@ create_sd_data: create_sd_folders prepare_msx_bios_files $(MAPPER_BINS) $(BUILD_
 	@$(CP) -O binary --only-section=.rodata_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/zelda3.ro"
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
 	@$(CP) -O binary --only-section=.coleco_bios_data $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/coleco/coleco.bin
-	@$(CP) -O binary --only-section=.overlay_graphics $(BUILD_DIR)/$(TARGET).elf $(CORES_DIR)/logo.bin
+	@$(CP) -O binary --only-section=.overlay_graphics $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/logo.bin
+	@rm -f $(FONTS_DIR)/cp1251_*.bin $(FONTS_DIR)/cp1252_*.bin $(FONTS_DIR)/unicode_*.bin
+ifeq ($(RU_RU),1)
+	@$(CP) -O binary --only-section=.sd_fonts_cp1251_serif $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1251_serif.bin
+ifneq ($(SINGLE_FONT),1)
 	@$(CP) -O binary --only-section=.sd_fonts_cp1251_greybeard $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1251_greybeard.bin
 	@$(CP) -O binary --only-section=.sd_fonts_cp1251_sans_serif_bold $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1251_sans_serif_bold.bin
 	@$(CP) -O binary --only-section=.sd_fonts_cp1251_sans_serif $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1251_sans_serif.bin
 	@$(CP) -O binary --only-section=.sd_fonts_cp1251_serif_bold $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1251_serif_bold.bin
-	@$(CP) -O binary --only-section=.sd_fonts_cp1251_serif $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1251_serif.bin
-	
+endif
+endif
+	@$(CP) -O binary --only-section=.sd_fonts_cp1252_serif $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1252_serif.bin
+ifneq ($(SINGLE_FONT),1)
 	@$(CP) -O binary --only-section=.sd_fonts_cp1252_greybeard $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1252_greybeard.bin
 	@$(CP) -O binary --only-section=.sd_fonts_cp1252_haeberli12 $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1252_haeberli12.bin
 	@$(CP) -O binary --only-section=.sd_fonts_cp1252_rock12 $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1252_rock12.bin
@@ -1169,16 +1482,56 @@ create_sd_data: create_sd_folders prepare_msx_bios_files $(MAPPER_BINS) $(BUILD_
 	@$(CP) -O binary --only-section=.sd_fonts_cp1252_sans_serif $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1252_sans_serif.bin
 	@$(CP) -O binary --only-section=.sd_fonts_cp1252_serif_bold $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1252_serif_bold.bin
 	@$(CP) -O binary --only-section=.sd_fonts_cp1252_serif_cjk $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1252_serif_cjk.bin
-	@$(CP) -O binary --only-section=.sd_fonts_cp1252_serif $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1252_serif.bin
 	@$(CP) -O binary --only-section=.sd_fonts_cp1252_unbalanced $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1252_unbalanced.bin
+endif
 
 	@$(V)cp build/gw_retro_go_intflash.bin $(SD_FOLDER)/update_bank2.bin
 	@$(MAKE) --no-print-directory $(UNICODE_FONT_BINS)
+	@$(MAKE) --no-print-directory $(LANG_BINS)
+	@touch $@
 
+# SD_CARD=0: pico8.ro is packed in FrogFS (post-patched for XiP); do not duplicate from GNW ZIP on LittleFS.
+FROGFS_PICO8_FLAGS := $(if $(filter 0,$(SD_CARD)),\
+	--bundle-pico8-ro-in-frogfs --extflash-base 0x90000000 --extflash-offset $(EXTFLASH_OFFSET),)
+LITTLEFS_OMIT_PICO8_RO := $(if $(filter 0,$(SD_CARD)),--omit-pico8-ro-from-gnw-zip,)
+
+# SD_CARD=0: optional FrogFS ROM LZMA pack (scripts/rom_frogfs_lzma.py); align with COMPRESS=lzma.
+FROGFS_ROM_LZMA_FLAGS := $(if $(filter 0,$(SD_CARD)),$(if $(filter-out 0,$(COMPRESS)),--rom-compression $(COMPRESS),),)
+# Omit /covers from FrogFS unless COVERFLOW=1 (matches firmware COVERFLOW define).
+FROGFS_COVERS_FLAGS := $(if $(filter 1,$(COVERFLOW)),,--no-covers)
+
+$(FROGFS_IMAGE): create_sd_data scripts/gen_frogfs_image.py scripts/rom_frogfs_lzma.py scripts/frogfs_pico8_ro.py scripts/pico8_ro_build_patch.py scripts/pico8_gnw_cores.py scripts/sd_cores_pack.py tools/gencovers.py external/zelda3/tables/restool.py external/smw/assets/restool.py $(FROGFS_DIR)/tools/mkfrogfs.py
+	$(V)$(PYTHON3) scripts/gen_frogfs_image.py \
+		--sd-content $(SD_FOLDER) \
+		--output $@ \
+		--build-dir $(FROGFS_BUILD_DIR) \
+		--reserve-size $(EXTFLASH_TOTAL_LENGTH) \
+		$(FROGFS_PICO8_FLAGS) \
+		$(FROGFS_ROM_LZMA_FLAGS) \
+		$(FROGFS_COVERS_FLAGS)
+
+frogfs_image: $(FROGFS_IMAGE)
+.PHONY: frogfs_image
+
+$(LITTLEFS_IMAGE): create_sd_data scripts/gen_littlefs_image.py scripts/sd_cores_pack.py scripts/nes_rom_mappers.py scripts/pico8_gnw_cores.py
+	$(V)$(PYTHON3) scripts/gen_littlefs_image.py \
+		--sd-content $(SD_FOLDER) \
+		--output $@ \
+		--build-dir $(LITTLEFS_BUILD_DIR) \
+		--size $(FILESYSTEM_SIZE) \
+		--block-size $(LITTLEFS_BLOCK_SIZE) \
+		$(LITTLEFS_OMIT_PICO8_RO)
+
+littlefs_image: $(LITTLEFS_IMAGE)
+.PHONY: littlefs_image
+
+ifeq ($(DOCKER),1)
+flash_sd: FORCE
+	$(V)$(DOCKER_RUN) $(MAKE) flash_sd $(_DOCKER_FWDVARS) CHECK_DIRTY_SUBMODULE=0
+else
 flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin create_sd_data
 	$(eval MAPPERS_SDPUSH := $(foreach mapper,$(MAPPER_NAMES),-- sdpush --file $(MAPPERS_DIR)/mapper_$(mapper).bin --dest-path "/cores/mappers/"))
 	@$(GNWMANAGER) flash $(INTFLASH_ADDRESS) $(BUILD_DIR)/$(TARGET)_intflash.bin \
-		-- sdpush --file $(CORES_DIR)/nes.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/nes_fceu.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/tgb.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/sms.bin --dest-path "/cores/" \
@@ -1194,7 +1547,7 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(CORES_DIR)/videopac.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/tama.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/pkmini.bin --dest-path "/cores/" \
-		-- sdpush --file $(CORES_DIR)/logo.bin --dest-path "/cores/" \
+		-- sdpush --file $(SD_FOLDER)/bios/logo.bin --dest-path "/bios/" \
 		-- sdpush --file $(HOMEBREWS_FOLDER)/celeste.bin --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Music.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Super Mario World.bin" --dest-path "/roms/homebrew/" \
@@ -1203,28 +1556,48 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(MAPPERS_DIR)/mappers_table.bin --dest-path "/cores/mappers/" \
 		-- sdpush --file $(MAPPERS_DIR)/ines_correct.bin --dest-path "/cores/mappers/" \
 		-- sdpush --file $(SD_FOLDER)/bios/nes/palettes.bin --dest-path "/bios/nes/" \
-		-- sdpush --file $(SD_FOLDER)/bios/coleco/coleco.bin --dest-path "/bios/coleco" \
+		-- sdpush --file $(SD_FOLDER)/bios/coleco/coleco.bin --dest-path "/bios/coleco/" \
 		-- sdpush --file $(SD_FOLDER)/bios/msx/msxromdb.bin --dest-path "/bios/msx/" \
 		$(MAPPERS_SDPUSH) \
 		-- start $(INTFLASH_ADDRESS) \
 		$(RESET_DBGMCU_CMD)
+endif
 
 firmware_update: create_sd_folders
 	@$(MAKE) -j$(nproc) -C external/firmware_update
 	@cp external/firmware_update/build/firmware_update.bin $(RELEASE_FOLDER)/
 
-# this is creating a release folder with update archive and update application
+# Release is SD_CARD=1 only; SD_CARD=0 builds require proprietary blobs and
+# cannot produce a distributable release package.
+ifeq ($(DOCKER),1)
+release: FORCE
+ifeq ($(SD_CARD),0)
+	$(error release target requires SD_CARD=1)
+endif
+	$(V)$(DOCKER_RUN) $(MAKE) -j$$(nproc) release $(_DOCKER_FWDVARS) CHECK_DIRTY_SUBMODULE=0
+else
 release: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin create_sd_data firmware_update
+ifeq ($(SD_CARD),0)
+	$(error release target requires SD_CARD=1; SD_CARD=0 builds require proprietary blobs and cannot produce a distributable release)
+endif
 	@tar --format=ustar -cf $(RELEASE_FOLDER)/gw_update.tar -C sd_content $$(find sd_content -mindepth 1 -maxdepth 1 -exec basename {} \;)
 	@./scripts/gen_release_package.sh
+endif
+.PHONY: release
 
+ifeq ($(DOCKER),1)
+release_sdpush: FORCE
+	$(V)$(DOCKER_RUN) $(MAKE) release_sdpush $(_DOCKER_FWDVARS) CHECK_DIRTY_SUBMODULE=0
+else
 release_sdpush: release
 	@$(GNWMANAGER) sdpush --file $(RELEASE_FOLDER)/retro-go_update.bin --dest-path "/" \
 		-- start bank1 \
 		$(RESET_DBGMCU_CMD)
+endif
+.PHONY: release_sdpush
 
 monitor:
-	@$(GNWMANAGER) monitor
+	@$(GNWMANAGER) monitor --utf8
 .PHONY: monitor
 
 flash-monitor: flash
@@ -1267,13 +1640,44 @@ dump_screenshot:
 .PHONY: dump_screenshot
 
 docker_build:
-	$(V)docker build --network=host -f Dockerfile --tag sylverb/retro-go-sd-builder .
+	$(V)docker build --network=host --build-arg ARM_COMPILER_VERSION=$(ARM_COMPILER_VERSION) -f Dockerfile --tag $(DOCKER_IMAGE) .
 .PHONY: docker_build
 
+# This is used to update multi arch (amd64/arm64) image on docker.io
+# you need to run this once to setup dockerx :
+#  docker buildx create --name multiarch --use && docker buildx inspect --bootstrap
+# and to login to your docker account :
+#  docker login
+docker_buildx:
+	$(V)docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		--network=host \
+		--build-arg ARM_COMPILER_VERSION=$(ARM_COMPILER_VERSION) \
+		-f Dockerfile \
+		-t $(DOCKER_REPOSITORY):latest \
+		-t $(DOCKER_REPOSITORY):$(RELEASE_VERSION) \
+		--push \
+		.
+
+.PHONY: docker_push_multiarch
+
+# DEPRECATED: use 'make release DOCKER=1' (SD_CARD=1) or 'make docker_shell' instead.
+# This target will be removed in a future release.
 docker:
-	$(V)docker run --rm -it --privileged --network host --user $(shell id -u):$(shell id -g) -v $(PWD):/opt/workdir -v /dev/bus/usb:/dev/bus/usb sylverb/retro-go-sd-builder:v1.3 \
-	bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
+	@echo "WARNING: 'make docker' is deprecated."
+	@echo "  Use 'make release DOCKER=1' for a containerized release build (SD_CARD=1)."
+	@echo "  Use 'make docker_shell' for an interactive shell in the container."
+ifeq ($(SD_CARD),0)
+	$(V)$(DOCKER_RUN) bash
+else
+	$(V)$(DOCKER_RUN) bash -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
+endif
 .PHONY: docker
+
+# Interactive shell without building release (handy when SD_CARD=1 but you only want the container).
+docker_shell:
+	$(V)$(DOCKER_RUN) bash
+.PHONY: docker_shell
 
 help:
 	@echo "Game and Watch Retro Go SD"
@@ -1286,25 +1690,35 @@ help:
 	@echo "  SD_CARD             - Use SD Card reader (default=0)"
 	@echo "                        set to 1 for auto detect between SD Card reader on spi1 (Design by Tim"
 	@echo "                        Schuerewegen) or on ospi1 (Design by *yota9* Vladislav Khmelevsky)"
+	@echo "  FILESYSTEM_SIZE     - Sets the littleFS partition flash size in bytes. Defaults to 10% of flash."
+	@echo "  FILESYSTEM_OFFSET   - Places the littleFS partition at a specified offset in the external flash. "
+	@echo "                        Defaults to placing the partition at the end of flash."
+	@echo "						   This value is offset from EXTFLASH_OFFSET."
+	@echo "  LITTLEFS_BLOCK_SIZE - Sets the generated littleFS image block/erase size in bytes. Defaults to 4096."
+	@echo "                        Only core binaries needed for non-empty roms/<system>/ folders are packed (see scripts/sd_cores_pack.py);"
+	@echo "                        use gen_littlefs_image.py --no-cores-filter to pack all of sd_content/cores."
 	@echo "  EXTFLASH_OFFSET     - Places the data at an offset in the external flash (useful for dual boot)"
+	@echo "                        For SD_CARD=0, EXTFLASH_OFFSET+EXTFLASH_SIZE must be a power of two (bytes)."
 	@echo "  INTFLASH_BANK       - Sets the internal flash bank. Valid values {1,2} (default=1)."
 	@echo "  INTFLASH_ADDRESS    - Explicit internal flash address. If not provided, derived from INTFLASH_BANK."
 	@echo "  BIG_BANK            - Use internal flash bank as undocumented 256k.(default=1, set 0 to 128k)."
-	@echo "  COMPRESS            - Configures ROM compression, Valid values {0,lzma} (default=lzma)."
+	@echo "  COMPRESS            - ROM compression: 0 or lzma (default=lzma). SD_CARD=0: FrogFS uses"
+	@echo "                        LZMA ROM payloads unless COMPRESS=0 (saves extflash; needs decoder in fw)."
 	@echo "  RESET_DBGMCU        - Configures if DBGMCU should be reset after flashing."
 	@echo "                        Set to 0 to disable power saving (default=1)"
 	@echo "  CODEPAGE            - Sets codepage to configures default display language.(default=1252)"
 	@echo "                        set 932 as Japanese; 936 as simple Chinese; 950 as traditional Chinese;"
 	@echo "                        949 as Korean; 12511 as Russian; 12521 as Spanish; 12522 as Portuguese;"
-	@echo "                        12523 as French; 12524 as Italian; 12525 as German;"
+	@echo "                        12523 as French; 12524 as Italian; 12525 as German; 12526 as Norwegian;"
 	@echo "  UICODEPAGE          - Sets ui display language.(default=CODEPAGE=1252 as English)"
 	@echo "  ROMINFOCODE         - Sets encoding of parse rom name, default = ascii"
 	@echo "  ES_ES,PT_PT,FR_FR,  "
 	@echo "  IT_IT,ZH_CN,ZH_TW,  "
 	@echo "  KO_KR,JA_JP,DE_DE,  "
-	@echo "  RU_RU               - Set to 1 to include or exclude some other language"
-	@echo "  SINGLE_FONT         - Set to 1 to only include a single default font."
-	@echo "                        Saves a few dozen KB of external flash."
+	@echo "  NO_NB,RU_RU         - Set to 0 to omit language UI and fonts on SD /lang and /fonts."
+	@echo "  SINGLE_FONT         - Set to 1 to only include the default serif font (per codepage)."
+	@echo "                        Fewer font sections in firmware and only cp1252_serif.bin (+ cp1251 if RU_RU) on /fonts."
+	@echo "                        Unicode fallback .bin files on /fonts follow active ZH_CN,ZH_TW,JA_JP,KO_KR (+ small symbol sets)."
 	@echo "  COVERFLOW           - Set to 1 include cover art with rom (default=0)"
 	@echo "  JPG_QUALITY         - Set convert cover art image jpg quality (default = 90)"
 	@echo "  ENABLE_SCREENSHOT   - Set to 1 to enable screenshot support (default enabled)"
@@ -1315,7 +1729,6 @@ help:
 	@echo "                        Retro-Go must be in Bank 1."
 	@echo "  SHARED_HIBERNATE_SAVESTATE - Set to 1 to enable a separate savestate for off/on (default=0)"
 	@echo "  DISABLE_SPLASH_SCREEN - Set to 1 to disable the slash screen animation at startup (default=0)"
-	@echo "  FORCE_NOFRENDO      - Set to 1 to force use of previous nofrendo-go emulator instead of fceumm (default=0)"
 	@echo ""
 	@echo "Current configuration:"
 	@echo "  EXTFLASH_FORCE_SPI=$(EXTFLASH_FORCE_SPI)"
@@ -1344,18 +1757,26 @@ help:
 	@echo "  IT_IT=$(IT_IT)"
 	@echo "  RU_RU=$(RU_RU)"
 	@echo "  DE_DE=$(DE_DE)"
+	@echo "  NO_NB=$(NO_NB)"
 	@echo "  ZH_CN=$(ZH_CN)"
 	@echo "  ZH_TW=$(ZH_TW)"
 	@echo "  KO_KR=$(KO_KR)"
 	@echo "  JA_JP=$(JA_JP)"
+	@echo "  SINGLE_FONT=$(SINGLE_FONT)"
 	@echo ""
 	@echo "Targets:"
-	@echo "  docker            - Runs a docker container using the image created by docker_build"
-	@echo "  docker_build      - Builds a docker image"
+	@echo "  make [target]         - Run target locally (default: build firmware)"
+	@echo "  make [target] DOCKER=1 - Run target inside the Docker container instead."
+	@echo "                        Applies to: (default), flash, flash_intflash, flash_extflash,"
+	@echo "                        flash_sd, release, release_sdpush."
+	@echo "  docker_build          - Build the Docker container image"
+	@echo "  docker_buildx         - Push Docker container image to docker.io"
+	@echo "  docker_shell          - Interactive shell in $(DOCKER_IMAGE)"
+	@echo "  docker (deprecated)   - Use 'make release DOCKER=1' or 'make docker_shell' instead"
 	@echo "  dump_screenshot   - Downloads the stored screenshot."
 	@echo "  flash             - Programs the internal and external flash"
 	@echo "  flash_all         - Alias for 'flash' (deprecated)"
-	@echo "  flash_extflash    - Only programs the external flash"
+	@echo "  flash_extflash    - Flash FrogFS image only (SD_CARD=0; respects EXTFLASH_OFFSET)"
 	@echo "  flash_intflash    - Only programs the internal flash"
 	@echo "  gdb               - Starts gdb and attaches to gdbserver"
 	@echo "  gdb_intflash      - Flashes intflash and then starts gdb and attaches to gdbserver"
@@ -1369,12 +1790,22 @@ help:
 #######################################
 # download SDK files
 #######################################
-$(SDK_DIR)/%:
-	$(V)$(ECHO) [ WGET ] $(notdir $@)
+$(HAL_DRIVER_DIR)/%: $(HAL_SENTINEL)
+	$(V)$(ECHO) [ WGET STM32CubeH7 HAL ] $(notdir $@)
+	$(V)mkdir -p $(dir $@)
+	$(V)wget -q $(HAL_DRIVER_URL)/$(HAL_DRIVER_VERSION)/$(patsubst $(HAL_DRIVER_DIR)/%,%,$@) -O $@
+
+$(CMSIS_DEVICE_DIR)/%: $(CMSIS_DEV_SENTINEL)
+	$(V)$(ECHO) [ WGET STM32CubeH7 CMSIS ] $(notdir $@)
+	$(V)mkdir -p $(dir $@)
+	$(V)wget -q $(CMSIS_DEVICE_URL)/$(CMSIS_DEVICE_VERSION)/$(patsubst $(CMSIS_DEVICE_DIR)/%,%,$@) -O $@
+
+$(SDK_DIR)/%: $(SDK_SENTINEL)
+	$(V)$(ECHO) [ WGET STM32CubeH7 ] $(notdir $@)
 	$(V)wget -q $(SDK_URL)/$(SDK_VERSION)/$@ -P $(dir $@)
 
 .PHONY: download_sdk
-download_sdk: $(SDK_HEADERS) $(SDK_C_SOURCES) $(SDK_ASM_SOURCES)
+download_sdk: $(SDK_SENTINEL) $(HAL_SENTINEL) $(CMSIS_DEV_SENTINEL) $(SDK_HEADERS) $(SDK_C_SOURCES) $(SDK_ASM_SOURCES)
 
 #######################################
 # clean up

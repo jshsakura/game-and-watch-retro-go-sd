@@ -31,9 +31,6 @@ typedef enum
 } img_state_t;
 
 typedef struct {
-#if CHEAT_CODES == 1
-    uint32_t id;
-#endif
     char name[256];
     const char *ext;
     char path[256];
@@ -57,7 +54,7 @@ bool rg_rom_list_arg_is_parent(const void *arg);
 typedef struct {
     char system_name[32];
     char dirname[16];
-    char exts[16];
+    char exts[32];
 	#if COVERFLOW != 0
     size_t cover_width;
     size_t cover_height;

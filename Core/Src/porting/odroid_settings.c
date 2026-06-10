@@ -1,15 +1,17 @@
 #include <assert.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "odroid_system.h"
 #include "odroid_settings.h"
 #include "main.h"
 #include "rg_i18n.h"
+#include "rg_storage.h"
 #include "appid.h"
 #include "gui.h"
 #include "rom_manager.h"
-#include "ff.h"
 #include "gw_sdcard.h"
 
 #define CONFIG_MAGIC 0xcafef00d
@@ -107,16 +109,18 @@ static const persistent_config_t persistent_config_default = {
     .lang = 4,
 #elif CODEPAGE==12525
     .lang = 5,
-#elif CODEPAGE==12511
+#elif CODEPAGE==12526
     .lang = 6,
-#elif CODEPAGE==932
-    .lang = 10,
-#elif CODEPAGE==936
+#elif CODEPAGE==12511
     .lang = 7,
-#elif CODEPAGE==949
-    .lang = 9,
-#elif CODEPAGE==950
+#elif CODEPAGE==932
+    .lang = 11,
+#elif CODEPAGE==936
     .lang = 8,
+#elif CODEPAGE==949
+    .lang = 10,
+#elif CODEPAGE==950
+    .lang = 9,
 #else
     .lang = 0,
 #endif
@@ -152,34 +156,20 @@ static const persistent_config_t persistent_config_default = {
 persistent_config_t persistent_config_ram;
 
 static bool file_exists(const char *file_path) {
-    FILINFO fno;
-    FRESULT res;
-
-    res = f_stat(file_path, &fno);
-    
-    if (res == FR_OK) {
-        return true;
-    } else {
-        return false;
-    }
+    struct stat st;
+    return stat(file_path, &st) == 0;
 }
 
 void odroid_settings_init()
 {
-    FIL file;
-    UINT bytes_read;
-
     if (fs_mounted && file_exists("/CONFIG")) {
-        FRESULT fr;
-        fr = f_open(&file, "/CONFIG", FA_READ);
-        if (fr == FR_OK) {
-            f_read(&file, (unsigned char *)&persistent_config_ram, sizeof(persistent_config_t), &bytes_read);
-            f_close(&file);
+        FILE *file = fopen("/CONFIG", "rb");
+        if (file) {
+            size_t bytes_read = fread((unsigned char *)&persistent_config_ram, 1, sizeof(persistent_config_t), file);
+            fclose(file);
+            if (bytes_read != sizeof(persistent_config_t))
+                memset(&persistent_config_ram, 0, sizeof(persistent_config_t));
         }
-    }
-    else
-    {
-        memset(&persistent_config_ram, 0, sizeof(persistent_config_t));
     }
 
     if (persistent_config_ram.magic != CONFIG_MAGIC) {
@@ -206,67 +196,54 @@ void odroid_settings_init()
     }
     //set colors;
     curr_colors = (colors_t *)(&gui_colors[persistent_config_ram.colors]);
+    gui_apply_colors_to_overlay_clut();
     //set font
     set_font(odroid_settings_font_get());
-    //set lang
-    curr_lang = (lang_t *)gui_lang[odroid_settings_lang_get()];
+    //set lang — load strings from /lang/xx_xx.bin on SD, fall back to
+    //  baked lang_en_us if the file is missing or corrupt.
+    curr_lang = i18n_load_language(odroid_settings_lang_get());
 }
 
 void odroid_settings_commit()
 {
-    FIL file;
-    FRESULT fr;
-    UINT bytes_write;
-
     // Calculate crc32 of the whole struct with the crc32 value set to 0
     persistent_config_ram.crc32 = 0;
     persistent_config_ram.crc32 = crc32_le(0, (unsigned char *) &persistent_config_ram, sizeof(persistent_config_t));
 
     if (fs_mounted) {
-        fr = f_open(&file, "/CONFIG", FA_CREATE_ALWAYS | FA_WRITE);
-        if (fr == FR_OK) {
-            f_write(&file, (const void *)&persistent_config_ram, sizeof(persistent_config_t), &bytes_write);
-            f_close(&file);
+        FILE *file = fopen("/CONFIG", "wb");
+        if (file) {
+            fwrite((const void *)&persistent_config_ram, 1, sizeof(persistent_config_t), file);
+            fclose(file);
         }
     }
+
+    /* Settings dialog has just closed. Re-loading the committed
+     * language is a cache hit when the user landed back on the same
+     * idx they entered with (i18n_load_language caches per-idx). */
+    curr_lang = i18n_load_language(odroid_settings_lang_get());
+}
+
+#if CHEAT_CODES == 1
+static int delete_cheat_state_file_cb(const rg_scandir_t *file, void *arg)
+{
+    (void)arg;
+
+    if (file->is_file) {
+        const char *ext = strrchr(file->basename, '.');
+        if (ext && strcmp(ext, ".state") == 0)
+            rg_storage_delete(file->path);
+    }
+
+    return RG_SCANDIR_CONTINUE;
 }
 
 static void odroid_settings_delete_cheat_state_files()
 {
-    DIR dir, subdir;
-    FILINFO fno, subfno;
-    FRESULT res, subres;
-
-    res = f_opendir(&dir, ODROID_BASE_PATH_CHEATS);
-    if (res == FR_OK) {
-        for (;;) {
-            res = f_readdir(&dir, &fno);
-            if (res != FR_OK || fno.fname[0] == 0) break; // Break on error or end of dir
-            if (fno.fattrib & AM_DIR && fno.fname[0] != '.') { // Check for subdirectories, skip '.' and '..'
-                char subdirpath[256];
-                snprintf(subdirpath, sizeof(subdirpath), "%s/%s", ODROID_BASE_PATH_CHEATS, fno.fname);
-                subres = f_opendir(&subdir, subdirpath);
-                if (subres == FR_OK) {
-                    for (;;) {
-                        subres = f_readdir(&subdir, &subfno);
-                        if (subres != FR_OK || subfno.fname[0] == 0) break; // Break on error or end of subdir
-                        if (!(subfno.fattrib & AM_DIR)) { // Skip sub directories
-                            // Check if the file has a ".state" extension
-                            char *ext = strrchr(subfno.fname, '.');
-                            if (ext && strcmp(ext, ".state") == 0) {
-                                char filepath[256];
-                                snprintf(filepath, sizeof(filepath), "%s/%s", subdirpath, subfno.fname);
-                                f_unlink(filepath);
-                            }
-                        }
-                    }
-                    f_closedir(&subdir);
-                }
-            }
-        }
-        f_closedir(&dir);
-    }
+    rg_storage_scandir(ODROID_BASE_PATH_SAVES, delete_cheat_state_file_cb, NULL,
+                       RG_SCANDIR_FILES | RG_SCANDIR_RECURSIVE);
 }
+#endif
 
 void odroid_settings_reset()
 {
@@ -373,29 +350,20 @@ void odroid_settings_turbo_buttons_set(int8_t turbo_buttons)
 
 int8_t odroid_settings_get_next_lang(uint8_t cur)
 {
-    lang_t* next_lang = NULL;
-    int ret = cur;
-    while (!next_lang)
-    {
-        ret ++;
-        if (ret >= gui_lang_count)
-            ret = 0;
-        next_lang = (lang_t *)gui_lang[ret];
-    }
+    /* gui_lang[] removed — all entries were non-NULL (only present-when-
+     * INCLUDED languages were in the array), so the original while-loop
+     * always exited on its first iteration. Reduce to simple wrap. */
+    int ret = cur + 1;
+    if (ret >= gui_lang_count)
+        ret = 0;
     return ret;
 }
 
 int8_t odroid_settings_get_prior_lang(uint8_t cur)
 {
-    lang_t* prior_lang = NULL;
-    int ret = cur;
-    while (!prior_lang)
-    {
-        ret --;
-        if (ret < 0)
-            ret = gui_lang_count - 1;
-        prior_lang = (lang_t *)gui_lang[ret];
-    }
+    int ret = (int)cur - 1;
+    if (ret < 0)
+        ret = gui_lang_count - 1;
     return ret;
 }
 

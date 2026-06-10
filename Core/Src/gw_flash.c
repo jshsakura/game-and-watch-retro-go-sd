@@ -644,6 +644,12 @@ void OSPI_EraseSync(uint32_t address, uint32_t size)
 
     do {
         ret = OSPI_Erase(&address, &size, true);
+        // Erase is a long, synchronous busy-wait — refresh the WWDG
+        // every sector so a multi-sector erase (e.g. a 137KB save state
+        // spanning three 64KB blocks) doesn't trip the watchdog at
+        // default 280MHz, where the window is ~472ms but a full erase
+        // chain can easily exceed that.
+        wdog_refresh();
     } while (ret == false);
 }
 
@@ -684,6 +690,11 @@ void OSPI_Program(uint32_t address,
                          buffer + (i * 256),
                          buffer_size > 256 ? 256 : buffer_size);
         buffer_size -= 256;
+        // ~1ms per 256B page; 137KB save = 536 pages = ~536ms total
+        // wait — past the ~472ms WWDG window at 280MHz. Refresh per
+        // page so the loop never accumulates more than ~1ms of
+        // un-kicked time, regardless of buffer length.
+        wdog_refresh();
     }
 }
 

@@ -131,9 +131,11 @@ void gui_init_colors()
         gui_colors[9].bg_c = _2CC(0x100000);
         gui_colors[9].main_c = _2CC(0x900000);
         
-        // Mario/Zelda specific themes (positions 10-11)
-        gui_colors[10].main_c = _2CC(0x006000);  // Zelda green
-        gui_colors[11].main_c = _2CC(0x006000);  // Zelda green
+        // Mario/Zelda specific themes (positions 10-11).
+        // _2CC is a swizzle: feed it the red-looking literal (as entries 0-9 do)
+        // to get green out. Passing 0x006000 here yields 0x6000 (red), not green.
+        gui_colors[10].main_c = _2CC(0x600000);  // Zelda green
+        gui_colors[11].main_c = _2CC(0x600000);  // Zelda green
         
         gui_colors[23].main_c = _2CC(0x801008);  // Other theme that had _2CC
     }
@@ -142,6 +144,36 @@ void gui_init_colors()
 colors_t *curr_colors = (colors_t *)(&gui_colors[0]);
 
 int gui_colors_count = 26;
+
+/* Push the 4 RGB565 colors of the active theme into the LUT8 overlay
+ * CLUT range so the menu renders with the exact yellow/green/etc. the
+ * user picked, instead of nearest-matching them against the cart's
+ * palette. No-op when the LCD is in RGB565 mode. Call after changing
+ * curr_colors (config load + theme nav). */
+void gui_apply_colors_to_overlay_clut(void)
+{
+    /* Don't gate on LCD mode — lcd_set_overlay_clut() stores the colors
+     * for later if not yet in LUT8 (e.g. during early config load before
+     * PICO-8 has switched the LCD). */
+    if (curr_colors == NULL) return;
+    const uint16_t rgb565[4] = {
+        curr_colors->bg_c, curr_colors->main_c,
+        curr_colors->sel_c, curr_colors->dis_c,
+    };
+    uint32_t rgb888[4];
+    for (int i = 0; i < 4; i++) {
+        uint16_t c = rgb565[i];
+        /* RGB565 → RGB888 with bit-replication for full 0..255 range. */
+        uint32_t r5 = (c >> 11) & 0x1F;
+        uint32_t g6 = (c >>  5) & 0x3F;
+        uint32_t b5 = (c      ) & 0x1F;
+        uint32_t r8 = (r5 << 3) | (r5 >> 2);
+        uint32_t g8 = (g6 << 2) | (g6 >> 4);
+        uint32_t b8 = (b5 << 3) | (b5 >> 2);
+        rgb888[i] = (r8 << 16) | (g8 << 8) | b8;
+    }
+    lcd_set_overlay_clut(rgb888, 4);
+}
 
 static char str_buffer[128];
 
@@ -985,7 +1017,7 @@ void gui_draw_coverlight_v(retro_emulator_file_t *file, int cover_position)
 
     /* draw cover art or grey box */
     if (file->img_state == IMG_STATE_NO_COVER)
-        odroid_overlay_draw_fill_rect(cover_x + COVER_BORDER, cover_y + COVER_BORDER, cover_width, cover_height, get_darken_pixel(C_GRAY, 100 * cover_light3[cover_position] / 255));
+        odroid_overlay_draw_fill_rect(cover_x + COVER_BORDER, cover_y + COVER_BORDER, cover_width, cover_height, get_darken_pixel(C_GRAY, 100 * cover_light3[-cover_position] / 255));
 
     /* display the cover art */
     else
@@ -1002,7 +1034,7 @@ void gui_draw_coverlight_v(retro_emulator_file_t *file, int cover_position)
     else
     {
         odroid_overlay_draw_rect(cover_x + 4, cover_y + 4, cover_width + 4, cover_height + 4, 2, curr_colors->bg_c);
-        odroid_overlay_draw_rect(5 + cover_x, 5 + cover_y, cover_width + 2, cover_height + 2, 1, get_darken_pixel_d(curr_colors->sel_c, curr_colors->bg_c, 100 * cover_light3[cover_position] / 255));
+        odroid_overlay_draw_rect(5 + cover_x, 5 + cover_y, cover_width + 2, cover_height + 2, 1, get_darken_pixel_d(curr_colors->sel_c, curr_colors->bg_c, 100 * cover_light3[-cover_position] / 255));
     }
 }
 

@@ -13,4 +13,8 @@ size_t msx_getromdata(uint8_t **data, uint8_t *src_data, size_t src_size, const 
 #if CHEAT_CODES == 1
 void update_cheats_msx();
 #endif
+#ifndef GNW_DISABLE_COMPRESSION
+/* Compression management */
+extern size_t msx_rom_decompress_size;
+#endif
 #endif

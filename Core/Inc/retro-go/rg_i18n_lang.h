@@ -68,6 +68,7 @@ typedef struct
     const char *s_md_Option_OFF;
     const char *s_md_AudioFilter;
     const char *s_md_VideoUpscaler;
+    const char *s_md_Region;
     //=====================================================================
 
     // Core\Src\porting\md\main_wsv.c ================================
@@ -208,7 +209,6 @@ typedef struct
     const char *s_Author;
     const char *s_Author_;
     const char *s_UI_Mod;
-    const char *s_UI_Mod_;
     const char *s_Lang;
     const char *s_LangAuthor;
     const char *s_Debug_menu;

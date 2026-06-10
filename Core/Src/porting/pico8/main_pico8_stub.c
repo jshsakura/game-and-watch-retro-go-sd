@@ -87,13 +87,26 @@ static void wait_for_any_button(void)
 }
 
 /* Entry trampoline placed at overlay offset 0 via .pico8_entry section.
- * Firmware dispatches through a function pointer at __RAM_EMU_START__
- * so this MUST be the first code in the overlay for both the GPL stub
- * and the separately-distributed engine binary. */
-__attribute__((section(".pico8_entry"), used, naked))
-void pico8_entry_trampoline(void)
+ * Firmware dispatches through a function pointer at the engine load
+ * address so this MUST be the first code in the overlay for both the
+ * GPL stub and the separately-distributed engine binary.
+ *
+ * Self-zero BSS — equivalent of crt0's startup BSS clear. GPL no longer
+ * zeroes BSS (so the engine can grow without GPL needing to know its
+ * footprint). Hand-written loop because the SD engine's firmware-bridge
+ * memset isn't initialised yet; keeping the same code path here in the
+ * stub for symmetry. */
+__attribute__((section(".pico8_entry"), used, noinline))
+void pico8_entry_trampoline(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
-    asm volatile ("b app_main_pico8");
+    /* Local externs declared as bytes so we never collide with the
+     * void*[] declaration in gw_linker.h (if it gets pulled in). */
+    extern uint8_t _OVERLAY_PICO8_BSS_START[];
+    extern uint8_t _OVERLAY_PICO8_BSS_END[];
+    uint32_t *p = (uint32_t *)_OVERLAY_PICO8_BSS_START;
+    uint32_t *e = (uint32_t *)_OVERLAY_PICO8_BSS_END;
+    while (p < e) *p++ = 0;
+    app_main_pico8(load_state, start_paused, save_slot);
 }
 
 void app_main_pico8(uint8_t load_state, uint8_t start_paused, int8_t save_slot)

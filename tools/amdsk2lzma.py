@@ -115,7 +115,7 @@ lzmaArray = analyzeDsk(dskFile,sys.argv[1])
 dskFile.close()
 
 if len(lzmaArray) > 0 :
-    outFile = sys.argv[1]+".cdk"
+    outFile = os.path.splitext(sys.argv[1])[0] + ".cdk"
     print("File compressed, saving "+outFile)
     newfile=open(outFile,'wb')
     newfile.write(lzmaArray)

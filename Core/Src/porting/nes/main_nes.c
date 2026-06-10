@@ -112,8 +112,8 @@ void osd_setpalette(rgb_t *pal)
     HAL_LTDC_EnableCLUT(&hltdc, 0);
 
     // color 13 is "black". Makes for a nice border.
-    memset(framebuffer1, 13, sizeof(framebuffer1));
-    memset(framebuffer2, 13, sizeof(framebuffer2));
+    memset(framebuffer1, 13, lcd_get_frame_size());
+    memset(framebuffer2, 13, lcd_get_frame_size());
 
     odroid_display_force_refresh();
 #else

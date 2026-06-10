@@ -15,7 +15,7 @@ if __name__ == "__main__":
         "--error",
         type=lambda x: float(x) / 100.0,
         default=0,
-        help="Allow for error margin in percent (0.5 => ±0.5%)",
+        help="Allow for error margin in percent (0.5 => ±0.5%%)",
     )
     args = parser.parse_args()
 
