@@ -68,6 +68,7 @@ static int  entry_count;
 static int  cursor;   // selected index into entries[]
 static int  scroll;   // index of the first visible row
 static char cur_path[PATH_MAX_LEN];
+static char g_root[PATH_MAX_LEN] = "/music";  // chosen at startup (/music or /media)
 
 static int scandir_cb(const rg_scandir_t *file, void *arg)
 {
@@ -82,12 +83,12 @@ static int scandir_cb(const rg_scandir_t *file, void *arg)
     return RG_SCANDIR_CONTINUE;
 }
 
-static void scan_current(void)
+static bool scan_current(void)
 {
     entry_count = 0;
     cursor = 0;
     scroll = 0;
-    rg_storage_scandir(cur_path, scandir_cb, NULL,
+    return rg_storage_scandir(cur_path, scandir_cb, NULL,
         RG_SCANDIR_FILES | RG_SCANDIR_DIRS | RG_SCANDIR_SORT);
 }
 
@@ -106,12 +107,12 @@ static void enter_dir(const char *name)
 // Returns false when already at MEDIA_ROOT (caller should exit the app).
 static bool go_parent(void)
 {
-    if (strcmp(cur_path, MEDIA_ROOT) == 0)
+    if (strcmp(cur_path, g_root) == 0)
         return false;
 
     char *slash = strrchr(cur_path, '/');
     if (!slash || slash == cur_path)
-        strcpy(cur_path, MEDIA_ROOT);
+        strcpy(cur_path, g_root);
     else
         *slash = '\0';
 
@@ -1179,8 +1180,12 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_system_init(APPID_HOMEBREW, 48000);
 
-    strcpy(cur_path, MEDIA_ROOT);
-    scan_current();
+    strcpy(cur_path, "/music");
+    if (!scan_current()) {           // fall back to /media if /music is absent
+        strcpy(cur_path, "/media");
+        scan_current();
+    }
+    strcpy(g_root, cur_path);
 
     odroid_gamepad_state_t joy, prev;
     memset(&prev, 0, sizeof(prev));
