@@ -30,9 +30,11 @@ typedef struct {
 // become empty strings. Always clears *out first.
 void id3_read_tags(const char *path, media_tags_t *out);
 
-// Locate the first APIC (embedded cover) and read up to cap bytes into dst.
-// Returns the image byte count (0 if none); sets *is_png (else assume JPEG).
-int  id3_read_cover(const char *path, uint8_t *dst, int cap, bool *is_png);
+// Locate the first APIC (embedded cover) WITHOUT reading the image into RAM:
+// returns 1 and sets *off (file offset of the image bytes), *len (image byte
+// length) and *is_png (else assume JPEG) so the caller can stream-decode it
+// straight from the file. Returns 0 if no usable cover is present.
+int  id3_locate_cover(const char *path, long *off, long *len, bool *is_png);
 
 // Load a sidecar "<track>.lrc" (replacing the .mp3 extension) into out as UTF-8.
 // Returns true and sets *out NUL-terminated if found. EUC-KR bytes are passed

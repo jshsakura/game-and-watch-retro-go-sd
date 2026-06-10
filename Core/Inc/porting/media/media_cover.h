@@ -1,15 +1,19 @@
 // Album-art rendering for the Music app.
 //
 // Decodes cover art (embedded ID3 APIC first, then a sidecar jpg/png beside the
-// track) using TJpgDec (scaled, any-size JPEG in ~8 KB) and lupng (PNG). Owns
-// the shared image + decode scratch buffers.
+// track) using TJpgDec (baseline JPEG) and lupng (PNG). The compressed image is
+// STREAMED straight from the file during decode, so there is no raw-size cap and
+// arbitrarily large covers work; only the PNG-inflate / JPEG-work scratch is
+// owned here. (Progressive JPEG is unsupported by TJpgDec → placeholder shown.)
 #pragma once
 
 #include <stdint.h>
 #include <stdbool.h>
 
-// Read the track's cover bytes into the internal image buffer. Returns the byte
-// count (0 if no cover found) and sets *is_png (else treat as JPEG).
+// Locate the track's cover and remember it as the active stream source (embedded
+// APIC, else a sidecar). Returns a positive value (the image byte length, for a
+// truthy "has cover") or 0 if none; sets *is_png (else treat as JPEG). The image
+// is decoded on demand by the cover_render_*/cover_thumb calls below.
 int  cover_load(const char *path, bool *is_png);
 
 // Render the loaded cover (n bytes) fit to the full screen, centered, then

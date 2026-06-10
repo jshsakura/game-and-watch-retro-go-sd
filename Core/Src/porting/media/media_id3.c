@@ -8,8 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 
-// Largest single frame we buffer (lyrics can be long; cover art is read
-// separately by id3_read_cover and never lands here).
+// Largest single frame we buffer (lyrics can be long; cover art is located
+// separately by id3_locate_cover and streamed from the file, never landing here).
 static uint8_t g_frame[ID3_LYRICS_MAX + 16];
 
 // --- UTF-8 encoding ---------------------------------------------------------
@@ -196,7 +196,7 @@ void id3_read_tags(const char *path, media_tags_t *out)
 
 // --- cover art --------------------------------------------------------------
 
-int id3_read_cover(const char *path, uint8_t *dst, int cap, bool *is_png)
+int id3_locate_cover(const char *path, long *off, long *len, bool *is_png)
 {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
@@ -208,7 +208,7 @@ int id3_read_cover(const char *path, uint8_t *dst, int cap, bool *is_png)
     int fhlen = (ver == 2) ? 6 : 10;
     long tag_end = 10 + (long)synchsafe(hdr + 6);
     long pos = 10;
-    int img_n = 0;
+    int found = 0;
 
     while (pos + fhlen <= tag_end) {
         if (fseek(f, pos, SEEK_SET) != 0) break;
@@ -250,12 +250,13 @@ int id3_read_cover(const char *path, uint8_t *dst, int cap, bool *is_png)
             }
             long isz = (long)fsize - consumed;
             if (isz > 8) {
-                long lim = isz < cap ? isz : cap;
-                img_n = (int)fread(dst, 1, (size_t)lim, f);
-                if (img_n > 8) {
-                    *is_png = (dst[0] == 0x89 && dst[1] == 'P' && dst[2] == 'N' && dst[3] == 'G');
-                } else {
-                    img_n = 0;
+                long img_off = ftell(f);                     // now at image data start
+                uint8_t sig[4] = { 0 };
+                if (img_off >= 0 && fread(sig, 1, 4, f) == 4) {
+                    *off = img_off;
+                    *len = isz;
+                    *is_png = (sig[0] == 0x89 && sig[1] == 'P' && sig[2] == 'N' && sig[3] == 'G');
+                    found = 1;
                 }
             }
             break;                                           // first picture only
@@ -263,7 +264,7 @@ int id3_read_cover(const char *path, uint8_t *dst, int cap, bool *is_png)
         pos = fdata + (long)fsize;
     }
     fclose(f);
-    return img_n;
+    return found;
 }
 
 // --- sidecar lyrics ---------------------------------------------------------

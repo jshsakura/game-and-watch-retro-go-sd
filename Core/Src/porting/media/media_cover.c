@@ -8,16 +8,37 @@
 #include <stdio.h>
 #include <string.h>
 
-#define IMG_BUF_MAX   (128 * 1024)   // raw cover bytes (JPEG/PNG) read from SD
 #define SCRATCH_MAX   (352 * 1024)   // PNG inflate pool — also lent to JPEG as its
                                      // work area (see JPEG_WORK_SZ); the two decoders
                                      // never run at once, so they share this buffer.
 #define JPEG_WORK_SZ  (32 * 1024)    // tjpgd work area, carved from g_scratch
 
-static uint8_t g_img[IMG_BUF_MAX];
 static uint8_t g_scratch[SCRATCH_MAX];
 
 _Static_assert(JPEG_WORK_SZ <= SCRATCH_MAX, "JPEG work area must fit in g_scratch");
+
+// Cover art is decoded by STREAMING straight from the file (embedded APIC at an
+// offset, or a sidecar starting at 0) — we never hold the whole compressed image
+// in RAM, so arbitrarily large covers decode and there is no size cap. g_src is
+// the located source; cover_open() returns a FILE* seeked to the image start.
+typedef struct {
+    char path[260];
+    long off;            // byte offset of the image data within the file
+    long len;            // image byte length
+    bool is_png;
+    bool valid;
+} cover_src_t;
+static cover_src_t g_src;
+
+static FILE *cover_open(long *remain)
+{
+    if (!g_src.valid) return NULL;
+    FILE *f = fopen(g_src.path, "rb");
+    if (!f) return NULL;
+    if (g_src.off > 0 && fseek(f, g_src.off, SEEK_SET) != 0) { fclose(f); return NULL; }
+    *remain = g_src.len;
+    return f;
+}
 
 // --- sidecar lookup ---------------------------------------------------------
 
@@ -55,37 +76,52 @@ static bool find_sidecar(const char *mp3path, char *out, size_t outsz, bool *is_
     return false;
 }
 
-static int load_file(const char *path, uint8_t *dst, int cap)
+static long file_size(const char *path)
 {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
-    int n = (int)fread(dst, 1, cap, f);
+    long n = (fseek(f, 0, SEEK_END) == 0) ? ftell(f) : 0;
     fclose(f);
     return n < 0 ? 0 : n;
 }
 
 int cover_load(const char *path, bool *is_png)
 {
-    int n = id3_read_cover(path, g_img, IMG_BUF_MAX, is_png);
-    if (n > 0) return n;
+    g_src.valid = false;
 
-    char side[260];
-    if (find_sidecar(path, side, sizeof(side), is_png))
-        return load_file(side, g_img, IMG_BUF_MAX);
-    return 0;
+    long off = 0, len = 0; bool png = false;
+    if (id3_locate_cover(path, &off, &len, &png) && len > 8) {
+        snprintf(g_src.path, sizeof(g_src.path), "%s", path);
+        g_src.off = off; g_src.len = len; g_src.is_png = png; g_src.valid = true;
+    } else {
+        char side[260]; bool spng = false;
+        if (!find_sidecar(path, side, sizeof(side), &spng)) return 0;
+        long sz = file_size(side);
+        if (sz <= 8) return 0;
+        snprintf(g_src.path, sizeof(g_src.path), "%s", side);
+        g_src.off = 0; g_src.len = sz; g_src.is_png = spng; g_src.valid = true;
+    }
+    *is_png = g_src.is_png;
+    return (int)(g_src.len > 0x7fffffff ? 0x7fffffff : g_src.len);   // truthy "have cover"
 }
 
 // --- JPEG (TJpgDec) ---------------------------------------------------------
 
-typedef struct { const uint8_t *data; size_t size, pos; } jpg_src_t;
+typedef struct { FILE *f; long remain; } jpg_src_t;
 
+// tjpgd input: read bytes into buf, or skip them when buf == NULL. Streams from
+// the file so the compressed JPEG is never fully resident in RAM.
 static size_t jpg_in(JDEC *jd, uint8_t *buf, size_t len)
 {
     jpg_src_t *s = (jpg_src_t *)jd->device;
-    size_t avail = s->size - s->pos;
-    if (len > avail) len = avail;
-    if (buf) memcpy(buf, s->data + s->pos, len);
-    s->pos += len;
+    if (len > (size_t)s->remain) len = (size_t)s->remain;
+    if (buf) {
+        size_t got = fread(buf, 1, len, s->f);
+        s->remain -= (long)got;
+        return got;
+    }
+    if (fseek(s->f, (long)len, SEEK_CUR) != 0) return 0;   // skip
+    s->remain -= (long)len;
     return len;
 }
 
@@ -108,15 +144,18 @@ static int jpg_out(JDEC *jd, void *bitmap, JRECT *rect)
     return 1;
 }
 
-// Decode g_img (n bytes), scaled to fit (bw,bh), centered in the box at (bx,by).
+// Stream-decode the located JPEG cover, scaled to fit (bw,bh), centered at (bx,by).
 static bool jpeg_to_box(int n, int bx, int by, int bw, int bh)
 {
+    (void)n;
+    long remain; FILE *f = cover_open(&remain);
+    if (!f) return false;
+
     JDEC jd;
-    jpg_src_t src = { g_img, (size_t)n, 0 };
+    jpg_src_t src = { f, remain };
     // Borrow g_scratch as the tjpgd work area — PNG decode (its only other user)
     // never runs concurrently with JPEG decode.
-    if (jd_prepare(&jd, jpg_in, g_scratch, JPEG_WORK_SZ, &src) != JDR_OK)
-        return false;
+    if (jd_prepare(&jd, jpg_in, g_scratch, JPEG_WORK_SZ, &src) != JDR_OK) { fclose(f); return false; }
     uint8_t sc = 0;
     while (sc < 3 && (((int)jd.width >> sc) > bw || ((int)jd.height >> sc) > bh))
         sc++;
@@ -127,7 +166,9 @@ static bool jpeg_to_box(int n, int bx, int by, int bw, int bh)
     g_clip_x1 = bx + bw; g_clip_y1 = by + bh;
     if (g_clip_x1 > GW_LCD_WIDTH)  g_clip_x1 = GW_LCD_WIDTH;
     if (g_clip_y1 > GW_LCD_HEIGHT) g_clip_y1 = GW_LCD_HEIGHT;
-    return jd_decomp(&jd, jpg_out, sc) == JDR_OK;
+    bool ok = jd_decomp(&jd, jpg_out, sc) == JDR_OK;
+    fclose(f);
+    return ok;
 }
 
 // --- PNG (lupng over a bump allocator) --------------------------------------
@@ -145,17 +186,18 @@ static void *scratch_alloc(size_t size, void *u)
 }
 static void scratch_free(void *p, void *u) { (void)p; (void)u; }
 
-typedef struct { const uint8_t *data; size_t size, pos; } mem_reader_t;
+typedef struct { FILE *f; long remain; } file_reader_t;
 
-static size_t mem_read(void *out, size_t size, size_t count, void *u)
+// lupng input: streams the compressed PNG from the file (decompressed pixels go
+// to g_scratch via scratch_alloc).
+static size_t file_read(void *out, size_t size, size_t count, void *u)
 {
-    mem_reader_t *r = (mem_reader_t *)u;
+    file_reader_t *r = (file_reader_t *)u;
     size_t want = size * count;
-    size_t avail = r->size - r->pos;
-    if (want > avail) want = avail;
-    memcpy(out, r->data + r->pos, want);
-    r->pos += want;
-    return size ? want / size : 0;
+    if (want > (size_t)r->remain) want = (size_t)r->remain;
+    size_t got = fread(out, 1, want, r->f);
+    r->remain -= (long)got;
+    return size ? got / size : 0;
 }
 
 // Blit an 8-bit RGB(A) image into the box (bx,by,bw,bh), centered + downscaled.
@@ -188,17 +230,21 @@ static void blit_rgb_box(const uint8_t *px, int w, int h, int ch,
 
 static bool png_to_box(int n, int bx, int by, int bw, int bh)
 {
-    mem_reader_t rd = { g_img, (size_t)n, 0 };
+    (void)n;
+    long remain; FILE *f = cover_open(&remain);
+    if (!f) return false;
+    file_reader_t rd = { f, remain };
     g_scratch_off = 0;
 
     LuUserContext uc;
     luUserContextInitDefault(&uc);
-    uc.readProc = mem_read;       uc.readProcUserPtr = &rd;
+    uc.readProc = file_read;      uc.readProcUserPtr = &rd;
     uc.allocProc = scratch_alloc; uc.allocProcUserPtr = NULL;
     uc.freeProc = scratch_free;   uc.freeProcUserPtr = NULL;
     uc.warnProc = NULL;
 
     LuImage *img = luPngReadUC(&uc);
+    fclose(f);
     if (!img) return false;
     if (img->depth != 8 || img->channels < 3) return false;
     blit_rgb_box(img->data, img->width, img->height, img->channels, bx, by, bw, bh);
@@ -256,11 +302,14 @@ static int jpg_thumb_out(JDEC *jd, void *bitmap, JRECT *rect)
 
 static bool jpeg_to_thumb(int n, uint16_t *out, int sz)
 {
+    (void)n;
+    long remain; FILE *f = cover_open(&remain);
+    if (!f) return false;
+
     JDEC jd;
-    jpg_src_t src = { g_img, (size_t)n, 0 };
+    jpg_src_t src = { f, remain };
     // Same shared work area as jpeg_to_box() — see note there.
-    if (jd_prepare(&jd, jpg_in, g_scratch, JPEG_WORK_SZ, &src) != JDR_OK)
-        return false;
+    if (jd_prepare(&jd, jpg_in, g_scratch, JPEG_WORK_SZ, &src) != JDR_OK) { fclose(f); return false; }
     uint8_t sc = 0;
     while (sc < 3 && (((int)jd.width >> sc) > sz * 4 || ((int)jd.height >> sc) > sz * 4)) sc++;
     g_thumb_sw = (int)jd.width >> sc;
@@ -268,22 +317,28 @@ static bool jpeg_to_thumb(int n, uint16_t *out, int sz)
     g_thumb_dst = out;
     g_thumb_sz = sz;
     memset(out, 0, (size_t)sz * sz * sizeof(uint16_t));
-    return jd_decomp(&jd, jpg_thumb_out, sc) == JDR_OK;
+    bool ok = jd_decomp(&jd, jpg_thumb_out, sc) == JDR_OK;
+    fclose(f);
+    return ok;
 }
 
 static bool png_to_thumb(int n, uint16_t *out, int sz)
 {
-    mem_reader_t rd = { g_img, (size_t)n, 0 };
+    (void)n;
+    long remain; FILE *f = cover_open(&remain);
+    if (!f) return false;
+    file_reader_t rd = { f, remain };
     g_scratch_off = 0;
 
     LuUserContext uc;
     luUserContextInitDefault(&uc);
-    uc.readProc = mem_read;       uc.readProcUserPtr = &rd;
+    uc.readProc = file_read;      uc.readProcUserPtr = &rd;
     uc.allocProc = scratch_alloc; uc.allocProcUserPtr = NULL;
     uc.freeProc = scratch_free;   uc.freeProcUserPtr = NULL;
     uc.warnProc = NULL;
 
     LuImage *img = luPngReadUC(&uc);
+    fclose(f);
     if (!img) return false;
     if (img->depth != 8 || img->channels < 3) return false;
 
