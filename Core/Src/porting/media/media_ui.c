@@ -22,18 +22,20 @@
 
 // now-playing layout
 #define TOPBAR_H 18
-#define CARD_SZ  140
+#define CARD_SZ  112
 #define CARD_X   ((SCR_W - CARD_SZ) / 2)
-#define CARD_Y   20
-#define TITLE_Y  162
-#define SUB_Y    175
-#define PANEL_Y  188
-#define PROG_X   18
-#define PROG_W   (SCR_W - 2 * PROG_X)
-#define PROG_Y   199
-#define TIMES_Y  209
-#define HINT_DIV 221
-#define HINT1_Y  225
+#define CARD_Y   26
+#define TITLE_Y  150
+#define SUB_Y    166
+#define PANEL_Y  186
+#define PROG_X   16
+#define TIMES_W  40                       // reserved width for each flanking time label
+#define PROG_BAR_X (PROG_X + TIMES_W + 6)  // bar starts after the left time label
+#define PROG_W   (SCR_W - 2 * PROG_BAR_X)  // bar width (symmetric margins)
+#define PROG_Y   196                       // progress-bar top
+#define TIMES_Y  192                       // time labels (vertically centered on bar)
+#define HINT_DIV 210
+#define HINT1_Y  216
 
 // --- primitives -------------------------------------------------------------
 
@@ -216,20 +218,51 @@ static void dot(int cx, int cy, int r, uint16_t c)
 #define RGB565(r, g, b) (uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3))
 
 // Beautiful retro vinyl record placeholder
-static void draw_vinyl_placeholder(int cx, int cy, uint16_t accent, uint16_t bg)
+// Spin state for the no-cover vinyl placeholder (advanced by ui_player_spin()).
+static int  g_vinyl_angle;
+static bool g_vinyl_active;
+
+// 16-step cos table (Q7, ×128); sin(i) = cos((i+12) & 15)
+static const int VINYL_COS[16] = {
+    128, 118, 91, 49, 0, -49, -91, -118, -128, -118, -91, -49, 0, 49, 91, 118
+};
+#define VINYL_SIN(i) VINYL_COS[((i) + 12) & 15]
+#define VINYL_R      54                 // outer radius (fits the 112px card)
+#define VINYL_STEPS  16                 // angle resolution for the spin
+
+// Spinning vinyl placeholder shown when a track has no (decodable) cover art.
+// `angle` advances each frame to rotate the shine + label mark, so the disc
+// reads as a turning record. Concentric body is opaque, so re-drawing the whole
+// disc each frame needs no background restore.
+static void draw_vinyl_placeholder(int cx, int cy, uint16_t accent, uint16_t bg, int angle)
 {
-    // Vinyl body (dark slate)
-    uint16_t slate = RGB565(26, 28, 36);
+    uint16_t slate  = RGB565(26, 28, 36);
     uint16_t groove = RGB565(48, 52, 64);
-    dot(cx, cy, 58, slate);
-    dot(cx, cy, 49, groove);
-    dot(cx, cy, 48, slate);
-    dot(cx, cy, 37, groove);
-    dot(cx, cy, 36, slate);
-    dot(cx, cy, 25, groove);
-    dot(cx, cy, 24, slate);
-    dot(cx, cy, 17, accent);
-    dot(cx, cy, 4, bg);
+    uint16_t sheen  = RGB565(150, 162, 188);   // rotating light streak
+
+    dot(cx, cy, VINYL_R,          slate);
+    dot(cx, cy, VINYL_R * 90/100, groove);
+    dot(cx, cy, VINYL_R * 88/100, slate);
+    dot(cx, cy, VINYL_R * 68/100, groove);
+    dot(cx, cy, VINYL_R * 66/100, slate);
+    dot(cx, cy, VINYL_R * 46/100, groove);
+    dot(cx, cy, VINYL_R * 44/100, slate);
+
+    // rotating shine: a light streak across the grooves (+ a fainter opposite one)
+    int a = ((angle % VINYL_STEPS) + VINYL_STEPS) % VINYL_STEPS;
+    int cs = VINYL_COS[a], sn = VINYL_SIN(a);
+    for (int r = VINYL_R * 30/100; r <= VINYL_R * 96/100; r++) {
+        int x = cx + r * cs / 128, y = cy + r * sn / 128;
+        ui_px(x, y, sheen); ui_px(x + 1, y, sheen);
+        int xo = cx - r * cs / 128, yo = cy - r * sn / 128;
+        ui_px(xo, yo, ui_mix(sheen, slate, 6));   // dimmer trailing streak
+    }
+
+    dot(cx, cy, VINYL_R * 32/100, accent);         // centre label
+    // label mark that orbits with the disc, reinforcing the spin
+    ui_fill(cx + (VINYL_R*18/100) * cs / 128 - 1,
+            cy + (VINYL_R*18/100) * sn / 128 - 1, 3, 3, ui_mix(bg, accent, 6));
+    dot(cx, cy, VINYL_R * 8/100, bg);              // spindle hole
 }
 
 // hardware-like vertical volume pips
@@ -341,9 +374,10 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
     ui_fill(CARD_X + 5, CARD_Y + CARD_SZ + 2, CARD_SZ - 10, 4, ui_dim(bg, 2, 5)); // soft shadow
     bool card = has_cover && cover_render_card(cover_n, cover_is_png,
                                                CARD_X, CARD_Y, CARD_SZ, CARD_SZ);
+    g_vinyl_active = !card;
     if (!card) {
         ui_fill(CARD_X, CARD_Y, CARD_SZ, CARD_SZ, ui_mix(bg, accent, 2));
-        draw_vinyl_placeholder(CARD_X + CARD_SZ / 2, CARD_Y + CARD_SZ / 2, accent, bg);
+        draw_vinyl_placeholder(CARD_X + CARD_SZ / 2, CARD_Y + CARD_SZ / 2, accent, bg, g_vinyl_angle);
     }
     ui_rrect(RX, RY, RW, RH, R, ui_mix(accent, bg, 8));                         // rounded frame
     corners_round_restore(RX, RY, RW, RH, R, cbuf);                            // round off square corners
@@ -367,6 +401,21 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
     ui_fill(0, PANEL_Y, SCR_W, SCR_H - PANEL_Y, panel_bg);
     ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(curr_colors->dis_c, bg, 5));
     draw_player_hints();
+}
+
+// Is the spinning vinyl placeholder showing (no decodable cover)? The player
+// loop uses this to decide whether to animate.
+bool ui_player_has_spin(void) { return g_vinyl_active; }
+
+// Advance the spin and redraw just the rotating disc into the active buffer.
+// No-op when a real cover is shown. The card frame/backdrop are left intact
+// (the disc is opaque and stays within the card), so only the disc is redrawn.
+void ui_player_spin(void)
+{
+    if (!g_vinyl_active) return;
+    uint16_t accent = curr_colors->sel_c, bg = curr_colors->bg_c;
+    g_vinyl_angle++;
+    draw_vinyl_placeholder(CARD_X + CARD_SZ / 2, CARD_Y + CARD_SZ / 2, accent, bg, g_vinyl_angle);
 }
 
 // --- now-playing: dynamic layer ---------------------------------------------
@@ -455,19 +504,16 @@ void ui_player_dynamic(const player_state_t *ps)
     if (frac < 0) frac = 0;
     if (frac > 1) frac = 1;
     int fillw = (int)(frac * PROG_W);
-    ui_fill(PROG_X, PROG_Y, PROG_W, 4, ui_mix(bg, main_c, 2));     // track
-    ui_fill(PROG_X, PROG_Y, fillw, 4, accent);                 // elapsed
-    dot(PROG_X + fillw, PROG_Y + 2, 6, ui_mix(accent, bg, 7)); // knob glow
-    dot(PROG_X + fillw, PROG_Y + 2, 4, scrubbing ? main_c : accent);  // knob
+    ui_fill(PROG_BAR_X, PROG_Y, PROG_W, 4, ui_mix(bg, main_c, 2));     // track
+    ui_fill(PROG_BAR_X, PROG_Y, fillw, 4, accent);                 // elapsed
+    dot(PROG_BAR_X + fillw, PROG_Y + 2, 6, ui_mix(accent, bg, 7)); // knob glow
+    dot(PROG_BAR_X + fillw, PROG_Y + 2, 4, scrubbing ? main_c : accent);  // knob
 
+    // elapsed / remaining times flank the bar on a single row
     char t[16];
     int shown = scrubbing ? (int)(frac * ps->total) : ps->sec;
     fmt_time(t, sizeof(t), shown);
-    ui_text(PROG_X, TIMES_Y, 56, t, scrubbing ? accent : soft, panel_bg);
-
-    // Centered mini play/pause indicator inside transport times row
-    if (ps->paused) icon_pause(SCR_W / 2 - 3, TIMES_Y + 1, 7, 10, soft);
-    else            icon_play(SCR_W / 2 - 3, TIMES_Y + 1, 7, 10, accent);
+    ui_text(PROG_X, TIMES_Y, TIMES_W, t, scrubbing ? accent : soft, panel_bg);
 
     fmt_time(t, sizeof(t), ps->total - shown);
     char rem[16]; snprintf(rem, sizeof(rem), "-%s", t);

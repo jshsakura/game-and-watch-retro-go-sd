@@ -42,6 +42,11 @@ uint16_t ui_dim(uint16_t c, int num, int den);                     // c * num/de
 void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png);
 // Dynamic layer (top bar + transport + hint bar): redraw every frame.
 void ui_player_dynamic(const player_state_t *ps);
+// Spinning vinyl placeholder (shown when a track has no decodable cover):
+// ui_player_has_spin() reports whether it's active; ui_player_spin() advances
+// the rotation and redraws just the disc into the active buffer.
+bool ui_player_has_spin(void);
+void ui_player_spin(void);
 
 // --- browser list (handles large libraries: scrollbar, position, ellipsis) ---
 enum { LIST_TRACK = 0, LIST_DIR = 1, LIST_SPECIAL = 2 };

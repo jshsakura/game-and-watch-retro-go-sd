@@ -247,6 +247,14 @@ int main(void)
     ui_player_dynamic(&ps);
     dump("nowplaying_nocover");
 
+    // spin frames: advance the rotation a few steps to preview the animation
+    for (int s = 1; s <= 4; s++) {
+        char nm[32]; snprintf(nm, sizeof(nm), "nowplaying_spin%d", s);
+        ui_player_spin(); ui_player_spin();   // 2 steps per frame for a clearer delta
+        ui_player_dynamic(&ps);
+        dump(nm);
+    }
+
     g_have_cover = 1;
     ui_info_draw(&ps);
     dump("info");

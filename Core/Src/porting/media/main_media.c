@@ -47,6 +47,7 @@ enum { MENU_INFO = 1, MENU_LYRICS = 2, MENU_CLOSE = 3 };
 
 #define HOLD_MS     300        // press longer than this => seek-scrub
 #define SCRUB_STEP  0.010f     // fraction per frame while scrubbing
+#define SPIN_DIV    4          // redraw the spinning vinyl every Nth loop (~15fps)
 
 // i18n string with an English fallback when a language lacks the key.
 #define TR(field, fallback) ((curr_lang && curr_lang->field) ? curr_lang->field : (fallback))
@@ -513,6 +514,7 @@ static void music_player(int start_pi)
     bool reload = true, recompose = false, dirty = true, screen_off = false;
     int  view = VIEW_PLAY, lyr_scroll = 0;
     int  last_sec = -1, last_active = -2, last_top = -999;
+    int  spin_div = 0;                  // throttles the spinning-vinyl animation
     uint32_t played = 0;
     bool lr_down = false; int lr_dir = 0; uint32_t lr_press = 0; bool scrubbing = false; float scrub = 0;
 
@@ -616,7 +618,13 @@ static void music_player(int start_pi)
         // render the active view
         if (!screen_off) {
             if (view == VIEW_PLAY) {
-                if (ps.sec != last_sec || dirty || scrubbing) { last_sec = ps.sec; ui_player_dynamic(&ps); lcd_swap(); }
+                if (ps.sec != last_sec || dirty || scrubbing) {
+                    last_sec = ps.sec; spin_div = 0;
+                    ui_player_dynamic(&ps); lcd_swap();
+                } else if (!ps.paused && ui_player_has_spin() && ++spin_div >= SPIN_DIV) {
+                    // throttle the spinning vinyl to ~15fps; keep transport current
+                    spin_div = 0; ui_player_spin(); ui_player_dynamic(&ps); lcd_swap();
+                }
             } else if (view == VIEW_INFO) {
                 if (dirty) { ui_info_draw(&ps); lcd_swap(); }
             } else { // VIEW_LYRICS
