@@ -38,7 +38,7 @@
 #define LIST_TOP      HEADER_HEIGHT
 #define VISIBLE_ROWS  ((GW_LCD_HEIGHT - HEADER_HEIGHT - FOOTER_HEIGHT) / ROW_HEIGHT)
 #define THUMB_SZ      34
-#define META_N        16
+#define META_N        10
 #define FAV_MAX       64
 
 enum { MODE_FOLDER = 0, MODE_FAV = 1 };
