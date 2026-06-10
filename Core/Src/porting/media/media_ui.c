@@ -22,11 +22,11 @@
 
 // now-playing layout
 #define TOPBAR_H 18
-#define CARD_SZ  112
+#define CARD_SZ  108
 #define CARD_X   ((SCR_W - CARD_SZ) / 2)
-#define CARD_Y   22
-#define TITLE_Y  138
-#define SUB_Y    153
+#define CARD_Y   14
+#define TITLE_Y  126            // 2x (24px) title
+#define SUB_Y    154
 #define PANEL_Y  168
 #define PROG_X   14
 #define PROG_W   (SCR_W - 2 * PROG_X)
@@ -84,6 +84,38 @@ void ui_text_bold_center_t(int y, const char *t, uint16_t fg)
     int x = (SCR_W - w) / 2;
     ui_text_t(x, y, w + 3, t, fg);
     ui_text_t(x + 1, y, w + 3, t, fg);    // faux-bold: second pass offset 1px
+}
+
+// Draw `t` centered at `y`, integer-upscaled `scale`x. The 12px bitmap font has
+// no anti-aliasing, so each glyph pixel becomes a crisp scale×scale block. The
+// 12px source is rendered into the top scratch rows (0..11) — always repainted
+// by the dynamic top bar — then block-copied (fg pixels only) to (centered, y).
+// Falls back to 1x if the scaled width would not fit the screen.
+static void ui_text_scaled_center(int y, const char *t, uint16_t fg, int scale)
+{
+    int w = i18n_get_text_width(t);
+    if (w <= 0) return;
+    while (scale > 1 && w * scale > SCR_W - 8) scale--;
+    if (scale <= 1) { ui_text_center_t(y, t, fg); return; }
+
+    const uint16_t S = 0x0001;                 // sentinel bg (≈ black, ≠ fg)
+    ui_fill(0, 0, w + 2, FONT_H, S);
+    ui_text(0, 0, w + 2, t, fg, S);
+
+    uint16_t *fb = lcd_get_active_buffer();
+    int dw = w * scale, dh = FONT_H * scale;
+    int ox = (SCR_W - dw) / 2, oy = y;
+    for (int j = 0; j < dh; j++) {
+        int sy = j / scale, dy = oy + j;
+        if (dy < 0 || dy >= SCR_H) continue;
+        const uint16_t *srow = fb + sy * SCR_W;
+        uint16_t *drow = fb + dy * SCR_W;
+        for (int i = 0; i < dw; i++) {
+            uint16_t px = srow[i / scale];
+            int dx = ox + i;
+            if (px != S && dx >= 0 && dx < SCR_W) drow[dx] = px;
+        }
+    }
 }
 
 uint16_t ui_dim(uint16_t c, int num, int den)
@@ -180,8 +212,8 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
     }
     ui_rect(CARD_X, CARD_Y, CARD_SZ, CARD_SZ, ui_mix(accent, main_c, 4));
 
-    // title (faux-bold) + "artist · album"
-    ui_text_bold_center_t(TITLE_Y, ps->title && ps->title[0] ? ps->title : "(no title)", main_c);
+    // title (upscaled 2x) + "artist · album"
+    ui_text_scaled_center(TITLE_Y, ps->title && ps->title[0] ? ps->title : "(no title)", main_c, 2);
 
     char sub[200];
     const char *ar = ps->artist ? ps->artist : "";
