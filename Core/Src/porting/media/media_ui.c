@@ -171,6 +171,15 @@ static uint16_t ui_mix(uint16_t a, uint16_t b, int t)
     return (uint16_t)((r << 11) | (g << 5) | bl);
 }
 
+// A lifted, lightly accent-tinted control surface relative to the theme — so the
+// top/bottom bars read as distinct panels instead of melting into a dark bg.
+// Works on dark themes (lifts toward the ink) and light themes alike.
+static uint16_t ui_player_surface(void)
+{
+    uint16_t base = ui_mix(curr_colors->bg_c, curr_colors->main_c, 2);
+    return ui_mix(base, curr_colors->sel_c, 1);
+}
+
 // Vertical gradient background (subtle, themed).
 static void draw_vbg(void)
 {
@@ -360,8 +369,8 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
 {
     uint16_t main_c = curr_colors->main_c, bg = curr_colors->bg_c;
     uint16_t accent = curr_colors->sel_c;
-    uint16_t soft = ui_mix(main_c, bg, 6);
-    uint16_t panel_bg = ui_mix(bg, main_c, 1);
+    uint16_t soft = ui_mix(main_c, bg, 4);          // brighter secondary text
+    uint16_t panel_bg = ui_player_surface();        // lifted, accent-tinted
 
     draw_vbg();
     bool has_cover = cover_render_backdrop(cover_n, cover_is_png);
@@ -379,7 +388,7 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
         ui_fill(CARD_X, CARD_Y, CARD_SZ, CARD_SZ, ui_mix(bg, accent, 2));
         draw_vinyl_placeholder(CARD_X + CARD_SZ / 2, CARD_Y + CARD_SZ / 2, accent, bg, g_vinyl_angle);
     }
-    ui_rrect(RX, RY, RW, RH, R, ui_mix(accent, bg, 8));                         // rounded frame
+    ui_rrect(RX, RY, RW, RH, R, ui_mix(accent, bg, 5));                         // rounded frame (brighter)
     corners_round_restore(RX, RY, RW, RH, R, cbuf);                            // round off square corners
 
     // title (faux-bold) + "artist · album", both ellipsized to fit
@@ -399,7 +408,7 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
     // static hint bar (the dynamic layer repaints only the top bar + transport
     // sub-region above HINT_DIV, so the hint bar is never re-measured per frame).
     ui_fill(0, PANEL_Y, SCR_W, SCR_H - PANEL_Y, panel_bg);
-    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(curr_colors->dis_c, bg, 5));
+    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
     draw_player_hints();
 }
 
@@ -471,16 +480,17 @@ void ui_player_dynamic(const player_state_t *ps)
 {
     uint16_t bg = curr_colors->bg_c, main_c = curr_colors->main_c;
     uint16_t accent = curr_colors->sel_c, dim = curr_colors->dis_c;
-    uint16_t soft = ui_mix(main_c, bg, 6);
-    uint16_t muted = ui_mix(accent, bg, 11);
-    uint16_t panel_bg = ui_mix(bg, main_c, 1);
+    uint16_t soft = ui_mix(main_c, bg, 4);      // secondary text — brighter, legible
+    uint16_t bright = ui_mix(main_c, bg, 1);    // near-full ink for key labels
+    uint16_t muted = ui_mix(accent, bg, 5);     // active state icons — clearly visible
+    uint16_t panel_bg = ui_player_surface();    // lifted, accent-tinted control bar
     bool scrubbing = ps->scrub >= 0.0f;
 
     // ---- top bar: [▶ 3/12] ............ [셔플 반복 ♥ vol] ----
     ui_fill(0, 0, SCR_W, TOPBAR_H, panel_bg);
-    ui_fill(0, TOPBAR_H - 1, SCR_W, 1, ui_mix(dim, bg, 5));
-    if (ps->paused) icon_pause(10, 5, 8, 10, soft);
-    else            icon_play(10, 5, 8, 10, soft);
+    ui_fill(0, TOPBAR_H - 1, SCR_W, 1, ui_mix(accent, bg, 4));
+    if (ps->paused) icon_pause(10, 5, 8, 10, accent);
+    else            icon_play(10, 5, 8, 10, accent);
     char pos[24];
     snprintf(pos, sizeof(pos), "%d/%d", ps->track_index + 1, ps->track_count);
     ui_text(24, 4, 80, pos, soft, panel_bg);
@@ -488,7 +498,7 @@ void ui_player_dynamic(const player_state_t *ps)
     int rx = SCR_W - 8;
     rx -= 26; draw_vol_pips(rx, 5, ps->volume);
     rx -= 10;
-    rx -= 13; ui_text(rx, 4, 14, "\xE2\x99\xA5", ps->favorite ? accent : ui_dim(dim, 1, 2), panel_bg);   // ♥
+    rx -= 13; ui_text(rx, 4, 14, "\xE2\x99\xA5", ps->favorite ? accent : ui_mix(dim, bg, 3), panel_bg);   // ♥
     if (ps->repeat != REPEAT_OFF) {
         rx -= 8 + 11; icon_repeat(rx, 5, muted);
         if (ps->repeat == REPEAT_ONE) { ui_text(rx + 11, 4, 8, "1", muted, panel_bg); rx -= 6; }
@@ -497,14 +507,14 @@ void ui_player_dynamic(const player_state_t *ps)
 
     // ---- transport sub-region (above the static hint bar) ----
     ui_fill(0, PANEL_Y, SCR_W, HINT_DIV - PANEL_Y, panel_bg);
-    ui_fill(0, PANEL_Y, SCR_W, 1, ui_mix(dim, bg, 5)); // top border of bottom panel
+    ui_fill(0, PANEL_Y, SCR_W, 1, ui_mix(accent, bg, 4)); // top border of bottom panel
 
     float frac = scrubbing ? ps->scrub
                : (ps->total > 0 ? (float)ps->sec / (float)ps->total : 0.0f);
     if (frac < 0) frac = 0;
     if (frac > 1) frac = 1;
     int fillw = (int)(frac * PROG_W);
-    ui_fill(PROG_BAR_X, PROG_Y, PROG_W, 4, ui_mix(bg, main_c, 2));     // track
+    ui_fill(PROG_BAR_X, PROG_Y, PROG_W, 4, ui_mix(bg, main_c, 5));     // track (clearer)
     ui_fill(PROG_BAR_X, PROG_Y, fillw, 4, accent);                 // elapsed
     dot(PROG_BAR_X + fillw, PROG_Y + 2, 6, ui_mix(accent, bg, 7)); // knob glow
     dot(PROG_BAR_X + fillw, PROG_Y + 2, 4, scrubbing ? main_c : accent);  // knob
@@ -513,7 +523,7 @@ void ui_player_dynamic(const player_state_t *ps)
     char t[16];
     int shown = scrubbing ? (int)(frac * ps->total) : ps->sec;
     fmt_time(t, sizeof(t), shown);
-    ui_text(PROG_X, TIMES_Y, TIMES_W, t, scrubbing ? accent : soft, panel_bg);
+    ui_text(PROG_X, TIMES_Y, TIMES_W, t, scrubbing ? accent : bright, panel_bg);
 
     fmt_time(t, sizeof(t), ps->total - shown);
     char rem[16]; snprintf(rem, sizeof(rem), "-%s", t);
@@ -523,15 +533,16 @@ void ui_player_dynamic(const player_state_t *ps)
 
 static void draw_player_hints(void)
 {
-    uint16_t bg = curr_colors->bg_c;
-    uint16_t accent = curr_colors->sel_c, dim = curr_colors->dis_c;
+    uint16_t bg = curr_colors->bg_c, main_c = curr_colors->main_c;
+    uint16_t accent = curr_colors->sel_c;
     static const chip_t chips[] = {
         { "A", ICN_PLAY },
         { "\xE2\x97\x80\xE2\x96\xB6", ICN_NOTE },     // ◀▶  track
         { "\xE2\x96\xB2\xE2\x96\xBC", ICN_SPEAKER },  // ▲▼  volume
         { "PAUSE", ICN_MENU },
     };
-    chip_row(HINT1_Y, chips, 4, ui_mix(accent, bg, 9), ui_mix(dim, bg, 10), 0);
+    // bright key labels + accent icons — the hint bar was nearly invisible before
+    chip_row(HINT1_Y, chips, 4, ui_mix(main_c, bg, 2), accent, 0);
 }
 
 // --- browser list -----------------------------------------------------------
@@ -552,8 +563,8 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
 {
     uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c;
     uint16_t accent = curr_colors->sel_c, dim = curr_colors->dis_c;
-    uint16_t soft = ui_mix(fg, bg, 6);
-    uint16_t panel_bg = ui_mix(bg, fg, 1);
+    uint16_t soft = ui_mix(fg, bg, 4);
+    uint16_t panel_bg = ui_player_surface();
     const int H = LIST_HEADER_H, RH = v->row_h, TH = 34;
     bool has_bar = v->count > v->visible_rows;
     int right = SCR_W - (has_bar ? 8 : 4);                      // content right edge
@@ -568,8 +579,8 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
     int pw = i18n_get_text_width(pos);
     ui_ellipsize(buf, sizeof(buf), v->header ? v->header : "", SCR_W - 16 - pw - 8);
     ui_text(8, 4, SCR_W - 16 - pw - 8, buf, accent, panel_bg);
-    ui_text(SCR_W - 8 - pw, 4, pw + 2, pos, dim, panel_bg);
-    ui_fill(0, H - 1, SCR_W, 1, ui_mix(dim, bg, 5));
+    ui_text(SCR_W - 8 - pw, 4, pw + 2, pos, soft, panel_bg);
+    ui_fill(0, H - 1, SCR_W, 1, ui_mix(accent, bg, 4));
 
     if (v->count == 0) {
         const char *hint = (v->empty_hint && v->empty_hint[0]) ? v->empty_hint
@@ -592,7 +603,7 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
         uint16_t pill_bg = ui_mix(bg, accent, 4);
         uint16_t rbg = sel ? pill_bg : bg;
         uint16_t txt = fg;
-        uint16_t sub = sel ? ui_mix(fg, bg, 4) : dim;
+        uint16_t sub = sel ? ui_mix(fg, bg, 4) : ui_mix(fg, bg, 7);   // clearer artist/duration
 
         int pill_x = 4;
         int pill_y = y + 2;
@@ -654,12 +665,12 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
 
     // footer hint
     ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, LIST_FOOTER_H, panel_bg);
-    ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, 1, ui_mix(dim, bg, 5));
+    ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, 1, ui_mix(accent, bg, 4));
     static const chip_t fh[] = {
         { "A", ICN_PLAY }, { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE },     // ▲▼
         { "\xE2\x97\x80\xE2\x96\xB6", ICN_NONE }, { "B", ICN_NONE },     // ◀▶
     };
-    chip_row(SCR_H - LIST_FOOTER_H + 2, fh, 4, ui_mix(accent, bg, 9), ui_mix(dim, bg, 10), 0);
+    chip_row(SCR_H - LIST_FOOTER_H + 2, fh, 4, ui_mix(fg, bg, 2), accent, 0);
 }
 
 // --- info screen ------------------------------------------------------------
