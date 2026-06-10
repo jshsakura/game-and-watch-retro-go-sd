@@ -28,6 +28,8 @@ const lang_t lang_en_us LANG_DATA = {
     .s_brightness = "Brightness",
     .s_info = "Info",
     .s_lyrics = "Lyrics",
+    .s_empty_music = "Add music files to:",
+    .s_no_favorite = "No favorites yet",
 
     // Core\Src\porting\nes-fceu\main_nes_fceu.c ===========================
     .s_Crop_Vertical_Overscan = "Crop Vertical Overscan",

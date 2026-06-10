@@ -29,6 +29,8 @@ const lang_t lang_ko_kr LANG_DATA = {
     .s_brightness = "밝기",
     .s_info = "정보",
     .s_lyrics = "가사",
+    .s_empty_music = "이 폴더에 음악 파일을 넣어주세요:",
+    .s_no_favorite = "즐겨찾기가 비어 있어요",
     //한국어
     // If you can translate, please feed back the translation results to me, thank you
     // translate by  Augen(히힛마스터):

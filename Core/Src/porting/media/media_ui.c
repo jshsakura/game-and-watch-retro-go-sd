@@ -525,8 +525,15 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
     ui_text(SCR_W - 8 - pw, 4, pw + 2, pos, dim, panel_bg);
     ui_fill(0, H - 1, SCR_W, 1, ui_mix(dim, bg, 5));
 
-    if (v->count == 0)
-        ui_text_center_t(H + 16, "(\xEB\xB9\x84\xEC\x96\xB4\xEC\x9E\x88\xEC\x9D\x8C)", soft);   // (비어있음)
+    if (v->count == 0) {
+        const char *hint = (v->empty_hint && v->empty_hint[0]) ? v->empty_hint
+                                                               : "(empty)";
+        ui_text_center_t(H + 28, hint, fg);
+        if (v->empty_sub && v->empty_sub[0]) {
+            ui_ellipsize(buf, sizeof(buf), v->empty_sub, SCR_W - 16);
+            ui_text_center_t(H + 28 + 22, buf, soft);
+        }
+    }
 
     for (int r = 0; r < v->visible_rows; r++) {
         int idx = v->scroll + r;

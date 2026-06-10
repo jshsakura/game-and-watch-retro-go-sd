@@ -380,9 +380,23 @@ static void draw_list(void)
     static char favhead[64];
     snprintf(favhead, sizeof(favhead), "\xE2\x98\x85 %s", TR(s_favorite, "Favorites"));
     const char *head = (g_mode == MODE_FAV) ? favhead : cur_path;
+
+    // Empty-state guidance: favourites view tells the user the list is empty;
+    // folder view points them at the current folder to drop music files into.
+    const char *empty_hint = NULL, *empty_sub = NULL;
+    if (entry_count == 0) {
+        if (g_mode == MODE_FAV) {
+            empty_hint = TR(s_no_favorite, "No favorites yet");
+        } else {
+            empty_hint = TR(s_empty_music, "Add music files to:");
+            empty_sub  = cur_path;
+        }
+    }
+
     list_view_t v = {
         .header = head, .count = entry_count, .cursor = cursor, .scroll = scroll,
         .visible_rows = LIST_VISIBLE_ROWS, .row_h = LIST_ROW_H, .busy = g_list_busy,
+        .empty_hint = empty_hint, .empty_sub = empty_sub,
     };
     ui_list_draw(&v, list_item_at);
 }

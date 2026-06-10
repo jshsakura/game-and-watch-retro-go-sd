@@ -62,6 +62,8 @@ typedef struct {
     int  cursor, scroll;         // selection + first visible row
     int  visible_rows, row_h;
     bool busy;                   // true while fast-scrolling (skip art/sub)
+    const char *empty_hint;      // headline shown when count==0 (NULL = default)
+    const char *empty_sub;       // optional 2nd line below the hint (e.g. folder path)
 } list_view_t;
 
 #define LIST_HEADER_H 18

@@ -275,6 +275,8 @@ typedef struct
     const char *s_brightness;
     const char *s_info;
     const char *s_lyrics;
+    const char *s_empty_music;   // empty-folder hint headline
+    const char *s_no_favorite;   // empty-favorites hint
     //=====================================================================
     //           ------------ end ---------------
 } lang_t;
