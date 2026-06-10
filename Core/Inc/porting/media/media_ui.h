@@ -43,6 +43,36 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png);
 // Dynamic layer (top bar + transport + hint bar): redraw every frame.
 void ui_player_dynamic(const player_state_t *ps);
 
+// --- browser list (handles large libraries: scrollbar, position, ellipsis) ---
+enum { LIST_TRACK = 0, LIST_DIR = 1, LIST_SPECIAL = 2 };
+
+typedef struct {
+    const char     *title;       // primary line (id3 title or file name)
+    const char     *subtitle;    // artist, or ""
+    const char     *duration;    // "3:45", or ""
+    const uint16_t *art;         // thumbnail pixels (art_sz×art_sz) or NULL
+    int             art_sz;
+    int             kind;        // LIST_*
+    bool            fav;
+} list_item_t;
+
+typedef struct {
+    const char *header;          // folder path or "★ 즐겨찾기"
+    int  count;                  // total entries
+    int  cursor, scroll;         // selection + first visible row
+    int  visible_rows, row_h;
+    bool busy;                   // true while fast-scrolling (skip art/sub)
+} list_view_t;
+
+#define LIST_HEADER_H 20
+#define LIST_FOOTER_H 16
+#define LIST_ROW_H    34
+#define LIST_VISIBLE_ROWS ((240 - LIST_HEADER_H - LIST_FOOTER_H) / LIST_ROW_H)
+
+// Draw the browser list. `item_at(i, out)` fills a row's data lazily (called
+// only for visible rows) so the caller can keep its metadata cache.
+void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out));
+
 // --- info screen (full tags + technical table) ---
 void ui_info_draw(const player_state_t *ps);
 

@@ -29,7 +29,7 @@
 #include "media_cover.h"
 #include "media_ui.h"
 
-#define MAX_ENTRIES   256
+#define MAX_ENTRIES   512
 #define NAME_MAX_LEN  128
 #define PATH_MAX_LEN  256
 #define ROW_HEIGHT    34
@@ -331,84 +331,57 @@ static const track_meta_t *meta_get(int entry_idx)
     return m;
 }
 
+// When fast-scrolling we skip the (file-I/O heavy) metadata decode and show the
+// bare file name, so the list stays smooth; metadata fills in once movement
+// settles. Set by the app loop.
+static bool g_list_busy;
+
+static const char *strip_ext(const char *name, char *buf, size_t cap)
+{
+    snprintf(buf, cap, "%s", name);
+    char *d = strrchr(buf, '.');
+    if (d) *d = '\0';
+    return buf;
+}
+
+// Fill one visible row for ui_list_draw (called only for on-screen rows).
+static void list_item_at(int idx, list_item_t *out)
+{
+    static char title[NAME_MAX_LEN], dur[16];
+    media_entry_t *e = &entries[idx];
+
+    if (e->is_special) { out->kind = LIST_SPECIAL; out->title = e->name; return; }
+    if (e->is_dir)     { out->kind = LIST_DIR;     out->title = e->name; return; }
+
+    out->kind = LIST_TRACK;
+    char p[PATH_MAX_LEN];
+    entry_track_path(idx, p, sizeof(p));
+    out->fav = fav_is(p);
+
+    if (g_list_busy) {                      // fast scroll: name only, no decode
+        out->title = strip_ext(e->name, title, sizeof(title));
+        out->art_sz = THUMB_SZ;
+        return;
+    }
+
+    const track_meta_t *m = meta_get(idx);
+    out->title = m->title[0] ? m->title : strip_ext(e->name, title, sizeof(title));
+    out->subtitle = m->artist;
+    if (m->dur > 0) { snprintf(dur, sizeof(dur), "%d:%02d", m->dur / 60, m->dur % 60); out->duration = dur; }
+    out->art = m->has_art ? m->art : NULL;
+    out->art_sz = THUMB_SZ;
+}
+
 static void draw_list(void)
 {
-    uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c;
-    uint16_t sel = curr_colors->sel_c, dim = curr_colors->dis_c;
-
-    ui_fill(0, 0, GW_LCD_WIDTH, GW_LCD_HEIGHT, bg);
-
     const char *head = (g_mode == MODE_FAV)
         ? "\xE2\x98\x85 \xEC\xA6\x90\xEA\xB2\xA8\xEC\xB0\xBE\xEA\xB8\xB0"   // ★ 즐겨찾기
         : cur_path;
-    ui_text(6, 3, GW_LCD_WIDTH - 12, head, sel, bg);
-    ui_fill(0, HEADER_HEIGHT - 1, GW_LCD_WIDTH, 1, ui_dim(dim, 1, 2));
-
-    if (entry_count == 0)
-        ui_text(6, LIST_TOP + 10, GW_LCD_WIDTH - 12, "(\xEB\xB9\x84\xEC\x96\xB4\xEC\x9E\x88\xEC\x9D\x8C)", fg, bg);  // (비어있음)
-
-    for (int row = 0; row < VISIBLE_ROWS; row++) {
-        int idx = scroll + row;
-        if (idx >= entry_count) break;
-        media_entry_t *e = &entries[idx];
-        int y = LIST_TOP + row * ROW_HEIGHT;
-        bool is_sel = (idx == cursor);
-        uint16_t rbg = is_sel ? sel : bg;
-        uint16_t txt = is_sel ? bg : fg;
-        uint16_t sub = is_sel ? bg : dim;
-        if (is_sel) {
-            ui_fill(0, y, GW_LCD_WIDTH, ROW_HEIGHT, sel);
-            ui_fill(0, y, 3, ROW_HEIGHT, curr_colors->main_c);    // accent bar
-        }
-        int tx = 8, ty = y + (ROW_HEIGHT - THUMB_SZ) / 2;
-
-        if (e->is_special) {
-            ui_text_t(tx, y + 10, GW_LCD_WIDTH - tx - 8, e->name, is_sel ? bg : curr_colors->main_c);
-            continue;
-        }
-        if (e->is_dir) {
-            ui_fill(tx, ty + 4, THUMB_SZ, THUMB_SZ - 8, sub);
-            ui_text(tx + THUMB_SZ + 8, y + 10, GW_LCD_WIDTH - (tx + THUMB_SZ + 8) - 8, e->name, txt, rbg);
-            continue;
-        }
-
-        const track_meta_t *m = meta_get(idx);
-
-        // title (id3 or filename) + artist
-        char title[NAME_MAX_LEN];
-        if (m->title[0]) snprintf(title, sizeof(title), "%s", m->title);
-        else { snprintf(title, sizeof(title), "%s", e->name); char *d = strrchr(title, '.'); if (d) *d = '\0'; }
-
-        bool fav = false;
-        { char p[PATH_MAX_LEN]; entry_track_path(idx, p, sizeof(p)); fav = fav_is(p); }
-
-        int textw = GW_LCD_WIDTH - (tx + THUMB_SZ + 8) - 54;
-        ui_text(tx + THUMB_SZ + 8, y + 4, textw, title, txt, rbg);
-        if (m->artist[0])
-            ui_text(tx + THUMB_SZ + 8, y + 18, textw, m->artist, sub, rbg);
-
-        char d[16];
-        if (m->dur > 0) snprintf(d, sizeof(d), "%d:%02d", m->dur / 60, m->dur % 60);
-        else            snprintf(d, sizeof(d), "--:--");
-        ui_text(GW_LCD_WIDTH - 50, y + 18, 46, d, sub, rbg);
-        if (fav)
-            ui_text(GW_LCD_WIDTH - 50, y + 4, 14, "\xE2\x99\xA5", is_sel ? bg : curr_colors->sel_c, rbg);  // ♥
-
-        uint16_t *fb = lcd_get_active_buffer();
-        if (m->has_art) {
-            for (int j = 0; j < THUMB_SZ; j++)
-                for (int i = 0; i < THUMB_SZ; i++)
-                    fb[(ty + j) * GW_LCD_WIDTH + (tx + i)] = m->art[j * THUMB_SZ + i];
-        } else {
-            ui_fill(tx, ty, THUMB_SZ, THUMB_SZ, sub);
-        }
-    }
-
-    ui_fill(0, GW_LCD_HEIGHT - FOOTER_HEIGHT, GW_LCD_WIDTH, FOOTER_HEIGHT, bg);
-    ui_fill(0, GW_LCD_HEIGHT - FOOTER_HEIGHT, GW_LCD_WIDTH, 1, ui_dim(dim, 1, 2));
-    ui_text(6, GW_LCD_HEIGHT - FOOTER_HEIGHT + 2, GW_LCD_WIDTH - 12,
-        "A \xEC\x9E\xAC\xEC\x83\x9D    \xE2\x96\xB2\xE2\x96\xBC \xEC\x9D\xB4\xEB\x8F\x99    B \xEB\x92\xA4\xEB\xA1\x9C",  // A 재생  ▲▼ 이동  B 뒤로
-        dim, bg);
+    list_view_t v = {
+        .header = head, .count = entry_count, .cursor = cursor, .scroll = scroll,
+        .visible_rows = LIST_VISIBLE_ROWS, .row_h = LIST_ROW_H, .busy = g_list_busy,
+    };
+    ui_list_draw(&v, list_item_at);
 }
 
 // ---------------------------------------------------------------------------
@@ -671,37 +644,58 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     memset(&prev, 0, sizeof(prev));
     lcd_clear_buffers();
 
+    bool dirty = true;
+    int  settle = 0, held_dir = 0;
+    uint32_t held_t0 = 0, held_last = 0;
+
     while (true) {
         wdog_refresh();
         odroid_input_read_gamepad(&joy);
         #define PRESSED(b) (joy.values[b] && !prev.values[b])
+        bool moved = false;
 
-        if (PRESSED(ODROID_INPUT_UP))    move_cursor(-1);
-        if (PRESSED(ODROID_INPUT_DOWN))  move_cursor(1);
-        if (PRESSED(ODROID_INPUT_LEFT))  move_cursor(-VISIBLE_ROWS);
-        if (PRESSED(ODROID_INPUT_RIGHT)) move_cursor(VISIBLE_ROWS);
+        // vertical navigation with hold-to-repeat (accelerating)
+        int vdir = joy.values[ODROID_INPUT_UP] ? -1 : joy.values[ODROID_INPUT_DOWN] ? 1 : 0;
+        if (vdir) {
+            uint32_t now = HAL_GetTick();
+            if (held_dir != vdir) {                 // new press
+                move_cursor(vdir); moved = true; held_dir = vdir; held_t0 = held_last = now;
+            } else {
+                uint32_t since = now - held_t0;
+                uint32_t iv = since > 1500 ? 30 : since > 350 ? 75 : 0xFFFFFFFFu;  // delay, then accelerate
+                if (now - held_last >= iv) { move_cursor(vdir); moved = true; held_last = now; }
+            }
+        } else {
+            held_dir = 0;
+        }
+        if (PRESSED(ODROID_INPUT_LEFT))  { move_cursor(-LIST_VISIBLE_ROWS); moved = true; }
+        if (PRESSED(ODROID_INPUT_RIGHT)) { move_cursor(LIST_VISIBLE_ROWS);  moved = true; }
+        if (moved) { dirty = true; settle = 8; }
 
         if (PRESSED(ODROID_INPUT_A) && entry_count > 0) {
             media_entry_t *e = &entries[cursor];
             if (e->is_special) {
-                g_mode = MODE_FAV; scan_favourites();
+                g_mode = MODE_FAV; scan_favourites(); dirty = true;
             } else if (e->is_dir) {
-                enter_dir(e->name);
+                enter_dir(e->name); dirty = true;
             } else {
                 music_player(cursor_to_pl(cursor));
-                odroid_input_read_gamepad(&joy); prev = joy; continue;
+                odroid_input_read_gamepad(&joy); prev = joy; dirty = true; held_dir = 0; continue;
             }
         }
 
         if (PRESSED(ODROID_INPUT_B)) {
             if (g_mode == MODE_FAV) { g_mode = MODE_FOLDER; strcpy(cur_path, g_root); scan_folder(); }
             else if (!go_parent()) odroid_system_switch_app(APPID_LAUNCHER);  // noreturn
+            dirty = true;
         }
         #undef PRESSED
 
         prev = joy;
-        draw_list();
-        lcd_swap();
+        if (settle > 0 && --settle == 0) dirty = true;   // settled -> upgrade rows to full metadata
+        g_list_busy = settle > 0;
+
+        if (dirty) { draw_list(); lcd_swap(); dirty = false; }
         lcd_wait_for_vblank();
     }
 }

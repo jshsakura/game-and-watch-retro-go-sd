@@ -21,20 +21,19 @@
 #define FONT_H 12
 
 // now-playing layout
-#define TOPBAR_H 18
-#define CARD_SZ  108
+#define TOPBAR_H 20
+#define CARD_SZ  120
 #define CARD_X   ((SCR_W - CARD_SZ) / 2)
-#define CARD_Y   14
-#define TITLE_Y  126            // 2x (24px) title
-#define SUB_Y    154
-#define PANEL_Y  168
-#define PROG_X   14
+#define CARD_Y   24
+#define TITLE_Y  150
+#define SUB_Y    166
+#define PANEL_Y  184
+#define PROG_X   18
 #define PROG_W   (SCR_W - 2 * PROG_X)
-#define PROG_Y   184
-#define TIMES_Y  192
-#define HINT_DIV 206
-#define HINT1_Y  209
-#define HINT2_Y  224
+#define PROG_Y   197
+#define TIMES_Y  207
+#define HINT_DIV 221
+#define HINT1_Y  225
 
 // --- primitives -------------------------------------------------------------
 
@@ -84,38 +83,6 @@ void ui_text_bold_center_t(int y, const char *t, uint16_t fg)
     int x = (SCR_W - w) / 2;
     ui_text_t(x, y, w + 3, t, fg);
     ui_text_t(x + 1, y, w + 3, t, fg);    // faux-bold: second pass offset 1px
-}
-
-// Draw `t` centered at `y`, integer-upscaled `scale`x. The 12px bitmap font has
-// no anti-aliasing, so each glyph pixel becomes a crisp scale×scale block. The
-// 12px source is rendered into the top scratch rows (0..11) — always repainted
-// by the dynamic top bar — then block-copied (fg pixels only) to (centered, y).
-// Falls back to 1x if the scaled width would not fit the screen.
-static void ui_text_scaled_center(int y, const char *t, uint16_t fg, int scale)
-{
-    int w = i18n_get_text_width(t);
-    if (w <= 0) return;
-    while (scale > 1 && w * scale > SCR_W - 8) scale--;
-    if (scale <= 1) { ui_text_center_t(y, t, fg); return; }
-
-    const uint16_t S = 0x0001;                 // sentinel bg (≈ black, ≠ fg)
-    ui_fill(0, 0, w + 2, FONT_H, S);
-    ui_text(0, 0, w + 2, t, fg, S);
-
-    uint16_t *fb = lcd_get_active_buffer();
-    int dw = w * scale, dh = FONT_H * scale;
-    int ox = (SCR_W - dw) / 2, oy = y;
-    for (int j = 0; j < dh; j++) {
-        int sy = j / scale, dy = oy + j;
-        if (dy < 0 || dy >= SCR_H) continue;
-        const uint16_t *srow = fb + sy * SCR_W;
-        uint16_t *drow = fb + dy * SCR_W;
-        for (int i = 0; i < dw; i++) {
-            uint16_t px = srow[i / scale];
-            int dx = ox + i;
-            if (px != S && dx >= 0 && dx < SCR_W) drow[dx] = px;
-        }
-    }
 }
 
 uint16_t ui_dim(uint16_t c, int num, int den)
@@ -180,11 +147,40 @@ static void dot(int cx, int cy, int r, uint16_t c)
             }
 }
 
-static void draw_volume(int x, int y, int vol)
+// slim rounded volume bar (0..9)
+static void draw_vol_bar(int x, int y, int w, int vol)
 {
-    uint16_t on = curr_colors->sel_c, off = ui_dim(curr_colors->dis_c, 1, 2);
-    for (int i = 0; i < 9; i++)
-        ui_fill(x + i * 4, y, 3, 8, i < vol ? on : off);
+    ui_fill(x, y, w, 3, ui_dim(curr_colors->dis_c, 1, 2));
+    int f = w * vol / 9;
+    if (f > 0) ui_fill(x, y, f, 3, curr_colors->sel_c);
+}
+
+// Copy `s` into `out`, truncating with a trailing ".." if it is wider than maxw.
+static void ui_ellipsize(char *out, int cap, const char *s, int maxw)
+{
+    if (!s) { out[0] = '\0'; return; }
+    if (i18n_get_text_width(s) <= maxw) {
+        snprintf(out, cap, "%s", s);
+        return;
+    }
+    int dotw = i18n_get_text_width("..");
+    int budget = maxw - dotw;
+    int o = 0;
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p && o < cap - 4) {
+        int n = (*p < 0x80) ? 1 : (*p & 0xE0) == 0xC0 ? 2 : (*p & 0xF0) == 0xE0 ? 3 : 4;
+        char tmp[8];
+        for (int i = 0; i < n; i++) tmp[i] = (char)p[i];
+        tmp[n] = '\0';
+        out[o] = '\0';
+        char probe[256];
+        snprintf(probe, sizeof(probe), "%s%s", out, tmp);
+        if (i18n_get_text_width(probe) > budget) break;
+        for (int i = 0; i < n; i++) out[o++] = (char)p[i];
+        p += n;
+    }
+    out[o] = '\0';
+    snprintf(out + o, cap - o, "..");
 }
 
 static void draw_player_hints(void);   // defined with hint_row below (static layer)
@@ -200,20 +196,22 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
     draw_vbg();
     bool has_cover = cover_render_backdrop(cover_n, cover_is_png);
 
-    // cover card (shadow + image/placeholder + border)
-    ui_fill(CARD_X + 3, CARD_Y + 3, CARD_SZ, CARD_SZ, ui_dim(bg, 1, 3));
+    // cover card: soft shadow, art (or placeholder), thin light frame
+    ui_fill(CARD_X + 3, CARD_Y + CARD_SZ + 1, CARD_SZ, 3, ui_dim(bg, 2, 5));   // soft shadow
     bool card = has_cover && cover_render_card(cover_n, cover_is_png,
                                                CARD_X, CARD_Y, CARD_SZ, CARD_SZ);
     if (!card) {
-        ui_fill(CARD_X, CARD_Y, CARD_SZ, CARD_SZ, ui_mix(bg, accent, 3));
+        ui_fill(CARD_X, CARD_Y, CARD_SZ, CARD_SZ, ui_mix(bg, accent, 2));
         int nw = i18n_get_text_width("\xE2\x99\xAA");   // ♪
         ui_text_t(CARD_X + (CARD_SZ - nw) / 2, CARD_Y + CARD_SZ / 2 - 6,
-                  nw + 2, "\xE2\x99\xAA", ui_mix(bg, main_c, 8));
+                  nw + 2, "\xE2\x99\xAA", ui_mix(bg, main_c, 7));
     }
-    ui_rect(CARD_X, CARD_Y, CARD_SZ, CARD_SZ, ui_mix(accent, main_c, 4));
+    ui_rect(CARD_X - 1, CARD_Y - 1, CARD_SZ + 2, CARD_SZ + 2, ui_mix(main_c, bg, 9));  // soft frame
 
-    // title (upscaled 2x) + "artist · album"
-    ui_text_scaled_center(TITLE_Y, ps->title && ps->title[0] ? ps->title : "(no title)", main_c, 2);
+    // title (faux-bold) + "artist · album", both ellipsized to fit
+    char buf[256];
+    ui_ellipsize(buf, sizeof(buf), ps->title && ps->title[0] ? ps->title : "(no title)", SCR_W - 28);
+    ui_text_bold_center_t(TITLE_Y, buf, main_c);
 
     char sub[200];
     const char *ar = ps->artist ? ps->artist : "";
@@ -222,14 +220,12 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
     else if (ar[0])          snprintf(sub, sizeof(sub), "%s", ar);
     else if (al[0])          snprintf(sub, sizeof(sub), "%s", al);
     else                     sub[0] = '\0';
-    if (sub[0]) ui_text_center_t(SUB_Y, sub, soft);
+    if (sub[0]) { ui_ellipsize(buf, sizeof(buf), sub, SCR_W - 44); ui_text_center_t(SUB_Y, buf, soft); }
 
-    // static transport panel chrome + always-on hint bar (the dynamic layer
-    // only repaints the top bar and the transport sub-region above HINT_DIV, so
-    // the hint bar is composed once per track and never re-measured per frame).
+    // static hint bar (the dynamic layer repaints only the top bar + transport
+    // sub-region above HINT_DIV, so the hint bar is never re-measured per frame).
     ui_fill(0, PANEL_Y, SCR_W, SCR_H - PANEL_Y, bg);
-    ui_fill(0, PANEL_Y, SCR_W, 1, ui_mix(accent, bg, 8));
-    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(curr_colors->dis_c, bg, 8));
+    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(curr_colors->dis_c, bg, 6));
     draw_player_hints();
 }
 
@@ -268,32 +264,41 @@ void ui_player_dynamic(const player_state_t *ps)
     uint16_t bg = curr_colors->bg_c, main_c = curr_colors->main_c;
     uint16_t accent = curr_colors->sel_c, dim = curr_colors->dis_c;
     uint16_t soft = ui_mix(main_c, bg, 6);
+    uint16_t muted = ui_mix(accent, bg, 11);
     bool scrubbing = ps->scrub >= 0.0f;
 
-    // ---- top bar ----
+    // ---- top bar: [▶ 3/12] ............ [셔플 반복 ♥ vol] ----
     ui_fill(0, 0, SCR_W, TOPBAR_H, bg);
-    ui_fill(0, TOPBAR_H - 1, SCR_W, 1, ui_mix(accent, bg, 8));
-    if (ps->paused) icon_pause(8, 4, 9, 10, accent);
-    else            icon_play(8, 4, 9, 10, accent);
+    ui_fill(0, TOPBAR_H - 1, SCR_W, 1, ui_mix(dim, bg, 5));
+    if (ps->paused) icon_pause(10, 5, 8, 10, soft);
+    else            icon_play(10, 5, 8, 10, soft);
     char pos[24];
-    snprintf(pos, sizeof(pos), "%d / %d", ps->track_index + 1, ps->track_count);
-    ui_text(24, 3, 80, pos, soft, bg);
-    draw_volume(SCR_W - 9 * 4 - 6, 5, ps->volume);
-    ui_text_t(SCR_W - 9 * 4 - 6 - 18, 3, 14, "\xE2\x99\xA5",     // ♥
-              ps->favorite ? accent : ui_dim(dim, 1, 2));
+    snprintf(pos, sizeof(pos), "%d/%d", ps->track_index + 1, ps->track_count);
+    ui_text(24, 4, 80, pos, soft, bg);
+
+    int rx = SCR_W - 8;
+    rx -= 34; draw_vol_bar(rx, 8, 34, ps->volume);
+    rx -= 10;
+    rx -= 13; ui_text(rx, 4, 14, "\xE2\x99\xA5", ps->favorite ? accent : ui_dim(dim, 1, 2), bg);   // ♥
+    if (ps->repeat != REPEAT_OFF) {
+        const char *r = ps->repeat == REPEAT_ONE ? "\xEB\xB0\x98\xEB\xB3\xB51" : "\xEB\xB0\x98\xEB\xB3\xB5"; // 반복 / 반복1
+        rx -= 8 + i18n_get_text_width(r); ui_text(rx, 4, 40, r, muted, bg);
+    }
+    if (ps->shuffle) {
+        rx -= 8 + i18n_get_text_width("\xEC\x85\x94\xED\x94\x8C"); ui_text(rx, 4, 30, "\xEC\x85\x94\xED\x94\x8C", muted, bg); // 셔플
+    }
 
     // ---- transport sub-region (above the static hint bar) ----
     ui_fill(0, PANEL_Y, SCR_W, HINT_DIV - PANEL_Y, bg);
-    ui_fill(0, PANEL_Y, SCR_W, 1, ui_mix(accent, bg, 8));
 
     float frac = scrubbing ? ps->scrub
                : (ps->total > 0 ? (float)ps->sec / (float)ps->total : 0.0f);
     if (frac < 0) frac = 0;
     if (frac > 1) frac = 1;
     int fillw = (int)(frac * PROG_W);
-    ui_fill(PROG_X, PROG_Y, PROG_W, 4, ui_dim(dim, 1, 2));     // track
-    ui_fill(PROG_X, PROG_Y, fillw, 4, accent);                 // elapsed
-    dot(PROG_X + fillw, PROG_Y + 2, 4, scrubbing ? main_c : accent);  // knob
+    ui_fill(PROG_X, PROG_Y, PROG_W, 3, ui_dim(dim, 1, 2));     // track
+    ui_fill(PROG_X, PROG_Y, fillw, 3, accent);                 // elapsed
+    dot(PROG_X + fillw, PROG_Y + 1, 4, scrubbing ? main_c : accent);  // knob
 
     char t[16];
     int shown = scrubbing ? (int)(frac * ps->total) : ps->sec;
@@ -303,37 +308,129 @@ void ui_player_dynamic(const player_state_t *ps)
     char rem[16]; snprintf(rem, sizeof(rem), "-%s", t);
     int rw = i18n_get_text_width(rem);
     ui_text(SCR_W - PROG_X - rw, TIMES_Y, rw + 2, rem, soft, bg);
+}
 
-    // center status: shuffle / repeat
-    char st[48]; st[0] = '\0';
-    if (ps->shuffle) strcat(st, "\xEC\x85\x94\xED\x94\x8C");          // 셔플
-    if (ps->repeat == REPEAT_ALL) { if (st[0]) strcat(st, "  "); strcat(st, "\xEB\xB0\x98\xEB\xB3\xB5"); }       // 반복
-    if (ps->repeat == REPEAT_ONE) { if (st[0]) strcat(st, "  "); strcat(st, "\xEB\xB0\x98\xEB\xB3\xB5 1"); }     // 반복 1
-    if (st[0]) {
-        int w = i18n_get_text_width(st);
-        ui_text((SCR_W - w) / 2, TIMES_Y, w + 2, st, accent, bg);
+// Always-on button hint bar (static layer — composed once per track). One
+// elegant, muted line of the primary actions; the rest live in the PAUSE menu.
+static void draw_player_hints(void)
+{
+    uint16_t bg = curr_colors->bg_c;
+    uint16_t accent = curr_colors->sel_c, dim = curr_colors->dis_c;
+    static const hint_t line1[] = {
+        { "A", "\xEC\x9E\xAC\xEC\x83\x9D" },                                     // 재생
+        { "\xE2\x97\x80\xE2\x96\xB6", "\xEA\xB3\xA1" },                          // ◀▶ 곡
+        { "\xE2\x96\xB2\xE2\x96\xBC", "\xEC\x9D\x8C\xEB\x9F\x89" },               // ▲▼ 음량
+        { "PAUSE", "\xEB\xA9\x94\xEB\x89\xB4" },                                 // 메뉴
+    };
+    hint_row(HINT1_Y, line1, 4, ui_mix(accent, bg, 10), ui_mix(dim, bg, 12), ui_mix(dim, bg, 5));
+}
+
+// --- browser list -----------------------------------------------------------
+
+static void blit_thumb(const uint16_t *art, int sz, int x, int y)
+{
+    uint16_t *fb = lcd_get_active_buffer();
+    for (int j = 0; j < sz; j++) {
+        int dy = y + j; if (dy < 0 || dy >= SCR_H) continue;
+        for (int i = 0; i < sz; i++) {
+            int dx = x + i; if (dx < 0 || dx >= SCR_W) continue;
+            fb[dy * SCR_W + dx] = art[j * sz + i];
+        }
     }
 }
 
-// Always-on button hint bar (static layer — composed once per track).
-static void draw_player_hints(void)
+void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out))
 {
-    uint16_t bg = curr_colors->bg_c, main_c = curr_colors->main_c;
+    uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c;
     uint16_t accent = curr_colors->sel_c, dim = curr_colors->dis_c;
-    uint16_t soft = ui_mix(main_c, bg, 6);
-    static const hint_t line1[] = {
+    uint16_t soft = ui_mix(fg, bg, 6);
+    const int H = LIST_HEADER_H, RH = v->row_h, TH = 28;        // thumb size
+    bool has_bar = v->count > v->visible_rows;
+    int right = SCR_W - (has_bar ? 8 : 4);                      // content right edge
+
+    ui_fill(0, 0, SCR_W, SCR_H, bg);
+
+    // header: title + "cur/total"
+    ui_fill(0, 0, SCR_W, H, bg);
+    char buf[256];
+    char pos[24];
+    snprintf(pos, sizeof(pos), "%d/%d", v->count ? v->cursor + 1 : 0, v->count);
+    int pw = i18n_get_text_width(pos);
+    ui_ellipsize(buf, sizeof(buf), v->header ? v->header : "", SCR_W - 16 - pw - 8);
+    ui_text(8, 4, SCR_W - 16 - pw - 8, buf, accent, bg);
+    ui_text(SCR_W - 8 - pw, 4, pw + 2, pos, dim, bg);
+    ui_fill(0, H - 1, SCR_W, 1, ui_mix(dim, bg, 5));
+
+    if (v->count == 0)
+        ui_text_center_t(H + 16, "(\xEB\xB9\x84\xEC\x96\xB4\xEC\x9E\x88\xEC\x9D\x8C)", soft);   // (비어있음)
+
+    for (int r = 0; r < v->visible_rows; r++) {
+        int idx = v->scroll + r;
+        if (idx >= v->count) break;
+        list_item_t it; memset(&it, 0, sizeof(it));
+        item_at(idx, &it);
+
+        int y = H + r * RH;
+        bool sel = (idx == v->cursor);
+        uint16_t rbg = sel ? accent : bg;
+        uint16_t txt = sel ? bg : fg;
+        uint16_t sub = sel ? ui_mix(bg, accent, 4) : dim;
+        if (sel) {
+            ui_fill(0, y, SCR_W, RH, accent);
+            ui_fill(0, y, 3, RH, fg);                          // accent edge bar
+        }
+        int tx = 8, ty = y + (RH - TH) / 2;
+
+        if (it.kind == LIST_SPECIAL) {
+            ui_text(tx + 2, y + (RH - 12) / 2, right - tx - 2, it.title, sel ? bg : accent, rbg);
+            continue;
+        }
+        if (it.kind == LIST_DIR) {
+            ui_fill(tx, ty + 5, TH, TH - 10, sub);             // folder glyph
+            ui_text(tx + TH + 8, y + (RH - 12) / 2, right - (tx + TH + 8), it.title, txt, rbg);
+            continue;
+        }
+
+        // track row: thumb, title, artist, duration, heart
+        if (it.art && it.art_sz > 0) blit_thumb(it.art, it.art_sz, tx, ty);
+        else ui_fill(tx, ty, TH, TH, ui_mix(rbg, sub, 6));
+
+        int dw = it.duration && it.duration[0] ? i18n_get_text_width(it.duration) : 0;
+        int textx = tx + TH + 8;
+        int textw = right - textx - (dw ? dw + 10 : 6);
+
+        ui_ellipsize(buf, sizeof(buf), it.title ? it.title : "", textw - (it.fav ? 16 : 0));
+        ui_text(textx, y + 4, textw, buf, txt, rbg);
+        if (it.subtitle && it.subtitle[0]) {
+            ui_ellipsize(buf, sizeof(buf), it.subtitle, textw);
+            ui_text(textx, y + 18, textw, buf, sub, rbg);
+        }
+        if (it.fav)
+            ui_text(right - dw - 26, y + 4, 14, "\xE2\x99\xA5", sel ? bg : accent, rbg);   // ♥
+        if (dw)
+            ui_text(right - dw - 2, y + 18, dw + 2, it.duration, sub, rbg);
+    }
+
+    // scrollbar
+    if (has_bar) {
+        int top = H, h = SCR_H - H - LIST_FOOTER_H;
+        ui_fill(SCR_W - 4, top, 3, h, ui_dim(dim, 1, 2));
+        int th = h * v->visible_rows / v->count; if (th < 14) th = 14;
+        int ty = top + (h - th) * v->scroll / (v->count - v->visible_rows > 0 ? v->count - v->visible_rows : 1);
+        if (ty + th > top + h) ty = top + h - th;
+        ui_fill(SCR_W - 4, ty, 3, th, accent);
+    }
+
+    // footer hint
+    ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, LIST_FOOTER_H, bg);
+    ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, 1, ui_mix(dim, bg, 5));
+    static const hint_t fh[] = {
         { "A", "\xEC\x9E\xAC\xEC\x83\x9D" },                                     // 재생
-        { "\xE2\x97\x80\xE2\x96\xB6", "\xEA\xB3\xA1/\xED\x83\x90\xEC\x83\x89" },  // ◀▶ 곡/탐색
-        { "\xE2\x96\xB2\xE2\x96\xBC", "\xEC\x9D\x8C\xEB\x9F\x89" },               // ▲▼ 음량
+        { "\xE2\x96\xB2\xE2\x96\xBC", "\xEC\x9D\xB4\xEB\x8F\x99" },               // ▲▼ 이동
+        { "\xE2\x97\x80\xE2\x96\xB6", "\xED\x8E\x98\xEC\x9D\xB4\xEC\xA7\x80" },   // ◀▶ 페이지
+        { "B", "\xEB\x92\xA4\xEB\xA1\x9C" },                                     // 뒤로
     };
-    static const hint_t line2[] = {
-        { "GAME", "\xEC\xA0\x95\xEB\xB3\xB4/\xEA\xB0\x80\xEC\x82\xAC" },          // 정보/가사
-        { "TIME", "\xEC\x85\x94\xED\x94\x8C" },                                  // 셔플
-        { "PAUSE", "\xEB\xA9\x94\xEB\x89\xB4" },                                 // 메뉴
-        { "B", "\xEB\xAA\xA9\xEB\xA1\x9D" },                                     // 목록
-    };
-    hint_row(HINT1_Y, line1, 3, accent, soft, ui_mix(dim, bg, 6));
-    hint_row(HINT2_Y, line2, 4, accent, dim, ui_mix(dim, bg, 6));
+    hint_row(SCR_H - LIST_FOOTER_H + 2, fh, 4, ui_mix(accent, bg, 10), ui_mix(dim, bg, 12), ui_mix(dim, bg, 5));
 }
 
 // --- info screen ------------------------------------------------------------
@@ -342,8 +439,10 @@ static void info_row(int *y, const char *label, const char *value)
 {
     if (!value || !value[0]) return;
     uint16_t dim = curr_colors->dis_c, main_c = curr_colors->main_c;
-    ui_text_t(16, *y, 92, label, dim);
-    ui_text_t(110, *y, SCR_W - 110 - 12, value, main_c);
+    char buf[256];
+    ui_text_t(16, *y, 100, label, dim);
+    ui_ellipsize(buf, sizeof(buf), value, SCR_W - 120 - 12);
+    ui_text_t(120, *y, SCR_W - 120 - 12, buf, main_c);
     *y += 15;
 }
 
@@ -395,7 +494,7 @@ void ui_info_draw(const player_state_t *ps)
         { "B", "\xEB\xAA\xA9\xEB\xA1\x9D" },      // 목록
     };
     ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(curr_colors->dis_c, bg, 8));
-    hint_row(HINT1_Y + 6, hints, 2, accent, curr_colors->dis_c, ui_mix(curr_colors->dis_c, bg, 6));
+    hint_row(226, hints, 2, ui_mix(accent,bg,10), curr_colors->dis_c, ui_mix(curr_colors->dis_c, bg, 6));
 }
 
 // --- lyrics (parser in media_lyrics.c) --------------------------------------
@@ -432,5 +531,5 @@ void ui_lyrics_draw(const player_state_t *ps, const lyrics_t *ly, int top_line, 
         { "B", "\xEB\xAA\xA9\xEB\xA1\x9D" },                                   // 목록
     };
     ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(curr_colors->dis_c, bg, 8));
-    hint_row(HINT1_Y + 6, hints, 3, accent, curr_colors->dis_c, ui_mix(curr_colors->dis_c, bg, 6));
+    hint_row(226, hints, 3, ui_mix(accent,bg,10), curr_colors->dis_c, ui_mix(curr_colors->dis_c, bg, 6));
 }
