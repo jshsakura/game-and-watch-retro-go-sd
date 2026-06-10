@@ -63,6 +63,35 @@ player** ("마치 원래부터 그런 용도로 나온 제품처럼"). All code 
 7. **Polish**: premium/native feel — smooth track transitions, consistent theming,
    clean typography/layout.
 
+8. **Beautiful design pass** (high priority — "디자인 아름답게"):
+   - Premium now-playing: cover as a full-screen **dimmed/blurred backdrop** +
+     a crisp centered cover card; elegant typographic hierarchy (title bold,
+     artist/album dim).
+   - Smooth **fade transitions** on track change; subtle animated progress knob.
+   - Consistent theme-colour accents, rounded panels, tasteful spacing.
+   - Rich list: nicer rows (album-art rounded, 2-line title/artist, right-aligned
+     duration), selection highlight with accent bar.
+9. **Lyrics view** ("가사 있으면 가사도"):
+   - Sources: ID3v2 **USLT** (unsynced lyrics) and **SYLT** (synced w/ timestamps),
+     plus sidecar **`.lrc`** files (LRC timestamp format) next to the track.
+   - Parse in `extract_*` style; show a lyrics screen (toggle key, e.g. START).
+   - If timestamps exist (SYLT/LRC): **auto-scroll + highlight the current line**
+     against the audio clock (`played`); else plain scrollable text.
+   - Lyrics text is UTF-8 (ID3 enc 1/2 = UTF-16 → convert; sidecar .lrc often
+     EUC-KR → the web converter can normalise, or decode on-device).
+
+10. **Show ALL available info — beautifully** ("보여줄 수 있는 정보는 모두"):
+    - Parse all useful ID3v2 text frames: **TIT2** title, **TPE1** artist,
+      **TALB** album, **TYER/TDRC** year, **TCON** genre, **TRCK** track #,
+      **TPE2** album-artist, **TCOM** composer, **COMM** comment.
+    - Technical info: bitrate (CBR/VBR), sample rate, channels, duration,
+      file size, codec/layer.
+    - Lay it out elegantly: now-playing shows title / artist / album prominently;
+      an **info screen** (toggle) shows the full tag + technical table.
+    - All text UTF-8 (convert ID3 enc 0/1/2/3: latin1/UTF-16/UTF-16BE/UTF-8).
+    - Generalise `extract_id3_art` into an ID3 tag reader that pulls these
+      frames in one pass (and the cover) into a struct.
+
 ## Other branches
 - `feat/media-browser` (PR #1): full media browser (txt/image/video) experiment.
 - `feat/media-converter`: web converter (image resize, txt→UTF-8 incl EUC-KR,
