@@ -105,6 +105,10 @@ int i18n_draw_text(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const char *t
 { return i18n_draw_text_line(x, y, w, t, fg, bg, transparent); }
 
 // --- cover stubs (synthetic art) -------------------------------------------
+uint8_t GW_GetCurrentHour(void) { return 10; }
+uint8_t GW_GetCurrentMinute(void) { return 38; }
+uint8_t GW_GetCurrentSecond(void) { return 0; }
+uint8_t GW_GetCurrentSubSeconds(void) { return 0; }
 int audio_bitrate_kbps(void) { return 320; }
 int audio_src_hz(void) { return 44100; }
 int audio_channels(void) { return 2; }

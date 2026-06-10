@@ -14,6 +14,7 @@
 #include "gw_lcd.h"
 #include "gui.h"
 #include "rg_i18n.h"
+#include "rg_rtc.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -389,26 +390,49 @@ static void vis_compute(bool active)
     }
 }
 
+// Retro LED-VU analyzer: each bar is a stack of discrete LED segments (lit ones
+// coloured by zone like a hardware meter, unlit ones a faint ghost), with a
+// floating peak-hold LED on top.
+#define VIS_SEG  4                          // LED segment height
+#define VIS_GAP  1
 static void draw_spectrum(uint16_t lcd_bg)
 {
+    const int STEP = VIS_SEG + VIS_GAP;
     int pitch = (SCR_W - 2 * VIS_X) / VIS_BARS;
     int bw = pitch - 4; if (bw < 3) bw = 3;
     int H = VIS_BASE - VIS_TOP;
-    uint16_t lo  = curr_colors->sel_c;
-    uint16_t hi  = ui_mix(lo, curr_colors->main_c, 7);
-    uint16_t cap = ui_mix(curr_colors->main_c, lo, 3);
+    int rows = H / STEP;
+    uint16_t lo   = curr_colors->sel_c;                     // green zone
+    uint16_t mid  = ui_mix(lo, curr_colors->main_c, 9);     // amber zone
+    uint16_t hi   = curr_colors->main_c;                    // hot zone
+    uint16_t off  = ui_mix(lcd_bg, lo, 1);                  // unlit ghost LED
+    uint16_t peak = ui_mix(curr_colors->main_c, lo, 2);
 
     ui_fill(VIS_X, VIS_TOP - 2, SCR_W - 2 * VIS_X, H + 4, lcd_bg);
     for (int b = 0; b < VIS_BARS; b++) {
         int x = VIS_X + b * pitch + 1;
-        int h = (int)(g_bar[b] * H);
-        if (h > 0) {
-            uint16_t c = ui_mix(lo, hi, (int)(g_bar[b] * 16));
-            ui_fill(x, VIS_BASE - h, bw, h, c);
+        int lit = (int)(g_bar[b] * rows + 0.5f);
+        int pk  = (int)(g_peak[b] * rows + 0.5f);
+        for (int s = 0; s < rows; s++) {
+            int yy = VIS_BASE - (s + 1) * STEP + VIS_GAP;
+            uint16_t c;
+            if (s == pk - 1 && pk > 0)      c = peak;        // peak-hold LED
+            else if (s < lit) {
+                int z = s * 100 / (rows > 1 ? rows - 1 : 1);
+                c = (z < 55) ? lo : (z < 80) ? mid : hi;
+            } else                          c = off;
+            ui_fill(x, yy, bw, VIS_SEG, c);
         }
-        int ph = (int)(g_peak[b] * H);
-        if (ph > 0) ui_fill(x, VIS_BASE - ph - 1, bw, 2, cap);
     }
+}
+
+// Small "HH:MM" clock — Game & Watch is a watch, so the time is always on screen.
+static void draw_clock(int x_center, int y, uint16_t fg)
+{
+    char t[8];
+    snprintf(t, sizeof(t), "%02d:%02d", GW_GetCurrentHour(), GW_GetCurrentMinute());
+    int w = i18n_get_text_width(t);
+    ui_text_t(x_center - w / 2, y, w + 2, t, fg);
 }
 
 // --- scrolling title marquee ------------------------------------------------
@@ -652,7 +676,9 @@ void ui_player_dynamic(const player_state_t *ps)
 
     g_anim++;
 
-    // ---- title bar right: play/pause glyph + track index ----
+    // ---- title bar: centered clock + (right) play/pause glyph + track index ----
+    ui_fill(SCR_W / 2 - 26, 1, 52, TITLEBAR_H - 2, surface);
+    draw_clock(SCR_W / 2, 3, ui_mix(main_c, accent, 9));
     ui_fill(SCR_W - 86, 1, 86, TITLEBAR_H - 2, surface);
     if (ps->paused) icon_pause(SCR_W - 84, 3, 7, 9, ui_mix(accent, surface, 9));
     else            icon_play (SCR_W - 84, 3, 8, 9, ui_mix(accent, surface, 9));
@@ -750,15 +776,21 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
 
     ui_fill(0, 0, SCR_W, SCR_H, bg);
 
-    // header: title + "cur/total"
+    // header: a solid accent tab on the left edge marks this as the title bar
+    // (visually distinct from the footer's button hints), then folder/title on
+    // the left and the live clock + position on the right.
     ui_fill(0, 0, SCR_W, H, panel_bg);
-    char buf[256];
-    char pos[24];
+    ui_fill(0, 0, 3, H, accent);
+    char buf[256], pos[24], clk[8];
+    snprintf(clk, sizeof(clk), "%02d:%02d", GW_GetCurrentHour(), GW_GetCurrentMinute());
     snprintf(pos, sizeof(pos), "%d/%d", v->count ? v->cursor + 1 : 0, v->count);
+    int cw = i18n_get_text_width(clk);
     int pw = i18n_get_text_width(pos);
-    ui_ellipsize(buf, sizeof(buf), v->header ? v->header : "", SCR_W - 16 - pw - 8);
-    ui_text(8, 4, SCR_W - 16 - pw - 8, buf, accent, panel_bg);
-    ui_text(SCR_W - 8 - pw, 4, pw + 2, pos, soft, panel_bg);
+    ui_text(SCR_W - 8 - cw, 4, cw + 2, clk, accent, panel_bg);
+    ui_text(SCR_W - 8 - cw - 8 - pw, 4, pw + 2, pos, soft, panel_bg);
+    int titlew = SCR_W - 12 - (cw + 8 + pw + 8);
+    ui_ellipsize(buf, sizeof(buf), v->header ? v->header : "", titlew);
+    ui_text(10, 4, titlew, buf, accent, panel_bg);
     ui_fill(0, H - 1, SCR_W, 1, ui_mix(accent, bg, 4));
 
     if (v->count == 0) {

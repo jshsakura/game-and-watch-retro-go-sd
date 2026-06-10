@@ -29,6 +29,7 @@
 #include "media_audio.h"
 #include "media_cover.h"
 #include "media_ui.h"
+#include "rg_rtc.h"
 
 #define MAX_ENTRIES   384   // per-folder cap; shares the MEDIA RAM region with code
 #define NAME_MAX_LEN  128
@@ -430,6 +431,7 @@ static void draw_list(void)
 // ---------------------------------------------------------------------------
 
 static player_state_t *g_ps;
+static uint32_t g_played;   // total samples played; shared so the menu keeps playback going
 
 // Small album-art thumbnail for the Winamp deck — decoded once per track into
 // this static buffer (list-sized, cheap) and lent to media_ui via set_cover.
@@ -482,8 +484,28 @@ static bool bri_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t
     return false;
 }
 
+// Feed the audio DMA from the decoded ring and advance the play position. Used
+// by the menu's repaint callback so music keeps playing (and the analyzer keeps
+// dancing) while the blocking dialog is open. One DMA half (~22ms at 48kHz) is
+// longer than a menu frame, so filling one half per repaint never underruns.
+static void player_audio_service(void)
+{
+    int16_t *buf = audio_get_active_buffer();
+    int len = audio_get_buffer_length();
+    int32_t vol = common_emu_sound_get_volume();
+    bool paused = !g_ps || g_ps->paused;
+    for (int i = 0; i < len; i++) {
+        int16_t sm = (paused || audio_ring_count() == 0) ? 0 : audio_pull();
+        buf[i] = (int16_t)((sm * vol) >> 8);
+        if (!(i & 1)) ui_vis_push(sm);
+    }
+    if (!paused) { g_played += len; audio_pump(AUDIO_PUMP_TARGET); }
+    common_emu_sound_sync(false);
+}
+
 static void player_repaint(void)
 {
+    player_audio_service();        // keep the music playing while the menu is open
     ui_player_static(g_ps);
     ui_player_dynamic(g_ps);
 }
@@ -491,17 +513,6 @@ static void player_repaint(void)
 static int open_menu(player_state_t *ps)
 {
     g_ps = ps;
-
-    // The dialog is a blocking modal, so the player loop (which refills the audio
-    // DMA) is suspended while it's open. Flush silence into both DMA half-buffers
-    // first so playback goes cleanly quiet instead of looping the last fragment;
-    // music resumes from the same spot on close (the position never advanced).
-    for (int k = 0; k < 2; k++) {
-        int16_t *b = audio_get_active_buffer();
-        memset(b, 0, (size_t)audio_get_buffer_length() * sizeof(int16_t));
-        common_emu_sound_sync(false);
-    }
-
     set_fav_v(); set_rep_v(); set_shf_v(); set_bri_v();
     odroid_dialog_choice_t choices[] = {
         { 10, TR(s_favorite,   "Favorite"),   fav_v, 1, fav_cb },
@@ -552,8 +563,7 @@ static void music_player(int start_pi)
     bool reload = true, recompose = false, dirty = true, screen_off = false;
     int  view = VIEW_PLAY, lyr_scroll = 0;
     int  last_sec = -1, last_active = -2, last_top = -999;
-    int  spin_div = 0;                  // throttles the spinning-vinyl animation
-    uint32_t played = 0;
+    int  spin_div = 0;                  // throttles the deck animation
     bool lr_down = false; int lr_dir = 0; uint32_t lr_press = 0; bool scrubbing = false; float scrub = 0;
 
     odroid_gamepad_state_t joy, prev;
@@ -561,7 +571,7 @@ static void music_player(int start_pi)
 
     while (true) {
         if (reload) {
-            reload = false; ps.paused = false; played = 0; scrubbing = false; ps.scrub = -1.0f;
+            reload = false; ps.paused = false; g_played = 0; scrubbing = false; ps.scrub = -1.0f;
             view = VIEW_PLAY; lyr_scroll = 0; dirty = true;
 
             pl_path(pi, ps.path, sizeof(ps.path));
@@ -630,10 +640,10 @@ static void music_player(int start_pi)
                 }
                 else if (lr_down && !now) {
                     lr_down = false;
-                    if (scrubbing) { audio_seek(scrub); played = (uint32_t)(scrub * ps.total * AUDIO_SAMPLE_RATE); scrubbing = false; ps.scrub = -1.0f; dirty = true; }
+                    if (scrubbing) { audio_seek(scrub); g_played = (uint32_t)(scrub * ps.total * AUDIO_SAMPLE_RATE); scrubbing = false; ps.scrub = -1.0f; dirty = true; }
                     else if (lr_dir > 0) { int n = pick_next(pi, ps.shuffle, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } }
-                    else { if (ps.sec > 3) { audio_seek(0); played = 0; dirty = true; }
-                           else { int n = pick_prev(pi, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } else { audio_seek(0); played = 0; dirty = true; } } }
+                    else { if (ps.sec > 3) { audio_seek(0); g_played = 0; dirty = true; }
+                           else { int n = pick_prev(pi, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } else { audio_seek(0); g_played = 0; dirty = true; } } }
                 }
             } else if (view == VIEW_LYRICS && !ly.synced) {
                 if (P(ODROID_INPUT_UP) && lyr_scroll > 0) { lyr_scroll--; dirty = true; }
@@ -653,8 +663,8 @@ static void music_player(int start_pi)
             buf[i] = (int16_t)((sm * vol) >> 8);
             if (!(i & 1)) ui_vis_push(sm);     // feed the spectrum analyzer
         }
-        if (!ps.paused) { played += len; audio_pump(AUDIO_PUMP_TARGET); }
-        ps.sec = (int)(played / AUDIO_SAMPLE_RATE);
+        if (!ps.paused) { g_played += len; audio_pump(AUDIO_PUMP_TARGET); }
+        ps.sec = (int)(g_played / AUDIO_SAMPLE_RATE);
 
         // render the active view
         if (!screen_off) {
@@ -671,7 +681,7 @@ static void music_player(int start_pi)
             } else if (view == VIEW_INFO) {
                 if (dirty) { ui_info_draw(&ps); lcd_swap(); }
             } else { // VIEW_LYRICS
-                int act = ly.synced ? lyrics_active_line(&ly, (int)((long long)played * 1000 / AUDIO_SAMPLE_RATE)) : -1;
+                int act = ly.synced ? lyrics_active_line(&ly, (int)((long long)g_played * 1000 / AUDIO_SAMPLE_RATE)) : -1;
                 int top = ly.synced ? (act > 3 ? act - 3 : 0) : lyr_scroll;
                 if (act != last_active || top != last_top || dirty) { ui_lyrics_draw(&ps, &ly, top, act); lcd_swap(); last_active = act; last_top = top; }
             }
@@ -781,6 +791,9 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         prev = joy;
         if (settle > 0 && --settle == 0) dirty = true;   // settled -> decode any new rows
         g_list_busy = settle > 0;                         // meta_peek keeps cached rows from blinking
+
+        // tick the header clock once a minute even while idle
+        { static int lastmin = -1; int m = GW_GetCurrentMinute(); if (m != lastmin) { lastmin = m; dirty = true; } }
 
         if (dirty) { draw_list(); lcd_swap(); dirty = false; }
 
