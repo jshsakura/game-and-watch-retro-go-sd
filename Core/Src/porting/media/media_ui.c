@@ -51,14 +51,6 @@ void ui_fill(int x, int y, int w, int h, uint16_t c)
     }
 }
 
-static void ui_rect(int x, int y, int w, int h, uint16_t c)
-{
-    ui_fill(x, y, w, 1, c);
-    ui_fill(x, y + h - 1, w, 1, c);
-    ui_fill(x, y, 1, h, c);
-    ui_fill(x + w - 1, y, 1, h, c);
-}
-
 static void ui_px(int x, int y, uint16_t c)
 {
     if (x >= 0 && x < SCR_W && y >= 0 && y < SCR_H) {
@@ -317,7 +309,7 @@ void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
 
     // cover card: rounded, soft shadow, art (or placeholder), thin light frame
     const int RX = CARD_X - 1, RY = CARD_Y - 1, RW = CARD_SZ + 2, RH = CARD_SZ + 2, R = 9;
-    static uint16_t cbuf[4 * 9 * 9];
+    uint16_t cbuf[4 * 9 * 9];                                                  // on stack (keep out of BSS)
     corners_save(RX, RY, RW, RH, R, cbuf);                                     // remember backdrop
 
     ui_fill(CARD_X + 4, CARD_Y + CARD_SZ + 2, CARD_SZ - 8, 3, ui_dim(bg, 2, 5)); // soft shadow

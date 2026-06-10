@@ -29,7 +29,7 @@
 #include "media_cover.h"
 #include "media_ui.h"
 
-#define MAX_ENTRIES   512
+#define MAX_ENTRIES   384   // per-folder cap; shares the MEDIA RAM region with code
 #define NAME_MAX_LEN  128
 #define PATH_MAX_LEN  256
 #define ROW_HEIGHT    34
