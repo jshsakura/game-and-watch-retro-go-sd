@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "font_data.h"
 
 #define W 320
@@ -237,23 +238,36 @@ int main(void)
 
     player_state_t ps; fill_tags(&ps);
 
-    g_have_cover = 1;
-    ui_player_static(&ps, 1, false);
+    // Feed synthetic PCM (a few tones + noise) so the spectrum analyzer has
+    // something to show in the still preview, then settle the bars over a few
+    // dynamic passes (gravity needs a couple of frames to reach the targets).
+    #define PI_F 3.14159265f
+    for (int pass = 0; pass < 24; pass++) {
+        for (int n = 0; n < 256; n++) {
+            float t = (float)(pass * 256 + n) / 48000.0f;
+            float s = 9000.0f * sinf(2.0f * PI_F * 110.0f  * t)
+                    + 6000.0f * sinf(2.0f * PI_F * 880.0f  * t)
+                    + 3500.0f * sinf(2.0f * PI_F * 3500.0f * t)
+                    + 1500.0f * sinf(2.0f * PI_F * 9000.0f * t);
+            ui_vis_push((int16_t)s);
+        }
+        ui_player_dynamic(&ps);
+    }
+
+    // synthetic 56x56 album cover for the deck
+    static uint16_t cover[56 * 56];
+    for (int j = 0; j < 56; j++)
+        for (int i = 0; i < 56; i++)
+            cover[j * 56 + i] = rgb(40 + i * 3, 90 + j * 2, 200 - i * 2);
+    ui_player_set_cover(cover, 56, true);
+    ui_player_static(&ps);
     ui_player_dynamic(&ps);
     dump("nowplaying");
 
-    g_have_cover = 0;
-    ui_player_static(&ps, 0, false);
+    ui_player_set_cover(cover, 56, false);     // no embedded art → record stand-in
+    ui_player_static(&ps);
     ui_player_dynamic(&ps);
     dump("nowplaying_nocover");
-
-    // spin frames: advance the rotation a few steps to preview the animation
-    for (int s = 1; s <= 4; s++) {
-        char nm[32]; snprintf(nm, sizeof(nm), "nowplaying_spin%d", s);
-        ui_player_spin(); ui_player_spin();   // 2 steps per frame for a clearer delta
-        ui_player_dynamic(&ps);
-        dump(nm);
-    }
 
     g_have_cover = 1;
     ui_info_draw(&ps);

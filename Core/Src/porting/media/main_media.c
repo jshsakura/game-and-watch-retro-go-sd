@@ -1,9 +1,10 @@
 // Music — a themed, native-feeling MP3 player for the Game & Watch.
 //
-// Browse /music (falls back to /media), play with an iPod-style now-playing
-// screen (dimmed cover backdrop + crisp cover card + title/artist), full tag
-// info and lyrics views, favourites (persisted to SD), repeat/shuffle, seek,
-// volume and screen-off. Controls are always shown on a beautiful hint bar.
+// Browse /music (falls back to /media), play with a Winamp-style now-playing
+// "deck" (7-seg LCD time, scrolling title marquee, live spectrum analyzer,
+// position slider and volume), full tag info and lyrics views, favourites
+// (persisted to SD), repeat/shuffle, seek, volume and screen-off. Controls are
+// always shown on a hint bar. Album-art thumbnails appear in the browser list.
 //
 // Rendering lives in media_ui.c; ID3 metadata in media_id3.c; the streaming MP3
 // engine in media_audio.c; album-art decode in media_cover.c.
@@ -27,7 +28,6 @@
 #include "media_id3.h"
 #include "media_audio.h"
 #include "media_cover.h"
-#include "media_cache.h"
 #include "media_ui.h"
 
 #define MAX_ENTRIES   384   // per-folder cap; shares the MEDIA RAM region with code
@@ -48,7 +48,7 @@ enum { MENU_INFO = 1, MENU_LYRICS = 2, MENU_CLOSE = 3 };
 
 #define HOLD_MS     300        // press longer than this => seek-scrub
 #define SCRUB_STEP  0.010f     // fraction per frame while scrubbing
-#define SPIN_DIV    4          // redraw the spinning vinyl every Nth loop (~15fps)
+#define SPIN_DIV    2          // redraw the deck every Nth loop (~30fps analyzer)
 
 // i18n string with an English fallback when a language lacks the key.
 #define TR(field, fallback) ((curr_lang && curr_lang->field) ? curr_lang->field : (fallback))
@@ -82,11 +82,6 @@ static track_meta_t g_meta[META_N];
 static int g_meta_clock;
 static media_tags_t g_scan_tags;     // scratch for list metadata
 
-// background SD-thumbnail prefetch: walk the folder while idle, warming the
-// on-disk cache one track at a time so the list "fills in" without scrolling.
-static int      g_prefetch;          // next entry index to warm (>= entry_count = done)
-static uint16_t g_pf_thumb[THUMB_SZ * THUMB_SZ];
-
 static bool has_ext(const char *name, const char *ext);
 static const track_meta_t *meta_get(int entry_idx);
 
@@ -114,7 +109,7 @@ static void meta_invalidate(void)
 
 static bool scan_folder(void)
 {
-    entry_count = cursor = scroll = 0; g_prefetch = 0;
+    entry_count = cursor = scroll = 0;
     meta_invalidate();
     bool ok = rg_storage_scandir(cur_path, scandir_cb, NULL,
         RG_SCANDIR_FILES | RG_SCANDIR_DIRS | RG_SCANDIR_SORT);
@@ -138,7 +133,7 @@ static const char *base_name(const char *p)
 
 static void scan_favourites(void)
 {
-    entry_count = cursor = scroll = 0; g_prefetch = 0;
+    entry_count = cursor = scroll = 0;
     meta_invalidate();
     for (int i = 0; i < g_fav_count && entry_count < MAX_ENTRIES; i++) {
         media_entry_t *e = &entries[entry_count++];
@@ -341,19 +336,6 @@ static const track_meta_t *meta_get(int entry_idx)
     return m;
 }
 
-// Warm one track's thumbnail into the SD cache, then advance. Called only while
-// idle. cover_thumb is cheap for already-cached tracks (a small read, no decode)
-// so this walks the whole folder once and then stops at g_prefetch==entry_count.
-static void prefetch_step(void)
-{
-    if (g_prefetch >= entry_count) return;
-    int idx = g_prefetch++;
-    if (!is_track(idx)) return;
-    char path[PATH_MAX_LEN];
-    entry_track_path(idx, path, sizeof(path));
-    cover_thumb(path, g_pf_thumb, THUMB_SZ);   // decodes+caches on miss; fast on hit
-}
-
 // When fast-scrolling we skip the (file-I/O heavy) metadata decode and show the
 // bare file name, so the list stays smooth; metadata fills in once movement
 // settles. Set by the app loop.
@@ -399,7 +381,18 @@ static void draw_list(void)
 {
     static char favhead[64];
     snprintf(favhead, sizeof(favhead), "\xE2\x98\x85 %s", TR(s_favorite, "Favorites"));
-    const char *head = (g_mode == MODE_FAV) ? favhead : cur_path;
+
+    // Folder header: a clean app title at the root (instead of the raw "/music"
+    // or "/media" mount path that the loader fell back to), and just the folder
+    // name once the user has descended into a subfolder.
+    const char *folder_head;
+    if (strcmp(cur_path, g_root) == 0) {
+        folder_head = TR(s_music, "Music");
+    } else {
+        const char *slash = strrchr(cur_path, '/');
+        folder_head = (slash && slash[1]) ? slash + 1 : cur_path;
+    }
+    const char *head = (g_mode == MODE_FAV) ? favhead : folder_head;
 
     // Empty-state guidance: favourites view tells the user the list is empty;
     // folder view points them at the current folder to drop music files into.
@@ -426,8 +419,12 @@ static void draw_list(void)
 // ---------------------------------------------------------------------------
 
 static player_state_t *g_ps;
-static int  g_cover_n;
-static bool g_cover_png;
+
+// Small album-art thumbnail for the Winamp deck — decoded once per track into
+// this static buffer (list-sized, cheap) and lent to media_ui via set_cover.
+#define DECK_COVER_SZ 56
+static uint16_t g_deck_cover[DECK_COVER_SZ * DECK_COVER_SZ];
+static bool     g_deck_has_cover;
 // Toggle values use language-neutral symbols: ● on / ○ off, ●1 = repeat-one.
 #define SYM_ON   "\xE2\x97\x8F"   // ●
 #define SYM_OFF  "\xE2\x97\x8B"   // ○
@@ -476,7 +473,7 @@ static bool bri_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t
 
 static void player_repaint(void)
 {
-    ui_player_static(g_ps, g_cover_n, g_cover_png);
+    ui_player_static(g_ps);
     ui_player_dynamic(g_ps);
 }
 
@@ -506,7 +503,7 @@ static int open_menu(player_state_t *ps)
 static void compose_static(player_state_t *ps)
 {
     for (int i = 0; i < 2; i++) {
-        ui_player_static(ps, g_cover_n, g_cover_png);
+        ui_player_static(ps);
         ui_player_dynamic(ps);
         lcd_swap();
     }
@@ -564,7 +561,9 @@ static void music_player(int start_pi)
             audio_pump(AUDIO_PUMP_TARGET);
             ps.total = audio_duration_sec();
             ps.sec = 0; last_sec = -1; last_active = -2; last_top = -999;
-            g_cover_n = cover_load(ps.path, &g_cover_png);
+            // decode a small album-art thumbnail for the deck (cheap, list-sized)
+            g_deck_has_cover = cover_thumb(ps.path, g_deck_cover, DECK_COVER_SZ);
+            ui_player_set_cover(g_deck_cover, DECK_COVER_SZ, g_deck_has_cover);
             recompose = true;
         }
         if (recompose) { recompose = false; if (!screen_off) compose_static(&ps); dirty = true; }
@@ -630,6 +629,7 @@ static void music_player(int start_pi)
         for (int i = 0; i < len; i++) {
             int16_t sm = (ps.paused || audio_ring_count() == 0) ? 0 : audio_pull();
             buf[i] = (int16_t)((sm * vol) >> 8);
+            if (!(i & 1)) ui_vis_push(sm);     // feed the spectrum analyzer
         }
         if (!ps.paused) { played += len; audio_pump(AUDIO_PUMP_TARGET); }
         ps.sec = (int)(played / AUDIO_SAMPLE_RATE);
@@ -637,12 +637,14 @@ static void music_player(int start_pi)
         // render the active view
         if (!screen_off) {
             if (view == VIEW_PLAY) {
-                if (ps.sec != last_sec || dirty || scrubbing) {
-                    last_sec = ps.sec; spin_div = 0;
+                // The Winamp deck animates continuously while playing (spectrum +
+                // marquee scroll), so redraw the dynamic layer on each tick and,
+                // between ticks, every SPIN_DIV frames to keep the analyzer alive.
+                bool tick = (ps.sec != last_sec || dirty || scrubbing);
+                if (tick) { last_sec = ps.sec; spin_div = 0; }
+                if (tick || (!ps.paused && ++spin_div >= SPIN_DIV)) {
+                    spin_div = 0;
                     ui_player_dynamic(&ps); lcd_swap();
-                } else if (!ps.paused && ui_player_has_spin() && ++spin_div >= SPIN_DIV) {
-                    // throttle the spinning vinyl to ~15fps; keep transport current
-                    spin_div = 0; ui_player_spin(); ui_player_dynamic(&ps); lcd_swap();
                 }
             } else if (view == VIEW_INFO) {
                 if (dirty) { ui_info_draw(&ps); lcd_swap(); }
@@ -687,7 +689,6 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         fav_load();
         scan_folder();
     }
-    cache_init(g_root);              // persistent SD thumbnail cache under <root>/.mthumb
 
     odroid_gamepad_state_t joy, prev;
     memset(&prev, 0, sizeof(prev));
@@ -745,10 +746,6 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         g_list_busy = settle > 0;
 
         if (dirty) { draw_list(); lcd_swap(); dirty = false; }
-
-        // idle: gradually warm the SD thumbnail cache so the list fills in even
-        // without scrolling (and re-visits are instant). One track per frame.
-        if (!moved && settle == 0) prefetch_step();
 
         lcd_wait_for_vblank();
     }

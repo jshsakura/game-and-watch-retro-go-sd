@@ -1,11 +1,12 @@
 // Drawing layer for the Music app — see media_ui.h.
 //
-// The now-playing screen is composed in two layers: a per-track STATIC layer
-// (dimmed cover backdrop + crisp cover card + title/artist) drawn into both
-// framebuffers, and a per-frame DYNAMIC layer (top bar + transport + always-on
-// button-hint bar) drawn into the active buffer each iteration. Glyphs come from
-// the i18n font (▲▼◀▶ in Geometric Shapes, ♥♪ in Misc Symbols); play/pause,
-// the progress knob and volume pips are drawn geometrically.
+// The now-playing screen is a Winamp-style "deck": a beveled title bar, a dark
+// LCD glass panel holding a 7-segment elapsed-time readout, the bit-rate / kHz,
+// a scrolling track-title marquee and a live spectrum analyzer (Goertzel over
+// the audio PCM), then a position slider and a volume / status row, with the
+// always-on button-hint bar at the foot. The STATIC layer (title bar + panels +
+// hints) is drawn once per track into both framebuffers; the DYNAMIC layer (the
+// LCD, analyzer, slider, volume) is repainted every frame into the active one.
 
 #include "media_ui.h"
 #include "media_cover.h"
@@ -15,27 +16,34 @@
 #include "rg_i18n.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #define SCR_W  GW_LCD_WIDTH
 #define SCR_H  GW_LCD_HEIGHT
 #define FONT_H 12
 
-// now-playing layout
-#define TOPBAR_H 18
-#define CARD_SZ  112
-#define CARD_X   ((SCR_W - CARD_SZ) / 2)
-#define CARD_Y   26
-#define TITLE_Y  150
-#define SUB_Y    166
-#define PANEL_Y  186
-#define PROG_X   16
-#define TIMES_W  40                       // reserved width for each flanking time label
-#define PROG_BAR_X (PROG_X + TIMES_W + 6)  // bar starts after the left time label
-#define PROG_W   (SCR_W - 2 * PROG_BAR_X)  // bar width (symmetric margins)
-#define PROG_Y   196                       // progress-bar top
-#define TIMES_Y  192                       // time labels (vertically centered on bar)
-#define HINT_DIV 210
-#define HINT1_Y  216
+// now-playing: Winamp-style skin layout (320x240)
+#define TITLEBAR_H 16
+#define LCD_Y      18
+#define LCD_H      132                     // glass panel spans LCD_Y .. LCD_Y+LCD_H
+#define COVER_X    8                       // small album-art thumbnail, top-left
+#define COVER_Y    24
+#define COVER_SZ   56
+#define SEG_X      74                      // 7-segment time, right of the cover
+#define SEG_Y      26
+#define SEG_W      14                      // per-digit cell
+#define SEG_H      28
+#define INFO_X     164                     // bit-rate / kHz column
+#define MARQUEE_Y  86                      // scrolling title band (below cover)
+#define VIS_X      8                       // spectrum analyzer left margin
+#define VIS_TOP    100
+#define VIS_BASE   146                     // bars grow upward from here
+#define VIS_BARS   20
+#define SEEK_X     14
+#define SEEK_Y     162
+#define ROW_Y      182                     // volume + status row
+#define HINT_DIV   210                     // top of the bottom hint panel
+#define HINT1_Y    216
 
 // --- primitives -------------------------------------------------------------
 
@@ -73,38 +81,6 @@ static void round_corners(int x, int y, int w, int h, int r, uint16_t c)
                 ui_px(x + i, y + h - 1 - j, c);
                 ui_px(x + w - 1 - i, y + h - 1 - j, c);
             }
-        }
-}
-
-// Save the four r×r corners of a rect (before drawing something over it).
-static void corners_save(int x, int y, int w, int h, int r, uint16_t *b)
-{
-    uint16_t *fb = lcd_get_active_buffer();
-    #define GETP(px, py) (((px) >= 0 && (px) < SCR_W && (py) >= 0 && (py) < SCR_H) ? fb[(py) * SCR_W + (px)] : 0)
-    for (int j = 0; j < r; j++)
-        for (int i = 0; i < r; i++) {
-            int k = j * r + i;
-            b[0 * r * r + k] = GETP(x + i, y + j);
-            b[1 * r * r + k] = GETP(x + w - 1 - i, y + j);
-            b[2 * r * r + k] = GETP(x + i, y + h - 1 - j);
-            b[3 * r * r + k] = GETP(x + w - 1 - i, y + h - 1 - j);
-        }
-    #undef GETP
-}
-
-// Restore the corner pixels that fall OUTSIDE radius r (rounds the rect by
-// putting the saved background back over the square corners).
-static void corners_round_restore(int x, int y, int w, int h, int r, const uint16_t *b)
-{
-    for (int j = 0; j < r; j++)
-        for (int i = 0; i < r; i++) {
-            int dx = r - i, dy = r - j;
-            if (dx * dx + dy * dy <= r * r) continue;
-            int k = j * r + i;
-            ui_px(x + i, y + j, b[0 * r * r + k]);
-            ui_px(x + w - 1 - i, y + j, b[1 * r * r + k]);
-            ui_px(x + i, y + h - 1 - j, b[2 * r * r + k]);
-            ui_px(x + w - 1 - i, y + h - 1 - j, b[3 * r * r + k]);
         }
 }
 
@@ -172,8 +148,7 @@ static uint16_t ui_mix(uint16_t a, uint16_t b, int t)
 }
 
 // A lifted, lightly accent-tinted control surface relative to the theme — so the
-// top/bottom bars read as distinct panels instead of melting into a dark bg.
-// Works on dark themes (lifts toward the ink) and light themes alike.
+// title/control bars read as distinct panels instead of melting into a dark bg.
 static uint16_t ui_player_surface(void)
 {
     uint16_t base = ui_mix(curr_colors->bg_c, curr_colors->main_c, 2);
@@ -224,56 +199,6 @@ static void dot(int cx, int cy, int r, uint16_t c)
             }
 }
 
-#define RGB565(r, g, b) (uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3))
-
-// Beautiful retro vinyl record placeholder
-// Spin state for the no-cover vinyl placeholder (advanced by ui_player_spin()).
-static int  g_vinyl_angle;
-static bool g_vinyl_active;
-
-// 16-step cos table (Q7, ×128); sin(i) = cos((i+12) & 15)
-static const int VINYL_COS[16] = {
-    128, 118, 91, 49, 0, -49, -91, -118, -128, -118, -91, -49, 0, 49, 91, 118
-};
-#define VINYL_SIN(i) VINYL_COS[((i) + 12) & 15]
-#define VINYL_R      54                 // outer radius (fits the 112px card)
-#define VINYL_STEPS  16                 // angle resolution for the spin
-
-// Spinning vinyl placeholder shown when a track has no (decodable) cover art.
-// `angle` advances each frame to rotate the shine + label mark, so the disc
-// reads as a turning record. Concentric body is opaque, so re-drawing the whole
-// disc each frame needs no background restore.
-static void draw_vinyl_placeholder(int cx, int cy, uint16_t accent, uint16_t bg, int angle)
-{
-    uint16_t slate  = RGB565(26, 28, 36);
-    uint16_t groove = RGB565(48, 52, 64);
-    uint16_t sheen  = RGB565(150, 162, 188);   // rotating light streak
-
-    dot(cx, cy, VINYL_R,          slate);
-    dot(cx, cy, VINYL_R * 90/100, groove);
-    dot(cx, cy, VINYL_R * 88/100, slate);
-    dot(cx, cy, VINYL_R * 68/100, groove);
-    dot(cx, cy, VINYL_R * 66/100, slate);
-    dot(cx, cy, VINYL_R * 46/100, groove);
-    dot(cx, cy, VINYL_R * 44/100, slate);
-
-    // rotating shine: a light streak across the grooves (+ a fainter opposite one)
-    int a = ((angle % VINYL_STEPS) + VINYL_STEPS) % VINYL_STEPS;
-    int cs = VINYL_COS[a], sn = VINYL_SIN(a);
-    for (int r = VINYL_R * 30/100; r <= VINYL_R * 96/100; r++) {
-        int x = cx + r * cs / 128, y = cy + r * sn / 128;
-        ui_px(x, y, sheen); ui_px(x + 1, y, sheen);
-        int xo = cx - r * cs / 128, yo = cy - r * sn / 128;
-        ui_px(xo, yo, ui_mix(sheen, slate, 6));   // dimmer trailing streak
-    }
-
-    dot(cx, cy, VINYL_R * 32/100, accent);         // centre label
-    // label mark that orbits with the disc, reinforcing the spin
-    ui_fill(cx + (VINYL_R*18/100) * cs / 128 - 1,
-            cy + (VINYL_R*18/100) * sn / 128 - 1, 3, 3, ui_mix(bg, accent, 6));
-    dot(cx, cy, VINYL_R * 8/100, bg);              // spindle hole
-}
-
 // hardware-like vertical volume pips
 static void draw_vol_pips(int x, int y, int vol)
 {
@@ -319,7 +244,6 @@ static void icon_menu(int x, int y, uint16_t c)       // hamburger
     ui_fill(x, y + 5, 11, 2, c);
     ui_fill(x, y + 9, 11, 2, c);
 }
-
 
 // folder icon centered in an sz×sz cell
 static void icon_folder(int x, int y, int sz, uint16_t c)
@@ -374,73 +298,183 @@ static void ui_ellipsize(char *out, int cap, const char *s, int maxw)
     snprintf(out + o, cap - o, "..");
 }
 
-static void draw_player_hints(void);
+// --- LCD 7-segment time -----------------------------------------------------
 
-// --- now-playing: static layer ----------------------------------------------
+// segment bitmask: a=0x01 b=0x02 c=0x04 d=0x08 e=0x10 f=0x20 g=0x40
+static const uint8_t SEG_MAP[10] = {
+    0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F
+};
 
-void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png)
+static void draw_7seg(int x, int y, int digit, uint16_t on, uint16_t off)
 {
-    uint16_t main_c = curr_colors->main_c, bg = curr_colors->bg_c;
-    uint16_t accent = curr_colors->sel_c;
-    uint16_t soft = ui_mix(main_c, bg, 4);          // brighter secondary text
-    uint16_t panel_bg = ui_player_surface();        // lifted, accent-tinted
+    const int t = 3, W = SEG_W, H = SEG_H;
+    int vlen = (H - 3 * t) / 2;
+    int midY = y + t + vlen;
+    uint8_t m = (digit >= 0 && digit <= 9) ? SEG_MAP[digit] : 0;
+    ui_fill(x + t,     y,         W - 2 * t, t,    (m & 0x01) ? on : off);  // a
+    ui_fill(x + W - t, y + t,     t,         vlen, (m & 0x02) ? on : off);  // b
+    ui_fill(x + W - t, midY + t,  t,         vlen, (m & 0x04) ? on : off);  // c
+    ui_fill(x + t,     y + H - t, W - 2 * t, t,    (m & 0x08) ? on : off);  // d
+    ui_fill(x,         midY + t,  t,         vlen, (m & 0x10) ? on : off);  // e
+    ui_fill(x,         y + t,     t,         vlen, (m & 0x20) ? on : off);  // f
+    ui_fill(x + t,     midY,      W - 2 * t, t,    (m & 0x40) ? on : off);  // g
+}
 
-    draw_vbg();
-    bool has_cover = cover_render_backdrop(cover_n, cover_is_png);
+// Render M:SS (minutes 0..99) as lit/unlit segments; returns the end x.
+static int draw_lcd_time(int sec, uint16_t on, uint16_t off)
+{
+    if (sec < 0) sec = 0;
+    int mm = sec / 60, ss = sec % 60;
+    if (mm > 99) mm = 99;
+    int x = SEG_X;
+    if (mm >= 10) { draw_7seg(x, SEG_Y, mm / 10, on, off); x += SEG_W + 4; }
+    draw_7seg(x, SEG_Y, mm % 10, on, off); x += SEG_W + 7;
+    ui_fill(x, SEG_Y + 7, 3, 3, on); ui_fill(x, SEG_Y + 18, 3, 3, on); x += 3 + 7;  // colon
+    draw_7seg(x, SEG_Y, ss / 10, on, off); x += SEG_W + 4;
+    draw_7seg(x, SEG_Y, ss % 10, on, off); x += SEG_W;
+    return x;
+}
 
-    // cover card: rounded, soft shadow, art (or placeholder), thin light frame
-    const int RX = CARD_X - 1, RY = CARD_Y - 1, RW = CARD_SZ + 2, RH = CARD_SZ + 2, R = 10;
-    uint16_t cbuf[4 * 10 * 10];
-    corners_save(RX, RY, RW, RH, R, cbuf);
+// --- spectrum analyzer (Goertzel over captured PCM) -------------------------
 
-    ui_fill(CARD_X + 5, CARD_Y + CARD_SZ + 2, CARD_SZ - 10, 4, ui_dim(bg, 2, 5)); // soft shadow
-    bool card = has_cover && cover_render_card(cover_n, cover_is_png,
-                                               CARD_X, CARD_Y, CARD_SZ, CARD_SZ);
-    g_vinyl_active = !card;
-    if (!card) {
-        ui_fill(CARD_X, CARD_Y, CARD_SZ, CARD_SZ, ui_mix(bg, accent, 2));
-        draw_vinyl_placeholder(CARD_X + CARD_SZ / 2, CARD_Y + CARD_SZ / 2, accent, bg, g_vinyl_angle);
+#define VIS_FS 48000                       // engine resamples mono to 48 kHz
+#define VIS_N  256                          // analysis window (power of two)
+
+static int16_t g_vis[VIS_N];
+static int      g_vis_w;                    // ring write index (free-running)
+static float    g_bar[VIS_BARS], g_peak[VIS_BARS], g_coeff[VIS_BARS];
+static bool     g_vis_ready;
+
+// Capture one mono sample for the analyzer (called from the audio feed loop).
+void ui_vis_push(int16_t s) { g_vis[g_vis_w & (VIS_N - 1)] = s; g_vis_w++; }
+
+static void vis_init(void)
+{
+    for (int i = 0; i < VIS_BARS; i++) {
+        float frac = (VIS_BARS > 1) ? (float)i / (VIS_BARS - 1) : 0.0f;
+        float f = 60.0f * powf(14000.0f / 60.0f, frac);     // log-spaced 60Hz..14kHz
+        g_coeff[i] = 2.0f * cosf(2.0f * 3.14159265f * f / (float)VIS_FS);
+        g_bar[i] = g_peak[i] = 0.0f;
     }
-    ui_rrect(RX, RY, RW, RH, R, ui_mix(accent, bg, 5));                         // rounded frame (brighter)
-    corners_round_restore(RX, RY, RW, RH, R, cbuf);                            // round off square corners
-
-    // title (faux-bold) + "artist · album", both ellipsized to fit
-    char buf[256];
-    ui_ellipsize(buf, sizeof(buf), ps->title && ps->title[0] ? ps->title : "(no title)", SCR_W - 28);
-    ui_text_bold_center_t(TITLE_Y, buf, main_c);
-
-    char sub[200];
-    const char *ar = ps->artist ? ps->artist : "";
-    const char *al = ps->album ? ps->album : "";
-    if (ar[0] && al[0])      snprintf(sub, sizeof(sub), "%s \xC2\xB7 %s", ar, al);  // ·
-    else if (ar[0])          snprintf(sub, sizeof(sub), "%s", ar);
-    else if (al[0])          snprintf(sub, sizeof(sub), "%s", al);
-    else                     sub[0] = '\0';
-    if (sub[0]) { ui_ellipsize(buf, sizeof(buf), sub, SCR_W - 44); ui_text_center_t(SUB_Y, buf, soft); }
-
-    // static hint bar (the dynamic layer repaints only the top bar + transport
-    // sub-region above HINT_DIV, so the hint bar is never re-measured per frame).
-    ui_fill(0, PANEL_Y, SCR_W, SCR_H - PANEL_Y, panel_bg);
-    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
-    draw_player_hints();
+    g_vis_ready = true;
 }
 
-// Is the spinning vinyl placeholder showing (no decodable cover)? The player
-// loop uses this to decide whether to animate.
-bool ui_player_has_spin(void) { return g_vinyl_active; }
-
-// Advance the spin and redraw just the rotating disc into the active buffer.
-// No-op when a real cover is shown. The card frame/backdrop are left intact
-// (the disc is opaque and stays within the card), so only the disc is redrawn.
-void ui_player_spin(void)
+// One Goertzel pass per band over the latest VIS_N samples (when `active`),
+// then bar gravity + slowly-falling peak caps — the classic analyzer feel.
+static void vis_compute(bool active)
 {
-    if (!g_vinyl_active) return;
-    uint16_t accent = curr_colors->sel_c, bg = curr_colors->bg_c;
-    g_vinyl_angle++;
-    draw_vinyl_placeholder(CARD_X + CARD_SZ / 2, CARD_Y + CARD_SZ / 2, accent, bg, g_vinyl_angle);
+    if (!g_vis_ready) vis_init();
+    int w = g_vis_w;
+    for (int b = 0; b < VIS_BARS; b++) {
+        float v = 0.0f;
+        if (active) {
+            float coeff = g_coeff[b], s1 = 0.0f, s2 = 0.0f;
+            for (int n = 0; n < VIS_N; n++) {
+                float x = (float)g_vis[(w - VIS_N + n) & (VIS_N - 1)];
+                float s0 = x + coeff * s1 - s2;
+                s2 = s1; s1 = s0;
+            }
+            float mag2 = s1 * s1 + s2 * s2 - coeff * s1 * s2;
+            float mag = (mag2 > 0.0f) ? sqrtf(mag2) / (float)VIS_N : 0.0f;
+            // log map with headroom so loud content sits near ~0.85 (not pegged)
+            // and quiet detail still lifts off the floor.
+            v = log10f(1.0f + mag * 0.5f) / log10f(1.0f + 30000.0f);
+            if (v < 0.0f) v = 0.0f;
+            if (v > 1.0f) v = 1.0f;
+        }
+        if (v > g_bar[b]) g_bar[b] = v; else g_bar[b] -= 0.07f;
+        if (g_bar[b] < 0.0f) g_bar[b] = 0.0f;
+        if (g_bar[b] > g_peak[b]) g_peak[b] = g_bar[b]; else g_peak[b] -= 0.025f;
+        if (g_peak[b] < 0.0f) g_peak[b] = 0.0f;
+    }
 }
 
-// --- now-playing: dynamic layer ---------------------------------------------
+static void draw_spectrum(uint16_t lcd_bg)
+{
+    int pitch = (SCR_W - 2 * VIS_X) / VIS_BARS;
+    int bw = pitch - 4; if (bw < 3) bw = 3;
+    int H = VIS_BASE - VIS_TOP;
+    uint16_t lo  = curr_colors->sel_c;
+    uint16_t hi  = ui_mix(lo, curr_colors->main_c, 7);
+    uint16_t cap = ui_mix(curr_colors->main_c, lo, 3);
+
+    ui_fill(VIS_X, VIS_TOP - 2, SCR_W - 2 * VIS_X, H + 4, lcd_bg);
+    for (int b = 0; b < VIS_BARS; b++) {
+        int x = VIS_X + b * pitch + 1;
+        int h = (int)(g_bar[b] * H);
+        if (h > 0) {
+            uint16_t c = ui_mix(lo, hi, (int)(g_bar[b] * 16));
+            ui_fill(x, VIS_BASE - h, bw, h, c);
+        }
+        int ph = (int)(g_peak[b] * H);
+        if (ph > 0) ui_fill(x, VIS_BASE - ph - 1, bw, 2, cap);
+    }
+}
+
+// --- scrolling title marquee ------------------------------------------------
+
+static char     g_marquee[256];     // "Artist - Title" for the LCD panel
+static int      g_marquee_w;        // pixel width (set per track in static layer)
+static uint32_t g_anim;             // frame counter (marquee scroll + analyzer)
+
+static int utf8_len(const unsigned char *p)
+{
+    return (*p < 0x80) ? 1 : (*p & 0xE0) == 0xC0 ? 2 : (*p & 0xF0) == 0xE0 ? 3 : 4;
+}
+
+// Copy as many whole glyphs of `src` as fit within `maxw` pixels into `out`.
+// The result is always <= maxw wide, so it can be drawn at a fixed x without
+// ever running past the screen edge (the i18n renderer does not clip overlong
+// lines, and its x_pos is unsigned — negative/overflowing x corrupts memory).
+static void marquee_fit(char *out, int cap, const char *src, int maxw)
+{
+    int o = 0;
+    const unsigned char *p = (const unsigned char *)src;
+    while (*p && o < cap - 5) {
+        int n = utf8_len(p);
+        char probe[260];
+        memcpy(probe, out, o); memcpy(probe + o, p, n); probe[o + n] = '\0';
+        if (i18n_get_text_width(probe) > maxw) break;
+        for (int i = 0; i < n; i++) out[o++] = (char)p[i];
+        p += n;
+    }
+    out[o] = '\0';
+}
+
+// LED-sign marquee: when the title overflows the band, advance one glyph at a
+// time through "TITLE    TITLE    " and show the window that fits. Safe by
+// construction — text is always pre-fitted and drawn at a fixed x = VIS_X.
+static void draw_marquee(uint16_t lcd_bg)
+{
+    uint16_t lit = ui_mix(curr_colors->sel_c, curr_colors->main_c, 6);
+    int region = SCR_W - 2 * VIS_X;
+    ui_fill(VIS_X, MARQUEE_Y - 1, region, 14, lcd_bg);
+
+    if (g_marquee_w <= region) {
+        int x = VIS_X + (region - g_marquee_w) / 2;
+        ui_text(x, MARQUEE_Y, g_marquee_w + 2, g_marquee, lit, lcd_bg);
+        return;
+    }
+
+    char period[300];
+    snprintf(period, sizeof(period), "%s    ", g_marquee);     // 4-space gap
+    int glyphs = 0;
+    for (const unsigned char *p = (const unsigned char *)period; *p; p += utf8_len(p))
+        glyphs++;
+    if (glyphs < 1) glyphs = 1;
+
+    int s = (int)((g_anim / 6) % (uint32_t)glyphs);            // ~1 glyph / 6 frames
+    char dbl[600];
+    snprintf(dbl, sizeof(dbl), "%s%s", period, period);
+    const unsigned char *p = (const unsigned char *)dbl;
+    for (int i = 0; i < s && *p; i++) p += utf8_len(p);
+
+    char win[256];
+    marquee_fit(win, sizeof(win), (const char *)p, region);
+    ui_text(VIS_X, MARQUEE_Y, region, win, lit, lcd_bg);
+}
+
+// --- button-hint chips ------------------------------------------------------
 
 enum { ICN_NONE = 0, ICN_PLAY, ICN_TRACK, ICN_SPEAKER, ICN_MENU };
 typedef struct { const char *key; int icon; } chip_t;
@@ -505,65 +539,175 @@ static void chip_row(int y, const chip_t *h, int n, uint16_t keyc, uint16_t icon
     chip_row_k(y, h, n, keyc, iconc, 0);    // plain text (legacy callers / footer)
 }
 
-static void fmt_time(char *out, int n, int sec)
+// --- now-playing: the Winamp deck -------------------------------------------
+
+// Deep, faintly accent-tinted "LCD glass".
+static uint16_t ui_lcd_bg(void)
 {
-    if (sec < 0) sec = 0;
-    snprintf(out, n, "%d:%02d", sec / 60, sec % 60);
+    uint16_t base = ui_mix(curr_colors->bg_c, curr_colors->sel_c, 1);
+    return ui_dim(base, 2, 5);
 }
 
+static void blit_thumb(const uint16_t *art, int sz, int x, int y);
+
+// Small album-art thumbnail for the deck — decoded once per track by the player
+// (cheap, list-sized) and handed to us as a pointer into its static buffer.
+static const uint16_t *g_deck_cover;
+static int             g_deck_cover_sz;
+static bool            g_deck_has_cover;
+
+void ui_player_set_cover(const uint16_t *thumb, int sz, bool has)
+{
+    g_deck_cover = thumb; g_deck_cover_sz = sz; g_deck_has_cover = has;
+}
+
+// A little record (concentric grooves + centre label) — the no-cover stand-in.
+static void draw_disc(int cx, int cy, int r, uint16_t accent, uint16_t bg)
+{
+    uint16_t slate  = ui_mix(bg, accent, 1);
+    uint16_t groove = ui_mix(bg, accent, 3);
+    dot(cx, cy, r,            slate);
+    dot(cx, cy, r * 72 / 100, groove);
+    dot(cx, cy, r * 70 / 100, slate);
+    dot(cx, cy, r * 46 / 100, groove);
+    dot(cx, cy, r * 44 / 100, slate);
+    dot(cx, cy, r * 30 / 100, accent);     // label
+    dot(cx, cy, r * 8 / 100,  bg);         // spindle hole
+}
+
+// Album art (or the record stand-in), rounded + thin-framed, in the LCD panel.
+static void draw_deck_cover(uint16_t lcd_bg)
+{
+    uint16_t accent = curr_colors->sel_c;
+    int x = COVER_X, y = COVER_Y, s = COVER_SZ;
+    if (g_deck_has_cover && g_deck_cover && g_deck_cover_sz == s)
+        blit_thumb(g_deck_cover, s, x, y);
+    else {
+        ui_fill(x, y, s, s, ui_mix(lcd_bg, accent, 1));
+        draw_disc(x + s / 2, y + s / 2, s / 2 - 2, accent, lcd_bg);
+    }
+    round_corners(x, y, s, s, 6, lcd_bg);
+    ui_rrect(x, y, s, s, 6, ui_mix(accent, lcd_bg, 6));
+}
+
+static void draw_player_hints(void);
+
+// Static layer: drawn once per track into BOTH framebuffers. The album-art
+// thumbnail is supplied separately via ui_player_set_cover().
+void ui_player_static(const player_state_t *ps)
+{
+    uint16_t bg = curr_colors->bg_c, main_c = curr_colors->main_c;
+    uint16_t accent = curr_colors->sel_c;
+    uint16_t surface = ui_player_surface();
+    uint16_t lcd = ui_lcd_bg();
+
+    draw_vbg();
+
+    // title bar: beveled panel, ribbed grip + "MUSIC"
+    ui_fill(0, 0, SCR_W, TITLEBAR_H, surface);
+    ui_fill(0, 0, SCR_W, 1, ui_mix(accent, main_c, 6));         // top highlight
+    ui_fill(0, TITLEBAR_H - 1, SCR_W, 1, ui_dim(bg, 1, 2));     // bottom shade
+    for (int i = 0; i < 4; i++)
+        ui_fill(6, 4 + i * 2, 18, 1, ui_mix(accent, surface, 8));
+    ui_text_t(30, 3, 80, "MUSIC", ui_mix(main_c, accent, 6));
+
+    // LCD glass panel
+    ui_fill(0, LCD_Y, SCR_W, LCD_H, lcd);
+    ui_fill(0, LCD_Y, SCR_W, 1, ui_dim(bg, 1, 3));
+    ui_fill(0, LCD_Y + LCD_H, SCR_W, 1, ui_mix(accent, bg, 3));
+
+    // album-art thumbnail (static — the dynamic layer never paints over it)
+    draw_deck_cover(lcd);
+
+    // bottom control panel (slider + volume row sit on this)
+    ui_fill(0, LCD_Y + LCD_H + 1, SCR_W, HINT_DIV - (LCD_Y + LCD_H + 1), surface);
+
+    // per-track marquee string
+    const char *t = (ps->title && ps->title[0]) ? ps->title : "(no title)";
+    const char *a = ps->artist ? ps->artist : "";
+    if (a[0]) snprintf(g_marquee, sizeof(g_marquee), "%s - %s", a, t);
+    else      snprintf(g_marquee, sizeof(g_marquee), "%s", t);
+    g_marquee_w = i18n_get_text_width(g_marquee);
+
+    // bottom hint bar (static)
+    ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, surface);
+    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
+    draw_player_hints();
+}
+
+// The deck animates continuously while playing — there is no separate "spin".
+bool ui_player_has_spin(void) { return true; }
+
+// Dynamic layer: repaint the LCD, analyzer, slider and volume row each frame.
 void ui_player_dynamic(const player_state_t *ps)
 {
     uint16_t bg = curr_colors->bg_c, main_c = curr_colors->main_c;
     uint16_t accent = curr_colors->sel_c, dim = curr_colors->dis_c;
-    uint16_t soft = ui_mix(main_c, bg, 4);      // secondary text — brighter, legible
-    uint16_t bright = ui_mix(main_c, bg, 1);    // near-full ink for key labels
-    uint16_t muted = ui_mix(accent, bg, 5);     // active state icons — clearly visible
-    uint16_t panel_bg = ui_player_surface();    // lifted, accent-tinted control bar
+    uint16_t surface = ui_player_surface();
+    uint16_t lcd = ui_lcd_bg();
+    uint16_t lit = ui_mix(accent, main_c, 6);          // bright LCD ink
+    uint16_t off = ui_mix(accent, lcd, 13);            // unlit ghost segments
+    uint16_t soft = ui_mix(main_c, bg, 5);
     bool scrubbing = ps->scrub >= 0.0f;
 
-    // ---- top bar: [▶ 3/12] ............ [셔플 반복 ♥ vol] ----
-    ui_fill(0, 0, SCR_W, TOPBAR_H, panel_bg);
-    ui_fill(0, TOPBAR_H - 1, SCR_W, 1, ui_mix(accent, bg, 4));
-    if (ps->paused) icon_pause(10, 5, 8, 10, accent);
-    else            icon_play(10, 5, 8, 10, accent);
+    g_anim++;
+
+    // ---- title bar right: play/pause glyph + track index ----
+    ui_fill(SCR_W - 86, 1, 86, TITLEBAR_H - 2, surface);
+    if (ps->paused) icon_pause(SCR_W - 84, 3, 7, 9, ui_mix(accent, surface, 9));
+    else            icon_play (SCR_W - 84, 3, 8, 9, ui_mix(accent, surface, 9));
     char pos[24];
     snprintf(pos, sizeof(pos), "%d/%d", ps->track_index + 1, ps->track_count);
-    ui_text(24, 4, 80, pos, soft, panel_bg);
+    int pw = i18n_get_text_width(pos);
+    ui_text(SCR_W - 8 - pw, 3, pw + 2, pos, ui_mix(main_c, accent, 6), surface);
 
-    int rx = SCR_W - 8;
-    rx -= 26; draw_vol_pips(rx, 5, ps->volume);
-    rx -= 10;
-    rx -= 13; ui_text(rx, 4, 14, "\xE2\x99\xA5", ps->favorite ? accent : ui_mix(dim, bg, 3), panel_bg);   // ♥
-    if (ps->repeat != REPEAT_OFF) {
-        rx -= 8 + 11; icon_repeat(rx, 5, muted);
-        if (ps->repeat == REPEAT_ONE) { ui_text(rx + 11, 4, 8, "1", muted, panel_bg); rx -= 6; }
-    }
-    if (ps->shuffle) { rx -= 8 + 11; icon_shuffle(rx, 5, muted); }
-
-    // ---- transport sub-region (above the static hint bar) ----
-    ui_fill(0, PANEL_Y, SCR_W, HINT_DIV - PANEL_Y, panel_bg);
-    ui_fill(0, PANEL_Y, SCR_W, 1, ui_mix(accent, bg, 4)); // top border of bottom panel
-
+    // ---- LCD time (7-seg) + bit-rate / kHz / channels ----
     float frac = scrubbing ? ps->scrub
                : (ps->total > 0 ? (float)ps->sec / (float)ps->total : 0.0f);
     if (frac < 0) frac = 0;
     if (frac > 1) frac = 1;
-    int fillw = (int)(frac * PROG_W);
-    ui_fill(PROG_BAR_X, PROG_Y, PROG_W, 4, ui_mix(bg, main_c, 5));     // track (clearer)
-    ui_fill(PROG_BAR_X, PROG_Y, fillw, 4, accent);                 // elapsed
-    dot(PROG_BAR_X + fillw, PROG_Y + 2, 6, ui_mix(accent, bg, 7)); // knob glow
-    dot(PROG_BAR_X + fillw, PROG_Y + 2, 4, scrubbing ? main_c : accent);  // knob
-
-    // elapsed / remaining times flank the bar on a single row
-    char t[16];
     int shown = scrubbing ? (int)(frac * ps->total) : ps->sec;
-    fmt_time(t, sizeof(t), shown);
-    ui_text(PROG_X, TIMES_Y, TIMES_W, t, scrubbing ? accent : bright, panel_bg);
+    ui_fill(SEG_X - 2, SEG_Y - 2, INFO_X - SEG_X, SEG_H + 4, lcd);
+    draw_lcd_time(shown, scrubbing ? accent : lit, off);
 
-    fmt_time(t, sizeof(t), ps->total - shown);
-    char rem[16]; snprintf(rem, sizeof(rem), "-%s", t);
-    int rw = i18n_get_text_width(rem);
-    ui_text(SCR_W - PROG_X - rw, TIMES_Y, rw + 2, rem, soft, panel_bg);
+    ui_fill(INFO_X, SEG_Y, SCR_W - INFO_X - 8, SEG_H, lcd);
+    char info[40];
+    int br = audio_bitrate_kbps();
+    snprintf(info, sizeof(info), "%d kbps", br > 0 ? br : 0);
+    ui_text(INFO_X, SEG_Y + 1, SCR_W - INFO_X - 8, info, lit, lcd);
+    int hz = audio_src_hz(); if (hz <= 0) hz = VIS_FS;
+    snprintf(info, sizeof(info), "%d.%dkHz %s", hz / 1000, (hz % 1000) / 100,
+             audio_channels() >= 2 ? "stereo" : "mono");
+    ui_text(INFO_X, SEG_Y + 16, SCR_W - INFO_X - 8, info, soft, lcd);
+
+    // ---- marquee + spectrum analyzer ----
+    draw_marquee(lcd);
+    vis_compute(!ps->paused);
+    draw_spectrum(lcd);
+
+    // ---- position slider ----
+    int gw = SCR_W - 2 * SEEK_X;
+    int fillw = (int)(frac * gw);
+    ui_fill(SEEK_X - 2, SEEK_Y - 4, gw + 4, 12, surface);
+    ui_fill(SEEK_X, SEEK_Y, gw, 3, ui_mix(bg, main_c, 5));
+    ui_fill(SEEK_X, SEEK_Y, fillw, 3, accent);
+    dot(SEEK_X + fillw, SEEK_Y + 1, 4, scrubbing ? main_c : accent);
+
+    // ---- volume + status row ----
+    ui_fill(0, ROW_Y - 2, SCR_W, HINT_DIV - (ROW_Y - 2), surface);
+    int volx = SEEK_X + i18n_get_text_width("VOL") + 8;
+    ui_text(SEEK_X, ROW_Y, volx - SEEK_X, "VOL", soft, surface);
+    draw_vol_pips(volx, ROW_Y + 1, ps->volume);
+
+    int rx = SCR_W - SEEK_X;
+    char tot[16];
+    snprintf(tot, sizeof(tot), "%d:%02d", ps->total / 60, ps->total % 60);
+    int tw = i18n_get_text_width(tot);
+    rx -= tw; ui_text(rx, ROW_Y, tw + 2, tot, soft, surface);
+    rx -= 16; ui_text(rx, ROW_Y, 14, "\xE2\x99\xA5",
+                      ps->favorite ? accent : ui_mix(dim, bg, 3), surface);  // ♥
+    if (ps->repeat != REPEAT_OFF) { rx -= 14; icon_repeat(rx, ROW_Y + 1, ui_mix(accent, bg, 6)); }
+    if (ps->shuffle)              { rx -= 14; icon_shuffle(rx, ROW_Y + 1, ui_mix(accent, bg, 6)); }
 }
 
 static void draw_player_hints(void)
@@ -576,7 +720,6 @@ static void draw_player_hints(void)
         { "\xE2\x96\xB2\xE2\x96\xBC", ICN_SPEAKER },  // ▲▼  volume
         { "PAUSE", ICN_MENU },
     };
-    // bright key labels in keycaps + accent function icons
     chip_row_k(HINT1_Y, chips, 4, ui_mix(main_c, bg, 1), accent, 16);
 }
 
@@ -603,6 +746,7 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
     const int H = LIST_HEADER_H, RH = v->row_h, TH = 34;
     bool has_bar = v->count > v->visible_rows;
     int right = SCR_W - (has_bar ? 8 : 4);                      // content right edge
+    const int RPAD = 10;     // keep text/time clear of the rounded pill border
 
     ui_fill(0, 0, SCR_W, SCR_H, bg);
 
@@ -674,7 +818,7 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
 
         int dw = it.duration && it.duration[0] ? i18n_get_text_width(it.duration) : 0;
         int textx = tx + TH + 8;
-        int textw = right - textx - (dw ? dw + 10 : 6);
+        int textw = right - textx - (dw ? dw + RPAD + 4 : RPAD);
 
         ui_ellipsize(buf, sizeof(buf), it.title ? it.title : "", textw - (it.fav ? 16 : 0));
         ui_text(textx, y + 5, textw, buf, txt, rbg);
@@ -683,9 +827,9 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
             ui_text(textx, y + 21, textw, buf, sub, rbg);
         }
         if (it.fav)
-            ui_text(right - dw - 26, y + 5, 14, "\xE2\x99\xA5", sel ? accent : accent, rbg);   // ♥
+            ui_text(right - RPAD - dw - 16, y + 5, 14, "\xE2\x99\xA5", sel ? accent : accent, rbg);   // ♥
         if (dw)
-            ui_text(right - dw - 2, y + 25, dw + 2, it.duration, sub, rbg);
+            ui_text(right - RPAD - dw, y + 25, dw + 2, it.duration, sub, rbg);
     }
 
     // scrollbar

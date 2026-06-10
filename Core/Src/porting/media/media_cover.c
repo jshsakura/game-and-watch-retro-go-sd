@@ -6,7 +6,6 @@
 #include "tjpgd.h"
 #include "lupng.h"
 #include "progjpeg.h"
-#include "media_cache.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -418,14 +417,10 @@ static bool png_to_thumb(int n, uint16_t *out, int sz)
 
 bool cover_thumb(const char *path, uint16_t *out, int sz)
 {
-    long msz = file_size(path);                 // cache key: track byte size
-    if (msz > 8 && cache_get(path, msz, out, sz))
-        return true;                            // instant: cached, no decode
-
+    // Decoded on demand for visible rows; the caller keeps a small RAM ring
+    // (g_meta) so on-screen thumbnails are not re-decoded. No on-disk cache.
     bool is_png = false;
     int n = cover_load(path, &is_png);
     if (n <= 0) return false;
-    bool ok = is_png ? png_to_thumb(n, out, sz) : jpeg_to_thumb(n, out, sz);
-    if (ok && msz > 8) cache_put(path, msz, out, sz);
-    return ok;
+    return is_png ? png_to_thumb(n, out, sz) : jpeg_to_thumb(n, out, sz);
 }

@@ -36,17 +36,21 @@ void ui_text_center_t(int y, const char *t, uint16_t fg);          // transparen
 void ui_text_bold_center_t(int y, const char *t, uint16_t fg);     // faux-bold, transparent
 uint16_t ui_dim(uint16_t c, int num, int den);                     // c * num/den toward black
 
-// --- now-playing ---
-// Static layer (cover backdrop + card + title/artist): draw once per track into
-// BOTH framebuffers. cover_n/cover_is_png come from cover_load().
-void ui_player_static(const player_state_t *ps, int cover_n, bool cover_is_png);
-// Dynamic layer (top bar + transport + hint bar): redraw every frame.
+// --- now-playing (Winamp-style deck) ---
+// Static layer (title bar + LCD/control panels + album-art + hint bar): draw
+// once per track into BOTH framebuffers. The cover is set via ui_player_set_cover.
+void ui_player_static(const player_state_t *ps);
+// Dynamic layer (LCD time, spectrum analyzer, marquee, slider, volume): redraw
+// every frame; the deck animates continuously while playing.
 void ui_player_dynamic(const player_state_t *ps);
-// Spinning vinyl placeholder (shown when a track has no decodable cover):
-// ui_player_has_spin() reports whether it's active; ui_player_spin() advances
-// the rotation and redraws just the disc into the active buffer.
+// True while the deck should keep animating (always, so the analyzer dances).
 bool ui_player_has_spin(void);
-void ui_player_spin(void);
+// Feed one mono PCM sample to the spectrum analyzer (called from the audio loop).
+void ui_vis_push(int16_t sample);
+// Hand the deck a small album-art thumbnail (sz×sz RGB565) decoded once per
+// track; pass has=false (any pointer) to show the record stand-in instead. The
+// buffer must outlive the now-playing screen (the player keeps it static).
+void ui_player_set_cover(const uint16_t *thumb, int sz, bool has);
 
 // --- browser list (handles large libraries: scrollbar, position, ellipsis) ---
 enum { LIST_TRACK = 0, LIST_DIR = 1, LIST_SPECIAL = 2 };

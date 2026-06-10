@@ -738,7 +738,6 @@ Core/Src/porting/media/main_media.c \
 Core/Src/porting/media/media_id3.c \
 Core/Src/porting/media/media_audio.c \
 Core/Src/porting/media/media_cover.c \
-Core/Src/porting/media/media_cache.c \
 Core/Src/porting/media/media_lyrics.c \
 Core/Src/porting/media/media_ui.c \
 Core/Src/porting/media/media_lupng.c \
