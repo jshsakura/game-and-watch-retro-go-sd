@@ -144,7 +144,18 @@ bool cover_render_card(int n, bool is_png, int bx, int by, int bw, int bh)
     return true;
 }
 
-bool cover_thumb(const char *p, uint16_t *out, int sz) { (void)p; (void)out; (void)sz; return false; }
+bool cover_thumb(const char *p, uint16_t *out, int sz)
+{
+    (void)p;
+    for (int y = 0; y < sz; y++) {
+        for (int x = 0; x < sz; x++) {
+            out[y * sz + x] = (uint16_t)((((x * 31 / sz) & 0x1F) << 11) | 
+                                         ((((12 + y * 40 / sz) & 0x3F) << 5)) | 
+                                         ((x * y * 31 / (sz * sz)) & 0x1F));
+        }
+    }
+    return true;
+}
 
 // --- scenes -----------------------------------------------------------------
 static void dump(const char *name)

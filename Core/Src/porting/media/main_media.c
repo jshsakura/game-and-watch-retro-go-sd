@@ -32,12 +32,12 @@
 #define MAX_ENTRIES   384   // per-folder cap; shares the MEDIA RAM region with code
 #define NAME_MAX_LEN  128
 #define PATH_MAX_LEN  256
-#define ROW_HEIGHT    34
-#define HEADER_HEIGHT 20
-#define FOOTER_HEIGHT 16
+#define ROW_HEIGHT    40
+#define HEADER_HEIGHT 18
+#define FOOTER_HEIGHT 14
 #define LIST_TOP      HEADER_HEIGHT
 #define VISIBLE_ROWS  ((GW_LCD_HEIGHT - HEADER_HEIGHT - FOOTER_HEIGHT) / ROW_HEIGHT)
-#define THUMB_SZ      28
+#define THUMB_SZ      34
 #define META_N        16
 #define FAV_MAX       64
 

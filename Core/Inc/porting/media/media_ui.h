@@ -64,9 +64,9 @@ typedef struct {
     bool busy;                   // true while fast-scrolling (skip art/sub)
 } list_view_t;
 
-#define LIST_HEADER_H 20
-#define LIST_FOOTER_H 16
-#define LIST_ROW_H    34
+#define LIST_HEADER_H 18
+#define LIST_FOOTER_H 14
+#define LIST_ROW_H    40
 #define LIST_VISIBLE_ROWS ((240 - LIST_HEADER_H - LIST_FOOTER_H) / LIST_ROW_H)
 
 // Draw the browser list. `item_at(i, out)` fills a row's data lazily (called

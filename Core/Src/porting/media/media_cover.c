@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define IMG_BUF_MAX   (128 * 1024)   // raw cover bytes (JPEG/PNG)
+#define IMG_BUF_MAX   (256 * 1024)   // raw cover bytes (JPEG/PNG) - increased to support larger cover arts
 #define SCRATCH_MAX   (352 * 1024)   // PNG decode pool
 
 static uint8_t g_img[IMG_BUF_MAX];
@@ -106,7 +106,7 @@ static int jpg_out(JDEC *jd, void *bitmap, JRECT *rect)
 // Decode g_img (n bytes), scaled to fit (bw,bh), centered in the box at (bx,by).
 static bool jpeg_to_box(int n, int bx, int by, int bw, int bh)
 {
-    static uint8_t pool[8 * 1024];
+    static uint8_t pool[24 * 1024]; // Increased from 8KB to 24KB to handle images with large headers/quantization tables
     JDEC jd;
     jpg_src_t src = { g_img, (size_t)n, 0 };
     if (jd_prepare(&jd, jpg_in, pool, sizeof(pool), &src) != JDR_OK)
@@ -250,7 +250,7 @@ static int jpg_thumb_out(JDEC *jd, void *bitmap, JRECT *rect)
 
 static bool jpeg_to_thumb(int n, uint16_t *out, int sz)
 {
-    static uint8_t pool[8 * 1024];
+    static uint8_t pool[24 * 1024]; // Increased from 8KB to 24KB to handle images with large headers/quantization tables
     JDEC jd;
     jpg_src_t src = { g_img, (size_t)n, 0 };
     if (jd_prepare(&jd, jpg_in, pool, sizeof(pool), &src) != JDR_OK)
@@ -265,10 +265,39 @@ static bool jpeg_to_thumb(int n, uint16_t *out, int sz)
     return jd_decomp(&jd, jpg_thumb_out, sc) == JDR_OK;
 }
 
+static bool png_to_thumb(int n, uint16_t *out, int sz)
+{
+    mem_reader_t rd = { g_img, (size_t)n, 0 };
+    g_scratch_off = 0;
+
+    LuUserContext uc;
+    luUserContextInitDefault(&uc);
+    uc.readProc = mem_read;       uc.readProcUserPtr = &rd;
+    uc.allocProc = scratch_alloc; uc.allocProcUserPtr = NULL;
+    uc.freeProc = scratch_free;   uc.freeProcUserPtr = NULL;
+    uc.warnProc = NULL;
+
+    LuImage *img = luPngReadUC(&uc);
+    if (!img) return false;
+    if (img->depth != 8 || img->channels < 3) return false;
+
+    int w = img->width, h = img->height, ch = img->channels;
+    for (int y = 0; y < sz; y++) {
+        int sy = y * h / sz;
+        const uint8_t *row = img->data + (size_t)sy * w * ch;
+        for (int x = 0; x < sz; x++) {
+            int sx = x * w / sz;
+            const uint8_t *p = row + (size_t)sx * ch;
+            out[y * sz + x] = (uint16_t)(((p[0] >> 3) << 11) | ((p[1] >> 2) << 5) | (p[2] >> 3));
+        }
+    }
+    return true;
+}
+
 bool cover_thumb(const char *path, uint16_t *out, int sz)
 {
     bool is_png = false;
     int n = cover_load(path, &is_png);
-    if (n <= 0 || is_png) return false;        // PNG thumbnails skipped
-    return jpeg_to_thumb(n, out, sz);
+    if (n <= 0) return false;
+    return is_png ? png_to_thumb(n, out, sz) : jpeg_to_thumb(n, out, sz);
 }
