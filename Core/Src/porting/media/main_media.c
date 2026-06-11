@@ -56,12 +56,23 @@ enum { MENU_INFO = 1, MENU_LYRICS = 2, MENU_CLOSE = 3 };
 
 // Battery accessors for media_ui's shared top bar — keep the UI layer free of
 // the hardware headers (media_ui declares these extern; the host preview stubs
-// them).
-int media_battery_percent(void)  { return odroid_input_read_battery().percentage; }
-int media_battery_charging(void)
+// them). The ADC read is throttled to ~2s and cached, so the per-frame top-bar
+// redraw is cheap; a missing battery reports 100% so it never reads as "empty".
+static int      g_batt_pct = 100;
+static int      g_batt_chg = 0;
+static uint32_t g_batt_t;
+static void batt_refresh(void)
 {
-    return odroid_input_read_battery().state == ODROID_BATTERY_CHARGE_STATE_CHARGING;
+    uint32_t now = HAL_GetTick();
+    if (g_batt_t != 0 && now - g_batt_t < 2000) return;
+    g_batt_t = now ? now : 1;
+    odroid_battery_state_t b = odroid_input_read_battery();
+    if (b.state == ODROID_BATTERY_CHARGE_STATE_BATTERY_MISSING) { g_batt_pct = 100; g_batt_chg = 0; return; }
+    g_batt_pct = b.percentage;
+    g_batt_chg = (b.state == ODROID_BATTERY_CHARGE_STATE_CHARGING);
 }
+int media_battery_percent(void)  { batt_refresh(); return g_batt_pct; }
+int media_battery_charging(void) { batt_refresh(); return g_batt_chg; }
 
 typedef struct {
     char name[NAME_MAX_LEN];
