@@ -23,26 +23,27 @@
 #define SCR_H  GW_LCD_HEIGHT
 #define FONT_H 12
 
-// now-playing: Winamp-style skin layout (320x240)
-#define TITLEBAR_H 16
-#define LCD_Y      18
-#define LCD_H      132                     // glass panel spans LCD_Y .. LCD_Y+LCD_H
-#define COVER_X    8                       // small album-art thumbnail, top-left
-#define COVER_Y    24
-#define COVER_SZ   56
-#define SEG_X      74                      // 7-segment time, right of the cover
-#define SEG_Y      26
+// now-playing: deck layout (320x240). Top bar matches the browser header; time,
+// bit-rate, volume and status all live together in the info/LCD panel.
+#define TITLEBAR_H 18                      // == LIST_HEADER_H (consistent top bar)
+#define LCD_Y      24                      // info/LCD panel, dropped off the top bar
+#define LCD_H      162                     // 24 .. 186
+#define COVER_X    8                       // album-art thumbnail, top-left of panel
+#define COVER_Y    30
+#define COVER_SZ   56                      // 30 .. 86
+#define SEG_X      74                      // 7-segment elapsed time, right of cover
+#define SEG_Y      34
 #define SEG_W      14                      // per-digit cell
-#define SEG_H      28
-#define INFO_X     164                     // bit-rate / kHz column
-#define MARQUEE_Y  86                      // scrolling title band (below cover)
+#define SEG_H      28                      // 34 .. 62
+#define INFO_X     166                     // bit-rate / kHz column
+#define STAT_Y     70                      // play/pause + volume + status + total time
+#define MARQUEE_Y  92                      // scrolling title band (below cover)
 #define VIS_X      8                       // spectrum analyzer left margin
-#define VIS_TOP    100
-#define VIS_BASE   146                     // bars grow upward from here
+#define VIS_TOP    108
+#define VIS_BASE   182                     // taller equalizer: 108 .. 182
 #define VIS_BARS   20
 #define SEEK_X     14
-#define SEEK_Y     162
-#define ROW_Y      182                     // volume + status row
+#define SEEK_Y     194                     // thin position bar, lowered
 #define HINT_DIV   210                     // top of the bottom hint panel
 #define HINT1_Y    216
 
@@ -426,15 +427,6 @@ static void draw_spectrum(uint16_t lcd_bg)
     }
 }
 
-// Small "HH:MM" clock — Game & Watch is a watch, so the time is always on screen.
-static void draw_clock(int x_center, int y, uint16_t fg)
-{
-    char t[8];
-    snprintf(t, sizeof(t), "%02d:%02d", GW_GetCurrentHour(), GW_GetCurrentMinute());
-    int w = i18n_get_text_width(t);
-    ui_text_t(x_center - w / 2, y, w + 2, t, fg);
-}
-
 // --- scrolling title marquee ------------------------------------------------
 
 static char     g_marquee[256];     // "Artist - Title" for the LCD panel
@@ -588,15 +580,18 @@ void ui_player_set_cover(const uint16_t *thumb, int sz, bool has)
 // A little record (concentric grooves + centre label) — the no-cover stand-in.
 static void draw_disc(int cx, int cy, int r, uint16_t accent, uint16_t bg)
 {
-    uint16_t slate  = ui_mix(bg, accent, 1);
-    uint16_t groove = ui_mix(bg, accent, 3);
-    dot(cx, cy, r,            slate);
-    dot(cx, cy, r * 72 / 100, groove);
-    dot(cx, cy, r * 70 / 100, slate);
-    dot(cx, cy, r * 46 / 100, groove);
-    dot(cx, cy, r * 44 / 100, slate);
-    dot(cx, cy, r * 30 / 100, accent);     // label
-    dot(cx, cy, r * 8 / 100,  bg);         // spindle hole
+    uint16_t slate  = ui_mix(bg, accent, 2);
+    uint16_t groove = ui_mix(bg, accent, 5);
+    dot(cx, cy, r,            slate);       // disc body (drawn large -> small)
+    dot(cx, cy, r * 86 / 100, groove);
+    dot(cx, cy, r * 84 / 100, slate);
+    dot(cx, cy, r * 68 / 100, groove);
+    dot(cx, cy, r * 66 / 100, slate);
+    dot(cx, cy, r * 50 / 100, groove);
+    dot(cx, cy, r * 48 / 100, slate);
+    dot(cx, cy, r * 34 / 100, accent);      // bright centre label
+    int nw = i18n_get_text_width("\xE2\x99\xAA");
+    ui_text_t(cx - nw / 2, cy - 6, nw + 2, "\xE2\x99\xAA", bg);   // ♪ on the label
 }
 
 // Album art (or the record stand-in), rounded + thin-framed, in the LCD panel.
@@ -620,20 +615,18 @@ static void draw_player_hints(void);
 // thumbnail is supplied separately via ui_player_set_cover().
 void ui_player_static(const player_state_t *ps)
 {
-    uint16_t bg = curr_colors->bg_c, main_c = curr_colors->main_c;
+    uint16_t bg = curr_colors->bg_c;
     uint16_t accent = curr_colors->sel_c;
     uint16_t surface = ui_player_surface();
     uint16_t lcd = ui_lcd_bg();
 
     draw_vbg();
 
-    // title bar: beveled panel, ribbed grip + "MUSIC"
+    // top bar — same look as the browser header: accent tab + title + underline
     ui_fill(0, 0, SCR_W, TITLEBAR_H, surface);
-    ui_fill(0, 0, SCR_W, 1, ui_mix(accent, main_c, 6));         // top highlight
-    ui_fill(0, TITLEBAR_H - 1, SCR_W, 1, ui_dim(bg, 1, 2));     // bottom shade
-    for (int i = 0; i < 4; i++)
-        ui_fill(6, 4 + i * 2, 18, 1, ui_mix(accent, surface, 8));
-    ui_text_t(30, 3, 80, "MUSIC", ui_mix(main_c, accent, 6));
+    ui_fill(0, 0, 3, TITLEBAR_H, accent);
+    ui_fill(0, TITLEBAR_H - 1, SCR_W, 1, ui_mix(accent, bg, 4));
+    ui_text(10, 4, 90, "MUSIC", accent, surface);
 
     // LCD glass panel
     ui_fill(0, LCD_Y, SCR_W, LCD_H, lcd);
@@ -676,18 +669,19 @@ void ui_player_dynamic(const player_state_t *ps)
 
     g_anim++;
 
-    // ---- title bar: centered clock + (right) play/pause glyph + track index ----
-    ui_fill(SCR_W / 2 - 26, 1, 52, TITLEBAR_H - 2, surface);
-    draw_clock(SCR_W / 2, 3, ui_mix(main_c, accent, 9));
-    ui_fill(SCR_W - 86, 1, 86, TITLEBAR_H - 2, surface);
-    if (ps->paused) icon_pause(SCR_W - 84, 3, 7, 9, ui_mix(accent, surface, 9));
-    else            icon_play (SCR_W - 84, 3, 8, 9, ui_mix(accent, surface, 9));
+    // ---- top bar right: track index + clock (mirrors the browser header) ----
+    ui_fill(SCR_W - 120, 1, 120, TITLEBAR_H - 2, surface);
+    int trx = SCR_W - 8;
+    char clk[8];
+    snprintf(clk, sizeof(clk), "%02d:%02d", GW_GetCurrentHour(), GW_GetCurrentMinute());
+    int cw = i18n_get_text_width(clk);
+    trx -= cw; ui_text(trx, 4, cw + 2, clk, accent, surface);
     char pos[24];
     snprintf(pos, sizeof(pos), "%d/%d", ps->track_index + 1, ps->track_count);
     int pw = i18n_get_text_width(pos);
-    ui_text(SCR_W - 8 - pw, 3, pw + 2, pos, ui_mix(main_c, accent, 6), surface);
+    trx -= 8 + pw; ui_text(trx, 4, pw + 2, pos, soft, surface);
 
-    // ---- LCD time (7-seg) + bit-rate / kHz / channels ----
+    // ---- 7-seg elapsed time + bit-rate / kHz ----
     float frac = scrubbing ? ps->scrub
                : (ps->total > 0 ? (float)ps->sec / (float)ps->total : 0.0f);
     if (frac < 0) frac = 0;
@@ -706,34 +700,33 @@ void ui_player_dynamic(const player_state_t *ps)
              audio_channels() >= 2 ? "stereo" : "mono");
     ui_text(INFO_X, SEG_Y + 16, SCR_W - INFO_X - 8, info, soft, lcd);
 
-    // ---- marquee + spectrum analyzer ----
+    // ---- status line (in the panel): play/pause + volume | heart/shuffle/repeat + total ----
+    ui_fill(SEG_X, STAT_Y - 1, SCR_W - SEG_X - 6, 13, lcd);
+    if (ps->paused) icon_pause(SEG_X, STAT_Y + 1, 7, 9, accent);
+    else            icon_play (SEG_X, STAT_Y + 1, 8, 9, accent);
+    draw_vol_pips(SEG_X + 14, STAT_Y + 1, ps->volume);
+    int rx = SCR_W - 8;
+    char tot[16];
+    snprintf(tot, sizeof(tot), "%d:%02d", ps->total / 60, ps->total % 60);
+    int tw = i18n_get_text_width(tot);
+    rx -= tw; ui_text(rx, STAT_Y, tw + 2, tot, soft, lcd);
+    rx -= 16; ui_text(rx, STAT_Y, 14, "\xE2\x99\xA5",
+                      ps->favorite ? accent : ui_mix(dim, bg, 3), lcd);  // ♥
+    if (ps->repeat != REPEAT_OFF) { rx -= 14; icon_repeat(rx, STAT_Y + 1, ui_mix(accent, bg, 6)); }
+    if (ps->shuffle)              { rx -= 14; icon_shuffle(rx, STAT_Y + 1, ui_mix(accent, bg, 6)); }
+
+    // ---- marquee + spectrum (equalizer) ----
     draw_marquee(lcd);
     vis_compute(!ps->paused);
     draw_spectrum(lcd);
 
-    // ---- position slider ----
+    // ---- thin position bar (lowered) ----
     int gw = SCR_W - 2 * SEEK_X;
     int fillw = (int)(frac * gw);
-    ui_fill(SEEK_X - 2, SEEK_Y - 4, gw + 4, 12, surface);
-    ui_fill(SEEK_X, SEEK_Y, gw, 3, ui_mix(bg, main_c, 5));
-    ui_fill(SEEK_X, SEEK_Y, fillw, 3, accent);
-    dot(SEEK_X + fillw, SEEK_Y + 1, 4, scrubbing ? main_c : accent);
-
-    // ---- volume + status row ----
-    ui_fill(0, ROW_Y - 2, SCR_W, HINT_DIV - (ROW_Y - 2), surface);
-    int volx = SEEK_X + i18n_get_text_width("VOL") + 8;
-    ui_text(SEEK_X, ROW_Y, volx - SEEK_X, "VOL", soft, surface);
-    draw_vol_pips(volx, ROW_Y + 1, ps->volume);
-
-    int rx = SCR_W - SEEK_X;
-    char tot[16];
-    snprintf(tot, sizeof(tot), "%d:%02d", ps->total / 60, ps->total % 60);
-    int tw = i18n_get_text_width(tot);
-    rx -= tw; ui_text(rx, ROW_Y, tw + 2, tot, soft, surface);
-    rx -= 16; ui_text(rx, ROW_Y, 14, "\xE2\x99\xA5",
-                      ps->favorite ? accent : ui_mix(dim, bg, 3), surface);  // ♥
-    if (ps->repeat != REPEAT_OFF) { rx -= 14; icon_repeat(rx, ROW_Y + 1, ui_mix(accent, bg, 6)); }
-    if (ps->shuffle)              { rx -= 14; icon_shuffle(rx, ROW_Y + 1, ui_mix(accent, bg, 6)); }
+    ui_fill(SEEK_X - 2, SEEK_Y - 3, gw + 4, 8, surface);
+    ui_fill(SEEK_X, SEEK_Y, gw, 2, ui_mix(bg, main_c, 5));
+    ui_fill(SEEK_X, SEEK_Y, fillw, 2, accent);
+    dot(SEEK_X + fillw, SEEK_Y + 1, 3, scrubbing ? main_c : accent);
 }
 
 static void draw_player_hints(void)
