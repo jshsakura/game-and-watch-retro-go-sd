@@ -674,6 +674,7 @@ static int music_dialog(const char *title, odroid_dialog_choice_t *c, void (*rep
         wdog_refresh();
         repaint();                                   // feed audio + redraw background
         odroid_overlay_draw_dialog(title, c, sel);   // menu box on top
+        media_draw_topbar("", "");                   // keep the system header above the menu
         lcd_swap();
 
         odroid_input_read_gamepad(&joy);
@@ -834,6 +835,10 @@ static void playback_load(int pi)
     ps.total = audio_duration_sec();
     ps.bitrate = audio_bitrate_kbps(); ps.hz = audio_src_hz(); ps.channels = audio_channels();
     ps.sec = 0;
+    // Ring is primed: resume the ISR NOW, before the (slow) album-art decode, so
+    // the gap between tracks is just the open+prime time, not the cover decode —
+    // the 170ms ring keeps playing while the cover is built.
+    if (!ps.paused) audio_isr_set(common_emu_sound_get_volume(), false);
     g_deck_has_cover = cover_thumb(ps.path, g_deck_cover, DECK_COVER_SZ);
     ui_player_set_cover(g_deck_cover, DECK_COVER_SZ, g_deck_has_cover);
 }
