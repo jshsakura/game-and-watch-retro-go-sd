@@ -86,6 +86,15 @@ static char cur_path[PATH_MAX_LEN];
 static char g_root[PATH_MAX_LEN] = "/music";
 static int  g_mode = MODE_FOLDER;
 
+// Background playback state at file scope: persists across the browser and
+// now-playing views so music keeps playing while you browse the list.
+static player_state_t ps;            // the now-playing state
+static lyrics_t       ly;
+static char           fallback[NAME_MAX_LEN];
+static int            g_play_pi = -1;   // playing playlist index (-1 = nothing playing)
+static bool           g_playing;        // a track is loaded and playing
+static bool           g_audio_on;       // the audio DMA has been started
+
 // favourites (absolute track paths, persisted to "<root>/.favourites")
 static char g_fav[FAV_MAX][PATH_MAX_LEN];
 static int  g_fav_count;
@@ -453,15 +462,6 @@ static void draw_list(void)
 
 static player_state_t *g_ps;
 static uint32_t g_played;   // total samples played; shared so the menu keeps playback going
-
-// Background playback state at file scope: it persists across the browser and
-// now-playing views so music keeps playing while you browse the list.
-static player_state_t ps;            // the now-playing state
-static lyrics_t       ly;
-static char           fallback[NAME_MAX_LEN];
-static int            g_play_pi = -1;   // playing playlist index (-1 = nothing playing)
-static bool           g_playing;        // a track is loaded and playing
-static bool           g_audio_on;       // the audio DMA has been started
 
 static void playback_feed(void);
 static bool playback_autoadvance(void);
