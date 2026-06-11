@@ -23,6 +23,7 @@ typedef enum {
 extern int16_t audiobuffer_dma[AUDIO_BUFFER_LENGTH * 2] __attribute__((section (".audio")));
 extern dma_transfer_state_t dma_state;
 extern uint32_t dma_counter;
+extern void (*audio_dma_hook)(void);   // per-half-buffer hook (Music app ISR feed)
 
 uint16_t audio_get_buffer_full_length(void);
 uint16_t audio_get_buffer_length(void);

@@ -10,14 +10,21 @@ uint32_t dma_counter;
 
 static uint16_t audiobuffer_full_length = AUDIO_BUFFER_LENGTH * 2;
 
+// Optional per-half-buffer hook (NULL for emulators; the Music app sets it to
+// audio_isr_fill so playback is fed straight from the ISR, decoupled from the
+// main loop's rendering).
+void (*audio_dma_hook)(void) = 0;
+
 void HAL_SAI_TxHalfCpltCallback(SAI_HandleTypeDef *hsai) {
     dma_counter++;
     dma_state = DMA_TRANSFER_STATE_HF;
+    if (audio_dma_hook) audio_dma_hook();
 }
 
 void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef *hsai) {
     dma_counter++;
     dma_state = DMA_TRANSFER_STATE_TC;
+    if (audio_dma_hook) audio_dma_hook();
 }
 
 uint16_t audio_get_buffer_full_length() {
