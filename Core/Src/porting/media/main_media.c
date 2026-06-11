@@ -20,6 +20,7 @@
 #include "appid.h"
 #include "rg_storage.h"
 #include "odroid_overlay.h"
+#include "bitmaps.h"
 #include "rg_i18n.h"
 #include "gw_audio.h"
 #include "common.h"
@@ -54,25 +55,35 @@ enum { MENU_INFO = 1, MENU_LYRICS = 2, MENU_CLOSE = 3 };
 // i18n string with an English fallback when a language lacks the key.
 #define TR(field, fallback) ((curr_lang && curr_lang->field) ? curr_lang->field : (fallback))
 
-// Battery accessors for media_ui's shared top bar — keep the UI layer free of
-// the hardware headers (media_ui declares these extern; the host preview stubs
-// them). The ADC read is throttled to ~2s and cached, so the per-frame top-bar
-// redraw is cheap; a missing battery reports 100% so it never reads as "empty".
-static int      g_batt_pct = 100;
-static int      g_batt_chg = 0;
-static uint32_t g_batt_t;
-static void batt_refresh(void)
+// Shared top bar for the music app, drawn here (not in media_ui) so it can use
+// the SAME system chrome as the launcher status bar: the ribbed Game & Watch
+// shell strip, the RGW logo, and the system clock + battery. media_ui calls this
+// (declared extern there) for both the browser header and the now-playing deck,
+// so the homebrew app's top bar is identical to the rest of the device.
+#define MEDIA_STATUS_H 33   // == gui.c STATUS_HEIGHT
+void media_draw_topbar(const char *title, const char *right_label)
 {
-    uint32_t now = HAL_GetTick();
-    if (g_batt_t != 0 && now - g_batt_t < 2000) return;
-    g_batt_t = now ? now : 1;
+    uint16_t main_c = curr_colors->main_c, bg = curr_colors->bg_c, sel = curr_colors->sel_c;
+    odroid_overlay_draw_fill_rect(0, 0, GW_LCD_WIDTH, MEDIA_STATUS_H, main_c);
+    odroid_overlay_draw_fill_rect(0, 1, GW_LCD_WIDTH, 2, bg);   // shell ribs
+    odroid_overlay_draw_fill_rect(0, 4, GW_LCD_WIDTH, 2, bg);
+    odroid_overlay_draw_fill_rect(0, 8, GW_LCD_WIDTH, 2, bg);
+    odroid_overlay_draw_logo(8, 16, RG_LOGO_RGW, sel);          // Game & Watch logo
+
     odroid_battery_state_t b = odroid_input_read_battery();
-    if (b.state == ODROID_BATTERY_CHARGE_STATE_BATTERY_MISSING) { g_batt_pct = 100; g_batt_chg = 0; return; }
-    g_batt_pct = b.percentage;
-    g_batt_chg = (b.state == ODROID_BATTERY_CHARGE_STATE_CHARGING);
+    odroid_overlay_draw_battery(b, GW_LCD_WIDTH - 28, 17);
+    odroid_overlay_clock(GW_LCD_WIDTH - 74, 17);
+
+    int rx = GW_LCD_WIDTH - 80;
+    if (right_label && right_label[0]) {                        // folder count / track index
+        int w = i18n_get_text_width(right_label);
+        rx -= w; i18n_draw_text_line(rx, 16, w + 2, right_label, bg, main_c, 1);
+    }
+    if (title && title[0]) {                                    // 음악 / folder name
+        int tx = 42, tw = rx - tx - 6; if (tw < 20) tw = 20;
+        i18n_draw_text_line(tx, 16, tw, title, bg, main_c, 1);
+    }
 }
-int media_battery_percent(void)  { batt_refresh(); return g_batt_pct; }
-int media_battery_charging(void) { batt_refresh(); return g_batt_chg; }
 
 typedef struct {
     char name[NAME_MAX_LEN];

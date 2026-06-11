@@ -25,22 +25,22 @@
 
 // now-playing: deck layout (320x240). Top bar matches the browser header; time,
 // bit-rate, volume and status all live together in the info/LCD panel.
-#define TITLEBAR_H 18                      // == LIST_HEADER_H (consistent top bar)
-#define LCD_Y      24                      // info/LCD panel, dropped off the top bar
-#define LCD_H      162                     // 24 .. 186
+#define TITLEBAR_H 33                      // == system STATUS_HEIGHT (ribbed bar + RGW logo + clock)
+#define LCD_Y      36                      // info/LCD panel, below the system top bar
+#define LCD_H      150                     // 36 .. 186
 #define COVER_X    8                       // album-art thumbnail, top-left of panel
-#define COVER_Y    30
-#define COVER_SZ   56                      // 30 .. 86
+#define COVER_Y    42
+#define COVER_SZ   56                      // 42 .. 98
 #define SEG_X      74                      // 7-segment elapsed time, right of cover
-#define SEG_Y      34
+#define SEG_Y      46
 #define SEG_W      14                      // per-digit cell
-#define SEG_H      28                      // 34 .. 62
+#define SEG_H      28                      // 46 .. 74
 #define INFO_X     166                     // bit-rate / kHz column
-#define STAT_Y     70                      // play/pause + volume + status + total time
-#define MARQUEE_Y  92                      // scrolling title band (below cover)
+#define STAT_Y     80                      // play/pause + volume + status + total time
+#define MARQUEE_Y  100                     // scrolling title band (below cover)
 #define VIS_X      8                       // spectrum analyzer left margin
-#define VIS_TOP    108
-#define VIS_BASE   182                     // taller equalizer: 108 .. 182
+#define VIS_TOP    116
+#define VIS_BASE   182                     // equalizer: 116 .. 182
 #define VIS_BARS   20
 #define SEEK_X     14
 #define SEEK_Y     194                     // thin position bar, lowered
@@ -611,54 +611,14 @@ static void draw_deck_cover(uint16_t lcd_bg)
 
 // Battery level [0..100] + charging flag — provided by the firmware (main_media)
 // or the host preview, so this rendering layer stays free of hardware headers.
-extern int  media_battery_percent(void);
-extern int  media_battery_charging(void);
-
-// Small battery icon (body + nub), filled by charge level; red when low.
-static void ui_battery(int x, int y)
-{
-    int pct = media_battery_percent();
-    if (pct < 0)   pct = 0;
-    if (pct > 100) pct = 100;
-    uint16_t bg = curr_colors->bg_c, accent = curr_colors->sel_c, main_c = curr_colors->main_c;
-    uint16_t frame = ui_mix(main_c, bg, 5);
-    uint16_t fillc = media_battery_charging() ? main_c
-                   : (pct <= 20 ? (uint16_t)(0x1F << 11) : accent);   // red when low
-    const int W = 16, Hh = 9;
-    ui_fill(x, y, W, 1, frame); ui_fill(x, y + Hh - 1, W, 1, frame);   // top/bottom
-    ui_fill(x, y, 1, Hh, frame); ui_fill(x + W - 1, y, 1, Hh, frame);  // sides
-    ui_fill(x + W, y + 3, 2, 3, frame);                                // nub
-    int iw = (W - 4) * pct / 100;
-    if (iw > 0) ui_fill(x + 2, y + 2, iw, Hh - 4, fillc);              // charge level
-}
-
-// Shared top bar — the browser header and the now-playing deck draw the SAME
-// bar: accent tab + title (left), then an optional context label (folder count
-// / track index), the battery and the clock (right).
+// The shared top bar is drawn by the firmware (media_draw_topbar in main_media.c)
+// so the homebrew app uses the SAME system chrome as the launcher: the ribbed
+// Game & Watch shell strip, the RGW logo, and the system clock + battery. The
+// host preview stubs it.
+extern void media_draw_topbar(const char *title, const char *right_label);
 static void ui_topbar(const char *title, const char *right_label)
 {
-    uint16_t bg = curr_colors->bg_c, accent = curr_colors->sel_c;
-    uint16_t soft = ui_mix(curr_colors->main_c, bg, 5);
-    uint16_t surface = ui_player_surface();
-    const int H = TITLEBAR_H;
-
-    ui_fill(0, 0, SCR_W, H, surface);
-    ui_fill(0, H - 1, SCR_W, 1, ui_mix(accent, bg, 4));  // single thin underline, no side bar
-
-    int rx = SCR_W - 8;
-    char clk[8];
-    snprintf(clk, sizeof(clk), "%02d:%02d", GW_GetCurrentHour(), GW_GetCurrentMinute());
-    int cw = i18n_get_text_width(clk);
-    rx -= cw;      ui_text(rx, 4, cw + 2, clk, accent, surface);
-    rx -= 6 + 18;  ui_battery(rx, 4);
-    if (right_label && right_label[0]) {
-        int lw = i18n_get_text_width(right_label);
-        rx -= 8 + lw; ui_text(rx, 4, lw + 2, right_label, soft, surface);
-    }
-    char buf[160];
-    int titlew = rx - 10; if (titlew < 20) titlew = 20;
-    ui_ellipsize(buf, sizeof(buf), title ? title : "", titlew);
-    ui_text(8, 4, titlew, buf, accent, surface);
+    media_draw_topbar(title, right_label);
 }
 
 static void draw_player_hints(void);

@@ -115,6 +115,22 @@ int audio_bitrate_kbps(void) { return 320; }
 int audio_src_hz(void) { return 44100; }
 int audio_channels(void) { return 2; }
 
+// host stub for the system status bar (firmware draws the real RGW logo +
+// system clock + battery via the overlay layer); approximate it for layout.
+void media_draw_topbar(const char *title, const char *right)
+{
+    uint16_t main_c = theme.main_c, bg = theme.bg_c, sel = theme.sel_c;
+    for (int y = 0; y < 33; y++) for (int x = 0; x < W; x++) fb[y * W + x] = main_c;
+    for (int s = 0; s < 3; s++) { int yy = 1 + s * 3;
+        for (int x = 0; x < W; x++) { fb[yy*W+x] = bg; fb[(yy+1)*W+x] = bg; } }
+    for (int y = 14; y < 28; y++) for (int x = 8; x < 30; x++) fb[y*W+x] = sel;   // logo box
+    i18n_draw_text_line(W - 72, 16, 40, "10:38", sel, main_c, 1);                 // clock
+    for (int y = 17; y < 26; y++) for (int x = W-28; x < W-12; x++) fb[y*W+x] = sel; // battery
+    if (right && right[0]) { int w = i18n_get_text_width(right);
+        i18n_draw_text_line(W - 80 - w, 16, w + 2, right, bg, main_c, 1); }
+    if (title && title[0]) i18n_draw_text_line(42, 16, 140, title, bg, main_c, 1);
+}
+
 static int g_have_cover = 1;
 
 int cover_load(const char *path, bool *is_png) { (void)path; *is_png = false; return g_have_cover; }

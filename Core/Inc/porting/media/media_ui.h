@@ -77,7 +77,7 @@ typedef struct {
     const char *empty_sub;       // optional 2nd line below the hint (e.g. folder path)
 } list_view_t;
 
-#define LIST_HEADER_H 18
+#define LIST_HEADER_H 33      // == system STATUS_HEIGHT, so the top bar matches the launcher
 #define LIST_FOOTER_H 14
 #define LIST_ROW_H    40
 #define LIST_VISIBLE_ROWS ((240 - LIST_HEADER_H - LIST_FOOTER_H) / LIST_ROW_H)
