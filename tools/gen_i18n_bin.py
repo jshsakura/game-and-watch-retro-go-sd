@@ -74,6 +74,7 @@ def parse_header_field_order(path: Path) -> list[str]:
     fields = []
     seen = set()
     in_struct = False
+    after_fmt = False
     text = _strip_block_comments(path.read_text(encoding='utf-8'))
     for line in text.splitlines():
         stripped = line.strip()
@@ -83,9 +84,22 @@ def parse_header_field_order(path: Path) -> list[str]:
             continue
         if stripped.startswith('}'):
             break
+        # The fmt_* function pointers mark the end of the flat string region the
+        # C loader covers (LANG_T_STRING_COUNT = s_LangUI..fmt_Title_Date_Format).
+        # An s_XXX field after them is never populated by i18n_load_language()
+        # AND pushes this .bin's field count past LANG_T_STRING_COUNT+4, so the
+        # loader rejects the WHOLE file and every language falls back to English.
+        if '(*fmt' in line:
+            after_fmt = True
         m = HEADER_FIELD_RE.match(line)
         if m:
             name = m.group(1)
+            if after_fmt:
+                raise SystemExit(
+                    f's_{name} is declared AFTER the fmt_* function pointers in '
+                    f'{path}; move every s_XXX string field BEFORE '
+                    f'fmt_Title_Date_Format (otherwise the firmware loader rejects '
+                    f'the generated .bin and falls back to English).')
             if name in seen:
                 # Defensive: same field declared twice would corrupt the
                 # ordering — refuse to proceed rather than silently emit
