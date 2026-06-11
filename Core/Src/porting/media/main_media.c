@@ -46,7 +46,9 @@
 
 enum { MODE_FOLDER = 0, MODE_FAV = 1 };
 enum { VIEW_PLAY = 0, VIEW_INFO = 1, VIEW_LYRICS = 2 };
-enum { MENU_INFO = 1, MENU_LYRICS = 2, MENU_CLOSE = 3 };
+// IDs >= 10 so they never collide with the system settings-menu rows
+// (Brightness=0, Volume=1, Turbo=2) that odroid_overlay_settings_menu prepends.
+enum { MENU_INFO = 20, MENU_LYRICS = 21 };
 
 #define HOLD_MS     300        // press longer than this => seek-scrub
 #define SCRUB_STEP  0.010f     // fraction per frame while scrubbing
@@ -441,7 +443,9 @@ static void draw_list(void)
     // name once the user has descended into a subfolder.
     const char *folder_head;
     if (strcmp(cur_path, g_root) == 0) {
-        folder_head = TR(s_music, "Music");
+        // at the root the Game & Watch logo in the top bar already identifies the
+        // app, so leave the title blank (the "Music" word would just crowd it).
+        folder_head = "";
     } else {
         const char *slash = strrchr(cur_path, '/');
         folder_head = (slash && slash[1]) ? slash + 1 : cur_path;
@@ -487,12 +491,11 @@ static bool     g_deck_has_cover;
 #define SYM_ON   "\xE2\x97\x8F"   // ●
 #define SYM_OFF  "\xE2\x97\x8B"   // ○
 
-static char fav_v[20], rep_v[20], shf_v[20], bri_v[8];
+static char fav_v[20], rep_v[20], shf_v[20];
 
 static void set_fav_v(void)  { snprintf(fav_v, sizeof(fav_v), "%s", g_ps->favorite ? SYM_ON : SYM_OFF); }
 static void set_rep_v(void)  { snprintf(rep_v, sizeof(rep_v), "%s", g_ps->repeat == REPEAT_ALL ? SYM_ON : g_ps->repeat == REPEAT_ONE ? SYM_ON "1" : SYM_OFF); }
 static void set_shf_v(void)  { snprintf(shf_v, sizeof(shf_v), "%s", g_ps->shuffle ? SYM_ON : SYM_OFF); }
-static void set_bri_v(void)  { snprintf(bri_v, sizeof(bri_v), "%d", lcd_backlight_get()); }
 
 static bool fav_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t r)
 {
@@ -519,16 +522,6 @@ static bool shf_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t
     set_shf_v();
     return false;
 }
-static bool bri_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t r)
-{
-    (void)o; (void)r;
-    int b = lcd_backlight_get();
-    if (ev == ODROID_DIALOG_NEXT && b < 9) lcd_backlight_set(b + 1);
-    else if (ev == ODROID_DIALOG_PREV && b > 0) lcd_backlight_set(b - 1);
-    set_bri_v();
-    return false;
-}
-
 // Live language switch (◀▶ cycles) — handy from inside the app.
 static char lang_v[28];
 static void set_lang_v(void) { snprintf(lang_v, sizeof(lang_v), "%s", i18n_lang_display_name(odroid_settings_lang_get())); }
@@ -572,28 +565,28 @@ static void player_repaint(void)
     ui_player_dynamic(g_ps);
 }
 
+// The deck's options menu: the launcher-identical settings menu (Brightness +
+// Volume sliders, drawn by the system) with the track actions appended.
 static int open_menu(player_state_t *ps)
 {
     g_ps = ps;
-    set_fav_v(); set_rep_v(); set_shf_v(); set_bri_v();
-    odroid_dialog_choice_t choices[] = {
-        { 10, TR(s_favorite,   "Favorite"),   fav_v, 1, fav_cb },
-        { 11, TR(s_repeat,     "Repeat"),     rep_v, 1, rep_cb },
-        { 12, TR(s_shuffle,    "Shuffle"),    shf_v, 1, shf_cb },
-        { 13, TR(s_brightness, "Brightness"), bri_v, 1, bri_cb },
+    set_fav_v(); set_rep_v(); set_shf_v();
+    odroid_dialog_choice_t extra[] = {
+        ODROID_DIALOG_CHOICE_SEPARATOR,
+        { 10, TR(s_favorite, "Favorite"), fav_v, 1, fav_cb },
+        { 11, TR(s_repeat,   "Repeat"),   rep_v, 1, rep_cb },
+        { 12, TR(s_shuffle,  "Shuffle"),  shf_v, 1, shf_cb },
         ODROID_DIALOG_CHOICE_SEPARATOR,
         { MENU_INFO,   TR(s_info,   "Info"),   (char *)"", 1, NULL },
         { MENU_LYRICS, TR(s_lyrics, "Lyrics"), (char *)"", 1, NULL },
-        ODROID_DIALOG_CHOICE_SEPARATOR,
-        { MENU_CLOSE,  TR(s_Close,  "Close"),  (char *)"", 1, NULL },
         ODROID_DIALOG_CHOICE_LAST,
     };
-    return odroid_overlay_dialog(TR(s_music, "Music"), choices, 0, player_repaint, 0);
+    return odroid_overlay_settings_menu(extra, player_repaint, 0);
 }
 
-// Shared options menu reachable from the browser list via PAUSE: brightness +
-// live language switch + close. (Track-specific items like favourite/repeat/
-// info/lyrics only make sense while a track is playing, so they're omitted.)
+// The browser list's options menu: same system settings menu (so Volume +
+// Brightness look and behave exactly like the launcher) plus the live language
+// switch. Track-specific items only make sense on the deck, so they're omitted.
 static void browser_repaint(void)
 {
     if (g_playing) { playback_feed(); common_emu_sound_sync(false); }   // keep music playing
@@ -602,15 +595,13 @@ static void browser_repaint(void)
 
 static void open_browser_menu(void)
 {
-    set_bri_v(); set_lang_v();
-    odroid_dialog_choice_t choices[] = {
-        { 13, TR(s_brightness, "Brightness"), bri_v,  1, bri_cb },
-        { 14, TR(s_LangUI,     "Language"),   lang_v, 1, lang_cb },
+    set_lang_v();
+    odroid_dialog_choice_t extra[] = {
         ODROID_DIALOG_CHOICE_SEPARATOR,
-        { MENU_CLOSE, TR(s_Close, "Close"), (char *)"", 1, NULL },
+        { 14, TR(s_LangUI, "Language"), lang_v, 1, lang_cb },
         ODROID_DIALOG_CHOICE_LAST,
     };
-    odroid_overlay_dialog(TR(s_music, "Music"), choices, 0, browser_repaint, 0);
+    odroid_overlay_settings_menu(extra, browser_repaint, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -744,9 +735,10 @@ static void music_player(int start_pi)
                 if (view != VIEW_PLAY) { view = VIEW_PLAY; recompose = true; dirty = true; }
                 else break;
             }
-            // PAUSE button pauses/resumes (matches its label); GAME opens the menu
-            if (P(ODROID_INPUT_VOLUME)) { ps.paused = !ps.paused; dirty = true; }
-            if (P(ODROID_INPUT_START)) {
+            // PAUSE (the stock retro-go menu hotkey; GAME also works) opens the
+            // options menu — volume + brightness sliders plus the track actions.
+            // (A toggles play/pause below.)
+            if (P(ODROID_INPUT_VOLUME) || P(ODROID_INPUT_START)) {
                 int r = open_menu(&ps);
                 if (r == MENU_INFO) view = VIEW_INFO;
                 else if (r == MENU_LYRICS) view = VIEW_LYRICS;
@@ -903,10 +895,9 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             dirty = true;
         }
 
-        if (PRESSED(ODROID_INPUT_VOLUME) && g_playing) {   // PAUSE button: pause/resume the music
-            ps.paused = !ps.paused; dirty = true;
-        }
-        if (PRESSED(ODROID_INPUT_START)) {                 // GAME button: shared options menu
+        // PAUSE (the stock retro-go menu hotkey; GAME also works) opens the
+        // shared options menu: launcher-identical volume + brightness sliders.
+        if (PRESSED(ODROID_INPUT_VOLUME) || PRESSED(ODROID_INPUT_START)) {
             open_browser_menu();
             odroid_input_read_gamepad(&joy); prev = joy; dirty = true; held_dir = 0; continue;
         }

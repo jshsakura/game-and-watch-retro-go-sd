@@ -43,9 +43,8 @@
 #define VIS_BASE   182                     // equalizer: 116 .. 182
 #define VIS_BARS   20
 #define SEEK_X     14
-#define SEEK_Y     194                     // thin position bar, lowered
-#define HINT_DIV   210                     // top of the bottom hint panel
-#define HINT1_Y    216
+#define HINT_DIV   226                     // bottom hint bar (== the list footer: 14px)
+#define SEEK_Y     205                     // position bar, centered in its band (187..226)
 
 // --- primitives -------------------------------------------------------------
 
@@ -555,6 +554,17 @@ static void chip_row(int y, const chip_t *h, int n, uint16_t keyc, uint16_t icon
     chip_row_k(y, h, n, keyc, iconc, 0);    // plain text (legacy callers / footer)
 }
 
+// The one and only bottom hint bar: a thin panel pinned to the screen bottom
+// with a centered chip row. Shared by the list, the deck and the info/lyrics
+// views so every screen's footer looks identical.
+static void draw_footer(const chip_t *h, int n)
+{
+    uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c, accent = curr_colors->sel_c;
+    ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, ui_player_surface());
+    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
+    chip_row(HINT_DIV + 2, h, n, ui_mix(fg, bg, 2), accent, 0);
+}
+
 // --- now-playing: the Winamp deck -------------------------------------------
 
 // Deep, faintly accent-tinted "LCD glass".
@@ -655,9 +665,7 @@ void ui_player_static(const player_state_t *ps)
     else      snprintf(g_marquee, sizeof(g_marquee), "%s", t);
     g_marquee_w = i18n_get_text_width(g_marquee);
 
-    // bottom hint bar (static)
-    ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, surface);
-    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
+    // bottom hint bar (static) — the shared footer, identical to the list
     draw_player_hints();
 }
 
@@ -681,7 +689,7 @@ void ui_player_dynamic(const player_state_t *ps)
     // ---- top bar: identical to the browser header (MUSIC + idx + battery + clock) ----
     char pos[24];
     snprintf(pos, sizeof(pos), "%d/%d", ps->track_index + 1, ps->track_count);
-    ui_topbar(ps->app_name && ps->app_name[0] ? ps->app_name : "Music", pos);
+    ui_topbar("", pos);   // logo identifies the app; no redundant "Music" word
 
     // ---- 7-seg elapsed time + bit-rate / kHz ----
     float frac = scrubbing ? ps->scrub
@@ -733,15 +741,13 @@ void ui_player_dynamic(const player_state_t *ps)
 
 static void draw_player_hints(void)
 {
-    uint16_t bg = curr_colors->bg_c, main_c = curr_colors->main_c;
-    uint16_t accent = curr_colors->sel_c;
     static const chip_t chips[] = {
         { "A", ICN_PLAY },                            // play / pause
         { "\xE2\x97\x80\xE2\x96\xB6", ICN_TRACK },    // ◀▶  prev / next
         { "\xE2\x96\xB2\xE2\x96\xBC", ICN_SPEAKER },  // ▲▼  volume
-        { "GAME", ICN_MENU },                         // menu (shuffle / repeat / info ...)
+        { "PAUSE", ICN_MENU },                        // PAUSE  options menu
     };
-    chip_row_k(HINT1_Y, chips, 4, ui_mix(main_c, bg, 1), accent, 16);
+    draw_footer(chips, 4);
 }
 
 // --- browser list -----------------------------------------------------------
@@ -771,11 +777,12 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
 
     ui_fill(0, 0, SCR_W, SCR_H, bg);
 
-    // header: the shared top bar (accent tab + folder/title + position + battery
-    // + clock), identical to the now-playing deck.
+    // header: the shared system top bar (logo + folder title + battery + clock).
+    // The track position is NOT shown here — it would crowd the clock — but in
+    // the footer's bottom-right corner instead.
     char buf[256], pos[24];
     snprintf(pos, sizeof(pos), "%d/%d", v->count ? v->cursor + 1 : 0, v->count);
-    ui_topbar(v->header ? v->header : "", pos);
+    ui_topbar(v->header ? v->header : "", "");
 
     if (v->count == 0) {
         const char *hint = (v->empty_hint && v->empty_hint[0]) ? v->empty_hint
@@ -795,28 +802,24 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
 
         int y = H + r * RH;
         bool sel = (idx == v->cursor);
-        uint16_t pill_bg = ui_mix(bg, accent, 4);
-        uint16_t zebra   = ui_mix(bg, fg, 1);                        // faint alternating row tint
-        uint16_t rbg = sel ? pill_bg : ((r & 1) ? zebra : bg);
+        uint16_t zebra = ui_mix(bg, fg, 1);                          // faint alternating row tint
+        uint16_t selbg = ui_mix(bg, accent, 5);                      // selection overlay
+        uint16_t rbg = sel ? selbg : ((r & 1) ? zebra : bg);
         uint16_t txt = fg;
         uint16_t sub = sel ? ui_mix(fg, bg, 4) : ui_mix(fg, bg, 7);   // clearer artist/duration
 
-        int pill_x = 4;
-        int pill_y = y + 4;          // breathing room above/below each row
-        int pill_w = right - pill_x;
-        int pill_h = RH - 8;
-        int pill_r = 6;
+        // full-bleed square rows: fill edge to edge (no side margins), and frame
+        // the selection with a clean 1px rule top and bottom — no rounded pill.
+        ui_fill(0, y, SCR_W, RH, rbg);
         if (sel) {
-            ui_fill(pill_x, pill_y, pill_w, pill_h, pill_bg);
-            round_corners(pill_x, pill_y, pill_w, pill_h, pill_r, bg);
-            ui_rrect(pill_x, pill_y, pill_w, pill_h, pill_r, ui_mix(bg, accent, 10)); // selection border
-        } else if (r & 1) {
-            ui_fill(pill_x, pill_y, pill_w, pill_h, zebra);                           // faint zebra band
+            uint16_t bd = ui_mix(bg, accent, 12);
+            ui_fill(0, y, SCR_W, 1, bd);
+            ui_fill(0, y + RH - 1, SCR_W, 1, bd);
         }
         int tx = 8, ty = y + (RH - TH) / 2;
 
         if (it.kind == LIST_SPECIAL) {
-            ui_text(tx + 2, y + (RH - 12) / 2, right - tx - 2, it.title, sel ? accent : accent, rbg);
+            ui_text(tx + 2, y + (RH - 12) / 2, right - tx - 2, it.title, accent, rbg);
             continue;
         }
         if (it.kind == LIST_DIR) {
@@ -825,7 +828,7 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
             continue;
         }
 
-        // track row: thumb (rounded), title, artist, duration, heart
+        // track row: square thumb, title, artist, duration, heart
         if (it.art && it.art_sz > 0) {
             blit_thumb(it.art, it.art_sz, tx, ty);
         } else {
@@ -833,10 +836,8 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
             int nw = i18n_get_text_width("\xE2\x99\xAA");   // ♪
             ui_text_t(tx + (TH - nw) / 2, ty + (TH - 12) / 2, nw + 2, "\xE2\x99\xAA", ui_mix(rbg, txt, 7));
         }
-        round_corners(tx, ty, TH, TH, 6, rbg);
         if (it.playing) {                                   // "now playing" badge on the thumb
             ui_fill(tx, ty, 13, 13, ui_mix(bg, accent, 13));
-            round_corners(tx, ty, 13, 13, 4, rbg);
             icon_play(tx + 3, ty + 2, 7, 8, bg);
         }
 
@@ -866,14 +867,19 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
         ui_fill(SCR_W - 4, ty, 3, th, accent);
     }
 
-    // footer hint
-    ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, LIST_FOOTER_H, panel_bg);
-    ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, 1, ui_mix(accent, bg, 4));
+    // footer hint — the shared bottom bar, identical to the deck
     static const chip_t fh[] = {
         { "A", ICN_PLAY }, { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE },     // play | ▲▼ move
-        { "GAME", ICN_MENU }, { "B", ICN_NONE },                        // GAME = menu | back
+        { "PAUSE", ICN_MENU }, { "B", ICN_NONE },                       // PAUSE = menu | back
     };
-    chip_row(SCR_H - LIST_FOOTER_H + 2, fh, 4, ui_mix(fg, bg, 2), accent, 0);
+    draw_footer(fh, 4);
+
+    // track position lives bottom-right (off the top bar, which is clean system
+    // chrome: logo + clock + battery only).
+    if (v->count > 0) {
+        int pw = i18n_get_text_width(pos);
+        ui_text_t(SCR_W - pw - 6, HINT_DIV + 2, pw + 2, pos, ui_mix(fg, bg, 6));
+    }
 }
 
 // --- info screen ------------------------------------------------------------
@@ -934,10 +940,8 @@ void ui_info_draw(const player_state_t *ps)
         info_row(&y, "File size", v);
     }
 
-    static const chip_t hints[] = { { "GAME", ICN_NONE }, { "B", ICN_NONE } };
-    ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, panel_bg);
-    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(dim, bg, 5));
-    chip_row(226, hints, 2, ui_mix(accent, bg, 9), ui_mix(curr_colors->dis_c, bg, 10), 0);
+    static const chip_t hints[] = { { "B", ICN_NONE } };   // back to the deck
+    draw_footer(hints, 1);
 }
 
 // --- lyrics (parser in media_lyrics.c) --------------------------------------
@@ -970,8 +974,6 @@ void ui_lyrics_draw(const player_state_t *ps, const lyrics_t *ly, int top_line, 
         else     ui_text_center_t(y, txt, soft);
     }
 
-    static const chip_t hints[] = { { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE }, { "GAME", ICN_NONE }, { "B", ICN_NONE } };
-    ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, panel_bg);
-    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(dim, bg, 5));
-    chip_row(226, hints, 3, ui_mix(accent, bg, 9), ui_mix(curr_colors->dis_c, bg, 10), 0);
+    static const chip_t hints[] = { { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE }, { "B", ICN_NONE } };
+    draw_footer(hints, 2);
 }
