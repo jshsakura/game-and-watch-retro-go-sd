@@ -609,6 +609,58 @@ static void draw_deck_cover(uint16_t lcd_bg)
     ui_rrect(x, y, s, s, 6, ui_mix(accent, lcd_bg, 6));
 }
 
+// Battery level [0..100] + charging flag — provided by the firmware (main_media)
+// or the host preview, so this rendering layer stays free of hardware headers.
+extern int  media_battery_percent(void);
+extern int  media_battery_charging(void);
+
+// Small battery icon (body + nub), filled by charge level; red when low.
+static void ui_battery(int x, int y)
+{
+    int pct = media_battery_percent();
+    if (pct < 0)   pct = 0;
+    if (pct > 100) pct = 100;
+    uint16_t bg = curr_colors->bg_c, accent = curr_colors->sel_c, main_c = curr_colors->main_c;
+    uint16_t frame = ui_mix(main_c, bg, 5);
+    uint16_t fillc = media_battery_charging() ? main_c
+                   : (pct <= 20 ? (uint16_t)(0x1F << 11) : accent);   // red when low
+    const int W = 16, Hh = 9;
+    ui_fill(x, y, W, 1, frame); ui_fill(x, y + Hh - 1, W, 1, frame);   // top/bottom
+    ui_fill(x, y, 1, Hh, frame); ui_fill(x + W - 1, y, 1, Hh, frame);  // sides
+    ui_fill(x + W, y + 3, 2, 3, frame);                                // nub
+    int iw = (W - 4) * pct / 100;
+    if (iw > 0) ui_fill(x + 2, y + 2, iw, Hh - 4, fillc);              // charge level
+}
+
+// Shared top bar — the browser header and the now-playing deck draw the SAME
+// bar: accent tab + title (left), then an optional context label (folder count
+// / track index), the battery and the clock (right).
+static void ui_topbar(const char *title, const char *right_label)
+{
+    uint16_t bg = curr_colors->bg_c, accent = curr_colors->sel_c;
+    uint16_t soft = ui_mix(curr_colors->main_c, bg, 5);
+    uint16_t surface = ui_player_surface();
+    const int H = TITLEBAR_H;
+
+    ui_fill(0, 0, SCR_W, H, surface);
+    ui_fill(0, H - 1, SCR_W, 1, ui_mix(accent, bg, 4));  // single thin underline, no side bar
+
+    int rx = SCR_W - 8;
+    char clk[8];
+    snprintf(clk, sizeof(clk), "%02d:%02d", GW_GetCurrentHour(), GW_GetCurrentMinute());
+    int cw = i18n_get_text_width(clk);
+    rx -= cw;      ui_text(rx, 4, cw + 2, clk, accent, surface);
+    rx -= 6 + 18;  ui_battery(rx, 4);
+    if (right_label && right_label[0]) {
+        int lw = i18n_get_text_width(right_label);
+        rx -= 8 + lw; ui_text(rx, 4, lw + 2, right_label, soft, surface);
+    }
+    char buf[160];
+    int titlew = rx - 10; if (titlew < 20) titlew = 20;
+    ui_ellipsize(buf, sizeof(buf), title ? title : "", titlew);
+    ui_text(8, 4, titlew, buf, accent, surface);
+}
+
 static void draw_player_hints(void);
 
 // Static layer: drawn once per track into BOTH framebuffers. The album-art
@@ -622,11 +674,8 @@ void ui_player_static(const player_state_t *ps)
 
     draw_vbg();
 
-    // top bar — same look as the browser header: accent tab + title + underline
-    ui_fill(0, 0, SCR_W, TITLEBAR_H, surface);
-    ui_fill(0, 0, 3, TITLEBAR_H, accent);
-    ui_fill(0, TITLEBAR_H - 1, SCR_W, 1, ui_mix(accent, bg, 4));
-    ui_text(10, 4, 90, "MUSIC", accent, surface);
+    // the top bar is drawn by ui_topbar() in the dynamic layer (identical to the
+    // browser header), so it is not painted here.
 
     // LCD glass panel
     ui_fill(0, LCD_Y, SCR_W, LCD_H, lcd);
@@ -669,17 +718,10 @@ void ui_player_dynamic(const player_state_t *ps)
 
     g_anim++;
 
-    // ---- top bar right: track index + clock (mirrors the browser header) ----
-    ui_fill(SCR_W - 120, 1, 120, TITLEBAR_H - 2, surface);
-    int trx = SCR_W - 8;
-    char clk[8];
-    snprintf(clk, sizeof(clk), "%02d:%02d", GW_GetCurrentHour(), GW_GetCurrentMinute());
-    int cw = i18n_get_text_width(clk);
-    trx -= cw; ui_text(trx, 4, cw + 2, clk, accent, surface);
+    // ---- top bar: identical to the browser header (MUSIC + idx + battery + clock) ----
     char pos[24];
     snprintf(pos, sizeof(pos), "%d/%d", ps->track_index + 1, ps->track_count);
-    int pw = i18n_get_text_width(pos);
-    trx -= 8 + pw; ui_text(trx, 4, pw + 2, pos, soft, surface);
+    ui_topbar(ps->app_name && ps->app_name[0] ? ps->app_name : "Music", pos);
 
     // ---- 7-seg elapsed time + bit-rate / kHz ----
     float frac = scrubbing ? ps->scrub
@@ -769,22 +811,11 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
 
     ui_fill(0, 0, SCR_W, SCR_H, bg);
 
-    // header: a solid accent tab on the left edge marks this as the title bar
-    // (visually distinct from the footer's button hints), then folder/title on
-    // the left and the live clock + position on the right.
-    ui_fill(0, 0, SCR_W, H, panel_bg);
-    ui_fill(0, 0, 3, H, accent);
-    char buf[256], pos[24], clk[8];
-    snprintf(clk, sizeof(clk), "%02d:%02d", GW_GetCurrentHour(), GW_GetCurrentMinute());
+    // header: the shared top bar (accent tab + folder/title + position + battery
+    // + clock), identical to the now-playing deck.
+    char buf[256], pos[24];
     snprintf(pos, sizeof(pos), "%d/%d", v->count ? v->cursor + 1 : 0, v->count);
-    int cw = i18n_get_text_width(clk);
-    int pw = i18n_get_text_width(pos);
-    ui_text(SCR_W - 8 - cw, 4, cw + 2, clk, accent, panel_bg);
-    ui_text(SCR_W - 8 - cw - 8 - pw, 4, pw + 2, pos, soft, panel_bg);
-    int titlew = SCR_W - 12 - (cw + 8 + pw + 8);
-    ui_ellipsize(buf, sizeof(buf), v->header ? v->header : "", titlew);
-    ui_text(10, 4, titlew, buf, accent, panel_bg);
-    ui_fill(0, H - 1, SCR_W, 1, ui_mix(accent, bg, 4));
+    ui_topbar(v->header ? v->header : "", pos);
 
     if (v->count == 0) {
         const char *hint = (v->empty_hint && v->empty_hint[0]) ? v->empty_hint
@@ -811,17 +842,16 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
         uint16_t sub = sel ? ui_mix(fg, bg, 4) : ui_mix(fg, bg, 7);   // clearer artist/duration
 
         int pill_x = 4;
-        int pill_y = y + 2;
+        int pill_y = y + 4;          // breathing room above/below each row
         int pill_w = right - pill_x;
-        int pill_h = RH - 4;
+        int pill_h = RH - 8;
         int pill_r = 6;
         if (sel) {
             ui_fill(pill_x, pill_y, pill_w, pill_h, pill_bg);
             round_corners(pill_x, pill_y, pill_w, pill_h, pill_r, bg);
             ui_rrect(pill_x, pill_y, pill_w, pill_h, pill_r, ui_mix(bg, accent, 10)); // selection border
-            ui_fill(pill_x, pill_y + 3, 3, pill_h - 6, accent);                       // accent "you are here" bar
         } else if (r & 1) {
-            ui_fill(pill_x, pill_y, pill_w, pill_h, zebra);                           // zebra band
+            ui_fill(pill_x, pill_y, pill_w, pill_h, zebra);                           // faint zebra band
         }
         int tx = 8, ty = y + (RH - TH) / 2;
 

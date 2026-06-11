@@ -14,6 +14,7 @@ enum { REPEAT_OFF = 0, REPEAT_ALL = 1, REPEAT_ONE = 2 };
 typedef struct {
     char        path[256];
     media_tags_t tags;
+    const char *app_name;       // localized "Music" for the top bar (-> TR(s_music))
     const char *title;          // -> tags.title or the file name
     const char *artist;         // -> tags.artist or ""
     const char *album;          // -> tags.album or ""

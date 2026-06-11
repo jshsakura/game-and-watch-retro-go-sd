@@ -107,6 +107,8 @@ int i18n_draw_text(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const char *t
 // --- cover stubs (synthetic art) -------------------------------------------
 uint8_t GW_GetCurrentHour(void) { return 10; }
 uint8_t GW_GetCurrentMinute(void) { return 38; }
+int media_battery_percent(void) { return 72; }
+int media_battery_charging(void) { return 0; }
 uint8_t GW_GetCurrentSecond(void) { return 0; }
 uint8_t GW_GetCurrentSubSeconds(void) { return 0; }
 int audio_bitrate_kbps(void) { return 320; }
@@ -182,6 +184,7 @@ static void fill_tags(player_state_t *ps)
     strcpy(ps->tags.genre, "Indie Pop");
     strcpy(ps->tags.track, "3/12");
     strcpy(ps->tags.composer, "Kim");
+    ps->app_name = "\xEC\x9D\x8C\xEC\x95\x85";   // 음악
     ps->title = ps->tags.title;
     ps->artist = ps->tags.artist;
     ps->album = ps->tags.album;

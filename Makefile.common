@@ -1375,6 +1375,7 @@ create_sd_folders:
 	$(V)mkdir -p $(SD_FOLDER)/bios/nes
 	$(V)mkdir -p $(SD_FOLDER)/bios/coleco
 	$(V)mkdir -p $(HOMEBREWS_FOLDER)
+	$(V)mkdir -p $(SD_FOLDER)/music
 	$(V)mkdir -p $(RELEASE_FOLDER)
 
 prepare_msx_bios_files: create_sd_folders

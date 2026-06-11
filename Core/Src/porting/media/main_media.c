@@ -54,6 +54,15 @@ enum { MENU_INFO = 1, MENU_LYRICS = 2, MENU_CLOSE = 3 };
 // i18n string with an English fallback when a language lacks the key.
 #define TR(field, fallback) ((curr_lang && curr_lang->field) ? curr_lang->field : (fallback))
 
+// Battery accessors for media_ui's shared top bar — keep the UI layer free of
+// the hardware headers (media_ui declares these extern; the host preview stubs
+// them).
+int media_battery_percent(void)  { return odroid_input_read_battery().percentage; }
+int media_battery_charging(void)
+{
+    return odroid_input_read_battery().state == ODROID_BATTERY_CHARGE_STATE_CHARGING;
+}
+
 typedef struct {
     char name[NAME_MAX_LEN];
     bool is_dir;
@@ -594,6 +603,7 @@ static void music_player(int start_pi)
 
     ps.shuffle = false; ps.repeat = REPEAT_OFF; ps.scrub = -1.0f;
     ps.volume = odroid_audio_volume_get();
+    ps.app_name = TR(s_music, "Music");   // localized title for the top bar
 
     bool reload = true, recompose = false, dirty = true, screen_off = false;
     int  view = VIEW_PLAY, lyr_scroll = 0;

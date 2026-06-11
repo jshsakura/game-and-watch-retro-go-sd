@@ -45,3 +45,6 @@ choices.yaml
 build-error.log
 .bash_history
 *.sfc
+
+# Jupyter autosave checkpoints
+.ipynb_checkpoints/
