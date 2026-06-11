@@ -25,6 +25,7 @@ typedef struct {
     int   repeat;               // REPEAT_*
     int   volume;               // 0..9
     long  file_size;            // bytes (info screen)
+    int   bitrate, hz, channels; // info screen (0 = unknown -> row hidden)
     float scrub;                // >=0 while seek-scrubbing (preview), else -1
 } player_state_t;
 

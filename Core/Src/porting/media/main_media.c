@@ -540,6 +540,51 @@ static bool lang_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_
     return false;
 }
 
+// Launcher-identical Brightness + Volume sliders (bar graph using the font's
+// s_Full / s_Fill block glyphs), WITHOUT the Turbo row the system settings menu
+// would force in. Both use the 0..9 scale.
+#define SLIDER_MAX 9
+static char bri_bar[20], vol_bar[20];
+
+static char bar_full(void) { return (curr_lang && curr_lang->s_Full) ? curr_lang->s_Full[0] : '|'; }
+static char bar_fill(void) { return (curr_lang && curr_lang->s_Fill) ? curr_lang->s_Fill[0] : '.'; }
+
+static void set_bri_bar(void)
+{
+    int lvl = lcd_backlight_get();
+    char full = bar_full(), fill = bar_fill();
+    int k = 0;
+    for (int i = 0; i <= SLIDER_MAX; i++) bri_bar[k++] = (i <= lvl) ? full : fill;
+    bri_bar[k] = '\0';
+}
+static void set_vol_bar(void)
+{
+    int lvl = odroid_audio_volume_get();
+    char full = bar_full(), fill = bar_fill();
+    int k = 0;
+    for (int i = ODROID_AUDIO_VOLUME_MIN; i <= ODROID_AUDIO_VOLUME_MAX; i++)
+        vol_bar[k++] = ((i - ODROID_AUDIO_VOLUME_MIN) <= lvl) ? full : fill;
+    vol_bar[k] = '\0';
+}
+static bool bri_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t r)
+{
+    (void)o; (void)r;
+    int lvl = lcd_backlight_get();
+    if (ev == ODROID_DIALOG_PREV && lvl > 0) lcd_backlight_set(lvl - 1);
+    else if (ev == ODROID_DIALOG_NEXT && lvl < SLIDER_MAX) lcd_backlight_set(lvl + 1);
+    set_bri_bar();
+    return ev == ODROID_DIALOG_ENTER;
+}
+static bool vol_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t r)
+{
+    (void)o; (void)r;
+    int lvl = odroid_audio_volume_get();
+    if (ev == ODROID_DIALOG_PREV && lvl > ODROID_AUDIO_VOLUME_MIN) odroid_audio_volume_set(lvl - 1);
+    else if (ev == ODROID_DIALOG_NEXT && lvl < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(lvl + 1);
+    set_vol_bar();
+    return ev == ODROID_DIALOG_ENTER;
+}
+
 // Feed the audio DMA from the decoded ring and advance the play position. Used
 // by the menu's repaint callback so music keeps playing (and the analyzer keeps
 // dancing) while the blocking dialog is open. One DMA half (~22ms at 48kHz) is
@@ -566,13 +611,15 @@ static void player_repaint(void)
     ui_player_dynamic(g_ps);
 }
 
-// The deck's options menu: the launcher-identical settings menu (Brightness +
-// Volume sliders, drawn by the system) with the track actions appended.
+// The deck's options menu: launcher-style Brightness + Volume sliders (no Turbo)
+// plus the track actions.
 static int open_menu(player_state_t *ps)
 {
     g_ps = ps;
-    set_fav_v(); set_rep_v(); set_shf_v();
-    odroid_dialog_choice_t extra[] = {
+    set_fav_v(); set_rep_v(); set_shf_v(); set_bri_bar(); set_vol_bar();
+    odroid_dialog_choice_t choices[] = {
+        { 0, TR(s_Brightness, "Brightness"), bri_bar, 1, bri_cb },
+        { 1, TR(s_Volume,     "Volume"),     vol_bar, 1, vol_cb },
         ODROID_DIALOG_CHOICE_SEPARATOR,
         { 10, TR(s_favorite, "Favorite"), fav_v, 1, fav_cb },
         { 11, TR(s_repeat,   "Repeat"),   rep_v, 1, rep_cb },
@@ -582,7 +629,7 @@ static int open_menu(player_state_t *ps)
         { MENU_LYRICS, TR(s_lyrics, "Lyrics"), (char *)"", 1, NULL },
         ODROID_DIALOG_CHOICE_LAST,
     };
-    return odroid_overlay_settings_menu(extra, player_repaint, 0);
+    return odroid_overlay_dialog(TR(s_music, "Music"), choices, 0, player_repaint, 0);
 }
 
 // The browser list's options menu: same system settings menu (so Volume +
@@ -594,15 +641,93 @@ static void browser_repaint(void)
     draw_list();
 }
 
-static void open_browser_menu(void)
+// selected-track state for the list's "Info / Lyrics / Favorite" items (built
+// from tags only — never opens the audio decoder, so background playback is
+// untouched).
+static player_state_t sel_ps;
+static lyrics_t       sel_ly;
+static char           sel_fallback[NAME_MAX_LEN];
+static char           g_sel_path[PATH_MAX_LEN];
+static char           sel_fav_v[20];
+
+static void set_sel_fav_v(void) { snprintf(sel_fav_v, sizeof(sel_fav_v), "%s", fav_is(g_sel_path) ? SYM_ON : SYM_OFF); }
+static bool sel_fav_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t r)
 {
-    set_lang_v();
-    odroid_dialog_choice_t extra[] = {
-        ODROID_DIALOG_CHOICE_SEPARATOR,
-        { 14, TR(s_LangUI, "Language"), lang_v, 1, lang_cb },
-        ODROID_DIALOG_CHOICE_LAST,
-    };
-    odroid_overlay_settings_menu(extra, browser_repaint, 0);
+    (void)o; (void)r;
+    if (ev == ODROID_DIALOG_PREV || ev == ODROID_DIALOG_NEXT || ev == ODROID_DIALOG_ENTER) {
+        fav_toggle(g_sel_path); set_sel_fav_v();
+    }
+    return false;
+}
+
+// The browser list's options menu: launcher-style Brightness + Volume (no Turbo),
+// the selected track's Favorite/Info/Lyrics (when a track is highlighted), and
+// the live language switch. Returns MENU_INFO / MENU_LYRICS when chosen.
+static int open_browser_menu(void)
+{
+    set_lang_v(); set_bri_bar(); set_vol_bar();
+    bool is_track = entry_count > 0 && !entries[cursor].is_dir && !entries[cursor].is_special;
+    if (is_track) { entry_track_path(cursor, g_sel_path, sizeof(g_sel_path)); set_sel_fav_v(); }
+
+    odroid_dialog_choice_t c[12]; int n = 0;
+    c[n++] = (odroid_dialog_choice_t){ 0, TR(s_Brightness, "Brightness"), bri_bar, 1, bri_cb };
+    c[n++] = (odroid_dialog_choice_t){ 1, TR(s_Volume,     "Volume"),     vol_bar, 1, vol_cb };
+    if (is_track) {
+        c[n++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_SEPARATOR;
+        c[n++] = (odroid_dialog_choice_t){ 10, TR(s_favorite, "Favorite"), sel_fav_v, 1, sel_fav_cb };
+        c[n++] = (odroid_dialog_choice_t){ MENU_INFO,   TR(s_info,   "Info"),   (char *)"", 1, NULL };
+        c[n++] = (odroid_dialog_choice_t){ MENU_LYRICS, TR(s_lyrics, "Lyrics"), (char *)"", 1, NULL };
+    }
+    c[n++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_SEPARATOR;
+    c[n++] = (odroid_dialog_choice_t){ 14, TR(s_LangUI, "Language"), lang_v, 1, lang_cb };
+    c[n++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
+    return odroid_overlay_dialog(TR(s_music, "Music"), c, 0, browser_repaint, 0);
+}
+
+// Load the highlighted track's tags/lyrics (no audio_open) for the list's Info /
+// Lyrics views, then show them until B/A. Background music keeps playing.
+static void load_sel_state(void)
+{
+    memset(&sel_ps, 0, sizeof(sel_ps));
+    snprintf(sel_ps.path, sizeof(sel_ps.path), "%s", g_sel_path);
+    id3_read_tags(sel_ps.path, &sel_ps.tags);
+    strncpy(sel_fallback, base_name(sel_ps.path), sizeof(sel_fallback) - 1);
+    sel_fallback[sizeof(sel_fallback) - 1] = '\0';
+    { char *d = strrchr(sel_fallback, '.'); if (d) *d = '\0'; }
+    sel_ps.title  = sel_ps.tags.title[0] ? sel_ps.tags.title : sel_fallback;
+    sel_ps.artist = sel_ps.tags.artist;
+    sel_ps.album  = sel_ps.tags.album;
+    sel_ps.favorite = fav_is(sel_ps.path);
+    sel_ps.file_size = file_size(sel_ps.path);
+    sel_ps.scrub = -1.0f;
+    if (!sel_ps.tags.has_lyrics) id3_read_lrc(sel_ps.path, sel_ps.tags.lyrics, ID3_LYRICS_MAX);
+    lyrics_parse(sel_ps.tags.lyrics, &sel_ly);
+}
+
+static void view_selected_track(bool show_lyrics)
+{
+    load_sel_state();
+    int top = 0;
+    odroid_gamepad_state_t joy, prev;
+    odroid_input_read_gamepad(&prev);
+    for (;;) {
+        wdog_refresh();
+        odroid_input_read_gamepad(&joy);
+        #define P(b) (joy.values[b] && !prev.values[b])
+        bool quit = P(ODROID_INPUT_B) || P(ODROID_INPUT_A);
+        if (show_lyrics && sel_ly.n > 0) {
+            if (P(ODROID_INPUT_UP)   && top > 0)              top--;
+            if (P(ODROID_INPUT_DOWN) && top < sel_ly.n - 1)   top++;
+        }
+        #undef P
+        prev = joy;
+        if (quit) break;
+        if (g_playing) playback_feed();
+        if (show_lyrics) ui_lyrics_draw(&sel_ps, &sel_ly, top, -1);
+        else             ui_info_draw(&sel_ps);
+        lcd_swap();
+        if (g_playing) common_emu_sound_sync(false); else lcd_wait_for_vblank();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +770,7 @@ static void playback_load(int pi)
     audio_open(ps.path);
     audio_pump(AUDIO_PUMP_TARGET);
     ps.total = audio_duration_sec();
+    ps.bitrate = audio_bitrate_kbps(); ps.hz = audio_src_hz(); ps.channels = audio_channels();
     ps.sec = 0;
     g_deck_has_cover = cover_thumb(ps.path, g_deck_cover, DECK_COVER_SZ);
     ui_player_set_cover(g_deck_cover, DECK_COVER_SZ, g_deck_has_cover);
@@ -897,9 +1023,12 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         }
 
         // PAUSE (the stock retro-go menu hotkey; GAME also works) opens the
-        // shared options menu: launcher-identical volume + brightness sliders.
+        // shared options menu: volume + brightness, plus the selected track's
+        // Favorite / Info / Lyrics.
         if (PRESSED(ODROID_INPUT_VOLUME) || PRESSED(ODROID_INPUT_START)) {
-            open_browser_menu();
+            int r = open_browser_menu();
+            if (r == MENU_INFO)        view_selected_track(false);
+            else if (r == MENU_LYRICS) view_selected_track(true);
             odroid_input_read_gamepad(&joy); prev = joy; dirty = true; held_dir = 0; continue;
         }
 

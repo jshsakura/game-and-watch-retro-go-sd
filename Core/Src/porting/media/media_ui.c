@@ -925,9 +925,9 @@ void ui_info_draw(const player_state_t *ps)
 {
     uint16_t bg = curr_colors->bg_c;
     draw_vbg();
-    // identical system top bar (logo + song title + clock + battery); only the
-    // center changes between screens.
-    ui_topbar(ps->title && ps->title[0] ? ps->title : "Info", "");
+    // clean system top bar (logo + clock + battery); the Title row below carries
+    // the song name, so nothing crowds the header.
+    ui_topbar("", "");
 
     const media_tags_t *g = &ps->tags;
     int y = LIST_HEADER_H + 7;
@@ -946,15 +946,13 @@ void ui_info_draw(const player_state_t *ps)
     y += 6;
 
     char v[40];
-    int total = ps->total;
-    snprintf(v, sizeof(v), "%d:%02d", total / 60, total % 60);
-    info_row(&y, "Duration", v);
-    int br = audio_bitrate_kbps();
-    if (br > 0) { snprintf(v, sizeof(v), "%d kbps", br); info_row(&y, "Bitrate", v); }
-    int hz = audio_src_hz();
-    if (hz > 0) { snprintf(v, sizeof(v), "%d Hz", hz); info_row(&y, "Sample rate", v); }
-    int ch = audio_channels();
-    if (ch > 0) info_row(&y, "Channels", ch >= 2 ? "Stereo" : "Mono");
+    if (ps->total > 0) {
+        snprintf(v, sizeof(v), "%d:%02d", ps->total / 60, ps->total % 60);
+        info_row(&y, "Duration", v);
+    }
+    if (ps->bitrate > 0) { snprintf(v, sizeof(v), "%d kbps", ps->bitrate); info_row(&y, "Bitrate", v); }
+    if (ps->hz > 0)      { snprintf(v, sizeof(v), "%d Hz", ps->hz); info_row(&y, "Sample rate", v); }
+    if (ps->channels > 0) info_row(&y, "Channels", ps->channels >= 2 ? "Stereo" : "Mono");
     if (ps->file_size > 0) {
         if (ps->file_size >= 1024 * 1024)
             snprintf(v, sizeof(v), "%ld.%ld MB", ps->file_size / (1024 * 1024),
@@ -975,10 +973,13 @@ void ui_lyrics_draw(const player_state_t *ps, const lyrics_t *ly, int top_line, 
     uint16_t accent = curr_colors->sel_c, bg = curr_colors->bg_c, main_c = curr_colors->main_c;
     uint16_t soft = ui_mix(main_c, bg, 7);
     draw_vbg();
-    // identical system top bar (logo + song title + clock + battery)
-    ui_topbar(ps->title && ps->title[0] ? ps->title : "Lyrics", "");
+    // clean system top bar (logo + clock + battery) — no title crowding it.
+    ui_topbar("", "");
+    // the song title lives in the content area, not the header.
+    if (ps->title && ps->title[0])
+        ui_text_center_t(LIST_HEADER_H + 6, ps->title, ui_mix(accent, bg, 12));
 
-    const int ROW = 17, TOP = LIST_HEADER_H + 8, BOTTOM = HINT_DIV - 4;
+    const int ROW = 17, TOP = LIST_HEADER_H + 26, BOTTOM = HINT_DIV - 4;
     int rows = (BOTTOM - TOP) / ROW;
     if (ly->n == 0) {
         ui_text_center_t(110, "\xEA\xB0\x80\xEC\x82\xAC \xEC\x97\x86\xEC\x9D\x8C", soft); // 가사 없음

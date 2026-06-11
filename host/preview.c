@@ -209,6 +209,7 @@ static void fill_tags(player_state_t *ps)
     ps->paused = false; ps->shuffle = true; ps->favorite = true;
     ps->repeat = REPEAT_ALL; ps->volume = 6;
     ps->file_size = 5L * 1024 * 1024;
+    ps->bitrate = 320; ps->hz = 44100; ps->channels = 2;
     ps->scrub = -1.0f;
 }
 
