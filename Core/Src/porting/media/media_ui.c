@@ -769,7 +769,6 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
     uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c;
     uint16_t accent = curr_colors->sel_c, dim = curr_colors->dis_c;
     uint16_t soft = ui_mix(fg, bg, 4);
-    uint16_t panel_bg = ui_player_surface();
     const int H = LIST_HEADER_H, RH = v->row_h, TH = 34;
     bool has_bar = v->count > v->visible_rows;
     int right = SCR_W - (has_bar ? 8 : 4);                      // content right edge
@@ -892,21 +891,19 @@ static void info_row(int *y, const char *label, const char *value)
     ui_text_t(16, *y, 100, label, dim);
     ui_ellipsize(buf, sizeof(buf), value, SCR_W - 120 - 12);
     ui_text_t(120, *y, SCR_W - 120 - 12, buf, main_c);
-    *y += 15;
+    *y += 14;
 }
 
 void ui_info_draw(const player_state_t *ps)
 {
-    uint16_t accent = curr_colors->sel_c, bg = curr_colors->bg_c, main_c = curr_colors->main_c;
-    uint16_t panel_bg = ui_mix(bg, main_c, 1);
-    uint16_t dim = curr_colors->dis_c;
+    uint16_t bg = curr_colors->bg_c;
     draw_vbg();
-    ui_fill(0, 0, SCR_W, 22, panel_bg);
-    ui_fill(0, 21, SCR_W, 1, ui_mix(dim, bg, 5));
-    ui_text_t(12, 4, SCR_W - 24, "\xEC\xA0\x95\xEB\xB3\xB4", accent);   // 정보
+    // identical system top bar (logo + song title + clock + battery); only the
+    // center changes between screens.
+    ui_topbar(ps->title && ps->title[0] ? ps->title : "Info", "");
 
     const media_tags_t *g = &ps->tags;
-    int y = 30;
+    int y = LIST_HEADER_H + 7;
     info_row(&y, "Title",   ps->title);
     info_row(&y, "Artist",  g->artist);
     info_row(&y, "Album",   g->album);
@@ -949,16 +946,12 @@ void ui_info_draw(const player_state_t *ps)
 void ui_lyrics_draw(const player_state_t *ps, const lyrics_t *ly, int top_line, int active)
 {
     uint16_t accent = curr_colors->sel_c, bg = curr_colors->bg_c, main_c = curr_colors->main_c;
-    uint16_t panel_bg = ui_mix(bg, main_c, 1);
-    uint16_t dim = curr_colors->dis_c;
     uint16_t soft = ui_mix(main_c, bg, 7);
     draw_vbg();
+    // identical system top bar (logo + song title + clock + battery)
+    ui_topbar(ps->title && ps->title[0] ? ps->title : "Lyrics", "");
 
-    ui_fill(0, 0, SCR_W, 22, panel_bg);
-    ui_fill(0, 21, SCR_W, 1, ui_mix(dim, bg, 5));
-    ui_text_t(12, 4, SCR_W - 24, ps->title && ps->title[0] ? ps->title : "Lyrics", accent);
-
-    const int ROW = 17, TOP = 30, BOTTOM = HINT_DIV - 4;
+    const int ROW = 17, TOP = LIST_HEADER_H + 8, BOTTOM = HINT_DIV - 4;
     int rows = (BOTTOM - TOP) / ROW;
     if (ly->n == 0) {
         ui_text_center_t(110, "\xEA\xB0\x80\xEC\x82\xAC \xEC\x97\x86\xEC\x9D\x8C", soft); // 가사 없음
