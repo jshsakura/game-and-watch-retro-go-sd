@@ -79,10 +79,11 @@ typedef struct {
     const char *empty_sub;       // optional 2nd line below the hint (e.g. folder path)
 } list_view_t;
 
-#define LIST_HEADER_H 33      // == system STATUS_HEIGHT, so the top bar matches the launcher
-#define LIST_FOOTER_H 18      // keycap (button-style) hint bar
-#define LIST_ROW_H    47      // 4 spacious rows fill 33..221 with breathing room between tracks
-#define LIST_VISIBLE_ROWS ((240 - LIST_HEADER_H - LIST_FOOTER_H) / LIST_ROW_H)
+#define LIST_HEADER_H 33      // == system STATUS_HEIGHT: clean top bar (logo + clock + battery)
+#define LIST_BANNER_H 20      // section-name strip (folder / favorites) below the bar
+#define LIST_FOOTER_H 22      // keycap (button-style) hint bar
+#define LIST_ROW_H    41      // 4 rows fill the area between banner and footer
+#define LIST_VISIBLE_ROWS ((240 - LIST_HEADER_H - LIST_BANNER_H - LIST_FOOTER_H) / LIST_ROW_H)
 
 // Draw the browser list. `item_at(i, out)` fills a row's data lazily (called
 // only for visible rows) so the caller can keep its metadata cache.

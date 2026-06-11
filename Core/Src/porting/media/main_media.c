@@ -166,7 +166,8 @@ static bool scan_folder(void)
         for (int i = entry_count; i > 0; i--) entries[i] = entries[i - 1];
         entry_count++;
         media_entry_t *e = &entries[0];
-        snprintf(e->name, NAME_MAX_LEN, "\xE2\x98\x85 %s (%d)", TR(s_favorite, "Favorites"), g_fav_count);
+        // no ★ in the text — the special row draws a ★ tile (like album art)
+        snprintf(e->name, NAME_MAX_LEN, "%s (%d)", TR(s_favorite, "Favorites"), g_fav_count);
         e->is_dir = false; e->is_special = true;
     }
     return ok;
@@ -256,6 +257,8 @@ static int fav_find(const char *p)
 }
 static bool fav_is(const char *p) { return fav_find(p) >= 0; }
 
+static bool g_fav_dirty;   // favourites changed -> the list needs a rescan
+
 static void fav_toggle(const char *p)
 {
     int i = fav_find(p);
@@ -268,6 +271,7 @@ static void fav_toggle(const char *p)
         g_fav_count++;
     }
     fav_save();
+    g_fav_dirty = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +321,25 @@ static void pl_path(int pi, char *out, size_t outsz)
     int e = (g_mode == MODE_FAV) ? pi : nth_track(pi);
     if (e < 0) { out[0] = '\0'; return; }
     entry_track_path(e, out, outsz);
+}
+
+// Re-scan the current view (so a freshly added/removed ★ favourites shortcut row
+// shows up immediately) while keeping the cursor on the same track.
+static void rescan_preserve(void)
+{
+    char keep[PATH_MAX_LEN] = "";
+    if (entry_count > 0 && cursor < entry_count && is_track(cursor))
+        entry_track_path(cursor, keep, sizeof(keep));
+    if (g_mode == MODE_FAV) scan_favourites(); else scan_folder();
+    if (keep[0]) {
+        for (int i = 0; i < entry_count; i++) {
+            if (!is_track(i)) continue;
+            char p[PATH_MAX_LEN]; entry_track_path(i, p, sizeof(p));
+            if (strcmp(p, keep) == 0) { cursor = i; break; }
+        }
+    }
+    if (cursor < scroll) scroll = cursor;
+    else if (cursor >= scroll + LIST_VISIBLE_ROWS) scroll = cursor - LIST_VISIBLE_ROWS + 1;
 }
 
 static int cursor_to_pl(int cur)
@@ -439,14 +462,12 @@ static void draw_list(void)
     static char favhead[64];
     snprintf(favhead, sizeof(favhead), "\xE2\x98\x85 %s", TR(s_favorite, "Favorites"));
 
-    // Folder header: a clean app title at the root (instead of the raw "/music"
-    // or "/media" mount path that the loader fell back to), and just the folder
-    // name once the user has descended into a subfolder.
+    // Section banner (drawn below the clean top bar, launcher-style): the app
+    // name at the root, the folder name in a subfolder. This no longer sits in
+    // the system top bar, so it can't crowd the wide G&W logo.
     const char *folder_head;
     if (strcmp(cur_path, g_root) == 0) {
-        // at the root the Game & Watch logo in the top bar already identifies the
-        // app, so leave the title blank (the "Music" word would just crowd it).
-        folder_head = "";
+        folder_head = TR(s_music, "Music");
     } else {
         const char *slash = strrchr(cur_path, '/');
         folder_head = (slash && slash[1]) ? slash + 1 : cur_path;
@@ -1016,6 +1037,7 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
                 enter_dir(e->name); dirty = true;
             } else {
                 music_player(cursor_to_pl(cursor));
+                if (g_fav_dirty) { rescan_preserve(); g_fav_dirty = false; }   // ★ added on the deck
                 odroid_input_read_gamepad(&joy); prev = joy; dirty = true; held_dir = 0; continue;
             }
         }
@@ -1033,6 +1055,7 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             int r = open_browser_menu();
             if (r == MENU_INFO)        view_selected_track(false);
             else if (r == MENU_LYRICS) view_selected_track(true);
+            if (g_fav_dirty) { rescan_preserve(); g_fav_dirty = false; }   // show the ★ row at once
             odroid_input_read_gamepad(&joy); prev = joy; dirty = true; held_dir = 0; continue;
         }
 

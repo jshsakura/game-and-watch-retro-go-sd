@@ -234,7 +234,7 @@ static const char *ARTISTS[] = {
 static void list_item(int i, list_item_t *out)
 {
     memset(out, 0, sizeof(*out));
-    if (i == 0) { out->kind = LIST_SPECIAL; out->title = "\xE2\x98\x85 \xEC\xA6\x90\xEA\xB2\xA8\xEC\xB0\xBE\xEA\xB8\xB0 (5)"; return; }
+    if (i == 0) { out->kind = LIST_SPECIAL; out->title = "\xEC\xA6\x90\xEA\xB2\xA8\xEC\xB0\xBE\xEA\xB8\xB0 (5)"; return; }
     if (i == 1) { out->kind = LIST_DIR; out->title = "\xEC\x95\xA8\xEB\xB2\x94"; return; }                 // 앨범
     if (i == 2) { out->kind = LIST_DIR; out->title = "\xED\x94\x8C\xEB\xA0\x88\xEC\x9D\xB4\xEB\xA6\xAC\xEC\x8A\xA4\xED\x8A\xB8"; return; } // 플레이리스트
     static char t[80], d[12];
