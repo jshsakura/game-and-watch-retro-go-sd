@@ -874,6 +874,11 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
             ui_text_t(tx + (TH - nw) / 2, ty + (TH - 12) / 2, nw + 2, "\xE2\x99\xAA", ui_mix(rbg, txt, 7));
         }
         round_corners(tx, ty, TH, TH, 6, rbg);
+        if (it.playing) {                                   // "now playing" badge on the thumb
+            ui_fill(tx, ty, 13, 13, ui_mix(bg, accent, 13));
+            round_corners(tx, ty, 13, 13, 4, rbg);
+            icon_play(tx + 3, ty + 2, 7, 8, bg);
+        }
 
         int dw = it.duration && it.duration[0] ? i18n_get_text_width(it.duration) : 0;
         int textx = tx + TH + 8;

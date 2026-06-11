@@ -64,6 +64,7 @@ typedef struct {
     int             art_sz;
     int             kind;        // LIST_*
     bool            fav;
+    bool            playing;     // this track is the one currently playing (▶ marker)
 } list_item_t;
 
 typedef struct {

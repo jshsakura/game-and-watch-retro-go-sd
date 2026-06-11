@@ -233,6 +233,7 @@ static void list_item(int i, list_item_t *out)
     out->art = (i % 3) ? g_thumb : NULL;
     out->art_sz = 28;
     out->fav = (i % 6 == 0);
+    out->playing = (i == 38 || i == 2);   // preview the now-playing badge
 }
 
 int main(void)

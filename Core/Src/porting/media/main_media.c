@@ -396,6 +396,7 @@ static void list_item_at(int idx, list_item_t *out)
     char p[PATH_MAX_LEN];
     entry_track_path(idx, p, sizeof(p));
     out->fav = fav_is(p);
+    out->playing = g_playing && strcmp(p, ps.path) == 0;   // ▶ marker on the live track
 
     // While fast-scrolling, use only already-cached metadata (no decode) so the
     // list stays smooth AND cached rows keep their detail instead of blinking;
@@ -452,6 +453,18 @@ static void draw_list(void)
 
 static player_state_t *g_ps;
 static uint32_t g_played;   // total samples played; shared so the menu keeps playback going
+
+// Background playback state at file scope: it persists across the browser and
+// now-playing views so music keeps playing while you browse the list.
+static player_state_t ps;            // the now-playing state
+static lyrics_t       ly;
+static char           fallback[NAME_MAX_LEN];
+static int            g_play_pi = -1;   // playing playlist index (-1 = nothing playing)
+static bool           g_playing;        // a track is loaded and playing
+static bool           g_audio_on;       // the audio DMA has been started
+
+static void playback_feed(void);
+static bool playback_autoadvance(void);
 
 // Small album-art thumbnail for the Winamp deck — decoded once per track into
 // this static buffer (list-sized, cheap) and lent to media_ui via set_cover.
@@ -569,7 +582,11 @@ static int open_menu(player_state_t *ps)
 // Shared options menu reachable from the browser list via PAUSE: brightness +
 // live language switch + close. (Track-specific items like favourite/repeat/
 // info/lyrics only make sense while a track is playing, so they're omitted.)
-static void browser_repaint(void) { draw_list(); }
+static void browser_repaint(void)
+{
+    if (g_playing) { playback_feed(); common_emu_sound_sync(false); }   // keep music playing
+    draw_list();
+}
 
 static void open_browser_menu(void)
 {
@@ -588,35 +605,100 @@ static void open_browser_menu(void)
 // now-playing player loop
 // ---------------------------------------------------------------------------
 
-static void compose_static(player_state_t *ps)
+static void compose_static(player_state_t *p)
 {
     for (int i = 0; i < 2; i++) {
-        ui_player_static(ps);
-        ui_player_dynamic(ps);
+        ui_player_static(p);
+        ui_player_dynamic(p);
         lcd_swap();
     }
 }
 
+// Load track `pi` (tags, audio, cover, lyrics) into the shared playback state.
+// Used both when entering the deck and when auto-advancing from the list.
+static void playback_load(int pi)
+{
+    g_play_pi = pi;
+    g_playing = true;
+    ps.paused = false; g_played = 0; ps.scrub = -1.0f;
+    ps.app_name = TR(s_music, "Music");
+
+    pl_path(pi, ps.path, sizeof(ps.path));
+    id3_read_tags(ps.path, &ps.tags);
+    strncpy(fallback, base_name(ps.path), sizeof(fallback) - 1);
+    fallback[sizeof(fallback) - 1] = '\0';
+    { char *d = strrchr(fallback, '.'); if (d) *d = '\0'; }
+    ps.title  = ps.tags.title[0] ? ps.tags.title : fallback;
+    ps.artist = ps.tags.artist;
+    ps.album  = ps.tags.album;
+    ps.track_index = pi; ps.track_count = pl_count();
+    ps.favorite = fav_is(ps.path);
+    ps.file_size = file_size(ps.path);
+
+    if (!ps.tags.has_lyrics) id3_read_lrc(ps.path, ps.tags.lyrics, ID3_LYRICS_MAX);
+    lyrics_parse(ps.tags.lyrics, &ly);
+
+    audio_open(ps.path);
+    audio_pump(AUDIO_PUMP_TARGET);
+    ps.total = audio_duration_sec();
+    ps.sec = 0;
+    g_deck_has_cover = cover_thumb(ps.path, g_deck_cover, DECK_COVER_SZ);
+    ui_player_set_cover(g_deck_cover, DECK_COVER_SZ, g_deck_has_cover);
+}
+
+// Feed one DMA half from the decoded ring (silence when paused/stopped/empty),
+// advance the play position and pump the decoder. Called every frame by BOTH
+// the now-playing loop and the browser loop so audio never stops while browsing.
+static void playback_feed(void)
+{
+    int16_t *buf = audio_get_active_buffer();
+    int len = audio_get_buffer_length();
+    int32_t vol = common_emu_sound_get_volume();
+    bool silent = !g_playing || ps.paused || audio_ring_count() == 0;
+    for (int i = 0; i < len; i++) {
+        int16_t sm = silent ? 0 : audio_pull();
+        buf[i] = (int16_t)((sm * vol) >> 8);
+        if (!(i & 1)) ui_vis_push(sm);
+    }
+    if (g_playing && !ps.paused) { g_played += len; audio_pump(AUDIO_PUMP_TARGET); }
+    ps.sec = (int)(g_played / AUDIO_SAMPLE_RATE);
+}
+
+// At end of track advance to the next (per shuffle/repeat), or stop at the end
+// of the playlist. Returns true when a track change happened.
+static bool playback_autoadvance(void)
+{
+    if (!g_playing || ps.paused) return false;
+    if (!(audio_eof() && audio_ring_count() == 0)) return false;
+    int n = pick_next(g_play_pi, ps.shuffle, ps.repeat);
+    if (n >= 0) { playback_load(n); return true; }
+    g_playing = false;
+    return true;
+}
+
 static void music_player(int start_pi)
 {
-    static player_state_t ps;
-    static lyrics_t ly;
-    static char fallback[NAME_MAX_LEN];
-
     int count = pl_count();
     if (count <= 0) return;
-    int pi = start_pi < 0 ? 0 : (start_pi >= count ? count - 1 : start_pi);
+    int pi = start_pi < 0 ? g_play_pi : (start_pi >= count ? count - 1 : start_pi);
+    if (pi < 0) pi = 0;
 
-    g_rng ^= dma_counter + (uint32_t)pi + 1u;
-    common_emu_state.skip_frames = 0;
-    common_emu_state.pause_frames = 0;
-    audio_start_playing(AUDIO_BUFFER_LENGTH);
-
-    ps.shuffle = false; ps.repeat = REPEAT_OFF; ps.scrub = -1.0f;
+    if (!g_audio_on) {                       // start the DMA once; it runs while the app lives
+        g_rng ^= dma_counter + (uint32_t)pi + 1u;
+        common_emu_state.skip_frames = 0;
+        common_emu_state.pause_frames = 0;
+        audio_start_playing(AUDIO_BUFFER_LENGTH);
+        g_audio_on = true;
+        ps.shuffle = false; ps.repeat = REPEAT_OFF;
+    }
     ps.volume = odroid_audio_volume_get();
-    ps.app_name = TR(s_music, "Music");   // localized title for the top bar
 
-    bool reload = true, recompose = false, dirty = true, screen_off = false;
+    // Re-opening the deck for the already-playing track just resumes the view;
+    // a different (or freshly picked) track is loaded.
+    bool resume = (g_playing && pi == g_play_pi);
+    if (resume) pi = g_play_pi;
+
+    bool reload = !resume, recompose = true, dirty = true, screen_off = false;
     int  view = VIEW_PLAY, lyr_scroll = 0;
     int  last_sec = -1, last_active = -2, last_top = -999;
     int  spin_div = 0;                  // throttles the deck animation
@@ -627,31 +709,10 @@ static void music_player(int start_pi)
 
     while (true) {
         if (reload) {
-            reload = false; ps.paused = false; g_played = 0; scrubbing = false; ps.scrub = -1.0f;
+            reload = false; scrubbing = false; ps.scrub = -1.0f;
             view = VIEW_PLAY; lyr_scroll = 0; dirty = true;
-
-            pl_path(pi, ps.path, sizeof(ps.path));
-            id3_read_tags(ps.path, &ps.tags);
-            strncpy(fallback, base_name(ps.path), sizeof(fallback) - 1);
-            fallback[sizeof(fallback) - 1] = '\0';
-            { char *d = strrchr(fallback, '.'); if (d) *d = '\0'; }
-            ps.title  = ps.tags.title[0]  ? ps.tags.title  : fallback;
-            ps.artist = ps.tags.artist;
-            ps.album  = ps.tags.album;
-            ps.track_index = pi; ps.track_count = count;
-            ps.favorite = fav_is(ps.path);
-            ps.file_size = file_size(ps.path);
-
-            if (!ps.tags.has_lyrics) id3_read_lrc(ps.path, ps.tags.lyrics, ID3_LYRICS_MAX);
-            lyrics_parse(ps.tags.lyrics, &ly);
-
-            audio_open(ps.path);
-            audio_pump(AUDIO_PUMP_TARGET);
-            ps.total = audio_duration_sec();
-            ps.sec = 0; last_sec = -1; last_active = -2; last_top = -999;
-            // decode a small album-art thumbnail for the deck (cheap, list-sized)
-            g_deck_has_cover = cover_thumb(ps.path, g_deck_cover, DECK_COVER_SZ);
-            ui_player_set_cover(g_deck_cover, DECK_COVER_SZ, g_deck_has_cover);
+            playback_load(pi);
+            last_sec = -1; last_active = -2; last_top = -999;
             recompose = true;
         }
         if (recompose) { recompose = false; if (!screen_off) compose_static(&ps); dirty = true; }
@@ -710,17 +771,7 @@ static void music_player(int start_pi)
         prev = joy;
         if (reload) continue;
 
-        // feed the audio DMA from the decoded ring
-        int16_t *buf = audio_get_active_buffer();
-        int len = audio_get_buffer_length();
-        int32_t vol = common_emu_sound_get_volume();
-        for (int i = 0; i < len; i++) {
-            int16_t sm = (ps.paused || audio_ring_count() == 0) ? 0 : audio_pull();
-            buf[i] = (int16_t)((sm * vol) >> 8);
-            if (!(i & 1)) ui_vis_push(sm);     // feed the spectrum analyzer
-        }
-        if (!ps.paused) { g_played += len; audio_pump(AUDIO_PUMP_TARGET); }
-        ps.sec = (int)(g_played / AUDIO_SAMPLE_RATE);
+        playback_feed();   // feed the DMA + advance position (shared with the browser loop)
 
         // render the active view
         if (!screen_off) {
@@ -752,8 +803,8 @@ static void music_player(int start_pi)
         }
     }
 
-    audio_stop_playing();
-    audio_close();
+    // NB: audio is NOT stopped here — playback keeps going in the background and
+    // the browser loop keeps feeding it (stopped only at end of the playlist).
     if (screen_off) lcd_backlight_on();
 }
 
@@ -797,7 +848,8 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             for (int b = 0; b < ODROID_INPUT_MAX; b++) if (PRESSED(b)) { any = true; break; }
             if (any) { lcd_backlight_on(); screen_off = false; dirty = true; }
             prev = joy;
-            lcd_wait_for_vblank();
+            if (g_playing) { playback_autoadvance(); playback_feed(); common_emu_sound_sync(false); }
+            else lcd_wait_for_vblank();
             continue;
         }
         bool moved = false;
@@ -851,13 +903,20 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         prev = joy;
         if (settle > 0 && --settle == 0) dirty = true;   // settled -> decode any new rows
-        g_list_busy = settle > 0;                         // meta_peek keeps cached rows from blinking
+        // While a track plays, skip the (SD-heavy) thumbnail decode so it can't
+        // starve the audio ring — cached rows still show via meta_peek.
+        g_list_busy = (settle > 0) || (g_playing && !ps.paused);
 
         // tick the header clock once a minute even while idle
         { static int lastmin = -1; int m = GW_GetCurrentMinute(); if (m != lastmin) { lastmin = m; dirty = true; } }
 
+        // background playback: auto-advance + keep feeding the DMA, and repaint so
+        // the now-playing row's ▶ marker tracks the current track.
+        if (g_playing) { if (playback_autoadvance()) dirty = true; playback_feed(); }
+
         if (dirty) { draw_list(); lcd_swap(); dirty = false; }
 
-        lcd_wait_for_vblank();
+        if (g_playing) common_emu_sound_sync(false);   // pace by audio while playing
+        else lcd_wait_for_vblank();
     }
 }
