@@ -538,15 +538,18 @@ static int chip_row_at(int x, int y, const chip_t *h, int n, uint16_t keyc, uint
     uint16_t surface = ui_player_surface();
     uint16_t cap_fill = ui_mix(bg, accent, 3);
     uint16_t cap_brd  = ui_mix(accent, bg, 6);
-    int cy = y - 2;
+    // center the 12px label vertically in the keycap; keep the corner radius
+    // small relative to the height so short keycaps stay rectangular (not ovals).
+    int cy = y - (kh > 0 ? (kh - FONT_H) / 2 : 0);
+    int cr = kh >= 18 ? 4 : 3;
     for (int i = 0; i < n; i++) {
         if (i) x += CHIP_GAP;
         int tw = i18n_get_text_width(h[i].key);
         int kw = tw + 2 * PADX;
         if (kh > 0) {                       // keycap behind the label
             ui_fill(x, cy, kw, kh, cap_fill);
-            round_corners(x, cy, kw, kh, 4, surface);
-            ui_rrect(x, cy, kw, kh, 4, cap_brd);
+            round_corners(x, cy, kw, kh, cr, surface);
+            ui_rrect(x, cy, kw, kh, cr, cap_brd);
         }
         ui_text_t(x + PADX, y, tw + 2, h[i].key, keyc);
         x += kw;
@@ -572,8 +575,8 @@ static void draw_footer(const chip_t *h, int n)
     uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c, accent = curr_colors->sel_c;
     ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, ui_player_surface());
     ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
-    // button-style keycaps (slightly smaller than the old deck hints: kh 16 -> 13)
-    chip_row_k(HINT_DIV + 5, h, n, ui_mix(fg, bg, 1), accent, 13);
+    // button-style keycaps (slightly smaller than the old deck hints: kh 16 -> 14)
+    chip_row_k(HINT_DIV + 3, h, n, ui_mix(fg, bg, 1), accent, 14);
 }
 
 // --- now-playing: the Winamp deck -------------------------------------------
@@ -898,10 +901,10 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
     };
     ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, ui_player_surface());
     ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
-    chip_row_at(8, HINT_DIV + 5, fh, 4, ui_mix(fg, bg, 1), accent, 13);
+    chip_row_at(8, HINT_DIV + 3, fh, 4, ui_mix(fg, bg, 1), accent, 14);
     if (v->count > 0) {
         int pw = i18n_get_text_width(pos);
-        ui_text_t(SCR_W - pw - 8, HINT_DIV + 5, pw + 2, pos, ui_mix(fg, bg, 7));
+        ui_text_t(SCR_W - pw - 8, HINT_DIV + 3, pw + 2, pos, ui_mix(fg, bg, 7));
     }
 }
 
