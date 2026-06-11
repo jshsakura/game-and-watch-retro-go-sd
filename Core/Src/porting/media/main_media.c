@@ -46,8 +46,8 @@
 
 enum { MODE_FOLDER = 0, MODE_FAV = 1 };
 enum { VIEW_PLAY = 0, VIEW_INFO = 1, VIEW_LYRICS = 2 };
-// IDs >= 10 so they never collide with the system settings-menu rows
-// (Brightness=0, Volume=1, Turbo=2) that odroid_overlay_settings_menu prepends.
+// Activation ids returned by the menu — kept clear of the slider/toggle row ids
+// (Brightness=0, Volume=1, Favorite=10, Repeat=11, Shuffle=12, Language=14).
 enum { MENU_INFO = 20, MENU_LYRICS = 21 };
 
 #define HOLD_MS     300        // press longer than this => seek-scrub
@@ -503,6 +503,7 @@ static uint32_t g_played;   // total samples played; shared so the menu keeps pl
 
 static void playback_feed(void);
 static bool playback_autoadvance(void);
+static int  music_dialog(const char *title, odroid_dialog_choice_t *c, void (*repaint)(void));
 
 // Small album-art thumbnail for the Winamp deck — decoded once per track into
 // this static buffer (list-sized, cheap) and lent to media_ui via set_cover.
@@ -650,7 +651,7 @@ static int open_menu(player_state_t *ps)
         { MENU_LYRICS, TR(s_lyrics, "Lyrics"), (char *)"", 1, NULL },
         ODROID_DIALOG_CHOICE_LAST,
     };
-    return odroid_overlay_dialog(TR(s_music, "Music"), choices, 0, player_repaint, 0);
+    return music_dialog(TR(s_music, "Music"), choices, player_repaint);
 }
 
 // The browser list's options menu: same system settings menu (so Volume +
@@ -659,7 +660,51 @@ static int open_menu(player_state_t *ps)
 static void browser_repaint(void)
 {
     if (g_playing) { playback_feed(); common_emu_sound_sync(false); }   // keep music playing
+    else lcd_wait_for_vblank();                                          // pace when idle
     draw_list();
+}
+
+// Audio-seamless modal menu. Same look as odroid_overlay_dialog (it reuses the
+// system renderer) but driven by our own loop, so `repaint` — which BOTH feeds
+// the audio and redraws the background — runs every single frame with no blind
+// HAL_Delay debounce. That is what keeps the music from glitching while the menu
+// is open. Returns the chosen option id, or -1 when closed with B/PAUSE.
+#define DLG_LAST 0x0F0F0F0F
+#define DLG_SEP  0x0F0F0F0E
+static int music_dialog(const char *title, odroid_dialog_choice_t *c, void (*repaint)(void))
+{
+    int n = 0; while (c[n].id != DLG_LAST) n++;
+    int sel = 0; while (sel < n && c[sel].id == DLG_SEP) sel++;
+    odroid_gamepad_state_t joy, prev;
+    odroid_input_read_gamepad(&prev);
+    bool armed = false;     // ignore input until the keys that opened the menu release
+
+    for (;;) {
+        wdog_refresh();
+        repaint();                                   // feed audio + redraw background
+        odroid_overlay_draw_dialog(title, c, sel);   // menu box on top
+        lcd_swap();
+
+        odroid_input_read_gamepad(&joy);
+        #define P(b) (joy.values[b] && !prev.values[b])
+        if (!armed) {
+            if (!joy.values[ODROID_INPUT_A] && !joy.values[ODROID_INPUT_B] &&
+                !joy.values[ODROID_INPUT_VOLUME] && !joy.values[ODROID_INPUT_START])
+                armed = true;
+            prev = joy; continue;
+        }
+        if (P(ODROID_INPUT_UP))   do { sel = (sel - 1 + n) % n; } while (c[sel].id == DLG_SEP);
+        if (P(ODROID_INPUT_DOWN)) do { sel = (sel + 1) % n;     } while (c[sel].id == DLG_SEP);
+        if (P(ODROID_INPUT_LEFT)  && c[sel].update_cb) c[sel].update_cb(&c[sel], ODROID_DIALOG_PREV, 0);
+        if (P(ODROID_INPUT_RIGHT) && c[sel].update_cb) c[sel].update_cb(&c[sel], ODROID_DIALOG_NEXT, 0);
+        if (P(ODROID_INPUT_A)) {
+            if (!c[sel].update_cb)                                  { prev = joy; return c[sel].id; }
+            if (c[sel].update_cb(&c[sel], ODROID_DIALOG_ENTER, 0)) { prev = joy; return c[sel].id; }
+        }
+        if (P(ODROID_INPUT_B) || P(ODROID_INPUT_VOLUME)) { prev = joy; return -1; }
+        #undef P
+        prev = joy;
+    }
 }
 
 // selected-track state for the list's "Info / Lyrics / Favorite" items (built
@@ -706,7 +751,7 @@ static int open_browser_menu(void)
     c[n++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_SEPARATOR;
     c[n++] = (odroid_dialog_choice_t){ 14, TR(s_LangUI, "Language"), lang_v, 1, lang_cb };
     c[n++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
-    return odroid_overlay_dialog(TR(s_music, "Music"), c, 0, browser_repaint, 0);
+    return music_dialog(TR(s_music, "Music"), c, browser_repaint);
 }
 
 // Load the highlighted track's tags/lyrics (no audio_open) for the list's Info /
