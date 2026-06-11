@@ -1,4 +1,6 @@
-// Streaming MP3 audio engine — see media_audio.h.
+// Streaming MP3 + WAV(PCM) audio engine — see media_audio.h. Both formats feed
+// the same mono / 48 kHz resample ring; WAV (8/16/24/32-bit, any rate) reuses
+// the MP3 input buffer so it costs no extra RAM.
 
 #include "media_audio.h"
 #include "minimp3.h"
@@ -23,8 +25,45 @@ static int       g_bitrate;     // kbps of the last decoded frame
 static int       g_hz;          // source sample rate of the last frame
 static int       g_chan;        // channels of the last frame
 
-static long      g_data_off;    // first audio byte (past ID3v2 tag)
+static long      g_data_off;    // first audio byte (past ID3v2 tag / WAV header)
 static long      g_audio_size;  // bytes of audio data (file size - g_data_off)
+
+// WAV (uncompressed PCM) support — reuses the same ring/resample path as MP3.
+static bool      g_is_wav;
+static int       g_wav_hz, g_wav_chan, g_wav_bits;
+static long      g_wav_pos;     // bytes already read out of the data chunk
+
+// Parse a RIFF/WAVE header from `f`: fill rate/channels/bits and the data chunk
+// offset+size. Returns false if not a PCM WAV we can play.
+static bool wav_parse_fp(FILE *f, int *hz, int *chan, int *bits, long *doff, long *dsz)
+{
+    uint8_t hdr[12];
+    if (fseek(f, 0, SEEK_SET) != 0 || fread(hdr, 1, 12, f) != 12) return false;
+    if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) return false;
+    bool have_fmt = false, have_data = false;
+    long pos = 12;
+    for (int guard = 0; guard < 64 && !(have_fmt && have_data); guard++) {
+        uint8_t ch[8];
+        if (fseek(f, pos, SEEK_SET) != 0 || fread(ch, 1, 8, f) != 8) break;
+        uint32_t csz = ch[4] | (ch[5] << 8) | (ch[6] << 16) | ((uint32_t)ch[7] << 24);
+        if (memcmp(ch, "fmt ", 4) == 0) {
+            uint8_t fm[16];
+            if (fread(fm, 1, 16, f) == 16) {
+                int fmt = fm[0] | (fm[1] << 8);
+                *chan = fm[2] | (fm[3] << 8);
+                *hz   = fm[4] | (fm[5] << 8) | (fm[6] << 16) | ((uint32_t)fm[7] << 24);
+                *bits = fm[14] | (fm[15] << 8);
+                if (fmt == 1 || fmt == 0xFFFE) have_fmt = true;   // PCM / extensible
+            }
+        } else if (memcmp(ch, "data", 4) == 0) {
+            *doff = pos + 8; *dsz = (long)csz; have_data = true;
+        }
+        pos += 8 + (long)csz + (csz & 1);                          // word-aligned chunks
+    }
+    if (!have_fmt || !have_data || *chan < 1) return false;
+    if (*bits != 8 && *bits != 16 && *bits != 24 && *bits != 32) return false;
+    return true;
+}
 
 // --- decoded-PCM ring (48 kHz mono) -----------------------------------------
 #define RING_SIZE  8192            // power of two
@@ -76,9 +115,40 @@ static void refill(void)
     }
 }
 
-// Decode one MP3 frame into g_mono; returns false at end of stream.
+// Read one block of WAV PCM into g_mono (downmixed to mono int16). Reuses g_in
+// as the byte buffer, so no extra RAM.
+static bool wav_decode_frame(void)
+{
+    int fb = g_wav_chan * (g_wav_bits / 8), bytes = g_wav_bits / 8;
+    long remain = g_audio_size - g_wav_pos;
+    if (fb <= 0 || remain < fb) return false;
+    int frames = 1152;
+    if ((long)frames * fb > remain)      frames = (int)(remain / fb);
+    if ((long)frames * fb > MP3_IN_BUF)  frames = MP3_IN_BUF / fb;
+    int got = (int)fread(g_in, 1, (size_t)frames * fb, g_fp);
+    g_wav_pos += got;
+    int gf = got / fb;
+    for (int i = 0; i < gf; i++) {
+        int32_t acc = 0;
+        const uint8_t *p = g_in + (long)i * fb;
+        for (int c = 0; c < g_wav_chan; c++, p += bytes) {
+            int32_t s;
+            if (g_wav_bits == 8)       s = ((int)p[0] - 128) << 8;        // unsigned 8-bit
+            else if (g_wav_bits == 16) s = (int16_t)(p[0] | (p[1] << 8));
+            else if (g_wav_bits == 24) s = (int16_t)(p[1] | (p[2] << 8)); // high 16 of 24
+            else                       s = (int16_t)(p[2] | (p[3] << 8)); // high 16 of 32
+            acc += s;
+        }
+        g_mono[i] = (int16_t)(acc / g_wav_chan);
+    }
+    g_frame_n = gf;
+    return gf > 0;
+}
+
+// Decode one frame into g_mono; returns false at end of stream.
 static bool decode_frame(void)
 {
+    if (g_is_wav) return wav_decode_frame();
     for (;;) {
         if ((g_in_len - g_in_pos) < 2048 && !g_file_eof)
             refill();
@@ -142,17 +212,26 @@ bool audio_open(const char *path)
     g_step = ((uint32_t)44100 << 16) / AUDIO_SAMPLE_RATE;
     g_bitrate = 0; g_hz = 0; g_chan = 0;
     g_data_off = 0; g_audio_size = 0;
+    g_is_wav = false; g_wav_pos = 0;
 
     if (g_fp) {
-        uint8_t h[10];
-        if (fread(h, 1, 10, g_fp) == 10 && memcmp(h, "ID3", 3) == 0) {
-            g_data_off = 10 + (long)(((uint32_t)(h[6] & 0x7f) << 21) |
-                ((uint32_t)(h[7] & 0x7f) << 14) | ((uint32_t)(h[8] & 0x7f) << 7) |
-                (uint32_t)(h[9] & 0x7f));
+        if (wav_parse_fp(g_fp, &g_wav_hz, &g_wav_chan, &g_wav_bits, &g_data_off, &g_audio_size)) {
+            g_is_wav = true;
+            g_hz = g_wav_hz; g_chan = g_wav_chan;
+            g_step = ((uint32_t)g_wav_hz << 16) / AUDIO_SAMPLE_RATE;
+            g_bitrate = (int)((long long)g_wav_hz * g_wav_chan * g_wav_bits / 1000);
+        } else {
+            uint8_t h[10];
+            fseek(g_fp, 0, SEEK_SET);
+            if (fread(h, 1, 10, g_fp) == 10 && memcmp(h, "ID3", 3) == 0) {
+                g_data_off = 10 + (long)(((uint32_t)(h[6] & 0x7f) << 21) |
+                    ((uint32_t)(h[7] & 0x7f) << 14) | ((uint32_t)(h[8] & 0x7f) << 7) |
+                    (uint32_t)(h[9] & 0x7f));
+            }
+            fseek(g_fp, 0, SEEK_END);
+            long sz = ftell(g_fp);
+            g_audio_size = sz - g_data_off;
         }
-        fseek(g_fp, 0, SEEK_END);
-        long sz = ftell(g_fp);
-        g_audio_size = sz - g_data_off;
         fseek(g_fp, g_data_off, SEEK_SET);
     }
     reset_decoder();
@@ -170,6 +249,11 @@ void audio_seek(float frac)
     if (frac < 0.0f) frac = 0.0f;
     if (frac > 0.999f) frac = 0.999f;
     long off = g_data_off + (long)(frac * (float)g_audio_size);
+    if (g_is_wav) {
+        int fb = g_wav_chan * (g_wav_bits / 8);
+        if (fb > 0) off -= (off - g_data_off) % fb;   // align to a sample frame
+        g_wav_pos = off - g_data_off;
+    }
     fseek(g_fp, off, SEEK_SET);
     reset_decoder();
     audio_pump(AUDIO_PUMP_TARGET);
@@ -177,6 +261,11 @@ void audio_seek(float frac)
 
 int audio_duration_sec(void)
 {
+    if (g_is_wav) {
+        int fb = g_wav_chan * (g_wav_bits / 8);
+        if (fb <= 0 || g_wav_hz <= 0) return 0;
+        return (int)(g_audio_size / fb / g_wav_hz);
+    }
     if (g_bitrate <= 0 || g_audio_size <= 0) return 0;
     return (int)((long long)g_audio_size * 8 / ((long long)g_bitrate * 1000));
 }
@@ -187,6 +276,14 @@ int audio_quick_duration(const char *path)
 {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
+
+    int whz, wch, wb; long wdoff, wdsz;
+    if (wav_parse_fp(f, &whz, &wch, &wb, &wdoff, &wdsz)) {   // WAV: from the header
+        fclose(f);
+        int fb = wch * (wb / 8);
+        return (fb > 0 && whz > 0) ? (int)(wdsz / fb / whz) : 0;
+    }
+
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);

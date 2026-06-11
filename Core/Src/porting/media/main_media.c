@@ -137,7 +137,8 @@ static int scandir_cb(const rg_scandir_t *file, void *arg)
     // hide hidden/system entries: the thumbnail cache (.mthumb), .favourites,
     // macOS AppleDouble (._*) / .DS_Store, etc. — only music + real folders show.
     if (file->basename[0] == '.') return RG_SCANDIR_CONTINUE;
-    if (!file->is_dir && !has_ext(file->basename, ".mp3")) return RG_SCANDIR_CONTINUE;
+    if (!file->is_dir && !has_ext(file->basename, ".mp3")
+                      && !has_ext(file->basename, ".wav")) return RG_SCANDIR_CONTINUE;
     media_entry_t *e = &entries[entry_count++];
     strncpy(e->name, file->basename, NAME_MAX_LEN - 1);
     e->name[NAME_MAX_LEN - 1] = '\0';
