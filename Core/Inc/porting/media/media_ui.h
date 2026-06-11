@@ -1,5 +1,5 @@
-// Drawing layer for the Music app: shared primitives, the iPod-style now-playing
-// screen, the info screen, the lyrics view and the always-on button-hint bar.
+// Drawing layer for the Music app: shared primitives, the Winamp-style now-playing
+// deck, the info screen, the lyrics view and the always-on button-hint bar.
 // Rendering only — input loops live in main_media.c.
 #pragma once
 
