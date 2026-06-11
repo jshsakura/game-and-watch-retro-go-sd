@@ -484,6 +484,23 @@ static bool bri_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t
     return false;
 }
 
+// Live language switch (◀▶ cycles) — handy from inside the app.
+static char lang_v[28];
+static void set_lang_v(void) { snprintf(lang_v, sizeof(lang_v), "%s", i18n_lang_display_name(odroid_settings_lang_get())); }
+static bool lang_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t r)
+{
+    (void)o; (void)r;
+    int8_t lang = odroid_settings_lang_get();
+    if (ev == ODROID_DIALOG_PREV)      lang = odroid_settings_get_prior_lang(lang);
+    else if (ev == ODROID_DIALOG_NEXT) lang = odroid_settings_get_next_lang(lang);
+    if (ev == ODROID_DIALOG_PREV || ev == ODROID_DIALOG_NEXT) {
+        odroid_settings_lang_set(lang);
+        curr_lang = i18n_load_language(lang);
+    }
+    set_lang_v();
+    return false;
+}
+
 // Feed the audio DMA from the decoded ring and advance the play position. Used
 // by the menu's repaint callback so music keeps playing (and the analyzer keeps
 // dancing) while the blocking dialog is open. One DMA half (~22ms at 48kHz) is
@@ -527,6 +544,24 @@ static int open_menu(player_state_t *ps)
         ODROID_DIALOG_CHOICE_LAST,
     };
     return odroid_overlay_dialog(TR(s_music, "Music"), choices, 0, player_repaint, 0);
+}
+
+// Shared options menu reachable from the browser list via PAUSE: brightness +
+// live language switch + close. (Track-specific items like favourite/repeat/
+// info/lyrics only make sense while a track is playing, so they're omitted.)
+static void browser_repaint(void) { draw_list(); }
+
+static void open_browser_menu(void)
+{
+    set_bri_v(); set_lang_v();
+    odroid_dialog_choice_t choices[] = {
+        { 13, TR(s_brightness, "Brightness"), bri_v,  1, bri_cb },
+        { 14, TR(s_LangUI,     "Language"),   lang_v, 1, lang_cb },
+        ODROID_DIALOG_CHOICE_SEPARATOR,
+        { MENU_CLOSE, TR(s_Close, "Close"), (char *)"", 1, NULL },
+        ODROID_DIALOG_CHOICE_LAST,
+    };
+    odroid_overlay_dialog(TR(s_music, "Music"), choices, 0, browser_repaint, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -780,6 +815,11 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             if (g_mode == MODE_FAV) { g_mode = MODE_FOLDER; strcpy(cur_path, g_root); scan_folder(); }
             else if (!go_parent()) odroid_system_switch_app(APPID_LAUNCHER);  // noreturn
             dirty = true;
+        }
+
+        if (PRESSED(ODROID_INPUT_VOLUME)) {          // PAUSE/SET → shared options menu
+            open_browser_menu();
+            odroid_input_read_gamepad(&joy); prev = joy; dirty = true; held_dir = 0; continue;
         }
 
         if (PRESSED(ODROID_INPUT_POWER)) {           // blank the screen until any key

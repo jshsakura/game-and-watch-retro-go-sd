@@ -812,7 +812,8 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
         int y = H + r * RH;
         bool sel = (idx == v->cursor);
         uint16_t pill_bg = ui_mix(bg, accent, 4);
-        uint16_t rbg = sel ? pill_bg : bg;
+        uint16_t zebra   = ui_mix(bg, fg, 1);                        // faint alternating row tint
+        uint16_t rbg = sel ? pill_bg : ((r & 1) ? zebra : bg);
         uint16_t txt = fg;
         uint16_t sub = sel ? ui_mix(fg, bg, 4) : ui_mix(fg, bg, 7);   // clearer artist/duration
 
@@ -825,6 +826,9 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
             ui_fill(pill_x, pill_y, pill_w, pill_h, pill_bg);
             round_corners(pill_x, pill_y, pill_w, pill_h, pill_r, bg);
             ui_rrect(pill_x, pill_y, pill_w, pill_h, pill_r, ui_mix(bg, accent, 10)); // selection border
+            ui_fill(pill_x, pill_y + 3, 3, pill_h - 6, accent);                       // accent "you are here" bar
+        } else if (r & 1) {
+            ui_fill(pill_x, pill_y, pill_w, pill_h, zebra);                           // zebra band
         }
         int tx = 8, ty = y + (RH - TH) / 2;
 
@@ -879,7 +883,7 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
     ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, 1, ui_mix(accent, bg, 4));
     static const chip_t fh[] = {
         { "A", ICN_PLAY }, { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE },     // ▲▼
-        { "\xE2\x97\x80\xE2\x96\xB6", ICN_NONE }, { "B", ICN_NONE },     // ◀▶
+        { "PAUSE", ICN_MENU }, { "B", ICN_NONE },                       // PAUSE = menu
     };
     chip_row(SCR_H - LIST_FOOTER_H + 2, fh, 4, ui_mix(fg, bg, 2), accent, 0);
 }
