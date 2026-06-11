@@ -665,16 +665,20 @@ static bool sel_fav_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint
 // the live language switch. Returns MENU_INFO / MENU_LYRICS when chosen.
 static int open_browser_menu(void)
 {
-    set_lang_v(); set_bri_bar(); set_vol_bar();
+    g_ps = &ps;                 // repeat/shuffle act on the (background) playback state
+    set_lang_v(); set_bri_bar(); set_vol_bar(); set_rep_v(); set_shf_v();
     bool is_track = entry_count > 0 && !entries[cursor].is_dir && !entries[cursor].is_special;
     if (is_track) { entry_track_path(cursor, g_sel_path, sizeof(g_sel_path)); set_sel_fav_v(); }
 
-    odroid_dialog_choice_t c[12]; int n = 0;
+    odroid_dialog_choice_t c[14]; int n = 0;
     c[n++] = (odroid_dialog_choice_t){ 0, TR(s_Brightness, "Brightness"), bri_bar, 1, bri_cb };
     c[n++] = (odroid_dialog_choice_t){ 1, TR(s_Volume,     "Volume"),     vol_bar, 1, vol_cb };
+    // same playback options as the now-playing deck when a track is highlighted.
     if (is_track) {
         c[n++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_SEPARATOR;
         c[n++] = (odroid_dialog_choice_t){ 10, TR(s_favorite, "Favorite"), sel_fav_v, 1, sel_fav_cb };
+        c[n++] = (odroid_dialog_choice_t){ 11, TR(s_repeat,   "Repeat"),   rep_v, 1, rep_cb };
+        c[n++] = (odroid_dialog_choice_t){ 12, TR(s_shuffle,  "Shuffle"),  shf_v, 1, shf_cb };
         c[n++] = (odroid_dialog_choice_t){ MENU_INFO,   TR(s_info,   "Info"),   (char *)"", 1, NULL };
         c[n++] = (odroid_dialog_choice_t){ MENU_LYRICS, TR(s_lyrics, "Lyrics"), (char *)"", 1, NULL };
     }
