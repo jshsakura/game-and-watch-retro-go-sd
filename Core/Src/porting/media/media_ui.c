@@ -27,7 +27,7 @@
 // bit-rate, volume and status all live together in the info/LCD panel.
 #define TITLEBAR_H 33                      // == system STATUS_HEIGHT (ribbed bar + RGW logo + clock)
 #define LCD_Y      36                      // info/LCD panel, below the system top bar
-#define LCD_H      164                     // 36 .. 200 (panel extends down so the slider band is compact)
+#define LCD_H      152                     // 36 .. 188 (leaves a roomy band for the seek bar)
 #define COVER_X    8                       // album-art thumbnail, top-left of panel
 #define COVER_Y    42
 #define COVER_SZ   56                      // 42 .. 98
@@ -40,11 +40,11 @@
 #define MARQUEE_Y  100                     // scrolling title band (below cover)
 #define VIS_X      8                       // spectrum analyzer left margin
 #define VIS_TOP    116
-#define VIS_BASE   194                     // equalizer: 116 .. 194 (taller, fills the panel)
+#define VIS_BASE   182                     // equalizer: 116 .. 182
 #define VIS_BARS   20
 #define SEEK_X     14
-#define HINT_DIV   218                     // bottom hint bar (== the list footer: 22px keycaps)
-#define SEEK_Y     209                     // position bar, centered in the compact band (201..218)
+#define HINT_DIV   214                     // bottom hint bar (== the list footer: 26px keycaps)
+#define SEEK_Y     200                     // position bar, centered in its roomy band (189..214)
 
 // --- primitives -------------------------------------------------------------
 
@@ -518,18 +518,6 @@ static void chip_icon_draw(int icon, int x, int y, uint16_t c)
 // kh==0 falls back to plain text (for the short list footer with no room).
 static const int CHIP_GAP = 9;          // between chips
 
-// total pixel width a chip row occupies (for centering / right-edge math)
-static int chip_row_width(const chip_t *h, int n, int kh)
-{
-    const int PADX = (kh > 0) ? 5 : 0;
-    int total = 0;
-    for (int i = 0; i < n; i++) {
-        int iw = chip_icon_w(h[i].icon);
-        total += i18n_get_text_width(h[i].key) + 2 * PADX + (iw ? 4 + iw : 0) + (i ? CHIP_GAP : 0);
-    }
-    return total;
-}
-
 // draw a chip row starting at x0 (left-aligned). Returns the x past the last chip.
 static int chip_row_at(int x, int y, const chip_t *h, int n, uint16_t keyc, uint16_t iconc, int kh)
 {
@@ -559,24 +547,22 @@ static int chip_row_at(int x, int y, const chip_t *h, int n, uint16_t keyc, uint
     return x;
 }
 
-// centered chip row (deck / info / lyrics footer)
-static void chip_row_k(int y, const chip_t *h, int n, uint16_t keyc, uint16_t iconc, int kh)
-{
-    int x = (SCR_W - chip_row_width(h, n, kh)) / 2;
-    if (x < 2) x = 2;
-    chip_row_at(x, y, h, n, keyc, iconc, kh);
-}
-
 // The one and only bottom hint bar: a thin panel pinned to the screen bottom
 // with a centered chip row. Shared by the list, the deck and the info/lyrics
 // views so every screen's footer looks identical.
-static void draw_footer(const chip_t *h, int n)
+// The one bottom hint bar, identical on every screen: button-style keycaps
+// left-aligned, and (when given) the track/position count on the right.
+static void draw_footer(const chip_t *h, int n, const char *pos)
 {
     uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c, accent = curr_colors->sel_c;
+    int fy = HINT_DIV + (SCR_H - HINT_DIV - FONT_H) / 2;   // vertically centered
     ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, ui_player_surface());
     ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
-    // button-style keycaps, vertically centered in the bar
-    chip_row_k(HINT_DIV + (SCR_H - HINT_DIV - FONT_H) / 2, h, n, ui_mix(fg, bg, 1), accent, 14);
+    chip_row_at(8, fy, h, n, ui_mix(fg, bg, 1), accent, 16);
+    if (pos && pos[0]) {
+        int pw = i18n_get_text_width(pos);
+        ui_text_t(SCR_W - pw - 8, fy, pw + 2, pos, ui_mix(fg, bg, 7));
+    }
 }
 
 // --- now-playing: the Winamp deck -------------------------------------------
@@ -645,7 +631,7 @@ static void ui_topbar(const char *title, const char *right_label)
     media_draw_topbar(title, right_label);
 }
 
-static void draw_player_hints(void);
+static void draw_player_hints(const player_state_t *ps);
 
 // Static layer: drawn once per track into BOTH framebuffers. The album-art
 // thumbnail is supplied separately via ui_player_set_cover().
@@ -680,7 +666,7 @@ void ui_player_static(const player_state_t *ps)
     g_marquee_w = i18n_get_text_width(g_marquee);
 
     // bottom hint bar (static) — the shared footer, identical to the list
-    draw_player_hints();
+    draw_player_hints(ps);
 }
 
 // The deck animates continuously while playing — there is no separate "spin".
@@ -700,10 +686,9 @@ void ui_player_dynamic(const player_state_t *ps)
 
     g_anim++;
 
-    // ---- top bar: identical to the browser header (MUSIC + idx + battery + clock) ----
-    char pos[24];
-    snprintf(pos, sizeof(pos), "%d/%d", ps->track_index + 1, ps->track_count);
-    ui_topbar("", pos);   // logo identifies the app; no redundant "Music" word
+    // ---- top bar: clean system chrome only (logo + clock + battery); the track
+    // count lives in the footer's bottom-right, like the browser list ----
+    ui_topbar("", "");
 
     // ---- 7-seg elapsed time + bit-rate / kHz ----
     float frac = scrubbing ? ps->scrub
@@ -755,15 +740,20 @@ void ui_player_dynamic(const player_state_t *ps)
     dot(kx, ky, 3, scrubbing ? main_c : accent);               // knob core
 }
 
-static void draw_player_hints(void)
+static void draw_player_hints(const player_state_t *ps)
 {
+    // each direction key is its own keycap (no cramped ◀▶ / ▲▼ pairs)
     static const chip_t chips[] = {
-        { "A", ICN_PLAY },                            // play / pause
-        { "\xE2\x97\x80\xE2\x96\xB6", ICN_TRACK },    // ◀▶  prev / next
-        { "\xE2\x96\xB2\xE2\x96\xBC", ICN_SPEAKER },  // ▲▼  volume
-        { "PAUSE", ICN_MENU },                        // PAUSE  options menu
+        { "A", ICN_PLAY },                  // play / pause
+        { "\xE2\x97\x80", ICN_NONE },       // ◀ prev
+        { "\xE2\x96\xB6", ICN_NONE },       // ▶ next
+        { "\xE2\x96\xB2", ICN_NONE },       // ▲ vol +
+        { "\xE2\x96\xBC", ICN_NONE },       // ▼ vol -
+        { "PAUSE", ICN_MENU },              // options menu
     };
-    draw_footer(chips, 4);
+    char pos[24];
+    snprintf(pos, sizeof(pos), "%d/%d", ps->track_index + 1, ps->track_count);
+    draw_footer(chips, 6, pos);
 }
 
 // --- browser list -----------------------------------------------------------
@@ -905,20 +895,16 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
         ui_fill(SCR_W - 4, ty, 3, th, accent);
     }
 
-    // footer: same keycap bar as the deck, but laid out as "hints left, position
-    // right" so the track count lives bottom-right without crowding the top bar.
+    // footer: the shared keycap bar (hints left, position right) — each arrow key
+    // is its own keycap.
     static const chip_t fh[] = {
-        { "A", ICN_PLAY }, { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE },     // play | ▲▼ move
-        { "PAUSE", ICN_MENU }, { "B", ICN_NONE },                       // PAUSE = menu | back
+        { "A", ICN_PLAY },              // play
+        { "\xE2\x96\xB2", ICN_NONE },   // ▲ up
+        { "\xE2\x96\xBC", ICN_NONE },   // ▼ down
+        { "PAUSE", ICN_MENU },          // options menu
+        { "B", ICN_NONE },              // back
     };
-    int fy = HINT_DIV + (SCR_H - HINT_DIV - FONT_H) / 2;   // vertically centered in the bar
-    ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, ui_player_surface());
-    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
-    chip_row_at(8, fy, fh, 4, ui_mix(fg, bg, 1), accent, 14);
-    if (v->count > 0) {
-        int pw = i18n_get_text_width(pos);
-        ui_text_t(SCR_W - pw - 8, fy, pw + 2, pos, ui_mix(fg, bg, 7));
-    }
+    draw_footer(fh, 5, v->count > 0 ? pos : NULL);
 }
 
 // --- info screen ------------------------------------------------------------
@@ -976,7 +962,7 @@ void ui_info_draw(const player_state_t *ps)
     }
 
     static const chip_t hints[] = { { "B", ICN_NONE } };   // back to the deck
-    draw_footer(hints, 1);
+    draw_footer(hints, 1, NULL);
 }
 
 // --- lyrics (parser in media_lyrics.c) --------------------------------------
@@ -1009,5 +995,5 @@ void ui_lyrics_draw(const player_state_t *ps, const lyrics_t *ly, int top_line, 
     }
 
     static const chip_t hints[] = { { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE }, { "B", ICN_NONE } };
-    draw_footer(hints, 2);
+    draw_footer(hints, 2, NULL);
 }
