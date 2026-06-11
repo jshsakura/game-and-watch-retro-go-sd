@@ -27,7 +27,7 @@
 // bit-rate, volume and status all live together in the info/LCD panel.
 #define TITLEBAR_H 33                      // == system STATUS_HEIGHT (ribbed bar + RGW logo + clock)
 #define LCD_Y      36                      // info/LCD panel, below the system top bar
-#define LCD_H      150                     // 36 .. 186
+#define LCD_H      168                     // 36 .. 204 (panel extends down so the slider band is compact)
 #define COVER_X    8                       // album-art thumbnail, top-left of panel
 #define COVER_Y    42
 #define COVER_SZ   56                      // 42 .. 98
@@ -40,11 +40,11 @@
 #define MARQUEE_Y  100                     // scrolling title band (below cover)
 #define VIS_X      8                       // spectrum analyzer left margin
 #define VIS_TOP    116
-#define VIS_BASE   182                     // equalizer: 116 .. 182
+#define VIS_BASE   198                     // equalizer: 116 .. 198 (taller, fills the panel)
 #define VIS_BARS   20
 #define SEEK_X     14
-#define HINT_DIV   226                     // bottom hint bar (== the list footer: 14px)
-#define SEEK_Y     205                     // position bar, centered in its band (187..226)
+#define HINT_DIV   222                     // bottom hint bar (== the list footer: 18px keycaps)
+#define SEEK_Y     211                     // position bar, centered in the compact band (205..222)
 
 // --- primitives -------------------------------------------------------------
 
@@ -191,9 +191,11 @@ static void icon_pause(int x, int y, int w, int h, uint16_t c)
 static void dot(int cx, int cy, int r, uint16_t c)
 {
     uint16_t *fb = lcd_get_active_buffer();
+    // +r in the radius test fills the cardinal extents so small circles read as
+    // round rather than blocky (≈ the (r+0.5)^2 mid-point rule).
     for (int y = -r; y <= r; y++)
         for (int x = -r; x <= r; x++)
-            if (x * x + y * y <= r * r) {
+            if (x * x + y * y <= r * r + r) {
                 int px = cx + x, py = cy + y;
                 if (px >= 0 && px < SCR_W && py >= 0 && py < SCR_H)
                     fb[py * SCR_W + px] = c;
@@ -514,26 +516,31 @@ static void chip_icon_draw(int icon, int x, int y, uint16_t c)
 // Draw a centered row of button hints. Each chip is the button label rendered
 // as a little keycap (when kh>0) followed by the function icon, e.g. [Ⓐ]▶.
 // kh==0 falls back to plain text (for the short list footer with no room).
-static void chip_row_k(int y, const chip_t *h, int n, uint16_t keyc, uint16_t iconc, int kh)
+static const int CHIP_GAP = 9;          // between chips
+
+// total pixel width a chip row occupies (for centering / right-edge math)
+static int chip_row_width(const chip_t *h, int n, int kh)
 {
-    const int GAP  = 9;                 // between chips
-    const int PADX = (kh > 0) ? 5 : 0;  // keycap horizontal padding
+    const int PADX = (kh > 0) ? 5 : 0;
+    int total = 0;
+    for (int i = 0; i < n; i++) {
+        int iw = chip_icon_w(h[i].icon);
+        total += i18n_get_text_width(h[i].key) + 2 * PADX + (iw ? 4 + iw : 0) + (i ? CHIP_GAP : 0);
+    }
+    return total;
+}
+
+// draw a chip row starting at x0 (left-aligned). Returns the x past the last chip.
+static int chip_row_at(int x, int y, const chip_t *h, int n, uint16_t keyc, uint16_t iconc, int kh)
+{
+    const int PADX = (kh > 0) ? 5 : 0;
     uint16_t bg = curr_colors->bg_c, accent = curr_colors->sel_c;
     uint16_t surface = ui_player_surface();
     uint16_t cap_fill = ui_mix(bg, accent, 3);
     uint16_t cap_brd  = ui_mix(accent, bg, 6);
-
-    int total = 0;
-    for (int i = 0; i < n; i++) {
-        int iw = chip_icon_w(h[i].icon);
-        total += i18n_get_text_width(h[i].key) + 2 * PADX + (iw ? 4 + iw : 0) + (i ? GAP : 0);
-    }
-    int x = (SCR_W - total) / 2;
-    if (x < 2) x = 2;
-
     int cy = y - 2;
     for (int i = 0; i < n; i++) {
-        if (i) x += GAP;
+        if (i) x += CHIP_GAP;
         int tw = i18n_get_text_width(h[i].key);
         int kw = tw + 2 * PADX;
         if (kh > 0) {                       // keycap behind the label
@@ -546,12 +553,15 @@ static void chip_row_k(int y, const chip_t *h, int n, uint16_t keyc, uint16_t ic
         int iw = chip_icon_w(h[i].icon);
         if (iw) { x += 4; chip_icon_draw(h[i].icon, x, y, iconc); x += iw; }
     }
+    return x;
 }
 
-static void chip_row(int y, const chip_t *h, int n, uint16_t keyc, uint16_t iconc, uint16_t sepc)
+// centered chip row (deck / info / lyrics footer)
+static void chip_row_k(int y, const chip_t *h, int n, uint16_t keyc, uint16_t iconc, int kh)
 {
-    (void)sepc;
-    chip_row_k(y, h, n, keyc, iconc, 0);    // plain text (legacy callers / footer)
+    int x = (SCR_W - chip_row_width(h, n, kh)) / 2;
+    if (x < 2) x = 2;
+    chip_row_at(x, y, h, n, keyc, iconc, kh);
 }
 
 // The one and only bottom hint bar: a thin panel pinned to the screen bottom
@@ -562,7 +572,8 @@ static void draw_footer(const chip_t *h, int n)
     uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c, accent = curr_colors->sel_c;
     ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, ui_player_surface());
     ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
-    chip_row(HINT_DIV + 2, h, n, ui_mix(fg, bg, 2), accent, 0);
+    // button-style keycaps (slightly smaller than the old deck hints: kh 16 -> 13)
+    chip_row_k(HINT_DIV + 5, h, n, ui_mix(fg, bg, 1), accent, 13);
 }
 
 // --- now-playing: the Winamp deck -------------------------------------------
@@ -730,13 +741,15 @@ void ui_player_dynamic(const player_state_t *ps)
     vis_compute(!ps->paused);
     draw_spectrum(lcd);
 
-    // ---- thin position bar (lowered) ----
+    // ---- position bar: clear track + smooth ring knob, in a compact band ----
     int gw = SCR_W - 2 * SEEK_X;
     int fillw = (int)(frac * gw);
-    ui_fill(SEEK_X - 2, SEEK_Y - 3, gw + 4, 8, surface);
-    ui_fill(SEEK_X, SEEK_Y, gw, 2, ui_mix(bg, main_c, 5));
-    ui_fill(SEEK_X, SEEK_Y, fillw, 2, accent);
-    dot(SEEK_X + fillw, SEEK_Y + 1, 3, scrubbing ? main_c : accent);
+    ui_fill(0, LCD_Y + LCD_H + 1, SCR_W, HINT_DIV - (LCD_Y + LCD_H + 1), surface); // clear the band
+    ui_fill(SEEK_X, SEEK_Y, gw, 3, ui_mix(main_c, bg, 9));      // unfilled track (clearly visible)
+    ui_fill(SEEK_X, SEEK_Y, fillw, 3, accent);                 // played portion
+    int kx = SEEK_X + fillw, ky = SEEK_Y + 1;
+    dot(kx, ky, 5, ui_mix(bg, accent, 11));                    // knob ring
+    dot(kx, ky, 3, scrubbing ? main_c : accent);               // knob core
 }
 
 static void draw_player_hints(void)
@@ -835,9 +848,20 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
             int nw = i18n_get_text_width("\xE2\x99\xAA");   // ♪
             ui_text_t(tx + (TH - nw) / 2, ty + (TH - 12) / 2, nw + 2, "\xE2\x99\xAA", ui_mix(rbg, txt, 7));
         }
-        if (it.playing) {                                   // "now playing" badge on the thumb
-            ui_fill(tx, ty, 13, 13, ui_mix(bg, accent, 13));
-            icon_play(tx + 3, ty + 2, 7, 8, bg);
+        if (it.playing) {
+            // now-playing: a semi-transparent scrim over the album art with a
+            // large centered play/pause glyph showing the current state.
+            uint16_t *fbp = lcd_get_active_buffer();
+            for (int j = 0; j < TH; j++) {
+                int dy = ty + j; if (dy < 0 || dy >= SCR_H) continue;
+                for (int i = 0; i < TH; i++) {
+                    int dx = tx + i; if (dx < 0 || dx >= SCR_W) continue;
+                    fbp[dy * SCR_W + dx] = ui_mix(fbp[dy * SCR_W + dx], 0x0000, 9);  // ~55% dark
+                }
+            }
+            const int iw = 14, ih = 16, ix = tx + (TH - iw) / 2, iy = ty + (TH - ih) / 2;
+            if (it.paused) icon_pause(ix, iy, iw, ih, 0xFFFF);
+            else           icon_play (ix, iy, iw, ih, 0xFFFF);
         }
 
         int dw = it.duration && it.duration[0] ? i18n_get_text_width(it.duration) : 0;
@@ -845,15 +869,15 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
         int textw = right - textx - (dw ? dw + RPAD + 4 : RPAD);
 
         ui_ellipsize(buf, sizeof(buf), it.title ? it.title : "", textw - (it.fav ? 16 : 0));
-        ui_text(textx, y + 5, textw, buf, txt, rbg);
+        ui_text(textx, y + 9, textw, buf, txt, rbg);
         if (it.subtitle && it.subtitle[0]) {
             ui_ellipsize(buf, sizeof(buf), it.subtitle, textw);
-            ui_text(textx, y + 21, textw, buf, sub, rbg);
+            ui_text(textx, y + 27, textw, buf, sub, rbg);
         }
         if (it.fav)
-            ui_text(right - RPAD - dw - 16, y + 5, 14, "\xE2\x99\xA5", sel ? accent : accent, rbg);   // ♥
+            ui_text(right - RPAD - dw - 16, y + 9, 14, "\xE2\x99\xA5", accent, rbg);   // ♥
         if (dw)
-            ui_text(right - RPAD - dw, y + 21, dw + 2, it.duration, sub, rbg);   // aligned with the artist line
+            ui_text(right - RPAD - dw, y + 27, dw + 2, it.duration, sub, rbg);   // aligned with the artist line
     }
 
     // scrollbar
@@ -866,18 +890,18 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
         ui_fill(SCR_W - 4, ty, 3, th, accent);
     }
 
-    // footer hint — the shared bottom bar, identical to the deck
+    // footer: same keycap bar as the deck, but laid out as "hints left, position
+    // right" so the track count lives bottom-right without crowding the top bar.
     static const chip_t fh[] = {
         { "A", ICN_PLAY }, { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE },     // play | ▲▼ move
         { "PAUSE", ICN_MENU }, { "B", ICN_NONE },                       // PAUSE = menu | back
     };
-    draw_footer(fh, 4);
-
-    // track position lives bottom-right (off the top bar, which is clean system
-    // chrome: logo + clock + battery only).
+    ui_fill(0, HINT_DIV, SCR_W, SCR_H - HINT_DIV, ui_player_surface());
+    ui_fill(0, HINT_DIV, SCR_W, 1, ui_mix(accent, bg, 4));
+    chip_row_at(8, HINT_DIV + 5, fh, 4, ui_mix(fg, bg, 1), accent, 13);
     if (v->count > 0) {
         int pw = i18n_get_text_width(pos);
-        ui_text_t(SCR_W - pw - 6, HINT_DIV + 2, pw + 2, pos, ui_mix(fg, bg, 6));
+        ui_text_t(SCR_W - pw - 8, HINT_DIV + 5, pw + 2, pos, ui_mix(fg, bg, 7));
     }
 }
 

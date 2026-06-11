@@ -64,7 +64,8 @@ typedef struct {
     int             art_sz;
     int             kind;        // LIST_*
     bool            fav;
-    bool            playing;     // this track is the one currently playing (▶ marker)
+    bool            playing;     // this track is the one currently playing (center overlay)
+    bool            paused;      // ...and playback is currently paused (overlay shows ▶ vs ❚❚)
 } list_item_t;
 
 typedef struct {
@@ -78,8 +79,8 @@ typedef struct {
 } list_view_t;
 
 #define LIST_HEADER_H 33      // == system STATUS_HEIGHT, so the top bar matches the launcher
-#define LIST_FOOTER_H 14
-#define LIST_ROW_H    38      // 5 rows fill 33..223 cleanly (no dead space above the footer)
+#define LIST_FOOTER_H 18      // keycap (button-style) hint bar
+#define LIST_ROW_H    47      // 4 spacious rows fill 33..221 with breathing room between tracks
 #define LIST_VISIBLE_ROWS ((240 - LIST_HEADER_H - LIST_FOOTER_H) / LIST_ROW_H)
 
 // Draw the browser list. `item_at(i, out)` fills a row's data lazily (called

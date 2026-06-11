@@ -419,7 +419,8 @@ static void list_item_at(int idx, list_item_t *out)
     char p[PATH_MAX_LEN];
     entry_track_path(idx, p, sizeof(p));
     out->fav = fav_is(p);
-    out->playing = g_playing && strcmp(p, ps.path) == 0;   // ▶ marker on the live track
+    out->playing = g_playing && strcmp(p, ps.path) == 0;   // center overlay on the live track
+    out->paused  = out->playing && ps.paused;              // overlay shows ▶ (paused) vs ❚❚ (playing)
 
     // While fast-scrolling, use only already-cached metadata (no decode) so the
     // list stays smooth AND cached rows keep their detail instead of blinking;
