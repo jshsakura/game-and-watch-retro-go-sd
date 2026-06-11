@@ -727,11 +727,19 @@ static void music_player(int start_pi)
             for (int b = 0; b < ODROID_INPUT_MAX; b++) if (P(b)) { any = true; break; }
             if (any) { lcd_backlight_on(); screen_off = false; recompose = true; prev = joy; continue; }
         } else {
-            if (P(ODROID_INPUT_B)) { break; }
+            // B: from info/lyrics back to the deck; from the deck, back to the list
+            if (P(ODROID_INPUT_B)) {
+                if (view != VIEW_PLAY) { view = VIEW_PLAY; recompose = true; dirty = true; }
+                else break;
+            }
+            // PAUSE button pauses/resumes (matches its label); GAME opens the menu
+            if (P(ODROID_INPUT_VOLUME)) { ps.paused = !ps.paused; dirty = true; }
             if (P(ODROID_INPUT_START)) {
-                view = (view + 1) % 3;
-                if (view == VIEW_PLAY) recompose = true;
-                dirty = true;
+                int r = open_menu(&ps);
+                if (r == MENU_INFO) view = VIEW_INFO;
+                else if (r == MENU_LYRICS) view = VIEW_LYRICS;
+                recompose = (view == VIEW_PLAY); dirty = true;
+                odroid_input_read_gamepad(&prev); continue;
             }
             if (view == VIEW_PLAY) {
                 if (P(ODROID_INPUT_A)) { ps.paused = !ps.paused; dirty = true; }
@@ -739,13 +747,6 @@ static void music_player(int start_pi)
                 if (P(ODROID_INPUT_DOWN)) { int v = odroid_audio_volume_get(); if (v > 0) odroid_audio_volume_set(v - 1); ps.volume = odroid_audio_volume_get(); dirty = true; }
                 if (P(ODROID_INPUT_SELECT)) { ps.shuffle = !ps.shuffle; dirty = true; }
                 if (P(ODROID_INPUT_POWER)) { screen_off = true; lcd_backlight_off(); }
-                if (P(ODROID_INPUT_VOLUME)) {
-                    int r = open_menu(&ps);
-                    if (r == MENU_INFO) view = VIEW_INFO;
-                    else if (r == MENU_LYRICS) view = VIEW_LYRICS;
-                    recompose = (view == VIEW_PLAY); dirty = true;
-                    odroid_input_read_gamepad(&prev); continue;
-                }
 
                 // LEFT/RIGHT: tap = prev/next, hold = seek-scrub
                 bool nowL = joy.values[ODROID_INPUT_LEFT], nowR = joy.values[ODROID_INPUT_RIGHT];
@@ -890,7 +891,10 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             dirty = true;
         }
 
-        if (PRESSED(ODROID_INPUT_VOLUME)) {          // PAUSE/SET → shared options menu
+        if (PRESSED(ODROID_INPUT_VOLUME) && g_playing) {   // PAUSE button: pause/resume the music
+            ps.paused = !ps.paused; dirty = true;
+        }
+        if (PRESSED(ODROID_INPUT_START)) {                 // GAME button: shared options menu
             open_browser_menu();
             odroid_input_read_gamepad(&joy); prev = joy; dirty = true; held_dir = 0; continue;
         }

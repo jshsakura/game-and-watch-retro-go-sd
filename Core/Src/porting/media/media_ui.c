@@ -776,10 +776,10 @@ static void draw_player_hints(void)
     uint16_t bg = curr_colors->bg_c, main_c = curr_colors->main_c;
     uint16_t accent = curr_colors->sel_c;
     static const chip_t chips[] = {
-        { "A", ICN_PLAY },
-        { "\xE2\x97\x80\xE2\x96\xB6", ICN_TRACK },    // ◀▶  track
+        { "A", ICN_PLAY },                            // play / pause
+        { "\xE2\x97\x80\xE2\x96\xB6", ICN_TRACK },    // ◀▶  prev / next
         { "\xE2\x96\xB2\xE2\x96\xBC", ICN_SPEAKER },  // ▲▼  volume
-        { "PAUSE", ICN_MENU },
+        { "GAME", ICN_MENU },                         // menu (shuffle / repeat / info ...)
     };
     chip_row_k(HINT1_Y, chips, 4, ui_mix(main_c, bg, 1), accent, 16);
 }
@@ -910,8 +910,8 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
     ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, LIST_FOOTER_H, panel_bg);
     ui_fill(0, SCR_H - LIST_FOOTER_H, SCR_W, 1, ui_mix(accent, bg, 4));
     static const chip_t fh[] = {
-        { "A", ICN_PLAY }, { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE },     // ▲▼
-        { "PAUSE", ICN_MENU }, { "B", ICN_NONE },                       // PAUSE = menu
+        { "A", ICN_PLAY }, { "\xE2\x96\xB2\xE2\x96\xBC", ICN_NONE },     // play | ▲▼ move
+        { "GAME", ICN_MENU }, { "B", ICN_NONE },                        // GAME = menu | back
     };
     chip_row(SCR_H - LIST_FOOTER_H + 2, fh, 4, ui_mix(fg, bg, 2), accent, 0);
 }
