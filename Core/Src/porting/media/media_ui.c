@@ -853,7 +853,7 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
         if (it.fav)
             ui_text(right - RPAD - dw - 16, y + 5, 14, "\xE2\x99\xA5", sel ? accent : accent, rbg);   // ♥
         if (dw)
-            ui_text(right - RPAD - dw, y + 25, dw + 2, it.duration, sub, rbg);
+            ui_text(right - RPAD - dw, y + 21, dw + 2, it.duration, sub, rbg);   // aligned with the artist line
     }
 
     // scrollbar
@@ -888,9 +888,9 @@ static void info_row(int *y, const char *label, const char *value)
     if (!value || !value[0]) return;
     uint16_t dim = curr_colors->dis_c, main_c = curr_colors->main_c;
     char buf[256];
-    ui_text_t(16, *y, 100, label, dim);
-    ui_ellipsize(buf, sizeof(buf), value, SCR_W - 120 - 12);
-    ui_text_t(120, *y, SCR_W - 120 - 12, buf, main_c);
+    ui_text_t(16, *y, 122, label, dim);
+    ui_ellipsize(buf, sizeof(buf), value, SCR_W - 140 - 12);
+    ui_text_t(140, *y, SCR_W - 140 - 12, buf, main_c);
     *y += 14;
 }
 

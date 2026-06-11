@@ -79,7 +79,7 @@ typedef struct {
 
 #define LIST_HEADER_H 33      // == system STATUS_HEIGHT, so the top bar matches the launcher
 #define LIST_FOOTER_H 14
-#define LIST_ROW_H    40
+#define LIST_ROW_H    38      // 5 rows fill 33..223 cleanly (no dead space above the footer)
 #define LIST_VISIBLE_ROWS ((240 - LIST_HEADER_H - LIST_FOOTER_H) / LIST_ROW_H)
 
 // Draw the browser list. `item_at(i, out)` fills a row's data lazily (called
