@@ -24,15 +24,6 @@ int16_t audio_pull(void);              // one mono sample (0 if empty)
 int     audio_ring_count(void);
 bool    audio_eof(void);               // decode reached end of stream
 
-// ISR-driven playback: the SAI DMA ISR (HAL_SAI_Tx(Half)CpltCallback) calls
-// audio_isr_fill() to feed the next half-buffer from the ring, so rendering can
-// never starve the audio. The main loop just keeps the ring full and updates
-// the params below.
-void     audio_isr_fill(void);             // called from the DMA ISR
-void     audio_isr_set(int vol, bool silent);
-void     audio_isr_setpos(uint32_t samples);
-uint32_t audio_isr_pos(void);              // samples played so far
-
 // Reposition playback to a fraction [0,1) of the audio data. Re-syncs the
 // decoder, clears the ring and re-pumps.
 void    audio_seek(float frac);

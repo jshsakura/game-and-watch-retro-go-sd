@@ -613,8 +613,17 @@ static bool vol_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t
 // longer than a menu frame, so filling one half per repaint never underruns.
 static void player_audio_service(void)
 {
-    playback_feed();            // ISR-driven: top up the ring + sync ISR state
-    common_emu_sound_sync(false);   // pace to the DMA (advanced by the ISR)
+    int16_t *buf = audio_get_active_buffer();
+    int len = audio_get_buffer_length();
+    int32_t vol = common_emu_sound_get_volume();
+    bool paused = !g_ps || g_ps->paused;
+    for (int i = 0; i < len; i++) {
+        int16_t sm = (paused || audio_ring_count() == 0) ? 0 : audio_pull();
+        buf[i] = (int16_t)((sm * vol) >> 8);
+        if (!(i & 1)) ui_vis_push(sm);
+    }
+    if (!paused) { g_played += len; audio_pump(AUDIO_PUMP_TARGET); }
+    common_emu_sound_sync(false);
 }
 
 static void player_repaint(void)
@@ -812,7 +821,6 @@ static void playback_load(int pi)
     g_play_pi = pi;
     g_playing = true;
     ps.paused = false; g_played = 0; ps.scrub = -1.0f;
-    audio_isr_set(0, true); audio_isr_setpos(0);   // mute the ISR while the ring is reset/reopened
     ps.app_name = TR(s_music, "Music");
 
     pl_path(pi, ps.path, sizeof(ps.path));
@@ -835,10 +843,6 @@ static void playback_load(int pi)
     ps.total = audio_duration_sec();
     ps.bitrate = audio_bitrate_kbps(); ps.hz = audio_src_hz(); ps.channels = audio_channels();
     ps.sec = 0;
-    // Ring is primed: resume the ISR NOW, before the (slow) album-art decode, so
-    // the gap between tracks is just the open+prime time, not the cover decode —
-    // the 170ms ring keeps playing while the cover is built.
-    if (!ps.paused) audio_isr_set(common_emu_sound_get_volume(), false);
     g_deck_has_cover = cover_thumb(ps.path, g_deck_cover, DECK_COVER_SZ);
     ui_player_set_cover(g_deck_cover, DECK_COVER_SZ, g_deck_has_cover);
 }
@@ -848,24 +852,17 @@ static void playback_load(int pi)
 // the now-playing loop and the browser loop so audio never stops while browsing.
 static void playback_feed(void)
 {
-    // The DMA ISR pulls straight from the ring (audio_isr_fill), so all the main
-    // loop has to do is keep the ring topped up and hand the ISR the current
-    // volume / paused state. This decouples playback from rendering: a slow frame
-    // can no longer starve the ~22ms DMA buffer (no more ticks).
-    audio_isr_set(common_emu_sound_get_volume(), !g_playing || ps.paused);
-    if (g_playing && !ps.paused) audio_pump(AUDIO_PUMP_TARGET);
-    g_played = audio_isr_pos();
+    int16_t *buf = audio_get_active_buffer();
+    int len = audio_get_buffer_length();
+    int32_t vol = common_emu_sound_get_volume();
+    bool silent = !g_playing || ps.paused || audio_ring_count() == 0;
+    for (int i = 0; i < len; i++) {
+        int16_t sm = silent ? 0 : audio_pull();
+        buf[i] = (int16_t)((sm * vol) >> 8);
+        if (!(i & 1)) ui_vis_push(sm);
+    }
+    if (g_playing && !ps.paused) { g_played += len; audio_pump(AUDIO_PUMP_TARGET); }
     ps.sec = (int)(g_played / AUDIO_SAMPLE_RATE);
-}
-
-// Seek to a fraction of the track, muting the ISR while the ring is reset.
-static void seek_to(float frac)
-{
-    audio_isr_set(0, true);
-    audio_seek(frac);
-    uint32_t pos = (uint32_t)(frac * ps.total * AUDIO_SAMPLE_RATE);
-    audio_isr_setpos(pos);
-    g_played = pos;
 }
 
 // At end of track advance to the next (per shuffle/repeat), or stop at the end
@@ -877,7 +874,6 @@ static bool playback_autoadvance(void)
     int n = pick_next(g_play_pi, ps.shuffle, ps.repeat);
     if (n >= 0) { playback_load(n); return true; }
     g_playing = false;
-    audio_isr_set(0, true);            // playlist ended -> ISR outputs silence
     return true;
 }
 
@@ -893,7 +889,6 @@ static void music_player(int start_pi)
         common_emu_state.skip_frames = 0;
         common_emu_state.pause_frames = 0;
         audio_start_playing(AUDIO_BUFFER_LENGTH);
-        audio_dma_hook = audio_isr_fill;   // feed playback straight from the DMA ISR
         g_audio_on = true;
         ps.shuffle = false; ps.repeat = REPEAT_OFF;
     }
@@ -965,10 +960,10 @@ static void music_player(int start_pi)
                 }
                 else if (lr_down && !now) {
                     lr_down = false;
-                    if (scrubbing) { seek_to(scrub); scrubbing = false; ps.scrub = -1.0f; dirty = true; }
+                    if (scrubbing) { audio_seek(scrub); g_played = (uint32_t)(scrub * ps.total * AUDIO_SAMPLE_RATE); scrubbing = false; ps.scrub = -1.0f; dirty = true; }
                     else if (lr_dir > 0) { int n = pick_next(pi, ps.shuffle, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } }
-                    else { if (ps.sec > 3) { seek_to(0); dirty = true; }
-                           else { int n = pick_prev(pi, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } else { seek_to(0); dirty = true; } } }
+                    else { if (ps.sec > 3) { audio_seek(0); g_played = 0; dirty = true; }
+                           else { int n = pick_prev(pi, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } else { audio_seek(0); g_played = 0; dirty = true; } } }
                 }
             } else if (view == VIEW_LYRICS && !ly.synced) {
                 if (P(ODROID_INPUT_UP) && lyr_scroll > 0) { lyr_scroll--; dirty = true; }
@@ -1095,7 +1090,7 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         if (PRESSED(ODROID_INPUT_B)) {
             if (g_mode == MODE_FAV) { g_mode = MODE_FOLDER; strcpy(cur_path, g_root); scan_folder(); }
-            else if (!go_parent()) { audio_dma_hook = 0; odroid_system_switch_app(APPID_LAUNCHER); }  // noreturn; release the ISR hook
+            else if (!go_parent()) odroid_system_switch_app(APPID_LAUNCHER);  // noreturn
             dirty = true;
         }
 

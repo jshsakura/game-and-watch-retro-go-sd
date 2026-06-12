@@ -69,58 +69,28 @@ static bool wav_parse_fp(FILE *f, int *hz, int *chan, int *bits, long *doff, lon
 #define RING_SIZE  8192            // power of two
 #define RING_MASK  (RING_SIZE - 1)
 static int16_t g_ring[RING_SIZE];
-// Lock-free single-producer (decode) / single-consumer (DMA ISR) ring: the
-// producer only writes g_head, the consumer only writes g_tail, so it is
-// ISR-safe without a shared count.
-static volatile uint16_t g_head, g_tail;
+static int     g_head, g_tail, g_count;
 
 static void ring_push(int16_t s)
 {
-    uint16_t next = (g_head + 1) & RING_MASK;
-    if (next == g_tail) return;            // full
+    if (g_count >= RING_SIZE) return;
     g_ring[g_head] = s;
-    g_head = next;
+    g_head = (g_head + 1) & RING_MASK;
+    g_count++;
 }
 
-void audio_ring_reset(void) { g_head = g_tail = 0; }
+void audio_ring_reset(void) { g_head = g_tail = g_count = 0; }
 
 int16_t audio_pull(void)
 {
-    if (g_tail == g_head) return 0;        // empty
+    if (g_count == 0) return 0;
     int16_t s = g_ring[g_tail];
     g_tail = (g_tail + 1) & RING_MASK;
+    g_count--;
     return s;
 }
 
-int  audio_ring_count(void) { return (g_head - g_tail) & RING_MASK; }
-
-// --- ISR-driven playback ----------------------------------------------------
-// The SAI DMA ISR fills the next half-buffer straight from the ring, decoupled
-// from rendering, so a slow frame can't starve the ~22ms DMA buffer (the way
-// old MP3 players did it). The main loop only keeps the ring full (audio_pump).
-extern void ui_vis_push(int16_t);
-static volatile int16_t  g_isr_vol = 0;     // 0..256
-static volatile uint8_t  g_isr_silent = 1;  // output silence (paused/stopped/seeking)
-static volatile uint32_t g_isr_played;      // samples played so far (position)
-
-void audio_isr_set(int vol, bool silent) { g_isr_vol = (int16_t)vol; g_isr_silent = silent ? 1 : 0; }
-void audio_isr_setpos(uint32_t samples)  { g_isr_played = samples; }
-uint32_t audio_isr_pos(void)             { return g_isr_played; }
-
-// Called from HAL_SAI_Tx(Half)CpltCallback — fills the just-freed half-buffer.
-void audio_isr_fill(void)
-{
-    int16_t *buf = audio_get_active_buffer();
-    int len = audio_get_buffer_length();
-    int vol = g_isr_vol;
-    bool silent = g_isr_silent;
-    for (int i = 0; i < len; i++) {
-        int16_t sm = silent ? 0 : audio_pull();
-        buf[i] = (int16_t)((sm * vol) >> 8);
-        if (!(i & 1)) ui_vis_push(sm);
-    }
-    if (!silent) g_isr_played += len;
-}
+int  audio_ring_count(void) { return g_count; }
 bool audio_eof(void)        { return g_eof; }
 int  audio_bitrate_kbps(void) { return g_bitrate; }
 int  audio_src_hz(void)     { return g_hz; }
@@ -211,7 +181,7 @@ static bool decode_frame(void)
 
 void audio_pump(int target)
 {
-    while (audio_ring_count() < target && !g_eof) {
+    while (g_count < target && !g_eof) {
         while ((g_phase >> 16) >= (uint32_t)g_frame_n) {
             g_phase -= (uint32_t)g_frame_n << 16;
             if (!decode_frame()) { g_eof = true; break; }
