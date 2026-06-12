@@ -79,6 +79,7 @@ extern uint8_t _OVERLAY_WSV_BSS_SIZE;
 extern void * _OVERLAY_MD_LOAD_START[];
 extern uint8_t _OVERLAY_MD_SIZE;
 extern void * _OVERLAY_MD_BSS_START[];
+extern void * _OVERLAY_MD_BSS_END[];
 extern uint8_t _OVERLAY_MD_BSS_SIZE;
 extern void * _OVERLAY_A7800_LOAD_START[];
 extern uint8_t _OVERLAY_A7800_SIZE;
