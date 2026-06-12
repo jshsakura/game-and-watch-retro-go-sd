@@ -742,18 +742,17 @@ void ui_player_dynamic(const player_state_t *ps)
 
 static void draw_player_hints(const player_state_t *ps)
 {
-    // each direction key is its own keycap (no cramped ◀▶ / ▲▼ pairs)
+    // each key shows what it does via its function icon; arrows are spaced so
+    // they don't read as one cramped glyph.
     static const chip_t chips[] = {
-        { "A", ICN_PLAY },                  // play / pause
-        { "\xE2\x97\x80", ICN_NONE },       // ◀ prev
-        { "\xE2\x96\xB6", ICN_NONE },       // ▶ next
-        { "\xE2\x96\xB2", ICN_NONE },       // ▲ vol +
-        { "\xE2\x96\xBC", ICN_NONE },       // ▼ vol -
-        { "PAUSE", ICN_MENU },              // options menu
+        { "A", ICN_PLAY },                              // play / pause
+        { "\xE2\x97\x80 \xE2\x96\xB6", ICN_TRACK },     // ◀ ▶  prev / next track
+        { "\xE2\x96\xB2 \xE2\x96\xBC", ICN_SPEAKER },   // ▲ ▼  volume
+        { "PAUSE", ICN_MENU },                          // options menu
+        { "B", ICN_NONE },                              // exit
     };
-    char pos[24];
-    snprintf(pos, sizeof(pos), "%d/%d", ps->track_index + 1, ps->track_count);
-    draw_footer(chips, 6, pos);
+    (void)ps;   // deck footer is full with the hint keys; no room for the count
+    draw_footer(chips, 5, NULL);
 }
 
 // --- browser list -----------------------------------------------------------
@@ -895,16 +894,14 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
         ui_fill(SCR_W - 4, ty, 3, th, accent);
     }
 
-    // footer: the shared keycap bar (hints left, position right) — each arrow key
-    // is its own keycap.
+    // footer: the shared keycap bar (hints left, position right)
     static const chip_t fh[] = {
-        { "A", ICN_PLAY },              // play
-        { "\xE2\x96\xB2", ICN_NONE },   // ▲ up
-        { "\xE2\x96\xBC", ICN_NONE },   // ▼ down
-        { "PAUSE", ICN_MENU },          // options menu
-        { "B", ICN_NONE },              // back
+        { "A", ICN_PLAY },                            // open / play
+        { "\xE2\x96\xB2 \xE2\x96\xBC", ICN_NONE },    // ▲ ▼  move
+        { "PAUSE", ICN_MENU },                        // options menu
+        { "B", ICN_NONE },                            // back
     };
-    draw_footer(fh, 5, v->count > 0 ? pos : NULL);
+    draw_footer(fh, 4, v->count > 0 ? pos : NULL);
 }
 
 // --- info screen ------------------------------------------------------------

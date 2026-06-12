@@ -503,7 +503,6 @@ static uint32_t g_played;   // total samples played; shared so the menu keeps pl
 
 static void playback_feed(void);
 static bool playback_autoadvance(void);
-static int  music_dialog(const char *title, odroid_dialog_choice_t *c, void (*repaint)(void));
 
 // Small album-art thumbnail for the Winamp deck — decoded once per track into
 // this static buffer (list-sized, cheap) and lent to media_ui via set_cover.
@@ -573,7 +572,7 @@ static char bar_fill(void) { return (curr_lang && curr_lang->s_Fill) ? curr_lang
 
 static void set_bri_bar(void)
 {
-    int lvl = lcd_backlight_get();
+    int lvl = odroid_display_get_backlight();
     char full = bar_full(), fill = bar_fill();
     int k = 0;
     for (int i = 0; i <= SLIDER_MAX; i++) bri_bar[k++] = (i <= lvl) ? full : fill;
@@ -591,9 +590,9 @@ static void set_vol_bar(void)
 static bool bri_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t r)
 {
     (void)o; (void)r;
-    int lvl = lcd_backlight_get();
-    if (ev == ODROID_DIALOG_PREV && lvl > 0) lcd_backlight_set(lvl - 1);
-    else if (ev == ODROID_DIALOG_NEXT && lvl < SLIDER_MAX) lcd_backlight_set(lvl + 1);
+    int lvl = odroid_display_get_backlight();
+    if (ev == ODROID_DIALOG_PREV && lvl > 0) odroid_display_set_backlight(lvl - 1);
+    else if (ev == ODROID_DIALOG_NEXT && lvl < SLIDER_MAX) odroid_display_set_backlight(lvl + 1);
     set_bri_bar();
     return ev == ODROID_DIALOG_ENTER;
 }
@@ -651,7 +650,7 @@ static int open_menu(player_state_t *ps)
         { MENU_LYRICS, TR(s_lyrics, "Lyrics"), (char *)"", 1, NULL },
         ODROID_DIALOG_CHOICE_LAST,
     };
-    return music_dialog(TR(s_music, "Music"), choices, player_repaint);
+    return odroid_overlay_dialog(TR(s_music, "Music"), choices, 0, player_repaint, 0);
 }
 
 // The browser list's options menu: same system settings menu (so Volume +
@@ -662,50 +661,6 @@ static void browser_repaint(void)
     if (g_playing) { playback_feed(); common_emu_sound_sync(false); }   // keep music playing
     else lcd_wait_for_vblank();                                          // pace when idle
     draw_list();
-}
-
-// Audio-seamless modal menu. Same look as odroid_overlay_dialog (it reuses the
-// system renderer) but driven by our own loop, so `repaint` — which BOTH feeds
-// the audio and redraws the background — runs every single frame with no blind
-// HAL_Delay debounce. That is what keeps the music from glitching while the menu
-// is open. Returns the chosen option id, or -1 when closed with B/PAUSE.
-#define DLG_LAST 0x0F0F0F0F
-#define DLG_SEP  0x0F0F0F0E
-static int music_dialog(const char *title, odroid_dialog_choice_t *c, void (*repaint)(void))
-{
-    int n = 0; while (c[n].id != DLG_LAST) n++;
-    int sel = 0; while (sel < n && c[sel].id == DLG_SEP) sel++;
-    odroid_gamepad_state_t joy, prev;
-    odroid_input_read_gamepad(&prev);
-    bool armed = false;     // ignore input until the keys that opened the menu release
-
-    for (;;) {
-        wdog_refresh();
-        repaint();                                   // feed audio + redraw background
-        odroid_overlay_draw_dialog(title, c, sel);   // menu box on top
-        media_draw_topbar("", "");                   // keep the system header above the menu
-        lcd_swap();
-
-        odroid_input_read_gamepad(&joy);
-        #define P(b) (joy.values[b] && !prev.values[b])
-        if (!armed) {
-            if (!joy.values[ODROID_INPUT_A] && !joy.values[ODROID_INPUT_B] &&
-                !joy.values[ODROID_INPUT_VOLUME] && !joy.values[ODROID_INPUT_START])
-                armed = true;
-            prev = joy; continue;
-        }
-        if (P(ODROID_INPUT_UP))   do { sel = (sel - 1 + n) % n; } while (c[sel].id == DLG_SEP);
-        if (P(ODROID_INPUT_DOWN)) do { sel = (sel + 1) % n;     } while (c[sel].id == DLG_SEP);
-        if (P(ODROID_INPUT_LEFT)  && c[sel].update_cb) c[sel].update_cb(&c[sel], ODROID_DIALOG_PREV, 0);
-        if (P(ODROID_INPUT_RIGHT) && c[sel].update_cb) c[sel].update_cb(&c[sel], ODROID_DIALOG_NEXT, 0);
-        if (P(ODROID_INPUT_A)) {
-            if (!c[sel].update_cb)                                  { prev = joy; return c[sel].id; }
-            if (c[sel].update_cb(&c[sel], ODROID_DIALOG_ENTER, 0)) { prev = joy; return c[sel].id; }
-        }
-        if (P(ODROID_INPUT_B) || P(ODROID_INPUT_VOLUME)) { prev = joy; return -1; }
-        #undef P
-        prev = joy;
-    }
 }
 
 // selected-track state for the list's "Info / Lyrics / Favorite" items (built
@@ -752,7 +707,7 @@ static int open_browser_menu(void)
     c[n++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_SEPARATOR;
     c[n++] = (odroid_dialog_choice_t){ 14, TR(s_LangUI, "Language"), lang_v, 1, lang_cb };
     c[n++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
-    return music_dialog(TR(s_music, "Music"), c, browser_repaint);
+    return odroid_overlay_dialog(TR(s_music, "Music"), c, 0, browser_repaint, 0);
 }
 
 // Load the highlighted track's tags/lyrics (no audio_open) for the list's Info /
@@ -822,6 +777,12 @@ static void playback_load(int pi)
     g_playing = true;
     ps.paused = false; g_played = 0; ps.scrub = -1.0f;
     ps.app_name = TR(s_music, "Music");
+
+    // Loading (tag read + open + decode + album-art JPEG) blocks the main loop,
+    // so the DMA would otherwise replay the previous buffer = a "drrrk" between
+    // tracks. Silence both DMA halves first so the gap is clean silence instead.
+    audio_clear_active_buffer();
+    audio_clear_inactive_buffer();
 
     pl_path(pi, ps.path, sizeof(ps.path));
     id3_read_tags(ps.path, &ps.tags);
@@ -989,11 +950,14 @@ static void music_player(int start_pi)
                     ui_player_dynamic(&ps); lcd_swap();
                 }
             } else if (view == VIEW_INFO) {
-                if (dirty) { ui_info_draw(&ps); lcd_swap(); }
+                // render every frame so BOTH framebuffers stay on the info screen
+                // (otherwise the idle buffer keeps a stale list/deck image that
+                // shows through as a "broken" background).
+                ui_info_draw(&ps); lcd_swap();
             } else { // VIEW_LYRICS
                 int act = ly.synced ? lyrics_active_line(&ly, (int)((long long)g_played * 1000 / AUDIO_SAMPLE_RATE)) : -1;
                 int top = ly.synced ? (act > 3 ? act - 3 : 0) : lyr_scroll;
-                if (act != last_active || top != last_top || dirty) { ui_lyrics_draw(&ps, &ly, top, act); lcd_swap(); last_active = act; last_top = top; }
+                ui_lyrics_draw(&ps, &ly, top, act); lcd_swap(); last_active = act; last_top = top;
             }
         }
         dirty = false;
