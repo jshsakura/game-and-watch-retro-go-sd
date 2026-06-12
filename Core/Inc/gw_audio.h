@@ -24,6 +24,16 @@ extern int16_t audiobuffer_dma[AUDIO_BUFFER_LENGTH * 2] __attribute__((section (
 extern dma_transfer_state_t dma_state;
 extern uint32_t dma_counter;
 
+// Music app: ISR-fed playback. The ring + fill routine live in the main firmware
+// (gw_audio.c); the Music overlay only decodes into it and toggles playback.
+void     music_ring_reset(void);
+int      music_ring_count(void);
+void     music_ring_push(int16_t s);
+void     music_audio_enable(int on);          // 1 = Music app owns the DMA buffer
+void     music_audio_set(int vol, int play);  // play=0 -> ISR outputs silence
+void     music_audio_setpos(uint32_t samples);
+uint32_t music_audio_pos(void);
+
 uint16_t audio_get_buffer_full_length(void);
 uint16_t audio_get_buffer_length(void);
 uint16_t audio_get_buffer_size(void);

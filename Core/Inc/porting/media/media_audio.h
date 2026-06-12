@@ -20,7 +20,6 @@ void audio_close(void);
 
 void    audio_ring_reset(void);
 void    audio_pump(int target);        // decode-ahead until ring >= target
-int16_t audio_pull(void);              // one mono sample (0 if empty)
 int     audio_ring_count(void);
 bool    audio_eof(void);               // decode reached end of stream
 

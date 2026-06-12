@@ -66,31 +66,22 @@ static bool wav_parse_fp(FILE *f, int *hz, int *chan, int *bits, long *doff, lon
 }
 
 // --- decoded-PCM ring (48 kHz mono) -----------------------------------------
-#define RING_SIZE  8192            // power of two
-#define RING_MASK  (RING_SIZE - 1)
-static int16_t g_ring[RING_SIZE];
-static int     g_head, g_tail, g_count;
+// The ring buffer + the SAI-ISR fill routine live in the MAIN firmware
+// (gw_audio.c, music_*). This overlay only DECODES into it — so the audio ISR
+// never calls overlay code (that was the earlier brick). We also feed the
+// spectrum analyzer here, on the decode side, since the ISR can't call into the
+// overlay's ui_vis_push.
+extern void ui_vis_push(int16_t);
+static uint8_t g_vis_tog;
 
 static void ring_push(int16_t s)
 {
-    if (g_count >= RING_SIZE) return;
-    g_ring[g_head] = s;
-    g_head = (g_head + 1) & RING_MASK;
-    g_count++;
+    music_ring_push(s);
+    if (!(g_vis_tog++ & 1)) ui_vis_push(s);
 }
 
-void audio_ring_reset(void) { g_head = g_tail = g_count = 0; }
-
-int16_t audio_pull(void)
-{
-    if (g_count == 0) return 0;
-    int16_t s = g_ring[g_tail];
-    g_tail = (g_tail + 1) & RING_MASK;
-    g_count--;
-    return s;
-}
-
-int  audio_ring_count(void) { return g_count; }
+void audio_ring_reset(void) { music_ring_reset(); }
+int  audio_ring_count(void) { return music_ring_count(); }
 bool audio_eof(void)        { return g_eof; }
 int  audio_bitrate_kbps(void) { return g_bitrate; }
 int  audio_src_hz(void)     { return g_hz; }
@@ -181,7 +172,7 @@ static bool decode_frame(void)
 
 void audio_pump(int target)
 {
-    while (g_count < target && !g_eof) {
+    while (music_ring_count() < target && !g_eof) {
         while ((g_phase >> 16) >= (uint32_t)g_frame_n) {
             g_phase -= (uint32_t)g_frame_n << 16;
             if (!decode_frame()) { g_eof = true; break; }
