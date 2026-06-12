@@ -768,6 +768,7 @@ static void playback_load(int pi)
     g_playing = true;
     ps.paused = false; g_played = 0; ps.scrub = -1.0f;
     ps.app_name = TR(s_music, "Music");
+    music_audio_set(0, 0);   // mute the ISR while we reset/reopen the ring (avoids a reset race)
     music_audio_setpos(0);   // new track starts at 0 (the ISR advances from here)
 
     pl_path(pi, ps.path, sizeof(ps.path));
@@ -805,6 +806,17 @@ static void playback_feed(void)
     if (g_playing && !ps.paused) audio_pump(AUDIO_PUMP_TARGET);
     g_played = music_audio_pos();
     ps.sec = (int)(g_played / AUDIO_SAMPLE_RATE);
+}
+
+// Seek to a fraction of the track, muting the ISR while the ring is reset (so
+// the core consumer can't race the reset); the next playback_feed un-mutes.
+static void seek_to(float frac)
+{
+    music_audio_set(0, 0);
+    audio_seek(frac);
+    uint32_t pos = (uint32_t)(frac * ps.total * AUDIO_SAMPLE_RATE);
+    music_audio_setpos(pos);
+    g_played = pos;
 }
 
 // At end of track advance to the next (per shuffle/repeat), or stop at the end
@@ -904,10 +916,10 @@ static void music_player(int start_pi)
                 }
                 else if (lr_down && !now) {
                     lr_down = false;
-                    if (scrubbing) { audio_seek(scrub); g_played = (uint32_t)(scrub * ps.total * AUDIO_SAMPLE_RATE); music_audio_setpos(g_played); scrubbing = false; ps.scrub = -1.0f; dirty = true; }
+                    if (scrubbing) { seek_to(scrub); scrubbing = false; ps.scrub = -1.0f; dirty = true; }
                     else if (lr_dir > 0) { int n = pick_next(pi, ps.shuffle, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } }
-                    else { if (ps.sec > 3) { audio_seek(0); g_played = 0; music_audio_setpos(0); dirty = true; }
-                           else { int n = pick_prev(pi, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } else { audio_seek(0); g_played = 0; music_audio_setpos(0); dirty = true; } } }
+                    else { if (ps.sec > 3) { seek_to(0); dirty = true; }
+                           else { int n = pick_prev(pi, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } else { seek_to(0); dirty = true; } } }
                 }
             } else if (view == VIEW_LYRICS && !ly.synced) {
                 if (P(ODROID_INPUT_UP) && lyr_scroll > 0) { lyr_scroll--; dirty = true; }

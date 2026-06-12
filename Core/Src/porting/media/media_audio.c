@@ -66,22 +66,30 @@ static bool wav_parse_fp(FILE *f, int *hz, int *chan, int *bits, long *doff, lon
 }
 
 // --- decoded-PCM ring (48 kHz mono) -----------------------------------------
-// The ring buffer + the SAI-ISR fill routine live in the MAIN firmware
-// (gw_audio.c, music_*). This overlay only DECODES into it — so the audio ISR
-// never calls overlay code (that was the earlier brick). We also feed the
-// spectrum analyzer here, on the decode side, since the ISR can't call into the
-// overlay's ui_vis_push.
+// The ring buffer lives HERE (16KB — too big for core RAM), but the SAI-ISR fill
+// routine lives in the main firmware (gw_audio.c). We register this ring with
+// the core via music_attach() so the audio ISR only READS it and never calls
+// overlay code (that was the earlier brick). SPSC: the decoder (this overlay)
+// writes g_head, the core ISR writes g_tail. The analyzer is fed here, on the
+// decode side, since the core ISR can't call the overlay's ui_vis_push.
+#define RING_SIZE  8192            // power of two
+#define RING_MASK  (RING_SIZE - 1)
+static int16_t           g_ring[RING_SIZE];
+static volatile uint16_t g_head, g_tail;
 extern void ui_vis_push(int16_t);
 static uint8_t g_vis_tog;
 
 static void ring_push(int16_t s)
 {
-    music_ring_push(s);
+    uint16_t n = (g_head + 1) & RING_MASK;
+    if (n == g_tail) return;               // full
+    g_ring[g_head] = s;
+    g_head = n;
     if (!(g_vis_tog++ & 1)) ui_vis_push(s);
 }
 
-void audio_ring_reset(void) { music_ring_reset(); }
-int  audio_ring_count(void) { return music_ring_count(); }
+void audio_ring_reset(void) { g_head = g_tail = 0; }
+int  audio_ring_count(void) { return (g_head - g_tail) & RING_MASK; }
 bool audio_eof(void)        { return g_eof; }
 int  audio_bitrate_kbps(void) { return g_bitrate; }
 int  audio_src_hz(void)     { return g_hz; }
@@ -172,7 +180,7 @@ static bool decode_frame(void)
 
 void audio_pump(int target)
 {
-    while (music_ring_count() < target && !g_eof) {
+    while (audio_ring_count() < target && !g_eof) {
         while ((g_phase >> 16) >= (uint32_t)g_frame_n) {
             g_phase -= (uint32_t)g_frame_n << 16;
             if (!decode_frame()) { g_eof = true; break; }
@@ -198,6 +206,7 @@ static void reset_decoder(void)
 
 bool audio_open(const char *path)
 {
+    music_attach(g_ring, RING_SIZE, &g_head, &g_tail);   // let the core ISR read our ring
     audio_close();
     g_fp = fopen(path, "rb");
     g_step = ((uint32_t)44100 << 16) / AUDIO_SAMPLE_RATE;
