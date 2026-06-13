@@ -399,6 +399,9 @@ static const track_meta_t *meta_get(int entry_idx)
     const track_meta_t *cached = meta_peek(entry_idx);
     if (cached) return cached;
 
+    if (g_decode_budget <= 0) { g_decode_pending = true; return NULL; }  // defer to next repaint
+    g_decode_budget--;
+
     track_meta_t *m = &g_meta[g_meta_clock];
     g_meta_clock = (g_meta_clock + 1) % META_N;
     m->idx = entry_idx; m->valid = true; m->has_art = false; m->dur = 0;
@@ -419,6 +422,12 @@ static const track_meta_t *meta_get(int entry_idx)
 // bare file name, so the list stays smooth; metadata fills in once movement
 // settles. Set by the app loop.
 static bool g_list_busy;
+
+// Decode at most one row per repaint so a settled screen fills in top-to-bottom
+// (each cover pops in ~a frame apart) instead of freezing while all of them
+// decode at once. g_decode_pending tells the loop to repaint again for the rest.
+static int  g_decode_budget;
+static bool g_decode_pending;
 
 static const char *strip_ext(const char *name, char *buf, size_t cap)
 {
@@ -1084,7 +1093,11 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         // the now-playing row's ▶ marker tracks the current track.
         if (g_playing) { if (playback_autoadvance()) dirty = true; playback_feed(); }
 
-        if (dirty) { draw_list(); lcd_swap(); dirty = false; }
+        if (dirty) {
+            g_decode_budget = 1; g_decode_pending = false;   // one cover per repaint
+            draw_list(); lcd_swap();
+            dirty = g_decode_pending;                         // more rows? repaint again
+        }
 
         if (g_playing) common_emu_sound_sync(false);   // pace by audio while playing
         else lcd_wait_for_vblank();
