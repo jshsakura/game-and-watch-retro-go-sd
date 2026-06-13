@@ -50,7 +50,7 @@ enum { MODE_FOLDER = 0, MODE_FAV = 1 };
 enum { VIEW_PLAY = 0, VIEW_INFO = 1, VIEW_LYRICS = 2 };
 // Activation ids returned by the menu — kept clear of the slider/toggle row ids
 // (Brightness=0, Volume=1, Favorite=10, Repeat=11, Shuffle=12, Language=14).
-enum { MENU_INFO = 20, MENU_LYRICS = 21 };
+enum { MENU_INFO = 20, MENU_LYRICS = 21, MENU_QUIT = 22 };
 
 #define HOLD_MS     300        // press longer than this => seek-scrub
 #define SCRUB_STEP  0.010f     // fraction per frame while scrubbing
@@ -562,22 +562,6 @@ static bool shf_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t
     set_shf_v();
     return false;
 }
-// Live language switch (◀▶ cycles) — handy from inside the app.
-static char lang_v[28];
-static void set_lang_v(void) { snprintf(lang_v, sizeof(lang_v), "%s", i18n_lang_display_name(odroid_settings_lang_get())); }
-static bool lang_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t r)
-{
-    (void)o; (void)r;
-    int8_t lang = odroid_settings_lang_get();
-    if (ev == ODROID_DIALOG_PREV)      lang = odroid_settings_get_prior_lang(lang);
-    else if (ev == ODROID_DIALOG_NEXT) lang = odroid_settings_get_next_lang(lang);
-    if (ev == ODROID_DIALOG_PREV || ev == ODROID_DIALOG_NEXT) {
-        odroid_settings_lang_set(lang);
-        curr_lang = i18n_load_language(lang);
-    }
-    set_lang_v();
-    return false;
-}
 
 // Launcher-identical Brightness + Volume sliders (bar graph using the font's
 // s_Full / s_Fill block glyphs), WITHOUT the Turbo row the system settings menu
@@ -657,14 +641,16 @@ static int open_menu(player_state_t *ps)
         ODROID_DIALOG_CHOICE_SEPARATOR,
         { MENU_INFO,   TR(s_info,   "Info"),   (char *)"", 1, NULL },
         { MENU_LYRICS, TR(s_lyrics, "Lyrics"), (char *)"", 1, NULL },
+        ODROID_DIALOG_CHOICE_SEPARATOR,
+        { MENU_QUIT,   TR(s_Quit_to_menu, "Quit to menu"), (char *)"", 1, NULL },
         ODROID_DIALOG_CHOICE_LAST,
     };
     return odroid_overlay_dialog(TR(s_music, "Music"), choices, 0, player_repaint, 0);
 }
 
 // The browser list's options menu: same system settings menu (so Volume +
-// Brightness look and behave exactly like the launcher) plus the live language
-// switch. Track-specific items only make sense on the deck, so they're omitted.
+// Brightness look and behave exactly like the launcher) plus Quit to menu.
+// Track-specific items only make sense on the deck, so they're omitted.
 static void browser_repaint(void)
 {
     if (g_playing) { playback_feed(); common_emu_sound_sync(false); }   // keep music playing
@@ -693,11 +679,11 @@ static bool sel_fav_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint
 
 // The browser list's options menu: launcher-style Brightness + Volume (no Turbo),
 // the selected track's Favorite/Info/Lyrics (when a track is highlighted), and
-// the live language switch. Returns MENU_INFO / MENU_LYRICS when chosen.
+// Quit to menu. Returns MENU_INFO / MENU_LYRICS / MENU_QUIT when chosen.
 static int open_browser_menu(void)
 {
     g_ps = &ps;                 // repeat/shuffle act on the (background) playback state
-    set_lang_v(); set_bri_bar(); set_vol_bar(); set_rep_v(); set_shf_v();
+    set_bri_bar(); set_vol_bar(); set_rep_v(); set_shf_v();
     bool is_track = entry_count > 0 && !entries[cursor].is_dir && !entries[cursor].is_special;
     if (is_track) { entry_track_path(cursor, g_sel_path, sizeof(g_sel_path)); set_sel_fav_v(); }
 
@@ -714,7 +700,7 @@ static int open_browser_menu(void)
         c[n++] = (odroid_dialog_choice_t){ MENU_LYRICS, TR(s_lyrics, "Lyrics"), (char *)"", 1, NULL };
     }
     c[n++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_SEPARATOR;
-    c[n++] = (odroid_dialog_choice_t){ 14, TR(s_LangUI, "Language"), lang_v, 1, lang_cb };
+    c[n++] = (odroid_dialog_choice_t){ MENU_QUIT, TR(s_Quit_to_menu, "Quit to menu"), (char *)"", 1, NULL };
     c[n++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
     return odroid_overlay_dialog(TR(s_music, "Music"), c, 0, browser_repaint, 0);
 }
@@ -914,6 +900,7 @@ static void music_player(int start_pi)
                 int r = open_menu(&ps);
                 if (r == MENU_INFO) view = VIEW_INFO;
                 else if (r == MENU_LYRICS) view = VIEW_LYRICS;
+                else if (r == MENU_QUIT) { music_audio_enable(0); odroid_system_switch_app(APPID_LAUNCHER); }  // noreturn
                 recompose = (view == VIEW_PLAY); dirty = true;
                 odroid_input_read_gamepad(&prev); continue;
             }
@@ -1076,6 +1063,7 @@ void app_main_music(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             int r = open_browser_menu();
             if (r == MENU_INFO)        view_selected_track(false);
             else if (r == MENU_LYRICS) view_selected_track(true);
+            else if (r == MENU_QUIT)   { music_audio_enable(0); odroid_system_switch_app(APPID_LAUNCHER); }  // noreturn
             if (g_fav_dirty) { rescan_preserve(); g_fav_dirty = false; }   // show the ★ row at once
             odroid_input_read_gamepad(&joy); prev = joy; dirty = true; held_dir = 0; continue;
         }
