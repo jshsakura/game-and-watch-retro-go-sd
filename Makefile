@@ -733,17 +733,17 @@ $(CORE_CCLESTE)/celeste.c \
 $(CORE_CCLESTE)/celeste_audio.c \
 Core/Src/porting/celeste/main_celeste.c
 
-MEDIA_C_SOURCES = \
-Core/Src/porting/media/main_media.c \
-Core/Src/porting/media/media_id3.c \
-Core/Src/porting/media/media_audio.c \
-Core/Src/porting/media/media_cover.c \
-Core/Src/porting/media/media_lyrics.c \
-Core/Src/porting/media/media_ui.c \
-Core/Src/porting/media/media_lupng.c \
-Core/Src/porting/media/media_minimp3.c \
-Core/Src/porting/media/tjpgd.c \
-Core/Src/porting/media/progjpeg.c \
+MUSIC_C_SOURCES = \
+Core/Src/porting/music/main_music.c \
+Core/Src/porting/music/music_id3.c \
+Core/Src/porting/music/music_audio.c \
+Core/Src/porting/music/music_cover.c \
+Core/Src/porting/music/music_lyrics.c \
+Core/Src/porting/music/music_ui.c \
+Core/Src/porting/music/music_lupng.c \
+Core/Src/porting/music/music_minimp3.c \
+Core/Src/porting/music/tjpgd.c \
+Core/Src/porting/music/progjpeg.c \
 retro-go-stm32/components/lupng/miniz.c
 
 # PICO-8 stub only — the engine is distributed separately as binary files
@@ -1008,11 +1008,11 @@ CELESTE_C_INCLUDES +=  \
 -I$(CORE_CCLESTE)\
 -I./
 
-MEDIA_C_INCLUDES += \
+MUSIC_C_INCLUDES += \
 -ICore/Inc \
 -ICore/Inc/retro-go \
 -ICore/Inc/porting \
--ICore/Inc/porting/media \
+-ICore/Inc/porting/music \
 -ICore/Src/porting/lib \
 -Iretro-go-stm32/components/lupng \
 -Iretro-go-stm32/components/odroid \
@@ -1048,7 +1048,7 @@ include Makefile.common
 
 $(BUILD_DIR)/$(TARGET)_extflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)
-	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_a2600 -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_media -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini $< $(BUILD_DIR)/$(TARGET)_extflash.bin
+	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_a2600 -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_music -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini $< $(BUILD_DIR)/$(TARGET)_extflash.bin
 
 $(BUILD_DIR)/$(TARGET)_intflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)

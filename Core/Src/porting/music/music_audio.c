@@ -1,8 +1,8 @@
-// Streaming MP3 + WAV(PCM) audio engine — see media_audio.h. Both formats feed
+// Streaming MP3 + WAV(PCM) audio engine — see music_audio.h. Both formats feed
 // the same mono / 48 kHz resample ring; WAV (8/16/24/32-bit, any rate) reuses
 // the MP3 input buffer so it costs no extra RAM.
 
-#include "media_audio.h"
+#include "music_audio.h"
 #include "minimp3.h"
 #include "gw_audio.h"          // AUDIO_SAMPLE_RATE
 #include <stdio.h>

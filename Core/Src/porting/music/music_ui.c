@@ -1,4 +1,4 @@
-// Drawing layer for the Music app — see media_ui.h.
+// Drawing layer for the Music app — see music_ui.h.
 //
 // The now-playing screen is a Winamp-style "deck": a beveled title bar, a dark
 // LCD glass panel holding a 7-segment elapsed-time readout, the bit-rate / kHz,
@@ -8,9 +8,9 @@
 // hints) is drawn once per track into both framebuffers; the DYNAMIC layer (the
 // LCD, analyzer, slider, volume) is repainted every frame into the active one.
 
-#include "media_ui.h"
-#include "media_cover.h"
-#include "media_audio.h"
+#include "music_ui.h"
+#include "music_cover.h"
+#include "music_audio.h"
 #include "gw_lcd.h"
 #include "gui.h"
 #include "rg_i18n.h"
@@ -619,16 +619,16 @@ static void draw_deck_cover(uint16_t lcd_bg)
     ui_rrect(x, y, s, s, 6, ui_mix(accent, lcd_bg, 6));
 }
 
-// Battery level [0..100] + charging flag — provided by the firmware (main_media)
+// Battery level [0..100] + charging flag — provided by the firmware (main_music)
 // or the host preview, so this rendering layer stays free of hardware headers.
-// The shared top bar is drawn by the firmware (media_draw_topbar in main_media.c)
+// The shared top bar is drawn by the firmware (music_draw_topbar in main_music.c)
 // so the homebrew app uses the SAME system chrome as the launcher: the ribbed
 // Game & Watch shell strip, the RGW logo, and the system clock + battery. The
 // host preview stubs it.
-extern void media_draw_topbar(const char *title, const char *right_label);
+extern void music_draw_topbar(const char *title, const char *right_label);
 static void ui_topbar(const char *title, const char *right_label)
 {
-    media_draw_topbar(title, right_label);
+    music_draw_topbar(title, right_label);
 }
 
 static void draw_player_hints(const player_state_t *ps);
@@ -928,7 +928,7 @@ void ui_info_draw(const player_state_t *ps)
     // the song name, so nothing crowds the header.
     ui_topbar("", "");
 
-    const media_tags_t *g = &ps->tags;
+    const music_tags_t *g = &ps->tags;
     int y = LIST_HEADER_H + 7;
     info_row(&y, "Title",   ps->title);
     info_row(&y, "Artist",  g->artist);
@@ -965,7 +965,7 @@ void ui_info_draw(const player_state_t *ps)
     draw_footer(hints, 1, NULL);
 }
 
-// --- lyrics (parser in media_lyrics.c) --------------------------------------
+// --- lyrics (parser in music_lyrics.c) --------------------------------------
 
 void ui_lyrics_draw(const player_state_t *ps, const lyrics_t *ly, int top_line, int active)
 {

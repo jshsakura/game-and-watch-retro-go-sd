@@ -1,10 +1,10 @@
-// ID3v2 metadata reader — see media_id3.h.
+// ID3v2 metadata reader — see music_id3.h.
 //
 // Reads frame headers straight off disk (fseek/fread) so no large tag buffer is
 // needed; only one frame's data is held in RAM at a time. Text is decoded from
 // the four ID3 encodings (latin1 / UTF-16+BOM / UTF-16BE / UTF-8) to UTF-8.
 
-#include "media_id3.h"
+#include "music_id3.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -124,7 +124,7 @@ static bool fid(const uint8_t *h, const char *id4, const char *id3, int idlen)
     return memcmp(h, idlen == 4 ? id4 : id3, idlen) == 0;
 }
 
-void id3_read_tags(const char *path, media_tags_t *out)
+void id3_read_tags(const char *path, music_tags_t *out)
 {
     memset(out, 0, sizeof(*out));
 

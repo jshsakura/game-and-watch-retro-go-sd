@@ -1,19 +1,19 @@
 // Drawing layer for the Music app: shared primitives, the Winamp-style now-playing
 // deck, the info screen, the lyrics view and the always-on button-hint bar.
-// Rendering only — input loops live in main_media.c.
+// Rendering only — input loops live in main_music.c.
 #pragma once
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "media_id3.h"
-#include "media_lyrics.h"
+#include "music_id3.h"
+#include "music_lyrics.h"
 
 // repeat modes
 enum { REPEAT_OFF = 0, REPEAT_ALL = 1, REPEAT_ONE = 2 };
 
 typedef struct {
     char        path[256];
-    media_tags_t tags;
+    music_tags_t tags;
     const char *app_name;       // localized "Music" for the top bar (-> TR(s_music))
     const char *title;          // -> tags.title or the file name
     const char *artist;         // -> tags.artist or ""
@@ -92,6 +92,6 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
 // --- info screen (full tags + technical table) ---
 void ui_info_draw(const player_state_t *ps);
 
-// --- lyrics (model + parser in media_lyrics.h) ---
+// --- lyrics (model + parser in music_lyrics.h) ---
 // Draw the lyrics view; top_line is the first visible line.
 void ui_lyrics_draw(const player_state_t *ps, const lyrics_t *ly, int top_line, int active);

@@ -24,11 +24,11 @@ typedef struct {
     char lyrics[ID3_LYRICS_MAX];   // empty unless has_lyrics
     bool has_lyrics;
     bool found;                    // an ID3v2 tag was present
-} media_tags_t;
+} music_tags_t;
 
 // Parse ID3v2 text frames + USLT lyrics into *out (all UTF-8). Missing fields
 // become empty strings. Always clears *out first.
-void id3_read_tags(const char *path, media_tags_t *out);
+void id3_read_tags(const char *path, music_tags_t *out);
 
 // Locate the first APIC (embedded cover) WITHOUT reading the image into RAM:
 // returns 1 and sets *off (file offset of the image bytes), *len (image byte

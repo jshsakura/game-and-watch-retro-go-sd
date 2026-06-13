@@ -6,8 +6,8 @@
 // (persisted to SD), repeat/shuffle, seek, volume and screen-off. Controls are
 // always shown on a hint bar. Album-art thumbnails appear in the browser list.
 //
-// Rendering lives in media_ui.c; ID3 metadata in media_id3.c; the streaming MP3
-// engine in media_audio.c; album-art decode in media_cover.c.
+// Rendering lives in music_ui.c; ID3 metadata in music_id3.c; the streaming MP3
+// engine in music_audio.c; album-art decode in music_cover.c.
 
 #include <odroid_system.h>
 #include <string.h>
@@ -25,14 +25,14 @@
 #include "gw_audio.h"
 #include "common.h"
 #include "gui.h"
-#include "main_media.h"
-#include "media_id3.h"
-#include "media_audio.h"
-#include "media_cover.h"
-#include "media_ui.h"
+#include "main_music.h"
+#include "music_id3.h"
+#include "music_audio.h"
+#include "music_cover.h"
+#include "music_ui.h"
 #include "rg_rtc.h"
 
-#define MAX_ENTRIES   384   // per-folder cap; shares the MEDIA RAM region with code
+#define MAX_ENTRIES   384   // per-folder cap; shares the MUSIC RAM region with code
 #define NAME_MAX_LEN  128
 #define PATH_MAX_LEN  256
 #define ROW_HEIGHT    40
@@ -43,7 +43,7 @@
 #define THUMB_SZ      34
 #define META_N        24   // list thumbnail/meta cache (~2.4KB each) — keep many rows
                            // cached so scrolling back doesn't re-decode covers
-                           // (capped by the MEDIA overlay BSS budget)
+                           // (capped by the MUSIC overlay BSS budget)
 #define FAV_MAX       64
 
 enum { MODE_FOLDER = 0, MODE_FAV = 1 };
@@ -59,16 +59,16 @@ enum { MENU_INFO = 20, MENU_LYRICS = 21 };
 // i18n string with an English fallback when a language lacks the key.
 #define TR(field, fallback) ((curr_lang && curr_lang->field) ? curr_lang->field : (fallback))
 
-// Shared top bar for the music app, drawn here (not in media_ui) so it can use
+// Shared top bar for the music app, drawn here (not in music_ui) so it can use
 // the SAME system chrome as the launcher status bar: the ribbed Game & Watch
-// shell strip, the RGW logo, and the system clock + battery. media_ui calls this
+// shell strip, the RGW logo, and the system clock + battery. music_ui calls this
 // (declared extern there) for both the browser header and the now-playing deck,
 // so the homebrew app's top bar is identical to the rest of the device.
-#define MEDIA_STATUS_H 33   // == gui.c STATUS_HEIGHT
-void media_draw_topbar(const char *title, const char *right_label)
+#define MUSIC_STATUS_H 33   // == gui.c STATUS_HEIGHT
+void music_draw_topbar(const char *title, const char *right_label)
 {
     uint16_t main_c = curr_colors->main_c, bg = curr_colors->bg_c, sel = curr_colors->sel_c;
-    odroid_overlay_draw_fill_rect(0, 0, GW_LCD_WIDTH, MEDIA_STATUS_H, main_c);
+    odroid_overlay_draw_fill_rect(0, 0, GW_LCD_WIDTH, MUSIC_STATUS_H, main_c);
     odroid_overlay_draw_fill_rect(0, 1, GW_LCD_WIDTH, 2, bg);   // shell ribs
     odroid_overlay_draw_fill_rect(0, 4, GW_LCD_WIDTH, 2, bg);
     odroid_overlay_draw_fill_rect(0, 8, GW_LCD_WIDTH, 2, bg);
@@ -93,9 +93,9 @@ typedef struct {
     char name[NAME_MAX_LEN];
     bool is_dir;
     bool is_special;           // the "★ Favourites" shortcut row
-} media_entry_t;
+} music_entry_t;
 
-static media_entry_t entries[MAX_ENTRIES];
+static music_entry_t entries[MAX_ENTRIES];
 static int  entry_count, cursor, scroll;
 static char cur_path[PATH_MAX_LEN];
 static char g_root[PATH_MAX_LEN] = "/music";
@@ -125,7 +125,7 @@ typedef struct {
 } track_meta_t;
 static track_meta_t g_meta[META_N];
 static int g_meta_clock;
-static media_tags_t g_scan_tags;     // scratch for list metadata
+static music_tags_t g_scan_tags;     // scratch for list metadata
 
 // Decode at most one row per repaint so a settled list fills in top-to-bottom
 // (covers pop in ~a frame apart) instead of freezing while all decode at once.
@@ -148,7 +148,7 @@ static int scandir_cb(const rg_scandir_t *file, void *arg)
     if (file->basename[0] == '.') return RG_SCANDIR_CONTINUE;
     if (!file->is_dir && !has_ext(file->basename, ".mp3")
                       && !has_ext(file->basename, ".wav")) return RG_SCANDIR_CONTINUE;
-    media_entry_t *e = &entries[entry_count++];
+    music_entry_t *e = &entries[entry_count++];
     strncpy(e->name, file->basename, NAME_MAX_LEN - 1);
     e->name[NAME_MAX_LEN - 1] = '\0';
     e->is_dir = file->is_dir;
@@ -172,7 +172,7 @@ static bool scan_folder(void)
     if (strcmp(cur_path, g_root) == 0 && g_fav_count > 0 && entry_count < MAX_ENTRIES) {
         for (int i = entry_count; i > 0; i--) entries[i] = entries[i - 1];
         entry_count++;
-        media_entry_t *e = &entries[0];
+        music_entry_t *e = &entries[0];
         // no ★ in the text — the special row draws a ★ tile (like album art)
         snprintf(e->name, NAME_MAX_LEN, "%s (%d)", TR(s_favorite, "Favorites"), g_fav_count);
         e->is_dir = false; e->is_special = true;
@@ -191,7 +191,7 @@ static void scan_favourites(void)
     entry_count = cursor = scroll = 0;
     meta_invalidate();
     for (int i = 0; i < g_fav_count && entry_count < MAX_ENTRIES; i++) {
-        media_entry_t *e = &entries[entry_count++];
+        music_entry_t *e = &entries[entry_count++];
         strncpy(e->name, base_name(g_fav[i]), NAME_MAX_LEN - 1);
         e->name[NAME_MAX_LEN - 1] = '\0';
         e->is_dir = false; e->is_special = false;
@@ -442,7 +442,7 @@ static const char *strip_ext(const char *name, char *buf, size_t cap)
 static void list_item_at(int idx, list_item_t *out)
 {
     static char title[NAME_MAX_LEN], dur[16];
-    media_entry_t *e = &entries[idx];
+    music_entry_t *e = &entries[idx];
 
     if (e->is_special) { out->kind = LIST_SPECIAL; out->title = e->name; return; }
     if (e->is_dir)     { out->kind = LIST_DIR;     out->title = e->name; return; }
@@ -515,7 +515,7 @@ static void playback_feed(void);
 static bool playback_autoadvance(void);
 
 // Small album-art thumbnail for the Winamp deck — decoded once per track into
-// this static buffer (list-sized, cheap) and lent to media_ui via set_cover.
+// this static buffer (list-sized, cheap) and lent to music_ui via set_cover.
 #define DECK_COVER_SZ 56
 static uint16_t g_deck_cover[DECK_COVER_SZ * DECK_COVER_SZ];
 static bool     g_deck_has_cover;
@@ -985,7 +985,7 @@ static void music_player(int start_pi)
 // app entry + browser loop
 // ---------------------------------------------------------------------------
 
-void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+void app_main_music(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)load_state; (void)start_paused; (void)save_slot;
 
@@ -1041,7 +1041,7 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         if (moved) { dirty = true; settle = 8; }
 
         if (PRESSED(ODROID_INPUT_A) && entry_count > 0) {
-            media_entry_t *e = &entries[cursor];
+            music_entry_t *e = &entries[cursor];
             if (e->is_special) {
                 g_mode = MODE_FAV; scan_favourites(); dirty = true;
             } else if (e->is_dir) {

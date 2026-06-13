@@ -28,7 +28,7 @@
 #include "main_smw.h"
 #include "main_videopac.h"
 #include "main_celeste.h"
-#include "main_media.h"
+#include "main_music.h"
 #include "main_pico8.h"
 #include "main_tama.h"
 #include "main_pkmini.h"
@@ -1234,9 +1234,9 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_SMW_SIZE);
             app_main_smw(load_state, start_paused, save_slot);
         } else if (strcmp(newfile->name,"Music") == 0) {
-            memset(&_OVERLAY_MEDIA_BSS_START, 0x0, (size_t)&_OVERLAY_MEDIA_BSS_SIZE);
-            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_MEDIA_SIZE);
-            app_main_media(load_state, start_paused, save_slot);
+            memset(&_OVERLAY_MUSIC_BSS_START, 0x0, (size_t)&_OVERLAY_MUSIC_BSS_SIZE);
+            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_MUSIC_SIZE);
+            app_main_music(load_state, start_paused, save_slot);
         }
       }
     } else if(strcmp(system_name, "Tamagotchi") == 0) {

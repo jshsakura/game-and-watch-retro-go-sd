@@ -593,27 +593,27 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_CELESTE_BSS_SIZE = SIZEOF(.overlay_celeste_bss);
 
-  .overlay_media __RAM_EMU_START__ : {
+  .overlay_music __RAM_EMU_START__ : {
     . = ALIGN(4);
-    __ram_emu_media_start__ = .;
-    build/media/*.o (.data .data* .text .text* .rodata .rodata*)
+    __ram_emu_music_start__ = .;
+    build/music/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
-    _OVERLAY_MEDIA_LOAD_END = .;
+    _OVERLAY_MUSIC_LOAD_END = .;
   } AT > CORES
-  _OVERLAY_MEDIA_LOAD_START = LOADADDR(.overlay_media);
-  _OVERLAY_MEDIA_SIZE = SIZEOF(.overlay_media);
+  _OVERLAY_MUSIC_LOAD_START = LOADADDR(.overlay_music);
+  _OVERLAY_MUSIC_SIZE = SIZEOF(.overlay_music);
 
-  .overlay_media_bss _OVERLAY_MEDIA_LOAD_END : {
+  .overlay_music_bss _OVERLAY_MUSIC_LOAD_END : {
     . = ALIGN(4);
-    _OVERLAY_MEDIA_BSS_START = .;
-    build/media/*.o (.bss .bss*)
+    _OVERLAY_MUSIC_BSS_START = .;
+    build/music/*.o (.bss .bss*)
     . = ALIGN(4);
-    build/media/*.o (COMMON)
-    __ram_emu_media_end__ = .;
-    _OVERLAY_MEDIA_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_MEDIA_BSS_END) < __RAM_EMU_END__, "Error: MEDIA BSS overflow");
+    build/music/*.o (COMMON)
+    __ram_emu_music_end__ = .;
+    _OVERLAY_MUSIC_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_MUSIC_BSS_END) < __RAM_EMU_END__, "Error: MUSIC BSS overflow");
   }
-  _OVERLAY_MEDIA_BSS_SIZE = SIZEOF(.overlay_media_bss);
+  _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
 
   /* PICO-8 stub overlay → RAM, placed at HIGH end of RAM_EMU.
      The GPL build only includes the install-prompt stub (main_pico8_stub.c).

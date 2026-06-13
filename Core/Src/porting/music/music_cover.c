@@ -1,7 +1,7 @@
-// Album-art rendering — see media_cover.h.
+// Album-art rendering — see music_cover.h.
 
-#include "media_cover.h"
-#include "media_id3.h"
+#include "music_cover.h"
+#include "music_id3.h"
 #include "gw_lcd.h"
 #include "tjpgd.h"
 #include "lupng.h"

@@ -1,6 +1,6 @@
-// Lyrics parser — see media_lyrics.h.
+// Lyrics parser — see music_lyrics.h.
 
-#include "media_lyrics.h"
+#include "music_lyrics.h"
 #include <stdio.h>
 #include <string.h>
 
