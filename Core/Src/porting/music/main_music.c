@@ -856,7 +856,7 @@ static void music_player(int start_pi)
         audio_start_playing(AUDIO_BUFFER_LENGTH);
         music_audio_enable(1);   // Music app now owns the DMA buffer; the ISR feeds it
         g_audio_on = true;
-        ps.shuffle = false; ps.repeat = REPEAT_OFF;
+        ps.shuffle = false; ps.repeat = REPEAT_ALL;   // loop the playlist by default (last -> first)
     }
     ps.volume = odroid_audio_volume_get();
 
