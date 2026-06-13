@@ -856,7 +856,7 @@ static void music_player(int start_pi)
         audio_start_playing(AUDIO_BUFFER_LENGTH);
         music_audio_enable(1);   // Music app now owns the DMA buffer; the ISR feeds it
         g_audio_on = true;
-        ps.shuffle = false; ps.repeat = REPEAT_ALL;   // loop the playlist by default (last -> first)
+        ps.shuffle = false; ps.repeat = REPEAT_ALL;   // loop the playlist by default; GAME cycles repeat
     }
     ps.volume = odroid_audio_volume_get();
 
@@ -899,10 +899,10 @@ static void music_player(int start_pi)
                 if (view != VIEW_PLAY) { view = VIEW_PLAY; recompose = true; dirty = true; }
                 else break;
             }
-            // PAUSE (the stock retro-go menu hotkey; GAME also works) opens the
-            // options menu — volume + brightness sliders plus the track actions.
-            // (A toggles play/pause below.)
-            if (P(ODROID_INPUT_VOLUME) || P(ODROID_INPUT_START)) {
+            // PAUSE (the stock retro-go menu hotkey) opens the options menu —
+            // volume + brightness sliders plus the track actions. (A toggles
+            // play/pause, GAME cycles repeat, SELECT toggles shuffle, below.)
+            if (P(ODROID_INPUT_VOLUME)) {
                 int r = open_menu(&ps);
                 if (r == MENU_INFO) view = VIEW_INFO;
                 else if (r == MENU_LYRICS) view = VIEW_LYRICS;
@@ -914,6 +914,8 @@ static void music_player(int start_pi)
                 if (P(ODROID_INPUT_UP)) { int v = odroid_audio_volume_get(); if (v < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(v + 1); ps.volume = odroid_audio_volume_get(); dirty = true; }
                 if (P(ODROID_INPUT_DOWN)) { int v = odroid_audio_volume_get(); if (v > 0) odroid_audio_volume_set(v - 1); ps.volume = odroid_audio_volume_get(); dirty = true; }
                 if (P(ODROID_INPUT_SELECT)) { ps.shuffle = !ps.shuffle; dirty = true; }
+                if (P(ODROID_INPUT_START))  { ps.repeat = (ps.repeat + 1) % 3; dirty = true; }   // GAME: cycle repeat
+
                 if (P(ODROID_INPUT_POWER)) { screen_off = true; lcd_backlight_off(); }
 
                 // LEFT/RIGHT: tap = prev/next, hold = seek-scrub
