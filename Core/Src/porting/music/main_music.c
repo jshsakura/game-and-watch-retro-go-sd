@@ -378,6 +378,14 @@ static int pick_prev(int pi, int repeat)
     return (repeat == REPEAT_ALL) ? n - 1 : 0;
 }
 
+// TIME button: cycle the play mode off -> repeat -> repeat+shuffle -> off.
+static void cycle_play_mode(player_state_t *p)
+{
+    if (p->repeat == REPEAT_OFF)   { p->repeat = REPEAT_ALL; p->shuffle = false; }  // off -> repeat
+    else if (!p->shuffle)          { p->repeat = REPEAT_ALL; p->shuffle = true;  }  // repeat -> +shuffle
+    else                           { p->repeat = REPEAT_OFF; p->shuffle = false; }  // +shuffle -> off
+}
+
 // ---------------------------------------------------------------------------
 // browser list rendering
 // ---------------------------------------------------------------------------
@@ -899,10 +907,10 @@ static void music_player(int start_pi)
                 if (view != VIEW_PLAY) { view = VIEW_PLAY; recompose = true; dirty = true; }
                 else break;
             }
-            // PAUSE (the stock retro-go menu hotkey) opens the options menu —
-            // volume + brightness sliders plus the track actions. (A toggles
-            // play/pause, GAME cycles repeat, SELECT toggles shuffle, below.)
-            if (P(ODROID_INPUT_VOLUME)) {
+            // PAUSE/SET or GAME opens the options menu (volume + brightness
+            // sliders plus the track actions). A toggles play/pause and TIME
+            // cycles the play mode (repeat / repeat+shuffle / off), below.
+            if (P(ODROID_INPUT_VOLUME) || P(ODROID_INPUT_START)) {
                 int r = open_menu(&ps);
                 if (r == MENU_INFO) view = VIEW_INFO;
                 else if (r == MENU_LYRICS) view = VIEW_LYRICS;
@@ -913,8 +921,7 @@ static void music_player(int start_pi)
                 if (P(ODROID_INPUT_A)) { ps.paused = !ps.paused; dirty = true; }
                 if (P(ODROID_INPUT_UP)) { int v = odroid_audio_volume_get(); if (v < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(v + 1); ps.volume = odroid_audio_volume_get(); dirty = true; }
                 if (P(ODROID_INPUT_DOWN)) { int v = odroid_audio_volume_get(); if (v > 0) odroid_audio_volume_set(v - 1); ps.volume = odroid_audio_volume_get(); dirty = true; }
-                if (P(ODROID_INPUT_SELECT)) { ps.shuffle = !ps.shuffle; dirty = true; }
-                if (P(ODROID_INPUT_START))  { ps.repeat = (ps.repeat + 1) % 3; dirty = true; }   // GAME: cycle repeat
+                if (P(ODROID_INPUT_SELECT)) { cycle_play_mode(&ps); dirty = true; }   // TIME: off->repeat->+shuffle
 
                 if (P(ODROID_INPUT_POWER)) { screen_off = true; lcd_backlight_off(); }
 
@@ -1061,9 +1068,10 @@ void app_main_music(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             dirty = true;
         }
 
-        // PAUSE (the stock retro-go menu hotkey; GAME also works) opens the
-        // shared options menu: volume + brightness, plus the selected track's
-        // Favorite / Info / Lyrics.
+        // TIME cycles the play mode (repeat / repeat+shuffle / off), matching the
+        // now-playing deck. PAUSE/SET or GAME opens the shared options menu
+        // (volume + brightness, plus the selected track's Favorite / Info / Lyrics).
+        if (PRESSED(ODROID_INPUT_SELECT)) { cycle_play_mode(&ps); dirty = true; }
         if (PRESSED(ODROID_INPUT_VOLUME) || PRESSED(ODROID_INPUT_START)) {
             int r = open_browser_menu();
             if (r == MENU_INFO)        view_selected_track(false);
