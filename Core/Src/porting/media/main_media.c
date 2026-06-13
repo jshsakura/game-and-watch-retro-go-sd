@@ -218,7 +218,7 @@ static void move_cursor(int delta)
     if (cursor < 0) cursor = 0;
     if (cursor >= entry_count) cursor = entry_count - 1;
     if (cursor < scroll) scroll = cursor;
-    if (cursor >= scroll + VISIBLE_ROWS) scroll = cursor - VISIBLE_ROWS + 1;
+    if (cursor >= scroll + LIST_VISIBLE_ROWS) scroll = cursor - LIST_VISIBLE_ROWS + 1;
 }
 
 // ---------------------------------------------------------------------------
