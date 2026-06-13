@@ -907,10 +907,10 @@ static void music_player(int start_pi)
                 if (view != VIEW_PLAY) { view = VIEW_PLAY; recompose = true; dirty = true; }
                 else break;
             }
-            // PAUSE/SET or GAME opens the options menu (volume + brightness
-            // sliders plus the track actions). A toggles play/pause and TIME
-            // cycles the play mode (repeat / repeat+shuffle / off), below.
-            if (P(ODROID_INPUT_VOLUME) || P(ODROID_INPUT_START)) {
+            // PAUSE/SET opens the options menu (volume + brightness sliders plus
+            // the track actions). A toggles play/pause and TIME cycles the play
+            // mode (repeat / repeat+shuffle / off), below.
+            if (P(ODROID_INPUT_VOLUME)) {
                 int r = open_menu(&ps);
                 if (r == MENU_INFO) view = VIEW_INFO;
                 else if (r == MENU_LYRICS) view = VIEW_LYRICS;
@@ -1069,10 +1069,10 @@ void app_main_music(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         }
 
         // TIME cycles the play mode (repeat / repeat+shuffle / off), matching the
-        // now-playing deck. PAUSE/SET or GAME opens the shared options menu
-        // (volume + brightness, plus the selected track's Favorite / Info / Lyrics).
+        // now-playing deck. PAUSE/SET opens the shared options menu (volume +
+        // brightness, plus the selected track's Favorite / Info / Lyrics).
         if (PRESSED(ODROID_INPUT_SELECT)) { cycle_play_mode(&ps); dirty = true; }
-        if (PRESSED(ODROID_INPUT_VOLUME) || PRESSED(ODROID_INPUT_START)) {
+        if (PRESSED(ODROID_INPUT_VOLUME)) {
             int r = open_browser_menu();
             if (r == MENU_INFO)        view_selected_track(false);
             else if (r == MENU_LYRICS) view_selected_track(true);
