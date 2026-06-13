@@ -125,6 +125,11 @@ static track_meta_t g_meta[META_N];
 static int g_meta_clock;
 static media_tags_t g_scan_tags;     // scratch for list metadata
 
+// Decode at most one row per repaint so a settled list fills in top-to-bottom
+// (covers pop in ~a frame apart) instead of freezing while all decode at once.
+static int  g_decode_budget;
+static bool g_decode_pending;        // set when a row was deferred -> repaint again
+
 static bool has_ext(const char *name, const char *ext);
 static const track_meta_t *meta_get(int entry_idx);
 
@@ -422,12 +427,6 @@ static const track_meta_t *meta_get(int entry_idx)
 // bare file name, so the list stays smooth; metadata fills in once movement
 // settles. Set by the app loop.
 static bool g_list_busy;
-
-// Decode at most one row per repaint so a settled screen fills in top-to-bottom
-// (each cover pops in ~a frame apart) instead of freezing while all of them
-// decode at once. g_decode_pending tells the loop to repaint again for the rest.
-static int  g_decode_budget;
-static bool g_decode_pending;
 
 static const char *strip_ext(const char *name, char *buf, size_t cap)
 {
