@@ -26,6 +26,7 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_favorite = "お気に入り",
     .s_repeat = "リピート",
     .s_shuffle = "シャッフル",
+    .s_brightness = "明るさ",
     .s_info = "情報",
     .s_lyrics = "歌詞",
     // Core\Src\porting\gb\main_gb.c =======================================
@@ -306,6 +307,8 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_Time_Format = "%02d:%02d:%02d",
 
     // Media browser (homebrew document/media viewer)
+    .s_media_hint = "A:開く  B:戻る",
+    .s_media_empty = "(空)",
     .fmt_Title_Date_Format = ja_jp_fmt_Title_Date_Format,
     .fmtDate = ja_jp_fmt_Date,
     .fmtTime = ja_jp_fmt_Time,

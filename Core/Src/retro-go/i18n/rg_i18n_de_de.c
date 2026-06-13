@@ -27,6 +27,7 @@ const lang_t lang_de_de LANG_DATA = {
     .s_favorite = "Favorit",
     .s_repeat = "Wiederholen",
     .s_shuffle = "Zufall",
+    .s_brightness = "Helligkeit",
     .s_info = "Info",
     .s_lyrics = "Liedtext",
 
@@ -285,6 +286,8 @@ const lang_t lang_de_de LANG_DATA = {
     .s_Date_Format = "%s der %02d.%02d.20%02d",
     .s_Time_Format = "%02d:%02d:%02d",
     // Media browser (homebrew document/media viewer)
+    .s_media_hint = "A:Öffnen  B:Zurück",
+    .s_media_empty = "(leer)",
     .fmt_Title_Date_Format = de_de_fmt_Title_Date_Format,
     .fmtDate = de_de_fmt_Date,
     .fmtTime = de_de_fmt_Time,

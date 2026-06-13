@@ -258,6 +258,8 @@ typedef struct
     const char *s_Turbo_AB;
 
     // Media browser (homebrew document/media viewer)
+    const char *s_media_hint;
+    const char *s_media_empty;
 
     //=====================================================================
     // Core\Src\porting\media\main_media.c (Music app) =====================
@@ -272,6 +274,7 @@ typedef struct
     const char *s_favorite;
     const char *s_repeat;
     const char *s_shuffle;
+    const char *s_brightness;
     const char *s_info;
     const char *s_lyrics;
     const char *s_empty_music;   // empty-folder hint headline

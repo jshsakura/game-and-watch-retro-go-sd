@@ -25,6 +25,7 @@ const lang_t lang_zh_cn LANG_DATA = {
     .s_favorite = "收藏",
     .s_repeat = "重复",
     .s_shuffle = "随机",
+    .s_brightness = "亮度",
     .s_info = "信息",
     .s_lyrics = "歌词",
     
@@ -297,6 +298,8 @@ const lang_t lang_zh_cn LANG_DATA = {
     .s_Time_Format = "%02d:%02d:%02d",
 
     // Media browser (homebrew document/media viewer)
+    .s_media_hint = "A:打开  B:返回",
+    .s_media_empty = "(空)",
     .fmt_Title_Date_Format = zh_cn_fmt_Title_Date_Format,
     .fmtDate = zh_cn_fmt_Date,
     .fmtTime = zh_cn_fmt_Time,
