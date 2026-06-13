@@ -41,8 +41,9 @@
 #define LIST_TOP      HEADER_HEIGHT
 #define VISIBLE_ROWS  ((GW_LCD_HEIGHT - HEADER_HEIGHT - FOOTER_HEIGHT) / ROW_HEIGHT)
 #define THUMB_SZ      34
-#define META_N        48   // list thumbnail/meta cache (~2.4KB each) — keep many rows
+#define META_N        24   // list thumbnail/meta cache (~2.4KB each) — keep many rows
                            // cached so scrolling back doesn't re-decode covers
+                           // (capped by the MEDIA overlay BSS budget)
 #define FAV_MAX       64
 
 enum { MODE_FOLDER = 0, MODE_FAV = 1 };
