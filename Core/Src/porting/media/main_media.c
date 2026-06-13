@@ -1,6 +1,6 @@
 // Music — a themed, native-feeling MP3 player for the Game & Watch.
 //
-// Browse /music (falls back to /media), play with a Winamp-style now-playing
+// Browse /music on the SD card, play with a Winamp-style now-playing
 // "deck" (7-seg LCD time, scrolling title marquee, live spectrum analyzer,
 // position slider and volume), full tag info and lyrics views, favourites
 // (persisted to SD), repeat/shuffle, seek, volume and screen-off. Controls are
@@ -995,12 +995,7 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     g_mode = MODE_FOLDER;
     strcpy(g_root, "/music");
     fav_load();
-    if (!scan_folder()) {            // fall back to /media
-        strcpy(cur_path, "/media");
-        strcpy(g_root, "/media");
-        fav_load();
-        scan_folder();
-    }
+    scan_folder();
 
     odroid_gamepad_state_t joy, prev;
     memset(&prev, 0, sizeof(prev));
