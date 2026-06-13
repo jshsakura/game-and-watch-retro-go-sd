@@ -808,13 +808,6 @@ static void playback_feed(void)
     ps.sec = (int)(g_played / AUDIO_SAMPLE_RATE);
 }
 
-// Called repeatedly from inside the album-art decode (cover_yield_cb) so a big
-// cover can't starve the ISR — keep the ring topped up while we're playing.
-static void cover_yield(void)
-{
-    if (g_playing && !ps.paused) audio_pump(AUDIO_PUMP_TARGET);
-}
-
 // Seek to a fraction of the track, muting the ISR while the ring is reset (so
 // the core consumer can't race the reset); the next playback_feed un-mutes.
 static void seek_to(float frac)
@@ -852,7 +845,6 @@ static void music_player(int start_pi)
         common_emu_state.pause_frames = 0;
         audio_start_playing(AUDIO_BUFFER_LENGTH);
         music_audio_enable(1);   // Music app now owns the DMA buffer; the ISR feeds it
-        cover_yield_cb = cover_yield;   // keep audio alive during album-art decodes
         g_audio_on = true;
         ps.shuffle = false; ps.repeat = REPEAT_OFF;
     }
@@ -1058,7 +1050,7 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         if (PRESSED(ODROID_INPUT_B)) {
             if (g_mode == MODE_FAV) { g_mode = MODE_FOLDER; strcpy(cur_path, g_root); scan_folder(); }
-            else if (!go_parent()) { music_audio_enable(0); cover_yield_cb = 0; odroid_system_switch_app(APPID_LAUNCHER); }  // noreturn; hand audio back
+            else if (!go_parent()) { music_audio_enable(0); odroid_system_switch_app(APPID_LAUNCHER); }  // noreturn; hand audio back
             dirty = true;
         }
 

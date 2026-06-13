@@ -27,7 +27,3 @@ bool cover_render_card(int n, bool is_png, int bx, int by, int bw, int bh);
 // Decode the track's cover into an sz×sz RGB565 thumbnail (JPEG only; PNG
 // thumbnails are skipped). Returns true on success.
 bool cover_thumb(const char *path, uint16_t *out, int sz);
-
-// Optional yield called during the (slow) cover decode so the caller can keep
-// audio alive. The Music app points it at a ring-pump.
-extern void (*cover_yield_cb)(void);
