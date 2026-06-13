@@ -27,6 +27,7 @@ static int       g_chan;        // channels of the last frame
 
 static long      g_data_off;    // first audio byte (past ID3v2 tag / WAV header)
 static long      g_audio_size;  // bytes of audio data (file size - g_data_off)
+static int       g_duration;    // track length in sec (Xing/Info frame count, else CBR estimate)
 
 // WAV (uncompressed PCM) support — reuses the same ring/resample path as MP3.
 static bool      g_is_wav;
@@ -207,6 +208,8 @@ void audio_pump(int target)
 
 // --- open / close / seek ----------------------------------------------------
 
+static int mp3_probe_duration(FILE *f, long data_off, long audio_size);  // defined below
+
 static void reset_decoder(void)
 {
     mp3dec_init(&g_mp3);
@@ -225,7 +228,7 @@ bool audio_open(const char *path)
     g_fp = fopen(path, "rb");
     g_step = ((uint32_t)44100 << 16) / AUDIO_SAMPLE_RATE;
     g_bitrate = 0; g_hz = 0; g_chan = 0;
-    g_data_off = 0; g_audio_size = 0;
+    g_data_off = 0; g_audio_size = 0; g_duration = 0;
     g_is_wav = false; g_wav_pos = 0;
 
     if (g_fp) {
@@ -245,6 +248,7 @@ bool audio_open(const char *path)
             fseek(g_fp, 0, SEEK_END);
             long sz = ftell(g_fp);
             g_audio_size = sz - g_data_off;
+            g_duration = mp3_probe_duration(g_fp, g_data_off, g_audio_size);
         }
         fseek(g_fp, g_data_off, SEEK_SET);
     }
@@ -273,6 +277,58 @@ void audio_seek(float frac)
     audio_pump(AUDIO_PUMP_TARGET);
 }
 
+// MPEG Layer III samples-per-frame: 1152 for MPEG1 (>=32 kHz), 576 for MPEG2/2.5.
+static inline int mp3_spf(int hz) { return hz >= 32000 ? 1152 : 576; }
+
+// Look for a LAME/Xing ("Xing") or CBR ("Info") VBR header inside the first MPEG
+// frame and return its total-frame count (0 if absent). The tag sits a few bytes
+// past the frame header+side-info, so scan the frame's leading bytes for it.
+static int mp3_xing_frames(const uint8_t *p, int len)
+{
+    int lim = len - 12; if (lim > 40) lim = 40;
+    for (int i = 0; i < lim; i++) {
+        bool tag = (p[i] == 'X' && p[i+1] == 'i' && p[i+2] == 'n' && p[i+3] == 'g') ||
+                   (p[i] == 'I' && p[i+1] == 'n' && p[i+2] == 'f' && p[i+3] == 'o');
+        if (!tag) continue;
+        uint32_t flags = ((uint32_t)p[i+4] << 24) | ((uint32_t)p[i+5] << 16) |
+                         ((uint32_t)p[i+6] << 8)  |  (uint32_t)p[i+7];
+        if (!(flags & 0x1)) return 0;            // frame-count field not present
+        int j = i + 8;
+        return (int)(((uint32_t)p[j] << 24) | ((uint32_t)p[j+1] << 16) |
+                     ((uint32_t)p[j+2] << 8) | (uint32_t)p[j+3]);
+    }
+    return 0;
+}
+
+// Estimate an MP3's length in seconds. Prefers the exact Xing/Info frame count
+// (correct for VBR, where a single frame's bitrate is not the file average);
+// falls back to a bitrate*size estimate for plain CBR with no header. Uses the
+// shared g_mp3/g_in/g_pcm scratch — only call when not mid-playback.
+static int mp3_probe_duration(FILE *f, long data_off, long audio_size)
+{
+    if (fseek(f, data_off, SEEK_SET) != 0) return 0;
+    int got = (int)fread(g_in, 1, 4096, f);
+    if (got <= 0) return 0;
+
+    mp3dec_init(&g_mp3);
+    mp3dec_frame_info_t info;
+    int pos = 0, br = 0;
+    while (pos < got) {
+        int fs = pos;
+        int s = mp3dec_decode_frame(&g_mp3, g_in + pos, got - pos, g_pcm, &info);
+        if (info.frame_bytes == 0) break;
+        if (info.hz > 0) {                       // a real frame header — check for Xing/Info
+            int frames = mp3_xing_frames(g_in + fs, info.frame_bytes);
+            if (frames > 0)
+                return (int)((long long)frames * mp3_spf(info.hz) / info.hz);
+        }
+        pos += info.frame_bytes;
+        if (s > 0 && info.bitrate_kbps > 0) { br = info.bitrate_kbps; break; }  // CBR
+    }
+    if (br <= 0) return 0;
+    return (int)((long long)audio_size * 8 / ((long long)br * 1000));
+}
+
 int audio_duration_sec(void)
 {
     if (g_is_wav) {
@@ -280,6 +336,7 @@ int audio_duration_sec(void)
         if (fb <= 0 || g_wav_hz <= 0) return 0;
         return (int)(g_audio_size / fb / g_wav_hz);
     }
+    if (g_duration > 0) return g_duration;   // exact Xing/Info length from audio_open
     if (g_bitrate <= 0 || g_audio_size <= 0) return 0;
     return (int)((long long)g_audio_size * 8 / ((long long)g_bitrate * 1000));
 }
@@ -300,27 +357,14 @@ int audio_quick_duration(const char *path)
 
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
 
     uint8_t h[10];
     long off = 0;
+    fseek(f, 0, SEEK_SET);
     if (fread(h, 1, 10, f) == 10 && memcmp(h, "ID3", 3) == 0)
         off = 10 + (long)(((uint32_t)(h[6] & 0x7f) << 21) | ((uint32_t)(h[7] & 0x7f) << 14) |
                           ((uint32_t)(h[8] & 0x7f) << 7) | (uint32_t)(h[9] & 0x7f));
-    fseek(f, off, SEEK_SET);
-    int got = (int)fread(g_in, 1, 4096, f);     // reuse input buffer (not playing)
+    int dur = mp3_probe_duration(f, off, sz - off);   // Xing/Info VBR count, else CBR estimate
     fclose(f);
-    if (got <= 0) return 0;
-
-    mp3dec_init(&g_mp3);
-    mp3dec_frame_info_t info;
-    int pos = 0, br = 0;
-    while (pos < got) {
-        int s = mp3dec_decode_frame(&g_mp3, g_in + pos, got - pos, g_pcm, &info);
-        pos += info.frame_bytes;
-        if (info.frame_bytes == 0) break;
-        if (s > 0 && info.bitrate_kbps > 0) { br = info.bitrate_kbps; break; }
-    }
-    if (br <= 0) return 0;
-    return (int)((long long)(sz - off) * 8 / ((long long)br * 1000));
+    return dur;
 }
