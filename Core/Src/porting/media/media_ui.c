@@ -701,8 +701,11 @@ void ui_player_dynamic(const player_state_t *ps)
 
     ui_fill(INFO_X, SEG_Y, SCR_W - INFO_X - 8, SEG_H, lcd);
     char info[40];
-    int br = audio_bitrate_kbps();
-    snprintf(info, sizeof(info), "%d kbps", br > 0 ? br : 0);
+    // VBR bitrate jumps every frame — latch it and refresh only once per second
+    // so the readout is steady instead of flickering.
+    static int s_br = 0, s_br_sec = -1;
+    if (ps->sec != s_br_sec) { s_br = audio_bitrate_kbps(); s_br_sec = ps->sec; }
+    snprintf(info, sizeof(info), "%d kbps", s_br > 0 ? s_br : 0);
     ui_text(INFO_X, SEG_Y + 1, SCR_W - INFO_X - 8, info, lit, lcd);
     int hz = audio_src_hz(); if (hz <= 0) hz = VIS_FS;
     snprintf(info, sizeof(info), "%d.%dkHz %s", hz / 1000, (hz % 1000) / 100,

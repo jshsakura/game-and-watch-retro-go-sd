@@ -612,17 +612,8 @@ static bool vol_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t ev, uint32_t
 // longer than a menu frame, so filling one half per repaint never underruns.
 static void player_audio_service(void)
 {
-    int16_t *buf = audio_get_active_buffer();
-    int len = audio_get_buffer_length();
-    int32_t vol = common_emu_sound_get_volume();
-    bool paused = !g_ps || g_ps->paused;
-    for (int i = 0; i < len; i++) {
-        int16_t sm = (paused || audio_ring_count() == 0) ? 0 : audio_pull();
-        buf[i] = (int16_t)((sm * vol) >> 8);
-        if (!(i & 1)) ui_vis_push(sm);
-    }
-    if (!paused) { g_played += len; audio_pump(AUDIO_PUMP_TARGET); }
-    common_emu_sound_sync(false);
+    playback_feed();                // top up the ring + hand the ISR vol/play state
+    common_emu_sound_sync(false);   // pace to the DMA (advanced by the ISR)
 }
 
 static void player_repaint(void)
@@ -777,12 +768,8 @@ static void playback_load(int pi)
     g_playing = true;
     ps.paused = false; g_played = 0; ps.scrub = -1.0f;
     ps.app_name = TR(s_music, "Music");
-
-    // Loading (tag read + open + decode + album-art JPEG) blocks the main loop,
-    // so the DMA would otherwise replay the previous buffer = a "drrrk" between
-    // tracks. Silence both DMA halves first so the gap is clean silence instead.
-    audio_clear_active_buffer();
-    audio_clear_inactive_buffer();
+    music_audio_set(0, 0);   // mute the ISR while we reset/reopen the ring (avoids a reset race)
+    music_audio_setpos(0);   // new track starts at 0 (the ISR advances from here)
 
     pl_path(pi, ps.path, sizeof(ps.path));
     id3_read_tags(ps.path, &ps.tags);
@@ -808,22 +795,35 @@ static void playback_load(int pi)
     ui_player_set_cover(g_deck_cover, DECK_COVER_SZ, g_deck_has_cover);
 }
 
-// Feed one DMA half from the decoded ring (silence when paused/stopped/empty),
-// advance the play position and pump the decoder. Called every frame by BOTH
-// the now-playing loop and the browser loop so audio never stops while browsing.
+// Keep the (core, gw_audio) ring topped up and hand the SAI ISR the current
+// volume / play state + read back the position. The ISR (music_fill) does the
+// actual DMA fill, decoupled from rendering, so a slow frame can't starve the
+// ~22ms DMA buffer (no more ticks) — and it lives in the main firmware, so the
+// audio interrupt never calls into this overlay (no brick).
 static void playback_feed(void)
 {
-    int16_t *buf = audio_get_active_buffer();
-    int len = audio_get_buffer_length();
-    int32_t vol = common_emu_sound_get_volume();
-    bool silent = !g_playing || ps.paused || audio_ring_count() == 0;
-    for (int i = 0; i < len; i++) {
-        int16_t sm = silent ? 0 : audio_pull();
-        buf[i] = (int16_t)((sm * vol) >> 8);
-        if (!(i & 1)) ui_vis_push(sm);
-    }
-    if (g_playing && !ps.paused) { g_played += len; audio_pump(AUDIO_PUMP_TARGET); }
+    music_audio_set(common_emu_sound_get_volume(), g_playing && !ps.paused);
+    if (g_playing && !ps.paused) audio_pump(AUDIO_PUMP_TARGET);
+    g_played = music_audio_pos();
     ps.sec = (int)(g_played / AUDIO_SAMPLE_RATE);
+}
+
+// Called repeatedly from inside the album-art decode (cover_yield_cb) so a big
+// cover can't starve the ISR — keep the ring topped up while we're playing.
+static void cover_yield(void)
+{
+    if (g_playing && !ps.paused) audio_pump(AUDIO_PUMP_TARGET);
+}
+
+// Seek to a fraction of the track, muting the ISR while the ring is reset (so
+// the core consumer can't race the reset); the next playback_feed un-mutes.
+static void seek_to(float frac)
+{
+    music_audio_set(0, 0);
+    audio_seek(frac);
+    uint32_t pos = (uint32_t)(frac * ps.total * AUDIO_SAMPLE_RATE);
+    music_audio_setpos(pos);
+    g_played = pos;
 }
 
 // At end of track advance to the next (per shuffle/repeat), or stop at the end
@@ -835,6 +835,7 @@ static bool playback_autoadvance(void)
     int n = pick_next(g_play_pi, ps.shuffle, ps.repeat);
     if (n >= 0) { playback_load(n); return true; }
     g_playing = false;
+    music_audio_set(0, 0);          // playlist ended -> ISR outputs silence
     return true;
 }
 
@@ -850,6 +851,8 @@ static void music_player(int start_pi)
         common_emu_state.skip_frames = 0;
         common_emu_state.pause_frames = 0;
         audio_start_playing(AUDIO_BUFFER_LENGTH);
+        music_audio_enable(1);   // Music app now owns the DMA buffer; the ISR feeds it
+        cover_yield_cb = cover_yield;   // keep audio alive during album-art decodes
         g_audio_on = true;
         ps.shuffle = false; ps.repeat = REPEAT_OFF;
     }
@@ -921,10 +924,10 @@ static void music_player(int start_pi)
                 }
                 else if (lr_down && !now) {
                     lr_down = false;
-                    if (scrubbing) { audio_seek(scrub); g_played = (uint32_t)(scrub * ps.total * AUDIO_SAMPLE_RATE); scrubbing = false; ps.scrub = -1.0f; dirty = true; }
+                    if (scrubbing) { seek_to(scrub); scrubbing = false; ps.scrub = -1.0f; dirty = true; }
                     else if (lr_dir > 0) { int n = pick_next(pi, ps.shuffle, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } }
-                    else { if (ps.sec > 3) { audio_seek(0); g_played = 0; dirty = true; }
-                           else { int n = pick_prev(pi, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } else { audio_seek(0); g_played = 0; dirty = true; } } }
+                    else { if (ps.sec > 3) { seek_to(0); dirty = true; }
+                           else { int n = pick_prev(pi, REPEAT_ALL); if (n >= 0 && n != pi) { pi = n; reload = true; } else { seek_to(0); dirty = true; } } }
                 }
             } else if (view == VIEW_LYRICS && !ly.synced) {
                 if (P(ODROID_INPUT_UP) && lyr_scroll > 0) { lyr_scroll--; dirty = true; }
@@ -935,7 +938,8 @@ static void music_player(int start_pi)
         prev = joy;
         if (reload) continue;
 
-        playback_feed();   // feed the DMA + advance position (shared with the browser loop)
+        playback_feed();   // top up the ring + ISR vol/play state + position
+        audio_vis_feed();  // feed the analyzer from the play position (smooth)
 
         // render the active view
         if (!screen_off) {
@@ -1054,7 +1058,7 @@ void app_main_media(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         if (PRESSED(ODROID_INPUT_B)) {
             if (g_mode == MODE_FAV) { g_mode = MODE_FOLDER; strcpy(cur_path, g_root); scan_folder(); }
-            else if (!go_parent()) odroid_system_switch_app(APPID_LAUNCHER);  // noreturn
+            else if (!go_parent()) { music_audio_enable(0); cover_yield_cb = 0; odroid_system_switch_app(APPID_LAUNCHER); }  // noreturn; hand audio back
             dirty = true;
         }
 

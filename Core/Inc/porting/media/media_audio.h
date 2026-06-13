@@ -20,9 +20,9 @@ void audio_close(void);
 
 void    audio_ring_reset(void);
 void    audio_pump(int target);        // decode-ahead until ring >= target
-int16_t audio_pull(void);              // one mono sample (0 if empty)
 int     audio_ring_count(void);
 bool    audio_eof(void);               // decode reached end of stream
+void    audio_vis_feed(void);          // push newly-played samples to the analyzer
 
 // Reposition playback to a fraction [0,1) of the audio data. Re-syncs the
 // decoder, clears the ring and re-pumps.

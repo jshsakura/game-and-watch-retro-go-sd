@@ -110,10 +110,16 @@ int cover_load(const char *path, bool *is_png)
 
 typedef struct { FILE *f; long remain; } jpg_src_t;
 
+// Optional yield, called repeatedly during the (slow) cover decode. The Music
+// app points it at a ring-pump so background playback doesn't stall on a big
+// album-art decode. NULL elsewhere -> no-op.
+void (*cover_yield_cb)(void) = 0;
+
 // tjpgd input: read bytes into buf, or skip them when buf == NULL. Streams from
 // the file so the compressed JPEG is never fully resident in RAM.
 static size_t jpg_in(JDEC *jd, uint8_t *buf, size_t len)
 {
+    if (cover_yield_cb) cover_yield_cb();
     jpg_src_t *s = (jpg_src_t *)jd->device;
     if (len > (size_t)s->remain) len = (size_t)s->remain;
     if (buf) {
@@ -239,6 +245,7 @@ typedef struct { FILE *f; long remain; } file_reader_t;
 // to g_scratch via scratch_alloc).
 static size_t file_read(void *out, size_t size, size_t count, void *u)
 {
+    if (cover_yield_cb) cover_yield_cb();
     file_reader_t *r = (file_reader_t *)u;
     size_t want = size * count;
     if (want > (size_t)r->remain) want = (size_t)r->remain;
