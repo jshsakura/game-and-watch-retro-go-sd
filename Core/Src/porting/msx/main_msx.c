@@ -953,9 +953,9 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
                 machine->slotInfo[i].slot = 1;
                 machine->slotInfo[i].subslot = 0;
                 machine->slotInfo[i].startPage = 0;
-                machine->slotInfo[i].pageCount = 16;
-                machine->slotInfo[i].romType = ROM_MSXDOS2;
-                strcpy(machine->slotInfo[i].name, "/bios/msx/MSXDOS23.ROM");
+                machine->slotInfo[i].pageCount = 8;
+                machine->slotInfo[i].romType = ROM_SUNRISEIDE;
+                strcpy(machine->slotInfo[i].name, "/bios/msx/Nextor.rom");
                 i++;
             }
 
@@ -1043,9 +1043,9 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
                 machine->slotInfo[i].slot = 1;
                 machine->slotInfo[i].subslot = 0;
                 machine->slotInfo[i].startPage = 0;
-                machine->slotInfo[i].pageCount = 16;
-                machine->slotInfo[i].romType = ROM_MSXDOS2;
-                strcpy(machine->slotInfo[i].name, "/bios/msx/MSXDOS23.ROM");
+                machine->slotInfo[i].pageCount = 8;
+                machine->slotInfo[i].romType = ROM_SUNRISEIDE;
+                strcpy(machine->slotInfo[i].name, "/bios/msx/Nextor.rom");
                 i++;
             }
 
@@ -1790,7 +1790,6 @@ static void insertGame() {
         }
         case MSX_GAME_HDIDE:
         {
-            insertCartridge(properties, 0, CARTNAME_SUNRISEIDE, NULL, ROM_SUNRISEIDE, -1);
             insertCartridge(properties, 1, CARTNAME_SNATCHER, NULL, ROM_SNATCHER, -1);
             insertDiskette(properties, 1, current_disk_path, NULL, -1);
             break;

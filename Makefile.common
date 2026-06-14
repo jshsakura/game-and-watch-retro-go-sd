@@ -1402,10 +1402,9 @@ prepare_msx_bios_files: create_sd_folders
 	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2P.rom" $(SD_FOLDER)/bios/msx/
 	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2PEXT.rom" $(SD_FOLDER)/bios/msx/
 	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2PMUS.rom" $(SD_FOLDER)/bios/msx/
-	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSXDOS23.ROM" $(SD_FOLDER)/bios/msx/
+	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/Nextor.rom" $(SD_FOLDER)/bios/msx/
 	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSXKANJI.rom" $(SD_FOLDER)/bios/msx/
 	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/PANASONICDISK.rom" $(SD_FOLDER)/bios/msx/
-	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/SUNRISEIDE.rom" $(SD_FOLDER)/bios/msx/
     # PANASONICDISK_.rom is a patched version of PANASONICDISK.rom to disable the 2nd FDD
     # this is allowing to free some ram, which is needed for some games. It could be done by pressing
     # ctrl key at boot using original bios, but using this patched version, the user will have nothing

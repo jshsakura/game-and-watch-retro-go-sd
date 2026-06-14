@@ -29,7 +29,7 @@ echo "const char *ROM_NAME = \"$INFILE\";" >> $OUTFILE
 extension="${INFILE##*.}"
 echo "const char *ROM_EXT = \"$extension\";" >> $OUTFILE
 
-rom_mapper=$(python3 ../tools/findblueMsxMapper.py ../roms/msx_bios/msxromdb.xml "$INFILE")
+rom_mapper=$(python3 ../external/blueMSX-go/findblueMsxMapper.py ../external/blueMSX-go/system/bluemsx/Databases/msxromdb.xml "$INFILE")
 echo "unsigned int ROM_MAPPER = $rom_mapper;" >> $OUTFILE
 
 echo "Done!"
