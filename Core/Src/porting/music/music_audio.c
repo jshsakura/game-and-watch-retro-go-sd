@@ -187,7 +187,13 @@ static bool decode_frame(void)
                     g_mono[i] = g_pcm[i];
             g_frame_n = samples;
             if (info.hz > 0) { g_hz = info.hz; g_step = ((uint32_t)info.hz << 16) / AUDIO_SAMPLE_RATE; }
-            if (info.bitrate_kbps > 0) g_bitrate = info.bitrate_kbps;
+            if (info.bitrate_kbps > 0) {
+                g_bitrate = info.bitrate_kbps;
+                // If the open-time probe couldn't derive a track average (no Xing
+                // and no duration), latch the FIRST frame's bitrate once so the
+                // readout is steady instead of following each VBR frame.
+                if (g_avg_bitrate <= 0) g_avg_bitrate = info.bitrate_kbps;
+            }
             if (info.channels > 0) g_chan = info.channels;
             return true;
         }
