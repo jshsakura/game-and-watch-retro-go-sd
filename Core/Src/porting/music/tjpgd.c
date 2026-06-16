@@ -882,9 +882,13 @@ JRESULT jd_mcu_output(
                         pc++;                       /* Step forward chroma pointer every pixel */
                     }
                     yy = *py++;         /* Get Y component */
-                    *pix++ = /*B*/ BYTECLIP(yy + ((int)(1.772 * CVACC) * cb) / CVACC);
-                    *pix++ = /*G*/ BYTECLIP(yy - ((int)(0.344 * CVACC) * cb + (int)(0.714 * CVACC) * cr) / CVACC);
+                    /* Emit R,G,B (matches the RGB565 packer below, which puts the
+                     * first byte in the high/red bits). The stock ChaN ordering;
+                     * a prior local edit had B,G,R here, which swapped R<->B and
+                     * made JPEG covers render as BGR. */
                     *pix++ = /*R*/ BYTECLIP(yy + ((int)(1.402 * CVACC) * cr) / CVACC);
+                    *pix++ = /*G*/ BYTECLIP(yy - ((int)(0.344 * CVACC) * cb + (int)(0.714 * CVACC) * cr) / CVACC);
+                    *pix++ = /*B*/ BYTECLIP(yy + ((int)(1.772 * CVACC) * cb) / CVACC);
                 }
             }
         }
