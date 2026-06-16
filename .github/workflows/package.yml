@@ -26,6 +26,18 @@ jobs:
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.4 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
+      # Upload both build outputs so the PR run is enough to test on-device
+      # (no merge/tag needed):
+      #   retro-go_update.bin = firmware to flash
+      #   gw_update.tar       = SD content, includes /roms/homebrew/Media.bin
+      - name: Upload firmware + SD content artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: media-browser-build
+          path: |
+            release/retro-go_update.bin
+            release/gw_update.tar
+
   build-package:
     if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
@@ -67,26 +79,21 @@ jobs:
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.4 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
-      # 3. Create a release and upload files
-      - name: Create Release
-        uses: actions/create-release@v1
-        id: create_release
+      # 3. Create the release and attach the build outputs.
+      #    NB: actions/create-release@v1 and actions/upload-release-asset@v1 are
+      #    archived/deprecated and fail on current runners — use the maintained
+      #    softprops/action-gh-release instead, which creates the release AND
+      #    uploads the assets in one step.
+      - name: Create Release and upload firmware
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref_name }}
-          release_name: Release ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
           body_path: CHANGELOG.md
           draft: false
           prerelease: false
-
-      # 4. Add firmware update file as assets
-      - name: Upload retro-go_update.bin to Release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: release/retro-go_update.bin
-          asset_name: retro-go_update.bin
-          asset_content_type: application/octet-stream
+          files: |
+            release/retro-go_update.bin
+            release/gw_update.tar
