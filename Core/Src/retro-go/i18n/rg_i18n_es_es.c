@@ -23,6 +23,13 @@ const lang_t lang_es_es LANG_DATA = {
     .codepage = 1252,
     .s_LangUI = "Idioma",
     .s_LangName = "Spanish",
+    .s_music = "Música",
+    .s_favorite = "Favorito",
+    .s_repeat = "Repetir",
+    .s_shuffle = "Aleatorio",
+    .s_brightness = "Brillo",
+    .s_info = "Info",
+    .s_lyrics = "Letras",
 
     // Core\Src\porting\nes-fceu\main_nes_fceu.c ===========================
     .s_Crop_Vertical_Overscan = "Cortar sobrebarrido Vertical",
@@ -278,6 +285,9 @@ const lang_t lang_es_es LANG_DATA = {
     .s_Title_Date_Format = "%02d-%02d %s %02d:%02d:%02d",
     .s_Date_Format = "%02d.%02d.20%02d %s",
     .s_Time_Format = "%02d:%02d:%02d",
+    // Media browser (homebrew document/media viewer)
+    .s_media_hint = "A:Abrir  B:Atrás",
+    .s_media_empty = "(vacío)",
     .fmt_Title_Date_Format = es_es_fmt_Title_Date_Format,
     .fmtDate = es_es_fmt_Date,
     .fmtTime = es_es_fmt_Time,

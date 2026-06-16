@@ -257,6 +257,30 @@ typedef struct
     const char *s_Turbo_B;
     const char *s_Turbo_AB;
 
+    // Media browser (homebrew document/media viewer)
+    const char *s_media_hint;
+    const char *s_media_empty;
+
+    //=====================================================================
+    // Core\Src\porting\media\main_media.c (Music app) =====================
+    // CRITICAL: these string fields MUST stay BEFORE the fmt_* function
+    // pointers. The loader's LANG_T_STRING_COUNT only spans
+    // s_LangUI..fmt_Title_Date_Format, so any s_XXX placed after the fmt
+    // pointers is (a) never populated by i18n_load_language() and (b) inflates
+    // the generated .bin's field count beyond LANG_T_STRING_COUNT+4, which makes
+    // the loader reject the WHOLE file and fall back to English. (This is the
+    // bug that broke all languages after the upstream SD-i18n merge.)
+    const char *s_music;
+    const char *s_favorite;
+    const char *s_repeat;
+    const char *s_shuffle;
+    const char *s_brightness;
+    const char *s_info;
+    const char *s_lyrics;
+    const char *s_empty_music;   // empty-folder hint headline
+    const char *s_no_favorite;   // empty-favorites hint
+    //=====================================================================
+
     const int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, const char *weekday, uint16_t hour, uint16_t minutes, uint16_t seconds);
     // const char *fmt_Title_Date_Format(outstr,datefmt,day,month,weekday,hour,minutes,seconds) sprintf(outstr,datefmt,day,month,weekday,hour,minutes,seconds)
     const int (*fmtDate)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, uint16_t year, const char *weekday);

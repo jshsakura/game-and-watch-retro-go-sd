@@ -1,0 +1,387 @@
+// Streaming MP3 + WAV(PCM) audio engine — see music_audio.h. Both formats feed
+// the same mono / 48 kHz resample ring; WAV (8/16/24/32-bit, any rate) reuses
+// the MP3 input buffer so it costs no extra RAM.
+
+#include "music_audio.h"
+#include "minimp3.h"
+#include "gw_audio.h"          // AUDIO_SAMPLE_RATE
+#include <stdio.h>
+#include <string.h>
+
+#define MP3_IN_BUF  (16 * 1024)
+
+static mp3dec_t  g_mp3;
+static FILE     *g_fp;
+static uint8_t   g_in[MP3_IN_BUF];
+static int       g_in_len, g_in_pos;
+static bool      g_file_eof;
+static int16_t   g_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
+static int16_t   g_mono[MINIMP3_MAX_SAMPLES_PER_FRAME];
+static int       g_frame_n;     // mono samples currently in g_mono
+static uint32_t  g_phase;       // 16.16 read index within the current frame
+static uint32_t  g_step;        // (in_rate << 16) / 48000
+static bool      g_eof;         // decode reached end of stream
+static int       g_bitrate;     // kbps of the last decoded frame (per-frame; VBR jumps)
+static int       g_avg_bitrate; // track-average kbps for the readout (stable, set at open)
+static int       g_hz;          // source sample rate of the last frame
+static int       g_chan;        // channels of the last frame
+
+static long      g_data_off;    // first audio byte (past ID3v2 tag / WAV header)
+static long      g_audio_size;  // bytes of audio data (file size - g_data_off)
+static int       g_duration;    // track length in sec (Xing/Info frame count, else CBR estimate)
+
+// WAV (uncompressed PCM) support — reuses the same ring/resample path as MP3.
+static bool      g_is_wav;
+static int       g_wav_hz, g_wav_chan, g_wav_bits;
+static long      g_wav_pos;     // bytes already read out of the data chunk
+
+// Parse a RIFF/WAVE header from `f`: fill rate/channels/bits and the data chunk
+// offset+size. Returns false if not a PCM WAV we can play.
+static bool wav_parse_fp(FILE *f, int *hz, int *chan, int *bits, long *doff, long *dsz)
+{
+    uint8_t hdr[12];
+    if (fseek(f, 0, SEEK_SET) != 0 || fread(hdr, 1, 12, f) != 12) return false;
+    if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) return false;
+    bool have_fmt = false, have_data = false;
+    long pos = 12;
+    for (int guard = 0; guard < 64 && !(have_fmt && have_data); guard++) {
+        uint8_t ch[8];
+        if (fseek(f, pos, SEEK_SET) != 0 || fread(ch, 1, 8, f) != 8) break;
+        uint32_t csz = ch[4] | (ch[5] << 8) | (ch[6] << 16) | ((uint32_t)ch[7] << 24);
+        if (memcmp(ch, "fmt ", 4) == 0) {
+            uint8_t fm[16];
+            if (fread(fm, 1, 16, f) == 16) {
+                int fmt = fm[0] | (fm[1] << 8);
+                *chan = fm[2] | (fm[3] << 8);
+                *hz   = fm[4] | (fm[5] << 8) | (fm[6] << 16) | ((uint32_t)fm[7] << 24);
+                *bits = fm[14] | (fm[15] << 8);
+                if (fmt == 1 || fmt == 0xFFFE) have_fmt = true;   // PCM / extensible
+            }
+        } else if (memcmp(ch, "data", 4) == 0) {
+            *doff = pos + 8; *dsz = (long)csz; have_data = true;
+        }
+        pos += 8 + (long)csz + (csz & 1);                          // word-aligned chunks
+    }
+    if (!have_fmt || !have_data || *chan < 1) return false;
+    if (*bits != 8 && *bits != 16 && *bits != 24 && *bits != 32) return false;
+    return true;
+}
+
+// --- decoded-PCM ring (48 kHz mono) -----------------------------------------
+// The ring buffer lives HERE (16KB — too big for core RAM), but the SAI-ISR fill
+// routine lives in the main firmware (gw_audio.c). We register this ring with
+// the core via music_attach() so the audio ISR only READS it and never calls
+// overlay code (that was the earlier brick). SPSC: the decoder (this overlay)
+// writes g_head, the core ISR writes g_tail. The analyzer is fed here, on the
+// decode side, since the core ISR can't call the overlay's ui_vis_push.
+#define RING_SIZE  8192            // power of two
+#define RING_MASK  (RING_SIZE - 1)
+static int16_t           g_ring[RING_SIZE];
+static volatile uint16_t g_head, g_tail;
+extern void ui_vis_push(int16_t);
+static uint8_t g_vis_tog;
+
+static void ring_push(int16_t s)
+{
+    uint16_t n = (g_head + 1) & RING_MASK;
+    if (n == g_tail) return;               // full
+    g_ring[g_head] = s;
+    g_head = n;
+}
+
+// Feed the spectrum analyzer from the PLAY position (g_tail, advanced by the SAI
+// ISR) — the samples actually being heard — instead of the bursty decode-ahead,
+// so the bars track the music smoothly instead of jumping/glitching.
+static uint16_t g_vis_pos;
+void audio_vis_feed(void)
+{
+    uint16_t t = g_tail;
+    int guard = RING_SIZE;                  // never spin forever
+    while (g_vis_pos != t && guard-- > 0) {
+        if (!(g_vis_tog++ & 1)) ui_vis_push(g_ring[g_vis_pos]);
+        g_vis_pos = (g_vis_pos + 1) & RING_MASK;
+    }
+    g_vis_pos = t;
+}
+
+void audio_ring_reset(void) { g_head = g_tail = 0; g_vis_pos = 0; }
+int  audio_ring_count(void) { return (g_head - g_tail) & RING_MASK; }
+bool audio_eof(void)        { return g_eof; }
+// Report the track AVERAGE bitrate, not the per-frame one: VBR frames carry
+// different header bitrates, so the live value jumps every frame. The average
+// (audio bytes * 8 / duration) is steady and is what a player should show; for
+// CBR it equals the constant rate. Falls back to the per-frame value only when
+// the average could not be derived (no duration probed).
+int  audio_bitrate_kbps(void) { return g_avg_bitrate > 0 ? g_avg_bitrate : g_bitrate; }
+int  audio_src_hz(void)     { return g_hz; }
+int  audio_channels(void)   { return g_chan; }
+
+// --- decode -----------------------------------------------------------------
+
+static void refill(void)
+{
+    if (g_in_pos > 0) {
+        int remain = g_in_len - g_in_pos;
+        if (remain > 0)
+            memmove(g_in, g_in + g_in_pos, remain);
+        g_in_len = remain;
+        g_in_pos = 0;
+    }
+    if (!g_file_eof) {
+        int space = MP3_IN_BUF - g_in_len;
+        int got = space > 0 ? (int)fread(g_in + g_in_len, 1, space, g_fp) : 0;
+        if (got <= 0) g_file_eof = true;
+        else          g_in_len += got;
+    }
+}
+
+// Read one block of WAV PCM into g_mono (downmixed to mono int16). Reuses g_in
+// as the byte buffer, so no extra RAM.
+static bool wav_decode_frame(void)
+{
+    int fb = g_wav_chan * (g_wav_bits / 8), bytes = g_wav_bits / 8;
+    long remain = g_audio_size - g_wav_pos;
+    if (fb <= 0 || remain < fb) return false;
+    int frames = 1152;
+    if ((long)frames * fb > remain)      frames = (int)(remain / fb);
+    if ((long)frames * fb > MP3_IN_BUF)  frames = MP3_IN_BUF / fb;
+    int got = (int)fread(g_in, 1, (size_t)frames * fb, g_fp);
+    g_wav_pos += got;
+    int gf = got / fb;
+    for (int i = 0; i < gf; i++) {
+        int32_t acc = 0;
+        const uint8_t *p = g_in + (long)i * fb;
+        for (int c = 0; c < g_wav_chan; c++, p += bytes) {
+            int32_t s;
+            if (g_wav_bits == 8)       s = ((int)p[0] - 128) << 8;        // unsigned 8-bit
+            else if (g_wav_bits == 16) s = (int16_t)(p[0] | (p[1] << 8));
+            else if (g_wav_bits == 24) s = (int16_t)(p[1] | (p[2] << 8)); // high 16 of 24
+            else                       s = (int16_t)(p[2] | (p[3] << 8)); // high 16 of 32
+            acc += s;
+        }
+        g_mono[i] = (int16_t)(acc / g_wav_chan);
+    }
+    g_frame_n = gf;
+    return gf > 0;
+}
+
+// Decode one frame into g_mono; returns false at end of stream.
+static bool decode_frame(void)
+{
+    if (g_is_wav) return wav_decode_frame();
+    for (;;) {
+        if ((g_in_len - g_in_pos) < 2048 && !g_file_eof)
+            refill();
+
+        mp3dec_frame_info_t info;
+        int samples = mp3dec_decode_frame(&g_mp3, g_in + g_in_pos,
+                                          g_in_len - g_in_pos, g_pcm, &info);
+        g_in_pos += info.frame_bytes;
+
+        if (samples > 0) {
+            if (info.channels >= 2)
+                for (int i = 0; i < samples; i++)
+                    g_mono[i] = (int16_t)(((int)g_pcm[2 * i] + g_pcm[2 * i + 1]) / 2);
+            else
+                for (int i = 0; i < samples; i++)
+                    g_mono[i] = g_pcm[i];
+            g_frame_n = samples;
+            if (info.hz > 0) { g_hz = info.hz; g_step = ((uint32_t)info.hz << 16) / AUDIO_SAMPLE_RATE; }
+            if (info.bitrate_kbps > 0) {
+                g_bitrate = info.bitrate_kbps;
+                // If the open-time probe couldn't derive a track average (no Xing
+                // and no duration), latch the FIRST frame's bitrate once so the
+                // readout is steady instead of following each VBR frame.
+                if (g_avg_bitrate <= 0) g_avg_bitrate = info.bitrate_kbps;
+            }
+            if (info.channels > 0) g_chan = info.channels;
+            return true;
+        }
+        if (info.frame_bytes == 0) {
+            if (g_file_eof) return false;
+            refill();
+            if ((g_in_len - g_in_pos) == 0) return false;
+        }
+    }
+}
+
+void audio_pump(int target)
+{
+    while (audio_ring_count() < target && !g_eof) {
+        while ((g_phase >> 16) >= (uint32_t)g_frame_n) {
+            g_phase -= (uint32_t)g_frame_n << 16;
+            if (!decode_frame()) { g_eof = true; break; }
+        }
+        if (g_eof) break;
+        ring_push(g_mono[g_phase >> 16]);
+        g_phase += g_step;
+    }
+}
+
+// --- open / close / seek ----------------------------------------------------
+
+static int mp3_probe_duration(FILE *f, long data_off, long audio_size);  // defined below
+
+static void reset_decoder(void)
+{
+    mp3dec_init(&g_mp3);
+    g_in_len = g_in_pos = 0;
+    g_file_eof = (g_fp == NULL);
+    g_frame_n = 0;
+    g_phase = 0;
+    g_eof = false;
+    audio_ring_reset();
+}
+
+bool audio_open(const char *path)
+{
+    music_attach(g_ring, RING_SIZE, &g_head, &g_tail);   // let the core ISR read our ring
+    audio_close();
+    g_fp = fopen(path, "rb");
+    g_step = ((uint32_t)44100 << 16) / AUDIO_SAMPLE_RATE;
+    g_bitrate = 0; g_avg_bitrate = 0; g_hz = 0; g_chan = 0;
+    g_data_off = 0; g_audio_size = 0; g_duration = 0;
+    g_is_wav = false; g_wav_pos = 0;
+
+    if (g_fp) {
+        if (wav_parse_fp(g_fp, &g_wav_hz, &g_wav_chan, &g_wav_bits, &g_data_off, &g_audio_size)) {
+            g_is_wav = true;
+            g_hz = g_wav_hz; g_chan = g_wav_chan;
+            g_step = ((uint32_t)g_wav_hz << 16) / AUDIO_SAMPLE_RATE;
+            g_bitrate = (int)((long long)g_wav_hz * g_wav_chan * g_wav_bits / 1000);
+        } else {
+            uint8_t h[10];
+            fseek(g_fp, 0, SEEK_SET);
+            if (fread(h, 1, 10, g_fp) == 10 && memcmp(h, "ID3", 3) == 0) {
+                g_data_off = 10 + (long)(((uint32_t)(h[6] & 0x7f) << 21) |
+                    ((uint32_t)(h[7] & 0x7f) << 14) | ((uint32_t)(h[8] & 0x7f) << 7) |
+                    (uint32_t)(h[9] & 0x7f));
+            }
+            fseek(g_fp, 0, SEEK_END);
+            long sz = ftell(g_fp);
+            g_audio_size = sz - g_data_off;
+            g_duration = mp3_probe_duration(g_fp, g_data_off, g_audio_size);
+        }
+        fseek(g_fp, g_data_off, SEEK_SET);
+    }
+    // Derive the stable average bitrate once per track (see audio_bitrate_kbps).
+    if (g_is_wav)
+        g_avg_bitrate = g_bitrate;                                  // PCM: constant rate
+    else if (g_duration > 0 && g_audio_size > 0)
+        g_avg_bitrate = (int)((long long)g_audio_size * 8 / ((long long)g_duration * 1000));
+    reset_decoder();
+    return g_fp != NULL;
+}
+
+void audio_close(void)
+{
+    if (g_fp) { fclose(g_fp); g_fp = NULL; }
+}
+
+void audio_seek(float frac)
+{
+    if (!g_fp || g_audio_size <= 0) return;
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 0.999f) frac = 0.999f;
+    long off = g_data_off + (long)(frac * (float)g_audio_size);
+    if (g_is_wav) {
+        int fb = g_wav_chan * (g_wav_bits / 8);
+        if (fb > 0) off -= (off - g_data_off) % fb;   // align to a sample frame
+        g_wav_pos = off - g_data_off;
+    }
+    fseek(g_fp, off, SEEK_SET);
+    reset_decoder();
+    audio_pump(AUDIO_PUMP_TARGET);
+}
+
+// MPEG Layer III samples-per-frame: 1152 for MPEG1 (>=32 kHz), 576 for MPEG2/2.5.
+static inline int mp3_spf(int hz) { return hz >= 32000 ? 1152 : 576; }
+
+// Look for a LAME/Xing ("Xing") or CBR ("Info") VBR header inside the first MPEG
+// frame and return its total-frame count (0 if absent). The tag sits a few bytes
+// past the frame header+side-info, so scan the frame's leading bytes for it.
+static int mp3_xing_frames(const uint8_t *p, int len)
+{
+    int lim = len - 12; if (lim > 40) lim = 40;
+    for (int i = 0; i < lim; i++) {
+        bool tag = (p[i] == 'X' && p[i+1] == 'i' && p[i+2] == 'n' && p[i+3] == 'g') ||
+                   (p[i] == 'I' && p[i+1] == 'n' && p[i+2] == 'f' && p[i+3] == 'o');
+        if (!tag) continue;
+        uint32_t flags = ((uint32_t)p[i+4] << 24) | ((uint32_t)p[i+5] << 16) |
+                         ((uint32_t)p[i+6] << 8)  |  (uint32_t)p[i+7];
+        if (!(flags & 0x1)) return 0;            // frame-count field not present
+        int j = i + 8;
+        return (int)(((uint32_t)p[j] << 24) | ((uint32_t)p[j+1] << 16) |
+                     ((uint32_t)p[j+2] << 8) | (uint32_t)p[j+3]);
+    }
+    return 0;
+}
+
+// Estimate an MP3's length in seconds. Prefers the exact Xing/Info frame count
+// (correct for VBR, where a single frame's bitrate is not the file average);
+// falls back to a bitrate*size estimate for plain CBR with no header. Uses the
+// shared g_mp3/g_in/g_pcm scratch — only call when not mid-playback.
+static int mp3_probe_duration(FILE *f, long data_off, long audio_size)
+{
+    if (fseek(f, data_off, SEEK_SET) != 0) return 0;
+    int got = (int)fread(g_in, 1, 4096, f);
+    if (got <= 0) return 0;
+
+    mp3dec_init(&g_mp3);
+    mp3dec_frame_info_t info;
+    int pos = 0, br = 0;
+    while (pos < got) {
+        int fs = pos;
+        int s = mp3dec_decode_frame(&g_mp3, g_in + pos, got - pos, g_pcm, &info);
+        if (info.frame_bytes == 0) break;
+        if (info.hz > 0) {                       // a real frame header — check for Xing/Info
+            int frames = mp3_xing_frames(g_in + fs, info.frame_bytes);
+            if (frames > 0)
+                return (int)((long long)frames * mp3_spf(info.hz) / info.hz);
+        }
+        pos += info.frame_bytes;
+        if (s > 0 && info.bitrate_kbps > 0) { br = info.bitrate_kbps; break; }  // CBR
+    }
+    if (br <= 0) return 0;
+    return (int)((long long)audio_size * 8 / ((long long)br * 1000));
+}
+
+int audio_duration_sec(void)
+{
+    if (g_is_wav) {
+        int fb = g_wav_chan * (g_wav_bits / 8);
+        if (fb <= 0 || g_wav_hz <= 0) return 0;
+        return (int)(g_audio_size / fb / g_wav_hz);
+    }
+    if (g_duration > 0) return g_duration;   // exact Xing/Info length from audio_open
+    if (g_bitrate <= 0 || g_audio_size <= 0) return 0;
+    return (int)((long long)g_audio_size * 8 / ((long long)g_bitrate * 1000));
+}
+
+// --- standalone quick duration (list rows) ----------------------------------
+
+int audio_quick_duration(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+
+    int whz, wch, wb; long wdoff, wdsz;
+    if (wav_parse_fp(f, &whz, &wch, &wb, &wdoff, &wdsz)) {   // WAV: from the header
+        fclose(f);
+        int fb = wch * (wb / 8);
+        return (fb > 0 && whz > 0) ? (int)(wdsz / fb / whz) : 0;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+
+    uint8_t h[10];
+    long off = 0;
+    fseek(f, 0, SEEK_SET);
+    if (fread(h, 1, 10, f) == 10 && memcmp(h, "ID3", 3) == 0)
+        off = 10 + (long)(((uint32_t)(h[6] & 0x7f) << 21) | ((uint32_t)(h[7] & 0x7f) << 14) |
+                          ((uint32_t)(h[8] & 0x7f) << 7) | (uint32_t)(h[9] & 0x7f));
+    int dur = mp3_probe_duration(f, off, sz - off);   // Xing/Info VBR count, else CBR estimate
+    fclose(f);
+    return dur;
+}

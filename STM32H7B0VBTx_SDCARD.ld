@@ -593,6 +593,28 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_CELESTE_BSS_SIZE = SIZEOF(.overlay_celeste_bss);
 
+  .overlay_music __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_music_start__ = .;
+    build/music/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_MUSIC_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_MUSIC_LOAD_START = LOADADDR(.overlay_music);
+  _OVERLAY_MUSIC_SIZE = SIZEOF(.overlay_music);
+
+  .overlay_music_bss _OVERLAY_MUSIC_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_MUSIC_BSS_START = .;
+    build/music/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/music/*.o (COMMON)
+    __ram_emu_music_end__ = .;
+    _OVERLAY_MUSIC_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_MUSIC_BSS_END) < __RAM_EMU_END__, "Error: MUSIC BSS overflow");
+  }
+  _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
+
   /* PICO-8 stub overlay → RAM, placed at HIGH end of RAM_EMU.
      The GPL build only includes the install-prompt stub (main_pico8_stub.c).
      The real engine is loaded from /cores/pico8.bin at runtime, replacing

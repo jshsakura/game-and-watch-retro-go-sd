@@ -19,6 +19,15 @@ const lang_t lang_ko_kr LANG_DATA = {
     .codepage = 949,
     .s_LangUI = "언어",
     .s_LangName = "Korean",
+    .s_music = "음악",
+    .s_favorite = "즐겨찾기",
+    .s_repeat = "반복",
+    .s_shuffle = "셔플",
+    .s_brightness = "밝기",
+    .s_info = "정보",
+    .s_lyrics = "가사",
+    .s_empty_music = "이 폴더에 음악 파일을 넣어주세요:",
+    .s_no_favorite = "즐겨찾기가 비어 있어요",
     //한국어
     // If you can translate, please feed back the translation results to me, thank you
     // translate by  Augen(히힛마스터):
@@ -290,6 +299,9 @@ const lang_t lang_ko_kr LANG_DATA = {
     .s_Title_Date_Format = "%02d-%02d %s %02d:%02d:%02d",
     .s_Date_Format = "%02d.%02d.20%02d %s",
     .s_Time_Format = "%02d:%02d:%02d",
+    // Media browser (homebrew document/media viewer)
+    .s_media_hint = "A:열기  B:뒤로",
+    .s_media_empty = "(비어 있음)",
     .fmt_Title_Date_Format = ko_kr_fmt_Title_Date_Format,
     .fmtDate = ko_kr_fmt_Date,
     .fmtTime = ko_kr_fmt_Time,
