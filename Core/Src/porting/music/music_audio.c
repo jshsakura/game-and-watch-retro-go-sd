@@ -21,7 +21,8 @@ static int       g_frame_n;     // mono samples currently in g_mono
 static uint32_t  g_phase;       // 16.16 read index within the current frame
 static uint32_t  g_step;        // (in_rate << 16) / 48000
 static bool      g_eof;         // decode reached end of stream
-static int       g_bitrate;     // kbps of the last decoded frame
+static int       g_bitrate;     // kbps of the last decoded frame (per-frame; VBR jumps)
+static int       g_avg_bitrate; // track-average kbps for the readout (stable, set at open)
 static int       g_hz;          // source sample rate of the last frame
 static int       g_chan;        // channels of the last frame
 
@@ -106,7 +107,12 @@ void audio_vis_feed(void)
 void audio_ring_reset(void) { g_head = g_tail = 0; g_vis_pos = 0; }
 int  audio_ring_count(void) { return (g_head - g_tail) & RING_MASK; }
 bool audio_eof(void)        { return g_eof; }
-int  audio_bitrate_kbps(void) { return g_bitrate; }
+// Report the track AVERAGE bitrate, not the per-frame one: VBR frames carry
+// different header bitrates, so the live value jumps every frame. The average
+// (audio bytes * 8 / duration) is steady and is what a player should show; for
+// CBR it equals the constant rate. Falls back to the per-frame value only when
+// the average could not be derived (no duration probed).
+int  audio_bitrate_kbps(void) { return g_avg_bitrate > 0 ? g_avg_bitrate : g_bitrate; }
 int  audio_src_hz(void)     { return g_hz; }
 int  audio_channels(void)   { return g_chan; }
 
@@ -181,7 +187,13 @@ static bool decode_frame(void)
                     g_mono[i] = g_pcm[i];
             g_frame_n = samples;
             if (info.hz > 0) { g_hz = info.hz; g_step = ((uint32_t)info.hz << 16) / AUDIO_SAMPLE_RATE; }
-            if (info.bitrate_kbps > 0) g_bitrate = info.bitrate_kbps;
+            if (info.bitrate_kbps > 0) {
+                g_bitrate = info.bitrate_kbps;
+                // If the open-time probe couldn't derive a track average (no Xing
+                // and no duration), latch the FIRST frame's bitrate once so the
+                // readout is steady instead of following each VBR frame.
+                if (g_avg_bitrate <= 0) g_avg_bitrate = info.bitrate_kbps;
+            }
             if (info.channels > 0) g_chan = info.channels;
             return true;
         }
@@ -227,7 +239,7 @@ bool audio_open(const char *path)
     audio_close();
     g_fp = fopen(path, "rb");
     g_step = ((uint32_t)44100 << 16) / AUDIO_SAMPLE_RATE;
-    g_bitrate = 0; g_hz = 0; g_chan = 0;
+    g_bitrate = 0; g_avg_bitrate = 0; g_hz = 0; g_chan = 0;
     g_data_off = 0; g_audio_size = 0; g_duration = 0;
     g_is_wav = false; g_wav_pos = 0;
 
@@ -252,6 +264,11 @@ bool audio_open(const char *path)
         }
         fseek(g_fp, g_data_off, SEEK_SET);
     }
+    // Derive the stable average bitrate once per track (see audio_bitrate_kbps).
+    if (g_is_wav)
+        g_avg_bitrate = g_bitrate;                                  // PCM: constant rate
+    else if (g_duration > 0 && g_audio_size > 0)
+        g_avg_bitrate = (int)((long long)g_audio_size * 8 / ((long long)g_duration * 1000));
     reset_decoder();
     return g_fp != NULL;
 }

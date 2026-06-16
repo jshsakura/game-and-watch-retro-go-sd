@@ -247,14 +247,18 @@ static size_t file_read(void *out, size_t size, size_t count, void *u)
     return size ? got / size : 0;
 }
 
-// Blit an 8-bit RGB(A) image into the box (bx,by,bw,bh), centered + downscaled.
+// Blit an 8-bit RGB(A) image into the box (bx,by,bw,bh), centered + scaled to fit.
 static void blit_rgb_box(const uint8_t *px, int w, int h, int ch,
                          int bx, int by, int bw, int bh)
 {
     uint16_t *fb = lcd_get_active_buffer();
-    int tw = w, th = h;
-    if (tw > bw) { th = th * bw / tw; tw = bw; }
-    if (th > bh) { tw = tw * bh / th; th = bh; }
+    if (w < 1 || h < 1) return;
+    // Contain-fit to the box, preserving aspect ratio. Scale UP to fill when the
+    // source is smaller than the box (e.g. the 1/8-res progressive-JPEG DC
+    // preview), not only down — the dest->src sampling below maps correctly in
+    // either direction, so nearest-neighbour upscaling needs no other change.
+    int tw = bw, th = (int)((long)h * bw / w);
+    if (th > bh) { th = bh; tw = (int)((long)w * bh / h); }
     if (tw < 1) tw = 1;
     if (th < 1) th = 1;
     int ox = bx + (bw - tw) / 2;
