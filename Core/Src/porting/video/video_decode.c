@@ -7,6 +7,7 @@
 
 #include "video_decode.h"
 #include "gw_lcd.h"
+#include "main.h"           // wdog_refresh
 #include "tjpgd.h"
 #include <string.h>
 
@@ -25,6 +26,7 @@ static int       s_clip_w, s_clip_h;  // framebuffer bounds
 // Stream the JPEG payload from the file (bounded to the chunk length).
 static size_t vid_in(JDEC *jd, uint8_t *buf, size_t len)
 {
+    wdog_refresh();   // keep the watchdog fed even if an SD read stalls mid-frame
     vsrc_t *s = (vsrc_t *)jd->device;
     if ((long)len > s->remain) len = (size_t)s->remain;
     if (buf) {
