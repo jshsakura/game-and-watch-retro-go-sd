@@ -177,8 +177,20 @@ static void show_message(const char *msg)
     uint16_t bg = curr_colors->bg_c;
     uint16_t *fb = lcd_get_active_buffer();
     for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
-    ui_text_center_t(GW_LCD_HEIGHT / 2 - 6, msg, curr_colors->main_c);
-    ui_text_center_t(GW_LCD_HEIGHT / 2 + 14, vstr(VS_ANYKEY), curr_colors->dis_c);
+    // Render '|'-separated lines stacked (so multi-field diagnostics are readable).
+    char line[96];
+    const char *p = msg;
+    int y = 40;
+    do {
+        int n = 0;
+        while (p[n] && p[n] != '|' && n < (int)sizeof(line) - 1) { line[n] = p[n]; n++; }
+        line[n] = '\0';
+        ui_text_center_t(y, line, curr_colors->main_c);
+        y += 18;
+        p += n;
+        if (*p == '|') p++;
+    } while (*p);
+    ui_text_center_t(y + 10, vstr(VS_ANYKEY), curr_colors->dis_c);
     lcd_swap();
     odroid_gamepad_state_t j;
     for (;;) {

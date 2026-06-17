@@ -31,6 +31,7 @@ extern uint8_t g_scratch[];
 // 5=HW-decode-rc-nonzero. w/h = parsed dims, rc = JPEG_DecodeToFrame return.
 int  g_vdec_st = 0, g_vdec_w = 0, g_vdec_h = 0;
 long g_vdec_sz = 0, g_vdec_rc = 0;
+unsigned char g_vdec_b0 = 0, g_vdec_b1 = 0;   // first 2 bytes of the frame (FFD8 = JPEG SOI)
 
 void video_decode_init(void)
 {
@@ -72,6 +73,7 @@ bool video_decode_frame(FILE *f, long size, uint16_t *fb, int fb_w, int fb_h)
     wdog_refresh();
     if (fread(g_scratch, 1, (size_t)size, f) != (size_t)size) { g_vdec_st = 2; return false; }
     wdog_refresh();
+    g_vdec_b0 = g_scratch[0]; g_vdec_b1 = g_scratch[1];
 
     int w, h;
     if (!jpeg_dims(g_scratch, size, &w, &h)) { g_vdec_st = 3; return false; }

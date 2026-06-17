@@ -194,11 +194,24 @@ static int open_video_menu(const avi_t *a)
 
 // --- playback ---------------------------------------------------------------
 
-// Diagnostic string for the last unplayable clip (shown on screen).
+// Comprehensive diagnostic for the last unplayable clip (shown on screen, '|' =
+// line break). Lets one device run pinpoint where playback breaks.
 extern int  g_vdec_st, g_vdec_w, g_vdec_h;
 extern long g_vdec_sz, g_vdec_rc;
-static char s_diag[80];
+extern unsigned char g_vdec_b0, g_vdec_b1;
+static char s_diag[200];
 const char *video_last_diag(void) { return s_diag[0] ? s_diag : "unsupported / unreadable"; }
+
+static void build_diag(const avi_t *a, int nv, int na)
+{
+    int fps = a->usec_per_frame > 0 ? (1000000 + a->usec_per_frame / 2) / a->usec_per_frame : 0;
+    snprintf(s_diag, sizeof s_diag,
+             "open %dx%d %dfps f=%d|frame %02X%02X sz=%ld|decode st=%d %dx%d rc=%ld|"
+             "chunks v=%d a=%d",
+             a->width, a->height, fps, a->total_frames,
+             g_vdec_b0, g_vdec_b1, g_vdec_sz,
+             g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_rc, nv, na);
+}
 
 vid_result_t video_play(const char *path)
 {
@@ -209,7 +222,8 @@ vid_result_t video_play(const char *path)
         snprintf(s_diag, sizeof s_diag, "avi_open FAILED");
         return VID_UNPLAYABLE;
     }
-    int nv_seen = 0;
+    int nv_seen = 0, na_seen = 0;
+    s_diag[0] = '\0';                   // fresh diag for this clip
 
     video_decode_init();                // power up the hardware JPEG codec
 
@@ -320,6 +334,7 @@ vid_result_t video_play(const char *path)
         }
 
         if (k == AVI_AUDIO) {
+            na_seen++;
             if (spd == 1 && !paused) feed_audio(&a, sz);
             continue;
         }
@@ -335,6 +350,10 @@ vid_result_t video_play(const char *path)
 
         if (video_decode_frame(a.f, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT))
             decoded_any = true;
+        else if (nv_seen >= 30) {                 // first 30 frames all failed -> report now
+            build_diag(&a, nv_seen, na_seen);
+            stopped = true; break;
+        }
         if ((int32_t)(HAL_GetTick() - osd_until) < 0)
             draw_osd(&a, spd, paused, -1, frame_ms);
         if ((int32_t)(HAL_GetTick() - vol_until) < 0)
@@ -352,9 +371,7 @@ vid_result_t video_play(const char *path)
     video_decode_deinit();
     avi_close(&a);
     if (!decoded_any) {
-        // st: 0=decode-never-called(all dropped) 1=args 2=fread 3=dims 4=size 5=HWrc
-        snprintf(s_diag, sizeof s_diag, "nv=%d sz=%ld st=%d %dx%d rc=%ld",
-                 nv_seen, g_vdec_sz, g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_rc);
+        if (!s_diag[0]) build_diag(&a, nv_seen, na_seen);   // (early-bail already filled it)
         return VID_UNPLAYABLE;
     }
     return stopped ? VID_STOPPED : VID_OK;
