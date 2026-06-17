@@ -1,7 +1,7 @@
 // Video app — a /video browser that plays MJPEG-AVI clips. Renders with the
 // Music app's shared list UI (ui_list_draw) so the look is pixel-identical:
 // system top bar, folder banner, zebra + selection rows, scrollbar, keycap
-// footer. Each clip shows a generic "video" tile (a play triangle) where the
+// footer. Each clip shows its extension ("AVI") as the tile label where the
 // Music app shows album art. Lives in the Music overlay (only one homebrew
 // runs at a time).
 
@@ -18,7 +18,7 @@
 #include "rg_i18n.h"           // curr_lang (active language -> localized strings)
 #include "common.h"
 #include "gui.h"               // curr_colors
-#include "music_ui.h"          // ui_list_draw + list_view_t/list_item_t + LIST_* + ui_dim
+#include "music_ui.h"          // ui_list_draw + list_view_t/list_item_t + LIST_*
 #include "main_video.h"
 #include "video_play.h"
 
@@ -26,13 +26,27 @@
 #define NAME_MAX_LEN  128
 #define PATH_MAX_LEN  256
 #define VIDEO_ROOT    "/video"
-#define TILE_SZ       34          // == ui_list_draw's album-art tile (TH)
 
 typedef struct { char name[NAME_MAX_LEN]; bool is_dir; } vid_entry_t;
 static vid_entry_t entries[MAX_ENTRIES];
 static int entry_count, cursor, scroll;
 static char cur_path[PATH_MAX_LEN];
-static uint16_t icon_tile[TILE_SZ * TILE_SZ];   // generic video tile (built once)
+
+// The thumbnail tile shows the file's extension (e.g. "AVI") as text, drawn in the
+// same style as the Music app's ♪ placeholder — no custom bitmap, no border.
+static const char *ext_label(const char *name)
+{
+    static char buf[8];
+    const char *d = strrchr(name, '.');
+    if (!d || !d[1]) return "VID";
+    int j = 0;
+    for (const char *p = d + 1; *p && j < (int)sizeof(buf) - 1; p++) {
+        char c = *p;
+        buf[j++] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+    }
+    buf[j] = '\0';
+    return buf;
+}
 
 // --- localization -----------------------------------------------------------
 // Strings are chosen by the ACTIVE language (curr_lang), whose font/codepage is
@@ -56,30 +70,6 @@ static const char *vstr(vstr_t s)
     case VS_ANYKEY:     return ko ? "아무 키나 누르세요" : "press a key";
     }
     return "";
-}
-
-// Build the generic video tile once: a dark themed square, a 1px accent frame,
-// and a centered white play triangle — the "this is a video" stand-in for cover
-// art. Theme is fixed for the app's lifetime, so once is enough.
-static void build_icon_tile(void)
-{
-    uint16_t base  = ui_dim(curr_colors->sel_c, 2, 5);   // medium-dark accent
-    uint16_t frame = curr_colors->sel_c;                 // accent border
-    for (int i = 0; i < TILE_SZ * TILE_SZ; i++) icon_tile[i] = base;
-    for (int i = 0; i < TILE_SZ; i++) {
-        icon_tile[i] = frame;                            // top
-        icon_tile[(TILE_SZ - 1) * TILE_SZ + i] = frame;  // bottom
-        icon_tile[i * TILE_SZ] = frame;                  // left
-        icon_tile[i * TILE_SZ + TILE_SZ - 1] = frame;    // right
-    }
-    // right-pointing play triangle, vertically centered
-    const int xl = 13, xr = 25, ytop = 9, ybot = 25;
-    const int ymid = (ytop + ybot) / 2, half = (ybot - ytop) / 2;
-    for (int y = ytop; y <= ybot; y++) {
-        int dy = y > ymid ? y - ymid : ymid - y;         // 0..half
-        int rx = xl + (xr - xl) * (half - dy) / half;
-        for (int x = xl; x <= rx; x++) icon_tile[y * TILE_SZ + x] = 0xFFFF;
-    }
 }
 
 // --- directory scan ---------------------------------------------------------
@@ -117,8 +107,9 @@ static void item_at(int i, list_item_t *out)
     out->subtitle = "";
     out->duration = "";
     out->kind     = entries[i].is_dir ? LIST_DIR : LIST_TRACK;
-    out->art      = entries[i].is_dir ? NULL : icon_tile;   // video tile on files
-    out->art_sz   = entries[i].is_dir ? 0    : TILE_SZ;
+    out->art      = NULL;
+    out->art_sz   = 0;
+    out->placeholder = entries[i].is_dir ? NULL : ext_label(entries[i].name);  // "AVI"
     out->fav = out->playing = out->paused = false;
 }
 
@@ -190,7 +181,6 @@ void app_main_video(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     (void)load_state; (void)start_paused; (void)save_slot;
     odroid_system_init(APPID_HOMEBREW, 48000);
 
-    build_icon_tile();
     strcpy(cur_path, VIDEO_ROOT);
     scan();
 

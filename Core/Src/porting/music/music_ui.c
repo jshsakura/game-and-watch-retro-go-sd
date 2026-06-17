@@ -850,9 +850,12 @@ void ui_list_draw(const list_view_t *v, void (*item_at)(int i, list_item_t *out)
         if (it.art && it.art_sz > 0) {
             blit_thumb(it.art, it.art_sz, tx, ty);
         } else {
+            // No thumbnail: a subtle tile with a centered glyph/label. Defaults to
+            // ♪ (Music); a caller can override (e.g. the Video app shows "AVI").
             ui_fill(tx, ty, TH, TH, ui_mix(rbg, sub, 3));
-            int nw = i18n_get_text_width("\xE2\x99\xAA");   // ♪
-            ui_text_t(tx + (TH - nw) / 2, ty + (TH - 12) / 2, nw + 2, "\xE2\x99\xAA", ui_mix(rbg, txt, 7));
+            const char *ph = it.placeholder ? it.placeholder : "\xE2\x99\xAA";   // ♪
+            int nw = i18n_get_text_width(ph);
+            ui_text_t(tx + (TH - nw) / 2, ty + (TH - 12) / 2, nw + 2, ph, ui_mix(rbg, txt, 7));
         }
         if (it.playing) {
             // now-playing: a semi-transparent scrim over the album art with a
