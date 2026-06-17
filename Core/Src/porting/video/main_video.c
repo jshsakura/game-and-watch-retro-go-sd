@@ -213,7 +213,7 @@ static void enter_selected(void)
         vid_result_t r = video_play(path);
         video_ui_list_invalidate();                    // decoder reused g_scratch
         if (r == VID_STOPPED) break;                   // user pressed B
-        if (r == VID_UNPLAYABLE && first) { show_message(vstr(VS_UNPLAYABLE)); break; }
+        if (r == VID_UNPLAYABLE && first) { show_message(video_last_diag()); break; }   // DIAG
         // VID_OK (ended) or skipped unplayable -> continue to the next clip
     }
 }

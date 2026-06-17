@@ -194,13 +194,22 @@ static int open_video_menu(const avi_t *a)
 
 // --- playback ---------------------------------------------------------------
 
+// Diagnostic string for the last unplayable clip (shown on screen).
+extern int  g_vdec_st, g_vdec_w, g_vdec_h;
+extern long g_vdec_sz, g_vdec_rc;
+static char s_diag[80];
+const char *video_last_diag(void) { return s_diag[0] ? s_diag : "unsupported / unreadable"; }
+
 vid_result_t video_play(const char *path)
 {
     avi_t a;
     // The read-ahead buffer lives in g_scratch's tail (past the frame src + JPEG
     // work areas) — block reads from the SD instead of many tiny per-chunk reads.
-    if (!avi_open(&a, path, g_scratch + VIDEO_RA_OFFSET, VIDEO_RA_SIZE))
+    if (!avi_open(&a, path, g_scratch + VIDEO_RA_OFFSET, VIDEO_RA_SIZE)) {
+        snprintf(s_diag, sizeof s_diag, "avi_open FAILED");
         return VID_UNPLAYABLE;
+    }
+    int nv_seen = 0;
 
     video_decode_init();                // power up the hardware JPEG codec
 
@@ -316,6 +325,7 @@ vid_result_t video_play(const char *path)
         }
 
         // VIDEO frame: pace to the frame interval, dropping when behind.
+        nv_seen++;
         uint32_t interval = (uint32_t)frame_ms * SPD_DEN[spd] / SPD_NUM[spd];
         uint32_t now = HAL_GetTick();
         if (now > next_due + interval) {                 // behind -> drop (don't decode)
@@ -341,6 +351,11 @@ vid_result_t video_play(const char *path)
     audio_stop_playing();        // halt the SAI DMA so it can't loop the stale buffer (exit buzz)
     video_decode_deinit();
     avi_close(&a);
-    if (!decoded_any) return VID_UNPLAYABLE;
+    if (!decoded_any) {
+        // st: 0=decode-never-called(all dropped) 1=args 2=fread 3=dims 4=size 5=HWrc
+        snprintf(s_diag, sizeof s_diag, "nv=%d sz=%ld st=%d %dx%d rc=%ld",
+                 nv_seen, g_vdec_sz, g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_rc);
+        return VID_UNPLAYABLE;
+    }
     return stopped ? VID_STOPPED : VID_OK;
 }

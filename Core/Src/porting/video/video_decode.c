@@ -26,6 +26,12 @@
 #define JWORK_SZ   (160 * 1024)        // >= 320x240 4:2:0 (115KB) with margin
 extern uint8_t g_scratch[];
 
+// Diagnostics for the last decode attempt (shown on screen when a clip won't play):
+// st 0=ok 1=bad-args/too-big 2=fread-fail 3=jpeg_dims-fail 4=larger-than-screen
+// 5=HW-decode-rc-nonzero. w/h = parsed dims, rc = JPEG_DecodeToFrame return.
+int  g_vdec_st = 0, g_vdec_w = 0, g_vdec_h = 0;
+long g_vdec_sz = 0, g_vdec_rc = 0;
+
 void video_decode_init(void)
 {
     JPEG_DecodeToFrameInit((uint32_t)(g_scratch + FRAME_MAX), JWORK_SZ);
@@ -60,15 +66,17 @@ static bool jpeg_dims(const uint8_t *p, long n, int *w, int *h)
 
 bool video_decode_frame(FILE *f, long size, uint16_t *fb, int fb_w, int fb_h)
 {
-    if (!f || size < 2 || size > FRAME_MAX || !fb) return false;
+    g_vdec_sz = size; g_vdec_st = 0; g_vdec_w = g_vdec_h = 0; g_vdec_rc = 0;
+    if (!f || size < 2 || size > FRAME_MAX || !fb) { g_vdec_st = 1; return false; }
 
     wdog_refresh();
-    if (fread(g_scratch, 1, (size_t)size, f) != (size_t)size) return false;
+    if (fread(g_scratch, 1, (size_t)size, f) != (size_t)size) { g_vdec_st = 2; return false; }
     wdog_refresh();
 
     int w, h;
-    if (!jpeg_dims(g_scratch, size, &w, &h)) return false;
-    if (w > fb_w || h > fb_h) return false;      // HW codec can't downscale -> skip
+    if (!jpeg_dims(g_scratch, size, &w, &h)) { g_vdec_st = 3; return false; }
+    g_vdec_w = w; g_vdec_h = h;
+    if (w > fb_w || h > fb_h) { g_vdec_st = 4; return false; }   // HW codec can't downscale
     int x = (fb_w - w) / 2, y = (fb_h - h) / 2;
 
     if (w < fb_w || h < fb_h)
@@ -77,6 +85,8 @@ bool video_decode_frame(FILE *f, long size, uint16_t *fb, int fb_w, int fb_h)
     // Flush the JPEG source to RAM so the peripheral's MDMA reads fresh bytes.
     SCB_CleanDCache_by_Addr((uint32_t *)g_scratch, (int32_t)((size + 31) & ~31L));
 
-    return JPEG_DecodeToFrame((uint32_t)g_scratch, (uint32_t)fb,
-                              (uint16_t)x, (uint16_t)y, 255) == 0;
+    g_vdec_rc = (long)JPEG_DecodeToFrame((uint32_t)g_scratch, (uint32_t)fb,
+                                         (uint16_t)x, (uint16_t)y, 255);
+    if (g_vdec_rc != 0) { g_vdec_st = 5; return false; }
+    return true;
 }

@@ -12,3 +12,6 @@ typedef enum {
 } vid_result_t;
 
 vid_result_t video_play(const char *path);
+
+// Diagnostic text describing why the last clip was VID_UNPLAYABLE (temporary).
+const char *video_last_diag(void);
