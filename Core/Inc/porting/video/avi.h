@@ -13,6 +13,8 @@
 
 typedef enum { AVI_END = 0, AVI_VIDEO = 1, AVI_AUDIO = 2 } avi_kind_t;
 
+#define AVI_CKPT_N 128       // sparse seek checkpoints (offset index, ~512 bytes)
+
 typedef struct {
     FILE *f;
     long  file_end;          // total file size (bounds the header walk)
@@ -23,6 +25,8 @@ typedef struct {
     int   usec_per_frame;    // microseconds per frame (from the AVI main header)
     int   total_frames;      // total video frames (from the header; 0 if unknown)
     int   cur_frame;         // video frames consumed so far (advanced by avi_next)
+    long  ckpt[AVI_CKPT_N];  // movi_pos recorded at frame k*ckpt_step (0 = not seen yet)
+    int   ckpt_step;         // frames between checkpoints
 } avi_t;
 
 // Open `path`, parse the AVI main header (frame size + rate) and locate the

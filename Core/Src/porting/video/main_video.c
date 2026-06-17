@@ -55,7 +55,7 @@ static const char *ext_label(const char *name)
 // already loaded, so the localized glyphs render correctly. No lang_t fields are
 // added — that keeps the app decoupled from the SD /lang bins and avoids the
 // version-skew brick risk documented in rg_i18n.h. English is the fallback.
-typedef enum { VS_APP, VS_EMPTY, VS_UNPLAYABLE, VS_ANYKEY } vstr_t;
+typedef enum { VS_APP, VS_EMPTY, VS_UNPLAYABLE, VS_ANYKEY, VS_LOADING } vstr_t;
 
 static const char *vstr(vstr_t s)
 {
@@ -71,6 +71,7 @@ static const char *vstr(vstr_t s)
     case VS_UNPLAYABLE: return ko ? "재생할 수 없는 형식입니다 (MJPEG-AVI만 지원)"
                                   : "unsupported format (MJPEG-AVI only)";
     case VS_ANYKEY:     return ko ? "아무 키나 누르세요" : "press a key";
+    case VS_LOADING:    return ko ? "불러오는 중..." : "loading...";
     }
     return "";
 }
@@ -107,11 +108,23 @@ static int scandir_cb(const rg_scandir_t *file, void *arg)
     return RG_SCANDIR_CONTINUE;
 }
 
+// "Loading…" splash shown while scandir blocks on the SD, so it's never confused
+// with a genuinely empty folder (which shows the add-files hint after the scan).
+static void draw_loading(void)
+{
+    uint16_t bg = curr_colors->bg_c;
+    uint16_t *fb = lcd_get_active_buffer();
+    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
+    ui_text_center_t(GW_LCD_HEIGHT / 2 - 6, vstr(VS_LOADING), curr_colors->main_c);
+    lcd_swap();
+}
+
 static void scan(void)
 {
     entry_count = cursor = scroll = 0;
     last_scroll = -1;
     video_ui_list_invalidate();        // content changed -> rebuild the snapshot
+    draw_loading();                    // SD read can stall -> show progress, not "empty"
     rg_storage_scandir(cur_path, scandir_cb, NULL,
         RG_SCANDIR_FILES | RG_SCANDIR_DIRS | RG_SCANDIR_SORT);
 }
@@ -225,6 +238,12 @@ void app_main_video(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         if (HIT(ODROID_INPUT_DOWN) && cursor + 1 < entry_count) { cursor++; dirty = true; }
         if (HIT(ODROID_INPUT_UP)   && cursor > 0)               { cursor--; dirty = true; }
+        if (HIT(ODROID_INPUT_RIGHT) && entry_count > 0) {       // page down
+            cursor += LIST_VISIBLE_ROWS; if (cursor >= entry_count) cursor = entry_count - 1; dirty = true;
+        }
+        if (HIT(ODROID_INPUT_LEFT) && entry_count > 0) {        // page up
+            cursor -= LIST_VISIBLE_ROWS; if (cursor < 0) cursor = 0; dirty = true;
+        }
         if (HIT(ODROID_INPUT_A) && entry_count > 0) {
             enter_selected();
             // Re-seed prev with the CURRENT state and restart the loop so the A/B

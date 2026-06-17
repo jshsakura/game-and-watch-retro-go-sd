@@ -83,6 +83,9 @@ bool avi_open(avi_t *a, const char *path)
                 if (a->width <= 0)  a->width = 320;            // sane fallbacks
                 if (a->height <= 0) a->height = 240;
                 if (a->usec_per_frame <= 0) a->usec_per_frame = 41667;
+                a->ckpt_step = a->total_frames / AVI_CKPT_N;   // sparse seek index
+                if (a->ckpt_step < 1) a->ckpt_step = 1;
+                a->ckpt[0] = a->movi_start;                    // frame 0 lives here
                 fseek(a->f, a->movi_pos, SEEK_SET);
                 return true;
             }
@@ -115,7 +118,13 @@ avi_kind_t avi_next(avi_t *a, long *size)
         // chunk id = "NNxx": NN = stream index, xx = type ("dc"/"db" video, "wb" audio)
         char t0 = id[2], t1 = id[3];
         if (t0 == 'd' && (t1 == 'c' || t1 == 'b')) {
-            *size = (long)sz; fseek(a->f, data, SEEK_SET); a->cur_frame++; return AVI_VIDEO;
+            *size = (long)sz; fseek(a->f, data, SEEK_SET);
+            a->cur_frame++;
+            if (a->ckpt_step > 0 && a->cur_frame % a->ckpt_step == 0) {   // record a seek checkpoint
+                int kk = a->cur_frame / a->ckpt_step;
+                if (kk > 0 && kk < AVI_CKPT_N) a->ckpt[kk] = a->movi_pos;
+            }
+            return AVI_VIDEO;
         }
         if (t0 == 'w' && t1 == 'b') {
             *size = (long)sz; fseek(a->f, data, SEEK_SET); return AVI_AUDIO;
@@ -130,12 +139,15 @@ void avi_seek_frame(avi_t *a, int frame)
     if (frame < 0) frame = 0;
     if (a->total_frames > 0 && frame >= a->total_frames) frame = a->total_frames - 1;
 
-    // Seek RELATIVE to the current position: walking forward is cheap (only the
-    // delta), which is the common case (skip-ahead / forward scrub). Only a
-    // backward target needs to rewind to the start and re-walk.
+    // Forward is cheap (walk only the delta from here). Backward jumps to the
+    // nearest recorded checkpoint at/just-before the target, then walks the short
+    // remainder — so seeking back never re-walks the whole clip from the start.
     if (frame < a->cur_frame) {
-        a->movi_pos = a->movi_start;
-        a->cur_frame = 0;
+        int k = a->ckpt_step > 0 ? frame / a->ckpt_step : 0;
+        if (k >= AVI_CKPT_N) k = AVI_CKPT_N - 1;
+        while (k > 0 && a->ckpt[k] == 0) k--;          // nearest recorded checkpoint
+        a->movi_pos  = a->ckpt[k] ? a->ckpt[k] : a->movi_start;
+        a->cur_frame = a->ckpt[k] ? k * a->ckpt_step : 0;
     }
     long sz;
     while (a->cur_frame < frame) {
