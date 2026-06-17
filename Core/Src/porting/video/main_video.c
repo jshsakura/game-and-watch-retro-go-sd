@@ -93,9 +93,8 @@ static void draw_list(void)
             bool on = (idx == cursor);
             if (on) odroid_overlay_draw_fill_rect(0, y, GW_LCD_WIDTH, ROW_HEIGHT, sel);
             char label[NAME_MAX_LEN + 4];
-            snprintf(label, sizeof label, "%s%s",
-                     entries[idx].is_dir ? "[" : "\xE2\x96\xB6 ", entries[idx].name);   // ▶
-            if (entries[idx].is_dir) strncat(label, "]", sizeof(label) - strlen(label) - 1);
+            if (entries[idx].is_dir) snprintf(label, sizeof label, "%s/", entries[idx].name);
+            else                     snprintf(label, sizeof label, "%s", entries[idx].name);
             i18n_draw_text_line(10, y + 3, GW_LCD_WIDTH - 16, label,
                                 on ? bg : main_c, on ? sel : bg, on ? 1 : 0);
         }

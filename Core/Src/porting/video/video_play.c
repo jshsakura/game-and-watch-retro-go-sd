@@ -71,6 +71,23 @@ vid_result_t video_play(const char *path)
     uint32_t osd_until = HAL_GetTick() + OSD_MS;   // show briefly on entry
     bool need_seek = false; int seek_target = 0;
 
+    // Diagnostic splash: prove what we parsed (real AVI vs. a non-MJPEG file).
+    {
+        uint16_t *fb = lcd_get_active_buffer();
+        memset(fb, 0, (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * sizeof(uint16_t));
+        char l[48];
+        i18n_draw_text_line(20, 50, 280, "AVI loaded", 0xFFFF, 0, 1);
+        snprintf(l, sizeof l, "%d x %d  @ %d fps", a.width, a.height,
+                 a.usec_per_frame > 0 ? 1000000 / a.usec_per_frame : 0);
+        i18n_draw_text_line(20, 80, 280, l, 0xFFFF, 0, 0);
+        snprintf(l, sizeof l, "%d frames", a.total_frames);
+        i18n_draw_text_line(20, 100, 280, l, 0xFFFF, 0, 0);
+        i18n_draw_text_line(20, 140, 280, "playing...  A pause  B stop", 0x7BEF, 0, 0);
+        lcd_swap();
+        uint32_t t = HAL_GetTick();
+        while (HAL_GetTick() - t < 1800) { wdog_refresh(); HAL_Delay(20); }
+    }
+
     long sz;
     avi_kind_t k;
     while ((k = avi_next(&a, &sz)) != AVI_END) {
@@ -133,6 +150,9 @@ vid_result_t video_play(const char *path)
             wdog_refresh();
             HAL_Delay(1);
         }
+        char hud[20];                       // diagnostic: frame counter + decode status
+        snprintf(hud, sizeof hud, "f%d %s", vframe, decoded_any ? "OK" : "--");
+        i18n_draw_text_line(2, 2, 110, hud, 0xFFFF, 0, 1);
         lcd_swap();
         next_due += interval;
     }
