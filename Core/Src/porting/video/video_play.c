@@ -11,6 +11,8 @@
 #include "video_decode.h"
 #include "video_audio.h"
 #include "gw_lcd.h"
+#include "gw_audio.h"           // audio_start_playing / music_audio_* / AUDIO_BUFFER_LENGTH
+#include "common.h"             // common_emu_sound_get_volume / common_emu_state
 #include "main.h"               // HAL_GetTick / HAL_Delay / wdog_refresh
 #include <odroid_system.h>
 #include "rg_i18n.h"
@@ -27,6 +29,31 @@
 static const int SPD_NUM[] = { 1, 1, 2 };
 static const int SPD_DEN[] = { 2, 1, 1 };
 static const char *SPD_LBL[] = { "x0.5", "x1", "x2" };
+
+// Audio is synced only at 1x (the ring plays at a fixed 48kHz; speed-changing the
+// video would desync it), and muted while paused. This tells the ISR the current
+// volume + play state without touching the ring.
+static void apply_audio(int spd, bool paused)
+{
+    bool live = (spd == 1) && !paused;
+    music_audio_set(live ? common_emu_sound_get_volume() : 0, live ? 1 : 0);
+}
+
+// Pump one AVI audio chunk (MP3) into the decode->ring path. Small chunks (one or
+// a few MP3 frames), read sequentially on the shared file handle — never racing
+// the video read (FF_FS_TINY-safe).
+static void feed_audio(avi_t *a, long sz)
+{
+    uint8_t buf[2048];
+    while (sz > 0) {
+        wdog_refresh();
+        size_t want = sz > (long)sizeof buf ? sizeof buf : (size_t)sz;
+        size_t got = fread(buf, 1, want, a->f);
+        if (got == 0) break;
+        video_audio_feed(buf, (int)got);
+        sz -= (long)got;
+    }
+}
 
 static void draw_osd(const avi_t *a, int vframe, int spd, bool paused)
 {
@@ -62,7 +89,14 @@ vid_result_t video_play(const char *path)
     odroid_gamepad_state_t joy, prev;
     memset(&prev, 0, sizeof prev);
 
-    // video_audio_start();  // TEMP: audio off during silent-video bring-up
+    // Audio bring-up: attach the ring to the SAI ISR, start the DMA, hand the
+    // buffer to this app, then set the initial volume/play state (1x, unpaused).
+    common_emu_state.skip_frames = 0;
+    common_emu_state.pause_frames = 0;
+    video_audio_start();
+    audio_start_playing(AUDIO_BUFFER_LENGTH);
+    music_audio_enable(1);
+    apply_audio(1, false);
 
     int  spd = 1;                  // 1x
     int  vframe = 0;
@@ -82,8 +116,8 @@ vid_result_t video_play(const char *path)
         for (int b = 0; b < ODROID_INPUT_MAX; b++) if (joy.values[b] && !prev.values[b]) any_press = true;
 
         if (HIT(ODROID_INPUT_B)) { stopped = true; prev = joy; break; }
-        if (HIT(ODROID_INPUT_A)) paused = !paused;
-        if (HIT(ODROID_INPUT_SELECT)) { spd = (spd + 1) % 3; next_due = HAL_GetTick(); }
+        if (HIT(ODROID_INPUT_A)) { paused = !paused; apply_audio(spd, paused); }
+        if (HIT(ODROID_INPUT_SELECT)) { spd = (spd + 1) % 3; next_due = HAL_GetTick(); apply_audio(spd, paused); }
         if (HIT(ODROID_INPUT_RIGHT)) { need_seek = true; seek_target = vframe + seek_frames; }
         if (HIT(ODROID_INPUT_LEFT))  { need_seek = true; seek_target = vframe - seek_frames; }
         if (any_press) osd_until = HAL_GetTick() + OSD_MS;
@@ -93,6 +127,7 @@ vid_result_t video_play(const char *path)
             need_seek = false;
             avi_seek_frame(&a, seek_target);
             vframe = seek_target < 0 ? 0 : seek_target;
+            video_audio_stop();        // drop audio buffered from the old position
             next_due = HAL_GetTick();
             continue;
         }
@@ -108,10 +143,14 @@ vid_result_t video_play(const char *path)
                 HAL_Delay(20);
             }
             next_due += HAL_GetTick() - pstart;     // shift the clock past the pause
+            apply_audio(spd, paused);               // unmute on resume
             if (stopped) break;
         }
 
-        if (k == AVI_AUDIO) continue;   // TEMP: audio off during silent-video bring-up
+        if (k == AVI_AUDIO) {
+            if (spd == 1 && !paused) feed_audio(&a, sz);   // audio is synced only at 1x
+            continue;
+        }
 
         // VIDEO frame.
         uint32_t interval = (uint32_t)frame_ms * SPD_DEN[spd] / SPD_NUM[spd];
@@ -137,6 +176,9 @@ vid_result_t video_play(const char *path)
         next_due += interval;
     }
 
+    music_audio_set(0, 0);       // ISR outputs silence
+    video_audio_stop();          // drain the ring
+    music_audio_enable(0);       // hand the DMA buffer back to the system
     avi_close(&a);
     if (!decoded_any) return VID_UNPLAYABLE;
     return stopped ? VID_STOPPED : VID_OK;
