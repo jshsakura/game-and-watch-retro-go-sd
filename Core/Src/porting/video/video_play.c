@@ -17,6 +17,7 @@
 #include "main.h"               // HAL_GetTick / HAL_Delay / wdog_refresh
 #include <odroid_system.h>
 #include "rg_i18n.h"
+#include "odroid_overlay.h"     // odroid_overlay_settings_menu + dialog choices
 #include "gui.h"                // curr_colors
 #include <string.h>
 #include <stdio.h>
@@ -150,6 +151,27 @@ static void draw_osd(const avi_t *a, int spd, bool paused, int scrub_frame, int 
     }
 }
 
+// --- options menu (PAUSE / SET) ---------------------------------------------
+
+#define VTR(field, fallback) ((curr_lang && curr_lang->field) ? curr_lang->field : (fallback))
+enum { VMENU_QUIT = 91 };
+
+// The shared launcher settings menu (Brightness + Volume sliders) plus a read-only
+// Info line and a Quit entry. Returns the chosen id (VMENU_QUIT to leave).
+static int open_video_menu(const avi_t *a)
+{
+    static char info[40];
+    int fps = a->usec_per_frame > 0 ? (1000000 + a->usec_per_frame / 2) / a->usec_per_frame : 24;
+    snprintf(info, sizeof info, "%dx%d  %dfps", a->width, a->height, fps);
+    odroid_dialog_choice_t extra[] = {
+        { 90,         VTR(s_info, "Info"),               info,          0, NULL },
+        ODROID_DIALOG_CHOICE_SEPARATOR,
+        { VMENU_QUIT, VTR(s_Quit_to_menu, "Quit to menu"), (char *)"",  1, NULL },
+        ODROID_DIALOG_CHOICE_LAST,
+    };
+    return odroid_overlay_settings_menu(extra, NULL, 0);
+}
+
 // --- playback ---------------------------------------------------------------
 
 vid_result_t video_play(const char *path)
@@ -194,6 +216,16 @@ vid_result_t video_play(const char *path)
         if (HIT(ODROID_INPUT_B)) { stopped = true; prev = joy; break; }
         if (HIT(ODROID_INPUT_A)) { paused = !paused; apply_audio(spd, paused); }
         if (HIT(ODROID_INPUT_SELECT)) { spd = (spd + 1) % 3; next_due = HAL_GetTick(); apply_audio(spd, paused); }
+        if (HIT(ODROID_INPUT_VOLUME)) {                  // PAUSE/SET -> options menu
+            music_audio_set(0, 0);
+            int r = open_video_menu(&a);
+            apply_audio(spd, paused);
+            next_due  = HAL_GetTick();
+            osd_until = HAL_GetTick() + OSD_MS;
+            odroid_input_read_gamepad(&prev);            // swallow the menu's buttons
+            if (r == VMENU_QUIT) { stopped = true; break; }
+            continue;
+        }
         if (HIT(ODROID_INPUT_UP))   { int v = odroid_audio_volume_get(); if (v < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(v + 1); apply_audio(spd, paused); }
         if (HIT(ODROID_INPUT_DOWN)) { int v = odroid_audio_volume_get(); if (v > 0) odroid_audio_volume_set(v - 1); apply_audio(spd, paused); }
 

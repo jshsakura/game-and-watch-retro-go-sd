@@ -181,17 +181,28 @@ static void show_message(const char *msg)
 
 static void enter_selected(void)
 {
-    vid_entry_t *e = &entries[cursor];
-    char path[PATH_MAX_LEN];
-    snprintf(path, sizeof path, "%s/%s", cur_path, e->name);
-    if (e->is_dir) {
+    if (entries[cursor].is_dir) {                       // open the folder
+        char path[PATH_MAX_LEN];
+        snprintf(path, sizeof path, "%s/%s", cur_path, entries[cursor].name);
         snprintf(cur_path, sizeof cur_path, "%s", path);
         scan();
         return;
     }
-    if (video_play(path) == VID_UNPLAYABLE)
-        show_message(vstr(VS_UNPLAYABLE));
-    video_ui_list_invalidate();   // the decoder reused g_scratch (the snapshot store)
+
+    // Play through the list from here: when a clip ends naturally, advance to the
+    // next playable file (skip folders, silently skip unplayable). B stops and
+    // returns to the list; an unplayable FIRST pick shows the format message.
+    for (int idx = cursor, first = 1; idx < entry_count; idx++, first = 0) {
+        if (entries[idx].is_dir) continue;
+        char path[PATH_MAX_LEN];
+        snprintf(path, sizeof path, "%s/%s", cur_path, entries[idx].name);
+        cursor = idx;
+        vid_result_t r = video_play(path);
+        video_ui_list_invalidate();                    // decoder reused g_scratch
+        if (r == VID_STOPPED) break;                   // user pressed B
+        if (r == VID_UNPLAYABLE && first) { show_message(vstr(VS_UNPLAYABLE)); break; }
+        // VID_OK (ended) or skipped unplayable -> continue to the next clip
+    }
 }
 
 void app_main_video(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
