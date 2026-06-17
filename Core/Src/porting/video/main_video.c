@@ -196,7 +196,15 @@ void app_main_video(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         if (HIT(ODROID_INPUT_DOWN) && cursor + 1 < entry_count) { cursor++; dirty = true; }
         if (HIT(ODROID_INPUT_UP)   && cursor > 0)               { cursor--; dirty = true; }
-        if (HIT(ODROID_INPUT_A) && entry_count > 0)             { enter_selected(); dirty = true; }
+        if (HIT(ODROID_INPUT_A) && entry_count > 0) {
+            enter_selected();
+            // Re-seed prev with the CURRENT state and restart the loop so the A/B
+            // that ended playback isn't seen as a fresh edge here (which would pop
+            // us out to the launcher or re-enter immediately).
+            odroid_input_read_gamepad(&prev);
+            draw_list();
+            continue;
+        }
         if (HIT(ODROID_INPUT_B)) {
             if (strcmp(cur_path, VIDEO_ROOT) != 0) {            // up a folder
                 char *s = strrchr(cur_path, '/');

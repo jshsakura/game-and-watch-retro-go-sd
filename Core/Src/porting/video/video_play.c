@@ -91,7 +91,9 @@ vid_result_t video_play(const char *path)
     const int seek_frames = frame_ms > 0 ? (SEEK_SECONDS * 1000) / frame_ms : 24 * SEEK_SECONDS;
 
     odroid_gamepad_state_t joy, prev;
-    memset(&prev, 0, sizeof prev);
+    odroid_input_read_gamepad(&prev);   // seed with the CURRENT state so the A press
+                                        // that launched playback isn't seen as a new
+                                        // edge (which would instantly pause it)
 
     // Audio bring-up: attach the ring to the SAI ISR, start the DMA, hand the
     // buffer to this app, then set the initial volume/play state (1x, unpaused).
