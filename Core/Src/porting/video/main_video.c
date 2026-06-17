@@ -1,6 +1,7 @@
-// Video app — a /video browser that plays MJPEG-AVI clips with the same retro
-// chrome as the Music app (shared top bar, theme colours, font). Lives in the
-// Music overlay (only one homebrew runs at a time). See main_video.h.
+// Video app — a /video browser that plays MJPEG-AVI clips. Renders with the
+// Music app's shared list UI (ui_list_draw) so the look is pixel-identical:
+// system top bar, folder banner, zebra + selection rows, scrollbar, keycap
+// footer. Lives in the Music overlay (only one homebrew runs at a time).
 
 #include <odroid_system.h>
 #include <string.h>
@@ -12,23 +13,17 @@
 #include "gw_lcd.h"
 #include "appid.h"
 #include "rg_storage.h"
-#include "odroid_overlay.h"
 #include "rg_i18n.h"
 #include "common.h"
 #include "gui.h"
+#include "music_ui.h"          // ui_list_draw + list_view_t/list_item_t + LIST_*
 #include "main_video.h"
 #include "video_play.h"
 
-#define MAX_ENTRIES   128   // per-folder cap (kept modest — shares overlay BSS)
+#define MAX_ENTRIES   128
 #define NAME_MAX_LEN  128
 #define PATH_MAX_LEN  256
-#define ROW_HEIGHT    18
-#define LIST_TOP      36
-#define FOOTER_H      16
-#define ROOT_DIR      "/"
-
-// Drawn in main_music.c (same overlay) — reuse it so the bar is identical.
-extern void music_draw_topbar(const char *title, const char *right_label);
+#define VIDEO_ROOT    "/video"
 
 typedef struct { char name[NAME_MAX_LEN]; bool is_dir; } vid_entry_t;
 static vid_entry_t entries[MAX_ENTRIES];
@@ -61,58 +56,34 @@ static void scan(void)
         RG_SCANDIR_FILES | RG_SCANDIR_DIRS | RG_SCANDIR_SORT);
 }
 
-static int visible_rows(void)
+// Fill one visible row for ui_list_draw (called only for on-screen rows).
+static void item_at(int i, list_item_t *out)
 {
-    return (GW_LCD_HEIGHT - LIST_TOP - FOOTER_H) / ROW_HEIGHT;
-}
-
-static void draw_centered(int y, const char *t, uint16_t fg)
-{
-    int w = i18n_get_text_width(t);
-    i18n_draw_text_line((GW_LCD_WIDTH - w) / 2, y, w + 2, t, fg, 0, 1);
+    out->title    = entries[i].name;
+    out->subtitle = "";
+    out->duration = "";
+    out->art      = NULL;          // TODO: first-frame thumbnail
+    out->art_sz   = 0;
+    out->kind     = entries[i].is_dir ? LIST_DIR : LIST_TRACK;
+    out->fav = out->playing = out->paused = false;
 }
 
 static void draw_list(void)
 {
-    uint16_t bg = curr_colors->bg_c, main_c = curr_colors->main_c, sel = curr_colors->sel_c;
-    uint16_t *fb = lcd_get_active_buffer();
-    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
-
-    music_draw_topbar("Video", "");
-
-    int rows = visible_rows();
     if (cursor < scroll) scroll = cursor;
-    if (cursor >= scroll + rows) scroll = cursor - rows + 1;
+    if (cursor >= scroll + LIST_VISIBLE_ROWS) scroll = cursor - LIST_VISIBLE_ROWS + 1;
 
-    if (entry_count == 0) {
-        draw_centered(LIST_TOP + 30, "no .avi files here", main_c);
-    } else {
-        for (int r = 0; r < rows && scroll + r < entry_count; r++) {
-            int idx = scroll + r;
-            int y = LIST_TOP + r * ROW_HEIGHT;
-            bool on = (idx == cursor);
-            if (on) odroid_overlay_draw_fill_rect(0, y, GW_LCD_WIDTH, ROW_HEIGHT, sel);
-            char label[NAME_MAX_LEN + 4];
-            if (entries[idx].is_dir) snprintf(label, sizeof label, "%s/", entries[idx].name);
-            else                     snprintf(label, sizeof label, "%s", entries[idx].name);
-            i18n_draw_text_line(10, y + 3, GW_LCD_WIDTH - 16, label,
-                                on ? bg : main_c, on ? sel : bg, on ? 1 : 0);
-        }
-    }
-    // footer: keycap-style hints (left) + entry count (right), accent strip
-    int fy = GW_LCD_HEIGHT - FOOTER_H;
-    odroid_overlay_draw_fill_rect(0, fy, GW_LCD_WIDTH, FOOTER_H, sel);
-    int x = 6;
-    odroid_overlay_draw_fill_rect(x, fy + 2, 11, FOOTER_H - 4, bg);
-    i18n_draw_text_line(x + 3, fy + 3, 9, "A", main_c, bg, 1); x += 15;
-    i18n_draw_text_line(x, fy + 3, 36, "play", bg, sel, 0); x += 34;
-    odroid_overlay_draw_fill_rect(x, fy + 2, 11, FOOTER_H - 4, bg);
-    i18n_draw_text_line(x + 3, fy + 3, 9, "B", main_c, bg, 1); x += 15;
-    i18n_draw_text_line(x, fy + 3, 36, "back", bg, sel, 0);
-    char cnt[24];
-    snprintf(cnt, sizeof cnt, "%d/%d", entry_count ? cursor + 1 : 0, entry_count);
-    int cw = i18n_get_text_width(cnt);
-    i18n_draw_text_line(GW_LCD_WIDTH - cw - 6, fy + 3, cw + 2, cnt, bg, sel, 0);
+    list_view_t v;
+    memset(&v, 0, sizeof v);
+    v.header       = cur_path;
+    v.count        = entry_count;
+    v.cursor       = cursor;
+    v.scroll       = scroll;
+    v.visible_rows = LIST_VISIBLE_ROWS;
+    v.row_h        = LIST_ROW_H;
+    v.empty_hint   = "no videos";
+    v.empty_sub    = VIDEO_ROOT;
+    ui_list_draw(&v, item_at);
     lcd_swap();
 }
 
@@ -121,8 +92,8 @@ static void show_message(const char *msg)
     uint16_t bg = curr_colors->bg_c;
     uint16_t *fb = lcd_get_active_buffer();
     for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
-    draw_centered(GW_LCD_HEIGHT / 2 - 6, msg, curr_colors->main_c);
-    draw_centered(GW_LCD_HEIGHT / 2 + 14, "press a key", curr_colors->dis_c);
+    ui_text_center_t(GW_LCD_HEIGHT / 2 - 6, msg, curr_colors->main_c);
+    ui_text_center_t(GW_LCD_HEIGHT / 2 + 14, "press a key", curr_colors->dis_c);
     lcd_swap();
     odroid_gamepad_state_t j;
     for (;;) {
@@ -140,15 +111,13 @@ static void enter_selected(void)
 {
     vid_entry_t *e = &entries[cursor];
     char path[PATH_MAX_LEN];
-    if (strcmp(cur_path, "/") == 0) snprintf(path, sizeof path, "/%s", e->name);
-    else                            snprintf(path, sizeof path, "%s/%s", cur_path, e->name);
+    snprintf(path, sizeof path, "%s/%s", cur_path, e->name);
     if (e->is_dir) {
         snprintf(cur_path, sizeof cur_path, "%s", path);
         scan();
         return;
     }
-    vid_result_t r = video_play(path);
-    if (r == VID_UNPLAYABLE)
+    if (video_play(path) == VID_UNPLAYABLE)
         show_message("unsupported or unreadable file");
 }
 
@@ -157,7 +126,7 @@ void app_main_video(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     (void)load_state; (void)start_paused; (void)save_slot;
     odroid_system_init(APPID_HOMEBREW, 48000);
 
-    strcpy(cur_path, ROOT_DIR);
+    strcpy(cur_path, VIDEO_ROOT);
     scan();
 
     odroid_gamepad_state_t joy, prev;
@@ -174,9 +143,9 @@ void app_main_video(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         if (HIT(ODROID_INPUT_UP)   && cursor > 0)               { cursor--; dirty = true; }
         if (HIT(ODROID_INPUT_A) && entry_count > 0)             { enter_selected(); dirty = true; }
         if (HIT(ODROID_INPUT_B)) {
-            if (strcmp(cur_path, ROOT_DIR) != 0) {              // up a folder
+            if (strcmp(cur_path, VIDEO_ROOT) != 0) {            // up a folder
                 char *s = strrchr(cur_path, '/');
-                if (s && s != cur_path) *s = '\0'; else strcpy(cur_path, ROOT_DIR);
+                if (s && s != cur_path) *s = '\0'; else strcpy(cur_path, VIDEO_ROOT);
                 scan(); dirty = true;
             } else {
                 odroid_system_switch_app(APPID_LAUNCHER);       // noreturn
