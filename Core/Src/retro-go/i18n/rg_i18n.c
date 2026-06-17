@@ -101,7 +101,7 @@ static uint8_t curr_font = 0;
 
 // Font cache management
 #define CACHE_SIZE 256  // Stores up to 128 character widths (adjustable)
-#define FONT_CACHE_SIZE 5*1024  // 5KB cache for raw font data
+#define FONT_CACHE_SIZE 16*1024  // raw font-data cache (bigger = fewer SD reloads)
 
 typedef struct {
     uint32_t codepoint; // Unicode codepoint
@@ -219,6 +219,34 @@ void init_font_cache() {
     cache_data_index = 0;
 }
 
+// Keep the current glyph font file OPEN across calls. A cache miss used to
+// fopen()+fclose() the font file PER GLYPH; on FatFs an fopen is a directory
+// walk, and on a slow/flaky SD that is seconds each — so rendering one CJK title
+// (dozens of fresh glyphs) could stall for ~10s. Consecutive glyphs almost
+// always come from the same file, so reuse the handle and only switch when the
+// filename changes. (get_font_file returns stable string-literal pointers, so a
+// pointer compare identifies "same file".)
+static FILE       *s_font_file = NULL;
+static const char *s_font_name = NULL;
+
+static FILE *font_file_open(const char *name)
+{
+    if (s_font_file && name == s_font_name)
+        return s_font_file;                  // already open
+    if (s_font_file) fclose(s_font_file);
+    s_font_file = fopen(name, "rb");
+    s_font_name = s_font_file ? name : NULL;
+    return s_font_file;
+}
+
+// Release the cached font handle. Call before unrelated SD work (FF_FS_TINY
+// shares one sector buffer across open files) and on font/SD teardown.
+void i18n_font_cache_release(void)
+{
+    if (s_font_file) { fclose(s_font_file); s_font_file = NULL; }
+    s_font_name = NULL;
+}
+
 static FontEntry *get_font_data(uint32_t codepoint) {
     FILE *file;
 
@@ -241,7 +269,7 @@ static FontEntry *get_font_data(uint32_t codepoint) {
 
     const char *filename = get_font_file(codepoint);
     uint16_t char_offset = codepoint;
-    file = fopen(filename, "rb");
+    file = font_file_open(filename);
     if (!file) {
         // Font file missing or SD unavailable: return replacement character
         return &unknown_glyph_entry;
@@ -302,8 +330,7 @@ static FontEntry *get_font_data(uint32_t codepoint) {
         varwidth_N = 240;
     } else if (codepoint >= 0x100) {
         // Codepoint not handled by any known block: return U+FFFD replacement character
-        fclose(file);
-        return &unknown_glyph_entry;
+        return &unknown_glyph_entry;   // font file stays open (cached)
     }
 
     // Read glyph width for variable-width files
@@ -345,9 +372,8 @@ static FontEntry *get_font_data(uint32_t codepoint) {
 //    printf("\n");
     cache_data_index += data_length;
     entry->valid = true;
-    fclose(file);
     cache_index = (cache_index + 1) % CACHE_SIZE;
-    return entry;
+    return entry;   // font file stays open (cached) for the next glyph
 }
 
 // end font cache management
