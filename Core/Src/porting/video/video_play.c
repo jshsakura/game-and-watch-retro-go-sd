@@ -151,6 +151,26 @@ static void draw_osd(const avi_t *a, int spd, bool paused, int scrub_frame, int 
     }
 }
 
+// Volume popup (shown briefly while UP/DOWN adjust the level), like the Music app.
+static void draw_volume(void)
+{
+    uint16_t *fb = lcd_get_active_buffer();
+    uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c, accent = curr_colors->sel_c;
+    int vol = odroid_audio_volume_get(), maxv = ODROID_AUDIO_VOLUME_MAX;
+    int pw = 160, ph = 26, px = (GW_LCD_WIDTH - pw) / 2, py = 18;
+    for (int y = py; y < py + ph; y++)
+        for (int x = px; x < px + pw; x++)
+            fb[y * GW_LCD_WIDTH + x] = vmix(fb[y * GW_LCD_WIDTH + x], 0x0000, 12);
+    i18n_draw_text_line(px + 10, py + 7, 16, "\xE2\x99\xAA", fg, 0, 1);   // ♪
+    int bx = px + 32, bw = pw - 44, bh = 8, by = py + (ph - bh) / 2;
+    int fillw = maxv > 0 ? bw * vol / maxv : 0;
+    for (int y = 0; y < bh; y++) {
+        uint16_t *row = fb + (by + y) * GW_LCD_WIDTH;
+        for (int x = 0; x < bw; x++)    row[bx + x] = vmix(fg, bg, 9);
+        for (int x = 0; x < fillw; x++) row[bx + x] = accent;
+    }
+}
+
 // --- options menu (PAUSE / SET) ---------------------------------------------
 
 #define VTR(field, fallback) ((curr_lang && curr_lang->field) ? curr_lang->field : (fallback))
@@ -204,6 +224,7 @@ vid_result_t video_play(const char *path)
     bool decoded_any = false, stopped = false, paused = false;
     uint32_t next_due  = HAL_GetTick();
     uint32_t osd_until = HAL_GetTick() + OSD_MS;
+    uint32_t vol_until = 0;
     bool lr_down = false; int lr_dir = 0; uint32_t lr_press = 0;
 
     long sz;
@@ -228,8 +249,8 @@ vid_result_t video_play(const char *path)
             if (r == VMENU_QUIT) { stopped = true; break; }
             continue;
         }
-        if (HIT(ODROID_INPUT_UP))   { int v = odroid_audio_volume_get(); if (v < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(v + 1); apply_audio(spd, paused); }
-        if (HIT(ODROID_INPUT_DOWN)) { int v = odroid_audio_volume_get(); if (v > 0) odroid_audio_volume_set(v - 1); apply_audio(spd, paused); }
+        if (HIT(ODROID_INPUT_UP))   { int v = odroid_audio_volume_get(); if (v < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(v + 1); apply_audio(spd, paused); vol_until = HAL_GetTick() + 1500; }
+        if (HIT(ODROID_INPUT_DOWN)) { int v = odroid_audio_volume_get(); if (v > 0) odroid_audio_volume_set(v - 1); apply_audio(spd, paused); vol_until = HAL_GetTick() + 1500; }
 
         // LEFT/RIGHT: track press; tap (short) = ±5s, hold (long) = scrub.
         bool nowL = joy.values[ODROID_INPUT_LEFT], nowR = joy.values[ODROID_INPUT_RIGHT];
@@ -306,6 +327,8 @@ vid_result_t video_play(const char *path)
             decoded_any = true;
         if ((int32_t)(HAL_GetTick() - osd_until) < 0)
             draw_osd(&a, spd, paused, -1, frame_ms);
+        if ((int32_t)(HAL_GetTick() - vol_until) < 0)
+            draw_volume();
 
         while ((int32_t)(HAL_GetTick() - next_due) < 0) { wdog_refresh(); HAL_Delay(1); }
         lcd_swap();
@@ -315,6 +338,7 @@ vid_result_t video_play(const char *path)
     music_audio_set(0, 0);
     video_audio_stop();
     music_audio_enable(0);
+    audio_stop_playing();        // halt the SAI DMA so it can't loop the stale buffer (exit buzz)
     video_decode_deinit();
     avi_close(&a);
     if (!decoded_any) return VID_UNPLAYABLE;
