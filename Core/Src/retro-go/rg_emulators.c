@@ -1064,6 +1064,7 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     CHOSEN_FILE = NULL;
 #endif
 
+    free(savestates);
     return force_redraw;
 }
 

@@ -47,6 +47,7 @@
 #include "JoystickPort.h"
 #include "InputEvent.h"
 #include "R800.h"
+#include "VDP_MSX.h"
 #include "save_msx.h"
 #include "gw_malloc.h"
 #include "gw_linker.h"
@@ -158,6 +159,7 @@ static void setPropertiesMsx(Machine *machine, int msxType);
 static void setupEmulatorRessources(int msxType);
 static void createProperties();
 static void blit(uint8_t *msx_fb, uint16_t *framebuffer);
+static void draw_disk_icon(void);
 
 void msxLedSetFdd1(int state) {
     show_disk_icon = state;
@@ -177,7 +179,7 @@ static bool msx_system_SaveState(const char *savePathName)
     for (uint8_t i = 0; i < 24; i++) {
         for (uint8_t j = 0; j < 24; j++) {
         if (IMG_DISKETTE[idx / 8] & (1 << (7 - idx % 8))) {
-            dest[274 + j + GW_LCD_WIDTH * (2 + i)] = 0xFFFF;
+            dest[272 + j + GW_LCD_WIDTH * (2 + i)] = 0xFFFF;
         }
         idx++;
         }
@@ -216,15 +218,15 @@ void load_gnw_msx_data() {
 
 static void *msx_screenshot()
 {
-    if ((vdpGetScreenMode() != 10) && (vdpGetScreenMode() != 12)) {
-        lcd_wait_for_vblank();
 
+    if ((vdpGetScreenMode() != 10) && (vdpGetScreenMode() != 11) && (vdpGetScreenMode() != 12)) {
+        lcd_wait_for_vblank();
         lcd_clear_active_buffer();
         blit(msx_framebuffer, lcd_get_active_buffer());
         return lcd_get_active_buffer();
-    } else {
-        return NULL;
     }
+
+    return NULL;
 }
 
 static void msx_sleep_wake_up()
@@ -951,9 +953,9 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
                 machine->slotInfo[i].slot = 1;
                 machine->slotInfo[i].subslot = 0;
                 machine->slotInfo[i].startPage = 0;
-                machine->slotInfo[i].pageCount = 16;
-                machine->slotInfo[i].romType = ROM_MSXDOS2;
-                strcpy(machine->slotInfo[i].name, "/bios/msx/MSXDOS23.ROM");
+                machine->slotInfo[i].pageCount = 8;
+                machine->slotInfo[i].romType = ROM_SUNRISEIDE;
+                strcpy(machine->slotInfo[i].name, "/bios/msx/Nextor.rom");
                 i++;
             }
 
@@ -1041,9 +1043,9 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
                 machine->slotInfo[i].slot = 1;
                 machine->slotInfo[i].subslot = 0;
                 machine->slotInfo[i].startPage = 0;
-                machine->slotInfo[i].pageCount = 16;
-                machine->slotInfo[i].romType = ROM_MSXDOS2;
-                strcpy(machine->slotInfo[i].name, "/bios/msx/MSXDOS23.ROM");
+                machine->slotInfo[i].pageCount = 8;
+                machine->slotInfo[i].romType = ROM_SUNRISEIDE;
+                strcpy(machine->slotInfo[i].name, "/bios/msx/Nextor.rom");
                 i++;
             }
 
@@ -1069,7 +1071,7 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
 }
 
 static void createMsxMachine(int msxType) {
-    msxMachine = ahb_calloc(1,sizeof(Machine));
+    msxMachine = calloc(1,sizeof(Machine));
 
     msxMachine->cpu.freqZ80 = 3579545;
     msxMachine->cpu.freqR800 = 7159090;
@@ -1788,7 +1790,6 @@ static void insertGame() {
         }
         case MSX_GAME_HDIDE:
         {
-            insertCartridge(properties, 0, CARTNAME_SUNRISEIDE, NULL, ROM_SUNRISEIDE, -1);
             insertCartridge(properties, 1, CARTNAME_SNATCHER, NULL, ROM_SNATCHER, -1);
             insertDiskette(properties, 1, current_disk_path, NULL, -1);
             break;
@@ -1826,6 +1827,7 @@ static void createProperties() {
 static void setupEmulatorRessources(int msxType)
 {
     int i;
+    msxYjkColorInit();
     mixer = mixerCreate();
     createProperties();
     createMsxMachine(msxType);
@@ -1904,10 +1906,43 @@ static inline void screen_blit_nn(uint8_t *msx_fb, uint16_t *framebuffer/*int32_
     }
 }
 
+static void draw_disk_icon(void)
+{
+    odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
+    uint16_t offset;
+    uint16_t *dest;
+    uint16_t idx = 0;
+
+    if (!show_disk_icon)
+        return;
+
+    switch (scaling) {
+    case ODROID_DISPLAY_SCALING_OFF:
+        offset = 272;
+        break;
+    case ODROID_DISPLAY_SCALING_FIT:
+    case ODROID_DISPLAY_SCALING_FULL:
+    case ODROID_DISPLAY_SCALING_CUSTOM:
+        offset = GW_LCD_WIDTH - 26;
+        break;
+    default:
+        return;
+    }
+
+    dest = lcd_get_active_buffer();
+    for (uint8_t i = 0; i < 24; i++) {
+        for (uint8_t j = 0; j < 24; j++) {
+            if (IMG_DISKETTE[idx / 8] & (1 << (7 - idx % 8))) {
+                dest[offset + j + GW_LCD_WIDTH * (2 + i)] = 0xFFFF;
+            }
+            idx++;
+        }
+    }
+}
+
 static void blit(uint8_t *msx_fb, uint16_t *framebuffer)
 {
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
-    uint16_t offset = 274;
 
     switch (scaling) {
     case ODROID_DISPLAY_SCALING_OFF:
@@ -1919,7 +1954,6 @@ static void blit(uint8_t *msx_fb, uint16_t *framebuffer)
     case ODROID_DISPLAY_SCALING_FIT:
     case ODROID_DISPLAY_SCALING_FULL:
     case ODROID_DISPLAY_SCALING_CUSTOM:
-        offset = GW_LCD_WIDTH-26;
         use_overscan = false;
         update_fb_info();
         screen_blit_nn(msx_fb, framebuffer);
@@ -1927,18 +1961,6 @@ static void blit(uint8_t *msx_fb, uint16_t *framebuffer)
     default:
         printf("Unsupported scaling mode %d\n", scaling);
         break;
-    }
-    if (show_disk_icon) {
-        uint16_t *dest = lcd_get_active_buffer();
-        uint16_t idx = 0;
-        for (uint8_t i = 0; i < 24; i++) {
-            for (uint8_t j = 0; j < 24; j++) {
-            if (IMG_DISKETTE[idx / 8] & (1 << (7 - idx % 8))) {
-                dest[offset + j + GW_LCD_WIDTH * (2 + i)] = 0xFFFF;
-            }
-            idx++;
-            }
-        }
     }
 }
 
@@ -2053,14 +2075,17 @@ void app_main_msx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         drawFrame = common_emu_frame_loop();
 
-        void _blit()
+        void _blit_frame(void)
         {
-            // If current MSX screen mode is 10 or 12, data has been directly written into
-            // framebuffer (scaling is not possible for these screen modes), elseway apply
-            // current scaling mode
-            if ((vdpGetScreenMode() != 10) && (vdpGetScreenMode() != 12)) {
+            // Modes 10/11/12: RGB565 written directly by the VDP (no palette blit)
+            if ((vdpGetScreenMode() != 10) && (vdpGetScreenMode() != 11) && (vdpGetScreenMode() != 12)) {
                 blit(msx_framebuffer, lcd_get_active_buffer());
             }
+        }
+
+        void _blit(void)
+        {
+            _blit_frame();
             common_ingame_overlay();
         }
 
@@ -2074,10 +2099,18 @@ void app_main_msx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         ((R800*)boardInfo.cpuRef)->terminate = 0;
         boardInfo.run(boardInfo.cpuRef);
 
-        if (drawFrame) {
-            _blit();
-            lcd_swap();
-        }
+        /* Modes 10/11/12 render RGB565 straight into the LCD back buffer
+         * (frameBufferGetLine16). Gwenesis always lcd_swap() even when skipping
+         * line render; MSX must do the same or the panel stays on a stale front
+         * buffer while emulation keeps updating the back buffer. */
+        if (drawFrame)
+            _blit_frame();
+        /* Overlay after emulation: run() overwrites any HUD drawn in input_loop,
+         * and _blit_frame() is skipped on frameskip — still show volume/brightness. */
+        if (common_emu_state.overlay != INGAME_OVERLAY_NONE)
+            common_ingame_overlay();
+        draw_disk_icon();
+        lcd_swap();
 
         // Render audio
         mixerSyncGNW(mixer,(AUDIO_MSX_SAMPLE_RATE/msx_fps));

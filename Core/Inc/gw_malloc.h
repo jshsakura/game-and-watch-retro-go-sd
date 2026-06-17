@@ -12,6 +12,7 @@ extern uint32_t ram_start;
 
 void ahb_init();
 void *ahb_malloc(size_t size);
+void *ahb_only_malloc(size_t size);
 void *ahb_calloc(size_t count,size_t size);
 
 void itc_init();

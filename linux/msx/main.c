@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <SDL2/SDL.h>
+#include <SDL.h>
 
 #include "porting.h"
 #include "crc32.h"
@@ -36,13 +36,14 @@
 #include "Src/Utils/SaveState.h"
 #include "save_msx.h"
 #include "main.h"
+#include "VDP_MSX.h"
 
 extern const unsigned char ROM_DATA[];
 extern unsigned int ROM_DATA_LENGTH;
 extern unsigned int cart_rom_len;
 extern const char *ROM_NAME;
 extern const char *ROM_EXT;
-extern unsigned int *ROM_MAPPER;
+extern unsigned int ROM_MAPPER;
 
 #define AUDIO_MSX_SAMPLE_RATE 16000
 #define FPS_NTSC  60
@@ -140,6 +141,16 @@ void *ram_malloc(size_t size)
 //   printf("itc_malloc %zu bytes (new total = %u)\n",size,itc_allocated_ram);
    void *ret = malloc(size);
    return ret;
+}
+
+void *ahb_only_malloc(size_t size)
+{
+   return malloc(size);
+}
+
+void msxLedSetFdd1(int state)
+{
+   (void)state;
 }
 
 #define APP_ID  11
@@ -363,6 +374,12 @@ void keyboardUpdate()
             case SDLK_COLON:
                 eventMap[EC_COLON]  = 1;
                 break;
+            case SDLK_COMMA:
+                eventMap[EC_COMMA]  = 1;
+                break;
+            case SDLK_PERIOD:
+                eventMap[EC_PERIOD]  = 1;
+                break;
             case SDLK_LSHIFT:
                 eventMap[EC_LSHIFT]  = 1;
                 break;
@@ -523,6 +540,12 @@ void keyboardUpdate()
                 break;
             case SDLK_COLON:
                 eventMap[EC_COLON]  = 0;
+                break;
+            case SDLK_COMMA:
+                eventMap[EC_COMMA]  = 0;
+                break;
+            case SDLK_PERIOD:
+                eventMap[EC_PERIOD]  = 0;
                 break;
             case SDLK_LSHIFT:
                 eventMap[EC_LSHIFT]  = 0;
@@ -780,7 +803,7 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
             machine->slotInfo[i].startPage = 0;
             machine->slotInfo[i].pageCount = 4;
             machine->slotInfo[i].romType = ROM_CASPATCH;
-            strcpy(machine->slotInfo[i].name, "../roms/msx_bios/MSX.rom");
+            strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX.rom");
             i++;
 
             if (msx_game_type == MSX_GAME_DISK) {
@@ -789,7 +812,7 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
                 machine->slotInfo[i].startPage = 2;
                 machine->slotInfo[i].pageCount = 4;
                 machine->slotInfo[i].romType = ROM_TC8566AF;
-                strcpy(machine->slotInfo[i].name, "../roms/msx_bios/PANASONICDISK.rom");
+                strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/PANASONICDISK.rom");
                 i++;
             }
 
@@ -826,7 +849,7 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
             machine->slotInfo[i].startPage = 0;
             machine->slotInfo[i].pageCount = 4;
             machine->slotInfo[i].romType = ROM_CASPATCH;
-            strcpy(machine->slotInfo[i].name, "../roms/msx_bios/MSX2.rom");
+            strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2.rom");
             i++;
 
             machine->slotInfo[i].slot = 3;
@@ -834,24 +857,27 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
             machine->slotInfo[i].startPage = 0;
             machine->slotInfo[i].pageCount = 2;
             machine->slotInfo[i].romType = ROM_NORMAL;
-            strcpy(machine->slotInfo[i].name, "../roms/msx_bios/MSX2EXT.rom");
+            strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2EXT.rom");
             i++;
 
             if (msx_game_type == MSX_GAME_DISK) {
+                /* Floppy BIOS at 3-1-2 (MSX2 layout). */
                 machine->slotInfo[i].slot = 3;
                 machine->slotInfo[i].subslot = 1;
                 machine->slotInfo[i].startPage = 2;
                 machine->slotInfo[i].pageCount = 4;
                 machine->slotInfo[i].romType = ROM_TC8566AF;
-                strcpy(machine->slotInfo[i].name, "../roms/msx_bios/PANASONICDISK.rom");
+                strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/PANASONICDISK.rom");
                 i++;
-            } else if (msx_game_type == MSX_GAME_HDIDE) {
+            }
+            /* else if (msx_game_type == MSX_GAME_HDIDE)*/ {
+                /* Sunrise IDE in machine slots (not cart): hdId 0 → HDD drive 1. */
                 machine->slotInfo[i].slot = 1;
                 machine->slotInfo[i].subslot = 0;
                 machine->slotInfo[i].startPage = 0;
-                machine->slotInfo[i].pageCount = 16;
-                machine->slotInfo[i].romType = ROM_MSXDOS2;
-                strcpy(machine->slotInfo[i].name, "../roms/msx_bios/MSXDOS23.ROM");
+                machine->slotInfo[i].pageCount = 8;
+                machine->slotInfo[i].romType = ROM_SUNRISEIDE;
+                strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/Nextor.ROM");
                 i++;
             }
 
@@ -860,7 +886,7 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
             machine->slotInfo[i].startPage = 2;
             machine->slotInfo[i].pageCount = 2;
             machine->slotInfo[i].romType = ROM_MSXMUSIC; // FMPAC
-            strcpy(machine->slotInfo[i].name, "../roms/msx_bios/MSX2PMUS.rom");
+            strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2PMUS.rom");
             i++;
 
             machine->slotInfoCount = i;
@@ -896,7 +922,7 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
             machine->slotInfo[i].startPage = 0;
             machine->slotInfo[i].pageCount = 4;
             machine->slotInfo[i].romType = ROM_CASPATCH;
-            strcpy(machine->slotInfo[i].name, "../roms/msx_bios/MSX2P.rom");
+            strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2P.rom");
             i++;
 
             machine->slotInfo[i].slot = 0;
@@ -904,7 +930,7 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
             machine->slotInfo[i].startPage = 2;
             machine->slotInfo[i].pageCount = 2;
             machine->slotInfo[i].romType = ROM_MSXMUSIC; // FMPAC
-            strcpy(machine->slotInfo[i].name, "../roms/msx_bios/MSX2PMUS.rom");
+            strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2PMUS.rom");
             i++;
 
             machine->slotInfo[i].slot = 3;
@@ -920,7 +946,7 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
             machine->slotInfo[i].startPage = 0;
             machine->slotInfo[i].pageCount = 2;
             machine->slotInfo[i].romType = ROM_NORMAL;
-            strcpy(machine->slotInfo[i].name, "../roms/msx_bios/MSX2PEXT.rom");
+            strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2PEXT.rom");
             i++;
 
             machine->slotInfo[i].slot = 3;
@@ -928,24 +954,25 @@ static void setPropertiesMsx(Machine *machine, int msxType) {
             machine->slotInfo[i].startPage = 2;
             machine->slotInfo[i].pageCount = 4;
             machine->slotInfo[i].romType = ROM_0x4000;
-            strcpy(machine->slotInfo[i].name, "../roms/msx_bios/MSXKANJI.rom");
+            strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSXKANJI.rom");
             i++;
 
             if (msx_game_type == MSX_GAME_DISK) {
+                /* Floppy BIOS (required for .dsk boot). */
                 machine->slotInfo[i].slot = 3;
                 machine->slotInfo[i].subslot = 2;
                 machine->slotInfo[i].startPage = 2;
                 machine->slotInfo[i].pageCount = 4;
                 machine->slotInfo[i].romType = ROM_TC8566AF;
-                strcpy(machine->slotInfo[i].name, "../roms/msx_bios/PANASONICDISK.rom");
+                strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/PANASONICDISK.rom");
                 i++;
             } else if (msx_game_type == MSX_GAME_HDIDE) {
                 machine->slotInfo[i].slot = 1;
                 machine->slotInfo[i].subslot = 0;
                 machine->slotInfo[i].startPage = 0;
-                machine->slotInfo[i].pageCount = 16;
-                machine->slotInfo[i].romType = ROM_MSXDOS2;
-                strcpy(machine->slotInfo[i].name, "../roms/msx_bios/MSXDOS23.ROM");
+                machine->slotInfo[i].pageCount = 8;
+                machine->slotInfo[i].romType = ROM_SUNRISEIDE;
+                strcpy(machine->slotInfo[i].name, "../external/blueMSX-go/system/bluemsx/Machines/Shared Roms/Nextor.ROM");
                 i++;
             }
 
@@ -971,7 +998,7 @@ static void createMsxMachine(int msxType) {
 
     // We need to know which kind of media we will load to
     // load correct configuration
-    if (0 == strcmp(ROM_EXT,MSX_DISK_EXTENSION_COMPRESSED)) {
+    if (0 == strcasecmp(ROM_EXT,MSX_DISK_EXTENSION_COMPRESSED)) {
         // Find if file is disk image or IDE HDD image
         const uint8_t *diskData = ROM_DATA;
         uint32_t payload_offset = diskData[4]+(diskData[5]<<8)+(diskData[6]<<16)+(diskData[7]<<24);
@@ -980,7 +1007,7 @@ static void createMsxMachine(int msxType) {
         } else {
             msx_game_type = MSX_GAME_HDIDE;
         }
-    } else if (0 == strcmp(ROM_EXT,MSX_DISK_EXTENSION)) {
+    } else if (0 == strcasecmp(ROM_EXT,MSX_DISK_EXTENSION)) {
         if (ROM_DATA_LENGTH <= 737280)
             msx_game_type = MSX_GAME_DISK;
         else
@@ -1029,7 +1056,6 @@ static void insertGame() {
         }
         case MSX_GAME_HDIDE:
         {
-            insertCartridge(properties, 0, CARTNAME_SUNRISEIDE, NULL, ROM_SUNRISEIDE, -1);
             insertCartridge(properties, 1, CARTNAME_SNATCHER, NULL, ROM_SNATCHER, -1);
             insertDiskette(properties, 1, ROM_NAME, NULL, -1);
             break;
@@ -1063,6 +1089,7 @@ static void createProperties() {
 static void setupEmulatorRessources(int msxType)
 {
     int i;
+    msxYjkColorInit();
     mixer = mixerCreate();
     createProperties();
     createMsxMachine(msxType);
@@ -1141,7 +1168,7 @@ int main(int argc, char *argv[])
     init_window(width, height);
 
     odroid_system_init(APP_ID, AUDIO_MSX_SAMPLE_RATE);
-    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, NULL, NULL, NULL, NULL);
+//    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, NULL, NULL, NULL, NULL);
 
     /* Init controls */
     memset(&previous_joystick_state,0, sizeof(odroid_gamepad_state_t));
