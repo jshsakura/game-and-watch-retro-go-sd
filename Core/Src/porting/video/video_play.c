@@ -71,13 +71,27 @@ static void draw_osd(const avi_t *a, int vframe, int spd, bool paused)
     snprintf(vbuf, sizeof vbuf, "\xE2\x99\xAA%d", odroid_audio_volume_get());   // ♪N volume
     i18n_draw_text_line(64, y + 6, 32, vbuf, fg, bg, 0);
 
-    // progress bar (needs total frames; skip if unknown)
-    int bx = 100, bw = GW_LCD_WIDTH - bx - 10, bh = 6, byy = y + 10;
-    odroid_overlay_draw_fill_rect(bx, byy, bw, bh, curr_colors->dis_c);
-    if (a->total_frames > 0) {
-        int fillw = (int)((long)bw * vframe / a->total_frames);
-        if (fillw > bw) fillw = bw;
-        odroid_overlay_draw_fill_rect(bx, byy, fillw, bh, ac);
+    // elapsed / total time on the right (M:SS/M:SS — ASCII, baked font, no SD)
+    int fms   = avi_frame_ms(a);
+    int cur_s = vframe * fms / 1000;
+    int tot_s = a->total_frames > 0 ? a->total_frames * fms / 1000 : 0;
+    char tbuf[24];
+    if (tot_s > 0)
+        snprintf(tbuf, sizeof tbuf, "%d:%02d/%d:%02d", cur_s / 60, cur_s % 60, tot_s / 60, tot_s % 60);
+    else
+        snprintf(tbuf, sizeof tbuf, "%d:%02d", cur_s / 60, cur_s % 60);
+    int tw = i18n_get_text_width(tbuf);
+    i18n_draw_text_line(GW_LCD_WIDTH - tw - 6, y + 6, tw + 4, tbuf, fg, bg, 0);
+
+    // progress bar fills the middle, between the volume readout and the time
+    int bx = 100, bw = GW_LCD_WIDTH - bx - tw - 16, bh = 6, byy = y + 10;
+    if (bw > 0) {
+        odroid_overlay_draw_fill_rect(bx, byy, bw, bh, curr_colors->dis_c);
+        if (a->total_frames > 0) {
+            int fillw = (int)((long)bw * vframe / a->total_frames);
+            if (fillw > bw) fillw = bw;
+            odroid_overlay_draw_fill_rect(bx, byy, fillw, bh, ac);
+        }
     }
 }
 
