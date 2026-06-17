@@ -1,7 +1,7 @@
-// Host unit tests for media_id3 (ID3v2 tag/cover reader, encoding conversion).
+// Host unit tests for music_id3 (ID3v2 tag/cover reader, encoding conversion).
 // Builds synthetic ID3v2.3 tags in /tmp and verifies parsing to UTF-8.
 // Build+run: see tests/run.sh
-#include "media_id3.h"
+#include "music_id3.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -70,7 +70,7 @@ static void test_text_frames(void)
 
     write_tag("/tmp/t_id3_text.mp3");
 
-    media_tags_t t;
+    music_tags_t t;
     id3_read_tags("/tmp/t_id3_text.mp3", &t);
     CHECK(t.found, "tag found");
     CHECK_STR(t.title, "\xEB\x85\xB8\xEB\x9E\x98", "UTF-8 title preserved");
@@ -90,7 +90,7 @@ static void test_utf16_be(void)
     f_text("TIT2", 2, be, sizeof(be));
     write_tag("/tmp/t_id3_be.mp3");
 
-    media_tags_t t;
+    music_tags_t t;
     id3_read_tags("/tmp/t_id3_be.mp3", &t);
     CHECK_STR(t.title, "OK", "UTF-16BE title");
 }
@@ -111,14 +111,17 @@ static void test_cover(void)
     f_frame("APIC", ap, an);
     write_tag("/tmp/t_id3_cover.mp3");
 
-    unsigned char out[256];
-    int is_png = 5;
+    // New API locates the APIC bytes (offset+length) without reading them.
+    long off = 0, len = 0;
     bool png_b = true;
-    int n = id3_read_cover("/tmp/t_id3_cover.mp3", out, sizeof(out), &png_b);
-    (void)is_png;
-    CHECK(n == 12, "cover byte count == jpeg length");
+    int found = id3_locate_cover("/tmp/t_id3_cover.mp3", &off, &len, &png_b);
+    CHECK(found == 1, "cover located");
+    CHECK(len == 12, "cover byte count == jpeg length");
     CHECK(!png_b, "cover detected as JPEG (not png)");
-    CHECK(n >= 2 && out[0] == 0xFF && out[1] == 0xD8, "cover starts with JPEG SOI");
+    unsigned char hd[2] = { 0, 0 };
+    FILE *cf = fopen("/tmp/t_id3_cover.mp3", "rb");
+    if (cf) { fseek(cf, off, SEEK_SET); if (fread(hd, 1, 2, cf) != 2) hd[0] = 0; fclose(cf); }
+    CHECK(hd[0] == 0xFF && hd[1] == 0xD8, "cover starts with JPEG SOI");
 }
 
 static void test_no_tag(void)
@@ -128,14 +131,14 @@ static void test_no_tag(void)
     fwrite(x, 1, sizeof(x), fp);
     fclose(fp);
 
-    media_tags_t t;
+    music_tags_t t;
     id3_read_tags("/tmp/t_id3_none.mp3", &t);
     CHECK(!t.found, "no ID3 -> not found");
     CHECK_STR(t.title, "", "no ID3 -> empty title");
 
-    unsigned char out[16];
-    bool png_b;
-    CHECK(id3_read_cover("/tmp/t_id3_none.mp3", out, sizeof(out), &png_b) == 0, "no ID3 -> no cover");
+    long o2 = 0, l2 = 0;
+    bool p2 = false;
+    CHECK(id3_locate_cover("/tmp/t_id3_none.mp3", &o2, &l2, &p2) == 0, "no ID3 -> no cover");
 }
 
 int main(void)
@@ -144,6 +147,6 @@ int main(void)
     test_utf16_be();
     test_cover();
     test_no_tag();
-    printf("media_id3: %d checks, %d failures\n", checks, fails);
+    printf("music_id3: %d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
 }

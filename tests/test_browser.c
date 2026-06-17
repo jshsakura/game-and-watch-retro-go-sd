@@ -1,4 +1,4 @@
-// Host unit tests for browser/navigation logic from main_media.c.
+// Host unit tests for browser/navigation logic from main_music.c.
 // Duplicates the pure functions (static in the source) so any logic change
 // must also update these tests (red-green safety net).
 // Build+run: see tests/run.sh
@@ -22,7 +22,7 @@ static int fails = 0, checks = 0;
 #define NAME_MAX_LEN 128
 #define PATH_MAX_LEN 256
 
-// --- duplicated pure functions from main_media.c ---
+// --- duplicated pure functions from main_music.c ---
 
 static bool has_ext(const char *name, const char *ext)
 {
