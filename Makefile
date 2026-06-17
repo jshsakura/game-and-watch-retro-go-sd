@@ -744,7 +744,6 @@ Core/Src/porting/music/music_lupng.c \
 Core/Src/porting/music/music_minimp3.c \
 Core/Src/porting/music/tjpgd.c \
 Core/Src/porting/music/progjpeg.c \
-Core/Src/porting/music/video_bench.c \
 retro-go-stm32/components/lupng/miniz.c
 
 # PICO-8 stub only — the engine is distributed separately as binary files
