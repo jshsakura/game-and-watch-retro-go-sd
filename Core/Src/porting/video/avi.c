@@ -35,6 +35,8 @@ static void parse_hdrl(avi_t *a, long pos, long end)
         long data = ftell(a->f);
         if (FCC(id, "avih")) {
             a->usec_per_frame = (int)rd_u32(a->f);            // +0
+            fseek(a->f, data + 16, SEEK_SET);
+            a->total_frames = (int)rd_u32(a->f);              // +16 dwTotalFrames
             fseek(a->f, data + 32, SEEK_SET);
             a->width  = (int)rd_u32(a->f);                    // +32
             a->height = (int)rd_u32(a->f);                    // +36
@@ -75,6 +77,7 @@ bool avi_open(avi_t *a, const char *path)
             if (FCC(lt, "hdrl")) {
                 parse_hdrl(a, inner, next);
             } else if (FCC(lt, "movi")) {
+                a->movi_start = inner;
                 a->movi_pos = inner;
                 a->movi_end = next < a->file_end ? next : a->file_end;
                 if (a->width <= 0)  a->width = 320;            // sane fallbacks
@@ -120,6 +123,20 @@ avi_kind_t avi_next(avi_t *a, long *size)
         // JUNK / 'ix..' index / unknown -> skip (cursor already advanced)
     }
     return AVI_END;
+}
+
+void avi_seek_frame(avi_t *a, int frame)
+{
+    if (frame < 0) frame = 0;
+    if (a->total_frames > 0 && frame >= a->total_frames) frame = a->total_frames - 1;
+    a->movi_pos = a->movi_start;
+    long sz;
+    int seen = 0;
+    while (seen < frame) {
+        avi_kind_t k = avi_next(a, &sz);   // walk (no decode); positions movi_pos
+        if (k == AVI_END) break;
+        if (k == AVI_VIDEO) seen++;
+    }
 }
 
 void avi_close(avi_t *a)

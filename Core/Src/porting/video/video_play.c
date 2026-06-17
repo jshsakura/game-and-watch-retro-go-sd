@@ -1,30 +1,75 @@
 // Video playback loop — see video_play.h.
+//
+// Demux an AVI, decode + pace its MJPEG frames to the LCD and feed its MP3 audio
+// to the SAI ring (the Music app's brick-safe path). Adapts to the file's
+// size/rate, drops frames when behind, and exposes a retro transport overlay
+// (play/pause icon, speed, progress) that auto-hides. Truly undecodable input
+// returns VID_UNPLAYABLE so the app can show a message.
 
 #include "video_play.h"
 #include "avi.h"
 #include "video_decode.h"
+#include "video_audio.h"
 #include "gw_lcd.h"
 #include "main.h"               // HAL_GetTick / HAL_Delay / wdog_refresh
-#include <odroid_system.h>      // gamepad input
+#include <odroid_system.h>
+#include "rg_i18n.h"
+#include "odroid_overlay.h"
+#include "gui.h"                // curr_colors
 #include <string.h>
+#include <stdio.h>
+
+#define OSD_MS       2200       // transport overlay visible after a key press
+#define OSD_H        26
+#define SEEK_SECONDS 5
+
+// Speed steps: 0=0.5x, 1=1x, 2=2x  (interval = frame_ms * den / num).
+static const int SPD_NUM[] = { 1, 1, 2 };
+static const int SPD_DEN[] = { 2, 1, 1 };
+static const char *SPD_LBL[] = { "x0.5", "x1", "x2" };
+
+static void draw_osd(const avi_t *a, int vframe, int spd, bool paused)
+{
+    uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c, ac = curr_colors->sel_c;
+    int y = GW_LCD_HEIGHT - OSD_H;
+    odroid_overlay_draw_fill_rect(0, y, GW_LCD_WIDTH, OSD_H, bg);
+    odroid_overlay_draw_fill_rect(0, y, GW_LCD_WIDTH, 1, ac);
+
+    // play / pause glyph (Geometric Shapes — the device font's "free icons")
+    const char *icon = paused ? "\xE2\x96\xAE\xE2\x96\xAE" : "\xE2\x96\xB6";   // ▮▮ / ▶
+    i18n_draw_text_line(8, y + 6, 24, icon, fg, bg, 1);
+    i18n_draw_text_line(34, y + 6, 40, SPD_LBL[spd], fg, bg, 0);
+
+    // progress bar (needs total frames; skip if unknown)
+    int bx = 80, bw = GW_LCD_WIDTH - bx - 10, bh = 6, byy = y + 10;
+    odroid_overlay_draw_fill_rect(bx, byy, bw, bh, curr_colors->dis_c);
+    if (a->total_frames > 0) {
+        int fillw = (int)((long)bw * vframe / a->total_frames);
+        if (fillw > bw) fillw = bw;
+        odroid_overlay_draw_fill_rect(bx, byy, fillw, bh, ac);
+    }
+}
 
 vid_result_t video_play(const char *path)
 {
     avi_t a;
     if (!avi_open(&a, path))
-        return VID_UNPLAYABLE;              // not an AVI / no movi / corrupt header
+        return VID_UNPLAYABLE;
 
     const int frame_ms = avi_frame_ms(&a);
+    const int seek_frames = frame_ms > 0 ? (SEEK_SECONDS * 1000) / frame_ms : 24 * SEEK_SECONDS;
 
     odroid_gamepad_state_t joy, prev;
     memset(&prev, 0, sizeof prev);
 
-    uint32_t t0 = HAL_GetTick();            // playback clock origin
-    uint32_t paused_ms = 0;                 // total time spent paused
-    int  vframe = 0;                        // video frames seen (for scheduling)
-    bool decoded_any = false;
-    bool stopped = false;
-    bool paused = false;
+    video_audio_start();
+
+    int  spd = 1;                  // 1x
+    int  vframe = 0;
+    bool decoded_any = false, stopped = false, paused = false;
+    uint32_t next_due = HAL_GetTick();
+    uint32_t osd_until = HAL_GetTick() + OSD_MS;   // show briefly on entry
+    bool need_seek = false; int seek_target = 0;
 
     long sz;
     avi_kind_t k;
@@ -32,50 +77,83 @@ vid_result_t video_play(const char *path)
         wdog_refresh();
 
         odroid_input_read_gamepad(&joy);
-        #define PRESS(b) (joy.values[b] && !prev.values[b])
-        if (PRESS(ODROID_INPUT_B)) { stopped = true; prev = joy; break; }
-        if (PRESS(ODROID_INPUT_A)) paused = !paused;
+        #define HIT(b) (joy.values[b] && !prev.values[b])
+        bool any_press = false;
+        for (int b = 0; b < ODROID_INPUT_MAX; b++) if (joy.values[b] && !prev.values[b]) any_press = true;
+
+        if (HIT(ODROID_INPUT_B)) { stopped = true; prev = joy; break; }
+        if (HIT(ODROID_INPUT_A)) paused = !paused;
+        if (HIT(ODROID_INPUT_SELECT)) { spd = (spd + 1) % 3; next_due = HAL_GetTick(); }
+        if (HIT(ODROID_INPUT_RIGHT)) { need_seek = true; seek_target = vframe + seek_frames; }
+        if (HIT(ODROID_INPUT_LEFT))  { need_seek = true; seek_target = vframe - seek_frames; }
+        if (any_press) osd_until = HAL_GetTick() + OSD_MS;
         prev = joy;
 
+        if (need_seek) {
+            need_seek = false;
+            video_audio_stop();
+            avi_seek_frame(&a, seek_target);
+            vframe = seek_target < 0 ? 0 : seek_target;
+            next_due = HAL_GetTick();
+            continue;
+        }
+
         if (paused) {
-            // Hold on the current frame; freeze the clock until unpaused.
             uint32_t pstart = HAL_GetTick();
             while (paused) {
                 wdog_refresh();
                 odroid_input_read_gamepad(&joy);
-                if (PRESS(ODROID_INPUT_A)) paused = false;
-                if (PRESS(ODROID_INPUT_B)) { stopped = true; paused = false; }
+                if (HIT(ODROID_INPUT_A)) paused = false;
+                if (HIT(ODROID_INPUT_B)) { stopped = true; paused = false; }
                 prev = joy;
                 HAL_Delay(20);
             }
-            paused_ms += HAL_GetTick() - pstart;
+            next_due += HAL_GetTick() - pstart;     // shift the clock past the pause
             if (stopped) break;
         }
 
-        if (k != AVI_VIDEO) continue;       // silent for now: skip audio chunks
+        if (k == AVI_AUDIO) {
+            // Feed audio only at normal speed (fast/slow would desync / change pitch).
+            if (spd == 1) {
+                uint8_t abuf[1024];
+                long rem = sz;
+                while (rem > 0) {
+                    int want = rem > (long)sizeof abuf ? (int)sizeof abuf : (int)rem;
+                    int got = (int)fread(abuf, 1, (size_t)want, a.f);
+                    if (got <= 0) break;
+                    video_audio_feed(abuf, got);
+                    rem -= got;
+                }
+            }
+            continue;
+        }
 
-        uint32_t elapsed = HAL_GetTick() - t0 - paused_ms;
-        uint32_t due = (uint32_t)vframe * frame_ms;
+        // VIDEO frame.
+        uint32_t interval = (uint32_t)frame_ms * SPD_DEN[spd] / SPD_NUM[spd];
+        uint32_t now = HAL_GetTick();
         vframe++;
 
-        // Behind by more than a frame -> drop (don't decode) to catch up.
-        if (elapsed > due + (uint32_t)frame_ms)
+        if (now > next_due + interval) {            // behind -> drop (don't decode)
+            next_due += interval;
             continue;
+        }
 
         if (video_decode_frame(a.f, sz, lcd_get_active_buffer(),
                                GW_LCD_WIDTH, GW_LCD_HEIGHT))
             decoded_any = true;
-        // else: decode failed -> keep the previous frame on screen.
+        if ((int32_t)(HAL_GetTick() - osd_until) < 0)
+            draw_osd(&a, vframe, spd, paused);
 
-        // Pace: wait until this frame is due (only if we are early).
-        while ((HAL_GetTick() - t0 - paused_ms) < due) {
+        while ((int32_t)(HAL_GetTick() - next_due) < 0) {
             wdog_refresh();
             HAL_Delay(1);
         }
         lcd_swap();
+        next_due += interval;
     }
 
+    video_audio_stop();
     avi_close(&a);
-    if (!decoded_any) return VID_UNPLAYABLE;   // movi had no decodable frames
+    if (!decoded_any) return VID_UNPLAYABLE;
     return stopped ? VID_STOPPED : VID_OK;
 }

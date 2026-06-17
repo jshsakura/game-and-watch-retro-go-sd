@@ -16,10 +16,12 @@ typedef enum { AVI_END = 0, AVI_VIDEO = 1, AVI_AUDIO = 2 } avi_kind_t;
 typedef struct {
     FILE *f;
     long  file_end;          // total file size (bounds the header walk)
+    long  movi_start;        // first chunk offset of the movi list (for seeking)
     long  movi_pos;          // read cursor within the movi list
     long  movi_end;          // end offset of the movi list
     int   width, height;     // video frame size (from the AVI main header)
     int   usec_per_frame;    // microseconds per frame (from the AVI main header)
+    int   total_frames;      // total video frames (from the header; 0 if unknown)
 } avi_t;
 
 // Open `path`, parse the AVI main header (frame size + rate) and locate the
@@ -32,6 +34,11 @@ bool avi_open(avi_t *a, const char *path);
 // (read *size bytes — e.g. stream them into a decoder). Returns AVI_END at the
 // end of the movi list. JUNK / index / empty / unknown chunks are skipped.
 avi_kind_t avi_next(avi_t *a, long *size);
+
+// Rewind the demuxer to the movi start and skip forward to the `frame`-th video
+// frame (clamped to [0, total)). Cheap because MJPEG frames are independent.
+// After this the next avi_next() returns that frame.
+void avi_seek_frame(avi_t *a, int frame);
 
 void avi_close(avi_t *a);
 
