@@ -14,6 +14,7 @@ $CC $FLAGS tests/test_id3.c      "$SRC/music_id3.c"    -o /tmp/mtest/test_id3
 $CC $FLAGS tests/test_ui_layout.c                        -o /tmp/mtest/test_ui_layout
 $CC $FLAGS tests/test_browser.c                          -o /tmp/mtest/test_browser
 $CC $FLAGS tests/test_color.c                            -o /tmp/mtest/test_color
+$CC $FLAGS -ICore/Inc/porting/video tests/test_avi.c Core/Src/porting/video/avi.c -o /tmp/mtest/test_avi
 
 rc=0
 echo "=== run ==="
@@ -22,4 +23,5 @@ echo "=== run ==="
 /tmp/mtest/test_ui_layout || rc=1
 /tmp/mtest/test_browser   || rc=1
 /tmp/mtest/test_color     || rc=1
+/tmp/mtest/test_avi       || rc=1
 exit $rc
