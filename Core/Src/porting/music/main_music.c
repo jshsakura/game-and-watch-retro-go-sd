@@ -29,6 +29,7 @@
 #include "music_id3.h"
 #include "music_audio.h"
 #include "music_cover.h"
+#include "video_bench.h"        // on-device JPEG decode benchmark (video sizing)
 #include "music_ui.h"
 #include "rg_rtc.h"
 
@@ -996,6 +997,8 @@ void app_main_music(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_gamepad_state_t joy, prev;
     memset(&prev, 0, sizeof(prev));
     lcd_clear_buffers();
+
+    video_decode_bench();   // show on-device decode ms/fps once, then continue
 
     bool dirty = true, screen_off = false;
     int  settle = 0, held_dir = 0;
