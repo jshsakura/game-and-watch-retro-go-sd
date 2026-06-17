@@ -748,6 +748,7 @@ Core/Src/porting/video/avi.c \
 Core/Src/porting/video/video_decode.c \
 Core/Src/porting/video/video_audio.c \
 Core/Src/porting/video/video_play.c \
+Core/Src/porting/video/video_ui.c \
 Core/Src/porting/video/main_video.c \
 retro-go-stm32/components/lupng/miniz.c
 

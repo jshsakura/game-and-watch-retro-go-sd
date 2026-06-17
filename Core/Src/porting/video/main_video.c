@@ -21,6 +21,7 @@
 #include "music_ui.h"          // ui_list_draw + list_view_t/list_item_t + LIST_*
 #include "main_video.h"
 #include "video_play.h"
+#include "video_ui.h"          // snapshot+overlay list (instant scrolling)
 
 #define MAX_ENTRIES   128
 #define NAME_MAX_LEN  128
@@ -30,6 +31,7 @@
 typedef struct { char name[NAME_MAX_LEN]; bool is_dir; } vid_entry_t;
 static vid_entry_t entries[MAX_ENTRIES];
 static int entry_count, cursor, scroll;
+static int last_scroll = -1;          // tracks scroll so moves can skip a re-render
 static char cur_path[PATH_MAX_LEN];
 
 // The thumbnail tile shows the file's extension (e.g. "AVI") as text, drawn in the
@@ -96,6 +98,8 @@ static int scandir_cb(const rg_scandir_t *file, void *arg)
 static void scan(void)
 {
     entry_count = cursor = scroll = 0;
+    last_scroll = -1;
+    video_ui_list_invalidate();        // content changed -> rebuild the snapshot
     rg_storage_scandir(cur_path, scandir_cb, NULL,
         RG_SCANDIR_FILES | RG_SCANDIR_DIRS | RG_SCANDIR_SORT);
 }
@@ -117,6 +121,8 @@ static void draw_list(void)
 {
     if (cursor < scroll) scroll = cursor;
     if (cursor >= scroll + LIST_VISIBLE_ROWS) scroll = cursor - LIST_VISIBLE_ROWS + 1;
+    bool rebuild = (scroll != last_scroll);    // only a scroll needs a full re-render
+    last_scroll = scroll;
 
     // Banner shows the localized app name at the root, the folder name deeper in
     // (mirrors the Music browser), so a Korean user sees "비디오", not "/video".
@@ -138,8 +144,7 @@ static void draw_list(void)
     v.row_h        = LIST_ROW_H;
     v.empty_hint   = vstr(VS_EMPTY);
     v.empty_sub    = cur_path;
-    ui_list_draw(&v, item_at);
-    lcd_swap();
+    video_ui_list(&v, item_at, rebuild);   // snapshot+overlay (swaps internally)
 }
 
 static void show_message(const char *msg)
@@ -174,6 +179,7 @@ static void enter_selected(void)
     }
     if (video_play(path) == VID_UNPLAYABLE)
         show_message(vstr(VS_UNPLAYABLE));
+    video_ui_list_invalidate();   // the decoder reused g_scratch (the snapshot store)
 }
 
 void app_main_video(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
