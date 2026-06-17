@@ -31,8 +31,10 @@ typedef struct {
 
 // Open `path`, parse the AVI main header (frame size + rate) and locate the
 // 'movi' stream. Returns false (and leaves nothing open) if it is not a usable
-// AVI. On success the cursor sits at the first movi chunk.
-bool avi_open(avi_t *a, const char *path);
+// AVI. On success the cursor sits at the first movi chunk. `rabuf`/`rasize` is an
+// optional read-ahead buffer (stdio fully-buffered) for large block reads; pass
+// NULL/0 for default buffering.
+bool avi_open(avi_t *a, const char *path, void *rabuf, unsigned long rasize);
 
 // Advance to the next video/audio chunk. On AVI_VIDEO / AVI_AUDIO, sets *size to
 // the chunk payload length and positions the file at the payload's first byte

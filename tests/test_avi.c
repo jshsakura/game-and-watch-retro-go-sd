@@ -72,7 +72,7 @@ static const char *build_avi(void)
 static void test_header(void)
 {
     avi_t a;
-    CHECK(avi_open(&a, build_avi()), "avi_open succeeds");
+    CHECK(avi_open(&a, build_avi(), NULL, 0), "avi_open succeeds");
     CHECK(a.width == 320, "width 320");
     CHECK(a.height == 240, "height 240");
     CHECK(a.usec_per_frame == 41667, "usec/frame 41667");
@@ -83,7 +83,7 @@ static void test_header(void)
 static void test_walk(void)
 {
     avi_t a;
-    CHECK(avi_open(&a, build_avi()), "open for walk");
+    CHECK(avi_open(&a, build_avi(), NULL, 0), "open for walk");
 
     int nv = 0, na = 0;
     unsigned char v0[2] = {0,0}, a0[2] = {0,0};
@@ -110,8 +110,8 @@ static void test_bad(void)
     FILE *f = fopen("/tmp/t_not.avi", "wb");
     fwrite("NOPEnope", 1, 8, f);
     fclose(f);
-    CHECK(!avi_open(&a, "/tmp/t_not.avi"), "non-AVI rejected");
-    CHECK(!avi_open(&a, "/tmp/does_not_exist.avi"), "missing file rejected");
+    CHECK(!avi_open(&a, "/tmp/t_not.avi", NULL, 0), "non-AVI rejected");
+    CHECK(!avi_open(&a, "/tmp/does_not_exist.avi", NULL, 0), "missing file rejected");
 }
 
 int main(void)

@@ -46,11 +46,17 @@ static void parse_hdrl(avi_t *a, long pos, long end)
     }
 }
 
-bool avi_open(avi_t *a, const char *path)
+bool avi_open(avi_t *a, const char *path, void *rabuf, unsigned long rasize)
 {
     memset(a, 0, sizeof *a);
     a->f = fopen(path, "rb");
     if (!a->f) return false;
+
+    // Read-ahead: a big fully-buffered stdio buffer turns the demuxer's many tiny
+    // chunk reads into a few large block reads — the win on a slow SD, where the
+    // per-read overhead (not throughput) is what stutters playback. Must be set
+    // before any I/O on the stream.
+    if (rabuf && rasize) setvbuf(a->f, (char *)rabuf, _IOFBF, (size_t)rasize);
 
     if (fseek(a->f, 0, SEEK_END) != 0) goto fail;
     a->file_end = ftell(a->f);

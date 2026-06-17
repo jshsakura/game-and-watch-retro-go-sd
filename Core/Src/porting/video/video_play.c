@@ -177,7 +177,9 @@ static int open_video_menu(const avi_t *a)
 vid_result_t video_play(const char *path)
 {
     avi_t a;
-    if (!avi_open(&a, path))
+    // The read-ahead buffer lives in g_scratch's tail (past the frame src + JPEG
+    // work areas) — block reads from the SD instead of many tiny per-chunk reads.
+    if (!avi_open(&a, path, g_scratch + VIDEO_RA_OFFSET, VIDEO_RA_SIZE))
         return VID_UNPLAYABLE;
 
     video_decode_init();                // power up the hardware JPEG codec
