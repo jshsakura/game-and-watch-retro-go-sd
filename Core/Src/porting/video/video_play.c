@@ -62,7 +62,7 @@ vid_result_t video_play(const char *path)
     odroid_gamepad_state_t joy, prev;
     memset(&prev, 0, sizeof prev);
 
-    video_audio_start();
+    // video_audio_start();  // TEMP: audio off during silent-video bring-up
 
     int  spd = 1;                  // 1x
     int  vframe = 0;
@@ -91,7 +91,6 @@ vid_result_t video_play(const char *path)
 
         if (need_seek) {
             need_seek = false;
-            video_audio_stop();
             avi_seek_frame(&a, seek_target);
             vframe = seek_target < 0 ? 0 : seek_target;
             next_due = HAL_GetTick();
@@ -112,21 +111,7 @@ vid_result_t video_play(const char *path)
             if (stopped) break;
         }
 
-        if (k == AVI_AUDIO) {
-            // Feed audio only at normal speed (fast/slow would desync / change pitch).
-            if (spd == 1) {
-                uint8_t abuf[1024];
-                long rem = sz;
-                while (rem > 0) {
-                    int want = rem > (long)sizeof abuf ? (int)sizeof abuf : (int)rem;
-                    int got = (int)fread(abuf, 1, (size_t)want, a.f);
-                    if (got <= 0) break;
-                    video_audio_feed(abuf, got);
-                    rem -= got;
-                }
-            }
-            continue;
-        }
+        if (k == AVI_AUDIO) continue;   // TEMP: audio off during silent-video bring-up
 
         // VIDEO frame.
         uint32_t interval = (uint32_t)frame_ms * SPD_DEN[spd] / SPD_NUM[spd];
@@ -152,7 +137,6 @@ vid_result_t video_play(const char *path)
         next_due += interval;
     }
 
-    video_audio_stop();
     avi_close(&a);
     if (!decoded_any) return VID_UNPLAYABLE;
     return stopped ? VID_STOPPED : VID_OK;

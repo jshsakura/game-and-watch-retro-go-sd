@@ -74,5 +74,6 @@ bool video_decode_frame(FILE *f, long size, uint16_t *fb, int fb_w, int fb_h)
     s_ox = (fb_w - w) / 2;
     s_oy = (fb_h - h) / 2;
 
+    memset(fb, 0, (size_t)fb_w * fb_h * sizeof(uint16_t));   // clean letterbox each frame
     return jd_decomp(&jd, vid_out, sc) == JDR_OK;
 }
