@@ -1,10 +1,10 @@
 // Video playback loop — see video_play.h.
 //
-// Demux an AVI, decode + pace its MJPEG frames to the LCD and feed its MP3 audio
-// to the SAI ring (the Music app's brick-safe path). Adapts to the file's
-// size/rate, drops frames when behind, and exposes a retro transport overlay
-// (play/pause icon, speed, progress) that auto-hides. Truly undecodable input
-// returns VID_UNPLAYABLE so the app can show a message.
+// Demux an AVI, hardware-decode + pace its MJPEG frames to the LCD and feed its
+// MP3 audio to the SAI ring. Transport: A pause / B stop / SELECT speed / volume
+// on UP-DOWN / LEFT-RIGHT tap = ±5s, hold = scrub (freeze the picture, drag the
+// bar, one seek on release). A translucent overlay with a Music-style knob slider
+// + elapsed/total time auto-hides. Truly undecodable input returns VID_UNPLAYABLE.
 
 #include "video_play.h"
 #include "avi.h"
@@ -13,35 +13,36 @@
 #include "gw_lcd.h"
 #include "gw_audio.h"           // audio_start_playing / music_audio_* / AUDIO_BUFFER_LENGTH
 #include "common.h"             // common_emu_sound_get_volume / common_emu_state
+#include "music_cover.h"        // g_scratch (frozen-frame store while scrubbing)
 #include "main.h"               // HAL_GetTick / HAL_Delay / wdog_refresh
 #include <odroid_system.h>
 #include "rg_i18n.h"
-#include "odroid_overlay.h"
 #include "gui.h"                // curr_colors
 #include <string.h>
 #include <stdio.h>
 
 #define OSD_MS       2200       // transport overlay visible after a key press
-#define OSD_H        26
+#define OSD_H        30         // overlay band height (room for the knob slider)
+#define HOLD_MS      280        // press longer than this => scrub instead of a tap-seek
 #define SEEK_SECONDS 5
+#define FB_PX        (GW_LCD_WIDTH * GW_LCD_HEIGHT)
 
 // Speed steps: 0=0.5x, 1=1x, 2=2x  (interval = frame_ms * den / num).
 static const int SPD_NUM[] = { 1, 1, 2 };
 static const int SPD_DEN[] = { 2, 1, 1 };
 static const char *SPD_LBL[] = { "x0.5", "x1", "x2" };
 
+extern uint8_t g_scratch[];
+
 // Audio is synced only at 1x (the ring plays at a fixed 48kHz; speed-changing the
-// video would desync it), and muted while paused. This tells the ISR the current
-// volume + play state without touching the ring.
+// video would desync it) and muted while paused.
 static void apply_audio(int spd, bool paused)
 {
     bool live = (spd == 1) && !paused;
     music_audio_set(live ? common_emu_sound_get_volume() : 0, live ? 1 : 0);
 }
 
-// Pump one AVI audio chunk (MP3) into the decode->ring path. Small chunks (one or
-// a few MP3 frames), read sequentially on the shared file handle — never racing
-// the video read (FF_FS_TINY-safe).
+// Pump one AVI audio chunk (MP3) into the decode->ring path.
 static void feed_audio(avi_t *a, long sz)
 {
     uint8_t buf[2048];
@@ -55,45 +56,101 @@ static void feed_audio(avi_t *a, long sz)
     }
 }
 
-static void draw_osd(const avi_t *a, int vframe, int spd, bool paused)
+// Mute + flush the audio across a seek so the SAI ISR can't buzz on the stale /
+// underrunning ring while the demuxer walks to the target.
+static void seek_to(avi_t *a, int frame, int spd, bool paused, uint32_t *next_due)
 {
-    uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c, ac = curr_colors->sel_c;
-    int y = GW_LCD_HEIGHT - OSD_H;
-    odroid_overlay_draw_fill_rect(0, y, GW_LCD_WIDTH, OSD_H, bg);
-    odroid_overlay_draw_fill_rect(0, y, GW_LCD_WIDTH, 1, ac);
+    music_audio_set(0, 0);
+    avi_seek_frame(a, frame);
+    video_audio_stop();
+    apply_audio(spd, paused);
+    *next_due = HAL_GetTick();
+}
 
-    // play / pause glyph (Geometric Shapes — the device font's "free icons")
-    const char *icon = paused ? "\xE2\x96\xAE\xE2\x96\xAE" : "\xE2\x96\xB6";   // ▮▮ / ▶
-    i18n_draw_text_line(8, y + 6, 24, icon, fg, bg, 1);
-    i18n_draw_text_line(32, y + 6, 30, SPD_LBL[spd], fg, bg, 0);
+// --- overlay drawing --------------------------------------------------------
 
-    char vbuf[12];
-    snprintf(vbuf, sizeof vbuf, "\xE2\x99\xAA%d", odroid_audio_volume_get());   // ♪N volume
-    i18n_draw_text_line(64, y + 6, 32, vbuf, fg, bg, 0);
+// Blend RGB565 a toward b by n/16.
+static inline uint16_t vmix(uint16_t a, uint16_t b, int n)
+{
+    int ar = (a >> 11) & 0x1F, ag = (a >> 5) & 0x3F, ab = a & 0x1F;
+    int br = (b >> 11) & 0x1F, bg = (b >> 5) & 0x3F, bb = b & 0x1F;
+    return (uint16_t)((((ar + (((br - ar) * n) >> 4)) << 11)) |
+                      (((ag + (((bg - ag) * n) >> 4)) << 5)) |
+                       ((ab + (((bb - ab) * n) >> 4))));
+}
 
-    // elapsed / total time on the right (M:SS/M:SS — ASCII, baked font, no SD)
-    int fms   = avi_frame_ms(a);
-    int cur_s = vframe * fms / 1000;
-    int tot_s = a->total_frames > 0 ? a->total_frames * fms / 1000 : 0;
-    char tbuf[24];
-    if (tot_s > 0)
-        snprintf(tbuf, sizeof tbuf, "%d:%02d/%d:%02d", cur_s / 60, cur_s % 60, tot_s / 60, tot_s % 60);
-    else
-        snprintf(tbuf, sizeof tbuf, "%d:%02d", cur_s / 60, cur_s % 60);
-    int tw = i18n_get_text_width(tbuf);
-    i18n_draw_text_line(GW_LCD_WIDTH - tw - 6, y + 6, tw + 4, tbuf, fg, bg, 0);
-
-    // progress bar fills the middle, between the volume readout and the time
-    int bx = 100, bw = GW_LCD_WIDTH - bx - tw - 16, bh = 6, byy = y + 10;
-    if (bw > 0) {
-        odroid_overlay_draw_fill_rect(bx, byy, bw, bh, curr_colors->dis_c);
-        if (a->total_frames > 0) {
-            int fillw = (int)((long)bw * vframe / a->total_frames);
-            if (fillw > bw) fillw = bw;
-            odroid_overlay_draw_fill_rect(bx, byy, fillw, bh, ac);
+// Filled circle (the slider knob).
+static void dot(uint16_t *fb, int cx, int cy, int r, uint16_t c)
+{
+    for (int dy = -r; dy <= r; dy++) {
+        int y = cy + dy; if (y < 0 || y >= GW_LCD_HEIGHT) continue;
+        for (int dx = -r; dx <= r; dx++) {
+            int x = cx + dx; if (x < 0 || x >= GW_LCD_WIDTH) continue;
+            if (dx * dx + dy * dy <= r * r) fb[y * GW_LCD_WIDTH + x] = c;
         }
     }
 }
+
+static void fmt_time(char *out, int total_frames_at, int frame_ms)
+{
+    int s = total_frames_at * frame_ms / 1000;
+    snprintf(out, 8, "%d:%02d", s / 60, s % 60);
+}
+
+// Transport overlay: a translucent band (the video shows through, dimmed) with a
+// play/pause glyph, the Music-deck knob slider and elapsed/total time. When
+// scrub_frame >= 0 the slider previews that position (knob turns white).
+static void draw_osd(const avi_t *a, int spd, bool paused, int scrub_frame, int frame_ms)
+{
+    uint16_t *fb = lcd_get_active_buffer();
+    uint16_t bg = curr_colors->bg_c, fg = curr_colors->main_c, accent = curr_colors->sel_c;
+    int y0 = GW_LCD_HEIGHT - OSD_H, cy = y0 + OSD_H / 2;
+    bool scrub = scrub_frame >= 0;
+    int total = a->total_frames > 0 ? a->total_frames : 0;
+    int pos = scrub ? scrub_frame : a->cur_frame;
+
+    // translucent overlay band + a thin top edge (subtle, not a hard line)
+    for (int y = y0; y < GW_LCD_HEIGHT; y++) {
+        uint16_t *row = fb + y * GW_LCD_WIDTH;
+        for (int x = 0; x < GW_LCD_WIDTH; x++) row[x] = vmix(row[x], 0x0000, 11);
+    }
+    for (int x = 0; x < GW_LCD_WIDTH; x++) fb[y0 * GW_LCD_WIDTH + x] = vmix(bg, accent, 6);
+
+    // left cluster: play/pause glyph (+ speed tag when not 1x)
+    const char *icon = paused ? "\xE2\x96\xAE\xE2\x96\xAE" : "\xE2\x96\xB6";   // ▮▮ / ▶
+    int lx = 8;
+    i18n_draw_text_line(lx, cy - 6, 18, icon, fg, 0, 1);
+    lx += 22;
+    if (spd != 1) {
+        i18n_draw_text_line(lx, cy - 6, 28, SPD_LBL[spd], accent, 0, 1);
+        lx += i18n_get_text_width(SPD_LBL[spd]) + 6;
+    }
+
+    // elapsed (left of the bar) and total (far right)
+    char te[8], tt[8];
+    fmt_time(te, pos, frame_ms);
+    fmt_time(tt, total, frame_ms);
+    int ew = i18n_get_text_width(te), tw = i18n_get_text_width(tt);
+    i18n_draw_text_line(lx, cy - 6, ew + 4, te, scrub ? accent : fg, 0, 1);
+    int tx = GW_LCD_WIDTH - tw - 8;
+    i18n_draw_text_line(tx, cy - 6, tw + 4, tt, fg, 0, 1);
+
+    // knob slider between them (3px track + accent fill + ringed knob)
+    int sx = lx + ew + 10, ex = tx - 12, sw = ex - sx;
+    if (sw > 12) {
+        int fillw = total > 0 ? (int)((long)sw * pos / total) : 0;
+        if (fillw < 0) fillw = 0; if (fillw > sw) fillw = sw;
+        for (int dy = -1; dy <= 1; dy++) {
+            uint16_t *row = fb + (cy + dy) * GW_LCD_WIDTH;
+            for (int x = 0; x < sw; x++)    row[sx + x] = vmix(fg, bg, 9);   // track
+            for (int x = 0; x < fillw; x++) row[sx + x] = accent;            // played
+        }
+        dot(fb, sx + fillw, cy, 5, vmix(bg, accent, 11));     // knob ring
+        dot(fb, sx + fillw, cy, 3, scrub ? fg : accent);      // knob core
+    }
+}
+
+// --- playback ---------------------------------------------------------------
 
 vid_result_t video_play(const char *path)
 {
@@ -105,14 +162,13 @@ vid_result_t video_play(const char *path)
 
     const int frame_ms = avi_frame_ms(&a);
     const int seek_frames = frame_ms > 0 ? (SEEK_SECONDS * 1000) / frame_ms : 24 * SEEK_SECONDS;
+    int scrub_step = a.total_frames > 0 ? a.total_frames / 120 : 12;
+    if (scrub_step < 1) scrub_step = 1;
 
     odroid_gamepad_state_t joy, prev;
     odroid_input_read_gamepad(&prev);   // seed with the CURRENT state so the A press
-                                        // that launched playback isn't seen as a new
-                                        // edge (which would instantly pause it)
+                                        // that launched playback isn't seen as a new edge
 
-    // Audio bring-up: attach the ring to the SAI ISR, start the DMA, hand the
-    // buffer to this app, then set the initial volume/play state (1x, unpaused).
     common_emu_state.skip_frames = 0;
     common_emu_state.pause_frames = 0;
     video_audio_start();
@@ -120,18 +176,16 @@ vid_result_t video_play(const char *path)
     music_audio_enable(1);
     apply_audio(1, false);
 
-    int  spd = 1;                  // 1x
-    int  vframe = 0;
+    int  spd = 1;
     bool decoded_any = false, stopped = false, paused = false;
-    uint32_t next_due = HAL_GetTick();
-    uint32_t osd_until = HAL_GetTick() + OSD_MS;   // show briefly on entry
-    bool need_seek = false; int seek_target = 0;
+    uint32_t next_due  = HAL_GetTick();
+    uint32_t osd_until = HAL_GetTick() + OSD_MS;
+    bool lr_down = false; int lr_dir = 0; uint32_t lr_press = 0;
 
     long sz;
     avi_kind_t k;
     while ((k = avi_next(&a, &sz)) != AVI_END) {
         wdog_refresh();
-
         odroid_input_read_gamepad(&joy);
         #define HIT(b) (joy.values[b] && !prev.values[b])
         bool any_press = false;
@@ -140,19 +194,49 @@ vid_result_t video_play(const char *path)
         if (HIT(ODROID_INPUT_B)) { stopped = true; prev = joy; break; }
         if (HIT(ODROID_INPUT_A)) { paused = !paused; apply_audio(spd, paused); }
         if (HIT(ODROID_INPUT_SELECT)) { spd = (spd + 1) % 3; next_due = HAL_GetTick(); apply_audio(spd, paused); }
-        if (HIT(ODROID_INPUT_RIGHT)) { need_seek = true; seek_target = vframe + seek_frames; }
-        if (HIT(ODROID_INPUT_LEFT))  { need_seek = true; seek_target = vframe - seek_frames; }
         if (HIT(ODROID_INPUT_UP))   { int v = odroid_audio_volume_get(); if (v < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(v + 1); apply_audio(spd, paused); }
         if (HIT(ODROID_INPUT_DOWN)) { int v = odroid_audio_volume_get(); if (v > 0) odroid_audio_volume_set(v - 1); apply_audio(spd, paused); }
+
+        // LEFT/RIGHT: track press; tap (short) = ±5s, hold (long) = scrub.
+        bool nowL = joy.values[ODROID_INPUT_LEFT], nowR = joy.values[ODROID_INPUT_RIGHT];
+        bool lr = nowL || nowR;
+        if (lr && !lr_down) { lr_down = true; lr_dir = nowR ? 1 : -1; lr_press = HAL_GetTick(); }
+        bool released   = lr_down && !lr;
+        bool go_scrub   = lr_down && lr && (HAL_GetTick() - lr_press > HOLD_MS);
+
         if (any_press) osd_until = HAL_GetTick() + OSD_MS;
         prev = joy;
 
-        if (need_seek) {
-            need_seek = false;
-            avi_seek_frame(&a, seek_target);
-            vframe = seek_target < 0 ? 0 : seek_target;
-            video_audio_stop();        // drop audio buffered from the old position
-            next_due = HAL_GetTick();
+        if (released) {                                  // quick tap -> skip ±5s
+            lr_down = false;
+            seek_to(&a, a.cur_frame + lr_dir * seek_frames, spd, paused, &next_due);
+            continue;
+        }
+
+        if (go_scrub) {                                  // hold -> freeze + drag the bar
+            lr_down = false;
+            int scrub_frame = a.cur_frame;
+            music_audio_set(0, 0);                       // silence while scrubbing
+            memcpy(g_scratch, lcd_get_active_buffer(), FB_PX * sizeof(uint16_t));   // freeze
+            for (;;) {
+                wdog_refresh();
+                odroid_input_read_gamepad(&joy);
+                if (HIT(ODROID_INPUT_B)) { stopped = true; prev = joy; break; }
+                bool sL = joy.values[ODROID_INPUT_LEFT], sR = joy.values[ODROID_INPUT_RIGHT];
+                prev = joy;
+                if (!sL && !sR) {                        // release -> one seek
+                    seek_to(&a, scrub_frame, spd, paused, &next_due);
+                    break;
+                }
+                scrub_frame += (sR ? 1 : -1) * scrub_step;
+                if (scrub_frame < 0) scrub_frame = 0;
+                if (a.total_frames > 0 && scrub_frame >= a.total_frames) scrub_frame = a.total_frames - 1;
+                memcpy(lcd_get_active_buffer(), g_scratch, FB_PX * sizeof(uint16_t));
+                draw_osd(&a, spd, paused, scrub_frame, frame_ms);
+                lcd_swap();
+                HAL_Delay(16);
+            }
+            if (stopped) break;
             continue;
         }
 
@@ -166,44 +250,38 @@ vid_result_t video_play(const char *path)
                 prev = joy;
                 HAL_Delay(20);
             }
-            next_due += HAL_GetTick() - pstart;     // shift the clock past the pause
-            apply_audio(spd, paused);               // unmute on resume
+            next_due += HAL_GetTick() - pstart;
+            apply_audio(spd, paused);
             if (stopped) break;
         }
 
         if (k == AVI_AUDIO) {
-            if (spd == 1 && !paused) feed_audio(&a, sz);   // audio is synced only at 1x
+            if (spd == 1 && !paused) feed_audio(&a, sz);
             continue;
         }
 
-        // VIDEO frame.
+        // VIDEO frame: pace to the frame interval, dropping when behind.
         uint32_t interval = (uint32_t)frame_ms * SPD_DEN[spd] / SPD_NUM[spd];
         uint32_t now = HAL_GetTick();
-        vframe++;
-
-        if (now > next_due + interval) {            // behind -> drop (don't decode)
+        if (now > next_due + interval) {                 // behind -> drop (don't decode)
             next_due += interval;
             continue;
         }
 
-        if (video_decode_frame(a.f, sz, lcd_get_active_buffer(),
-                               GW_LCD_WIDTH, GW_LCD_HEIGHT))
+        if (video_decode_frame(a.f, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT))
             decoded_any = true;
         if ((int32_t)(HAL_GetTick() - osd_until) < 0)
-            draw_osd(&a, vframe, spd, paused);
+            draw_osd(&a, spd, paused, -1, frame_ms);
 
-        while ((int32_t)(HAL_GetTick() - next_due) < 0) {
-            wdog_refresh();
-            HAL_Delay(1);
-        }
+        while ((int32_t)(HAL_GetTick() - next_due) < 0) { wdog_refresh(); HAL_Delay(1); }
         lcd_swap();
         next_due += interval;
     }
 
-    music_audio_set(0, 0);       // ISR outputs silence
-    video_audio_stop();          // drain the ring
-    music_audio_enable(0);       // hand the DMA buffer back to the system
-    video_decode_deinit();       // release the hardware JPEG codec
+    music_audio_set(0, 0);
+    video_audio_stop();
+    music_audio_enable(0);
+    video_decode_deinit();
     avi_close(&a);
     if (!decoded_any) return VID_UNPLAYABLE;
     return stopped ? VID_STOPPED : VID_OK;

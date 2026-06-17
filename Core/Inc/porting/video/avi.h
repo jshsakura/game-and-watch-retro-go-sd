@@ -22,6 +22,7 @@ typedef struct {
     int   width, height;     // video frame size (from the AVI main header)
     int   usec_per_frame;    // microseconds per frame (from the AVI main header)
     int   total_frames;      // total video frames (from the header; 0 if unknown)
+    int   cur_frame;         // video frames consumed so far (advanced by avi_next)
 } avi_t;
 
 // Open `path`, parse the AVI main header (frame size + rate) and locate the
