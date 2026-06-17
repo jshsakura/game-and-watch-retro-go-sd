@@ -65,10 +65,14 @@ static void draw_osd(const avi_t *a, int vframe, int spd, bool paused)
     // play / pause glyph (Geometric Shapes — the device font's "free icons")
     const char *icon = paused ? "\xE2\x96\xAE\xE2\x96\xAE" : "\xE2\x96\xB6";   // ▮▮ / ▶
     i18n_draw_text_line(8, y + 6, 24, icon, fg, bg, 1);
-    i18n_draw_text_line(34, y + 6, 40, SPD_LBL[spd], fg, bg, 0);
+    i18n_draw_text_line(32, y + 6, 30, SPD_LBL[spd], fg, bg, 0);
+
+    char vbuf[12];
+    snprintf(vbuf, sizeof vbuf, "\xE2\x99\xAA%d", odroid_audio_volume_get());   // ♪N volume
+    i18n_draw_text_line(64, y + 6, 32, vbuf, fg, bg, 0);
 
     // progress bar (needs total frames; skip if unknown)
-    int bx = 80, bw = GW_LCD_WIDTH - bx - 10, bh = 6, byy = y + 10;
+    int bx = 100, bw = GW_LCD_WIDTH - bx - 10, bh = 6, byy = y + 10;
     odroid_overlay_draw_fill_rect(bx, byy, bw, bh, curr_colors->dis_c);
     if (a->total_frames > 0) {
         int fillw = (int)((long)bw * vframe / a->total_frames);
@@ -120,6 +124,8 @@ vid_result_t video_play(const char *path)
         if (HIT(ODROID_INPUT_SELECT)) { spd = (spd + 1) % 3; next_due = HAL_GetTick(); apply_audio(spd, paused); }
         if (HIT(ODROID_INPUT_RIGHT)) { need_seek = true; seek_target = vframe + seek_frames; }
         if (HIT(ODROID_INPUT_LEFT))  { need_seek = true; seek_target = vframe - seek_frames; }
+        if (HIT(ODROID_INPUT_UP))   { int v = odroid_audio_volume_get(); if (v < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(v + 1); apply_audio(spd, paused); }
+        if (HIT(ODROID_INPUT_DOWN)) { int v = odroid_audio_volume_get(); if (v > 0) odroid_audio_volume_set(v - 1); apply_audio(spd, paused); }
         if (any_press) osd_until = HAL_GetTick() + OSD_MS;
         prev = joy;
 
