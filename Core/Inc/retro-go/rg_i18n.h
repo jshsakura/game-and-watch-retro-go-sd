@@ -31,6 +31,10 @@ lang_t *i18n_load_language(int idx);
  * to list available languages without loading their strings. */
 const char *i18n_lang_display_name(int idx);
 
+// Close the cached glyph-font file handle (see rg_i18n.c). Safe to call anytime;
+// the next glyph load reopens lazily.
+void i18n_font_cache_release(void);
+
 int i18n_get_text_height();
 
 int  i18n_get_text_width(const char *text);
