@@ -12,9 +12,12 @@
 
 #define VID_WORK_SZ (32 * 1024)
 
+// Reuse the Music app's 352KB cover scratch as the tjpgd work area instead of a
+// second large buffer — Music and Video share the overlay and never run at once.
+extern uint8_t g_scratch[];
+
 typedef struct { FILE *f; long remain; } vsrc_t;
 
-static uint8_t   s_work[VID_WORK_SZ];
 static uint16_t *s_fb;
 static int       s_ox, s_oy;          // top-left of the centered image
 static int       s_clip_w, s_clip_h;  // framebuffer bounds
@@ -57,7 +60,7 @@ bool video_decode_frame(FILE *f, long size, uint16_t *fb, int fb_w, int fb_h)
 
     JDEC jd;
     vsrc_t src = { f, size };
-    if (jd_prepare(&jd, vid_in, s_work, sizeof s_work, &src) != JDR_OK)
+    if (jd_prepare(&jd, vid_in, g_scratch, VID_WORK_SZ, &src) != JDR_OK)
         return false;                       // not a baseline JPEG / unreadable
 
     // Pick the largest tjpgd scale (1, 1/2, 1/4, 1/8) that fits the screen.

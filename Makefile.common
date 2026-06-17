@@ -681,6 +681,7 @@ C_INCLUDES +=  \
 -ICore/Inc/porting/videopac \
 -ICore/Inc/porting/celeste \
 -ICore/Inc/porting/music \
+-ICore/Inc/porting/video \
 -ICore/Inc/porting/pico8 \
 -ICore/Inc/porting/tama \
 -ICore/Inc/porting/pkmini \
@@ -1459,6 +1460,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_pico8,$(CORES_DIR)/pico8_stub.bin)
 	@$(CP) -O binary --only-section=.overlay_celeste $(BUILD_DIR)/$(TARGET).elf $(HOMEBREWS_FOLDER)/celeste.bin
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Music.bin"
+	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Video.bin"
 	@$(CP) -O binary --only-section=.overlay_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Zelda 3.bin"
 	@$(CP) -O binary --only-section=.rodata_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/zelda3.ro"
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"

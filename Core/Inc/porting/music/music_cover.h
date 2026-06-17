@@ -27,3 +27,8 @@ bool cover_render_card(int n, bool is_png, int bx, int by, int bw, int bh);
 // Decode the track's cover into an sz×sz RGB565 thumbnail (JPEG only; PNG
 // thumbnails are skipped). Returns true on success.
 bool cover_thumb(const char *path, uint16_t *out, int sz);
+
+// Shared 352KB scratch (PNG inflate / JPEG work area). Exposed so the Video
+// app's frame decoder can reuse it — Music and Video share the overlay and
+// never run simultaneously, so it is free during video playback.
+extern uint8_t g_scratch[];

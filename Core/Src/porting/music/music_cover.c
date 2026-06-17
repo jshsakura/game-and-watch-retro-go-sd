@@ -14,7 +14,9 @@
                                      // never run at once, so they share this buffer.
 #define JPEG_WORK_SZ  (32 * 1024)    // tjpgd work area, carved from g_scratch
 
-static uint8_t g_scratch[SCRATCH_MAX];
+// Not static: the Video app's JPEG decoder reuses this as its tjpgd work area
+// (Music and Video share the overlay and never run at once). See music_cover.h.
+uint8_t g_scratch[SCRATCH_MAX];
 
 _Static_assert(JPEG_WORK_SZ <= SCRATCH_MAX, "JPEG work area must fit in g_scratch");
 
