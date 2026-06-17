@@ -101,6 +101,8 @@ vid_result_t video_play(const char *path)
     if (!avi_open(&a, path))
         return VID_UNPLAYABLE;
 
+    video_decode_init();                // power up the hardware JPEG codec
+
     const int frame_ms = avi_frame_ms(&a);
     const int seek_frames = frame_ms > 0 ? (SEEK_SECONDS * 1000) / frame_ms : 24 * SEEK_SECONDS;
 
@@ -201,6 +203,7 @@ vid_result_t video_play(const char *path)
     music_audio_set(0, 0);       // ISR outputs silence
     video_audio_stop();          // drain the ring
     music_audio_enable(0);       // hand the DMA buffer back to the system
+    video_decode_deinit();       // release the hardware JPEG codec
     avi_close(&a);
     if (!decoded_any) return VID_UNPLAYABLE;
     return stopped ? VID_STOPPED : VID_OK;
