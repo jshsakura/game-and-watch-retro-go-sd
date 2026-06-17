@@ -68,7 +68,8 @@ static const char *vstr(vstr_t s)
     case VS_APP:        return ko ? "비디오" : ja ? "ビデオ"
                              : zh_cn ? "视频" : zh_tw ? "視訊" : "Video";
     case VS_EMPTY:      return ko ? "영상을 넣어주세요:" : "Add video files to:";
-    case VS_UNPLAYABLE: return ko ? "재생할 수 없는 파일입니다" : "unsupported or unreadable file";
+    case VS_UNPLAYABLE: return ko ? "재생할 수 없는 형식입니다 (MJPEG-AVI만 지원)"
+                                  : "unsupported format (MJPEG-AVI only)";
     case VS_ANYKEY:     return ko ? "아무 키나 누르세요" : "press a key";
     }
     return "";
@@ -76,10 +77,21 @@ static const char *vstr(vstr_t s)
 
 // --- directory scan ---------------------------------------------------------
 
-static bool has_avi_ext(const char *n)
+// Common video-container extensions. Only MJPEG-AVI actually plays on this
+// device, but we list every video file so the user sees them all (the tile shows
+// the format) and gets a clear "can't play" message on an unsupported one —
+// rather than the file silently not appearing.
+static bool has_video_ext(const char *n)
 {
+    static const char *const exts[] = {
+        ".avi", ".mp4", ".mkv", ".mov", ".webm",
+        ".m4v", ".flv", ".ts",  ".wmv", ".mpg", ".mpeg",
+    };
     const char *d = strrchr(n, '.');
-    return d && (strcasecmp(d, ".avi") == 0);
+    if (!d) return false;
+    for (unsigned i = 0; i < sizeof(exts) / sizeof(exts[0]); i++)
+        if (strcasecmp(d, exts[i]) == 0) return true;
+    return false;
 }
 
 static int scandir_cb(const rg_scandir_t *file, void *arg)
@@ -87,7 +99,7 @@ static int scandir_cb(const rg_scandir_t *file, void *arg)
     (void)arg;
     if (entry_count >= MAX_ENTRIES) return RG_SCANDIR_STOP;
     if (file->basename[0] == '.') return RG_SCANDIR_CONTINUE;
-    if (!file->is_dir && !has_avi_ext(file->basename)) return RG_SCANDIR_CONTINUE;
+    if (!file->is_dir && !has_video_ext(file->basename)) return RG_SCANDIR_CONTINUE;
     vid_entry_t *e = &entries[entry_count++];
     strncpy(e->name, file->basename, NAME_MAX_LEN - 1);
     e->name[NAME_MAX_LEN - 1] = '\0';
