@@ -277,7 +277,7 @@ vid_result_t video_play(const char *path)
     int  spd = 1, dec_ok = 0;
     bool decoded_any = false, stopped = false, paused = false;
     bool anchored = false;              // re-anchor the schedule at the 1st frame after start/seek
-    uint32_t t0 = 0, audio_base = 0;    // wall + audio-sample anchors for A/V-locked pacing
+    uint32_t t0 = 0;                    // wall-clock anchor for exact-interval pacing
     int      frame_idx = 0;            // video frames presented since the anchor
     uint32_t osd_until = HAL_GetTick() + OSD_MS;
     uint32_t vol_until = 0;
@@ -374,34 +374,16 @@ vid_result_t video_play(const char *path)
             continue;
         }
 
-        // VIDEO frame: pace the fine (1ms) wall clock but LOCK it to the audio clock,
-        // so video and audio never drift apart over a long clip. music_audio_pos()
-        // counts the samples the SAI has actually output — a steady 48kHz hardware
-        // master that keeps advancing even through a ring underrun (it counts the
-        // silence it emits), so it does NOT drag video down when audio hiccups. The
-        // old wall-only pacing rounded 33.333ms -> 33ms and drifted ~1%/clip, which is
-        // why continuous playback grew choppy toward the end while a fresh seek (which
-        // re-anchors) played clean. Speed-shifted playback mutes audio, so 0.5x/2x fall
-        // back to a pure wall schedule.
+        // VIDEO frame: pace each frame to its EXACT presentation time — frame_idx *
+        // usec_per_frame, computed fresh so there is NO 33-vs-33.333ms rounding to
+        // drift over a long clip (that drift was why continuous playback grew choppy
+        // toward the end while a fresh seek played clean). Display when due; if the SD
+        // made us fall a whole frame behind, drop this one so lag never accumulates.
+        // Anchored at the first frame after start/seek so the audio pre-roll / seek
+        // walk never poisons the schedule.
         nv_seen++;
-        bool aclk = (spd == 1 && !paused);                 // audio advances only at 1x unpaused
         uint32_t fr_us = (uint32_t)a.usec_per_frame * SPD_DEN[spd] / SPD_NUM[spd];
-        if (!anchored) {
-            t0 = HAL_GetTick();
-            audio_base = music_audio_pos();
-            frame_idx  = 0;
-            anchored   = true;
-        }
-
-        // Slew the wall anchor toward the audio clock (only past the ~22ms ISR
-        // granularity, so quantization noise never jitters it) — kills long-run drift.
-        if (aclk) {
-            uint32_t a_ms = (uint32_t)((uint64_t)(music_audio_pos() - audio_base) * 1000 / AUDIO_SAMPLE_RATE);
-            int32_t  skew = (int32_t)((HAL_GetTick() - t0) - a_ms);
-            if      (skew >  25) t0 += 1;                  // wall ran ahead -> delay the schedule
-            else if (skew < -25) t0 -= 1;                  // wall fell behind -> advance it
-        }
-
+        if (!anchored) { t0 = HAL_GetTick(); frame_idx = 0; anchored = true; }
         uint32_t due = t0 + (uint32_t)((uint64_t)frame_idx * fr_us / 1000ULL);
 
         if ((int32_t)(HAL_GetTick() - due) > (int32_t)(fr_us / 1000)) {   // >1 frame late -> drop
