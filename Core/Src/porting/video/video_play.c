@@ -59,13 +59,13 @@ static void feed_audio(avi_t *a, long sz)
 
 // Mute + flush the audio across a seek so the SAI ISR can't buzz on the stale /
 // underrunning ring while the demuxer walks to the target.
-static void seek_to(avi_t *a, int frame, int spd, bool paused, uint32_t *next_due)
+static void seek_to(avi_t *a, int frame, int spd, bool paused)
 {
     music_audio_set(0, 0);
     avi_seek_frame(a, frame);
     video_audio_stop();
     apply_audio(spd, paused);
-    *next_due = HAL_GetTick();
+    // The caller clears `anchored`, so the next frame re-anchors the A/V schedule.
 }
 
 // --- overlay drawing --------------------------------------------------------
@@ -276,8 +276,9 @@ vid_result_t video_play(const char *path)
 
     int  spd = 1, dec_ok = 0;
     bool decoded_any = false, stopped = false, paused = false;
-    uint32_t next_due  = HAL_GetTick();
-    bool anchored = false;              // re-anchor next_due at the 1st frame after start/seek
+    bool anchored = false;              // re-anchor the schedule at the 1st frame after start/seek
+    uint32_t t0 = 0, audio_base = 0;    // wall + audio-sample anchors for A/V-locked pacing
+    int      frame_idx = 0;            // video frames presented since the anchor
     uint32_t osd_until = HAL_GetTick() + OSD_MS;
     uint32_t vol_until = 0;
     bool lr_down = false; int lr_dir = 0; uint32_t lr_press = 0;
@@ -319,7 +320,7 @@ vid_result_t video_play(const char *path)
 
         if (released) {                                  // quick tap -> skip ±5s
             lr_down = false;
-            seek_to(&a, a.cur_frame + lr_dir * seek_frames, spd, paused, &next_due);
+            seek_to(&a, a.cur_frame + lr_dir * seek_frames, spd, paused);
             anchored = false;
             continue;
         }
@@ -336,7 +337,7 @@ vid_result_t video_play(const char *path)
                 bool sL = joy.values[ODROID_INPUT_LEFT], sR = joy.values[ODROID_INPUT_RIGHT];
                 prev = joy;
                 if (!sL && !sR) {                        // release -> one seek
-                    seek_to(&a, scrub_frame, spd, paused, &next_due);
+                    seek_to(&a, scrub_frame, spd, paused);
                     anchored = false;
                     break;
                 }
@@ -373,22 +374,39 @@ vid_result_t video_play(const char *path)
             continue;
         }
 
-        // VIDEO frame: audio is the master clock — it MUST play at real time or it
-        // drifts/stutters ("음악이 밀려"). When we fall behind schedule (the SD can't
-        // sustain reading every frame at the full rate) SKIP this frame's decode AND
-        // its data read, handing that bandwidth/time back to the audio so the ring
-        // never starves. Video just loses a few frames (e.g. 30->~20fps), audio stays
-        // locked. The schedule is anchored at the FIRST frame after start/seek so the
-        // audio preamble / seek walk never poisons it (that was the old all-drop bug).
+        // VIDEO frame: pace the fine (1ms) wall clock but LOCK it to the audio clock,
+        // so video and audio never drift apart over a long clip. music_audio_pos()
+        // counts the samples the SAI has actually output — a steady 48kHz hardware
+        // master that keeps advancing even through a ring underrun (it counts the
+        // silence it emits), so it does NOT drag video down when audio hiccups. The
+        // old wall-only pacing rounded 33.333ms -> 33ms and drifted ~1%/clip, which is
+        // why continuous playback grew choppy toward the end while a fresh seek (which
+        // re-anchors) played clean. Speed-shifted playback mutes audio, so 0.5x/2x fall
+        // back to a pure wall schedule.
         nv_seen++;
-        uint32_t interval = (uint32_t)frame_ms * SPD_DEN[spd] / SPD_NUM[spd];
-        if (!anchored) { next_due = HAL_GetTick(); anchored = true; }
+        bool aclk = (spd == 1 && !paused);                 // audio advances only at 1x unpaused
+        uint32_t fr_us = (uint32_t)a.usec_per_frame * SPD_DEN[spd] / SPD_NUM[spd];
+        if (!anchored) {
+            t0 = HAL_GetTick();
+            audio_base = music_audio_pos();
+            frame_idx  = 0;
+            anchored   = true;
+        }
 
-        if ((int32_t)(HAL_GetTick() - next_due) > (int32_t)interval) {   // behind -> drop frame
-            next_due += interval;                                        // advance the schedule
-            if ((int32_t)(HAL_GetTick() - next_due) > (int32_t)(interval * 16))
-                next_due = HAL_GetTick();                                // hard resync after a stall
-            continue;                                                    // skip decode+read; audio flows
+        // Slew the wall anchor toward the audio clock (only past the ~22ms ISR
+        // granularity, so quantization noise never jitters it) — kills long-run drift.
+        if (aclk) {
+            uint32_t a_ms = (uint32_t)((uint64_t)(music_audio_pos() - audio_base) * 1000 / AUDIO_SAMPLE_RATE);
+            int32_t  skew = (int32_t)((HAL_GetTick() - t0) - a_ms);
+            if      (skew >  25) t0 += 1;                  // wall ran ahead -> delay the schedule
+            else if (skew < -25) t0 -= 1;                  // wall fell behind -> advance it
+        }
+
+        uint32_t due = t0 + (uint32_t)((uint64_t)frame_idx * fr_us / 1000ULL);
+
+        if ((int32_t)(HAL_GetTick() - due) > (int32_t)(fr_us / 1000)) {   // >1 frame late -> drop
+            frame_idx++;                                   // skip decode+read; the clock catches up
+            continue;
         }
 
         if (video_decode_frame(a.f, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT)) {
@@ -404,9 +422,9 @@ vid_result_t video_play(const char *path)
         if ((int32_t)(HAL_GetTick() - vol_until) < 0)
             draw_volume();
 
-        while ((int32_t)(HAL_GetTick() - next_due) < 0) { wdog_refresh(); HAL_Delay(1); }
+        while ((int32_t)(HAL_GetTick() - due) < 0) { wdog_refresh(); HAL_Delay(1); }
         lcd_swap();
-        next_due += interval;
+        frame_idx++;
     }
 
     music_audio_set(0, 0);
