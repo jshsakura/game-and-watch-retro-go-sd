@@ -343,10 +343,12 @@ vid_result_t video_play(const char *path)
         nv_seen++;
         uint32_t interval = (uint32_t)frame_ms * SPD_DEN[spd] / SPD_NUM[spd];
         uint32_t now = HAL_GetTick();
-        if (now > next_due + interval) {                 // behind -> drop (don't decode)
-            next_due += interval;
-            continue;
-        }
+        if ((int32_t)(now - next_due) > (int32_t)interval) {  // fell behind (startup audio
+            next_due = now;                                    // preload, a seek, or slow IO):
+            continue;                                          // drop ONE frame and resync the
+        }                                                      // clock -- crawling it by a single
+                                                               // interval can never catch up to
+                                                               // wall time, which drops every frame
 
         if (video_decode_frame(a.f, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT))
             decoded_any = true;
