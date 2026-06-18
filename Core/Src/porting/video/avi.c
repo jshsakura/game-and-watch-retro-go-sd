@@ -140,20 +140,92 @@ avi_kind_t avi_next(avi_t *a, long *size)
     return AVI_END;
 }
 
+// Pre-fill the sparse seek checkpoints from the AVI 'idx1' index (the table of
+// every chunk's offset/size that sits right after the movi list). This makes a
+// big FORWARD jump into a not-yet-played region fast: seek lands on the nearest
+// checkpoint and walks only a few frames, instead of stepping through thousands
+// of chunks. Done lazily on the first seek so it never slows the initial open.
+// Fully defensive — any inconsistency just leaves ckpt[] as recorded during
+// playback, so seeking still works (only slower). idx1 offsets are stored either
+// relative to the 'movi' fourcc or as file-absolute; the base is auto-detected.
+static void avi_build_index(avi_t *a)
+{
+    a->indexed = true;                                    // try once, success or not
+    if (a->total_frames <= 0 || a->ckpt_step <= 0) return;
+
+    // walk top-level chunks from movi_end to find 'idx1'
+    long pos = a->movi_end, idx_pos = 0;
+    uint32_t idx_sz = 0;
+    while (pos + 8 <= a->file_end) {
+        if (fseek(a->f, pos, SEEK_SET) != 0) return;
+        char id[4];
+        if (!rd_fourcc(a->f, id)) return;
+        uint32_t sz = rd_u32(a->f);
+        long body = ftell(a->f);
+        if (FCC(id, "idx1")) { idx_pos = body; idx_sz = sz; break; }
+        long next = body + sz + (sz & 1);
+        if (next <= pos) return;
+        pos = next;
+    }
+    if (!idx_pos || idx_sz < 16) return;
+
+    // detect the offset base from the first entry: id[4] flags[4] offset[4] size[4]
+    uint8_t e[16];
+    if (fseek(a->f, idx_pos, SEEK_SET) != 0) return;
+    if (fread(e, 1, 16, a->f) != 16) return;
+    uint32_t off0 = (uint32_t)e[8] | ((uint32_t)e[9] << 8) |
+                    ((uint32_t)e[10] << 16) | ((uint32_t)e[11] << 24);
+    long base = 0;
+    bool have_base = false;
+    long cand[2] = { a->movi_start - 4, 0 };              // movi-relative, then file-absolute
+    for (int t = 0; t < 2 && !have_base; t++) {
+        char cid[4];
+        if (fseek(a->f, cand[t] + (long)off0, SEEK_SET) == 0 && rd_fourcc(a->f, cid) &&
+            cid[0] == (char)e[0] && cid[1] == (char)e[1] &&
+            cid[2] == (char)e[2] && cid[3] == (char)e[3]) {
+            base = cand[t]; have_base = true;
+        }
+    }
+    if (!have_base) return;                               // unknown layout -> keep playback ckpts
+
+    // stream the index sequentially, recording a checkpoint at every ckpt_step-th
+    // video frame (ckpt[k] points at the chunk id of the (k*ckpt_step+1)-th frame)
+    if (fseek(a->f, idx_pos, SEEK_SET) != 0) return;
+    long n = idx_sz / 16;
+    int vf = 0;                                           // 1-based video-frame index
+    for (long i = 0; i < n; i++) {
+        if (fread(e, 1, 16, a->f) != 16) break;
+        if (e[2] != 'd' || (e[3] != 'c' && e[3] != 'b')) continue;   // video chunks only
+        vf++;
+        if (vf >= 2 && (vf - 1) % a->ckpt_step == 0) {
+            int k = (vf - 1) / a->ckpt_step;
+            if (k > 0 && k < AVI_CKPT_N && a->ckpt[k] == 0) {
+                uint32_t off = (uint32_t)e[8] | ((uint32_t)e[9] << 8) |
+                               ((uint32_t)e[10] << 16) | ((uint32_t)e[11] << 24);
+                a->ckpt[k] = base + (long)off;
+            }
+        }
+    }
+}
+
 void avi_seek_frame(avi_t *a, int frame)
 {
     if (frame < 0) frame = 0;
     if (a->total_frames > 0 && frame >= a->total_frames) frame = a->total_frames - 1;
 
-    // Forward is cheap (walk only the delta from here). Backward jumps to the
-    // nearest recorded checkpoint at/just-before the target, then walks the short
-    // remainder — so seeking back never re-walks the whole clip from the start.
-    if (frame < a->cur_frame) {
-        int k = a->ckpt_step > 0 ? frame / a->ckpt_step : 0;
-        if (k >= AVI_CKPT_N) k = AVI_CKPT_N - 1;
-        while (k > 0 && a->ckpt[k] == 0) k--;          // nearest recorded checkpoint
-        a->movi_pos  = a->ckpt[k] ? a->ckpt[k] : a->movi_start;
-        a->cur_frame = a->ckpt[k] ? k * a->ckpt_step : 0;
+    if (!a->indexed) avi_build_index(a);   // lazy: fill ckpt[] across the whole file once
+
+    // Jump to the nearest checkpoint at/just-before the target whenever it is closer
+    // to the target than where we are now — so both a big forward jump and a backward
+    // seek land near the goal and walk only the short remainder (never the whole clip).
+    int k = a->ckpt_step > 0 ? frame / a->ckpt_step : 0;
+    if (k >= AVI_CKPT_N) k = AVI_CKPT_N - 1;
+    while (k > 0 && a->ckpt[k] == 0) k--;                 // nearest recorded checkpoint
+    int  ck_frame = k > 0 ? k * a->ckpt_step : 0;
+    long ck_pos   = k > 0 ? a->ckpt[k] : a->movi_start;
+    if (frame < a->cur_frame || ck_frame > a->cur_frame) {
+        a->cur_frame = ck_frame;
+        a->movi_pos  = ck_pos;
     }
     long sz;
     while (a->cur_frame < frame) {

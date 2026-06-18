@@ -27,6 +27,7 @@ typedef struct {
     int   cur_frame;         // video frames consumed so far (advanced by avi_next)
     long  ckpt[AVI_CKPT_N];  // movi_pos recorded at frame k*ckpt_step (0 = not seen yet)
     int   ckpt_step;         // frames between checkpoints
+    bool  indexed;           // idx1 already scanned to pre-fill ckpt[] (lazy, on 1st seek)
 } avi_t;
 
 // Open `path`, parse the AVI main header (frame size + rate) and locate the

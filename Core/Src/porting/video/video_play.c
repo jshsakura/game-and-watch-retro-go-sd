@@ -174,22 +174,29 @@ static void draw_volume(void)
 // --- options menu (PAUSE / SET) ---------------------------------------------
 
 #define VTR(field, fallback) ((curr_lang && curr_lang->field) ? curr_lang->field : (fallback))
-enum { VMENU_QUIT = 91 };
+enum { VMENU_INFO = 90, VMENU_QUIT = 91, VMENU_DEBUG = 92 };
+
+// Diagnostic overlay toggle (declared here so the options menu can flip it).
+static bool g_show_debug = true;
 
 // The shared launcher settings menu (Brightness + Volume sliders) plus a read-only
-// Info line and a Quit entry. Returns the chosen id (VMENU_QUIT to leave).
+// Info line, a Debug-overlay toggle and a Quit entry. Returns the chosen id
+// (VMENU_QUIT to leave); flips the debug overlay in place when that entry is picked.
 static int open_video_menu(const avi_t *a)
 {
     static char info[40];
     int fps = a->usec_per_frame > 0 ? (1000000 + a->usec_per_frame / 2) / a->usec_per_frame : 24;
     snprintf(info, sizeof info, "%dx%d  %dfps", a->width, a->height, fps);
     odroid_dialog_choice_t extra[] = {
-        { 90,         VTR(s_info, "Info"),               info,          0, NULL },
+        { VMENU_INFO,  VTR(s_info, "Info"),               info,                              0, NULL },
+        { VMENU_DEBUG, "Debug",                           (char *)(g_show_debug ? "ON" : "OFF"), 1, NULL },
         ODROID_DIALOG_CHOICE_SEPARATOR,
-        { VMENU_QUIT, VTR(s_Quit_to_menu, "Quit to menu"), (char *)"",  1, NULL },
+        { VMENU_QUIT,  VTR(s_Quit_to_menu, "Quit to menu"), (char *)"",                       1, NULL },
         ODROID_DIALOG_CHOICE_LAST,
     };
-    return odroid_overlay_settings_menu(extra, NULL, 0);
+    int r = odroid_overlay_settings_menu(extra, NULL, 0);
+    if (r == VMENU_DEBUG) g_show_debug = !g_show_debug;
+    return r;
 }
 
 // --- playback ---------------------------------------------------------------
@@ -213,9 +220,10 @@ static void build_diag(const avi_t *a, int nv, int na)
              g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_rc, nv, na);
 }
 
-// TEMP live decoder HUD: overlays the decode counters on top of whatever the
-// frame produced, so a black/frozen picture still reveals what the HW JPEG is
-// doing (decoded count, last stage/return code, parsed dims, first bytes).
+// Live decoder overlay (toggle in the options menu via g_show_debug): a translucent
+// top panel showing what the HW JPEG path is doing — decoded/seen/audio counts, the
+// last stage/return code, parsed dims and first bytes — so a stall or a bad frame is
+// diagnosable at a glance without reflashing. Default on; the video shows through.
 static void draw_hud(int dec_ok, int seen, int na)
 {
     char l1[48], l2[48];
@@ -223,12 +231,14 @@ static void draw_hud(int dec_ok, int seen, int na)
     snprintf(l2, sizeof l2, "st=%d rc=%ld %dx%d sz=%ld %02X%02X",
              g_vdec_st, g_vdec_rc, g_vdec_w, g_vdec_h, g_vdec_sz, g_vdec_b0, g_vdec_b1);
     uint16_t *fb = lcd_get_active_buffer();
-    for (int y = 0; y < 26; y++) {                       // dark strip for legibility
+    uint16_t accent = curr_colors->sel_c;
+    for (int y = 0; y < 26; y++) {                       // translucent panel (video shows through)
         uint16_t *row = fb + y * GW_LCD_WIDTH;
-        for (int x = 0; x < GW_LCD_WIDTH; x++) row[x] = vmix(row[x], 0x0000, 12);
+        for (int x = 0; x < GW_LCD_WIDTH; x++) row[x] = vmix(row[x], 0x0000, 9);
     }
-    i18n_draw_text_line(2, 2,  GW_LCD_WIDTH - 4, l1, curr_colors->main_c, 0, 1);
-    i18n_draw_text_line(2, 14, GW_LCD_WIDTH - 4, l2, curr_colors->main_c, 0, 1);
+    for (int x = 0; x < GW_LCD_WIDTH; x++) fb[26 * GW_LCD_WIDTH + x] = accent;   // accent edge
+    i18n_draw_text_line(3, 2,  GW_LCD_WIDTH - 6, l1, accent,               0, 1);
+    i18n_draw_text_line(3, 14, GW_LCD_WIDTH - 6, l2, curr_colors->main_c, 0, 1);
 }
 
 vid_result_t video_play(const char *path)
@@ -379,7 +389,7 @@ vid_result_t video_play(const char *path)
             draw_osd(&a, spd, paused, -1, frame_ms);
         if ((int32_t)(HAL_GetTick() - vol_until) < 0)
             draw_volume();
-        draw_hud(dec_ok, nv_seen, na_seen);       // TEMP: live decoder status overlay
+        if (g_show_debug) draw_hud(dec_ok, nv_seen, na_seen);   // live decoder status overlay
 
         // pace: only wait while we're AHEAD of schedule; if I/O pushed us behind,
         // proceed immediately and resync so we never accumulate an unpayable debt.
