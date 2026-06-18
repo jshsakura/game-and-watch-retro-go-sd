@@ -401,9 +401,13 @@ vid_result_t video_play(const char *path)
     }
 
     music_audio_set(0, 0);
-    video_audio_stop();
-    music_audio_enable(0);
-    audio_stop_playing();        // halt the SAI DMA so it can't loop the stale buffer (exit buzz)
+    video_audio_stop();          // empty the source ring
+    music_audio_enable(0);       // stop the ISR refilling from it
+    // Definitively kill the exit buzz: zero the SAI DMA output buffer the codec is
+    // still looping RIGHT NOW (it lives in non-cacheable .audio, so the write is
+    // immediately visible to the DMA), then halt the DMA. Either way it plays silence.
+    memset(audiobuffer_dma, 0, sizeof audiobuffer_dma);
+    audio_stop_playing();
     video_decode_deinit();
     avi_close(&a);
     if (!decoded_any) {
