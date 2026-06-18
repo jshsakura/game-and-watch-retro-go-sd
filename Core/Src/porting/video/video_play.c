@@ -277,6 +277,7 @@ vid_result_t video_play(const char *path)
     int  spd = 1, dec_ok = 0;
     bool decoded_any = false, stopped = false, paused = false;
     uint32_t next_due  = HAL_GetTick();
+    bool anchored = false;              // re-anchor next_due at the 1st frame after start/seek
     uint32_t osd_until = HAL_GetTick() + OSD_MS;
     uint32_t vol_until = 0;
     bool lr_down = false; int lr_dir = 0; uint32_t lr_press = 0;
@@ -292,12 +293,12 @@ vid_result_t video_play(const char *path)
 
         if (HIT(ODROID_INPUT_B)) { stopped = true; prev = joy; break; }
         if (HIT(ODROID_INPUT_A)) { paused = !paused; apply_audio(spd, paused); }
-        if (HIT(ODROID_INPUT_SELECT)) { spd = (spd + 1) % 3; next_due = HAL_GetTick(); apply_audio(spd, paused); }
+        if (HIT(ODROID_INPUT_SELECT)) { spd = (spd + 1) % 3; anchored = false; apply_audio(spd, paused); }
         if (HIT(ODROID_INPUT_VOLUME)) {                  // PAUSE/SET -> options menu
             music_audio_set(0, 0);
             int r = open_video_menu(&a);
             apply_audio(spd, paused);
-            next_due  = HAL_GetTick();
+            anchored  = false;
             osd_until = HAL_GetTick() + OSD_MS;
             odroid_input_read_gamepad(&prev);            // swallow the menu's buttons
             if (r == VMENU_QUIT) { stopped = true; break; }
@@ -319,6 +320,7 @@ vid_result_t video_play(const char *path)
         if (released) {                                  // quick tap -> skip ±5s
             lr_down = false;
             seek_to(&a, a.cur_frame + lr_dir * seek_frames, spd, paused, &next_due);
+            anchored = false;
             continue;
         }
 
@@ -335,6 +337,7 @@ vid_result_t video_play(const char *path)
                 prev = joy;
                 if (!sL && !sR) {                        // release -> one seek
                     seek_to(&a, scrub_frame, spd, paused, &next_due);
+                    anchored = false;
                     break;
                 }
                 scrub_frame += (sR ? 1 : -1) * scrub_step;
@@ -359,7 +362,7 @@ vid_result_t video_play(const char *path)
                 prev = joy;
                 HAL_Delay(20);
             }
-            next_due += HAL_GetTick() - pstart;
+            anchored = false;                            // re-anchor the schedule after the pause
             apply_audio(spd, paused);
             if (stopped) break;
         }
@@ -370,18 +373,27 @@ vid_result_t video_play(const char *path)
             continue;
         }
 
-        // VIDEO frame: ALWAYS decode it -- never drop. The old "drop when behind"
-        // heuristic starved decode completely: feeding the interleaved audio costs
-        // more than one frame interval on the slow SD, so every video frame looked
-        // "behind" and was skipped -> decode never ran (v=N, dec=0). Now we decode
-        // every frame; if I/O can't sustain real time the clip simply plays a touch
-        // slow (audio may desync) but the PICTURE always shows.
+        // VIDEO frame: audio is the master clock — it MUST play at real time or it
+        // drifts/stutters ("음악이 밀려"). When we fall behind schedule (the SD can't
+        // sustain reading every frame at the full rate) SKIP this frame's decode AND
+        // its data read, handing that bandwidth/time back to the audio so the ring
+        // never starves. Video just loses a few frames (e.g. 30->~20fps), audio stays
+        // locked. The schedule is anchored at the FIRST frame after start/seek so the
+        // audio preamble / seek walk never poisons it (that was the old all-drop bug).
         nv_seen++;
         uint32_t interval = (uint32_t)frame_ms * SPD_DEN[spd] / SPD_NUM[spd];
+        if (!anchored) { next_due = HAL_GetTick(); anchored = true; }
+
+        if ((int32_t)(HAL_GetTick() - next_due) > (int32_t)interval) {   // behind -> drop frame
+            next_due += interval;                                        // advance the schedule
+            if ((int32_t)(HAL_GetTick() - next_due) > (int32_t)(interval * 16))
+                next_due = HAL_GetTick();                                // hard resync after a stall
+            continue;                                                    // skip decode+read; audio flows
+        }
 
         if (video_decode_frame(a.f, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT)) {
             decoded_any = true; dec_ok++;
-        } else if (nv_seen >= 30) {               // first 30 frames all failed -> report now
+        } else if (nv_seen >= 30) {               // first 30 frames all failed to DECODE -> report
             build_diag(&a, nv_seen, na_seen);
             stopped = true; break;
         }
@@ -392,13 +404,9 @@ vid_result_t video_play(const char *path)
         if ((int32_t)(HAL_GetTick() - vol_until) < 0)
             draw_volume();
 
-        // pace: only wait while we're AHEAD of schedule; if I/O pushed us behind,
-        // proceed immediately and resync so we never accumulate an unpayable debt.
         while ((int32_t)(HAL_GetTick() - next_due) < 0) { wdog_refresh(); HAL_Delay(1); }
         lcd_swap();
         next_due += interval;
-        if ((int32_t)(HAL_GetTick() - next_due) > (int32_t)interval)
-            next_due = HAL_GetTick();
     }
 
     music_audio_set(0, 0);
