@@ -234,9 +234,12 @@ static void draw_hud(int dec_ok, int seen, int na)
 vid_result_t video_play(const char *path)
 {
     avi_t a;
-    // The read-ahead buffer lives in g_scratch's tail (past the frame src + JPEG
-    // work areas) — block reads from the SD instead of many tiny per-chunk reads.
-    if (!avi_open(&a, path, g_scratch + VIDEO_RA_OFFSET, VIDEO_RA_SIZE)) {
+    // No setvbuf read-ahead: a big fully-buffered stdio buffer front-loads ~16
+    // frames during open then STALLS for a full ~128KB SD refill once drained
+    // (the "first frames then freeze" the device showed). The proven-smooth build
+    // (27679012490) had none — each frame is read with one direct fread of its own
+    // size, which newlib services as a direct large read (no per-read storm).
+    if (!avi_open(&a, path, NULL, 0)) {
         snprintf(s_diag, sizeof s_diag, "avi_open FAILED");
         return VID_UNPLAYABLE;
     }

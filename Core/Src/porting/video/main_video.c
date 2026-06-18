@@ -222,6 +222,8 @@ static void enter_selected(void)
         char path[PATH_MAX_LEN];
         snprintf(path, sizeof path, "%s/%s", cur_path, entries[idx].name);
         cursor = idx;
+        draw_loading();                                // SD open/parse stalls -> show progress,
+                                                       // not a frozen list, until the 1st frame
         vid_result_t r = video_play(path);
         video_ui_list_invalidate();                    // decoder reused g_scratch
         if (r == VID_STOPPED) break;                   // user pressed B
