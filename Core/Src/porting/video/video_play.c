@@ -213,6 +213,24 @@ static void build_diag(const avi_t *a, int nv, int na)
              g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_rc, nv, na);
 }
 
+// TEMP live decoder HUD: overlays the decode counters on top of whatever the
+// frame produced, so a black/frozen picture still reveals what the HW JPEG is
+// doing (decoded count, last stage/return code, parsed dims, first bytes).
+static void draw_hud(int dec_ok, int seen, int na)
+{
+    char l1[48], l2[48];
+    snprintf(l1, sizeof l1, "dec=%d v=%d a=%d", dec_ok, seen, na);
+    snprintf(l2, sizeof l2, "st=%d rc=%ld %dx%d sz=%ld %02X%02X",
+             g_vdec_st, g_vdec_rc, g_vdec_w, g_vdec_h, g_vdec_sz, g_vdec_b0, g_vdec_b1);
+    uint16_t *fb = lcd_get_active_buffer();
+    for (int y = 0; y < 26; y++) {                       // dark strip for legibility
+        uint16_t *row = fb + y * GW_LCD_WIDTH;
+        for (int x = 0; x < GW_LCD_WIDTH; x++) row[x] = vmix(row[x], 0x0000, 12);
+    }
+    i18n_draw_text_line(2, 2,  GW_LCD_WIDTH - 4, l1, curr_colors->main_c, 0, 1);
+    i18n_draw_text_line(2, 14, GW_LCD_WIDTH - 4, l2, curr_colors->main_c, 0, 1);
+}
+
 vid_result_t video_play(const char *path)
 {
     avi_t a;
@@ -243,7 +261,7 @@ vid_result_t video_play(const char *path)
     music_audio_enable(1);
     apply_audio(1, false);
 
-    int  spd = 1;
+    int  spd = 1, dec_ok = 0;
     bool decoded_any = false, stopped = false, paused = false;
     uint32_t next_due  = HAL_GetTick();
     uint32_t osd_until = HAL_GetTick() + OSD_MS;
@@ -339,20 +357,18 @@ vid_result_t video_play(const char *path)
             continue;
         }
 
-        // VIDEO frame: pace to the frame interval, dropping when behind.
+        // VIDEO frame: ALWAYS decode it -- never drop. The old "drop when behind"
+        // heuristic starved decode completely: feeding the interleaved audio costs
+        // more than one frame interval on the slow SD, so every video frame looked
+        // "behind" and was skipped -> decode never ran (v=N, dec=0). Now we decode
+        // every frame; if I/O can't sustain real time the clip simply plays a touch
+        // slow (audio may desync) but the PICTURE always shows.
         nv_seen++;
         uint32_t interval = (uint32_t)frame_ms * SPD_DEN[spd] / SPD_NUM[spd];
-        uint32_t now = HAL_GetTick();
-        if ((int32_t)(now - next_due) > (int32_t)interval) {  // fell behind (startup audio
-            next_due = now;                                    // preload, a seek, or slow IO):
-            continue;                                          // drop ONE frame and resync the
-        }                                                      // clock -- crawling it by a single
-                                                               // interval can never catch up to
-                                                               // wall time, which drops every frame
 
-        if (video_decode_frame(a.f, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT))
-            decoded_any = true;
-        else if (nv_seen >= 30) {                 // first 30 frames all failed -> report now
+        if (video_decode_frame(a.f, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT)) {
+            decoded_any = true; dec_ok++;
+        } else if (nv_seen >= 30) {               // first 30 frames all failed -> report now
             build_diag(&a, nv_seen, na_seen);
             stopped = true; break;
         }
@@ -360,10 +376,15 @@ vid_result_t video_play(const char *path)
             draw_osd(&a, spd, paused, -1, frame_ms);
         if ((int32_t)(HAL_GetTick() - vol_until) < 0)
             draw_volume();
+        draw_hud(dec_ok, nv_seen, na_seen);       // TEMP: live decoder status overlay
 
+        // pace: only wait while we're AHEAD of schedule; if I/O pushed us behind,
+        // proceed immediately and resync so we never accumulate an unpayable debt.
         while ((int32_t)(HAL_GetTick() - next_due) < 0) { wdog_refresh(); HAL_Delay(1); }
         lcd_swap();
         next_due += interval;
+        if ((int32_t)(HAL_GetTick() - next_due) > (int32_t)interval)
+            next_due = HAL_GetTick();
     }
 
     music_audio_set(0, 0);
