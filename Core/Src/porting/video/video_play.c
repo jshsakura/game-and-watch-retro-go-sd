@@ -385,11 +385,12 @@ vid_result_t video_play(const char *path)
             build_diag(&a, nv_seen, na_seen);
             stopped = true; break;
         }
-        if ((int32_t)(HAL_GetTick() - osd_until) < 0)
+        if ((int32_t)(HAL_GetTick() - osd_until) < 0) {
             draw_osd(&a, spd, paused, -1, frame_ms);
+            if (g_show_debug) draw_hud(dec_ok, nv_seen, na_seen);   // debug rides with the OSD
+        }
         if ((int32_t)(HAL_GetTick() - vol_until) < 0)
             draw_volume();
-        if (g_show_debug) draw_hud(dec_ok, nv_seen, na_seen);   // live decoder status overlay
 
         // pace: only wait while we're AHEAD of schedule; if I/O pushed us behind,
         // proceed immediately and resync so we never accumulate an unpayable debt.
@@ -401,13 +402,9 @@ vid_result_t video_play(const char *path)
     }
 
     music_audio_set(0, 0);
-    video_audio_stop();          // empty the source ring
-    music_audio_enable(0);       // stop the ISR refilling from it
-    // Definitively kill the exit buzz: zero the SAI DMA output buffer the codec is
-    // still looping RIGHT NOW (it lives in non-cacheable .audio, so the write is
-    // immediately visible to the DMA), then halt the DMA. Either way it plays silence.
-    memset(audiobuffer_dma, 0, sizeof audiobuffer_dma);
-    audio_stop_playing();
+    video_audio_stop();
+    music_audio_enable(0);
+    audio_stop_playing();        // halt the SAI DMA so it can't loop the stale buffer (exit buzz)
     video_decode_deinit();
     avi_close(&a);
     if (!decoded_any) {
