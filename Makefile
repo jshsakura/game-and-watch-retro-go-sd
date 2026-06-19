@@ -982,6 +982,7 @@ WSWAN_C_INCLUDES += \
 -I$(CORE_WSWAN)/headers \
 -I$(CORE_WSWAN)/sound \
 -DNOSDL_FB \
+-DGNW_WSWAN \
 -I./
 
 A2600_C_INCLUDES += \
