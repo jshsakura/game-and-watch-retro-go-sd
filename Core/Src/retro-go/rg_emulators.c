@@ -239,7 +239,7 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 24 /* bumped from 19: NGP + WonderSwan additions (21 cores now) */
+#define MAX_EMULATORS 21 /* bumped from 19 for NGP + WonderSwan; sized to exact core count (DTCM is tight) */
 static retro_emulator_t emulators[MAX_EMULATORS];
 static rom_system_t systems[MAX_EMULATORS];
 static int emulators_count = 0;
