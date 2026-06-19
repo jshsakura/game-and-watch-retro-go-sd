@@ -2,3 +2,4 @@
 # Populated from the linker's multiple-definition reports.
 Page ws__Page
 Noise ws__Noise
+graphics_paint ws__graphics_paint

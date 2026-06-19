@@ -31,6 +31,12 @@ extern int32_t rBuf, wBuf;
 /* Referenced by oswan's WsLoadEeprom (defined in the excluded SDL front-end). */
 char gameName[512];
 
+/* End-of-frame present hook. oswan's Interrupt() calls graphics_paint() at
+ * vblank; the SDL front-end blits there. We blit FrameBuffer ourselves in the
+ * app loop, so this is a no-op. Namespaced (ws__graphics_paint via
+ * wswan_redefines) so it does not collide with RACE's graphics_paint. */
+void graphics_paint(void) { }
+
 /* WonderSwan native screen: 224x144, rendered into FrameBuffer at row stride
  * 240 with an 8-pixel left margin (see RefreshLine). */
 #define WIDTH       320

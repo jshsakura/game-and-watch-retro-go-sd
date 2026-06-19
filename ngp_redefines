@@ -8,3 +8,4 @@ dac_update ngp__dac_update
 system_sound_chipreset ngp__system_sound_chipreset
 bios ngp__bios
 screen ngp__screen
+graphics_paint ngp__graphics_paint
