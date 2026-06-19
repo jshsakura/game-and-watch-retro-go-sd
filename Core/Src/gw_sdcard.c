@@ -74,6 +74,14 @@ void sdcard_init(void) {
     cause = f_mount(&FatFs, (const TCHAR *)"", 1);
     if (cause == FR_OK) {
         printf("filesytem mounted.\n");
+        // The card is initialized now (CMD0/ACMD41 need the slow /256 clock MX_SPI1_Init
+        // sets). /256 is SD *init* speed — left there it caps reads at ~60KB/s. Bump to
+        // a faster DATA clock. /32 (8x) was too fast for the G&W's hand-wired SD signal
+        // (read errors -> retries -> slower). /64 (4x, ~240KB/s) is gentler on signal
+        // integrity while still ample for 24fps MJPEG. Back off to /128 (2x) if a card
+        // still reads unreliably here; init stays at /256 for handshake robustness.
+        hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+        HAL_SPI_Init(&hspi1);
         fs_mounted = true;
         return;
     } else {
