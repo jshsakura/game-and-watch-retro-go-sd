@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/ngp-pocket
     tags:
       - 'v*'
   pull_request:
