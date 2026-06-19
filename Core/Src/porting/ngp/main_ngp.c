@@ -14,11 +14,19 @@
 #include "rg_i18n.h"
 
 /* RACE (Neo Geo Pocket / Color) core */
-#include "main.h"
 #include "graphics.h"
-#include "sound.h"
 #include "neopopsound.h"
 #include "state.h"
+#include "tlcs900h.h"
+
+/* RACE entry points live in main.h, which drags in <libretro.h>; forward-
+ * declare just the two functions we call to keep that header out of this TU. */
+void mainemuinit(void);
+int handleInputFile(const char *romName, const unsigned char *romData, int romSize);
+
+/* NGPC input register. Upstream this is defined in the libretro front-end
+ * (excluded here), so we own it; the core reads it via race-memory.h. */
+uint8_t ngpInputState = 0;
 
 #define WIDTH 320
 

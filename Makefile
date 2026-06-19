@@ -556,6 +556,7 @@ $(CORE_NGP)/race-memory.c \
 $(CORE_NGP)/sound.c \
 $(CORE_NGP)/state.c \
 $(CORE_NGP)/tlcs900h.c \
+$(CORE_NGP)/deps/blip/Blip_Buffer.c \
 Core/Src/porting/ngp/main_ngp.c
 
 MD_C_SOURCES =
@@ -955,8 +956,10 @@ NGP_C_INCLUDES += \
 -ICore/Src/porting/lib \
 -I$(CORE_NGP) \
 -I$(CORE_NGP)/libretro-common/include \
+-I$(CORE_NGP)/deps/blip \
 -DCZ80 \
 -DGNW_NGP \
+-D_MAX_PATH=260 \
 -I./
 
 A2600_C_INCLUDES += \
