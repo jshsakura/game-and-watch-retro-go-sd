@@ -1359,10 +1359,10 @@ void emulators_init()
     add_emulator("Watara Supervision", "wsv", "wsv sv bin lzma", RG_LOGO_PAD_WSV, RG_LOGO_HEADER_WSV, NO_GAME_DATA);
     /* NGP/NGPC: ROM stays in flash (no lzma decompress); core auto-detects mono/colour.
      * Logos are placeholders (WSV) until icons/{c,h}_ngp.bmp + RG_LOGO_*_NGP are added. */
-    add_emulator("Neo Geo Pocket", "ngp", "ngp ngc ngpc", RG_LOGO_PAD_WSV, RG_LOGO_HEADER_WSV, NO_GAME_DATA);
+    add_emulator("Neo Geo Pocket", "ngp", "ngp ngc ngpc", RG_LOGO_PAD_NGP, RG_LOGO_HEADER_NGP, NO_GAME_DATA);
     /* WonderSwan / Color: ROM stays in flash; core auto-detects mono/colour.
      * Placeholder logos (WSV) until WS icons are wired into rg_logos. */
-    add_emulator("WonderSwan", "ws", "ws wsc", RG_LOGO_PAD_WSV, RG_LOGO_HEADER_WSV, NO_GAME_DATA);
+    add_emulator("WonderSwan", "ws", "ws wsc", RG_LOGO_PAD_WSWAN, RG_LOGO_HEADER_WSWAN, NO_GAME_DATA);
     add_emulator("MSX", "msx", "dsk rom mx1 mx2 cdk lzma", RG_LOGO_PAD_MSX, RG_LOGO_HEADER_MSX, NO_GAME_DATA);
     add_emulator("Atari 2600", "a2600", "a26 bin lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_A2600, NO_GAME_DATA);
     add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
