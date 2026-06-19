@@ -1182,6 +1182,7 @@ $(BUILD_DIR):
 	$(V)mkdir $@/msx
 	$(V)mkdir $@/gw
 	$(V)mkdir $@/wsv
+	$(V)mkdir $@/ngp
 	$(V)mkdir $@/md
 	$(V)mkdir $@/a2600
 	$(V)mkdir $@/a7800
