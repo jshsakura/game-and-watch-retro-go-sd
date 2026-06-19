@@ -44,6 +44,12 @@ jobs:
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.4 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
+      # TEMP debug: dump overlay symbol map around the WonderSwan crash range
+      - name: Dump symbol map (TEMP)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.4 \
+            bash -l -c "echo '=== SYMS 0x2404-0x2407 ==='; arm-none-eabi-nm --numeric-sort --print-size build/gw_retro_go.elf | grep -E '^2404|^2405|^2406|^2407' | head -200" || true
+
       # 3. Upload retro-go_update.bin artifact
       - name: Upload retro-go_update.bin artifact
         uses: actions/upload-artifact@v4

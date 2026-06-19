@@ -137,7 +137,9 @@ void ngp_pcm_submit(void) {
     uint16_t sound_buffer_length = audio_get_buffer_length();
 
     for (int i = 0; i < sound_buffer_length; i++) {
-        sound_buffer[i] = (audioBuffer_ngp[i] * factor);
+        /* audioBuffer_ngp is full-scale int16; factor is 0-255 (volume_tbl),
+         * so scale by factor/256 to apply volume and stay within int16. */
+        sound_buffer[i] = (int16_t)((audioBuffer_ngp[i] * factor) >> 8);
     }
 }
 
@@ -242,8 +244,8 @@ static void ngp_input_read(odroid_gamepad_state_t *joystick) {
     if (joystick->values[ODROID_INPUT_DOWN])   state |= 0x02;
     if (joystick->values[ODROID_INPUT_LEFT])   state |= 0x04;
     if (joystick->values[ODROID_INPUT_RIGHT])  state |= 0x08;
-    if (joystick->values[ODROID_INPUT_B])      state |= 0x10;
-    if (joystick->values[ODROID_INPUT_A])      state |= 0x20;
+    if (joystick->values[ODROID_INPUT_A])      state |= 0x10; /* NGP A (bit4) = the G&W red A */
+    if (joystick->values[ODROID_INPUT_B])      state |= 0x20; /* NGP B (bit5) */
     if (joystick->values[ODROID_INPUT_START] || joystick->values[ODROID_INPUT_X]) state |= 0x40; /* OPTION */
     ngpInputState = state;
 }
