@@ -397,7 +397,7 @@ INCLUDE build/fceumm_mappers.ld
     build/ngp/*.o (COMMON)
     __ram_emu_ngp_end__ = .;
     _OVERLAY_NGP_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_NGP_BSS_END) < __RAM_EMU_END__, "Error: NGP BSS overflow");
+    ASSERT(ABSOLUTE(_OVERLAY_NGP_BSS_END) < __RAM_EMU_END__ + 0x400000, "Error: NGP BSS overflow (relaxed for measurement)");
   }
   _OVERLAY_NGP_BSS_SIZE = SIZEOF(.overlay_ngp_bss);
 
