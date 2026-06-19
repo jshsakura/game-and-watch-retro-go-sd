@@ -796,7 +796,11 @@ PICO8_OBJECTS = $(addprefix $(BUILD_DIR)/pico8/,$(notdir $(patsubst %.cpp,%.o,$(
 TAMA_OBJECTS = $(addprefix $(BUILD_DIR)/tama/,$(notdir $(TAMA_C_SOURCES:.c=.o)))
 PKMINI_OBJECTS = $(addprefix $(BUILD_DIR)/pkmini/,$(notdir $(PKMINI_C_SOURCES:.c=.o)))
 
-vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(TAMP_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(NGP_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(CELESTE_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
+vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(TAMP_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(CELESTE_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
+# NGP (RACE) is intentionally excluded from vpath: its generic filenames
+# (state.c, sound.c, main.c, flash.c, graphics.c) would shadow other cores'
+# same-named files. NGP objects are built via ngp_obj_prereq_gen (explicit
+# full paths), like zelda3/smw.
 # Guard empty lists: vpath with empty path resets the pattern's search path.
 # The GPL stub build has no PICO8_CXX_SOURCES, so only emit these when non-empty.
 ifneq ($(strip $(PICO8_CXX_SOURCES)),)
@@ -971,10 +975,6 @@ $(BUILD_DIR)/gw/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 $(BUILD_DIR)/wsv/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC wsv ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(WSV_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/wsv/$(notdir $(<:.c=.lst)) $< -o $@
-
-$(BUILD_DIR)/ngp/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
-	$(V)$(ECHO) [ CC ngp ] $(notdir $<)
-	$(V)$(CC) -c $(CFLAGS) $(NGP_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/ngp/$(notdir $(<:.c=.lst)) $< -o $@
 
 $(BUILD_DIR)/md/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC md ] $(notdir $<)
@@ -1151,6 +1151,18 @@ endef
 
 # generate all smw object prerequisite rules
 $(eval $(foreach obj,$(SMW_C_SOURCES),$(call smw_obj_prereq_gen,$(obj))))
+
+define ngp_obj_prereq_gen
+$$(BUILD_DIR)/ngp/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+	$$(V)$$(ECHO) [ CC ngp ] $$(notdir $$<)
+	$$(V)$$(CC) -c $$(CFLAGS) $$(NGP_C_INCLUDES) -Wa,-a,-ad,-alms=$$(BUILD_DIR)/ngp/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
+	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-const-variable -Wno-unused-parameter -Wno-sign-compare -Wno-strict-aliasing -Wno-implicit-fallthrough -Wno-parentheses -Wno-unknown-pragmas -Wno-comment -Wno-int-in-bool-context -Wno-maybe-uninitialized
+
+endef
+# note: the blank line above is intentional
+
+# generate all ngp object prerequisite rules
+$(eval $(foreach obj,$(NGP_C_SOURCES),$(call ngp_obj_prereq_gen,$(obj))))
 
 external/smw/smw_assets.dat: roms/smw/smw.sfc | $(BUILD_DIR)
 	cp $< external/smw/assets/smw.sfc
