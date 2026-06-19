@@ -17,12 +17,13 @@
 #include "graphics.h"
 #include "neopopsound.h"
 #include "state.h"
-#include "tlcs900h.h"
 
-/* RACE entry points live in main.h, which drags in <libretro.h>; forward-
- * declare just the two functions we call to keep that header out of this TU. */
+/* Forward-declare the few core entry points we call. We deliberately avoid
+ * including main.h (drags in <libretro.h>) and tlcs900h.h (defines TLCS-900
+ * register-name macros like SP/PC that clash with the STM32 CMSIS headers). */
 void mainemuinit(void);
 int handleInputFile(const char *romName, const unsigned char *romData, int romSize);
+void tlcs_execute(int cycles, int skipRender);
 
 /* NGPC input register. Upstream this is defined in the libretro front-end
  * (excluded here), so we own it; the core reads it via race-memory.h. */
