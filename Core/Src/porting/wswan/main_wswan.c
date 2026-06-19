@@ -21,8 +21,15 @@ void WsReset(void);
 uint32_t WsRun(void);
 extern uint16_t FrameBuffer[240 * 144];          /* render target (NOSDL_FB) */
 int  ws_create_from_flash(const uint8_t *data, uint32_t size); /* G&W ROM loader */
-int16_t *apuBufGetLock(uint32_t size);
-void apuBufGetUnlock(void *ptr, uint32_t size);
+
+/* APU ring buffer (WSApu.c). apuBufGetLock/Unlock live in the excluded SDL
+ * backend, so we drain the ring directly. */
+#define WS_SND_RNGSIZE (32 * 512)
+extern int16_t sndbuffer[2][WS_SND_RNGSIZE];
+extern int32_t rBuf, wBuf;
+
+/* Referenced by oswan's WsLoadEeprom (defined in the excluded SDL front-end). */
+char gameName[512];
 
 /* WonderSwan native screen: 224x144, rendered into FrameBuffer at row stride
  * 240 with an 8-pixel left margin (see RefreshLine). */
@@ -73,22 +80,20 @@ static void *Screenshot(void)
 
 void ws_pcm_submit(void)
 {
+    int16_t *dst = audio_get_active_buffer();
+    uint16_t dst_len = audio_get_buffer_length();
     if (common_emu_sound_loop_is_muted()) {
         return;
     }
-    int len = WS_AUDIO_BUFFER_LENGTH;
-    int16_t *src = apuBufGetLock(len);
     int32_t factor = common_emu_sound_get_volume();
-    int16_t *dst = audio_get_active_buffer();
-    uint16_t dst_len = audio_get_buffer_length();
-
-    if (src) {
-        for (int i = 0; i < dst_len; i++) {
-            dst[i] = (src[i] * factor);
+    /* Drain the APU stereo ring, mixing L+R down to the mono G&W output. */
+    for (int i = 0; i < dst_len; i++) {
+        int16_t s = 0;
+        if (rBuf != wBuf) {
+            s = (int16_t)((sndbuffer[0][rBuf] + sndbuffer[1][rBuf]) >> 1);
+            if (++rBuf >= WS_SND_RNGSIZE) rBuf = 0;
         }
-        apuBufGetUnlock(src, len);
-    } else {
-        for (int i = 0; i < dst_len; i++) dst[i] = 0;
+        dst[i] = s * factor;
     }
 }
 
