@@ -399,6 +399,27 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_WSV_BSS_SIZE = SIZEOF(.overlay_wsv_bss);
 
+  .overlay_ngp __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_ngp_start__ = .;
+    build/ngp/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_NGP_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_NGP_LOAD_START = LOADADDR(.overlay_ngp);
+  _OVERLAY_NGP_SIZE = SIZEOF(.overlay_ngp);
+  .overlay_ngp_bss _OVERLAY_NGP_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_NGP_BSS_START = .;
+    build/ngp/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/ngp/*.o (COMMON)
+    __ram_emu_ngp_end__ = .;
+    _OVERLAY_NGP_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_NGP_BSS_END) < __RAM_EMU_END__, "Error: NGP BSS overflow");
+  }
+  _OVERLAY_NGP_BSS_SIZE = SIZEOF(.overlay_ngp_bss);
+
   .overlay_gw __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_gw_start__ = .;

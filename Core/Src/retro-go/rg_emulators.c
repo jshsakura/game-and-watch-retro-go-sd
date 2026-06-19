@@ -21,6 +21,7 @@
 #include "main_msx.h"
 #include "main_gw.h"
 #include "main_wsv.h"
+#include "main_ngp.h"
 #include "main_gwenesis.h"
 #include "main_a7800.h"
 #include "main_amstrad.h"
@@ -1108,7 +1109,8 @@ static const emu_dispatch_t emu_tgb     = { "/cores/tgb.bin",     &_OVERLAY_TGB_
 static const emu_dispatch_t emu_pce     = { "/cores/pce.bin",     &_OVERLAY_PCE_BSS_START,     (uint32_t)&_OVERLAY_PCE_BSS_SIZE,     (uint32_t)&_OVERLAY_PCE_SIZE,     0, EMU_ENTRY(app_main_pce) };
 static const emu_dispatch_t emu_msx     = { "/cores/msx.bin",     &_OVERLAY_MSX_BSS_START,     (uint32_t)&_OVERLAY_MSX_BSS_SIZE,     (uint32_t)&_OVERLAY_MSX_SIZE,     0, EMU_ENTRY(app_main_msx) };
 static const emu_dispatch_t emu_wsv     = { "/cores/wsv.bin",     &_OVERLAY_WSV_BSS_START,     (uint32_t)&_OVERLAY_WSV_BSS_SIZE,     (uint32_t)&_OVERLAY_WSV_SIZE,     0, EMU_ENTRY(app_main_wsv) };
-static const emu_dispatch_t emu_md      = { "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
+static const emu_dispatch_t emu_ngp     = { "/cores/ngp.bin",     &_OVERLAY_NGP_BSS_START,     (uint32_t)&_OVERLAY_NGP_BSS_SIZE,     (uint32_t)&_OVERLAY_NGP_SIZE,     0, EMU_ENTRY(app_main_ngp) };
+static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
 static const emu_dispatch_t emu_a7800   = { "/cores/a7800.bin",   &_OVERLAY_A7800_BSS_START,   (uint32_t)&_OVERLAY_A7800_BSS_SIZE,   (uint32_t)&_OVERLAY_A7800_SIZE,   0, EMU_ENTRY(app_main_a7800) };
 static const emu_dispatch_t emu_amstrad = { "/cores/amstrad.bin", &_OVERLAY_AMSTRAD_BSS_START, (uint32_t)&_OVERLAY_AMSTRAD_BSS_SIZE, (uint32_t)&_OVERLAY_AMSTRAD_SIZE, 0, EMU_ENTRY(app_main_amstrad) };
@@ -1200,6 +1202,8 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         run_internal_emu(&emu_msx, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Watara Supervision") == 0) {
         run_internal_emu(&emu_wsv, load_state, start_paused, save_slot);
+    } else if(strcmp(system_name, "Neo Geo Pocket") == 0) {
+        run_internal_emu(&emu_ngp, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Sega Genesis") == 0)  {
         run_internal_emu(&emu_md, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Atari 2600") == 0) {
@@ -1349,6 +1353,9 @@ void emulators_init()
     add_emulator("Sega SG-1000", "sg", "sg lzma", RG_LOGO_PAD_SG1000, RG_LOGO_HEADER_SG1000, NO_GAME_DATA);
     add_emulator("Colecovision", "col", "col lzma", RG_LOGO_PAD_COL, RG_LOGO_HEADER_COL, NO_GAME_DATA);
     add_emulator("Watara Supervision", "wsv", "wsv sv bin lzma", RG_LOGO_PAD_WSV, RG_LOGO_HEADER_WSV, NO_GAME_DATA);
+    /* NGP/NGPC: ROM stays in flash (no lzma decompress); core auto-detects mono/colour.
+     * Logos are placeholders (WSV) until icons/{c,h}_ngp.bmp + RG_LOGO_*_NGP are added. */
+    add_emulator("Neo Geo Pocket", "ngp", "ngp ngc ngpc", RG_LOGO_PAD_WSV, RG_LOGO_HEADER_WSV, NO_GAME_DATA);
     add_emulator("MSX", "msx", "dsk rom mx1 mx2 cdk lzma", RG_LOGO_PAD_MSX, RG_LOGO_HEADER_MSX, NO_GAME_DATA);
     add_emulator("Atari 2600", "a2600", "a26 bin lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_A2600, NO_GAME_DATA);
     add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
