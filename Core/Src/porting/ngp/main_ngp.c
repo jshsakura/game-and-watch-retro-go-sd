@@ -15,15 +15,19 @@
 
 /* RACE (Neo Geo Pocket / Color) core */
 #include "graphics.h"
-#include "neopopsound.h"
 #include "state.h"
 
-/* Forward-declare the few core entry points we call. We deliberately avoid
- * including main.h (drags in <libretro.h>) and tlcs900h.h (defines TLCS-900
- * register-name macros like SP/PC that clash with the STM32 CMSIS headers). */
+/* Forward-declare the core entry points we call. We deliberately avoid several
+ * RACE headers because they pollute the namespace against the STM32 CMSIS
+ * headers also included in this TU: main.h drags in <libretro.h>; tlcs900h.h
+ * defines register-name macros (SP/PC/...); neopopsound.h uses an identifier
+ * 'RNG' that collides with the CMSIS RNG peripheral macro. */
 void mainemuinit(void);
 int handleInputFile(const char *romName, const unsigned char *romData, int romSize);
 void tlcs_execute(int cycles, int skipRender);
+void system_sound_chipreset(int sample_rate);
+void sound_update(uint16_t *chip_buffer, int length_bytes);
+void dac_update(uint16_t *dac_buffer, int length_bytes);
 
 /* NGPC input register. Upstream this is defined in the libretro front-end
  * (excluded here), so we own it; the core reads it via race-memory.h. */
