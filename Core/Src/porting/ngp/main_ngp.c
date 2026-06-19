@@ -244,9 +244,13 @@ static void ngp_input_read(odroid_gamepad_state_t *joystick) {
     if (joystick->values[ODROID_INPUT_DOWN])   state |= 0x02;
     if (joystick->values[ODROID_INPUT_LEFT])   state |= 0x04;
     if (joystick->values[ODROID_INPUT_RIGHT])  state |= 0x08;
-    if (joystick->values[ODROID_INPUT_A])      state |= 0x10; /* NGP A (bit4) = the G&W red A */
-    if (joystick->values[ODROID_INPUT_B])      state |= 0x20; /* NGP B (bit5) */
-    if (joystick->values[ODROID_INPUT_START] || joystick->values[ODROID_INPUT_X]) state |= 0x40; /* OPTION */
+    if (joystick->values[ODROID_INPUT_A])      state |= 0x10; /* NGP A = G&W red A */
+    /* NGP B on the B button AND the GAME button: some G&W units don't expose a
+     * usable B, so GAME is a guaranteed-reachable B for 2-button games. */
+    if (joystick->values[ODROID_INPUT_B] ||
+        joystick->values[ODROID_INPUT_START])  state |= 0x20; /* NGP B (bit5) */
+    if (joystick->values[ODROID_INPUT_SELECT] ||
+        joystick->values[ODROID_INPUT_X])      state |= 0x40; /* NGP Option = TIME */
     ngpInputState = state;
 }
 
