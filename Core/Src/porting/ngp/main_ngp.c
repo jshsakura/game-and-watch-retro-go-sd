@@ -33,6 +33,13 @@ void dac_update(uint16_t *dac_buffer, int length_bytes);
  * (excluded here), so we own it; the core reads it via race-memory.h. */
 uint8_t ngpInputState = 0;
 
+/* Other front-end globals the core reads, also defined in the excluded
+ * libretro front-end upstream: console-variant override, gfx hacks, BIOS
+ * language. Defaults (0) keep auto-detection / English BIOS. */
+int tipo_consola = 0;
+int gfx_hacks = 0;
+int setting_ngp_language = 0;
+
 #define WIDTH 320
 
 /* Native NGPC screen. FB_WIDTH/FB_HEIGHT in the RACE libretro front-end. */
