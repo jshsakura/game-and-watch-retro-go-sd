@@ -1155,8 +1155,9 @@ $(eval $(foreach obj,$(SMW_C_SOURCES),$(call smw_obj_prereq_gen,$(obj))))
 define ngp_obj_prereq_gen
 $$(BUILD_DIR)/ngp/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC ngp ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) $$(NGP_C_INCLUDES) -Wa,-a,-ad,-alms=$$(BUILD_DIR)/ngp/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(CFLAGS) $$(NGP_C_INCLUDES) -fno-jump-tables -Wa,-a,-ad,-alms=$$(BUILD_DIR)/ngp/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
 	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-const-variable -Wno-unused-parameter -Wno-sign-compare -Wno-strict-aliasing -Wno-implicit-fallthrough -Wno-parentheses -Wno-unknown-pragmas -Wno-comment -Wno-int-in-bool-context -Wno-maybe-uninitialized
+	$$(V)$$(CP) --redefine-syms=ngp_redefines $$@
 
 endef
 # note: the blank line above is intentional
