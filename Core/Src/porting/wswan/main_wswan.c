@@ -27,6 +27,7 @@ int  ws_create_from_flash(const uint8_t *data, uint32_t size); /* G&W ROM loader
 #define WS_SND_RNGSIZE (32 * 512)
 extern int16_t sndbuffer[2][WS_SND_RNGSIZE];
 extern int32_t rBuf, wBuf;
+extern int ws_render_enabled;   /* WSRender.c: 0 = skip per-scanline pixel work */
 
 /* Referenced by oswan's WsLoadEeprom (defined in the excluded SDL front-end). */
 char gameName[512];
@@ -250,6 +251,9 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         common_emu_input_loop(&joystick, options, &blit);
         common_emu_input_loop_handle_turbo(&joystick);
 
+        /* Skip per-scanline rendering on frames we won't display, so the
+         * emulator can keep pace (WsRun always renders otherwise). */
+        ws_render_enabled = drawFrame;
         WsRun();
 
         if (drawFrame) {
