@@ -224,12 +224,17 @@ static void build_diag(const avi_t *a, int nv, int na)
 // top panel showing what the HW JPEG path is doing — decoded/seen/audio counts, the
 // last stage/return code, parsed dims and first bytes — so a stall or a bad frame is
 // diagnosable at a glance without reflashing. Default on; the video shows through.
+// Per-frame timing (ms): last decode, worst-case decode, last whole-iteration.
+// Reveals whether busy-scene judder is decode-bound (d/dmax spike toward the
+// frame budget) or pacing/other — the flash read itself is ~free (XIP).
+static int g_vid_dms = 0, g_vid_dmax = 0, g_vid_fms = 0;
+
 static void draw_hud(int dec_ok, int seen, int na)
 {
     char l1[48], l2[48];
-    snprintf(l1, sizeof l1, "dec=%d v=%d a=%d", dec_ok, seen, na);
-    snprintf(l2, sizeof l2, "st=%d rc=%ld %dx%d sz=%ld %02X%02X",
-             g_vdec_st, g_vdec_rc, g_vdec_w, g_vdec_h, g_vdec_sz, g_vdec_b0, g_vdec_b1);
+    snprintf(l1, sizeof l1, "dec=%d v=%d a=%d d=%d dmx=%d", dec_ok, seen, na, g_vid_dms, g_vid_dmax);
+    snprintf(l2, sizeof l2, "st=%d %dx%d sz=%ld f=%dms %02X%02X",
+             g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_sz, g_vid_fms, g_vdec_b0, g_vdec_b1);
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t accent = curr_colors->sel_c;
     for (int y = 0; y < 26; y++) {                       // translucent panel (video shows through)
@@ -391,7 +396,11 @@ vid_result_t video_play(const char *path)
             continue;
         }
 
-        if (video_decode_frame(a.f, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT)) {
+        uint32_t t_dec0 = HAL_GetTick();
+        bool dec_ok_now = video_decode_frame(a.f, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT);
+        g_vid_dms = (int)(HAL_GetTick() - t_dec0);
+        if (g_vid_dms > g_vid_dmax) g_vid_dmax = g_vid_dms;
+        if (dec_ok_now) {
             decoded_any = true; dec_ok++;
         } else if (nv_seen >= 30) {               // first 30 frames all failed to DECODE -> report
             build_diag(&a, nv_seen, na_seen);
@@ -404,6 +413,7 @@ vid_result_t video_play(const char *path)
         if ((int32_t)(HAL_GetTick() - vol_until) < 0)
             draw_volume();
 
+        g_vid_fms = (int)(HAL_GetTick() - t_dec0);   // real work this frame (decode+draw), excl. vsync wait
         while ((int32_t)(HAL_GetTick() - due) < 0) { wdog_refresh(); HAL_Delay(1); }
         lcd_swap();
         frame_idx++;
