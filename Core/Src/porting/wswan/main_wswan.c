@@ -196,32 +196,17 @@ static inline void screen_blit_nn(int32_t dest_width, int32_t dest_height)
     }
 }
 
-static void screen_blit_bilinear(int32_t dest_width)
-{
-    int hpad = (320 - dest_width) / 2;
-    uint16_t *dest = lcd_get_active_buffer();
-
-    image_t dst_img = { dest_width, 240, 2, (uint8_t *)dest + hpad * 2 };
-    image_t src_img = { WS_WIDTH, WS_HEIGHT, 2, (uint8_t *)(FrameBuffer + WS_XOFF) };
-    /* NOTE: imlib uses a packed source; WS_STRIDE margin handled via WS_XOFF
-     * base. Bilinear is best-effort; nearest is the crisp default. */
-
-    if (hpad > 0) {
-        memset(dest, 0x00, hpad * 2);
-    }
-    float x_scale = ((float)dest_width) / ((float)WS_WIDTH);
-    float y_scale = 240.0f / ((float)WS_HEIGHT);
-    imlib_draw_image(&dst_img, &src_img, 0, 0, 320, x_scale, y_scale, NULL, -1, 255, NULL,
-                     NULL, IMAGE_HINT_BILINEAR, NULL, NULL);
-}
-
 static void blit_emulator(void)
 {
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
     odroid_display_filter_t filtering = odroid_display_get_filter_mode();
 
+    (void)filtering;
     switch (scaling) {
     case ODROID_DISPLAY_SCALING_OFF:
+        /* 224x144 centred leaves a black border; clear first so a previous
+         * full-screen frame's pixels don't stay as garbage around the image. */
+        lcd_clear_active_buffer();
         screen_blit_nn(WS_WIDTH, WS_HEIGHT);
         break;
     case ODROID_DISPLAY_SCALING_FIT:
@@ -230,13 +215,12 @@ static void blit_emulator(void)
         break;
     case ODROID_DISPLAY_SCALING_FULL:
     case ODROID_DISPLAY_SCALING_CUSTOM:
-        if (filtering == ODROID_DISPLAY_FILTER_SOFT) {
-            screen_blit_bilinear(320);
-        } else {
-            screen_blit_nn(320, 240);
-        }
-        break;
     default:
+        /* Always nearest-neighbour. The bilinear (SOFT filter) path fed imlib a
+         * PACKED 224-wide source, but FrameBuffer's real row stride is WS_STRIDE
+         * (240) — every row drifted 16px, shearing the picture. NN reads the
+         * stride correctly (see screen_blit_nn) and is crisp; soft filtering is
+         * disabled until it can be done against the true stride. */
         screen_blit_nn(320, 240);
         break;
     }
@@ -329,7 +313,12 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
          * emulator at real time so the pitch is correct; on frames that genuinely
          * overran, the DMA has already advanced so this passes through with no
          * extra delay (render-skip still kicks in via common_emu_frame_loop). */
-        {
+        /* ...but ONLY at 1x. During a user speed-up (e.g. 1.5x), the loop must run
+         * faster than real time; pinning it to the audio DMA here would make
+         * common_emu_frame_loop (which targets the faster rate) see the loop as
+         * permanently 'behind' -> skip_frames stays maxed -> the screen never
+         * redraws (looks frozen). So skip the wait while speeding up. */
+        if (odroid_system_get_app()->speedupEnabled == SPEEDUP_1x) {
             static uint32_t ws_last_dma = 0;
             if (ws_last_dma == 0) ws_last_dma = dma_counter;
             while (dma_counter == ws_last_dma)
