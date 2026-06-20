@@ -231,10 +231,14 @@ static int g_vid_dms = 0, g_vid_dmax = 0, g_vid_fms = 0;
 
 static void draw_hud(int dec_ok, int seen, int na)
 {
+    // SD read path: S1 = HW SPI1 (Tim S.), O1 = soft-SPI bit-bang over OSPI (Yota9).
+    // Tells us whether a slow read is the HW-SPI clock or the bit-bang loop.
+    const char *sd = sdcard_hw_type == SDCARD_HW_SPI1 ? "S1"
+                   : sdcard_hw_type == SDCARD_HW_OSPI1 ? "O1" : "--";
     char l1[48], l2[48];
     snprintf(l1, sizeof l1, "dec=%d v=%d a=%d d=%d dmx=%d", dec_ok, seen, na, g_vid_dms, g_vid_dmax);
-    snprintf(l2, sizeof l2, "st=%d %dx%d sz=%ld f=%dms %02X%02X",
-             g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_sz, g_vid_fms, g_vdec_b0, g_vdec_b1);
+    snprintf(l2, sizeof l2, "st=%d %dx%d sz=%ld f=%dms sd=%s",
+             g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_sz, g_vid_fms, sd);
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t accent = curr_colors->sel_c;
     for (int y = 0; y < 26; y++) {                       // translucent panel (video shows through)
