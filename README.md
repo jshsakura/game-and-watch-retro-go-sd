@@ -1,9 +1,5 @@
-![](assets/gnw.gif)
+# ⚠️ EXPERIMENTAL TESTBED FORK — read before flashing
 
-# Nintendo® Game & Watch™ Retro-Go SD
-
-> ## ⚠️ EXPERIMENTAL TESTBED FORK — read before flashing
->
 > This is a **personal experimental testbed** of retro-go-sd with extra in-progress
 > features (Neo Geo Pocket / WonderSwan emulators, MP3 music + MJPEG video players,
 > savestate and SD-read tweaks). Releases here are **test builds, not stable**:
@@ -21,6 +17,12 @@
 > 테스트 빌드**이며 SD 읽기/쓰기·세이브스테이트를 건드리는 변경이 있어 **세이브가
 > 손상/무효화될 수 있으니 SD카드를 먼저 백업**하세요. 화면에 디버그 오버레이가 보일 수
 > 있고, **최신 릴리즈 하나만 유효**합니다.
+
+---
+
+![](assets/gnw.gif)
+
+# Nintendo® Game & Watch™ Retro-Go SD
 
 A comprehensive emulator collection for the Nintendo® Game & Watch™ with SD Card support, allowing you to play your favorite retro games on the go!
 
