@@ -234,7 +234,14 @@ const gw_firmware_abi_t g_firmware_abi = {
     .impure_ptr_ptr            = (void **)&_impure_ptr,
     .dtcm_p8ram_start          = NULL,  /* no longer a fixed section — use dtcm_malloc */
 
-    .dtcm_malloc               = malloc,
+    /* PICO-8's 64KB p8ram. Was `malloc` (newlib -> the 85KB DTCM heap), but with
+     * ~23KB of that heap already in use a 64KB request was ~1.7KB short -> HEAP
+     * OOM, crashing every PICO-8 cart (the Suika game) after a firmware update
+     * invalidated PICO-8's flash cache. DTCM is 100% full so the heap can't grow.
+     * Use ram_malloc instead: the 703KB AXI main pool (after the loaded core code)
+     * has plenty of room, so PICO-8 fits with no DTCM pressure and no effect on any
+     * other app. Trade-off: p8ram lives in slower AXI SRAM rather than DTCM. */
+    .dtcm_malloc               = ram_malloc,
 
     .odroid_system_emu_load_state = odroid_system_emu_load_state,
     .odroid_audio_mute            = odroid_audio_mute,
