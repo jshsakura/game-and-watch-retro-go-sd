@@ -119,7 +119,7 @@ void ws_pcm_submit(void)
             last = (int16_t)((sndbuffer[0][rBuf] + sndbuffer[1][rBuf]) >> 1);
             if (++rBuf >= WS_SND_RNGSIZE) rBuf = 0;
         }
-        dst[i] = last * factor;
+        dst[i] = (int16_t)((last * factor) >> 8);  /* factor 0..255 volume */
     }
 }
 
