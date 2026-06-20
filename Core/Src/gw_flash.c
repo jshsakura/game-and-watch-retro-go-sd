@@ -543,13 +543,6 @@ void OSPI_EnableMemoryMappedMode(void)
     }
 
     flash.mem_mapped_enabled = true;
-
-    /* The external-flash window (0x90000000) is configured cacheable (MPU) so
-     * XIP code/ROM reads hit the D/I-cache instead of the slow OSPI bus. We get
-     * here right after a flash write/erase, so any cached lines for the flash
-     * are now stale - drop them so the next reads see the new contents. */
-    SCB_CleanInvalidateDCache();
-    SCB_InvalidateICache();
 }
 
 void OSPI_DisableMemoryMappedMode(void)

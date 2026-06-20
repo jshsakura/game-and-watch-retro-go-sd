@@ -1378,26 +1378,6 @@ void mpu_set_lcd_pool_uncached_range(uint32_t framebuffer_bytes)
   MPU_InitStruct.BaseAddress = 0x24000000 + (r3_size_kb + r4_size_kb + r5_size_kb) * 1024u;
   MPU_InitStruct.Size        = r6_enum;
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
-
-  /* External OSPI flash window (0x90000000): ROMs run XIP from here. With no
-   * MPU region it defaults to Device memory (uncached), so every emulator
-   * opcode/operand fetch from ROM hits the slow OSPI bus. Mark it Normal,
-   * cacheable write-through (TEX0/C1/B0) so the D/I-cache absorbs the reads -
-   * a large speedup for ROM-execution-heavy cores (e.g. WonderSwan). Coherency
-   * is handled by invalidating the caches in OSPI_EnableMemoryMappedMode()
-   * after any flash write/erase. */
-  MPU_InitStruct.Enable          = MPU_REGION_ENABLE;
-  MPU_InitStruct.Number          = MPU_REGION_NUMBER7;
-  MPU_InitStruct.BaseAddress     = 0x90000000;
-  MPU_InitStruct.Size            = MPU_REGION_SIZE_256MB;
-  MPU_InitStruct.SubRegionDisable = 0x0;
-  MPU_InitStruct.TypeExtField    = MPU_TEX_LEVEL0;
-  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-  MPU_InitStruct.DisableExec     = MPU_INSTRUCTION_ACCESS_ENABLE;
-  MPU_InitStruct.IsShareable     = MPU_ACCESS_NOT_SHAREABLE;
-  MPU_InitStruct.IsCacheable     = MPU_ACCESS_CACHEABLE;
-  MPU_InitStruct.IsBufferable    = MPU_ACCESS_NOT_BUFFERABLE;
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
 }
 
 /**
