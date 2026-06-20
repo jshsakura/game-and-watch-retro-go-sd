@@ -60,13 +60,17 @@ uint32_t WsInputGetState(void)
     odroid_gamepad_state_t joystick;
     odroid_input_read_gamepad(&joystick);
     uint32_t s = 0;
-    if (joystick.values[ODROID_INPUT_UP])     s |= 0x0010; /* X1 */
-    if (joystick.values[ODROID_INPUT_RIGHT])  s |= 0x0020; /* X2 */
-    if (joystick.values[ODROID_INPUT_DOWN])   s |= 0x0040; /* X3 */
-    if (joystick.values[ODROID_INPUT_LEFT])   s |= 0x0080; /* X4 */
-    if (joystick.values[ODROID_INPUT_START])  s |= 0x0200; /* START */
-    if (joystick.values[ODROID_INPUT_A])      s |= 0x0400; /* A */
-    if (joystick.values[ODROID_INPUT_B])      s |= 0x0800; /* B */
+    /* Drive the D-pad on BOTH the X-pad (bits 4-7) and Y-pad (bits 0-3) so it
+     * works whether the game reads the horizontal or vertical pad. */
+    if (joystick.values[ODROID_INPUT_UP])     s |= 0x0010 | 0x0001; /* X1 | Y1 */
+    if (joystick.values[ODROID_INPUT_RIGHT])  s |= 0x0020 | 0x0002; /* X2 | Y2 */
+    if (joystick.values[ODROID_INPUT_DOWN])   s |= 0x0040 | 0x0004; /* X3 | Y3 */
+    if (joystick.values[ODROID_INPUT_LEFT])   s |= 0x0080 | 0x0008; /* X4 | Y4 */
+    if (joystick.values[ODROID_INPUT_A])      s |= 0x0400; /* A  (bit10) */
+    if (joystick.values[ODROID_INPUT_B])      s |= 0x0800; /* B  (bit11) */
+    /* START on the GAME button; also OPTION via TIME. */
+    if (joystick.values[ODROID_INPUT_START])  s |= 0x0200; /* START (bit9) */
+    if (joystick.values[ODROID_INPUT_SELECT]) s |= 0x0100; /* OPTION (bit8) */
     return s;
 }
 
@@ -212,6 +216,11 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_system_init(APPID_WSWAN, WS_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
+
+    /* No saved per-app scaling default (defaults to OFF = tiny native), so fill
+     * the screen the first time instead. */
+    if (odroid_display_get_scaling_mode() == ODROID_DISPLAY_SCALING_OFF)
+        odroid_display_set_scaling_mode(ODROID_DISPLAY_SCALING_FULL);
 
     audio_start_playing(WS_AUDIO_BUFFER_LENGTH);
 

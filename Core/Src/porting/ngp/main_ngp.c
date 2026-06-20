@@ -297,6 +297,11 @@ void app_main_ngp(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_init(APPID_NGP, NGP_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
 
+    /* This core has no saved per-app scaling default (it defaults to OFF =
+     * tiny native), so fill the screen the first time instead. */
+    if (odroid_display_get_scaling_mode() == ODROID_DISPLAY_SCALING_OFF)
+        odroid_display_set_scaling_mode(ODROID_DISPLAY_SCALING_FULL);
+
     audio_start_playing(NGP_AUDIO_BUFFER_LENGTH);
 
     /* Init order mirrors the RACE front-end: sound chip, emulator, then ROM. */
