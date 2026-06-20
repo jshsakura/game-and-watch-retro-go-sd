@@ -271,9 +271,12 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_init(APPID_WSWAN, WS_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
 
-    /* Follow the shared global scaling setting like every other emulator — no
-     * per-app override (it used to force FULL when global was OFF, which made
-     * WS inconsistent with the rest). */
+    /* First-run default = FIT (global OFF = tiny native, too small here). FIT
+     * fills the screen while preserving the 224:144 aspect ratio — sensible,
+     * without FULL's stretch. Saved to the shared global setting; the user can
+     * change it afterwards. */
+    if (odroid_display_get_scaling_mode() == ODROID_DISPLAY_SCALING_OFF)
+        odroid_display_set_scaling_mode(ODROID_DISPLAY_SCALING_FIT);
 
     audio_start_playing(WS_AUDIO_BUFFER_LENGTH);
 
