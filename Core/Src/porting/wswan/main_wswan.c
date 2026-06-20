@@ -44,7 +44,12 @@ void graphics_paint(void) { }
 #define WS_HEIGHT   (144)
 #define WS_STRIDE   (240)
 #define WS_XOFF     (8)
-#define WS_FPS      (75)   /* WonderSwan refresh ~75.47 Hz */
+/* WonderSwan refreshes at ~75.47 Hz, but the G&W LCD / frame pacer is built
+ * around 60 Hz (like every other core). Asking for 75 gave each frame only
+ * 13.3 ms of budget; the emulator couldn't keep up, so frame_integrator ran
+ * away, skip_frames stuck at 2 and the screen never redrew (only the first
+ * few startup frames showed). Run at 60 like NGP - slightly slow but smooth. */
+#define WS_FPS      (60)
 
 #define WS_SAMPLE_RATE         (44100)
 #define WS_AUDIO_BUFFER_LENGTH (WS_SAMPLE_RATE / WS_FPS)
