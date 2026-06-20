@@ -32,16 +32,31 @@ static void delay_us(uint32_t usec) {
     }
 }
 
+/* Inner bit-bang loop. Uses direct GPIO BSRR/IDR register writes instead of
+ * HAL_GPIO_WritePin/ReadPin: at the SD data-phase clock (DelayUs == 0) every bit
+ * was spending ~3 HAL function calls (~tens of cycles each), which capped SD
+ * throughput around ~220 KB/s and made video frame reads ~31ms each. The bit
+ * PROTOCOL is identical (set MOSI -> setup pause -> SCK high -> sample MISO ->
+ * SCK low), only the per-bit overhead drops, so timing/correctness — and thus
+ * savestate WRITE integrity, which shares this path — is preserved; the clock
+ * stays far below the SD card's SPI-mode limit. CS is toggled once per transfer
+ * (negligible), so it keeps the simpler HAL calls. */
 static void __SoftSpi_WriteRead(SoftSPI *spi, const uint8_t *txData, uint8_t *rxData,
                                 uint32_t len, bool txDummy, bool csEnable) {
-    int i, j;
-    uint8_t txBit, rxBit;
-    uint8_t txByte, rxByte;
-
     if (!len)
         return;
 
-    HAL_GPIO_WritePin(spi->sck.port, spi->sck.pin, GPIO_PIN_RESET);
+    GPIO_TypeDef *sck_port  = spi->sck.port;
+    GPIO_TypeDef *mosi_port = spi->mosi.port;
+    GPIO_TypeDef *miso_port = spi->miso.port;
+    const uint32_t sck_set  = spi->sck.pin;
+    const uint32_t sck_clr  = (uint32_t)spi->sck.pin << 16;
+    const uint32_t mosi_set = spi->mosi.pin;
+    const uint32_t mosi_clr = (uint32_t)spi->mosi.pin << 16;
+    const uint32_t miso_pin = spi->miso.pin;
+    const uint32_t dly      = spi->DelayUs;
+
+    sck_port->BSRR = sck_clr;                       /* SCK idle low */
     if (csEnable)
         HAL_GPIO_WritePin(spi->cs.port, spi->cs.pin,
                           spi->csIsInverted ? GPIO_PIN_SET : GPIO_PIN_RESET);
@@ -49,24 +64,21 @@ static void __SoftSpi_WriteRead(SoftSPI *spi, const uint8_t *txData, uint8_t *rx
         HAL_GPIO_WritePin(spi->cs.port, spi->cs.pin,
                           spi->csIsInverted ? GPIO_PIN_RESET : GPIO_PIN_SET);
 
-    for (i = 0; i < len; i++) {
-        txByte = txDummy ? txData[0] : txData[i];
-        rxByte = 0;
+    for (uint32_t i = 0; i < len; i++) {
+        uint8_t txByte = txDummy ? txData[0] : txData[i];
+        uint8_t rxByte = 0;
 
-        for (j = 7; j >= 0; j--) {
-            txBit = (txByte & (1 << j)) ? 1 : 0;
+        for (int j = 7; j >= 0; j--) {
+            mosi_port->BSRR = (txByte & (1u << j)) ? mosi_set : mosi_clr;
+            gpio_pause();                            /* MOSI setup before clock edge */
+            sck_port->BSRR = sck_set;                /* SCK high — card samples MOSI */
+            if (dly) delay_us(dly);
 
-            HAL_GPIO_WritePin(spi->mosi.port, spi->mosi.pin, txBit ? GPIO_PIN_SET : GPIO_PIN_RESET);
-            gpio_pause();
-            HAL_GPIO_WritePin(spi->sck.port, spi->sck.pin, GPIO_PIN_SET);
-            delay_us(spi->DelayUs);
+            rxByte = (uint8_t)((rxByte << 1) |
+                               ((miso_port->IDR & miso_pin) ? 1u : 0u));
 
-            rxBit = HAL_GPIO_ReadPin(spi->miso.port, spi->miso.pin) == GPIO_PIN_SET ? 1 : 0;
-            rxByte <<= 1;
-            rxByte |= rxBit;
-
-            HAL_GPIO_WritePin(spi->sck.port, spi->sck.pin, GPIO_PIN_RESET);
-            delay_us(spi->DelayUs);
+            sck_port->BSRR = sck_clr;                /* SCK low */
+            if (dly) delay_us(dly);
         }
 
         if (rxData)
