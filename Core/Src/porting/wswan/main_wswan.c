@@ -66,11 +66,13 @@ uint32_t WsInputGetState(void)
     if (joystick.values[ODROID_INPUT_RIGHT])  s |= 0x0020 | 0x0002; /* X2 | Y2 */
     if (joystick.values[ODROID_INPUT_DOWN])   s |= 0x0040 | 0x0004; /* X3 | Y3 */
     if (joystick.values[ODROID_INPUT_LEFT])   s |= 0x0080 | 0x0008; /* X4 | Y4 */
-    if (joystick.values[ODROID_INPUT_A])      s |= 0x0400; /* A  (bit10) */
-    if (joystick.values[ODROID_INPUT_B])      s |= 0x0800; /* B  (bit11) */
-    /* START on the GAME button; also OPTION via TIME. */
-    if (joystick.values[ODROID_INPUT_START])  s |= 0x0200; /* START (bit9) */
-    if (joystick.values[ODROID_INPUT_SELECT]) s |= 0x0100; /* OPTION (bit8) */
+    if (joystick.values[ODROID_INPUT_A])      s |= 0x0400; /* WS A = red A */
+    /* WS B on the B button AND the GAME button (the bare B isn't reachable on
+     * some G&W units), so 2-button games always have a working B. */
+    if (joystick.values[ODROID_INPUT_B] ||
+        joystick.values[ODROID_INPUT_START])  s |= 0x0800; /* WS B (bit11) */
+    if (joystick.values[ODROID_INPUT_SELECT]) s |= 0x0200; /* WS START = TIME */
+    if (joystick.values[ODROID_INPUT_X])      s |= 0x0100; /* WS OPTION */
     return s;
 }
 
