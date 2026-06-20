@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feat/ngp-pocket
+      - experimental-testbed
     tags:
       - 'v*'
   pull_request:
