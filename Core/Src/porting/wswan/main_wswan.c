@@ -24,7 +24,7 @@ int  ws_create_from_flash(const uint8_t *data, uint32_t size); /* G&W ROM loader
 
 /* APU ring buffer (WSApu.c). apuBufGetLock/Unlock live in the excluded SDL
  * backend, so we drain the ring directly. */
-#define WS_SND_RNGSIZE (32 * 512)
+#define WS_SND_RNGSIZE (8 * 512)   /* must match oswan SND_RNGSIZE */
 extern int16_t sndbuffer[2][WS_SND_RNGSIZE];
 extern int32_t rBuf, wBuf;
 extern int ws_render_enabled;   /* WSRender.c: 0 = skip per-scanline pixel work */
