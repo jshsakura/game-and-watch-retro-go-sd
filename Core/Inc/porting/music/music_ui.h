@@ -63,6 +63,7 @@ typedef struct {
     const char     *duration;    // "3:45", or ""
     const uint16_t *art;         // thumbnail pixels (art_sz×art_sz) or NULL
     int             art_sz;
+    const char     *placeholder; // glyph/label drawn when art==NULL (NULL → ♪)
     int             kind;        // LIST_*
     bool            fav;
     bool            playing;     // this track is the one currently playing (center overlay)
