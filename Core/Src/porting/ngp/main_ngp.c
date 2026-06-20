@@ -1,7 +1,6 @@
 #include <odroid_system.h>
 
 #include <assert.h>
-#include <stdio.h>
 #include "gw_lcd.h"
 #include "gw_linker.h"
 #include "gw_buttons.h"
@@ -241,16 +240,6 @@ static void blit_emulator(void)
 
 static void blit(void) {
     blit_emulator();
-    /* Loadstate sound diagnostic: after a load, watch whether each counter keeps
-     * GROWING. T3 (Timer3 IRQs) frozen => timer dead; T3 grows but Z80 frozen =>
-     * sound CPU not running; Z80 grows but SW (WriteSoundChip) frozen => the Z80
-     * runs but the music sequencer is stuck (the drone). Pinpoints the break. */
-    {
-        extern unsigned int g_dbg_t3, g_dbg_z80run, g_dbg_sndw;
-        char dbg[48];
-        snprintf(dbg, sizeof dbg, "T3=%u Z80=%u SW=%u", g_dbg_t3, g_dbg_z80run, g_dbg_sndw);
-        i18n_draw_text_line(2, 2, WIDTH - 4, dbg, 0xFFE0, 0, 1);
-    }
     common_ingame_overlay();
 }
 
