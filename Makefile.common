@@ -708,6 +708,7 @@ C_INCLUDES +=  \
 -ICore/Inc/porting/videopac \
 -ICore/Inc/porting/celeste \
 -ICore/Inc/porting/music \
+-ICore/Inc/porting/video \
 -ICore/Inc/porting/pico8 \
 -ICore/Inc/porting/tama \
 -ICore/Inc/porting/pkmini \
