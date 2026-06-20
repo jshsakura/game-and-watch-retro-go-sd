@@ -774,6 +774,12 @@ Core/Src/porting/music/music_lupng.c \
 Core/Src/porting/music/music_minimp3.c \
 Core/Src/porting/music/tjpgd.c \
 Core/Src/porting/music/progjpeg.c \
+Core/Src/porting/video/avi.c \
+Core/Src/porting/video/video_decode.c \
+Core/Src/porting/video/video_audio.c \
+Core/Src/porting/video/video_play.c \
+Core/Src/porting/video/video_ui.c \
+Core/Src/porting/video/main_video.c \
 retro-go-stm32/components/lupng/miniz.c
 
 # PICO-8 stub only — the engine is distributed separately as binary files
@@ -1069,6 +1075,7 @@ MUSIC_C_INCLUDES += \
 -ICore/Inc/retro-go \
 -ICore/Inc/porting \
 -ICore/Inc/porting/music \
+-ICore/Inc/porting/video \
 -ICore/Src/porting/lib \
 -Iretro-go-stm32/components/lupng \
 -Iretro-go-stm32/components/odroid \
