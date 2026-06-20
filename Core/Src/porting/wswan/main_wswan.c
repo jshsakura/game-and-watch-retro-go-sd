@@ -77,12 +77,13 @@ uint32_t WsInputGetState(void)
     odroid_gamepad_state_t joystick;
     odroid_input_read_gamepad(&joystick);
     uint32_t s = 0;
-    /* Drive the D-pad on BOTH the X-pad (bits 4-7) and Y-pad (bits 0-3) so it
-     * works whether the game reads the horizontal or vertical pad. */
-    if (joystick.values[ODROID_INPUT_UP])     s |= 0x0010 | 0x0001; /* X1 | Y1 */
-    if (joystick.values[ODROID_INPUT_RIGHT])  s |= 0x0020 | 0x0002; /* X2 | Y2 */
-    if (joystick.values[ODROID_INPUT_DOWN])   s |= 0x0040 | 0x0004; /* X3 | Y3 */
-    if (joystick.values[ODROID_INPUT_LEFT])   s |= 0x0080 | 0x0008; /* X4 | Y4 */
+    /* Drive ONLY the X-pad (the horizontal-orientation D-pad). Mirroring onto
+     * the Y-pad as well breaks games that use the Y-pad as action buttons -
+     * left/right then doubled as Y2/Y4 and the character jittered/diagonal'd. */
+    if (joystick.values[ODROID_INPUT_UP])     s |= 0x0010; /* X1 up */
+    if (joystick.values[ODROID_INPUT_RIGHT])  s |= 0x0020; /* X2 right */
+    if (joystick.values[ODROID_INPUT_DOWN])   s |= 0x0040; /* X3 down */
+    if (joystick.values[ODROID_INPUT_LEFT])   s |= 0x0080; /* X4 left */
     if (joystick.values[ODROID_INPUT_A])      s |= 0x0400; /* WS A = red A */
     if (joystick.values[ODROID_INPUT_B])      s |= 0x0800; /* WS B = B button */
     /* WS START on the GAME button and the dedicated START button (Zelda ed.). */
