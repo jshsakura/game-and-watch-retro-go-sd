@@ -209,18 +209,24 @@ static void blit_emulator(void)
         lcd_clear_active_buffer();
         screen_blit_nn(WS_WIDTH, WS_HEIGHT);
         break;
-    case ODROID_DISPLAY_SCALING_FIT:
-        /* 224x144 -> full height 240, width 224*240/144 = 373 -> clamp 320 */
-        screen_blit_nn(320, 240);
+    case ODROID_DISPLAY_SCALING_FIT: {
+        /* Aspect-preserving: WonderSwan 224:144 (1.56) is WIDER than the 320:240
+         * LCD (1.33), so fill the width (320) and letterbox the height. 320x206
+         * with ~17px black bars top/bottom — image keeps correct proportions
+         * (vs FULL which stretches). Clear first so the bars aren't stale pixels. */
+        int fit_h = (WS_HEIGHT * 320 + WS_WIDTH / 2) / WS_WIDTH;   /* ~206 */
+        lcd_clear_active_buffer();
+        screen_blit_nn(320, fit_h);
         break;
+    }
     case ODROID_DISPLAY_SCALING_FULL:
     case ODROID_DISPLAY_SCALING_CUSTOM:
     default:
-        /* Always nearest-neighbour. The bilinear (SOFT filter) path fed imlib a
-         * PACKED 224-wide source, but FrameBuffer's real row stride is WS_STRIDE
-         * (240) — every row drifted 16px, shearing the picture. NN reads the
-         * stride correctly (see screen_blit_nn) and is crisp; soft filtering is
-         * disabled until it can be done against the true stride. */
+        /* Stretch to the full 320x240 (fills the screen, slight vertical stretch).
+         * Always nearest-neighbour: the old bilinear (SOFT filter) path fed imlib a
+         * PACKED 224-wide source while FrameBuffer's real row stride is WS_STRIDE
+         * (240), drifting 16px/row and shearing the picture. NN reads the stride
+         * correctly and is crisp; soft filtering is disabled until done vs the true stride. */
         screen_blit_nn(320, 240);
         break;
     }
