@@ -246,8 +246,9 @@ static void ngp_input_read(odroid_gamepad_state_t *joystick) {
     if (joystick->values[ODROID_INPUT_RIGHT])  state |= 0x08;
     if (joystick->values[ODROID_INPUT_A])      state |= 0x10; /* NGP A = red A */
     if (joystick->values[ODROID_INPUT_B])      state |= 0x20; /* NGP B = B button */
-    if (joystick->values[ODROID_INPUT_START] ||
-        joystick->values[ODROID_INPUT_SELECT]) state |= 0x40; /* NGP Option = GAME/TIME */
+    if (joystick->values[ODROID_INPUT_START]  || joystick->values[ODROID_INPUT_SELECT] ||
+        joystick->values[ODROID_INPUT_X]      || joystick->values[ODROID_INPUT_Y])
+        state |= 0x40; /* NGP Option = GAME/TIME/START/SELECT */
     ngpInputState = state;
 }
 

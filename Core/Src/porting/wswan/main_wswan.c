@@ -38,6 +38,14 @@ char gameName[512];
  * wswan_redefines) so it does not collide with RACE's graphics_paint. */
 void graphics_paint(void) { }
 
+/* oswan's APU (SOUND_ON) calls into its SDL sound back-end, which we don't
+ * compile. We drain the sample ring ourselves in ws_pcm_submit, so these are
+ * no-ops. */
+void Sound_APU_Start(void) { }
+void Sound_APU_End(void)   { }
+void Sound_APUClose(void)  { }
+void Pause_Sound(void)     { }
+
 /* WonderSwan native screen: 224x144, rendered into FrameBuffer at row stride
  * 240 with an 8-pixel left margin (see RefreshLine). */
 #define WIDTH       320
@@ -45,12 +53,10 @@ void graphics_paint(void) { }
 #define WS_HEIGHT   (144)
 #define WS_STRIDE   (240)
 #define WS_XOFF     (8)
-/* WonderSwan refreshes at ~75.47 Hz, but the G&W LCD / frame pacer is built
- * around 60 Hz (like every other core). Asking for 75 gave each frame only
- * 13.3 ms of budget; the emulator couldn't keep up, so frame_integrator ran
- * away, skip_frames stuck at 2 and the screen never redrew (only the first
- * few startup frames showed). Run at 60 like NGP - slightly slow but smooth. */
-#define WS_FPS      (60)
+/* WonderSwan's native refresh. The earlier freeze was NOT the rate - it was
+ * WsRun rendering every frame; now that ws_render_enabled skips render on
+ * dropped frames the pacer keeps up at 75, so run at native speed. */
+#define WS_FPS      (75)
 
 #define WS_SAMPLE_RATE         (44100)
 #define WS_AUDIO_BUFFER_LENGTH (WS_SAMPLE_RATE / WS_FPS)
@@ -74,8 +80,11 @@ uint32_t WsInputGetState(void)
     if (joystick.values[ODROID_INPUT_LEFT])   s |= 0x0080 | 0x0008; /* X4 | Y4 */
     if (joystick.values[ODROID_INPUT_A])      s |= 0x0400; /* WS A = red A */
     if (joystick.values[ODROID_INPUT_B])      s |= 0x0800; /* WS B = B button */
-    if (joystick.values[ODROID_INPUT_START])  s |= 0x0200; /* WS START = GAME */
-    if (joystick.values[ODROID_INPUT_SELECT]) s |= 0x0100; /* WS OPTION = TIME */
+    /* WS START on the GAME button and the dedicated START button (Zelda ed.). */
+    if (joystick.values[ODROID_INPUT_START] ||
+        joystick.values[ODROID_INPUT_X])      s |= 0x0200; /* WS START */
+    if (joystick.values[ODROID_INPUT_SELECT] ||
+        joystick.values[ODROID_INPUT_Y])      s |= 0x0100; /* WS OPTION = TIME / SELECT */
     return s;
 }
 
@@ -101,14 +110,16 @@ void ws_pcm_submit(void)
         return;
     }
     int32_t factor = common_emu_sound_get_volume();
-    /* Drain the APU stereo ring, mixing L+R down to the mono G&W output. */
+    static int16_t last = 0;
+    /* Drain the APU stereo ring, mixing L+R down to the mono G&W output. On
+     * underrun hold the last sample (pitch stretch) instead of writing silence,
+     * which would click. */
     for (int i = 0; i < dst_len; i++) {
-        int16_t s = 0;
         if (rBuf != wBuf) {
-            s = (int16_t)((sndbuffer[0][rBuf] + sndbuffer[1][rBuf]) >> 1);
+            last = (int16_t)((sndbuffer[0][rBuf] + sndbuffer[1][rBuf]) >> 1);
             if (++rBuf >= WS_SND_RNGSIZE) rBuf = 0;
         }
-        dst[i] = s * factor;
+        dst[i] = last * factor;
     }
 }
 
