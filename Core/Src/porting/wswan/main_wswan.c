@@ -151,13 +151,9 @@ void ws_pcm_submit(void)
     uint32_t step = ((uint32_t)avail << 16) / dst_len;
     if (step == 0) step = 1;
     uint32_t pos = 0;
-    /* The WS APU emits raw square/noise waves with no band-limiting, so the
-     * output has harsh high-frequency buzz/aliasing. Now that playback speed is
-     * correct, condition each sample: DC blocker (kills offset/pops) then a
-     * gentle one-pole low-pass (~11 kHz) to take the edge off without making it
-     * muffled. */
-    static int32_t dc_x1 = 0, dc_y1 = 0, lp = 0;
-    const int32_t LP_A = 205;   /* /256 ~ 0.80 -> ~11 kHz cutoff at 44.1 kHz */
+    /* Output the raw lerp'd APU mix - no DC/low-pass filter. The filter didn't
+     * help (and made it differ from the reference web oswan, which is the same
+     * core with raw output). Match that: just resample + volume. */
     for (int i = 0; i < dst_len; i++) {
         uint32_t whole = pos >> 16;
         uint32_t frac  = pos & 0xFFFF;
@@ -168,13 +164,7 @@ void ws_pcm_submit(void)
         int32_t s0 = (sndbuffer[0][i0] + sndbuffer[1][i0]) >> 1;
         int32_t s1 = (sndbuffer[0][i1] + sndbuffer[1][i1]) >> 1;
         int32_t s  = s0 + (((s1 - s0) * (int32_t)frac) >> 16);   /* lerp */
-        int32_t hp = s - dc_x1 + ((dc_y1 * 255) >> 8);   /* DC block */
-        dc_x1 = s; dc_y1 = hp;
-        lp += ((hp - lp) * LP_A) >> 8;                   /* one-pole low-pass */
-        int32_t o = (lp * factor) >> 8;                  /* factor 0..255 volume */
-        if (o >  32767) o =  32767;
-        if (o < -32768) o = -32768;
-        dst[i] = (int16_t)o;
+        dst[i] = (int16_t)((s * factor) >> 8);  /* factor 0..255 volume */
         pos += step;
     }
     rBuf += avail;
