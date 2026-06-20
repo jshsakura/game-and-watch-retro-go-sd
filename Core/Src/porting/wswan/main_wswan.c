@@ -91,8 +91,41 @@ uint32_t WsInputGetState(void)
 static void blit_emulator(void);
 
 /* Savestates are not wired for v1 (oswan's WsSaveState is FILE-based). */
-static bool LoadState(const char *savePathName) { (void)savePathName; return false; }
-static bool SaveState(const char *savePathName) { (void)savePathName; return false; }
+static bool SaveState(const char *savePathName) {
+    lcd_wait_for_vblank();
+    /* Use the off-screen framebuffer as scratch (same trick as NGP). */
+    uint8_t *buf = (uint8_t *)lcd_get_active_buffer();
+    uint32_t size = WsStateMemSize();
+    if (size > (uint32_t)GW_LCD_FRAME_SIZE)
+        return false;
+    WsSaveStateMem(buf);
+
+    FILE *file = fopen(savePathName, "wb");
+    if (file == NULL)
+        return false;
+    size_t written = fwrite(buf, size, 1, file);
+    fclose(file);
+    return written != 0;
+}
+
+static bool LoadState(const char *savePathName) {
+    uint8_t *buf = (uint8_t *)lcd_get_active_buffer();
+    uint32_t size = WsStateMemSize();
+    if (size > (uint32_t)GW_LCD_FRAME_SIZE)
+        return false;
+
+    FILE *file = fopen(savePathName, "rb");
+    if (file == NULL)
+        return false;
+    size_t read = fread(buf, size, 1, file);
+    fclose(file);
+    if (!read)
+        return false;
+
+    WsLoadStateMem(buf);
+    lcd_clear_active_buffer();
+    return true;
+}
 
 static void *Screenshot(void)
 {
