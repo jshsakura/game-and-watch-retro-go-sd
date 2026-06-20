@@ -235,10 +235,10 @@ static void draw_hud(int dec_ok, int seen, int na)
     // Tells us whether a slow read is the HW-SPI clock or the bit-bang loop.
     const char *sd = sdcard_hw_type == SDCARD_HW_SPI1 ? "S1"
                    : sdcard_hw_type == SDCARD_HW_OSPI1 ? "O1" : "--";
+    extern int g_vdec_read_ms, g_vdec_jpeg_ms;
     char l1[48], l2[48];
-    snprintf(l1, sizeof l1, "dec=%d v=%d a=%d d=%d dmx=%d", dec_ok, seen, na, g_vid_dms, g_vid_dmax);
-    snprintf(l2, sizeof l2, "st=%d %dx%d sz=%ld f=%dms sd=%s",
-             g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_sz, g_vid_fms, sd);
+    snprintf(l1, sizeof l1, "dec=%d v=%d rd=%dms jpg=%dms", dec_ok, seen, g_vdec_read_ms, g_vdec_jpeg_ms);
+    snprintf(l2, sizeof l2, "sz=%ld dmx=%d sd=%s %dx%d", g_vdec_sz, g_vid_dmax, sd, g_vdec_w, g_vdec_h);
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t accent = curr_colors->sel_c;
     for (int y = 0; y < 26; y++) {                       // translucent panel (video shows through)

@@ -33,6 +33,10 @@ int  g_vdec_st = 0, g_vdec_w = 0, g_vdec_h = 0;
 long g_vdec_sz = 0, g_vdec_rc = 0;
 unsigned char g_vdec_b0 = 0, g_vdec_b1 = 0;   // first 2 bytes of the frame (FFD8 = JPEG SOI)
 
+// Split timing (ms): the SD fread vs the HW JPEG decode, so the HUD can tell
+// whether the ~40ms/frame cost is read-bound (slow SD) or decode-bound.
+int g_vdec_read_ms = 0, g_vdec_jpeg_ms = 0;
+
 void video_decode_init(void)
 {
     JPEG_DecodeToFrameInit((uint32_t)(g_scratch + FRAME_MAX), JWORK_SZ);
@@ -71,7 +75,9 @@ bool video_decode_frame(FILE *f, long size, uint16_t *fb, int fb_w, int fb_h)
     if (!f || size < 2 || size > FRAME_MAX || !fb) { g_vdec_st = 1; return false; }
 
     wdog_refresh();
+    uint32_t t_read0 = HAL_GetTick();
     if (fread(g_scratch, 1, (size_t)size, f) != (size_t)size) { g_vdec_st = 2; return false; }
+    g_vdec_read_ms = (int)(HAL_GetTick() - t_read0);
     wdog_refresh();
     g_vdec_b0 = g_scratch[0]; g_vdec_b1 = g_scratch[1];
 
@@ -87,8 +93,10 @@ bool video_decode_frame(FILE *f, long size, uint16_t *fb, int fb_w, int fb_h)
     // Flush the JPEG source to RAM so the peripheral's MDMA reads fresh bytes.
     SCB_CleanDCache_by_Addr((uint32_t *)g_scratch, (int32_t)((size + 31) & ~31L));
 
+    uint32_t t_jpeg0 = HAL_GetTick();
     g_vdec_rc = (long)JPEG_DecodeToFrame((uint32_t)g_scratch, (uint32_t)fb,
                                          (uint16_t)x, (uint16_t)y, 255);
+    g_vdec_jpeg_ms = (int)(HAL_GetTick() - t_jpeg0);
     if (g_vdec_rc != 0) { g_vdec_st = 5; return false; }
     return true;
 }
