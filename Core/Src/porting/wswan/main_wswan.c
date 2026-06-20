@@ -29,11 +29,10 @@ extern int16_t sndbuffer[2][WS_SND_RNGSIZE];
 extern int32_t rBuf, wBuf;
 extern int ws_render_enabled;   /* WSRender.c: 0 = skip per-scanline pixel work */
 
-/* Memory-based savestate (WSFileio.c on the fork). Forward-declared to avoid
+/* File-based savestate (WSFileio.c on the fork). Forward-declared to avoid
  * pulling oswan's headers (SDL/CMSIS clashes) into the front-end. */
-extern uint32_t WsStateMemSize(void);
-extern void     WsSaveStateMem(uint8_t *p);
-extern uint32_t WsLoadStateMem(const uint8_t *p);
+extern uint32_t WsSaveStateToFile(FILE *fp);
+extern uint32_t WsLoadStateFromFile(FILE *fp);
 
 /* Referenced by oswan's WsLoadEeprom (defined in the excluded SDL front-end). */
 char gameName[512];
@@ -98,39 +97,23 @@ static void blit_emulator(void);
 
 /* Savestates are not wired for v1 (oswan's WsSaveState is FILE-based). */
 static bool SaveState(const char *savePathName) {
-    lcd_wait_for_vblank();
-    /* Use the off-screen framebuffer as scratch (same trick as NGP). */
-    uint8_t *buf = (uint8_t *)lcd_get_active_buffer();
-    uint32_t size = WsStateMemSize();
-    if (size > (uint32_t)GW_LCD_FRAME_SIZE)
-        return false;
-    WsSaveStateMem(buf);
-
     FILE *file = fopen(savePathName, "wb");
     if (file == NULL)
         return false;
-    size_t written = fwrite(buf, size, 1, file);
+    uint32_t err = WsSaveStateToFile(file);
     fclose(file);
-    return written != 0;
+    return err == 0;
 }
 
 static bool LoadState(const char *savePathName) {
-    uint8_t *buf = (uint8_t *)lcd_get_active_buffer();
-    uint32_t size = WsStateMemSize();
-    if (size > (uint32_t)GW_LCD_FRAME_SIZE)
-        return false;
-
     FILE *file = fopen(savePathName, "rb");
     if (file == NULL)
         return false;
-    size_t read = fread(buf, size, 1, file);
+    uint32_t err = WsLoadStateFromFile(file);
     fclose(file);
-    if (!read)
-        return false;
-
-    WsLoadStateMem(buf);
-    lcd_clear_active_buffer();
-    return true;
+    if (err == 0)
+        lcd_clear_active_buffer();
+    return err == 0;
 }
 
 static void *Screenshot(void)
