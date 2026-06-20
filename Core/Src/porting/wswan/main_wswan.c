@@ -143,24 +143,15 @@ void ws_pcm_submit(void)
         for (int i = 0; i < dst_len; i++) dst[i] = 0;
         return;
     }
-    /* Continuous-phase resampler with LINEAR INTERPOLATION and a SMOOTHED
-     * step. The APU rate (~HBlank*MULT) doesn't equal the SAI rate, so we
-     * resample - but resampling each frame at avail/dst_len made the ratio
-     * jump frame-to-frame, wobbling the pitch (WS sounded crunchy vs NGP's
-     * clean 1:1 output). Keep the fractional read phase across frames and
-     * low-pass the step so the pitch stays steady; the ring self-balances. */
-    static uint32_t step_smooth = 0;
-    static uint32_t rphase = 0;          /* 16.16 fractional offset from rBuf */
+    /* Resample exactly this frame's `avail` samples to fill `dst_len`, with
+     * LINEAR INTERPOLATION. Consuming exactly `avail` per frame keeps the
+     * playback speed correct (one frame of audio -> one frame of output); the
+     * earlier continuous-phase version drifted and played fast. Lerp removes
+     * the nearest-neighbour aliasing that made it sound crunchy. */
     uint32_t step = ((uint32_t)avail << 16) / dst_len;
     if (step == 0) step = 1;
-    if (step_smooth == 0) step_smooth = step;
-    step_smooth += ((int32_t)step - (int32_t)step_smooth) >> 3;   /* low-pass */
-    if (step_smooth == 0) step_smooth = 1;
-
-    uint32_t pos = rphase;
-    uint32_t maxpos = ((uint32_t)avail << 16) - 1;   /* don't read past wBuf */
+    uint32_t pos = 0;
     for (int i = 0; i < dst_len; i++) {
-        if (pos > maxpos) pos = maxpos;              /* underrun: hold last */
         uint32_t whole = pos >> 16;
         uint32_t frac  = pos & 0xFFFF;
         int32_t i0 = rBuf + (int32_t)whole;
@@ -171,13 +162,10 @@ void ws_pcm_submit(void)
         int32_t s1 = (sndbuffer[0][i1] + sndbuffer[1][i1]) >> 1;
         int32_t s  = s0 + (((s1 - s0) * (int32_t)frac) >> 16);   /* lerp */
         dst[i] = (int16_t)((s * factor) >> 8);  /* factor 0..255 volume */
-        pos += step_smooth;
+        pos += step;
     }
-    uint32_t consumed = pos >> 16;
-    if (consumed > (uint32_t)avail) consumed = avail;
-    rBuf += consumed;
+    rBuf += avail;
     if (rBuf >= WS_SND_RNGSIZE) rBuf -= WS_SND_RNGSIZE;
-    rphase = pos - (consumed << 16);
 }
 
 __attribute__((optimize("unroll-loops")))
