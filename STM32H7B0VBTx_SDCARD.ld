@@ -56,7 +56,12 @@ ENTRY(Reset_Handler)
 _estack = _stack_top;    /* end of RAM */
 
 /* Generate a link error if heap and stack don't fit into RAM */
-_Heap_Size = 85 * 1024;     /* p8ram section removed — PICO-8 allocates from heap at runtime */
+_Heap_Size = 88 * 1024;     /* p8ram section removed — PICO-8 allocates 64KB from heap at runtime.
+                             * Bumped 85->88KB: a firmware update invalidates PICO-8's flash cache,
+                             * forcing a re-patch that needs the full 64KB; with ~23KB already used
+                             * an 85KB heap was ~1.7KB short (HEAP OOM in _sbrk), crashing PICO-8
+                             * carts (incl. the Suika game). The linker reserve check below still
+                             * guarantees _Min_Stack_Size, so this errors at link time if DTCM overflows. */
 
 _Stack_Redzone_Size = 256;  /* size of stack overflow protection */
 _Min_Stack_Size = 24 * 1024; /* required amount of stack */
