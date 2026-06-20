@@ -151,6 +151,13 @@ void ws_pcm_submit(void)
     uint32_t step = ((uint32_t)avail << 16) / dst_len;
     if (step == 0) step = 1;
     uint32_t pos = 0;
+    /* Output conditioning. The WS APU emits raw square/noise waves with no
+     * band-limiting (unlike NGP's blip path), so the output is harsh and full
+     * of aliasing buzz. Run each sample through a DC blocker (removes offset/
+     * pops) then a one-pole low-pass (~8 kHz) to tame the worst high-frequency
+     * grit - the single biggest audible quality win for WonderSwan. */
+    static int32_t dc_x1 = 0, dc_y1 = 0, lp = 0;
+    const int32_t LP_A = 174;   /* /256 ~ 0.68 -> ~8 kHz cutoff at 44.1 kHz */
     for (int i = 0; i < dst_len; i++) {
         uint32_t whole = pos >> 16;
         uint32_t frac  = pos & 0xFFFF;
@@ -161,7 +168,15 @@ void ws_pcm_submit(void)
         int32_t s0 = (sndbuffer[0][i0] + sndbuffer[1][i0]) >> 1;
         int32_t s1 = (sndbuffer[0][i1] + sndbuffer[1][i1]) >> 1;
         int32_t s  = s0 + (((s1 - s0) * (int32_t)frac) >> 16);   /* lerp */
-        dst[i] = (int16_t)((s * factor) >> 8);  /* factor 0..255 volume */
+        /* DC block: y = x - x1 + 0.996*y1 */
+        int32_t hp = s - dc_x1 + ((dc_y1 * 255) >> 8);
+        dc_x1 = s; dc_y1 = hp;
+        /* one-pole low-pass */
+        lp += ((hp - lp) * LP_A) >> 8;
+        int32_t o = (lp * factor) >> 8;   /* factor 0..255 volume */
+        if (o >  32767) o =  32767;
+        if (o < -32768) o = -32768;
+        dst[i] = (int16_t)o;
         pos += step;
     }
     rBuf += avail;
