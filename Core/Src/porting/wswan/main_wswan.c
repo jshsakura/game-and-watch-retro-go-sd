@@ -29,6 +29,12 @@ extern int16_t sndbuffer[2][WS_SND_RNGSIZE];
 extern int32_t rBuf, wBuf;
 extern int ws_render_enabled;   /* WSRender.c: 0 = skip per-scanline pixel work */
 
+/* Memory-based savestate (WSFileio.c on the fork). Forward-declared to avoid
+ * pulling oswan's headers (SDL/CMSIS clashes) into the front-end. */
+extern uint32_t WsStateMemSize(void);
+extern void     WsSaveStateMem(uint8_t *p);
+extern uint32_t WsLoadStateMem(const uint8_t *p);
+
 /* Referenced by oswan's WsLoadEeprom (defined in the excluded SDL front-end). */
 char gameName[512];
 
