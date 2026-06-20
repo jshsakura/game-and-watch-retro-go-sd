@@ -248,13 +248,15 @@ bool odroid_system_emu_screenshot(const char *filename)
 
     rg_storage_mkdir(rg_dirname(filename));
 
-    uint8_t *data;
+    uint8_t *data = NULL;
     size_t size = lcd_get_frame_size();
     if (currentApp.handlers.screenshot) {
         data = (*currentApp.handlers.screenshot)();
-    } else {
-        // If there is no callback for screenshot, we take it from framebuffer
-        // which is not the best as it will include menu in the middle
+    }
+    if (data == NULL) {
+        // If there is no callback for screenshot, or callback returned NULL,
+        // we take it from framebuffer which is not the best as it will
+        // include menu in the middle
         lcd_wait_for_vblank();
         data = (unsigned char *)lcd_get_inactive_buffer();
     }

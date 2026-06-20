@@ -67,9 +67,12 @@ void *ahb_malloc(size_t size) {
     if (pointer)
       return pointer;
   }
-  pointer = (void *)current_ahb_pointer;
-//  printf("hab_malloc 0x%lx size %d\n",current_ahb_pointer,size);
-  current_ahb_pointer = (current_ahb_pointer + size + 3) & ~0x03; // Make sure pointers are always 32 bits aligned
+  return ahb_only_malloc(size);
+}
+
+void *ahb_only_malloc(size_t size) {
+  void *pointer = (void *)current_ahb_pointer;
+  current_ahb_pointer = (current_ahb_pointer + size + 3) & ~0x03;
   assert(current_ahb_pointer <= (uint32_t)&__ahbram_audio_start__);
   return pointer;
 }

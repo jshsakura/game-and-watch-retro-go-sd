@@ -25,7 +25,7 @@ jobs:
 
       - name: Build test
         run: |
-          docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.4 \
+          docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
   build-package:
@@ -42,7 +42,7 @@ jobs:
       # 2. Generate the update archive using Docker
       - name: Generate retro-go_update.bin
         run: |
-          docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.4 \
+          docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
       # TEMP debug: upload the ELF so crash PCs can be resolved to symbols
@@ -73,7 +73,7 @@ jobs:
       # 2. Generate the update files using Docker
       - name: Generate firmware_update.bin and gw_update.tar
         run: |
-          docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.4 \
+          docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
       # 3. Create a release and upload files

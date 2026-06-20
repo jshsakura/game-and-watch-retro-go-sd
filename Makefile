@@ -474,7 +474,7 @@ $(CORE_MSX)/Src/Memory/romMapperSunriseIDE.c \
 $(CORE_MSX)/Src/Memory/romMapperSCCplus.c \
 $(CORE_MSX)/Src/Memory/romMapperTC8566AF.c \
 $(CORE_MSX)/Src/Memory/SlotManager.c \
-$(CORE_MSX)/Src/VideoChips/VDP_YJK.c \
+$(CORE_MSX)/Src/VideoChips/VDP_YJK_gnw.c \
 $(CORE_MSX)/Src/VideoChips/VDP_MSX.c \
 $(CORE_MSX)/Src/VideoChips/V9938.c \
 $(CORE_MSX)/Src/VideoChips/VideoManager.c \

@@ -42,7 +42,7 @@ DOCKER ?= 0
 _DOCKER_FWDVARS := $(filter-out DOCKER=%,$(MAKEOVERRIDES))
 
 # Docker bulid args
-ARM_COMPILER_VERSION ?= 13.3.rel1
+ARM_COMPILER_VERSION ?= 15.2.rel1
 
 # Configure where data is stored in the external flash by
 # setting EXTFLASH_OFFSET. Useful if the first 1MB/4MB are to be preserved.
@@ -1445,10 +1445,9 @@ prepare_msx_bios_files: create_sd_folders
 	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2P.rom" $(SD_FOLDER)/bios/msx/
 	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2PEXT.rom" $(SD_FOLDER)/bios/msx/
 	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSX2PMUS.rom" $(SD_FOLDER)/bios/msx/
-	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSXDOS23.ROM" $(SD_FOLDER)/bios/msx/
+	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/Nextor.rom" $(SD_FOLDER)/bios/msx/
 	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/MSXKANJI.rom" $(SD_FOLDER)/bios/msx/
 	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/PANASONICDISK.rom" $(SD_FOLDER)/bios/msx/
-	@cp "external/blueMSX-go/system/bluemsx/Machines/Shared Roms/SUNRISEIDE.rom" $(SD_FOLDER)/bios/msx/
     # PANASONICDISK_.rom is a patched version of PANASONICDISK.rom to disable the 2nd FDD
     # this is allowing to free some ram, which is needed for some games. It could be done by pressing
     # ctrl key at boot using original bios, but using this patched version, the user will have nothing
