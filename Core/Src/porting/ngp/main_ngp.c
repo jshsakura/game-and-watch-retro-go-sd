@@ -215,9 +215,15 @@ static void blit_emulator(void)
     /* 160x152: full height is 240 -> width 160*240/152 = 252 (4:3-ish). */
     switch (scaling) {
     case ODROID_DISPLAY_SCALING_OFF:
+        /* 160x152 centred -> black border; clear so a previous wider frame's
+         * pixels don't remain as garbage around the image. */
+        lcd_clear_active_buffer();
         screen_blit_nn(NGP_WIDTH, NGP_HEIGHT);
         break;
     case ODROID_DISPLAY_SCALING_FIT:
+        /* Aspect-preserving 252x240 -> left/right pillarbox bars; clear them so
+         * they aren't stale pixels from a previous full-screen frame. */
+        lcd_clear_active_buffer();
         if (filtering == ODROID_DISPLAY_FILTER_SOFT) {
             screen_blit_bilinear(252);
         } else {
