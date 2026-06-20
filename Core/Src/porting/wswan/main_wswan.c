@@ -271,10 +271,9 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_init(APPID_WSWAN, WS_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
 
-    /* No saved per-app scaling default (defaults to OFF = tiny native), so fill
-     * the screen the first time instead. */
-    if (odroid_display_get_scaling_mode() == ODROID_DISPLAY_SCALING_OFF)
-        odroid_display_set_scaling_mode(ODROID_DISPLAY_SCALING_FULL);
+    /* Follow the shared global scaling setting like every other emulator — no
+     * per-app override (it used to force FULL when global was OFF, which made
+     * WS inconsistent with the rest). */
 
     audio_start_playing(WS_AUDIO_BUFFER_LENGTH);
 
