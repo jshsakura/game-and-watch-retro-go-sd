@@ -76,6 +76,11 @@ void graphics_paint(unsigned char render)
 }
 
 static bool LoadState(const char *savePathName) {
+    /* Silence the SAI output buffers up front: the main loop is blocked during
+     * the file read below, so the audio DMA would otherwise loop the last
+     * buffer (a latched tone = the post-load beep) until playback resumes. */
+    audio_clear_buffers();
+
     /* Stash the serialised state in the off-screen framebuffer. */
     unsigned char *data = (unsigned char *)lcd_get_active_buffer();
     int size = state_get_size();
@@ -127,6 +132,18 @@ void ngp_pcm_submit(void) {
     int samples = NGP_AUDIO_BUFFER_LENGTH;
     sound_update((uint16_t *)audioBuffer_ngp, samples * sizeof(int16_t));
     dac_update((uint16_t *)audioBuffer_ngp, samples * sizeof(int16_t));
+
+    /* After a savestate load the chip is restored but may hold a latched tone;
+     * keep the output silent until the game writes sound again (ngp_audio_active
+     * is cleared on load, set by WriteSoundChip/dac_writeL). Zero the output so
+     * the SAI plays silence rather than looping the previous buffer. */
+    extern int ngp_audio_active;
+    if (!ngp_audio_active) {
+        int16_t *sb = audio_get_active_buffer();
+        uint16_t n = audio_get_buffer_length();
+        for (int i = 0; i < n; i++) sb[i] = 0;
+        return;
+    }
 
     if (common_emu_sound_loop_is_muted()) {
         return;
