@@ -97,7 +97,16 @@ static void odroid_system_get_path_buf(emu_path_type_t type, const char *_romPat
 
     if (!fileName || strlen(fileName) < 4)
     {
-        RG_PANIC("Invalid ROM path!");
+        /* Homebrew apps (Music, Video) have no ROM and thus no real ROM path;
+         * the framework must not panic when building a save/screenshot path for
+         * them. Fall back to a stable stem so the path is well-formed (it is
+         * never actually used to read/write ROM saves). Real emulators with a
+         * genuinely invalid path still fail loudly. This is what lets Video
+         * launch exactly like Music. */
+        if (currentApp.id == APPID_HOMEBREW)
+            fileName = "homebrew";
+        else
+            RG_PANIC("Invalid ROM path!");
     }
 
     switch (type)
