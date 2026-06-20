@@ -143,12 +143,22 @@ void ws_pcm_submit(void)
         for (int i = 0; i < dst_len; i++) dst[i] = 0;
         return;
     }
+    /* Resample avail -> dst_len with LINEAR INTERPOLATION (not nearest-
+     * neighbour, which aliased badly and made WS audio harsh). Interpolate
+     * between adjacent ring samples using the 16.16 fractional position. */
     uint32_t step = ((uint32_t)avail << 16) / dst_len;
+    if (step == 0) step = 1;
     uint32_t pos = 0;
     for (int i = 0; i < dst_len; i++) {
-        int32_t idx = rBuf + (int32_t)(pos >> 16);
-        if (idx >= WS_SND_RNGSIZE) idx -= WS_SND_RNGSIZE;
-        int16_t s = (int16_t)((sndbuffer[0][idx] + sndbuffer[1][idx]) >> 1);
+        uint32_t whole = pos >> 16;
+        uint32_t frac  = pos & 0xFFFF;
+        int32_t i0 = rBuf + (int32_t)whole;
+        if (i0 >= WS_SND_RNGSIZE) i0 -= WS_SND_RNGSIZE;
+        int32_t i1 = i0 + 1;
+        if (i1 >= WS_SND_RNGSIZE) i1 -= WS_SND_RNGSIZE;
+        int32_t s0 = (sndbuffer[0][i0] + sndbuffer[1][i0]) >> 1;
+        int32_t s1 = (sndbuffer[0][i1] + sndbuffer[1][i1]) >> 1;
+        int32_t s  = s0 + (((s1 - s0) * (int32_t)frac) >> 16);   /* lerp */
         dst[i] = (int16_t)((s * factor) >> 8);  /* factor 0..255 volume */
         pos += step;
     }
