@@ -177,7 +177,9 @@ static void draw_volume(void)
 enum { VMENU_INFO = 90, VMENU_QUIT = 91, VMENU_DEBUG = 92 };
 
 // Diagnostic overlay toggle (declared here so the options menu can flip it).
-static bool g_show_debug = true;
+// Default OFF for release — the SD read bottleneck it was added to diagnose is
+// fixed (block reads); still toggleable via the options menu when needed.
+static bool g_show_debug = false;
 
 // The shared launcher settings menu (Brightness + Volume sliders) plus a read-only
 // Info line, a Debug-overlay toggle and a Quit entry. Returns the chosen id
