@@ -89,6 +89,7 @@ extern uint8_t _OVERLAY_WSWAN_BSS_SIZE;
 extern void * _OVERLAY_MD_LOAD_START[];
 extern uint8_t _OVERLAY_MD_SIZE;
 extern void * _OVERLAY_MD_BSS_START[];
+extern void * _OVERLAY_MD_BSS_END[];
 extern uint8_t _OVERLAY_MD_BSS_SIZE;
 extern void * _OVERLAY_A7800_LOAD_START[];
 extern uint8_t _OVERLAY_A7800_SIZE;
@@ -119,6 +120,10 @@ extern void * _OVERLAY_CELESTE_LOAD_START[];
 extern uint8_t _OVERLAY_CELESTE_SIZE;
 extern void * _OVERLAY_CELESTE_BSS_START[];
 extern uint8_t _OVERLAY_CELESTE_BSS_SIZE;
+extern void * _OVERLAY_MUSIC_LOAD_START[];
+extern uint8_t _OVERLAY_MUSIC_SIZE;
+extern void * _OVERLAY_MUSIC_BSS_START[];
+extern uint8_t _OVERLAY_MUSIC_BSS_SIZE;
 extern void * _OVERLAY_PICO8_LOAD_START[];
 extern uint8_t _OVERLAY_PICO8_SIZE;
 extern void * _OVERLAY_PICO8_BSS_START[];
@@ -155,6 +160,11 @@ extern uint8_t *_PCE_ROM_UNPACK_BUFFER;
 extern uint8_t _PCE_ROM_UNPACK_BUFFER_SIZE;
 
 extern void * __RAM_END__[];
+
+extern uint8_t __ahbram_start__[];
+extern uint8_t __ahbram_heap_start__[];
+extern uint8_t __ahbram_audio_start__[];
+extern uint8_t __ahbram_end__[];
 
 /* C++ init array constructors */
 extern void (* __init_array_tgb_start__[])(void);

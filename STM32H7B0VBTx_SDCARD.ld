@@ -71,6 +71,7 @@ __REMOTE_INPUT_RESERVE__ = DEFINED(REMOTE_INPUT) ? REMOTE_INPUT * 12 : 0;
 __RAM_UC_LENGTH__   = 300K; /* framebuffer : 2 x 320 x 240 x 16 bits */
 __RAM_EMU_LENGTH__  = 1024K - __RAM_UC_LENGTH__;
 __AHBRAM_LENGTH__   = 128K;
+__AHBRAM_AUDIO_RESERVE__ = 8K; /* MPU non-cacheable slot for .audio DMA buffer at end of AHB SRAM */
 __FLASH_LENGTH__    = 256K; /* Bank 1 */
 __FLASH2_LENGTH__   = 256K; /* Bank 2 */
 __RAM_FCEUMM_MAPPER_LENGTH__ = 48K; /* Current FCEUMM mapper code */
@@ -635,6 +636,28 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_CELESTE_BSS_SIZE = SIZEOF(.overlay_celeste_bss);
 
+  .overlay_music __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_music_start__ = .;
+    build/music/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_MUSIC_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_MUSIC_LOAD_START = LOADADDR(.overlay_music);
+  _OVERLAY_MUSIC_SIZE = SIZEOF(.overlay_music);
+
+  .overlay_music_bss _OVERLAY_MUSIC_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_MUSIC_BSS_START = .;
+    build/music/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/music/*.o (COMMON)
+    __ram_emu_music_end__ = .;
+    _OVERLAY_MUSIC_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_MUSIC_BSS_END) < __RAM_EMU_END__, "Error: MUSIC BSS overflow");
+  }
+  _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
+
   /* PICO-8 stub overlay → RAM, placed at HIGH end of RAM_EMU.
      The GPL build only includes the install-prompt stub (main_pico8_stub.c).
      The real engine is loaded from /cores/pico8.bin at runtime, replacing
@@ -744,12 +767,16 @@ INCLUDE build/fceumm_mappers.ld
     . = . + SIZEOF(.overlay_md_bss);
   } >RAM_EMU
 
+  /* only use ahb_malloc/ahb_calloc to use ahb memory ! */
+  /* only audio buffer is statically allocated */
   ._ahbram (NOLOAD) :
   {
     __ahbram_start__ = .;
     . = ALIGN(4);
+    __ahbram_heap_start__ = .;
+    . = ORIGIN(AHBRAM) + LENGTH(AHBRAM) - __AHBRAM_AUDIO_RESERVE__;
+    __ahbram_audio_start__ = .;
     *(.audio)
-    *(.ahb)
     . = ALIGN(4);
     __ahbram_end__ = .;
   } > AHBRAM

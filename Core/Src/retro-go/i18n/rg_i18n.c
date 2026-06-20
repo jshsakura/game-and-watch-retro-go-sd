@@ -531,6 +531,16 @@ static const lang_metadata_t lang_metadata[] = {
     ((offsetof(lang_t, fmt_Title_Date_Format) - offsetof(lang_t, s_LangUI)) \
      / sizeof(const char *))
 
+/* Guard the flat-array assumption above: every s_XXX string field must live in
+ * the s_LangUI..fmt_Title_Date_Format region. A string field added after the
+ * fmt_* pointers is silently dropped here AND inflates the generated .bin's
+ * field count past LANG_T_STRING_COUNT+4, which makes i18n_load_language()
+ * reject the whole file so every language falls back to English. s_no_favorite
+ * is the last declared string field; if it ever lands after the fmt pointers
+ * this fails the build instead of shipping an English-only firmware. */
+_Static_assert(offsetof(lang_t, s_no_favorite) < offsetof(lang_t, fmt_Title_Date_Format),
+               "lang_t s_XXX fields must precede the fmt_* function pointers");
+
 static lang_t  lang_active;
 /* Per-idx string-buffer cache. Each language is loaded from SD at most
  * once per session; the strings buffer and the populated pointer table

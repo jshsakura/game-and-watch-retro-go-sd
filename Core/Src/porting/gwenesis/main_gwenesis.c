@@ -48,6 +48,7 @@ __license__ = "GPLv3"
 #include "gwenesis_vdp.h"
 #include "gwenesis_savestate.h"
 #include "gwenesis_sram.h"
+#include "gw_malloc.h"
 
 #pragma GCC optimize("Ofast")
 
@@ -609,6 +610,8 @@ int app_main_gwenesis(uint8_t load_state, uint8_t start_paused, int8_t save_slot
 {
 
     printf("Genesis start\n");
+
+    ram_start = (uint32_t)&_OVERLAY_MD_BSS_END;
 
     // Set maximum clock speed for better performance if CPU is not overclocked
     if (odroid_settings_cpu_oc_level_get() == 0) {
