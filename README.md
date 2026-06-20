@@ -1,4 +1,4 @@
-# ⚠️ EXPERIMENTAL TESTBED FORK — read before flashing
+# 🧪 EXPERIMENTAL TESTBED FORK ⚠️ — read before flashing
 
 > This is a **personal experimental testbed** of retro-go-sd with extra in-progress
 > features (Neo Geo Pocket / WonderSwan emulators, MP3 music + MJPEG video players,
