@@ -110,17 +110,27 @@ void ws_pcm_submit(void)
         return;
     }
     int32_t factor = common_emu_sound_get_volume();
-    static int16_t last = 0;
-    /* Drain the APU stereo ring, mixing L+R down to the mono G&W output. On
-     * underrun hold the last sample (pitch stretch) instead of writing silence,
-     * which would click. */
-    for (int i = 0; i < dst_len; i++) {
-        if (rBuf != wBuf) {
-            last = (int16_t)((sndbuffer[0][rBuf] + sndbuffer[1][rBuf]) >> 1);
-            if (++rBuf >= WS_SND_RNGSIZE) rBuf = 0;
-        }
-        dst[i] = (int16_t)((last * factor) >> 8);  /* factor 0..255 volume */
+    /* Samples the APU produced this frame. The APU rate (~HBlank*MULT) doesn't
+     * equal the fixed SAI rate, so resample this frame's samples to fill the
+     * whole output buffer at the right pitch and consume them all - avoids the
+     * underrun stretch that made the music lag/click. */
+    int32_t avail = wBuf - rBuf;
+    if (avail < 0) avail += WS_SND_RNGSIZE;
+    if (avail < 1) {
+        for (int i = 0; i < dst_len; i++) dst[i] = 0;
+        return;
     }
+    uint32_t step = ((uint32_t)avail << 16) / dst_len;
+    uint32_t pos = 0;
+    for (int i = 0; i < dst_len; i++) {
+        int32_t idx = rBuf + (int32_t)(pos >> 16);
+        if (idx >= WS_SND_RNGSIZE) idx -= WS_SND_RNGSIZE;
+        int16_t s = (int16_t)((sndbuffer[0][idx] + sndbuffer[1][idx]) >> 1);
+        dst[i] = (int16_t)((s * factor) >> 8);  /* factor 0..255 volume */
+        pos += step;
+    }
+    rBuf += avail;
+    if (rBuf >= WS_SND_RNGSIZE) rBuf -= WS_SND_RNGSIZE;
 }
 
 __attribute__((optimize("unroll-loops")))
