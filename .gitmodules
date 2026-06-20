@@ -47,7 +47,8 @@
 	url = https://github.com/sylverb/stella2014-go.git
 [submodule "Core/Src/porting/lib/FatFs"]
 	path = Core/Src/porting/lib/FatFs
-	url = https://github.com/sylverb/FatFs.git
+	url = https://github.com/jshsakura/FatFs.git
+	branch = gnw-sd-fast-read
 [submodule "external/firmware_update"]
 	path = external/firmware_update
 	url = https://github.com/sylverb/firmware_update
