@@ -282,12 +282,28 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
     bq24072_data.sample_count += 1u;
 
     /*
-     * Publish only after accumulating 9 samples.
+     * Window not full yet: re-arm the ADC immediately so the remaining
+     * samples are taken back-to-back. A single bq24072_poll() therefore
+     * fills the whole 9-sample window in one fast burst (sub-millisecond)
+     * instead of one sample per ~1 Hz TIM1 tick.
+     *
+     * Before this, the window took ~9 s to complete, so after every reset
+     * or STANDBY wake (RAM lost -> bq24072_init -> sample_valid=false)
+     * bq24072_get_percent_filtered() reported 0 % for ~9 s until the first
+     * publish snapped it to the real value — the "0 % then jumps to ~10 %
+     * when the screen comes back" artefact.
+     */
+    if (bq24072_data.sample_count < 9u) {
+        HAL_ADC_Start_IT(hadc);
+        return;
+    }
+
+    /*
+     * Publish after accumulating 9 samples.
      * OFW: "if (8 < uVar9)" — uVar9 is count AFTER increment,
      * so first publish happens when count reaches 9.
-     * CHANGED from original >= 8 to >= 9 to match OFW exactly.
      */
-    if (bq24072_data.sample_count >= 9u) {
+    {
 
         new_avg = (uint16_t)(bq24072_data.sample_sum /
                              bq24072_data.sample_count);
@@ -331,7 +347,6 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 #endif
 
         HAL_ADC_Stop_IT(hadc);
-        /* else: keep accumulating into the current window. */
     }
 }
 
