@@ -60,9 +60,18 @@ jobs:
           name: retro-go_update.bin
           path: release/retro-go_update.bin
 
+      # 3b. Upload the SD content archive (cores + /roms/homebrew/*.bin)
+      - name: Upload gw_update.tar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gw_update.tar
+          path: release/gw_update.tar
+
   release-package:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       # 1. Checkout the repository with submodules
