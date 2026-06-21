@@ -298,6 +298,20 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         bool drawFrame = common_emu_frame_loop();
 
+        /* Guarantee the panel refreshes at least every few frames even if the
+         * frame-skip integrator latches. One Piece WSC's sound-DMA stalls pin
+         * skip_frames=2 during heavy stretches, and the 1x audio-DMA pacing
+         * below keeps elapsed ~= frame_time so the integrator never decays ->
+         * render+present stay skipped and the screen looks frozen until PAUSE
+         * resets it. Forcing a draw on the 6th consecutive skip un-freezes it. */
+        static int ws_skipped_run = 0;
+        if (drawFrame) {
+            ws_skipped_run = 0;
+        } else if (++ws_skipped_run >= 6) {
+            drawFrame = true;
+            ws_skipped_run = 0;
+        }
+
         odroid_input_read_gamepad(&joystick);
         common_emu_input_loop(&joystick, options, &blit);
         common_emu_input_loop_handle_turbo(&joystick);
