@@ -811,7 +811,7 @@ $(DOOMGENERIC_DIR)/i_endoom.c \
 $(DOOMGENERIC_DIR)/i_joystick.c \
 $(DOOMGENERIC_DIR)/i_scale.c \
 $(DOOMGENERIC_DIR)/i_sound.c \
-$(DOOMGENERIC_DIR)/i_system.c \
+Core/Src/porting/doom/doom_i_system.c \
 $(DOOMGENERIC_DIR)/i_timer.c \
 $(DOOMGENERIC_DIR)/memio.c \
 $(DOOMGENERIC_DIR)/m_argv.c \

@@ -596,15 +596,23 @@ uint32_t WsLoadStateFromFile(FILE *fp)
     if (fread(hdr, sizeof(uint32_t), 4, fp) != 4) return 1;
     if (hdr[0] != WS_STATE_MAGIC || hdr[1] != WS_STATE_VERSION) return 1;
     if (hdr[2] != RAMBanks || hdr[3] != RAMSize) return 1;
+    printf("WSLD: hdr ok RAMBanks=%lu RAMSize=%lx bank=%lx\n",
+           (unsigned long)RAMBanks, (unsigned long)RAMSize, (unsigned long)bank);
     for (i = 0; i < (uint32_t)WS_STATE_NEC_COUNT; i++) {
         uint32_t v;
         if (fread(&v, sizeof(uint32_t), 1, fp) != 1) return 1;
         nec_set_reg(ws_state_nec_regs[i], v);
     }
+    printf("WSLD: nec regs done\n");
     if (fread(IRAM, 1, 0x10000, fp) != 0x10000) return 1;
     if (fread(IO,   1, 0x100,   fp) != 0x100)   return 1;
-    for (i = 0; i < RAMBanks; i++) fread(RAMMap[i], 1, bank, fp);
+    printf("WSLD: iram+io done\n");
+    for (i = 0; i < RAMBanks; i++) {
+        if (RAMMap[i] == NULL) { printf("WSLD: RAMMap[%lu] NULL, skip\n", (unsigned long)i); continue; }
+        fread(RAMMap[i], 1, bank, fp);
+    }
     fread(Palette, sizeof(uint16_t), 16 * 16, fp);
+    printf("WSLD: rammap+palette done\n");
 
     /* Rebuild derived state that WriteIO caches outside IO[]. The display
      * registers 0x00-0x3F are critical: WriteIO(0x07) recomputes Scr1TMap /
@@ -612,20 +620,24 @@ uint32_t WsLoadStateFromFile(FILE *fp)
      * palette - without replaying them the tilemap base stays stale and the
      * whole screen renders garbled. 0x00-0x3F are pure config (no DMA/sound
      * trigger lives below 0x40), so replaying them is side-effect-safe. */
-    for (i = 0x00; i <= 0x3F; i++)
-        WriteIO(i, IO[i]);
-    WriteIO(0xC1, IO[0xC1]);
-    WriteIO(0xC2, IO[0xC2]);
-    WriteIO(0xC3, IO[0xC3]);
-    { /* G&W: restoring state must NOT run the emulated CPU. WriteIO(0xC0) calls
-         nec_execute(1) when CS>=0x4000 (e.g. One Piece 8MB), executing a
-         garbage opcode before Page[] is mapped -> null NEC handler -> crash.
-         Force CS=0 so that branch is skipped; Page[] is still mapped. */
-        uint32_t _saved_cs = nec_get_reg(NEC_CS); nec_set_reg(NEC_CS, 0);
-        WriteIO(0xC0, IO[0xC0]);
-        nec_set_reg(NEC_CS, _saved_cs); }
-    for (i = 0x80; i <= 0x90; i++)
-        WriteIO(i, IO[i]);
+    { uint32_t _saved_cs = nec_get_reg(NEC_CS); nec_set_reg(NEC_CS, 0);
+      for (i = 0x00; i <= 0x3F; i++)
+          WriteIO(i, IO[i]);
+      printf("WSLD: writeio 00-3F done\n");
+      WriteIO(0xC1, IO[0xC1]);
+      WriteIO(0xC2, IO[0xC2]);
+      WriteIO(0xC3, IO[0xC3]);
+      printf("WSLD: writeio C1-C3 done\n");
+      /* WriteIO(0xC0) calls nec_execute(1) when CS>=0x4000; CS is forced 0
+       * above so that branch (and the whole replay) can't run the emulated
+       * CPU before Page[] is mapped -> null NEC handler -> crash. */
+      WriteIO(0xC0, IO[0xC0]);
+      printf("WSLD: writeio C0 done\n");
+      for (i = 0x80; i <= 0x90; i++)
+          WriteIO(i, IO[i]);
+      printf("WSLD: writeio 80-90 done\n");
+      nec_set_reg(NEC_CS, _saved_cs); }
+    printf("WSLD: complete\n");
     return 0;
 }
 
