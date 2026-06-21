@@ -119,6 +119,7 @@ extern SPI_HandleTypeDef hspi1;
 
 void Error_Handler(void);
 void BSOD(BSOD_t fault, uint32_t pc, uint32_t lr) __attribute__((noreturn));
+void gw_debug_show_log(const char *banner);
 
 void boot_magic_set(uint32_t magic);
 void SystemClock_Config(uint8_t new_oc_level);

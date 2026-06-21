@@ -210,6 +210,61 @@ __attribute__((optimize("-O0"))) void BSOD(BSOD_t fault, uint32_t pc, uint32_t l
   }
 }
 
+/*
+ * On-screen debug panel for NON-fault failures (e.g. a homebrew app that
+ * bails out cleanly via exit()/I_Error and would otherwise bounce silently
+ * back to the launcher). Renders `banner` plus the tail of the printf log
+ * (logbuf) to the LCD and blocks until a button is pressed, so the captured
+ * diagnostics are actually visible. Unlike BSOD() this does NOT disable IRQs
+ * or reset — the caller resumes (typically to exit the app) afterwards.
+ */
+void gw_debug_show_log(const char *banner)
+{
+  char *start;
+  char *end;
+  char *line;
+  size_t i = 0;
+  int y = 0;
+
+  lcd_sync();
+  lcd_reset_active_buffer();
+  odroid_display_set_backlight(ODROID_BACKLIGHT_LEVEL6);
+
+  y += odroid_overlay_draw_text(0, y, GW_LCD_WIDTH,
+                                banner ? banner : "DEBUG", C_RED, C_BLUE);
+  y += odroid_overlay_draw_text(0, y, GW_LCD_WIDTH, GIT_TAG, C_YELLOW, C_BLUE);
+
+  // Print each log line in reverse (newest first), same walk as BSOD().
+  end = &logbuf[strnlen(logbuf, sizeof(logbuf)) - 1];
+  while (y < GW_LCD_HEIGHT) {
+    if (i++ >= 28) {
+      break;
+    }
+    start = logbuf;
+    while (start < end) {
+      line = start;
+      start = strnstr(start, "\n", end - start);
+      if (start == NULL) {
+        break;
+      } else {
+        start += 1;
+      }
+    }
+    end[0] = '\x00';
+    end = line;
+    y += odroid_overlay_draw_text(0, y, GW_LCD_WIDTH, line, C_WHITE, C_BLUE);
+    if (line == logbuf) {
+      break;
+    }
+  }
+
+  // Wait for a fresh button press+release so the panel can actually be read.
+  uint32_t old_buttons = buttons_get();
+  while ((buttons_get() == 0) || (buttons_get() == old_buttons)) {
+    wdog_refresh();
+  }
+}
+
 // Used by assert()
 void abort(void)
 {

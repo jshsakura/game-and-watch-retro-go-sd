@@ -466,6 +466,15 @@ void I_Error (char *error, ...)
 
     exit(-1);
 #else
+    /* G&W: there is no console/GUI here, so an I_Error would otherwise bounce
+     * silently back to the launcher. Show the message + captured log on the
+     * LCD and block for a button so the actual failure reason is visible. */
+    {
+        extern void gw_debug_show_log(const char *banner);
+        char banner[80];
+        M_snprintf(banner, sizeof(banner), "DOOM I_Error: %s", msgbuf);
+        gw_debug_show_log(banner);
+    }
     exit(-1);
 #endif
 }
