@@ -138,6 +138,35 @@ static bool wolf_system_SaveState(const char *path) { (void)path; return false; 
 static bool wolf_system_LoadState(const char *path) { (void)path; return false; }
 static void *Screenshot(void) { return lcd_get_active_buffer(); }
 
+/* Heap: route the engine's malloc/calloc/realloc/free (renamed to wolf3d__*
+ * via wolf3d_redefines) to the 724KB RAM_EMU overlay region; the newlib _sbrk
+ * heap (~87KB) is too small. Bump allocator: free is a no-op; realloc copies
+ * via a size header. */
+void *wolf3d__malloc(size_t n)
+{
+    uint32_t *p = (uint32_t *)ram_malloc(n + sizeof(uint32_t));
+    if (!p) return NULL;
+    *p = (uint32_t)n;
+    return p + 1;
+}
+void *wolf3d__calloc(size_t a, size_t b)
+{
+    size_t n = a * b;
+    void *p = wolf3d__malloc(n);
+    if (p) memset(p, 0, n);
+    return p;
+}
+void wolf3d__free(void *p) { (void)p; }
+void *wolf3d__realloc(void *p, size_t n)
+{
+    void *q = wolf3d__malloc(n);
+    if (p && q) {
+        uint32_t old = ((uint32_t *)p)[-1];
+        memcpy(q, p, old < n ? old : n);
+    }
+    return q;
+}
+
 int app_main_wolf3d(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)load_state; (void)save_slot;

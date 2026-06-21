@@ -165,6 +165,39 @@ static void *Screenshot(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Heap: route the engine's malloc/calloc/realloc/free (renamed to      */
+/* doom__* via doom_redefines) to the 724KB RAM_EMU overlay region. The */
+/* firmware's newlib _sbrk heap is only ~87KB — far too small for DOOM's */
+/* zone. Bump allocator: free is a no-op; realloc copies via a size      */
+/* header. (newlib's own internal mallocs are NOT renamed, so they keep  */
+/* using the small _sbrk heap.)                                          */
+/* ------------------------------------------------------------------ */
+void *doom__malloc(size_t n)
+{
+    uint32_t *p = (uint32_t *)ram_malloc(n + sizeof(uint32_t));
+    if (!p) return NULL;
+    *p = (uint32_t)n;
+    return p + 1;
+}
+void *doom__calloc(size_t a, size_t b)
+{
+    size_t n = a * b;
+    void *p = doom__malloc(n);
+    if (p) memset(p, 0, n);
+    return p;
+}
+void doom__free(void *p) { (void)p; }
+void *doom__realloc(void *p, size_t n)
+{
+    void *q = doom__malloc(n);
+    if (p && q) {
+        uint32_t old = ((uint32_t *)p)[-1];
+        memcpy(q, p, old < n ? old : n);
+    }
+    return q;
+}
+
+/* ------------------------------------------------------------------ */
 /* Entry point.                                                        */
 /* ------------------------------------------------------------------ */
 int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)

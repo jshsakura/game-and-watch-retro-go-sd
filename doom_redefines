@@ -1,0 +1,4 @@
+malloc doom__malloc
+calloc doom__calloc
+realloc doom__realloc
+free doom__free

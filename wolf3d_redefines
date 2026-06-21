@@ -16,3 +16,7 @@ viewsin wolf3d__viewsin
 viewwidth wolf3d__viewwidth
 viewx wolf3d__viewx
 viewy wolf3d__viewy
+malloc wolf3d__malloc
+calloc wolf3d__calloc
+realloc wolf3d__realloc
+free wolf3d__free

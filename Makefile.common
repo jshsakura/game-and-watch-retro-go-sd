@@ -1034,9 +1034,10 @@ $(BUILD_DIR)/music/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DI
 	$(V)$(ECHO) [ CC music ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(MUSIC_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/music/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/doom/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/doom/%.o: %.c Makefile.common Makefile doom_redefines $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC doom ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(DOOM_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/doom/$(notdir $(<:.c=.lst)) $< -o $@
+	$(V)$(CP) --redefine-syms=doom_redefines $@
 
 $(BUILD_DIR)/wolf3d/%.o: %.c Makefile.common Makefile wolf3d_redefines $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC wolf3d ] $(notdir $<)
