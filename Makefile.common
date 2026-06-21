@@ -1038,9 +1038,10 @@ $(BUILD_DIR)/doom/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR
 	$(V)$(ECHO) [ CC doom ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(DOOM_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/doom/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/wolf3d/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/wolf3d/%.o: %.c Makefile.common Makefile wolf3d_redefines $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC wolf3d ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(WOLF3D_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/wolf3d/$(notdir $(<:.c=.lst)) $< -o $@
+	$(V)$(CP) --redefine-syms=wolf3d_redefines $@
 
 # PICO-8: ALL sources compiled as C++ (z8lua .c files require C++ for fix32.h)
 # Extra flags: -fno-exceptions since we don't use them.
