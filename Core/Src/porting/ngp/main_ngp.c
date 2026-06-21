@@ -164,12 +164,28 @@ static inline void screen_blit_nn(int32_t dest_width, int32_t dest_height)
     uint16_t *screen_buf = (uint16_t *)video_frame.buffer;
     uint16_t *dest = lcd_get_active_buffer();
 
+    /* Write the FULL 320x240 buffer every frame (image + black borders) so the
+     * pillarboxed/letterboxed modes have the same all-pixels-written invariant
+     * as FULL. Relying on a separate lcd_clear_active_buffer() added a ~150KB
+     * memset per frame that pushed FIT/OFF past the vblank boundary, desyncing
+     * the LTDC buffer swap and making the bottom band flicker. */
+    for (int i = 0; i < wpad; i++)
+        memset(dest + i * WIDTH, 0, WIDTH * sizeof(uint16_t));
+    for (int i = wpad + h2; i < 240; i++)
+        memset(dest + i * WIDTH, 0, WIDTH * sizeof(uint16_t));
+
     for (int i = 0; i < h2; i++) {
+        uint16_t *row = dest + (i + wpad) * WIDTH;
+        int y2 = ((i * y_ratio) >> 16);
+        const uint16_t *src_row = screen_buf + (y2 * w1);
+        for (int j = 0; j < hpad; j++)
+            row[j] = 0;
         for (int j = 0; j < w2; j++) {
             int x2 = ((j * x_ratio) >> 16);
-            int y2 = ((i * y_ratio) >> 16);
-            dest[((i + wpad) * WIDTH) + j + hpad] = screen_buf[(y2 * w1) + x2];
+            row[j + hpad] = src_row[x2];
         }
+        for (int j = hpad + w2; j < WIDTH; j++)
+            row[j] = 0;
     }
 }
 
@@ -226,19 +242,18 @@ static void blit_emulator(void)
     /* 160x152: full height is 240 -> width 160*240/152 = 252 (4:3-ish). */
     switch (scaling) {
     case ODROID_DISPLAY_SCALING_OFF:
-        /* 160x152 centred -> black border; clear so a previous wider frame's
-         * pixels don't remain as garbage around the image. */
-        lcd_clear_active_buffer();
+        /* 160x152 centred. screen_blit_nn writes the full buffer (image + black
+         * borders) so no separate clear is needed (the extra memset caused the
+         * bottom band to flicker via vblank-swap desync). */
         screen_blit_nn(NGP_WIDTH, NGP_HEIGHT);
         break;
     case ODROID_DISPLAY_SCALING_FIT:
-        /* Aspect-preserving 252x240 -> left/right pillarbox bars; clear them so
-         * they aren't stale pixels from a previous full-screen frame. */
-        lcd_clear_active_buffer();
+        /* Aspect-preserving 252x240 -> left/right pillarbox bars. */
         if (filtering == ODROID_DISPLAY_FILTER_SOFT) {
+            lcd_clear_active_buffer();   /* bilinear doesn't fill the borders */
             screen_blit_bilinear(252);
         } else {
-            screen_blit_nn(252, 240);
+            screen_blit_nn(252, 240);    /* full-coverage blit, no separate clear */
         }
         break;
     case ODROID_DISPLAY_SCALING_FULL:
