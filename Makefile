@@ -877,10 +877,10 @@ WOLF3D_C_SOURCES = \
 Core/Src/porting/wolf3d/main_wolf3d.c \
 Core/Src/porting/wolf3d/wolf_vl.c \
 Core/Src/porting/wolf3d/wolf_vh.c \
+Core/Src/porting/wolf3d/wolf_sd.c \
 $(WOLF3D_DIR)/id_ca.c \
 $(WOLF3D_DIR)/id_in.c \
 $(WOLF3D_DIR)/id_pm.c \
-$(WOLF3D_DIR)/id_sd.c \
 $(WOLF3D_DIR)/id_us_1.c \
 $(WOLF3D_DIR)/signon.c \
 $(WOLF3D_DIR)/wl_act1.c \
@@ -1211,7 +1211,7 @@ DOOM_C_INCLUDES += \
 # The 1990s id engine relies on implicit int<->pointer conversions that GCC 15
 # treats as errors; demote them to warnings for this codebase only.
 WOLF3D_C_INCLUDES += \
--Wno-int-conversion -Wno-incompatible-pointer-types \
+-Wno-int-conversion -Wno-incompatible-pointer-types -Wno-implicit-function-declaration \
 -DVERSIONALREADYCHOSEN -DCARMACIZED -DUPLOAD \
 -ICore/Inc \
 -ICore/Inc/retro-go \
