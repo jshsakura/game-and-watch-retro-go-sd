@@ -212,6 +212,17 @@ static void blit_emulator(void)
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
     odroid_display_filter_t filtering = odroid_display_get_filter_mode();
 
+    /* On a scaling-mode change, clear BOTH framebuffers once. The per-frame
+     * clear below only wipes the active (back) buffer; the other buffer still
+     * holds the previous mode's image and is shown for one frame right after
+     * the switch (e.g. native -> FIT leaves the small centred image / pillarbox
+     * garbage visible). Wiping both makes the transition clean. */
+    static odroid_display_scaling_t last_scaling = -1;
+    if (scaling != last_scaling) {
+        lcd_clear_buffers();
+        last_scaling = scaling;
+    }
+
     /* 160x152: full height is 240 -> width 160*240/152 = 252 (4:3-ish). */
     switch (scaling) {
     case ODROID_DISPLAY_SCALING_OFF:
