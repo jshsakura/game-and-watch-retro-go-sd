@@ -658,6 +658,30 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
 
+  /* DOOM (doomgeneric) homebrew overlay — same RAM_EMU VMA, LMA in EXTFLASH.
+     Shipped as /roms/homebrew/Doom.bin and cached into RAM at launch. */
+  .overlay_doom __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_doom_start__ = .;
+    build/doom/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_DOOM_LOAD_END = .;
+  } AT> EXTFLASH
+  _OVERLAY_DOOM_LOAD_START = LOADADDR(.overlay_doom);
+  _OVERLAY_DOOM_SIZE = SIZEOF(.overlay_doom);
+
+  .overlay_doom_bss _OVERLAY_DOOM_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_DOOM_BSS_START = .;
+    build/doom/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/doom/*.o (COMMON)
+    __ram_emu_doom_end__ = .;
+    _OVERLAY_DOOM_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_DOOM_BSS_END) < __RAM_EMU_END__, "Error: DOOM BSS overflow");
+  }
+  _OVERLAY_DOOM_BSS_SIZE = SIZEOF(.overlay_doom_bss);
+
   /* PICO-8 stub overlay → RAM, placed at HIGH end of RAM_EMU.
      The GPL build only includes the install-prompt stub (main_pico8_stub.c).
      The real engine is loaded from /cores/pico8.bin at runtime, replacing
