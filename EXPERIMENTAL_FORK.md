@@ -9,11 +9,15 @@
 
 | Feature | State | Notes |
 |---|---|---|
-| **Neo Geo Pocket / Color** (RACE core) | ✅ Playable | Boot, input, sound, savestates (4 slots), runs full speed |
-| **WonderSwan / Color** (oswan core) | ✅ Playable | Boot, input, sound, savestates; heavy action games run slow (V30MZ interpreter limit) |
+| **Neo Geo Pocket / Color** (RACE core) | ✅ Playable | Boot, input, sound, savestates (4 slots), runs full speed. Savestate sound-resume fixed (`ngpRunning` was unsnapshotted) |
+| **WonderSwan / Color** (oswan core) | ✅ Playable | Boot, input, sound, savestates; Fit/Full scaling + speed-up fixed; heavy action games run slow (V30MZ interpreter limit) |
 | **Music player** (MP3) | ✅ | Browser, deck, album-art covers |
+| **Video player** (MJPEG/AVI) | ✅ Playable | 320×240 MJPEG-AVI from SD. SD block-read made it smooth (decode 27%→97.7%); encode via the companion app |
+| **PICO-8** (external `pico8.ro`) | ✅ | p8ram moved to the AXI pool so it no longer OOMs the DTCM heap after a firmware update |
 | **Battery monitor + auto power-off** | 🔜 evaluating | OFW-accurate battery %, shutdown at low % to protect RTC (from upstream PR #53) |
-| **Video player** (MJPEG/AVI) | 🧪 WIP | SD bandwidth constrained; not yet in this build |
+
+A post-mortem of the trickier bugs (dead-ends + actual root causes) is in
+[issue #9](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/9).
 
 ## Performance notes (WonderSwan)
 
