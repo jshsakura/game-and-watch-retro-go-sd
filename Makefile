@@ -1199,11 +1199,11 @@ MUSIC_C_INCLUDES += \
 DOOM_C_INCLUDES += \
 -DDOOMGENERIC_RESX=320 \
 -DDOOMGENERIC_RESY=200 \
+-I$(DOOMGENERIC_DIR) \
 -ICore/Inc \
 -ICore/Inc/retro-go \
 -ICore/Inc/porting \
 -ICore/Inc/porting/doom \
--I$(DOOMGENERIC_DIR) \
 -Iretro-go-stm32/components/odroid \
 -I./
 
