@@ -12,7 +12,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 SS = 6  # supersample for crisp 1-bit downscale
 
-SERIF_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
+# "Homebrew" wordmark font: Sriracha (Cadson Demak, OFL) — casual brush/italic.
+SERIF_BOLD = "tools/fonts/Sriracha-Regular.ttf"
 
 
 def to_1bit(img_l, thresh):
