@@ -869,6 +869,33 @@ $(DOOMGENERIC_DIR)/i_input.c \
 $(DOOMGENERIC_DIR)/i_video.c \
 $(DOOMGENERIC_DIR)/doomgeneric.c
 
+# Wolfenstein 3D (autobalance/Wolf3D-STM32 engine). id_vl.c/id_vh.c are NOT
+# compiled from the submodule — vendored+patched copies (wolf_vl.c/wolf_vh.c)
+# replace the LTDC render path with a software 8bit->RGB565 flush.
+WOLF3D_DIR = external/wolf3d-stm32/src/wolf3d
+WOLF3D_C_SOURCES = \
+Core/Src/porting/wolf3d/main_wolf3d.c \
+Core/Src/porting/wolf3d/wolf_vl.c \
+Core/Src/porting/wolf3d/wolf_vh.c \
+$(WOLF3D_DIR)/id_ca.c \
+$(WOLF3D_DIR)/id_in.c \
+$(WOLF3D_DIR)/id_pm.c \
+$(WOLF3D_DIR)/id_sd.c \
+$(WOLF3D_DIR)/id_us_1.c \
+$(WOLF3D_DIR)/signon.c \
+$(WOLF3D_DIR)/wl_act1.c \
+$(WOLF3D_DIR)/wl_act2.c \
+$(WOLF3D_DIR)/wl_agent.c \
+$(WOLF3D_DIR)/wl_debug.c \
+$(WOLF3D_DIR)/wl_draw.c \
+$(WOLF3D_DIR)/wl_game.c \
+$(WOLF3D_DIR)/wl_inter.c \
+$(WOLF3D_DIR)/wl_main.c \
+$(WOLF3D_DIR)/wl_menu.c \
+$(WOLF3D_DIR)/wl_play.c \
+$(WOLF3D_DIR)/wl_state.c \
+$(WOLF3D_DIR)/wl_text.c
+
 # PICO-8 stub only — the engine is distributed separately as binary files
 # (pico8.bin, pico8.ro, pico8_itcm.bin) placed on the SD card under /cores/.
 # The stub is built as pico8_stub.bin; rg_emulators.c loads pico8.bin first
@@ -1177,6 +1204,17 @@ DOOM_C_INCLUDES += \
 -ICore/Inc/porting \
 -ICore/Inc/porting/doom \
 -I$(DOOMGENERIC_DIR) \
+-Iretro-go-stm32/components/odroid \
+-I./
+
+# Wolf3D: shareware v1.4 (CARMACIZED+UPLOAD => .WL1 data); engine + glue headers.
+WOLF3D_C_INCLUDES += \
+-DVERSIONALREADYCHOSEN -DCARMACIZED -DUPLOAD \
+-ICore/Inc \
+-ICore/Inc/retro-go \
+-ICore/Inc/porting \
+-ICore/Inc/porting/wolf3d \
+-I$(WOLF3D_DIR) \
 -Iretro-go-stm32/components/odroid \
 -I./
 

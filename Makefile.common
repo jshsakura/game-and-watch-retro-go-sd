@@ -822,12 +822,13 @@ VIDEOPAC_OBJECTS = $(addprefix $(BUILD_DIR)/videopac/,$(notdir $(VIDEOPAC_C_SOUR
 CELESTE_OBJECTS = $(addprefix $(BUILD_DIR)/celeste/,$(notdir $(CELESTE_C_SOURCES:.c=.o)))
 MUSIC_OBJECTS = $(addprefix $(BUILD_DIR)/music/,$(notdir $(MUSIC_C_SOURCES:.c=.o)))
 DOOM_OBJECTS = $(addprefix $(BUILD_DIR)/doom/,$(notdir $(DOOM_C_SOURCES:.c=.o)))
+WOLF3D_OBJECTS = $(addprefix $(BUILD_DIR)/wolf3d/,$(notdir $(WOLF3D_C_SOURCES:.c=.o)))
 PICO8_ALL_SOURCES = $(PICO8_C_SOURCES) $(PICO8_CXX_SOURCES) $(PICO8_CXX_STUBS)
 PICO8_OBJECTS = $(addprefix $(BUILD_DIR)/pico8/,$(notdir $(patsubst %.cpp,%.o,$(patsubst %.c,%.o,$(PICO8_ALL_SOURCES)))))
 TAMA_OBJECTS = $(addprefix $(BUILD_DIR)/tama/,$(notdir $(TAMA_C_SOURCES:.c=.o)))
 PKMINI_OBJECTS = $(addprefix $(BUILD_DIR)/pkmini/,$(notdir $(PKMINI_C_SOURCES:.c=.o)))
 
-vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(TAMP_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(CELESTE_C_SOURCES) $(MUSIC_C_SOURCES) $(DOOM_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
+vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(TAMP_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(CELESTE_C_SOURCES) $(MUSIC_C_SOURCES) $(DOOM_C_SOURCES) $(WOLF3D_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
 # NGP (RACE) is intentionally excluded from vpath: its generic filenames
 # (state.c, sound.c, main.c, flash.c, graphics.c) would shadow other cores'
 # same-named files. NGP objects are built via ngp_obj_prereq_gen (explicit
@@ -954,9 +955,9 @@ $(BUILD_DIR)/memcpy-armv7m.o: Core/Src/memcpy-armv7m.s Makefile.common Makefile 
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(DOOM_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(DOOM_OBJECTS) $(WOLF3D_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
-	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(DOOM_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
+	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(DOOM_OBJECTS) $(WOLF3D_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
 $(BUILD_DIR)/core/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC core ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/core/$(notdir $(<:.c=.lst)) $< -o $@
@@ -1036,6 +1037,10 @@ $(BUILD_DIR)/music/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DI
 $(BUILD_DIR)/doom/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC doom ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(DOOM_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/doom/$(notdir $(<:.c=.lst)) $< -o $@
+
+$(BUILD_DIR)/wolf3d/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+	$(V)$(ECHO) [ CC wolf3d ] $(notdir $<)
+	$(V)$(CC) -c $(CFLAGS) $(WOLF3D_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/wolf3d/$(notdir $(<:.c=.lst)) $< -o $@
 
 # PICO-8: ALL sources compiled as C++ (z8lua .c files require C++ for fix32.h)
 # Extra flags: -fno-exceptions since we don't use them.
@@ -1245,6 +1250,7 @@ $(BUILD_DIR):
 	$(V)mkdir $@/celeste
 	$(V)mkdir $@/music
 	$(V)mkdir $@/doom
+	$(V)mkdir $@/wolf3d
 	$(V)mkdir $@/pico8
 	$(V)mkdir $@/tama
 	$(V)mkdir $@/pkmini
@@ -1529,6 +1535,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Music.bin"
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Video.bin"
 	@$(CP) -O binary --only-section=.overlay_doom $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Doom.bin"
+	@$(CP) -O binary --only-section=.overlay_wolf3d $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Wolf3D.bin"
 	@$(CP) -O binary --only-section=.overlay_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Zelda 3.bin"
 	@$(CP) -O binary --only-section=.rodata_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/zelda3.ro"
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
@@ -1626,6 +1633,7 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(HOMEBREWS_FOLDER)/celeste.bin --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Music.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Doom.bin" --dest-path "/roms/homebrew/" \
+		-- sdpush --file "$(HOMEBREWS_FOLDER)/Wolf3D.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Video.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Super Mario World.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Zelda 3.bin" --dest-path "/roms/homebrew/" \

@@ -33,6 +33,7 @@
 #include "main_music.h"
 #include "main_video.h"
 #include "doom/main_doom.h"
+#include "wolf3d/main_wolf3d.h"
 #include "main_pico8.h"
 #include "main_tama.h"
 #include "main_pkmini.h"
@@ -1259,6 +1260,10 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             memset(&_OVERLAY_DOOM_BSS_START, 0x0, (size_t)&_OVERLAY_DOOM_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_DOOM_SIZE);
             app_main_doom(load_state, start_paused, save_slot);
+        } else if (strcmp(newfile->name,"Wolf3D") == 0) {
+            memset(&_OVERLAY_WOLF3D_BSS_START, 0x0, (size_t)&_OVERLAY_WOLF3D_BSS_SIZE);
+            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_WOLF3D_SIZE);
+            app_main_wolf3d(load_state, start_paused, save_slot);
         }
       }
     } else if(strcmp(system_name, "Tamagotchi") == 0) {
