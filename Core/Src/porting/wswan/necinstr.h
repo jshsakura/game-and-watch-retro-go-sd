@@ -138,6 +138,7 @@ static void i_mov_wsreg(void);
 static void i_lea(void);
 static void i_mov_sregw(void);
 static void i_invalid(void);
+static void i_undef_dbg(void);   /* GNW: logs opcode+CS:IP, pops debug panel */
 static void i_popw(void);
 static void i_nop(void);
 static void i_xchg_axcx(void);
@@ -262,7 +263,7 @@ void (*nec_instruction[256])(void) =
     i_or_ald8,          /* 0x0c */
     i_or_axd16,         /* 0x0d */
     i_push_cs,          /* 0x0e */
-	i_invalid, 			/* 0x0f */ /* GNW: was NULL -> (*NULL)() HardFault (PC=0) when a savestate resume executed opcode 0x0F; route to i_invalid like every other undefined opcode */
+	i_undef_dbg, 		/* 0x0f */ /* GNW: was NULL -> (*NULL)() HardFault; now a diagnostic handler that logs opcode+CS:IP and pops the on-screen panel (V30 ext-op prefix, unimplemented) */
     i_adc_br8,          /* 0x10 */
     i_adc_wr16,         /* 0x11 */
     i_adc_r8b,          /* 0x12 */
@@ -350,8 +351,8 @@ void (*nec_instruction[256])(void) =
     
     /*i_repnc,*/		/* 0x64 */
     /*i_repc,*/			/* 0x65 */
-    i_invalid,			/* 0x64 GNW: was NULL (unimpl V30 repnc prefix) -> HardFault; route to i_invalid */
-    i_invalid,			/* 0x65 GNW: was NULL (unimpl V30 repc prefix)  -> HardFault; route to i_invalid */
+    i_undef_dbg,		/* 0x64 GNW: was NULL (unimpl V30 repnc prefix) -> diagnostic handler */
+    i_undef_dbg,		/* 0x65 GNW: was NULL (unimpl V30 repc prefix)  -> diagnostic handler */
 
     i_invalid,			/* 0x66 */
     i_invalid,			/* 0x67 */

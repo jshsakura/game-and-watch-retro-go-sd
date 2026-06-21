@@ -27,15 +27,19 @@
 ****************************************************************************/
 
 /* GNW VENDORED COPY of external/oswan-go/main/emu/cpu/nec.c (gitlink pinned at
- * beabf6ea; do not bump). This file is byte-identical to the submodule original
- * EXCEPT it is compiled from Core/Src/porting/wswan/ so its quote-include of
- * "necinstr.h" resolves to the vendored Core/Src/porting/wswan/necinstr.h (same
- * directory is searched before any -I path). That vendored necinstr.h fills the
- * three NULL slots in nec_instruction[] (0x0F, 0x64, 0x65) with i_invalid, which
- * fixes the savestate-resume HardFault: One Piece (WSC) resumes into code that
- * executes opcode 0x0F, and (*nec_instruction[0x0f])() == (*NULL)() faulted at
- * PC=0. All other oswan headers (nec.h, necintrf.h, necea.h, necmodrm.h) still
- * resolve to the submodule via -I$(CORE_WSWAN)/emu/cpu. */
+ * beabf6ea; do not bump). Compiled from Core/Src/porting/wswan/ so its quote-
+ * include of "necinstr.h" resolves to the vendored copy in the same directory
+ * (searched before any -I path); the other oswan headers (nec.h, necintrf.h,
+ * necea.h, necmodrm.h) still resolve to the submodule via -I$(CORE_WSWAN)/emu/cpu.
+ *
+ * Changes vs the submodule original:
+ *  - vendored necinstr.h points the three formerly-NULL slots in
+ *    nec_instruction[] (0x0F, 0x64, 0x65) at i_undef_dbg instead of NULL. Those
+ *    NULL slots faulted at PC=0 via (*NULL)() when a savestate resume executed
+ *    them (One Piece WSC).
+ *  - i_undef_dbg (defined below) logs opcode+CS:IP and pops the on-screen debug
+ *    panel on first hit, so we can tell whether a game genuinely executes one of
+ *    these opcodes (=> must implement) or a ROM mis-map fed a garbage byte. */
 
 #include <stdio.h>
 #include <stdint.h>
@@ -782,6 +786,40 @@ OP( 0xff, i_ffpre ) { uint32_t tmp, tmp1; GetModRM; tmp=GetRMWord(ModRM);
 
 static void i_invalid(void)
 {
+	CLK(10);
+}
+
+/* GNW DIAGNOSTIC handler for the opcodes this oswan core never implemented
+ * (0x0F V30 ext-prefix, 0x64/0x65 repnc/repc). They used to be NULL slots in
+ * nec_instruction[] -> (*NULL)() HardFault. Routing them to i_invalid stopped
+ * the crash but hid the signal: a game that actually executes one (e.g. One
+ * Piece after a savestate resume) just silently no-ops and freezes/garbles
+ * with no clue why. This logs the opcode + CS:IP to the firmware logbuf and,
+ * on the FIRST hit, pops the on-screen debug panel so we can see EXACTLY which
+ * opcode is hit and where -- distinguishing "game really runs 0x0F (must
+ * implement it)" from "ROM mis-map -> garbage byte". Behaviour otherwise
+ * matches i_invalid (10-cycle no-op) so the game keeps running after the
+ * panel is dismissed. */
+static void i_undef_dbg(void)
+{
+	extern void gw_debug_show_log(const char *banner);
+	static int log_count = 0;
+	static int panel_shown = 0;
+	unsigned ip = (unsigned)((I.ip - 1) & 0xFFFF);
+	unsigned cs = (unsigned)I.sregs[CS];
+	unsigned op = (unsigned)cpu_readop(cs_base + ip) & 0xFF;
+
+	if (log_count < 64) {
+		printf("WSUNDEF: op=%02X CS:IP=%04X:%04X\n", op, cs, ip);
+		log_count++;
+	}
+	if (!panel_shown) {
+		char banner[64];
+		snprintf(banner, sizeof(banner),
+		         "WS UNDEF op=%02X @ %04X:%04X", op, cs, ip);
+		panel_shown = 1;
+		gw_debug_show_log(banner);
+	}
 	CLK(10);
 }
 
