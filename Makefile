@@ -1208,7 +1208,10 @@ DOOM_C_INCLUDES += \
 -I./
 
 # Wolf3D: shareware v1.4 (CARMACIZED+UPLOAD => .WL1 data); engine + glue headers.
+# The 1990s id engine relies on implicit int<->pointer conversions that GCC 15
+# treats as errors; demote them to warnings for this codebase only.
 WOLF3D_C_INCLUDES += \
+-Wno-int-conversion -Wno-incompatible-pointer-types \
 -DVERSIONALREADYCHOSEN -DCARMACIZED -DUPLOAD \
 -ICore/Inc \
 -ICore/Inc/retro-go \

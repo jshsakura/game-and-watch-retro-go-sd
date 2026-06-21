@@ -416,14 +416,13 @@ boolean FizzleFade (scrsurf *source, int x1, int y1,
         // If there is no double buffering, we always use the "first frame" case
         if(usedoublebuffering) first = 0;
 
-        while (!(LTDC->CDSR & LTDC_CDSR_VSYNCS));
+        gw_wolf_present(screen->pixels.u8, curpal_lut);
 
         frame++;
         Delay(frame - GetTimeCount());        // don't go too fast
     } while (1);
 
 finished:
-    SCB_CleanDCache_by_Addr((uint32_t*)(((uint32_t)screen->pixels.u8) & ~(uint32_t)0x1F), screen->width * screen->height + 32);
-    while (!(LTDC->CDSR & LTDC_CDSR_VSYNCS));
+    gw_wolf_present(screen->pixels.u8, curpal_lut);
     return false;
 }
