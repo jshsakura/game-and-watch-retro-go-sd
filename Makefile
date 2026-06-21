@@ -567,7 +567,7 @@ $(CORE_WSWAN)/emu/WS.c \
 Core/Src/porting/wswan/ws_fileio.c \
 $(CORE_WSWAN)/emu/WSRender.c \
 $(CORE_WSWAN)/emu/WSApu.c \
-$(CORE_WSWAN)/emu/cpu/nec.c \
+Core/Src/porting/wswan/nec.c \
 Core/Src/porting/wswan/main_wswan.c
 
 MD_C_SOURCES =
