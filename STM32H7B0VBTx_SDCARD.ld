@@ -666,7 +666,7 @@ INCLUDE build/fceumm_mappers.ld
     build/doom/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_DOOM_LOAD_END = .;
-  } AT> EXTFLASH
+  } AT > CORES
   _OVERLAY_DOOM_LOAD_START = LOADADDR(.overlay_doom);
   _OVERLAY_DOOM_SIZE = SIZEOF(.overlay_doom);
 
