@@ -47,8 +47,22 @@ int find_free_slot() {
     return -1; // No free slot
 }
 
+/* Relative-path prefix for engines that open data by bare filename (e.g. Wolf3D
+ * opens "vswap.WL1"). An overlay sets it to its data dir; NULL otherwise so
+ * normal absolute paths ('/...') are untouched. Reset to NULL per app launch. */
+const char *gw_fs_relpath_prefix = NULL;
+
 int _open(const char *name, int flags, int mode)
 {
+    char prefixed[128];
+    if (gw_fs_relpath_prefix && name[0] != '/' && name[0] != '\0') {
+        if (strlen(gw_fs_relpath_prefix) + strlen(name) + 1 <= sizeof(prefixed)) {
+            strcpy(prefixed, gw_fs_relpath_prefix);
+            strcat(prefixed, name);
+            name = prefixed;
+        }
+    }
+
     int slot = find_free_slot();
     if (slot == -1) {
         errno = ENFILE;

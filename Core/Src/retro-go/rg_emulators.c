@@ -1169,6 +1169,10 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
     ahb_init();
     itc_init();
     ram_start = 0;
+    // reset the relative-path open() prefix so it can't leak from one app
+    // (e.g. Wolf3D's /roms/homebrew/) into the next launch.
+    extern const char *gw_fs_relpath_prefix;
+    gw_fs_relpath_prefix = NULL;
     // some pointers were freed, set them to null
     rg_reset_logo_buffers();
 

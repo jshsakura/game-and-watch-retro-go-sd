@@ -64,37 +64,36 @@ def render_wordmark(text, height):
     return pad_width_to_8(to_1bit(crop, 110))
 
 
-def render_stein(w, h):
-    """Chunky beer stein, filled silhouette with negative-space details.
-    Designed to read at ~48x32 in a single colour."""
-    W, H = w * SS, h * SS
-    im = Image.new("L", (W, H), 0)
+def render_pint(w, h, tilt_deg=20):
+    """Filled pint glass with a foamy head + flying droplets, tilted `tilt_deg`
+    to the left. Filled silhouette reads far better than line-art at ~48x32."""
+    S = 360
+    im = Image.new("L", (S, S), 0)
     d = ImageDraw.Draw(im)
-    # body (the glass + beer)
-    bx0, bx1 = int(W * 0.12), int(W * 0.60)
-    by0, by1 = int(H * 0.34), int(H * 0.93)
-    d.rounded_rectangle([bx0, by0, bx1, by1], radius=int(H * 0.10), fill=255)
-    # foam dome on top, slightly overhanging the rim
-    fy_top = int(H * 0.07)
-    d.pieslice([bx0 - int(W * 0.04), fy_top, bx1 + int(W * 0.04), int(H * 0.50)], 180, 360, fill=255)
-    d.rectangle([bx0 - int(W * 0.04), int(H * 0.28), bx1 + int(W * 0.04), int(H * 0.36)], fill=255)
-    # thin gap separating foam from beer (negative space => reads as foam line)
-    d.rectangle([bx0, by0 - int(H * 0.05), bx1, by0 - int(H * 0.015)], fill=0)
-    # thick C-handle on the right with a negative hole
-    hx0, hx1 = bx1 - int(W * 0.02), int(W * 0.93)
-    hy0, hy1 = int(H * 0.45), int(H * 0.80)
-    d.rounded_rectangle([hx0, hy0, hx1, hy1], radius=int(H * 0.14), fill=255)
-    d.rounded_rectangle(
-        [hx0 + int(W * 0.085), hy0 + int(H * 0.12), hx1 - int(W * 0.05), hy1 - int(H * 0.12)],
-        radius=int(H * 0.08), fill=0,
-    )
-    # two rising foam bubbles (filled) above the dome for charm
-    for cx, cy, r in [(0.30, 0.05, 0.045), (0.50, 0.02, 0.035)]:
-        cxx, cyy, rr = int(W * cx), int(H * cy), int(H * r)
-        d.ellipse([cxx - rr, cyy - rr, cxx + rr, cyy + rr], fill=255)
-    # vertical shine stripe on the glass (negative)
-    sx = int(W * 0.22)
-    d.rectangle([sx, by0 + int(H * 0.12), sx + max(SS, int(W * 0.035)), by1 - int(H * 0.08)], fill=0)
+    cx = S // 2
+    top_y, bot_y = int(S * 0.40), int(S * 0.88)
+    top_hw, bot_hw = int(S * 0.185), int(S * 0.15)
+    # glass body, filled tapered
+    d.polygon([(cx - top_hw, top_y), (cx + top_hw, top_y),
+               (cx + bot_hw, bot_y), (cx - bot_hw, bot_y)], fill=255)
+    # foam head, filled, overflowing (wider than the rim) with a bumpy top
+    fhw = top_hw + int(S * 0.055)
+    fy0, fy1 = int(S * 0.27), top_y + int(S * 0.02)
+    d.rounded_rectangle([cx - fhw, fy0, cx + fhw, fy1], radius=int(S * 0.055), fill=255)
+    for k in (-0.78, -0.3, 0.2, 0.68):
+        bx, r = cx + int(fhw * k), int(S * 0.062)
+        d.ellipse([bx - r, fy0 - r, bx + r, fy0 + r], fill=255)
+    # negative beer line under the foam + bubbles, for a touch of detail
+    d.line([(cx - top_hw + int(S*0.02), top_y + int(S*0.07)),
+            (cx + top_hw - int(S*0.02), top_y + int(S*0.07))], fill=0, width=int(S*0.013))
+    for bx, by, r in [(0.47, 0.63, 0.022), (0.545, 0.72, 0.017)]:
+        rr = int(S * r)
+        d.ellipse([int(S*bx)-rr, int(S*by)-rr, int(S*bx)+rr, int(S*by)+rr], fill=0)
+    # flying foam droplets above the head
+    for bx, by, r in [(0.30, 0.15, 0.024), (0.71, 0.12, 0.026), (0.81, 0.21, 0.017)]:
+        rr = int(S * r)
+        d.ellipse([int(S*bx)-rr, int(S*by)-rr, int(S*bx)+rr, int(S*by)+rr], fill=255)
+    im = im.rotate(tilt_deg, resample=Image.BICUBIC, expand=False)   # CCW => top tilts left
     return pad_width_to_8(to_1bit(im.resize((w, h), Image.LANCZOS), 110))
 
 
@@ -102,7 +101,7 @@ if __name__ == "__main__":
     import sys
 
     word = render_wordmark("Homebrew", 24)
-    stein = render_stein(48, 32)
+    stein = render_pint(48, 32)
     # also dump PNG previews for visual check
     if "--png" in sys.argv:
         word.resize((word.width * 3, word.height * 3)).save("/tmp/hb_word.png")

@@ -28,6 +28,13 @@
 extern void wl_main(void);
 extern void INL_KeyService(int data);   /* PS/2 set-2 byte stream */
 
+/* Firmware hook (syscalls.c): prefix bare-filename opens with our data dir so
+ * the engine's fopen("vswap.WL1") etc. resolve to /roms/homebrew/ (same place
+ * as DOOM1.WAD; the .WL1 files don't clutter the Homebrew tab since it lists
+ * only .bin, and there is no extra sub-folder). */
+extern const char *gw_fs_relpath_prefix;
+#define WOLF_DATA_DIR "/roms/homebrew/"
+
 /* Wolf3D screen is 320x200; letterbox into the 320x240 LCD. */
 #define WOLF_W 320
 #define WOLF_H 200
@@ -189,6 +196,7 @@ int app_main_wolf3d(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     /* Runs the engine's own loop forever (title -> menu -> game). Frame present,
      * input and the pause menu are driven from gw_wolf_present each frame. */
+    gw_fs_relpath_prefix = WOLF_DATA_DIR;   /* resolve bare "vswap.WL1" -> /roms/homebrew/ */
     wl_main();
     return 0;
 }
