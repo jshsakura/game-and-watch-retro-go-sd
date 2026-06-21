@@ -68,6 +68,8 @@ enum {
     RG_LOGO_PAD_NGP,
     RG_LOGO_HEADER_WSWAN,
     RG_LOGO_PAD_WSWAN,
+    // Homebrew beer-stein tab icon (appended last to not shift existing enum values)
+    RG_LOGO_PAD_HOMEBREW,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
@@ -132,6 +134,7 @@ extern const retro_logo_image header_ngp;
 extern const retro_logo_image pad_ngp;
 extern const retro_logo_image header_wswan;
 extern const retro_logo_image pad_wswan;
+extern const retro_logo_image pad_homebrew;
 
 
 extern const unsigned char IMG_SPEAKER[];

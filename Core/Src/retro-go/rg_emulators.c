@@ -32,6 +32,7 @@
 #include "main_celeste.h"
 #include "main_music.h"
 #include "main_video.h"
+#include "doom/main_doom.h"
 #include "main_pico8.h"
 #include "main_tama.h"
 #include "main_pkmini.h"
@@ -1254,6 +1255,10 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             memset(&_OVERLAY_MUSIC_BSS_START, 0x0, (size_t)&_OVERLAY_MUSIC_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_MUSIC_SIZE);
             app_main_video(load_state, start_paused, save_slot);
+        } else if (strcmp(newfile->name,"Doom") == 0) {
+            memset(&_OVERLAY_DOOM_BSS_START, 0x0, (size_t)&_OVERLAY_DOOM_BSS_SIZE);
+            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_DOOM_SIZE);
+            app_main_doom(load_state, start_paused, save_slot);
         }
       }
     } else if(strcmp(system_name, "Tamagotchi") == 0) {
@@ -1384,7 +1389,7 @@ void emulators_init()
 //    add_emulator("Philips Vectrex", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA); // TODO : change graphics
     add_emulator("Tamagotchi", "tama", "b", RG_LOGO_PAD_TAMA, RG_LOGO_HEADER_TAMA, NO_GAME_DATA);
     add_emulator("Pokemon Mini", "mini", "min", RG_LOGO_PAD_PKMINI, RG_LOGO_HEADER_PKMINI, NO_GAME_DATA);
-    add_emulator("Homebrew", "homebrew", "bin", RG_LOGO_EMPTY, RG_LOGO_HEADER_HOMEBREW, NO_GAME_DATA);
+    add_emulator("Homebrew", "homebrew", "bin", RG_LOGO_PAD_HOMEBREW, RG_LOGO_HEADER_HOMEBREW, NO_GAME_DATA);
     /* PICO-8: carts (.p8 / .p8.png) live under /roms/pico8/. The engine
      * itself (pico8.bin) is a separately-distributed overlay loaded at
      * runtime; see the stub in Core/Src/porting/pico8/main_pico8.c. */

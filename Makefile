@@ -782,6 +782,93 @@ Core/Src/porting/video/video_ui.c \
 Core/Src/porting/video/main_video.c \
 retro-go-stm32/components/lupng/miniz.c
 
+# DOOM (doomgeneric) homebrew overlay. Canonical core file set from
+# external/doomgeneric/doomgeneric/Makefile (SRC_DOOM), with the platform
+# backend (doomgeneric_xlib.c) replaced by our DG_ glue (main_doom.c).
+DOOMGENERIC_DIR = external/doomgeneric/doomgeneric
+DOOM_C_SOURCES = \
+Core/Src/porting/doom/main_doom.c \
+$(DOOMGENERIC_DIR)/dummy.c \
+$(DOOMGENERIC_DIR)/am_map.c \
+$(DOOMGENERIC_DIR)/doomdef.c \
+$(DOOMGENERIC_DIR)/doomstat.c \
+$(DOOMGENERIC_DIR)/dstrings.c \
+$(DOOMGENERIC_DIR)/d_event.c \
+$(DOOMGENERIC_DIR)/d_items.c \
+$(DOOMGENERIC_DIR)/d_iwad.c \
+$(DOOMGENERIC_DIR)/d_loop.c \
+$(DOOMGENERIC_DIR)/d_main.c \
+$(DOOMGENERIC_DIR)/d_mode.c \
+$(DOOMGENERIC_DIR)/d_net.c \
+$(DOOMGENERIC_DIR)/f_finale.c \
+$(DOOMGENERIC_DIR)/f_wipe.c \
+$(DOOMGENERIC_DIR)/g_game.c \
+$(DOOMGENERIC_DIR)/hu_lib.c \
+$(DOOMGENERIC_DIR)/hu_stuff.c \
+$(DOOMGENERIC_DIR)/info.c \
+$(DOOMGENERIC_DIR)/i_cdmus.c \
+$(DOOMGENERIC_DIR)/i_endoom.c \
+$(DOOMGENERIC_DIR)/i_joystick.c \
+$(DOOMGENERIC_DIR)/i_scale.c \
+$(DOOMGENERIC_DIR)/i_sound.c \
+$(DOOMGENERIC_DIR)/i_system.c \
+$(DOOMGENERIC_DIR)/i_timer.c \
+$(DOOMGENERIC_DIR)/memio.c \
+$(DOOMGENERIC_DIR)/m_argv.c \
+$(DOOMGENERIC_DIR)/m_bbox.c \
+$(DOOMGENERIC_DIR)/m_cheat.c \
+$(DOOMGENERIC_DIR)/m_config.c \
+$(DOOMGENERIC_DIR)/m_controls.c \
+$(DOOMGENERIC_DIR)/m_fixed.c \
+$(DOOMGENERIC_DIR)/m_menu.c \
+$(DOOMGENERIC_DIR)/m_misc.c \
+$(DOOMGENERIC_DIR)/m_random.c \
+$(DOOMGENERIC_DIR)/p_ceilng.c \
+$(DOOMGENERIC_DIR)/p_doors.c \
+$(DOOMGENERIC_DIR)/p_enemy.c \
+$(DOOMGENERIC_DIR)/p_floor.c \
+$(DOOMGENERIC_DIR)/p_inter.c \
+$(DOOMGENERIC_DIR)/p_lights.c \
+$(DOOMGENERIC_DIR)/p_map.c \
+$(DOOMGENERIC_DIR)/p_maputl.c \
+$(DOOMGENERIC_DIR)/p_mobj.c \
+$(DOOMGENERIC_DIR)/p_plats.c \
+$(DOOMGENERIC_DIR)/p_pspr.c \
+$(DOOMGENERIC_DIR)/p_saveg.c \
+$(DOOMGENERIC_DIR)/p_setup.c \
+$(DOOMGENERIC_DIR)/p_sight.c \
+$(DOOMGENERIC_DIR)/p_spec.c \
+$(DOOMGENERIC_DIR)/p_switch.c \
+$(DOOMGENERIC_DIR)/p_telept.c \
+$(DOOMGENERIC_DIR)/p_tick.c \
+$(DOOMGENERIC_DIR)/p_user.c \
+$(DOOMGENERIC_DIR)/r_bsp.c \
+$(DOOMGENERIC_DIR)/r_data.c \
+$(DOOMGENERIC_DIR)/r_draw.c \
+$(DOOMGENERIC_DIR)/r_main.c \
+$(DOOMGENERIC_DIR)/r_plane.c \
+$(DOOMGENERIC_DIR)/r_segs.c \
+$(DOOMGENERIC_DIR)/r_sky.c \
+$(DOOMGENERIC_DIR)/r_things.c \
+$(DOOMGENERIC_DIR)/sha1.c \
+$(DOOMGENERIC_DIR)/sounds.c \
+$(DOOMGENERIC_DIR)/statdump.c \
+$(DOOMGENERIC_DIR)/st_lib.c \
+$(DOOMGENERIC_DIR)/st_stuff.c \
+$(DOOMGENERIC_DIR)/s_sound.c \
+$(DOOMGENERIC_DIR)/tables.c \
+$(DOOMGENERIC_DIR)/v_video.c \
+$(DOOMGENERIC_DIR)/wi_stuff.c \
+$(DOOMGENERIC_DIR)/w_checksum.c \
+$(DOOMGENERIC_DIR)/w_file.c \
+$(DOOMGENERIC_DIR)/w_main.c \
+$(DOOMGENERIC_DIR)/w_wad.c \
+$(DOOMGENERIC_DIR)/z_zone.c \
+$(DOOMGENERIC_DIR)/w_file_stdc.c \
+$(DOOMGENERIC_DIR)/i_input.c \
+$(DOOMGENERIC_DIR)/i_video.c \
+$(DOOMGENERIC_DIR)/doomgeneric.c
+
 # PICO-8 stub only — the engine is distributed separately as binary files
 # (pico8.bin, pico8.ro, pico8_itcm.bin) placed on the SD card under /cores/.
 # The stub is built as pico8_stub.bin; rg_emulators.c loads pico8.bin first
@@ -1078,6 +1165,18 @@ MUSIC_C_INCLUDES += \
 -ICore/Inc/porting/video \
 -ICore/Src/porting/lib \
 -Iretro-go-stm32/components/lupng \
+-Iretro-go-stm32/components/odroid \
+-I./
+
+# DOOM: internal render res 320x200; glue + doomgeneric headers.
+DOOM_C_INCLUDES += \
+-DDOOMGENERIC_RESX=320 \
+-DDOOMGENERIC_RESY=200 \
+-ICore/Inc \
+-ICore/Inc/retro-go \
+-ICore/Inc/porting \
+-ICore/Inc/porting/doom \
+-I$(DOOMGENERIC_DIR) \
 -Iretro-go-stm32/components/odroid \
 -I./
 
