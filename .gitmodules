@@ -73,3 +73,6 @@
 [submodule "external/doomgeneric"]
 	path = external/doomgeneric
 	url = https://github.com/ozkl/doomgeneric
+[submodule "external/wolf3d-stm32"]
+	path = external/wolf3d-stm32
+	url = https://github.com/autobalance/Wolf3D-STM32

@@ -700,6 +700,29 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_DOOM_BSS_SIZE = SIZEOF(.overlay_doom_bss);
 
+  /* Wolfenstein 3D homebrew overlay. */
+  .overlay_wolf3d __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_wolf3d_start__ = .;
+    build/wolf3d/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_WOLF3D_LOAD_END = .;
+  } AT> EXTFLASH
+  _OVERLAY_WOLF3D_LOAD_START = LOADADDR(.overlay_wolf3d);
+  _OVERLAY_WOLF3D_SIZE = SIZEOF(.overlay_wolf3d);
+
+  .overlay_wolf3d_bss _OVERLAY_WOLF3D_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_WOLF3D_BSS_START = .;
+    build/wolf3d/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/wolf3d/*.o (COMMON)
+    __ram_emu_wolf3d_end__ = .;
+    _OVERLAY_WOLF3D_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_WOLF3D_BSS_END) < __RAM_EMU_END__, "Error: WOLF3D BSS overflow");
+  }
+  _OVERLAY_WOLF3D_BSS_SIZE = SIZEOF(.overlay_wolf3d_bss);
+
   /* PICO-8 stub overlay → RAM, placed at the LOW end of the LCD bonus
      area. Same VMA as the runtime-loaded pico8.bin so engine RAM refs
      resolve. In SD_CARD=0 builds the SD-built pico8.bin/.ro/_itcm.bin
