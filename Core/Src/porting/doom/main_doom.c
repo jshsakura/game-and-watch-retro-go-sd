@@ -16,15 +16,23 @@
 #include "gw_linker.h"
 #include "gw_buttons.h"
 #include "gw_malloc.h"
+#include "stm32h7xx_hal.h"
 #include "common.h"
 #include "rom_manager.h"
 #include "appid.h"
 
 #include "doom/main_doom.h"
 
-/* doomgeneric core (external/doomgeneric/doomgeneric) */
-#include "doomgeneric.h"
+/* doomgeneric core (external/doomgeneric/doomgeneric). We do NOT include
+ * doomgeneric.h here because it typedefs pixel_t as uint32_t, which clashes
+ * with the firmware's pixel_t (gw_lcd.h, uint8/uint16). Declare the few
+ * symbols we need with explicit types instead. DOOMGENERIC_RESX/RESY come
+ * from -D flags in the Makefile. */
 #include "doomkeys.h"
+
+extern uint32_t *DG_ScreenBuffer;   /* ARGB8888, DOOMGENERIC_RESX x RESY */
+void doomgeneric_Create(int argc, char **argv);
+void doomgeneric_Tick(void);
 
 /* DOOM internal native savegame (g_game.c) — used for "continue"/savestate. */
 extern void G_SaveGame(int slot, const char *description);
@@ -95,7 +103,7 @@ static inline uint16_t argb8888_to_rgb565(uint32_t p)
 void DG_DrawFrame(void)
 {
     uint16_t *dst = lcd_get_active_buffer();
-    const pixel_t *src = DG_ScreenBuffer;
+    const uint32_t *src = DG_ScreenBuffer;
 
     for (int y = 0; y < DOOMGENERIC_RESY; y++) {
         uint16_t *row = dst + (size_t)(y + DOOM_FB_Y_OFFSET) * ODROID_SCREEN_WIDTH + DOOM_FB_X_OFFSET;
@@ -130,7 +138,7 @@ void DG_SetWindowTitle(const char *title)
 /* Savestate / resume — route retro-go save/load to DOOM's native      */
 /* savegame so "continue" restores the in-progress game.               */
 /* ------------------------------------------------------------------ */
-static bool doom_system_SaveState(char *savePathName)
+static bool doom_system_SaveState(const char *savePathName)
 {
     (void)savePathName;
     odroid_audio_mute(true);
@@ -141,7 +149,7 @@ static bool doom_system_SaveState(char *savePathName)
     return true;
 }
 
-static bool doom_system_LoadState(char *savePathName)
+static bool doom_system_LoadState(const char *savePathName)
 {
     (void)savePathName;
     odroid_audio_mute(true);
