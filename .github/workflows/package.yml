@@ -8,6 +8,7 @@ on:
       - experimental-testbed
     tags:
       - 'v*'
+      - 'testbed-full-*'
   pull_request:
     branches:
       - main
@@ -99,3 +100,14 @@ jobs:
           asset_path: release/retro-go_update.bin
           asset_name: retro-go_update.bin
           asset_content_type: application/octet-stream
+
+      # 5. SD content archive (cores + /roms/homebrew/*.bin incl. Doom.bin, Wolf3D.bin)
+      - name: Upload gw_update.tar to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: release/gw_update.tar
+          asset_name: gw_update.tar
+          asset_content_type: application/x-tar
