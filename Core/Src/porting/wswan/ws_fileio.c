@@ -637,6 +637,11 @@ uint32_t WsLoadStateFromFile(FILE *fp)
           WriteIO(i, IO[i]);
       printf("WSLD: writeio 80-90 done\n");
       nec_set_reg(NEC_CS, _saved_cs); }
+    printf("WSLD: resume CS=%lx IP=%lx SS=%lx SP=%lx DS=%lx ES=%lx PEND=%lx\n",
+           (unsigned long)nec_get_reg(NEC_CS), (unsigned long)nec_get_reg(NEC_IP),
+           (unsigned long)nec_get_reg(NEC_SS), (unsigned long)nec_get_reg(NEC_SP),
+           (unsigned long)nec_get_reg(NEC_DS), (unsigned long)nec_get_reg(NEC_ES),
+           (unsigned long)nec_get_reg(NEC_PENDING));
     printf("WSLD: complete\n");
     return 0;
 }
