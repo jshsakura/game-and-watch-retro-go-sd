@@ -96,6 +96,12 @@ unsigned int g_int_n, g_iret_n;
 unsigned int  g_csip_ring[8];
 unsigned char g_ring_pos;
 unsigned char g_runaway_caught;
+/* Stack snapshot taken AT the moment the runaway is caught (SP still mid-
+ * descent, frames intact) -- the per-frame ws_freeze_check runs too late (after
+ * the stack has fully blown into the zeroed IVT). Repeated return CS:IP pairs
+ * here = the recursive function. */
+unsigned int  g_runaway_sp;
+unsigned char g_runaway_stack[48];
 
 static nec_Regs I;
 
@@ -1001,8 +1007,14 @@ int32_t nec_execute(int32_t cycles)
 			/* Stack runaway: catch EARLY in the descent (SP ~0x600 below the
 			 * normal ~0x1ff0 top) so the ring holds the PUSH/CALL phase of the
 			 * recursion, not the later unwind. */
-			if (I.regs.w[SP] < 0x1A00 && I.sregs[CS] >= 0x100)
+			if (I.regs.w[SP] < 0x1A00 && I.sregs[CS] >= 0x100) {
+				int q;
+				uint32_t sb = ((uint32_t)I.sregs[SS] << 4) + I.regs.w[SP];
 				g_runaway_caught = 1;   /* freeze the ring at the runaway loop */
+				g_runaway_sp = ((unsigned int)I.sregs[SS] << 16) | I.regs.w[SP];
+				for (q = 0; q < 48; q++)
+					g_runaway_stack[q] = (unsigned char)ReadMem(sb + q);
+			}
 		}
 		nec_instruction[FETCHOP]();
 	}

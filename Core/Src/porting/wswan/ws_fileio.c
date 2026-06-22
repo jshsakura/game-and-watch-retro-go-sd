@@ -692,6 +692,16 @@ void ws_freeze_check(void)
                           (v >> 16) & 0xFFFF, v & 0xFFFF);
         }
         printf("WSRING: %s\n", buf);
+        /* Stack snapshot captured AT the runaway (frames intact). */
+        {
+            extern unsigned int  g_runaway_sp;
+            extern unsigned char g_runaway_stack[48];
+            n = 0;
+            for (k = 0; k < 40; k++)
+                n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_runaway_stack[k]);
+            printf("WSRSTK: SS:SP=%04X:%04X %s\n",
+                   (g_runaway_sp >> 16) & 0xFFFF, g_runaway_sp & 0xFFFF, buf);
+        }
         /* Wide ROM windows around the runaway cycle's two functions, dumped
          * BACKWARD 0x18 from each ring anchor to capture the function body that
          * decides to recurse (the conditional branch + what it reads), not just
