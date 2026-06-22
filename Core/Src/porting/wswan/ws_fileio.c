@@ -586,6 +586,11 @@ uint32_t WsSaveStateToFile(FILE *fp)
     return 0;
 }
 
+/* Resume-time stack/BP-chain snapshot, surfaced in the freeze panel (logbuf
+ * truncates the early WSLD lines off the SD file). */
+unsigned char g_resume_stk[64];
+unsigned int  g_resume_base;
+
 uint32_t WsLoadStateFromFile(FILE *fp)
 {
     uint32_t i;
@@ -647,13 +652,19 @@ uint32_t WsLoadStateFromFile(FILE *fp)
      * here, the saved state itself has a broken chain (save-side problem); if it
      * is a valid outer-frame pointer now but 0 by the crash, something overwrites
      * it during the first frames (runtime corruption). */
-    { uint16_t ss = (uint16_t)nec_get_reg(NEC_SS);
+    { extern unsigned char g_resume_stk[64];
+      extern unsigned int  g_resume_base;
+      uint16_t ss = (uint16_t)nec_get_reg(NEC_SS);
       uint16_t bp = (uint16_t)nec_get_reg(NEC_BP);
-      uint32_t base = ((uint32_t)ss << 4) + (uint16_t)(bp - 0x12);
+      uint16_t lo = (uint16_t)(bp - 0x12);
+      uint32_t base = ((uint32_t)ss << 4) + lo;
       char b2[140]; int q, m = 0;
-      for (q = 0; q < 64; q++)
-          m += snprintf(b2 + m, sizeof(b2) - m, "%02X", ReadMem(base + q));
-      printf("WSLD: stk@BP-12 (%04X:%04X)=%s\n", ss, (uint16_t)(bp - 0x12), b2); }
+      g_resume_base = ((unsigned int)ss << 16) | lo;
+      for (q = 0; q < 64; q++) {
+          g_resume_stk[q] = (unsigned char)ReadMem(base + q);
+          m += snprintf(b2 + m, sizeof(b2) - m, "%02X", g_resume_stk[q]);
+      }
+      printf("WSLD: stk@BP-12 (%04X:%04X)=%s\n", ss, lo, b2); }
     printf("WSLD: complete\n");
     return 0;
 }
@@ -798,6 +809,15 @@ void ws_freeze_check(void)
           n = 0; for (i = 0; i < 16; i++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_bpz_stk[i]);
           printf("WSBPZ: stk@SP=%s\n", buf);
+          /* Resume-time BP-chain (captured at load) -- in the panel so it can't
+           * be truncated off the SD file. base = BP-0x12, so [BP]=[0x1FFA] is at
+           * offset 0x12 (bytes 18-19). 0 there => save-side broken chain. */
+          { extern unsigned char g_resume_stk[64];
+            extern unsigned int  g_resume_base;
+            n = 0; for (i = 0; i < 64; i++)
+                n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_resume_stk[i]);
+            printf("WSRSM: stk@%04X:%04X(+12=[BP])=%s\n",
+                   (g_resume_base >> 16) & 0xFFFF, g_resume_base & 0xFFFF, buf); }
           { extern unsigned int  g_bpz_ret;
             extern unsigned char g_bpz_retrom[32];
             n = 0; for (i = 0; i < 32; i++)
