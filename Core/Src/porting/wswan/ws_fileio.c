@@ -715,9 +715,11 @@ void ws_freeze_check(void)
         { extern unsigned int g_int_n, g_iret_n;
           printf("WSBAD: CS:IP=%04X:%04X SS:SP=%04X:%04X INT=%u IRET=%u REPC=%u\n",
                  cs, ip, ss, sp, g_int_n, g_iret_n, g_repc_n); }
-        /* stack words at SP (pushed return CS:IP / flags if we INT'd or CALLed) */
+        /* Stack from SP upward = the recursion frames pushed so far. Caught
+         * early in the descent, repeated return CS:IP pairs here reveal the
+         * recursive function. 40 bytes = ~10 words ~= 5 far-call frames. */
         n = 0;
-        for (i = 0; i < 16; i++)
+        for (i = 0; i < 40; i++)
             n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(sbase + i));
         printf("WSBAD: stack@SP=%s\n", buf);
         /* IRQ state + IVT base region (vectors the WS IRQs index into) */

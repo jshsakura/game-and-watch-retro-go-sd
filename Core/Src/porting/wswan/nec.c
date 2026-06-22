@@ -998,8 +998,10 @@ int32_t nec_execute(int32_t cycles)
 		if (!g_runaway_caught) {
 			g_csip_ring[g_ring_pos++ & 7] =
 				((unsigned int)I.sregs[CS] << 16) | I.ip;
-			/* Stack runaway: SP far below its normal top, still in game code. */
-			if (I.regs.w[SP] < 0x0400 && I.sregs[CS] >= 0x100)
+			/* Stack runaway: catch EARLY in the descent (SP ~0x600 below the
+			 * normal ~0x1ff0 top) so the ring holds the PUSH/CALL phase of the
+			 * recursion, not the later unwind. */
+			if (I.regs.w[SP] < 0x1A00 && I.sregs[CS] >= 0x100)
 				g_runaway_caught = 1;   /* freeze the ring at the runaway loop */
 		}
 		nec_instruction[FETCHOP]();
