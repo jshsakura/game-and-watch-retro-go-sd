@@ -892,6 +892,10 @@ OP( 0x65, i_repc ) {
 	uint32_t next = FETCHOP;
 	uint16_t c = I.regs.w[CW];
 	g_repc_n++;
+	if (g_repc_n == 1)
+		printf("REPC1: @%04X:%04X next=%02X CW=%04X SI=%04X DI=%04X CF=%d\n",
+		       (unsigned)I.sregs[CS], (unsigned)((I.ip-1)&0xFFFF), (unsigned)next,
+		       (unsigned)c, (unsigned)I.regs.w[IX], (unsigned)I.regs.w[IY], CF?1:0);
 	switch (next) {
 		case 0x26: seg_prefix=TRUE; prefix_base=I.sregs[ES]<<4; next = FETCHOP; CLK(2); break;
 		case 0x2e: seg_prefix=TRUE; prefix_base=I.sregs[CS]<<4; next = FETCHOP; CLK(2); break;
@@ -915,6 +919,10 @@ OP( 0x65, i_repc ) {
 		case 0xaf: CLK(2); if (c) do { i_scasw(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
 		default:   nec_instruction[next]();
 	}
+	if (g_repc_n == 1)
+		printf("REPC1: after CW=%04X SI=%04X DI=%04X CF=%d ZF=%d SP=%04X\n",
+		       (unsigned)I.regs.w[CW], (unsigned)I.regs.w[IX], (unsigned)I.regs.w[IY],
+		       CF?1:0, ZF?1:0, (unsigned)I.regs.w[SP]);
 	seg_prefix=FALSE;
 }
 
