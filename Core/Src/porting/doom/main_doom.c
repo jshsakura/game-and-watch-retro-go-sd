@@ -101,8 +101,8 @@ int DG_GetKey(int *pressed, unsigned char *doomKey)
 /* a RAM_EMU fallback so nothing breaks if the pool is exhausted/absent.    */
 /* ------------------------------------------------------------------ */
 static uint8_t *doom_bonus_base = NULL;
-static size_t   doom_bonus_size = 0;
-static size_t   doom_bonus_used = 0;
+size_t          doom_bonus_size = 0;   /* non-static: read by I_Error MEM report */
+size_t          doom_bonus_used = 0;
 
 void *doom_bonus_alloc(size_t n)
 {

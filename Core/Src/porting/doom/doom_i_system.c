@@ -478,8 +478,17 @@ void I_Error (char *error, ...)
     {
         extern void lcd_setup_framebuffers(int mode);  /* 0 = LCD_MODE_RGB565 */
         extern void gw_debug_show_log(const char *banner);
+        extern int Z_FreeMemory(void);
+        extern unsigned int Z_ZoneSize(void);
+        extern size_t doom_bonus_used, doom_bonus_size;
         char banner[80];
         lcd_setup_framebuffers(0);
+        /* Print the memory picture so the panel shows WHY (zone full vs a
+         * single oversized alloc). These land as the newest log lines. */
+        printf("MEM: zone=%uK free=%dK bonus=%uK/%uK\n",
+               Z_ZoneSize() / 1024, Z_FreeMemory() / 1024,
+               (unsigned)(doom_bonus_used / 1024),
+               (unsigned)(doom_bonus_size / 1024));
         M_snprintf(banner, sizeof(banner), "DOOM I_Error: %s", msgbuf);
         gw_debug_show_log(banner);
     }
