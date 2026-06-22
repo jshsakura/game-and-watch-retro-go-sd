@@ -799,9 +799,16 @@ static void i_invalid(void)
  * nec.h, pre-ported to this file's types -- reused verbatim, no hand-rolled
  * BCD math. EXT/INS/BRKEM are stubbed (consume their operand byte, no-op) --
  * MAME stubs them too and WS games don't use them. */
+/* GNW diagnostic counters: which V30 0x0F sub-opcodes (and REPC/REPNC) a game
+ * actually executes. Dumped to the on-screen panel by ws_v30_report() so a
+ * mis-implemented op can be pinpointed. Non-static -> read from ws_fileio.c. */
+unsigned short g_v30op[256];
+unsigned int   g_repc_n, g_repnc_n;
+
 OP( 0x0f, i_pre_nec ) {
-	uint32_t ModRM, tmp, tmp2;
-	switch (FETCH) {
+	uint32_t ModRM, tmp, tmp2, sub = FETCH;
+	g_v30op[sub & 0xFF]++;
+	switch (sub) {
 		/* bit ops, bit index in CL */
 		case 0x10: BITOP_uint8_t;  CLK(3); tmp2 = I.regs.b[CL] & 0x7; I.ZeroVal = (tmp & (1<<tmp2)) ? 1 : 0; I.CarryVal = I.OverVal = 0; break; /* TEST1 b,CL */
 		case 0x11: BITOP_uint16_t; CLK(3); tmp2 = I.regs.b[CL] & 0xf; I.ZeroVal = (tmp & (1<<tmp2)) ? 1 : 0; I.CarryVal = I.OverVal = 0; break; /* TEST1 w,CL */
@@ -848,6 +855,7 @@ OP( 0x0f, i_pre_nec ) {
 OP( 0x64, i_repnc ) {
 	uint32_t next = FETCHOP;
 	uint16_t c = I.regs.w[CW];
+	g_repnc_n++;
 	switch (next) {
 		case 0x26: seg_prefix=TRUE; prefix_base=I.sregs[ES]<<4; next = FETCHOP; CLK(2); break;
 		case 0x2e: seg_prefix=TRUE; prefix_base=I.sregs[CS]<<4; next = FETCHOP; CLK(2); break;
@@ -878,6 +886,7 @@ OP( 0x64, i_repnc ) {
 OP( 0x65, i_repc ) {
 	uint32_t next = FETCHOP;
 	uint16_t c = I.regs.w[CW];
+	g_repc_n++;
 	switch (next) {
 		case 0x26: seg_prefix=TRUE; prefix_base=I.sregs[ES]<<4; next = FETCHOP; CLK(2); break;
 		case 0x2e: seg_prefix=TRUE; prefix_base=I.sregs[CS]<<4; next = FETCHOP; CLK(2); break;

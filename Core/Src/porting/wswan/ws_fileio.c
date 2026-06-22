@@ -646,58 +646,48 @@ uint32_t WsLoadStateFromFile(FILE *fp)
     return 0;
 }
 
-/* GNW freeze diagnostic. Called once per emulated frame from main_wswan.c.
- * One Piece (WSC) plays fine from a cold boot but its savestate RESUME leaves
- * the CPU stuck in a tight poll loop (the screen renders the saved HUD then
- * freezes -- the game is waiting on some emulator-internal state the savestate
- * doesn't restore: a timer counter, sound/voice DMA, etc.). When the CPU's
- * CS:IP stays inside a small window for ~2.5s we declare a freeze and dump, to
- * the on-screen debug panel, the 16 instruction bytes at CS:IP (so the polled
- * I/O port can be decoded by hand) plus the DMA / sound-DMA / IRQ registers.
- * One-shot per launch. */
+/* GNW diagnostic. Called once per emulated frame from main_wswan.c. One Piece
+ * (WSC) plays fine from a cold boot but its savestate RESUME runs the game with
+ * corrupted output (graphics degrade) -- it is NOT frozen, it's executing, so a
+ * freeze detector never fires. The likely cause is a mis-implemented V30 0x0F
+ * sub-opcode (the BCD ADD4S/SUB4S/CMP4S macros were never exercised before).
+ * So instead of waiting for a freeze, ~3s after launch we UNCONDITIONALLY pop
+ * the on-screen panel and dump which 0x0F sub-opcodes (and REPC/REPNC) the game
+ * actually executed, plus CS:IP + the bytes there. That pins down exactly which
+ * op to re-verify against MAME. One-shot per launch. */
 void ws_freeze_check(void)
 {
     extern void gw_debug_show_log(const char *banner);
-    static uint16_t f_cs = 0xFFFF, f_ip_lo = 0, f_ip_hi = 0;
-    static int f_count = 0, f_shown = 0;
+    extern unsigned short g_v30op[256];
+    extern unsigned int   g_repc_n, g_repnc_n;
+    static int frame = 0, shown = 0;
     uint16_t cs, ip;
-    uint32_t base;
     char buf[96];
     int i, n;
 
-    if (f_shown) return;
+    if (shown) return;
+    if (++frame < 180) return;   /* ~3s after resume, regardless of state */
+    shown = 1;
+
+    /* List the 0x0F sub-opcodes the game used, with counts. */
+    n = 0;
+    for (i = 0; i < 256; i++) {
+        if (g_v30op[i] && n < (int)sizeof(buf) - 12)
+            n += snprintf(buf + n, sizeof(buf) - n, "%02X:%u ", i, g_v30op[i]);
+    }
+    if (n == 0) snprintf(buf, sizeof(buf), "(none)");
+    printf("WSV30: 0F sub-ops used: %s\n", buf);
+    printf("WSV30: REPC=%u REPNC=%u\n", g_repc_n, g_repnc_n);
 
     cs = (uint16_t)nec_get_reg(NEC_CS);
     ip = (uint16_t)nec_get_reg(NEC_IP);
-
-    if (cs == f_cs && ip >= f_ip_lo && ip <= f_ip_hi) {
-        if (++f_count < 120) return;   /* ~2s within the same ~1KB window */
-    } else {
-        f_cs = cs;
-        f_ip_lo = (ip > 512) ? (uint16_t)(ip - 512) : 0;
-        f_ip_hi = (uint16_t)(ip + 512);
-        f_count = 0;
-        return;
-    }
-
-    f_shown = 1;
-    base = ((uint32_t)cs << 4) + ip;
-
     n = 0;
-    for (i = 0; i < 16; i++)
-        n += snprintf(buf + n, sizeof(buf) - n, "%02X ", ReadMem(base + i));
-    printf("WSFRZ: CS:IP=%04X:%04X ops=%s\n", cs, ip, buf);
+    for (i = 0; i < 12; i++)
+        n += snprintf(buf + n, sizeof(buf) - n, "%02X ",
+                      ReadMem(((uint32_t)cs << 4) + ip + i));
+    printf("WSV30: CS:IP=%04X:%04X here=%s\n", cs, ip, buf);
 
-    n = 0;
-    for (i = 0x40; i <= 0x5F; i++)
-        n += snprintf(buf + n, sizeof(buf) - n, "%02X", IO[i]);
-    printf("WSFRZ: IO40-5F=%s\n", buf);   /* DMA(40-47) SDMA(4A-4F) SDMACTL(52) */
-
-    printf("WSFRZ: IRQENA=%02X IRQBSE=%02X PEND=%02lX KEYCTL=%02X SNDMOD=%02X\n",
-           IO[IRQENA], IO[IRQBSE], (unsigned long)nec_get_reg(NEC_PENDING),
-           IO[0xB5], IO[SNDMOD]);
-
-    snprintf(buf, sizeof(buf), "WS FREEZE @ %04X:%04X", cs, ip);
+    snprintf(buf, sizeof(buf), "WS V30 ops report (3s)");
     gw_debug_show_log(buf);
 }
 
