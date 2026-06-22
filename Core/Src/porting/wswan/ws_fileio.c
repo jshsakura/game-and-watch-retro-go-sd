@@ -637,9 +637,10 @@ uint32_t WsLoadStateFromFile(FILE *fp)
           WriteIO(i, IO[i]);
       printf("WSLD: writeio 80-90 done\n");
       nec_set_reg(NEC_CS, _saved_cs); }
-    printf("WSLD: resume CS=%lx IP=%lx SS=%lx SP=%lx DS=%lx ES=%lx PEND=%lx\n",
+    printf("WSLD: resume CS=%lx IP=%lx SS=%lx SP=%lx BP=%lx DS=%lx ES=%lx PEND=%lx\n",
            (unsigned long)nec_get_reg(NEC_CS), (unsigned long)nec_get_reg(NEC_IP),
            (unsigned long)nec_get_reg(NEC_SS), (unsigned long)nec_get_reg(NEC_SP),
+           (unsigned long)nec_get_reg(NEC_BP),
            (unsigned long)nec_get_reg(NEC_DS), (unsigned long)nec_get_reg(NEC_ES),
            (unsigned long)nec_get_reg(NEC_PENDING));
     printf("WSLD: complete\n");
@@ -662,7 +663,7 @@ void ws_freeze_check(void)
     extern unsigned int   g_repc_n, g_repnc_n;
     static int frame = 0, shown = 0;
     uint16_t cs, ip;
-    char buf[96];
+    char buf[260];
     int i, n;
 
     if (shown) return;
@@ -680,18 +681,29 @@ void ws_freeze_check(void)
 
     /* The runaway loop body: last 8 (CS:IP) executed before SP hit 0x0400. */
     {
-        extern unsigned int g_csip_ring[8];
+        extern unsigned int   g_csip_ring[16];
+        extern unsigned short g_sp_ring[16];
+        extern unsigned short g_bp_ring[16];
         extern unsigned char g_ring_pos;
         int k;
-        unsigned int a_old = g_csip_ring[g_ring_pos & 7];
-        unsigned int a_new = g_csip_ring[(g_ring_pos + 7) & 7];
+        unsigned int a_old = g_csip_ring[g_ring_pos & 15];
+        unsigned int a_new = g_csip_ring[(g_ring_pos + 15) & 15];
         n = 0;
-        for (k = 0; k < 8; k++) {
-            unsigned int v = g_csip_ring[(g_ring_pos + k) & 7];
+        for (k = 0; k < 16; k++) {
+            unsigned int v = g_csip_ring[(g_ring_pos + k) & 15];
             n += snprintf(buf + n, sizeof(buf) - n, "%04X:%04X ",
                           (v >> 16) & 0xFFFF, v & 0xFFFF);
         }
         printf("WSRING: %s\n", buf);
+        /* SP/BP trajectory aligned with WSRING -- shows whether SP marched down
+         * gradually (deep recursion) or dropped in one step (a MOV SP,BP with a
+         * corrupt BP). Oldest->newest, same order as WSRING. */
+        n = 0;
+        for (k = 0; k < 16; k++)
+            n += snprintf(buf + n, sizeof(buf) - n, "%04X/%04X ",
+                          g_sp_ring[(g_ring_pos + k) & 15],
+                          g_bp_ring[(g_ring_pos + k) & 15]);
+        printf("WSTRAJ(SP/BP): %s\n", buf);
         /* Stack snapshot captured AT the runaway (frames intact). */
         {
             extern unsigned int  g_runaway_sp;

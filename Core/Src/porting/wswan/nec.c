@@ -93,7 +93,9 @@ unsigned int g_int_n, g_iret_n;
  * 0x0400 (about to trash the IVT) we FREEZE the ring -- it then holds the body
  * of the runaway PUSH/CALL loop, revealing exactly what code is exhausting the
  * stack after a savestate resume. */
-unsigned int  g_csip_ring[8];
+unsigned int   g_csip_ring[16];
+unsigned short g_sp_ring[16];   /* SP at each ring entry */
+unsigned short g_bp_ring[16];   /* BP at each ring entry */
 unsigned char g_ring_pos;
 unsigned char g_runaway_caught;
 /* Stack snapshot taken AT the moment the runaway is caught (SP still mid-
@@ -1002,8 +1004,10 @@ int32_t nec_execute(int32_t cycles)
 	{
 		cs_base = I.sregs[CS] << 4;
 		if (!g_runaway_caught) {
-			g_csip_ring[g_ring_pos++ & 7] =
-				((unsigned int)I.sregs[CS] << 16) | I.ip;
+			unsigned char rp = g_ring_pos++ & 15;
+			g_csip_ring[rp] = ((unsigned int)I.sregs[CS] << 16) | I.ip;
+			g_sp_ring[rp]   = I.regs.w[SP];
+			g_bp_ring[rp]   = I.regs.w[BP];
 			/* Stack runaway: catch EARLY in the descent (SP ~0x600 below the
 			 * normal ~0x1ff0 top) so the ring holds the PUSH/CALL phase of the
 			 * recursion, not the later unwind. */
