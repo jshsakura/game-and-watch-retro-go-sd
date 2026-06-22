@@ -113,7 +113,9 @@ unsigned int   g_bpz_at;   /* CS:IP observed with BP just-zeroed (current) */
 unsigned int   g_bpz_by;   /* CS:IP of the instruction that zeroed BP (prev) */
 unsigned short g_bpz_sp;
 unsigned short g_bp_prev;
+unsigned char  g_bpz_caught;
 unsigned char  g_bpz_rom[24];
+unsigned char  g_bpz_stk[16];   /* stack @SP when BP first hit 0 */
 
 static nec_Regs I;
 
@@ -1030,19 +1032,26 @@ int32_t nec_execute(int32_t cycles)
 					g_runaway_stack[q] = (unsigned char)ReadMem(sb + q);
 			}
 		}
-		/* Track the LAST instruction that drives BP nonzero->0 (the root of the
-		 * MOV SP,BP collapse). Overwrites each time so the dump holds the one
-		 * closest to the crash. */
+		/* LATCH the FIRST instruction that drives BP nonzero->0 (the root of the
+		 * MOV SP,BP collapse), while SP is still healthy -- later ones are the
+		 * post-collapse thrash (SP already wrapped past 0). n counts all. */
 		if (g_bp_prev != 0 && I.regs.w[BP] == 0 && I.sregs[CS] >= 0x100) {
-			unsigned int prev = g_csip_ring[(g_ring_pos - 1) & 15];
-			int q; uint32_t pa = (((prev >> 16) & 0xFFFF) << 4)
-			                     + (unsigned short)((prev & 0xFFFF) - 0x08);
 			g_bpz_n++;
-			g_bpz_at = ((unsigned int)I.sregs[CS] << 16) | I.ip;
-			g_bpz_by = prev;
-			g_bpz_sp = I.regs.w[SP];
-			for (q = 0; q < 24; q++)
-				g_bpz_rom[q] = (unsigned char)ReadMem(pa + q);
+			if (!g_bpz_caught) {
+				unsigned int prev = g_csip_ring[(g_ring_pos - 1) & 15];
+				int q;
+				uint32_t pa = (((prev >> 16) & 0xFFFF) << 4)
+				              + (unsigned short)((prev & 0xFFFF) - 0x08);
+				uint32_t sb = ((uint32_t)I.sregs[SS] << 4) + I.regs.w[SP];
+				g_bpz_caught = 1;
+				g_bpz_at = ((unsigned int)I.sregs[CS] << 16) | I.ip;
+				g_bpz_by = prev;
+				g_bpz_sp = I.regs.w[SP];
+				for (q = 0; q < 24; q++)
+					g_bpz_rom[q] = (unsigned char)ReadMem(pa + q);
+				for (q = 0; q < 16; q++)
+					g_bpz_stk[q] = (unsigned char)ReadMem(sb + q);
+			}
 		}
 		g_bp_prev = I.regs.w[BP];
 		nec_instruction[FETCHOP]();
