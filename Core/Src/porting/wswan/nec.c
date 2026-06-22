@@ -116,6 +116,8 @@ unsigned short g_bp_prev;
 unsigned char  g_bpz_caught;
 unsigned char  g_bpz_rom[24];
 unsigned char  g_bpz_stk[16];   /* stack @SP when BP first hit 0 */
+unsigned int   g_bpz_ret;       /* RET target the resume-frame pops to */
+unsigned char  g_bpz_retrom[32];/* ROM at that target (runs with BP=0) */
 
 static nec_Regs I;
 
@@ -1038,11 +1040,13 @@ int32_t nec_execute(int32_t cycles)
 		if (g_bp_prev != 0 && I.regs.w[BP] == 0 && I.sregs[CS] >= 0x100) {
 			g_bpz_n++;
 			if (!g_bpz_caught) {
-				unsigned int prev = g_csip_ring[(g_ring_pos - 1) & 15];
+				/* current instr = ring[-1]; the one that zeroed BP = ring[-2] */
+				unsigned int prev = g_csip_ring[(g_ring_pos - 2) & 15];
 				int q;
 				uint32_t pa = (((prev >> 16) & 0xFFFF) << 4)
 				              + (unsigned short)((prev & 0xFFFF) - 0x08);
 				uint32_t sb = ((uint32_t)I.sregs[SS] << 4) + I.regs.w[SP];
+				uint16_t rip, rcs; uint32_t rp2;
 				g_bpz_caught = 1;
 				g_bpz_at = ((unsigned int)I.sregs[CS] << 16) | I.ip;
 				g_bpz_by = prev;
@@ -1051,6 +1055,15 @@ int32_t nec_execute(int32_t cycles)
 					g_bpz_rom[q] = (unsigned char)ReadMem(pa + q);
 				for (q = 0; q < 16; q++)
 					g_bpz_stk[q] = (unsigned char)ReadMem(sb + q);
+				/* The RET target the resume-frame pops to (BP=0 carried in):
+				 * dump its ROM -- that code runs with BP=0 and does the fatal
+				 * MOV SP,BP. [SP]=IP, [SP+2]=CS. */
+				rip = g_bpz_stk[0] | (g_bpz_stk[1] << 8);
+				rcs = g_bpz_stk[2] | (g_bpz_stk[3] << 8);
+				rp2 = ((uint32_t)rcs << 4) + rip;
+				g_bpz_ret = ((unsigned int)rcs << 16) | rip;
+				for (q = 0; q < 32; q++)
+					g_bpz_retrom[q] = (unsigned char)ReadMem(rp2 + q);
 			}
 		}
 		g_bp_prev = I.regs.w[BP];

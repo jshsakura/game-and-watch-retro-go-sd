@@ -786,7 +786,13 @@ void ws_freeze_check(void)
                  (g_bpz_at >> 16) & 0xFFFF, g_bpz_at & 0xFFFF, g_bpz_sp, buf);
           n = 0; for (i = 0; i < 16; i++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_bpz_stk[i]);
-          printf("WSBPZ: stk@SP=%s\n", buf); }
+          printf("WSBPZ: stk@SP=%s\n", buf);
+          { extern unsigned int  g_bpz_ret;
+            extern unsigned char g_bpz_retrom[32];
+            n = 0; for (i = 0; i < 32; i++)
+                n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_bpz_retrom[i]);
+            printf("WSBPZ: ret=%04X:%04X rom=%s\n",
+                   (g_bpz_ret >> 16) & 0xFFFF, g_bpz_ret & 0xFFFF, buf); } }
     }
 
     /* Dump the whole captured log to the SD card so the user can read it off
