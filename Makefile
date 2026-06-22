@@ -866,8 +866,8 @@ $(DOOMGENERIC_DIR)/w_wad.c \
 $(DOOMGENERIC_DIR)/z_zone.c \
 $(DOOMGENERIC_DIR)/w_file_stdc.c \
 $(DOOMGENERIC_DIR)/i_input.c \
-$(DOOMGENERIC_DIR)/i_video.c \
-$(DOOMGENERIC_DIR)/doomgeneric.c
+Core/Src/porting/doom/i_video.c \
+Core/Src/porting/doom/doomgeneric.c
 
 # Wolfenstein 3D (autobalance/Wolf3D-STM32 engine). id_vl.c/id_vh.c are NOT
 # compiled from the submodule — vendored+patched copies (wolf_vl.c/wolf_vh.c)

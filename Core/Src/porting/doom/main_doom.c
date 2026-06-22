@@ -30,7 +30,12 @@
  * from -D flags in the Makefile. */
 #include "doomkeys.h"
 
-extern uint32_t *DG_ScreenBuffer;   /* ARGB8888, DOOMGENERIC_RESX x RESY */
+/* DOOM renders to I_VideoBuffer (8bpp paletted, SCREENWIDTH x SCREENHEIGHT =
+ * 320 x 200, allocated in the zone). doom_pal565[] is the live 256-entry
+ * RGB565 colour LUT maintained by I_SetPalette (vendored i_video.c). We blit
+ * straight from these to the LCD, so the 256KB ARGB DG_ScreenBuffer is gone. */
+extern unsigned char *I_VideoBuffer;
+extern uint16_t doom_pal565[256];
 void doomgeneric_Create(int argc, char **argv);
 void doomgeneric_Tick(void);
 
@@ -103,12 +108,15 @@ static inline uint16_t argb8888_to_rgb565(uint32_t p)
 void DG_DrawFrame(void)
 {
     uint16_t *dst = lcd_get_active_buffer();
-    const uint32_t *src = DG_ScreenBuffer;
+    const uint8_t *src = I_VideoBuffer;   /* 8bpp paletted, RESX x RESY */
+
+    if (src == NULL)
+        return;
 
     for (int y = 0; y < DOOMGENERIC_RESY; y++) {
         uint16_t *row = dst + (size_t)(y + DOOM_FB_Y_OFFSET) * ODROID_SCREEN_WIDTH + DOOM_FB_X_OFFSET;
         for (int x = 0; x < DOOMGENERIC_RESX; x++)
-            row[x] = argb8888_to_rgb565(*src++);
+            row[x] = doom_pal565[*src++];
         wdog_refresh();
     }
     lcd_swap();

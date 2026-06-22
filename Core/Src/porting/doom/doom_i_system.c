@@ -145,13 +145,19 @@ byte *I_ZoneBase (int *size)
     (void)p; (void)min_ram; (void)default_ram;
 
     /* G&W: DOOM's MiB-granular AutoAllocMemory can never fit the RAM_EMU overlay
-     * pool (only a few hundred KB free, and DG_ScreenBuffer already took ~256KB).
-     * Size the zone to whatever ram_malloc has left. (malloc here is renamed to
+     * pool. Size the zone to whatever ram_malloc has left, but LEAVE A MARGIN:
+     * not everything DOOM allocates comes from the zone. W_AddFile reallocs the
+     * WAD lumpinfo array (~40-60KB for DOOM1.WAD) via raw realloc -> doom__realloc
+     * -> ram_malloc AFTER the zone is carved out, plus a few smaller raw allocs.
+     * The old 8KB margin starved that ("I_Error: Couldn't realloc lumpinfo").
+     * Now that DG_ScreenBuffer is gone (~256KB freed back to the pool), reserve a
+     * generous 96KB so lumpinfo and friends fit. (malloc here is renamed to
      * doom__malloc -> ram_malloc by doom_redefines.) */
     extern unsigned int ram_get_free_size(void);
+    enum { ZONE_RESERVE = 96 * 1024 };    /* headroom for non-zone raw mallocs */
     int avail = (int)ram_get_free_size();
-    int sz = avail - 8 * 1024;            /* small margin for later mallocs */
-    if (sz < 96 * 1024) sz = 96 * 1024;   /* DOOM needs ~100KB+ for E1M1 */
+    int sz = avail - ZONE_RESERVE;
+    if (sz < 96 * 1024) sz = 96 * 1024;   /* DOOM needs ~100KB+ even to boot */
     *size = sz;
     zonemem = malloc(sz);
     if (zonemem == NULL)
