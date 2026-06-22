@@ -846,7 +846,7 @@ $(DOOMGENERIC_DIR)/r_bsp.c \
 $(DOOMGENERIC_DIR)/r_data.c \
 $(DOOMGENERIC_DIR)/r_draw.c \
 $(DOOMGENERIC_DIR)/r_main.c \
-$(DOOMGENERIC_DIR)/r_plane.c \
+Core/Src/porting/doom/r_plane.c \
 $(DOOMGENERIC_DIR)/r_segs.c \
 $(DOOMGENERIC_DIR)/r_sky.c \
 $(DOOMGENERIC_DIR)/r_things.c \
