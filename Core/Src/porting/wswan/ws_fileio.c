@@ -773,6 +773,16 @@ void ws_freeze_check(void)
           n = 0; for (i = 0; i < 44; i++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(p2 + i));
           printf("WSREC2: %04X:%04X=%s\n", rcs, o2, buf); }
+        /* The instruction that drove BP nonzero->0 (root of the SP collapse) +
+         * ROM around it, dumped from -0x08 so we see the full instruction. */
+        { extern unsigned int   g_bpz_n, g_bpz_at, g_bpz_by;
+          extern unsigned short g_bpz_sp;
+          extern unsigned char  g_bpz_rom[24];
+          n = 0; for (i = 0; i < 24; i++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_bpz_rom[i]);
+          printf("WSBPZ: n=%u by=%04X:%04X at=%04X:%04X SP=%04X rom@-8=%s\n",
+                 g_bpz_n, (g_bpz_by >> 16) & 0xFFFF, g_bpz_by & 0xFFFF,
+                 (g_bpz_at >> 16) & 0xFFFF, g_bpz_at & 0xFFFF, g_bpz_sp, buf); }
     }
 
     /* Dump the whole captured log to the SD card so the user can read it off

@@ -104,6 +104,16 @@ unsigned char g_runaway_caught;
  * here = the recursive function. */
 unsigned int  g_runaway_sp;
 unsigned char g_runaway_stack[48];
+/* BP-zeroing tracker. resume BP is healthy (0x1FFA) but by the crash BP=0,
+ * and an epilogue MOV SP,BP then nukes SP. Capture the LAST instruction that
+ * drives BP nonzero->0 (CS>=0x100) before the runaway: its CS:IP, the SP at
+ * that moment, and 24 ROM bytes around it -- the root that mis-sets BP. */
+unsigned int   g_bpz_n;
+unsigned int   g_bpz_at;   /* CS:IP observed with BP just-zeroed (current) */
+unsigned int   g_bpz_by;   /* CS:IP of the instruction that zeroed BP (prev) */
+unsigned short g_bpz_sp;
+unsigned short g_bp_prev;
+unsigned char  g_bpz_rom[24];
 
 static nec_Regs I;
 
@@ -1020,6 +1030,21 @@ int32_t nec_execute(int32_t cycles)
 					g_runaway_stack[q] = (unsigned char)ReadMem(sb + q);
 			}
 		}
+		/* Track the LAST instruction that drives BP nonzero->0 (the root of the
+		 * MOV SP,BP collapse). Overwrites each time so the dump holds the one
+		 * closest to the crash. */
+		if (g_bp_prev != 0 && I.regs.w[BP] == 0 && I.sregs[CS] >= 0x100) {
+			unsigned int prev = g_csip_ring[(g_ring_pos - 1) & 15];
+			int q; uint32_t pa = (((prev >> 16) & 0xFFFF) << 4)
+			                     + (unsigned short)((prev & 0xFFFF) - 0x08);
+			g_bpz_n++;
+			g_bpz_at = ((unsigned int)I.sregs[CS] << 16) | I.ip;
+			g_bpz_by = prev;
+			g_bpz_sp = I.regs.w[SP];
+			for (q = 0; q < 24; q++)
+				g_bpz_rom[q] = (unsigned char)ReadMem(pa + q);
+		}
+		g_bp_prev = I.regs.w[BP];
 		nec_instruction[FETCHOP]();
 	}
 
