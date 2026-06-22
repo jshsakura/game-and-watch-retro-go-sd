@@ -33,13 +33,14 @@
  * necea.h, necmodrm.h) still resolve to the submodule via -I$(CORE_WSWAN)/emu/cpu.
  *
  * Changes vs the submodule original:
- *  - vendored necinstr.h points the three formerly-NULL slots in
- *    nec_instruction[] (0x0F, 0x64, 0x65) at i_undef_dbg instead of NULL. Those
- *    NULL slots faulted at PC=0 via (*NULL)() when a savestate resume executed
- *    them (One Piece WSC).
- *  - i_undef_dbg (defined below) logs opcode+CS:IP and pops the on-screen debug
- *    panel on first hit, so we can tell whether a game genuinely executes one of
- *    these opcodes (=> must implement) or a ROM mis-map fed a garbage byte. */
+ *  - vendored necinstr.h fills the three formerly-NULL slots in nec_instruction[]
+ *    -- 0x0F (V30 extended-instruction prefix), 0x64 (REPNC), 0x65 (REPC) --
+ *    which faulted at PC=0 via (*NULL)() when a savestate resume executed them.
+ *    On-device diagnostics proved One Piece (WSC) really executes 0x0F and 0x65.
+ *  - i_pre_nec / i_repnc / i_repc (defined below) implement those, ported from
+ *    MAME 0.139's NEC core (this file's lineage) and reusing the BCD/bit helper
+ *    macros already present in nec.h. EXT/INS/BRKEM sub-ops are stubbed (as in
+ *    MAME); WS games don't use them. */
 
 #include <stdio.h>
 #include <stdint.h>
@@ -789,38 +790,118 @@ static void i_invalid(void)
 	CLK(10);
 }
 
-/* GNW DIAGNOSTIC handler for the opcodes this oswan core never implemented
- * (0x0F V30 ext-prefix, 0x64/0x65 repnc/repc). They used to be NULL slots in
- * nec_instruction[] -> (*NULL)() HardFault. Routing them to i_invalid stopped
- * the crash but hid the signal: a game that actually executes one (e.g. One
- * Piece after a savestate resume) just silently no-ops and freezes/garbles
- * with no clue why. This logs the opcode + CS:IP to the firmware logbuf and,
- * on the FIRST hit, pops the on-screen debug panel so we can see EXACTLY which
- * opcode is hit and where -- distinguishing "game really runs 0x0F (must
- * implement it)" from "ROM mis-map -> garbage byte". Behaviour otherwise
- * matches i_invalid (10-cycle no-op) so the game keeps running after the
- * panel is dismissed. */
-static void i_undef_dbg(void)
-{
-	extern void gw_debug_show_log(const char *banner);
-	static int log_count = 0;
-	static int panel_shown = 0;
-	unsigned ip = (unsigned)((I.ip - 1) & 0xFFFF);
-	unsigned cs = (unsigned)I.sregs[CS];
-	unsigned op = (unsigned)cpu_readop(cs_base + ip) & 0xFF;
+/* GNW: V30 extended-instruction group (0x0F) + REPNC/REPC (0x64/0x65), ported
+ * from MAME 0.139 src/emu/cpu/nec/nec.c (i_pre_nec / i_repnc / i_repc) -- the
+ * exact lineage this file credits. These three slots were NULL in the stock
+ * oswan table; on-device diagnostics proved One Piece (WSC) genuinely executes
+ * 0x0F and 0x65, so they are implemented for real (not no-op'd). The BCD/bit
+ * helpers (BITOP_uint8_t/16, BIT_NOT, ADD4S/SUB4S/CMP4S) already existed in
+ * nec.h, pre-ported to this file's types -- reused verbatim, no hand-rolled
+ * BCD math. EXT/INS/BRKEM are stubbed (consume their operand byte, no-op) --
+ * MAME stubs them too and WS games don't use them. */
+OP( 0x0f, i_pre_nec ) {
+	uint32_t ModRM, tmp, tmp2;
+	switch (FETCH) {
+		/* bit ops, bit index in CL */
+		case 0x10: BITOP_uint8_t;  CLK(3); tmp2 = I.regs.b[CL] & 0x7; I.ZeroVal = (tmp & (1<<tmp2)) ? 1 : 0; I.CarryVal = I.OverVal = 0; break; /* TEST1 b,CL */
+		case 0x11: BITOP_uint16_t; CLK(3); tmp2 = I.regs.b[CL] & 0xf; I.ZeroVal = (tmp & (1<<tmp2)) ? 1 : 0; I.CarryVal = I.OverVal = 0; break; /* TEST1 w,CL */
+		case 0x12: BITOP_uint8_t;  CLK(5); tmp2 = I.regs.b[CL] & 0x7; tmp &= ~(1<<tmp2); PutbackRMByte(ModRM,tmp); break; /* CLR1 b,CL */
+		case 0x13: BITOP_uint16_t; CLK(5); tmp2 = I.regs.b[CL] & 0xf; tmp &= ~(1<<tmp2); PutbackRMWord(ModRM,tmp); break; /* CLR1 w,CL */
+		case 0x14: BITOP_uint8_t;  CLK(4); tmp2 = I.regs.b[CL] & 0x7; tmp |=  (1<<tmp2); PutbackRMByte(ModRM,tmp); break; /* SET1 b,CL */
+		case 0x15: BITOP_uint16_t; CLK(4); tmp2 = I.regs.b[CL] & 0xf; tmp |=  (1<<tmp2); PutbackRMWord(ModRM,tmp); break; /* SET1 w,CL */
+		case 0x16: BITOP_uint8_t;  CLK(4); tmp2 = I.regs.b[CL] & 0x7; BIT_NOT;           PutbackRMByte(ModRM,tmp); break; /* NOT1 b,CL */
+		case 0x17: BITOP_uint16_t; CLK(4); tmp2 = I.regs.b[CL] & 0xf; BIT_NOT;           PutbackRMWord(ModRM,tmp); break; /* NOT1 w,CL */
+		/* bit ops, immediate bit index (fetched after the modrm operand) */
+		case 0x18: BITOP_uint8_t;  CLK(4); tmp2 = (FETCH) & 0x7; I.ZeroVal = (tmp & (1<<tmp2)) ? 1 : 0; I.CarryVal = I.OverVal = 0; break; /* TEST1 b,imm */
+		case 0x19: BITOP_uint16_t; CLK(4); tmp2 = (FETCH) & 0xf; I.ZeroVal = (tmp & (1<<tmp2)) ? 1 : 0; I.CarryVal = I.OverVal = 0; break; /* TEST1 w,imm */
+		case 0x1a: BITOP_uint8_t;  CLK(6); tmp2 = (FETCH) & 0x7; tmp &= ~(1<<tmp2); PutbackRMByte(ModRM,tmp); break; /* CLR1 b,imm */
+		case 0x1b: BITOP_uint16_t; CLK(6); tmp2 = (FETCH) & 0xf; tmp &= ~(1<<tmp2); PutbackRMWord(ModRM,tmp); break; /* CLR1 w,imm */
+		case 0x1c: BITOP_uint8_t;  CLK(5); tmp2 = (FETCH) & 0x7; tmp |=  (1<<tmp2); PutbackRMByte(ModRM,tmp); break; /* SET1 b,imm */
+		case 0x1d: BITOP_uint16_t; CLK(5); tmp2 = (FETCH) & 0xf; tmp |=  (1<<tmp2); PutbackRMWord(ModRM,tmp); break; /* SET1 w,imm */
+		case 0x1e: BITOP_uint8_t;  CLK(5); tmp2 = (FETCH) & 0x7; BIT_NOT;           PutbackRMByte(ModRM,tmp); break; /* NOT1 b,imm */
+		case 0x1f: BITOP_uint16_t; CLK(5); tmp2 = (FETCH) & 0xf; BIT_NOT;           PutbackRMWord(ModRM,tmp); break; /* NOT1 w,imm */
+		/* packed-BCD string ops (DS:IX -> ES:IY, length CL nibbles) */
+		case 0x20: ADD4S; CLK(7); break; /* ADD4S */
+		case 0x22: SUB4S; CLK(7); break; /* SUB4S */
+		case 0x26: CMP4S; CLK(7); break; /* CMP4S */
+		/* BCD nibble rotates between AL and r/m byte */
+		case 0x28: /* ROL4 r/m8 */
+			ModRM = FETCH; tmp = GetRMByte(ModRM); tmp <<= 4; tmp |= I.regs.b[AL] & 0xf;
+			I.regs.b[AL] = (I.regs.b[AL] & 0xf0) | ((tmp >> 8) & 0xf);
+			tmp &= 0xff; PutbackRMByte(ModRM, tmp); CLK(13); break;
+		case 0x2a: /* ROR4 r/m8 */
+			ModRM = FETCH; tmp = GetRMByte(ModRM); tmp2 = (I.regs.b[AL] & 0xf) << 4;
+			I.regs.b[AL] = (I.regs.b[AL] & 0xf0) | (tmp & 0xf);
+			tmp = tmp2 | (tmp >> 4); PutbackRMByte(ModRM, tmp); CLK(17); break;
+		/* bit-field INS/EXT + BRKEM: stubbed (consume operand, no-op) */
+		case 0x31: ModRM = FETCH; (void)ModRM; CLK(2); break; /* INS r8,r8 */
+		case 0x33: ModRM = FETCH; (void)ModRM; CLK(2); break; /* EXT r8,r8 */
+		case 0x39: ModRM = FETCH; (void)ModRM; CLK(2); break; /* INS r8,imm4 */
+		case 0x3b: ModRM = FETCH; (void)ModRM; CLK(2); break; /* EXT r8,imm4 */
+		case 0xff: ModRM = FETCH; (void)ModRM; CLK(2); break; /* BRKEM imm8 (no 8080 mode) */
+		default:   CLK(2); break;
+	}
+}
 
-	if (log_count < 64) {
-		printf("WSUNDEF: op=%02X CS:IP=%04X:%04X\n", op, cs, ip);
-		log_count++;
+/* 0x64: REPNC - repeat string primitive while CW!=0 AND CF==0. Modeled on the
+ * existing i_repne (0xF2). */
+OP( 0x64, i_repnc ) {
+	uint32_t next = FETCHOP;
+	uint16_t c = I.regs.w[CW];
+	switch (next) {
+		case 0x26: seg_prefix=TRUE; prefix_base=I.sregs[ES]<<4; next = FETCHOP; CLK(2); break;
+		case 0x2e: seg_prefix=TRUE; prefix_base=I.sregs[CS]<<4; next = FETCHOP; CLK(2); break;
+		case 0x36: seg_prefix=TRUE; prefix_base=I.sregs[SS]<<4; next = FETCHOP; CLK(2); break;
+		case 0x3e: seg_prefix=TRUE; prefix_base=I.sregs[DS]<<4; next = FETCHOP; CLK(2); break;
 	}
-	if (!panel_shown) {
-		char banner[64];
-		snprintf(banner, sizeof(banner),
-		         "WS UNDEF op=%02X @ %04X:%04X", op, cs, ip);
-		panel_shown = 1;
-		gw_debug_show_log(banner);
+	switch (next) {
+		case 0x6c: CLK(2); if (c) do { i_insb();  c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0x6d: CLK(2); if (c) do { i_insw();  c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0x6e: CLK(2); if (c) do { i_outsb(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0x6f: CLK(2); if (c) do { i_outsw(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0xa4: CLK(2); if (c) do { i_movsb(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0xa5: CLK(2); if (c) do { i_movsw(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0xa6: CLK(2); if (c) do { i_cmpsb(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0xa7: CLK(2); if (c) do { i_cmpsw(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0xaa: CLK(2); if (c) do { i_stosb(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0xab: CLK(2); if (c) do { i_stosw(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0xac: CLK(2); if (c) do { i_lodsb(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0xad: CLK(2); if (c) do { i_lodsw(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0xae: CLK(2); if (c) do { i_scasb(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		case 0xaf: CLK(2); if (c) do { i_scasw(); c--; } while (c>0 && !CF); I.regs.w[CW]=c; break;
+		default:   nec_instruction[next]();
 	}
-	CLK(10);
+	seg_prefix=FALSE;
+}
+
+/* 0x65: REPC - repeat string primitive while CW!=0 AND CF==1. Modeled on i_repe (0xF3). */
+OP( 0x65, i_repc ) {
+	uint32_t next = FETCHOP;
+	uint16_t c = I.regs.w[CW];
+	switch (next) {
+		case 0x26: seg_prefix=TRUE; prefix_base=I.sregs[ES]<<4; next = FETCHOP; CLK(2); break;
+		case 0x2e: seg_prefix=TRUE; prefix_base=I.sregs[CS]<<4; next = FETCHOP; CLK(2); break;
+		case 0x36: seg_prefix=TRUE; prefix_base=I.sregs[SS]<<4; next = FETCHOP; CLK(2); break;
+		case 0x3e: seg_prefix=TRUE; prefix_base=I.sregs[DS]<<4; next = FETCHOP; CLK(2); break;
+	}
+	switch (next) {
+		case 0x6c: CLK(2); if (c) do { i_insb();  c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0x6d: CLK(2); if (c) do { i_insw();  c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0x6e: CLK(2); if (c) do { i_outsb(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0x6f: CLK(2); if (c) do { i_outsw(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0xa4: CLK(2); if (c) do { i_movsb(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0xa5: CLK(2); if (c) do { i_movsw(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0xa6: CLK(2); if (c) do { i_cmpsb(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0xa7: CLK(2); if (c) do { i_cmpsw(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0xaa: CLK(2); if (c) do { i_stosb(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0xab: CLK(2); if (c) do { i_stosw(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0xac: CLK(2); if (c) do { i_lodsb(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0xad: CLK(2); if (c) do { i_lodsw(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0xae: CLK(2); if (c) do { i_scasb(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		case 0xaf: CLK(2); if (c) do { i_scasw(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
+		default:   nec_instruction[next]();
+	}
+	seg_prefix=FALSE;
 }
 
 /*****************************************************************************/
