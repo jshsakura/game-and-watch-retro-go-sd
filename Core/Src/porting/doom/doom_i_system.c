@@ -145,16 +145,14 @@ byte *I_ZoneBase (int *size)
     (void)p; (void)min_ram; (void)default_ram;
 
     /* G&W: DOOM's MiB-granular AutoAllocMemory can never fit the RAM_EMU overlay
-     * pool. Size the zone to whatever ram_malloc has left, but LEAVE A MARGIN:
-     * not everything DOOM allocates comes from the zone. W_AddFile reallocs the
-     * WAD lumpinfo array (~40-60KB for DOOM1.WAD) via raw realloc -> doom__realloc
-     * -> ram_malloc AFTER the zone is carved out, plus a few smaller raw allocs.
-     * The old 8KB margin starved that ("I_Error: Couldn't realloc lumpinfo").
-     * Now that DG_ScreenBuffer is gone (~256KB freed back to the pool), reserve a
-     * generous 96KB so lumpinfo and friends fit. (malloc here is renamed to
-     * doom__malloc -> ram_malloc by doom_redefines.) */
+     * pool. Size the zone to whatever ram_malloc has left, minus a small margin.
+     * The big non-zone allocations (the 64KB I_VideoBuffer and the ~64KB WAD
+     * lumpinfo) now come from the LUT8 bonus pool (doom_bonus_alloc), NOT from
+     * ram_malloc, so only a handful of tiny raw mallocs (config parse, dehacked
+     * strings) remain here. A 16KB margin covers them. (malloc here is renamed
+     * to doom__malloc -> ram_malloc by doom_redefines.) */
     extern unsigned int ram_get_free_size(void);
-    enum { ZONE_RESERVE = 96 * 1024 };    /* headroom for non-zone raw mallocs */
+    enum { ZONE_RESERVE = 16 * 1024 };    /* headroom for small non-zone raw mallocs */
     int avail = (int)ram_get_free_size();
     int sz = avail - ZONE_RESERVE;
     if (sz < 96 * 1024) sz = 96 * 1024;   /* DOOM needs ~100KB+ even to boot */
@@ -473,11 +471,15 @@ void I_Error (char *error, ...)
     exit(-1);
 #else
     /* G&W: there is no console/GUI here, so an I_Error would otherwise bounce
-     * silently back to the launcher. Show the message + captured log on the
-     * LCD and block for a button so the actual failure reason is visible. */
+     * silently back to the launcher. Restore RGB565 first (we run the LCD in
+     * LUT8 during play; the debug panel + launcher expect RGB565), then show
+     * the message + captured log on the LCD and block for a button so the
+     * actual failure reason is visible. */
     {
+        extern void lcd_setup_framebuffers(int mode);  /* 0 = LCD_MODE_RGB565 */
         extern void gw_debug_show_log(const char *banner);
         char banner[80];
+        lcd_setup_framebuffers(0);
         M_snprintf(banner, sizeof(banner), "DOOM I_Error: %s", msgbuf);
         gw_debug_show_log(banner);
     }

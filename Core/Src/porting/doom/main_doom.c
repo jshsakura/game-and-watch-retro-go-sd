@@ -31,11 +31,10 @@
 #include "doomkeys.h"
 
 /* DOOM renders to I_VideoBuffer (8bpp paletted, SCREENWIDTH x SCREENHEIGHT =
- * 320 x 200, allocated in the zone). doom_pal565[] is the live 256-entry
- * RGB565 colour LUT maintained by I_SetPalette (vendored i_video.c). We blit
- * straight from these to the LCD, so the 256KB ARGB DG_ScreenBuffer is gone. */
+ * 320 x 200). The LCD runs in LUT8 mode so the LTDC CLUT (programmed from
+ * DOOM's palette in I_SetPalette) does the colour; DG_DrawFrame just copies
+ * the 8bpp indices. I_VideoBuffer is allocated from the LUT8 bonus pool. */
 extern unsigned char *I_VideoBuffer;
-extern uint16_t doom_pal565[256];
 void doomgeneric_Create(int argc, char **argv);
 void doomgeneric_Tick(void);
 
@@ -96,29 +95,45 @@ int DG_GetKey(int *pressed, unsigned char *doomKey)
 }
 
 /* ------------------------------------------------------------------ */
-/* Video: blit DG_ScreenBuffer (ARGB8888, RESX x RESY) -> RGB565 LCD,  */
-/* letterboxed vertically (200 -> 240).                                */
+/* Bonus pool: LUT8 mode frees ~146KB of the LCD pool (the second RGB565   */
+/* framebuffer). We hand that to I_VideoBuffer (64KB) and the WAD lumpinfo  */
+/* so the DOOM zone keeps the full RAM_EMU pool. Simple bump allocator with */
+/* a RAM_EMU fallback so nothing breaks if the pool is exhausted/absent.    */
 /* ------------------------------------------------------------------ */
-static inline uint16_t argb8888_to_rgb565(uint32_t p)
+static uint8_t *doom_bonus_base = NULL;
+static size_t   doom_bonus_size = 0;
+static size_t   doom_bonus_used = 0;
+
+void *doom_bonus_alloc(size_t n)
 {
-    uint8_t r = (p >> 16) & 0xFF, g = (p >> 8) & 0xFF, b = p & 0xFF;
-    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+    n = (n + 3u) & ~(size_t)3u;
+    if (doom_bonus_base && doom_bonus_used + n <= doom_bonus_size) {
+        void *p = doom_bonus_base + doom_bonus_used;
+        doom_bonus_used += n;
+        return p;
+    }
+    return ram_malloc(n);   /* fallback: zone-adjacent RAM, as before */
 }
 
+/* ------------------------------------------------------------------ */
+/* Video: DOOM renders to I_VideoBuffer (8bpp paletted, RESX x RESY).  */
+/* In LUT8 mode the LCD framebuffer is also 8bpp and the LTDC CLUT does */
+/* the colour, so we just copy the indices into the letterboxed middle  */
+/* of the active buffer (borders cleared once at init). No conversion.  */
+/* ------------------------------------------------------------------ */
 void DG_DrawFrame(void)
 {
-    uint16_t *dst = lcd_get_active_buffer();
+    uint8_t *dst = (uint8_t *)lcd_get_active_buffer();
     const uint8_t *src = I_VideoBuffer;   /* 8bpp paletted, RESX x RESY */
 
     if (src == NULL)
         return;
 
-    for (int y = 0; y < DOOMGENERIC_RESY; y++) {
-        uint16_t *row = dst + (size_t)(y + DOOM_FB_Y_OFFSET) * ODROID_SCREEN_WIDTH + DOOM_FB_X_OFFSET;
-        for (int x = 0; x < DOOMGENERIC_RESX; x++)
-            row[x] = doom_pal565[*src++];
-        wdog_refresh();
-    }
+    /* X_OFFSET is 0 (RESX == screen width), so rows are contiguous and we
+     * can copy the whole frame into the vertical centre in one shot. */
+    memcpy(dst + (size_t)DOOM_FB_Y_OFFSET * ODROID_SCREEN_WIDTH,
+           src, (size_t)DOOMGENERIC_RESX * DOOMGENERIC_RESY);
+    wdog_refresh();
     lcd_swap();
 }
 
@@ -216,6 +231,22 @@ int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_init(APPID_HOMEBREW, 11025);
     odroid_system_emu_init(&doom_system_LoadState, &doom_system_SaveState,
                            &Screenshot, NULL, NULL, NULL);
+
+    /* DOOM is natively 8bpp paletted. Switch the LCD to LUT8: the LTDC does
+     * palette lookup in hardware (set up in I_SetPalette via lcd_set_clut),
+     * the framebuffers shrink to 154KB, and the freed ~146KB bonus pool is
+     * handed to I_VideoBuffer + the WAD lumpinfo (see doom_bonus_alloc) so the
+     * DOOM zone keeps the full RAM_EMU pool. odroid_system_switch_app() resets
+     * the LCD back to RGB565 when we quit, so the launcher is unaffected. */
+    lcd_setup_framebuffers(LCD_MODE_LUT8);
+    {
+        uint8_t *bp = NULL; size_t bs = 0;
+        lcd_get_bonus_pool(&bp, &bs);
+        doom_bonus_base = bp;
+        doom_bonus_size = bs;
+        doom_bonus_used = 0;
+    }
+    lcd_clear_buffers();   /* clear both LUT8 buffers (letterbox borders) */
 
     if (start_paused) {
         common_emu_state.pause_after_frames = 2;

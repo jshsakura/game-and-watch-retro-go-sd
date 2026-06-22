@@ -862,7 +862,7 @@ $(DOOMGENERIC_DIR)/wi_stuff.c \
 $(DOOMGENERIC_DIR)/w_checksum.c \
 $(DOOMGENERIC_DIR)/w_file.c \
 $(DOOMGENERIC_DIR)/w_main.c \
-$(DOOMGENERIC_DIR)/w_wad.c \
+Core/Src/porting/doom/w_wad.c \
 $(DOOMGENERIC_DIR)/z_zone.c \
 $(DOOMGENERIC_DIR)/w_file_stdc.c \
 $(DOOMGENERIC_DIR)/i_input.c \

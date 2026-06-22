@@ -132,12 +132,6 @@ typedef struct
 
 static uint16_t rgb565_palette[256];
 
-/* GNW: RGB565 palette consumed directly by DG_DrawFrame (main_doom.c). We no
- * longer expand I_VideoBuffer into a 256KB ARGB DG_ScreenBuffer; instead the
- * platform blits the 8bpp I_VideoBuffer through this LUT straight to the LCD,
- * freeing 256KB of RAM_EMU for the DOOM zone. Kept current in I_SetPalette. */
-uint16_t doom_pal565[256];
-
 void cmap_to_rgb565(uint16_t * out, uint8_t * in, int in_pixels)
 {
     int i, j;
@@ -293,7 +287,10 @@ void I_InitGraphics (void)
 
 
     /* Allocate screen to draw to */
-	I_VideoBuffer = (byte*)Z_Malloc (SCREENWIDTH * SCREENHEIGHT, PU_STATIC, NULL);  // For DOOM to draw on
+	/* GNW: allocate the 64KB framebuffer from the LUT8 bonus pool, not the
+	 * zone, so the DOOM zone keeps that 64KB for textures/level data. */
+	{ extern void *doom_bonus_alloc(size_t n);
+	  I_VideoBuffer = (byte*)doom_bonus_alloc(SCREENWIDTH * SCREENHEIGHT); }  // For DOOM to draw on
 
 	screenvisible = true;
 
@@ -303,7 +300,11 @@ void I_InitGraphics (void)
 
 void I_ShutdownGraphics (void)
 {
-	Z_Free (I_VideoBuffer);
+	/* GNW: I_VideoBuffer now lives in the LUT8 bonus pool (doom_bonus_alloc),
+	 * NOT the zone -- Z_Free()ing it would corrupt the zone's block list.
+	 * The pool is reclaimed wholesale when DOOM exits (LCD resets to RGB565
+	 * via odroid_system_switch_app), so just drop the reference. */
+	I_VideoBuffer = NULL;
 }
 
 void I_StartFrame (void)
@@ -368,19 +369,22 @@ void I_SetPalette (byte* palette)
 	//}
     
 
-    /* performance boost:
-     * map to the right pixel format over here! */
+    /* GNW: the LCD runs in LUT8 mode for DOOM, so program the gamma-corrected
+     * 256-colour palette straight into the LTDC hardware CLUT (0x00RRGGBB).
+     * DG_DrawFrame then only copies 8bpp indices -- the LTDC does the colour. */
+    extern void lcd_set_clut(const uint32_t *clut, unsigned short count);
+    uint32_t clut[256];
 
     for (i=0; i<256; ++i ) {
         colors[i].a = 0;
         colors[i].r = gammatable[usegamma][*palette++];
         colors[i].g = gammatable[usegamma][*palette++];
         colors[i].b = gammatable[usegamma][*palette++];
-        /* GNW: keep the RGB565 LUT used by DG_DrawFrame in sync. */
-        doom_pal565[i] = (uint16_t)(((colors[i].r & 0xF8) << 8) |
-                                    ((colors[i].g & 0xFC) << 3) |
-                                    ( colors[i].b >> 3));
+        clut[i] = ((uint32_t)colors[i].r << 16) |
+                  ((uint32_t)colors[i].g << 8)  |
+                  ((uint32_t)colors[i].b);
     }
+    lcd_set_clut(clut, 256);
 
 #ifdef CMAP256
 
