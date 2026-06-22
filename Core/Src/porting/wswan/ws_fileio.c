@@ -683,6 +683,8 @@ void ws_freeze_check(void)
         extern unsigned int g_csip_ring[8];
         extern unsigned char g_ring_pos;
         int k;
+        unsigned int a_old = g_csip_ring[g_ring_pos & 7];
+        unsigned int a_new = g_csip_ring[(g_ring_pos + 7) & 7];
         n = 0;
         for (k = 0; k < 8; k++) {
             unsigned int v = g_csip_ring[(g_ring_pos + k) & 7];
@@ -690,6 +692,16 @@ void ws_freeze_check(void)
                           (v >> 16) & 0xFFFF, v & 0xFFFF);
         }
         printf("WSRING: %s\n", buf);
+        /* ROM bytes at the oldest and newest ring instructions, to decode the
+         * runaway loop body / its far-call target by hand. */
+        { uint32_t pa = (((a_old >> 16) & 0xFFFF) << 4) + (a_old & 0xFFFF);
+          n = 0; for (k = 0; k < 16; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
+          printf("WSOPA: %04X:%04X=%s\n", (a_old>>16)&0xFFFF, a_old&0xFFFF, buf); }
+        { uint32_t pa = (((a_new >> 16) & 0xFFFF) << 4) + (a_new & 0xFFFF);
+          n = 0; for (k = 0; k < 16; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
+          printf("WSOPB: %04X:%04X=%s\n", (a_new>>16)&0xFFFF, a_new&0xFFFF, buf); }
     }
 
     {
