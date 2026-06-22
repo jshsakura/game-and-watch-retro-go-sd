@@ -680,8 +680,9 @@ void ws_freeze_check(void)
         uint16_t ss = (uint16_t)nec_get_reg(NEC_SS);
         uint16_t sp = (uint16_t)nec_get_reg(NEC_SP);
         uint32_t sbase = ((uint32_t)ss << 4) + sp;
-        printf("WSBAD: CS:IP=%04X:%04X SS:SP=%04X:%04X REPC=%u REPNC=%u\n",
-               cs, ip, ss, sp, g_repc_n, g_repnc_n);
+        { extern unsigned int g_int_n, g_iret_n;
+          printf("WSBAD: CS:IP=%04X:%04X SS:SP=%04X:%04X INT=%u IRET=%u REPC=%u\n",
+                 cs, ip, ss, sp, g_int_n, g_iret_n, g_repc_n); }
         /* stack words at SP (pushed return CS:IP / flags if we INT'd or CALLed) */
         n = 0;
         for (i = 0; i < 16; i++)

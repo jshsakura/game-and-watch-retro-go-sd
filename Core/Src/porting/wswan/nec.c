@@ -85,6 +85,10 @@ int32_t nec_ICount;
  * saving the per-fetch segment load+shift. */
 uint32_t cs_base;
 
+/* GNW diag: count actual interrupt entries vs IRETs. A savestate-resume stack
+ * blow-up shows as g_int_n >> g_iret_n (interrupts firing without returning). */
+unsigned int g_int_n, g_iret_n;
+
 static nec_Regs I;
 
 static uint32_t prefix_base;	/* base address of the latest prefix segment */
@@ -146,6 +150,7 @@ void nec_int(uint32_t wektor)
 
 	if(I.IF)
 	{
+		g_int_n++;
 		i_pushf();
 		I.TF = I.IF = 0;
 		dest_off = ReadWord(wektor);
@@ -565,7 +570,7 @@ OP( 0xcb, i_retf	  ) { POP(I.ip); POP(I.sregs[CS]); CLK(8); }
 OP( 0xcc, i_int3	  ) { nec_interrupt(3); CLK(9); }
 OP( 0xcd, i_int 	  ) { nec_interrupt(FETCH); CLK(10); }
 OP( 0xce, i_into	  ) { if (OF) { nec_interrupt(4); CLK(13); } else CLK(6); }
-OP( 0xcf, i_iret	  ) { POP(I.ip); POP(I.sregs[CS]); i_popf(); CLK(10); }
+OP( 0xcf, i_iret	  ) { g_iret_n++; POP(I.ip); POP(I.sregs[CS]); i_popf(); CLK(10); }
 
 OP( 0xd0, i_rotshft_b ) {
 	uint32_t src, dst; GetModRM; src = (uint32_t)GetRMByte(ModRM); dst=src;
