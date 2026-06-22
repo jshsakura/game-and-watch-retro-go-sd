@@ -89,6 +89,14 @@ uint32_t cs_base;
  * blow-up shows as g_int_n >> g_iret_n (interrupts firing without returning). */
 unsigned int g_int_n, g_iret_n;
 
+/* GNW diag: ring of the last 8 (CS<<16|IP) executed. When SP runs away below
+ * 0x0400 (about to trash the IVT) we FREEZE the ring -- it then holds the body
+ * of the runaway PUSH/CALL loop, revealing exactly what code is exhausting the
+ * stack after a savestate resume. */
+unsigned int  g_csip_ring[8];
+unsigned char g_ring_pos;
+unsigned char g_runaway_caught;
+
 static nec_Regs I;
 
 static uint32_t prefix_base;	/* base address of the latest prefix segment */
@@ -987,6 +995,13 @@ int32_t nec_execute(int32_t cycles)
 	while(nec_ICount>=0)
 	{
 		cs_base = I.sregs[CS] << 4;
+		if (!g_runaway_caught) {
+			g_csip_ring[g_ring_pos++ & 7] =
+				((unsigned int)I.sregs[CS] << 16) | I.ip;
+			/* Stack runaway: SP far below its normal top, still in game code. */
+			if (I.regs.w[SP] < 0x0400 && I.sregs[CS] >= 0x100)
+				g_runaway_caught = 1;   /* freeze the ring at the runaway loop */
+		}
 		nec_instruction[FETCHOP]();
 	}
 

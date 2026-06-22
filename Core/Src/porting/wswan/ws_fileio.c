@@ -670,11 +670,27 @@ void ws_freeze_check(void)
     cs = (uint16_t)nec_get_reg(NEC_CS);
     ip = (uint16_t)nec_get_reg(NEC_IP);
 
-    /* The corruption sends the CPU into the IVT / low IRAM (CS small, IP tiny)
-     * executing zeros. Trap that the instant it happens so the stack still
-     * shows HOW we got here. Fallback: dump after ~6s regardless. */
-    if (!(cs < 0x100 || ++frame >= 360)) return;
+    /* Fire the instant the stack-runaway ring is frozen (the real target), or
+     * when the CPU has already fallen into low IRAM, or after ~6s. */
+    {
+        extern unsigned char g_runaway_caught;
+        if (!(g_runaway_caught || cs < 0x100 || ++frame >= 360)) return;
+    }
     shown = 1;
+
+    /* The runaway loop body: last 8 (CS:IP) executed before SP hit 0x0400. */
+    {
+        extern unsigned int g_csip_ring[8];
+        extern unsigned char g_ring_pos;
+        int k;
+        n = 0;
+        for (k = 0; k < 8; k++) {
+            unsigned int v = g_csip_ring[(g_ring_pos + k) & 7];
+            n += snprintf(buf + n, sizeof(buf) - n, "%04X:%04X ",
+                          (v >> 16) & 0xFFFF, v & 0xFFFF);
+        }
+        printf("WSRING: %s\n", buf);
+    }
 
     {
         uint16_t ss = (uint16_t)nec_get_reg(NEC_SS);
