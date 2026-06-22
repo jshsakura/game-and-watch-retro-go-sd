@@ -324,6 +324,10 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         WsRun();
         if (dbgf < 3) printf("WSf%d: post-WsRun\n", dbgf);
 
+        /* Detect a savestate-resume freeze and dump the stuck loop + I/O regs
+         * to the on-screen panel (one-shot). See ws_freeze_check in ws_fileio.c. */
+        { extern void ws_freeze_check(void); ws_freeze_check(); }
+
         if (drawFrame) {
             blit();
             lcd_swap();
