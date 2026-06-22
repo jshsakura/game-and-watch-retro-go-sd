@@ -666,28 +666,42 @@ void ws_freeze_check(void)
     int i, n;
 
     if (shown) return;
-    if (++frame < 180) return;   /* ~3s after resume, regardless of state */
-    shown = 1;
-
-    /* List the 0x0F sub-opcodes the game used, with counts. */
-    n = 0;
-    for (i = 0; i < 256; i++) {
-        if (g_v30op[i] && n < (int)sizeof(buf) - 12)
-            n += snprintf(buf + n, sizeof(buf) - n, "%02X:%u ", i, g_v30op[i]);
-    }
-    if (n == 0) snprintf(buf, sizeof(buf), "(none)");
-    printf("WSV30: 0F sub-ops used: %s\n", buf);
-    printf("WSV30: REPC=%u REPNC=%u\n", g_repc_n, g_repnc_n);
 
     cs = (uint16_t)nec_get_reg(NEC_CS);
     ip = (uint16_t)nec_get_reg(NEC_IP);
-    n = 0;
-    for (i = 0; i < 12; i++)
-        n += snprintf(buf + n, sizeof(buf) - n, "%02X ",
-                      ReadMem(((uint32_t)cs << 4) + ip + i));
-    printf("WSV30: CS:IP=%04X:%04X here=%s\n", cs, ip, buf);
 
-    snprintf(buf, sizeof(buf), "WS V30 ops report (3s)");
+    /* The corruption sends the CPU into the IVT / low IRAM (CS small, IP tiny)
+     * executing zeros. Trap that the instant it happens so the stack still
+     * shows HOW we got here. Fallback: dump after ~6s regardless. */
+    if (!(cs < 0x100 || ++frame >= 360)) return;
+    shown = 1;
+
+    {
+        uint16_t ss = (uint16_t)nec_get_reg(NEC_SS);
+        uint16_t sp = (uint16_t)nec_get_reg(NEC_SP);
+        uint32_t sbase = ((uint32_t)ss << 4) + sp;
+        printf("WSBAD: CS:IP=%04X:%04X SS:SP=%04X:%04X REPC=%u REPNC=%u\n",
+               cs, ip, ss, sp, g_repc_n, g_repnc_n);
+        /* stack words at SP (pushed return CS:IP / flags if we INT'd or CALLed) */
+        n = 0;
+        for (i = 0; i < 16; i++)
+            n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(sbase + i));
+        printf("WSBAD: stack@SP=%s\n", buf);
+        /* IRQ state + IVT base region (vectors the WS IRQs index into) */
+        printf("WSBAD: IRQENA=%02X IRQBSE=%02X IRQVEC=%02X PEND=%02lX\n",
+               IO[0xB2], IO[0xB0], IO[0xB4], (unsigned long)nec_get_reg(NEC_PENDING));
+        n = 0;
+        for (i = 0; i < 16; i++)              /* IVT vectors 0..3 (16 bytes) */
+            n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(i));
+        printf("WSBAD: IVT0-3=%s\n", buf);
+        /* IVT entry the IRQ base points at */
+        { uint32_t v = ((uint32_t)IO[0xB0]) << 2; n = 0;
+          for (i = 0; i < 16; i++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(v + i));
+          printf("WSBAD: IVT@IRQBSE(%lx)=%s\n", (unsigned long)v, buf); }
+    }
+
+    snprintf(buf, sizeof(buf), "WS BAD-JUMP @ %04X:%04X", cs, ip);
     gw_debug_show_log(buf);
 }
 
