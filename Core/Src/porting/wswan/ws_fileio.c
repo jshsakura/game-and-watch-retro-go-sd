@@ -717,6 +717,23 @@ void ws_freeze_check(void)
                           (v >> 16) & 0xFFFF, v & 0xFFFF);
         }
         printf("WSRING: %s\n", buf);
+        /* Bank-switch (OUT 0xC0-0xC3) history -- last 16, oldest->newest. Each
+         * is CS:IP=port:val. A code-bank (0xC0) switch right before the crash,
+         * or a switch to bank 0 (MemDummy), confirms the bank-timing divergence. */
+        {
+            extern unsigned int   g_bnk_ring[16];
+            extern unsigned short g_bnk_meta[16];
+            extern unsigned char  g_bnk_pos;
+            n = 0;
+            for (k = 0; k < 16; k++) {
+                unsigned int  v = g_bnk_ring[(g_bnk_pos + k) & 15];
+                unsigned short mt = g_bnk_meta[(g_bnk_pos + k) & 15];
+                n += snprintf(buf + n, sizeof(buf) - n, "%04X:%04X=%02X:%02X ",
+                              (v >> 16) & 0xFFFF, v & 0xFFFF,
+                              (mt >> 8) & 0xFF, mt & 0xFF);
+            }
+            printf("WSBNK: %s\n", buf);
+        }
         /* SP/BP trajectory aligned with WSRING -- shows whether SP marched down
          * gradually (deep recursion) or dropped in one step (a MOV SP,BP with a
          * corrupt BP). Oldest->newest, same order as WSRING. */

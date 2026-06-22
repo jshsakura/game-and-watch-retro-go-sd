@@ -118,6 +118,11 @@ unsigned char  g_bpz_rom[24];
 unsigned char  g_bpz_stk[16];   /* stack @SP when BP first hit 0 */
 unsigned int   g_bpz_ret;       /* RET target the resume-frame pops to */
 unsigned char  g_bpz_retrom[32];/* ROM at that target (runs with BP=0) */
+/* Bank-switch (OUT 0xC0-0xC3) event ring -- confirms whether a far-call/bank
+ * switch right before the crash steers control flow wrong on this 8MB cart. */
+unsigned int   g_bnk_ring[16];  /* CS:IP of the OUT */
+unsigned short g_bnk_meta[16];  /* (port<<8) | AL value written */
+unsigned char  g_bnk_pos;
 
 static nec_Regs I;
 
@@ -1067,6 +1072,23 @@ int32_t nec_execute(int32_t cycles)
 			}
 		}
 		g_bp_prev = I.regs.w[BP];
+		/* Log OUT 0xC0-0xC3 (ROM/SRAM bank switches) just before they execute. */
+		if (!g_runaway_caught) {
+			unsigned char op = (unsigned char)ReadMem(cs_base + I.ip);
+			int port = -1;
+			if (op == 0xE6) {           /* OUT imm8, AL */
+				unsigned char pt = (unsigned char)ReadMem(cs_base + I.ip + 1);
+				if (pt >= 0xC0 && pt <= 0xC3) port = pt;
+			} else if (op == 0xEE) {    /* OUT DX, AL */
+				unsigned short dx = I.regs.w[DW];
+				if (dx >= 0xC0 && dx <= 0xC3) port = dx & 0xFF;
+			}
+			if (port >= 0) {
+				unsigned char p = g_bnk_pos++ & 15;
+				g_bnk_ring[p] = ((unsigned int)I.sregs[CS] << 16) | I.ip;
+				g_bnk_meta[p] = ((unsigned short)port << 8) | I.regs.b[AL];
+			}
+		}
 		nec_instruction[FETCHOP]();
 	}
 
