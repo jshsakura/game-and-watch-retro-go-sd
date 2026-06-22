@@ -744,6 +744,23 @@ void ws_freeze_check(void)
           for (i = 0; i < 16; i++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(v + i));
           printf("WSBAD: IVT@IRQBSE(%lx)=%s\n", (unsigned long)v, buf); }
+        /* The recursion's return CS:IP consistently lands at phys 0x0008 (the
+         * runaway frame). Dump ROM around that return site in two windows so we
+         * can decode the CALL FAR just before it + the recursive function body /
+         * its termination test -- the value it reads that the savestate left
+         * unrestored. WSREC1 = [-0x30,-0x04), WSREC2 = [-0x04,+0x28). */
+        { uint16_t rip = ReadMem(0x08) | (ReadMem(0x09) << 8);
+          uint16_t rcs = ReadMem(0x0A) | (ReadMem(0x0B) << 8);
+          uint16_t o1  = (uint16_t)(rip - 0x30);
+          uint16_t o2  = (uint16_t)(rip - 0x04);
+          uint32_t p1  = ((uint32_t)rcs << 4) + o1;
+          uint32_t p2  = ((uint32_t)rcs << 4) + o2;
+          n = 0; for (i = 0; i < 44; i++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(p1 + i));
+          printf("WSREC1: %04X:%04X=%s\n", rcs, o1, buf);
+          n = 0; for (i = 0; i < 44; i++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(p2 + i));
+          printf("WSREC2: %04X:%04X=%s\n", rcs, o2, buf); }
     }
 
     /* Dump the whole captured log to the SD card so the user can read it off
