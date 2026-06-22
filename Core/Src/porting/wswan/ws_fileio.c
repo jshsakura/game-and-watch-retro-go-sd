@@ -643,6 +643,17 @@ uint32_t WsLoadStateFromFile(FILE *fp)
            (unsigned long)nec_get_reg(NEC_BP),
            (unsigned long)nec_get_reg(NEC_DS), (unsigned long)nec_get_reg(NEC_ES),
            (unsigned long)nec_get_reg(NEC_PENDING));
+    /* Dump the stack/BP-chain region AT RESUME. If [BP]=[0x1FFA] is already 0
+     * here, the saved state itself has a broken chain (save-side problem); if it
+     * is a valid outer-frame pointer now but 0 by the crash, something overwrites
+     * it during the first frames (runtime corruption). */
+    { uint16_t ss = (uint16_t)nec_get_reg(NEC_SS);
+      uint16_t bp = (uint16_t)nec_get_reg(NEC_BP);
+      uint32_t base = ((uint32_t)ss << 4) + (uint16_t)(bp - 0x12);
+      char b2[140]; int q, m = 0;
+      for (q = 0; q < 64; q++)
+          m += snprintf(b2 + m, sizeof(b2) - m, "%02X", ReadMem(base + q));
+      printf("WSLD: stk@BP-12 (%04X:%04X)=%s\n", ss, (uint16_t)(bp - 0x12), b2); }
     printf("WSLD: complete\n");
     return 0;
 }
