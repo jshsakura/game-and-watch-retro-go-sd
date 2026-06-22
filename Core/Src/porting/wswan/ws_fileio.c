@@ -692,16 +692,20 @@ void ws_freeze_check(void)
                           (v >> 16) & 0xFFFF, v & 0xFFFF);
         }
         printf("WSRING: %s\n", buf);
-        /* ROM bytes at the oldest and newest ring instructions, to decode the
-         * runaway loop body / its far-call target by hand. */
-        { uint32_t pa = (((a_old >> 16) & 0xFFFF) << 4) + (a_old & 0xFFFF);
-          n = 0; for (k = 0; k < 16; k++)
+        /* Wide ROM windows around the runaway cycle's two functions, dumped
+         * BACKWARD 0x18 from each ring anchor to capture the function body that
+         * decides to recurse (the conditional branch + what it reads), not just
+         * the epilogue. 24 bytes each, decoded by hand. */
+        { unsigned short seg = (a_old >> 16) & 0xFFFF, off = (a_old & 0xFFFF) - 0x18;
+          uint32_t pa = ((uint32_t)seg << 4) + off;
+          n = 0; for (k = 0; k < 24; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSOPA: %04X:%04X=%s\n", (a_old>>16)&0xFFFF, a_old&0xFFFF, buf); }
-        { uint32_t pa = (((a_new >> 16) & 0xFFFF) << 4) + (a_new & 0xFFFF);
-          n = 0; for (k = 0; k < 16; k++)
+          printf("WSOPA: %04X:%04X=%s\n", seg, off, buf); }
+        { unsigned short seg = (a_new >> 16) & 0xFFFF, off = (a_new & 0xFFFF) - 0x18;
+          uint32_t pa = ((uint32_t)seg << 4) + off;
+          n = 0; for (k = 0; k < 24; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSOPB: %04X:%04X=%s\n", (a_new>>16)&0xFFFF, a_new&0xFFFF, buf); }
+          printf("WSOPB: %04X:%04X=%s\n", seg, off, buf); }
     }
 
     {
@@ -730,7 +734,21 @@ void ws_freeze_check(void)
           printf("WSBAD: IVT@IRQBSE(%lx)=%s\n", (unsigned long)v, buf); }
     }
 
-    snprintf(buf, sizeof(buf), "WS BAD-JUMP @ %04X:%04X", cs, ip);
+    /* Dump the whole captured log to the SD card so the user can read it off
+     * the card instead of photographing the screen. */
+    {
+        extern char logbuf[];
+        FILE *lf = fopen("/ws_debug.txt", "w");
+        if (lf) {
+            fwrite(logbuf, 1, strlen(logbuf), lf);
+            fclose(lf);
+            printf("WSLOG: wrote /ws_debug.txt\n");
+        } else {
+            printf("WSLOG: fopen /ws_debug.txt FAILED\n");
+        }
+    }
+
+    snprintf(buf, sizeof(buf), "WS BAD-JUMP @ %04X:%04X (saved /ws_debug.txt)", cs, ip);
     gw_debug_show_log(buf);
 }
 
