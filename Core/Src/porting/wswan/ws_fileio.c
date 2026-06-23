@@ -665,9 +665,21 @@ uint32_t WsLoadStateFromFile(FILE *fp)
      * so forcing CS=0 only SKIPPED that instruction and left the bank/CPU state
      * inconsistent, which is what corrupted One Piece's savestate resume. */
     WriteIO(0xC1, IO[0xC1]);
-    WriteIO(0xC2, IO[0xC2]);
-    WriteIO(0xC3, IO[0xC3]);
-    printf("WSLD: writeio C1-C3 done\n");
+    /* C1>=8 hits WriteIO's WonderWitch->MemDummy branch, but a real-SRAM cart
+     * aliases the bank to a valid one (One Piece leaves C1=0xFF at save time).
+     * Point Page[1] back at the mirrored real SRAM so resume reads valid data
+     * instead of 0xA0 garbage (which corrupted return addresses -> wrong jumps). */
+    { extern uint8_t *Page[16];
+      int fixed = 0;
+      if (RAMBanks > 0 && RAMMap[0] != MemDummy && Page[1] == MemDummy) {
+          Page[1] = RAMMap[IO[0xC1] % RAMBanks];
+          fixed = 1;
+      }
+      WriteIO(0xC2, IO[0xC2]);
+      WriteIO(0xC3, IO[0xC3]);
+      printf("WSLD: writeio C1-C3 done (C1=%02X page1=%s%s)\n",
+             IO[0xC1], (Page[1] == MemDummy) ? "dummy" : "ram",
+             fixed ? " [remapped]" : ""); }
     WriteIO(0xC0, IO[0xC0]);
     printf("WSLD: writeio C0 done\n");
     for (i = 0x80; i <= 0x90; i++)
