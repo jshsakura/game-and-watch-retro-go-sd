@@ -862,6 +862,16 @@ void ws_freeze_check(void)
                               (mt >> 8) & 0xFF, mt & 0xFF);
             }
             printf("WSBNK: %s\n", buf); }
+          /* Dump the non-terminating loop body B978:3080-3170 (the C2-bank loop
+           * that leaks SP) so we can decode the CALL/RETF that never balances. */
+          { int blk; uint16_t lcs = 0xB978, lbase = 0x3080;
+            for (blk = 0; blk < 4; blk++) {
+                uint16_t off = lbase + (uint16_t)(blk * 56);
+                uint32_t pa = ((uint32_t)lcs << 4) + off;
+                n = 0; for (i = 0; i < 56; i++)
+                    n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + i));
+                printf("WSLOOP %04X:%04X=%s\n", lcs, off, buf);
+            } }
           { extern unsigned int  g_bpz_ret;
             extern unsigned char g_bpz_retrom[32];
             n = 0; for (i = 0; i < 32; i++)
