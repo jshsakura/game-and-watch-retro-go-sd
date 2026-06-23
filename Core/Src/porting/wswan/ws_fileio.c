@@ -680,7 +680,17 @@ uint32_t WsLoadStateFromFile(FILE *fp)
       printf("WSLD: writeio C1-C3 done (C1=%02X page1=%s%s)\n",
              IO[0xC1], (Page[1] == MemDummy) ? "dummy" : "ram",
              fixed ? " [remapped]" : ""); }
-    WriteIO(0xC0, IO[0xC0]);
+    /* Skip WriteIO(0xC0)'s bank-delay nec_execute(1) during resume: it models
+     * the 1-instruction delay after a LIVE 'OUT 0xC0', but on resume there is no
+     * in-flight OUT -- it would run the resumed first instruction (e.g. B978:0D85
+     * 'PUSH DI; CALL FAR ES:[DI]') fetched from the not-yet-mapped (stale) bank,
+     * decoding a garbage opcode that corrupts a function pointer -> far-call into
+     * data. Force CS=0 so the branch is skipped; the banks are still mapped, and
+     * the real first instruction then runs in the main loop with the correct bank. */
+    { uint32_t _scs = nec_get_reg(NEC_CS);
+      nec_set_reg(NEC_CS, 0);
+      WriteIO(0xC0, IO[0xC0]);
+      nec_set_reg(NEC_CS, _scs); }
     printf("WSLD: writeio C0 done\n");
     for (i = 0x80; i <= 0x90; i++)
         WriteIO(i, IO[i]);
