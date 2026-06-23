@@ -935,6 +935,15 @@ void ws_freeze_check(void)
                     n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + i));
                 printf("WSLOOP %04X:%04X=%s\n", lcs, off, buf);
             } }
+          /* Jump-table targets of the B978:309B `CALL [BX+0x30D5]` (table @30D5 =
+           * {30D9, 3273}). One of these leads to the bad far-jump into 70FF. */
+          { int blk; static const unsigned short tg[] = {0x30D5, 0x30D9, 0x3273};
+            for (blk = 0; blk < 3; blk++) {
+                uint32_t pa = ((uint32_t)0xB978 << 4) + tg[blk];
+                n = 0; for (i = 0; i < 44; i++)
+                    n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + i));
+                printf("WSJT B978:%04X=%s\n", tg[blk], buf);
+            } }
           /* The wrong jump that lands in the A068:0Cxx data table + the regs. */
           { extern unsigned char g_jmp_caught, g_jmp_rom[24];
             extern unsigned int   g_jmp_from, g_jmp_to, g_jmp_dses;

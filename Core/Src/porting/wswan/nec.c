@@ -1079,9 +1079,12 @@ int32_t nec_execute(int32_t cycles)
 			}
 		}
 		g_bp_prev = I.regs.w[BP];
-		/* Latch the FIRST entry into the A068:0Cxx data region (the wrong jump). */
-		if (!g_jmp_caught && I.sregs[CS] == 0xA068
-		    && I.ip >= 0x0C00 && I.ip <= 0x0C60) {
+		/* Latch the FIRST entry into a known garbage target (the wrong jump):
+		 * A068:0Cxx (data table) or segment 0x70FF (ROM graphics run as code on
+		 * the deterministic B978:3085 save). */
+		if (!g_jmp_caught
+		    && ((I.sregs[CS] == 0xA068 && I.ip >= 0x0C00 && I.ip <= 0x0C60)
+		        || I.sregs[CS] == 0x70FF)) {
 			unsigned int prev = g_csip_ring[(g_ring_pos - 2) & 15];
 			int q; uint32_t pa = (((prev >> 16) & 0xFFFF) << 4)
 			                     + (unsigned short)((prev & 0xFFFF) - 0x08);
