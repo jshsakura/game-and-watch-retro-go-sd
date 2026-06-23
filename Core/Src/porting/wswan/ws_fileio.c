@@ -606,6 +606,9 @@ uint32_t WsSaveStateToFile(FILE *fp)
  * truncates the early WSLD lines off the SD file). */
 unsigned char g_resume_stk[64];
 unsigned int  g_resume_base;
+unsigned int  g_resume_csip;   /* CS:IP at resume (surfaced in panel) */
+unsigned int  g_resume_sssp;   /* SS:SP at resume */
+unsigned int  g_resume_dses;   /* DS:ES at resume */
 
 uint32_t WsLoadStateFromFile(FILE *fp)
 {
@@ -669,11 +672,14 @@ uint32_t WsLoadStateFromFile(FILE *fp)
      * is a valid outer-frame pointer now but 0 by the crash, something overwrites
      * it during the first frames (runtime corruption). */
     { extern unsigned char g_resume_stk[64];
-      extern unsigned int  g_resume_base;
+      extern unsigned int  g_resume_base, g_resume_csip, g_resume_sssp, g_resume_dses;
       uint16_t ss = (uint16_t)nec_get_reg(NEC_SS);
       uint16_t bp = (uint16_t)nec_get_reg(NEC_BP);
       uint16_t lo = (uint16_t)(bp - 0x12);
       uint32_t base = ((uint32_t)ss << 4) + lo;
+      g_resume_csip = ((unsigned int)(uint16_t)nec_get_reg(NEC_CS) << 16) | (uint16_t)nec_get_reg(NEC_IP);
+      g_resume_sssp = ((unsigned int)ss << 16) | (uint16_t)nec_get_reg(NEC_SP);
+      g_resume_dses = ((unsigned int)(uint16_t)nec_get_reg(NEC_DS) << 16) | (uint16_t)nec_get_reg(NEC_ES);
       char b2[140]; int q, m = 0;
       g_resume_base = ((unsigned int)ss << 16) | lo;
       for (q = 0; q < 64; q++) {
@@ -834,6 +840,12 @@ void ws_freeze_check(void)
                 n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_resume_stk[i]);
             printf("WSRSM: stk@%04X:%04X(+12=[BP])=%s\n",
                    (g_resume_base >> 16) & 0xFFFF, g_resume_base & 0xFFFF, buf); }
+          /* Resume regs, surfaced in the panel (the WSLD line truncates off). */
+          { extern unsigned int g_resume_csip, g_resume_sssp, g_resume_dses;
+            printf("WSRSM: resume CS:IP=%04X:%04X SS:SP=%04X:%04X DS:ES=%04X:%04X\n",
+                   (g_resume_csip >> 16) & 0xFFFF, g_resume_csip & 0xFFFF,
+                   (g_resume_sssp >> 16) & 0xFFFF, g_resume_sssp & 0xFFFF,
+                   (g_resume_dses >> 16) & 0xFFFF, g_resume_dses & 0xFFFF); }
           /* Bank-switch (OUT 0xC0-0xC3) history, last 16 oldest->newest, each
            * CS:IP=port:val. Placed in the late (retained) block so it survives the
            * logbuf truncation. A code-bank (0xC0) switch right before the crash,
