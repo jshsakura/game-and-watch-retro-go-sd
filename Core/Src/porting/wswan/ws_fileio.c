@@ -695,6 +695,20 @@ uint32_t WsLoadStateFromFile(FILE *fp)
     for (i = 0x80; i <= 0x90; i++)
         WriteIO(i, IO[i]);
     printf("WSLD: writeio 80-90 done\n");
+    /* Restart the HBlank/VBlank timer countdowns. HTimer/VTimer are static in
+     * WS.c -- NOT saved and NOT in the replay set -- so on resume they stay
+     * dead/stale: a timer the game enabled never counts down, its IRQ never
+     * fires, and a timer-driven counter the game's logic waits on never advances
+     * -> it spins / recurses forever (exactly the B978:30xx recursion we see).
+     * Replay the timer preset + control regs so WriteIO reloads HTimer/VTimer
+     * from the restored HPRE/VPRE and re-enables them. */
+    WriteIO(0xA4, IO[0xA4]);   /* HPRE lo -> HTimer */
+    WriteIO(0xA5, IO[0xA5]);   /* HPRE hi -> HTimer */
+    WriteIO(0xA6, IO[0xA6]);   /* VPRE lo -> VTimer */
+    WriteIO(0xA7, IO[0xA7]);   /* VPRE hi -> VTimer */
+    WriteIO(0xA2, IO[0xA2]);   /* TIMCTL -> enable + reload both */
+    printf("WSLD: writeio timers A2-A7 done (TIMCTL=%02X HPRE=%02X%02X VPRE=%02X%02X)\n",
+           IO[0xA2], IO[0xA5], IO[0xA4], IO[0xA7], IO[0xA6]);
     printf("WSLD: resume CS=%lx IP=%lx SS=%lx SP=%lx BP=%lx DS=%lx ES=%lx PEND=%lx\n",
            (unsigned long)nec_get_reg(NEC_CS), (unsigned long)nec_get_reg(NEC_IP),
            (unsigned long)nec_get_reg(NEC_SS), (unsigned long)nec_get_reg(NEC_SP),
