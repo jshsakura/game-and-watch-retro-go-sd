@@ -889,7 +889,12 @@ void ws_freeze_check(void)
                    (g_resume_dses >> 16) & 0xFFFF, g_resume_dses & 0xFFFF);
             printf("WSRSM: banks C0=%02X C1=%02X C2=%02X C3=%02X RAMBanks=%lu RAMSize=%lx\n",
                    IO[0xC0], IO[0xC1], IO[0xC2], IO[0xC3],
-                   (unsigned long)RAMBanks, (unsigned long)RAMSize); }
+                   (unsigned long)RAMBanks, (unsigned long)RAMSize);
+            printf("WSRSM: regs AX=%04lX BX=%04lX CX=%04lX DX=%04lX SI=%04lX DI=%04lX FLAGS=%04lX\n",
+                   (unsigned long)nec_get_reg(NEC_AW), (unsigned long)nec_get_reg(NEC_BW),
+                   (unsigned long)nec_get_reg(NEC_CW), (unsigned long)nec_get_reg(NEC_DW),
+                   (unsigned long)nec_get_reg(NEC_IX), (unsigned long)nec_get_reg(NEC_IY),
+                   (unsigned long)nec_get_reg(NEC_FLAGS)); }
           /* Bank-switch (OUT 0xC0-0xC3) history, last 16 oldest->newest, each
            * CS:IP=port:val. Placed in the late (retained) block so it survives the
            * logbuf truncation. A code-bank (0xC0) switch right before the crash,
