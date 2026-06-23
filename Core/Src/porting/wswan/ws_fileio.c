@@ -879,6 +879,19 @@ void ws_freeze_check(void)
                     n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + i));
                 printf("WSLOOP %04X:%04X=%s\n", lcs, off, buf);
             } }
+          /* The wrong jump that lands in the A068:0Cxx data table + the regs. */
+          { extern unsigned char g_jmp_caught, g_jmp_rom[24];
+            extern unsigned int   g_jmp_from, g_jmp_to, g_jmp_dses;
+            extern unsigned short g_jmp_regs[8];
+            n = 0; for (i = 0; i < 24; i++)
+                n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_jmp_rom[i]);
+            printf("WSJMP: c=%u from=%04X:%04X to=%04X:%04X rom@-8=%s\n",
+                   g_jmp_caught, (g_jmp_from >> 16) & 0xFFFF, g_jmp_from & 0xFFFF,
+                   (g_jmp_to >> 16) & 0xFFFF, g_jmp_to & 0xFFFF, buf);
+            printf("WSJMP: AX=%04X BX=%04X CX=%04X DX=%04X SI=%04X DI=%04X BP=%04X SP=%04X DS=%04X ES=%04X\n",
+                   g_jmp_regs[0], g_jmp_regs[1], g_jmp_regs[2], g_jmp_regs[3],
+                   g_jmp_regs[4], g_jmp_regs[5], g_jmp_regs[6], g_jmp_regs[7],
+                   (g_jmp_dses >> 16) & 0xFFFF, g_jmp_dses & 0xFFFF); }
           { extern unsigned int  g_bpz_ret;
             extern unsigned char g_bpz_retrom[32];
             n = 0; for (i = 0; i < 32; i++)

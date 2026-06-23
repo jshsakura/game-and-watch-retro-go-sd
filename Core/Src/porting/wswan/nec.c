@@ -123,6 +123,13 @@ unsigned char  g_bpz_retrom[32];/* ROM at that target (runs with BP=0) */
 unsigned int   g_bnk_ring[16];  /* CS:IP of the OUT */
 unsigned short g_bnk_meta[16];  /* (port<<8) | AL value written */
 unsigned char  g_bnk_pos;
+/* Catch the FIRST jump into the A068:0Cxx data table (the wrong-index dispatch
+ * that lands in data and hangs the loop): the jump instruction's CS:IP + ROM,
+ * and the register file at that instant (the bad index/target source). */
+unsigned char  g_jmp_caught;
+unsigned int   g_jmp_from, g_jmp_to, g_jmp_dses;
+unsigned short g_jmp_regs[8];   /* AW BW CW DW SI DI BP SP */
+unsigned char  g_jmp_rom[24];
 
 static nec_Regs I;
 
@@ -1072,6 +1079,23 @@ int32_t nec_execute(int32_t cycles)
 			}
 		}
 		g_bp_prev = I.regs.w[BP];
+		/* Latch the FIRST entry into the A068:0Cxx data region (the wrong jump). */
+		if (!g_jmp_caught && I.sregs[CS] == 0xA068
+		    && I.ip >= 0x0C00 && I.ip <= 0x0C60) {
+			unsigned int prev = g_csip_ring[(g_ring_pos - 2) & 15];
+			int q; uint32_t pa = (((prev >> 16) & 0xFFFF) << 4)
+			                     + (unsigned short)((prev & 0xFFFF) - 0x08);
+			g_jmp_caught = 1;
+			g_jmp_from = prev;
+			g_jmp_to = ((unsigned int)I.sregs[CS] << 16) | I.ip;
+			g_jmp_regs[0] = I.regs.w[AW]; g_jmp_regs[1] = I.regs.w[BW];
+			g_jmp_regs[2] = I.regs.w[CW]; g_jmp_regs[3] = I.regs.w[DW];
+			g_jmp_regs[4] = I.regs.w[IX]; g_jmp_regs[5] = I.regs.w[IY];
+			g_jmp_regs[6] = I.regs.w[BP]; g_jmp_regs[7] = I.regs.w[SP];
+			g_jmp_dses = ((unsigned int)I.sregs[DS] << 16) | I.sregs[ES];
+			for (q = 0; q < 24; q++)
+				g_jmp_rom[q] = (unsigned char)ReadMem(pa + q);
+		}
 		/* Log OUT 0xC0-0xC3 (ROM/SRAM bank switches) just before they execute. */
 		if (!g_runaway_caught) {
 			unsigned char op = (unsigned char)ReadMem(cs_base + I.ip);
