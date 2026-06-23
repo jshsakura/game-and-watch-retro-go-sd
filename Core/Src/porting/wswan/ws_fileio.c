@@ -350,6 +350,14 @@ int ws_create_from_flash(const uint8_t *data, uint32_t size)
         if (banks > WS_CART_RAM_BANKS) banks = WS_CART_RAM_BANKS;
         for (b = 0; b < banks; b++)
             RAMMap[b] = ws_cart_ram + b * 0x10000;
+        /* Mirror the SRAM banks across the C1-reachable range (0..7) like the
+         * hardware: a cart with fewer than 8 SRAM banks aliases bank V to
+         * (V mod banks). Without this, IO[0xC1]=non-zero on a 1-bank cart maps
+         * Page[1] to MemDummy (0xA0) -> the game reads garbage SRAM. (Parallels
+         * the ROM bank mirror above.) */
+        if (banks > 0)
+            for (b = banks; b < 8; b++)
+                RAMMap[b] = RAMMap[b % banks];
     }
 
     SaveName[0] = 0;
@@ -856,7 +864,10 @@ void ws_freeze_check(void)
             printf("WSRSM: resume CS:IP=%04X:%04X SS:SP=%04X:%04X DS:ES=%04X:%04X\n",
                    (g_resume_csip >> 16) & 0xFFFF, g_resume_csip & 0xFFFF,
                    (g_resume_sssp >> 16) & 0xFFFF, g_resume_sssp & 0xFFFF,
-                   (g_resume_dses >> 16) & 0xFFFF, g_resume_dses & 0xFFFF); }
+                   (g_resume_dses >> 16) & 0xFFFF, g_resume_dses & 0xFFFF);
+            printf("WSRSM: banks C0=%02X C1=%02X C2=%02X C3=%02X RAMBanks=%lu RAMSize=%lx\n",
+                   IO[0xC0], IO[0xC1], IO[0xC2], IO[0xC3],
+                   (unsigned long)RAMBanks, (unsigned long)RAMSize); }
           /* Bank-switch (OUT 0xC0-0xC3) history, last 16 oldest->newest, each
            * CS:IP=port:val. Placed in the late (retained) block so it survives the
            * logbuf truncation. A code-bank (0xC0) switch right before the crash,
