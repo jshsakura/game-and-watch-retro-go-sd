@@ -723,6 +723,13 @@ void ws_freeze_check(void)
     }
     shown = 1;
 
+    /* Clear the 4KB printf ring so the whole dump below is written contiguously
+     * from index 0 -- without this the boot/WSLD/WSf lines push the dump past
+     * 4KB and it wraps, mangling the copy fwrite()n to /ws_debug.txt. The dump
+     * (~3KB) fits in one pass, so the SD file then holds it complete and in
+     * order. Every datum we need is reprinted in the dump below. */
+    { extern uint32_t log_idx; extern char logbuf[]; log_idx = 0; logbuf[0] = '\0'; }
+
     /* The runaway loop body: last 8 (CS:IP) executed before SP hit 0x0400. */
     {
         extern unsigned int   g_csip_ring[16];
