@@ -644,23 +644,27 @@ uint32_t WsLoadStateFromFile(FILE *fp)
      * palette - without replaying them the tilemap base stays stale and the
      * whole screen renders garbled. 0x00-0x3F are pure config (no DMA/sound
      * trigger lives below 0x40), so replaying them is side-effect-safe. */
-    { uint32_t _saved_cs = nec_get_reg(NEC_CS); nec_set_reg(NEC_CS, 0);
-      for (i = 0x00; i <= 0x3F; i++)
-          WriteIO(i, IO[i]);
-      printf("WSLD: writeio 00-3F done\n");
-      WriteIO(0xC1, IO[0xC1]);
-      WriteIO(0xC2, IO[0xC2]);
-      WriteIO(0xC3, IO[0xC3]);
-      printf("WSLD: writeio C1-C3 done\n");
-      /* WriteIO(0xC0) calls nec_execute(1) when CS>=0x4000; CS is forced 0
-       * above so that branch (and the whole replay) can't run the emulated
-       * CPU before Page[] is mapped -> null NEC handler -> crash. */
-      WriteIO(0xC0, IO[0xC0]);
-      printf("WSLD: writeio C0 done\n");
-      for (i = 0x80; i <= 0x90; i++)
-          WriteIO(i, IO[i]);
-      printf("WSLD: writeio 80-90 done\n");
-      nec_set_reg(NEC_CS, _saved_cs); }
+    /* Display config replay (our addition): rebuild the tilemap base pointers so
+     * the screen isn't garbled. No nec_execute / DMA below 0x40, so safe. */
+    for (i = 0x00; i <= 0x3F; i++)
+        WriteIO(i, IO[i]);
+    printf("WSLD: writeio 00-3F done\n");
+    /* Bank replay -- EXACTLY mirror the stock WsLoadState (C1,C2,C3,C0,80-90)
+     * with the REAL CS. WriteIO(0xC0) deliberately runs nec_execute(1) at
+     * CS>=0x4000: that completes the in-flight bank-switch the save interrupted,
+     * which the resume needs. We previously forced CS=0 to dodge a HardFault,
+     * but that was the NULL V30 opcode slots (0x0F/0x64/0x65), now implemented --
+     * so forcing CS=0 only SKIPPED that instruction and left the bank/CPU state
+     * inconsistent, which is what corrupted One Piece's savestate resume. */
+    WriteIO(0xC1, IO[0xC1]);
+    WriteIO(0xC2, IO[0xC2]);
+    WriteIO(0xC3, IO[0xC3]);
+    printf("WSLD: writeio C1-C3 done\n");
+    WriteIO(0xC0, IO[0xC0]);
+    printf("WSLD: writeio C0 done\n");
+    for (i = 0x80; i <= 0x90; i++)
+        WriteIO(i, IO[i]);
+    printf("WSLD: writeio 80-90 done\n");
     printf("WSLD: resume CS=%lx IP=%lx SS=%lx SP=%lx BP=%lx DS=%lx ES=%lx PEND=%lx\n",
            (unsigned long)nec_get_reg(NEC_CS), (unsigned long)nec_get_reg(NEC_IP),
            (unsigned long)nec_get_reg(NEC_SS), (unsigned long)nec_get_reg(NEC_SP),
