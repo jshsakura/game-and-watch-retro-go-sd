@@ -324,6 +324,22 @@ int ws_create_from_flash(const uint8_t *data, uint32_t size)
                 (uint8_t *)(data + (size - total) + (uint32_t)i * 0x10000);
     }
 
+    /* Mirror a sub-16MB cart across the whole 0x00-0xFF bank space, like the
+     * real hardware: the cart's unconnected high bank-address lines make bank V
+     * alias to (V mod ROMBanks). Without this, a game that selects a bank below
+     * the top-anchored range (0x100-ROMBanks) reads MemDummy (0xA0) instead of
+     * the aliased ROM. One Piece (8MB, ROMBanks=128) writes 0xC3 bank 0x14/0x00
+     * during play; the missing mirror fed it 0xA0 garbage, and on savestate
+     * resume that corrupted its control flow (BP popped to 0 -> MOV SP,BP ->
+     * SP=0 -> IVT overwrite -> crash). Only mirror power-of-two cart sizes,
+     * where the aliasing is exact; odd sizes (48/96 banks) are left as-is. */
+    if (ROMBanks > 0 && ROMBanks < 0x100 &&
+        (ROMBanks & (ROMBanks - 1)) == 0) {
+        int v, lo = 0x100 - ROMBanks;
+        for (v = 0; v < lo; v++)
+            ROMMap[v] = ROMMap[lo + (v & (ROMBanks - 1))];
+    }
+
     /* Cart save RAM, backed by one static buffer covering every bank the cart
      * declares (up to 4 x 64KB). Map each bank to its slice so multi-bank SRAM
      * games keep real, contiguous storage instead of aliasing MemDummy. */
