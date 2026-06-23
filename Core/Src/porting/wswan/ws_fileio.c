@@ -923,6 +923,18 @@ void ws_freeze_check(void)
             extern unsigned char g_bpz_retrom[32];
             n = 0; for (i = 0; i < 32; i++)
                 n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_bpz_retrom[i]);
+            /* Serial-wait investigation: dump the COMCTL poll routine, its
+             * caller, and the serial/IRQ IO state. */
+            { int blk; static const struct { unsigned short cs, off; } dmp[] = {
+                  {0xB978, 0x1540}, {0xB978, 0x1563}, {0xB978, 0x16C8} };
+              for (blk = 0; blk < 3; blk++) {
+                  uint32_t pa = ((uint32_t)dmp[blk].cs << 4) + dmp[blk].off;
+                  n = 0; for (i = 0; i < 48; i++)
+                      n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + i));
+                  printf("WSSER %04X:%04X=%s\n", dmp[blk].cs, dmp[blk].off, buf);
+              } }
+            printf("WSSER: IO B0=%02X B1=%02X B2=%02X B3=%02X B4=%02X B5=%02X B6=%02X\n",
+                   IO[0xB0], IO[0xB1], IO[0xB2], IO[0xB3], IO[0xB4], IO[0xB5], IO[0xB6]);
             printf("WSBPZ: ret=%04X:%04X rom=%s\n",
                    (g_bpz_ret >> 16) & 0xFFFF, g_bpz_ret & 0xFFFF, buf); } }
     }
