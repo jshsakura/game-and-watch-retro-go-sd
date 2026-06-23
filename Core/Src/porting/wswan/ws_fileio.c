@@ -717,23 +717,6 @@ void ws_freeze_check(void)
                           (v >> 16) & 0xFFFF, v & 0xFFFF);
         }
         printf("WSRING: %s\n", buf);
-        /* Bank-switch (OUT 0xC0-0xC3) history -- last 16, oldest->newest. Each
-         * is CS:IP=port:val. A code-bank (0xC0) switch right before the crash,
-         * or a switch to bank 0 (MemDummy), confirms the bank-timing divergence. */
-        {
-            extern unsigned int   g_bnk_ring[16];
-            extern unsigned short g_bnk_meta[16];
-            extern unsigned char  g_bnk_pos;
-            n = 0;
-            for (k = 0; k < 16; k++) {
-                unsigned int  v = g_bnk_ring[(g_bnk_pos + k) & 15];
-                unsigned short mt = g_bnk_meta[(g_bnk_pos + k) & 15];
-                n += snprintf(buf + n, sizeof(buf) - n, "%04X:%04X=%02X:%02X ",
-                              (v >> 16) & 0xFFFF, v & 0xFFFF,
-                              (mt >> 8) & 0xFF, mt & 0xFF);
-            }
-            printf("WSBNK: %s\n", buf);
-        }
         /* SP/BP trajectory aligned with WSRING -- shows whether SP marched down
          * gradually (deep recursion) or dropped in one step (a MOV SP,BP with a
          * corrupt BP). Oldest->newest, same order as WSRING. */
@@ -835,6 +818,22 @@ void ws_freeze_check(void)
                 n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_resume_stk[i]);
             printf("WSRSM: stk@%04X:%04X(+12=[BP])=%s\n",
                    (g_resume_base >> 16) & 0xFFFF, g_resume_base & 0xFFFF, buf); }
+          /* Bank-switch (OUT 0xC0-0xC3) history, last 16 oldest->newest, each
+           * CS:IP=port:val. Placed in the late (retained) block so it survives the
+           * logbuf truncation. A code-bank (0xC0) switch right before the crash,
+           * or a switch to bank 0 (MemDummy), confirms the bank-timing divergence. */
+          { extern unsigned int   g_bnk_ring[16];
+            extern unsigned short g_bnk_meta[16];
+            extern unsigned char  g_bnk_pos;
+            n = 0;
+            for (i = 0; i < 16; i++) {
+                unsigned int  v = g_bnk_ring[(g_bnk_pos + i) & 15];
+                unsigned short mt = g_bnk_meta[(g_bnk_pos + i) & 15];
+                n += snprintf(buf + n, sizeof(buf) - n, "%04X:%04X=%02X:%02X ",
+                              (v >> 16) & 0xFFFF, v & 0xFFFF,
+                              (mt >> 8) & 0xFF, mt & 0xFF);
+            }
+            printf("WSBNK: %s\n", buf); }
           { extern unsigned int  g_bpz_ret;
             extern unsigned char g_bpz_retrom[32];
             n = 0; for (i = 0; i < 32; i++)
