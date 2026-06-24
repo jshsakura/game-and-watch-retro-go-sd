@@ -781,10 +781,10 @@ void ws_freeze_check(void)
     /* Fire the instant the stack-runaway ring is frozen (the real target), or
      * when the CPU has already fallen into low IRAM, or after ~6s. */
     {
-        extern unsigned char g_runaway_caught, g_b436_caught;
-        /* Also fire once B978:436D was reached (cold-boot OR resume) so its full
-         * state can be compared. */
-        if (!(g_runaway_caught || cs < 0x100 || g_b436_caught || ++frame >= 360)) return;
+        extern unsigned char g_runaway_caught, g_b436_caught, g_efc_caught;
+        /* Fire at the first A068:5EFC (the CALL [0006]) too -- on cold-boot it has
+         * no crash, so this is how its path/[0006] is captured for the diff. */
+        if (!(g_runaway_caught || cs < 0x100 || g_b436_caught || g_efc_caught || ++frame >= 360)) return;
     }
     shown = 1;
 
@@ -853,6 +853,13 @@ void ws_freeze_check(void)
           n = 0; for (k = 0; k < 32; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_save_vars[k]);
           printf("WSDSP: SAVED v6=%04X vars=%s\n", g_save_v6, buf); }
+        /* Cold-boot vs resume: [0006] + the A068:0000 FAR-init count AT the first
+         * CALL [0006]. resume -> v6=0000 initfar=0 (init skipped); cold-boot ->
+         * v6=0155 initfar>=1 (init ran first). The WSFAR trail above is the path
+         * to A068:5EFC -- diff the two runs to find where the init was skipped. */
+        { extern unsigned char g_efc_caught; extern unsigned int g_efc_v6, g_efc_initfar, g_initfar_n;
+          printf("WSEFC: caught=%u v6@call=%04X initfar@call=%u initfar_total=%u\n",
+                 g_efc_caught, g_efc_v6, g_efc_initfar, g_initfar_n); }
         /* Far-transfer trail: last 32 CALL FAR(C)/RETF(R)/INT(I)/IRET(T)/JMPF(J)/
          * HWINT(H) with SP-after -- trace the call nesting to where an extra word
          * leaks onto the stack (the +2 that crashes the A068 RETF). Oldest first. */

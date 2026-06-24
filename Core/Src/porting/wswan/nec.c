@@ -136,6 +136,14 @@ unsigned int   g_ivt1_ring[8];  /* the 8 CS:IP before the install */
 unsigned int   g_far_csip[32];  /* dest (or src) CS:IP of the transfer */
 unsigned int   g_far_meta[32];  /* (type<<24) | SP-after ; type 1=CALLF 2=RETF 3=INT 4=IRET 5=JMPF 6=HWINT */
 unsigned char  g_far_pos;
+/* Cold-boot vs resume comparison at A068:5EFC (the `CALL [0006]` that near-calls
+ * the FAR init A068:0000 when [0006]==0). Capture the fn-ptr value + how many times
+ * A068:0000 was FAR-called (the init) before reaching the use, so the two runs can
+ * be diffed: resume should show v6=0 / initfar=0, cold-boot v6=0155 / initfar>=1. */
+unsigned char  g_efc_caught;
+unsigned int   g_efc_v6;        /* [110C:0006] at the first A068:5EFC */
+unsigned int   g_efc_initfar;   /* g_initfar_n at that point */
+unsigned int   g_initfar_n;     /* count of CALL FAR to A068:0000 (the init site) */
 #define FARLOG(t) do { unsigned char _p = g_far_pos++ & 31; \
         g_far_csip[_p] = ((unsigned int)I.sregs[CS] << 16) | I.ip; \
         g_far_meta[_p] = ((unsigned int)(t) << 24) | I.regs.w[SP]; } while (0)
@@ -551,7 +559,7 @@ OP( 0x97, i_xchg_axdi ) { XchgAWReg(IY); CLK(3); }
 
 OP( 0x98, i_cbw 	  ) { I.regs.b[AH] = (I.regs.b[AL] & 0x80) ? 0xff : 0;	CLK(1);	}
 OP( 0x99, i_cwd 	  ) { I.regs.w[DW] = (I.regs.b[AH] & 0x80) ? 0xffff : 0;	CLK(1);	}
-OP( 0x9a, i_call_far  ) { uint32_t tmp, tmp2;	FETCHuint16_t(tmp); FETCHuint16_t(tmp2); PUSH(I.sregs[CS]); PUSH(I.ip); I.ip = (uint16_t)tmp; I.sregs[CS] = (uint16_t)tmp2; FARLOG(1); CLK(10); }
+OP( 0x9a, i_call_far  ) { uint32_t tmp, tmp2;	FETCHuint16_t(tmp); FETCHuint16_t(tmp2); PUSH(I.sregs[CS]); PUSH(I.ip); I.ip = (uint16_t)tmp; I.sregs[CS] = (uint16_t)tmp2; if (tmp2 == 0xA068 && tmp == 0x0000) g_initfar_n++; FARLOG(1); CLK(10); }
 OP( 0x9b, i_wait	  ) { ; }
 OP( 0x9c, i_pushf	  ) { PUSH( CompressFlags() ); CLK(2); }
 OP( 0x9d, i_popf	  ) { uint32_t tmp; POP(tmp); ExpandFlags(tmp); CLK(3);}
@@ -1094,6 +1102,13 @@ int32_t nec_execute(int32_t cycles)
 			g_b436_segs[2]=I.sregs[ES]; g_b436_segs[3]=I.sregs[SS];
 			for (q=0;q<16;q++) g_b436_ivt[q]=(unsigned char)ReadMem(q);
 			for (q=0;q<24;q++) g_b436_stk[q]=(unsigned char)ReadMem(sb+q);
+		}
+		/* Capture the first time the game reaches A068:5EFC (the `CALL [0006]`),
+		 * with the fn-ptr value + init count, for the cold-boot vs resume diff. */
+		if (!g_efc_caught && I.sregs[CS] == 0xA068 && I.ip == 0x5EFC) {
+			g_efc_caught = 1;
+			g_efc_v6 = ReadMem(0x110C6) | (ReadMem(0x110C7) << 8);
+			g_efc_initfar = g_initfar_n;
 		}
 		/* Detect the first instant IVT[1] (phys 4..7) goes non-zero -- this is the
 		 * game installing its INT 1 handler. Capture where + the value + the recent
