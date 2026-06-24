@@ -123,6 +123,13 @@ unsigned short g_b436_regs[8];  /* AW BW CW DW IX(SI) IY(DI) BP SP */
 unsigned short g_b436_segs[4];  /* CS DS ES SS */
 unsigned char  g_b436_ivt[16];  /* IVT[0..3] */
 unsigned char  g_b436_stk[24];  /* stack @SP */
+/* Where/when IVT[1] is first installed (it became garbage 0007:0085 in the run
+ * that progressed furthest -> INT 1 mis-dispatch). Capture the installing
+ * context + value + recent CS:IP ring so the garbage source can be traced. */
+unsigned char  g_ivt1_caught;
+unsigned int   g_ivt1_csip;     /* CS:IP just after IVT[1] turned non-zero */
+unsigned int   g_ivt1_val;      /* IVT[1] = CS<<16 | IP */
+unsigned int   g_ivt1_ring[8];  /* the 8 CS:IP before the install */
 unsigned char  g_bpz_caught;
 unsigned char  g_bpz_rom[24];
 unsigned char  g_bpz_stk[16];   /* stack @SP when BP first hit 0 */
@@ -233,6 +240,12 @@ void nec_interrupt(uint32_t int_num)
 	if (dest_seg == 0 && dest_off == 0) {
 		g_nullint_n++;
 		g_nullint_last = int_num;
+		/* INT 1's real handler consumes one caller-pushed stack word: on-device,
+		 * the plain skip left +2 of drift that crashed a later RETF at A068:0063
+		 * (the display-setup routine -> garbled top). SP+=2 passed A068 and the
+		 * game rendered/ran much further. */
+		if (int_num == 1)
+			I.regs.w[SP] += 2;
 		return;
 	}
 
@@ -1063,6 +1076,22 @@ int32_t nec_execute(int32_t cycles)
 			g_b436_segs[2]=I.sregs[ES]; g_b436_segs[3]=I.sregs[SS];
 			for (q=0;q<16;q++) g_b436_ivt[q]=(unsigned char)ReadMem(q);
 			for (q=0;q<24;q++) g_b436_stk[q]=(unsigned char)ReadMem(sb+q);
+		}
+		/* Detect the first instant IVT[1] (phys 4..7) goes non-zero -- this is the
+		 * game installing its INT 1 handler. Capture where + the value + the recent
+		 * CS:IP ring to find why it ends up garbage (0007:0085). */
+		if (!g_ivt1_caught) {
+			unsigned int v1 = ((unsigned int)ReadMem(7)<<24)|((unsigned int)ReadMem(6)<<16)
+			                 |((unsigned int)ReadMem(5)<<8)|ReadMem(4);
+			if (v1 != 0) {
+				int q;
+				g_ivt1_caught = 1;
+				g_ivt1_csip = ((unsigned int)I.sregs[CS] << 16) | I.ip;
+				/* store as CS<<16 | IP for readable print */
+				g_ivt1_val = ((unsigned int)(((v1>>16)&0xFFFF)) << 16) | (v1 & 0xFFFF);
+				for (q=0;q<8;q++)
+					g_ivt1_ring[q] = g_csip_ring[(g_ring_pos - 8 + q) & 15];
+			}
 		}
 		if (!g_runaway_caught) {
 			unsigned char rp = g_ring_pos++ & 15;

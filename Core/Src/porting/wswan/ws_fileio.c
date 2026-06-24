@@ -810,6 +810,17 @@ void ws_freeze_check(void)
           n = 0; for (k = 0; k < 24; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_b436_stk[k]);
           printf("WSCMP: stk@SP=%s\n", buf); }
+        /* Where IVT[1] (the INT 1 handler) was first installed + with what value
+         * -- traces the garbage 0007:0085 to its source. */
+        { extern unsigned char g_ivt1_caught;
+          extern unsigned int  g_ivt1_csip, g_ivt1_val, g_ivt1_ring[8];
+          printf("WSIVT1: caught=%u at=%04X:%04X val=%04X:%04X\n",
+                 g_ivt1_caught, g_ivt1_csip>>16, g_ivt1_csip&0xFFFF,
+                 g_ivt1_val>>16, g_ivt1_val&0xFFFF);
+          n = 0; for (k = 0; k < 8; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%04X:%04X ",
+                            g_ivt1_ring[k]>>16, g_ivt1_ring[k]&0xFFFF);
+          printf("WSIVT1: ring=%s\n", buf); }
         /* SP/BP trajectory aligned with WSRING -- shows whether SP marched down
          * gradually (deep recursion) or dropped in one step (a MOV SP,BP with a
          * corrupt BP). Oldest->newest, same order as WSRING. */
