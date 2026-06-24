@@ -735,6 +735,11 @@ uint32_t WsLoadStateFromFile(FILE *fp)
           m += snprintf(b2 + m, sizeof(b2) - m, "%02X", g_resume_stk[q]);
       }
       printf("WSLD: stk@BP-12 (%04X:%04X)=%s\n", ss, lo, b2); }
+    /* Reset the un-saved frame-timing statics (HBlank sub-step + cycle debt) so
+     * the first resumed frame starts on a clean boundary -- otherwise the stale
+     * cold-boot values fire the first line-compare/H-V-timer IRQ a step off and
+     * the game diverges (-> spurious INT 1 -> A068 display-setup RETF crash). */
+    { extern void WsResetFrameTiming(void); WsResetFrameTiming(); }
     printf("WSLD: complete\n");
     return 0;
 }
