@@ -130,6 +130,15 @@ unsigned char  g_ivt1_caught;
 unsigned int   g_ivt1_csip;     /* CS:IP just after IVT[1] turned non-zero */
 unsigned int   g_ivt1_val;      /* IVT[1] = CS<<16 | IP */
 unsigned int   g_ivt1_ring[8];  /* the 8 CS:IP before the install */
+/* Far-transfer ring: every CALL FAR / RETF / INT / IRET / JMP FAR with the SP
+ * AFTER it, so the call nesting can be traced and the point where an extra word
+ * leaks onto the stack (the +2 that crashes the A068 RETF) is visible. */
+unsigned int   g_far_csip[32];  /* dest (or src) CS:IP of the transfer */
+unsigned int   g_far_meta[32];  /* (type<<24) | SP-after ; type 1=CALLF 2=RETF 3=INT 4=IRET 5=JMPF 6=HWINT */
+unsigned char  g_far_pos;
+#define FARLOG(t) do { unsigned char _p = g_far_pos++ & 31; \
+        g_far_csip[_p] = ((unsigned int)I.sregs[CS] << 16) | I.ip; \
+        g_far_meta[_p] = ((unsigned int)(t) << 24) | I.regs.w[SP]; } while (0)
 unsigned char  g_bpz_caught;
 unsigned char  g_bpz_rom[24];
 unsigned char  g_bpz_stk[16];   /* stack @SP when BP first hit 0 */
@@ -219,6 +228,7 @@ void nec_int(uint32_t wektor)
 		PUSH(I.ip);
 		I.ip = (uint16_t)dest_off;
 		I.sregs[CS] = (uint16_t)dest_seg;
+		FARLOG(6);
 	}
 }
 
@@ -541,7 +551,7 @@ OP( 0x97, i_xchg_axdi ) { XchgAWReg(IY); CLK(3); }
 
 OP( 0x98, i_cbw 	  ) { I.regs.b[AH] = (I.regs.b[AL] & 0x80) ? 0xff : 0;	CLK(1);	}
 OP( 0x99, i_cwd 	  ) { I.regs.w[DW] = (I.regs.b[AH] & 0x80) ? 0xffff : 0;	CLK(1);	}
-OP( 0x9a, i_call_far  ) { uint32_t tmp, tmp2;	FETCHuint16_t(tmp); FETCHuint16_t(tmp2); PUSH(I.sregs[CS]); PUSH(I.ip); I.ip = (uint16_t)tmp; I.sregs[CS] = (uint16_t)tmp2; CLK(10); }
+OP( 0x9a, i_call_far  ) { uint32_t tmp, tmp2;	FETCHuint16_t(tmp); FETCHuint16_t(tmp2); PUSH(I.sregs[CS]); PUSH(I.ip); I.ip = (uint16_t)tmp; I.sregs[CS] = (uint16_t)tmp2; FARLOG(1); CLK(10); }
 OP( 0x9b, i_wait	  ) { ; }
 OP( 0x9c, i_pushf	  ) { PUSH( CompressFlags() ); CLK(2); }
 OP( 0x9d, i_popf	  ) { uint32_t tmp; POP(tmp); ExpandFlags(tmp); CLK(3);}
@@ -648,12 +658,12 @@ OP( 0xc9, i_leave ) {
 	POP(I.regs.w[BP]);
 	CLK(2);
 }
-OP( 0xca, i_retf_d16  ) { uint32_t count = FETCH; count += FETCH << 8; POP(I.ip); POP(I.sregs[CS]); I.regs.w[SP]+=count; CLK(9); }
-OP( 0xcb, i_retf	  ) { POP(I.ip); POP(I.sregs[CS]); CLK(8); }
+OP( 0xca, i_retf_d16  ) { uint32_t count = FETCH; count += FETCH << 8; POP(I.ip); POP(I.sregs[CS]); I.regs.w[SP]+=count; FARLOG(2); CLK(9); }
+OP( 0xcb, i_retf	  ) { POP(I.ip); POP(I.sregs[CS]); FARLOG(2); CLK(8); }
 OP( 0xcc, i_int3	  ) { nec_interrupt(3); CLK(9); }
-OP( 0xcd, i_int 	  ) { nec_interrupt(FETCH); CLK(10); }
+OP( 0xcd, i_int 	  ) { nec_interrupt(FETCH); FARLOG(3); CLK(10); }
 OP( 0xce, i_into	  ) { if (OF) { nec_interrupt(4); CLK(13); } else CLK(6); }
-OP( 0xcf, i_iret	  ) { g_iret_n++; POP(I.ip); POP(I.sregs[CS]); i_popf(); CLK(10); }
+OP( 0xcf, i_iret	  ) { g_iret_n++; POP(I.ip); POP(I.sregs[CS]); i_popf(); FARLOG(4); CLK(10); }
 
 OP( 0xd0, i_rotshft_b ) {
 	uint32_t src, dst; GetModRM; src = (uint32_t)GetRMByte(ModRM); dst=src;
@@ -736,7 +746,7 @@ OP( 0xe7, i_outax  ) { uint8_t port = FETCH; write_port(port, I.regs.b[AL]); wri
 
 OP( 0xe8, i_call_d16 ) { uint32_t tmp; FETCHuint16_t(tmp); PUSH(I.ip); I.ip = (uint16_t)(I.ip+(int16_t)tmp); CLK(5); }
 OP( 0xe9, i_jmp_d16  ) { uint32_t tmp; FETCHuint16_t(tmp); I.ip = (uint16_t)(I.ip+(int16_t)tmp); CLK(4); }
-OP( 0xea, i_jmp_far  ) { uint32_t tmp,tmp1; FETCHuint16_t(tmp); FETCHuint16_t(tmp1); I.sregs[CS] = (uint16_t)tmp1; 	I.ip = (uint16_t)tmp; CLK(7);	}
+OP( 0xea, i_jmp_far  ) { uint32_t tmp,tmp1; FETCHuint16_t(tmp); FETCHuint16_t(tmp1); I.sregs[CS] = (uint16_t)tmp1; 	I.ip = (uint16_t)tmp; FARLOG(5); CLK(7);	}
 OP( 0xeb, i_jmp_d8	 ) { 
 	int32_t tmp = (int)((int8_t)FETCH); CLK(4);
 	if (tmp==-2 && no_interrupt==0 && nec_ICount>0) nec_ICount%=12; /* cycle skip */

@@ -735,11 +735,6 @@ uint32_t WsLoadStateFromFile(FILE *fp)
           m += snprintf(b2 + m, sizeof(b2) - m, "%02X", g_resume_stk[q]);
       }
       printf("WSLD: stk@BP-12 (%04X:%04X)=%s\n", ss, lo, b2); }
-    /* Reset the un-saved frame-timing statics (HBlank sub-step + cycle debt) so
-     * the first resumed frame starts on a clean boundary -- otherwise the stale
-     * cold-boot values fire the first line-compare/H-V-timer IRQ a step off and
-     * the game diverges (-> spurious INT 1 -> A068 display-setup RETF crash). */
-    { extern void WsResetFrameTiming(void); WsResetFrameTiming(); }
     printf("WSLD: complete\n");
     return 0;
 }
@@ -826,6 +821,23 @@ void ws_freeze_check(void)
               n += snprintf(buf + n, sizeof(buf) - n, "%04X:%04X ",
                             g_ivt1_ring[k]>>16, g_ivt1_ring[k]&0xFFFF);
           printf("WSIVT1: ring=%s\n", buf); }
+        /* Far-transfer trail: last 32 CALL FAR(C)/RETF(R)/INT(I)/IRET(T)/JMPF(J)/
+         * HWINT(H) with SP-after -- trace the call nesting to where an extra word
+         * leaks onto the stack (the +2 that crashes the A068 RETF). Oldest first. */
+        { extern unsigned int g_far_csip[32], g_far_meta[32];
+          extern unsigned char g_far_pos;
+          static const char tc[7] = "?CRITJH";
+          int row; for (row = 0; row < 4; row++) {
+              n = 0;
+              for (k = 0; k < 8; k++) {
+                  unsigned char idx = (unsigned char)((g_far_pos + row * 8 + k) & 31);
+                  unsigned int  m = g_far_meta[idx], c = g_far_csip[idx];
+                  unsigned char t = (m >> 24) & 0xFF;
+                  n += snprintf(buf + n, sizeof(buf) - n, "%c%04X:%04X/%04X ",
+                                (t <= 6) ? tc[t] : '?', c >> 16, c & 0xFFFF, m & 0xFFFF);
+              }
+              printf("WSFAR%d: %s\n", row, buf);
+          } }
         /* SP/BP trajectory aligned with WSRING -- shows whether SP marched down
          * gradually (deep recursion) or dropped in one step (a MOV SP,BP with a
          * corrupt BP). Oldest->newest, same order as WSRING. */
