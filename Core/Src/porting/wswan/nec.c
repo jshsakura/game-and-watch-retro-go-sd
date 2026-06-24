@@ -144,9 +144,17 @@ unsigned char  g_efc_caught;
 unsigned int   g_efc_v6;        /* [110C:0006] at the first A068:5EFC */
 unsigned int   g_efc_initfar;   /* g_initfar_n at that point */
 unsigned int   g_initfar_n;     /* count of CALL FAR to A068:0000 (the init site) */
+/* Also capture the FIRST 48 far-transfers after a savestate load (g_far2_n reset
+ * to 0 by WsLoadStateFromFile) so the resume's initial path B978:43CA -> the redraw
+ * that reaches A068:5EFC is visible (the last-32 ring only shows the lead-up). */
+unsigned int   g_far2_csip[48];
+unsigned int   g_far2_meta[48];
+unsigned int   g_far2_n;
 #define FARLOG(t) do { unsigned char _p = g_far_pos++ & 31; \
-        g_far_csip[_p] = ((unsigned int)I.sregs[CS] << 16) | I.ip; \
-        g_far_meta[_p] = ((unsigned int)(t) << 24) | I.regs.w[SP]; } while (0)
+        unsigned int _v = ((unsigned int)I.sregs[CS] << 16) | I.ip; \
+        unsigned int _m = ((unsigned int)(t) << 24) | I.regs.w[SP]; \
+        g_far_csip[_p] = _v; g_far_meta[_p] = _m; \
+        if (g_far2_n < 48) { g_far2_csip[g_far2_n] = _v; g_far2_meta[g_far2_n] = _m; g_far2_n++; } } while (0)
 unsigned char  g_bpz_caught;
 unsigned char  g_bpz_rom[24];
 unsigned char  g_bpz_stk[16];   /* stack @SP when BP first hit 0 */

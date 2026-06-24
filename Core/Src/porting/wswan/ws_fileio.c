@@ -750,6 +750,10 @@ uint32_t WsLoadStateFromFile(FILE *fp)
           m += snprintf(b2 + m, sizeof(b2) - m, "%02X", g_resume_stk[q]);
       }
       printf("WSLD: stk@BP-12 (%04X:%04X)=%s\n", ss, lo, b2); }
+    /* Reset the "first 48 far-transfers" ring so it captures the RESUME's initial
+     * path (B978:43CA -> redraw -> A068:5EFC). On cold boot there's no load, so it
+     * captures the boot path to the startup A068:5EFC instead -- the two are diffed. */
+    { extern unsigned int g_far2_n; g_far2_n = 0; }
     printf("WSLD: complete\n");
     return 0;
 }
@@ -833,10 +837,22 @@ void ws_freeze_check(void)
           n = 0; for (k = 0; k < 48; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
           printf("WSDSP: var110C:0000=%s\n", buf); }
-        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x564F;
-          n = 0; for (k = 0; k < 80; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: B978:564F=%s\n", buf); }
+        /* The FIRST far-transfers after resume (cold boot: after boot) -- the path
+         * INTO the redraw that reaches A068:5EFC. Diff cold-boot vs resume here. */
+        { extern unsigned int g_far2_csip[48], g_far2_meta[48], g_far2_n;
+          static const char tc[7] = "?CRITJH";
+          int row; for (row = 0; row < 6; row++) {
+              n = 0;
+              for (k = 0; k < 8; k++) {
+                  unsigned int idx = (unsigned int)(row * 8 + k);
+                  if (idx >= g_far2_n) break;
+                  unsigned int m = g_far2_meta[idx], c = g_far2_csip[idx];
+                  unsigned char t = (m >> 24) & 0xFF;
+                  n += snprintf(buf + n, sizeof(buf) - n, "%c%04X:%04X/%04X ",
+                                (t <= 6) ? tc[t] : '?', c >> 16, c & 0xFFFF, m & 0xFFFF);
+              }
+              printf("WSF2_%d: %s\n", row, buf);
+          } }
         { extern uint8_t *RAMMap[]; n = 0;
           if (RAMMap[0]) for (k = 0; k < 48; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", RAMMap[0][0x10C0 + k]);
