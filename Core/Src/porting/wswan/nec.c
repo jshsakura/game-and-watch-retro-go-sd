@@ -226,6 +226,12 @@ void nec_interrupt(uint32_t int_num)
 	if (dest_seg == 0 && dest_off == 0) {
 		g_nullint_n++;
 		g_nullint_last = int_num;
+		/* The real (BIOS) INT 1 handler consumes one stack word (a parameter the
+		 * caller pushed): on-device, skipping it left exactly +2 of stack drift
+		 * per INT 1 (n=1 -> +2), which later made a RETF pop a wrong return. Match
+		 * it by consuming that word so the stack stays aligned. */
+		if (int_num == 1)
+			I.regs.w[SP] += 2;
 		return;
 	}
 
