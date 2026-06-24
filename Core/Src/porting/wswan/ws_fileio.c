@@ -613,6 +613,8 @@ uint32_t WsSaveStateToFile(FILE *fp)
 /* Resume-time stack/BP-chain snapshot, surfaced in the freeze panel (logbuf
  * truncates the early WSLD lines off the SD file). */
 unsigned char g_resume_stk[64];
+unsigned int  g_save_v6;        /* saved [110C:0006] fn-ptr at load (pre-execution) */
+unsigned char g_save_vars[32];  /* saved 110C:[0000..001F] var block at load */
 unsigned int  g_resume_base;
 unsigned int  g_resume_csip;   /* CS:IP at resume (surfaced in panel) */
 unsigned int  g_resume_sssp;   /* SS:SP at resume */
@@ -645,6 +647,19 @@ uint32_t WsLoadStateFromFile(FILE *fp)
     }
     fread(Palette, sizeof(uint16_t), 16 * 16, fp);
     printf("WSLD: rammap+palette done\n");
+    /* SAVED value of the function pointer [110C:0006] (= RAMMap[0][0x10C6]) BEFORE
+     * any execution. The crash near-calls A068:0000 because [0006]==0 at the call;
+     * this tells us whether the save itself has [0006]==0 (init genuinely not done
+     * -> a path/timing divergence reaches CALL [0006] too early) or [0006]!=0 (it
+     * got cleared during the resumed run -> find the clearer). Surfaced in the
+     * freeze panel too so it survives the logbuf. */
+    { extern unsigned int g_save_v6; extern unsigned char g_save_vars[32];
+      int q; if (RAMMap[0]) {
+        g_save_v6 = RAMMap[0][0x10C6] | (RAMMap[0][0x10C7] << 8);
+        for (q = 0; q < 32; q++) g_save_vars[q] = RAMMap[0][0x10C0 + q];
+      }
+      printf("WSLD: saved [110C:0006]=%04X [0014]=%02X%02X\n",
+             g_save_v6, g_save_vars[0x15], g_save_vars[0x14]); }
 
     /* Rebuild derived state that WriteIO caches outside IO[]. The display
      * registers 0x00-0x3F are critical: WriteIO(0x07) recomputes Scr1TMap /
@@ -830,6 +845,14 @@ void ws_freeze_check(void)
           n = 0; for (k = 0; k < 52; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(sb + k));
           printf("WSDSP: stk@0000:1FCC=%s\n", buf); }
+        /* The SAVED [0006]/var block captured at load (pre-execution) -- compare to
+         * the live var110C above: if saved [0006]!=0 but live differs, it was
+         * cleared during the run; if saved [0006]==0, the init genuinely wasn't done
+         * at save time and the resume path reaches CALL [0006] too early. */
+        { extern unsigned int g_save_v6; extern unsigned char g_save_vars[32];
+          n = 0; for (k = 0; k < 32; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_save_vars[k]);
+          printf("WSDSP: SAVED v6=%04X vars=%s\n", g_save_v6, buf); }
         /* Far-transfer trail: last 32 CALL FAR(C)/RETF(R)/INT(I)/IRET(T)/JMPF(J)/
          * HWINT(H) with SP-after -- trace the call nesting to where an extra word
          * leaks onto the stack (the +2 that crashes the A068 RETF). Oldest first. */
