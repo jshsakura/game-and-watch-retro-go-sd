@@ -696,6 +696,8 @@ C_INCLUDES +=  \
 -ICore/Inc/porting/pce \
 -ICore/Inc/porting/msx \
 -ICore/Inc/porting/wsv \
+-ICore/Inc/porting/ngp \
+-ICore/Inc/porting/wswan \
 -ICore/Inc/porting/gw \
 -ICore/Inc/porting/gwenesis \
 -ICore/Inc/porting/a2600 \
@@ -806,6 +808,8 @@ PCE_OBJECTS = $(addprefix $(BUILD_DIR)/pce/,$(notdir $(PCE_C_SOURCES:.c=.o)))
 GW_OBJECTS = $(addprefix $(BUILD_DIR)/gw/,$(notdir $(GW_C_SOURCES:.c=.o)))
 MSX_OBJECTS = $(addprefix $(BUILD_DIR)/msx/,$(notdir $(MSX_C_SOURCES:.c=.o)))
 WSV_OBJECTS = $(addprefix $(BUILD_DIR)/wsv/,$(notdir $(WSV_C_SOURCES:.c=.o)))
+NGP_OBJECTS = $(addprefix $(BUILD_DIR)/ngp/,$(notdir $(NGP_C_SOURCES:.c=.o)))
+WSWAN_OBJECTS = $(addprefix $(BUILD_DIR)/wswan/,$(notdir $(WSWAN_C_SOURCES:.c=.o)))
 MD_OBJECTS = $(addprefix $(BUILD_DIR)/md/,$(notdir $(MD_C_SOURCES:.c=.o)))
 A2600_OBJECTS = $(addprefix $(BUILD_DIR)/a2600/,$(notdir $(A2600_C_SOURCES:.c=.o)))
 A7800_OBJECTS = $(addprefix $(BUILD_DIR)/a7800/,$(notdir $(A7800_C_SOURCES:.c=.o)))
@@ -820,6 +824,10 @@ TAMA_OBJECTS = $(addprefix $(BUILD_DIR)/tama/,$(notdir $(TAMA_C_SOURCES:.c=.o)))
 PKMINI_OBJECTS = $(addprefix $(BUILD_DIR)/pkmini/,$(notdir $(PKMINI_C_SOURCES:.c=.o)))
 
 vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(TAMP_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(CELESTE_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
+# NGP (RACE) is intentionally excluded from vpath: its generic filenames
+# (state.c, sound.c, main.c, flash.c, graphics.c) would shadow other cores'
+# same-named files. NGP objects are built via ngp_obj_prereq_gen (explicit
+# full paths), like zelda3/smw.
 # Guard empty lists: vpath with empty path resets the pattern's search path.
 # The GPL stub build has no PICO8_CXX_SOURCES, so only emit these when non-empty.
 ifneq ($(strip $(PICO8_CXX_SOURCES)),)
@@ -943,9 +951,9 @@ $(BUILD_DIR)/memcpy-armv7m.o: Core/Src/memcpy-armv7m.s Makefile.common Makefile 
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
-	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
+	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(CELESTE_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
 
 $(BUILD_DIR)/core/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC core ] $(notdir $<)
@@ -1171,6 +1179,32 @@ endef
 # generate all smw object prerequisite rules
 $(eval $(foreach obj,$(SMW_C_SOURCES),$(call smw_obj_prereq_gen,$(obj))))
 
+define ngp_obj_prereq_gen
+$$(BUILD_DIR)/ngp/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+	$$(V)$$(ECHO) [ CC ngp ] $$(notdir $$<)
+	$$(V)$$(CC) -c $$(CFLAGS) $$(NGP_C_INCLUDES) -Os $(if $(filter %/cz80.c,$1),-fno-jump-tables,) -Wa,-a,-ad,-alms=$$(BUILD_DIR)/ngp/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
+	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-const-variable -Wno-unused-parameter -Wno-sign-compare -Wno-strict-aliasing -Wno-implicit-fallthrough -Wno-parentheses -Wno-unknown-pragmas -Wno-comment -Wno-int-in-bool-context -Wno-maybe-uninitialized
+	$$(V)$$(CP) --redefine-syms=ngp_redefines $$@
+
+endef
+# note: the blank line above is intentional
+
+# generate all ngp object prerequisite rules
+$(eval $(foreach obj,$(NGP_C_SOURCES),$(call ngp_obj_prereq_gen,$(obj))))
+
+define wswan_obj_prereq_gen
+$$(BUILD_DIR)/wswan/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+	$$(V)$$(ECHO) [ CC wswan ] $$(notdir $$<)
+	$$(V)$$(CC) -c $$(CFLAGS) $$(WSWAN_C_INCLUDES) -O3 -Wa,-a,-ad,-alms=$$(BUILD_DIR)/wswan/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
+	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-const-variable -Wno-unused-parameter -Wno-sign-compare -Wno-strict-aliasing -Wno-implicit-fallthrough -Wno-parentheses -Wno-unknown-pragmas -Wno-comment -Wno-int-in-bool-context -Wno-maybe-uninitialized -Wno-format
+	$$(V)$$(CP) --redefine-syms=wswan_redefines $$@
+
+endef
+# note: the blank line above is intentional
+
+# generate all wswan object prerequisite rules
+$(eval $(foreach obj,$(WSWAN_C_SOURCES),$(call wswan_obj_prereq_gen,$(obj))))
+
 external/smw/smw_assets.dat: roms/smw/smw.sfc | $(BUILD_DIR)
 	cp $< external/smw/assets/smw.sfc
 	$(MAKE) -C external/smw smw_assets.dat
@@ -1189,6 +1223,8 @@ $(BUILD_DIR):
 	$(V)mkdir $@/msx
 	$(V)mkdir $@/gw
 	$(V)mkdir $@/wsv
+	$(V)mkdir $@/ngp
+	$(V)mkdir $@/wswan
 	$(V)mkdir $@/md
 	$(V)mkdir $@/a2600
 	$(V)mkdir $@/a7800
@@ -1465,6 +1501,8 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_pce,$(CORES_DIR)/pce.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_msx,$(CORES_DIR)/msx.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_wsv,$(CORES_DIR)/wsv.bin)
+	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_ngp,$(CORES_DIR)/ngp.bin)
+	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_wswan,$(CORES_DIR)/wswan.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_gw,$(CORES_DIR)/gw.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md,$(CORES_DIR)/md.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_a2600,$(CORES_DIR)/a2600.bin)
@@ -1557,6 +1595,8 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(CORES_DIR)/pce.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/msx.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/wsv.bin --dest-path "/cores/" \
+		-- sdpush --file $(CORES_DIR)/ngp.bin --dest-path "/cores/" \
+		-- sdpush --file $(CORES_DIR)/wswan.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/gw.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/md.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/a2600.bin --dest-path "/cores/" \

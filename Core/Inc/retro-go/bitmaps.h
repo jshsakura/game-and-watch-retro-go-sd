@@ -63,6 +63,11 @@ enum {
     RG_LOGO_TAMA,
     // PICO-8 (appended last to not shift any existing enum values)
     RG_LOGO_HEADER_PICO8,
+    // NGP / WonderSwan (appended last to not shift existing enum values)
+    RG_LOGO_HEADER_NGP,
+    RG_LOGO_PAD_NGP,
+    RG_LOGO_HEADER_WSWAN,
+    RG_LOGO_PAD_WSWAN,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
@@ -123,6 +128,10 @@ extern const retro_logo_image logo_watara;
 extern const retro_logo_image logo_atari;
 extern const retro_logo_image logo_amstrad;
 extern const retro_logo_image logo_tama;
+extern const retro_logo_image header_ngp;
+extern const retro_logo_image pad_ngp;
+extern const retro_logo_image header_wswan;
+extern const retro_logo_image pad_wswan;
 
 
 extern const unsigned char IMG_SPEAKER[];

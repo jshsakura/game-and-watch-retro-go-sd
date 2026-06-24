@@ -1,0 +1,11 @@
+cpu_readmem16 ngp__cpu_readmem16
+cpu_writemem16 ngp__cpu_writemem16
+cpu_readport ngp__cpu_readport
+cpu_writeport ngp__cpu_writeport
+sound_update ngp__sound_update
+sound_init ngp__sound_init
+dac_update ngp__dac_update
+system_sound_chipreset ngp__system_sound_chipreset
+bios ngp__bios
+screen ngp__screen
+graphics_paint ngp__graphics_paint

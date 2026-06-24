@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/ngp-pocket
     tags:
       - 'v*'
   pull_request:
@@ -42,6 +43,13 @@ jobs:
         run: |
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
+
+      # TEMP debug: upload the ELF so crash PCs can be resolved to symbols
+      - name: Upload ELF (TEMP debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: gw_retro_go.elf
+          path: build/gw_retro_go.elf
 
       # 3. Upload retro-go_update.bin artifact
       - name: Upload retro-go_update.bin artifact

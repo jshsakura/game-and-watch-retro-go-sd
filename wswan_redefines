@@ -1,0 +1,5 @@
+# WonderSwan (oswan) symbol renames to avoid clashes with other cores.
+# Populated from the linker's multiple-definition reports.
+Page ws__Page
+Noise ws__Noise
+graphics_paint ws__graphics_paint
