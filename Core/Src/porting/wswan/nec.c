@@ -240,12 +240,20 @@ void nec_interrupt(uint32_t int_num)
 	if (dest_seg == 0 && dest_off == 0) {
 		g_nullint_n++;
 		g_nullint_last = int_num;
-		/* INT 1's real handler consumes one caller-pushed stack word: on-device,
-		 * the plain skip left +2 of drift that crashed a later RETF at A068:0063
-		 * (the display-setup routine -> garbled top). SP+=2 passed A068 and the
-		 * game rendered/ran much further. */
-		if (int_num == 1)
-			I.regs.w[SP] += 2;
+		/* INT 1's stack behaviour is context-dependent:
+		 *  - The `CD 01; RETF` wrapper (e.g. EFCE:0965) is STACK-NEUTRAL -- the
+		 *    RETF immediately after returns to the caller; SP+=2 there over-pops
+		 *    and the RETF jumps into IRAM (EFCE:0967 -> 0013:B978 on device).
+		 *  - Other INT 1 sites pass a caller-pushed word the real handler consumes;
+		 *    leaving it gives +2 drift that crashes the A068:0063 display-setup RETF
+		 *    (garbled top). There SP+=2 is required.
+		 * Distinguish by the byte right after `CD 01`: a RETF (0xCB) => the
+		 * stack-neutral wrapper; anything else => a param-taking call. */
+		if (int_num == 1) {
+			uint32_t nb = ((uint32_t)I.sregs[CS] << 4) + I.ip;
+			if ((unsigned char)ReadMem(nb) != 0xCB)
+				I.regs.w[SP] += 2;
+		}
 		return;
 	}
 
