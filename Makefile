@@ -563,7 +563,7 @@ WSWAN_C_SOURCES =
 
 CORE_WSWAN = external/oswan-go/main
 WSWAN_C_SOURCES += \
-Core/Src/porting/wswan/ws.c \
+$(CORE_WSWAN)/emu/WS.c \
 Core/Src/porting/wswan/ws_fileio.c \
 $(CORE_WSWAN)/emu/WSRender.c \
 $(CORE_WSWAN)/emu/WSApu.c \
