@@ -22,6 +22,13 @@ const lang_t lang_ja_jp LANG_DATA = {
     .codepage = 932,
     .s_LangUI = "言語",
     .s_LangName = "Japanese",
+    .s_music = "音楽",
+    .s_favorite = "お気に入り",
+    .s_repeat = "リピート",
+    .s_shuffle = "シャッフル",
+    .s_brightness = "明るさ",
+    .s_info = "情報",
+    .s_lyrics = "歌詞",
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "パレット",
     //=====================================================================
@@ -299,6 +306,9 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_Date_Format = "%02d.%02d.20%02d %s",
     .s_Time_Format = "%02d:%02d:%02d",
 
+    // Media browser (homebrew document/media viewer)
+    .s_media_hint = "A:開く  B:戻る",
+    .s_media_empty = "(空)",
     .fmt_Title_Date_Format = ja_jp_fmt_Title_Date_Format,
     .fmtDate = ja_jp_fmt_Date,
     .fmtTime = ja_jp_fmt_Time,

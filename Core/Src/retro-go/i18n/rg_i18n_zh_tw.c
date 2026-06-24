@@ -21,6 +21,13 @@ const lang_t lang_zh_tw LANG_DATA = {
     .codepage = 950,
     .s_LangUI = "語言",
     .s_LangName = "Traditional Chinese",
+    .s_music = "音樂",
+    .s_favorite = "收藏",
+    .s_repeat = "重複",
+    .s_shuffle = "隨機",
+    .s_brightness = "亮度",
+    .s_info = "資訊",
+    .s_lyrics = "歌詞",
     
     // Core\Src\porting\nes-fceu\main_nes_fceu.c ===========================
    .s_Crop_Vertical_Overscan = "垂直過掃描裁切",
@@ -287,6 +294,9 @@ const lang_t lang_zh_tw LANG_DATA = {
     .s_Title_Date_Format = "%02d-%02d 週%s %02d:%02d:%02d",
     .s_Time_Format = "%02d:%02d:%02d",
 
+    // Media browser (homebrew document/media viewer)
+    .s_media_hint = "A:開啟  B:返回",
+    .s_media_empty = "(空)",
     .fmt_Title_Date_Format = zh_tw_fmt_Title_Date_Format,
     .fmtDate = zh_tw_fmt_Date,
     .fmtTime = zh_tw_fmt_Time,
