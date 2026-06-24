@@ -212,18 +212,24 @@ void nec_interrupt(uint32_t int_num)
 	if (int_num == -1)
 		return;
 
-	 i_pushf();
-	I.TF = I.IF = 0;	
-	
-
 	dest_off = ReadWord((int_num)*4);
 	dest_seg = ReadWord((int_num)*4+2);
+
+	/* A NULL vector means no handler is installed (the WS BIOS, which the
+	 * emulator skips, would set some of these). Jumping to 0000:0000 just runs
+	 * the zeroed IVT as code and hangs. Treat a null-vector software INT as a
+	 * no-op so the game continues -- One Piece does `INT 1; RETF` and IVT[1]=0
+	 * on resume, which otherwise crashes into low IRAM. */
+	if (dest_seg == 0 && dest_off == 0)
+		return;
+
+	i_pushf();
+	I.TF = I.IF = 0;
 
 	PUSH(I.sregs[CS]);
 	PUSH(I.ip);
 	I.ip = (uint16_t)dest_off;
 	I.sregs[CS] = (uint16_t)dest_seg;
-
 }
 
 
