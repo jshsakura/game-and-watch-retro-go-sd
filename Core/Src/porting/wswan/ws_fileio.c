@@ -857,20 +857,6 @@ void ws_freeze_check(void)
             printf("WSRSTK: SS:SP=%04X:%04X %s\n",
                    (g_runaway_sp >> 16) & 0xFFFF, g_runaway_sp & 0xFFFF, buf);
         }
-        /* Wide ROM windows around the runaway cycle's two functions, dumped
-         * BACKWARD 0x18 from each ring anchor to capture the function body that
-         * decides to recurse (the conditional branch + what it reads), not just
-         * the epilogue. 24 bytes each, decoded by hand. */
-        { unsigned short seg = (a_old >> 16) & 0xFFFF, off = (a_old & 0xFFFF) - 0x18;
-          uint32_t pa = ((uint32_t)seg << 4) + off;
-          n = 0; for (k = 0; k < 24; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSOPA: %04X:%04X=%s\n", seg, off, buf); }
-        { unsigned short seg = (a_new >> 16) & 0xFFFF, off = (a_new & 0xFFFF) - 0x18;
-          uint32_t pa = ((uint32_t)seg << 4) + off;
-          n = 0; for (k = 0; k < 24; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSOPB: %04X:%04X=%s\n", seg, off, buf); }
     }
 
     {
@@ -899,23 +885,6 @@ void ws_freeze_check(void)
           for (i = 0; i < 16; i++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(v + i));
           printf("WSBAD: IVT@IRQBSE(%lx)=%s\n", (unsigned long)v, buf); }
-        /* The recursion's return CS:IP consistently lands at phys 0x0008 (the
-         * runaway frame). Dump ROM around that return site in two windows so we
-         * can decode the CALL FAR just before it + the recursive function body /
-         * its termination test -- the value it reads that the savestate left
-         * unrestored. WSREC1 = [-0x30,-0x04), WSREC2 = [-0x04,+0x28). */
-        { uint16_t rip = ReadMem(0x08) | (ReadMem(0x09) << 8);
-          uint16_t rcs = ReadMem(0x0A) | (ReadMem(0x0B) << 8);
-          uint16_t o1  = (uint16_t)(rip - 0x30);
-          uint16_t o2  = (uint16_t)(rip - 0x04);
-          uint32_t p1  = ((uint32_t)rcs << 4) + o1;
-          uint32_t p2  = ((uint32_t)rcs << 4) + o2;
-          n = 0; for (i = 0; i < 44; i++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(p1 + i));
-          printf("WSREC1: %04X:%04X=%s\n", rcs, o1, buf);
-          n = 0; for (i = 0; i < 44; i++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(p2 + i));
-          printf("WSREC2: %04X:%04X=%s\n", rcs, o2, buf); }
         /* The instruction that drove BP nonzero->0 (root of the SP collapse) +
          * ROM around it, dumped from -0x08 so we see the full instruction. */
         { extern unsigned int   g_bpz_n, g_bpz_at, g_bpz_by;
@@ -969,25 +938,6 @@ void ws_freeze_check(void)
                               (mt >> 8) & 0xFF, mt & 0xFF);
             }
             printf("WSBNK: %s\n", buf); }
-          /* Dump the non-terminating loop body B978:3080-3170 (the C2-bank loop
-           * that leaks SP) so we can decode the CALL/RETF that never balances. */
-          { int blk; uint16_t lcs = 0xB978, lbase = 0x3080;
-            for (blk = 0; blk < 4; blk++) {
-                uint16_t off = lbase + (uint16_t)(blk * 56);
-                uint32_t pa = ((uint32_t)lcs << 4) + off;
-                n = 0; for (i = 0; i < 56; i++)
-                    n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + i));
-                printf("WSLOOP %04X:%04X=%s\n", lcs, off, buf);
-            } }
-          /* Jump-table targets of the B978:309B `CALL [BX+0x30D5]` (table @30D5 =
-           * {30D9, 3273}). One of these leads to the bad far-jump into 70FF. */
-          { int blk; static const unsigned short tg[] = {0x30D5, 0x30D9, 0x3273};
-            for (blk = 0; blk < 3; blk++) {
-                uint32_t pa = ((uint32_t)0xB978 << 4) + tg[blk];
-                n = 0; for (i = 0; i < 44; i++)
-                    n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + i));
-                printf("WSJT B978:%04X=%s\n", tg[blk], buf);
-            } }
           /* The wrong jump that lands in the A068:0Cxx data table + the regs. */
           { extern unsigned char g_jmp_caught, g_jmp_rom[24];
             extern unsigned int   g_jmp_from, g_jmp_to, g_jmp_dses;
@@ -1007,24 +957,8 @@ void ws_freeze_check(void)
               printf("WSJMP: stk@SP-8=%s\n", buf); }
             { extern unsigned int g_nullint_n, g_nullint_last;
               printf("WSJMP: nullINT n=%u last=%u\n", g_nullint_n, g_nullint_last); } }
-          { extern unsigned int  g_bpz_ret;
-            extern unsigned char g_bpz_retrom[32];
-            n = 0; for (i = 0; i < 32; i++)
-                n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_bpz_retrom[i]);
-            /* Serial-wait investigation: dump the COMCTL poll routine, its
-             * caller, and the serial/IRQ IO state. */
-            { int blk; static const struct { unsigned short cs, off; } dmp[] = {
-                  {0xB978, 0x1540}, {0xB978, 0x1563}, {0xB978, 0x16C8} };
-              for (blk = 0; blk < 3; blk++) {
-                  uint32_t pa = ((uint32_t)dmp[blk].cs << 4) + dmp[blk].off;
-                  n = 0; for (i = 0; i < 48; i++)
-                      n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + i));
-                  printf("WSSER %04X:%04X=%s\n", dmp[blk].cs, dmp[blk].off, buf);
-              } }
-            printf("WSSER: IO B0=%02X B1=%02X B2=%02X B3=%02X B4=%02X B5=%02X B6=%02X\n",
-                   IO[0xB0], IO[0xB1], IO[0xB2], IO[0xB3], IO[0xB4], IO[0xB5], IO[0xB6]);
-            printf("WSBPZ: ret=%04X:%04X rom=%s\n",
-                   (g_bpz_ret >> 16) & 0xFFFF, g_bpz_ret & 0xFFFF, buf); } }
+          printf("WSSER: IO B0=%02X B1=%02X B2=%02X B3=%02X B4=%02X B5=%02X B6=%02X\n",
+                 IO[0xB0], IO[0xB1], IO[0xB2], IO[0xB3], IO[0xB4], IO[0xB5], IO[0xB6]); }
     }
 
     /* Dump the whole captured log to the SD card so the user can read it off
