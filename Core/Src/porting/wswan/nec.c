@@ -114,6 +114,8 @@ unsigned int   g_bpz_by;   /* CS:IP of the instruction that zeroed BP (prev) */
 unsigned short g_bpz_sp;
 unsigned short g_bp_prev;
 unsigned short g_prev_cs;
+unsigned int   g_nullint_n;     /* count of skipped null-vector software INTs */
+unsigned int   g_nullint_last;  /* the last INT number that was skipped */
 unsigned char  g_bpz_caught;
 unsigned char  g_bpz_rom[24];
 unsigned char  g_bpz_stk[16];   /* stack @SP when BP first hit 0 */
@@ -221,8 +223,11 @@ void nec_interrupt(uint32_t int_num)
 	 * the zeroed IVT as code and hangs. Treat a null-vector software INT as a
 	 * no-op so the game continues -- One Piece does `INT 1; RETF` and IVT[1]=0
 	 * on resume, which otherwise crashes into low IRAM. */
-	if (dest_seg == 0 && dest_off == 0)
+	if (dest_seg == 0 && dest_off == 0) {
+		g_nullint_n++;
+		g_nullint_last = int_num;
 		return;
+	}
 
 	i_pushf();
 	I.TF = I.IF = 0;

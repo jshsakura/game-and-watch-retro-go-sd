@@ -960,7 +960,9 @@ void ws_freeze_check(void)
             { extern unsigned char g_jmp_stk[16];
               n = 0; for (i = 0; i < 16; i++)
                   n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_jmp_stk[i]);
-              printf("WSJMP: stk@SP-8=%s\n", buf); } }
+              printf("WSJMP: stk@SP-8=%s\n", buf); }
+            { extern unsigned int g_nullint_n, g_nullint_last;
+              printf("WSJMP: nullINT n=%u last=%u\n", g_nullint_n, g_nullint_last); } }
           { extern unsigned int  g_bpz_ret;
             extern unsigned char g_bpz_retrom[32];
             n = 0; for (i = 0; i < 32; i++)
