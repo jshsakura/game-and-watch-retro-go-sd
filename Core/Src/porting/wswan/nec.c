@@ -116,6 +116,13 @@ unsigned short g_bp_prev;
 unsigned short g_prev_cs;
 unsigned int   g_nullint_n;     /* count of skipped null-vector software INTs */
 unsigned int   g_nullint_last;  /* the last INT number that was skipped */
+/* Full-state snapshot at the FIRST visit to B978:436D (the resume point), so the
+ * cold-boot state there can be diffed against the resume (saved) state. */
+unsigned char  g_b436_caught;
+unsigned short g_b436_regs[8];  /* AW BW CW DW IX(SI) IY(DI) BP SP */
+unsigned short g_b436_segs[4];  /* CS DS ES SS */
+unsigned char  g_b436_ivt[16];  /* IVT[0..3] */
+unsigned char  g_b436_stk[24];  /* stack @SP */
 unsigned char  g_bpz_caught;
 unsigned char  g_bpz_rom[24];
 unsigned char  g_bpz_stk[16];   /* stack @SP when BP first hit 0 */
@@ -1042,6 +1049,21 @@ int32_t nec_execute(int32_t cycles)
 	while(nec_ICount>=0)
 	{
 		cs_base = I.sregs[CS] << 4;
+		/* Snapshot the FULL state the first time we reach B978:436D (the resume
+		 * point) -- lets us diff the cold-boot state there against the saved
+		 * (resume) state to find the root inconsistency. */
+		if (!g_b436_caught && I.sregs[CS] == 0xB978 && I.ip == 0x436D) {
+			int q; uint32_t sb = ((uint32_t)I.sregs[SS] << 4) + I.regs.w[SP];
+			g_b436_caught = 1;
+			g_b436_regs[0]=I.regs.w[AW]; g_b436_regs[1]=I.regs.w[BW];
+			g_b436_regs[2]=I.regs.w[CW]; g_b436_regs[3]=I.regs.w[DW];
+			g_b436_regs[4]=I.regs.w[IX]; g_b436_regs[5]=I.regs.w[IY];
+			g_b436_regs[6]=I.regs.w[BP]; g_b436_regs[7]=I.regs.w[SP];
+			g_b436_segs[0]=I.sregs[CS]; g_b436_segs[1]=I.sregs[DS];
+			g_b436_segs[2]=I.sregs[ES]; g_b436_segs[3]=I.sregs[SS];
+			for (q=0;q<16;q++) g_b436_ivt[q]=(unsigned char)ReadMem(q);
+			for (q=0;q<24;q++) g_b436_stk[q]=(unsigned char)ReadMem(sb+q);
+		}
 		if (!g_runaway_caught) {
 			unsigned char rp = g_ring_pos++ & 15;
 			g_csip_ring[rp] = ((unsigned int)I.sregs[CS] << 16) | I.ip;

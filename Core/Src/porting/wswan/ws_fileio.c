@@ -766,8 +766,10 @@ void ws_freeze_check(void)
     /* Fire the instant the stack-runaway ring is frozen (the real target), or
      * when the CPU has already fallen into low IRAM, or after ~6s. */
     {
-        extern unsigned char g_runaway_caught;
-        if (!(g_runaway_caught || cs < 0x100 || ++frame >= 360)) return;
+        extern unsigned char g_runaway_caught, g_b436_caught;
+        /* Also fire once B978:436D was reached (cold-boot OR resume) so its full
+         * state can be compared. */
+        if (!(g_runaway_caught || cs < 0x100 || g_b436_caught || ++frame >= 360)) return;
     }
     shown = 1;
 
@@ -794,6 +796,20 @@ void ws_freeze_check(void)
                           (v >> 16) & 0xFFFF, v & 0xFFFF);
         }
         printf("WSRING: %s\n", buf);
+        /* Full-state snapshot at the first B978:436D visit -- compare cold-boot
+         * vs resume to find the root inconsistency (IVT/regs/stack). */
+        { extern unsigned char  g_b436_caught, g_b436_ivt[16], g_b436_stk[24];
+          extern unsigned short g_b436_regs[8], g_b436_segs[4];
+          printf("WSCMP: caught=%u CS=%04X DS=%04X ES=%04X SS=%04X  AX=%04X BX=%04X CX=%04X DX=%04X SI=%04X DI=%04X BP=%04X SP=%04X\n",
+                 g_b436_caught, g_b436_segs[0], g_b436_segs[1], g_b436_segs[2], g_b436_segs[3],
+                 g_b436_regs[0], g_b436_regs[1], g_b436_regs[2], g_b436_regs[3],
+                 g_b436_regs[4], g_b436_regs[5], g_b436_regs[6], g_b436_regs[7]);
+          n = 0; for (k = 0; k < 16; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_b436_ivt[k]);
+          printf("WSCMP: IVT0-3=%s\n", buf);
+          n = 0; for (k = 0; k < 24; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_b436_stk[k]);
+          printf("WSCMP: stk@SP=%s\n", buf); }
         /* SP/BP trajectory aligned with WSRING -- shows whether SP marched down
          * gradually (deep recursion) or dropped in one step (a MOV SP,BP with a
          * corrupt BP). Oldest->newest, same order as WSRING. */
