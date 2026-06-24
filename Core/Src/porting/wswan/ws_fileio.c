@@ -796,31 +796,30 @@ void ws_freeze_check(void)
                           (v >> 16) & 0xFFFF, v & 0xFFFF);
         }
         printf("WSRING: %s\n", buf);
-        /* Full-state snapshot at the first B978:436D visit -- compare cold-boot
-         * vs resume to find the root inconsistency (IVT/regs/stack). */
-        { extern unsigned char  g_b436_caught, g_b436_ivt[16], g_b436_stk[24];
-          extern unsigned short g_b436_regs[8], g_b436_segs[4];
-          printf("WSCMP: caught=%u CS=%04X DS=%04X ES=%04X SS=%04X  AX=%04X BX=%04X CX=%04X DX=%04X SI=%04X DI=%04X BP=%04X SP=%04X\n",
-                 g_b436_caught, g_b436_segs[0], g_b436_segs[1], g_b436_segs[2], g_b436_segs[3],
-                 g_b436_regs[0], g_b436_regs[1], g_b436_regs[2], g_b436_regs[3],
-                 g_b436_regs[4], g_b436_regs[5], g_b436_regs[6], g_b436_regs[7]);
-          n = 0; for (k = 0; k < 16; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_b436_ivt[k]);
-          printf("WSCMP: IVT0-3=%s\n", buf);
-          n = 0; for (k = 0; k < 24; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_b436_stk[k]);
-          printf("WSCMP: stk@SP=%s\n", buf); }
-        /* Where IVT[1] (the INT 1 handler) was first installed + with what value
-         * -- traces the garbage 0007:0085 to its source. */
-        { extern unsigned char g_ivt1_caught;
-          extern unsigned int  g_ivt1_csip, g_ivt1_val, g_ivt1_ring[8];
-          printf("WSIVT1: caught=%u at=%04X:%04X val=%04X:%04X\n",
-                 g_ivt1_caught, g_ivt1_csip>>16, g_ivt1_csip&0xFFFF,
-                 g_ivt1_val>>16, g_ivt1_val&0xFFFF);
-          n = 0; for (k = 0; k < 8; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%04X:%04X ",
-                            g_ivt1_ring[k]>>16, g_ivt1_ring[k]&0xFFFF);
-          printf("WSIVT1: ring=%s\n", buf); }
+        /* The A068:00xx RETF-chain dispatch table (the WSFAR trail shows the loop
+         * walks A068:0007->001D->0031 via RETF, and the first entry leaks 4 bytes
+         * of SP). Dump A068:0000-007F to decode each entry's push/pop, plus the
+         * two routines it calls (B978:0BA0, B978:0EC9) and the full stack frame
+         * 1FCC-1FFF so the leaked words can be matched to who pushed them. */
+        { uint32_t pa = ((uint32_t)0xA068 << 4) + 0x0000;
+          n = 0; for (k = 0; k < 64; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
+          printf("WSDSP: A068:0000=%s\n", buf);
+          n = 0; for (k = 0; k < 64; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + 64 + k));
+          printf("WSDSP: A068:0040=%s\n", buf); }
+        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x0BA0;
+          n = 0; for (k = 0; k < 56; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
+          printf("WSDSP: B978:0BA0=%s\n", buf); }
+        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x0EC9;
+          n = 0; for (k = 0; k < 56; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
+          printf("WSDSP: B978:0EC9=%s\n", buf); }
+        { uint32_t sb = ((uint32_t)0x0000 << 4) + 0x1FCC;
+          n = 0; for (k = 0; k < 52; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(sb + k));
+          printf("WSDSP: stk@0000:1FCC=%s\n", buf); }
         /* Far-transfer trail: last 32 CALL FAR(C)/RETF(R)/INT(I)/IRET(T)/JMPF(J)/
          * HWINT(H) with SP-after -- trace the call nesting to where an extra word
          * leaks onto the stack (the +2 that crashes the A068 RETF). Oldest first. */
