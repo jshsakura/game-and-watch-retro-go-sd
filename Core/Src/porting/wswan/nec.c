@@ -113,6 +113,7 @@ unsigned int   g_bpz_at;   /* CS:IP observed with BP just-zeroed (current) */
 unsigned int   g_bpz_by;   /* CS:IP of the instruction that zeroed BP (prev) */
 unsigned short g_bpz_sp;
 unsigned short g_bp_prev;
+unsigned short g_prev_cs;
 unsigned char  g_bpz_caught;
 unsigned char  g_bpz_rom[24];
 unsigned char  g_bpz_stk[16];   /* stack @SP when BP first hit 0 */
@@ -1079,12 +1080,14 @@ int32_t nec_execute(int32_t cycles)
 			}
 		}
 		g_bp_prev = I.regs.w[BP];
+		g_prev_cs = I.sregs[CS];
 		/* Latch the FIRST entry into a known garbage target (the wrong jump):
 		 * A068:0Cxx (data table) or segment 0x70FF (ROM graphics run as code on
 		 * the deterministic B978:3085 save). */
 		if (!g_jmp_caught
 		    && ((I.sregs[CS] == 0xA068 && I.ip >= 0x0C00 && I.ip <= 0x0C60)
-		        || I.sregs[CS] == 0x70FF)) {
+		        || I.sregs[CS] == 0x70FF
+		        || (I.sregs[CS] < 0x0100 && g_prev_cs >= 0x0100))) {
 			unsigned int prev = g_csip_ring[(g_ring_pos - 2) & 15];
 			int q; uint32_t pa = (((prev >> 16) & 0xFFFF) << 4)
 			                     + (unsigned short)((prev & 0xFFFF) - 0x08);
