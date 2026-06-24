@@ -85,95 +85,6 @@ int32_t nec_ICount;
  * saving the per-fetch segment load+shift. */
 uint32_t cs_base;
 
-/* GNW diag: count actual interrupt entries vs IRETs. A savestate-resume stack
- * blow-up shows as g_int_n >> g_iret_n (interrupts firing without returning). */
-unsigned int g_int_n, g_iret_n;
-
-/* GNW diag: ring of the last 8 (CS<<16|IP) executed. When SP runs away below
- * 0x0400 (about to trash the IVT) we FREEZE the ring -- it then holds the body
- * of the runaway PUSH/CALL loop, revealing exactly what code is exhausting the
- * stack after a savestate resume. */
-unsigned int   g_csip_ring[16];
-unsigned short g_sp_ring[16];   /* SP at each ring entry */
-unsigned short g_bp_ring[16];   /* BP at each ring entry */
-unsigned char g_ring_pos;
-unsigned char g_runaway_caught;
-/* Stack snapshot taken AT the moment the runaway is caught (SP still mid-
- * descent, frames intact) -- the per-frame ws_freeze_check runs too late (after
- * the stack has fully blown into the zeroed IVT). Repeated return CS:IP pairs
- * here = the recursive function. */
-unsigned int  g_runaway_sp;
-unsigned char g_runaway_stack[48];
-/* BP-zeroing tracker. resume BP is healthy (0x1FFA) but by the crash BP=0,
- * and an epilogue MOV SP,BP then nukes SP. Capture the LAST instruction that
- * drives BP nonzero->0 (CS>=0x100) before the runaway: its CS:IP, the SP at
- * that moment, and 24 ROM bytes around it -- the root that mis-sets BP. */
-unsigned int   g_bpz_n;
-unsigned int   g_bpz_at;   /* CS:IP observed with BP just-zeroed (current) */
-unsigned int   g_bpz_by;   /* CS:IP of the instruction that zeroed BP (prev) */
-unsigned short g_bpz_sp;
-unsigned short g_bp_prev;
-unsigned short g_prev_cs;
-unsigned int   g_nullint_n;     /* count of skipped null-vector software INTs */
-unsigned int   g_nullint_last;  /* the last INT number that was skipped */
-/* Full-state snapshot at the FIRST visit to B978:436D (the resume point), so the
- * cold-boot state there can be diffed against the resume (saved) state. */
-unsigned char  g_b436_caught;
-unsigned short g_b436_regs[8];  /* AW BW CW DW IX(SI) IY(DI) BP SP */
-unsigned short g_b436_segs[4];  /* CS DS ES SS */
-unsigned char  g_b436_ivt[16];  /* IVT[0..3] */
-unsigned char  g_b436_stk[24];  /* stack @SP */
-/* Where/when IVT[1] is first installed (it became garbage 0007:0085 in the run
- * that progressed furthest -> INT 1 mis-dispatch). Capture the installing
- * context + value + recent CS:IP ring so the garbage source can be traced. */
-unsigned char  g_ivt1_caught;
-unsigned int   g_ivt1_csip;     /* CS:IP just after IVT[1] turned non-zero */
-unsigned int   g_ivt1_val;      /* IVT[1] = CS<<16 | IP */
-unsigned int   g_ivt1_ring[8];  /* the 8 CS:IP before the install */
-/* Far-transfer ring: every CALL FAR / RETF / INT / IRET / JMP FAR with the SP
- * AFTER it, so the call nesting can be traced and the point where an extra word
- * leaks onto the stack (the +2 that crashes the A068 RETF) is visible. */
-unsigned int   g_far_csip[32];  /* dest (or src) CS:IP of the transfer */
-unsigned int   g_far_meta[32];  /* (type<<24) | SP-after ; type 1=CALLF 2=RETF 3=INT 4=IRET 5=JMPF 6=HWINT */
-unsigned char  g_far_pos;
-/* Cold-boot vs resume comparison at A068:5EFC (the `CALL [0006]` that near-calls
- * the FAR init A068:0000 when [0006]==0). Capture the fn-ptr value + how many times
- * A068:0000 was FAR-called (the init) before reaching the use, so the two runs can
- * be diffed: resume should show v6=0 / initfar=0, cold-boot v6=0155 / initfar>=1. */
-unsigned char  g_efc_caught;
-unsigned int   g_efc_v6;        /* [110C:0006] at the first A068:5EFC */
-unsigned int   g_efc_initfar;   /* g_initfar_n at that point */
-unsigned int   g_initfar_n;     /* count of CALL FAR to A068:0000 (the init site) */
-/* Also capture the FIRST 48 far-transfers after a savestate load (g_far2_n reset
- * to 0 by WsLoadStateFromFile) so the resume's initial path B978:43CA -> the redraw
- * that reaches A068:5EFC is visible (the last-32 ring only shows the lead-up). */
-unsigned int   g_far2_csip[48];
-unsigned int   g_far2_meta[48];
-unsigned int   g_far2_n;
-#define FARLOG(t) do { unsigned char _p = g_far_pos++ & 31; \
-        unsigned int _v = ((unsigned int)I.sregs[CS] << 16) | I.ip; \
-        unsigned int _m = ((unsigned int)(t) << 24) | I.regs.w[SP]; \
-        g_far_csip[_p] = _v; g_far_meta[_p] = _m; \
-        if (g_far2_n < 48) { g_far2_csip[g_far2_n] = _v; g_far2_meta[g_far2_n] = _m; g_far2_n++; } } while (0)
-unsigned char  g_bpz_caught;
-unsigned char  g_bpz_rom[24];
-unsigned char  g_bpz_stk[16];   /* stack @SP when BP first hit 0 */
-unsigned int   g_bpz_ret;       /* RET target the resume-frame pops to */
-unsigned char  g_bpz_retrom[32];/* ROM at that target (runs with BP=0) */
-/* Bank-switch (OUT 0xC0-0xC3) event ring -- confirms whether a far-call/bank
- * switch right before the crash steers control flow wrong on this 8MB cart. */
-unsigned int   g_bnk_ring[16];  /* CS:IP of the OUT */
-unsigned short g_bnk_meta[16];  /* (port<<8) | AL value written */
-unsigned char  g_bnk_pos;
-/* Catch the FIRST jump into the A068:0Cxx data table (the wrong-index dispatch
- * that lands in data and hangs the loop): the jump instruction's CS:IP + ROM,
- * and the register file at that instant (the bad index/target source). */
-unsigned char  g_jmp_caught;
-unsigned int   g_jmp_from, g_jmp_to, g_jmp_dses;
-unsigned short g_jmp_regs[8];   /* AW BW CW DW SI DI BP SP */
-unsigned char  g_jmp_rom[24];
-unsigned char  g_jmp_stk[16];   /* stack around SP at the bad jump (SP-8 .. SP+8) */
-
 static nec_Regs I;
 
 static uint32_t prefix_base;	/* base address of the latest prefix segment */
@@ -235,7 +146,6 @@ void nec_int(uint32_t wektor)
 
 	if(I.IF)
 	{
-		g_int_n++;
 		i_pushf();
 		I.TF = I.IF = 0;
 		dest_off = ReadWord(wektor);
@@ -244,7 +154,6 @@ void nec_int(uint32_t wektor)
 		PUSH(I.ip);
 		I.ip = (uint16_t)dest_off;
 		I.sregs[CS] = (uint16_t)dest_seg;
-		FARLOG(6);
 	}
 }
 
@@ -263,25 +172,8 @@ void nec_interrupt(uint32_t int_num)
 	 * the zeroed IVT as code and hangs. Treat a null-vector software INT as a
 	 * no-op so the game continues -- One Piece does `INT 1; RETF` and IVT[1]=0
 	 * on resume, which otherwise crashes into low IRAM. */
-	if (dest_seg == 0 && dest_off == 0) {
-		g_nullint_n++;
-		g_nullint_last = int_num;
-		/* INT 1's stack behaviour is context-dependent:
-		 *  - The `CD 01; RETF` wrapper (e.g. EFCE:0965) is STACK-NEUTRAL -- the
-		 *    RETF immediately after returns to the caller; SP+=2 there over-pops
-		 *    and the RETF jumps into IRAM (EFCE:0967 -> 0013:B978 on device).
-		 *  - Other INT 1 sites pass a caller-pushed word the real handler consumes;
-		 *    leaving it gives +2 drift that crashes the A068:0063 display-setup RETF
-		 *    (garbled top). There SP+=2 is required.
-		 * Distinguish by the byte right after `CD 01`: a RETF (0xCB) => the
-		 * stack-neutral wrapper; anything else => a param-taking call. */
-		if (int_num == 1) {
-			uint32_t nb = ((uint32_t)I.sregs[CS] << 4) + I.ip;
-			if ((unsigned char)ReadMem(nb) != 0xCB)
-				I.regs.w[SP] += 2;
-		}
+	if (dest_seg == 0 && dest_off == 0)
 		return;
-	}
 
 	i_pushf();
 	I.TF = I.IF = 0;
@@ -567,7 +459,7 @@ OP( 0x97, i_xchg_axdi ) { XchgAWReg(IY); CLK(3); }
 
 OP( 0x98, i_cbw 	  ) { I.regs.b[AH] = (I.regs.b[AL] & 0x80) ? 0xff : 0;	CLK(1);	}
 OP( 0x99, i_cwd 	  ) { I.regs.w[DW] = (I.regs.b[AH] & 0x80) ? 0xffff : 0;	CLK(1);	}
-OP( 0x9a, i_call_far  ) { uint32_t tmp, tmp2;	FETCHuint16_t(tmp); FETCHuint16_t(tmp2); PUSH(I.sregs[CS]); PUSH(I.ip); I.ip = (uint16_t)tmp; I.sregs[CS] = (uint16_t)tmp2; if (tmp2 == 0xA068 && tmp == 0x0000) g_initfar_n++; FARLOG(1); CLK(10); }
+OP( 0x9a, i_call_far  ) { uint32_t tmp, tmp2;	FETCHuint16_t(tmp); FETCHuint16_t(tmp2); PUSH(I.sregs[CS]); PUSH(I.ip); I.ip = (uint16_t)tmp; I.sregs[CS] = (uint16_t)tmp2; CLK(10); }
 OP( 0x9b, i_wait	  ) { ; }
 OP( 0x9c, i_pushf	  ) { PUSH( CompressFlags() ); CLK(2); }
 OP( 0x9d, i_popf	  ) { uint32_t tmp; POP(tmp); ExpandFlags(tmp); CLK(3);}
@@ -674,12 +566,12 @@ OP( 0xc9, i_leave ) {
 	POP(I.regs.w[BP]);
 	CLK(2);
 }
-OP( 0xca, i_retf_d16  ) { uint32_t count = FETCH; count += FETCH << 8; POP(I.ip); POP(I.sregs[CS]); I.regs.w[SP]+=count; FARLOG(2); CLK(9); }
-OP( 0xcb, i_retf	  ) { POP(I.ip); POP(I.sregs[CS]); FARLOG(2); CLK(8); }
+OP( 0xca, i_retf_d16  ) { uint32_t count = FETCH; count += FETCH << 8; POP(I.ip); POP(I.sregs[CS]); I.regs.w[SP]+=count; CLK(9); }
+OP( 0xcb, i_retf	  ) { POP(I.ip); POP(I.sregs[CS]); CLK(8); }
 OP( 0xcc, i_int3	  ) { nec_interrupt(3); CLK(9); }
-OP( 0xcd, i_int 	  ) { nec_interrupt(FETCH); FARLOG(3); CLK(10); }
+OP( 0xcd, i_int 	  ) { nec_interrupt(FETCH); CLK(10); }
 OP( 0xce, i_into	  ) { if (OF) { nec_interrupt(4); CLK(13); } else CLK(6); }
-OP( 0xcf, i_iret	  ) { g_iret_n++; POP(I.ip); POP(I.sregs[CS]); i_popf(); FARLOG(4); CLK(10); }
+OP( 0xcf, i_iret	  ) { POP(I.ip); POP(I.sregs[CS]); i_popf(); CLK(10); }
 
 OP( 0xd0, i_rotshft_b ) {
 	uint32_t src, dst; GetModRM; src = (uint32_t)GetRMByte(ModRM); dst=src;
@@ -762,7 +654,7 @@ OP( 0xe7, i_outax  ) { uint8_t port = FETCH; write_port(port, I.regs.b[AL]); wri
 
 OP( 0xe8, i_call_d16 ) { uint32_t tmp; FETCHuint16_t(tmp); PUSH(I.ip); I.ip = (uint16_t)(I.ip+(int16_t)tmp); CLK(5); }
 OP( 0xe9, i_jmp_d16  ) { uint32_t tmp; FETCHuint16_t(tmp); I.ip = (uint16_t)(I.ip+(int16_t)tmp); CLK(4); }
-OP( 0xea, i_jmp_far  ) { uint32_t tmp,tmp1; FETCHuint16_t(tmp); FETCHuint16_t(tmp1); I.sregs[CS] = (uint16_t)tmp1; 	I.ip = (uint16_t)tmp; FARLOG(5); CLK(7);	}
+OP( 0xea, i_jmp_far  ) { uint32_t tmp,tmp1; FETCHuint16_t(tmp); FETCHuint16_t(tmp1); I.sregs[CS] = (uint16_t)tmp1; 	I.ip = (uint16_t)tmp; CLK(7);	}
 OP( 0xeb, i_jmp_d8	 ) { 
 	int32_t tmp = (int)((int8_t)FETCH); CLK(4);
 	if (tmp==-2 && no_interrupt==0 && nec_ICount>0) nec_ICount%=12; /* cycle skip */
@@ -913,15 +805,8 @@ static void i_invalid(void)
  * nec.h, pre-ported to this file's types -- reused verbatim, no hand-rolled
  * BCD math. EXT/INS/BRKEM are stubbed (consume their operand byte, no-op) --
  * MAME stubs them too and WS games don't use them. */
-/* GNW diagnostic counters: which V30 0x0F sub-opcodes (and REPC/REPNC) a game
- * actually executes. Dumped to the on-screen panel by ws_v30_report() so a
- * mis-implemented op can be pinpointed. Non-static -> read from ws_fileio.c. */
-unsigned short g_v30op[256];
-unsigned int   g_repc_n, g_repnc_n;
-
 OP( 0x0f, i_pre_nec ) {
 	uint32_t ModRM, tmp, tmp2, sub = FETCH;
-	g_v30op[sub & 0xFF]++;
 	switch (sub) {
 		/* bit ops, bit index in CL */
 		case 0x10: BITOP_uint8_t;  CLK(3); tmp2 = I.regs.b[CL] & 0x7; I.ZeroVal = (tmp & (1<<tmp2)) ? 1 : 0; I.CarryVal = I.OverVal = 0; break; /* TEST1 b,CL */
@@ -969,7 +854,6 @@ OP( 0x0f, i_pre_nec ) {
 OP( 0x64, i_repnc ) {
 	uint32_t next = FETCHOP;
 	uint16_t c = I.regs.w[CW];
-	g_repnc_n++;
 	switch (next) {
 		case 0x26: seg_prefix=TRUE; prefix_base=I.sregs[ES]<<4; next = FETCHOP; CLK(2); break;
 		case 0x2e: seg_prefix=TRUE; prefix_base=I.sregs[CS]<<4; next = FETCHOP; CLK(2); break;
@@ -1000,11 +884,6 @@ OP( 0x64, i_repnc ) {
 OP( 0x65, i_repc ) {
 	uint32_t next = FETCHOP;
 	uint16_t c = I.regs.w[CW];
-	g_repc_n++;
-	if (g_repc_n == 1)
-		printf("REPC1: @%04X:%04X next=%02X CW=%04X SI=%04X DI=%04X CF=%d\n",
-		       (unsigned)I.sregs[CS], (unsigned)((I.ip-1)&0xFFFF), (unsigned)next,
-		       (unsigned)c, (unsigned)I.regs.w[IX], (unsigned)I.regs.w[IY], CF?1:0);
 	switch (next) {
 		case 0x26: seg_prefix=TRUE; prefix_base=I.sregs[ES]<<4; next = FETCHOP; CLK(2); break;
 		case 0x2e: seg_prefix=TRUE; prefix_base=I.sregs[CS]<<4; next = FETCHOP; CLK(2); break;
@@ -1028,10 +907,6 @@ OP( 0x65, i_repc ) {
 		case 0xaf: CLK(2); if (c) do { i_scasw(); c--; } while (c>0 && CF); I.regs.w[CW]=c; break;
 		default:   nec_instruction[next]();
 	}
-	if (g_repc_n == 1)
-		printf("REPC1: after CW=%04X SI=%04X DI=%04X CF=%d ZF=%d SP=%04X\n",
-		       (unsigned)I.regs.w[CW], (unsigned)I.regs.w[IX], (unsigned)I.regs.w[IY],
-		       CF?1:0, ZF?1:0, (unsigned)I.regs.w[SP]);
 	seg_prefix=FALSE;
 }
 
@@ -1096,137 +971,6 @@ int32_t nec_execute(int32_t cycles)
 	while(nec_ICount>=0)
 	{
 		cs_base = I.sregs[CS] << 4;
-		/* Snapshot the FULL state the first time we reach B978:436D (the resume
-		 * point) -- lets us diff the cold-boot state there against the saved
-		 * (resume) state to find the root inconsistency. */
-		if (!g_b436_caught && I.sregs[CS] == 0xB978 && I.ip == 0x436D) {
-			int q; uint32_t sb = ((uint32_t)I.sregs[SS] << 4) + I.regs.w[SP];
-			g_b436_caught = 1;
-			g_b436_regs[0]=I.regs.w[AW]; g_b436_regs[1]=I.regs.w[BW];
-			g_b436_regs[2]=I.regs.w[CW]; g_b436_regs[3]=I.regs.w[DW];
-			g_b436_regs[4]=I.regs.w[IX]; g_b436_regs[5]=I.regs.w[IY];
-			g_b436_regs[6]=I.regs.w[BP]; g_b436_regs[7]=I.regs.w[SP];
-			g_b436_segs[0]=I.sregs[CS]; g_b436_segs[1]=I.sregs[DS];
-			g_b436_segs[2]=I.sregs[ES]; g_b436_segs[3]=I.sregs[SS];
-			for (q=0;q<16;q++) g_b436_ivt[q]=(unsigned char)ReadMem(q);
-			for (q=0;q<24;q++) g_b436_stk[q]=(unsigned char)ReadMem(sb+q);
-		}
-		/* Capture the first time the game reaches A068:5EFC (the `CALL [0006]`),
-		 * with the fn-ptr value + init count, for the cold-boot vs resume diff. */
-		if (!g_efc_caught && I.sregs[CS] == 0xA068 && I.ip == 0x5EFC) {
-			g_efc_caught = 1;
-			g_efc_v6 = ReadMem(0x110C6) | (ReadMem(0x110C7) << 8);
-			g_efc_initfar = g_initfar_n;
-		}
-		/* Detect the first instant IVT[1] (phys 4..7) goes non-zero -- this is the
-		 * game installing its INT 1 handler. Capture where + the value + the recent
-		 * CS:IP ring to find why it ends up garbage (0007:0085). */
-		if (!g_ivt1_caught) {
-			unsigned int v1 = ((unsigned int)ReadMem(7)<<24)|((unsigned int)ReadMem(6)<<16)
-			                 |((unsigned int)ReadMem(5)<<8)|ReadMem(4);
-			if (v1 != 0) {
-				int q;
-				g_ivt1_caught = 1;
-				g_ivt1_csip = ((unsigned int)I.sregs[CS] << 16) | I.ip;
-				/* store as CS<<16 | IP for readable print */
-				g_ivt1_val = ((unsigned int)(((v1>>16)&0xFFFF)) << 16) | (v1 & 0xFFFF);
-				for (q=0;q<8;q++)
-					g_ivt1_ring[q] = g_csip_ring[(g_ring_pos - 8 + q) & 15];
-			}
-		}
-		if (!g_runaway_caught) {
-			unsigned char rp = g_ring_pos++ & 15;
-			g_csip_ring[rp] = ((unsigned int)I.sregs[CS] << 16) | I.ip;
-			g_sp_ring[rp]   = I.regs.w[SP];
-			g_bp_ring[rp]   = I.regs.w[BP];
-			/* Stack runaway: catch EARLY in the descent (SP ~0x600 below the
-			 * normal ~0x1ff0 top) so the ring holds the PUSH/CALL phase of the
-			 * recursion, not the later unwind. */
-			if (I.regs.w[SP] < 0x1A00 && I.sregs[CS] >= 0x100) {
-				int q;
-				uint32_t sb = ((uint32_t)I.sregs[SS] << 4) + I.regs.w[SP];
-				g_runaway_caught = 1;   /* freeze the ring at the runaway loop */
-				g_runaway_sp = ((unsigned int)I.sregs[SS] << 16) | I.regs.w[SP];
-				for (q = 0; q < 48; q++)
-					g_runaway_stack[q] = (unsigned char)ReadMem(sb + q);
-			}
-		}
-		/* LATCH the FIRST instruction that drives BP nonzero->0 (the root of the
-		 * MOV SP,BP collapse), while SP is still healthy -- later ones are the
-		 * post-collapse thrash (SP already wrapped past 0). n counts all. */
-		if (g_bp_prev != 0 && I.regs.w[BP] == 0 && I.sregs[CS] >= 0x100) {
-			g_bpz_n++;
-			if (!g_bpz_caught) {
-				/* current instr = ring[-1]; the one that zeroed BP = ring[-2] */
-				unsigned int prev = g_csip_ring[(g_ring_pos - 2) & 15];
-				int q;
-				uint32_t pa = (((prev >> 16) & 0xFFFF) << 4)
-				              + (unsigned short)((prev & 0xFFFF) - 0x08);
-				uint32_t sb = ((uint32_t)I.sregs[SS] << 4) + I.regs.w[SP];
-				uint16_t rip, rcs; uint32_t rp2;
-				g_bpz_caught = 1;
-				g_bpz_at = ((unsigned int)I.sregs[CS] << 16) | I.ip;
-				g_bpz_by = prev;
-				g_bpz_sp = I.regs.w[SP];
-				for (q = 0; q < 24; q++)
-					g_bpz_rom[q] = (unsigned char)ReadMem(pa + q);
-				for (q = 0; q < 16; q++)
-					g_bpz_stk[q] = (unsigned char)ReadMem(sb + q);
-				/* The RET target the resume-frame pops to (BP=0 carried in):
-				 * dump its ROM -- that code runs with BP=0 and does the fatal
-				 * MOV SP,BP. [SP]=IP, [SP+2]=CS. */
-				rip = g_bpz_stk[0] | (g_bpz_stk[1] << 8);
-				rcs = g_bpz_stk[2] | (g_bpz_stk[3] << 8);
-				rp2 = ((uint32_t)rcs << 4) + rip;
-				g_bpz_ret = ((unsigned int)rcs << 16) | rip;
-				for (q = 0; q < 32; q++)
-					g_bpz_retrom[q] = (unsigned char)ReadMem(rp2 + q);
-			}
-		}
-		g_bp_prev = I.regs.w[BP];
-		/* Latch the FIRST entry into a known garbage target (the wrong jump):
-		 * A068:0Cxx (data table) or segment 0x70FF (ROM graphics run as code on
-		 * the deterministic B978:3085 save). */
-		if (!g_jmp_caught
-		    && ((I.sregs[CS] == 0xA068 && I.ip >= 0x0C00 && I.ip <= 0x0C60)
-		        || I.sregs[CS] == 0x70FF
-		        || (I.sregs[CS] == 0x0D8A && g_prev_cs != 0x0D8A)
-		        || (I.sregs[CS] < 0x0100 && g_prev_cs >= 0x0100))) {
-			unsigned int prev = g_csip_ring[(g_ring_pos - 2) & 15];
-			int q; uint32_t pa = (((prev >> 16) & 0xFFFF) << 4)
-			                     + (unsigned short)((prev & 0xFFFF) - 0x08);
-			g_jmp_caught = 1;
-			g_jmp_from = prev;
-			g_jmp_to = ((unsigned int)I.sregs[CS] << 16) | I.ip;
-			g_jmp_regs[0] = I.regs.w[AW]; g_jmp_regs[1] = I.regs.w[BW];
-			g_jmp_regs[2] = I.regs.w[CW]; g_jmp_regs[3] = I.regs.w[DW];
-			g_jmp_regs[4] = I.regs.w[IX]; g_jmp_regs[5] = I.regs.w[IY];
-			g_jmp_regs[6] = I.regs.w[BP]; g_jmp_regs[7] = I.regs.w[SP];
-			g_jmp_dses = ((unsigned int)I.sregs[DS] << 16) | I.sregs[ES];
-			for (q = 0; q < 24; q++)
-				g_jmp_rom[q] = (unsigned char)ReadMem(pa + q);
-			{ uint32_t sb = ((uint32_t)I.sregs[SS] << 4) + I.regs.w[SP];
-			  for (q = 0; q < 16; q++)
-				  g_jmp_stk[q] = (unsigned char)ReadMem(sb - 8 + q); }
-		}
-		/* Log OUT 0xC0-0xC3 (ROM/SRAM bank switches) just before they execute. */
-		if (!g_runaway_caught) {
-			unsigned char op = (unsigned char)ReadMem(cs_base + I.ip);
-			int port = -1;
-			if (op == 0xE6) {           /* OUT imm8, AL */
-				unsigned char pt = (unsigned char)ReadMem(cs_base + I.ip + 1);
-				if (pt >= 0xC0 && pt <= 0xC3) port = pt;
-			} else if (op == 0xEE) {    /* OUT DX, AL */
-				unsigned short dx = I.regs.w[DW];
-				if (dx >= 0xC0 && dx <= 0xC3) port = dx & 0xFF;
-			}
-			if (port >= 0) {
-				unsigned char p = g_bnk_pos++ & 15;
-				g_bnk_ring[p] = ((unsigned int)I.sregs[CS] << 16) | I.ip;
-				g_bnk_meta[p] = ((unsigned short)port << 8) | I.regs.b[AL];
-			}
-		}
-		g_prev_cs = I.sregs[CS];   /* AFTER the traps: holds the prev iter's CS */
 		nec_instruction[FETCHOP]();
 	}
 

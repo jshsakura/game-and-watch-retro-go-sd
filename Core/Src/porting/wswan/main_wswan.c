@@ -319,23 +319,14 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         /* Skip per-scanline rendering on frames we won't display, so the
          * emulator can keep pace (WsRun always renders otherwise). */
         ws_render_enabled = drawFrame;
-        static int dbgf = 0;   /* bisect the post-loadstate resume crash */
-        if (dbgf < 3) printf("WSf%d: pre-WsRun render=%d\n", dbgf, drawFrame);
         WsRun();
-        if (dbgf < 3) printf("WSf%d: post-WsRun\n", dbgf);
-
-        /* Detect a savestate-resume freeze and dump the stuck loop + I/O regs
-         * to the on-screen panel (one-shot). See ws_freeze_check in ws_fileio.c. */
-        { extern void ws_freeze_check(void); ws_freeze_check(); }
 
         if (drawFrame) {
             blit();
             lcd_swap();
         }
-        if (dbgf < 3) printf("WSf%d: post-blit\n", dbgf);
 
         ws_pcm_submit();
-        if (dbgf < 3) { printf("WSf%d: post-pcm\n", dbgf); dbgf++; }
 
         /* Pace the loop by the audio DMA UNCONDITIONALLY. common_emu_sound_sync
          * skips this wait when skip_frames>0, which let heavy games (render

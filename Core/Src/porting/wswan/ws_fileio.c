@@ -610,17 +610,6 @@ uint32_t WsSaveStateToFile(FILE *fp)
     return 0;
 }
 
-/* Resume-time stack/BP-chain snapshot, surfaced in the freeze panel (logbuf
- * truncates the early WSLD lines off the SD file). */
-unsigned char g_resume_stk[64];
-unsigned char g_was_resumed;    /* set once WsLoadStateFromFile runs -> this is a resume, not cold boot */
-unsigned int  g_save_v6;        /* saved [110C:0006] fn-ptr at load (pre-execution) */
-unsigned char g_save_vars[32];  /* saved 110C:[0000..001F] var block at load */
-unsigned int  g_resume_base;
-unsigned int  g_resume_csip;   /* CS:IP at resume (surfaced in panel) */
-unsigned int  g_resume_sssp;   /* SS:SP at resume */
-unsigned int  g_resume_dses;   /* DS:ES at resume */
-
 uint32_t WsLoadStateFromFile(FILE *fp)
 {
     uint32_t i;
@@ -631,36 +620,18 @@ uint32_t WsLoadStateFromFile(FILE *fp)
     if (fread(hdr, sizeof(uint32_t), 4, fp) != 4) return 1;
     if (hdr[0] != WS_STATE_MAGIC || hdr[1] != WS_STATE_VERSION) return 1;
     if (hdr[2] != RAMBanks || hdr[3] != RAMSize) return 1;
-    printf("WSLD: hdr ok RAMBanks=%lu RAMSize=%lx bank=%lx\n",
-           (unsigned long)RAMBanks, (unsigned long)RAMSize, (unsigned long)bank);
     for (i = 0; i < (uint32_t)WS_STATE_NEC_COUNT; i++) {
         uint32_t v;
         if (fread(&v, sizeof(uint32_t), 1, fp) != 1) return 1;
         nec_set_reg(ws_state_nec_regs[i], v);
     }
-    printf("WSLD: nec regs done\n");
     if (fread(IRAM, 1, 0x10000, fp) != 0x10000) return 1;
     if (fread(IO,   1, 0x100,   fp) != 0x100)   return 1;
-    printf("WSLD: iram+io done\n");
     for (i = 0; i < RAMBanks; i++) {
-        if (RAMMap[i] == NULL) { printf("WSLD: RAMMap[%lu] NULL, skip\n", (unsigned long)i); continue; }
+        if (RAMMap[i] == NULL) continue;
         fread(RAMMap[i], 1, bank, fp);
     }
     fread(Palette, sizeof(uint16_t), 16 * 16, fp);
-    printf("WSLD: rammap+palette done\n");
-    /* SAVED value of the function pointer [110C:0006] (= RAMMap[0][0x10C6]) BEFORE
-     * any execution. The crash near-calls A068:0000 because [0006]==0 at the call;
-     * this tells us whether the save itself has [0006]==0 (init genuinely not done
-     * -> a path/timing divergence reaches CALL [0006] too early) or [0006]!=0 (it
-     * got cleared during the resumed run -> find the clearer). Surfaced in the
-     * freeze panel too so it survives the logbuf. */
-    { extern unsigned int g_save_v6; extern unsigned char g_save_vars[32];
-      int q; if (RAMMap[0]) {
-        g_save_v6 = RAMMap[0][0x10C6] | (RAMMap[0][0x10C7] << 8);
-        for (q = 0; q < 32; q++) g_save_vars[q] = RAMMap[0][0x10C0 + q];
-      }
-      printf("WSLD: saved [110C:0006]=%04X [0014]=%02X%02X\n",
-             g_save_v6, g_save_vars[0x15], g_save_vars[0x14]); }
 
     /* Rebuild derived state that WriteIO caches outside IO[]. The display
      * registers 0x00-0x3F are critical: WriteIO(0x07) recomputes Scr1TMap /
@@ -672,7 +643,6 @@ uint32_t WsLoadStateFromFile(FILE *fp)
      * the screen isn't garbled. No nec_execute / DMA below 0x40, so safe. */
     for (i = 0x00; i <= 0x3F; i++)
         WriteIO(i, IO[i]);
-    printf("WSLD: writeio 00-3F done\n");
     /* Bank replay -- EXACTLY mirror the stock WsLoadState (C1,C2,C3,C0,80-90)
      * with the REAL CS. WriteIO(0xC0) deliberately runs nec_execute(1) at
      * CS>=0x4000: that completes the in-flight bank-switch the save interrupted,
@@ -686,16 +656,10 @@ uint32_t WsLoadStateFromFile(FILE *fp)
      * Point Page[1] back at the mirrored real SRAM so resume reads valid data
      * instead of 0xA0 garbage (which corrupted return addresses -> wrong jumps). */
     { extern uint8_t *Page[16];
-      int fixed = 0;
-      if (RAMBanks > 0 && RAMMap[0] != MemDummy && Page[1] == MemDummy) {
+      if (RAMBanks > 0 && RAMMap[0] != MemDummy && Page[1] == MemDummy)
           Page[1] = RAMMap[IO[0xC1] % RAMBanks];
-          fixed = 1;
-      }
       WriteIO(0xC2, IO[0xC2]);
-      WriteIO(0xC3, IO[0xC3]);
-      printf("WSLD: writeio C1-C3 done (C1=%02X page1=%s%s)\n",
-             IO[0xC1], (Page[1] == MemDummy) ? "dummy" : "ram",
-             fixed ? " [remapped]" : ""); }
+      WriteIO(0xC3, IO[0xC3]); }
     /* Skip WriteIO(0xC0)'s bank-delay nec_execute(1) during resume: it models
      * the 1-instruction delay after a LIVE 'OUT 0xC0', but on resume there is no
      * in-flight OUT -- it would run the resumed first instruction (e.g. B978:0D85
@@ -707,10 +671,8 @@ uint32_t WsLoadStateFromFile(FILE *fp)
       nec_set_reg(NEC_CS, 0);
       WriteIO(0xC0, IO[0xC0]);
       nec_set_reg(NEC_CS, _scs); }
-    printf("WSLD: writeio C0 done\n");
     for (i = 0x80; i <= 0x90; i++)
         WriteIO(i, IO[i]);
-    printf("WSLD: writeio 80-90 done\n");
     /* Restart the HBlank/VBlank timer countdowns. HTimer/VTimer are static in
      * WS.c -- NOT saved and NOT in the replay set -- so on resume they stay
      * dead/stale: a timer the game enabled never counts down, its IRQ never
@@ -723,338 +685,8 @@ uint32_t WsLoadStateFromFile(FILE *fp)
     WriteIO(0xA6, IO[0xA6]);   /* VPRE lo -> VTimer */
     WriteIO(0xA7, IO[0xA7]);   /* VPRE hi -> VTimer */
     WriteIO(0xA2, IO[0xA2]);   /* TIMCTL -> enable + reload both */
-    printf("WSLD: writeio timers A2-A7 done (TIMCTL=%02X HPRE=%02X%02X VPRE=%02X%02X)\n",
-           IO[0xA2], IO[0xA5], IO[0xA4], IO[0xA7], IO[0xA6]);
-    printf("WSLD: resume CS=%lx IP=%lx SS=%lx SP=%lx BP=%lx DS=%lx ES=%lx PEND=%lx\n",
-           (unsigned long)nec_get_reg(NEC_CS), (unsigned long)nec_get_reg(NEC_IP),
-           (unsigned long)nec_get_reg(NEC_SS), (unsigned long)nec_get_reg(NEC_SP),
-           (unsigned long)nec_get_reg(NEC_BP),
-           (unsigned long)nec_get_reg(NEC_DS), (unsigned long)nec_get_reg(NEC_ES),
-           (unsigned long)nec_get_reg(NEC_PENDING));
-    /* Dump the stack/BP-chain region AT RESUME. If [BP]=[0x1FFA] is already 0
-     * here, the saved state itself has a broken chain (save-side problem); if it
-     * is a valid outer-frame pointer now but 0 by the crash, something overwrites
-     * it during the first frames (runtime corruption). */
-    { extern unsigned char g_resume_stk[64];
-      extern unsigned int  g_resume_base, g_resume_csip, g_resume_sssp, g_resume_dses;
-      uint16_t ss = (uint16_t)nec_get_reg(NEC_SS);
-      uint16_t bp = (uint16_t)nec_get_reg(NEC_BP);
-      uint16_t lo = (uint16_t)(bp - 0x12);
-      uint32_t base = ((uint32_t)ss << 4) + lo;
-      g_resume_csip = ((unsigned int)(uint16_t)nec_get_reg(NEC_CS) << 16) | (uint16_t)nec_get_reg(NEC_IP);
-      g_resume_sssp = ((unsigned int)ss << 16) | (uint16_t)nec_get_reg(NEC_SP);
-      g_resume_dses = ((unsigned int)(uint16_t)nec_get_reg(NEC_DS) << 16) | (uint16_t)nec_get_reg(NEC_ES);
-      char b2[140]; int q, m = 0;
-      g_resume_base = ((unsigned int)ss << 16) | lo;
-      for (q = 0; q < 64; q++) {
-          g_resume_stk[q] = (unsigned char)ReadMem(base + q);
-          m += snprintf(b2 + m, sizeof(b2) - m, "%02X", g_resume_stk[q]);
-      }
-      printf("WSLD: stk@BP-12 (%04X:%04X)=%s\n", ss, lo, b2); }
-    /* Reset the "first 48 far-transfers" ring so it captures the RESUME's initial
-     * path (B978:43CA -> redraw -> A068:5EFC). On cold boot there's no load, so it
-     * captures the boot path to the startup A068:5EFC instead -- the two are diffed. */
-    { extern unsigned int g_far2_n; g_far2_n = 0; }
-    g_was_resumed = 1;   /* mark this run as a resume so the panel writes /ws_debug.txt */
-    printf("WSLD: complete\n");
     return 0;
 }
 
-/* GNW diagnostic. Called once per emulated frame from main_wswan.c. One Piece
- * (WSC) plays fine from a cold boot but its savestate RESUME runs the game with
- * corrupted output (graphics degrade) -- it is NOT frozen, it's executing, so a
- * freeze detector never fires. The likely cause is a mis-implemented V30 0x0F
- * sub-opcode (the BCD ADD4S/SUB4S/CMP4S macros were never exercised before).
- * So instead of waiting for a freeze, ~3s after launch we UNCONDITIONALLY pop
- * the on-screen panel and dump which 0x0F sub-opcodes (and REPC/REPNC) the game
- * actually executed, plus CS:IP + the bytes there. That pins down exactly which
- * op to re-verify against MAME. One-shot per launch. */
-void ws_freeze_check(void)
-{
-    extern void gw_debug_show_log(const char *banner);
-    extern unsigned short g_v30op[256];
-    extern unsigned int   g_repc_n, g_repnc_n;
-    static int frame = 0, shown = 0;
-    uint16_t cs, ip;
-    char buf[260];
-    int i, n;
-
-    if (shown) return;
-
-    cs = (uint16_t)nec_get_reg(NEC_CS);
-    ip = (uint16_t)nec_get_reg(NEC_IP);
-
-    /* Fire the instant the stack-runaway ring is frozen (the real target), or
-     * when the CPU has already fallen into low IRAM, or after ~6s. */
-    {
-        extern unsigned char g_runaway_caught, g_b436_caught, g_efc_caught;
-        /* Fire at the first A068:5EFC (the CALL [0006]) too -- on cold-boot it has
-         * no crash, so this is how its path/[0006] is captured for the diff. */
-        if (!(g_runaway_caught || cs < 0x100 || g_b436_caught || g_efc_caught || ++frame >= 360)) return;
-    }
-    shown = 1;
-
-    /* Clear the 4KB printf ring so the whole dump below is written contiguously
-     * from index 0 -- without this the boot/WSLD/WSf lines push the dump past
-     * 4KB and it wraps, mangling the copy fwrite()n to /ws_debug.txt. The dump
-     * (~3KB) fits in one pass, so the SD file then holds it complete and in
-     * order. Every datum we need is reprinted in the dump below. */
-    { extern uint32_t log_idx; extern char logbuf[]; log_idx = 0; logbuf[0] = '\0'; }
-
-    /* The runaway loop body: last 8 (CS:IP) executed before SP hit 0x0400. */
-    {
-        extern unsigned int   g_csip_ring[16];
-        extern unsigned short g_sp_ring[16];
-        extern unsigned short g_bp_ring[16];
-        extern unsigned char g_ring_pos;
-        int k;
-        unsigned int a_old = g_csip_ring[g_ring_pos & 15];
-        unsigned int a_new = g_csip_ring[(g_ring_pos + 15) & 15];
-        n = 0;
-        for (k = 0; k < 16; k++) {
-            unsigned int v = g_csip_ring[(g_ring_pos + k) & 15];
-            n += snprintf(buf + n, sizeof(buf) - n, "%04X:%04X ",
-                          (v >> 16) & 0xFFFF, v & 0xFFFF);
-        }
-        printf("WSRING: %s\n", buf);
-        /* The A068:00xx RETF-chain dispatch table (the WSFAR trail shows the loop
-         * walks A068:0007->001D->0031 via RETF, and the first entry leaks 4 bytes
-         * of SP). Dump A068:0000-007F to decode each entry's push/pop, plus the
-         * two routines it calls (B978:0BA0, B978:0EC9) and the full stack frame
-         * 1FCC-1FFF so the leaked words can be matched to who pushed them. */
-        /* The divergence: A068:0000 (a FAR routine ending in RETF) is entered with
-         * SP already 2 low, so an extra word (5F00) sits below the real return
-         * B978:0D8A. WSFAR shows R A068:5EEB just before, so 5EEB's code is how
-         * execution reaches A068:0000 with the bad SP. Dump A068:5EC0-5F60 (the
-         * 5EEB routine + how it transfers to 0000) and the B978:5A40-5B40 callers
-         * that returned into A068:5EEB, plus the stack frame. */
-        /* The crash is a near-call/far-ret mismatch: A068:5EFC does `CALL [0006]`
-         * (a NEAR indirect call through the function pointer at DS=110C:[0006]),
-         * and [0006]==0 makes it near-call A068:0000 -- a FAR routine -- so its
-         * RETF pops one word too many. Dump the 110C: variable block (so [0006]
-         * and the [0014] that gates the B978:564F init are visible), the init
-         * routine B978:564F, and the same window from RAMMap[0] directly (to tell
-         * a restore miss from a live overwrite). */
-        { uint32_t pa = ((uint32_t)0x110C << 4) + 0x0000;
-          n = 0; for (k = 0; k < 48; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: var110C:0000=%s\n", buf); }
-        /* The FIRST far-transfers after resume (cold boot: after boot) -- the path
-         * INTO the redraw that reaches A068:5EFC. Diff cold-boot vs resume here. */
-        { extern unsigned int g_far2_csip[48], g_far2_meta[48], g_far2_n;
-          static const char tc[7] = "?CRITJH";
-          int row; for (row = 0; row < 6; row++) {
-              n = 0;
-              for (k = 0; k < 8; k++) {
-                  unsigned int idx = (unsigned int)(row * 8 + k);
-                  if (idx >= g_far2_n) break;
-                  unsigned int m = g_far2_meta[idx], c = g_far2_csip[idx];
-                  unsigned char t = (m >> 24) & 0xFF;
-                  n += snprintf(buf + n, sizeof(buf) - n, "%c%04X:%04X/%04X ",
-                                (t <= 6) ? tc[t] : '?', c >> 16, c & 0xFFFF, m & 0xFFFF);
-              }
-              printf("WSF2_%d: %s\n", row, buf);
-          } }
-        /* The divergence point: after the line-compare IRQ (handler B978:13F1)
-         * IRETs (cold 13CB / resume 13D0), the code RETFs to B978:0DB0 and there
-         * cold unwinds (RETF) but resume CALL FAR E7DD:0746 -> A068. Dump that
-         * branch + the 13C0-1400 region (IRET targets + the handler) to see if the
-         * branch is on a value (fixable) or pure IRQ-position timing. */
-        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x0DA0;
-          n = 0; for (k = 0; k < 56; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: B978:0DA0=%s\n", buf); }
-        /* The loop that reaches 0DAB (does it run the XOR CX,CX at 0DA2 on the
-         * way, or skip it so CX keeps the saved 0x13?) + the rest of the 13F1
-         * line-compare handler (does it clobber CX?). */
-        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x0D70;
-          n = 0; for (k = 0; k < 56; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: B978:0D70=%s\n", buf); }
-        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x1400;
-          n = 0; for (k = 0; k < 56; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: B978:1400=%s\n", buf); }
-        { uint32_t sb = ((uint32_t)0x0000 << 4) + 0x1FCC;
-          n = 0; for (k = 0; k < 52; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(sb + k));
-          printf("WSDSP: stk@0000:1FCC=%s\n", buf); }
-        /* The SAVED [0006]/var block captured at load (pre-execution) -- compare to
-         * the live var110C above: if saved [0006]!=0 but live differs, it was
-         * cleared during the run; if saved [0006]==0, the init genuinely wasn't done
-         * at save time and the resume path reaches CALL [0006] too early. */
-        { extern unsigned int g_save_v6; extern unsigned char g_save_vars[32];
-          n = 0; for (k = 0; k < 32; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_save_vars[k]);
-          printf("WSDSP: SAVED v6=%04X vars=%s\n", g_save_v6, buf); }
-        /* Cold-boot vs resume: [0006] + the A068:0000 FAR-init count AT the first
-         * CALL [0006]. resume -> v6=0000 initfar=0 (init skipped); cold-boot ->
-         * v6=0155 initfar>=1 (init ran first). The WSFAR trail above is the path
-         * to A068:5EFC -- diff the two runs to find where the init was skipped. */
-        { extern unsigned char g_efc_caught; extern unsigned int g_efc_v6, g_efc_initfar, g_initfar_n;
-          printf("WSEFC: caught=%u v6@call=%04X initfar@call=%u initfar_total=%u\n",
-                 g_efc_caught, g_efc_v6, g_efc_initfar, g_initfar_n); }
-        /* Far-transfer trail: last 32 CALL FAR(C)/RETF(R)/INT(I)/IRET(T)/JMPF(J)/
-         * HWINT(H) with SP-after -- trace the call nesting to where an extra word
-         * leaks onto the stack (the +2 that crashes the A068 RETF). Oldest first. */
-        { extern unsigned int g_far_csip[32], g_far_meta[32];
-          extern unsigned char g_far_pos;
-          static const char tc[7] = "?CRITJH";
-          int row; for (row = 0; row < 4; row++) {
-              n = 0;
-              for (k = 0; k < 8; k++) {
-                  unsigned char idx = (unsigned char)((g_far_pos + row * 8 + k) & 31);
-                  unsigned int  m = g_far_meta[idx], c = g_far_csip[idx];
-                  unsigned char t = (m >> 24) & 0xFF;
-                  n += snprintf(buf + n, sizeof(buf) - n, "%c%04X:%04X/%04X ",
-                                (t <= 6) ? tc[t] : '?', c >> 16, c & 0xFFFF, m & 0xFFFF);
-              }
-              printf("WSFAR%d: %s\n", row, buf);
-          } }
-        /* SP/BP trajectory aligned with WSRING -- shows whether SP marched down
-         * gradually (deep recursion) or dropped in one step (a MOV SP,BP with a
-         * corrupt BP). Oldest->newest, same order as WSRING. */
-        n = 0;
-        for (k = 0; k < 16; k++)
-            n += snprintf(buf + n, sizeof(buf) - n, "%04X/%04X ",
-                          g_sp_ring[(g_ring_pos + k) & 15],
-                          g_bp_ring[(g_ring_pos + k) & 15]);
-        printf("WSTRAJ(SP/BP): %s\n", buf);
-        /* Stack snapshot captured AT the runaway (frames intact). */
-        {
-            extern unsigned int  g_runaway_sp;
-            extern unsigned char g_runaway_stack[48];
-            n = 0;
-            for (k = 0; k < 40; k++)
-                n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_runaway_stack[k]);
-            printf("WSRSTK: SS:SP=%04X:%04X %s\n",
-                   (g_runaway_sp >> 16) & 0xFFFF, g_runaway_sp & 0xFFFF, buf);
-        }
-    }
-
-    {
-        uint16_t ss = (uint16_t)nec_get_reg(NEC_SS);
-        uint16_t sp = (uint16_t)nec_get_reg(NEC_SP);
-        uint32_t sbase = ((uint32_t)ss << 4) + sp;
-        { extern unsigned int g_int_n, g_iret_n;
-          printf("WSBAD: CS:IP=%04X:%04X SS:SP=%04X:%04X INT=%u IRET=%u REPC=%u\n",
-                 cs, ip, ss, sp, g_int_n, g_iret_n, g_repc_n); }
-        /* Stack from SP upward = the recursion frames pushed so far. Caught
-         * early in the descent, repeated return CS:IP pairs here reveal the
-         * recursive function. 40 bytes = ~10 words ~= 5 far-call frames. */
-        n = 0;
-        for (i = 0; i < 40; i++)
-            n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(sbase + i));
-        printf("WSBAD: stack@SP=%s\n", buf);
-        /* IRQ state + IVT base region (vectors the WS IRQs index into) */
-        printf("WSBAD: IRQENA=%02X IRQBSE=%02X IRQVEC=%02X PEND=%02lX\n",
-               IO[0xB2], IO[0xB0], IO[0xB4], (unsigned long)nec_get_reg(NEC_PENDING));
-        n = 0;
-        for (i = 0; i < 16; i++)              /* IVT vectors 0..3 (16 bytes) */
-            n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(i));
-        printf("WSBAD: IVT0-3=%s\n", buf);
-        /* IVT entry the IRQ base points at */
-        { uint32_t v = ((uint32_t)IO[0xB0]) << 2; n = 0;
-          for (i = 0; i < 16; i++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(v + i));
-          printf("WSBAD: IVT@IRQBSE(%lx)=%s\n", (unsigned long)v, buf); }
-        /* The instruction that drove BP nonzero->0 (root of the SP collapse) +
-         * ROM around it, dumped from -0x08 so we see the full instruction. */
-        { extern unsigned int   g_bpz_n, g_bpz_at, g_bpz_by;
-          extern unsigned short g_bpz_sp;
-          extern unsigned char  g_bpz_rom[24];
-          extern unsigned char  g_bpz_stk[16];
-          n = 0; for (i = 0; i < 24; i++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_bpz_rom[i]);
-          printf("WSBPZ: n=%u by=%04X:%04X at=%04X:%04X SP=%04X rom@-8=%s\n",
-                 g_bpz_n, (g_bpz_by >> 16) & 0xFFFF, g_bpz_by & 0xFFFF,
-                 (g_bpz_at >> 16) & 0xFFFF, g_bpz_at & 0xFFFF, g_bpz_sp, buf);
-          n = 0; for (i = 0; i < 16; i++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_bpz_stk[i]);
-          printf("WSBPZ: stk@SP=%s\n", buf);
-          /* Resume-time BP-chain (captured at load) -- in the panel so it can't
-           * be truncated off the SD file. base = BP-0x12, so [BP]=[0x1FFA] is at
-           * offset 0x12 (bytes 18-19). 0 there => save-side broken chain. */
-          { extern unsigned char g_resume_stk[64];
-            extern unsigned int  g_resume_base;
-            n = 0; for (i = 0; i < 64; i++)
-                n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_resume_stk[i]);
-            printf("WSRSM: stk@%04X:%04X(+12=[BP])=%s\n",
-                   (g_resume_base >> 16) & 0xFFFF, g_resume_base & 0xFFFF, buf); }
-          /* Resume regs, surfaced in the panel (the WSLD line truncates off). */
-          { extern unsigned int g_resume_csip, g_resume_sssp, g_resume_dses;
-            printf("WSRSM: resume CS:IP=%04X:%04X SS:SP=%04X:%04X DS:ES=%04X:%04X\n",
-                   (g_resume_csip >> 16) & 0xFFFF, g_resume_csip & 0xFFFF,
-                   (g_resume_sssp >> 16) & 0xFFFF, g_resume_sssp & 0xFFFF,
-                   (g_resume_dses >> 16) & 0xFFFF, g_resume_dses & 0xFFFF);
-            printf("WSRSM: banks C0=%02X C1=%02X C2=%02X C3=%02X RAMBanks=%lu RAMSize=%lx\n",
-                   IO[0xC0], IO[0xC1], IO[0xC2], IO[0xC3],
-                   (unsigned long)RAMBanks, (unsigned long)RAMSize);
-            printf("WSRSM: regs AX=%04lX BX=%04lX CX=%04lX DX=%04lX SI=%04lX DI=%04lX FLAGS=%04lX\n",
-                   (unsigned long)nec_get_reg(NEC_AW), (unsigned long)nec_get_reg(NEC_BW),
-                   (unsigned long)nec_get_reg(NEC_CW), (unsigned long)nec_get_reg(NEC_DW),
-                   (unsigned long)nec_get_reg(NEC_IX), (unsigned long)nec_get_reg(NEC_IY),
-                   (unsigned long)nec_get_reg(NEC_FLAGS)); }
-          /* Bank-switch (OUT 0xC0-0xC3) history, last 16 oldest->newest, each
-           * CS:IP=port:val. Placed in the late (retained) block so it survives the
-           * logbuf truncation. A code-bank (0xC0) switch right before the crash,
-           * or a switch to bank 0 (MemDummy), confirms the bank-timing divergence. */
-          { extern unsigned int   g_bnk_ring[16];
-            extern unsigned short g_bnk_meta[16];
-            extern unsigned char  g_bnk_pos;
-            n = 0;
-            for (i = 0; i < 16; i++) {
-                unsigned int  v = g_bnk_ring[(g_bnk_pos + i) & 15];
-                unsigned short mt = g_bnk_meta[(g_bnk_pos + i) & 15];
-                n += snprintf(buf + n, sizeof(buf) - n, "%04X:%04X=%02X:%02X ",
-                              (v >> 16) & 0xFFFF, v & 0xFFFF,
-                              (mt >> 8) & 0xFF, mt & 0xFF);
-            }
-            printf("WSBNK: %s\n", buf); }
-          /* The wrong jump that lands in the A068:0Cxx data table + the regs. */
-          { extern unsigned char g_jmp_caught, g_jmp_rom[24];
-            extern unsigned int   g_jmp_from, g_jmp_to, g_jmp_dses;
-            extern unsigned short g_jmp_regs[8];
-            n = 0; for (i = 0; i < 24; i++)
-                n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_jmp_rom[i]);
-            printf("WSJMP: c=%u from=%04X:%04X to=%04X:%04X rom@-8=%s\n",
-                   g_jmp_caught, (g_jmp_from >> 16) & 0xFFFF, g_jmp_from & 0xFFFF,
-                   (g_jmp_to >> 16) & 0xFFFF, g_jmp_to & 0xFFFF, buf);
-            printf("WSJMP: AX=%04X BX=%04X CX=%04X DX=%04X SI=%04X DI=%04X BP=%04X SP=%04X DS=%04X ES=%04X\n",
-                   g_jmp_regs[0], g_jmp_regs[1], g_jmp_regs[2], g_jmp_regs[3],
-                   g_jmp_regs[4], g_jmp_regs[5], g_jmp_regs[6], g_jmp_regs[7],
-                   (g_jmp_dses >> 16) & 0xFFFF, g_jmp_dses & 0xFFFF);
-            { extern unsigned char g_jmp_stk[16];
-              n = 0; for (i = 0; i < 16; i++)
-                  n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_jmp_stk[i]);
-              printf("WSJMP: stk@SP-8=%s\n", buf); }
-            { extern unsigned int g_nullint_n, g_nullint_last;
-              printf("WSJMP: nullINT n=%u last=%u\n", g_nullint_n, g_nullint_last); } }
-          printf("WSSER: IO B0=%02X B1=%02X B2=%02X B3=%02X B4=%02X B5=%02X B6=%02X\n",
-                 IO[0xB0], IO[0xB1], IO[0xB2], IO[0xB3], IO[0xB4], IO[0xB5], IO[0xB6]); }
-    }
-
-    /* Dump the whole captured log to the SD card so the user can read it off
-     * the card instead of photographing the screen. */
-    {
-        extern char logbuf[];
-        extern unsigned char g_was_resumed;
-        /* Cold-boot capture (the startup A068:5EFC panel) -> /ws_cold.txt; resume
-         * capture (crash) -> /ws_debug.txt. Two separate files so the resume does
-         * NOT overwrite the cold-boot one -- the user reads both at the end. */
-        const char *fn = g_was_resumed ? "/ws_debug.txt" : "/ws_cold.txt";
-        FILE *lf = fopen(fn, "w");
-        if (lf) {
-            fwrite(logbuf, 1, strlen(logbuf), lf);
-            fclose(lf);
-            printf("WSLOG: wrote %s\n", fn);
-        } else {
-            printf("WSLOG: fopen %s FAILED\n", fn);
-        }
-    }
-
-    snprintf(buf, sizeof(buf), "WS BAD-JUMP @ %04X:%04X (saved /ws_debug.txt)", cs, ip);
-    gw_debug_show_log(buf);
-}
 
 
