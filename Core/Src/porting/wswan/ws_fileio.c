@@ -801,21 +801,24 @@ void ws_freeze_check(void)
          * of SP). Dump A068:0000-007F to decode each entry's push/pop, plus the
          * two routines it calls (B978:0BA0, B978:0EC9) and the full stack frame
          * 1FCC-1FFF so the leaked words can be matched to who pushed them. */
-        { uint32_t pa = ((uint32_t)0xA068 << 4) + 0x0000;
-          n = 0; for (k = 0; k < 64; k++)
+        /* The divergence: A068:0000 (a FAR routine ending in RETF) is entered with
+         * SP already 2 low, so an extra word (5F00) sits below the real return
+         * B978:0D8A. WSFAR shows R A068:5EEB just before, so 5EEB's code is how
+         * execution reaches A068:0000 with the bad SP. Dump A068:5EC0-5F60 (the
+         * 5EEB routine + how it transfers to 0000) and the B978:5A40-5B40 callers
+         * that returned into A068:5EEB, plus the stack frame. */
+        { uint32_t pa = ((uint32_t)0xA068 << 4) + 0x5EC0;
+          n = 0; for (k = 0; k < 80; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: A068:0000=%s\n", buf);
-          n = 0; for (k = 0; k < 64; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + 64 + k));
-          printf("WSDSP: A068:0040=%s\n", buf); }
-        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x0BA0;
-          n = 0; for (k = 0; k < 56; k++)
+          printf("WSDSP: A068:5EC0=%s\n", buf); }
+        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x5A40;
+          n = 0; for (k = 0; k < 80; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: B978:0BA0=%s\n", buf); }
-        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x0EC9;
-          n = 0; for (k = 0; k < 56; k++)
+          printf("WSDSP: B978:5A40=%s\n", buf); }
+        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x5AC0;
+          n = 0; for (k = 0; k < 80; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: B978:0EC9=%s\n", buf); }
+          printf("WSDSP: B978:5AC0=%s\n", buf); }
         { uint32_t sb = ((uint32_t)0x0000 << 4) + 0x1FCC;
           n = 0; for (k = 0; k < 52; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(sb + k));
