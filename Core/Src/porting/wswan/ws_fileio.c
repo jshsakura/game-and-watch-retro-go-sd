@@ -855,10 +855,19 @@ void ws_freeze_check(void)
               }
               printf("WSF2_%d: %s\n", row, buf);
           } }
-        { extern uint8_t *RAMMap[]; n = 0;
-          if (RAMMap[0]) for (k = 0; k < 48; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", RAMMap[0][0x10C0 + k]);
-          printf("WSDSP: RAMMap0@10C0=%s\n", buf); }
+        /* The divergence point: after the line-compare IRQ (handler B978:13F1)
+         * IRETs (cold 13CB / resume 13D0), the code RETFs to B978:0DB0 and there
+         * cold unwinds (RETF) but resume CALL FAR E7DD:0746 -> A068. Dump that
+         * branch + the 13C0-1400 region (IRET targets + the handler) to see if the
+         * branch is on a value (fixable) or pure IRQ-position timing. */
+        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x0DA0;
+          n = 0; for (k = 0; k < 56; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
+          printf("WSDSP: B978:0DA0=%s\n", buf); }
+        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x13C0;
+          n = 0; for (k = 0; k < 64; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
+          printf("WSDSP: B978:13C0=%s\n", buf); }
         { uint32_t sb = ((uint32_t)0x0000 << 4) + 0x1FCC;
           n = 0; for (k = 0; k < 52; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(sb + k));
