@@ -807,18 +807,25 @@ void ws_freeze_check(void)
          * execution reaches A068:0000 with the bad SP. Dump A068:5EC0-5F60 (the
          * 5EEB routine + how it transfers to 0000) and the B978:5A40-5B40 callers
          * that returned into A068:5EEB, plus the stack frame. */
-        { uint32_t pa = ((uint32_t)0xA068 << 4) + 0x5EC0;
+        /* The crash is a near-call/far-ret mismatch: A068:5EFC does `CALL [0006]`
+         * (a NEAR indirect call through the function pointer at DS=110C:[0006]),
+         * and [0006]==0 makes it near-call A068:0000 -- a FAR routine -- so its
+         * RETF pops one word too many. Dump the 110C: variable block (so [0006]
+         * and the [0014] that gates the B978:564F init are visible), the init
+         * routine B978:564F, and the same window from RAMMap[0] directly (to tell
+         * a restore miss from a live overwrite). */
+        { uint32_t pa = ((uint32_t)0x110C << 4) + 0x0000;
+          n = 0; for (k = 0; k < 48; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
+          printf("WSDSP: var110C:0000=%s\n", buf); }
+        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x564F;
           n = 0; for (k = 0; k < 80; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: A068:5EC0=%s\n", buf); }
-        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x5A40;
-          n = 0; for (k = 0; k < 80; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: B978:5A40=%s\n", buf); }
-        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x5AC0;
-          n = 0; for (k = 0; k < 80; k++)
-              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: B978:5AC0=%s\n", buf); }
+          printf("WSDSP: B978:564F=%s\n", buf); }
+        { extern uint8_t *RAMMap[]; n = 0;
+          if (RAMMap[0]) for (k = 0; k < 48; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", RAMMap[0][0x10C0 + k]);
+          printf("WSDSP: RAMMap0@10C0=%s\n", buf); }
         { uint32_t sb = ((uint32_t)0x0000 << 4) + 0x1FCC;
           n = 0; for (k = 0; k < 52; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(sb + k));
