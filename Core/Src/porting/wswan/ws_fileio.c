@@ -864,10 +864,17 @@ void ws_freeze_check(void)
           n = 0; for (k = 0; k < 56; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
           printf("WSDSP: B978:0DA0=%s\n", buf); }
-        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x13C0;
-          n = 0; for (k = 0; k < 64; k++)
+        /* The loop that reaches 0DAB (does it run the XOR CX,CX at 0DA2 on the
+         * way, or skip it so CX keeps the saved 0x13?) + the rest of the 13F1
+         * line-compare handler (does it clobber CX?). */
+        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x0D70;
+          n = 0; for (k = 0; k < 56; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
-          printf("WSDSP: B978:13C0=%s\n", buf); }
+          printf("WSDSP: B978:0D70=%s\n", buf); }
+        { uint32_t pa = ((uint32_t)0xB978 << 4) + 0x1400;
+          n = 0; for (k = 0; k < 56; k++)
+              n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(pa + k));
+          printf("WSDSP: B978:1400=%s\n", buf); }
         { uint32_t sb = ((uint32_t)0x0000 << 4) + 0x1FCC;
           n = 0; for (k = 0; k < 52; k++)
               n += snprintf(buf + n, sizeof(buf) - n, "%02X", ReadMem(sb + k));
