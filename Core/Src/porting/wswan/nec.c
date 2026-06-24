@@ -1080,7 +1080,6 @@ int32_t nec_execute(int32_t cycles)
 			}
 		}
 		g_bp_prev = I.regs.w[BP];
-		g_prev_cs = I.sregs[CS];
 		/* Latch the FIRST entry into a known garbage target (the wrong jump):
 		 * A068:0Cxx (data table) or segment 0x70FF (ROM graphics run as code on
 		 * the deterministic B978:3085 save). */
@@ -1119,6 +1118,7 @@ int32_t nec_execute(int32_t cycles)
 				g_bnk_meta[p] = ((unsigned short)port << 8) | I.regs.b[AL];
 			}
 		}
+		g_prev_cs = I.sregs[CS];   /* AFTER the traps: holds the prev iter's CS */
 		nec_instruction[FETCHOP]();
 	}
 
