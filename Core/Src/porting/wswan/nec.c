@@ -131,6 +131,7 @@ unsigned char  g_jmp_caught;
 unsigned int   g_jmp_from, g_jmp_to, g_jmp_dses;
 unsigned short g_jmp_regs[8];   /* AW BW CW DW SI DI BP SP */
 unsigned char  g_jmp_rom[24];
+unsigned char  g_jmp_stk[16];   /* stack around SP at the bad jump (SP-8 .. SP+8) */
 
 static nec_Regs I;
 
@@ -1092,6 +1093,7 @@ int32_t nec_execute(int32_t cycles)
 		if (!g_jmp_caught
 		    && ((I.sregs[CS] == 0xA068 && I.ip >= 0x0C00 && I.ip <= 0x0C60)
 		        || I.sregs[CS] == 0x70FF
+		        || (I.sregs[CS] == 0x0D8A && g_prev_cs != 0x0D8A)
 		        || (I.sregs[CS] < 0x0100 && g_prev_cs >= 0x0100))) {
 			unsigned int prev = g_csip_ring[(g_ring_pos - 2) & 15];
 			int q; uint32_t pa = (((prev >> 16) & 0xFFFF) << 4)
@@ -1106,6 +1108,9 @@ int32_t nec_execute(int32_t cycles)
 			g_jmp_dses = ((unsigned int)I.sregs[DS] << 16) | I.sregs[ES];
 			for (q = 0; q < 24; q++)
 				g_jmp_rom[q] = (unsigned char)ReadMem(pa + q);
+			{ uint32_t sb = ((uint32_t)I.sregs[SS] << 4) + I.regs.w[SP];
+			  for (q = 0; q < 16; q++)
+				  g_jmp_stk[q] = (unsigned char)ReadMem(sb - 8 + q); }
 		}
 		/* Log OUT 0xC0-0xC3 (ROM/SRAM bank switches) just before they execute. */
 		if (!g_runaway_caught) {

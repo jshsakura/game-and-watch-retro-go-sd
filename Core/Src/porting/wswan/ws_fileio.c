@@ -956,7 +956,11 @@ void ws_freeze_check(void)
             printf("WSJMP: AX=%04X BX=%04X CX=%04X DX=%04X SI=%04X DI=%04X BP=%04X SP=%04X DS=%04X ES=%04X\n",
                    g_jmp_regs[0], g_jmp_regs[1], g_jmp_regs[2], g_jmp_regs[3],
                    g_jmp_regs[4], g_jmp_regs[5], g_jmp_regs[6], g_jmp_regs[7],
-                   (g_jmp_dses >> 16) & 0xFFFF, g_jmp_dses & 0xFFFF); }
+                   (g_jmp_dses >> 16) & 0xFFFF, g_jmp_dses & 0xFFFF);
+            { extern unsigned char g_jmp_stk[16];
+              n = 0; for (i = 0; i < 16; i++)
+                  n += snprintf(buf + n, sizeof(buf) - n, "%02X", g_jmp_stk[i]);
+              printf("WSJMP: stk@SP-8=%s\n", buf); } }
           { extern unsigned int  g_bpz_ret;
             extern unsigned char g_bpz_retrom[32];
             n = 0; for (i = 0; i < 32; i++)
