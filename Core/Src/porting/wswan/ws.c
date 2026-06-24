@@ -35,21 +35,18 @@ static uint16_t HTimer;
 static uint16_t VTimer;
 static uint8_t RtcCount;
 
-/* Frame-timing statics promoted to file scope so a savestate resume can reset
- * them. RSTRL (the scanline) lives in IO[] and IS restored, but the HBlank
- * sub-step counter and the cycle-debt accumulator were function-static and kept
- * their stale cold-boot values across a load -- making the first resumed frame's
- * interrupts (line-compare / H/V timer, all gated on LCount) fire a step early or
- * late and diverge the game. Reset to a clean frame boundary on load. */
+/* Frame-timing phase promoted to file scope so a savestate can persist it. The
+ * line-compare IRQ fires when RSTRL(in IO, saved)==RSTRLC at LCount==6, and the
+ * instruction it interrupts depends on LCount (the HBlank sub-step) + period (the
+ * cycle-debt accumulator). Resume kept the stale cold-boot phase, so the IRQ fired
+ * a few bytes off and a timing-sensitive callback dispatcher diverged. Save/restore
+ * these so the resumed frame's IRQ lands on the same instruction as the original. */
 static int32_t LCount = 0;
 static int32_t Joyz = 0x0000;
 static int32_t period = IPeriod;
 
-void WsResetFrameTiming(void)
-{
-    LCount = 0;
-    period = IPeriod;
-}
+void WsGetTiming(int32_t *p_period, int32_t *p_lcount) { *p_period = period; *p_lcount = LCount; }
+void WsSetTiming(int32_t p_period, int32_t p_lcount)   { period = p_period; LCount = p_lcount; }
 
 #ifdef FRAMESKIP
 int32_t FrameSkip = 0;

@@ -586,7 +586,7 @@ static const int ws_state_nec_regs[] = {
 /* Header so a save from an incompatible build (or a stale/short file) is
  * rejected on load instead of being applied as garbage -> corrupt screen. */
 #define WS_STATE_MAGIC   0x53575347u   /* 'GSWS' */
-#define WS_STATE_VERSION 1u
+#define WS_STATE_VERSION 2u            /* v2 adds the frame-timing phase (period/LCount) */
 
 uint32_t WsSaveStateToFile(FILE *fp)
 {
@@ -607,6 +607,10 @@ uint32_t WsSaveStateToFile(FILE *fp)
     fwrite(IO,   1, 0x100,   fp);
     for (i = 0; i < RAMBanks; i++) fwrite(RAMMap[i], 1, bank, fp);
     fwrite(Palette, sizeof(uint16_t), 16 * 16, fp);
+    /* v2: frame-timing phase, so the resumed frame's IRQ lands on the same
+     * instruction (the line-compare-driven callback dispatcher is timing-sensitive). */
+    { extern void WsGetTiming(int32_t *, int32_t *); int32_t tm[2];
+      WsGetTiming(&tm[0], &tm[1]); fwrite(tm, sizeof(int32_t), 2, fp); }
     return 0;
 }
 
@@ -647,6 +651,14 @@ uint32_t WsLoadStateFromFile(FILE *fp)
         fread(RAMMap[i], 1, bank, fp);
     }
     fread(Palette, sizeof(uint16_t), 16 * 16, fp);
+    /* v2: restore the frame-timing phase so the resumed frame's line-compare IRQ
+     * fires on the same instruction as the original run (else a timing-sensitive
+     * callback dispatcher diverges -> A068 used before init -> crash). */
+    { extern void WsSetTiming(int32_t, int32_t); int32_t tm[2] = { 32, 0 };
+      if (fread(tm, sizeof(int32_t), 2, fp) == 2) {
+          WsSetTiming(tm[0], tm[1]);
+          printf("WSLD: timing restored period=%ld LCount=%ld\n", (long)tm[0], (long)tm[1]);
+      } }
     printf("WSLD: rammap+palette done\n");
     /* SAVED value of the function pointer [110C:0006] (= RAMMap[0][0x10C6]) BEFORE
      * any execution. The crash near-calls A068:0000 because [0006]==0 at the call;
