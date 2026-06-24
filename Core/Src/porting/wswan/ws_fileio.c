@@ -613,6 +613,7 @@ uint32_t WsSaveStateToFile(FILE *fp)
 /* Resume-time stack/BP-chain snapshot, surfaced in the freeze panel (logbuf
  * truncates the early WSLD lines off the SD file). */
 unsigned char g_resume_stk[64];
+unsigned char g_was_resumed;    /* set once WsLoadStateFromFile runs -> this is a resume, not cold boot */
 unsigned int  g_save_v6;        /* saved [110C:0006] fn-ptr at load (pre-execution) */
 unsigned char g_save_vars[32];  /* saved 110C:[0000..001F] var block at load */
 unsigned int  g_resume_base;
@@ -754,6 +755,7 @@ uint32_t WsLoadStateFromFile(FILE *fp)
      * path (B978:43CA -> redraw -> A068:5EFC). On cold boot there's no load, so it
      * captures the boot path to the startup A068:5EFC instead -- the two are diffed. */
     { extern unsigned int g_far2_n; g_far2_n = 0; }
+    g_was_resumed = 1;   /* mark this run as a resume so the panel writes /ws_debug.txt */
     printf("WSLD: complete\n");
     return 0;
 }
@@ -1020,13 +1022,18 @@ void ws_freeze_check(void)
      * the card instead of photographing the screen. */
     {
         extern char logbuf[];
-        FILE *lf = fopen("/ws_debug.txt", "w");
+        extern unsigned char g_was_resumed;
+        /* Cold-boot capture (the startup A068:5EFC panel) -> /ws_cold.txt; resume
+         * capture (crash) -> /ws_debug.txt. Two separate files so the resume does
+         * NOT overwrite the cold-boot one -- the user reads both at the end. */
+        const char *fn = g_was_resumed ? "/ws_debug.txt" : "/ws_cold.txt";
+        FILE *lf = fopen(fn, "w");
         if (lf) {
             fwrite(logbuf, 1, strlen(logbuf), lf);
             fclose(lf);
-            printf("WSLOG: wrote /ws_debug.txt\n");
+            printf("WSLOG: wrote %s\n", fn);
         } else {
-            printf("WSLOG: fopen /ws_debug.txt FAILED\n");
+            printf("WSLOG: fopen %s FAILED\n", fn);
         }
     }
 
