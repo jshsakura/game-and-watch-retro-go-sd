@@ -1536,7 +1536,7 @@ void emulators_init()
     /* Atari Lynx (Handy core): ROM (.lnx/.lyx) loads from flash; no BIOS needed (HLE).
      * Logos are placeholders (Atari 2600) until copyright-safe RomM-derived Lynx icons
      * + RG_LOGO_*_LYNX are wired into rg_logos. */
-    add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_A2600, NO_GAME_DATA);
+    add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
     add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
     add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
 //    add_emulator("Philips Vectrex", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA); // TODO : change graphics

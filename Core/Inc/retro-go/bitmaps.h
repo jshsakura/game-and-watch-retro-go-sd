@@ -70,6 +70,8 @@ enum {
     RG_LOGO_PAD_WSWAN,
     // Homebrew beer-stein tab icon (appended last to not shift existing enum values)
     RG_LOGO_PAD_HOMEBREW,
+    // Atari Lynx name header (appended last; matches header_lynx at end of rg_logos.c)
+    RG_LOGO_HEADER_LYNX,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
@@ -135,6 +137,7 @@ extern const retro_logo_image pad_ngp;
 extern const retro_logo_image header_wswan;
 extern const retro_logo_image pad_wswan;
 extern const retro_logo_image pad_homebrew;
+extern const retro_logo_image header_lynx;
 
 
 extern const unsigned char IMG_SPEAKER[];
