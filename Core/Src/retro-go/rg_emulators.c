@@ -311,7 +311,7 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 21 /* bumped from 19 for NGP + WonderSwan; sized to exact core count (DTCM is tight) */
+#define MAX_EMULATORS 22 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx) */
 static retro_emulator_t emulators[MAX_EMULATORS];
 static rom_system_t systems[MAX_EMULATORS];
 static int emulators_count = 0;
@@ -628,7 +628,7 @@ static void event_handler(gui_event_t event, tab_t *tab)
 static void add_emulator(const char *system, const char *dirname, const char* ext,
                          uint16_t logo_idx, uint16_t header_idx, game_data_type_t game_data_type)
 {
-    assert(emulators_count <= MAX_EMULATORS);
+    assert(emulators_count < MAX_EMULATORS); /* '<': index emulators_count must be in-bounds */
     retro_emulator_t *p = &emulators[emulators_count];
     rom_system_t *s = &systems[emulators_count];
     emulators_count++;
