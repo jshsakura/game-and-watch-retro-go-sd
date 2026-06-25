@@ -70,24 +70,6 @@ enum {
     RG_LOGO_PAD_WSWAN,
     // Homebrew beer-stein tab icon (appended last to not shift existing enum values)
     RG_LOGO_PAD_HOMEBREW,
-    // Korean-only console name headers (Yeon Sung). Appended last; order MUST
-    // match the header_*_ko definition order at the end of rg_logos.c.
-    RG_LOGO_HEADER_NES_KO,
-    RG_LOGO_HEADER_GB_KO,
-    RG_LOGO_HEADER_GBC_KO,
-    RG_LOGO_HEADER_GW_KO,
-    RG_LOGO_HEADER_PCE_KO,
-    RG_LOGO_HEADER_GG_KO,
-    RG_LOGO_HEADER_SMS_KO,
-    RG_LOGO_HEADER_GEN_KO,
-    RG_LOGO_HEADER_COL_KO,
-    RG_LOGO_HEADER_WSV_KO,
-    RG_LOGO_HEADER_NGP_KO,
-    RG_LOGO_HEADER_WSWAN_KO,
-    RG_LOGO_HEADER_LYNX_KO,
-    RG_LOGO_HEADER_TAMA_KO,
-    RG_LOGO_HEADER_PKMINI_KO,
-    RG_LOGO_HEADER_HOMEBREW_KO,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
@@ -153,24 +135,6 @@ extern const retro_logo_image pad_ngp;
 extern const retro_logo_image header_wswan;
 extern const retro_logo_image pad_wswan;
 extern const retro_logo_image pad_homebrew;
-
-/* Korean-only console name headers (Yeon Sung) — see rg_logos.c tail. */
-extern const retro_logo_image header_nes_ko;
-extern const retro_logo_image header_gb_ko;
-extern const retro_logo_image header_gbc_ko;
-extern const retro_logo_image header_gw_ko;
-extern const retro_logo_image header_pce_ko;
-extern const retro_logo_image header_gg_ko;
-extern const retro_logo_image header_sms_ko;
-extern const retro_logo_image header_gen_ko;
-extern const retro_logo_image header_col_ko;
-extern const retro_logo_image header_wsv_ko;
-extern const retro_logo_image header_ngp_ko;
-extern const retro_logo_image header_wswan_ko;
-extern const retro_logo_image header_lynx_ko;
-extern const retro_logo_image header_tama_ko;
-extern const retro_logo_image header_pkmini_ko;
-extern const retro_logo_image header_homebrew_ko;
 
 
 extern const unsigned char IMG_SPEAKER[];
