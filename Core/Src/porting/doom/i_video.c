@@ -90,6 +90,10 @@ static struct color colors[256];
 #endif  // CMAP256
 
 
+/* One-shot pipeline marker (see main_doom.c) — block-scoped static per use. */
+#define DOOM_MARK(tag) do { static int _m = 0; \
+    if (!_m) { _m = 1; printf("[doom] >> " tag "\n"); } } while (0)
+
 void I_GetEvent(void);
 
 // The screen buffer; this is modified to draw things to the screen
@@ -296,11 +300,13 @@ void I_InitGraphics (void)
 	 * zone, so the DOOM zone keeps that 64KB for textures/level data. */
 	{ extern void *doom_bonus_alloc(size_t n);
 	  I_VideoBuffer = (byte*)doom_bonus_alloc(SCREENWIDTH * SCREENHEIGHT); }  // For DOOM to draw on
+	DOOM_MARK("I_InitGraphics: I_VideoBuffer allocated");
 
 	screenvisible = true;
 
     extern void I_InitInput(void);
     I_InitInput();
+    DOOM_MARK("I_InitGraphics DONE");
 }
 
 void I_ShutdownGraphics (void)
@@ -314,7 +320,7 @@ void I_ShutdownGraphics (void)
 
 void I_StartFrame (void)
 {
-
+	DOOM_MARK("I_StartFrame");
 }
 
 void I_StartTic (void)
@@ -342,6 +348,7 @@ void I_UpdateNoBlit (void)
 
 void I_FinishUpdate (void)
 {
+    DOOM_MARK("I_FinishUpdate (frame ready)");
     /* GNW: the original expanded I_VideoBuffer (8bpp) into the 256KB ARGB
      * DG_ScreenBuffer here. We dropped DG_ScreenBuffer to free RAM for the
      * zone, so there is nothing to expand: the platform DG_DrawFrame
@@ -369,6 +376,7 @@ void I_ReadScreen (byte* scr)
 
 void I_SetPalette (byte* palette)
 {
+	DOOM_MARK("I_SetPalette");
 	int i;
 	//col_t* c;
 

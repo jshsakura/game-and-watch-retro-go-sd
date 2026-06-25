@@ -47,6 +47,12 @@ extern void G_LoadGame(const char *name);
 extern void doom_trace_begin(void);
 extern void doom_trace_end(void);
 
+/* One-shot pipeline marker: prints the first time control reaches a spot, so a
+ * single /doom_trace.txt shows the furthest milestone before a fault/hang. Each
+ * use has its own block-scoped static, so multiple marks per function are fine. */
+#define DOOM_MARK(tag) do { static int _m = 0; \
+    if (!_m) { _m = 1; printf("[doom] >> " tag "\n"); } } while (0)
+
 #define DOOM_WAD_PATH      "/roms/homebrew/DOOM1.WAD"
 #define DOOM_FB_X_OFFSET   ((ODROID_SCREEN_WIDTH  - DOOMGENERIC_RESX) / 2)   /* 0  */
 #define DOOM_FB_Y_OFFSET   ((ODROID_SCREEN_HEIGHT - DOOMGENERIC_RESY) / 2)   /* 20 */
@@ -75,6 +81,7 @@ static const doom_keymap_t DOOM_KEYMAP[] = {
 
 void DG_Init(void)
 {
+    DOOM_MARK("DG_Init");
     doom_prev_buttons = 0;
 }
 
@@ -137,11 +144,14 @@ void *doom_bonus_alloc(size_t n)
 /* ------------------------------------------------------------------ */
 void DG_DrawFrame(void)
 {
+    DOOM_MARK("DG_DrawFrame (first frame to LCD)");
     uint8_t *dst = (uint8_t *)lcd_get_active_buffer();
     const uint8_t *src = I_VideoBuffer;   /* 8bpp paletted, RESX x RESY */
 
-    if (src == NULL)
+    if (src == NULL) {
+        DOOM_MARK("DG_DrawFrame: I_VideoBuffer NULL");
         return;
+    }
 
     /* X_OFFSET is 0 (RESX == screen width), so rows are contiguous and we
      * can copy the whole frame into the vertical centre in one shot. */

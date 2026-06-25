@@ -70,6 +70,10 @@ struct atexit_listentry_s
 
 static atexit_listentry_t *exit_funcs = NULL;
 
+/* One-shot pipeline marker (see main_doom.c) — block-scoped static per use. */
+#define DOOM_MARK(tag) do { static int _m = 0; \
+    if (!_m) { _m = 1; printf("[doom] >> " tag "\n"); } } while (0)
+
 void I_AtExit(atexit_func_t func, boolean run_on_error)
 {
     atexit_listentry_t *entry;
@@ -249,6 +253,7 @@ void I_BindVariables(void)
 
 void I_Quit (void)
 {
+    DOOM_MARK("I_Quit");
     atexit_listentry_t *entry;
 
     // Run through all exit functions
@@ -392,6 +397,11 @@ void I_Error (char *error, ...)
     memset(msgbuf, 0, sizeof(msgbuf));
     M_vsnprintf(msgbuf, sizeof(msgbuf), error, argptr);
     va_end(argptr);
+
+    /* DIAGNOSTIC: I_Error is DOOM's fatal abort. stderr isn't teed to the SD
+     * trace (only stdout is), so echo the message to stdout so /doom_trace.txt
+     * captures WHY DOOM bailed (e.g. "P_SetupLevel: ...", "Z_Malloc: ..."). */
+    printf("[doom] >> I_ERROR: %s\n", msgbuf);
 
     // Shutdown. Here might be other errors.
 
