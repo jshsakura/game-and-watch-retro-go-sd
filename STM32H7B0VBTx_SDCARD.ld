@@ -668,25 +668,16 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_doom __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_doom_start__ = .;
-    /* Hot objects (renderer inner loops + glue): keep .text/.rodata/.data in RAM
-       for speed — listed first so they are matched here before the .doom_xip
-       catch-all. Everything else (game logic .text + all remaining .rodata, incl.
-       tables.o's ~65K trig LUTs) goes XIP from QSPI flash via .doom_xip below,
-       freeing ~190K of RAM_EMU for the DOOM zone. With only rodata XIP the zone
-       reached ~358K and cleared R_Init's 68K but still died on a later 36K
-       Z_Malloc; moving non-hot .text out too gives the zone the needed headroom. */
-    build/doom/r_draw.o   (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_main.o   (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_data.o   (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_things.o (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_plane.o  (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_bsp.o    (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_segs.o   (.data .data* .text .text* .rodata .rodata*)
-    build/doom/m_fixed.o  (.data .data* .text .text* .rodata .rodata*)
-    build/doom/doomgeneric.o   (.data .data* .text .text* .rodata .rodata*)
-    build/doom/i_video.o       (.data .data* .text .text* .rodata .rodata*)
-    build/doom/doom_i_system.o (.data .data* .text .text* .rodata .rodata*)
-    build/doom/main_doom.o     (.data .data* .text .text* .rodata .rodata*)
+    /* CODE-IN-FLASH model (next-hack style): the ONLY DOOM .text kept in RAM is
+       main_doom.o, because the firmware (rg_emulators.c) calls app_main_doom()
+       directly and the entry must not sit at the unpatched XIP sentinel. Its
+       internal refs to XIP functions ARE patched (this overlay is scanned by
+       PatchDoomRegion). ALL other DOOM .text + .rodata runs XIP from flash via
+       .doom_xip below. Eliminating RAM-resident renderer/game code removes the
+       RAM->flash code veneers whose machinery corrupted a return address and
+       HardFaulted on the first input poll (pc landed in the thintriangle_guy
+       data table). Only writable .data stays in RAM. */
+    build/doom/main_doom.o (.data .data* .text .text* .rodata .rodata*)
     /* all remaining doom .data must stay writable in RAM */
     build/doom/*.o (.data .data*)
     . = ALIGN(4);
