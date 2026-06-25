@@ -1051,6 +1051,10 @@ void emulator_update_cheats_info(retro_emulator_file_t *file) {
 }
 #endif
 
+/* Buffer for the localized sort-mode name shown in the Sort row. Sized for the
+ * longest codepage-encoded value with margin (snprintf-bounded regardless). */
+#define SORT_VALUE_LEN 32
+
 /* Game list sort row: cycles ODROID_SORT_NAME -> ADDED -> FAVORITES on every
  * press (A) or left/right, and never closes the menu. The new value is
  * persisted when the overlay closes (see emulator_show_file_menu). */
@@ -1070,7 +1074,7 @@ static bool sort_mode_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t e
         case ODROID_SORT_FAVORITES: name = curr_lang->s_favorite;   break;
         default:                    name = curr_lang->s_Sort_name;  break;
     }
-    sprintf(option->value, "%s", name);
+    snprintf(option->value, SORT_VALUE_LEN, "%s", name);
 
     return false; // A / left / right all just cycle; never select-close
 }
@@ -1087,7 +1091,7 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     bool has_sram = odroid_sdcard_get_filesize(sram_path) > 0;
     bool is_fav = favorite_is(file);
     bool force_redraw = false;
-    char sort_value[32]; // localized sort-mode name (codepage-encoded)
+    char sort_value[SORT_VALUE_LEN]; // localized sort-mode name (codepage-encoded)
     uint8_t sort_mode_at_entry = odroid_settings_SortMode_get();
 
 #if CHEAT_CODES == 1
