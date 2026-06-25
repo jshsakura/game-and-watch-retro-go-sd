@@ -56,7 +56,9 @@ ENTRY(Reset_Handler)
 _estack = _stack_top;    /* end of RAM */
 
 /* Generate a link error if heap and stack don't fit into RAM */
-_Heap_Size = 85 * 1024;     /* p8ram section removed — PICO-8 allocates from heap at runtime */
+_Heap_Size = 81 * 1024;     /* p8ram section removed — PICO-8 allocates from heap at runtime.
+                               Trimmed 85->81K to free DTCM after Atari Lynx (MAX_EMULATORS 22)
+                               grew emulators[]/systems[]; the stack-padding ASSERT was 64B over. */
 
 _Stack_Redzone_Size = 256;  /* size of stack overflow protection */
 _Min_Stack_Size = 24 * 1024; /* required amount of stack */
