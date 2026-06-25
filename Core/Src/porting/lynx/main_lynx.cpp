@@ -155,11 +155,20 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     uint32_t rom_length = 0;
     uint8_t *rom_ptr = NULL;
 
+    /* DIAGNOSTIC: tee stdout (and the BSOD fault line) to a SEPARATE SD file
+     * /lynx_trace.txt (DOOM uses /doom_trace.txt) so both logs are preserved and
+     * we can see exactly where Lynx dies instead of guessing. */
+    extern "C" void sd_trace_begin(const char *path);
+    sd_trace_begin("/lynx_trace.txt");
+    printf("[lynx] app start (XIP cart build)\n");
+
     heap_itc_alloc(true);
 
     common_emu_state.pause_after_frames = start_paused ? 2 : 0;
 
     rom_length = getromdata(&rom_ptr);
+    printf("[lynx] getromdata: rom_ptr=%p rom_length=%lu\n",
+           (void *)rom_ptr, (unsigned long)rom_length);
     if (rom_ptr == NULL)
     {
         printf("Lynx: Failed to load ROM in flash/ram.\n");
@@ -167,8 +176,10 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     }
 
     // Init emulator (Handy renders directly to gPrimaryFrameBuffer in 565 LE)
+    printf("[lynx] new CSystem...\n");
     lynx = new CSystem((const UBYTE *)rom_ptr, (ULONG)rom_length,
                        MIKIE_PIXEL_FORMAT_16BPP_565, AUDIO_LYNX_SAMPLE_RATE);
+    printf("[lynx] CSystem ok, fileType=%d\n", lynx ? (int)lynx->mFileType : -1);
 
     if (lynx == NULL || lynx->mFileType == HANDY_FILETYPE_ILLEGAL)
     {

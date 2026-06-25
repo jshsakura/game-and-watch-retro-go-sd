@@ -45,10 +45,16 @@ void init_file_table() {
  * main_doom.c calls doom_trace_begin() at launch. */
 static FIL doom_trace_fil;
 static int doom_trace_on = 0;
-void doom_trace_begin(void) {
+/* Generic: tee stdout to an arbitrary SD path. Only one app runs at a time, so a
+ * single FIL is reused; each homebrew picks its own file (DOOM -> /doom_trace.txt,
+ * Lynx -> /lynx_trace.txt) so both logs are preserved across runs. */
+void sd_trace_begin(const char *path) {
     if (doom_trace_on) { f_close(&doom_trace_fil); doom_trace_on = 0; }
-    if (f_open(&doom_trace_fil, "/doom_trace.txt", FA_WRITE | FA_CREATE_ALWAYS) == FR_OK)
+    if (f_open(&doom_trace_fil, path, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK)
         doom_trace_on = 1;
+}
+void doom_trace_begin(void) {
+    sd_trace_begin("/doom_trace.txt");
 }
 void doom_trace_end(void) {
     if (!doom_trace_on) return;
