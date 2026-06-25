@@ -74,11 +74,14 @@ jobs:
       contents: write
 
     steps:
-      # 1. Checkout the repository with submodules
+      # 1. Checkout the repository with submodules (full history + tags so the
+      #    release notes can diff this tag against the previous one)
       - name: Checkout repository with submodules
         uses: actions/checkout@v3
         with:
           submodules: true  # Clone submodules with --recurse-submodules
+          fetch-depth: 0
+          fetch-tags: true
 
       # 2. Generate the update files using Docker
       - name: Generate firmware_update.bin and gw_update.tar
@@ -86,7 +89,26 @@ jobs:
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
-      # 3. Create a release and upload files
+      # 3. Compose release notes from our curated testbed notes + the commits in
+      #    this build (this fork's changes — NOT the upstream CHANGELOG.md)
+      - name: Compose release notes
+        run: |
+          cp TESTBED_NOTES.md RELEASE_NOTES.md
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "### Commits in this build"
+            PREV=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || true)
+            if [ -n "$PREV" ]; then
+              git log --no-merges --pretty=format:'- %s' "$PREV..${{ github.ref_name }}"
+            else
+              git log --no-merges --pretty=format:'- %s' -20
+            fi
+            echo ""
+          } >> RELEASE_NOTES.md
+
+      # 4. Create a release and upload files
       - name: Create Release
         uses: actions/create-release@v1
         id: create_release
@@ -95,7 +117,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           release_name: Release ${{ github.ref_name }}
-          body_path: CHANGELOG.md
+          body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
 
