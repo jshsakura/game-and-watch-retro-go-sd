@@ -19,13 +19,11 @@
 #define CONFIG_MAGIC 0xcafef00d
 #define ODROID_APPID_COUNT 4
 
-/* Favorites are stored OUTSIDE the DTCM-resident persistent_config struct,
- * in a tiny SD-backed "DB": a sorted array of path hashes (crc32). It is
- * lazy-loaded into a small heap buffer on first access and rewritten on
- * change. This keeps DTCM at zero cost (no fixed array) and removes the
- * old 64-favorite cap (the file grows as needed). */
-#define FAVORITES_FILE  "/FAVORITES"
-#define FAVORITES_MAGIC 0x31564146u /* "FAV1" */
+/* Favorites: path-hash (crc32) list kept in the DTCM-resident persistent_config
+ * (synchronous, no malloc/file IO — reliable). Sized to fit DTCM alongside the
+ * Atari Lynx app[] entry (the SD-backed variant was dropped: lazy-load/fs
+ * timing made favorites flaky on-device). 32 * 4 = 128 bytes. */
+#define ODROID_FAVORITES_MAX 32
 
 #if !defined  (COVERFLOW)
   #define COVERFLOW 0
@@ -92,8 +90,9 @@ typedef struct persistent_config {
     /** Welcome prompt: 0 = not anchored, 1 = message already shown, else YYYYMMDD anchor (RTC >= 2026). */
     uint32_t welcome_prompt;
 
-    /** Game list sort mode (odroid_sort_mode_t).
-     * NOTE: favorites are no longer stored here — see FAVORITES_FILE. */
+    /** Favorite games as path hashes (0 = empty slot). */
+    uint32_t favorites[ODROID_FAVORITES_MAX];
+    /** Game list sort mode (odroid_sort_mode_t). */
     uint8_t sort_mode;
 
     app_config_t app[APPID_COUNT];
@@ -103,7 +102,7 @@ typedef struct persistent_config {
 
 static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
-    .version = 10,
+    .version = 11,
 
     .backlight = ODROID_BACKLIGHT_LEVEL6,
     .start_action = ODROID_START_ACTION_RESUME,
@@ -754,123 +753,44 @@ void odroid_settings_SortMode_set(uint8_t mode)
     persistent_config_ram.sort_mode = (mode < ODROID_SORT_COUNT) ? mode : ODROID_SORT_NAME;
 }
 
-/* ---- Favorites: tiny SD-backed DB (sorted path-hash array) --------------
- * Zero fixed DTCM cost: the list lives in FAVORITES_FILE and is lazy-loaded
- * into a small heap buffer (sorted ascending) for O(log n) lookups. Add/
- * remove keep the array sorted and rewrite the file. */
-static uint32_t *fav_cache = NULL;  /* sorted ascending */
-static int fav_count = 0;
-static int fav_cap = 0;
-static bool fav_loaded = false;
-
-static void fav_load(void)
-{
-    if (fav_loaded)
-        return;
-    fav_loaded = true;
-
-    if (!fs_mounted || !file_exists(FAVORITES_FILE))
-        return;
-
-    FILE *file = fopen(FAVORITES_FILE, "rb");
-    if (!file)
-        return;
-
-    uint32_t hdr[2];
-    if (fread(hdr, sizeof(uint32_t), 2, file) == 2 && hdr[0] == FAVORITES_MAGIC) {
-        int n = (int)hdr[1];
-        if (n > 0 && n < 100000) {
-            fav_cache = (uint32_t *)malloc((size_t)n * sizeof(uint32_t));
-            if (fav_cache) {
-                fav_cap = n;
-                fav_count = (int)fread(fav_cache, sizeof(uint32_t), (size_t)n, file);
-            }
-        }
-    }
-    fclose(file);
-}
-
-/* Returns index of hash if present, else -(insertion_point + 1). */
-static int fav_bsearch(uint32_t hash)
-{
-    int lo = 0, hi = fav_count - 1;
-    while (lo <= hi) {
-        int mid = lo + (hi - lo) / 2;
-        uint32_t v = fav_cache[mid];
-        if (v == hash)
-            return mid;
-        if (v < hash)
-            lo = mid + 1;
-        else
-            hi = mid - 1;
-    }
-    return -(lo + 1);
-}
-
-static void fav_save(void)
-{
-    if (!fs_mounted)
-        return;
-    FILE *file = fopen(FAVORITES_FILE, "wb");
-    if (!file)
-        return;
-    uint32_t hdr[2] = {FAVORITES_MAGIC, (uint32_t)fav_count};
-    fwrite(hdr, sizeof(uint32_t), 2, file);
-    if (fav_count > 0)
-        fwrite(fav_cache, sizeof(uint32_t), (size_t)fav_count, file);
-    fclose(file);
-}
-
+/* ---- Favorites: simple in-RAM path-hash array in persistent_config -------
+ * Synchronous, no malloc / no file IO -> reliable on-device. Persisted with
+ * the rest of persistent_config via odroid_settings_commit() (caller does so
+ * after add/remove). 0 = empty slot; capacity ODROID_FAVORITES_MAX. */
 bool odroid_settings_favorite_has(uint32_t hash)
 {
     if (hash == 0)
         return false;
-    fav_load();
-    return fav_count > 0 && fav_bsearch(hash) >= 0;
+    for (int i = 0; i < ODROID_FAVORITES_MAX; i++)
+        if (persistent_config_ram.favorites[i] == hash)
+            return true;
+    return false;
 }
 
 bool odroid_settings_favorite_add(uint32_t hash)
 {
     if (hash == 0)
         return false;
-    fav_load();
-
-    int idx = (fav_count > 0) ? fav_bsearch(hash) : -1;
-    if (idx >= 0)
-        return true; // already a favorite
-
-    int ins = -idx - 1;
-    if (fav_count >= fav_cap) {
-        int new_cap = fav_cap ? fav_cap * 2 : 16;
-        uint32_t *grown = (uint32_t *)realloc(fav_cache, (size_t)new_cap * sizeof(uint32_t));
-        if (!grown)
-            return false;
-        fav_cache = grown;
-        fav_cap = new_cap;
-    }
-
-    memmove(&fav_cache[ins + 1], &fav_cache[ins], (size_t)(fav_count - ins) * sizeof(uint32_t));
-    fav_cache[ins] = hash;
-    fav_count++;
-    fav_save();
-    return true;
+    if (odroid_settings_favorite_has(hash))
+        return true;
+    for (int i = 0; i < ODROID_FAVORITES_MAX; i++)
+        if (persistent_config_ram.favorites[i] == 0) {
+            persistent_config_ram.favorites[i] = hash;
+            return true;
+        }
+    return false; // list full
 }
 
 bool odroid_settings_favorite_remove(uint32_t hash)
 {
     if (hash == 0)
         return false;
-    fav_load();
-    if (fav_count == 0)
-        return false;
-
-    int idx = fav_bsearch(hash);
-    if (idx < 0)
-        return false;
-
-    memmove(&fav_cache[idx], &fav_cache[idx + 1], (size_t)(fav_count - idx - 1) * sizeof(uint32_t));
-    fav_count--;
-    fav_save();
-    return true;
+    bool removed = false;
+    for (int i = 0; i < ODROID_FAVORITES_MAX; i++)
+        if (persistent_config_ram.favorites[i] == hash) {
+            persistent_config_ram.favorites[i] = 0;
+            removed = true;
+        }
+    return removed;
 }
 
