@@ -154,9 +154,30 @@ uint32_t DG_GetTicksMs(void)
 
 void DG_SleepMs(uint32_t ms)
 {
-    uint32_t end = HAL_GetTick() + ms;
-    while (HAL_GetTick() < end)
-        wdog_refresh();
+    /* DIAGNOSTIC: DOOM's TryRunTics waits for HAL_GetTick() to advance; if the
+     * HAL tick is frozen during the overlay this spins forever. Log the first
+     * call, and if the tick clearly isn't advancing, log FROZEN and bail so the
+     * watchdog can reboot (instead of hanging — no wdog_refresh in the spin). */
+    static int logged = 0;
+    uint32_t t0 = HAL_GetTick();
+    if (!logged) {
+        logged = 1;
+        printf("[doom] DG_SleepMs first call: ms=%lu HAL_GetTick=%lu\n",
+               (unsigned long)ms, (unsigned long)t0);
+    }
+    uint32_t end = t0 + ms;
+    uint32_t guard = 0;
+    while (HAL_GetTick() < end) {
+        if (++guard > 20000000u) {
+            static int froze = 0;
+            if (!froze) {
+                froze = 1;
+                printf("[doom] DG_SleepMs STUCK: t0=%lu now=%lu -> HAL tick FROZEN\n",
+                       (unsigned long)t0, (unsigned long)HAL_GetTick());
+            }
+            break;
+        }
+    }
 }
 
 void DG_SetWindowTitle(const char *title)
