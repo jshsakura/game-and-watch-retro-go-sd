@@ -10,7 +10,8 @@ Each icon -> 16-colour RGB565 palette + 4bpp index data (idx 0 = transparent).
 import sys, os, cairosvg
 from PIL import Image, ImageDraw
 
-H = 24  # icon height — same height for all; centred in 32px bar => ~4px top/bottom margin
+MAXDIM = 26  # longest side fits this box -> uniform visual size across all aspect ratios
+H = MAXDIM   # svg render reference height
 
 # RG_LOGO_PAD_* enum  ->  system-icons file (basename, ext auto-detected)
 MAP = [
@@ -61,8 +62,12 @@ def render(d, name):
     bb = im.getchannel("A").getbbox()
     if bb:
         im = im.crop(bb)
-    w = max(1, round(im.width * H / im.height))
-    im = im.resize((w, H), Image.LANCZOS)
+    # Fit the LONGEST side to MAXDIM (preserve aspect) so every icon has the
+    # same maximum extent -> consistent visual size regardless of shape.
+    scale = MAXDIM / max(im.width, im.height)
+    w = max(1, round(im.width * scale))
+    h = max(1, round(im.height * scale))
+    im = im.resize((w, h), Image.LANCZOS)
     a = im.getchannel("A")
     q = im.convert("RGB").quantize(colors=15, method=Image.Quantize.FASTOCTREE)
     qp = q.getpalette()
@@ -70,13 +75,13 @@ def render(d, name):
     while len(pal) < 16:
         pal.append(0)
     qpx, apx = q.load(), a.load()
-    idx = [0 if apx[x, y] < 96 else qpx[x, y] + 1 for y in range(H) for x in range(w)]
+    idx = [0 if apx[x, y] < 96 else qpx[x, y] + 1 for y in range(h) for x in range(w)]
     data = []
     for i in range(0, len(idx), 2):
         hi = idx[i] & 0xF
         lo = idx[i + 1] & 0xF if i + 1 < len(idx) else 0
         data.append((hi << 4) | lo)
-    return w, H, pal, data, q, a
+    return w, h, pal, data, q, a
 
 
 def main():
