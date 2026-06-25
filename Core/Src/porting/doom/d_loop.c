@@ -141,11 +141,14 @@ static boolean BuildNewTic(void)
     gameticdiv = gametic/ticdup;
 
     I_StartTic ();
+    { static int _m=0; if(!_m){_m=1; printf("[doom] >> BuildNewTic: before ProcessEvents\n");} }
     loop_interface->ProcessEvents();
+    { static int _m=0; if(!_m){_m=1; printf("[doom] >> BuildNewTic: after ProcessEvents\n");} }
 
     // Always run the menu
 
     loop_interface->RunMenu();
+    { static int _m=0; if(!_m){_m=1; printf("[doom] >> BuildNewTic: after RunMenu\n");} }
 
     if (drone)
     {
@@ -175,7 +178,9 @@ static boolean BuildNewTic(void)
 
     //printf ("mk:%i ",maketic);
     memset(&cmd, 0, sizeof(ticcmd_t));
+    { static int _m=0; if(!_m){_m=1; printf("[doom] >> BuildNewTic: before BuildTiccmd\n");} }
     loop_interface->BuildTiccmd(&cmd, maketic);
+    { static int _m=0; if(!_m){_m=1; printf("[doom] >> BuildNewTic: after BuildTiccmd\n");} }
 
 #ifdef FEATURE_MULTIPLAYER
 
