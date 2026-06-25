@@ -453,15 +453,17 @@ static void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
         int py = y + row;
         if (py < 0 || py >= GW_LCD_HEIGHT)
             continue;
-        const uint16_t *src = ic->data + row * ic->width;
         uint16_t *dst = fb + py * GW_LCD_WIDTH;
         for (int col = 0; col < ic->width; col++) {
+            int i = row * ic->width + col;
+            uint8_t byte = ic->data[i >> 1];
+            uint8_t idx = (i & 1) ? (byte & 0x0F) : (byte >> 4);
+            if (idx == 0)
+                continue; // transparent
             int px = x + col;
             if (px < 0 || px >= GW_LCD_WIDTH)
                 continue;
-            uint16_t c = src[col];
-            if (c != COLOR_ICON_TRANSPARENT)
-                dst[px] = c;
+            dst[px] = ic->pal[idx];
         }
     }
 }

@@ -8,14 +8,15 @@ typedef struct
     char logo[];
 } retro_logo_image;
 
-/* Full-colour (RGB565) console icon for the launcher header. data pixels equal
- * to COLOR_ICON_TRANSPARENT are skipped at blit time. */
-#define COLOR_ICON_TRANSPARENT 0xF81F
+/* Full-colour console icon for the launcher header, stored 4bpp + a 16-entry
+ * RGB565 palette to keep internal flash small. Palette index 0 is transparent
+ * (skipped at blit time). data is flat 4bpp, 2 px/byte, even px = high nibble. */
 typedef struct
 {
     uint16_t width;
     uint16_t height;
-    const uint16_t *data;
+    const uint16_t *pal;
+    const uint8_t  *data;
 } color_icon_t;
 
 /* Returns the colour icon for a RG_LOGO_PAD_* index, or NULL if none (caller
