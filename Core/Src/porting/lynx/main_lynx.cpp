@@ -76,42 +76,14 @@ static uint8_t rom_memory[ROM_BUFF_LENGTH];
 
 static size_t getromdata(unsigned char **data)
 {
-#ifndef GNW_DISABLE_COMPRESSION
-#if SD_CARD == 1
-#error "Roms compression is not supported on SD Card"
-#else
-    uint32_t src_size = 0;
-    const unsigned char *src = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &src_size, false);
-    unsigned char *dest = (unsigned char *)rom_memory;
-
-    if (strcmp(ACTIVE_FILE->ext, "lzma") == 0)
-    {
-        size_t n_decomp_bytes = lzma_inflate(dest, ROM_BUFF_LENGTH, src, src_size);
-        *data = dest;
-        return n_decomp_bytes;
-    }
-    else
-    {
-        *data = (unsigned char *)src;
-        return src_size;
-    }
-#endif
-#else
-    uint32_t size = ACTIVE_FILE->size;
-    if (size > (heap_free_mem()))
-    {
-        *data = (uint8_t *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
-    }
-    else
-    {
-        *data = (uint8_t *)heap_alloc_mem(size);
-        if (*data != NULL)
-        {
-            odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)*data);
-        }
-    }
+    /* Always hand the core a flash-resident (XIP) pointer — never heap-copy
+     * the ROM. Handy's CCart memcpy's the banks it needs into its own buffers,
+     * so copying the (up to 512 KB) Lynx ROM into the overlay C++ heap here is
+     * pure waste: ROM(≈320K) + cart banks(≈320K) + 64K RAM overflowed the heap
+     * and HardFaulted on load. lzma is unused in this build. */
+    uint32_t size = 0;
+    *data = (unsigned char *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
     return size;
-#endif
 }
 
 // 2x2 nearest scale of the 160x102 core framebuffer onto the centered

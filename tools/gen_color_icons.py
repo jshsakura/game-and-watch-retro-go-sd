@@ -12,7 +12,7 @@ array. Palette index 0 is the transparent colour key (skipped at blit time).
 import sys, os, cairosvg
 from PIL import Image
 
-H = 32  # banner height
+H = 22  # icon height (banner is 32 -> leaves padding)
 
 # RG_LOGO_PAD_* enum  ->  RomM platform slug
 MAP = [
