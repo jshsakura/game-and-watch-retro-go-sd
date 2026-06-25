@@ -10,9 +10,11 @@ Each icon -> 16-colour RGB565 palette + 4bpp index data (idx 0 = transparent).
 import sys, os, cairosvg
 from PIL import Image, ImageDraw
 
-BOX = 28  # every icon is normalised into this square: autocrop -> contain-fit
-          # (longest side = BOX) -> centred, transparent-padded. Uniform footprint.
-H = 32    # svg render reference height
+BOX = 28      # uniform square footprint for every icon (autocrop -> fit -> centre)
+SQ_TARGET = 23  # near-square icons fit to this (smaller) so they don't fill the box
+                # edge-to-edge -> matches the airiness of the padded wide/tall ones
+SQ_RATIO = 1.25  # |w/h| below this counts as "square-ish"
+H = 32        # svg render reference height
 
 # RG_LOGO_PAD_* enum  ->  system-icons file (basename, ext auto-detected)
 MAP = [
@@ -63,9 +65,12 @@ def render(d, name):
     bb = im.getchannel("A").getbbox()
     if bb:
         im = im.crop(bb)
-    # Contain-fit the device (longest side = BOX) then centre it in a uniform
-    # BOX x BOX square with transparent padding -> identical footprint for all.
-    scale = BOX / max(im.width, im.height)
+    # Contain-fit the device then centre it in a uniform BOX x BOX square.
+    # Near-square icons fit to the smaller SQ_TARGET so they get breathing room
+    # instead of filling the box edge-to-edge (matches the padded wide/tall ones).
+    ratio = max(im.width, im.height) / min(im.width, im.height)
+    target = SQ_TARGET if ratio < SQ_RATIO else BOX
+    scale = target / max(im.width, im.height)
     nw = max(1, round(im.width * scale))
     nh = max(1, round(im.height * scale))
     im = im.resize((nw, nh), Image.LANCZOS)
