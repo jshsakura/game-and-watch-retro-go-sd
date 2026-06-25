@@ -116,6 +116,11 @@ MEMORY
   /* PICO-8 code (sentinel address, patched to QSPI XIP at runtime) */
   PICO8_CODE (x) : ORIGIN = 0xBEEF0000,   LENGTH = 512K
 
+  /* DOOM rodata (sentinel address, patched to QSPI XIP at runtime). Mirrors the
+     DOOM_CODE sentinel in STM32H7B0VBTx_FLASH.ld so rg_emulators.c (DOOM_CODE_BASE)
+     and the doom.ro extraction work identically in the SD build. */
+  DOOM_CODE  (x) : ORIGIN = 0xD00D0000,   LENGTH = 1024K
+
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
 }
@@ -663,12 +668,30 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_doom __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_doom_start__ = .;
-    build/doom/*.o (.data .data* .text .text* .rodata .rodata*)
+    /* Keep DOOM code + writable data in the RAM overlay (Doom.bin). The large,
+       read-only .rodata (trig LUTs in tables.o ~65K, strings, etc.) is moved to
+       the DOOM_CODE sentinel below (.doom_xip -> doom.ro), XIP from QSPI flash,
+       which frees ~100K of RAM_EMU for the DOOM zone. Without this the zone is
+       only 259K and R_Init dies on a 68K Z_Malloc. */
+    build/doom/*.o (.data .data* .text .text*)
     . = ALIGN(4);
     _OVERLAY_DOOM_LOAD_END = .;
   } AT > CORES
   _OVERLAY_DOOM_LOAD_START = LOADADDR(.overlay_doom);
   _OVERLAY_DOOM_SIZE = SIZEOF(.overlay_doom);
+
+  /* DOOM read-only data, run in place (XIP) from external flash. VMA == LMA at the
+     DOOM_CODE sentinel (0xD00D0000); extracted to /roms/homebrew/doom.ro, cached to
+     QSPI flash and relocated at launch (DoomCacheCodeToFlash + PatchDoomRegion in
+     rg_emulators.c patches the sentinel refs in both the overlay and the blob). */
+  .doom_xip : {
+    . = ALIGN(4);
+    __doom_xip_start__ = .;
+    build/doom/*.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __doom_xip_end__ = .;
+  } > DOOM_CODE
+  _DOOM_XIP_SIZE = SIZEOF(.doom_xip);
 
   .overlay_doom_bss _OVERLAY_DOOM_LOAD_END : {
     . = ALIGN(4);
