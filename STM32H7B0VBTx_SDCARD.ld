@@ -668,26 +668,43 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_doom __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_doom_start__ = .;
-    /* Keep DOOM code + writable data in the RAM overlay (Doom.bin). The large,
-       read-only .rodata (trig LUTs in tables.o ~65K, strings, etc.) is moved to
-       the DOOM_CODE sentinel below (.doom_xip -> doom.ro), XIP from QSPI flash,
-       which frees ~100K of RAM_EMU for the DOOM zone. Without this the zone is
-       only 259K and R_Init dies on a 68K Z_Malloc. */
-    build/doom/*.o (.data .data* .text .text*)
+    /* Hot objects (renderer inner loops + glue): keep .text/.rodata/.data in RAM
+       for speed — listed first so they are matched here before the .doom_xip
+       catch-all. Everything else (game logic .text + all remaining .rodata, incl.
+       tables.o's ~65K trig LUTs) goes XIP from QSPI flash via .doom_xip below,
+       freeing ~190K of RAM_EMU for the DOOM zone. With only rodata XIP the zone
+       reached ~358K and cleared R_Init's 68K but still died on a later 36K
+       Z_Malloc; moving non-hot .text out too gives the zone the needed headroom. */
+    build/doom/r_draw.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_main.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_data.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_things.o (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_plane.o  (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_bsp.o    (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_segs.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/m_fixed.o  (.data .data* .text .text* .rodata .rodata*)
+    build/doom/doomgeneric.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/i_video.o       (.data .data* .text .text* .rodata .rodata*)
+    build/doom/doom_i_system.o (.data .data* .text .text* .rodata .rodata*)
+    build/doom/main_doom.o     (.data .data* .text .text* .rodata .rodata*)
+    /* all remaining doom .data must stay writable in RAM */
+    build/doom/*.o (.data .data*)
     . = ALIGN(4);
     _OVERLAY_DOOM_LOAD_END = .;
   } AT > CORES
   _OVERLAY_DOOM_LOAD_START = LOADADDR(.overlay_doom);
   _OVERLAY_DOOM_SIZE = SIZEOF(.overlay_doom);
 
-  /* DOOM read-only data, run in place (XIP) from external flash. VMA == LMA at the
-     DOOM_CODE sentinel (0xD00D0000); extracted to /roms/homebrew/doom.ro, cached to
-     QSPI flash and relocated at launch (DoomCacheCodeToFlash + PatchDoomRegion in
-     rg_emulators.c patches the sentinel refs in both the overlay and the blob). */
+  /* Non-hot DOOM code + read-only data, run in place (XIP) from external flash.
+     VMA == LMA at the DOOM_CODE sentinel (0xD00D0000); extracted to
+     /roms/homebrew/doom.ro, cached to QSPI flash and relocated at launch
+     (DoomCacheCodeToFlash + PatchDoomRegion in rg_emulators.c patch the sentinel
+     refs in both the RAM overlay and the blob; a D-cache invalidate after the
+     flash reprogram makes the patched bytes visible). */
   .doom_xip : {
     . = ALIGN(4);
     __doom_xip_start__ = .;
-    build/doom/*.o (.rodata .rodata*)
+    build/doom/*.o (.text .text* .rodata .rodata*)
     . = ALIGN(4);
     __doom_xip_end__ = .;
   } > DOOM_CODE

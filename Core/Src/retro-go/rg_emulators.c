@@ -282,6 +282,12 @@ static uint8_t *DoomCacheCodeToFlash(uint32_t *code_size_out)
     OSPI_EraseSync(flash_offset, erase_size);
     OSPI_Program(flash_offset, ram_buf, *code_size_out);
     OSPI_EnableMemoryMappedMode();
+    /* The earlier memcpy() cached the ORIGINAL (unpatched) blob bytes for this
+       flash region in the D-cache; we just reprogrammed the same addresses with
+       the patched bytes. Invalidate so XIP reads see the patched data — otherwise
+       any sentinel ref inside the blob (now that non-hot .text is XIP'd) would
+       read back the stale 0xD00D0000 value and fault. */
+    SCB_InvalidateDCache_by_Addr((uint32_t *)code_addr, (int32_t)*code_size_out);
     printf("DOOM: reprogrammed XIP flash, first word: 0x%08lX\n",
            (unsigned long)*(uint32_t *)code_addr);
   } else {
