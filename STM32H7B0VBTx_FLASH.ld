@@ -142,6 +142,7 @@ MEMORY
   CORES      (x  ) : ORIGIN = 0x0,                 LENGTH = 0xFFFFFFFF
   RODATA     (x  ) : ORIGIN = 0xCAFE0000,          LENGTH = 0xFFFFFFFF
   PICO8_CODE (x  ) : ORIGIN = 0xBEEF0000,          LENGTH = 512K
+  DOOM_CODE  (x  ) : ORIGIN = 0xD00D0000,          LENGTH = 1024K
   EXTFLASH   (xr ) : ORIGIN = __EXTFLASH_START__,  LENGTH = 32M
 }
 
@@ -676,17 +677,48 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
 
-  /* DOOM (doomgeneric) homebrew overlay — same RAM_EMU VMA, LMA in EXTFLASH.
-     Shipped as /roms/homebrew/Doom.bin and cached into RAM at launch. */
+  /* DOOM (doomgeneric) homebrew. HOT files (inner-loop renderers + glue) stay in
+     RAM_EMU (.overlay_doom, shipped as /roms/homebrew/Doom.bin). The non-hot
+     .text/.rodata run XIP from external flash via the DOOM_CODE sentinel
+     (.doom_xip, shipped as /roms/homebrew/doom.ro, cached + sentinel-patched at
+     launch like PICO-8). All .data stays writable in RAM; .bss stays in RAM. */
   .overlay_doom __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_doom_start__ = .;
-    build/doom/*.o (.data .data* .text .text* .rodata .rodata*)
+    /* hot objects: keep .text/.rodata/.data in RAM (listed first => matched first) */
+    build/doom/r_draw.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_main.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_data.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_things.o (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_plane.o  (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_amalgam.o (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_oam.o    (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_bsp.o    (.data .data* .text .text* .rodata .rodata*)
+    build/doom/r_segs.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/tables.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/m_fixed.o  (.data .data* .text .text* .rodata .rodata*)
+    build/doom/doomgeneric.o   (.data .data* .text .text* .rodata .rodata*)
+    build/doom/i_video.o       (.data .data* .text .text* .rodata .rodata*)
+    build/doom/doom_i_system.o (.data .data* .text .text* .rodata .rodata*)
+    build/doom/main_doom.o     (.data .data* .text .text* .rodata .rodata*)
+    /* all remaining doom .data must stay writable in RAM */
+    build/doom/*.o (.data .data*)
     . = ALIGN(4);
     _OVERLAY_DOOM_LOAD_END = .;
   } AT> EXTFLASH
   _OVERLAY_DOOM_LOAD_START = LOADADDR(.overlay_doom);
   _OVERLAY_DOOM_SIZE = SIZEOF(.overlay_doom);
+
+  /* Non-hot DOOM code/rodata, run in place (XIP) from external flash. VMA == LMA
+     at the DOOM_CODE sentinel; extracted to doom.ro and relocated at launch. */
+  .doom_xip : {
+    . = ALIGN(4);
+    __doom_xip_start__ = .;
+    build/doom/*.o (.text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    __doom_xip_end__ = .;
+  } > DOOM_CODE
+  _DOOM_XIP_SIZE = SIZEOF(.doom_xip);
 
   .overlay_doom_bss _OVERLAY_DOOM_LOAD_END : {
     . = ALIGN(4);

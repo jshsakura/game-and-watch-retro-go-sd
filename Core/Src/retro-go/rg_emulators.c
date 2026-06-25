@@ -232,6 +232,65 @@ static uint8_t *Pico8CacheCodeToFlash(uint32_t *code_size_out)
   #endif
 }
 
+/* ---- DOOM XIP code: same sentinel-patch scheme as PICO-8 ----
+ * DOOM's non-hot .text/.rodata are linked at the DOOM_CODE sentinel base and
+ * shipped as /roms/homebrew/doom.ro. At launch the blob is cached to XIP flash,
+ * its internal sentinel refs are patched to the real flash address, the patched
+ * bytes are reprogrammed, and the code then runs in place from external flash --
+ * freeing RAM_EMU for the DOOM zone. The hot files stay in the RAM overlay. */
+#define DOOM_CODE_BASE 0xD00D0000u
+
+int PatchDoomRegion(uint32_t *start, uint32_t *end, int32_t offset, uint32_t code_size)
+{
+  int patched = 0;
+  for (uint32_t *ptr = start; ptr < end; ptr++) {
+    uint32_t value = *ptr;
+    if ((value & ~1u) >= DOOM_CODE_BASE && (value & ~1u) < DOOM_CODE_BASE + code_size) {
+      *ptr = value + offset;
+      patched++;
+    }
+  }
+  return patched;
+}
+
+static uint8_t *DoomCacheCodeToFlash(uint32_t *code_size_out)
+{
+  printf("DOOM: caching doom.ro to flash...\n");
+  uint8_t *code_addr = odroid_overlay_cache_file_in_flash("/roms/homebrew/doom.ro", code_size_out, false);
+  if (!code_addr || *code_size_out == 0) {
+    printf("DOOM: doom.ro cache FAILED (not found on SD?)\n");
+    return NULL;
+  }
+#if SD_CARD == 1
+  int32_t offset = (int32_t)((uint32_t)code_addr - DOOM_CODE_BASE);
+  printf("DOOM: doom.ro cached at %p, size=%lu, offset=%ld\n",
+         code_addr, (unsigned long)*code_size_out, (long)offset);
+
+  /* RAM_EMU is free here (Doom.bin is loaded AFTER this returns) -- use it as the
+   * patch scratch. */
+  uint8_t *ram_buf = (uint8_t *)&__RAM_EMU_START__;
+  memcpy(ram_buf, code_addr, *code_size_out);
+  int patched = PatchDoomRegion((uint32_t *)ram_buf,
+                                (uint32_t *)(ram_buf + *code_size_out),
+                                offset, *code_size_out);
+  printf("DOOM: patched %d sentinel refs in doom.ro\n", patched);
+
+  if (patched > 0) {
+    uint32_t flash_offset = (uint32_t)code_addr - (uint32_t)&__EXTFLASH_BASE__;
+    uint32_t erase_size = (*code_size_out + 4095) & ~4095u;
+    OSPI_DisableMemoryMappedMode();
+    OSPI_EraseSync(flash_offset, erase_size);
+    OSPI_Program(flash_offset, ram_buf, *code_size_out);
+    OSPI_EnableMemoryMappedMode();
+    printf("DOOM: reprogrammed XIP flash, first word: 0x%08lX\n",
+           (unsigned long)*(uint32_t *)code_addr);
+  } else {
+    printf("DOOM: no sentinel refs found (already patched from previous boot)\n");
+  }
+#endif
+  return code_addr;
+}
+
 const unsigned char *ROM_DATA = NULL;
 unsigned ROM_DATA_LENGTH;
 const char *ROM_EXT = NULL;
@@ -1236,7 +1295,25 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 #endif
 #endif
     } else if(strcmp(system_name, "Homebrew") == 0)  {
-      if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
+      if (strcmp(newfile->name,"Doom") == 0) {
+        /* DOOM runs its non-hot code XIP from flash: cache+patch+reprogram doom.ro
+         * to flash FIRST (uses RAM_EMU as scratch), THEN load the hot overlay
+         * (Doom.bin) into RAM, THEN patch the overlay's sentinel refs to the real
+         * XIP flash address. */
+        uint32_t doom_xip_size = 0;
+        uint8_t *doom_xip_addr = DoomCacheCodeToFlash(&doom_xip_size);
+        if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
+            if (doom_xip_addr) {
+                int32_t off = (int32_t)((uint32_t)doom_xip_addr - DOOM_CODE_BASE);
+                PatchDoomRegion((uint32_t *)&__RAM_EMU_START__,
+                                (uint32_t *)&_OVERLAY_DOOM_BSS_START, off, doom_xip_size);
+            }
+            memset(&_OVERLAY_DOOM_BSS_START, 0x0, (size_t)&_OVERLAY_DOOM_BSS_SIZE);
+            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_DOOM_SIZE);
+            SCB_InvalidateICache();
+            app_main_doom(load_state, start_paused, save_slot);
+        }
+      } else if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
         if (strcmp(newfile->name,"celeste") == 0) {
             memset(&_OVERLAY_CELESTE_BSS_START, 0x0, (size_t)&_OVERLAY_CELESTE_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_CELESTE_SIZE);
@@ -1260,10 +1337,6 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             memset(&_OVERLAY_MUSIC_BSS_START, 0x0, (size_t)&_OVERLAY_MUSIC_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_MUSIC_SIZE);
             app_main_video(load_state, start_paused, save_slot);
-        } else if (strcmp(newfile->name,"Doom") == 0) {
-            memset(&_OVERLAY_DOOM_BSS_START, 0x0, (size_t)&_OVERLAY_DOOM_BSS_SIZE);
-            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_DOOM_SIZE);
-            app_main_doom(load_state, start_paused, save_slot);
         } else if (strcmp(newfile->name,"Wolf3D") == 0) {
             memset(&_OVERLAY_WOLF3D_BSS_START, 0x0, (size_t)&_OVERLAY_WOLF3D_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_WOLF3D_SIZE);
