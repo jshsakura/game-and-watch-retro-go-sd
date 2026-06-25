@@ -1546,7 +1546,7 @@ void emulators_init()
     /* PICO-8: carts (.p8 / .p8.png) live under /roms/pico8/. The engine
      * itself (pico8.bin) is a separately-distributed overlay loaded at
      * runtime; see the stub in Core/Src/porting/pico8/main_pico8.c. */
-    add_emulator("PICO-8", "pico8", "p8 png", RG_LOGO_EMPTY, RG_LOGO_HEADER_PICO8, GAME_DATA);
+    add_emulator("PICO-8", "pico8", "p8 png", RG_LOGO_PAD_PICO8, RG_LOGO_HEADER_PICO8, GAME_DATA);
 }
 
 static bool browse_subpath_is_safe(const char *s)

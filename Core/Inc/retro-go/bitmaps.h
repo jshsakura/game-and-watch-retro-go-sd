@@ -87,6 +87,10 @@ enum {
     RG_LOGO_PAD_HOMEBREW,
     // Atari Lynx name header (appended last; matches header_lynx at end of rg_logos.c)
     RG_LOGO_HEADER_LYNX,
+    // PICO-8 console icon: COLOUR-ONLY (color_icon_for_logo); no logo.bin entry,
+    // so rg_get_logo() returns NULL for it (bounds-checked) — used only as the
+    // header-right colour icon, never the 1-bit navbar logo.
+    RG_LOGO_PAD_PICO8,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
