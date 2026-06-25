@@ -1515,7 +1515,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 void emulators_init()
 {
     add_emulator("Nintendo Gameboy", "gb", "gb gbc lzma", RG_LOGO_PAD_GB, RG_LOGO_HEADER_GB, NO_GAME_DATA);
-    add_emulator("Nintendo Gameboy Color", "gbc", "gb gbc lzma", RG_LOGO_PAD_GB, RG_LOGO_HEADER_GBC, NO_GAME_DATA);
+    add_emulator("Nintendo Gameboy Color", "gbc", "gb gbc lzma", RG_LOGO_PAD_GBC, RG_LOGO_HEADER_GBC, NO_GAME_DATA);
     add_emulator("Nintendo Entertainment System", "nes", "nes fds nsf lzma", RG_LOGO_PAD_NES, RG_LOGO_HEADER_NES, NO_GAME_DATA);
     add_emulator("Game & Watch", "gw", "gw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
     add_emulator("PC Engine", "pce", "pce lzma", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCE, NO_GAME_DATA);
@@ -1536,13 +1536,13 @@ void emulators_init()
     /* Atari Lynx (Handy core): ROM (.lnx/.lyx) loads from flash; no BIOS needed (HLE).
      * Logos are placeholders (Atari 2600) until copyright-safe RomM-derived Lynx icons
      * + RG_LOGO_*_LYNX are wired into rg_logos. */
-    add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
+    add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
     add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
     add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
 //    add_emulator("Philips Vectrex", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA); // TODO : change graphics
     add_emulator("Tamagotchi", "tama", "b", RG_LOGO_PAD_TAMA, RG_LOGO_HEADER_TAMA, NO_GAME_DATA);
     add_emulator("Pokemon Mini", "mini", "min", RG_LOGO_PAD_PKMINI, RG_LOGO_HEADER_PKMINI, NO_GAME_DATA);
-    add_emulator("Homebrew", "homebrew", "bin", RG_LOGO_EMPTY, RG_LOGO_HEADER_HOMEBREW, NO_GAME_DATA);
+    add_emulator("Homebrew", "homebrew", "bin", RG_LOGO_PAD_HOMEBREW, RG_LOGO_HEADER_HOMEBREW, NO_GAME_DATA);
     /* PICO-8: carts (.p8 / .p8.png) live under /roms/pico8/. The engine
      * itself (pico8.bin) is a separately-distributed overlay loaded at
      * runtime; see the stub in Core/Src/porting/pico8/main_pico8.c. */

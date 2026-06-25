@@ -1,32 +1,41 @@
 #!/usr/bin/env python3
-"""Render RomM platform device icons (SVG) to PALETTED RGB565 C data for the
-launcher header console icon. The LCD is RGB565, so these show in full colour.
+"""Render the game-and-what project's per-system icons into PALETTED RGB565
+C data for the launcher header console icon (RG565 LCD -> full colour).
 
-To keep internal flash small, each icon is quantised to <=15 colours and
-packed 4bpp (2 px/byte): a 16-entry uint16 RGB565 palette + a nibble index
-array. Palette index 0 is the transparent colour key (skipped at blit time).
-~0.5 KB/icon vs ~2 KB for raw RGB565.
+Source: ../game-and-what/frontend/public/system-icons/<name>.{svg,png}
+Each icon -> 16-colour RGB565 palette + 4bpp index data (idx 0 = transparent).
 
-  python3 tools/gen_color_icons.py <romm_svg_dir> <out.inc>
+  python3 tools/gen_color_icons.py <system-icons-dir> <out.inc> [--preview p.png]
 """
 import sys, os, cairosvg
-from PIL import Image
+from PIL import Image, ImageDraw
 
 H = 22  # icon height (banner is 32 -> leaves padding)
 
-# RG_LOGO_PAD_* enum  ->  RomM platform slug
+# RG_LOGO_PAD_* enum  ->  system-icons file (basename, ext auto-detected)
 MAP = [
     ("RG_LOGO_PAD_NES",     "nes"),
     ("RG_LOGO_PAD_GB",      "gb"),
-    ("RG_LOGO_PAD_GG",      "gamegear"),
-    ("RG_LOGO_PAD_PCE",     "tg16"),
-    ("RG_LOGO_PAD_GEN",     "genesis"),
-    ("RG_LOGO_PAD_COL",     "colecovision"),
-    ("RG_LOGO_PAD_A2600",   "atari2600"),
-    ("RG_LOGO_PAD_A7800",   "atari7800"),
-    ("RG_LOGO_PAD_AMSTRAD", "acpc"),
-    ("RG_LOGO_PAD_NGP",     "neo-geo-pocket"),
-    ("RG_LOGO_PAD_WSWAN",   "wonderswan"),
+    ("RG_LOGO_PAD_GBC",     "gbc"),
+    ("RG_LOGO_PAD_GG",      "gg"),
+    ("RG_LOGO_PAD_SMS",     "sms"),
+    ("RG_LOGO_PAD_GEN",     "md"),
+    ("RG_LOGO_PAD_SG1000",  "sg"),
+    ("RG_LOGO_PAD_COL",     "col"),
+    ("RG_LOGO_PAD_PCE",     "pce"),
+    ("RG_LOGO_PAD_MSX",     "msx"),
+    ("RG_LOGO_PAD_WSV",     "wsv"),
+    ("RG_LOGO_PAD_WSWAN",   "ws"),
+    ("RG_LOGO_PAD_NGP",     "ngp"),
+    ("RG_LOGO_PAD_A2600",   "a2600"),
+    ("RG_LOGO_PAD_A7800",   "a7800"),
+    ("RG_LOGO_PAD_LYNX",    "lynx"),
+    ("RG_LOGO_PAD_AMSTRAD", "amstrad"),
+    ("RG_LOGO_PAD_TAMA",    "tama"),
+    ("RG_LOGO_PAD_PKMINI",  "mini"),
+    ("RG_LOGO_PAD_GW",      "gw"),
+    ("RG_LOGO_PAD_PICO8",   "pico8"),
+    ("RG_LOGO_PAD_HOMEBREW","homebrew"),
 ]
 
 
@@ -34,61 +43,76 @@ def to565(r, g, b):
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
 
 
-def render(svg_dir, slug):
-    png = os.path.join(svg_dir, slug + ".png")
-    cairosvg.svg2png(url=os.path.join(svg_dir, slug + ".svg"), write_to=png, output_height=H * 4)
-    im = Image.open(png).convert("RGBA")
+def load_rgba(d, name):
+    svg, png = os.path.join(d, name + ".svg"), os.path.join(d, name + ".png")
+    if os.path.exists(svg):
+        out = "/tmp/_ci_%s.png" % name
+        cairosvg.svg2png(url=svg, write_to=out, output_height=H * 4)
+        return Image.open(out).convert("RGBA")
+    if os.path.exists(png):
+        return Image.open(png).convert("RGBA")
+    raise SystemExit("missing icon: " + name)
+
+
+def render(d, name):
+    im = load_rgba(d, name)
     w = max(1, round(im.width * H / im.height))
     im = im.resize((w, H), Image.LANCZOS)
-
-    alpha = im.getchannel("A")
-    # Quantise opaque colours to 15 (palette indices become 1..15; 0=transparent)
+    a = im.getchannel("A")
     q = im.convert("RGB").quantize(colors=15, method=Image.Quantize.FASTOCTREE)
-    qp = q.getpalette()  # [r,g,b, r,g,b, ...]
-    pal = [0]  # index 0 = transparent
-    for i in range(15):
-        r, g, b = qp[i * 3], qp[i * 3 + 1], qp[i * 3 + 2]
-        pal.append(to565(r, g, b))
+    qp = q.getpalette()
+    pal = [0] + [to565(qp[i * 3], qp[i * 3 + 1], qp[i * 3 + 2]) for i in range(15)]
     while len(pal) < 16:
         pal.append(0)
-
-    qpx = q.load()
-    apx = alpha.load()
-    idx = []
-    for y in range(H):
-        for x in range(w):
-            idx.append(0 if apx[x, y] < 96 else (qpx[x, y] + 1))
-    # pack 4bpp, flat, 2 px/byte (even px -> high nibble)
+    qpx, apx = q.load(), a.load()
+    idx = [0 if apx[x, y] < 96 else qpx[x, y] + 1 for y in range(H) for x in range(w)]
     data = []
     for i in range(0, len(idx), 2):
         hi = idx[i] & 0xF
         lo = idx[i + 1] & 0xF if i + 1 < len(idx) else 0
         data.append((hi << 4) | lo)
-    return w, H, pal, data
+    return w, H, pal, data, q, a
 
 
 def main():
-    svg_dir, out = sys.argv[1], sys.argv[2]
-    chunks, table = [], []
+    d, out = sys.argv[1], sys.argv[2]
+    preview = sys.argv[sys.argv.index("--preview") + 1] if "--preview" in sys.argv else None
+    chunks, table, prev = [], [], []
     total = 0
-    for enum, slug in MAP:
-        w, h, pal, data = render(svg_dir, slug)
-        var = "cicon_" + slug.replace("-", "_")
-        pbody = ",".join(f"0x{v:04x}" for v in pal)
-        dbody = ",".join(f"0x{v:02x}" for v in data)
-        chunks.append(f"static const uint16_t {var}_pal[16] = {{{pbody}}};")
-        chunks.append(f"static const uint8_t {var}_data[{len(data)}] = {{{dbody}}};")
+    for enum, name in MAP:
+        w, h, pal, data, q, a = render(d, name)
+        var = "cicon_" + name
+        chunks.append(f"static const uint16_t {var}_pal[16] = {{{','.join(f'0x{v:04x}' for v in pal)}}};")
+        chunks.append(f"static const uint8_t {var}_data[{len(data)}] = {{{','.join(f'0x{v:02x}' for v in data)}}};")
         chunks.append(f"const color_icon_t {var} = {{ {w}, {h}, {var}_pal, {var}_data }};")
         table.append((enum, var))
         total += len(data) + 32
-        print(f"{enum:22s} {slug:16s} {w}x{h}  {len(data)+32}B")
+        print(f"{enum:22s} {name:10s} {w}x{h}")
+        if preview:
+            bg = Image.new("RGB", (w, h), (20, 24, 40))
+            qq, apx = q.convert("RGB").load(), a.load()
+            for y in range(h):
+                for x in range(w):
+                    if apx[x, y] >= 96:
+                        bg.putpixel((x, y), qq[x, y])
+            prev.append((name, bg, w))
     sw = "\n".join(f"        case {e}: return &{v};" for e, v in table)
     func = (f"\nconst color_icon_t *color_icon_for_logo(int16_t logo_idx)\n{{\n"
             f"    switch (logo_idx) {{\n{sw}\n        default: return (const color_icon_t *)0;\n    }}\n}}\n")
-    with open(out, "w") as f:
-        f.write("/* AUTO-GENERATED by tools/gen_color_icons.py — RomM device icons, 4bpp palette. */\n\n")
-        f.write("\n".join(chunks) + "\n" + func)
-    print(f"wrote {out}  (~{total}B icon data total)")
+    open(out, "w").write("/* AUTO-GENERATED by tools/gen_color_icons.py from game-and-what system-icons. */\n\n"
+                         + "\n".join(chunks) + "\n" + func)
+    print(f"wrote {out}  (~{total}B)")
+    if preview:
+        gap = 6
+        W = max(w for *_, w in prev) + 90
+        Ht = sum(H for _ in prev) + gap * len(prev) + 8
+        c = Image.new("RGB", (W, Ht), (20, 24, 40))
+        dr = ImageDraw.Draw(c)
+        y = 4
+        for name, bg, w in prev:
+            c.paste(bg, (4, y)); dr.text((w + 10, y + 7), name, fill=(220, 220, 220)); y += H + gap
+        c.resize((W * 3, Ht * 3), Image.NEAREST).save(preview)
+        print("preview ->", preview)
 
 
 if __name__ == "__main__":
