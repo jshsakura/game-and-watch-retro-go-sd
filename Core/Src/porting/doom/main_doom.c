@@ -42,6 +42,11 @@ void doomgeneric_Tick(void);
 extern void G_SaveGame(int slot, const char *description);
 extern void G_LoadGame(const char *name);
 
+/* Boot trace to /doom_trace.txt (firmware-side, syscalls.c). Tees stdout with an
+ * f_sync per line so the last step survives a silent hard fault. */
+extern void doom_trace_begin(void);
+extern void doom_trace_end(void);
+
 #define DOOM_WAD_PATH      "/roms/homebrew/DOOM1.WAD"
 #define DOOM_FB_X_OFFSET   ((ODROID_SCREEN_WIDTH  - DOOMGENERIC_RESX) / 2)   /* 0  */
 #define DOOM_FB_Y_OFFSET   ((ODROID_SCREEN_HEIGHT - DOOMGENERIC_RESY) / 2)   /* 20 */
@@ -225,7 +230,8 @@ void *doom__realloc(void *p, size_t n)
 /* ------------------------------------------------------------------ */
 int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
-    printf("DOOM start\n");
+    doom_trace_begin();
+    printf("DOOM start (build trace)\n");
     ram_start = (uint32_t)&_OVERLAY_DOOM_BSS_END;
 
     odroid_system_init(APPID_HOMEBREW, 11025);
@@ -257,7 +263,9 @@ int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     /* Boot doomgeneric with the shareware IWAD from SD/flash. */
     static char *argv[] = { "doom", "-iwad", DOOM_WAD_PATH };
+    printf("[doom] doomgeneric_Create...\n");
     doomgeneric_Create(3, argv);
+    printf("[doom] doomgeneric_Create returned OK\n");
 
     if (load_state)
         odroid_system_emu_load_state(save_slot);
@@ -265,8 +273,13 @@ int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         lcd_clear_buffers();
 
     odroid_gamepad_state_t joystick;
+    int trace_tick = 0;
     while (true) {
         wdog_refresh();
+
+        /* Trace the first frames: a silent hard fault during the first level
+         * load / render shows up as the last "tick N" line on the SD card. */
+        if (trace_tick < 40) printf("[doom] tick %d\n", trace_tick++);
 
         /* Retro-go menu + savestate hotkeys (PAUSE+A save / PAUSE+B load,
          * brightness/volume, quit) via the registered Save/Load callbacks. */

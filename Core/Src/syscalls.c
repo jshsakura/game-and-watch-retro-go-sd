@@ -37,6 +37,25 @@ void init_file_table() {
     }
 }
 
+/* ---- Homebrew boot trace -----------------------------------------------
+ * Tee everything written to stdout/stderr into /doom_trace.txt with an f_sync
+ * after each line, so the last progress line survives even a silent hard fault
+ * (DOOM's printf otherwise only lands in the volatile RAM logbuf). State lives
+ * in the firmware — NOT in a RAM overlay — so it stays valid across app loads.
+ * main_doom.c calls doom_trace_begin() at launch. */
+static FIL doom_trace_fil;
+static int doom_trace_on = 0;
+void doom_trace_begin(void) {
+    if (doom_trace_on) { f_close(&doom_trace_fil); doom_trace_on = 0; }
+    if (f_open(&doom_trace_fil, "/doom_trace.txt", FA_WRITE | FA_CREATE_ALWAYS) == FR_OK)
+        doom_trace_on = 1;
+}
+void doom_trace_end(void) {
+    if (!doom_trace_on) return;
+    doom_trace_on = 0;
+    f_close(&doom_trace_fil);
+}
+
 #define FATFS_FD_OFFSET 3 // Prevent collision with STDOUT_FILENO, ...
 int find_free_slot() {
     for (int i = 0; i < MAX_OPEN_FILES; i++) {
@@ -141,6 +160,12 @@ int _write(int file, char *ptr, int len)
         logbuf[idx] = '\0';
 
         log_idx = idx;
+
+        if (doom_trace_on) {
+            UINT bw;
+            f_write(&doom_trace_fil, ptr, len, &bw);
+            f_sync(&doom_trace_fil);
+        }
 
         return len;
     }
