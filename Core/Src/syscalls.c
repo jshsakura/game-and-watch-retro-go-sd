@@ -55,6 +55,18 @@ void doom_trace_end(void) {
     doom_trace_on = 0;
     f_close(&doom_trace_fil);
 }
+/* Write a raw NUL-terminated string straight to the trace + sync. Safe to call
+ * from the fault path (BSOD) to record the verdict before the screen/reset:
+ * a "FAULT" line means a real exception (with PC to map to a function); its
+ * absence means a watchdog hang/infinite loop. */
+void doom_trace_raw(const char *s) {
+    if (!doom_trace_on || s == NULL) return;
+    UINT bw;
+    size_t n = 0;
+    while (s[n]) n++;
+    f_write(&doom_trace_fil, s, n, &bw);
+    f_sync(&doom_trace_fil);
+}
 
 #define FATFS_FD_OFFSET 3 // Prevent collision with STDOUT_FILENO, ...
 int find_free_slot() {

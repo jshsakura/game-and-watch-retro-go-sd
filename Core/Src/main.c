@@ -137,6 +137,8 @@ const char *fault_list[] = {
   [BSOD_OTHER] = "Other",
 };
 
+extern void doom_trace_raw(const char *s);  /* syscalls.c — SD trace tee */
+
 __attribute__((optimize("-O0"))) void BSOD(BSOD_t fault, uint32_t pc, uint32_t lr)
 {
   char msg[128];
@@ -146,6 +148,17 @@ __attribute__((optimize("-O0"))) void BSOD(BSOD_t fault, uint32_t pc, uint32_t l
   char *end;
   char *line;
   int y = 0;
+
+  /* DIAGNOSTIC: record the fault to /doom_trace.txt BEFORE disabling IRQs (the
+   * SD/FatFs path needs HAL_GetTick timeouts). If the DOOM hang is a real
+   * exception this captures the type + faulting PC (map via the .elf); if the
+   * trace ends with no FAULT line, it was a watchdog hang/infinite loop. */
+  {
+    char fline[96];
+    snprintf(fline, sizeof(fline), "\n[doom] FAULT %s pc=0x%08lx lr=0x%08lx\n",
+             fault_list[fault], pc, lr);
+    doom_trace_raw(fline);
+  }
 
   __disable_irq();
 
