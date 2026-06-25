@@ -693,9 +693,11 @@ INCLUDE build/fceumm_mappers.ld
     build/doom/r_plane.o  (.data .data* .text .text* .rodata .rodata*)
     build/doom/r_amalgam.o (.data .data* .text .text* .rodata .rodata*)
     build/doom/r_oam.o    (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_bsp.o    (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_segs.o   (.data .data* .text .text* .rodata .rodata*)
-    build/doom/tables.o   (.data .data* .text .text* .rodata .rodata*)
+    /* r_bsp.o, r_segs.o, tables.o moved to .doom_xip to free RAM for the zone
+       (build 2345 died at R_Init Z_Malloc 68192; zone=259K too small, only ~89K
+       free inside it). tables.o is pure trig rodata (biggest win); r_bsp/r_segs
+       are per-frame but tolerable from XIP. Their .data stays in RAM via the
+       catch-all below; only .text/.rodata go XIP. Tune back for speed later. */
     build/doom/m_fixed.o  (.data .data* .text .text* .rodata .rodata*)
     build/doom/doomgeneric.o   (.data .data* .text .text* .rodata .rodata*)
     build/doom/i_video.o       (.data .data* .text .text* .rodata .rodata*)
