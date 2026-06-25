@@ -409,6 +409,11 @@ void *W_CacheLumpNum(int lumpnum, int tag)
     lump = &lumpinfo[lumpnum];
 
     if (doom_trace_lumps) {
+        /* All DOOM code is now XIP (slow QSPI); the first tic's P_SetupLevel
+         * runs inside doomgeneric_Create BEFORE app_main_doom's wdog loop, so
+         * refresh here to rule out a watchdog reboot mid-map-load. */
+        extern void wdog_refresh(void);
+        wdog_refresh();
         char nm[9];
         memcpy(nm, lump->name, 8); nm[8] = '\0';
         printf("[doom] lump %-8s (len=%d)\n", nm, lump->size);

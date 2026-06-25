@@ -809,7 +809,7 @@ $(DOOMGENERIC_DIR)/dstrings.c \
 $(DOOMGENERIC_DIR)/d_event.c \
 $(DOOMGENERIC_DIR)/d_items.c \
 $(DOOMGENERIC_DIR)/d_iwad.c \
-$(DOOMGENERIC_DIR)/d_loop.c \
+Core/Src/porting/doom/d_loop.c \
 $(DOOMGENERIC_DIR)/d_main.c \
 $(DOOMGENERIC_DIR)/d_mode.c \
 $(DOOMGENERIC_DIR)/d_net.c \
