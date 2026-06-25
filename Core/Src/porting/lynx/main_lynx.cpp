@@ -17,6 +17,7 @@ extern "C"
 #include "lzma.h"
 #endif
 #include "heap.hpp"
+void sd_trace_begin(const char *path); /* diagnostic SD log tee (syscalls.c) */
 }
 
 #include <handy.h>
@@ -158,7 +159,6 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     /* DIAGNOSTIC: tee stdout (and the BSOD fault line) to a SEPARATE SD file
      * /lynx_trace.txt (DOOM uses /doom_trace.txt) so both logs are preserved and
      * we can see exactly where Lynx dies instead of guessing. */
-    extern "C" void sd_trace_begin(const char *path);
     sd_trace_begin("/lynx_trace.txt");
     printf("[lynx] app start (XIP cart build)\n");
 
