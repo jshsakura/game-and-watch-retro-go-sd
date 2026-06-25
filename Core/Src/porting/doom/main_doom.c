@@ -81,6 +81,15 @@ void DG_Init(void)
 /* Returns 1 and fills *pressed/*doomKey for the next changed button, else 0. */
 int DG_GetKey(int *pressed, unsigned char *doomKey)
 {
+    /* DIAGNOSTIC: I_GetEvent loops `while (DG_GetKey(...))`. If buttons_get()
+     * keeps reporting changes (noisy/floating line) this never converges and
+     * hangs the first tic. We render nothing before I_InitGraphics, so an
+     * absurd call count here = runaway; log the button state once. */
+    static uint32_t calls = 0;
+    if (++calls == 5000u)
+        printf("[doom] DG_GetKey runaway: now=0x%08lx prev=0x%08lx\n",
+               (unsigned long)buttons_get(), (unsigned long)doom_prev_buttons);
+
     uint32_t now = buttons_get();
     uint32_t changed = now ^ doom_prev_buttons;
     if (!changed)
