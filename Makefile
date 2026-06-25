@@ -806,7 +806,7 @@ $(DOOMGENERIC_DIR)/am_map.c \
 $(DOOMGENERIC_DIR)/doomdef.c \
 $(DOOMGENERIC_DIR)/doomstat.c \
 $(DOOMGENERIC_DIR)/dstrings.c \
-$(DOOMGENERIC_DIR)/d_event.c \
+Core/Src/porting/doom/d_event.c \
 $(DOOMGENERIC_DIR)/d_items.c \
 $(DOOMGENERIC_DIR)/d_iwad.c \
 Core/Src/porting/doom/d_loop.c \
