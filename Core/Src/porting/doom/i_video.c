@@ -204,6 +204,11 @@ void cmap_to_fb(uint8_t *out, uint8_t *in, int in_pixels)
 
 void I_InitGraphics (void)
 {
+    /* DIAGNOSTIC: marks the call right after the first TryRunTics() returns. If
+     * this prints, the first game tic (RunTic/G_Ticker) survived and the hang
+     * (if any) is inside graphics init; if it does NOT print, the hang is the
+     * first RunTic inside TryRunTics, before we ever get here. */
+    printf("[doom] I_InitGraphics ENTER\n");
     int i, gfxmodeparm;
     char *mode;
 
