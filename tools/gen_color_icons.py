@@ -10,7 +10,7 @@ Each icon -> 16-colour RGB565 palette + 4bpp index data (idx 0 = transparent).
 import sys, os, cairosvg
 from PIL import Image, ImageDraw
 
-H = 22  # icon height (banner is 32 -> leaves padding)
+H = 24  # icon height — same height for all; centred in 32px bar => ~4px top/bottom margin
 
 # RG_LOGO_PAD_* enum  ->  system-icons file (basename, ext auto-detected)
 MAP = [
@@ -56,6 +56,11 @@ def load_rgba(d, name):
 
 def render(d, name):
     im = load_rgba(d, name)
+    # Crop away transparent margins so EVERY icon's actual device content fills
+    # the target height uniformly (source icons have inconsistent padding).
+    bb = im.getchannel("A").getbbox()
+    if bb:
+        im = im.crop(bb)
     w = max(1, round(im.width * H / im.height))
     im = im.resize((w, H), Image.LANCZOS)
     a = im.getchannel("A")
