@@ -319,6 +319,7 @@ void I_StartFrame (void)
 
 void I_StartTic (void)
 {
+	extern volatile int doom_trace_lumps;  /* w_wad.c: gate map-load lump logging */
 	static int once = 0;
 	static int once_after = 0;
 	if (!once) { once = 1; printf("[doom] I_StartTic first call (in TryRunTics)\n"); }
@@ -326,6 +327,9 @@ void I_StartTic (void)
 	/* If this never prints, I_GetEvent() (submodule: while(DG_GetKey(...))) is
 	 * the infinite loop — see the DG_GetKey runaway guard for the button state. */
 	if (!once_after) { once_after = 1; printf("[doom] I_StartTic: I_GetEvent returned\n"); }
+	/* Game loop has begun: log the lumps the first tic (P_SetupLevel for E1M1)
+	 * requests, so the trace shows where map load stalls. */
+	doom_trace_lumps = 1;
 }
 
 void I_UpdateNoBlit (void)

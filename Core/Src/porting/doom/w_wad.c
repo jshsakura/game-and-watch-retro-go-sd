@@ -58,8 +58,14 @@ typedef struct
 
 // Location of each lump on disk.
 
-lumpinfo_t *lumpinfo;		
+lumpinfo_t *lumpinfo;
 unsigned int numlumps = 0;
+
+/* DIAGNOSTIC: set to 1 by I_StartTic once the game loop begins, so we log only
+ * the lumps the first tic requests (skipping the R_Init flood). The first tic
+ * autostarts E1M1 -> P_SetupLevel, so this trace shows the map-load sequence
+ * and pinpoints which lump/stage the hang sits on. */
+volatile int doom_trace_lumps = 0;
 
 // Hash table for fast lookups
 
@@ -401,6 +407,12 @@ void *W_CacheLumpNum(int lumpnum, int tag)
     }
 
     lump = &lumpinfo[lumpnum];
+
+    if (doom_trace_lumps) {
+        char nm[9];
+        memcpy(nm, lump->name, 8); nm[8] = '\0';
+        printf("[doom] lump %-8s (len=%d)\n", nm, lump->size);
+    }
 
     // Get the pointer to return.  If the lump is in a memory-mapped
     // file, we can just return a pointer to within the memory-mapped
