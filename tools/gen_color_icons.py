@@ -10,8 +10,9 @@ Each icon -> 16-colour RGB565 palette + 4bpp index data (idx 0 = transparent).
 import sys, os, cairosvg
 from PIL import Image, ImageDraw
 
-MAXDIM = 26  # longest side fits this box -> uniform visual size across all aspect ratios
-H = MAXDIM   # svg render reference height
+BOX = 28  # every icon is normalised into this square: autocrop -> contain-fit
+          # (longest side = BOX) -> centred, transparent-padded. Uniform footprint.
+H = 32    # svg render reference height
 
 # RG_LOGO_PAD_* enum  ->  system-icons file (basename, ext auto-detected)
 MAP = [
@@ -62,12 +63,16 @@ def render(d, name):
     bb = im.getchannel("A").getbbox()
     if bb:
         im = im.crop(bb)
-    # Fit the LONGEST side to MAXDIM (preserve aspect) so every icon has the
-    # same maximum extent -> consistent visual size regardless of shape.
-    scale = MAXDIM / max(im.width, im.height)
-    w = max(1, round(im.width * scale))
-    h = max(1, round(im.height * scale))
-    im = im.resize((w, h), Image.LANCZOS)
+    # Contain-fit the device (longest side = BOX) then centre it in a uniform
+    # BOX x BOX square with transparent padding -> identical footprint for all.
+    scale = BOX / max(im.width, im.height)
+    nw = max(1, round(im.width * scale))
+    nh = max(1, round(im.height * scale))
+    im = im.resize((nw, nh), Image.LANCZOS)
+    canvas = Image.new("RGBA", (BOX, BOX), (0, 0, 0, 0))
+    canvas.alpha_composite(im, ((BOX - nw) // 2, (BOX - nh) // 2))
+    im = canvas
+    w = h = BOX
     a = im.getchannel("A")
     q = im.convert("RGB").quantize(colors=15, method=Image.Quantize.FASTOCTREE)
     qp = q.getpalette()
