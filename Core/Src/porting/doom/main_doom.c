@@ -154,30 +154,27 @@ uint32_t DG_GetTicksMs(void)
 
 void DG_SleepMs(uint32_t ms)
 {
-    /* DIAGNOSTIC: DOOM's TryRunTics waits for HAL_GetTick() to advance; if the
-     * HAL tick is frozen during the overlay this spins forever. Log the first
-     * call, and if the tick clearly isn't advancing, log FROZEN and bail so the
-     * watchdog can reboot (instead of hanging — no wdog_refresh in the spin). */
-    static int logged = 0;
-    uint32_t t0 = HAL_GetTick();
-    if (!logged) {
-        logged = 1;
-        printf("[doom] DG_SleepMs first call: ms=%lu HAL_GetTick=%lu\n",
-               (unsigned long)ms, (unsigned long)t0);
+    /* DIAGNOSTIC (tick probe): DOOM's first TryRunTics() spins in a wait loop
+     * whose ONLY escape is I_GetTime()/HAL_GetTick() advancing ~1 tic (~29ms).
+     * The device reboots here, so either the tick is frozen (SysTick not
+     * incrementing uwTick during the overlay) or it advances too slowly.
+     *
+     * DG_SleepMs is called once per wait-loop iteration. Each printf()+f_sync()
+     * to SD costs ~1ms of wall-clock, so logging the raw HAL_GetTick() across
+     * the first 8 iterations is itself a timed experiment: if SysTick is alive
+     * the tick climbs line-to-line; if every line shows the same value the tick
+     * is FROZEN. No wdog_refresh() here, so the watchdog still reboots cleanly
+     * after we've flushed the verdict to /doom_trace.txt (no battery drain). */
+    (void)ms;
+    static int n = 0;
+    static uint32_t first = 0;
+    uint32_t t = HAL_GetTick();
+    if (n == 0) first = t;
+    if (n < 8) {
+        printf("[doom] tick probe #%d: HAL_GetTick=%lu (delta=%ld)\n",
+               n, (unsigned long)t, (long)(t - first));
     }
-    uint32_t end = t0 + ms;
-    uint32_t guard = 0;
-    while (HAL_GetTick() < end) {
-        if (++guard > 20000000u) {
-            static int froze = 0;
-            if (!froze) {
-                froze = 1;
-                printf("[doom] DG_SleepMs STUCK: t0=%lu now=%lu -> HAL tick FROZEN\n",
-                       (unsigned long)t0, (unsigned long)HAL_GetTick());
-            }
-            break;
-        }
-    }
+    n++;
 }
 
 void DG_SetWindowTitle(const char *title)
