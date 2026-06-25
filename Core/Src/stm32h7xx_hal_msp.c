@@ -926,6 +926,16 @@ void HAL_WWDG_EarlyWakeupCallback(WWDG_HandleTypeDef *hwwdg)
     /* Uncomment the following line for catching it while debugging: */
     //__asm("bkpt 1");
 
+    /* DOOM runs XIP from QSPI flash; a cold compute burst (e.g. the first game
+     * tic) can reach here without any I/O having refreshed the dog. Keep DOOM
+     * alive by refreshing instead of resetting; a true hang then just freezes. */
+    extern volatile int g_doom_running;
+    extern WWDG_HandleTypeDef hwwdg1;
+    if (g_doom_running) {
+        HAL_WWDG_Refresh(&hwwdg1);
+        return;
+    }
+
     boot_magic_set(BOOT_MAGIC_WATCHDOG);
 }
 

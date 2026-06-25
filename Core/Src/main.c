@@ -87,6 +87,15 @@ TIM_HandleTypeDef htim1;
 
 WWDG_HandleTypeDef hwwdg1;
 
+/* Set while the DOOM homebrew runs. DOOM executes most of its code XIP from QSPI
+ * flash; the first cold pass through a routine can be slow enough to blow the
+ * WWDG window during a compute burst with no incidental wdog_refresh (e.g. the
+ * first game tic). While this is set, the WWDG early-wakeup ISR refreshes the
+ * dog instead of letting it reset, so cold-XIP bursts don't kill DOOM. A genuine
+ * hang then shows as a frozen screen (not a silent reboot), which is also more
+ * diagnosable. Other apps keep the normal watchdog (flag is 0). */
+volatile int g_doom_running = 0;
+
 /* USER CODE BEGIN PV */
 
 PERSISTENT(boot_magic) volatile uint32_t boot_magic;
