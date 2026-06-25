@@ -147,6 +147,8 @@ void DG_DrawFrame(void)
 /* ------------------------------------------------------------------ */
 uint32_t DG_GetTicksMs(void)
 {
+    static int once = 0;
+    if (!once) { once = 1; printf("[doom] DG_GetTicksMs first call (in TryRunTics)\n"); }
     return HAL_GetTick();
 }
 
@@ -231,11 +233,6 @@ void *doom__realloc(void *p, size_t n)
 int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     doom_trace_begin();
-    /* Keep the WWDG from resetting us during slow cold-XIP compute bursts (see
-     * the EWI handler in stm32h7xx_hal_msp.c). Cleared by the full reset on app
-     * switch. */
-    extern volatile int g_doom_running;
-    g_doom_running = 1;
     printf("DOOM start (build trace)\n");
     ram_start = (uint32_t)&_OVERLAY_DOOM_BSS_END;
 

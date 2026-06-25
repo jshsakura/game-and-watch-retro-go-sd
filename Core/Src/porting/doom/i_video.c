@@ -314,6 +314,8 @@ void I_StartFrame (void)
 
 void I_StartTic (void)
 {
+	static int once = 0;
+	if (!once) { once = 1; printf("[doom] I_StartTic first call (in TryRunTics)\n"); }
 	I_GetEvent();
 }
 
