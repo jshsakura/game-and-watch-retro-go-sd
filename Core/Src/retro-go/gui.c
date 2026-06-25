@@ -444,6 +444,28 @@ void gui_draw_navbar()
     }
 }
 
+/* Blit a full-colour RGB565 console icon into the active LCD buffer,
+ * skipping transparent (colour-key) pixels. */
+static void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
+{
+    uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
+    for (int row = 0; row < ic->height; row++) {
+        int py = y + row;
+        if (py < 0 || py >= GW_LCD_HEIGHT)
+            continue;
+        const uint16_t *src = ic->data + row * ic->width;
+        uint16_t *dst = fb + py * GW_LCD_WIDTH;
+        for (int col = 0; col < ic->width; col++) {
+            int px = x + col;
+            if (px < 0 || px >= GW_LCD_WIDTH)
+                continue;
+            uint16_t c = src[col];
+            if (c != COLOR_ICON_TRANSPARENT)
+                dst[px] = c;
+        }
+    }
+}
+
 void gui_draw_header(tab_t *tab)
 {
 
@@ -453,15 +475,21 @@ void gui_draw_header(tab_t *tab)
         odroid_overlay_draw_logo(8, ODROID_SCREEN_HEIGHT - IMAGE_BANNER_HEIGHT - 15 + 7, tab->header_idx, curr_colors->sel_c);
 
     if (tab->logo_idx) {
-        retro_logo_image *img_logo = rg_get_logo(tab->logo_idx);
-        if (img_logo) {
-            int h = img_logo->height;
-            h = (IMAGE_BANNER_HEIGHT - h) / 2;
-            int w = h + img_logo->width;
-            
-            odroid_overlay_draw_logo(ODROID_SCREEN_WIDTH - w - 1, 
-                                    ODROID_SCREEN_HEIGHT - IMAGE_BANNER_HEIGHT - 15 + h, 
-                                    tab->logo_idx, get_shined_pixel(curr_colors->main_c, 25));
+        const color_icon_t *cic = color_icon_for_logo(tab->logo_idx);
+        if (cic) {
+            int iy = ODROID_SCREEN_HEIGHT - IMAGE_BANNER_HEIGHT - 15 + (IMAGE_BANNER_HEIGHT - cic->height) / 2;
+            gui_draw_color_icon(ODROID_SCREEN_WIDTH - cic->width - 4, iy, cic);
+        } else {
+            retro_logo_image *img_logo = rg_get_logo(tab->logo_idx);
+            if (img_logo) {
+                int h = img_logo->height;
+                h = (IMAGE_BANNER_HEIGHT - h) / 2;
+                int w = h + img_logo->width;
+
+                odroid_overlay_draw_logo(ODROID_SCREEN_WIDTH - w - 1,
+                                        ODROID_SCREEN_HEIGHT - IMAGE_BANNER_HEIGHT - 15 + h,
+                                        tab->logo_idx, get_shined_pixel(curr_colors->main_c, 25));
+            }
         }
     }
 
