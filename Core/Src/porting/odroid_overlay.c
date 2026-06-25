@@ -46,6 +46,7 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
 #include "rg_rtc.h"
 #include "rg_i18n.h"
 #include "rg_storage.h"
+#include "favorites.h"
 #include "gw_flash_alloc.h"
 #if SD_CARD == 0
 #include "rg_frogfs.h"
@@ -1576,6 +1577,10 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
     // Collect stats before freezing emulation
     runtime_stats_t stats = odroid_system_get_stats(!draw_only);
 
+    // Favorite toggle for the running game (id 70), so it can be added/removed
+    // without quitting to the launcher.
+    bool is_fav = favorite_is(ACTIVE_FILE);
+
     void _repaint()
     {
         if (repaint != NULL)
@@ -1588,7 +1593,7 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
     }
 
 #if CHEAT_CODES == 1
-    odroid_dialog_choice_t choices[12];
+    odroid_dialog_choice_t choices[13];
     bool cheat_update_support = false;
     CHOSEN_FILE = ACTIVE_FILE;
     rom_system_t *system = (rom_system_t *)CHOSEN_FILE->system;
@@ -1625,6 +1630,12 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
     index++;
     choices[index].id = 40;
     choices[index].label = curr_lang->s_Options;
+    choices[index].value = "";
+    choices[index].enabled = 1;
+    choices[index].update_cb = NULL;
+    index++;
+    choices[index].id = 70;
+    choices[index].label = is_fav ? curr_lang->s_Del_favorite : curr_lang->s_Add_favorite;
     choices[index].value = "";
     choices[index].enabled = 1;
     choices[index].update_cb = NULL;
@@ -1674,6 +1685,7 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
         ODROID_DIALOG_CHOICE_SEPARATOR,
         {30, curr_lang->s_Reload, "", 1, NULL},
         {40, curr_lang->s_Options, "", 1, NULL},
+        {70, is_fav ? curr_lang->s_Del_favorite : curr_lang->s_Add_favorite, "", 1, NULL},
         // {50, "Tools", "", 1, NULL},
         ODROID_DIALOG_CHOICE_SEPARATOR,
         {90, curr_lang->s_Power_off, "", 1, NULL},
@@ -1713,6 +1725,9 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
         break;
     case 40:
         odroid_overlay_game_settings_menu(extra_options, &_repaint, flags);
+        break;
+    case 70:
+        favorite_toggle(ACTIVE_FILE);
         break;
     case 50:
         odroid_overlay_game_debug_menu(&_repaint);

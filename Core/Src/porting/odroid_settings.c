@@ -11,11 +11,16 @@
 #include "rg_storage.h"
 #include "appid.h"
 #include "gui.h"
+#include "favorites.h"
 #include "rom_manager.h"
 #include "gw_sdcard.h"
 
 #define CONFIG_MAGIC 0xcafef00d
 #define ODROID_APPID_COUNT 4
+
+/* Max number of games that can be marked as favorites. Stored as path
+ * hashes (crc32) in the persistent config struct: 64 * 4 = 256 bytes. */
+#define ODROID_FAVORITES_MAX 64
 
 #if !defined  (COVERFLOW)
   #define COVERFLOW 0
@@ -82,6 +87,11 @@ typedef struct persistent_config {
     /** Welcome prompt: 0 = not anchored, 1 = message already shown, else YYYYMMDD anchor (RTC >= 2026). */
     uint32_t welcome_prompt;
 
+    /** Favorite games as path hashes (0 = empty slot). */
+    uint32_t favorites[ODROID_FAVORITES_MAX];
+    /** Game list sort mode (odroid_sort_mode_t). */
+    uint8_t sort_mode;
+
     app_config_t app[APPID_COUNT];
 
     uint32_t crc32;
@@ -89,7 +99,7 @@ typedef struct persistent_config {
 
 static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
-    .version = 8,
+    .version = 9,
 
     .backlight = ODROID_BACKLIGHT_LEVEL6,
     .start_action = ODROID_START_ACTION_RESUME,
@@ -132,6 +142,7 @@ static const persistent_config_t persistent_config_default = {
     .main_menu_browse_subpath = {0},
     .debug_clock_always_on = false,
     .welcome_prompt = 0,
+    .sort_mode = 0,
     .app = {
         {0}, // Launcher
         {
@@ -726,5 +737,51 @@ uint32_t odroid_settings_WelcomePrompt_get(void)
 void odroid_settings_WelcomePrompt_set(uint32_t value)
 {
     persistent_config_ram.welcome_prompt = value;
+}
+
+uint8_t odroid_settings_SortMode_get(void)
+{
+    uint8_t mode = persistent_config_ram.sort_mode;
+    return (mode < ODROID_SORT_COUNT) ? mode : ODROID_SORT_NAME;
+}
+
+void odroid_settings_SortMode_set(uint8_t mode)
+{
+    persistent_config_ram.sort_mode = (mode < ODROID_SORT_COUNT) ? mode : ODROID_SORT_NAME;
+}
+
+bool odroid_settings_favorite_has(uint32_t hash)
+{
+    if (hash == 0)
+        return false;
+    for (int i = 0; i < ODROID_FAVORITES_MAX; i++)
+        if (persistent_config_ram.favorites[i] == hash)
+            return true;
+    return false;
+}
+
+bool odroid_settings_favorite_add(uint32_t hash)
+{
+    if (hash == 0)
+        return false;
+    if (odroid_settings_favorite_has(hash))
+        return true;
+    for (int i = 0; i < ODROID_FAVORITES_MAX; i++)
+        if (persistent_config_ram.favorites[i] == 0) {
+            persistent_config_ram.favorites[i] = hash;
+            return true;
+        }
+    return false; // favorites list is full
+}
+
+bool odroid_settings_favorite_remove(uint32_t hash)
+{
+    bool removed = false;
+    for (int i = 0; i < ODROID_FAVORITES_MAX; i++)
+        if (persistent_config_ram.favorites[i] == hash) {
+            persistent_config_ram.favorites[i] = 0;
+            removed = true;
+        }
+    return removed;
 }
 

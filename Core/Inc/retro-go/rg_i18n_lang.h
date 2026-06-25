@@ -181,6 +181,9 @@ typedef struct
     const char *s_New_game;
     const char *s_Del_favorite;
     const char *s_Add_favorite;
+    const char *s_Sort;        // game list sort row label
+    const char *s_Sort_name;   // sort mode: alphabetical
+    const char *s_Sort_added;  // sort mode: scan/added order
     const char *s_Delete_save;
     const char *s_Confirm_del_save;
     const char *s_Confirm_del_sram;

@@ -76,3 +76,6 @@
 [submodule "external/wolf3d-stm32"]
 	path = external/wolf3d-stm32
 	url = https://github.com/autobalance/Wolf3D-STM32
+[submodule "external/handy-go"]
+	path = external/handy-go
+	url = https://github.com/jshsakura/handy-go.git

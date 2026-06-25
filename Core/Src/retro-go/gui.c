@@ -15,6 +15,7 @@
 #include "main.h"
 #include "rg_i18n.h"
 #include "rg_emulators.h"
+#include "favorites.h"
 #include "gw_malloc.h"
 
 #if !defined(COVERFLOW)
@@ -597,6 +598,64 @@ void gui_draw_item_postion_v(int posx, int starty, int endy, int cur, int size)
             curr_colors->sel_c);
 }
 
+/* Small 11x11 five-point star used to mark favorite games. Each row is an
+ * 11-bit mask, MSB = leftmost pixel. Drawn directly to the active framebuffer
+ * (same approach as the easter-egg clock) so it works in both the simple list
+ * and the cover view. */
+#define FAV_STAR_W 11
+#define FAV_STAR_H 11
+static const uint16_t FAV_STAR_GLYPH[FAV_STAR_H] = {
+    0x020, 0x070, 0x070, 0x7FF, 0x3FE, 0x1FC, 0x0F8, 0x1DC, 0x38E, 0x603, 0x401
+};
+
+static void gui_draw_star_raw(int x, int y, uint16_t color)
+{
+    uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
+    if (fb == NULL)
+        return;
+    for (int ry = 0; ry < FAV_STAR_H; ry++) {
+        int py = y + ry;
+        if (py < 0 || py >= GW_LCD_HEIGHT)
+            continue;
+        uint16_t row = FAV_STAR_GLYPH[ry];
+        for (int rx = 0; rx < FAV_STAR_W; rx++) {
+            if (row & (1u << (FAV_STAR_W - 1 - rx))) {
+                int px = x + rx;
+                if (px >= 0 && px < GW_LCD_WIDTH)
+                    fb[py * GW_LCD_WIDTH + px] = color;
+            }
+        }
+    }
+}
+
+/* Gold star with a 1px dark drop-shadow so it stays visible over any cover. */
+static void gui_draw_favorite_star(int x, int y)
+{
+    gui_draw_star_raw(x + 1, y + 1, 0x0000);
+    gui_draw_star_raw(x, y, C_GOLD);
+}
+
+/* Draw the favorite star to the left of a simple-list row, if that row is a
+ * (non-parent) favorited ROM. */
+static void gui_draw_favorite_marker(tab_t *tab, int item_index, int posx, int text_y, int font_height)
+{
+    listbox_t *list = &tab->listbox;
+    if (item_index < 0 || item_index >= list->length)
+        return;
+
+    void *arg = list->items[item_index].arg;
+    if (arg == NULL || rg_rom_list_arg_is_parent(arg))
+        return;
+    if (!favorite_is((retro_emulator_file_t *)arg))
+        return;
+
+    int sx = posx - FAV_STAR_W - 2;
+    if (sx < 0)
+        sx = 0;
+    int sy = text_y + (font_height - FAV_STAR_H) / 2;
+    gui_draw_favorite_star(sx, sy);
+}
+
 void gui_draw_simple_list(int posx, tab_t *tab)
 {
     listbox_t *list = &tab->listbox;
@@ -606,8 +665,10 @@ void gui_draw_simple_list(int posx, tab_t *tab)
         int w = ODROID_SCREEN_WIDTH - posx - 12;
         listbox_item_t *item = &list->items[list->cursor];
         int h1 = gui_list_view_y0 + (gui_list_view_h - font_height) / 2;
-        if (item)
+        if (item) {
             i18n_draw_text_line(posx, h1, w, list->items[list->cursor].text, curr_colors->sel_c, curr_colors->bg_c, 0);
+            gui_draw_favorite_marker(tab, list->cursor, posx, h1, font_height);
+        }
 
         int index_next = list->cursor + 1;
         int index_proior = list->cursor - 1;
@@ -621,7 +682,7 @@ void gui_draw_simple_list(int posx, tab_t *tab)
             h2 = h2 - font_height - max_line + i;
             if (h2 < gui_list_view_y0) //out range;
                 break;
-            if (next_item)
+            if (next_item) {
                 i18n_draw_text_line(
                     posx,
                     h1,
@@ -630,9 +691,11 @@ void gui_draw_simple_list(int posx, tab_t *tab)
                     get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, (max_line - i) * 100 / max_line),
                     curr_colors->bg_c,
                     0);
+                gui_draw_favorite_marker(tab, index_next, posx, h1, font_height);
+            }
             index_next++;
             listbox_item_t *prior_item = gui_get_item_by_index(tab, &index_proior);
-            if (prior_item)
+            if (prior_item) {
                 i18n_draw_text_line(
                     posx,
                     h2,
@@ -641,6 +704,8 @@ void gui_draw_simple_list(int posx, tab_t *tab)
                     get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, (max_line - i) * 100 / max_line),
                     curr_colors->bg_c,
                     0);
+                gui_draw_favorite_marker(tab, index_proior, posx, h2, font_height);
+            }
             index_proior--;
         }
         //draw currpostion
@@ -906,6 +971,11 @@ void gui_draw_coverlight_h(retro_emulator_file_t *file, int cover_position)
         odroid_overlay_draw_rect(cover_x, cover_y, cover_width + 2 * COVER_BORDER, cover_height + 2 * COVER_BORDER, COVER_BORDER, curr_colors->bg_c);
         odroid_overlay_draw_rect(2 + cover_x, 2 + cover_y, cover_width + 8, cover_height + 8, 2, curr_colors->sel_c);
 
+        /* favorite star, top-right corner of the cover */
+        if (favorite_is(file))
+            gui_draw_favorite_star(cover_x + COVER_BORDER + cover_width - FAV_STAR_W - 3,
+                                   cover_y + COVER_BORDER + 3);
+
         /* TODO add shadowing */
         //left side
         /*
@@ -1029,6 +1099,11 @@ void gui_draw_coverlight_v(retro_emulator_file_t *file, int cover_position)
     {
         odroid_overlay_draw_rect(cover_x, cover_y, cover_width + 2 * COVER_BORDER, cover_height + 2 * COVER_BORDER, COVER_BORDER, curr_colors->bg_c);
         odroid_overlay_draw_rect(2 + cover_x, 2 + cover_y, cover_width + 8, cover_height + 8, 2, curr_colors->sel_c);
+
+        /* favorite star, top-right corner of the cover */
+        if (favorite_is(file))
+            gui_draw_favorite_star(cover_x + COVER_BORDER + cover_width - FAV_STAR_W - 3,
+                                   cover_y + COVER_BORDER + 3);
     }
     /* other cover */
     else

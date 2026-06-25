@@ -657,7 +657,20 @@ $(CORE_A2600)/stella/src/emucore/TrackBall.cxx \
 $(CORE_A2600)/stella/src/emucore/StellaGenesis.cxx \
 $(CORE_A2600)/stella/src/emucore/StellaKeyboard.cxx
 
-A7800_C_SOURCES = 
+LYNX_C_SOURCES =
+LYNX_CXX_SOURCES =
+
+CORE_LYNX = external/handy-go
+LYNX_CXX_SOURCES += \
+Core/Src/porting/lynx/main_lynx.cpp \
+$(CORE_LYNX)/cart.cpp \
+$(CORE_LYNX)/eeprom.cpp \
+$(CORE_LYNX)/lynxdec.cpp \
+$(CORE_LYNX)/mikie.cpp \
+$(CORE_LYNX)/susie.cpp \
+$(CORE_LYNX)/system.cpp
+
+A7800_C_SOURCES =
 
 CORE_PROSYSTEM = external/prosystem-go
 A7800_C_SOURCES += \
@@ -1131,6 +1144,14 @@ A2600_C_INCLUDES += \
 -I$(CORE_A2600)/stella/src/common \
 -I$(CORE_A2600)/stella/src/gui \
 -I$(CORE_A2600)/libretro-common/include \
+-I./
+
+LYNX_C_INCLUDES += \
+-ICore/Inc \
+-ICore/Inc/porting/lynx \
+-ICore/Src/porting/lib \
+-ICore/Src/porting/lib/lzma \
+-I$(CORE_LYNX) \
 -I./
 
 A7800_C_INCLUDES += \

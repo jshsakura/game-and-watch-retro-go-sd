@@ -7,6 +7,8 @@
 #include "gw_linker.h"
 #include "gw_malloc.h"
 #include "rg_emulators.h"
+#include "favorites.h"
+#include "odroid_settings.h"
 #include "rg_storage.h"
 #include "rg_i18n.h"
 #include "bitmaps.h"
@@ -38,6 +40,7 @@
 #include "main_tama.h"
 #include "main_pkmini.h"
 #include "main_a2600.h"
+#include "main_lynx.h"
 #include "rg_rtc.h"
 #include "gittag.h"
 #include "heap.hpp"
@@ -487,7 +490,15 @@ static int rom_entries_cmp(const void *a, const void *b)
     const int da = (fa->ext == NULL);
     const int db = (fb->ext == NULL);
     if (da != db)
-        return db - da;
+        return db - da; // directories before files
+
+    if (odroid_settings_SortMode_get() == ODROID_SORT_FAVORITES) {
+        const int xa = favorite_is(fa) ? 1 : 0;
+        const int xb = favorite_is(fb) ? 1 : 0;
+        if (xa != xb)
+            return xb - xa; // favorites before non-favorites
+    }
+
     return strcasecmp(fa->name, fb->name);
 }
 
@@ -498,7 +509,9 @@ static void emulator_fill_tab_list(tab_t *tab, retro_emulator_t *emu)
     const int parent_row = in_subfolder ? 1 : 0;
     const int list_len = n + parent_row;
 
-    if (n > 0) {
+    // ODROID_SORT_ADDED keeps the raw scan order (files as added to the SD
+    // card); the other modes sort by name (favorites-first handled in cmp).
+    if (n > 0 && odroid_settings_SortMode_get() != ODROID_SORT_ADDED) {
         qsort(emu->roms.files, (size_t)n, sizeof(retro_emulator_file_t), rom_entries_cmp);
         // Recalculate ext pointers after sort (they point into .path which moved)
         for (int i = 0; i < n; i++) {
@@ -581,7 +594,16 @@ static void event_handler(gui_event_t event, tab_t *tab)
             }
             return;
         }
+        uint8_t sort_before = odroid_settings_SortMode_get();
         emulator_show_file_menu(file);
+        // Sort/favorite may have changed in the overlay. Switching the sort
+        // mode needs a rescan: a prior name/favorite qsort reordered the array
+        // in place, so "added order" can only be restored from disk. A plain
+        // favorite toggle just needs a cheap re-sort of the existing array.
+        if (odroid_settings_SortMode_get() != sort_before)
+            gui_event(TAB_REFRESH_LIST, tab);
+        else
+            emulator_fill_tab_list(tab, emu);
     }
     else if (event == KEY_PRESS_B)
     {
@@ -1029,6 +1051,30 @@ void emulator_update_cheats_info(retro_emulator_file_t *file) {
 }
 #endif
 
+/* Game list sort row: cycles ODROID_SORT_NAME -> ADDED -> FAVORITES on every
+ * press (A) or left/right, and never closes the menu. The new value is
+ * persisted when the overlay closes (see emulator_show_file_menu). */
+static bool sort_mode_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
+{
+    uint8_t mode = odroid_settings_SortMode_get();
+
+    if (event == ODROID_DIALOG_PREV)
+        mode = (mode + ODROID_SORT_COUNT - 1) % ODROID_SORT_COUNT;
+    else if (event == ODROID_DIALOG_NEXT || event == ODROID_DIALOG_ENTER)
+        mode = (mode + 1) % ODROID_SORT_COUNT;
+    odroid_settings_SortMode_set(mode);
+
+    const char *name;
+    switch (mode) {
+        case ODROID_SORT_ADDED:     name = curr_lang->s_Sort_added; break;
+        case ODROID_SORT_FAVORITES: name = curr_lang->s_favorite;   break;
+        default:                    name = curr_lang->s_Sort_name;  break;
+    }
+    sprintf(option->value, "%s", name);
+
+    return false; // A / left / right all just cycle; never select-close
+}
+
 bool emulator_show_file_menu(retro_emulator_file_t *file)
 {
     if (file->ext == NULL)
@@ -1039,8 +1085,10 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     rg_emu_states_t *savestates = odroid_system_emu_get_states(file->path, 4);
     bool has_save = savestates->used > 0;
     bool has_sram = odroid_sdcard_get_filesize(sram_path) > 0;
-//    bool is_fav = favorite_find(file) != NULL;
+    bool is_fav = favorite_is(file);
     bool force_redraw = false;
+    char sort_value[32]; // localized sort-mode name (codepage-encoded)
+    uint8_t sort_mode_at_entry = odroid_settings_SortMode_get();
 
 #if CHEAT_CODES == 1
     // Free previous cheat codes
@@ -1067,7 +1115,8 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
         {0, curr_lang->s_Resume_game, "", (has_save) ? 1:-1, NULL},
         {1, curr_lang->s_New_game, "", 1, NULL},
         ODROID_DIALOG_CHOICE_SEPARATOR,
-//        {3, is_fav ? "Del favorite" : "Add favorite", "", 1, NULL},
+        {5, curr_lang->s_Sort, sort_value, 1, &sort_mode_cb},
+        {3, is_fav ? curr_lang->s_Del_favorite : curr_lang->s_Add_favorite, "", 1, NULL},
         {2, curr_lang->s_Delete_save, "", (has_save || has_sram) ? 1 : -1, NULL},
 #if CHEAT_CODES == 1
         ODROID_DIALOG_CHOICE_SEPARATOR,
@@ -1077,8 +1126,10 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     };
 
 #if CHEAT_CODES == 1
+    // Sort + favorite rows sit before "Delete save", so the cheat separator is
+    // at index 6 (was 4 before those two rows were added).
     if (CHOSEN_FILE->cheat_count == 0)
-        choices[4] = last;
+        choices[6] = last;
 #endif
 
     int sel = odroid_overlay_dialog(file->name, choices, has_save ? 0 : 1, &gui_redraw_callback, 0);
@@ -1112,12 +1163,10 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
             odroid_sdcard_unlink(sram_path);
         }
     }
-/*    else if (sel == 3) {
-        if (is_fav)
-            favorite_remove(file);
-        else
-            favorite_add(file);
-    }*/
+    else if (sel == 3) { // Add / remove favorite
+        favorite_toggle(file);
+        force_redraw = true;
+    }
 #if CHEAT_CODES == 1
     else if (sel == 4) {
         if (CHOSEN_FILE->cheat_count != 0)
@@ -1132,6 +1181,11 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
 #if CHEAT_CODES == 1
     CHOSEN_FILE = NULL;
 #endif
+
+    // Persist the sort mode if the user cycled it (favorites already commit
+    // in favorite_toggle). One write on close avoids per-press flash wear.
+    if (odroid_settings_SortMode_get() != sort_mode_at_entry)
+        odroid_settings_commit();
 
     free(savestates);
     return force_redraw;
@@ -1184,6 +1238,7 @@ static const emu_dispatch_t emu_ngp     = { "/cores/ngp.bin",     &_OVERLAY_NGP_
 static const emu_dispatch_t emu_wswan   = { "/cores/wswan.bin",   &_OVERLAY_WSWAN_BSS_START,   (uint32_t)&_OVERLAY_WSWAN_BSS_SIZE,   (uint32_t)&_OVERLAY_WSWAN_SIZE,   0, EMU_ENTRY(app_main_wswan) };
 static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
+static const emu_dispatch_t emu_lynx    = { "/cores/lynx.bin",    &_OVERLAY_LYNX_BSS_START,    (uint32_t)&_OVERLAY_LYNX_BSS_SIZE,    (uint32_t)&_OVERLAY_LYNX_SIZE,    (uint32_t)&_OVERLAY_LYNX_BSS_END, EMU_ENTRY(app_main_lynx) };
 static const emu_dispatch_t emu_a7800   = { "/cores/a7800.bin",   &_OVERLAY_A7800_BSS_START,   (uint32_t)&_OVERLAY_A7800_BSS_SIZE,   (uint32_t)&_OVERLAY_A7800_SIZE,   0, EMU_ENTRY(app_main_a7800) };
 static const emu_dispatch_t emu_amstrad = { "/cores/amstrad.bin", &_OVERLAY_AMSTRAD_BSS_START, (uint32_t)&_OVERLAY_AMSTRAD_BSS_SIZE, (uint32_t)&_OVERLAY_AMSTRAD_SIZE, 0, EMU_ENTRY(app_main_amstrad) };
 static const emu_dispatch_t emu_tama    = { "/cores/tama.bin",    &_OVERLAY_TAMA_BSS_START,    (uint32_t)&_OVERLAY_TAMA_BSS_SIZE,    (uint32_t)&_OVERLAY_TAMA_SIZE,    0, EMU_ENTRY(app_main_tama) };
@@ -1286,6 +1341,8 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         run_internal_emu(&emu_md, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Atari 2600") == 0) {
         run_internal_emu(&emu_a2600, load_state, start_paused, save_slot);
+    } else if(strcmp(system_name, "Atari Lynx") == 0) {
+        run_internal_emu(&emu_lynx, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Atari 7800") == 0)  {
         run_internal_emu(&emu_a7800, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Amstrad CPC") == 0)  {
@@ -1472,6 +1529,10 @@ void emulators_init()
     add_emulator("WonderSwan", "ws", "ws wsc", RG_LOGO_PAD_WSWAN, RG_LOGO_HEADER_WSWAN, NO_GAME_DATA);
     add_emulator("MSX", "msx", "dsk rom mx1 mx2 cdk lzma", RG_LOGO_PAD_MSX, RG_LOGO_HEADER_MSX, NO_GAME_DATA);
     add_emulator("Atari 2600", "a2600", "a26 bin lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_A2600, NO_GAME_DATA);
+    /* Atari Lynx (Handy core): ROM (.lnx/.lyx) loads from flash; no BIOS needed (HLE).
+     * Logos are placeholders (Atari 2600) until copyright-safe RomM-derived Lynx icons
+     * + RG_LOGO_*_LYNX are wired into rg_logos. */
+    add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_A2600, NO_GAME_DATA);
     add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
     add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
 //    add_emulator("Philips Vectrex", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA); // TODO : change graphics
