@@ -230,13 +230,16 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     }
 
     audio_start_playing(samplesPerFrame);
+    printf("[lynx] entering main loop\n");
 
+    uint32_t _hbf = 0;
     while (1)
     {
         wdog_refresh();
         common_emu_frame_loop();
         odroid_input_read_gamepad(&joystick);
         common_emu_input_loop(&joystick, options, &blit);
+        if (_hbf == 0) printf("[lynx] f0: frame_loop+input ok\n");
 
         uint8_t turbo_buttons = odroid_settings_turbo_buttons_get();
         bool turbo_a = (joystick.values[ODROID_INPUT_A] && (turbo_buttons & 1));
@@ -250,13 +253,20 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
         map_buttons(&joystick);
 
         lynx->UpdateFrame(true);
+        if (_hbf == 0) printf("[lynx] f0: UpdateFrame ok, fb[mid]=%04x\n",
+                              lynx_framebuffer[160 * 51 + 80]);
 
         blit();
+        if (_hbf == 0) printf("[lynx] f0: blit ok\n");
         common_ingame_overlay();
         lcd_swap();
+        if (_hbf == 0) printf("[lynx] f0: lcd_swap ok\n");
         sound_store();
 
         common_emu_sound_sync(false);
+
+        if ((_hbf % 120) == 0) printf("[lynx] alive frame %lu\n", (unsigned long)_hbf);
+        _hbf++;
     }
 }
 
