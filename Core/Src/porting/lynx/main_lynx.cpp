@@ -189,23 +189,19 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     printf("[lynx] new CSystem...\n");
     lynx = new CSystem((const UBYTE *)rom_ptr, (ULONG)rom_length,
                        MIKIE_PIXEL_FORMAT_16BPP_565, AUDIO_LYNX_SAMPLE_RATE);
-    /* Accept by RE-READING the heap object's mFileType, NOT a cached stack local.
-     * On device a cached `int lynx_ft` compared as garbage (ft printed 0 yet
-     * 0==LNX was false) because the RAM-overlay glue's veneer'd printf/new calls
-     * clobber the stack slot. The DIAG below proves the OBJECT read is intact
-     * (eq_illegal correctly 0) and `lynx` is a file-scope static (.bss, not on
-     * the corrupted stack), so this check is robust. */
-    printf("[lynx] DIAG build=%s %s ILLEGAL=%d ft=%d eq_illegal=%d null=%d\n",
-           __DATE__, __TIME__, (int)HANDY_FILETYPE_ILLEGAL,
-           lynx ? (int)lynx->mFileType : -1,
-           (int)(lynx && lynx->mFileType == HANDY_FILETYPE_ILLEGAL),
-           (int)(lynx == NULL));
 
+    /* DEVICE-CRITICAL: do the accept/reject check IMMEDIATELY after construction,
+     * BEFORE any printf in this RAM-overlay frame. On device a RAM->flash
+     * veneer'd printf here corrupts the very NEXT comparison: the DIAG proved the
+     * same (lynx->mFileType == ILLEGAL) read false (eq_illegal=0) as a printf
+     * ARG, yet evaluated true an instant later once the printf had run. So we
+     * must test before the first post-construction printf in this frame. */
     if (lynx == NULL || lynx->mFileType == HANDY_FILETYPE_ILLEGAL)
     {
         printf("Lynx: ROM loading failed.\n");
         return;
     }
+    printf("[lynx] CSystem ok, fileType accepted (build %s %s)\n", __DATE__, __TIME__);
 
     gPrimaryFrameBuffer = (UBYTE *)lynx_framebuffer;
     gAudioBuffer = lynx_audio_buffer;
