@@ -1051,7 +1051,7 @@ $(BUILD_DIR)/doom/%.o: %.c Makefile.common Makefile doom_redefines $(SDK_HEADERS
 # -ICore/Inc (whose different main.h pulls in CMSIS and clashes with shadow nrf.h).
 $(BUILD_DIR)/nhdoom/%.o: %.c Makefile.common Makefile nhdoom_redefines $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC nhdoom ] $(notdir $<)
-	$(V)$(CC) -c $(NHDOOM_C_INCLUDES) $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/nhdoom/$(notdir $(<:.c=.lst)) $< -o $@
+	$(V)$(CC) -c $(NHDOOM_C_INCLUDES) $(CFLAGS) -std=gnu11 -Wno-incompatible-pointer-types -Wno-implicit-function-declaration -Wno-int-conversion -Wno-builtin-declaration-mismatch -Wno-parentheses -Wno-unknown-pragmas -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-const-variable -Wno-int-in-bool-context -Wno-unused-value -Wno-unused-function -Wno-format -Wno-array-bounds -Wno-strict-aliasing -Wno-maybe-uninitialized -Wa,-a,-ad,-alms=$(BUILD_DIR)/nhdoom/$(notdir $(<:.c=.lst)) $< -o $@
 	# Rename engine globals that collide with other cores linked into the same
 	# ELF (e.g. nes_fceu also defines a global `palette`). One-at-a-time list.
 	$(V)$(CP) --redefine-syms=nhdoom_redefines $@
