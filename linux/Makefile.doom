@@ -1,0 +1,159 @@
+# Linux host harness for the Game & Watch DOOM zone-allocation failure.
+# Mirrors linux/Makefile.<core>: gcc + LINUX_EMU/TARGET_GNW/IS_LITTLE_ENDIAN.
+# Compiles the EXACT device DOOM source set (Makefile DOOM_C_SOURCES) so the
+# zone + bonus-pool accounting matches the device, EXCEPT:
+#   - main_doom.c (device GW glue) -> doom/host_main.c (headless host glue)
+#   - r_plane.c uses the UPSTREAM doomgeneric version, not the override: the
+#     override only shrinks render-time BSS arrays (visplanes/openings) and
+#     makes ZERO zone allocations, so the zone behaviour is identical, while
+#     the upstream visplane counts avoid render-path I_Errors that would mask
+#     the zone result during a successful (large-zone) demo render.
+#
+# Build:  cd linux && make -f Makefile.doom
+# Run:    DOOM_ZONE_KB=490 ./build_doom/retro-go-doom.elf
+
+TARGET   = retro-go-doom
+
+# ARCH=native (default, 64-bit host) or ARCH=arm32 (32-bit ARM cross via
+# arm-linux-gnueabihf-gcc + qemu-arm-static). arm32 gives ILP32 / 4-byte
+# pointers so seg_t/line_t/blocklinks byte-match the 32-bit Game & Watch device.
+ARCH ?= native
+ifeq ($(ARCH),arm32)
+  CC = arm-linux-gnueabihf-gcc
+  SZ = arm-linux-gnueabihf-size
+  BUILD_DIR = build_doom32
+else
+  CC = gcc
+  SZ = size
+  BUILD_DIR = build_doom
+endif
+
+DG      = ../external/doomgeneric/doomgeneric
+DOOMSRC = ../Core/Src/porting/doom
+
+# Device override files (memory-accounting fidelity). w_wad.c carries the real
+# flash-XIP mapped-WAD path; f_wipe.c is the real no-op-wipe override (so the
+# harness exercises the actual committed device source, not a --wrap shim).
+C_SOURCES = \
+doom/host_main.c \
+$(DOOMSRC)/d_event.c \
+$(DOOMSRC)/d_loop.c \
+$(DOOMSRC)/doom_i_system.c \
+$(DOOMSRC)/w_wad.c \
+$(DOOMSRC)/i_video.c \
+$(DOOMSRC)/doomgeneric.c \
+$(DOOMSRC)/f_wipe.c \
+$(DG)/dummy.c \
+$(DG)/am_map.c \
+$(DG)/doomdef.c \
+$(DG)/doomstat.c \
+$(DG)/dstrings.c \
+$(DG)/d_items.c \
+$(DG)/d_iwad.c \
+$(DG)/d_main.c \
+$(DG)/d_mode.c \
+$(DG)/d_net.c \
+$(DG)/f_finale.c \
+$(DG)/g_game.c \
+$(DG)/hu_lib.c \
+$(DG)/hu_stuff.c \
+$(DG)/info.c \
+$(DG)/i_cdmus.c \
+$(DG)/i_endoom.c \
+$(DG)/i_joystick.c \
+$(DG)/i_scale.c \
+$(DG)/i_sound.c \
+$(DG)/i_timer.c \
+$(DG)/memio.c \
+$(DG)/m_argv.c \
+$(DG)/m_bbox.c \
+$(DG)/m_cheat.c \
+$(DG)/m_config.c \
+$(DG)/m_controls.c \
+$(DG)/m_fixed.c \
+$(DG)/m_menu.c \
+$(DG)/m_misc.c \
+$(DG)/m_random.c \
+$(DG)/p_ceilng.c \
+$(DG)/p_doors.c \
+$(DG)/p_enemy.c \
+$(DG)/p_floor.c \
+$(DG)/p_inter.c \
+$(DG)/p_lights.c \
+$(DG)/p_map.c \
+$(DG)/p_maputl.c \
+$(DG)/p_mobj.c \
+$(DG)/p_plats.c \
+$(DG)/p_pspr.c \
+$(DG)/p_saveg.c \
+$(DG)/p_setup.c \
+$(DG)/p_sight.c \
+$(DG)/p_spec.c \
+$(DG)/p_switch.c \
+$(DG)/p_telept.c \
+$(DG)/p_tick.c \
+$(DG)/p_user.c \
+$(DG)/r_bsp.c \
+$(DG)/r_data.c \
+$(DG)/r_draw.c \
+$(DG)/r_main.c \
+$(DG)/r_plane.c \
+$(DG)/r_segs.c \
+$(DG)/r_sky.c \
+$(DG)/r_things.c \
+$(DG)/sha1.c \
+$(DG)/sounds.c \
+$(DG)/statdump.c \
+$(DG)/st_lib.c \
+$(DG)/st_stuff.c \
+$(DG)/s_sound.c \
+$(DG)/tables.c \
+$(DG)/v_video.c \
+$(DG)/wi_stuff.c \
+$(DG)/w_checksum.c \
+$(DG)/w_file.c \
+$(DG)/w_main.c \
+$(DG)/z_zone.c \
+$(DG)/w_file_stdc.c \
+$(DG)/i_input.c
+
+C_DEFS = -DLINUX_EMU -DTARGET_GNW -DIS_LITTLE_ENDIAN \
+         -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200
+
+C_INCLUDES = -I. -I./doom -I$(DG) -I$(DOOMSRC) -I../Core/Inc/porting/doom
+
+# -O1 (keep readable frames), -g + -fno-omit-frame-pointer for backtraces,
+# -no-pie so frame addresses are absolute (addr2line resolves directly).
+OPT = -O1 -g -fno-omit-frame-pointer
+CFLAGS = $(C_DEFS) $(C_INCLUDES) $(OPT) \
+         -fno-strict-aliasing -fno-stack-protector \
+         -Wno-implicit-function-declaration -Wno-int-conversion \
+         -Wno-incompatible-pointer-types -Wno-format
+CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
+
+# --wrap=Z_Malloc routes all callers to __wrap_Z_Malloc (host_main.c) -- the
+# only remaining wrap, used purely to record alloc sizes/sites for diagnostics
+# (it does NOT change behaviour). The wipe + mapped-WAD fixes are now in the
+# real device source (f_wipe.c / w_wad.c), so the old wipe/W_OpenFile wraps are
+# gone. -rdynamic + -no-pie so backtrace_symbols / addr2line resolve names.
+LDFLAGS = -lm -rdynamic -no-pie -Wl,--wrap=Z_Malloc
+
+all: $(BUILD_DIR)/$(TARGET).elf
+
+OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+vpath %.c $(sort $(dir $(C_SOURCES)))
+
+$(BUILD_DIR)/%.o: %.c Makefile.doom | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) Makefile.doom
+	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR):
+	mkdir -p $@
+
+clean:
+	-rm -fR $(BUILD_DIR)
+
+-include $(wildcard $(BUILD_DIR)/*.d)
