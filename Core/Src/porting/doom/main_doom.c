@@ -164,25 +164,29 @@ void DG_DrawFrame(void)
         return;
     }
 
-    /* ---- BULLETPROOF DIAGNOSTIC (DOOM_LCD_REDTEST2) ----
-     * Eliminate every confound (buffer choice, swap timing, my swap-pending
-     * gate): fill BOTH framebuffers entirely red, every frame, with no gate.
-     * Whatever buffer the LTDC scans out of the pool, it must turn red. If the
-     * screen is RED, the output path is alive and DOOM's content/timing is the
-     * bug. If it stays BLACK, the LTDC genuinely never scans the LCD pool for
-     * this app (display disabled / reload never completing). Remove after. */
-#define DOOM_LCD_REDTEST2 1
-#if DOOM_LCD_REDTEST2
+    /* One-shot serial diagnostic -- the screen can't tell us anything, so dump
+     * the facts to the log instead. Is the palette black? Does I_VideoBuffer
+     * actually hold non-zero pixels? Does the buffer we draw into match the
+     * framebuffer pool? This bisects palette-black vs display-path with zero
+     * dependence on what the panel shows. Remove once understood. */
     {
-        const size_t total = (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT;
-        uint16_t *a = (uint16_t *)lcd_get_active_buffer();
-        uint16_t *b = (uint16_t *)lcd_get_inactive_buffer();
-        for (size_t i = 0; i < total; ++i) { a[i] = 0xF800; b[i] = 0xF800; }
-        wdog_refresh();
-        lcd_swap();
-        return;
+        static int doomdiag_done = 0;
+        if (!doomdiag_done) {
+            doomdiag_done = 1;
+            extern uint16_t rgb565_palette[256];
+            extern pixel_t *framebuffer1;
+            extern pixel_t *framebuffer2;
+            printf("[doomdiag] pal[1,2,4,8,16,80]= %04x %04x %04x %04x %04x %04x\n",
+                   rgb565_palette[1], rgb565_palette[2], rgb565_palette[4],
+                   rgb565_palette[8], rgb565_palette[16], rgb565_palette[80]);
+            printf("[doomdiag] vbuf[0..15]=");
+            for (int i = 0; i < 16; ++i) printf(" %02x", src[i]);
+            printf("\n");
+            printf("[doomdiag] active=%p inactive=%p fb1=%p fb2=%p y_off=%d\n",
+                   lcd_get_active_buffer(), lcd_get_inactive_buffer(),
+                   (void *)framebuffer1, (void *)framebuffer2, DOOM_FB_Y_OFFSET);
+        }
     }
-#endif
 
     /* Don't touch the framebuffer while the previous swap is still being applied
      * at vblank. Issuing another draw+swap mid-reload corrupts the active/inactive
