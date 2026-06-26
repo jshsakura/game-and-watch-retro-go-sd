@@ -1,0 +1,95 @@
+TARGET = retro-go-lynx
+
+DEBUG = 1
+OPT = -O0 -ggdb3
+
+# Isolated build dir so this can run in parallel with other host harnesses.
+BUILD_DIR = build_lynx
+
+CORE_LYNX = ../external/handy-go
+
+C_SOURCES =  \
+loaded_lynx_rom.c \
+
+SOURCES_CXX := \
+lynx/main.cxx \
+$(CORE_LYNX)/system.cpp \
+$(CORE_LYNX)/cart.cpp \
+$(CORE_LYNX)/mikie.cpp \
+$(CORE_LYNX)/susie.cpp \
+$(CORE_LYNX)/eeprom.cpp \
+$(CORE_LYNX)/lynxdec.cpp \
+
+PREFIX =
+
+CC = $(PREFIX)gcc
+CXX= $(PREFIX)g++
+AS = $(PREFIX)gcc -x assembler-with-cpp
+CP = $(PREFIX)objcopy
+SZ = $(PREFIX)size
+
+HEX = $(CP) -O ihex
+BIN = $(CP) -O binary -S
+
+# Host is little-endian; do NOT define MSB_FIRST / RETRO_GO / SDL_PATCH /
+# _LYNXDBG (those would either change crc/log wiring or pull in device headers).
+C_DEFS =  \
+-DIS_LITTLE_ENDIAN -DTARGET_GNW -DLINUX_EMU
+
+C_INCLUDES =  \
+-I. \
+-I./lynx \
+-I$(CORE_LYNX) \
+
+CXX_INCLUDES =  \
+-I. \
+-I./lynx \
+-I$(CORE_LYNX) \
+
+ASFLAGS = $(AS_DEFS) $(AS_INCLUDES) $(OPT) -fdata-sections -ffunction-sections
+CFLAGS  = $(C_DEFS) $(C_INCLUDES) `sdl2-config --cflags` $(OPT) -fdata-sections -ffunction-sections
+CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)" \
+	-fno-stack-protector -fno-ident -fomit-frame-pointer
+
+CXXFLAGS = $(CFLAGS) $(CXX_INCLUDES) \
+	-fno-rtti \
+	-fno-math-errno \
+	-fomit-frame-pointer \
+	-fno-stack-protector \
+	-DHAVE_STDINT_H \
+	-DIS_LITTLE_ENDIAN
+
+LIBS = -lm `sdl2-config --libs`
+CXXLIBS = -lstdc++
+LDFLAGS = $(LIBS) $(CXXLIBS)
+
+all: $(BUILD_DIR)/$(TARGET).elf
+
+OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+vpath %.c $(sort $(dir $(C_SOURCES)))
+CXX_OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(SOURCES_CXX:.cpp=.o)))
+CXX_OBJECTS := $(CXX_OBJECTS:.cxx=.o)
+vpath %.c $(sort $(dir $(C_SOURCES)))
+vpath %.cpp $(sort $(dir $(SOURCES_CXX)))
+vpath %.cxx $(sort $(dir $(SOURCES_CXX)))
+
+$(BUILD_DIR)/%.o: %.c Makefile.lynx | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/%.o: %.cpp Makefile.lynx | $(BUILD_DIR)
+	$(CXX) -c $(CXXFLAGS) $< -o $@
+
+$(BUILD_DIR)/%.o: %.cxx Makefile.lynx | $(BUILD_DIR)
+	$(CXX) -c $(CXXFLAGS) $< -o $@
+
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(CXX_OBJECTS) Makefile.lynx
+	$(CC) $(OBJECTS) $(CXX_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR):
+	mkdir $@
+
+clean:
+	-rm -fR $(BUILD_DIR)
+
+-include $(wildcard $(BUILD_DIR)/*.d)

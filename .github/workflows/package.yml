@@ -29,6 +29,22 @@ jobs:
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
+  lynx-core-test:
+    # Host-side AddressSanitizer test of the Atari Lynx core (external/handy-go),
+    # which is shared verbatim with the device overlay. Runs on every push/PR
+    # ALONGSIDE the firmware build so Lynx load-path memory bugs (e.g. the BS93
+    # big-endian header OOB-write) are caught before anything is flashed — the
+    # device itself can't safely run an unverified core. No toolchain/docker
+    # needed; ubuntu-latest ships g++ + python3.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+      - name: Lynx host core test (ASan + UBSan)
+        run: cd linux && ./run_lynx_host_test.sh
+
   build-package:
     if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
