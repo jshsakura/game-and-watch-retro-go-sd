@@ -160,17 +160,7 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
      * /lynx_trace.txt (DOOM uses /doom_trace.txt) so both logs are preserved and
      * we can see exactly where Lynx dies instead of guessing. */
     sd_trace_begin("/lynx_trace.txt");
-    printf("[lynx] app start (XIP cart build)\n");
-    /* Surface the pre-app XIP cache/patch results (they printed to UART before
-     * this trace file existed) so the SD log shows whether lynx.ro cached and
-     * how many sentinel refs were patched in the flash blob + the RAM glue. */
-    {
-        extern uint8_t *g_lynx_ro_addr; extern unsigned int g_lynx_ro_size;
-        extern int g_lynx_ro_patched; extern int g_lynx_glue_patched;
-        printf("[lynx] XIP ro=%p size=%u ro_patched=%d glue_patched=%d\n",
-               (void *)g_lynx_ro_addr, g_lynx_ro_size,
-               g_lynx_ro_patched, g_lynx_glue_patched);
-    }
+    printf("[lynx] app start (RAM overlay build)\n");
 
     heap_itc_alloc(true);
 
