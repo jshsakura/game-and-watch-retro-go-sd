@@ -83,7 +83,16 @@ static size_t getromdata(unsigned char **data)
      * pure waste: ROM(≈320K) + cart banks(≈320K) + 64K RAM overflowed the heap
      * and HardFaulted on load. lzma is unused in this build. */
     uint32_t size = 0;
-    *data = (unsigned char *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
+    unsigned char *flashptr = (unsigned char *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
+    if (!flashptr || size == 0) { *data = NULL; return 0; }
+    /* TEST: copy the ROM into RAM so the 65C02 reads cart bank0 from RAM (like
+     * the host harness, which runs UpdateFrame fine) instead of QSPI flash-XIP.
+     * UpdateFrame dies on device (marker m2->m3) but not on host — the only
+     * difference is bank0's location. 256K ROM + 64K bank1 + 64K CRam = 384K,
+     * fits the ~610K overlay heap. If this runs, flash-XIP bank0 was the cause. */
+    unsigned char *ram = new unsigned char[size];
+    memcpy(ram, flashptr, size);
+    *data = ram;
     return size;
 }
 
