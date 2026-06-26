@@ -100,6 +100,12 @@ void lcd_get_bonus_pool(uint8_t **out_ptr, size_t *out_size);
  * entries internally so lcd_pack_color() can do nearest-match lookups. */
 void lcd_set_clut(const uint32_t *clut, uint16_t count);
 
+/* Full-palette variant for 256-colour cores (DOOM): programs all `count`
+ * (<=256) entries straight to the LTDC hardware CLUT, with no darkened-twin
+ * doubling and no active_clut[] staging. Leaves the lcd_set_clut() cart path
+ * untouched. Use when the core owns the whole 256-entry palette. */
+void lcd_set_clut_full(const uint32_t *clut, uint16_t count);
+
 /* Fixed-size snapshot of the active cart CLUT as RGB565, used by the
  * savestate-screenshot loader to convert a LUT8 preview to RGB565 when
  * the menu's framebuffer is in RGB565 mode.

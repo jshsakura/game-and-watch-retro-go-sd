@@ -412,6 +412,19 @@ void lcd_set_clut(const uint32_t *clut, uint16_t count)
   clut_push();
 }
 
+/* Full 256-colour CLUT for paletted cores (DOOM) that use the entire palette
+ * and have no use for the cart darkened-twin / overlay scheme. Programs all
+ * `count` (<=256) entries straight to the LTDC hardware CLUT at slot 0 -- no
+ * twin doubling, no active_clut[] staging. The existing lcd_set_clut() (Lynx
+ * cart path) and active_clut[] state are left completely untouched. */
+void lcd_set_clut_full(const uint32_t *clut, uint16_t count)
+{
+  if (current_lcd_mode != LCD_MODE_LUT8 || clut == NULL || count == 0) return;
+  if (count > 256) count = 256;
+  HAL_LTDC_ConfigCLUT(&hltdc, (uint32_t *)clut, count, 0);
+  HAL_LTDC_EnableCLUT(&hltdc, 0);
+}
+
 void lcd_set_overlay_clut(const uint32_t *colors, uint16_t count)
 {
   if (colors == NULL) return;

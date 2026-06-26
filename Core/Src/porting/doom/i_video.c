@@ -394,8 +394,10 @@ void I_SetPalette (byte* palette)
 
     /* GNW: the LCD runs in LUT8 mode for DOOM, so program the gamma-corrected
      * 256-colour palette straight into the LTDC hardware CLUT (0x00RRGGBB).
-     * DG_DrawFrame then only copies 8bpp indices -- the LTDC does the colour. */
-    extern void lcd_set_clut(const uint32_t *clut, unsigned short count);
+     * DG_DrawFrame then only copies 8bpp indices -- the LTDC does the colour.
+     * Use the full-256 variant: lcd_set_clut() clamps to 32 (cart/Lynx path),
+     * which would leave indices 64..255 black. */
+    extern void lcd_set_clut_full(const uint32_t *clut, unsigned short count);
     uint32_t clut[256];
 
     for (i=0; i<256; ++i ) {
@@ -407,7 +409,7 @@ void I_SetPalette (byte* palette)
                   ((uint32_t)colors[i].g << 8)  |
                   ((uint32_t)colors[i].b);
     }
-    lcd_set_clut(clut, 256);
+    lcd_set_clut_full(clut, 256);
 
 #ifdef CMAP256
 
