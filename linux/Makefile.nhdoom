@@ -1,0 +1,88 @@
+# Linux/arm32 host harness for the next-hack nRF52840Doom engine (Phase 1).
+#
+# Goal: prove the engine + the converted .mcu.wad pipeline render a level on the
+# HOST, with the real 113600-byte static zone, BEFORE any Game & Watch HAL work.
+#
+# We cross-compile the portable engine for arm-linux-gnueabihf (ILP32, 4-byte
+# pointers) and run under qemu-arm-static so seg_t/line_t/vertex_t and the zone
+# short-pointer math byte-match the device.  The ~9 nRF HAL seams are replaced
+# by host stubs in nhdoom/src; nRF hardware headers are shadowed in
+# nhdoom/include.  A custom linker script (nhdoom.ld) pins the engine's data,
+# bss and the zone at RAM_PTR_BASE=0x20000000 (so 16-bit short pointers round
+# trip) while keeping the 240x240 framebuffer out of that window; the WAD and
+# the internal-flash cache are mmap'd at their device addresses (host_main.c).
+#
+# Build:  cd linux && make -f Makefile.nhdoom
+# Run:    qemu-arm-static ./build_nhdoom/nhdoom.elf <doom1.mcu.wad>
+
+CC = arm-linux-gnueabihf-gcc
+SZ = arm-linux-gnueabihf-size
+QEMU = qemu-arm-static
+
+BUILD_DIR = build_nhdoom
+NH        = ../external/nh-doom/NRF52840Doom
+ESRC      = $(NH)/Doom/source
+EINC      = $(NH)/Doom/include
+HOST      = nhdoom
+HINC      = $(HOST)/include
+HSRC      = $(HOST)/src
+
+# Shadow include dir FIRST so our nrf.h/main.h/graphics.h/... win over src/.
+INCLUDES = -I$(HINC) -I$(EINC)
+
+PRELUDE = $(HINC)/nh_prelude.h
+
+CFLAGS = -std=gnu11 -O1 -g -fcommon -fno-strict-aliasing \
+         -ffunction-sections -fdata-sections \
+         -DHAVE_CONFIG_H -include $(PRELUDE) $(INCLUDES) \
+         -Wno-implicit-function-declaration -Wno-int-conversion
+
+LDFLAGS = -static -no-pie -T $(HOST)/nhdoom.ld -pthread
+
+# Portable engine sources, EXCLUDING the two nRF-only files we replace:
+#   i_main.c  -> NRF_TIMER3 clock + I_Init      -> nhdoom/src/host_sys.c
+#   i_audio.c -> nRF PWM/I2S sound mixer        -> nhdoom/src/host_audio.c
+# i_spi_support.c is KEPT (just defines currentSpiAddress; reads are mmap derefs)
+ENGINE_C = \
+$(ESRC)/am_map.c $(ESRC)/d_client.c $(ESRC)/d_items.c $(ESRC)/d_main.c \
+$(ESRC)/f_finale.c $(ESRC)/f_wipe.c $(ESRC)/g_game.c \
+$(ESRC)/global_data.c $(ESRC)/hu_lib.c $(ESRC)/hu_stuff.c $(ESRC)/i_spi_support.c \
+$(ESRC)/i_video.c $(ESRC)/info.c $(ESRC)/m_bbox.c $(ESRC)/m_cheat.c \
+$(ESRC)/m_menu.c $(ESRC)/m_random.c $(ESRC)/p_ceilng.c $(ESRC)/p_doors.c \
+$(ESRC)/p_enemy.c $(ESRC)/p_floor.c $(ESRC)/p_genlin.c $(ESRC)/p_inter.c \
+$(ESRC)/p_lights.c $(ESRC)/p_map.c $(ESRC)/p_maputl.c $(ESRC)/p_mobj.c \
+$(ESRC)/p_plats.c $(ESRC)/p_pspr.c $(ESRC)/p_setup.c $(ESRC)/p_sight.c \
+$(ESRC)/p_spec.c $(ESRC)/p_switch.c $(ESRC)/p_telept.c $(ESRC)/p_tick.c \
+$(ESRC)/p_user.c $(ESRC)/r_data.c $(ESRC)/r_draw.c $(ESRC)/r_fast_stuff.c \
+$(ESRC)/r_main.c $(ESRC)/r_patch.c $(ESRC)/r_plane.c $(ESRC)/r_things.c \
+$(ESRC)/s_sound.c $(ESRC)/sounds.c $(ESRC)/st_gfx.c $(ESRC)/st_lib.c \
+$(ESRC)/st_stuff.c $(ESRC)/tables.c $(ESRC)/v_video.c $(ESRC)/version.c \
+$(ESRC)/w_wad.c $(ESRC)/wi_stuff.c $(ESRC)/z_bmalloc.c $(ESRC)/z_zone.c
+
+HOST_C = \
+$(HSRC)/host_main.c $(HSRC)/host_nrf.c $(HSRC)/host_video.c \
+$(HSRC)/host_input.c $(HSRC)/host_audio.c $(HSRC)/host_sys.c
+
+SRC = $(ENGINE_C) $(HOST_C)
+OBJ = $(patsubst %.c,$(BUILD_DIR)/%.o,$(notdir $(SRC)))
+
+TARGET = $(BUILD_DIR)/nhdoom.elf
+
+vpath %.c $(ESRC) $(HSRC)
+
+all: $(TARGET)
+
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+$(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(TARGET): $(OBJ)
+	$(CC) $(OBJ) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+clean:
+	rm -rf $(BUILD_DIR)
+
+.PHONY: all clean

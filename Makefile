@@ -882,6 +882,51 @@ $(DOOMGENERIC_DIR)/i_input.c \
 Core/Src/porting/doom/i_video.c \
 Core/Src/porting/doom/doomgeneric.c
 
+# -----------------------------------------------------------------------------
+# DOOM engine selector (Phase 2). USE_NHDOOM switches the DOOM target from the
+# doomgeneric checkpoint (kept in tree, default OFF only when set to 0) to the
+# next-hack nRF52840Doom engine + Game & Watch HAL (Core/Src/porting/nhdoom).
+# USE_NHDOOM=0 restores the exact doomgeneric build (fully reversible).
+# -----------------------------------------------------------------------------
+USE_NHDOOM ?= 1
+ifeq ($(USE_NHDOOM),1)
+# Do not compile the doomgeneric sources; the next-hack engine owns DOOM now.
+DOOM_C_SOURCES :=
+C_DEFS += -DUSE_NHDOOM
+
+NHDOOM_NH   = external/nh-doom/NRF52840Doom
+NHDOOM_ESRC = $(NHDOOM_NH)/Doom/source
+NHDOOM_HAL  = Core/Src/porting/nhdoom/src
+
+# Portable next-hack engine: the exact 55-file set proven on the host harness
+# (linux/Makefile.nhdoom ENGINE_C). i_main.c / i_audio.c / doom_iwad.c are
+# EXCLUDED and replaced by the device HAL (device_sys/device_audio/device_main).
+NHDOOM_C_SOURCES = \
+$(NHDOOM_ESRC)/am_map.c $(NHDOOM_ESRC)/d_client.c $(NHDOOM_ESRC)/d_items.c \
+$(NHDOOM_ESRC)/d_main.c $(NHDOOM_ESRC)/f_finale.c $(NHDOOM_ESRC)/f_wipe.c \
+$(NHDOOM_ESRC)/g_game.c $(NHDOOM_ESRC)/global_data.c $(NHDOOM_ESRC)/hu_lib.c \
+$(NHDOOM_ESRC)/hu_stuff.c $(NHDOOM_ESRC)/i_spi_support.c $(NHDOOM_ESRC)/i_video.c \
+$(NHDOOM_ESRC)/info.c $(NHDOOM_ESRC)/m_bbox.c $(NHDOOM_ESRC)/m_cheat.c \
+$(NHDOOM_ESRC)/m_menu.c $(NHDOOM_ESRC)/m_random.c $(NHDOOM_ESRC)/p_ceilng.c \
+$(NHDOOM_ESRC)/p_doors.c $(NHDOOM_ESRC)/p_enemy.c $(NHDOOM_ESRC)/p_floor.c \
+$(NHDOOM_ESRC)/p_genlin.c $(NHDOOM_ESRC)/p_inter.c $(NHDOOM_ESRC)/p_lights.c \
+$(NHDOOM_ESRC)/p_map.c $(NHDOOM_ESRC)/p_maputl.c $(NHDOOM_ESRC)/p_mobj.c \
+$(NHDOOM_ESRC)/p_plats.c $(NHDOOM_ESRC)/p_pspr.c $(NHDOOM_ESRC)/p_setup.c \
+$(NHDOOM_ESRC)/p_sight.c $(NHDOOM_ESRC)/p_spec.c $(NHDOOM_ESRC)/p_switch.c \
+$(NHDOOM_ESRC)/p_telept.c $(NHDOOM_ESRC)/p_tick.c $(NHDOOM_ESRC)/p_user.c \
+$(NHDOOM_ESRC)/r_data.c $(NHDOOM_ESRC)/r_draw.c $(NHDOOM_ESRC)/r_fast_stuff.c \
+$(NHDOOM_ESRC)/r_main.c $(NHDOOM_ESRC)/r_patch.c $(NHDOOM_ESRC)/r_plane.c \
+$(NHDOOM_ESRC)/r_things.c $(NHDOOM_ESRC)/s_sound.c $(NHDOOM_ESRC)/sounds.c \
+$(NHDOOM_ESRC)/st_gfx.c $(NHDOOM_ESRC)/st_lib.c $(NHDOOM_ESRC)/st_stuff.c \
+$(NHDOOM_ESRC)/tables.c $(NHDOOM_ESRC)/v_video.c $(NHDOOM_ESRC)/version.c \
+$(NHDOOM_ESRC)/w_wad.c $(NHDOOM_ESRC)/wi_stuff.c $(NHDOOM_ESRC)/z_bmalloc.c \
+$(NHDOOM_ESRC)/z_zone.c \
+$(NHDOOM_HAL)/device_main.c $(NHDOOM_HAL)/device_nrf.c $(NHDOOM_HAL)/device_video.c \
+$(NHDOOM_HAL)/device_input.c $(NHDOOM_HAL)/device_audio.c $(NHDOOM_HAL)/device_sys.c
+else
+NHDOOM_C_SOURCES :=
+endif
+
 # Wolfenstein 3D (autobalance/Wolf3D-STM32 engine). id_vl.c/id_vh.c are NOT
 # compiled from the submodule — vendored+patched copies (wolf_vl.c/wolf_vh.c)
 # replace the LTDC render path with a software 8bit->RGB565 flush.
@@ -1226,6 +1271,24 @@ DOOM_C_INCLUDES += \
 -ICore/Inc/porting \
 -ICore/Inc/porting/doom \
 -Iretro-go-stm32/components/odroid \
+-I./
+
+# nhdoom (next-hack engine + G&W HAL). The shadow headers (Core/Src/porting/
+# nhdoom/include) MUST precede the engine include so they win over the engine's
+# hardware headers, and nh_prelude.h is force-included before every TU to claim
+# the i_memory.h guard (runtime pointer-packing bases) -- exactly like the host
+# harness. -O caveat: the host -O1 limit was a host-gcc-13 codegen bug; the
+# arm-none-eabi build compiles the engine at the global OPT (-O2) with no issue.
+NHDOOM_C_INCLUDES += \
+-include Core/Src/porting/nhdoom/include/nh_prelude.h \
+-ICore/Src/porting/nhdoom/include \
+-Iexternal/nh-doom/NRF52840Doom/Doom/include \
+-ICore/Inc \
+-ICore/Inc/retro-go \
+-ICore/Inc/porting \
+-Iretro-go-stm32/components/odroid \
+-Wno-implicit-function-declaration -Wno-int-conversion \
+-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function \
 -I./
 
 # Wolf3D: shareware v1.4 (CARMACIZED+UPLOAD => .WL1 data); engine + glue headers.

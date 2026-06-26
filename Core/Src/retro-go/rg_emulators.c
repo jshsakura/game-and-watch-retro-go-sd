@@ -35,6 +35,9 @@
 #include "main_music.h"
 #include "main_video.h"
 #include "doom/main_doom.h"
+#ifdef USE_NHDOOM
+#include "nhdoom/main_nhdoom.h"
+#endif
 #include "wolf3d/main_wolf3d.h"
 #include "main_pico8.h"
 #include "main_tama.h"
@@ -1458,7 +1461,14 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             memset(&_OVERLAY_DOOM_BSS_START, 0x0, (size_t)&_OVERLAY_DOOM_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_DOOM_SIZE);
             SCB_InvalidateICache();
+#ifdef USE_NHDOOM
+            /* Phase 2: the next-hack engine replaces doomgeneric for DOOM.
+             * Same overlay (Doom.bin) / XIP (doom.ro) dispatch; only the entry
+             * point differs. USE_NHDOOM=0 restores app_main_doom. */
+            app_main_nhdoom(load_state, start_paused, save_slot);
+#else
             app_main_doom(load_state, start_paused, save_slot);
+#endif
         }
       } else if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
         if (strcmp(newfile->name,"celeste") == 0) {
