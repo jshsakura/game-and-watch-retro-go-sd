@@ -164,6 +164,15 @@ void DG_DrawFrame(void)
         return;
     }
 
+    /* Don't touch the framebuffer while the previous swap is still being applied
+     * at vblank. Issuing another draw+swap mid-reload corrupts the active/inactive
+     * buffer state: we draw into the buffer currently on screen (garbled/torn) or
+     * flip to an unwritten buffer (black). Every working core gates on this; DOOM
+     * was the only one swapping unconditionally. Present the next tic instead --
+     * I_VideoBuffer keeps the latest frame. */
+    if (lcd_is_swap_pending())
+        return;
+
     /* Software palette like the host harness: look up rgb565_palette[index] for
      * each 8bpp pixel and write RGB565 into the letterboxed middle of the active
      * buffer (X_OFFSET is 0 so rows are contiguous). LCD stays in RGB565 mode. */
