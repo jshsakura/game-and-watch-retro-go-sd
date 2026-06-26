@@ -189,25 +189,21 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     printf("[lynx] new CSystem...\n");
     lynx = new CSystem((const UBYTE *)rom_ptr, (ULONG)rom_length,
                        MIKIE_PIXEL_FORMAT_16BPP_565, AUDIO_LYNX_SAMPLE_RATE);
-    /* DIAG + ROBUST ACCEPT. The committed source can never reject fileType=0
-     * (LNX) here, yet a device build did — so dump the build stamp + the RAW
-     * runtime values to settle whether the running binary matches this source,
-     * and WHITELIST the known-good types instead of black-listing ILLEGAL, so a
-     * miscompiled/corrupted ILLEGAL constant can no longer reject a valid cart. */
-    int lynx_ft = lynx ? (int)lynx->mFileType : -1;
-    printf("[lynx] DIAG build=%s %s  ILLEGAL=%d ft=%d eq_illegal=%d null=%d\n",
-           __DATE__, __TIME__, (int)HANDY_FILETYPE_ILLEGAL, lynx_ft,
+    /* Accept by RE-READING the heap object's mFileType, NOT a cached stack local.
+     * On device a cached `int lynx_ft` compared as garbage (ft printed 0 yet
+     * 0==LNX was false) because the RAM-overlay glue's veneer'd printf/new calls
+     * clobber the stack slot. The DIAG below proves the OBJECT read is intact
+     * (eq_illegal correctly 0) and `lynx` is a file-scope static (.bss, not on
+     * the corrupted stack), so this check is robust. */
+    printf("[lynx] DIAG build=%s %s ILLEGAL=%d ft=%d eq_illegal=%d null=%d\n",
+           __DATE__, __TIME__, (int)HANDY_FILETYPE_ILLEGAL,
+           lynx ? (int)lynx->mFileType : -1,
            (int)(lynx && lynx->mFileType == HANDY_FILETYPE_ILLEGAL),
            (int)(lynx == NULL));
 
-    bool lynx_ok = (lynx != NULL) &&
-                   (lynx_ft == HANDY_FILETYPE_LNX ||
-                    lynx_ft == HANDY_FILETYPE_HOMEBREW ||
-                    lynx_ft == HANDY_FILETYPE_RAW ||
-                    lynx_ft == HANDY_FILETYPE_SNAPSHOT);
-    if (!lynx_ok)
+    if (lynx == NULL || lynx->mFileType == HANDY_FILETYPE_ILLEGAL)
     {
-        printf("Lynx: ROM loading failed (ft=%d).\n", lynx_ft);
+        printf("Lynx: ROM loading failed.\n");
         return;
     }
 
