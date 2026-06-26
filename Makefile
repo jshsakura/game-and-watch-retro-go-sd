@@ -814,7 +814,7 @@ $(DOOMGENERIC_DIR)/d_main.c \
 $(DOOMGENERIC_DIR)/d_mode.c \
 $(DOOMGENERIC_DIR)/d_net.c \
 $(DOOMGENERIC_DIR)/f_finale.c \
-$(DOOMGENERIC_DIR)/f_wipe.c \
+Core/Src/porting/doom/f_wipe.c \
 $(DOOMGENERIC_DIR)/g_game.c \
 $(DOOMGENERIC_DIR)/hu_lib.c \
 $(DOOMGENERIC_DIR)/hu_stuff.c \

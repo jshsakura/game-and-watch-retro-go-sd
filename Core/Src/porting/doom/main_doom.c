@@ -20,6 +20,7 @@
 #include "common.h"
 #include "rom_manager.h"
 #include "appid.h"
+#include "odroid_overlay.h"   /* odroid_overlay_cache_file_in_flash: WAD -> XIP flash */
 
 #include "doom/main_doom.h"
 
@@ -56,6 +57,17 @@ extern void doom_trace_end(void);
 #define DOOM_WAD_PATH      "/roms/homebrew/DOOM1.WAD"
 #define DOOM_FB_X_OFFSET   ((ODROID_SCREEN_WIDTH  - DOOMGENERIC_RESX) / 2)   /* 0  */
 #define DOOM_FB_Y_OFFSET   ((ODROID_SCREEN_HEIGHT - DOOMGENERIC_RESY) / 2)   /* 20 */
+
+/* WAD served from memory-mapped (XIP) flash. app_main_doom() caches the
+ * shareware IWAD into external flash once at launch (CRC-cached across
+ * launches) and publishes the mapped pointer + size here; W_AddFile
+ * (Core/Src/porting/doom/w_wad.c) then sets wad_file->mapped so DOOM serves
+ * every lump in place instead of Z_Malloc-copying it into the small,
+ * fragmented zone. On cache failure these stay NULL/0 and DOOM falls back to
+ * reading lumps from SD (today's behaviour) with no regression.
+ * (next-hack flash-resident-WAD technique, ref next-hack/nRF52840Doom.) */
+uint8_t  *g_doom_wad_mapped = NULL;
+uint32_t  g_doom_wad_size   = 0;
 
 /* ------------------------------------------------------------------ */
 /* Input: translate the G&W buttons into a queue of DOOM key events.   */
@@ -299,6 +311,14 @@ int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     } else {
         common_emu_state.pause_after_frames = 0;
     }
+
+    /* Cache the shareware IWAD into memory-mapped (XIP) flash before booting
+     * doomgeneric, so W_AddFile can serve lumps in place (see globals above).
+     * First launch copies ~4 MB to flash; subsequent launches are instant. */
+    g_doom_wad_mapped = odroid_overlay_cache_file_in_flash(DOOM_WAD_PATH,
+                                                           &g_doom_wad_size, false);
+    printf("[doom] WAD flash-cache: ptr=%p size=%lu\n",
+           (void *)g_doom_wad_mapped, (unsigned long)g_doom_wad_size);
 
     /* Boot doomgeneric with the shareware IWAD from SD/flash. */
     static char *argv[] = { "doom", "-iwad", DOOM_WAD_PATH };

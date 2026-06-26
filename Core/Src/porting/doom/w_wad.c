@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #include "doomtype.h"
 
@@ -173,6 +174,23 @@ wad_file_t *W_AddFile (char *filename)
     {
 		printf (" couldn't open %s\n", filename);
 		return NULL;
+    }
+
+    /* GNW: serve every lump directly from the memory-mapped (XIP) flash copy
+     * of the WAD instead of Z_Malloc-copying each lump into the small,
+     * fragmented DOOM zone. app_main_doom() cached the IWAD into flash and
+     * published the pointer; point wad_file->mapped at it so the mapped
+     * fast-path in W_CacheLumpNum (below) is taken. The exact size match
+     * ensures only that cached IWAD is mapped; on cache failure the pointer
+     * is NULL and we fall back to SD reads (no regression).
+     * (next-hack flash-resident-WAD technique, ref next-hack/nRF52840Doom.) */
+    {
+        extern uint8_t  *g_doom_wad_mapped;
+        extern uint32_t  g_doom_wad_size;
+        if (g_doom_wad_mapped != NULL && wad_file->length == g_doom_wad_size)
+        {
+            wad_file->mapped = g_doom_wad_mapped;
+        }
     }
 
     newnumlumps = numlumps;
