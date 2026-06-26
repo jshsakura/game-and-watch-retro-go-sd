@@ -173,6 +173,26 @@ void DG_DrawFrame(void)
     if (lcd_is_swap_pending())
         return;
 
+    /* ---- DIAGNOSTIC (DOOM_LCD_REDTEST): bisect the black screen ----
+     * Ignore DOOM's frame entirely and paint the WHOLE active buffer solid
+     * red, then swap. If the LCD shows red, the output path (buffer ->
+     * LTDC scanout -> panel) is alive and the bug is in DOOM's content/
+     * offset/format. If it stays black, the LTDC never scans the buffer we
+     * write and the problem is below DOOM (palette/swap are irrelevant).
+     * Remove this block once the screen is confirmed. */
+#define DOOM_LCD_REDTEST 1
+#if DOOM_LCD_REDTEST
+    {
+        uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
+        const size_t total = (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT;
+        for (size_t i = 0; i < total; ++i)
+            fb[i] = 0xF800;   /* RGB565 pure red */
+        wdog_refresh();
+        lcd_swap();
+        return;
+    }
+#endif
+
     /* Software palette like the host harness: look up rgb565_palette[index] for
      * each 8bpp pixel and write RGB565 into the letterboxed middle of the active
      * buffer (X_OFFSET is 0 so rows are contiguous). LCD stays in RGB565 mode. */
