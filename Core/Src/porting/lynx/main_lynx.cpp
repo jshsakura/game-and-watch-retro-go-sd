@@ -201,11 +201,17 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
         printf("Lynx: ROM loading failed.\n");
         return;
     }
-    printf("[lynx] CSystem ok, fileType accepted (build %s %s)\n", __DATE__, __TIME__);
-
+    /* Set the render/audio globals IMMEDIATELY — before any printf in this
+     * RAM-overlay frame. A RAM->flash veneer'd printf here corrupts the very
+     * next operation on device (proven: it flipped the fileType compare), so a
+     * printf between the accept and these stores can leave gPrimaryFrameBuffer
+     * pointing at garbage -> handy renders off-screen (black) and trashes
+     * memory -> fault back to the menu. Stores first, log after. */
     gPrimaryFrameBuffer = (UBYTE *)lynx_framebuffer;
     gAudioBuffer = lynx_audio_buffer;
     gAudioEnabled = 1;
+    printf("[lynx] CSystem ok, fb=%p (build %s %s)\n",
+           (void *)gPrimaryFrameBuffer, __DATE__, __TIME__);
 
     uint32_t samplesPerFrame = AUDIO_LYNX_SAMPLE_RATE / LYNX_FPS;
 
