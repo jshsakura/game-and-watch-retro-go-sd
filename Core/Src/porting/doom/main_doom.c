@@ -173,26 +173,6 @@ void DG_DrawFrame(void)
     if (lcd_is_swap_pending())
         return;
 
-    /* ---- DIAGNOSTIC (DOOM_LCD_REDTEST): bisect the black screen ----
-     * Ignore DOOM's frame entirely and paint the WHOLE active buffer solid
-     * red, then swap. If the LCD shows red, the output path (buffer ->
-     * LTDC scanout -> panel) is alive and the bug is in DOOM's content/
-     * offset/format. If it stays black, the LTDC never scans the buffer we
-     * write and the problem is below DOOM (palette/swap are irrelevant).
-     * Remove this block once the screen is confirmed. */
-#define DOOM_LCD_REDTEST 1
-#if DOOM_LCD_REDTEST
-    {
-        uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
-        const size_t total = (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT;
-        for (size_t i = 0; i < total; ++i)
-            fb[i] = 0xF800;   /* RGB565 pure red */
-        wdog_refresh();
-        lcd_swap();
-        return;
-    }
-#endif
-
     /* Software palette like the host harness: look up rgb565_palette[index] for
      * each 8bpp pixel and write RGB565 into the letterboxed middle of the active
      * buffer (X_OFFSET is 0 so rows are contiguous). LCD stays in RGB565 mode. */
@@ -318,19 +298,25 @@ int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     printf("DOOM start (build trace)\n");
     ram_start = (uint32_t)&_OVERLAY_DOOM_BSS_END;
 
-    odroid_system_init(APPID_HOMEBREW, 11025);
-    odroid_system_emu_init(&doom_system_LoadState, &doom_system_SaveState,
-                           &Screenshot, NULL, NULL, NULL);
-
-    /* Keep the LCD in its normal RGB565 mode: DG_DrawFrame does the 8bpp->RGB565
-     * palette lookup in software (like the host harness), so there is no LTDC
-     * CLUT/LUT8 path to go wrong. I_VideoBuffer (64KB) and the WAD lumpinfo come
-     * from the zone-adjacent RAM_EMU pool via doom_bonus_alloc's fallback (the
-     * zone still reports ~500KB free, so they fit). */
+    /* Configure the LCD pixel format BEFORE odroid_system_init turns the
+     * backlight/LTDC scanout on. Reconfiguring the LTDC (pixel format +
+     * framebuffer address + vblank reload) while it is ALREADY actively
+     * scanning wedges the display on the wrong/cleared buffer -- the panel
+     * stays black even though the engine renders fine. Working cores (zelda3)
+     * never call lcd_setup_framebuffers; DOOM must do it while the panel is
+     * still idle, then let odroid_system_init bring the backlight up on a
+     * stable LTDC. DG_DrawFrame does the 8bpp->RGB565 palette lookup in
+     * software, so there is no LTDC CLUT/LUT8 path. I_VideoBuffer (64KB) and
+     * the WAD lumpinfo come from the zone-adjacent RAM_EMU pool. */
     lcd_setup_framebuffers(LCD_MODE_RGB565);
     doom_bonus_base = NULL;   /* no LUT8 bonus pool -> ram_malloc fallback */
     doom_bonus_size = 0;
     doom_bonus_used = 0;
+
+    odroid_system_init(APPID_HOMEBREW, 11025);
+    odroid_system_emu_init(&doom_system_LoadState, &doom_system_SaveState,
+                           &Screenshot, NULL, NULL, NULL);
+
     lcd_clear_buffers();      /* clear both buffers (letterbox borders) */
 
     if (start_paused) {
