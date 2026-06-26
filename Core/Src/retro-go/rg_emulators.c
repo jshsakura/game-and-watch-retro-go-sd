@@ -311,6 +311,13 @@ static uint8_t *DoomCacheCodeToFlash(uint32_t *code_size_out)
  * the RAM-resident handy code whose RAM->flash veneers corrupted execution. */
 #define LYNX_CODE_BASE 0x11A00000u   /* must match LYNX_CODE ORIGIN in both .ld */
 
+/* Diagnostics surfaced into the Lynx SD trace, which only opens INSIDE
+ * app_main_lynx (after these run) — so main_lynx prints them from these globals. */
+uint8_t  *g_lynx_ro_addr      = (uint8_t *)0;
+uint32_t  g_lynx_ro_size      = 0;
+int       g_lynx_ro_patched   = -2;  /* -2 = cache fn never ran, -1 = cache failed */
+int       g_lynx_glue_patched = -2;
+
 /* Generic sentinel relocator (DOOM's PatchDoomRegion, parameterised on base). */
 static int PatchSentinelRegion(uint32_t *start, uint32_t *end, uint32_t base,
                                int32_t offset, uint32_t code_size)
@@ -332,8 +339,11 @@ static uint8_t *LynxCacheCodeToFlash(uint32_t *code_size_out)
   uint8_t *code_addr = odroid_overlay_cache_file_in_flash("/cores/lynx.ro", code_size_out, false);
   if (!code_addr || *code_size_out == 0) {
     printf("LYNX: lynx.ro cache FAILED (not found?)\n");
+    g_lynx_ro_patched = -1;
     return NULL;
   }
+  g_lynx_ro_addr = code_addr;
+  g_lynx_ro_size = *code_size_out;
 #if SD_CARD == 1
   int32_t offset = (int32_t)((uint32_t)code_addr - LYNX_CODE_BASE);
   printf("LYNX: lynx.ro cached at %p, size=%lu, offset=%ld\n",
@@ -344,6 +354,7 @@ static uint8_t *LynxCacheCodeToFlash(uint32_t *code_size_out)
   int patched = PatchSentinelRegion((uint32_t *)ram_buf,
                                     (uint32_t *)(ram_buf + *code_size_out),
                                     LYNX_CODE_BASE, offset, *code_size_out);
+  g_lynx_ro_patched = patched;
   printf("LYNX: patched %d sentinel refs in lynx.ro\n", patched);
   if (patched > 0) {
     uint32_t flash_offset = (uint32_t)code_addr - (uint32_t)&__EXTFLASH_BASE__;
@@ -1420,7 +1431,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         if (load_core_bin_with_header("/cores/lynx.bin", (uint8_t *)&__RAM_EMU_START__)) {
             if (lynx_xip_addr) {
                 int32_t off = (int32_t)((uint32_t)lynx_xip_addr - LYNX_CODE_BASE);
-                PatchSentinelRegion((uint32_t *)&__RAM_EMU_START__,
+                g_lynx_glue_patched = PatchSentinelRegion((uint32_t *)&__RAM_EMU_START__,
                                     (uint32_t *)&_OVERLAY_LYNX_BSS_START,
                                     LYNX_CODE_BASE, off, lynx_xip_size);
             }
