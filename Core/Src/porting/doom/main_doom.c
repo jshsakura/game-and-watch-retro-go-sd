@@ -157,7 +157,6 @@ void *doom_bonus_alloc(size_t n)
 void DG_DrawFrame(void)
 {
     DOOM_MARK("DG_DrawFrame (first frame to LCD)");
-    uint8_t *dst = (uint8_t *)lcd_get_active_buffer();
     const uint8_t *src = I_VideoBuffer;   /* 8bpp paletted, RESX x RESY */
 
     if (src == NULL) {
@@ -165,10 +164,15 @@ void DG_DrawFrame(void)
         return;
     }
 
-    /* X_OFFSET is 0 (RESX == screen width), so rows are contiguous and we
-     * can copy the whole frame into the vertical centre in one shot. */
-    memcpy(dst + (size_t)DOOM_FB_Y_OFFSET * ODROID_SCREEN_WIDTH,
-           src, (size_t)DOOMGENERIC_RESX * DOOMGENERIC_RESY);
+    /* Software palette like the host harness: look up rgb565_palette[index] for
+     * each 8bpp pixel and write RGB565 into the letterboxed middle of the active
+     * buffer (X_OFFSET is 0 so rows are contiguous). LCD stays in RGB565 mode. */
+    extern uint16_t rgb565_palette[256];
+    uint16_t *dst = (uint16_t *)lcd_get_active_buffer()
+                  + (size_t)DOOM_FB_Y_OFFSET * ODROID_SCREEN_WIDTH;
+    const size_t pixels = (size_t)DOOMGENERIC_RESX * DOOMGENERIC_RESY;
+    for (size_t i = 0; i < pixels; ++i)
+        dst[i] = rgb565_palette[src[i]];
     wdog_refresh();
     lcd_swap();
 }
@@ -289,21 +293,16 @@ int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_emu_init(&doom_system_LoadState, &doom_system_SaveState,
                            &Screenshot, NULL, NULL, NULL);
 
-    /* DOOM is natively 8bpp paletted. Switch the LCD to LUT8: the LTDC does
-     * palette lookup in hardware (set up in I_SetPalette via lcd_set_clut),
-     * the framebuffers shrink to 154KB, and the freed ~146KB bonus pool is
-     * handed to I_VideoBuffer + the WAD lumpinfo (see doom_bonus_alloc) so the
-     * DOOM zone keeps the full RAM_EMU pool. odroid_system_switch_app() resets
-     * the LCD back to RGB565 when we quit, so the launcher is unaffected. */
-    lcd_setup_framebuffers(LCD_MODE_LUT8);
-    {
-        uint8_t *bp = NULL; size_t bs = 0;
-        lcd_get_bonus_pool(&bp, &bs);
-        doom_bonus_base = bp;
-        doom_bonus_size = bs;
-        doom_bonus_used = 0;
-    }
-    lcd_clear_buffers();   /* clear both LUT8 buffers (letterbox borders) */
+    /* Keep the LCD in its normal RGB565 mode: DG_DrawFrame does the 8bpp->RGB565
+     * palette lookup in software (like the host harness), so there is no LTDC
+     * CLUT/LUT8 path to go wrong. I_VideoBuffer (64KB) and the WAD lumpinfo come
+     * from the zone-adjacent RAM_EMU pool via doom_bonus_alloc's fallback (the
+     * zone still reports ~500KB free, so they fit). */
+    lcd_setup_framebuffers(LCD_MODE_RGB565);
+    doom_bonus_base = NULL;   /* no LUT8 bonus pool -> ram_malloc fallback */
+    doom_bonus_size = 0;
+    doom_bonus_used = 0;
+    lcd_clear_buffers();      /* clear both buffers (letterbox borders) */
 
     if (start_paused) {
         common_emu_state.pause_after_frames = 2;

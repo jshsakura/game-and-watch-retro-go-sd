@@ -134,7 +134,7 @@ typedef struct
 
 // Palette converted to RGB565
 
-static uint16_t rgb565_palette[256];
+uint16_t rgb565_palette[256];   /* RGB565 LUT; DG_DrawFrame (main_doom.c) reads it */
 
 void cmap_to_rgb565(uint16_t * out, uint8_t * in, int in_pixels)
 {
@@ -392,24 +392,17 @@ void I_SetPalette (byte* palette)
 	//}
     
 
-    /* GNW: the LCD runs in LUT8 mode for DOOM, so program the gamma-corrected
-     * 256-colour palette straight into the LTDC hardware CLUT (0x00RRGGBB).
-     * DG_DrawFrame then only copies 8bpp indices -- the LTDC does the colour.
-     * Use the full-256 variant: lcd_set_clut() clamps to 32 (cart/Lynx path),
-     * which would leave indices 64..255 black. */
-    extern void lcd_set_clut_full(const uint32_t *clut, unsigned short count);
-    uint32_t clut[256];
-
-    for (i=0; i<256; ++i ) {
+    /* GNW: do it the way the host harness / original do it -- software palette.
+     * Build a gamma-corrected RGB565 LUT from PLAYPAL; DG_DrawFrame then looks
+     * up rgb565_palette[index] for each 8bpp pixel and blits RGB565 to the LCD
+     * (which stays in its normal RGB565 mode). No LTDC CLUT / LUT8 involved. */
+    for (i = 0; i < 256; ++i) {
         colors[i].a = 0;
         colors[i].r = gammatable[usegamma][*palette++];
         colors[i].g = gammatable[usegamma][*palette++];
         colors[i].b = gammatable[usegamma][*palette++];
-        clut[i] = ((uint32_t)colors[i].r << 16) |
-                  ((uint32_t)colors[i].g << 8)  |
-                  ((uint32_t)colors[i].b);
+        rgb565_palette[i] = GFX_RGB565(colors[i].r, colors[i].g, colors[i].b);
     }
-    lcd_set_clut_full(clut, 256);
 
 #ifdef CMAP256
 
