@@ -1536,6 +1536,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md,$(CORES_DIR)/md.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_a2600,$(CORES_DIR)/a2600.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_lynx,$(CORES_DIR)/lynx.bin)
+	@$(CP) -O binary --only-section=.lynx_xip $(BUILD_DIR)/$(TARGET).elf "$(CORES_DIR)/lynx.ro"
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_a7800,$(CORES_DIR)/a7800.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_amstrad,$(CORES_DIR)/amstrad.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_videopac,$(CORES_DIR)/videopac.bin)
@@ -1637,6 +1638,7 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(CORES_DIR)/a2600.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/a2600_defprops.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/lynx.bin --dest-path "/cores/" \
+		-- sdpush --file $(CORES_DIR)/lynx.ro --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/a7800.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/amstrad.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/videopac.bin --dest-path "/cores/" \
