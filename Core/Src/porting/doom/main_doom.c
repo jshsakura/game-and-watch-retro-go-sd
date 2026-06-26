@@ -164,6 +164,26 @@ void DG_DrawFrame(void)
         return;
     }
 
+    /* ---- BULLETPROOF DIAGNOSTIC (DOOM_LCD_REDTEST2) ----
+     * Eliminate every confound (buffer choice, swap timing, my swap-pending
+     * gate): fill BOTH framebuffers entirely red, every frame, with no gate.
+     * Whatever buffer the LTDC scans out of the pool, it must turn red. If the
+     * screen is RED, the output path is alive and DOOM's content/timing is the
+     * bug. If it stays BLACK, the LTDC genuinely never scans the LCD pool for
+     * this app (display disabled / reload never completing). Remove after. */
+#define DOOM_LCD_REDTEST2 1
+#if DOOM_LCD_REDTEST2
+    {
+        const size_t total = (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT;
+        uint16_t *a = (uint16_t *)lcd_get_active_buffer();
+        uint16_t *b = (uint16_t *)lcd_get_inactive_buffer();
+        for (size_t i = 0; i < total; ++i) { a[i] = 0xF800; b[i] = 0xF800; }
+        wdog_refresh();
+        lcd_swap();
+        return;
+    }
+#endif
+
     /* Don't touch the framebuffer while the previous swap is still being applied
      * at vblank. Issuing another draw+swap mid-reload corrupts the active/inactive
      * buffer state: we draw into the buffer currently on screen (garbled/torn) or
