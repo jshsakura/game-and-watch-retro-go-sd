@@ -160,7 +160,17 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
      * /lynx_trace.txt (DOOM uses /doom_trace.txt) so both logs are preserved and
      * we can see exactly where Lynx dies instead of guessing. */
     sd_trace_begin("/lynx_trace.txt");
-    printf("[lynx] app start (RAM overlay build)\n");
+    printf("[lynx] app start (XIP cart build)\n");
+    /* Surface the pre-app XIP cache/patch results (they printed to UART before
+     * this trace file existed) so the SD log shows whether lynx.ro cached and
+     * how many sentinel refs were patched in the flash blob + the RAM glue. */
+    {
+        extern uint8_t *g_lynx_ro_addr; extern unsigned int g_lynx_ro_size;
+        extern int g_lynx_ro_patched; extern int g_lynx_glue_patched;
+        printf("[lynx] XIP ro=%p size=%u ro_patched=%d glue_patched=%d\n",
+               (void *)g_lynx_ro_addr, g_lynx_ro_size,
+               g_lynx_ro_patched, g_lynx_glue_patched);
+    }
 
     heap_itc_alloc(true);
 
@@ -220,16 +230,18 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     }
 
     audio_start_playing(samplesPerFrame);
-    printf("[lynx] entering main loop\n");
 
-    uint32_t _hbf = 0;
+    /* NO printf inside this loop — exactly like the working a2600 core. A
+     * main_lynx.o (RAM-overlay) printf here corrupts the immediately-following
+     * op on device (proven: it flipped a compare; with heartbeats it crashed
+     * at UpdateFrame). The other consoles' loops are printf-free, which is why
+     * they run; keep Lynx's loop printf-free too. */
     while (1)
     {
         wdog_refresh();
         common_emu_frame_loop();
         odroid_input_read_gamepad(&joystick);
         common_emu_input_loop(&joystick, options, &blit);
-        if (_hbf == 0) printf("[lynx] f0: frame_loop+input ok\n");
 
         uint8_t turbo_buttons = odroid_settings_turbo_buttons_get();
         bool turbo_a = (joystick.values[ODROID_INPUT_A] && (turbo_buttons & 1));
@@ -243,14 +255,10 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
         map_buttons(&joystick);
 
         lynx->UpdateFrame(true);
-        if (_hbf == 0) printf("[lynx] f0: UpdateFrame ok, fb[mid]=%04x\n",
-                              lynx_framebuffer[160 * 51 + 80]);
 
         blit();
-        if (_hbf == 0) printf("[lynx] f0: blit ok\n");
         common_ingame_overlay();
         lcd_swap();
-        if (_hbf == 0) printf("[lynx] f0: lcd_swap ok\n");
         sound_store();
 
         common_emu_sound_sync(false);
