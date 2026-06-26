@@ -39,12 +39,26 @@ that are **not** in the official project and may be unstable.
 - MJPEG-AVI video player homebrew (shares the music overlay).
 - ~8× faster SD reads via HW-SPI block reads, fixing busy-scene judder; optional timing HUD.
 
-### DOOM (work in progress)
-- Bringing up DOOM (doomgeneric) by running most of its code/rodata **XIP from QSPI flash**
-  so the zone fits in RAM (zone ~469 KB; all engine init passes).
-- Keeps the window watchdog alive during slow cold-XIP bursts; boot trace to
-  `/roms/homebrew/../doom_trace.txt` for diagnosis.
-- Not guaranteed playable yet — actively being debugged on this testbed.
+### DOOM (next-hack flash-resident engine — NEW, not yet verified on hardware)
+- Replaced the earlier doomgeneric bring-up with the **next-hack flash-resident DOOM
+  engine** (GBADoom-derived): a tiny ~111 KB static zone, build-time pre-composed
+  textures, and texture columns read straight from XIP flash. This removes the zone
+  fragmentation that crashed doomgeneric on level load and the per-column lump re-fetch
+  that made it run far too slowly.
+- Engine renderer/game code runs XIP from flash; only the small writable zone and
+  framebuffers live in a 256 KB-aligned AXI-SRAM window. doomgeneric stays in-tree and can
+  be re-selected at build time with `USE_NHDOOM=0`.
+- **Requires a converted IWAD.** Run the in-tree `MCUDoomWadUtil` on your own `DOOM1.WAD`
+  to produce `doom1.mcu.wad`, and place it at `/roms/homebrew/doom1.mcu.wad` — the raw
+  `DOOM1.WAD` will **not** work. First launch caches it to flash (one-time, a little slow).
+- **This engine swap is freshly integrated and unverified on real hardware.** If it
+  misbehaves, please share the serial / SD log (not a screenshot).
+
+### Atari Lynx (Handy)
+- The Handy core now runs **XIP from QSPI flash** (only the small glue stays in the RAM
+  overlay), killing the RAM→flash veneer corruption that destabilised execution.
+- Two on-run crashes fixed earlier (BS93 big-endian header parse, Mikey render-line
+  bounds), surfaced by a host AddressSanitizer harness that now gates CI.
 
 ### Other
 - Wolf3D homebrew overlay (id-engine symbols namespaced to avoid overlay collisions).
