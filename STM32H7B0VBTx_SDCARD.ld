@@ -123,11 +123,6 @@ MEMORY
      and the doom.ro extraction work identically in the SD build. */
   DOOM_CODE  (x) : ORIGIN = 0xD00D0000,   LENGTH = 1024K
 
-  /* Lynx (handy) non-glue code (sentinel address, patched to QSPI XIP at runtime).
-     Mirrors LYNX_CODE in STM32H7B0VBTx_FLASH.ld so rg_emulators.c (LYNX_CODE_BASE)
-     and the lynx.ro extraction work identically in the SD build. */
-  LYNX_CODE  (x) : ORIGIN = 0x11A00000,   LENGTH = 256K
-
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
 }
@@ -504,37 +499,22 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_A2600_BSS_SIZE = SIZEOF(.overlay_a2600_bss);
 
-  /* Lynx (handy). GLUE-ONLY in RAM: ONLY main_lynx.o in RAM_EMU (.overlay_lynx,
-     /cores/lynx.bin); ALL handy core .text/.rodata run XIP from flash via the
-     LYNX_CODE sentinel (.lynx_xip, /cores/lynx.ro, cached+patched at launch).
-     Removes RAM-resident handy code whose RAM->flash veneers corrupted execution. */
+  /* Lynx (handy) — plain RAM overlay: whole core runs from RAM_EMU, exactly like
+     .overlay_a2600. (Earlier code-in-flash XIP was reverted: a2600/other C++
+     cores prove RAM overlays work, and the XIP sentinel-patching corrupted
+     main_lynx.) */
   .overlay_lynx __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_lynx_start__ = .;
     __init_array_lynx_start__ = .;
     KEEP(build/lynx/*.o(.init_array*))
     __init_array_lynx_end__ = .;
-    /* glue only (listed first => matched first) */
-    build/lynx/main_lynx.o (.data .data* .text .text* .rodata .rodata* .ARM.extab.text.* .ARM.exidx.text.*)
-    /* all remaining handy .data must stay writable in RAM */
-    build/lynx/*.o (.data .data*)
+    build/lynx/*.o (.data .data* .text .text* .rodata .rodata* .ARM.extab.text.* .ARM.exidx.text.*)
     . = ALIGN(4);
     _OVERLAY_LYNX_LOAD_END = .;
   } AT > CORES
   _OVERLAY_LYNX_LOAD_START = LOADADDR(.overlay_lynx);
   _OVERLAY_LYNX_SIZE = SIZEOF(.overlay_lynx);
-
-  /* Non-glue handy core code + read-only data, run XIP from external flash.
-     VMA == LMA at the LYNX_CODE sentinel; extracted to /cores/lynx.ro and
-     relocated at launch (LynxCacheCodeToFlash + PatchSentinelRegion). */
-  .lynx_xip : {
-    . = ALIGN(4);
-    __lynx_xip_start__ = .;
-    build/lynx/*.o (.text .text* .rodata .rodata* .ARM.extab.text.* .ARM.exidx.text.*)
-    . = ALIGN(4);
-    __lynx_xip_end__ = .;
-  } > LYNX_CODE
-  _LYNX_XIP_SIZE = SIZEOF(.lynx_xip);
 
   .overlay_lynx_bss _OVERLAY_LYNX_LOAD_END : {
     . = ALIGN(4);

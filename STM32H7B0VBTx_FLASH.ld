@@ -143,7 +143,6 @@ MEMORY
   RODATA     (x  ) : ORIGIN = 0xCAFE0000,          LENGTH = 0xFFFFFFFF
   PICO8_CODE (x  ) : ORIGIN = 0xBEEF0000,          LENGTH = 512K
   DOOM_CODE  (x  ) : ORIGIN = 0xD00D0000,          LENGTH = 1024K
-  LYNX_CODE  (x  ) : ORIGIN = 0x11A00000,          LENGTH =  256K
   EXTFLASH   (xr ) : ORIGIN = __EXTFLASH_START__,  LENGTH = 32M
 }
 
@@ -513,41 +512,22 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_A2600_BSS_SIZE = SIZEOF(.overlay_a2600_bss);
 
-  /* Lynx (handy). GLUE-ONLY in RAM: keep ONLY main_lynx.o .text/.rodata/.data in
-     RAM_EMU (.overlay_lynx, shipped as /cores/lynx.bin) because the firmware calls
-     app_main_lynx() directly and the entry must not sit at the unpatched XIP
-     sentinel. ALL handy core .text/.rodata run XIP from flash via the LYNX_CODE
-     sentinel (.lynx_xip, shipped as /cores/lynx.ro, cached + sentinel-patched at
-     launch in rg_emulators.c). This removes the RAM-resident handy code whose
-     RAM->flash veneers corrupted execution (the fileType check miscompared on
-     device). All handy .data stays writable in RAM; .bss stays in RAM. */
+  /* Lynx (handy) — plain RAM overlay: whole core runs from RAM_EMU, exactly like
+     .overlay_a2600. (Earlier code-in-flash XIP was reverted: a2600/other C++
+     cores prove RAM overlays work, and the XIP sentinel-patching corrupted
+     main_lynx.) */
   .overlay_lynx __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_lynx_start__ = .;
     __init_array_lynx_start__ = .;
     KEEP(build/lynx/*.o(.init_array*))
     __init_array_lynx_end__ = .;
-    /* glue only (listed first => matched first) */
-    build/lynx/main_lynx.o (.data .data* .text .text* .rodata .rodata* .ARM.extab.text.* .ARM.exidx.text.*)
-    /* all remaining handy .data must stay writable in RAM */
-    build/lynx/*.o (.data .data*)
+    build/lynx/*.o (.data .data* .text .text* .rodata .rodata* .ARM.extab.text.* .ARM.exidx.text.*)
     . = ALIGN(4);
     _OVERLAY_LYNX_LOAD_END = .;
   } AT > CORES
   _OVERLAY_LYNX_LOAD_START = LOADADDR(.overlay_lynx);
   _OVERLAY_LYNX_SIZE = SIZEOF(.overlay_lynx);
-
-  /* Non-glue handy core code + read-only data, run in place (XIP) from external
-     flash. VMA == LMA at the LYNX_CODE sentinel; extracted to /cores/lynx.ro and
-     relocated at launch (LynxCacheCodeToFlash + PatchSentinelRegion). */
-  .lynx_xip : {
-    . = ALIGN(4);
-    __lynx_xip_start__ = .;
-    build/lynx/*.o (.text .text* .rodata .rodata* .ARM.extab.text.* .ARM.exidx.text.*)
-    . = ALIGN(4);
-    __lynx_xip_end__ = .;
-  } > LYNX_CODE
-  _LYNX_XIP_SIZE = SIZEOF(.lynx_xip);
 
   .overlay_lynx_bss _OVERLAY_LYNX_LOAD_END : {
     . = ALIGN(4);

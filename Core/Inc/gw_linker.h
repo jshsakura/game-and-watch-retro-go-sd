@@ -162,10 +162,6 @@ extern uint8_t _OVERLAY_LYNX_SIZE;
 extern void * _OVERLAY_LYNX_BSS_START[];
 extern void * _OVERLAY_LYNX_BSS_END[];
 extern uint8_t _OVERLAY_LYNX_BSS_SIZE;
-/* handy core code/rodata run XIP from flash (.lynx_xip @ LYNX_CODE sentinel) */
-extern void * __lynx_xip_start__[];
-extern void * __lynx_xip_end__[];
-extern uint8_t _LYNX_XIP_SIZE;
 extern void * __itcram_emu_wswan_start__[];
 extern void * __itcram_emu_wswan_end__[];
 extern uint8_t _ITCM_WSWAN_SIZE;

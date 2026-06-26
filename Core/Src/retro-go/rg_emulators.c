@@ -303,76 +303,6 @@ static uint8_t *DoomCacheCodeToFlash(uint32_t *code_size_out)
   return code_addr;
 }
 
-/* ---- Atari Lynx (handy) code-in-flash (XIP) — same scheme as DOOM ---------
- * The handy core .text/.rodata are linked at the LYNX_CODE sentinel
- * (.lynx_xip), extracted to /cores/lynx.ro, cached to QSPI flash at launch and
- * relocated by patching every 32-bit word that points into the sentinel range.
- * Only main_lynx.o glue stays in the RAM overlay (/cores/lynx.bin). This kills
- * the RAM-resident handy code whose RAM->flash veneers corrupted execution. */
-#define LYNX_CODE_BASE 0x11A00000u   /* must match LYNX_CODE ORIGIN in both .ld */
-
-/* Diagnostics surfaced into the Lynx SD trace, which only opens INSIDE
- * app_main_lynx (after these run) — so main_lynx prints them from these globals. */
-uint8_t  *g_lynx_ro_addr      = (uint8_t *)0;
-uint32_t  g_lynx_ro_size      = 0;
-int       g_lynx_ro_patched   = -2;  /* -2 = cache fn never ran, -1 = cache failed */
-int       g_lynx_glue_patched = -2;
-
-/* Generic sentinel relocator (DOOM's PatchDoomRegion, parameterised on base). */
-static int PatchSentinelRegion(uint32_t *start, uint32_t *end, uint32_t base,
-                               int32_t offset, uint32_t code_size)
-{
-  int patched = 0;
-  for (uint32_t *ptr = start; ptr < end; ptr++) {
-    uint32_t value = *ptr;
-    if ((value & ~1u) >= base && (value & ~1u) < base + code_size) {
-      *ptr = value + offset;
-      patched++;
-    }
-  }
-  return patched;
-}
-
-static uint8_t *LynxCacheCodeToFlash(uint32_t *code_size_out)
-{
-  printf("LYNX: caching lynx.ro to flash...\n");
-  uint8_t *code_addr = odroid_overlay_cache_file_in_flash("/cores/lynx.ro", code_size_out, false);
-  if (!code_addr || *code_size_out == 0) {
-    printf("LYNX: lynx.ro cache FAILED (not found?)\n");
-    g_lynx_ro_patched = -1;
-    return NULL;
-  }
-  g_lynx_ro_addr = code_addr;
-  g_lynx_ro_size = *code_size_out;
-#if SD_CARD == 1
-  int32_t offset = (int32_t)((uint32_t)code_addr - LYNX_CODE_BASE);
-  printf("LYNX: lynx.ro cached at %p, size=%lu, offset=%ld\n",
-         code_addr, (unsigned long)*code_size_out, (long)offset);
-  /* RAM_EMU is free here (lynx.bin is loaded AFTER this returns) -> patch scratch. */
-  uint8_t *ram_buf = (uint8_t *)&__RAM_EMU_START__;
-  memcpy(ram_buf, code_addr, *code_size_out);
-  int patched = PatchSentinelRegion((uint32_t *)ram_buf,
-                                    (uint32_t *)(ram_buf + *code_size_out),
-                                    LYNX_CODE_BASE, offset, *code_size_out);
-  g_lynx_ro_patched = patched;
-  printf("LYNX: patched %d sentinel refs in lynx.ro\n", patched);
-  if (patched > 0) {
-    uint32_t flash_offset = (uint32_t)code_addr - (uint32_t)&__EXTFLASH_BASE__;
-    uint32_t erase_size = (*code_size_out + 4095) & ~4095u;
-    OSPI_DisableMemoryMappedMode();
-    OSPI_EraseSync(flash_offset, erase_size);
-    OSPI_Program(flash_offset, ram_buf, *code_size_out);
-    OSPI_EnableMemoryMappedMode();
-    SCB_InvalidateDCache_by_Addr((uint32_t *)code_addr, (int32_t)*code_size_out);
-    printf("LYNX: reprogrammed XIP flash, first word: 0x%08lX\n",
-           (unsigned long)*(uint32_t *)code_addr);
-  } else {
-    printf("LYNX: no sentinel refs found (already patched from previous boot)\n");
-  }
-#endif
-  return code_addr;
-}
-
 const unsigned char *ROM_DATA = NULL;
 unsigned ROM_DATA_LENGTH;
 const char *ROM_EXT = NULL;
@@ -1315,9 +1245,7 @@ static const emu_dispatch_t emu_ngp     = { "/cores/ngp.bin",     &_OVERLAY_NGP_
 static const emu_dispatch_t emu_wswan   = { "/cores/wswan.bin",   &_OVERLAY_WSWAN_BSS_START,   (uint32_t)&_OVERLAY_WSWAN_BSS_SIZE,   (uint32_t)&_OVERLAY_WSWAN_SIZE,   0, EMU_ENTRY(app_main_wswan) };
 static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
-/* emu_lynx removed: Lynx has a bespoke launch block (handy core runs XIP from
- * flash, see "Atari Lynx" case in emulator_start) — it cannot use the generic
- * run_internal_emu table because it must cache+patch lynx.ro before the entry. */
+static const emu_dispatch_t emu_lynx    = { "/cores/lynx.bin",    &_OVERLAY_LYNX_BSS_START,    (uint32_t)&_OVERLAY_LYNX_BSS_SIZE,    (uint32_t)&_OVERLAY_LYNX_SIZE,    (uint32_t)&_OVERLAY_LYNX_BSS_END, EMU_ENTRY(app_main_lynx) };
 static const emu_dispatch_t emu_a7800   = { "/cores/a7800.bin",   &_OVERLAY_A7800_BSS_START,   (uint32_t)&_OVERLAY_A7800_BSS_SIZE,   (uint32_t)&_OVERLAY_A7800_SIZE,   0, EMU_ENTRY(app_main_a7800) };
 static const emu_dispatch_t emu_amstrad = { "/cores/amstrad.bin", &_OVERLAY_AMSTRAD_BSS_START, (uint32_t)&_OVERLAY_AMSTRAD_BSS_SIZE, (uint32_t)&_OVERLAY_AMSTRAD_SIZE, 0, EMU_ENTRY(app_main_amstrad) };
 static const emu_dispatch_t emu_tama    = { "/cores/tama.bin",    &_OVERLAY_TAMA_BSS_START,    (uint32_t)&_OVERLAY_TAMA_BSS_SIZE,    (uint32_t)&_OVERLAY_TAMA_SIZE,    0, EMU_ENTRY(app_main_tama) };
@@ -1421,26 +1349,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
     } else if(strcmp(system_name, "Atari 2600") == 0) {
         run_internal_emu(&emu_a2600, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Atari Lynx") == 0) {
-        /* Lynx runs the handy core XIP from flash (lynx.ro) to avoid the RAM
-         * overlay's RAM->flash code veneers (they corrupted execution -> the
-         * fileType check miscompared on device). Cache+patch lynx.ro to flash
-         * FIRST (uses RAM_EMU as scratch), THEN load the glue overlay (lynx.bin)
-         * into RAM, THEN patch the glue's sentinel refs to the real XIP address. */
-        uint32_t lynx_xip_size = 0;
-        uint8_t *lynx_xip_addr = LynxCacheCodeToFlash(&lynx_xip_size);
-        if (load_core_bin_with_header("/cores/lynx.bin", (uint8_t *)&__RAM_EMU_START__)) {
-            if (lynx_xip_addr) {
-                int32_t off = (int32_t)((uint32_t)lynx_xip_addr - LYNX_CODE_BASE);
-                g_lynx_glue_patched = PatchSentinelRegion((uint32_t *)&__RAM_EMU_START__,
-                                    (uint32_t *)&_OVERLAY_LYNX_BSS_START,
-                                    LYNX_CODE_BASE, off, lynx_xip_size);
-            }
-            memset(&_OVERLAY_LYNX_BSS_START, 0x0, (size_t)&_OVERLAY_LYNX_BSS_SIZE);
-            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_LYNX_SIZE);
-            SCB_InvalidateICache();
-            cpp_heap_init((uint32_t)&_OVERLAY_LYNX_BSS_END);
-            app_main_lynx(load_state, start_paused, save_slot);
-        }
+        run_internal_emu(&emu_lynx, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Atari 7800") == 0)  {
         run_internal_emu(&emu_a7800, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Amstrad CPC") == 0)  {
