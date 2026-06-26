@@ -262,9 +262,6 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
         sound_store();
 
         common_emu_sound_sync(false);
-
-        if ((_hbf % 120) == 0) printf("[lynx] alive frame %lu\n", (unsigned long)_hbf);
-        _hbf++;
     }
 }
 
