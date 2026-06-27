@@ -239,12 +239,19 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
      * core is running (the append-log kept showing stale lines from old builds). */
     sd_save_log_boot("[boot] lynx core build " __DATE__ " " __TIME__);
 
+    /* PINPOINT: lynx was valid at the fileType check but 0 by emu_init. Read the
+     * TRUE value (firmware reads &lynx; address calc isn't veneer-corrupted) at
+     * each step to find which op zeroes lynx_mem.sys. */
+    lynx_dump_ptr("t1 post-boot", &lynx);
+
     uint32_t samplesPerFrame = AUDIO_LYNX_SAMPLE_RATE / LYNX_FPS;
 
     common_emu_state.frame_time_10us = (uint16_t)(100000 / LYNX_FPS + 0.5f);
 
     odroid_system_init(APPID_LYNX, AUDIO_LYNX_SAMPLE_RATE);
+    lynx_dump_ptr("t2 post-sysinit", &lynx);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
+    lynx_dump_ptr("t3 post-emuinit", &lynx);
 
     /* Capture the live pointer into firmware DTCM NOW (lynx is valid here — the
      * loop below uses it). The handlers read it from there; it survives the
