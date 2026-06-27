@@ -597,16 +597,10 @@ static void event_handler(gui_event_t event, tab_t *tab)
             }
             return;
         }
-        uint8_t sort_before = odroid_settings_SortMode_get();
         emulator_show_file_menu(file);
-        // Sort/favorite may have changed in the overlay. Switching the sort
-        // mode needs a rescan: a prior name/favorite qsort reordered the array
-        // in place, so "added order" can only be restored from disk. A plain
-        // favorite toggle just needs a cheap re-sort of the existing array.
-        if (odroid_settings_SortMode_get() != sort_before)
-            gui_event(TAB_REFRESH_LIST, tab);
-        else
-            emulator_fill_tab_list(tab, emu);
+        // Favorite may have been toggled in the menu — re-sort the existing
+        // array so the star/order updates immediately.
+        emulator_fill_tab_list(tab, emu);
     }
     else if (event == KEY_PRESS_B)
     {
@@ -1054,34 +1048,6 @@ void emulator_update_cheats_info(retro_emulator_file_t *file) {
 }
 #endif
 
-/* Buffer for the localized sort-mode name shown in the Sort row. Sized for the
- * longest codepage-encoded value with margin (snprintf-bounded regardless). */
-#define SORT_VALUE_LEN 32
-
-/* Game list sort row: cycles ODROID_SORT_NAME -> ADDED -> FAVORITES on every
- * press (A) or left/right, and never closes the menu. The new value is
- * persisted when the overlay closes (see emulator_show_file_menu). */
-static bool sort_mode_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
-{
-    uint8_t mode = odroid_settings_SortMode_get();
-
-    if (event == ODROID_DIALOG_PREV)
-        mode = (mode + ODROID_SORT_COUNT - 1) % ODROID_SORT_COUNT;
-    else if (event == ODROID_DIALOG_NEXT || event == ODROID_DIALOG_ENTER)
-        mode = (mode + 1) % ODROID_SORT_COUNT;
-    odroid_settings_SortMode_set(mode);
-
-    const char *name;
-    switch (mode) {
-        case ODROID_SORT_ADDED:     name = curr_lang->s_Sort_added; break;
-        case ODROID_SORT_FAVORITES: name = curr_lang->s_favorite;   break;
-        default:                    name = curr_lang->s_Sort_name;  break;
-    }
-    snprintf(option->value, SORT_VALUE_LEN, "%s", name);
-
-    return false; // A / left / right all just cycle; never select-close
-}
-
 bool emulator_show_file_menu(retro_emulator_file_t *file)
 {
     if (file->ext == NULL)
@@ -1094,8 +1060,6 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     bool has_sram = odroid_sdcard_get_filesize(sram_path) > 0;
     bool is_fav = favorite_is(file);
     bool force_redraw = false;
-    char sort_value[SORT_VALUE_LEN]; // localized sort-mode name (codepage-encoded)
-    uint8_t sort_mode_at_entry = odroid_settings_SortMode_get();
 
 #if CHEAT_CODES == 1
     // Free previous cheat codes
@@ -1122,7 +1086,6 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
         {0, curr_lang->s_Resume_game, "", (has_save) ? 1:-1, NULL},
         {1, curr_lang->s_New_game, "", 1, NULL},
         ODROID_DIALOG_CHOICE_SEPARATOR,
-        {5, curr_lang->s_Sort, sort_value, 1, &sort_mode_cb},
         {3, is_fav ? curr_lang->s_Del_favorite : curr_lang->s_Add_favorite, "", 1, NULL},
         {2, curr_lang->s_Delete_save, "", (has_save || has_sram) ? 1 : -1, NULL},
 #if CHEAT_CODES == 1
@@ -1133,10 +1096,10 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     };
 
 #if CHEAT_CODES == 1
-    // Sort + favorite rows sit before "Delete save", so the cheat separator is
-    // at index 6 (was 4 before those two rows were added).
+    // Favorite row sits before "Delete save", so the cheat separator is at
+    // index 5 (was 6 before the Sort row was removed).
     if (CHOSEN_FILE->cheat_count == 0)
-        choices[6] = last;
+        choices[5] = last;
 #endif
 
     int sel = odroid_overlay_dialog(file->name, choices, has_save ? 0 : 1, &gui_redraw_callback, 0);
@@ -1188,11 +1151,6 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
 #if CHEAT_CODES == 1
     CHOSEN_FILE = NULL;
 #endif
-
-    // Persist the sort mode if the user cycled it (favorites already commit
-    // in favorite_toggle). One write on close avoids per-press flash wear.
-    if (odroid_settings_SortMode_get() != sort_mode_at_entry)
-        odroid_settings_commit();
 
     free(savestates);
     return force_redraw;

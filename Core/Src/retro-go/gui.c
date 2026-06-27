@@ -665,27 +665,6 @@ static void gui_draw_favorite_star(int x, int y)
     gui_draw_star_raw(x, y, C_GOLD);
 }
 
-/* Draw the favorite star to the left of a simple-list row, if that row is a
- * (non-parent) favorited ROM. */
-static void gui_draw_favorite_marker(tab_t *tab, int item_index, int posx, int text_y, int font_height)
-{
-    listbox_t *list = &tab->listbox;
-    if (item_index < 0 || item_index >= list->length)
-        return;
-
-    void *arg = list->items[item_index].arg;
-    if (arg == NULL || rg_rom_list_arg_is_parent(arg))
-        return;
-    if (!favorite_is((retro_emulator_file_t *)arg))
-        return;
-
-    int sx = posx - FAV_STAR_W - 2;
-    if (sx < 0)
-        sx = 0;
-    int sy = text_y + (font_height - FAV_STAR_H) / 2;
-    gui_draw_favorite_star(sx, sy);
-}
-
 void gui_draw_simple_list(int posx, tab_t *tab)
 {
     listbox_t *list = &tab->listbox;
@@ -697,7 +676,6 @@ void gui_draw_simple_list(int posx, tab_t *tab)
         int h1 = gui_list_view_y0 + (gui_list_view_h - font_height) / 2;
         if (item) {
             i18n_draw_text_line(posx, h1, w, list->items[list->cursor].text, curr_colors->sel_c, curr_colors->bg_c, 0);
-            gui_draw_favorite_marker(tab, list->cursor, posx, h1, font_height);
         }
 
         int index_next = list->cursor + 1;
@@ -721,7 +699,6 @@ void gui_draw_simple_list(int posx, tab_t *tab)
                     get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, (max_line - i) * 100 / max_line),
                     curr_colors->bg_c,
                     0);
-                gui_draw_favorite_marker(tab, index_next, posx, h1, font_height);
             }
             index_next++;
             listbox_item_t *prior_item = gui_get_item_by_index(tab, &index_proior);
@@ -734,7 +711,6 @@ void gui_draw_simple_list(int posx, tab_t *tab)
                     get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, (max_line - i) * 100 / max_line),
                     curr_colors->bg_c,
                     0);
-                gui_draw_favorite_marker(tab, index_proior, posx, h2, font_height);
             }
             index_proior--;
         }
@@ -1001,10 +977,10 @@ void gui_draw_coverlight_h(retro_emulator_file_t *file, int cover_position)
         odroid_overlay_draw_rect(cover_x, cover_y, cover_width + 2 * COVER_BORDER, cover_height + 2 * COVER_BORDER, COVER_BORDER, curr_colors->bg_c);
         odroid_overlay_draw_rect(2 + cover_x, 2 + cover_y, cover_width + 8, cover_height + 8, 2, curr_colors->sel_c);
 
-        /* favorite star, top-right corner of the cover */
+        /* favorite star, bottom-right corner of the cover */
         if (favorite_is(file))
             gui_draw_favorite_star(cover_x + COVER_BORDER + cover_width - FAV_STAR_W - 3,
-                                   cover_y + COVER_BORDER + 3);
+                                   cover_y + COVER_BORDER + cover_height - FAV_STAR_H - 3);
 
         /* TODO add shadowing */
         //left side
@@ -1130,10 +1106,10 @@ void gui_draw_coverlight_v(retro_emulator_file_t *file, int cover_position)
         odroid_overlay_draw_rect(cover_x, cover_y, cover_width + 2 * COVER_BORDER, cover_height + 2 * COVER_BORDER, COVER_BORDER, curr_colors->bg_c);
         odroid_overlay_draw_rect(2 + cover_x, 2 + cover_y, cover_width + 8, cover_height + 8, 2, curr_colors->sel_c);
 
-        /* favorite star, top-right corner of the cover */
+        /* favorite star, bottom-right corner of the cover */
         if (favorite_is(file))
             gui_draw_favorite_star(cover_x + COVER_BORDER + cover_width - FAV_STAR_W - 3,
-                                   cover_y + COVER_BORDER + 3);
+                                   cover_y + COVER_BORDER + cover_height - FAV_STAR_H - 3);
     }
     /* other cover */
     else
@@ -1251,6 +1227,10 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
             //draw the cover cenver
             JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
             odroid_display_write_rect(start_xpos + p_width1 + p_width2 + 11, cover_top, jpeg_cover_width, jpeg_cover_height, jpeg_cover_width, pCover_Buffer);
+            /* favorite star, bottom-right of the poster */
+            if (favorite_is(file))
+                gui_draw_favorite_star(start_xpos + p_width1 + p_width2 + 11 + cover_width - FAV_STAR_W - 3,
+                                       cover_top + cover_height - FAV_STAR_H - 3);
             //draw the cover shadow
             for (int y = 0; y <= 20; y++)
                 if ((5 + cover_top + cover_height + y) < max_y)
@@ -1489,6 +1469,10 @@ void gui_draw_coverflow_v(tab_t *tab, int start_posx) // ||||||||
         {
             JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
             odroid_display_write_rect(start_posx + 3 + (cover_width - jpeg_cover_width) / 2, start_ypos + p_height + 16 + (cover_height - jpeg_cover_height) / 2, jpeg_cover_width, jpeg_cover_height, jpeg_cover_width, pCover_Buffer);
+            /* favorite star, bottom-right of the poster */
+            if (favorite_is(file))
+                gui_draw_favorite_star(start_posx + 3 + (cover_width + jpeg_cover_width) / 2 - FAV_STAR_W - 3,
+                                       start_ypos + p_height + 16 + (cover_height + jpeg_cover_height) / 2 - FAV_STAR_H - 3);
         };
     }
     if (p_height)
