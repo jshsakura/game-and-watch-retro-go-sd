@@ -74,20 +74,19 @@ void doom_trace_raw(const char *s) {
     f_sync(&doom_trace_fil);
 }
 
-/* The Lynx CSystem* lived as a static in the overlay BSS tail, where SOMETHING
- * zeroes it between the game loop and the save/load handlers (device-proven:
- * handler reads NULL though UpdateFrame works). Stash it in firmware RAM instead
- * — outside the overlay region — so the handlers always see the live pointer
- * regardless of what clobbers the overlay BSS. main_lynx sets it right after the
- * core is constructed; LoadState/SaveState read it. */
-void *g_lynx_csystem = NULL;
-/* Set/get via FIRMWARE-context functions: a direct overlay store to this DTCM
- * global read back as 0 in the handlers (overlay->firmware data write not
- * persisting / not visible). Doing the store and load in firmware code (the
- * overlay only calls in, passing/receiving the pointer by register) sidesteps
- * that. */
-void lynx_set_csystem(void *p) { g_lynx_csystem = p; }
-void *lynx_get_csystem(void)   { return g_lynx_csystem; }
+/* GROUND-TRUTH pointer read. The overlay handlers, when they read `lynx` right
+ * after a RAM->flash firmware (veneer) call, get a corrupted 0. This runs in
+ * FIRMWARE context: the caller passes the ADDRESS of the pointer (computing
+ * &lynx is just an address calc, never corrupted), and we read *(void**)addr
+ * here uncorrupted, logging the REAL value. Lets us prove an overlay read was a
+ * veneer artifact (overlay sees 0, firmware sees the live pointer). */
+void sd_save_log(const char *line); /* fwd decl (defined below) */
+void lynx_dump_ptr(const char *tag, void *addr) {
+    void *val = addr ? *(void **)addr : (void *)0;
+    char b[80];
+    snprintf(b, sizeof b, "[truth] %s = %p", tag ? tag : "?", val);
+    sd_save_log(b);
+}
 
 /* ---- One-shot save-path diagnostic ------------------------------------
  * The Lynx ".sav never appears on SD" bug needs the REAL FatFs reason, which

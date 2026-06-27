@@ -47,38 +47,26 @@ static SWORD    lynx_audio_buffer[HANDY_AUDIO_BUFFER_LENGTH];
 
 static void blit();
 
-/* Save-path diagnostic (firmware-side, syscalls.c) — see sd_save_log() there.
- * Writes the real FatFs FRESULT + each step to /lynx_save_diag.txt so we can
- * see WHY the .sav never lands on the SD card. Remove once the save bug is found. */
-extern "C" int sd_path_probe(const char *path);
+/* Firmware-side helpers (syscalls.c). sd_save_log writes one line to
+ * /lynx_save_diag.txt; sd_save_log_boot truncates it + writes the build marker;
+ * lynx_dump_ptr reads *(void**)addr IN FIRMWARE CONTEXT (no veneer corruption)
+ * and logs the TRUE value — used to prove the overlay's corrupted reads. */
 extern "C" void sd_save_log(const char *line);
-extern "C" void sd_save_log_boot(const char *line); /* truncates the log + writes marker */
-/* Live CSystem* kept in FIRMWARE RAM (syscalls.c). A DIRECT overlay store to that
- * global read back as 0 in the handlers, so set/get it through FIRMWARE functions
- * (the overlay only passes/receives the pointer by register via the call). */
-extern "C" void  lynx_set_csystem(void *p);
-extern "C" void *lynx_get_csystem(void);
+extern "C" void sd_save_log_boot(const char *line);
+extern "C" void lynx_dump_ptr(const char *tag, void *addr);
 
-/* FIX: capture the overlay static `lynx` into a LOCAL as the very first op,
- * BEFORE any fopen()/printf firmware (RAM->flash veneer) call. The documented
- * Lynx hazard is that the operation right after such a call is corrupted; the
- * old code re-read `lynx` AFTER fopen() for `lynx->ContextSave(fp)`, so the
- * pointer was clobbered and the save/load did nothing (0-byte .sav; load ->
- * Reset). Using the pre-captured `L` keeps the pointer stable across fopen. */
-/* The "lynx==0" the diagnostics kept showing was a VENEER ARTIFACT: reading the
- * pointer right after a firmware (RAM->flash) call returns a corrupted 0 on this
- * device. The real bug is the handler re-reading `lynx` AFTER fopen() for
- * lynx->ContextSave/Load(). Fix: read `lynx` as the VERY FIRST op (no preceding
- * firmware call -> clean), capture into L, and use L throughout. NO firmware call
- * before/between the critical reads. One confirmation line, AFTER everything. */
+/* ROOT CAUSE: on this device, reading `lynx` right after a RAM->flash firmware
+ * (veneer) call returns a corrupted 0. The old handler re-read `lynx` AFTER
+ * fopen() for lynx->ContextSave/Load() -> got 0 -> wrote nothing (.sav absent).
+ * FIX: read `lynx` as the VERY FIRST op (no preceding firmware call -> clean),
+ * capture into L, and use L throughout (never re-read after fopen). The truth
+ * dump confirms via firmware: if L==0 but truth!=0, even the capture got hit. */
 static bool LoadState(const char *savePathName)
 {
     CSystem *L = lynx;                 /* clean first read */
-    if (L == NULL)
-        return false;
+    if (L == NULL) { lynx_dump_ptr("load L==0 truth", &lynx); return false; }
     FILE *fp = fopen(savePathName, "rb");
-    if (fp == NULL)
-        return false;
+    if (fp == NULL) { sd_save_log("[load] fopen NULL"); return false; }
     bool ret = L->ContextLoad(fp);
     fclose(fp);
     if (!ret)
@@ -90,11 +78,9 @@ static bool LoadState(const char *savePathName)
 static bool SaveState(const char *savePathName)
 {
     CSystem *L = lynx;                 /* clean first read */
-    if (L == NULL)
-        return false;
+    if (L == NULL) { lynx_dump_ptr("save L==0 truth", &lynx); return false; }
     FILE *fp = fopen(savePathName, "wb");
-    if (fp == NULL)
-        return false;
+    if (fp == NULL) { sd_save_log("[save] fopen NULL"); return false; }
     bool ret = L->ContextSave(fp);
     fclose(fp);
     { char b[64]; snprintf(b, sizeof b, "[save] done L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
@@ -233,8 +219,6 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
         printf("Lynx: ROM loading failed.\n");
         return;
     }
-    /* (csystem ptr is stashed via lynx_set_csystem() after emu_init below — a
-     * direct store here in this fragile post-construction frame doesn't persist.) */
     /* Set the render/audio globals IMMEDIATELY — before any printf in this
      * RAM-overlay frame. A RAM->flash veneer'd printf here corrupts the very
      * next operation on device (proven: it flipped the fileType compare), so a
