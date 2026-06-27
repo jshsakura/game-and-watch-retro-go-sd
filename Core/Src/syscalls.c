@@ -81,6 +81,13 @@ void doom_trace_raw(const char *s) {
  * regardless of what clobbers the overlay BSS. main_lynx sets it right after the
  * core is constructed; LoadState/SaveState read it. */
 void *g_lynx_csystem = NULL;
+/* Set/get via FIRMWARE-context functions: a direct overlay store to this DTCM
+ * global read back as 0 in the handlers (overlay->firmware data write not
+ * persisting / not visible). Doing the store and load in firmware code (the
+ * overlay only calls in, passing/receiving the pointer by register) sidesteps
+ * that. */
+void lynx_set_csystem(void *p) { g_lynx_csystem = p; }
+void *lynx_get_csystem(void)   { return g_lynx_csystem; }
 
 /* ---- One-shot save-path diagnostic ------------------------------------
  * The Lynx ".sav never appears on SD" bug needs the REAL FatFs reason, which
