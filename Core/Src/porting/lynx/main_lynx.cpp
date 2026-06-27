@@ -38,6 +38,7 @@ static void blit();
 
 extern "C" void sd_save_log(const char *line);
 extern "C" void sd_save_log_boot(const char *line); /* truncates the log + build marker */
+extern "C" size_t heap_free_mem(void); /* remaining overlay heap (RAM_EMU), see heap.cpp */
 
 /* DEVICE FACT (measured, build 14:51:02): when firmware calls SaveState/LoadState
  * through the registered function pointers, `lynx` reads back 0 in that context
@@ -115,20 +116,39 @@ static void *Screenshot()
 static uint8_t rom_memory[ROM_BUFF_LENGTH];
 #endif
 
+/* RAM kept free for the allocations CCart/CSystem still make on top of the ROM
+ * copy: bank1 (≤64K), the Lynx 64K system RAM, plus heap slack. If the full ROM
+ * copy + this headroom won't fit, we XIP bank0 from flash instead. */
+#define LYNX_RAM_COPY_HEADROOM (192 * 1024)
+
 static size_t getromdata(unsigned char **data)
 {
-    /* Copy the ROM into RAM so the 65C02 fetches bank0 from RAM, not QSPI flash.
-     * Running the CPU XIP from flash bank0 broke on device (even 256K APB that
-     * works from RAM) — flash-resident execution is too slow / faults there. RAM
-     * copy is the proven config: 256K ROM + 64K bank1 + 64K CRam = 384K fits the
-     * ~610K overlay heap. NOTE: this caps carts at ~256K (512K would overflow);
-     * 512K support needs flash-XIP, which is a separate device-verified task. */
+    /* Small carts (≤256K, e.g. APB): copy the ROM into RAM so the 65C02 fetches
+     * bank0 from fast RAM — the proven config (256K ROM + 64K bank1 + 64K CRam
+     * fits the ~610K overlay heap).
+     *
+     * Large carts (512K, e.g. Ninja Gaiden III): a full RAM copy + bank1 + CRam
+     * overflows the heap (the BSOD). For these we hand CCart the flash pointer so
+     * it XIPs bank0 straight from memory-mapped QSPI flash (the path CCart already
+     * implements: full bank0 present -> mCartBank0 = gamedata, no new[]/memcpy).
+     * Only bank1 (64K) then lands in RAM, so 512K fits. Decision is by ACTUAL free
+     * heap, not a hardcoded cap, so APB stays on the RAM path with no regression. */
     uint32_t size = 0;
     unsigned char *flashptr = (unsigned char *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
     if (!flashptr || size == 0) { *data = NULL; return 0; }
-    unsigned char *ram = new unsigned char[size];
-    memcpy(ram, flashptr, size);
-    *data = ram;
+
+    if (heap_free_mem() >= (size_t)size + LYNX_RAM_COPY_HEADROOM)
+    {
+        unsigned char *ram = new unsigned char[size];
+        memcpy(ram, flashptr, size);
+        *data = ram;
+        printf("[lynx] ROM->RAM %lu B (free %u)\n", (unsigned long)size, (unsigned)heap_free_mem());
+    }
+    else
+    {
+        *data = flashptr; /* XIP bank0 directly from flash */
+        printf("[lynx] ROM XIP-flash %lu B (free %u)\n", (unsigned long)size, (unsigned)heap_free_mem());
+    }
     return size;
 }
 
