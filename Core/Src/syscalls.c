@@ -105,6 +105,22 @@ int sd_path_probe(const char *path) {
     return (int)r;
 }
 
+/* TRUNCATE the log and write the first (boot/build marker) line, so every app
+ * launch starts a FRESH file — no more stale lines from old builds confusing us. */
+void sd_save_log_boot(const char *line) {
+    if (line == NULL) return;
+    FIL f;
+    if (f_open(&f, "/lynx_save_diag.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+        return;
+    UINT bw;
+    size_t n = 0;
+    while (line[n]) n++;
+    f_write(&f, line, n, &bw);
+    f_write(&f, "\n", 1, &bw);
+    f_sync(&f);
+    f_close(&f);
+}
+
 void sd_save_log(const char *line) {
     if (line == NULL) return;
     FIL f;

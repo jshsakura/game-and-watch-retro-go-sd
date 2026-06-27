@@ -52,6 +52,7 @@ static void blit();
  * see WHY the .sav never lands on the SD card. Remove once the save bug is found. */
 extern "C" int sd_path_probe(const char *path);
 extern "C" void sd_save_log(const char *line);
+extern "C" void sd_save_log_boot(const char *line); /* truncates the log + writes marker */
 /* Live CSystem* kept in FIRMWARE RAM (syscalls.c). A DIRECT overlay store to that
  * global read back as 0 in the handlers, so set/get it through FIRMWARE functions
  * (the overlay only passes/receives the pointer by register via the call). */
@@ -245,6 +246,10 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     gAudioEnabled = 1;
     printf("[lynx] CSystem ok, fb=%p (build %s %s)\n",
            (void *)gPrimaryFrameBuffer, __DATE__, __TIME__);
+
+    /* Fresh log each launch + a build fingerprint so we can see exactly which
+     * core is running (the append-log kept showing stale lines from old builds). */
+    sd_save_log_boot("[boot] lynx core build " __DATE__ " " __TIME__);
 
     uint32_t samplesPerFrame = AUDIO_LYNX_SAMPLE_RATE / LYNX_FPS;
 
