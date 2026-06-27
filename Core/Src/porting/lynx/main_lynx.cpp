@@ -243,18 +243,21 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     printf("[lynx] CSystem ok, fb=%p (build %s %s)\n",
            (void *)gPrimaryFrameBuffer, __DATE__, __TIME__);
 
+    /* STAGED TRACE: log lynx at every stage so ONE run shows exactly where it
+     * goes to 0 (no more one-line guessing). All after the danger zone. */
+    { char b[80]; snprintf(b, sizeof b, "[A] after-ctor lynx=%p", (void *)lynx); sd_save_log(b); }
+
     uint32_t samplesPerFrame = AUDIO_LYNX_SAMPLE_RATE / LYNX_FPS;
 
     common_emu_state.frame_time_10us = (uint16_t)(100000 / LYNX_FPS + 0.5f);
 
     odroid_system_init(APPID_LYNX, AUDIO_LYNX_SAMPLE_RATE);
+    { char b[80]; snprintf(b, sizeof b, "[B] after-sysinit lynx=%p", (void *)lynx); sd_save_log(b); }
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
 
-    /* Stash the live pointer via a FIRMWARE function (firmware does the store) —
-     * a direct overlay store to the firmware global read back as 0. lynx is valid
-     * here (the loop uses it) and this runs BEFORE emu_load_state, so LoadState
-     * gets a live pointer too. */
+    /* Stash the live pointer via a FIRMWARE function (firmware does the store). */
     lynx_set_csystem(lynx);
+    { char b[80]; snprintf(b, sizeof b, "[C] after-set lynx=%p get=%p", (void *)lynx, lynx_get_csystem()); sd_save_log(b); }
 
     if (load_state)
     {
@@ -266,6 +269,10 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     }
 
     audio_start_playing(samplesPerFrame);
+
+    /* STAGED TRACE: log once from inside the loop (where UpdateFrame works) so we
+     * see lynx + the firmware get right before an in-game save can happen. */
+    { char b[80]; snprintf(b, sizeof b, "[D] loop1 lynx=%p get=%p", (void *)lynx, lynx_get_csystem()); sd_save_log(b); }
 
     /* Main loop — printf-free like the other cores. */
     while (1)
