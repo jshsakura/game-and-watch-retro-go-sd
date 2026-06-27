@@ -40,40 +40,40 @@ static void blit();
 extern "C" int sd_path_probe(const char *path);
 extern "C" void sd_save_log(const char *line);
 
+/* FIX: capture the overlay static `lynx` into a LOCAL as the very first op,
+ * BEFORE any fopen()/printf firmware (RAM->flash veneer) call. The documented
+ * Lynx hazard is that the operation right after such a call is corrupted; the
+ * old code re-read `lynx` AFTER fopen() for `lynx->ContextSave(fp)`, so the
+ * pointer was clobbered and the save/load did nothing (0-byte .sav; load ->
+ * Reset). Using the pre-captured `L` keeps the pointer stable across fopen. */
 static bool LoadState(const char *savePathName)
 {
-    char b[160];
-    snprintf(b, sizeof b, "[load] ENTER lynx=%p &lynx=%p", (void *)lynx, (void *)&lynx);
-    sd_save_log(b);
-    if (lynx == NULL)
+    CSystem *L = lynx;                 /* capture before any veneer call */
+    if (L == NULL)
         return false;
     FILE *fp = fopen(savePathName, "rb");
-    if (fp == NULL) { sd_save_log("[load] fopen(rb)==NULL -> false"); return false; }
-    bool ret = lynx->ContextLoad(fp);
+    if (fp == NULL)
+        return false;
+    bool ret = L->ContextLoad(fp);
     fclose(fp);
-    snprintf(b, sizeof b, "[load] ContextLoad=%d", (int)ret);
-    sd_save_log(b);
     if (!ret)
-        lynx->Reset();
+        L->Reset();
+    /* log LAST so its veneer call can't corrupt the !ret/Reset decision above */
+    { char b[64]; snprintf(b, sizeof b, "[load] L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
     return ret;
 }
 
 static bool SaveState(const char *savePathName)
 {
-    char b[160];
-    int probe = sd_path_probe(savePathName);
-    snprintf(b, sizeof b, "[save] ENTER probe_fopen=%d lynx=%p &lynx=%p",
-             probe, (void *)lynx, (void *)&lynx);
-    sd_save_log(b);
-    if (lynx == NULL) { sd_save_log("[save] lynx==NULL -> false"); return false; }
+    CSystem *L = lynx;                 /* capture before any veneer call */
+    if (L == NULL)
+        return false;
     FILE *fp = fopen(savePathName, "wb");
-    if (fp == NULL) { sd_save_log("[save] fopen(wb)==NULL -> false"); return false; }
-    sd_save_log("[save] fopen OK");
-    bool ret = lynx->ContextSave(fp);
-    snprintf(b, sizeof b, "[save] ContextSave=%d", (int)ret);
-    sd_save_log(b);
+    if (fp == NULL)
+        return false;
+    bool ret = L->ContextSave(fp);
     fclose(fp);
-    sd_save_log("[save] fclose done -> return");
+    { char b[64]; snprintf(b, sizeof b, "[save] L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
     return ret;
 }
 
@@ -221,16 +221,6 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     printf("[lynx] CSystem ok, fb=%p (build %s %s)\n",
            (void *)gPrimaryFrameBuffer, __DATE__, __TIME__);
 
-    /* DIAGNOSTIC: the handlers see lynx==NULL though UpdateFrame works in the
-     * loop. Log lynx value + ADDRESS here (construction) to compare against the
-     * handler's &lynx — same addr + value 0 in handler => zeroed; different addr
-     * => the handler reads a different instance. */
-    {
-        char db[96];
-        snprintf(db, sizeof db, "[ctor] lynx=%p &lynx=%p", (void *)lynx, (void *)&lynx);
-        sd_save_log(db);
-    }
-
     uint32_t samplesPerFrame = AUDIO_LYNX_SAMPLE_RATE / LYNX_FPS;
 
     common_emu_state.frame_time_10us = (uint16_t)(100000 / LYNX_FPS + 0.5f);
@@ -248,14 +238,6 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     }
 
     audio_start_playing(samplesPerFrame);
-
-    /* DIAGNOSTIC: log lynx value + &lynx from the LOOP context (where UpdateFrame
-     * works) to compare against the handler's view. */
-    {
-        char db[96];
-        snprintf(db, sizeof db, "[loop] lynx=%p &lynx=%p", (void *)lynx, (void *)&lynx);
-        sd_save_log(db);
-    }
 
     /* Main loop — printf-free like the other cores. */
     while (1)
