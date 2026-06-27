@@ -74,6 +74,37 @@ void doom_trace_raw(const char *s) {
     f_sync(&doom_trace_fil);
 }
 
+/* ---- One-shot save-path diagnostic ------------------------------------
+ * The Lynx ".sav never appears on SD" bug needs the REAL FatFs reason, which
+ * newlib's _open masks to a flat EIO. These helpers open+write+close per call
+ * (NO held handle, unlike sd_trace) so they cannot collide with the save write.
+ * sd_path_probe() returns the actual FRESULT of creating the target path:
+ *   FR_OK(0)=creatable, FR_NO_PATH(5)=dir missing (mkdir failed), FR_DISK_ERR(1),
+ *   FR_DENIED(7), etc. sd_save_log() appends one line to /lynx_save_diag.txt,
+ * which the user reads off the SD card on a PC. */
+int sd_path_probe(const char *path) {
+    if (!path || !path[0]) return -1;
+    FIL t;
+    FRESULT r = f_open(&t, path, FA_WRITE | FA_CREATE_ALWAYS);
+    if (r == FR_OK) f_close(&t); /* real save fopen() truncates+rewrites after */
+    return (int)r;
+}
+
+void sd_save_log(const char *line) {
+    if (line == NULL) return;
+    FIL f;
+    if (f_open(&f, "/lynx_save_diag.txt", FA_WRITE | FA_OPEN_APPEND) != FR_OK &&
+        f_open(&f, "/lynx_save_diag.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+        return;
+    UINT bw;
+    size_t n = 0;
+    while (line[n]) n++;
+    f_write(&f, line, n, &bw);
+    f_write(&f, "\n", 1, &bw);
+    f_sync(&f);
+    f_close(&f);
+}
+
 #define FATFS_FD_OFFSET 3 // Prevent collision with STDOUT_FILENO, ...
 int find_free_slot() {
     for (int i = 0; i < MAX_OPEN_FILES; i++) {

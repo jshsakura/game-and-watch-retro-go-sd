@@ -34,15 +34,25 @@ static SWORD    lynx_audio_buffer[HANDY_AUDIO_BUFFER_LENGTH];
 
 static void blit();
 
+/* Save-path diagnostic (firmware-side, syscalls.c) — see sd_save_log() there.
+ * Writes the real FatFs FRESULT + each step to /lynx_save_diag.txt so we can
+ * see WHY the .sav never lands on the SD card. Remove once the save bug is found. */
+extern "C" int sd_path_probe(const char *path);
+extern "C" void sd_save_log(const char *line);
+
 static bool LoadState(const char *savePathName)
 {
+    char b[160];
+    snprintf(b, sizeof b, "[load] ENTER path=%s lynx=%p", savePathName, (void *)lynx);
+    sd_save_log(b);
     if (lynx == NULL)
         return false;
     FILE *fp = fopen(savePathName, "rb");
-    if (fp == NULL)
-        return false;
+    if (fp == NULL) { sd_save_log("[load] fopen(rb)==NULL -> false"); return false; }
     bool ret = lynx->ContextLoad(fp);
     fclose(fp);
+    snprintf(b, sizeof b, "[load] ContextLoad=%d", (int)ret);
+    sd_save_log(b);
     if (!ret)
         lynx->Reset();
     return ret;
@@ -50,13 +60,20 @@ static bool LoadState(const char *savePathName)
 
 static bool SaveState(const char *savePathName)
 {
-    if (lynx == NULL)
-        return false;
+    char b[160];
+    int probe = sd_path_probe(savePathName);
+    snprintf(b, sizeof b, "[save] ENTER path=%s probe_fopen=%d lynx=%p",
+             savePathName, probe, (void *)lynx);
+    sd_save_log(b);
+    if (lynx == NULL) { sd_save_log("[save] lynx==NULL -> false"); return false; }
     FILE *fp = fopen(savePathName, "wb");
-    if (fp == NULL)
-        return false;
+    if (fp == NULL) { sd_save_log("[save] fopen(wb)==NULL -> false"); return false; }
+    sd_save_log("[save] fopen OK");
     bool ret = lynx->ContextSave(fp);
+    snprintf(b, sizeof b, "[save] ContextSave=%d", (int)ret);
+    sd_save_log(b);
     fclose(fp);
+    sd_save_log("[save] fclose done -> return");
     return ret;
 }
 
