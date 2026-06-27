@@ -27,50 +27,30 @@ extern "C"
 #define LYNX_FPS                60
 #define AUDIO_LYNX_SAMPLE_RATE  HANDY_AUDIO_SAMPLE_FREQ /* 32000 */
 
-/* The static `lynx` pointer was being ZEROED before the save/load handlers ran
- * (device proof: handler L=0 & &lynx=0x2406ccb4 — the correct, single-instance
- * static at the overlay BSS tail — though UpdateFrame works fine in the loop, so
- * something clobbers that address between the loop and the handler). Enlarging
- * lynx_framebuffer did NOT help, so it is NOT a framebuffer overdraw. Put the
- * pointer in ONE struct, placed AFTER the framebuffer + a guard, so the pointer
- * is moved well off the clobbered address (and any overdraw lands in the guard).
- * Macros keep the rest of the file unchanged. */
-#define LYNX_FB_GUARD_PIXELS (160 * 64)
-static struct {
-    uint16_t framebuffer[HANDY_SCREEN_WIDTH * HANDY_SCREEN_HEIGHT + LYNX_FB_GUARD_PIXELS];
-    uint8_t  ptr_guard[4096];
-    CSystem *sys;
-} lynx_mem;
-#define lynx_framebuffer (lynx_mem.framebuffer)
-#define lynx             (lynx_mem.sys)
+/* Plain static layout — exactly like the original (build 1219) where APB plays
+ * fine. The struct/guard experiments were chasing a phantom clobber that was
+ * really veneer-corrupted reads + the new core never installing; reverted. */
+static CSystem *lynx = NULL;
+static uint16_t lynx_framebuffer[HANDY_SCREEN_WIDTH * HANDY_SCREEN_HEIGHT];
 static SWORD    lynx_audio_buffer[HANDY_AUDIO_BUFFER_LENGTH];
 
 static void blit();
 
-/* Firmware-side helpers (syscalls.c). sd_save_log writes one line to
- * /lynx_save_diag.txt; sd_save_log_boot truncates it + writes the build marker;
- * lynx_dump_ptr reads *(void**)addr IN FIRMWARE CONTEXT (no veneer corruption)
- * and logs the TRUE value — used to prove the overlay's corrupted reads. */
 extern "C" void sd_save_log(const char *line);
-extern "C" void sd_save_log_boot(const char *line);
-extern "C" void lynx_dump_ptr(const char *tag, void *addr);
-/* Firmware-DTCM stash of the live CSystem*, set while valid (after construction),
- * read by the handlers — survives the RAM_EMU clobber that zeroes the overlay static. */
-extern "C" void  lynx_set_csystem(void *p);
-extern "C" void *lynx_get_csystem(void);
+extern "C" void sd_save_log_boot(const char *line); /* truncates the log + build marker */
 
-/* ROOT CAUSE: on this device, reading `lynx` right after a RAM->flash firmware
- * (veneer) call returns a corrupted 0. The old handler re-read `lynx` AFTER
- * fopen() for lynx->ContextSave/Load() -> got 0 -> wrote nothing (.sav absent).
- * FIX: read `lynx` as the VERY FIRST op (no preceding firmware call -> clean),
- * capture into L, and use L throughout (never re-read after fopen). The truth
- * dump confirms via firmware: if L==0 but truth!=0, even the capture got hit. */
+/* Clean capture-first: read `lynx` as the VERY FIRST op (no preceding firmware
+ * call), then use the captured L — never re-read `lynx` after fopen() (the old
+ * bug: the post-fopen re-read was veneer-corrupted to 0, so ContextSave wrote
+ * nothing). One log line AFTER fclose; no firmware calls in the critical path. */
 static bool LoadState(const char *savePathName)
 {
-    CSystem *L = (CSystem *)lynx_get_csystem();  /* firmware-DTCM stash (survives clobber) */
-    if (L == NULL) { lynx_dump_ptr("load get==0; overlay", &lynx); return false; }
+    CSystem *L = lynx;
+    if (L == NULL)
+        return false;
     FILE *fp = fopen(savePathName, "rb");
-    if (fp == NULL) { sd_save_log("[load] fopen NULL"); return false; }
+    if (fp == NULL)
+        return false;
     bool ret = L->ContextLoad(fp);
     fclose(fp);
     if (!ret)
@@ -81,10 +61,12 @@ static bool LoadState(const char *savePathName)
 
 static bool SaveState(const char *savePathName)
 {
-    CSystem *L = (CSystem *)lynx_get_csystem();  /* firmware-DTCM stash (survives clobber) */
-    if (L == NULL) { lynx_dump_ptr("save get==0; overlay", &lynx); return false; }
+    CSystem *L = lynx;
+    if (L == NULL)
+        return false;
     FILE *fp = fopen(savePathName, "wb");
-    if (fp == NULL) { sd_save_log("[save] fopen NULL"); return false; }
+    if (fp == NULL)
+        return false;
     bool ret = L->ContextSave(fp);
     fclose(fp);
     { char b[64]; snprintf(b, sizeof b, "[save] done L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
@@ -235,31 +217,16 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     printf("[lynx] CSystem ok, fb=%p (build %s %s)\n",
            (void *)gPrimaryFrameBuffer, __DATE__, __TIME__);
 
-    /* Fresh log each launch + a build fingerprint so we can see exactly which
-     * core is running (the append-log kept showing stale lines from old builds). */
+    /* Fresh log each launch + a build fingerprint so we can see which core is
+     * running (the append-log kept showing stale lines from old builds). */
     sd_save_log_boot("[boot] lynx core build " __DATE__ " " __TIME__);
-
-    /* PINPOINT: lynx was valid at the fileType check but 0 by emu_init. Read the
-     * TRUE value (firmware reads &lynx; address calc isn't veneer-corrupted) at
-     * each step to find which op zeroes lynx_mem.sys. */
-    lynx_dump_ptr("t1 post-boot", &lynx);
 
     uint32_t samplesPerFrame = AUDIO_LYNX_SAMPLE_RATE / LYNX_FPS;
 
     common_emu_state.frame_time_10us = (uint16_t)(100000 / LYNX_FPS + 0.5f);
 
     odroid_system_init(APPID_LYNX, AUDIO_LYNX_SAMPLE_RATE);
-    lynx_dump_ptr("t2 post-sysinit", &lynx);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
-    lynx_dump_ptr("t3 post-emuinit", &lynx);
-
-    /* Capture the live pointer into firmware DTCM NOW (lynx is valid here — the
-     * loop below uses it). The handlers read it from there; it survives the
-     * RAM_EMU clobber that zeroes the overlay static by save time. Runs BEFORE
-     * emu_load_state so LoadState gets it too. Log the truth so we confirm the
-     * value being captured is non-zero. */
-    lynx_set_csystem(lynx);
-    lynx_dump_ptr("set-csystem &lynx", &lynx);
 
     if (load_state)
     {
