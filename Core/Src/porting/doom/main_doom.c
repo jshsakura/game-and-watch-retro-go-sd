@@ -48,12 +48,6 @@ extern void G_LoadGame(const char *name);
 extern void doom_trace_begin(void);
 extern void doom_trace_end(void);
 
-/* One-shot pipeline marker: prints the first time control reaches a spot, so a
- * single /doom_trace.txt shows the furthest milestone before a fault/hang. Each
- * use has its own block-scoped static, so multiple marks per function are fine. */
-#define DOOM_MARK(tag) do { static int _m = 0; \
-    if (!_m) { _m = 1; printf("[doom] >> " tag "\n"); } } while (0)
-
 #define DOOM_WAD_PATH      "/roms/homebrew/DOOM1.WAD"
 #define DOOM_FB_X_OFFSET   ((ODROID_SCREEN_WIDTH  - DOOMGENERIC_RESX) / 2)   /* 0  */
 #define DOOM_FB_Y_OFFSET   ((ODROID_SCREEN_HEIGHT - DOOMGENERIC_RESY) / 2)   /* 20 */
@@ -93,22 +87,16 @@ static const doom_keymap_t DOOM_KEYMAP[] = {
 
 void DG_Init(void)
 {
-    DOOM_MARK("DG_Init");
     doom_prev_buttons = 0;
 }
 
-/* Returns 1 and fills *pressed/*doomKey for the next changed button, else 0. */
+/* Returns 1 and fills *pressed/*doomKey for the next changed button, else 0.
+ * printf-free: this runs in the first-tic input poll where DOOM HardFaulted,
+ * and a veneer'd printf from this RAM-overlay function can corrupt the next
+ * compare (proven on Lynx, commit f442284d). Crash location comes from the
+ * BSOD fault-tee (syscalls.c), not from per-call logging. */
 int DG_GetKey(int *pressed, unsigned char *doomKey)
 {
-    /* DIAGNOSTIC: I_GetEvent loops `while (DG_GetKey(...))`. If buttons_get()
-     * keeps reporting changes (noisy/floating line) this never converges and
-     * hangs the first tic. We render nothing before I_InitGraphics, so an
-     * absurd call count here = runaway; log the button state once. */
-    static uint32_t calls = 0;
-    if (++calls == 5000u)
-        printf("[doom] DG_GetKey runaway: now=0x%08lx prev=0x%08lx\n",
-               (unsigned long)buttons_get(), (unsigned long)doom_prev_buttons);
-
     uint32_t now = buttons_get();
     uint32_t changed = now ^ doom_prev_buttons;
     if (!changed)
@@ -156,37 +144,10 @@ void *doom_bonus_alloc(size_t n)
 /* ------------------------------------------------------------------ */
 void DG_DrawFrame(void)
 {
-    DOOM_MARK("DG_DrawFrame (first frame to LCD)");
     const uint8_t *src = I_VideoBuffer;   /* 8bpp paletted, RESX x RESY */
 
-    if (src == NULL) {
-        DOOM_MARK("DG_DrawFrame: I_VideoBuffer NULL");
+    if (src == NULL)
         return;
-    }
-
-    /* One-shot serial diagnostic -- the screen can't tell us anything, so dump
-     * the facts to the log instead. Is the palette black? Does I_VideoBuffer
-     * actually hold non-zero pixels? Does the buffer we draw into match the
-     * framebuffer pool? This bisects palette-black vs display-path with zero
-     * dependence on what the panel shows. Remove once understood. */
-    {
-        static int doomdiag_done = 0;
-        if (!doomdiag_done) {
-            doomdiag_done = 1;
-            extern uint16_t rgb565_palette[256];
-            extern pixel_t *framebuffer1;
-            extern pixel_t *framebuffer2;
-            printf("[doomdiag] pal[1,2,4,8,16,80]= %04x %04x %04x %04x %04x %04x\n",
-                   rgb565_palette[1], rgb565_palette[2], rgb565_palette[4],
-                   rgb565_palette[8], rgb565_palette[16], rgb565_palette[80]);
-            printf("[doomdiag] vbuf[0..15]=");
-            for (int i = 0; i < 16; ++i) printf(" %02x", src[i]);
-            printf("\n");
-            printf("[doomdiag] active=%p inactive=%p fb1=%p fb2=%p y_off=%d\n",
-                   lcd_get_active_buffer(), lcd_get_inactive_buffer(),
-                   (void *)framebuffer1, (void *)framebuffer2, DOOM_FB_Y_OFFSET);
-        }
-    }
 
     /* Don't touch the framebuffer while the previous swap is still being applied
      * at vblank. Issuing another draw+swap mid-reload corrupts the active/inactive
@@ -215,34 +176,12 @@ void DG_DrawFrame(void)
 /* ------------------------------------------------------------------ */
 uint32_t DG_GetTicksMs(void)
 {
-    static int once = 0;
-    if (!once) { once = 1; printf("[doom] DG_GetTicksMs first call (in TryRunTics)\n"); }
     return HAL_GetTick();
 }
 
 void DG_SleepMs(uint32_t ms)
 {
-    /* DIAGNOSTIC (tick probe): DOOM's first TryRunTics() spins in a wait loop
-     * whose ONLY escape is I_GetTime()/HAL_GetTick() advancing ~1 tic (~29ms).
-     * The device reboots here, so either the tick is frozen (SysTick not
-     * incrementing uwTick during the overlay) or it advances too slowly.
-     *
-     * DG_SleepMs is called once per wait-loop iteration. Each printf()+f_sync()
-     * to SD costs ~1ms of wall-clock, so logging the raw HAL_GetTick() across
-     * the first 8 iterations is itself a timed experiment: if SysTick is alive
-     * the tick climbs line-to-line; if every line shows the same value the tick
-     * is FROZEN. No wdog_refresh() here, so the watchdog still reboots cleanly
-     * after we've flushed the verdict to /doom_trace.txt (no battery drain). */
-    (void)ms;
-    static int n = 0;
-    static uint32_t first = 0;
-    uint32_t t = HAL_GetTick();
-    if (n == 0) first = t;
-    if (n < 8) {
-        printf("[doom] tick probe #%d: HAL_GetTick=%lu (delta=%ld)\n",
-               n, (unsigned long)t, (long)(t - first));
-    }
-    n++;
+    (void)ms;   /* printf-free: was a tick-probe; see Lynx 6c93f023 lesson. */
 }
 
 void DG_SetWindowTitle(const char *title)
@@ -370,13 +309,14 @@ int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         lcd_clear_buffers();
 
     odroid_gamepad_state_t joystick;
-    int trace_tick = 0;
     while (true) {
         wdog_refresh();
 
-        /* Trace the first frames: a silent hard fault during the first level
-         * load / render shows up as the last "tick N" line on the SD card. */
-        if (trace_tick < 40) printf("[doom] tick %d\n", trace_tick++);
+        /* printf-free main loop, like zelda3 and the other working cores
+         * (Lynx 6c93f023): a veneer'd printf per frame from this RAM overlay
+         * can corrupt the next compare. A first-tic fault is captured by the
+         * BSOD fault-tee (syscalls.c) with pc/lr, which is how the original
+         * thintriangle_guy corruption was decoded -- no per-tick log needed. */
 
         /* Retro-go menu + savestate hotkeys (PAUSE+A save / PAUSE+B load,
          * brightness/volume, quit) via the registered Save/Load callbacks. */
