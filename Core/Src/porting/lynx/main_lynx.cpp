@@ -64,10 +64,15 @@ extern "C" void *lynx_get_csystem(void);
  * old code re-read `lynx` AFTER fopen() for `lynx->ContextSave(fp)`, so the
  * pointer was clobbered and the save/load did nothing (0-byte .sav; load ->
  * Reset). Using the pre-captured `L` keeps the pointer stable across fopen. */
+/* The "lynx==0" the diagnostics kept showing was a VENEER ARTIFACT: reading the
+ * pointer right after a firmware (RAM->flash) call returns a corrupted 0 on this
+ * device. The real bug is the handler re-reading `lynx` AFTER fopen() for
+ * lynx->ContextSave/Load(). Fix: read `lynx` as the VERY FIRST op (no preceding
+ * firmware call -> clean), capture into L, and use L throughout. NO firmware call
+ * before/between the critical reads. One confirmation line, AFTER everything. */
 static bool LoadState(const char *savePathName)
 {
-    CSystem *L = (CSystem *)lynx_get_csystem();   /* firmware get, not the clobbered static */
-    { char e[112]; snprintf(e, sizeof e, "[load] ENTER L=%p static=%p", (void *)L, (void *)lynx); sd_save_log(e); }
+    CSystem *L = lynx;                 /* clean first read */
     if (L == NULL)
         return false;
     FILE *fp = fopen(savePathName, "rb");
@@ -77,15 +82,13 @@ static bool LoadState(const char *savePathName)
     fclose(fp);
     if (!ret)
         L->Reset();
-    /* log LAST so its veneer call can't corrupt the !ret/Reset decision above */
-    { char b[64]; snprintf(b, sizeof b, "[load] L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
+    { char b[64]; snprintf(b, sizeof b, "[load] done L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
     return ret;
 }
 
 static bool SaveState(const char *savePathName)
 {
-    CSystem *L = (CSystem *)lynx_get_csystem();   /* firmware get, not the clobbered static */
-    { char e[112]; snprintf(e, sizeof e, "[save] ENTER L=%p static=%p", (void *)L, (void *)lynx); sd_save_log(e); }
+    CSystem *L = lynx;                 /* clean first read */
     if (L == NULL)
         return false;
     FILE *fp = fopen(savePathName, "wb");
@@ -93,7 +96,7 @@ static bool SaveState(const char *savePathName)
         return false;
     bool ret = L->ContextSave(fp);
     fclose(fp);
-    { char b[64]; snprintf(b, sizeof b, "[save] L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
+    { char b[64]; snprintf(b, sizeof b, "[save] done L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
     return ret;
 }
 
@@ -243,21 +246,12 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     printf("[lynx] CSystem ok, fb=%p (build %s %s)\n",
            (void *)gPrimaryFrameBuffer, __DATE__, __TIME__);
 
-    /* STAGED TRACE: log lynx at every stage so ONE run shows exactly where it
-     * goes to 0 (no more one-line guessing). All after the danger zone. */
-    { char b[80]; snprintf(b, sizeof b, "[A] after-ctor lynx=%p", (void *)lynx); sd_save_log(b); }
-
     uint32_t samplesPerFrame = AUDIO_LYNX_SAMPLE_RATE / LYNX_FPS;
 
     common_emu_state.frame_time_10us = (uint16_t)(100000 / LYNX_FPS + 0.5f);
 
     odroid_system_init(APPID_LYNX, AUDIO_LYNX_SAMPLE_RATE);
-    { char b[80]; snprintf(b, sizeof b, "[B] after-sysinit lynx=%p", (void *)lynx); sd_save_log(b); }
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
-
-    /* Stash the live pointer via a FIRMWARE function (firmware does the store). */
-    lynx_set_csystem(lynx);
-    { char b[80]; snprintf(b, sizeof b, "[C] after-set lynx=%p get=%p", (void *)lynx, lynx_get_csystem()); sd_save_log(b); }
 
     if (load_state)
     {
@@ -269,10 +263,6 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     }
 
     audio_start_playing(samplesPerFrame);
-
-    /* STAGED TRACE: log once from inside the loop (where UpdateFrame works) so we
-     * see lynx + the firmware get right before an in-game save can happen. */
-    { char b[80]; snprintf(b, sizeof b, "[D] loop1 lynx=%p get=%p", (void *)lynx, lynx_get_csystem()); sd_save_log(b); }
 
     /* Main loop — printf-free like the other cores. */
     while (1)
