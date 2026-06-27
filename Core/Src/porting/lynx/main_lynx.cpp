@@ -29,7 +29,15 @@ extern "C"
 
 static CSystem *lynx = NULL;
 
-static uint16_t lynx_framebuffer[HANDY_SCREEN_WIDTH * HANDY_SCREEN_HEIGHT];
+/* The Lynx active screen is 160x102, but Handy/Mikie can render PAST it (rotated
+ * games use up to 160x160 per ducalex). The linker places the `lynx` pointer
+ * IMMEDIATELY after this buffer — proven via the map: fb end == &lynx == 0x24067cb4
+ * with a 0-byte gap — so any overdraw zeroed the lynx pointer, making
+ * SaveState/LoadState see lynx==NULL (0-byte .sav; load fell through to Reset()
+ * = "just restarts"). Size for the 160x160 worst case + a guard so overdraw lands
+ * in slack, never on `lynx`. blit() still shows only the 160x102 active area. */
+#define LYNX_FB_GUARD_PIXELS (160 * 64) /* 58 extra rows for 160x160 + margin */
+static uint16_t lynx_framebuffer[HANDY_SCREEN_WIDTH * HANDY_SCREEN_HEIGHT + LYNX_FB_GUARD_PIXELS];
 static SWORD    lynx_audio_buffer[HANDY_AUDIO_BUFFER_LENGTH];
 
 static void blit();
