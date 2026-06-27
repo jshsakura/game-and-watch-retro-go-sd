@@ -38,14 +38,17 @@ static void blit();
 
 extern "C" void sd_save_log(const char *line);
 extern "C" void sd_save_log_boot(const char *line); /* truncates the log + build marker */
+/* Firmware-RAM copy of the live CSystem*, written by a PLAIN STORE from the main
+ * loop where `lynx` is proven readable (UpdateFrame works there). A plain store
+ * is not a veneer call, so it is safe in the loop and reaches firmware RAM
+ * uncorrupted. The handlers read this directly (first op) instead of the overlay
+ * static, whose read in the handler context kept coming back 0. */
+extern "C" void *g_lynx_csystem;
 
-/* Clean capture-first: read `lynx` as the VERY FIRST op (no preceding firmware
- * call), then use the captured L — never re-read `lynx` after fopen() (the old
- * bug: the post-fopen re-read was veneer-corrupted to 0, so ContextSave wrote
- * nothing). One log line AFTER fclose; no firmware calls in the critical path. */
 static bool LoadState(const char *savePathName)
 {
-    CSystem *L = lynx;
+    CSystem *L = (CSystem *)g_lynx_csystem;   /* loop-captured, clean */
+    if (L == NULL) L = lynx;                  /* fallback to overlay static */
     if (L == NULL)
         return false;
     FILE *fp = fopen(savePathName, "rb");
@@ -61,7 +64,8 @@ static bool LoadState(const char *savePathName)
 
 static bool SaveState(const char *savePathName)
 {
-    CSystem *L = lynx;
+    CSystem *L = (CSystem *)g_lynx_csystem;   /* loop-captured, clean */
+    if (L == NULL) L = lynx;                  /* fallback to overlay static */
     if (L == NULL)
         return false;
     FILE *fp = fopen(savePathName, "wb");
@@ -228,14 +232,12 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     odroid_system_init(APPID_LYNX, AUDIO_LYNX_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
 
-    if (load_state)
-    {
-        odroid_system_emu_load_state(save_slot);
-    }
-    else
-    {
+    /* Resume-load is DEFERRED to the first loop iteration: LoadState needs
+     * g_lynx_csystem, which is only captured (cleanly) once inside the loop.
+     * Doing it here (before the loop) would read a 0 pointer. */
+    bool pending_resume = load_state;
+    if (!load_state)
         lcd_clear_buffers();
-    }
 
     audio_start_playing(samplesPerFrame);
 
@@ -257,6 +259,19 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
             joystick.values[ODROID_INPUT_B] = !turbo_button;
 
         map_buttons(&joystick);
+
+        /* Capture the live pointer here, where it is proven readable (the very
+         * next op, UpdateFrame, dereferences it fine). A PLAIN STORE to firmware
+         * RAM — not a veneer call — so it's safe in this hot loop and reaches
+         * g_lynx_csystem uncorrupted for the save/load handlers to read. */
+        g_lynx_csystem = lynx;
+
+        /* Deferred resume-load, now that g_lynx_csystem is set (LoadState reads it). */
+        if (pending_resume)
+        {
+            pending_resume = false;
+            odroid_system_emu_load_state(save_slot);
+        }
 
         lynx->UpdateFrame(true);
 
