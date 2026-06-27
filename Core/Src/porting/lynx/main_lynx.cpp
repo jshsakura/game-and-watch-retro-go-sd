@@ -250,6 +250,14 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     odroid_system_init(APPID_LYNX, AUDIO_LYNX_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
 
+    /* Re-stash AFTER odroid_system_init/emu_init: the earlier store (right after
+     * construction) read back as 0 in the handlers, i.e. firmware RAM got zeroed
+     * between construction and the handler — odroid_system_init's display/audio
+     * init is the prime suspect. lynx (overlay static) is still valid here (the
+     * loop below uses it), and this runs BEFORE emu_load_state, so LoadState sees
+     * a live pointer too. */
+    g_lynx_csystem = lynx;
+
     if (load_state)
     {
         odroid_system_emu_load_state(save_slot);
