@@ -52,6 +52,9 @@ static void blit();
  * see WHY the .sav never lands on the SD card. Remove once the save bug is found. */
 extern "C" int sd_path_probe(const char *path);
 extern "C" void sd_save_log(const char *line);
+/* Live CSystem* kept in FIRMWARE RAM (syscalls.c), set right after construction,
+ * so the handlers never read the clobbered overlay-BSS static. */
+extern "C" void *g_lynx_csystem;
 
 /* FIX: capture the overlay static `lynx` into a LOCAL as the very first op,
  * BEFORE any fopen()/printf firmware (RAM->flash veneer) call. The documented
@@ -61,8 +64,8 @@ extern "C" void sd_save_log(const char *line);
  * Reset). Using the pre-captured `L` keeps the pointer stable across fopen. */
 static bool LoadState(const char *savePathName)
 {
-    CSystem *L = lynx;                 /* capture before any veneer call */
-    { char e[96]; snprintf(e, sizeof e, "[load] ENTER L=%p &lynx=%p", (void *)L, (void *)&lynx); sd_save_log(e); }
+    CSystem *L = (CSystem *)g_lynx_csystem;   /* firmware-RAM copy, not the clobbered static */
+    { char e[112]; snprintf(e, sizeof e, "[load] ENTER L=%p static=%p", (void *)L, (void *)lynx); sd_save_log(e); }
     if (L == NULL)
         return false;
     FILE *fp = fopen(savePathName, "rb");
@@ -79,8 +82,8 @@ static bool LoadState(const char *savePathName)
 
 static bool SaveState(const char *savePathName)
 {
-    CSystem *L = lynx;                 /* capture before any veneer call */
-    { char e[96]; snprintf(e, sizeof e, "[save] ENTER L=%p &lynx=%p", (void *)L, (void *)&lynx); sd_save_log(e); }
+    CSystem *L = (CSystem *)g_lynx_csystem;   /* firmware-RAM copy, not the clobbered static */
+    { char e[112]; snprintf(e, sizeof e, "[save] ENTER L=%p static=%p", (void *)L, (void *)lynx); sd_save_log(e); }
     if (L == NULL)
         return false;
     FILE *fp = fopen(savePathName, "wb");
@@ -224,6 +227,10 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
         printf("Lynx: ROM loading failed.\n");
         return;
     }
+    /* Stash the live pointer in firmware RAM NOW (plain store, no veneer call) so
+     * the save/load handlers never depend on the overlay-BSS static that gets
+     * zeroed before they run. lynx is valid here (the check above just passed). */
+    g_lynx_csystem = lynx;
     /* Set the render/audio globals IMMEDIATELY — before any printf in this
      * RAM-overlay frame. A RAM->flash veneer'd printf here corrupts the very
      * next operation on device (proven: it flipped the fileType compare), so a

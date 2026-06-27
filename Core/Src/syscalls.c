@@ -74,6 +74,14 @@ void doom_trace_raw(const char *s) {
     f_sync(&doom_trace_fil);
 }
 
+/* The Lynx CSystem* lived as a static in the overlay BSS tail, where SOMETHING
+ * zeroes it between the game loop and the save/load handlers (device-proven:
+ * handler reads NULL though UpdateFrame works). Stash it in firmware RAM instead
+ * — outside the overlay region — so the handlers always see the live pointer
+ * regardless of what clobbers the overlay BSS. main_lynx sets it right after the
+ * core is constructed; LoadState/SaveState read it. */
+void *g_lynx_csystem = NULL;
+
 /* ---- One-shot save-path diagnostic ------------------------------------
  * The Lynx ".sav never appears on SD" bug needs the REAL FatFs reason, which
  * newlib's _open masks to a flat EIO. These helpers open+write+close per call
