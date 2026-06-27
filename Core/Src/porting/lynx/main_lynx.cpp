@@ -49,16 +49,14 @@ static bool LoadState(const char *savePathName)
 {
     CSystem *L = (CSystem *)g_lynx_csystem;   /* loop-captured, clean */
     if (L == NULL) L = lynx;                  /* fallback to overlay static */
-    if (L == NULL)
-        return false;
+    if (L == NULL) { sd_save_log("[load] FAIL ptr-null"); return false; }
     FILE *fp = fopen(savePathName, "rb");
-    if (fp == NULL)
-        return false;
+    if (fp == NULL) { sd_save_log("[load] FAIL fopen-null"); return false; }
     bool ret = L->ContextLoad(fp);
     fclose(fp);
     if (!ret)
         L->Reset();
-    { char b[64]; snprintf(b, sizeof b, "[load] done L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
+    { char b[64]; snprintf(b, sizeof b, "[load] OK L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
     return ret;
 }
 
@@ -66,14 +64,15 @@ static bool SaveState(const char *savePathName)
 {
     CSystem *L = (CSystem *)g_lynx_csystem;   /* loop-captured, clean */
     if (L == NULL) L = lynx;                  /* fallback to overlay static */
-    if (L == NULL)
-        return false;
+    /* ONE decisive line: tells us EXACTLY where save dies — null pointer vs the
+     * file not opening vs it actually working. No more guessing between the two
+     * silent failure paths. */
+    if (L == NULL) { sd_save_log("[save] FAIL ptr-null"); return false; }
     FILE *fp = fopen(savePathName, "wb");
-    if (fp == NULL)
-        return false;
+    if (fp == NULL) { sd_save_log("[save] FAIL fopen-null"); return false; }
     bool ret = L->ContextSave(fp);
     fclose(fp);
-    { char b[64]; snprintf(b, sizeof b, "[save] done L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
+    { char b[64]; snprintf(b, sizeof b, "[save] OK L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
     return ret;
 }
 
