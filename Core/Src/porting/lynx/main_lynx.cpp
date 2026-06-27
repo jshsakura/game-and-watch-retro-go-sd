@@ -49,6 +49,7 @@ extern "C" void sd_save_log(const char *line);
 static bool LoadState(const char *savePathName)
 {
     CSystem *L = lynx;                 /* capture before any veneer call */
+    { char e[96]; snprintf(e, sizeof e, "[load] ENTER L=%p &lynx=%p", (void *)L, (void *)&lynx); sd_save_log(e); }
     if (L == NULL)
         return false;
     FILE *fp = fopen(savePathName, "rb");
@@ -66,6 +67,7 @@ static bool LoadState(const char *savePathName)
 static bool SaveState(const char *savePathName)
 {
     CSystem *L = lynx;                 /* capture before any veneer call */
+    { char e[96]; snprintf(e, sizeof e, "[save] ENTER L=%p &lynx=%p", (void *)L, (void *)&lynx); sd_save_log(e); }
     if (L == NULL)
         return false;
     FILE *fp = fopen(savePathName, "wb");
