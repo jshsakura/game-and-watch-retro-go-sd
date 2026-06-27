@@ -76,16 +76,18 @@ static uint8_t rom_memory[ROM_BUFF_LENGTH];
 
 static size_t getromdata(unsigned char **data)
 {
-    /* Hand the core the flash-resident (QSPI XIP) pointer — never heap-copy the
-     * ROM. Handy's CCart XIPs bank0 read-only straight from this flash pointer
-     * (and only new[]s the writable bank1 + 64K CRam), so the overlay heap holds
-     * just ~145K regardless of cart size. This lets up-to-512K carts (Ninja
-     * Gaiden III, Pit Fighter) fit — a RAM copy of a 512K ROM (512+64+64 = 640K)
-     * overflowed the ~610K heap. The boot hang was NOT bank0 location (a RAM-copy
-     * probe still hung) — it was the UpdateSound sample blow-up, fixed in handy.
-     * lzma is unused in this build. */
+    /* Copy the ROM into RAM so the 65C02 fetches bank0 from RAM, not QSPI flash.
+     * Running the CPU XIP from flash bank0 broke on device (even 256K APB that
+     * works from RAM) — flash-resident execution is too slow / faults there. RAM
+     * copy is the proven config: 256K ROM + 64K bank1 + 64K CRam = 384K fits the
+     * ~610K overlay heap. NOTE: this caps carts at ~256K (512K would overflow);
+     * 512K support needs flash-XIP, which is a separate device-verified task. */
     uint32_t size = 0;
-    *data = (unsigned char *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
+    unsigned char *flashptr = (unsigned char *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
+    if (!flashptr || size == 0) { *data = NULL; return 0; }
+    unsigned char *ram = new unsigned char[size];
+    memcpy(ram, flashptr, size);
+    *data = ram;
     return size;
 }
 
