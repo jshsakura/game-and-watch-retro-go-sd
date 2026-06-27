@@ -43,7 +43,7 @@ extern "C" void sd_save_log(const char *line);
 static bool LoadState(const char *savePathName)
 {
     char b[160];
-    snprintf(b, sizeof b, "[load] ENTER path=%s lynx=%p", savePathName, (void *)lynx);
+    snprintf(b, sizeof b, "[load] ENTER lynx=%p &lynx=%p", (void *)lynx, (void *)&lynx);
     sd_save_log(b);
     if (lynx == NULL)
         return false;
@@ -62,8 +62,8 @@ static bool SaveState(const char *savePathName)
 {
     char b[160];
     int probe = sd_path_probe(savePathName);
-    snprintf(b, sizeof b, "[save] ENTER path=%s probe_fopen=%d lynx=%p",
-             savePathName, probe, (void *)lynx);
+    snprintf(b, sizeof b, "[save] ENTER probe_fopen=%d lynx=%p &lynx=%p",
+             probe, (void *)lynx, (void *)&lynx);
     sd_save_log(b);
     if (lynx == NULL) { sd_save_log("[save] lynx==NULL -> false"); return false; }
     FILE *fp = fopen(savePathName, "wb");
@@ -221,6 +221,16 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     printf("[lynx] CSystem ok, fb=%p (build %s %s)\n",
            (void *)gPrimaryFrameBuffer, __DATE__, __TIME__);
 
+    /* DIAGNOSTIC: the handlers see lynx==NULL though UpdateFrame works in the
+     * loop. Log lynx value + ADDRESS here (construction) to compare against the
+     * handler's &lynx — same addr + value 0 in handler => zeroed; different addr
+     * => the handler reads a different instance. */
+    {
+        char db[96];
+        snprintf(db, sizeof db, "[ctor] lynx=%p &lynx=%p", (void *)lynx, (void *)&lynx);
+        sd_save_log(db);
+    }
+
     uint32_t samplesPerFrame = AUDIO_LYNX_SAMPLE_RATE / LYNX_FPS;
 
     common_emu_state.frame_time_10us = (uint16_t)(100000 / LYNX_FPS + 0.5f);
@@ -238,6 +248,14 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     }
 
     audio_start_playing(samplesPerFrame);
+
+    /* DIAGNOSTIC: log lynx value + &lynx from the LOOP context (where UpdateFrame
+     * works) to compare against the handler's view. */
+    {
+        char db[96];
+        snprintf(db, sizeof db, "[loop] lynx=%p &lynx=%p", (void *)lynx, (void *)&lynx);
+        sd_save_log(db);
+    }
 
     /* Main loop — printf-free like the other cores. */
     while (1)
