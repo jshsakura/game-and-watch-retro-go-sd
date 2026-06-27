@@ -209,6 +209,11 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
         printf("Lynx: ROM loading failed.\n");
         return;
     }
+    /* Capture into firmware RAM HERE — the EARLIEST provably-valid point: the
+     * check above just dereferenced `lynx` (lynx->mFileType) and passed, so it is
+     * valid right now, and this plain store runs BEFORE the printf/sysinit that
+     * (somewhere) zero the overlay copy. This is the value the handlers read. */
+    g_lynx_csystem = lynx;
     /* Set the render/audio globals IMMEDIATELY — before any printf in this
      * RAM-overlay frame. A RAM->flash veneer'd printf here corrupts the very
      * next operation on device (proven: it flipped the fileType compare), so a
