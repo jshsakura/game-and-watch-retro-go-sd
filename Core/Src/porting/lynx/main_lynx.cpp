@@ -38,42 +38,67 @@ static void blit();
 
 extern "C" void sd_save_log(const char *line);
 extern "C" void sd_save_log_boot(const char *line); /* truncates the log + build marker */
-/* Firmware-RAM copy of the live CSystem*, written by a PLAIN STORE from the main
- * loop where `lynx` is proven readable (UpdateFrame works there). A plain store
- * is not a veneer call, so it is safe in the loop and reaches firmware RAM
- * uncorrupted. The handlers read this directly (first op) instead of the overlay
- * static, whose read in the handler context kept coming back 0. */
-extern "C" void *g_lynx_csystem;
+
+/* DEVICE FACT (measured, build 14:51:02): when firmware calls SaveState/LoadState
+ * through the registered function pointers, `lynx` reads back 0 in that context
+ * ("[save] FAIL ptr-null" while APB plays fine and UpdateFrame dereferences the
+ * SAME pointer one frame later). The resume-load path already worked around this
+ * by DEFERRING the real load into the main loop, where `lynx` is provably valid.
+ * We do the same for menu save/load: the handler only records the request +
+ * path; the actual ContextSave/Load runs in the loop next to UpdateFrame. */
+static volatile bool s_pending_save = false;
+static volatile bool s_pending_load = false;
+static char          s_pending_path[300];
+
+static void queue_state_op(volatile bool *flag, const char *savePathName)
+{
+    strncpy(s_pending_path, savePathName, sizeof s_pending_path - 1);
+    s_pending_path[sizeof s_pending_path - 1] = '\0';
+    *flag = true;
+}
 
 static bool LoadState(const char *savePathName)
 {
-    CSystem *L = (CSystem *)g_lynx_csystem;   /* loop-captured, clean */
-    if (L == NULL) L = lynx;                  /* fallback to overlay static */
-    if (L == NULL) { sd_save_log("[load] FAIL ptr-null"); return false; }
-    FILE *fp = fopen(savePathName, "rb");
-    if (fp == NULL) { sd_save_log("[load] FAIL fopen-null"); return false; }
-    bool ret = L->ContextLoad(fp);
-    fclose(fp);
-    if (!ret)
-        L->Reset();
-    { char b[64]; snprintf(b, sizeof b, "[load] OK L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
-    return ret;
+    queue_state_op(&s_pending_load, savePathName);
+    return true; /* real load happens in the loop where `lynx` is valid */
 }
 
 static bool SaveState(const char *savePathName)
 {
-    CSystem *L = (CSystem *)g_lynx_csystem;   /* loop-captured, clean */
-    if (L == NULL) L = lynx;                  /* fallback to overlay static */
-    /* ONE decisive line: tells us EXACTLY where save dies — null pointer vs the
-     * file not opening vs it actually working. No more guessing between the two
-     * silent failure paths. */
-    if (L == NULL) { sd_save_log("[save] FAIL ptr-null"); return false; }
-    FILE *fp = fopen(savePathName, "wb");
-    if (fp == NULL) { sd_save_log("[save] FAIL fopen-null"); return false; }
-    bool ret = L->ContextSave(fp);
-    fclose(fp);
-    { char b[64]; snprintf(b, sizeof b, "[save] OK L=%p ret=%d", (void *)L, (int)ret); sd_save_log(b); }
-    return ret;
+    queue_state_op(&s_pending_save, savePathName);
+    return true; /* real save happens in the loop where `lynx` is valid */
+}
+
+/* Runs from the main loop (NOT a firmware fn-ptr handler), so `lynx` is the same
+ * provably-valid pointer that UpdateFrame uses. This is the only place the Lynx
+ * savestate stream is actually read/written. */
+static void process_pending_state_ops()
+{
+    if (s_pending_save)
+    {
+        s_pending_save = false;
+        FILE *fp = fopen(s_pending_path, "wb");
+        if (fp == NULL) { sd_save_log("[save] fopen-null"); }
+        else
+        {
+            bool ok = lynx->ContextSave(fp);
+            fclose(fp);
+            char b[80]; snprintf(b, sizeof b, "[save] done ok=%d", (int)ok); sd_save_log(b);
+        }
+    }
+    if (s_pending_load)
+    {
+        s_pending_load = false;
+        FILE *fp = fopen(s_pending_path, "rb");
+        if (fp == NULL) { lynx->Reset(); sd_save_log("[load] fopen-null"); }
+        else
+        {
+            bool ok = lynx->ContextLoad(fp);
+            fclose(fp);
+            if (!ok) lynx->Reset();
+            char b[80]; snprintf(b, sizeof b, "[load] done ok=%d", (int)ok); sd_save_log(b);
+        }
+    }
 }
 
 static void *Screenshot()
@@ -208,11 +233,6 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
         printf("Lynx: ROM loading failed.\n");
         return;
     }
-    /* Capture into firmware RAM HERE — the EARLIEST provably-valid point: the
-     * check above just dereferenced `lynx` (lynx->mFileType) and passed, so it is
-     * valid right now, and this plain store runs BEFORE the printf/sysinit that
-     * (somewhere) zero the overlay copy. This is the value the handlers read. */
-    g_lynx_csystem = lynx;
     /* Set the render/audio globals IMMEDIATELY — before any printf in this
      * RAM-overlay frame. A RAM->flash veneer'd printf here corrupts the very
      * next operation on device (proven: it flipped the fileType compare), so a
@@ -264,18 +284,17 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
 
         map_buttons(&joystick);
 
-        /* Capture the live pointer here, where it is proven readable (the very
-         * next op, UpdateFrame, dereferences it fine). A PLAIN STORE to firmware
-         * RAM — not a veneer call — so it's safe in this hot loop and reaches
-         * g_lynx_csystem uncorrupted for the save/load handlers to read. */
-        g_lynx_csystem = lynx;
-
-        /* Deferred resume-load, now that g_lynx_csystem is set (LoadState reads it). */
+        /* Resume-load: queue it (LoadState just sets the pending flag now). */
         if (pending_resume)
         {
             pending_resume = false;
             odroid_system_emu_load_state(save_slot);
         }
+
+        /* Do any queued save/load HERE, where `lynx` is the valid pointer that
+         * UpdateFrame (below) uses — not in the firmware fn-ptr handler context
+         * where it reads back 0. */
+        process_pending_state_ops();
 
         lynx->UpdateFrame(true);
 
