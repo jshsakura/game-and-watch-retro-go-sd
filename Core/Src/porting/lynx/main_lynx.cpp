@@ -54,6 +54,10 @@ static void blit();
 extern "C" void sd_save_log(const char *line);
 extern "C" void sd_save_log_boot(const char *line);
 extern "C" void lynx_dump_ptr(const char *tag, void *addr);
+/* Firmware-DTCM stash of the live CSystem*, set while valid (after construction),
+ * read by the handlers — survives the RAM_EMU clobber that zeroes the overlay static. */
+extern "C" void  lynx_set_csystem(void *p);
+extern "C" void *lynx_get_csystem(void);
 
 /* ROOT CAUSE: on this device, reading `lynx` right after a RAM->flash firmware
  * (veneer) call returns a corrupted 0. The old handler re-read `lynx` AFTER
@@ -63,8 +67,8 @@ extern "C" void lynx_dump_ptr(const char *tag, void *addr);
  * dump confirms via firmware: if L==0 but truth!=0, even the capture got hit. */
 static bool LoadState(const char *savePathName)
 {
-    CSystem *L = lynx;                 /* clean first read */
-    if (L == NULL) { lynx_dump_ptr("load L==0 truth", &lynx); return false; }
+    CSystem *L = (CSystem *)lynx_get_csystem();  /* firmware-DTCM stash (survives clobber) */
+    if (L == NULL) { lynx_dump_ptr("load get==0; overlay", &lynx); return false; }
     FILE *fp = fopen(savePathName, "rb");
     if (fp == NULL) { sd_save_log("[load] fopen NULL"); return false; }
     bool ret = L->ContextLoad(fp);
@@ -77,8 +81,8 @@ static bool LoadState(const char *savePathName)
 
 static bool SaveState(const char *savePathName)
 {
-    CSystem *L = lynx;                 /* clean first read */
-    if (L == NULL) { lynx_dump_ptr("save L==0 truth", &lynx); return false; }
+    CSystem *L = (CSystem *)lynx_get_csystem();  /* firmware-DTCM stash (survives clobber) */
+    if (L == NULL) { lynx_dump_ptr("save get==0; overlay", &lynx); return false; }
     FILE *fp = fopen(savePathName, "wb");
     if (fp == NULL) { sd_save_log("[save] fopen NULL"); return false; }
     bool ret = L->ContextSave(fp);
@@ -241,6 +245,14 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
 
     odroid_system_init(APPID_LYNX, AUDIO_LYNX_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
+
+    /* Capture the live pointer into firmware DTCM NOW (lynx is valid here — the
+     * loop below uses it). The handlers read it from there; it survives the
+     * RAM_EMU clobber that zeroes the overlay static by save time. Runs BEFORE
+     * emu_load_state so LoadState gets it too. Log the truth so we confirm the
+     * value being captured is non-zero. */
+    lynx_set_csystem(lynx);
+    lynx_dump_ptr("set-csystem &lynx", &lynx);
 
     if (load_state)
     {

@@ -88,6 +88,17 @@ void lynx_dump_ptr(const char *tag, void *addr) {
     sd_save_log(b);
 }
 
+/* GROUND-TRUTH CONFIRMED (build 2223 on device): the overlay static `lynx`
+ * (lynx_mem.sys, in RAM_EMU) is GENUINELY zeroed between the game loop and the
+ * save handler — both the overlay read AND a firmware read of its address return
+ * 0, yet UpdateFrame runs in the loop. So capture the live pointer into THIS
+ * firmware-DTCM global while it is still valid (right after construction), and
+ * read it from the handler — DTCM is a different region than the clobbered
+ * RAM_EMU, so it survives. Set/get in firmware context (overlay only calls in). */
+void *g_lynx_csystem = NULL;
+void lynx_set_csystem(void *p) { g_lynx_csystem = p; }
+void *lynx_get_csystem(void)   { return g_lynx_csystem; }
+
 /* ---- One-shot save-path diagnostic ------------------------------------
  * The Lynx ".sav never appears on SD" bug needs the REAL FatFs reason, which
  * newlib's _open masks to a flat EIO. These helpers open+write+close per call
