@@ -76,22 +76,16 @@ static uint8_t rom_memory[ROM_BUFF_LENGTH];
 
 static size_t getromdata(unsigned char **data)
 {
-    /* Always hand the core a flash-resident (XIP) pointer — never heap-copy
-     * the ROM. Handy's CCart memcpy's the banks it needs into its own buffers,
-     * so copying the (up to 512 KB) Lynx ROM into the overlay C++ heap here is
-     * pure waste: ROM(≈320K) + cart banks(≈320K) + 64K RAM overflowed the heap
-     * and HardFaulted on load. lzma is unused in this build. */
+    /* Hand the core the flash-resident (QSPI XIP) pointer — never heap-copy the
+     * ROM. Handy's CCart XIPs bank0 read-only straight from this flash pointer
+     * (and only new[]s the writable bank1 + 64K CRam), so the overlay heap holds
+     * just ~145K regardless of cart size. This lets up-to-512K carts (Ninja
+     * Gaiden III, Pit Fighter) fit — a RAM copy of a 512K ROM (512+64+64 = 640K)
+     * overflowed the ~610K heap. The boot hang was NOT bank0 location (a RAM-copy
+     * probe still hung) — it was the UpdateSound sample blow-up, fixed in handy.
+     * lzma is unused in this build. */
     uint32_t size = 0;
-    unsigned char *flashptr = (unsigned char *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
-    if (!flashptr || size == 0) { *data = NULL; return 0; }
-    /* TEST: copy the ROM into RAM so the 65C02 reads cart bank0 from RAM (like
-     * the host harness, which runs UpdateFrame fine) instead of QSPI flash-XIP.
-     * UpdateFrame dies on device (marker m2->m3) but not on host — the only
-     * difference is bank0's location. 256K ROM + 64K bank1 + 64K CRam = 384K,
-     * fits the ~610K overlay heap. If this runs, flash-XIP bank0 was the cause. */
-    unsigned char *ram = new unsigned char[size];
-    memcpy(ram, flashptr, size);
-    *data = ram;
+    *data = (unsigned char *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
     return size;
 }
 
