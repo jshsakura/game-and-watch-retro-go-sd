@@ -17,7 +17,6 @@ extern "C"
 #include "lzma.h"
 #endif
 #include "heap.hpp"
-void sd_trace_begin(const char *path); /* diagnostic SD log tee (syscalls.c) */
 }
 
 #include <handy.h>
@@ -77,19 +76,15 @@ static uint8_t rom_memory[ROM_BUFF_LENGTH];
 
 static size_t getromdata(unsigned char **data)
 {
-    /* Always hand the core a flash-resident (XIP) pointer — never heap-copy
-     * the ROM. Handy's CCart memcpy's the banks it needs into its own buffers,
-     * so copying the (up to 512 KB) Lynx ROM into the overlay C++ heap here is
-     * pure waste: ROM(≈320K) + cart banks(≈320K) + 64K RAM overflowed the heap
-     * and HardFaulted on load. lzma is unused in this build. */
+    /* Copy the ROM into RAM so the 65C02 fetches bank0 from RAM, not QSPI flash.
+     * Running the CPU XIP from flash bank0 broke on device (even 256K APB that
+     * works from RAM) — flash-resident execution is too slow / faults there. RAM
+     * copy is the proven config: 256K ROM + 64K bank1 + 64K CRam = 384K fits the
+     * ~610K overlay heap. NOTE: this caps carts at ~256K (512K would overflow);
+     * 512K support needs flash-XIP, which is a separate device-verified task. */
     uint32_t size = 0;
     unsigned char *flashptr = (unsigned char *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
     if (!flashptr || size == 0) { *data = NULL; return 0; }
-    /* TEST: copy the ROM into RAM so the 65C02 reads cart bank0 from RAM (like
-     * the host harness, which runs UpdateFrame fine) instead of QSPI flash-XIP.
-     * UpdateFrame dies on device (marker m2->m3) but not on host — the only
-     * difference is bank0's location. 256K ROM + 64K bank1 + 64K CRam = 384K,
-     * fits the ~610K overlay heap. If this runs, flash-XIP bank0 was the cause. */
     unsigned char *ram = new unsigned char[size];
     memcpy(ram, flashptr, size);
     *data = ram;
@@ -165,12 +160,9 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
     uint32_t rom_length = 0;
     uint8_t *rom_ptr = NULL;
 
-    /* DIAGNOSTIC: tee stdout (and the BSOD fault line) to a SEPARATE SD file
-     * /lynx_trace.txt (DOOM uses /doom_trace.txt) so both logs are preserved and
-     * we can see exactly where Lynx dies instead of guessing. */
-    sd_trace_begin("/lynx_trace.txt");
-    printf("[lynx] app start (RAM overlay build)\n");
-
+    /* NOTE: no sd_trace here — keeping /lynx_trace.txt open on the SD card
+     * collided with the save-state writes (fopen of /data/lynx/*.sav failed,
+     * so saves never appeared). Plain printf -> UART only. */
     heap_itc_alloc(true);
 
     common_emu_state.pause_after_frames = start_paused ? 2 : 0;
@@ -230,20 +222,13 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
 
     audio_start_playing(samplesPerFrame);
 
-    /* NO printf inside this loop — exactly like the working a2600 core. A
-     * main_lynx.o (RAM-overlay) printf here corrupts the immediately-following
-     * op on device (proven: it flipped a compare; with heartbeats it crashed
-     * at UpdateFrame). The other consoles' loops are printf-free, which is why
-     * they run; keep Lynx's loop printf-free too. */
-    printf("[lynx] loop enter\n");
-    int _f = 0;
+    /* Main loop — printf-free like the other cores. */
     while (1)
     {
         wdog_refresh();
         common_emu_frame_loop();
         odroid_input_read_gamepad(&joystick);
         common_emu_input_loop(&joystick, options, &blit);
-        if (_f == 0) printf("[lynx] m1 input ok\n");
 
         uint8_t turbo_buttons = odroid_settings_turbo_buttons_get();
         bool turbo_a = (joystick.values[ODROID_INPUT_A] && (turbo_buttons & 1));
@@ -255,22 +240,15 @@ static void app_main_lynx_cpp(uint8_t load_state, uint8_t start_paused, int8_t s
             joystick.values[ODROID_INPUT_B] = !turbo_button;
 
         map_buttons(&joystick);
-        if (_f == 0) printf("[lynx] m2 buttons ok\n");
 
         lynx->UpdateFrame(true);
-        if (_f == 0) printf("[lynx] m3 UpdateFrame ok fb=%04x\n", lynx_framebuffer[160 * 51 + 80]);
 
         blit();
-        if (_f == 0) printf("[lynx] m4 blit ok\n");
         common_ingame_overlay();
-        if (_f == 0) printf("[lynx] m5 overlay ok\n");
         lcd_swap();
-        if (_f == 0) printf("[lynx] m6 swap ok\n");
         sound_store();
 
         common_emu_sound_sync(false);
-        if (_f < 3) printf("[lynx] frame %d done\n", _f);
-        _f++;
     }
 }
 
