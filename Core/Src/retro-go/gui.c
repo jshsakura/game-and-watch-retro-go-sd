@@ -572,21 +572,17 @@ listbox_item_t *gui_get_item_by_index(tab_t *tab, int *index)
     listbox_t *list = &tab->listbox;
     int x = *index;
 
-    if (list->length == 0)
+    /* No wrap-around for DISPLAY: out-of-range neighbours return NULL so the
+     * cover carousel / list shows only the items that actually exist instead
+     * of repeating them to fill every slot (a single ROM used to be drawn in
+     * every slot — "repeated hundreds of times"). Cursor navigation wrap
+     * (end -> start) is handled separately in gui_scroll_list, so reaching the
+     * end and looping back to the start still works. */
+    if (x < 0 || x >= list->length)
         return NULL;
 
-    if (x < 0)
-        x = (list->length + x) % (list->length);
-
-    if (x >= list->length)
-        x = x % (list->length);
-
-    if (x >= 0 && x < list->length)
-    {
-        *index = x;
-        return &list->items[x];
-    }
-    return NULL;
+    *index = x;
+    return &list->items[x];
 }
 
 void gui_draw_item_postion_v(int posx, int starty, int endy, int cur, int size)
