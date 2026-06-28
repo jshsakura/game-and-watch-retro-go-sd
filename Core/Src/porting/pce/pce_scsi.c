@@ -59,6 +59,7 @@ static uint32_t s_read_lba, s_read_remain;
 
 static uint8_t  s_port2, s_port3;   /* $1802 IRQ-enable, $1803 IRQ-status */
 static int      s_trace;            /* trace register accesses during a bulk READ */
+static int      s_atrace;           /* trace ADPCM/idle-loop polls ($180A-F, $1803) */
 
 static void update_irq(void)
 {
@@ -73,7 +74,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
     s_diag_lines = 0;   /* fresh run */
-    diag("=== BUILD it11 ===\n");
+    diag("=== BUILD it12 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
@@ -269,10 +270,13 @@ static void ack_deassert(void)
 
 uint8_t pce_scsi_read(uint8_t reg)
 {
-    if (s_bulk && s_phase == PH_DATAIN && s_trace < 60) {
-        diag("R%x req=%d db=%02x cd=%d io=%d p3=%02x\n",
-             reg & 0xf, s_req, s_db, s_cd, s_io, s_port3);
+    if (s_bulk && s_phase == PH_DATAIN && s_trace < 12) {
+        diag("R%x db=%02x\n", reg & 0xf, s_db);
         s_trace++;
+    }
+    if (((reg & 0xf) >= 0x0A || (reg & 0xf) == 0x03) && s_atrace < 120) {
+        diag("Ar%x p3=%02x p2=%02x ph=%d\n", reg & 0xf, s_port3, s_port2, s_phase);
+        s_atrace++;
     }
     switch (reg & 0x0F) {
     case 0x00:
@@ -297,9 +301,13 @@ uint8_t pce_scsi_read(uint8_t reg)
 
 void pce_scsi_write(uint8_t reg, uint8_t val)
 {
-    if (s_bulk && s_phase == PH_DATAIN && s_trace < 60) {
-        diag("W%x=%02x req=%d\n", reg & 0xf, val, s_req);
+    if (s_bulk && s_phase == PH_DATAIN && s_trace < 12) {
+        diag("W%x=%02x\n", reg & 0xf, val);
         s_trace++;
+    }
+    if ((reg & 0xf) >= 0x0A && s_atrace < 120) {
+        diag("Aw%x=%02x ph=%d\n", reg & 0xf, val, s_phase);
+        s_atrace++;
     }
     switch (reg & 0x0F) {
     case 0x00: /* SEL pulse: select the drive -> COMMAND phase */
