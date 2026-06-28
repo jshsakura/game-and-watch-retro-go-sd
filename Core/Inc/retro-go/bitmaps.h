@@ -87,6 +87,8 @@ enum {
     RG_LOGO_PAD_HOMEBREW,
     // Atari Lynx name header (appended last; matches header_lynx at end of rg_logos.c)
     RG_LOGO_HEADER_LYNX,
+    // PC Engine CD name header (matches header_pcecd, appended after header_lynx)
+    RG_LOGO_HEADER_PCECD,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
@@ -159,6 +161,7 @@ extern const retro_logo_image header_wswan;
 extern const retro_logo_image pad_wswan;
 extern const retro_logo_image pad_homebrew;
 extern const retro_logo_image header_lynx;
+extern const retro_logo_image header_pcecd;
 
 
 extern const unsigned char IMG_SPEAKER[];

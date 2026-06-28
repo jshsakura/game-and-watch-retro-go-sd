@@ -255,6 +255,7 @@ SECTIONS
   .overlay_graphics : {
     . = ALIGN(4);
     KEEP(*(.sdcard_logo))
+    . = ALIGN(4);  /* pad the LAST logo so logo.bin readers don't over-read it */
   } > CORES
 
 INCLUDE build/fceumm_mappers.ld

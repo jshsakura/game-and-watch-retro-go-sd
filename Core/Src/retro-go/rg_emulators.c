@@ -1606,7 +1606,7 @@ void emulators_init()
     /* PC Engine CD (= TurboGrafx-CD): same HuC6280/VDC core as HuCard PCE; the
      * disc (.cue/.bin) is streamed from SD and the System Card BIOS is loaded as
      * the boot ROM. Logos reuse PCE until CD-specific art is wired in. */
-    add_emulator("PC Engine CD", "pcecd", "cue", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCE, NO_GAME_DATA);
+    add_emulator("PC Engine CD", "pcecd", "cue", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCECD, NO_GAME_DATA);
     add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
     add_emulator("Sega Master System", "sms", "sms lzma", RG_LOGO_PAD_SMS, RG_LOGO_HEADER_SMS, NO_GAME_DATA);
     add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);

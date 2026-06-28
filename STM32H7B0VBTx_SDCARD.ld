@@ -912,6 +912,7 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_graphics : {
     . = ALIGN(4);
     KEEP(*(.sdcard_logo))
+    . = ALIGN(4);  /* pad the LAST logo so logo.bin readers don't over-read it */
   } > CORES
 
   ._ram_space_check_md : {
