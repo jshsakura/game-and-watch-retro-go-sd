@@ -58,6 +58,7 @@ static bool     s_bulk;        /* data-in is a bulk READ (auto-ack on $1801 read
 static uint32_t s_read_lba, s_read_remain;
 
 static uint8_t  s_port2, s_port3;   /* $1802 IRQ-enable, $1803 IRQ-status */
+static int      s_trace;            /* trace register accesses during a bulk READ */
 
 static void update_irq(void)
 {
@@ -72,7 +73,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
     s_diag_lines = 0;   /* fresh run */
-    diag("=== BUILD it7 ===\n");
+    diag("=== BUILD it8 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
@@ -224,6 +225,7 @@ static void execute_command(void)
         uint32_t cnt = s_cmd[4] ? s_cmd[4] : 1;
         s_read_lba = lba; s_read_remain = cnt; s_reading = true; s_bulk = true;
         s_din_pos = s_din_len = 0;
+        s_trace = 0;   /* trace the System Card's register pattern for this READ */
         diag("  READ lba=%lu cnt=%lu\n", (unsigned long)lba, (unsigned long)cnt);
         change_phase(PH_DATAIN);
         feed_din();
@@ -267,6 +269,11 @@ static void ack_deassert(void)
 
 uint8_t pce_scsi_read(uint8_t reg)
 {
+    if (s_bulk && s_phase == PH_DATAIN && s_trace < 60) {
+        diag("R%x req=%d db=%02x cd=%d io=%d p3=%02x\n",
+             reg & 0xf, s_req, s_db, s_cd, s_io, s_port3);
+        s_trace++;
+    }
     switch (reg & 0x0F) {
     case 0x00:
         return (uint8_t)((s_bsy ? 0x80 : 0) | (s_req ? 0x40 : 0) | (s_msg ? 0x20 : 0)
@@ -288,6 +295,10 @@ uint8_t pce_scsi_read(uint8_t reg)
 
 void pce_scsi_write(uint8_t reg, uint8_t val)
 {
+    if (s_bulk && s_phase == PH_DATAIN && s_trace < 60) {
+        diag("W%x=%02x req=%d\n", reg & 0xf, val, s_req);
+        s_trace++;
+    }
     switch (reg & 0x0F) {
     case 0x00: /* SEL pulse: select the drive -> COMMAND phase */
         if (!s_bsy) change_phase(PH_COMMAND);
