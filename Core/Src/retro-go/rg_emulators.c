@@ -297,6 +297,22 @@ static uint8_t *DoomCacheCodeToFlash(uint32_t *code_size_out)
     SCB_InvalidateDCache_by_Addr((uint32_t *)code_addr, (int32_t)*code_size_out);
     printf("DOOM: reprogrammed XIP flash, first word: 0x%08lX\n",
            (unsigned long)*(uint32_t *)code_addr);
+    /* The Cortex-M7 D-cache and I-cache are separate. The long-call veneers at
+       the TAIL of doom.ro (e.g. __memcpy_veneer: `ldr pc,[pc]; .word memcpy`)
+       execute fine (I-side) but the adjacent literal can read back a STALE 0 on
+       the D-side if the by-addr invalidate above missed that line -> the veneer
+       jumps to 0 (observed: FindLumpByName -> bl __memcpy_veneer -> pc=0). A full
+       clean+invalidate + barriers guarantees every doom.ro line is coherent. */
+    {
+      volatile uint32_t *vlit = (volatile uint32_t *)((uint8_t *)code_addr + 0x4433c);
+      uint32_t before = *vlit;
+      SCB_CleanInvalidateDCache();
+      __DSB();
+      __ISB();
+      uint32_t after = *vlit;
+      printf("DOOM: veneer literal +0x4433c before=0x%08lX after=0x%08lX\n",
+             (unsigned long)before, (unsigned long)after);
+    }
   } else {
     printf("DOOM: no sentinel refs found (already patched from previous boot)\n");
   }
