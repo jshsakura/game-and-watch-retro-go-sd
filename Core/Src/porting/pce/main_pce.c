@@ -697,13 +697,19 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         /* PCE-CD diag: sample the CPU PC so we can see where the game stalls
          * after the intro loads (BIOS bank vs game bank, looping vs moving). */
         if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+            extern uint8_t *PageR[8];
             static int s_pc_n = 0, s_pc_logged = 0;
-            if ((s_pc_n++ % 30) == 0 && s_pc_logged < 40) {
+            if ((s_pc_n++ % 30) == 0 && s_pc_logged < 12) {
                 s_pc_logged++;
+                uint16_t pc = CPU_PCE.PC;
+                uint8_t *pg = PageR[(pc >> 13) & 7];
+                uint16_t o = pc & 0x1FFF;
                 FILE *pf = fopen("/pcecd_diag.txt", "a");
                 if (pf) {
-                    fprintf(pf, "PC=%04x bank=%02x halt=%lu\n", CPU_PCE.PC,
-                            PCE.MMR[(CPU_PCE.PC >> 13) & 7], (unsigned long)CPU_PCE.halted);
+                    fprintf(pf, "PC=%04x bank=%02x I: %02x %02x %02x %02x %02x irqm=%02x\n",
+                            pc, PCE.MMR[(pc >> 13) & 7],
+                            pg[o], pg[(uint16_t)(o + 1)], pg[(uint16_t)(o + 2)],
+                            pg[(uint16_t)(o + 3)], pg[(uint16_t)(o + 4)], CPU_PCE.irq_mask);
                     fclose(pf);
                 }
             }
