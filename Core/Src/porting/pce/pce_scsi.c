@@ -243,7 +243,7 @@ static void ack_assert(void)
     if (!s_req) return;
     switch (s_phase) {
     case PH_COMMAND: if (s_cmd_idx < (int)sizeof(s_cmd)) s_cmd[s_cmd_idx++] = s_db; s_req = 0; break;
-    case PH_DATAIN:  break;              /* data-in advances on $1801 read, not ACK */
+    case PH_DATAIN:  s_req = 0; break;   /* ACK toggles REQ; the byte advanced on $1801 read */
     case PH_STATUS:  s_req = 0; break;
     case PH_MSGIN:   s_req = 0; break;
     }
@@ -254,7 +254,7 @@ static void ack_deassert(void)
 {
     switch (s_phase) {
     case PH_COMMAND: if (s_cmd_idx >= 6) execute_command(); else s_req = 1; break;
-    case PH_DATAIN:  break;              /* data-in advances on $1801 read */
+    case PH_DATAIN:  s_req = 1; break;   /* REQ back up for the next $1801 read (no advance here) */
     case PH_STATUS:  change_phase(PH_MSGIN); break;
     case PH_MSGIN:   change_phase(PH_BUSFREE); break;
     }
