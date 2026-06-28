@@ -1324,12 +1324,21 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 #endif
     } else if(strcmp(system_name, "Homebrew") == 0)  {
       if (strcmp(newfile->name,"Doom") == 0) {
+        /* Begin the SD trace HERE (not in app_main_doom) so the XIP cache /
+         * patch / flash-reprogram steps below are captured even if one of them
+         * faults before DOOM proper starts -- "/doom_trace.txt never created"
+         * means we died in DoomCacheCodeToFlash. Each line is f_sync'd. */
+        extern void doom_trace_begin(void);
+        doom_trace_begin();
+        printf("[doom] launch: enter Doom branch, begin XIP cache\n");
         /* DOOM runs its non-hot code XIP from flash: cache+patch+reprogram doom.ro
          * to flash FIRST (uses RAM_EMU as scratch), THEN load the hot overlay
          * (Doom.bin) into RAM, THEN patch the overlay's sentinel refs to the real
          * XIP flash address. */
         uint32_t doom_xip_size = 0;
         uint8_t *doom_xip_addr = DoomCacheCodeToFlash(&doom_xip_size);
+        printf("[doom] launch: DoomCacheCodeToFlash returned %p size=%lu\n",
+               (void *)doom_xip_addr, (unsigned long)doom_xip_size);
         if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
             if (doom_xip_addr) {
                 int32_t off = (int32_t)((uint32_t)doom_xip_addr - DOOM_CODE_BASE);

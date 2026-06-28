@@ -257,7 +257,9 @@ void *doom__realloc(void *p, size_t n)
 /* ------------------------------------------------------------------ */
 int app_main_doom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
-    doom_trace_begin();
+    /* Trace already begun by the launcher (rg_emulators.c) BEFORE the XIP
+     * cache step so a fault there is captured too; do NOT re-begin here (that
+     * would CREATE_ALWAYS-truncate and drop the cache breadcrumbs). */
     printf("DOOM start (build trace)\n");
     ram_start = (uint32_t)&_OVERLAY_DOOM_BSS_END;
 
