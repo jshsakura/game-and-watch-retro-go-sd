@@ -73,7 +73,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
     s_diag_lines = 0;   /* fresh run */
-    diag("=== BUILD it8 ===\n");
+    diag("=== BUILD it9 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
@@ -278,17 +278,19 @@ uint8_t pce_scsi_read(uint8_t reg)
     case 0x00:
         return (uint8_t)((s_bsy ? 0x80 : 0) | (s_req ? 0x40 : 0) | (s_msg ? 0x20 : 0)
                        | (s_cd ? 0x10 : 0) | (s_io ? 0x08 : 0));
-    case 0x01:
-        if (s_phase == PH_DATAIN && s_bulk) {
-            /* bulk READ: reading the data port auto-acks and pulls the next byte */
-            uint8_t b = s_db;
-            feed_din();
-            return b;
-        }
-        return s_db;          /* TOC/status: byte advances on ACK */
+    case 0x01: return s_db;   /* command/TOC/status byte; advances on ACK */
     case 0x02: return s_port2;
     case 0x03: return s_port3;
     case 0x04: return 0;
+    case 0x08: {
+        /* $1808 = SCSI auto-increment data read. The System Card pulls BULK READ
+         * data through here: return the current byte and, in data-in, auto-ack
+         * to advance to the next (mirrors Mednafen read_1808). */
+        uint8_t b = s_db;
+        if (s_phase == PH_DATAIN && s_req)
+            feed_din();
+        return b;
+    }
     default:   return 0;
     }
 }
