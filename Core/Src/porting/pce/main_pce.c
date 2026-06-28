@@ -694,6 +694,21 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
     while (true) {
         wdog_refresh();
 
+        /* PCE-CD diag: sample the CPU PC so we can see where the game stalls
+         * after the intro loads (BIOS bank vs game bank, looping vs moving). */
+        if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+            static int s_pc_n = 0, s_pc_logged = 0;
+            if ((s_pc_n++ % 30) == 0 && s_pc_logged < 40) {
+                s_pc_logged++;
+                FILE *pf = fopen("/pcecd_diag.txt", "a");
+                if (pf) {
+                    fprintf(pf, "PC=%04x bank=%02x halt=%lu\n", CPU_PCE.PC,
+                            PCE.MMR[(CPU_PCE.PC >> 13) & 7], (unsigned long)CPU_PCE.halted);
+                    fclose(pf);
+                }
+            }
+        }
+
         bool drawFrame = common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
