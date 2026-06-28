@@ -406,10 +406,13 @@ void gui_scroll_list(tab_t *tab, scroll_mode_t mode)
         }
     }
 
+    /* Cursor loop only when the list fills the carousel (length >= 5), matching
+     * the DISPLAY wrap in gui_get_item_by_index: 5+ items connect end<->start
+     * (continuous loop); fewer than 5 clamp at the ends (no looping). */
     if (cur_cursor < 0)
-        cur_cursor = list->length - 1;
+        cur_cursor = (list->length >= 5) ? list->length - 1 : 0;
     if (cur_cursor >= list->length)
-        cur_cursor = 0;
+        cur_cursor = (list->length >= 5) ? 0 : list->length - 1;
 
     list->cursor = cur_cursor;
 
@@ -572,14 +575,25 @@ listbox_item_t *gui_get_item_by_index(tab_t *tab, int *index)
     listbox_t *list = &tab->listbox;
     int x = *index;
 
-    /* No wrap-around for DISPLAY: out-of-range neighbours return NULL so the
-     * cover carousel / list shows only the items that actually exist instead
-     * of repeating them to fill every slot (a single ROM used to be drawn in
-     * every slot — "repeated hundreds of times"). Cursor navigation wrap
-     * (end -> start) is handled separately in gui_scroll_list, so reaching the
-     * end and looping back to the start still works. */
-    if (x < 0 || x >= list->length)
+    if (list->length == 0)
         return NULL;
+
+    /* DISPLAY wrap policy (the cover carousel shows up to MAX_COVERS=5 slots):
+     *  - length >= 5  -> WRAP the index modulo length, so neighbours connect
+     *    end<->start and every slot holds a distinct real item: a continuous
+     *    carousel with no empty boxes.
+     *  - length < 5 (doesn't fill the screen, incl. a single ROM) -> NO wrap.
+     *    Out-of-range neighbours return NULL so callers (all guard with
+     *    `if (item)`) skip them and leave the slot blank, instead of repeating
+     *    one item to fill every slot ("a single ROM drawn hundreds of times").
+     * Cursor navigation wrap is gated on the same threshold in gui_scroll_list. */
+    if (list->length >= 5) {
+        x %= list->length;
+        if (x < 0)
+            x += list->length;
+    } else if (x < 0 || x >= list->length) {
+        return NULL;
+    }
 
     *index = x;
     return &list->items[x];
