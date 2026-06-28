@@ -1560,9 +1560,13 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	@$(CP) -O binary --only-section=.overlay_celeste $(BUILD_DIR)/$(TARGET).elf $(HOMEBREWS_FOLDER)/celeste.bin
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Music.bin"
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Video.bin"
-	@$(CP) -O binary --only-section=.overlay_doom $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Doom.bin"
-	@$(CP) -O binary --only-section=.doom_xip $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/doom.ro"
-	@$(CP) -O binary --only-section=.overlay_wolf3d $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Wolf3D.bin"
+	# DOOM (next-hack) + Wolf3D shelved 2026-06-28 (DOOM: XIP veneer OSPI hazard;
+	# Wolf3D: Quit at launch). Not shipped so they don't appear as broken entries
+	# in the Homebrew menu. Engine code stays in-tree; re-enable these lines to
+	# resume. See memory/doom-duke-xip.md.
+	#@$(CP) -O binary --only-section=.overlay_doom $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Doom.bin"
+	#@$(CP) -O binary --only-section=.doom_xip $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/doom.ro"
+	#@$(CP) -O binary --only-section=.overlay_wolf3d $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Wolf3D.bin"
 	@$(CP) -O binary --only-section=.overlay_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Zelda 3.bin"
 	@$(CP) -O binary --only-section=.rodata_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/zelda3.ro"
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
@@ -1660,9 +1664,6 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(SD_FOLDER)/bios/logo.bin --dest-path "/bios/" \
 		-- sdpush --file $(HOMEBREWS_FOLDER)/celeste.bin --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Music.bin" --dest-path "/roms/homebrew/" \
-		-- sdpush --file "$(HOMEBREWS_FOLDER)/Doom.bin" --dest-path "/roms/homebrew/" \
-		-- sdpush --file "$(HOMEBREWS_FOLDER)/doom.ro" --dest-path "/roms/homebrew/" \
-		-- sdpush --file "$(HOMEBREWS_FOLDER)/Wolf3D.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Video.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Super Mario World.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Zelda 3.bin" --dest-path "/roms/homebrew/" \
