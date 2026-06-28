@@ -699,17 +699,29 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
             extern uint8_t *PageR[8];
             static int s_pc_n = 0, s_pc_logged = 0;
-            if ((s_pc_n++ % 30) == 0 && s_pc_logged < 12) {
+            if ((s_pc_n++ % 16) == 0 && s_pc_logged < 20) {
                 s_pc_logged++;
                 uint16_t pc = CPU_PCE.PC;
-                uint8_t *pg = PageR[(pc >> 13) & 7];
-                uint16_t o = pc & 0x1FFF;
+                int pgi = (pc >> 13) & 7;
+                uint8_t *pg = PageR[pgi];
                 FILE *pf = fopen("/pcecd_diag.txt", "a");
                 if (pf) {
-                    fprintf(pf, "PC=%04x bank=%02x I: %02x %02x %02x %02x %02x irqm=%02x\n",
-                            pc, PCE.MMR[(pc >> 13) & 7],
-                            pg[o], pg[(uint16_t)(o + 1)], pg[(uint16_t)(o + 2)],
-                            pg[(uint16_t)(o + 3)], pg[(uint16_t)(o + 4)], CPU_PCE.irq_mask);
+                    /* PageR[pgi] is pre-biased by -pgi*0x2000, so index with the
+                     * FULL pc (pce_read8 semantics) — masking to 0x1FFF reads the
+                     * wrong region. IOAREA pages are not flat RAM. */
+                    if (pg == PCE.IOAREA) {
+                        fprintf(pf, "PC=%04x bank=%02x [IO] P=%02x irqm=%02x irql=%02x\n",
+                                pc, PCE.MMR[pgi], CPU_PCE.P, CPU_PCE.irq_mask, CPU_PCE.irq_lines);
+                    } else {
+                        fprintf(pf, "PC=%04x bank=%02x I: %02x %02x %02x %02x %02x %02x %02x "
+                                    "A=%02x X=%02x Y=%02x P=%02x S=%02x irqm=%02x irql=%02x\n",
+                                pc, PCE.MMR[pgi],
+                                pg[pc], pg[(uint16_t)(pc + 1)], pg[(uint16_t)(pc + 2)],
+                                pg[(uint16_t)(pc + 3)], pg[(uint16_t)(pc + 4)],
+                                pg[(uint16_t)(pc + 5)], pg[(uint16_t)(pc + 6)],
+                                CPU_PCE.A, CPU_PCE.X, CPU_PCE.Y, CPU_PCE.P, CPU_PCE.S,
+                                CPU_PCE.irq_mask, CPU_PCE.irq_lines);
+                    }
                     fclose(pf);
                 }
             }
