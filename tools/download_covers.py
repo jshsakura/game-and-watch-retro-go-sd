@@ -25,6 +25,7 @@ SYSTEM_MAP = {
     # "ngpc": "SNK_-_Neo_Geo_Pocket_Color",
     "pce": "NEC_-_PC_Engine_-_TurboGrafx_16",
     "tg16": "NEC_-_PC_Engine_-_TurboGrafx_16",
+    "pcecd": "NEC_-_PC_Engine_CD_-_TurboGrafx-CD",
     "wswan": "Bandai_-_WonderSwan",
     "wswanc": "Bandai_-_WonderSwan_Color",
     "wsv": "Bandai_-_WonderSwan",
@@ -126,11 +127,18 @@ def main():
 
         print(f"\n[{system.upper()}] Scanning ROMs in {system_dir}...")
         
-        # Scan files in system_dir
+        # Scan files in system_dir. PC Engine CD keeps one folder per game
+        # (a .cue + its .bin tracks), so recurse and treat each .cue as the ROM;
+        # other systems stay flat.
         rom_files = []
-        for f in system_dir.iterdir():
-            if f.is_file() and not f.name.startswith(".") and f.suffix.lower() not in EXCLUDED_EXTENSIONS:
-                rom_files.append(f)
+        if system == "pcecd":
+            for f in system_dir.rglob("*.cue"):
+                if f.is_file() and not f.name.startswith("."):
+                    rom_files.append(f)
+        else:
+            for f in system_dir.iterdir():
+                if f.is_file() and not f.name.startswith(".") and f.suffix.lower() not in EXCLUDED_EXTENSIONS:
+                    rom_files.append(f)
 
         if not rom_files:
             print(f"[{system.upper()}] No ROM files found. Skipping.")
@@ -141,7 +149,7 @@ def main():
         for rom in rom_files:
             has_local_image = False
             for ext in [".png", ".jpg", ".jpeg", ".bmp"]:
-                if (system_dir / (rom.stem + ext)).exists():
+                if (rom.parent / (rom.stem + ext)).exists():
                     has_local_image = True
                     break
             
@@ -206,8 +214,8 @@ def main():
                 with urllib.request.urlopen(req) as response:
                     png_bytes = response.read()
 
-                # Save raw PNG next to the ROM file
-                dest_png = system_dir / (rom.stem + ".png")
+                # Save raw PNG next to the ROM file (its own folder for PCE CD)
+                dest_png = rom.parent / (rom.stem + ".png")
                 with open(dest_png, "wb") as f:
                     f.write(png_bytes)
                 print(f"    Saved PNG: {dest_png.name}")
