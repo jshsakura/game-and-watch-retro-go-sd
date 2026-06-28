@@ -73,7 +73,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
     s_diag_lines = 0;   /* fresh run */
-    diag("=== BUILD it10 ===\n");
+    diag("=== BUILD it11 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
@@ -261,7 +261,7 @@ static void ack_deassert(void)
 {
     switch (s_phase) {
     case PH_COMMAND: if (s_cmd_idx >= 6) execute_command(); else s_req = 1; break;
-    case PH_DATAIN:  if (!s_bulk) feed_din(); else s_req = 1; break;  /* TOC advances on ACK; bulk on read */
+    case PH_DATAIN:  feed_din(); break;  /* advance on ACK (TOC + manual-ack READs); $1808 reads advance separately */
     case PH_STATUS:  change_phase(PH_MSGIN); break;
     case PH_MSGIN:   change_phase(PH_BUSFREE); break;
     }
