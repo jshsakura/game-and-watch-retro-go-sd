@@ -30,6 +30,15 @@
 //#define GW_LCD_WIDTH  (320)
 //#define GW_LCD_HEIGHT (240)
 #define FPS_NTSC 60
+/* PC Engine CD: the boot ROM is the (user-supplied, copyrighted) System Card.
+ * Super System Card 3.0 covers base + Super CD-ROM2 titles. The dump is a raw
+ * HuCard image, so .bin and .pce are interchangeable (a 512-byte header, if
+ * present, is auto-stripped by LoadCartPCE via `rom_length & 0x1fff`). Try both
+ * names so the user need not rename their dump. */
+static const char *const PCE_SYSCARD_BIOS_PATHS[] = {
+    "/bios/pce/syscard3.pce",
+    "/bios/pce/syscard3.bin",
+};
 
 #define FB_INTERNAL_OFFSET (((XBUF_HEIGHT - current_height) / 2 + 16) * XBUF_WIDTH + (XBUF_WIDTH - current_width) / 2)
 #define AUDIO_BUFFER_LENGTH_PCE  (PCE_SAMPLE_RATE / FPS_NTSC)
@@ -362,6 +371,19 @@ pce_osd_getromdata(unsigned char **data)
 #endif
 #endif
     ram_start = (uint32_t)&_OVERLAY_PCE_BSS_END;
+    if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+        /* PCE-CD: the "ROM" is the System Card BIOS (mapped at bank 0); the disc
+         * image itself is streamed from SD separately. XIP it from flash like a
+         * HuCard. Phase 1 boots the CD-ROM2 menu to validate the core path. */
+        uint32_t bios_size = 0;
+        *data = NULL;
+        for (size_t i = 0; i < sizeof(PCE_SYSCARD_BIOS_PATHS) / sizeof(PCE_SYSCARD_BIOS_PATHS[0]); i++) {
+            *data = (unsigned char *)odroid_overlay_cache_file_in_flash(PCE_SYSCARD_BIOS_PATHS[i], &bios_size, false);
+            if (*data != NULL && bios_size > 0)
+                break;
+        }
+        return (*data != NULL && bios_size > 0) ? bios_size : 0;
+    }
     uint32_t size = ACTIVE_FILE->size;
     if (size > ram_get_free_size()) {
         *data = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);

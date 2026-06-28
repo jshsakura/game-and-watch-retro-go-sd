@@ -412,7 +412,7 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 22 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx) */
+#define MAX_EMULATORS 23 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD) */
 static retro_emulator_t emulators[MAX_EMULATORS];
 static rom_system_t systems[MAX_EMULATORS];
 static int emulators_count = 0;
@@ -1390,7 +1390,8 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_GW_SIZE);
             app_main_gw(load_state, save_slot);
         }
-    } else if(strcmp(system_name, "PC Engine") == 0) {
+    } else if(strcmp(system_name, "PC Engine") == 0 ||
+              strcmp(system_name, "PC Engine CD") == 0) {
         run_internal_emu(&emu_pce, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "MSX") == 0) {
         run_internal_emu(&emu_msx, load_state, start_paused, save_slot);
@@ -1594,6 +1595,10 @@ void emulators_init()
     add_emulator("Nintendo Entertainment System", "nes", "nes fds nsf lzma", RG_LOGO_PAD_NES, RG_LOGO_HEADER_NES, NO_GAME_DATA);
     add_emulator("Game & Watch", "gw", "gw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
     add_emulator("PC Engine", "pce", "pce lzma", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCE, NO_GAME_DATA);
+    /* PC Engine CD (= TurboGrafx-CD): same HuC6280/VDC core as HuCard PCE; the
+     * disc (.cue/.bin) is streamed from SD and the System Card BIOS is loaded as
+     * the boot ROM. Logos reuse PCE until CD-specific art is wired in. */
+    add_emulator("PC Engine CD", "pcecd", "cue", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCE, NO_GAME_DATA);
     add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
     add_emulator("Sega Master System", "sms", "sms lzma", RG_LOGO_PAD_SMS, RG_LOGO_HEADER_SMS, NO_GAME_DATA);
     add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);
