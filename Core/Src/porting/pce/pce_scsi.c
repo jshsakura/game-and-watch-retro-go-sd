@@ -74,7 +74,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
     s_diag_lines = 0;   /* fresh run */
-    diag("=== BUILD it12 ===\n");
+    diag("=== BUILD it13 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
@@ -274,8 +274,8 @@ uint8_t pce_scsi_read(uint8_t reg)
         diag("R%x db=%02x\n", reg & 0xf, s_db);
         s_trace++;
     }
-    if (((reg & 0xf) >= 0x0A || (reg & 0xf) == 0x03) && s_atrace < 120) {
-        diag("Ar%x p3=%02x p2=%02x ph=%d\n", reg & 0xf, s_port3, s_port2, s_phase);
+    if (s_phase == PH_BUSFREE && s_atrace < 130) {
+        diag("Ir%x db=%02x p3=%02x p2=%02x\n", reg & 0xf, s_db, s_port3, s_port2);
         s_atrace++;
     }
     switch (reg & 0x0F) {
@@ -305,8 +305,8 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
         diag("W%x=%02x\n", reg & 0xf, val);
         s_trace++;
     }
-    if ((reg & 0xf) >= 0x0A && s_atrace < 120) {
-        diag("Aw%x=%02x ph=%d\n", reg & 0xf, val, s_phase);
+    if (s_phase == PH_BUSFREE && s_atrace < 130) {
+        diag("Iw%x=%02x\n", reg & 0xf, val);
         s_atrace++;
     }
     switch (reg & 0x0F) {
