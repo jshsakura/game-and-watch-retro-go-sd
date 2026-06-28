@@ -24,3 +24,9 @@ void    pce_scsi_write(uint8_t reg, uint8_t val);
 /* Per-frame poll: advances pending reads and asserts IRQ when data/status is
  * ready (kept out of the hot CPU read path). Returns true if an IRQ is pending. */
 void pce_scsi_run(void);
+
+/* DIAG: per-instruction PC ring. h6280_run() calls pce_scsi_pc_tick() every
+ * instruction while g_pcecd_trace is set; dumps the path into the 0x6257 halt
+ * trap the first time it is hit. Remove once the PCE-CD boot is solved. */
+extern int g_pcecd_trace;
+void pce_scsi_pc_tick(uint16_t pc);

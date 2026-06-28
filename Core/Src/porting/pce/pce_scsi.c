@@ -61,6 +61,35 @@ static uint8_t  s_port2, s_port3;   /* $1802 IRQ-enable, $1803 IRQ-status */
 static int      s_trace;            /* trace register accesses during a bulk READ */
 static int      s_atrace;           /* trace ADPCM/idle-loop polls ($180A-F, $1803) */
 
+/* ---- per-instruction PC ring: capture the path into the 0x6257 halt trap.
+ *      h6280_run() calls pce_scsi_pc_tick() every instruction while a disc is
+ *      mounted; when the CPU first reaches the trap we dump the last N PCs +
+ *      their opcode bytes so the failing init check is visible. Diag only. ---- */
+extern uint8_t *PageR[8];
+#define PC_RING_N 96
+static uint16_t s_pc_ring[PC_RING_N];
+static int      s_pc_pos;
+static bool     s_trap_dumped;
+int             g_pcecd_trace;      /* gates the hook; set when a disc is present */
+
+void pce_scsi_pc_tick(uint16_t pc)
+{
+    s_pc_ring[s_pc_pos] = pc;
+    s_pc_pos = (s_pc_pos + 1) % PC_RING_N;
+    if (pc != 0x6257 || s_trap_dumped) return;
+    s_trap_dumped = true;
+    FILE *f = fopen("/pcecd_diag.txt", "a");
+    if (!f) return;
+    fprintf(f, "TRAP@6257 trace (oldest->newest, pc:op):\n");
+    for (int i = 0; i < PC_RING_N; i++) {
+        uint16_t p  = s_pc_ring[(s_pc_pos + i) % PC_RING_N];
+        uint8_t *pg = PageR[(p >> 13) & 7];
+        fprintf(f, "%04x:%02x ", p, pg ? pg[p] : 0);
+        if ((i & 7) == 7) fprintf(f, "\n");
+    }
+    fclose(f);
+}
+
 static void update_irq(void)
 {
     if (s_port2 & s_port3 & IRQ_MASK)
@@ -74,7 +103,9 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
     s_diag_lines = 0;   /* fresh run */
-    diag("=== BUILD it18 ===\n");
+    s_pc_pos = 0; s_trap_dumped = false;
+    g_pcecd_trace = s_present;   /* enable the per-instruction PC ring */
+    diag("=== BUILD it19 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
