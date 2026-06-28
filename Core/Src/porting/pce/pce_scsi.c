@@ -243,7 +243,7 @@ static void ack_assert(void)
     if (!s_req) return;
     switch (s_phase) {
     case PH_COMMAND: if (s_cmd_idx < (int)sizeof(s_cmd)) s_cmd[s_cmd_idx++] = s_db; s_req = 0; break;
-    case PH_DATAIN:  s_req = 0; break;   /* initiator already read s_db */
+    case PH_DATAIN:  break;              /* data-in advances on $1801 read, not ACK */
     case PH_STATUS:  s_req = 0; break;
     case PH_MSGIN:   s_req = 0; break;
     }
@@ -254,7 +254,7 @@ static void ack_deassert(void)
 {
     switch (s_phase) {
     case PH_COMMAND: if (s_cmd_idx >= 6) execute_command(); else s_req = 1; break;
-    case PH_DATAIN:  feed_din(); break;
+    case PH_DATAIN:  break;              /* data-in advances on $1801 read */
     case PH_STATUS:  change_phase(PH_MSGIN); break;
     case PH_MSGIN:   change_phase(PH_BUSFREE); break;
     }
@@ -266,7 +266,15 @@ uint8_t pce_scsi_read(uint8_t reg)
     case 0x00:
         return (uint8_t)((s_bsy ? 0x80 : 0) | (s_req ? 0x40 : 0) | (s_msg ? 0x20 : 0)
                        | (s_cd ? 0x10 : 0) | (s_io ? 0x08 : 0));
-    case 0x01: return s_db;
+    case 0x01:
+        if (s_phase == PH_DATAIN) {
+            /* Data-in is hardware auto-acked: reading the data port pulls the
+             * current byte and presents the next (or ends the transfer). */
+            uint8_t b = s_db;
+            feed_din();
+            return b;
+        }
+        return s_db;
     case 0x02: return s_port2;
     case 0x03: return s_port3;
     case 0x04: return 0;
