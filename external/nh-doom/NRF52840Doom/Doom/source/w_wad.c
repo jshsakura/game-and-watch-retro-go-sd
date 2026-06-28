@@ -205,10 +205,19 @@ void flashErasePage(uint32_t *pageAddress)
 
     nh_enable_irq();
 }
+#ifdef NHDOOM_COUNT_WRITES
+/* host-only: counts every actual flash word write. With a correctly pre-baked +
+ * relocated cache pre-loaded, the engine recomputes but writes NOTHING, so this
+ * must be 0 (proves the bake is complete). Compiled out on device. */
+unsigned long nh_flash_write_count = 0;
+#endif
 void programFlashWord(uint32_t *address, uint32_t word)
 {
     if (*address == 0xFFFFFFFF)
     {
+#ifdef NHDOOM_COUNT_WRITES
+        nh_flash_write_count++;
+#endif
         nh_disable_irq();
         // enable write
         NRF_NVMC->CONFIG = NVMC_CONFIG_WEN_Wen << NVMC_CONFIG_WEN_Pos;
@@ -417,6 +426,12 @@ void* storeLevelValues(boolean levelChanged)
     }
     printf("Freeing p_wad_level_flash_data %0x\r\n", (uint32_t) p_wad_level_flash_data);
     Z_Free(p_wad_level_flash_data);
+#ifdef NHDOOM_BAKE_HOOK
+    /* host-only: the flash cache is now fully built (immutable + this level), so
+     * the host baker/verifier can act here -- BEFORE the (layout-flaky) first
+     * frame render -- making bake + write-count verification reliable. */
+    { extern void nhdoom_cache_ready(void); nhdoom_cache_ready(); }
+#endif
     return (uint32_t*) p_wad_immutable_flash_data->levelData;
 }
 //

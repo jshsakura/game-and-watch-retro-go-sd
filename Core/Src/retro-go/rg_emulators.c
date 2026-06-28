@@ -37,6 +37,7 @@
 #include "doom/main_doom.h"
 #ifdef USE_NHDOOM
 #include "nhdoom/main_nhdoom.h"
+#include "nhdoom/nhdoom_flashcache.h"
 #endif
 #include "wolf3d/main_wolf3d.h"
 #include "main_pico8.h"
@@ -302,6 +303,81 @@ static uint8_t *DoomCacheCodeToFlash(uint32_t *code_size_out)
 #endif
   return code_addr;
 }
+
+/* ---- NHDOOM pre-baked flash cache ----
+ * The next-hack engine builds a ~749KB "flash cache" (composite textures, level
+ * data, lumpAddressTable) into nh_flash_addr_base at boot. nRF52840 has writable
+ * internal flash for it; the G&W has none, and the external OSPI flash that would
+ * hold it cannot be written while the engine runs XIP from it. So we ship the
+ * cache PRE-BAKED (built once on the host, /roms/homebrew/doom1.flashcache.bin)
+ * and only relocate the few thousand absolute pointers it contains to this boot's
+ * WAD / cache addresses -- the same cache-then-patch-then-reprogram pattern as
+ * DoomCacheCodeToFlash, driven by the file's reloc table. The engine then
+ * recomputes but every storeWordToFlash() is a no-op (the bytes already match).
+ * Runs in firmware context (internal flash) so the OSPI memory-map can be toggled
+ * safely; nh_flash_addr_base is set from the return value. Returns the XIP address
+ * of the cache data, or NULL if the file is missing/invalid. */
+#ifdef USE_NHDOOM
+#define NHDOOM_FC_PATH "/roms/homebrew/doom1.flashcache.bin"
+
+uint8_t *NhdoomLoadFlashCache(uint32_t dev_wad_base)
+{
+  uint32_t file_size = 0;
+  uint8_t *file_addr = odroid_overlay_cache_file_in_flash(NHDOOM_FC_PATH, &file_size, false);
+  if (!file_addr || file_size < sizeof(nhdoom_fc_header_t)) {
+    printf("NHDOOM: flashcache MISSING (%s) -- DOOM will hang; add it to SD\n", NHDOOM_FC_PATH);
+    return NULL;
+  }
+  const nhdoom_fc_header_t *h = (const nhdoom_fc_header_t *)file_addr;
+  if (h->magic != NHDOOM_FC_MAGIC || h->version != NHDOOM_FC_VERSION) {
+    printf("NHDOOM: flashcache bad header magic=0x%08lX ver=%lu\n",
+           (unsigned long)h->magic, (unsigned long)h->version);
+    return NULL;
+  }
+  uint8_t *cache = file_addr + h->data_offset;            /* XIP cache data */
+  const uint32_t *reloc = (const uint32_t *)(file_addr + h->reloc_offset);
+  int32_t wad_delta   = (int32_t)(dev_wad_base        - h->host_wad_base);
+  int32_t cache_delta = (int32_t)((uint32_t)cache      - h->host_cache_base);
+  uint32_t whlo = h->host_wad_base,   whhi = h->host_wad_base   + h->host_wad_size;
+  uint32_t chlo = h->host_cache_base, chhi = h->host_cache_base + h->host_cache_size;
+  printf("NHDOOM: flashcache data@%p bytes=%lu reloc=%lu wadD=%ld cacheD=%ld\n",
+         cache, (unsigned long)h->cache_bytes, (unsigned long)h->n_reloc,
+         (long)wad_delta, (long)cache_delta);
+#if SD_CARD == 1
+  /* Relocate page by page: read the page (XIP), patch any reloc words still in
+   * the HOST range (so a previously-relocated OSPI copy is left untouched =
+   * idempotent), then erase+reprogram only pages that actually changed. */
+  static uint8_t page[NHDOOM_FC_PAGE] __attribute__((aligned(4)));
+  uint32_t cache_flash_off = (uint32_t)cache - (uint32_t)&__EXTFLASH_BASE__;
+  uint32_t total = 0;
+  for (uint32_t base = 0; base < h->cache_bytes; base += NHDOOM_FC_PAGE) {
+    memcpy(page, cache + base, NHDOOM_FC_PAGE);
+    int patched = 0;
+    for (uint32_t k = 0; k < h->n_reloc; k++) {
+      uint32_t off = reloc[k] & NHDOOM_FC_OFFSET_MASK;
+      if (off < base || off >= base + NHDOOM_FC_PAGE) continue;
+      uint32_t *w = (uint32_t *)(page + (off - base));
+      if ((reloc[k] & NHDOOM_FC_TYPE_MASK) == NHDOOM_FC_RELOC_CACHE) {
+        if (*w >= chlo && *w < chhi) { *w += cache_delta; patched++; }
+      } else {
+        if (*w >= whlo && *w < whhi) { *w += wad_delta;   patched++; }
+      }
+    }
+    if (patched) {
+      uint32_t foff = cache_flash_off + base;
+      OSPI_DisableMemoryMappedMode();
+      OSPI_EraseSync(foff, NHDOOM_FC_PAGE);
+      OSPI_Program(foff, page, NHDOOM_FC_PAGE);
+      OSPI_EnableMemoryMappedMode();
+      SCB_InvalidateDCache_by_Addr((uint32_t *)(cache + base), NHDOOM_FC_PAGE);
+      total += patched;
+    }
+  }
+  printf("NHDOOM: flashcache relocated %lu words\n", (unsigned long)total);
+#endif
+  return cache;
+}
+#endif /* USE_NHDOOM */
 
 const unsigned char *ROM_DATA = NULL;
 unsigned ROM_DATA_LENGTH;

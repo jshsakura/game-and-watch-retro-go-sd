@@ -24,6 +24,7 @@
 #include "i_memory.h"
 #include "z_zone.h"
 #include "global_data.h"
+#include "nhdoom/nhdoom_flashcache.h"
 
 /* runtime pointer-packing bases consumed by the shadow i_memory.h. */
 unsigned long nh_ram_ptr_base;
@@ -86,6 +87,152 @@ static void map_flash_cache(void)
     fprintf(stderr, "[nhdoom] flash-cache mmap'd @%p size=%zu (0xFF)\n", p, sz);
 }
 
+/* ---- pre-baked flash-cache: BAKE (dump) and VERIFY (preload+relocate) ---- *
+ * BAKE  (NHDOOM_BAKE=<out>): after a normal run has populated the cache, scan
+ *   it, classify every non-0xFF word as data / WAD-pointer / cache-pointer, and
+ *   write doom1.flashcache.bin (header + cache data + reloc table). Called from
+ *   the host_video.c exit path.
+ * VERIFY (NHDOOM_VERIFY=<in>): before Z_Init, copy a previously baked cache into
+ *   the (freshly mmap'd, possibly differently-based) cache region and relocate
+ *   its pointers to THIS run's WAD/cache bases. The engine then recomputes and
+ *   every write no-ops (storeWordToFlash) / matches (updateLumpAddresses, which
+ *   while(1)-hangs on a mismatch) — so a clean run + identical frames proves the
+ *   relocation is correct, exactly mirroring the device load. */
+void nhdoom_bake_dump(void)
+{
+    const char *out = getenv("NHDOOM_BAKE");
+    if (!out) return;
+
+    const uint32_t *fc = (const uint32_t *)(uintptr_t)nh_flash_addr_base;
+    unsigned long nwords = (unsigned long)FLASH_CACHE_REGION_SIZE / 4;
+    uint32_t wadlo = (uint32_t)nh_ext_flash_base;
+    uint32_t wadhi = (uint32_t)(nh_ext_flash_base + nh_ext_flash_size);
+    uint32_t fclo  = (uint32_t)nh_flash_addr_base;
+    uint32_t fchi  = (uint32_t)(nh_flash_addr_base + FLASH_CACHE_REGION_SIZE);
+
+    unsigned long hi = 0;
+    for (unsigned long i = 0; i < nwords; i++) if (fc[i] != 0xFFFFFFFFu) hi = i;
+    uint32_t used = (uint32_t)((hi + 1) * 4);
+    uint32_t cache_bytes = (used + NHDOOM_FC_PAGE - 1) & ~(NHDOOM_FC_PAGE - 1);
+
+    /* static (not malloc): the QSPI emulation pthread spins and a malloc here
+     * can contend the libc arena lock and stall. host-only, so a fixed buffer is
+     * fine. */
+    static uint32_t reloc[FLASH_CACHE_REGION_SIZE / 4];
+    uint32_t nr = 0;
+    for (unsigned long i = 0; i <= hi; i++) {
+        uint32_t w = fc[i];
+        if (w == 0xFFFFFFFFu) continue;
+        if (w >= wadlo && w < wadhi)      reloc[nr++] = (uint32_t)(i * 4) | NHDOOM_FC_RELOC_WAD;
+        else if (w >= fclo && w < fchi)   reloc[nr++] = (uint32_t)(i * 4) | NHDOOM_FC_RELOC_CACHE;
+    }
+
+    nhdoom_fc_header_t h;
+    memset(&h, 0, sizeof(h));
+    h.magic          = NHDOOM_FC_MAGIC;
+    h.version        = NHDOOM_FC_VERSION;
+    h.cache_bytes    = cache_bytes;
+    h.host_wad_base  = (uint32_t)nh_ext_flash_base;
+    h.host_wad_size  = (uint32_t)nh_ext_flash_size;
+    h.host_cache_base= (uint32_t)nh_flash_addr_base;
+    h.host_cache_size= (uint32_t)FLASH_CACHE_REGION_SIZE;
+    h.n_reloc        = nr;
+    h.data_offset    = NHDOOM_FC_PAGE;                 /* cache data on a sector */
+    h.reloc_offset   = NHDOOM_FC_PAGE + cache_bytes;   /* reloc on its own sector */
+
+    FILE *f = fopen(out, "wb");
+    if (!f) { perror("open bake out"); return; }
+    uint8_t pad[NHDOOM_FC_PAGE];
+    memset(pad, 0xFF, sizeof(pad));
+    fwrite(&h, sizeof(h), 1, f);
+    fwrite(pad, 1, NHDOOM_FC_PAGE - sizeof(h), f);     /* pad header -> sector */
+    fwrite(fc, 1, used, f);
+    fwrite(pad, 1, cache_bytes - used, f);             /* pad cache -> sector */
+    fwrite(reloc, sizeof(uint32_t), nr, f);
+    fclose(f);
+    fprintf(stderr, "[BAKE] wrote %s: cache=%uB (used=%uB) reloc=%u "
+            "(wad/cache ptrs) wad_base=0x%x cache_base=0x%x\n",
+            out, cache_bytes, used, nr,
+            h.host_wad_base, h.host_cache_base);
+}
+
+void nhdoom_verify_preload(void)
+{
+    const char *in = getenv("NHDOOM_VERIFY");
+    if (!in) return;
+
+    FILE *f = fopen(in, "rb");
+    if (!f) { perror("open verify in"); exit(2); }
+    nhdoom_fc_header_t h;
+    if (fread(&h, sizeof(h), 1, f) != 1 || h.magic != NHDOOM_FC_MAGIC) {
+        fprintf(stderr, "[VERIFY] bad flashcache file\n"); exit(2);
+    }
+
+    uint8_t *cache = (uint8_t *)(uintptr_t)nh_flash_addr_base;
+    fseek(f, h.data_offset, SEEK_SET);
+    if (fread(cache, 1, h.cache_bytes, f) != h.cache_bytes) {
+        fprintf(stderr, "[VERIFY] short cache read\n"); exit(2);
+    }
+    /* static, not malloc: avoid libc-arena-lock contention with the spinning
+     * QSPI pthread (already started here), which can deadlock. */
+    static uint32_t reloc[FLASH_CACHE_REGION_SIZE / 4];
+    if (h.n_reloc > FLASH_CACHE_REGION_SIZE / 4) {
+        fprintf(stderr, "[VERIFY] n_reloc too large\n"); exit(2);
+    }
+    fseek(f, h.reloc_offset, SEEK_SET);
+    if (fread(reloc, sizeof(uint32_t), h.n_reloc, f) != h.n_reloc) {
+        fprintf(stderr, "[VERIFY] short reloc read\n"); exit(2);
+    }
+    fclose(f);
+
+    int32_t wad_delta   = (int32_t)((uint32_t)nh_ext_flash_base  - h.host_wad_base);
+    int32_t cache_delta = (int32_t)((uint32_t)nh_flash_addr_base - h.host_cache_base);
+    uint32_t whlo = h.host_wad_base,   whhi = h.host_wad_base   + h.host_wad_size;
+    uint32_t chlo = h.host_cache_base, chhi = h.host_cache_base + h.host_cache_size;
+    uint32_t done = 0;
+    for (uint32_t k = 0; k < h.n_reloc; k++) {
+        uint32_t off  = reloc[k] & NHDOOM_FC_OFFSET_MASK;
+        uint32_t type = reloc[k] & NHDOOM_FC_TYPE_MASK;
+        uint32_t *w = (uint32_t *)(cache + off);
+        if (type == NHDOOM_FC_RELOC_CACHE) {
+            if (*w >= chlo && *w < chhi) { *w = (uint32_t)((int32_t)*w + cache_delta); done++; }
+        } else {
+            if (*w >= whlo && *w < whhi) { *w = (uint32_t)((int32_t)*w + wad_delta); done++; }
+        }
+    }
+    fprintf(stderr, "[VERIFY] preloaded %uB, relocated %u/%u words "
+            "(wad_delta=%d cache_delta=%d)\n",
+            h.cache_bytes, done, h.n_reloc, wad_delta, cache_delta);
+}
+
+/* Called by w_wad.c (NHDOOM_BAKE_HOOK) the instant the flash cache is fully built
+ * -- BEFORE the first frame render, which the host engine crashes ~50% of the
+ * time due to a pre-existing layout/demo-sensitive packed-pointer bug. Acting
+ * here makes BAKE and the write-count VERIFY reliable. */
+void nhdoom_cache_ready(void)
+{
+    static int once = 0;
+    if (once++) return;                 /* first level's cache is enough */
+#ifdef NHDOOM_COUNT_WRITES
+    extern unsigned long nh_flash_write_count;
+    fprintf(stderr, "[CACHE_READY] flash word writes during build = %lu\n",
+            nh_flash_write_count);
+#endif
+    if (getenv("NHDOOM_BAKE")) {
+        nhdoom_bake_dump();
+        fprintf(stderr, "[CACHE_READY] baked, exiting before render\n");
+        exit(0);
+    }
+    if (getenv("NHDOOM_VERIFY")) {
+#ifdef NHDOOM_COUNT_WRITES
+        fprintf(stderr, "[VERIFY-RESULT] writes=%lu (PASS iff 0)\n",
+                nh_flash_write_count);
+#endif
+        if (!getenv("NHDOOM_VERIFY_RENDER")) exit(0);  /* reliable; skip render */
+    }
+    /* normal run (or NHDOOM_VERIFY_RENDER): fall through and render frames. */
+}
+
 int main(int argc, char **argv)
 {
     const char *wad = getenv("NHDOOM_WAD");
@@ -108,6 +255,10 @@ int main(int argc, char **argv)
 
     nh_start_qspi_dma();
     initGraphics();
+
+    /* device-load simulation: if NHDOOM_VERIFY is set, preload a baked cache and
+     * relocate it to these bases before the engine recomputes (no-op writes). */
+    nhdoom_verify_preload();
 
     Z_Init();
     InitGlobals();

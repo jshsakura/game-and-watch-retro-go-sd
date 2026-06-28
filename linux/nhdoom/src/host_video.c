@@ -77,6 +77,16 @@ void startDisplayRefresh(uint8_t bufferNumber)
     g_frame++;
     if (g_frame >= g_frame_limit) {
         fflush(stdout);
+        /* if NHDOOM_BAKE is set, dump the populated flash-cache + reloc table
+         * (doom1.flashcache.bin) for the device to pre-load read-only. */
+        extern void nhdoom_bake_dump(void);
+        nhdoom_bake_dump();
+#ifdef NHDOOM_COUNT_WRITES
+        /* with a correct pre-baked cache loaded (NHDOOM_VERIFY), this is 0. */
+        extern unsigned long nh_flash_write_count;
+        fprintf(stderr, "[WRITES] actual flash word writes this run = %lu\n",
+                nh_flash_write_count);
+#endif
         fprintf(stderr, "[nhdoom] frame limit %d reached, exiting\n", g_frame_limit);
         exit(0);
     }

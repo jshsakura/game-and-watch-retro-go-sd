@@ -9,8 +9,10 @@
  *                               (nh_ram_window_base, 256KB-aligned in RAM_EMU),
  *        - nh_ext_flash_base  = XIP WAD base (minus 4, so WAD_ADDRESS hits the
  *                               IWAD at offset 0 of the .mcu.wad),
- *        - nh_flash_addr_base = internal-flash cache base (unused on device:
- *                               the WAD is read-only XIP, save writes are no-ops),
+ *        - nh_flash_addr_base = base of the pre-baked, relocated flash cache in
+ *                               XIP (doom1.flashcache.bin; see NhdoomLoadFlashCache
+ *                               in rg_emulators.c). The engine recomputes the cache
+ *                               but every storeWordToFlash() then no-ops,
  *   4. initGraphics, Z_Init, InitGlobals, D_DoomMain (auto-warps to a level via
  *      the DEBUG_SETUP/AUTOSTART path; never returns).
  *
@@ -46,10 +48,6 @@ const unsigned char *doom_iwad = 0;
 const unsigned int  *p_doom_iwad_len = 0;
 static unsigned int  nh_wad_len;
 
-/* small scratch internal-flash-cache region (kept tiny; the engine's flash
- * cache path is not exercised because the WAD is served in place from XIP). */
-static uint8_t nh_flash_cache_stub[64] __attribute__((aligned(4)));
-
 extern char nh_ram_window_base[];        /* linker symbol (256KB-aligned)  */
 extern uint32_t _OVERLAY_NHDOOM_BSS_END; /* end of nhdoom RAM footprint     */
 
@@ -83,13 +81,23 @@ int app_main_nhdoom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     /* Publish the pointer-packing bases (mirror host_main.c). */
     nh_ram_ptr_base    = (unsigned long)(uintptr_t)nh_ram_window_base;
-    nh_flash_addr_base = (unsigned long)(uintptr_t)nh_flash_cache_stub;
     if (wad) {
         nh_ext_flash_base = (unsigned long)(uintptr_t)wad - 4;  /* WAD_ADDRESS = wad */
         nh_ext_flash_size = (unsigned long)wad_size + 4;
         nh_wad_len        = wad_size;
         doom_iwad         = (const unsigned char *)wad;
         p_doom_iwad_len   = &nh_wad_len;
+
+        /* Load + relocate the pre-baked flash cache (doom1.flashcache.bin) into
+         * XIP. This replaces the runtime flash-cache build the engine would do on
+         * nRF internal flash -- the G&W has no writable flash for it, so the cache
+         * is shipped pre-built and only its absolute pointers are fixed up to this
+         * boot's WAD / cache addresses. The OSPI reprogram runs in firmware
+         * context (rg_emulators.c). nh_flash_addr_base then points at read-only XIP
+         * and every engine storeWordToFlash() is a no-op. */
+        extern uint8_t *NhdoomLoadFlashCache(uint32_t dev_wad_base);
+        uint8_t *fc = NhdoomLoadFlashCache((uint32_t)nh_ext_flash_base);
+        nh_flash_addr_base = (unsigned long)(uintptr_t)fc;
     }
 
     printf("[nhdoom] RAM_PTR_BASE=%#lx EXT_FLASH_BASE=%#lx FLASH_ADDRESS=%#lx\n",

@@ -28,13 +28,16 @@ HINC      = $(HOST)/include
 HSRC      = $(HOST)/src
 
 # Shadow include dir FIRST so our nrf.h/main.h/graphics.h/... win over src/.
-INCLUDES = -I$(HINC) -I$(EINC)
+# ../Core/Inc/porting gives the shared nhdoom/nhdoom_flashcache.h (one source of
+# truth for the pre-baked flash-cache format, used by host bake + device load).
+INCLUDES = -I$(HINC) -I$(EINC) -I../Core/Inc/porting
 
 PRELUDE = $(HINC)/nh_prelude.h
 
 CFLAGS = -std=gnu11 -O1 -g -fcommon -fno-strict-aliasing \
          -ffunction-sections -fdata-sections \
-         -DHAVE_CONFIG_H -include $(PRELUDE) $(INCLUDES) \
+         -DHAVE_CONFIG_H -DNHDOOM_COUNT_WRITES -DNHDOOM_BAKE_HOOK \
+         -include $(PRELUDE) $(INCLUDES) \
          -Wno-implicit-function-declaration -Wno-int-conversion
 
 LDFLAGS = -static -no-pie -T $(HOST)/nhdoom.ld -pthread
