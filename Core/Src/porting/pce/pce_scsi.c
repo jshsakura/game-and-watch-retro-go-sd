@@ -1,19 +1,26 @@
-/* PC Engine CD-ROM2 SCSI target. See pce_scsi.h. Iteration 1: boot/data path. */
+/* PC Engine CD-ROM2 SCSI target. See pce_scsi.h.
+ *
+ * Register + handshake semantics ported from Mednafen pce_fast (pcecd.c /
+ * pcecd_drive.c): $1800w = SEL pulse (selects drive -> COMMAND phase); command
+ * bytes via $1801 DB-out + $1802 bit7 ACK; $1800r bit7..3 = BSY/REQ/MSG/CD/IO;
+ * $1802 = IRQ-enable, $1803 = IRQ-status, IRQ2 = port2 & port3 & 0x7C with
+ * 0x40=DATA-READY, 0x20=DATA-DONE. Commands: TEST UNIT READY, GET DIR INFO
+ * (0xDE, the TOC the System Card needs to find the data track), READ(6); audio
+ * commands ack OK (ADPCM/CD-DA not yet). Sectors come from pce_cd. */
 #include "pce_scsi.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include "h6280.h"          /* CPU_PCE, INT_IRQ2 */
 
-/* --- diagnostics: append the command stream to SD so we can see where the
- *     System Card stalls. APPEND-only: delete /pcecd_diag.txt before a clean
- *     test. Capped so it can't flood. --- */
+/* ---- diagnostics: append the command stream to /pcecd_diag.txt (delete it
+ *      before a clean test; capped so it can't flood). ---- */
 #define PCECD_DIAG 1
 #if PCECD_DIAG
 static int s_diag_lines;
 static void diag(const char *fmt, ...)
 {
-    if (s_diag_lines > 200) return;
+    if (s_diag_lines > 300) return;
     s_diag_lines++;
     FILE *f = fopen("/pcecd_diag.txt", "a");
     if (!f) return;
@@ -26,16 +33,11 @@ static void diag(const char *fmt, ...)
 #define diag(...) ((void)0)
 #endif
 
-/* $1800 bus-status bits (SCSI phase lines, as the System Card reads them). */
-#define ST_BSY  0x80
-#define ST_REQ  0x40
-#define ST_MSG  0x20
-#define ST_CD   0x10   /* Command/Data: 1 = command/status/message, 0 = data */
-#define ST_IO   0x08   /* 1 = target->initiator (in), 0 = initiator->target (out) */
-
-/* $1802 IRQ-enable / $1803 IRQ-status bits. */
-#define IRQ_DATA_IN   0x20   /* data transfer ready */
-#define IRQ_STATUS    0x40   /* status/command complete */
+#define STATUS_GOOD            0x00
+#define STATUS_CHECK_CONDITION 0x02
+#define IRQ_DATA_DONE          0x20   /* $1803 */
+#define IRQ_DATA_READY         0x40
+#define IRQ_MASK               0x7C   /* 0x4|0x8|0x10|0x20|0x40 */
 
 enum { PH_BUSFREE, PH_COMMAND, PH_DATAIN, PH_STATUS, PH_MSGIN };
 
@@ -43,26 +45,25 @@ static const pce_cd_toc_t *s_toc;
 static bool     s_present;
 
 static int      s_phase;
+static bool     s_bsy, s_req, s_msg, s_cd, s_io, s_ack;
+static uint8_t  s_db;          /* SCSI data bus */
 static uint8_t  s_cmd[16];
-static int      s_cmd_len;     /* bytes expected for current CDB (6/10) */
 static int      s_cmd_idx;
-static uint8_t  s_status;      /* SCSI status byte (0 = GOOD) */
 static uint8_t  s_message;
 
-static uint8_t  s_sector[PCE_CD_SECTOR_RAW];
-static int      s_data_ptr;    /* index into the 2048-byte user area */
-static int      s_data_len;    /* valid user bytes in s_sector (2048) */
-static uint32_t s_read_lba;
-static uint32_t s_read_remain; /* sectors left to stream */
+static uint8_t  s_din[2048];   /* current data-in buffer (command response or sector) */
+static int      s_din_pos, s_din_len;
+static bool     s_reading;     /* READ(6) sector-stream mode */
+static uint32_t s_read_lba, s_read_remain;
 
-static uint8_t  s_irq_enable;
-static uint8_t  s_irq_status;
+static uint8_t  s_port2, s_port3;   /* $1802 IRQ-enable, $1803 IRQ-status */
 
-static void raise_cd_irq(uint8_t flag)
+static void update_irq(void)
 {
-    s_irq_status |= flag;
-    if (s_irq_enable & flag)
+    if (s_port2 & s_port3 & IRQ_MASK)
         CPU_PCE.irq_lines |= INT_IRQ2;
+    else
+        CPU_PCE.irq_lines &= ~INT_IRQ2;
 }
 
 void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
@@ -71,129 +72,204 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_present = present && toc && toc->num_tracks > 0;
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
-    if (toc)
-        for (int i = 0; i < toc->num_tracks && i < 6; i++)
-            diag("  trk%d type=%d start=%lu len=%lu bin=%s\n",
-                 toc->tracks[i].number, toc->tracks[i].type,
-                 (unsigned long)toc->tracks[i].start_lba,
-                 (unsigned long)toc->tracks[i].length_lba, toc->tracks[i].bin_path);
     pce_scsi_reset();
 }
 
 void pce_scsi_reset(void)
 {
     s_phase = PH_BUSFREE;
-    s_cmd_idx = s_cmd_len = 0;
-    s_status = s_message = 0;
-    s_data_ptr = s_data_len = 0;
+    s_bsy = s_req = s_msg = s_cd = s_io = s_ack = 0;
+    s_db = 0;
+    s_cmd_idx = 0;
+    s_message = 0;
+    s_din_pos = s_din_len = 0;
+    s_reading = false;
     s_read_remain = 0;
-    s_irq_status = 0;
+    s_port2 = s_port3 = 0;
+    CPU_PCE.irq_lines &= ~INT_IRQ2;
 }
 
-/* Load the next data sector's 2048 user bytes (MODE1 payload at raw offset 16). */
-static bool load_next_sector(void)
+static void change_phase(int ph)
 {
-    if (!s_present || s_read_remain == 0)
-        return false;
-    if (!pce_cd_read_sector(s_toc, s_read_lba, s_sector))
-        return false;
-    s_data_ptr = 0;
-    s_data_len = 2048;
-    s_read_lba++;
-    s_read_remain--;
+    s_phase = ph;
+    switch (ph) {
+    case PH_BUSFREE: s_bsy = s_req = s_msg = s_cd = s_io = 0; s_port3 |= IRQ_DATA_DONE; break;
+    case PH_COMMAND: s_bsy = 1; s_cd = 1; s_io = 0; s_msg = 0; s_req = 1; s_cmd_idx = 0; break;
+    case PH_DATAIN:  s_bsy = 1; s_io = 1; s_cd = 0; s_msg = 0; s_req = 0; s_port3 |= IRQ_DATA_READY; break;
+    case PH_STATUS:  s_bsy = 1; s_io = 1; s_cd = 1; s_msg = 0; s_req = 1; break;
+    case PH_MSGIN:   s_bsy = 1; s_io = 1; s_cd = 1; s_msg = 1; s_req = 1; s_db = s_message; break;
+    }
+    update_irq();
+}
+
+static void send_status(uint8_t status, uint8_t message)
+{
+    s_message = message;
+    s_db = (status == STATUS_GOOD) ? 0x00 : 0x01;
+    change_phase(PH_STATUS);
+}
+
+/* Pull the next user sector (MODE1 payload at raw offset 16) into s_din. */
+static bool load_sector(void)
+{
+    static uint8_t raw[PCE_CD_SECTOR_RAW];
+    if (!s_present || s_read_remain == 0) return false;
+    if (!pce_cd_read_sector(s_toc, s_read_lba, raw)) return false;
+    memcpy(s_din, raw + 16, 2048);
+    s_din_pos = 0; s_din_len = 2048;
+    s_read_lba++; s_read_remain--;
     return true;
 }
 
-static void enter_status(uint8_t status)
+static int din_get(void)
 {
-    s_status = status;
-    s_phase = PH_STATUS;
-    raise_cd_irq(IRQ_STATUS);
+    if (s_din_pos >= s_din_len) {
+        if (s_reading && s_read_remain > 0) { if (!load_sector()) return -1; }
+        else return -1;
+    }
+    return s_din[s_din_pos++];
 }
 
-/* Decode and start executing a completed CDB. */
-static void execute_command(void)
+/* Present the next data-in byte (assert REQ), or finish the transfer. */
+static void feed_din(void)
 {
-    diag("CMD %02x %02x %02x %02x %02x %02x irqen=%02x\n",
-         s_cmd[0], s_cmd[1], s_cmd[2], s_cmd[3], s_cmd[4], s_cmd[5], s_irq_enable);
-    switch (s_cmd[0]) {
-    case 0x00: /* TEST UNIT READY */
-        enter_status(s_present ? 0x00 : 0x02);
-        break;
+    int b = din_get();
+    if (b < 0) { s_reading = false; send_status(STATUS_GOOD, 0); }
+    else       { s_db = (uint8_t)b; s_req = 1; }
+}
 
-    case 0x08: { /* READ(6): LBA in cmd[1..3], count in cmd[4] */
-        uint32_t lba = ((uint32_t)(s_cmd[1] & 0x1F) << 16) | ((uint32_t)s_cmd[2] << 8) | s_cmd[3];
-        uint32_t cnt = s_cmd[4] ? s_cmd[4] : 1;
-        s_read_lba = lba;
-        s_read_remain = cnt;
-        bool ok = load_next_sector();
-        diag("  READ lba=%lu cnt=%lu ok=%d\n", (unsigned long)lba, (unsigned long)cnt, ok);
-        if (ok) {
-            s_phase = PH_DATAIN;
-            raise_cd_irq(IRQ_DATA_IN);
-        } else {
-            enter_status(0x02);
-        }
+static void do_data_in(const uint8_t *buf, uint32_t len)
+{
+    if (len > sizeof(s_din)) len = sizeof(s_din);
+    memcpy(s_din, buf, len);
+    s_din_pos = 0; s_din_len = (int)len;
+    s_reading = false;
+    change_phase(PH_DATAIN);
+    feed_din();
+}
+
+static uint8_t u8_to_bcd(uint8_t v) { return (uint8_t)(((v / 10) << 4) | (v % 10)); }
+static uint8_t bcd_to_u8(uint8_t v) { return (uint8_t)((v >> 4) * 10 + (v & 0x0F)); }
+
+static void lba_to_amsf(uint32_t lba, uint8_t *m, uint8_t *s, uint8_t *f)
+{
+    uint32_t t = lba + PCE_CD_LEADIN_LBA;   /* absolute MSF */
+    *m = (uint8_t)(t / (75 * 60));
+    *s = (uint8_t)((t / 75) % 60);
+    *f = (uint8_t)(t % 75);
+}
+
+/* 0xDE GET DIR INFO — the TOC query the System Card uses to locate tracks. */
+static void get_dir_info(void)
+{
+    uint8_t out[8] = {0};
+    uint32_t len = 0;
+    switch (s_cmd[1]) {
+    case 0x0:
+        out[0] = u8_to_bcd(s_toc->tracks[0].number);                 /* first track */
+        out[1] = u8_to_bcd(s_toc->tracks[s_toc->num_tracks - 1].number); /* last */
+        len = 2;
+        break;
+    case 0x1: { /* lead-out MSF */
+        uint8_t m, s, f; lba_to_amsf(s_toc->total_lba, &m, &s, &f);
+        out[0] = u8_to_bcd(m); out[1] = u8_to_bcd(s); out[2] = u8_to_bcd(f);
+        len = 3;
         break;
     }
-
-    case 0xD8: /* SET AUDIO PLAYBACK START (CD-DA) — audio not yet implemented */
-    case 0xD9: /* SET AUDIO PLAYBACK END */
-    case 0xDA: /* PAUSE */
-    case 0xDB: /* ... */
-    case 0xDD: /* READ SUBCHANNEL */
-    case 0xDE: /* GET DIR INFO (TOC) — minimal: report good for now */
-        enter_status(0x00);
+    case 0x2: { /* per-track start MSF + control */
+        uint32_t lba = s_toc->total_lba; uint8_t ctrl = 0x04;
+        if (s_cmd[2] != 0xAA) {
+            int t = bcd_to_u8(s_cmd[2]); if (!t) t = 1;
+            for (int i = 0; i < s_toc->num_tracks; i++)
+                if (s_toc->tracks[i].number == t) {
+                    lba = s_toc->tracks[i].start_lba;
+                    ctrl = (s_toc->tracks[i].type == PCE_TRACK_DATA) ? 0x04 : 0x00;
+                    break;
+                }
+        }
+        uint8_t m, s, f; lba_to_amsf(lba, &m, &s, &f);
+        out[0] = u8_to_bcd(m); out[1] = u8_to_bcd(s); out[2] = u8_to_bcd(f); out[3] = ctrl;
+        len = 4;
         break;
+    }
+    }
+    do_data_in(out, len);
+}
 
+static void execute_command(void)
+{
+    uint8_t op = s_cmd[0];
+    diag("CMD %02x %02x %02x %02x %02x %02x p2=%02x\n",
+         s_cmd[0], s_cmd[1], s_cmd[2], s_cmd[3], s_cmd[4], s_cmd[5], s_port2);
+
+    if (!s_present && op != 0x03) { send_status(STATUS_CHECK_CONDITION, 0); return; }
+
+    switch (op) {
+    case 0x00: /* TEST UNIT READY */
+        send_status(STATUS_GOOD, 0);
+        break;
+    case 0x03: { /* REQUEST SENSE (minimal) */
+        uint8_t sense[18] = {0}; sense[0] = 0x70;
+        uint32_t n = s_cmd[4] ? s_cmd[4] : 14; if (n > sizeof(sense)) n = sizeof(sense);
+        do_data_in(sense, n);
+        break;
+    }
+    case 0x08: { /* READ(6) */
+        uint32_t lba = ((uint32_t)(s_cmd[1] & 0x1F) << 16) | ((uint32_t)s_cmd[2] << 8) | s_cmd[3];
+        uint32_t cnt = s_cmd[4] ? s_cmd[4] : 1;
+        s_read_lba = lba; s_read_remain = cnt; s_reading = true;
+        s_din_pos = s_din_len = 0;
+        diag("  READ lba=%lu cnt=%lu\n", (unsigned long)lba, (unsigned long)cnt);
+        change_phase(PH_DATAIN);
+        feed_din();
+        if (s_phase == PH_STATUS) diag("  READ failed (no sector)\n");
+        break;
+    }
+    case 0xDE: /* GET DIR INFO (TOC) */
+        get_dir_info();
+        break;
+    case 0xD8: case 0xD9: case 0xDA: case 0xDD: /* audio: ack OK for now */
+        send_status(STATUS_GOOD, 0);
+        break;
     default:
-        enter_status(0x00); /* be permissive in iteration 1 */
+        send_status(STATUS_GOOD, 0);
         break;
+    }
+}
+
+/* ACK rising edge: the current REQ byte is transferred. */
+static void ack_assert(void)
+{
+    if (!s_req) return;
+    switch (s_phase) {
+    case PH_COMMAND: if (s_cmd_idx < (int)sizeof(s_cmd)) s_cmd[s_cmd_idx++] = s_db; s_req = 0; break;
+    case PH_DATAIN:  s_req = 0; break;   /* initiator already read s_db */
+    case PH_STATUS:  s_req = 0; break;
+    case PH_MSGIN:   s_req = 0; break;
+    }
+}
+
+/* ACK falling edge: advance to the next byte / phase. */
+static void ack_deassert(void)
+{
+    switch (s_phase) {
+    case PH_COMMAND: if (s_cmd_idx >= 6) execute_command(); else s_req = 1; break;
+    case PH_DATAIN:  feed_din(); break;
+    case PH_STATUS:  change_phase(PH_MSGIN); break;
+    case PH_MSGIN:   change_phase(PH_BUSFREE); break;
     }
 }
 
 uint8_t pce_scsi_read(uint8_t reg)
 {
     switch (reg & 0x0F) {
-    case 0x00: { /* bus status */
-        uint8_t st = 0;
-        switch (s_phase) {
-        case PH_BUSFREE: st = 0; break;
-        case PH_COMMAND: st = ST_BSY | ST_REQ | ST_CD; break;            /* out */
-        case PH_DATAIN:  st = ST_BSY | ST_REQ | ST_IO; break;            /* in, data */
-        case PH_STATUS:  st = ST_BSY | ST_REQ | ST_CD | ST_IO; break;    /* in, status */
-        case PH_MSGIN:   st = ST_BSY | ST_REQ | ST_CD | ST_IO | ST_MSG; break;
-        }
-        return st;
-    }
-    case 0x01: { /* data bus in */
-        if (s_phase == PH_DATAIN) {
-            uint8_t b = s_sector[16 + s_data_ptr];
-            if (++s_data_ptr >= s_data_len) {
-                if (!load_next_sector()) {
-                    /* all requested sectors sent -> status phase */
-                    enter_status(0x00);
-                }
-            }
-            return b;
-        }
-        if (s_phase == PH_STATUS) {
-            uint8_t b = s_status;
-            s_phase = PH_MSGIN;
-            return b;
-        }
-        if (s_phase == PH_MSGIN) {
-            uint8_t b = s_message;
-            s_phase = PH_BUSFREE;     /* command complete */
-            raise_cd_irq(IRQ_STATUS);
-            return b;
-        }
-        return 0;
-    }
-    case 0x02: return s_irq_enable;
-    case 0x03: return s_irq_status | 0x10; /* BRAM unlocked bit kept set */
+    case 0x00:
+        return (uint8_t)((s_bsy ? 0x80 : 0) | (s_req ? 0x40 : 0) | (s_msg ? 0x20 : 0)
+                       | (s_cd ? 0x10 : 0) | (s_io ? 0x08 : 0));
+    case 0x01: return s_db;
+    case 0x02: return s_port2;
+    case 0x03: return s_port3;
     case 0x04: return 0;
-    case 0x07: return 0x00;                /* BRAM not present */
     default:   return 0;
     }
 }
@@ -201,40 +277,29 @@ uint8_t pce_scsi_read(uint8_t reg)
 void pce_scsi_write(uint8_t reg, uint8_t val)
 {
     switch (reg & 0x0F) {
-    case 0x00: /* bus control: a write with no select just idles */
+    case 0x00: /* SEL pulse: select the drive -> COMMAND phase */
+        if (!s_bsy) change_phase(PH_COMMAND);
+        s_port3 &= ~(IRQ_DATA_DONE | IRQ_DATA_READY);
+        update_irq();
         break;
-    case 0x01: /* data bus out (command byte during COMMAND phase) */
-        if (s_phase == PH_BUSFREE) {
-            /* first byte selects the device + starts a command */
-            s_phase = PH_COMMAND;
-            s_cmd_idx = 0;
-            s_cmd_len = 6;            /* PCE uses 6-byte CDBs */
-        }
-        if (s_phase == PH_COMMAND && s_cmd_idx < (int)sizeof(s_cmd)) {
-            s_cmd[s_cmd_idx++] = val;
-            if (s_cmd_idx >= s_cmd_len)
-                execute_command();
-        }
+    case 0x01: /* data bus out */
+        s_db = val;
         break;
-    case 0x02: /* IRQ enable */
-        s_irq_enable = val;
-        if (!(val & IRQ_DATA_IN) && !(val & IRQ_STATUS))
-            CPU_PCE.irq_lines &= ~INT_IRQ2;
+    case 0x02: { /* IRQ-enable + ACK (bit7) */
+        bool nack = (val & 0x80) != 0;
+        s_port2 = val;
+        if (nack && !s_ack)      ack_assert();
+        else if (!nack && s_ack) ack_deassert();
+        s_ack = nack;
+        update_irq();
         break;
-    case 0x03: /* ack / clear */
-        s_irq_status &= ~val;
-        CPU_PCE.irq_lines &= ~INT_IRQ2;
-        break;
+    }
     case 0x04: /* reset */
-        if (val & 0x02)
-            pce_scsi_reset();
+        if (val & 0x02) pce_scsi_reset();
         break;
     default:
         break;
     }
 }
 
-void pce_scsi_run(void)
-{
-    /* IRQ assertion is event-driven in this iteration; nothing periodic yet. */
-}
+void pce_scsi_run(void) { }
