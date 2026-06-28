@@ -793,7 +793,9 @@ static int scan_folder_cb(const rg_scandir_t *entry, void *arg)
     }
     else if (entry->is_dir)
     {
-        is_valid = true;
+        /* PCE CD lists every .cue flat (recursive scan descends game folders),
+         * so its sub-folders are not shown as browse rows. */
+        is_valid = (strcmp(emu->dirname, "pcecd") != 0);
     }
 
     if (!is_valid)
@@ -873,7 +875,10 @@ void emulator_init(retro_emulator_t *emu)
     rg_storage_mkdir(folder);
 
     emulator_browse_folder_path(emu, folder, sizeof(folder));
-    rg_storage_scandir(folder, scan_folder_cb, emu, 0);
+    /* PCE CD: recurse so every .cue under /roms/pcecd (incl. per-game folders)
+     * is listed flat, instead of showing folders to drill into. */
+    uint32_t scan_flags = (strcmp(emu->dirname, "pcecd") == 0) ? RG_SCANDIR_RECURSIVE : 0;
+    rg_storage_scandir(folder, scan_folder_cb, emu, scan_flags);
 }
 
 void emulator_refresh_list(retro_emulator_t *emu)
@@ -884,7 +889,10 @@ void emulator_refresh_list(retro_emulator_t *emu)
     rg_storage_mkdir(folder);
 
     emulator_browse_folder_path(emu, folder, sizeof(folder));
-    rg_storage_scandir(folder, scan_folder_cb, emu, 0);
+    /* PCE CD: recurse so every .cue under /roms/pcecd (incl. per-game folders)
+     * is listed flat, instead of showing folders to drill into. */
+    uint32_t scan_flags = (strcmp(emu->dirname, "pcecd") == 0) ? RG_SCANDIR_RECURSIVE : 0;
+    rg_storage_scandir(folder, scan_folder_cb, emu, scan_flags);
 }
 
 void emulator_show_file_info(retro_emulator_file_t *file)
