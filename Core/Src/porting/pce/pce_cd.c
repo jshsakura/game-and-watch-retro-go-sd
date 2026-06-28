@@ -1,0 +1,143 @@
+/* PC Engine CD — CUE/BIN disc layer. See pce_cd.h. */
+#include "pce_cd.h"
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+/* Resolve a .cue FILE reference (relative) against the cue's own directory. */
+static void resolve_bin_path(const char *cue_path, const char *name, char *out, size_t out_size)
+{
+    const char *slash = strrchr(cue_path, '/');
+    if (slash) {
+        size_t dir_len = (size_t)(slash - cue_path) + 1; /* keep trailing '/' */
+        if (dir_len >= out_size) dir_len = out_size - 1;
+        memcpy(out, cue_path, dir_len);
+        out[dir_len] = '\0';
+        strncat(out, name, out_size - strlen(out) - 1);
+    } else {
+        snprintf(out, out_size, "%s", name);
+    }
+}
+
+static long file_size_bytes(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fclose(f);
+    return sz;
+}
+
+/* Strip CR/LF and return pointer to first non-space char. */
+static char *trim(char *s)
+{
+    char *e = s + strlen(s);
+    while (e > s && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' ' || e[-1] == '\t')) *--e = '\0';
+    while (*s == ' ' || *s == '\t') s++;
+    return s;
+}
+
+bool pce_cd_parse_cue(const char *cue_path, pce_cd_toc_t *toc)
+{
+    FILE *cue = fopen(cue_path, "rb");
+    if (!cue) return false;
+
+    memset(toc, 0, sizeof(*toc));
+
+    char     cur_bin[256] = {0};
+    uint32_t cur_file_base_lba = 0;   /* absolute LBA at offset 0 of cur_bin */
+    uint32_t running_lba = 0;         /* total sectors across files seen so far */
+    int      ti = -1;                 /* current track index */
+    char     line[512];
+
+    while (fgets(line, sizeof(line), cue)) {
+        char *p = trim(line);
+
+        if (strncmp(p, "FILE", 4) == 0) {
+            const char *q1 = strchr(p, '"');
+            const char *q2 = q1 ? strchr(q1 + 1, '"') : NULL;
+            if (!q1 || !q2) continue;
+            char name[256];
+            size_t n = (size_t)(q2 - q1 - 1);
+            if (n >= sizeof(name)) n = sizeof(name) - 1;
+            memcpy(name, q1 + 1, n);
+            name[n] = '\0';
+
+            resolve_bin_path(cue_path, name, cur_bin, sizeof(cur_bin));
+            cur_file_base_lba = running_lba;
+            long sz = file_size_bytes(cur_bin);
+            if (sz > 0)
+                running_lba += (uint32_t)(sz / PCE_CD_SECTOR_RAW);
+        }
+        else if (strncmp(p, "TRACK", 5) == 0) {
+            int num = 0;
+            char mode[32] = {0};
+            if (sscanf(p, "TRACK %d %31s", &num, mode) != 2) continue;
+            if (toc->num_tracks >= PCE_CD_MAX_TRACKS) break;
+            ti = toc->num_tracks++;
+            pce_cd_track_t *t = &toc->tracks[ti];
+            t->number = (uint8_t)num;
+            t->type = (strncmp(mode, "AUDIO", 5) == 0) ? PCE_TRACK_AUDIO : PCE_TRACK_DATA;
+            t->sector_size = (strstr(mode, "/2048")) ? 2048 : PCE_CD_SECTOR_RAW;
+            strncpy(t->bin_path, cur_bin, sizeof(t->bin_path) - 1);
+        }
+        else if (strncmp(p, "INDEX", 5) == 0 && ti >= 0) {
+            int idx = 0, mm = 0, ss = 0, ff = 0;
+            if (sscanf(p, "INDEX %d %d:%d:%d", &idx, &mm, &ss, &ff) != 4) continue;
+            if (idx != 1) continue;                 /* INDEX 01 = track start */
+            uint32_t frames = (uint32_t)((mm * 60 + ss) * 75 + ff);
+            pce_cd_track_t *t = &toc->tracks[ti];
+            t->start_lba = cur_file_base_lba + frames;
+            t->file_offset = frames * t->sector_size;
+        }
+    }
+    fclose(cue);
+
+    if (toc->num_tracks == 0) return false;
+
+    toc->total_lba = running_lba;
+    /* Track lengths = gap to next track's start (last reaches end of disc). */
+    for (int i = 0; i < toc->num_tracks; i++) {
+        uint32_t end = (i + 1 < toc->num_tracks) ? toc->tracks[i + 1].start_lba : toc->total_lba;
+        toc->tracks[i].length_lba = (end > toc->tracks[i].start_lba) ? (end - toc->tracks[i].start_lba) : 0;
+    }
+    return true;
+}
+
+int pce_cd_track_at_lba(const pce_cd_toc_t *toc, uint32_t lba)
+{
+    for (int i = 0; i < toc->num_tracks; i++) {
+        uint32_t s = toc->tracks[i].start_lba;
+        if (lba >= s && lba < s + toc->tracks[i].length_lba)
+            return i;
+    }
+    return -1;
+}
+
+bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
+{
+    int ti = pce_cd_track_at_lba(toc, lba);
+    if (ti < 0) return false;
+    const pce_cd_track_t *t = &toc->tracks[ti];
+
+    uint32_t sec_in_track = lba - t->start_lba;
+    long offset = (long)t->file_offset + (long)sec_in_track * (long)t->sector_size;
+
+    FILE *f = fopen(t->bin_path, "rb");
+    if (!f) return false;
+    if (fseek(f, offset, SEEK_SET) != 0) { fclose(f); return false; }
+
+    bool ok;
+    if (t->sector_size == PCE_CD_SECTOR_RAW) {
+        ok = (fread(buf, 1, PCE_CD_SECTOR_RAW, f) == PCE_CD_SECTOR_RAW);
+    } else {
+        /* 2048-byte user data: place it where a MODE1 sector keeps user bytes
+         * (offset 16) and zero the sync/header/ECC frame around it. */
+        memset(buf, 0, PCE_CD_SECTOR_RAW);
+        ok = (fread(buf + 16, 1, 2048, f) == 2048);
+    }
+    fclose(f);
+    return ok;
+}
