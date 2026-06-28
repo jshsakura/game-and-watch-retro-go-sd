@@ -70,6 +70,8 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
 {
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
+    s_diag_lines = 0;   /* fresh run */
+    diag("=== BUILD it5 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
@@ -93,7 +95,7 @@ static void change_phase(int ph)
 {
     s_phase = ph;
     switch (ph) {
-    case PH_BUSFREE: s_bsy = s_req = s_msg = s_cd = s_io = 0; s_port3 |= IRQ_DATA_DONE; break;
+    case PH_BUSFREE: s_bsy = s_req = s_msg = s_cd = s_io = 0; s_port3 |= IRQ_DATA_DONE; diag("  DONE\n"); break;
     case PH_COMMAND: s_bsy = 1; s_cd = 1; s_io = 0; s_msg = 0; s_req = 1; s_cmd_idx = 0; break;
     case PH_DATAIN:  s_bsy = 1; s_io = 1; s_cd = 0; s_msg = 0; s_req = 0; s_port3 |= IRQ_DATA_READY; break;
     case PH_STATUS:  s_bsy = 1; s_io = 1; s_cd = 1; s_msg = 0; s_req = 1; break;
@@ -144,6 +146,7 @@ static void do_data_in(const uint8_t *buf, uint32_t len)
     memcpy(s_din, buf, len);
     s_din_pos = 0; s_din_len = (int)len;
     s_reading = false;
+    diag("  DATAIN len=%lu\n", (unsigned long)len);
     change_phase(PH_DATAIN);
     feed_din();
 }
