@@ -144,10 +144,22 @@ void initImmutableFlashRegion()
     // set size of this structure
     p_wad_immutable_flash_data->immutableDataLength = sizeof(wad_immutable_flash_data_t);
     currentImmutableFlashOffset = sizeof(wad_immutable_flash_data_t);
+    /* [diag] dump the WAD anchors so a fault in the first lump read can be
+     * traced to the exact bad address (one decisive line, removable). */
+    printf("[diag] iwad=0x%08lX lenptr=0x%08lX wadSize=%lu nlumps=%d infoofs=%ld WADADDR=0x%08lX FCADDR=0x%08lX\n",
+           (unsigned long)(uintptr_t)doom_iwad, (unsigned long)(uintptr_t)p_doom_iwad_len,
+           (unsigned long)p_wad_immutable_flash_data->wadSize,
+           (int)p_wad_immutable_flash_data->wadHeader.numlumps,
+           (long)p_wad_immutable_flash_data->wadHeader.infotableofs,
+           (unsigned long)(uintptr_t)WAD_ADDRESS, (unsigned long)(uintptr_t)FLASH_ADDRESS);
+    int diag_playpal = W_GetNumForName("PLAYPAL");
+    int diag_colormap = W_GetNumForName("COLORMAP");
+    printf("[diag] PLAYPAL=%d COLORMAP=%d (numlumps=%d) -> reading lumps now\n",
+           diag_playpal, diag_colormap, (int)getNumberOfLumps());
     // get the palette
-    p_wad_immutable_flash_data->palette_lump = writeLumpToFlashRegion(W_GetNumForName("PLAYPAL"), FLASH_IMMUTABLE_REGION, true);
+    p_wad_immutable_flash_data->palette_lump = writeLumpToFlashRegion(diag_playpal, FLASH_IMMUTABLE_REGION, true);
     // get the colormap
-    p_wad_immutable_flash_data->colormaps = writeLumpToFlashRegion(W_GetNumForName("COLORMAP"), FLASH_IMMUTABLE_REGION, true);
+    p_wad_immutable_flash_data->colormaps = writeLumpToFlashRegion(diag_colormap, FLASH_IMMUTABLE_REGION, true);
     //
     #if CACHE_ALL_COLORMAP_TO_RAM
         memcpy (ramColorMap, p_wad_immutable_flash_data->colormaps, sizeof (ramColorMap));
@@ -176,7 +188,12 @@ void initLumpPtrTable(void)
 }
 void getFileLumpByNum(int n, filelump_t *fl)
 {
-    spiFlashSetAddress(WAD_ADDRESS + p_wad_immutable_flash_data->wadHeader.infotableofs + n * sizeof(filelump_t));
+    uint32_t src = WAD_ADDRESS + p_wad_immutable_flash_data->wadHeader.infotableofs + n * sizeof(filelump_t);
+    /* [diag] log the first few directory-entry source addresses; the LAST one
+     * in /doom_trace.txt before a fault is the bad pointer. Removable. */
+    static int diag_calls = 0;
+    if (diag_calls < 6) { printf("[diag] getFileLump n=%d src=0x%08lX\n", n, (unsigned long)src); diag_calls++; }
+    spiFlashSetAddress(src);
     spiFlashGetData(fl, sizeof(filelump_t));
 }
 // get how much space we have in flash, taking into account if we already stored the lump pointer table or not.
