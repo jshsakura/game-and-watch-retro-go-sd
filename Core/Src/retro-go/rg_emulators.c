@@ -318,7 +318,10 @@ static uint8_t *DoomCacheCodeToFlash(uint32_t *code_size_out)
  * safely; nh_flash_addr_base is set from the return value. Returns the XIP address
  * of the cache data, or NULL if the file is missing/invalid. */
 #ifdef USE_NHDOOM
-#define NHDOOM_FC_PATH "/roms/homebrew/doom1.flashcache.bin"
+/* NOT *.bin: the Homebrew launcher lists *.bin as games, so the support files
+ * (this pre-baked cache, the .ro XIP blob, the .mcu.wad) use other extensions to
+ * stay out of the menu. Only Doom.bin shows, as the single "Doom" entry. */
+#define NHDOOM_FC_PATH "/roms/homebrew/doom1.fc"
 
 uint8_t *NhdoomLoadFlashCache(uint32_t dev_wad_base)
 {
