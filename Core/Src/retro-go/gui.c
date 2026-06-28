@@ -365,6 +365,19 @@ void gui_resize_list(tab_t *tab, int new_size)
     printf("gui_resize_list: Resized list '%s' from %d to %d items\n", tab->name, cur_size, new_size);
 }
 
+/* How many covers the CURRENT theme shows at once = the minimum item count for
+ * the cover carousel to loop end<->start. Below it the list doesn't fill the
+ * screen, so it must not wrap (no fake infinite loop, no empty side boxes).
+ * 0 = the text list, which never display-wraps. */
+int gui_carousel_min(void)
+{
+    switch (odroid_settings_theme_get()) {
+        case 1: case 4: return 3;   /* vertical coverflow: 3 covers visible */
+        case 2: case 3: return 5;   /* horizontal coverflow: 5 covers visible */
+        default:        return 0;   /* text list */
+    }
+}
+
 void gui_scroll_list(tab_t *tab, scroll_mode_t mode)
 {
     listbox_t *list = &tab->listbox;
@@ -406,13 +419,16 @@ void gui_scroll_list(tab_t *tab, scroll_mode_t mode)
         }
     }
 
-    /* Cursor loop only when the list fills the carousel (length >= 5), matching
-     * the DISPLAY wrap in gui_get_item_by_index: 5+ items connect end<->start
-     * (continuous loop); fewer than 5 clamp at the ends (no looping). */
+    /* Cursor loop policy, matching the DISPLAY wrap in gui_get_item_by_index:
+     *  - cover carousel: loop end<->start only when the list fills it
+     *    (length >= the theme's visible cover count); fewer items clamp at ends.
+     *  - text list (gui_carousel_min()==0): always loop (standard long-list nav). */
+    int wmin = gui_carousel_min();
+    int do_wrap = (wmin == 0) || (list->length >= wmin);
     if (cur_cursor < 0)
-        cur_cursor = (list->length >= 5) ? list->length - 1 : 0;
+        cur_cursor = do_wrap ? list->length - 1 : 0;
     if (cur_cursor >= list->length)
-        cur_cursor = (list->length >= 5) ? 0 : list->length - 1;
+        cur_cursor = do_wrap ? 0 : list->length - 1;
 
     list->cursor = cur_cursor;
 
@@ -587,7 +603,8 @@ listbox_item_t *gui_get_item_by_index(tab_t *tab, int *index)
      *    `if (item)`) skip them and leave the slot blank, instead of repeating
      *    one item to fill every slot ("a single ROM drawn hundreds of times").
      * Cursor navigation wrap is gated on the same threshold in gui_scroll_list. */
-    if (list->length >= 5) {
+    int wrap_min = gui_carousel_min();
+    if (wrap_min > 0 && list->length >= wrap_min) {
         x %= list->length;
         if (x < 0)
             x += list->length;
@@ -1178,26 +1195,47 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
     uint16_t *dst_img = lcd_get_active_buffer();
     uint16_t max_y = ODROID_SCREEN_HEIGHT - HEADER_HEIGHT;
 
+    /* Side slots (left1=cursor-2, left2=cursor-1, right2=cursor+1, right1=cursor+2)
+     * are drawn ONLY when they actually hold an item. gui_get_item_by_index honours
+     * the wrap policy, so with a single ROM (or any list that doesn't fill the
+     * carousel) the empty side slots draw nothing instead of an empty box frame. */
+    int _im2 = list->cursor - 2, _im1 = list->cursor - 1;
+    int _ip1 = list->cursor + 1, _ip2 = list->cursor + 2;
+    int has_m2 = gui_get_item_by_index(tab, &_im2) != NULL;
+    int has_m1 = gui_get_item_by_index(tab, &_im1) != NULL;
+    int has_p1 = gui_get_item_by_index(tab, &_ip1) != NULL;
+    int has_p2 = gui_get_item_by_index(tab, &_ip2) != NULL;
+
     //left1
-    odroid_overlay_draw_rect(start_xpos + 1, cover_top + (cover_height - p_height1) / 4 * 3 - 2, p_width1 + 2, p_height1 + 4, 1, get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 40));
-    odroid_overlay_draw_fill_rect(start_xpos + p_width1 + 2, cover_top + (cover_height - p_height1) / 4 * 3 - 1, 1, p_height1 + 2, curr_colors->bg_c);
-    odroid_overlay_draw_rect(start_xpos + p_width1 + 4, cover_top + (cover_height - p_height2) / 4 * 3 - 2, p_width2 + 2, p_height2 + 4, 1, get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 80));
-    odroid_overlay_draw_fill_rect(start_xpos + p_width1 + p_width2 + 5, cover_top + (cover_height - p_height2) / 4 * 3 - 1, 1, p_height2 + 2, curr_colors->bg_c);
+    if (has_m2) {
+        odroid_overlay_draw_rect(start_xpos + 1, cover_top + (cover_height - p_height1) / 4 * 3 - 2, p_width1 + 2, p_height1 + 4, 1, get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 40));
+        odroid_overlay_draw_fill_rect(start_xpos + p_width1 + 2, cover_top + (cover_height - p_height1) / 4 * 3 - 1, 1, p_height1 + 2, curr_colors->bg_c);
+    }
+    if (has_m1) {
+        odroid_overlay_draw_rect(start_xpos + p_width1 + 4, cover_top + (cover_height - p_height2) / 4 * 3 - 2, p_width2 + 2, p_height2 + 4, 1, get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 80));
+        odroid_overlay_draw_fill_rect(start_xpos + p_width1 + p_width2 + 5, cover_top + (cover_height - p_height2) / 4 * 3 - 1, 1, p_height2 + 2, curr_colors->bg_c);
+    }
 
     odroid_overlay_draw_rect(start_xpos + p_width1 + p_width2 + 8, cover_top - 3, cover_width + 6, cover_height + 6, 1, curr_colors->sel_c);
     odroid_overlay_draw_rect(start_xpos + p_width1 + p_width2 + 9, cover_top - 2, cover_width + 4, cover_height + 4, 1, curr_colors->dis_c);
 
-    odroid_overlay_draw_rect(start_xpos + p_width1 + p_width2 + cover_width + 16, cover_top + (cover_height - p_height2) / 4 * 3 - 2, p_width2 + 2, p_height2 + 4, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 80));
-    odroid_overlay_draw_fill_rect(start_xpos + p_width1 + p_width2 + cover_width + 16, cover_top + (cover_height - p_height2) / 4 * 3 - 1, 1, p_height2 + 2, curr_colors->bg_c);
-    odroid_overlay_draw_rect(start_xpos + p_width1 + p_width2 * 2 + cover_width + 19, cover_top + (cover_height - p_height1) / 4 * 3 - 2, p_width1 + 2, p_height1 + 4, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 40));
-    odroid_overlay_draw_fill_rect(start_xpos + p_width1 + p_width2 * 2 + cover_width + 19, cover_top + (cover_height - p_height1) / 4 * 3 - 1, 1, p_height1 + 2, curr_colors->bg_c);
+    if (has_p1) {
+        odroid_overlay_draw_rect(start_xpos + p_width1 + p_width2 + cover_width + 16, cover_top + (cover_height - p_height2) / 4 * 3 - 2, p_width2 + 2, p_height2 + 4, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 80));
+        odroid_overlay_draw_fill_rect(start_xpos + p_width1 + p_width2 + cover_width + 16, cover_top + (cover_height - p_height2) / 4 * 3 - 1, 1, p_height2 + 2, curr_colors->bg_c);
+    }
+    if (has_p2) {
+        odroid_overlay_draw_rect(start_xpos + p_width1 + p_width2 * 2 + cover_width + 19, cover_top + (cover_height - p_height1) / 4 * 3 - 2, p_width1 + 2, p_height1 + 4, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 40));
+        odroid_overlay_draw_fill_rect(start_xpos + p_width1 + p_width2 * 2 + cover_width + 19, cover_top + (cover_height - p_height1) / 4 * 3 - 1, 1, p_height1 + 2, curr_colors->bg_c);
+    }
 
     //shadow effect;
     odroid_overlay_draw_rect(start_xpos + p_width1 + p_width2 + 9, cover_top + cover_height + 3, cover_width + 4, 1, 1, curr_colors->bg_c + get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 50));
     for (int y = 0; y < 15; y++)
     {
-        dst_img[(p1_top + p_height1 + 2 + y) * ODROID_SCREEN_WIDTH + start_xpos + 1] = get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 20 * (100 - y * 6) / 100);
-        dst_img[(p2_top + p_height2 + 2 + y) * ODROID_SCREEN_WIDTH + start_xpos + p_width1 + 4] = get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c ,40 * (100 - y * 6) / 100);
+        if (has_m2)
+            dst_img[(p1_top + p_height1 + 2 + y) * ODROID_SCREEN_WIDTH + start_xpos + 1] = get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 20 * (100 - y * 6) / 100);
+        if (has_m1)
+            dst_img[(p2_top + p_height2 + 2 + y) * ODROID_SCREEN_WIDTH + start_xpos + p_width1 + 4] = get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c ,40 * (100 - y * 6) / 100);
 
         if ((cover_top + cover_height + 3 + y) < max_y)
         {
@@ -1207,8 +1245,10 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
             dst_img[(cover_top + cover_height + 3 + y) * ODROID_SCREEN_WIDTH + start_xpos + p_width1 + p_width2 + cover_width + 12] = get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 50 * (100 - y * 6) / 100);
         };
 
-        dst_img[(p2_top + p_height2 + 2 + y) * ODROID_SCREEN_WIDTH + start_xpos + p_width1 + p_width2 * 2 + cover_width + 17] = get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 40 * (100 - y * 6) / 100);
-        dst_img[(p1_top + p_height1 + 2 + y) * ODROID_SCREEN_WIDTH + start_xpos + p_width1 * 2 + p_width2 * 2 + cover_width + 20] = get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 20 * (100 - y * 6) / 100);
+        if (has_p1)
+            dst_img[(p2_top + p_height2 + 2 + y) * ODROID_SCREEN_WIDTH + start_xpos + p_width1 + p_width2 * 2 + cover_width + 17] = get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 40 * (100 - y * 6) / 100);
+        if (has_p2)
+            dst_img[(p1_top + p_height1 + 2 + y) * ODROID_SCREEN_WIDTH + start_xpos + p_width1 * 2 + p_width2 * 2 + cover_width + 20] = get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 20 * (100 - y * 6) / 100);
     };
 
     if (list->cursor >= 0 && list->cursor < list->length)
