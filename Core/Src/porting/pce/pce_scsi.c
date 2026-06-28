@@ -54,6 +54,7 @@ static uint8_t  s_message;
 static uint8_t  s_din[2048];   /* current data-in buffer (command response or sector) */
 static int      s_din_pos, s_din_len;
 static bool     s_reading;     /* READ(6) sector-stream mode */
+static bool     s_bulk;        /* data-in is a bulk READ (auto-ack on $1801 read) vs TOC (manual ACK) */
 static uint32_t s_read_lba, s_read_remain;
 
 static uint8_t  s_port2, s_port3;   /* $1802 IRQ-enable, $1803 IRQ-status */
@@ -71,7 +72,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
     s_diag_lines = 0;   /* fresh run */
-    diag("=== BUILD it6 ===\n");
+    diag("=== BUILD it7 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
@@ -86,6 +87,7 @@ void pce_scsi_reset(void)
     s_message = 0;
     s_din_pos = s_din_len = 0;
     s_reading = false;
+    s_bulk = false;
     s_read_remain = 0;
     s_port2 = s_port3 = 0;
     CPU_PCE.irq_lines &= ~INT_IRQ2;
@@ -145,7 +147,7 @@ static void do_data_in(const uint8_t *buf, uint32_t len)
     if (len > sizeof(s_din)) len = sizeof(s_din);
     memcpy(s_din, buf, len);
     s_din_pos = 0; s_din_len = (int)len;
-    s_reading = false;
+    s_reading = false; s_bulk = false;
     diag("  DATAIN len=%lu\n", (unsigned long)len);
     change_phase(PH_DATAIN);
     feed_din();
@@ -220,7 +222,7 @@ static void execute_command(void)
     case 0x08: { /* READ(6) */
         uint32_t lba = ((uint32_t)(s_cmd[1] & 0x1F) << 16) | ((uint32_t)s_cmd[2] << 8) | s_cmd[3];
         uint32_t cnt = s_cmd[4] ? s_cmd[4] : 1;
-        s_read_lba = lba; s_read_remain = cnt; s_reading = true;
+        s_read_lba = lba; s_read_remain = cnt; s_reading = true; s_bulk = true;
         s_din_pos = s_din_len = 0;
         diag("  READ lba=%lu cnt=%lu\n", (unsigned long)lba, (unsigned long)cnt);
         change_phase(PH_DATAIN);
@@ -257,7 +259,7 @@ static void ack_deassert(void)
 {
     switch (s_phase) {
     case PH_COMMAND: if (s_cmd_idx >= 6) execute_command(); else s_req = 1; break;
-    case PH_DATAIN:  feed_din(); break;   /* advance to next data byte (or -> status) on ACK */
+    case PH_DATAIN:  if (!s_bulk) feed_din(); else s_req = 1; break;  /* TOC advances on ACK; bulk on read */
     case PH_STATUS:  change_phase(PH_MSGIN); break;
     case PH_MSGIN:   change_phase(PH_BUSFREE); break;
     }
@@ -269,7 +271,14 @@ uint8_t pce_scsi_read(uint8_t reg)
     case 0x00:
         return (uint8_t)((s_bsy ? 0x80 : 0) | (s_req ? 0x40 : 0) | (s_msg ? 0x20 : 0)
                        | (s_cd ? 0x10 : 0) | (s_io ? 0x08 : 0));
-    case 0x01: return s_db;   /* current data-bus byte; advance happens on ACK */
+    case 0x01:
+        if (s_phase == PH_DATAIN && s_bulk) {
+            /* bulk READ: reading the data port auto-acks and pulls the next byte */
+            uint8_t b = s_db;
+            feed_din();
+            return b;
+        }
+        return s_db;          /* TOC/status: byte advances on ACK */
     case 0x02: return s_port2;
     case 0x03: return s_port3;
     case 0x04: return 0;
