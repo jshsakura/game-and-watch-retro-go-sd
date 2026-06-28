@@ -782,6 +782,20 @@ static uint8_t *get_coverfile(char *rom_path)
 
     char *coverpath = odroid_system_get_path(ODROID_PATH_COVER_FILE, rom_path);
     FILE *file = fopen(coverpath, "rb");
+    if (!file && strstr(rom_path, "/pcecd/"))
+    {
+        /* PCE CD = one folder per game; also accept a single cover named after
+         * the game FOLDER so /romart need not mirror the per-game sub-folders:
+         *   /romart/pcecd/<game folder>.img  */
+        free(coverpath);
+        char folder[300];
+        strncpy(folder, rom_path, sizeof(folder) - 1);
+        folder[sizeof(folder) - 1] = '\0';
+        char *slash = strrchr(folder, '/');
+        if (slash && slash != folder) *slash = '\0';
+        coverpath = odroid_system_get_path(ODROID_PATH_COVER_FILE, folder);
+        file = fopen(coverpath, "rb");
+    }
     if (!file)
     {
         // No cover exists for this game
