@@ -763,7 +763,17 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(0x40000);
     nh_ram_window_base = .;
     __nhdoom_window_start = .;
-    build/nhdoom/*.o (.displayData_bss)   /* staticZone[113600] at window base */
+    /* Reserve the first 8-byte CHUNK (short-pointer 0). The engine's
+       getLongPtrDW() treats a packed short-pointer of 0 as NULL, so anything
+       landing at the window base (>>3 == 0) is unaddressable. memzone_t puts
+       .blocklist at offset 0, so with staticZone exactly at the base,
+       Z_Init's `block->next = getShortPtrDW(&mainzone->blocklist)` == 0 == NULL
+       and Z_Malloc2 traps (udf) on the broken ring. Pushing staticZone one
+       chunk up makes its lowest packed pointer 1, mirroring the original nRF
+       build where short-ptr 0 is naturally unused. RAM_PTR_BASE stays
+       256KB-aligned so the `base | (sptr<<3)` reconstruction is unaffected. */
+    . = . + 8;
+    build/nhdoom/*.o (.displayData_bss)   /* staticZone[113600] at window base + 8 */
     build/nhdoom/*.o (.openings_bss)
     build/nhdoom/*.o (.bss .bss*)
     . = ALIGN(4);
