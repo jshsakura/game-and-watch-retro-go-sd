@@ -346,8 +346,11 @@ uint8_t *NhdoomLoadFlashCache(uint32_t dev_wad_base)
 #if SD_CARD == 1
   /* Relocate page by page: read the page (XIP), patch any reloc words still in
    * the HOST range (so a previously-relocated OSPI copy is left untouched =
-   * idempotent), then erase+reprogram only pages that actually changed. */
-  static uint8_t page[NHDOOM_FC_PAGE] __attribute__((aligned(4)));
+   * idempotent), then erase+reprogram only pages that actually changed.
+   * The 4KB page scratch comes from the AHB/RAM bump heap, NOT a static — a
+   * static[4096] lands in DTCM .bss and overflows the tight DTCM budget. */
+  uint8_t *page = (uint8_t *)ahb_malloc(NHDOOM_FC_PAGE);
+  if (!page) { printf("NHDOOM: flashcache reloc: no scratch\n"); return cache; }
   uint32_t cache_flash_off = (uint32_t)cache - (uint32_t)&__EXTFLASH_BASE__;
   uint32_t total = 0;
   for (uint32_t base = 0; base < h->cache_bytes; base += NHDOOM_FC_PAGE) {
