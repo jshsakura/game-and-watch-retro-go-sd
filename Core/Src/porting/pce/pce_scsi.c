@@ -71,7 +71,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
     s_diag_lines = 0;   /* fresh run */
-    diag("=== BUILD it5 ===\n");
+    diag("=== BUILD it6 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
@@ -257,7 +257,7 @@ static void ack_deassert(void)
 {
     switch (s_phase) {
     case PH_COMMAND: if (s_cmd_idx >= 6) execute_command(); else s_req = 1; break;
-    case PH_DATAIN:  s_req = 1; break;   /* REQ back up for the next $1801 read (no advance here) */
+    case PH_DATAIN:  feed_din(); break;   /* advance to next data byte (or -> status) on ACK */
     case PH_STATUS:  change_phase(PH_MSGIN); break;
     case PH_MSGIN:   change_phase(PH_BUSFREE); break;
     }
@@ -269,15 +269,7 @@ uint8_t pce_scsi_read(uint8_t reg)
     case 0x00:
         return (uint8_t)((s_bsy ? 0x80 : 0) | (s_req ? 0x40 : 0) | (s_msg ? 0x20 : 0)
                        | (s_cd ? 0x10 : 0) | (s_io ? 0x08 : 0));
-    case 0x01:
-        if (s_phase == PH_DATAIN) {
-            /* Data-in is hardware auto-acked: reading the data port pulls the
-             * current byte and presents the next (or ends the transfer). */
-            uint8_t b = s_db;
-            feed_din();
-            return b;
-        }
-        return s_db;
+    case 0x01: return s_db;   /* current data-bus byte; advance happens on ACK */
     case 0x02: return s_port2;
     case 0x03: return s_port3;
     case 0x04: return 0;
