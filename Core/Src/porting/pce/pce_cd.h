@@ -12,6 +12,17 @@
 #define PCE_CD_SECTOR_RAW   2352      /* bytes per raw sector (MODE1/2352, AUDIO) */
 #define PCE_CD_LEADIN_LBA   150       /* 2 s pre-gap: MSF 00:02:00 == LBA 0 */
 
+/* CD-ROM2 program RAM mapped into the HuC6280 bank space. Banks 0x80-0x87 are
+ * the 64KB base CD RAM present on every CD system; banks 0x68-0x7F add the
+ * 192KB Super CD-ROM2 RAM. They are contiguous (0x68..0x87 = 32 banks), so a
+ * single 256KB block backs them all. Without this the banks alias the shared
+ * 8KB NULLRAM and a loaded game corrupts itself. */
+#define PCE_CD_RAM_FIRST_BANK  0x68
+#define PCE_CD_RAM_LAST_BANK   0x87
+#define PCE_CD_RAM_BANK_SIZE   0x2000
+#define PCE_CD_RAM_SIZE        ((PCE_CD_RAM_LAST_BANK - PCE_CD_RAM_FIRST_BANK + 1) * PCE_CD_RAM_BANK_SIZE) /* 256KB */
+#define PCE_CD_RAM_BASE_BANK   0x80   /* base 64KB (0x80-0x87) — minimum for any CD game */
+
 typedef enum {
     PCE_TRACK_AUDIO = 0,
     PCE_TRACK_DATA  = 1,

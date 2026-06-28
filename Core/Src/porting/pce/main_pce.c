@@ -513,7 +513,36 @@ void LoadCartPCE() {
         pce_rom_patch();
     else
         pce_rom_full_patch();
-        
+
+    /* PCE-CD: back the CD-ROM2 program-RAM banks with real RAM. The System Card
+     * is XIP'd from flash (pce_osd_getromdata), so the entire ROM-unpack buffer
+     * is free to host the CD RAM. Banks 0x68-0x87 are contiguous: 0x80-0x87 is
+     * the 64KB base RAM, 0x68-0x7F adds the 192KB Super CD RAM (256KB total).
+     * Without this every CD bank aliases the shared 8KB NULLRAM and a loaded
+     * game overwrites itself, then traps. Done last so it overrides the
+     * System-Card ROM mirror that the bank loop left on 0x68-0x7F. */
+    if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+        uint8_t  *cdram = (uint8_t *)&_PCE_ROM_UNPACK_BUFFER;
+        uint32_t  room  = (uint32_t)&_PCE_ROM_UNPACK_BUFFER_SIZE;
+        int first = (room >= PCE_CD_RAM_SIZE) ? PCE_CD_RAM_FIRST_BANK
+                                              : PCE_CD_RAM_BASE_BANK;
+        uint32_t need = (uint32_t)(PCE_CD_RAM_LAST_BANK - first + 1) * PCE_CD_RAM_BANK_SIZE;
+        if (room >= need) {
+            memset(cdram, 0, need);
+            for (int v = first; v <= PCE_CD_RAM_LAST_BANK; v++) {
+                uint8_t *p = cdram + (uint32_t)(v - first) * PCE_CD_RAM_BANK_SIZE;
+                PCE.MemoryMapR[v] = p;
+                PCE.MemoryMapW[v] = p;
+            }
+        }
+        FILE *cf = fopen("/pcecd_diag.txt", "a");
+        if (cf) {
+            fprintf(cf, "CDRAM map: room=%lu need=%lu first=%02x %s\n",
+                    (unsigned long)room, (unsigned long)need, first,
+                    (room >= need) ? "OK" : "TOO-SMALL");
+            fclose(cf);
+        }
+    }
 }
 
 void ResetPCE(bool hard) {
