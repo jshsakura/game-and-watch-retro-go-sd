@@ -1,7 +1,30 @@
 /* PC Engine CD-ROM2 SCSI target. See pce_scsi.h. Iteration 1: boot/data path. */
 #include "pce_scsi.h"
 #include <string.h>
+#include <stdio.h>
+#include <stdarg.h>
 #include "h6280.h"          /* CPU_PCE, INT_IRQ2 */
+
+/* --- diagnostics: append the command stream to SD so we can see where the
+ *     System Card stalls. APPEND-only: delete /pcecd_diag.txt before a clean
+ *     test. Capped so it can't flood. --- */
+#define PCECD_DIAG 1
+#if PCECD_DIAG
+static int s_diag_lines;
+static void diag(const char *fmt, ...)
+{
+    if (s_diag_lines > 200) return;
+    s_diag_lines++;
+    FILE *f = fopen("/pcecd_diag.txt", "a");
+    if (!f) return;
+    va_list ap; __builtin_va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    __builtin_va_end(ap);
+    fclose(f);
+}
+#else
+#define diag(...) ((void)0)
+#endif
 
 /* $1800 bus-status bits (SCSI phase lines, as the System Card reads them). */
 #define ST_BSY  0x80
@@ -46,6 +69,14 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
 {
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
+    diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
+         toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
+    if (toc)
+        for (int i = 0; i < toc->num_tracks && i < 6; i++)
+            diag("  trk%d type=%d start=%lu len=%lu bin=%s\n",
+                 toc->tracks[i].number, toc->tracks[i].type,
+                 (unsigned long)toc->tracks[i].start_lba,
+                 (unsigned long)toc->tracks[i].length_lba, toc->tracks[i].bin_path);
     pce_scsi_reset();
 }
 
@@ -83,6 +114,8 @@ static void enter_status(uint8_t status)
 /* Decode and start executing a completed CDB. */
 static void execute_command(void)
 {
+    diag("CMD %02x %02x %02x %02x %02x %02x irqen=%02x\n",
+         s_cmd[0], s_cmd[1], s_cmd[2], s_cmd[3], s_cmd[4], s_cmd[5], s_irq_enable);
     switch (s_cmd[0]) {
     case 0x00: /* TEST UNIT READY */
         enter_status(s_present ? 0x00 : 0x02);
@@ -93,7 +126,9 @@ static void execute_command(void)
         uint32_t cnt = s_cmd[4] ? s_cmd[4] : 1;
         s_read_lba = lba;
         s_read_remain = cnt;
-        if (load_next_sector()) {
+        bool ok = load_next_sector();
+        diag("  READ lba=%lu cnt=%lu ok=%d\n", (unsigned long)lba, (unsigned long)cnt, ok);
+        if (ok) {
             s_phase = PH_DATAIN;
             raise_cd_irq(IRQ_DATA_IN);
         } else {
