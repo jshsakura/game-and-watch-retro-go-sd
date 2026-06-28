@@ -18,6 +18,8 @@
 #include "rom_manager.h"
 #include "common.h"
 #include "sound_pce.h"
+#include "pce_cd.h"
+#include "pce_scsi.h"
 #include "appid.h"
 #ifndef GNW_DISABLE_COMPRESSION
 #include "lzma.h"
@@ -39,6 +41,9 @@ static const char *const PCE_SYSCARD_BIOS_PATHS[] = {
     "/bios/pce/syscard3.pce",
     "/bios/pce/syscard3.bin",
 };
+
+/* Mounted PCE-CD disc table-of-contents (kept for the SCSI target's lifetime). */
+static pce_cd_toc_t s_pcecd_toc;
 
 #define FB_INTERNAL_OFFSET (((XBUF_HEIGHT - current_height) / 2 + 16) * XBUF_WIDTH + (XBUF_WIDTH - current_width) / 2)
 #define AUDIO_BUFFER_LENGTH_PCE  (PCE_SAMPLE_RATE / FPS_NTSC)
@@ -382,6 +387,11 @@ pce_osd_getromdata(unsigned char **data)
             if (*data != NULL && bios_size > 0)
                 break;
         }
+        /* Mount the disc so the System Card's SCSI reads ($1800) hit the CUE/BIN. */
+        if (pce_cd_parse_cue(ACTIVE_FILE->path, &s_pcecd_toc))
+            pce_scsi_set_disc(&s_pcecd_toc, true);
+        else
+            pce_scsi_set_disc(NULL, false);
         return (*data != NULL && bios_size > 0) ? bios_size : 0;
     }
     uint32_t size = ACTIVE_FILE->size;
