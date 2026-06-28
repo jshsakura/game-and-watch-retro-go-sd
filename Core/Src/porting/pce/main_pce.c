@@ -522,24 +522,36 @@ void LoadCartPCE() {
      * game overwrites itself, then traps. Done last so it overrides the
      * System-Card ROM mirror that the bank loop left on 0x68-0x7F. */
     if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
-        uint8_t  *cdram = (uint8_t *)&_PCE_ROM_UNPACK_BUFFER;
-        uint32_t  room  = (uint32_t)&_PCE_ROM_UNPACK_BUFFER_SIZE;
-        int first = (room >= PCE_CD_RAM_SIZE) ? PCE_CD_RAM_FIRST_BANK
-                                              : PCE_CD_RAM_BASE_BANK;
-        uint32_t need = (uint32_t)(PCE_CD_RAM_LAST_BANK - first + 1) * PCE_CD_RAM_BANK_SIZE;
-        if (room >= need) {
-            memset(cdram, 0, need);
-            for (int v = first; v <= PCE_CD_RAM_LAST_BANK; v++) {
-                uint8_t *p = cdram + (uint32_t)(v - first) * PCE_CD_RAM_BANK_SIZE;
-                PCE.MemoryMapR[v] = p;
-                PCE.MemoryMapW[v] = p;
-            }
+        uint8_t  *buf  = (uint8_t *)&_PCE_ROM_UNPACK_BUFFER;
+        uint32_t  room = (uint32_t)&_PCE_ROM_UNPACK_BUFFER_SIZE;
+        int total_banks = PCE_CD_RAM_LAST_BANK - PCE_CD_RAM_FIRST_BANK + 1;  /* 32 = 256KB */
+        int buf_banks   = (int)(room / PCE_CD_RAM_BANK_SIZE);
+        if (buf_banks > total_banks) buf_banks = total_banks;
+        /* The unpack buffer is ~10KB shy of the full 256KB, so borrow the few
+         * leftover banks from PCE_EXRAM_BUF — the Populous on-board RAM, which
+         * is idle for CD (HuCard and CD never load together). Banks are mapped
+         * independently via MemoryMap, so the two pools needn't be contiguous. */
+        int exram_banks = (int)(sizeof(PCE_EXRAM_BUF) / PCE_CD_RAM_BANK_SIZE);
+        int from_exram  = total_banks - buf_banks;
+        if (from_exram < 0) from_exram = 0;
+        if (from_exram > exram_banks) from_exram = exram_banks;
+        int mapped = buf_banks + from_exram;
+        if (mapped > total_banks) mapped = total_banks;
+        for (int i = 0; i < mapped; i++) {
+            int v = PCE_CD_RAM_FIRST_BANK + i;
+            uint8_t *p = (i < from_exram)
+                       ? PCE_EXRAM_BUF + (uint32_t)i * PCE_CD_RAM_BANK_SIZE
+                       : buf + (uint32_t)(i - from_exram) * PCE_CD_RAM_BANK_SIZE;
+            PCE.MemoryMapR[v] = p;
+            PCE.MemoryMapW[v] = p;
         }
+        if (from_exram) memset(PCE_EXRAM_BUF, 0, (uint32_t)from_exram * PCE_CD_RAM_BANK_SIZE);
+        if (mapped > from_exram) memset(buf, 0, (uint32_t)(mapped - from_exram) * PCE_CD_RAM_BANK_SIZE);
         FILE *cf = fopen("/pcecd_diag.txt", "a");
         if (cf) {
-            fprintf(cf, "CDRAM map: room=%lu need=%lu first=%02x %s\n",
-                    (unsigned long)room, (unsigned long)need, first,
-                    (room >= need) ? "OK" : "TOO-SMALL");
+            fprintf(cf, "CDRAM map: room=%lu buf_banks=%d exram=%d mapped=%d/%d %s\n",
+                    (unsigned long)room, buf_banks, from_exram, mapped, total_banks,
+                    (mapped >= total_banks) ? "FULL" : "PARTIAL");
             fclose(cf);
         }
     }
