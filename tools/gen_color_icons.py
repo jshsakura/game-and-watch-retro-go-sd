@@ -27,6 +27,7 @@ MAP = [
     ("RG_LOGO_PAD_SG1000",  "sg"),
     ("RG_LOGO_PAD_COL",     "col"),
     ("RG_LOGO_PAD_PCE",     "pce"),
+    ("RG_LOGO_PAD_PCECD",   "pcecd"),
     ("RG_LOGO_PAD_MSX",     "msx"),
     ("RG_LOGO_PAD_WSV",     "wsv"),
     ("RG_LOGO_PAD_WSWAN",   "ws"),

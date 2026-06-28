@@ -95,6 +95,7 @@ enum {
     RG_LOGO_PAD_PICO8,
     RG_LOGO_PAD_GBC,
     RG_LOGO_PAD_LYNX,
+    RG_LOGO_PAD_PCECD,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
