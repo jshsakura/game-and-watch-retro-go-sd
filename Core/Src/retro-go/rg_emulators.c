@@ -412,7 +412,7 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 23 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added (Odyssey2/ZX/C64 cores -> 26). */
+#define MAX_EMULATORS 24 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added (ZX/C64 cores -> 26). */
 static retro_emulator_t emulators[MAX_EMULATORS];
 static rom_system_t systems[MAX_EMULATORS];
 static int emulators_count = 0;
@@ -1406,16 +1406,12 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         run_internal_emu(&emu_a7800, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Amstrad CPC") == 0)  {
         run_internal_emu(&emu_amstrad, load_state, start_paused, save_slot);
-#if 0
-    } else if(strcmp(system_name, "Philips Vectrex") == 0)  {
-#ifdef ENABLE_EMULATOR_VIDEOPAC
+    } else if(strcmp(system_name, "Magnavox Odyssey2") == 0)  {
       if (load_core_bin_with_header("/cores/videopac.bin", (uint8_t *)&__RAM_EMU_START__)) {
         memset(&_OVERLAY_VIDEOPAC_BSS_START, 0x0, (size_t)&_OVERLAY_VIDEOPAC_BSS_SIZE);
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_VIDEOPAC_SIZE);
         app_main_videopac(load_state, start_paused, save_slot);
       }
-#endif
-#endif
     } else if(strcmp(system_name, "Homebrew") == 0)  {
       if (strcmp(newfile->name,"Doom") == 0) {
         /* Begin the SD trace HERE (not in app_main_doom) so the XIP cache /
@@ -1614,7 +1610,7 @@ void emulators_init()
     add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
     add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
     add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
-//    add_emulator("Philips Vectrex", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA); // TODO : change graphics
+    add_emulator("Magnavox Odyssey2", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_VIDEOPAC, NO_GAME_DATA);
     add_emulator("Tamagotchi", "tama", "b", RG_LOGO_PAD_TAMA, RG_LOGO_HEADER_TAMA, NO_GAME_DATA);
     add_emulator("Pokemon Mini", "mini", "min", RG_LOGO_PAD_PKMINI, RG_LOGO_HEADER_PKMINI, NO_GAME_DATA);
     add_emulator("Homebrew", "homebrew", "bin", RG_LOGO_PAD_HOMEBREW, RG_LOGO_HEADER_HOMEBREW, NO_GAME_DATA);

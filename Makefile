@@ -708,9 +708,10 @@ Core/Src/porting/amstrad/amstrad_format.c \
 Core/Src/porting/amstrad/amstrad_loader.c \
 Core/Src/porting/amstrad/amstrad_video8bpp.c
 
-VIDEOPAC_C_SOURCES = 
+VIDEOPAC_C_SOURCES =
 
-ifneq ($(strip $(ROMS_VIDEOPAC)),)
+# Odyssey2 / Videopac (O2EM core) compiles unconditionally like the other
+# SD-ROM systems (pcecd/lynx/tama); ROMs are read from the SD, not baked in.
 CORE_O2EM = external/o2em-go
 VIDEOPAC_C_SOURCES += \
 $(CORE_O2EM)/src/o2em_audio.c \
@@ -730,7 +731,6 @@ $(CORE_O2EM)/src/vkeyb/vkeyb.c \
 $(CORE_O2EM)/src/vkeyb/vkeyb_config.c \
 $(CORE_O2EM)/src/vkeyb/vkeyb_layout.c \
 Core/Src/porting/videopac/main_videopac.c
-endif
 
 TAMA_C_SOURCES = 
 
