@@ -735,67 +735,6 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
     while (true) {
         wdog_refresh();
 
-        /* PCE-CD diag: sample the CPU PC so we can see where the game stalls
-         * after the intro loads (BIOS bank vs game bank, looping vs moving). */
-        if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
-            extern uint8_t *PageR[8];
-            static int s_pc_n = 0, s_pc_logged = 0;
-            /* EXPERIMENT (it21): the game idle-halts at its entry (0x6254:
-             * JSR $635a; JMP $6257) expecting interrupts ON — it set up the VDC
-             * vblank IRQ but never CLIs, and the System Card launcher
-             * (EBFF: TXS; EC02: JMP ($2282)) hands off with FL_I still set, so
-             * the pending IRQ1 never fires. Clear FL_I once at the idle-halt;
-             * RTI then preserves the cleared state. If the game springs to
-             * life, the fix is to enter the launched program with IRQs on. */
-            static bool s_forced_cli = false;
-            if (!s_forced_cli && CPU_PCE.PC == 0x6257 && (CPU_PCE.P & 0x04)) {
-                s_forced_cli = true;
-                CPU_PCE.P &= ~0x04;   /* clear FL_I */
-                /* Dump the System Card vblank user-hook: E509 builds a trampoline
-                 * at $2286 from $221F/$2220/$2222 and JSRs it each vblank. If the
-                 * game never registered its hook there, the handler calls nothing
-                 * -> the game idles forever even with IRQs on. $2200-area = bank
-                 * 0xF8 RAM mapped at page 1, so index PageR[1] with the full addr. */
-                uint8_t *p1 = PageR[1];
-                FILE *cf = fopen("/pcecd_diag.txt", "a");
-                if (cf) {
-                    fprintf(cf, "FORCE-CLI at 0x6257 (P was %02x, irql=%02x irqm=%02x)\n",
-                            CPU_PCE.P | 0x04, CPU_PCE.irq_lines, CPU_PCE.irq_mask);
-                    fprintf(cf, "VHOOK $221F..22: %02x %02x %02x %02x  tramp $2286..8E: %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                            p1[0x221F], p1[0x2220], p1[0x2221], p1[0x2222],
-                            p1[0x2286], p1[0x2287], p1[0x2288], p1[0x2289], p1[0x228A],
-                            p1[0x228B], p1[0x228C], p1[0x228D], p1[0x228E]);
-                    fclose(cf);
-                }
-            }
-            if ((s_pc_n++ % 16) == 0 && s_pc_logged < 20) {
-                s_pc_logged++;
-                uint16_t pc = CPU_PCE.PC;
-                int pgi = (pc >> 13) & 7;
-                uint8_t *pg = PageR[pgi];
-                FILE *pf = fopen("/pcecd_diag.txt", "a");
-                if (pf) {
-                    /* PageR[pgi] is pre-biased by -pgi*0x2000, so index with the
-                     * FULL pc (pce_read8 semantics) — masking to 0x1FFF reads the
-                     * wrong region. IOAREA pages are not flat RAM. */
-                    if (pg == PCE.IOAREA) {
-                        fprintf(pf, "PC=%04x bank=%02x [IO] P=%02x irqm=%02x irql=%02x\n",
-                                pc, PCE.MMR[pgi], CPU_PCE.P, CPU_PCE.irq_mask, CPU_PCE.irq_lines);
-                    } else {
-                        fprintf(pf, "PC=%04x bank=%02x I: %02x %02x %02x %02x %02x %02x %02x "
-                                    "A=%02x X=%02x Y=%02x P=%02x S=%02x irqm=%02x irql=%02x\n",
-                                pc, PCE.MMR[pgi],
-                                pg[pc], pg[(uint16_t)(pc + 1)], pg[(uint16_t)(pc + 2)],
-                                pg[(uint16_t)(pc + 3)], pg[(uint16_t)(pc + 4)],
-                                pg[(uint16_t)(pc + 5)], pg[(uint16_t)(pc + 6)],
-                                CPU_PCE.A, CPU_PCE.X, CPU_PCE.Y, CPU_PCE.P, CPU_PCE.S,
-                                CPU_PCE.irq_mask, CPU_PCE.irq_lines);
-                    }
-                    fclose(pf);
-                }
-            }
-        }
-
         bool drawFrame = common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);

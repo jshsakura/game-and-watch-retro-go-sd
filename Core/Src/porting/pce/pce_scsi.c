@@ -13,6 +13,13 @@
 #include <stdarg.h>
 #include "h6280.h"          /* CPU_PCE, INT_IRQ2 */
 
+/* The pce-go submodule's h6280.c has a gated per-instruction diag hook
+ * (`if (g_pcecd_trace) pce_scsi_pc_tick(pc)`). Provide WEAK definitions here so
+ * the device firmware links (g_pcecd_trace stays 0 → the hook is a no-op); the
+ * PC host harness defines strong versions in main.c that override these. */
+__attribute__((weak)) int  g_pcecd_trace = 0;
+__attribute__((weak)) void pce_scsi_pc_tick(uint16_t pc) { (void)pc; }
+
 /* ---- diagnostics: append the command stream to /pcecd_diag.txt (delete it
  *      before a clean test; capped so it can't flood). ---- */
 #define PCECD_DIAG 1
@@ -63,6 +70,7 @@ static bool     s_bulk;        /* data-in is a bulk READ (auto-ack on $1801 read
 static uint32_t s_read_lba, s_read_remain;
 
 static uint8_t  s_port2, s_port3;   /* $1802 IRQ-enable, $1803 IRQ-status */
+static uint8_t  s_adpcm_ctrl;       /* $180B ADPCM DMA control latch */
 static int      s_trace;            /* trace register accesses during a bulk READ */
 static int      s_atrace;           /* trace ADPCM/idle-loop polls ($180A-F, $1803) */
 
@@ -79,7 +87,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
     s_diag_lines = 0;   /* fresh run */
-    diag("=== BUILD it27 ===\n");
+    diag("=== BUILD scd-adpcm-fix ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
@@ -97,6 +105,7 @@ void pce_scsi_reset(void)
     s_bulk = false;
     s_read_remain = 0;
     s_port2 = s_port3 = 0;
+    s_adpcm_ctrl = 0;
     CPU_PCE.irq_lines &= ~INT_IRQ2;
 }
 
@@ -147,6 +156,26 @@ static void feed_din(void)
     int b = din_get();
     if (b < 0) { s_reading = false; send_status(STATUS_GOOD, 0); }
     else       { s_db = (uint8_t)b; s_req = 1; }
+}
+
+/* ADPCM ($180A-$180D). The System Card loads ADPCM (voice) data straight from CD
+ * by issuing a READ(6) then enabling SCSI->ADPCM DMA via $180B bit1; it then polls
+ * $180C (ADPCM busy) and $1803 (DATA_DONE) for completion. We don't run a real
+ * ADPCM engine yet, so when DMA is enabled during a bulk READ we drain the whole
+ * transfer at once (consuming every sector) and signal completion, so the BIOS
+ * loop exits and the game proceeds instead of hanging/rebooting. */
+static void adpcm_dma_drain(void)
+{
+    if (!s_reading) return;
+    while (din_get() >= 0) { /* discard to ADPCM RAM (playback not yet wired) */ }
+    s_reading = false;
+    /* Completion needs BOTH, in this order, for the System Card's ADPCM-load path:
+     *  - $1803 DATA_DONE set NOW (the transfer-complete IRQ flag the f3d0 loop polls
+     *    BEFORE the status handshake), and
+     *  - the bus presented in STATUS phase ($1800 & $F8 == $D8) so the following
+     *    $E9C5 status-wait can read the result byte and run the normal handshake. */
+    send_status(STATUS_GOOD, 0);
+    s_port3 |= IRQ_DATA_DONE;
 }
 
 static void do_data_in(const uint8_t *buf, uint32_t len)
@@ -300,6 +329,8 @@ uint8_t pce_scsi_read(uint8_t reg)
             feed_din();
         return b;
     }
+    case 0x0B: return s_adpcm_ctrl;
+    case 0x0C: return 0x00;   /* ADPCM status: not busy / not playing (drained instantly) */
     default:   return 0;
     }
 }
@@ -332,6 +363,10 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
         update_irq();
         break;
     }
+    case 0x0B: /* ADPCM DMA control: bit1 = enable SCSI->ADPCM auto-transfer */
+        s_adpcm_ctrl = val;
+        if (val & 0x02) adpcm_dma_drain();
+        break;
     case 0x04: /* reset */
         if (val & 0x02) pce_scsi_reset();
         break;
