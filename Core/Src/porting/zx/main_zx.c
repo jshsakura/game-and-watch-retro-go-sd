@@ -31,15 +31,16 @@ static bool      zx_is128;
 
 static void audio_cb(const float *s, int n, void *u) { (void)s; (void)n; (void)u; }
 
-/* ---- save/load: snapshot the whole zx_t (chips zeroes callback ptrs for us) ---- */
+/* ---- save/load: dump the live zx_t straight to disk. It's a static at a fixed
+ * address, so all its internal self-pointers (mem page table -> zx.ram/rom) and
+ * the audio callback ptr stay valid after reload within the same firmware build.
+ * Avoids the chips snapshot API, whose zx_load_snapshot keeps a 322KB static
+ * scratch zx_t that would blow the RAM_EMU overlay budget. ---- */
 static bool SaveState(const char *path)
 {
     FILE *f = fopen(path, "wb");
     if (!f) return false;
-    static zx_t snap;            /* static: too big for the stack */
-    uint32_t ver = zx_save_snapshot(&zx, &snap);
-    fwrite(&ver, sizeof(ver), 1, f);
-    fwrite(&snap, sizeof(snap), 1, f);
+    fwrite(&zx, sizeof(zx), 1, f);
     fclose(f);
     return true;
 }
@@ -48,12 +49,8 @@ static bool LoadState(const char *path)
 {
     FILE *f = fopen(path, "rb");
     if (!f) return false;
-    static zx_t snap;
-    uint32_t ver = 0;
-    fread(&ver, sizeof(ver), 1, f);
-    fread(&snap, sizeof(snap), 1, f);
+    fread(&zx, sizeof(zx), 1, f);
     fclose(f);
-    zx_load_snapshot(&zx, ver, &snap);
     return true;
 }
 
