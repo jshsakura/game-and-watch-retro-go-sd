@@ -545,13 +545,18 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
 
         videopac_input_update(&joystick);
 
-        if (autosel <= 130) {
+        /* Auto-start retries: the O2 BIOS reaches SELECT GAME at an unpredictable
+         * time on hardware, so a one-shot press at frame 60 often misses. Repeat the
+         * keypad "1" + RETURN sequence on a ~5s cycle for the first ~25s until the
+         * game takes over, instead of giving up after one try. */
+        if (autosel < 1500) {
             extern unsigned char key[256*2];
+            int t = autosel % 300;                            /* 300-frame (~5s) cycle */
+            if      (t == 60)  key[49] = 1;                   /* press keypad "1" */
+            else if (t == 90)  key[49] = 0;                   /* release */
+            else if (t == 120) key[RETROK_RETURN] = 1;        /* press RETURN (start) */
+            else if (t == 150) key[RETROK_RETURN] = 0;        /* release */
             autosel++;
-            if      (autosel == 60)  key[49] = 1;             /* press keypad "1" */
-            else if (autosel == 90)  key[49] = 0;             /* release */
-            else if (autosel == 100) key[RETROK_RETURN] = 1;  /* press RETURN (start) */
-            else if (autosel == 130) key[RETROK_RETURN] = 0;  /* release */
         }
 
         RLOOP=1;

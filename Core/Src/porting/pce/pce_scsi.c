@@ -388,7 +388,10 @@ static void ack_assert(void)
 static void ack_deassert(void)
 {
     switch (s_phase) {
-    case PH_COMMAND: if (s_cmd_idx >= RequiredCDBLen[s_cmd[0] >> 4]) execute_command(); else s_req = 1; break;
+    /* Restore the proven boot-to-gameplay behavior (commit a4217fec): execute on 6
+     * bytes. The 10/12-byte RequiredCDBLen table (added with CD-DA) is the only SCSI
+     * boot-path change since PCE-CD last booted; revert it. CD-DA is disabled below. */
+    case PH_COMMAND: if (s_cmd_idx >= 6) execute_command(); else s_req = 1; (void)RequiredCDBLen; break;
     case PH_DATAIN:  feed_din(); break;  /* advance on ACK (TOC + manual-ack READs); $1808 reads advance separately */
     case PH_STATUS:  change_phase(PH_MSGIN); break;
     case PH_MSGIN:   change_phase(PH_BUSFREE); break;
