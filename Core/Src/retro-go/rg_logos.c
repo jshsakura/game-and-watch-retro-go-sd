@@ -78,8 +78,12 @@ retro_logo_image *rg_get_logo(int16_t logo_index) {
         if (width == 0 || height == 0 || width > 320 || height > 240)
             break;
 
-        size_t data_size = ((width + 7) >> 3) * height; // width aligned to 8 * height / 8
-        data_size = (data_size + 3) & ~3; // align to 4 bytes
+        /* Logo bitmaps in logo.bin are packed at exactly ((width+7)>>3)*height bytes
+         * with NO inter-entry padding. The old "(data_size+3)&~3" 4-byte alignment
+         * over-read on any logo whose row-byte count is odd (e.g. 152x18 = 19 B/row),
+         * drifting the parser into garbage after the first such entry — which dropped
+         * every later title and triggered the giant bogus allocation. Match the data. */
+        size_t data_size = ((width + 7) >> 3) * height;
 
         retro_logo_image* dest = itc_malloc(sizeof(retro_logo_image) + data_size);
         if (dest == (void *)0xffffffff)
