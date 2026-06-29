@@ -296,8 +296,14 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
             s_cdda_lba++;
             s_cdda_pos = 0;
         }
-        out[i * 2]     = (int16_t)(s_cdda_sec[s_cdda_pos]     | (s_cdda_sec[s_cdda_pos + 1] << 8));
-        out[i * 2 + 1] = (int16_t)(s_cdda_sec[s_cdda_pos + 2] | (s_cdda_sec[s_cdda_pos + 3] << 8));
+        /* Average the two 44.1k frames into one 22.05k frame — a cheap 2-tap
+         * box low-pass that removes the harsh aliasing of plain drop-decimation. */
+        int16_t l0 = (int16_t)(s_cdda_sec[s_cdda_pos]     | (s_cdda_sec[s_cdda_pos + 1] << 8));
+        int16_t r0 = (int16_t)(s_cdda_sec[s_cdda_pos + 2] | (s_cdda_sec[s_cdda_pos + 3] << 8));
+        int16_t l1 = (int16_t)(s_cdda_sec[s_cdda_pos + 4] | (s_cdda_sec[s_cdda_pos + 5] << 8));
+        int16_t r1 = (int16_t)(s_cdda_sec[s_cdda_pos + 6] | (s_cdda_sec[s_cdda_pos + 7] << 8));
+        out[i * 2]     = (int16_t)((l0 + l1) >> 1);
+        out[i * 2 + 1] = (int16_t)((r0 + r1) >> 1);
         s_cdda_pos += 8;                            /* consume 2 CD frames, emit 1 (decimate /2) */
     }
     return frames;

@@ -571,8 +571,22 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
             else if (t >= 40) { key[RETROK_RETURN] = 0; gsel_send = 0; }
         }
 
+        /* DIAG: bracket cpu_exec so a device crash leaves the last frame+phase in
+         * /videopac_diag.txt (overwrite each time; fclose flushes). Strip later. */
+        static int vpf = 0;
+        if (vpf < 1200) {
+            FILE *df = fopen("/videopac_diag.txt", "w");
+            if (df) { fprintf(df, "f%d pre  gsel=%d send=%d\n", vpf, gsel_active, gsel_send); fclose(df); }
+        }
+
         RLOOP=1;
         cpu_exec();
+
+        if (vpf < 1200) {
+            FILE *df = fopen("/videopac_diag.txt", "w");
+            if (df) { fprintf(df, "f%d post gsel=%d send=%d\n", vpf, gsel_active, gsel_send); fclose(df); }
+            vpf++;
+        }
 
         if (gsel_active) {
             char b[28];
