@@ -51,6 +51,11 @@ void gamecom_set_input_state(uint8_t in0, uint8_t in1, uint8_t in2);
 /* Tap/release the touchscreen at screen pixel (x,y); pressed=0 lifts the stylus. */
 void gamecom_set_stylus(int x, int y, int pressed);
 
+/* Synthesize `n` signed-16-bit mono samples at `sample_rate` Hz from the live
+ * SG0/SG1 wavetable channels + DAC. Advances internal phase; call once per frame
+ * with n = sample_rate/fps. */
+void gamecom_audio_mix(int16_t *out, int n, int sample_rate);
+
 /* Serialize all machine + CPU state through a read-or-write callback (returns 1
  * on ok). saving!=0 writes; saving==0 reads then re-derives bank pointers.
  * ROM/BIOS pointers are NOT saved — they stay as gamecom_init() set them, so a

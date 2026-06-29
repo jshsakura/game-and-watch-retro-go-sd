@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "gw_lcd.h"
+#include "gw_audio.h"
 #include "common.h"
 #include "appid.h"
 #include "rom_manager.h"
@@ -72,6 +73,25 @@ static bool LoadState(const char *path)
     int ok = gamecom_state_rw(rw_read, f, 0);
     fclose(f);
     return ok != 0;
+}
+
+/* Fill this frame's audio buffer from the core's SG0/SG1 + DAC mix, scaled by
+ * the user volume (same factor>>8 convention as pce/wsv). */
+static void gamecom_pcm_submit(void)
+{
+    int16_t *buf = audio_get_active_buffer();
+    uint16_t len = audio_get_buffer_length();
+    if (common_emu_sound_loop_is_muted()) {
+        memset(buf, 0, len * sizeof(int16_t));
+        return;
+    }
+    int32_t factor = common_emu_sound_get_volume();
+    gamecom_audio_mix(buf, len, GAMECOM_AUDIO_SAMPLE_RATE);
+    for (int i = 0; i < len; i++) {
+        int32_t s = ((int32_t)buf[i] * factor) >> 8;
+        if (s > 32767) s = 32767; else if (s < -32768) s = -32768;
+        buf[i] = (int16_t)s;
+    }
 }
 
 static const uint8_t *cache_rom(const char *path, uint32_t want, uint32_t *sz_out)
@@ -159,6 +179,7 @@ void app_main_gamecom(uint8_t load_state, uint8_t start_paused, int8_t save_slot
         gc_blit();
         lcd_swap();
 
+        gamecom_pcm_submit();
         common_emu_sound_sync(false);
         frame++;
     }

@@ -3,7 +3,7 @@
 //
 // Freestanding C port of the Tiger Game.com machine (MAME gamecom_m.cpp /
 // gamecom_v.cpp / gamecom.cpp).  Bus, banking, blitter-DMA, timers and a
-// software scanline renderer.  Audio is stored but not yet synthesised.
+// software scanline renderer + SG0/SG1 wavetable  software scanline renderer.  Audio is stored but not yet synthesised. DAC audio.
 
 #include "gamecom_core.h"
 #include "sm8500.h"
@@ -112,13 +112,21 @@ static const int gamecom_timer_limit[8] = { 2, 1024, 2048, 4096, 8192, 16384, 32
 static int clock_enabled, clock_minutes;
 static int clock_frame_acc;
 
-/* --- sound registers (stored; no synthesis yet) --- */
+/* --- sound registers (synthesised in gamecom_audio_mix) --- */
 typedef struct {
 	uint8_t sgc, sg0l, sg1l, sg2l, sgda;
 	uint16_t sg0t, sg1t, sg2t;
 	uint8_t sg0w[16], sg1w[16];
 } gamecom_sound_t;
 static gamecom_sound_t m_sound;
+/* wavetable phase accumulators (in 0..32 waveform-step units) */
+static float sg0_phase, sg1_phase;
+/* DAC capture: the game streams 8-bit samples by writing SGDA at the TIM1 rate
+ * (MAME: "dac pitch is controlled by how often TIM1_INT occurs"). We record each
+ * write within a frame and resample the lot across the frame's output samples. */
+#define GC_DAC_FIFO 8192
+static uint8_t  dac_fifo[GC_DAC_FIFO];
+static uint16_t dac_count;
 
 /* ============================ banking ============================ */
 static void gamecom_set_mmu(uint8_t mmu, uint8_t data)
@@ -270,7 +278,11 @@ static void gamecom_internal_w(uint16_t offset, uint8_t data)   /* offset 0x20-0
 	case SM8521_SG2L: m_sound.sg2l = data; break;
 	case SM8521_SG2TH: m_sound.sg2t = (m_sound.sg2t & 0xFF)   | (data << 8); break;
 	case SM8521_SG2TL: m_sound.sg2t = (m_sound.sg2t & 0xFF00) | data;        break;
-	case SM8521_SGDA: m_sound.sgda = data; break;
+	case SM8521_SGDA:
+		m_sound.sgda = data;
+		if ((m_sound.sgc & 0x8f) == 0x88 && dac_count < GC_DAC_FIFO)
+			dac_fifo[dac_count++] = data;   /* digitized sample stream (DAC) */
+		break;
 	default:
 		if (offset >= SM8521_SG0W0 && offset <= SM8521_SG0W15)
 			m_sound.sg0w[offset - SM8521_SG0W0] = data;
@@ -477,6 +489,50 @@ void gamecom_run_frame(void)
 	}
 }
 
+/* ============================ audio ============================ */
+/* SG0/SG1 are 32-step (16 byte x 2 nibble) wavetable oscillators clocked at
+ * 2,764,800 / sgXt steps per second (MAME gamecom_sound{0,1}_timer_callback),
+ * i.e. a tone of 2764800/(32*sgXt) Hz, amplitude sgXl/31. SGC: bit7 master,
+ * bit0 SG0, bit1 SG1, bit3 DAC. The DAC (8-bit SGDA, used for digitized FX) is
+ * mixed as its held level — imperfect, like MAME, but audible. SG2 noise TODO. */
+void gamecom_audio_mix(int16_t *out, int n, int sample_rate)
+{
+	uint8_t sgc = m_sound.sgc;
+	int     master = (sgc & 0x80) != 0;
+	float   inc0 = (master && (sgc & 0x01) && m_sound.sg0t) ? (2764800.0f / m_sound.sg0t) / sample_rate : 0.0f;
+	float   inc1 = (master && (sgc & 0x02) && m_sound.sg1t) ? (2764800.0f / m_sound.sg1t) / sample_rate : 0.0f;
+	int     dn = dac_count;   /* DAC samples captured during the frame just run */
+
+	for (int i = 0; i < n; i++) {
+		int s = 0;
+		if (inc0 > 0.0f) {
+			int st = (int)sg0_phase & 31;
+			int nib = (m_sound.sg0w[st >> 1] >> ((st & 1) * 4)) & 0xf;
+			s += (nib - 8) * m_sound.sg0l;
+			sg0_phase += inc0;
+			if (sg0_phase >= 32.0f) sg0_phase -= 32.0f;
+		}
+		if (inc1 > 0.0f) {
+			int st = (int)sg1_phase & 31;
+			int nib = (m_sound.sg1w[st >> 1] >> ((st & 1) * 4)) & 0xf;
+			s += (nib - 8) * m_sound.sg1l;
+			sg1_phase += inc1;
+			if (sg1_phase >= 32.0f) sg1_phase -= 32.0f;
+		}
+		s *= 40;                                  /* SG headroom: 2ch*8*31 ≈ 496 -> ~20k */
+
+		if (dn > 0) {                             /* resample the DAC stream across the frame */
+			int d = (int)dac_fifo[(i * dn) / n] - 128;
+			s += d * 110;                         /* 8-bit center -> ~14k peak */
+		}
+
+		if (s > 32767) s = 32767;
+		if (s < -32768) s = -32768;
+		out[i] = (int16_t)s;
+	}
+	dac_count = 0;   /* consumed; next frame refills */
+}
+
 /* ============================ init / reset ============================ */
 static void load_palette(void)
 {
@@ -518,6 +574,8 @@ int gamecom_init(const uint8_t *irom, int irom_len,
 	memset(&m_sound, 0, sizeof(m_sound));
 	clock_enabled = clock_minutes = clock_frame_acc = 0;
 	m_scanline = 0;
+	sg0_phase = sg1_phase = 0.0f;
+	dac_count = 0;
 	for (int c = 0; c < GC_GRID_COLS; c++) io_grid[c] = 0;
 	io_in0 = io_in1 = io_in2 = 0xFF;
 
