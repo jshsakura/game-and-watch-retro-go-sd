@@ -71,6 +71,13 @@ retro_logo_image *rg_get_logo(int16_t logo_index) {
         width = (uint16_t)(header[0] | ((uint16_t)header[1] << 8));
         height = (uint16_t)(header[2] | ((uint16_t)header[3] << 8));
 
+        /* Reject a malformed / stale / past-the-end logo.bin entry: the LCD is
+         * 320x240, so any larger dimension is garbage. Without this, a bad header
+         * yields a huge data_size and the allocation below OOMs at boot (this was
+         * the FATAL EXCEPTION on device — 184 KB request on the ~82 KB heap). */
+        if (width == 0 || height == 0 || width > 320 || height > 240)
+            break;
+
         size_t data_size = ((width + 7) >> 3) * height; // width aligned to 8 * height / 8
         data_size = (data_size + 3) & ~3; // align to 4 bytes
 
