@@ -845,6 +845,24 @@ static int scan_folder_cb(const rg_scandir_t *entry, void *arg)
     return RG_SCANDIR_CONTINUE;
 }
 
+/* DIAG (it24): why does only homebrew show? Log SD-mount + per-system /roms
+ * scan counts to /launcher_diag.txt so we get ground truth, not guesses.
+ * Remove once the launcher list issue is resolved. */
+#include <stdarg.h>
+#include "rg_storage.h"
+static void ldiag(const char *fmt, ...)
+{
+    static int n;
+    if (n > 90) return;
+    n++;
+    FILE *f = fopen("/launcher_diag.txt", "a");
+    if (!f) return;
+    va_list ap; va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fclose(f);
+}
+
 void emulator_init(retro_emulator_t *emu)
 {
     char folder[RG_PATH_MAX];
@@ -872,6 +890,7 @@ void emulator_init(retro_emulator_t *emu)
      * is listed flat, instead of showing folders to drill into. */
     uint32_t scan_flags = (strcmp(emu->dirname, "pcecd") == 0) ? RG_SCANDIR_RECURSIVE : 0;
     rg_storage_scandir(folder, scan_folder_cb, emu, scan_flags);
+    ldiag("INIT %-9s sd=%d %s -> %d roms\n", emu->dirname, rg_storage_ready(), folder, emu->roms.count);
 }
 
 void emulator_refresh_list(retro_emulator_t *emu)
@@ -1622,6 +1641,8 @@ void emulators_init()
      * itself (pico8.bin) is a separately-distributed overlay loaded at
      * runtime; see the stub in Core/Src/porting/pico8/main_pico8.c. */
     add_emulator("PICO-8", "pico8", "p8 png", RG_LOGO_PAD_PICO8, RG_LOGO_HEADER_PICO8, GAME_DATA);
+    ldiag("=== LAUNCHER it24 GIT_TAG=%s emulators=%d sd_ready=%d ===\n",
+          GIT_TAG, emulators_count, rg_storage_ready());
 }
 
 static bool browse_subpath_is_safe(const char *s)
