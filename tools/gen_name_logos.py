@@ -28,7 +28,7 @@ NAMES = {
     "header_sg1000":   "SG-1000",
     "header_col":      "COLECOVISION",
     "header_wsv":      "SUPERVISION",
-    "header_ngp":      "NEO GEO POCKET",
+    "header_ngp":      "NEOGEO POCKET",
     "header_wswan":    "WONDERSWAN",
     "header_msx":      "MSX",
     "header_a2600":    "ATARI 2600",
@@ -38,6 +38,10 @@ NAMES = {
     "header_pkmini":   "POKEMON MINI",
     "header_homebrew": "HOMEBREW",
     "header_pico8":    "PICO-8",
+    "header_videopac": "ODYSSEY 2",
+    "header_zx":       "ZX SPECTRUM",
+    "header_c64":      "COMMODORE 64",
+    "header_favorites": "FAVORITES",
 }
 
 TARGET_H = 18      # matches existing header height
