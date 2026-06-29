@@ -110,6 +110,13 @@ enum {
     RG_LOGO_PAD_C64,
     // Favorites virtual tab colour icon (gold star; color_icon_for_logo only)
     RG_LOGO_PAD_FAVORITES,
+    // Tiger Game.com (appended LAST so no existing logo.bin index shifts). The
+    // header has no logo.bin/struct yet -> rg_get_logo() returns NULL (the menu
+    // falls back to the "Tiger Game.com" text); the PAD is color_icon_for_logo
+    // only (cicon_gamecom). A GAME.COM wordmark needs the LuckiestGuy font + an
+    // SD logo.bin rebuild, deferred to a follow-up.
+    RG_LOGO_HEADER_GAMECOM,
+    RG_LOGO_PAD_GAMECOM,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);

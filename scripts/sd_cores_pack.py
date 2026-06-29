@@ -36,6 +36,7 @@ _SYSTEM_CORE_RELFILES: dict[str, frozenset[str]] = {
     "tama": frozenset({"tama.bin"}),
     "mini": frozenset({"pkmini.bin"}),
     "videopac": frozenset({"videopac.bin"}),
+    "gamecom": frozenset({"gamecom.bin"}),
     "homebrew": frozenset(),
     "pico8": frozenset(),
 }

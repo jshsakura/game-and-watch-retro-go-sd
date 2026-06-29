@@ -767,7 +767,14 @@ Core/Src/porting/c64/frodo/REU.cpp \
 Core/Src/porting/c64/frodo/SAM.cpp \
 Core/Src/porting/c64/main_c64_dev.cpp
 
-TAMA_C_SOURCES = 
+# Tiger Game.com (Sharp SM8500/SM8521, ported from MAME). C-only, compiled
+# unconditionally like videopac; .bin/.tgc carts + /bios/gamecom/* read from SD.
+GAMECOM_C_SOURCES = \
+Core/Src/porting/gamecom/sm8500.c \
+Core/Src/porting/gamecom/gamecom_core.c \
+Core/Src/porting/gamecom/main_gamecom.c
+
+TAMA_C_SOURCES =
 
 CORE_TAMA = external/tamalib
 TAMA_C_SOURCES += \

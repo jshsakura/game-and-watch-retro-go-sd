@@ -41,6 +41,11 @@ MAP = [
     ("RG_LOGO_PAD_GW",      "gw"),
     ("RG_LOGO_PAD_PICO8",   "pico8"),
     ("RG_LOGO_PAD_HOMEBREW","homebrew"),
+    ("RG_LOGO_PAD_VIDEOPAC","videopac"),
+    ("RG_LOGO_PAD_ZX",      "zxs"),
+    ("RG_LOGO_PAD_C64",     "c64"),
+    ("RG_LOGO_PAD_GAMECOM", "gamecom"),
+    ("RG_LOGO_PAD_FAVORITES","favorites"),  # original gold-star icon for the favorites virtual tab
 ]
 
 

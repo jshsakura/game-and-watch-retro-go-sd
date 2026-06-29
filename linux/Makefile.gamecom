@@ -1,0 +1,23 @@
+# Minimal headless host harness for the Tiger Game.com (SM8500/SM8521) core.
+# Ported from MAME (gamecom + cpu/sm8500). No SDL — dumps gamecom_frame.ppm.
+TARGET    = gamecom
+BUILD_DIR = build
+CC        = gcc
+
+# Canonical core lives in the firmware tree; the harness compiles it directly.
+CORE     = ../Core/Src/porting/gamecom
+INCLUDES = -Igamecom -I$(CORE)
+CFLAGS   = $(INCLUDES) -O2 -g -Wall -Wno-unused-function -Wno-unused-variable
+
+SRCS = gamecom/main.c $(CORE)/gamecom_core.c $(CORE)/sm8500.c
+
+all: $(BUILD_DIR)/$(TARGET)
+
+$(BUILD_DIR)/$(TARGET): $(SRCS) $(CORE)/sm85ops.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SRCS) -lm -o $@
+
+$(BUILD_DIR):
+	mkdir -p $@
+
+clean:
+	rm -f $(BUILD_DIR)/$(TARGET)

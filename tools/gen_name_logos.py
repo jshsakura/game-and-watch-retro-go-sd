@@ -41,6 +41,7 @@ NAMES = {
     "header_videopac": "ODYSSEY 2",
     "header_zx":       "ZX SPECTRUM",
     "header_c64":      "COMMODORE 64",
+    "header_gamecom":  "GAME.COM",
     "header_favorites": "FAVORITES",
 }
 

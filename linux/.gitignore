@@ -14,3 +14,16 @@ pc_trace.txt
 pcecd_diag.txt
 loaded_pce_rom.c
 build/
+
+# game.com harness
+gamecom_frame.ppm
+# game.com firmware test ROMs (copyright Tiger Electronics; supply your own)
+internal.bin
+external.bin
+# game.com test cartridge(s)
+frogger.bin
+# C64 ROMs (copyright; supply your own)
+*.rom
+Basic.rom
+Char.rom
+Kernal.rom
