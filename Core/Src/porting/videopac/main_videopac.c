@@ -526,18 +526,12 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
 
     app_data.euro = 0;
 
-    /* Game-select overlay: the Odyssey2 BIOS shows "SELECT GAME" and waits for a
-     * keypad game number — without one the screen just sits there. So at launch we
-     * show a tiny picker (UP/DOWN pick 0-9, A starts). If the player doesn't touch
-     * it within ~5s we auto-start game 1 (the common case); ANY input cancels the
-     * timeout so they can take their time. Confirm sends keypad <N> then RETURN
-     * (host-verified sequence). State resets per launch. */
-    int  gsel_num     = 1;       /* selected O2 game number */
-    bool gsel_active  = true;    /* picker visible / accepting input */
-    bool gsel_touched = false;   /* user changed the number -> drop the timeout */
-    int  gsel_timer   = 0;       /* frames since launch (5s = 300 @ 60fps) */
-    int  gsel_send    = 0;       /* >0: running the <N>+RETURN send sequence */
-    bool p_up = false, p_dn = false, p_a = false;
+    /* Auto-start: the Odyssey2 BIOS "SELECT GAME" screen waits for a keypad game
+     * number. Most carts use game 1, so a short while after launch we press keypad
+     * "1" then RETURN. (A proper on-screen keypad to choose other numbers — like
+     * the web emulator's vkeyb — is a follow-up.) Long holds so the BIOS catches it. */
+    int      autosel = 0;
+    uint32_t vpdiag  = 0;
 
     while (true)
     {
@@ -551,41 +545,21 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
 
         videopac_input_update(&joystick);
 
-        if (gsel_active) {
-            bool up = joystick.values[ODROID_INPUT_UP];
-            bool dn = joystick.values[ODROID_INPUT_DOWN];
-            bool a  = joystick.values[ODROID_INPUT_A];
-            if (up && !p_up) { gsel_num = (gsel_num + 1) % 10; gsel_touched = true; }
-            if (dn && !p_dn) { gsel_num = (gsel_num + 9) % 10; gsel_touched = true; }
-            bool confirm = (a && !p_a);
-            if (!gsel_touched && ++gsel_timer >= 300) confirm = true;  /* 5s -> game 1 */
-            p_up = up; p_dn = dn; p_a = a;
-            if (confirm) { gsel_active = false; gsel_send = 1; }
-        }
-        if (gsel_send) {
+        if (autosel <= 130) {
             extern unsigned char key[256*2];
-            int t = gsel_send++;
-            if      (t == 1)  key[48 + gsel_num] = 1;   /* press keypad <N> (RETROK_0=48) */
-            else if (t == 15) key[48 + gsel_num] = 0;
-            else if (t == 25) key[RETROK_RETURN] = 1;   /* press RETURN (start) */
-            else if (t >= 40) { key[RETROK_RETURN] = 0; gsel_send = 0; }
+            autosel++;
+            if      (autosel == 60)  key[49] = 1;             /* press keypad "1" */
+            else if (autosel == 90)  key[49] = 0;             /* release */
+            else if (autosel == 100) key[RETROK_RETURN] = 1;  /* press RETURN (start) */
+            else if (autosel == 130) key[RETROK_RETURN] = 0;  /* release */
         }
 
         RLOOP=1;
         cpu_exec();
 
-        if (gsel_active) {
-            char b[28];
-            snprintf(b, sizeof(b), " SELECT GAME: %d ", gsel_num);
-            odroid_overlay_draw_text(88, 104, 17 * 8, b, 0xFFFF, 0x0000);
-            odroid_overlay_draw_text(48, 120, 26 * 8, " UP/DOWN = No.   A = Start", 0xFFFF, 0x0000);
-        }
-
-        /* DIAG (on-screen): a free-running frame counter in the top-left. If the
-         * number keeps counting, cpu_exec is fine (so a stuck game = input/select
-         * issue); if the number FREEZES, cpu_exec crashed on that frame. Strip later. */
+        /* DIAG (on-screen, no I/O): free-running counter, top-left. Counting =
+         * cpu_exec OK (stuck game = input); frozen = cpu_exec crashed. Strip later. */
         {
-            static uint32_t vpdiag = 0;
             char fb[20];
             snprintf(fb, sizeof(fb), "F%lu", (unsigned long)vpdiag++);
             odroid_overlay_draw_text(0, 0, 10 * 8, fb, 0xFFFF, 0x0000);
