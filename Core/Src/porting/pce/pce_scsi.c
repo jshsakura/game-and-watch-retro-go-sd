@@ -87,6 +87,14 @@ void pce_scsi_pc_tick(uint16_t pc)
         fprintf(f, "%04x:%02x ", p, pg ? pg[p] : 0);
         if ((i & 7) == 7) fprintf(f, "\n");
     }
+    /* EXPERIMENT (it20): the game idle-halts here expecting interrupts ON
+     * (it set up the VDC vblank IRQ in 635a but never CLIs; the System Card
+     * launcher JMP ($2282) hands off with FL_I still set). Clear FL_I once;
+     * RTI then preserves the cleared state. If the game springs to life, the
+     * root cause is confirmed = launcher must enter the game with IRQs enabled. */
+    fprintf(f, "P_before=%02x irql=%02x irqm=%02x -> forcing CLI\n",
+            CPU_PCE.P, CPU_PCE.irq_lines, CPU_PCE.irq_mask);
+    CPU_PCE.P &= ~FL_I;
     fclose(f);
 }
 
@@ -105,7 +113,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_diag_lines = 0;   /* fresh run */
     s_pc_pos = 0; s_trap_dumped = false;
     g_pcecd_trace = s_present;   /* enable the per-instruction PC ring */
-    diag("=== BUILD it19 ===\n");
+    diag("=== BUILD it20 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
