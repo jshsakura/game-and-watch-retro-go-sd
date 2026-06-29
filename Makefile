@@ -740,6 +740,11 @@ ZX_C_SOURCES += \
 Core/Src/porting/zx/zx_impl.c \
 Core/Src/porting/zx/main_zx.c
 
+C64_C_SOURCES =
+C64_C_SOURCES += \
+Core/Src/porting/c64/c64_impl.c \
+Core/Src/porting/c64/main_c64.c
+
 TAMA_C_SOURCES = 
 
 CORE_TAMA = external/tamalib
@@ -1240,6 +1245,17 @@ ZX_C_INCLUDES +=  \
 -ICore/Inc/porting \
 -ICore/Inc/porting/zx \
 -ICore/Src/porting/zx \
+-ICore/Src/porting/lib \
+-ICore/Src/porting/lib/lzma \
+-Iretro-go-stm32/components/odroid \
+-I./
+
+C64_C_INCLUDES +=  \
+-ICore/Inc \
+-ICore/Inc/retro-go \
+-ICore/Inc/porting \
+-ICore/Inc/porting/c64 \
+-ICore/Src/porting/c64 \
 -ICore/Src/porting/lib \
 -ICore/Src/porting/lib/lzma \
 -Iretro-go-stm32/components/odroid \

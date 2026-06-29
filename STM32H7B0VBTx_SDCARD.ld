@@ -672,6 +672,28 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_ZX_BSS_SIZE = SIZEOF(.overlay_zx_bss);
 
+  .overlay_c64 __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_c64_start__ = .;
+    build/c64/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_C64_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_C64_LOAD_START = LOADADDR(.overlay_c64);
+  _OVERLAY_C64_SIZE = SIZEOF(.overlay_c64);
+
+  .overlay_c64_bss _OVERLAY_C64_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_C64_BSS_START = .;
+    build/c64/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/c64/*.o (COMMON)
+    __ram_emu_c64_end__ = .;
+    _OVERLAY_C64_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_C64_BSS_END) < __RAM_EMU_END__, "Error: C64 BSS overflow");
+  }
+  _OVERLAY_C64_BSS_SIZE = SIZEOF(.overlay_c64_bss);
+
   .overlay_celeste __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_celeste_start__ = .;

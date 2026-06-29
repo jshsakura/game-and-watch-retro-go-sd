@@ -1,0 +1,21 @@
+# Minimal headless host harness for the Commodore 64 (floooh/chips c64.h) core.
+# main.c is self-contained (CHIPS_IMPL inline) — no SDL, dumps c64_frame.ppm.
+TARGET   = c64
+BUILD_DIR = build
+CC = gcc
+
+# chips headers live in the device tree under Core/Src/porting/c64/chips/
+INCLUDES = -I../Core/Src/porting/c64
+
+CFLAGS = $(INCLUDES) -O2 -g -Wall -Wno-unused-function
+
+all: $(BUILD_DIR)/$(TARGET)
+
+$(BUILD_DIR)/$(TARGET): c64/main.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) c64/main.c -lm -o $@
+
+$(BUILD_DIR):
+	mkdir -p $@
+
+clean:
+	rm -f $(BUILD_DIR)/$(TARGET)

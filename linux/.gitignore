@@ -1,0 +1,16 @@
+# Host-harness test artifacts and user-supplied ROMs/BIOS — never committed.
+# C64 ROMs (copyright; supply your own in /bios/c64/)
+basic.bin
+chargen.bin
+kernal.bin
+# ZX ROM (supply your own)
+48.rom
+# generated frames / screenshots
+*.ppm
+*.png
+# audio / trace / diag dumps
+*.pcm
+pc_trace.txt
+pcecd_diag.txt
+loaded_pce_rom.c
+build/
