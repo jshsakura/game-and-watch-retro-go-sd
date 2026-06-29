@@ -682,10 +682,8 @@ void pce_pcm_submit() {
      * and mix with the PSG. Returns 0 for HuCard / when no audio is playing. */
     static int16_t cdda_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
     static int16_t adpcm_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
-    /* CD-DA / ADPCM playback disabled while we restore PCE-CD boot (it regressed on
-     * device with the audio commits). Re-enable once boot is confirmed on hardware. */
-    int cdda_n  = 0; (void)cdda_buf;  (void)pce_scsi_cdda_fill;
-    int adpcm_n = 0; (void)adpcm_buf; (void)pce_adpcm_fill;
+    int cdda_n  = pce_scsi_cdda_fill(cdda_buf, AUDIO_BUFFER_LENGTH_PCE);
+    int adpcm_n = pce_adpcm_fill(adpcm_buf, AUDIO_BUFFER_LENGTH_PCE);
 
     for (int i = 0; i < sound_buffer_length; i++) {
         /* mix left & right */
