@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
 #include "bitmaps.h"
 #include "gw_lcd.h"
@@ -54,8 +55,13 @@ retro_logo_image *rg_get_logo(int16_t logo_index) {
         return NULL;
     }
 
+    /* ITCM is only 64 KB and shared with all the hot .itcm code; as systems were
+     * added it can no longer hold the whole logo cache. Fall back to the main heap
+     * (logos are drawn rarely, so they don't need fast TCM) and never crash on OOM. */
     logo_image_cache = itc_malloc(MAX_LOGO_COUNT * sizeof(retro_logo_image*));
-    assert(logo_image_cache != (void *)0xffffffff);
+    if (logo_image_cache == (void *)0xffffffff)
+        logo_image_cache = malloc(MAX_LOGO_COUNT * sizeof(retro_logo_image*));
+    if (logo_image_cache == NULL) { fclose(file); return NULL; }
 
     int current_logo_index = 0;
     while (1) {
@@ -69,7 +75,9 @@ retro_logo_image *rg_get_logo(int16_t logo_index) {
         data_size = (data_size + 3) & ~3; // align to 4 bytes
 
         retro_logo_image* dest = itc_malloc(sizeof(retro_logo_image) + data_size);
-        assert(dest != (void *)0xffffffff);
+        if (dest == (void *)0xffffffff)
+            dest = malloc(sizeof(retro_logo_image) + data_size);
+        if (dest == NULL) break;
         dest->width = width;
         dest->height = height;
         read = fread(dest->logo, 1, data_size, file);
