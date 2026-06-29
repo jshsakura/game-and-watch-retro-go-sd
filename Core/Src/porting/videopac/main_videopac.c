@@ -549,13 +549,14 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
          * time on hardware, so a one-shot press at frame 60 often misses. Repeat the
          * keypad "1" + RETURN sequence on a ~5s cycle for the first ~25s until the
          * game takes over, instead of giving up after one try. */
-        if (autosel < 1500) {
+        if (autosel < 1800) {
             extern unsigned char key[256*2];
-            int t = autosel % 300;                            /* 300-frame (~5s) cycle */
-            if      (t == 60)  key[49] = 1;                   /* press keypad "1" */
-            else if (t == 90)  key[49] = 0;                   /* release */
-            else if (t == 120) key[RETROK_RETURN] = 1;        /* press RETURN (start) */
-            else if (t == 150) key[RETROK_RETURN] = 0;        /* release */
+            int t = autosel % 360;                            /* 360-frame (~6s) cycle */
+            /* Hold each key CONTINUOUSLY (re-set every frame), not a brief pulse: the
+             * hardware BIOS scans the keypad at unpredictable moments, so a 1-frame
+             * pulse is missed. Long held windows are far more likely to be sampled. */
+            key[49]            = (t >= 30  && t < 120) ? 1 : 0;   /* keypad "1", ~1.5s hold */
+            key[RETROK_RETURN] = (t >= 180 && t < 270) ? 1 : 0;  /* RETURN (start), ~1.5s hold */
             autosel++;
         }
 
