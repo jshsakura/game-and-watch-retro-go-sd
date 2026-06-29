@@ -16,13 +16,18 @@
 /* ---- diagnostics: append the command stream to /pcecd_diag.txt (delete it
  *      before a clean test; capped so it can't flood). ---- */
 #define PCECD_DIAG 1
+#ifdef LINUX_EMU
+  #define PCECD_DIAG_FILE "pcecd_diag.txt"   /* host harness: writable cwd */
+#else
+  #define PCECD_DIAG_FILE "/pcecd_diag.txt"  /* device: SD root */
+#endif
 #if PCECD_DIAG
 static int s_diag_lines;
 static void diag(const char *fmt, ...)
 {
     if (s_diag_lines > 300) return;
     s_diag_lines++;
-    FILE *f = fopen("/pcecd_diag.txt", "a");
+    FILE *f = fopen(PCECD_DIAG_FILE, "a");
     if (!f) return;
     va_list ap; __builtin_va_start(ap, fmt);
     vfprintf(f, fmt, ap);

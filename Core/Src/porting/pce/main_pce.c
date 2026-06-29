@@ -802,6 +802,18 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         common_emu_input_loop(&joystick, options, &blit);
         common_emu_input_loop_handle_turbo(&joystick);
 
+        /* PCE-CD: auto-press START (RUN) at the "CD-ROM SYSTEM" screen so the
+         * disc boots without the user pressing it. Injected after the emu input
+         * loop (so it can't trip the emulator menu) and only for a window early
+         * after launch, then released. */
+        if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+            static int s_autostart = 0;
+            if (s_autostart <= 150) {
+                s_autostart++;
+                if (s_autostart >= 60) joystick.values[ODROID_INPUT_START] = 1;
+            }
+        }
+
         pce_input_read(&joystick);
 
         for (PCE.Scanline = 0; PCE.Scanline < 263; ++PCE.Scanline) {
