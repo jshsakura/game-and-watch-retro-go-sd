@@ -526,6 +526,19 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
 
     app_data.euro = 0;
 
+    /* Game-select overlay: the Odyssey2 BIOS shows "SELECT GAME" and waits for a
+     * keypad game number — without one the screen just sits there. So at launch we
+     * show a tiny picker (UP/DOWN pick 0-9, A starts). If the player doesn't touch
+     * it within ~5s we auto-start game 1 (the common case); ANY input cancels the
+     * timeout so they can take their time. Confirm sends keypad <N> then RETURN
+     * (host-verified sequence). State resets per launch. */
+    int  gsel_num     = 1;       /* selected O2 game number */
+    bool gsel_active  = true;    /* picker visible / accepting input */
+    bool gsel_touched = false;   /* user changed the number -> drop the timeout */
+    int  gsel_timer   = 0;       /* frames since launch (5s = 300 @ 60fps) */
+    int  gsel_send    = 0;       /* >0: running the <N>+RETURN send sequence */
+    bool p_up = false, p_dn = false, p_a = false;
+
     while (true)
     {
         wdog_refresh();
@@ -538,8 +551,36 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
 
         videopac_input_update(&joystick);
 
+        if (gsel_active) {
+            bool up = joystick.values[ODROID_INPUT_UP];
+            bool dn = joystick.values[ODROID_INPUT_DOWN];
+            bool a  = joystick.values[ODROID_INPUT_A];
+            if (up && !p_up) { gsel_num = (gsel_num + 1) % 10; gsel_touched = true; }
+            if (dn && !p_dn) { gsel_num = (gsel_num + 9) % 10; gsel_touched = true; }
+            bool confirm = (a && !p_a);
+            if (!gsel_touched && ++gsel_timer >= 300) confirm = true;  /* 5s -> game 1 */
+            p_up = up; p_dn = dn; p_a = a;
+            if (confirm) { gsel_active = false; gsel_send = 1; }
+        }
+        if (gsel_send) {
+            extern unsigned char key[256*2];
+            int t = gsel_send++;
+            if      (t == 1)  key[48 + gsel_num] = 1;   /* press keypad <N> (RETROK_0=48) */
+            else if (t == 15) key[48 + gsel_num] = 0;
+            else if (t == 25) key[RETROK_RETURN] = 1;   /* press RETURN (start) */
+            else if (t >= 40) { key[RETROK_RETURN] = 0; gsel_send = 0; }
+        }
+
         RLOOP=1;
         cpu_exec();
+
+        if (gsel_active) {
+            char b[28];
+            snprintf(b, sizeof(b), " SELECT GAME: %d ", gsel_num);
+            odroid_overlay_draw_text(88, 104, 17 * 8, b, 0xFFFF, 0x0000);
+            odroid_overlay_draw_text(48, 120, 26 * 8, " UP/DOWN = No.   A = Start", 0xFFFF, 0x0000);
+        }
+
         lcd_swap();
         pcm_submit();
 
