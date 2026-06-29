@@ -751,9 +751,22 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
             if (!s_forced_cli && CPU_PCE.PC == 0x6257 && (CPU_PCE.P & 0x04)) {
                 s_forced_cli = true;
                 CPU_PCE.P &= ~0x04;   /* clear FL_I */
+                /* Dump the System Card vblank user-hook: E509 builds a trampoline
+                 * at $2286 from $221F/$2220/$2222 and JSRs it each vblank. If the
+                 * game never registered its hook there, the handler calls nothing
+                 * -> the game idles forever even with IRQs on. $2200-area = bank
+                 * 0xF8 RAM mapped at page 1, so index PageR[1] with the full addr. */
+                uint8_t *p1 = PageR[1];
                 FILE *cf = fopen("/pcecd_diag.txt", "a");
-                if (cf) { fprintf(cf, "FORCE-CLI at 0x6257 (P was %02x, irql=%02x irqm=%02x)\n",
-                                  CPU_PCE.P | 0x04, CPU_PCE.irq_lines, CPU_PCE.irq_mask); fclose(cf); }
+                if (cf) {
+                    fprintf(cf, "FORCE-CLI at 0x6257 (P was %02x, irql=%02x irqm=%02x)\n",
+                            CPU_PCE.P | 0x04, CPU_PCE.irq_lines, CPU_PCE.irq_mask);
+                    fprintf(cf, "VHOOK $221F..22: %02x %02x %02x %02x  tramp $2286..8E: %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                            p1[0x221F], p1[0x2220], p1[0x2221], p1[0x2222],
+                            p1[0x2286], p1[0x2287], p1[0x2288], p1[0x2289], p1[0x228A],
+                            p1[0x228B], p1[0x228C], p1[0x228D], p1[0x228E]);
+                    fclose(cf);
+                }
             }
             if ((s_pc_n++ % 16) == 0 && s_pc_logged < 20) {
                 s_pc_logged++;
