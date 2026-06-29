@@ -89,6 +89,13 @@ enum {
     RG_LOGO_HEADER_LYNX,
     // PC Engine CD name header (matches header_pcecd, appended after header_lynx)
     RG_LOGO_HEADER_PCECD,
+    // Odyssey2 / ZX Spectrum / C64 name headers (match header_videopac/zx/c64,
+    // appended last in rg_logos.c to keep /bios/logo.bin index alignment)
+    RG_LOGO_HEADER_VIDEOPAC,
+    RG_LOGO_HEADER_ZX,
+    RG_LOGO_HEADER_C64,
+    // Favorites virtual tab name header (matches header_favorites, appended last)
+    RG_LOGO_HEADER_FAVORITES,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
@@ -96,6 +103,13 @@ enum {
     RG_LOGO_PAD_GBC,
     RG_LOGO_PAD_LYNX,
     RG_LOGO_PAD_PCECD,
+    // Odyssey2 / ZX Spectrum / C64 colour tab icons (color_icon_for_logo only,
+    // no logo.bin entry -> rg_get_logo() returns NULL, bounds-checked)
+    RG_LOGO_PAD_VIDEOPAC,
+    RG_LOGO_PAD_ZX,
+    RG_LOGO_PAD_C64,
+    // Favorites virtual tab colour icon (gold star; color_icon_for_logo only)
+    RG_LOGO_PAD_FAVORITES,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
@@ -163,6 +177,10 @@ extern const retro_logo_image pad_wswan;
 extern const retro_logo_image pad_homebrew;
 extern const retro_logo_image header_lynx;
 extern const retro_logo_image header_pcecd;
+extern const retro_logo_image header_videopac;
+extern const retro_logo_image header_zx;
+extern const retro_logo_image header_c64;
+extern const retro_logo_image header_favorites;
 
 
 extern const unsigned char IMG_SPEAKER[];

@@ -412,7 +412,7 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 23 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD) */
+#define MAX_EMULATORS 23 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added (Odyssey2/ZX/C64 cores -> 26). */
 static retro_emulator_t emulators[MAX_EMULATORS];
 static rom_system_t systems[MAX_EMULATORS];
 static int emulators_count = 0;
@@ -592,13 +592,6 @@ static int rom_entries_cmp(const void *a, const void *b)
     const int db = (fb->ext == NULL);
     if (da != db)
         return db - da; // directories before files
-
-    if (odroid_settings_SortMode_get() == ODROID_SORT_FAVORITES) {
-        const int xa = favorite_is(fa) ? 1 : 0;
-        const int xb = favorite_is(fb) ? 1 : 0;
-        if (xa != xb)
-            return xb - xa; // favorites before non-favorites
-    }
 
     return strcasecmp(fa->name, fb->name);
 }
@@ -1164,7 +1157,6 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     rg_emu_states_t *savestates = odroid_system_emu_get_states(file->path, 4);
     bool has_save = savestates->used > 0;
     bool has_sram = odroid_sdcard_get_filesize(sram_path) > 0;
-    bool is_fav = favorite_is(file);
     bool force_redraw = false;
 
 #if CHEAT_CODES == 1
@@ -1192,7 +1184,6 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
         {0, curr_lang->s_Resume_game, "", (has_save) ? 1:-1, NULL},
         {1, curr_lang->s_New_game, "", 1, NULL},
         ODROID_DIALOG_CHOICE_SEPARATOR,
-        {3, is_fav ? curr_lang->s_Del_favorite : curr_lang->s_Add_favorite, "", 1, NULL},
         {2, curr_lang->s_Delete_save, "", (has_save || has_sram) ? 1 : -1, NULL},
 #if CHEAT_CODES == 1
         ODROID_DIALOG_CHOICE_SEPARATOR,
@@ -1202,10 +1193,10 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     };
 
 #if CHEAT_CODES == 1
-    // Favorite row sits before "Delete save", so the cheat separator is at
-    // index 5 (was 6 before the Sort row was removed).
+    // The cheat separator now sits at index 4 (Resume, New, separator,
+    // Delete save) after the favorite row and the Sort row were removed.
     if (CHOSEN_FILE->cheat_count == 0)
-        choices[5] = last;
+        choices[4] = last;
 #endif
 
     int sel = odroid_overlay_dialog(file->name, choices, has_save ? 0 : 1, &gui_redraw_callback, 0);
@@ -1238,10 +1229,6 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
         {
             odroid_sdcard_unlink(sram_path);
         }
-    }
-    else if (sel == 3) { // Add / remove favorite
-        favorite_toggle(file);
-        force_redraw = true;
     }
 #if CHEAT_CODES == 1
     else if (sel == 4) {

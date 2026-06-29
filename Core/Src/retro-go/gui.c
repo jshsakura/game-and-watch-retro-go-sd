@@ -15,7 +15,6 @@
 #include "main.h"
 #include "rg_i18n.h"
 #include "rg_emulators.h"
-#include "favorites.h"
 #include "gw_malloc.h"
 
 #if !defined(COVERFLOW)
@@ -655,43 +654,6 @@ void gui_draw_item_postion_v(int posx, int starty, int endy, int cur, int size)
             curr_colors->sel_c);
 }
 
-/* Small 11x11 five-point star used to mark favorite games. Each row is an
- * 11-bit mask, MSB = leftmost pixel. Drawn directly to the active framebuffer
- * (same approach as the easter-egg clock) so it works in both the simple list
- * and the cover view. */
-#define FAV_STAR_W 11
-#define FAV_STAR_H 11
-static const uint16_t FAV_STAR_GLYPH[FAV_STAR_H] = {
-    0x020, 0x070, 0x070, 0x7FF, 0x3FE, 0x1FC, 0x0F8, 0x1DC, 0x38E, 0x603, 0x401
-};
-
-static void gui_draw_star_raw(int x, int y, uint16_t color)
-{
-    uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
-    if (fb == NULL)
-        return;
-    for (int ry = 0; ry < FAV_STAR_H; ry++) {
-        int py = y + ry;
-        if (py < 0 || py >= GW_LCD_HEIGHT)
-            continue;
-        uint16_t row = FAV_STAR_GLYPH[ry];
-        for (int rx = 0; rx < FAV_STAR_W; rx++) {
-            if (row & (1u << (FAV_STAR_W - 1 - rx))) {
-                int px = x + rx;
-                if (px >= 0 && px < GW_LCD_WIDTH)
-                    fb[py * GW_LCD_WIDTH + px] = color;
-            }
-        }
-    }
-}
-
-/* Gold star with a 1px dark drop-shadow so it stays visible over any cover. */
-static void gui_draw_favorite_star(int x, int y)
-{
-    gui_draw_star_raw(x + 1, y + 1, 0x0000);
-    gui_draw_star_raw(x, y, C_GOLD);
-}
-
 void gui_draw_simple_list(int posx, tab_t *tab)
 {
     listbox_t *list = &tab->listbox;
@@ -1018,11 +980,6 @@ void gui_draw_coverlight_h(retro_emulator_file_t *file, int cover_position)
         odroid_overlay_draw_rect(cover_x, cover_y, cover_width + 2 * COVER_BORDER, cover_height + 2 * COVER_BORDER, COVER_BORDER, curr_colors->bg_c);
         odroid_overlay_draw_rect(2 + cover_x, 2 + cover_y, cover_width + 8, cover_height + 8, 2, curr_colors->sel_c);
 
-        /* favorite star, bottom-right corner of the cover */
-        if (favorite_is(file))
-            gui_draw_favorite_star(cover_x + COVER_BORDER + cover_width - FAV_STAR_W - 3,
-                                   cover_y + COVER_BORDER + cover_height - FAV_STAR_H - 3);
-
         /* TODO add shadowing */
         //left side
         /*
@@ -1146,11 +1103,6 @@ void gui_draw_coverlight_v(retro_emulator_file_t *file, int cover_position)
     {
         odroid_overlay_draw_rect(cover_x, cover_y, cover_width + 2 * COVER_BORDER, cover_height + 2 * COVER_BORDER, COVER_BORDER, curr_colors->bg_c);
         odroid_overlay_draw_rect(2 + cover_x, 2 + cover_y, cover_width + 8, cover_height + 8, 2, curr_colors->sel_c);
-
-        /* favorite star, bottom-right corner of the cover */
-        if (favorite_is(file))
-            gui_draw_favorite_star(cover_x + COVER_BORDER + cover_width - FAV_STAR_W - 3,
-                                   cover_y + COVER_BORDER + cover_height - FAV_STAR_H - 3);
     }
     /* other cover */
     else
@@ -1291,10 +1243,6 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
             //draw the cover cenver
             JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
             odroid_display_write_rect(start_xpos + p_width1 + p_width2 + 11, cover_top, jpeg_cover_width, jpeg_cover_height, jpeg_cover_width, pCover_Buffer);
-            /* favorite star, bottom-right of the poster */
-            if (favorite_is(file))
-                gui_draw_favorite_star(start_xpos + p_width1 + p_width2 + 11 + cover_width - FAV_STAR_W - 3,
-                                       cover_top + cover_height - FAV_STAR_H - 3);
             //draw the cover shadow
             for (int y = 0; y <= 20; y++)
                 if ((5 + cover_top + cover_height + y) < max_y)
@@ -1533,10 +1481,6 @@ void gui_draw_coverflow_v(tab_t *tab, int start_posx) // ||||||||
         {
             JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
             odroid_display_write_rect(start_posx + 3 + (cover_width - jpeg_cover_width) / 2, start_ypos + p_height + 16 + (cover_height - jpeg_cover_height) / 2, jpeg_cover_width, jpeg_cover_height, jpeg_cover_width, pCover_Buffer);
-            /* favorite star, bottom-right of the poster */
-            if (favorite_is(file))
-                gui_draw_favorite_star(start_posx + 3 + (cover_width + jpeg_cover_width) / 2 - FAV_STAR_W - 3,
-                                       start_ypos + p_height + 16 + (cover_height + jpeg_cover_height) / 2 - FAV_STAR_H - 3);
         };
     }
     if (p_height)

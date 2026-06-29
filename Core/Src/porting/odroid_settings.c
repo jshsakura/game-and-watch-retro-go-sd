@@ -19,11 +19,10 @@
 #define CONFIG_MAGIC 0xcafef00d
 #define ODROID_APPID_COUNT 4
 
-/* Favorites: path-hash (crc32) list kept in the DTCM-resident persistent_config
- * (synchronous, no malloc/file IO — reliable). Sized to fit DTCM alongside the
- * Atari Lynx app[] entry (the SD-backed variant was dropped: lazy-load/fs
- * timing made favorites flaky on-device). 32 * 4 = 128 bytes. */
-#define ODROID_FAVORITES_MAX 32
+/* Favorites: the in-RAM favorites[32] hash array (128 B in DTCM-resident
+ * persistent_config) was REMOVED (2026-06-29) to reclaim DTCM for emulator
+ * cores, and the favorites UI/accessors were removed entirely afterwards.
+ * Only the game-list sort mode persists in persistent_config now. */
 
 #if !defined  (COVERFLOW)
   #define COVERFLOW 0
@@ -90,8 +89,7 @@ typedef struct persistent_config {
     /** Welcome prompt: 0 = not anchored, 1 = message already shown, else YYYYMMDD anchor (RTC >= 2026). */
     uint32_t welcome_prompt;
 
-    /** Favorite games as path hashes (0 = empty slot). */
-    uint32_t favorites[ODROID_FAVORITES_MAX];
+    /* favorites[32] removed — reclaimed 128 B DTCM (feature was RAM-resident). */
     /** Game list sort mode (odroid_sort_mode_t). */
     uint8_t sort_mode;
 
@@ -102,7 +100,7 @@ typedef struct persistent_config {
 
 static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
-    .version = 11,
+    .version = 12,  /* 11->12: favorites[32] removed from struct (one-time settings reset on upgrade) */
 
     .backlight = ODROID_BACKLIGHT_LEVEL6,
     .start_action = ODROID_START_ACTION_RESUME,
@@ -751,46 +749,5 @@ uint8_t odroid_settings_SortMode_get(void)
 void odroid_settings_SortMode_set(uint8_t mode)
 {
     persistent_config_ram.sort_mode = (mode < ODROID_SORT_COUNT) ? mode : ODROID_SORT_NAME;
-}
-
-/* ---- Favorites: simple in-RAM path-hash array in persistent_config -------
- * Synchronous, no malloc / no file IO -> reliable on-device. Persisted with
- * the rest of persistent_config via odroid_settings_commit() (caller does so
- * after add/remove). 0 = empty slot; capacity ODROID_FAVORITES_MAX. */
-bool odroid_settings_favorite_has(uint32_t hash)
-{
-    if (hash == 0)
-        return false;
-    for (int i = 0; i < ODROID_FAVORITES_MAX; i++)
-        if (persistent_config_ram.favorites[i] == hash)
-            return true;
-    return false;
-}
-
-bool odroid_settings_favorite_add(uint32_t hash)
-{
-    if (hash == 0)
-        return false;
-    if (odroid_settings_favorite_has(hash))
-        return true;
-    for (int i = 0; i < ODROID_FAVORITES_MAX; i++)
-        if (persistent_config_ram.favorites[i] == 0) {
-            persistent_config_ram.favorites[i] = hash;
-            return true;
-        }
-    return false; // list full
-}
-
-bool odroid_settings_favorite_remove(uint32_t hash)
-{
-    if (hash == 0)
-        return false;
-    bool removed = false;
-    for (int i = 0; i < ODROID_FAVORITES_MAX; i++)
-        if (persistent_config_ram.favorites[i] == hash) {
-            persistent_config_ram.favorites[i] = 0;
-            removed = true;
-        }
-    return removed;
 }
 

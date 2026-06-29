@@ -414,7 +414,6 @@ Core/Src/porting/gw_sleep.c \
 Core/Src/retro-go/rg_main.c \
 Core/Src/retro-go/rg_rtc.c \
 Core/Src/retro-go/rg_emulators.c \
-Core/Src/retro-go/favorites.c \
 Core/Src/retro-go/gw_firmware_abi.c \
 Core/Src/retro-go/rg_storage.c \
 Core/Src/retro-go/rg_welcome_prompt.c \
