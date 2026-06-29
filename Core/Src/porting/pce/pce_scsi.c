@@ -61,39 +61,6 @@ static uint8_t  s_port2, s_port3;   /* $1802 IRQ-enable, $1803 IRQ-status */
 static int      s_trace;            /* trace register accesses during a bulk READ */
 static int      s_atrace;           /* trace ADPCM/idle-loop polls ($180A-F, $1803) */
 
-/* ---- per-instruction PC ring (re-added it25): the game loads, idles at
- *      0x6257, then SCSI-resets ($1804=02) and re-reads the whole boot — a
- *      RETRY LOOP. Dump the last N pc:op right before the RETRY reset to see
- *      what the vblank logic checked and why it rejected the boot. h6280_run()
- *      calls pce_scsi_pc_tick() every instruction while g_pcecd_trace is set. */
-extern uint8_t *PageR[8];
-#define PC_RING_N 96
-static uint16_t s_pc_ring[PC_RING_N];
-static int      s_pc_pos;
-static int      s_read_count;       /* READ(6) commands seen this mount */
-static bool     s_retry_dumped;
-int             g_pcecd_trace;      /* gates the hook; set when a disc is present */
-
-void pce_scsi_pc_tick(uint16_t pc)
-{
-    s_pc_ring[s_pc_pos] = pc;
-    s_pc_pos = (s_pc_pos + 1) % PC_RING_N;
-}
-
-static void dump_ring(const char *why)
-{
-    FILE *f = fopen("/pcecd_diag.txt", "a");
-    if (!f) return;
-    fprintf(f, "RING (%s) oldest->newest pc:op:\n", why);
-    for (int i = 0; i < PC_RING_N; i++) {
-        uint16_t p  = s_pc_ring[(s_pc_pos + i) % PC_RING_N];
-        uint8_t *pg = PageR[(p >> 13) & 7];
-        fprintf(f, "%04x:%02x ", p, pg ? pg[p] : 0);
-        if ((i & 7) == 7) fprintf(f, "\n");
-    }
-    fclose(f);
-}
-
 static void update_irq(void)
 {
     if (s_port2 & s_port3 & IRQ_MASK)
@@ -107,9 +74,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_toc = toc;
     s_present = present && toc && toc->num_tracks > 0;
     s_diag_lines = 0;   /* fresh run */
-    s_pc_pos = 0; s_read_count = 0; s_retry_dumped = false;
-    g_pcecd_trace = s_present;   /* enable the per-instruction PC ring */
-    diag("=== BUILD it25 ===\n");
+    diag("=== BUILD it26 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     pce_scsi_reset();
@@ -262,7 +227,6 @@ static void execute_command(void)
         s_read_lba = lba; s_read_remain = cnt; s_reading = true; s_bulk = true;
         s_din_pos = s_din_len = 0;
         s_trace = 0;   /* trace the System Card's register pattern for this READ */
-        s_read_count++;
         diag("  READ lba=%lu cnt=%lu\n", (unsigned long)lba, (unsigned long)cnt);
         change_phase(PH_DATAIN);
         feed_din();
@@ -364,16 +328,7 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
         break;
     }
     case 0x04: /* reset */
-        if (val & 0x02) {
-            /* Boot-retry detector: the first $1804=02 is normal init (before any
-             * READ); a later one (after the boot reads) is the game rejecting the
-             * load and retrying. Dump the path into THAT one. */
-            if (s_read_count > 0 && !s_retry_dumped) {
-                s_retry_dumped = true;
-                dump_ring("RETRY $1804=02 after boot");
-            }
-            pce_scsi_reset();
-        }
+        if (val & 0x02) pce_scsi_reset();
         break;
     default:
         break;
