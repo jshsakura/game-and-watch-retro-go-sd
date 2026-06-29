@@ -25,6 +25,10 @@ porting.c \
 ../retro-go-stm32/pce-go/components/pce-go/gfx.c \
 ../retro-go-stm32/pce-go/components/pce-go/h6280.c \
 ../retro-go-stm32/pce-go/components/pce-go/pce.c \
+../retro-go-stm32/pce-go/components/pce-go/psg.c \
+../Core/Src/porting/pce/pce_scsi.c \
+../Core/Src/porting/pce/pce_cd.c \
+../Core/Src/porting/pce/pce_adpcm.c \
 
 
 PREFIX = 
@@ -38,7 +42,7 @@ HEX = $(CP) -O ihex
 BIN = $(CP) -O binary -S
 
 C_DEFS =  \
--DIS_LITTLE_ENDIAN
+-DIS_LITTLE_ENDIAN -DLINUX_EMU
 
 C_INCLUDES =  \
 -I. \
@@ -46,6 +50,9 @@ C_INCLUDES =  \
 -I../Core/Src/porting/lib \
 -I../Core/Src/porting/lib/lzma \
 -I../retro-go-stm32/pce-go/components/pce-go \
+-I../Core/Src/porting/pce \
+-I../Core/Inc \
+-I../Core/Inc/retro-go \
 -I../retro-go-stm32/components/odroid \
 -I../retro-go-stm32/components/lupng \
 -I../

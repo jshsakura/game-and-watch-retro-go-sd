@@ -15,6 +15,122 @@
 #include "gw_lcd.h"
 #include <pce.h>
 #include <romdb.h>
+#include "pce_cd.h"
+#include "pce_scsi.h"
+
+/* Path to the disc .cue (argv[1]); NULL = run System Card only. */
+static const char *g_cue_path = NULL;
+
+/* Deterministic per-instruction PC trace (host only). h6280_run() calls
+ * pce_scsi_pc_tick() each instruction when g_pcecd_trace is set; we turn it on
+ * right after the force-CLI so we capture EXACTLY what the game/vblank does
+ * once interrupts are live — no Heisenbug (host timing is cycle-deterministic). */
+static void dump_mem(uint16_t start, int len);   /* fwd */
+int g_pcecd_trace = 0;
+void pce_scsi_pc_tick(uint16_t pc)
+{
+    static int n = 0;          /* distinct (run-length-compressed) entries written */
+    static int run = 0;        /* consecutive repeats of last_pc */
+    static uint16_t last_pc = 0xFFFF;
+    static FILE *tf = NULL;
+    static int started = 0;
+    static int dumped_entry = 0, dumped_idle = 0;
+    /* Self-arm: ignore everything (incl. the long System Card boot) until the CPU
+     * first lands on the REAL game exec entry (from the disc IPL: load=$6000,
+     * exec=$6000), then trace the full game init from there. */
+    #define GAME_EXEC 0x6000
+    if (!started) { if (pc != GAME_EXEC) return; started = 1; }
+
+    /* Ring buffer of the last 256 PCs. When the game FIRST reaches its hang loop
+     * ($6257 = JMP self), dump the ring so we see EXACTLY the path (and the
+     * conditional branch) that diverted into the halt — the decisive evidence. */
+    #define RING 256
+    static uint16_t ring[RING];
+    static int ridx = 0, ring_done = 0;
+    ring[ridx++ % RING] = pc;
+    if (!ring_done && pc == 0x6257 && ridx > 1) {
+        ring_done = 1;
+        printf("[host] ===== PATH INTO $6257 HANG (last %d PCs) =====\n", RING);
+        int start = ridx % RING;
+        for (int k = 0; k < RING; k++) {
+            int i = (start + k) % RING;
+            printf("%04x ", ring[i]);
+            if ((k % 16) == 15) printf("\n");
+        }
+        printf("\n[host] ===== END PATH =====\n");
+        fflush(stdout);
+    }
+    /* Print the FIRST 16 instructions with the EXACT opcode the CPU fetches
+     * (PageR[pc>>13][pc], same expression as imm_operand) vs pce_read8, plus the
+     * bank mapping for that page — to settle the trace-vs-dump contradiction. */
+    if (dumped_entry < 80) {
+        dumped_entry++;
+        extern uint8_t *PageR[8];
+        uint8_t opc_raw = PageR[pc >> 13][pc];     /* what the CPU executes */
+        uint8_t opc_r8  = pce_read8(pc);
+        printf("[host] #%02d pc=%04x op(raw)=%02x op(r8)=%02x MMR[%d]=%02x A=%02x X=%02x Y=%02x S=%02x P=%02x\n",
+               dumped_entry, pc, opc_raw, opc_r8, pc >> 13, PCE.MMR[pc >> 13],
+               CPU_PCE.A, CPU_PCE.X, CPU_PCE.Y, CPU_PCE.S, CPU_PCE.P);
+        fflush(stdout);
+    }
+    (void)dumped_idle;
+
+    /* Game-space-only ring (pc < $E000 = not System Card ROM): records the last
+     * GREC game instructions with regs/flags, dumped when the hang ($6257) is
+     * first reached — so we see the game's OWN decision logic + the branch that
+     * chose the dead-end, with all the BIOS noise filtered out. */
+    #define GREC 200
+    static struct { uint16_t pc, o; uint8_t a, x, y, p; } gr[GREC];
+    static int gi = 0, gdone = 0;
+    if (pc < 0xE000) {
+        extern uint8_t *PageR[8];
+        int s = gi % GREC;
+        gr[s].pc = pc; gr[s].o = PageR[pc >> 13][pc];
+        gr[s].a = CPU_PCE.A; gr[s].x = CPU_PCE.X; gr[s].y = CPU_PCE.Y; gr[s].p = CPU_PCE.P;
+        gi++;
+    }
+    /* Targeted trace of the decisive BIOS call JSR $E0DE @ $6050 — whose returned
+     * Carry decides hang ($6219) vs continue ($6058). Arm when we first reach the
+     * $6050 call site; log every instruction (incl. System Card) until it returns
+     * to $6053, so we see what $E0DE checks and where Carry gets set. */
+    static int e0de = 0, e0de_arm = 0;
+    if (!e0de_arm && pc == 0x6050) e0de_arm = 1;
+    if (e0de_arm && e0de < 300) {
+        e0de++;
+        extern uint8_t *PageR[8];
+        uint8_t o0 = PageR[pc >> 13][pc];
+        printf("[host] E %04x:%02x A=%02x X=%02x Y=%02x P=%02x [C%d]\n",
+               pc, o0, CPU_PCE.A, CPU_PCE.X, CPU_PCE.Y, CPU_PCE.P, CPU_PCE.P & 1);
+        if (pc == 0x6053) e0de = 999;   /* stop after return */
+        fflush(stdout);
+    }
+
+    if (!gdone && gi == 30000) {
+        gdone = 1;
+        printf("[host] ===== STEADY-STATE: last %d GAME INSTRS @ gi=30000 =====\n", GREC);
+        int n = gi < GREC ? gi : GREC;
+        int start = gi < GREC ? 0 : (gi % GREC);
+        for (int k = 0; k < n; k++) {
+            int i = (start + k) % GREC;
+            printf("%04x:%02x[A%02x X%02x Y%02x P%02x] ", gr[i].pc, gr[i].o,
+                   gr[i].a, gr[i].x, gr[i].y, gr[i].p);
+            if ((k % 6) == 5) printf("\n");
+        }
+        printf("\n[host] ===== END GAME RING =====\n");
+        fflush(stdout);
+    }
+    if (n >= 200000) return;
+    if (!tf) tf = fopen("pc_trace.txt", "w");
+    if (!tf) return;
+    /* Run-length compress: idle loops (e.g. 6257 6257 ...) collapse to one line
+     * "6257 xN" so the actual control flow / init sequence is readable. */
+    if (pc == last_pc) { run++; return; }
+    if (run > 0) { fprintf(tf, "x%d\n", run + 1); run = 0; }
+    last_pc = pc;
+    fprintf(tf, "%04x ", pc);
+    n++;
+    if (n == 200000) { fprintf(tf, "...cap\n"); fflush(tf); }
+}
 
 #undef printf
 #define APP_ID 20
@@ -50,7 +166,7 @@ static uint16_t mypalette[256];
 #define FB_INTERNAL_OFFSET (((XBUF_HEIGHT - current_height) / 2 + 16) * XBUF_WIDTH + (XBUF_WIDTH - current_width) / 2)
 static uint8_t emulator_framebuffer_pce[XBUF_WIDTH * XBUF_HEIGHT * 2];
 
-extern unsigned char ROM_DATA[];
+extern const unsigned char ROM_DATA[];
 extern unsigned int cart_rom_len;
 
 
@@ -236,7 +352,7 @@ int init_window(int width, int height)
     return 0;
 }
 
-static bool LoadState(char *savePathName, char *sramPathName)
+static bool host_LoadState(const char *savePathName)
 {
     printf("Loading state from %s...\n", savePathName);
 
@@ -261,6 +377,11 @@ static bool LoadState(char *savePathName, char *sramPathName)
 		fread(SaveStateVars[i].ptr, SaveStateVars[i].len, 1, fp);
 	}
 
+	/* PCE-CD: restore the 256KB CD RAM streamed after the core state. */
+	if (g_cue_path)
+		for (int v = 0x68; v <= 0x87; v++)
+			fread(PCE.MemoryMapW[v], 0x2000, 1, fp);
+
 	for(int i = 0; i < 8; i++)
 	{
 		pce_bank_set(i, PCE.MMR[i]);
@@ -275,7 +396,7 @@ static bool LoadState(char *savePathName, char *sramPathName)
 	return 0;
 }
 
-static bool SaveState(char *savePathName, char *sramPathName)
+static bool host_SaveState(const char *savePathName)
 {
     printf("Saving state to %s...\n", savePathName);
 
@@ -291,9 +412,15 @@ static bool SaveState(char *savePathName, char *sramPathName)
 		fwrite(SaveStateVars[i].ptr, SaveStateVars[i].len, 1, fp);
 	}
 
+	/* PCE-CD: stream the 256KB CD RAM (banks 0x68-0x87) after the core state,
+	 * mirroring the device SaveState. */
+	if (g_cue_path)
+		for (int v = 0x68; v <= 0x87; v++)
+			fwrite(PCE.MemoryMapR[v], 0x2000, 1, fp);
+
 	fclose(fp);
 
-	return 0;  
+	return 0;
 }
 
 void pcm_submit(void)
@@ -431,6 +558,25 @@ InitPCE(int samplerate, bool stereo, const char *huecard)
 	if (huecard && LoadCard(huecard))
 		return 1;
 
+	/* PCE-CD host harness: map 256KB CD RAM (banks 0x68-0x87) like the device
+	 * LoadCartPCE does, then mount the real CUE/BIN so the System Card's $1800
+	 * SCSI reads hit it. pce_cd_read_sector uses fopen/fread = works on host. */
+	if (g_cue_path) {
+		static uint8_t *cdram = NULL;
+		if (!cdram) cdram = (uint8_t *)malloc(0x40000);
+		memset(cdram, 0, 0x40000);
+		for (int v = 0x68; v <= 0x87; v++)
+			PCE.MemoryMapR[v] = PCE.MemoryMapW[v] = cdram + (uint32_t)(v - 0x68) * 0x2000;
+		static pce_cd_toc_t s_toc;
+		if (pce_cd_parse_cue(g_cue_path, &s_toc)) {
+			pce_scsi_set_disc(&s_toc, true);
+			printf("CD mounted: %s (%d tracks)\n", g_cue_path, s_toc.num_tracks);
+		} else {
+			pce_scsi_set_disc(NULL, false);
+			printf("CD mount FAILED: %s\n", g_cue_path);
+		}
+	}
+
 	gfx_reset(0);
 	pce_reset(0);
 
@@ -441,7 +587,7 @@ void init(void)
 {
     printf("init()\n");
     odroid_system_init(APP_ID, AUDIO_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL);
+    odroid_system_emu_init(&host_LoadState, &host_SaveState, NULL, NULL, NULL, NULL);
 
     // Hack: Use the same buffer twice
     update1.buffer = fb_data;
@@ -603,11 +749,11 @@ void odroid_input_read_gamepad_pce(odroid_gamepad_state_t* out_state)
                 break;
             case SDLK_F1:
                 if (last_down_event.key.keysym.sym == SDLK_F1)
-                    SaveState("save_pce.bin","");
+                    host_SaveState("save_pce.bin");
                 break;
             case SDLK_F4:
                 if (last_down_event.key.keysym.sym == SDLK_F4)
-                    LoadState("save_pce.bin","");
+                    host_LoadState("save_pce.bin");
                 break;                
             default:
                 break;
@@ -623,12 +769,54 @@ void osd_log(int type, const char *format, ...) {
     va_end(ap);
 }
 
+/* One-shot dump of the CPU bank mapping (MMR) + the System Card RAM hook-vector
+ * area ($2200-$225F lives in PCE.RAM offset 0x200). Lets us SEE whether the game
+ * registered a vsync/IRQ handler pointing at its own code (0x6xxx/0x8xxx). */
+static void dump_mem(uint16_t start, int len)
+{
+    for (int a = start; a < start + len; a += 16) {
+        printf("[host] $%04x:", a);
+        for (int j = 0; j < 16; j++) printf(" %02x", pce_read8((uint16_t)(a + j)));
+        printf("\n");
+    }
+}
+
+static void dump_state(const char *tag)
+{
+    printf("[host] === STATE %s ===\n", tag);
+    printf("[host] MMR:");
+    for (int i = 0; i < 8; i++) printf(" %d:%02x", i, PCE.MMR[i]);
+    printf("\n");
+    for (int base = 0x200; base < 0x260; base += 16) {
+        printf("[host] $%04x:", 0x2000 + base);
+        for (int j = 0; j < 16; j++) printf(" %02x", PCE.RAM[base + j]);
+        printf("\n");
+    }
+    printf("[host] --- exec vector $2280-$228F ---\n"); dump_mem(0x2280, 16);
+    printf("[host] --- program @ $6250-$62BF ---\n");   dump_mem(0x6250, 112);
+    printf("[host] --- subroutine @ $6350-$637F ---\n"); dump_mem(0x6350, 48);
+    fflush(stdout);
+}
+
 int main(int argc, char *argv[])
 {
+    if (argc > 1) g_cue_path = argv[1];
+    /* Headless trace mode: argv[2] = number of frames to run then exit (so the
+     * deterministic SCSI/PC diag can be inspected without an infinite loop). */
+    int max_frames = (argc > 2) ? atoi(argv[2]) : 0;
+
     init_window(WIDTH, HEIGHT);
 
     init();
     odroid_gamepad_state_t joystick = {0};
+    int frame = 0;
+    bool forced_cli = false;
+    bool dumped_6257 = false;
+    /* argv[3] == "cli" → force-CLI at 0x6257 (run the game IRQ-enabled). Without
+     * it we observe the game's NATURAL init: does it CLI / register a vsync hook
+     * on its own, or idle at 0x6257 with interrupts still masked? */
+    bool do_cli = (argc > 3 && strcmp(argv[3], "cli") == 0);
+    g_pcecd_trace = 1;   /* tracer self-arms at first 0x6254 (game entry) */
 
     while (true)
     {
@@ -639,7 +827,27 @@ int main(int argc, char *argv[])
         bool drawFrame = true;// common_emu_frame_loop();
 
         odroid_input_read_gamepad_pce(&joystick);
+        /* Headless: auto-press START (RUN) over frames 60-120 to boot the disc
+         * from the "CD-ROM SYSTEM" screen (no human to press it). */
+        joystick.values[ODROID_INPUT_START] = ((frame % 200) >= 60 && (frame % 200) < 90) ? 1 : 0;
         pce_input_read(&joystick);
+
+        /* First time the game reaches its idle loop, dump the registered hook
+         * vectors + bank mapping so we can see what (if anything) init set up. */
+        if (!dumped_6257 && CPU_PCE.PC == 0x6257) {
+            dumped_6257 = true;
+            printf("[host] reached 0x6257 idle frame=%d P=%02x irqmask=%02x\n",
+                   frame, CPU_PCE.P, CPU_PCE.irq_mask);
+            dump_state("at-6257");
+        }
+
+        /* Optional: same interrupt-enable the device harness uses — the System
+         * Card hands off with FL_I set; clear it once so VBlank IRQs run. */
+        if (do_cli && !forced_cli && CPU_PCE.PC == 0x6257 && (CPU_PCE.P & 0x04)) {
+            forced_cli = true;
+            CPU_PCE.P &= ~0x04;
+            printf("[host] FORCE-CLI at 0x6257 frame=%d\n", frame);
+        }
 
         for (PCE.Scanline = 0; PCE.Scanline < 263; ++PCE.Scanline) {
             gfx_run();
@@ -647,10 +855,76 @@ int main(int argc, char *argv[])
         pce_osd_gfx_blit(drawFrame);
         //if(drawFrame) pce_pcm_submit();
 
+        /* CD-DA verify: dump this frame's CD-DA PCM (22050 stereo s16) to a raw
+         * file so we can confirm the audio decode produces real music. */
+        {
+            static FILE *cf = NULL, *af = NULL;
+            static int16_t cb[400 * 2], ab[400 * 2];
+            if (!cf) cf = fopen("cdda.pcm", "wb");
+            if (!af) af = fopen("adpcm.pcm", "wb");
+            int n = pce_scsi_cdda_fill(cb, 367);
+            if (cf && n > 0) fwrite(cb, sizeof(int16_t) * 2, n, cf);
+            extern int pce_adpcm_fill(int16_t *, int);
+            int an = pce_adpcm_fill(ab, 367);
+            if (af && an > 0) fwrite(ab, sizeof(int16_t) * 2, an, af);
+        }
+
         // Prevent overflow
         PCE.Timer.cycles_counter -= Cycles;
         PCE.MaxCycles -= Cycles;
         Cycles = 0;
+
+        /* Save/load round-trip self-test (PCE-CD): save at 1100, corrupt the CD
+         * RAM at 1105, load at 1110 — the checksum must return to the saved one. */
+        if (g_cue_path && max_frames >= 1115) {
+            static uint32_t sum_pre = 0;
+            if (frame == 1100) {
+                for (int v = 0x68; v <= 0x87; v++)
+                    for (int k = 0; k < 0x2000; k++) sum_pre += PCE.MemoryMapR[v][k];
+                host_SaveState("save_pce.bin");
+                printf("[host] SAVE @1100 cdram_sum=%08x\n", sum_pre);
+            } else if (frame == 1105) {
+                memset(PCE.MemoryMapW[0x80], 0xEE, 0x2000);   /* corrupt one bank */
+                uint32_t s = 0;
+                for (int v = 0x68; v <= 0x87; v++)
+                    for (int k = 0; k < 0x2000; k++) s += PCE.MemoryMapR[v][k];
+                printf("[host] CORRUPT @1105 cdram_sum=%08x (should differ)\n", s);
+            } else if (frame == 1110) {
+                host_LoadState("save_pce.bin");
+                uint32_t s = 0;
+                for (int v = 0x68; v <= 0x87; v++)
+                    for (int k = 0; k < 0x2000; k++) s += PCE.MemoryMapR[v][k];
+                printf("[host] LOAD @1110 cdram_sum=%08x -> %s\n", s,
+                       s == sum_pre ? "MATCH (save/load OK)" : "MISMATCH (BUG)");
+            }
+        }
+
+        if (max_frames && ++frame >= max_frames) {
+            printf("[host] done %d frames, PC=%04x P=%02x irql=%02x\n",
+                   frame, CPU_PCE.PC, CPU_PCE.P, CPU_PCE.irq_lines);
+            dump_state("end");
+            /* Dump the live framebuffer to a PPM so we can SEE what's on screen. */
+            {
+                FILE *pf = fopen("frame_end.ppm", "wb");
+                if (pf) {
+                    uint8_t *efb = osd_gfx_framebuffer();
+                    fprintf(pf, "P6\n%d %d\n255\n", current_width, current_height);
+                    for (int yy = 0; yy < current_height; yy++) {
+                        uint8_t *rowp = efb + yy * XBUF_WIDTH;
+                        for (int xx = 0; xx < current_width; xx++) {
+                            uint16_t px = mypalette[rowp[xx]];
+                            uint8_t r = ((px >> 11) & 0x1f) << 3;
+                            uint8_t g = ((px >> 5) & 0x3f) << 2;
+                            uint8_t b = (px & 0x1f) << 3;
+                            fputc(r, pf); fputc(g, pf); fputc(b, pf);
+                        }
+                    }
+                    fclose(pf);
+                    printf("[host] wrote frame_end.ppm %dx%d\n", current_width, current_height);
+                }
+            }
+            break;
+        }
     }
 
     SDL_Quit();

@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include "h6280.h"          /* CPU_PCE, INT_IRQ2 */
+#include "pce_adpcm.h"      /* $1808-$180E ADPCM voice */
 
 /* The pce-go submodule's h6280.c has a gated per-instruction diag hook
  * (`if (g_pcecd_trace) pce_scsi_pc_tick(pc)`). Provide WEAK definitions here so
@@ -121,6 +122,7 @@ void pce_scsi_reset(void)
     s_port2 = s_port3 = 0;
     s_adpcm_ctrl = 0;
     s_cdda_play = false;
+    pce_adpcm_reset();
     CPU_PCE.irq_lines &= ~INT_IRQ2;
 }
 
@@ -182,7 +184,8 @@ static void feed_din(void)
 static void adpcm_dma_drain(void)
 {
     if (!s_reading) return;
-    while (din_get() >= 0) { /* discard to ADPCM RAM (playback not yet wired) */ }
+    int b;
+    while ((b = din_get()) >= 0) pce_adpcm_dma_byte((uint8_t)b);   /* CD -> ADPCM RAM */
     s_reading = false;
     /* Completion needs BOTH, in this order, for the System Card's ADPCM-load path:
      *  - $1803 DATA_DONE set NOW (the transfer-complete IRQ flag the f3d0 loop polls
@@ -413,8 +416,9 @@ uint8_t pce_scsi_read(uint8_t reg)
             feed_din();
         return b;
     }
+    case 0x0A: return pce_adpcm_read(0x0A);   /* ADPCM RAM data */
     case 0x0B: return s_adpcm_ctrl;
-    case 0x0C: return 0x00;   /* ADPCM status: not busy / not playing (drained instantly) */
+    case 0x0C: return pce_adpcm_read(0x0C);   /* ADPCM status (end/playing) */
     default:   return 0;
     }
 }
@@ -447,6 +451,9 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
         update_irq();
         break;
     }
+    case 0x08: case 0x09: case 0x0A: case 0x0D: case 0x0E:
+        pce_adpcm_write(reg, val);   /* ADPCM addr/data/control/rate */
+        break;
     case 0x0B: /* ADPCM DMA control: bit1 = enable SCSI->ADPCM auto-transfer */
         s_adpcm_ctrl = val;
         if (val & 0x02) adpcm_dma_drain();

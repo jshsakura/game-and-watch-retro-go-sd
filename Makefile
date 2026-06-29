@@ -436,6 +436,7 @@ retro-go-stm32/pce-go/components/pce-go/pce.c \
 Core/Src/porting/pce/sound_pce.c \
 Core/Src/porting/pce/pce_cd.c \
 Core/Src/porting/pce/pce_scsi.c \
+Core/Src/porting/pce/pce_adpcm.c \
 Core/Src/porting/pce/main_pce.c
 
 MSX_C_SOURCES = 
