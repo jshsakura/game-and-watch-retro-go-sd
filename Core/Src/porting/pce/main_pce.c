@@ -199,6 +199,13 @@ static bool SaveState(const char *savePathName) {
         return false;
     }
     size_t written = fwrite(pce_save_buf, SAVE_STATE_BUFFER_SIZE, 1, file);
+    /* PCE-CD: the 256KB CD RAM (banks 0x68-0x87) holds the game's loaded code +
+     * data and is far bigger than save_buffer, so stream it to the file right
+     * after the core state. (HuCard .pce saves are unchanged.) */
+    if (written && strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+        for (int v = PCE_CD_RAM_FIRST_BANK; v <= PCE_CD_RAM_LAST_BANK; v++)
+            fwrite(PCE.MemoryMapR[v], PCE_CD_RAM_BANK_SIZE, 1, file);
+    }
     fclose(file);
     if (!written) {
         return false;
@@ -215,21 +222,30 @@ static bool LoadState(const char *savePathName) {
     }
 
     size_t read = fread(pce_save_buf, SAVE_STATE_BUFFER_SIZE, 1, file);
-    fclose(file);
-
     if (!read) {
+        fclose(file);
         return false;
     }
 
-    pce_save_buf+=sizeof(SAVESTATE_HEADER) + 1;
-    uint32_t *crc_ptr = (uint32_t *)pce_save_buf;
 #pragma GCC diagnostic ignored "-Warray-bounds"
-    sprintf(pce_log,"%08lX",crc_ptr[0]);
-    if (crc_ptr[0]!=PCE.ROM_CRC) {
+    uint32_t saved_crc = *(uint32_t *)(pce_save_buf + sizeof(SAVESTATE_HEADER) + 1);
+#pragma GCC diagnostic pop
+    sprintf(pce_log,"%08lX",saved_crc);
+    if (saved_crc != PCE.ROM_CRC) {
+        fclose(file);
         return true;
     }
-#pragma GCC diagnostic pop
-    pce_save_buf+=sizeof(uint32_t);
+    /* PCE-CD: restore the 256KB CD RAM streamed after the core state (see
+     * SaveState). Read it BEFORE closing, then reset the SCSI to idle (the disc
+     * stays mounted from launch; saves are taken with no transfer in flight). */
+    if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+        for (int v = PCE_CD_RAM_FIRST_BANK; v <= PCE_CD_RAM_LAST_BANK; v++)
+            fread(PCE.MemoryMapW[v], PCE_CD_RAM_BANK_SIZE, 1, file);
+        pce_scsi_reset();
+    }
+    fclose(file);
+
+    pce_save_buf+=sizeof(SAVESTATE_HEADER) + 1 + sizeof(uint32_t);
     int pos=0;
     for (int i = 0; SaveStateVars[i].len > 0; i++) {
         printf("Loading %s (%d)\n", SaveStateVars[i].key, SaveStateVars[i].len);
