@@ -732,6 +732,13 @@ $(CORE_O2EM)/src/vkeyb/vkeyb_config.c \
 $(CORE_O2EM)/src/vkeyb/vkeyb_layout.c \
 Core/Src/porting/videopac/main_videopac.c
 
+# ZX Spectrum (floooh/chips zx.h, header-only core). Compiled unconditionally;
+# .z80 games + /bios/zx/48.rom read from SD.
+ZX_C_SOURCES =
+ZX_C_SOURCES += \
+Core/Src/porting/zx/zx_impl.c \
+Core/Src/porting/zx/main_zx.c
+
 TAMA_C_SOURCES = 
 
 CORE_TAMA = external/tamalib
@@ -1224,6 +1231,17 @@ VIDEOPAC_C_INCLUDES +=  \
 -I$(CORE_O2EM)/src \
 -I$(CORE_O2EM)/libretro-common/include \
 -I$(CORE_O2EM)/allegrowrapper \
+-I./
+
+ZX_C_INCLUDES +=  \
+-ICore/Inc \
+-ICore/Inc/retro-go \
+-ICore/Inc/porting \
+-ICore/Inc/porting/zx \
+-ICore/Src/porting/zx \
+-ICore/Src/porting/lib \
+-ICore/Src/porting/lib/lzma \
+-Iretro-go-stm32/components/odroid \
 -I./
 
 ZELDA3_C_INCLUDES +=  \

@@ -663,6 +663,28 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_VIDEOPAC_BSS_SIZE = SIZEOF(.overlay_videopac_bss);
 
+  .overlay_zx __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_zx_start__ = .;
+    build/zx/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_ZX_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_ZX_LOAD_START = LOADADDR(.overlay_zx);
+  _OVERLAY_ZX_SIZE = SIZEOF(.overlay_zx);
+
+  .overlay_zx_bss _OVERLAY_ZX_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_ZX_BSS_START = .;
+    build/zx/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/zx/*.o (COMMON)
+    __ram_emu_zx_end__ = .;
+    _OVERLAY_ZX_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_ZX_BSS_END) < __RAM_EMU_END__, "Error: ZX BSS overflow");
+  }
+  _OVERLAY_ZX_BSS_SIZE = SIZEOF(.overlay_zx_bss);
+
   .overlay_celeste __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_celeste_start__ = .;

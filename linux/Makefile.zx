@@ -1,0 +1,21 @@
+# Minimal headless host harness for the ZX Spectrum (floooh/chips zx.h) core.
+# main.c is self-contained (CHIPS_IMPL inline) — no SDL, dumps zx_frame.ppm.
+TARGET   = zx
+BUILD_DIR = build
+CC = gcc
+
+# chips headers live in the device tree under Core/Src/porting/zx/chips/
+INCLUDES = -I../Core/Src/porting/zx
+
+CFLAGS = $(INCLUDES) -O2 -g -Wall -Wno-unused-function
+
+all: $(BUILD_DIR)/$(TARGET)
+
+$(BUILD_DIR)/$(TARGET): zx/main.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) zx/main.c -lm -o $@
+
+$(BUILD_DIR):
+	mkdir -p $@
+
+clean:
+	rm -f $(BUILD_DIR)/$(TARGET)
