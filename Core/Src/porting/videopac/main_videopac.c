@@ -545,19 +545,17 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
 
         videopac_input_update(&joystick);
 
-        /* Auto-start retries: the O2 BIOS reaches SELECT GAME at an unpredictable
-         * time on hardware, so a one-shot press at frame 60 often misses. Repeat the
-         * keypad "1" + RETURN sequence on a ~5s cycle for the first ~25s until the
-         * game takes over, instead of giving up after one try. */
-        if (autosel < 1800) {
+        /* Auto-start (verified against o2em's read_P2 keypad scan): the O2 BIOS scans
+         * the keypad matrix at unpredictable moments, so brief/pulsed presses are
+         * missed on hardware. A SINGLE digit selects the game immediately — RETURN is
+         * NOT needed (and injecting it can disturb the entry). So just HOLD keypad "1"
+         * continuously (every frame) for the first ~12s. After that, the A button
+         * presses "1" manually (libretro-o2em maps buttons straight to keypad keys).
+         * Holding key[49] in-game is harmless: games read the joystick, not the keypad. */
+        {
             extern unsigned char key[256*2];
-            int t = autosel % 360;                            /* 360-frame (~6s) cycle */
-            /* Hold each key CONTINUOUSLY (re-set every frame), not a brief pulse: the
-             * hardware BIOS scans the keypad at unpredictable moments, so a 1-frame
-             * pulse is missed. Long held windows are far more likely to be sampled. */
-            key[49]            = (t >= 30  && t < 120) ? 1 : 0;   /* keypad "1", ~1.5s hold */
-            key[RETROK_RETURN] = (t >= 180 && t < 270) ? 1 : 0;  /* RETURN (start), ~1.5s hold */
-            autosel++;
+            key[49] = (autosel < 700 || joystick.values[ODROID_INPUT_A]) ? 1 : 0;
+            if (autosel < 700) autosel++;
         }
 
         RLOOP=1;

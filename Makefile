@@ -436,6 +436,7 @@ retro-go-stm32/pce-go/components/pce-go/pce.c \
 Core/Src/porting/pce/sound_pce.c \
 Core/Src/porting/pce/pce_cd.c \
 Core/Src/porting/pce/pce_scsi.c \
+Core/Src/porting/pce/pce_adpcm.c \
 Core/Src/porting/pce/main_pce.c
 
 MSX_C_SOURCES = 
@@ -739,10 +740,32 @@ ZX_C_SOURCES += \
 Core/Src/porting/zx/zx_impl.c \
 Core/Src/porting/zx/main_zx.c
 
+# C64 now uses the Frodo core (cebix/frodo-go) for .d64 support — all C++.
+# The old chips core (c64_impl.c/main_c64.c, .prg only) is no longer built.
 C64_C_SOURCES =
-C64_C_SOURCES += \
-Core/Src/porting/c64/c64_impl.c \
-Core/Src/porting/c64/main_c64.c
+
+# Frodo source subset (mirrors linux/Makefile.c64frodo), excluding:
+#   - 1541fs.cpp : host-filesystem drive, needs <dirent.h> (bare-metal has none);
+#                  we use the virtual 1541 D64 drive (1541d64.cpp) instead.
+#   - Display.cpp / DigitalRenderer.cpp / main.cpp : platform glue, replaced by
+#                  main_c64_dev.cpp (device C64Display + DigitalRenderer stub + app_main_c64).
+C64_CXX_SOURCES = \
+Core/Src/porting/c64/frodo/C64.cpp \
+Core/Src/porting/c64/frodo/CPUC64.cpp \
+Core/Src/porting/c64/frodo/CPU_common.cpp \
+Core/Src/porting/c64/frodo/VIC.cpp \
+Core/Src/porting/c64/frodo/VIC_table.cpp \
+Core/Src/porting/c64/frodo/SID.cpp \
+Core/Src/porting/c64/frodo/CIA.cpp \
+Core/Src/porting/c64/frodo/IEC.cpp \
+Core/Src/porting/c64/frodo/1541d64.cpp \
+Core/Src/porting/c64/frodo/1541job.cpp \
+Core/Src/porting/c64/frodo/1541t64.cpp \
+Core/Src/porting/c64/frodo/CPU1541.cpp \
+Core/Src/porting/c64/frodo/Prefs.cpp \
+Core/Src/porting/c64/frodo/REU.cpp \
+Core/Src/porting/c64/frodo/SAM.cpp \
+Core/Src/porting/c64/main_c64_dev.cpp
 
 TAMA_C_SOURCES = 
 
@@ -1255,6 +1278,7 @@ C64_C_INCLUDES +=  \
 -ICore/Inc/porting \
 -ICore/Inc/porting/c64 \
 -ICore/Src/porting/c64 \
+-ICore/Src/porting/c64/frodo \
 -ICore/Src/porting/lib \
 -ICore/Src/porting/lib/lzma \
 -Iretro-go-stm32/components/odroid \

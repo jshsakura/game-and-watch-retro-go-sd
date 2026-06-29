@@ -1,0 +1,148 @@
+/* Commodore 64 device porting layer — Frodo core (cebix/frodo-go), .d64 via the
+ * virtual 1541. Replaces the ESP Display/DigitalRenderer/main with G&W glue.
+ * Mirrors the Lynx C++-overlay pattern. ROMs from /bios/c64/, disk from SD path. */
+extern "C" {
+#include <odroid_system.h>
+#include "gw_lcd.h"
+#include "common.h"
+#include "appid.h"
+#include "rom_manager.h"
+#include "main_c64.h"
+void  heap_itc_alloc(bool itc);
+}
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#include "C64.h"
+#include "Display.h"
+#include "Prefs.h"
+#include "DigitalRenderer.h"
+
+#define RGB565(r,g,b) ((((r)>>3)<<11)|(((g)>>2)<<5)|((b)>>3))
+/* Frodo bitmap is DISPLAY_X(384) x DISPLAY_Y(272); crop the centred 320x240 window. */
+#define C64_CROP_X 32
+#define C64_CROP_Y 16
+
+/* IsFrodoSC is defined in C64.cpp (one definition kept there). */
+
+static const uint8 c64rgb[16][3] = {
+    {0x00,0x00,0x00},{0xff,0xff,0xff},{0x68,0x37,0x2b},{0x70,0xa4,0xb2},
+    {0x6f,0x3d,0x86},{0x58,0x8d,0x43},{0x35,0x28,0x79},{0xb8,0xc7,0x6f},
+    {0x6f,0x4f,0x25},{0x43,0x39,0x00},{0x9a,0x67,0x59},{0x44,0x44,0x44},
+    {0x6c,0x6c,0x6c},{0x9a,0xd2,0x84},{0x6c,0x5e,0xb5},{0x95,0x95,0x95},
+};
+static uint16_t s_pal565[256];
+static uint8    s_bitmap[DISPLAY_X * DISPLAY_Y];
+static uint32_t s_frame = 0;
+
+/* ---- C64Display (device) ---- */
+C64Display::C64Display(C64 *the_c64) : TheC64(the_c64)
+{
+    quit_requested = false;
+    memset(s_bitmap, 0, sizeof(s_bitmap));
+    for (int i = 0; i < 16; i++) s_pal565[i] = RGB565(c64rgb[i][0], c64rgb[i][1], c64rgb[i][2]);
+}
+C64Display::~C64Display() {}
+uint8 *C64Display::BitmapBase(void) { return s_bitmap; }
+int    C64Display::BitmapXMod(void) { return DISPLAY_X; }
+void   C64Display::UpdateLEDs(int,int,int,int) {}
+void   C64Display::Speedometer(int) {}
+bool   C64Display::NumLock(void) { return false; }
+void   C64Display::NewPrefs(Prefs *) {}
+void   C64Display::InitColors(uint8 *colors) { for (int i = 0; i < 256; i++) colors[i] = i & 0x0f; }
+
+/* autostart: feed LOAD"*",8,1 / RUN into the C64 keyboard buffer ($0277, count $C6) */
+static const char *s_type = NULL;
+static int s_typepos = 0;
+
+void C64Display::Update(void)
+{
+    s_frame++;
+    wdog_refresh();
+
+    /* autostart sequencing */
+    if (s_frame == 150)      { s_type = "LOAD\"*\",8,1\r"; s_typepos = 0; }
+    else if (s_frame == 420) { s_type = "RUN\r";          s_typepos = 0; }
+    if (s_type && TheC64->RAM[0xC6] == 0) {
+        int n = 0;
+        while (s_type[s_typepos] && n < 10) { TheC64->RAM[0x0277 + n] = (uint8)s_type[s_typepos++]; n++; }
+        TheC64->RAM[0xC6] = (uint8)n;
+        if (!s_type[s_typepos]) { s_type = NULL; s_typepos = 0; }
+    }
+
+    /* blit Frodo bitmap -> LCD (cropped 320x240, RGB565) */
+    uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
+    for (int y = 0; y < 240; y++) {
+        const uint8 *src = &s_bitmap[(C64_CROP_Y + y) * DISPLAY_X + C64_CROP_X];
+        uint16_t *dst = &out[y * WIDTH];
+        for (int x = 0; x < 320; x++) dst[x] = s_pal565[src[x] & 0x0f];
+    }
+    lcd_swap();
+    common_emu_sound_sync(false);
+}
+
+#ifdef __riscos__
+void C64Display::PollKeyboard(uint8*,uint8*,uint8*,uint8*) {}
+#else
+void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joystick)
+{
+    (void)key_matrix; (void)rev_matrix;
+    odroid_gamepad_state_t js;
+    odroid_input_read_gamepad(&js);
+    uint8 m = 0xff;  /* active-low */
+    if (js.values[ODROID_INPUT_UP])    m &= ~0x01;
+    if (js.values[ODROID_INPUT_DOWN])  m &= ~0x02;
+    if (js.values[ODROID_INPUT_LEFT])  m &= ~0x04;
+    if (js.values[ODROID_INPUT_RIGHT]) m &= ~0x08;
+    if (js.values[ODROID_INPUT_A])     m &= ~0x10;  /* fire */
+    if (joystick) *joystick = m;
+}
+#endif
+
+long ShowRequester(char *str, char *b1, char *b2) { (void)b1; (void)b2; printf("[c64] %s\n", str?str:""); return 1; }
+
+/* ---- DigitalRenderer no-op (SIDType=NONE, never instantiated) ---- */
+DigitalRenderer::DigitalRenderer() { ready = false; volume = 0; v3_mute = false; pad00 = 0; }
+DigitalRenderer::~DigitalRenderer() {}
+void DigitalRenderer::Reset(void) {}
+void DigitalRenderer::EmulateLine(void) {}
+void DigitalRenderer::WriteRegister(uint16, uint8) {}
+void DigitalRenderer::NewPrefs(Prefs *) {}
+void DigitalRenderer::Pause(void) {}
+void DigitalRenderer::Resume(void) {}
+
+static bool load_rom(const char *path, uint8 *dst, uint32_t want)
+{
+    uint32_t sz = 0;
+    const uint8_t *p = (const uint8_t *)odroid_overlay_cache_file_in_flash(path, &sz, false);
+    if (!p || sz < want) { printf("[c64] missing %s (%u/%u)\n", path, (unsigned)sz, (unsigned)want); return false; }
+    memcpy(dst, p, want);
+    return true;
+}
+
+extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+{
+    (void)load_state; (void)start_paused; (void)save_slot;
+    odroid_system_init(APPID_GB, 22050);
+
+    heap_itc_alloc(true);   /* small allocs in ITCM, big spill to AXI heap (Lynx pattern) */
+
+    /* fast virtual 1541 from the .d64 on SD; no SID renderer; no 1541 ROM needed */
+    ThePrefs.Emul1541Proc = false;
+    ThePrefs.DriveType[0] = DRVTYPE_D64;
+    strncpy(ThePrefs.DrivePath[0], ACTIVE_FILE->path, 255);
+    ThePrefs.SIDType    = SIDTYPE_NONE;
+    ThePrefs.SpritesOn  = true;
+    ThePrefs.LimitSpeed = false;
+    ThePrefs.FastReset  = true;
+
+    C64 *the_c64 = new C64;
+    if (!load_rom("/bios/c64/basic.bin",   the_c64->Basic,  0x2000) ||
+        !load_rom("/bios/c64/kernal.bin",  the_c64->Kernal, 0x2000) ||
+        !load_rom("/bios/c64/chargen.bin", the_c64->Char,   0x1000)) {
+        while (true) { wdog_refresh(); }
+    }
+    printf("[c64] Frodo start, disk=%s\n", ThePrefs.DrivePath[0]);
+    the_c64->Run();   /* blocks; per-frame work happens in C64Display::Update */
+}

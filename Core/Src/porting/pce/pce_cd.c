@@ -116,6 +116,18 @@ int pce_cd_track_at_lba(const pce_cd_toc_t *toc, uint32_t lba)
     return -1;
 }
 
+/* Persistent .bin handle. fopen/fclose per sector is a FatFs directory walk each
+ * time — fatal for CD-DA streaming (~75 sectors/s) → the stutter/lag. Keep the file
+ * open and only reopen when the track's .bin path actually changes. */
+static FILE *s_bin_f;
+static char  s_bin_path[256];
+
+void pce_cd_close(void)
+{
+    if (s_bin_f) { fclose(s_bin_f); s_bin_f = NULL; }
+    s_bin_path[0] = 0;
+}
+
 bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
 {
     int ti = pce_cd_track_at_lba(toc, lba);
@@ -125,9 +137,15 @@ bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
     uint32_t sec_in_track = lba - t->start_lba;
     long offset = (long)t->file_offset + (long)sec_in_track * (long)t->sector_size;
 
-    FILE *f = fopen(t->bin_path, "rb");
-    if (!f) return false;
-    if (fseek(f, offset, SEEK_SET) != 0) { fclose(f); return false; }
+    if (!s_bin_f || strcmp(s_bin_path, t->bin_path) != 0) {
+        if (s_bin_f) fclose(s_bin_f);
+        s_bin_f = fopen(t->bin_path, "rb");
+        if (!s_bin_f) { s_bin_path[0] = 0; return false; }
+        strncpy(s_bin_path, t->bin_path, sizeof(s_bin_path) - 1);
+        s_bin_path[sizeof(s_bin_path) - 1] = 0;
+    }
+    FILE *f = s_bin_f;
+    if (fseek(f, offset, SEEK_SET) != 0) return false;
 
     bool ok;
     if (t->sector_size == PCE_CD_SECTOR_RAW) {
@@ -138,6 +156,5 @@ bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
         memset(buf, 0, PCE_CD_SECTOR_RAW);
         ok = (fread(buf + 16, 1, 2048, f) == 2048);
     }
-    fclose(f);
     return ok;
 }

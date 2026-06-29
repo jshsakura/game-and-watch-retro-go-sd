@@ -52,5 +52,8 @@ bool pce_cd_parse_cue(const char *cue_path, pce_cd_toc_t *toc);
  * synthesised around the 2048 user bytes. Returns false past end / on I/O error. */
 bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf);
 
+/* Close the cached .bin handle (call on mount to start fresh, avoid handle leaks). */
+void pce_cd_close(void);
+
 /* Index of the track containing absolute LBA, or -1. */
 int pce_cd_track_at_lba(const pce_cd_toc_t *toc, uint32_t lba);

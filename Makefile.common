@@ -824,6 +824,7 @@ SMW_OBJECTS = $(addprefix $(BUILD_DIR)/smw/,$(notdir $(SMW_C_SOURCES:.c=.o)))
 VIDEOPAC_OBJECTS = $(addprefix $(BUILD_DIR)/videopac/,$(notdir $(VIDEOPAC_C_SOURCES:.c=.o)))
 ZX_OBJECTS = $(addprefix $(BUILD_DIR)/zx/,$(notdir $(ZX_C_SOURCES:.c=.o)))
 C64_OBJECTS = $(addprefix $(BUILD_DIR)/c64/,$(notdir $(C64_C_SOURCES:.c=.o)))
+C64_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/c64/,$(notdir $(C64_CXX_SOURCES:.cpp=.o)))
 CELESTE_OBJECTS = $(addprefix $(BUILD_DIR)/celeste/,$(notdir $(CELESTE_C_SOURCES:.c=.o)))
 MUSIC_OBJECTS = $(addprefix $(BUILD_DIR)/music/,$(notdir $(MUSIC_C_SOURCES:.c=.o)))
 DOOM_OBJECTS = $(addprefix $(BUILD_DIR)/doom/,$(notdir $(DOOM_C_SOURCES:.c=.o)))
@@ -862,7 +863,7 @@ TGBDUAL_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/tgbdual/,$(notdir $(TGBDUAL_CXX_S
 A2600_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/a2600/,$(notdir $(A2600_CXX_SOURCES:.cxx=.o)))
 LYNX_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/lynx/,$(notdir $(LYNX_CXX_SOURCES:.cpp=.o)))
 
-vpath %.cpp $(sort $(dir $(CXX_SOURCES) $(TGBDUAL_CXX_SOURCES) $(LYNX_CXX_SOURCES) ))
+vpath %.cpp $(sort $(dir $(CXX_SOURCES) $(TGBDUAL_CXX_SOURCES) $(LYNX_CXX_SOURCES) $(C64_CXX_SOURCES) ))
 vpath %.cxx $(sort $(dir $(A2600_CXX_SOURCES) ))
 
 # list of ASM program objects
@@ -962,9 +963,9 @@ $(BUILD_DIR)/memcpy-armv7m.o: Core/Src/memcpy-armv7m.s Makefile.common Makefile 
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(DOOM_OBJECTS) $(NHDOOM_OBJECTS) $(WOLF3D_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(DOOM_OBJECTS) $(NHDOOM_OBJECTS) $(WOLF3D_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
-	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(DOOM_OBJECTS) $(NHDOOM_OBJECTS) $(WOLF3D_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
+	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(DOOM_OBJECTS) $(NHDOOM_OBJECTS) $(WOLF3D_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SMW_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
 # Resident firmware (launcher/HAL/UI) is performance-insensitive — emulation runs in the
 # RAM-overlay cores, which keep their own -O2. Build the resident core -Os to claw back
 # internal-FLASH (Bank 1, 256 KB) headroom as the system count grows. patsubst keeps every
@@ -1067,6 +1068,11 @@ $(BUILD_DIR)/c64/c64_impl.o: Core/Src/porting/c64/c64_impl.c Makefile.common Mak
 $(BUILD_DIR)/c64/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC c64 ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(C64_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/c64/$(notdir $(<:.c=.lst)) $< -o $@
+
+# Frodo C64 core (C++). -fpermissive: vendored Frodo predates strict C++.
+$(BUILD_DIR)/c64/%.o: %.cpp Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+	$(V)$(ECHO) [ CXX c64 ] $(notdir $<)
+	$(V)$(CXX) -c $(CXXFLAGS) $(C64_C_INCLUDES) -fpermissive -fno-strict-aliasing -Wa,-a,-ad,-alms=$(BUILD_DIR)/c64/$(notdir $(<:.cpp=.lst)) $< -o $@
 
 $(BUILD_DIR)/celeste/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC celeste ] $(notdir $<)
