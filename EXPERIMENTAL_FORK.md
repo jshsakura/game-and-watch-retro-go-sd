@@ -11,6 +11,9 @@
 |---|---|---|
 | **Neo Geo Pocket / Color** (RACE core) | ✅ Playable | Boot, input, sound, savestates (4 slots), runs full speed. Savestate sound-resume fixed (`ngpRunning` was unsnapshotted) |
 | **WonderSwan / Color** (oswan core) | ✅ Playable | Boot, input, sound, savestates; Fit/Full scaling + speed-up fixed; heavy action games run slow (V30MZ interpreter limit) |
+| **Atari Lynx** (Handy core) | ✅ Playable | Boot, input, sound, save/load; core runs XIP from QSPI flash; 512 KB carts supported |
+| **PC Engine CD / Super CD-ROM²** (pce core) | 🧪 Boots & plays | *Ai Chou Aniki* boots to gameplay; Super System Card signature + ADPCM-from-CD DMA fixed. Host-harness verified, on-device pending. No CD audio yet |
+| **Magnavox Odyssey² / Videopac** (O2EM core) | 🧪 New | SD-ROM system; BIOS from `/bios/videopac`; multi-game game-select overlay |
 | **Music player** (MP3) | ✅ | Browser, deck, album-art covers |
 | **Video player** (MJPEG/AVI) | ✅ Playable | 320×240 MJPEG-AVI from SD. SD block-read made it smooth (decode 27%→97.7%); encode via the companion app |
 | **PICO-8** (external `pico8.ro`) | ✅ | p8ram moved to the AXI pool so it no longer OOMs the DTCM heap after a firmware update |
@@ -48,3 +51,7 @@ Releases. Flash `retro-go_update.bin` with the normal G&W update procedure.
 topic branches and are combined here. Upstream's `wonderswan` branch only drops
 in the core submodule and has no working integration; this fork's WonderSwan is
 a complete, playable implementation.
+
+Which features are candidates for contribution back to `sylverb/main`, their
+state, and what each still needs is tracked in
+[issue #11](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/11).

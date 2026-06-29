@@ -39,20 +39,23 @@ that are **not** in the official project and may be unstable.
 - MJPEG-AVI video player homebrew (shares the music overlay).
 - ~8× faster SD reads via HW-SPI block reads, fixing busy-scene judder; optional timing HUD.
 
-### DOOM (next-hack flash-resident engine — NEW, not yet verified on hardware)
-- Replaced the earlier doomgeneric bring-up with the **next-hack flash-resident DOOM
-  engine** (GBADoom-derived): a tiny ~111 KB static zone, build-time pre-composed
-  textures, and texture columns read straight from XIP flash. This removes the zone
-  fragmentation that crashed doomgeneric on level load and the per-column lump re-fetch
-  that made it run far too slowly.
-- Engine renderer/game code runs XIP from flash; only the small writable zone and
-  framebuffers live in a 256 KB-aligned AXI-SRAM window. doomgeneric stays in-tree and can
-  be re-selected at build time with `USE_NHDOOM=0`.
-- **Requires a converted IWAD.** Run the in-tree `MCUDoomWadUtil` on your own `DOOM1.WAD`
-  to produce `doom1.mcu.wad`, and place it at `/roms/homebrew/doom1.mcu.wad` — the raw
-  `DOOM1.WAD` will **not** work. First launch caches it to flash (one-time, a little slow).
-- **This engine swap is freshly integrated and unverified on real hardware.** If it
-  misbehaves, please share the serial / SD log (not a screenshot).
+### PC Engine CD / Super CD-ROM² (pce)
+- CD-ROM² games now boot and play. *Ai Chou Aniki* runs from the MASAYA logo through
+  the intro art into Stage 1 shooter gameplay.
+- Two protocol-level fixes found on the host trace harness and applied to the shared
+  device core: the `$18C0` **Super System Card signature** (so the game stops aborting to
+  a halt), and the **ADPCM-from-CD DMA** path (`$180B` bit 1), which previously never
+  completed the bulk read and looped the boot.
+- Savestates include the full 256 KB CD RAM.
+- ADPCM / CDDA audio is decoded-and-discarded for now (no CD sound yet), and the 4-slot
+  save/load polish is still in progress. **Host-harness verified; on-device boot still to
+  be confirmed** — please share a serial / SD log if it misbehaves, not a screenshot.
+
+### Magnavox Odyssey² / Videopac (O2EM)
+- New SD-ROM system driven by the O2EM core.
+- BIOS loads from `/bios/videopac`.
+- Multi-game carts get a small game-select overlay: UP/DOWN pick a game (0–9), A starts;
+  it defaults to game 1 after ~5 s if you don't choose.
 
 ### Atari Lynx (Handy)
 - The Handy core now runs **XIP from QSPI flash** (only the small glue stays in the RAM
@@ -61,5 +64,8 @@ that are **not** in the official project and may be unstable.
   bounds), surfaced by a host AddressSanitizer harness that now gates CI.
 
 ### Other
-- Wolf3D homebrew overlay (id-engine symbols namespaced to avoid overlay collisions).
 - Misc display/scaling consistency fixes across emulators.
+
+> **Next up (in bring-up, not in this build):** ZX Spectrum and Commodore 64, currently
+> being brought up on a host harness. DOOM and Wolfenstein 3D have been dropped from the
+> testbed — see the post-mortem issue for the why.

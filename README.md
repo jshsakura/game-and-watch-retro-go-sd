@@ -1,17 +1,44 @@
-# 🧪 EXPERIMENTAL TESTBED FORK ⚠️ — read before flashing
+# 🧪 Experimental Testbed Fork ⚠️ — read before flashing
 
-> This is a **personal experimental testbed** of retro-go-sd with extra in-progress
-> features (Neo Geo Pocket / WonderSwan emulators, MP3 music + MJPEG video players,
-> savestate and SD-read tweaks). Releases here are **test builds, not stable**:
+This is a **personal, experimental testbed** built on top of
+[sylverb/game-and-watch-retro-go-sd](https://github.com/sylverb/game-and-watch-retro-go-sd).
+It tracks upstream but carries extra, in-progress work that is **not** in the official
+build. The aim is to push a few more systems and apps onto the Nintendo® Game & Watch™ and,
+where the work proves out, to offer it back upstream.
+
+### What this fork adds over upstream
+
+- **More emulators:** Neo Geo Pocket / Color (RACE) and WonderSwan / Color (oswan) — both
+  playable with sound and savestates; **Atari Lynx** (Handy) — playable on device incl.
+  512 KB carts; **PC Engine CD / Super CD-ROM²** (pce) and **Magnavox Odyssey² / Videopac**
+  (O2EM) — booting and in active bring-up.
+- **Homebrew apps:** an MP3 **music player** (with album-art covers) and an MJPEG/AVI
+  **video player**.
+- **On-device fixes** to savestates, scaling, and the SD read path across several cores.
+
+### How it's built (the honest part)
+
+I don't come from an embedded background and I don't debug with JTAG. Two things carry this
+project instead: **host harnesses** under `linux/<sys>/` that link the *same core source* the
+firmware ships and reproduce bugs deterministically on a PC, and **SD-card logs** read back
+from the real hardware. Findings are kept fact-based and tagged by how they were verified —
+the full engineering log is in [docs/UPSTREAM_ENGINEERING_NOTES.md](docs/UPSTREAM_ENGINEERING_NOTES.md)
+(and issue #12), with the upstream-contribution status in issue #11.
+
+### ⚠️ Before you flash
+
+> Releases here are **test builds, not stable**.
 >
-> - **BACK UP YOUR SD CARD / SAVES FIRST.** Some changes touch the SD read/write
->   path and savestate format; a bad build can corrupt or invalidate saves.
-> - Test builds may show **on-screen debug overlays** (e.g. a video `rd/jpg/sd` HUD)
->   and may be unstable or change without notice.
+> - **BACK UP YOUR SD CARD / SAVES FIRST.** Some changes touch the SD read/write path and
+>   the savestate format; a bad build can corrupt or invalidate saves.
+> - Test builds may show **on-screen debug overlays** and may be unstable or change without
+>   notice.
 > - Only the **latest** release is meaningful; older ones are deleted.
-> - For the stable upstream project, use
->   [sylverb/game-and-watch-retro-go](https://github.com/sylverb/game-and-watch-retro-go)
->   (flash-only) — see also [EXPERIMENTAL_FORK.md](EXPERIMENTAL_FORK.md).
+> - For the stable, official project use
+>   [sylverb/game-and-watch-retro-go-sd](https://github.com/sylverb/game-and-watch-retro-go-sd)
+>   (or [game-and-watch-retro-go](https://github.com/sylverb/game-and-watch-retro-go) for the
+>   flash-only mod). See also [EXPERIMENTAL_FORK.md](EXPERIMENTAL_FORK.md) and
+>   [TESTBED_NOTES.md](TESTBED_NOTES.md).
 >
 > 한국어: 이 저장소는 **개인 실험용 테스트베드**입니다. 릴리즈는 **안정판이 아니라
 > 테스트 빌드**이며 SD 읽기/쓰기·세이브스테이트를 건드리는 변경이 있어 **세이브가
