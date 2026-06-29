@@ -130,10 +130,14 @@ static void change_phase(int ph)
 {
     s_phase = ph;
     switch (ph) {
-    case PH_BUSFREE: s_bsy = s_req = s_msg = s_cd = s_io = 0; s_port3 |= IRQ_DATA_DONE; diag("  DONE\n"); break;
-    case PH_COMMAND: s_bsy = 1; s_cd = 1; s_io = 0; s_msg = 0; s_req = 1; s_cmd_idx = 0; break;
+    /* $1803 (s_port3) is the SCSI IRQ status the game polls. DATA_READY must reflect
+     * the CURRENT data-in phase only — clearing it when the data phase ends. Leaving
+     * it set (the old |= never cleared) left s_port3 stuck at 0x60, so the game's
+     * "wait for DATA_READY to clear" poll after a READ spun forever -> black boot. */
+    case PH_BUSFREE: s_bsy = s_req = s_msg = s_cd = s_io = 0; s_port3 = (s_port3 & ~IRQ_DATA_READY) | IRQ_DATA_DONE; diag("  DONE\n"); break;
+    case PH_COMMAND: s_bsy = 1; s_cd = 1; s_io = 0; s_msg = 0; s_req = 1; s_cmd_idx = 0; s_port3 &= ~(IRQ_DATA_DONE | IRQ_DATA_READY); break;
     case PH_DATAIN:  s_bsy = 1; s_io = 1; s_cd = 0; s_msg = 0; s_req = 0; s_port3 |= IRQ_DATA_READY; break;
-    case PH_STATUS:  s_bsy = 1; s_io = 1; s_cd = 1; s_msg = 0; s_req = 1; break;
+    case PH_STATUS:  s_bsy = 1; s_io = 1; s_cd = 1; s_msg = 0; s_req = 1; s_port3 &= ~IRQ_DATA_READY; break;
     case PH_MSGIN:   s_bsy = 1; s_io = 1; s_cd = 1; s_msg = 1; s_req = 1; s_db = s_message; break;
     }
     update_irq();
