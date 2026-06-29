@@ -571,28 +571,24 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
             else if (t >= 40) { key[RETROK_RETURN] = 0; gsel_send = 0; }
         }
 
-        /* DIAG: bracket cpu_exec so a device crash leaves the last frame+phase in
-         * /videopac_diag.txt (overwrite each time; fclose flushes). Strip later. */
-        static int vpf = 0;
-        if (vpf < 1200) {
-            FILE *df = fopen("/videopac_diag.txt", "w");
-            if (df) { fprintf(df, "f%d pre  gsel=%d send=%d\n", vpf, gsel_active, gsel_send); fclose(df); }
-        }
-
         RLOOP=1;
         cpu_exec();
-
-        if (vpf < 1200) {
-            FILE *df = fopen("/videopac_diag.txt", "w");
-            if (df) { fprintf(df, "f%d post gsel=%d send=%d\n", vpf, gsel_active, gsel_send); fclose(df); }
-            vpf++;
-        }
 
         if (gsel_active) {
             char b[28];
             snprintf(b, sizeof(b), " SELECT GAME: %d ", gsel_num);
             odroid_overlay_draw_text(88, 104, 17 * 8, b, 0xFFFF, 0x0000);
             odroid_overlay_draw_text(48, 120, 26 * 8, " UP/DOWN = No.   A = Start", 0xFFFF, 0x0000);
+        }
+
+        /* DIAG (on-screen): a free-running frame counter in the top-left. If the
+         * number keeps counting, cpu_exec is fine (so a stuck game = input/select
+         * issue); if the number FREEZES, cpu_exec crashed on that frame. Strip later. */
+        {
+            static uint32_t vpdiag = 0;
+            char fb[20];
+            snprintf(fb, sizeof(fb), "F%lu", (unsigned long)vpdiag++);
+            odroid_overlay_draw_text(0, 0, 10 * 8, fb, 0xFFFF, 0x0000);
         }
 
         lcd_swap();
