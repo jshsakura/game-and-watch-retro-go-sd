@@ -694,6 +694,28 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_C64_BSS_SIZE = SIZEOF(.overlay_c64_bss);
 
+  .overlay_gamecom __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_gamecom_start__ = .;
+    build/gamecom/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_GAMECOM_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_GAMECOM_LOAD_START = LOADADDR(.overlay_gamecom);
+  _OVERLAY_GAMECOM_SIZE = SIZEOF(.overlay_gamecom);
+
+  .overlay_gamecom_bss _OVERLAY_GAMECOM_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_GAMECOM_BSS_START = .;
+    build/gamecom/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/gamecom/*.o (COMMON)
+    __ram_emu_gamecom_end__ = .;
+    _OVERLAY_GAMECOM_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_GAMECOM_BSS_END) < __RAM_EMU_END__, "Error: GAMECOM BSS overflow");
+  }
+  _OVERLAY_GAMECOM_BSS_SIZE = SIZEOF(.overlay_gamecom_bss);
+
   .overlay_celeste __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_celeste_start__ = .;
