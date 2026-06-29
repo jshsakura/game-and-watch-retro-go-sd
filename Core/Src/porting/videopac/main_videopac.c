@@ -59,12 +59,12 @@ static void blit() {
 
 }
 
-static bool SaveState(char *savePathName, char *sramPathName, int slot)
+static bool SaveState(const char *savePathName)
 {
     return true;
 }
 
-static bool LoadState(char *savePathName, char *sramPathName, int slot)
+static bool LoadState(const char *savePathName)
 {
     return true;
 }
@@ -198,27 +198,24 @@ static size_t videopac_getromdata(retro_emulator_file_t *rom_file, unsigned char
 
 static bool load_bios()
 {
-    retro_emulator_file_t *rom_file;
-    uint8_t *bios_data;
-    size_t bios_size;
+    uint8_t bios_data[1024];
     uint32_t crc;
     size_t i;
 
-    rom_system_t *rom_system = (rom_system_t *)rom_manager_system(&rom_mgr, "Philips Vectrex");
-    rom_file = (retro_emulator_file_t *)rom_manager_get_file((const rom_system_t *)rom_system,"bios.lzma");
-    if (rom_file == NULL) {
-        rom_file = (retro_emulator_file_t *)rom_manager_get_file((const rom_system_t *)rom_system,"bios.bin");
-    }
-    if (rom_file == NULL) {
-        printf("[O2EM]: Error loading BIOS ROM.\n");
+    /* BIOS lives at the firmware's standard /bios/<system>/ path (same convention
+     * as PCE's /bios/pce/syscard3.pce). It's only 1KB, so read it straight off the
+     * SD — no flash cache needed (that buffer holds the game ROM). */
+    FILE *bf = fopen("/bios/videopac/o2rom.bin", "rb");
+    if (bf == NULL) {
+        printf("[O2EM]: Error opening /bios/videopac/o2rom.bin\n");
         return false;
     }
-
-    bios_size = videopac_getromdata(rom_file, &bios_data,VIDEOPAC_BIOS_BUFF_LENGTH);
+    size_t bios_size = fread(bios_data, 1, sizeof(bios_data), bf);
+    fclose(bf);
 
     if (bios_size != 1024)
     {
-        printf("[O2EM]: Error loading BIOS ROM. bios_size : %d\n",bios_size);
+        printf("[O2EM]: Error loading BIOS ROM. bios_size : %d\n",(int)bios_size);
         return false;
     }
 
