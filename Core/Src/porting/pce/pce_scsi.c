@@ -32,7 +32,7 @@ __attribute__((weak)) void pce_scsi_pc_tick(uint16_t pc) { (void)pc; }
 static int s_diag_lines;
 static void diag(const char *fmt, ...)
 {
-    if (s_diag_lines > 300) return;
+    if (s_diag_lines > 4000) return;
     s_diag_lines++;
     FILE *f = fopen(PCECD_DIAG_FILE, "a");
     if (!f) return;
@@ -71,6 +71,20 @@ static uint32_t s_read_lba, s_read_remain;
 
 static uint8_t  s_port2, s_port3;   /* $1802 IRQ-enable, $1803 IRQ-status */
 static uint8_t  s_adpcm_ctrl;       /* $180B ADPCM DMA control latch */
+
+/* SCSI CDB length by opcode high nibble (Mednafen pce_fast). The NEC audio +
+ * TOC commands (0xDn/0xEn) are 10 bytes — we must pull all 10 so the SAPSP/SAPEP
+ * addressing mode byte cdb[9] is available for CD-DA. READ(6)/TEST = 6. */
+static const uint8_t RequiredCDBLen[16] = {
+    6, 6, 10, 10, 10, 10, 10, 10, 10, 10, 12, 12, 10, 10, 10, 10,
+};
+
+/* ---- CD-DA (Red Book audio / BGM) ---- */
+static bool     s_cdda_play;            /* currently streaming audio */
+static uint32_t s_cdda_lba, s_cdda_end, s_cdda_start; /* current/end/start sector */
+static uint8_t  s_cdda_sec[PCE_CD_SECTOR_RAW];
+static int      s_cdda_pos;             /* byte offset within s_cdda_sec (>= raw means reload) */
+static int      s_cdda_mode;            /* SAPEP play mode: 1=loop, 3=normal */
 static int      s_trace;            /* trace register accesses during a bulk READ */
 static int      s_atrace;           /* trace ADPCM/idle-loop polls ($180A-F, $1803) */
 
@@ -106,6 +120,7 @@ void pce_scsi_reset(void)
     s_read_remain = 0;
     s_port2 = s_port3 = 0;
     s_adpcm_ctrl = 0;
+    s_cdda_play = false;
     CPU_PCE.irq_lines &= ~INT_IRQ2;
 }
 
@@ -237,6 +252,54 @@ static void get_dir_info(void)
     do_data_in(out, len);
 }
 
+/* Decode a SAPSP/SAPEP audio position. cmd[9]&0xC0 selects the mode (Mednafen):
+ * 0x00=LBA(cmd[3..5]), 0x40=MSF BCD(cmd[2..4]), 0x80=track number BCD(cmd[2]). */
+static uint32_t cdda_decode_pos(const uint8_t *cmd)
+{
+    switch (cmd[9] & 0xC0) {
+    case 0x00:
+        return ((uint32_t)cmd[3] << 16) | ((uint32_t)cmd[4] << 8) | cmd[5];
+    case 0x40: {
+        uint32_t lba = (bcd_to_u8(cmd[2]) * 60u + bcd_to_u8(cmd[3])) * 75u + bcd_to_u8(cmd[4]);
+        return (lba >= PCE_CD_LEADIN_LBA) ? lba - PCE_CD_LEADIN_LBA : 0;
+    }
+    default: {
+        int t = bcd_to_u8(cmd[2]); if (!t) t = 1;
+        if (s_toc) for (int i = 0; i < s_toc->num_tracks; i++)
+            if (s_toc->tracks[i].number == t) return s_toc->tracks[i].start_lba;
+        return s_toc ? s_toc->total_lba : 0;
+    }
+    }
+}
+
+/* Fill `frames` stereo int16 samples at half the CD rate (44100/2 = 22050) by
+ * decimating. Returns frames produced (0 = not playing). Reads raw 2352B audio
+ * sectors on demand. */
+int pce_scsi_cdda_fill(int16_t *out, int frames)
+{
+    if (!s_cdda_play || !s_present) return 0;
+    for (int i = 0; i < frames; i++) {
+        if (s_cdda_pos + 8 > PCE_CD_SECTOR_RAW) {
+            if (s_cdda_lba >= s_cdda_end) {
+                if (s_cdda_mode == 1) {            /* LOOP: restart at the start sector */
+                    s_cdda_lba = s_cdda_start;
+                } else {                           /* NORMAL: stop, pad the rest with silence */
+                    s_cdda_play = false;
+                    for (; i < frames; i++) { out[i * 2] = 0; out[i * 2 + 1] = 0; }
+                    return frames;
+                }
+            }
+            if (!pce_cd_read_sector(s_toc, s_cdda_lba, s_cdda_sec)) { s_cdda_play = false; return i; }
+            s_cdda_lba++;
+            s_cdda_pos = 0;
+        }
+        out[i * 2]     = (int16_t)(s_cdda_sec[s_cdda_pos]     | (s_cdda_sec[s_cdda_pos + 1] << 8));
+        out[i * 2 + 1] = (int16_t)(s_cdda_sec[s_cdda_pos + 2] | (s_cdda_sec[s_cdda_pos + 3] << 8));
+        s_cdda_pos += 8;                            /* consume 2 CD frames, emit 1 (decimate /2) */
+    }
+    return frames;
+}
+
 static void execute_command(void)
 {
     uint8_t op = s_cmd[0];
@@ -270,7 +333,28 @@ static void execute_command(void)
     case 0xDE: /* GET DIR INFO (TOC) */
         get_dir_info();
         break;
-    case 0xD8: case 0xD9: case 0xDA: case 0xDD: /* audio: ack OK for now */
+    case 0xD8: /* SAPSP — set audio playback start position (+ play if cmd[1]) */
+        s_cdda_start = s_cdda_lba = cdda_decode_pos(s_cmd);
+        s_cdda_end   = s_toc ? s_toc->total_lba : 0;
+        s_cdda_pos   = PCE_CD_SECTOR_RAW;          /* force a fresh sector load */
+        s_cdda_mode  = 3;
+        s_cdda_play  = (s_cmd[1] != 0);
+        diag("  CDDA SAPSP lba=%lu play=%d\n", (unsigned long)s_cdda_lba, s_cdda_play);
+        send_status(STATUS_GOOD, 0);
+        break;
+    case 0xD9: /* SAPEP — set end position + play mode (1=loop 2=int 3=normal 0=stop) */
+        s_cdda_end  = cdda_decode_pos(s_cmd);
+        s_cdda_mode = s_cmd[1];
+        s_cdda_play = (s_cmd[1] != 0);
+        s_cdda_pos  = PCE_CD_SECTOR_RAW;
+        diag("  CDDA SAPEP end=%lu mode=%d\n", (unsigned long)s_cdda_end, s_cmd[1]);
+        send_status(STATUS_GOOD, 0);
+        break;
+    case 0xDA: /* PAUSE */
+        s_cdda_play = false;
+        send_status(STATUS_GOOD, 0);
+        break;
+    case 0xDD: /* READ SUBCHANNEL Q — minimal ack */
         send_status(STATUS_GOOD, 0);
         break;
     default:
@@ -295,7 +379,7 @@ static void ack_assert(void)
 static void ack_deassert(void)
 {
     switch (s_phase) {
-    case PH_COMMAND: if (s_cmd_idx >= 6) execute_command(); else s_req = 1; break;
+    case PH_COMMAND: if (s_cmd_idx >= RequiredCDBLen[s_cmd[0] >> 4]) execute_command(); else s_req = 1; break;
     case PH_DATAIN:  feed_din(); break;  /* advance on ACK (TOC + manual-ack READs); $1808 reads advance separately */
     case PH_STATUS:  change_phase(PH_MSGIN); break;
     case PH_MSGIN:   change_phase(PH_BUSFREE); break;

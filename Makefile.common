@@ -1031,6 +1031,18 @@ $(BUILD_DIR)/videopac/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD
 	$(V)$(ECHO) [ CC o2em ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(VIDEOPAC_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/videopac/$(notdir $(<:.c=.lst)) $< -o $@
 
+# The chips ZX core (zx_impl.o) exports generic z80_*/mem_*/kbd_* symbols that
+# collide with the smsplusgx/msx Z80 cores at link time (they live in separate
+# overlays but the linker sees duplicate globals). It's a single TU, so localize
+# everything except the small zx_* API that main_zx.o needs.
+$(BUILD_DIR)/zx/zx_impl.o: Core/Src/porting/zx/zx_impl.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+	$(V)$(ECHO) [ CC zx-core ] $(notdir $<)
+	$(V)$(CC) -c $(CFLAGS) $(ZX_C_INCLUDES) $< -o $@
+	$(V)$(CP) --keep-global-symbol=zx_init --keep-global-symbol=zx_exec \
+		--keep-global-symbol=zx_quickload --keep-global-symbol=zx_joystick \
+		--keep-global-symbol=zx_key_down --keep-global-symbol=zx_key_up \
+		--keep-global-symbol=zx_display_info $@
+
 $(BUILD_DIR)/zx/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC zx ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(ZX_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/zx/$(notdir $(<:.c=.lst)) $< -o $@

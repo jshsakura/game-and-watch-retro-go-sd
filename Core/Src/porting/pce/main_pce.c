@@ -677,10 +677,19 @@ void pce_pcm_submit() {
     int16_t* sound_buffer = audio_get_active_buffer();
     uint16_t sound_buffer_length = audio_get_buffer_length();
 
+    /* CD-DA (Red Book audio / BGM): pull this frame's samples (22050Hz stereo)
+     * and mix with the PSG. Returns 0 for HuCard / when no audio is playing. */
+    static int16_t cdda_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
+    int cdda_n = pce_scsi_cdda_fill(cdda_buf, AUDIO_BUFFER_LENGTH_PCE);
+
     for (int i = 0; i < sound_buffer_length; i++) {
         /* mix left & right */
         int32_t sample = (audioBuffer_pce[i*2] + audioBuffer_pce[i*2+1]);
-        sound_buffer[i] = (sample * factor) >> 8;
+        if (cdda_n && i < cdda_n)
+            sample += (cdda_buf[i*2] + cdda_buf[i*2+1]) >> 1;   /* CD-DA is full-scale PCM */
+        sample = (sample * factor) >> 8;
+        if (sample > 32767) sample = 32767; else if (sample < -32768) sample = -32768;
+        sound_buffer[i] = sample;
     }
 }
 

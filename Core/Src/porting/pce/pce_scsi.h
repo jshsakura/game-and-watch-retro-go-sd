@@ -24,3 +24,7 @@ void    pce_scsi_write(uint8_t reg, uint8_t val);
 /* Per-frame poll: advances pending reads and asserts IRQ when data/status is
  * ready (kept out of the hot CPU read path). Returns true if an IRQ is pending. */
 void pce_scsi_run(void);
+
+/* Fill `frames` stereo int16 samples of CD-DA (Red Book audio / BGM) at 22050Hz
+ * (half the CD rate). Returns frames produced, 0 if no audio is playing. */
+int pce_scsi_cdda_fill(int16_t *out, int frames);
