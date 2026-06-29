@@ -740,6 +740,21 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
             extern uint8_t *PageR[8];
             static int s_pc_n = 0, s_pc_logged = 0;
+            /* EXPERIMENT (it21): the game idle-halts at its entry (0x6254:
+             * JSR $635a; JMP $6257) expecting interrupts ON — it set up the VDC
+             * vblank IRQ but never CLIs, and the System Card launcher
+             * (EBFF: TXS; EC02: JMP ($2282)) hands off with FL_I still set, so
+             * the pending IRQ1 never fires. Clear FL_I once at the idle-halt;
+             * RTI then preserves the cleared state. If the game springs to
+             * life, the fix is to enter the launched program with IRQs on. */
+            static bool s_forced_cli = false;
+            if (!s_forced_cli && CPU_PCE.PC == 0x6257 && (CPU_PCE.P & 0x04)) {
+                s_forced_cli = true;
+                CPU_PCE.P &= ~0x04;   /* clear FL_I */
+                FILE *cf = fopen("/pcecd_diag.txt", "a");
+                if (cf) { fprintf(cf, "FORCE-CLI at 0x6257 (P was %02x, irql=%02x irqm=%02x)\n",
+                                  CPU_PCE.P | 0x04, CPU_PCE.irq_lines, CPU_PCE.irq_mask); fclose(cf); }
+            }
             if ((s_pc_n++ % 16) == 0 && s_pc_logged < 20) {
                 s_pc_logged++;
                 uint16_t pc = CPU_PCE.PC;
