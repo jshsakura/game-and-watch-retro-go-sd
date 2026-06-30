@@ -1425,6 +1425,9 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
       if (load_core_bin_with_header("/cores/c64.bin", (uint8_t *)&__RAM_EMU_START__)) {
         memset(&_OVERLAY_C64_BSS_START, 0x0, (size_t)&_OVERLAY_C64_BSS_SIZE);
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_C64_SIZE);
+        /* Frodo is C++: set up the overlay heap (badheap = [c64 bss end, RAM end])
+         * so new/new[] for the 64KB C64 RAM don't assert. Without this badheap=0. */
+        cpp_heap_init((size_t)&_OVERLAY_C64_BSS_END);
         app_main_c64(load_state, start_paused, save_slot);
       }
     } else if(strcmp(system_name, "Tiger Game.com") == 0)  {

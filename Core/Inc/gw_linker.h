@@ -124,6 +124,7 @@ extern void * _OVERLAY_C64_LOAD_START[];
 extern uint8_t _OVERLAY_C64_SIZE;
 extern void * _OVERLAY_C64_BSS_START[];
 extern uint8_t _OVERLAY_C64_BSS_SIZE;
+extern void * _OVERLAY_C64_BSS_END[];
 extern void * _OVERLAY_GAMECOM_LOAD_START[];
 extern uint8_t _OVERLAY_GAMECOM_SIZE;
 extern void * _OVERLAY_GAMECOM_BSS_START[];
