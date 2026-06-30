@@ -161,7 +161,7 @@ void app_main_gamecom(uint8_t load_state, uint8_t start_paused, int8_t save_slot
 
     while (true) {
         wdog_refresh();
-        common_emu_frame_loop();
+        bool drawFrame = common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
         common_emu_input_loop(&joystick, options, &gc_blit);   /* repaint cb: NULL -> pause menu called (*NULL)() = PC=0 HardFault */
@@ -188,8 +188,11 @@ void app_main_gamecom(uint8_t load_state, uint8_t start_paused, int8_t save_slot
             gamecom_set_stylus(0, 0, 0);
 
         gamecom_run_frame();
-        gc_blit();
-        lcd_swap();
+        if (drawFrame) {                 /* frame-skip the blit when behind -> less audio underrun ("득득득") */
+            gc_blit();
+            common_ingame_overlay();     /* draw volume/brightness/pause overlay ON the frame (was missing -> overlay flickered/hid) */
+            lcd_swap();
+        }
 
         gamecom_pcm_submit();
         common_emu_sound_sync(false);

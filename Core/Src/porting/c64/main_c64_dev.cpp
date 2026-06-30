@@ -122,13 +122,6 @@ void C64Display::Update(void)
     s_frame++;
     wdog_refresh();
 
-    /* Menu / volume / brightness / power-off — the path every other core uses. Without
-     * this the C64 had no menu, no volume, and could not be exited or powered off. */
-    odroid_gamepad_state_t js;
-    odroid_input_read_gamepad(&js);
-    static odroid_dialog_choice_t c64_menu_options[] = { ODROID_DIALOG_CHOICE_LAST };
-    common_emu_input_loop(&js, c64_menu_options, &c64_blit_frame);
-
     /* autostart sequencing */
     if (s_is_prg) {
         if      (s_frame == 120) { inject_prg(TheC64); }
