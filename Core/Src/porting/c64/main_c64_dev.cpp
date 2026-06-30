@@ -27,11 +27,23 @@ void  heap_itc_alloc(bool itc);
  * line written = where the .d64 load stalled. 1541d64.cpp calls this for disk events. */
 extern "C" void c64_diag(const char *fmt, ...)
 {
-    /* DISABLED: the device filesystem allows only ONE open file (gw_littlefs
-     * MAX_OPEN_FILES=1). Opening /c64_diag.txt while the .d64 (the_file) is open
-     * corrupted the disk-read handle, so the virtual 1541 looped re-reading the
-     * directory (t18 s0) and never loaded the game. The log itself was the bug. */
-    (void)fmt;
+    /* The earlier "log corrupts the .d64 handle" claim was WRONG: fopen on this
+     * device routes to FatFs (Core/Src/syscalls.c, MAX_OPEN_FILES=10, FF_FS_LOCK=0),
+     * NOT the littlefs 1-file limit — so opening /c64_diag.txt alongside the open .d64
+     * is safe (different files, separate slots). The t18-loop "fix" of disabling this
+     * was treating a timing coincidence; we never actually measured the loop. Re-enabled
+     * (capped, append) so one build captures WHERE the .d64 load stalls: a tail of
+     * repeating "RD t=18 s=0" = directory re-read loop; advancing tracks then stop = a
+     * different failure. Delete /c64_diag.txt before a clean test. */
+    static int s_lines = 0;
+    if (s_lines >= 250) return;
+    s_lines++;
+    FILE *f = fopen("/c64_diag.txt", "a");
+    if (!f) return;
+    va_list ap; va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fclose(f);
 }
 
 #define RGB565(r,g,b) ((((r)>>3)<<11)|(((g)>>2)<<5)|((b)>>3))

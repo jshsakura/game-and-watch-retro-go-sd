@@ -207,6 +207,11 @@ static void adpcm_dma_drain(void)
      *    $E9C5 status-wait can read the result byte and run the normal handshake. */
     send_status(STATUS_GOOD, 0);
     s_port3 |= IRQ_DATA_DONE;
+    update_irq();   /* refresh IRQ2 with the just-set DATA_DONE: send_status/change_phase
+                       ran update_irq() BEFORE we OR'd DATA_DONE in, so without this the
+                       ADPCM-load-complete IRQ never asserts and the System Card poll-loops
+                       $1802/$1803 forever right after the opening (Dracula X "opening then
+                       stops"). Every other DATA_DONE set refreshes the line via change_phase. */
 }
 
 static void do_data_in(const uint8_t *buf, uint32_t len)
