@@ -562,10 +562,13 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
 
     app_data.euro = 0;
 
-    /* Auto-start: the Odyssey2 BIOS "SELECT GAME" screen waits for a keypad game
-     * number. Most carts use game 1, so a short while after launch we press keypad
-     * "1" then RETURN. (A proper on-screen keypad to choose other numbers — like
-     * the web emulator's vkeyb — is a follow-up.) Long holds so the BIOS catches it. */
+    /* Odyssey2 "SELECT GAME": the BIOS waits for a keypad game number. We auto-select
+     * game 1 once at boot — hold keypad "1" across the boot→SELECT-GAME window (the
+     * BIOS scans the matrix at an unpredictable moment, so a one-frame pulse is missed)
+     * then release. After that the A button presses "1" manually (other numbers via an
+     * on-screen keypad = follow-up). The cart now loads correctly (videopac_getromdata
+     * fix), so this short window is enough — no permanent hold needed. */
+    #define O2_AUTOSEL_FRAMES 180   /* ~3s @ 60Hz — covers boot to the keypad scan */
     int      autosel = 0;
     uint32_t vpdiag  = 0;
 
@@ -581,42 +584,22 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
 
         videopac_input_update(&joystick);
 
-        /* Auto-start (verified against o2em's read_P2 keypad scan): the O2 BIOS scans
-         * the keypad matrix at unpredictable moments, so brief/pulsed presses are
-         * missed on hardware. A SINGLE digit selects the game immediately — RETURN is
-         * NOT needed (and injecting it can disturb the entry). So just HOLD keypad "1"
-         * continuously (every frame) for the first ~12s. After that, the A button
-         * presses "1" manually (libretro-o2em maps buttons straight to keypad keys).
-         * Holding key[49] in-game is harmless: games read the joystick, not the keypad. */
+        /* Auto-select game 1 for the boot window, then let A press "1" manually.
+         * Holding key[49] is harmless in-game: games read the joystick, not the keypad. */
         {
             extern unsigned char key[256*2];
-            key[49] = (autosel < 700 || joystick.values[ODROID_INPUT_A]) ? 1 : 0;
-            if (autosel < 700) autosel++;
+            key[49] = (autosel < O2_AUTOSEL_FRAMES || joystick.values[ODROID_INPUT_A]) ? 1 : 0;
+            if (autosel < O2_AUTOSEL_FRAMES) autosel++;
         }
 
         RLOOP=1;
         cpu_exec();
 
-        /* DIAG (on-screen, no I/O): free-running counter, top-left. Counting =
-         * cpu_exec OK (stuck game = input); frozen = cpu_exec crashed. Strip later. */
-        {
-            extern unsigned int g_o2_kbscan, g_o2_key1, g_o2_keyread;
-            char fb[40];
-            /* F=frame, R=#digit-row keypad scans by the BIOS, K=#scans that saw
-             * key[49], Y=#scans where a key actually REACHED the BIOS (row produced
-             * a value). In the host harness R==K==Y and the game starts by ~frame
-             * 100, so on device:
-             *   R==0        -> BIOS never scans the keypad (CPU/boot diverged)
-             *   R>0,K==0    -> our key[49] write isn't landing in the core's key[]
-             *   K>0,Y==0    -> key[49] set but NOT in the scanned key_map row
-             *   Y>0,no game -> key reaches BIOS but selection logic differs. */
-            /* on-SD log: full state at frame 0, then a line every 30 frames (~20s) */
-            if (vpdiag == 0 || (vpdiag < 1200 && (vpdiag % 30) == 0))
-                videopac_diag_log(vpdiag);
-            snprintf(fb, sizeof(fb), "F%lu R%u K%u Y%u",
-                     (unsigned long)vpdiag++, g_o2_kbscan, g_o2_key1, g_o2_keyread);
-            odroid_overlay_draw_text(0, 0, 20 * 8, fb, 0xFFFF, 0x0000);
-        }
+        /* On-SD diag (silent, no on-screen text): confirms the cart-load fix on device
+         * — frame 0 logs the cart CRC, then a line every 30 frames. Strip once verified. */
+        if (vpdiag == 0 || (vpdiag < 1200 && (vpdiag % 30) == 0))
+            videopac_diag_log(vpdiag);
+        vpdiag++;
 
         lcd_swap();
         pcm_submit();
