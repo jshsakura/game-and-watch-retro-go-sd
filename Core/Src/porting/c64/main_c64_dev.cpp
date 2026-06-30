@@ -196,6 +196,18 @@ static bool load_rom(const char *path, uint8 *dst, uint32_t want)
     return true;
 }
 
+/* Read a ROM straight from SD into RAM (NO flash cache). The cache can return clobbered
+ * bytes after wrapping; the BIOS is tiny so a direct fread is both safe and simple. */
+static bool read_bios_file(const char *path, uint8 *dst, uint32_t want)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("[c64] missing %s\n", path); return false; }
+    size_t n = fread(dst, 1, want, f);
+    fclose(f);
+    if (n != want) { printf("[c64] %s short read %u/%u\n", path, (unsigned)n, (unsigned)want); return false; }
+    return true;
+}
+
 extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)load_state; (void)start_paused; (void)save_slot;
@@ -222,21 +234,19 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     ThePrefs.FastReset  = true;
     c64_diag("=== C64 BOOT === prg=%d disk=%s\n", (int)s_is_prg, ThePrefs.DrivePath[0]);
 
-    /* Basic/Char MUST be COPIED into RAM, not used live from the flash cache.
-     * odroid_overlay_cache_file_in_flash() is a CIRCULAR buffer (gw_flash_alloc.c):
-     * a later cache write (chargen, kernal, or any other core's ROM/logo cached on a
-     * previous launch) wraps and OVERWRITES an earlier entry. When Basic/Char pointed
-     * straight at flash, that clobber turned the BASIC ROM into garbage -> the 6510 ran
-     * junk -> MOS6510::illegal_op() called the_c64->Reset() every time -> the drive was
-     * re-Reset in a loop (the endless "RD t=18 s=0" with no OPEN, never loading the .d64).
-     * It "worked once" only when the cache happened not to have wrapped yet. Copying each
-     * ROM into a private RAM buffer right after caching makes it immune to later writes.
-     * 12KB of overlay BSS is a fine trade for not corrupting the ROM. Kernal is likewise
-     * copied (it must be writable for C64::PatchKernal's IEC hooks). */
+    /* Read the 3 ROMs STRAIGHT from SD into RAM, bypassing the flash cache entirely.
+     * PROVEN on the host harness: the Frodo core + these exact BIOS files load .d64s
+     * perfectly (Giana Sisters: RD t18s0 -> t18s1 -> t17 file). So the device-only
+     * t18-s0 reset loop is NOT the core and NOT the ROM data — it is the ROM-LOADING
+     * path. odroid_overlay_cache_file_in_flash() is a CIRCULAR buffer (gw_flash_alloc.c)
+     * that can return clobbered/garbage bytes after the cache has wrapped across core
+     * launches; a garbage KERNAL/BASIC makes the 6510 run junk -> MOS6510::illegal_op()
+     * -> the_c64->Reset() -> drive re-Reset (the endless "RD t=18 s=0", no OPEN, no load).
+     * fread is ~20KB total and avoids the cache machinery completely — deterministic. */
     static uint8 s_basic_rom[0x2000];
     static uint8 s_char_rom[0x1000];
-    if (!load_rom("/bios/c64/basic.bin",   s_basic_rom, 0x2000) ||
-        !load_rom("/bios/c64/chargen.bin", s_char_rom,  0x1000)) {
+    if (!read_bios_file("/bios/c64/basic.bin",   s_basic_rom, 0x2000) ||
+        !read_bios_file("/bios/c64/chargen.bin", s_char_rom,  0x1000)) {
         c64_diag("ROM FAIL (need /bios/c64/{basic,chargen}.bin)\n");
         return;
     }
@@ -244,7 +254,7 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     c64_ext_char_rom  = s_char_rom;
 
     C64 *the_c64 = new C64;
-    if (!load_rom("/bios/c64/kernal.bin", the_c64->Kernal, 0x2000)) {
+    if (!read_bios_file("/bios/c64/kernal.bin", the_c64->Kernal, 0x2000)) {
         c64_diag("ROM FAIL (need /bios/c64/kernal.bin)\n");
         return;   /* bounce back to the launcher instead of freezing (like the other cores) */
     }
