@@ -227,11 +227,11 @@ void app_main_gamecom(uint8_t load_state, uint8_t start_paused, int8_t save_slot
         if (joystick.values[ODROID_INPUT_SELECT]) in2 &= ~GC_IN2_D;   /* SELECT -> D */
         gamecom_set_input_state(in0, in1, in2);
 
-        /* Stylus bridge (see file header). */
+        /* Stylus bridge: ONLY the boot auto-tap of the CARTRIDGE icon. The old "A = centre
+         * tap" made every A press also poke the touchscreen mid-game, so A felt like it
+         * whiffed/double-fired ("헛방"); A is now a clean GC_IN0_A action button. */
         if (!load_state && frame >= GC_LAUNCH_BEGIN && frame < GC_LAUNCH_END)
             gamecom_set_stylus(45, 60, 1);                 /* auto-enter CARTRIDGE */
-        else if (joystick.values[ODROID_INPUT_A])
-            gamecom_set_stylus(GAMECOM_W / 2, GAMECOM_H / 2, 1); /* A = centre tap */
         else
             gamecom_set_stylus(0, 0, 0);
 
