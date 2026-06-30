@@ -27,17 +27,9 @@ void  heap_itc_alloc(bool itc);
  * line written = where the .d64 load stalled. 1541d64.cpp calls this for disk events. */
 extern "C" void c64_diag(const char *fmt, ...)
 {
-    /* The earlier "log corrupts the .d64 handle" claim was WRONG: fopen on this
-     * device routes to FatFs (Core/Src/syscalls.c, MAX_OPEN_FILES=10, FF_FS_LOCK=0),
-     * NOT the littlefs 1-file limit — so opening /c64_diag.txt alongside the open .d64
-     * is safe (different files, separate slots). The t18-loop "fix" of disabling this
-     * was treating a timing coincidence; we never actually measured the loop. Re-enabled
-     * (capped, append) so one build captures WHERE the .d64 load stalls: a tail of
-     * repeating "RD t=18 s=0" = directory re-read loop; advancing tracks then stop = a
-     * different failure. Delete /c64_diag.txt before a clean test. */
-    static int s_lines = 0;
-    if (s_lines >= 250) return;
-    s_lines++;
+    static int lines;
+    if (lines > 600) return;
+    lines++;
     FILE *f = fopen("/c64_diag.txt", "a");
     if (!f) return;
     va_list ap; va_start(ap, fmt);
@@ -107,24 +99,6 @@ static void inject_prg(C64 *c64)
     fclose(f);
 }
 
-/* Scale the full DISPLAY_X×DISPLAY_Y Frodo picture to the LCD, fit to width keeping
- * aspect (letterbox top/bottom) — shows the whole picture incl. the right edge the old
- * 320-wide crop cut off; no stretch. Also the pause-menu repaint callback. */
-static void c64_blit_frame(void)
-{
-    uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
-    const int dstH = DISPLAY_Y * WIDTH / DISPLAY_X;       /* 208*320/340 = 195 */
-    const int y0   = (HEIGHT - dstH) / 2;                 /* 22 */
-    memset(out, 0, (size_t)y0 * WIDTH * sizeof(uint16_t));
-    memset(&out[(y0 + dstH) * WIDTH], 0, (size_t)(HEIGHT - y0 - dstH) * WIDTH * sizeof(uint16_t));
-    for (int dy = 0; dy < dstH; dy++) {
-        const uint8 *src = &s_bitmap[(dy * DISPLAY_Y / dstH) * DISPLAY_X];
-        uint16_t *dst = &out[(y0 + dy) * WIDTH];
-        for (int dx = 0; dx < WIDTH; dx++)
-            dst[dx] = s_pal565[src[dx * DISPLAY_X / WIDTH] & 0x0f];
-    }
-}
-
 void C64Display::Update(void)
 {
     s_frame++;
@@ -135,18 +109,8 @@ void C64Display::Update(void)
         if      (s_frame == 120) { inject_prg(TheC64); }
         else if (s_frame == 150) { s_type = "RUN\r"; s_typepos = 0; }
     } else {
-        /* LOAD the first file at frame 150, then RUN only AFTER the load has finished
-         * (disk reads started, then stopped). A fixed frame is WRONG: during the load the
-         * auto-warp races s_frame ~16x, so a frame-420 RUN fired mid-load and the 1541
-         * looped re-reading the directory (t18 s0) forever instead of running the game. */
-        extern volatile unsigned int g_c64_disk_reads;
-        static unsigned int s_run_last = 0;
-        static int s_run_idle = 0, s_run_done = 0;
-        if (s_frame == 150) { s_type = "LOAD\"*\",8,1\r"; s_typepos = 0; }
-        else if (s_frame > 150 && !s_run_done) {
-            if (g_c64_disk_reads != s_run_last) { s_run_last = g_c64_disk_reads; s_run_idle = 0; }
-            else if (g_c64_disk_reads > 1 && ++s_run_idle > 40) { s_type = "RUN\r"; s_typepos = 0; s_run_done = 1; }
-        }
+        if      (s_frame == 150) { s_type = "LOAD\"*\",8,1\r"; s_typepos = 0; }
+        else if (s_frame == 420) { s_type = "RUN\r";          s_typepos = 0; }
     }
     if (s_type && TheC64->RAM[0xC6] == 0) {
         int n = 0;
@@ -165,23 +129,23 @@ void C64Display::Update(void)
     static int s_warp_idle = 999;
     if (g_c64_disk_reads != s_last_reads) { s_last_reads = g_c64_disk_reads; s_warp_idle = 0; }
     else if (s_warp_idle < 999) s_warp_idle++;
-    /* Auto-warp DISABLED: running the emulation unpaced (skipping sound_sync) while the
-     * device does slow real SD reads desynced the C64<->1541 IEC timing, so the 1541
-     * looped forever re-reading the directory (t18 s0) and never loaded the file. The host
-     * harness never hit this (its file reads are instant). Paced 50fps keeps the read
-     * latency small relative to emulation, so the load completes reliably — just slower
-     * (~30-60s at LOADING for a full disk). Reliable-but-slow beats a fast infinite loop. */
-    /* Auto-warp restored: it was never the directory-loop cause (the loop persisted with
-     * warp off); the real culprit was the c64_diag log opening a 2nd file. Warp gives the
-     * fast load again. */
     const bool warp = (s_warp_idle < 25);
     if (warp && (s_frame & 0x0F) != 0)
         return;                       /* skip blit + sync -> full-speed load */
 
-    c64_blit_frame();
+    /* blit Frodo bitmap -> LCD (320 wide crop, RGB565), letterboxed into 240 rows */
+    uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
+    memset(out, 0, (size_t)C64_LETTERBOX_Y * WIDTH * sizeof(uint16_t));
+    memset(&out[(C64_LETTERBOX_Y + DISPLAY_Y) * WIDTH], 0,
+           (size_t)(HEIGHT - C64_LETTERBOX_Y - DISPLAY_Y) * WIDTH * sizeof(uint16_t));
+    for (int y = 0; y < DISPLAY_Y; y++) {
+        const uint8 *src = &s_bitmap[y * DISPLAY_X + C64_CROP_X];
+        uint16_t *dst = &out[(C64_LETTERBOX_Y + y) * WIDTH];
+        for (int x = 0; x < 320; x++) dst[x] = s_pal565[src[x] & 0x0f];
+    }
     lcd_swap();
     if (!warp)
-        common_emu_sound_sync(false);
+        common_emu_sound_sync(false);   /* during warp, don't pace to audio */
 }
 
 #ifdef __riscos__
@@ -189,6 +153,7 @@ void C64Display::PollKeyboard(uint8*,uint8*,uint8*,uint8*) {}
 #else
 void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joystick)
 {
+    (void)key_matrix; (void)rev_matrix;
     odroid_gamepad_state_t js;
     odroid_input_read_gamepad(&js);
     uint8 m = 0xff;  /* active-low */
@@ -196,21 +161,8 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
     if (js.values[ODROID_INPUT_DOWN])  m &= ~0x02;
     if (js.values[ODROID_INPUT_LEFT])  m &= ~0x04;
     if (js.values[ODROID_INPUT_RIGHT]) m &= ~0x08;
-    if (js.values[ODROID_INPUT_A])     m &= ~0x10;  /* fire (joystick port 2) */
+    if (js.values[ODROID_INPUT_A])     m &= ~0x10;  /* fire */
     if (joystick) *joystick = m;
-
-    /* Keyboard: C64 has no keys mapped otherwise. START -> "Y" so Y/N prompts (e.g.
-     * crack-trainer "UNLIMITED LIVES (Y/N)") and yes/no menus can be answered. The CIA
-     * only resets the matrix to 0xff ONCE at reset, so PollKeyboard must release-then-press
-     * every call or the key sticks. (autostart types into the keyboard BUFFER, not the
-     * matrix, so this is independent.) Y = row 3, col 1. */
-    if (key_matrix && rev_matrix) {
-        for (int i = 0; i < 8; i++) { key_matrix[i] = 0xff; rev_matrix[i] = 0xff; }
-        if (js.values[ODROID_INPUT_START]) {   /* press Y */
-            key_matrix[3] &= ~0x02;
-            rev_matrix[1] &= ~0x08;
-        }
-    }
 }
 #endif
 
@@ -254,9 +206,6 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     cpp_init_array(__init_array_c64_start__, __init_array_c64_end__);
 
     odroid_system_init(APPID_GB, 22050);
-    /* Register NULL state handlers so the pause-menu save/load are no-ops rather than
-     * calling a stale pointer left by a previously-run core (no C64 save/load yet). */
-    odroid_system_emu_init(NULL, NULL, NULL, NULL, NULL, NULL);
 
     heap_itc_alloc(true);   /* small allocs in ITCM, big spill to AXI heap (Lynx pattern) */
 
