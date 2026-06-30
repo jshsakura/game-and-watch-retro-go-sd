@@ -35,6 +35,9 @@
 #define WDT_INT  SM8500_WDT_INT
 #define NMI_INT  SM8500_NMI_INT
 
+#ifdef GC_PROFILE
+unsigned long gc_prof_insns=0, gc_prof_halt=0;
+#endif
 #define ASSERT_LINE SM8500_ASSERT_LINE
 #define CLEAR_LINE  SM8500_CLEAR_LINE
 
@@ -71,7 +74,6 @@ static uint8_t mem_readbyte(uint32_t offset)
 
 static void mem_writebyte(uint32_t offset, uint8_t data)
 {
-	uint8_t i;
 	offset &= 0xffff;
 	if (offset < 0x10)
 		m_register_ram[offset + (m_PS0 & 0xF8)] = data;
@@ -88,10 +90,12 @@ static void mem_writebyte(uint32_t offset, uint8_t data)
 		case 0x1a: m_CKC = data; break;
 		case 0x1c:
 		case 0x1d: get_sp(); break;
-		case 0x1e: m_PS0 = data;
-			for (i = 0; i < 16; i++)   /* mirror register file into low RAM */
-				gc_program_write(i, mem_readbyte(i));
-			break;
+		/* MAME also mirrored the 16-register file into low RAM (0x00-0x0F) on
+		 * every PS0 write, purely to refresh its debugger view — ~16 writes per
+		 * instruction (the execute loop writes PS0 each step). Nothing in the
+		 * emulation reads that mirror (registers come from m_register_ram), so
+		 * it's dropped: it was the dominant per-frame cost (248K->56K writes). */
+		case 0x1e: m_PS0 = data; break;
 		case 0x1f: m_PS1 = data; break;
 	}
 }
@@ -235,12 +239,17 @@ int sm8500_execute(int cycles)
 
 		process_interrupts();
 		if (!m_halted) {
+#ifdef GC_PROFILE
+			gc_prof_insns++;
+#endif
+			/* m_SYS/m_PS0/m_PS1/m_SP are kept in sync with program RAM at all
+			 * times (every write to 0x19/0x1e/0x1f/0x1c-0x1d goes through
+			 * mem_writebyte which updates both global+RAM; interrupts update
+			 * both; the writebacks below sync RAM after opcode-modified globals).
+			 * So MAME's per-instruction re-read of these from RAM is redundant —
+			 * dropping it removes ~5 reads/instruction (~70K reads/frame). */
 			m_oldpc = m_PC;
 			uint8_t op = mem_readbyte(m_PC++);
-			m_SYS = gc_program_read(0x19);
-			m_PS0 = gc_program_read(0x1e);
-			m_PS1 = gc_program_read(0x1f);
-			get_sp();
 			switch (op)
 			{
 #include "sm85ops.h"
@@ -250,6 +259,9 @@ int sm8500_execute(int cycles)
 			mem_writebyte(0x1e, m_PS0);
 			gc_program_write(0x1f, m_PS1);
 		} else {
+#ifdef GC_PROFILE
+			gc_prof_halt++;
+#endif
 			mycycles = 4;
 			gc_dma_cb(mycycles);
 		}

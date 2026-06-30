@@ -48,7 +48,11 @@ static void gc_blit(void)
     static int16_t sx[WIDTH];
     static int started;
     if (!started) { for (int x = 0; x < WIDTH; x++) sx[x] = (int16_t)(x * GAMECOM_W / WIDTH); started = 1; }
-    uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
+    /* ACTIVE buffer — same one common_ingame_overlay() and pce/wsv/videopac draw
+     * into, and the buffer lcd_swap() presents. The old inactive-buffer blit put
+     * the game frame on a DIFFERENT buffer than the overlay, so the volume/
+     * brightness/save popups landed on the not-shown buffer and "hid behind". */
+    uint16_t *out = (uint16_t *)lcd_get_active_buffer();
     for (int y = 0; y < 240; y++) {
         const uint8_t *src = &gamecom_fb[(y * GAMECOM_H / 240) * GAMECOM_W];
         uint16_t *dst = &out[y * WIDTH];
@@ -157,11 +161,18 @@ void app_main_gamecom(uint8_t load_state, uint8_t start_paused, int8_t save_slot
     if (load_state)
         odroid_system_emu_load_state(save_slot);
 
-    int frame = 0;
+    int frame = 0, skips = 0;
 
     while (true) {
         wdog_refresh();
-        common_emu_frame_loop();
+        /* PCE/videopac pacing: decouple audio from video. When we fall behind,
+         * common_emu_frame_loop() returns false -> skip only the 320x240 blit to
+         * catch up, but still emulate + refill the audio buffer every loop so the
+         * music never underruns (the "득득" stutter). Guard: never skip more than
+         * 2 in a row, so the screen can't visually freeze. */
+        bool draw = common_emu_frame_loop();
+        if (!draw && ++skips >= 3) draw = true;
+        if (draw) skips = 0;
 
         odroid_input_read_gamepad(&joystick);
         common_emu_input_loop(&joystick, options, &gc_blit);   /* repaint cb: NULL -> pause menu called (*NULL)() = PC=0 HardFault */
@@ -188,11 +199,13 @@ void app_main_gamecom(uint8_t load_state, uint8_t start_paused, int8_t save_slot
             gamecom_set_stylus(0, 0, 0);
 
         gamecom_run_frame();
-        gc_blit();
-        common_ingame_overlay();     /* draw volume/brightness/pause overlay ON the frame (was missing -> overlay flickered/hid) */
-        lcd_swap();
+        if (draw) {
+            gc_blit();
+            common_ingame_overlay();     /* draw volume/brightness/pause overlay ON the frame */
+            lcd_swap();
+        }
 
-        gamecom_pcm_submit();
+        gamecom_pcm_submit();            /* audio EVERY loop, drawn or skipped */
         common_emu_sound_sync(false);
         frame++;
     }

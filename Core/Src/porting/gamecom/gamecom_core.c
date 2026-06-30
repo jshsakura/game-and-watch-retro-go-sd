@@ -294,8 +294,14 @@ static void gamecom_internal_w(uint16_t offset, uint8_t data)   /* offset 0x20-0
 }
 
 /* ============================ program bus ============================ */
+#ifdef GC_PROFILE
+unsigned long gc_prof_reads=0, gc_prof_writes=0, gc_prof_dma_calls=0, gc_prof_dma_px=0;
+#endif
 uint8_t gc_program_read(uint16_t addr)
 {
+#ifdef GC_PROFILE
+	gc_prof_reads++;
+#endif
 	if (addr < 0x0400) return ram[addr];        /* RAM + register file (pure reads) */
 	if (addr < 0x1000) return 0;                /* unmapped */
 	if (addr < 0x2000) return internal_rom ? internal_rom[addr - 0x1000] : 0;
@@ -309,6 +315,9 @@ uint8_t gc_program_read(uint16_t addr)
 
 void gc_program_write(uint16_t addr, uint8_t data)
 {
+#ifdef GC_PROFILE
+	gc_prof_writes++;
+#endif
 	if (addr < 0x0400) {
 		if (addr >= 0x14 && addr <= 0x17)      gamecom_pio_w(addr, data);
 		else if (addr >= 0x20 && addr <= 0x7F) gamecom_internal_w(addr, data);
@@ -367,6 +376,9 @@ void gc_dma_cb(uint8_t cycles)
 		m_dma.dest_bank = &nvram[0x0000];
 		break;
 	}
+#ifdef GC_PROFILE
+	gc_prof_dma_calls++; gc_prof_dma_px += (unsigned long)(m_dma.block_width+1)*(m_dma.block_height+1);
+#endif
 	m_dma.source_current = m_dma.source_width * m_dma.source_y + (m_dma.source_x >> 2);
 	m_dma.dest_current   = m_dma.dest_width   * m_dma.dest_y   + (m_dma.dest_x   >> 2);
 	m_dma.source_line = m_dma.source_current;
