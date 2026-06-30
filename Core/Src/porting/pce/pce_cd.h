@@ -52,7 +52,12 @@ bool pce_cd_parse_cue(const char *cue_path, pce_cd_toc_t *toc);
  * synthesised around the 2048 user bytes. Returns false past end / on I/O error. */
 bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf);
 
-/* Close the cached .bin handle (call on mount to start fresh, avoid handle leaks). */
+/* Same, but uses an independent file handle for CD-DA streaming so it never thrashes
+ * the SCSI data handle (audio + data are usually different .bin files, both read every
+ * frame with sound on). FatFs allows it (10 open files). */
+bool pce_cd_read_sector_audio(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf);
+
+/* Close the cached .bin handles (call on mount to start fresh, avoid handle leaks). */
 void pce_cd_close(void);
 
 /* Index of the track containing absolute LBA, or -1. */

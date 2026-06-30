@@ -116,19 +116,30 @@ int pce_cd_track_at_lba(const pce_cd_toc_t *toc, uint32_t lba)
     return -1;
 }
 
-/* Persistent .bin handle. fopen/fclose per sector is a FatFs directory walk each
- * time — fatal for CD-DA streaming (~75 sectors/s) → the stutter/lag. Keep the file
- * open and only reopen when the track's .bin path actually changes. */
-static FILE *s_bin_f;
-static char  s_bin_path[256];
+/* Persistent .bin handles. fopen/fclose per sector is a FatFs directory walk each
+ * time — fatal for CD-DA streaming (~75 sectors/s). Keep the file open and only reopen
+ * when the track's .bin path actually changes.
+ *
+ * TWO independent handles (FatFs allows up to 10 open files, FF_FS_LOCK=0):
+ *   slot 0 = SCSI data reads (program/graphics, the data track .bin)
+ *   slot 1 = CD-DA streaming (audio tracks — usually a DIFFERENT .bin per track)
+ * With sound ON, cdda_fill() reads an audio track every frame while the SCSI engine
+ * reads the data track. With a SINGLE shared handle those two thrash it — fclose+fopen
+ * an 8MB .bin 60x/s (FatFs dir walk) — which on-device starved the emulation enough to
+ * break the game's CD timing (all 4 CD games ran with SOUND OFF, hung with sound on).
+ * Separate handles = no cross-track thrash. */
+static FILE *s_bin_f[2];
+static char  s_bin_path[2][256];
 
 void pce_cd_close(void)
 {
-    if (s_bin_f) { fclose(s_bin_f); s_bin_f = NULL; }
-    s_bin_path[0] = 0;
+    for (int i = 0; i < 2; i++) {
+        if (s_bin_f[i]) { fclose(s_bin_f[i]); s_bin_f[i] = NULL; }
+        s_bin_path[i][0] = 0;
+    }
 }
 
-bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
+static bool read_sector_slot(int slot, const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
 {
     int ti = pce_cd_track_at_lba(toc, lba);
     if (ti < 0) return false;
@@ -137,14 +148,14 @@ bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
     uint32_t sec_in_track = lba - t->start_lba;
     long offset = (long)t->file_offset + (long)sec_in_track * (long)t->sector_size;
 
-    if (!s_bin_f || strcmp(s_bin_path, t->bin_path) != 0) {
-        if (s_bin_f) fclose(s_bin_f);
-        s_bin_f = fopen(t->bin_path, "rb");
-        if (!s_bin_f) { s_bin_path[0] = 0; return false; }
-        strncpy(s_bin_path, t->bin_path, sizeof(s_bin_path) - 1);
-        s_bin_path[sizeof(s_bin_path) - 1] = 0;
+    if (!s_bin_f[slot] || strcmp(s_bin_path[slot], t->bin_path) != 0) {
+        if (s_bin_f[slot]) fclose(s_bin_f[slot]);
+        s_bin_f[slot] = fopen(t->bin_path, "rb");
+        if (!s_bin_f[slot]) { s_bin_path[slot][0] = 0; return false; }
+        strncpy(s_bin_path[slot], t->bin_path, sizeof(s_bin_path[slot]) - 1);
+        s_bin_path[slot][sizeof(s_bin_path[slot]) - 1] = 0;
     }
-    FILE *f = s_bin_f;
+    FILE *f = s_bin_f[slot];
     if (fseek(f, offset, SEEK_SET) != 0) return false;
 
     bool ok;
@@ -157,4 +168,16 @@ bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
         ok = (fread(buf + 16, 1, 2048, f) == 2048);
     }
     return ok;
+}
+
+/* SCSI data path (slot 0). */
+bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
+{
+    return read_sector_slot(0, toc, lba, buf);
+}
+
+/* CD-DA streaming path (slot 1) — its own handle so it never thrashes the data handle. */
+bool pce_cd_read_sector_audio(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
+{
+    return read_sector_slot(1, toc, lba, buf);
 }

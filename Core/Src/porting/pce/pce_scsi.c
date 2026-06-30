@@ -318,7 +318,7 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
                     return frames;
                 }
             }
-            if (!pce_cd_read_sector(s_toc, s_cdda_lba, s_cdda_sec)) { s_cdda_play = false; return i; }
+            if (!pce_cd_read_sector_audio(s_toc, s_cdda_lba, s_cdda_sec)) { s_cdda_play = false; return i; }
             s_cdda_lba++;
             s_cdda_pos = 0;
         }
