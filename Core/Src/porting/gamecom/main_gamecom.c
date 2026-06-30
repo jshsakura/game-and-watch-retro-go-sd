@@ -43,13 +43,19 @@ static void gc_build_palette(void)
 
 static void gc_blit(void)
 {
+    /* Scale the 200x160 picture to FILL the 320x240 LCD (nearest-neighbour). Fills
+     * every pixel so no per-frame full-screen memset (faster + no black border). */
+    static int16_t sx[WIDTH];
+    static int started;
+    if (!started) { for (int x = 0; x < WIDTH; x++) sx[x] = (int16_t)(x * GAMECOM_W / WIDTH); started = 1; }
     uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
-    memset(out, 0, WIDTH * 240 * sizeof(uint16_t));   /* letterbox border */
-    for (int y = 0; y < GAMECOM_H; y++) {
-        const uint8_t *src = &gamecom_fb[y * GAMECOM_W];
-        uint16_t *dst = &out[(y + GC_Y0) * WIDTH + GC_X0];
-        for (int x = 0; x < GAMECOM_W; x++)
-            dst[x] = gc_pal565[src[x] <= 4 ? src[x] : 4];
+    for (int y = 0; y < 240; y++) {
+        const uint8_t *src = &gamecom_fb[(y * GAMECOM_H / 240) * GAMECOM_W];
+        uint16_t *dst = &out[y * WIDTH];
+        for (int x = 0; x < WIDTH; x++) {
+            uint8_t v = src[sx[x]];
+            dst[x] = gc_pal565[v <= 4 ? v : 4];
+        }
     }
 }
 
@@ -158,7 +164,7 @@ void app_main_gamecom(uint8_t load_state, uint8_t start_paused, int8_t save_slot
         common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
-        common_emu_input_loop(&joystick, options, NULL);
+        common_emu_input_loop(&joystick, options, &gc_blit);   /* repaint cb: NULL -> pause menu called (*NULL)() = PC=0 HardFault */
         common_emu_input_loop_handle_turbo(&joystick);
 
         /* G&W buttons -> game.com ports (active low: 0 bit = pressed). */

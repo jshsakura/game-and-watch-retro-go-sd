@@ -99,10 +99,35 @@ static void inject_prg(C64 *c64)
     fclose(f);
 }
 
+/* Scale the full DISPLAY_X×DISPLAY_Y Frodo picture to the LCD, fit to width keeping
+ * aspect (letterbox top/bottom) — shows the whole picture incl. the right edge the old
+ * 320-wide crop cut off; no stretch. Also the pause-menu repaint callback. */
+static void c64_blit_frame(void)
+{
+    uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
+    const int dstH = DISPLAY_Y * WIDTH / DISPLAY_X;       /* 208*320/340 = 195 */
+    const int y0   = (HEIGHT - dstH) / 2;                 /* 22 */
+    memset(out, 0, (size_t)y0 * WIDTH * sizeof(uint16_t));
+    memset(&out[(y0 + dstH) * WIDTH], 0, (size_t)(HEIGHT - y0 - dstH) * WIDTH * sizeof(uint16_t));
+    for (int dy = 0; dy < dstH; dy++) {
+        const uint8 *src = &s_bitmap[(dy * DISPLAY_Y / dstH) * DISPLAY_X];
+        uint16_t *dst = &out[(y0 + dy) * WIDTH];
+        for (int dx = 0; dx < WIDTH; dx++)
+            dst[dx] = s_pal565[src[dx * DISPLAY_X / WIDTH] & 0x0f];
+    }
+}
+
 void C64Display::Update(void)
 {
     s_frame++;
     wdog_refresh();
+
+    /* Menu / volume / brightness / power-off — the path every other core uses. Without
+     * this the C64 had no menu, no volume, and could not be exited or powered off. */
+    odroid_gamepad_state_t js;
+    odroid_input_read_gamepad(&js);
+    static odroid_dialog_choice_t c64_menu_options[] = { ODROID_DIALOG_CHOICE_LAST };
+    common_emu_input_loop(&js, c64_menu_options, &c64_blit_frame);
 
     /* autostart sequencing */
     if (s_is_prg) {
@@ -133,16 +158,7 @@ void C64Display::Update(void)
     if (warp && (s_frame & 0x0F) != 0)
         return;                       /* skip blit + sync -> full-speed load */
 
-    /* blit Frodo bitmap -> LCD (320 wide crop, RGB565), letterboxed into 240 rows */
-    uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
-    memset(out, 0, (size_t)C64_LETTERBOX_Y * WIDTH * sizeof(uint16_t));
-    memset(&out[(C64_LETTERBOX_Y + DISPLAY_Y) * WIDTH], 0,
-           (size_t)(HEIGHT - C64_LETTERBOX_Y - DISPLAY_Y) * WIDTH * sizeof(uint16_t));
-    for (int y = 0; y < DISPLAY_Y; y++) {
-        const uint8 *src = &s_bitmap[y * DISPLAY_X + C64_CROP_X];
-        uint16_t *dst = &out[(C64_LETTERBOX_Y + y) * WIDTH];
-        for (int x = 0; x < 320; x++) dst[x] = s_pal565[src[x] & 0x0f];
-    }
+    c64_blit_frame();
     lcd_swap();
     if (!warp)
         common_emu_sound_sync(false);   /* during warp, don't pace to audio */
@@ -206,6 +222,9 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     cpp_init_array(__init_array_c64_start__, __init_array_c64_end__);
 
     odroid_system_init(APPID_GB, 22050);
+    /* Register NULL state handlers so the pause-menu save/load are no-ops rather than
+     * calling a stale pointer left by a previously-run core (no C64 save/load yet). */
+    odroid_system_emu_init(NULL, NULL, NULL, NULL, NULL, NULL);
 
     heap_itc_alloc(true);   /* small allocs in ITCM, big spill to AXI heap (Lynx pattern) */
 
