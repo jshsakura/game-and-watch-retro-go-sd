@@ -55,6 +55,28 @@ void   C64Display::InitColors(uint8 *colors) { for (int i = 0; i < 256; i++) col
 /* autostart: feed LOAD"*",8,1 / RUN into the C64 keyboard buffer ($0277, count $C6) */
 static const char *s_type = NULL;
 static int s_typepos = 0;
+static bool s_is_prg = false;   /* raw .prg (RAM-injected) vs .d64 (virtual 1541) */
+
+/* A raw .prg file isn't a disk image, so the virtual 1541 can't mount it. Load it
+ * straight into C64 RAM at its 2-byte header address, then RUN. Done after the
+ * KERNAL has cleared RAM (~frame 120) so the program survives reset. */
+static void inject_prg(C64 *c64)
+{
+    FILE *f = fopen(ACTIVE_FILE->path, "rb");
+    if (!f) return;
+    uint8 hdr[2];
+    if (fread(hdr, 1, 2, f) == 2) {
+        uint16_t addr = (uint16_t)(hdr[0] | (hdr[1] << 8));
+        int n = (int)fread(&c64->RAM[addr], 1, 0x10000 - addr, f);
+        uint16_t end = (uint16_t)(addr + n);
+        /* Point BASIC's end-of-program vectors past the loaded code so RUN works
+         * (PRGs at $0801 are BASIC-launchable; most game PRGs have a SYS stub). */
+        c64->RAM[0x2d] = end & 0xff; c64->RAM[0x2e] = end >> 8;   /* VARTAB */
+        c64->RAM[0x2f] = end & 0xff; c64->RAM[0x30] = end >> 8;   /* ARYTAB */
+        c64->RAM[0x31] = end & 0xff; c64->RAM[0x32] = end >> 8;   /* STREND */
+    }
+    fclose(f);
+}
 
 void C64Display::Update(void)
 {
@@ -62,8 +84,13 @@ void C64Display::Update(void)
     wdog_refresh();
 
     /* autostart sequencing */
-    if (s_frame == 150)      { s_type = "LOAD\"*\",8,1\r"; s_typepos = 0; }
-    else if (s_frame == 420) { s_type = "RUN\r";          s_typepos = 0; }
+    if (s_is_prg) {
+        if      (s_frame == 120) { inject_prg(TheC64); }
+        else if (s_frame == 150) { s_type = "RUN\r"; s_typepos = 0; }
+    } else {
+        if      (s_frame == 150) { s_type = "LOAD\"*\",8,1\r"; s_typepos = 0; }
+        else if (s_frame == 420) { s_type = "RUN\r";          s_typepos = 0; }
+    }
     if (s_type && TheC64->RAM[0xC6] == 0) {
         int n = 0;
         while (s_type[s_typepos] && n < 10) { TheC64->RAM[0x0277 + n] = (uint8)s_type[s_typepos++]; n++; }
@@ -128,10 +155,13 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
 
     heap_itc_alloc(true);   /* small allocs in ITCM, big spill to AXI heap (Lynx pattern) */
 
-    /* fast virtual 1541 from the .d64 on SD; no SID renderer; no 1541 ROM needed */
+    /* .d64 → fast virtual 1541; .prg → no disk, RAM-injected in C64Display::Update */
+    s_is_prg = (ACTIVE_FILE->ext && strcmp(ACTIVE_FILE->ext, "prg") == 0);
     ThePrefs.Emul1541Proc = false;
-    ThePrefs.DriveType[0] = DRVTYPE_D64;
-    strncpy(ThePrefs.DrivePath[0], ACTIVE_FILE->path, 255);
+    if (!s_is_prg) {
+        ThePrefs.DriveType[0] = DRVTYPE_D64;
+        strncpy(ThePrefs.DrivePath[0], ACTIVE_FILE->path, 255);
+    }
     ThePrefs.SIDType    = SIDTYPE_NONE;
     ThePrefs.SpritesOn  = true;
     ThePrefs.LimitSpeed = false;
