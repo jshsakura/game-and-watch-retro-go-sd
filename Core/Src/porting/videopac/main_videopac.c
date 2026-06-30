@@ -181,6 +181,10 @@ static void videopac_input_update(odroid_gamepad_state_t *joystick)
  * per-frame R/K/Y line + key[49] read-back + what the BIOS digit-row scan sees. */
 static void videopac_diag_log(unsigned long frame)
 {
+#ifndef LINUX_EMU
+    (void)frame;   /* Odyssey² confirmed working — drop the on-device per-frame SD log. */
+    return;
+#else
     extern unsigned char key[256 * 2];
     extern unsigned int g_o2_kbscan, g_o2_key1, g_o2_keyread;
     extern const unsigned int *o2_diag_keymap_row0(void);
@@ -203,6 +207,7 @@ static void videopac_diag_log(unsigned long frame)
         fprintf(f, "\n");
     }
     fclose(f);
+#endif
 }
 
 static rg_app_desc_t * init(uint8_t load_state, int8_t save_slot)
