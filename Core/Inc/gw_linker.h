@@ -200,3 +200,5 @@ extern void (* __init_array_a2600_start__[])(void);
 extern void (* __init_array_a2600_end__[])(void);
 extern void (* __init_array_lynx_start__[])(void);
 extern void (* __init_array_lynx_end__[])(void);
+extern void (* __init_array_c64_start__[])(void);
+extern void (* __init_array_c64_end__[])(void);

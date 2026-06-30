@@ -675,6 +675,13 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_c64 __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_c64_start__ = .;
+    /* Keep the C++ static ctors (e.g. Frodo's global `ThePrefs`) INSIDE the overlay
+     * so they're not pulled into the resident .init_array — running them at boot
+     * would jump into the not-yet-loaded overlay and hard-fault. app_main_c64 runs
+     * them via cpp_init_array() after the overlay is copied to RAM (Lynx pattern). */
+    __init_array_c64_start__ = .;
+    KEEP(build/c64/*.o(.init_array*))
+    __init_array_c64_end__ = .;
     build/c64/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_C64_LOAD_END = .;

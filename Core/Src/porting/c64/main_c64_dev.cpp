@@ -8,6 +8,8 @@ extern "C" {
 #include "appid.h"
 #include "rom_manager.h"
 #include "main_c64.h"
+#include "gw_linker.h"
+#include "cpp_init_array.h"
 void  heap_itc_alloc(bool itc);
 }
 #include <stdio.h>
@@ -151,6 +153,12 @@ static bool load_rom(const char *path, uint8 *dst, uint32_t want)
 extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)load_state; (void)start_paused; (void)save_slot;
+
+    /* Run the Frodo C++ static constructors (global ThePrefs etc.) NOW, after the
+     * overlay is copied into RAM — NOT via __libc_init_array at boot (their code
+     * lives in this unloaded overlay, so boot-time init hard-faults). Lynx pattern. */
+    cpp_init_array(__init_array_c64_start__, __init_array_c64_end__);
+
     odroid_system_init(APPID_GB, 22050);
 
     heap_itc_alloc(true);   /* small allocs in ITCM, big spill to AXI heap (Lynx pattern) */
