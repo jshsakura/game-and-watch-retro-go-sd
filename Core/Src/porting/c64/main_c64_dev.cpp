@@ -177,7 +177,6 @@ void C64Display::PollKeyboard(uint8*,uint8*,uint8*,uint8*) {}
 #else
 void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joystick)
 {
-    (void)key_matrix; (void)rev_matrix;
     odroid_gamepad_state_t js;
     odroid_input_read_gamepad(&js);
     uint8 m = 0xff;  /* active-low */
@@ -185,8 +184,21 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
     if (js.values[ODROID_INPUT_DOWN])  m &= ~0x02;
     if (js.values[ODROID_INPUT_LEFT])  m &= ~0x04;
     if (js.values[ODROID_INPUT_RIGHT]) m &= ~0x08;
-    if (js.values[ODROID_INPUT_A])     m &= ~0x10;  /* fire */
+    if (js.values[ODROID_INPUT_A])     m &= ~0x10;  /* fire (joystick port 2) */
     if (joystick) *joystick = m;
+
+    /* Keyboard: C64 has no keys mapped otherwise. START -> "Y" so Y/N prompts (e.g.
+     * crack-trainer "UNLIMITED LIVES (Y/N)") and yes/no menus can be answered. The CIA
+     * only resets the matrix to 0xff ONCE at reset, so PollKeyboard must release-then-press
+     * every call or the key sticks. (autostart types into the keyboard BUFFER, not the
+     * matrix, so this is independent.) Y = row 3, col 1. */
+    if (key_matrix && rev_matrix) {
+        for (int i = 0; i < 8; i++) { key_matrix[i] = 0xff; rev_matrix[i] = 0xff; }
+        if (js.values[ODROID_INPUT_START]) {   /* press Y */
+            key_matrix[3] &= ~0x02;
+            rev_matrix[1] &= ~0x08;
+        }
+    }
 }
 #endif
 
