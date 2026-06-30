@@ -212,17 +212,20 @@ void app_main_gamecom(uint8_t load_state, uint8_t start_paused, int8_t save_slot
         common_emu_input_loop(&joystick, options, &gc_blit);   /* repaint cb: NULL -> pause menu called (*NULL)() = PC=0 HardFault */
         common_emu_input_loop_handle_turbo(&joystick);
 
-        /* G&W buttons -> game.com ports (active low: 0 bit = pressed). */
-        uint8_t in0 = 0xFF, in1 = 0xFF;
-        if (joystick.values[ODROID_INPUT_UP])    in0 &= ~GC_IN0_UP;
-        if (joystick.values[ODROID_INPUT_DOWN])  in0 &= ~GC_IN0_DOWN;
-        if (joystick.values[ODROID_INPUT_LEFT])  in0 &= ~GC_IN0_LEFT;
-        if (joystick.values[ODROID_INPUT_RIGHT]) in0 &= ~GC_IN0_RIGHT;
-        if (joystick.values[ODROID_INPUT_A])     in0 &= ~GC_IN0_A;
-        if (joystick.values[ODROID_INPUT_B])     in1 &= ~GC_IN1_B;
-        if (joystick.values[ODROID_INPUT_START]) in0 &= ~GC_IN0_MENU;   /* START -> Menu */
-        if (joystick.values[ODROID_INPUT_SELECT]) in0 &= ~GC_IN0_PAUSE; /* SELECT -> Pause */
-        gamecom_set_input_state(in0, in1, 0xFF);
+        /* G&W buttons -> game.com ports (active low: 0 bit = pressed). game.com has 4
+         * action buttons A/B/C/D; map ALL of them (the old map wasted START/SELECT on the
+         * system MENU/PAUSE — which retro-go's own overlay already covers — and left C/D
+         * dead, so games/menus needing C or D couldn't be operated). */
+        uint8_t in0 = 0xFF, in1 = 0xFF, in2 = 0xFF;
+        if (joystick.values[ODROID_INPUT_UP])     in0 &= ~GC_IN0_UP;
+        if (joystick.values[ODROID_INPUT_DOWN])   in0 &= ~GC_IN0_DOWN;
+        if (joystick.values[ODROID_INPUT_LEFT])   in0 &= ~GC_IN0_LEFT;
+        if (joystick.values[ODROID_INPUT_RIGHT])  in0 &= ~GC_IN0_RIGHT;
+        if (joystick.values[ODROID_INPUT_A])      in0 &= ~GC_IN0_A;   /* A */
+        if (joystick.values[ODROID_INPUT_B])      in1 &= ~GC_IN1_B;   /* B */
+        if (joystick.values[ODROID_INPUT_START])  in1 &= ~GC_IN1_C;   /* START  -> C */
+        if (joystick.values[ODROID_INPUT_SELECT]) in2 &= ~GC_IN2_D;   /* SELECT -> D */
+        gamecom_set_input_state(in0, in1, in2);
 
         /* Stylus bridge (see file header). */
         if (!load_state && frame >= GC_LAUNCH_BEGIN && frame < GC_LAUNCH_END)
