@@ -187,9 +187,15 @@ static void feed_din(void)
 static void adpcm_dma_drain(void)
 {
     if (!s_reading) return;
+    extern void wdog_refresh(void);
     int b;
-    while ((b = din_get()) >= 0) pce_adpcm_dma_byte((uint8_t)b);   /* CD -> ADPCM RAM */
+    unsigned long n = 0;
+    while ((b = din_get()) >= 0) {
+        pce_adpcm_dma_byte((uint8_t)b);                 /* CD -> ADPCM RAM */
+        if ((++n & 0x7FF) == 0) wdog_refresh();         /* feed wdog on big FMV streams */
+    }
     s_reading = false;
+    diag("  ADPCM drain %lu B\n", n);
     /* Completion needs BOTH, in this order, for the System Card's ADPCM-load path:
      *  - $1803 DATA_DONE set NOW (the transfer-complete IRQ flag the f3d0 loop polls
      *    BEFORE the status handshake), and
