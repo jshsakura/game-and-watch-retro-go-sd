@@ -27,15 +27,23 @@ __attribute__((weak)) void pce_scsi_pc_tick(uint16_t pc) { (void)pc; }
 #ifdef LINUX_EMU
   #define PCECD_DIAG 1
   #define PCECD_DIAG_FILE "pcecd_diag.txt"   /* host harness: writable cwd */
+  #define PCECD_DIAG_MAX  4000
 #else
-  #define PCECD_DIAG 0                        /* device: off (FATAL otherwise) */
+  /* Device: RE-ENABLED. fopen routes to FatFs (syscalls.c MAX_OPEN_FILES=10,
+   * FF_FS_LOCK=0), NOT the littlefs 1-file limit — logging alongside the open .bin
+   * is safe. The old "diag caused the FATAL" was the wrong premise (same as C64);
+   * the real FATAL risk is the per-command fopen+f_sync repeated thousands of times
+   * in the System-Card poll loop, so cap tight at 400 lines (the per-category caps
+   * s_atrace<130 / s_trace<12 already bound the bulk). Delete /pcecd_diag.txt first. */
+  #define PCECD_DIAG 1
   #define PCECD_DIAG_FILE "/pcecd_diag.txt"
+  #define PCECD_DIAG_MAX  400
 #endif
 #if PCECD_DIAG
 static int s_diag_lines;
 static void diag(const char *fmt, ...)
 {
-    if (s_diag_lines > 4000) return;
+    if (s_diag_lines > PCECD_DIAG_MAX) return;
     s_diag_lines++;
     FILE *f = fopen(PCECD_DIAG_FILE, "a");
     if (!f) return;

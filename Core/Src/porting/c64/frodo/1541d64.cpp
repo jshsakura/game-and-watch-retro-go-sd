@@ -166,6 +166,7 @@ void D64Drive::open_close_d64_file(char *d64name)
 uint8 D64Drive::Open(int channel, char *filename)
 {
 	set_error(ERR_OK);
+	c64_diag("OPEN ch=%d name='%s'\n", channel, filename ? filename : "(null)");
 
 	// Channel 15: execute file name as command
 	if (channel == 15) {
@@ -206,13 +207,14 @@ uint8 D64Drive::open_file(int channel, char *filename)
 
 	convert_filename(filename, plainname, &filemode, &filetype);
 
-	// Channel 0 is READ PRG, channel 1 is WRITE PRG
-	if (!channel) {
+	// Channel 0 is READ PRG. Secondary address 1 (LOAD"name",8,1) ALSO arrives here
+	// as channel 1 — it is a READ, not a write. The original "channel 1 = WRITE PRG"
+	// forced ERR_WRITEPROTECT below BEFORE find_file ran, so the file never loaded and
+	// the C64 kept re-initialising the drive (the t18-s0 directory-reread loop seen in
+	// /c64_diag.txt). This drive is read-only; an explicit write still errors via the
+	// ",W" filename suffix that convert_filename() parsed above.
+	if (!channel || channel == 1) {
 		filemode = FMODE_READ;
-		filetype = FTYPE_PRG;
-	}
-	if (channel == 1) {
-		filemode = FMODE_WRITE;
 		filetype = FTYPE_PRG;
 	}
 
@@ -301,6 +303,7 @@ bool D64Drive::find_file(char *filename, int *track, int *sector)
 	// Scan all directory blocks
 	dir.next_track = bam->dir_track;
 	dir.next_sector = bam->dir_sector;
+	c64_diag("find_file '%s' dir_ts=%d/%d\n", filename, dir.next_track, dir.next_sector);
 
 	while (dir.next_track) {
 		if (!read_sector(dir.next_track, dir.next_sector, (uint8 *) &dir.next_track))
