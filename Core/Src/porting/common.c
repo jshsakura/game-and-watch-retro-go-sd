@@ -196,6 +196,30 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
         repaint_overlay(repaint);
     }
 
+    /* Idle auto-sleep: an abandoned OR hung game keeps this loop running forever and
+     * would drain the battery flat (only the launcher had an idle timeout, not in-game).
+     * After ~5 min with NO button pressed, save state and sleep — exactly the POWER-
+     * button flow — so the device never just dies. Any input resets the timer. */
+    {
+        #define IDLE_AUTOSLEEP_FRAMES 18000   /* ~5 min @ 60 fps */
+        static uint32_t idle_frames = 0;
+        bool any_input = false;
+        for (int i = 0; i < ODROID_INPUT_MAX; i++) if (joystick->values[i]) { any_input = true; break; }
+        if (any_input) {
+            idle_frames = 0;
+        } else if (++idle_frames >= IDLE_AUTOSLEEP_FRAMES) {
+            idle_frames = 0;
+            audio_stop_playing();
+            odroid_system_sleep_ex(SLEEP_SHOW_ANIMATION, NULL);
+#if OFF_SAVESTATE == 1 || SD_CARD == 1
+            odroid_system_emu_save_state(-1);
+#else
+            odroid_system_emu_save_state(0);
+#endif
+            sleep_and_open_pause_menu(game_options, _repaint, true, ODROID_MENU_FLAG_DRAW_ONLY);
+        }
+    }
+
     if(joystick->values[ODROID_INPUT_VOLUME]){  // PAUSE/SET button
         // PAUSE/SET has been pressed, checking additional inputs for macros
         pause_pressed = true;
