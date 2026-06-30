@@ -155,6 +155,36 @@ static void videopac_input_update(odroid_gamepad_state_t *joystick)
     memcpy(&previous_joystick_state, joystick, sizeof(odroid_gamepad_state_t));
 }
 
+/* On-SD diagnostic log: writes /videopac_diag.txt so the keypad-auto-start
+ * failure can be read off the card in one device run (faster than the on-screen
+ * counters). frame==0 truncates + dumps the static state; later calls append a
+ * per-frame R/K/Y line + key[49] read-back + what the BIOS digit-row scan sees. */
+static void videopac_diag_log(unsigned long frame)
+{
+    extern unsigned char key[256 * 2];
+    extern unsigned int g_o2_kbscan, g_o2_key1, g_o2_keyread;
+    extern const unsigned int *o2_diag_keymap_row0(void);
+    const unsigned int *km0 = o2_diag_keymap_row0();
+
+    FILE *f = fopen("/videopac_diag.txt", frame == 0 ? "w" : "a");
+    if (!f) return;
+    if (frame == 0) {
+        fprintf(f, "=== VIDEOPAC/O2 device diag ===\n");
+        fprintf(f, "app_data: crc=%08X bios=%d bank=%d exrom=%d megaxrom=%d three_k=%d euro=%d vpp=%d\n",
+                (unsigned)app_data.crc, app_data.bios, app_data.bank, app_data.exrom,
+                app_data.megaxrom, app_data.three_k, app_data.euro, app_data.vpp);
+        fprintf(f, "key[] @ %p ; key_map[0] (want 48 49 50 51 52 53 54 55): "
+                   "%u %u %u %u %u %u %u %u\n", (void *)key,
+                km0[0], km0[1], km0[2], km0[3], km0[4], km0[5], km0[6], km0[7]);
+    } else {
+        fprintf(f, "F%-5lu R=%u K=%u Y=%u  key[49]=%u  row0_keys:",
+                frame, g_o2_kbscan, g_o2_key1, g_o2_keyread, key[49]);
+        for (int i = 0; i < 8; i++) fprintf(f, " %u", key[km0[i] & 0x1ff]);
+        fprintf(f, "\n");
+    }
+    fclose(f);
+}
+
 static rg_app_desc_t * init(uint8_t load_state, int8_t save_slot)
 {
     odroid_system_init(APPID_GB, AUDIO_SAMPLE_RATE_VIDEOPAC);
@@ -574,6 +604,9 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
              *   R>0,K==0    -> our key[49] write isn't landing in the core's key[]
              *   K>0,Y==0    -> key[49] set but NOT in the scanned key_map row
              *   Y>0,no game -> key reaches BIOS but selection logic differs. */
+            /* on-SD log: full state at frame 0, then a line every 30 frames (~20s) */
+            if (vpdiag == 0 || (vpdiag < 1200 && (vpdiag % 30) == 0))
+                videopac_diag_log(vpdiag);
             snprintf(fb, sizeof(fb), "F%lu R%u K%u Y%u",
                      (unsigned long)vpdiag++, g_o2_kbscan, g_o2_key1, g_o2_keyread);
             odroid_overlay_draw_text(0, 0, 20 * 8, fb, 0xFFFF, 0x0000);
