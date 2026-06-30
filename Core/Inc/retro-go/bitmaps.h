@@ -96,6 +96,10 @@ enum {
     RG_LOGO_HEADER_C64,
     // Favorites virtual tab name header (matches header_favorites, appended last)
     RG_LOGO_HEADER_FAVORITES,
+    // Tiger Game.com name header (matches header_gamecom — the last LOGO_DATA
+    // struct in rg_logos.c, so it's a NEW last /bios/logo.bin entry and no
+    // existing index shifts).
+    RG_LOGO_HEADER_GAMECOM,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
@@ -110,12 +114,7 @@ enum {
     RG_LOGO_PAD_C64,
     // Favorites virtual tab colour icon (gold star; color_icon_for_logo only)
     RG_LOGO_PAD_FAVORITES,
-    // Tiger Game.com (appended LAST so no existing logo.bin index shifts). The
-    // header has no logo.bin/struct yet -> rg_get_logo() returns NULL (the menu
-    // falls back to the "Tiger Game.com" text); the PAD is color_icon_for_logo
-    // only (cicon_gamecom). A GAME.COM wordmark needs the LuckiestGuy font + an
-    // SD logo.bin rebuild, deferred to a follow-up.
-    RG_LOGO_HEADER_GAMECOM,
+    // Tiger Game.com colour tab icon (cicon_gamecom; color_icon_for_logo only)
     RG_LOGO_PAD_GAMECOM,
 };
 
@@ -188,6 +187,7 @@ extern const retro_logo_image header_videopac;
 extern const retro_logo_image header_zx;
 extern const retro_logo_image header_c64;
 extern const retro_logo_image header_favorites;
+extern const retro_logo_image header_gamecom;
 
 
 extern const unsigned char IMG_SPEAKER[];
