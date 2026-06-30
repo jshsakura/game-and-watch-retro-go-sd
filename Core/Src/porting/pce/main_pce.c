@@ -63,7 +63,10 @@ static uint16_t mypalette[256];
 static int current_height, current_width;
 static short audioBuffer_pce[ AUDIO_BUFFER_LENGTH_PCE * 2];
 static uint8_t pce_framebuffer[XBUF_WIDTH * XBUF_HEIGHT * 2];
-static uint8_t PCE_EXRAM_BUF[0x8000];
+/* Borrowed for CD-RAM banks (idle on CD; Populous HuCard uses only the first 0x8000).
+ * Sized to map the FULL 256KB CD RAM (32 banks) together with the ROM-unpack buffer, so
+ * big Super-CD games like Dynastic Hero (~232KB) stop infinite-loading on missing banks. */
+static uint8_t PCE_EXRAM_BUF[0x18000];   /* 96KB = 12 banks */
 
 // TODO: Move to lcd.c/h
 extern LTDC_HandleTypeDef hltdc;
