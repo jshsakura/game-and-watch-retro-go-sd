@@ -966,9 +966,15 @@ void D64Drive::free_buffer(int buf)
  *  true: success, false: error
  */
 
+/* Auto-warp: bumped on every virtual-1541 sector read so the port can run the
+ * emulation flat-out (skip frame/audio sync) while a disk load is in progress —
+ * the standard KERNAL LOAD is slow in real time (~30-50s) and looks frozen. */
+volatile unsigned int g_c64_disk_reads = 0;
+
 bool D64Drive::read_sector(int track, int sector, uint8 *buffer)
 {
 	int offset;
+	g_c64_disk_reads++;
 
 	// Convert track/sector to byte offset in file
 	if ((offset = offset_from_ts(track, sector)) < 0) {

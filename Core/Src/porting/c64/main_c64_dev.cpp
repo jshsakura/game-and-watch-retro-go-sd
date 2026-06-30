@@ -102,6 +102,20 @@ void C64Display::Update(void)
         if (!s_type[s_typepos]) { s_type = NULL; s_typepos = 0; }
     }
 
+    /* Auto-warp during disk loading: the standard KERNAL LOAD is slow in real time
+     * (~30-50s on a 50fps-paced device → looks frozen at "LOADING"). While the virtual
+     * 1541 is delivering sectors, run flat-out — blit only 1 frame in 16 and SKIP the
+     * audio/frame sync so Frodo emulates the next frame immediately. Stops ~0.5s after
+     * the last disk read, then normal paced play resumes. (Mirrors VICE autoloadwarp.) */
+    extern volatile unsigned int g_c64_disk_reads;
+    static unsigned int s_last_reads = 0;
+    static int s_warp_idle = 999;
+    if (g_c64_disk_reads != s_last_reads) { s_last_reads = g_c64_disk_reads; s_warp_idle = 0; }
+    else if (s_warp_idle < 999) s_warp_idle++;
+    const bool warp = (s_warp_idle < 25);
+    if (warp && (s_frame & 0x0F) != 0)
+        return;                       /* skip blit + sync -> full-speed load */
+
     /* blit Frodo bitmap -> LCD (320 wide crop, RGB565), letterboxed into 240 rows */
     uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
     memset(out, 0, (size_t)C64_LETTERBOX_Y * WIDTH * sizeof(uint16_t));
@@ -113,7 +127,8 @@ void C64Display::Update(void)
         for (int x = 0; x < 320; x++) dst[x] = s_pal565[src[x] & 0x0f];
     }
     lcd_swap();
-    common_emu_sound_sync(false);
+    if (!warp)
+        common_emu_sound_sync(false);   /* during warp, don't pace to audio */
 }
 
 #ifdef __riscos__
