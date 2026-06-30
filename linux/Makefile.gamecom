@@ -21,3 +21,10 @@ $(BUILD_DIR):
 
 clean:
 	rm -f $(BUILD_DIR)/$(TARGET)
+
+# Device flash-cache regression test: proves the cart-first/BIOS-last order in
+# main_gamecom.c survives the circular flash cache (the bios-first clobber froze
+# the device). Needs internal.bin + external.bin + a 2MB cart (e.g. sonicjam.bin).
+test-cache: | $(BUILD_DIR)
+	$(CC) $(CFLAGS) gamecom/test_flash_cache.c $(CORE)/gamecom_core.c $(CORE)/sm8500.c -lm -o $(BUILD_DIR)/test_flash_cache
+	cd . && $(BUILD_DIR)/test_flash_cache internal.bin external.bin sonicjam.bin

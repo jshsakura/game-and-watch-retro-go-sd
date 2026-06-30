@@ -27,3 +27,6 @@ frogger.bin
 Basic.rom
 Char.rom
 Kernal.rom
+
+# flash-cache test cart (copyright; supply your own 2MB cart)
+sonicjam.bin

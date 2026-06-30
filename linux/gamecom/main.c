@@ -90,10 +90,21 @@ int main(int argc, char **argv)
 	if (tap_x >= 0)
 		printf("  scripted tap  : (%d,%d) frames %d..%d\n", tap_x, tap_y, tap_start, tap_start + tap_len - 1);
 
+	/* test driver: pulse button A every GC_A_PERIOD frames after GC_A_FROM, to
+	 * confirm menus and advance into gameplay (mirrors device A=button+centre tap) */
+	int a_from   = getenv("GC_A_FROM")   ? atoi(getenv("GC_A_FROM"))   : -1;
+	int a_period = getenv("GC_A_PERIOD") ? atoi(getenv("GC_A_PERIOD")) : 90;
+
 	for (int fr = 0; fr < frames; fr++) {
 		if (tap_x >= 0) {
 			int down = (fr >= tap_start && fr < tap_start + tap_len);
 			gamecom_set_stylus(tap_x, tap_y, down);
+		}
+		if (a_from >= 0 && fr >= a_from) {
+			int phase = (fr - a_from) % a_period;
+			int a_down = (phase < 8);   /* 8-frame A press, then release */
+			gamecom_set_input_state(a_down ? (uint8_t)~GC_IN0_A : 0xFF, 0xFF, 0xFF);
+			gamecom_set_stylus(GAMECOM_W/2, GAMECOM_H/2, a_down);
 		}
 		gamecom_run_frame();
 
@@ -103,6 +114,15 @@ int main(int argc, char **argv)
 
 		if (fr % 60 == 0 || fr == frames - 1)
 			printf("  frame %4d: PC=%04X  nonblank=%d\n", fr, sm8500_pc(), nb);
+
+		if (getenv("GC_DUMP_EVERY")) {
+			int every = atoi(getenv("GC_DUMP_EVERY"));
+			if (every > 0 && (fr % every == 0)) {
+				char nm[64];
+				snprintf(nm, sizeof nm, "/tmp/gc_f%05d.ppm", fr);
+				dump_ppm(nm);
+			}
+		}
 	}
 
 	dump_ppm("gamecom_frame.ppm");
