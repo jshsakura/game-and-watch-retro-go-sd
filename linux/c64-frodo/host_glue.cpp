@@ -15,6 +15,27 @@
 #include <stdlib.h>
 #include <new>
 
+/* host_glue uses the REAL fopen/fclose for its own bookkeeping (ROM loads, PPM dump);
+ * the device-faithful 1-open-file limit (h_fopen, esp_shim.h) applies to the vendored
+ * Frodo sources — the device code path that the .d64 + any diag actually run through. */
+#undef fopen
+#undef fclose
+static int g_open_files = 0;
+extern "C" FILE *h_fopen(const char *path, const char *mode)
+{
+    if (g_open_files >= 1) {
+        fprintf(stderr, "\n[HARNESS DEVICE-FAITHFUL] BUG: 2nd fopen('%s') while %d file "
+                "already open. The device allows only ONE (gw_littlefs MAX_OPEN_FILES=1) "
+                "and corrupts the first handle here — exactly the c64_diag/.d64 loop.\n",
+                path, g_open_files);
+        abort();
+    }
+    FILE *f = fopen(path, mode);
+    if (f) g_open_files++;
+    return f;
+}
+extern "C" int h_fclose(FILE *f) { if (f) g_open_files--; return fclose(f); }
+
 /* ---- DEVICE-FAITHFUL bounded heap ----------------------------------------
  * The device C64 overlay has a ~100KB run-time heap (badheap). Model it here so
  * device OOM reproduces on the host (plain malloc was unbounded). Overflow aborts

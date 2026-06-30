@@ -3,6 +3,26 @@
 #pragma once
 #include <stdlib.h>
 #include <stddef.h>
+#include <stdio.h>
+
+/* ---- DEVICE-FAITHFUL I/O: the device FS allows only ONE open file at a time
+ * (gw_littlefs MAX_OPEN_FILES=1). Opening a 2nd file while one is open corrupts the
+ * first handle on-device — that is exactly what made c64_diag's /c64_diag.txt clobber
+ * the open .d64 so the 1541 looped re-reading the directory and never loaded. The old
+ * harness used unbounded stdio and never caught it. Route the vendored Frodo sources'
+ * fopen/fclose through h_fopen/h_fclose, which ABORT on a concurrent 2nd open so this
+ * whole class of bug fails loudly on the host. (host_glue.cpp #undef's these for its
+ * own bookkeeping files — ROM loads, the PPM dump.) */
+#ifdef __cplusplus
+extern "C" {
+#endif
+FILE *h_fopen(const char *path, const char *mode);
+int   h_fclose(FILE *f);
+#ifdef __cplusplus
+}
+#endif
+#define fopen  h_fopen
+#define fclose h_fclose
 #define MALLOC_CAP_SPIRAM 0
 #define MALLOC_CAP_DMA    0
 #define MALLOC_CAP_8BIT   0

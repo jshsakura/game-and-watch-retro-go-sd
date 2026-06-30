@@ -478,6 +478,11 @@ void odroid_input_read_gamepad_o2em(odroid_gamepad_state_t* out_state)
     }
 }
 
+/* ---- host stubs for device-only firmware symbols (so the harness links) ---- */
+void SaveStateStm(const char *p) { (void)p; }
+void LoadStateStm(const char *p) { (void)p; }
+void gnw_videopack_blit(unsigned char *input, void *palette) { (void)input; (void)palette; }
+
 void blit(uint16_t *buffer) {
     // we want 60 Hz for NTSC
 //    int wantedTime = 1000 / 60;
@@ -512,41 +517,20 @@ int main(int argc, char *argv[])
 
     app_data.euro = 1;
 
-    while (true)
+    extern unsigned char key[256*2];
+    extern unsigned int g_o2_kbscan, g_o2_key1, g_o2_keyread;
+    int o2frame = 0;
+    while (o2frame < 1800)
     {
-
-        //Start cap timer
-        capTimer = SDL_GetTicks();
-        //wdog_refresh();
-        bool drawFrame = true;// common_emu_frame_loop();
-
-        odroid_input_read_gamepad_o2em(&joystick);
-
-//   update_input();
-
+        key[49] = (o2frame >= 300 && o2frame < 330) ? 1 : 0;   /* EDGE TEST: single pulse at f300 */
         RLOOP=1;
         cpu_exec();
         blit(mbmp);
-
-        printf("%02x %02x \n",soundBuffer[0],soundBuffer[1]);
-/*        if (blend_frames)
-            blend_frames();
-
-        if (vkb_show)
-            vkb_show_virtual_keyboard();
-
-        if (crop_overscan)
-        {
-            uint16_t *mbmp_cropped = mbmp + (TEX_WIDTH * CROPPED_OFFSET_Y) + CROPPED_OFFSET_X;
-            video_cb(mbmp_cropped, CROPPED_WIDTH, CROPPED_HEIGHT, TEX_WIDTH << 1);
-        }
-        else
-            video_cb(mbmp, EMUWIDTH, EMUHEIGHT, TEX_WIDTH << 1);
-*/
-            if(drawFrame) {
-//                upate_audio();
-            }
+        if ((o2frame % 120) == 0)
+            fprintf(stderr, "F%d  R(scan)=%u  K(key49)=%u  KEYREAD(reached BIOS)=%u\n", o2frame, g_o2_kbscan, g_o2_key1, g_o2_keyread);
+        o2frame++;
     }
+    fprintf(stderr, "=== DONE %d frames: R=%u K=%u KEYREAD=%u ===\n", o2frame, g_o2_kbscan, g_o2_key1, g_o2_keyread);
 
     SDL_Quit();
 

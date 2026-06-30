@@ -56,10 +56,13 @@ C_DEFS =  \
 
 C_INCLUDES =  \
 -I. \
+-Io2em \
 -I../external/o2em-go/src \
 -I../external/o2em-go/libretro-common/include \
 -I../external/o2em-go/allegrowrapper \
--I../retro-go-stm32/components/odroid
+-I../retro-go-stm32/components/odroid \
+-I../Core/Inc \
+-I../Core/Inc/retro-go
 
 
 ASFLAGS = $(AS_DEFS) $(AS_INCLUDES) $(OPT) -fdata-sections -ffunction-sections
