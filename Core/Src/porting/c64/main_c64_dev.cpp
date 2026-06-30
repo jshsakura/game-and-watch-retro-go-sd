@@ -157,14 +157,20 @@ void C64Display::Update(void)
     static int s_warp_idle = 999;
     if (g_c64_disk_reads != s_last_reads) { s_last_reads = g_c64_disk_reads; s_warp_idle = 0; }
     else if (s_warp_idle < 999) s_warp_idle++;
-    const bool warp = (s_warp_idle < 25);
+    /* Auto-warp DISABLED: running the emulation unpaced (skipping sound_sync) while the
+     * device does slow real SD reads desynced the C64<->1541 IEC timing, so the 1541
+     * looped forever re-reading the directory (t18 s0) and never loaded the file. The host
+     * harness never hit this (its file reads are instant). Paced 50fps keeps the read
+     * latency small relative to emulation, so the load completes reliably — just slower
+     * (~30-60s at LOADING for a full disk). Reliable-but-slow beats a fast infinite loop. */
+    (void)s_warp_idle;
+    const bool warp = false;
     if (warp && (s_frame & 0x0F) != 0)
-        return;                       /* skip blit + sync -> full-speed load */
+        return;
 
     c64_blit_frame();
     lcd_swap();
-    if (!warp)
-        common_emu_sound_sync(false);   /* during warp, don't pace to audio */
+    common_emu_sound_sync(false);
 }
 
 #ifdef __riscos__
