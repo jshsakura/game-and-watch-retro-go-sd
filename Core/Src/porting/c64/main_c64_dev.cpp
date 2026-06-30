@@ -222,16 +222,30 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     ThePrefs.FastReset  = true;
     c64_diag("=== C64 BOOT === prg=%d disk=%s\n", (int)s_is_prg, ThePrefs.DrivePath[0]);
 
-    /* RAM-fit: read-only Basic/Char stay in flash (0 heap); set BEFORE `new C64` so the
-     * constructor adopts the flash pointers instead of allocating 12KB. Kernal is patched
-     * by C64::PatchKernal() (IEC hooks), so it must be writable -> copied into heap below. */
-    c64_ext_basic_rom = (uint8 *)flash_rom("/bios/c64/basic.bin",   0x2000);
-    c64_ext_char_rom  = (uint8 *)flash_rom("/bios/c64/chargen.bin", 0x1000);
+    /* Basic/Char MUST be COPIED into RAM, not used live from the flash cache.
+     * odroid_overlay_cache_file_in_flash() is a CIRCULAR buffer (gw_flash_alloc.c):
+     * a later cache write (chargen, kernal, or any other core's ROM/logo cached on a
+     * previous launch) wraps and OVERWRITES an earlier entry. When Basic/Char pointed
+     * straight at flash, that clobber turned the BASIC ROM into garbage -> the 6510 ran
+     * junk -> MOS6510::illegal_op() called the_c64->Reset() every time -> the drive was
+     * re-Reset in a loop (the endless "RD t=18 s=0" with no OPEN, never loading the .d64).
+     * It "worked once" only when the cache happened not to have wrapped yet. Copying each
+     * ROM into a private RAM buffer right after caching makes it immune to later writes.
+     * 12KB of overlay BSS is a fine trade for not corrupting the ROM. Kernal is likewise
+     * copied (it must be writable for C64::PatchKernal's IEC hooks). */
+    static uint8 s_basic_rom[0x2000];
+    static uint8 s_char_rom[0x1000];
+    if (!load_rom("/bios/c64/basic.bin",   s_basic_rom, 0x2000) ||
+        !load_rom("/bios/c64/chargen.bin", s_char_rom,  0x1000)) {
+        c64_diag("ROM FAIL (need /bios/c64/{basic,chargen}.bin)\n");
+        return;
+    }
+    c64_ext_basic_rom = s_basic_rom;   /* RAM copies — set BEFORE `new C64` adopts them */
+    c64_ext_char_rom  = s_char_rom;
 
     C64 *the_c64 = new C64;
-    if (!c64_ext_basic_rom || !c64_ext_char_rom ||
-        !load_rom("/bios/c64/kernal.bin", the_c64->Kernal, 0x2000)) {
-        c64_diag("ROM FAIL (need /bios/c64/{basic,chargen,kernal}.bin)\n");
+    if (!load_rom("/bios/c64/kernal.bin", the_c64->Kernal, 0x2000)) {
+        c64_diag("ROM FAIL (need /bios/c64/kernal.bin)\n");
         return;   /* bounce back to the launcher instead of freezing (like the other cores) */
     }
     /* Start the audio DMA BEFORE Run(): C64Display::Update() calls common_emu_sound_sync,
