@@ -253,11 +253,25 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     c64_ext_basic_rom = s_basic_rom;   /* RAM copies — set BEFORE `new C64` adopts them */
     c64_ext_char_rom  = s_char_rom;
 
+    /* Dump ROM integrity so the log itself proves whether the ROM is good or garbage —
+     * compare to the host ground-truth sums (no guessing). A mismatch = the load path
+     * corrupted it; a match = ROM is fine and the bug is elsewhere (see ILLOP pc). */
+    { uint32_t bs = 0, cs = 0;
+      for (int i = 0; i < 0x2000; i++) bs += s_basic_rom[i];
+      for (int i = 0; i < 0x1000; i++) cs += s_char_rom[i];
+      c64_diag("BIOS basic sum=%08lx f=%02x%02x l=%02x%02x (want 000e3d56 94e3 00e0)\n",
+               (unsigned long)bs, s_basic_rom[0], s_basic_rom[1], s_basic_rom[0x1ffe], s_basic_rom[0x1fff]);
+      c64_diag("BIOS char  sum=%08lx f=%02x%02x (want 0007f7f8 3c66)\n",
+               (unsigned long)cs, s_char_rom[0], s_char_rom[1]); }
+
     C64 *the_c64 = new C64;
     if (!read_bios_file("/bios/c64/kernal.bin", the_c64->Kernal, 0x2000)) {
         c64_diag("ROM FAIL (need /bios/c64/kernal.bin)\n");
         return;   /* bounce back to the launcher instead of freezing (like the other cores) */
     }
+    { uint32_t ks = 0; for (int i = 0; i < 0x2000; i++) ks += the_c64->Kernal[i];
+      c64_diag("BIOS kernal sum=%08lx resetvec=%02x%02x (want 000fc70a, e2 fc)\n",
+               (unsigned long)ks, the_c64->Kernal[0x1ffc], the_c64->Kernal[0x1ffd]); }
     /* Start the audio DMA BEFORE Run(): C64Display::Update() calls common_emu_sound_sync,
      * which busy-waits for the audio DMA counter to advance. Without audio_start_playing
      * the DMA never runs, dma_counter never changes, and the very first frame hangs

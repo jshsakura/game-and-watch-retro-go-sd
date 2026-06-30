@@ -984,7 +984,9 @@ bool D64Drive::read_sector(int track, int sector, uint8 *buffer)
 {
 	int offset;
 	g_c64_disk_reads++;
-	if ((g_c64_disk_reads % 64) == 1)
+	if (g_c64_disk_reads <= 120)   /* log EVERY read (not every 64th) so the sequence is
+	                                  unambiguous: pure t18-s0 = reset loop; t18s0->t18s1->t17
+	                                  = real directory+file load like the host harness. */
 		c64_diag("RD #%u t=%d s=%d\n", g_c64_disk_reads, track, sector);
 
 	// Convert track/sector to byte offset in file
