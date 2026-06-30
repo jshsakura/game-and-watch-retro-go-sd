@@ -114,12 +114,16 @@ static bool init(void)
 
     /* firmware /bios/<sys>/ convention; copyright Tiger ROMs, user-supplied. */
     uint32_t isz = 0, ksz = 0, csz = 0;
+
+    /* Cache the (up to 2MB) cartridge FIRST. The circular flash cache invalidates
+     * earlier files when a large write wraps, so caching the small, every-launch
+     * BIOS ROMs LAST stops the big per-game cart from clobbering them — a clobbered
+     * external BIOS leaves the SM8500 running garbage = the instant freeze on launch.
+     * Cart is XIP'd in place (never copied to RAM). */
+    const uint8_t *cart = (const uint8_t *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &csz, false);
     const uint8_t *irom = cache_rom("/bios/gamecom/internal.bin", 0x1000,  &isz);
     const uint8_t *krom = cache_rom("/bios/gamecom/external.bin", 0x40000, &ksz);
     if (!irom || !krom) return false;
-
-    /* cartridge: flash-XIP in place (up to 2MB, never copied to RAM). */
-    const uint8_t *cart = (const uint8_t *)odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &csz, false);
 
     if (gamecom_init(irom, (int)isz, krom, (int)ksz, cart, (int)csz) != 0) {
         printf("[GAMECOM] gamecom_init failed\n");
