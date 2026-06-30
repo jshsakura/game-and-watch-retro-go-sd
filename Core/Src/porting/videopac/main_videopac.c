@@ -221,8 +221,14 @@ static size_t videopac_getromdata(retro_emulator_file_t *rom_file, unsigned char
     else
 #endif
     {
-        *res_data = (unsigned char *)ROM_DATA;
-        return ROM_DATA_LENGTH;
+        /* Raw cart: use the launched file's flash address/size directly (the same
+         * source the lzma branch decompresses from). The old global ROM_DATA is
+         * set by the firmware launcher, but inside this overlay it bound to the
+         * core's own NULL ROM_DATA copy -> empty cart -> crc=0, so the O2 ran a
+         * blank cart and never reached the keypad scan (R=0 in the SD diag).
+         * rom_file is ACTIVE_FILE, so address/size are always valid here. */
+        *res_data = (unsigned char *)rom_file->address;
+        return rom_file->size;
     }
 }
 
