@@ -64,9 +64,10 @@ static int current_height, current_width;
 static short audioBuffer_pce[ AUDIO_BUFFER_LENGTH_PCE * 2];
 static uint8_t pce_framebuffer[XBUF_WIDTH * XBUF_HEIGHT * 2];
 /* Borrowed for CD-RAM banks (idle on CD; Populous HuCard uses only the first 0x8000).
- * Sized to map the FULL 256KB CD RAM (32 banks) together with the ROM-unpack buffer, so
- * big Super-CD games like Dynastic Hero (~232KB) stop infinite-loading on missing banks. */
-static uint8_t PCE_EXRAM_BUF[0x18000];   /* 96KB = 12 banks */
+ * NOTE: 32KB only. Growing this to fit big Super-CD games (Dynastic Hero ~232KB needs
+ * 32 banks) links OK but at runtime the extra overlay BSS starves the PCE heap and ALL
+ * CD games crash -> Dynastic Hero is a genuine hard RAM limit; keep the working 200KB. */
+static uint8_t PCE_EXRAM_BUF[0x8000];
 
 // TODO: Move to lcd.c/h
 extern LTDC_HandleTypeDef hltdc;
@@ -568,13 +569,15 @@ void LoadCartPCE() {
         }
         if (from_exram) memset(PCE_EXRAM_BUF, 0, (uint32_t)from_exram * PCE_CD_RAM_BANK_SIZE);
         if (mapped > from_exram) memset(buf, 0, (uint32_t)(mapped - from_exram) * PCE_CD_RAM_BANK_SIZE);
-        FILE *cf = fopen("/pcecd_diag.txt", "a");
+#ifdef LINUX_EMU   /* host only: on-device this fopen + the open .bin = 1-file-limit corruption */
+        FILE *cf = fopen("pcecd_diag.txt", "a");
         if (cf) {
             fprintf(cf, "CDRAM map: room=%lu buf_banks=%d exram=%d mapped=%d/%d %s\n",
                     (unsigned long)room, buf_banks, from_exram, mapped, total_banks,
                     (mapped >= total_banks) ? "FULL" : "PARTIAL");
             fclose(cf);
         }
+#endif
     }
 }
 
