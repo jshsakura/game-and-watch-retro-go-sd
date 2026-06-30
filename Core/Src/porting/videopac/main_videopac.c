@@ -564,13 +564,18 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
         /* DIAG (on-screen, no I/O): free-running counter, top-left. Counting =
          * cpu_exec OK (stuck game = input); frozen = cpu_exec crashed. Strip later. */
         {
-            extern unsigned int g_o2_kbscan, g_o2_key1;
+            extern unsigned int g_o2_kbscan, g_o2_key1, g_o2_keyread;
             char fb[40];
-            /* F=frame, R=#digit-row keypad scans by the BIOS, K=#scans that saw key[49].
-             * R==0 -> BIOS never scans the keypad here; R>0,K==0 -> key[49] write not
-             * reaching the scan; R>0,K>0 -> scan sees it (problem is elsewhere). */
-            snprintf(fb, sizeof(fb), "F%lu R%u K%u",
-                     (unsigned long)vpdiag++, g_o2_kbscan, g_o2_key1);
+            /* F=frame, R=#digit-row keypad scans by the BIOS, K=#scans that saw
+             * key[49], Y=#scans where a key actually REACHED the BIOS (row produced
+             * a value). In the host harness R==K==Y and the game starts by ~frame
+             * 100, so on device:
+             *   R==0        -> BIOS never scans the keypad (CPU/boot diverged)
+             *   R>0,K==0    -> our key[49] write isn't landing in the core's key[]
+             *   K>0,Y==0    -> key[49] set but NOT in the scanned key_map row
+             *   Y>0,no game -> key reaches BIOS but selection logic differs. */
+            snprintf(fb, sizeof(fb), "F%lu R%u K%u Y%u",
+                     (unsigned long)vpdiag++, g_o2_kbscan, g_o2_key1, g_o2_keyread);
             odroid_overlay_draw_text(0, 0, 20 * 8, fb, 0xFFFF, 0x0000);
         }
 
