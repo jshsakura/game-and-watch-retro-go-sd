@@ -10,16 +10,35 @@ extern "C" {
 #include "main_c64.h"
 #include "gw_linker.h"
 #include "cpp_init_array.h"
+#include "gw_buttons.h"
+#include "gw_sleep.h"
+#include "gw_audio.h"
 void  heap_itc_alloc(bool itc);
 }
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 #include "C64.h"
 #include "Display.h"
 #include "Prefs.h"
 #include "DigitalRenderer.h"
+
+/* Precise on-SD trace to /c64_diag.txt (delete before a clean test; capped). The last
+ * line written = where the .d64 load stalled. 1541d64.cpp calls this for disk events. */
+extern "C" void c64_diag(const char *fmt, ...)
+{
+    static int lines;
+    if (lines > 600) return;
+    lines++;
+    FILE *f = fopen("/c64_diag.txt", "a");
+    if (!f) return;
+    va_list ap; va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fclose(f);
+}
 
 #define RGB565(r,g,b) ((((r)>>3)<<11)|(((g)>>2)<<5)|((b)>>3))
 /* G&W RAM-fit: Frodo bitmap is now DISPLAY_X(340) x DISPLAY_Y(208). The 40-column
@@ -87,6 +106,14 @@ void C64Display::Update(void)
     s_frame++;
     wdog_refresh();
 
+    /* POWER OFF: the C64 runs its own loop (the_c64->Run/Update) and never went through
+     * common_emu_input_loop, so the power button did NOTHING — a hung or idle C64 could
+     * not be turned off and drained the battery. Check it every frame: power -> standby. */
+    if (buttons_get() & B_POWER) {
+        audio_stop_playing();
+        GW_EnterDeepSleep(true, NULL, NULL);   /* does not return */
+    }
+
     /* autostart sequencing */
     if (s_is_prg) {
         if      (s_frame == 120) { inject_prg(TheC64); }
@@ -126,13 +153,6 @@ void C64Display::Update(void)
         uint16_t *dst = &out[(C64_LETTERBOX_Y + y) * WIDTH];
         for (int x = 0; x < 320; x++) dst[x] = s_pal565[src[x] & 0x0f];
     }
-    /* DIAG: row 0 = a 16px block that toggles red/green every frame (Update alive?);
-     * row 1 = white bar, length = #1541 sector reads (capped at WIDTH). Frozen toggle
-     * => emu stuck inside a read (fread blocks); bar stops at N => read N hangs; both
-     * move but never finishes => C64-side loop. Pinpoints the hang in ONE look. */
-    for (int x = 0; x < 16; x++) out[x] = (s_frame & 1) ? 0xF800 : 0x07E0;
-    unsigned rr = g_c64_disk_reads; if (rr > (unsigned)WIDTH) rr = WIDTH;
-    for (unsigned x = 0; x < rr; x++) out[WIDTH + x] = 0xFFFF;
     lcd_swap();
     if (!warp)
         common_emu_sound_sync(false);   /* during warp, don't pace to audio */
@@ -210,6 +230,7 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     ThePrefs.SpritesOn  = true;
     ThePrefs.LimitSpeed = false;
     ThePrefs.FastReset  = true;
+    c64_diag("=== C64 BOOT === prg=%d disk=%s\n", (int)s_is_prg, ThePrefs.DrivePath[0]);
 
     /* RAM-fit: read-only Basic/Char stay in flash (0 heap); set BEFORE `new C64` so the
      * constructor adopts the flash pointers instead of allocating 12KB. Kernal is patched
@@ -220,8 +241,10 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     C64 *the_c64 = new C64;
     if (!c64_ext_basic_rom || !c64_ext_char_rom ||
         !load_rom("/bios/c64/kernal.bin", the_c64->Kernal, 0x2000)) {
-        while (true) { wdog_refresh(); }
+        c64_diag("ROM FAIL (need /bios/c64/{basic,chargen,kernal}.bin)\n");
+        while (true) { wdog_refresh(); if (buttons_get() & B_POWER) GW_EnterDeepSleep(true, NULL, NULL); }
     }
+    c64_diag("ROMs ok -> the_c64->Run()\n");
     printf("[c64] Frodo start, disk=%s\n", ThePrefs.DrivePath[0]);
     the_c64->Run();   /* blocks; per-frame work happens in C64Display::Update */
 }

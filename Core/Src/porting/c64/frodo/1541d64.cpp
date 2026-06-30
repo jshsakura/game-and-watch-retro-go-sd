@@ -48,6 +48,8 @@ enum {
 const int NUM_TRACKS = 35;
 const int NUM_SECTORS = 683;
 
+extern "C" void c64_diag(const char *fmt, ...);   /* -> /c64_diag.txt (main_c64_dev) */
+
 // Prototypes
 static bool match(uint8 *p, uint8 *n);
 
@@ -115,15 +117,18 @@ void D64Drive::open_close_d64_file_internal(char *d64name)
 
 	// Open new .d64 file
 	if (d64name[0]) {
+		c64_diag("d64 OPEN try '%s'\n", d64name);
 		if ((the_file = fopen(d64name, "rb")) != NULL) {
 
 			// Check length
 			fseek(the_file, 0, SEEK_END);
 			if ((size = ftell(the_file)) < NUM_SECTORS * 256) {
+				c64_diag("d64 too small size=%ld\n", (long)size);
 				fclose(the_file);
 				the_file = NULL;
 				return;
 			}
+			c64_diag("d64 OPEN ok size=%ld\n", (long)size);
 
 			// x64 image?
 			rewind(the_file);
@@ -970,11 +975,14 @@ void D64Drive::free_buffer(int buf)
  * emulation flat-out (skip frame/audio sync) while a disk load is in progress —
  * the standard KERNAL LOAD is slow in real time (~30-50s) and looks frozen. */
 volatile unsigned int g_c64_disk_reads = 0;
+extern "C" void c64_diag(const char *fmt, ...);   /* -> /c64_diag.txt (main_c64_dev) */
 
 bool D64Drive::read_sector(int track, int sector, uint8 *buffer)
 {
 	int offset;
 	g_c64_disk_reads++;
+	if ((g_c64_disk_reads % 64) == 1)
+		c64_diag("RD #%u t=%d s=%d\n", g_c64_disk_reads, track, sector);
 
 	// Convert track/sector to byte offset in file
 	if ((offset = offset_from_ts(track, sector)) < 0) {
