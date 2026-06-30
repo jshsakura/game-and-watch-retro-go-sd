@@ -126,6 +126,13 @@ void C64Display::Update(void)
         uint16_t *dst = &out[(C64_LETTERBOX_Y + y) * WIDTH];
         for (int x = 0; x < 320; x++) dst[x] = s_pal565[src[x] & 0x0f];
     }
+    /* DIAG: row 0 = a 16px block that toggles red/green every frame (Update alive?);
+     * row 1 = white bar, length = #1541 sector reads (capped at WIDTH). Frozen toggle
+     * => emu stuck inside a read (fread blocks); bar stops at N => read N hangs; both
+     * move but never finishes => C64-side loop. Pinpoints the hang in ONE look. */
+    for (int x = 0; x < 16; x++) out[x] = (s_frame & 1) ? 0xF800 : 0x07E0;
+    unsigned rr = g_c64_disk_reads; if (rr > (unsigned)WIDTH) rr = WIDTH;
+    for (unsigned x = 0; x < rr; x++) out[WIDTH + x] = 0xFFFF;
     lcd_swap();
     if (!warp)
         common_emu_sound_sync(false);   /* during warp, don't pace to audio */
