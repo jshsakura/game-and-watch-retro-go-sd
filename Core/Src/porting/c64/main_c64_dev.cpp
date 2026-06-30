@@ -127,8 +127,18 @@ void C64Display::Update(void)
         if      (s_frame == 120) { inject_prg(TheC64); }
         else if (s_frame == 150) { s_type = "RUN\r"; s_typepos = 0; }
     } else {
-        if      (s_frame == 150) { s_type = "LOAD\"*\",8,1\r"; s_typepos = 0; }
-        else if (s_frame == 420) { s_type = "RUN\r";          s_typepos = 0; }
+        /* LOAD the first file at frame 150, then RUN only AFTER the load has finished
+         * (disk reads started, then stopped). A fixed frame is WRONG: during the load the
+         * auto-warp races s_frame ~16x, so a frame-420 RUN fired mid-load and the 1541
+         * looped re-reading the directory (t18 s0) forever instead of running the game. */
+        extern volatile unsigned int g_c64_disk_reads;
+        static unsigned int s_run_last = 0;
+        static int s_run_idle = 0, s_run_done = 0;
+        if (s_frame == 150) { s_type = "LOAD\"*\",8,1\r"; s_typepos = 0; }
+        else if (s_frame > 150 && !s_run_done) {
+            if (g_c64_disk_reads != s_run_last) { s_run_last = g_c64_disk_reads; s_run_idle = 0; }
+            else if (g_c64_disk_reads > 1 && ++s_run_idle > 40) { s_type = "RUN\r"; s_typepos = 0; s_run_done = 1; }
+        }
     }
     if (s_type && TheC64->RAM[0xC6] == 0) {
         int n = 0;
