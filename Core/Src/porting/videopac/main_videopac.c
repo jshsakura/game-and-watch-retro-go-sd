@@ -217,11 +217,10 @@ static rg_app_desc_t * init(uint8_t load_state, int8_t save_slot)
 
     rg_app_desc_t *app = odroid_system_get_app();
 
-    if (load_state) {
-        odroid_system_emu_load_state(save_slot);
-    } else {
-        lcd_clear_buffers();
-    }
+    /* NOTE: load-state moved to app_main_videopac AFTER load_data()+init_cpu()+init_system().
+     * Restoring here was wiped by the cart load + the machine reset that run later, so
+     * "resume" (이어하기) never took. */
+    lcd_clear_buffers();
 
     return app;
 }
@@ -580,6 +579,12 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
     set_score(app_data.scoretype, app_data.scoreaddress, app_data.default_highscore);
 
     app_data.euro = 0;
+
+    /* Resume (이어하기): restore the saved state NOW — after the cart load + init_system
+     * machine reset, or the restore gets wiped. loadstate_from_mem checks the saved crc
+     * matches the just-loaded cart, so it no-ops cleanly on a wrong/empty slot. */
+    if (load_state)
+        odroid_system_emu_load_state(save_slot);
 
     /* Odyssey2 "SELECT GAME": the BIOS waits for a keypad game number. We auto-select
      * game 1 once at boot — hold keypad "1" across the boot→SELECT-GAME window (the
