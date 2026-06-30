@@ -79,10 +79,6 @@ Job1541::Job1541(uint8 *ram1541) : ram(ram1541)
 {
 	the_file = NULL;
 
-	/* The GCR disk buffer (~260KB) is used ONLY by cycle-exact 1541 emulation
-	 * (Emul1541Proc). The G&W port runs the fast virtual 1541 (1541d64.cpp) with
-	 * Emul1541Proc=false, so skip the 260KB malloc — it overflows the device heap
-	 * (it asserted at itc_malloc 260190). The GCR paths are unreachable then. */
 	if (ThePrefs.Emul1541Proc) {
 		gcr_data = gcr_ptr = gcr_track_start = (uint8*)heap_caps_malloc(GCR_DISK_SIZE, MALLOC_CAP_SPIRAM);
 		gcr_track_end = gcr_track_start + GCR_TRACK_SIZE;
