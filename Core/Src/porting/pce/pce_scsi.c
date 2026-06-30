@@ -23,16 +23,11 @@ __attribute__((weak)) void pce_scsi_pc_tick(uint16_t pc) { (void)pc; }
 
 /* ---- diagnostics: append the command stream to /pcecd_diag.txt (delete it
  *      before a clean test; capped so it can't flood). ---- */
-/* Host harness only: the device FS allows just ONE open file (gw_littlefs
- * MAX_OPEN_FILES=1) and the .bin CD image is held open for sector reads, so opening
- * /pcecd_diag.txt on-device corrupts that handle -> the CD read loops -> INFINITE LOADING
- * (the exact same Heisenbug as c64_diag). Keep the trace only on the host harness. */
+#define PCECD_DIAG 1
 #ifdef LINUX_EMU
-  #define PCECD_DIAG 1
-  #define PCECD_DIAG_FILE "pcecd_diag.txt"   /* host harness: writable cwd, no file limit */
+  #define PCECD_DIAG_FILE "pcecd_diag.txt"   /* host harness: writable cwd */
 #else
-  #define PCECD_DIAG 0                        /* device: MUST be off (1-open-file limit) */
-  #define PCECD_DIAG_FILE "/pcecd_diag.txt"
+  #define PCECD_DIAG_FILE "/pcecd_diag.txt"  /* device: SD root */
 #endif
 #if PCECD_DIAG
 static int s_diag_lines;
