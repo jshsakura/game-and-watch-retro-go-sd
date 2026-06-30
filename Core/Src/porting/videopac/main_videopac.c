@@ -59,14 +59,34 @@ static void blit() {
 
 }
 
+/* o2em state serialisers (external/o2em-go/src/vmachine.h). The state is tiny (~600B:
+ * intRAM/extRAM/VDC + the 8048 regs), so a small static buffer avoids the heap. */
+size_t savestate_size(void);
+bool   savestate_to_mem(uint8_t *data, size_t size);
+bool   loadstate_from_mem(const uint8_t *data, size_t size);
+
+static uint8_t s_o2_state[1024];
+
 static bool SaveState(const char *savePathName)
 {
-    return true;
+    size_t sz = savestate_size();
+    if (sz > sizeof(s_o2_state) || !savestate_to_mem(s_o2_state, sz)) return false;
+    FILE *f = fopen(savePathName, "wb");
+    if (!f) return false;
+    size_t w = fwrite(s_o2_state, 1, sz, f);
+    fclose(f);
+    return w == sz;
 }
 
 static bool LoadState(const char *savePathName)
 {
-    return true;
+    size_t sz = savestate_size();
+    if (sz > sizeof(s_o2_state)) return false;
+    FILE *f = fopen(savePathName, "rb");
+    if (!f) return false;
+    size_t r = fread(s_o2_state, 1, sz, f);
+    fclose(f);
+    return (r == sz) && loadstate_from_mem(s_o2_state, sz);
 }
 
 static void videopac_input_update(odroid_gamepad_state_t *joystick)
