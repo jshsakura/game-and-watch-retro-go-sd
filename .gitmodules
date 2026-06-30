@@ -35,7 +35,7 @@
 	branch = filesystem
 [submodule "o2em-go"]
 	path = external/o2em-go
-	url = https://github.com/sylverb/o2em-go.git
+	url = https://github.com/jshsakura/o2em-go.git
 [submodule "ccleste-go"]
 	path = external/ccleste-go
 	url = https://github.com/sylverb/ccleste-go.git

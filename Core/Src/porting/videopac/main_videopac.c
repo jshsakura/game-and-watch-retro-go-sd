@@ -564,9 +564,14 @@ void app_main_videopac(uint8_t load_state, uint8_t start_paused, int8_t save_slo
         /* DIAG (on-screen, no I/O): free-running counter, top-left. Counting =
          * cpu_exec OK (stuck game = input); frozen = cpu_exec crashed. Strip later. */
         {
-            char fb[20];
-            snprintf(fb, sizeof(fb), "F%lu", (unsigned long)vpdiag++);
-            odroid_overlay_draw_text(0, 0, 10 * 8, fb, 0xFFFF, 0x0000);
+            extern unsigned int g_o2_kbscan, g_o2_key1;
+            char fb[40];
+            /* F=frame, R=#digit-row keypad scans by the BIOS, K=#scans that saw key[49].
+             * R==0 -> BIOS never scans the keypad here; R>0,K==0 -> key[49] write not
+             * reaching the scan; R>0,K>0 -> scan sees it (problem is elsewhere). */
+            snprintf(fb, sizeof(fb), "F%lu R%u K%u",
+                     (unsigned long)vpdiag++, g_o2_kbscan, g_o2_key1);
+            odroid_overlay_draw_text(0, 0, 20 * 8, fb, 0xFFFF, 0x0000);
         }
 
         lcd_swap();
