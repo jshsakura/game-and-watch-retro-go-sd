@@ -111,6 +111,9 @@ static bool init(void)
 {
     odroid_system_init(APPID_GB, GAMECOM_AUDIO_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL);
+    /* Start the audio DMA: the per-frame common_emu_sound_sync busy-waits for the DMA
+     * counter, so without this the first frame hangs forever (no audio = no DMA tick). */
+    audio_start_playing(GAMECOM_AUDIO_SAMPLE_RATE / 60);
 
     /* firmware /bios/<sys>/ convention; copyright Tiger ROMs, user-supplied. */
     uint32_t isz = 0, ksz = 0, csz = 0;
