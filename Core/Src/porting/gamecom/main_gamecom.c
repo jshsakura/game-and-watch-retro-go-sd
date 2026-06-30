@@ -140,10 +140,9 @@ void app_main_gamecom(uint8_t load_state, uint8_t start_paused, int8_t save_slot
     odroid_gamepad_state_t joystick;
 
     if (!init()) {
-        /* missing ROMs / bad cart: paint one (black) frame so it's visible, idle. */
-        gc_blit();
-        lcd_swap();
-        while (true) { wdog_refresh(); }
+        /* missing ROMs / bad cart: bounce back to the launcher instead of freezing in a
+         * wdog-fed loop (which also blocked the watchdog from recovering). Like other cores. */
+        return;
     }
 
     if (load_state)

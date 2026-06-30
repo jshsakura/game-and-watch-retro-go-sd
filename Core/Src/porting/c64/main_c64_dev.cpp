@@ -10,9 +10,6 @@ extern "C" {
 #include "main_c64.h"
 #include "gw_linker.h"
 #include "cpp_init_array.h"
-#include "gw_buttons.h"
-#include "gw_sleep.h"
-#include "gw_audio.h"
 void  heap_itc_alloc(bool itc);
 }
 #include <stdio.h>
@@ -105,14 +102,6 @@ void C64Display::Update(void)
 {
     s_frame++;
     wdog_refresh();
-
-    /* POWER OFF: the C64 runs its own loop (the_c64->Run/Update) and never went through
-     * common_emu_input_loop, so the power button did NOTHING — a hung or idle C64 could
-     * not be turned off and drained the battery. Check it every frame: power -> standby. */
-    if (buttons_get() & B_POWER) {
-        audio_stop_playing();
-        GW_EnterDeepSleep(true, NULL, NULL);   /* does not return */
-    }
 
     /* autostart sequencing */
     if (s_is_prg) {
@@ -242,7 +231,7 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     if (!c64_ext_basic_rom || !c64_ext_char_rom ||
         !load_rom("/bios/c64/kernal.bin", the_c64->Kernal, 0x2000)) {
         c64_diag("ROM FAIL (need /bios/c64/{basic,chargen,kernal}.bin)\n");
-        while (true) { wdog_refresh(); if (buttons_get() & B_POWER) GW_EnterDeepSleep(true, NULL, NULL); }
+        return;   /* bounce back to the launcher instead of freezing (like the other cores) */
     }
     c64_diag("ROMs ok -> the_c64->Run()\n");
     printf("[c64] Frodo start, disk=%s\n", ThePrefs.DrivePath[0]);
