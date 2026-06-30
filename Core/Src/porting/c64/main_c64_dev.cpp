@@ -22,9 +22,11 @@ void  heap_itc_alloc(bool itc);
 #include "DigitalRenderer.h"
 
 #define RGB565(r,g,b) ((((r)>>3)<<11)|(((g)>>2)<<5)|((b)>>3))
-/* Frodo bitmap is DISPLAY_X(384) x DISPLAY_Y(272); crop the centred 320x240 window. */
-#define C64_CROP_X 32
-#define C64_CROP_Y 16
+/* G&W RAM-fit: Frodo bitmap is now DISPLAY_X(340) x DISPLAY_Y(208). The 40-column
+ * display window occupies bytes 20..339 of each line, so crop the 320px content at
+ * x=20. The 208 rows are letterboxed (centred) into the 240-row LCD. */
+#define C64_CROP_X 20
+#define C64_LETTERBOX_Y ((HEIGHT - DISPLAY_Y) / 2)   /* (240-208)/2 = 16 */
 
 /* IsFrodoSC is defined in C64.cpp (one definition kept there). */
 
@@ -100,11 +102,14 @@ void C64Display::Update(void)
         if (!s_type[s_typepos]) { s_type = NULL; s_typepos = 0; }
     }
 
-    /* blit Frodo bitmap -> LCD (cropped 320x240, RGB565) */
+    /* blit Frodo bitmap -> LCD (320 wide crop, RGB565), letterboxed into 240 rows */
     uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
-    for (int y = 0; y < 240; y++) {
-        const uint8 *src = &s_bitmap[(C64_CROP_Y + y) * DISPLAY_X + C64_CROP_X];
-        uint16_t *dst = &out[y * WIDTH];
+    memset(out, 0, (size_t)C64_LETTERBOX_Y * WIDTH * sizeof(uint16_t));
+    memset(&out[(C64_LETTERBOX_Y + DISPLAY_Y) * WIDTH], 0,
+           (size_t)(HEIGHT - C64_LETTERBOX_Y - DISPLAY_Y) * WIDTH * sizeof(uint16_t));
+    for (int y = 0; y < DISPLAY_Y; y++) {
+        const uint8 *src = &s_bitmap[y * DISPLAY_X + C64_CROP_X];
+        uint16_t *dst = &out[(C64_LETTERBOX_Y + y) * WIDTH];
         for (int x = 0; x < 320; x++) dst[x] = s_pal565[src[x] & 0x0f];
     }
     lcd_swap();
@@ -141,11 +146,20 @@ void DigitalRenderer::NewPrefs(Prefs *) {}
 void DigitalRenderer::Pause(void) {}
 void DigitalRenderer::Resume(void) {}
 
-static bool load_rom(const char *path, uint8 *dst, uint32_t want)
+/* Map a ROM file into flash and return a read-only pointer (>= want bytes), or NULL. */
+static const uint8_t *flash_rom(const char *path, uint32_t want)
 {
     uint32_t sz = 0;
     const uint8_t *p = (const uint8_t *)odroid_overlay_cache_file_in_flash(path, &sz, false);
-    if (!p || sz < want) { printf("[c64] missing %s (%u/%u)\n", path, (unsigned)sz, (unsigned)want); return false; }
+    if (!p || sz < want) { printf("[c64] missing %s (%u/%u)\n", path, (unsigned)sz, (unsigned)want); return NULL; }
+    return p;
+}
+
+/* Copy a ROM file from flash into a writable buffer (used for the patched Kernal). */
+static bool load_rom(const char *path, uint8 *dst, uint32_t want)
+{
+    const uint8_t *p = flash_rom(path, want);
+    if (!p) return false;
     memcpy(dst, p, want);
     return true;
 }
@@ -175,10 +189,15 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     ThePrefs.LimitSpeed = false;
     ThePrefs.FastReset  = true;
 
+    /* RAM-fit: read-only Basic/Char stay in flash (0 heap); set BEFORE `new C64` so the
+     * constructor adopts the flash pointers instead of allocating 12KB. Kernal is patched
+     * by C64::PatchKernal() (IEC hooks), so it must be writable -> copied into heap below. */
+    c64_ext_basic_rom = (uint8 *)flash_rom("/bios/c64/basic.bin",   0x2000);
+    c64_ext_char_rom  = (uint8 *)flash_rom("/bios/c64/chargen.bin", 0x1000);
+
     C64 *the_c64 = new C64;
-    if (!load_rom("/bios/c64/basic.bin",   the_c64->Basic,  0x2000) ||
-        !load_rom("/bios/c64/kernal.bin",  the_c64->Kernal, 0x2000) ||
-        !load_rom("/bios/c64/chargen.bin", the_c64->Char,   0x1000)) {
+    if (!c64_ext_basic_rom || !c64_ext_char_rom ||
+        !load_rom("/bios/c64/kernal.bin", the_c64->Kernal, 0x2000)) {
         while (true) { wdog_refresh(); }
     }
     printf("[c64] Frodo start, disk=%s\n", ThePrefs.DrivePath[0]);

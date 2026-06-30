@@ -39,6 +39,12 @@ bool IsFrodoSC = true;
 bool IsFrodoSC = false;
 #endif
 
+/* G&W RAM-fit: optional externally-provided, read-only Basic/Char ROM pointers.
+ * The platform (device: flash-cached ROM; host: malloc'd) sets these BEFORE `new C64`
+ * to keep these 12KB of read-only ROM off the small C++ overlay heap. Null => allocate. */
+uint8 *c64_ext_basic_rom = 0;
+uint8 *c64_ext_char_rom  = 0;
+
 
 /*
  *  Constructor: Allocate objects and memory
@@ -62,14 +68,22 @@ C64::C64()
 	// Open display
 	TheDisplay = new C64Display(this);
 
-	// Allocate RAM/ROM memory
+	// Allocate RAM/ROM memory.
+	// G&W RAM-fit: the C++ overlay heap is tiny (~67-90KB). To make C64::C64() fit:
+	//  - Basic/Char are read-only (CPU only reads them, never patched) -> the platform
+	//    points them at the flash-cached ROM via the c64_ext_* globals (set before
+	//    `new C64`), so they cost 0 heap. Kernal IS patched by PatchKernal() (IEC hooks),
+	//    so it stays in writable heap. If a global is null we fall back to allocating.
+	//  - The 1541 CPU ROM/RAM are only used when ThePrefs.Emul1541Proc is true; the G&W
+	//    port runs the virtual 1541 (1541d64.cpp) with Emul1541Proc=false, so ROM1541 is
+	//    never dereferenced. Point it at the 2KB RAM1541 instead of a 16KB heap block.
 	RAM = (uint8*)heap_caps_malloc(0x10000, MALLOC_CAP_SPIRAM);// new uint8[0x10000];
-	Basic = (uint8*)heap_caps_malloc(0x2000, MALLOC_CAP_SPIRAM);//new uint8[0x2000];
-	Kernal = (uint8*)heap_caps_malloc(0x2000, MALLOC_CAP_SPIRAM);//new uint8[0x2000];
-	Char = (uint8*)heap_caps_malloc(0x1000, MALLOC_CAP_SPIRAM);//new uint8[0x1000];
+	Basic = c64_ext_basic_rom ? c64_ext_basic_rom : (uint8*)heap_caps_malloc(0x2000, MALLOC_CAP_SPIRAM);
+	Kernal = (uint8*)heap_caps_malloc(0x2000, MALLOC_CAP_SPIRAM);//new uint8[0x2000]; (patched -> writable)
+	Char = c64_ext_char_rom ? c64_ext_char_rom : (uint8*)heap_caps_malloc(0x1000, MALLOC_CAP_SPIRAM);
 	Color = (uint8*)heap_caps_malloc(0x0400, MALLOC_CAP_SPIRAM);//new uint8[0x0400];
 	RAM1541 = (uint8*)heap_caps_malloc(0x0800, MALLOC_CAP_SPIRAM);//new uint8[0x0800];
-	ROM1541 = (uint8*)heap_caps_malloc(0x4000, MALLOC_CAP_SPIRAM);//new uint8[0x4000];
+	ROM1541 = RAM1541;	// unused (Emul1541Proc=false): avoid a 16KB heap allocation
 
 
 	// Create the chips

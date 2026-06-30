@@ -56,8 +56,11 @@
 #endif
 
 // First and last displayed line
-const unsigned FIRST_DISP_LINE = 0x10;
-const unsigned LAST_DISP_LINE = 0x11f;
+// G&W RAM-fit: window the rendered rasters to just bracket the active picture
+// (40-col area is raster ROW25_YSTART 0x33 .. ROW25_YSTOP 0xfb) so the bitmap is only
+// 208 rows = DISPLAY_Y. 0x2c..0xfb = 208 lines. (was 0x10..0x11f = 272.)
+const unsigned FIRST_DISP_LINE = 0x2c;
+const unsigned LAST_DISP_LINE = 0xfb;
 
 // First and last possible line for Bad Lines
 const unsigned FIRST_DMA_LINE = 0x30;

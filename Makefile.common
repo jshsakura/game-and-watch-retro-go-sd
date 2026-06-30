@@ -1077,9 +1077,12 @@ $(BUILD_DIR)/c64/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(CC) -c $(CFLAGS) $(C64_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/c64/$(notdir $(<:.c=.lst)) $< -o $@
 
 # Frodo C64 core (C++). -fpermissive: vendored Frodo predates strict C++.
+# Frodo is a large C++ core; build the overlay -Os so its code leaves enough RAM_EMU
+# free for the run-time heap (the 64KB C64 RAM + ROMs are new[]'d from badheap). At
+# -O2 the overlay left only ~56KB heap -> the 64KB RAM alloc asserted.
 $(BUILD_DIR)/c64/%.o: %.cpp Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CXX c64 ] $(notdir $<)
-	$(V)$(CXX) -c $(CXXFLAGS) $(C64_C_INCLUDES) -fpermissive -fno-strict-aliasing -Wa,-a,-ad,-alms=$(BUILD_DIR)/c64/$(notdir $(<:.cpp=.lst)) $< -o $@
+	$(V)$(CXX) -c $(patsubst -O2,-Os,$(CXXFLAGS)) $(C64_C_INCLUDES) -fpermissive -fno-strict-aliasing -Wa,-a,-ad,-alms=$(BUILD_DIR)/c64/$(notdir $(<:.cpp=.lst)) $< -o $@
 
 $(BUILD_DIR)/celeste/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC celeste ] $(notdir $<)

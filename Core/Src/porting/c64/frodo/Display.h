@@ -33,8 +33,16 @@ struct SDL_Surface;
 const int DISPLAY_X = 0x168;
 const int DISPLAY_Y = 0x110;
 #else
-const int DISPLAY_X = 0x180;
-const int DISPLAY_Y = 0x110;
+/* G&W RAM-fit: the Frodo render target is the single biggest overlay-.bss item
+ * (DISPLAY_X*DISPLAY_Y bytes). Shrunk from 384x272 to 340x208 so the C++ overlay
+ * heap (badheap) gains ~32KB for C64::C64()'s allocations. 340 (=0x154) is the
+ * minimum safe width: the 40-column display window is COL40_XSTART(20)..COL40_XSTOP(340),
+ * so content occupies bytes 20..339 with no right border; the device blit crops the
+ * 320px window at C64_CROP_X=20. 208 (=0xd0) rows bracket the C64 active picture
+ * (raster FIRST_DISP_LINE 0x2c .. LAST_DISP_LINE 0xfb); the device blit letterboxes
+ * them into the 240-tall LCD. DISPLAY_X must stay a multiple of 4 (32-bit border fills). */
+const int DISPLAY_X = 0x154;
+const int DISPLAY_Y = 0xd0;
 #endif
 
 

@@ -42,6 +42,11 @@ class MOS6502_1541;
 class Job1541;
 class CmdPipe;
 
+/* G&W RAM-fit: set these (read-only Basic/Char ROM) before `new C64` to keep 12KB off
+ * the C++ overlay heap. Null => C64::C64() heap-allocates that ROM (original behaviour). */
+extern uint8 *c64_ext_basic_rom;
+extern uint8 *c64_ext_char_rom;
+
 class C64 {
 public:
 	C64();
