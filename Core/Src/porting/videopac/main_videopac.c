@@ -207,28 +207,27 @@ static rg_app_desc_t * init(uint8_t load_state, int8_t save_slot)
 }
 
 static size_t videopac_getromdata(retro_emulator_file_t *rom_file, unsigned char **res_data, size_t max_size) {
-    /* src pointer to the ROM data in the external flash (raw or lzma) */
+    /* Odyssey2 is registered NO_GAME_DATA, so the launcher does NOT pre-cache the ROM into
+     * flash (rg_emulators.c only caches when game_data_type != NO_GAME_DATA) -> rom_file->
+     * address stays 0/NULL. Reading from it fed load_cart garbage (a crc matching NO real
+     * game; the O2 ran junk and the BIOS never reached the keypad scan = R=0). Cache the
+     * file into flash here ourselves (the game.com pattern) and XIP from that pointer. */
+    uint32_t sz = 0;
+    const unsigned char *src = (const unsigned char *)odroid_overlay_cache_file_in_flash(rom_file->path, &sz, false);
 
 #ifndef GNW_DISABLE_COMPRESSION
     if(strcmp(rom_file->ext, "lzma") == 0) {
-        const unsigned char *src = rom_file->address;
         uint8_t *dest = itc_malloc(max_size);
         size_t n_decomp_bytes;
-        n_decomp_bytes = lzma_inflate(dest, max_size, src, rom_file->size);
+        n_decomp_bytes = lzma_inflate(dest, max_size, src, sz);
         *res_data = dest;
         return n_decomp_bytes;
     }
     else
 #endif
     {
-        /* Raw cart: use the launched file's flash address/size directly (the same
-         * source the lzma branch decompresses from). The old global ROM_DATA is
-         * set by the firmware launcher, but inside this overlay it bound to the
-         * core's own NULL ROM_DATA copy -> empty cart -> crc=0, so the O2 ran a
-         * blank cart and never reached the keypad scan (R=0 in the SD diag).
-         * rom_file is ACTIVE_FILE, so address/size are always valid here. */
-        *res_data = (unsigned char *)rom_file->address;
-        return rom_file->size;
+        *res_data = (unsigned char *)src;
+        return sz;
     }
 }
 
