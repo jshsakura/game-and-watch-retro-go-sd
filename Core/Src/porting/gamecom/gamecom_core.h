@@ -56,6 +56,10 @@ void gamecom_set_stylus(int x, int y, int pressed);
  * with n = sample_rate/fps. */
 void gamecom_audio_mix(int16_t *out, int n, int sample_rate);
 
+/* The 8KB battery-backed cartridge NVRAM (0xE000-0xFFFF) — game.com's "internal
+ * memory" save (high scores, PDA data). Persist it to a .sav across sessions. */
+uint8_t *gamecom_nvram(uint32_t *size_out);
+
 /* Serialize all machine + CPU state through a read-or-write callback (returns 1
  * on ok). saving!=0 writes; saving==0 reads then re-derives bank pointers.
  * ROM/BIOS pointers are NOT saved — they stay as gamecom_init() set them, so a

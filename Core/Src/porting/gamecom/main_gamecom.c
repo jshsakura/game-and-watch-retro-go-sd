@@ -85,6 +85,39 @@ static bool LoadState(const char *path)
     return ok != 0;
 }
 
+/* Savestate-slot thumbnail: hand retro-go the current rendered frame. */
+static void *Screenshot(void)
+{
+    gc_blit();
+    return lcd_get_active_buffer();
+}
+
+/* Battery NVRAM: persist the 8KB cartridge save (high scores, PDA data) to a
+ * .sav so it survives power-off, like a real game.com's internal memory. */
+static void LoadSram(void)
+{
+    char *p = odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path);
+    FILE *f = p ? fopen(p, "rb") : NULL;
+    if (f) {
+        uint32_t n; uint8_t *nv = gamecom_nvram(&n);
+        if (fread(nv, 1, n, f) != n) { /* short/empty .sav: keep init value */ }
+        fclose(f);
+    }
+    free(p);
+}
+
+static void SaveSram(void)
+{
+    char *p = odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path);
+    FILE *f = p ? fopen(p, "wb") : NULL;
+    if (f) {
+        uint32_t n; uint8_t *nv = gamecom_nvram(&n);
+        fwrite(nv, 1, n, f);
+        fclose(f);
+    }
+    free(p);
+}
+
 /* Fill this frame's audio buffer from the core's SG0/SG1 + DAC mix, scaled by
  * the user volume (same factor>>8 convention as pce/wsv). */
 static void gamecom_pcm_submit(void)
@@ -120,7 +153,7 @@ static const uint8_t *cache_rom(const char *path, uint32_t want, uint32_t *sz_ou
 static bool init(void)
 {
     odroid_system_init(APPID_GB, GAMECOM_AUDIO_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL);
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, &SaveSram);
     /* Start the audio DMA: the per-frame common_emu_sound_sync busy-waits for the DMA
      * counter, so without this the first frame hangs forever (no audio = no DMA tick). */
     audio_start_playing(GAMECOM_AUDIO_SAMPLE_RATE / 60);
@@ -143,6 +176,7 @@ static bool init(void)
         return false;
     }
     gc_build_palette();
+    LoadSram();   /* restore the cartridge NVRAM save (after gamecom_init zeroed it) */
     return true;
 }
 

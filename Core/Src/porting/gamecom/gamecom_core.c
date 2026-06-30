@@ -207,6 +207,12 @@ void gamecom_set_input_state(uint8_t in0, uint8_t in1, uint8_t in2)
 	io_in0 = in0; io_in1 = in1; io_in2 = in2;
 }
 
+uint8_t *gamecom_nvram(uint32_t *size_out)
+{
+	if (size_out) *size_out = sizeof nvram;
+	return nvram;
+}
+
 /* ============================ I/O writes ============================ */
 static void gamecom_pio_w(uint16_t offset, uint8_t data)   /* offset 0x14-0x17 */
 {
