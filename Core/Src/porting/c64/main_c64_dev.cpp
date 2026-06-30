@@ -27,15 +27,11 @@ void  heap_itc_alloc(bool itc);
  * line written = where the .d64 load stalled. 1541d64.cpp calls this for disk events. */
 extern "C" void c64_diag(const char *fmt, ...)
 {
-    static int lines;
-    if (lines > 600) return;
-    lines++;
-    FILE *f = fopen("/c64_diag.txt", "a");
-    if (!f) return;
-    va_list ap; va_start(ap, fmt);
-    vfprintf(f, fmt, ap);
-    va_end(ap);
-    fclose(f);
+    /* DISABLED: the device filesystem allows only ONE open file (gw_littlefs
+     * MAX_OPEN_FILES=1). Opening /c64_diag.txt while the .d64 (the_file) is open
+     * corrupted the disk-read handle, so the virtual 1541 looped re-reading the
+     * directory (t18 s0) and never loaded the game. The log itself was the bug. */
+    (void)fmt;
 }
 
 #define RGB565(r,g,b) ((((r)>>3)<<11)|(((g)>>2)<<5)|((b)>>3))
@@ -163,14 +159,17 @@ void C64Display::Update(void)
      * harness never hit this (its file reads are instant). Paced 50fps keeps the read
      * latency small relative to emulation, so the load completes reliably — just slower
      * (~30-60s at LOADING for a full disk). Reliable-but-slow beats a fast infinite loop. */
-    (void)s_warp_idle;
-    const bool warp = false;
+    /* Auto-warp restored: it was never the directory-loop cause (the loop persisted with
+     * warp off); the real culprit was the c64_diag log opening a 2nd file. Warp gives the
+     * fast load again. */
+    const bool warp = (s_warp_idle < 25);
     if (warp && (s_frame & 0x0F) != 0)
-        return;
+        return;                       /* skip blit + sync -> full-speed load */
 
     c64_blit_frame();
     lcd_swap();
-    common_emu_sound_sync(false);
+    if (!warp)
+        common_emu_sound_sync(false);
 }
 
 #ifdef __riscos__
