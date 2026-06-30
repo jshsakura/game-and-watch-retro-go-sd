@@ -167,8 +167,11 @@ C64::~C64()
  *  Reset C64
  */
 
+extern "C" void c64_diag(const char *fmt, ...);   /* -> /c64_diag.txt (main_c64_dev) */
+
 void C64::Reset(void)
 {
+	c64_diag("C64::Reset\n");
 	TheCPU->AsyncReset();
 	TheCPU1541->AsyncReset();
 	TheSID->Reset();

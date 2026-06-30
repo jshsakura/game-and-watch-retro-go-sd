@@ -688,11 +688,14 @@ void MOS6510::Reset(void)
  *  Illegal opcode encountered
  */
 
+extern "C" void c64_diag(const char *fmt, ...);   /* -> /c64_diag.txt (main_c64_dev) */
+
 void MOS6510::illegal_op(uint8 op, uint16 at)
 {
 	char illop_msg[80];
 
 	sprintf(illop_msg, "Illegal opcode %02x at %04x.", op, at);
+	c64_diag("ILLEGAL OP %02x at %04x -> RESET\n", op, at);
 	ShowRequester(illop_msg, "Reset");
 	the_c64->Reset();
 	Reset();
@@ -708,6 +711,7 @@ void MOS6510::illegal_jump(uint16 at, uint16 to)
 	char illop_msg[80];
 
 	sprintf(illop_msg, "Jump to I/O space at %04x to %04x.", at, to);
+	c64_diag("ILLEGAL JUMP at %04x to %04x -> RESET\n", at, to);
 	ShowRequester(illop_msg, "Reset");
 	the_c64->Reset();
 	Reset();
