@@ -1067,6 +1067,7 @@ $(BUILD_DIR)/zxs/zxs_impl.o: Core/Src/porting/zxs/zxs_impl.c Makefile.common Mak
 	$(V)$(CP) --keep-global-symbol=zx_init --keep-global-symbol=zx_exec \
 		--keep-global-symbol=zx_quickload --keep-global-symbol=zx_joystick \
 		--keep-global-symbol=zx_key_down --keep-global-symbol=zx_key_up \
+		--keep-global-symbol=kbd_key_down --keep-global-symbol=kbd_key_up \
 		--keep-global-symbol=zx_display_info $@
 
 $(BUILD_DIR)/zxs/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
