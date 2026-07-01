@@ -698,6 +698,7 @@ void MOS6510::illegal_op(uint8 op, uint16 at)
 	c64_diag("ILLOP op=%02x pc=%04x mem[pc..]=%02x %02x %02x A=%02x X=%02x Y=%02x SP=%02x -> RESET\n",
 	         op, at, read_byte(at), read_byte((uint16)(at+1)), read_byte((uint16)(at+2)), a, x, y, sp);
 	ShowRequester(illop_msg, "Reset");
+	extern const char *g_c64_reset_reason; g_c64_reset_reason = "CPUC64-illop";
 	the_c64->Reset();
 	Reset();
 }
@@ -714,6 +715,7 @@ void MOS6510::illegal_jump(uint16 at, uint16 to)
 	sprintf(illop_msg, "Jump to I/O space at %04x to %04x.", at, to);
 	c64_diag("ILLJMP from=%04x to=%04x A=%02x X=%02x Y=%02x SP=%02x -> RESET\n", at, to, a, x, y, sp);
 	ShowRequester(illop_msg, "Reset");
+	extern const char *g_c64_reset_reason; g_c64_reset_reason = "CPUC64-illjmp";
 	the_c64->Reset();
 	Reset();
 }

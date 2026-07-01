@@ -644,13 +644,18 @@ void MOS6502_1541::Reset(void)
  *  Illegal opcode encountered
  */
 
+extern "C" void c64_diag(const char *fmt, ...);   /* -> /c64_diag.txt (main_c64_dev) */
+
 void MOS6502_1541::illegal_op(uint8 op, uint16 at)
 {
 	char illop_msg[80];
 
 	sprintf(illop_msg, "1541: Illegal opcode %02x at %04x.", op, at);
-	if (ShowRequester(illop_msg, "Reset 1541", "Reset C64"))
+	c64_diag("CPU1541 ILLOP op=%02x at=%04x (Emul1541Proc should be OFF!)\n", op, at);
+	if (ShowRequester(illop_msg, "Reset 1541", "Reset C64")) {
+		extern const char *g_c64_reset_reason; g_c64_reset_reason = "CPU1541-illop";
 		the_c64->Reset();
+	}
 	Reset();
 }
 
@@ -664,8 +669,11 @@ void MOS6502_1541::illegal_jump(uint16 at, uint16 to)
 	char illop_msg[80];
 
 	sprintf(illop_msg, "1541: Jump to I/O space at %04x to %04x.", at, to);
-	if (ShowRequester(illop_msg, "Reset 1541", "Reset C64"))
+	c64_diag("CPU1541 ILLJMP from=%04x to=%04x (Emul1541Proc should be OFF!)\n", at, to);
+	if (ShowRequester(illop_msg, "Reset 1541", "Reset C64")) {
+		extern const char *g_c64_reset_reason; g_c64_reset_reason = "CPU1541-illjmp";
 		the_c64->Reset();
+	}
 	Reset();
 }
 
