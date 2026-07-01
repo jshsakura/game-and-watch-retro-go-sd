@@ -1611,7 +1611,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_a7800,$(CORES_DIR)/a7800.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_amstrad,$(CORES_DIR)/amstrad.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_videopac,$(CORES_DIR)/videopac.bin)
-	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_zx,$(CORES_DIR)/zx.bin)
+	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_zx,$(CORES_DIR)/zxs.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_c64,$(CORES_DIR)/c64.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_gamecom,$(CORES_DIR)/gamecom.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_tama,$(CORES_DIR)/tama.bin)
@@ -1719,7 +1719,7 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(CORES_DIR)/a7800.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/amstrad.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/videopac.bin --dest-path "/cores/" \
-		-- sdpush --file $(CORES_DIR)/zx.bin --dest-path "/cores/" \
+		-- sdpush --file $(CORES_DIR)/zxs.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/c64.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/tama.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/pkmini.bin --dest-path "/cores/" \

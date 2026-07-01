@@ -1416,7 +1416,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         app_main_videopac(load_state, start_paused, save_slot);
       }
     } else if(strcmp(system_name, "ZX Spectrum") == 0)  {
-      if (load_core_bin_with_header("/cores/zx.bin", (uint8_t *)&__RAM_EMU_START__)) {
+      if (load_core_bin_with_header("/cores/zxs.bin", (uint8_t *)&__RAM_EMU_START__)) {
         memset(&_OVERLAY_ZX_BSS_START, 0x0, (size_t)&_OVERLAY_ZX_BSS_SIZE);
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_ZX_SIZE);
         app_main_zx(load_state, start_paused, save_slot);
