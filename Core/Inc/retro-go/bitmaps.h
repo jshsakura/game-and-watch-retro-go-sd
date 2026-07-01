@@ -116,6 +116,9 @@ enum {
     RG_LOGO_PAD_FAVORITES,
     // Tiger Game.com colour tab icon (cicon_gamecom; color_icon_for_logo only)
     RG_LOGO_PAD_GAMECOM,
+    // Virtual Boy colour tab icon (cicon_vb; color_icon_for_logo only, no logo.bin
+    // entry). Prepared ahead of the VB core so the asset is ready to wire up.
+    RG_LOGO_PAD_VB,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
