@@ -437,7 +437,21 @@ uint8_t pce_scsi_read(uint8_t reg)
                        | (s_cd ? 0x10 : 0) | (s_io ? 0x08 : 0));
     case 0x01: return s_db;   /* command/TOC/status byte; advances on ACK */
     case 0x02: return s_port2;
-    case 0x03: return s_port3;
+    case 0x03: {
+        /* $1803 IRQ status. DATA_DONE (0x20) is READ-TO-CLEAR once the bus is idle: the
+         * System Card's read-completion routine polls $1803 for DATA_DONE to SET *and then
+         * CLEAR* before issuing the next command. We assert it at BUSFREE but were holding
+         * it high until the next SEL, so the "wait for clear" spun forever right after the
+         * IPL read — the device "PUSH RUN BUTTON -> read 3596/3598 -> back to PUSH RUN"
+         * loop. Return it once (satisfies wait-for-set), then clear (satisfies wait-for-
+         * clear). Only in BUSFREE, so an in-flight transfer's DATA_READY is untouched. */
+        uint8_t v = s_port3;
+        if (s_phase == PH_BUSFREE && (s_port3 & IRQ_DATA_DONE)) {
+            s_port3 &= ~IRQ_DATA_DONE;
+            update_irq();
+        }
+        return v;
+    }
     case 0x04: return 0;
     case 0x08: {
         /* $1808 = SCSI auto-increment data read. The System Card pulls BULK READ
