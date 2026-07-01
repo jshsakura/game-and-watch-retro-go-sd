@@ -708,7 +708,7 @@ C_INCLUDES +=  \
 -ICore/Inc/porting/zelda3 \
 -ICore/Inc/porting/smw \
 -ICore/Inc/porting/videopac \
--ICore/Inc/porting/zx \
+-ICore/Inc/porting/zxs \
 -ICore/Inc/porting/c64 \
 -ICore/Inc/porting/gamecom \
 -ICore/Inc/porting/celeste \
@@ -826,7 +826,7 @@ AMSTRAD_OBJECTS = $(addprefix $(BUILD_DIR)/amstrad/,$(notdir $(AMSTRAD_C_SOURCES
 ZELDA3_OBJECTS = $(addprefix $(BUILD_DIR)/zelda3/,$(notdir $(ZELDA3_C_SOURCES:.c=.o)))
 SMW_OBJECTS = $(addprefix $(BUILD_DIR)/smw/,$(notdir $(SMW_C_SOURCES:.c=.o)))
 VIDEOPAC_OBJECTS = $(addprefix $(BUILD_DIR)/videopac/,$(notdir $(VIDEOPAC_C_SOURCES:.c=.o)))
-ZX_OBJECTS = $(addprefix $(BUILD_DIR)/zx/,$(notdir $(ZX_C_SOURCES:.c=.o)))
+ZX_OBJECTS = $(addprefix $(BUILD_DIR)/zxs/,$(notdir $(ZX_C_SOURCES:.c=.o)))
 C64_OBJECTS = $(addprefix $(BUILD_DIR)/c64/,$(notdir $(C64_C_SOURCES:.c=.o)))
 GAMECOM_OBJECTS = $(addprefix $(BUILD_DIR)/gamecom/,$(notdir $(GAMECOM_C_SOURCES:.c=.o)))
 C64_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/c64/,$(notdir $(C64_CXX_SOURCES:.cpp=.o)))
@@ -840,7 +840,7 @@ PICO8_OBJECTS = $(addprefix $(BUILD_DIR)/pico8/,$(notdir $(patsubst %.cpp,%.o,$(
 TAMA_OBJECTS = $(addprefix $(BUILD_DIR)/tama/,$(notdir $(TAMA_C_SOURCES:.c=.o)))
 PKMINI_OBJECTS = $(addprefix $(BUILD_DIR)/pkmini/,$(notdir $(PKMINI_C_SOURCES:.c=.o)))
 
-vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(TAMP_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(ZX_C_SOURCES) $(C64_C_SOURCES) $(GAMECOM_C_SOURCES) $(CELESTE_C_SOURCES) $(MUSIC_C_SOURCES) $(DOOM_C_SOURCES) $(NHDOOM_C_SOURCES) $(WOLF3D_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
+vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(TAMP_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(ZX_C_SOURCES) $(C64_C_SOURCES) $(VB_C_SOURCES) $(GAMECOM_C_SOURCES) $(CELESTE_C_SOURCES) $(MUSIC_C_SOURCES) $(DOOM_C_SOURCES) $(NHDOOM_C_SOURCES) $(WOLF3D_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
 # NGP (RACE) is intentionally excluded from vpath: its generic filenames
 # (state.c, sound.c, main.c, flash.c, graphics.c) would shadow other cores'
 # same-named files. NGP objects are built via ngp_obj_prereq_gen (explicit
@@ -1057,21 +1057,21 @@ $(BUILD_DIR)/gamecom/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_
 	$(V)$(ECHO) [ CC gamecom ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(GAMECOM_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/gamecom/$(notdir $(<:.c=.lst)) $< -o $@
 
-# The chips ZX core (zx_impl.o) exports generic z80_*/mem_*/kbd_* symbols that
+# The chips ZX core (zxs_impl.o) exports generic z80_*/mem_*/kbd_* symbols that
 # collide with the smsplusgx/msx Z80 cores at link time (they live in separate
 # overlays but the linker sees duplicate globals). It's a single TU, so localize
 # everything except the small zx_* API that main_zx.o needs.
-$(BUILD_DIR)/zx/zx_impl.o: Core/Src/porting/zx/zx_impl.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
-	$(V)$(ECHO) [ CC zx-core ] $(notdir $<)
+$(BUILD_DIR)/zxs/zxs_impl.o: Core/Src/porting/zxs/zxs_impl.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+	$(V)$(ECHO) [ CC zxs-core ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(ZX_C_INCLUDES) $< -o $@
 	$(V)$(CP) --keep-global-symbol=zx_init --keep-global-symbol=zx_exec \
 		--keep-global-symbol=zx_quickload --keep-global-symbol=zx_joystick \
 		--keep-global-symbol=zx_key_down --keep-global-symbol=zx_key_up \
 		--keep-global-symbol=zx_display_info $@
 
-$(BUILD_DIR)/zx/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
-	$(V)$(ECHO) [ CC zx ] $(notdir $<)
-	$(V)$(CC) -c $(CFLAGS) $(ZX_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/zx/$(notdir $(<:.c=.lst)) $< -o $@
+$(BUILD_DIR)/zxs/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+	$(V)$(ECHO) [ CC zxs ] $(notdir $<)
+	$(V)$(CC) -c $(CFLAGS) $(ZX_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/zxs/$(notdir $(<:.c=.lst)) $< -o $@
 
 # The chips C64 core (c64_impl.o) exports generic m6502_*/m6526_*/mem_*/kbd_* symbols
 # that collide with other cores' CPUs at link time. It's a single TU, so localize
@@ -1338,7 +1338,7 @@ $(BUILD_DIR):
 	$(V)mkdir $@/zelda3
 	$(V)mkdir $@/smw
 	$(V)mkdir $@/videopac
-	$(V)mkdir $@/zx
+	$(V)mkdir $@/zxs
 	$(V)mkdir $@/c64
 	$(V)mkdir $@/gamecom
 	$(V)mkdir $@/celeste
@@ -1625,7 +1625,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_vb,$(CORES_DIR)/vb.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_amstrad,$(CORES_DIR)/amstrad.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_videopac,$(CORES_DIR)/videopac.bin)
-	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_zx,$(CORES_DIR)/zxs.bin)
+	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_zxs,$(CORES_DIR)/zxs.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_c64,$(CORES_DIR)/c64.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_gamecom,$(CORES_DIR)/gamecom.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_tama,$(CORES_DIR)/tama.bin)

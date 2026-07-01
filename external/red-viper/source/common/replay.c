@@ -1,5 +1,7 @@
 #include <stdio.h>
+#ifndef GNW_VB_DEVICE   /* device build has no zlib; replay_save (gz) is stubbed below */
 #include <zlib.h>
+#endif
 #include "replay.h"
 #include "v810_mem.h"
 #include "vb_set.h"
@@ -55,6 +57,7 @@ void replay_update(HWORD inputs) {
     replay_cursor->count++;
 }
 
+#ifndef GNW_VB_DEVICE
 // returns 0 on success
 static int gz_write_all(gzFile f, void *data, size_t size) {
     int cursor = 0;
@@ -76,6 +79,9 @@ void replay_save(char *fn) {
     bail:
     gzclose(f);
 }
+#else
+void replay_save(char *fn) { (void)fn; }   /* device: no zlib, replay .gz save unavailable */
+#endif
 
 static FILE *current_replay;
 static ReplayEntry current_entry;

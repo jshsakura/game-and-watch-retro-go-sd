@@ -8,7 +8,25 @@
 #include <strings.h>
 #include <sys/stat.h>
 
+#ifdef GNW_VB_DEVICE
+/* Device loads a raw .vb from SD (vb_getromdata); the .zip loader below is dead code
+ * on device and minizip isn't in the firmware build — stub the unz* symbols it uses. */
+typedef void *unzFile;
+typedef struct { unsigned long uncompressed_size; unsigned long size_filename; } unz_file_info;
+#define UNZ_OK 0
+static inline unzFile unzOpen(const char *p){(void)p;return (unzFile)0;}
+static inline int unzClose(unzFile f){(void)f;return 0;}
+static inline int unzGoToFirstFile(unzFile f){(void)f;return 0;}
+static inline int unzGoToNextFile(unzFile f){(void)f;return 0;}
+static inline int unzGetCurrentFileInfo(unzFile f, unz_file_info *i, char *n, unsigned long ns,
+                                        void *e, unsigned long es, void *c, unsigned long cs)
+{ (void)f;(void)i;(void)n;(void)ns;(void)e;(void)es;(void)c;(void)cs; return 0; }
+static inline int unzOpenCurrentFile(unzFile f){(void)f;return 0;}
+static inline int unzCloseCurrentFile(unzFile f){(void)f;return 0;}
+static inline int unzReadCurrentFile(unzFile f, void *buf, unsigned len){(void)f;(void)buf;(void)len;return 0;}
+#else
 #include "minizip/unzip.h"
+#endif
 
 #include "v810_opt.h"
 #include "v810_cpu.h"
