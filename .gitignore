@@ -55,3 +55,7 @@ build-error.log
 *.sfc
 sdcard_staging/
 linux/vb/build_vb/
+linux/zx/zx_harness.elf
+linux/zx/*.o
+linux/zx/48.rom
+linux/48.rom

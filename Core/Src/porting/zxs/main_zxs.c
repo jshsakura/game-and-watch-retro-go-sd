@@ -23,9 +23,14 @@
 #define ZX_FPS               50            /* PAL */
 #define ZX_AUDIO_SAMPLES     (ZX_AUDIO_SAMPLE_RATE / ZX_FPS)   /* 441 / frame */
 #define RGB565(r, g, b) ((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3))
-/* LCD is 320x240; the ZX visible field is 320x256 (border baked in) — drop 8
- * scanlines top & bottom to centre it. */
-#define ZX_CROP_TOP 8
+/* Auto-fit: the chips ZX display is 320x256 with a 32px border on every side,
+ * so the real Spectrum screen is the 256x192 content at (32,32). Scale just that
+ * content to fill the 320x240 LCD — both are 4:3, so it's an exact 1.25x with no
+ * distortion and no wasted border. */
+#define ZX_CONTENT_LEFT 32
+#define ZX_CONTENT_TOP  32
+#define ZX_CONTENT_W    256
+#define ZX_CONTENT_H    192
 
 static zx_t      zx;
 static uint16_t  zx_pal565[16];
@@ -105,13 +110,21 @@ static void zx_build_palette(void)
 
 static void zx_blit(void)
 {
-    uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
-    for (int y = 0; y < 240; y++) {
-        const uint8_t *src = &zx.fb[(y + ZX_CROP_TOP) * ZX_FRAMEBUFFER_WIDTH];
-        uint16_t *dst = &out[y * WIDTH];
-        for (int x = 0; x < ZX_DISPLAY_WIDTH; x++)
-            dst[x] = zx_pal565[src[x] & 15];
+    /* Draw to the ACTIVE buffer — same as a7800/lynx — because the PAUSE popup
+     * (odroid_overlay) composites onto lcd_get_active_buffer(). Drawing to the
+     * inactive buffer here made the menu render over a stale/other frame. */
+    uint16_t *out = (uint16_t *)lcd_get_active_buffer();
+    for (int dy = 0; dy < GW_LCD_HEIGHT; dy++) {
+        int sy = ZX_CONTENT_TOP + (dy * ZX_CONTENT_H / GW_LCD_HEIGHT);
+        const uint8_t *src = &zx.fb[sy * ZX_FRAMEBUFFER_WIDTH + ZX_CONTENT_LEFT];
+        uint16_t *dst = &out[dy * GW_LCD_WIDTH];
+        for (int dx = 0; dx < GW_LCD_WIDTH; dx++) {
+            int sx = dx * ZX_CONTENT_W / GW_LCD_WIDTH;   /* 256 -> 320 (1.25x) */
+            dst[dx] = zx_pal565[src[sx] & 15];
+        }
     }
+    /* In-game overlay (battery, etc.) on top, like the other cores. */
+    common_ingame_overlay();
 }
 
 static bool load_bios(zx_desc_t *desc)
@@ -177,7 +190,10 @@ void app_main_zx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
-        common_emu_input_loop(&joystick, options, NULL);
+        /* Non-NULL repaint: the PAUSE menu calls this to redraw the frame behind
+         * the overlay — passing NULL jumps to PC=0 (HardFault) when PAUSE is
+         * pressed (cf. custom-loop-core-integration). */
+        common_emu_input_loop(&joystick, options, &zx_blit);
         common_emu_input_loop_handle_turbo(&joystick);
 
         uint8_t m = 0;
