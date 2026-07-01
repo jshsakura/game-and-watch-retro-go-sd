@@ -23,6 +23,7 @@ typedef enum {
     APPID_PICO8    = 19,
     APPID_NGP      = 20,
     APPID_LYNX     = 21,
+    APPID_VB       = 22,
 
     APPID_COUNT,
 } appid_t;

@@ -673,6 +673,37 @@ $(CORE_LYNX)/mikie.cpp \
 $(CORE_LYNX)/susie.cpp \
 $(CORE_LYNX)/system.cpp
 
+VB_C_SOURCES =
+VB_CXX_SOURCES =
+
+CORE_VB = external/red-viper/source/common
+VB_C_SOURCES += \
+$(CORE_VB)/v810_cpu.c \
+$(CORE_VB)/v810_ins.c \
+$(CORE_VB)/v810_mem.c \
+$(CORE_VB)/interpreter.c \
+$(CORE_VB)/vb_sound.c \
+$(CORE_VB)/vb_set.c \
+$(CORE_VB)/rom_db.c \
+$(CORE_VB)/patches.c \
+$(CORE_VB)/replay.c \
+$(CORE_VB)/video_common.c \
+$(CORE_VB)/inih/ini.c \
+Core/Src/porting/vb/main_vb.c \
+Core/Src/porting/vb/vb_savestate.c
+
+VB_CXX_SOURCES += \
+$(CORE_VB)/video_soft.cpp
+
+VB_C_INCLUDES += \
+-ICore/Inc \
+-ICore/Inc/porting/vb \
+-ICore/Src/porting/lib \
+-ICore/Src/porting/lib/lzma \
+-Iexternal/red-viper/include \
+-Iexternal/red-viper/source/common/inih \
+-I./
+
 A7800_C_SOURCES =
 
 CORE_PROSYSTEM = external/prosystem-go
