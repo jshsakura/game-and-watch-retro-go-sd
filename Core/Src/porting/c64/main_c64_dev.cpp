@@ -125,14 +125,15 @@ static void c64_repaint(void)
      * the 208 rows into the 240-tall LCD. (X0 is the only knob if the window is a few px
      * off; centring the 20px total border is the natural fit.) */
     uint16_t *out = (uint16_t *)lcd_get_active_buffer();
-    const int X0 = (DISPLAY_X - WIDTH) / 2;              /* (340-320)/2 = 10 */
+    const int X0 = 0x20;                                 /* VIC COL40_XSTART: content left edge */
+    int cw = DISPLAY_X - X0;                             /* visible content cols (340-32=308) */
+    if (cw > WIDTH) cw = WIDTH;
     const int Y0 = (HEIGHT - DISPLAY_Y) / 2;             /* (240-208)/2 = 16 */
-    memset(out, 0, (size_t)Y0 * WIDTH * sizeof(uint16_t));
-    memset(&out[(Y0 + DISPLAY_Y) * WIDTH], 0, (size_t)(HEIGHT - Y0 - DISPLAY_Y) * WIDTH * sizeof(uint16_t));
+    memset(out, 0, (size_t)HEIGHT * WIDTH * sizeof(uint16_t));   /* clear (borders) */
     for (int y = 0; y < DISPLAY_Y; y++) {
         const uint8 *src = &s_bitmap[y * DISPLAY_X + X0];
         uint16_t *dst = &out[(Y0 + y) * WIDTH];
-        for (int x = 0; x < WIDTH; x++)
+        for (int x = 0; x < cw; x++)
             dst[x] = s_pal565[src[x] & 0x0f];
     }
 }
@@ -188,6 +189,8 @@ void C64Display::Update(void)
     odroid_gamepad_state_t js;
     odroid_input_read_gamepad(&js);
     odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
+    common_emu_frame_loop();     /* required before input_loop (Lynx/gamecom) or the pause/
+                                    volume/brightness menu doesn't arm */
     common_emu_input_loop(&js, options, c64_repaint);
     common_emu_input_loop_handle_turbo(&js);
 
