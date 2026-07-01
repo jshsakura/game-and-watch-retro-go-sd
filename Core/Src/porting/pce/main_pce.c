@@ -620,10 +620,17 @@ static void blit() {
 
     int renderHeight = (current_height<=GW_LCD_HEIGHT)?current_height:GW_LCD_HEIGHT;
     int renderWidth = (current_width<=GW_LCD_WIDTH)?current_width:GW_LCD_WIDTH;
+    /* Vertically CENTRE the picture (was top-aligned -> "lifted up" feel with black at the
+     * bottom). No Y scaling yet, so just letterbox the renderHeight rows. */
+    int offY = (GW_LCD_HEIGHT - renderHeight) / 2;
+    if (offY < 0) offY = 0;
+
+    /* black the top letterbox */
+    memset(framebuffer_active, 0, (size_t)offY * GW_LCD_WIDTH * sizeof(pixel_t));
 
     for(y=0;y<renderHeight;y++) {
         fbTmp = emuFrameBuffer+(y*XBUF_WIDTH);
-        offsetY = y*GW_LCD_WIDTH;
+        offsetY = (y + offY)*GW_LCD_WIDTH;
         if (xScale) {
             // Horizontal - Scale
             for(int x=0;x<GW_LCD_WIDTH;x++) {
@@ -636,13 +643,11 @@ static void blit() {
             }
         }
     }
-    // Temporary, Y scaling is not yet implemented
-    for(;y<GW_LCD_HEIGHT;y++) {
-        fbTmp = emuFrameBuffer+(y*XBUF_WIDTH);
+    // black the bottom letterbox
+    for(y = offY + renderHeight; y < GW_LCD_HEIGHT; y++) {
         offsetY = y*GW_LCD_WIDTH;
-        for(int x=0;x<renderWidth;x++) {
-            framebuffer_active[offsetY+x+offsetX]=0;
-        }
+        for(int x=0;x<GW_LCD_WIDTH;x++)
+            framebuffer_active[offsetY+x]=0;
     }
 }
 
