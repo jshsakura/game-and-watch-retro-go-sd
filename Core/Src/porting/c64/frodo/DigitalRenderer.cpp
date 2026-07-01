@@ -420,7 +420,7 @@ DigitalRenderer::DigitalRenderer()
 	//init_sound();
 
     #if 1
-	odroid_audio_init(SAMPLE_FREQ);
+	c64sid_audio_init(SAMPLE_FREQ);
 
     sndbufsize = (SAMPLE_FREQ / 25);
     
@@ -930,7 +930,7 @@ void DigitalRenderer::init_sound(void)
 DigitalRenderer::~DigitalRenderer()
 {
 #if 1
-    odroid_audio_terminate();
+    c64sid_audio_terminate();
 #endif
 
 	printf("%s\n", __func__);
@@ -995,7 +995,7 @@ void DigitalRenderer::EmulateLine(void)
             sampleBuffer[i * 2 + 1] = sound_buffer[i];
         }
 
-        odroid_audio_submit(sampleBuffer, sndbufsize);
+        c64sid_audio_submit(sampleBuffer, sndbufsize);
 
         buffer_pos = 0;
     }    

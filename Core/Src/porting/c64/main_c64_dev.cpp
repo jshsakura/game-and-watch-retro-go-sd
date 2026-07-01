@@ -142,6 +142,8 @@ static void c64_repaint(void)
     }
 }
 
+static void c64_audio_drain(void);   /* SID ring -> DMA buffer; defined below */
+
 void C64Display::Update(void)
 {
     s_frame++;
@@ -246,9 +248,9 @@ long ShowRequester(char *str, char *b1, char *b2) { (void)b1; (void)b2; printf("
 static int16_t s_snd_ring[C64_SND_RING];
 static volatile int s_snd_wr = 0, s_snd_rd = 0;
 
-extern "C" void odroid_audio_init(int rate) { (void)rate; }
-extern "C" void odroid_audio_terminate(void) {}
-extern "C" void odroid_audio_submit(const int16_t *stereo, int frames)
+extern "C" void c64sid_audio_init(int rate) { (void)rate; }
+extern "C" void c64sid_audio_terminate(void) {}
+extern "C" void c64sid_audio_submit(const int16_t *stereo, int frames)
 {
     for (int i = 0; i < frames; i++) {
         int nx = (s_snd_wr + 1) & (C64_SND_RING - 1);
