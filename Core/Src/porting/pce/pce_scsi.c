@@ -34,10 +34,13 @@ __attribute__((weak)) void pce_scsi_pc_tick(uint16_t pc) { (void)pc; }
    * is safe. The old "diag caused the FATAL" was the wrong premise (same as C64);
    * the real FATAL risk is the per-command fopen+f_sync repeated thousands of times
    * in the System-Card poll loop, so cap tight at 400 lines (the per-category caps
-   * s_atrace<130 / s_trace<12 already bound the bulk). Delete /pcecd_diag.txt first. */
+   * s_atrace<130 / s_trace<12 already bound the HIGH-FREQUENCY bulk (that flood — not the
+   * global line count — was the FATAL risk, and it stays capped regardless), so this global
+   * cap only buys headroom for the low-rate events we actually want (CD-DA / ADPCM start,
+   * READ fails). 800 lines ~= 32KB, nothing on SD. Delete /pcecd_diag.txt first. */
   #define PCECD_DIAG 1
   #define PCECD_DIAG_FILE "/pcecd_diag.txt"
-  #define PCECD_DIAG_MAX  400
+  #define PCECD_DIAG_MAX  800
 #endif
 #if PCECD_DIAG
 static int s_diag_lines;
@@ -114,7 +117,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
 #if PCECD_DIAG
     s_diag_lines = 0;   /* fresh run */
 #endif
-    diag("=== BUILD scd-adpcm-fix ===\n");
+    diag("=== BUILD scd-adpcm+cdda-trace ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
     /* Dump every track's computed start_lba — the harness showed device reads land 294
@@ -315,6 +318,13 @@ static uint32_t cdda_decode_pos(const uint8_t *cmd)
 int pce_scsi_cdda_fill(int16_t *out, int frames)
 {
     if (!s_cdda_play || !s_present) return 0;
+    /* One-shot: prove the audio callback actually reaches a playing CD-DA stream on
+     * device (vs the command never arriving). If this never appears but SAPSP/SAPEP
+     * did, the fill path isn't wired to the mixer; if it appears but you hear nothing,
+     * the loss is downstream (volume/mix). */
+    { static bool logged; if (!logged) { logged = true;
+        diag("  cdda_fill START lba=%lu end=%lu frames=%d\n",
+             (unsigned long)s_cdda_lba, (unsigned long)s_cdda_end, frames); } }
     for (int i = 0; i < frames; i++) {
         if (s_cdda_pos + 8 > PCE_CD_SECTOR_RAW) {
             if (s_cdda_lba >= s_cdda_end) {
@@ -326,7 +336,11 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
                     return frames;
                 }
             }
-            if (!pce_cd_read_sector_audio(s_toc, s_cdda_lba, s_cdda_sec)) { s_cdda_play = false; return i; }
+            if (!pce_cd_read_sector_audio(s_toc, s_cdda_lba, s_cdda_sec)) {
+                diag("  cdda_fill READ AUDIO FAIL lba=%lu (SD/CUE audio-track read failed)\n",
+                     (unsigned long)s_cdda_lba);
+                s_cdda_play = false; return i;
+            }
             s_cdda_lba++;
             s_cdda_pos = 0;
         }
@@ -508,7 +522,14 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
         break;
     }
     case 0x08: case 0x09: case 0x0A: case 0x0D: case 0x0E:
-        pce_adpcm_write(reg, val);   /* ADPCM addr/data/control/rate */
+        { bool was_playing = pce_adpcm_playing();
+          pce_adpcm_write(reg, val);   /* ADPCM addr/data/control/rate */
+          /* Confirm the just-enabled ADPCM engine actually STARTS playing on device
+           * (the DMA "ADPCM drain" only proves data landed in RAM, not that $180D
+           * triggered decode). No line here = voice/SFX silent because playback never
+           * started, not because of the mixer. */
+          if (!was_playing && pce_adpcm_playing())
+              diag("  ADPCM PLAY start reg=%02x val=%02x freq=n/a\n", reg, val); }
         break;
     case 0x0B: /* ADPCM DMA control: bit1 = enable SCSI->ADPCM auto-transfer */
         s_adpcm_ctrl = val;
