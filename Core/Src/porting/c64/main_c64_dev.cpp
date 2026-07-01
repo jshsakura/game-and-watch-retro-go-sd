@@ -227,12 +227,11 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
         if (js.values[ODROID_INPUT_START]) {    /* GAME button -> SPACE  (row7,col4) */
             key_matrix[7] &= ~0x10; rev_matrix[4] &= ~0x80;
         }
-        if (js.values[ODROID_INPUT_B]) {        /* B button -> N (row4,col7): answer 'N'
-                                                 * to cracktro "use fastload? Y/N" prompts —
-                                                 * fastload needs a cycle-exact 1541, but we
-                                                 * run the high-level virtual drive, so N (the
-                                                 * standard load) is the one that works. */
-            key_matrix[4] &= ~0x80; rev_matrix[7] &= ~0x10;
+        if (js.values[ODROID_INPUT_B]) {        /* B button -> F1 (row0,col4): the C64
+                                                 * function key many games/menus need to
+                                                 * start or pick a mode (e.g. R-Type's
+                                                 * player-select is F1, unreachable before). */
+            key_matrix[0] &= ~0x10; rev_matrix[4] &= ~0x01;
         }
         if (js.values[ODROID_INPUT_SELECT]) {   /* TIME button -> RETURN (row0,col1) */
             key_matrix[0] &= ~0x02; rev_matrix[1] &= ~0x01;
@@ -290,7 +289,7 @@ static bool read_bios_file(const char *path, uint8 *dst, uint32_t want)
 
 extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
-    (void)load_state; (void)start_paused; (void)save_slot;
+    (void)start_paused;
 
     /* Run the Frodo C++ static constructors (global ThePrefs etc.) NOW, after the
      * overlay is copied into RAM — NOT via __libc_init_array at boot (their code
@@ -361,6 +360,15 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     audio_start_playing(22050 / 50);   /* PAL C64 ~50fps */
     lcd_clear_buffers();               /* black BOTH buffers once — the letterbox borders are
                                           then never redrawn per frame (see c64_repaint) */
+
+    /* RESUME: honour the launcher's "load state" (was ignored -> saves never restored).
+     * odroid_system_emu_load_state() -> c64_LoadState() records the slot path; the first
+     * C64Display::Update() then runs LoadSnapshot (deferred, where TheC64 is valid). Skip
+     * the LOAD/RUN autostart since the snapshot already has the game running. */
+    if (load_state) {
+        odroid_system_emu_load_state(save_slot);
+        s_frame = 1000;                /* past the autostart triggers (frames 150/420) */
+    }
     c64_diag("ROMs ok -> audio started -> the_c64->Run()\n");
     printf("[c64] Frodo start, disk=%s\n", ThePrefs.DrivePath[0]);
     the_c64->Run();   /* blocks; per-frame work happens in C64Display::Update */
