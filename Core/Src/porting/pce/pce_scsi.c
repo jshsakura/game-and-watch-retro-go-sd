@@ -117,6 +117,14 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     diag("=== BUILD scd-adpcm-fix ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
+    /* Dump every track's computed start_lba — the harness showed device reads land 294
+     * sectors below host for identical data, i.e. the per-track LBA computation diverges
+     * on device. Compare this dump host-vs-device to find where the offset creeps in. */
+    if (toc) for (int i = 0; i < toc->num_tracks; i++)
+        diag("TOC t%02d type=%d start=%lu off=%lu ss=%d %s\n",
+             toc->tracks[i].number, toc->tracks[i].type,
+             (unsigned long)toc->tracks[i].start_lba, (unsigned long)toc->tracks[i].file_offset,
+             toc->tracks[i].sector_size, toc->tracks[i].bin_path);
     pce_scsi_reset();
 }
 
