@@ -143,6 +143,8 @@ static void c64_repaint(void)
 }
 
 
+static void c64_audio_drain(void);
+
 void C64Display::Update(void)
 {
     s_frame++;
@@ -199,6 +201,7 @@ void C64Display::Update(void)
     common_ingame_overlay();   /* draws the volume/brightness/speedup bar armed just above */
     lcd_swap();
 
+    c64_audio_drain();         /* pull one frame of SID samples into the DMA buffer */
     if (!warp)
         common_emu_sound_sync(false);   /* during warp, don't pace to audio */
 }
@@ -242,20 +245,41 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
 
 long ShowRequester(char *str, char *b1, char *b2) { (void)b1; (void)b2; printf("[c64] %s\n", str?str:""); return 1; }
 
-/* ---- DigitalRenderer no-op stub (SIDType=NONE) ---------------------------
- * SID sound is REVERTED: the real Frodo DigitalRenderer's static tables (16KB
- * TriTable + the ring) grew the C64 overlay BSS enough that the 64KB `new C64`
- * no longer fit the tight AXI fallback heap -> HEAP OOM assert on launch. Keep
- * the C64 booting (silent); real SID needs a memory-budget rework (allocate the
- * C64 RAM / TriTable off the big RAM_EMU heap, not the ~80KB AXI heap). */
-DigitalRenderer::DigitalRenderer() { ready = false; volume = 0; v3_mute = false; pad00 = 0; }
-DigitalRenderer::~DigitalRenderer() {}
-void DigitalRenderer::Reset(void) {}
-void DigitalRenderer::EmulateLine(void) {}
-void DigitalRenderer::WriteRegister(uint16, uint8) {}
-void DigitalRenderer::NewPrefs(Prefs *) {}
-void DigitalRenderer::Pause(void) {}
-void DigitalRenderer::Resume(void) {}
+/* ---- SID audio bridge (SID re-enabled; TriTable now heap-alloc'd so it fits) ----
+ * The real Frodo DigitalRenderer generates the SID DSP and PUSHES stereo via
+ * c64sid_audio_submit() from SID::EmulateLine (per raster line). We ring-buffer the
+ * mono mix; C64Display::Update() drains one device-DMA frame (441 @ 22050/50) into
+ * audio_get_active_buffer before common_emu_sound_sync (same output path as Lynx). */
+#define C64_SND_RING 2048
+static int16_t s_snd_ring[C64_SND_RING];
+static volatile int s_snd_wr = 0, s_snd_rd = 0;
+
+extern "C" void c64sid_audio_init(int rate) { (void)rate; }
+extern "C" void c64sid_audio_terminate(void) {}
+extern "C" void c64sid_audio_submit(const int16_t *stereo, int frames)
+{
+    for (int i = 0; i < frames; i++) {
+        int nx = (s_snd_wr + 1) & (C64_SND_RING - 1);
+        if (nx == s_snd_rd) break;            /* ring full: drop */
+        s_snd_ring[s_snd_wr] = stereo[i * 2]; /* left -> mono */
+        s_snd_wr = nx;
+    }
+}
+
+static void c64_audio_drain(void)
+{
+    int16_t *out = audio_get_active_buffer();
+    int      len = audio_get_buffer_length();
+    int      mute = common_emu_sound_loop_is_muted();
+    int32_t  factor = common_emu_sound_get_volume();
+    for (int i = 0; i < len; i++) {
+        int16_t s = 0;
+        if (s_snd_rd != s_snd_wr) { s = s_snd_ring[s_snd_rd]; s_snd_rd = (s_snd_rd + 1) & (C64_SND_RING - 1); }
+        int32_t v = mute ? 0 : (((int32_t)s * factor) >> 8);
+        if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+        out[i] = (int16_t)v;
+    }
+}
 
 /* Map a ROM file into flash and return a read-only pointer (>= want bytes), or NULL. */
 static const uint8_t *flash_rom(const char *path, uint32_t want)
@@ -309,7 +333,7 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
         ThePrefs.DriveType[0] = DRVTYPE_D64;
         strncpy(ThePrefs.DrivePath[0], ACTIVE_FILE->path, 255);
     }
-    ThePrefs.SIDType    = SIDTYPE_NONE;   /* SID reverted (heap) — see DigitalRenderer stub */
+    ThePrefs.SIDType    = SIDTYPE_DIGITAL;  /* SID re-enabled (TriTable heap-alloc'd) */
     ThePrefs.SpritesOn  = true;
     ThePrefs.LimitSpeed = false;
     ThePrefs.FastReset  = true;

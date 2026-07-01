@@ -2,6 +2,8 @@
 
 #include <math.h>
 
+extern "C" void *heap_alloc_mem(size_t);   /* ITCM-preferred heap (heap.cpp) for TriTable */
+
 #include "VIC.h"
 
 extern "C"
@@ -49,7 +51,7 @@ static uint8 sid_random(void)
 }
 
 // Static data members
-uint16 DigitalRenderer::TriTable[0x1000*2];
+uint16 *DigitalRenderer::TriTable = 0;
 
 #ifndef EMUL_MOS8580
 // Sampled from a 6581R4
@@ -378,8 +380,10 @@ const int16 DigitalRenderer::SampleTab[16] = {
 
 DigitalRenderer::DigitalRenderer()
 {
-	// TriTable = (uint16*)heap_caps_malloc(0x1000 * 2 * sizeof(uint16), MALLOC_CAP_SPIRAM);
-	// if (!TriTable) abort();
+	/* Allocate the 16KB waveform table off the heap (ITCM-preferred via heap_alloc_mem)
+	 * instead of the C64 overlay BSS — that 16KB static is what pushed the 64KB `new C64`
+	 * past the tiny AXI fallback heap and OOM-crashed the launch. */
+	if (!TriTable) TriTable = (uint16 *)heap_alloc_mem(0x1000 * 2 * sizeof(uint16));
 
 	// Link voices together
 	voice[0].mod_by = &voice[2];

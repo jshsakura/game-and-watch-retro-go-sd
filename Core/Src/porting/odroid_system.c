@@ -107,8 +107,14 @@ static void odroid_system_get_path_buf(emu_path_type_t type, const char *_romPat
         if (currentApp.id == APPID_HOMEBREW ||
             (origPath && strstr(origPath, "homebrew")))
             fileName = "homebrew";
-        else
-            RG_PANIC("Invalid ROM path!");
+        else {
+            /* Degrade gracefully instead of a FATAL EXCEPTION: a missing/empty ROM path
+             * (e.g. a core that bailed on a missing BIOS) must NOT crash the whole device.
+             * Use a stable fallback stem — the resulting save/screenshot path is never used
+             * to read/write a real game's data, and the launcher stays alive. */
+            printf("odroid_system_get_path_buf: invalid ROM path '%s' -> fallback\n", origPath ?: "(null)");
+            fileName = "unknown";
+        }
     }
 
     switch (type)

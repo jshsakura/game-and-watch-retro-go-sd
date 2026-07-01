@@ -107,7 +107,7 @@ private:
 	bool v3_mute;					// Voice 3 muted
     uint8 pad00;
 
-	static uint16 TriTable[0x1000*2];	// Tables for certain waveforms
+	static uint16 *TriTable;	// waveform table (heap-alloc'd in ctor to keep 16KB off the overlay BSS)
 	static const uint16 TriSawTable[0x100];
 	static const uint16 TriRectTable[0x100];
 	static const uint16 SawRectTable[0x100];
