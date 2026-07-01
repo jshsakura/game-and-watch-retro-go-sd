@@ -183,21 +183,20 @@ void C64Display::Update(void)
     if (warp && (s_frame & 0x0F) != 0)
         return;                       /* skip blit + sync -> full-speed load */
 
-    c64_repaint();
-    common_ingame_overlay();   /* draw the volume/brightness/speedup bar (PAUSE+dir macros) */
-    lcd_swap();          /* present the game frame; c64_repaint no longer swaps itself */
-
-    /* Pause menu (VOLUME/SET button) -> volume / brightness / power / Quit-to-menu.
-     * Custom-loop cores (Run() blocks, this is the per-frame callback) MUST call this
-     * every non-warp frame with a NON-NULL repaint, else there is NO way to quit the
-     * game — the user had to drain the battery. "Quit to menu" does switch_app(0). */
+    /* INPUT FIRST, THEN DRAW. common_emu_input_loop (VOLUME/SET + dir) sets the volume/
+     * brightness overlay flag; it must run BEFORE common_ingame_overlay() draws the bar,
+     * or the bar is never shown (the previous order drew, THEN armed -> nothing appeared,
+     * "volume doesn't work"). It also opens the pause/quit menu (repaint = c64_repaint). */
     odroid_gamepad_state_t js;
     odroid_input_read_gamepad(&js);
     odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
-    common_emu_frame_loop();     /* required before input_loop (Lynx/gamecom) or the pause/
-                                    volume/brightness menu doesn't arm */
+    common_emu_frame_loop();
     common_emu_input_loop(&js, options, c64_repaint);
     common_emu_input_loop_handle_turbo(&js);
+
+    c64_repaint();
+    common_ingame_overlay();   /* draws the volume/brightness/speedup bar armed just above */
+    lcd_swap();
 
     if (!warp)
         common_emu_sound_sync(false);   /* during warp, don't pace to audio */
@@ -224,10 +223,10 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
      * sticks. C64 matrix: key_matrix[row]&=~(1<<col), rev_matrix[col]&=~(1<<row). */
     if (key_matrix && rev_matrix) {
         for (int i = 0; i < 8; i++) { key_matrix[i] = 0xff; rev_matrix[i] = 0xff; }
-        if (js.values[ODROID_INPUT_B]) {        /* SPACE  (row7,col4) */
+        if (js.values[ODROID_INPUT_START]) {    /* GAME button -> SPACE  (row7,col4) */
             key_matrix[7] &= ~0x10; rev_matrix[4] &= ~0x80;
         }
-        if (js.values[ODROID_INPUT_START]) {    /* RETURN (row0,col1) */
+        if (js.values[ODROID_INPUT_SELECT]) {   /* TIME button -> RETURN (row0,col1) */
             key_matrix[0] &= ~0x02; rev_matrix[1] &= ~0x01;
         }
     }
