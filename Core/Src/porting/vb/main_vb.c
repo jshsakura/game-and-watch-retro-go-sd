@@ -28,6 +28,7 @@
 #include "vb_set.h"
 #include "vb_dsp.h"
 #include "vb_sound.h"
+#include "replay.h"       /* replay_init() prototype */
 
 /* ---- device platform layer the core expects (harness stubs these) -------- */
 
@@ -204,7 +205,9 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     v810_reset();
     clearCache();
-    video_soft_init();
+    /* video_soft_init() is 3DS-only (allocates C3D GPU textures); the device software
+     * renderer (video_soft.cpp) composites straight into DISPLAY_RAM and needs no such
+     * setup — update_texture_cache_soft() (called per frame in vb_blit) is enough. */
     sound_init();
 
     audio_start_playing(SAMPLE_RATE / 50);
