@@ -20,6 +20,8 @@
 #include "chips/zx.h"
 
 #define ZX_AUDIO_SAMPLE_RATE 22050
+#define ZX_FPS               50            /* PAL */
+#define ZX_AUDIO_SAMPLES     (ZX_AUDIO_SAMPLE_RATE / ZX_FPS)   /* 441 / frame */
 #define RGB565(r, g, b) ((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3))
 /* LCD is 320x240; the ZX visible field is 320x256 (border baked in) — drop 8
  * scanlines top & bottom to centre it. */
@@ -29,7 +31,44 @@ static zx_t      zx;
 static uint16_t  zx_pal565[16];
 static bool      zx_is128;
 
-static void audio_cb(const float *s, int n, void *u) { (void)s; (void)n; (void)u; }
+/* ---- audio: the chips zx core emits float samples ([-1,1]) via this callback
+ * during zx_exec (in batches of desc.audio.num_samples). Accumulate them as int16,
+ * then zx_pcm_submit() hands one frame's worth to the device DMA buffer. Carrying
+ * the remainder between frames keeps 441-per-frame vs the 128-batch callback from
+ * clicking. ---- */
+static int16_t  zx_snd[ZX_AUDIO_SAMPLES * 2 + 128];
+static int      zx_snd_w;
+
+static void audio_cb(const float *s, int n, void *u)
+{
+    (void)u;
+    const int cap = (int)(sizeof(zx_snd) / sizeof(zx_snd[0]));
+    for (int i = 0; i < n && zx_snd_w < cap; i++) {
+        float v = s[i];
+        if (v > 1.0f) v = 1.0f; else if (v < -1.0f) v = -1.0f;
+        zx_snd[zx_snd_w++] = (int16_t)(v * 22000.0f);
+    }
+}
+
+static void zx_pcm_submit(void)
+{
+    int16_t *out = audio_get_active_buffer();
+    int      len = audio_get_buffer_length();
+    int      mute = common_emu_sound_loop_is_muted();
+    int32_t  factor = common_emu_sound_get_volume();
+    for (int i = 0; i < len; i++) {
+        int32_t s = (i < zx_snd_w) ? zx_snd[i] : 0;
+        if (mute) { s = 0; }
+        else {
+            s = (s * factor) >> 8;
+            if (s > 32767) s = 32767; else if (s < -32768) s = -32768;
+        }
+        out[i] = (int16_t)s;
+    }
+    int rem = zx_snd_w - len;           /* carry any over-produced samples forward */
+    if (rem > 0) { memmove(zx_snd, zx_snd + len, (size_t)rem * sizeof(int16_t)); zx_snd_w = rem; }
+    else         { zx_snd_w = 0; }
+}
 
 /* ---- save/load: dump the live zx_t straight to disk. It's a static at a fixed
  * address, so all its internal self-pointers (mem page table -> zx.ram/rom) and
@@ -94,6 +133,9 @@ static void init(void)
 {
     odroid_system_init(APPID_GB, ZX_AUDIO_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL);
+    /* Start the audio DMA: common_emu_sound_sync busy-waits on the DMA counter every
+     * frame, so without this the FIRST frame hangs forever (no DMA tick). */
+    audio_start_playing(ZX_AUDIO_SAMPLES);
 
     zx_desc_t desc = {0};
     desc.type           = ZX_TYPE_48K;
@@ -148,10 +190,11 @@ void app_main_zx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         if (joystick.values[ODROID_INPUT_START]) zx_key_down(&zx, 0x0D);
         else                                     zx_key_up(&zx, 0x0D);
 
-        zx_exec(&zx, 19968);     /* one 50Hz PAL frame */
+        zx_exec(&zx, 19968);     /* one 50Hz PAL frame (fills zx_snd via audio_cb) */
         zx_blit();
         lcd_swap();
 
+        zx_pcm_submit();         /* hand this frame's samples to the DMA buffer */
         common_emu_sound_sync(false);
     }
 }
