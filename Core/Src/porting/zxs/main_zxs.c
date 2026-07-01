@@ -174,10 +174,43 @@ static bool init(void)
     return true;
 }
 
+/* ---- configurable button->key (GAME / TIME / B), picked live from the PAUSE
+ * menu (D-pad L/R cycles) — the same pattern as the C64/Amstrad cores. Most ZX
+ * games need a keyboard key to start / pick controls (e.g. "0=start, L=load"),
+ * which the Kempston pad can't send. Uses kbd_key_down() DIRECTLY so Space and
+ * the arrows aren't stolen by zx_key_down()'s Kempston remap. ---- */
+struct zx_key { const char *name; int code; };
+static const struct zx_key zx_keys[] = {
+    {"Space",0x20},{"Enter",0x0D},
+    {"0",'0'},{"1",'1'},{"2",'2'},{"3",'3'},{"4",'4'},{"5",'5'},{"6",'6'},{"7",'7'},{"8",'8'},{"9",'9'},
+    {"Q",'q'},{"W",'w'},{"E",'e'},{"R",'r'},{"T",'t'},{"Y",'y'},{"U",'u'},{"I",'i'},{"O",'o'},{"P",'p'},
+    {"A",'a'},{"S",'s'},{"D",'d'},{"F",'f'},{"G",'g'},{"H",'h'},{"J",'j'},{"K",'k'},{"L",'l'},
+    {"Z",'z'},{"X",'x'},{"C",'c'},{"V",'v'},{"B",'b'},{"N",'n'},{"M",'m'},
+};
+#define ZX_NKEYS ((int)(sizeof(zx_keys) / sizeof(zx_keys[0])))
+static int zx_key_game = 1;   /* GAME -> Enter (default) */
+static int zx_key_time = 0;   /* TIME -> Space (default) */
+static int zx_key_b    = 2;   /* B    -> 0     (default; e.g. "0=start") */
+
+static bool zx_keycfg_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r, int *idx) {
+    (void)r;
+    if (e == ODROID_DIALOG_PREV) *idx = (*idx + ZX_NKEYS - 1) % ZX_NKEYS;
+    if (e == ODROID_DIALOG_NEXT) *idx = (*idx + 1) % ZX_NKEYS;
+    strcpy(o->value, zx_keys[*idx].name);
+    return e == ODROID_DIALOG_ENTER;
+}
+static bool zx_game_key_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r) { return zx_keycfg_cb(o, e, r, &zx_key_game); }
+static bool zx_time_key_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r) { return zx_keycfg_cb(o, e, r, &zx_key_time); }
+static bool zx_b_key_cb   (odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r) { return zx_keycfg_cb(o, e, r, &zx_key_b); }
+
+static void zx_btn_key(bool pressed, int keyidx) {
+    if (pressed) kbd_key_down(&zx.kbd, zx_keys[keyidx].code);
+    else         kbd_key_up(&zx.kbd, zx_keys[keyidx].code);
+}
+
 void app_main_zx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)start_paused;
-    odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
     odroid_gamepad_state_t joystick;
 
     if (!init()) return;   /* BIOS missing -> return to launcher instead of running garbage */
@@ -190,6 +223,18 @@ void app_main_zx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
+        /* PAUSE menu entries: pick which ZX key GAME / TIME / B send (D-pad L/R
+         * cycles the value). Rebuilt each frame so the shown name stays current. */
+        char game_kn[8], time_kn[8], b_kn[8];
+        strcpy(game_kn, zx_keys[zx_key_game].name);
+        strcpy(time_kn, zx_keys[zx_key_time].name);
+        strcpy(b_kn,    zx_keys[zx_key_b].name);
+        odroid_dialog_choice_t options[] = {
+            { 100, "GAME key", game_kn, 1, &zx_game_key_cb },
+            { 101, "TIME key", time_kn, 1, &zx_time_key_cb },
+            { 102, "B key",    b_kn,    1, &zx_b_key_cb },
+            ODROID_DIALOG_CHOICE_LAST,
+        };
         /* Non-NULL repaint: the PAUSE menu calls this to redraw the frame behind
          * the overlay — passing NULL jumps to PC=0 (HardFault) when PAUSE is
          * pressed (cf. custom-loop-core-integration). */
@@ -203,9 +248,12 @@ void app_main_zx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         if (joystick.values[ODROID_INPUT_DOWN])  m |= ZX_JOYSTICK_DOWN;
         if (joystick.values[ODROID_INPUT_A])     m |= ZX_JOYSTICK_BTN;
         zx_joystick(&zx, m);
-        /* START -> Enter (menu/start in many games) */
-        if (joystick.values[ODROID_INPUT_START]) zx_key_down(&zx, 0x0D);
-        else                                     zx_key_up(&zx, 0x0D);
+        /* GAME / TIME / B -> the configurable keyboard keys picked in the PAUSE
+         * menu (kbd_key_down goes straight to the matrix, bypassing the Kempston
+         * remap that would steal Space / arrows). */
+        zx_btn_key(joystick.values[ODROID_INPUT_START],  zx_key_game);
+        zx_btn_key(joystick.values[ODROID_INPUT_SELECT], zx_key_time);
+        zx_btn_key(joystick.values[ODROID_INPUT_B],      zx_key_b);
 
         zx_exec(&zx, 19968);     /* one 50Hz PAL frame (fills zx_snd via audio_cb) */
         zx_blit();

@@ -116,6 +116,31 @@ int main(void) {
     }
     printf("OK input: %ld joystick/button combos + control-key combos, ASan-clean\n", combos);
 
+    /* 4. INPUT REACHES THE MACHINE — the "can't start a game" check.
+     * (a) Kempston: zx_joystick() must set joy_joymask (what IN 0x1F returns).
+     * (b) Keyboard: typing a letter in BASIC must change the screen (ROM echo).
+     * (c) SPACE via zx_key_down is STOLEN by the Kempston remap (0x20 -> fire),
+     *     so a real keyboard SPACE needs kbd_key_down. */
+    zx_joystick(&zx, ZX_JOYSTICK_BTN | ZX_JOYSTICK_LEFT);
+    printf("   kempston: joy_joymask=0x%02x (want BTN|LEFT=0x%02x) -> %s\n",
+           zx.joy_joymask, ZX_JOYSTICK_BTN|ZX_JOYSTICK_LEFT,
+           (zx.joy_joymask==(ZX_JOYSTICK_BTN|ZX_JOYSTICK_LEFT))?"OK":"BROKEN");
+    zx_joystick(&zx, 0);
+
+    /* framebuffer checksum before/after typing 'A' in BASIC */
+    unsigned long h0=1469598103934665603UL;
+    for (int i=0;i<ZX_FRAMEBUFFER_SIZE_BYTES;i++){h0^=zx.fb[i];h0*=1099511628211UL;}
+    zx_key_down(&zx,'a'); run_frames(4); zx_key_up(&zx,'a'); run_frames(4);
+    unsigned long h1=1469598103934665603UL;
+    for (int i=0;i<ZX_FRAMEBUFFER_SIZE_BYTES;i++){h1^=zx.fb[i];h1*=1099511628211UL;}
+    printf("   keyboard 'a' in BASIC: screen %s (fb %s)\n",
+           (h0!=h1)?"CHANGED":"UNCHANGED", (h0!=h1)?"OK":"key not reaching ROM");
+
+    /* SPACE via the device's zx_key_down(0x20) path -> does it type space or fire? */
+    zx_key_down(&zx,0x20); 
+    printf("   zx_key_down(0x20/SPACE): joy_joymask=0x%02x (nonzero => stolen as Kempston fire)\n", zx.joy_joymask);
+    zx_key_up(&zx,0x20);
+
     printf("ALL ZX HOST HARNESS TESTS PASSED\n");
     return 0;
 }
