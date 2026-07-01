@@ -3,24 +3,18 @@
 #include "softspi.h"
 #include "main.h"
 
+/* MOSI-setup pause before each SCK rising edge. DO NOT REDUCE to raise the bit clock:
+ * the user already tried raising the soft-SPI clock — it corrupted SD access AND ended up
+ * SLOWER (faster bit clock → the card mis-samples → CRC errors → FatFs re-reads the sector
+ * → net slower + broken). 16 NOPs is at the card's reliable limit for this bit-bang wiring.
+ * The SD-bandwidth win for video/MP3 is NOT here — it's in the READ PATTERN (multi-block
+ * reads, fewer/larger transfers), not the per-bit clock. */
 __attribute__((always_inline))
 static inline void gpio_pause() {
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
-    __asm("NOP");
+    __asm("NOP"); __asm("NOP"); __asm("NOP"); __asm("NOP");
+    __asm("NOP"); __asm("NOP"); __asm("NOP"); __asm("NOP");
+    __asm("NOP"); __asm("NOP"); __asm("NOP"); __asm("NOP");
+    __asm("NOP"); __asm("NOP"); __asm("NOP"); __asm("NOP");
 }
 
 static void delay_us(uint32_t usec) {
