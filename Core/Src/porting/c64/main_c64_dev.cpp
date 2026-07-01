@@ -99,21 +99,25 @@ static void inject_prg(C64 *c64)
     fclose(f);
 }
 
-/* Blit the Frodo bitmap to the LCD (320-wide crop, RGB565, letterboxed into 240 rows).
- * Also the repaint callback passed to common_emu_input_loop so the pause-menu overlay
- * redraws the game behind it. */
+/* Scale the WHOLE 340x208 Frodo picture to fit the 320-wide LCD (keep aspect,
+ * letterbox top/bottom). Fixes the old 320-wide crop that cut the right edge and
+ * left the image shifted. Writes the ACTIVE buffer and does NOT swap — the caller
+ * (or the pause-menu overlay, which passes this as its repaint) owns the swap. That
+ * matches the Lynx/gb_tgbdual pattern; the previous inactive-buffer + swap here made
+ * the overlay double-swap and flicker. */
 static void c64_repaint(void)
 {
-    uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
-    memset(out, 0, (size_t)C64_LETTERBOX_Y * WIDTH * sizeof(uint16_t));
-    memset(&out[(C64_LETTERBOX_Y + DISPLAY_Y) * WIDTH], 0,
-           (size_t)(HEIGHT - C64_LETTERBOX_Y - DISPLAY_Y) * WIDTH * sizeof(uint16_t));
-    for (int y = 0; y < DISPLAY_Y; y++) {
-        const uint8 *src = &s_bitmap[y * DISPLAY_X + C64_CROP_X];
-        uint16_t *dst = &out[(C64_LETTERBOX_Y + y) * WIDTH];
-        for (int x = 0; x < 320; x++) dst[x] = s_pal565[src[x] & 0x0f];
+    uint16_t *out = (uint16_t *)lcd_get_active_buffer();
+    const int dstH = DISPLAY_Y * WIDTH / DISPLAY_X;      /* 208*320/340 = 195 */
+    const int y0   = (HEIGHT - dstH) / 2;                /* letterbox top */
+    memset(out, 0, (size_t)y0 * WIDTH * sizeof(uint16_t));
+    memset(&out[(y0 + dstH) * WIDTH], 0, (size_t)(HEIGHT - y0 - dstH) * WIDTH * sizeof(uint16_t));
+    for (int dy = 0; dy < dstH; dy++) {
+        const uint8 *src = &s_bitmap[(dy * DISPLAY_Y / dstH) * DISPLAY_X];
+        uint16_t *dst = &out[(y0 + dy) * WIDTH];
+        for (int dx = 0; dx < WIDTH; dx++)
+            dst[dx] = s_pal565[src[dx * DISPLAY_X / WIDTH] & 0x0f];
     }
-    lcd_swap();
 }
 
 void C64Display::Update(void)
@@ -151,6 +155,7 @@ void C64Display::Update(void)
         return;                       /* skip blit + sync -> full-speed load */
 
     c64_repaint();
+    lcd_swap();          /* present the game frame; c64_repaint no longer swaps itself */
 
     /* Pause menu (VOLUME/SET button) -> volume / brightness / power / Quit-to-menu.
      * Custom-loop cores (Run() blocks, this is the per-frame callback) MUST call this
