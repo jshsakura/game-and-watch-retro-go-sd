@@ -393,6 +393,13 @@ static bool host_LoadState(const char *savePathName)
 
 	fclose(fp);
 
+	/* Restore BRAM from its own file (the cabinet outlives any single .state). */
+	if (g_cue_path) {
+		FILE *bf = fopen("save_pce.bram", "rb");
+		if (bf) { fread(PCE.bram, 1, 0x800, bf); fclose(bf); }
+		pce_bram_format_if_needed();
+	}
+
 	return 0;
 }
 
@@ -419,6 +426,12 @@ static bool host_SaveState(const char *savePathName)
 			fwrite(PCE.MemoryMapR[v], 0x2000, 1, fp);
 
 	fclose(fp);
+
+	/* BRAM persisted to its own file, independent of the .state snapshot. */
+	if (g_cue_path) {
+		FILE *bf = fopen("save_pce.bram", "wb");
+		if (bf) { fwrite(PCE.bram, 1, 0x800, bf); fclose(bf); }
+	}
 
 	return 0;
 }
@@ -575,6 +588,11 @@ InitPCE(int samplerate, bool stereo, const char *huecard)
 			pce_scsi_set_disc(NULL, false);
 			printf("CD mount FAILED: %s\n", g_cue_path);
 		}
+		/* BRAM: map bank $F7, load save_pce.bram, format-init if absent. */
+		pce_bram_init();
+		FILE *bf = fopen("save_pce.bram", "rb");
+		if (bf) { fread(PCE.bram, 1, 0x800, bf); fclose(bf); }
+		pce_bram_format_if_needed();
 	}
 
 	gfx_reset(0);

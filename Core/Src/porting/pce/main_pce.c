@@ -212,6 +212,12 @@ static bool SaveState(const char *savePathName) {
             fwrite(PCE.MemoryMapR[v], PCE_CD_RAM_BANK_SIZE, 1, file);
     }
     fclose(file);
+    /* Persist BRAM to its OWN file (system-wide cabinet, not part of the per-game
+     * snapshot — deliberately absent from SaveStateVars). */
+    if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+        FILE *bf = fopen("/pcecd.bram", "wb");
+        if (bf) { fwrite(PCE.bram, 1, 0x800, bf); fclose(bf); }
+    }
     if (!written) {
         return false;
     }
@@ -601,6 +607,14 @@ void LoadCartPCE() {
             fclose(cf);
         }
 #endif
+        /* BRAM: map bank $F7, load the shared system-wide cabinet from SD, and
+         * format-init if the file is absent/invalid. Independent of the .state save
+         * and of the 0x68-0x87 CD RAM above. ROM is flash-XIP here, so no other FILE
+         * is open during LoadCartPCE. */
+        pce_bram_init();
+        FILE *bf = fopen("/pcecd.bram", "rb");
+        if (bf) { fread(PCE.bram, 1, 0x800, bf); fclose(bf); }
+        pce_bram_format_if_needed();
     }
 }
 
