@@ -129,12 +129,16 @@ static void c64_repaint(void)
     int cw = DISPLAY_X - X0;                             /* visible content cols (340-32=308) */
     if (cw > WIDTH) cw = WIDTH;
     const int Y0 = (HEIGHT - DISPLAY_Y) / 2;             /* (240-208)/2 = 16 */
-    memset(out, 0, (size_t)HEIGHT * WIDTH * sizeof(uint16_t));   /* clear (borders) */
+    /* No per-frame whole-buffer memset — that raced the LCD scan-out (a black bar crept up
+     * the screen). The borders are cleared ONCE at launch (lcd_clear_buffers); each frame
+     * we only overwrite the fixed content rectangle + its right strip, so the borders stay
+     * black on both buffers. */
     for (int y = 0; y < DISPLAY_Y; y++) {
         const uint8 *src = &s_bitmap[y * DISPLAY_X + X0];
         uint16_t *dst = &out[(Y0 + y) * WIDTH];
         for (int x = 0; x < cw; x++)
             dst[x] = s_pal565[src[x] & 0x0f];
+        for (int x = cw; x < WIDTH; x++) dst[x] = 0;    /* right border strip */
     }
 }
 
@@ -329,6 +333,8 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
      * the DMA never runs, dma_counter never changes, and the very first frame hangs
      * forever (the "freeze right after Run()" — sound is silent, SIDType=NONE). */
     audio_start_playing(22050 / 50);   /* PAL C64 ~50fps */
+    lcd_clear_buffers();               /* black BOTH buffers once — the letterbox borders are
+                                          then never redrawn per frame (see c64_repaint) */
     c64_diag("ROMs ok -> audio started -> the_c64->Run()\n");
     printf("[c64] Frodo start, disk=%s\n", ThePrefs.DrivePath[0]);
     the_c64->Run();   /* blocks; per-frame work happens in C64Display::Update */
