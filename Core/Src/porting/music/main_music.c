@@ -1076,9 +1076,11 @@ void app_main_music(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         prev = joy;
         if (settle > 0 && --settle == 0) dirty = true;   // settled -> decode any new rows
-        // While a track plays, skip the (SD-heavy) thumbnail decode so it can't
-        // starve the audio ring — cached rows still show via meta_peek.
-        g_list_busy = (settle > 0) || (g_playing && !ps.paused);
+        // Only fast-scroll (settle) blocks decode outright, for smoothness. A playing
+        // track NO LONGER blocks it — that left covers blank past the first cached page
+        // whenever music was playing. Instead the decode is THROTTLED while playing
+        // (see g_decode_budget below) so the SD-heavy JPEG decode can't starve the audio.
+        g_list_busy = (settle > 0);
 
         // tick the header clock once a minute even while idle
         { static int lastmin = -1; int m = GW_GetCurrentMinute(); if (m != lastmin) { lastmin = m; dirty = true; } }
@@ -1088,7 +1090,13 @@ void app_main_music(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         if (g_playing) { if (playback_autoadvance()) dirty = true; playback_feed(); }
 
         if (dirty) {
-            g_decode_budget = 1; g_decode_pending = false;   // one cover per repaint
+            // idle: decode 1 cover per repaint. Playing: 1 every 4th repaint so the audio
+            // ring (fed above + paced by sound_sync below) has time to recover between the
+            // SD-heavy JPEG decodes — covers still fill in on every page, just gradually.
+            static uint8_t play_gate = 0;
+            bool decoding_while_play = g_playing && !ps.paused;
+            g_decode_budget  = (!decoding_while_play || (++play_gate & 3) == 0) ? 1 : 0;
+            g_decode_pending = false;
             draw_list(); lcd_swap();
             dirty = g_decode_pending;                         // more rows? repaint again
         }
