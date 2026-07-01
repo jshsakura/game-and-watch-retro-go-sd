@@ -685,12 +685,23 @@ void pce_pcm_submit() {
     int16_t* sound_buffer = audio_get_active_buffer();
     uint16_t sound_buffer_length = audio_get_buffer_length();
 
-    /* CD-DA (Red Book audio / BGM): pull this frame's samples (22050Hz stereo)
-     * and mix with the PSG. Returns 0 for HuCard / when no audio is playing. */
+    /* CD-DA (Red Book audio / BGM) + ADPCM (voice): pull this frame's samples and mix
+     * with the PSG. GATED OFF on device (s_pcecd_cd_audio=0): streaming CD-DA sectors
+     * from the SD card every audio frame — on top of the game's own SCSI data reads from
+     * the SAME physical SD — makes the device thrash (Dracula X plays but lags/stutters;
+     * Ai Chou Aniki / Dynastic Hero stall). With CD audio off the games run smoothly and
+     * PSG still plays (the user confirmed "sound off = games work"). Host keeps it on
+     * (its file reads are instant) so the decode stays verified. Re-enable once CD audio
+     * is pre-buffered off the audio path. */
+#ifdef LINUX_EMU
+    static const int s_pcecd_cd_audio = 1;
+#else
+    static const int s_pcecd_cd_audio = 0;
+#endif
     static int16_t cdda_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
     static int16_t adpcm_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
-    int cdda_n  = pce_scsi_cdda_fill(cdda_buf, AUDIO_BUFFER_LENGTH_PCE);
-    int adpcm_n = pce_adpcm_fill(adpcm_buf, AUDIO_BUFFER_LENGTH_PCE);
+    int cdda_n  = s_pcecd_cd_audio ? pce_scsi_cdda_fill(cdda_buf, AUDIO_BUFFER_LENGTH_PCE) : 0;
+    int adpcm_n = s_pcecd_cd_audio ? pce_adpcm_fill(adpcm_buf, AUDIO_BUFFER_LENGTH_PCE) : 0;
 
     for (int i = 0; i < sound_buffer_length; i++) {
         /* mix left & right */
