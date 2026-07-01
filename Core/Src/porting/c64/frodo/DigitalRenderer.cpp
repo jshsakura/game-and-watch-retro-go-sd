@@ -1,12 +1,8 @@
 #include "DigitalRenderer.h"
 
 #include <math.h>
-#include <unistd.h>
-
 
 #include "VIC.h"
-
-#include <esp_heap_caps.h>
 
 extern "C"
 {
