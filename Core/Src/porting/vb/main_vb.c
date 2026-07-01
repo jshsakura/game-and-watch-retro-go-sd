@@ -230,39 +230,52 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     /* video_soft_init() is 3DS-only (allocates C3D GPU textures); the device software
      * renderer (video_soft.cpp) composites straight into DISPLAY_RAM and needs no such
      * setup — update_texture_cache_soft() (called per frame in vb_blit) is enough. */
-    sound_init();
+    sound_init();                 vb_diag("sound_init done\n");
 
     audio_start_playing(SAMPLE_RATE / 50);
+    vb_diag("audio_start_playing done\n");
 
     if (load_state) {
         odroid_system_emu_load_state(save_slot);
+        vb_diag("load_state done slot=%d\n", (int)save_slot);
     } else {
         lcd_clear_buffers();
     }
+    vb_diag("entering main loop\n");
 
     odroid_gamepad_state_t joystick = {0};
     odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
 
+    /* Per-frame trace: each vb_diag below is written BEFORE the call it names, so on a
+     * HardFault the LAST line in /vb_diag.txt is the exact call that faulted (frame_loop /
+     * input / v810_run / blit / swap / audio). Capped to the first VB_TRACE_FRAMES frames. */
+    #define VB_TRACE_FRAMES 40
+    int fr = 0;
     while (true) {
+        bool trace = (fr < VB_TRACE_FRAMES);
         wdog_refresh();
+
+        if (trace) vb_diag("f%d frame_loop PC=%08x\n", fr, (unsigned)vb_state->v810_state.PC);
         bool drawFrame = common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
+        if (trace) vb_diag("f%d input_loop\n", fr);
         common_emu_input_loop(&joystick, options, &vb_blit);
         vb_input_read(&joystick);
 
-        { static int fr = 0;
-          if (fr < 40) vb_diag("frame %d: PC=%08x -> v810_run\n", fr, (unsigned)vb_state->v810_state.PC);
-          fr++; }
+        if (trace) vb_diag("f%d v810_run\n", fr);
         v810_run();
+        if (trace) vb_diag("f%d v810_run done PC=%08x\n", fr, (unsigned)vb_state->v810_state.PC);
 
         if (drawFrame) {
-            { static int bf = 0; if (bf < 40) vb_diag("frame draw %d: dfb=%d\n", bf, (int)vb_state->tVIPREG.tDisplayedFB); bf++; }
+            if (trace) vb_diag("f%d blit dfb=%d\n", fr, (int)vb_state->tVIPREG.tDisplayedFB);
             vb_blit();
+            if (trace) vb_diag("f%d swap\n", fr);
             lcd_swap();
         }
 
         /* Downmix the VB VSU frames to the retro-go mono mixer (Lynx technique). */
+        if (trace) vb_diag("f%d audio\n", fr);
         if (common_emu_sound_loop_is_muted()) {
             vb_audio_reset();
         } else {
@@ -270,6 +283,8 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
                            common_emu_sound_get_volume());
         }
         common_emu_sound_sync(false);
+        if (trace) vb_diag("f%d end\n", fr);
+        fr++;
     }
 
     return 0;
