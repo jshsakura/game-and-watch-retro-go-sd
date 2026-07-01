@@ -935,11 +935,12 @@ void C64::VBlank(bool draw_frame)
 		TheCIA1->Joystick2 = tmp;
 	}
 
-	// Joystick keyboard emulation
-	//if (TheDisplay->NumLock())
-	//	TheCIA1->Joystick1 &= joykey;
-	//else
-		TheCIA1->Joystick2 &= joykey;
+	// Gamepad drives BOTH joystick ports: C64 games use port 1 OR port 2, and on the
+	// G&W poll_joystick() returns 0xff (no real joystick) so joykey is the only input.
+	// Feeding only port 2 (the old code) left port-1 games (and many cracktros/menus)
+	// dead — "no buttons work".
+	TheCIA1->Joystick1 &= joykey;
+	TheCIA1->Joystick2 &= joykey;
        
 	// Count TOD clocks
 	TheCIA1->CountTOD();

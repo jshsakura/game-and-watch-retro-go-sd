@@ -99,6 +99,23 @@ static void inject_prg(C64 *c64)
     fclose(f);
 }
 
+/* Blit the Frodo bitmap to the LCD (320-wide crop, RGB565, letterboxed into 240 rows).
+ * Also the repaint callback passed to common_emu_input_loop so the pause-menu overlay
+ * redraws the game behind it. */
+static void c64_repaint(void)
+{
+    uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
+    memset(out, 0, (size_t)C64_LETTERBOX_Y * WIDTH * sizeof(uint16_t));
+    memset(&out[(C64_LETTERBOX_Y + DISPLAY_Y) * WIDTH], 0,
+           (size_t)(HEIGHT - C64_LETTERBOX_Y - DISPLAY_Y) * WIDTH * sizeof(uint16_t));
+    for (int y = 0; y < DISPLAY_Y; y++) {
+        const uint8 *src = &s_bitmap[y * DISPLAY_X + C64_CROP_X];
+        uint16_t *dst = &out[(C64_LETTERBOX_Y + y) * WIDTH];
+        for (int x = 0; x < 320; x++) dst[x] = s_pal565[src[x] & 0x0f];
+    }
+    lcd_swap();
+}
+
 void C64Display::Update(void)
 {
     s_frame++;
@@ -133,17 +150,18 @@ void C64Display::Update(void)
     if (warp && (s_frame & 0x0F) != 0)
         return;                       /* skip blit + sync -> full-speed load */
 
-    /* blit Frodo bitmap -> LCD (320 wide crop, RGB565), letterboxed into 240 rows */
-    uint16_t *out = (uint16_t *)lcd_get_inactive_buffer();
-    memset(out, 0, (size_t)C64_LETTERBOX_Y * WIDTH * sizeof(uint16_t));
-    memset(&out[(C64_LETTERBOX_Y + DISPLAY_Y) * WIDTH], 0,
-           (size_t)(HEIGHT - C64_LETTERBOX_Y - DISPLAY_Y) * WIDTH * sizeof(uint16_t));
-    for (int y = 0; y < DISPLAY_Y; y++) {
-        const uint8 *src = &s_bitmap[y * DISPLAY_X + C64_CROP_X];
-        uint16_t *dst = &out[(C64_LETTERBOX_Y + y) * WIDTH];
-        for (int x = 0; x < 320; x++) dst[x] = s_pal565[src[x] & 0x0f];
-    }
-    lcd_swap();
+    c64_repaint();
+
+    /* Pause menu (VOLUME/SET button) -> volume / brightness / power / Quit-to-menu.
+     * Custom-loop cores (Run() blocks, this is the per-frame callback) MUST call this
+     * every non-warp frame with a NON-NULL repaint, else there is NO way to quit the
+     * game — the user had to drain the battery. "Quit to menu" does switch_app(0). */
+    odroid_gamepad_state_t js;
+    odroid_input_read_gamepad(&js);
+    odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
+    common_emu_input_loop(&js, options, c64_repaint);
+    common_emu_input_loop_handle_turbo(&js);
+
     if (!warp)
         common_emu_sound_sync(false);   /* during warp, don't pace to audio */
 }
