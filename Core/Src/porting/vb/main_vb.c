@@ -13,6 +13,8 @@
 
 #include <odroid_system.h>
 #include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 #include "gw_lcd.h"
 #include "gw_linker.h"
@@ -170,6 +172,21 @@ static void vb_blit(void)
     }
 }
 
+/* ---- on-SD device trace (/vb_diag.txt): the last line written = where it died.
+ * Delete before a clean test; capped so it can't fill the card. ---- */
+static void vb_diag(const char *fmt, ...)
+{
+    static int lines;
+    if (lines > 400) return;
+    lines++;
+    FILE *f = fopen("/vb_diag.txt", "a");
+    if (!f) return;
+    va_list ap; va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fclose(f);
+}
+
 /* ---- entry --------------------------------------------------------------- */
 
 int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
@@ -189,10 +206,12 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     unsigned char *rom_ptr = NULL;
     size_t rom_len = vb_getromdata(&rom_ptr);
 
+    vb_diag("=== VB BOOT === rom_len=%u rom_ptr=%p ram_start=%08x\n",
+            (unsigned)rom_len, (void *)rom_ptr, (unsigned)ram_start);
     setDefaults();
     is_multiplayer = false;
-    v810_init();
-    replay_init();
+    v810_init();     vb_diag("v810_init done\n");
+    replay_init();   vb_diag("replay_init done\n");
 
     /* Point the CPU at the flash-resident ROM (XIP) with a power-of-2 mirror. */
     V810_ROM1.pmemory  = rom_ptr;
@@ -203,8 +222,11 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     vb_rom_mask        = (unsigned int)(rom_len - 1);
     tVBOpt.CRC32       = vb_rom_stamp(rom_ptr, (uint32_t)rom_len);
 
+    vb_diag("ROM1 set size=%u mask=%08x crc=%08x -> v810_reset\n",
+            (unsigned)V810_ROM1.size, (unsigned)vb_rom_mask, (unsigned)tVBOpt.CRC32);
     v810_reset();
     clearCache();
+    vb_diag("reset+clearCache done, PC=%08x\n", (unsigned)vb_state->v810_state.PC);
     /* video_soft_init() is 3DS-only (allocates C3D GPU textures); the device software
      * renderer (video_soft.cpp) composites straight into DISPLAY_RAM and needs no such
      * setup — update_texture_cache_soft() (called per frame in vb_blit) is enough. */
@@ -229,9 +251,13 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         common_emu_input_loop(&joystick, options, &vb_blit);
         vb_input_read(&joystick);
 
+        { static int fr = 0;
+          if (fr < 40) vb_diag("frame %d: PC=%08x -> v810_run\n", fr, (unsigned)vb_state->v810_state.PC);
+          fr++; }
         v810_run();
 
         if (drawFrame) {
+            { static int bf = 0; if (bf < 40) vb_diag("frame draw %d: dfb=%d\n", bf, (int)vb_state->tVIPREG.tDisplayedFB); bf++; }
             vb_blit();
             lcd_swap();
         }
