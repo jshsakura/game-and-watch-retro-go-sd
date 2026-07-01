@@ -229,6 +229,13 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
         if (js.values[ODROID_INPUT_START]) {    /* GAME button -> SPACE  (row7,col4) */
             key_matrix[7] &= ~0x10; rev_matrix[4] &= ~0x80;
         }
+        if (js.values[ODROID_INPUT_B]) {        /* B button -> N (row4,col7): answer 'N'
+                                                 * to cracktro "use fastload? Y/N" prompts —
+                                                 * fastload needs a cycle-exact 1541, but we
+                                                 * run the high-level virtual drive, so N (the
+                                                 * standard load) is the one that works. */
+            key_matrix[4] &= ~0x80; rev_matrix[7] &= ~0x10;
+        }
         if (js.values[ODROID_INPUT_SELECT]) {   /* TIME button -> RETURN (row0,col1) */
             key_matrix[0] &= ~0x02; rev_matrix[1] &= ~0x01;
         }
