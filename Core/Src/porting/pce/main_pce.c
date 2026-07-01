@@ -569,11 +569,34 @@ void LoadCartPCE() {
         }
         if (from_exram) memset(PCE_EXRAM_BUF, 0, (uint32_t)from_exram * PCE_CD_RAM_BANK_SIZE);
         if (mapped > from_exram) memset(buf, 0, (uint32_t)(mapped - from_exram) * PCE_CD_RAM_BANK_SIZE);
+        /* STILL short of the full 32 banks (unpack ~174KB=21 + EXRAM 32KB=4 = 25 on
+         * device, so 7 banks/56KB missing)? Borrow the save-state staging buffer
+         * (save_buffer, SAVE_STATE_BUFFER_SIZE ~78KB). It is touched ONLY during
+         * Save/Load — idle during play — and it lives OUTSIDE the unpack buffer, so
+         * borrowing it is a NET GAIN (unlike enlarging a static buffer, which would
+         * just shrink the unpack pool by the same amount). This is what lets a full
+         * 256KB Super CD-ROM² game (Dynastic Hero) map all 32 banks and BOOT on the
+         * device — proven necessary: host maps 32/32 and boots it, device mapped 25/32
+         * and hung in the System-Card IPL. Caveat: a state Save of a game that actually
+         * uses banks 25-31 will clobber them (save_buffer doubles as save staging);
+         * booting is the priority and small CD games never touch those banks. */
+        int save_banks_cap = (int)(sizeof(save_buffer) / PCE_CD_RAM_BANK_SIZE);
+        int from_save = total_banks - mapped;
+        if (from_save < 0) from_save = 0;
+        if (from_save > save_banks_cap) from_save = save_banks_cap;
+        for (int k = 0; k < from_save; k++) {
+            int v = PCE_CD_RAM_FIRST_BANK + mapped + k;
+            uint8_t *p = save_buffer + (uint32_t)k * PCE_CD_RAM_BANK_SIZE;
+            PCE.MemoryMapR[v] = p;
+            PCE.MemoryMapW[v] = p;
+        }
+        if (from_save) memset(save_buffer, 0, (uint32_t)from_save * PCE_CD_RAM_BANK_SIZE);
+        mapped += from_save;
 #ifdef LINUX_EMU   /* host only: on-device this fopen + the open .bin = 1-file-limit corruption */
         FILE *cf = fopen("pcecd_diag.txt", "a");
         if (cf) {
-            fprintf(cf, "CDRAM map: room=%lu buf_banks=%d exram=%d mapped=%d/%d %s\n",
-                    (unsigned long)room, buf_banks, from_exram, mapped, total_banks,
+            fprintf(cf, "CDRAM map: room=%lu buf_banks=%d exram=%d save=%d mapped=%d/%d %s\n",
+                    (unsigned long)room, buf_banks, from_exram, from_save, mapped, total_banks,
                     (mapped >= total_banks) ? "FULL" : "PARTIAL");
             fclose(cf);
         }
