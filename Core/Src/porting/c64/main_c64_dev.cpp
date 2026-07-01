@@ -91,6 +91,42 @@ static bool c64_SaveState(const char *path)
 static bool c64_LoadState(const char *path)
 { strncpy(s_state_path, path, sizeof(s_state_path) - 1); s_state_path[sizeof(s_state_path) - 1] = 0; s_state_op = 2; return true; }
 
+/* ---- configurable button->C64-key map (Amstrad pattern) -------------------
+ * The G&W has too few buttons for a full C64 keyboard, so let the user choose which
+ * C64 key the GAME / TIME / B buttons send, live from the pause menu (dpad L/R cycles).
+ * A = joystick fire is fixed. row/col = C64 keyboard matrix; row 0xff = joystick fire. */
+struct c64_key { const char *name; uint8 row, col; };
+static const struct c64_key c64_keys[] = {
+    {"Space",   7, 4}, {"Return",  0, 1}, {"F1",      0, 4}, {"F3",      0, 5},
+    {"F5",      0, 6}, {"F7",      0, 3}, {"Y",       3, 1}, {"N",       4, 7},
+    {"Run/Stop",7, 7}, {"1",       7, 0}, {"2",       7, 3}, {"3",       1, 0},
+    {"Fire",    0xff, 0xff},
+};
+#define C64_NKEYS ((int)(sizeof(c64_keys) / sizeof(c64_keys[0])))
+static int c64_key_game = 0;   /* GAME  -> Space  (default) */
+static int c64_key_time = 1;   /* TIME  -> Return (default) */
+static int c64_key_b    = 7;   /* B     -> N      (default; the natural fastload answer) */
+
+static bool c64_keycfg_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat, int *idx)
+{
+    (void)repeat;
+    if (event == ODROID_DIALOG_PREV) *idx = (*idx + C64_NKEYS - 1) % C64_NKEYS;
+    if (event == ODROID_DIALOG_NEXT) *idx = (*idx + 1) % C64_NKEYS;
+    strcpy(option->value, c64_keys[*idx].name);
+    return event == ODROID_DIALOG_ENTER;
+}
+static bool c64_game_key_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r) { return c64_keycfg_cb(o, e, r, &c64_key_game); }
+static bool c64_time_key_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r) { return c64_keycfg_cb(o, e, r, &c64_key_time); }
+static bool c64_b_key_cb   (odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r) { return c64_keycfg_cb(o, e, r, &c64_key_b); }
+
+/* Apply a configured key to the C64 matrix (or the joystick fire mask for "Fire"). */
+static inline void c64_apply_key(int idx, uint8 *key_matrix, uint8 *rev_matrix, uint8 *fire_mask)
+{
+    uint8 row = c64_keys[idx].row, col = c64_keys[idx].col;
+    if (row == 0xff) { if (fire_mask) *fire_mask &= ~0x10; return; }   /* joystick fire */
+    if (key_matrix && rev_matrix) { key_matrix[row] &= ~(1 << col); rev_matrix[col] &= ~(1 << row); }
+}
+
 /* A raw .prg file isn't a disk image, so the virtual 1541 can't mount it. Load it
  * straight into C64 RAM at its 2-byte header address, then RUN. Done after the
  * KERNAL has cleared RAM (~frame 120) so the program survives reset. */
@@ -192,7 +228,16 @@ void C64Display::Update(void)
      * "volume doesn't work"). It also opens the pause/quit menu (repaint = c64_repaint). */
     odroid_gamepad_state_t js;
     odroid_input_read_gamepad(&js);
-    odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
+    char game_kn[12], time_kn[12], b_kn[12];
+    strcpy(game_kn, c64_keys[c64_key_game].name);
+    strcpy(time_kn, c64_keys[c64_key_time].name);
+    strcpy(b_kn,    c64_keys[c64_key_b].name);
+    odroid_dialog_choice_t options[] = {
+        { 100, "GAME key", game_kn, 1, &c64_game_key_cb },
+        { 101, "TIME key", time_kn, 1, &c64_time_key_cb },
+        { 102, "B key",    b_kn,    1, &c64_b_key_cb },
+        ODROID_DIALOG_CHOICE_LAST
+    };
     common_emu_frame_loop();
     common_emu_input_loop(&js, options, c64_repaint);
     common_emu_input_loop_handle_turbo(&js);
@@ -218,28 +263,18 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
     if (js.values[ODROID_INPUT_DOWN])  m &= ~0x02;
     if (js.values[ODROID_INPUT_LEFT])  m &= ~0x04;
     if (js.values[ODROID_INPUT_RIGHT]) m &= ~0x08;
-    if (js.values[ODROID_INPUT_A])     m &= ~0x10;  /* fire (joystick) */
-    if (joystick) *joystick = m;
+    if (js.values[ODROID_INPUT_A])     m &= ~0x10;  /* A = joystick fire (fixed) */
 
-    /* Keyboard: many games load to a title/instructions screen that starts on SPACE or
-     * RETURN (not fire), so map them — else "the game loads, shows text, never starts".
-     * The CIA resets the matrix to 0xff once at reset, so re-set it every poll or a key
-     * sticks. C64 matrix: key_matrix[row]&=~(1<<col), rev_matrix[col]&=~(1<<row). */
-    if (key_matrix && rev_matrix) {
+    /* GAME / TIME / B send the C64 key the user picked in the pause menu (default
+     * Space / Return / N). The CIA resets the matrix to 0xff once at reset, so re-set
+     * it every poll or a key sticks. A key mapped to "Fire" pulls the joystick fire. */
+    if (key_matrix && rev_matrix)
         for (int i = 0; i < 8; i++) { key_matrix[i] = 0xff; rev_matrix[i] = 0xff; }
-        if (js.values[ODROID_INPUT_START]) {    /* GAME button -> SPACE  (row7,col4) */
-            key_matrix[7] &= ~0x10; rev_matrix[4] &= ~0x80;
-        }
-        if (js.values[ODROID_INPUT_B]) {        /* B button -> F1 (row0,col4): the C64
-                                                 * function key many games/menus need to
-                                                 * start or pick a mode (e.g. R-Type's
-                                                 * player-select is F1, unreachable before). */
-            key_matrix[0] &= ~0x10; rev_matrix[4] &= ~0x01;
-        }
-        if (js.values[ODROID_INPUT_SELECT]) {   /* TIME button -> RETURN (row0,col1) */
-            key_matrix[0] &= ~0x02; rev_matrix[1] &= ~0x01;
-        }
-    }
+    if (js.values[ODROID_INPUT_START])  c64_apply_key(c64_key_game, key_matrix, rev_matrix, &m);
+    if (js.values[ODROID_INPUT_SELECT]) c64_apply_key(c64_key_time, key_matrix, rev_matrix, &m);
+    if (js.values[ODROID_INPUT_B])      c64_apply_key(c64_key_b,    key_matrix, rev_matrix, &m);
+
+    if (joystick) *joystick = m;
 }
 #endif
 
