@@ -120,16 +120,23 @@ static void inject_prg(C64 *c64)
  * the overlay double-swap and flicker. */
 static void c64_repaint(void)
 {
+    /* Auto-fit: the 40-column picture starts at VIC COL40_XSTART (0x20=32) in the 340-wide
+     * Frodo bitmap — the left of that is border. Cropping at 20 (the stale Display.h note)
+     * left 12px of border on the left, pushing the image right. Scale ONLY the content
+     * region [32 .. DISPLAY_X) to fill the LCD width, letterboxed vertically. */
     uint16_t *out = (uint16_t *)lcd_get_active_buffer();
-    const int dstH = DISPLAY_Y * WIDTH / DISPLAY_X;      /* 208*320/340 = 195 */
-    const int y0   = (HEIGHT - dstH) / 2;                /* letterbox top */
+    const int X0 = 0x20;                                 /* content left edge (VIC COL40_XSTART) */
+    const int cw = DISPLAY_X - X0;                       /* visible content columns (308) */
+    int dstH = DISPLAY_Y * WIDTH / cw;                   /* fill width, keep aspect (~216) */
+    if (dstH > HEIGHT) dstH = HEIGHT;
+    const int y0 = (HEIGHT - dstH) / 2;
     memset(out, 0, (size_t)y0 * WIDTH * sizeof(uint16_t));
     memset(&out[(y0 + dstH) * WIDTH], 0, (size_t)(HEIGHT - y0 - dstH) * WIDTH * sizeof(uint16_t));
     for (int dy = 0; dy < dstH; dy++) {
-        const uint8 *src = &s_bitmap[(dy * DISPLAY_Y / dstH) * DISPLAY_X];
+        const uint8 *src = &s_bitmap[(dy * DISPLAY_Y / dstH) * DISPLAY_X + X0];
         uint16_t *dst = &out[(y0 + dy) * WIDTH];
         for (int dx = 0; dx < WIDTH; dx++)
-            dst[dx] = s_pal565[src[dx * DISPLAY_X / WIDTH] & 0x0f];
+            dst[dx] = s_pal565[src[dx * cw / WIDTH] & 0x0f];
     }
 }
 
