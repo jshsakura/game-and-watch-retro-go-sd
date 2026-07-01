@@ -105,7 +105,7 @@ void *lynx_get_csystem(void)   { return g_lynx_csystem; }
  * (NO held handle, unlike sd_trace) so they cannot collide with the save write.
  * sd_path_probe() returns the actual FRESULT of creating the target path:
  *   FR_OK(0)=creatable, FR_NO_PATH(5)=dir missing (mkdir failed), FR_DISK_ERR(1),
- *   FR_DENIED(7), etc. sd_save_log() appends one line to /lynx_save_diag.txt,
+ *   FR_DENIED(7), etc. sd_save_log() appends one line to /device_diag.txt,
  * which the user reads off the SD card on a PC. */
 int sd_path_probe(const char *path) {
     if (!path || !path[0]) return -1;
@@ -120,7 +120,7 @@ int sd_path_probe(const char *path) {
 void sd_save_log_boot(const char *line) {
     if (line == NULL) return;
     FIL f;
-    if (f_open(&f, "/lynx_save_diag.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+    if (f_open(&f, "/device_diag.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
         return;
     UINT bw;
     size_t n = 0;
@@ -134,8 +134,8 @@ void sd_save_log_boot(const char *line) {
 void sd_save_log(const char *line) {
     if (line == NULL) return;
     FIL f;
-    if (f_open(&f, "/lynx_save_diag.txt", FA_WRITE | FA_OPEN_APPEND) != FR_OK &&
-        f_open(&f, "/lynx_save_diag.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+    if (f_open(&f, "/device_diag.txt", FA_WRITE | FA_OPEN_APPEND) != FR_OK &&
+        f_open(&f, "/device_diag.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
         return;
     UINT bw;
     size_t n = 0;

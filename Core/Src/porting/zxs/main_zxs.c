@@ -208,9 +208,9 @@ static void zx_btn_key(bool pressed, int keyidx) {
     else         kbd_key_up(&zx.kbd, zx_keys[keyidx].code);
 }
 
-/* ---- on-device input diagnostics: append one line per button edge to
- * /lynx_save_diag.txt (shared diag file — delete it before a clean test). Shows
- * whether a button is even detected and which ZX key it sends. ---- */
+/* ---- on-device input diagnostics: append one line per button edge to the shared
+ * /device_diag.txt (sd_save_log, shared by Lynx save + ZX input — delete it before a
+ * clean test). Shows whether a button is even detected and which ZX key it sends. ---- */
 extern void sd_save_log(const char *line);
 extern void sd_save_log_boot(const char *line);
 
