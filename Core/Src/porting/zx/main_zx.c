@@ -119,9 +119,9 @@ static bool load_bios(zx_desc_t *desc)
     uint32_t sz = 0;
     /* 48K only for v1: read the 16K ROM straight off the SD (firmware /bios/<sys>/
      * convention; cached in flash, zx_init memcpy's it into core RAM). */
-    const uint8_t *p = (const uint8_t *)odroid_overlay_cache_file_in_flash("/bios/zx/48.rom", &sz, false);
+    const uint8_t *p = (const uint8_t *)odroid_overlay_cache_file_in_flash("/bios/zxs/48.rom", &sz, false);
     if (!p || sz < 0x4000) {
-        printf("[ZX] missing /bios/zx/48.rom (got %u)\n", (unsigned)sz);
+        printf("[ZX] missing /bios/zxs/48.rom (got %u)\n", (unsigned)sz);
         return false;
     }
     desc->roms.zx48k.ptr  = (void *)p;
