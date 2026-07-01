@@ -428,7 +428,9 @@ uint8_t pce_scsi_read(uint8_t reg)
         s_trace++;
     }
     if (s_phase == PH_BUSFREE && s_atrace < 130) {
-        diag("Ir%x db=%02x p3=%02x p2=%02x\n", reg & 0xf, s_db, s_port3, s_port2);
+        /* pc = the System Card ROM address doing the poll — disassemble syscard3.pce there
+         * to see exactly which $1803/$1802 bit its post-read wait loop is stuck on. */
+        diag("Ir%x db=%02x p3=%02x p2=%02x pc=%04x\n", reg & 0xf, s_db, s_port3, s_port2, CPU_PCE.PC);
         s_atrace++;
     }
     switch (reg & 0x0F) {
