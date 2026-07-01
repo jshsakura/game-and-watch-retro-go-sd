@@ -41,7 +41,11 @@ const int DISPLAY_Y = 0x110;
  * 320px window at C64_CROP_X=20. 208 (=0xd0) rows bracket the C64 active picture
  * (raster FIRST_DISP_LINE 0x2c .. LAST_DISP_LINE 0xfb); the device blit letterboxes
  * them into the 240-tall LCD. DISPLAY_X must stay a multiple of 4 (32-bit border fills). */
-const int DISPLAY_X = 0x154;
+/* 352 (=0x160): the ACTIVE (non-SMALL_DISPLAY) VIC window is COL40_XSTART(0x20=32)..
+ * COL40_XSTOP(0x160=352) — the 320px picture ends at 352, so 340 clipped its right 12px
+ * ("right side cut off"). 352 holds the full 320px content (blit takes 320 @ x=32). The
+ * old comment's "20..340" was stale SMALL_DISPLAY text. Still a multiple of 4. */
+const int DISPLAY_X = 0x160;
 const int DISPLAY_Y = 0xd0;
 #endif
 
