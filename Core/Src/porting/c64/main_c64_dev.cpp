@@ -184,6 +184,7 @@ void C64Display::Update(void)
         return;                       /* skip blit + sync -> full-speed load */
 
     c64_repaint();
+    common_ingame_overlay();   /* draw the volume/brightness/speedup bar (PAUSE+dir macros) */
     lcd_swap();          /* present the game frame; c64_repaint no longer swaps itself */
 
     /* Pause menu (VOLUME/SET button) -> volume / brightness / power / Quit-to-menu.
