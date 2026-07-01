@@ -1,0 +1,10 @@
+build
+.ccls-cache
+.vscode
+*.3dsx
+*.cia
+*.elf
+*.smdh
+*.lst
+*.vb
+*.zip

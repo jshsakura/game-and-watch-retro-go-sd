@@ -27,6 +27,7 @@
 #include "main_wswan.h"
 #include "main_gwenesis.h"
 #include "main_a7800.h"
+#include "main_vb.h"
 #include "main_amstrad.h"
 #include "main_zelda3.h"
 #include "main_smw.h"
@@ -415,7 +416,7 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 27 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added. */
+#define MAX_EMULATORS 28 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added. */
 static retro_emulator_t emulators[MAX_EMULATORS];
 static rom_system_t systems[MAX_EMULATORS];
 static int emulators_count = 0;
@@ -1301,6 +1302,7 @@ static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BS
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
 static const emu_dispatch_t emu_lynx    = { "/cores/lynx.bin",    &_OVERLAY_LYNX_BSS_START,    (uint32_t)&_OVERLAY_LYNX_BSS_SIZE,    (uint32_t)&_OVERLAY_LYNX_SIZE,    (uint32_t)&_OVERLAY_LYNX_BSS_END, EMU_ENTRY(app_main_lynx) };
 static const emu_dispatch_t emu_a7800   = { "/cores/a7800.bin",   &_OVERLAY_A7800_BSS_START,   (uint32_t)&_OVERLAY_A7800_BSS_SIZE,   (uint32_t)&_OVERLAY_A7800_SIZE,   0, EMU_ENTRY(app_main_a7800) };
+static const emu_dispatch_t emu_vb      = { "/cores/vb.bin",      &_OVERLAY_VB_BSS_START,      (uint32_t)&_OVERLAY_VB_BSS_SIZE,      (uint32_t)&_OVERLAY_VB_SIZE,      0, EMU_ENTRY(app_main_vb) };
 static const emu_dispatch_t emu_amstrad = { "/cores/amstrad.bin", &_OVERLAY_AMSTRAD_BSS_START, (uint32_t)&_OVERLAY_AMSTRAD_BSS_SIZE, (uint32_t)&_OVERLAY_AMSTRAD_SIZE, 0, EMU_ENTRY(app_main_amstrad) };
 static const emu_dispatch_t emu_tama    = { "/cores/tama.bin",    &_OVERLAY_TAMA_BSS_START,    (uint32_t)&_OVERLAY_TAMA_BSS_SIZE,    (uint32_t)&_OVERLAY_TAMA_SIZE,    0, EMU_ENTRY(app_main_tama) };
 static const emu_dispatch_t emu_pkmini  = { "/cores/pkmini.bin",  &_OVERLAY_PKMINI_BSS_START,  (uint32_t)&_OVERLAY_PKMINI_BSS_SIZE,  (uint32_t)&_OVERLAY_PKMINI_SIZE,  0, EMU_ENTRY(app_main_pkmini) };
@@ -1407,6 +1409,8 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         run_internal_emu(&emu_lynx, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Atari 7800") == 0)  {
         run_internal_emu(&emu_a7800, load_state, start_paused, save_slot);
+    } else if(strcmp(system_name, "Virtual Boy") == 0)  {
+        run_internal_emu(&emu_vb, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Amstrad CPC") == 0)  {
         run_internal_emu(&emu_amstrad, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Magnavox Odyssey2") == 0)  {
@@ -1633,6 +1637,8 @@ void emulators_init()
      * + RG_LOGO_*_LYNX are wired into rg_logos. */
     add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
     add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
+    /* TODO: dedicated RG_LOGO_PAD_VB / RG_LOGO_HEADER_VB icon art (reusing A7800's for now). */
+    add_emulator("Virtual Boy", "vb", "vb lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
     add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
     add_emulator("Magnavox Odyssey2", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_VIDEOPAC, NO_GAME_DATA);
     add_emulator("ZX Spectrum", "zxs", "z80", RG_LOGO_PAD_ZX, RG_LOGO_HEADER_ZX, NO_GAME_DATA);

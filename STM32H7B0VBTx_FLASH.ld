@@ -564,6 +564,28 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_A7800_BSS_SIZE = SIZEOF(.overlay_a7800_bss);
 
+  .overlay_vb __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_vb_start__ = .;
+    build/vb/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_VB_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_VB_LOAD_START = LOADADDR(.overlay_vb);
+  _OVERLAY_VB_SIZE = SIZEOF(.overlay_vb);
+
+  .overlay_vb_bss _OVERLAY_VB_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_VB_BSS_START = .;
+    build/vb/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/vb/*.o (COMMON)
+    __ram_emu_vb_end__ = .;
+    _OVERLAY_VB_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_VB_BSS_END) < __RAM_EMU_END__, "Error: VB BSS overflow");
+  }
+  _OVERLAY_VB_BSS_SIZE = SIZEOF(.overlay_vb_bss);
+
   .overlay_amstrad __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_amstrad_start__ = .;
