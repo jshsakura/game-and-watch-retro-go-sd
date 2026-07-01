@@ -78,6 +78,19 @@ static const char *s_type = NULL;
 static int s_typepos = 0;
 static bool s_is_prg = false;   /* raw .prg (RAM-injected) vs .d64 (virtual 1541) */
 
+/* Deferred save/load. The pause-menu Save/Load handlers run in FIRMWARE context where the
+ * overlay's live C64 object can read back as garbage (the Lynx veneer/clobber hazard), so
+ * they only RECORD the op + path; the real SaveSnapshot/LoadSnapshot runs in
+ * C64Display::Update where TheC64 is valid. Snapshot = VIC+SID+CIA+CPU + full 64K RAM +
+ * colour RAM (C64.cpp SaveCPUState); the flash-resident ROM pointers aren't in it and stay
+ * valid across load. */
+static char s_state_path[300];
+static int  s_state_op;   /* 0 none, 1 save, 2 load */
+static bool c64_SaveState(const char *path)
+{ strncpy(s_state_path, path, sizeof(s_state_path) - 1); s_state_path[sizeof(s_state_path) - 1] = 0; s_state_op = 1; return true; }
+static bool c64_LoadState(const char *path)
+{ strncpy(s_state_path, path, sizeof(s_state_path) - 1); s_state_path[sizeof(s_state_path) - 1] = 0; s_state_op = 2; return true; }
+
 /* A raw .prg file isn't a disk image, so the virtual 1541 can't mount it. Load it
  * straight into C64 RAM at its 2-byte header address, then RUN. Done after the
  * KERNAL has cleared RAM (~frame 120) so the program survives reset. */
@@ -124,6 +137,13 @@ void C64Display::Update(void)
 {
     s_frame++;
     wdog_refresh();
+
+    /* Run any pending menu save/load HERE, where TheC64 is the valid live pointer. */
+    if (s_state_op) {
+        if (s_state_op == 1) TheC64->SaveSnapshot(s_state_path);
+        else                 TheC64->LoadSnapshot(s_state_path);
+        s_state_op = 0;
+    }
 
     /* autostart sequencing */
     if (s_is_prg) {
@@ -241,6 +261,8 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
     cpp_init_array(__init_array_c64_start__, __init_array_c64_end__);
 
     odroid_system_init(APPID_GB, 22050);
+    /* Register the real save/load handlers (deferred; see c64_SaveState/c64_LoadState). */
+    odroid_system_emu_init(&c64_LoadState, &c64_SaveState, NULL, NULL, NULL, NULL);
 
     heap_itc_alloc(true);   /* small allocs in ITCM, big spill to AXI heap (Lynx pattern) */
 
