@@ -721,15 +721,22 @@ void pce_pcm_submit() {
      * PSG still plays (the user confirmed "sound off = games work"). Host keeps it on
      * (its file reads are instant) so the decode stays verified. Re-enable once CD audio
      * is pre-buffered off the audio path. */
+    /* CD-DA (the BGM/Red-Book track) is the ONLY expensive one: it streams the audio
+     * track's sectors off the SAME SD card the game is reading data from, every audio
+     * frame -> thrash/stutter. Keep it gated off on device. ADPCM is DIFFERENT: its
+     * samples are already resident in ADPCM RAM (adpcm_dma_drain copied them there during
+     * the game's own bulk READ), so pce_adpcm_fill is pure in-RAM decode with NO extra SD
+     * traffic -> enable it on device too. That restores the ADPCM voice/SFX (e.g. Dracula
+     * X's thunder) with no lag. */
 #ifdef LINUX_EMU
-    static const int s_pcecd_cd_audio = 1;
+    static const int s_pcecd_cd_audio = 1;   /* host: CD-DA on (instant file reads) */
 #else
-    static const int s_pcecd_cd_audio = 0;
+    static const int s_pcecd_cd_audio = 0;   /* device: CD-DA off (SD-stream thrash) */
 #endif
     static int16_t cdda_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
     static int16_t adpcm_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
     int cdda_n  = s_pcecd_cd_audio ? pce_scsi_cdda_fill(cdda_buf, AUDIO_BUFFER_LENGTH_PCE) : 0;
-    int adpcm_n = s_pcecd_cd_audio ? pce_adpcm_fill(adpcm_buf, AUDIO_BUFFER_LENGTH_PCE) : 0;
+    int adpcm_n = pce_adpcm_fill(adpcm_buf, AUDIO_BUFFER_LENGTH_PCE);   /* in-RAM, cheap: always on */
 
     for (int i = 0; i < sound_buffer_length; i++) {
         /* mix left & right */
