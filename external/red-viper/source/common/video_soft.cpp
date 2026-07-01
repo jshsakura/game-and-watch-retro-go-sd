@@ -7,12 +7,14 @@ static struct {
         uint16_t u16[8];
         uint32_t u32[4];
     } indices;
-    // only one index, for each colour
+    // Per column, the presence mask (0b11 at each pixel of that colour index) for
+    // each of the 3 non-zero colour indices. The palette shade is applied at render
+    // time via VB_SHADE_BCAST[] (col & broadcast(shade)). Storing all 4 pre-shaded
+    // columns here cost 256B/tile -> 576KB total, which OOM'd the VB RAM regions on
+    // device; this is 64B/tile (~192KB total, a provably-equivalent transform).
     struct {
         struct {
-            struct {
-                uint16_t shade[4];
-            } col[4]; // actually 3 but 4 is better aligned
+            uint16_t col[4]; // [0..2] used; [3] padding to keep 8-byte alignment
         } column[8];
     } colmask;
     // mask where transparent pixels are 1
@@ -65,23 +67,25 @@ void update_texture_cache_soft(void) {
             tmp = ((column & 0xaaaaaaaa) >> 1) & column;
             colmask[2] = tmp | (tmp << 1);
             for (int k = 0; k < 3; k++) {
-                for (int l = 0; l < 4; l++) {
-                    const uint32_t cols[4] = {0, 0x55555555, 0xaaaaaaaa, 0xffffffff};
-                    uint32_t columns = colmask[k] & cols[l];
-                    tileCache[t].colmask.column[i * 2].col[k].shade[l] = columns;
-                    tileCache[t].colmask.column[i * 2 + 1].col[k].shade[l] = columns >> 16;
-                }
+                // Store the raw presence mask (0b11 per present pixel); the shade is
+                // applied at render time. Equivalent to the old shade[3] entry.
+                tileCache[t].colmask.column[i * 2].col[k]     = colmask[k];
+                tileCache[t].colmask.column[i * 2 + 1].col[k] = colmask[k] >> 16;
             }
             tileCache[t].mask.u32[i] = ~(colmask[0] | colmask[1] | colmask[2]);
         }
     }
 }
 
+/* col[k] holds the raw presence mask; painting a pixel of colour k with 2-bit shade
+ * s is (mask & VB_SHADE_BCAST[s]). This reproduces the old pre-shaded shade[s] lookup
+ * exactly (shade[s] was defined as colmask[k] & {0,0x5555,0xaaaa,0xffff}[s]). */
+static const uint16_t VB_SHADE_BCAST[4] = { 0x0000, 0x5555, 0xaaaa, 0xffff };
 static uint16_t get_tile_column(int tileid, uint16_t pal, int x, bool yflip) {
     int value =
-        (tileCache[tileid].colmask.column[x].col[0].shade[(pal >> 2) & 3]) |
-        (tileCache[tileid].colmask.column[x].col[1].shade[(pal >> 4) & 3]) |
-        (tileCache[tileid].colmask.column[x].col[2].shade[(pal >> 6) & 3]);
+        (tileCache[tileid].colmask.column[x].col[0] & VB_SHADE_BCAST[(pal >> 2) & 3]) |
+        (tileCache[tileid].colmask.column[x].col[1] & VB_SHADE_BCAST[(pal >> 4) & 3]) |
+        (tileCache[tileid].colmask.column[x].col[2] & VB_SHADE_BCAST[(pal >> 6) & 3]);
     if (yflip) {
         value = __builtin_bswap16(value);
         value = ((value & 0xf0f0) >> 4) | ((value << 4) & 0xf0f0);

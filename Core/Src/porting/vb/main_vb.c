@@ -211,6 +211,15 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     setDefaults();
     is_multiplayer = false;
     v810_init();     vb_diag("v810_init done\n");
+    /* Dump the emulator RAM region pointers. If any is NULL/bogus, ram_calloc OOM'd and
+     * that region's .off is garbage -> the FIRST guest access to it HardFaults. The
+     * frame-1 fault (guest touches VIP/WRAM after the reset code) points straight here;
+     * DISPLAY_RAM is 256KB (the big one, most likely to OOM). */
+    vb_diag("regions DISP=%p SND=%p WRAM=%p GRAM=%p (sizes 0x%x/0x%x/0x%x/0x%x)\n",
+            (void *)vb_state->V810_DISPLAY_RAM.pmemory, (void *)vb_state->V810_SOUND_RAM.pmemory,
+            (void *)vb_state->V810_VB_RAM.pmemory,      (void *)vb_state->V810_GAME_RAM.pmemory,
+            (unsigned)vb_state->V810_DISPLAY_RAM.size,  (unsigned)vb_state->V810_SOUND_RAM.size,
+            (unsigned)vb_state->V810_VB_RAM.size,       (unsigned)vb_state->V810_GAME_RAM.size);
     replay_init();   vb_diag("replay_init done\n");
 
     /* Point the CPU at the flash-resident ROM (XIP) with a power-of-2 mirror. */
