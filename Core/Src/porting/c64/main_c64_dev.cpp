@@ -208,7 +208,6 @@ void C64Display::PollKeyboard(uint8*,uint8*,uint8*,uint8*) {}
 #else
 void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joystick)
 {
-    (void)key_matrix; (void)rev_matrix;
     odroid_gamepad_state_t js;
     odroid_input_read_gamepad(&js);
     uint8 m = 0xff;  /* active-low */
@@ -216,8 +215,22 @@ void C64Display::PollKeyboard(uint8 *key_matrix, uint8 *rev_matrix, uint8 *joyst
     if (js.values[ODROID_INPUT_DOWN])  m &= ~0x02;
     if (js.values[ODROID_INPUT_LEFT])  m &= ~0x04;
     if (js.values[ODROID_INPUT_RIGHT]) m &= ~0x08;
-    if (js.values[ODROID_INPUT_A])     m &= ~0x10;  /* fire */
+    if (js.values[ODROID_INPUT_A])     m &= ~0x10;  /* fire (joystick) */
     if (joystick) *joystick = m;
+
+    /* Keyboard: many games load to a title/instructions screen that starts on SPACE or
+     * RETURN (not fire), so map them — else "the game loads, shows text, never starts".
+     * The CIA resets the matrix to 0xff once at reset, so re-set it every poll or a key
+     * sticks. C64 matrix: key_matrix[row]&=~(1<<col), rev_matrix[col]&=~(1<<row). */
+    if (key_matrix && rev_matrix) {
+        for (int i = 0; i < 8; i++) { key_matrix[i] = 0xff; rev_matrix[i] = 0xff; }
+        if (js.values[ODROID_INPUT_B]) {        /* SPACE  (row7,col4) */
+            key_matrix[7] &= ~0x10; rev_matrix[4] &= ~0x80;
+        }
+        if (js.values[ODROID_INPUT_START]) {    /* RETURN (row0,col1) */
+            key_matrix[0] &= ~0x02; rev_matrix[1] &= ~0x01;
+        }
+    }
 }
 #endif
 
