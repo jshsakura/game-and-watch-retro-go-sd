@@ -100,6 +100,12 @@ enum {
     // struct in rg_logos.c, so it's a NEW last /bios/logo.bin entry and no
     // existing index shifts).
     RG_LOGO_HEADER_GAMECOM,
+    // Virtual Boy name header (matches header_vb — appended as the NEW last LOGO_DATA
+    // struct in rg_logos.c, so it becomes the last /bios/logo.bin entry). MUST sit here,
+    // right after the last logo.bin-backed header and BEFORE the colour-only pad block,
+    // so enum value == 3 + logo.bin index stays exact (the colour-only pads below shift
+    // up one but remain past logo_image_count -> rg_get_logo() still returns NULL).
+    RG_LOGO_HEADER_VB,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
