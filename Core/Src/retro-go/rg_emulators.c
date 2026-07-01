@@ -1638,7 +1638,7 @@ void emulators_init()
     add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
     add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
     /* TODO: dedicated RG_LOGO_PAD_VB / RG_LOGO_HEADER_VB icon art (reusing A7800's for now). */
-    add_emulator("Virtual Boy", "vb", "vb lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
+    add_emulator("Virtual Boy", "vb", "vb lzma", RG_LOGO_PAD_VB, RG_LOGO_HEADER_VB, NO_GAME_DATA);
     add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
     add_emulator("Magnavox Odyssey2", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_VIDEOPAC, NO_GAME_DATA);
     add_emulator("ZX Spectrum", "zxs", "z80", RG_LOGO_PAD_ZX, RG_LOGO_HEADER_ZX, NO_GAME_DATA);
