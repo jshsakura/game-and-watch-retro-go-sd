@@ -728,25 +728,15 @@ void pce_pcm_submit() {
     uint16_t sound_buffer_length = audio_get_buffer_length();
 
     /* CD-DA (Red Book audio / BGM) + ADPCM (voice): pull this frame's samples and mix
-     * with the PSG. GATED OFF on device (s_pcecd_cd_audio=0): streaming CD-DA sectors
-     * from the SD card every audio frame — on top of the game's own SCSI data reads from
-     * the SAME physical SD — makes the device thrash (Dracula X plays but lags/stutters;
-     * Ai Chou Aniki / Dynastic Hero stall). With CD audio off the games run smoothly and
-     * PSG still plays (the user confirmed "sound off = games work"). Host keeps it on
-     * (its file reads are instant) so the decode stays verified. Re-enable once CD audio
-     * is pre-buffered off the audio path. */
-    /* CD-DA (the BGM/Red-Book track) is the ONLY expensive one: it streams the audio
-     * track's sectors off the SAME SD card the game is reading data from, every audio
-     * frame -> thrash/stutter. Keep it gated off on device. ADPCM is DIFFERENT: its
-     * samples are already resident in ADPCM RAM (adpcm_dma_drain copied them there during
-     * the game's own bulk READ), so pce_adpcm_fill is pure in-RAM decode with NO extra SD
-     * traffic -> enable it on device too. That restores the ADPCM voice/SFX (e.g. Dracula
-     * X's thunder) with no lag. */
-#ifdef LINUX_EMU
-    static const int s_pcecd_cd_audio = 1;   /* host: CD-DA on (instant file reads) */
-#else
-    static const int s_pcecd_cd_audio = 0;   /* device: CD-DA off (SD-stream thrash) */
-#endif
+     * with the PSG. CD-DA is now ON for device too. The old thrash that forced it off
+     * was fopen/fclose-per-sector on a SINGLE shared .bin handle (a FatFs dir walk 60x/s
+     * while the SCSI engine read the data track) — that is FIXED in pce_cd.c: the CD-DA
+     * stream uses its OWN persistent handle (s_bin_f[1], slot 1) so it never thrashes the
+     * data handle (slot 0). Reads are now just fseek+fread on an open file (~75 sectors/s).
+     * The CD-DA decode is verified on the host harness (Dynastic Hero opening = 17s of real
+     * stereo BGM, cdda.pcm 97% non-zero). ADPCM samples are already resident in ADPCM RAM
+     * (adpcm_dma_drain), so pce_adpcm_fill is pure in-RAM decode. Both channels on. */
+    static const int s_pcecd_cd_audio = 1;
     static int16_t cdda_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
     static int16_t adpcm_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
     int cdda_n  = s_pcecd_cd_audio ? pce_scsi_cdda_fill(cdda_buf, AUDIO_BUFFER_LENGTH_PCE) : 0;
