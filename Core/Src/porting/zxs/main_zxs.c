@@ -208,12 +208,36 @@ static void zx_btn_key(bool pressed, int keyidx) {
     else         kbd_key_up(&zx.kbd, zx_keys[keyidx].code);
 }
 
+/* ---- on-device input diagnostics: append one line per button edge to
+ * /lynx_save_diag.txt (shared diag file — delete it before a clean test). Shows
+ * whether a button is even detected and which ZX key it sends. ---- */
+extern void sd_save_log(const char *line);
+extern void sd_save_log_boot(const char *line);
+
+static void zx_log_input(odroid_gamepad_state_t *j) {
+    static uint8_t pg, pt, pb, pa, pdp;
+    char s[96];
+    uint8_t g = j->values[ODROID_INPUT_START], t = j->values[ODROID_INPUT_SELECT];
+    uint8_t b = j->values[ODROID_INPUT_B],     a = j->values[ODROID_INPUT_A];
+    uint8_t dp = j->values[ODROID_INPUT_UP] | j->values[ODROID_INPUT_DOWN] |
+                 j->values[ODROID_INPUT_LEFT] | j->values[ODROID_INPUT_RIGHT];
+    if (g != pg)  { snprintf(s, sizeof s, "[zxs] GAME %s -> key '%s'", g ? "DN" : "up", zx_keys[zx_key_game].name); sd_save_log(s); pg = g; }
+    if (t != pt)  { snprintf(s, sizeof s, "[zxs] TIME %s -> key '%s'", t ? "DN" : "up", zx_keys[zx_key_time].name); sd_save_log(s); pt = t; }
+    if (b != pb)  { snprintf(s, sizeof s, "[zxs] B %s -> key '%s'",    b ? "DN" : "up", zx_keys[zx_key_b].name);    sd_save_log(s); pb = b; }
+    if (a != pa)  { snprintf(s, sizeof s, "[zxs] A(fire) %s", a ? "DN" : "up"); sd_save_log(s); pa = a; }
+    if (dp != pdp){ snprintf(s, sizeof s, "[zxs] DPAD %s", dp ? "active" : "idle"); sd_save_log(s); pdp = dp; }
+}
+
 void app_main_zx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)start_paused;
     odroid_gamepad_state_t joystick;
 
     if (!init()) return;   /* BIOS missing -> return to launcher instead of running garbage */
+
+    { char s[96]; snprintf(s, sizeof s, "[zxs] input diag build %s %s  GAME=%s TIME=%s B=%s",
+        __DATE__, __TIME__, zx_keys[zx_key_game].name, zx_keys[zx_key_time].name, zx_keys[zx_key_b].name);
+      sd_save_log_boot(s); }
 
     if (load_state)
         odroid_system_emu_load_state(save_slot);
@@ -223,6 +247,7 @@ void app_main_zx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
+        zx_log_input(&joystick);   /* SD-log every button edge + the key it sends */
         /* PAUSE menu entries: pick which ZX key GAME / TIME / B send (D-pad L/R
          * cycles the value). Rebuilt each frame so the shown name stays current. */
         char game_kn[8], time_kn[8], b_kn[8];

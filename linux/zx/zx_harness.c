@@ -141,6 +141,20 @@ int main(void) {
     printf("   zx_key_down(0x20/SPACE): joy_joymask=0x%02x (nonzero => stolen as Kempston fire)\n", zx.joy_joymask);
     zx_key_up(&zx,0x20);
 
+    /* 5. Verify the EXACT device path (kbd_key_down direct) registers digits +
+     * space — the keys the configurable GAME/TIME/B buttons send. */
+    { const int tk[] = {'0','1','l',0x20,0x0D};
+      const char* tn[] = {"0","1","L","Space","Enter"};
+      for (unsigned t=0;t<5;t++){
+        unsigned long a=1469598103934665603UL;
+        for(int i=0;i<ZX_FRAMEBUFFER_SIZE_BYTES;i++){a^=zx.fb[i];a*=1099511628211UL;}
+        kbd_key_down(&zx.kbd,tk[t]); run_frames(4); kbd_key_up(&zx.kbd,tk[t]); run_frames(4);
+        unsigned long b=1469598103934665603UL;
+        for(int i=0;i<ZX_FRAMEBUFFER_SIZE_BYTES;i++){b^=zx.fb[i];b*=1099511628211UL;}
+        printf("   kbd_key_down('%s'): screen %s\n", tn[t], (a!=b)?"CHANGED (reaches ROM)":"unchanged");
+      }
+    }
+
     printf("ALL ZX HOST HARNESS TESTS PASSED\n");
     return 0;
 }
