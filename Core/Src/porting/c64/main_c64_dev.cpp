@@ -120,23 +120,20 @@ static void inject_prg(C64 *c64)
  * the overlay double-swap and flicker. */
 static void c64_repaint(void)
 {
-    /* Auto-fit: the 40-column picture starts at VIC COL40_XSTART (0x20=32) in the 340-wide
-     * Frodo bitmap — the left of that is border. Cropping at 20 (the stale Display.h note)
-     * left 12px of border on the left, pushing the image right. Scale ONLY the content
-     * region [32 .. DISPLAY_X) to fill the LCD width, letterboxed vertically. */
+    /* The C64 40-column picture is a FIXED 320px — same as the LCD width — so blit it 1:1,
+     * no scaling. Take the centred 320px window of the 340-wide Frodo bitmap and letterbox
+     * the 208 rows into the 240-tall LCD. (X0 is the only knob if the window is a few px
+     * off; centring the 20px total border is the natural fit.) */
     uint16_t *out = (uint16_t *)lcd_get_active_buffer();
-    const int X0 = 0x20;                                 /* content left edge (VIC COL40_XSTART) */
-    const int cw = DISPLAY_X - X0;                       /* visible content columns (308) */
-    int dstH = DISPLAY_Y * WIDTH / cw;                   /* fill width, keep aspect (~216) */
-    if (dstH > HEIGHT) dstH = HEIGHT;
-    const int y0 = (HEIGHT - dstH) / 2;
-    memset(out, 0, (size_t)y0 * WIDTH * sizeof(uint16_t));
-    memset(&out[(y0 + dstH) * WIDTH], 0, (size_t)(HEIGHT - y0 - dstH) * WIDTH * sizeof(uint16_t));
-    for (int dy = 0; dy < dstH; dy++) {
-        const uint8 *src = &s_bitmap[(dy * DISPLAY_Y / dstH) * DISPLAY_X + X0];
-        uint16_t *dst = &out[(y0 + dy) * WIDTH];
-        for (int dx = 0; dx < WIDTH; dx++)
-            dst[dx] = s_pal565[src[dx * cw / WIDTH] & 0x0f];
+    const int X0 = (DISPLAY_X - WIDTH) / 2;              /* (340-320)/2 = 10 */
+    const int Y0 = (HEIGHT - DISPLAY_Y) / 2;             /* (240-208)/2 = 16 */
+    memset(out, 0, (size_t)Y0 * WIDTH * sizeof(uint16_t));
+    memset(&out[(Y0 + DISPLAY_Y) * WIDTH], 0, (size_t)(HEIGHT - Y0 - DISPLAY_Y) * WIDTH * sizeof(uint16_t));
+    for (int y = 0; y < DISPLAY_Y; y++) {
+        const uint8 *src = &s_bitmap[y * DISPLAY_X + X0];
+        uint16_t *dst = &out[(Y0 + y) * WIDTH];
+        for (int x = 0; x < WIDTH; x++)
+            dst[x] = s_pal565[src[x] & 0x0f];
     }
 }
 
