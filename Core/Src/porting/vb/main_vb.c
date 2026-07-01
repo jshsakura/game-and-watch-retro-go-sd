@@ -47,17 +47,20 @@ void video_download_vip(int drawn_fb) { (void)drawn_fb; }
 
 /* Sound backend. MUST report success: sound_init() frees the wave buffers if
  * the backend fails and sound_update() then writes freed memory (proven UAF on
- * the harness). v1 is silent — bridging VB VSU samples to the retro-go mixer is
- * a follow-up; returning success keeps the buffers valid and the pipeline safe. */
+ * the harness). sound_push_backend() (in vb_audio.c) accumulates completed VSU
+ * buffers; vb_audio_drain() downmixes them to the retro-go mono mixer per frame. */
 static int16_t *s_wavebufs[BUF_COUNT];
-int  sound_init_backend(int16_t **bufs) {
+bool sound_init_backend(int16_t **bufs) {
     for (int i = 0; i < BUF_COUNT; i++) s_wavebufs[i] = bufs[i];
-    return 1;
+    return true;
 }
 void sound_close_backend(void)  {}
 void sound_pause_backend(void)  {}
 void sound_resume_backend(void) {}
-void sound_push_backend(void)   {}
+
+/* VB VSU -> retro-go mixer bridge (vb_audio.c). */
+void vb_audio_drain(int16_t *out, int len, int32_t factor);
+void vb_audio_reset(void);
 
 extern unsigned int vb_rom_mask;
 
@@ -126,7 +129,7 @@ static void vb_blit(void)
         if (tDSPCACHE.CharCacheInvalid) update_texture_cache_soft();
         video_soft_render(!dfb);
         tDSPCACHE.CharCacheInvalid = false;
-        tDSPCACHE.BGCacheInvalid = 0;
+        /* BGCacheInvalid only exists under NEED_BG_CACHE (disabled in this build). */
         memset(tDSPCACHE.CharacterCache, 0, sizeof(tDSPCACHE.CharacterCache));
     }
 
@@ -142,17 +145,26 @@ static void vb_blit(void)
 
     uint16_t *out = (uint16_t *)lcd_get_active_buffer();
 
-    for (int dy = 0; dy < GW_LCD_HEIGHT; dy++) {
-        int sy = dy * 224 / GW_LCD_HEIGHT;         /* nearest-neighbour scale */
+    /* Aspect-correct auto-fit (device convention, cf. Lynx center/letterbox):
+     * preserve the VB 384:224 ratio — full 320 width, scaled to 186 rows and
+     * vertically centered, with black letterbox bars top/bottom. */
+    const int dst_w = GW_LCD_WIDTH;                 /* 320 (full width) */
+    const int dst_h = GW_LCD_WIDTH * 224 / 384;     /* 186 (keeps 384:224) */
+    const int y0    = (GW_LCD_HEIGHT - dst_h) / 2;  /* 27 */
+
+    memset(out, 0, (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * sizeof(uint16_t));
+
+    for (int ry = 0; ry < dst_h; ry++) {
+        int sy = ry * 224 / dst_h;                  /* nearest-neighbour scale */
         const uint16_t *col = vb_fb + (sy >> 3);
         int shift = (sy & 7) * 2;
-        uint16_t *dst = out + dy * GW_LCD_WIDTH;
-        for (int dx = 0; dx < GW_LCD_WIDTH; dx++) {
-            int sx = dx * 384 / GW_LCD_WIDTH;
+        uint16_t *dst = out + (y0 + ry) * GW_LCD_WIDTH;
+        for (int dx = 0; dx < dst_w; dx++) {
+            int sx = dx * 384 / dst_w;
             int v = (col[sx * 32] >> shift) & 3;
             int b = bri[v] * 2;
             if (b > 255) b = 255;
-            dst[dx] = (uint16_t)((b >> 3) << 11); /* red channel only */
+            dst[dx] = (uint16_t)((b >> 3) << 11);   /* red channel only */
         }
     }
 }
@@ -221,9 +233,13 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             lcd_swap();
         }
 
-        /* v1: silent but correctly paced (avoids the sound_sync stall). */
-        int16_t *abuf = audio_get_active_buffer();
-        memset(abuf, 0, audio_get_buffer_length() * sizeof(int16_t));
+        /* Downmix the VB VSU frames to the retro-go mono mixer (Lynx technique). */
+        if (common_emu_sound_loop_is_muted()) {
+            vb_audio_reset();
+        } else {
+            vb_audio_drain(audio_get_active_buffer(), audio_get_buffer_length(),
+                           common_emu_sound_get_volume());
+        }
         common_emu_sound_sync(false);
     }
 

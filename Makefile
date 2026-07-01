@@ -690,7 +690,8 @@ $(CORE_VB)/replay.c \
 $(CORE_VB)/video_common.c \
 $(CORE_VB)/inih/ini.c \
 Core/Src/porting/vb/main_vb.c \
-Core/Src/porting/vb/vb_savestate.c
+Core/Src/porting/vb/vb_savestate.c \
+Core/Src/porting/vb/vb_audio.c
 
 VB_CXX_SOURCES += \
 $(CORE_VB)/video_soft.cpp

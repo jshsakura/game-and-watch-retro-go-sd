@@ -39,8 +39,9 @@ done
 g++ $SAN $DEF $INC -fno-rtti -fno-exceptions -c "$RV/source/common/video_soft.cpp" -o "$OUT/video_soft.o"
 gcc $SAN $DEF $INC -c "$RV/source/common/inih/ini.c" -o "$OUT/ini.o"
 
-# Device save/load module under test + the harness driver.
+# Device save/load + audio modules under test + the harness driver.
 gcc $SAN $DEF $INC -c Core/Src/porting/vb/vb_savestate.c -o "$OUT/vb_savestate.o"
+gcc $SAN $DEF $INC -c Core/Src/porting/vb/vb_audio.c     -o "$OUT/vb_audio.o"
 gcc $SAN $DEF $INC -c linux/vb/vb_harness.c              -o "$OUT/vb_harness.o"
 
 g++ $SAN "$OUT"/*.o -o "$OUT/vb_harness.elf" -lm -lminizip -lz

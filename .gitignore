@@ -54,3 +54,4 @@ build-error.log
 .bash_history
 *.sfc
 sdcard_staging/
+linux/vb/build_vb/
