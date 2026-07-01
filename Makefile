@@ -788,7 +788,6 @@ Core/Src/porting/c64/frodo/CPU_common.cpp \
 Core/Src/porting/c64/frodo/VIC.cpp \
 Core/Src/porting/c64/frodo/VIC_table.cpp \
 Core/Src/porting/c64/frodo/SID.cpp \
-Core/Src/porting/c64/frodo/DigitalRenderer.cpp \
 Core/Src/porting/c64/frodo/CIA.cpp \
 Core/Src/porting/c64/frodo/IEC.cpp \
 Core/Src/porting/c64/frodo/1541d64.cpp \

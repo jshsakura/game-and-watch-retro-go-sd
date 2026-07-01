@@ -129,7 +129,7 @@ static bool load_bios(zx_desc_t *desc)
     return true;
 }
 
-static void init(void)
+static bool init(void)
 {
     odroid_system_init(APPID_GB, ZX_AUDIO_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL);
@@ -147,7 +147,7 @@ static void init(void)
     desc.audio.ay_volume     = 0.5f;
     zx_is128 = false;
 
-    if (!load_bios(&desc)) return;
+    if (!load_bios(&desc)) return false;   /* missing /bios/zxs/48.rom -> bounce to menu, not HardFault */
     zx_init(&zx, &desc);
     zx_build_palette();
 
@@ -158,6 +158,7 @@ static void init(void)
         bool ok = zx_quickload(&zx, (chips_range_t){ .ptr = (void *)g, .size = gsz });
         printf("[ZX] quickload %s -> %d (%u bytes)\n", ACTIVE_FILE->path, ok, (unsigned)gsz);
     }
+    return true;
 }
 
 void app_main_zx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
@@ -166,7 +167,7 @@ void app_main_zx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
     odroid_gamepad_state_t joystick;
 
-    init();
+    if (!init()) return;   /* BIOS missing -> return to launcher instead of running garbage */
 
     if (load_state)
         odroid_system_emu_load_state(save_slot);

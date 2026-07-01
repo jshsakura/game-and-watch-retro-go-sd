@@ -12,7 +12,12 @@ typedef struct {
     HWORD count;
 } ReplayEntry;
 
+#ifdef GNW_VB_DEVICE
+#define REPLAY_COUNT 1        /* replay/rewind isn't exposed on device — keep the buffer tiny
+                               * (the 400KB one OOM'd the ~80KB newlib heap on launch) */
+#else
 #define REPLAY_COUNT 100000
+#endif
 
 // "RVRP"
 static const int MAGIC = 0x50525652;
@@ -25,8 +30,16 @@ static ReplayEntry *replay_buf = NULL, *replay_cursor;
 static bool overflowed = false;
 
 void replay_init(void) {
+#ifdef GNW_VB_DEVICE
+    /* newlib heap is only ~80KB — allocate from the RAM_EMU bump heap like the rest of
+     * the VB regions (the old newlib malloc of the 400KB replay_buf OOM'd on launch). */
+    extern void *vb_dev_malloc(size_t size);
+    initial_sram = vb_dev_malloc(vb_state->V810_GAME_RAM.highaddr + 1 - vb_state->V810_GAME_RAM.lowaddr);
+    replay_buf = vb_dev_malloc(sizeof(ReplayEntry) * REPLAY_COUNT);
+#else
     initial_sram = malloc(vb_state->V810_GAME_RAM.highaddr + 1 - vb_state->V810_GAME_RAM.lowaddr);
     replay_buf = malloc(sizeof(ReplayEntry) * REPLAY_COUNT);
+#endif
 }
 
 void replay_reset(bool with_sram) {
