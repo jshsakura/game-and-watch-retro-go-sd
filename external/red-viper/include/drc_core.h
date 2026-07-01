@@ -5,7 +5,9 @@
 #include "arm_emit.h"
 #include "v810_mem.h"
 
-#if __ARM_ARCH >= 6 && __arm__
+/* The DRC is A32 (ARM mode) codegen; the G&W's Cortex-M7 is Thumb-2 only and can't
+ * execute it, so force the interpreter on device (GNW_VB_DEVICE) even though it's ARM. */
+#if __ARM_ARCH >= 6 && __arm__ && !defined(GNW_VB_DEVICE)
 #define DRC_AVAILABLE true
 #else
 #define DRC_AVAILABLE false
