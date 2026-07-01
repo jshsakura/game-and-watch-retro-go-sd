@@ -25,6 +25,7 @@
 #include "v810_cpu.h"
 #include "v810_mem.h"
 #include "vb_dsp.h"
+#include "vb_sound.h"   /* SAMPLE_COUNT */
 
 /* tDSPCACHE normally lives in video.c (the GLES2 renderer we exclude on the
  * headless harness); provide the definition so the CPU/mem units link. */
@@ -50,10 +51,16 @@ void video_download_vip(int drawn_fb) { (void)drawn_fb; }
 /* MUST return success (non-zero): sound_init() frees the wave buffers if the
  * backend reports failure, and sound_update() then writes freed memory (ASan
  * heap-use-after-free). The device sound_init_backend must likewise succeed. */
-int  sound_init_backend(int16_t **bufs) { (void)bufs; return 1; }
+bool sound_init_backend(int16_t **bufs) { (void)bufs; return true; }
 void sound_close_backend(void) {}
 void sound_pause_backend(void) {} void sound_resume_backend(void) {}
-void sound_push_backend(void) {}
+/* sound_push_backend is provided by the real vb_audio.c under test. */
+
+/* VB audio bridge under test (Core/Src/porting/vb/vb_audio.c). sound_push_backend
+ * is declared by vb_sound.h. */
+int  vb_audio_pending(void);
+void vb_audio_reset(void);
+void vb_audio_drain(int16_t *out, int len, int32_t factor);
 
 #define ROM_SIZE 0x400  /* 1 KiB, power of two */
 
@@ -206,7 +213,33 @@ int main(void)
     if (vb_state_load(S1) == 0) { printf("FAIL: loaded a savestate for the wrong ROM\n"); return 1; }
     printf("OK guard: mismatched-CRC savestate correctly rejected\n");
 
-    free(b1); free(b2); free(rom);
+    free(b1); free(b2);
+
+    /* 3. Audio bridge (vb_audio.c) — the Lynx-style stereo->mono downmix that
+     * makes sound actually come out. Push a known stereo buffer, drain to mono,
+     * assert non-silent + correct scaling + accumulator drains. */
+    {
+        vb_audio_reset();   /* clear frames the boot run accumulated (never drained here) */
+        int16_t tone[SAMPLE_COUNT * 2];
+        for (int i = 0; i < SAMPLE_COUNT; i++) { tone[i * 2] = 1000; tone[i * 2 + 1] = 500; }
+        sound_push_backend(tone);
+        if (vb_audio_pending() != SAMPLE_COUNT) {
+            printf("FAIL audio: push not accumulated (%d != %d)\n", vb_audio_pending(), SAMPLE_COUNT);
+            return 1;
+        }
+        int16_t out[1000];
+        vb_audio_drain(out, 1000, 256);               /* (1000+500)*256>>9 = 750 */
+        if (out[0] != 750 || out[999] != 750) {       /* [500..999] clamp to last gen frame */
+            printf("FAIL audio: downmix out[0]=%d out[999]=%d (want 750)\n", out[0], out[999]);
+            return 1;
+        }
+        if (vb_audio_pending() != 0) { printf("FAIL audio: drain did not reset accumulator\n"); return 1; }
+        vb_audio_drain(out, 1000, 256);               /* nothing pending -> silence */
+        if (out[0] != 0) { printf("FAIL audio: empty drain not silent (%d)\n", out[0]); return 1; }
+        printf("OK audio: VSU stereo->mono downmix non-silent + correct + drains\n");
+    }
+
+    free(rom);
     printf("ALL VB DEVICE-PATH HARNESS TESTS PASSED\n");
     return 0;
 }
