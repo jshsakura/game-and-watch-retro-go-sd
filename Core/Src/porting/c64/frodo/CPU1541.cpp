@@ -650,13 +650,15 @@ void MOS6502_1541::illegal_op(uint8 op, uint16 at)
 {
 	char illop_msg[80];
 
-	sprintf(illop_msg, "1541: Illegal opcode %02x at %04x.", op, at);
-	c64_diag("CPU1541 ILLOP op=%02x at=%04x (Emul1541Proc should be OFF!)\n", op, at);
-	if (ShowRequester(illop_msg, "Reset 1541", "Reset C64")) {
-		extern const char *g_c64_reset_reason; g_c64_reset_reason = "CPU1541-illop";
-		the_c64->Reset();
-	}
-	Reset();
+	(void)illop_msg;
+	{ static int n = 0; if (n++ < 3) c64_diag("CPU1541 illop op=%02x at=%04x -> PARK (no C64 reset)\n", op, at); }
+	/* Virtual-1541 mode (Emul1541Proc=false): the 1541 CPU has NO real DOS ROM
+	 * (ROM1541 aliases zeroed RAM), so if the C64 ever wakes it via the IEC/ATN line
+	 * (CIA2 -> NewATNState/IECInterrupt) it runs garbage from a zero reset vector and
+	 * lands here. It must NEVER reset the C64 — that was the endless t18-s0 boot loop
+	 * (device only; host timing happened not to wake it). Park the dead 1541 idle; the
+	 * high-level D64Drive does all the real disk work. */
+	Idle = true;
 }
 
 
@@ -668,13 +670,10 @@ void MOS6502_1541::illegal_jump(uint16 at, uint16 to)
 {
 	char illop_msg[80];
 
-	sprintf(illop_msg, "1541: Jump to I/O space at %04x to %04x.", at, to);
-	c64_diag("CPU1541 ILLJMP from=%04x to=%04x (Emul1541Proc should be OFF!)\n", at, to);
-	if (ShowRequester(illop_msg, "Reset 1541", "Reset C64")) {
-		extern const char *g_c64_reset_reason; g_c64_reset_reason = "CPU1541-illjmp";
-		the_c64->Reset();
-	}
-	Reset();
+	(void)illop_msg;
+	{ static int n = 0; if (n++ < 3) c64_diag("CPU1541 illjmp from=%04x to=%04x -> PARK (no C64 reset)\n", at, to); }
+	/* See illegal_op above: never reset the C64 from the dormant virtual 1541. Park it. */
+	Idle = true;
 }
 
 
