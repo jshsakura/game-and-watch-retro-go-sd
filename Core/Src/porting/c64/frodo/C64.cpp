@@ -167,13 +167,8 @@ C64::~C64()
  *  Reset C64
  */
 
-extern "C" void c64_diag(const char *fmt, ...);   /* -> /c64_diag.txt (main_c64_dev) */
-const char *g_c64_reset_reason = "boot/first";     /* set by each the_c64->Reset() call site */
-
 void C64::Reset(void)
 {
-	c64_diag("C64::Reset reason=%s\n", g_c64_reset_reason);
-	g_c64_reset_reason = "UNKNOWN";                /* if this shows, a 5th caller exists */
 	TheCPU->AsyncReset();
 	TheCPU1541->AsyncReset();
 	TheSID->Reset();

@@ -48,8 +48,6 @@ enum {
 const int NUM_TRACKS = 35;
 const int NUM_SECTORS = 683;
 
-extern "C" void c64_diag(const char *fmt, ...);   /* -> /c64_diag.txt (main_c64_dev) */
-
 // Prototypes
 static bool match(uint8 *p, uint8 *n);
 
@@ -117,18 +115,15 @@ void D64Drive::open_close_d64_file_internal(char *d64name)
 
 	// Open new .d64 file
 	if (d64name[0]) {
-		c64_diag("d64 OPEN try '%s'\n", d64name);
 		if ((the_file = fopen(d64name, "rb")) != NULL) {
 
 			// Check length
 			fseek(the_file, 0, SEEK_END);
 			if ((size = ftell(the_file)) < NUM_SECTORS * 256) {
-				c64_diag("d64 too small size=%ld\n", (long)size);
 				fclose(the_file);
 				the_file = NULL;
 				return;
 			}
-			c64_diag("d64 OPEN ok size=%ld\n", (long)size);
 
 			// x64 image?
 			rewind(the_file);
@@ -166,7 +161,6 @@ void D64Drive::open_close_d64_file(char *d64name)
 uint8 D64Drive::Open(int channel, char *filename)
 {
 	set_error(ERR_OK);
-	c64_diag("OPEN ch=%d name='%s'\n", channel, filename ? filename : "(null)");
 
 	// Channel 15: execute file name as command
 	if (channel == 15) {
@@ -210,8 +204,8 @@ uint8 D64Drive::open_file(int channel, char *filename)
 	// Channel 0 is READ PRG. Secondary address 1 (LOAD"name",8,1) ALSO arrives here
 	// as channel 1 — it is a READ, not a write. The original "channel 1 = WRITE PRG"
 	// forced ERR_WRITEPROTECT below BEFORE find_file ran, so the file never loaded and
-	// the C64 kept re-initialising the drive (the t18-s0 directory-reread loop seen in
-	// /c64_diag.txt). This drive is read-only; an explicit write still errors via the
+	// the C64 kept re-initialising the drive (the t18-s0 directory-reread loop). This
+	// drive is read-only; an explicit write still errors via the
 	// ",W" filename suffix that convert_filename() parsed above.
 	if (!channel || channel == 1) {
 		filemode = FMODE_READ;
@@ -303,7 +297,6 @@ bool D64Drive::find_file(char *filename, int *track, int *sector)
 	// Scan all directory blocks
 	dir.next_track = bam->dir_track;
 	dir.next_sector = bam->dir_sector;
-	c64_diag("find_file '%s' dir_ts=%d/%d\n", filename, dir.next_track, dir.next_sector);
 
 	while (dir.next_track) {
 		if (!read_sector(dir.next_track, dir.next_sector, (uint8 *) &dir.next_track))
@@ -978,16 +971,10 @@ void D64Drive::free_buffer(int buf)
  * emulation flat-out (skip frame/audio sync) while a disk load is in progress —
  * the standard KERNAL LOAD is slow in real time (~30-50s) and looks frozen. */
 volatile unsigned int g_c64_disk_reads = 0;
-extern "C" void c64_diag(const char *fmt, ...);   /* -> /c64_diag.txt (main_c64_dev) */
-
 bool D64Drive::read_sector(int track, int sector, uint8 *buffer)
 {
 	int offset;
-	g_c64_disk_reads++;
-	if (g_c64_disk_reads <= 120)   /* log EVERY read (not every 64th) so the sequence is
-	                                  unambiguous: pure t18-s0 = reset loop; t18s0->t18s1->t17
-	                                  = real directory+file load like the host harness. */
-		c64_diag("RD #%u t=%d s=%d\n", g_c64_disk_reads, track, sector);
+	g_c64_disk_reads++;   /* bumped on every sector read; drives the load-time auto-warp */
 
 	// Convert track/sector to byte offset in file
 	if ((offset = offset_from_ts(track, sector)) < 0) {

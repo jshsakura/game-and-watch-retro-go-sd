@@ -644,14 +644,9 @@ void MOS6502_1541::Reset(void)
  *  Illegal opcode encountered
  */
 
-extern "C" void c64_diag(const char *fmt, ...);   /* -> /c64_diag.txt (main_c64_dev) */
-
 void MOS6502_1541::illegal_op(uint8 op, uint16 at)
 {
-	char illop_msg[80];
-
-	(void)illop_msg;
-	{ static int n = 0; if (n++ < 3) c64_diag("CPU1541 illop op=%02x at=%04x -> PARK (no C64 reset)\n", op, at); }
+	(void)op; (void)at;
 	/* Virtual-1541 mode (Emul1541Proc=false): the 1541 CPU has NO real DOS ROM
 	 * (ROM1541 aliases zeroed RAM), so if the C64 ever wakes it via the IEC/ATN line
 	 * (CIA2 -> NewATNState/IECInterrupt) it runs garbage from a zero reset vector and
@@ -668,10 +663,7 @@ void MOS6502_1541::illegal_op(uint8 op, uint16 at)
 
 void MOS6502_1541::illegal_jump(uint16 at, uint16 to)
 {
-	char illop_msg[80];
-
-	(void)illop_msg;
-	{ static int n = 0; if (n++ < 3) c64_diag("CPU1541 illjmp from=%04x to=%04x -> PARK (no C64 reset)\n", at, to); }
+	(void)at; (void)to;
 	/* See illegal_op above: never reset the C64 from the dormant virtual 1541. Park it. */
 	Idle = true;
 }
