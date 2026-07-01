@@ -769,8 +769,8 @@ Core/Src/porting/videopac/main_videopac.c
 # .z80 games + /bios/zx/48.rom read from SD.
 ZX_C_SOURCES =
 ZX_C_SOURCES += \
-Core/Src/porting/zx/zx_impl.c \
-Core/Src/porting/zx/main_zx.c
+Core/Src/porting/zxs/zxs_impl.c \
+Core/Src/porting/zxs/main_zxs.c
 
 # C64 now uses the Frodo core (cebix/frodo-go) for .d64 support — all C++.
 # The old chips core (c64_impl.c/main_c64.c, .prg only) is no longer built.
@@ -1305,8 +1305,8 @@ ZX_C_INCLUDES +=  \
 -ICore/Inc \
 -ICore/Inc/retro-go \
 -ICore/Inc/porting \
--ICore/Inc/porting/zx \
--ICore/Src/porting/zx \
+-ICore/Inc/porting/zxs \
+-ICore/Src/porting/zxs \
 -ICore/Src/porting/lib \
 -ICore/Src/porting/lib/lzma \
 -Iretro-go-stm32/components/odroid \

@@ -8,7 +8,7 @@
 #include "common.h"
 #include "appid.h"
 #include "rom_manager.h"
-#include "main_zx.h"
+#include "main_zxs.h"
 
 #include "chips/chips_common.h"
 #include "chips/z80.h"

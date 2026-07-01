@@ -685,27 +685,27 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_VIDEOPAC_BSS_SIZE = SIZEOF(.overlay_videopac_bss);
 
-  .overlay_zx __RAM_EMU_START__ : {
+  .overlay_zxs __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_zx_start__ = .;
-    build/zx/*.o (.data .data* .text .text* .rodata .rodata*)
+    build/zxs/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
-    _OVERLAY_ZX_LOAD_END = .;
+    _OVERLAY_ZXS_LOAD_END = .;
   } AT > CORES
-  _OVERLAY_ZX_LOAD_START = LOADADDR(.overlay_zx);
-  _OVERLAY_ZX_SIZE = SIZEOF(.overlay_zx);
+  _OVERLAY_ZXS_LOAD_START = LOADADDR(.overlay_zxs);
+  _OVERLAY_ZXS_SIZE = SIZEOF(.overlay_zxs);
 
-  .overlay_zx_bss _OVERLAY_ZX_LOAD_END : {
+  .overlay_zx_bss _OVERLAY_ZXS_LOAD_END : {
     . = ALIGN(4);
-    _OVERLAY_ZX_BSS_START = .;
-    build/zx/*.o (.bss .bss*)
+    _OVERLAY_ZXS_BSS_START = .;
+    build/zxs/*.o (.bss .bss*)
     . = ALIGN(4);
-    build/zx/*.o (COMMON)
+    build/zxs/*.o (COMMON)
     __ram_emu_zx_end__ = .;
-    _OVERLAY_ZX_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_ZX_BSS_END) < __RAM_EMU_END__, "Error: ZX BSS overflow");
+    _OVERLAY_ZXS_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_ZXS_BSS_END) < __RAM_EMU_END__, "Error: ZX BSS overflow");
   }
-  _OVERLAY_ZX_BSS_SIZE = SIZEOF(.overlay_zx_bss);
+  _OVERLAY_ZXS_BSS_SIZE = SIZEOF(.overlay_zx_bss);
 
   .overlay_c64 __RAM_EMU_START__ : {
     . = ALIGN(4);

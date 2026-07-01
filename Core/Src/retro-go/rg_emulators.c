@@ -32,7 +32,7 @@
 #include "main_zelda3.h"
 #include "main_smw.h"
 #include "main_videopac.h"
-#include "main_zx.h"
+#include "main_zxs.h"
 #include "main_c64.h"
 #include "main_gamecom.h"
 #include "main_celeste.h"
@@ -1421,8 +1421,8 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
       }
     } else if(strcmp(system_name, "ZX Spectrum") == 0)  {
       if (load_core_bin_with_header("/cores/zxs.bin", (uint8_t *)&__RAM_EMU_START__)) {
-        memset(&_OVERLAY_ZX_BSS_START, 0x0, (size_t)&_OVERLAY_ZX_BSS_SIZE);
-        SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_ZX_SIZE);
+        memset(&_OVERLAY_ZXS_BSS_START, 0x0, (size_t)&_OVERLAY_ZXS_BSS_SIZE);
+        SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_ZXS_SIZE);
         app_main_zx(load_state, start_paused, save_slot);
       }
     } else if(strcmp(system_name, "Commodore 64") == 0)  {
