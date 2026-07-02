@@ -23,7 +23,7 @@ wiring + a `linux/` host harness.
 | System | Core | porting LOC | Status |
 |---|---|---|---|
 | **C64** | Frodo (vendored `porting/c64/frodo`) | ~27,500 | plays, SID sound, save/resume, configurable keys |
-| **Virtual Boy** | red-viper (`external/red-viper`) | ~610 | plays; interpreter ~70% speed w/ scoped auto-OC; gapless audio |
+| **Virtual Boy** | red-viper (`external/red-viper`) | ~610 | plays; interpreter ~65-70% speed w/ scoped auto-OC (lvl2); gapless 4-tap audio; in-game OSD |
 | **ZX Spectrum** | floooh/chips (`porting/zxs/chips`) | ~5,980 | plays, beeper+AY, configurable keys |
 | **WonderSwan** | oswan (`external/oswan-go` fork) | ~2,540 | plays, scoped auto-OC |
 | **Neo Geo Pocket** | RACE (`external/race` fork) | ~380 | plays |
