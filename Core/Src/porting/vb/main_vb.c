@@ -223,7 +223,10 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * through at every boot) closes most of that gap. Applied ONLY for this app
      * and NOT persisted — leaving the emulator resets the system, which restores
      * the user's configured clock. Same OSPI1-hardware guard as the launcher. */
-    common_emu_auto_oc(2);
+    /* Level 1 (312MHz) suffices: frames land at ~24-28ms, comfortably inside the
+     * 29ms audio pacing — level 2 (353MHz) only buys anything if the pacing is
+     * later tightened toward real time. Prefer the milder clock. */
+    common_emu_auto_oc(1);
 
     odroid_system_init(APPID_VB, SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
