@@ -96,14 +96,18 @@ static const uint8_t RequiredCDBLen[16] = {
 /* ---- CD-DA (Red Book audio / BGM) ---- */
 static bool     s_cdda_play;            /* currently streaming audio */
 static uint32_t s_cdda_lba, s_cdda_end, s_cdda_start; /* current/end/start sector */
-#define PCE_CDDA_BATCH 4                /* sectors per SD read: one 9.4KB fread instead of
-                                           four 2.3KB ones (8 spiked ~5-8ms once per ~13 frames
-                                           = a periodic hitch; 4 halves the spike, keeps most
-                                           of the amortization) — FatFs per-call overhead was the
-                                           'subtly slow with BGM on' drag on device */
-static uint8_t  s_cdda_sec[PCE_CD_SECTOR_RAW * PCE_CDDA_BATCH];
-static int      s_cdda_pos;             /* byte offset within the buffered data */
-static int      s_cdda_have;            /* bytes valid in s_cdda_sec (0 = force reload) */
+/* CD-DA is streamed through a small sector FIFO topped up a LITTLE every audio
+ * frame, instead of a batch that read many sectors at once when it drained. The
+ * batch refill blocked pce_pcm_submit (main loop) with a ~9KB fread every ~3
+ * frames = a periodic hitch ("dragging" audio). A frame only consumes ~1.25
+ * sectors, so reading at most PCE_CDDA_TOPUP sectors per call keeps the SD cost
+ * small and EVEN, while PCE_CDDA_RING sectors of depth absorb read jitter. */
+#define PCE_CDDA_RING  6                /* FIFO depth in sectors (~5 frames of slack) */
+#define PCE_CDDA_TOPUP 3                /* max sectors read per fill call (> the ~1.25/frame
+                                          consumption so it keeps ahead, but bounded = no burst) */
+static uint8_t  s_cdda_sec[PCE_CD_SECTOR_RAW * PCE_CDDA_RING];
+static int      s_cdda_pos;             /* read cursor (bytes) */
+static int      s_cdda_have;            /* valid bytes (0 = empty FIFO) */
 static int      s_cdda_mode;            /* SAPEP play mode: 1=loop, 3=normal */
 static int      s_trace;            /* trace register accesses during a bulk READ */
 static int      s_atrace;           /* trace ADPCM/idle-loop polls ($180A-F, $1803) */
@@ -318,9 +322,25 @@ static uint32_t cdda_decode_pos(const uint8_t *cmd)
     }
 }
 
+/* Append one raw 2352B audio sector to the tail of the FIFO, handling loop wrap
+ * and end-of-stream. Returns 1 = appended, 0 = SD read failed, -1 = normal-mode
+ * end of stream (nothing more to read). Caller guarantees room for one sector. */
+static int cdda_topup_one(void)
+{
+    if (s_cdda_lba >= s_cdda_end) {
+        if (s_cdda_mode == 1) s_cdda_lba = s_cdda_start;   /* LOOP: restart */
+        else return -1;                                    /* NORMAL: done */
+    }
+    int n = pce_cd_read_sectors_audio(s_toc, s_cdda_lba, s_cdda_sec + s_cdda_have, 1);
+    if (n <= 0) return 0;
+    s_cdda_lba  += 1;
+    s_cdda_have += PCE_CD_SECTOR_RAW;
+    return 1;
+}
+
 /* Fill `frames` stereo int16 samples at half the CD rate (44100/2 = 22050) by
- * decimating. Returns frames produced (0 = not playing). Reads raw 2352B audio
- * sectors on demand. */
+ * decimating. Returns frames produced (0 = not playing). The FIFO is topped up a
+ * little each call (small, even SD reads) rather than in one burst. */
 int pce_scsi_cdda_fill(int16_t *out, int frames)
 {
     if (!s_cdda_play || !s_present) return 0;
@@ -331,28 +351,30 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
     { static bool logged; if (!logged) { logged = true;
         diag("  cdda_fill START lba=%lu end=%lu frames=%d\n",
              (unsigned long)s_cdda_lba, (unsigned long)s_cdda_end, frames); } }
+
+    const int BUFB = PCE_CD_SECTOR_RAW * PCE_CDDA_RING;
+    /* Compact consumed bytes to the front (retain 4 = one CD frame for the 4-tap
+     * lookback so it stays continuous across refills), then top up a bounded few
+     * sectors — small, EVEN reads instead of the old drain-then-burst. */
+    if (s_cdda_pos > 8) {
+        int drop = s_cdda_pos - 4;
+        memmove(s_cdda_sec, s_cdda_sec + drop, (size_t)(s_cdda_have - drop));
+        s_cdda_have -= drop;
+        s_cdda_pos   = 4;
+    }
+    for (int k = 0; k < PCE_CDDA_TOPUP && s_cdda_have + PCE_CD_SECTOR_RAW <= BUFB; k++) {
+        int r = cdda_topup_one();
+        if (r == 0) diag("  cdda_fill READ AUDIO FAIL lba=%lu\n", (unsigned long)s_cdda_lba);
+        if (r != 1) break;   /* end of stream or read fail: play out what's buffered */
+    }
+
     for (int i = 0; i < frames; i++) {
         if (s_cdda_pos + 8 > s_cdda_have) {
-            if (s_cdda_lba >= s_cdda_end) {
-                if (s_cdda_mode == 1) {            /* LOOP: restart at the start sector */
-                    s_cdda_lba = s_cdda_start;
-                } else {                           /* NORMAL: stop, pad the rest with silence */
-                    s_cdda_play = false;
-                    for (; i < frames; i++) { out[i * 2] = 0; out[i * 2 + 1] = 0; }
-                    return frames;
-                }
-            }
-            uint32_t remain = (s_cdda_end > s_cdda_lba) ? (s_cdda_end - s_cdda_lba) : 1;
-            int want = remain < PCE_CDDA_BATCH ? (int)remain : PCE_CDDA_BATCH;
-            int n = pce_cd_read_sectors_audio(s_toc, s_cdda_lba, s_cdda_sec, want);
-            if (n <= 0) {
-                diag("  cdda_fill READ AUDIO FAIL lba=%lu (SD/CUE audio-track read failed)\n",
-                     (unsigned long)s_cdda_lba);
-                s_cdda_play = false; return i;
-            }
-            s_cdda_lba += (uint32_t)n;
-            s_cdda_have = n * PCE_CD_SECTOR_RAW;
-            s_cdda_pos = 0;
+            /* FIFO dry: the stream ended, or a read could not keep up. Pad the
+             * remainder with silence; stop only if the stream is genuinely over. */
+            if (s_cdda_lba >= s_cdda_end && s_cdda_mode != 1) s_cdda_play = false;
+            for (; i < frames; i++) { out[i * 2] = 0; out[i * 2 + 1] = 0; }
+            return frames;
         }
         /* 44.1k -> 22.05k with a 4-tap (1,3,3,1)/8 low-pass across the previous,
          * current and next CD frames — noticeably smoother than the old 2-tap box
