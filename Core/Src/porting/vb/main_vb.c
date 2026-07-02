@@ -167,6 +167,15 @@ static void vb_blit(void)
         pal565[v] = (uint16_t)((b >> 3) << 11);     /* red channel only */
     }
 
+    /* Clear the top/bottom letterbox bands every frame. The game area (rows
+     * [y0, y0+dst_h)) is fully repainted below, but the bands are not — so a
+     * dismissed in-game overlay (volume/speed OSD) that drew into a band would
+     * otherwise leave stale pixels there (the "stuck overlay" after a PAUSE).
+     * Clearing just the two bands keeps most of the blit-memset saving. */
+    memset(out, 0, (size_t)y0 * GW_LCD_WIDTH * sizeof(uint16_t));
+    memset(out + (y0 + dst_h) * GW_LCD_WIDTH, 0,
+           (size_t)(GW_LCD_HEIGHT - y0 - dst_h) * GW_LCD_WIDTH * sizeof(uint16_t));
+
     int sy_acc = 0;                                  /* += 224 per row, sy = acc/dst_h */
     int sy = 0;
     for (int ry = 0; ry < dst_h; ry++) {
