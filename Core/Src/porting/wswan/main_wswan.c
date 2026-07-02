@@ -268,6 +268,10 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     video_frame.buffer = FrameBuffer;
 
+    /* WonderSwan runs close to the edge on stock 280MHz in heavy games — same
+     * scoped, non-persisted mild boost as VB (level 1 = 312MHz; reset on exit). */
+    common_emu_auto_oc(1);
+
     odroid_system_init(APPID_WSWAN, WS_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
 
