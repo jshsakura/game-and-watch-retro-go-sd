@@ -220,21 +220,29 @@ static void feed_din(void)
 /* ADPCM ($180A-$180D). The System Card loads ADPCM (voice) data straight from CD
  * by issuing a READ(6) then enabling SCSI->ADPCM DMA via $180B bit1; it then polls
  * $180C (ADPCM busy) and $1803 (DATA_DONE) for completion. We don't run a real
- * ADPCM engine yet, so when DMA is enabled during a bulk READ we drain the whole
- * transfer at once (consuming every sector) and signal completion, so the BIOS
- * loop exits and the game proceeds instead of hanging/rebooting. */
-static void adpcm_dma_drain(void)
+ * DMA engine, so the transfer is PUMPED from the main loop (pce_scsi_run), up to
+ * 4 sectors (8KB) per frame: the old drain-everything-now path pulled a 64KB FMV
+ * load through SD in ONE frame = a 30-55ms single-shot stall (the pacer's worst
+ * enemy). Chunked, the same load spreads over ~8 frames — still far faster than
+ * the ~430ms a real 1x drive needed, so the BIOS poll loop ($1802/$1803) simply
+ * sees "in progress" for a few frames, exactly as on hardware. */
+static bool     s_adpcm_dma_active;
+static uint32_t s_adpcm_dma_total;
+
+static void adpcm_dma_pump(void)
 {
-    if (!s_reading) return;
-    extern void wdog_refresh(void);
-    int b;
-    unsigned long n = 0;
-    while ((b = din_get()) >= 0) {
+    if (!s_adpcm_dma_active) return;
+    int budget = 4 * 2048;                              /* <=4 sectors per frame */
+    int b = -1;
+    while (budget > 0 && (b = din_get()) >= 0) {
         pce_adpcm_dma_byte((uint8_t)b);                 /* CD -> ADPCM RAM */
-        if ((++n & 0x7FF) == 0) wdog_refresh();         /* feed wdog on big FMV streams */
+        s_adpcm_dma_total++;
+        budget--;
     }
+    if (b >= 0) return;                                 /* more next frame */
+    s_adpcm_dma_active = false;
     s_reading = false;
-    diag("  ADPCM drain %lu B\n", n);
+    diag("  ADPCM drain %lu B\n", (unsigned long)s_adpcm_dma_total);
     /* Completion needs BOTH, in this order, for the System Card's ADPCM-load path:
      *  - $1803 DATA_DONE set NOW (the transfer-complete IRQ flag the f3d0 loop polls
      *    BEFORE the status handshake), and
@@ -328,20 +336,30 @@ static uint32_t cdda_decode_pos(const uint8_t *cmd)
     }
 }
 
-/* Append one raw 2352B audio sector to the tail of the FIFO, handling loop wrap
- * and end-of-stream. Returns 1 = appended, 0 = SD read failed, -1 = normal-mode
- * end of stream (nothing more to read). Caller guarantees room for one sector. */
-static int cdda_topup_one(void)
+/* Top up the FIFO tail with up to `want` raw audio sectors, batched: one fread
+ * per contiguous run instead of one per sector (each fseek+fread pair costs an
+ * SD command round-trip; batching flattens the periodic multi-sector frame
+ * spike the pacer is sensitive to). Handles loop wrap and end-of-stream; track
+ * boundaries just split the batch (pce_cd_read_sectors_audio clamps at the
+ * track end and the loop continues into the next track). */
+static void cdda_topup(int want)
 {
-    if (s_cdda_lba >= s_cdda_end) {
-        if (s_cdda_mode == 1) s_cdda_lba = s_cdda_start;   /* LOOP: restart */
-        else return -1;                                    /* NORMAL: done */
+    while (want > 0) {
+        if (s_cdda_lba >= s_cdda_end) {
+            if (s_cdda_mode == 1) s_cdda_lba = s_cdda_start;   /* LOOP: restart */
+            else return;                                       /* NORMAL: done */
+        }
+        uint32_t until_end = s_cdda_end - s_cdda_lba;
+        int n = (want < (int)until_end) ? want : (int)until_end;
+        int got = pce_cd_read_sectors_audio(s_toc, s_cdda_lba, s_cdda_sec + s_cdda_have, n);
+        if (got <= 0) {
+            diag("  cdda_fill READ AUDIO FAIL lba=%lu\n", (unsigned long)s_cdda_lba);
+            return;   /* SD read failed: play out what's buffered */
+        }
+        s_cdda_lba  += (uint32_t)got;
+        s_cdda_have += got * PCE_CD_SECTOR_RAW;
+        want        -= got;
     }
-    int n = pce_cd_read_sectors_audio(s_toc, s_cdda_lba, s_cdda_sec + s_cdda_have, 1);
-    if (n <= 0) return 0;
-    s_cdda_lba  += 1;
-    s_cdda_have += PCE_CD_SECTOR_RAW;
-    return 1;
 }
 
 /* Fill `frames` stereo int16 samples at half the CD rate (44100/2 = 22050) by
@@ -368,10 +386,9 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
         s_cdda_have -= drop;
         s_cdda_pos   = 4;
     }
-    for (int k = 0; k < PCE_CDDA_TOPUP && s_cdda_have + PCE_CD_SECTOR_RAW <= BUFB; k++) {
-        int r = cdda_topup_one();
-        if (r == 0) diag("  cdda_fill READ AUDIO FAIL lba=%lu\n", (unsigned long)s_cdda_lba);
-        if (r != 1) break;   /* end of stream or read fail: play out what's buffered */
+    {
+        int room = (BUFB - s_cdda_have) / PCE_CD_SECTOR_RAW;
+        cdda_topup((room < PCE_CDDA_TOPUP) ? room : PCE_CDDA_TOPUP);
     }
 
     for (int i = 0; i < frames; i++) {
@@ -602,7 +619,10 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
         break;
     case 0x0B: /* ADPCM DMA control: bit1 = enable SCSI->ADPCM auto-transfer */
         s_adpcm_ctrl = val;
-        if (val & 0x02) adpcm_dma_drain();
+        if ((val & 0x02) && s_reading && !s_adpcm_dma_active) {
+            s_adpcm_dma_active = true;      /* pumped per frame by pce_scsi_run */
+            s_adpcm_dma_total = 0;
+        }
         break;
     case 0x04: /* reset */
         if (val & 0x02) pce_scsi_reset();
@@ -612,4 +632,5 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
     }
 }
 
-void pce_scsi_run(void) { }
+/* Per-frame hook from the main loop: pump any active SCSI->ADPCM DMA. */
+void pce_scsi_run(void) { adpcm_dma_pump(); }

@@ -133,8 +133,16 @@ static const struct
 	SVAR_END
 };
 
+/* Skip-frame render skip: when the pacer decides this frame won't be shown,
+ * hand the core a NULL framebuffer — render_lines (gfx.c) early-outs and the
+ * whole BG+sprite tile render (~0.7-1.3ms) is skipped, not just the blit.
+ * VDC/IRQ/timing still run (gfx_run executes normally), so emulation state is
+ * identical; only the pixel work is dropped. blit() deliberately does NOT use
+ * this hook (direct pointer) so menu repaints can never see NULL. */
+static bool s_skip_render;
+
 uint8_t *osd_gfx_framebuffer(void){
-    return pce_framebuffer + FB_INTERNAL_OFFSET;
+    return s_skip_render ? NULL : pce_framebuffer + FB_INTERNAL_OFFSET;
 }
 
 void set_color(int index, uint8_t r, uint8_t g, uint8_t b) {
@@ -651,7 +659,9 @@ void pce_input_read(odroid_gamepad_state_t* out_state) {
 static void blit() {
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
 
-    uint8_t *emuFrameBuffer = osd_gfx_framebuffer();
+    /* Direct pointer, NOT osd_gfx_framebuffer(): that hook returns NULL on
+     * skip frames and blit can be called as the menu repaint callback. */
+    uint8_t *emuFrameBuffer = pce_framebuffer + FB_INTERNAL_OFFSET;
     pixel_t *framebuffer_active = lcd_get_active_buffer();
     int y=0, offsetY, offsetX = 0, cropX = 0;
     int xScale = 0;
@@ -861,9 +871,14 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
 
         pce_input_read(&joystick);
 
+        /* Chunked SCSI->ADPCM DMA pump (<=8KB/frame) — see pce_scsi_run. */
+        pce_scsi_run();
+
+        s_skip_render = !drawFrame;   /* drop tile/sprite work on skip frames */
         for (PCE.Scanline = 0; PCE.Scanline < 263; ++PCE.Scanline) {
             gfx_run();
         }
+        s_skip_render = false;        /* never leak into menu/screenshot paths */
 
         if (drawFrame) {
             pce_osd_gfx_blit();

@@ -859,6 +859,10 @@ int main(int argc, char *argv[])
         joystick.values[ODROID_INPUT_START] = ((frame % 200) >= 60 && (frame % 200) < 90) ? 1 : 0;
         pce_input_read(&joystick);
 
+        /* Same per-frame hook the device main loop calls: pumps the chunked
+         * SCSI->ADPCM DMA (<=8KB/frame) so ADPCM loads complete. */
+        pce_scsi_run();
+
         /* First time the game reaches its idle loop, dump the registered hook
          * vectors + bank mapping so we can see what (if anything) init set up. */
         if (!dumped_6257 && CPU_PCE.PC == 0x6257) {
