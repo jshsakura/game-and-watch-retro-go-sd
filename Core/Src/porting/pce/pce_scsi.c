@@ -354,14 +354,23 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
             s_cdda_have = n * PCE_CD_SECTOR_RAW;
             s_cdda_pos = 0;
         }
-        /* Average the two 44.1k frames into one 22.05k frame — a cheap 2-tap
-         * box low-pass that removes the harsh aliasing of plain drop-decimation. */
+        /* 44.1k -> 22.05k with a 4-tap (1,3,3,1)/8 low-pass across the previous,
+         * current and next CD frames — noticeably smoother than the old 2-tap box
+         * (which still let the top octave alias through as a brittle edge). The
+         * previous frame is carried across refills; the next-frame taps clamp at
+         * the buffer edge (one frame of ~zero phase error, inaudible). */
+        int pp = (s_cdda_pos >= 4) ? s_cdda_pos - 4 : s_cdda_pos;
+        int nn = (s_cdda_pos + 11 < s_cdda_have) ? s_cdda_pos + 8 : s_cdda_pos + 4;
+        int16_t lp = (int16_t)(s_cdda_sec[pp]     | (s_cdda_sec[pp + 1] << 8));
+        int16_t rp = (int16_t)(s_cdda_sec[pp + 2] | (s_cdda_sec[pp + 3] << 8));
         int16_t l0 = (int16_t)(s_cdda_sec[s_cdda_pos]     | (s_cdda_sec[s_cdda_pos + 1] << 8));
         int16_t r0 = (int16_t)(s_cdda_sec[s_cdda_pos + 2] | (s_cdda_sec[s_cdda_pos + 3] << 8));
         int16_t l1 = (int16_t)(s_cdda_sec[s_cdda_pos + 4] | (s_cdda_sec[s_cdda_pos + 5] << 8));
         int16_t r1 = (int16_t)(s_cdda_sec[s_cdda_pos + 6] | (s_cdda_sec[s_cdda_pos + 7] << 8));
-        out[i * 2]     = (int16_t)((l0 + l1) >> 1);
-        out[i * 2 + 1] = (int16_t)((r0 + r1) >> 1);
+        int16_t l2 = (int16_t)(s_cdda_sec[nn]     | (s_cdda_sec[nn + 1] << 8));
+        int16_t r2 = (int16_t)(s_cdda_sec[nn + 2] | (s_cdda_sec[nn + 3] << 8));
+        out[i * 2]     = (int16_t)((lp + 3 * l0 + 3 * l1 + l2) >> 3);
+        out[i * 2 + 1] = (int16_t)((rp + 3 * r0 + 3 * r1 + r2) >> 3);
         s_cdda_pos += 8;                            /* consume 2 CD frames, emit 1 (decimate /2) */
     }
     return frames;
