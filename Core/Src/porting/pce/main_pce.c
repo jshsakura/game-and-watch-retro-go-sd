@@ -185,33 +185,39 @@ void osd_log(int type, const char *format, ...) {
 static void blit();
 
 #define SAVE_STATE_BUFFER_SIZE (76*1024)
+/* NO LONGER save staging — the state now streams straight to the file (below).
+ * This array is purely CD RAM bank backing (banks 0x81-0x87 on device, see the
+ * mapping in pce_rom_full_patch). The old design used it for BOTH: building the
+ * SVAR snapshot in here DESTROYED the live content of the banks it backs, so a
+ * later load left those 56KB as garbage — games that keep code/data up there
+ * (Cotton) came back with the screen logic dead while CD-DA music (main-loop
+ * driven) kept playing. */
 uint8_t save_buffer[SAVE_STATE_BUFFER_SIZE];
 static bool SaveState(const char *savePathName) {
-    int pos=0;
-    // it should use active_framebuffer, but it makes it crash for unknown reason
-    uint8_t *pce_save_buf = save_buffer;
-    memset(pce_save_buf, 0x00, SAVE_STATE_BUFFER_SIZE); // 76K save size
-    uint8_t *pce_save_header=(uint8_t *)SAVESTATE_HEADER;
-    for(int i=0;i<sizeof(SAVESTATE_HEADER);i++) {
-        pce_save_buf[pos]=pce_save_header[i];
-        pos++;
-    }
-    pce_save_buf[pos]=0; pos++;
-    uint32_t *crc_ptr = (uint32_t *)(pce_save_buf + pos);
-    crc_ptr[0] = PCE.ROM_CRC; pos+=sizeof(uint32_t);
-    for (int i = 0; SaveStateVars[i].len > 0; i++) {
-        uint8_t *pce_save_ptr = (uint8_t *)SaveStateVars[i].ptr;
-        for(int j=0;j<SaveStateVars[i].len;j++) {
-            pce_save_buf[pos]=pce_save_ptr[j];
-            pos++;
-        }
-    }
-    assert(pos<SAVE_STATE_BUFFER_SIZE);
+    size_t pos = 0;
     FILE *file = fopen(savePathName, "wb");
     if (file == NULL) {
         return false;
     }
-    size_t written = fwrite(pce_save_buf, SAVE_STATE_BUFFER_SIZE, 1, file);
+    /* Same on-disk layout as the old staged writer: header + 0 + CRC + SVARs,
+     * padded to SAVE_STATE_BUFFER_SIZE, then the CD blocks. */
+    uint8_t zero = 0;
+    pos += fwrite(SAVESTATE_HEADER, 1, sizeof(SAVESTATE_HEADER), file);
+    pos += fwrite(&zero, 1, 1, file);
+    pos += fwrite(&PCE.ROM_CRC, 1, sizeof(uint32_t), file);
+    for (int i = 0; SaveStateVars[i].len > 0; i++) {
+        pos += fwrite(SaveStateVars[i].ptr, 1, SaveStateVars[i].len, file);
+    }
+    assert(pos < SAVE_STATE_BUFFER_SIZE);
+    size_t written = (pos > 0);
+    {   /* zero-pad up to the fixed core-block size (keeps old-reader compat) */
+        static const uint8_t pad[512] = {0};
+        while (pos < SAVE_STATE_BUFFER_SIZE) {
+            size_t chunk = SAVE_STATE_BUFFER_SIZE - pos;
+            if (chunk > sizeof(pad)) chunk = sizeof(pad);
+            pos += fwrite(pad, 1, chunk, file);
+        }
+    }
     /* PCE-CD: the 256KB CD RAM (banks 0x68-0x87) holds the game's loaded code +
      * data and is far bigger than save_buffer, so stream it to the file right
      * after the core state. (HuCard .pce saves are unchanged.) */
@@ -247,30 +253,36 @@ static bool SaveState(const char *savePathName) {
 }
 
 static bool LoadState(const char *savePathName) {
-    uint8_t *pce_save_buf = save_buffer;
+    /* Streams the state straight from the file into the live structures —
+     * NEVER through save_buffer, which is CD RAM bank backing (0x81-0x87 on
+     * device): the old staged reader overwrote those banks' live content with
+     * file bytes it was still parsing. Layout is unchanged, old saves load. */
     FILE *file = fopen(savePathName, "rb");
     if (file == NULL) {
         return false;
     }
 
-    size_t read = fread(pce_save_buf, SAVE_STATE_BUFFER_SIZE, 1, file);
-    if (!read) {
+    uint8_t head[sizeof(SAVESTATE_HEADER) + 1];
+    uint32_t saved_crc = 0;
+    if (fread(head, 1, sizeof(head), file) != sizeof(head) ||
+        fread(&saved_crc, 1, sizeof(saved_crc), file) != sizeof(saved_crc)) {
         fclose(file);
         return false;
     }
-
-#pragma GCC diagnostic ignored "-Warray-bounds"
-    uint32_t saved_crc = *(uint32_t *)(pce_save_buf + sizeof(SAVESTATE_HEADER) + 1);
-#pragma GCC diagnostic pop
     sprintf(pce_log,"%08lX",saved_crc);
     if (saved_crc != PCE.ROM_CRC) {
         fclose(file);
         return true;
     }
-    /* PCE-CD: restore the 256KB CD RAM streamed after the core state (see
-     * SaveState). Read it BEFORE closing, then reset the SCSI to idle (the disc
-     * stays mounted from launch; saves are taken with no transfer in flight). */
+    for (int i = 0; SaveStateVars[i].len > 0; i++) {
+        printf("Loading %s (%d)\n", SaveStateVars[i].key, (int)SaveStateVars[i].len);
+        fread(SaveStateVars[i].ptr, 1, SaveStateVars[i].len, file);
+    }
+    /* PCE-CD: restore the 256KB CD RAM streamed after the fixed-size core
+     * block, then reset the SCSI to idle (the disc stays mounted from launch;
+     * saves are taken with no transfer in flight). */
     if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+        fseek(file, SAVE_STATE_BUFFER_SIZE, SEEK_SET);
         for (int v = PCE_CD_RAM_FIRST_BANK; v <= PCE_CD_RAM_LAST_BANK; v++)
             fread(PCE.MemoryMapW[v], PCE_CD_RAM_BANK_SIZE, 1, file);
         pce_scsi_reset();
@@ -292,16 +304,6 @@ static bool LoadState(const char *savePathName) {
     }
     fclose(file);
 
-    pce_save_buf+=sizeof(SAVESTATE_HEADER) + 1 + sizeof(uint32_t);
-    int pos=0;
-    for (int i = 0; SaveStateVars[i].len > 0; i++) {
-        printf("Loading %s (%d)\n", SaveStateVars[i].key, SaveStateVars[i].len);
-        uint8_t *pce_save_ptr = (uint8_t *)SaveStateVars[i].ptr;
-        for(int j=0;j<SaveStateVars[i].len;j++) {
-            pce_save_ptr[j] = pce_save_buf[pos];
-            pos++;
-        }
-    }
     for(int i = 0; i < 8; i++) {
         pce_bank_set(i, PCE.MMR[i]);
     }
