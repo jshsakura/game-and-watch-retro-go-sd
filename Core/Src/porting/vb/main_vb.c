@@ -270,7 +270,13 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * setup — update_texture_cache_soft() (called per frame in vb_blit) is enough. */
     sound_init();                 vb_diag("sound_init done\n");
 
-    audio_start_playing(SAMPLE_RATE / 50);
+    /* DMA period matched to the MEASURED frame cost (~29ms), not the ideal 20ms:
+     * with 441-sample (20ms) buffers every 28-30ms frame replayed ~9ms of stale
+     * audio (the crackle). 640 samples ~= 29ms + the drain resampling the whole
+     * emulated frame onto it = continuous, gapless audio; common_emu_sound_sync
+     * then paces even the fast (idle-skip) scenes to the same uniform cadence —
+     * a consistent slightly-slower console instead of an erratic one. */
+    audio_start_playing(640);
     vb_diag("audio_start_playing done\n");
 
     if (load_state) {

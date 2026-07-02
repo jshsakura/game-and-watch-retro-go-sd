@@ -55,8 +55,12 @@ void vb_audio_drain(int16_t *out, int len, int32_t factor)
         memset(out, 0, (size_t)len * sizeof(int16_t));
         return;
     }
+    /* Resample ALL generated frames onto the DMA buffer (linear index map).
+     * The old 1:1-then-clamp mapping used only the first len of gen frames —
+     * dropped audio + a stale-replay gap whenever an emulated frame took longer
+     * than the DMA period (the device crackle). */
     for (int i = 0; i < len; i++) {
-        int idx = (i < gen) ? i : gen - 1;   /* clamp to last frame when gen < len */
+        int idx = (int)(((int64_t)i * gen) / len);
         int32_t s = (int32_t)s_accum[idx * 2] + (int32_t)s_accum[idx * 2 + 1];
         out[i] = (int16_t)((s * factor) >> 9);
     }
