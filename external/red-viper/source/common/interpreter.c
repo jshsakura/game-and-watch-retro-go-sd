@@ -339,6 +339,7 @@ int interpreter_run(void) {
                 if (disp < 0 && disp > -64) {
                     extern bool vb_idle_wrote, vb_idle_hwread;
                     extern WORD vb_idle_raddr;
+                    extern unsigned int vb_stat_skips;
                     static WORD s_idle_pc, s_idle_raddr;
                     static int  s_idle_spins;
                     /* Same loop AND same polled address each spin: scan/checksum
@@ -346,7 +347,7 @@ int interpreter_run(void) {
                      * would inflate emulated time and slow the GAME to a crawl. */
                     if (PC == s_idle_pc && vb_idle_raddr == s_idle_raddr) {
                         if (vb_idle_hwread && !vb_idle_wrote && ++s_idle_spins >= 3) {
-                            if ((SWORD)(target - cycles) > 0) cycles = target;
+                            if ((SWORD)(target - cycles) > 0) { cycles = target; vb_stat_skips++; }
                             s_idle_spins = 0;
                         }
                     } else {

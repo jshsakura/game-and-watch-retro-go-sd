@@ -474,7 +474,10 @@ void predictEvent(bool increment) {
 static int serviceDisplayInt(unsigned int cycles, WORD PC);
 
 // Returns number of cycles until next timer interrupt.
+unsigned int vb_stat_skips;   /* idle-skip fires (interpreter.c) */
+unsigned int vb_stat_svc;     /* serviceInt calls */
 int serviceInt(unsigned int cycles, WORD PC) {
+    vb_stat_svc++;
     bool pending_int = false;
 
     // hardware read timing

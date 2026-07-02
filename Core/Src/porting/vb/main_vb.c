@@ -299,13 +299,20 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         uint32_t t_run = get_elapsed_time();
         v810_run();
         t_run = get_elapsed_time() - t_run;   /* ms; 50fps budget = 20ms */
-        if (trace) vb_diag("f%d v810_run done PC=%08x %lums\n",
-                           fr, (unsigned)vb_state->v810_state.PC, (unsigned long)t_run);
+        if (trace) {
+            extern unsigned int vb_stat_skips, vb_stat_svc;
+            vb_diag("f%d v810_run done PC=%08x %lums svc=%u skip=%u\n",
+                    fr, (unsigned)vb_state->v810_state.PC, (unsigned long)t_run,
+                    vb_stat_svc, vb_stat_skips);
+            vb_stat_svc = vb_stat_skips = 0;
+        }
 
         if (drawFrame) {
-            if (trace) vb_diag("f%d blit dfb=%d\n", fr, (int)vb_state->tVIPREG.tDisplayedFB);
+            uint32_t t_blit = get_elapsed_time();
             vb_blit();
-            if (trace) vb_diag("f%d swap\n", fr);
+            t_blit = get_elapsed_time() - t_blit;
+            if (trace) vb_diag("f%d blit dfb=%d %lums\n", fr,
+                               (int)vb_state->tVIPREG.tDisplayedFB, (unsigned long)t_blit);
             lcd_swap();
         }
 
