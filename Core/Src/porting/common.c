@@ -15,6 +15,20 @@
 
 static void set_ingame_overlay(ingame_overlay_t type);
 
+/* Per-system automatic CPU boost. A core that needs more headroom than stock
+ * 280MHz calls this once at app start (e.g. VB: the V810 interpreter). Level is
+ * the launcher's own OC scale (0/1/2). NOT persisted: leaving an emulator resets
+ * the system, restoring the user's configured clock. Same OSPI1-hardware guard
+ * as the launcher menu (that SD design crashes when overclocked). */
+#include "main.h"
+void common_emu_auto_oc(uint8_t level)
+{
+#if SD_CARD == 1
+    if (sdcard_hw_type == SDCARD_HW_OSPI1) return;
+#endif
+    SystemClock_Config(level);
+}
+
 cpumon_stats_t cpumon_stats = {0};
 
 const uint8_t volume_tbl[ODROID_AUDIO_VOLUME_MAX + 1] = {
