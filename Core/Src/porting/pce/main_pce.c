@@ -219,7 +219,7 @@ static bool SaveState(const char *savePathName) {
     /* Persist BRAM to its OWN file (system-wide cabinet, not part of the per-game
      * snapshot — deliberately absent from SaveStateVars). */
     if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
-        FILE *bf = fopen("/pcecd.bram", "wb");
+        FILE *bf = fopen("/bios/pce/pcecd.bram", "wb");
         if (bf) { fwrite(PCE.bram, 1, 0x800, bf); fclose(bf); }
     }
     if (!written) {
@@ -621,7 +621,7 @@ void LoadCartPCE() {
          * and of the 0x68-0x87 CD RAM above. ROM is flash-XIP here, so no other FILE
          * is open during LoadCartPCE. */
         pce_bram_init();
-        FILE *bf = fopen("/pcecd.bram", "rb");
+        FILE *bf = fopen("/bios/pce/pcecd.bram", "rb");
         if (bf) { fread(PCE.bram, 1, 0x800, bf); fclose(bf); }
         pce_bram_format_if_needed();
     }
