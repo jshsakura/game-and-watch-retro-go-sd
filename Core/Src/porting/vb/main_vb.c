@@ -16,6 +16,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+#include "main.h"        /* SystemClock_Config + sdcard_hw_type (VB auto-OC) */
 #include "gw_lcd.h"
 #include "gw_linker.h"
 #include "gw_buttons.h"
@@ -216,6 +217,15 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * device "black screen with the game running underneath", see /vb_diag.txt:
      * blit lines stop after f3 = exactly the startup_frames<3 grace). */
     common_emu_state.frame_time_10us = (uint16_t)(100000 / 50.27f + 0.5f);
+
+    /* VB-only automatic CPU boost: the V810 interpreter needs ~27-31ms/frame at
+     * the stock 280MHz vs the 20ms budget; OC level 2 (353MHz core + OSPI 100MHz,
+     * the same level the launcher menu offers and ENABLE_BOOT_OC already sweeps
+     * through at every boot) closes most of that gap. Applied ONLY for this app
+     * and NOT persisted — leaving the emulator resets the system, which restores
+     * the user's configured clock. Same OSPI1-hardware guard as the launcher. */
+    if (sdcard_hw_type != SDCARD_HW_OSPI1)
+        SystemClock_Config(2);
 
     odroid_system_init(APPID_VB, SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
