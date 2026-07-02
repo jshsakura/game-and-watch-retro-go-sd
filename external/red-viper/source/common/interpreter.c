@@ -5,6 +5,19 @@
 #include "vb_types.h"
 #include "drc_core.h"
 
+/* Instruction-fetch fast path. mem_rhword() is a call + address-space switch on
+ * EVERY guest instruction (~290k/frame; 27% of host runtime, worse on the M7).
+ * The PC is almost always in ROM (mirrored at 0x07 with a power-of-2 mask) or
+ * WRAM (0x05); fetch those inline and fall back to mem_rhword for anything else. */
+extern unsigned int vb_rom_mask;   /* v810_mem.c */
+static inline HWORD fetch_hword(WORD PC) {
+    if (likely((PC & 0x07000000) == 0x07000000))
+        return *(HWORD *)(V810_ROM1.off + (PC & (0x07000000 | vb_rom_mask) & ~1));
+    if ((PC >> 24) == 0x05)
+        return *(HWORD *)(vb_state->V810_VB_RAM.off + (PC & 0x0500fffe));
+    return (HWORD)mem_rhword(PC);
+}
+
 static bool get_cond(BYTE code, WORD psw) {
     bool cond = false;
     switch (0x40 | (code & ~8)) {
@@ -40,7 +53,7 @@ int interpreter_run(void) {
             }
             target = cycles + vb_state->v810_state.cycles_until_event_partial;
         }
-        HWORD instr = mem_rhword(PC);
+        HWORD instr = fetch_hword(PC);
         PC += 2;
         BYTE opcode = instr >> 10;
         BYTE reg1 = instr & 31;
@@ -321,7 +334,7 @@ int interpreter_run(void) {
             }
         } else {
             // long instr
-            HWORD instr2 = mem_rhword(PC);
+            HWORD instr2 = fetch_hword(PC);
             PC += 2;
             switch (opcode) {
                 case V810_OP_MOVEA: {
