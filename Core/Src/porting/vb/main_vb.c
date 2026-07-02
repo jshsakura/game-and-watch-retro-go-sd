@@ -197,6 +197,12 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     } else {
         common_emu_state.pause_after_frames = 0;
     }
+    /* VB refreshes at ~50.27Hz. Without this, frame_time_10us stays 0 and
+     * common_emu_frame_loop's integrator judges every frame "behind schedule" ->
+     * drawFrame false forever -> the LCD freezes on the last startup frame (the
+     * device "black screen with the game running underneath", see /vb_diag.txt:
+     * blit lines stop after f3 = exactly the startup_frames<3 grace). */
+    common_emu_state.frame_time_10us = (uint16_t)(100000 / 50.27f + 0.5f);
 
     odroid_system_init(APPID_VB, SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
