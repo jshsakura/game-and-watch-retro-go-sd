@@ -316,6 +316,10 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             t_blit = get_elapsed_time() - t_blit;
             if (trace) vb_diag("f%d blit dfb=%d %lums\n", fr,
                                (int)vb_state->tVIPREG.tDisplayedFB, (unsigned long)t_blit);
+            /* In-game OSD (volume/speedup): every core draws it between the frame
+             * render and the swap (cf. Lynx) — vb_blit repaints the whole buffer,
+             * so drawn any earlier it would be wiped and never visible. */
+            common_ingame_overlay();
             lcd_swap();
         }
 
