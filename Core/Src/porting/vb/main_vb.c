@@ -282,6 +282,13 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         if (trace) vb_diag("f%d frame_loop PC=%08x\n", fr, (unsigned)vb_state->v810_state.PC);
         bool drawFrame = common_emu_frame_loop();
+        /* The frame_loop integrator has no clamp: if the emulation is genuinely
+         * slower than 50fps it stays "behind" forever and would never draw again
+         * (device: blit lines stop at f3). Force a presentation at least every
+         * 4th frame so a slow-but-running game is VISIBLE instead of black. */
+        { static int s_skipped;
+          if (!drawFrame && ++s_skipped >= 3) drawFrame = true;
+          if (drawFrame) s_skipped = 0; }
 
         odroid_input_read_gamepad(&joystick);
         if (trace) vb_diag("f%d input_loop\n", fr);
@@ -289,8 +296,11 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         vb_input_read(&joystick);
 
         if (trace) vb_diag("f%d v810_run\n", fr);
+        uint32_t t_run = get_elapsed_time();
         v810_run();
-        if (trace) vb_diag("f%d v810_run done PC=%08x\n", fr, (unsigned)vb_state->v810_state.PC);
+        t_run = get_elapsed_time() - t_run;   /* ms; 50fps budget = 20ms */
+        if (trace) vb_diag("f%d v810_run done PC=%08x %lums\n",
+                           fr, (unsigned)vb_state->v810_state.PC, (unsigned long)t_run);
 
         if (drawFrame) {
             if (trace) vb_diag("f%d blit dfb=%d\n", fr, (int)vb_state->tVIPREG.tDisplayedFB);
