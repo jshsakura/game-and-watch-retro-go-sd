@@ -362,9 +362,13 @@ static void cdda_topup(int want)
     }
 }
 
-/* Fill `frames` stereo int16 samples at half the CD rate (44100/2 = 22050) by
- * decimating. Returns frames produced (0 = not playing). The FIFO is topped up a
- * little each call (small, even SD reads) rather than in one burst. */
+/* Fill `frames` stereo int16 samples at the native CD rate (44100): a straight
+ * BIT-PERFECT copy from the sector FIFO — no decimation, no filter, no
+ * resampling (the mixer runs at PCE_SAMPLE_RATE = 44100 too). Replaces the old
+ * 44.1k->22.05k 4-tap decimator, which halved the bandwidth and colored the
+ * top end. Returns frames produced (0 = not playing). The FIFO is topped up a
+ * little each call (small, even SD reads) rather than in one burst; source
+ * consumption is unchanged (44100 samples/s from disc either way). */
 int pce_scsi_cdda_fill(int16_t *out, int frames)
 {
     if (!s_cdda_play || !s_present) return 0;
@@ -377,14 +381,12 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
              (unsigned long)s_cdda_lba, (unsigned long)s_cdda_end, frames); } }
 
     const int BUFB = PCE_CD_SECTOR_RAW * PCE_CDDA_RING;
-    /* Compact consumed bytes to the front (retain 4 = one CD frame for the 4-tap
-     * lookback so it stays continuous across refills), then top up a bounded few
-     * sectors — small, EVEN reads instead of the old drain-then-burst. */
-    if (s_cdda_pos > 8) {
-        int drop = s_cdda_pos - 4;
-        memmove(s_cdda_sec, s_cdda_sec + drop, (size_t)(s_cdda_have - drop));
-        s_cdda_have -= drop;
-        s_cdda_pos   = 4;
+    /* Compact consumed bytes to the front (passthrough needs no lookback), then
+     * top up a bounded few sectors — small, EVEN reads, not a drain-then-burst. */
+    if (s_cdda_pos > 0) {
+        memmove(s_cdda_sec, s_cdda_sec + s_cdda_pos, (size_t)(s_cdda_have - s_cdda_pos));
+        s_cdda_have -= s_cdda_pos;
+        s_cdda_pos   = 0;
     }
     {
         int room = (BUFB - s_cdda_have) / PCE_CD_SECTOR_RAW;
@@ -392,31 +394,16 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
     }
 
     for (int i = 0; i < frames; i++) {
-        if (s_cdda_pos + 8 > s_cdda_have) {
+        if (s_cdda_pos + 4 > s_cdda_have) {
             /* FIFO dry: the stream ended, or a read could not keep up. Pad the
              * remainder with silence; stop only if the stream is genuinely over. */
             if (s_cdda_lba >= s_cdda_end && s_cdda_mode != 1) s_cdda_play = false;
             for (; i < frames; i++) { out[i * 2] = 0; out[i * 2 + 1] = 0; }
             return frames;
         }
-        /* 44.1k -> 22.05k with a 4-tap (1,3,3,1)/8 low-pass across the previous,
-         * current and next CD frames — noticeably smoother than the old 2-tap box
-         * (which still let the top octave alias through as a brittle edge). The
-         * previous frame is carried across refills; the next-frame taps clamp at
-         * the buffer edge (one frame of ~zero phase error, inaudible). */
-        int pp = (s_cdda_pos >= 4) ? s_cdda_pos - 4 : s_cdda_pos;
-        int nn = (s_cdda_pos + 11 < s_cdda_have) ? s_cdda_pos + 8 : s_cdda_pos + 4;
-        int16_t lp = (int16_t)(s_cdda_sec[pp]     | (s_cdda_sec[pp + 1] << 8));
-        int16_t rp = (int16_t)(s_cdda_sec[pp + 2] | (s_cdda_sec[pp + 3] << 8));
-        int16_t l0 = (int16_t)(s_cdda_sec[s_cdda_pos]     | (s_cdda_sec[s_cdda_pos + 1] << 8));
-        int16_t r0 = (int16_t)(s_cdda_sec[s_cdda_pos + 2] | (s_cdda_sec[s_cdda_pos + 3] << 8));
-        int16_t l1 = (int16_t)(s_cdda_sec[s_cdda_pos + 4] | (s_cdda_sec[s_cdda_pos + 5] << 8));
-        int16_t r1 = (int16_t)(s_cdda_sec[s_cdda_pos + 6] | (s_cdda_sec[s_cdda_pos + 7] << 8));
-        int16_t l2 = (int16_t)(s_cdda_sec[nn]     | (s_cdda_sec[nn + 1] << 8));
-        int16_t r2 = (int16_t)(s_cdda_sec[nn + 2] | (s_cdda_sec[nn + 3] << 8));
-        out[i * 2]     = (int16_t)((lp + 3 * l0 + 3 * l1 + l2) >> 3);
-        out[i * 2 + 1] = (int16_t)((rp + 3 * r0 + 3 * r1 + r2) >> 3);
-        s_cdda_pos += 8;                            /* consume 2 CD frames, emit 1 (decimate /2) */
+        out[i * 2]     = (int16_t)(s_cdda_sec[s_cdda_pos]     | (s_cdda_sec[s_cdda_pos + 1] << 8));
+        out[i * 2 + 1] = (int16_t)(s_cdda_sec[s_cdda_pos + 2] | (s_cdda_sec[s_cdda_pos + 3] << 8));
+        s_cdda_pos += 4;                            /* one CD frame in, one sample pair out */
     }
     return frames;
 }

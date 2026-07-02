@@ -2,7 +2,7 @@
  * pce_fast (pcecd.c + okiadpcm.h). Registers $1808-$180E are routed here from
  * pce_scsi; the game DMAs CD data into the 64KB ADPCM RAM (pce_adpcm_dma_byte,
  * called from the SCSI->ADPCM drain) then triggers playback via $180D. We decode
- * at the programmed sample rate and resample to 22050Hz for the PCE mixer.
+ * at the programmed sample rate and resample to OUT_RATE for the PCE mixer.
  *
  * Simplifications vs Mednafen: the $180A write / read "pending" cycle timing is
  * collapsed to immediate (status bits 0x04/0x80 stay 0) — fine because the BIOS
@@ -11,7 +11,7 @@
 #include <string.h>
 
 #define ADPCM_RAM_SIZE 0x10000
-#define OUT_RATE       22050
+#define OUT_RATE       44100   /* = PCE_SAMPLE_RATE: mixer runs at 44.1k now */
 
 static const int StepSizes[49] = {
     16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,
@@ -26,7 +26,7 @@ static uint8_t  s_last_cmd, s_freq;
 static bool     s_playing, s_end, s_half, s_play_nibble;
 static int32_t  s_cur;          /* decoder predictor, 12-bit (center 0x800) */
 static int      s_ssi;          /* step-size index 0..48 */
-static uint32_t s_phase;        /* fs->22050 resample accumulator */
+static uint32_t s_phase;        /* fs->OUT_RATE resample accumulator */
 static int16_t  s_held;         /* last decoded PCM sample (held between ticks) */
 
 void pce_adpcm_reset(void)
@@ -123,7 +123,7 @@ void pce_adpcm_dma_byte(uint8_t val)
 
 bool pce_adpcm_playing(void) { return s_playing; }
 
-/* Fill `frames` stereo int16 samples (mono ADPCM duplicated L/R) at 22050Hz,
+/* Fill `frames` stereo int16 samples (mono ADPCM duplicated L/R) at OUT_RATE,
  * decoding at the programmed rate fs = 32087.5/(16-freq). Returns frames if
  * playing, else 0. */
 int pce_adpcm_fill(int16_t *out, int frames)

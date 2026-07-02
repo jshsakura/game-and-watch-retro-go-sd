@@ -886,21 +886,22 @@ int main(int argc, char *argv[])
         pce_osd_gfx_blit(drawFrame);
         //if(drawFrame) pce_pcm_submit();
 
-        /* CD-DA verify: dump this frame's CD-DA PCM (22050 stereo s16) to a raw
-         * file so we can confirm the audio decode produces real music. */
+        /* CD-DA verify: dump this frame's CD-DA PCM (44100 stereo s16,
+         * bit-perfect passthrough) to a raw file so we can confirm the audio
+         * decode produces real music. */
         {
             static FILE *cf = NULL, *af = NULL;
-            static int16_t cb[400 * 2], ab[400 * 2];
+            static int16_t cb[800 * 2], ab[800 * 2];
             if (!cf) cf = fopen("cdda.pcm", "wb");
             if (!af) af = fopen("adpcm.pcm", "wb");
-            int n = pce_scsi_cdda_fill(cb, 367);
+            int n = pce_scsi_cdda_fill(cb, 735);
             if (cf && n > 0) fwrite(cb, sizeof(int16_t) * 2, n, cf);
             /* Resume regression probe: across the frame-1100/1110 save/load
              * self-test, n must stay >0 (the CD-DA block re-arms the stream). */
             if (g_cue_path && frame >= 1105 && frame <= 1115)
                 printf("[host] f%d cdda_n=%d\n", (int)frame, n);
             extern int pce_adpcm_fill(int16_t *, int);
-            int an = pce_adpcm_fill(ab, 367);
+            int an = pce_adpcm_fill(ab, 735);
             if (af && an > 0) fwrite(ab, sizeof(int16_t) * 2, an, af);
         }
 
