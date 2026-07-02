@@ -1444,23 +1444,33 @@ void gui_draw_coverflow_v(tab_t *tab, int start_posx) // ||||||||
 
     uint16_t *dst_img = lcd_get_active_buffer();
 
-    odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width2) * 3 / 4 + 7, start_ypos + 4, p_width2 - 6, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 60));
-    odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width2) * 3 / 4 + 3, start_ypos + 6, p_width2, 1, get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c,80));
+    /* Side-slot frames/shadows are drawn ONLY when that neighbour actually holds an
+     * item — same policy as gui_draw_coverflow_h. With a single ROM (or any list
+     * shorter than the carousel) the prior/next slots draw nothing instead of empty
+     * box frames. Top slot = cursor-1 (prior), bottom slot = cursor+1 (next);
+     * gui_get_item_by_index honours the wrap policy. */
+    int _iprev = list->cursor - 1; int has_prior = gui_get_item_by_index(tab, &_iprev) != NULL;
+    int _inext = list->cursor + 1; int has_next  = gui_get_item_by_index(tab, &_inext) != NULL;
 
-    odroid_overlay_draw_rect(start_posx + (cover_width - p_width1) * 3 / 4 + 1, start_ypos + 9, p_width1 + 4, p_height + 2, 1, get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 80));
+    if (has_prior) {
+        odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width2) * 3 / 4 + 7, start_ypos + 4, p_width2 - 6, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 60));
+        odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width2) * 3 / 4 + 3, start_ypos + 6, p_width2, 1, get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c,80));
+        odroid_overlay_draw_rect(start_posx + (cover_width - p_width1) * 3 / 4 + 1, start_ypos + 9, p_width1 + 4, p_height + 2, 1, get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 80));
+    }
 
     odroid_overlay_draw_rect(start_posx, start_ypos + 13 + p_height, cover_width + 6, cover_height + 6, 1, curr_colors->sel_c);
     odroid_overlay_draw_rect(start_posx + 1, start_ypos + 14 + p_height, cover_width + 4, cover_height + 4, 1, curr_colors->dis_c);
 
-    odroid_overlay_draw_rect(start_posx + (cover_width - p_width1) * 3 / 4 + 1, start_ypos + p_height + cover_height + 21, p_width1 + 4, p_height + 2, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 80));
-
-    odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width2) * 3 / 4 + 3, start_ypos + 2 * p_height + cover_height + 25, p_width2, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 80));
-    odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width2) * 3 / 4 + 7, start_ypos + 2 * p_height + cover_height + 27, p_width2 - 6, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 60));
+    if (has_next) {
+        odroid_overlay_draw_rect(start_posx + (cover_width - p_width1) * 3 / 4 + 1, start_ypos + p_height + cover_height + 21, p_width1 + 4, p_height + 2, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 80));
+        odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width2) * 3 / 4 + 3, start_ypos + 2 * p_height + cover_height + 25, p_width2, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 80));
+        odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width2) * 3 / 4 + 7, start_ypos + 2 * p_height + cover_height + 27, p_width2 - 6, 1, get_darken_pixel_d(curr_colors->dis_c,curr_colors->bg_c, 60));
+    }
 
     if (p_height)
     {
-        odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width1) * 3 / 4 + 2, start_ypos + p_height + 10, p_width1 + 2, 1, curr_colors->bg_c);
-        odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width1) * 3 / 4 + 2, start_ypos + p_height + cover_height + 21, p_width1 + 2, 1, curr_colors->bg_c);
+        if (has_prior) odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width1) * 3 / 4 + 2, start_ypos + p_height + 10, p_width1 + 2, 1, curr_colors->bg_c);
+        if (has_next)  odroid_overlay_draw_fill_rect(start_posx + (cover_width - p_width1) * 3 / 4 + 2, start_ypos + p_height + cover_height + 21, p_width1 + 2, 1, curr_colors->bg_c);
     }
 
     if (item) //current page
