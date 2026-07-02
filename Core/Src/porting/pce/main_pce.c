@@ -222,6 +222,14 @@ static bool SaveState(const char *savePathName) {
         uint32_t cdda[1 + PCE_SCSI_CDDA_STATE_WORDS] = { 0x41444443u /* 'CDDA' */ };
         pce_scsi_cdda_get(cdda + 1);
         fwrite(cdda, sizeof(cdda), 1, file);
+        /* ADPCM engine + 64KB sample RAM: the game-side audio sequencer lives in
+         * game RAM (restored above) and references segments in ADPCM RAM by
+         * address — without this block a load desyncs them and the sequencer
+         * hangs waiting for a segment that never ends (~2s after load). */
+        uint32_t adpc[1 + PCE_ADPCM_STATE_WORDS] = { 0x43504441u /* 'ADPC' */ };
+        pce_adpcm_get(adpc + 1);
+        fwrite(adpc, sizeof(adpc), 1, file);
+        fwrite(pce_adpcm_ram(), 1, 0x10000, file);
     }
     fclose(file);
     /* Persist BRAM to its OWN file (system-wide cabinet, not part of the per-game
@@ -271,6 +279,16 @@ static bool LoadState(const char *savePathName) {
         uint32_t cdda[1 + PCE_SCSI_CDDA_STATE_WORDS];
         if (fread(cdda, sizeof(cdda), 1, file) == 1 && cdda[0] == 0x41444443u)
             pce_scsi_cdda_set(cdda + 1);
+        /* ADPCM engine + RAM (see SaveState). Old saves lack the block: reset the
+         * engine so a stale in-session state can't claim "still playing" against
+         * RAM it no longer matches (the load-then-hang failure). */
+        uint32_t adpc[1 + PCE_ADPCM_STATE_WORDS];
+        if (fread(adpc, sizeof(adpc), 1, file) == 1 && adpc[0] == 0x43504441u) {
+            fread(pce_adpcm_ram(), 1, 0x10000, file);
+            pce_adpcm_set(adpc + 1);
+        } else {
+            pce_adpcm_reset();
+        }
     }
     fclose(file);
 

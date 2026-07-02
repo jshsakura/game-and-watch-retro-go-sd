@@ -17,6 +17,7 @@
 #include <romdb.h>
 #include "pce_cd.h"
 #include "pce_scsi.h"
+#include "pce_adpcm.h"
 
 /* Path to the disc .cue (argv[1]); NULL = run System Card only. */
 static const char *g_cue_path = NULL;
@@ -385,6 +386,14 @@ static bool host_LoadState(const char *savePathName)
 		uint32_t cdda[1 + PCE_SCSI_CDDA_STATE_WORDS];
 		if (fread(cdda, sizeof(cdda), 1, fp) == 1 && cdda[0] == 0x41444443u)
 			pce_scsi_cdda_set(cdda + 1);
+		/* ADPCM engine + 64KB RAM block (mirrors device LoadState). */
+		uint32_t adpc[1 + PCE_ADPCM_STATE_WORDS];
+		if (fread(adpc, sizeof(adpc), 1, fp) == 1 && adpc[0] == 0x43504441u) {
+			fread(pce_adpcm_ram(), 1, 0x10000, fp);
+			pce_adpcm_set(adpc + 1);
+		} else {
+			pce_adpcm_reset();
+		}
 	}
 
 	for(int i = 0; i < 8; i++)
@@ -432,6 +441,11 @@ static bool host_SaveState(const char *savePathName)
 		uint32_t cdda[1 + PCE_SCSI_CDDA_STATE_WORDS] = { 0x41444443u /* 'CDDA' */ };
 		pce_scsi_cdda_get(cdda + 1);
 		fwrite(cdda, sizeof(cdda), 1, fp);
+		/* ADPCM engine + 64KB RAM block (mirrors device SaveState). */
+		uint32_t adpc[1 + PCE_ADPCM_STATE_WORDS] = { 0x43504441u /* 'ADPC' */ };
+		pce_adpcm_get(adpc + 1);
+		fwrite(adpc, sizeof(adpc), 1, fp);
+		fwrite(pce_adpcm_ram(), 1, 0x10000, fp);
 	}
 
 	fclose(fp);

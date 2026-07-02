@@ -123,6 +123,45 @@ void pce_adpcm_dma_byte(uint8_t val)
 
 bool pce_adpcm_playing(void) { return s_playing; }
 
+/* Savestate: the engine registers + RAM must round-trip, or a loaded state's
+ * game-side audio sequencer (restored from game RAM) points at segment
+ * addresses/lengths that no longer match the live ADPCM RAM — observed on
+ * device as "load, ~2s of music, then the game hangs waiting for a segment
+ * that never ends" (Ai Chou Aniki). */
+void pce_adpcm_get(uint32_t out[PCE_ADPCM_STATE_WORDS])
+{
+    out[0] = (uint32_t)s_addr | ((uint32_t)s_read_addr << 16);
+    out[1] = (uint32_t)s_write_addr | ((uint32_t)s_length << 16);
+    out[2] = (uint32_t)s_last_cmd | ((uint32_t)s_freq << 8) |
+             ((uint32_t)(s_playing ? 1 : 0) << 16) | ((uint32_t)(s_end ? 1 : 0) << 17) |
+             ((uint32_t)(s_half ? 1 : 0) << 18)    | ((uint32_t)(s_play_nibble ? 1 : 0) << 19);
+    out[3] = (uint32_t)s_cur;
+    out[4] = (uint32_t)s_ssi;
+    out[5] = s_phase;
+    out[6] = (uint32_t)(uint16_t)s_held;
+    out[7] = 0;   /* reserved */
+}
+
+void pce_adpcm_set(const uint32_t in[PCE_ADPCM_STATE_WORDS])
+{
+    s_addr        = (uint16_t)(in[0] & 0xFFFF);
+    s_read_addr   = (uint16_t)(in[0] >> 16);
+    s_write_addr  = (uint16_t)(in[1] & 0xFFFF);
+    s_length      = (uint16_t)(in[1] >> 16);
+    s_last_cmd    = (uint8_t)(in[2] & 0xFF);
+    s_freq        = (uint8_t)((in[2] >> 8) & 0x0F);
+    s_playing     = (in[2] >> 16) & 1;
+    s_end         = (in[2] >> 17) & 1;
+    s_half        = (in[2] >> 18) & 1;
+    s_play_nibble = (in[2] >> 19) & 1;
+    s_cur         = (int32_t)(in[3] & 0xFFF);
+    s_ssi         = (int)in[4]; if (s_ssi < 0 || s_ssi > 48) s_ssi = 0;
+    s_phase       = in[5];
+    s_held        = (int16_t)(uint16_t)in[6];
+}
+
+uint8_t *pce_adpcm_ram(void) { return s_ram; }
+
 /* Fill `frames` stereo int16 samples (mono ADPCM duplicated L/R) at OUT_RATE,
  * decoding at the programmed rate fs = 32087.5/(16-freq). Returns frames if
  * playing, else 0. */
