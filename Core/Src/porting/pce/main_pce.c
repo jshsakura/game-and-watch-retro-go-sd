@@ -773,6 +773,14 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         common_emu_state.pause_after_frames = 0;
     }
 
+    /* PCE-CD only: auto-OC level 1 (312MHz) for the extra CD load — SCSI engine +
+     * CD-DA fseek/fread/4-tap + ADPCM on top of the core. HuCard runs full speed
+     * at stock so it stays at the user's clock. Same VB pattern: NOT persisted
+     * (exit resets the clock), no-op on OSPI1 SD hardware (guarded inside). The
+     * actual clock is proven in /pcecd_diag.txt at disc mount ("clock=... MHz"). */
+    if (ACTIVE_FILE && ACTIVE_FILE->ext && strcmp(ACTIVE_FILE->ext, "cue") == 0)
+        common_emu_auto_oc(1);
+
     odroid_system_init(APPID_PCE, PCE_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
     pce_log[0]=0;

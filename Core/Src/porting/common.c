@@ -65,6 +65,7 @@ common_emu_state_t common_emu_state = {
 };
 
 static int32_t frame_integrator = 0;
+static uint8_t skip_streak = 0;
 
 void common_emu_frame_loop_reset(void){
     common_emu_state.last_sync_time = 0;
@@ -75,13 +76,22 @@ void common_emu_frame_loop_reset(void){
     common_emu_state.startup_frames=0;
     common_emu_state.clear_frames=0;
     frame_integrator = 0;
+    skip_streak = 0;
 }
 
 bool common_emu_frame_loop(void){
     rg_app_desc_t *app = odroid_system_get_app();
     int16_t frame_time_10us = common_emu_state.frame_time_10us;
-    int16_t elapsed_10us = 100 * get_elapsed_time_since(common_emu_state.last_sync_time);
+    /* int32: a >327ms stall overflowed the old int16 (100*ms) into NEGATIVE,
+     * randomly crediting the integrator during the very stalls it must track. */
+    int32_t elapsed_10us = 100 * (int32_t)get_elapsed_time_since(common_emu_state.last_sync_time);
     bool draw_frame = common_emu_state.skip_frames < 2;
+
+    /* Overload guard: under sustained slowdown the integrator pins at its cap
+     * (below) and skip_frames stays 2 — never blank the screen outright; force
+     * one drawn frame in every 4 so the worst case is ~15fps visible, not 0. */
+    if (!draw_frame && ++skip_streak >= 4) { draw_frame = true; skip_streak = 0; }
+    else if (draw_frame) skip_streak = 0;
 
     if( !cpumon_stats.busy_ms ) cpumon_busy();
     odroid_system_tick(!draw_frame, 0, cpumon_stats.busy_ms);
@@ -121,6 +131,19 @@ bool common_emu_frame_loop(void){
             break;
     }
     frame_integrator += (elapsed_10us - frame_time_10us);
+    /* Clamp: the integrator is a SHORT-TERM pacing error, not a debt ledger.
+     * Without a ceiling, one long stall (PCE-CD load burst, SD dir-walk fopen)
+     * banked tens of seconds of "behind", so skip_frames stayed 2 and the
+     * screen looked hard-frozen for 30s+ while the game ran on underneath
+     * (Dynastic Hero opening; revived only when the game got cheap to
+     * emulate). Cap debt at 2.5 frames / credit at 1.5 so recovery from any
+     * hiccup is immediate; the pause branch (< -1 frame) stays reachable. */
+    {
+        const int32_t debt_cap   = ((int32_t)frame_time_10us << 1) + (frame_time_10us >> 1);
+        const int32_t credit_cap = -(int32_t)frame_time_10us - (frame_time_10us >> 1);
+        if (frame_integrator > debt_cap)        frame_integrator = debt_cap;
+        else if (frame_integrator < credit_cap) frame_integrator = credit_cap;
+    }
     if(frame_integrator > frame_time_10us << 1) common_emu_state.skip_frames = 2;
     else if(frame_integrator > frame_time_10us) common_emu_state.skip_frames = 1;
     else if(frame_integrator < -frame_time_10us) common_emu_state.pause_frames = 1;
