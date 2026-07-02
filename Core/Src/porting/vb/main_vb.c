@@ -286,8 +286,11 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
          * slower than 50fps it stays "behind" forever and would never draw again
          * (device: blit lines stop at f3). Force a presentation at least every
          * 4th frame so a slow-but-running game is VISIBLE instead of black. */
+        /* EVEN cadence: when running behind, present every 2nd frame at a steady
+         * rhythm instead of a 12-25fps mix — irregular pacing reads as judder
+         * ("득득득") far more than a uniform lower rate does. */
         { static int s_skipped;
-          if (!drawFrame && ++s_skipped >= 3) drawFrame = true;
+          if (!drawFrame && ++s_skipped >= 1) drawFrame = true;
           if (drawFrame) s_skipped = 0; }
 
         odroid_input_read_gamepad(&joystick);
