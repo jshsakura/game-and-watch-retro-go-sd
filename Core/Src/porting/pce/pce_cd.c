@@ -181,3 +181,34 @@ bool pce_cd_read_sector_audio(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *bu
 {
     return read_sector_slot(1, toc, lba, buf);
 }
+
+/* Batched CD-DA read: up to `max_n` CONTIGUOUS raw sectors in a single fread
+ * (clamped to the current track so the file/offset stays linear). One 8-sector
+ * fread costs far less FatFs overhead than 8 sector-sized ones — the per-sector
+ * reads were the "subtly slow with BGM on" drag on device. Returns sectors read. */
+int pce_cd_read_sectors_audio(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf, int max_n)
+{
+    int ti = pce_cd_track_at_lba(toc, lba);
+    if (ti < 0 || max_n <= 0) return 0;
+    const pce_cd_track_t *t = &toc->tracks[ti];
+    if (t->sector_size != PCE_CD_SECTOR_RAW)      /* audio must be raw 2352B */
+        return pce_cd_read_sector_audio(toc, lba, buf) ? 1 : 0;
+
+    uint32_t track_end = (ti + 1 < toc->num_tracks) ? toc->tracks[ti + 1].start_lba
+                                                    : toc->total_lba;
+    uint32_t remain = (track_end > lba) ? (track_end - lba) : 1;
+    int n = (max_n < (int)remain) ? max_n : (int)remain;
+
+    uint32_t sec_in_track = lba - t->start_lba;
+    long offset = (long)t->file_offset + (long)sec_in_track * PCE_CD_SECTOR_RAW;
+    if (!s_bin_f[1] || strcmp(s_bin_path[1], t->bin_path) != 0) {
+        if (s_bin_f[1]) fclose(s_bin_f[1]);
+        s_bin_f[1] = fopen(t->bin_path, "rb");
+        if (!s_bin_f[1]) { s_bin_path[1][0] = 0; return 0; }
+        strncpy(s_bin_path[1], t->bin_path, sizeof(s_bin_path[1]) - 1);
+        s_bin_path[1][sizeof(s_bin_path[1]) - 1] = 0;
+    }
+    if (fseek(s_bin_f[1], offset, SEEK_SET) != 0) return 0;
+    size_t got = fread(buf, PCE_CD_SECTOR_RAW, n, s_bin_f[1]);
+    return (int)got;
+}

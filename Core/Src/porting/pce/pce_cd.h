@@ -56,6 +56,9 @@ bool pce_cd_read_sector(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf);
  * the SCSI data handle (audio + data are usually different .bin files, both read every
  * frame with sound on). FatFs allows it (10 open files). */
 bool pce_cd_read_sector_audio(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf);
+/* Batched variant: up to max_n contiguous raw sectors in one fread (clamped to the
+ * track). Returns sectors actually read. */
+int pce_cd_read_sectors_audio(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf, int max_n);
 
 /* Close the cached .bin handles (call on mount to start fresh, avoid handle leaks). */
 void pce_cd_close(void);

@@ -96,8 +96,12 @@ static const uint8_t RequiredCDBLen[16] = {
 /* ---- CD-DA (Red Book audio / BGM) ---- */
 static bool     s_cdda_play;            /* currently streaming audio */
 static uint32_t s_cdda_lba, s_cdda_end, s_cdda_start; /* current/end/start sector */
-static uint8_t  s_cdda_sec[PCE_CD_SECTOR_RAW];
-static int      s_cdda_pos;             /* byte offset within s_cdda_sec (>= raw means reload) */
+#define PCE_CDDA_BATCH 8                /* sectors per SD read: one 18.8KB fread instead of
+                                           eight 2.3KB ones — FatFs per-call overhead was the
+                                           'subtly slow with BGM on' drag on device */
+static uint8_t  s_cdda_sec[PCE_CD_SECTOR_RAW * PCE_CDDA_BATCH];
+static int      s_cdda_pos;             /* byte offset within the buffered data */
+static int      s_cdda_have;            /* bytes valid in s_cdda_sec (0 = force reload) */
 static int      s_cdda_mode;            /* SAPEP play mode: 1=loop, 3=normal */
 static int      s_trace;            /* trace register accesses during a bulk READ */
 static int      s_atrace;           /* trace ADPCM/idle-loop polls ($180A-F, $1803) */
@@ -326,7 +330,7 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
         diag("  cdda_fill START lba=%lu end=%lu frames=%d\n",
              (unsigned long)s_cdda_lba, (unsigned long)s_cdda_end, frames); } }
     for (int i = 0; i < frames; i++) {
-        if (s_cdda_pos + 8 > PCE_CD_SECTOR_RAW) {
+        if (s_cdda_pos + 8 > s_cdda_have) {
             if (s_cdda_lba >= s_cdda_end) {
                 if (s_cdda_mode == 1) {            /* LOOP: restart at the start sector */
                     s_cdda_lba = s_cdda_start;
@@ -336,12 +340,16 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
                     return frames;
                 }
             }
-            if (!pce_cd_read_sector_audio(s_toc, s_cdda_lba, s_cdda_sec)) {
+            uint32_t remain = (s_cdda_end > s_cdda_lba) ? (s_cdda_end - s_cdda_lba) : 1;
+            int want = remain < PCE_CDDA_BATCH ? (int)remain : PCE_CDDA_BATCH;
+            int n = pce_cd_read_sectors_audio(s_toc, s_cdda_lba, s_cdda_sec, want);
+            if (n <= 0) {
                 diag("  cdda_fill READ AUDIO FAIL lba=%lu (SD/CUE audio-track read failed)\n",
                      (unsigned long)s_cdda_lba);
                 s_cdda_play = false; return i;
             }
-            s_cdda_lba++;
+            s_cdda_lba += (uint32_t)n;
+            s_cdda_have = n * PCE_CD_SECTOR_RAW;
             s_cdda_pos = 0;
         }
         /* Average the two 44.1k frames into one 22.05k frame — a cheap 2-tap
@@ -373,7 +381,7 @@ void pce_scsi_cdda_set(const uint32_t in[PCE_SCSI_CDDA_STATE_WORDS])
     s_cdda_start = in[2];
     s_cdda_end   = in[3];
     s_cdda_mode  = (int)in[4];
-    s_cdda_pos   = PCE_CD_SECTOR_RAW;          /* force a fresh sector load */
+    s_cdda_pos = 0; s_cdda_have = 0;           /* force a fresh batch load */
     s_cdda_play  = (in[0] != 0) && s_present;
     diag("  CDDA restore play=%d lba=%lu end=%lu mode=%d\n",
          (int)s_cdda_play, (unsigned long)s_cdda_lba, (unsigned long)s_cdda_end, s_cdda_mode);
@@ -415,7 +423,7 @@ static void execute_command(void)
     case 0xD8: /* SAPSP — set audio playback start position (+ play if cmd[1]) */
         s_cdda_start = s_cdda_lba = cdda_decode_pos(s_cmd);
         s_cdda_end   = s_toc ? s_toc->total_lba : 0;
-        s_cdda_pos   = PCE_CD_SECTOR_RAW;          /* force a fresh sector load */
+        s_cdda_pos = 0; s_cdda_have = 0;           /* force a fresh batch load */
         s_cdda_mode  = 3;
         s_cdda_play  = (s_cmd[1] != 0);
         diag("  CDDA SAPSP lba=%lu play=%d\n", (unsigned long)s_cdda_lba, s_cdda_play);
@@ -425,7 +433,7 @@ static void execute_command(void)
         s_cdda_end  = cdda_decode_pos(s_cmd);
         s_cdda_mode = s_cmd[1];
         s_cdda_play = (s_cmd[1] != 0);
-        s_cdda_pos  = PCE_CD_SECTOR_RAW;
+        s_cdda_pos = 0; s_cdda_have = 0;
         diag("  CDDA SAPEP end=%lu mode=%d\n", (unsigned long)s_cdda_end, s_cmd[1]);
         send_status(STATUS_GOOD, 0);
         break;
