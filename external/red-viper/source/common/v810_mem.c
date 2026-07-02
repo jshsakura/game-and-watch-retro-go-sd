@@ -17,8 +17,8 @@ unsigned int vb_rom_mask = MAX_ROM_SIZE - 1;
  * backward branch. Set at the single choke points below. */
 bool vb_idle_wrote;
 bool vb_idle_hwread;
-WORD vb_idle_raddr;   /* last polled address: a true poll re-reads the SAME address
-                         every spin; scan/checksum loops advance it and must NOT skip */
+WORD vb_idle_raddr;   /* read-sequence signature for the current loop iteration; a true
+                         poll repeats the same signature every spin, scans don't */
 #define VB_ROM_MASK vb_rom_mask
 #else
 #define VB_ROM_MASK (MAX_ROM_SIZE - 1)
@@ -413,7 +413,10 @@ uint64_t mem_rom_rword(WORD addr) {
 uint64_t mem_rbyte(WORD addr) {
     { WORD sp = addr & 0x7000000;   /* poll signature: any read that an event/ISR
        could change (VIP/hw/WRAM/GRAM). ROM(7) never changes; VSU(1) is write-only. */
-      if (sp != 0x7000000 && sp != 0x1000000) { vb_idle_hwread = true; vb_idle_raddr = addr; } }
+      if (sp != 0x7000000 && sp != 0x1000000) { vb_idle_hwread = true;
+          vb_idle_raddr = vb_idle_raddr * 31 + addr; } }   /* per-iteration READ-SEQUENCE
+          signature: multi-address polls (INTPND + a WRAM flag etc.) repeat the same
+          sequence every spin; scans produce a different signature each time */
 
     switch((addr&0x7000000)) {// switch on address
     case 0x7000000:
@@ -434,7 +437,10 @@ uint64_t mem_rbyte(WORD addr) {
 uint64_t mem_rhword(WORD addr) {
     { WORD sp = addr & 0x7000000;   /* poll signature: any read that an event/ISR
        could change (VIP/hw/WRAM/GRAM). ROM(7) never changes; VSU(1) is write-only. */
-      if (sp != 0x7000000 && sp != 0x1000000) { vb_idle_hwread = true; vb_idle_raddr = addr; } }
+      if (sp != 0x7000000 && sp != 0x1000000) { vb_idle_hwread = true;
+          vb_idle_raddr = vb_idle_raddr * 31 + addr; } }   /* per-iteration READ-SEQUENCE
+          signature: multi-address polls (INTPND + a WRAM flag etc.) repeat the same
+          sequence every spin; scans produce a different signature each time */
 
     addr &= ~1;
     switch((addr&0x7000000)) {// switch on address
@@ -456,7 +462,10 @@ uint64_t mem_rhword(WORD addr) {
 uint64_t mem_rword(WORD addr) {
     { WORD sp = addr & 0x7000000;   /* poll signature: any read that an event/ISR
        could change (VIP/hw/WRAM/GRAM). ROM(7) never changes; VSU(1) is write-only. */
-      if (sp != 0x7000000 && sp != 0x1000000) { vb_idle_hwread = true; vb_idle_raddr = addr; } }
+      if (sp != 0x7000000 && sp != 0x1000000) { vb_idle_hwread = true;
+          vb_idle_raddr = vb_idle_raddr * 31 + addr; } }   /* per-iteration READ-SEQUENCE
+          signature: multi-address polls (INTPND + a WRAM flag etc.) repeat the same
+          sequence every spin; scans produce a different signature each time */
 
     addr &= ~3;
     switch((addr&0x7000000)) {// switch on address

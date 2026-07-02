@@ -407,6 +407,7 @@ int interpreter_run(void) {
                     }
                     vb_idle_wrote = false;
                     vb_idle_hwread = false;
+                    vb_idle_raddr = 0;   /* fresh signature for the next iteration */
                 }
             } else {
                 // branch not taken, so it only took 1 cycle
