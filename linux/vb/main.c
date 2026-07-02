@@ -84,18 +84,27 @@ static void vb_blit(void)
 
     memset(out, 0, (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * sizeof(uint16_t));
 
+    /* Same optimized conversion as device main_vb.c (pal565 + accumulators). */
+    uint16_t pal565[4];
+    for (int v = 0; v < 4; v++) {
+        int b = bri[v] * 2;
+        if (b > 255) b = 255;
+        pal565[v] = (uint16_t)((b >> 3) << 11);
+    }
+    int sy_acc = 0, sy = 0;
     for (int ry = 0; ry < dst_h; ry++) {
-        int sy = ry * 224 / dst_h;
         const uint16_t *col = vb_fb + (sy >> 3);
         int shift = (sy & 7) * 2;
         uint16_t *dst = out + (y0 + ry) * GW_LCD_WIDTH;
+        int sx_acc = 0;
+        const uint16_t *src = col;
         for (int dx = 0; dx < dst_w; dx++) {
-            int sx = dx * 384 / dst_w;
-            int v = (col[sx * 32] >> shift) & 3;
-            int b = bri[v] * 2;
-            if (b > 255) b = 255;
-            dst[dx] = (uint16_t)((b >> 3) << 11);
+            dst[dx] = pal565[(*src >> shift) & 3];
+            sx_acc += 384;
+            while (sx_acc >= dst_w) { sx_acc -= dst_w; src += 32; }
         }
+        sy_acc += 224;
+        while (sy_acc >= dst_h) { sy_acc -= dst_h; sy++; }
     }
 }
 

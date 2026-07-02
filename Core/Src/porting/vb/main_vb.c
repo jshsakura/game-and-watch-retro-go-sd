@@ -150,25 +150,38 @@ static void vb_blit(void)
 
     /* Aspect-correct auto-fit (device convention, cf. Lynx center/letterbox):
      * preserve the VB 384:224 ratio — full 320 width, scaled to 186 rows and
-     * vertically centered, with black letterbox bars top/bottom. */
+     * vertically centered, with black letterbox bars top/bottom. The bars were
+     * cleared ONCE at boot (lcd_clear_buffers) and the active area is fully
+     * overwritten below — no per-frame 150KB memset (was ~2ms of the blit). */
     const int dst_w = GW_LCD_WIDTH;                 /* 320 (full width) */
     const int dst_h = GW_LCD_WIDTH * 224 / 384;     /* 186 (keeps 384:224) */
     const int y0    = (GW_LCD_HEIGHT - dst_h) / 2;  /* 27 */
 
-    memset(out, 0, (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * sizeof(uint16_t));
+    /* Per-frame constants hoisted out of the 59k-pixel loop: the four shades as
+     * ready RGB565 values, and Bresenham-style accumulators instead of a mul+div
+     * per pixel/row. */
+    uint16_t pal565[4];
+    for (int v = 0; v < 4; v++) {
+        int b = bri[v] * 2;
+        if (b > 255) b = 255;
+        pal565[v] = (uint16_t)((b >> 3) << 11);     /* red channel only */
+    }
 
+    int sy_acc = 0;                                  /* += 224 per row, sy = acc/dst_h */
+    int sy = 0;
     for (int ry = 0; ry < dst_h; ry++) {
-        int sy = ry * 224 / dst_h;                  /* nearest-neighbour scale */
         const uint16_t *col = vb_fb + (sy >> 3);
         int shift = (sy & 7) * 2;
         uint16_t *dst = out + (y0 + ry) * GW_LCD_WIDTH;
+        int sx_acc = 0;                              /* += 384 per px, sx advances by carry */
+        const uint16_t *src = col;
         for (int dx = 0; dx < dst_w; dx++) {
-            int sx = dx * 384 / dst_w;
-            int v = (col[sx * 32] >> shift) & 3;
-            int b = bri[v] * 2;
-            if (b > 255) b = 255;
-            dst[dx] = (uint16_t)((b >> 3) << 11);   /* red channel only */
+            dst[dx] = pal565[(*src >> shift) & 3];
+            sx_acc += 384;
+            while (sx_acc >= dst_w) { sx_acc -= dst_w; src += 32; }
         }
+        sy_acc += 224;
+        while (sy_acc >= dst_h) { sy_acc -= dst_h; sy++; }
     }
 }
 
@@ -290,7 +303,7 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
          * rhythm instead of a 12-25fps mix — irregular pacing reads as judder
          * ("득득득") far more than a uniform lower rate does. */
         { static int s_skipped;
-          if (!drawFrame && ++s_skipped >= 1) drawFrame = true;
+          if (!drawFrame && ++s_skipped >= 2) drawFrame = true;
           if (drawFrame) s_skipped = 0; }
 
         odroid_input_read_gamepad(&joystick);
