@@ -131,9 +131,9 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
 #ifndef LINUX_EMU
-    /* Prove the PCE-CD auto-OC engaged (280 = stock/OSPI1-guarded, 312 = lvl1). */
+    /* Prove the PCE-CD auto-OC engaged (280 = stock/OSPI1-guarded, ~353 = lvl2). */
     { extern uint32_t HAL_RCC_GetSysClockFreq(void);
-      diag("clock=%lu MHz (auto-OC lvl1 requested)\n",
+      diag("clock=%lu MHz (auto-OC lvl2 requested)\n",
            (unsigned long)(HAL_RCC_GetSysClockFreq() / 1000000)); }
 #endif
     /* Dump every track's computed start_lba — the harness showed device reads land 294
