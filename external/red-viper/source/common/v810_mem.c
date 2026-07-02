@@ -409,6 +409,10 @@ uint64_t mem_rom_rword(WORD addr) {
 
 // Memory read functions
 uint64_t mem_rbyte(WORD addr) {
+    { WORD sp = addr & 0x7000000;   /* poll signature: any read that an event/ISR
+       could change (VIP/hw/WRAM/GRAM). ROM(7) never changes; VSU(1) is write-only. */
+      if (sp != 0x7000000 && sp != 0x1000000) vb_idle_hwread = true; }
+
     switch((addr&0x7000000)) {// switch on address
     case 0x7000000:
         return mem_rom_rbyte(addr);
@@ -426,6 +430,10 @@ uint64_t mem_rbyte(WORD addr) {
 }
 
 uint64_t mem_rhword(WORD addr) {
+    { WORD sp = addr & 0x7000000;   /* poll signature: any read that an event/ISR
+       could change (VIP/hw/WRAM/GRAM). ROM(7) never changes; VSU(1) is write-only. */
+      if (sp != 0x7000000 && sp != 0x1000000) vb_idle_hwread = true; }
+
     addr &= ~1;
     switch((addr&0x7000000)) {// switch on address
     case 0x7000000:
@@ -444,6 +452,10 @@ uint64_t mem_rhword(WORD addr) {
 }
 
 uint64_t mem_rword(WORD addr) {
+    { WORD sp = addr & 0x7000000;   /* poll signature: any read that an event/ISR
+       could change (VIP/hw/WRAM/GRAM). ROM(7) never changes; VSU(1) is write-only. */
+      if (sp != 0x7000000 && sp != 0x1000000) vb_idle_hwread = true; }
+
     addr &= ~3;
     switch((addr&0x7000000)) {// switch on address
     case 0x7000000:
