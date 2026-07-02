@@ -59,15 +59,19 @@ void vb_audio_drain(int16_t *out, int len, int32_t factor)
      * The old 1:1-then-clamp mapping used only the first len of gen frames —
      * dropped audio + a stale-replay gap whenever an emulated frame took longer
      * than the DMA period (the device crackle). */
+    /* 4-tap (1,3,3,1)/8 low-pass across the decimation window — the 2-tap box
+     * still let the top octave alias through as a brittle edge; the wider kernel
+     * smooths it (same upgrade applied to the PCE CD-DA decimator). Each tap is
+     * the mono (L+R) mix of one generated frame; indices clamp at the edges. */
+    #define VBMONO(k) ((int32_t)s_accum[(k) * 2] + (int32_t)s_accum[(k) * 2 + 1])
     for (int i = 0; i < len; i++) {
         int idx = (int)(((int64_t)i * gen) / len);
-        int nxt = (idx + 1 < gen) ? idx + 1 : idx;
-        /* 2-tap box average across the decimation step — the plain nearest pick
-         * aliased audibly (the ~2.3x downrate folded VSU harmonics into a harsh
-         * "crushed" tone); same cheap low-pass the PCE CD-DA decimator uses. */
-        int32_t s = ((int32_t)s_accum[idx * 2] + (int32_t)s_accum[idx * 2 + 1]
-                   + (int32_t)s_accum[nxt * 2] + (int32_t)s_accum[nxt * 2 + 1]) >> 1;
+        int p  = (idx > 0)       ? idx - 1 : idx;
+        int n1 = (idx + 1 < gen) ? idx + 1 : idx;
+        int n2 = (idx + 2 < gen) ? idx + 2 : n1;
+        int32_t s = (VBMONO(p) + 3 * VBMONO(idx) + 3 * VBMONO(n1) + VBMONO(n2)) >> 3;
         out[i] = (int16_t)((s * factor) >> 9);
     }
+    #undef VBMONO
     s_frames = 0;
 }
