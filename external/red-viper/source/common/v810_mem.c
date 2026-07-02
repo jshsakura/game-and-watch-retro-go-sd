@@ -11,6 +11,12 @@ int is_sram = 0;
 // mirrors correctly by masking the address with (rom_size-1). app_main_vb()
 // sets this to rom_size-1 after loading; defaults to the full 16MB mask.
 unsigned int vb_rom_mask = MAX_ROM_SIZE - 1;
+
+/* Idle-loop skip bookkeeping (see interpreter.c): a spin loop qualifies only if
+ * it READ a hardware/VIP status register and WROTE nothing since the last
+ * backward branch. Set at the single choke points below. */
+bool vb_idle_wrote;
+bool vb_idle_hwread;
 #define VB_ROM_MASK vb_rom_mask
 #else
 #define VB_ROM_MASK (MAX_ROM_SIZE - 1)
@@ -312,6 +318,7 @@ WORD mem_vsu_write(WORD addr, WORD data) {
 
 uint64_t mem_hw_read(WORD addr) {
     uint64_t wait = 0LL;
+    vb_idle_hwread = true;
     return (WORD)hcreg_rbyte(addr & 0x3c) | wait;
 }
 
@@ -456,7 +463,9 @@ uint64_t mem_rword(WORD addr) {
 
 /////////////////////////////////////////////////////////////////////////////
 //Memory Write Func
+
 WORD mem_wbyte(WORD addr, WORD data) {
+    vb_idle_wrote = true;
     switch((addr&0x7000000)) {
     case 0:
         return mem_vip_wbyte(addr, data);
@@ -474,6 +483,7 @@ WORD mem_wbyte(WORD addr, WORD data) {
 }
 
 WORD mem_whword(WORD addr, WORD data) {
+    vb_idle_wrote = true;
     addr &= ~1;
     switch((addr&0x7000000)) {
     case 0:
@@ -492,6 +502,7 @@ WORD mem_whword(WORD addr, WORD data) {
 }
 
 WORD mem_wword(WORD addr, WORD data) {
+    vb_idle_wrote = true;
     addr &= ~3;
     switch((addr&0x7000000)) {
     case 0:
@@ -687,6 +698,7 @@ static WORD hcreg_wbyte(WORD addr, BYTE data) {
 }
 
 static SBYTE vipcreg_rbyte(WORD addr) {
+    vb_idle_hwread = true;
     HWORD data = vipcreg_rhword(addr);
     if (addr & 1) data >>= 8;
     return (SBYTE)data;
@@ -698,6 +710,7 @@ static WORD vipcreg_wbyte(WORD addr, WORD data) {
 }
 
 static HWORD vipcreg_rhword(WORD addr) {
+    vb_idle_hwread = true;
     addr=(addr&0x0005007E); //Bring it into line
     addr=(addr|0x0005F800); //make sure all the right bits are on
     switch(addr) {

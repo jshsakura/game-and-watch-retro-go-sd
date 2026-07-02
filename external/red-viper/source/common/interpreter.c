@@ -328,6 +328,30 @@ int interpreter_run(void) {
             if (get_cond(instr >> 9, vb_state->v810_state.S_REG[PSW])) {
                 SHWORD disp = instr & (1 << 8) ? (instr | 0xfe00) : (instr & ~0xfe00);
                 PC += disp - 2;
+                /* Idle-loop skip: games spend most of a frame in tiny poll loops
+                 * (read a VIP/HW status reg, test, branch back). Emulating every
+                 * spin burns the whole 20ms budget on the M7. A taken SHORT
+                 * BACKWARD branch to the same target, whose body read a hw/VIP
+                 * status register and wrote NOTHING, is such a poll: fast-forward
+                 * to the next event (`target`), where serviceInt can change the
+                 * polled state. Register-only delay loops never set hwread and
+                 * are left untouched; any store disqualifies via vb_idle_wrote. */
+                if (disp < 0 && disp > -64) {
+                    extern bool vb_idle_wrote, vb_idle_hwread;
+                    static WORD s_idle_pc;
+                    static int  s_idle_spins;
+                    if (PC == s_idle_pc) {
+                        if (vb_idle_hwread && !vb_idle_wrote && ++s_idle_spins >= 3) {
+                            if ((SWORD)(target - cycles) > 0) cycles = target;
+                            s_idle_spins = 0;
+                        }
+                    } else {
+                        s_idle_pc = PC;
+                        s_idle_spins = 0;
+                    }
+                    vb_idle_wrote = false;
+                    vb_idle_hwread = false;
+                }
             } else {
                 // branch not taken, so it only took 1 cycle
                 cycles -= 2;
