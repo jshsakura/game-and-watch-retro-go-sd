@@ -378,9 +378,14 @@ static bool host_LoadState(const char *savePathName)
 	}
 
 	/* PCE-CD: restore the 256KB CD RAM streamed after the core state. */
-	if (g_cue_path)
+	if (g_cue_path) {
 		for (int v = 0x68; v <= 0x87; v++)
 			fread(PCE.MemoryMapW[v], 0x2000, 1, fp);
+		pce_scsi_reset();   /* mirror the device LoadState: SCSI back to idle */
+		uint32_t cdda[1 + PCE_SCSI_CDDA_STATE_WORDS];
+		if (fread(cdda, sizeof(cdda), 1, fp) == 1 && cdda[0] == 0x41444443u)
+			pce_scsi_cdda_set(cdda + 1);
+	}
 
 	for(int i = 0; i < 8; i++)
 	{
@@ -421,9 +426,13 @@ static bool host_SaveState(const char *savePathName)
 
 	/* PCE-CD: stream the 256KB CD RAM (banks 0x68-0x87) after the core state,
 	 * mirroring the device SaveState. */
-	if (g_cue_path)
+	if (g_cue_path) {
 		for (int v = 0x68; v <= 0x87; v++)
 			fwrite(PCE.MemoryMapR[v], 0x2000, 1, fp);
+		uint32_t cdda[1 + PCE_SCSI_CDDA_STATE_WORDS] = { 0x41444443u /* 'CDDA' */ };
+		pce_scsi_cdda_get(cdda + 1);
+		fwrite(cdda, sizeof(cdda), 1, fp);
+	}
 
 	fclose(fp);
 
@@ -882,6 +891,10 @@ int main(int argc, char *argv[])
             if (!af) af = fopen("adpcm.pcm", "wb");
             int n = pce_scsi_cdda_fill(cb, 367);
             if (cf && n > 0) fwrite(cb, sizeof(int16_t) * 2, n, cf);
+            /* Resume regression probe: across the frame-1100/1110 save/load
+             * self-test, n must stay >0 (the CD-DA block re-arms the stream). */
+            if (g_cue_path && frame >= 1105 && frame <= 1115)
+                printf("[host] f%d cdda_n=%d\n", (int)frame, n);
             extern int pce_adpcm_fill(int16_t *, int);
             int an = pce_adpcm_fill(ab, 367);
             if (af && an > 0) fwrite(ab, sizeof(int16_t) * 2, an, af);

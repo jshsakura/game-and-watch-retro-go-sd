@@ -28,3 +28,12 @@ void pce_scsi_run(void);
 /* Fill `frames` stereo int16 samples of CD-DA (Red Book audio / BGM) at 22050Hz
  * (half the CD rate). Returns frames produced, 0 if no audio is playing. */
 int pce_scsi_cdda_fill(int16_t *out, int frames);
+
+/* CD-DA playback snapshot for savestates: [0]=play [1]=lba [2]=start [3]=end
+ * [4]=mode. LoadState resets the SCSI to idle (correct for data transfers), which
+ * used to also kill the BGM — the game believes its music is still playing, so a
+ * resume stayed silent until the next track change. Save/restore these 5 words to
+ * re-arm the stream. */
+#define PCE_SCSI_CDDA_STATE_WORDS 5
+void pce_scsi_cdda_get(uint32_t out[PCE_SCSI_CDDA_STATE_WORDS]);
+void pce_scsi_cdda_set(const uint32_t in[PCE_SCSI_CDDA_STATE_WORDS]);

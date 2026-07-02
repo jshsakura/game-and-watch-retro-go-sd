@@ -210,6 +210,10 @@ static bool SaveState(const char *savePathName) {
     if (written && strcmp(ACTIVE_FILE->ext, "cue") == 0) {
         for (int v = PCE_CD_RAM_FIRST_BANK; v <= PCE_CD_RAM_LAST_BANK; v++)
             fwrite(PCE.MemoryMapR[v], PCE_CD_RAM_BANK_SIZE, 1, file);
+        /* CD-DA stream snapshot (magic + 5 words) so a resume re-arms the BGM. */
+        uint32_t cdda[1 + PCE_SCSI_CDDA_STATE_WORDS] = { 0x41444443u /* 'CDDA' */ };
+        pce_scsi_cdda_get(cdda + 1);
+        fwrite(cdda, sizeof(cdda), 1, file);
     }
     fclose(file);
     /* Persist BRAM to its OWN file (system-wide cabinet, not part of the per-game
@@ -253,6 +257,11 @@ static bool LoadState(const char *savePathName) {
         for (int v = PCE_CD_RAM_FIRST_BANK; v <= PCE_CD_RAM_LAST_BANK; v++)
             fread(PCE.MemoryMapW[v], PCE_CD_RAM_BANK_SIZE, 1, file);
         pce_scsi_reset();
+        /* Restore the CD-DA stream the reset just killed (block absent in old
+         * saves -> fread short-reads -> keep the pre-fix silent-resume behaviour). */
+        uint32_t cdda[1 + PCE_SCSI_CDDA_STATE_WORDS];
+        if (fread(cdda, sizeof(cdda), 1, file) == 1 && cdda[0] == 0x41444443u)
+            pce_scsi_cdda_set(cdda + 1);
     }
     fclose(file);
 

@@ -357,6 +357,28 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
     return frames;
 }
 
+/* Savestate snapshot of the CD-DA stream (see pce_scsi.h). */
+void pce_scsi_cdda_get(uint32_t out[PCE_SCSI_CDDA_STATE_WORDS])
+{
+    out[0] = s_cdda_play ? 1u : 0u;
+    out[1] = s_cdda_lba;
+    out[2] = s_cdda_start;
+    out[3] = s_cdda_end;
+    out[4] = (uint32_t)s_cdda_mode;
+}
+
+void pce_scsi_cdda_set(const uint32_t in[PCE_SCSI_CDDA_STATE_WORDS])
+{
+    s_cdda_lba   = in[1];
+    s_cdda_start = in[2];
+    s_cdda_end   = in[3];
+    s_cdda_mode  = (int)in[4];
+    s_cdda_pos   = PCE_CD_SECTOR_RAW;          /* force a fresh sector load */
+    s_cdda_play  = (in[0] != 0) && s_present;
+    diag("  CDDA restore play=%d lba=%lu end=%lu mode=%d\n",
+         (int)s_cdda_play, (unsigned long)s_cdda_lba, (unsigned long)s_cdda_end, s_cdda_mode);
+}
+
 static void execute_command(void)
 {
     uint8_t op = s_cmd[0];
