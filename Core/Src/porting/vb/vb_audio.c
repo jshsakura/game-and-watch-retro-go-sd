@@ -61,7 +61,12 @@ void vb_audio_drain(int16_t *out, int len, int32_t factor)
      * than the DMA period (the device crackle). */
     for (int i = 0; i < len; i++) {
         int idx = (int)(((int64_t)i * gen) / len);
-        int32_t s = (int32_t)s_accum[idx * 2] + (int32_t)s_accum[idx * 2 + 1];
+        int nxt = (idx + 1 < gen) ? idx + 1 : idx;
+        /* 2-tap box average across the decimation step — the plain nearest pick
+         * aliased audibly (the ~2.3x downrate folded VSU harmonics into a harsh
+         * "crushed" tone); same cheap low-pass the PCE CD-DA decimator uses. */
+        int32_t s = ((int32_t)s_accum[idx * 2] + (int32_t)s_accum[idx * 2 + 1]
+                   + (int32_t)s_accum[nxt * 2] + (int32_t)s_accum[nxt * 2 + 1]) >> 1;
         out[i] = (int16_t)((s * factor) >> 9);
     }
     s_frames = 0;
