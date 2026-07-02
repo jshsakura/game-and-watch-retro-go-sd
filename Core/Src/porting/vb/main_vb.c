@@ -235,7 +235,17 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             (unsigned)V810_ROM1.size, (unsigned)vb_rom_mask, (unsigned)tVBOpt.CRC32);
     v810_reset();
     clearCache();
-    vb_diag("reset+clearCache done, PC=%08x\n", (unsigned)vb_state->v810_state.PC);
+    /* Bootstrap normally done by red-viper's 3DS GUI (vb_gui.c game_load) — without it
+     * the screen stays BLACK even though the game runs (proven on the linux/vb harness):
+     *  - RENDERMODE defaults to RM_TOGPU (3DS GPU); we render with the software VIP.
+     *  - tVIPREG.frametime starts 0 and is only re-set at the framebuffer flip; the
+     *    flip requires a COMPLETED draw, and draw-row progress divides by frametime —
+     *    with 0 the draw never completes, so tDisplayedFB never flips and the LCD
+     *    forever shows the untouched fb0. */
+    tVBOpt.RENDERMODE = RM_CPUONLY;
+    vb_state->tVIPREG.frametime = videoProcessingTime();
+    vb_diag("reset+clearCache done, PC=%08x ft=%d\n",
+            (unsigned)vb_state->v810_state.PC, vb_state->tVIPREG.frametime);
     /* video_soft_init() is 3DS-only (allocates C3D GPU textures); the device software
      * renderer (video_soft.cpp) composites straight into DISPLAY_RAM and needs no such
      * setup — update_texture_cache_soft() (called per frame in vb_blit) is enough. */
