@@ -223,12 +223,17 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * through at every boot) closes most of that gap. Applied ONLY for this app
      * and NOT persisted — leaving the emulator resets the system, which restores
      * the user's configured clock. Same OSPI1-hardware guard as the launcher. */
-    /* Level 1 (312MHz) suffices: frames land at ~24-28ms, comfortably inside the
-     * 29ms audio pacing — level 2 (353MHz) only buys anything if the pacing is
-     * later tightened toward real time. Prefer the milder clock. */
-    common_emu_auto_oc(1);
+    /* Level 2 (353MHz) — the interpreter is CPU-bound and level 1 still left frames
+     * feeling slow on device; this is the max the firmware/menu offers. NOT
+     * persisted (exit resets the clock). No-op on OSPI1 SD hardware (guarded). */
+    common_emu_auto_oc(2);
 
     odroid_system_init(APPID_VB, SAMPLE_RATE);
+    /* Report the ACTUAL core clock so the log proves whether the boost engaged
+     * (280 = stock/OSPI1-guarded, 312 = lvl1, ~353 = lvl2). */
+    { extern uint32_t HAL_RCC_GetSysClockFreq(void);
+      vb_diag("clock=%lu MHz (auto-OC lvl2 requested)\n",
+              (unsigned long)(HAL_RCC_GetSysClockFreq() / 1000000)); }
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
 
     /* getromdata() sets ram_start (heap past overlay BSS) — MUST precede the
