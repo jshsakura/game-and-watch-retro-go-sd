@@ -96,8 +96,10 @@ static const uint8_t RequiredCDBLen[16] = {
 /* ---- CD-DA (Red Book audio / BGM) ---- */
 static bool     s_cdda_play;            /* currently streaming audio */
 static uint32_t s_cdda_lba, s_cdda_end, s_cdda_start; /* current/end/start sector */
-#define PCE_CDDA_BATCH 8                /* sectors per SD read: one 18.8KB fread instead of
-                                           eight 2.3KB ones — FatFs per-call overhead was the
+#define PCE_CDDA_BATCH 4                /* sectors per SD read: one 9.4KB fread instead of
+                                           four 2.3KB ones (8 spiked ~5-8ms once per ~13 frames
+                                           = a periodic hitch; 4 halves the spike, keeps most
+                                           of the amortization) — FatFs per-call overhead was the
                                            'subtly slow with BGM on' drag on device */
 static uint8_t  s_cdda_sec[PCE_CD_SECTOR_RAW * PCE_CDDA_BATCH];
 static int      s_cdda_pos;             /* byte offset within the buffered data */

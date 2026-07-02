@@ -338,15 +338,20 @@ int interpreter_run(void) {
                  * are left untouched; any store disqualifies via vb_idle_wrote. */
                 if (disp < 0 && disp > -64) {
                     extern bool vb_idle_wrote, vb_idle_hwread;
-                    static WORD s_idle_pc;
+                    extern WORD vb_idle_raddr;
+                    static WORD s_idle_pc, s_idle_raddr;
                     static int  s_idle_spins;
-                    if (PC == s_idle_pc) {
+                    /* Same loop AND same polled address each spin: scan/checksum
+                     * loops (advancing reads, register-only) must not skip — they
+                     * would inflate emulated time and slow the GAME to a crawl. */
+                    if (PC == s_idle_pc && vb_idle_raddr == s_idle_raddr) {
                         if (vb_idle_hwread && !vb_idle_wrote && ++s_idle_spins >= 3) {
                             if ((SWORD)(target - cycles) > 0) cycles = target;
                             s_idle_spins = 0;
                         }
                     } else {
                         s_idle_pc = PC;
+                        s_idle_raddr = vb_idle_raddr;
                         s_idle_spins = 0;
                     }
                     vb_idle_wrote = false;
