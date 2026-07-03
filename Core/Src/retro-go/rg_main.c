@@ -1196,7 +1196,10 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
 
     bool resume_emulator = (file != NULL);
     if (resume_emulator) {
-        emulator_start(file, true, true, -1);
+        /* start_paused=false: power-on auto-resume used to come up PAUSED with
+         * no visible indication — it read as "the game loaded frozen". Resume
+         * straight into gameplay instead (same as the launcher's Resume item). */
+        emulator_start(file, true, false, -1);
     }
     else
     {
