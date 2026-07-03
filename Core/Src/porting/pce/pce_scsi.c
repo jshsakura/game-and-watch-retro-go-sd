@@ -95,6 +95,7 @@ static const uint8_t RequiredCDBLen[16] = {
 
 /* ---- CD-DA (Red Book audio / BGM) ---- */
 static bool     s_cdda_play;            /* currently streaming audio */
+static bool     s_cdda_paused;          /* PAUSE(0xDA)/seek state: position held, not streaming */
 static uint32_t s_cdda_lba, s_cdda_end, s_cdda_start; /* current/end/start sector */
 /* CD-DA is streamed through a small sector FIFO topped up a LITTLE every audio
  * frame, instead of a batch that read many sectors at once when it drained. The
@@ -145,7 +146,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
 #if PCECD_DIAG
     s_diag_lines = 0;   /* fresh run */
 #endif
-    diag("=== BUILD adpcm-end-irq-1 ===\n");
+    diag("=== BUILD subq-pause-2 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
 #ifndef LINUX_EMU
@@ -179,6 +180,7 @@ void pce_scsi_reset(void)
     s_port2 = s_port3 = 0;
     s_adpcm_ctrl = 0;
     s_cdda_play = false;
+    s_cdda_paused = false;
     pce_adpcm_reset();
     CPU_PCE.irq_lines &= ~INT_IRQ2;
 }
@@ -467,7 +469,7 @@ void pce_scsi_state_set(const pce_scsi_state_t *st)
 /* Savestate snapshot of the CD-DA stream (see pce_scsi.h). */
 void pce_scsi_cdda_get(uint32_t out[PCE_SCSI_CDDA_STATE_WORDS])
 {
-    out[0] = s_cdda_play ? 1u : 0u;
+    out[0] = (s_cdda_play ? 1u : 0u) | (s_cdda_paused ? 2u : 0u);
     out[1] = s_cdda_lba;
     out[2] = s_cdda_start;
     out[3] = s_cdda_end;
@@ -481,7 +483,8 @@ void pce_scsi_cdda_set(const uint32_t in[PCE_SCSI_CDDA_STATE_WORDS])
     s_cdda_end   = in[3];
     s_cdda_mode  = (int)in[4];
     s_cdda_pos = 0; s_cdda_have = 0;           /* force a fresh batch load */
-    s_cdda_play  = (in[0] != 0) && s_present;
+    s_cdda_play  = (in[0] & 1u) && s_present;
+    s_cdda_paused = (in[0] & 2u) != 0;
     diag("  CDDA restore play=%d lba=%lu end=%lu mode=%d\n",
          (int)s_cdda_play, (unsigned long)s_cdda_lba, (unsigned long)s_cdda_end, s_cdda_mode);
 }
@@ -525,6 +528,7 @@ static void execute_command(void)
         s_cdda_pos = 0; s_cdda_have = 0;           /* force a fresh batch load */
         s_cdda_mode  = 3;
         s_cdda_play  = (s_cmd[1] != 0);
+        s_cdda_paused = !s_cdda_play;    /* NEC: SAPSP w/o play = seek then PAUSE */
         diag("  CDDA SAPSP lba=%lu play=%d\n", (unsigned long)s_cdda_lba, s_cdda_play);
         send_status(STATUS_GOOD, 0);
         break;
@@ -532,11 +536,13 @@ static void execute_command(void)
         s_cdda_end  = cdda_decode_pos(s_cmd);
         s_cdda_mode = s_cmd[1];
         s_cdda_play = (s_cmd[1] != 0);
+        s_cdda_paused = !s_cdda_play;    /* mode 0 = stop-at-position -> PAUSED */
         s_cdda_pos = 0; s_cdda_have = 0;
         diag("  CDDA SAPEP end=%lu mode=%d\n", (unsigned long)s_cdda_end, s_cmd[1]);
         send_status(STATUS_GOOD, 0);
         break;
-    case 0xDA: /* PAUSE */
+    case 0xDA: /* PAUSE — hold position; SUBQ must report PAUSED(2), not stopped */
+        if (s_cdda_play) s_cdda_paused = true;
         s_cdda_play = false;
         send_status(STATUS_GOOD, 0);
         break;
@@ -549,7 +555,7 @@ static void execute_command(void)
         uint8_t q[10] = {0};
         uint32_t alloc = s_cmd[1] ? s_cmd[1] : 10; if (alloc > 10) alloc = 10;
         uint32_t lba = s_cdda_lba;
-        q[0] = s_cdda_play ? 0x00 : 0x03;
+        q[0] = s_cdda_play ? 0x00 : (s_cdda_paused ? 0x02 : 0x03);
         int ti = (s_present && s_toc) ? pce_cd_track_at_lba(s_toc, lba) : -1;
         if (ti >= 0) {
             const pce_cd_track_t *t = &s_toc->tracks[ti];

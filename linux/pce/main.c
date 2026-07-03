@@ -1060,12 +1060,23 @@ int main(int argc, char *argv[])
          * RAM at 1105, load at 1110 — the checksum must return to the saved one. */
         if (g_cue_path && max_frames >= 1115) {
             static uint32_t sum_pre = 0;
-            if (frame == 5000) {
-                host_SaveState("save_pce2.bin");
-                printf("[host] SAVE2 @5000 (in-game)\n");
-            } else if (frame == 5010) {
+            /* COLD-RESUME repro (device flow): fresh boot, then load a PREVIOUS
+             * session's in-game save early — exactly what 'Resume game' does. */
+            static int cold_done = 0;
+            if (!cold_done && frame == 700 && getenv("PCE_COLD_RESUME")) {
+                cold_done = 1;
+                printf("[host] COLD-RESUME load @700\n");
                 host_LoadState("save_pce2.bin");
-                printf("[host] LOAD2 @5010 (in-game)\n");
+            }
+            static int save2_f = 0;
+            if (getenv("PCE_COLD_RESUME")) save2_f = -1;   /* skip in-session tests */
+            if (save2_f == 0 && frame >= 5000 && pce_adpcm_playing()) {
+                save2_f = frame;
+                host_SaveState("save_pce2.bin");
+                printf("[host] SAVE2 @%d (in-game, ADPCM PLAYING)\n", frame);
+            } else if (save2_f && frame == save2_f + 10) {
+                host_LoadState("save_pce2.bin");
+                printf("[host] LOAD2 @%d (in-game)\n", frame);
             } else if (frame == 1100) {
                 for (int v = 0x68; v <= 0x87; v++)
                     for (int k = 0; k < 0x2000; k++) sum_pre += PCE.MemoryMapR[v][k];
