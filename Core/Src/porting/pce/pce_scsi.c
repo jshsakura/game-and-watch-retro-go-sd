@@ -151,7 +151,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
 #if PCECD_DIAG
     s_diag_lines = 0;   /* fresh run */
 #endif
-    diag("=== BUILD resume-norun-1 ===\n");
+    diag("=== BUILD brkguard-1 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
 #ifndef LINUX_EMU
@@ -236,11 +236,16 @@ static int din_get(void)
 }
 
 /* Present the next data-in byte (assert REQ), or finish the transfer. */
+static uint32_t s_read_served;   /* bytes actually handed to the game this READ */
 static void feed_din(void)
 {
     int b = din_get();
-    if (b < 0) { s_reading = false; send_status(STATUS_GOOD, 0); }
-    else       { s_db = (uint8_t)b; s_req = 1; }
+    if (b < 0) {
+        s_reading = false;
+        diag("  READ served %lu B\n", (unsigned long)s_read_served);
+        send_status(STATUS_GOOD, 0);
+    }
+    else       { s_db = (uint8_t)b; s_req = 1; s_read_served++; }
 }
 
 /* ADPCM ($180A-$180D). The System Card loads ADPCM (voice) data straight from CD
@@ -518,6 +523,7 @@ static void execute_command(void)
         uint32_t cnt = s_cmd[4] ? s_cmd[4] : 1;
         s_read_lba = lba; s_read_remain = cnt; s_reading = true; s_bulk = true;
         s_din_pos = s_din_len = 0;
+        s_read_served = 0;
         s_trace = 0;   /* trace the System Card's register pattern for this READ */
         diag("  READ lba=%lu cnt=%lu\n", (unsigned long)lba, (unsigned long)cnt);
         change_phase(PH_DATAIN);
@@ -707,7 +713,11 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
         }
         break;
     case 0x04: /* reset */
-        if (val & 0x02) pce_scsi_reset();
+        if (val & 0x02) {
+            diag("  SCSI RST pulse ($1804=%02x) pc=%04x cdda_play=%d lba=%lu\n",
+                 val, CPU_PCE.PC, (int)s_cdda_play, (unsigned long)s_cdda_lba);
+            pce_scsi_reset();
+        }
         break;
     default:
         break;
