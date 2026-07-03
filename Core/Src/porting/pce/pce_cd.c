@@ -148,26 +148,35 @@ static bool read_sector_slot(int slot, const pce_cd_toc_t *toc, uint32_t lba, ui
     uint32_t sec_in_track = lba - t->start_lba;
     long offset = (long)t->file_offset + (long)sec_in_track * (long)t->sector_size;
 
-    if (!s_bin_f[slot] || strcmp(s_bin_path[slot], t->bin_path) != 0) {
-        if (s_bin_f[slot]) fclose(s_bin_f[slot]);
-        s_bin_f[slot] = fopen(t->bin_path, "rb");
-        if (!s_bin_f[slot]) { s_bin_path[slot][0] = 0; return false; }
-        strncpy(s_bin_path[slot], t->bin_path, sizeof(s_bin_path[slot]) - 1);
-        s_bin_path[slot][sizeof(s_bin_path[slot]) - 1] = 0;
+    /* Two attempts: the persistent handle goes STALE when the device sleeps
+     * (SD powered down/remounted) — every read then fails forever because the
+     * path never changes, so the reopen branch never triggered. On any failure,
+     * drop the handle and reopen once ("wake after sleep froze PCE-CD"). */
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (!s_bin_f[slot] || strcmp(s_bin_path[slot], t->bin_path) != 0) {
+            if (s_bin_f[slot]) fclose(s_bin_f[slot]);
+            s_bin_f[slot] = fopen(t->bin_path, "rb");
+            if (!s_bin_f[slot]) { s_bin_path[slot][0] = 0; continue; }
+            strncpy(s_bin_path[slot], t->bin_path, sizeof(s_bin_path[slot]) - 1);
+            s_bin_path[slot][sizeof(s_bin_path[slot]) - 1] = 0;
+        }
+        FILE *f = s_bin_f[slot];
+        if (fseek(f, offset, SEEK_SET) == 0) {
+            if (t->sector_size == PCE_CD_SECTOR_RAW) {
+                if (fread(buf, 1, PCE_CD_SECTOR_RAW, f) == PCE_CD_SECTOR_RAW) return true;
+            } else {
+                /* 2048-byte user data: place it where a MODE1 sector keeps user
+                 * bytes (offset 16) and zero the sync/header/ECC frame around it. */
+                memset(buf, 0, PCE_CD_SECTOR_RAW);
+                if (fread(buf + 16, 1, 2048, f) == 2048) return true;
+            }
+        }
+        /* stale/broken handle: force a fresh fopen on the retry */
+        fclose(s_bin_f[slot]);
+        s_bin_f[slot] = NULL;
+        s_bin_path[slot][0] = 0;
     }
-    FILE *f = s_bin_f[slot];
-    if (fseek(f, offset, SEEK_SET) != 0) return false;
-
-    bool ok;
-    if (t->sector_size == PCE_CD_SECTOR_RAW) {
-        ok = (fread(buf, 1, PCE_CD_SECTOR_RAW, f) == PCE_CD_SECTOR_RAW);
-    } else {
-        /* 2048-byte user data: place it where a MODE1 sector keeps user bytes
-         * (offset 16) and zero the sync/header/ECC frame around it. */
-        memset(buf, 0, PCE_CD_SECTOR_RAW);
-        ok = (fread(buf + 16, 1, 2048, f) == 2048);
-    }
-    return ok;
+    return false;
 }
 
 /* SCSI data path (slot 0). */
@@ -201,14 +210,22 @@ int pce_cd_read_sectors_audio(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *bu
 
     uint32_t sec_in_track = lba - t->start_lba;
     long offset = (long)t->file_offset + (long)sec_in_track * PCE_CD_SECTOR_RAW;
-    if (!s_bin_f[1] || strcmp(s_bin_path[1], t->bin_path) != 0) {
-        if (s_bin_f[1]) fclose(s_bin_f[1]);
-        s_bin_f[1] = fopen(t->bin_path, "rb");
-        if (!s_bin_f[1]) { s_bin_path[1][0] = 0; return 0; }
-        strncpy(s_bin_path[1], t->bin_path, sizeof(s_bin_path[1]) - 1);
-        s_bin_path[1][sizeof(s_bin_path[1]) - 1] = 0;
+    /* Same stale-handle self-heal as read_sector_slot (sleep/wake). */
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (!s_bin_f[1] || strcmp(s_bin_path[1], t->bin_path) != 0) {
+            if (s_bin_f[1]) fclose(s_bin_f[1]);
+            s_bin_f[1] = fopen(t->bin_path, "rb");
+            if (!s_bin_f[1]) { s_bin_path[1][0] = 0; continue; }
+            strncpy(s_bin_path[1], t->bin_path, sizeof(s_bin_path[1]) - 1);
+            s_bin_path[1][sizeof(s_bin_path[1]) - 1] = 0;
+        }
+        if (fseek(s_bin_f[1], offset, SEEK_SET) == 0) {
+            size_t got = fread(buf, PCE_CD_SECTOR_RAW, n, s_bin_f[1]);
+            if (got > 0) return (int)got;
+        }
+        fclose(s_bin_f[1]);
+        s_bin_f[1] = NULL;
+        s_bin_path[1][0] = 0;
     }
-    if (fseek(s_bin_f[1], offset, SEEK_SET) != 0) return 0;
-    size_t got = fread(buf, PCE_CD_SECTOR_RAW, n, s_bin_f[1]);
-    return (int)got;
+    return 0;
 }
