@@ -196,8 +196,13 @@ static void vb_blit(void)
 
 /* ---- on-SD device trace (/vb_diag.txt): the last line written = where it died.
  * Delete before a clean test; capped so it can't fill the card. ---- */
+#define VB_DIAG 0   /* RELEASE: off — this logged EVERY FRAME to SD. 1 = debug. */
 static void vb_diag(const char *fmt, ...)
 {
+#if !VB_DIAG
+    (void)fmt;
+    return;
+#endif
     static int lines;
     if (lines > 400) return;
     lines++;

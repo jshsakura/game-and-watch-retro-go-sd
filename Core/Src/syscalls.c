@@ -117,7 +117,9 @@ int sd_path_probe(const char *path) {
 
 /* TRUNCATE the log and write the first (boot/build marker) line, so every app
  * launch starts a FRESH file — no more stale lines from old builds confusing us. */
+#define DEVICE_DIAG_LOGS 0   /* RELEASE: off — /device_diag.txt writers. 1 = debug. */
 void sd_save_log_boot(const char *line) {
+    if (!DEVICE_DIAG_LOGS) return;
     if (line == NULL) return;
     FIL f;
     if (f_open(&f, "/device_diag.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
@@ -132,6 +134,7 @@ void sd_save_log_boot(const char *line) {
 }
 
 void sd_save_log(const char *line) {
+    if (!DEVICE_DIAG_LOGS) return;
     if (line == NULL) return;
     FIL f;
     if (f_open(&f, "/device_diag.txt", FA_WRITE | FA_OPEN_APPEND) != FR_OK &&

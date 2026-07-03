@@ -179,8 +179,13 @@ static void videopac_input_update(odroid_gamepad_state_t *joystick)
  * failure can be read off the card in one device run (faster than the on-screen
  * counters). frame==0 truncates + dumps the static state; later calls append a
  * per-frame R/K/Y line + key[49] read-back + what the BIOS digit-row scan sees. */
+#define VIDEOPAC_DIAG 0   /* RELEASE: off. 1 = debug. */
 static void videopac_diag_log(unsigned long frame)
 {
+#if !VIDEOPAC_DIAG
+    (void)frame;
+    return;
+#endif
 #ifndef LINUX_EMU
     (void)frame;   /* Odyssey² confirmed working — drop the on-device per-frame SD log. */
     return;
