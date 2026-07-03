@@ -228,6 +228,11 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
     static int8_t last_key = -1;
     static bool pause_pressed = false;
     static bool macro_activated = false;
+    /* Pause that originates from start_paused/pause_after_frames (power-on
+     * resume): show the PAUSE BANNER instead of dropping straight into the
+     * settings menu / a silent freeze — otherwise the resumed game reads as
+     * "loaded frozen" (PCE-CD user report). Any key resumes; PAUSE opens menu. */
+    static bool resume_pause_banner = false;
 
     void _repaint() {
         repaint_overlay(repaint);
@@ -418,7 +423,8 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
         // PAUSE/SET has been released without performing any macro. Launch menu
         pause_pressed = false;
 
-        open_pause_menu(game_options, _repaint, false, 0);
+        open_pause_menu(game_options, _repaint, resume_pause_banner, 0);
+        resume_pause_banner = false;
     }
     else if (!joystick->values[ODROID_INPUT_VOLUME]){
         pause_pressed = false;
@@ -454,6 +460,7 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
         (common_emu_state.pause_after_frames)--;
         if (common_emu_state.pause_after_frames == 0) {
             pause_pressed = true;
+            resume_pause_banner = true;   /* visible PAUSE banner, not a bare menu */
         }
     }
 }
