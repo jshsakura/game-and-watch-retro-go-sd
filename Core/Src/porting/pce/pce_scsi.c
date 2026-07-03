@@ -19,6 +19,7 @@
  * the device firmware links (g_pcecd_trace stays 0 → the hook is a no-op); the
  * PC host harness defines strong versions in main.c that override these. */
 __attribute__((weak)) int  g_pcecd_trace = 0;
+__attribute__((weak)) int  g_pce_kill_timer = 0;
 __attribute__((weak)) void pce_scsi_pc_tick(uint16_t pc) { (void)pc; }
 
 /* ---- diagnostics: append the command stream to pcecd_diag.txt. HOST ONLY: on-device the
@@ -98,6 +99,8 @@ static const uint8_t RequiredCDBLen[16] = {
 /* ---- CD-DA (Red Book audio / BGM) ---- */
 static bool     s_cdda_play;            /* currently streaming audio */
 static bool     s_cdda_paused;          /* PAUSE(0xDA)/seek state: position held, not streaming */
+static uint32_t s_head_lba;             /* laser head: last DATA sector read (SUBQ reports it
+                                           when CD-DA is not playing — real drives do) */
 static uint32_t s_cdda_lba, s_cdda_end, s_cdda_start; /* current/end/start sector */
 /* CD-DA is streamed through a small sector FIFO topped up a LITTLE every audio
  * frame, instead of a batch that read many sectors at once when it drained. The
@@ -218,6 +221,7 @@ static bool load_sector(void)
     if (!pce_cd_read_sector(s_toc, s_read_lba, raw)) return false;
     memcpy(s_din, raw + 16, 2048);
     s_din_pos = 0; s_din_len = 2048;
+    s_head_lba = s_read_lba;
     s_read_lba++; s_read_remain--;
     return true;
 }
@@ -556,7 +560,10 @@ static void execute_command(void)
         * [3]=index, [4-6]=MSF relative BCD, [7-9]=MSF absolute BCD. */
         uint8_t q[10] = {0};
         uint32_t alloc = s_cmd[1] ? s_cmd[1] : 10; if (alloc > 10) alloc = 10;
-        uint32_t lba = s_cdda_lba;
+        /* Position: the CD-DA stream while playing/paused, else the laser head
+         * at the last data sector read — a real drive's SUBQ never says lba 0
+         * after it just streamed the IPL (Dynastic checks this). */
+        uint32_t lba = (s_cdda_play || s_cdda_paused) ? s_cdda_lba : s_head_lba;
         q[0] = s_cdda_play ? 0x00 : (s_cdda_paused ? 0x02 : 0x03);
         int ti = (s_present && s_toc) ? pce_cd_track_at_lba(s_toc, lba) : -1;
         if (ti >= 0) {
