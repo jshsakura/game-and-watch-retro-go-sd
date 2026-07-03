@@ -540,9 +540,33 @@ static void execute_command(void)
         s_cdda_play = false;
         send_status(STATUS_GOOD, 0);
         break;
-    case 0xDD: /* READ SUBCHANNEL Q — minimal ack */
-        send_status(STATUS_GOOD, 0);
+    case 0xDD: { /* READ SUBCHANNEL Q — audio status + position (Mednafen layout).
+        * The 10-byte payload matters: after a state load, games (Cotton) issue
+        * SUBQ to resync their music engine to the CD position; the old
+        * status-only ack handed back nothing and the music driver never
+        * restarted. Layout: [0]=audio status 0/2/3, [1]=ctl/adr, [2]=track BCD,
+        * [3]=index, [4-6]=MSF relative BCD, [7-9]=MSF absolute BCD. */
+        uint8_t q[10] = {0};
+        uint32_t alloc = s_cmd[1] ? s_cmd[1] : 10; if (alloc > 10) alloc = 10;
+        uint32_t lba = s_cdda_lba;
+        q[0] = s_cdda_play ? 0x00 : 0x03;
+        int ti = (s_present && s_toc) ? pce_cd_track_at_lba(s_toc, lba) : -1;
+        if (ti >= 0) {
+            const pce_cd_track_t *t = &s_toc->tracks[ti];
+            uint32_t rel = lba - t->start_lba;
+            uint32_t abs = lba + 150;
+            #define TO_BCD(v) ((uint8_t)((((v) / 10) << 4) | ((v) % 10)))
+            q[1] = t->type ? 0x41 : 0x01;                 /* ctl/adr: data vs audio */
+            q[2] = TO_BCD(t->number);
+            q[3] = 0x01;
+            q[4] = TO_BCD(rel / 4500); q[5] = TO_BCD((rel % 4500) / 75); q[6] = TO_BCD(rel % 75);
+            q[7] = TO_BCD(abs / 4500); q[8] = TO_BCD((abs % 4500) / 75); q[9] = TO_BCD(abs % 75);
+            #undef TO_BCD
+        }
+        diag("  SUBQ st=%02x trk=%02x lba=%lu\n", q[0], q[2], (unsigned long)lba);
+        do_data_in(q, alloc);
         break;
+    }
     default:
         send_status(STATUS_GOOD, 0);
         break;
