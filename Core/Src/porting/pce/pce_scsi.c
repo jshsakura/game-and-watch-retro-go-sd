@@ -151,7 +151,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
 #if PCECD_DIAG
     s_diag_lines = 0;   /* fresh run */
 #endif
-    diag("=== BUILD subq-pause-2 ===\n");
+    diag("=== BUILD resume-norun-1 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
 #ifndef LINUX_EMU

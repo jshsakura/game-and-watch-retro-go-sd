@@ -260,6 +260,13 @@ static bool SaveState(const char *savePathName) {
     return true;
 }
 
+/* CD autostart = RUN injection for the "PUSH RUN BUTTON" boot screen. It must
+ * NOT fire into a restored game: to a running game RUN is its own PAUSE, so a
+ * power-on resume "froze" exactly 1s in (frame 60 = injection start) — the game
+ * sat in its pause loop (SUBQ+DA issued, music held) looking dead. Set on any
+ * successful state load; a failed/CRC-mismatched load keeps the boot injection. */
+static bool s_cd_state_loaded;
+
 static bool LoadState(const char *savePathName) {
     /* Streams the state straight from the file into the live structures —
      * NEVER through save_buffer, which is CD RAM bank backing (0x81-0x87 on
@@ -325,6 +332,7 @@ static bool LoadState(const char *savePathName) {
     }
     gfx_reset(true);
     osd_gfx_set_mode(IO_VDC_SCREEN_WIDTH, IO_VDC_SCREEN_HEIGHT);
+    s_cd_state_loaded = true;   /* suppress the boot RUN injection (see decl) */
     return true;
 }
 
@@ -896,8 +904,10 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         /* PCE-CD: auto-press START (RUN) at the "CD-ROM SYSTEM" screen so the
          * disc boots without the user pressing it. Injected after the emu input
          * loop (so it can't trip the emulator menu) and only for a window early
-         * after launch, then released. */
-        if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+         * after launch, then released. NEVER after a state load: a restored game
+         * is past the boot screen, and RUN pauses it (the "resume freezes after
+         * 1 second" bug — host-verified at the device log's exact lba 13811). */
+        if (!s_cd_state_loaded && strcmp(ACTIVE_FILE->ext, "cue") == 0) {
             static int s_autostart = 0;
             if (s_autostart <= 150) {
                 s_autostart++;
