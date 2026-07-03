@@ -1196,7 +1196,11 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
 
     bool resume_emulator = (file != NULL);
     if (resume_emulator) {
-        emulator_start(file, true, true, -1);
+        /* start_paused=false (FINAL, user decision after trying the banner UX):
+         * the pause adds nothing — resume straight into gameplay, same as the
+         * launcher's own Resume item. The pause-banner path in common.c stays
+         * dormant should anyone want it back (flip this to true). */
+        emulator_start(file, true, false, -1);
     }
     else
     {
