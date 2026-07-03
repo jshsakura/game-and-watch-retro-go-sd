@@ -122,6 +122,7 @@ void pce_adpcm_dma_byte(uint8_t val)
 }
 
 bool pce_adpcm_playing(void) { return s_playing; }
+bool pce_adpcm_end_flag(void) { return s_end; }
 
 /* Savestate: the engine registers + RAM must round-trip, or a loaded state's
  * game-side audio sequencer (restored from game RAM) points at segment

@@ -112,9 +112,21 @@ static int      s_cdda_mode;            /* SAPEP play mode: 1=loop, 3=normal */
 static int      s_trace;            /* trace register accesses during a bulk READ */
 static int      s_atrace;           /* trace ADPCM/idle-loop polls ($180A-F, $1803) */
 
+/* $1803 bit 0x08 = ADPCM sample END — a LEVEL flag mirrored straight from the
+ * ADPCM engine (cleared when a new play latches length, engine side). Games
+ * enable it via $1802 bit3 and SLEEP until the end IRQ to queue the next music
+ * segment; without this wire a state-load that resumed mid-segment froze ~2s
+ * later, exactly when the restored segment ran out (Cotton). */
+#define IRQ_ADPCM_END 0x08
+
+static uint8_t effective_port3(void)
+{
+    return (uint8_t)(s_port3 | (pce_adpcm_end_flag() ? IRQ_ADPCM_END : 0));
+}
+
 static void update_irq(void)
 {
-    if (s_port2 & s_port3 & IRQ_MASK)
+    if (s_port2 & effective_port3() & IRQ_MASK)
         CPU_PCE.irq_lines |= INT_IRQ2;
     else
         CPU_PCE.irq_lines &= ~INT_IRQ2;
@@ -580,7 +592,7 @@ uint8_t pce_scsi_read(uint8_t reg)
          * IPL read — the device "PUSH RUN BUTTON -> read 3596/3598 -> back to PUSH RUN"
          * loop. Return it once (satisfies wait-for-set), then clear (satisfies wait-for-
          * clear). Only in BUSFREE, so an in-flight transfer's DATA_READY is untouched. */
-        uint8_t v = s_port3;
+        uint8_t v = effective_port3();   /* incl. live ADPCM-end bit 0x08 */
         if (s_phase == PH_BUSFREE && (s_port3 & IRQ_DATA_DONE)) {
             s_port3 &= ~IRQ_DATA_DONE;
             update_irq();
@@ -657,5 +669,6 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
     }
 }
 
-/* Per-frame hook from the main loop: pump any active SCSI->ADPCM DMA. */
-void pce_scsi_run(void) { adpcm_dma_pump(); }
+/* Per-frame hook from the main loop: pump any active SCSI->ADPCM DMA, and
+ * refresh the IRQ2 level (the ADPCM-end bit can rise between register writes). */
+void pce_scsi_run(void) { adpcm_dma_pump(); update_irq(); }
