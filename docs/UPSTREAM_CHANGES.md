@@ -45,6 +45,25 @@ confirm before re-submitting.)*
   I/O to the SCSI target, Super System Card signature at `$18C0-$18C7`, and
   **CD backup RAM (BRAM)** at bank `$F7`. Adds: boot/data, CD-DA (Red Book BGM),
   ADPCM voice, BRAM saves (`/data/pcecd.bram`), resume-safe audio.
+  **2026-07-03 hardening pass (17 commits, all device-verified except noted):**
+  44.1kHz bit-perfect CD-DA passthrough (decimator deleted); scoped auto-OC lvl2
+  (353MHz, cue-only, `clock=` proof line); savestate completeness — tagged
+  blocks `ADPC` (ADPCM engine + 64KB RAM), `SCSX` (full SCSI engine incl.
+  in-flight READ), CD-DA `paused` bit; save/load streams straight to file
+  (the old staging buffer doubled as CD-RAM bank backing and destroyed banks
+  0x81-87 on every save); real `SUBQ` (0xDD) 10-byte response + PAUSED status +
+  data-head position; ADPCM sample-END wired into `$1803`/IRQ2; chunked
+  SCSI→ADPCM DMA (≤8KB/frame, was a 30-55ms single-frame stall); batched
+  CD-DA topup; stale .bin-handle self-heal (sleep/wake power-cycles the SD and
+  froze all reads). Host harness gained cold-resume mode (`PCE_COLD_RESUME=1`)
+  and an in-gameplay save/load self-test.
+  **Shared-infrastructure fix found via PCE-CD but affecting every emulator:**
+  `common.c` frame pacer integrator was unbounded — one long stall (CD load)
+  banked 30s+ of "behind", blanking the screen while the game ran; now clamped
+  to ±2.5 frames with a forced draw every 4th skipped frame, plus the int16
+  elapsed overflow fix. Known-open: Dynastic Hero New-game entry (SCD; loader
+  parameter bank arrives/becomes empty → runaway copy; investigation notes in
+  session memory).
 - **Videopac → Odyssey²** device-load fixes (`porting/videopac`, o2em-go fork).
 
 ## 3. Shared firmware infrastructure (the review-sensitive bits)
