@@ -126,10 +126,16 @@ static uint8_t effective_port3(void)
 
 static void update_irq(void)
 {
-    if (s_port2 & effective_port3() & IRQ_MASK)
+    uint8_t ep3 = effective_port3();
+    if (s_port2 & ep3 & IRQ_MASK) {
+        /* One-shot breadcrumbs: prove on-device that the ADPCM-END wire exists
+         * and the IRQ2 line actually rises after a state load. */
+        { static bool logged_end; if (!logged_end && (s_port2 & ep3 & IRQ_ADPCM_END)) {
+            logged_end = true; diag("  ADPCM END IRQ asserted\n"); } }
         CPU_PCE.irq_lines |= INT_IRQ2;
-    else
+    } else {
         CPU_PCE.irq_lines &= ~INT_IRQ2;
+    }
 }
 
 void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
@@ -139,7 +145,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
 #if PCECD_DIAG
     s_diag_lines = 0;   /* fresh run */
 #endif
-    diag("=== BUILD scd-frameskip-fix ===\n");
+    diag("=== BUILD adpcm-end-irq-1 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
 #ifndef LINUX_EMU
