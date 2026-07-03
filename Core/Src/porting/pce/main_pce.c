@@ -236,6 +236,14 @@ static bool SaveState(const char *savePathName) {
         pce_adpcm_get(adpc + 1);
         fwrite(adpc, sizeof(adpc), 1, file);
         fwrite(pce_adpcm_ram(), 1, 0x10000, file);
+        /* Full SCSI engine (in-flight transfer!): games like Cotton save DURING
+         * a CD read — without this block a load leaves them polling $1802/$1803
+         * forever for a reply the old reset threw away. */
+        uint32_t scsx = 0x58534353u; /* 'SCSX' */
+        static pce_scsi_state_t sst;
+        pce_scsi_state_get(&sst);
+        fwrite(&scsx, sizeof(scsx), 1, file);
+        fwrite(&sst, sizeof(sst), 1, file);
     }
     fclose(file);
     /* Persist BRAM to its OWN file (system-wide cabinet, not part of the per-game
@@ -300,6 +308,14 @@ static bool LoadState(const char *savePathName) {
             pce_adpcm_set(adpc + 1);
         } else {
             pce_adpcm_reset();
+        }
+        /* SCSI engine block: restores an in-flight transfer over the reset above
+         * (old saves without it keep the reset-to-idle behaviour). */
+        uint32_t scsx = 0;
+        static pce_scsi_state_t sst;
+        if (fread(&scsx, sizeof(scsx), 1, file) == 1 && scsx == 0x58534353u &&
+            fread(&sst, sizeof(sst), 1, file) == 1) {
+            pce_scsi_state_set(&sst);
         }
     }
     fclose(file);

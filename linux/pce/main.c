@@ -28,6 +28,9 @@ static const char *g_cue_path = NULL;
  * once interrupts are live — no Heisenbug (host timing is cycle-deterministic). */
 static void dump_mem(uint16_t start, int len);   /* fwd */
 int g_pcecd_trace = 0;
+unsigned long g_tick_count = 0;
+int g_frame_now = 0;
+uint16_t g_ring[256]; int g_ridx = 0;
 void pce_scsi_pc_tick(uint16_t pc)
 {
     static int n = 0;          /* distinct (run-length-compressed) entries written */
@@ -40,14 +43,28 @@ void pce_scsi_pc_tick(uint16_t pc)
      * first lands on the REAL game exec entry (from the disc IPL: load=$6000,
      * exec=$6000), then trace the full game init from there. */
     #define GAME_EXEC 0x6000
-    if (!started) { if (pc != GAME_EXEC) return; started = 1; }
+    { extern unsigned long g_tick_count; g_tick_count++; }   /* liveness counter */
+    { static int lr = 0;
+      if ((int)PCE.Timer.running != lr) {
+          printf("[tick] Timer.running %d->%d at pc=%04x (reload=%d) code:",
+                 lr, (int)PCE.Timer.running, pc, (int)PCE.Timer.reload);
+          { extern uint8_t *PageR[8];
+            for (int k = -8; k < 8; k++)
+                printf(" %02x", PageR[((uint16_t)(pc+k)) >> 13][(uint16_t)(pc + k)]);
+            printf(" MMR6=%02x\n", PCE.MMR[6]); }
+          fflush(stdout);
+          lr = (int)PCE.Timer.running;
+      } }
+    if (!started) { started = 1; }   /* arm immediately: entry differs per game */
 
     /* Ring buffer of the last 256 PCs. When the game FIRST reaches its hang loop
      * ($6257 = JMP self), dump the ring so we see EXACTLY the path (and the
      * conditional branch) that diverted into the halt — the decisive evidence. */
     #define RING 256
-    static uint16_t ring[RING];
-    static int ridx = 0, ring_done = 0;
+    extern uint16_t g_ring[]; extern int g_ridx;   /* file-scope: main loop dumps at f14000 */
+    #define ring g_ring
+    #define ridx g_ridx
+    static int ring_done = 0;
     ring[ridx++ % RING] = pc;
     if (!ring_done && pc == 0x6257 && ridx > 1) {
         ring_done = 1;
@@ -89,6 +106,22 @@ void pce_scsi_pc_tick(uint16_t pc)
         gr[s].pc = pc; gr[s].o = PageR[pc >> 13][pc];
         gr[s].a = CPU_PCE.A; gr[s].x = CPU_PCE.X; gr[s].y = CPU_PCE.Y; gr[s].p = CPU_PCE.P;
         gi++;
+    }
+    static int dumped_4dff = 0;
+    if (!dumped_4dff && pc == 0x4dff) {
+        dumped_4dff = 1;
+        { extern int g_frame_now; printf("[host] first $4dff at frame %d\n", g_frame_now); }
+        printf("[host] ===== GAME-SPACE OPCODE RING before first $4dff =====\n");
+        int n2 = gi < GREC ? gi : GREC;
+        int st2 = gi < GREC ? 0 : (gi % GREC);
+        for (int k = 0; k < n2; k++) {
+            int i = (st2 + k) % GREC;
+            printf("%04x:%02x[A%02x X%02x Y%02x P%02x] ", gr[i].pc, gr[i].o,
+                   gr[i].a, gr[i].x, gr[i].y, gr[i].p);
+            if ((k % 5) == 4) printf("\n");
+        }
+        printf("\n[host] ===== END OPCODE RING =====\n");
+        fflush(stdout);
     }
     /* Targeted trace of the decisive BIOS call JSR $E0DE @ $6050 — whose returned
      * Carry decides hang ($6219) vs continue ($6058). Arm when we first reach the
@@ -387,6 +420,7 @@ static bool host_LoadState(const char *savePathName)
 		if (fread(cdda, sizeof(cdda), 1, fp) == 1 && cdda[0] == 0x41444443u)
 			pce_scsi_cdda_set(cdda + 1);
 		/* ADPCM engine + 64KB RAM block (mirrors device LoadState). */
+#ifdef PCE_ADPCM_STATE_WORDS
 		uint32_t adpc[1 + PCE_ADPCM_STATE_WORDS];
 		if (fread(adpc, sizeof(adpc), 1, fp) == 1 && adpc[0] == 0x43504441u) {
 			fread(pce_adpcm_ram(), 1, 0x10000, fp);
@@ -394,6 +428,11 @@ static bool host_LoadState(const char *savePathName)
 		} else {
 			pce_adpcm_reset();
 		}
+		{ uint32_t scsx = 0; static pce_scsi_state_t sst;
+		  if (fread(&scsx, sizeof(scsx), 1, fp) == 1 && scsx == 0x58534353u &&
+		      fread(&sst, sizeof(sst), 1, fp) == 1)
+		      pce_scsi_state_set(&sst); }
+#endif
 	}
 
 	for(int i = 0; i < 8; i++)
@@ -442,10 +481,17 @@ static bool host_SaveState(const char *savePathName)
 		pce_scsi_cdda_get(cdda + 1);
 		fwrite(cdda, sizeof(cdda), 1, fp);
 		/* ADPCM engine + 64KB RAM block (mirrors device SaveState). */
+#ifdef PCE_ADPCM_STATE_WORDS
 		uint32_t adpc[1 + PCE_ADPCM_STATE_WORDS] = { 0x43504441u /* 'ADPC' */ };
 		pce_adpcm_get(adpc + 1);
 		fwrite(adpc, sizeof(adpc), 1, fp);
 		fwrite(pce_adpcm_ram(), 1, 0x10000, fp);
+		/* Full SCSI engine (in-flight transfer) — mirrors device SaveState. */
+		{ uint32_t scsx = 0x58534353u; static pce_scsi_state_t sst;
+		  pce_scsi_state_get(&sst);
+		  fwrite(&scsx, sizeof(scsx), 1, fp);
+		  fwrite(&sst, sizeof(sst), 1, fp); }
+#endif
 	}
 
 	fclose(fp);
@@ -815,9 +861,17 @@ void osd_log(int type, const char *format, ...) {
  * registered a vsync/IRQ handler pointing at its own code (0x6xxx/0x8xxx). */
 static void dump_mem(uint16_t start, int len)
 {
-    for (int a = start; a < start + len; a += 16) {
-        printf("[host] $%04x:", a);
-        for (int j = 0; j < 16; j++) printf(" %02x", pce_read8((uint16_t)(a + j)));
+    {
+        extern uint8_t *PageR[8];
+        printf("[host] dump_mem sees PageR[2]=%p first-byte@0x4de0=%02x\n",
+               (void *)PageR[2], pce_read8((uint16_t)0x4de0));
+    }
+    /* NB: loop var must NOT be named 'a' — pce_read8 is a statement-expr macro
+     * whose internal 'uint16_t a = (addr)' CAPTURES an outer 'a' in the addr
+     * expression (it read garbage addresses for weeks). */
+    for (int base = start; base < start + len; base += 16) {
+        printf("[host] $%04x:", base);
+        for (int j = 0; j < 16; j++) printf(" %02x", pce_read8((uint16_t)(base + j)));
         printf("\n");
     }
 }
@@ -871,11 +925,89 @@ int main(int argc, char *argv[])
         /* Headless: auto-press START (RUN) over frames 60-120 to boot the disc
          * from the "CD-ROM SYSTEM" screen (no human to press it). */
         joystick.values[ODROID_INPUT_START] = ((frame % 200) >= 60 && (frame % 200) < 90) ? 1 : 0;
+        /* Also mash A (I button) in a separate window so menus whose confirm is
+         * I — e.g. Dynastic Hero's DYNA save-select — get past "New game". */
+        joystick.values[ODROID_INPUT_A] = ((frame % 200) >= 140 && (frame % 200) < 170) ? 1 : 0;
         pce_input_read(&joystick);
 
         /* Same per-frame hook the device main loop calls: pumps the chunked
          * SCSI->ADPCM DMA (<=8KB/frame) so ADPCM loads complete. */
         pce_scsi_run();
+
+        /* EXPERIMENT: force the timer off before the New-game copy window —
+         * if the game then reaches in-game, root cause confirmed. */
+        { extern int g_frame_now; g_frame_now = frame; }
+        /* (timer suppression experiment removed — timer exonerated) */
+
+        /* Watchpoint: catch the exact frame Timer.running flips (no IO write
+         * ever sets it per the [io] log -> struct corruption suspect). */
+        {
+            static int last_run = -1, last_reload = -1;
+            if ((int)PCE.Timer.running != last_run || (int)PCE.Timer.reload != last_reload) {
+                printf("[host] f%d TIMER CHANGE running=%d reload=%d counter=%d\n",
+                       frame, (int)PCE.Timer.running, (int)PCE.Timer.reload, (int)PCE.Timer.counter);
+                last_run = PCE.Timer.running; last_reload = PCE.Timer.reload;
+            }
+        }
+
+        /* Stuck-probe: late in the run, sample where the 6280 sits each 50
+         * frames (a spin loop shows up as a stable PC cluster). */
+        if (frame > 13000 && (frame % 50) == 0) {
+            extern unsigned long g_tick_count;
+            static unsigned long last_ticks;
+            printf("[host] probe f%d pc=%04x P=%02x ticks/50f=%lu\n",
+                   frame, CPU_PCE.PC, CPU_PCE.P, g_tick_count - last_ticks);
+            last_ticks = g_tick_count;
+        }
+        if (frame == 14000) {
+            /* Compare what the 256KB stage load left in CD RAM vs the disc. */
+            printf("[host] CDRAM bank68[0..15]: ");
+            for (int k = 0; k < 16; k++) printf("%02x ", PCE.MemoryMapR[0x68][k]);
+            printf("\n[host] CDRAM bank69[0xdf0..0xdff]: ");
+            for (int k = 0; k < 16; k++) printf("%02x ", PCE.MemoryMapR[0x69][0xdf0 + k]);
+            printf("\n[host] CDRAM bank80[0..15]: ");
+            for (int k = 0; k < 16; k++) printf("%02x ", PCE.MemoryMapR[0x80][k]);
+            /* Decisive: which bank does PageR[2] REALLY point at? */
+            {
+                extern uint8_t *PageR[8];
+                uint8_t *pr2 = PageR[2] + 2 * 0x2000;   /* undo the -P*0x2000 bias */
+                printf("[host] PageR[2]+0x4000=%p MemoryMapR[MMR[2]=0x%02x]=%p\n",
+                       (void *)pr2, PCE.MMR[2], (void *)PCE.MemoryMapR[PCE.MMR[2]]);
+                for (int v = 0; v < 256; v++)
+                    if (PCE.MemoryMapR[v] == pr2)
+                        printf("[host] PageR[2] actually maps BANK 0x%02x\n", v);
+                printf("[host] TRIPLE $4df0: read8=%02x PageR2=%02x MapR69=%02x (ptrs %p %p)\n",
+                       pce_read8(0x4df0), PageR[2][0x4df0], PCE.MemoryMapR[0x69][0xdf0],
+                       (void *)(PageR[2] + 0x4df0), (void *)(PCE.MemoryMapR[0x69] + 0xdf0));
+            }
+            printf("[host] manual read8 $4de0-$4e0f: ");
+            for (int k = 0; k < 0x30; k++) printf("%02x ", pce_read8((uint16_t)(0x4de0 + k)));
+            printf("\n[host] CPU_PCE.PC raw=%08x\n", (unsigned)CPU_PCE.PC);
+            { extern uint16_t g_ring[]; extern int g_ridx;
+              printf("[host] ===== LIVE RING (last 256 exec PCs) =====\n");
+              int st = g_ridx % 256;
+              for (int k = 0; k < 256; k++) {
+                  printf("%04x ", g_ring[(st + k) % 256]);
+                  if ((k % 16) == 15) printf("\n");
+              } printf("[host] ===== END RING =====\n"); fflush(stdout); }
+            printf("[host] bank68 vectors $FFF0-$FFFF: ");
+            for (int k = 0; k < 16; k++) printf("%02x ", PCE.MemoryMapR[0x68][0x1ff0 + k]);
+            printf("\n[host] Timer: running=%d reload=%d counter=%d cyc=%d per_line=%d\n",
+                   (int)PCE.Timer.running, (int)PCE.Timer.reload, (int)PCE.Timer.counter,
+                   (int)PCE.Timer.cycles_counter, (int)PCE.Timer.cycles_per_line);
+            printf("\n[host] --- wait-loop + dispatch code ---\n");
+            dump_mem(0x45a0, 0x30);
+            dump_mem(0x47e0, 0x60);
+            dump_mem(0x3d20, 0x40);
+            dump_mem(0xe6b0, 0x30);
+            printf("\n[host] --- stuck loop code around PC ---\n");
+            dump_mem(CPU_PCE.PC - 0x20, 0x50);
+            printf("[host] MMR: ");
+            for (int b = 0; b < 8; b++) printf("%02x ", PCE.MMR[b]);
+            printf("\n[host] VDC status=%02x pending_irqs=%d irq_lines=%02x\n",
+                   PCE.VDC.status, (int)PCE.VDC.pending_irqs, CPU_PCE.irq_lines);
+            fflush(stdout);
+        }
 
         /* First time the game reaches its idle loop, dump the registered hook
          * vectors + bank mapping so we can see what (if anything) init set up. */

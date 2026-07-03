@@ -408,6 +408,44 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
     return frames;
 }
 
+/* Full SCSI-engine snapshot (see pce_scsi.h). */
+void pce_scsi_state_get(pce_scsi_state_t *st)
+{
+    memset(st, 0, sizeof(*st));
+    st->phase = (uint8_t)s_phase; st->db = s_db; st->message = s_message;
+    st->cmd_idx = (uint8_t)s_cmd_idx;
+    st->flags = (s_bsy?1:0) | (s_req?2:0) | (s_msg?4:0) | (s_cd?8:0) | (s_io?16:0) | (s_ack?32:0);
+    st->reading = s_reading; st->bulk = s_bulk;
+    st->adpcm_dma_active = s_adpcm_dma_active;
+    memcpy(st->cmd, s_cmd, sizeof(s_cmd));
+    st->din_pos = s_din_pos; st->din_len = s_din_len;
+    st->read_lba = s_read_lba; st->read_remain = s_read_remain;
+    st->port2 = s_port2; st->port3 = s_port3; st->adpcm_ctrl = s_adpcm_ctrl;
+    st->adpcm_dma_total = s_adpcm_dma_total;
+    memcpy(st->din, s_din, sizeof(s_din));
+}
+
+void pce_scsi_state_set(const pce_scsi_state_t *st)
+{
+    s_phase = st->phase; s_db = st->db; s_message = st->message;
+    s_cmd_idx = st->cmd_idx;
+    s_bsy = st->flags & 1;  s_req = (st->flags >> 1) & 1; s_msg = (st->flags >> 2) & 1;
+    s_cd  = (st->flags >> 3) & 1; s_io = (st->flags >> 4) & 1; s_ack = (st->flags >> 5) & 1;
+    s_reading = st->reading; s_bulk = st->bulk;
+    s_adpcm_dma_active = st->adpcm_dma_active;
+    memcpy(s_cmd, st->cmd, sizeof(s_cmd));
+    s_din_pos = st->din_pos; s_din_len = st->din_len;
+    if (s_din_pos < 0 || s_din_pos > (int)sizeof(s_din)) s_din_pos = 0;
+    if (s_din_len < 0 || s_din_len > (int)sizeof(s_din)) s_din_len = 0;
+    s_read_lba = st->read_lba; s_read_remain = st->read_remain;
+    s_port2 = st->port2; s_port3 = st->port3; s_adpcm_ctrl = st->adpcm_ctrl;
+    s_adpcm_dma_total = st->adpcm_dma_total;
+    memcpy(s_din, st->din, sizeof(s_din));
+    update_irq();
+    diag("  SCSI restore phase=%d reading=%d remain=%lu p2=%02x p3=%02x\n",
+         s_phase, (int)s_reading, (unsigned long)s_read_remain, s_port2, s_port3);
+}
+
 /* Savestate snapshot of the CD-DA stream (see pce_scsi.h). */
 void pce_scsi_cdda_get(uint32_t out[PCE_SCSI_CDDA_STATE_WORDS])
 {

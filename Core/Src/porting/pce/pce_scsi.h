@@ -37,3 +37,21 @@ int pce_scsi_cdda_fill(int16_t *out, int frames);
 #define PCE_SCSI_CDDA_STATE_WORDS 5
 void pce_scsi_cdda_get(uint32_t out[PCE_SCSI_CDDA_STATE_WORDS]);
 void pce_scsi_cdda_set(const uint32_t in[PCE_SCSI_CDDA_STATE_WORDS]);
+
+/* Full SCSI-engine snapshot (savestate): phase, in-flight READ, data-in buffer,
+ * IRQ ports, chunked-ADPCM-DMA progress. Games (Cotton) save mid-transfer; a
+ * plain reset on load leaves them polling $1802/$1803 forever for a reply that
+ * no longer exists. Fixed-layout struct, streamed as a tagged 'SCSX' block. */
+typedef struct {
+    uint8_t  phase, db, message, cmd_idx;
+    uint8_t  flags;            /* bit0..5 = bsy,req,msg,cd,io,ack */
+    uint8_t  reading, bulk, adpcm_dma_active;
+    uint8_t  cmd[16];
+    int32_t  din_pos, din_len;
+    uint32_t read_lba, read_remain;
+    uint8_t  port2, port3, adpcm_ctrl, pad0;
+    uint32_t adpcm_dma_total;
+    uint8_t  din[2048];
+} pce_scsi_state_t;
+void pce_scsi_state_get(pce_scsi_state_t *st);
+void pce_scsi_state_set(const pce_scsi_state_t *st);
