@@ -780,6 +780,30 @@ void pce_osd_gfx_blit() {
     lcd_swap();
 }
 
+/* common_emu_sound_sync(false) + CD-DA prefetch. The pacer wait (until the
+ * SAI DMA frees the next audio slot) is dead CPU time; spend it pulling the
+ * NEXT sectors of CD-DA from SD so slow frames find the FIFO full and their
+ * pce_scsi_cdda_fill() pays no SD read. One small read per iteration, and
+ * dma_counter is re-checked between reads, so the hand-off to the pacer stays
+ * prompt. Mirrors common_emu_sound_sync exactly otherwise — this is the ONLY
+ * sync call site in this emulator, so the private pacing state can't diverge
+ * from the common one. */
+static void pce_sound_sync_with_prefetch(void)
+{
+    if (common_emu_state.skip_frames)
+        return;                     /* running behind: no wait, no extra SD work */
+    static uint32_t last_dma_counter = 0;
+    if (last_dma_counter == 0)
+        last_dma_counter = dma_counter;
+    for (uint8_t p = 0; p < common_emu_state.pause_frames + 1; p++) {
+        while (dma_counter == last_dma_counter) {
+            if (!pce_scsi_cdda_prefetch())
+                cpumon_sleep();     /* FIFO full / no BGM: plain WFI as before */
+        }
+        last_dma_counter = dma_counter;
+    }
+}
+
 void pce_pcm_submit() {
     pce_snd_update(audioBuffer_pce, AUDIO_BUFFER_LENGTH_PCE);
 
@@ -932,7 +956,7 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
 
         pce_pcm_submit();
 
-        common_emu_sound_sync(false);
+        pce_sound_sync_with_prefetch();   /* sound_sync + CD-DA prefetch in the wait */
 
         // Prevent overflow
         PCE.Timer.cycles_counter -= Cycles;

@@ -29,6 +29,11 @@ void pce_scsi_run(void);
  * (half the CD rate). Returns frames produced, 0 if no audio is playing. */
 int pce_scsi_cdda_fill(int16_t *out, int frames);
 
+/* Opportunistic FIFO prefetch for the sound-sync wait loop: one small batched
+ * SD read (<=2 sectors) into the CD-DA FIFO. Returns true if a read happened.
+ * Main-loop context only (same context as pce_scsi_cdda_fill). */
+bool pce_scsi_cdda_prefetch(void);
+
 /* CD-DA playback snapshot for savestates: [0]=play [1]=lba [2]=start [3]=end
  * [4]=mode. LoadState resets the SCSI to idle (correct for data transfers), which
  * used to also kill the BGM — the game believes its music is still playing, so a

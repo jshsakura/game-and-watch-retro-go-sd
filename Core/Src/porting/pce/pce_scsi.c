@@ -373,24 +373,64 @@ static uint32_t cdda_decode_pos(const uint8_t *cmd)
  * spike the pacer is sensitive to). Handles loop wrap and end-of-stream; track
  * boundaries just split the batch (pce_cd_read_sectors_audio clamps at the
  * track end and the loop continues into the next track). */
+/* One bounded batched read into the FIFO tail (loop-wrap handled). Returns
+ * sectors read; 0 = end of a non-looping stream OR a failed SD read (either
+ * way: play out what's buffered). */
+static int cdda_read_step(int want)
+{
+    if (s_cdda_lba >= s_cdda_end) {
+        if (s_cdda_mode == 1) s_cdda_lba = s_cdda_start;   /* LOOP: restart */
+        else return 0;                                     /* NORMAL: done */
+    }
+    uint32_t until_end = s_cdda_end - s_cdda_lba;
+    int n = (want < (int)until_end) ? want : (int)until_end;
+    int got = pce_cd_read_sectors_audio(s_toc, s_cdda_lba, s_cdda_sec + s_cdda_have, n);
+    if (got <= 0) {
+        diag("  cdda_fill READ AUDIO FAIL lba=%lu\n", (unsigned long)s_cdda_lba);
+        return 0;
+    }
+    s_cdda_lba  += (uint32_t)got;
+    s_cdda_have += got * PCE_CD_SECTOR_RAW;
+    return got;
+}
+
 static void cdda_topup(int want)
 {
     while (want > 0) {
-        if (s_cdda_lba >= s_cdda_end) {
-            if (s_cdda_mode == 1) s_cdda_lba = s_cdda_start;   /* LOOP: restart */
-            else return;                                       /* NORMAL: done */
-        }
-        uint32_t until_end = s_cdda_end - s_cdda_lba;
-        int n = (want < (int)until_end) ? want : (int)until_end;
-        int got = pce_cd_read_sectors_audio(s_toc, s_cdda_lba, s_cdda_sec + s_cdda_have, n);
-        if (got <= 0) {
-            diag("  cdda_fill READ AUDIO FAIL lba=%lu\n", (unsigned long)s_cdda_lba);
-            return;   /* SD read failed: play out what's buffered */
-        }
-        s_cdda_lba  += (uint32_t)got;
-        s_cdda_have += got * PCE_CD_SECTOR_RAW;
-        want        -= got;
+        int got = cdda_read_step(want);
+        if (got <= 0)
+            return;
+        want -= got;
     }
+}
+
+/* Compact consumed bytes to the front so the free tail is contiguous
+ * (passthrough playback needs no lookback). */
+static void cdda_compact(void)
+{
+    if (s_cdda_pos > 0) {
+        memmove(s_cdda_sec, s_cdda_sec + s_cdda_pos, (size_t)(s_cdda_have - s_cdda_pos));
+        s_cdda_have -= s_cdda_pos;
+        s_cdda_pos   = 0;
+    }
+}
+
+/* Opportunistic CD-DA prefetch for the sound-sync WAIT loop: the pacer wait
+ * is dead CPU time, so use it to pull the next sectors from SD — slow frames
+ * then find the FIFO already full and their fill call skips the SD read.
+ * Bounded to ONE small batched read (<=2 sectors, ~0.3-0.6 ms) per call so
+ * the caller re-checks the DMA counter between reads. Returns true if a read
+ * was performed (false = FIFO full / not playing / stream ended). Main-loop
+ * context only — the same context as pce_scsi_cdda_fill, so no races. */
+bool pce_scsi_cdda_prefetch(void)
+{
+    if (!s_cdda_play || s_cdda_paused || !s_present)
+        return false;
+    cdda_compact();
+    int room = (PCE_CD_SECTOR_RAW * PCE_CDDA_RING - s_cdda_have) / PCE_CD_SECTOR_RAW;
+    if (room < 1)
+        return false;
+    return cdda_read_step(room < 2 ? room : 2) > 0;
 }
 
 /* Fill `frames` stereo int16 samples at the native CD rate (44100): a straight
@@ -411,16 +451,12 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
         diag("  cdda_fill START lba=%lu end=%lu frames=%d\n",
              (unsigned long)s_cdda_lba, (unsigned long)s_cdda_end, frames); } }
 
-    const int BUFB = PCE_CD_SECTOR_RAW * PCE_CDDA_RING;
-    /* Compact consumed bytes to the front (passthrough needs no lookback), then
-     * top up a bounded few sectors — small, EVEN reads, not a drain-then-burst. */
-    if (s_cdda_pos > 0) {
-        memmove(s_cdda_sec, s_cdda_sec + s_cdda_pos, (size_t)(s_cdda_have - s_cdda_pos));
-        s_cdda_have -= s_cdda_pos;
-        s_cdda_pos   = 0;
-    }
+    /* Compact, then top up a bounded few sectors — small, EVEN reads, not a
+     * drain-then-burst. If the sync-wait prefetch already filled the FIFO,
+     * `room` is 0 and this frame pays no SD read at all. */
+    cdda_compact();
     {
-        int room = (BUFB - s_cdda_have) / PCE_CD_SECTOR_RAW;
+        int room = (PCE_CD_SECTOR_RAW * PCE_CDDA_RING - s_cdda_have) / PCE_CD_SECTOR_RAW;
         cdda_topup((room < PCE_CDDA_TOPUP) ? room : PCE_CDDA_TOPUP);
     }
 
