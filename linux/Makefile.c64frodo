@@ -1,0 +1,26 @@
+# Headless host harness for Frodo (frodo-go core) — PC (line-based) mode, .d64 load.
+# Replaces the ESP32 Display/DigitalRenderer/main with host_glue.cpp.
+TARGET    = c64frodo
+BUILD_DIR = build
+CXX = g++
+FD  = c64-frodo/frodo
+
+# core sources (exclude the platform glue: Display, DigitalRenderer, main; ndir not needed on Linux)
+CORE = C64.cpp CPUC64.cpp CPU_common.cpp VIC.cpp VIC_table.cpp SID.cpp CIA.cpp \
+       IEC.cpp 1541d64.cpp 1541fs.cpp 1541job.cpp 1541t64.cpp CPU1541.cpp \
+       Prefs.cpp REU.cpp SAM.cpp
+SRCS = $(addprefix $(FD)/,$(CORE)) c64-frodo/host_glue.cpp
+
+CXXFLAGS = -I$(FD) -Ic64-frodo/stubs -include c64-frodo/esp_shim.h -O2 -g \
+           -fpermissive -w -fno-strict-aliasing
+
+all: $(BUILD_DIR)/$(TARGET)
+
+$(BUILD_DIR)/$(TARGET): $(SRCS) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(SRCS) -lm -o $@
+
+$(BUILD_DIR):
+	mkdir -p $@
+
+clean:
+	rm -f $(BUILD_DIR)/$(TARGET)

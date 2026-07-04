@@ -481,7 +481,20 @@ void odroid_input_read_gamepad_o2em(odroid_gamepad_state_t* out_state)
 /* ---- host stubs for device-only firmware symbols (so the harness links) ---- */
 void SaveStateStm(const char *p) { (void)p; }
 void LoadStateStm(const char *p) { (void)p; }
-void gnw_videopack_blit(unsigned char *input, void *palette) { (void)input; (void)palette; }
+unsigned int g_o2_blit_frame = 0;
+void gnw_videopack_blit(unsigned char *input, void *palette) {
+    (void)palette;
+    char nm[64];
+    /* every-frame overwrite (final state) + a frame-numbered snapshot every 50 */
+    int dump = getenv("O2_DUMP") && (g_o2_blit_frame % 50 == 0);
+    snprintf(nm, sizeof nm, dump ? "/tmp/o2_f%04u.ppm" : "o2_screen.ppm", g_o2_blit_frame);
+    FILE *f = fopen(nm, "wb");
+    g_o2_blit_frame++;
+    if (!f) return;
+    fprintf(f, "P6\n340 240\n255\n");
+    for (int i = 0; i < 340*240; i++) { unsigned char v = (unsigned char)((input[i] & 15) * 17); fputc(v,f); fputc(v,f); fputc(v,f); }
+    fclose(f);
+}
 
 void blit(uint16_t *buffer) {
     // we want 60 Hz for NTSC
@@ -520,14 +533,15 @@ int main(int argc, char *argv[])
     extern unsigned char key[256*2];
     extern unsigned int g_o2_kbscan, g_o2_key1, g_o2_keyread;
     int o2frame = 0;
+    int release = getenv("O2_RELEASE") ? atoi(getenv("O2_RELEASE")) : 1000000; /* release key[49] at this frame */
     while (o2frame < 1800)
     {
-        key[49] = (o2frame >= 300 && o2frame < 330) ? 1 : 0;   /* EDGE TEST: single pulse at f300 */
+        key[49] = (o2frame < release) ? 1 : 0;   /* hold 1 (device releases at ~700) */
         RLOOP=1;
         cpu_exec();
         blit(mbmp);
-        if ((o2frame % 120) == 0)
-            fprintf(stderr, "F%d  R(scan)=%u  K(key49)=%u  KEYREAD(reached BIOS)=%u\n", o2frame, g_o2_kbscan, g_o2_key1, g_o2_keyread);
+        if ((o2frame % 100) == 0)
+            fprintf(stderr, "F%d  R=%u K=%u KEYREAD=%u\n", o2frame, g_o2_kbscan, g_o2_key1, g_o2_keyread);
         o2frame++;
     }
     fprintf(stderr, "=== DONE %d frames: R=%u K=%u KEYREAD=%u ===\n", o2frame, g_o2_kbscan, g_o2_key1, g_o2_keyread);

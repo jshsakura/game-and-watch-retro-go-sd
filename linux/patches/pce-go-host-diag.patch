@@ -1,0 +1,85 @@
+diff --git a/pce-go/components/pce-go/h6280.c b/pce-go/components/pce-go/h6280.c
+index 192cd5b..27093ad 100644
+--- a/pce-go/components/pce-go/h6280.c
++++ b/pce-go/components/pce-go/h6280.c
+@@ -372,7 +372,8 @@ h6280_run(int32_t cycles)
+ 
+ 		while ( Cycles >= PCE.Timer.cycles_counter ){
+ 			PCE.Timer.cycles_counter += CYCLES_PER_TIMER_TICK;
+-			if (PCE.Timer.running) {
++			extern int g_pce_kill_timer;   /* host experiment: hard timer kill */
++			if (PCE.Timer.running && !g_pce_kill_timer) {
+ 				PCE.Timer.counter--;
+ 				if (PCE.Timer.counter > 0x7F) {
+ 					PCE.Timer.counter = PCE.Timer.reload;
+diff --git a/pce-go/components/pce-go/h6280_instr.h b/pce-go/components/pce-go/h6280_instr.h
+index 5fea048..732a507 100644
+--- a/pce-go/components/pce-go/h6280_instr.h
++++ b/pce-go/components/pce-go/h6280_instr.h
+@@ -2440,6 +2440,17 @@ OPCODE_FUNC interrupt(int type)
+ 	// however in practice it seems to break many games if we don't clear it?
+ 
+ 	TRACE_CPU("CPU_PCE interrupt: %d\n", type);
++	{ extern int g_pcecd_trace;
++	  if (g_pcecd_trace) {
++	      uint16_t vt = (type & INT_TIMER) ? pce_read16(VEC_TIMER)
++	                  : (type & INT_IRQ1)  ? pce_read16(VEC_IRQ1)
++	                  : pce_read16(VEC_IRQ2);
++	      if (vt < 0x2000 || vt == 0x4dff || vt == 0x30fd)   /* suspicious vector only */
++	          printf("[int] type=%d from pc=%04x -> vec=%04x MMR7=%02x CR=%04x RCR=%04x status=%02x pend=%08x\n",
++	                 type, CPU_PCE.PC, vt, PCE.MMR[7],
++	                 IO_VDC_REG[5].W, IO_VDC_REG[6].W, PCE.VDC.status,
++	                 (unsigned)PCE.VDC.pending_irqs);
++	  } }
+ 	push_16bit(CPU_PCE.PC);
+ 	push_8bit(CPU_PCE.P);
+ 	CPU_PCE.P &= ~(FL_D|FL_T);
+diff --git a/pce-go/components/pce-go/pce.c b/pce-go/components/pce-go/pce.c
+index 3d4e737..b0c3468 100644
+--- a/pce-go/components/pce-go/pce.c
++++ b/pce-go/components/pce-go/pce.c
+@@ -349,6 +349,9 @@ pce_writeIO(uint16_t A, uint8_t V)
+     case 0x0000:                /* VDC */
+         switch (A & 3) {
+         case 0: // Latch
++            { extern int g_pcecd_trace; static int n;
++              if (g_pcecd_trace && CPU_PCE.PC >= 0x4000 && CPU_PCE.PC < 0x6000 && n < 60) {
++                  n++; printf("[vdc] latch=%02x pc=%04x\n", V, CPU_PCE.PC); } }
+             PCE.VDC.reg = V & 31;
+             return;
+ 
+@@ -373,11 +376,18 @@ pce_writeIO(uint16_t A, uint8_t V)
+                 break;
+ 
+             case CR:                            // Control Register
++                { extern int g_pcecd_trace; static int m;
++                  if (g_pcecd_trace && m < 6 && CPU_PCE.PC >= 0x4000 && CPU_PCE.PC < 0x6000) { m++;
++                    printf("[vdc] CR.l=%02x pc=%04x zp24=%02x%02x X=%02x Y=%02x\n",
++                           V, CPU_PCE.PC, PCE.RAM[0x25], PCE.RAM[0x24],
++                           CPU_PCE.X, CPU_PCE.Y); } }
+                 if (IO_VDC_REG_ACTIVE.B.l != V)
+                     gfx_latch_context(0);
+                 break;
+ 
+             case RCR:                           // Raster Compare Register
++                { extern int g_pcecd_trace; if (g_pcecd_trace)
++                    printf("[vdc] RCR.l=%02x pc=%04x\n", V, CPU_PCE.PC); }
+                 break;
+ 
+             case BXR:
+@@ -672,6 +682,7 @@ pce_writeIO(uint16_t A, uint8_t V)
+         break;
+ 
+     case 0x0C00:                /* Timer */
++        { extern int g_pcecd_trace; if (g_pcecd_trace) printf("[io] W $%04x=%02x (timer) pc=%04x\n", A, V, CPU_PCE.PC); }
+         switch (A & 1) {
+         case 0:
+             PCE.Timer.reload = (V & 0x7F); // + 1;
+@@ -694,6 +705,7 @@ pce_writeIO(uint16_t A, uint8_t V)
+         return;
+ 
+     case 0x1400:                /* IRQ */
++        { extern int g_pcecd_trace; if (g_pcecd_trace) printf("[io] W $%04x=%02x (irq) pc=%04x\n", A, V, CPU_PCE.PC); }
+         switch (A & 3) {
+         case 2:
+             CPU_PCE.irq_mask = V & INT_MASK;
