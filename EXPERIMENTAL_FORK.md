@@ -1,26 +1,19 @@
-# Experimental Testbed Fork
+# Experimental Lab Fork
 
 > **This is a personal, experimental fork** of
 > [sylverb/game-and-watch-retro-go-sd](https://github.com/sylverb/game-and-watch-retro-go-sd).
-> It tracks upstream but carries extra, in-progress features that are **not** in
+> It tracks upstream but carries extra, in-progress work that is **not** in
 > the official build. Use at your own risk.
 
-## What this fork adds
+## What differs from upstream
 
-| Feature | State | Notes |
-|---|---|---|
-| **Neo Geo Pocket / Color** (RACE core) | ✅ Playable | Boot, input, sound, savestates (4 slots), runs full speed. Savestate sound-resume fixed (`ngpRunning` was unsnapshotted) |
-| **WonderSwan / Color** (oswan core) | ✅ Playable | Boot, input, sound, savestates; Fit/Full scaling + speed-up fixed; heavy action games run slow (V30MZ interpreter limit) |
-| **Atari Lynx** (Handy core) | ✅ Playable | Boot, input, sound, save/load; core runs XIP from QSPI flash; 512 KB carts supported |
-| **PC Engine CD / Super CD-ROM²** (pce core) | 🧪 Boots & plays | *Ai Chou Aniki* boots to gameplay; Super System Card signature + ADPCM-from-CD DMA fixed. Host-harness verified, on-device pending. No CD audio yet |
-| **Magnavox Odyssey² / Videopac** (O2EM core) | 🧪 New | SD-ROM system; BIOS from `/bios/videopac`; multi-game game-select overlay |
-| **Music player** (MP3) | ✅ | Browser, deck, album-art covers |
-| **Video player** (MJPEG/AVI) | ✅ Playable | 320×240 MJPEG-AVI from SD. SD block-read made it smooth (decode 27%→97.7%); encode via the companion app |
-| **PICO-8** (external `pico8.ro`) | ✅ | p8ram moved to the AXI pool so it no longer OOMs the DTCM heap after a firmware update |
-| **Battery monitor + auto power-off** | ✅ Integrated | OFW-accurate battery %, auto power-off at 5%, hide clock with B+dpad (upstream PR #53 by Ninoh-FOX) — needs on-device verification |
+The single maintained list is **[TESTBED_NOTES.md](TESTBED_NOTES.md)** — it doubles as
+the release-notes text, so it stays current with every build. (A feature table used to
+live here too; two lists drifted apart, so now there is one.)
 
-A post-mortem of the trickier bugs (dead-ends + actual root causes) is in
-[issue #9](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/9).
+The debugging history behind the features — what failed, what the actual root causes
+were, and how each finding was verified (host harness vs. on-device SD log) — is in
+[docs/UPSTREAM_ENGINEERING_NOTES.md](docs/UPSTREAM_ENGINEERING_NOTES.md).
 
 ## Performance notes (WonderSwan)
 
@@ -30,7 +23,7 @@ heaviest sprite-driven action games (e.g. Rockman EXE) run at roughly 40% speed.
 This is the hardware ceiling for an interpreter on this MCU — no safe
 optimization closes it without a dynamic recompiler.
 
-Applied CPU optimizations (all minimal-diff, mergeable upstream):
+Applied CPU optimizations (all minimal-diff):
 - Inlined the hot memory-read path into the CPU core
 - Direct-branch for internal-RAM (VRAM) writes
 - Cached the code-segment base per instruction in the fetch path
@@ -42,16 +35,17 @@ Deliberately **not** done (negligible gain and/or save-integrity risk):
 
 ## Build / install
 
-CI builds `retro-go_update.bin` on push; tagged builds are attached to
-Releases. Flash `retro-go_update.bin` with the normal G&W update procedure.
+CI builds `retro-go_update.bin` on push; tagged builds (`testbed-full-*`) are attached
+to Releases. Flash `retro-go_update.bin` with the normal G&W update procedure — the
+flashing procedure also pushes the matching SD support files (`/cores/*`,
+`/bios/logo.bin`, homebrew overlays) automatically.
 
 ## Relationship to upstream
 
-`main` mirrors `sylverb/main` and is synced periodically. Features live on
-topic branches and are combined here. Upstream's `wonderswan` branch only drops
-in the core submodule and has no working integration; this fork's WonderSwan is
-a complete, playable implementation.
+**`testbed`** is the integration branch (this repo's default): all features combined,
+what the releases are built from. `main` mirrors `sylverb/main` and is synced
+periodically; feature work happens on topic branches and lands in `testbed`.
 
-Which features are candidates for contribution back to `sylverb/main`, their
-state, and what each still needs is tracked in
-[issue #11](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/11).
+The fork is introduced to upstream — with the hope that a small part of it can
+contribute back someday — in
+[sylverb's discussions #94](https://github.com/sylverb/game-and-watch-retro-go-sd/discussions/94).

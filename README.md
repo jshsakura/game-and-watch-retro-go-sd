@@ -1,29 +1,37 @@
-# 🧪 Experimental Testbed Fork ⚠️ — read before flashing
+# 🧪 Experimental Lab Fork ⚠️ — read before flashing
 
-This is a **personal, experimental testbed** built on top of
-[sylverb/game-and-watch-retro-go-sd](https://github.com/sylverb/game-and-watch-retro-go-sd).
-It tracks upstream but carries extra, in-progress work that is **not** in the official
-build. The aim is to push a few more systems and apps onto the Nintendo® Game & Watch™ and,
-where the work proves out, to offer it back upstream.
+This is a **personal experimental lab** built on top of
+[sylverb/game-and-watch-retro-go-sd](https://github.com/sylverb/game-and-watch-retro-go-sd),
+the excellent SD-card fork of retro-go for the Nintendo® Game & Watch™. Everything here
+stands on that project — **if you just want to play games, use sylverb's stable build**;
+this repository is where I try things first. Fixes are made with affection for these
+little machines, in the hope that a small part of it can flow back upstream someday.
 
-### What this fork adds over upstream
+The integration branch is **`testbed`** (this repo's default) — release builds are cut
+from it as `testbed-full-*` tags on the
+[releases page](https://github.com/jshsakura/game-and-watch-retro-go-sd/releases).
 
-- **More emulators:** Neo Geo Pocket / Color (RACE) and WonderSwan / Color (oswan) — both
-  playable with sound and savestates; **Atari Lynx** (Handy) — playable on device incl.
-  512 KB carts; **PC Engine CD / Super CD-ROM²** (pce) and **Magnavox Odyssey² / Videopac**
-  (O2EM) — booting and in active bring-up.
-- **Homebrew apps:** an MP3 **music player** (with album-art covers) and an MJPEG/AVI
-  **video player**.
-- **On-device fixes** to savestates, scaling, and the SD read path across several cores.
+### How this fork differs from upstream
+
+The full, honest list lives in **[TESTBED_NOTES.md](TESTBED_NOTES.md)** (it is also the
+release-notes text). In one breath: nine additional systems on device — PC Engine CD,
+Atari Lynx, WonderSwan/Color, Neo Geo Pocket/Color, ZX Spectrum, Commodore 64,
+Odyssey²/Videopac, game.com, Virtual Boy (~65-70% speed, stated honestly) — plus an MP3
+music player, an MJPEG video player (work in progress), launcher additions (★ favorites
+tab, uniform wordmarks/icons), and system-wide changes (faster game caching, faster
+blits, a battery gauge that survives power-off).
 
 ### How it's built (the honest part)
 
-I don't come from an embedded background and I don't debug with JTAG. Two things carry this
-project instead: **host harnesses** under `linux/<sys>/` that link the *same core source* the
-firmware ships and reproduce bugs deterministically on a PC, and **SD-card logs** read back
-from the real hardware. Findings are kept fact-based and tagged by how they were verified —
-the full engineering log is in [docs/UPSTREAM_ENGINEERING_NOTES.md](docs/UPSTREAM_ENGINEERING_NOTES.md)
-(and issue #12), with the upstream-contribution status in issue #11.
+I don't come from an embedded background and I don't debug with JTAG. Most of the work
+is done with Claude (AI-assisted), and it earns its keep through two things: **host
+harnesses** under `linux/<sys>/` that link the *same core source* the firmware ships and
+reproduce bugs deterministically on a PC, and **SD-card logs** read back from the real
+hardware. Everything was tested by one person on one device, so it will not be perfect.
+Findings are kept fact-based and tagged by how they were verified — the full engineering
+log is in [docs/UPSTREAM_ENGINEERING_NOTES.md](docs/UPSTREAM_ENGINEERING_NOTES.md), and
+the fork is introduced to upstream in
+[sylverb's discussions #94](https://github.com/sylverb/game-and-watch-retro-go-sd/discussions/94).
 
 ### ⚠️ Before you flash
 
@@ -31,9 +39,10 @@ the full engineering log is in [docs/UPSTREAM_ENGINEERING_NOTES.md](docs/UPSTREA
 >
 > - **BACK UP YOUR SD CARD / SAVES FIRST.** Some changes touch the SD read/write path and
 >   the savestate format; a bad build can corrupt or invalidate saves.
+> - Install: flash `retro-go_update.bin` — the flashing procedure pushes the matching SD
+>   support files (`/cores/*`, `/bios/logo.bin`, homebrew overlays) automatically.
 > - Test builds may show **on-screen debug overlays** and may be unstable or change without
 >   notice.
-> - Only the **latest** release is meaningful; older ones are deleted.
 > - For the stable, official project use
 >   [sylverb/game-and-watch-retro-go-sd](https://github.com/sylverb/game-and-watch-retro-go-sd)
 >   (or [game-and-watch-retro-go](https://github.com/sylverb/game-and-watch-retro-go) for the
@@ -42,10 +51,18 @@ the full engineering log is in [docs/UPSTREAM_ENGINEERING_NOTES.md](docs/UPSTREA
 >
 > 한국어: 이 저장소는 **개인 실험용 테스트베드**입니다. 릴리즈는 **안정판이 아니라
 > 테스트 빌드**이며 SD 읽기/쓰기·세이브스테이트를 건드리는 변경이 있어 **세이브가
-> 손상/무효화될 수 있으니 SD카드를 먼저 백업**하세요. 화면에 디버그 오버레이가 보일 수
-> 있고, **최신 릴리즈 하나만 유효**합니다.
+> 손상/무효화될 수 있으니 SD카드를 먼저 백업**하세요. 안정판은 sylverb의 공식 저장소를
+> 사용하세요.
 
 ---
+
+# Upstream documentation (sylverb/game-and-watch-retro-go-sd)
+
+Everything below is the **original documentation from
+[sylverb's repository](https://github.com/sylverb/game-and-watch-retro-go-sd)**, kept
+intact because it fully applies here too — hardware mod, SD-card layout, building,
+flashing, troubleshooting. All credit for the project and its documentation goes to
+sylverb and the retro-go contributors.
 
 ![](assets/gnw.gif)
 
