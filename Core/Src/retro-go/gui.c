@@ -374,14 +374,25 @@ void gui_resize_list(tab_t *tab, int new_size)
     printf("gui_resize_list: Resized list '%s' from %d to %d items\n", tab->name, cur_size, new_size);
 }
 
-/* How many covers the CURRENT theme shows at once = the minimum item count for
- * the cover carousel to loop end<->start. Below it the list doesn't fill the
- * screen, so it must not wrap (no fake infinite loop, no empty side boxes).
+/* Minimum item count for the carousel to loop end<->start = one full page of
+ * the CURRENT theme, plus one. A list that fits on screen at once must never
+ * wrap: with e.g. 4 ROMs the vertical themes' text column would repeat them
+ * three times over ("fake infinite loop"). Above one page, wrapping connects
+ * end<->start into a continuous view.
  * 0 = the text list, which never display-wraps. */
 int gui_carousel_min(void)
 {
     switch (odroid_settings_theme_get()) {
-        case 1: case 4: return 3;   /* vertical coverflow: 3 covers visible */
+        case 1: case 4: {
+            /* Vertical themes pair the covers with a text column that shows
+             * cursor +/- max_line rows (see gui_draw_simple_list). */
+            int fh = i18n_get_text_height();
+            int view_h = (gui_list_view_h > 0) ? gui_list_view_h : LIST_HEIGHT;
+            if (fh <= 0)
+                fh = odroid_overlay_get_font_size();
+            int max_line = (view_h - fh) / fh / 2;
+            return 2 * max_line + 2;
+        }
         case 2: case 3: return 5;   /* horizontal coverflow: 5 covers visible */
         default:        return 0;   /* text list */
     }
