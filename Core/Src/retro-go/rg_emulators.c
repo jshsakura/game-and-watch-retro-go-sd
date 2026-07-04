@@ -1618,7 +1618,7 @@ void emulators_init()
     add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
     add_emulator("Colecovision", "col", "col lzma", RG_LOGO_PAD_COL, RG_LOGO_HEADER_COL, NO_GAME_DATA);
     add_emulator("Commodore 64", "c64", "d64 prg", RG_LOGO_PAD_C64, RG_LOGO_HEADER_C64, NO_GAME_DATA);
-    add_emulator("Game & Watch", "gw", "gw mgw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
+    add_emulator("Game & Watch", "gw", "gw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
     add_emulator("Homebrew", "homebrew", "bin", RG_LOGO_PAD_HOMEBREW, RG_LOGO_HEADER_HOMEBREW, NO_GAME_DATA);
     add_emulator("Magnavox Odyssey2", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_VIDEOPAC, NO_GAME_DATA);
     add_emulator("MSX", "msx", "dsk rom mx1 mx2 cdk lzma", RG_LOGO_PAD_MSX, RG_LOGO_HEADER_MSX, NO_GAME_DATA);
