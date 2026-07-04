@@ -41,6 +41,7 @@
 #include "Actions.h"
 #include "Language.h"
 #include "LaunchFile.h"
+#include "Disk.h"
 #include "ArchEvent.h"
 #include "ArchSound.h"
 #include "ArchNotifications.h"
@@ -229,11 +230,40 @@ static void *msx_screenshot()
     return NULL;
 }
 
+static bool msx_apply_cpu_clock(void)
+{
+    /* MSX needs boost OC when the user left settings at 0. gw_sleep restores
+     * settings OC on wake (280 MHz / 64 MHz OSPI) while gameplay runs at level
+     * 2 (~420 MHz / 100 MHz OSPI) — HDD titles then stutter until restart. */
+    if (odroid_settings_cpu_oc_level_get() == 0) {
+        SystemClock_Config(2);
+        return true;
+    }
+    return false;
+}
+
 static void msx_sleep_wake_up()
 {
-    if (strlen(current_disk_path) > 0) {
-        insertDiskette(properties, 0, current_disk_path, NULL, -1);
+    /* gw_sleep inits audio before this hook, still at settings OC. Reinit SAI/DMA
+     * after boosting the PLL so sample timing matches gameplay again. */
+    if (msx_apply_cpu_clock()) {
+        odroid_audio_init(AUDIO_MSX_SAMPLE_RATE);
+        audio_clear_buffers();
+        emulatorRestartSound();
     }
+
+    if (strlen(current_disk_path) == 0)
+        return;
+
+    if (msx_game_type != MSX_GAME_DISK && msx_game_type != MSX_GAME_HDIDE)
+        return;
+
+    const int drive = (msx_game_type == MSX_GAME_HDIDE) ? 1 : 0;
+
+    /* SD was unmounted: reopen the FILE* only. insertDiskette() would also
+     * reset the mixer and re-probe the image (disk icon flash). */
+    if (!diskReopenDrive(drive))
+        insertDiskette(properties, drive, current_disk_path, NULL, -1);
 }
 
 /* Core stubs */
@@ -1106,7 +1136,7 @@ static void createMsxMachine(int msxType) {
             printf("Compressed MSX_GAME_HDIDE\n");
             msx_game_type = MSX_GAME_HDIDE;
         }
-    } else if (0 == strcmp(ACTIVE_FILE->ext, MSX_DISK_EXTENSION)) {
+    } else if (0 == strcasecmp(ACTIVE_FILE->ext, MSX_DISK_EXTENSION)) {
         strcpy(current_disk_path, ACTIVE_FILE->path);
         // Find if file is disk image or IDE HDD image
         if (ACTIVE_FILE->size <= 720*1024) {
@@ -1992,9 +2022,7 @@ void app_main_msx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     bool drawFrame;
 
     // Set maximum clock speed for better performance if CPU is not overclocked
-    if (odroid_settings_cpu_oc_level_get() == 0) {
-        SystemClock_Config(2);
-    }
+    msx_apply_cpu_clock();
 
     show_disk_icon = false;
 
@@ -2047,7 +2075,12 @@ void app_main_msx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     if (load_state) {
         odroid_system_emu_load_state(save_slot);
 
-        if (strlen(current_disk_path) > 0) {
+        /* Remount the disk image only for floppy (.dsk) games. The HDD is on
+         * drive 1 (Sunrise/Nextor IDE); remounting drive 0 used to mount the
+         * HD image on the floppy slot and desync the IDE state restored from
+         * the save. For IDE games the image is already open from insertGame()
+         * before load — remounting would flush disk caches mid-transfer. */
+        if (msx_game_type == MSX_GAME_DISK && strlen(current_disk_path) > 0) {
             emulatorSuspend();
             insertDiskette(properties, 0, current_disk_path, NULL, -1);
             emulatorResume();

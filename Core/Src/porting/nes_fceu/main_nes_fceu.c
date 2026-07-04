@@ -845,6 +845,20 @@ void apply_cheat_code(const char *cheatcode) {
 }
 #endif
 
+/* gw_sleep() restores the *settings* OC level on wake, but this core forces the
+ * maximum OC during gameplay when the user left the setting at 0.  Without this
+ * the game keeps running at the (slower) settings clock after a sleep/wake
+ * cycle.  Re-apply the boost and reinit audio (SystemClock_Config also
+ * reprograms the audio PLL). */
+static void nes_fceu_sleep_wake_up()
+{
+    if (odroid_settings_cpu_oc_level_get() == 0) {
+        SystemClock_Config(2);
+        odroid_audio_init(odroid_audio_sample_rate_get());
+        audio_start_playing_full_length(audio_get_buffer_full_length());
+    }
+}
+
 int app_main_nes_fceu(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     uint8_t *rom_data;
@@ -899,7 +913,7 @@ int app_main_nes_fceu(uint8_t load_state, uint8_t start_paused, int8_t save_slot
     FCEUI_SetSoundVolume(150);
 
     odroid_system_init(APPID_NES, sndsamplerate);
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, &nes_fceu_sram_save_cb);
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &nes_fceu_sleep_wake_up, &nes_fceu_sram_save_cb);
 
     if (FSettings.PAL) {
         lcd_set_refresh_rate(50);

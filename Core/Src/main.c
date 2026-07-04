@@ -524,7 +524,7 @@ void SystemClock_Config(uint8_t oc_level)
   /*
     NORMAL : PLLM = 16 PLLN=140 PLLP=2 PLLQ=2 PLLR=2 Clock is ClockP >> 280MHz and OSPI 64MHz
     BOOST 1: PLLM = 16 PLLN=156 PLLP=2 PLLQ=6 PLLR=2 CLOCKPLL >> 312MHz CoreClock and OSPI 104MHz
-    BOOST 2: PLLM = 38 PLLN=420 PLLP=2 PLLQ=7 PLLR=2 CLOCKPLL >> 3..MHz CoreClock and OSPI 100MHz
+    BOOST 2: PLLM = 16 PLLN=170 PLLP=2 PLLQ=7 PLLR=2 CLOCKPLL >> 340MHz CoreClock and OSPI 97MHz
     CoreClock= HSI/PLLM x PLLN/PLLP
     OSPIClock= HSI/PLLM x PLLN/PLLQ
   */
@@ -537,8 +537,12 @@ void SystemClock_Config(uint8_t oc_level)
       RCC_OscInitStruct.PLL.PLLR = 2;
       break;
     case 2: // Maximum overclocking
-      RCC_OscInitStruct.PLL.PLLM = 38;
-      RCC_OscInitStruct.PLL.PLLN = 420;
+      // 340 MHz core / ~97 MHz OSPI (less aggressive than the former
+      // 353 MHz / 101 MHz to improve stability under sustained load).
+      // PLLM=16 keeps the PLL input at 4 MHz (same as case 1).
+      // core = 64/16 * 170/2 = 340 MHz ; OSPI = 64/16 * 170/7 = 97 MHz
+      RCC_OscInitStruct.PLL.PLLM = 16;
+      RCC_OscInitStruct.PLL.PLLN = 170;
       RCC_OscInitStruct.PLL.PLLP = 2;
       RCC_OscInitStruct.PLL.PLLQ = 7;
       RCC_OscInitStruct.PLL.PLLR = 2;
