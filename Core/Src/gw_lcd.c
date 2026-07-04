@@ -208,6 +208,10 @@ uint32_t lcd_get_pixel_position()
 
 void lcd_swap(void)
 {
+  /* The framebuffers are Normal non-cacheable (write-buffered) since the MPU
+   * change in mpu_set_lcd_pool_uncached_range — drain the CPU write buffer
+   * so every pixel is in RAM before LTDC is told to flip at vblank. */
+  __DSB();
   HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
   active_framebuffer = active_framebuffer ? 0 : 1;
 }

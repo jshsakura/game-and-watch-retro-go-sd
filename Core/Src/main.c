@@ -1413,7 +1413,15 @@ void mpu_set_lcd_pool_uncached_range(uint32_t framebuffer_bytes)
   MPU_Region_InitTypeDef MPU_InitStruct = {0};
   MPU_InitStruct.Enable           = MPU_REGION_ENABLE;
   MPU_InitStruct.SubRegionDisable = 0x0;
-  MPU_InitStruct.TypeExtField     = MPU_TEX_LEVEL0;
+  /* TEX=1/C=0/B=0 = NORMAL non-cacheable, NOT the old TEX=0/C=0/B=0
+   * Strongly-Ordered. Both are cache-bypassing (so LTDC/DMA2D always read
+   * fresh pixels — no cache maintenance needed), but Strongly-Ordered also
+   * forbids the CPU write buffer: every one of the ~77k stores of a full
+   * blit stalled until the AXI write completed (~1.4-2.1 ms/frame across
+   * ALL emulators). Normal memory lets stores retire through the write
+   * buffer and merge. The LTDC hand-off is ordered by the __DSB() in
+   * lcd_swap(). */
+  MPU_InitStruct.TypeExtField     = MPU_TEX_LEVEL1;
   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
   MPU_InitStruct.DisableExec      = MPU_INSTRUCTION_ACCESS_ENABLE;
   MPU_InitStruct.IsShareable      = MPU_ACCESS_NOT_SHAREABLE;
