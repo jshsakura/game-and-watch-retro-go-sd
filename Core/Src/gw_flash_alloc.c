@@ -233,15 +233,18 @@ static bool circular_flash_write(const char *file_path,
     }
 
     uint32_t flash_write_base = get_extflash_base();
+    uint32_t block_size = OSPI_GetSmallestEraseSize();
+    /* The erase (and thus the flash we consume) is block-aligned. */
+    uint32_t erase_size_total = (*data_size + block_size - 1) & ~(block_size - 1);
 
     // If there is not enough space available, write the file at the beginning of the flash
-    if (flash_write_pointer - flash_write_base + *data_size > OSPI_GetFlashSize() - get_reserved_extflash_size())
+    if (flash_write_pointer - flash_write_base + erase_size_total > OSPI_GetFlashSize() - get_reserved_extflash_size())
     {
         flash_write_pointer = flash_write_base;
     }
 
     // Data are larger than flash size ... Abort
-    if (flash_write_pointer - flash_write_base + *data_size > OSPI_GetFlashSize() - get_reserved_extflash_size())
+    if (flash_write_pointer - flash_write_base + erase_size_total > OSPI_GetFlashSize() - get_reserved_extflash_size())
     {
         fclose(file);
         return false;
@@ -250,38 +253,57 @@ static bool circular_flash_write(const char *file_path,
     uint32_t old_flash_write_pointer = flash_write_pointer;
     // Translates the address to an offset into external flash.
     uint32_t address_in_flash = flash_write_pointer - (uint32_t)&__EXTFLASH_BASE__;
-    uint32_t block_size = OSPI_GetSmallestEraseSize();
 
     OSPI_DisableMemoryMappedMode();
 
     *flash_address_out = flash_write_pointer;
 
+    /* Erase cursor runs AHEAD of the program cursor, one command at a time.
+     * OSPI_Erase() picks the LARGEST erase the chip offers for the current
+     * alignment (64KB blocks on the fitted chips) — the old loop forced one
+     * 4KB-sector erase per 4KB of file, i.e. 2048 erase commands for an 8MB
+     * ROM, which was the bulk of the "Caching game" wait. Interleaving the
+     * erase with the SD reads keeps the progress bar moving.
+     * (This also fixes a latent overflow: the old loop fread() block_size
+     * bytes into the 16KB buffer, which overflows on chips whose smallest
+     * erase exceeds 16KB, e.g. the 256KB-sector Spansion config.) */
+    uint32_t erase_addr = address_in_flash;
+    uint32_t erase_left = erase_size_total;
+
     while (total_bytes_processed < *data_size) {
-        OSPI_EraseSync(address_in_flash, block_size);
+        size_t want = sizeof(buffer);
+        if (want > *data_size - total_bytes_processed)
+            want = *data_size - total_bytes_processed;
 
-        size_t bytes_read = fread(buffer, 1, block_size, file);
-        if (bytes_read > 0) {
-            if (byte_swap) {
-                for (size_t i = 0; i < bytes_read; i += 2) {
-                    uint8_t temp = buffer[i];
-                    buffer[i] = buffer[i + 1];
-                    buffer[i + 1] = temp;
-                }
-            }
+        while (erase_addr < address_in_flash + want && erase_left > 0) {
+            OSPI_Erase(&erase_addr, &erase_left, true);
+            wdog_refresh();
+        }
 
-            OSPI_Program(address_in_flash, buffer, bytes_read);
+        size_t bytes_read = fread(buffer, 1, want, file);
+        if (bytes_read == 0)
+            break;
 
-            address_in_flash += block_size;
-            flash_write_pointer += block_size;
-            total_bytes_processed += bytes_read;
-
-            if (progress_cb) {
-                progress = (uint8_t)((total_bytes_processed * 100) / (*data_size));
-                progress_cb(*data_size, total_bytes_processed, progress);
+        if (byte_swap) {
+            for (size_t i = 0; i < bytes_read; i += 2) {
+                uint8_t temp = buffer[i];
+                buffer[i] = buffer[i + 1];
+                buffer[i + 1] = temp;
             }
         }
 
-        if (bytes_read < block_size) {
+        OSPI_Program(address_in_flash, buffer, bytes_read);
+
+        address_in_flash += bytes_read;
+        flash_write_pointer += bytes_read;
+        total_bytes_processed += bytes_read;
+
+        if (progress_cb) {
+            progress = (uint8_t)((total_bytes_processed * 100) / (*data_size));
+            progress_cb(*data_size, total_bytes_processed, progress);
+        }
+
+        if (bytes_read < want) {
             break;
         }
     }
@@ -289,7 +311,14 @@ static bool circular_flash_write(const char *file_path,
     OSPI_EnableMemoryMappedMode();
     fclose(file);
 
-    invalidate_overwritten_files(old_flash_write_pointer, total_bytes_processed);
+    /* The next file must start on an erase-block boundary (the old loop
+     * advanced in whole blocks; we advance by real bytes now). */
+    flash_write_pointer = (flash_write_pointer + block_size - 1) & ~(block_size - 1);
+
+    /* Invalidate everything the ERASE touched, not just the programmed bytes —
+     * the aligned tail past the file end is wiped too, and a cached file whose
+     * data began there would otherwise stay marked valid over blank flash. */
+    invalidate_overwritten_files(old_flash_write_pointer, erase_size_total);
     update_flash_pointer(flash_write_pointer);
 
     return true;
