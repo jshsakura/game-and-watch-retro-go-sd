@@ -21,11 +21,20 @@
 #include <string.h>
 
 // g_scratch (Music's 352KB cover scratch, idle while a video plays) is split:
-//   [0 .. FRAME_MAX)            the current frame's JPEG bytes (decoder source)
-//   [FRAME_MAX .. +JWORK_SZ)    the JPEG core's YCbCr intermediate (MDMA target)
-#define FRAME_MAX  (64 * 1024)
+//   [0    .. 64K)     frame slot 0 (JPEG source)
+//   [64K  .. 224K)    the JPEG core's YCbCr intermediate (MDMA target)
+//   [224K .. 288K)    frame slot 1
+//   [288K .. 352K)    frame slot 2
+// Three slots let the player hold the frame being decoded plus two read ahead.
+#define FRAME_MAX  VIDEO_FRAME_MAX
 #define JWORK_SZ   (160 * 1024)        // >= 320x240 4:2:0 (115KB) with margin
 extern uint8_t g_scratch[];
+
+uint8_t *video_slot(int i)
+{
+    static const uint32_t slot_off[VIDEO_SLOTS] = { 0, 224 * 1024, 288 * 1024 };
+    return g_scratch + slot_off[i];
+}
 
 // Diagnostics for the last decode attempt (shown on screen when a clip won't play):
 // st 0=ok 1=bad-args/too-big 2=fread-fail 3=jpeg_dims-fail 4=larger-than-screen
@@ -70,21 +79,16 @@ static bool jpeg_dims(const uint8_t *p, long n, int *w, int *h)
     return false;
 }
 
-bool video_decode_frame(avi_t *a, long size, uint16_t *fb, int fb_w, int fb_h)
+bool video_decode_slot(const uint8_t *src, long size, uint16_t *fb, int fb_w, int fb_h)
 {
     g_vdec_sz = size; g_vdec_st = 0; g_vdec_w = g_vdec_h = 0; g_vdec_rc = 0;
-    if (!a || !a->f || size < 2 || size > FRAME_MAX || !fb) { g_vdec_st = 1; return false; }
+    if (!src || size < 2 || size > FRAME_MAX || !fb) { g_vdec_st = 1; return false; }
 
     wdog_refresh();
-    uint32_t t_read0 = HAL_GetTick();
-    /* avi_read (not raw fread): self-heals the handle after device sleep */
-    if (avi_read(a, g_scratch, (size_t)size) != (size_t)size) { g_vdec_st = 2; return false; }
-    g_vdec_read_ms = (int)(HAL_GetTick() - t_read0);
-    wdog_refresh();
-    g_vdec_b0 = g_scratch[0]; g_vdec_b1 = g_scratch[1];
+    g_vdec_b0 = src[0]; g_vdec_b1 = src[1];
 
     int w, h;
-    if (!jpeg_dims(g_scratch, size, &w, &h)) { g_vdec_st = 3; return false; }
+    if (!jpeg_dims(src, size, &w, &h)) { g_vdec_st = 3; return false; }
     g_vdec_w = w; g_vdec_h = h;
     if (w > fb_w || h > fb_h) { g_vdec_st = 4; return false; }   // HW codec can't downscale
     int x = (fb_w - w) / 2, y = (fb_h - h) / 2;
@@ -93,10 +97,10 @@ bool video_decode_frame(avi_t *a, long size, uint16_t *fb, int fb_w, int fb_h)
         memset(fb, 0, (size_t)fb_w * fb_h * sizeof(uint16_t));   // letterbox bars
 
     // Flush the JPEG source to RAM so the peripheral's MDMA reads fresh bytes.
-    SCB_CleanDCache_by_Addr((uint32_t *)g_scratch, (int32_t)((size + 31) & ~31L));
+    SCB_CleanDCache_by_Addr((uint32_t *)src, (int32_t)((size + 31) & ~31L));
 
     uint32_t t_jpeg0 = HAL_GetTick();
-    g_vdec_rc = (long)JPEG_DecodeToFrame((uint32_t)g_scratch, (uint32_t)fb,
+    g_vdec_rc = (long)JPEG_DecodeToFrame((uint32_t)src, (uint32_t)fb,
                                          (uint16_t)x, (uint16_t)y, 255);
     g_vdec_jpeg_ms = (int)(HAL_GetTick() - t_jpeg0);
     if (g_vdec_rc != 0) { g_vdec_st = 5; return false; }

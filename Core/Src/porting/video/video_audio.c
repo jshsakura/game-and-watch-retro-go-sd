@@ -46,6 +46,7 @@ void video_audio_start(void)
 }
 
 int video_audio_ring_count(void) { return ring_count(); }
+int video_audio_ring_free(void)  { return VR_SIZE - 1 - ring_count(); }
 
 void video_audio_stop(void)
 {

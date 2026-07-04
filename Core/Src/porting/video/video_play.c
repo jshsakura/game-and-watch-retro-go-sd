@@ -34,6 +34,8 @@ static const int SPD_DEN[] = { 2, 1, 1 };
 static const char *SPD_LBL[] = { "x0.5", "x1", "x2" };
 
 extern uint8_t g_scratch[];
+extern int g_vdec_read_ms;      // read-time accumulator (video_decode.c diagnostics)
+extern int g_vdec_st;           // decode status code, set here on read-fail markers
 
 // Audio is synced only at 1x (the ring plays at a fixed 48kHz; speed-changing the
 // video would desync it) and muted while paused.
@@ -57,11 +59,127 @@ static void feed_audio(avi_t *a, long sz)
     }
 }
 
+// ---- Frame prefetch (jitter buffer) ----------------------------------------
+// MJPEG frame sizes are bursty: a busy scene's frame can take several times the
+// average SD read time and blow the 1/fps budget on its own. The pacing wait of
+// the EASY frames is idle time — so the demuxer runs ahead during it, reading
+// upcoming video frames into free slots (audio chunks met on the way are fed
+// immediately). A burst frame is then already in RAM when its turn comes.
+// Reads during the wait go in small steps so the swap never overshoots by more
+// than ~one step's worth of milliseconds.
+#define PF_DEPTH          2           // completed frames queued ahead (+1 being shown)
+#define PF_STEP           (4 * 1024)  // bytes per wait-loop tick
+#define PF_AUDIO_HEADROOM 2400        // ring samples that must stay free to demux on
+
+typedef struct { long sz; int slot; } pf_ent_t;   // slot < 0: unreadable/oversized frame
+
+static pf_ent_t pf_q[PF_DEPTH];
+static int      pf_n;
+static uint8_t  pf_busy;                          // slot-in-use bitmask
+static int      pf_ip_slot;                       // in-progress video read...
+static long     pf_ip_want = -1, pf_ip_got;       // ...(-1 = none)
+static bool     pf_src_end;
+
+static void pf_reset(void)
+{
+    pf_n = 0;
+    pf_busy = 0;
+    pf_ip_want = -1;
+    pf_src_end = false;
+}
+
+static int pf_slot_alloc(void)
+{
+    for (int s = 0; s < VIDEO_SLOTS; s++)
+        if (!(pf_busy & (1 << s))) { pf_busy |= (1 << s); return s; }
+    return -1;
+}
+
+static void pf_enqueue(long sz, int slot)
+{
+    pf_q[pf_n].sz = sz;
+    pf_q[pf_n].slot = slot;
+    pf_n++;
+}
+
+// Advance the prefetcher a little. force=false (pacing wait): bounded work per
+// call, honours the audio-ring gate. force=true (consumer starving): big reads,
+// no gate — this is exactly the old synchronous behaviour.
+// Returns false when there is nothing (more) to do right now.
+static bool pf_step(avi_t *a, int spd, bool paused, int *na_seen, bool force)
+{
+    if (pf_ip_want >= 0) {                       // continue the in-progress frame
+        long left = pf_ip_want - pf_ip_got;
+        long take = (!force && left > PF_STEP) ? PF_STEP : left;
+        uint32_t t0 = HAL_GetTick();
+        size_t got = avi_read(a, video_slot(pf_ip_slot) + pf_ip_got, (size_t)take);
+        g_vdec_read_ms += (int)(HAL_GetTick() - t0);
+        pf_ip_got += (long)got;
+        if (got < (size_t)take) {                // short read even after self-heal
+            pf_busy &= ~(1 << pf_ip_slot);
+            pf_enqueue(-1, -1);                  // surfaces as a decode failure
+            pf_ip_want = -1;
+            return true;
+        }
+        if (pf_ip_got >= pf_ip_want) {
+            pf_enqueue(pf_ip_want, pf_ip_slot);
+            pf_ip_want = -1;
+        }
+        return true;
+    }
+
+    if (pf_src_end || pf_n >= PF_DEPTH)
+        return false;
+    /* Feeding audio early presses on the PCM ring; only run ahead when it has
+     * room for another chunk (the forced path keeps today's behaviour). */
+    if (!force && spd == 1 && !paused && video_audio_ring_free() < PF_AUDIO_HEADROOM)
+        return false;
+
+    long sz;
+    avi_kind_t k = avi_next(a, &sz);
+    if (k == AVI_END) { pf_src_end = true; return false; }
+    if (k == AVI_AUDIO) {
+        (*na_seen)++;
+        if (spd == 1 && !paused) feed_audio(a, sz);
+        return true;
+    }
+    // video frame: unreadable sizes pass through as failure markers (the
+    // demuxer skips the unread payload by itself on the next avi_next)
+    if (sz < 2 || sz > VIDEO_FRAME_MAX) { pf_enqueue(sz, -1); return true; }
+
+    int slot = pf_slot_alloc();
+    if (slot < 0) return false;                  // shouldn't happen with pf_n < depth
+    pf_ip_slot = slot;
+    pf_ip_want = sz;
+    pf_ip_got = 0;
+    g_vdec_read_ms = 0;                          // fresh read-time accumulation
+    return true;
+}
+
+// Blocking: hand out the next video frame in display order (prefetched or read
+// now), feeding interleaved audio chunks along the way. false = end of stream.
+static bool pf_fetch(avi_t *a, pf_ent_t *out, int spd, bool paused, int *na_seen)
+{
+    for (;;) {
+        wdog_refresh();
+        if (pf_n > 0) {
+            *out = pf_q[0];
+            for (int i = 1; i < pf_n; i++) pf_q[i - 1] = pf_q[i];
+            pf_n--;
+            return true;
+        }
+        if (pf_src_end)
+            return false;
+        pf_step(a, spd, paused, na_seen, true);
+    }
+}
+
 // Mute + flush the audio across a seek so the SAI ISR can't buzz on the stale /
 // underrunning ring while the demuxer walks to the target.
 static void seek_to(avi_t *a, int frame, int spd, bool paused)
 {
     music_audio_set(0, 0);
+    pf_reset();                     // prefetched frames are from the old position
     avi_seek_frame(a, frame);
     video_audio_stop();
     apply_audio(spd, paused);
@@ -294,9 +412,9 @@ vid_result_t video_play(const char *path)
     uint32_t vol_until = 0;
     bool lr_down = false; int lr_dir = 0; uint32_t lr_press = 0;
 
-    long sz;
-    avi_kind_t k;
-    while ((k = avi_next(&a, &sz)) != AVI_END) {
+    pf_reset();
+    pf_ent_t ent;
+    while (pf_fetch(&a, &ent, spd, paused, &na_seen)) {
         wdog_refresh();
         odroid_input_read_gamepad(&joy);
         #define HIT(b) (joy.values[b] && !prev.values[b])
@@ -314,6 +432,7 @@ vid_result_t video_play(const char *path)
             osd_until = HAL_GetTick() + OSD_MS;
             odroid_input_read_gamepad(&prev);            // swallow the menu's buttons
             if (r == VMENU_QUIT) { stopped = true; break; }
+            if (ent.slot >= 0) pf_busy &= ~(1 << ent.slot);   // drop this frame
             continue;
         }
         if (HIT(ODROID_INPUT_UP))   { int v = odroid_audio_volume_get(); if (v < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(v + 1); apply_audio(spd, paused); vol_until = HAL_GetTick() + 1500; }
@@ -331,6 +450,7 @@ vid_result_t video_play(const char *path)
 
         if (released) {                                  // quick tap -> skip ±5s
             lr_down = false;
+            if (ent.slot >= 0) pf_busy &= ~(1 << ent.slot);
             seek_to(&a, a.cur_frame + lr_dir * seek_frames, spd, paused);
             anchored = false;
             continue;
@@ -340,6 +460,7 @@ vid_result_t video_play(const char *path)
             lr_down = false;
             int scrub_frame = a.cur_frame;
             music_audio_set(0, 0);                       // silence while scrubbing
+            pf_reset();                                  // freeze clobbers slot 0 below
             memcpy(g_scratch, lcd_get_active_buffer(), FB_PX * sizeof(uint16_t));   // freeze
             for (;;) {
                 wdog_refresh();
@@ -379,36 +500,37 @@ vid_result_t video_play(const char *path)
             if (stopped) break;
         }
 
-        if (k == AVI_AUDIO) {
-            na_seen++;
-            if (spd == 1 && !paused) feed_audio(&a, sz);
-            continue;
-        }
-
-        // VIDEO frame: pace each frame to its EXACT presentation time — frame_idx *
-        // usec_per_frame, computed fresh so there is NO 33-vs-33.333ms rounding to
-        // drift over a long clip (that drift was why continuous playback grew choppy
-        // toward the end while a fresh seek played clean). Display when due; if the SD
-        // made us fall a whole frame behind, drop this one so lag never accumulates.
-        // Anchored at the first frame after start/seek so the audio pre-roll / seek
-        // walk never poisons the schedule.
+        // VIDEO frame (audio chunks are fed inside pf_fetch/pf_step): pace each
+        // frame to its EXACT presentation time — frame_idx * usec_per_frame,
+        // computed fresh so there is NO 33-vs-33.333ms rounding to drift over a
+        // long clip (that drift was why continuous playback grew choppy toward
+        // the end while a fresh seek played clean). Display when due; if the SD
+        // made us fall a whole frame behind, drop this one so lag never
+        // accumulates. Anchored at the first frame after start/seek so the audio
+        // pre-roll / seek walk never poisons the schedule.
         nv_seen++;
         uint32_t fr_us = (uint32_t)a.usec_per_frame * SPD_DEN[spd] / SPD_NUM[spd];
         if (!anchored) { t0 = HAL_GetTick(); frame_idx = 0; anchored = true; }
         uint32_t due = t0 + (uint32_t)((uint64_t)frame_idx * fr_us / 1000ULL);
 
         if ((int32_t)(HAL_GetTick() - due) > (int32_t)(fr_us / 1000)) {   // >1 frame late -> drop
-            frame_idx++;                                   // skip decode+read; the clock catches up
+            frame_idx++;                                   // skip the decode; the clock catches up
+            if (ent.slot >= 0) pf_busy &= ~(1 << ent.slot);
             continue;
         }
 
         uint32_t t_dec0 = HAL_GetTick();
-        bool dec_ok_now = video_decode_frame(&a, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT);
+        bool dec_ok_now = (ent.slot >= 0) &&
+            video_decode_slot(video_slot(ent.slot), ent.sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT);
+        if (ent.slot < 0)
+            g_vdec_st = (ent.sz >= 2 && ent.sz <= VIDEO_FRAME_MAX) ? 2 : 1;  // read-fail / bad size
+        else
+            pf_busy &= ~(1 << ent.slot);                   // slot free for the prefetcher
         g_vid_dms = (int)(HAL_GetTick() - t_dec0);
         if (g_vid_dms > g_vid_dmax) g_vid_dmax = g_vid_dms;
         if (dec_ok_now) {
             decoded_any = true; dec_ok++;
-        } else if (nv_seen >= 30) {               // first 30 frames all failed to DECODE -> report
+        } else if (nv_seen >= 30 && !decoded_any) {   // first 30 frames all failed to DECODE -> report
             build_diag(&a, nv_seen, na_seen);
             stopped = true; break;
         }
@@ -420,7 +542,14 @@ vid_result_t video_play(const char *path)
             draw_volume();
 
         g_vid_fms = (int)(HAL_GetTick() - t_dec0);   // real work this frame (decode+draw), excl. vsync wait
-        while ((int32_t)(HAL_GetTick() - due) < 0) { wdog_refresh(); HAL_Delay(1); }
+
+        // Pacing wait doubles as prefetch time: read upcoming frames / feed
+        // audio in small steps until the presentation time arrives.
+        while ((int32_t)(HAL_GetTick() - due) < 0) {
+            wdog_refresh();
+            if (!pf_step(&a, spd, paused, &na_seen, false))
+                HAL_Delay(1);
+        }
         lcd_swap();
         frame_idx++;
     }

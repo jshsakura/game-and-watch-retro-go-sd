@@ -11,12 +11,15 @@
 #include <stdbool.h>
 #include "avi.h"
 
-// g_scratch (352KB) partition during playback: [0,64KB) frame src, [64KB,224KB)
-// JPEG YCbCr work, [224KB,352KB) the AVI read-ahead buffer (passed to avi_open).
-#define VIDEO_RA_OFFSET (224 * 1024)
-#define VIDEO_RA_SIZE   (128 * 1024)
+// Frame slots carved out of g_scratch: the player reads AVI video chunks ahead
+// into free slots during the pacing wait (jitter buffer), then decodes each
+// slot in display order. See video_decode.c for the g_scratch partition.
+#define VIDEO_FRAME_MAX (64 * 1024)
+#define VIDEO_SLOTS     3
+
+uint8_t *video_slot(int i);
 
 void video_decode_init(void);
 void video_decode_deinit(void);
-// Reads the frame via avi_read (stale-handle self-heal), then HW-decodes it.
-bool video_decode_frame(avi_t *a, long size, uint16_t *fb, int fb_w, int fb_h);
+// HW-decode a frame that was already read into a slot buffer.
+bool video_decode_slot(const uint8_t *src, long size, uint16_t *fb, int fb_w, int fb_h);

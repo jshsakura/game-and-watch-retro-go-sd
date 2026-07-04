@@ -63,8 +63,11 @@ Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
 - **Music player (MP3)** — minimp3 streaming, album art (HW JPEG + PNG, correct
   colours), ID3 tags, duration/seek; keeps playing across device sleep and while
   browsing the list.
-- **Video player (MJPEG-AVI)** — work in progress: watchable, with faster SD reads and
-  sleep recovery, but busy scenes can still judder (SD bandwidth bound).
+- **Video player (MJPEG-AVI)** — watchable, with faster SD reads and sleep recovery.
+  Busy-scene judder is addressed two ways: the player now reads frames ahead into a
+  jitter buffer during each frame's pacing wait (a burst frame is absorbed by earlier
+  frames' idle slack), and the companion encoder VBV-caps per-frame bytes on the
+  heaviest scenes (easy scenes stay byte-identical to before).
 
 ### Launcher
 
