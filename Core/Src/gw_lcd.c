@@ -106,6 +106,12 @@ void lcd_deinit(SPI_HandleTypeDef *spi) {
 }
 
 void *lcd_clear_active_buffer() {
+  /* A pending lcd_swap() flip only lands at the next vblank; until then the
+   * "active" buffer is still the one being scanned out, and the fast
+   * write-buffered clear can overtake the beam (bottom black band). Central
+   * guard for every core that clears per frame — same race the WS/NGP blits
+   * already wait out; returns immediately in the normal cadence. */
+  lcd_sleep_while_swap_pending();
   void *buffer = lcd_get_active_buffer();
   memset(buffer, 0, lcd_get_frame_size());
   return buffer;
