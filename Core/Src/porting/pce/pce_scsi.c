@@ -39,9 +39,9 @@ __attribute__((weak)) void pce_scsi_pc_tick(uint16_t pc) { (void)pc; }
    * global line count — was the FATAL risk, and it stays capped regardless), so this global
    * cap only buys headroom for the low-rate events we actually want (CD-DA / ADPCM start,
    * READ fails). 800 lines ~= 32KB, nothing on SD. Delete /pcecd_diag.txt first. */
-  /* Kept ON while PCE-CD load/resume is still under active verification
-   * (the only remaining device diag; all others are compiled out). */
-  #define PCECD_DIAG 1
+  /* OFF for the clean release: PCE-CD load/resume/Dynastic verification is
+   * complete (2026-07-04). Flip back to 1 if a new PCE-CD issue needs traces. */
+  #define PCECD_DIAG 0
   #define PCECD_DIAG_FILE "/pcecd_diag.txt"
   #define PCECD_DIAG_MAX  800
 #endif
