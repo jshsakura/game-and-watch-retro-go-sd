@@ -46,6 +46,18 @@ caveats where things fall short.
   automatic overclock. Gapless audio, selectable pad presets (left pad / right pad /
   triggers as A/B). Several titles are enjoyable at that speed.
 
+#### BIOS files the added systems expect
+
+| System | SD path | Files |
+|---|---|---|
+| PC Engine CD | `/bios/pce/` | `syscard3.pce` (Super CD-ROM² System Card 3.0; `syscard3.bin` is accepted too) |
+| ZX Spectrum | `/bios/zxs/` | `48.rom` |
+| Commodore 64 | `/bios/c64/` | `kernal.bin`, `basic.bin`, `chargen.bin` |
+| Odyssey² / Videopac | `/bios/videopac/` | `o2rom.bin` |
+| game.com | `/bios/gamecom/` | `internal.bin`, `external.bin` |
+
+Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
+
 ### Apps (homebrew overlays)
 
 - **Music player (MP3)** — minimp3 streaming, album art (HW JPEG + PNG, correct
