@@ -225,6 +225,15 @@ static void screen_blit_bilinear(int32_t dest_width)
 
 static void blit_emulator(void)
 {
+    /* Wait out a pending lcd_swap() flip before touching the buffer — it is
+     * still being scanned out until the flip lands at vblank. This is the
+     * "bottom band flicker via vblank-swap desync" already dodged below by
+     * making the NN blits full-coverage; the FIT+Soft path still clears first,
+     * and with the framebuffer now Normal memory (fast, write-buffered stores)
+     * a clear can overtake the beam. Normally the flip has long landed and
+     * this returns immediately. */
+    lcd_sleep_while_swap_pending();
+
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
     odroid_display_filter_t filtering = odroid_display_get_filter_mode();
 

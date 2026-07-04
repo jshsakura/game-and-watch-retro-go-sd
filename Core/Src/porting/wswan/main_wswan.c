@@ -198,6 +198,14 @@ static inline void screen_blit_nn(int32_t dest_width, int32_t dest_height)
 
 static void blit_emulator(void)
 {
+    /* The lcd_swap() flip only LANDS at the next vblank; until then the buffer
+     * this function is about to clear is still being scanned out. The per-frame
+     * clear used to lose that race harmlessly (Strongly-Ordered stores were
+     * slower than scanout); with the framebuffer now Normal memory the clear
+     * can overtake the beam and paint a black band across the bottom rows.
+     * Wait out a pending flip first — normally already done, so this is free. */
+    lcd_sleep_while_swap_pending();
+
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
     odroid_display_filter_t filtering = odroid_display_get_filter_mode();
 
