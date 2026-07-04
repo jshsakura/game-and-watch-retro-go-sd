@@ -15,6 +15,7 @@
 #include "main.h"
 #include "rg_i18n.h"
 #include "rg_emulators.h"
+#include "favorites.h"
 #include "gw_malloc.h"
 
 #if !defined(COVERFLOW)
@@ -58,6 +59,15 @@ static listbox_item_t *global_items = NULL;
 
 static uint8_t *pJPEG_Buffer = NULL;
 static uint16_t *pCover_Buffer = NULL;
+
+/* The ★ tab mixes systems, so square homebrew art sits next to poster box
+ * art and the carousel rows/columns drift with each cover's native size.
+ * On that tab only, every decoded cover is letterboxed into one fixed
+ * poster-shaped slot (scaled to fit, centered on a black mat) and reported
+ * at the slot size, so all four themes lay out identical frames. */
+#define COVER_SLOT_WIDTH ((uint32_t)75)
+#define COVER_SLOT_HEIGHT ((uint32_t)100)
+#define COVER_SLOT_BYTES ((uint32_t)(COVER_SLOT_WIDTH * COVER_SLOT_HEIGHT * 2))
 
 const uint8_t cover_light[5] = {60, 120, 255, 120, 60};
 const uint8_t cover_light3[3] = {255, 120, 60};
@@ -794,6 +804,51 @@ static uint8_t *get_coverfile(char *rom_path)
     return cover_cache[current_cache_index].buffer;
 }
 
+static bool cover_slot_active(void)
+{
+    return rg_favorites_is_current_tab();
+}
+
+/* Rescale the freshly decoded cover in pCover_Buffer into the fixed slot
+ * (nearest-neighbour, aspect kept, black letterbox) and report slot dims.
+ * No-op outside the ★ tab. */
+static void cover_slot_apply(uint32_t *width, uint32_t *height)
+{
+    static uint16_t *pSlot_Buffer = NULL;
+    uint32_t src_w = *width, src_h = *height;
+
+    if (!cover_slot_active() || src_w == 0 || src_h == 0)
+        return;
+    if ((src_w == COVER_SLOT_WIDTH) && (src_h == COVER_SLOT_HEIGHT))
+        return;
+    if (pSlot_Buffer == NULL)
+        pSlot_Buffer = (uint16_t *)ram_malloc(COVER_SLOT_BYTES);
+
+    uint32_t dst_w = COVER_SLOT_WIDTH;
+    uint32_t dst_h = (src_h * COVER_SLOT_WIDTH) / src_w;
+    if (dst_h > COVER_SLOT_HEIGHT)
+    {
+        dst_h = COVER_SLOT_HEIGHT;
+        dst_w = (src_w * COVER_SLOT_HEIGHT) / src_h;
+    }
+
+    memset(pSlot_Buffer, 0, COVER_SLOT_BYTES);
+
+    uint32_t x0 = (COVER_SLOT_WIDTH - dst_w) / 2;
+    uint32_t y0 = (COVER_SLOT_HEIGHT - dst_h) / 2;
+    for (uint32_t y = 0; y < dst_h; y++)
+    {
+        const uint16_t *src_row = &pCover_Buffer[((y * src_h) / dst_h) * src_w];
+        uint16_t *dst_row = &pSlot_Buffer[(y0 + y) * COVER_SLOT_WIDTH + x0];
+        for (uint32_t x = 0; x < dst_w; x++)
+            dst_row[x] = src_row[(x * src_w) / dst_w];
+    }
+
+    memcpy(pCover_Buffer, pSlot_Buffer, COVER_SLOT_BYTES);
+    *width = COVER_SLOT_WIDTH;
+    *height = COVER_SLOT_HEIGHT;
+}
+
 static void draw_centered_local_text_line(uint16_t y_pos,
                                           const char *text,
                                           uint16_t x1,
@@ -878,8 +933,17 @@ static bool gui_get_cover_size(retro_emulator_file_t *file, uint32_t *cov_width,
     {
         if (JPEG_DecodeGetSize((uint32_t)(file->img_address), &jpeg_cov_width, &jpeg_cov_height) == 0)
         {
-            *cov_width = jpeg_cov_width;
-            *cov_height = jpeg_cov_height;
+            /* ★ tab: layout always sees the fixed slot, not the native size */
+            if (cover_slot_active())
+            {
+                *cov_width = COVER_SLOT_WIDTH;
+                *cov_height = COVER_SLOT_HEIGHT;
+            }
+            else
+            {
+                *cov_width = jpeg_cov_width;
+                *cov_height = jpeg_cov_height;
+            }
             return true;
         }
     }
@@ -911,10 +975,16 @@ void gui_draw_coverlight_h(retro_emulator_file_t *file, int cover_position)
     if (file->img_state == IMG_STATE_COVER)
     {
         JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &cover_width, &cover_height, cover_light[cover_position + 2]);
+        cover_slot_apply(&cover_width, &cover_height);
         if (nocover_width > cover_width)
             nocover_width = cover_width;
         if (nocover_height > cover_height)
             nocover_height = cover_height;
+    }
+    else if (cover_slot_active())
+    {
+        cover_width = COVER_SLOT_WIDTH;
+        cover_height = COVER_SLOT_HEIGHT;
     }
     else
     {
@@ -1052,10 +1122,16 @@ void gui_draw_coverlight_v(retro_emulator_file_t *file, int cover_position)
     if (file->img_state == IMG_STATE_COVER)
     {
         JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &cover_width, &cover_height, cover_light3[-cover_position]);
+        cover_slot_apply(&cover_width, &cover_height);
         if (nocover_width > cover_width)
             nocover_width = cover_width;
         if (nocover_height > cover_height)
             nocover_height = cover_height;
+    }
+    else if (cover_slot_active())
+    {
+        cover_width = COVER_SLOT_WIDTH;
+        cover_height = COVER_SLOT_HEIGHT;
     }
     else
     {
@@ -1242,6 +1318,7 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
         {
             //draw the cover cenver
             JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             odroid_display_write_rect(start_xpos + p_width1 + p_width2 + 11, cover_top, jpeg_cover_width, jpeg_cover_height, jpeg_cover_width, pCover_Buffer);
             //draw the cover shadow
             for (int y = 0; y <= 20; y++)
@@ -1277,6 +1354,7 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
         else
         {
             JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             for (int y = 0; y < p_height2; y++)
                 for (int x = 0; x < p_width2; x++)
                 {
@@ -1312,6 +1390,7 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
         else
         {
             JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             for (int y = 0; y < p_height2; y++)
                 for (int x = 0; x < p_width2; x++)
                 {
@@ -1341,6 +1420,7 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
         if (file->img_state == IMG_STATE_COVER)
         {
             JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             for (int y = 0; y < p_height1; y++)
                 for (int x = 0; x < p_width1; x++)
                 {
@@ -1370,6 +1450,7 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
         if (file->img_state == IMG_STATE_COVER)
         {
             JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             for (int y = 0; y < p_height1; y++)
                 for (int x = 0; x < p_width1; x++)
                 {
@@ -1490,6 +1571,7 @@ void gui_draw_coverflow_v(tab_t *tab, int start_posx) // ||||||||
         else
         {
             JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             odroid_display_write_rect(start_posx + 3 + (cover_width - jpeg_cover_width) / 2, start_ypos + p_height + 16 + (cover_height - jpeg_cover_height) / 2, jpeg_cover_width, jpeg_cover_height, jpeg_cover_width, pCover_Buffer);
         };
     }
@@ -1518,6 +1600,7 @@ void gui_draw_coverflow_v(tab_t *tab, int start_posx) // ||||||||
             {
                 //draw the cover
                 JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+                cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
                 for (int y = 0; y < p_height; y++)
                     for (int x = 0; x < p_width1; x++)
                         dst_img[(start_ypos + p_height + cover_height + 21 + y) * ODROID_SCREEN_WIDTH + start_posx + (cover_width - p_width1) * 3 / 4 + 3 + x] =
@@ -1551,6 +1634,7 @@ void gui_draw_coverflow_v(tab_t *tab, int start_posx) // ||||||||
                 {
                     //draw the cover
                     JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+                    cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
 
                     for (int y = 0; y < p_height; y++)
                         for (int x = 0; x < p_width1; x++)
