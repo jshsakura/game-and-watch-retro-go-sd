@@ -12,6 +12,8 @@
 
 static mp3dec_t  g_mp3;
 static FILE     *g_fp;
+static char      g_path[256];   // for the stale-handle reopen (sleep/wake)
+static long      g_stream_pos;  // absolute file offset of the next stream read
 static uint8_t   g_in[MP3_IN_BUF];
 static int       g_in_len, g_in_pos;
 static bool      g_file_eof;
@@ -118,6 +120,36 @@ int  audio_channels(void)   { return g_chan; }
 
 // --- decode -----------------------------------------------------------------
 
+/* Streaming read with the same stale-handle self-heal as pce_cd.c: after
+ * device sleep the SD is remounted and the persistent g_fp dies, so every
+ * fread returns 0 forever and the track "ends" mid-song. When a read fails
+ * BEFORE the known end of the audio data, reopen the file once and resume at
+ * the tracked offset. A genuine EOF (offset at/after the end) never reopens,
+ * and a failed heal falls through to the normal end-of-stream path. */
+static size_t stream_read(void *dst, size_t want)
+{
+    if (g_fp == NULL || want == 0)
+        return 0;
+
+    size_t got = fread(dst, 1, want, g_fp);
+    if (got == 0 && g_stream_pos < g_data_off + g_audio_size) {
+        fclose(g_fp);
+        g_fp = fopen(g_path, "rb");
+        if (g_fp == NULL)
+            return 0;
+        if (fseek(g_fp, g_stream_pos, SEEK_SET) != 0) {
+            /* half-healed handle at offset 0 would feed the decoder the file
+             * START — drop it so the stream ends instead of corrupting */
+            fclose(g_fp);
+            g_fp = NULL;
+            return 0;
+        }
+        got = fread(dst, 1, want, g_fp);
+    }
+    g_stream_pos += (long)got;
+    return got;
+}
+
 static void refill(void)
 {
     if (g_in_pos > 0) {
@@ -129,7 +161,7 @@ static void refill(void)
     }
     if (!g_file_eof) {
         int space = MP3_IN_BUF - g_in_len;
-        int got = space > 0 ? (int)fread(g_in + g_in_len, 1, space, g_fp) : 0;
+        int got = space > 0 ? (int)stream_read(g_in + g_in_len, space) : 0;
         if (got <= 0) g_file_eof = true;
         else          g_in_len += got;
     }
@@ -145,7 +177,7 @@ static bool wav_decode_frame(void)
     int frames = 1152;
     if ((long)frames * fb > remain)      frames = (int)(remain / fb);
     if ((long)frames * fb > MP3_IN_BUF)  frames = MP3_IN_BUF / fb;
-    int got = (int)fread(g_in, 1, (size_t)frames * fb, g_fp);
+    int got = (int)stream_read(g_in, (size_t)frames * fb);
     g_wav_pos += got;
     int gf = got / fb;
     for (int i = 0; i < gf; i++) {
@@ -238,6 +270,8 @@ bool audio_open(const char *path)
     music_attach(g_ring, RING_SIZE, &g_head, &g_tail);   // let the core ISR read our ring
     audio_close();
     g_fp = fopen(path, "rb");
+    strncpy(g_path, path, sizeof(g_path) - 1);
+    g_path[sizeof(g_path) - 1] = 0;
     g_step = ((uint32_t)44100 << 16) / AUDIO_SAMPLE_RATE;
     g_bitrate = 0; g_avg_bitrate = 0; g_hz = 0; g_chan = 0;
     g_data_off = 0; g_audio_size = 0; g_duration = 0;
@@ -264,6 +298,7 @@ bool audio_open(const char *path)
         }
         fseek(g_fp, g_data_off, SEEK_SET);
     }
+    g_stream_pos = g_data_off;
     // Derive the stable average bitrate once per track (see audio_bitrate_kbps).
     if (g_is_wav)
         g_avg_bitrate = g_bitrate;                                  // PCM: constant rate
@@ -290,6 +325,8 @@ void audio_seek(float frac)
         g_wav_pos = off - g_data_off;
     }
     fseek(g_fp, off, SEEK_SET);
+    g_stream_pos = off;   /* even if the fseek failed on a stale handle, the
+                             next stream_read heals and resumes at `off` */
     reset_decoder();
     audio_pump(AUDIO_PUMP_TARGET);
 }

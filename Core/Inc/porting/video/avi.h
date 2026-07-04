@@ -28,6 +28,13 @@ typedef struct {
     long  ckpt[AVI_CKPT_N];  // movi_pos recorded at frame k*ckpt_step (0 = not seen yet)
     int   ckpt_step;         // frames between checkpoints
     bool  indexed;           // idx1 already scanned to pre-fill ckpt[] (lazy, on 1st seek)
+    // Stale-handle self-heal (sleep/wake kills the persistent FILE*): enough
+    // state to silently reopen the file and resume at the exact offset.
+    char  path[256];         // source file (for the reopen)
+    void *rabuf;             // read-ahead buffer handed to avi_open
+    unsigned long rasize;
+    long  chunk_off;         // payload offset of the chunk avi_next() returned
+    long  chunk_read;        // payload bytes already consumed via avi_read()
 } avi_t;
 
 // Open `path`, parse the AVI main header (frame size + rate) and locate the
@@ -42,6 +49,12 @@ bool avi_open(avi_t *a, const char *path, void *rabuf, unsigned long rasize);
 // (read *size bytes — e.g. stream them into a decoder). Returns AVI_END at the
 // end of the movi list. JUNK / index / empty / unknown chunks are skipped.
 avi_kind_t avi_next(avi_t *a, long *size);
+
+// Read chunk-payload bytes at the current position. Use this instead of a raw
+// fread(a->f): it survives a stale handle (device sleep remounts the SD and
+// kills the persistent FILE*) by reopening the file and resuming at the exact
+// payload offset. Returns the byte count actually read.
+size_t avi_read(avi_t *a, void *dst, size_t want);
 
 // Rewind the demuxer to the movi start and skip forward to the `frame`-th video
 // frame (clamped to [0, total)). Cheap because MJPEG frames are independent.

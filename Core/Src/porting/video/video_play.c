@@ -50,7 +50,7 @@ static void feed_audio(avi_t *a, long sz)
     while (sz > 0) {
         wdog_refresh();
         size_t want = sz > (long)sizeof buf ? sizeof buf : (size_t)sz;
-        size_t got = fread(buf, 1, want, a->f);
+        size_t got = avi_read(a, buf, want);   /* self-heals a slept-out handle */
         if (got == 0) break;
         video_audio_feed(buf, (int)got);
         sz -= (long)got;
@@ -403,7 +403,7 @@ vid_result_t video_play(const char *path)
         }
 
         uint32_t t_dec0 = HAL_GetTick();
-        bool dec_ok_now = video_decode_frame(a.f, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT);
+        bool dec_ok_now = video_decode_frame(&a, sz, lcd_get_active_buffer(), GW_LCD_WIDTH, GW_LCD_HEIGHT);
         g_vid_dms = (int)(HAL_GetTick() - t_dec0);
         if (g_vid_dms > g_vid_dmax) g_vid_dmax = g_vid_dms;
         if (dec_ok_now) {

@@ -51,6 +51,9 @@ bool avi_open(avi_t *a, const char *path, void *rabuf, unsigned long rasize)
     memset(a, 0, sizeof *a);
     a->f = fopen(path, "rb");
     if (!a->f) return false;
+    strncpy(a->path, path, sizeof(a->path) - 1);
+    a->rabuf = rabuf;
+    a->rasize = rasize;
 
     // Read-ahead: a big fully-buffered stdio buffer turns the demuxer's many tiny
     // chunk reads into a few large block reads — the win on a slow SD, where the
@@ -105,12 +108,43 @@ fail:
     return false;
 }
 
+/* Reopen the source after the persistent handle went stale (device sleep
+ * remounts the SD). Demuxer state (movi_pos & co) lives in avi_t, not in the
+ * FILE*, so a fresh handle resumes seamlessly. */
+static bool avi_reopen(avi_t *a)
+{
+    if (a->f) fclose(a->f);
+    a->f = fopen(a->path, "rb");
+    if (!a->f) return false;
+    if (a->rabuf && a->rasize)
+        setvbuf(a->f, (char *)a->rabuf, _IOFBF, (size_t)a->rasize);
+    return true;
+}
+
+size_t avi_read(avi_t *a, void *dst, size_t want)
+{
+    if (!a->f || want == 0) return 0;
+    size_t got = fread(dst, 1, want, a->f);
+    if (got < want) {
+        /* stale handle: reopen and resume inside the current chunk payload */
+        long pos = a->chunk_off + a->chunk_read + (long)got;
+        if (avi_reopen(a) && fseek(a->f, pos, SEEK_SET) == 0)
+            got += fread((uint8_t *)dst + got, 1, want - got, a->f);
+    }
+    a->chunk_read += (long)got;
+    return got;
+}
+
 avi_kind_t avi_next(avi_t *a, long *size)
 {
+    bool healed = false;
     while (a->movi_pos + 8 <= a->movi_end) {
-        if (fseek(a->f, a->movi_pos, SEEK_SET) != 0) break;
         char id[4];
-        if (!rd_fourcc(a->f, id)) break;
+        if (fseek(a->f, a->movi_pos, SEEK_SET) != 0 || !rd_fourcc(a->f, id)) {
+            /* stale handle (sleep/wake): one reopen, then retry this chunk */
+            if (!healed && avi_reopen(a)) { healed = true; continue; }
+            break;
+        }
         uint32_t sz = rd_u32(a->f);
         long data = ftell(a->f);
 
@@ -125,6 +159,7 @@ avi_kind_t avi_next(avi_t *a, long *size)
         char t0 = id[2], t1 = id[3];
         if (t0 == 'd' && (t1 == 'c' || t1 == 'b')) {
             *size = (long)sz; fseek(a->f, data, SEEK_SET);
+            a->chunk_off = data; a->chunk_read = 0;
             a->cur_frame++;
             if (a->ckpt_step > 0 && a->cur_frame % a->ckpt_step == 0) {   // record a seek checkpoint
                 int kk = a->cur_frame / a->ckpt_step;
@@ -133,7 +168,9 @@ avi_kind_t avi_next(avi_t *a, long *size)
             return AVI_VIDEO;
         }
         if (t0 == 'w' && t1 == 'b') {
-            *size = (long)sz; fseek(a->f, data, SEEK_SET); return AVI_AUDIO;
+            *size = (long)sz; fseek(a->f, data, SEEK_SET);
+            a->chunk_off = data; a->chunk_read = 0;
+            return AVI_AUDIO;
         }
         // JUNK / 'ix..' index / unknown -> skip (cursor already advanced)
     }

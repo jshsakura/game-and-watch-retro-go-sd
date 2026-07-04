@@ -13,6 +13,7 @@
 // player keeps the previous frame) — the encoder always targets 320x240 anyway.
 
 #include "video_decode.h"
+#include "avi.h"
 #include "gw_lcd.h"
 #include "main.h"               // wdog_refresh + CMSIS cache ops
 #include "hw_jpeg_decoder.h"
@@ -69,14 +70,15 @@ static bool jpeg_dims(const uint8_t *p, long n, int *w, int *h)
     return false;
 }
 
-bool video_decode_frame(FILE *f, long size, uint16_t *fb, int fb_w, int fb_h)
+bool video_decode_frame(avi_t *a, long size, uint16_t *fb, int fb_w, int fb_h)
 {
     g_vdec_sz = size; g_vdec_st = 0; g_vdec_w = g_vdec_h = 0; g_vdec_rc = 0;
-    if (!f || size < 2 || size > FRAME_MAX || !fb) { g_vdec_st = 1; return false; }
+    if (!a || !a->f || size < 2 || size > FRAME_MAX || !fb) { g_vdec_st = 1; return false; }
 
     wdog_refresh();
     uint32_t t_read0 = HAL_GetTick();
-    if (fread(g_scratch, 1, (size_t)size, f) != (size_t)size) { g_vdec_st = 2; return false; }
+    /* avi_read (not raw fread): self-heals the handle after device sleep */
+    if (avi_read(a, g_scratch, (size_t)size) != (size_t)size) { g_vdec_st = 2; return false; }
     g_vdec_read_ms = (int)(HAL_GetTick() - t_read0);
     wdog_refresh();
     g_vdec_b0 = g_scratch[0]; g_vdec_b1 = g_scratch[1];
