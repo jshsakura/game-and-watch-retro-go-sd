@@ -2,70 +2,89 @@
 
 This is an **unofficial, personal experimental** full-source build of retro-go-sd for
 the Nintendo Game & Watch. It carries work-in-progress features and on-device fixes
-that are **not** in the official project and may be unstable.
+that are **not** in the official project and may be unstable. Everything here was
+tested by one person on one device, so it will not be perfect.
 
 - **Official / stable build:** https://github.com/sylverb/game-and-watch-retro-go-sd
 - This fork: https://github.com/jshsakura/game-and-watch-retro-go-sd
-- **Testers welcome** — bug reports and screenshots are appreciated. Use at your own risk;
+- **Testers welcome** — bug reports and logs are appreciated. Use at your own risk;
   back up your saves first.
 
-> Install: flash `retro-go_update.bin`, then unpack `gw_update.tar` onto the SD card so the
-> firmware and the homebrew overlays (`/roms/homebrew/*.bin`, `*.ro`) come from the **same**
-> build. ROMs/WADs are never bundled — supply your own.
+> Install: flash `retro-go_update.bin`. Flashing also pushes the matching support files
+> (`/cores/*`, `/bios/logo.bin`, homebrew overlays) onto the SD card automatically, so
+> no manual SD step is needed; `gw_update.tar` is provided for manual recovery only.
+> ROMs are never bundled — supply your own.
 
 ---
 
-## What this testbed adds (vs. upstream)
+## How this build differs from upstream
 
-### WonderSwan / WonderSwan Color (oswan)
-- One Piece: Grand Battle (8 MB cart) now boots and runs at full speed — implemented the
-  missing V30 `0x0F` instruction group plus `REPNC`/`REPC`.
-- Fixed the savestate / resume HardFault on 8 MB carts: mirror cart banks across the
-  address space, force `CS=0` during the `WriteIO(0xC0)` bank replay, correct `INT 1`
-  stack handling, and save/restore the frame-timing phase in the savestate.
-- Fixed the sound-DMA boot hang / frozen screen (port `0x52`, frame-skip latch).
-- All the resume-debug instrumentation has been stripped back out.
+Upstream is the reference; this is simply a list of the differences, with honest
+caveats where things fall short.
 
-### Neo Geo Pocket / Color (RACE)
-- Sound now resumes correctly after loading a savestate (re-arm the Z80 / IRQ chain).
-- Fixed FIT / letterbox scaling corruption and the flickering bottom band.
-- Scaling follows the global setting and defaults to FIT on first run.
+### Additional systems
 
-### Music player (MP3)
-- Focused MP3 player homebrew.
-- Fixed album-art JPEG colors (BGR565 → RGB565 R/B swap in the decoder).
+- **PC Engine CD** — SCSI CD drive emulation on top of the existing pce-go port:
+  CD-DA audio, ADPCM (MSM5205) streaming, BRAM saves on SD, savestate/resume including
+  mid-ADPCM and CD-DA state. Per-game folder layout (`/roms/pcecd/<game>/` with
+  cue+tracks), cover art per folder. Verified through four full playthroughs.
+- **Atari Lynx** (handy) — runs with in-game save/load and resume; 512K carts execute
+  bank0 in place from flash when RAM is tight.
+- **WonderSwan / Color** (oswan) — 8 MB carts incl. One Piece: Grand Battle (missing V30
+  instructions implemented), sound-DMA boot hang fixed, FIT-scaling artifacts fixed.
+  Known limit: One Piece's savestate resume needs more cycle accuracy than oswan has.
+- **Neo Geo Pocket / Color** (RACE) — runs from flash, flicker/scaling fixes, sound
+  correctly resumes after loading a savestate.
+- **ZX Spectrum** (floooh's chips core) — BIOS from SD, auto-fit screen, PAUSE-menu
+  configurable GAME/TIME/B key mapping.
+- **Commodore 64** (Frodo) — `.d64` loading with autostart (LOAD/RUN + warp), both
+  joystick ports, pause/exit menu.
+- **Odyssey² / Videopac** (O2EM, already in the upstream tree) — enabled, with the
+  raw-ROM `getromdata` path fixed; save/load/resume; multi-game cart select overlay.
+- **game.com** (Tiger) — plays the library; the 4-action pad mapped onto G&W buttons.
+- **Virtual Boy** (red-viper) — honest caveat: **about 65-70% of full speed** with
+  automatic overclock. Gapless audio, selectable pad presets (left pad / right pad /
+  triggers as A/B). Several titles are enjoyable at that speed.
+- **Tamagotchi P2** — runs on the same TamaLib core as the upstream P1.
 
-### Video player (MJPEG / AVI)
-- MJPEG-AVI video player homebrew (shares the music overlay).
-- ~8× faster SD reads via HW-SPI block reads, fixing busy-scene judder; optional timing HUD.
+### Apps (homebrew overlays)
 
-### PC Engine CD / Super CD-ROM² (pce)
-- CD-ROM² games now boot and play. *Ai Chou Aniki* runs from the MASAYA logo through
-  the intro art into Stage 1 shooter gameplay.
-- Two protocol-level fixes found on the host trace harness and applied to the shared
-  device core: the `$18C0` **Super System Card signature** (so the game stops aborting to
-  a halt), and the **ADPCM-from-CD DMA** path (`$180B` bit 1), which previously never
-  completed the bulk read and looped the boot.
-- Savestates include the full 256 KB CD RAM.
-- ADPCM / CDDA audio is decoded-and-discarded for now (no CD sound yet), and the 4-slot
-  save/load polish is still in progress. **Host-harness verified; on-device boot still to
-  be confirmed** — please share a serial / SD log if it misbehaves, not a screenshot.
+- **Music player (MP3)** — minimp3 streaming, album art (HW JPEG + PNG, correct
+  colours), ID3 tags, duration/seek; keeps playing across device sleep and while
+  browsing the list.
+- **Video player (MJPEG-AVI)** — work in progress: watchable, with faster SD reads and
+  sleep recovery, but busy scenes can still judder (SD bandwidth bound).
 
-### Magnavox Odyssey² / Videopac (O2EM)
-- New SD-ROM system driven by the O2EM core.
-- BIOS loads from `/bios/videopac`.
-- Multi-game carts get a small game-select overlay: UP/DOWN pick a game (0–9), A starts;
-  it defaults to game 1 after ~5 s if you don't choose.
+### Launcher
 
-### Atari Lynx (Handy)
-- The Handy core now runs **XIP from QSPI flash** (only the small glue stays in the RAM
-  overlay), killing the RAM→flash veneer corruption that destabilised execution.
-- Two on-run crashes fixed earlier (BS93 big-endian header parse, Mikey render-line
-  bounds), surfaced by a host AddressSanitizer harness that now gates CI.
+- **Favorites tab (★)** — plain-text `/favorites.txt` (one ROM path per line) shown as
+  the first tab; costs zero resident RAM (reuses the shared list buffer). Toggle from
+  the A-button menu; mixed-system covers letterbox into one poster slot so the carousel
+  stays aligned.
+- **Wordmarks & icons** — per-system name headers in one font at one letter size,
+  28×28 colour tab icons. NES is labelled `NES (FAMICOM)`, MSX `MSX / MSX2+`.
+- **Carousel wrap** — lists that fit on one screen no longer repeat to fill the view;
+  only lists longer than a page connect end-to-start.
+- **i18n** — the added strings are translated across the 12 supported languages; older
+  SD language bins remain compatible.
 
-### Other
-- Misc display/scaling consistency fixes across emulators.
+### System-wide
 
-> **Next up (in bring-up, not in this build):** ZX Spectrum and Commodore 64, currently
-> being brought up on a host harness. DOOM and Wolfenstein 3D have been dropped from the
-> testbed — see the post-mortem issue for the why.
+- **Game caching speed** — the ROM flash cache erases with the chip's largest erase
+  command instead of per-4KB sectors; "Caching game" is several times shorter. Two
+  latent edge cases fixed along the way (a buffer overflow on 256KB-sector chips, and
+  a missed invalidation of the erased tail).
+- **Blit speed** — the framebuffer MPU regions are Normal non-cacheable instead of
+  Strongly-Ordered, saving ~1.4-2.1 ms per full-screen blit on every system, with
+  explicit ordering guards (DSB before the vblank flip; per-frame clears wait out a
+  pending flip).
+- **Battery gauge** — filter state persists across power-off in an RTC backup
+  register, with a time-based display limiter; the shown percent no longer seesaws
+  between boots.
+- **Idle auto-sleep** — an untouched game puts the device to sleep instead of draining
+  the battery.
+- **Sleep recovery** — SD file handles (music, video, PCE-CD streams) self-heal after
+  the SD card is power-cycled by sleep.
+
+The debugging history behind most of this is written up in
+[`docs/UPSTREAM_ENGINEERING_NOTES.md`](docs/UPSTREAM_ENGINEERING_NOTES.md).
