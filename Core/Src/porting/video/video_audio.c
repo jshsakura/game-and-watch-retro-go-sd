@@ -16,7 +16,10 @@ static volatile uint16_t g_head, g_tail;
 
 static mp3dec_t  g_mp3;
 static int16_t   g_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
-static int16_t   g_mono[MINIMP3_MAX_SAMPLES_PER_FRAME];
+/* mp3dec_decode_frame returns PER-CHANNEL sample counts (<=1152), so the mono
+ * downmix needs only half of MAX_SAMPLES_PER_FRAME (which counts both
+ * channels interleaved). The overlay BSS sits within bytes of its limit. */
+static int16_t   g_mono[MINIMP3_MAX_SAMPLES_PER_FRAME / 2];
 static int       g_frame_n;            // mono samples pending in g_mono
 static uint32_t  g_phase, g_step;      // 16.16 resample index / step
 
