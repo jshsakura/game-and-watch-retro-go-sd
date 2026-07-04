@@ -22,6 +22,7 @@ static const int StepIdxDelta[16] = { -1,-1,-1,-1,2,4,6,8, -1,-1,-1,-1,2,4,6,8 }
 
 static uint8_t  s_ram[ADPCM_RAM_SIZE];
 static uint16_t s_addr, s_read_addr, s_write_addr, s_length;
+static uint8_t  s_read_latch;   /* $180A read = one-read latency (see below) */
 static uint8_t  s_last_cmd, s_freq;
 static bool     s_playing, s_end, s_half, s_play_nibble;
 static int32_t  s_cur;          /* decoder predictor, 12-bit (center 0x800) */
@@ -32,6 +33,7 @@ static int16_t  s_held;         /* last decoded PCM sample (held between ticks) 
 void pce_adpcm_reset(void)
 {
     s_addr = s_read_addr = s_write_addr = s_length = 0;
+    s_read_latch = 0;
     s_last_cmd = s_freq = 0;
     s_playing = s_end = s_half = s_play_nibble = false;
     s_cur = 0x800; s_ssi = 0; s_phase = 0; s_held = 0;
@@ -106,8 +108,18 @@ void pce_adpcm_write(uint8_t reg, uint8_t val)
 uint8_t pce_adpcm_read(uint8_t reg)
 {
     switch (reg & 0x0F) {
-    case 0xA:                                   /* read a byte from ADPCM RAM */
-        return s_ram[s_read_addr++];
+    case 0xA: {                                 /* read a byte from ADPCM RAM.
+        * Real MSM5205 interface has a one-read LATENCY: $180A returns the
+        * previously latched byte and fetches the next (Mednafen ReadBuffer/
+        * ReadPending). The System Card's AD_READ knows this and issues a dummy
+        * read to prime the pipe — with our old immediate model that dummy read
+        * CONSUMED a real byte, shifting every AD_READ record by one (Dynastic
+        * Hero streams its level decompressor through AD_READ: the desynced
+        * stream yielded a garbage block count -> I/O spray -> purple screen). */
+        uint8_t v = s_read_latch;
+        s_read_latch = s_ram[s_read_addr++];
+        return v;
+    }
     case 0xC:                                   /* status */
         return (uint8_t)((s_end ? 0x01 : 0) | (s_playing ? 0x08 : 0));
     default:
@@ -140,7 +152,7 @@ void pce_adpcm_get(uint32_t out[PCE_ADPCM_STATE_WORDS])
     out[4] = (uint32_t)s_ssi;
     out[5] = s_phase;
     out[6] = (uint32_t)(uint16_t)s_held;
-    out[7] = 0;   /* reserved */
+    out[7] = (uint32_t)s_read_latch;
 }
 
 void pce_adpcm_set(const uint32_t in[PCE_ADPCM_STATE_WORDS])
@@ -159,6 +171,7 @@ void pce_adpcm_set(const uint32_t in[PCE_ADPCM_STATE_WORDS])
     s_ssi         = (int)in[4]; if (s_ssi < 0 || s_ssi > 48) s_ssi = 0;
     s_phase       = in[5];
     s_held        = (int16_t)(uint16_t)in[6];
+    s_read_latch  = (uint8_t)in[7];   /* 0 in old saves: one stale byte, harmless */
 }
 
 uint8_t *pce_adpcm_ram(void) { return s_ram; }

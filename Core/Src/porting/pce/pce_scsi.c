@@ -151,7 +151,7 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
 #if PCECD_DIAG
     s_diag_lines = 0;   /* fresh run */
 #endif
-    diag("=== BUILD brkguard-1 ===\n");
+    diag("=== BUILD adpcmshift-1 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
          toc ? toc->num_tracks : -1, (unsigned long)(toc ? toc->total_lba : 0));
 #ifndef LINUX_EMU
@@ -710,6 +710,12 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
         if ((val & 0x02) && s_reading && !s_adpcm_dma_active) {
             s_adpcm_dma_active = true;      /* pumped per frame by pce_scsi_run */
             s_adpcm_dma_total = 0;
+            /* the bus already PRESENTS the sector's first byte (feed_din ran at
+             * READ execute); rewind so the pump starts from it. Skipping it
+             * shifted the whole ADPCM image one byte vs disc — fatal for games
+             * that stream structured data through ADPCM RAM (Dynastic Hero),
+             * merely noisy for voice samples. */
+            if (s_req && s_din_pos > 0) s_din_pos--;
         }
         break;
     case 0x04: /* reset */
