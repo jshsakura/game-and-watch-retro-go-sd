@@ -15,7 +15,7 @@ from PIL import Image, ImageFont, ImageDraw
 # struct name in rg_logos.c -> wordmark text. header_zelda3/header_smw are
 # homebrew game banners, left untouched.
 NAMES = {
-    "header_nes":      "FAMICOM",
+    "header_nes":      "NES (FAMICOM)",
     "header_gb":       "GAMEBOY",
     "header_gbc":      "GAMEBOY COLOR",
     "header_lynx":     "ATARI LYNX",
@@ -30,7 +30,7 @@ NAMES = {
     "header_wsv":      "SUPERVISION",
     "header_ngp":      "NEOGEO POCKET",
     "header_wswan":    "WONDERSWAN",
-    "header_msx":      "MSX",
+    "header_msx":      "MSX / MSX2+",
     "header_a2600":    "ATARI 2600",
     "header_a7800":    "ATARI 7800",
     "header_amstrad":  "AMSTRAD CPC",
