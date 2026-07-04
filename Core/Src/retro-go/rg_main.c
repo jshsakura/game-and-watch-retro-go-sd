@@ -1161,6 +1161,11 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     if (fs_mounted == false) {
         sdcard_error_screen();
     }
+
+    /* Full battery drain wipes the RTC: quietly restore the clock from the
+     * SD snapshot written at the last sleep/power-off (off by the downtime,
+     * not by decades - the true elapsed time is unknowable offline). */
+    GW_RTC_RestoreIfLost();
 #else
     // Initialize the littleFS filesystem
     fs_init();

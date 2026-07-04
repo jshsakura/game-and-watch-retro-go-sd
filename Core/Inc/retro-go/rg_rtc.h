@@ -28,6 +28,11 @@ time_t GW_GetUnixTime(void);
 void GW_GetUnixTM(struct tm *tm);
 void GW_SetUnixTM(struct tm *tm);
 
+/* Clock persistence across full battery drain (SD snapshot + backup-reg
+ * wipe detection). Snapshot on sleep/power-off; restore-check at boot. */
+void GW_RTC_SnapshotToDisk(void);
+void GW_RTC_RestoreIfLost(void);
+
 // Setters
 void GW_AddToCurrentHour(const int8_t direction);
 void GW_AddToCurrentMinute(const int8_t direction);

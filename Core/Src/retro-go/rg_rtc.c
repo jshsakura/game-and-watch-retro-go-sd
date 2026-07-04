@@ -1,9 +1,24 @@
 #include <string.h>
+#include <stdio.h>
 #include <time.h>
 
 #include "main.h"
 #include "rg_rtc.h"
 #include "stm32h7xx_hal.h"
+#include "odroid_system.h"
+
+/*
+ * Full battery drain wipes the RTC backup domain, and the clock silently
+ * restarted at 2000-01-01. A small SD snapshot written on every sleep /
+ * power-off lets the next boot restore the clock to the last time the
+ * device was used instead — off by the downtime, not by decades.
+ *
+ * The backup register below survives everything except that same domain
+ * wipe, so "magic missing at boot" is exactly the drain signal.
+ */
+#define CLOCK_SNAPSHOT_FILE ODROID_BASE_PATH_SAVES "/clock.bin"
+#define CLOCK_BKP_REG       RTC_BKP_DR29
+#define CLOCK_BKP_MAGIC     0xC10CC10Cu
 
 const uint8_t MIN_TM_YEAR = 100; // 2000
 const uint8_t MAX_TM_YEAR = 199; // 2099
@@ -253,4 +268,51 @@ uint64_t GW_GetCurrentMillis(void) {
     ReadRTC();
 
     return (uint64_t) mktime(&TM) * 1000 + (subSecond * 1000 / 256);
+}
+
+/* Write the current time to the SD snapshot. Called on sleep / power-off
+ * entry (the SD is still mounted there); failure is harmless. */
+void GW_RTC_SnapshotToDisk(void) {
+    FILE *f = fopen(CLOCK_SNAPSHOT_FILE, "wb");
+    if (f == NULL) {
+        return;
+    }
+
+    uint32_t magic = CLOCK_BKP_MAGIC;
+    int64_t epoch = (int64_t)GW_GetUnixTime();
+    fwrite(&magic, sizeof(magic), 1, f);
+    fwrite(&epoch, sizeof(epoch), 1, f);
+    fclose(f);
+}
+
+/* Boot check: if the backup domain was wiped (full battery drain), restore
+ * the clock from the last SD snapshot instead of starting at 2000-01-01.
+ * Requires the SD to be mounted. */
+void GW_RTC_RestoreIfLost(void) {
+    if (HAL_RTCEx_BKUPRead(&hrtc, CLOCK_BKP_REG) == CLOCK_BKP_MAGIC) {
+        return; /* domain intact: the clock is whatever the user set */
+    }
+
+    HAL_PWR_EnableBkUpAccess();
+
+    FILE *f = fopen(CLOCK_SNAPSHOT_FILE, "rb");
+    if (f != NULL) {
+        uint32_t magic = 0;
+        int64_t epoch = 0;
+        bool ok = (fread(&magic, sizeof(magic), 1, f) == 1) &&
+                  (fread(&epoch, sizeof(epoch), 1, f) == 1) &&
+                  (magic == CLOCK_BKP_MAGIC);
+        fclose(f);
+
+        /* Only move forward: never rewind a clock the user already fixed. */
+        if (ok && (time_t)epoch > GW_GetUnixTime()) {
+            time_t t = (time_t)epoch;
+            struct tm tm;
+            localtime_r(&t, &tm);
+            GW_SetUnixTM(&tm);
+            printf("rtc: clock restored from SD snapshot\n");
+        }
+    }
+
+    HAL_RTCEx_BKUPWrite(&hrtc, CLOCK_BKP_REG, CLOCK_BKP_MAGIC);
 }

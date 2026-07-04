@@ -10,6 +10,7 @@
 #include "gw_buttons.h"
 #include "gw_lcd.h"
 #include "gw_audio.h"
+#include "rg_rtc.h"
 #if SD_CARD == 1
 #include "gw_sdcard.h"
 #include "ff.h"
@@ -106,6 +107,11 @@ void GW_EnterDeepSleep(bool standby, sleep_pre_wakeup_callback_t pre_wakeup_call
   HAL_PWR_EnableWakeUpPin(PWR_WAKEUP_PIN1_LOW);
 
 #if SD_CARD == 1
+  // Snapshot the clock while the SD is still mounted: if the battery fully
+  // drains during the coming sleep (wiping the RTC), the next boot restores
+  // the clock from this instead of restarting at 2000-01-01.
+  GW_RTC_SnapshotToDisk();
+
   // Unmount Fs and Deinit SD Card if needed
   sdcard_deinit();
 #endif
