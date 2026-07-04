@@ -711,6 +711,22 @@ static void blit() {
     int xScale = 0;
     uint8_t *fbTmp;
 
+    if (scaling == ODROID_DISPLAY_SCALING_FULL) {
+        /* Stretch BOTH axes to fill the screen, like the other cores' FULL mode.
+         * Without the Y stretch, 224-line games (most CD titles) leave 8px black
+         * bars top and bottom. Nearest-neighbour: 224->240 repeats 1 row in 15. */
+        xScale = (current_width << 8) / GW_LCD_WIDTH;
+        int yScale = (current_height << 8) / GW_LCD_HEIGHT;
+        for (y = 0; y < GW_LCD_HEIGHT; y++) {
+            fbTmp = emuFrameBuffer + ((y * yScale) >> 8) * XBUF_WIDTH;
+            pixel_t *dst = framebuffer_active + y * GW_LCD_WIDTH;
+            for (int x = 0; x < GW_LCD_WIDTH; x++) {
+                dst[x] = mypalette[fbTmp[(x * xScale) >> 8]];
+            }
+        }
+        return;
+    }
+
     if (scaling != ODROID_DISPLAY_SCALING_OFF ) {
         xScale = (current_width << 8) / GW_LCD_WIDTH ;
     } else if ( current_width < GW_LCD_WIDTH) {
