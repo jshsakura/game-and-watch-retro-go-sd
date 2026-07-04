@@ -21,14 +21,19 @@ That's the honest toolchain. Below I mark each item **[host harness]** or **[on-
 SD-log]** because the confidence level differs and I'd rather you know which is which than
 overstate it.
 
+**Where things stand today:** every system below runs on real hardware. The one known
+wall is **Virtual Boy's speed** (an interpreter ceiling, ~65-70 %), plus a single
+WonderSwan title's mid-battle resume (a cycle-accuracy limit, documented in its section).
+Everything else that reads like a battle report below ended in a fix that shipped.
+
 ## The host harnesses
 
 Present in the tree today:
 
 ```
-linux/pce/   linux/lynx/   linux/o2em/   linux/zx/
-linux/a2600/ linux/amstrad/ linux/celeste/ linux/gb-tgbdual/ linux/gwenesis/
-linux/msx/   linux/nes/   linux/nes-fceumm/   linux/pkmini/
+linux/pce/   linux/lynx/   linux/o2em/   linux/zx/   linux/c64-frodo/
+linux/gamecom/  linux/vb/   linux/a2600/ linux/amstrad/ linux/celeste/
+linux/gb-tgbdual/ linux/gwenesis/ linux/msx/ linux/nes/ linux/nes-fceumm/ linux/pkmini/
 ```
 
 Each links the real core (not a re-implementation), runs as
@@ -66,7 +71,7 @@ those were debugged on the device from SD logs, and I've marked them as such.
   not a bug I could patch at this layer. I'm flagging that rather than claiming it's solved
   (#10). The CPU optimizations applied are minimal-diff and meant to be mergeable.
 
-## PC Engine CD / Super CD-ROM² — pce core  ·  [host harness `linux/pce`]  ·  *Ai Chou Aniki* boots to gameplay
+## PC Engine CD / Super CD-ROM² — pce core  ·  [host harness `linux/pce` + on-device]  ·  verified on device, four titles played through
 
 The longest campaign: ~30 commits, iterations `it2`→`it27` on `feat/pcecd`. The harness is
 `linux/pce`, writing `/pcecd_diag.txt`, a CPU-PC ring sampler, and frame PPMs.
@@ -94,9 +99,29 @@ wrong. The PC sampler had been armed at `0x6254`, not the real IPL exec entry `0
 the indexing was fixed the actual halt path appeared. The log disagreed with the theory, so
 the theory lost.
 
-**State:** MASAYA logo → intro art → Stage 1 gameplay, reproduced on the host
-deterministically. **Not upstream-ready yet:** ADPCM/CDDA audio is currently drained and
-discarded (no CD sound), save/load needs polish, and on-device confirmation is pending.
+The campaign continued well past that state, all on the same harness-first method:
+
+- **CD audio, both kinds.** CD-DA (Red Book BGM) streams with batched SD sector reads;
+  ADPCM (MSM5205) streams from CD. The ADPCM pipe carried a **2-byte record shift** —
+  the drain lost the first byte and the `$180A` half-word latch semantics were missing —
+  which desynchronized the `AD_READ` records into garbage block counts and stray I/O.
+  Found by diffing the host trace against Mednafen's, fixed at the latch.
+- **The "freezes after load" saga** (nine distinct root causes over two days, each one
+  proven in a cold-resume host harness before flashing — `PCE_COLD_RESUME=1` replays a
+  savestate into a *fresh* process): stale `frame_integrator`, two savestate-section bugs
+  (`'ADPC'`, `'SCSX'`), a staging-bank clobber, a missing ADPCM-END IRQ, SUBQ needing
+  real data, CD-DA `PAUSED` state surviving save/load, boot-resume `start_paused`, and —
+  the on-device finale — the launcher's autostart `RUN` injection un-pausing into a pause.
+- **Dynastic Hero's two gates.** First death at boot (`f809`): a PSG timer tick landed in
+  a 68-byte window and took a BRK through an unmapped vector — fixed with an h6280
+  **BRK-vector guard**. The second gate was the ADPCM 2-byte shift above. Both fixes were
+  regression-checked against three other titles before shipping.
+- **BRAM saves** persist to SD; savestate/resume covers mid-ADPCM and CD-DA state and the
+  full 256 KB Super CD RAM.
+
+**State: done and verified on hardware.** Four titles played through on the device
+(Dracula X: Rondo of Blood, Cotton, Dynastic Hero, Ai Chou Aniki), with BGM, ADPCM voice,
+BRAM saves and mid-game resume. The cold-resume self-test harness stays in `linux/pce`.
 
 ## Atari Lynx — Handy core  ·  [host harness `linux/lynx` + ASan]  ·  verified on device
 
@@ -122,55 +147,110 @@ runnable under AddressSanitizer.
   unmeasured and false.
 - **State:** boots, runs, save/load, and 512 KB carts all confirmed on real hardware.
 
-## Magnavox Odyssey² / Videopac — O2EM core  ·  [host harness `linux/o2em`]
+## Magnavox Odyssey² / Videopac — O2EM core  ·  [host harness `linux/o2em` + on-device SD-log]  ·  verified on device
 
 - The core was already in-tree but disabled; enabling it surfaced two latent bugs in the
   previously-uncompiled glue (a `SaveState`/`LoadState` signature mismatch, and a BIOS path
   that didn't match this firmware's `/bios/<sys>/` convention).
 - The O2 BIOS waits at a "SELECT GAME" keypad prompt, so a bare launch just sits there. Added
-  a small game-select overlay (UP/DOWN pick 0–9, A starts, ~5 s → game 1).
+  a small game-select overlay (UP/DOWN pick 0–9, A starts, ~5 s → game 1) — the console has
+  a keypad the G&W doesn't, so the missing keys became a UI affordance instead.
 - `linux/o2em` host-verified that "1" + RETURN boots **K.C. Munchkin** to maze gameplay
   (PPM-confirmed) before touching the device.
+- **Device-only bug the harness could never see:** on hardware every cart sat at "SELECT
+  GAME" as if empty. `/videopac_diag.txt` showed the raw-ROM branch of `getromdata`
+  returning an overlay-NULL `ROM_DATA` symbol instead of `rom_file->address` — an empty
+  cart, so the BIOS had nothing to select. The harness bypasses `getromdata` entirely,
+  which is exactly why this one had to be caught by SD log. Runs with save/load/resume.
+
+## ZX Spectrum — floooh `chips` core  ·  [host harness `linux/zx` + on-device SD-log]  ·  verified on device
+
+- Core vendored from floooh/chips (`zx.h`, zlib licence); host-validated for `.z80`
+  loading before integration.
+- On device: a PAUSE-menu HardFault fixed, the screen auto-fits, and a graceful
+  message replaces the crash when `/bios/zxs/48.rom` is missing.
+- **The keyboard problem, solved in settings:** Spectrum games expect a 40-key keyboard
+  the G&W doesn't have, and every title binds differently. Instead of hardcoding one
+  layout, the PAUSE menu exposes **configurable GAME / TIME / B key mappings** — an
+  SD-logged trace of every button edge and the ZX key it sends was used to verify the
+  path. Keyboard-driven games are playable this way.
+
+## Commodore 64 — Frodo core  ·  [host harness `linux/c64-frodo` + on-device SD-log]  ·  verified on device
+
+Two cores were tried, and the switch is worth recording honestly:
+
+- **First attempt — floooh `chips` `c64.h`** (`linux/c64`): host-validated to the BASIC
+  READY prompt with working keyboard/VIC/CIA, and the device feasibility finding
+  (`sizeof(c64_t)` = 790 KB, dominated by a 512 KB datasette buffer that shrinks away)
+  still stands. But the games library lives on **`.d64` disk images**, and `chips` has no
+  1541 drive emulation — the honest scope check said the port would ship unable to load
+  most real software.
+- **Second attempt — Frodo** (Christian Bauer's emulator, with its full 1541 implementation)
+  is what shipped. `.d64` loading works with **autostart injection** (`LOAD"*",8,1` typed at
+  the right boot moment, `RUN` after the directory settles, warp during the load) — the
+  timing of that injection was itself a regression story: a "fix" based on a wrong diagnosis
+  once broke a provably-working baseline and was reverted on the log evidence.
+- **A reusable C++-overlay lesson:** Frodo is C++, and its global constructors leaked into
+  the resident `.init_array`, hard-faulting the boot before anything ran (black screen).
+  Overlay cores must KEEP their `.init_array` inside the overlay and run it on overlay
+  entry. Documented because it applies to any future C++ core.
+- **Controls:** both joystick ports are mapped (games disagree about which port the player
+  is on), plus a pause/exit menu. One SID variant was tried and reverted — it OOM'd the
+  heap on device; the shipped configuration is the one that fits.
+
+## game.com (Tiger) — SM8500/SM8521 core  ·  [host harness `linux/gamecom` + on-device SD-log]  ·  verified on device
+
+- Host harness plays Frogger, Sonic Jam, Indy 500 before any flash.
+- The handheld has a **4-action pad** (A/B/C/D); the G&W's fewer buttons are mapped so the
+  common two-button games feel right and the rest stay reachable.
+- What the harness *couldn't* catch became its own documented lesson: cores that run their
+  own blocking main loop (this one, and Frodo) must call `audio_start_playing()` before the
+  first `sound_sync` (else the first frame hangs — a marathon of a hang to find), pass a
+  non-NULL repaint callback to the input loop (else the menu crashes with PC=0), and wire
+  the standard input loop for menu/volume/power. The host harness stubs the firmware, so
+  all three were found on device via SD log.
+
+## Virtual Boy — red-viper core  ·  [host bench `linux/vb` + on-device]  ·  runs at ~65-70 % speed, stated plainly
+
+- The interpreter was benched on the host for 20k frames clean before porting.
+- On device it runs at **about 65-70 % of full speed** with automatic overclock — an
+  interpreter on this MCU has a ceiling, and it is stated rather than hidden. Several
+  titles are enjoyable at that speed (Wario Land, Tennis); audio is gapless.
+- **Controls, solved in settings:** the Virtual Boy has TWO d-pads and the G&W has one, so
+  no single mapping is right. The options menu offers **three pad presets** (left pad /
+  right pad / triggers-as-A/B), and the Zelda-style X/Y buttons always serve the
+  L/R triggers. A replay-buffer OOM was also fixed along the way.
 
 ---
 
-## In bring-up (not in this build)
+## System-wide findings  ·  [on-device unless noted]
 
-- **ZX Spectrum** — core vendored (floooh/chips `zx.h`, zlib) and host-validated on
-  `linux/zx` for `.z80` loading; integration in progress.
-- **Commodore 64** — core vendored (floooh/chips `c64.h`, zlib — chosen over Frodo for
-  consistency with the ZX path) and **host-validated on `linux/c64`**:
-  - Boots to the real `**** COMMODORE 64 BASIC V2 ****` / `38911 BASIC BYTES FREE` /
-    `READY.` screen (proves 6502 + KERNAL RAM test + VIC-II + chargen).
-  - A typed BASIC line (`POKE 53280,2 : POKE 53281,5 : PRINT …`) executes — border→red,
-    background→green, text printed — proving the keyboard matrix, BASIC interpreter, and
-    CIA/VIC register writes (deterministic, screenshot-confirmed).
-  - **Device feasibility finding:** `sizeof(c64_t)` is **790 KB**, *over* `RAM_EMU`
-    (~724 KB). The cause is the embedded 512 KB datasette (`c1530`) tape buffer. Since the
-    initial scope is `.prg`/`.crt` (no `.tap`), shrinking that buffer drops the core to
-    ~278 KB — a comfortable fit. This is the gating fact for the device port and was found
-    on the host before any flash.
-  - Test ROMs (KERNAL/BASIC/chargen) are **never committed** — user-supplied in
-    `/bios/c64/`, with MEGA65/open-roms as the documented GPL fallback. See
-    `docs/NEW_SYSTEMS_PLAN.md`.
-  - **Device integration written and ARM-verified:** `c64_impl.c` (CHIPS_IMPL TU,
-    symbols localized except the `c64_*` API) + `main_c64.c` (mirrors `main_zx.c`:
-    320×240 crop at framebuffer (100,40), joystick→both ports, `.prg` quickload +
-    autostart `RUN`, raw-struct save/load), wired through `Makefile`/`Makefile.common`,
-    both linker scripts (`.overlay_c64`/`_bss`), `gw_linker.h`, `rg_emulators.c`
-    (dispatch + `add_emulator("Commodore 64","c64","prg",…)`), `MAX_EMULATORS` 25→26.
-    **Both C64 objects compile clean for `arm-none-eabi-gcc`, and the `.overlay_c64`
-    RAM ASSERT passes** (the dead `c64_load_snapshot` static is GC'd, like ZX).
-  - **Full firmware links with C64 in it.** A branch-wide blocker surfaced first — the
-    256 KB internal FLASH bank overflowed by ~8 KB once the accumulated per-system glue
-    (ZX + C64 + all the rest) was added (proven *not* C64-specific: removing the C64
-    `add_emulator` moved the overflow by only 40 bytes). Fix: build the **resident
-    firmware `-Os`** (the `build/core/%.o` rule; launcher/HAL/UI are not performance-
-    critical — emulation runs in the RAM-overlay cores, which keep their own `-O2`).
-    That reclaimed ~27 KB. Result: `gw_retro_go_intflash.bin` = **243,464 / 262,144 bytes
-    (92.9 %, ~18 KB free)**, `.overlay_c64` RAM ASSERT passes, `app_main_c64` + its FLASH
-    veneer present. This same `-Os` fix also unblocks ZX. Still pending: on-device test
-    (real C64 ROMs in `/bios/c64/`), `.crt`/`.d64`, and SID audio.
+Not tied to one core, found while living with the device:
+
+- **Framebuffer MPU regions** were `TEX=0/C=0/B=0` (Strongly-Ordered), stalling every
+  store until the AXI write completed — ~1.4-2.1 ms per full-screen blit, on every
+  system. `TEX=1/C=0/B=0` (Normal non-cacheable) keeps the same no-cache coherence and
+  lets stores merge. The speedup exposed two ordering assumptions, both guarded: a
+  `__DSB()` before the LTDC vblank flip, and per-frame clears waiting out a pending flip
+  (skipping that guard produced a transient rising black band on cores that clear every
+  frame — the bug was observed, understood, and is what makes the guard non-optional).
+- **ROM flash cache**: `circular_flash_write()` erased 4 KB per 4 KB of file — 2048 erase
+  commands for an 8 MB ROM. Letting `OSPI_Erase()` use the chip's largest erase command
+  makes "Caching game" several times faster; two latent bugs (a 256 KB-sector Spansion
+  buffer overflow, a missed invalidation of the erased tail) fell out of the same read.
+- **Battery gauge**: the filter state lived in RAM, so every power-off reseeded it from a
+  fresh load-free reading and the shown percent seesawed (optimistic at boot, plunging
+  under game load). It now persists in an RTC backup register with a time-based display
+  limiter.
+- **Clock after a full drain**: a drain wipes the RTC backup domain and the clock used to
+  restart at 2000-01-01, silently. An 8-byte time snapshot written to SD on every
+  sleep/power-off entry (all drain paths pass through it, including the 1-5 % auto
+  power-off) restores the clock at boot when the wipe is detected. Honest limit: the true
+  elapsed downtime is unknowable offline, so the restored clock is *behind by the
+  downtime* — approximate on purpose, better than 26 years wrong.
+- **Video playback smoothing**: MJPEG frame sizes are bursty; the player now prefetches
+  frames into a jitter buffer during each frame's pacing wait, and the companion encoder
+  VBV-caps per-frame bytes (measured: easy scenes byte-identical, worst case ~26 % lighter).
 
 ## Dropped (kept honest)
 
