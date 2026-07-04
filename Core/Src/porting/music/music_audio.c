@@ -397,6 +397,23 @@ int audio_duration_sec(void)
 
 // --- standalone quick duration (list rows) ----------------------------------
 
+/* MPEG Layer III header tables (frame-header bits, no decoder needed). */
+static const uint16_t mp3_br_v1[16] = {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0};
+static const uint16_t mp3_br_v2[16] = {0,8,16,24,32,40,48,56,64,80,96,112,128,144,160,0};
+static const uint16_t mp3_hz_tab[4][3] = {
+    {11025, 12000,  8000},   /* version bits 00 = MPEG2.5 */
+    {    0,     0,     0},   /* 01 = reserved */
+    {22050, 24000, 16000},   /* 10 = MPEG2 */
+    {44100, 48000, 32000},   /* 11 = MPEG1 */
+};
+
+/* Duration for a LIST row. MUST NOT touch the shared g_mp3/g_in/g_pcm decoder
+ * scratch: this runs while another track is PLAYING (browsing the list), and
+ * the old mp3_probe_duration() call here clobbered the live decoder's input
+ * buffer with 4KB of the probed file and mp3dec_init-reset its state — an
+ * audible glitch every time an uncached row decoded ("browsing stutters the
+ * music"). Parse the first frame HEADER by hand instead (bitrate/samplerate
+ * from the header bits, Xing/Info count for VBR) — local buffer only. */
 int audio_quick_duration(const char *path)
 {
     FILE *f = fopen(path, "rb");
@@ -418,7 +435,31 @@ int audio_quick_duration(const char *path)
     if (fread(h, 1, 10, f) == 10 && memcmp(h, "ID3", 3) == 0)
         off = 10 + (long)(((uint32_t)(h[6] & 0x7f) << 21) | ((uint32_t)(h[7] & 0x7f) << 14) |
                           ((uint32_t)(h[8] & 0x7f) << 7) | (uint32_t)(h[9] & 0x7f));
-    int dur = mp3_probe_duration(f, off, sz - off);   // Xing/Info VBR count, else CBR estimate
+
+    uint8_t buf[1536];   /* first frame header + the Xing tag ~150B behind it */
+    fseek(f, off, SEEK_SET);
+    int got = (int)fread(buf, 1, sizeof(buf), f);
     fclose(f);
-    return dur;
+
+    for (int i = 0; i + 4 <= got; i++) {
+        if (buf[i] != 0xFF || (buf[i + 1] & 0xE0) != 0xE0)
+            continue;                                   /* not a frame sync */
+        int ver   = (buf[i + 1] >> 3) & 3;
+        int layer = (buf[i + 1] >> 1) & 3;
+        if (ver == 1 || layer != 1)                     /* reserved / not Layer III */
+            continue;
+        int bri = (buf[i + 2] >> 4) & 15;
+        int sri = (buf[i + 2] >> 2) & 3;
+        if (bri == 0 || bri == 15 || sri == 3)          /* free-format / bad */
+            continue;
+        int hz = mp3_hz_tab[ver][sri];
+        int br = (ver == 3 ? mp3_br_v1 : mp3_br_v2)[bri];
+        if (hz == 0 || br == 0)
+            continue;
+        int frames = mp3_xing_frames(buf + i, got - i);
+        if (frames > 0)                                 /* exact VBR length */
+            return (int)((long long)frames * mp3_spf(hz) / hz);
+        return (int)((sz - off) * 8 / ((long long)br * 1000));   /* CBR estimate */
+    }
+    return 0;
 }

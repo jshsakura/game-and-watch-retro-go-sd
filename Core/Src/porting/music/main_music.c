@@ -134,6 +134,7 @@ static bool g_decode_pending;        // set when a row was deferred -> repaint a
 
 static bool has_ext(const char *name, const char *ext);
 static const track_meta_t *meta_get(int entry_idx);
+static void playback_feed(void);
 
 // ---------------------------------------------------------------------------
 // directory / favourites scanning
@@ -425,11 +426,18 @@ static const track_meta_t *meta_get(int entry_idx)
     char path[PATH_MAX_LEN];
     entry_track_path(entry_idx, path, sizeof(path));
 
+    /* Re-feed the PCM ring between the SD-heavy reads: one uncached row costs
+     * id3 + duration-probe + thumbnail (each an SD open/read, the thumb maybe
+     * a JPEG decode) — together they can outlast what the ring holds and
+     * hiccup the playing track. */
     id3_read_tags(path, &g_scan_tags);
     if (g_scan_tags.title[0]) { strncpy(m->title, g_scan_tags.title, sizeof(m->title) - 1); m->title[sizeof(m->title) - 1] = '\0'; }
     if (g_scan_tags.artist[0]) { strncpy(m->artist, g_scan_tags.artist, sizeof(m->artist) - 1); m->artist[sizeof(m->artist) - 1] = '\0'; }
+    playback_feed();
     m->dur = audio_quick_duration(path);
+    playback_feed();
     m->has_art = cover_thumb(path, m->art, THUMB_SZ);
+    playback_feed();
     return m;
 }
 
