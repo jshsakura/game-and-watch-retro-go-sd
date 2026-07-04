@@ -23,6 +23,7 @@
 #include "rom_manager.h"
 #include "common.h"
 #include "appid.h"
+#include "rg_i18n.h"
 
 /* red-viper core */
 #include "v810_cpu.h"
@@ -101,22 +102,68 @@ static uint32_t vb_rom_stamp(const unsigned char *rom, uint32_t len)
 
 /* ---- input --------------------------------------------------------------- */
 
+/* The VB controller has TWO D-pads plus L/R triggers — more inputs than the
+ * device has buttons. A pad preset (cycled in the in-game menu, session
+ * scoped) picks what the physical buttons drive:
+ *   0 = default    : D-pad -> LEFT pad,  A/B -> A/B     (most games)
+ *   1 = right pad  : D-pad -> RIGHT pad, A/B -> A/B     (shooters that steer
+ *                    or strafe with the right pad, e.g. Red Alarm)
+ *   2 = triggers   : D-pad -> LEFT pad,  A -> R trigger, B -> L trigger
+ *                    (games where L/R matter more than A/B in a section)
+ * On the Zelda edition the extra START/SELECT buttons (ODROID_INPUT_X/Y) are
+ * ALWAYS the R/L triggers, so preset 2 is mainly for Mario units. */
+static int s_vb_pad_mode;
+
 static void vb_input_read(odroid_gamepad_state_t *j)
 {
     uint32_t k = 0;
-    /* Physical D-pad -> VB left D-pad; A/B and Start/Select map 1:1.
-     * VB right-D-pad + L/R need an overlay/mode-toggle (follow-up). */
-    if (j->values[ODROID_INPUT_UP])     k |= VB_LPAD_U;
-    if (j->values[ODROID_INPUT_DOWN])   k |= VB_LPAD_D;
-    if (j->values[ODROID_INPUT_LEFT])   k |= VB_LPAD_L;
-    if (j->values[ODROID_INPUT_RIGHT])  k |= VB_LPAD_R;
-    if (j->values[ODROID_INPUT_A])      k |= VB_KEY_A;
-    if (j->values[ODROID_INPUT_B])      k |= VB_KEY_B;
-    if (j->values[ODROID_INPUT_START])  k |= VB_KEY_START;
-    if (j->values[ODROID_INPUT_SELECT]) k |= VB_KEY_SELECT;
+    if (s_vb_pad_mode == 1) {
+        if (j->values[ODROID_INPUT_UP])     k |= VB_RPAD_U;
+        if (j->values[ODROID_INPUT_DOWN])   k |= VB_RPAD_D;
+        if (j->values[ODROID_INPUT_LEFT])   k |= VB_RPAD_L;
+        if (j->values[ODROID_INPUT_RIGHT])  k |= VB_RPAD_R;
+    } else {
+        if (j->values[ODROID_INPUT_UP])     k |= VB_LPAD_U;
+        if (j->values[ODROID_INPUT_DOWN])   k |= VB_LPAD_D;
+        if (j->values[ODROID_INPUT_LEFT])   k |= VB_LPAD_L;
+        if (j->values[ODROID_INPUT_RIGHT])  k |= VB_LPAD_R;
+    }
+    if (s_vb_pad_mode == 2) {
+        if (j->values[ODROID_INPUT_A])      k |= VB_KEY_R;
+        if (j->values[ODROID_INPUT_B])      k |= VB_KEY_L;
+    } else {
+        if (j->values[ODROID_INPUT_A])      k |= VB_KEY_A;
+        if (j->values[ODROID_INPUT_B])      k |= VB_KEY_B;
+    }
+    if (j->values[ODROID_INPUT_START])  k |= VB_KEY_START;   /* GAME */
+    if (j->values[ODROID_INPUT_SELECT]) k |= VB_KEY_SELECT;  /* TIME */
+    /* Zelda-edition START/SELECT: hardware R/L triggers (no-op on Mario). */
+    if (j->values[ODROID_INPUT_X])      k |= VB_KEY_R;
+    if (j->values[ODROID_INPUT_Y])      k |= VB_KEY_L;
 
     vb_state->tHReg.SLB = (BYTE)(k & 0xFF);
     vb_state->tHReg.SHB = (BYTE)((k >> 8) & 0xFF);
+}
+
+static const char *vb_pad_mode_name(int mode)
+{
+    switch (mode) {
+    case 1:  return "R-Pad";
+    case 2:  return "A/B=Trig";
+    default: return "L-Pad";
+    }
+}
+
+static char s_vb_pad_value[12];
+
+static bool vb_pad_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
+{
+    if (event == ODROID_DIALOG_PREV)
+        s_vb_pad_mode = s_vb_pad_mode > 0 ? s_vb_pad_mode - 1 : 2;
+    if (event == ODROID_DIALOG_NEXT)
+        s_vb_pad_mode = s_vb_pad_mode < 2 ? s_vb_pad_mode + 1 : 0;
+    strcpy(option->value, vb_pad_mode_name(s_vb_pad_mode));
+    return event == ODROID_DIALOG_ENTER;
 }
 
 /* ---- video: VB 384x224 2-bit red -> 320x240 RGB565 (single eye) ---------- */
@@ -318,7 +365,11 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     vb_diag("entering main loop\n");
 
     odroid_gamepad_state_t joystick = {0};
-    odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
+    strcpy(s_vb_pad_value, vb_pad_mode_name(s_vb_pad_mode));
+    odroid_dialog_choice_t options[] = {
+        {100, curr_lang->s_amd_Controls, s_vb_pad_value, 1, &vb_pad_update_cb},
+        ODROID_DIALOG_CHOICE_LAST
+    };
 
     /* Per-frame trace: each vb_diag below is written BEFORE the call it names, so on a
      * HardFault the LAST line in /vb_diag.txt is the exact call that faulted (frame_loop /
