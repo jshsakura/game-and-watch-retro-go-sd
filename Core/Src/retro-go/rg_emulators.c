@@ -1609,48 +1609,44 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 
 void emulators_init()
 {
+    /* Tab order == registration order. Kept ALPHABETICAL by display name so the
+     * launcher list is predictable — insert new systems in their sorted slot. */
+    add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
+    add_emulator("Atari 2600", "a2600", "a26 bin lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_A2600, NO_GAME_DATA);
+    add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
+    /* Atari Lynx (Handy core): ROM (.lnx/.lyx) loads from flash; no BIOS needed (HLE). */
+    add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
+    add_emulator("Colecovision", "col", "col lzma", RG_LOGO_PAD_COL, RG_LOGO_HEADER_COL, NO_GAME_DATA);
+    add_emulator("Commodore 64", "c64", "d64 prg", RG_LOGO_PAD_C64, RG_LOGO_HEADER_C64, NO_GAME_DATA);
+    add_emulator("Game & Watch", "gw", "gw mgw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
+    add_emulator("Homebrew", "homebrew", "bin", RG_LOGO_PAD_HOMEBREW, RG_LOGO_HEADER_HOMEBREW, NO_GAME_DATA);
+    add_emulator("Magnavox Odyssey2", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_VIDEOPAC, NO_GAME_DATA);
+    add_emulator("MSX", "msx", "dsk rom mx1 mx2 cdk lzma", RG_LOGO_PAD_MSX, RG_LOGO_HEADER_MSX, NO_GAME_DATA);
+    /* NGP/NGPC: ROM stays in flash (no lzma decompress); core auto-detects mono/colour. */
+    add_emulator("Neo Geo Pocket", "ngp", "ngp ngc ngpc", RG_LOGO_PAD_NGP, RG_LOGO_HEADER_NGP, NO_GAME_DATA);
+    add_emulator("Nintendo Entertainment System", "nes", "nes fds nsf lzma", RG_LOGO_PAD_NES, RG_LOGO_HEADER_NES, NO_GAME_DATA);
     add_emulator("Nintendo Gameboy", "gb", "gb gbc lzma", RG_LOGO_PAD_GB, RG_LOGO_HEADER_GB, NO_GAME_DATA);
     add_emulator("Nintendo Gameboy Color", "gbc", "gb gbc lzma", RG_LOGO_PAD_GBC, RG_LOGO_HEADER_GBC, NO_GAME_DATA);
-    add_emulator("Nintendo Entertainment System", "nes", "nes fds nsf lzma", RG_LOGO_PAD_NES, RG_LOGO_HEADER_NES, NO_GAME_DATA);
-    add_emulator("Game & Watch", "gw", "gw mgw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
     add_emulator("PC Engine", "pce", "pce lzma", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCE, NO_GAME_DATA);
     /* PC Engine CD (= TurboGrafx-CD): same HuC6280/VDC core as HuCard PCE; the
      * disc (.cue/.bin) is streamed from SD and the System Card BIOS is loaded as
-     * the boot ROM. Logos reuse PCE until CD-specific art is wired in. */
+     * the boot ROM. */
     add_emulator("PC Engine CD", "pcecd", "cue", RG_LOGO_PAD_PCECD, RG_LOGO_HEADER_PCECD, NO_GAME_DATA);
-    add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
-    add_emulator("Sega Master System", "sms", "sms lzma", RG_LOGO_PAD_SMS, RG_LOGO_HEADER_SMS, NO_GAME_DATA);
-    add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);
-    add_emulator("Sega SG-1000", "sg", "sg lzma", RG_LOGO_PAD_SG1000, RG_LOGO_HEADER_SG1000, NO_GAME_DATA);
-    add_emulator("Colecovision", "col", "col lzma", RG_LOGO_PAD_COL, RG_LOGO_HEADER_COL, NO_GAME_DATA);
-    add_emulator("Watara Supervision", "wsv", "wsv sv bin lzma", RG_LOGO_PAD_WSV, RG_LOGO_HEADER_WSV, NO_GAME_DATA);
-    /* NGP/NGPC: ROM stays in flash (no lzma decompress); core auto-detects mono/colour.
-     * Logos are placeholders (WSV) until icons/{c,h}_ngp.bmp + RG_LOGO_*_NGP are added. */
-    add_emulator("Neo Geo Pocket", "ngp", "ngp ngc ngpc", RG_LOGO_PAD_NGP, RG_LOGO_HEADER_NGP, NO_GAME_DATA);
-    /* WonderSwan / Color: ROM stays in flash; core auto-detects mono/colour.
-     * Placeholder logos (WSV) until WS icons are wired into rg_logos. */
-    add_emulator("WonderSwan", "ws", "ws wsc", RG_LOGO_PAD_WSWAN, RG_LOGO_HEADER_WSWAN, NO_GAME_DATA);
-    add_emulator("MSX", "msx", "dsk rom mx1 mx2 cdk lzma", RG_LOGO_PAD_MSX, RG_LOGO_HEADER_MSX, NO_GAME_DATA);
-    add_emulator("Atari 2600", "a2600", "a26 bin lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_A2600, NO_GAME_DATA);
-    /* Atari Lynx (Handy core): ROM (.lnx/.lyx) loads from flash; no BIOS needed (HLE).
-     * Logos are placeholders (Atari 2600) until copyright-safe RomM-derived Lynx icons
-     * + RG_LOGO_*_LYNX are wired into rg_logos. */
-    add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
-    add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
-    /* TODO: dedicated RG_LOGO_PAD_VB / RG_LOGO_HEADER_VB icon art (reusing A7800's for now). */
-    add_emulator("Virtual Boy", "vb", "vb lzma", RG_LOGO_PAD_VB, RG_LOGO_HEADER_VB, NO_GAME_DATA);
-    add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
-    add_emulator("Magnavox Odyssey2", "videopac", "bin lzma", RG_LOGO_PAD_VIDEOPAC, RG_LOGO_HEADER_VIDEOPAC, NO_GAME_DATA);
-    add_emulator("ZX Spectrum", "zxs", "z80", RG_LOGO_PAD_ZX, RG_LOGO_HEADER_ZX, NO_GAME_DATA);
-    add_emulator("Commodore 64", "c64", "d64 prg", RG_LOGO_PAD_C64, RG_LOGO_HEADER_C64, NO_GAME_DATA);
-    add_emulator("Tiger Game.com", "gamecom", "bin tgc", RG_LOGO_PAD_GAMECOM, RG_LOGO_HEADER_GAMECOM, NO_GAME_DATA);
-    add_emulator("Tamagotchi", "tama", "b", RG_LOGO_PAD_TAMA, RG_LOGO_HEADER_TAMA, NO_GAME_DATA);
-    add_emulator("Pokemon Mini", "mini", "min", RG_LOGO_PAD_PKMINI, RG_LOGO_HEADER_PKMINI, NO_GAME_DATA);
-    add_emulator("Homebrew", "homebrew", "bin", RG_LOGO_PAD_HOMEBREW, RG_LOGO_HEADER_HOMEBREW, NO_GAME_DATA);
     /* PICO-8: carts (.p8 / .p8.png) live under /roms/pico8/. The engine
      * itself (pico8.bin) is a separately-distributed overlay loaded at
      * runtime; see the stub in Core/Src/porting/pico8/main_pico8.c. */
     add_emulator("PICO-8", "pico8", "p8 png", RG_LOGO_PAD_PICO8, RG_LOGO_HEADER_PICO8, GAME_DATA);
+    add_emulator("Pokemon Mini", "mini", "min", RG_LOGO_PAD_PKMINI, RG_LOGO_HEADER_PKMINI, NO_GAME_DATA);
+    add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
+    add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);
+    add_emulator("Sega Master System", "sms", "sms lzma", RG_LOGO_PAD_SMS, RG_LOGO_HEADER_SMS, NO_GAME_DATA);
+    add_emulator("Sega SG-1000", "sg", "sg lzma", RG_LOGO_PAD_SG1000, RG_LOGO_HEADER_SG1000, NO_GAME_DATA);
+    add_emulator("Tamagotchi", "tama", "b", RG_LOGO_PAD_TAMA, RG_LOGO_HEADER_TAMA, NO_GAME_DATA);
+    add_emulator("Tiger Game.com", "gamecom", "bin tgc", RG_LOGO_PAD_GAMECOM, RG_LOGO_HEADER_GAMECOM, NO_GAME_DATA);
+    add_emulator("Virtual Boy", "vb", "vb lzma", RG_LOGO_PAD_VB, RG_LOGO_HEADER_VB, NO_GAME_DATA);
+    add_emulator("Watara Supervision", "wsv", "wsv sv bin lzma", RG_LOGO_PAD_WSV, RG_LOGO_HEADER_WSV, NO_GAME_DATA);
+    add_emulator("WonderSwan", "ws", "ws wsc", RG_LOGO_PAD_WSWAN, RG_LOGO_HEADER_WSWAN, NO_GAME_DATA);
+    add_emulator("ZX Spectrum", "zxs", "z80", RG_LOGO_PAD_ZX, RG_LOGO_HEADER_ZX, NO_GAME_DATA);
 }
 
 static bool browse_subpath_is_safe(const char *s)
