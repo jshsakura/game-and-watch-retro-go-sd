@@ -31,6 +31,37 @@ static const struct {
 
 extern ADC_HandleTypeDef hadc1;
 extern TIM_HandleTypeDef htim1;
+extern RTC_HandleTypeDef hrtc;
+
+/*
+ * Gauge state persisted across STANDBY / power-off in an RTC backup
+ * register. RAM is lost in standby, and reseeding the filter from a
+ * fresh, load-free reading made the shown percent seesaw: optimistic at
+ * every boot, then plunging once game load sags the battery voltage.
+ * Layout: [31:24] magic, [23:16] last shown percent, [15:0] ADC floor.
+ */
+#define BQ24072_BKP_REG   RTC_BKP_DR30
+#define BQ24072_BKP_MAGIC 0xB7u
+
+/*
+ * A restored floor may only be overridden upward at boot when the fresh
+ * reading says the battery is at least this much fuller — i.e. it was
+ * actually charged while the device was off. Smaller rises are just the
+ * voltage relaxing after load sag and must not lift the gauge.
+ */
+#define BQ24072_RESTORE_TRUST_DELTA 15
+
+/*
+ * The shown percent may move at most 1 % per this interval. The limiter
+ * used to be 1 % per call, which at per-frame call rates limited nothing.
+ */
+#define BQ24072_STEP_INTERVAL_MS 1000u
+
+/*
+ * At or below this percent, downward readings are trusted immediately so
+ * the 1-5 % auto power-off is never delayed by the step limiter.
+ */
+#define BQ24072_SNAP_FLOOR_PERCENT 10
 
 #if BQ24072_PROFILING
 static volatile uint32_t bq24072_battery_value;
@@ -72,6 +103,12 @@ static struct {
     uint32_t sample_sum;
     bool     charging;
     bool     power_good;
+
+    /* Floor/percent recovered from the RTC backup register at boot;
+     * consumed by the first publish (see bq24072_restore_floor). */
+    bool     restore_pending;
+    uint16_t restored_floor;
+    int      restored_percent;
 
     struct {
         bool            initialized;
@@ -217,6 +254,62 @@ static const bq24072_level_table_t* bq24072_select_table(uint16_t adc_value,
 }
 
 /* ======================================================================
+ * Backup-register persistence
+ * ====================================================================== */
+
+/* Pack the live gauge state into the backup register after each publish
+ * so a later boot resumes from it instead of a fresh optimistic seed. */
+static void bq24072_store_backup(void)
+{
+    int percent = bq24072_data.last.initialized ? bq24072_data.last.percent
+                                                : bq24072_get_percent();
+
+    if (percent < 0)   percent = 0;
+    if (percent > 100) percent = 100;
+
+    HAL_RTCEx_BKUPWrite(&hrtc, BQ24072_BKP_REG,
+                        ((uint32_t)BQ24072_BKP_MAGIC << 24) |
+                        ((uint32_t)percent << 16) |
+                        bq24072_data.filtered_value);
+}
+
+/*
+ * Decide the seed for the very first publish after boot.
+ *
+ * Without a restored floor the fresh average is used as before. With one:
+ *   - charger present         -> trust the fresh reading (it may rise);
+ *   - fresh <= restored floor -> battery drained further while off;
+ *   - fresh reads higher      -> only believe it when the mapped percent
+ *     exceeds the restored percent by BQ24072_RESTORE_TRUST_DELTA
+ *     (charged while off); otherwise it is just sag recovery and the
+ *     restored floor is kept so the gauge stays put across power cycles.
+ */
+static uint16_t bq24072_restore_floor(uint16_t fresh_avg)
+{
+    bq24072_state_t state;
+    int             fresh_percent;
+
+    if (!bq24072_data.restore_pending)
+        return fresh_avg;
+
+    bq24072_data.restore_pending = false;
+
+    state = bq24072_get_state();
+    if ((state == BQ24072_STATE_CHARGING) || (state == BQ24072_STATE_FULL))
+        return fresh_avg;
+
+    if (fresh_avg <= bq24072_data.restored_floor)
+        return fresh_avg;
+
+    fresh_percent = bq24072_percent_from_table(
+        fresh_avg, bq24072_select_table(fresh_avg, state));
+    if (fresh_percent >= bq24072_data.restored_percent + BQ24072_RESTORE_TRUST_DELTA)
+        return fresh_avg;
+
+    return bq24072_data.restored_floor;
+}
+
+/* ======================================================================
  * ADC interrupt callback
  *
  * Reconstructed from OFW FUN_00001b58
@@ -329,8 +422,9 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
          *   OFW: puVar3[3] = 0.
          */
         if (!bq24072_data.sample_valid) {
-            /* First publish: unconditionally seed filtered_value. */
-            bq24072_data.filtered_value = new_avg;
+            /* First publish: seed from the persisted floor when one was
+             * restored at boot, else from the fresh average. */
+            bq24072_data.filtered_value = bq24072_restore_floor(new_avg);
         } else if ((new_avg <= bq24072_data.filtered_value) ||
                     bq24072_data.adc_reset_pending) {
             /* Accept: discharge step or explicit charger-state reset. */
@@ -340,6 +434,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 
         bq24072_data.adc_reset_pending = false;  /* OFW: puVar3[3] = 0  */
         bq24072_data.sample_valid      = true;   /* OFW: puVar3[2] = 1  */
+
+        bq24072_store_backup();
 
 #if BQ24072_PROFILING == 1
         bq24072_battery_value      = bq24072_data.value;
@@ -355,6 +451,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
  * ====================================================================== */
 int32_t bq24072_init(void)
 {
+    uint32_t bkp;
+
     bq24072_data.value              = 0u;
     bq24072_data.filtered_value     = 0u;
     bq24072_data.adc_reset_pending  = false;
@@ -363,6 +461,29 @@ int32_t bq24072_init(void)
     bq24072_data.sample_count       = 0u;
     bq24072_data.sample_sum         = 0u;
     bq24072_data.last.initialized   = false;
+    bq24072_data.restore_pending    = false;
+
+    /* Resume the gauge from the state persisted before the last
+     * power-off / standby, so the shown percent carries over instead of
+     * restarting from an optimistic load-free reading. */
+    HAL_PWR_EnableBkUpAccess();
+    bkp = HAL_RTCEx_BKUPRead(&hrtc, BQ24072_BKP_REG);
+    if ((bkp >> 24) == BQ24072_BKP_MAGIC) {
+        uint16_t stored_floor = (uint16_t)(bkp & 0xFFFFu);
+        int      percent      = (int)((bkp >> 16) & 0xFFu);
+
+        if ((stored_floor != 0u) && (percent <= 100)) {
+            bq24072_data.restored_floor   = stored_floor;
+            bq24072_data.restored_percent = percent;
+            bq24072_data.restore_pending  = true;
+
+            /* Show the persisted percent right away; the regular
+             * limiter walks it from here once samples arrive. */
+            bq24072_data.last.initialized = true;
+            bq24072_data.last.percent     = percent;
+            bq24072_data.last.state       = BQ24072_STATE_DISCHARGING;
+        }
+    }
 
     bq24072_handle_power_good();
     bq24072_handle_charging();
@@ -481,18 +602,20 @@ int bq24072_get_percent(void)
 /*
  * Rate-limited UI percent.
  *
- * Applies a slow step-limiter (±1 %/poll) on top of the ADC-level
- * monotonicity filter to avoid the icon flickering during a single
- * ADC window.  The discharge-rise guard here is a secondary safety net;
- * the primary enforcement is already done in HAL_ADC_ConvCpltCallback.
+ * The shown percent walks toward the measured percent at most 1 % per
+ * BQ24072_STEP_INTERVAL_MS (the limiter is time-based; it used to be
+ * per-call, which at per-frame call rates limited nothing).  Load sag
+ * therefore drifts the gauge down slowly instead of snapping it, and
+ * rises while discharging are still rejected outright.  Downward
+ * readings at or below BQ24072_SNAP_FLOOR_PERCENT are trusted
+ * immediately so the 1-5 % auto power-off is never delayed.
  */
 int bq24072_get_percent_filtered(void)
 {
+    static uint32_t last_step_tick;
     int             percent;
     int             delta;
     bq24072_state_t state;
-    const int       snap_threshold = 5;
-    const int       step           = 1;
 
     if (!bq24072_data.sample_valid) {
         return bq24072_data.last.initialized ? bq24072_data.last.percent : 0;
@@ -509,10 +632,23 @@ int bq24072_get_percent_filtered(void)
     }
 
     if (state != bq24072_data.last.state) {
-        /* State transition: snap immediately to new reading. */
-        bq24072_data.last.state   = state;
-        bq24072_data.last.percent = percent;
-        return percent;
+        /*
+         * Snap only on plug/unplug (the threshold table changes, so the
+         * measured percent legitimately shifts).  CHARGING<->FULL flips
+         * share the charging table and the CHG pin can toggle around
+         * top-off, so those are carried by the limiter instead.
+         */
+        bool plug_event =
+            (state == BQ24072_STATE_DISCHARGING) ||
+            (state == BQ24072_STATE_MISSING) ||
+            (bq24072_data.last.state == BQ24072_STATE_DISCHARGING) ||
+            (bq24072_data.last.state == BQ24072_STATE_MISSING);
+
+        bq24072_data.last.state = state;
+        if (plug_event) {
+            bq24072_data.last.percent = percent;
+            return percent;
+        }
     }
 
     switch (state) {
@@ -522,9 +658,6 @@ int bq24072_get_percent_filtered(void)
             return 0;
 
         case BQ24072_STATE_FULL:
-            bq24072_data.last.percent = percent;
-            return percent;
-
         case BQ24072_STATE_CHARGING:
         case BQ24072_STATE_DISCHARGING:
             delta = percent - bq24072_data.last.percent;
@@ -537,14 +670,13 @@ int bq24072_get_percent_filtered(void)
             if ((state == BQ24072_STATE_DISCHARGING) && (delta > 0))
                 return bq24072_data.last.percent;
 
-            if ((delta >= snap_threshold) || (delta <= -snap_threshold)) {
-                /* Large deviation from filtered value: trust it immediately.
-                 * This recovers from a bad boot sample quickly. */
+            if ((delta < 0) && (percent <= BQ24072_SNAP_FLOOR_PERCENT)) {
+                /* Near empty: trust the drop at once (auto power-off). */
                 bq24072_data.last.percent = percent;
-            } else if (delta > 0) {
-                bq24072_data.last.percent += step;
-            } else if (delta < 0) {
-                bq24072_data.last.percent -= step;
+            } else if ((delta != 0) &&
+                       ((HAL_GetTick() - last_step_tick) >= BQ24072_STEP_INTERVAL_MS)) {
+                bq24072_data.last.percent += (delta > 0) ? 1 : -1;
+                last_step_tick = HAL_GetTick();
             }
             return bq24072_data.last.percent;
 
