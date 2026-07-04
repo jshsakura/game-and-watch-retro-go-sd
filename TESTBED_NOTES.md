@@ -45,7 +45,6 @@ caveats where things fall short.
 - **Virtual Boy** (red-viper) — honest caveat: **about 65-70% of full speed** with
   automatic overclock. Gapless audio, selectable pad presets (left pad / right pad /
   triggers as A/B). Several titles are enjoyable at that speed.
-- **Tamagotchi P2** — runs on the same TamaLib core as the upstream P1.
 
 ### Apps (homebrew overlays)
 
