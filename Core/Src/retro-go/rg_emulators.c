@@ -1612,7 +1612,7 @@ void emulators_init()
     add_emulator("Nintendo Gameboy", "gb", "gb gbc lzma", RG_LOGO_PAD_GB, RG_LOGO_HEADER_GB, NO_GAME_DATA);
     add_emulator("Nintendo Gameboy Color", "gbc", "gb gbc lzma", RG_LOGO_PAD_GBC, RG_LOGO_HEADER_GBC, NO_GAME_DATA);
     add_emulator("Nintendo Entertainment System", "nes", "nes fds nsf lzma", RG_LOGO_PAD_NES, RG_LOGO_HEADER_NES, NO_GAME_DATA);
-    add_emulator("Game & Watch", "gw", "gw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
+    add_emulator("Game & Watch", "gw", "gw mgw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
     add_emulator("PC Engine", "pce", "pce lzma", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCE, NO_GAME_DATA);
     /* PC Engine CD (= TurboGrafx-CD): same HuC6280/VDC core as HuCard PCE; the
      * disc (.cue/.bin) is streamed from SD and the System Card BIOS is loaded as
