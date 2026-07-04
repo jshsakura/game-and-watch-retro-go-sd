@@ -280,6 +280,17 @@ typedef struct
     const char *s_lyrics;
     const char *s_empty_music;   // empty-folder hint headline
     const char *s_no_favorite;   // empty-favorites hint
+
+    //=====================================================================
+    // Launcher favorites tab (Core\Src\retro-go\rg_favorites.c) ===========
+    // NEW FIELDS GO AT THE END of the string region (right before the fmt_*
+    // pointers): the SD .bin loader assigns strings BY INDEX, so inserting a
+    // field in the middle shifts every later label when the firmware runs
+    // against an older /lang/*.bin. Appended fields simply fall back to the
+    // baked en_us text until the SD lang files are updated.
+    const char *s_Add_favorite;    // A-menu: add game to favorites
+    const char *s_Del_favorite;    // A-menu: remove game from favorites
+    const char *s_Reset_favorites; // favorites-tab A-menu: delete all (also confirm text)
     //=====================================================================
 
     const int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, const char *weekday, uint16_t hour, uint16_t minutes, uint16_t seconds);

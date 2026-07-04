@@ -410,6 +410,9 @@ unsigned ROM_DATA_LENGTH;
 const char *ROM_EXT = NULL;
 retro_emulator_file_t *ACTIVE_FILE = NULL;
 
+/* One shared list buffer (531KB in RAM_EMU/AXI) reused by every tab — only
+ * the currently shown tab is ever materialized in it. */
+#define SHARED_ROM_SLOTS 1000
 static retro_emulator_file_t *shared_files = NULL;
 
 #if !defined(COVERFLOW)
@@ -717,6 +720,23 @@ static void event_handler(gui_event_t event, tab_t *tab)
     }
 }
 
+retro_emulator_file_t *rg_emulators_shared_file_buffer(int *maxcount)
+{
+    if (maxcount)
+        *maxcount = SHARED_ROM_SLOTS;
+    return shared_files;
+}
+
+const rom_system_t *rg_emulators_system_for_dir(const char *dirname, size_t len)
+{
+    for (int i = 0; i < emulators_count; i++) {
+        if (strlen(emulators[i].dirname) == len &&
+            strncmp(emulators[i].dirname, dirname, len) == 0)
+            return emulators[i].system;
+    }
+    return NULL;
+}
+
 static void add_emulator(const char *system, const char *dirname, const char* ext,
                          uint16_t logo_idx, uint16_t header_idx, game_data_type_t game_data_type)
 {
@@ -730,7 +750,7 @@ static void add_emulator(const char *system, const char *dirname, const char* ex
     snprintf(p->exts, sizeof(p->exts), " %s ", ext);
     p->browse_subpath[0] = '\0';
     p->roms.count = 0;
-    p->roms.maxcount = 1000;
+    p->roms.maxcount = SHARED_ROM_SLOTS;
     if (shared_files == NULL)
     {
         shared_files = ram_calloc(p->roms.maxcount, sizeof(retro_emulator_file_t));
@@ -938,6 +958,7 @@ void emulator_show_file_info(retro_emulator_file_t *file)
 
             if (delete_confirm_sel == 1) {
                 odroid_sdcard_unlink(file->path);
+                rg_favorites_remove(file->path); /* drop any stale ★ entry */
                 strcpy(file->path, "");
             } else {
                 continue;
@@ -1176,32 +1197,32 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
 
     CHOSEN_FILE = file;
     emulator_update_cheats_info(CHOSEN_FILE);
-    odroid_dialog_choice_t last = ODROID_DIALOG_CHOICE_LAST;
-    odroid_dialog_choice_t cheat_row = {4, curr_lang->s_Cheat_Codes, "", 1, NULL};
-    odroid_dialog_choice_t cheat_choice = last; 
+#endif
+
+    /* One /favorites.txt read per menu open — the discrete-event rule. */
+    bool is_fav = rg_favorites_contains(file->path);
+    bool on_fav_tab = rg_favorites_is_current_tab();
+
+    /* Built dynamically: the favorites rows vary, and the old fixed-array
+     * "overwrite index N with LAST" cheat-row hack broke on every reshuffle. */
+    const odroid_dialog_choice_t sep = ODROID_DIALOG_CHOICE_SEPARATOR;
+    odroid_dialog_choice_t choices[12];
+    int rows = 0;
+    choices[rows++] = (odroid_dialog_choice_t){0, curr_lang->s_Resume_game, (char *)"", (has_save) ? 1 : -1, NULL};
+    choices[rows++] = (odroid_dialog_choice_t){1, curr_lang->s_New_game, (char *)"", 1, NULL};
+    choices[rows++] = sep;
+    choices[rows++] = (odroid_dialog_choice_t){2, curr_lang->s_Delete_save, (char *)"", (has_save || has_sram) ? 1 : -1, NULL};
+    choices[rows++] = sep;
+    choices[rows++] = (odroid_dialog_choice_t){3, is_fav ? curr_lang->s_Del_favorite : curr_lang->s_Add_favorite, (char *)"", 1, NULL};
+    if (on_fav_tab)
+        choices[rows++] = (odroid_dialog_choice_t){5, curr_lang->s_Reset_favorites, (char *)"", 1, NULL};
+#if CHEAT_CODES == 1
     if (CHOSEN_FILE->cheat_count != 0) {
-        cheat_choice = cheat_row;
+        choices[rows++] = sep;
+        choices[rows++] = (odroid_dialog_choice_t){4, curr_lang->s_Cheat_Codes, (char *)"", 1, NULL};
     }
 #endif
-
-    odroid_dialog_choice_t choices[] = {
-        {0, curr_lang->s_Resume_game, "", (has_save) ? 1:-1, NULL},
-        {1, curr_lang->s_New_game, "", 1, NULL},
-        ODROID_DIALOG_CHOICE_SEPARATOR,
-        {2, curr_lang->s_Delete_save, "", (has_save || has_sram) ? 1 : -1, NULL},
-#if CHEAT_CODES == 1
-        ODROID_DIALOG_CHOICE_SEPARATOR,
-        cheat_choice,
-#endif
-        ODROID_DIALOG_CHOICE_LAST
-    };
-
-#if CHEAT_CODES == 1
-    // The cheat separator now sits at index 4 (Resume, New, separator,
-    // Delete save) after the favorite row and the Sort row were removed.
-    if (CHOSEN_FILE->cheat_count == 0)
-        choices[4] = last;
-#endif
+    choices[rows++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
 
     int sel = odroid_overlay_dialog(file->name, choices, has_save ? 0 : 1, &gui_redraw_callback, 0);
 
@@ -1233,6 +1254,18 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
         {
             odroid_sdcard_unlink(sram_path);
         }
+    }
+    else if (sel == 3) { // Add/remove favorite
+        if (is_fav)
+            rg_favorites_remove(file->path);
+        else
+            rg_favorites_add(file->path);
+        force_redraw = true;
+    }
+    else if (sel == 5) { // Reset (delete all) favorites — offered on the ★ tab only
+        if (odroid_overlay_confirm(curr_lang->s_Reset_favorites, false, &gui_redraw_callback) == 1)
+            rg_favorites_reset();
+        force_redraw = true;
     }
 #if CHEAT_CODES == 1
     else if (sel == 4) {
@@ -1609,6 +1642,9 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 
 void emulators_init()
 {
+    /* ★ Favorites must be the FIRST tab (index 0), before every system tab. */
+    rg_favorites_register_tab();
+
     /* Tab order == registration order. Kept ALPHABETICAL by display name so the
      * launcher list is predictable — insert new systems in their sorted slot. */
     add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
