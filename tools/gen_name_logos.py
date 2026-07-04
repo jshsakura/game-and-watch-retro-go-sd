@@ -15,7 +15,7 @@ from PIL import Image, ImageFont, ImageDraw
 # struct name in rg_logos.c -> wordmark text. header_zelda3/header_smw are
 # homebrew game banners, left untouched.
 NAMES = {
-    "header_nes":      "NES",
+    "header_nes":      "FAMICOM",
     "header_gb":       "GAMEBOY",
     "header_gbc":      "GAMEBOY COLOR",
     "header_lynx":     "ATARI LYNX",
@@ -50,13 +50,33 @@ FONT_PX  = 22
 THRESHOLD = 110
 
 
-def render(font, text):
+def raster(font, text):
     pad = 8
     w = int(font.getlength(text)) + pad * 2
     tmp = Image.new("L", (w, FONT_PX * 3), 0)
     ImageDraw.Draw(tmp).text((pad, pad), text, font=font, fill=255)
+    return tmp
+
+
+def global_band(font, texts):
+    """Common vertical glyph band across ALL wordmarks. Scaling each name by
+    its own bbox made names containing digits ('ATARI 2600', 'ODYSSEY 2')
+    render ~6% smaller: Luckiest Guy digits rise 1px above the caps, so
+    those bboxes were taller and the whole name shrank to fit TARGET_H.
+    Cropping everyone to one shared band gives every logo the same letter
+    size and a common baseline."""
+    top, bottom = 10**6, -1
+    for text in texts:
+        b = raster(font, text).getbbox()
+        top = min(top, b[1])
+        bottom = max(bottom, b[3])
+    return top, bottom
+
+
+def render(font, text, top, bottom):
+    tmp = raster(font, text)
     bbox = tmp.getbbox()
-    g = tmp.crop(bbox)
+    g = tmp.crop((bbox[0], top, bbox[2], bottom))
     nw = max(1, round(g.width * TARGET_H / g.height))
     return g.resize((nw, TARGET_H), Image.Resampling.LANCZOS)
 
@@ -97,9 +117,10 @@ def main():
     args = ap.parse_args()
 
     font = ImageFont.truetype(args.font, FONT_PX)
+    top, bottom = global_band(font, NAMES.values())
     rendered = {}
     for name, text in NAMES.items():
-        g = render(font, text)
+        g = render(font, text, top, bottom)
         pw, h, rows = pack(g)
         rendered[name] = (text, g, pw, h, rows)
         print(f"{name:18s} {text:16s} -> {pw}x{h}")
