@@ -5,6 +5,7 @@
 // the four ID3 encodings (latin1 / UTF-16+BOM / UTF-16BE / UTF-8) to UTF-8.
 
 #include "music_id3.h"
+#include "music_cover.h"   /* cover_io_idle: keep PCM fed during tag walks */
 #include <stdio.h>
 #include <string.h>
 
@@ -154,6 +155,7 @@ void id3_read_tags(const char *path, music_tags_t *out)
     out->found = true;
 
     while (pos + fhlen <= tag_end) {
+        cover_io_idle();                         // long tag walks mustn't starve playback
         if (fseek(f, pos, SEEK_SET) != 0) break;
         uint8_t fh[10];
         if (fread(fh, 1, fhlen, f) != (size_t)fhlen) break;
@@ -211,6 +213,7 @@ int id3_locate_cover(const char *path, long *off, long *len, bool *is_png)
     int found = 0;
 
     while (pos + fhlen <= tag_end) {
+        cover_io_idle();                         // long tag walks mustn't starve playback
         if (fseek(f, pos, SEEK_SET) != 0) break;
         uint8_t fh[10];
         if (fread(fh, 1, fhlen, f) != (size_t)fhlen) break;

@@ -28,6 +28,14 @@ bool cover_render_card(int n, bool is_png, int bx, int by, int bw, int bh);
 // thumbnails are skipped). Returns true on success.
 bool cover_thumb(const char *path, uint16_t *out, int sz);
 
+// IO idle hook: called from the streaming-read callbacks (JPEG/PNG input, ID3
+// frame walk) as bytes come off the SD, so a long cover decode keeps the PCM
+// ring fed instead of starving playback ("list thumbnails stutter the music").
+// main_music registers playback_feed; safe to leave NULL. cover_io_idle() is
+// the call-through for the other music_* modules.
+void cover_set_io_idle(void (*fn)(void));
+void cover_io_idle(void);
+
 // Shared 352KB scratch (PNG inflate / JPEG work area). Exposed so the Video
 // app's frame decoder can reuse it — Music and Video share the overlay and
 // never run simultaneously, so it is free during video playback.

@@ -33,6 +33,11 @@ typedef struct {
 } cover_src_t;
 static cover_src_t g_src;
 
+/* See music_cover.h: keeps the PCM ring fed during long streamed decodes. */
+static void (*g_io_idle)(void);
+void cover_set_io_idle(void (*fn)(void)) { g_io_idle = fn; }
+void cover_io_idle(void) { if (g_io_idle) g_io_idle(); }
+
 static FILE *cover_open(long *remain)
 {
     if (!g_src.valid) return NULL;
@@ -117,6 +122,7 @@ typedef struct { FILE *f; long remain; } jpg_src_t;
 static size_t jpg_in(JDEC *jd, uint8_t *buf, size_t len)
 {
     jpg_src_t *s = (jpg_src_t *)jd->device;
+    cover_io_idle();   /* a big cover decode must not starve the PCM ring */
     if (len > (size_t)s->remain) len = (size_t)s->remain;
     if (buf) {
         size_t got = fread(buf, 1, len, s->f);
@@ -161,6 +167,8 @@ static int pj_file_get(void *u)
 {
     jpg_src_t *s = (jpg_src_t *)u;
     if (s->remain <= 0) return -1;
+    if (((uint32_t)s->remain & 0xFFF) == 0)
+        cover_io_idle();   /* byte-at-a-time reader: feed the ring every 4KB */
     int c = fgetc(s->f);
     if (c < 0) return -1;
     s->remain--;
@@ -242,6 +250,7 @@ typedef struct { FILE *f; long remain; } file_reader_t;
 static size_t file_read(void *out, size_t size, size_t count, void *u)
 {
     file_reader_t *r = (file_reader_t *)u;
+    cover_io_idle();   /* PNG inflate streams too — keep the ring fed */
     size_t want = size * count;
     if (want > (size_t)r->remain) want = (size_t)r->remain;
     size_t got = fread(out, 1, want, r->f);

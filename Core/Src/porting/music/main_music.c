@@ -995,6 +995,10 @@ void app_main_music(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_system_init(APPID_HOMEBREW, 48000);
 
+    /* Streamed cover/tag reads re-feed the PCM ring as they go (see
+     * music_cover.h) — playback_feed no-ops safely while nothing plays. */
+    cover_set_io_idle(playback_feed);
+
     strcpy(cur_path, "/music");
     g_mode = MODE_FOLDER;
     strcpy(g_root, "/music");
