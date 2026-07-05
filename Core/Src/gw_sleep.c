@@ -123,6 +123,11 @@ void GW_EnterDeepSleep(bool standby, sleep_pre_wakeup_callback_t pre_wakeup_call
     HAL_Delay(50);
   }
 
+  // LCD/audio are off and the delay above let the voltage settle: persist a
+  // load-free battery reference so the next boot can tell "charged while
+  // asleep" from load-sag recovery with a small noise margin.
+  bq24072_sleep_snapshot();
+
   if (standby) {
     // Leave a trace in RAM that we entered standby mode
     boot_magic_set(BOOT_MAGIC_STANDBY);

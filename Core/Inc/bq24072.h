@@ -25,4 +25,8 @@ int bq24072_get_percent_filtered(void);
 
 void bq24072_poll(void);
 
+/* Persist a load-free quiescent reference on the way into deep sleep so the
+ * next boot can detect charging-while-asleep with a small noise margin. */
+void bq24072_sleep_snapshot(void);
+
 #endif // BQ24072_H

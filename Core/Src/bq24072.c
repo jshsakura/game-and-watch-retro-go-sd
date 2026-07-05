@@ -38,18 +38,32 @@ extern RTC_HandleTypeDef hrtc;
  * register. RAM is lost in standby, and reseeding the filter from a
  * fresh, load-free reading made the shown percent seesaw: optimistic at
  * every boot, then plunging once game load sags the battery voltage.
- * Layout: [31:24] magic, [23:16] last shown percent, [15:0] ADC floor.
+ * Layout: [31:24] magic, [23] quiescent flag, [22:16] last shown percent,
+ * [15:0] ADC value. Bit 23 marks the ADC value as a QUIESCENT reference:
+ * a fresh load-free burst taken on the way into deep sleep (LCD/audio
+ * already off), not a game-load-sagged floor.
  */
-#define BQ24072_BKP_REG   RTC_BKP_DR30
-#define BQ24072_BKP_MAGIC 0xB7u
+#define BQ24072_BKP_REG       RTC_BKP_DR30
+#define BQ24072_BKP_MAGIC     0xB7u
+#define BQ24072_BKP_QUIESCENT (1u << 23)
 
 /*
  * A restored floor may only be overridden upward at boot when the fresh
  * reading says the battery is at least this much fuller — i.e. it was
  * actually charged while the device was off. Smaller rises are just the
  * voltage relaxing after load sag and must not lift the gauge.
+ * Only used when the restored value is NOT a quiescent reference (crash,
+ * battery pull — anything that skipped the sleep path).
  */
 #define BQ24072_RESTORE_TRUST_DELTA 15
+
+/*
+ * When the restored value IS a quiescent reference, boot compares
+ * like-for-like (both readings load-free), so any rise beyond ADC noise
+ * and temperature drift means the battery really charged while asleep.
+ * ~100 counts is ~2-4 % in the high-domain tables (~5200 counts span).
+ */
+#define BQ24072_QUIESCENT_TRUST_MARGIN 100u
 
 /*
  * The shown percent may move at most 1 % per this interval. The limiter
@@ -107,8 +121,13 @@ static struct {
     /* Floor/percent recovered from the RTC backup register at boot;
      * consumed by the first publish (see bq24072_restore_floor). */
     bool     restore_pending;
+    bool     restored_quiescent;
     uint16_t restored_floor;
     int      restored_percent;
+
+    /* Bumped after every published window; lets bq24072_sleep_snapshot
+     * wait for a burst it triggered itself. */
+    volatile uint32_t publish_seq;
 
     struct {
         bool            initialized;
@@ -301,6 +320,17 @@ static uint16_t bq24072_restore_floor(uint16_t fresh_avg)
     if (fresh_avg <= bq24072_data.restored_floor)
         return fresh_avg;
 
+    if (bq24072_data.restored_quiescent) {
+        /* The reference was taken load-free on the way into sleep and this
+         * boot reading is load-free too, so the comparison is fair: any rise
+         * beyond noise means the battery really charged while asleep. */
+        if (fresh_avg > bq24072_data.restored_floor + BQ24072_QUIESCENT_TRUST_MARGIN) {
+            bq24072_data.last.initialized = false; /* snap the shown percent */
+            return fresh_avg;
+        }
+        return bq24072_data.restored_floor;
+    }
+
     fresh_percent = bq24072_percent_from_table(
         fresh_avg, bq24072_select_table(fresh_avg, state));
     if (fresh_percent >= bq24072_data.restored_percent + BQ24072_RESTORE_TRUST_DELTA) {
@@ -441,6 +471,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 
         bq24072_data.adc_reset_pending = false;  /* OFW: puVar3[3] = 0  */
         bq24072_data.sample_valid      = true;   /* OFW: puVar3[2] = 1  */
+        bq24072_data.publish_seq++;
 
         bq24072_store_backup();
 
@@ -477,12 +508,13 @@ int32_t bq24072_init(void)
     bkp = HAL_RTCEx_BKUPRead(&hrtc, BQ24072_BKP_REG);
     if ((bkp >> 24) == BQ24072_BKP_MAGIC) {
         uint16_t stored_floor = (uint16_t)(bkp & 0xFFFFu);
-        int      percent      = (int)((bkp >> 16) & 0xFFu);
+        int      percent      = (int)((bkp >> 16) & 0x7Fu);
 
         if ((stored_floor != 0u) && (percent <= 100)) {
-            bq24072_data.restored_floor   = stored_floor;
-            bq24072_data.restored_percent = percent;
-            bq24072_data.restore_pending  = true;
+            bq24072_data.restored_floor     = stored_floor;
+            bq24072_data.restored_percent   = percent;
+            bq24072_data.restored_quiescent = (bkp & BQ24072_BKP_QUIESCENT) != 0u;
+            bq24072_data.restore_pending    = true;
 
             /* Show the persisted percent right away; the regular
              * limiter walks it from here once samples arrive. */
@@ -701,4 +733,41 @@ void bq24072_poll(void)
 {
     bq24072_data.adc_settle_pending = true;
     HAL_ADC_Start_IT(&hadc1);
+}
+
+/* ======================================================================
+ * Sleep-entry quiescent snapshot
+ *
+ * Called on the way into deep sleep with the LCD and audio already off,
+ * i.e. with the battery as unloaded as this firmware ever sees it. The
+ * burst average is persisted with the QUIESCENT flag so the next boot
+ * (also load-free) can compare like-for-like and detect charging while
+ * asleep with a small noise margin instead of the coarse load-sag
+ * TRUST_DELTA. Every power-down path goes through the sleep entry, so
+ * only crashes/battery pulls fall back to the coarse rule.
+ * ====================================================================== */
+void bq24072_sleep_snapshot(void)
+{
+    uint32_t seq      = bq24072_data.publish_seq;
+    uint32_t deadline = HAL_GetTick() + 50u;
+    int      percent;
+
+    bq24072_poll();
+    while ((bq24072_data.publish_seq == seq) && (HAL_GetTick() < deadline)) {
+        /* burst completes sub-millisecond; deadline is a safety net */
+    }
+    if (bq24072_data.publish_seq == seq) {
+        return; /* ADC never published; keep the last regular backup */
+    }
+
+    percent = bq24072_data.last.initialized ? bq24072_data.last.percent
+                                            : bq24072_get_percent();
+    if (percent < 0)   percent = 0;
+    if (percent > 100) percent = 100;
+
+    HAL_RTCEx_BKUPWrite(&hrtc, BQ24072_BKP_REG,
+                        ((uint32_t)BQ24072_BKP_MAGIC << 24) |
+                        BQ24072_BKP_QUIESCENT |
+                        ((uint32_t)percent << 16) |
+                        bq24072_data.value);
 }
