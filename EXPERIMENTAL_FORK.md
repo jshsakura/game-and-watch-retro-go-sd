@@ -7,9 +7,10 @@
 
 ## What differs from upstream
 
-The single maintained list is **[TESTBED_NOTES.md](TESTBED_NOTES.md)** — it doubles as
-the release-notes text, so it stays current with every build. (A feature table used to
-live here too; two lists drifted apart, so now there is one.)
+The single maintained list is in the
+**[README — How this fork differs from upstream](README.md#how-this-fork-differs-from-upstream)**.
+Release notes list only what changed in each build. (A feature table used to live here
+too; two lists drifted apart, so now there is one.)
 
 The debugging history behind the features — what failed, what the actual root causes
 were, and how each finding was verified (host harness vs. on-device SD log) — is in

@@ -105,24 +105,30 @@ jobs:
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
-      # 3. Compose release notes from our curated testbed notes + the commits in
-      #    this build (this fork's changes — NOT the upstream CHANGELOG.md)
+      # 3. Compose release notes: what CHANGED in this build (commits since the
+      #    previous tag). The full feature overview lives in the README, linked —
+      #    not pasted — so each release reads as its delta.
       - name: Compose release notes
         run: |
-          cp TESTBED_NOTES.md RELEASE_NOTES.md
           {
+            echo "**Experimental testbed build — not stable. Back up your SD card / saves first.**"
             echo ""
-            echo "---"
+            echo "Install: flash \`retro-go_update.bin\` (matching SD support files are pushed automatically; \`gw_update.tar\` is manual recovery only). ROMs are never bundled."
             echo ""
-            echo "### Commits in this build"
+            echo "Full feature overview & BIOS table: [README — How this fork differs from upstream](https://github.com/${{ github.repository }}#how-this-fork-differs-from-upstream)"
+            echo ""
             PREV=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || true)
             if [ -n "$PREV" ]; then
+              echo "### Changes since ${PREV}"
+              echo ""
               git log --no-merges --pretty=format:'- %s' "$PREV..${{ github.ref_name }}"
             else
+              echo "### Changes in this build"
+              echo ""
               git log --no-merges --pretty=format:'- %s' -20
             fi
             echo ""
-          } >> RELEASE_NOTES.md
+          } > RELEASE_NOTES.md
 
       # 4. Create a release and upload files
       - name: Create Release
