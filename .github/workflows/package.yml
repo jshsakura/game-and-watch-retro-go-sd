@@ -119,14 +119,17 @@ jobs:
             echo ""
             PREV=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || true)
             if [ -n "$PREV" ]; then
-              echo "### Changes since ${PREV}"
-              echo ""
-              git log --no-merges --pretty=format:'- %s' "$PREV..${{ github.ref_name }}"
+              echo "## Changes since ${PREV}"
+              RANGE="$PREV..${{ github.ref_name }}"
             else
-              echo "### Changes in this build"
-              echo ""
-              git log --no-merges --pretty=format:'- %s' -20
+              echo "## Changes in this build"
+              RANGE="-20"
             fi
+            echo ""
+            # Subject as a heading, full commit body as the explanation —
+            # the bodies are written to be read, so the release explains
+            # itself instead of listing bare one-liners.
+            git log --no-merges --pretty=format:'### %s%n%n%b%n' $RANGE
             echo ""
           } > RELEASE_NOTES.md
 
