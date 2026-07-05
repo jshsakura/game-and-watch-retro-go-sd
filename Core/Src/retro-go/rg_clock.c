@@ -104,7 +104,7 @@ static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t co
 #define SEG_H    92
 #define SEG_T    10
 #define SEG_GAP  10
-#define SEG_Y    58
+#define SEG_Y    64   /* digits sit lower: breathing room under the logo bar */
 #define BIG_TIME_W (4*SEG_W + 3*SEG_GAP + (SEG_T + 2*SEG_GAP) + SEG_SLANT)
 
 /* Draw "HH:MM" centred; when colon=false the colon drops to the ghost shade.
