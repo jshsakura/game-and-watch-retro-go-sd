@@ -261,6 +261,9 @@ static bool show_title = false;
 static void paint(clock_mode_t mode, uint32_t now, bool ringing)
 {
     base(TH()->scr);
+    if (s_anim == ANIM_GIF && clock_gif_ready()) clock_gif_blit(fb, now);
+    else if (s_anim == ANIM_SCENE) draw_scene(now, TH());
+    else if (s_anim == 1) draw_ambient(now, TH()->ink);
     switch (mode) {
     case MODE_CLOCK:     render_clock(now, ringing); break;
     case MODE_POMODORO:  render_pomodoro(now);  break;

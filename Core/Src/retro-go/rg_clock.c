@@ -534,14 +534,6 @@ static void render_clock(uint32_t now, bool alarm_firing)
     int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
     bool colon = GW_GetCurrentSubSeconds() <= 127;
 
-    /* background layer: a user GIF (level 2) or the procedural ambient (level 1) */
-    if (s_anim == ANIM_GIF && clock_gif_ready())
-        clock_gif_blit(lcd_get_active_buffer(), now);
-    else if (s_anim == ANIM_SCENE)
-        draw_scene(now, t);
-    else if (s_anim == 1)
-        draw_ambient(now, t->ink);
-
     /* date + weekday, centred UNDER the top bar (was colliding with it) */
     char date[48];
     snprintf(date, sizeof date, "%02d/%02d %s", GW_GetCurrentMonth(), GW_GetCurrentDay(), weekday_str());
@@ -1124,9 +1116,6 @@ void rg_clock_show(void)
         if (mode == MODE_CLOCK) {
             sig = (1u<<30) | (hh<<20) | (mm<<12) | ((GW_GetCurrentSubSeconds() <= 127)<<11)
                 | (s_theme<<7) | (s_hour24<<6) | (s_dnd<<5) | (ringing<<4);
-            if (s_anim == ANIM_GIF)        sig ^= (now / 80);   /* GIF rate */
-            else if (s_anim == ANIM_SCENE) sig ^= (now / 640);  /* window twinkle */
-            else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
         }
         else if (mode == MODE_STOPWATCH)
             sig = (2u<<30) | ((s_watch.elapsed_ms / 10) << 2) | (uint32_t)s_watch.state;
@@ -1142,12 +1131,22 @@ void rg_clock_show(void)
         if (flash) sig ^= 0x55555555;
         if (ringing) sig ^= (now / 200);   /* repaint for the alarm digit pulse */
         if (mode == MODE_CLOCK && s_title_until > now) sig ^= (1u<<26);   /* title fade */
+        /* the chosen background travels with EVERY mode (theme/face/bg stay
+         * one consistent set), so its repaint rate applies everywhere too */
+        if (s_anim == ANIM_GIF)        sig ^= (now / 80);   /* GIF rate */
+        else if (s_anim == ANIM_SCENE) sig ^= (now / 640);  /* window twinkle */
+        else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
 
         if (dirty || sig != last_sig) {
             last_sig = sig; dirty = false;
             uint16_t *fb = lcd_get_active_buffer();
             uint16_t bg = flash ? TH()->ink : TH()->scr;
             for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
+            if (!flash) {   /* background layer, identical in every mode */
+                if (s_anim == ANIM_GIF && clock_gif_ready()) clock_gif_blit(fb, now);
+                else if (s_anim == ANIM_SCENE) draw_scene(now, TH());
+                else if (s_anim == 1) draw_ambient(now, TH()->ink);
+            }
             switch (mode) {
             case MODE_CLOCK:     render_clock(now, ringing); break;
             case MODE_POMODORO:  render_pomodoro(now);  break;
