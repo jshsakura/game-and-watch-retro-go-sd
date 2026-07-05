@@ -181,11 +181,15 @@ static void draw_centered_i18n(int y, const char *text, uint16_t col)
 typedef struct { uint8_t hour, min, enabled; } alarm_t;
 
 static int      s_theme;
+static int      s_face_override = -1;   /* -1 = use the theme's face, else FACE_* */
 static bool     s_hour24;
 static bool     s_dnd;
-static int      s_anim;          /* 0 = off, 1 = ambient (procedural) */
+static int      s_anim;          /* 0 = off, 1 = ambient, 2 = GIF */
+static int      s_alarm_vol = 6; /* 0..10 — alarm loudness */
 static alarm_t  s_alarms[MAX_ALARMS];
 static int      s_alarm_count;
+
+static const char *const FACE_NAME[4] = { "Auto", "7-seg", "Pixel", "Dot" };  /* index+1 = FACE_* */
 
 /* Animation levels, each labelled with its battery cost so the choice is
  * informed. "Ambient" is drawn in code (a few twinkling dots) and only bumps
@@ -202,16 +206,19 @@ static const char *const ANIM_BATT[ANIM_COUNT] = { "none", "low", "high" };
 
 static void clock_config_load(void)
 {
-    s_theme = 0; s_hour24 = false; s_dnd = false; s_anim = 0; s_alarm_count = 0;
+    s_theme = 0; s_face_override = -1; s_hour24 = false; s_dnd = false; s_anim = 0;
+    s_alarm_vol = 6; s_alarm_count = 0;
     FILE *f = fopen(CLOCK_CFG_PATH, "r");
     if (!f) return;
     char line[64];
     while (fgets(line, sizeof line, f)) {
         int v;
         if (sscanf(line, "theme=%d", &v) == 1) { if (v >= 0 && v < THEME_COUNT) s_theme = v; }
+        else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_DOT) s_face_override = v; }
         else if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
         else if (sscanf(line, "anim=%d", &v) == 1) { if (v >= 0 && v < ANIM_COUNT) s_anim = v; }
+        else if (sscanf(line, "vol=%d", &v) == 1) { if (v >= 0 && v <= 10) s_alarm_vol = v; }
         else if (sscanf(line, "alarm=%d", &v) == 1 && s_alarm_count < MAX_ALARMS) {
             s_alarms[s_alarm_count].hour = (v / 100) % 24;
             s_alarms[s_alarm_count].min  = v % 100;
@@ -227,9 +234,11 @@ static void clock_config_save(void)
     FILE *f = fopen(CLOCK_CFG_PATH, "w");
     if (!f) return;
     fprintf(f, "theme=%d\n", s_theme);
+    fprintf(f, "face=%d\n", s_face_override);
     fprintf(f, "hour24=%d\n", s_hour24 ? 1 : 0);
     fprintf(f, "dnd=%d\n", s_dnd ? 1 : 0);
     fprintf(f, "anim=%d\n", s_anim);
+    fprintf(f, "vol=%d\n", s_alarm_vol);
     for (int i = 0; i < s_alarm_count; i++)
         if (s_alarms[i].enabled)
             fprintf(f, "alarm=%02d%02d\n", s_alarms[i].hour, s_alarms[i].min);
@@ -332,10 +341,11 @@ static void render_clock(uint32_t now, bool alarm_firing)
     snprintf(date, sizeof date, "%02d/%02d %s", GW_GetCurrentMonth(), GW_GetCurrentDay(), weekday_str());
     draw_centered_i18n(11, date, t->ink);
 
-    /* big time */
+    /* big time — theme face unless the user overrode it */
     int dh = hh;
     if (!s_hour24) { dh = hh % 12; if (dh == 0) dh = 12; }
-    draw_big_time(dh, mm, colon, t->face, t->ink);
+    digit_face_t face = (s_face_override >= 0) ? (digit_face_t)s_face_override : (digit_face_t)t->face;
+    draw_big_time(dh, mm, colon, face, t->ink);
 
     /* AM/PM on its own centred line (i18n, normal font — digit faces have no letters) */
     if (!s_hour24)
@@ -356,7 +366,7 @@ static void render_clock(uint32_t now, bool alarm_firing)
             draw_centered_i18n(GW_LCD_HEIGHT - 32, line, alarm_firing ? t->ink : t->alarm);
         }
     }
-    draw_hint("A exit  L/R mode  UP/DN theme  START alarms", 0x8410 /* dim grey */);
+    draw_hint("A exit   L/R mode   PAUSE settings", 0x8410 /* dim grey */);
 }
 
 static void render_mmss(uint32_t ms, uint16_t col, bool colon)
@@ -479,33 +489,21 @@ static void render_alarm_setup(int sel, bool editing, int field)
 {
     const clock_theme_t *t = TH();
     draw_scrim();
-    draw_centered_i18n(24, curr_lang->s_Clock, t->alarm);   /* reuse "Clock" as title */
-    int y = 50; char line[64];
-
-    /* row 0: animation with its battery cost, so the choice is informed */
-    { bool cur = (sel == 0);
-      snprintf(line, sizeof line, "%s Animation: %s  (batt %s)", cur ? ">" : " ", ANIM_NAME[s_anim], ANIM_BATT[s_anim]);
-      draw_centered_i18n(y, line, cur ? t->ink : 0x9CD3); y += 24; }
-
-    /* alarm rows 1..count */
-    for (int i = 0; i < s_alarm_count; i++, y += 22) {
-        bool cur = (sel == i + 1); uint16_t col = cur ? t->ink : 0x9CD3;
-        char ts[24]; alarm_time_str(ts, sizeof ts, s_alarms[i].hour, s_alarms[i].min);
-        const char *tag = s_alarms[i].enabled ? "ON" : "off";
-        if (cur && editing) snprintf(line, sizeof line, "> %s   [%s]  %s", ts, field == 0 ? "hh" : "mm", tag);
-        else                snprintf(line, sizeof line, "%s %s        %s", cur ? ">" : " ", ts, tag);
+    draw_centered_i18n(30, curr_lang->s_Clock, t->alarm);
+    int y = 60, rows = s_alarm_count + 2; char line[64];
+    for (int i = 0; i < rows; i++, y += 22) {
+        bool cur = (i == sel); uint16_t col = cur ? t->ink : 0x9CD3;
+        if (i < s_alarm_count) {
+            char ts[24]; alarm_time_str(ts, sizeof ts, s_alarms[i].hour, s_alarms[i].min);
+            const char *tag = s_alarms[i].enabled ? "ON" : "off";
+            if (cur && editing) snprintf(line, sizeof line, "> %s   [%s]  %s", ts, field == 0 ? "hh" : "mm", tag);
+            else                snprintf(line, sizeof line, "%s %s        %s", cur ? ">" : " ", ts, tag);
+        } else if (i == s_alarm_count) snprintf(line, sizeof line, "%s [ + Add alarm ]", cur ? ">" : " ");
+        else snprintf(line, sizeof line, "%s [ Done ]", cur ? ">" : " ");
         draw_centered_i18n(y, line, col);
     }
-
-    { bool cur = (sel == s_alarm_count + 1);
-      snprintf(line, sizeof line, "%s [ + Add alarm ]", cur ? ">" : " ");
-      draw_centered_i18n(y, line, cur ? t->ink : 0x9CD3); y += 22; }
-    { bool cur = (sel == s_alarm_count + 2);
-      snprintf(line, sizeof line, "%s [ Done ]", cur ? ">" : " ");
-      draw_centered_i18n(y, line, cur ? t->ink : 0x9CD3); }
-
     draw_hint(editing ? "L/R field   UP/DN adjust   A ok"
-                      : "A pick/edit/add   SELECT on/off   START del   B done", 0x8410);
+                      : "A edit/add   SELECT on/off   START del   B done", 0x8410);
 }
 
 static void clock_alarm_setup(void)
@@ -517,36 +515,30 @@ static void clock_alarm_setup(void)
     while (true) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
-        int rows = s_alarm_count + 3;          /* animation + alarms + Add + Done */
-        int add_row = s_alarm_count + 1, a_idx = sel - 1;
-        bool on_alarm = (sel >= 1 && sel <= s_alarm_count);
+        int rows = s_alarm_count + 2;
 
         if (!editing) {
             if (pressed(&k, &prev, ODROID_INPUT_B)) break;
             if (pressed(&k, &prev, ODROID_INPUT_UP))   { sel = (sel == 0) ? rows-1 : sel-1; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_DOWN)) { sel = (sel+1) % rows; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_A)) {
-                if (sel == 0) {                                      /* cycle animation */
-                    s_anim = (s_anim + 1) % ANIM_COUNT;
-                    if (s_anim == ANIM_GIF) clock_gif_load(); else clock_gif_free();
-                }
-                else if (on_alarm) { editing = true; field = 0; }
-                else if (sel == add_row) {
+                if (sel < s_alarm_count) { editing = true; field = 0; }
+                else if (sel == s_alarm_count) {
                     if (s_alarm_count < MAX_ALARMS) { s_alarms[s_alarm_count].hour = 7;
                         s_alarms[s_alarm_count].min = 0; s_alarms[s_alarm_count].enabled = 1;
-                        s_alarm_count++; sel = s_alarm_count; editing = true; field = 0; }
-                } else break;                                       /* Done */
+                        sel = s_alarm_count; s_alarm_count++; editing = true; field = 0; }
+                } else break;
                 dirty = true;
             }
-            if (on_alarm) {
-                if (pressed(&k, &prev, ODROID_INPUT_SELECT)) { s_alarms[a_idx].enabled = !s_alarms[a_idx].enabled; dirty = true; }
-                if (pressed(&k, &prev, ODROID_INPUT_START)) {       /* delete */
-                    for (int i = a_idx; i < s_alarm_count-1; i++) s_alarms[i] = s_alarms[i+1];
-                    s_alarm_count--; if (sel > s_alarm_count) sel = s_alarm_count; dirty = true;
+            if (sel < s_alarm_count) {
+                if (pressed(&k, &prev, ODROID_INPUT_SELECT)) { s_alarms[sel].enabled = !s_alarms[sel].enabled; dirty = true; }
+                if (pressed(&k, &prev, ODROID_INPUT_START)) {
+                    for (int i = sel; i < s_alarm_count-1; i++) s_alarms[i] = s_alarms[i+1];
+                    s_alarm_count--; if (sel >= s_alarm_count && sel > 0) sel--; dirty = true;
                 }
             }
         } else {
-            alarm_t *a = &s_alarms[a_idx];
+            alarm_t *a = &s_alarms[sel];
             if (pressed(&k, &prev, ODROID_INPUT_A) || pressed(&k, &prev, ODROID_INPUT_B)) { editing = false; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { field = 0; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { field = 1; dirty = true; }
@@ -560,7 +552,86 @@ static void clock_alarm_setup(void)
         HAL_Delay(40);
     }
     clock_config_save();
-    s_last_fired_min = -1;   /* let a just-set alarm fire this minute */
+    s_last_fired_min = -1;
+}
+
+/* ---- settings menu (opened with PAUSE/SET = ODROID_INPUT_VOLUME) --------
+ * The proper place to set theme, digit face, format, DND, animation and the
+ * alarm volume — a standard dialog like the rest of the firmware, not D-pad
+ * shortcuts on the clock face. */
+
+static const char *const THEME_LABEL[THEME_COUNT] =
+    { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate" };
+static char v_theme[24], v_face[16], v_fmt[8], v_dnd[8], v_anim[28], v_vol[8], v_alarms[4];
+
+static bool cb_theme(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{
+    (void)r;
+    if (e == ODROID_DIALOG_PREV) s_theme = (s_theme == 0) ? THEME_COUNT-1 : s_theme-1;
+    if (e == ODROID_DIALOG_NEXT) s_theme = (s_theme+1) % THEME_COUNT;
+    sprintf(o->value, "%s", THEME_LABEL[s_theme]);
+    return e == ODROID_DIALOG_ENTER;
+}
+static bool cb_face(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{
+    (void)r;
+    if (e == ODROID_DIALOG_PREV) s_face_override = (s_face_override <= -1) ? FACE_DOT : s_face_override-1;
+    if (e == ODROID_DIALOG_NEXT) s_face_override = (s_face_override >= FACE_DOT) ? -1 : s_face_override+1;
+    sprintf(o->value, "%s", FACE_NAME[s_face_override + 1]);
+    return e == ODROID_DIALOG_ENTER;
+}
+static bool cb_fmt(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{ (void)r; if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_hour24 = !s_hour24;
+  sprintf(o->value, "%s", s_hour24 ? "24h" : "12h"); return e == ODROID_DIALOG_ENTER; }
+static bool cb_dnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{ (void)r; if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_dnd = !s_dnd;
+  sprintf(o->value, "%s", s_dnd ? "On" : "Off"); return e == ODROID_DIALOG_ENTER; }
+static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{
+    (void)r;
+    if (e == ODROID_DIALOG_PREV) s_anim = (s_anim == 0) ? ANIM_COUNT-1 : s_anim-1;
+    if (e == ODROID_DIALOG_NEXT) s_anim = (s_anim+1) % ANIM_COUNT;
+    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) { if (s_anim == ANIM_GIF) clock_gif_load(); else clock_gif_free(); }
+    sprintf(o->value, "%s (%s)", ANIM_NAME[s_anim], ANIM_BATT[s_anim]);
+    return e == ODROID_DIALOG_ENTER;
+}
+static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{ (void)r; if (e == ODROID_DIALOG_PREV && s_alarm_vol > 0) s_alarm_vol--;
+  if (e == ODROID_DIALOG_NEXT && s_alarm_vol < 10) s_alarm_vol++;
+  sprintf(o->value, "%d", s_alarm_vol); return e == ODROID_DIALOG_ENTER; }
+static bool cb_alarms(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{ (void)r; o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
+
+static void clock_menu_repaint(void)
+{
+    uint16_t *fb = lcd_get_active_buffer();
+    uint16_t bg = TH()->scr;
+    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
+    render_clock(HAL_GetTick(), false);
+}
+
+static void clock_settings_menu(void)
+{
+    odroid_dialog_choice_t opts[] = {
+        {0, "Theme",          v_theme,  1, cb_theme},
+        {1, "Digit face",     v_face,   1, cb_face},
+        {2, "Time format",    v_fmt,    1, cb_fmt},
+        {3, "Do Not Disturb", v_dnd,    1, cb_dnd},
+        {4, "Animation",      v_anim,   1, cb_anim},
+        {5, "Alarm volume",   v_vol,    1, cb_vol},
+        {6, "Alarms...",      v_alarms, 1, cb_alarms},
+        ODROID_DIALOG_CHOICE_LAST
+    };
+    cb_theme(&opts[0], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_face(&opts[1], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_fmt(&opts[2], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_dnd(&opts[3], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_anim(&opts[4], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_vol(&opts[5], ODROID_DIALOG_FOCUS_GAINED, 0);
+
+    int sel = odroid_overlay_dialog(curr_lang->s_Clock, opts, 0, &clock_menu_repaint, 0);
+    if (sel == 6) clock_alarm_setup();
+    clock_config_save();
 }
 
 /* ---- alarm tone (synthesised, no files) -------------------------------
@@ -586,7 +657,8 @@ static void tone_feed(uint32_t now, bool ringing)
 
     int16_t *buf = audio_get_active_buffer();
     int len = audio_get_buffer_length();
-    int amp = (odroid_audio_volume_get() > 0) ? 3600 : 0;   /* respect a muted device */
+    /* alarm loudness = the clock's own 0..10 setting (0 = silent) */
+    int amp = s_alarm_vol * 380;
     bool on = ((now / 250) % 2) == 0;                       /* 250 ms beep / 250 ms gap */
     int period = AUDIO_SAMPLE_RATE / TONE_HZ, half = period / 2;
     for (int i = 0; i < len; i++) {
@@ -625,20 +697,16 @@ void rg_clock_show(void)
         if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { mode = (mode == 0) ? MODE_COUNT-1 : mode-1; dirty = true; }
         if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { mode = (mode+1) % MODE_COUNT; dirty = true; }
 
-        if (mode == MODE_CLOCK) {
-            /* Config is written once on exit — not per keypress — so cycling
-             * themes never blocks on an SD write. */
-            if (pressed(&k, &prev, ODROID_INPUT_UP))   { s_theme = (s_theme+1) % THEME_COUNT; dirty = true; }
-            if (pressed(&k, &prev, ODROID_INPUT_DOWN)) { s_theme = (s_theme == 0) ? THEME_COUNT-1 : s_theme-1; dirty = true; }
-            if (pressed(&k, &prev, ODROID_INPUT_SELECT)) { s_hour24 = !s_hour24; dirty = true; }
-            if (pressed(&k, &prev, ODROID_INPUT_START)) { clock_alarm_setup(); dirty = true; }
-        } else {
-            switch (mode) {
-            case MODE_POMODORO:  input_pomodoro(&k, &prev, now);  break;
-            case MODE_TIMER:     input_timer(&k, &prev, now);     break;
-            case MODE_STOPWATCH: input_stopwatch(&k, &prev, now); break;
-            default: break;
-            }
+        /* PAUSE/SET (= VOLUME button) opens the settings menu in any mode —
+         * theme, digit face, format, DND, animation, alarm volume, alarms.
+         * The clock face itself has no D-pad shortcuts; everything is in here. */
+        if (pressed(&k, &prev, ODROID_INPUT_VOLUME)) { clock_settings_menu(); dirty = true; }
+
+        switch (mode) {
+        case MODE_POMODORO:  input_pomodoro(&k, &prev, now);  break;
+        case MODE_TIMER:     input_timer(&k, &prev, now);     break;
+        case MODE_STOPWATCH: input_stopwatch(&k, &prev, now); break;
+        default: break;
         }
 
         /* Alarm check (clock time). Ring = flash for 20s or until a key. */
