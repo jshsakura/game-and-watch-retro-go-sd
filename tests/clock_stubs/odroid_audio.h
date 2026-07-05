@@ -1,0 +1,3 @@
+#ifndef STUB_ODROID_AUDIO_H
+#define STUB_ODROID_AUDIO_H
+#endif
