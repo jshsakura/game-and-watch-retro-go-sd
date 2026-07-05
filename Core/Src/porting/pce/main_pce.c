@@ -171,6 +171,13 @@ void osd_gfx_set_mode(int width, int height) {
 		printf("Correcting out of range screen h %d\n", height);
 		height = 224;
 	}
+    /* Games rewrite the VDC mode registers every frame; only a REAL dimension
+     * change moves FB_INTERNAL_OFFSET. When it does, the old picture is at the
+     * old offset — clear the buffer so the transition frame shows black rather
+     * than misaligned stale rows. */
+    if (width != current_width || height != current_height) {
+        memset(pce_framebuffer, 0, sizeof(pce_framebuffer));
+    }
     current_width = width;
     current_height = height;
 }
@@ -700,34 +707,26 @@ void pce_input_read(odroid_gamepad_state_t* out_state) {
     PCE.Joypad.regs[0] = rc;
 }
 
-/* FULL-mode overscan auto-crop (see the comment in blit). Bounded so a mostly
- * empty scene (dialog on black) can never zoom past the real overscan border. */
-#define OVERSCAN_MAX_CROP    24
-#define OVERSCAN_GROW_FRAMES 30
-static int s_crop_top, s_crop_bot;          /* applied crop, rows */
-static int s_cand_top, s_cand_bot;          /* candidate awaiting stability */
-static int s_crop_stable;                   /* frames the candidate has held */
-
-static bool pce_row_is_background(const uint8_t *row, int width, uint8_t bg) {
-    for (int i = 0; i < width; i++) {
-        if (row[i] != bg)
-            return false;
-    }
-    return true;
-}
+/* FULL-mode overscan handling: a FIXED, CRT-style rule — no content
+ * detection. The crop changes ONLY with the video mode; a detector that
+ * followed the picture content pumped the zoom on title screens and paused
+ * frames. Measured on real games (host harness, frame dumps):
+ *   - Cotton / Ai Chou Aniki (240-line mode): bottom 16 rows pure background
+ *   - Galaga '90 (240-line mode): draws a real bar down to row 231
+ *   - TwinBee (240-line mode): nothing below row 223
+ *   - Dracula X (225-line mode): draws everything it outputs
+ * No game draws below row 231, so cropping the excess over 224 lines from
+ * the bottom is right in spirit but must be capped at 8 rows (the classic
+ * CRT action-safe margin) or Galaga-style games lose their bottom bar. */
+#define PCE_CRT_VISIBLE_LINES 224
+#define PCE_CRT_MAX_CROP      8
 
 /* One generic nearest-neighbour scaler; the modes mean the same thing as in
  * the other cores (NES etc.):
  *   OFF    - 1:1, centred, cropped if larger than the LCD
  *   FIT    - preserve aspect ratio, as large as fits, black borders
- *   FULL   - fill the whole screen, overscan border auto-cropped first
- *   CUSTOM - fill the whole screen, no overscan crop (plain stretch)
- * FULL's auto-crop drops rows the game left as pure background colour (the
- * VDC memset value Palette[0] — e.g. Cotton's bottom 16 lines, hidden by CRT
- * overscan on real hardware). Detection is by palette INDEX, not visual
- * colour, so a flat sky drawn by tiles never matches. Crop shrinks the moment
- * content appears in a cropped row but only grows after OVERSCAN_GROW_FRAMES
- * stable frames, so scene changes don't pump the zoom. */
+ *   FULL   - fill the whole screen, fixed CRT overscan crop (above)
+ *   CUSTOM - fill the whole screen, no overscan crop (plain stretch) */
 static void blit() {
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
 
@@ -736,41 +735,17 @@ static void blit() {
     uint8_t *emuFrameBuffer = pce_framebuffer + FB_INTERNAL_OFFSET;
     pixel_t *framebuffer_active = lcd_get_active_buffer();
 
-    if (scaling == ODROID_DISPLAY_SCALING_FULL) {
-        int top = 0, bot = 0;
-        uint8_t bg = PCE.Palette[0];
-        while (top < OVERSCAN_MAX_CROP &&
-               pce_row_is_background(emuFrameBuffer + top * XBUF_WIDTH, current_width, bg))
-            top++;
-        while (bot < OVERSCAN_MAX_CROP && current_height - 1 - bot > top &&
-               pce_row_is_background(emuFrameBuffer + (current_height - 1 - bot) * XBUF_WIDTH, current_width, bg))
-            bot++;
-
-        if (top < s_crop_top) { s_crop_top = top; s_crop_stable = 0; }
-        if (bot < s_crop_bot) { s_crop_bot = bot; s_crop_stable = 0; }
-        if (top == s_cand_top && bot == s_cand_bot) {
-            if (++s_crop_stable >= OVERSCAN_GROW_FRAMES &&
-                (top != s_crop_top || bot != s_crop_bot)) {
-                s_crop_top = top;
-                s_crop_bot = bot;
-            }
-        } else {
-            s_cand_top = top;
-            s_cand_bot = bot;
-            s_crop_stable = 0;
-        }
-    } else {
-        s_crop_top = s_crop_bot = s_crop_stable = 0;
+    int cropBot = 0;
+    if (scaling == ODROID_DISPLAY_SCALING_FULL &&
+        current_height > PCE_CRT_VISIBLE_LINES) {
+        cropBot = current_height - PCE_CRT_VISIBLE_LINES;
+        if (cropBot > PCE_CRT_MAX_CROP)
+            cropBot = PCE_CRT_MAX_CROP;
     }
 
-    /* Source window (after FULL's overscan crop) */
-    int srcX0 = 0, srcY0 = s_crop_top;
-    int srcW = current_width, srcH = current_height - s_crop_top - s_crop_bot;
-    if (srcH < 160) { /* mode change made the crop stale */
-        s_crop_top = s_crop_bot = s_crop_stable = 0;
-        srcY0 = 0;
-        srcH = current_height;
-    }
+    /* Source window (after FULL's fixed overscan crop) */
+    int srcX0 = 0, srcY0 = 0;
+    int srcW = current_width, srcH = current_height - cropBot;
 
     /* Destination size per mode */
     int dstW, dstH;
