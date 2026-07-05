@@ -257,6 +257,7 @@ static void dump(const char *name)
 
 static void base(uint16_t bg) { for (int i = 0; i < W * H; i++) fb[i] = bg; }
 
+static bool show_title = false;
 static void paint(clock_mode_t mode, uint32_t now, bool ringing)
 {
     base(TH()->scr);
@@ -267,7 +268,7 @@ static void paint(clock_mode_t mode, uint32_t now, bool ringing)
     case MODE_STOPWATCH: render_stopwatch(now); break;
     default: break;
     }
-    draw_topbar(mode);
+    draw_topbar(mode, mode != MODE_CLOCK || show_title);
     draw_hintbar(ringing ? curr_lang->s_Clock_Hint_Ring
         : mode == MODE_CLOCK     ? curr_lang->s_Clock_Hint_Clock
         : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
@@ -287,9 +288,9 @@ int main(void)
     s_alarm_count = 2;
     s_hour24 = false;
 
-    /* 1) clock face */
-    paint(MODE_CLOCK, 1000, false); dump("clock_hints");
-    paint(MODE_CLOCK, 1000, false); dump("clock_clean");
+    /* 1) clock face: right after a mode switch (title showing) vs settled */
+    show_title = true;  paint(MODE_CLOCK, 1000, false); dump("clock_hints");
+    show_title = false; paint(MODE_CLOCK, 1000, false); dump("clock_clean");
     /* 2) clock with ambient dots + DND moon */
     s_anim = 1; s_dnd = true; paint(MODE_CLOCK, 1000, false); dump("clock_ambient"); s_anim = 0; s_dnd = false;
     /* 2b) built-in pixel scene */
@@ -307,8 +308,8 @@ int main(void)
     /* 6b) Amber theme (pixel face) — theme/face pickers are back */
     s_theme = 1; paint(MODE_CLOCK, 1000, false); dump("clock_amber"); s_theme = 0;
     /* 7) alarm editor popup (row 0 selected) */
-    render_alarm_setup(0, false, 0); dump("editor");
-    /* 8) editor, editing the hour field */
-    render_alarm_setup(0, true, 0); dump("editor_edit");
+    render_alarm_setup(0); dump("editor");
+    /* 8) full-screen clone-view alarm editor (hour field lit phase) */
+    render_alarm_edit(&s_alarms[0], 0, false); dump("editor_edit");
     return 0;
 }
