@@ -355,17 +355,27 @@ static void draw_topbar(clock_mode_t mode)
             i == (int)mode ? t->alarm : mix565(t->scr, t->ink, 4));
 }
 
-/* Bottom hint: a quiet theme-tinted panel, identical in every mode. */
 /* Bottom hint: ALWAYS visible, in the firmware's default 8px font (crisp,
  * matches the rest of the OS chrome — the 12px serif looked broken here),
- * sitting on a rounded pill so it reads as one quiet control strip. */
+ * sitting on a rounded pill so it reads as one quiet control strip.
+ *
+ * NOTE the device blitters do NOT clip: a rect or text cell that crosses the
+ * right edge wraps into the next row's left side (the "crumbs" beside the
+ * old hint bar). Everything here is therefore clamped to the screen. */
 static void draw_round_panel(int x, int y, int w, int h, int r, uint16_t col)
 {
     for (int j = 0; j < h; j++) {
-        int dy = (j < r) ? r - 1 - j : (j >= h - r ? j - (h - r) : -1);
+        int dy = (j < r) ? r - 1 - j : (j >= h - r ? j - (h - r - 1) : -1);
         int inset = 0;
-        if (dy >= 0) { inset = r; for (int k = 0; k <= r; k++) if (k*k + dy*dy <= r*r) { inset = r - k; break; } }
-        odroid_overlay_draw_fill_rect(x + inset, y + j, w - 2*inset, 1, col);
+        if (dy >= 0) {   /* largest k with k^2 + dy^2 <= r^2 = quarter circle */
+            inset = r;
+            for (int k = r; k >= 0; k--)
+                if (k*k + dy*dy <= r*r) { inset = r - k; break; }
+        }
+        int rx = x + inset, rw = w - 2*inset;
+        if (rx < 0) { rw += rx; rx = 0; }
+        if (rx + rw > GW_LCD_WIDTH) rw = GW_LCD_WIDTH - rx;
+        if (rw > 0) odroid_overlay_draw_fill_rect(rx, y + j, rw, 1, col);
     }
 }
 
@@ -375,8 +385,9 @@ static void draw_hintbar(const char *hint)
     uint16_t panel = mix565(t->scr, t->ink, 2);
     uint16_t txt   = mix565(t->scr, t->ink, 9);
     int w = (int)strlen(hint) * odroid_overlay_get_font_width();
+    int maxw = GW_LCD_WIDTH - 32;          /* pill padding + side margins */
+    if (w > maxw) w = maxw & ~7;           /* truncate to whole glyph cells */
     int x = (GW_LCD_WIDTH - w) / 2, y = GW_LCD_HEIGHT - 22;
-    if (x < 4) x = 4;
     draw_round_panel(x - 12, y - 4, w + 24, 16, 7, panel);
     /* width must be EXACTLY the text width: draw_text paints the glyph-cell
      * background across the whole width you hand it (the old full-screen
@@ -386,12 +397,14 @@ static void draw_hintbar(const char *hint)
 
 /* Hint legends are fixed ASCII (button names are Latin on the shell anyway)
  * so the 8px font can render them in every language. */
+/* Hint legends: fixed ASCII (Latin button names) so the 8px font covers every
+ * language. Keep each under ~34 chars: 8px x 34 + pill padding fits 320. */
 #define HINT_CLOCK       "PAUSE settings"
-#define HINT_RUN         "A start/stop   B reset"
-#define HINT_TIMER_STOP  "A start/stop   B reset   UP/DN min"
-#define HINT_EDITOR      "A edit   TIME on/off   GAME del   B done"
-#define HINT_EDIT        "L/R field   UP/DN set   A ok   B cancel"
-#define HINT_RINGING     "A snooze 5min   B stop"
+#define HINT_RUN         "A start/stop  B reset"
+#define HINT_TIMER_STOP  "A start/stop  B reset  UP/DN min"
+#define HINT_EDITOR      "A edit  TIME on/off  GAME del  B ok"
+#define HINT_EDIT        "L/R field  UP/DN set  A ok  B undo"
+#define HINT_RINGING     "A snooze 5min  B stop"
 
 static const char *weekday_str(void)
 {
