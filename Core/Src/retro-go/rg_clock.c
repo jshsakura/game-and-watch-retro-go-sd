@@ -317,7 +317,7 @@ static void render_clock(bool alarm_firing)
             draw_centered_i18n(GW_LCD_HEIGHT - 32, line, alarm_firing ? t->ink : t->alarm);
         }
     }
-    draw_hint("A exit   L/R mode   UP/DN theme", 0x8410 /* dim grey */);
+    draw_hint("A exit  L/R mode  UP/DN theme  START alarms", 0x8410 /* dim grey */);
 }
 
 static void render_mmss(uint32_t ms, uint16_t col, bool colon)
@@ -419,6 +419,102 @@ static bool alarm_should_fire(int hh, int mm)
     return false;
 }
 
+/* ---- in-app alarm editor (opened with START from the clock face) ------ */
+
+static void draw_scrim(void)
+{
+    uint16_t *fb = lcd_get_active_buffer();
+    /* dim the face: halve each RGB565 channel so the list reads on top */
+    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++)
+        fb[i] = (fb[i] >> 1) & 0x7BEF;
+}
+
+static void alarm_time_str(char *out, size_t n, int h, int m)
+{
+    if (s_hour24) snprintf(out, n, "%02d:%02d", h, m);
+    else { int h12 = h % 12; if (h12 == 0) h12 = 12;
+           snprintf(out, n, "%d:%02d %s", h12, m, h < 12 ? curr_lang->s_AM : curr_lang->s_PM); }
+}
+
+static void render_alarm_setup(int sel, bool editing, int field)
+{
+    const clock_theme_t *t = TH();
+    draw_scrim();
+    draw_centered_i18n(30, curr_lang->s_Clock, t->alarm);   /* reuse "Clock" as title */
+    int y = 60, rows = s_alarm_count + 2;
+    for (int i = 0; i < rows; i++, y += 22) {
+        char line[48];
+        bool cur = (i == sel);
+        uint16_t col = cur ? t->ink : 0x9CD3;
+        if (i < s_alarm_count) {
+            char ts[24]; alarm_time_str(ts, sizeof ts, s_alarms[i].hour, s_alarms[i].min);
+            const char *tag = s_alarms[i].enabled ? "ON" : "off";
+            if (cur && editing) snprintf(line, sizeof line, "> %s   [%s]  %s", ts, field == 0 ? "hh" : "mm", tag);
+            else                snprintf(line, sizeof line, "%s %s        %s", cur ? ">" : " ", ts, tag);
+        } else if (i == s_alarm_count) {
+            snprintf(line, sizeof line, "%s [ + Add alarm ]", cur ? ">" : " ");
+        } else {
+            snprintf(line, sizeof line, "%s [ Done ]", cur ? ">" : " ");
+        }
+        draw_centered_i18n(y, line, col);
+    }
+    draw_hint(editing ? "L/R field   UP/DN adjust   A ok"
+                      : "A edit/add   SELECT on/off   START del   B done", 0x8410);
+}
+
+static void clock_alarm_setup(void)
+{
+    int sel = 0, field = 0; bool editing = false, dirty = true;
+    odroid_gamepad_state_t k, prev = {0};
+    odroid_input_read_gamepad(&prev);
+
+    while (true) {
+        wdog_refresh();
+        odroid_input_read_gamepad(&k);
+        int rows = s_alarm_count + 2;
+
+        if (!editing) {
+            if (pressed(&k, &prev, ODROID_INPUT_B)) break;
+            if (pressed(&k, &prev, ODROID_INPUT_UP))   { sel = (sel == 0) ? rows-1 : sel-1; dirty = true; }
+            if (pressed(&k, &prev, ODROID_INPUT_DOWN)) { sel = (sel+1) % rows; dirty = true; }
+            if (pressed(&k, &prev, ODROID_INPUT_A)) {
+                if (sel < s_alarm_count) { editing = true; field = 0; }
+                else if (sel == s_alarm_count) {        /* add */
+                    if (s_alarm_count < MAX_ALARMS) { s_alarms[s_alarm_count].hour = 7;
+                        s_alarms[s_alarm_count].min = 0; s_alarms[s_alarm_count].enabled = 1;
+                        sel = s_alarm_count; s_alarm_count++; editing = true; field = 0; }
+                } else break;                            /* Done */
+                dirty = true;
+            }
+            if (sel < s_alarm_count) {
+                if (pressed(&k, &prev, ODROID_INPUT_SELECT)) { s_alarms[sel].enabled = !s_alarms[sel].enabled; dirty = true; }
+                if (pressed(&k, &prev, ODROID_INPUT_START)) {   /* delete */
+                    for (int i = sel; i < s_alarm_count-1; i++) s_alarms[i] = s_alarms[i+1];
+                    s_alarm_count--; if (sel >= s_alarm_count && sel > 0) sel--; dirty = true;
+                }
+            }
+        } else {
+            alarm_t *a = &s_alarms[sel];
+            if (pressed(&k, &prev, ODROID_INPUT_A) || pressed(&k, &prev, ODROID_INPUT_B)) { editing = false; dirty = true; }
+            if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { field = 0; dirty = true; }
+            if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { field = 1; dirty = true; }
+            if (pressed(&k, &prev, ODROID_INPUT_UP)) {
+                if (field == 0) a->hour = (a->hour+1) % 24; else a->min = (a->min+1) % 60; dirty = true;
+            }
+            if (pressed(&k, &prev, ODROID_INPUT_DOWN)) {
+                if (field == 0) a->hour = (a->hour == 0) ? 23 : a->hour-1; else a->min = (a->min == 0) ? 59 : a->min-1; dirty = true;
+            }
+        }
+
+        if (dirty) { dirty = false; render_alarm_setup(sel, editing, field);
+                     lcd_swap(); lcd_sleep_while_swap_pending(); }
+        prev = k;
+        HAL_Delay(40);
+    }
+    clock_config_save();
+    s_last_fired_min = -1;   /* let a just-set alarm fire this minute */
+}
+
 /* ---- main loop -------------------------------------------------------- */
 
 void rg_clock_show(void)
@@ -450,6 +546,7 @@ void rg_clock_show(void)
             if (pressed(&k, &prev, ODROID_INPUT_UP))   { s_theme = (s_theme+1) % THEME_COUNT; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_DOWN)) { s_theme = (s_theme == 0) ? THEME_COUNT-1 : s_theme-1; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_SELECT)) { s_hour24 = !s_hour24; dirty = true; }
+            if (pressed(&k, &prev, ODROID_INPUT_START)) { clock_alarm_setup(); dirty = true; }
         } else {
             switch (mode) {
             case MODE_POMODORO:  input_pomodoro(&k, &prev, now);  break;
