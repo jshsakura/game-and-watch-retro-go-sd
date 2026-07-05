@@ -19,12 +19,14 @@
 
 #include "main.h"
 #include "gw_lcd.h"
+#include "gw_audio.h"
 #include "rg_rtc.h"
 #include "rg_i18n.h"
 #include "gui.h"
 #include "bitmaps.h"
 #include "odroid_overlay.h"
 #include "odroid_input.h"
+#include "odroid_audio.h"
 #include "rg_clock.h"
 
 #define C565(r,g,b) ((uint16_t)((((r)&0xF8)<<8)|(((g)&0xFC)<<3)|((b)>>3)))
@@ -137,6 +139,20 @@ static void draw_moon(int x, int y, uint16_t col, uint16_t bg)
     fill_disc(x + 9, y + 5, 6, bg);
 }
 
+/* Ambient "low battery" animation: a few twinkling dots, ~3 fps. Fixed pseudo-
+ * random positions; each dot pulses on a staggered phase. Cheap (no assets, no
+ * SD) — it only bumps the repaint rate, which is why its cost is "low". */
+static void draw_ambient(uint32_t now, uint16_t col)
+{
+    uint16_t dim = (col >> 1) & 0x7BEF;
+    uint32_t ph = now / 320;
+    for (int i = 0; i < 26; i++) {
+        int x = (i*73 + 11) % GW_LCD_WIDTH, y = (i*127 + 7) % GW_LCD_HEIGHT;
+        int p = (ph + i*3) % 9;
+        if (p < 3) { int sz = (p == 1) ? 2 : 1; odroid_overlay_draw_fill_rect(x, y, sz, sz, p == 1 ? col : dim); }
+    }
+}
+
 /* ---- i18n text: centred line (CJK-aware width estimate) ---------------- */
 
 static int i18n_text_w(const char *s)
@@ -166,12 +182,21 @@ typedef struct { uint8_t hour, min, enabled; } alarm_t;
 static int      s_theme;
 static bool     s_hour24;
 static bool     s_dnd;
+static int      s_anim;          /* 0 = off, 1 = ambient (procedural) */
 static alarm_t  s_alarms[MAX_ALARMS];
 static int      s_alarm_count;
 
+/* Animation levels, each labelled with its battery cost so the choice is
+ * informed. "Ambient" is drawn in code (a few twinkling dots) and only bumps
+ * the repaint rate to ~3 fps, so the cost is low; "off" keeps the fully
+ * event-driven, near-zero-draw loop. (User image/GIF = a future "high" level.) */
+#define ANIM_COUNT 2
+static const char *const ANIM_NAME[ANIM_COUNT] = { "Off", "Ambient" };
+static const char *const ANIM_BATT[ANIM_COUNT] = { "none", "low" };
+
 static void clock_config_load(void)
 {
-    s_theme = 0; s_hour24 = false; s_dnd = false; s_alarm_count = 0;
+    s_theme = 0; s_hour24 = false; s_dnd = false; s_anim = 0; s_alarm_count = 0;
     FILE *f = fopen(CLOCK_CFG_PATH, "r");
     if (!f) return;
     char line[64];
@@ -180,6 +205,7 @@ static void clock_config_load(void)
         if (sscanf(line, "theme=%d", &v) == 1) { if (v >= 0 && v < THEME_COUNT) s_theme = v; }
         else if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
+        else if (sscanf(line, "anim=%d", &v) == 1) { if (v >= 0 && v < ANIM_COUNT) s_anim = v; }
         else if (sscanf(line, "alarm=%d", &v) == 1 && s_alarm_count < MAX_ALARMS) {
             s_alarms[s_alarm_count].hour = (v / 100) % 24;
             s_alarms[s_alarm_count].min  = v % 100;
@@ -197,6 +223,7 @@ static void clock_config_save(void)
     fprintf(f, "theme=%d\n", s_theme);
     fprintf(f, "hour24=%d\n", s_hour24 ? 1 : 0);
     fprintf(f, "dnd=%d\n", s_dnd ? 1 : 0);
+    fprintf(f, "anim=%d\n", s_anim);
     for (int i = 0; i < s_alarm_count; i++)
         if (s_alarms[i].enabled)
             fprintf(f, "alarm=%02d%02d\n", s_alarms[i].hour, s_alarms[i].min);
@@ -277,11 +304,13 @@ static const char *weekday_str(void)
     return w[wd - 1];
 }
 
-static void render_clock(bool alarm_firing)
+static void render_clock(uint32_t now, bool alarm_firing)
 {
     const clock_theme_t *t = TH();
     int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
     bool colon = GW_GetCurrentSubSeconds() <= 127;
+
+    if (s_anim > 0) draw_ambient(now, t->ink);   /* behind everything */
 
     /* logo (retro-go G&W, reused as-is) + battery + DND, one colour */
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
@@ -440,26 +469,33 @@ static void render_alarm_setup(int sel, bool editing, int field)
 {
     const clock_theme_t *t = TH();
     draw_scrim();
-    draw_centered_i18n(30, curr_lang->s_Clock, t->alarm);   /* reuse "Clock" as title */
-    int y = 60, rows = s_alarm_count + 2;
-    for (int i = 0; i < rows; i++, y += 22) {
-        char line[48];
-        bool cur = (i == sel);
-        uint16_t col = cur ? t->ink : 0x9CD3;
-        if (i < s_alarm_count) {
-            char ts[24]; alarm_time_str(ts, sizeof ts, s_alarms[i].hour, s_alarms[i].min);
-            const char *tag = s_alarms[i].enabled ? "ON" : "off";
-            if (cur && editing) snprintf(line, sizeof line, "> %s   [%s]  %s", ts, field == 0 ? "hh" : "mm", tag);
-            else                snprintf(line, sizeof line, "%s %s        %s", cur ? ">" : " ", ts, tag);
-        } else if (i == s_alarm_count) {
-            snprintf(line, sizeof line, "%s [ + Add alarm ]", cur ? ">" : " ");
-        } else {
-            snprintf(line, sizeof line, "%s [ Done ]", cur ? ">" : " ");
-        }
+    draw_centered_i18n(24, curr_lang->s_Clock, t->alarm);   /* reuse "Clock" as title */
+    int y = 50; char line[64];
+
+    /* row 0: animation with its battery cost, so the choice is informed */
+    { bool cur = (sel == 0);
+      snprintf(line, sizeof line, "%s Animation: %s  (batt %s)", cur ? ">" : " ", ANIM_NAME[s_anim], ANIM_BATT[s_anim]);
+      draw_centered_i18n(y, line, cur ? t->ink : 0x9CD3); y += 24; }
+
+    /* alarm rows 1..count */
+    for (int i = 0; i < s_alarm_count; i++, y += 22) {
+        bool cur = (sel == i + 1); uint16_t col = cur ? t->ink : 0x9CD3;
+        char ts[24]; alarm_time_str(ts, sizeof ts, s_alarms[i].hour, s_alarms[i].min);
+        const char *tag = s_alarms[i].enabled ? "ON" : "off";
+        if (cur && editing) snprintf(line, sizeof line, "> %s   [%s]  %s", ts, field == 0 ? "hh" : "mm", tag);
+        else                snprintf(line, sizeof line, "%s %s        %s", cur ? ">" : " ", ts, tag);
         draw_centered_i18n(y, line, col);
     }
+
+    { bool cur = (sel == s_alarm_count + 1);
+      snprintf(line, sizeof line, "%s [ + Add alarm ]", cur ? ">" : " ");
+      draw_centered_i18n(y, line, cur ? t->ink : 0x9CD3); y += 22; }
+    { bool cur = (sel == s_alarm_count + 2);
+      snprintf(line, sizeof line, "%s [ Done ]", cur ? ">" : " ");
+      draw_centered_i18n(y, line, cur ? t->ink : 0x9CD3); }
+
     draw_hint(editing ? "L/R field   UP/DN adjust   A ok"
-                      : "A edit/add   SELECT on/off   START del   B done", 0x8410);
+                      : "A pick/edit/add   SELECT on/off   START del   B done", 0x8410);
 }
 
 static void clock_alarm_setup(void)
@@ -471,39 +507,38 @@ static void clock_alarm_setup(void)
     while (true) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
-        int rows = s_alarm_count + 2;
+        int rows = s_alarm_count + 3;          /* animation + alarms + Add + Done */
+        int add_row = s_alarm_count + 1, a_idx = sel - 1;
+        bool on_alarm = (sel >= 1 && sel <= s_alarm_count);
 
         if (!editing) {
             if (pressed(&k, &prev, ODROID_INPUT_B)) break;
             if (pressed(&k, &prev, ODROID_INPUT_UP))   { sel = (sel == 0) ? rows-1 : sel-1; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_DOWN)) { sel = (sel+1) % rows; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_A)) {
-                if (sel < s_alarm_count) { editing = true; field = 0; }
-                else if (sel == s_alarm_count) {        /* add */
+                if (sel == 0) s_anim = (s_anim + 1) % ANIM_COUNT;    /* cycle animation */
+                else if (on_alarm) { editing = true; field = 0; }
+                else if (sel == add_row) {
                     if (s_alarm_count < MAX_ALARMS) { s_alarms[s_alarm_count].hour = 7;
                         s_alarms[s_alarm_count].min = 0; s_alarms[s_alarm_count].enabled = 1;
-                        sel = s_alarm_count; s_alarm_count++; editing = true; field = 0; }
-                } else break;                            /* Done */
+                        s_alarm_count++; sel = s_alarm_count; editing = true; field = 0; }
+                } else break;                                       /* Done */
                 dirty = true;
             }
-            if (sel < s_alarm_count) {
-                if (pressed(&k, &prev, ODROID_INPUT_SELECT)) { s_alarms[sel].enabled = !s_alarms[sel].enabled; dirty = true; }
-                if (pressed(&k, &prev, ODROID_INPUT_START)) {   /* delete */
-                    for (int i = sel; i < s_alarm_count-1; i++) s_alarms[i] = s_alarms[i+1];
-                    s_alarm_count--; if (sel >= s_alarm_count && sel > 0) sel--; dirty = true;
+            if (on_alarm) {
+                if (pressed(&k, &prev, ODROID_INPUT_SELECT)) { s_alarms[a_idx].enabled = !s_alarms[a_idx].enabled; dirty = true; }
+                if (pressed(&k, &prev, ODROID_INPUT_START)) {       /* delete */
+                    for (int i = a_idx; i < s_alarm_count-1; i++) s_alarms[i] = s_alarms[i+1];
+                    s_alarm_count--; if (sel > s_alarm_count) sel = s_alarm_count; dirty = true;
                 }
             }
         } else {
-            alarm_t *a = &s_alarms[sel];
+            alarm_t *a = &s_alarms[a_idx];
             if (pressed(&k, &prev, ODROID_INPUT_A) || pressed(&k, &prev, ODROID_INPUT_B)) { editing = false; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { field = 0; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { field = 1; dirty = true; }
-            if (pressed(&k, &prev, ODROID_INPUT_UP)) {
-                if (field == 0) a->hour = (a->hour+1) % 24; else a->min = (a->min+1) % 60; dirty = true;
-            }
-            if (pressed(&k, &prev, ODROID_INPUT_DOWN)) {
-                if (field == 0) a->hour = (a->hour == 0) ? 23 : a->hour-1; else a->min = (a->min == 0) ? 59 : a->min-1; dirty = true;
-            }
+            if (pressed(&k, &prev, ODROID_INPUT_UP))   { if (field == 0) a->hour = (a->hour+1)%24; else a->min = (a->min+1)%60; dirty = true; }
+            if (pressed(&k, &prev, ODROID_INPUT_DOWN)) { if (field == 0) a->hour = (a->hour==0)?23:a->hour-1; else a->min = (a->min==0)?59:a->min-1; dirty = true; }
         }
 
         if (dirty) { dirty = false; render_alarm_setup(sel, editing, field);
@@ -513,6 +548,42 @@ static void clock_alarm_setup(void)
     }
     clock_config_save();
     s_last_fired_min = -1;   /* let a just-set alarm fire this minute */
+}
+
+/* ---- alarm tone (synthesised, no files) -------------------------------
+ *
+ * The SAI DMA is already running from boot (circular, double-buffered), so the
+ * clock can beep without becoming a separate audio app: start the transmit,
+ * fill the active half with a gated square wave each loop, stop on dismiss.
+ * The DMA buffer lives in its own .audio section, so this never touches an
+ * emulator's RAM. Tones are generated in code — no sound files, no SD needed;
+ * user-supplied WAV/MP3 from SD can layer on later. */
+
+#define TONE_HZ   880
+static bool     s_tone_on = false;
+static uint32_t s_tone_phase = 0;
+
+static void tone_feed(uint32_t now, bool ringing)
+{
+    if (!ringing) {
+        if (s_tone_on) { audio_stop_playing(); s_tone_on = false; }
+        return;
+    }
+    if (!s_tone_on) { audio_start_playing(AUDIO_BUFFER_LENGTH); s_tone_on = true; s_tone_phase = 0; }
+
+    int16_t *buf = audio_get_active_buffer();
+    int len = audio_get_buffer_length();
+    int amp = (odroid_audio_volume_get() > 0) ? 3600 : 0;   /* respect a muted device */
+    bool on = ((now / 250) % 2) == 0;                       /* 250 ms beep / 250 ms gap */
+    int period = AUDIO_SAMPLE_RATE / TONE_HZ, half = period / 2;
+    for (int i = 0; i < len; i++) {
+        int16_t s = 0;
+        if (on && amp) {
+            s = (s_tone_phase < (uint32_t)half) ? (int16_t)amp : (int16_t)-amp;
+            if (++s_tone_phase >= (uint32_t)period) s_tone_phase = 0;
+        }
+        buf[i] = s;
+    }
 }
 
 /* ---- main loop -------------------------------------------------------- */
@@ -561,14 +632,17 @@ void rg_clock_show(void)
         if (alarm_should_fire(hh, mm)) alarm_ring_until = now + 20000;
         if (alarm_ring_until > now && k.bitmask) alarm_ring_until = 0;   /* dismiss */
         bool ringing = alarm_ring_until > now;
+        tone_feed(now, ringing);   /* synthesised beep while the alarm rings */
 
         /* Only repaint when the visible frame actually changes — saves battery.
          * The signature captures everything on screen for the current mode. */
         static uint32_t last_sig = 0xFFFFFFFF;
         uint32_t sig;
-        if (mode == MODE_CLOCK)
+        if (mode == MODE_CLOCK) {
             sig = (1u<<30) | (hh<<20) | (mm<<12) | ((GW_GetCurrentSubSeconds() <= 127)<<11)
                 | (s_theme<<7) | (s_hour24<<6) | (s_dnd<<5) | (ringing<<4);
+            if (s_anim > 0) sig ^= (now / 320);   /* animate ~3fps when ambient is on */
+        }
         else if (mode == MODE_STOPWATCH)
             sig = (2u<<30) | (s_watch.elapsed_ms / 10);           /* centiseconds */
         else {
@@ -585,7 +659,7 @@ void rg_clock_show(void)
             for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
             draw_header(mode, TH()->alarm);
             switch (mode) {
-            case MODE_CLOCK:     render_clock(ringing); break;
+            case MODE_CLOCK:     render_clock(now, ringing); break;
             case MODE_POMODORO:  render_pomodoro(now);  break;
             case MODE_TIMER:     render_timer(now);     break;
             case MODE_STOPWATCH: render_stopwatch(now); break;
@@ -596,8 +670,10 @@ void rg_clock_show(void)
         }
 
         prev = k;
-        HAL_Delay(mode == MODE_STOPWATCH ? 20 : 40);   /* low-power idle between frames */
+        /* Ringing feeds audio, so keep the buffer fresh; otherwise idle longer. */
+        HAL_Delay(ringing ? 8 : (mode == MODE_STOPWATCH ? 20 : 40));
     }
 
+    tone_feed(0, false);   /* make sure the SAI is stopped on the way out */
     clock_config_save();
 }
