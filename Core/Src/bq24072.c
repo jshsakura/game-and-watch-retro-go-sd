@@ -303,8 +303,15 @@ static uint16_t bq24072_restore_floor(uint16_t fresh_avg)
 
     fresh_percent = bq24072_percent_from_table(
         fresh_avg, bq24072_select_table(fresh_avg, state));
-    if (fresh_percent >= bq24072_data.restored_percent + BQ24072_RESTORE_TRUST_DELTA)
+    if (fresh_percent >= bq24072_data.restored_percent + BQ24072_RESTORE_TRUST_DELTA) {
+        /* Charged while off. The shown percent must jump too: it was seeded
+         * with the stale restored value, and the DISCHARGING anti-rise guard
+         * in bq24072_get_percent_filtered() would otherwise pin it there
+         * forever (overnight charge still read "20%"). Re-seeding makes the
+         * next UI read snap straight to the fresh measurement. */
+        bq24072_data.last.initialized = false;
         return fresh_avg;
+    }
 
     return bq24072_data.restored_floor;
 }
