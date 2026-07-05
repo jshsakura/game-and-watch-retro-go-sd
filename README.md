@@ -64,6 +64,17 @@ Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
   frames' idle slack), and the companion encoder VBV-caps per-frame bytes on the
   heaviest scenes (easy scenes stay byte-identical to before).
 
+#### Clock (TIME menu → Clock)
+
+- A full-screen clock app benchmarked on the Game & Watch alarm clock, drawn
+  entirely in code so nothing copyrighted ships: retro-go's own G&W logo top-left,
+  localized date/weekday, battery + Do-Not-Disturb, big time in a themed digit face,
+  AM/PM, and the next alarm. **8 colour+face themes** (7-segment / pixel / dot),
+  12/24-hour, an **in-app multi-alarm editor**, plus **Pomodoro, a countdown timer
+  and a stopwatch**. Config lives in `/clock.cfg`. Runs in the launcher context —
+  ~25 bytes of RAM, no overlay — so it never touches an emulator's memory. (Follow-ups:
+  alarm sound, SD background image, decorative bitmap faces.)
+
 #### Launcher
 
 - **Favorites tab (★)** — plain-text `/favorites.txt` (one ROM path per line) shown as
