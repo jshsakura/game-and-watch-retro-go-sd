@@ -7,8 +7,8 @@
  * is a per-frame LZW decode, which is exactly why this animation level is
  * labelled "high" battery.
  *
- * MEMORY: a 320x240 GIF needs ~600 KB (gifdec canvas+frame ~450 KB, LZW
- * table 25 KB, one RGB888 render frame 230 KB) — far beyond the ~80 KB
+ * MEMORY: a 320x240 GIF needs ~330 KB (gifdec canvas+frame, LZW table;
+ * frames compose straight into the canvas) — far beyond the ~80 KB
  * launcher heap, whose malloc ASSERTS on OOM instead of returning NULL (the
  * 0131 boot crash). So everything comes from the big emu-RAM bump pool
  * (ram_malloc, the same pool the launcher uses for covers): we snapshot the
@@ -29,7 +29,6 @@
 #define GIF_PATH "/clock/bg.gif"
 
 static gd_GIF  *s_gif;
-static uint8_t *s_rgb;        /* one decoded frame, w*h*3 (RGB888) */
 static int      s_gw, s_gh;
 static uint32_t s_next_tick;
 static bool     s_have_frame;
@@ -44,7 +43,6 @@ bool clock_gif_ready(void) { return s_gif != NULL; }
 void clock_gif_free(void)
 {
     if (s_gif) { gd_close_gif(s_gif); s_gif = NULL; }   /* frees are no-ops */
-    s_rgb = NULL;
     if (s_ram_mark) { ram_release(s_ram_mark); s_ram_mark = 0; }
     s_gw = s_gh = 0; s_next_tick = 0; s_have_frame = false;
 }
@@ -62,10 +60,7 @@ bool clock_gif_load(void)
         gd_close_gif(g);   /* closes the fd; arena frees are no-ops */
         clock_gif_free(); return false;
     }
-    uint8_t *rgb = (uint8_t *)ram_malloc((size_t)g->width * g->height * 3);
-    if (!rgb) { gd_close_gif(g); clock_gif_free(); return false; }
-
-    s_gif = g; s_rgb = rgb; s_gw = g->width; s_gh = g->height;
+    s_gif = g; s_gw = g->width; s_gh = g->height;
     s_next_tick = 0; s_have_frame = false;
     return true;
 }
@@ -79,7 +74,11 @@ static void gif_decode_next(uint32_t now)
         r = gd_get_frame(s_gif);
         if (r <= 0) { s_next_tick = now + 1000; return; }   /* empty/broken: back off */
     }
-    gd_render_frame(s_gif, s_rgb);
+    /* Compose the frame straight into gifdec's own canvas and blit from it —
+     * saves a whole extra w*h*3 buffer. Composition-wise this matches what
+     * dispose() would do for methods 0/1/2; only the rare "restore previous"
+     * (3) loses its pristine canvas, acceptable for a background loop. */
+    gd_render_frame(s_gif, s_gif->canvas);
     s_have_frame = true;
     uint16_t delay_cs = s_gif->gce.delay ? s_gif->gce.delay : 10;   /* default 100 ms */
     s_next_tick = now + delay_cs * 10u;
@@ -92,7 +91,7 @@ void clock_gif_blit(uint16_t *fb, uint32_t now)
     if (!s_have_frame) return;
 
     int w = s_gw, h = s_gh;
-    const uint8_t *rgb = s_rgb;
+    const uint8_t *rgb = s_gif->canvas;
     for (int y = 0; y < GW_LCD_HEIGHT; y++) {
         const uint8_t *srow = rgb + (size_t)(y * h / GW_LCD_HEIGHT) * w * 3;
         uint16_t *drow = fb + y * GW_LCD_WIDTH;

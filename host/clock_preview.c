@@ -239,7 +239,7 @@ static const lang_t KO = {
     .s_Clock_Anim="배경 효과", .s_Clock_Anim_0="끄기 (배터리 소모 없음)",
     .s_Clock_Anim_1="은은한 효과 (낮음)", .s_Clock_Anim_2="GIF (높음)",
     .s_Clock_Volume="알람 음량", .s_Clock_Alarms="알람", .s_Clock_Exit="시계 나가기",
-    .s_Clock_Hint_Ring="A 5분 스누즈  B 끄기", .s_Full="\x7", .s_Fill="\x8",
+    .s_Clock_Hint_Ring="A 5분 스누즈  B 끄기", .s_Clock_Theme="테마", .s_Clock_Face="숫자 서체", .s_Clock_Auto="자동", .s_Full="\x7", .s_Fill="\x8",
 };
 const lang_t *curr_lang = &KO;
 
@@ -301,6 +301,8 @@ int main(void)
     /* 6) stopwatch running at 12:34 */
     s_watch.state = RUN_RUNNING; s_watch.elapsed_ms = (12*60+34)*1000;
     paint(MODE_STOPWATCH, 1200, false); dump("stopwatch");
+    /* 6b) Amber theme (pixel face) — theme/face pickers are back */
+    s_theme = 1; paint(MODE_CLOCK, 1000, false); dump("clock_amber"); s_theme = 0;
     /* 7) alarm editor popup (row 0 selected) */
     render_alarm_setup(0, false, 0); dump("editor");
     /* 8) editor, editing the hour field */
