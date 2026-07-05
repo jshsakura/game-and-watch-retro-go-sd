@@ -700,6 +700,34 @@ void pce_input_read(odroid_gamepad_state_t* out_state) {
     PCE.Joypad.regs[0] = rc;
 }
 
+/* FULL-mode overscan auto-crop (see the comment in blit). Bounded so a mostly
+ * empty scene (dialog on black) can never zoom past the real overscan border. */
+#define OVERSCAN_MAX_CROP    24
+#define OVERSCAN_GROW_FRAMES 30
+static int s_crop_top, s_crop_bot;          /* applied crop, rows */
+static int s_cand_top, s_cand_bot;          /* candidate awaiting stability */
+static int s_crop_stable;                   /* frames the candidate has held */
+
+static bool pce_row_is_background(const uint8_t *row, int width, uint8_t bg) {
+    for (int i = 0; i < width; i++) {
+        if (row[i] != bg)
+            return false;
+    }
+    return true;
+}
+
+/* One generic nearest-neighbour scaler; the modes mean the same thing as in
+ * the other cores (NES etc.):
+ *   OFF    - 1:1, centred, cropped if larger than the LCD
+ *   FIT    - preserve aspect ratio, as large as fits, black borders
+ *   FULL   - fill the whole screen, overscan border auto-cropped first
+ *   CUSTOM - fill the whole screen, no overscan crop (plain stretch)
+ * FULL's auto-crop drops rows the game left as pure background colour (the
+ * VDC memset value Palette[0] — e.g. Cotton's bottom 16 lines, hidden by CRT
+ * overscan on real hardware). Detection is by palette INDEX, not visual
+ * colour, so a flat sky drawn by tiles never matches. Crop shrinks the moment
+ * content appears in a cropped row but only grows after OVERSCAN_GROW_FRAMES
+ * stable frames, so scene changes don't pump the zoom. */
 static void blit() {
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
 
@@ -707,64 +735,92 @@ static void blit() {
      * skip frames and blit can be called as the menu repaint callback. */
     uint8_t *emuFrameBuffer = pce_framebuffer + FB_INTERNAL_OFFSET;
     pixel_t *framebuffer_active = lcd_get_active_buffer();
-    int y=0, offsetY, offsetX = 0, cropX = 0;
-    int xScale = 0;
-    uint8_t *fbTmp;
 
     if (scaling == ODROID_DISPLAY_SCALING_FULL) {
-        /* Stretch BOTH axes to fill the screen, like the other cores' FULL mode.
-         * Without the Y stretch, 224-line games (most CD titles) leave 8px black
-         * bars top and bottom. Nearest-neighbour: 224->240 repeats 1 row in 15. */
-        xScale = (current_width << 8) / GW_LCD_WIDTH;
-        int yScale = (current_height << 8) / GW_LCD_HEIGHT;
-        for (y = 0; y < GW_LCD_HEIGHT; y++) {
-            fbTmp = emuFrameBuffer + ((y * yScale) >> 8) * XBUF_WIDTH;
-            pixel_t *dst = framebuffer_active + y * GW_LCD_WIDTH;
-            for (int x = 0; x < GW_LCD_WIDTH; x++) {
-                dst[x] = mypalette[fbTmp[(x * xScale) >> 8]];
-            }
-        }
-        return;
-    }
+        int top = 0, bot = 0;
+        uint8_t bg = PCE.Palette[0];
+        while (top < OVERSCAN_MAX_CROP &&
+               pce_row_is_background(emuFrameBuffer + top * XBUF_WIDTH, current_width, bg))
+            top++;
+        while (bot < OVERSCAN_MAX_CROP && current_height - 1 - bot > top &&
+               pce_row_is_background(emuFrameBuffer + (current_height - 1 - bot) * XBUF_WIDTH, current_width, bg))
+            bot++;
 
-    if (scaling != ODROID_DISPLAY_SCALING_OFF ) {
-        xScale = (current_width << 8) / GW_LCD_WIDTH ;
-    } else if ( current_width < GW_LCD_WIDTH) {
-        offsetX = (GW_LCD_WIDTH - current_width)/2; //center the image horizontally
-    } else if ( current_width > GW_LCD_WIDTH) {
-        cropX = (current_width - GW_LCD_WIDTH)/2; //crop the image horizontally if it's bigger
-    }
-
-    int renderHeight = (current_height<=GW_LCD_HEIGHT)?current_height:GW_LCD_HEIGHT;
-    int renderWidth = (current_width<=GW_LCD_WIDTH)?current_width:GW_LCD_WIDTH;
-    /* Vertically CENTRE the picture (was top-aligned -> "lifted up" feel with black at the
-     * bottom). No Y scaling yet, so just letterbox the renderHeight rows. */
-    int offY = (GW_LCD_HEIGHT - renderHeight) / 2;
-    if (offY < 0) offY = 0;
-
-    /* black the top letterbox */
-    memset(framebuffer_active, 0, (size_t)offY * GW_LCD_WIDTH * sizeof(pixel_t));
-
-    for(y=0;y<renderHeight;y++) {
-        fbTmp = emuFrameBuffer+(y*XBUF_WIDTH);
-        offsetY = (y + offY)*GW_LCD_WIDTH;
-        if (xScale) {
-            // Horizontal - Scale
-            for(int x=0;x<GW_LCD_WIDTH;x++) {
-                framebuffer_active[offsetY+x]= mypalette[fbTmp[ (x * xScale) >> 8 ]];
+        if (top < s_crop_top) { s_crop_top = top; s_crop_stable = 0; }
+        if (bot < s_crop_bot) { s_crop_bot = bot; s_crop_stable = 0; }
+        if (top == s_cand_top && bot == s_cand_bot) {
+            if (++s_crop_stable >= OVERSCAN_GROW_FRAMES &&
+                (top != s_crop_top || bot != s_crop_bot)) {
+                s_crop_top = top;
+                s_crop_bot = bot;
             }
         } else {
-            // No scaling, 1:1
-            for(int x=0;x<renderWidth;x++) {
-                   framebuffer_active[offsetY+x+offsetX]=mypalette[fbTmp[x+cropX]];
-            }
+            s_cand_top = top;
+            s_cand_bot = bot;
+            s_crop_stable = 0;
         }
+    } else {
+        s_crop_top = s_crop_bot = s_crop_stable = 0;
     }
-    // black the bottom letterbox
-    for(y = offY + renderHeight; y < GW_LCD_HEIGHT; y++) {
-        offsetY = y*GW_LCD_WIDTH;
-        for(int x=0;x<GW_LCD_WIDTH;x++)
-            framebuffer_active[offsetY+x]=0;
+
+    /* Source window (after FULL's overscan crop) */
+    int srcX0 = 0, srcY0 = s_crop_top;
+    int srcW = current_width, srcH = current_height - s_crop_top - s_crop_bot;
+    if (srcH < 160) { /* mode change made the crop stale */
+        s_crop_top = s_crop_bot = s_crop_stable = 0;
+        srcY0 = 0;
+        srcH = current_height;
+    }
+
+    /* Destination size per mode */
+    int dstW, dstH;
+    switch (scaling) {
+    case ODROID_DISPLAY_SCALING_OFF:
+        dstW = srcW;
+        dstH = srcH;
+        if (dstW > GW_LCD_WIDTH)  { srcX0 += (dstW - GW_LCD_WIDTH) / 2;  dstW = srcW = GW_LCD_WIDTH; }
+        if (dstH > GW_LCD_HEIGHT) { srcY0 += (dstH - GW_LCD_HEIGHT) / 2; dstH = srcH = GW_LCD_HEIGHT; }
+        break;
+    case ODROID_DISPLAY_SCALING_FIT: {
+        int fx = (GW_LCD_WIDTH << 8) / srcW;
+        int fy = (GW_LCD_HEIGHT << 8) / srcH;
+        int f = (fx < fy) ? fx : fy;
+        dstW = (srcW * f) >> 8;
+        dstH = (srcH * f) >> 8;
+        break;
+    }
+    default: /* FULL, CUSTOM */
+        dstW = GW_LCD_WIDTH;
+        dstH = GW_LCD_HEIGHT;
+        break;
+    }
+
+    int stepX = (srcW << 8) / dstW;   /* 8.8 fixed-point source step */
+    int stepY = (srcH << 8) / dstH;
+    int offX = (GW_LCD_WIDTH - dstW) / 2;
+    int offY = (GW_LCD_HEIGHT - dstH) / 2;
+
+    /* black the top/bottom borders */
+    memset(framebuffer_active, 0, (size_t)offY * GW_LCD_WIDTH * sizeof(pixel_t));
+    memset(framebuffer_active + (offY + dstH) * GW_LCD_WIDTH, 0,
+           (size_t)(GW_LCD_HEIGHT - offY - dstH) * GW_LCD_WIDTH * sizeof(pixel_t));
+
+    for (int y = 0; y < dstH; y++) {
+        uint8_t *src = emuFrameBuffer + (srcY0 + ((y * stepY) >> 8)) * XBUF_WIDTH + srcX0;
+        pixel_t *dstRow = framebuffer_active + (y + offY) * GW_LCD_WIDTH;
+        /* black the side borders */
+        for (int x = 0; x < offX; x++)
+            dstRow[x] = 0;
+        for (int x = offX + dstW; x < GW_LCD_WIDTH; x++)
+            dstRow[x] = 0;
+        pixel_t *dst = dstRow + offX;
+        if (stepX == 0x100) {
+            for (int x = 0; x < dstW; x++)
+                dst[x] = mypalette[src[x]];
+        } else {
+            for (int x = 0; x < dstW; x++)
+                dst[x] = mypalette[src[(x * stepX) >> 8]];
+        }
     }
 }
 

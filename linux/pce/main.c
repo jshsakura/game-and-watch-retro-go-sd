@@ -1489,6 +1489,30 @@ int main(int argc, char *argv[])
             }
         }
 
+        /* PCE_DUMP_EVERY=N: periodic PPM dumps (frame_00600.ppm ...) so we can
+         * see where the picture sits inside the VDC window over time. */
+        { static int dump_every = -1;
+          if (dump_every < 0) { const char *de = getenv("PCE_DUMP_EVERY"); dump_every = de ? atoi(de) : 0; }
+          if (dump_every > 0 && frame > 0 && (frame % dump_every) == 0) {
+              char name[64]; snprintf(name, sizeof name, "frame_%05d.ppm", frame);
+              FILE *pf = fopen(name, "wb");
+              if (pf) {
+                  uint8_t *efb = osd_gfx_framebuffer();
+                  fprintf(pf, "P6\n%d %d\n255\n", current_width, current_height);
+                  for (int yy = 0; yy < current_height; yy++) {
+                      uint8_t *rowp = efb + yy * XBUF_WIDTH;
+                      for (int xx = 0; xx < current_width; xx++) {
+                          uint16_t px = mypalette[rowp[xx]];
+                          fputc(((px >> 11) & 0x1f) << 3, pf);
+                          fputc(((px >> 5) & 0x3f) << 2, pf);
+                          fputc((px & 0x1f) << 3, pf);
+                      }
+                  }
+                  fclose(pf);
+              }
+          }
+        }
+
         if (max_frames && ++frame >= max_frames) {
             printf("[host] done %d frames, PC=%04x P=%02x irql=%02x\n",
                    frame, CPU_PCE.PC, CPU_PCE.P, CPU_PCE.irq_lines);
