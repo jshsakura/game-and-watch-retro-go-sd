@@ -64,3 +64,4 @@ linux/48.rom
 linux/*.d64
 linux/*.bram
 linux/diag_*.txt
+clock_mockup.html

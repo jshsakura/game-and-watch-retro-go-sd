@@ -20,6 +20,7 @@
 #include "odroid_overlay.h"
 #include "odroid_settings.h"
 #include "rg_welcome_prompt.h"
+#include "rg_clock.h"
 #include "bitmaps.h"
 #include "error_screens.h"
 #include "gw_malloc.h"
@@ -526,11 +527,19 @@ static void GLOBAL_DATA handle_time_menu()
     char time_str[14];
     char date_str[24];
 
+    static char clock_value[2] = "";
     odroid_dialog_choice_t rtcinfo[] = {
             {0, curr_lang->s_Time, time_str, 1, &time_display_cb},
             {1, curr_lang->s_Date, date_str, 1, &date_display_cb},
+            {2, curr_lang->s_Clock, clock_value, 1, NULL},
             ODROID_DIALOG_CHOICE_LAST};
     int sel = odroid_overlay_dialog(curr_lang->s_Time_Title, rtcinfo, 0, &gui_redraw_callback, 0);
+
+    if (sel == 2)
+    {
+        rg_clock_show();
+        return;
+    }
 
     if (sel == 0)
     {
