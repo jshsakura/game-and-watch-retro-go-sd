@@ -29,6 +29,7 @@ static const char *test_path(const char *p)
  * i18n_draw_text_line — so glyphs match the device pixel for pixel.
  * (Default font index 0 = cp1252_serif, same as a fresh device.) */
 #include "logo_gnw.h"
+#include "../retro-go-stm32/components/odroid/bitmaps/font_basic.h"
 
 /* ---- framebuffer / lcd ------------------------------------------------- */
 uint16_t *lcd_get_active_buffer(void) { return fb; }
@@ -134,6 +135,13 @@ void audio_clear_buffers(void){} void audio_set_buffer_length(uint16_t l){(void)
 void audio_start_playing(uint16_t l){(void)l;} void audio_start_playing_full_length(uint16_t l){(void)l;}
 void audio_stop_playing(void){}
 
+/* system-volume stubs (alarm loudness follows the global volume) */
+const uint8_t volume_tbl[ODROID_AUDIO_VOLUME_MAX + 1] =
+    { 0, 4, 8, 15, 32, 48, 64, 96, 128, 255 };
+static int stub_volume = 9;
+int odroid_audio_volume_get(void) { return stub_volume; }
+void odroid_audio_volume_set(int level) { stub_volume = level; }
+
 /* the real 35x30 G&W logo bitmap, drawn exactly like odroid_overlay_draw_logo */
 void odroid_overlay_draw_logo(int x, int y, int logo, uint16_t color)
 {
@@ -160,8 +168,20 @@ void odroid_overlay_draw_battery(int pct, int x, int y)
     for (int j = 3; j < 7; j++) fb[(y+j)*W + x+20] = c;
 }
 
+/* the REAL firmware 8x8 font path (font8x8_basic, bg painted per cell) */
 void odroid_overlay_draw_text(int x, int y, int w, const char *text, uint16_t color, uint16_t bg)
-{ (void)w; i18n_draw_text_line(x, y, 0, text, color, bg, 1); }
+{
+    int text_len = (int)strlen(text);
+    for (int i = 0; i < w / 8; i++) {
+        const char *glyph = font8x8_basic[(i < text_len) ? (unsigned char)text[i] : ' '];
+        for (int yy = 0; yy < 8; yy++)
+            for (int xx = 0; xx < 8; xx++) {
+                int px = x + i*8 + xx, py = y + yy;
+                if (px >= 0 && px < W && py >= 0 && py < H)
+                    fb[py * W + px] = (glyph[yy] & (1 << xx)) ? color : bg;
+            }
+    }
+}
 int odroid_overlay_get_font_width(void) { return 8; }
 int odroid_overlay_dialog(const char *h, odroid_dialog_choice_t *o, int s, void (*r)(void), int f)
 { (void)h;(void)o;(void)s;(void)r;(void)f; return -1; }
@@ -225,6 +245,11 @@ static void paint(clock_mode_t mode, uint32_t now, bool ringing)
     default: break;
     }
     draw_topbar(mode);
+    draw_hintbar(ringing ? HINT_RINGING
+        : mode == MODE_CLOCK     ? HINT_CLOCK
+        : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? HINT_RUN : HINT_TIMER_STOP)
+        : mode == MODE_TIMER     ? (s_timer.state == RUN_RUNNING ? HINT_RUN : HINT_TIMER_STOP)
+        : HINT_RUN);
     if (ringing && mode != MODE_CLOCK && ((now / 200) & 1))
         draw_centered_i18n(32, curr_lang->s_Clock_Ringing, TH()->alarm);
 }
@@ -237,25 +262,24 @@ int main(void)
     s_alarm_count = 2;
     s_hour24 = false;
 
-    /* 1) clock, hints visible */
-    s_hint_until = 99999; paint(MODE_CLOCK, 1000, false); dump("clock_hints");
-    /* 2) clock, clean face (hints faded) */
-    s_hint_until = 0; paint(MODE_CLOCK, 1000, false); dump("clock_clean");
-    /* 3) clock with ambient dots */
+    /* 1) clock face */
+    paint(MODE_CLOCK, 1000, false); dump("clock_hints");
+    paint(MODE_CLOCK, 1000, false); dump("clock_clean");
+    /* 2) clock with ambient dots */
     s_anim = 1; paint(MODE_CLOCK, 1000, false); dump("clock_ambient"); s_anim = 0;
-    /* 4) clock ringing (accent pulse frame) */
-    s_hint_until = 0; paint(MODE_CLOCK, 1200, true); dump("clock_ringing");
-    /* 5) pomodoro running (13:37 left of work round 2) */
+    /* 3) clock ringing (accent pulse frame + snooze legend) */
+    paint(MODE_CLOCK, 1200, true); dump("clock_ringing");
+    /* 4) pomodoro running (13:37 left of work round 2) */
     s_pomo.state = RUN_RUNNING; s_pomo.remaining_ms = (13*60+37)*1000; s_pomo_cycles = 1;
-    s_hint_until = 99999; paint(MODE_POMODORO, 1000, false); dump("pomodoro");
-    /* 6) timer stopped at 05:00 */
-    s_hint_until = 99999; paint(MODE_TIMER, 1000, false); dump("timer");
-    /* 7) stopwatch running at 12:34 */
+    paint(MODE_POMODORO, 1000, false); dump("pomodoro");
+    /* 5) timer stopped at 05:00 */
+    paint(MODE_TIMER, 1000, false); dump("timer");
+    /* 6) stopwatch running at 12:34 */
     s_watch.state = RUN_RUNNING; s_watch.elapsed_ms = (12*60+34)*1000;
-    s_hint_until = 99999; paint(MODE_STOPWATCH, 1200, false); dump("stopwatch");
-    /* 8) alarm editor popup (row 0 selected) */
+    paint(MODE_STOPWATCH, 1200, false); dump("stopwatch");
+    /* 7) alarm editor popup (row 0 selected) */
     render_alarm_setup(0, false, 0); dump("editor");
-    /* 9) editor, editing the hour field */
+    /* 8) editor, editing the hour field */
     render_alarm_setup(0, true, 0); dump("editor_edit");
     return 0;
 }

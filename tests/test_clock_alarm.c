@@ -66,6 +66,13 @@ void audio_set_buffer_length(uint16_t l){ full_len = l*2; }
 void audio_start_playing(uint16_t l){ audio_clear_buffers(); full_len = l*2; sim_playing = 1; sim_starts++; }
 void audio_start_playing_full_length(uint16_t l){ audio_clear_buffers(); full_len = l; sim_playing = 1; sim_starts++; }
 void audio_stop_playing(void){ audio_clear_buffers(); sim_playing = 0; sim_stops++; }
+
+/* system-volume stubs (alarm loudness follows the global volume) */
+const uint8_t volume_tbl[ODROID_AUDIO_VOLUME_MAX + 1] =
+    { 0, 4, 8, 15, 32, 48, 64, 96, 128, 255 };
+static int stub_volume = 9;
+int odroid_audio_volume_get(void) { return stub_volume; }
+void odroid_audio_volume_set(int level) { stub_volume = level; }
 static void sim_isr_flip(void)  /* one DMA half consumed */
 { dma_state = (dma_state == DMA_TRANSFER_STATE_HF) ? DMA_TRANSFER_STATE_TC : DMA_TRANSFER_STATE_HF; dma_counter++; }
 
@@ -118,14 +125,14 @@ static void test_window(void)
 static void test_cfg_roundtrip(void)
 {
     reset_alarms(); add_alarm(7, 30, 1); add_alarm(8, 0, 0);
-    s_alarm_vol = 9;
+    s_dnd = true;
     clock_config_save();
-    reset_alarms(); s_alarm_vol = 6;
+    reset_alarms(); s_dnd = false;
     clock_config_load();
     CHECK(s_alarm_count == 2, "both alarms survive save/load");
     CHECK(s_alarms[0].hour == 7 && s_alarms[0].min == 30 && s_alarms[0].enabled == 1, "enabled alarm intact");
     CHECK(s_alarms[1].hour == 8 && s_alarms[1].min == 0 && s_alarms[1].enabled == 0, "DISABLED alarm persists (was deleted before fix)");
-    CHECK(s_alarm_vol == 9, "volume round-trip");
+    CHECK(s_dnd == true, "dnd round-trip");
 
     FILE *f = fopen(test_path("/clock.cfg"), "w");
     fprintf(f, "alarm=0730\n");        /* old format = enabled */
@@ -143,7 +150,7 @@ static void test_cfg_roundtrip(void)
 
 static void test_tone_dma_sync(void)
 {
-    s_alarm_vol = 6; s_tone_on = false; dma_state = DMA_TRANSFER_STATE_HF; dma_counter = 100;
+    s_tone_on = false; dma_state = DMA_TRANSFER_STATE_HF; dma_counter = 100;
     tone_feed(0, true);
     CHECK(sim_starts == 1 && s_tone_on, "tone starts on first ring feed");
     uint32_t phase_after_first = s_tone_phase;

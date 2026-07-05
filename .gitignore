@@ -65,3 +65,6 @@ linux/*.d64
 linux/*.bram
 linux/diag_*.txt
 clock_mockup.html
+
+# root-dropped clock preview copies (host/preview_out is the canonical set)
+/clock_*.png

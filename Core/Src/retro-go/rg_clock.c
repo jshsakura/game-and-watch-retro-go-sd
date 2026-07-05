@@ -2,12 +2,15 @@
  *
  * A mode switcher (Left/Right) over one shared layout: top bar (G&W logo,
  * "< MODE >" title, pager dots, battery), big 7-seg time with LCD ghost
- * segments, one status row, and an auto-hiding hint bar — clock, Pomodoro,
+ * segments, one status row, and an always-on rounded hint strip (8px default
+ * font) — clock, Pomodoro,
  * countdown timer and stopwatch all read as one app. ONE fixed look (no theme
  * or font pickers); the customisable part is the background (off / ambient /
  * user GIF via /clock/bg.gif). Every label comes from the firmware i18n
- * table. Controls are uniform: A start/pause, B reset, PAUSE = settings
- * (incl. Exit), POWER exits. Config (24h, DND, volume, alarms) = /clock.cfg.
+ * table (hint legends stay ASCII for the 8px font). Controls are uniform:
+ * A start/pause, B reset, PAUSE = settings (incl. Exit), POWER exits; while
+ * the alarm rings A = snooze (5 min), anything else stops it. Alarm loudness
+ * follows the SYSTEM volume. Config (24h, DND, alarms) = /clock.cfg.
  *
  * Runs inside the launcher context (no APPID overlay), so it costs a handful
  * of bytes of RAM and can never reduce an emulator's heap or DTCM. The paint
@@ -29,6 +32,7 @@
 #include "odroid_overlay.h"
 #include "odroid_input.h"
 #include "odroid_audio.h"
+#include "common.h"   /* volume_tbl — alarm loudness = the SYSTEM volume */
 #include "rg_clock.h"
 #include "rg_clock_gif.h"
 
@@ -147,6 +151,15 @@ static void draw_moon(int x, int y, uint16_t col, uint16_t bg)
     fill_disc(x + 9, y + 5, 6, bg);
 }
 
+/* Tiny bell — shown whenever at least one alarm is armed. */
+static void draw_bell(int x, int y, uint16_t col)
+{
+    fill_disc(x + 5, y + 4, 3, col);                          /* dome */
+    odroid_overlay_draw_fill_rect(x + 2, y + 4, 7, 3, col);   /* body */
+    odroid_overlay_draw_fill_rect(x + 1, y + 7, 9, 1, col);   /* flared lip */
+    odroid_overlay_draw_fill_rect(x + 4, y + 9, 3, 1, col);   /* clapper */
+}
+
 /* Ambient "low battery" animation: a few twinkling dots, ~3 fps. Fixed pseudo-
  * random positions clear of the top bar and hint bar; each dot pulses on a
  * staggered phase. Cheap (no assets, no SD) — it only bumps the repaint rate,
@@ -192,9 +205,15 @@ typedef struct { uint8_t hour, min, enabled; } alarm_t;
 static bool     s_hour24;
 static bool     s_dnd;
 static int      s_anim;          /* 0 = off, 1 = ambient, 2 = GIF */
-static int      s_alarm_vol = 6; /* 0..10 — alarm loudness */
 static alarm_t  s_alarms[MAX_ALARMS];
 static int      s_alarm_count;
+
+static int alarms_armed(void)
+{
+    int n = 0;
+    for (int i = 0; i < s_alarm_count; i++) n += s_alarms[i].enabled;
+    return n;
+}
 
 /* Background levels — THE one customisable visual. Each is labelled with its
  * battery cost so the choice is informed: "off" keeps the fully event-driven,
@@ -207,7 +226,7 @@ static int      s_alarm_count;
 static void clock_config_load(void)
 {
     s_hour24 = false; s_dnd = false; s_anim = 0;
-    s_alarm_vol = 6; s_alarm_count = 0;
+    s_alarm_count = 0;
     FILE *f = fopen(CLOCK_CFG_PATH, "r");
     if (!f) return;
     char line[64];
@@ -217,7 +236,6 @@ static void clock_config_load(void)
         if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
         else if (sscanf(line, "anim=%d", &v) == 1) { if (v >= 0 && v < ANIM_COUNT) s_anim = v; }
-        else if (sscanf(line, "vol=%d", &v) == 1) { if (v >= 0 && v <= 10) s_alarm_vol = v; }
         /* alarm=HHMM[,enabled] — the suffix is new; plain HHMM (older cfg) = enabled */
         else if (sscanf(line, "alarm=%d,%d", &v, &en) >= 1 && s_alarm_count < MAX_ALARMS) {
             int hr = v / 100, mn = v % 100;
@@ -238,7 +256,6 @@ static void clock_config_save(void)
     fprintf(f, "hour24=%d\n", s_hour24 ? 1 : 0);
     fprintf(f, "dnd=%d\n", s_dnd ? 1 : 0);
     fprintf(f, "anim=%d\n", s_anim);
-    fprintf(f, "vol=%d\n", s_alarm_vol);
     for (int i = 0; i < s_alarm_count; i++)   /* disabled alarms persist too */
         fprintf(f, "alarm=%02d%02d,%d\n", s_alarms[i].hour, s_alarms[i].min,
                 s_alarms[i].enabled ? 1 : 0);
@@ -272,6 +289,8 @@ static int  s_pomo_work_min = 25, s_pomo_break_min = 5, s_pomo_cycles = 0;
 static bool s_pomo_on_break = false;
 static runner_t s_pomo = { RUN_STOPPED, 25*60*1000, 0, 0 };
 static uint32_t s_flash_until = 0;
+#define SNOOZE_MS (5u * 60u * 1000u)
+static uint32_t s_snooze_tick = 0;   /* HAL tick when a snoozed alarm re-rings */
 
 static void tick_countdown(runner_t *r, uint32_t now)
 {
@@ -324,6 +343,7 @@ static void draw_topbar(clock_mode_t mode)
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
     odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 11);
     if (s_dnd) draw_moon(GW_LCD_WIDTH - 48, 9, t->ink, t->scr);
+    if (alarms_armed()) draw_bell(GW_LCD_WIDTH - (s_dnd ? 66 : 48), 10, t->alarm);
 
     char line[48]; snprintf(line, sizeof line, "< %s >", mode_title(mode));
     draw_centered_i18n(6, line, t->alarm);
@@ -336,22 +356,42 @@ static void draw_topbar(clock_mode_t mode)
 }
 
 /* Bottom hint: a quiet theme-tinted panel, identical in every mode. */
-/* Bottom hint: one quiet dim line, no panel — identical in every mode. */
+/* Bottom hint: ALWAYS visible, in the firmware's default 8px font (crisp,
+ * matches the rest of the OS chrome — the 12px serif looked broken here),
+ * sitting on a rounded pill so it reads as one quiet control strip. */
+static void draw_round_panel(int x, int y, int w, int h, int r, uint16_t col)
+{
+    for (int j = 0; j < h; j++) {
+        int dy = (j < r) ? r - 1 - j : (j >= h - r ? j - (h - r) : -1);
+        int inset = 0;
+        if (dy >= 0) { inset = r; for (int k = 0; k <= r; k++) if (k*k + dy*dy <= r*r) { inset = r - k; break; } }
+        odroid_overlay_draw_fill_rect(x + inset, y + j, w - 2*inset, 1, col);
+    }
+}
+
 static void draw_hintbar(const char *hint)
 {
     const clock_theme_t *t = TH();
-    draw_centered_i18n(GW_LCD_HEIGHT - 18, hint, mix565(t->scr, t->ink, 7));
+    uint16_t panel = mix565(t->scr, t->ink, 2);
+    uint16_t txt   = mix565(t->scr, t->ink, 9);
+    int w = (int)strlen(hint) * odroid_overlay_get_font_width();
+    int x = (GW_LCD_WIDTH - w) / 2, y = GW_LCD_HEIGHT - 22;
+    if (x < 4) x = 4;
+    draw_round_panel(x - 12, y - 4, w + 24, 16, 7, panel);
+    /* width must be EXACTLY the text width: draw_text paints the glyph-cell
+     * background across the whole width you hand it (the old full-screen
+     * width here is what smeared a dark band across the face) */
+    odroid_overlay_draw_text(x, y, w, hint, txt, panel);
 }
 
-/* Hints fade out after a few idle seconds (any key brings them back) so the
- * face stays a clock, not a manual. */
-#define HINT_SHOW_MS 6000
-static uint32_t s_hint_until = 0;
-
-static void draw_hint(uint32_t now, const char *hint)
-{
-    if (s_hint_until > now) draw_hintbar(hint);
-}
+/* Hint legends are fixed ASCII (button names are Latin on the shell anyway)
+ * so the 8px font can render them in every language. */
+#define HINT_CLOCK       "PAUSE settings"
+#define HINT_RUN         "A start/stop   B reset"
+#define HINT_TIMER_STOP  "A start/stop   B reset   UP/DN min"
+#define HINT_EDITOR      "A edit   TIME on/off   GAME del   B done"
+#define HINT_EDIT        "L/R field   UP/DN set   A ok   B cancel"
+#define HINT_RINGING     "A snooze 5min   B stop"
 
 static const char *weekday_str(void)
 {
@@ -406,14 +446,16 @@ static void render_clock(uint32_t now, bool alarm_firing)
             else { int h12 = ah % 12; if (h12 == 0) h12 = 12;
                    snprintf(al, sizeof al, "%s %d:%02d", ah < 12 ? curr_lang->s_AM : curr_lang->s_PM, h12, am); }
             char line[64];
-            if (enabled > 1) snprintf(line, sizeof line, "* %s  +%d", al, enabled - 1);
-            else snprintf(line, sizeof line, "* %s", al);
+            if (enabled > 1) snprintf(line, sizeof line, "%s  +%d", al, enabled - 1);
+            else snprintf(line, sizeof line, "%s", al);
             /* dimmed under DND — the alarm won't actually ring then */
-            draw_centered_i18n(STATUS_Y, line,
-                               s_dnd ? mix565(t->scr, t->ink, 6) : (alarm_firing ? t->ink : t->alarm));
+            uint16_t alcol = s_dnd ? mix565(t->scr, t->ink, 6)
+                                   : (alarm_firing ? t->ink : t->alarm);
+            int lx = (GW_LCD_WIDTH - i18n_text_w(line)) / 2;
+            draw_bell(lx - 16, STATUS_Y, alcol);
+            draw_centered_i18n(STATUS_Y, line, alcol);
         }
     }
-    draw_hint(now, curr_lang->s_Clock_Hint_Clock);
 }
 
 static void render_mmss(uint32_t ms, uint16_t col, bool colon)
@@ -455,24 +497,18 @@ static void render_pomodoro(uint32_t now)
         s_pomo_on_break ? curr_lang->s_Clock_Break : curr_lang->s_Clock_Work,
         curr_lang->s_Clock_Cycle, s_pomo_cycles + 1);
     draw_centered_i18n(STATUS_Y, st, s_pomo_on_break ? t->alarm : t->ink);
-    draw_hint(now, s_pomo.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
-                                               : curr_lang->s_Clock_Hint_TimerStop);
 }
 
 static void render_timer(uint32_t now)
 {
     bool colon = (now / 500) & 1;
     render_mmss(s_timer.remaining_ms, TH()->ink, s_timer.state != RUN_RUNNING ? true : colon);
-    draw_hint(now, s_timer.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
-                                                : curr_lang->s_Clock_Hint_TimerStop);
 }
 
 static void render_stopwatch(uint32_t now)
 {
     bool colon = s_watch.state == RUN_RUNNING ? ((now / 500) & 1) : true;
     render_mmss(s_watch.elapsed_ms, TH()->ink, colon);
-    draw_hint(now, s_watch.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
-                                                : curr_lang->s_Clock_Hint_Stop);
 }
 
 /* ---- input ------------------------------------------------------------ */
@@ -585,7 +621,7 @@ static void render_alarm_setup(int sel, bool editing, int field)
         else snprintf(line, sizeof line, "%s", curr_lang->s_Clock_Done);
         draw_centered_i18n(y, line, col);
     }
-    draw_hintbar(editing ? curr_lang->s_Clock_Hint_Edit : curr_lang->s_Clock_Hint_Editor);
+    draw_hintbar(editing ? HINT_EDIT : HINT_EDITOR);
 }
 
 static void alarm_delete_at(int sel)
@@ -680,9 +716,12 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
     return e == ODROID_DIALOG_ENTER;
 }
 static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{ (void)r; if (e == ODROID_DIALOG_PREV && s_alarm_vol > 0) s_alarm_vol--;
-  if (e == ODROID_DIALOG_NEXT && s_alarm_vol < 10) s_alarm_vol++;
-  sprintf(o->value, "%d", s_alarm_vol); return e == ODROID_DIALOG_ENTER; }
+{   /* edits the SYSTEM volume — same 0..9 scale and curve as games/launcher */
+    (void)r;
+    int lv = odroid_audio_volume_get();
+    if (e == ODROID_DIALOG_PREV && lv > 0) odroid_audio_volume_set(--lv);
+    if (e == ODROID_DIALOG_NEXT && lv < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(++lv);
+    sprintf(o->value, "%d", lv); return e == ODROID_DIALOG_ENTER; }
 static bool cb_enter(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 { (void)r; o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
 
@@ -751,9 +790,9 @@ static void tone_feed(uint32_t now, bool ringing)
 
     int16_t *buf = audio_get_active_buffer();
     int len = audio_get_buffer_length();
-    /* alarm loudness = the clock's own 0..10 setting (0 = silent); x1000 tops
-     * out near 1/3 full scale — a wake-up alarm, not the old -19dBFS whisper */
-    int amp = s_alarm_vol * 1000;
+    /* alarm loudness follows the SYSTEM volume (identical scale/curve to the
+     * rest of the firmware): half-scale square scaled by volume_tbl */
+    int amp = (16000 * volume_tbl[odroid_audio_volume_get()]) >> 8;
     bool on = ((now / 250) % 2) == 0;                       /* 250 ms beep / 250 ms gap */
     int period = AUDIO_SAMPLE_RATE / TONE_HZ, half = period / 2;
     for (int i = 0; i < len; i++) {
@@ -776,9 +815,9 @@ void rg_clock_show(void)
     bool dirty = true;
 
     clock_config_load();
+    s_snooze_tick = 0;
     if (s_anim == ANIM_GIF) clock_gif_load();   /* decode /clock/bg.gif once */
     odroid_input_read_gamepad(&prev);   /* swallow the opening button */
-    s_hint_until = HAL_GetTick() + HINT_SHOW_MS;
 
     while (true) {
         wdog_refresh();
@@ -786,18 +825,24 @@ void rg_clock_show(void)
         uint32_t now = HAL_GetTick();
         int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
 
-        /* any fresh press wakes the hint bar back up */
-        if (k.bitmask & ~prev.bitmask) s_hint_until = now + HINT_SHOW_MS;
-
-        /* Alarm first (clock time). Ring = digit pulse + beep for 20s or until
-         * a NEW key press — a key already held when it fires must not swallow
-         * it, and the dismissing press is CONSUMED here so it can't fall
-         * through and reset a runner, switch mode or open the menu. */
+        /* Alarm first (clock time). Ring = digit pulse + beep for 20s or a
+         * NEW key press: A = SNOOZE (ring again in 5 min), anything else =
+         * stop — a key already held when it fires must not swallow it, and
+         * the press is CONSUMED so it can't fall through and reset a runner,
+         * switch mode or open the menu. */
         if (alarm_should_fire(hh, mm)) alarm_ring_until = now + 20000;
+        if (s_snooze_tick && now >= s_snooze_tick) {   /* snooze expired */
+            s_snooze_tick = 0;
+            alarm_ring_until = now + 20000;
+        }
         bool ringing = alarm_ring_until > now;
-        if (ringing && (k.bitmask & ~prev.bitmask)) {   /* new press = dismiss */
+        if (ringing && (k.bitmask & ~prev.bitmask)) {
             alarm_ring_until = 0;
             tone_feed(now, false);
+            if (pressed(&k, &prev, ODROID_INPUT_A))
+                s_snooze_tick = now + SNOOZE_MS;       /* A = snooze */
+            else
+                s_snooze_tick = 0;                     /* anything else = off */
             prev = k; dirty = true;
             HAL_Delay(40);
             continue;
@@ -851,7 +896,6 @@ void rg_clock_show(void)
             sig = ((uint32_t)mode<<28) | ((r->remaining_ms/500)<<4) | (s_pomo_on_break<<3)
                 | (uint32_t)r->state;
         }
-        if (s_hint_until > now) sig ^= (1u<<26);   /* hint bar fading out repaints */
         /* Full-screen flash is ONLY for the timer/pomodoro end (solid background).
          * The clock alarm must NOT full-screen flash — that would wipe/hide a GIF
          * or ambient background; instead render_clock pulses the time colour. */
@@ -872,6 +916,11 @@ void rg_clock_show(void)
             default: break;
             }
             draw_topbar(mode);   /* over the background layers */
+            draw_hintbar(ringing ? HINT_RINGING
+                : mode == MODE_CLOCK     ? HINT_CLOCK
+                : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? HINT_RUN : HINT_TIMER_STOP)
+                : mode == MODE_TIMER     ? (s_timer.state == RUN_RUNNING ? HINT_RUN : HINT_TIMER_STOP)
+                : HINT_RUN);
             /* the digit pulse only exists on the clock face — give the other
              * modes a visible (and vol=0-proof) ring signal too */
             if (ringing && mode != MODE_CLOCK && ((now / 200) & 1))
