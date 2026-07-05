@@ -323,6 +323,7 @@ typedef struct
     const char *s_Clock_Volume;    // alarm volume
     const char *s_Clock_Alarms;    // alarms menu entry + editor title
     const char *s_Clock_Exit;      // leave the clock app (PAUSE menu)
+    const char *s_Clock_Hint_Ring; // legend while the alarm rings (snooze/stop)
     //=====================================================================
 
     const int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, const char *weekday, uint16_t hour, uint16_t minutes, uint16_t seconds);

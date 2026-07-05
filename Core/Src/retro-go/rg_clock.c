@@ -147,8 +147,8 @@ static void fill_disc(int cx, int cy, int r, uint16_t col)
 /* Crescent: a disc with an offset disc punched out in the background colour. */
 static void draw_moon(int x, int y, uint16_t col, uint16_t bg)
 {
-    fill_disc(x + 6, y + 6, 6, col);
-    fill_disc(x + 9, y + 5, 6, bg);
+    fill_disc(x + 7, y + 7, 7, col);
+    fill_disc(x + 10, y + 5, 6, bg);
 }
 
 /* Tiny bell — shown whenever at least one alarm is armed. */
@@ -170,27 +170,17 @@ static void draw_ambient(uint32_t now, uint16_t col)
     uint32_t ph = now / 320;
     for (int i = 0; i < 26; i++) {
         int x = (i*73 + 11) % GW_LCD_WIDTH;
-        int y = 34 + (i*127 + 7) % (GW_LCD_HEIGHT - 34 - 34);
+        int y = 44 + (i*127 + 7) % (GW_LCD_HEIGHT - 44 - 34);
         int p = (ph + i*3) % 9;
         if (p < 3) { int sz = (p == 1) ? 2 : 1; odroid_overlay_draw_fill_rect(x, y, sz, sz, p == 1 ? col : dim); }
     }
 }
 
-/* ---- i18n text: centred line (CJK-aware width estimate) ---------------- */
-
-static int i18n_text_w(const char *s)
-{
-    int w = 0;
-    while (*s) { unsigned char c = *s;
-        if (c < 0x80) { w += 6; s += 1; }
-        else if (c < 0xE0) { w += 6; s += 2; }
-        else { w += 12; s += 3; } }
-    return w;
-}
+/* ---- i18n text: centred line (REAL glyph metrics via rg_i18n) ---------- */
 
 static void draw_centered_i18n(int y, const char *text, uint16_t col)
 {
-    int x = (GW_LCD_WIDTH - i18n_text_w(text)) / 2;
+    int x = (GW_LCD_WIDTH - i18n_get_text_width(text)) / 2;
     if (x < 0) x = 0;
     i18n_draw_text_line(x, y, GW_LCD_WIDTH - x, text, col, CLOCK_BLACK, 1);
 }
@@ -337,21 +327,24 @@ static const char *mode_title(clock_mode_t mode)
 /* One SHARED top bar for every mode — logo, "< MODE >" (i18n, transparent, no
  * black box), mode pager dots, battery (+DND moon) — so the four screens read
  * as one app. The date lives BELOW it (render_clock), not on top of it. */
+/* Everything in the bar is vertically centred on the logo (35x30 at y=8,
+ * centre row 23): battery 10px -> y=18, moon 14px -> y=16, title 12px ->
+ * y=12 with the pager dots under it. No bell up here — the next-alarm line
+ * already carries it. */
 static void draw_topbar(clock_mode_t mode)
 {
     const clock_theme_t *t = TH();
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
-    odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 11);
-    if (s_dnd) draw_moon(GW_LCD_WIDTH - 48, 9, t->ink, t->scr);
-    if (alarms_armed()) draw_bell(GW_LCD_WIDTH - (s_dnd ? 66 : 48), 10, t->alarm);
+    odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 18);
+    if (s_dnd) draw_moon(GW_LCD_WIDTH - 48, 16, t->ink, t->scr);
 
     char line[48]; snprintf(line, sizeof line, "< %s >", mode_title(mode));
-    draw_centered_i18n(6, line, t->alarm);
+    draw_centered_i18n(12, line, t->alarm);
 
     /* pager dots: which of the four modes you are on */
     int dx = (GW_LCD_WIDTH - (MODE_COUNT*8 - 4)) / 2;
     for (int i = 0; i < MODE_COUNT; i++, dx += 8)
-        odroid_overlay_draw_fill_rect(dx, 22, 4, 4,
+        odroid_overlay_draw_fill_rect(dx, 28, 4, 4,
             i == (int)mode ? t->alarm : mix565(t->scr, t->ink, 4));
 }
 
@@ -384,27 +377,18 @@ static void draw_hintbar(const char *hint)
     const clock_theme_t *t = TH();
     uint16_t panel = mix565(t->scr, t->ink, 2);
     uint16_t txt   = mix565(t->scr, t->ink, 9);
-    int w = (int)strlen(hint) * odroid_overlay_get_font_width();
+    int w = i18n_get_text_width(hint) + 2;
     int maxw = GW_LCD_WIDTH - 32;          /* pill padding + side margins */
-    if (w > maxw) w = maxw & ~7;           /* truncate to whole glyph cells */
-    int x = (GW_LCD_WIDTH - w) / 2, y = GW_LCD_HEIGHT - 22;
-    draw_round_panel(x - 12, y - 4, w + 24, 16, 7, panel);
-    /* width must be EXACTLY the text width: draw_text paints the glyph-cell
-     * background across the whole width you hand it (the old full-screen
-     * width here is what smeared a dark band across the face) */
-    odroid_overlay_draw_text(x, y, w, hint, txt, panel);
+    if (w > maxw) w = maxw;
+    int x = (GW_LCD_WIDTH - w) / 2, y = GW_LCD_HEIGHT - 24;
+    draw_round_panel(x - 12, y - 3, w + 24, 18, 8, panel);
+    /* i18n text, transparent, clipped to w by the renderer itself */
+    i18n_draw_text_line(x, y, w, hint, txt, panel, 1);
 }
 
 /* Hint legends are fixed ASCII (button names are Latin on the shell anyway)
  * so the 8px font can render them in every language. */
-/* Hint legends: fixed ASCII (Latin button names) so the 8px font covers every
- * language. Keep each under ~34 chars: 8px x 34 + pill padding fits 320. */
-#define HINT_CLOCK       "PAUSE settings"
-#define HINT_RUN         "A start/stop  B reset"
-#define HINT_TIMER_STOP  "A start/stop  B reset  UP/DN min"
-#define HINT_EDITOR      "A edit  TIME on/off  GAME del  B ok"
-#define HINT_EDIT        "L/R field  UP/DN set  A ok  B undo"
-#define HINT_RINGING     "A snooze 5min  B stop"
+
 
 static const char *weekday_str(void)
 {
@@ -430,7 +414,7 @@ static void render_clock(uint32_t now, bool alarm_firing)
     /* date + weekday, centred UNDER the top bar (was colliding with it) */
     char date[48];
     snprintf(date, sizeof date, "%02d/%02d %s", GW_GetCurrentMonth(), GW_GetCurrentDay(), weekday_str());
-    draw_centered_i18n(32, date, t->ink);
+    draw_centered_i18n(42, date, t->ink);
 
     /* big time. When the alarm is ringing the digits PULSE between ink and
      * the accent (~2.5 Hz): a clear alarm signal that sits on top of the
@@ -464,8 +448,8 @@ static void render_clock(uint32_t now, bool alarm_firing)
             /* dimmed under DND — the alarm won't actually ring then */
             uint16_t alcol = s_dnd ? mix565(t->scr, t->ink, 6)
                                    : (alarm_firing ? t->ink : t->alarm);
-            int lx = (GW_LCD_WIDTH - i18n_text_w(line)) / 2;
-            draw_bell(lx - 16, STATUS_Y, alcol);
+            int lx = (GW_LCD_WIDTH - i18n_get_text_width(line)) / 2;
+            draw_bell(lx - 16, STATUS_Y + 1, alcol);
             draw_centered_i18n(STATUS_Y, line, alcol);
         }
     }
@@ -634,7 +618,7 @@ static void render_alarm_setup(int sel, bool editing, int field)
         else snprintf(line, sizeof line, "%s", curr_lang->s_Clock_Done);
         draw_centered_i18n(y, line, col);
     }
-    draw_hintbar(editing ? HINT_EDIT : HINT_EDITOR);
+    draw_hintbar(editing ? curr_lang->s_Clock_Hint_Edit : curr_lang->s_Clock_Hint_Editor);
 }
 
 static void alarm_delete_at(int sel)
@@ -708,7 +692,7 @@ static void clock_alarm_setup(void)
  * alarm volume — a standard dialog like the rest of the firmware, not D-pad
  * shortcuts on the clock face. */
 
-static char v_fmt[8], v_dnd[12], v_anim[40], v_vol[8], v_alarms[4], v_exit[4];
+static char v_fmt[8], v_dnd[12], v_anim[40], v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_alarms[4], v_exit[4];
 
 static bool cb_fmt(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 { (void)r; if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_hour24 = !s_hour24;
@@ -729,12 +713,16 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
     return e == ODROID_DIALOG_ENTER;
 }
 static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{   /* edits the SYSTEM volume — same 0..9 scale and curve as games/launcher */
-    (void)r;
+{   /* edits the SYSTEM volume — same 0..9 scale, curve AND bar-gauge look
+     * as the common volume row (odroid_overlay.c volume_update_cb) */
     int lv = odroid_audio_volume_get();
     if (e == ODROID_DIALOG_PREV && lv > 0) odroid_audio_volume_set(--lv);
     if (e == ODROID_DIALOG_NEXT && lv < ODROID_AUDIO_VOLUME_MAX) odroid_audio_volume_set(++lv);
-    sprintf(o->value, "%d", lv); return e == ODROID_DIALOG_ENTER; }
+    char a = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
+    char b = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
+    for (int i = 0; i <= ODROID_AUDIO_VOLUME_MAX; i++) o->value[i] = (i <= lv) ? a : b;
+    o->value[ODROID_AUDIO_VOLUME_MAX + 1] = 0;
+    return e == ODROID_DIALOG_ENTER; }
 static bool cb_enter(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 { (void)r; o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
 
@@ -929,15 +917,17 @@ void rg_clock_show(void)
             default: break;
             }
             draw_topbar(mode);   /* over the background layers */
-            draw_hintbar(ringing ? HINT_RINGING
-                : mode == MODE_CLOCK     ? HINT_CLOCK
-                : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? HINT_RUN : HINT_TIMER_STOP)
-                : mode == MODE_TIMER     ? (s_timer.state == RUN_RUNNING ? HINT_RUN : HINT_TIMER_STOP)
-                : HINT_RUN);
+            draw_hintbar(ringing ? curr_lang->s_Clock_Hint_Ring
+                : mode == MODE_CLOCK     ? curr_lang->s_Clock_Hint_Clock
+                : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
+                                                                        : curr_lang->s_Clock_Hint_TimerStop)
+                : mode == MODE_TIMER     ? (s_timer.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
+                                                                         : curr_lang->s_Clock_Hint_TimerStop)
+                : curr_lang->s_Clock_Hint_Run);
             /* the digit pulse only exists on the clock face — give the other
              * modes a visible (and vol=0-proof) ring signal too */
             if (ringing && mode != MODE_CLOCK && ((now / 200) & 1))
-                draw_centered_i18n(32, curr_lang->s_Clock_Ringing, TH()->alarm);
+                draw_centered_i18n(42, curr_lang->s_Clock_Ringing, TH()->alarm);
             lcd_swap();
             lcd_sleep_while_swap_pending();
         }

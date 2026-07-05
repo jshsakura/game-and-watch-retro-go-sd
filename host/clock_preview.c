@@ -88,6 +88,13 @@ static int real_glyph(int cp, uint8_t *rows /*12 rows x up to 4B*/, int *cw)
     return 1;
 }
 
+int i18n_get_text_width(const char *t)
+{
+    const char *p = t; int cp, w = 0; uint8_t rows[12*4];
+    while ((cp = utf8_next(&p)) > 0) { int cw; if (real_glyph(cp, rows, &cw)) w += cw; else w += 8; }
+    return w;
+}
+
 int i18n_draw_text_line(int x, int y, int width, const char *t,
                         uint16_t fg, uint16_t bg, int transparent)
 {
@@ -210,7 +217,7 @@ static const lang_t KO = {
     .s_Clock_Hint_Run="A 시작/정지  B 리셋",
     .s_Clock_Hint_Stop="A 시작/정지  B 리셋",
     .s_Clock_Hint_TimerStop="A 시작/정지  B 리셋  UP/DN 분",
-    .s_Clock_Hint_Editor="A 편집/추가  TIME 켬/끔  GAME 삭제  B 완료",
+    .s_Clock_Hint_Editor="A 편집  TIME 켬/끔  GAME 삭제  B 완료",
     .s_Clock_Hint_Edit="L/R 자리  UP/DN 조절  A 확인  B 취소",
     .s_Clock_Add_Alarm="알람 추가", .s_Clock_Done="완료",
     .s_Clock_On="켬", .s_Clock_Off="끔",
@@ -218,6 +225,7 @@ static const lang_t KO = {
     .s_Clock_Anim="배경 효과", .s_Clock_Anim_0="끄기 (배터리 소모 없음)",
     .s_Clock_Anim_1="은은한 효과 (낮음)", .s_Clock_Anim_2="GIF (높음)",
     .s_Clock_Volume="알람 음량", .s_Clock_Alarms="알람", .s_Clock_Exit="시계 나가기",
+    .s_Clock_Hint_Ring="A 5분 스누즈  B 끄기", .s_Full="\x7", .s_Fill="\x8",
 };
 const lang_t *curr_lang = &KO;
 
@@ -245,11 +253,13 @@ static void paint(clock_mode_t mode, uint32_t now, bool ringing)
     default: break;
     }
     draw_topbar(mode);
-    draw_hintbar(ringing ? HINT_RINGING
-        : mode == MODE_CLOCK     ? HINT_CLOCK
-        : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? HINT_RUN : HINT_TIMER_STOP)
-        : mode == MODE_TIMER     ? (s_timer.state == RUN_RUNNING ? HINT_RUN : HINT_TIMER_STOP)
-        : HINT_RUN);
+    draw_hintbar(ringing ? curr_lang->s_Clock_Hint_Ring
+        : mode == MODE_CLOCK     ? curr_lang->s_Clock_Hint_Clock
+        : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
+                                                                : curr_lang->s_Clock_Hint_TimerStop)
+        : mode == MODE_TIMER     ? (s_timer.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
+                                                                 : curr_lang->s_Clock_Hint_TimerStop)
+        : curr_lang->s_Clock_Hint_Run);
     if (ringing && mode != MODE_CLOCK && ((now / 200) & 1))
         draw_centered_i18n(32, curr_lang->s_Clock_Ringing, TH()->alarm);
 }
@@ -265,8 +275,8 @@ int main(void)
     /* 1) clock face */
     paint(MODE_CLOCK, 1000, false); dump("clock_hints");
     paint(MODE_CLOCK, 1000, false); dump("clock_clean");
-    /* 2) clock with ambient dots */
-    s_anim = 1; paint(MODE_CLOCK, 1000, false); dump("clock_ambient"); s_anim = 0;
+    /* 2) clock with ambient dots + DND moon */
+    s_anim = 1; s_dnd = true; paint(MODE_CLOCK, 1000, false); dump("clock_ambient"); s_anim = 0; s_dnd = false;
     /* 3) clock ringing (accent pulse frame + snooze legend) */
     paint(MODE_CLOCK, 1200, true); dump("clock_ringing");
     /* 4) pomodoro running (13:37 left of work round 2) */

@@ -33,6 +33,7 @@ static const lang_t L = { .s_AM="AM", .s_PM="PM", .s_Clock="Clock",
   .s_Clock_On="On", .s_Clock_Off="Off" };
 const lang_t *curr_lang = &L;
 int i18n_draw_text_line(int x,int y,int w,const char*t,uint16_t c,uint16_t bg,int f){(void)x;(void)y;(void)w;(void)t;(void)c;(void)bg;(void)f;return 0;}
+int i18n_get_text_width(const char *t){ return (int)strlen(t) * 6; }
 int odroid_overlay_dialog(const char*h,odroid_dialog_choice_t*o,int s,void(*r)(void),int f){(void)h;(void)o;(void)s;(void)r;(void)f;return -1;}
 void odroid_overlay_draw_fill_rect(int x,int y,int w,int h,uint16_t c){(void)x;(void)y;(void)w;(void)h;(void)c;}
 void odroid_overlay_draw_text(int x,int y,int w,const char*t,uint16_t c,uint16_t b){(void)x;(void)y;(void)w;(void)t;(void)c;(void)b;}
