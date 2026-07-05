@@ -212,17 +212,20 @@ static void clock_config_load(void)
     if (!f) return;
     char line[64];
     while (fgets(line, sizeof line, f)) {
-        int v;
+        int v, en = 1;
         if (sscanf(line, "theme=%d", &v) == 1) { if (v >= 0 && v < THEME_COUNT) s_theme = v; }
         else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_DOT) s_face_override = v; }
         else if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
         else if (sscanf(line, "anim=%d", &v) == 1) { if (v >= 0 && v < ANIM_COUNT) s_anim = v; }
         else if (sscanf(line, "vol=%d", &v) == 1) { if (v >= 0 && v <= 10) s_alarm_vol = v; }
-        else if (sscanf(line, "alarm=%d", &v) == 1 && s_alarm_count < MAX_ALARMS) {
-            s_alarms[s_alarm_count].hour = (v / 100) % 24;
-            s_alarms[s_alarm_count].min  = v % 100;
-            s_alarms[s_alarm_count].enabled = 1;
+        /* alarm=HHMM[,enabled] — the suffix is new; plain HHMM (older cfg) = enabled */
+        else if (sscanf(line, "alarm=%d,%d", &v, &en) >= 1 && s_alarm_count < MAX_ALARMS) {
+            int hr = v / 100, mn = v % 100;
+            if (v < 0 || hr > 23 || mn > 59) continue;   /* reject hand-edited junk */
+            s_alarms[s_alarm_count].hour = hr;
+            s_alarms[s_alarm_count].min  = mn;
+            s_alarms[s_alarm_count].enabled = en ? 1 : 0;
             s_alarm_count++;
         }
     }
@@ -239,9 +242,9 @@ static void clock_config_save(void)
     fprintf(f, "dnd=%d\n", s_dnd ? 1 : 0);
     fprintf(f, "anim=%d\n", s_anim);
     fprintf(f, "vol=%d\n", s_alarm_vol);
-    for (int i = 0; i < s_alarm_count; i++)
-        if (s_alarms[i].enabled)
-            fprintf(f, "alarm=%02d%02d\n", s_alarms[i].hour, s_alarms[i].min);
+    for (int i = 0; i < s_alarm_count; i++)   /* disabled alarms persist too */
+        fprintf(f, "alarm=%02d%02d,%d\n", s_alarms[i].hour, s_alarms[i].min,
+                s_alarms[i].enabled ? 1 : 0);
     fclose(f);
 }
 
@@ -368,7 +371,9 @@ static void render_clock(uint32_t now, bool alarm_firing)
             char line[64];
             if (enabled > 1) snprintf(line, sizeof line, "* %s  +%d", al, enabled - 1);
             else snprintf(line, sizeof line, "* %s", al);
-            draw_centered_i18n(GW_LCD_HEIGHT - 32, line, alarm_firing ? t->ink : t->alarm);
+            /* dimmed under DND — the alarm won't actually ring then */
+            draw_centered_i18n(GW_LCD_HEIGHT - 32, line,
+                               s_dnd ? 0x8410 : (alarm_firing ? t->ink : t->alarm));
         }
     }
     draw_hint("A exit   L/R mode   PAUSE settings", 0x8410 /* dim grey */);
@@ -463,13 +468,29 @@ static int s_last_fired_min = -1;   /* minute-of-day we last fired, avoids re-fi
 
 static bool alarm_should_fire(int hh, int mm)
 {
-    if (s_dnd) return false;
     int mod = hh * 60 + mm;
+    if (mod != s_last_fired_min) s_last_fired_min = -1;   /* minute passed — re-arm (daily re-fire) */
+    if (s_dnd) return false;
     if (mod == s_last_fired_min) return false;
     for (int i = 0; i < s_alarm_count; i++)
         if (s_alarms[i].enabled && s_alarms[i].hour == hh && s_alarms[i].min == mm) {
             s_last_fired_min = mod; return true;
         }
+    return false;
+}
+
+/* Did any enabled alarm's minute pass while a blocking menu held the loop?
+ * Checks (from_mod, to_mod) EXCLUSIVE — to_mod itself is still the current
+ * minute and is handled by the regular alarm_should_fire() check. */
+static bool alarm_fired_in_window(int from_mod, int to_mod)
+{
+    if (s_dnd) return false;
+    int day = 24 * 60, span = (to_mod - from_mod + day) % day;
+    for (int i = 0; i < s_alarm_count; i++) {
+        if (!s_alarms[i].enabled) continue;
+        int d = ((s_alarms[i].hour * 60 + s_alarms[i].min) - from_mod + day) % day;
+        if (d > 0 && d < span) return true;
+    }
     return false;
 }
 
@@ -507,13 +528,20 @@ static void render_alarm_setup(int sel, bool editing, int field)
         else snprintf(line, sizeof line, "%s [ Done ]", cur ? ">" : " ");
         draw_centered_i18n(y, line, col);
     }
-    draw_hint(editing ? "L/R field   UP/DN adjust   A ok"
+    draw_hint(editing ? "L/R field  UP/DN adjust  A ok  B cancel"
                       : "A edit/add   SELECT on/off   START del   B done", 0x8410);
+}
+
+static void alarm_delete_at(int sel)
+{
+    for (int i = sel; i < s_alarm_count - 1; i++) s_alarms[i] = s_alarms[i+1];
+    s_alarm_count--;
 }
 
 static void clock_alarm_setup(void)
 {
-    int sel = 0, field = 0; bool editing = false, dirty = true;
+    int sel = 0, field = 0, adding = -1;   /* adding = row index of a not-yet-confirmed add */
+    bool editing = false, dirty = true;
     odroid_gamepad_state_t k, prev = {0};
     odroid_input_read_gamepad(&prev);
 
@@ -527,24 +555,31 @@ static void clock_alarm_setup(void)
             if (pressed(&k, &prev, ODROID_INPUT_UP))   { sel = (sel == 0) ? rows-1 : sel-1; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_DOWN)) { sel = (sel+1) % rows; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_A)) {
-                if (sel < s_alarm_count) { editing = true; field = 0; }
+                if (sel < s_alarm_count) { editing = true; field = 0; adding = -1; }
                 else if (sel == s_alarm_count) {
                     if (s_alarm_count < MAX_ALARMS) { s_alarms[s_alarm_count].hour = 7;
                         s_alarms[s_alarm_count].min = 0; s_alarms[s_alarm_count].enabled = 1;
-                        sel = s_alarm_count; s_alarm_count++; editing = true; field = 0; }
+                        sel = s_alarm_count; s_alarm_count++; editing = true; field = 0; adding = sel; }
                 } else break;
                 dirty = true;
             }
-            if (sel < s_alarm_count) {
+            else if (sel < s_alarm_count) {   /* exclusive with A: no same-frame edit+delete */
                 if (pressed(&k, &prev, ODROID_INPUT_SELECT)) { s_alarms[sel].enabled = !s_alarms[sel].enabled; dirty = true; }
                 if (pressed(&k, &prev, ODROID_INPUT_START)) {
-                    for (int i = sel; i < s_alarm_count-1; i++) s_alarms[i] = s_alarms[i+1];
-                    s_alarm_count--; if (sel >= s_alarm_count && sel > 0) sel--; dirty = true;
+                    alarm_delete_at(sel);
+                    if (sel >= s_alarm_count && sel > 0) sel--;
+                    dirty = true;
                 }
             }
         } else {
             alarm_t *a = &s_alarms[sel];
-            if (pressed(&k, &prev, ODROID_INPUT_A) || pressed(&k, &prev, ODROID_INPUT_B)) { editing = false; dirty = true; }
+            if (pressed(&k, &prev, ODROID_INPUT_A)) { editing = false; adding = -1; dirty = true; }
+            else if (pressed(&k, &prev, ODROID_INPUT_B)) {
+                /* B = cancel: a just-added row is removed, not committed */
+                if (sel == adding) { alarm_delete_at(sel);
+                                     if (sel >= s_alarm_count && sel > 0) sel--; }
+                editing = false; adding = -1; dirty = true;
+            }
             if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { field = 0; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { field = 1; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_UP))   { if (field == 0) a->hour = (a->hour+1)%24; else a->min = (a->min+1)%60; dirty = true; }
@@ -556,6 +591,9 @@ static void clock_alarm_setup(void)
         prev = k;
         HAL_Delay(40);
     }
+    /* wait for release so the closing A/B press can't leak into the caller's
+     * loop and exit the whole app (odroid_overlay_dialog does the same) */
+    do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); } while (k.bitmask);
     clock_config_save();
     s_last_fired_min = -1;
 }
@@ -651,6 +689,7 @@ static void clock_settings_menu(void)
 #define TONE_HZ   880
 static bool     s_tone_on = false;
 static uint32_t s_tone_phase = 0;
+static uint32_t s_tone_dma_mark = 0;   /* dma_counter of the half we last filled */
 
 static void tone_feed(uint32_t now, bool ringing)
 {
@@ -658,12 +697,21 @@ static void tone_feed(uint32_t now, bool ringing)
         if (s_tone_on) { audio_stop_playing(); s_tone_on = false; }
         return;
     }
-    if (!s_tone_on) { audio_start_playing(AUDIO_BUFFER_LENGTH); s_tone_on = true; s_tone_phase = 0; }
+    if (!s_tone_on) { audio_start_playing(AUDIO_BUFFER_LENGTH); s_tone_on = true;
+                      s_tone_phase = 0; s_tone_dma_mark = dma_counter - 1; }
+
+    /* Fill each freed half exactly once — the SAI ISR bumps dma_counter per
+     * half. The ring loop runs ~8ms vs the 22.4ms half period; refilling the
+     * same half every pass advanced the phase 1077 samples per rewrite and put
+     * a phase jump at almost every half boundary (audible buzz). */
+    if (dma_counter == s_tone_dma_mark) return;
+    s_tone_dma_mark = dma_counter;
 
     int16_t *buf = audio_get_active_buffer();
     int len = audio_get_buffer_length();
-    /* alarm loudness = the clock's own 0..10 setting (0 = silent) */
-    int amp = s_alarm_vol * 380;
+    /* alarm loudness = the clock's own 0..10 setting (0 = silent); x1000 tops
+     * out near 1/3 full scale — a wake-up alarm, not the old -19dBFS whisper */
+    int amp = s_alarm_vol * 1000;
     bool on = ((now / 250) % 2) == 0;                       /* 250 ms beep / 250 ms gap */
     int period = AUDIO_SAMPLE_RATE / TONE_HZ, half = period / 2;
     for (int i = 0; i < len; i++) {
@@ -693,6 +741,22 @@ void rg_clock_show(void)
         wdog_refresh();
         odroid_input_read_gamepad(&k);
         uint32_t now = HAL_GetTick();
+        int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
+
+        /* Alarm first (clock time). Ring = digit pulse + beep for 20s or until
+         * a NEW key press — a key already held when it fires must not swallow
+         * it, and the dismissing press is CONSUMED here so it can't fall
+         * through and exit the app, switch mode or open the menu. */
+        if (alarm_should_fire(hh, mm)) alarm_ring_until = now + 20000;
+        bool ringing = alarm_ring_until > now;
+        if (ringing && (k.bitmask & ~prev.bitmask)) {   /* new press = dismiss */
+            alarm_ring_until = 0;
+            tone_feed(now, false);
+            prev = k; dirty = true;
+            HAL_Delay(40);
+            continue;
+        }
+        tone_feed(now, ringing);   /* synthesised beep while the alarm rings */
 
         bool exit_app = k.values[ODROID_INPUT_POWER];
         if (mode == MODE_CLOCK) exit_app |= pressed(&k, &prev, ODROID_INPUT_A);
@@ -704,8 +768,17 @@ void rg_clock_show(void)
 
         /* PAUSE/SET (= VOLUME button) opens the settings menu in any mode —
          * theme, digit face, format, DND, animation, alarm volume, alarms.
-         * The clock face itself has no D-pad shortcuts; everything is in here. */
-        if (pressed(&k, &prev, ODROID_INPUT_VOLUME)) { clock_settings_menu(); dirty = true; }
+         * The clock face itself has no D-pad shortcuts; everything is in here.
+         * The dialog blocks this loop, so ring anything whose minute passed
+         * while it was open (the current minute is caught by the regular
+         * check above on the next pass). */
+        if (pressed(&k, &prev, ODROID_INPUT_VOLUME)) {
+            int pre_mod = hh * 60 + mm;
+            clock_settings_menu();
+            if (alarm_fired_in_window(pre_mod, GW_GetCurrentHour() * 60 + GW_GetCurrentMinute()))
+                alarm_ring_until = HAL_GetTick() + 20000;
+            dirty = true;
+        }
 
         switch (mode) {
         case MODE_POMODORO:  input_pomodoro(&k, &prev, now);  break;
@@ -713,13 +786,6 @@ void rg_clock_show(void)
         case MODE_STOPWATCH: input_stopwatch(&k, &prev, now); break;
         default: break;
         }
-
-        /* Alarm check (clock time). Ring = flash for 20s or until a key. */
-        int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
-        if (alarm_should_fire(hh, mm)) alarm_ring_until = now + 20000;
-        if (alarm_ring_until > now && k.bitmask) alarm_ring_until = 0;   /* dismiss */
-        bool ringing = alarm_ring_until > now;
-        tone_feed(now, ringing);   /* synthesised beep while the alarm rings */
 
         /* Only repaint when the visible frame actually changes — saves battery.
          * The signature captures everything on screen for the current mode. */
@@ -757,6 +823,10 @@ void rg_clock_show(void)
             case MODE_STOPWATCH: render_stopwatch(now); break;
             default: break;
             }
+            /* the digit pulse only exists on the clock face — give the other
+             * modes a visible (and vol=0-proof) ring signal too */
+            if (ringing && mode != MODE_CLOCK && ((now / 200) & 1))
+                draw_centered_i18n(30, "* ALARM *", TH()->alarm);
             lcd_swap();
             lcd_sleep_while_swap_pending();
         }
