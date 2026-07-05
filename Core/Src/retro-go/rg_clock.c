@@ -341,11 +341,16 @@ static void render_clock(uint32_t now, bool alarm_firing)
     snprintf(date, sizeof date, "%02d/%02d %s", GW_GetCurrentMonth(), GW_GetCurrentDay(), weekday_str());
     draw_centered_i18n(11, date, t->ink);
 
-    /* big time — theme face unless the user overrode it */
+    /* big time — theme face unless the user overrode it. When the alarm is
+     * ringing the digits PULSE between ink and the accent (~2.5 Hz): a clear
+     * alarm signal that sits on top of the GIF/ambient background instead of a
+     * full-screen flash that would cover it. */
     int dh = hh;
     if (!s_hour24) { dh = hh % 12; if (dh == 0) dh = 12; }
     digit_face_t face = (s_face_override >= 0) ? (digit_face_t)s_face_override : (digit_face_t)t->face;
-    draw_big_time(dh, mm, colon, face, t->ink);
+    uint16_t timecol = t->ink;
+    if (alarm_firing && ((now / 200) & 1)) timecol = t->alarm;
+    draw_big_time(dh, mm, colon, face, timecol);
 
     /* AM/PM on its own centred line (i18n, normal font — digit faces have no letters) */
     if (!s_hour24)
@@ -732,8 +737,12 @@ void rg_clock_show(void)
             runner_t *r = (mode == MODE_TIMER) ? &s_timer : &s_pomo;
             sig = ((uint32_t)mode<<28) | (r->remaining_ms/500) | (s_pomo_on_break<<27);
         }
-        bool flash = (s_flash_until > now || ringing) && ((now/150) & 1);
+        /* Full-screen flash is ONLY for the timer/pomodoro end (solid background).
+         * The clock alarm must NOT full-screen flash — that would wipe/hide a GIF
+         * or ambient background; instead render_clock pulses the time colour. */
+        bool flash = s_flash_until > now && ((now/150) & 1);
         if (flash) sig ^= 0x55555555;
+        if (ringing) sig ^= (now / 200);   /* repaint for the alarm digit pulse */
 
         if (dirty || sig != last_sig) {
             last_sig = sig; dirty = false;
