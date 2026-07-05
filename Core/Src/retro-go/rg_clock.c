@@ -221,13 +221,19 @@ static void draw_bell(int x, int y, uint16_t col)
  * which is why its cost is "low". */
 static void draw_ambient(uint32_t now, uint16_t col)
 {
-    uint16_t dim = (col >> 1) & 0x7BEF;
+    /* 48 dots, up to ~20 lit at once, 1-3px, bright at pulse peak — the old
+     * 26x1px version was invisible on the real LCD */
+    uint16_t dim = (col >> 1) & 0x7BEF;   /* half-bright ink */
     uint32_t ph = now / 320;
-    for (int i = 0; i < 26; i++) {
-        int x = (i*73 + 11) % GW_LCD_WIDTH;
-        int y = 44 + (i*127 + 7) % (GW_LCD_HEIGHT - 44 - 34);
-        int p = (ph + i*3) % 9;
-        if (p < 3) { int sz = (p == 1) ? 2 : 1; odroid_overlay_draw_fill_rect(x, y, sz, sz, p == 1 ? col : dim); }
+    for (int i = 0; i < 48; i++) {
+        int x = (i*67 + 13) % (GW_LCD_WIDTH - 3);
+        int y = 40 + (i*113 + 9) % (GW_LCD_HEIGHT - 40 - 32);
+        int p = (ph + i*5) % 11;
+        if (p < 4) {
+            int peak = (p == 1 || p == 2);
+            int sz = peak ? ((i & 3) == 0 ? 3 : 2) : 1;
+            odroid_overlay_draw_fill_rect(x, y, sz, sz, peak ? col : dim);
+        }
     }
 }
 
