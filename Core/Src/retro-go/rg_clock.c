@@ -462,16 +462,16 @@ static void draw_topbar(clock_mode_t mode, bool with_title)
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
     odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 18);
     if (s_dnd) draw_moon(GW_LCD_WIDTH - 48, 16, t->ink, t->scr);
-    if (!with_title) return;
-
-    char line[48]; snprintf(line, sizeof line, "\xe2\x97\x80 %s \xe2\x96\xb6", mode_title(mode));
-    draw_centered_i18n(12, line, t->alarm);
-
-    /* pager dots: which of the four modes you are on */
+    /* pager dots stay ALWAYS (tiny, and good mode context);
+     * only the title text fades on the clock face */
     int dx = (GW_LCD_WIDTH - (MODE_COUNT*8 - 4)) / 2;
     for (int i = 0; i < MODE_COUNT; i++, dx += 8)
         odroid_overlay_draw_fill_rect(dx, 28, 4, 4,
             i == (int)mode ? t->alarm : mix565(t->scr, t->ink, 4));
+    if (!with_title) return;
+
+    char line[48]; snprintf(line, sizeof line, "\xe2\x97\x80 %s \xe2\x96\xb6", mode_title(mode));
+    draw_centered_i18n(12, line, t->alarm);
 }
 
 #define TITLE_SHOW_MS 2500
