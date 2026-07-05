@@ -27,7 +27,10 @@ uint16_t *lcd_get_active_buffer(void) { return fb; }
 void lcd_swap(void) {}
 void lcd_sleep_while_swap_pending(void) {}
 
-static const lang_t L = { "AM","PM","Clock","Mon","Tue","Wed","Thu","Fri","Sat","Sun" };
+static const lang_t L = { .s_AM="AM", .s_PM="PM", .s_Clock="Clock",
+  .s_Weekday_Mon="Mon", .s_Weekday_Tue="Tue", .s_Weekday_Wed="Wed", .s_Weekday_Thu="Thu",
+  .s_Weekday_Fri="Fri", .s_Weekday_Sat="Sat", .s_Weekday_Sun="Sun",
+  .s_Clock_On="On", .s_Clock_Off="Off" };
 const lang_t *curr_lang = &L;
 int i18n_draw_text_line(int x,int y,int w,const char*t,uint16_t c,uint16_t bg,int f){(void)x;(void)y;(void)w;(void)t;(void)c;(void)bg;(void)f;return 0;}
 int odroid_overlay_dialog(const char*h,odroid_dialog_choice_t*o,int s,void(*r)(void),int f){(void)h;(void)o;(void)s;(void)r;(void)f;return -1;}
@@ -115,14 +118,14 @@ static void test_window(void)
 static void test_cfg_roundtrip(void)
 {
     reset_alarms(); add_alarm(7, 30, 1); add_alarm(8, 0, 0);
-    s_theme = 2; s_alarm_vol = 9;
+    s_alarm_vol = 9;
     clock_config_save();
-    reset_alarms(); s_theme = 0; s_alarm_vol = 6;
+    reset_alarms(); s_alarm_vol = 6;
     clock_config_load();
     CHECK(s_alarm_count == 2, "both alarms survive save/load");
     CHECK(s_alarms[0].hour == 7 && s_alarms[0].min == 30 && s_alarms[0].enabled == 1, "enabled alarm intact");
     CHECK(s_alarms[1].hour == 8 && s_alarms[1].min == 0 && s_alarms[1].enabled == 0, "DISABLED alarm persists (was deleted before fix)");
-    CHECK(s_theme == 2 && s_alarm_vol == 9, "theme/vol round-trip");
+    CHECK(s_alarm_vol == 9, "volume round-trip");
 
     FILE *f = fopen(test_path("/clock.cfg"), "w");
     fprintf(f, "alarm=0730\n");        /* old format = enabled */

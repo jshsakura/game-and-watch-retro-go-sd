@@ -67,16 +67,18 @@ Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
 #### Clock (TIME menu → Clock)
 
 - A full-screen clock app benchmarked on the Game & Watch alarm clock, drawn
-  entirely in code so nothing copyrighted ships: retro-go's own G&W logo top-left,
-  localized date/weekday, battery + Do-Not-Disturb, big time in a themed digit face,
-  AM/PM, and the next alarm. **8 colour+face themes** (7-segment / pixel / dot),
-  12/24-hour, an **in-app multi-alarm editor**, plus **Pomodoro, a countdown timer
-  and a stopwatch**. A synthesised alarm beep (no sound files) and selectable
-  **ambient / animated-GIF backgrounds** — drop a `/clock/bg.gif` and it plays,
-  decoded once and cached so playback is just a blit; each animation level shows its
-  battery cost so the choice is yours. Config lives in `/clock.cfg`. Runs in the
-  launcher context so it never touches an emulator's memory. (Follow-ups: SD still
-  image + centre-icon slot, brightness/volume popup, decorative bitmap faces.)
+  entirely in code so nothing copyrighted ships: one fixed, sleek look — big
+  **7-segment digits with LCD ghost segments**, shared top bar (G&W logo, mode
+  title + pager dots, battery, DND moon), localized date/weekday, AM/PM beside
+  the digits, next-alarm line, and an **auto-hiding hint bar**. Clock, **Pomodoro,
+  countdown timer and stopwatch** share the same layout and controls
+  (A start/pause, B reset, PAUSE = settings incl. Exit). **In-app multi-alarm
+  editor** (popup), synthesised alarm beep (no sound files), fully localized
+  (12 languages). The one visual customisation is the **background**: off /
+  ambient / animated GIF — drop a `/clock/bg.gif` and it plays; each level shows
+  its battery cost. Config lives in `/clock.cfg`. Runs in the launcher context so
+  it never touches an emulator's memory. `host/clock_preview.c` renders the real
+  draw code to PNGs for design review before flashing.
 
 #### Launcher
 

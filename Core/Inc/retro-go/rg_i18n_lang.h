@@ -294,6 +294,35 @@ typedef struct
     const char *s_Clock;           // TIME menu: open the full-screen clock app
     const char *s_AM;              // clock 12-hour meridiem (before noon)
     const char *s_PM;              // clock 12-hour meridiem (after noon)
+    // Clock app v2 (Core\Src\retro-go\rg_clock.c): mode titles, status
+    // labels, button hints, settings menu. Appended AT THE END per the rule
+    // above (SD .bin index compatibility).
+    const char *s_Clock_Pomodoro;
+    const char *s_Clock_Timer;
+    const char *s_Clock_Stopwatch;
+    const char *s_Clock_Work;      // pomodoro focus phase
+    const char *s_Clock_Break;     // pomodoro break phase
+    const char *s_Clock_Cycle;     // pomodoro round counter label
+    const char *s_Clock_Ringing;   // pulsing banner while the alarm beeps
+    const char *s_Clock_Hint_Clock;     // clock face button hints
+    const char *s_Clock_Hint_Run;       // running pomodoro/timer/stopwatch
+    const char *s_Clock_Hint_Stop;      // stopped pomodoro/stopwatch
+    const char *s_Clock_Hint_TimerStop; // stopped timer (adds UP/DN minutes)
+    const char *s_Clock_Hint_Editor;    // alarm list hints
+    const char *s_Clock_Hint_Edit;      // editing one alarm
+    const char *s_Clock_Add_Alarm;
+    const char *s_Clock_Done;
+    const char *s_Clock_On;
+    const char *s_Clock_Off;
+    const char *s_Clock_Format;    // 12h/24h setting
+    const char *s_Clock_DND;       // Do Not Disturb setting
+    const char *s_Clock_Anim;      // background setting (the one visual custom)
+    const char *s_Clock_Anim_0;    // off (no battery cost)
+    const char *s_Clock_Anim_1;    // ambient (low)
+    const char *s_Clock_Anim_2;    // user GIF (high)
+    const char *s_Clock_Volume;    // alarm volume
+    const char *s_Clock_Alarms;    // alarms menu entry + editor title
+    const char *s_Clock_Exit;      // leave the clock app (PAUSE menu)
     //=====================================================================
 
     const int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, const char *weekday, uint16_t hour, uint16_t minutes, uint16_t seconds);

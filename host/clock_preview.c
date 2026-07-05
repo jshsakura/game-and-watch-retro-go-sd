@@ -1,0 +1,225 @@
+// Host preview harness for the Clock app: renders the REAL rg_clock.c drawing
+// code (7-seg ghost digits, top bar, hint bar, alarm-editor popup) into a
+// framebuffer and dumps raw RGB565 frames for render_clock.py to PNG-ify.
+// Text uses the same 12px bitmap atlas as the media preview (gen_font.py).
+//
+// Build+run (from repo root):
+//   python3 host/gen_font.py
+//   gcc -O2 -std=gnu11 -Ihost -Itests/clock_stubs host/clock_preview.c -o /tmp/clock_preview
+//   /tmp/clock_preview && python3 host/render_clock.py
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+
+#define W 320
+#define H 240
+
+static uint16_t fb[W * H];
+
+/* redirect /clock.cfg away from the host root */
+static const char *test_path(const char *p)
+{ static char b[256]; snprintf(b, sizeof b, "/tmp/clockprev_%s", p + 1); return b; }
+#define fopen(p, m) fopen(test_path(p), m)
+#include "../Core/Src/retro-go/rg_clock.c"
+#undef fopen
+
+#include "font_data.h"
+
+/* ---- framebuffer / lcd ------------------------------------------------- */
+uint16_t *lcd_get_active_buffer(void) { return fb; }
+void lcd_swap(void) {}
+void lcd_sleep_while_swap_pending(void) {}
+
+/* ---- fill rect / text (atlas) ------------------------------------------ */
+void odroid_overlay_draw_fill_rect(int x, int y, int w, int h, uint16_t color)
+{
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++) {
+            int px = x + i, py = y + j;
+            if (px >= 0 && px < W && py >= 0 && py < H) fb[py * W + px] = color;
+        }
+}
+
+static int utf8_next(const char **p)
+{
+    const unsigned char *s = (const unsigned char *)*p;
+    if (*s == 0) return -1;
+    int cp, n;
+    if (*s < 0x80) { cp = *s; n = 1; }
+    else if ((*s & 0xE0) == 0xC0) { cp = *s & 0x1F; n = 2; }
+    else if ((*s & 0xF0) == 0xE0) { cp = *s & 0x0F; n = 3; }
+    else { cp = *s & 0x07; n = 4; }
+    for (int i = 1; i < n; i++) cp = (cp << 6) | (s[i] & 0x3F);
+    *p += n;
+    return cp;
+}
+
+static const glyph_t *find_glyph(int cp)
+{
+    for (int i = 0; i < GLYPH_N; i++) if ((int)GLYPHS[i].cp == cp) return &GLYPHS[i];
+    return NULL;
+}
+
+int i18n_draw_text_line(int x, int y, int width, const char *t,
+                        uint16_t fg, uint16_t bg, int transparent)
+{
+    (void)width;
+    if (!transparent)
+        for (int j = 0; j < 12; j++)
+            for (int i = 0; i < width; i++)
+                if (x + i < W && y + j < H) fb[(y + j) * W + x + i] = bg;
+    if (!t) return 12;
+    const char *p = t; int cp, cx = x;
+    while ((cp = utf8_next(&p)) > 0) {
+        const glyph_t *g = find_glyph(cp);
+        if (!g) { cx += 8; continue; }
+        for (int j = 0; j < 12; j++)
+            for (int i = 0; i < g->w; i++)
+                if ((g->rows[j] >> i) & 1) {
+                    int px = cx + i, py = y + j;
+                    if (px >= 0 && px < W && py >= 0 && py < H) fb[py * W + px] = fg;
+                }
+        cx += g->w + 1;
+    }
+    return 12;
+}
+
+/* ---- misc firmware stubs ------------------------------------------------ */
+void wdog_refresh(void) {}
+static uint32_t fake_tick = 0;
+uint32_t HAL_GetTick(void) { return fake_tick; }
+void HAL_Delay(uint32_t ms) { fake_tick += ms; }
+int HAL_SAI_Transmit_DMA(SAI_HandleTypeDef *h, uint8_t *b, uint16_t l) { (void)h;(void)b;(void)l; return 0; }
+int HAL_SAI_DMAStop(SAI_HandleTypeDef *h) { (void)h; return 0; }
+SAI_HandleTypeDef hsai_BlockA1; DMA_HandleTypeDef hdma_sai1_a;
+uint32_t audio_mute; int16_t audiobuffer_dma[AUDIO_BUFFER_LENGTH * 2];
+dma_transfer_state_t dma_state; uint32_t dma_counter;
+uint16_t audio_get_buffer_full_length(void){ return AUDIO_BUFFER_LENGTH*2; }
+uint16_t audio_get_buffer_length(void){ return AUDIO_BUFFER_LENGTH; }
+uint16_t audio_get_buffer_size(void){ return AUDIO_BUFFER_LENGTH*2; }
+int16_t *audio_get_active_buffer(void){ return audiobuffer_dma; }
+int16_t *audio_get_inactive_buffer(void){ return audiobuffer_dma; }
+void audio_clear_active_buffer(void){} void audio_clear_inactive_buffer(void){}
+void audio_clear_buffers(void){} void audio_set_buffer_length(uint16_t l){(void)l;}
+void audio_start_playing(uint16_t l){(void)l;} void audio_start_playing_full_length(uint16_t l){(void)l;}
+void audio_stop_playing(void){}
+
+/* G&W logo stand-in: outlined box with G&W lettering (same footprint) */
+void odroid_overlay_draw_logo(int x, int y, int logo, uint16_t color)
+{
+    (void)logo;
+    for (int i = 0; i < 42; i++) { fb[(y)*W + x+i] = color; fb[(y+27)*W + x+i] = color; }
+    for (int j = 0; j < 28; j++) { fb[(y+j)*W + x] = color; fb[(y+j)*W + x+41] = color; }
+    i18n_draw_text_line(x + 6, y + 8, 40, "G&W", color, 0, 1);
+}
+
+void odroid_overlay_draw_battery(int pct, int x, int y)
+{
+    uint16_t c = 0xFD20;
+    for (int i = 0; i < 20; i++) { fb[y*W + x+i] = c; fb[(y+9)*W + x+i] = c; }
+    for (int j = 0; j < 10; j++) { fb[(y+j)*W + x] = c; fb[(y+j)*W + x+19] = c; }
+    int wfill = pct * 16 / 100;
+    for (int j = 2; j < 8; j++) for (int i = 0; i < wfill; i++) fb[(y+j)*W + x+2+i] = c;
+    for (int j = 3; j < 7; j++) fb[(y+j)*W + x+20] = c;
+}
+
+void odroid_overlay_draw_text(int x, int y, int w, const char *text, uint16_t color, uint16_t bg)
+{ (void)w; i18n_draw_text_line(x, y, 0, text, color, bg, 1); }
+int odroid_overlay_get_font_width(void) { return 8; }
+int odroid_overlay_dialog(const char *h, odroid_dialog_choice_t *o, int s, void (*r)(void), int f)
+{ (void)h;(void)o;(void)s;(void)r;(void)f; return -1; }
+
+static odroid_gamepad_state_t stub_pad;
+void odroid_input_read_gamepad(odroid_gamepad_state_t *s){ *s = stub_pad; }
+int odroid_input_read_battery(void){ return 76; }
+
+static int st_h = 9, st_m = 41, st_mon = 7, st_day = 6, st_wd = 1, st_ss = 100;
+int GW_GetCurrentHour(void){return st_h;} int GW_GetCurrentMinute(void){return st_m;}
+int GW_GetCurrentSubSeconds(void){return st_ss;} int GW_GetCurrentMonth(void){return st_mon;}
+int GW_GetCurrentDay(void){return st_day;} int GW_GetCurrentWeekday(void){return st_wd;}
+bool clock_gif_ready(void){return false;}
+void clock_gif_blit(uint16_t*f,uint32_t n){(void)f;(void)n;}
+void clock_gif_load(void){} void clock_gif_free(void){}
+
+/* Korean UI strings (what the device shows with lang=ko) */
+static const lang_t KO = {
+    .s_AM="오전", .s_PM="오후", .s_Clock="시계",
+    .s_Weekday_Mon="월", .s_Weekday_Tue="화", .s_Weekday_Wed="수", .s_Weekday_Thu="목",
+    .s_Weekday_Fri="금", .s_Weekday_Sat="토", .s_Weekday_Sun="일",
+    .s_Clock_Pomodoro="뽀모도로", .s_Clock_Timer="타이머", .s_Clock_Stopwatch="스톱워치",
+    .s_Clock_Work="집중", .s_Clock_Break="휴식", .s_Clock_Cycle="라운드",
+    .s_Clock_Ringing="* 알람 *",
+    .s_Clock_Hint_Clock="L/R 모드   PAUSE 설정/나가기",
+    .s_Clock_Hint_Run="A 일시정지   B 리셋",
+    .s_Clock_Hint_Stop="A 시작   B 리셋",
+    .s_Clock_Hint_TimerStop="A 시작   B 리셋   UP/DN 분",
+    .s_Clock_Hint_Editor="A 편집/추가   TIME 켬/끔   GAME 삭제   B 완료",
+    .s_Clock_Hint_Edit="L/R 자리   UP/DN 조절   A 확인   B 취소",
+    .s_Clock_Add_Alarm="알람 추가", .s_Clock_Done="완료",
+    .s_Clock_On="켬", .s_Clock_Off="끔",
+    .s_Clock_Format="시간 형식", .s_Clock_DND="방해 금지",
+    .s_Clock_Anim="배경 효과", .s_Clock_Anim_0="끄기 (배터리 소모 없음)",
+    .s_Clock_Anim_1="은은한 효과 (낮음)", .s_Clock_Anim_2="GIF (높음)",
+    .s_Clock_Volume="알람 음량", .s_Clock_Alarms="알람", .s_Clock_Exit="시계 나가기",
+};
+const lang_t *curr_lang = &KO;
+
+/* ---- scene dump ---------------------------------------------------------- */
+static void dump(const char *name)
+{
+    char path[128]; snprintf(path, sizeof path, "/tmp/clockprev/%s.bin", name);
+    FILE *f = fopen(path, "wb");   /* note: macro-redirected is fine too */
+    if (!f) { perror(path); return; }
+    fwrite(fb, 2, W * H, f);
+    fclose(f);
+    printf("wrote %s\n", path);
+}
+
+static void base(uint16_t bg) { for (int i = 0; i < W * H; i++) fb[i] = bg; }
+
+static void paint(clock_mode_t mode, uint32_t now, bool ringing)
+{
+    base(TH()->scr);
+    switch (mode) {
+    case MODE_CLOCK:     render_clock(now, ringing); break;
+    case MODE_POMODORO:  render_pomodoro(now);  break;
+    case MODE_TIMER:     render_timer(now);     break;
+    case MODE_STOPWATCH: render_stopwatch(now); break;
+    default: break;
+    }
+    draw_topbar(mode);
+    if (ringing && mode != MODE_CLOCK && ((now / 200) & 1))
+        draw_centered_i18n(32, curr_lang->s_Clock_Ringing, TH()->alarm);
+}
+
+int main(void)
+{
+    /* one enabled alarm so the next-alarm chip shows */
+    s_alarms[0] = (alarm_t){ 7, 30, 1 };
+    s_alarms[1] = (alarm_t){ 22, 15, 0 };
+    s_alarm_count = 2;
+    s_hour24 = false;
+
+    /* 1) clock, hints visible */
+    s_hint_until = 99999; paint(MODE_CLOCK, 1000, false); dump("clock_hints");
+    /* 2) clock, clean face (hints faded) */
+    s_hint_until = 0; paint(MODE_CLOCK, 1000, false); dump("clock_clean");
+    /* 3) clock with ambient dots */
+    s_anim = 1; paint(MODE_CLOCK, 1000, false); dump("clock_ambient"); s_anim = 0;
+    /* 4) clock ringing (accent pulse frame) */
+    s_hint_until = 0; paint(MODE_CLOCK, 1200, true); dump("clock_ringing");
+    /* 5) pomodoro running (13:37 left of work round 2) */
+    s_pomo.state = RUN_RUNNING; s_pomo.remaining_ms = (13*60+37)*1000; s_pomo_cycles = 1;
+    s_hint_until = 99999; paint(MODE_POMODORO, 1000, false); dump("pomodoro");
+    /* 6) timer stopped at 05:00 */
+    s_hint_until = 99999; paint(MODE_TIMER, 1000, false); dump("timer");
+    /* 7) stopwatch running at 12:34 */
+    s_watch.state = RUN_RUNNING; s_watch.elapsed_ms = (12*60+34)*1000;
+    s_hint_until = 99999; paint(MODE_STOPWATCH, 1200, false); dump("stopwatch");
+    /* 8) alarm editor popup (row 0 selected) */
+    render_alarm_setup(0, false, 0); dump("editor");
+    /* 9) editor, editing the hour field */
+    render_alarm_setup(0, true, 0); dump("editor_edit");
+    return 0;
+}
