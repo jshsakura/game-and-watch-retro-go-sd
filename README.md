@@ -71,9 +71,12 @@ Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
   localized date/weekday, battery + Do-Not-Disturb, big time in a themed digit face,
   AM/PM, and the next alarm. **8 colour+face themes** (7-segment / pixel / dot),
   12/24-hour, an **in-app multi-alarm editor**, plus **Pomodoro, a countdown timer
-  and a stopwatch**. Config lives in `/clock.cfg`. Runs in the launcher context —
-  ~25 bytes of RAM, no overlay — so it never touches an emulator's memory. (Follow-ups:
-  alarm sound, SD background image, decorative bitmap faces.)
+  and a stopwatch**. A synthesised alarm beep (no sound files) and selectable
+  **ambient / animated-GIF backgrounds** — drop a `/clock/bg.gif` and it plays,
+  decoded once and cached so playback is just a blit; each animation level shows its
+  battery cost so the choice is yours. Config lives in `/clock.cfg`. Runs in the
+  launcher context so it never touches an emulator's memory. (Follow-ups: SD still
+  image + centre-icon slot, brightness/volume popup, decorative bitmap faces.)
 
 #### Launcher
 
