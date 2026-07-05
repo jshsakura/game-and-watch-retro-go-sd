@@ -8,6 +8,11 @@
  * decoder + one frame buffer in the launcher heap while no emulator runs;
  * freed on unload, so an emulator's RAM is never reduced. */
 
+#define CLOCK_GIF_OK       0
+#define CLOCK_GIF_NO_FILE  1   /* /clock/bg.gif missing or unreadable */
+#define CLOCK_GIF_NO_RAM   2   /* emu-RAM pool too full (covers etc.) */
+#define CLOCK_GIF_BAD_DIMS 3   /* larger than 480x320 */
+int  clock_gif_status(void);                     /* why the last load failed */
 bool clock_gif_load(void);                       /* open + alloc; false if none/too big */
 void clock_gif_free(void);
 bool clock_gif_ready(void);

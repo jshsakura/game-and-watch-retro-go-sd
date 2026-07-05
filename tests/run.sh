@@ -24,6 +24,18 @@ else
 fi
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/clock_stubs \
     tests/test_clock_alarm.c                             -o /tmp/mtest/test_clock_alarm
+$CC -O2 -Wall -std=gnu11 -Itests/clock_stubs -ICore/Src/porting/lib/gifdec \
+    tests/test_clock_gif.c                               -o /tmp/mtest/test_clock_gif
+python3 - <<'PYEOF2'
+from PIL import Image, ImageDraw
+frames = []
+for i in range(8):
+    im = Image.new('RGB', (320, 240), (10 + i*5, 20, 60))
+    d = ImageDraw.Draw(im)
+    d.rectangle([20 + i*30, 60, 120 + i*30, 180], fill=(255, 160 - i*10, 40))
+    frames.append(im.convert('P', palette=Image.ADAPTIVE, colors=128))
+frames[0].save('/tmp/mtest/bg.gif', save_all=True, append_images=frames[1:], duration=100, loop=0)
+PYEOF2
 
 echo "=== run ==="
 if [ -d "$SRC" ]; then
@@ -34,4 +46,5 @@ if [ -d "$SRC" ]; then
     /tmp/mtest/test_color       || rc=1
 fi
 /tmp/mtest/test_clock_alarm || rc=1
+/tmp/mtest/test_clock_gif   || rc=1
 exit $rc

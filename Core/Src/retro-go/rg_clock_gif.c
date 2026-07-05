@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "gifdec.h"
 #include "gw_lcd.h"
@@ -33,6 +35,9 @@ static int      s_gw, s_gh;
 static uint32_t s_next_tick;
 static bool     s_have_frame;
 static size_t   s_ram_mark;   /* emu-RAM bump-pointer snapshot (see header) */
+static int      s_status = CLOCK_GIF_OK;
+
+int clock_gif_status(void) { return s_status; }
 
 /* gifdec allocator = the emu-RAM arena; free is a no-op, the whole arena is
  * rolled back at clock_gif_free() via ram_release(). */
@@ -51,15 +56,22 @@ bool clock_gif_load(void)
 {
     clock_gif_free();
 
+    /* distinguish "no file" from "no RAM": gd_open_gif returns NULL for both */
+    int probe = open(GIF_PATH, O_RDONLY);
+    if (probe < 0) { s_status = CLOCK_GIF_NO_FILE; return false; }
+    close(probe);
+
     s_ram_mark = ram_mark();
     gd_set_allocator(ram_malloc, ram_calloc, gif_arena_free);
 
     gd_GIF *g = gd_open_gif(GIF_PATH);
-    if (!g) { clock_gif_free(); return false; }
+    if (!g) { s_status = CLOCK_GIF_NO_RAM; clock_gif_free(); return false; }
     if (g->width <= 0 || g->height <= 0 || g->width > 480 || g->height > 320) {
+        s_status = CLOCK_GIF_BAD_DIMS;
         gd_close_gif(g);   /* closes the fd; arena frees are no-ops */
         clock_gif_free(); return false;
     }
+    s_status = CLOCK_GIF_OK;
     s_gif = g; s_gw = g->width; s_gh = g->height;
     s_next_tick = 0; s_have_frame = false;
     return true;

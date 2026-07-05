@@ -48,7 +48,8 @@ int GW_GetCurrentSubSeconds(void){return 0;} int GW_GetCurrentMonth(void){return
 int GW_GetCurrentDay(void){return 1;} int GW_GetCurrentWeekday(void){return 1;}
 bool clock_gif_ready(void){return false;}
 void clock_gif_blit(uint16_t*f,uint32_t n){(void)f;(void)n;}
-void clock_gif_load(void){} void clock_gif_free(void){}
+bool clock_gif_load(void){return false;} void clock_gif_free(void){}
+int clock_gif_status(void){return 1;}
 
 /* simulated SAI DMA (mirrors gw_audio.c semantics) */
 uint32_t audio_mute;

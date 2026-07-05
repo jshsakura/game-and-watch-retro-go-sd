@@ -217,7 +217,8 @@ int GW_GetCurrentSubSeconds(void){return st_ss;} int GW_GetCurrentMonth(void){re
 int GW_GetCurrentDay(void){return st_day;} int GW_GetCurrentWeekday(void){return st_wd;}
 bool clock_gif_ready(void){return false;}
 void clock_gif_blit(uint16_t*f,uint32_t n){(void)f;(void)n;}
-void clock_gif_load(void){} void clock_gif_free(void){}
+bool clock_gif_load(void){return false;} void clock_gif_free(void){}
+int clock_gif_status(void){return 1;}
 
 /* Korean UI strings (what the device shows with lang=ko) */
 static const lang_t KO = {
@@ -237,7 +238,7 @@ static const lang_t KO = {
     .s_Clock_On="켬", .s_Clock_Off="끔",
     .s_Clock_Format="시간 형식", .s_Clock_DND="방해 금지",
     .s_Clock_Anim="배경 효과", .s_Clock_Anim_0="끄기 (배터리 소모 없음)",
-    .s_Clock_Anim_1="은은한 효과 (낮음)", .s_Clock_Anim_2="GIF (높음)",
+    .s_Clock_Anim_1="은은한 효과 (낮음)", .s_Clock_Anim_2="픽셀 풍경 (낮음)", .s_Clock_Anim_3="GIF (높음)",
     .s_Clock_Volume="알람 음량", .s_Clock_Alarms="알람", .s_Clock_Exit="시계 나가기",
     .s_Clock_Hint_Ring="A 5분 스누즈  B 끄기", .s_Clock_Theme="테마", .s_Clock_Face="숫자 서체", .s_Clock_Auto="자동", .s_Full="\x7", .s_Fill="\x8",
 };
@@ -291,6 +292,8 @@ int main(void)
     paint(MODE_CLOCK, 1000, false); dump("clock_clean");
     /* 2) clock with ambient dots + DND moon */
     s_anim = 1; s_dnd = true; paint(MODE_CLOCK, 1000, false); dump("clock_ambient"); s_anim = 0; s_dnd = false;
+    /* 2b) built-in pixel scene */
+    s_anim = ANIM_SCENE; paint(MODE_CLOCK, 1000, false); dump("clock_scene"); s_anim = 0;
     /* 3) clock ringing (accent pulse frame + snooze legend) */
     paint(MODE_CLOCK, 1200, true); dump("clock_ringing");
     /* 4) pomodoro running (13:37 left of work round 2) */

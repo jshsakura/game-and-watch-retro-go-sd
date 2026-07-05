@@ -273,8 +273,9 @@ static int alarms_armed(void)
  * near-zero-draw loop; "ambient" (procedural twinkling dots) only bumps the
  * repaint rate to ~3 fps; "GIF" (/clock/bg.gif, decoded on the fly — see
  * rg_clock_gif) repaints the whole face at the GIF rate, hence "high". */
-#define ANIM_COUNT 3
-#define ANIM_GIF   2
+#define ANIM_COUNT 4
+#define ANIM_SCENE 2   /* built-in pixel skyline (the mockup's bundled art) */
+#define ANIM_GIF   3
 
 static void clock_config_load(void)
 {
@@ -384,6 +385,47 @@ static uint16_t mix565(uint16_t a, uint16_t b, int t)
     return (uint16_t)(((ar+(br-ar)*t/16)<<11) | ((ag+(bg-ag)*t/16)<<5) | (ab+(bb-ab)*t/16));
 }
 
+/* Built-in pixel scene: a night skyline with slowly twinkling windows and a
+ * few stars, tinted from the active theme — the bundled background the HTML
+ * mockups always had. Pure code, no SD assets; repaints ~1.5 fps. */
+static void draw_scene(uint32_t now, const clock_theme_t *t)
+{
+    uint16_t sil  = mix565(t->scr, t->ink, 3);
+    uint16_t sil2 = mix565(t->scr, t->ink, 2);
+    uint16_t win  = mix565(t->scr, t->alarm, 10);
+    uint16_t wdim = mix565(t->scr, t->alarm, 5);
+    uint32_t ph = now / 640;
+
+    /* far layer: low rooftops */
+    for (int x = 0, i = 0; x < GW_LCD_WIDTH; i++) {
+        int w = 26 + ((i * 41) % 19), hgt = 10 + ((i * 29) % 14);
+        odroid_overlay_draw_fill_rect(x, GW_LCD_HEIGHT - hgt, w, hgt, sil2);
+        x += w;
+    }
+    /* near layer: taller buildings with windows */
+    for (int x = 2, i = 0; x < GW_LCD_WIDTH - 12; i++) {
+        int w = 20 + ((i * 37) % 21), hgt = 22 + ((i * 53) % 32);
+        int top = GW_LCD_HEIGHT - hgt;
+        if (x + w > GW_LCD_WIDTH) w = GW_LCD_WIDTH - x;
+        odroid_overlay_draw_fill_rect(x, top, w, hgt, sil);
+        for (int wy = top + 4; wy + 4 < GW_LCD_HEIGHT; wy += 8)
+            for (int wx = x + 3; wx + 3 < x + w - 2; wx += 7) {
+                uint32_t hsh = (uint32_t)(wx * 31 + wy * 17 + i * 7);
+                if ((hsh % 9) < 3)   /* ~1/3 of window slots exist */
+                    odroid_overlay_draw_fill_rect(wx, wy, 3, 4,
+                        ((hsh + ph) % 13) < 10 ? win : wdim);   /* slow twinkle */
+            }
+        x += w + 3;
+    }
+    /* a few stars above the skyline */
+    for (int k = 0; k < 20; k++) {
+        int sx = (k * 71 + 9) % GW_LCD_WIDTH;
+        int sy = 42 + (k * 97 + 5) % 110;
+        if (((now / 640) + k * 3) % 7 < 2)
+            odroid_overlay_draw_fill_rect(sx, sy, 1, 1, mix565(t->scr, t->ink, 8));
+    }
+}
+
 static const char *mode_title(clock_mode_t mode)
 {
     switch (mode) {
@@ -478,6 +520,8 @@ static void render_clock(uint32_t now, bool alarm_firing)
     /* background layer: a user GIF (level 2) or the procedural ambient (level 1) */
     if (s_anim == ANIM_GIF && clock_gif_ready())
         clock_gif_blit(lcd_get_active_buffer(), now);
+    else if (s_anim == ANIM_SCENE)
+        draw_scene(now, t);
     else if (s_anim == 1)
         draw_ambient(now, t->ink);
 
@@ -809,10 +853,15 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
     if (e == ODROID_DIALOG_NEXT) s_anim = (s_anim+1) % ANIM_COUNT;
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) { if (s_anim == ANIM_GIF) clock_gif_load(); else clock_gif_free(); }
     const char *lv = (s_anim == 0) ? curr_lang->s_Clock_Anim_0
-                   : (s_anim == 1) ? curr_lang->s_Clock_Anim_1 : curr_lang->s_Clock_Anim_2;
-    /* "(!)" = GIF selected but not loaded (no /clock/bg.gif, or RAM short) */
-    snprintf(o->value, sizeof v_anim, "%s%s", lv,
-             (s_anim == ANIM_GIF && !clock_gif_ready()) ? " (!)" : "");
+                   : (s_anim == 1) ? curr_lang->s_Clock_Anim_1
+                   : (s_anim == ANIM_SCENE) ? curr_lang->s_Clock_Anim_2
+                   : curr_lang->s_Clock_Anim_3;
+    const char *why = "";
+    if (s_anim == ANIM_GIF && !clock_gif_ready())
+        why = (clock_gif_status() == CLOCK_GIF_NO_RAM)  ? " (no RAM)"
+            : (clock_gif_status() == CLOCK_GIF_BAD_DIMS) ? " (too big)"
+            : " (no file)";
+    snprintf(o->value, sizeof v_anim, "%s%s", lv, why);
     return e == ODROID_DIALOG_ENTER;
 }
 static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
@@ -993,8 +1042,9 @@ void rg_clock_show(void)
         if (mode == MODE_CLOCK) {
             sig = (1u<<30) | (hh<<20) | (mm<<12) | ((GW_GetCurrentSubSeconds() <= 127)<<11)
                 | (s_theme<<7) | (s_hour24<<6) | (s_dnd<<5) | (ringing<<4);
-            if (s_anim == ANIM_GIF) sig ^= (now / 80);    /* repaint at the GIF rate */
-            else if (s_anim > 0)    sig ^= (now / 320);   /* ambient ~3fps */
+            if (s_anim == ANIM_GIF)        sig ^= (now / 80);   /* GIF rate */
+            else if (s_anim == ANIM_SCENE) sig ^= (now / 640);  /* window twinkle */
+            else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
         }
         else if (mode == MODE_STOPWATCH)
             sig = (2u<<30) | ((s_watch.elapsed_ms / 10) << 2) | (uint32_t)s_watch.state;

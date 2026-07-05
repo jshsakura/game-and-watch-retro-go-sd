@@ -319,7 +319,7 @@ typedef struct
     const char *s_Clock_Anim;      // background setting (the one visual custom)
     const char *s_Clock_Anim_0;    // off (no battery cost)
     const char *s_Clock_Anim_1;    // ambient (low)
-    const char *s_Clock_Anim_2;    // user GIF (high)
+    const char *s_Clock_Anim_2;    // built-in pixel scene (low)
     const char *s_Clock_Volume;    // alarm volume
     const char *s_Clock_Alarms;    // alarms menu entry + editor title
     const char *s_Clock_Exit;      // leave the clock app (PAUSE menu)
@@ -327,6 +327,7 @@ typedef struct
     const char *s_Clock_Theme;     // theme picker row
     const char *s_Clock_Face;      // digit face picker row
     const char *s_Clock_Auto;      // face value: follow the theme
+    const char *s_Clock_Anim_3;    // user GIF (high)
     //=====================================================================
 
     const int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, const char *weekday, uint16_t hour, uint16_t minutes, uint16_t seconds);
