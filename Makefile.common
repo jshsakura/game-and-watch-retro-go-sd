@@ -357,6 +357,7 @@ C_INCLUDES += \
 -I$(FROGFS_DIR)/include \
 -I$(FROGFS_DIR)/src \
 -ICore/Src/porting/lib/littlefs/ \
+-ICore/Src/porting/lib/gifdec \
 -ICore/Src/porting/lib/tamp/tamp/_c_src
 # LZMA ROM payloads (FrogFS --rom-compression) need inflate; COMPRESS=0 disables to save code size.
 ifeq ($(COMPRESS),0)
@@ -416,6 +417,8 @@ Core/Src/retro-go/rg_rtc.c \
 Core/Src/retro-go/rg_emulators.c \
 Core/Src/retro-go/rg_favorites.c \
 Core/Src/retro-go/rg_clock.c \
+Core/Src/retro-go/rg_clock_gif.c \
+Core/Src/porting/lib/gifdec/gifdec.c \
 Core/Src/retro-go/gw_firmware_abi.c \
 Core/Src/retro-go/rg_storage.c \
 Core/Src/retro-go/rg_welcome_prompt.c \
@@ -689,6 +692,7 @@ AS_INCLUDES +=
 # C includes
 C_INCLUDES +=  \
 -ICore/Inc \
+-ICore/Src/porting/lib/gifdec \
 -ICore/Inc/porting \
 -ICore/Inc/porting/gb \
 -ICore/Inc/porting/gb_tgbdual \

@@ -28,6 +28,7 @@
 #include "odroid_input.h"
 #include "odroid_audio.h"
 #include "rg_clock.h"
+#include "rg_clock_gif.h"
 
 #define C565(r,g,b) ((uint16_t)((((r)&0xF8)<<8)|(((g)&0xFC)<<3)|((b)>>3)))
 #define CLOCK_BLACK 0x0000
@@ -190,9 +191,14 @@ static int      s_alarm_count;
  * informed. "Ambient" is drawn in code (a few twinkling dots) and only bumps
  * the repaint rate to ~3 fps, so the cost is low; "off" keeps the fully
  * event-driven, near-zero-draw loop. (User image/GIF = a future "high" level.) */
-#define ANIM_COUNT 2
-static const char *const ANIM_NAME[ANIM_COUNT] = { "Off", "Ambient" };
-static const char *const ANIM_BATT[ANIM_COUNT] = { "none", "low" };
+/* Level 2 = a user GIF (/clock/bg.gif), decoded once and cached; playback is a
+ * blit at the GIF's delay (see rg_clock_gif). Costs more battery than ambient
+ * because the whole face repaints at the GIF rate — hence "high", shown to the
+ * user so it's their informed choice. */
+#define ANIM_COUNT 3
+#define ANIM_GIF   2
+static const char *const ANIM_NAME[ANIM_COUNT] = { "Off", "Ambient", "GIF" };
+static const char *const ANIM_BATT[ANIM_COUNT] = { "none", "low", "high" };
 
 static void clock_config_load(void)
 {
@@ -310,7 +316,11 @@ static void render_clock(uint32_t now, bool alarm_firing)
     int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
     bool colon = GW_GetCurrentSubSeconds() <= 127;
 
-    if (s_anim > 0) draw_ambient(now, t->ink);   /* behind everything */
+    /* background layer: a user GIF (level 2) or the procedural ambient (level 1) */
+    if (s_anim == ANIM_GIF && clock_gif_ready())
+        clock_gif_blit(lcd_get_active_buffer(), now);
+    else if (s_anim == 1)
+        draw_ambient(now, t->ink);
 
     /* logo (retro-go G&W, reused as-is) + battery + DND, one colour */
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
@@ -516,7 +526,10 @@ static void clock_alarm_setup(void)
             if (pressed(&k, &prev, ODROID_INPUT_UP))   { sel = (sel == 0) ? rows-1 : sel-1; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_DOWN)) { sel = (sel+1) % rows; dirty = true; }
             if (pressed(&k, &prev, ODROID_INPUT_A)) {
-                if (sel == 0) s_anim = (s_anim + 1) % ANIM_COUNT;    /* cycle animation */
+                if (sel == 0) {                                      /* cycle animation */
+                    s_anim = (s_anim + 1) % ANIM_COUNT;
+                    if (s_anim == ANIM_GIF) clock_gif_load(); else clock_gif_free();
+                }
                 else if (on_alarm) { editing = true; field = 0; }
                 else if (sel == add_row) {
                     if (s_alarm_count < MAX_ALARMS) { s_alarms[s_alarm_count].hour = 7;
@@ -596,6 +609,7 @@ void rg_clock_show(void)
     bool dirty = true;
 
     clock_config_load();
+    if (s_anim == ANIM_GIF) clock_gif_load();   /* decode /clock/bg.gif once */
     odroid_input_read_gamepad(&prev);   /* swallow the opening button */
 
     while (true) {
@@ -641,7 +655,8 @@ void rg_clock_show(void)
         if (mode == MODE_CLOCK) {
             sig = (1u<<30) | (hh<<20) | (mm<<12) | ((GW_GetCurrentSubSeconds() <= 127)<<11)
                 | (s_theme<<7) | (s_hour24<<6) | (s_dnd<<5) | (ringing<<4);
-            if (s_anim > 0) sig ^= (now / 320);   /* animate ~3fps when ambient is on */
+            if (s_anim == ANIM_GIF) sig ^= (now / 80);    /* repaint at the GIF rate */
+            else if (s_anim > 0)    sig ^= (now / 320);   /* ambient ~3fps */
         }
         else if (mode == MODE_STOPWATCH)
             sig = (2u<<30) | (s_watch.elapsed_ms / 10);           /* centiseconds */
@@ -675,5 +690,6 @@ void rg_clock_show(void)
     }
 
     tone_feed(0, false);   /* make sure the SAI is stopped on the way out */
+    clock_gif_free();      /* release the transient GIF cache */
     clock_config_save();
 }
