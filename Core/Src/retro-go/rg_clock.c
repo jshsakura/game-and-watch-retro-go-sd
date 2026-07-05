@@ -46,22 +46,53 @@ typedef struct { uint16_t scr, ink, alarm; } clock_theme_t;
 static const clock_theme_t THEME =
     { C565(0x07,0x0a,0x10), C565(0xee,0xf1,0xee), C565(0x33,0xd3,0xc9) };
 
-/* ---- 7-segment vector digit ------------------------------------------- */
+/* ---- 7-segment vector digit --------------------------------------------
+ * Real-LCD styling: every segment is a HEXAGON (ends taper to a point at
+ * 45°) and the whole digit leans right by SEG_SLANT px (italic), the way
+ * DSEG-style clock faces do — not seven butted rectangles. Drawn as 1px
+ * rows so the shear is exact; still just fill_rect calls underneath. */
+
+#define SEG_SLANT 5   /* total rightward lean, top row vs bottom row */
 
 static const uint8_t SEG7[10] = { 0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F };
+
+static int seg_shear(int y_rel, int h) { return (SEG_SLANT * (h - y_rel)) / h; }
 
 static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
 {
     if (d < 0 || d > 9) return;
     uint8_t m = SEG7[d];
-    int vlen = (h - 3 * t) / 2, rx = x + w - t, by = y + h - t, my = y + t + vlen, ey = y + 2 * t + vlen;
-    if (m & 0x01) odroid_overlay_draw_fill_rect(x + t, y,   w - 2*t, t, col);
-    if (m & 0x02) odroid_overlay_draw_fill_rect(rx,    y + t, t, vlen, col);
-    if (m & 0x04) odroid_overlay_draw_fill_rect(rx,    ey,   t, vlen, col);
-    if (m & 0x08) odroid_overlay_draw_fill_rect(x + t, by,   w - 2*t, t, col);
-    if (m & 0x10) odroid_overlay_draw_fill_rect(x,     ey,   t, vlen, col);
-    if (m & 0x20) odroid_overlay_draw_fill_rect(x,     y + t, t, vlen, col);
-    if (m & 0x40) odroid_overlay_draw_fill_rect(x + t, my,   w - 2*t, t, col);
+    int vlen = (h - 3 * t) / 2;
+    /* segment boxes, unsheared: bit order A,B,C,D,E,F,G */
+    const struct { int16_t x0, y0, len; uint8_t vert; } S[7] = {
+        { (int16_t)t,       0,                     (int16_t)(w - 2*t), 0 },  /* A */
+        { (int16_t)(w - t), (int16_t)t,            (int16_t)vlen,      1 },  /* B */
+        { (int16_t)(w - t), (int16_t)(2*t + vlen), (int16_t)vlen,      1 },  /* C */
+        { (int16_t)t,       (int16_t)(h - t),      (int16_t)(w - 2*t), 0 },  /* D */
+        { 0,                (int16_t)(2*t + vlen), (int16_t)vlen,      1 },  /* E */
+        { 0,                (int16_t)t,            (int16_t)vlen,      1 },  /* F */
+        { (int16_t)t,       (int16_t)(t + vlen),   (int16_t)(w - 2*t), 0 },  /* G */
+    };
+    for (int s = 0; s < 7; s++) {
+        if (!(m & (1u << s))) continue;
+        if (!S[s].vert) {
+            for (int r = 0; r < t; r++) {           /* horizontal hexagon */
+                int c2 = 2*r - (t - 1), dc = c2 < 0 ? -c2 : c2;
+                int inset = (dc + 1) / 2 + 1;
+                int yr = S[s].y0 + r;
+                odroid_overlay_draw_fill_rect(x + S[s].x0 + inset + seg_shear(yr, h),
+                                              y + yr, S[s].len - 2*inset, 1, col);
+            }
+        } else {
+            for (int r = 0; r < S[s].len; r++) {    /* vertical hexagon */
+                int e = r < S[s].len - 1 - r ? r : S[s].len - 1 - r;
+                int wid = 2*e + 1; if (wid > t - 1) wid = t - 1;
+                int yr = S[s].y0 + r;
+                odroid_overlay_draw_fill_rect(x + S[s].x0 + (t - wid)/2 + seg_shear(yr, h),
+                                              y + yr, wid, 1, col);
+            }
+        }
+    }
 }
 
 /* Geometry of the one big "HH:MM" block (7-seg, centred). */
@@ -70,7 +101,7 @@ static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t co
 #define SEG_T    10
 #define SEG_GAP  10
 #define SEG_Y    58
-#define BIG_TIME_W (4*SEG_W + 3*SEG_GAP + (SEG_T + 2*SEG_GAP))
+#define BIG_TIME_W (4*SEG_W + 3*SEG_GAP + (SEG_T + 2*SEG_GAP) + SEG_SLANT)
 
 /* Draw "HH:MM" centred; when colon=false the colon drops to the ghost shade.
  * Every segment is first drawn in a faint "ghost" colour, the lit ones on
@@ -305,15 +336,11 @@ static void draw_topbar(clock_mode_t mode)
 }
 
 /* Bottom hint: a quiet theme-tinted panel, identical in every mode. */
+/* Bottom hint: one quiet dim line, no panel — identical in every mode. */
 static void draw_hintbar(const char *hint)
 {
     const clock_theme_t *t = TH();
-    uint16_t panel = mix565(t->scr, t->ink, 2);
-    uint16_t txt   = mix565(t->scr, t->ink, 10);
-    int w = (int)strlen(hint) * odroid_overlay_get_font_width();
-    int x = (GW_LCD_WIDTH - w) / 2, y = GW_LCD_HEIGHT - 20;
-    odroid_overlay_draw_fill_rect(x - 10, y - 4, w + 20, 16, panel);
-    odroid_overlay_draw_text(x, y, GW_LCD_WIDTH - x, hint, txt, panel);
+    draw_centered_i18n(GW_LCD_HEIGHT - 18, hint, mix565(t->scr, t->ink, 7));
 }
 
 /* Hints fade out after a few idle seconds (any key brings them back) so the

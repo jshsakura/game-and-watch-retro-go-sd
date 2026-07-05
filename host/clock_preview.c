@@ -1,10 +1,10 @@
 // Host preview harness for the Clock app: renders the REAL rg_clock.c drawing
 // code (7-seg ghost digits, top bar, hint bar, alarm-editor popup) into a
 // framebuffer and dumps raw RGB565 frames for render_clock.py to PNG-ify.
-// Text uses the same 12px bitmap atlas as the media preview (gen_font.py).
+// Text/logo come from the REAL device assets (sd_content/fonts + rg_logos.c).
 //
 // Build+run (from repo root):
-//   python3 host/gen_font.py
+//   python3 host/gen_logo.py
 //   gcc -O2 -std=gnu11 -Ihost -Itests/clock_stubs host/clock_preview.c -o /tmp/clock_preview
 //   /tmp/clock_preview && python3 host/render_clock.py
 #include <stdio.h>
@@ -24,7 +24,11 @@ static const char *test_path(const char *p)
 #include "../Core/Src/retro-go/rg_clock.c"
 #undef fopen
 
-#include "font_data.h"
+/* Text is rendered from the REAL device font bins (sd_content/fonts/*.bin)
+ * with the same lookup + LSB-first blit as rg_i18n.c get_font_data /
+ * i18n_draw_text_line — so glyphs match the device pixel for pixel.
+ * (Default font index 0 = cp1252_serif, same as a fresh device.) */
+#include "logo_gnw.h"
 
 /* ---- framebuffer / lcd ------------------------------------------------- */
 uint16_t *lcd_get_active_buffer(void) { return fb; }
@@ -55,32 +59,57 @@ static int utf8_next(const char **p)
     return cp;
 }
 
-static const glyph_t *find_glyph(int cp)
+/* mirror of rg_i18n.c get_font_file/get_font_data, reading the same bins */
+static int real_glyph(int cp, uint8_t *rows /*12 rows x up to 4B*/, int *cw)
 {
-    for (int i = 0; i < GLYPH_N; i++) if ((int)GLYPHS[i].cp == cp) return &GLYPHS[i];
-    return NULL;
+    const char *file = "sd_content/fonts/cp1252_serif.bin";
+    long off = cp; int fixed = 0, varw_n = 256;
+    if (cp >= 0xAC00 && cp <= 0xD7A3) { file = "sd_content/fonts/unicode_hangul.bin"; off = cp - 0xAC00; fixed = 1; }
+    else if (cp >= 0x4E00 && cp <= 0x9FFF) { file = "sd_content/fonts/unicode_cjk.bin"; off = cp - 0x4E00; fixed = 1; }
+    else if (cp >= 0x100) return 0;
+    FILE *f = fopen(file, "rb");
+    if (!f) { fprintf(stderr, "missing %s\n", file); return 0; }
+    int width; long data_off;
+    if (fixed) {
+        width = 12;
+        data_off = off * ((width + 7) / 8) * 12;
+    } else {
+        uint8_t w8; fseek(f, off, SEEK_SET); fread(&w8, 1, 1, f); width = w8;
+        uint16_t o16; fseek(f, varw_n + off * 2, SEEK_SET); fread(&o16, 1, 2, f);
+        data_off = (long)o16 + varw_n * 3;
+    }
+    int line_bytes = (width + 7) / 8;
+    memset(rows, 0, 12 * 4);
+    fseek(f, data_off, SEEK_SET);
+    for (int y = 0; y < 12; y++) fread(&rows[y * 4], 1, line_bytes, f);
+    fclose(f);
+    *cw = width;
+    return 1;
 }
 
 int i18n_draw_text_line(int x, int y, int width, const char *t,
                         uint16_t fg, uint16_t bg, int transparent)
 {
-    (void)width;
     if (!transparent)
         for (int j = 0; j < 12; j++)
             for (int i = 0; i < width; i++)
                 if (x + i < W && y + j < H) fb[(y + j) * W + x + i] = bg;
     if (!t) return 12;
-    const char *p = t; int cp, cx = x;
+    const char *p = t; int cp, x_offset = 0;
+    uint8_t rows[12 * 4];
     while ((cp = utf8_next(&p)) > 0) {
-        const glyph_t *g = find_glyph(cp);
-        if (!g) { cx += 8; continue; }
-        for (int j = 0; j < 12; j++)
-            for (int i = 0; i < g->w; i++)
-                if ((g->rows[j] >> i) & 1) {
-                    int px = cx + i, py = y + j;
+        int cw;
+        if (!real_glyph(cp, rows, &cw)) continue;
+        if (x_offset + cw > width) break;
+        for (int j = 0; j < 12; j++) {
+            uint32_t bits = rows[j*4] | (rows[j*4+1] << 8) | (rows[j*4+2] << 16) | ((uint32_t)rows[j*4+3] << 24);
+            for (int i = 0; i < cw; i++)
+                if (bits & (1u << i)) {
+                    int px = x + x_offset + i, py = y + j;
                     if (px >= 0 && px < W && py >= 0 && py < H) fb[py * W + px] = fg;
                 }
-        cx += g->w + 1;
+        }
+        x_offset += cw;
     }
     return 12;
 }
@@ -105,13 +134,20 @@ void audio_clear_buffers(void){} void audio_set_buffer_length(uint16_t l){(void)
 void audio_start_playing(uint16_t l){(void)l;} void audio_start_playing_full_length(uint16_t l){(void)l;}
 void audio_stop_playing(void){}
 
-/* G&W logo stand-in: outlined box with G&W lettering (same footprint) */
+/* the real 35x30 G&W logo bitmap, drawn exactly like odroid_overlay_draw_logo */
 void odroid_overlay_draw_logo(int x, int y, int logo, uint16_t color)
 {
     (void)logo;
-    for (int i = 0; i < 42; i++) { fb[(y)*W + x+i] = color; fb[(y+27)*W + x+i] = color; }
-    for (int j = 0; j < 28; j++) { fb[(y+j)*W + x] = color; fb[(y+j)*W + x+41] = color; }
-    i18n_draw_text_line(x + 6, y + 8, 40, "G&W", color, 0, 1);
+    int wbytes = (LOGO_W + 7) / 8;
+    for (int j = 0; j < LOGO_H; j++)
+        for (int i = 0; i < wbytes; i++) {
+            unsigned char g = LOGO_BITS[j * wbytes + i];
+            for (int b = 0; b < 8; b++)
+                if ((g >> (7 - b)) & 1) {
+                    int px = x + i * 8 + b, py = y + j;
+                    if (px >= 0 && px < W && py >= 0 && py < H) fb[py * W + px] = color;
+                }
+        }
 }
 
 void odroid_overlay_draw_battery(int pct, int x, int y)
@@ -150,12 +186,12 @@ static const lang_t KO = {
     .s_Clock_Pomodoro="뽀모도로", .s_Clock_Timer="타이머", .s_Clock_Stopwatch="스톱워치",
     .s_Clock_Work="집중", .s_Clock_Break="휴식", .s_Clock_Cycle="라운드",
     .s_Clock_Ringing="* 알람 *",
-    .s_Clock_Hint_Clock="L/R 모드   PAUSE 설정/나가기",
-    .s_Clock_Hint_Run="A 일시정지   B 리셋",
-    .s_Clock_Hint_Stop="A 시작   B 리셋",
-    .s_Clock_Hint_TimerStop="A 시작   B 리셋   UP/DN 분",
-    .s_Clock_Hint_Editor="A 편집/추가   TIME 켬/끔   GAME 삭제   B 완료",
-    .s_Clock_Hint_Edit="L/R 자리   UP/DN 조절   A 확인   B 취소",
+    .s_Clock_Hint_Clock="PAUSE 설정",
+    .s_Clock_Hint_Run="A 시작/정지  B 리셋",
+    .s_Clock_Hint_Stop="A 시작/정지  B 리셋",
+    .s_Clock_Hint_TimerStop="A 시작/정지  B 리셋  UP/DN 분",
+    .s_Clock_Hint_Editor="A 편집/추가  TIME 켬/끔  GAME 삭제  B 완료",
+    .s_Clock_Hint_Edit="L/R 자리  UP/DN 조절  A 확인  B 취소",
     .s_Clock_Add_Alarm="알람 추가", .s_Clock_Done="완료",
     .s_Clock_On="켬", .s_Clock_Off="끔",
     .s_Clock_Format="시간 형식", .s_Clock_DND="방해 금지",
