@@ -327,26 +327,14 @@ static const char *mode_title(clock_mode_t mode)
 /* One SHARED top bar for every mode — logo, "< MODE >" (i18n, transparent, no
  * black box), mode pager dots, battery (+DND moon) — so the four screens read
  * as one app. The date lives BELOW it (render_clock), not on top of it. */
-/* Small G&W mark: the full 35x30 logo overpowered the bar and downsampling
- * mangles its lettering, so draw a crisp bordered "G&W" chip instead. */
-static void draw_logo_small(int x, int y, uint16_t col)
-{
-    const int w = 32, h = 14;
-    odroid_overlay_draw_fill_rect(x + 1, y,         w - 2, 1, col);
-    odroid_overlay_draw_fill_rect(x + 1, y + h - 1, w - 2, 1, col);
-    odroid_overlay_draw_fill_rect(x,         y + 1, 1, h - 2, col);
-    odroid_overlay_draw_fill_rect(x + w - 1, y + 1, 1, h - 2, col);
-    odroid_overlay_draw_text(x + 4, y + 3, 3 * 8, "G&W", col, TH()->scr);
-}
-
-/* Everything in the bar is vertically centred on one row (y=23): small
- * logo 17px -> y=15, battery 10px -> y=18, moon 14px -> y=16, title 12px ->
- * y=12 with the pager dots under it. No bell up here — the next-alarm line
- * already carries it. */
+/* Everything in the bar is vertically centred on the REAL G&W logo (35x30
+ * at y=8, centre row 23): battery 10px -> y=18, moon 14px -> y=16, title
+ * 12px -> y=12 with the pager dots under it. No bell up here — the
+ * next-alarm line already carries it. */
 static void draw_topbar(clock_mode_t mode)
 {
     const clock_theme_t *t = TH();
-    draw_logo_small(10, 16, t->ink);
+    odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
     odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 18);
     if (s_dnd) draw_moon(GW_LCD_WIDTH - 48, 16, t->ink, t->scr);
 

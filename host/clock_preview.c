@@ -164,7 +164,20 @@ retro_logo_image *rg_get_logo(int16_t idx)
 }
 
 void odroid_overlay_draw_logo(int x, int y, int logo, uint16_t color)
-{ (void)x; (void)y; (void)logo; (void)color; }
+{
+    (void)logo;
+    retro_logo_image *lg = rg_get_logo(0);
+    int wbytes = (lg->width + 7) / 8;
+    for (int j = 0; j < lg->height; j++)
+        for (int i = 0; i < wbytes; i++) {
+            unsigned char g = (unsigned char)lg->logo[j * wbytes + i];
+            for (int b = 0; b < 8; b++)
+                if ((g >> (7 - b)) & 1) {
+                    int px = x + i * 8 + b, py = y + j;
+                    if (px >= 0 && px < W && py >= 0 && py < H) fb[py * W + px] = color;
+                }
+        }
+}
 
 void odroid_overlay_draw_battery(int pct, int x, int y)
 {
