@@ -291,6 +291,9 @@ typedef struct
     const char *s_Add_favorite;    // A-menu: add game to favorites
     const char *s_Del_favorite;    // A-menu: remove game from favorites
     const char *s_Reset_favorites; // favorites-tab A-menu: delete all (also confirm text)
+    const char *s_Clock;           // TIME menu: open the full-screen clock app
+    const char *s_AM;              // clock 12-hour meridiem (before noon)
+    const char *s_PM;              // clock 12-hour meridiem (after noon)
     //=====================================================================
 
     const int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, const char *weekday, uint16_t hour, uint16_t minutes, uint16_t seconds);
