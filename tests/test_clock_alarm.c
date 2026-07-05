@@ -38,6 +38,7 @@ int odroid_overlay_dialog(const char*h,odroid_dialog_choice_t*o,int s,void(*r)(v
 void odroid_overlay_draw_fill_rect(int x,int y,int w,int h,uint16_t c){(void)x;(void)y;(void)w;(void)h;(void)c;}
 void odroid_overlay_draw_text(int x,int y,int w,const char*t,uint16_t c,uint16_t b){(void)x;(void)y;(void)w;(void)t;(void)c;(void)b;}
 void odroid_overlay_draw_logo(int x,int y,int l,uint16_t c){(void)x;(void)y;(void)l;(void)c;}
+retro_logo_image *rg_get_logo(int16_t i){ (void)i; return NULL; }
 void odroid_overlay_draw_battery(int p,int x,int y){(void)p;(void)x;(void)y;}
 int odroid_overlay_get_font_width(void){return 8;}
 void odroid_input_read_gamepad(odroid_gamepad_state_t *s){ memset(s,0,sizeof *s); }

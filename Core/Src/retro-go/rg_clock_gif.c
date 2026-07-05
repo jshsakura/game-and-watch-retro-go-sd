@@ -7,10 +7,15 @@
  * is a per-frame LZW decode, which is exactly why this animation level is
  * labelled "high" battery.
  *
- * All allocation is transient — the GIF decoder state and the one RGB frame
- * buffer live in the launcher heap only while the clock GIF is showing (no
- * emulator is running then) and are freed on exit, so an emulator's RAM is
- * never reduced. A failed open/malloc just leaves the background solid. */
+ * MEMORY: a 320x240 GIF needs ~600 KB (gifdec canvas+frame ~450 KB, LZW
+ * table 25 KB, one RGB888 render frame 230 KB) — far beyond the ~80 KB
+ * launcher heap, whose malloc ASSERTS on OOM instead of returning NULL (the
+ * 0131 boot crash). So everything comes from the big emu-RAM bump pool
+ * (ram_malloc, the same pool the launcher uses for covers): we snapshot the
+ * bump pointer with ram_mark() at load and roll it back with ram_release()
+ * at free, so cover/list allocations keep working afterwards. No emulator is
+ * running while the clock shows, and every emulator launch resets the pool
+ * anyway. ram_malloc returns NULL on exhaustion -> background stays solid. */
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -18,6 +23,7 @@
 
 #include "gifdec.h"
 #include "gw_lcd.h"
+#include "gw_malloc.h"
 #include "rg_clock_gif.h"
 
 #define GIF_PATH "/clock/bg.gif"
@@ -27,13 +33,19 @@ static uint8_t *s_rgb;        /* one decoded frame, w*h*3 (RGB888) */
 static int      s_gw, s_gh;
 static uint32_t s_next_tick;
 static bool     s_have_frame;
+static size_t   s_ram_mark;   /* emu-RAM bump-pointer snapshot (see header) */
+
+/* gifdec allocator = the emu-RAM arena; free is a no-op, the whole arena is
+ * rolled back at clock_gif_free() via ram_release(). */
+static void gif_arena_free(void *p) { (void)p; }
 
 bool clock_gif_ready(void) { return s_gif != NULL; }
 
 void clock_gif_free(void)
 {
-    if (s_gif) { gd_close_gif(s_gif); s_gif = NULL; }
-    if (s_rgb) { free(s_rgb); s_rgb = NULL; }
+    if (s_gif) { gd_close_gif(s_gif); s_gif = NULL; }   /* frees are no-ops */
+    s_rgb = NULL;
+    if (s_ram_mark) { ram_release(s_ram_mark); s_ram_mark = 0; }
     s_gw = s_gh = 0; s_next_tick = 0; s_have_frame = false;
 }
 
@@ -41,13 +53,17 @@ bool clock_gif_load(void)
 {
     clock_gif_free();
 
+    s_ram_mark = ram_mark();
+    gd_set_allocator(ram_malloc, ram_calloc, gif_arena_free);
+
     gd_GIF *g = gd_open_gif(GIF_PATH);
-    if (!g) return false;
+    if (!g) { clock_gif_free(); return false; }
     if (g->width <= 0 || g->height <= 0 || g->width > 480 || g->height > 320) {
-        gd_close_gif(g); return false;
+        gd_close_gif(g);   /* closes the fd; arena frees are no-ops */
+        clock_gif_free(); return false;
     }
-    uint8_t *rgb = (uint8_t *)malloc((size_t)g->width * g->height * 3);
-    if (!rgb) { gd_close_gif(g); return false; }
+    uint8_t *rgb = (uint8_t *)ram_malloc((size_t)g->width * g->height * 3);
+    if (!rgb) { gd_close_gif(g); clock_gif_free(); return false; }
 
     s_gif = g; s_rgb = rgb; s_gw = g->width; s_gh = g->height;
     s_next_tick = 0; s_have_frame = false;

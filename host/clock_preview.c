@@ -66,6 +66,7 @@ static int real_glyph(int cp, uint8_t *rows /*12 rows x up to 4B*/, int *cw)
     const char *file = "sd_content/fonts/cp1252_serif.bin";
     long off = cp; int fixed = 0, varw_n = 256;
     if (cp >= 0xAC00 && cp <= 0xD7A3) { file = "sd_content/fonts/unicode_hangul.bin"; off = cp - 0xAC00; fixed = 1; }
+    else if (cp >= 0x25A0 && cp <= 0x25FF) { file = "sd_content/fonts/unicode_geometric.bin"; off = cp - 0x25A0; varw_n = 96; }
     else if (cp >= 0x4E00 && cp <= 0x9FFF) { file = "sd_content/fonts/unicode_cjk.bin"; off = cp - 0x4E00; fixed = 1; }
     else if (cp >= 0x100) return 0;
     FILE *f = fopen(file, "rb");
@@ -149,21 +150,21 @@ static int stub_volume = 9;
 int odroid_audio_volume_get(void) { return stub_volume; }
 void odroid_audio_volume_set(int level) { stub_volume = level; }
 
-/* the real 35x30 G&W logo bitmap, drawn exactly like odroid_overlay_draw_logo */
-void odroid_overlay_draw_logo(int x, int y, int logo, uint16_t color)
+/* the real 35x30 G&W logo bitmap served through the firmware API */
+retro_logo_image *rg_get_logo(int16_t idx)
 {
-    (void)logo;
-    int wbytes = (LOGO_W + 7) / 8;
-    for (int j = 0; j < LOGO_H; j++)
-        for (int i = 0; i < wbytes; i++) {
-            unsigned char g = LOGO_BITS[j * wbytes + i];
-            for (int b = 0; b < 8; b++)
-                if ((g >> (7 - b)) & 1) {
-                    int px = x + i * 8 + b, py = y + j;
-                    if (px >= 0 && px < W && py >= 0 && py < H) fb[py * W + px] = color;
-                }
-        }
+    (void)idx;
+    static uint8_t buf[sizeof(retro_logo_image) + sizeof(LOGO_BITS)];
+    retro_logo_image *lg = (retro_logo_image *)buf;
+    if (lg->width == 0) {
+        lg->width = LOGO_W; lg->height = LOGO_H;
+        memcpy(lg->logo, LOGO_BITS, sizeof(LOGO_BITS));
+    }
+    return lg;
 }
+
+void odroid_overlay_draw_logo(int x, int y, int logo, uint16_t color)
+{ (void)x; (void)y; (void)logo; (void)color; }
 
 void odroid_overlay_draw_battery(int pct, int x, int y)
 {
@@ -213,12 +214,12 @@ static const lang_t KO = {
     .s_Clock_Pomodoro="뽀모도로", .s_Clock_Timer="타이머", .s_Clock_Stopwatch="스톱워치",
     .s_Clock_Work="집중", .s_Clock_Break="휴식", .s_Clock_Cycle="라운드",
     .s_Clock_Ringing="* 알람 *",
-    .s_Clock_Hint_Clock="PAUSE 설정",
+    .s_Clock_Hint_Clock="◀▶ 모드  PAUSE 설정",
     .s_Clock_Hint_Run="A 시작/정지  B 리셋",
     .s_Clock_Hint_Stop="A 시작/정지  B 리셋",
-    .s_Clock_Hint_TimerStop="A 시작/정지  B 리셋  UP/DN 분",
+    .s_Clock_Hint_TimerStop="A 시작/정지  B 리셋  ▲▼ 분",
     .s_Clock_Hint_Editor="A 편집  TIME 켬/끔  GAME 삭제  B 완료",
-    .s_Clock_Hint_Edit="L/R 자리  UP/DN 조절  A 확인  B 취소",
+    .s_Clock_Hint_Edit="◀▶ 자리  ▲▼ 조절  A 확인  B 취소",
     .s_Clock_Add_Alarm="알람 추가", .s_Clock_Done="완료",
     .s_Clock_On="켬", .s_Clock_Off="끔",
     .s_Clock_Format="시간 형식", .s_Clock_DND="방해 금지",

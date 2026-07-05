@@ -52,6 +52,18 @@ void *ram_malloc(size_t size) {
   }
 }
 
+size_t ram_mark(void) {
+  assert(ram_start != 0);
+  if (current_ram_pointer == 0)
+    current_ram_pointer = (ram_start + 3) & ~0x03;
+  return (size_t)current_ram_pointer;
+}
+
+void ram_release(size_t mark) {
+  if (mark != 0)
+    current_ram_pointer = (uint32_t)mark;
+}
+
 void *ram_calloc(size_t count,size_t size) {
   void *pointer = ram_malloc(count*size);
   if (pointer)

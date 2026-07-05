@@ -20,6 +20,21 @@
 #define MIN(A, B) ((A) < (B) ? (A) : (B))
 #define MAX(A, B) ((A) > (B) ? (A) : (B))
 
+/* pluggable allocator (defaults to stdlib) — see gd_set_allocator() */
+static void *(*gd_malloc_fn)(size_t) = malloc;
+static void *(*gd_calloc_fn)(size_t, size_t) = calloc;
+static void (*gd_free_fn)(void *) = free;
+
+void
+gd_set_allocator(void *(*malloc_fn)(size_t),
+                 void *(*calloc_fn)(size_t, size_t),
+                 void (*free_fn)(void *))
+{
+    gd_malloc_fn = malloc_fn ? malloc_fn : malloc;
+    gd_calloc_fn = calloc_fn ? calloc_fn : calloc;
+    gd_free_fn = free_fn ? free_fn : free;
+}
+
 typedef struct Entry {
     uint16_t length;
     uint16_t prefix;
@@ -90,7 +105,7 @@ gd_open_gif(const char *fname)
     /* Aspect Ratio */
     read(fd, &aspect, 1);
     /* Create gd_GIF Structure. */
-    gif = calloc(1, sizeof(*gif));
+    gif = gd_calloc_fn(1, sizeof(*gif));
     if (!gif) goto fail;
     gif->fd = fd;
     gif->width  = width;
@@ -101,9 +116,9 @@ gd_open_gif(const char *fname)
     read(fd, gif->gct.colors, 3 * gif->gct.size);
     gif->palette = &gif->gct;
     gif->bgindex = bgidx;
-    gif->frame = calloc(4, width * height);
+    gif->frame = gd_calloc_fn(4, width * height);
     if (!gif->frame) {
-        free(gif);
+        gd_free_fn(gif);
         goto fail;
     }
     gif->canvas = &gif->frame[width * height];
@@ -242,13 +257,17 @@ read_ext(gd_GIF *gif)
 }
 
 static Table *
-new_table(int key_size)
+new_table(gd_GIF *gif, int key_size)
 {
     int key;
-    int init_bulk = MAX(1 << (key_size + 1), 0x100);
-    Table *table = malloc(sizeof(*table) + sizeof(Entry) * init_bulk);
+    /* Fixed max-size table (0x1000 = the 12-bit LZW ceiling), allocated once
+     * per GIF and reused for every frame: no per-frame malloc/realloc/free,
+     * which also makes arena allocators (no real free) leak-free. */
+    if (!gif->lzw_table)
+        gif->lzw_table = gd_malloc_fn(sizeof(Table) + sizeof(Entry) * 0x1000);
+    Table *table = (Table *) gif->lzw_table;
     if (table) {
-        table->bulk = init_bulk;
+        table->bulk = 0x1000;
         table->nentries = (1 << key_size) + 2;
         table->entries = (Entry *) &table[1];
         for (key = 0; key < (1 << key_size); key++)
@@ -265,13 +284,8 @@ static int
 add_entry(Table **tablep, uint16_t length, uint16_t prefix, uint8_t suffix)
 {
     Table *table = *tablep;
-    if (table->nentries == table->bulk) {
-        table->bulk *= 2;
-        table = realloc(table, sizeof(*table) + sizeof(Entry) * table->bulk);
-        if (!table) return -1;
-        table->entries = (Entry *) &table[1];
-        *tablep = table;
-    }
+    if (table->nentries == table->bulk)
+        return -1;   /* can't happen: bulk == 0x1000 == the caller's add cap */
     table->entries[table->nentries] = (Entry) {length, prefix, suffix};
     table->nentries++;
     if ((table->nentries & (table->nentries - 1)) == 0)
@@ -356,7 +370,8 @@ read_image_data(gd_GIF *gif, int interlace)
     lseek(gif->fd, start, SEEK_SET);
     clear = 1 << key_size;
     stop = clear + 1;
-    table = new_table(key_size);
+    table = new_table(gif, key_size);
+    if (!table) return -1;   /* arena/heap exhausted -> fail the frame cleanly */
     key_size++;
     init_key_size = key_size;
     sub_len = shift = 0;
@@ -371,10 +386,8 @@ read_image_data(gd_GIF *gif, int interlace)
             table_is_full = 0;
         } else if (!table_is_full) {
             ret = add_entry(&table, str_len + 1, key, entry.suffix);
-            if (ret == -1) {
-                free(table);
-                return -1;
-            }
+            if (ret == -1)
+                return -1;   /* table is owned by the gif, freed at close */
             if (table->nentries == 0x1000) {
                 ret = 0;
                 table_is_full = 1;
@@ -402,7 +415,7 @@ read_image_data(gd_GIF *gif, int interlace)
         if (key < table->nentries - 1 && !table_is_full)
             table->entries[table->nentries - 1].suffix = entry.suffix;
     }
-    free(table);
+    /* table persists in gif->lzw_table for the next frame */
     if (key == stop)
         read(gif->fd, &sub_len, 1); /* Must be zero! */
     lseek(gif->fd, end, SEEK_SET);
@@ -529,6 +542,7 @@ void
 gd_close_gif(gd_GIF *gif)
 {
     close(gif->fd);
-    free(gif->frame);    
-    free(gif);
+    gd_free_fn(gif->lzw_table);
+    gd_free_fn(gif->frame);
+    gd_free_fn(gif);
 }

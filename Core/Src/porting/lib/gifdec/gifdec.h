@@ -44,7 +44,14 @@ typedef struct gd_GIF {
     uint16_t fx, fy, fw, fh;
     uint8_t bgindex;
     uint8_t *canvas, *frame;
+    void *lzw_table;   /* one max-size LZW table, allocated at open, reused per frame */
 } gd_GIF;
+
+/* Optional allocator override (defaults to stdlib). free may be a no-op when
+ * the backing store is an arena that is released wholesale. */
+void gd_set_allocator(void *(*malloc_fn)(size_t),
+                      void *(*calloc_fn)(size_t, size_t),
+                      void (*free_fn)(void *));
 
 gd_GIF *gd_open_gif(const char *fname);
 int gd_get_frame(gd_GIF *gif);

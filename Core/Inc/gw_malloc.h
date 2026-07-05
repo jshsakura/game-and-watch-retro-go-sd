@@ -20,6 +20,11 @@ void *itc_malloc(size_t size);
 void *itc_calloc(size_t count,size_t size);
 
 size_t ram_get_free_size();
+/* mark/release: snapshot the bump pointer and roll it back — lets a launcher
+ * app (e.g. the Clock GIF background) borrow the big emu-RAM pool temporarily
+ * without starving later cover/list allocations. Only valid LIFO. */
+size_t ram_mark(void);
+void ram_release(size_t mark);
 void *ram_malloc(size_t size);
 void *ram_calloc(size_t count,size_t size);
 
