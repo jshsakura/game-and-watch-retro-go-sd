@@ -18,9 +18,11 @@
 #include "rom_manager.h"
 #include "common.h"
 #include "sound_pce.h"
+#if SD_CARD
 #include "pce_cd.h"
 #include "pce_scsi.h"
 #include "pce_adpcm.h"
+#endif
 #include "appid.h"
 #ifndef GNW_DISABLE_COMPRESSION
 #include "lzma.h"
@@ -33,6 +35,7 @@
 //#define GW_LCD_WIDTH  (320)
 //#define GW_LCD_HEIGHT (240)
 #define FPS_NTSC 60
+#if SD_CARD
 /* PC Engine CD: the boot ROM is the (user-supplied, copyrighted) System Card.
  * Super System Card 3.0 covers base + Super CD-ROM2 titles. The dump is a raw
  * HuCard image, so .bin and .pce are interchangeable (a 512-byte header, if
@@ -45,6 +48,7 @@ static const char *const PCE_SYSCARD_BIOS_PATHS[] = {
 
 /* Mounted PCE-CD disc table-of-contents (kept for the SCSI target's lifetime). */
 static pce_cd_toc_t s_pcecd_toc;
+#endif /* SD_CARD */
 
 #define FB_INTERNAL_OFFSET (((XBUF_HEIGHT - current_height) / 2 + 16) * XBUF_WIDTH + (XBUF_WIDTH - current_width) / 2)
 #define AUDIO_BUFFER_LENGTH_PCE  (PCE_SAMPLE_RATE / FPS_NTSC)
@@ -225,6 +229,7 @@ static bool SaveState(const char *savePathName) {
             pos += fwrite(pad, 1, chunk, file);
         }
     }
+#if SD_CARD
     /* PCE-CD: the 256KB CD RAM (banks 0x68-0x87) holds the game's loaded code +
      * data and is far bigger than save_buffer, so stream it to the file right
      * after the core state. (HuCard .pce saves are unchanged.) */
@@ -252,14 +257,18 @@ static bool SaveState(const char *savePathName) {
         fwrite(&scsx, sizeof(scsx), 1, file);
         fwrite(&sst, sizeof(sst), 1, file);
     }
+#endif /* SD_CARD */
     fclose(file);
+#if SD_CARD
     /* Persist BRAM to its OWN file (system-wide cabinet, not part of the per-game
-     * snapshot — deliberately absent from SaveStateVars). */
+     * snapshot — deliberately absent from SaveStateVars). CD-only: BRAM is the
+     * CD-ROM2 System Card's battery-backed save cabinet. */
     if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
         odroid_sdcard_mkdir(ODROID_BASE_PATH_SAVES);   /* fresh SD: /data may not exist yet */
         FILE *bf = fopen(ODROID_BASE_PATH_SAVES "/pcecd.bram", "wb");
         if (bf) { fwrite(PCE.bram, 1, 0x800, bf); fclose(bf); }
     }
+#endif /* SD_CARD */
     if (!written) {
         return false;
     }
@@ -267,12 +276,14 @@ static bool SaveState(const char *savePathName) {
     return true;
 }
 
+#if SD_CARD
 /* CD autostart = RUN injection for the "PUSH RUN BUTTON" boot screen. It must
  * NOT fire into a restored game: to a running game RUN is its own PAUSE, so a
  * power-on resume "froze" exactly 1s in (frame 60 = injection start) — the game
  * sat in its pause loop (SUBQ+DA issued, music held) looking dead. Set on any
  * successful state load; a failed/CRC-mismatched load keeps the boot injection. */
 static bool s_cd_state_loaded;
+#endif /* SD_CARD */
 
 static bool LoadState(const char *savePathName) {
     /* Streams the state straight from the file into the live structures —
@@ -300,6 +311,7 @@ static bool LoadState(const char *savePathName) {
         printf("Loading %s (%d)\n", SaveStateVars[i].key, (int)SaveStateVars[i].len);
         fread(SaveStateVars[i].ptr, 1, SaveStateVars[i].len, file);
     }
+#if SD_CARD
     /* PCE-CD: restore the 256KB CD RAM streamed after the fixed-size core
      * block, then reset the SCSI to idle (the disc stays mounted from launch;
      * saves are taken with no transfer in flight). */
@@ -332,6 +344,7 @@ static bool LoadState(const char *savePathName) {
             pce_scsi_state_set(&sst);
         }
     }
+#endif /* SD_CARD */
     fclose(file);
 
     for(int i = 0; i < 8; i++) {
@@ -339,7 +352,9 @@ static bool LoadState(const char *savePathName) {
     }
     gfx_reset(true);
     osd_gfx_set_mode(IO_VDC_SCREEN_WIDTH, IO_VDC_SCREEN_HEIGHT);
+#if SD_CARD
     s_cd_state_loaded = true;   /* suppress the boot RUN injection (see decl) */
+#endif /* SD_CARD */
     return true;
 }
 
@@ -472,6 +487,7 @@ pce_osd_getromdata(unsigned char **data)
 #endif
 #endif
     ram_start = (uint32_t)&_OVERLAY_PCE_BSS_END;
+#if SD_CARD
     if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
         /* PCE-CD: the "ROM" is the System Card BIOS (mapped at bank 0); the disc
          * image itself is streamed from SD separately. XIP it from flash like a
@@ -491,6 +507,7 @@ pce_osd_getromdata(unsigned char **data)
             pce_scsi_set_disc(NULL, false);
         return (*data != NULL && bios_size > 0) ? bios_size : 0;
     }
+#endif /* SD_CARD */
     uint32_t size = ACTIVE_FILE->size;
     if (size > ram_get_free_size()) {
         *data = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
@@ -611,6 +628,7 @@ void LoadCartPCE() {
     else
         pce_rom_full_patch();
 
+#if SD_CARD
     /* PCE-CD: back the CD-ROM2 program-RAM banks with real RAM. The System Card
      * is XIP'd from flash (pce_osd_getromdata), so the entire ROM-unpack buffer
      * is free to host the CD RAM. Banks 0x68-0x87 are contiguous: 0x80-0x87 is
@@ -685,6 +703,7 @@ void LoadCartPCE() {
         if (bf) { fread(PCE.bram, 1, 0x800, bf); fclose(bf); }
         pce_bram_format_if_needed();
     }
+#endif /* SD_CARD */
 }
 
 void ResetPCE(bool hard) {
@@ -844,8 +863,12 @@ static void pce_sound_sync_with_prefetch(void)
         last_dma_counter = dma_counter;
     for (uint8_t p = 0; p < common_emu_state.pause_frames + 1; p++) {
         while (dma_counter == last_dma_counter) {
+#if SD_CARD
             if (!pce_scsi_cdda_prefetch())
                 cpumon_sleep();     /* FIFO full / no BGM: plain WFI as before */
+#else
+            cpumon_sleep();         /* no CD-DA to prefetch: plain WFI */
+#endif /* SD_CARD */
         }
         last_dma_counter = dma_counter;
     }
@@ -862,6 +885,7 @@ void pce_pcm_submit() {
     int16_t* sound_buffer = audio_get_active_buffer();
     uint16_t sound_buffer_length = audio_get_buffer_length();
 
+#if SD_CARD
     /* CD-DA (Red Book audio / BGM) + ADPCM (voice): pull this frame's samples and mix
      * with the PSG. CD-DA is now ON for device too. The old thrash that forced it off
      * was fopen/fclose-per-sector on a SINGLE shared .bin handle (a FatFs dir walk 60x/s
@@ -871,19 +895,21 @@ void pce_pcm_submit() {
      * The CD-DA decode is verified on the host harness (Dynastic Hero opening = 17s of real
      * stereo BGM, cdda.pcm 97% non-zero). ADPCM samples are already resident in ADPCM RAM
      * (adpcm_dma_drain), so pce_adpcm_fill is pure in-RAM decode. Both channels on. */
-    static const int s_pcecd_cd_audio = 1;
     static int16_t cdda_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
     static int16_t adpcm_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
-    int cdda_n  = s_pcecd_cd_audio ? pce_scsi_cdda_fill(cdda_buf, AUDIO_BUFFER_LENGTH_PCE) : 0;
+    int cdda_n  = pce_scsi_cdda_fill(cdda_buf, AUDIO_BUFFER_LENGTH_PCE);
     int adpcm_n = pce_adpcm_fill(adpcm_buf, AUDIO_BUFFER_LENGTH_PCE);   /* in-RAM, cheap: always on */
+#endif /* SD_CARD */
 
     for (int i = 0; i < sound_buffer_length; i++) {
         /* mix left & right */
         int32_t sample = (audioBuffer_pce[i*2] + audioBuffer_pce[i*2+1]);
+#if SD_CARD
         if (cdda_n && i < cdda_n)
             sample += (cdda_buf[i*2] + cdda_buf[i*2+1]) >> 1;   /* CD-DA is full-scale PCM */
         if (adpcm_n && i < adpcm_n)
             sample += adpcm_buf[i*2];                            /* ADPCM is mono (dup L/R) */
+#endif /* SD_CARD */
         sample = (sample * factor) >> 8;
         if (sample > 32767) sample = 32767; else if (sample < -32768) sample = -32768;
         sound_buffer[i] = sample;
@@ -898,6 +924,7 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         common_emu_state.pause_after_frames = 0;
     }
 
+#if SD_CARD
     /* PCE-CD only: auto-OC level 2 (353MHz, the max the firmware/menu offers —
      * same level VB uses) for the extra CD load: SCSI engine + CD-DA
      * fseek/fread/4-tap + ADPCM on top of the core. HuCard runs full speed at
@@ -906,6 +933,7 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
      * actual clock is proven in /pcecd_diag.txt at disc mount ("clock=... MHz"). */
     if (ACTIVE_FILE && ACTIVE_FILE->ext && strcmp(ACTIVE_FILE->ext, "cue") == 0)
         common_emu_auto_oc(2);
+#endif /* SD_CARD */
 
     odroid_system_init(APPID_PCE, PCE_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
@@ -972,6 +1000,7 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         common_emu_input_loop(&joystick, options, &blit);
         common_emu_input_loop_handle_turbo(&joystick);
 
+#if SD_CARD
         /* PCE-CD: auto-press START (RUN) at the "CD-ROM SYSTEM" screen so the
          * disc boots without the user pressing it. Injected after the emu input
          * loop (so it can't trip the emulator menu) and only for a window early
@@ -985,11 +1014,14 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
                 if (s_autostart >= 60) joystick.values[ODROID_INPUT_START] = 1;
             }
         }
+#endif /* SD_CARD */
 
         pce_input_read(&joystick);
 
+#if SD_CARD
         /* Chunked SCSI->ADPCM DMA pump (<=8KB/frame) — see pce_scsi_run. */
         pce_scsi_run();
+#endif /* SD_CARD */
 
         s_skip_render = !drawFrame;   /* drop tile/sprite work on skip frames */
         for (PCE.Scanline = 0; PCE.Scanline < 263; ++PCE.Scanline) {

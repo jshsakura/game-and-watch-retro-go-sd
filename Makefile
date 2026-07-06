@@ -427,17 +427,28 @@ retro-go-stm32/smsplusgx-go/components/smsplus/sound/sms_sound.c \
 retro-go-stm32/smsplusgx-go/components/smsplus/sound/ym2413.c \
 Core/Src/porting/smsplusgx/main_smsplusgx.c
 
-PCE_C_SOURCES = 
+PCE_C_SOURCES =
 
 PCE_C_SOURCES += \
 retro-go-stm32/pce-go/components/pce-go/gfx.c \
 retro-go-stm32/pce-go/components/pce-go/h6280.c \
 retro-go-stm32/pce-go/components/pce-go/pce.c \
 Core/Src/porting/pce/sound_pce.c \
+Core/Src/porting/pce/main_pce.c
+
+# PC Engine CD (Super CD-ROM2): SCSI target + ADPCM + CUE/BIN disc layer.
+# Upstream guidance: CD support enlarges the PCE core enough to break large
+# flash-only HuCard games on 64/256MB non-SD systems, and CD games can't fit
+# those systems anyway (no SD card to stream the disc from) -- so build it
+# only for SD_CARD=1. Default matches Makefile.common's `SD_CARD ?= 1`; set
+# here too since this block is read before Makefile.common is included.
+SD_CARD ?= 1
+ifeq ($(SD_CARD),1)
+PCE_C_SOURCES += \
 Core/Src/porting/pce/pce_cd.c \
 Core/Src/porting/pce/pce_scsi.c \
-Core/Src/porting/pce/pce_adpcm.c \
-Core/Src/porting/pce/main_pce.c
+Core/Src/porting/pce/pce_adpcm.c
+endif
 
 MSX_C_SOURCES = 
 
