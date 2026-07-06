@@ -141,7 +141,10 @@ static void test_cfg_roundtrip(void)
     CHECK(s_alarms[1].hour == 8 && s_alarms[1].min == 0 && s_alarms[1].enabled == 0, "DISABLED alarm persists (was deleted before fix)");
     CHECK(s_dnd == true, "dnd round-trip");
 
-    FILE *f = fopen(test_path("/clock.cfg"), "w");
+    /* Write to the primary cfg path the loader reads first — the earlier
+     * save() above already left a file there, so writing to the legacy
+     * /clock.cfg would be shadowed and the parser never exercised. */
+    FILE *f = fopen(test_path(CLOCK_CFG_PATH), "w");
     fprintf(f, "alarm=0730\n");        /* old format = enabled */
     fprintf(f, "alarm=0775\n");        /* minute 75: reject */
     fprintf(f, "alarm=2500\n");        /* hour 25: reject */
