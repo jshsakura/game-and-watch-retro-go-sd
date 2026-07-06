@@ -447,16 +447,16 @@ static void draw_topbar(clock_mode_t mode)
 {
     const clock_theme_t *t = TH();
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
-    odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 18);
-    if (s_dnd) draw_icon(&PIX_MOON, GW_LCD_WIDTH - 48, 17, t->ink);
+    odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 10);
+    if (s_dnd) draw_icon(&PIX_MOON, GW_LCD_WIDTH - 48, 9, t->ink);
     /* No text title — the mode reads from the icon pager alone (current one
      * lit in the accent), with <> strokes hinting the L/R switch. Steady,
      * nothing appearing/disappearing. */
     uint16_t dim = mix565(t->scr, t->ink, 5);
     int pw = MODE_COUNT*17 - 4;
-    int dx = (GW_LCD_WIDTH - pw) / 2, iy = 17;
-    draw_icon(&PIX_CHEV_L, dx - 15, 19, dim);
-    draw_icon(&PIX_CHEV_R, dx + pw + 9, 19, dim);
+    int dx = (GW_LCD_WIDTH - pw) / 2, iy = 9;   /* top-aligned with the battery */
+    draw_icon(&PIX_CHEV_L, dx - 15, 12, dim);
+    draw_icon(&PIX_CHEV_R, dx + pw + 9, 12, dim);
     for (int i = 0; i < MODE_COUNT; i++, dx += 17) {
         uint16_t c = (i == (int)mode) ? t->alarm : dim;
         switch (i) {
@@ -621,17 +621,56 @@ static void render_timer(uint32_t now)
     render_mmss(s_timer.remaining_ms, TH()->ink, s_timer.state != RUN_RUNNING ? true : colon);
 }
 
+/* Stopwatch: MM:SS.cc as ONE big six-digit display — physically big, not a
+ * small side annotation. Segments scale down so all six digits + colon +
+ * decimal point fit the width; the ghost treatment stays. */
 static void render_stopwatch(uint32_t now)
 {
     (void)now;
     const clock_theme_t *t = TH();
-    render_mmss(s_watch.elapsed_ms, t->ink, true);
-    /* centiseconds in the AM/PM slot: MM:SS big + .cc small = 6-digit read */
-    char cs[8]; snprintf(cs, sizeof cs, ".%02u", (unsigned)((s_watch.elapsed_ms / 10) % 100));
+    uint16_t col = t->ink, ghost = mix565(t->scr, t->ink, 2);
+    uint32_t ms = s_watch.elapsed_ms;
+    int d[6] = { (int)((ms/60000) % 100) / 10, (int)((ms/60000) % 100) % 10,
+                 (int)((ms/1000)  % 60)  / 10, (int)((ms/1000)  % 60)  % 10,
+                 (int)((ms/10)    % 100) / 10, (int)((ms/10)    % 100) % 10 };
     digit_face_t face = cur_face();
-    int x = (GW_LCD_WIDTH + big_time_width(face)) / 2 + 6;
-    int yb = (face == FACE_SEG7) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
-    i18n_draw_text_line(x, yb, GW_LCD_WIDTH - x, cs, t->alarm, CLOCK_BLACK, 1);
+
+    if (face == FACE_SEG7) {
+        const int w = 32, h = 68, tt = 8, g = 6, sep = tt + 2*g;
+        int total = 6*w + 3*g + 2*sep;
+        int x = (GW_LCD_WIDTH - total) / 2, y = SEG_Y + 12;
+        for (int i = 0; i < 6; i++) {
+            draw_seg_digit(8, x, y, w, h, tt, ghost);
+            draw_seg_digit(d[i], x, y, w, h, tt, col);
+            x += w + ((i == 1 || i == 3) ? 0 : g);
+            if (i == 1) {           /* colon */
+                odroid_overlay_draw_fill_rect(x+g, y+h/3, tt, tt, col);
+                odroid_overlay_draw_fill_rect(x+g, y+2*h/3, tt, tt, col);
+                x += sep;
+            } else if (i == 3) {    /* decimal point, at the baseline */
+                odroid_overlay_draw_fill_rect(x+g, y+h-tt, tt, tt, col);
+                x += sep;
+            }
+        }
+    } else {
+        bool dot = (face == FACE_DOT);
+        const int px = 7, dw = 5*px, g = px, sep = px*3;
+        int total = 6*dw + 3*g + 2*sep;
+        int x = (GW_LCD_WIDTH - total) / 2, y = PIX_Y + 10;
+        for (int i = 0; i < 6; i++) {
+            draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+            draw_pix_digit(d[i], x, y, px, col, dot);
+            x += dw + ((i == 1 || i == 3) ? 0 : g);
+            if (i == 1) {
+                odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, col);
+                odroid_overlay_draw_fill_rect(x+px, y+4*px, px, px, col);
+                x += sep;
+            } else if (i == 3) {
+                odroid_overlay_draw_fill_rect(x+px, y+6*px, px, px, col);
+                x += sep;
+            }
+        }
+    }
 }
 
 /* ---- input ------------------------------------------------------------ */
