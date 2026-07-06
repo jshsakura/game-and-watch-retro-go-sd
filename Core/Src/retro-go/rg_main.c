@@ -21,6 +21,7 @@
 #include "odroid_settings.h"
 #include "rg_welcome_prompt.h"
 #include "rg_clock.h"
+#include "rg_clock_gif.h"
 #include "bitmaps.h"
 #include "error_screens.h"
 #include "gw_malloc.h"
@@ -1062,6 +1063,14 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     // Initialize the littleFS filesystem
     fs_init();
 #endif
+
+    /* Claim the clock-background GIF decode arena NOW, while the emu-RAM bump
+     * pool is still empty. The pool never frees: once the launcher caches a
+     * screen of covers there may be <50K left, and a 320x240 GIF needs ~270K
+     * ("no RAM need 273K free 41K"). Reserving up front (only if /clock/bg.gif
+     * exists, sized from its header) makes the GIF background work no matter
+     * how long the launcher has been browsing. */
+    clock_gif_reserve();
 
     // Re-initialize system now that the filesystem is mounted
     odroid_system_init(ODROID_APPID_LAUNCHER, 32000);

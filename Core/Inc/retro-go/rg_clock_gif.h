@@ -13,6 +13,9 @@
 #define CLOCK_GIF_NO_RAM   2   /* emu-RAM pool too full (covers etc.) */
 #define CLOCK_GIF_BAD_DIMS 3   /* larger than 480x320 */
 #define CLOCK_GIF_BAD_FMT  4   /* not a GIF / decoder rejected it */
+void clock_gif_reserve(void);                    /* at boot, before covers: pre-claim
+                                                    the decode arena from the emu-RAM
+                                                    pool per /clock/bg.gif's header */
 int  clock_gif_status(void);                     /* why the last load failed */
 const char *clock_gif_diag(void);                /* human-readable failure detail */
 bool clock_gif_load(void);                       /* open + alloc; false if none/too big */

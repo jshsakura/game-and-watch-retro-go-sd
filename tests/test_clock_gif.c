@@ -88,6 +88,23 @@ int main(void)
     CHECK(!clock_gif_ready(), "not ready after failed load");
     ram_release(hog);
 
+    /* --- boot reservation vs cover-cache pressure (the field failure:
+     *     "no RAM: need 273K free 41K" after the launcher cached covers) --- */
+    pool_off = 0;                       /* fresh boot, pool empty */
+    clock_gif_reserve();                /* SD mounted, before any cover */
+    size_t reserved = pool_off;
+    printf("  boot reservation: %zu KB\n", reserved / 1024);
+    CHECK(reserved > 200 * 1024, "reserve claims the 320x240 decode arena");
+    while (ram_get_free_size() > 41 * 1024)     /* covers eat the rest of the pool */
+        if (!ram_malloc(4096)) break;
+    CHECK(clock_gif_load(), "gif loads with 41K free (reserved arena)");
+    memset(fb, 0, sizeof fb);
+    clock_gif_blit(fb, 0);
+    CHECK(fb_sum(fb) != 0, "reserved-arena frame renders");
+    clock_gif_free();
+    CHECK(clock_gif_load(), "reload reuses the arena (reset, not refreed)");
+    clock_gif_free();
+
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

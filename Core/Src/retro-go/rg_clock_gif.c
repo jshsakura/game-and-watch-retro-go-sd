@@ -12,11 +12,11 @@
  * no per-pixel conversion at blit) — far beyond the ~80 KB
  * launcher heap, whose malloc ASSERTS on OOM instead of returning NULL (the
  * 0131 boot crash). So everything comes from the big emu-RAM bump pool
- * (ram_malloc, the same pool the launcher uses for covers): we snapshot the
- * bump pointer with ram_mark() at load and roll it back with ram_release()
- * at free, so cover/list allocations keep working afterwards. No emulator is
- * running while the clock shows, and every emulator launch resets the pool
- * anyway. ram_malloc returns NULL on exhaustion -> background stays solid. */
+ * (ram_malloc, the same pool the launcher uses for covers). That pool never
+ * frees, so clock_gif_reserve() claims the decode arena AT BOOT (before any
+ * cover is cached) — see its comment. Loads without a reservation fall back
+ * to pool-top with ram_mark()/ram_release() as before. ram_malloc returns
+ * NULL on exhaustion -> background stays solid. */
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -43,12 +43,67 @@ static size_t   s_ram_mark;   /* emu-RAM bump-pointer snapshot (see header) */
 static int      s_status = CLOCK_GIF_OK;
 static char     s_diag[64] = "";
 
+/* Boot-reserved decode arena. The emu-RAM pool is a bump allocator with no
+ * free: every cover the launcher caches bumps it for good, so by the time the
+ * user opens the clock there may be almost nothing left (seen in the field:
+ * "need 273K free 41K" — even a 1x1 GIF can't load then, the fixed LZW slack
+ * alone is 48K). clock_gif_reserve() runs at boot, right after the SD mounts
+ * and BEFORE the GUI touches the pool, and claims exactly what /clock/bg.gif's
+ * header says it needs. Covers simply get that much less cache — they're
+ * reloadable; the background either works or it doesn't. No file, no cost. */
+static uint8_t *s_arena;
+static size_t   s_arena_size;
+static size_t   s_arena_off;
+
 int clock_gif_status(void) { return s_status; }
 const char *clock_gif_diag(void) { return s_diag; }
 
-/* gifdec allocator = the emu-RAM arena; free is a no-op, the whole arena is
+/* gifdec allocators over the reserved arena (LIFO reset per load). */
+static void *arena_malloc(size_t n)
+{
+    n = (n + 3) & ~(size_t)3;
+    if (!s_arena || s_arena_off + n > s_arena_size) return NULL;
+    void *p = s_arena + s_arena_off;
+    s_arena_off += n;
+    return p;
+}
+static void *arena_calloc(size_t c, size_t n)
+{
+    void *p = arena_malloc(c * n);
+    if (p) memset(p, 0, c * n);
+    return p;
+}
+
+/* gifdec free = no-op both ways: the arena is reset per load, the pool path is
  * rolled back at clock_gif_free() via ram_release(). */
 static void gif_arena_free(void *p) { (void)p; }
+
+/* Read just the GIF header (10 bytes): dims -> decode budget, or 0 if the file
+ * is missing/not a GIF/absurdly sized. (Load re-probes with full diagnostics.) */
+static size_t gif_header_need(int *out_w, int *out_h)
+{
+    int fd = open(GIF_PATH, O_RDONLY);
+    if (fd < 0) return 0;
+    uint8_t hdr[10];
+    int n = read(fd, hdr, 10);
+    close(fd);
+    if (n < 10 || memcmp(hdr, "GIF", 3) != 0) return 0;
+    int w = hdr[6] | (hdr[7] << 8), h = hdr[8] | (hdr[9] << 8);
+    if (w <= 0 || h <= 0 || w > 640 || h > 480) return 0;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    /* gifdec needs frame+565 canvas (3*w*h) + LZW table (~40KB) + slack */
+    return (size_t)w * h * 3 + 48 * 1024;
+}
+
+void clock_gif_reserve(void)
+{
+    size_t need = gif_header_need(NULL, NULL);
+    if (need == 0 || need > ram_get_free_size()) return;   /* no file / no room */
+    s_arena = (uint8_t *)ram_malloc(need);
+    s_arena_size = s_arena ? need : 0;
+    s_arena_off = 0;
+}
 
 bool clock_gif_ready(void) { return s_gif != NULL; }
 
@@ -56,6 +111,7 @@ void clock_gif_free(void)
 {
     if (s_gif) { gd_close_gif(s_gif); s_gif = NULL; }   /* frees are no-ops */
     if (s_ram_mark) { ram_release(s_ram_mark); s_ram_mark = 0; }
+    s_arena_off = 0;                                    /* arena stays reserved */
     s_gw = s_gh = 0; s_next_tick = 0; s_have_frame = false;
 }
 
@@ -79,12 +135,19 @@ bool clock_gif_load(void)
         snprintf(s_diag, sizeof s_diag, "bad dims %dx%d (max 480x320)", gw, gh); return false; }
     /* gifdec needs frame+565 canvas (3*w*h) + LZW table (~40KB) + slack */
     size_t need = (size_t)gw * gh * 3 + 48 * 1024;
-    if (ram_get_free_size() < need) { s_status = CLOCK_GIF_NO_RAM;
-        snprintf(s_diag, sizeof s_diag, "no RAM: need %dK free %dK",
-                 (int)(need/1024), (int)(ram_get_free_size()/1024)); return false; }
-
-    s_ram_mark = ram_mark();
-    gd_set_allocator(ram_malloc, ram_calloc, gif_arena_free);
+    if (s_arena && need <= s_arena_size) {
+        /* boot-reserved arena: immune to how many covers filled the pool */
+        s_arena_off = 0;
+        gd_set_allocator(arena_malloc, arena_calloc, gif_arena_free);
+    } else {
+        /* no reservation (file appeared after boot, or grew past the reserve):
+         * fall back to whatever is left of the pool */
+        if (ram_get_free_size() < need) { s_status = CLOCK_GIF_NO_RAM;
+            snprintf(s_diag, sizeof s_diag, "no RAM: need %dK free %dK - reboot",
+                     (int)(need/1024), (int)(ram_get_free_size()/1024)); return false; }
+        s_ram_mark = ram_mark();
+        gd_set_allocator(ram_malloc, ram_calloc, gif_arena_free);
+    }
 
     gd_GIF *g = gd_open_gif(GIF_PATH);
     if (!g) { s_status = CLOCK_GIF_BAD_FMT;
