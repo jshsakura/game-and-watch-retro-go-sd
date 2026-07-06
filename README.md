@@ -67,18 +67,27 @@ Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
 #### Clock (TIME menu → Clock)
 
 - A full-screen clock app benchmarked on the Game & Watch alarm clock, drawn
-  entirely in code so nothing copyrighted ships: one fixed, sleek look — big
-  **7-segment digits with LCD ghost segments**, shared top bar (G&W logo, mode
-  title + pager dots, battery, DND moon), localized date/weekday, AM/PM beside
-  the digits, next-alarm line, and an **auto-hiding hint bar**. Clock, **Pomodoro,
-  countdown timer and stopwatch** share the same layout and controls
-  (A start/pause, B reset, PAUSE = settings incl. Exit). **In-app multi-alarm
-  editor** (popup), synthesised alarm beep (no sound files), fully localized
-  (12 languages). The one visual customisation is the **background**: off /
-  ambient / animated GIF — drop a `/clock/bg.gif` and it plays; each level shows
-  its battery cost. Config lives in `/clock.cfg`. Runs in the launcher context so
-  it never touches an emulator's memory. `host/clock_preview.c` renders the real
-  draw code to PNGs for design review before flashing.
+  entirely in code so nothing copyrighted ships. Big crisp **7-segment digits**
+  (a subtle unlit-segment "ghost" on the plain face) with a shared top bar —
+  real G&W logo, a **mode-icon pager** (clock / pomodoro / timer / stopwatch,
+  Lucide icons baked to 1-bit), `<>` chevrons, battery, DND moon — localized
+  date/weekday, AM/PM beside the digits, next-alarm with a bell, and a rounded
+  hint strip. Clock, **Pomodoro, countdown timer and stopwatch** share the
+  layout and controls (A start/pause, B reset, PAUSE = settings incl. Exit).
+  **8 colour themes × 3 digit faces** (7-seg / pixel / dot). **Alarms are set on
+  a full-screen clone of the clock face** (the field you're editing blinks),
+  with **snooze** (ring → A = +5 min, anything else = stop); synthesised beep
+  at the system volume; fully localized. The one visual customisation that
+  *travels with every mode* is the **background**: off / ambient / built-in
+  pixel scene / animated GIF (`/clock/bg.gif`). GIF is decoded a frame at a time
+  straight to RGB565 from the emulator-RAM pool (borrowed and released, so it
+  never permanently costs an emulator anything); it must be **320×240** (the LCD
+  — the app scale-fills, so a bigger GIF only wastes memory). The companion
+  **game-and-what** web tool turns any image/video into a clock-ready 320×240
+  GIF (`encode_to_clock_gif`: palette-optimized, dithered for RGB565). Config
+  lives in `/clock/clock.cfg`. `host/clock_preview.c` renders the real draw
+  code to pixel-exact PNGs (real font bins + logo) for design review before
+  flashing; `tests/` has host unit tests for the alarm logic and GIF pipeline.
 
 #### Launcher
 
