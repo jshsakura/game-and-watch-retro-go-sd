@@ -224,6 +224,61 @@ static void draw_bell(int x, int y, uint16_t col)
     odroid_overlay_draw_fill_rect(x + 4, y + 9, 3, 1, col);   /* clapper */
 }
 
+/* ---- 13px mode icons for the pager (procedural, no assets) ------------ */
+
+static void icon_clockface(int x, int y, uint16_t col, uint16_t bg)
+{
+    fill_disc(x + 6, y + 6, 6, col);
+    fill_disc(x + 6, y + 6, 4, bg);
+    odroid_overlay_draw_fill_rect(x + 6, y + 3, 1, 4, col);   /* hour hand */
+    odroid_overlay_draw_fill_rect(x + 6, y + 6, 3, 1, col);   /* minute hand */
+}
+
+static void icon_tomato(int x, int y, uint16_t col)
+{
+    fill_disc(x + 6, y + 8, 5, col);
+    odroid_overlay_draw_fill_rect(x + 5, y + 1, 3, 2, col);   /* stem */
+    odroid_overlay_draw_fill_rect(x + 2, y + 3, 9, 1, col);   /* leaf */
+}
+
+static void icon_hourglass(int x, int y, uint16_t col)
+{
+    odroid_overlay_draw_fill_rect(x + 2, y + 1, 9, 1, col);
+    for (int r = 0; r < 5; r++) {
+        odroid_overlay_draw_fill_rect(x + 2 + r, y + 2 + r, 9 - 2*r, 1, col);
+        odroid_overlay_draw_fill_rect(x + 2 + r, y + 10 - r, 9 - 2*r, 1, col);
+    }
+    odroid_overlay_draw_fill_rect(x + 2, y + 11, 9, 1, col);
+}
+
+static void icon_stopwatch(int x, int y, uint16_t col, uint16_t bg)
+{
+    odroid_overlay_draw_fill_rect(x + 5, y, 3, 2, col);       /* crown */
+    fill_disc(x + 6, y + 8, 5, col);
+    fill_disc(x + 6, y + 8, 3, bg);
+    odroid_overlay_draw_fill_rect(x + 6, y + 5, 1, 4, col);   /* hand */
+}
+
+/* drawn chevrons (no font glyphs pretending to be icons) */
+static void chevron_left(int x, int cy, uint16_t col)    /* apex on the left */
+{
+    for (int c = 0; c < 6; c++)
+        odroid_overlay_draw_fill_rect(x + c, cy - c, 1, 2*c + 1, col);
+}
+static void chevron_right(int x, int cy, uint16_t col)   /* apex on the right */
+{
+    for (int c = 0; c < 6; c++)
+        odroid_overlay_draw_fill_rect(x + 5 - c, cy - c, 1, 2*c + 1, col);
+}
+
+static void icon_mug(int x, int y, uint16_t col)
+{
+    odroid_overlay_draw_fill_rect(x + 2, y + 4, 8, 7, col);   /* body */
+    odroid_overlay_draw_fill_rect(x + 10, y + 5, 2, 4, col);  /* handle */
+    odroid_overlay_draw_fill_rect(x + 3, y + 1, 1, 2, col);   /* steam */
+    odroid_overlay_draw_fill_rect(x + 6, y + 0, 1, 3, col);
+}
+
 /* Ambient "low battery" animation: a few twinkling dots, ~3 fps. Fixed pseudo-
  * random positions clear of the top bar and hint bar; each dot pulses on a
  * staggered phase. Cheap (no assets, no SD) — it only bumps the repaint rate,
@@ -460,14 +515,25 @@ static void draw_topbar(clock_mode_t mode)
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
     odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 18);
     if (s_dnd) draw_moon(GW_LCD_WIDTH - 48, 16, t->ink, t->scr);
-    /* mode title + pager dots, always on (the fade-out experiment read as
-     * flicker when switching modes — steady beats clever here) */
-    char line[48]; snprintf(line, sizeof line, "\xe2\x97\x80 %s \xe2\x96\xb6", mode_title(mode));
-    draw_centered_i18n(12, line, t->alarm);
-    int dx = (GW_LCD_WIDTH - (MODE_COUNT*8 - 4)) / 2;
-    for (int i = 0; i < MODE_COUNT; i++, dx += 8)
-        odroid_overlay_draw_fill_rect(dx, 28, 4, 4,
-            i == (int)mode ? t->alarm : mix565(t->scr, t->ink, 4));
+    /* mode title flanked by DRAWN chevrons + a pager of mini mode icons,
+     * always on (the fade-out experiment read as flicker when switching) */
+    const char *title = mode_title(mode);
+    int tw = i18n_get_text_width(title);
+    int tx = (GW_LCD_WIDTH - tw) / 2;
+    draw_centered_i18n(10, title, t->alarm);
+    chevron_left(tx - 16, 16, t->alarm);
+    chevron_right(tx + tw + 10, 16, t->alarm);
+    uint16_t dim = mix565(t->scr, t->ink, 5);
+    int dx = (GW_LCD_WIDTH - (MODE_COUNT*17 - 4)) / 2, iy = 25;
+    for (int i = 0; i < MODE_COUNT; i++, dx += 17) {
+        uint16_t c = (i == (int)mode) ? t->alarm : dim;
+        switch (i) {
+        case MODE_CLOCK:     icon_clockface(dx, iy, c, t->scr); break;
+        case MODE_POMODORO:  icon_tomato(dx, iy, c);            break;
+        case MODE_TIMER:     icon_hourglass(dx, iy, c);         break;
+        default:             icon_stopwatch(dx, iy, c, t->scr); break;
+        }
+    }
 }
 
 /* Bottom hint: ALWAYS visible, in the firmware's default 8px font (crisp,
@@ -611,7 +677,11 @@ static void render_pomodoro(uint32_t now)
     char st[64]; snprintf(st, sizeof st, "%s   %s %d",
         s_pomo_on_break ? curr_lang->s_Clock_Break : curr_lang->s_Clock_Work,
         curr_lang->s_Clock_Cycle, s_pomo_cycles + 1);
-    draw_centered_i18n(STATUS_Y, st, s_pomo_on_break ? t->alarm : t->ink);
+    uint16_t stc = s_pomo_on_break ? t->alarm : t->ink;
+    int sx = (GW_LCD_WIDTH - i18n_get_text_width(st)) / 2;
+    if (s_pomo_on_break) icon_mug(sx - 18, STATUS_Y, stc);
+    else                 icon_tomato(sx - 18, STATUS_Y, stc);
+    draw_centered_i18n(STATUS_Y, st, stc);
 }
 
 static void render_timer(uint32_t now)
@@ -1155,8 +1225,13 @@ void rg_clock_show(void)
                 : curr_lang->s_Clock_Hint_Run);
             /* the digit pulse only exists on the clock face — give the other
              * modes a visible (and vol=0-proof) ring signal too */
-            if (ringing && mode != MODE_CLOCK && ((now / 200) & 1))
+            if (ringing && mode != MODE_CLOCK && ((now / 200) & 1)) {
+                int bw = i18n_get_text_width(curr_lang->s_Clock_Ringing);
+                int bx = (GW_LCD_WIDTH - bw) / 2;
+                draw_bell(bx - 18, 43, TH()->alarm);
+                draw_bell(bx + bw + 7, 43, TH()->alarm);
                 draw_centered_i18n(42, curr_lang->s_Clock_Ringing, TH()->alarm);
+            }
             lcd_swap();
             lcd_sleep_while_swap_pending();
         }

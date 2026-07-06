@@ -227,13 +227,13 @@ static const lang_t KO = {
     .s_Weekday_Fri="금", .s_Weekday_Sat="토", .s_Weekday_Sun="일",
     .s_Clock_Pomodoro="뽀모도로", .s_Clock_Timer="타이머", .s_Clock_Stopwatch="스톱워치",
     .s_Clock_Work="집중", .s_Clock_Break="휴식", .s_Clock_Cycle="라운드",
-    .s_Clock_Ringing="* 알람 *",
-    .s_Clock_Hint_Clock="◀▶ 모드  PAUSE 설정",
+    .s_Clock_Ringing="알람!",
+    .s_Clock_Hint_Clock="PAUSE 설정",
     .s_Clock_Hint_Run="A 시작/정지  B 리셋",
     .s_Clock_Hint_Stop="A 시작/정지  B 리셋",
-    .s_Clock_Hint_TimerStop="A 시작/정지  B 리셋  ▲▼ 분",
+    .s_Clock_Hint_TimerStop="A 시작/정지  B 리셋  위아래 분",
     .s_Clock_Hint_Editor="A 편집  TIME 켬/끔  GAME 삭제  B 완료",
-    .s_Clock_Hint_Edit="◀▶ 자리  ▲▼ 조절  A 확인  B 취소",
+    .s_Clock_Hint_Edit="좌우 자리  위아래 조절  A 확인  B 취소",
     .s_Clock_Add_Alarm="알람 추가", .s_Clock_Done="완료",
     .s_Clock_On="켬", .s_Clock_Off="끔",
     .s_Clock_Format="시간 형식", .s_Clock_DND="방해 금지",
@@ -278,8 +278,13 @@ static void paint(clock_mode_t mode, uint32_t now, bool ringing)
         : mode == MODE_TIMER     ? (s_timer.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
                                                                  : curr_lang->s_Clock_Hint_TimerStop)
         : curr_lang->s_Clock_Hint_Run);
-    if (ringing && mode != MODE_CLOCK && ((now / 200) & 1))
-        draw_centered_i18n(32, curr_lang->s_Clock_Ringing, TH()->alarm);
+    if (ringing && mode != MODE_CLOCK && ((now / 200) & 1)) {
+        int bw = i18n_get_text_width(curr_lang->s_Clock_Ringing);
+        int bx = (W - bw) / 2;
+        draw_bell(bx - 18, 43, TH()->alarm);
+        draw_bell(bx + bw + 7, 43, TH()->alarm);
+        draw_centered_i18n(42, curr_lang->s_Clock_Ringing, TH()->alarm);
+    }
 }
 
 int main(void)
