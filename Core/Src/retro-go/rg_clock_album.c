@@ -27,12 +27,14 @@ static size_t    s_arena_bytes = 0;
 static int       s_count = 0;
 static int       s_index = 0;
 static bool      s_ready = false;
-static char      s_paths[MAX_PHOTOS][RG_PATH_MAX + 1];
+/* The path list lives INSIDE the borrowed arena (right after the photo buffer),
+ * NOT in resident BSS — 64 * (RG_PATH_MAX+1) would be ~16KB of firmware image. */
+static char    (*s_paths)[RG_PATH_MAX + 1] = NULL;
 
 static int scan_cb(const rg_scandir_t *f, void *arg)
 {
     (void)arg;
-    if (!f->is_file || f->basename[0] == '.') return RG_SCANDIR_CONTINUE;
+    if (!s_paths || !f->is_file || f->basename[0] == '.') return RG_SCANDIR_CONTINUE;
     const char *ext = rg_extension(f->basename);
     if (ext && strcasecmp(ext, "565") == 0 && s_count < MAX_PHOTOS) {
         snprintf(s_paths[s_count], sizeof s_paths[s_count], "%s", f->path);
@@ -44,7 +46,7 @@ static int scan_cb(const rg_scandir_t *f, void *arg)
 /* Read photo #idx (raw RGB565, must be exactly PHOTO_BYTES) into the arena. */
 static bool load_565(int idx)
 {
-    if (idx < 0 || idx >= s_count || !s_buf) return false;
+    if (idx < 0 || idx >= s_count || !s_buf || !s_paths) return false;
     int fd = open(s_paths[idx], O_RDONLY);
     if (fd < 0) return false;
     size_t total = 0;
@@ -66,8 +68,12 @@ bool clock_album_open(void)
     if (!arena || maxcount <= 0) return false;
     /* Byte span of shared_files = slots * slot size (rg_emulators owns the type). */
     s_arena_bytes = rg_emulators_shared_file_bytes();
-    if (s_arena_bytes < PHOTO_BYTES) return false;   /* safety: never overrun */
-    s_buf = (uint16_t *)arena;
+    /* Arena layout: [photo 150K][path list ~16K]. Both carved from shared_files;
+     * nothing goes into resident BSS. */
+    size_t need = PHOTO_BYTES + (size_t)MAX_PHOTOS * (RG_PATH_MAX + 1);
+    if (s_arena_bytes < need) return false;   /* safety: never overrun */
+    s_buf   = (uint16_t *)arena;
+    s_paths = (char (*)[RG_PATH_MAX + 1])((uint8_t *)arena + PHOTO_BYTES);
 
     s_count = 0; s_index = 0;
     rg_storage_scandir(ALBUM_DIR, scan_cb, NULL, 0);
@@ -95,5 +101,5 @@ void clock_album_close(void)
 {
     /* The arena is the launcher's shared_files, borrowed in place — nothing to
      * free. The clock exit path rebuilds the launcher's lists. */
-    s_ready = false; s_buf = NULL; s_arena_bytes = 0; s_count = 0; s_index = 0;
+    s_ready = false; s_buf = NULL; s_paths = NULL; s_arena_bytes = 0; s_count = 0; s_index = 0;
 }
