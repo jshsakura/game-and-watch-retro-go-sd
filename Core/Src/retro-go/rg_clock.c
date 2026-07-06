@@ -198,10 +198,8 @@ static void draw_big_time(int hh, int mm, bool colon, bool blank_lead,
     draw_big_time_2c(hh, mm, colon, blank_lead, face, col, col, ghost);
 }
 
-/* ---- pixel-art icons (1-bit sprites, drawn like the logo/wordmarks — no
- * disc/rect approximations). Each row is MSB-left. */
-
-typedef struct { uint8_t w, h; const uint16_t *rows; } pix_icon_t;
+/* ---- icons: baked 1-bit sprites from Lucide (see host/gen_icons.py) --- */
+#include "rg_clock_icons.h"
 
 static void draw_icon(const pix_icon_t *ic, int x, int y, uint16_t col)
 {
@@ -210,25 +208,6 @@ static void draw_icon(const pix_icon_t *ic, int x, int y, uint16_t col)
             if (ic->rows[r] & (1u << (ic->w - 1 - c)))
                 odroid_overlay_draw_fill_rect(x + c, y + r, 1, 1, col);
 }
-
-static const uint16_t PIX_CLOCK_ROWS[11] = { 0x0f8, 0x104, 0x202, 0x421, 0x421, 0x431, 0x401, 0x401, 0x202, 0x104, 0x0f8 };
-static const pix_icon_t PIX_CLOCK = { 11, 11, PIX_CLOCK_ROWS };
-static const uint16_t PIX_TOMATO_ROWS[10] = { 0x050, 0x0a8, 0x070, 0x1fc, 0x3fe, 0x7ff, 0x7ff, 0x7ff, 0x3fe, 0x1fc };
-static const pix_icon_t PIX_TOMATO = { 11, 10, PIX_TOMATO_ROWS };
-static const uint16_t PIX_HOURGLASS_ROWS[12] = { 0x1ff, 0x101, 0x082, 0x044, 0x028, 0x010, 0x010, 0x028, 0x044, 0x092, 0x139, 0x1ff };
-static const pix_icon_t PIX_HOURGLASS = { 9, 12, PIX_HOURGLASS_ROWS };
-static const uint16_t PIX_STOPWATCH_ROWS[12] = { 0x070, 0x070, 0x0f8, 0x18c, 0x202, 0x222, 0x421, 0x421, 0x232, 0x202, 0x18c, 0x0f8 };
-static const pix_icon_t PIX_STOPWATCH = { 11, 12, PIX_STOPWATCH_ROWS };
-static const uint16_t PIX_BELL_ROWS[10] = { 0x070, 0x0f8, 0x1fc, 0x1fc, 0x1fc, 0x3fe, 0x3fe, 0x7ff, 0x020, 0x070 };
-static const pix_icon_t PIX_BELL = { 11, 10, PIX_BELL_ROWS };
-static const uint16_t PIX_MOON_ROWS[11] = { 0x03c, 0x0e0, 0x1c0, 0x180, 0x380, 0x380, 0x380, 0x180, 0x1c0, 0x0e0, 0x03c };
-static const pix_icon_t PIX_MOON = { 10, 11, PIX_MOON_ROWS };
-static const uint16_t PIX_MUG_ROWS[11] = { 0x220, 0x440, 0x220, 0x000, 0x7f8, 0x7fa, 0x7f9, 0x7f9, 0x7fa, 0x7f8, 0x3f0 };
-static const pix_icon_t PIX_MUG = { 12, 11, PIX_MUG_ROWS };
-static const uint16_t PIX_CHEV_L_ROWS[9] = { 0x003, 0x006, 0x00c, 0x018, 0x030, 0x018, 0x00c, 0x006, 0x003 };
-static const pix_icon_t PIX_CHEV_L = { 6, 9, PIX_CHEV_L_ROWS };
-static const uint16_t PIX_CHEV_R_ROWS[9] = { 0x030, 0x018, 0x00c, 0x006, 0x003, 0x006, 0x00c, 0x018, 0x030 };
-static const pix_icon_t PIX_CHEV_R = { 6, 9, PIX_CHEV_R_ROWS };
 
 /* Ambient "low battery" animation: a few twinkling dots, ~3 fps. Fixed pseudo-
  * random positions clear of the top bar and hint bar; each dot pulses on a
@@ -466,16 +445,14 @@ static void draw_topbar(clock_mode_t mode)
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
     odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 18);
     if (s_dnd) draw_icon(&PIX_MOON, GW_LCD_WIDTH - 48, 17, t->ink);
-    /* mode title flanked by DRAWN chevrons + a pager of mini mode icons,
-     * always on (the fade-out experiment read as flicker when switching) */
-    const char *title = mode_title(mode);
-    int tw = i18n_get_text_width(title);
-    int tx = (GW_LCD_WIDTH - tw) / 2;
-    draw_centered_i18n(10, title, t->alarm);
-    draw_icon(&PIX_CHEV_L, tx - 16, 12, t->alarm);
-    draw_icon(&PIX_CHEV_R, tx + tw + 10, 12, t->alarm);
+    /* No text title — the mode reads from the icon pager alone (current one
+     * lit in the accent), with <> strokes hinting the L/R switch. Steady,
+     * nothing appearing/disappearing. */
     uint16_t dim = mix565(t->scr, t->ink, 5);
-    int dx = (GW_LCD_WIDTH - (MODE_COUNT*17 - 4)) / 2, iy = 25;
+    int pw = MODE_COUNT*17 - 4;
+    int dx = (GW_LCD_WIDTH - pw) / 2, iy = 17;
+    draw_icon(&PIX_CHEV_L, dx - 15, 19, dim);
+    draw_icon(&PIX_CHEV_R, dx + pw + 9, 19, dim);
     for (int i = 0; i < MODE_COUNT; i++, dx += 17) {
         uint16_t c = (i == (int)mode) ? t->alarm : dim;
         switch (i) {
