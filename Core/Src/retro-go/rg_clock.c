@@ -33,6 +33,7 @@
 #include "odroid_input.h"
 #include "odroid_audio.h"
 #include "common.h"   /* volume_tbl — alarm loudness = the SYSTEM volume */
+#include "ff.h"       /* f_mkdir — ensure /clock exists before saving */
 #include "rg_clock.h"
 #include "rg_clock_gif.h"
 
@@ -242,7 +243,8 @@ static void draw_centered_i18n(int y, const char *text, uint16_t col)
 
 /* ---- config + alarms (/clock.cfg) ------------------------------------- */
 
-#define CLOCK_CFG_PATH  "/clock.cfg"
+#define CLOCK_CFG_PATH    "/clock/clock.cfg"   /* lives with /clock/bg.gif */
+#define CLOCK_CFG_LEGACY  "/clock.cfg"          /* pre-move location, read-only fallback */
 #define MAX_ALARMS      8
 
 typedef struct { uint8_t hour, min, enabled; } alarm_t;
@@ -277,6 +279,7 @@ static void clock_config_load(void)
     s_hour24 = false; s_dnd = false; s_anim = 0;
     s_alarm_count = 0;
     FILE *f = fopen(CLOCK_CFG_PATH, "r");
+    if (!f) f = fopen(CLOCK_CFG_LEGACY, "r");   /* migrate: next save writes /clock/ */
     if (!f) return;
     char line[64];
     while (fgets(line, sizeof line, f)) {
@@ -301,6 +304,7 @@ static void clock_config_load(void)
 
 static void clock_config_save(void)
 {
+    f_mkdir("/clock");   /* harmless if it already exists */
     FILE *f = fopen(CLOCK_CFG_PATH, "w");
     if (!f) return;
     fprintf(f, "theme=%d\n", s_theme);

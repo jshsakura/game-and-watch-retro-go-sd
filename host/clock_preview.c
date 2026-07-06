@@ -19,7 +19,9 @@ static uint16_t fb[W * H];
 
 /* redirect /clock.cfg away from the host root */
 static const char *test_path(const char *p)
-{ static char b[256]; snprintf(b, sizeof b, "/tmp/clockprev_%s", p + 1); return b; }
+{ static char b[256]; snprintf(b, sizeof b, "/tmp/clockprev_%s", p + 1);
+  for (char *c = b + 5; *c; c++) if (*c == '/') *c = '_';   /* flatten subdirs */
+  return b; }
 #define fopen(p, m) fopen(test_path(p), m)
 #include "../Core/Src/retro-go/rg_clock.c"
 #undef fopen
