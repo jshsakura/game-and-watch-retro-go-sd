@@ -901,14 +901,30 @@ void pce_pcm_submit() {
     int adpcm_n = pce_adpcm_fill(adpcm_buf, AUDIO_BUFFER_LENGTH_PCE);   /* in-RAM, cheap: always on */
 #endif /* SD_CARD */
 
+#if SD_CARD
+    /* $180F hardware fader: Q8 (256=full, 0=silent) multipliers, one per
+     * channel, driven by pce_scsi_run()'s per-frame ramp. Fixed for the
+     * whole buffer (it only changes once per frame) so this is a single
+     * read, not a per-sample call. Without this a fade-out write was a
+     * silent no-op and CD-DA/ADPCM BGM never faded/stopped (e.g. Ys I&II).
+     * Guarded by SD_CARD: pce_scsi.c (where these live) is excluded on
+     * flash-only builds. */
+    int32_t cdda_fade_q8  = pce_scsi_cdda_fade_q8();
+    int32_t adpcm_fade_q8 = pce_scsi_adpcm_fade_q8();
+#endif /* SD_CARD */
+
     for (int i = 0; i < sound_buffer_length; i++) {
         /* mix left & right */
         int32_t sample = (audioBuffer_pce[i*2] + audioBuffer_pce[i*2+1]);
 #if SD_CARD
-        if (cdda_n && i < cdda_n)
-            sample += (cdda_buf[i*2] + cdda_buf[i*2+1]) >> 1;   /* CD-DA is full-scale PCM */
-        if (adpcm_n && i < adpcm_n)
-            sample += adpcm_buf[i*2];                            /* ADPCM is mono (dup L/R) */
+        if (cdda_n && i < cdda_n) {
+            int32_t cdda_s = (cdda_buf[i*2] + cdda_buf[i*2+1]) >> 1;   /* CD-DA is full-scale PCM */
+            sample += (cdda_s * cdda_fade_q8) >> 8;
+        }
+        if (adpcm_n && i < adpcm_n) {
+            int32_t adpcm_s = adpcm_buf[i*2];                          /* ADPCM is mono (dup L/R) */
+            sample += (adpcm_s * adpcm_fade_q8) >> 8;
+        }
 #endif /* SD_CARD */
         sample = (sample * factor) >> 8;
         if (sample > 32767) sample = 32767; else if (sample < -32768) sample = -32768;
