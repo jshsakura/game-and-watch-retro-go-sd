@@ -34,7 +34,7 @@
 #include "odroid_input.h"
 #include "odroid_audio.h"
 #include "common.h"   /* volume_tbl — alarm loudness = the SYSTEM volume */
-#include "ff.h"       /* f_mkdir — ensure /clock exists before saving */
+#include "rg_storage.h" /* rg_storage_mkdir — ensure /clock exists on FatFs and LittleFS alike */
 #include "rg_clock.h"
 #include "rg_clock_gif.h"
 #include "rg_clock_album.h"
@@ -371,7 +371,7 @@ static void clock_config_load(void)
 
 static void clock_config_save(void)
 {
-    f_mkdir("/clock");   /* harmless if it already exists */
+    rg_storage_mkdir("/clock");   /* harmless if it already exists */
     FILE *f = fopen(CLOCK_CFG_PATH, "w");
     if (!f) return;
     fprintf(f, "theme=%d\n", s_theme);
@@ -1220,6 +1220,10 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
             : (st == CLOCK_GIF_BAD_FMT)  ? " (bad gif)"
             : " (no file)";
     }
+    /* mirror the GIF diagnostic: an empty /clock/album must say so instead of
+     * silently keeping the plain theme background (bit us on flash builds) */
+    if (s_anim == ANIM_PHOTO && !clock_album_ready())
+        why = " (no photos)";
     snprintf(o->value, sizeof v_anim, "%s%s", lv, why);
     return e == ODROID_DIALOG_ENTER;
 }
@@ -1366,8 +1370,8 @@ void rg_clock_show(void)
     bool dirty = true;
 
     clock_config_load();
-    f_mkdir("/clock");          /* ensure the clock's SD folders exist on first run */
-    f_mkdir("/clock/album");    /* the user drops 320x240 raw .565 photos here */
+    rg_storage_mkdir("/clock");       /* ensure the clock's folders exist on first run */
+    rg_storage_mkdir("/clock/album"); /* the user drops 320x240 raw .565 photos here */
     s_snooze_tick = 0;
     s_album_used = false;
     if (s_anim == ANIM_GIF && clock_gif_load()) s_album_used = true;   /* GIF borrows shared_files -> restore lists on exit */

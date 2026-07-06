@@ -1478,8 +1478,11 @@ void emulators_init()
     add_emulator("PC Engine", "pce", "pce lzma", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCE, NO_GAME_DATA);
     /* PC Engine CD (= TurboGrafx-CD): same HuC6280/VDC core as HuCard PCE; the
      * disc (.cue/.bin) is streamed from SD and the System Card BIOS is loaded as
-     * the boot ROM. */
+     * the boot ROM. SD builds only: the flash build compiles the CD stack out
+     * (pce_cd_stubs.c) — a .cue picked there would boot as garbage HuCard bytes. */
+#if SD_CARD == 1
     add_emulator("PC Engine CD", "pcecd", "cue", RG_LOGO_PAD_PCECD, RG_LOGO_HEADER_PCECD, NO_GAME_DATA);
+#endif
     /* PICO-8: carts (.p8 / .p8.png) live under /roms/pico8/. The engine
      * itself (pico8.bin) is a separately-distributed overlay loaded at
      * runtime; see the stub in Core/Src/porting/pico8/main_pico8.c. */

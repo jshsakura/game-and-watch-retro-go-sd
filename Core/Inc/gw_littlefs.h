@@ -40,6 +40,7 @@ int fs_sync(fs_file_t *file);
 int fs_stat(const char *path, struct lfs_info *info);
 int fs_get_file_time(const char *path, uint32_t *timestamp);
 int fs_mkdir(const char *path);
+int fs_rename(const char *oldpath, const char *newpath);
 void fs_close(fs_file_t *file);
 bool fs_exists(const char *path);
 uint32_t fs_free_blocks();
@@ -47,6 +48,10 @@ uint32_t fs_free_blocks();
 int fs_dir_open(uint8_t dir_index, const char *path);
 int fs_dir_read(uint8_t dir_index, fs_folder_entry *entry);
 int fs_dir_close(uint8_t dir_index);
+/* caller-owned-handle variants (safe for recursive walks) */
+int fs_diropen(lfs_dir_t *d, const char *path);
+int fs_dirread(lfs_dir_t *d, struct lfs_info *info);
+int fs_dirclose(lfs_dir_t *d);
 
 extern bool fs_mounted;
 

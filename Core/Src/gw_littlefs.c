@@ -393,6 +393,10 @@ int fs_mkdir(const char *path){
     return lfs_mkdir(&lfs, path);
 }
 
+int fs_rename(const char *oldpath, const char *newpath){
+    return lfs_rename(&lfs, oldpath, newpath);
+}
+
 int fs_write(fs_file_t *file, unsigned char *data, size_t size){
     // TODO: do we want to put delete-oldest-savestate-logic in here?
     if(!file_is_using_compression(file))
@@ -555,4 +559,18 @@ int fs_dir_read(uint8_t dir_index, fs_folder_entry *entry) {
 
 int fs_dir_close(uint8_t dir_index) {
     return lfs_dir_close(&lfs, &dir[dir_index]);
+}
+
+/* Caller-owned-handle variants: the fixed dir[2] pool above can't serve
+ * rg_storage_scandir's recursion, and fs_dir_read stringifies sizes. */
+int fs_diropen(lfs_dir_t *d, const char *path) {
+    return lfs_dir_open(&lfs, d, path);
+}
+
+int fs_dirread(lfs_dir_t *d, struct lfs_info *info) {
+    return lfs_dir_read(&lfs, d, info);
+}
+
+int fs_dirclose(lfs_dir_t *d) {
+    return lfs_dir_close(&lfs, d);
 }

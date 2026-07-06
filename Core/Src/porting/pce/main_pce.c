@@ -507,6 +507,13 @@ pce_osd_getromdata(unsigned char **data)
             pce_scsi_set_disc(NULL, false);
         return (*data != NULL && bios_size > 0) ? bios_size : 0;
     }
+#else
+    if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
+        /* Flash build: the CD stack is compiled out (pce_cd_stubs.c). Refuse the
+         * cue sheet instead of booting its text bytes as a garbage HuCard. */
+        *data = NULL;
+        return 0;
+    }
 #endif /* SD_CARD */
     uint32_t size = ACTIVE_FILE->size;
     if (size > ram_get_free_size()) {
