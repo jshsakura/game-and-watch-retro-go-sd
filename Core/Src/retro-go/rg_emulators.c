@@ -38,12 +38,6 @@
 #include "main_celeste.h"
 #include "main_music.h"
 #include "main_video.h"
-#include "doom/main_doom.h"
-#ifdef USE_NHDOOM
-#include "nhdoom/main_nhdoom.h"
-#include "nhdoom/nhdoom_flashcache.h"
-#endif
-#include "wolf3d/main_wolf3d.h"
 #include "main_pico8.h"
 #include "main_tama.h"
 #include "main_pkmini.h"
@@ -242,168 +236,6 @@ static uint8_t *Pico8CacheCodeToFlash(uint32_t *code_size_out)
   return code_addr;
   #endif
 }
-
-/* ---- DOOM XIP code: same sentinel-patch scheme as PICO-8 ----
- * DOOM's non-hot .text/.rodata are linked at the DOOM_CODE sentinel base and
- * shipped as /roms/homebrew/doom.ro. At launch the blob is cached to XIP flash,
- * its internal sentinel refs are patched to the real flash address, the patched
- * bytes are reprogrammed, and the code then runs in place from external flash --
- * freeing RAM_EMU for the DOOM zone. The hot files stay in the RAM overlay. */
-#define DOOM_CODE_BASE 0xD00D0000u
-
-int PatchDoomRegion(uint32_t *start, uint32_t *end, int32_t offset, uint32_t code_size)
-{
-  int patched = 0;
-  for (uint32_t *ptr = start; ptr < end; ptr++) {
-    uint32_t value = *ptr;
-    if ((value & ~1u) >= DOOM_CODE_BASE && (value & ~1u) < DOOM_CODE_BASE + code_size) {
-      *ptr = value + offset;
-      patched++;
-    }
-  }
-  return patched;
-}
-
-static uint8_t *DoomCacheCodeToFlash(uint32_t *code_size_out)
-{
-  printf("DOOM: caching doom.ro to flash...\n");
-  uint8_t *code_addr = odroid_overlay_cache_file_in_flash("/roms/homebrew/doom.ro", code_size_out, false);
-  if (!code_addr || *code_size_out == 0) {
-    printf("DOOM: doom.ro cache FAILED (not found on SD?)\n");
-    return NULL;
-  }
-#if SD_CARD == 1
-  int32_t offset = (int32_t)((uint32_t)code_addr - DOOM_CODE_BASE);
-  printf("DOOM: doom.ro cached at %p, size=%lu, offset=%ld\n",
-         code_addr, (unsigned long)*code_size_out, (long)offset);
-
-  /* RAM_EMU is free here (Doom.bin is loaded AFTER this returns) -- use it as the
-   * patch scratch. */
-  uint8_t *ram_buf = (uint8_t *)&__RAM_EMU_START__;
-  memcpy(ram_buf, code_addr, *code_size_out);
-  int patched = PatchDoomRegion((uint32_t *)ram_buf,
-                                (uint32_t *)(ram_buf + *code_size_out),
-                                offset, *code_size_out);
-  printf("DOOM: patched %d sentinel refs in doom.ro\n", patched);
-
-  if (patched > 0) {
-    uint32_t flash_offset = (uint32_t)code_addr - (uint32_t)&__EXTFLASH_BASE__;
-    uint32_t erase_size = (*code_size_out + 4095) & ~4095u;
-    OSPI_DisableMemoryMappedMode();
-    OSPI_EraseSync(flash_offset, erase_size);
-    OSPI_Program(flash_offset, ram_buf, *code_size_out);
-    OSPI_EnableMemoryMappedMode();
-    /* The earlier memcpy() cached the ORIGINAL (unpatched) blob bytes for this
-       flash region in the D-cache; we just reprogrammed the same addresses with
-       the patched bytes. Invalidate so XIP reads see the patched data — otherwise
-       any sentinel ref inside the blob (now that non-hot .text is XIP'd) would
-       read back the stale 0xD00D0000 value and fault. */
-    SCB_InvalidateDCache_by_Addr((uint32_t *)code_addr, (int32_t)*code_size_out);
-    printf("DOOM: reprogrammed XIP flash, first word: 0x%08lX\n",
-           (unsigned long)*(uint32_t *)code_addr);
-    /* The Cortex-M7 D-cache and I-cache are separate. The long-call veneers at
-       the TAIL of doom.ro (e.g. __memcpy_veneer: `ldr pc,[pc]; .word memcpy`)
-       execute fine (I-side) but the adjacent literal can read back a STALE 0 on
-       the D-side if the by-addr invalidate above missed that line -> the veneer
-       jumps to 0 (observed: FindLumpByName -> bl __memcpy_veneer -> pc=0). A full
-       clean+invalidate + barriers guarantees every doom.ro line is coherent. */
-    {
-      volatile uint32_t *vlit = (volatile uint32_t *)((uint8_t *)code_addr + 0x4433c);
-      uint32_t before = *vlit;
-      SCB_CleanInvalidateDCache();
-      __DSB();
-      __ISB();
-      uint32_t after = *vlit;
-      printf("DOOM: veneer literal +0x4433c before=0x%08lX after=0x%08lX\n",
-             (unsigned long)before, (unsigned long)after);
-    }
-  } else {
-    printf("DOOM: no sentinel refs found (already patched from previous boot)\n");
-  }
-#endif
-  return code_addr;
-}
-
-/* ---- NHDOOM pre-baked flash cache ----
- * The next-hack engine builds a ~749KB "flash cache" (composite textures, level
- * data, lumpAddressTable) into nh_flash_addr_base at boot. nRF52840 has writable
- * internal flash for it; the G&W has none, and the external OSPI flash that would
- * hold it cannot be written while the engine runs XIP from it. So we ship the
- * cache PRE-BAKED (built once on the host, /roms/homebrew/doom1.flashcache.bin)
- * and only relocate the few thousand absolute pointers it contains to this boot's
- * WAD / cache addresses -- the same cache-then-patch-then-reprogram pattern as
- * DoomCacheCodeToFlash, driven by the file's reloc table. The engine then
- * recomputes but every storeWordToFlash() is a no-op (the bytes already match).
- * Runs in firmware context (internal flash) so the OSPI memory-map can be toggled
- * safely; nh_flash_addr_base is set from the return value. Returns the XIP address
- * of the cache data, or NULL if the file is missing/invalid. */
-#ifdef USE_NHDOOM
-/* NOT *.bin: the Homebrew launcher lists *.bin as games, so the support files
- * (this pre-baked cache, the .ro XIP blob, the .mcu.wad) use other extensions to
- * stay out of the menu. Only Doom.bin shows, as the single "Doom" entry. */
-#define NHDOOM_FC_PATH "/roms/homebrew/doom1.fc"
-
-uint8_t *NhdoomLoadFlashCache(uint32_t dev_wad_base)
-{
-  uint32_t file_size = 0;
-  uint8_t *file_addr = odroid_overlay_cache_file_in_flash(NHDOOM_FC_PATH, &file_size, false);
-  if (!file_addr || file_size < sizeof(nhdoom_fc_header_t)) {
-    printf("NHDOOM: flashcache MISSING (%s) -- DOOM will hang; add it to SD\n", NHDOOM_FC_PATH);
-    return NULL;
-  }
-  const nhdoom_fc_header_t *h = (const nhdoom_fc_header_t *)file_addr;
-  if (h->magic != NHDOOM_FC_MAGIC || h->version != NHDOOM_FC_VERSION) {
-    printf("NHDOOM: flashcache bad header magic=0x%08lX ver=%lu\n",
-           (unsigned long)h->magic, (unsigned long)h->version);
-    return NULL;
-  }
-  uint8_t *cache = file_addr + h->data_offset;            /* XIP cache data */
-  const uint32_t *reloc = (const uint32_t *)(file_addr + h->reloc_offset);
-  int32_t wad_delta   = (int32_t)(dev_wad_base        - h->host_wad_base);
-  int32_t cache_delta = (int32_t)((uint32_t)cache      - h->host_cache_base);
-  uint32_t whlo = h->host_wad_base,   whhi = h->host_wad_base   + h->host_wad_size;
-  uint32_t chlo = h->host_cache_base, chhi = h->host_cache_base + h->host_cache_size;
-  printf("NHDOOM: flashcache data@%p bytes=%lu reloc=%lu wadD=%ld cacheD=%ld\n",
-         cache, (unsigned long)h->cache_bytes, (unsigned long)h->n_reloc,
-         (long)wad_delta, (long)cache_delta);
-#if SD_CARD == 1
-  /* Relocate page by page: read the page (XIP), patch any reloc words still in
-   * the HOST range (so a previously-relocated OSPI copy is left untouched =
-   * idempotent), then erase+reprogram only pages that actually changed.
-   * The 4KB page scratch comes from the AHB/RAM bump heap, NOT a static — a
-   * static[4096] lands in DTCM .bss and overflows the tight DTCM budget. */
-  uint8_t *page = (uint8_t *)ahb_malloc(NHDOOM_FC_PAGE);
-  if (!page) { printf("NHDOOM: flashcache reloc: no scratch\n"); return cache; }
-  uint32_t cache_flash_off = (uint32_t)cache - (uint32_t)&__EXTFLASH_BASE__;
-  uint32_t total = 0;
-  for (uint32_t base = 0; base < h->cache_bytes; base += NHDOOM_FC_PAGE) {
-    memcpy(page, cache + base, NHDOOM_FC_PAGE);
-    int patched = 0;
-    for (uint32_t k = 0; k < h->n_reloc; k++) {
-      uint32_t off = reloc[k] & NHDOOM_FC_OFFSET_MASK;
-      if (off < base || off >= base + NHDOOM_FC_PAGE) continue;
-      uint32_t *w = (uint32_t *)(page + (off - base));
-      if ((reloc[k] & NHDOOM_FC_TYPE_MASK) == NHDOOM_FC_RELOC_CACHE) {
-        if (*w >= chlo && *w < chhi) { *w += cache_delta; patched++; }
-      } else {
-        if (*w >= whlo && *w < whhi) { *w += wad_delta;   patched++; }
-      }
-    }
-    if (patched) {
-      uint32_t foff = cache_flash_off + base;
-      OSPI_DisableMemoryMappedMode();
-      OSPI_EraseSync(foff, NHDOOM_FC_PAGE);
-      OSPI_Program(foff, page, NHDOOM_FC_PAGE);
-      OSPI_EnableMemoryMappedMode();
-      SCB_InvalidateDCache_by_Addr((uint32_t *)(cache + base), NHDOOM_FC_PAGE);
-      total += patched;
-    }
-  }
-  printf("NHDOOM: flashcache relocated %lu words\n", (unsigned long)total);
-#endif
-  return cache;
-}
-#endif /* USE_NHDOOM */
 
 const unsigned char *ROM_DATA = NULL;
 unsigned ROM_DATA_LENGTH;
@@ -1404,7 +1236,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
     itc_init();
     ram_start = 0;
     // reset the relative-path open() prefix so it can't leak from one app
-    // (e.g. Wolf3D's /roms/homebrew/) into the next launch.
+    // (e.g. a homebrew app's /roms/homebrew/) into the next launch.
     extern const char *gw_fs_relpath_prefix;
     gw_fs_relpath_prefix = NULL;
     // some pointers were freed, set them to null
@@ -1492,41 +1324,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         app_main_gamecom(load_state, start_paused, save_slot);
       }
     } else if(strcmp(system_name, "Homebrew") == 0)  {
-      if (strcmp(newfile->name,"Doom") == 0) {
-        /* Begin the SD trace HERE (not in app_main_doom) so the XIP cache /
-         * patch / flash-reprogram steps below are captured even if one of them
-         * faults before DOOM proper starts -- "/doom_trace.txt never created"
-         * means we died in DoomCacheCodeToFlash. Each line is f_sync'd. */
-        extern void doom_trace_begin(void);
-        doom_trace_begin();
-        printf("[doom] launch: enter Doom branch, begin XIP cache\n");
-        /* DOOM runs its non-hot code XIP from flash: cache+patch+reprogram doom.ro
-         * to flash FIRST (uses RAM_EMU as scratch), THEN load the hot overlay
-         * (Doom.bin) into RAM, THEN patch the overlay's sentinel refs to the real
-         * XIP flash address. */
-        uint32_t doom_xip_size = 0;
-        uint8_t *doom_xip_addr = DoomCacheCodeToFlash(&doom_xip_size);
-        printf("[doom] launch: DoomCacheCodeToFlash returned %p size=%lu\n",
-               (void *)doom_xip_addr, (unsigned long)doom_xip_size);
-        if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
-            if (doom_xip_addr) {
-                int32_t off = (int32_t)((uint32_t)doom_xip_addr - DOOM_CODE_BASE);
-                PatchDoomRegion((uint32_t *)&__RAM_EMU_START__,
-                                (uint32_t *)&_OVERLAY_DOOM_BSS_START, off, doom_xip_size);
-            }
-            memset(&_OVERLAY_DOOM_BSS_START, 0x0, (size_t)&_OVERLAY_DOOM_BSS_SIZE);
-            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_DOOM_SIZE);
-            SCB_InvalidateICache();
-#ifdef USE_NHDOOM
-            /* Phase 2: the next-hack engine replaces doomgeneric for DOOM.
-             * Same overlay (Doom.bin) / XIP (doom.ro) dispatch; only the entry
-             * point differs. USE_NHDOOM=0 restores app_main_doom. */
-            app_main_nhdoom(load_state, start_paused, save_slot);
-#else
-            app_main_doom(load_state, start_paused, save_slot);
-#endif
-        }
-      } else if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
+      if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
         if (strcmp(newfile->name,"celeste") == 0) {
             memset(&_OVERLAY_CELESTE_BSS_START, 0x0, (size_t)&_OVERLAY_CELESTE_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_CELESTE_SIZE);
@@ -1550,10 +1348,6 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             memset(&_OVERLAY_MUSIC_BSS_START, 0x0, (size_t)&_OVERLAY_MUSIC_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_MUSIC_SIZE);
             app_main_video(load_state, start_paused, save_slot);
-        } else if (strcmp(newfile->name,"Wolf3D") == 0) {
-            memset(&_OVERLAY_WOLF3D_BSS_START, 0x0, (size_t)&_OVERLAY_WOLF3D_BSS_SIZE);
-            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_WOLF3D_SIZE);
-            app_main_wolf3d(load_state, start_paused, save_slot);
         }
       }
     } else if(strcmp(system_name, "Tamagotchi") == 0) {

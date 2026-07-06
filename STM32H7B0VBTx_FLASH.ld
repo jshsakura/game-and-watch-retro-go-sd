@@ -142,7 +142,6 @@ MEMORY
   CORES      (x  ) : ORIGIN = 0x0,                 LENGTH = 0xFFFFFFFF
   RODATA     (x  ) : ORIGIN = 0xCAFE0000,          LENGTH = 0xFFFFFFFF
   PICO8_CODE (x  ) : ORIGIN = 0xBEEF0000,          LENGTH = 512K
-  DOOM_CODE  (x  ) : ORIGIN = 0xD00D0000,          LENGTH = 1024K
   EXTFLASH   (xr ) : ORIGIN = __EXTFLASH_START__,  LENGTH = 32M
 }
 
@@ -794,86 +793,6 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(_OVERLAY_MUSIC_BSS_END) < __RAM_EMU_END__, "Error: MUSIC BSS overflow");
   }
   _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
-
-  /* DOOM (doomgeneric) homebrew. HOT files (inner-loop renderers + glue) stay in
-     RAM_EMU (.overlay_doom, shipped as /roms/homebrew/Doom.bin). The non-hot
-     .text/.rodata run XIP from external flash via the DOOM_CODE sentinel
-     (.doom_xip, shipped as /roms/homebrew/doom.ro, cached + sentinel-patched at
-     launch like PICO-8). All .data stays writable in RAM; .bss stays in RAM. */
-  .overlay_doom __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_doom_start__ = .;
-    /* hot objects: keep .text/.rodata/.data in RAM (listed first => matched first) */
-    build/doom/r_draw.o   (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_main.o   (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_data.o   (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_things.o (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_plane.o  (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_amalgam.o (.data .data* .text .text* .rodata .rodata*)
-    build/doom/r_oam.o    (.data .data* .text .text* .rodata .rodata*)
-    /* r_bsp.o, r_segs.o, tables.o moved to .doom_xip to free RAM for the zone
-       (build 2345 died at R_Init Z_Malloc 68192; zone=259K too small, only ~89K
-       free inside it). tables.o is pure trig rodata (biggest win); r_bsp/r_segs
-       are per-frame but tolerable from XIP. Their .data stays in RAM via the
-       catch-all below; only .text/.rodata go XIP. Tune back for speed later. */
-    build/doom/m_fixed.o  (.data .data* .text .text* .rodata .rodata*)
-    build/doom/doomgeneric.o   (.data .data* .text .text* .rodata .rodata*)
-    build/doom/i_video.o       (.data .data* .text .text* .rodata .rodata*)
-    build/doom/doom_i_system.o (.data .data* .text .text* .rodata .rodata*)
-    build/doom/main_doom.o     (.data .data* .text .text* .rodata .rodata*)
-    /* all remaining doom .data must stay writable in RAM */
-    build/doom/*.o (.data .data*)
-    . = ALIGN(4);
-    _OVERLAY_DOOM_LOAD_END = .;
-  } AT> EXTFLASH
-  _OVERLAY_DOOM_LOAD_START = LOADADDR(.overlay_doom);
-  _OVERLAY_DOOM_SIZE = SIZEOF(.overlay_doom);
-
-  /* Non-hot DOOM code/rodata, run in place (XIP) from external flash. VMA == LMA
-     at the DOOM_CODE sentinel; extracted to doom.ro and relocated at launch. */
-  .doom_xip : {
-    . = ALIGN(4);
-    __doom_xip_start__ = .;
-    build/doom/*.o (.text .text* .rodata .rodata*)
-    . = ALIGN(4);
-    __doom_xip_end__ = .;
-  } > DOOM_CODE
-  _DOOM_XIP_SIZE = SIZEOF(.doom_xip);
-
-  .overlay_doom_bss _OVERLAY_DOOM_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_DOOM_BSS_START = .;
-    build/doom/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/doom/*.o (COMMON)
-    __ram_emu_doom_end__ = .;
-    _OVERLAY_DOOM_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_DOOM_BSS_END) < __RAM_EMU_END__, "Error: DOOM BSS overflow");
-  }
-  _OVERLAY_DOOM_BSS_SIZE = SIZEOF(.overlay_doom_bss);
-
-  /* Wolfenstein 3D homebrew overlay. */
-  .overlay_wolf3d __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_wolf3d_start__ = .;
-    build/wolf3d/*.o (.data .data* .text .text* .rodata .rodata*)
-    . = ALIGN(4);
-    _OVERLAY_WOLF3D_LOAD_END = .;
-  } AT> EXTFLASH
-  _OVERLAY_WOLF3D_LOAD_START = LOADADDR(.overlay_wolf3d);
-  _OVERLAY_WOLF3D_SIZE = SIZEOF(.overlay_wolf3d);
-
-  .overlay_wolf3d_bss _OVERLAY_WOLF3D_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_WOLF3D_BSS_START = .;
-    build/wolf3d/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/wolf3d/*.o (COMMON)
-    __ram_emu_wolf3d_end__ = .;
-    _OVERLAY_WOLF3D_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_WOLF3D_BSS_END) < __RAM_EMU_END__, "Error: WOLF3D BSS overflow");
-  }
-  _OVERLAY_WOLF3D_BSS_SIZE = SIZEOF(.overlay_wolf3d_bss);
 
   /* PICO-8 stub overlay → RAM, placed at the LOW end of the LCD bonus
      area. Same VMA as the runtime-loaded pico8.bin so engine RAM refs
