@@ -3,9 +3,6 @@ name: Generate gw_update.tar
 on:
   push:
     branches:
-      - main
-      - feat/ngp-pocket
-      - experimental-testbed
       - testbed
     tags:
       - 'v*'
@@ -56,7 +53,7 @@ jobs:
       - name: Build test (SD_CARD=0)
         run: |
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
-            bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 SD_CARD=0 COVERFLOW=0 DISABLE_SPLASH_SCREEN=1 INTFLASH_BANK=2 KO_KR=1 all"
+            bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 SD_CARD=0 COVERFLOW=0 DISABLE_SPLASH_SCREEN=1 INTFLASH_BANK=2 KO_KR=1 EXTFLASH_SIZE_MB=64 all"
 
   lynx-core-test:
     # Host-side AddressSanitizer test of the Atari Lynx core (external/handy-go),
