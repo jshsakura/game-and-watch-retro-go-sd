@@ -294,6 +294,7 @@ static int      s_face_override = -1;   /* -1 = the theme's face, else FACE_* */
 static bool     s_hour24;
 static bool     s_dnd;
 static int      s_anim;          /* 0 = off, 1 = ambient, 2 = GIF */
+static int      s_scene;         /* which pixel scene (0..SCENE_COUNT-1) when anim = SCENE */
 static alarm_t  s_alarms[MAX_ALARMS];
 static int      s_alarm_count;
 
@@ -329,7 +330,7 @@ static bool     s_fade_swapped = false;
 static void clock_config_load(void)
 {
     s_theme = 0; s_face_override = -1;
-    s_hour24 = false; s_dnd = false; s_anim = 0;
+    s_hour24 = false; s_dnd = false; s_anim = 0; s_scene = 0;
     s_alarm_count = 0;
     FILE *f = fopen(CLOCK_CFG_PATH, "r");
     if (!f) f = fopen(CLOCK_CFG_LEGACY, "r");   /* migrate: next save writes /clock/ */
@@ -342,6 +343,7 @@ static void clock_config_load(void)
         else if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
         else if (sscanf(line, "anim=%d", &v) == 1) { if (v >= 0 && v < ANIM_COUNT) s_anim = v; }
+        else if (sscanf(line, "scene=%d", &v) == 1) { if (v >= 0) s_scene = v; }  /* draw_scene clamps */
         /* alarm=HHMM[,enabled] — the suffix is new; plain HHMM (older cfg) = enabled */
         else if (sscanf(line, "alarm=%d,%d", &v, &en) >= 1 && s_alarm_count < MAX_ALARMS) {
             int hr = v / 100, mn = v % 100;
@@ -365,6 +367,7 @@ static void clock_config_save(void)
     fprintf(f, "hour24=%d\n", s_hour24 ? 1 : 0);
     fprintf(f, "dnd=%d\n", s_dnd ? 1 : 0);
     fprintf(f, "anim=%d\n", s_anim);
+    fprintf(f, "scene=%d\n", s_scene);
     for (int i = 0; i < s_alarm_count; i++)   /* disabled alarms persist too */
         fprintf(f, "alarm=%02d%02d,%d\n", s_alarms[i].hour, s_alarms[i].min,
                 s_alarms[i].enabled ? 1 : 0);
@@ -439,7 +442,10 @@ static uint16_t mix565(uint16_t a, uint16_t b, int t)
 /* Built-in pixel scene: a night skyline with slowly twinkling windows and a
  * few stars, tinted from the active theme — the bundled background the HTML
  * mockups always had. Pure code, no SD assets; repaints ~1.5 fps. */
-static void draw_scene(uint32_t now, const clock_theme_t *t)
+#include "rg_clock_scenes.inc"   /* 16 procedural scenes + srect/itri/shash helpers */
+
+/* 0) city — the original night skyline (kept as scene index 0) */
+static void scene_city(uint32_t now, const clock_theme_t *t)
 {
     uint16_t sil  = mix565(t->scr, t->ink, 3);
     uint16_t sil2 = mix565(t->scr, t->ink, 2);
@@ -475,6 +481,28 @@ static void draw_scene(uint32_t now, const clock_theme_t *t)
         if (((now / 640) + k * 3) % 7 < 2)
             odroid_overlay_draw_fill_rect(sx, sy, 1, 1, mix565(t->scr, t->ink, 8));
     }
+}
+
+/* pixel-scene registry — s_scene selects one; all are procedural (0 RAM). */
+typedef void (*scene_fn)(uint32_t, const clock_theme_t *);
+static const scene_fn SCENES[] = {
+    scene_city, scene_mountains, scene_ocean, scene_starfield, scene_synthwave,
+    scene_rain, scene_snow, scene_aurora, scene_forest, scene_desert,
+    scene_meteor, scene_matrix, scene_bubbles, scene_fireworks, scene_grid_pulse,
+    scene_clouds, scene_campfire,
+};
+static const char *const SCENE_NAMES[] = {
+    "City", "Mountains", "Ocean", "Starfield", "Synthwave",
+    "Rain", "Snow", "Aurora", "Forest", "Desert",
+    "Meteor", "Matrix", "Bubbles", "Fireworks", "Grid Pulse",
+    "Clouds", "Campfire",
+};
+#define SCENE_COUNT ((int)(sizeof(SCENES) / sizeof(SCENES[0])))
+
+static void draw_scene(uint32_t now, const clock_theme_t *t)
+{
+    int idx = (s_scene >= 0 && s_scene < SCENE_COUNT) ? s_scene : 0;
+    SCENES[idx](now, t);
 }
 
 static const char *mode_title(clock_mode_t mode)
@@ -1021,7 +1049,7 @@ static void clock_alarm_setup(void)
 static const char *const THEME_LABEL[THEME_COUNT] =
     { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate" };
 static const char *const FACE_NAME[3] = { "7-seg", "Pixel", "Dot" };
-static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44],
+static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44], v_scene[24],
             v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_alarms[4], v_exit[4];
 
 static bool cb_theme(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
@@ -1074,6 +1102,15 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
     snprintf(o->value, sizeof v_anim, "%s%s", lv, why);
     return e == ODROID_DIALOG_ENTER;
 }
+static bool cb_scene(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{
+    (void)r;
+    if (e == ODROID_DIALOG_PREV) s_scene = (s_scene == 0) ? SCENE_COUNT - 1 : s_scene - 1;
+    if (e == ODROID_DIALOG_NEXT) s_scene = (s_scene + 1) % SCENE_COUNT;
+    if (s_scene < 0 || s_scene >= SCENE_COUNT) s_scene = 0;
+    snprintf(o->value, sizeof v_scene, "%s", SCENE_NAMES[s_scene]);
+    return e == ODROID_DIALOG_ENTER;
+}
 static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {   /* edits the SYSTEM volume — same 0..9 scale, curve AND bar-gauge look
      * as the common volume row (odroid_overlay.c volume_update_cb) */
@@ -1108,25 +1145,27 @@ static bool clock_settings_menu(void)
         {0, curr_lang->s_Clock_Theme,  v_theme,  1, cb_theme},
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},
         {2, curr_lang->s_Clock_Anim,   v_anim,   1, cb_anim},
-        {3, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
-        {4, curr_lang->s_Clock_DND,    v_dnd,    1, cb_dnd},
-        {5, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
-        {6, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
-        {7, curr_lang->s_Clock_Exit,   v_exit,   1, cb_enter},
+        {3, "Scene",                   v_scene,  1, cb_scene},
+        {4, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
+        {5, curr_lang->s_Clock_DND,    v_dnd,    1, cb_dnd},
+        {6, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
+        {7, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
+        {8, curr_lang->s_Clock_Exit,   v_exit,   1, cb_enter},
         ODROID_DIALOG_CHOICE_LAST
     };
     cb_theme(&opts[0], ODROID_DIALOG_FOCUS_GAINED, 0);
     cb_face(&opts[1], ODROID_DIALOG_FOCUS_GAINED, 0);
     cb_anim(&opts[2], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_fmt(&opts[3], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_dnd(&opts[4], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_vol(&opts[5], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_scene(&opts[3], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_fmt(&opts[4], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_dnd(&opts[5], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_vol(&opts[6], ODROID_DIALOG_FOCUS_GAINED, 0);
     v_alarms[0] = 0; v_exit[0] = 0;
 
     int sel = odroid_overlay_dialog(curr_lang->s_Clock, opts, 0, &clock_menu_repaint, 0);
-    if (sel == 6) clock_alarm_setup();
+    if (sel == 7) clock_alarm_setup();
     clock_config_save();
-    return sel == 7;
+    return sel == 8;
 }
 
 /* ---- alarm tone (synthesised, no files) -------------------------------

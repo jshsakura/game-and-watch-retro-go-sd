@@ -346,5 +346,14 @@ int main(void)
     render_alarm_setup(0); dump("editor");
     /* 8) full-screen clone-view alarm editor (hour field lit phase) */
     render_alarm_edit(&s_alarms[0], 0, false); dump("editor_edit");
+
+    /* 9) montage of every pixel scene (animated bg + the real clock face) */
+    s_anim = ANIM_SCENE;
+    for (int sc = 0; sc < SCENE_COUNT; sc++) {
+        s_scene = sc;
+        char nm[24]; snprintf(nm, sizeof nm, "zscene_%02d", sc);
+        paint(MODE_CLOCK, 1500 + sc * 137, false); dump(nm);
+    }
+    s_anim = 0; s_scene = 0;
     return 0;
 }
