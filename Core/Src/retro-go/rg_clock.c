@@ -283,10 +283,10 @@ static void draw_centered_i18n(int y, const char *text, uint16_t col)
 {
     int x = (GW_LCD_WIDTH - i18n_get_text_width(text)) / 2;
     if (x < 0) x = 0;
-    /* drop shadow so the text reads over a live photo/scene/GIF background;
-     * solid themes keep the clean flat look */
+    /* tight 1px drop shadow so the text reads over a live photo/scene/GIF
+     * background; solid themes keep the clean flat look */
     if (!s_ghost_on)
-        i18n_draw_text_line(x + 2, y + 2, GW_LCD_WIDTH - x, text, CLOCK_BLACK, CLOCK_BLACK, 1);
+        i18n_draw_text_line(x + 1, y + 1, GW_LCD_WIDTH - x, text, CLOCK_BLACK, CLOCK_BLACK, 1);
     i18n_draw_text_line(x, y, GW_LCD_WIDTH - x, text, col, CLOCK_BLACK, 1);
 }
 
