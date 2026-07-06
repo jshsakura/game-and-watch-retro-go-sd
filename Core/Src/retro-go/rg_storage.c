@@ -11,6 +11,8 @@
 #include "ff.h"
 #else
 #include "rg_frogfs.h"
+#include "gw_littlefs.h"
+bool gw_fs_is_frogfs_path(const char *path); /* syscalls.c: FrogFS-vs-LittleFS routing rule */
 #endif
 #include "rg_storage.h"
 #include <unistd.h>
@@ -220,6 +222,74 @@ bool rg_storage_scandir(const char *path, rg_scandir_cb_t *callback, void *arg, 
 
     return true;
 #else
+    if (!gw_fs_is_frogfs_path(path))
+    {
+        /* RW LittleFS side (/save, /clock, /music, /video, ...) — FrogFS only
+         * holds the read-only tree, so walk this dir with the LittleFS API. */
+        lfs_dir_t dh;
+        struct lfs_info info;
+
+        if (fs_diropen(&dh, path) < 0)
+            return false;
+
+        rg_scandir_t *result = calloc(1, sizeof(rg_scandir_t));
+        if (!result)
+        {
+            fs_dirclose(&dh);
+            return false;
+        }
+
+        result->dirname = path;
+
+        while (fs_dirread(&dh, &info) > 0)
+        {
+            wdog_refresh();
+
+            if (info.name[0] == '.' && (!info.name[1] || (info.name[1] == '.' && !info.name[2])))
+                continue;
+
+            int written;
+            if (strcmp(path, "/") == 0)
+                written = snprintf(result->path, sizeof(result->path), "/%s", info.name);
+            else
+                written = snprintf(result->path, sizeof(result->path), "%s/%s", path, info.name);
+
+            if (written < 0 || (size_t)written >= sizeof(result->path))
+            {
+                printf("File path too long '%s'", path);
+                continue;
+            }
+
+            result->basename = strrchr(result->path, '/');
+            result->basename = result->basename ? result->basename + 1 : result->path;
+            result->is_dir = (info.type == LFS_TYPE_DIR);
+            result->is_file = !result->is_dir;
+            result->size = info.size;
+            result->mtime = 0;
+
+            if ((result->is_dir && types != RG_SCANDIR_FILES) || (result->is_file && types != RG_SCANDIR_DIRS))
+            {
+                int ret = (callback)(result, arg);
+
+                if (ret == RG_SCANDIR_STOP)
+                    break;
+
+                if (ret == RG_SCANDIR_SKIP)
+                    continue;
+            }
+
+            if ((flags & RG_SCANDIR_RECURSIVE) && result->is_dir)
+            {
+                rg_storage_scandir(result->path, callback, arg, flags);
+            }
+        }
+
+        fs_dirclose(&dh);
+        free(result);
+
+        return true;
+    }
+
     frogfs_fs_t *fs = rg_frogfs_get();
     if (!fs)
         return false;
@@ -396,7 +466,7 @@ bool rg_storage_get_adjacent_files(const char *path, char *prev_path, char *next
             if (need_prev && cmp < 0) {
                 // If we don't have a previous file yet, or this one is higher than our current best
                 if (!best_prev[0] || strcasecmp(fno.fname, best_prev + strlen(dir) + 1) > 0) {
-                    sprintf(best_prev, "%s/%s", dir, fno.fname);
+                    snprintf(best_prev, sizeof(best_prev), "%s/%s", dir, fno.fname);
                 }
             }
             
@@ -404,7 +474,7 @@ bool rg_storage_get_adjacent_files(const char *path, char *prev_path, char *next
             if (need_next && cmp > 0) {
                 // If we don't have a next file yet, or this one is lower than our current best
                 if (!best_next[0] || strcasecmp(fno.fname, best_next + strlen(dir) + 1) < 0) {
-                    sprintf(best_next, "%s/%s", dir, fno.fname);
+                    snprintf(best_next, sizeof(best_next), "%s/%s", dir, fno.fname);
                 }
             }
         }
