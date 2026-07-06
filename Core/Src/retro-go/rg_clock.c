@@ -492,21 +492,18 @@ static void scene_city(uint32_t now, const clock_theme_t *t)
 
 /* pixel-scene registry — s_scene selects one; all are procedural (0 RAM). */
 typedef void (*scene_fn)(uint32_t, const clock_theme_t *);
-/* Grid Pulse is intentionally NOT a selectable background — it is reused as the
- * alarm ring effect (see render path), so it stays out of this list.
- * (Equalizer/Plasma/Helix are defined in the .inc but delisted here to stay
- * inside the FLASH budget — re-add them once space is reclaimed.) */
+/* A curated 10-scene set (trimmed from 16 to free FLASH). Grid Pulse is reused
+ * as the alarm ring effect so it's not selectable. Several scenes remain defined
+ * in the .inc but delisted here (gc-sections drops them): mountains, desert,
+ * meteor, bubbles, fireworks, clouds, and the newer equalizer/plasma/helix —
+ * any can be re-listed when there's budget. */
 static const scene_fn SCENES[] = {
-    scene_city, scene_mountains, scene_ocean, scene_starfield, scene_synthwave,
-    scene_rain, scene_snow, scene_aurora, scene_forest, scene_desert,
-    scene_meteor, scene_matrix, scene_bubbles, scene_fireworks,
-    scene_clouds, scene_campfire,
+    scene_city, scene_ocean, scene_starfield, scene_synthwave, scene_rain,
+    scene_snow, scene_aurora, scene_forest, scene_matrix, scene_campfire,
 };
 static const char *const SCENE_NAMES[] = {
-    "City", "Mountains", "Ocean", "Starfield", "Synthwave",
-    "Rain", "Snow", "Aurora", "Forest", "Desert",
-    "Meteor", "Matrix", "Bubbles", "Fireworks",
-    "Clouds", "Campfire",
+    "City", "Ocean", "Starfield", "Synthwave", "Rain",
+    "Snow", "Aurora", "Forest", "Matrix", "Campfire",
 };
 #define SCENE_COUNT ((int)(sizeof(SCENES) / sizeof(SCENES[0])))
 
@@ -623,6 +620,16 @@ static const char *weekday_str(void)
  * box. The blitter has no alpha, so we blend the already-drawn background pixels
  * in place, before the digits go on top. Only used over a photo background. */
 static int isqrt_i(int v) { int s = 0; while ((s + 1) * (s + 1) <= v) s++; return s; }
+
+/* Fill the whole framebuffer with one colour writing 32 bits (two pixels) per
+ * store — halves the memory writes vs a per-pixel loop. The buffer is a full
+ * 320x240 (even count) and 4-byte aligned, so the word loop is exact. */
+static inline void fb_fill_screen(uint16_t *fb, uint16_t c)
+{
+    uint32_t c2 = (uint32_t)c | ((uint32_t)c << 16);
+    uint32_t *p = (uint32_t *)fb;
+    for (int i = 0; i < (GW_LCD_WIDTH * GW_LCD_HEIGHT) / 2; i++) p[i] = c2;
+}
 
 static void scrim_for_digits(void)
 {
@@ -913,7 +920,7 @@ static void render_alarm_edit(const alarm_t *a, int field, bool blink_off)
 {
     const clock_theme_t *t = TH();
     uint16_t *fb = lcd_get_active_buffer();
-    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = t->scr;
+    fb_fill_screen(fb, t->scr);
 
     char title[64];
     snprintf(title, sizeof title, "%s", curr_lang->s_Clock_Alarms);
@@ -981,7 +988,7 @@ static void render_alarm_setup(int sel)
 {
     const clock_theme_t *t = TH();
     uint16_t *fb = lcd_get_active_buffer();
-    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = t->scr;
+    fb_fill_screen(fb, t->scr);
 
     int rows = s_alarm_count + 2, rh = 18;
     int pw = 240, ph = 30 + rows * rh + 10;
@@ -1026,7 +1033,7 @@ static void render_datetime_edit(const struct tm *tm, int field, bool blink_off)
 {
     const clock_theme_t *t = TH();
     uint16_t *fb = lcd_get_active_buffer();
-    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = t->scr;
+    fb_fill_screen(fb, t->scr);
     draw_centered_i18n(30, curr_lang->s_Clock_Set_Time, t->alarm);
 
     char yy[8], mo[8], dd[8];
@@ -1267,7 +1274,7 @@ static void clock_menu_repaint(void)
 {
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t bg = TH()->scr;
-    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
+    fb_fill_screen(fb, bg);
     if (s_anim == ANIM_SCENE) { draw_scene(HAL_GetTick(), TH()); s_ghost_on = false; }
     else if (s_anim == 1) { draw_ambient(HAL_GetTick(), TH()->ink); s_ghost_on = false; }
     else if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, HAL_GetTick()); s_ghost_on = false; }
@@ -1503,7 +1510,7 @@ void rg_clock_show(void)
          * the signature — else a static face repaints at 12fps for nothing,
          * defeating the event-driven loop and draining the battery. */
         if (s_anim == ANIM_GIF)        { if (clock_gif_ready()) sig ^= (now / 80); }
-        else if (s_anim == ANIM_SCENE) sig ^= (now / 33);   /* ~30fps: scenes must animate as smoothly as the live settings preview (rain/matrix/plasma) */
+        else if (s_anim == ANIM_SCENE) sig ^= (now / 32);   /* ~31fps, and 32ms = exactly 2 polls (16ms) so frames land evenly — no beat/jitter */
         else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
 
         /* mode pager + hint fade out after a few idle seconds (any key restores
@@ -1527,7 +1534,7 @@ void rg_clock_show(void)
             last_sig = sig; dirty = false;
             uint16_t *fb = lcd_get_active_buffer();
             uint16_t bg = flash ? TH()->ink : TH()->scr;
-            for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
+            fb_fill_screen(fb, bg);
             bool bg_live = false;
             if (!flash) {   /* background layer, identical in every mode */
                 if (ringing) { scene_grid_pulse(now, TH()); bg_live = true; }   /* alarm effect = the grid-pulse ripple (over any chosen background) */
