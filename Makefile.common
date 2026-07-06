@@ -65,6 +65,12 @@ OFF_SAVESTATE = 0
 ifeq ($(SHARED_HIBERNATE_SAVESTATE),1)
 	OFF_SAVESTATE = 1
 endif
+# Flash-only builds: without this, every sleep/power-off silently overwrites
+# the user's manual save slot 0. LittleFS is RW, so give them the dedicated
+# /save/off.sav just like SD builds get.
+ifeq ($(SD_CARD),0)
+	OFF_SAVESTATE = 1
+endif
 
 # Disable system logos splash screen at startup
 DISABLE_SPLASH_SCREEN ?= 0
@@ -353,6 +359,10 @@ C_SOURCES += $(FROGFS_C_SOURCES) \
              $(LITTLEFS_C_SOURCES) \
 			 Core/Src/gw_littlefs.c
 C_DEFS += -DLFS_NO_MALLOC
+# frogfs.c sizes path buffers with PATH_MAX, which newlib's <limits.h> only
+# exposes behind an #ifndef guard some toolchains never satisfy (Debian
+# arm-none-eabi). The guard means this -D wins cleanly everywhere.
+C_DEFS += -DPATH_MAX=256
 C_INCLUDES += \
 -I$(FROGFS_DIR)/include \
 -I$(FROGFS_DIR)/src \
@@ -803,7 +813,9 @@ ifneq ($(SD_CARD),0)
 all: $(BUILD_DIR)/$(TARGET)_extflash.bin
 endif
 ifeq ($(SD_CARD),0)
-all: $(FROGFS_IMAGE)
+# littlefs.bin too: it carries /cores/*.bin (+ /lang) — a firmware flashed
+# without it fails every emulator launch on a missing/stale core overlay.
+all: $(FROGFS_IMAGE) $(LITTLEFS_IMAGE)
 endif
 endif
 
@@ -1680,6 +1692,7 @@ $(LITTLEFS_IMAGE): create_sd_data scripts/gen_littlefs_image.py scripts/sd_cores
 		--build-dir $(LITTLEFS_BUILD_DIR) \
 		--size $(FILESYSTEM_SIZE) \
 		--block-size $(LITTLEFS_BLOCK_SIZE) \
+		--include cores --include lang \
 		$(LITTLEFS_OMIT_PICO8_RO)
 
 littlefs_image: $(LITTLEFS_IMAGE)

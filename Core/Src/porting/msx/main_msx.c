@@ -258,12 +258,14 @@ static void msx_sleep_wake_up()
     if (msx_game_type != MSX_GAME_DISK && msx_game_type != MSX_GAME_HDIDE)
         return;
 
+#if SD_CARD == 1
     const int drive = (msx_game_type == MSX_GAME_HDIDE) ? 1 : 0;
 
     /* SD was unmounted: reopen the FILE* only. insertDiskette() would also
      * reset the mixer and re-probe the image (disk icon flash). */
     if (!diskReopenDrive(drive))
         insertDiskette(properties, drive, current_disk_path, NULL, -1);
+#endif /* flash build: FrogFS/LittleFS handles survive sleep, nothing to reopen */
 }
 
 /* Core stubs */

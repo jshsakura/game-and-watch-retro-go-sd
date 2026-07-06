@@ -353,8 +353,12 @@ static void draw_hud(int dec_ok, int seen, int na)
 {
     // SD read path: S1 = HW SPI1 (Tim S.), O1 = soft-SPI bit-bang over OSPI (Yota9).
     // Tells us whether a slow read is the HW-SPI clock or the bit-bang loop.
+#if SD_CARD == 1
     const char *sd = sdcard_hw_type == SDCARD_HW_SPI1 ? "S1"
                    : sdcard_hw_type == SDCARD_HW_OSPI1 ? "O1" : "--";
+#else
+    const char *sd = "--"; /* flash build: media streams from FrogFS, no SD path */
+#endif
     extern int g_vdec_read_ms, g_vdec_jpeg_ms;
     char l1[48], l2[48];
     snprintf(l1, sizeof l1, "dec=%d v=%d rd=%dms jpg=%dms", dec_ok, seen, g_vdec_read_ms, g_vdec_jpeg_ms);

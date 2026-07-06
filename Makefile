@@ -448,6 +448,11 @@ PCE_C_SOURCES += \
 Core/Src/porting/pce/pce_cd.c \
 Core/Src/porting/pce/pce_scsi.c \
 Core/Src/porting/pce/pce_adpcm.c
+else
+# The pce-go core references the SCSI target from its IO decode even when the
+# CD stack isn't built; link no-CD-unit stubs instead.
+PCE_C_SOURCES += \
+Core/Src/porting/pce/pce_cd_stubs.c
 endif
 
 MSX_C_SOURCES = 
@@ -1236,6 +1241,12 @@ PKMINI_C_INCLUDES +=  \
 -I$(CORE_PKMINI)/freebios \
 -I$(CORE_PKMINI)/libretro/libretro-common/include \
 -I./
+# Debian/Ubuntu arm-none-eabi ships gcc's freestanding stdint.h (no include_next
+# to newlib's), so newlib <inttypes.h> never sees __int64_t_defined and skips
+# PRI*64 — retro_common_api.h then hits '#error inttypes.h is being screwy'.
+# newlib's own sys/_stdint.h uses the identical '#define __int64_t_defined 1',
+# so this is a no-op on toolchains that don't have the quirk.
+PKMINI_C_INCLUDES += -D__int64_t_defined=1
 
 TAMP_C_INCLUDES += -I$(TAMP_DIR)
 

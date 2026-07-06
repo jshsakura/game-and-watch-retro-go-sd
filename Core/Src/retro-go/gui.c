@@ -382,6 +382,11 @@ void gui_resize_list(tab_t *tab, int new_size)
  * 0 = the text list, which never display-wraps. */
 int gui_carousel_min(void)
 {
+#if COVERFLOW == 0
+    /* No cover themes compiled in: only the text list exists, and
+     * odroid_settings_theme_get() itself is COVERFLOW-gated. */
+    return 0;
+#else
     switch (odroid_settings_theme_get()) {
         case 1: case 4: {
             /* Vertical themes pair the covers with a text column that shows
@@ -396,6 +401,7 @@ int gui_carousel_min(void)
         case 2: case 3: return 5;   /* horizontal coverflow: 5 covers visible */
         default:        return 0;   /* text list */
     }
+#endif
 }
 
 void gui_scroll_list(tab_t *tab, scroll_mode_t mode)

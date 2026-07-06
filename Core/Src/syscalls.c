@@ -513,6 +513,20 @@ int __wrap_fflush(int file) {
 extern uint32_t log_idx;
 extern char logbuf[1024 * 4];
 
+/* SD-card diagnostic hooks (see the SD_CARD==1 branch above): callers in the
+ * launcher/cores are not all SD-gated, so keep the symbols as no-ops here —
+ * there is no removable card to drop a trace file onto. */
+void sd_trace_begin(const char *path) { (void)path; }
+void doom_trace_begin(void) {}
+void doom_trace_end(void) {}
+void doom_trace_raw(const char *s) { (void)s; }
+void sd_save_log(const char *line) { (void)line; }
+void sd_save_log_boot(const char *line) { (void)line; }
+
+/* Consumed by the SD build's _open() to resolve core-relative fopen()s;
+ * defined here so shared launcher code links, unused by the FrogFS path. */
+const char *gw_fs_relpath_prefix = NULL;
+
 #define MAX_OPEN_FILES 10
 #define FS_FD_OFFSET 3
 
@@ -578,6 +592,13 @@ static bool is_frogfs_path(const char *path)
            path_has_prefix_dir(path, "fonts") ||
            path_has_prefix_dir(path, "font") ||
            is_cores_pico8_ro_frogfs_path(path);
+}
+
+/* Public probe of the routing rule above, so rg_storage_scandir can pick the
+ * matching backend (FrogFS walk vs LittleFS walk) for a given directory. */
+bool gw_fs_is_frogfs_path(const char *path)
+{
+    return is_frogfs_path(path);
 }
 
 static const char *normalize_frogfs_path(const char *name, char *buffer, size_t buffer_size)
