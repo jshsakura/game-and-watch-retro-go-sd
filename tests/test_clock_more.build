@@ -1,0 +1,3 @@
+mkdir -p /tmp/mtest
+gcc -O2 -Wall -Wextra -std=gnu11 -Itests/clock_stubs tests/test_clock_more.c -o /tmp/mtest/test_clock_more
+/tmp/mtest/test_clock_more

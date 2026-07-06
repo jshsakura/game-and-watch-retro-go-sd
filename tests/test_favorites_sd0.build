@@ -1,0 +1,3 @@
+mkdir -p /tmp/mtest /tmp/favtest0
+gcc -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/fav_stubs -DFAVORITES_FILE='"/tmp/favtest0/favorites.txt"' -DFAVORITES_TMP='"/tmp/favtest0/favorites.new"' tests/test_favorites_sd0.c Core/Src/retro-go/rg_favorites.c -o /tmp/mtest/test_favorites_sd0
+/tmp/mtest/test_favorites_sd0

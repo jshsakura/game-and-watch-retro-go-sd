@@ -26,6 +26,22 @@ $CC -O2 -Wall -Wextra -std=gnu11 -Itests/clock_stubs \
     tests/test_clock_alarm.c                             -o /tmp/mtest/test_clock_alarm
 $CC -O2 -Wall -std=gnu11 -Itests/clock_stubs -ICore/Src/porting/lib/gifdec \
     tests/test_clock_gif.c                               -o /tmp/mtest/test_clock_gif
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/clock_stubs \
+    tests/test_clock_more.c                              -o /tmp/mtest/test_clock_more
+mkdir -p /tmp/favtest
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/fav_stubs \
+    -DFAVORITES_FILE='"/tmp/favtest/favorites.txt"' \
+    -DFAVORITES_TMP='"/tmp/favtest/favorites.new"' \
+    tests/test_favorites.c Core/Src/retro-go/rg_favorites.c -o /tmp/mtest/test_favorites
+# rg_storage.c compiled twice: FatFs backend (SD_CARD=1) and FrogFS backend (SD_CARD=0)
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/storage_stubs -ICore/Inc/retro-go \
+    tests/test_storage.c Core/Src/retro-go/rg_storage.c \
+    tests/storage_stubs/stubs.c tests/storage_stubs/fake_fatfs.c tests/storage_stubs/posix_dir.c \
+    -o /tmp/mtest/test_storage_sd1
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/storage_stubs -ICore/Inc/retro-go \
+    tests/test_storage.c Core/Src/retro-go/rg_storage.c \
+    tests/storage_stubs/stubs.c tests/storage_stubs/fake_frogfs.c \
+    -o /tmp/mtest/test_storage_sd0
 python3 - <<'PYEOF2'
 from PIL import Image, ImageDraw
 frames = []
@@ -47,6 +63,10 @@ if [ -d "$SRC" ]; then
 fi
 /tmp/mtest/test_clock_alarm || rc=1
 /tmp/mtest/test_clock_gif   || rc=1
+/tmp/mtest/test_clock_more  || rc=1
+/tmp/mtest/test_favorites   || rc=1
+/tmp/mtest/test_storage_sd1 || rc=1
+/tmp/mtest/test_storage_sd0 || rc=1
 
 # === merge-hygiene guard (red-green) ==================================
 # A merge that interleaves OUR logo additions with upstream's can silently

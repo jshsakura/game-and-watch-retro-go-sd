@@ -1,0 +1,5 @@
+mkdir -p /tmp/mtest
+gcc -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/storage_stubs -ICore/Inc/retro-go tests/test_storage.c Core/Src/retro-go/rg_storage.c tests/storage_stubs/stubs.c tests/storage_stubs/fake_fatfs.c tests/storage_stubs/posix_dir.c -o /tmp/mtest/test_storage_sd1
+/tmp/mtest/test_storage_sd1
+gcc -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/storage_stubs -ICore/Inc/retro-go tests/test_storage.c Core/Src/retro-go/rg_storage.c tests/storage_stubs/stubs.c tests/storage_stubs/fake_frogfs.c -o /tmp/mtest/test_storage_sd0
+/tmp/mtest/test_storage_sd0
