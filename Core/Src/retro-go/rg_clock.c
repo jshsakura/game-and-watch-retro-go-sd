@@ -44,7 +44,7 @@
  * Every face keeps the LCD ghost treatment; text always uses the one
  * firmware i18n font. */
 
-typedef enum { FACE_SEG7 = 0, FACE_PIXEL, FACE_DOT, FACE_SEG7U } digit_face_t;  /* SEG7U = upright */
+typedef enum { FACE_SEG7 = 0, FACE_PIXEL, FACE_DOT } digit_face_t;
 
 typedef struct { uint16_t scr, ink, alarm; uint8_t face; } clock_theme_t;
 
@@ -66,12 +66,7 @@ static const clock_theme_t THEMES[] = {
  * DSEG-style clock faces do — not seven butted rectangles. Drawn as 1px
  * rows so the shear is exact; still just fill_rect calls underneath. */
 
-#define SEG_SLANT 5   /* italic lean for FACE_SEG7 (upright FACE_SEG7U = 0) */
-static int s_seg_slant = SEG_SLANT;   /* set per face before drawing segments */
-
 static const uint8_t SEG7[10] = { 0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F };
-
-static int seg_shear(int y_rel, int h) { return (s_seg_slant * (h - y_rel)) / h; }
 
 static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
 {
@@ -95,7 +90,7 @@ static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t co
                 int c2 = 2*r - (t - 1), dc = c2 < 0 ? -c2 : c2;
                 int inset = (dc + 1) / 2 + 1;
                 int yr = S[s].y0 + r;
-                odroid_overlay_draw_fill_rect(x + S[s].x0 + inset + seg_shear(yr, h),
+                odroid_overlay_draw_fill_rect(x + S[s].x0 + inset,
                                               y + yr, S[s].len - 2*inset, 1, col);
             }
         } else {
@@ -103,7 +98,7 @@ static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t co
                 int e = r < S[s].len - 1 - r ? r : S[s].len - 1 - r;
                 int wid = 2*e + 1; if (wid > t - 1) wid = t - 1;
                 int yr = S[s].y0 + r;
-                odroid_overlay_draw_fill_rect(x + S[s].x0 + (t - wid)/2 + seg_shear(yr, h),
+                odroid_overlay_draw_fill_rect(x + S[s].x0 + (t - wid)/2,
                                               y + yr, wid, 1, col);
             }
         }
@@ -141,8 +136,8 @@ static void draw_pix_digit(int d, int x, int y, int px, uint16_t col, bool dot)
 
 static int big_time_width(digit_face_t face)
 {
-    if (face == FACE_SEG7 || face == FACE_SEG7U)
-        return 4*SEG_W + 3*SEG_GAP + (SEG_T + 2*SEG_GAP) + (face == FACE_SEG7 ? SEG_SLANT : 0);
+    if (face == FACE_SEG7)
+        return 4*SEG_W + 3*SEG_GAP + (SEG_T + 2*SEG_GAP);
     return 4*(5*PIX_PX) + 3*PIX_PX + (PIX_PX*3);
 }
 
@@ -150,12 +145,6 @@ static int big_time_width(digit_face_t face)
  * Every segment is first drawn in a faint "ghost" colour, the lit ones on
  * top — the unlit-segment look of a real LCD alarm clock. blank_lead hides a
  * leading zero the way segment clocks do (12h "9:41", not "09:41"). */
-/* When a live background is on, the faint "ghost 8" behind each digit reads
- * as a dark block over the art — skip it there (set by render each frame).
- * It also only suits the dense pixel/dot faces; the 7-seg face is cleaner
- * without it (face_ghost()). */
-static bool s_ghost_on = true;
-static inline bool face_ghost(digit_face_t f) { return f == FACE_PIXEL || f == FACE_DOT; }
 
 /* Two-colour core: hours and minutes can differ (the alarm edit view blinks
  * one field by dropping it to the ghost shade). */
@@ -165,41 +154,29 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
 {
     int x = (GW_LCD_WIDTH - big_time_width(face)) / 2;
     int a = hh/10, b = hh%10, c = mm/10, e = mm%10;
-    bool gh = s_ghost_on && face_ghost(face);
-    uint16_t cc = colon ? col_h : (gh ? ghost : col_h);
-    bool seg = (face == FACE_SEG7 || face == FACE_SEG7U);
-    s_seg_slant = (face == FACE_SEG7) ? SEG_SLANT : 0;
-
-    if (seg) {
+    uint16_t cc = colon ? col_h : ghost;   /* blink: colon drops to the dim shade */
+    if (face == FACE_SEG7) {
         int w = SEG_W, h = SEG_H, t = SEG_T, gap = SEG_GAP, y = SEG_Y;
-        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);   /* 8 lights all segments */
         if (!(blank_lead && a == 0))
             draw_seg_digit(a, x, y, w, h, t, col_h);
         x += w+gap;
-        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(b, x, y, w, h, t, col_h); x += w+gap;
         odroid_overlay_draw_fill_rect(x+gap, y+h/3, t, t, cc);
         odroid_overlay_draw_fill_rect(x+gap, y+2*h/3, t, t, cc);
         x += t+2*gap;
-        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(c, x, y, w, h, t, col_m); x += w+gap;
-        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(e, x, y, w, h, t, col_m);
     } else {
         bool dot = (face == FACE_DOT);
         int px = PIX_PX, dw = 5*px, y = PIX_Y;
-        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         if (!(blank_lead && a == 0))
             draw_pix_digit(a, x, y, px, col_h, dot);
         x += dw+px;
-        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(b, x, y, px, col_h, dot); x += dw+px;
         odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, cc);
         odroid_overlay_draw_fill_rect(x+px, y+4*px, px, px, cc);
         x += px*3;
-        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(c, x, y, px, col_m, dot); x += dw+px;
-        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(e, x, y, px, col_m, dot);
     }
 }
@@ -212,6 +189,20 @@ static void draw_big_time(int hh, int mm, bool colon, bool blank_lead,
 
 /* ---- icons: baked 1-bit sprites from Lucide (see host/gen_icons.py) --- */
 #include "rg_clock_icons.h"
+
+/* Filled crescent moon (solid, not an outline): a disc with an offset disc
+ * cut away — only the lit crescent pixels are drawn, so it reads over any
+ * background. cx,cy = top-left of an r*2 box. */
+static void draw_moon(int x, int y, int r, uint16_t col)
+{
+    int cx = x + r, cy = y + r, ox = (r + 1) / 2;
+    for (int dy = -r; dy <= r; dy++)
+        for (int dx = -r; dx <= r; dx++) {
+            int e = dx - ox;
+            if (dx*dx + dy*dy <= r*r && e*e + dy*dy > r*r)
+                odroid_overlay_draw_fill_rect(cx + dx, cy + dy, 1, 1, col);
+        }
+}
 
 static void draw_icon(const pix_icon_t *ic, int x, int y, uint16_t col)
 {
@@ -296,7 +287,7 @@ static void clock_config_load(void)
     while (fgets(line, sizeof line, f)) {
         int v, en = 1;
         if (sscanf(line, "theme=%d", &v) == 1) { if (v >= 0 && v < THEME_COUNT) s_theme = v; }
-        else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_SEG7U) s_face_override = v; }
+        else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_DOT) s_face_override = v; }
         else if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
         else if (sscanf(line, "anim=%d", &v) == 1) { if (v >= 0 && v < ANIM_COUNT) s_anim = v; }
@@ -459,15 +450,15 @@ static void draw_topbar(clock_mode_t mode)
     const clock_theme_t *t = TH();
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
     odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 10);
-    if (s_dnd) draw_icon(&PIX_MOON, GW_LCD_WIDTH - 48, 9, t->ink);
+    if (s_dnd) draw_moon(GW_LCD_WIDTH - 50, 9, 7, t->ink);
     /* No text title — the mode reads from the icon pager alone (current one
      * lit in the accent), with <> strokes hinting the L/R switch. Steady,
      * nothing appearing/disappearing. */
     uint16_t dim = mix565(t->scr, t->ink, 5);
     int pw = MODE_COUNT*17 - 4;
     int dx = (GW_LCD_WIDTH - pw) / 2, iy = 9;   /* top-aligned with the battery */
-    draw_icon(&PIX_CHEV_L, dx - 15, 11, dim);
-    draw_icon(&PIX_CHEV_R, dx + pw + 9, 11, dim);
+    draw_icon(&PIX_CHEV_L, dx - 15, 12, dim);
+    draw_icon(&PIX_CHEV_R, dx + pw + 9, 12, dim);
     for (int i = 0; i < MODE_COUNT; i++, dx += 17) {
         uint16_t c = (i == (int)mode) ? t->alarm : dim;
         switch (i) {
@@ -645,21 +636,18 @@ static void render_stopwatch(uint32_t now)
 {
     (void)now;
     const clock_theme_t *t = TH();
-    uint16_t col = t->ink, ghost = mix565(t->scr, t->ink, 2);
-    bool gh = s_ghost_on && face_ghost(cur_face());
+    uint16_t col = t->ink;
     uint32_t ms = s_watch.elapsed_ms;
     int d[6] = { (int)((ms/60000) % 100) / 10, (int)((ms/60000) % 100) % 10,
                  (int)((ms/1000)  % 60)  / 10, (int)((ms/1000)  % 60)  % 10,
                  (int)((ms/10)    % 100) / 10, (int)((ms/10)    % 100) % 10 };
     digit_face_t face = cur_face();
 
-    s_seg_slant = (face == FACE_SEG7) ? SEG_SLANT : 0;
-    if (face == FACE_SEG7 || face == FACE_SEG7U) {
+    if (face == FACE_SEG7) {
         const int w = 32, h = 68, tt = 8, g = 6, sep = tt + 2*g;
         int total = 6*w + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = SEG_Y + 12;
         for (int i = 0; i < 6; i++) {
-            if (gh) draw_seg_digit(8, x, y, w, h, tt, ghost);
             draw_seg_digit(d[i], x, y, w, h, tt, col);
             x += w + ((i == 1 || i == 3) ? 0 : g);
             if (i == 1) {           /* colon */
@@ -677,8 +665,7 @@ static void render_stopwatch(uint32_t now)
         int total = 6*dw + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = PIX_Y + 10;
         for (int i = 0; i < 6; i++) {
-            if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
-            draw_pix_digit(d[i], x, y, px, col, dot);
+                draw_pix_digit(d[i], x, y, px, col, dot);
             x += dw + ((i == 1 || i == 3) ? 0 : g);
             if (i == 1) {
                 odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, col);
@@ -942,7 +929,7 @@ static void clock_alarm_setup(void)
 
 static const char *const THEME_LABEL[THEME_COUNT] =
     { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate" };
-static const char *const FACE_NAME[4] = { "7-seg", "Pixel", "Dot", "Upright" };
+static const char *const FACE_NAME[3] = { "7-seg", "Pixel", "Dot" };
 static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44],
             v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_alarms[4], v_exit[4];
 
@@ -957,8 +944,8 @@ static bool cb_theme(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_
 static bool cb_face(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    if (e == ODROID_DIALOG_PREV) s_face_override = (s_face_override <= -1) ? FACE_SEG7U : s_face_override-1;
-    if (e == ODROID_DIALOG_NEXT) s_face_override = (s_face_override >= FACE_SEG7U) ? -1 : s_face_override+1;
+    if (e == ODROID_DIALOG_PREV) s_face_override = (s_face_override <= -1) ? FACE_DOT : s_face_override-1;
+    if (e == ODROID_DIALOG_NEXT) s_face_override = (s_face_override >= FACE_DOT) ? -1 : s_face_override+1;
     if (s_face_override < 0) sprintf(o->value, "%s", curr_lang->s_Clock_Auto);
     else sprintf(o->value, "%s", FACE_NAME[s_face_override]);
     return e == ODROID_DIALOG_ENTER;
@@ -1011,10 +998,9 @@ static void clock_menu_repaint(void)
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t bg = TH()->scr;
     for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
-    if (s_anim == ANIM_SCENE) { draw_scene(HAL_GetTick(), TH()); s_ghost_on = false; }
-    else if (s_anim == 1) { draw_ambient(HAL_GetTick(), TH()->ink); s_ghost_on = false; }
-    else if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, HAL_GetTick()); s_ghost_on = false; }
-    else s_ghost_on = true;
+    if (s_anim == ANIM_SCENE) draw_scene(HAL_GetTick(), TH());
+    else if (s_anim == 1) draw_ambient(HAL_GetTick(), TH()->ink);
+    else if (s_anim == ANIM_GIF && clock_gif_ready()) clock_gif_blit(fb, HAL_GetTick());
     draw_topbar(MODE_CLOCK);
     render_clock(HAL_GetTick(), false);
 }
@@ -1199,13 +1185,11 @@ void rg_clock_show(void)
             uint16_t *fb = lcd_get_active_buffer();
             uint16_t bg = flash ? TH()->ink : TH()->scr;
             for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
-            bool bg_live = false;
             if (!flash) {   /* background layer, identical in every mode */
-                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
-                else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
-                else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
+                if (s_anim == ANIM_GIF && clock_gif_ready()) clock_gif_blit(fb, now);
+                else if (s_anim == ANIM_SCENE) draw_scene(now, TH());
+                else if (s_anim == 1) draw_ambient(now, TH()->ink);
             }
-            s_ghost_on = !bg_live;   /* skip the LCD ghost over live art */
             switch (mode) {
             case MODE_CLOCK:     render_clock(now, ringing); break;
             case MODE_POMODORO:  render_pomodoro(now);  break;

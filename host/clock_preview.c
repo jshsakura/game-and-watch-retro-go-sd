@@ -272,11 +272,9 @@ static void base(uint16_t bg) { for (int i = 0; i < W * H; i++) fb[i] = bg; }
 static void paint(clock_mode_t mode, uint32_t now, bool ringing)
 {
     base(TH()->scr);
-    bool bg_live = false;
-    if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
-    else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
-    else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
-    s_ghost_on = !bg_live;
+    if (s_anim == ANIM_GIF && clock_gif_ready()) clock_gif_blit(fb, now);
+    else if (s_anim == ANIM_SCENE) draw_scene(now, TH());
+    else if (s_anim == 1) draw_ambient(now, TH()->ink);
     switch (mode) {
     case MODE_CLOCK:     render_clock(now, ringing); break;
     case MODE_POMODORO:  render_pomodoro(now);  break;
@@ -328,8 +326,6 @@ int main(void)
     paint(MODE_STOPWATCH, 1200, false); dump("stopwatch");
     /* 6b) Amber theme (pixel face) — theme/face pickers are back */
     s_theme = 1; paint(MODE_CLOCK, 1000, false); dump("clock_amber"); s_theme = 0;
-    /* 6d) upright 7-seg face (no ghost) */
-    s_face_override = FACE_SEG7U; paint(MODE_CLOCK, 1000, false); dump("clock_upright"); s_face_override = -1;
     /* 6c) GIF background (real decode; device gates on free RAM) */
     s_anim = ANIM_GIF; clock_gif_load();
     paint(MODE_CLOCK, 0, false); dump("clock_gif");
