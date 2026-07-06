@@ -140,6 +140,7 @@ int i18n_draw_text_line(int x, int y, int width, const char *t,
 
 /* ---- misc firmware stubs ------------------------------------------------ */
 void wdog_refresh(void) {}
+void odroid_system_sleep(void) {}
 static uint32_t fake_tick = 0;
 uint32_t HAL_GetTick(void) { return fake_tick; }
 void HAL_Delay(uint32_t ms) { fake_tick += ms; }

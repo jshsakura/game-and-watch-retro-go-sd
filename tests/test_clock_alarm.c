@@ -20,6 +20,7 @@ static uint32_t fake_tick = 0;
 uint32_t HAL_GetTick(void) { return fake_tick; }
 void HAL_Delay(uint32_t ms) { fake_tick += ms; }
 void wdog_refresh(void) {}
+void odroid_system_sleep(void) {}
 int HAL_SAI_Transmit_DMA(SAI_HandleTypeDef *h, uint8_t *b, uint16_t l) { (void)h;(void)b;(void)l; return 0; }
 int HAL_SAI_DMAStop(SAI_HandleTypeDef *h) { (void)h; return 0; }
 SAI_HandleTypeDef hsai_BlockA1; DMA_HandleTypeDef hdma_sai1_a;

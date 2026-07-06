@@ -6,4 +6,5 @@
 #define ODROID_AUDIO_VOLUME_MAX 9
 int odroid_audio_volume_get(void);
 void odroid_audio_volume_set(int level);
+void odroid_system_sleep(void);
 #endif

@@ -8,7 +8,8 @@
  * or font pickers); the customisable part is the background (off / ambient /
  * user GIF via /clock/bg.gif). Every label comes from the firmware i18n
  * table (hint legends stay ASCII for the 8px font). Controls are uniform:
- * A start/pause, B reset, PAUSE = settings (incl. Exit), POWER exits; while
+ * A start/pause, B reset, PAUSE = settings (incl. Exit); POWER sleeps and
+ * resumes back INTO the clock (it does not quit); while
  * the alarm rings A = snooze (5 min), anything else stops it. Alarm loudness
  * follows the SYSTEM volume. Config (24h, DND, alarms) = /clock.cfg.
  *
@@ -449,16 +450,16 @@ static void draw_topbar(clock_mode_t mode)
 {
     const clock_theme_t *t = TH();
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
-    odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 10);
-    if (s_dnd) draw_moon(GW_LCD_WIDTH - 50, 9, 7, t->ink);
+    odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 12);
+    if (s_dnd) draw_moon(GW_LCD_WIDTH - 50, 10, 7, t->ink);
     /* No text title — the mode reads from the icon pager alone (current one
      * lit in the accent), with <> strokes hinting the L/R switch. Steady,
      * nothing appearing/disappearing. */
     uint16_t dim = mix565(t->scr, t->ink, 5);
     int pw = MODE_COUNT*17 - 4;
     int dx = (GW_LCD_WIDTH - pw) / 2, iy = 9;   /* top-aligned with the battery */
-    draw_icon(&PIX_CHEV_L, dx - 15, 12, dim);
-    draw_icon(&PIX_CHEV_R, dx + pw + 9, 12, dim);
+    draw_icon(&PIX_CHEV_L, dx - 15, 14, dim);
+    draw_icon(&PIX_CHEV_R, dx + pw + 9, 14, dim);
     for (int i = 0; i < MODE_COUNT; i++, dx += 17) {
         uint16_t c = (i == (int)mode) ? t->alarm : dim;
         switch (i) {
@@ -1125,9 +1126,26 @@ void rg_clock_show(void)
         }
         tone_feed(now, ringing);   /* synthesised beep while the alarm rings */
 
-        /* Exit = POWER, or the "Exit" entry in the PAUSE menu — identical in
-         * every mode. Face buttons never exit (A/B belong to the runners). */
-        if (k.values[ODROID_INPUT_POWER]) break;
+        /* POWER = SLEEP that RESUMES back into the clock — a bedside clock
+         * should not quit on sleep. odroid_system_sleep() fades the CURRENT
+         * (clock) frame out (no logo, no launcher flash), STOP-sleeps, and
+         * returns in place on wake. The GIF's open fd is invalidated by the
+         * SD unmount/remount across sleep, so drop and reload it. Exit is the
+         * PAUSE-menu "Exit" item only. */
+        if (pressed(&k, &prev, ODROID_INPUT_POWER)) {
+            tone_feed(now, false);
+            bool had_gif = (s_anim == ANIM_GIF);
+            if (had_gif) clock_gif_free();
+            odroid_system_sleep();          /* fade -> STOP sleep -> resume here */
+            if (had_gif) clock_gif_load();   /* reopen: the pre-sleep fd is stale */
+            /* swallow the wake press so we neither re-sleep nor leak it out */
+            do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); }
+            while (k.values[ODROID_INPUT_POWER]);
+            odroid_input_read_gamepad(&prev);
+            s_last_fired_min = -1;   /* re-arm alarms after the sleep gap */
+            dirty = true;
+            continue;
+        }
 
         if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { mode = (mode == 0) ? MODE_COUNT-1 : mode-1; dirty = true; }
         if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { mode = (mode+1) % MODE_COUNT; dirty = true; }
