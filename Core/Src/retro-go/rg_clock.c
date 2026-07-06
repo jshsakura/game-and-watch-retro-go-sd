@@ -493,18 +493,20 @@ static void scene_city(uint32_t now, const clock_theme_t *t)
 /* pixel-scene registry — s_scene selects one; all are procedural (0 RAM). */
 typedef void (*scene_fn)(uint32_t, const clock_theme_t *);
 /* Grid Pulse is intentionally NOT a selectable background — it is reused as the
- * alarm ring effect (see render path), so it stays out of this list. */
+ * alarm ring effect (see render path), so it stays out of this list.
+ * (Equalizer/Plasma/Helix are defined in the .inc but delisted here to stay
+ * inside the FLASH budget — re-add them once space is reclaimed.) */
 static const scene_fn SCENES[] = {
     scene_city, scene_mountains, scene_ocean, scene_starfield, scene_synthwave,
     scene_rain, scene_snow, scene_aurora, scene_forest, scene_desert,
     scene_meteor, scene_matrix, scene_bubbles, scene_fireworks,
-    scene_clouds, scene_campfire, scene_equalizer, scene_plasma, scene_helix,
+    scene_clouds, scene_campfire,
 };
 static const char *const SCENE_NAMES[] = {
     "City", "Mountains", "Ocean", "Starfield", "Synthwave",
     "Rain", "Snow", "Aurora", "Forest", "Desert",
     "Meteor", "Matrix", "Bubbles", "Fireworks",
-    "Clouds", "Campfire", "Equalizer", "Plasma", "Helix",
+    "Clouds", "Campfire",
 };
 #define SCENE_COUNT ((int)(sizeof(SCENES) / sizeof(SCENES[0])))
 
@@ -1244,9 +1246,7 @@ static bool cb_pspeed(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32
     if (e == ODROID_DIALOG_NEXT) s_photo_speed = (s_photo_speed + 1) % 3;
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) { s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
     snprintf(o->value, sizeof v_pspeed, "%s",
-             (s_photo_speed == 0) ? curr_lang->s_Clock_Speed_Slow
-           : (s_photo_speed == 2) ? curr_lang->s_Clock_Speed_Fast
-                                   : curr_lang->s_Clock_Speed_Normal);
+             (s_photo_speed == 0) ? "Slow" : (s_photo_speed == 2) ? "Fast" : "Normal");
     return e == ODROID_DIALOG_ENTER;
 }
 static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)

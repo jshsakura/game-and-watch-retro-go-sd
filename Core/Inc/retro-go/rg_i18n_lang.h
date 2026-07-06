@@ -331,9 +331,6 @@ typedef struct
     const char *s_Clock_Set_Time;    // set the RTC date/time (settings row + editor title)
     const char *s_Clock_Scene;         // pixel-scene picker row
     const char *s_Clock_Photo_Speed;   // photo album transition speed row
-    const char *s_Clock_Speed_Slow;    // photo speed value
-    const char *s_Clock_Speed_Normal;  // photo speed value
-    const char *s_Clock_Speed_Fast;    // photo speed value
     const char *s_Clock_Anim_4;        // photo album background value
     //=====================================================================
 
