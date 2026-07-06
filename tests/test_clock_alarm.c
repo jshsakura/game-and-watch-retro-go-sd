@@ -52,6 +52,7 @@ bool clock_gif_ready(void){return false;}
 void clock_gif_blit(uint16_t*f,uint32_t n){(void)f;(void)n;}
 bool clock_gif_load(void){return false;} void clock_gif_free(void){}
 int clock_gif_status(void){return 1;}
+const char *clock_gif_diag(void){return "";}
 
 /* simulated SAI DMA (mirrors gw_audio.c semantics) */
 uint32_t audio_mute;

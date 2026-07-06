@@ -14,6 +14,7 @@
 #define CLOCK_GIF_BAD_DIMS 3   /* larger than 480x320 */
 #define CLOCK_GIF_BAD_FMT  4   /* not a GIF / decoder rejected it */
 int  clock_gif_status(void);                     /* why the last load failed */
+const char *clock_gif_diag(void);                /* human-readable failure detail */
 bool clock_gif_load(void);                       /* open + alloc; false if none/too big */
 void clock_gif_free(void);
 bool clock_gif_ready(void);

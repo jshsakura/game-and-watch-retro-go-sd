@@ -328,6 +328,8 @@ int main(void)
     paint(MODE_STOPWATCH, 1200, false); dump("stopwatch");
     /* 6b) Amber theme (pixel face) — theme/face pickers are back */
     s_theme = 1; paint(MODE_CLOCK, 1000, false); dump("clock_amber"); s_theme = 0;
+    /* 6d) upright 7-seg face (no ghost) */
+    s_face_override = FACE_SEG7U; paint(MODE_CLOCK, 1000, false); dump("clock_upright"); s_face_override = -1;
     /* 6c) GIF background (real decode; device gates on free RAM) */
     s_anim = ANIM_GIF; clock_gif_load();
     paint(MODE_CLOCK, 0, false); dump("clock_gif");

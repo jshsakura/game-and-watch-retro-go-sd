@@ -44,7 +44,7 @@
  * Every face keeps the LCD ghost treatment; text always uses the one
  * firmware i18n font. */
 
-typedef enum { FACE_SEG7 = 0, FACE_PIXEL, FACE_DOT } digit_face_t;
+typedef enum { FACE_SEG7 = 0, FACE_PIXEL, FACE_DOT, FACE_SEG7U } digit_face_t;  /* SEG7U = upright */
 
 typedef struct { uint16_t scr, ink, alarm; uint8_t face; } clock_theme_t;
 
@@ -66,11 +66,12 @@ static const clock_theme_t THEMES[] = {
  * DSEG-style clock faces do — not seven butted rectangles. Drawn as 1px
  * rows so the shear is exact; still just fill_rect calls underneath. */
 
-#define SEG_SLANT 5   /* total rightward lean, top row vs bottom row */
+#define SEG_SLANT 5   /* italic lean for FACE_SEG7 (upright FACE_SEG7U = 0) */
+static int s_seg_slant = SEG_SLANT;   /* set per face before drawing segments */
 
 static const uint8_t SEG7[10] = { 0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F };
 
-static int seg_shear(int y_rel, int h) { return (SEG_SLANT * (h - y_rel)) / h; }
+static int seg_shear(int y_rel, int h) { return (s_seg_slant * (h - y_rel)) / h; }
 
 static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
 {
@@ -140,8 +141,8 @@ static void draw_pix_digit(int d, int x, int y, int px, uint16_t col, bool dot)
 
 static int big_time_width(digit_face_t face)
 {
-    if (face == FACE_SEG7)
-        return 4*SEG_W + 3*SEG_GAP + (SEG_T + 2*SEG_GAP) + SEG_SLANT;
+    if (face == FACE_SEG7 || face == FACE_SEG7U)
+        return 4*SEG_W + 3*SEG_GAP + (SEG_T + 2*SEG_GAP) + (face == FACE_SEG7 ? SEG_SLANT : 0);
     return 4*(5*PIX_PX) + 3*PIX_PX + (PIX_PX*3);
 }
 
@@ -150,8 +151,11 @@ static int big_time_width(digit_face_t face)
  * top — the unlit-segment look of a real LCD alarm clock. blank_lead hides a
  * leading zero the way segment clocks do (12h "9:41", not "09:41"). */
 /* When a live background is on, the faint "ghost 8" behind each digit reads
- * as a dark block over the art — skip it there (set by render each frame). */
+ * as a dark block over the art — skip it there (set by render each frame).
+ * It also only suits the dense pixel/dot faces; the 7-seg face is cleaner
+ * without it (face_ghost()). */
 static bool s_ghost_on = true;
+static inline bool face_ghost(digit_face_t f) { return f == FACE_PIXEL || f == FACE_DOT; }
 
 /* Two-colour core: hours and minutes can differ (the alarm edit view blinks
  * one field by dropping it to the ghost shade). */
@@ -161,38 +165,41 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
 {
     int x = (GW_LCD_WIDTH - big_time_width(face)) / 2;
     int a = hh/10, b = hh%10, c = mm/10, e = mm%10;
-    uint16_t cc = colon ? col_h : ghost;
+    bool gh = s_ghost_on && face_ghost(face);
+    uint16_t cc = colon ? col_h : (gh ? ghost : col_h);
+    bool seg = (face == FACE_SEG7 || face == FACE_SEG7U);
+    s_seg_slant = (face == FACE_SEG7) ? SEG_SLANT : 0;
 
-    if (face == FACE_SEG7) {
+    if (seg) {
         int w = SEG_W, h = SEG_H, t = SEG_T, gap = SEG_GAP, y = SEG_Y;
-        if (s_ghost_on) draw_seg_digit(8, x, y, w, h, t, ghost);   /* 8 lights all segments */
+        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);   /* 8 lights all segments */
         if (!(blank_lead && a == 0))
             draw_seg_digit(a, x, y, w, h, t, col_h);
         x += w+gap;
-        if (s_ghost_on) draw_seg_digit(8, x, y, w, h, t, ghost);
+        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(b, x, y, w, h, t, col_h); x += w+gap;
         odroid_overlay_draw_fill_rect(x+gap, y+h/3, t, t, cc);
         odroid_overlay_draw_fill_rect(x+gap, y+2*h/3, t, t, cc);
         x += t+2*gap;
-        if (s_ghost_on) draw_seg_digit(8, x, y, w, h, t, ghost);
+        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(c, x, y, w, h, t, col_m); x += w+gap;
-        if (s_ghost_on) draw_seg_digit(8, x, y, w, h, t, ghost);
+        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(e, x, y, w, h, t, col_m);
     } else {
         bool dot = (face == FACE_DOT);
         int px = PIX_PX, dw = 5*px, y = PIX_Y;
-        if (s_ghost_on) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         if (!(blank_lead && a == 0))
             draw_pix_digit(a, x, y, px, col_h, dot);
         x += dw+px;
-        if (s_ghost_on) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(b, x, y, px, col_h, dot); x += dw+px;
         odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, cc);
         odroid_overlay_draw_fill_rect(x+px, y+4*px, px, px, cc);
         x += px*3;
-        if (s_ghost_on) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(c, x, y, px, col_m, dot); x += dw+px;
-        if (s_ghost_on) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(e, x, y, px, col_m, dot);
     }
 }
@@ -289,7 +296,7 @@ static void clock_config_load(void)
     while (fgets(line, sizeof line, f)) {
         int v, en = 1;
         if (sscanf(line, "theme=%d", &v) == 1) { if (v >= 0 && v < THEME_COUNT) s_theme = v; }
-        else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_DOT) s_face_override = v; }
+        else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_SEG7U) s_face_override = v; }
         else if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
         else if (sscanf(line, "anim=%d", &v) == 1) { if (v >= 0 && v < ANIM_COUNT) s_anim = v; }
@@ -573,6 +580,12 @@ static void render_clock(uint32_t now, bool alarm_firing)
             draw_centered_i18n(STATUS_Y, line, alcol);
         }
     }
+
+    /* GIF selected but not showing? put the reason on screen (device = log) */
+    if (s_anim == ANIM_GIF && !clock_gif_ready()) {
+        char msg[80]; snprintf(msg, sizeof msg, "GIF: %s", clock_gif_diag());
+        draw_centered_i18n(STATUS_Y + 22, msg, t->alarm);
+    }
 }
 
 static void render_mmss(uint32_t ms, uint16_t col, bool colon)
@@ -633,18 +646,20 @@ static void render_stopwatch(uint32_t now)
     (void)now;
     const clock_theme_t *t = TH();
     uint16_t col = t->ink, ghost = mix565(t->scr, t->ink, 2);
+    bool gh = s_ghost_on && face_ghost(cur_face());
     uint32_t ms = s_watch.elapsed_ms;
     int d[6] = { (int)((ms/60000) % 100) / 10, (int)((ms/60000) % 100) % 10,
                  (int)((ms/1000)  % 60)  / 10, (int)((ms/1000)  % 60)  % 10,
                  (int)((ms/10)    % 100) / 10, (int)((ms/10)    % 100) % 10 };
     digit_face_t face = cur_face();
 
-    if (face == FACE_SEG7) {
+    s_seg_slant = (face == FACE_SEG7) ? SEG_SLANT : 0;
+    if (face == FACE_SEG7 || face == FACE_SEG7U) {
         const int w = 32, h = 68, tt = 8, g = 6, sep = tt + 2*g;
         int total = 6*w + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = SEG_Y + 12;
         for (int i = 0; i < 6; i++) {
-            if (s_ghost_on) draw_seg_digit(8, x, y, w, h, tt, ghost);
+            if (gh) draw_seg_digit(8, x, y, w, h, tt, ghost);
             draw_seg_digit(d[i], x, y, w, h, tt, col);
             x += w + ((i == 1 || i == 3) ? 0 : g);
             if (i == 1) {           /* colon */
@@ -662,7 +677,7 @@ static void render_stopwatch(uint32_t now)
         int total = 6*dw + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = PIX_Y + 10;
         for (int i = 0; i < 6; i++) {
-            if (s_ghost_on) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+            if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
             draw_pix_digit(d[i], x, y, px, col, dot);
             x += dw + ((i == 1 || i == 3) ? 0 : g);
             if (i == 1) {
@@ -927,7 +942,7 @@ static void clock_alarm_setup(void)
 
 static const char *const THEME_LABEL[THEME_COUNT] =
     { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate" };
-static const char *const FACE_NAME[3] = { "7-seg", "Pixel", "Dot" };
+static const char *const FACE_NAME[4] = { "7-seg", "Pixel", "Dot", "Upright" };
 static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44],
             v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_alarms[4], v_exit[4];
 
@@ -942,8 +957,8 @@ static bool cb_theme(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_
 static bool cb_face(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    if (e == ODROID_DIALOG_PREV) s_face_override = (s_face_override <= -1) ? FACE_DOT : s_face_override-1;
-    if (e == ODROID_DIALOG_NEXT) s_face_override = (s_face_override >= FACE_DOT) ? -1 : s_face_override+1;
+    if (e == ODROID_DIALOG_PREV) s_face_override = (s_face_override <= -1) ? FACE_SEG7U : s_face_override-1;
+    if (e == ODROID_DIALOG_NEXT) s_face_override = (s_face_override >= FACE_SEG7U) ? -1 : s_face_override+1;
     if (s_face_override < 0) sprintf(o->value, "%s", curr_lang->s_Clock_Auto);
     else sprintf(o->value, "%s", FACE_NAME[s_face_override]);
     return e == ODROID_DIALOG_ENTER;

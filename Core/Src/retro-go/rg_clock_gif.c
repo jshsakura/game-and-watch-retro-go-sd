@@ -27,6 +27,7 @@
 #include "gw_lcd.h"
 #include "gw_malloc.h"
 #include <string.h>
+#include <stdio.h>
 #include "rg_clock_gif.h"
 
 #ifndef GIF_PATH
@@ -39,8 +40,10 @@ static uint32_t s_next_tick;
 static bool     s_have_frame;
 static size_t   s_ram_mark;   /* emu-RAM bump-pointer snapshot (see header) */
 static int      s_status = CLOCK_GIF_OK;
+static char     s_diag[64] = "";
 
 int clock_gif_status(void) { return s_status; }
+const char *clock_gif_diag(void) { return s_diag; }
 
 /* gifdec allocator = the emu-RAM arena; free is a no-op, the whole arena is
  * rolled back at clock_gif_free() via ram_release(). */
@@ -63,28 +66,35 @@ bool clock_gif_load(void)
      * (the launcher's covers+list already hold much of the emu-RAM pool, so a
      * full-screen GIF may simply not fit what's left). */
     int probe = open(GIF_PATH, O_RDONLY);
-    if (probe < 0) { s_status = CLOCK_GIF_NO_FILE; return false; }
+    if (probe < 0) { s_status = CLOCK_GIF_NO_FILE;
+        snprintf(s_diag, sizeof s_diag, "no file: %s", GIF_PATH); return false; }
     uint8_t hdr[10];
     int hn = read(probe, hdr, 10);
     close(probe);
-    if (hn < 10 || memcmp(hdr, "GIF", 3) != 0) { s_status = CLOCK_GIF_BAD_FMT; return false; }
+    if (hn < 10 || memcmp(hdr, "GIF", 3) != 0) { s_status = CLOCK_GIF_BAD_FMT;
+        snprintf(s_diag, sizeof s_diag, "not a GIF (got %02X %02X %02X)", hdr[0],hdr[1],hdr[2]); return false; }
     int gw = hdr[6] | (hdr[7] << 8), gh = hdr[8] | (hdr[9] << 8);
-    if (gw <= 0 || gh <= 0 || gw > 480 || gh > 320) { s_status = CLOCK_GIF_BAD_DIMS; return false; }
+    if (gw <= 0 || gh <= 0 || gw > 480 || gh > 320) { s_status = CLOCK_GIF_BAD_DIMS;
+        snprintf(s_diag, sizeof s_diag, "bad dims %dx%d (max 480x320)", gw, gh); return false; }
     /* gifdec needs frame(4*w*h) + LZW table (~40KB) + slack */
     size_t need = (size_t)gw * gh * 4 + 48 * 1024;
-    if (ram_get_free_size() < need) { s_status = CLOCK_GIF_NO_RAM; return false; }
+    if (ram_get_free_size() < need) { s_status = CLOCK_GIF_NO_RAM;
+        snprintf(s_diag, sizeof s_diag, "no RAM: need %dK free %dK",
+                 (int)(need/1024), (int)(ram_get_free_size()/1024)); return false; }
 
     s_ram_mark = ram_mark();
     gd_set_allocator(ram_malloc, ram_calloc, gif_arena_free);
 
     gd_GIF *g = gd_open_gif(GIF_PATH);
-    if (!g) { s_status = CLOCK_GIF_BAD_FMT; clock_gif_free(); return false; }
+    if (!g) { s_status = CLOCK_GIF_BAD_FMT;
+        snprintf(s_diag, sizeof s_diag, "decoder rejected %dx%d", gw, gh);
+        clock_gif_free(); return false; }
     if (g->width <= 0 || g->height <= 0 || g->width > 480 || g->height > 320) {
         s_status = CLOCK_GIF_BAD_DIMS;
         gd_close_gif(g);   /* closes the fd; arena frees are no-ops */
         clock_gif_free(); return false;
     }
-    s_status = CLOCK_GIF_OK;
+    s_status = CLOCK_GIF_OK; s_diag[0] = 0;
     s_gif = g; s_gw = g->width; s_gh = g->height;
     s_next_tick = 0; s_have_frame = false;
     return true;
