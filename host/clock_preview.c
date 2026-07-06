@@ -266,7 +266,10 @@ static const lang_t KO = {
     .s_Clock_Anim="배경 효과", .s_Clock_Anim_0="끄기 (배터리 소모 없음)",
     .s_Clock_Anim_1="은은한 효과 (낮음)", .s_Clock_Anim_2="픽셀 풍경 (낮음)", .s_Clock_Anim_3="GIF (높음)",
     .s_Clock_Volume="알람 음량", .s_Clock_Alarms="알람", .s_Clock_Exit="시계 나가기",
-    .s_Clock_Hint_Ring="A 5분 스누즈  B 끄기", .s_Clock_Theme="테마", .s_Clock_Face="숫자 서체", .s_Clock_Auto="자동", .s_Full="\x7", .s_Fill="\x8",
+    .s_Clock_Hint_Ring="A 5분 스누즈  B 끄기", .s_Clock_Theme="테마", .s_Clock_Face="숫자 서체", .s_Clock_Auto="자동",
+    .s_Clock_Set_Time="시간 설정", .s_Clock_Scene="씬", .s_Clock_Photo_Speed="사진 속도",
+    .s_Clock_Speed_Slow="느림", .s_Clock_Speed_Normal="보통", .s_Clock_Speed_Fast="빠름", .s_Clock_Anim_4="사진 앨범",
+    .s_Full="\x7", .s_Fill="\x8",
 };
 const lang_t *curr_lang = &KO;
 
@@ -296,7 +299,7 @@ static void paint(clock_mode_t mode, uint32_t now, bool ringing)
     case MODE_STOPWATCH: render_stopwatch(now); break;
     default: break;
     }
-    draw_topbar(mode);
+    draw_topbar(mode, true);
     draw_hintbar(ringing ? curr_lang->s_Clock_Hint_Ring
         : mode == MODE_CLOCK     ? curr_lang->s_Clock_Hint_Clock
         : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run

@@ -52,26 +52,30 @@ static void scene_mountains(uint32_t now, const clock_theme_t *t)
 /* 2) ocean — shifting wave lines + moon + reflection shimmer */
 static void scene_ocean(uint32_t now, const clock_theme_t *t)
 {
-    int horizon = 150;
+    int horizon = 138;
     uint16_t star = mix565(t->scr, t->ink, 7);
     for (int k = 0; k < 16; k++) {
-        int sx = (k * 83 + 7) % GW_LCD_WIDTH, sy = 10 + (k * 53) % 110;
+        int sx = (k * 83 + 7) % GW_LCD_WIDTH, sy = 8 + (k * 53) % (horizon - 30);
         if (((now / 800) + k) % 4 < 2) srect(sx, sy, 1, 1, star);
     }
-    uint16_t moon = mix565(t->scr, t->ink, 11);
-    srect(150, 40, 10, 10, moon); srect(148, 42, 14, 6, moon);
-    for (int y = horizon; y < GW_LCD_HEIGHT; y += 3) {
-        int depth = y - horizon, ph = now / 120 + depth;
-        uint16_t c = mix565(t->scr, t->ink, 2 + depth / 20);
-        for (int x = 0; x < GW_LCD_WIDTH; x += 6) {
+    uint16_t moon = mix565(t->scr, t->ink, 12);
+    int mx = 155, my = 40;
+    srect(mx - 5, my, 10, 12, moon); srect(mx - 7, my + 2, 14, 8, moon);
+    srect(mx - 3, my - 2, 6, 16, moon);
+    /* denser, brighter wave rows that brighten toward the foreground */
+    for (int y = horizon; y < GW_LCD_HEIGHT; y += 2) {
+        int depth = y - horizon, ph = now / 100 + depth;
+        uint16_t c = mix565(t->scr, t->ink, 3 + depth / 12);
+        for (int x = 0; x < GW_LCD_WIDTH; x += 5) {
             int off = itri(x / 2 + ph, 2);
-            srect(x, y + off, 3 + ((x + ph) % 3), 1, c);
+            srect(x, y + off, 4 + ((x + ph) % 3), 1, c);
         }
     }
-    uint16_t sh = mix565(t->scr, t->ink, 9);
-    for (int y = horizon; y < GW_LCD_HEIGHT; y += 4) {
-        int w = 6 + itri(y * 3 + now / 150, 4); if (w < 1) w = 1;
-        srect(155 - w / 2, y, w, 1, sh);
+    /* moon reflection shimmer column under the moon */
+    for (int y = horizon; y < GW_LCD_HEIGHT; y += 3) {
+        int w = 9 + itri(y * 3 + now / 150, 7); if (w < 2) w = 2;
+        int lvl = 12 - (y - horizon) / 18; if (lvl < 5) lvl = 5;
+        srect(mx - w / 2, y, w, 2, mix565(t->scr, t->ink, lvl));
     }
 }
 
@@ -103,15 +107,16 @@ static void scene_starfield(uint32_t now, const clock_theme_t *t)
 /* 4) synthwave — perspective grid + horizon sun */
 static void scene_synthwave(uint32_t now, const clock_theme_t *t)
 {
-    int hz = 150;
+    int hz = 176;                                  /* low horizon, below the digits */
     uint16_t sun = mix565(t->scr, t->alarm, 12);
-    for (int i = 0; i < 11; i++) {
-        int w = 60 - i * 4, y = hz - 2 - i * 5;
-        if (i % 2 == 0) srect(160 - w / 2, y, w, 4, sun);
+    /* retro sun: banded disc rising just above the low horizon (stays clear of digits) */
+    for (int i = 0; i < 9; i++) {
+        int w = 58 - i * 4, y = hz - 2 - i * 4;
+        if (i % 2 == 0) srect(160 - w / 2, y, w, 3, sun);
     }
     uint16_t grid = mix565(t->scr, t->alarm, 7);
-    for (int i = 1; i <= 16; i++) {
-        int y = hz + (i * i) / 2 + (int)((now / 60) % ((hz) / 8 + 1));
+    for (int i = 1; i <= 14; i++) {
+        int y = hz + (i * i) / 2 + (int)((now / 60) % ((GW_LCD_HEIGHT - hz) / 6 + 1));
         if (y < GW_LCD_HEIGHT) srect(0, y, GW_LCD_WIDTH, 1, grid);
     }
     for (int vx = -8; vx <= 8; vx++)
@@ -162,12 +167,14 @@ static void scene_aurora(uint32_t now, const clock_theme_t *t)
         int sx = (k * 67 + 9) % GW_LCD_WIDTH, sy = 6 + (k * 41) % 90;
         if (((now / 700) + k) % 4 < 2) srect(sx, sy, 1, 1, star);
     }
+    /* XMB-style bands lowered toward the vertical centre/lower area, big smooth flow */
     for (int b = 0; b < 3; b++) {
-        uint16_t c = mix565(t->scr, t->alarm, 10 - b * 3);
-        int base = 40 + b * 22;
+        uint16_t c = mix565(t->scr, t->alarm, 11 - b * 3);
+        int base = 120 + b * 26;
         for (int x = 0; x < GW_LCD_WIDTH; x += 3) {
-            int y = base + itri(x / 2 + (int)(now / 150) + b * 60, 14) + itri(x + (int)(now / 90), 4);
-            int hgt = 10 + itri(x * 2 + (int)(now / 120) + b * 30, 6); if (hgt < 3) hgt = 3;
+            int y = base + itri(x / 2 + (int)(now / 150) + b * 60, 28)
+                         + itri(x / 4 + (int)(now / 260) + b * 40, 14);
+            int hgt = 12 + itri(x * 2 + (int)(now / 120) + b * 30, 8); if (hgt < 4) hgt = 4;
             srect(x, y, 3, hgt, c);
         }
     }
@@ -337,20 +344,97 @@ static void scene_campfire(uint32_t now, const clock_theme_t *t)
         int sx = (k * 71 + 5) % GW_LCD_WIDTH, sy = 8 + (k * 47) % 90;
         if (((now / 700) + k) % 4 < 2) srect(sx, sy, 1, 1, star);
     }
-    int fx = 160, fy = 224;
-    uint16_t lg = mix565(t->scr, t->ink, 4);
-    srect(fx - 18, fy, 36, 6, lg); srect(fx - 14, fy + 4, 28, 4, lg);
-    int fl = (int)(now / 80);
-    for (int i = 0; i < 14; i++) {
-        int y = fy - 2 - i * 3, jit = itri(fl + i * 20, 3 + i / 3);
-        int w = 26 - i * 2; if (w < 2) w = 2;
-        int f = 13 - i; if (f < 2) f = 2;
-        srect(fx - w / 2 + jit, y, w, 3, mix565(t->scr, t->alarm, f));
+    int fx = 160, fy = 228;
+    /* wide log base */
+    uint16_t lg = mix565(t->scr, t->ink, 4), lg2 = mix565(t->scr, t->ink, 3);
+    srect(fx - 32, fy, 64, 8, lg); srect(fx - 24, fy + 6, 48, 5, lg2);
+    int fl = (int)(now / 70);
+    /* outer flame — tall, wide, tapering stack */
+    for (int i = 0; i < 20; i++) {
+        int y = fy - 2 - i * 4, jit = itri(fl + i * 18, 5 + i / 3);
+        int w = 48 - i * 2; if (w < 3) w = 3;
+        int f = 11 - i / 2; if (f < 2) f = 2;
+        srect(fx - w / 2 + jit, y, w, 4, mix565(t->scr, t->alarm, f));
     }
-    for (int k = 0; k < 8; k++) {
+    /* inner hot core — brighter, narrower, blends toward the light ink */
+    for (int i = 0; i < 15; i++) {
+        int y = fy - 4 - i * 4, jit = itri(fl + i * 26 + 40, 4 + i / 4);
+        int w = 26 - i * 2; if (w < 2) w = 2;
+        int f = 6 + i / 3; if (f > 12) f = 12;
+        srect(fx - w / 2 + jit, y, w, 4, mix565(t->alarm, t->ink, f));
+    }
+    /* bigger rising sparks */
+    for (int k = 0; k < 14; k++) {
         uint32_t h = shash(k * 3517u);
-        int life = (int)(now / 30 + (h >> 2)) % 80;
-        int x = fx + (int)(h % 20) - 10 + itri(life * 3, 5), y = fy - 10 - life * 2;
-        if (y > 0) srect(x, y, 1, 1, mix565(t->scr, t->alarm, 10 - life / 10));
+        int life = (int)(now / 28 + (h >> 2)) % 95;
+        int x = fx + (int)(h % 44) - 22 + itri(life * 3, 8), y = fy - 16 - life * 2;
+        int sz = 1 + (int)((h >> 9) & 1);
+        if (y > 0) srect(x, y, sz, sz, mix565(t->scr, t->alarm, 11 - life / 12));
+    }
+}
+
+/* 17) equalizer — spectrum bars bouncing along the bottom, bright peak caps */
+static void scene_equalizer(uint32_t now, const clock_theme_t *t)
+{
+    int bars = 20, bw = GW_LCD_WIDTH / bars;      /* 16px per bar */
+    int floorY = GW_LCD_HEIGHT;
+    for (int b = 0; b < bars; b++) {
+        uint32_t h = shash(b * 2237u);
+        int ph = (int)(now / 30) + (int)(h % 128);
+        int amp = 50 + (int)((h >> 5) % 90);
+        int hgt = 20 + amp / 2 + itri(ph, amp / 2) + itri(ph * 3 + 40, amp / 6);
+        if (hgt < 4) hgt = 4;
+        if (hgt > floorY - 6) hgt = floorY - 6;
+        int x = b * bw + 2, w = bw - 3;
+        for (int y = floorY - hgt; y < floorY; y += 4) {  /* brighter toward top */
+            int frac = (floorY - y) * 12 / hgt;
+            int br = 4 + frac; if (br > 13) br = 13;
+            srect(x, y, w, 4, mix565(t->scr, t->alarm, br));
+        }
+        int peak = itri(ph - 30, amp / 2);            /* lagging peak cap */
+        int py = floorY - hgt - 4 - (peak > 0 ? peak / 6 : 0);
+        srect(x, py, w, 2, mix565(t->scr, t->ink, 12));
+    }
+}
+
+/* 18) plasma — demoscene interference field in chunky blocks (theme-tinted) */
+static void scene_plasma(uint32_t now, const clock_theme_t *t)
+{
+    const int bs = 10;                            /* 32×24 blocks */
+    int tt = (int)(now / 40);
+    for (int y = 0; y < GW_LCD_HEIGHT; y += bs)
+        for (int x = 0; x < GW_LCD_WIDTH; x += bs) {
+            int v = itri(x + tt, 16) + itri(y - tt, 16)
+                  + itri((x + y) / 2 + tt, 16) + itri((x - y) / 2 - tt * 2, 12);
+            int br = (v + 60) * 16 / 120;          /* v≈-60..60 → 0..16 */
+            if (br < 0) br = 0; if (br > 16) br = 16;
+            uint16_t col = (br < 8) ? mix565(t->scr, t->ink, 8 - br)
+                                    : mix565(t->scr, t->alarm, br - 8);
+            srect(x, y, bs, bs, col);
+        }
+}
+
+/* 19) helix — twin sine strands weaving with connecting rungs + stars */
+static void scene_helix(uint32_t now, const clock_theme_t *t)
+{
+    uint16_t star = mix565(t->scr, t->ink, 6);
+    for (int k = 0; k < 14; k++) {
+        int sx = (k * 89 + 5) % GW_LCD_WIDTH, sy = (k * 53 + 9) % GW_LCD_HEIGHT;
+        if (((now / 700) + k) % 4 < 2) srect(sx, sy, 1, 1, star);
+    }
+    int cx = GW_LCD_WIDTH / 2, amp = 70, tt = (int)(now / 40);
+    uint16_t rung = mix565(t->scr, t->ink, 3);            /* faint connecting rung */
+    for (int y = 0; y < GW_LCD_HEIGHT; y += 5) {
+        int a = itri(y * 2 + tt, amp);
+        int x1 = cx + a, x2 = cx - a, front = (a >= 0);
+        /* sparse rung: only ~every 20px of height, so it never becomes a bar */
+        if ((y / 5) % 4 == 0) {
+            int lx = x1 < x2 ? x1 : x2, rw = (x1 < x2 ? x2 - x1 : x1 - x2);
+            srect(lx, y + 2, rw, 1, rung);
+        }
+        uint16_t c1 = mix565(t->scr, t->alarm, front ? 13 : 6);
+        uint16_t c2 = mix565(t->scr, t->ink,   front ? 6 : 13);
+        srect(x1 - 3, y, 6, 5, c1);                        /* thicker strand dots */
+        srect(x2 - 3, y, 6, 5, c2);
     }
 }

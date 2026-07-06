@@ -154,7 +154,7 @@ static void draw_pix_digit(int d, int x, int y, int px, uint16_t col, bool dot)
 #define SEG_H    92
 #define SEG_T    10
 #define SEG_GAP  10
-#define SEG_Y    64   /* digits sit lower: breathing room under the logo bar */
+#define SEG_Y    72   /* digits sit lower: breathing room under the logo bar + balance with the lowered topbar */
 #define PIX_PX   9
 #define PIX_Y    (SEG_Y + 6)
 
@@ -193,8 +193,10 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
         x += w+gap;
         if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(b, x, y, w, h, t, col_h); x += w+gap;
-        odroid_overlay_draw_fill_rect(x+gap, y+h/3, t, t, cc);
-        odroid_overlay_draw_fill_rect(x+gap, y+2*h/3, t, t, cc);
+        /* centre the colon in its slot: the slot is t+3*gap wide, so gap*1.5 on
+         * each side (was x+gap, i.e. 2*gap left vs 1*gap right — visibly off) */
+        odroid_overlay_draw_fill_rect(x+gap+gap/2, y+h/3, t, t, cc);
+        odroid_overlay_draw_fill_rect(x+gap+gap/2, y+2*h/3, t, t, cc);
         x += t+2*gap;
         if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(c, x, y, w, h, t, col_m); x += w+gap;
@@ -406,6 +408,7 @@ static bool s_pomo_on_break = false;
 static runner_t s_pomo = { RUN_STOPPED, 25*60*1000, 0, 0 };
 static uint32_t s_flash_until = 0;
 #define SNOOZE_MS (5u * 60u * 1000u)
+#define CLOCK_UI_HIDE_MS 8000u   /* idle time before the mode pager + hint fade away */
 static uint32_t s_snooze_tick = 0;   /* HAL tick when a snoozed alarm re-rings */
 
 static void tick_countdown(runner_t *r, uint32_t now)
@@ -489,17 +492,19 @@ static void scene_city(uint32_t now, const clock_theme_t *t)
 
 /* pixel-scene registry — s_scene selects one; all are procedural (0 RAM). */
 typedef void (*scene_fn)(uint32_t, const clock_theme_t *);
+/* Grid Pulse is intentionally NOT a selectable background — it is reused as the
+ * alarm ring effect (see render path), so it stays out of this list. */
 static const scene_fn SCENES[] = {
     scene_city, scene_mountains, scene_ocean, scene_starfield, scene_synthwave,
     scene_rain, scene_snow, scene_aurora, scene_forest, scene_desert,
-    scene_meteor, scene_matrix, scene_bubbles, scene_fireworks, scene_grid_pulse,
-    scene_clouds, scene_campfire,
+    scene_meteor, scene_matrix, scene_bubbles, scene_fireworks,
+    scene_clouds, scene_campfire, scene_equalizer, scene_plasma, scene_helix,
 };
 static const char *const SCENE_NAMES[] = {
     "City", "Mountains", "Ocean", "Starfield", "Synthwave",
     "Rain", "Snow", "Aurora", "Forest", "Desert",
-    "Meteor", "Matrix", "Bubbles", "Fireworks", "Grid Pulse",
-    "Clouds", "Campfire",
+    "Meteor", "Matrix", "Bubbles", "Fireworks",
+    "Clouds", "Campfire", "Equalizer", "Plasma", "Helix",
 };
 #define SCENE_COUNT ((int)(sizeof(SCENES) / sizeof(SCENES[0])))
 
@@ -528,25 +533,31 @@ static const char *mode_title(clock_mode_t mode)
  * next-alarm line already carries it.
  *
  */
-static void draw_topbar(clock_mode_t mode)
+static void draw_topbar(clock_mode_t mode, bool show_pager)
 {
     const clock_theme_t *t = TH();
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
-    odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 12);
-    if (s_dnd) draw_moon(GW_LCD_WIDTH - 50, 10, 7, t->ink);
+    odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 34, 18);
+    if (s_dnd) draw_moon(GW_LCD_WIDTH - 58, 16, 7, t->ink);
+    /* The logo/battery stay; the mode pager auto-hides after a few idle seconds
+     * (any key brings it back) so the clock face reads clean. */
+    if (!show_pager) return;
     /* No text title — the mode reads from the icon pager alone (current one
-     * lit in the accent), with <> strokes hinting the L/R switch. Steady,
-     * nothing appearing/disappearing. */
-    uint16_t dim = mix565(t->scr, t->ink, 5);
+     * lit in the accent), with <> strokes hinting the L/R switch. Inactive
+     * icons use a soft, LIGHT tint — a heavy dark grey looked tacky over a
+     * bright photo background. */
+    uint16_t dim = mix565(t->scr, t->ink, 9);
     int pw = MODE_COUNT*17 - 4;
-    int dx = (GW_LCD_WIDTH - pw) / 2, iy = 9;   /* top-aligned with the battery */
-    draw_icon(&PIX_CHEV_L, dx - 15, 14, dim);
-    draw_icon(&PIX_CHEV_R, dx + pw + 9, 14, dim);
+    int dx = (GW_LCD_WIDTH - pw) / 2, iy = 15;  /* lowered to sit on the battery's row */
+    /* All four mode glyphs are 13px tall on the same row (iy..iy+12, centre iy+6).
+     * The chevrons are 7px, so y = iy - 3 sits them on that same centre. */
+    draw_icon(&PIX_CHEV_L, dx - 15, iy + 3, dim);
+    draw_icon(&PIX_CHEV_R, dx + pw + 9, iy + 3, dim);
     for (int i = 0; i < MODE_COUNT; i++, dx += 17) {
         uint16_t c = (i == (int)mode) ? t->alarm : dim;
         switch (i) {
         case MODE_CLOCK:     draw_icon(&PIX_CLOCK,     dx, iy, c); break;
-        case MODE_POMODORO:  draw_icon(&PIX_TOMATO,    dx, iy + 1, c); break;
+        case MODE_POMODORO:  draw_icon(&PIX_TOMATO,    dx, iy, c); break;
         case MODE_TIMER:     draw_icon(&PIX_HOURGLASS, dx + 1, iy, c); break;
         default:             draw_icon(&PIX_STOPWATCH, dx, iy, c); break;
         }
@@ -609,19 +620,25 @@ static const char *weekday_str(void)
  * black, FEATHERED at the top and bottom so it reads as a vignette rather than a
  * box. The blitter has no alpha, so we blend the already-drawn background pixels
  * in place, before the digits go on top. Only used over a photo background. */
+static int isqrt_i(int v) { int s = 0; while ((s + 1) * (s + 1) <= v) s++; return s; }
+
 static void scrim_for_digits(void)
 {
     uint16_t *fb = lcd_get_active_buffer();
-    const int y0 = 30, y1 = STATUS_Y + 20;        /* date(42) .. digits .. status(178) */
-    const int mid = (y0 + y1) / 2, half = (y1 - y0) / 2;
-    const int peak = 11;                           /* centre darkening ~70% — digits read over bright photos */
-    for (int y = y0; y < y1 && y < GW_LCD_HEIGHT; y++) {
-        int d = y - mid; if (d < 0) d = -d;        /* 0 at centre, half at edges */
-        int str = peak * (half - d) / half;        /* feather toward the edges */
-        if (str <= 0) continue;
+    /* One translucent rounded "card" behind the clock content — a clean frosted
+     * plate (uniform, ~38% dark), NOT a feathered gradient. The digit outline
+     * carries the fine legibility; this just lifts the text off a busy photo. */
+    const int cw = 250, ch = (STATUS_Y + 16) - 34;   /* covers date -> digits -> next-alarm */
+    const int cx = (GW_LCD_WIDTH - cw) / 2, cy = 34, r = 14, str = 6;
+    for (int j = 0; j < ch; j++) {
+        int y = cy + j; if (y < 0 || y >= GW_LCD_HEIGHT) continue;
+        int inset = 0, dy = -1;
+        if (j < r)            dy = r - j;                  /* top rounded zone */
+        else if (j >= ch - r) dy = j - (ch - 1 - r);       /* bottom rounded zone */
+        if (dy > 0) inset = r - isqrt_i(r * r - dy * dy);
         uint16_t *row = &fb[y * GW_LCD_WIDTH];
-        for (int x = 0; x < GW_LCD_WIDTH; x++)
-            row[x] = mix565(row[x], CLOCK_BLACK, str);
+        for (int x = cx + inset; x < cx + cw - inset; x++)
+            if (x >= 0 && x < GW_LCD_WIDTH) row[x] = mix565(row[x], CLOCK_BLACK, str);
     }
 }
 
@@ -636,24 +653,8 @@ static int photo_fade_darkness(uint32_t now)
     return v > 16 ? 16 : v;
 }
 
-/* 8-bit alarm pulse: blocky square rings expand from the screen centre in the
- * accent colour while the alarm rings — a lively signal that reads over any
- * background. Procedural (0 RAM), drawn behind the digits. */
-static void draw_alarm_pulse(uint32_t now)
-{
-    const clock_theme_t *t = TH();
-    int cx = GW_LCD_WIDTH / 2, cy = GW_LCD_HEIGHT / 2;
-    for (int ring = 0; ring < 3; ring++) {
-        int phase = (int)((now / 12 + ring * 240) % 720);
-        int rad = phase / 3;                    /* 0..240 */
-        int fade = 13 - phase / 60;             /* fades as the ring grows */
-        if (fade < 2 || rad < 3) continue;
-        uint16_t c = mix565(t->scr, t->alarm, fade);
-        int x0 = cx - rad, y0 = cy - rad, s = rad * 2;
-        srect(x0, y0, s, 2, c); srect(x0, y0 + s - 2, s, 2, c);   /* top / bottom */
-        srect(x0, y0, 2, s, c); srect(x0 + s - 2, y0, 2, s, c);   /* left / right */
-    }
-}
+/* (The old square-ring alarm pulse was replaced by the grid-pulse scene, drawn
+ * as the ringing background in the main loop — see scene_grid_pulse.) */
 
 static void render_clock(uint32_t now, bool alarm_firing)
 {
@@ -666,7 +667,8 @@ static void render_clock(uint32_t now, bool alarm_firing)
     snprintf(date, sizeof date, "%02d/%02d %s", GW_GetCurrentMonth(), GW_GetCurrentDay(), weekday_str());
     draw_centered_i18n(42, date, t->ink);
 
-    if (alarm_firing) draw_alarm_pulse(now);   /* 8-bit rings behind the digits */
+    /* the alarm's background effect (grid-pulse) is drawn in the main loop's
+     * background layer while ringing — nothing extra to draw here */
 
     /* big time. When the alarm is ringing the digits PULSE between ink and
      * the accent (~2.5 Hz): a clear alarm signal that sits on top of the
@@ -1008,19 +1010,99 @@ static void alarm_delete_at(int sel)
     s_alarm_count--;
 }
 
-/* Set the device clock: read the current time, run the clone-view hh:mm editor,
- * write it back to the RTC on confirm (seconds reset to 0, date kept). */
+/* days in a Gregorian month (mon0 = 0..11), leap-aware */
+static int days_in_month(int year, int mon0)
+{
+    static const uint8_t d[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    if (mon0 == 1) { bool leap = (year%4==0 && (year%100!=0 || year%400==0)); return leap ? 29 : 28; }
+    return d[mon0 & 11];
+}
+
+/* Full set-time screen: a YYYY-MM-DD line (fields 0..2) above the big HH:MM
+ * (fields 3..4, reusing the alarm editor's blink), the active field pulsing. */
+static void render_datetime_edit(const struct tm *tm, int field, bool blink_off)
+{
+    const clock_theme_t *t = TH();
+    uint16_t *fb = lcd_get_active_buffer();
+    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = t->scr;
+    draw_centered_i18n(30, curr_lang->s_Clock_Set_Time, t->alarm);
+
+    char yy[8], mo[8], dd[8];
+    snprintf(yy, sizeof yy, "%04d", tm->tm_year + 1900);
+    snprintf(mo, sizeof mo, "%02d", tm->tm_mon + 1);
+    snprintf(dd, sizeof dd, "%02d", tm->tm_mday);
+    const char *seg[5] = { yy, "-", mo, "-", dd };
+    int fld[5] = { 0, -1, 1, -1, 2 };
+    int total = 0; for (int i = 0; i < 5; i++) total += i18n_get_text_width(seg[i]);
+    int x = (GW_LCD_WIDTH - total) / 2, y = 52;
+    for (int i = 0; i < 5; i++) {
+        uint16_t col = (fld[i] == field) ? (blink_off ? mix565(t->scr, t->ink, 4) : t->alarm) : t->ink;
+        i18n_draw_text_line(x, y, GW_LCD_WIDTH - x, seg[i], col, CLOCK_BLACK, 1);
+        x += i18n_get_text_width(seg[i]);
+    }
+
+    int dh = tm->tm_hour;
+    if (!s_hour24) { dh = tm->tm_hour % 12; if (dh == 0) dh = 12; }
+    digit_face_t face = cur_face();
+    uint16_t ghost = mix565(t->scr, t->ink, 2);
+    uint16_t ch = (field == 3 && blink_off) ? ghost : t->ink;
+    uint16_t cm = (field == 4 && blink_off) ? ghost : t->ink;
+    draw_big_time_2c(dh, tm->tm_min, true, !s_hour24, face, ch, cm, ghost);
+    if (!s_hour24) {
+        int xx = (GW_LCD_WIDTH + big_time_width(face)) / 2 + 6;
+        int yb = (face == FACE_SEG7) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
+        i18n_draw_text_line(xx, yb, GW_LCD_WIDTH - xx,
+                            tm->tm_hour < 12 ? curr_lang->s_AM : curr_lang->s_PM, t->ink, CLOCK_BLACK, 1);
+    }
+    draw_hintbar(curr_lang->s_Clock_Hint_Edit);
+}
+
+/* Set the device clock (date + time). LEFT/RIGHT pick a field (year, month, day,
+ * hour, minute); UP/DOWN adjust; A saves to the RTC, B cancels. */
 static void clock_edit_time(void)
 {
     struct tm tm;
     GW_GetUnixTM(&tm);
-    alarm_t cur = { (uint8_t)tm.tm_hour, (uint8_t)tm.tm_min, 1 };
-    if (alarm_edit_view(&cur)) {
-        tm.tm_hour = cur.hour;
-        tm.tm_min  = cur.min;
-        tm.tm_sec  = 0;
-        GW_SetUnixTM(&tm);
+    if (tm.tm_year < 70) tm.tm_year = 70;   /* floor at 1970 */
+    int field = 0; bool dirty = true; uint32_t last_phase = ~0u;
+    odroid_gamepad_state_t k, prev = {0};
+    odroid_input_read_gamepad(&prev);
+
+    while (true) {
+        wdog_refresh();
+        odroid_input_read_gamepad(&k);
+        uint32_t now = HAL_GetTick();
+
+        if (pressed(&k, &prev, ODROID_INPUT_A)) { tm.tm_sec = 0; GW_SetUnixTM(&tm); break; }
+        if (pressed(&k, &prev, ODROID_INPUT_B)) break;
+        if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { field = (field == 0) ? 4 : field - 1; dirty = true; }
+        if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { field = (field + 1) % 5; dirty = true; }
+        bool up = pressed(&k, &prev, ODROID_INPUT_UP), dn = pressed(&k, &prev, ODROID_INPUT_DOWN);
+        if (up || dn) {
+            switch (field) {
+            case 0: tm.tm_year += up ? 1 : -1;
+                    if (tm.tm_year < 70) tm.tm_year = 70; if (tm.tm_year > 199) tm.tm_year = 199; break;
+            case 1: tm.tm_mon = (tm.tm_mon + (up ? 1 : 11)) % 12; break;
+            case 2: { int dim = days_in_month(tm.tm_year + 1900, tm.tm_mon);
+                      tm.tm_mday = ((tm.tm_mday - 1 + (up ? 1 : dim - 1)) % dim) + 1; } break;
+            case 3: tm.tm_hour = (tm.tm_hour + (up ? 1 : 23)) % 24; break;
+            case 4: tm.tm_min  = (tm.tm_min  + (up ? 1 : 59)) % 60; break;
+            }
+            int dim = days_in_month(tm.tm_year + 1900, tm.tm_mon);
+            if (tm.tm_mday > dim) tm.tm_mday = dim;   /* clamp Feb 29 -> 28, etc. */
+            dirty = true;
+        }
+
+        uint32_t phase = now / 500;
+        if (dirty || phase != last_phase) {
+            dirty = false; last_phase = phase;
+            render_datetime_edit(&tm, field, (phase & 1) != 0);
+            lcd_swap(); lcd_sleep_while_swap_pending();
+        }
+        prev = k;
+        HAL_Delay(40);
     }
+    do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); } while (k.bitmask);
 }
 
 static void clock_alarm_setup(void)
@@ -1125,12 +1207,16 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) {
         if (s_anim == ANIM_GIF) clock_gif_load(); else clock_gif_free();
         if (s_anim == ANIM_PHOTO) { if (!clock_album_ready()) clock_album_open(); s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
+        /* opts[] order after this row is: [+1] Scene, [+2] Photo speed. Each is
+         * live only for its own background (pixel scene / photo album). */
+        o[1].enabled = (s_anim == ANIM_SCENE) ? 1 : -1;
+        o[2].enabled = (s_anim == ANIM_PHOTO) ? 1 : -1;
     }
     const char *lv = (s_anim == 0) ? curr_lang->s_Clock_Anim_0
                    : (s_anim == 1) ? curr_lang->s_Clock_Anim_1
                    : (s_anim == ANIM_SCENE) ? curr_lang->s_Clock_Anim_2
                    : (s_anim == ANIM_GIF) ? curr_lang->s_Clock_Anim_3
-                   : "Photo Album";   /* TODO i18n s_Clock_Anim_4 */
+                   : curr_lang->s_Clock_Anim_4;
     const char *why = "";
     if (s_anim == ANIM_GIF && !clock_gif_ready()) {
         int st = clock_gif_status();
@@ -1158,7 +1244,9 @@ static bool cb_pspeed(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32
     if (e == ODROID_DIALOG_NEXT) s_photo_speed = (s_photo_speed + 1) % 3;
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) { s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
     snprintf(o->value, sizeof v_pspeed, "%s",
-             (s_photo_speed == 0) ? "Slow" : (s_photo_speed == 2) ? "Fast" : "Normal");
+             (s_photo_speed == 0) ? curr_lang->s_Clock_Speed_Slow
+           : (s_photo_speed == 2) ? curr_lang->s_Clock_Speed_Fast
+                                   : curr_lang->s_Clock_Speed_Normal);
     return e == ODROID_DIALOG_ENTER;
 }
 static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
@@ -1184,7 +1272,7 @@ static void clock_menu_repaint(void)
     else if (s_anim == 1) { draw_ambient(HAL_GetTick(), TH()->ink); s_ghost_on = false; }
     else if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, HAL_GetTick()); s_ghost_on = false; }
     else s_ghost_on = true;
-    draw_topbar(MODE_CLOCK);
+    draw_topbar(MODE_CLOCK, true);   /* the live settings preview always shows the pager */
     render_clock(HAL_GetTick(), false);
 }
 
@@ -1195,12 +1283,15 @@ static bool clock_settings_menu(void)
         {0, curr_lang->s_Clock_Theme,  v_theme,  1, cb_theme},
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},
         {2, curr_lang->s_Clock_Anim,   v_anim,   1, cb_anim},
-        {3, "Scene",                   v_scene,  1, cb_scene},
-        {4, "Photo speed",             v_pspeed, 1, cb_pspeed},
+        /* Scene picker only does anything when the background IS a pixel scene,
+         * so it is greyed + skipped otherwise (cb_anim toggles it live). */
+        {3, curr_lang->s_Clock_Scene,  v_scene,  (s_anim == ANIM_SCENE) ? 1 : -1, cb_scene},
+        /* Photo speed only matters for the photo album — greyed + skipped else */
+        {4, curr_lang->s_Clock_Photo_Speed, v_pspeed, (s_anim == ANIM_PHOTO) ? 1 : -1, cb_pspeed},
         {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
         {6, curr_lang->s_Clock_DND,    v_dnd,    1, cb_dnd},
         {7, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
-        {8, "Set time",                v_settime, 1, cb_enter},
+        {8, curr_lang->s_Clock_Set_Time, v_settime, 1, cb_enter},
         {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
         {10, curr_lang->s_Clock_Exit,  v_exit,   1, cb_enter},
         ODROID_DIALOG_CHOICE_LAST
@@ -1276,6 +1367,7 @@ void rg_clock_show(void)
     clock_mode_t mode = MODE_CLOCK;
     odroid_gamepad_state_t k, prev = {0};
     uint32_t alarm_ring_until = 0;
+    uint32_t last_input = HAL_GetTick();   /* mode pager + hint auto-hide after idle */
     bool dirty = true;
 
     clock_config_load();
@@ -1294,6 +1386,7 @@ void rg_clock_show(void)
         wdog_refresh();
         odroid_input_read_gamepad(&k);
         uint32_t now = HAL_GetTick();
+        if (k.bitmask & ~prev.bitmask) last_input = now;   /* any new press re-shows the pager + hint */
         int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
 
         /* Alarm first (clock time). Ring = digit pulse + beep for 20s or a
@@ -1344,8 +1437,14 @@ void rg_clock_show(void)
 
         /* GAME (START) = quit straight back to the launcher home — the one-press
          * exit that pairs with TIME opening the clock. (During a ring the alarm
-         * dismiss below consumes the press first.) */
-        if (!ringing && pressed(&k, &prev, ODROID_INPUT_START)) break;
+         * dismiss below consumes the press first.) Drain the press before leaving
+         * so the launcher doesn't read it as a fresh START and pop its About menu
+         * — from the clock, GAME just navigates home, nothing else. */
+        if (!ringing && pressed(&k, &prev, ODROID_INPUT_START)) {
+            do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); }
+            while (k.values[ODROID_INPUT_START]);
+            break;
+        }
 
         if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { mode = (mode == 0) ? MODE_COUNT-1 : mode-1; dirty = true; }
         if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { mode = (mode+1) % MODE_COUNT; dirty = true; }
@@ -1404,8 +1503,13 @@ void rg_clock_show(void)
          * the signature — else a static face repaints at 12fps for nothing,
          * defeating the event-driven loop and draining the battery. */
         if (s_anim == ANIM_GIF)        { if (clock_gif_ready()) sig ^= (now / 80); }
-        else if (s_anim == ANIM_SCENE) sig ^= (now / 640);  /* window twinkle */
+        else if (s_anim == ANIM_SCENE) sig ^= (now / 33);   /* ~30fps: scenes must animate as smoothly as the live settings preview (rain/matrix/plasma) */
         else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
+
+        /* mode pager + hint fade out after a few idle seconds (any key restores
+         * them) — fold into the signature so the hide itself triggers a repaint */
+        bool ui_show = (now - last_input) < CLOCK_UI_HIDE_MS;
+        if (ui_show) sig ^= 0x02000000u;
 
         /* photo album auto-advance: hold PHOTO_HOLD_MS, then dip to black, swap
          * to the next photo at the midpoint, and dip back — no hard cut. */
@@ -1426,7 +1530,8 @@ void rg_clock_show(void)
             for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
             bool bg_live = false;
             if (!flash) {   /* background layer, identical in every mode */
-                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; scrim_for_digits(); }
+                if (ringing) { scene_grid_pulse(now, TH()); bg_live = true; }   /* alarm effect = the grid-pulse ripple (over any chosen background) */
+                else if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; scrim_for_digits(); }
                 else if (s_anim == ANIM_PHOTO && clock_album_ready()) {
                     memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
                     int fd = photo_fade_darkness(now);   /* dip to black across a photo swap */
@@ -1444,7 +1549,10 @@ void rg_clock_show(void)
             case MODE_STOPWATCH: render_stopwatch(now); break;
             default: break;
             }
-            draw_topbar(mode);   /* over the background layers */
+            draw_topbar(mode, ui_show);   /* over the background layers; pager auto-hides */
+            /* the hint bar rides the same idle timer as the pager, but a ringing
+             * alarm always shows its snooze/stop legend */
+            if (ui_show || ringing)
             draw_hintbar(ringing ? curr_lang->s_Clock_Hint_Ring
                 : mode == MODE_CLOCK     ? curr_lang->s_Clock_Hint_Clock
                 : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
@@ -1466,8 +1574,15 @@ void rg_clock_show(void)
         }
 
         prev = k;
-        /* Ringing feeds audio, so keep the buffer fresh; otherwise idle longer. */
-        HAL_Delay(ringing ? 8 : (s_fade_start ? 20 : 40));
+        /* Poll fast enough for the active animation so it doesn't stutter: an
+         * animated pixel scene runs ~30fps (a 40ms idle poll capped it at 25 and
+         * beat against the 33ms frame clock — the "버버벅"). Static faces idle
+         * longer to save power. Ringing feeds audio so it polls fastest. */
+        uint32_t poll = ringing ? 8
+                      : (s_fade_start || s_anim == ANIM_SCENE) ? 16
+                      : (s_anim == ANIM_GIF && clock_gif_ready()) ? 24
+                      : 40;
+        HAL_Delay(poll);
     }
 
     tone_feed(0, false);   /* make sure the SAI is stopped on the way out */
