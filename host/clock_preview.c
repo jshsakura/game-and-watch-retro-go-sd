@@ -262,9 +262,11 @@ static void base(uint16_t bg) { for (int i = 0; i < W * H; i++) fb[i] = bg; }
 static void paint(clock_mode_t mode, uint32_t now, bool ringing)
 {
     base(TH()->scr);
-    if (s_anim == ANIM_GIF && clock_gif_ready()) clock_gif_blit(fb, now);
-    else if (s_anim == ANIM_SCENE) draw_scene(now, TH());
-    else if (s_anim == 1) draw_ambient(now, TH()->ink);
+    bool bg_live = false;
+    if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
+    else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
+    else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
+    s_ghost_on = !bg_live;
     switch (mode) {
     case MODE_CLOCK:     render_clock(now, ringing); break;
     case MODE_POMODORO:  render_pomodoro(now);  break;

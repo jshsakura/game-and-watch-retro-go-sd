@@ -79,9 +79,9 @@ gd_open_gif(const char *fname)
         fprintf(stderr, "invalid signature\n");
         goto fail;
     }
-    /* Version */
+    /* Version: accept both 87a and 89a (many exporters still emit 87a) */
     read(fd, sigver, 3);
-    if (memcmp(sigver, "89a", 3) != 0) {
+    if (memcmp(sigver, "89a", 3) != 0 && memcmp(sigver, "87a", 3) != 0) {
         fprintf(stderr, "invalid version\n");
         goto fail;
     }

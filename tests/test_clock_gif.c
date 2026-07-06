@@ -20,6 +20,7 @@ void  *ram_malloc(size_t n) { n = (n + 3) & ~3u;
     if (pool_off + n > sizeof pool) return NULL;
     void *p = pool + pool_off; pool_off += n; return p; }
 void  *ram_calloc(size_t c, size_t s) { void *p = ram_malloc(c * s); if (p) memset(p, 0, c * s); return p; }
+size_t ram_get_free_size(void) { return sizeof pool - pool_off; }
 size_t ram_mark(void) { return pool_off + 1; }             /* +1: never 0 */
 void   ram_release(size_t m) { pool_off = m - 1; }
 

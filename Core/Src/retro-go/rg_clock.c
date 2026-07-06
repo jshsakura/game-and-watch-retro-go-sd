@@ -149,6 +149,10 @@ static int big_time_width(digit_face_t face)
  * Every segment is first drawn in a faint "ghost" colour, the lit ones on
  * top — the unlit-segment look of a real LCD alarm clock. blank_lead hides a
  * leading zero the way segment clocks do (12h "9:41", not "09:41"). */
+/* When a live background is on, the faint "ghost 8" behind each digit reads
+ * as a dark block over the art — skip it there (set by render each frame). */
+static bool s_ghost_on = true;
+
 /* Two-colour core: hours and minutes can differ (the alarm edit view blinks
  * one field by dropping it to the ghost shade). */
 static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
@@ -161,34 +165,34 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
 
     if (face == FACE_SEG7) {
         int w = SEG_W, h = SEG_H, t = SEG_T, gap = SEG_GAP, y = SEG_Y;
-        draw_seg_digit(8, x, y, w, h, t, ghost);   /* 8 lights all segments */
+        if (s_ghost_on) draw_seg_digit(8, x, y, w, h, t, ghost);   /* 8 lights all segments */
         if (!(blank_lead && a == 0))
             draw_seg_digit(a, x, y, w, h, t, col_h);
         x += w+gap;
-        draw_seg_digit(8, x, y, w, h, t, ghost);
+        if (s_ghost_on) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(b, x, y, w, h, t, col_h); x += w+gap;
         odroid_overlay_draw_fill_rect(x+gap, y+h/3, t, t, cc);
         odroid_overlay_draw_fill_rect(x+gap, y+2*h/3, t, t, cc);
         x += t+2*gap;
-        draw_seg_digit(8, x, y, w, h, t, ghost);
+        if (s_ghost_on) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(c, x, y, w, h, t, col_m); x += w+gap;
-        draw_seg_digit(8, x, y, w, h, t, ghost);
+        if (s_ghost_on) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(e, x, y, w, h, t, col_m);
     } else {
         bool dot = (face == FACE_DOT);
         int px = PIX_PX, dw = 5*px, y = PIX_Y;
-        draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+        if (s_ghost_on) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         if (!(blank_lead && a == 0))
             draw_pix_digit(a, x, y, px, col_h, dot);
         x += dw+px;
-        draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+        if (s_ghost_on) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(b, x, y, px, col_h, dot); x += dw+px;
         odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, cc);
         odroid_overlay_draw_fill_rect(x+px, y+4*px, px, px, cc);
         x += px*3;
-        draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+        if (s_ghost_on) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(c, x, y, px, col_m, dot); x += dw+px;
-        draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+        if (s_ghost_on) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(e, x, y, px, col_m, dot);
     }
 }
@@ -455,8 +459,8 @@ static void draw_topbar(clock_mode_t mode)
     uint16_t dim = mix565(t->scr, t->ink, 5);
     int pw = MODE_COUNT*17 - 4;
     int dx = (GW_LCD_WIDTH - pw) / 2, iy = 9;   /* top-aligned with the battery */
-    draw_icon(&PIX_CHEV_L, dx - 15, 12, dim);
-    draw_icon(&PIX_CHEV_R, dx + pw + 9, 12, dim);
+    draw_icon(&PIX_CHEV_L, dx - 15, 11, dim);
+    draw_icon(&PIX_CHEV_R, dx + pw + 9, 11, dim);
     for (int i = 0; i < MODE_COUNT; i++, dx += 17) {
         uint16_t c = (i == (int)mode) ? t->alarm : dim;
         switch (i) {
@@ -640,7 +644,7 @@ static void render_stopwatch(uint32_t now)
         int total = 6*w + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = SEG_Y + 12;
         for (int i = 0; i < 6; i++) {
-            draw_seg_digit(8, x, y, w, h, tt, ghost);
+            if (s_ghost_on) draw_seg_digit(8, x, y, w, h, tt, ghost);
             draw_seg_digit(d[i], x, y, w, h, tt, col);
             x += w + ((i == 1 || i == 3) ? 0 : g);
             if (i == 1) {           /* colon */
@@ -658,7 +662,7 @@ static void render_stopwatch(uint32_t now)
         int total = 6*dw + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = PIX_Y + 10;
         for (int i = 0; i < 6; i++) {
-            draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+            if (s_ghost_on) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
             draw_pix_digit(d[i], x, y, px, col, dot);
             x += dw + ((i == 1 || i == 3) ? 0 : g);
             if (i == 1) {
@@ -963,10 +967,13 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
                    : (s_anim == ANIM_SCENE) ? curr_lang->s_Clock_Anim_2
                    : curr_lang->s_Clock_Anim_3;
     const char *why = "";
-    if (s_anim == ANIM_GIF && !clock_gif_ready())
-        why = (clock_gif_status() == CLOCK_GIF_NO_RAM)  ? " (no RAM)"
-            : (clock_gif_status() == CLOCK_GIF_BAD_DIMS) ? " (too big)"
+    if (s_anim == ANIM_GIF && !clock_gif_ready()) {
+        int st = clock_gif_status();
+        why = (st == CLOCK_GIF_NO_RAM)  ? " (no RAM)"
+            : (st == CLOCK_GIF_BAD_DIMS) ? " (too big)"
+            : (st == CLOCK_GIF_BAD_FMT)  ? " (bad gif)"
             : " (no file)";
+    }
     snprintf(o->value, sizeof v_anim, "%s%s", lv, why);
     return e == ODROID_DIALOG_ENTER;
 }
@@ -989,6 +996,10 @@ static void clock_menu_repaint(void)
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t bg = TH()->scr;
     for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
+    if (s_anim == ANIM_SCENE) { draw_scene(HAL_GetTick(), TH()); s_ghost_on = false; }
+    else if (s_anim == 1) { draw_ambient(HAL_GetTick(), TH()->ink); s_ghost_on = false; }
+    else if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, HAL_GetTick()); s_ghost_on = false; }
+    else s_ghost_on = true;
     draw_topbar(MODE_CLOCK);
     render_clock(HAL_GetTick(), false);
 }
@@ -1173,11 +1184,13 @@ void rg_clock_show(void)
             uint16_t *fb = lcd_get_active_buffer();
             uint16_t bg = flash ? TH()->ink : TH()->scr;
             for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
+            bool bg_live = false;
             if (!flash) {   /* background layer, identical in every mode */
-                if (s_anim == ANIM_GIF && clock_gif_ready()) clock_gif_blit(fb, now);
-                else if (s_anim == ANIM_SCENE) draw_scene(now, TH());
-                else if (s_anim == 1) draw_ambient(now, TH()->ink);
+                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
+                else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
+                else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
             }
+            s_ghost_on = !bg_live;   /* skip the LCD ghost over live art */
             switch (mode) {
             case MODE_CLOCK:     render_clock(now, ringing); break;
             case MODE_POMODORO:  render_pomodoro(now);  break;

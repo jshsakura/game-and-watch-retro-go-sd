@@ -12,6 +12,7 @@
 #define CLOCK_GIF_NO_FILE  1   /* /clock/bg.gif missing or unreadable */
 #define CLOCK_GIF_NO_RAM   2   /* emu-RAM pool too full (covers etc.) */
 #define CLOCK_GIF_BAD_DIMS 3   /* larger than 480x320 */
+#define CLOCK_GIF_BAD_FMT  4   /* not a GIF / decoder rejected it */
 int  clock_gif_status(void);                     /* why the last load failed */
 bool clock_gif_load(void);                       /* open + alloc; false if none/too big */
 void clock_gif_free(void);
