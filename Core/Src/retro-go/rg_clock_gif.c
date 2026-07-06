@@ -29,7 +29,9 @@
 #include <string.h>
 #include "rg_clock_gif.h"
 
+#ifndef GIF_PATH
 #define GIF_PATH "/clock/bg.gif"
+#endif
 
 static gd_GIF  *s_gif;
 static int      s_gw, s_gh;

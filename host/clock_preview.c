@@ -31,6 +31,19 @@ static const char *test_path(const char *p)
  * i18n_draw_text_line — so glyphs match the device pixel for pixel.
  * (Default font index 0 = cp1252_serif, same as a fresh device.) */
 #include "logo_gnw.h"
+
+/* real GIF pipeline for the preview (host RAM is ample) */
+static uint8_t gpool[1024*1024]; static size_t gpool_off = 0;
+void *ram_malloc(size_t n){ n=(n+3)&~3u; if(gpool_off+n>sizeof gpool) return 0; void*p=gpool+gpool_off; gpool_off+=n; return p; }
+void *ram_calloc(size_t c,size_t n){ void*p=ram_malloc(c*n); if(p) memset(p,0,c*n); return p; }
+size_t ram_get_free_size(void){ return sizeof gpool - gpool_off; }
+size_t ram_mark(void){ return gpool_off+1; }
+void ram_release(size_t m){ gpool_off=m-1; }
+#include <fcntl.h>
+#include <unistd.h>
+#define GIF_PATH "/tmp/mtest/bg.gif"
+#include "../Core/Src/porting/lib/gifdec/gifdec.c"
+#include "../Core/Src/retro-go/rg_clock_gif.c"
 #include "../retro-go-stm32/components/odroid/bitmaps/font_basic.h"
 
 /* ---- framebuffer / lcd ------------------------------------------------- */
@@ -217,10 +230,7 @@ static int st_h = 9, st_m = 41, st_mon = 7, st_day = 6, st_wd = 1, st_ss = 100;
 int GW_GetCurrentHour(void){return st_h;} int GW_GetCurrentMinute(void){return st_m;}
 int GW_GetCurrentSubSeconds(void){return st_ss;} int GW_GetCurrentMonth(void){return st_mon;}
 int GW_GetCurrentDay(void){return st_day;} int GW_GetCurrentWeekday(void){return st_wd;}
-bool clock_gif_ready(void){return false;}
-void clock_gif_blit(uint16_t*f,uint32_t n){(void)f;(void)n;}
-bool clock_gif_load(void){return false;} void clock_gif_free(void){}
-int clock_gif_status(void){return 1;}
+
 
 /* Korean UI strings (what the device shows with lang=ko) */
 static const lang_t KO = {
@@ -318,6 +328,10 @@ int main(void)
     paint(MODE_STOPWATCH, 1200, false); dump("stopwatch");
     /* 6b) Amber theme (pixel face) — theme/face pickers are back */
     s_theme = 1; paint(MODE_CLOCK, 1000, false); dump("clock_amber"); s_theme = 0;
+    /* 6c) GIF background (real decode; device gates on free RAM) */
+    s_anim = ANIM_GIF; clock_gif_load();
+    paint(MODE_CLOCK, 0, false); dump("clock_gif");
+    clock_gif_free(); s_anim = 0;
     /* 7) alarm editor popup (row 0 selected) */
     render_alarm_setup(0); dump("editor");
     /* 8) full-screen clone-view alarm editor (hour field lit phase) */
