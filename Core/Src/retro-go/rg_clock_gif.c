@@ -27,6 +27,7 @@
 #include "gifdec.h"
 #include "gw_lcd.h"
 #include "gw_malloc.h"
+#include "rg_emulators.h"   /* borrow shared_files as the decode arena */
 #include <string.h>
 #include <stdio.h>
 #include "rg_clock_gif.h"
@@ -98,11 +99,10 @@ static size_t gif_header_need(int *out_w, int *out_h)
 
 void clock_gif_reserve(void)
 {
-    size_t need = gif_header_need(NULL, NULL);
-    if (need == 0 || need > ram_get_free_size()) return;   /* no file / no room */
-    s_arena = (uint8_t *)ram_malloc(need);
-    s_arena_size = s_arena ? need : 0;
-    s_arena_off = 0;
+    /* No longer reserves from the emu-RAM pool (that permanently stole ~270KB
+     * from the emulators). The decode arena is borrowed from shared_files at
+     * load time — see clock_gif_load(). Kept as a no-op so the boot call site
+     * is undisturbed. */
 }
 
 bool clock_gif_ready(void) { return s_gif != NULL; }
@@ -135,19 +135,23 @@ bool clock_gif_load(void)
         snprintf(s_diag, sizeof s_diag, "bad dims %dx%d (max 480x320)", gw, gh); return false; }
     /* gifdec needs frame+565 canvas (3*w*h) + LZW table (~40KB) + slack */
     size_t need = (size_t)gw * gh * 3 + 48 * 1024;
-    if (s_arena && need <= s_arena_size) {
-        /* boot-reserved arena: immune to how many covers filled the pool */
-        s_arena_off = 0;
-        gd_set_allocator(arena_malloc, arena_calloc, gif_arena_free);
-    } else {
-        /* no reservation (file appeared after boot, or grew past the reserve):
-         * fall back to whatever is left of the pool */
-        if (ram_get_free_size() < need) { s_status = CLOCK_GIF_NO_RAM;
-            snprintf(s_diag, sizeof s_diag, "no RAM: need %dK free %dK - reboot",
-                     (int)(need/1024), (int)(ram_get_free_size()/1024)); return false; }
-        s_ram_mark = ram_mark();
-        gd_set_allocator(ram_malloc, ram_calloc, gif_arena_free);
+    /* Borrow the launcher's shared_files buffer (~527KB) as the decode arena —
+     * the same in-place trick the photo album uses. The emu-RAM pool is far too
+     * small once the launcher's covers fill it (~41KB left), which is why a
+     * full-screen GIF used to fail "no RAM". GIF and the photo album are
+     * mutually exclusive background modes, so this buffer is free while a GIF is
+     * shown; the clock's exit path re-scans the ROM lists to restore it. */
+    int maxcount = 0;
+    uint8_t *arena = (uint8_t *)rg_emulators_shared_file_buffer(&maxcount);
+    size_t arena_bytes = rg_emulators_shared_file_bytes();
+    if (!arena || arena_bytes < need) {
+        s_status = CLOCK_GIF_NO_RAM;
+        snprintf(s_diag, sizeof s_diag, "no RAM: need %dK have %dK",
+                 (int)(need/1024), (int)(arena_bytes/1024));
+        return false;
     }
+    s_arena = arena; s_arena_size = arena_bytes; s_arena_off = 0;
+    gd_set_allocator(arena_malloc, arena_calloc, gif_arena_free);
 
     gd_GIF *g = gd_open_gif(GIF_PATH);
     if (!g) { s_status = CLOCK_GIF_BAD_FMT;

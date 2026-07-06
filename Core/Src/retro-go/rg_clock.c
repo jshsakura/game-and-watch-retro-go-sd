@@ -283,6 +283,10 @@ static void draw_centered_i18n(int y, const char *text, uint16_t col)
 {
     int x = (GW_LCD_WIDTH - i18n_get_text_width(text)) / 2;
     if (x < 0) x = 0;
+    /* drop shadow so the text reads over a live photo/scene/GIF background;
+     * solid themes keep the clean flat look */
+    if (!s_ghost_on)
+        i18n_draw_text_line(x + 2, y + 2, GW_LCD_WIDTH - x, text, CLOCK_BLACK, CLOCK_BLACK, 1);
     i18n_draw_text_line(x, y, GW_LCD_WIDTH - x, text, col, CLOCK_BLACK, 1);
 }
 
@@ -617,13 +621,6 @@ static const char *weekday_str(void)
     return w[wd - 1];
 }
 
-/* Photo backgrounds are arbitrary and often bright, so the digits can wash out.
- * Darken a soft vertical band behind the face (date -> digits -> status) toward
- * black, FEATHERED at the top and bottom so it reads as a vignette rather than a
- * box. The blitter has no alpha, so we blend the already-drawn background pixels
- * in place, before the digits go on top. Only used over a photo background. */
-static int isqrt_i(int v) { int s = 0; while ((s + 1) * (s + 1) <= v) s++; return s; }
-
 /* Fill the whole framebuffer with one colour writing 32 bits (two pixels) per
  * store — halves the memory writes vs a per-pixel loop. The buffer is a full
  * 320x240 (even count) and 4-byte aligned, so the word loop is exact. */
@@ -634,27 +631,6 @@ static inline void fb_fill_screen(uint16_t *fb, uint16_t c)
     for (int i = 0; i < (GW_LCD_WIDTH * GW_LCD_HEIGHT) / 2; i++) p[i] = c2;
 }
 
-/* A small translucent rounded "frosted" pill that darkens whatever is behind it
- * (a photo/scene) by `str`, so one line of text lifts off a busy background. */
-static void frosted_pill(int x, int y, int w, int h, int r, int str)
-{
-    uint16_t *fb = lcd_get_active_buffer();
-    for (int j = 0; j < h; j++) {
-        int yy = y + j; if (yy < 0 || yy >= GW_LCD_HEIGHT) continue;
-        int inset = 0, dy = (j < r) ? r - j : (j >= h - r) ? j - (h - 1 - r) : -1;
-        if (dy > 0) inset = r - isqrt_i(r * r - dy * dy);
-        uint16_t *row = &fb[yy * GW_LCD_WIDTH];
-        for (int xx = x + inset; xx < x + w - inset; xx++)
-            if (xx >= 0 && xx < GW_LCD_WIDTH) row[xx] = mix565(row[xx], CLOCK_BLACK, str);
-    }
-}
-/* Frosted pill centred on screen, sized to hug a piece of content of width cw. */
-static void frosted_pill_centered(int y, int cw, int h)
-{
-    const int pad = 12, str = 6;
-    int w = cw + pad * 2, r = (h / 2 < 9) ? h / 2 : 9;
-    frosted_pill((GW_LCD_WIDTH - w) / 2, y, w, h, r, str);
-}
 
 /* Dip-to-black progress: 0 at the ends (steady) .. 16 fully black at the midpoint
  * of the PHOTO_FADE_MS transition. Applied to the photo before the digits go on. */
@@ -676,14 +652,9 @@ static void render_clock(uint32_t now, bool alarm_firing)
     int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
     bool colon = GW_GetCurrentSubSeconds() <= 127;
 
-    /* Over a live background (photo/scene/GIF) each text group sits on its own
-     * small frosted pill so it reads without one big darkening block. */
-    bool plated = !s_ghost_on;
-
     /* date + weekday, centred UNDER the top bar (was colliding with it) */
     char date[48];
     snprintf(date, sizeof date, "%02d/%02d %s", GW_GetCurrentMonth(), GW_GetCurrentDay(), weekday_str());
-    if (plated) frosted_pill_centered(40, i18n_get_text_width(date), 18);
     draw_centered_i18n(42, date, t->ink);
 
     /* the alarm's background effect (grid-pulse) is drawn in the main loop's
@@ -700,7 +671,6 @@ static void render_clock(uint32_t now, bool alarm_firing)
     /* over a live photo/scene (no ghost) give the digits a dark halo so they read
      * over any background; solid themes keep the clean ghost look (no outline). */
     if (!s_ghost_on) { s_outline = 2; s_outline_col = CLOCK_BLACK; }
-    if (plated) frosted_pill_centered(SEG_Y - 6, big_time_width(face), SEG_H + 12);
     draw_big_time(dh, mm, colon, !s_hour24, face, timecol, mix565(t->scr, t->ink, 2));
     s_outline = 0;
 
@@ -729,7 +699,6 @@ static void render_clock(uint32_t now, bool alarm_firing)
             uint16_t alcol = s_dnd ? mix565(t->scr, t->ink, 6)
                                    : (alarm_firing ? t->ink : t->alarm);
             int lx = (GW_LCD_WIDTH - i18n_get_text_width(line)) / 2;
-            if (plated) frosted_pill_centered(STATUS_Y - 3, i18n_get_text_width(line) + 20, 18);
             draw_icon(&PIX_BELL, lx - 16, STATUS_Y + 1, alcol);
             draw_centered_i18n(STATUS_Y, line, alcol);
         }
@@ -745,7 +714,6 @@ static void render_clock(uint32_t now, bool alarm_firing)
 static void render_mmss(uint32_t ms, uint16_t col, bool colon)
 {
     uint32_t total = ms / 1000; int m = (total / 60) % 100, s = total % 60;
-    if (!s_ghost_on) frosted_pill_centered(SEG_Y - 6, big_time_width(cur_face()), SEG_H + 12);
     draw_big_time(m, s, colon, false, cur_face(), col, mix565(TH()->scr, TH()->ink, 2));
 }
 
@@ -783,7 +751,6 @@ static void render_pomodoro(uint32_t now)
         curr_lang->s_Clock_Cycle, s_pomo_cycles + 1);
     uint16_t stc = s_pomo_on_break ? t->alarm : t->ink;
     int sx = (GW_LCD_WIDTH - i18n_get_text_width(st)) / 2;
-    if (!s_ghost_on) frosted_pill_centered(STATUS_Y - 3, i18n_get_text_width(st) + 22, 18);
     draw_icon(s_pomo_on_break ? &PIX_MUG : &PIX_TOMATO, sx - 18, STATUS_Y + 1, stc);
     draw_centered_i18n(STATUS_Y, st, stc);
 }
@@ -813,7 +780,6 @@ static void render_stopwatch(uint32_t now)
         const int w = 32, h = 68, tt = 8, g = 6, sep = tt + 2*g;
         int total = 6*w + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = SEG_Y + 12;
-        if (!gh) frosted_pill_centered(y - 8, total, h + 16);
         for (int i = 0; i < 6; i++) {
             if (gh) draw_seg_digit(8, x, y, w, h, tt, ghost);
             draw_seg_digit(d[i], x, y, w, h, tt, col);
@@ -832,7 +798,6 @@ static void render_stopwatch(uint32_t now)
         const int px = 7, dw = 5*px, g = px, sep = px*3;
         int total = 6*dw + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = PIX_Y + 10;
-        if (!gh) frosted_pill_centered(y - 8, total, 7*px + 16);
         for (int i = 0; i < 6; i++) {
                 if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
             draw_pix_digit(d[i], x, y, px, col, dot);
@@ -1231,7 +1196,7 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
     if (e == ODROID_DIALOG_NEXT) s_anim = (s_anim+1) % ANIM_COUNT;
     if (s_anim == 1) s_anim = (e == ODROID_DIALOG_NEXT) ? ANIM_SCENE : 0;   /* ambient retired — skip it */
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) {
-        if (s_anim == ANIM_GIF) clock_gif_load(); else clock_gif_free();
+        if (s_anim == ANIM_GIF) { if (clock_gif_load()) s_album_used = true; } else clock_gif_free();
         if (s_anim == ANIM_PHOTO) { if (!clock_album_ready()) clock_album_open(); s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
         /* opts[] order after this row is: [+1] Scene, [+2] Photo speed. Each is
          * live only for its own background (pixel scene / photo album). */
@@ -1303,31 +1268,33 @@ static void clock_menu_repaint(void)
 /* returns true when the user picked "Exit" — the caller leaves the app */
 static bool clock_settings_menu(void)
 {
+    /* Order: the everyday actions first (set time, alarms, volume), then the
+     * look-and-feel pickers. The choice `id`s are fixed (the post-dialog
+     * dispatch keys off them), so rows can be reordered freely. Anim/Scene/
+     * Photo-speed MUST stay adjacent in that order — cb_anim toggles the two
+     * that follow it via o[1]/o[2]. */
     odroid_dialog_choice_t opts[] = {
+        {8, curr_lang->s_Clock_Set_Time, v_settime, 1, cb_enter},
+        {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
+        {7, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
         {0, curr_lang->s_Clock_Theme,  v_theme,  1, cb_theme},
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},
         {2, curr_lang->s_Clock_Anim,   v_anim,   1, cb_anim},
-        /* Scene picker only does anything when the background IS a pixel scene,
-         * so it is greyed + skipped otherwise (cb_anim toggles it live). */
         {3, curr_lang->s_Clock_Scene,  v_scene,  (s_anim == ANIM_SCENE) ? 1 : -1, cb_scene},
-        /* Photo speed only matters for the photo album — greyed + skipped else */
         {4, curr_lang->s_Clock_Photo_Speed, v_pspeed, (s_anim == ANIM_PHOTO) ? 1 : -1, cb_pspeed},
         {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
         {6, curr_lang->s_Clock_DND,    v_dnd,    1, cb_dnd},
-        {7, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
-        {8, curr_lang->s_Clock_Set_Time, v_settime, 1, cb_enter},
-        {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
         {10, curr_lang->s_Clock_Exit,  v_exit,   1, cb_enter},
         ODROID_DIALOG_CHOICE_LAST
     };
-    cb_theme(&opts[0], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_face(&opts[1], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_anim(&opts[2], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_scene(&opts[3], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_pspeed(&opts[4], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_fmt(&opts[5], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_dnd(&opts[6], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_vol(&opts[7], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_vol(&opts[2], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_theme(&opts[3], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_face(&opts[4], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_anim(&opts[5], ODROID_DIALOG_FOCUS_GAINED, 0);   /* o[1]=Scene, o[2]=Photo speed */
+    cb_scene(&opts[6], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_pspeed(&opts[7], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_fmt(&opts[8], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_dnd(&opts[9], ODROID_DIALOG_FOCUS_GAINED, 0);
     v_settime[0] = 0; v_alarms[0] = 0; v_exit[0] = 0;
 
     int sel = odroid_overlay_dialog(curr_lang->s_Clock, opts, 0, &clock_menu_repaint, 0);
@@ -1399,7 +1366,7 @@ void rg_clock_show(void)
     f_mkdir("/clock/album");    /* the user drops 320x240 raw .565 photos here */
     s_snooze_tick = 0;
     s_album_used = false;
-    if (s_anim == ANIM_GIF) clock_gif_load();   /* decode /clock/bg.gif once */
+    if (s_anim == ANIM_GIF && clock_gif_load()) s_album_used = true;   /* GIF borrows shared_files -> restore lists on exit */
     if (s_anim == ANIM_PHOTO) {                 /* borrow shared_files, load first photo */
         if (clock_album_open()) { s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; }
         else s_anim = 0;                        /* no photos / no room -> solid fallback */

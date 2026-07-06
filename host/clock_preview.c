@@ -150,6 +150,10 @@ void clock_album_advance(void) {}
 int clock_album_count(void) { return 0; }
 void clock_album_close(void) {}
 void rg_emulators_reset_all_lists(void) {}
+/* shared_files borrow arena for the GIF decode path (host has ample RAM) */
+static uint8_t s_prev_shared[600 * 1024];
+retro_emulator_file_t *rg_emulators_shared_file_buffer(int *maxcount) { if (maxcount) *maxcount = 1000; return (retro_emulator_file_t *)s_prev_shared; }
+size_t rg_emulators_shared_file_bytes(void) { return sizeof s_prev_shared; }
 tab_t *gui_get_current_tab(void) { return 0; }
 void gui_refresh_tab(tab_t *tab) { (void)tab; }
 static uint32_t fake_tick = 0;
