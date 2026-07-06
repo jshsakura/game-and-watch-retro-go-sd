@@ -25,7 +25,7 @@ linux/loaded_gwenesis_rom.c
 linux/loaded_lynx_rom.c
 
 # host test harness (linux/): isolated build dirs + generated/runtime artifacts
-# (the bare "build" rule above does not match build_lynx/build_doom/build_doom32)
+# (the bare "build" rule above does not match build_lynx/build_<core>)
 linux/build_*/
 linux/lynx/test.lyx
 linux/lynx/test_bs93.lyx

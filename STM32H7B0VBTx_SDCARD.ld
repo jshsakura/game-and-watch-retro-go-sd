@@ -118,11 +118,6 @@ MEMORY
   /* PICO-8 code (sentinel address, patched to QSPI XIP at runtime) */
   PICO8_CODE (x) : ORIGIN = 0xBEEF0000,   LENGTH = 512K
 
-  /* DOOM rodata (sentinel address, patched to QSPI XIP at runtime). Mirrors the
-     DOOM_CODE sentinel in STM32H7B0VBTx_FLASH.ld so rg_emulators.c (DOOM_CODE_BASE)
-     and the doom.ro extraction work identically in the SD build. */
-  DOOM_CODE  (x) : ORIGIN = 0xD00D0000,   LENGTH = 1024K
-
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
 }
@@ -788,122 +783,6 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(_OVERLAY_MUSIC_BSS_END) < __RAM_EMU_END__, "Error: MUSIC BSS overflow");
   }
   _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
-
-  /* DOOM (doomgeneric) homebrew overlay — same RAM_EMU VMA, LMA in EXTFLASH.
-     Shipped as /roms/homebrew/Doom.bin and cached into RAM at launch. */
-  .overlay_doom __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_doom_start__ = .;
-    /* CODE-IN-FLASH model (next-hack style): the ONLY DOOM .text kept in RAM is
-       main_doom.o, because the firmware (rg_emulators.c) calls app_main_doom()
-       directly and the entry must not sit at the unpatched XIP sentinel. Its
-       internal refs to XIP functions ARE patched (this overlay is scanned by
-       PatchDoomRegion). ALL other DOOM .text + .rodata runs XIP from flash via
-       .doom_xip below. Eliminating RAM-resident renderer/game code removes the
-       RAM->flash code veneers whose machinery corrupted a return address and
-       HardFaulted on the first input poll (pc landed in the thintriangle_guy
-       data table). Only writable .data stays in RAM. */
-    build/doom/main_doom*.o (.data .data* .text .text* .rodata .rodata*)
-    /* all remaining doom .data must stay writable in RAM */
-    build/doom/*.o (.data .data*)
-    /* --- next-hack engine (USE_NHDOOM, Phase 2): device_main.o is the entry
-       HAL the firmware calls directly, so it stays RAM-resident (like
-       main_doom.o); all other engine .text/.rodata runs XIP via .doom_xip.
-       Engine writable .data stays in RAM. These lines are empty when
-       USE_NHDOOM=0 (build/nhdoom/*.o is not built). --- */
-    build/nhdoom/device_main*.o (.data .data* .text .text* .rodata .rodata*)
-    build/nhdoom/*.o (.data .data*)
-    . = ALIGN(4);
-    _OVERLAY_DOOM_LOAD_END = .;
-  } AT > CORES
-  _OVERLAY_DOOM_LOAD_START = LOADADDR(.overlay_doom);
-  _OVERLAY_DOOM_SIZE = SIZEOF(.overlay_doom);
-
-  /* Non-hot DOOM code + read-only data, run in place (XIP) from external flash.
-     VMA == LMA at the DOOM_CODE sentinel (0xD00D0000); extracted to
-     /roms/homebrew/doom.ro, cached to QSPI flash and relocated at launch
-     (DoomCacheCodeToFlash + PatchDoomRegion in rg_emulators.c patch the sentinel
-     refs in both the RAM overlay and the blob; a D-cache invalidate after the
-     flash reprogram makes the patched bytes visible). */
-  .doom_xip : {
-    . = ALIGN(4);
-    __doom_xip_start__ = .;
-    build/doom/*.o (.text .text* .rodata .rodata*)
-    /* next-hack engine code/rodata, XIP from external flash (empty when
-       USE_NHDOOM=0). device_main.o is excluded -- it is RAM-resident above. */
-    build/nhdoom/*.o (.text .text* .rodata .rodata*)
-    . = ALIGN(4);
-    __doom_xip_end__ = .;
-  } > DOOM_CODE
-  _DOOM_XIP_SIZE = SIZEOF(.doom_xip);
-
-  .overlay_doom_bss _OVERLAY_DOOM_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_DOOM_BSS_START = .;
-    build/doom/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/doom/*.o (COMMON)
-    __ram_emu_doom_end__ = .;
-    _OVERLAY_DOOM_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_DOOM_BSS_END) < __RAM_EMU_END__, "Error: DOOM BSS overflow");
-
-    /* ---- next-hack engine 256KB short-pointer window (USE_NHDOOM, Phase 2) ----
-       The engine packs zone-block pointers as 16-bit (offset>>2) relative to a
-       256KB-aligned base (RAM_PTR_BASE). Only staticZone is short-pointer'd, so
-       it MUST sit inside one 256KB window; we 256KB-align here, publish
-       nh_ram_window_base, and place staticZone (.displayData_bss) at the base,
-       followed by the engine's other writable bss. host-proven footprint is
-       ~193KB < 256KB. DTCM (128KB) is too small; AXI SRAM (RAM_EMU) is the only
-       region that fits, hence the placement here. Empty when USE_NHDOOM=0. */
-    . = ALIGN(0x40000);
-    nh_ram_window_base = .;
-    __nhdoom_window_start = .;
-    /* Reserve the first 8-byte CHUNK (short-pointer 0). The engine's
-       getLongPtrDW() treats a packed short-pointer of 0 as NULL, so anything
-       landing at the window base (>>3 == 0) is unaddressable. memzone_t puts
-       .blocklist at offset 0, so with staticZone exactly at the base,
-       Z_Init's `block->next = getShortPtrDW(&mainzone->blocklist)` == 0 == NULL
-       and Z_Malloc2 traps (udf) on the broken ring. Pushing staticZone one
-       chunk up makes its lowest packed pointer 1, mirroring the original nRF
-       build where short-ptr 0 is naturally unused. RAM_PTR_BASE stays
-       256KB-aligned so the `base | (sptr<<3)` reconstruction is unaffected. */
-    . = . + 8;
-    build/nhdoom/*.o (.displayData_bss)   /* staticZone[113600] at window base + 8 */
-    build/nhdoom/*.o (.openings_bss)
-    build/nhdoom/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/nhdoom/*.o (COMMON)
-    . = ALIGN(4);
-    __nhdoom_window_end = .;
-    _OVERLAY_NHDOOM_BSS_END = .;
-    ASSERT((__nhdoom_window_end - nh_ram_window_base) <= 0x40000,
-           "Error: nhdoom 256KB short-pointer window overflow");
-    ASSERT(ABSOLUTE(_OVERLAY_NHDOOM_BSS_END) < __RAM_EMU_END__, "Error: NHDOOM BSS overflow");
-  }
-  _OVERLAY_DOOM_BSS_SIZE = SIZEOF(.overlay_doom_bss);
-
-  /* Wolfenstein 3D homebrew overlay (SD build: overlay LMA region is CORES). */
-  .overlay_wolf3d __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_wolf3d_start__ = .;
-    build/wolf3d/*.o (.data .data* .text .text* .rodata .rodata*)
-    . = ALIGN(4);
-    _OVERLAY_WOLF3D_LOAD_END = .;
-  } AT > CORES
-  _OVERLAY_WOLF3D_LOAD_START = LOADADDR(.overlay_wolf3d);
-  _OVERLAY_WOLF3D_SIZE = SIZEOF(.overlay_wolf3d);
-
-  .overlay_wolf3d_bss _OVERLAY_WOLF3D_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_WOLF3D_BSS_START = .;
-    build/wolf3d/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/wolf3d/*.o (COMMON)
-    __ram_emu_wolf3d_end__ = .;
-    _OVERLAY_WOLF3D_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_WOLF3D_BSS_END) < __RAM_EMU_END__, "Error: WOLF3D BSS overflow");
-  }
-  _OVERLAY_WOLF3D_BSS_SIZE = SIZEOF(.overlay_wolf3d_bss);
 
   /* PICO-8 stub overlay → RAM, placed at HIGH end of RAM_EMU.
      The GPL build only includes the install-prompt stub (main_pico8_stub.c).
