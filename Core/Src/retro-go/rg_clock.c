@@ -1145,6 +1145,8 @@ void rg_clock_show(void)
     bool dirty = true;
 
     clock_config_load();
+    f_mkdir("/clock");          /* ensure the clock's SD folders exist on first run */
+    f_mkdir("/clock/album");    /* the user drops 320x240 raw .565 photos here */
     s_snooze_tick = 0;
     s_album_used = false;
     if (s_anim == ANIM_GIF) clock_gif_load();   /* decode /clock/bg.gif once */
