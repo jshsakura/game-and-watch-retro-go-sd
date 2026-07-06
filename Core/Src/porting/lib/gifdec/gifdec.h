@@ -43,7 +43,8 @@ typedef struct gd_GIF {
     void (*application)(struct gd_GIF *gif, char id[8], char auth[3]);
     uint16_t fx, fy, fw, fh;
     uint8_t bgindex;
-    uint8_t *canvas, *frame;
+    uint8_t *frame;    /* palette indices, w*h bytes */
+    uint16_t *canvas;  /* composited RGB565, w*h*2 bytes */
     void *lzw_table;   /* one max-size LZW table, allocated at open, reused per frame */
 } gd_GIF;
 
@@ -55,7 +56,7 @@ void gd_set_allocator(void *(*malloc_fn)(size_t),
 
 gd_GIF *gd_open_gif(const char *fname);
 int gd_get_frame(gd_GIF *gif);
-void gd_render_frame(gd_GIF *gif, uint8_t *buffer);
+void gd_render_frame(gd_GIF *gif, uint16_t *buffer);
 int gd_is_bgcolor(gd_GIF *gif, uint8_t color[3]);
 void gd_rewind(gd_GIF *gif);
 void gd_close_gif(gd_GIF *gif);

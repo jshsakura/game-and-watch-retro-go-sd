@@ -35,6 +35,8 @@ gd_set_allocator(void *(*malloc_fn)(size_t),
     gd_free_fn = free_fn ? free_fn : free;
 }
 
+#define GD_RGB565(r,g,b) ((uint16_t)((((r)&0xF8)<<8)|(((g)&0xFC)<<3)|((b)>>3)))
+
 typedef struct Entry {
     uint16_t length;
     uint16_t prefix;
@@ -115,20 +117,23 @@ gd_open_gif(const char *fname)
     if (gct_sz) read(fd, gif->gct.colors, 3 * gif->gct.size);
     gif->palette = &gif->gct;
     gif->bgindex = bgidx;
-    gif->frame = gd_calloc_fn(4, width * height);
+    /* indices (w*h) + RGB565 canvas (w*h*2) = 3*w*h bytes (was 4*w*h RGB888) */
+    gif->frame = gd_calloc_fn(3, width * height);
     if (!gif->frame) {
         gd_free_fn(gif);
         goto fail;
     }
-    gif->canvas = &gif->frame[width * height];
+    gif->canvas = (uint16_t *)&gif->frame[width * height];
     if (gif->bgindex)
         memset(gif->frame, gif->bgindex, gif->width * gif->height);
     /* only meaningful with a GCT; canvas is calloc'd (black) otherwise */
     if (gct_sz) {
         bgcolor = &gif->palette->colors[gif->bgindex*3];
-        if (bgcolor[0] || bgcolor[1] || bgcolor [2])
+        if (bgcolor[0] || bgcolor[1] || bgcolor[2]) {
+            uint16_t bg565 = GD_RGB565(bgcolor[0], bgcolor[1], bgcolor[2]);
             for (i = 0; i < gif->width * gif->height; i++)
-                memcpy(&gif->canvas[i*3], bgcolor, 3);
+                gif->canvas[i] = bg565;
+        }
     }
     gif->anim_start = lseek(fd, 0, SEEK_CUR);
     goto ok;
@@ -461,7 +466,7 @@ read_image(gd_GIF *gif)
 }
 
 static void
-render_frame_rect(gd_GIF *gif, uint8_t *buffer)
+render_frame_rect(gd_GIF *gif, uint16_t *buffer)
 {
     int i, j, k;
     uint8_t index, *color;
@@ -471,7 +476,7 @@ render_frame_rect(gd_GIF *gif, uint8_t *buffer)
             index = gif->frame[(gif->fy + j) * gif->width + gif->fx + k];
             color = &gif->palette->colors[index*3];
             if (!gif->gce.transparency || index != gif->gce.tindex)
-                memcpy(&buffer[(i+k)*3], color, 3);
+                buffer[i+k] = GD_RGB565(color[0], color[1], color[2]);
         }
         i += gif->width;
     }
@@ -485,11 +490,14 @@ dispose(gd_GIF *gif)
     switch (gif->gce.disposal) {
     case 2: /* Restore to background color. */
         bgcolor = &gif->palette->colors[gif->bgindex*3];
-        i = gif->fy * gif->width + gif->fx;
-        for (j = 0; j < gif->fh; j++) {
-            for (k = 0; k < gif->fw; k++)
-                memcpy(&gif->canvas[(i+k)*3], bgcolor, 3);
-            i += gif->width;
+        {
+            uint16_t bg565 = GD_RGB565(bgcolor[0], bgcolor[1], bgcolor[2]);
+            i = gif->fy * gif->width + gif->fx;
+            for (j = 0; j < gif->fh; j++) {
+                for (k = 0; k < gif->fw; k++)
+                    gif->canvas[i+k] = bg565;
+                i += gif->width;
+            }
         }
         break;
     case 3: /* Restore to previous, i.e., don't update canvas.*/
@@ -522,9 +530,10 @@ gd_get_frame(gd_GIF *gif)
 }
 
 void
-gd_render_frame(gd_GIF *gif, uint8_t *buffer)
+gd_render_frame(gd_GIF *gif, uint16_t *buffer)
 {
-    memcpy(buffer, gif->canvas, gif->width * gif->height * 3);
+    if (buffer != gif->canvas)
+        memcpy(buffer, gif->canvas, gif->width * gif->height * 2);
     render_frame_rect(gif, buffer);
 }
 

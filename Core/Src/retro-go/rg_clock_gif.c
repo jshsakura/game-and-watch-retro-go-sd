@@ -7,8 +7,9 @@
  * is a per-frame LZW decode, which is exactly why this animation level is
  * labelled "high" battery.
  *
- * MEMORY: a 320x240 GIF needs ~330 KB (gifdec canvas+frame, LZW table;
- * frames compose straight into the canvas) — far beyond the ~80 KB
+ * MEMORY: a 320x240 GIF needs ~270 KB (indices + RGB565 canvas + LZW
+ * table; frames compose straight into the 565 canvas, no extra buffer and
+ * no per-pixel conversion at blit) — far beyond the ~80 KB
  * launcher heap, whose malloc ASSERTS on OOM instead of returning NULL (the
  * 0131 boot crash). So everything comes from the big emu-RAM bump pool
  * (ram_malloc, the same pool the launcher uses for covers): we snapshot the
@@ -74,10 +75,10 @@ bool clock_gif_load(void)
     if (hn < 10 || memcmp(hdr, "GIF", 3) != 0) { s_status = CLOCK_GIF_BAD_FMT;
         snprintf(s_diag, sizeof s_diag, "not a GIF (got %02X %02X %02X)", hdr[0],hdr[1],hdr[2]); return false; }
     int gw = hdr[6] | (hdr[7] << 8), gh = hdr[8] | (hdr[9] << 8);
-    if (gw <= 0 || gh <= 0 || gw > 480 || gh > 320) { s_status = CLOCK_GIF_BAD_DIMS;
+    if (gw <= 0 || gh <= 0 || gw > 640 || gh > 480) { s_status = CLOCK_GIF_BAD_DIMS;
         snprintf(s_diag, sizeof s_diag, "bad dims %dx%d (max 480x320)", gw, gh); return false; }
-    /* gifdec needs frame(4*w*h) + LZW table (~40KB) + slack */
-    size_t need = (size_t)gw * gh * 4 + 48 * 1024;
+    /* gifdec needs frame+565 canvas (3*w*h) + LZW table (~40KB) + slack */
+    size_t need = (size_t)gw * gh * 3 + 48 * 1024;
     if (ram_get_free_size() < need) { s_status = CLOCK_GIF_NO_RAM;
         snprintf(s_diag, sizeof s_diag, "no RAM: need %dK free %dK",
                  (int)(need/1024), (int)(ram_get_free_size()/1024)); return false; }
@@ -89,7 +90,7 @@ bool clock_gif_load(void)
     if (!g) { s_status = CLOCK_GIF_BAD_FMT;
         snprintf(s_diag, sizeof s_diag, "decoder rejected %dx%d", gw, gh);
         clock_gif_free(); return false; }
-    if (g->width <= 0 || g->height <= 0 || g->width > 480 || g->height > 320) {
+    if (g->width <= 0 || g->height <= 0 || g->width > 640 || g->height > 480) {
         s_status = CLOCK_GIF_BAD_DIMS;
         gd_close_gif(g);   /* closes the fd; arena frees are no-ops */
         clock_gif_free(); return false;
@@ -113,7 +114,7 @@ static void gif_decode_next(uint32_t now)
      * saves a whole extra w*h*3 buffer. Composition-wise this matches what
      * dispose() would do for methods 0/1/2; only the rare "restore previous"
      * (3) loses its pristine canvas, acceptable for a background loop. */
-    gd_render_frame(s_gif, s_gif->canvas);
+    gd_render_frame(s_gif, s_gif->canvas);   /* composites into the 565 canvas */
     s_have_frame = true;
     uint16_t delay_cs = s_gif->gce.delay ? s_gif->gce.delay : 10;   /* default 100 ms */
     s_next_tick = now + delay_cs * 10u;
@@ -126,13 +127,11 @@ void clock_gif_blit(uint16_t *fb, uint32_t now)
     if (!s_have_frame) return;
 
     int w = s_gw, h = s_gh;
-    const uint8_t *rgb = s_gif->canvas;
+    const uint16_t *cv = s_gif->canvas;   /* already RGB565 */
     for (int y = 0; y < GW_LCD_HEIGHT; y++) {
-        const uint8_t *srow = rgb + (size_t)(y * h / GW_LCD_HEIGHT) * w * 3;
+        const uint16_t *srow = cv + (size_t)(y * h / GW_LCD_HEIGHT) * w;
         uint16_t *drow = fb + y * GW_LCD_WIDTH;
-        for (int x = 0; x < GW_LCD_WIDTH; x++) {
-            const uint8_t *p = srow + (size_t)(x * w / GW_LCD_WIDTH) * 3;
-            drow[x] = (uint16_t)(((p[0] & 0xF8) << 8) | ((p[1] & 0xFC) << 3) | (p[2] >> 3));
-        }
+        for (int x = 0; x < GW_LCD_WIDTH; x++)
+            drow[x] = srow[(size_t)(x * w / GW_LCD_WIDTH)];
     }
 }
