@@ -1008,6 +1008,21 @@ static void alarm_delete_at(int sel)
     s_alarm_count--;
 }
 
+/* Set the device clock: read the current time, run the clone-view hh:mm editor,
+ * write it back to the RTC on confirm (seconds reset to 0, date kept). */
+static void clock_edit_time(void)
+{
+    struct tm tm;
+    GW_GetUnixTM(&tm);
+    alarm_t cur = { (uint8_t)tm.tm_hour, (uint8_t)tm.tm_min, 1 };
+    if (alarm_edit_view(&cur)) {
+        tm.tm_hour = cur.hour;
+        tm.tm_min  = cur.min;
+        tm.tm_sec  = 0;
+        GW_SetUnixTM(&tm);
+    }
+}
+
 static void clock_alarm_setup(void)
 {
     int sel = 0;
@@ -1075,7 +1090,7 @@ static const char *const THEME_LABEL[THEME_COUNT] =
     { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate" };
 static const char *const FACE_NAME[3] = { "7-seg", "Pixel", "Dot" };
 static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44], v_scene[24], v_pspeed[12],
-            v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_alarms[4], v_exit[4];
+            v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];
 
 static bool cb_theme(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
@@ -1185,8 +1200,9 @@ static bool clock_settings_menu(void)
         {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
         {6, curr_lang->s_Clock_DND,    v_dnd,    1, cb_dnd},
         {7, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
-        {8, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
-        {9, curr_lang->s_Clock_Exit,   v_exit,   1, cb_enter},
+        {8, "Set time",                v_settime, 1, cb_enter},
+        {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
+        {10, curr_lang->s_Clock_Exit,  v_exit,   1, cb_enter},
         ODROID_DIALOG_CHOICE_LAST
     };
     cb_theme(&opts[0], ODROID_DIALOG_FOCUS_GAINED, 0);
@@ -1197,12 +1213,13 @@ static bool clock_settings_menu(void)
     cb_fmt(&opts[5], ODROID_DIALOG_FOCUS_GAINED, 0);
     cb_dnd(&opts[6], ODROID_DIALOG_FOCUS_GAINED, 0);
     cb_vol(&opts[7], ODROID_DIALOG_FOCUS_GAINED, 0);
-    v_alarms[0] = 0; v_exit[0] = 0;
+    v_settime[0] = 0; v_alarms[0] = 0; v_exit[0] = 0;
 
     int sel = odroid_overlay_dialog(curr_lang->s_Clock, opts, 0, &clock_menu_repaint, 0);
-    if (sel == 8) clock_alarm_setup();
+    if (sel == 8) clock_edit_time();
+    if (sel == 9) clock_alarm_setup();
     clock_config_save();
-    return sel == 9;
+    return sel == 10;
 }
 
 /* ---- alarm tone (synthesised, no files) -------------------------------

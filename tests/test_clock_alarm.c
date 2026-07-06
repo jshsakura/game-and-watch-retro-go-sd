@@ -56,6 +56,8 @@ void odroid_overlay_draw_battery(int p,int x,int y){(void)p;(void)x;(void)y;}
 int odroid_overlay_get_font_width(void){return 8;}
 void odroid_input_read_gamepad(odroid_gamepad_state_t *s){ memset(s,0,sizeof *s); }
 int odroid_input_read_battery(void){return 50;}
+void GW_GetUnixTM(struct tm *tm){ memset(tm,0,sizeof *tm); tm->tm_hour=9; tm->tm_min=41; }
+void GW_SetUnixTM(struct tm *tm){ (void)tm; }
 int GW_GetCurrentHour(void){return 0;} int GW_GetCurrentMinute(void){return 0;}
 int GW_GetCurrentSubSeconds(void){return 0;} int GW_GetCurrentMonth(void){return 1;}
 int GW_GetCurrentDay(void){return 1;} int GW_GetCurrentWeekday(void){return 1;}

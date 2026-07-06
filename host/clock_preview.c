@@ -239,6 +239,8 @@ void odroid_input_read_gamepad(odroid_gamepad_state_t *s){ *s = stub_pad; }
 int odroid_input_read_battery(void){ return 76; }
 
 static int st_h = 9, st_m = 41, st_mon = 7, st_day = 6, st_wd = 1, st_ss = 100;
+void GW_GetUnixTM(struct tm *tm){ memset(tm,0,sizeof *tm); tm->tm_hour=st_h; tm->tm_min=st_m; }
+void GW_SetUnixTM(struct tm *tm){ (void)tm; }
 int GW_GetCurrentHour(void){return st_h;} int GW_GetCurrentMinute(void){return st_m;}
 int GW_GetCurrentSubSeconds(void){return st_ss;} int GW_GetCurrentMonth(void){return st_mon;}
 int GW_GetCurrentDay(void){return st_day;} int GW_GetCurrentWeekday(void){return st_wd;}
