@@ -198,86 +198,37 @@ static void draw_big_time(int hh, int mm, bool colon, bool blank_lead,
     draw_big_time_2c(hh, mm, colon, blank_lead, face, col, col, ghost);
 }
 
-/* ---- small glyphs (DND moon) ------------------------------------------ */
+/* ---- pixel-art icons (1-bit sprites, drawn like the logo/wordmarks — no
+ * disc/rect approximations). Each row is MSB-left. */
 
-static void fill_disc(int cx, int cy, int r, uint16_t col)
+typedef struct { uint8_t w, h; const uint16_t *rows; } pix_icon_t;
+
+static void draw_icon(const pix_icon_t *ic, int x, int y, uint16_t col)
 {
-    for (int dy = -r; dy <= r; dy++) {
-        int dx = 0; while (dx*dx + dy*dy <= r*r) dx++;
-        if (dx) odroid_overlay_draw_fill_rect(cx - dx + 1, cy + dy, 2*dx - 1, 1, col);
-    }
+    for (int r = 0; r < ic->h; r++)
+        for (int c = 0; c < ic->w; c++)
+            if (ic->rows[r] & (1u << (ic->w - 1 - c)))
+                odroid_overlay_draw_fill_rect(x + c, y + r, 1, 1, col);
 }
 
-/* Crescent: a disc with an offset disc punched out in the background colour. */
-static void draw_moon(int x, int y, uint16_t col, uint16_t bg)
-{
-    fill_disc(x + 7, y + 7, 7, col);
-    fill_disc(x + 10, y + 5, 6, bg);
-}
-
-/* Tiny bell — shown whenever at least one alarm is armed. */
-static void draw_bell(int x, int y, uint16_t col)
-{
-    fill_disc(x + 5, y + 4, 3, col);                          /* dome */
-    odroid_overlay_draw_fill_rect(x + 2, y + 4, 7, 3, col);   /* body */
-    odroid_overlay_draw_fill_rect(x + 1, y + 7, 9, 1, col);   /* flared lip */
-    odroid_overlay_draw_fill_rect(x + 4, y + 9, 3, 1, col);   /* clapper */
-}
-
-/* ---- 13px mode icons for the pager (procedural, no assets) ------------ */
-
-static void icon_clockface(int x, int y, uint16_t col, uint16_t bg)
-{
-    fill_disc(x + 6, y + 6, 6, col);
-    fill_disc(x + 6, y + 6, 4, bg);
-    odroid_overlay_draw_fill_rect(x + 6, y + 3, 1, 4, col);   /* hour hand */
-    odroid_overlay_draw_fill_rect(x + 6, y + 6, 3, 1, col);   /* minute hand */
-}
-
-static void icon_tomato(int x, int y, uint16_t col)
-{
-    fill_disc(x + 6, y + 8, 5, col);
-    odroid_overlay_draw_fill_rect(x + 5, y + 1, 3, 2, col);   /* stem */
-    odroid_overlay_draw_fill_rect(x + 2, y + 3, 9, 1, col);   /* leaf */
-}
-
-static void icon_hourglass(int x, int y, uint16_t col)
-{
-    odroid_overlay_draw_fill_rect(x + 2, y + 1, 9, 1, col);
-    for (int r = 0; r < 5; r++) {
-        odroid_overlay_draw_fill_rect(x + 2 + r, y + 2 + r, 9 - 2*r, 1, col);
-        odroid_overlay_draw_fill_rect(x + 2 + r, y + 10 - r, 9 - 2*r, 1, col);
-    }
-    odroid_overlay_draw_fill_rect(x + 2, y + 11, 9, 1, col);
-}
-
-static void icon_stopwatch(int x, int y, uint16_t col, uint16_t bg)
-{
-    odroid_overlay_draw_fill_rect(x + 5, y, 3, 2, col);       /* crown */
-    fill_disc(x + 6, y + 8, 5, col);
-    fill_disc(x + 6, y + 8, 3, bg);
-    odroid_overlay_draw_fill_rect(x + 6, y + 5, 1, 4, col);   /* hand */
-}
-
-/* drawn chevrons (no font glyphs pretending to be icons) */
-static void chevron_left(int x, int cy, uint16_t col)    /* apex on the left */
-{
-    for (int c = 0; c < 6; c++)
-        odroid_overlay_draw_fill_rect(x + c, cy - c, 1, 2*c + 1, col);
-}
-static void chevron_right(int x, int cy, uint16_t col)   /* apex on the right */
-{
-    for (int c = 0; c < 6; c++)
-        odroid_overlay_draw_fill_rect(x + 5 - c, cy - c, 1, 2*c + 1, col);
-}
-
-static void icon_mug(int x, int y, uint16_t col)
-{
-    odroid_overlay_draw_fill_rect(x + 2, y + 4, 8, 7, col);   /* body */
-    odroid_overlay_draw_fill_rect(x + 10, y + 5, 2, 4, col);  /* handle */
-    odroid_overlay_draw_fill_rect(x + 3, y + 1, 1, 2, col);   /* steam */
-    odroid_overlay_draw_fill_rect(x + 6, y + 0, 1, 3, col);
-}
+static const uint16_t PIX_CLOCK_ROWS[11] = { 0x0f8, 0x104, 0x202, 0x421, 0x421, 0x431, 0x401, 0x401, 0x202, 0x104, 0x0f8 };
+static const pix_icon_t PIX_CLOCK = { 11, 11, PIX_CLOCK_ROWS };
+static const uint16_t PIX_TOMATO_ROWS[10] = { 0x050, 0x0a8, 0x070, 0x1fc, 0x3fe, 0x7ff, 0x7ff, 0x7ff, 0x3fe, 0x1fc };
+static const pix_icon_t PIX_TOMATO = { 11, 10, PIX_TOMATO_ROWS };
+static const uint16_t PIX_HOURGLASS_ROWS[12] = { 0x1ff, 0x101, 0x082, 0x044, 0x028, 0x010, 0x010, 0x028, 0x044, 0x092, 0x139, 0x1ff };
+static const pix_icon_t PIX_HOURGLASS = { 9, 12, PIX_HOURGLASS_ROWS };
+static const uint16_t PIX_STOPWATCH_ROWS[12] = { 0x070, 0x070, 0x0f8, 0x18c, 0x202, 0x222, 0x421, 0x421, 0x232, 0x202, 0x18c, 0x0f8 };
+static const pix_icon_t PIX_STOPWATCH = { 11, 12, PIX_STOPWATCH_ROWS };
+static const uint16_t PIX_BELL_ROWS[10] = { 0x070, 0x0f8, 0x1fc, 0x1fc, 0x1fc, 0x3fe, 0x3fe, 0x7ff, 0x020, 0x070 };
+static const pix_icon_t PIX_BELL = { 11, 10, PIX_BELL_ROWS };
+static const uint16_t PIX_MOON_ROWS[11] = { 0x03c, 0x0e0, 0x1c0, 0x180, 0x380, 0x380, 0x380, 0x180, 0x1c0, 0x0e0, 0x03c };
+static const pix_icon_t PIX_MOON = { 10, 11, PIX_MOON_ROWS };
+static const uint16_t PIX_MUG_ROWS[11] = { 0x220, 0x440, 0x220, 0x000, 0x7f8, 0x7fa, 0x7f9, 0x7f9, 0x7fa, 0x7f8, 0x3f0 };
+static const pix_icon_t PIX_MUG = { 12, 11, PIX_MUG_ROWS };
+static const uint16_t PIX_CHEV_L_ROWS[9] = { 0x003, 0x006, 0x00c, 0x018, 0x030, 0x018, 0x00c, 0x006, 0x003 };
+static const pix_icon_t PIX_CHEV_L = { 6, 9, PIX_CHEV_L_ROWS };
+static const uint16_t PIX_CHEV_R_ROWS[9] = { 0x030, 0x018, 0x00c, 0x006, 0x003, 0x006, 0x00c, 0x018, 0x030 };
+static const pix_icon_t PIX_CHEV_R = { 6, 9, PIX_CHEV_R_ROWS };
 
 /* Ambient "low battery" animation: a few twinkling dots, ~3 fps. Fixed pseudo-
  * random positions clear of the top bar and hint bar; each dot pulses on a
@@ -514,24 +465,24 @@ static void draw_topbar(clock_mode_t mode)
     const clock_theme_t *t = TH();
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
     odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 18);
-    if (s_dnd) draw_moon(GW_LCD_WIDTH - 48, 16, t->ink, t->scr);
+    if (s_dnd) draw_icon(&PIX_MOON, GW_LCD_WIDTH - 48, 17, t->ink);
     /* mode title flanked by DRAWN chevrons + a pager of mini mode icons,
      * always on (the fade-out experiment read as flicker when switching) */
     const char *title = mode_title(mode);
     int tw = i18n_get_text_width(title);
     int tx = (GW_LCD_WIDTH - tw) / 2;
     draw_centered_i18n(10, title, t->alarm);
-    chevron_left(tx - 16, 16, t->alarm);
-    chevron_right(tx + tw + 10, 16, t->alarm);
+    draw_icon(&PIX_CHEV_L, tx - 16, 12, t->alarm);
+    draw_icon(&PIX_CHEV_R, tx + tw + 10, 12, t->alarm);
     uint16_t dim = mix565(t->scr, t->ink, 5);
     int dx = (GW_LCD_WIDTH - (MODE_COUNT*17 - 4)) / 2, iy = 25;
     for (int i = 0; i < MODE_COUNT; i++, dx += 17) {
         uint16_t c = (i == (int)mode) ? t->alarm : dim;
         switch (i) {
-        case MODE_CLOCK:     icon_clockface(dx, iy, c, t->scr); break;
-        case MODE_POMODORO:  icon_tomato(dx, iy, c);            break;
-        case MODE_TIMER:     icon_hourglass(dx, iy, c);         break;
-        default:             icon_stopwatch(dx, iy, c, t->scr); break;
+        case MODE_CLOCK:     draw_icon(&PIX_CLOCK,     dx, iy, c); break;
+        case MODE_POMODORO:  draw_icon(&PIX_TOMATO,    dx, iy + 1, c); break;
+        case MODE_TIMER:     draw_icon(&PIX_HOURGLASS, dx + 1, iy, c); break;
+        default:             draw_icon(&PIX_STOPWATCH, dx, iy, c); break;
         }
     }
 }
@@ -633,7 +584,7 @@ static void render_clock(uint32_t now, bool alarm_firing)
             uint16_t alcol = s_dnd ? mix565(t->scr, t->ink, 6)
                                    : (alarm_firing ? t->ink : t->alarm);
             int lx = (GW_LCD_WIDTH - i18n_get_text_width(line)) / 2;
-            draw_bell(lx - 16, STATUS_Y + 1, alcol);
+            draw_icon(&PIX_BELL, lx - 16, STATUS_Y + 1, alcol);
             draw_centered_i18n(STATUS_Y, line, alcol);
         }
     }
@@ -679,8 +630,7 @@ static void render_pomodoro(uint32_t now)
         curr_lang->s_Clock_Cycle, s_pomo_cycles + 1);
     uint16_t stc = s_pomo_on_break ? t->alarm : t->ink;
     int sx = (GW_LCD_WIDTH - i18n_get_text_width(st)) / 2;
-    if (s_pomo_on_break) icon_mug(sx - 18, STATUS_Y, stc);
-    else                 icon_tomato(sx - 18, STATUS_Y, stc);
+    draw_icon(s_pomo_on_break ? &PIX_MUG : &PIX_TOMATO, sx - 18, STATUS_Y + 1, stc);
     draw_centered_i18n(STATUS_Y, st, stc);
 }
 
@@ -795,7 +745,7 @@ static void render_alarm_edit(const alarm_t *a, int field, bool blink_off)
     char title[64];
     snprintf(title, sizeof title, "%s", curr_lang->s_Clock_Alarms);
     int tw = i18n_get_text_width(title);
-    draw_bell((GW_LCD_WIDTH - tw) / 2 - 16, 12, t->alarm);
+    draw_icon(&PIX_BELL, (GW_LCD_WIDTH - tw) / 2 - 16, 12, t->alarm);
     draw_centered_i18n(12, title, t->alarm);
 
     int dh = a->hour;
@@ -1228,8 +1178,8 @@ void rg_clock_show(void)
             if (ringing && mode != MODE_CLOCK && ((now / 200) & 1)) {
                 int bw = i18n_get_text_width(curr_lang->s_Clock_Ringing);
                 int bx = (GW_LCD_WIDTH - bw) / 2;
-                draw_bell(bx - 18, 43, TH()->alarm);
-                draw_bell(bx + bw + 7, 43, TH()->alarm);
+                draw_icon(&PIX_BELL, bx - 18, 43, TH()->alarm);
+                draw_icon(&PIX_BELL, bx + bw + 7, 43, TH()->alarm);
                 draw_centered_i18n(42, curr_lang->s_Clock_Ringing, TH()->alarm);
             }
             lcd_swap();

@@ -281,8 +281,8 @@ static void paint(clock_mode_t mode, uint32_t now, bool ringing)
     if (ringing && mode != MODE_CLOCK && ((now / 200) & 1)) {
         int bw = i18n_get_text_width(curr_lang->s_Clock_Ringing);
         int bx = (W - bw) / 2;
-        draw_bell(bx - 18, 43, TH()->alarm);
-        draw_bell(bx + bw + 7, 43, TH()->alarm);
+        draw_icon(&PIX_BELL, bx - 18, 43, TH()->alarm);
+        draw_icon(&PIX_BELL, bx + bw + 7, 43, TH()->alarm);
         draw_centered_i18n(42, curr_lang->s_Clock_Ringing, TH()->alarm);
     }
 }
