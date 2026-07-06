@@ -74,9 +74,21 @@ static const clock_theme_t THEMES[] = {
 
 static const uint8_t SEG7[10] = { 0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F };
 
+/* Legibility over photos: when s_outline > 0, every digit is first painted as a
+ * dark 4-way halo (offset s_outline px) in s_outline_col, so the ink reads over
+ * ANY background. Zero on solid themes (the ghost-8 does that job there). */
+static int      s_outline = 0;
+static uint16_t s_outline_col = 0;
+
 static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
 {
     if (d < 0 || d > 9) return;
+    if (s_outline) {
+        int o = s_outline; uint16_t oc = s_outline_col; s_outline = 0;   /* guard recursion */
+        draw_seg_digit(d, x - o, y, w, h, t, oc); draw_seg_digit(d, x + o, y, w, h, t, oc);
+        draw_seg_digit(d, x, y - o, w, h, t, oc); draw_seg_digit(d, x, y + o, w, h, t, oc);
+        s_outline = o;
+    }
     uint8_t m = SEG7[d];
     int vlen = (h - 3 * t) / 2;
     /* segment boxes, unsheared: bit order A,B,C,D,E,F,G */
@@ -124,6 +136,12 @@ static const uint8_t DOT5x7[11][7] = {
 static void draw_pix_digit(int d, int x, int y, int px, uint16_t col, bool dot)
 {
     if (d < 0 || d > PIX_ALL) return;
+    if (s_outline) {
+        int o = s_outline; uint16_t oc = s_outline_col; s_outline = 0;   /* guard recursion */
+        draw_pix_digit(d, x - o, y, px, oc, dot); draw_pix_digit(d, x + o, y, px, oc, dot);
+        draw_pix_digit(d, x, y - o, px, oc, dot); draw_pix_digit(d, x, y + o, px, oc, dot);
+        s_outline = o;
+    }
     int inset = dot ? 1 : 0, sz = px - (dot ? 2 : 0);
     for (int r = 0; r < 7; r++)
         for (int c = 0; c < 5; c++)
@@ -556,7 +574,7 @@ static void scrim_for_digits(void)
     uint16_t *fb = lcd_get_active_buffer();
     const int y0 = 30, y1 = STATUS_Y + 20;        /* date(42) .. digits .. status(178) */
     const int mid = (y0 + y1) / 2, half = (y1 - y0) / 2;
-    const int peak = 8;                            /* centre darkening = 8/16 = 50% */
+    const int peak = 11;                           /* centre darkening ~70% — digits read over bright photos */
     for (int y = y0; y < y1 && y < GW_LCD_HEIGHT; y++) {
         int d = y - mid; if (d < 0) d = -d;        /* 0 at centre, half at edges */
         int str = peak * (half - d) / half;        /* feather toward the edges */
@@ -586,7 +604,11 @@ static void render_clock(uint32_t now, bool alarm_firing)
     uint16_t timecol = t->ink;
     if (alarm_firing && ((now / 200) & 1)) timecol = t->alarm;
     digit_face_t face = cur_face();
+    /* over a live photo/scene (no ghost) give the digits a dark halo so they read
+     * over any background; solid themes keep the clean ghost look (no outline). */
+    if (!s_ghost_on) { s_outline = 2; s_outline_col = CLOCK_BLACK; }
     draw_big_time(dh, mm, colon, !s_hour24, face, timecol, mix565(t->scr, t->ink, 2));
+    s_outline = 0;
 
     /* AM/PM tucked to the RIGHT of the digits at their baseline (G&W style),
      * not a whole centred line of its own */
