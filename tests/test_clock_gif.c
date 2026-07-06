@@ -1,8 +1,9 @@
 /* Host test for the Clock GIF pipeline: compiles the REAL gifdec + rg_clock_gif
- * with a simulated emu-RAM arena (700 KB cap, LIFO mark/release) and decodes a
- * real animated GIF end to end, checking frames actually change and the blit
- * produces plausible pixels. Catches decoder/allocator regressions the device
- * can only report as a black background. */
+ * with a simulated emu-RAM pool AND a simulated shared_files buffer (the decode
+ * arena the clock borrows — see rg_clock_gif.c), then decodes a real animated
+ * GIF end to end, checking frames actually change and the blit produces
+ * plausible pixels. Catches decoder/allocator regressions the device can only
+ * report as a black background. */
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -24,6 +25,17 @@ size_t ram_get_free_size(void) { return sizeof pool - pool_off; }
 size_t ram_mark(void) { return pool_off + 1; }             /* +1: never 0 */
 void   ram_release(size_t m) { pool_off = m - 1; }
 
+/* ---- simulated shared_files buffer (rg_emulators) — the borrowed decode
+ * arena, sized like the device's (1000 slots ≈ 527 KB). The size override
+ * lets one test fake a buffer too small for the GIF. ---- */
+#include "rg_emulators.h"
+static uint8_t shared_buf[527 * 1024];
+static size_t  shared_bytes_override = 0;
+retro_emulator_file_t *rg_emulators_shared_file_buffer(int *maxcount)
+{ if (maxcount) *maxcount = 0; return (retro_emulator_file_t *)shared_buf; }
+size_t rg_emulators_shared_file_bytes(void)
+{ return shared_bytes_override ? shared_bytes_override : sizeof shared_buf; }
+
 /* redirect the absolute SD path to the test file */
 static const char *gif_path(const char *p)
 { return strcmp(p, "/clock/bg.gif") == 0 ? "/tmp/mtest/bg.gif" : p; }
@@ -44,10 +56,12 @@ int main(void)
     static uint16_t fb[GW_LCD_WIDTH * GW_LCD_HEIGHT];
     size_t before = pool_off;
 
-    CHECK(clock_gif_load(), "gif loads from the arena");
+    clock_gif_reserve();   /* boot call site is a no-op now */
+    CHECK(pool_off == before, "reserve is free (no emu-RAM claimed)");
+
+    CHECK(clock_gif_load(), "gif loads from the shared_files arena");
     CHECK(clock_gif_ready(), "ready after load");
-    printf("  arena used after load: %zu KB\n", (pool_off - before) / 1024);
-    CHECK(pool_off - before < 400 * 1024, "load fits in <400KB (covers headroom)");
+    CHECK(pool_off == before, "emu-RAM pool untouched by load");
 
     memset(fb, 0, sizeof fb);
     clock_gif_blit(fb, 0);
@@ -73,36 +87,34 @@ int main(void)
     CHECK(fb_sum(fb) != 0, "still rendering after looping");
 
     clock_gif_free();
-    CHECK(pool_off == before, "arena fully released on free");
+    CHECK(pool_off == before, "pool still untouched after free");
     CHECK(!clock_gif_ready(), "not ready after free");
 
-    /* reload after release must work (mark/release round trip) */
-    CHECK(clock_gif_load(), "reload after release");
+    /* reload after free must work (arena reset round trip) */
+    CHECK(clock_gif_load(), "reload after free");
     clock_gif_blit(fb, 5000);
     CHECK(fb_sum(fb) != 0, "reload renders");
     clock_gif_free();
 
-    /* arena exhaustion is graceful, not fatal */
-    size_t hog = ram_mark(); (void)ram_malloc(sizeof pool - pool_off - 1024);
-    CHECK(!clock_gif_load(), "load fails cleanly when the pool is nearly full");
-    CHECK(!clock_gif_ready(), "not ready after failed load");
-    ram_release(hog);
-
-    /* --- boot reservation vs cover-cache pressure (the field failure:
-     *     "no RAM: need 273K free 41K" after the launcher cached covers) --- */
-    pool_off = 0;                       /* fresh boot, pool empty */
-    clock_gif_reserve();                /* SD mounted, before any cover */
-    size_t reserved = pool_off;
-    printf("  boot reservation: %zu KB\n", reserved / 1024);
-    CHECK(reserved > 200 * 1024, "reserve claims the 320x240 decode arena");
-    while (ram_get_free_size() > 41 * 1024)     /* covers eat the rest of the pool */
+    /* --- the field failure: launcher covers filled the emu-RAM pool down to
+     *     41K free ("no RAM: need 273K free 41K"). The shared_files arena is
+     *     independent of the pool, so the GIF must STILL load. --- */
+    while (ram_get_free_size() > 41 * 1024)     /* covers eat the pool */
         if (!ram_malloc(4096)) break;
-    CHECK(clock_gif_load(), "gif loads with 41K free (reserved arena)");
+    printf("  pool free now: %zu KB\n", ram_get_free_size() / 1024);
+    CHECK(clock_gif_load(), "gif loads with 41K pool free (shared arena)");
     memset(fb, 0, sizeof fb);
     clock_gif_blit(fb, 0);
-    CHECK(fb_sum(fb) != 0, "reserved-arena frame renders");
+    CHECK(fb_sum(fb) != 0, "frame renders under pool pressure");
     clock_gif_free();
-    CHECK(clock_gif_load(), "reload reuses the arena (reset, not refreed)");
+
+    /* a too-small shared buffer fails cleanly (not fatally) */
+    shared_bytes_override = 100 * 1024;         /* < 273K needed for 320x240 */
+    CHECK(!clock_gif_load(), "load fails cleanly when the arena is too small");
+    CHECK(clock_gif_status() == CLOCK_GIF_NO_RAM, "status reports NO_RAM");
+    CHECK(!clock_gif_ready(), "not ready after failed load");
+    shared_bytes_override = 0;
+    CHECK(clock_gif_load(), "recovers once the arena is big enough");
     clock_gif_free();
 
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
