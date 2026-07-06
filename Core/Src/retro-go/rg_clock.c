@@ -319,10 +319,12 @@ static int alarms_armed(void)
  * rebuilds the launcher's ROM lists exactly once. */
 static bool s_album_used = false;
 
-/* Photo album auto-advance: each photo holds PHOTO_HOLD_MS, then a short
- * dip-to-black swaps to the next — never a hard "뿅" cut. (TODO: user-set hold.) */
-#define PHOTO_HOLD_MS 8000
-#define PHOTO_FADE_MS 500
+/* Photo album auto-advance: each photo holds, then a short dip-to-black swaps to
+ * the next — never a hard "뿅" cut. Hold time is user-selectable (slow/normal/fast). */
+static int s_photo_speed = 1;                          /* 0=slow 1=normal 2=fast */
+static const uint32_t PHOTO_HOLD_TBL[3] = { 15000, 8000, 4000 };
+#define PHOTO_HOLD_MS (PHOTO_HOLD_TBL[(s_photo_speed >= 0 && s_photo_speed < 3) ? s_photo_speed : 1])
+#define PHOTO_FADE_MS 260   /* the dip itself is snappy — a quick 샤라락, not a lingering fade */
 static uint32_t s_photo_next   = 0;   /* tick to begin the next advance (0 = off) */
 static uint32_t s_fade_start   = 0;   /* tick the dip began (0 = steady) */
 static bool     s_fade_swapped = false;
@@ -330,7 +332,7 @@ static bool     s_fade_swapped = false;
 static void clock_config_load(void)
 {
     s_theme = 0; s_face_override = -1;
-    s_hour24 = false; s_dnd = false; s_anim = 0; s_scene = 0;
+    s_hour24 = false; s_dnd = false; s_anim = 0; s_scene = 0; s_photo_speed = 1;
     s_alarm_count = 0;
     FILE *f = fopen(CLOCK_CFG_PATH, "r");
     if (!f) f = fopen(CLOCK_CFG_LEGACY, "r");   /* migrate: next save writes /clock/ */
@@ -344,6 +346,7 @@ static void clock_config_load(void)
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
         else if (sscanf(line, "anim=%d", &v) == 1) { if (v >= 0 && v < ANIM_COUNT) s_anim = v; }
         else if (sscanf(line, "scene=%d", &v) == 1) { if (v >= 0) s_scene = v; }  /* draw_scene clamps */
+        else if (sscanf(line, "photospeed=%d", &v) == 1) { if (v >= 0 && v < 3) s_photo_speed = v; }
         /* alarm=HHMM[,enabled] — the suffix is new; plain HHMM (older cfg) = enabled */
         else if (sscanf(line, "alarm=%d,%d", &v, &en) >= 1 && s_alarm_count < MAX_ALARMS) {
             int hr = v / 100, mn = v % 100;
@@ -368,6 +371,7 @@ static void clock_config_save(void)
     fprintf(f, "dnd=%d\n", s_dnd ? 1 : 0);
     fprintf(f, "anim=%d\n", s_anim);
     fprintf(f, "scene=%d\n", s_scene);
+    fprintf(f, "photospeed=%d\n", s_photo_speed);
     for (int i = 0; i < s_alarm_count; i++)   /* disabled alarms persist too */
         fprintf(f, "alarm=%02d%02d,%d\n", s_alarms[i].hour, s_alarms[i].min,
                 s_alarms[i].enabled ? 1 : 0);
@@ -1049,7 +1053,7 @@ static void clock_alarm_setup(void)
 static const char *const THEME_LABEL[THEME_COUNT] =
     { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate" };
 static const char *const FACE_NAME[3] = { "7-seg", "Pixel", "Dot" };
-static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44], v_scene[24],
+static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44], v_scene[24], v_pspeed[12],
             v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_alarms[4], v_exit[4];
 
 static bool cb_theme(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
@@ -1111,6 +1115,16 @@ static bool cb_scene(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_
     snprintf(o->value, sizeof v_scene, "%s", SCENE_NAMES[s_scene]);
     return e == ODROID_DIALOG_ENTER;
 }
+static bool cb_pspeed(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{
+    (void)r;
+    if (e == ODROID_DIALOG_PREV) s_photo_speed = (s_photo_speed == 0) ? 2 : s_photo_speed - 1;
+    if (e == ODROID_DIALOG_NEXT) s_photo_speed = (s_photo_speed + 1) % 3;
+    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) { s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
+    snprintf(o->value, sizeof v_pspeed, "%s",
+             (s_photo_speed == 0) ? "Slow" : (s_photo_speed == 2) ? "Fast" : "Normal");
+    return e == ODROID_DIALOG_ENTER;
+}
 static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {   /* edits the SYSTEM volume — same 0..9 scale, curve AND bar-gauge look
      * as the common volume row (odroid_overlay.c volume_update_cb) */
@@ -1146,26 +1160,28 @@ static bool clock_settings_menu(void)
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},
         {2, curr_lang->s_Clock_Anim,   v_anim,   1, cb_anim},
         {3, "Scene",                   v_scene,  1, cb_scene},
-        {4, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
-        {5, curr_lang->s_Clock_DND,    v_dnd,    1, cb_dnd},
-        {6, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
-        {7, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
-        {8, curr_lang->s_Clock_Exit,   v_exit,   1, cb_enter},
+        {4, "Photo speed",             v_pspeed, 1, cb_pspeed},
+        {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
+        {6, curr_lang->s_Clock_DND,    v_dnd,    1, cb_dnd},
+        {7, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
+        {8, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
+        {9, curr_lang->s_Clock_Exit,   v_exit,   1, cb_enter},
         ODROID_DIALOG_CHOICE_LAST
     };
     cb_theme(&opts[0], ODROID_DIALOG_FOCUS_GAINED, 0);
     cb_face(&opts[1], ODROID_DIALOG_FOCUS_GAINED, 0);
     cb_anim(&opts[2], ODROID_DIALOG_FOCUS_GAINED, 0);
     cb_scene(&opts[3], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_fmt(&opts[4], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_dnd(&opts[5], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_vol(&opts[6], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_pspeed(&opts[4], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_fmt(&opts[5], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_dnd(&opts[6], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_vol(&opts[7], ODROID_DIALOG_FOCUS_GAINED, 0);
     v_alarms[0] = 0; v_exit[0] = 0;
 
     int sel = odroid_overlay_dialog(curr_lang->s_Clock, opts, 0, &clock_menu_repaint, 0);
-    if (sel == 7) clock_alarm_setup();
+    if (sel == 8) clock_alarm_setup();
     clock_config_save();
-    return sel == 8;
+    return sel == 9;
 }
 
 /* ---- alarm tone (synthesised, no files) -------------------------------
