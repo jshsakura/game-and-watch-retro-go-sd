@@ -6,6 +6,7 @@ on:
       - main
       - feat/ngp-pocket
       - experimental-testbed
+      - testbed
     tags:
       - 'v*'
       - 'testbed-full-*'
@@ -28,6 +29,34 @@ jobs:
         run: |
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
             bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
+
+  host-tests:
+    # Host unit tests (tests/run.sh): clock alarm/cfg/editor state machines,
+    # favorites file ops, rg_storage compiled BOTH ways (FatFs + FrogFS stubs),
+    # GIF decode, merge-hygiene logo guard. Cheap, no toolchain: plain gcc.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Install Pillow (GIF fixture generator)
+        run: pip3 install --quiet Pillow
+      - name: Run host test suite
+        run: bash tests/run.sh
+
+  build-sd0-test:
+    # Non-SD (flash-only, SD_CARD=0) build must stay green: FrogFS + LittleFS
+    # images and the FLASH.ld link are exercised by no other job. This is the
+    # configuration a Game & Watch WITHOUT the SD mod runs.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+      - name: Build test (SD_CARD=0)
+        run: |
+          docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
+            bash -l -c "make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 SD_CARD=0 COVERFLOW=0 DISABLE_SPLASH_SCREEN=1 INTFLASH_BANK=2 KO_KR=1 all"
 
   lynx-core-test:
     # Host-side AddressSanitizer test of the Atari Lynx core (external/handy-go),
