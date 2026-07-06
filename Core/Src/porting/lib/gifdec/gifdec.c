@@ -90,16 +90,15 @@ gd_open_gif(const char *fname)
     height = read_num(fd);
     /* FDSZ */
     read(fd, &fdsz, 1);
-    /* Presence of GCT */
-    if (!(fdsz & 0x80)) {
-        fprintf(stderr, "no global color table\n");
-        goto fail;
-    }
+    /* Presence of a Global Color Table. Files that carry only per-frame
+     * Local Color Tables (common with optimised exporters) have no GCT —
+     * that is allowed; the LCT is read per image in read_image(). */
+    int has_gct = (fdsz & 0x80) != 0;
     /* Color Space's Depth */
     depth = ((fdsz >> 4) & 7) + 1;
     /* Ignore Sort Flag. */
     /* GCT Size */
-    gct_sz = 1 << ((fdsz & 0x07) + 1);
+    gct_sz = has_gct ? (1 << ((fdsz & 0x07) + 1)) : 0;
     /* Background Color Index */
     read(fd, &bgidx, 1);
     /* Aspect Ratio */
@@ -111,9 +110,9 @@ gd_open_gif(const char *fname)
     gif->width  = width;
     gif->height = height;
     gif->depth  = depth;
-    /* Read GCT */
+    /* Read GCT (if present) */
     gif->gct.size = gct_sz;
-    read(fd, gif->gct.colors, 3 * gif->gct.size);
+    if (gct_sz) read(fd, gif->gct.colors, 3 * gif->gct.size);
     gif->palette = &gif->gct;
     gif->bgindex = bgidx;
     gif->frame = gd_calloc_fn(4, width * height);
@@ -124,10 +123,13 @@ gd_open_gif(const char *fname)
     gif->canvas = &gif->frame[width * height];
     if (gif->bgindex)
         memset(gif->frame, gif->bgindex, gif->width * gif->height);
-    bgcolor = &gif->palette->colors[gif->bgindex*3];
-    if (bgcolor[0] || bgcolor[1] || bgcolor [2])
-        for (i = 0; i < gif->width * gif->height; i++)
-            memcpy(&gif->canvas[i*3], bgcolor, 3);
+    /* only meaningful with a GCT; canvas is calloc'd (black) otherwise */
+    if (gct_sz) {
+        bgcolor = &gif->palette->colors[gif->bgindex*3];
+        if (bgcolor[0] || bgcolor[1] || bgcolor [2])
+            for (i = 0; i < gif->width * gif->height; i++)
+                memcpy(&gif->canvas[i*3], bgcolor, 3);
+    }
     gif->anim_start = lseek(fd, 0, SEEK_CUR);
     goto ok;
 fail:
