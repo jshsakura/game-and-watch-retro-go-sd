@@ -47,4 +47,21 @@ if [ -d "$SRC" ]; then
 fi
 /tmp/mtest/test_clock_alarm || rc=1
 /tmp/mtest/test_clock_gif   || rc=1
+
+# === merge-hygiene guard (red-green) ==================================
+# A merge that interleaves OUR logo additions with upstream's can silently
+# duplicate a RG_LOGO_* enumerator (→ compile error) or a logo blob (→ link
+# error). That is exactly what a stray upstream Lynx-logo re-add did once,
+# and it only blew up 5 minutes into the ARM CI. Catch it HERE, on the host,
+# so following upstream stays "pretty" and never confuses a downstream picker.
+echo "=== merge hygiene: duplicate logo enums / blobs ==="
+dup_enum=$(grep -oE 'RG_LOGO_[A-Z0-9_]+' Core/Inc/retro-go/bitmaps.h | sort | uniq -d)
+dup_blob=$(grep -oE '^const retro_logo_image[[:space:]]+[a-z0-9_]+[[:space:]]+LOGO_DATA' \
+           Core/Src/retro-go/rg_logos.c | awk '{print $3}' | sort | uniq -d)
+if [ -n "$dup_enum" ] || [ -n "$dup_blob" ]; then
+    echo "FAIL duplicate logo — enum:[$dup_enum] blob:[$dup_blob]"; rc=1
+else
+    echo "OK no duplicate logo enums/blobs"
+fi
+
 exit $rc
