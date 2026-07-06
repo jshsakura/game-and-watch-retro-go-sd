@@ -289,8 +289,8 @@ static void base(uint16_t bg) { for (int i = 0; i < W * H; i++) fb[i] = bg; }
 static void paint(clock_mode_t mode, uint32_t now, bool ringing)
 {
     base(TH()->scr);
-    if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); s_ghost_on = false; scrim_for_digits(); }
-    else if (s_anim == ANIM_SCENE) draw_scene(now, TH());
+    if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); s_ghost_on = false; }
+    else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); s_ghost_on = false; }
     else if (s_anim == 1) draw_ambient(now, TH()->ink);
     switch (mode) {
     case MODE_CLOCK:     render_clock(now, ringing); break;

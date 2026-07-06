@@ -167,15 +167,19 @@ static void scene_aurora(uint32_t now, const clock_theme_t *t)
         int sx = (k * 67 + 9) % GW_LCD_WIDTH, sy = 6 + (k * 41) % 90;
         if (((now / 700) + k) % 4 < 2) srect(sx, sy, 1, 1, star);
     }
-    /* XMB-style bands lowered toward the vertical centre/lower area, big smooth flow */
+    /* XMB-style bands, lower area. Slow, LONG-period waves + wide overlapping
+     * ribbons so the flow reads soft and round (동글동글), not pointy. */
     for (int b = 0; b < 3; b++) {
         uint16_t c = mix565(t->scr, t->alarm, 11 - b * 3);
         int base = 120 + b * 26;
-        for (int x = 0; x < GW_LCD_WIDTH; x += 3) {
-            int y = base + itri(x / 2 + (int)(now / 150) + b * 60, 28)
-                         + itri(x / 4 + (int)(now / 260) + b * 40, 14);
-            int hgt = 12 + itri(x * 2 + (int)(now / 120) + b * 30, 8); if (hgt < 4) hgt = 4;
-            srect(x, y, 3, hgt, c);
+        for (int x = 0; x < GW_LCD_WIDTH; x += 2) {
+            /* two gentle waves summed → rounded crest, then a slow half-wave
+             * added on top rounds the corners further */
+            int y = base + itri(x / 4 + (int)(now / 190) + b * 60, 26)
+                         + itri(x / 7 + (int)(now / 320) + b * 40, 13)
+                         + itri(x / 12 + (int)(now / 260), 6);
+            int hgt = 16 + itri(x / 3 + (int)(now / 150) + b * 30, 9); if (hgt < 6) hgt = 6;
+            srect(x - 2, y, 6, hgt, c);   /* wide, overlapping = soft edges */
         }
     }
 }

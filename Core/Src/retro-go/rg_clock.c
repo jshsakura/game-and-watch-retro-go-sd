@@ -233,13 +233,16 @@ static void draw_big_time(int hh, int mm, bool colon, bool blank_lead,
 /* Filled crescent moon (solid, not an outline): a disc with an offset disc
  * cut away — only the lit crescent pixels are drawn, so it reads over any
  * background. cx,cy = top-left of an r*2 box. */
+/* A bold crescent: a full disc minus a same-size disc shifted up-and-right, so a
+ * fat lune remains. The old half-thin sliver aliased into a "broken" blob at
+ * this size; keeping most of the disc reads clearly as a moon. */
 static void draw_moon(int x, int y, int r, uint16_t col)
 {
-    int cx = x + r, cy = y + r, ox = (r + 1) / 2;
+    int cx = x + r, cy = y + r, ox = r - 1, oy = -1;
     for (int dy = -r; dy <= r; dy++)
         for (int dx = -r; dx <= r; dx++) {
-            int e = dx - ox;
-            if (dx*dx + dy*dy <= r*r && e*e + dy*dy > r*r)
+            int ex = dx - ox, ey = dy - oy;
+            if (dx*dx + dy*dy <= r*r && ex*ex + ey*ey > r*r)
                 odroid_overlay_draw_fill_rect(cx + dx, cy + dy, 1, 1, col);
         }
 }
@@ -346,7 +349,7 @@ static void clock_config_load(void)
         else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_DOT) s_face_override = v; }
         else if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
-        else if (sscanf(line, "anim=%d", &v) == 1) { if (v >= 0 && v < ANIM_COUNT) s_anim = v; }
+        else if (sscanf(line, "anim=%d", &v) == 1) { if (v == 1) v = 0; if (v >= 0 && v < ANIM_COUNT) s_anim = v; }   /* ambient(1) retired */
         else if (sscanf(line, "scene=%d", &v) == 1) { if (v >= 0) s_scene = v; }  /* draw_scene clamps */
         else if (sscanf(line, "photospeed=%d", &v) == 1) { if (v >= 0 && v < 3) s_photo_speed = v; }
         /* alarm=HHMM[,enabled] — the suffix is new; plain HHMM (older cfg) = enabled */
@@ -631,24 +634,26 @@ static inline void fb_fill_screen(uint16_t *fb, uint16_t c)
     for (int i = 0; i < (GW_LCD_WIDTH * GW_LCD_HEIGHT) / 2; i++) p[i] = c2;
 }
 
-static void scrim_for_digits(void)
+/* A small translucent rounded "frosted" pill that darkens whatever is behind it
+ * (a photo/scene) by `str`, so one line of text lifts off a busy background. */
+static void frosted_pill(int x, int y, int w, int h, int r, int str)
 {
     uint16_t *fb = lcd_get_active_buffer();
-    /* One translucent rounded "card" behind the clock content — a clean frosted
-     * plate (uniform, ~38% dark), NOT a feathered gradient. The digit outline
-     * carries the fine legibility; this just lifts the text off a busy photo. */
-    const int cw = 250, ch = (STATUS_Y + 16) - 34;   /* covers date -> digits -> next-alarm */
-    const int cx = (GW_LCD_WIDTH - cw) / 2, cy = 34, r = 14, str = 6;
-    for (int j = 0; j < ch; j++) {
-        int y = cy + j; if (y < 0 || y >= GW_LCD_HEIGHT) continue;
-        int inset = 0, dy = -1;
-        if (j < r)            dy = r - j;                  /* top rounded zone */
-        else if (j >= ch - r) dy = j - (ch - 1 - r);       /* bottom rounded zone */
+    for (int j = 0; j < h; j++) {
+        int yy = y + j; if (yy < 0 || yy >= GW_LCD_HEIGHT) continue;
+        int inset = 0, dy = (j < r) ? r - j : (j >= h - r) ? j - (h - 1 - r) : -1;
         if (dy > 0) inset = r - isqrt_i(r * r - dy * dy);
-        uint16_t *row = &fb[y * GW_LCD_WIDTH];
-        for (int x = cx + inset; x < cx + cw - inset; x++)
-            if (x >= 0 && x < GW_LCD_WIDTH) row[x] = mix565(row[x], CLOCK_BLACK, str);
+        uint16_t *row = &fb[yy * GW_LCD_WIDTH];
+        for (int xx = x + inset; xx < x + w - inset; xx++)
+            if (xx >= 0 && xx < GW_LCD_WIDTH) row[xx] = mix565(row[xx], CLOCK_BLACK, str);
     }
+}
+/* Frosted pill centred on screen, sized to hug a piece of content of width cw. */
+static void frosted_pill_centered(int y, int cw, int h)
+{
+    const int pad = 12, str = 6;
+    int w = cw + pad * 2, r = (h / 2 < 9) ? h / 2 : 9;
+    frosted_pill((GW_LCD_WIDTH - w) / 2, y, w, h, r, str);
 }
 
 /* Dip-to-black progress: 0 at the ends (steady) .. 16 fully black at the midpoint
@@ -671,9 +676,14 @@ static void render_clock(uint32_t now, bool alarm_firing)
     int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
     bool colon = GW_GetCurrentSubSeconds() <= 127;
 
+    /* Over a live background (photo/scene/GIF) each text group sits on its own
+     * small frosted pill so it reads without one big darkening block. */
+    bool plated = !s_ghost_on;
+
     /* date + weekday, centred UNDER the top bar (was colliding with it) */
     char date[48];
     snprintf(date, sizeof date, "%02d/%02d %s", GW_GetCurrentMonth(), GW_GetCurrentDay(), weekday_str());
+    if (plated) frosted_pill_centered(40, i18n_get_text_width(date), 18);
     draw_centered_i18n(42, date, t->ink);
 
     /* the alarm's background effect (grid-pulse) is drawn in the main loop's
@@ -690,6 +700,7 @@ static void render_clock(uint32_t now, bool alarm_firing)
     /* over a live photo/scene (no ghost) give the digits a dark halo so they read
      * over any background; solid themes keep the clean ghost look (no outline). */
     if (!s_ghost_on) { s_outline = 2; s_outline_col = CLOCK_BLACK; }
+    if (plated) frosted_pill_centered(SEG_Y - 6, big_time_width(face), SEG_H + 12);
     draw_big_time(dh, mm, colon, !s_hour24, face, timecol, mix565(t->scr, t->ink, 2));
     s_outline = 0;
 
@@ -718,6 +729,7 @@ static void render_clock(uint32_t now, bool alarm_firing)
             uint16_t alcol = s_dnd ? mix565(t->scr, t->ink, 6)
                                    : (alarm_firing ? t->ink : t->alarm);
             int lx = (GW_LCD_WIDTH - i18n_get_text_width(line)) / 2;
+            if (plated) frosted_pill_centered(STATUS_Y - 3, i18n_get_text_width(line) + 20, 18);
             draw_icon(&PIX_BELL, lx - 16, STATUS_Y + 1, alcol);
             draw_centered_i18n(STATUS_Y, line, alcol);
         }
@@ -733,6 +745,7 @@ static void render_clock(uint32_t now, bool alarm_firing)
 static void render_mmss(uint32_t ms, uint16_t col, bool colon)
 {
     uint32_t total = ms / 1000; int m = (total / 60) % 100, s = total % 60;
+    if (!s_ghost_on) frosted_pill_centered(SEG_Y - 6, big_time_width(cur_face()), SEG_H + 12);
     draw_big_time(m, s, colon, false, cur_face(), col, mix565(TH()->scr, TH()->ink, 2));
 }
 
@@ -770,6 +783,7 @@ static void render_pomodoro(uint32_t now)
         curr_lang->s_Clock_Cycle, s_pomo_cycles + 1);
     uint16_t stc = s_pomo_on_break ? t->alarm : t->ink;
     int sx = (GW_LCD_WIDTH - i18n_get_text_width(st)) / 2;
+    if (!s_ghost_on) frosted_pill_centered(STATUS_Y - 3, i18n_get_text_width(st) + 22, 18);
     draw_icon(s_pomo_on_break ? &PIX_MUG : &PIX_TOMATO, sx - 18, STATUS_Y + 1, stc);
     draw_centered_i18n(STATUS_Y, st, stc);
 }
@@ -799,6 +813,7 @@ static void render_stopwatch(uint32_t now)
         const int w = 32, h = 68, tt = 8, g = 6, sep = tt + 2*g;
         int total = 6*w + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = SEG_Y + 12;
+        if (!gh) frosted_pill_centered(y - 8, total, h + 16);
         for (int i = 0; i < 6; i++) {
             if (gh) draw_seg_digit(8, x, y, w, h, tt, ghost);
             draw_seg_digit(d[i], x, y, w, h, tt, col);
@@ -817,6 +832,7 @@ static void render_stopwatch(uint32_t now)
         const int px = 7, dw = 5*px, g = px, sep = px*3;
         int total = 6*dw + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = PIX_Y + 10;
+        if (!gh) frosted_pill_centered(y - 8, total, 7*px + 16);
         for (int i = 0; i < 6; i++) {
                 if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
             draw_pix_digit(d[i], x, y, px, col, dot);
@@ -1213,6 +1229,7 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
     (void)r;
     if (e == ODROID_DIALOG_PREV) s_anim = (s_anim == 0) ? ANIM_COUNT-1 : s_anim-1;
     if (e == ODROID_DIALOG_NEXT) s_anim = (s_anim+1) % ANIM_COUNT;
+    if (s_anim == 1) s_anim = (e == ODROID_DIALOG_NEXT) ? ANIM_SCENE : 0;   /* ambient retired — skip it */
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) {
         if (s_anim == ANIM_GIF) clock_gif_load(); else clock_gif_free();
         if (s_anim == ANIM_PHOTO) { if (!clock_album_ready()) clock_album_open(); s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
@@ -1538,12 +1555,12 @@ void rg_clock_show(void)
             bool bg_live = false;
             if (!flash) {   /* background layer, identical in every mode */
                 if (ringing) { scene_grid_pulse(now, TH()); bg_live = true; }   /* alarm effect = the grid-pulse ripple (over any chosen background) */
-                else if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; scrim_for_digits(); }
+                else if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
                 else if (s_anim == ANIM_PHOTO && clock_album_ready()) {
                     memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
                     int fd = photo_fade_darkness(now);   /* dip to black across a photo swap */
                     if (fd) for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = mix565(fb[i], CLOCK_BLACK, fd);
-                    bg_live = true; scrim_for_digits();
+                    bg_live = true;
                 }
                 else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
                 else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
