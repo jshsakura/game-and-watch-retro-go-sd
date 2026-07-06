@@ -636,6 +636,25 @@ static int photo_fade_darkness(uint32_t now)
     return v > 16 ? 16 : v;
 }
 
+/* 8-bit alarm pulse: blocky square rings expand from the screen centre in the
+ * accent colour while the alarm rings — a lively signal that reads over any
+ * background. Procedural (0 RAM), drawn behind the digits. */
+static void draw_alarm_pulse(uint32_t now)
+{
+    const clock_theme_t *t = TH();
+    int cx = GW_LCD_WIDTH / 2, cy = GW_LCD_HEIGHT / 2;
+    for (int ring = 0; ring < 3; ring++) {
+        int phase = (int)((now / 12 + ring * 240) % 720);
+        int rad = phase / 3;                    /* 0..240 */
+        int fade = 13 - phase / 60;             /* fades as the ring grows */
+        if (fade < 2 || rad < 3) continue;
+        uint16_t c = mix565(t->scr, t->alarm, fade);
+        int x0 = cx - rad, y0 = cy - rad, s = rad * 2;
+        srect(x0, y0, s, 2, c); srect(x0, y0 + s - 2, s, 2, c);   /* top / bottom */
+        srect(x0, y0, 2, s, c); srect(x0 + s - 2, y0, 2, s, c);   /* left / right */
+    }
+}
+
 static void render_clock(uint32_t now, bool alarm_firing)
 {
     const clock_theme_t *t = TH();
@@ -646,6 +665,8 @@ static void render_clock(uint32_t now, bool alarm_firing)
     char date[48];
     snprintf(date, sizeof date, "%02d/%02d %s", GW_GetCurrentMonth(), GW_GetCurrentDay(), weekday_str());
     draw_centered_i18n(42, date, t->ink);
+
+    if (alarm_firing) draw_alarm_pulse(now);   /* 8-bit rings behind the digits */
 
     /* big time. When the alarm is ringing the digits PULSE between ink and
      * the accent (~2.5 Hz): a clear alarm signal that sits on top of the
@@ -1304,6 +1325,11 @@ void rg_clock_show(void)
             continue;
         }
 
+        /* GAME (START) = quit straight back to the launcher home — the one-press
+         * exit that pairs with TIME opening the clock. (During a ring the alarm
+         * dismiss below consumes the press first.) */
+        if (!ringing && pressed(&k, &prev, ODROID_INPUT_START)) break;
+
         if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { mode = (mode == 0) ? MODE_COUNT-1 : mode-1; dirty = true; }
         if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { mode = (mode+1) % MODE_COUNT; dirty = true; }
 
@@ -1354,7 +1380,7 @@ void rg_clock_show(void)
         bool flash = (mode == MODE_TIMER || mode == MODE_POMODORO)
                      && s_flash_until > now && ((now/150) & 1);
         if (flash) sig ^= 0x55555555;
-        if (ringing) sig ^= (now / 200);   /* repaint for the alarm digit pulse */
+        if (ringing) sig ^= (now / 40);    /* ~25fps: smooth 8-bit ring pulse + digit flash */
         /* the chosen background travels with EVERY mode (theme/face/bg stay
          * one consistent set), so its repaint rate applies everywhere too.
          * A GIF that isn't loaded (missing / too big) must NOT keep bumping

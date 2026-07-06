@@ -768,7 +768,8 @@ void retro_loop()
             }
             else if (last_key == ODROID_INPUT_SELECT)
             {
-                handle_time_menu();
+                rg_clock_show();   /* TIME opens the clock directly (GAME returns home) */
+                (void)handle_time_menu;   /* kept for reference; the Time/Date dialog is retired */
             }
             else if (last_key == key_up)
             {
