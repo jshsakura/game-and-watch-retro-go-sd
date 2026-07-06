@@ -318,6 +318,14 @@ static int alarms_armed(void)
  * rebuilds the launcher's ROM lists exactly once. */
 static bool s_album_used = false;
 
+/* Photo album auto-advance: each photo holds PHOTO_HOLD_MS, then a short
+ * dip-to-black swaps to the next — never a hard "뿅" cut. (TODO: user-set hold.) */
+#define PHOTO_HOLD_MS 8000
+#define PHOTO_FADE_MS 500
+static uint32_t s_photo_next   = 0;   /* tick to begin the next advance (0 = off) */
+static uint32_t s_fade_start   = 0;   /* tick the dip began (0 = steady) */
+static bool     s_fade_swapped = false;
+
 static void clock_config_load(void)
 {
     s_theme = 0; s_face_override = -1;
@@ -583,6 +591,17 @@ static void scrim_for_digits(void)
         for (int x = 0; x < GW_LCD_WIDTH; x++)
             row[x] = mix565(row[x], CLOCK_BLACK, str);
     }
+}
+
+/* Dip-to-black progress: 0 at the ends (steady) .. 16 fully black at the midpoint
+ * of the PHOTO_FADE_MS transition. Applied to the photo before the digits go on. */
+static int photo_fade_darkness(uint32_t now)
+{
+    if (!s_fade_start) return 0;
+    uint32_t el = now - s_fade_start, half = PHOTO_FADE_MS / 2;
+    uint32_t d = (el < half) ? el : (el < PHOTO_FADE_MS ? PHOTO_FADE_MS - el : 0);
+    int v = (int)(d * 16 / half);
+    return v > 16 ? 16 : v;
 }
 
 static void render_clock(uint32_t now, bool alarm_firing)
@@ -1037,7 +1056,7 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
     if (e == ODROID_DIALOG_NEXT) s_anim = (s_anim+1) % ANIM_COUNT;
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) {
         if (s_anim == ANIM_GIF) clock_gif_load(); else clock_gif_free();
-        if (s_anim == ANIM_PHOTO) { if (!clock_album_ready()) clock_album_open(); s_album_used = true; }
+        if (s_anim == ANIM_PHOTO) { if (!clock_album_ready()) clock_album_open(); s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
     }
     const char *lv = (s_anim == 0) ? curr_lang->s_Clock_Anim_0
                    : (s_anim == 1) ? curr_lang->s_Clock_Anim_1
@@ -1173,7 +1192,7 @@ void rg_clock_show(void)
     s_album_used = false;
     if (s_anim == ANIM_GIF) clock_gif_load();   /* decode /clock/bg.gif once */
     if (s_anim == ANIM_PHOTO) {                 /* borrow shared_files, load first photo */
-        if (clock_album_open()) s_album_used = true;
+        if (clock_album_open()) { s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; }
         else s_anim = 0;                        /* no photos / no room -> solid fallback */
     }
     odroid_input_read_gamepad(&prev);   /* swallow the opening button */
@@ -1290,6 +1309,18 @@ void rg_clock_show(void)
         else if (s_anim == ANIM_SCENE) sig ^= (now / 640);  /* window twinkle */
         else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
 
+        /* photo album auto-advance: hold PHOTO_HOLD_MS, then dip to black, swap
+         * to the next photo at the midpoint, and dip back — no hard cut. */
+        if (s_anim == ANIM_PHOTO && clock_album_ready() && clock_album_count() > 1) {
+            if (!s_fade_start && s_photo_next && now >= s_photo_next) { s_fade_start = now ? now : 1; s_fade_swapped = false; }
+            if (s_fade_start) {
+                uint32_t el = now - s_fade_start;
+                if (!s_fade_swapped && el >= PHOTO_FADE_MS/2) { clock_album_advance(); s_fade_swapped = true; }
+                if (el >= PHOTO_FADE_MS) { s_fade_start = 0; s_photo_next = now + PHOTO_HOLD_MS; }
+                sig ^= (now / 33);   /* ~30fps repaint through the dip */
+            }
+        }
+
         if (dirty || sig != last_sig) {
             last_sig = sig; dirty = false;
             uint16_t *fb = lcd_get_active_buffer();
@@ -1298,7 +1329,12 @@ void rg_clock_show(void)
             bool bg_live = false;
             if (!flash) {   /* background layer, identical in every mode */
                 if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; scrim_for_digits(); }
-                else if (s_anim == ANIM_PHOTO && clock_album_ready()) { memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2); bg_live = true; scrim_for_digits(); }
+                else if (s_anim == ANIM_PHOTO && clock_album_ready()) {
+                    memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
+                    int fd = photo_fade_darkness(now);   /* dip to black across a photo swap */
+                    if (fd) for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = mix565(fb[i], CLOCK_BLACK, fd);
+                    bg_live = true; scrim_for_digits();
+                }
                 else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
                 else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
             }
@@ -1333,7 +1369,7 @@ void rg_clock_show(void)
 
         prev = k;
         /* Ringing feeds audio, so keep the buffer fresh; otherwise idle longer. */
-        HAL_Delay(ringing ? 8 : 40);
+        HAL_Delay(ringing ? 8 : (s_fade_start ? 20 : 40));
     }
 
     tone_feed(0, false);   /* make sure the SAI is stopped on the way out */
