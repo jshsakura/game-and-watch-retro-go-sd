@@ -25,6 +25,12 @@ void    pce_scsi_write(uint8_t reg, uint8_t val);
  * ready (kept out of the hot CPU read path). Returns true if an IRQ is pending. */
 void pce_scsi_run(void);
 
+/* Current CD-DA / ADPCM fade multipliers, driven by the $180F hardware fader
+ * (Q8: 256 = full volume, 0 = silent). Read by main_pce.c pce_pcm_submit()
+ * when mixing each channel so a fade-out actually silences the music. */
+int pce_scsi_cdda_fade_q8(void);
+int pce_scsi_adpcm_fade_q8(void);
+
 /* Fill `frames` stereo int16 samples of CD-DA (Red Book audio / BGM) at 22050Hz
  * (half the CD rate). Returns frames produced, 0 if no audio is playing. */
 int pce_scsi_cdda_fill(int16_t *out, int frames);

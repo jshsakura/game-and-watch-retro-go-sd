@@ -144,6 +144,71 @@ static void update_irq(void)
     }
 }
 
+/* ---- CD-DA / ADPCM hardware fader ($180F) ------------------------------
+ * Was a silent no-op (fell to `default: break;` in pce_scsi_write), so games
+ * (Ys I&II etc.) that fade/stop their BGM via this register never did.
+ *
+ * Bit decode SOURCE: Mednafen's pcecd.cpp — the `case 0xf:` register-write
+ * handler plus Fader_SyncWhich()/Fader_Run() (a cached copy of that file was
+ * available locally at /tmp/pcecd.c for this fix; it is the de-facto
+ * reference implementation other PCE-CD emulators cite for this register):
+ *   D3 (0x08) = fade enable. 0 = CANCEL: snap the affected channel straight
+ *               back to full volume (no ramp) — this is also how games
+ *               un-fade/restore volume for a new track. 1 = start/continue a
+ *               fade-OUT ramp.
+ *   D2 (0x04) = duration: 1 = short (~2.5s), 0 = long (~6.0s).
+ *   D1 (0x02) = target channel: 1 = ADPCM, 0 = CD-DA.
+ *   D0, D7    = UNDETERMINED even in Mednafen — its own source carries a
+ *               literal TODO for both ("Determine what D0 of the fade
+ *               control register does (maybe mutes the channel not being
+ *               fade-controlled)" / "Determine what D7 ... does ('TEST')").
+ *               Left unimplemented here too; flagging this as the one
+ *               uncertain part of the decode.
+ * Only ONE channel fades at a time — the register drives a single shared
+ * hardware fader, and whichever channel is NOT currently selected is pinned
+ * to full volume. Mednafen's model only ever ramps volume DOWN (Volume
+ * decrements to 0 and stops); there is no gradual fade-IN, which matches the
+ * reported symptom (BGM never fades/stops = fade-OUT never applied). */
+#define FADER_FULL_Q16          65536   /* full volume, Q16 (Mednafen's Volume scale) */
+#define PCE_FADER_SHORT_FRAMES  150     /* ~2.5s @ 60fps (D2=1) */
+#define PCE_FADER_LONG_FRAMES   360     /* ~6.0s @ 60fps (D2=0) */
+
+static bool     s_fader_adpcm_sel;      /* last-selected fade target: true=ADPCM, false=CD-DA */
+static bool     s_fader_active;         /* D3: a fade-out ramp is running */
+static int32_t  s_fader_level = FADER_FULL_Q16;  /* Q16 65536..0: level of the SELECTED channel */
+static int32_t  s_fader_step;           /* Q16 subtracted from s_fader_level per emulated frame */
+static int16_t  s_fade_cdda_q8  = 256;  /* Q8 0..256 multiplier consumed by pce_pcm_submit */
+static int16_t  s_fade_adpcm_q8 = 256;
+
+/* Recompute the two output multipliers from the single shared fader state:
+ * the selected channel gets the ramping level, the other stays pinned full. */
+static void fader_sync(void)
+{
+    int32_t adpcm_lvl = s_fader_adpcm_sel ? s_fader_level : FADER_FULL_Q16;
+    int32_t cdda_lvl  = s_fader_adpcm_sel ? FADER_FULL_Q16 : s_fader_level;
+    s_fade_adpcm_q8 = (int16_t)(adpcm_lvl >> 8);
+    s_fade_cdda_q8  = (int16_t)(cdda_lvl  >> 8);
+}
+
+/* Advance the active fade-out by one emulated video frame. s_fader_step
+ * already encodes the selected duration as a per-frame Q16 decrement, so
+ * this is a plain linear ramp to 0 (called once/frame from pce_scsi_run). */
+static void fader_advance(void)
+{
+    if (!s_fader_active) return;
+    s_fader_level -= s_fader_step;
+    if (s_fader_level <= 0) {
+        s_fader_level  = 0;
+        s_fader_active = false;   /* ramp complete: silent until the next $180F write */
+    }
+    fader_sync();
+}
+
+/* Current CD-DA / ADPCM fade multipliers (Q8: 256=full, 0=silent) for the
+ * mixer in main_pce.c pce_pcm_submit(). */
+int pce_scsi_cdda_fade_q8(void)  { return s_fade_cdda_q8; }
+int pce_scsi_adpcm_fade_q8(void) { return s_fade_adpcm_q8; }
+
 void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
 {
     s_toc = toc;
@@ -186,6 +251,10 @@ void pce_scsi_reset(void)
     s_adpcm_ctrl = 0;
     s_cdda_play = false;
     s_cdda_paused = false;
+    s_fader_adpcm_sel = false;
+    s_fader_active = false;
+    s_fader_level = FADER_FULL_Q16;
+    fader_sync();
     pce_adpcm_reset();
     CPU_PCE.irq_lines &= ~INT_IRQ2;
 }
@@ -761,11 +830,32 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
             pce_scsi_reset();
         }
         break;
+    case 0x0F: { /* CD-DA / ADPCM fader — see the block comment above fader_sync(). */
+        s_fader_adpcm_sel = (val & 0x02) != 0;
+        if (!(val & 0x08)) {
+            /* D3=0: cancel — snap the selected channel back to full volume. */
+            s_fader_active = false;
+            s_fader_level  = FADER_FULL_Q16;
+        } else {
+            /* D3=1: (re)start a fade-out at the selected duration. Continues
+             * from the current level rather than resetting it — matches the
+             * reference (switching D1/D2 mid-fade doesn't restart the ramp). */
+            int frames = (val & 0x04) ? PCE_FADER_SHORT_FRAMES : PCE_FADER_LONG_FRAMES;
+            s_fader_step = FADER_FULL_Q16 / frames;
+            if (s_fader_step < 1) s_fader_step = 1;
+            s_fader_active = true;
+        }
+        fader_sync();
+        diag("  FADER cmd=%02x adpcm=%d active=%d level=%ld\n",
+             val, (int)s_fader_adpcm_sel, (int)s_fader_active, (long)s_fader_level);
+        break;
+    }
     default:
         break;
     }
 }
 
-/* Per-frame hook from the main loop: pump any active SCSI->ADPCM DMA, and
- * refresh the IRQ2 level (the ADPCM-end bit can rise between register writes). */
-void pce_scsi_run(void) { adpcm_dma_pump(); update_irq(); }
+/* Per-frame hook from the main loop: pump any active SCSI->ADPCM DMA, advance
+ * the $180F fade-out ramp by one frame, and refresh the IRQ2 level (the
+ * ADPCM-end bit can rise between register writes). */
+void pce_scsi_run(void) { adpcm_dma_pump(); fader_advance(); update_irq(); }
