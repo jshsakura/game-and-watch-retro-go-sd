@@ -727,6 +727,24 @@ retro_emulator_file_t *rg_emulators_shared_file_buffer(int *maxcount)
     return shared_files;
 }
 
+/* Byte span of the shared_files buffer — the clock's photo album borrows this
+ * region while it runs (the type is private to this file). */
+size_t rg_emulators_shared_file_bytes(void)
+{
+    return (size_t)SHARED_ROM_SLOTS * sizeof(retro_emulator_file_t);
+}
+
+/* Invalidate EVERY tab's ROM list so they all re-scan on next visit. Used by the
+ * clock after it borrowed shared_files as photo memory: the caller then refreshes
+ * the current tab immediately; the rest heal lazily when browsed. */
+void rg_emulators_reset_all_lists(void)
+{
+    for (int i = 0; i < emulators_count; i++) {
+        emulators[i].initialized = false;
+        emulators[i].roms.count = 0;
+    }
+}
+
 const rom_system_t *rg_emulators_system_for_dir(const char *dirname, size_t len)
 {
     for (int i = 0; i < emulators_count; i++) {

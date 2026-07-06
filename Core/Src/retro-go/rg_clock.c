@@ -37,6 +37,11 @@
 #include "ff.h"       /* f_mkdir — ensure /clock exists before saving */
 #include "rg_clock.h"
 #include "rg_clock_gif.h"
+#include "rg_clock_album.h"
+
+/* forward-declared to keep the heavy rg_emulators.h out of this TU (and the host
+ * clock preview harness); rg_clock already pulls in gui.h for the tab accessors. */
+extern void rg_emulators_reset_all_lists(void);
 
 #define C565(r,g,b) ((uint16_t)((((r)&0xF8)<<8)|(((g)&0xFC)<<3)|((b)>>3)))
 #define CLOCK_BLACK 0x0000
@@ -286,9 +291,14 @@ static int alarms_armed(void)
  * near-zero-draw loop; "ambient" (procedural twinkling dots) only bumps the
  * repaint rate to ~3 fps; "GIF" (/clock/bg.gif, decoded on the fly — see
  * rg_clock_gif) repaints the whole face at the GIF rate, hence "high". */
-#define ANIM_COUNT 4
+#define ANIM_COUNT 5
 #define ANIM_SCENE 2   /* built-in pixel skyline (the mockup's bundled art) */
 #define ANIM_GIF   3
+#define ANIM_PHOTO 4   /* photo album from /clock/album (borrows shared_files) */
+
+/* set once the clock ever borrows shared_files for photos, so the exit path
+ * rebuilds the launcher's ROM lists exactly once. */
+static bool s_album_used = false;
 
 static void clock_config_load(void)
 {
@@ -534,6 +544,27 @@ static const char *weekday_str(void)
                          curr_lang->s_Weekday_Thu, curr_lang->s_Weekday_Fri, curr_lang->s_Weekday_Sat,
                          curr_lang->s_Weekday_Sun };
     return w[wd - 1];
+}
+
+/* Photo backgrounds are arbitrary and often bright, so the digits can wash out.
+ * Darken a soft vertical band behind the face (date -> digits -> status) toward
+ * black, FEATHERED at the top and bottom so it reads as a vignette rather than a
+ * box. The blitter has no alpha, so we blend the already-drawn background pixels
+ * in place, before the digits go on top. Only used over a photo background. */
+static void scrim_for_digits(void)
+{
+    uint16_t *fb = lcd_get_active_buffer();
+    const int y0 = 30, y1 = STATUS_Y + 20;        /* date(42) .. digits .. status(178) */
+    const int mid = (y0 + y1) / 2, half = (y1 - y0) / 2;
+    const int peak = 8;                            /* centre darkening = 8/16 = 50% */
+    for (int y = y0; y < y1 && y < GW_LCD_HEIGHT; y++) {
+        int d = y - mid; if (d < 0) d = -d;        /* 0 at centre, half at edges */
+        int str = peak * (half - d) / half;        /* feather toward the edges */
+        if (str <= 0) continue;
+        uint16_t *row = &fb[y * GW_LCD_WIDTH];
+        for (int x = 0; x < GW_LCD_WIDTH; x++)
+            row[x] = mix565(row[x], CLOCK_BLACK, str);
+    }
 }
 
 static void render_clock(uint32_t now, bool alarm_firing)
@@ -982,11 +1013,15 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
     (void)r;
     if (e == ODROID_DIALOG_PREV) s_anim = (s_anim == 0) ? ANIM_COUNT-1 : s_anim-1;
     if (e == ODROID_DIALOG_NEXT) s_anim = (s_anim+1) % ANIM_COUNT;
-    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) { if (s_anim == ANIM_GIF) clock_gif_load(); else clock_gif_free(); }
+    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) {
+        if (s_anim == ANIM_GIF) clock_gif_load(); else clock_gif_free();
+        if (s_anim == ANIM_PHOTO) { if (!clock_album_ready()) clock_album_open(); s_album_used = true; }
+    }
     const char *lv = (s_anim == 0) ? curr_lang->s_Clock_Anim_0
                    : (s_anim == 1) ? curr_lang->s_Clock_Anim_1
                    : (s_anim == ANIM_SCENE) ? curr_lang->s_Clock_Anim_2
-                   : curr_lang->s_Clock_Anim_3;
+                   : (s_anim == ANIM_GIF) ? curr_lang->s_Clock_Anim_3
+                   : "Photo Album";   /* TODO i18n s_Clock_Anim_4 */
     const char *why = "";
     if (s_anim == ANIM_GIF && !clock_gif_ready()) {
         int st = clock_gif_status();
@@ -1111,7 +1146,12 @@ void rg_clock_show(void)
 
     clock_config_load();
     s_snooze_tick = 0;
+    s_album_used = false;
     if (s_anim == ANIM_GIF) clock_gif_load();   /* decode /clock/bg.gif once */
+    if (s_anim == ANIM_PHOTO) {                 /* borrow shared_files, load first photo */
+        if (clock_album_open()) s_album_used = true;
+        else s_anim = 0;                        /* no photos / no room -> solid fallback */
+    }
     odroid_input_read_gamepad(&prev);   /* swallow the opening button */
 
     while (true) {
@@ -1233,7 +1273,8 @@ void rg_clock_show(void)
             for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
             bool bg_live = false;
             if (!flash) {   /* background layer, identical in every mode */
-                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
+                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; scrim_for_digits(); }
+                else if (s_anim == ANIM_PHOTO && clock_album_ready()) { memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2); bg_live = true; scrim_for_digits(); }
                 else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
                 else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
             }
@@ -1273,5 +1314,15 @@ void rg_clock_show(void)
 
     tone_feed(0, false);   /* make sure the SAI is stopped on the way out */
     clock_gif_free();      /* release the transient GIF cache */
+    /* If we borrowed shared_files for photos, its contents are now overwritten.
+     * Rebuild the launcher's ROM lists: invalidate every tab, then re-scan the
+     * current one so the list is whole on return (faster than one tab switch). */
+    if (s_album_used) {
+        clock_album_close();
+        rg_emulators_reset_all_lists();
+        tab_t *cur = gui_get_current_tab();
+        if (cur) gui_refresh_tab(cur);
+        s_album_used = false;
+    }
     clock_config_save();
 }

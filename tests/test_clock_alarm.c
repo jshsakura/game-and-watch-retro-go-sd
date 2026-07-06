@@ -21,6 +21,16 @@ uint32_t HAL_GetTick(void) { return fake_tick; }
 void HAL_Delay(uint32_t ms) { fake_tick += ms; }
 void wdog_refresh(void) {}
 void odroid_system_sleep(void) {}
+/* photo album + launcher list rebuild — inert on the host */
+bool clock_album_open(void) { return false; }
+bool clock_album_ready(void) { return false; }
+const uint16_t *clock_album_current(void) { return 0; }
+void clock_album_advance(void) {}
+int clock_album_count(void) { return 0; }
+void clock_album_close(void) {}
+void rg_emulators_reset_all_lists(void) {}
+tab_t *gui_get_current_tab(void) { return 0; }
+void gui_refresh_tab(tab_t *tab) { (void)tab; }
 int HAL_SAI_Transmit_DMA(SAI_HandleTypeDef *h, uint8_t *b, uint16_t l) { (void)h;(void)b;(void)l; return 0; }
 int HAL_SAI_DMAStop(SAI_HandleTypeDef *h) { (void)h; return 0; }
 SAI_HandleTypeDef hsai_BlockA1; DMA_HandleTypeDef hdma_sai1_a;

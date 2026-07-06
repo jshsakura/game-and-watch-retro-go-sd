@@ -418,6 +418,7 @@ Core/Src/retro-go/rg_emulators.c \
 Core/Src/retro-go/rg_favorites.c \
 Core/Src/retro-go/rg_clock.c \
 Core/Src/retro-go/rg_clock_gif.c \
+Core/Src/retro-go/rg_clock_album.c \
 Core/Src/porting/lib/gifdec/gifdec.c \
 Core/Src/retro-go/gw_firmware_abi.c \
 Core/Src/retro-go/rg_storage.c \

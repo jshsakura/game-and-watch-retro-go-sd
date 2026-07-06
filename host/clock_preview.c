@@ -141,6 +141,17 @@ int i18n_draw_text_line(int x, int y, int width, const char *t,
 /* ---- misc firmware stubs ------------------------------------------------ */
 void wdog_refresh(void) {}
 void odroid_system_sleep(void) {}
+/* photo album + launcher list rebuild — inert on the host (preview uses the GIF
+ * path as the photo stand-in) */
+bool clock_album_open(void) { return false; }
+bool clock_album_ready(void) { return false; }
+const uint16_t *clock_album_current(void) { return 0; }
+void clock_album_advance(void) {}
+int clock_album_count(void) { return 0; }
+void clock_album_close(void) {}
+void rg_emulators_reset_all_lists(void) {}
+tab_t *gui_get_current_tab(void) { return 0; }
+void gui_refresh_tab(tab_t *tab) { (void)tab; }
 static uint32_t fake_tick = 0;
 uint32_t HAL_GetTick(void) { return fake_tick; }
 void HAL_Delay(uint32_t ms) { fake_tick += ms; }
@@ -273,7 +284,7 @@ static void base(uint16_t bg) { for (int i = 0; i < W * H; i++) fb[i] = bg; }
 static void paint(clock_mode_t mode, uint32_t now, bool ringing)
 {
     base(TH()->scr);
-    if (s_anim == ANIM_GIF && clock_gif_ready()) clock_gif_blit(fb, now);
+    if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); s_ghost_on = false; scrim_for_digits(); }
     else if (s_anim == ANIM_SCENE) draw_scene(now, TH());
     else if (s_anim == 1) draw_ambient(now, TH()->ink);
     switch (mode) {

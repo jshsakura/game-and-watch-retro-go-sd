@@ -72,6 +72,9 @@ typedef struct {
 
 
 void emulators_init();
+retro_emulator_file_t *rg_emulators_shared_file_buffer(int *maxcount);
+size_t rg_emulators_shared_file_bytes(void);   /* byte span of shared_files (clock album borrow) */
+void rg_emulators_reset_all_lists(void);        /* invalidate every tab's list -> re-scan on visit */
 void rg_emulators_restore_main_menu_browse_path(void);
 void emulator_init(retro_emulator_t *emu);
 void emulator_refresh_list(retro_emulator_t *emu);
