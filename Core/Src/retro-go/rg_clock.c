@@ -453,29 +453,22 @@ static const char *mode_title(clock_mode_t mode)
  * 12px -> y=12 with the pager dots under it. No bell up here — the
  * next-alarm line already carries it.
  *
- * with_title: the mode name + pager dots suit navigation, not a clean clock
- * face — on MODE_CLOCK they appear for a moment after entry/mode switch and
- * then fade, leaving logo/battery only. Other modes keep them. */
-static void draw_topbar(clock_mode_t mode, bool with_title)
+ */
+static void draw_topbar(clock_mode_t mode)
 {
     const clock_theme_t *t = TH();
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
     odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 26, 18);
     if (s_dnd) draw_moon(GW_LCD_WIDTH - 48, 16, t->ink, t->scr);
-    /* pager dots stay ALWAYS (tiny, and good mode context);
-     * only the title text fades on the clock face */
+    /* mode title + pager dots, always on (the fade-out experiment read as
+     * flicker when switching modes — steady beats clever here) */
+    char line[48]; snprintf(line, sizeof line, "\xe2\x97\x80 %s \xe2\x96\xb6", mode_title(mode));
+    draw_centered_i18n(12, line, t->alarm);
     int dx = (GW_LCD_WIDTH - (MODE_COUNT*8 - 4)) / 2;
     for (int i = 0; i < MODE_COUNT; i++, dx += 8)
         odroid_overlay_draw_fill_rect(dx, 28, 4, 4,
             i == (int)mode ? t->alarm : mix565(t->scr, t->ink, 4));
-    if (!with_title) return;
-
-    char line[48]; snprintf(line, sizeof line, "\xe2\x97\x80 %s \xe2\x96\xb6", mode_title(mode));
-    draw_centered_i18n(12, line, t->alarm);
 }
-
-#define TITLE_SHOW_MS 2500
-static uint32_t s_title_until = 0;   /* clock-face mode-title fade deadline */
 
 /* Bottom hint: ALWAYS visible, in the firmware's default 8px font (crisp,
  * matches the rest of the OS chrome — the 12px serif looked broken here),
@@ -956,7 +949,7 @@ static void clock_menu_repaint(void)
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t bg = TH()->scr;
     for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = bg;
-    draw_topbar(MODE_CLOCK, true);
+    draw_topbar(MODE_CLOCK);
     render_clock(HAL_GetTick(), false);
 }
 
@@ -1048,7 +1041,6 @@ void rg_clock_show(void)
     s_snooze_tick = 0;
     if (s_anim == ANIM_GIF) clock_gif_load();   /* decode /clock/bg.gif once */
     odroid_input_read_gamepad(&prev);   /* swallow the opening button */
-    s_title_until = HAL_GetTick() + TITLE_SHOW_MS;
 
     while (true) {
         wdog_refresh();
@@ -1084,8 +1076,8 @@ void rg_clock_show(void)
          * every mode. Face buttons never exit (A/B belong to the runners). */
         if (k.values[ODROID_INPUT_POWER]) break;
 
-        if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { mode = (mode == 0) ? MODE_COUNT-1 : mode-1; dirty = true; s_title_until = now + TITLE_SHOW_MS; }
-        if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { mode = (mode+1) % MODE_COUNT; dirty = true; s_title_until = now + TITLE_SHOW_MS; }
+        if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { mode = (mode == 0) ? MODE_COUNT-1 : mode-1; dirty = true; }
+        if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { mode = (mode+1) % MODE_COUNT; dirty = true; }
 
         /* PAUSE/SET opens the settings menu in any mode — background, format,
          * DND, alarm volume, alarms, exit. The dialog blocks this loop, so on
@@ -1130,7 +1122,6 @@ void rg_clock_show(void)
         bool flash = s_flash_until > now && ((now/150) & 1);
         if (flash) sig ^= 0x55555555;
         if (ringing) sig ^= (now / 200);   /* repaint for the alarm digit pulse */
-        if (mode == MODE_CLOCK && s_title_until > now) sig ^= (1u<<26);   /* title fade */
         /* the chosen background travels with EVERY mode (theme/face/bg stay
          * one consistent set), so its repaint rate applies everywhere too */
         if (s_anim == ANIM_GIF)        sig ^= (now / 80);   /* GIF rate */
@@ -1154,8 +1145,7 @@ void rg_clock_show(void)
             case MODE_STOPWATCH: render_stopwatch(now); break;
             default: break;
             }
-            bool with_title = (mode != MODE_CLOCK) || now < s_title_until;
-            draw_topbar(mode, with_title);   /* over the background layers */
+            draw_topbar(mode);   /* over the background layers */
             draw_hintbar(ringing ? curr_lang->s_Clock_Hint_Ring
                 : mode == MODE_CLOCK     ? curr_lang->s_Clock_Hint_Clock
                 : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
