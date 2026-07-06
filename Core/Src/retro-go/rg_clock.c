@@ -542,6 +542,8 @@ static const char *mode_title(clock_mode_t mode)
 static void draw_topbar(clock_mode_t mode, bool show_pager)
 {
     const clock_theme_t *t = TH();
+    if (!s_ghost_on)   /* 1px drop shadow behind the logo over a live background */
+        odroid_overlay_draw_logo(10, 9, RG_LOGO_GNW, CLOCK_BLACK);
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
     odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 34, 18);
     if (s_dnd) draw_moon(GW_LCD_WIDTH - 58, 16, 7, t->ink);
@@ -679,8 +681,10 @@ static void render_clock(uint32_t now, bool alarm_firing)
     if (!s_hour24) {
         int x = (GW_LCD_WIDTH + big_time_width(face)) / 2 + 6;
         int yb = (face == FACE_SEG7) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
-        i18n_draw_text_line(x, yb, GW_LCD_WIDTH - x,
-                            hh < 12 ? curr_lang->s_AM : curr_lang->s_PM, t->ink, CLOCK_BLACK, 1);
+        const char *ap = hh < 12 ? curr_lang->s_AM : curr_lang->s_PM;
+        if (!s_ghost_on)   /* 1px drop shadow over a live background, like the other text */
+            i18n_draw_text_line(x + 1, yb + 1, GW_LCD_WIDTH - x, ap, CLOCK_BLACK, CLOCK_BLACK, 1);
+        i18n_draw_text_line(x, yb, GW_LCD_WIDTH - x, ap, t->ink, CLOCK_BLACK, 1);
     }
 
     /* next alarm */
