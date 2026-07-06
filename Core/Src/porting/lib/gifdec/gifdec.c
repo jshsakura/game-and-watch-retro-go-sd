@@ -117,13 +117,18 @@ gd_open_gif(const char *fname)
     if (gct_sz) read(fd, gif->gct.colors, 3 * gif->gct.size);
     gif->palette = &gif->gct;
     gif->bgindex = bgidx;
-    /* indices (w*h) + RGB565 canvas (w*h*2) = 3*w*h bytes (was 4*w*h RGB888) */
-    gif->frame = gd_calloc_fn(3, width * height);
+    /* indices (w*h) + RGB565 canvas (w*h*2). The canvas is indexed as
+     * uint16_t, so its base must be 2-byte aligned regardless of w*h parity:
+     * round the index region up to a word boundary before the canvas (an odd
+     * w*h would otherwise put the canvas on an odd address = unaligned
+     * uint16_t access / UB). */
+    size_t idx_bytes = ((size_t)width * height + 3u) & ~3u;
+    gif->frame = gd_calloc_fn(1, idx_bytes + (size_t)width * height * 2);
     if (!gif->frame) {
         gd_free_fn(gif);
         goto fail;
     }
-    gif->canvas = (uint16_t *)&gif->frame[width * height];
+    gif->canvas = (uint16_t *)&gif->frame[idx_bytes];
     if (gif->bgindex)
         memset(gif->frame, gif->bgindex, gif->width * gif->height);
     /* only meaningful with a GCT; canvas is calloc'd (black) otherwise */

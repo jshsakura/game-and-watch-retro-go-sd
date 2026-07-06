@@ -891,11 +891,12 @@ static void clock_alarm_setup(void)
                 if (s_alarm_count < MAX_ALARMS) {
                     s_alarms[s_alarm_count] = (alarm_t){ 7, 0, 1 };
                     sel = s_alarm_count; s_alarm_count++;
-                    /* cancel on a fresh add = the alarm never existed */
-                    if (!alarm_edit_view(&s_alarms[sel])) {
+                    /* cancel on a fresh add = the alarm never existed. No
+                     * cursor clamp here: sel == s_alarm_count is the still-valid
+                     * "+ Add" row, so the highlight stays put (unlike the
+                     * START-delete path, which may drop off a real last row). */
+                    if (!alarm_edit_view(&s_alarms[sel]))
                         alarm_delete_at(sel);
-                        if (sel >= s_alarm_count && sel > 0) sel--;
-                    }
                     odroid_input_read_gamepad(&prev);
                 }
             } else break;
@@ -1171,12 +1172,20 @@ void rg_clock_show(void)
         /* Full-screen flash is ONLY for the timer/pomodoro end (solid background).
          * The clock alarm must NOT full-screen flash — that would wipe/hide a GIF
          * or ambient background; instead render_clock pulses the time colour. */
-        bool flash = s_flash_until > now && ((now/150) & 1);
+        /* the end-of-countdown flash belongs to the timer/pomodoro only —
+         * scoping it here stops a rollover from full-screen-flashing (and
+         * wiping the GIF/ambient background of) the clock face if the user
+         * switches modes inside the 800ms flash window */
+        bool flash = (mode == MODE_TIMER || mode == MODE_POMODORO)
+                     && s_flash_until > now && ((now/150) & 1);
         if (flash) sig ^= 0x55555555;
         if (ringing) sig ^= (now / 200);   /* repaint for the alarm digit pulse */
         /* the chosen background travels with EVERY mode (theme/face/bg stay
-         * one consistent set), so its repaint rate applies everywhere too */
-        if (s_anim == ANIM_GIF)        sig ^= (now / 80);   /* GIF rate */
+         * one consistent set), so its repaint rate applies everywhere too.
+         * A GIF that isn't loaded (missing / too big) must NOT keep bumping
+         * the signature — else a static face repaints at 12fps for nothing,
+         * defeating the event-driven loop and draining the battery. */
+        if (s_anim == ANIM_GIF)        { if (clock_gif_ready()) sig ^= (now / 80); }
         else if (s_anim == ANIM_SCENE) sig ^= (now / 640);  /* window twinkle */
         else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
 
