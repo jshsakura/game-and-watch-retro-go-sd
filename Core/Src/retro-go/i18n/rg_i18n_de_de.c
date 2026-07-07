@@ -59,6 +59,7 @@ const lang_t lang_de_de LANG_DATA = {
     .s_Clock_Auto_Dim = "Auto-Dimmen",
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "Alarmton",
+    .s_Clock_Night_Off = "Nacht aus",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "Pixel-BG",
     .s_Clock_Volume = "Alarm volume",

@@ -71,6 +71,14 @@ void lcd_swap(void) {}
 void lcd_sleep_while_swap_pending(void) {}
 void lcd_backlight_set(uint8_t b) { (void)b; }
 uint8_t odroid_display_get_backlight_raw(void) { return 178; }
+/* same raw table as odroid_display.c's backlightLevels[] — the clock's own
+ * dedicated-brightness row indexes into this via odroid_display_backlight_raw_for_level */
+uint8_t odroid_display_backlight_raw_for_level(int level)
+{ static const uint8_t t[10] = {128,130,133,139,149,162,178,198,222,255};
+  if (level < 0) { level = 0; } if (level > 9) { level = 9; } return t[level]; }
+/* rg_clock_show() (unused here, but compiled) reads the charger state for the
+ * idle-backlight charging exception — not exercised by the SD0 clamp tests. */
+bq24072_state_t bq24072_get_state(void) { return BQ24072_STATE_DISCHARGING; }
 
 static lang_t L;
 static void init_lang(void)

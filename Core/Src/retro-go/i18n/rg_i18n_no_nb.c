@@ -234,6 +234,7 @@ const lang_t lang_no_nb LANG_DATA = {
     .s_Clock_Auto_Dim = "Auto-demping",
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "Alarmlyd",
+    .s_Clock_Night_Off = "Natt av",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "Pikselbakgrunn",
     .s_Clock_Volume = "Alarm volume",

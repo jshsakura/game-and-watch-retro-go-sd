@@ -41,6 +41,14 @@ void lcd_swap(void) {}
 void lcd_sleep_while_swap_pending(void) {}
 void lcd_backlight_set(uint8_t b) { (void)b; }
 uint8_t odroid_display_get_backlight_raw(void) { return 178; }
+/* same raw table as odroid_display.c's backlightLevels[] — the clock's own
+ * dedicated-brightness row indexes into this via odroid_display_backlight_raw_for_level */
+uint8_t odroid_display_backlight_raw_for_level(int level)
+{ static const uint8_t t[10] = {128,130,133,139,149,162,178,198,222,255};
+  if (level < 0) { level = 0; } if (level > 9) { level = 9; } return t[level]; }
+/* rg_clock_show() (unused here, but compiled) reads the charger state for the
+ * idle-backlight charging exception — not exercised by the alarm tests. */
+bq24072_state_t bq24072_get_state(void) { return BQ24072_STATE_DISCHARGING; }
 
 static const lang_t L = { .s_AM="AM", .s_PM="PM", .s_Clock="Clock",
   .s_Weekday_Mon="Mon", .s_Weekday_Tue="Tue", .s_Weekday_Wed="Wed", .s_Weekday_Thu="Thu",
@@ -212,6 +220,33 @@ static void test_tone_dma_sync(void)
     CHECK(sum == 0, "buffer silenced after stop");
 }
 
+/* ---- alarm volume: the clock's OWN loudness (s_alarm_volume), independent
+ * of the system volume (stub_volume / odroid_audio_volume_get above) — a
+ * quiet gaming system volume must not silently mute the morning alarm, and
+ * 0 must mean an intentionally SILENT alarm (amp 0), not "same as max". */
+static void test_alarm_volume_amp(void)
+{
+    stub_volume = 9;   /* system volume at max: must have NO effect on the beep */
+
+    s_alarm_volume = 0;
+    s_tone_on = false; dma_state = DMA_TRANSFER_STATE_HF; dma_counter = 200;
+    tone_feed(0, true);
+    int16_t *b0 = audiobuffer_dma; int n = AUDIO_BUFFER_LENGTH * 2;
+    int16_t sum0 = 0; for (int i = 0; i < n; i++) sum0 |= b0[i];
+    CHECK(sum0 == 0, "alarm volume 0 means a silent beep (amp 0), even at max system volume");
+    tone_feed(8, false);
+
+    s_alarm_volume = 9;   /* max alarm volume: must actually produce sound */
+    s_tone_on = false; dma_state = DMA_TRANSFER_STATE_HF; dma_counter = 300;
+    tone_feed(0, true);
+    int16_t *b9 = audiobuffer_dma;
+    bool any_nonzero = false; for (int i = 0; i < n; i++) if (b9[i] != 0) any_nonzero = true;
+    CHECK(any_nonzero, "alarm volume 9 produces a non-silent beep");
+    tone_feed(8, false);
+
+    s_alarm_volume = 6;   /* restore the module default for later tests */
+}
+
 /* ring_audio picks the source ONCE at ring start: MP3 file -> MP3, else beep;
  * a failed MP3 start falls straight back to the beep (never a silent alarm). */
 static void test_ring_source(void)
@@ -259,6 +294,7 @@ int main(void)
     test_window();
     test_cfg_roundtrip();
     test_tone_dma_sync();
+    test_alarm_volume_amp();
     test_ring_source();
     test_next_alarm();
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);

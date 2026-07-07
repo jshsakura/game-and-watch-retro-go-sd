@@ -58,6 +58,7 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_Clock_Auto_Dim = "自動減光",
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "アラーム音",
+    .s_Clock_Night_Off = "夜間消灯",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "ピクセル背景",
     .s_Clock_Volume = "Alarm volume",

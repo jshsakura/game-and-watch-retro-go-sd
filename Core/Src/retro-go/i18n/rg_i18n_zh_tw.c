@@ -57,6 +57,7 @@ const lang_t lang_zh_tw LANG_DATA = {
     .s_Clock_Auto_Dim = "自動變暗",
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "鬧鐘聲音",
+    .s_Clock_Night_Off = "夜間熄屏",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "像素背景",
     .s_Clock_Volume = "Alarm volume",

@@ -335,6 +335,7 @@ typedef struct
     const char *s_Clock_Auto_Dim;      // idle backlight auto-dim toggle row
     const char *s_Clock_Bg_File;       // GIF background file picker row (SD builds)
     const char *s_Clock_Alarm_Sound;   // alarm sound picker row (Beep / SD file)
+    const char *s_Clock_Night_Off;     // night full-off window preset row (Off/22-06/23-07/00-08)
     //=====================================================================
 
     const int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, const char *weekday, uint16_t hour, uint16_t minutes, uint16_t seconds);

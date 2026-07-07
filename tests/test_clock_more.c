@@ -54,6 +54,14 @@ void lcd_swap(void) {}
 void lcd_sleep_while_swap_pending(void) {}
 void lcd_backlight_set(uint8_t b) { (void)b; }
 uint8_t odroid_display_get_backlight_raw(void) { return 178; }
+/* same raw table as odroid_display.c's backlightLevels[] — the clock's own
+ * dedicated-brightness row indexes into this via odroid_display_backlight_raw_for_level */
+uint8_t odroid_display_backlight_raw_for_level(int level)
+{ static const uint8_t t[10] = {128,130,133,139,149,162,178,198,222,255};
+  if (level < 0) { level = 0; } if (level > 9) { level = 9; } return t[level]; }
+/* rg_clock_show() (unused directly by these tests, but compiled) reads the
+ * charger state for the idle-backlight charging exception. */
+bq24072_state_t bq24072_get_state(void) { return BQ24072_STATE_DISCHARGING; }
 
 /* every lang_t field is a `const char *` — point them all at one placeholder
  * so ANY string the renderer reaches for (not just the ones the alarm test
@@ -186,6 +194,7 @@ static void reset_cfg_fields(void)
 {
     s_theme = 0; s_face_override = -1; s_hour24 = false; s_dnd = false;
     s_anim = 0; s_scene = 0; s_photo_speed = 1;
+    s_nightoff = 2; s_alarm_volume = 6; s_clock_bright = -1;
     s_alarm_count = 0; memset(s_alarms, 0, sizeof s_alarms);
 }
 
@@ -244,6 +253,7 @@ static void test_cfg_full_roundtrip(void)
     reset_cfg_fields();
     s_theme = 5; s_face_override = FACE_DOT; s_hour24 = true;
     s_anim = ANIM_SCENE; s_scene = 7; s_photo_speed = 2; s_autodim = false;
+    s_nightoff = 1; s_alarm_volume = 3; s_clock_bright = 4;
     snprintf(s_bgfile, sizeof s_bgfile, "%s", "sunset.gif");
     snprintf(s_alarmsnd, sizeof s_alarmsnd, "%s", "chime.mp3");
     clock_config_save();
@@ -258,9 +268,22 @@ static void test_cfg_full_roundtrip(void)
     CHECK(s_scene == 7,              "scene round-trips");
     CHECK(s_photo_speed == 2,        "photo speed round-trips");
     CHECK(s_autodim == false,        "auto-dim round-trips (non-default value)");
+    CHECK(s_nightoff == 1,           "night-off preset round-trips (non-default value)");
+    CHECK(s_alarm_volume == 3,       "alarm volume round-trips (non-default value)");
+    CHECK(s_clock_bright == 4,       "clock brightness round-trips (non-default value)");
     CHECK(strcmp(s_bgfile, "sunset.gif") == 0,    "bgfile round-trips");
     CHECK(strcmp(s_alarmsnd, "chime.mp3") == 0,   "alarmsnd round-trips");
     s_autodim = true;   /* restore module default */
+
+    /* -1 (follow-system) must round-trip too — it is the default, and the
+     * whole point of the feature is "zero behaviour change until touched" */
+    remove(test_path(CLOCK_CFG_PATH));
+    reset_cfg_fields();
+    clock_config_save();
+    reset_cfg_fields();
+    s_clock_bright = 99;   /* poison so a no-op load would be caught */
+    clock_config_load();
+    CHECK(s_clock_bright == -1, "clock brightness -1 (follow system) round-trips as the default");
 
     /* an empty (default) bgfile/alarmsnd must NOT be written — "" means the
      * implicit bg.gif / alarm.mp3, and an old cfg without the key must stay
@@ -276,55 +299,109 @@ static void test_cfg_full_roundtrip(void)
 
 /* ---- idle backlight: the pure 3-state decision function ------------------
  * CLOCK_BL_FULL / CLOCK_BL_DIM / CLOCK_BL_OFF. Day dims to half brightness;
- * the night window (23:00-07:00, wrapping past midnight) goes fully off
- * instead, like a bedside clock. */
+ * the night window (preset 2 = 23:00-07:00, wrapping past midnight) goes
+ * fully off instead, like a bedside clock. night_preset/charging are the two
+ * newest parameters — preset 2 ("23-07", the original always-on default) and
+ * charging=false reproduce the exact behaviour this function had before
+ * either feature existed, so the bulk of this test just threads those two
+ * constants through unchanged. */
+#define NP_DEFAULT 2   /* NIGHT_PRESET_TBL[2] == 23-07, this test's baseline */
 static void test_backlight_logic(void)
 {
     int noon = 12 * 60;
 
     /* ---- day dim, at and around the idle threshold ---- */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, noon) == CLOCK_BL_DIM,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, noon, NP_DEFAULT, false) == CLOCK_BL_DIM,
           "dims (day) on the clock face once idle >= the threshold");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS - 1, noon) == CLOCK_BL_FULL,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS - 1, noon, NP_DEFAULT, false) == CLOCK_BL_FULL,
           "does not dim before the idle threshold");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, 0, noon) == CLOCK_BL_FULL,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, 0, noon, NP_DEFAULT, false) == CLOCK_BL_FULL,
           "fresh input (idle=0) keeps full brightness");
 
     /* ---- night-OFF window + midnight wraparound, all AT the idle threshold ---- */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 22 * 60 + 59) == CLOCK_BL_DIM,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 22 * 60 + 59, NP_DEFAULT, false) == CLOCK_BL_DIM,
           "22:59 is still day — dims, does not go dark");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 23 * 60) == CLOCK_BL_OFF,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 23 * 60, NP_DEFAULT, false) == CLOCK_BL_OFF,
           "23:00 enters the night window — backlight off");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 3 * 60) == CLOCK_BL_OFF,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 3 * 60, NP_DEFAULT, false) == CLOCK_BL_OFF,
           "03:00 is deep in the night window (past midnight) — off");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 6 * 60 + 59) == CLOCK_BL_OFF,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 6 * 60 + 59, NP_DEFAULT, false) == CLOCK_BL_OFF,
           "06:59 is still inside the night window — off");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 7 * 60) == CLOCK_BL_DIM,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 7 * 60, NP_DEFAULT, false) == CLOCK_BL_DIM,
           "07:00 exits the night window — back to a day dim");
 
     /* ---- not idle yet: always FULL, day or night ---- */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, 0, 23 * 60) == CLOCK_BL_FULL,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, 0, 23 * 60, NP_DEFAULT, false) == CLOCK_BL_FULL,
           "fresh input at night keeps full brightness");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS - 1, 3 * 60) == CLOCK_BL_FULL,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS - 1, 3 * 60, NP_DEFAULT, false) == CLOCK_BL_FULL,
           "just under the threshold at night is still full brightness");
 
-    /* ---- ringing always forces FULL, even waking from night-OFF ---- */
-    CHECK(clock_should_dim(MODE_CLOCK, true, true, CLOCK_DIM_IDLE_MS * 2, 3 * 60) == CLOCK_BL_FULL,
+    /* ---- ringing always forces FULL, even waking from night-OFF, even while charging ---- */
+    CHECK(clock_should_dim(MODE_CLOCK, true, true, CLOCK_DIM_IDLE_MS * 2, 3 * 60, NP_DEFAULT, false) == CLOCK_BL_FULL,
           "a ringing alarm always forces full brightness, even at 03:00 idle");
+    CHECK(clock_should_dim(MODE_CLOCK, true, true, CLOCK_DIM_IDLE_MS * 2, 3 * 60, NP_DEFAULT, true) == CLOCK_BL_FULL,
+          "ringing beats everything, including charging");
 
     /* ---- never touches a face the user is actively watching ---- */
-    CHECK(clock_should_dim(MODE_TIMER, false, true, CLOCK_DIM_IDLE_MS * 2, noon) == CLOCK_BL_FULL,
+    CHECK(clock_should_dim(MODE_TIMER, false, true, CLOCK_DIM_IDLE_MS * 2, noon, NP_DEFAULT, false) == CLOCK_BL_FULL,
           "never dims the running-timer face the user is watching");
-    CHECK(clock_should_dim(MODE_POMODORO, false, true, CLOCK_DIM_IDLE_MS * 2, 3 * 60) == CLOCK_BL_FULL,
+    CHECK(clock_should_dim(MODE_POMODORO, false, true, CLOCK_DIM_IDLE_MS * 2, 3 * 60, NP_DEFAULT, false) == CLOCK_BL_FULL,
           "never dims the pomodoro face, even at night");
-    CHECK(clock_should_dim(MODE_STOPWATCH, false, true, CLOCK_DIM_IDLE_MS * 2, noon) == CLOCK_BL_FULL,
+    CHECK(clock_should_dim(MODE_STOPWATCH, false, true, CLOCK_DIM_IDLE_MS * 2, noon, NP_DEFAULT, false) == CLOCK_BL_FULL,
           "never dims the stopwatch face");
 
     /* ---- the single autodim toggle governs BOTH day-dim and night-off ---- */
-    CHECK(clock_should_dim(MODE_CLOCK, false, false, CLOCK_DIM_IDLE_MS * 2, noon) == CLOCK_BL_FULL,
+    CHECK(clock_should_dim(MODE_CLOCK, false, false, CLOCK_DIM_IDLE_MS * 2, noon, NP_DEFAULT, false) == CLOCK_BL_FULL,
           "auto-dim off disables day dimming");
-    CHECK(clock_should_dim(MODE_CLOCK, false, false, CLOCK_DIM_IDLE_MS * 2, 3 * 60) == CLOCK_BL_FULL,
+    CHECK(clock_should_dim(MODE_CLOCK, false, false, CLOCK_DIM_IDLE_MS * 2, 3 * 60, NP_DEFAULT, false) == CLOCK_BL_FULL,
           "auto-dim off disables night-off too");
+}
+
+/* ---- night-off preset row: Off/22-06/23-07/00-08 window mapping --------- */
+static void test_night_preset_mapping(void)
+{
+    int noon = 12 * 60;
+
+    /* preset 0 = Off: the night window never fires, day dim still applies */
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 3 * 60, 0, false) == CLOCK_BL_DIM,
+          "preset Off: 03:00 (would be night under any other preset) just day-dims");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, noon, 0, false) == CLOCK_BL_DIM,
+          "preset Off: daytime still dims as usual");
+
+    /* preset 1 = 22-06 */
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 21 * 60 + 59, 1, false) == CLOCK_BL_DIM,
+          "preset 22-06: 21:59 is still day");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 22 * 60, 1, false) == CLOCK_BL_OFF,
+          "preset 22-06: 22:00 enters the window");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 5 * 60 + 59, 1, false) == CLOCK_BL_OFF,
+          "preset 22-06: 05:59 still inside (past midnight)");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 6 * 60, 1, false) == CLOCK_BL_DIM,
+          "preset 22-06: 06:00 exits the window");
+
+    /* preset 3 = 00-08 */
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 23 * 60 + 59, 3, false) == CLOCK_BL_DIM,
+          "preset 00-08: 23:59 is still day (window starts at 00:00)");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 0, 3, false) == CLOCK_BL_OFF,
+          "preset 00-08: 00:00 enters the window");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 7 * 60 + 59, 3, false) == CLOCK_BL_OFF,
+          "preset 00-08: 07:59 still inside");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 8 * 60, 3, false) == CLOCK_BL_DIM,
+          "preset 00-08: 08:00 exits the window");
+}
+
+/* ---- charging exception: suppresses the DAY dim, never the night-OFF --- */
+static void test_charging_exception(void)
+{
+    int noon = 12 * 60;
+
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, noon, NP_DEFAULT, true) == CLOCK_BL_FULL,
+          "charging suppresses the daytime idle half-dim (desk clock on permanent power)");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, noon, NP_DEFAULT, false) == CLOCK_BL_DIM,
+          "sanity: the same moment without charging still dims");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 3 * 60, NP_DEFAULT, true) == CLOCK_BL_OFF,
+          "night full-off STILL applies while charging — a charger overnight must not light the room");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 3 * 60, 0, true) == CLOCK_BL_FULL,
+          "with the night preset Off, charging suppresses the day-equivalent dim at night too");
 }
 
 /* ---- dim level helper: half of the user's brightness, floor-clamped -----*/
@@ -370,6 +447,12 @@ static void test_cfg_rejects_out_of_range(void)
     fprintf(f, "theme=-1\n");   /* negative: reject */
     fprintf(f, "face=9\n");     /* > FACE_DOT: reject */
     fprintf(f, "anim=1\n");     /* retired ambient value: migrates to off (0), not kept as 1 */
+    fprintf(f, "nightoff=99\n");     /* >= NIGHT_PRESET_COUNT: reject */
+    fprintf(f, "nightoff=-1\n");     /* negative: reject */
+    fprintf(f, "alarmvol=99\n");     /* > ODROID_AUDIO_VOLUME_MAX: reject */
+    fprintf(f, "alarmvol=-1\n");     /* negative: reject */
+    fprintf(f, "clockbright=99\n");  /* >= ODROID_BACKLIGHT_LEVEL_COUNT: reject */
+    fprintf(f, "clockbright=-2\n");  /* below -1 (follow-system floor): reject */
     fclose(f);
 
     reset_cfg_fields();
@@ -377,6 +460,9 @@ static void test_cfg_rejects_out_of_range(void)
     CHECK(s_theme == 0,         "out-of-range theme rejected, default kept");
     CHECK(s_face_override == -1, "out-of-range face rejected, default kept");
     CHECK(s_anim == 0,          "retired ambient (anim=1) migrates to off, not ANIM_SCENE");
+    CHECK(s_nightoff == 2,      "out-of-range nightoff rejected, default (23-07) kept");
+    CHECK(s_alarm_volume == 6,  "out-of-range alarmvol rejected, default kept");
+    CHECK(s_clock_bright == -1, "out-of-range clockbright rejected, default (follow system) kept");
 
     remove(test_path(CLOCK_CFG_PATH));
 }
@@ -585,6 +671,8 @@ int main(void)
     test_update_timer_flash_guard();
     test_clock_edit_time_rollover();
     test_backlight_logic();
+    test_night_preset_mapping();
+    test_charging_exception();
     test_dim_level();
     test_ring_overlay();
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
