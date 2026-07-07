@@ -1054,15 +1054,18 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     if (fs_mounted == false) {
         sdcard_error_screen();
     }
-
-    /* Full battery drain wipes the RTC: quietly restore the clock from the
-     * SD snapshot written at the last sleep/power-off (off by the downtime,
-     * not by decades - the true elapsed time is unknowable offline). */
-    GW_RTC_RestoreIfLost();
 #else
     // Initialize the littleFS filesystem
     fs_init();
 #endif
+
+    /* Full battery drain wipes the RTC: quietly restore the clock from the
+     * snapshot written at the last sleep/power-off (off by the downtime,
+     * not by decades - the true elapsed time is unknowable offline).
+     * /save/clock.bin lives on the SD card or the LittleFS partition alike,
+     * so both builds get the restore — the flash build doubly needs it, as
+     * a card-less unit is that much more likely to be used as a clock. */
+    GW_RTC_RestoreIfLost();
 
     /* Claim the clock-background GIF decode arena NOW, while the emu-RAM bump
      * pool is still empty. The pool never frees: once the launcher caches a

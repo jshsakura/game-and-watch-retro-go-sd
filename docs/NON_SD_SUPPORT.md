@@ -75,6 +75,21 @@ Runtime-level (found by tracing every feature with no card present):
 - Clock "Photo" background reports `(no photos)` in the settings menu when the
   album is empty, mirroring the GIF diagnostics.
 
+## Clock app: SD vs flash-only matrix
+
+The clock is a first-class feature on card-less units (it may well BE the
+device's day job there), so every clock feature branches deliberately:
+
+| clock feature | SD build (card) | flash build (LittleFS) |
+|---|---|---|
+| faces, themes, pixel scenes, timers, pomodoro | RAM/flash only — identical | identical |
+| settings / alarms / auto-dim (`/clock/clock.cfg`) | SD, editable on a PC | LittleFS, device-side edits persist |
+| photo album (`/clock/album/*.565`) | drop files on the card (web tool converts) | bake via `LITTLEFS_INCLUDE="… clock"`; empty album says `(no photos)` |
+| GIF background (`/clock/bg.gif`) | drop on card / web tool push | bake via `LITTLEFS_INCLUDE`; missing file says `(no file)` |
+| MP3/WAV alarm (`/clock/alarm.mp3` + `/cores/clockmp3.bin`) | both on card | both baked (clockmp3.bin is always packed); missing file → synth beep |
+| RTC restore after battery drain (`/save/clock.bin`) | snapshot on card | snapshot on LittleFS (restore runs on both builds) |
+| hibernate save | dedicated `off.sav` | dedicated `off.sav` (`OFF_SAVESTATE=1` default) |
+
 ## Known limitations
 
 - No post-flash content push for LittleFS (no `sdpush` equivalent): adding
