@@ -21,6 +21,7 @@
 #include "odroid_settings.h"
 #include "rg_welcome_prompt.h"
 #include "rg_clock.h"
+#include "rg_alarm.h"   /* resident all-state next-alarm cache */
 #include "rg_clock_gif.h"
 #include "bitmaps.h"
 #include "error_screens.h"
@@ -1070,6 +1071,12 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
      * so both builds get the restore — the flash build doubly needs it, as
      * a card-less unit is that much more likely to be used as a clock. */
     GW_RTC_RestoreIfLost();
+
+    /* Prime the resident next-alarm cache from /clock/clock.cfg now that the
+     * clock is valid and the FS is mounted: this is what lets the alarm ring in
+     * every state (launcher, in-game, music/video) and arms the deep-sleep RTC
+     * alarm on the next sleep. Cheap (one small cfg parse). */
+    rg_alarm_cache_refresh();
 
     /* Claim the clock-background GIF decode arena NOW, while the emu-RAM bump
      * pool is still empty. The pool never frees: once the launcher caches a

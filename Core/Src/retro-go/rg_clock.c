@@ -38,6 +38,7 @@
 #include "rg_storage.h" /* rg_storage_mkdir — ensure /clock exists on FatFs and LittleFS alike */
 #include "bq24072.h"  /* bq24072_get_state — charging exception for the idle backlight */
 #include "rg_clock.h"
+#include "rg_alarm.h"   /* resident next-alarm cache + shared tone presets (all-state alarm) */
 #include "rg_clock_gif.h"
 #include "rg_clock_album.h"
 #include "rg_clock_alarm_mp3.h"
@@ -627,6 +628,11 @@ static const struct { int8_t start, end; } LEGACY_NIGHT_PRESET[4] = {
  * Persisted as cfg alarmvol=. */
 static int8_t s_alarm_volume = 6;
 
+/* Synth-beep preset (RG_TONE_*): the non-SD alarm sound, and the SD fallback
+ * when no MP3 plays. Selectable on BOTH builds; persisted inside the alarmsnd=
+ * cfg key as an ASCII token (beep/beep2/chirp/siren). */
+static int8_t s_beep_preset = RG_TONE_BEEP;
+
 static alarm_t  s_alarms[MAX_ALARMS];
 static int      s_alarm_count;
 #if CLOCK_SD_MEDIA
@@ -679,6 +685,7 @@ static void clock_config_load(void)
     s_autodim = true;
     s_night_start = 23; s_night_end = 7;
     s_alarm_volume = 6;
+    s_beep_preset = RG_TONE_BEEP;
     s_alarm_count = 0;
 #if CLOCK_SD_MEDIA
     s_photo_speed = 1;
@@ -712,12 +719,20 @@ static void clock_config_load(void)
         else if (sscanf(line, "nightend=%d", &v) == 1) { if (night_end_index(v) >= 0) s_night_end = v; }
         else if (sscanf(line, "nightoff=%d", &v) == 1) { if (v >= 0 && v < 4) legacy_nightoff = v; }
         else if (sscanf(line, "alarmvol=%d", &v) == 1) { if (v >= 0 && v <= ODROID_AUDIO_VOLUME_MAX) s_alarm_volume = v; }
+        /* alarmsnd= holds either a synth-preset token (both builds) or, on SD
+         * builds, an /clock sound-file basename. Set the preset from a token on
+         * either build; keep the raw string only where files are supported. */
+        else if (strncmp(line, "alarmsnd=", 9) == 0) { char *nl = strchr(line, '\n'); if (nl) *nl = 0;
+            int p = rg_tone_preset_from_token(line + 9);
+            if (p >= 0) s_beep_preset = p;
+#if CLOCK_SD_MEDIA
+            if (strlen(line + 9) < sizeof s_alarmsnd) snprintf(s_alarmsnd, sizeof s_alarmsnd, "%s", line + 9);
+#endif
+        }
 #if CLOCK_SD_MEDIA
         else if (sscanf(line, "photospeed=%d", &v) == 1) { if (v >= 0 && v < 3) s_photo_speed = v; }
         else if (strncmp(line, "bgfile=", 7) == 0)   { char *nl = strchr(line, '\n'); if (nl) *nl = 0;
             if (strlen(line + 7) < sizeof s_bgfile)   snprintf(s_bgfile,   sizeof s_bgfile,   "%s", line + 7); }
-        else if (strncmp(line, "alarmsnd=", 9) == 0) { char *nl = strchr(line, '\n'); if (nl) *nl = 0;
-            if (strlen(line + 9) < sizeof s_alarmsnd) snprintf(s_alarmsnd, sizeof s_alarmsnd, "%s", line + 9); }
 #endif
         /* alarm=HHMM[,enabled] — the suffix is new; plain HHMM (older cfg) = enabled */
         else if (sscanf(line, "alarm=%d,%d", &v, &en) >= 1 && s_alarm_count < MAX_ALARMS) {
@@ -763,6 +778,38 @@ static void clock_config_save(void)
         fprintf(f, "alarm=%02d%02d,%d\n", s_alarms[i].hour, s_alarms[i].min,
                 s_alarms[i].enabled ? 1 : 0);
     fclose(f);
+
+    /* keep the resident all-state next-alarm cache in step with the file */
+    rg_alarm_cache_refresh();
+}
+
+/* ---- exports for the resident all-state alarm cache (rg_alarm.c) -------
+ * These reuse clock_config_load()'s parser so there is exactly one place that
+ * understands clock.cfg. clock_config_load() only writes the file-static clock
+ * state, which rg_clock_show() reloads on entry anyway, so calling it here is
+ * side-effect-free for the launcher. */
+void rg_clock_query_alarms(rg_alarm_query_t *out)
+{
+    clock_config_load();
+    out->count = 0;
+    out->dnd = s_dnd;
+    for (int i = 0; i < s_alarm_count && out->count < RG_ALARM_MAX; i++)
+        if (s_alarms[i].enabled)
+            out->mins[out->count++] = (uint16_t)(s_alarms[i].hour * 60 + s_alarms[i].min);
+}
+
+void rg_clock_alarm_prefs(int *preset, int *volume)
+{
+    clock_config_load();
+    int p = s_beep_preset;
+#if CLOCK_SD_MEDIA
+    /* an SD file name is not a synth preset — the in-place ring is beep-only
+     * (the MP3 decoder needs the emulator's RAM), so fall back to the preset. */
+    int t = rg_tone_preset_from_token(s_alarmsnd);
+    if (t >= 0) p = t;
+#endif
+    if (preset) *preset = p;
+    if (volume) *volume = s_alarm_volume;
 }
 
 /* Minutes-from-now to the soonest enabled alarm; -1 if none. Fills *idx. */
