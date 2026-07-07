@@ -61,7 +61,7 @@ uint8_t odroid_display_get_backlight_raw() {
  * dedicated brightness row — preview/apply a level without touching
  * odroid_settings via odroid_display_set_backlight(). Clamped so a
  * corrupt/out-of-range level can't index off the table. */
-uint8_t odroid_display_backlight_raw_for_level(odroid_display_backlight_t level)
+uint8_t odroid_display_backlight_raw_for_level(int level)
 {
     if (level < ODROID_BACKLIGHT_LEVEL0) level = ODROID_BACKLIGHT_LEVEL0;
     if (level >= ODROID_BACKLIGHT_LEVEL_COUNT) level = ODROID_BACKLIGHT_LEVEL_COUNT - 1;

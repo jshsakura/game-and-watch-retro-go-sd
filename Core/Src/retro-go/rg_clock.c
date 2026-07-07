@@ -550,6 +550,10 @@ static uint8_t clock_dim_level(uint8_t user_raw)
  * value — is what clock_dim_level dims from and what FULL/ring restore to,
  * so a custom clock brightness applies even while wide awake, not just
  * during the idle dim. */
+/* Defined in odroid_display.c (fork addition); declared here rather than in
+ * odroid_display.h because that header lives in the retro-go-stm32 submodule
+ * and this is the only caller. */
+uint8_t odroid_display_backlight_raw_for_level(int level);
 static uint8_t clock_effective_bright_raw(void)
 {
     return (s_clock_bright < 0) ? odroid_display_get_backlight_raw()
