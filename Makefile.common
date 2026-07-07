@@ -872,6 +872,7 @@ $(BUILD_DIR)/core/error_screens.o: Core/Inc/gittag.h
 $(BUILD_DIR)/core/main.o: Core/Inc/gittag.h
 $(BUILD_DIR)/core/rg_main.o: Core/Inc/gittag.h
 $(BUILD_DIR)/core/rg_emulators.o: Core/Inc/gittag.h
+$(BUILD_DIR)/core/gw_littlefs.o: Core/Inc/gittag.h
 
 # Run parse_roms.py to generate information about the roms
 $(BUILD_DIR)/rom_files.txt: FORCE | $(BUILD_DIR)
