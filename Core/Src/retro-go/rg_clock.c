@@ -75,7 +75,7 @@ extern void rg_emulators_reset_all_lists(void);
  * AM/PM baseline, stopwatch) works for every face without per-face branches. */
 typedef enum {
     FACE_SEG7 = 0, FACE_PIXEL, FACE_DOT,     /* originals — values locked */
-    FACE_THIN, FACE_OUTLINE, FACE_NIXIE, FACE_FLIP, FACE_LED, FACE_LCD,
+    FACE_THIN, FACE_OUTLINE, FACE_FACET, FACE_FLIP, FACE_LED, FACE_LCD,
     FACE_COUNT
 } digit_face_t;
 #define FACE_LAST (FACE_COUNT - 1)
@@ -96,6 +96,13 @@ static const clock_theme_t THEMES[] = {
     { C565(0x04,0x12,0x1a), C565(0x4f,0xd6,0xe6), C565(0xa0,0xf0,0xff), FACE_DOT   }, /* Aqua     */
     { C565(0x0a,0x06,0x14), C565(0xc7,0x7d,0xff), C565(0xff,0x7a,0xc8), FACE_SEG7  }, /* Neon     */
     { C565(0x0d,0x0f,0x12), C565(0xdf,0xe6,0xee), C565(0x8f,0xb4,0xd8), FACE_PIXEL }, /* Slate    */
+    /* ---- new: 6 more tasteful palettes (appended — indices are persisted) */
+    { C565(0x06,0x12,0x0e), C565(0xb8,0xf2,0xd8), C565(0xff,0x8a,0x9e), FACE_THIN    }, /* Mint     */
+    { C565(0x12,0x08,0x0e), C565(0xff,0xcd,0xe0), C565(0xff,0x5f,0x9c), FACE_DOT     }, /* Sakura   */
+    { C565(0x05,0x0c,0x14), C565(0xd7,0xef,0xff), C565(0x5a,0xd8,0xff), FACE_LCD     }, /* Arctic   */
+    { C565(0x07,0x0d,0x08), C565(0x9b,0xd9,0x7a), C565(0xe0,0xb8,0x4a), FACE_SEG7    }, /* Forest   */
+    { C565(0x00,0x00,0x00), C565(0xff,0xff,0xff), C565(0xff,0x33,0x33), FACE_OUTLINE }, /* OLED     */
+    { C565(0x00,0x00,0x00), C565(0xff,0xb0,0x00), C565(0xff,0xe0,0x66), FACE_LED     }, /* Term     */
 };
 #define THEME_COUNT ((int)(sizeof(THEMES) / sizeof(THEMES[0])))
 
@@ -160,6 +167,11 @@ static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t co
  * helpers that are defined further down (rendering section). */
 static uint16_t mix565(uint16_t a, uint16_t b, int t);
 static void draw_round_panel(int x, int y, int w, int h, int r, uint16_t col);
+static void draw_round_panel_ex(int x, int y, int w, int h, int r, uint16_t col, bool blend);
+/* true on a solid theme background (no live wallpaper under the digits) —
+ * defined further down with the render state; forward-declared so Flip's
+ * card (drawn earlier in the file) can decide opaque-vs-blend at draw time. */
+static bool s_ghost_on;
 
 /* ---- upright rectangular 7-seg engine (shared by Thin + Retro-LCD) ------
  * One parameterised drawer covers both upright (non-italic) seg faces: `tt` is
@@ -212,10 +224,14 @@ static void draw_rect7(int d, int x, int y, int w, int h, int tt, int hg, int vg
 static void draw_thin_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
 { int tt = t/2; if (tt < 3) tt = 3; draw_rect7(d, x, y, w, h, tt, tt, 0, true, col); }
 
-/* Retro-LCD: full-thickness square segments with small joint gaps — see the
- * strong ghost underlay applied by seg_cell for the "all-8 faintly on" look. */
+/* Retro-LCD: classic calculator-style square segments — thinner than a solid
+ * block (canonical 7-seg stroke is a fraction of the digit width, not the
+ * whole cell) with a wider corner gap so adjoining segments read as distinct
+ * bars, not a fused blob. The faint "all-8" ghost underlay (see seg_cell) is
+ * what actually sells the period-LCD look. */
 static void draw_lcd_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
-{ int g = t/3; if (g < 1) g = 1; draw_rect7(d, x, y, w, h, t, g, g, false, col); }
+{ int tt = t*3/5; if (tt < 4) tt = 4; int g = t/2; if (g < 2) g = 2;
+  draw_rect7(d, x, y, w, h, tt, g, g, false, col); }
 
 /* ---- Outline: bold hollow 7-seg ----------------------------------------
  * The base hexagon digit with a darker inner digit punched into it, leaving a
@@ -232,24 +248,54 @@ static void draw_outline_digit(int d, int x, int y, int w, int h, int t, uint16_
     s_outline = o;
 }
 
-/* ---- Nixie: warm-glow tube digit ---------------------------------------
- * A soft outer glow (dim ink, 4-way offset) under the ink body under a bright
- * inner core — the tube-cathode look, tinted from the active theme ink so it
- * respects the palette. All layers are draw_seg_digit calls + a colour blend. */
-static void draw_nixie_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
+/* ---- Facet: low-poly stacked-triangle digit -----------------------------
+ * Every 7-seg bar is split by ONE diagonal into two triangles — a lighter
+ * tint on one side, a darker shade on the other — so each bar reads as a
+ * faceted origami wedge instead of a flat block; the seven wedges stack into
+ * a low-poly numeral. Same upright box layout as Thin/Retro-LCD (draw_rect7's
+ * S[] geometry), but the fill is a per-row half-space test (pure scanline
+ * triangle math) instead of a solid seg_bar — no new heavy primitive, still
+ * just fill_rect calls, and every span stays inside the digit's own box so it
+ * needs no extra clamping beyond that (same invariant as every other face). */
+static void seg_bar_facet(int x, int y, int len, int tt, bool vert, uint16_t hi, uint16_t lo)
+{
+    for (int r = 0; r < tt; r++) {
+        int split = len * (tt - r) / tt;    /* half-space cut: shrinks as r grows */
+        if (split > 0) {
+            if (vert) odroid_overlay_draw_fill_rect(x + r, y,         1, split, hi);
+            else      odroid_overlay_draw_fill_rect(x,     y + r, split,     1, hi);
+        }
+        if (split < len) {
+            int rem = len - split;
+            if (vert) odroid_overlay_draw_fill_rect(x + r, y + split, 1, rem, lo);
+            else      odroid_overlay_draw_fill_rect(x + split, y + r, rem, 1, lo);
+        }
+    }
+}
+
+static void draw_facet_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
 {
     if (d < 0 || d > 9) return;
-    int o = s_outline; s_outline = 0;             /* layer manually */
-    if (o) {                                       /* live-bg black halo */
-        draw_seg_digit(d, x-o, y, w, h, t, CLOCK_BLACK); draw_seg_digit(d, x+o, y, w, h, t, CLOCK_BLACK);
-        draw_seg_digit(d, x, y-o, w, h, t, CLOCK_BLACK); draw_seg_digit(d, x, y+o, w, h, t, CLOCK_BLACK);
+    if (s_outline) {
+        int o = s_outline; uint16_t oc = s_outline_col; s_outline = 0;
+        draw_facet_digit(d, x-o, y, w, h, t, oc); draw_facet_digit(d, x+o, y, w, h, t, oc);
+        draw_facet_digit(d, x, y-o, w, h, t, oc); draw_facet_digit(d, x, y+o, w, h, t, oc);
+        s_outline = o;
     }
-    uint16_t glow = mix565(col, CLOCK_BLACK, 9);   /* soft halo */
-    draw_seg_digit(d, x-1, y, w, h, t, glow); draw_seg_digit(d, x+1, y, w, h, t, glow);
-    draw_seg_digit(d, x, y-1, w, h, t, glow); draw_seg_digit(d, x, y+1, w, h, t, glow);
-    draw_seg_digit(d, x, y, w, h, t, col);         /* body */
-    if (t >= 8) draw_seg_digit(d, x+2, y+2, w-4, h-4, t-4, mix565(col, 0xFFFF, 7));  /* bright core */
-    s_outline = o;
+    uint8_t m = SEG7[d];
+    int tt = t - 2; if (tt < 4) tt = 4;      /* small gap so wedges read as separate facets */
+    int ym = y + (h - tt)/2;
+    int hx = x + 2, hw = w - 4, xr = x + w - tt;
+    int vt = y + tt + 2, vtl = ym - (y + tt) - 2;
+    int vb = ym + tt + 2, vbl = (y + h - tt) - (ym + tt) - 2;
+    uint16_t hi = mix565(col, 0xFFFF, 6), lo = mix565(col, CLOCK_BLACK, 8);
+    if (m & (1<<0)) seg_bar_facet(hx, y,        hw,  tt, false, hi, lo);  /* A */
+    if (m & (1<<6)) seg_bar_facet(hx, ym,       hw,  tt, false, hi, lo);  /* G */
+    if (m & (1<<3)) seg_bar_facet(hx, y + h-tt, hw,  tt, false, hi, lo);  /* D */
+    if (m & (1<<5)) seg_bar_facet(x,  vt,       vtl, tt, true,  hi, lo);  /* F */
+    if (m & (1<<1)) seg_bar_facet(xr, vt,       vtl, tt, true,  hi, lo);  /* B */
+    if (m & (1<<4)) seg_bar_facet(x,  vb,       vbl, tt, true,  hi, lo);  /* E */
+    if (m & (1<<2)) seg_bar_facet(xr, vb,       vbl, tt, true,  hi, lo);  /* C */
 }
 
 /* ---- Flip: split-flap card ---------------------------------------------
@@ -258,9 +304,14 @@ static void draw_nixie_digit(int d, int x, int y, int w, int h, int t, uint16_t 
  * digit (even over a live background, where dark flaps over wallpaper is the
  * whole charm), the numeral (base seg face) on top, then the seam over both. */
 #define FLIP_PAD 1
+/* Over a live background (GIF/photo/scene) the flap card blends toward the
+ * wallpaper instead of sitting as an opaque grey block — the seam (drawn
+ * separately, still solid) keeps the split-flap read. On a solid theme
+ * background there's nothing under the card to blend with, so it stays the
+ * same opaque look as before. */
 static void draw_flip_panel(int x, int y, int w, int h, uint16_t card)
 {
-    draw_round_panel(x - FLIP_PAD, y - 2, w + 2*FLIP_PAD, h + 4, 5, card);
+    draw_round_panel_ex(x - FLIP_PAD, y - 2, w + 2*FLIP_PAD, h + 4, 5, card, !s_ghost_on);
 }
 static void draw_flip_seam(int x, int y, int w, int h, uint16_t seam)
 {
@@ -354,7 +405,7 @@ static void seg_glyph(digit_face_t face, int d, int x, int y, int w, int h, int 
     switch (face) {
     case FACE_THIN:    draw_thin_digit(d, x, y, w, h, t, col);    break;
     case FACE_OUTLINE: draw_outline_digit(d, x, y, w, h, t, col); break;
-    case FACE_NIXIE:   draw_nixie_digit(d, x, y, w, h, t, col);   break;
+    case FACE_FACET:   draw_facet_digit(d, x, y, w, h, t, col);  break;
     case FACE_LCD:     draw_lcd_digit(d, x, y, w, h, t, col);     break;
     default:           draw_seg_digit(d, x, y, w, h, t, col);     break;   /* SEG7, FLIP numeral */
     }
@@ -373,8 +424,8 @@ static void seg_cell(digit_face_t face, int d, int x, int y, int w, int h, int t
         return;
     }
     /* Retro LCD lifts the ghost toward the lit ink so the unlit segments read
-     * clearly — the "all 8s faintly on" hallmark of a real LCD. */
-    uint16_t gcol = (face == FACE_LCD) ? mix565(ghost, col, 8) : ghost;
+     * as a faint "all 8s on" hallmark of a real LCD — faint, not half-lit. */
+    uint16_t gcol = (face == FACE_LCD) ? mix565(ghost, col, 4) : ghost;
     if (gh) seg_glyph(face, 8, x, y, w, h, t, gcol);
     if (!blank) seg_glyph(face, d, x, y, w, h, t, col);
 }
@@ -964,8 +1015,14 @@ static void draw_topbar(clock_mode_t mode, bool show_pager)
  * NOTE the device blitters do NOT clip: a rect or text cell that crosses the
  * right edge wraps into the next row's left side (the "crumbs" beside the
  * old hint bar). Everything here is therefore clamped to the screen. */
-static void draw_round_panel(int x, int y, int w, int h, int r, uint16_t col)
+/* blend=false: same opaque rounded fill every caller originally got. blend=true
+ * (Flip's card over a live background) mixes col INTO the framebuffer pixels
+ * already there instead of overwriting them, so wallpaper shows through the
+ * card — same rounded-rect geometry either way, just a per-pixel read+blend
+ * instead of one fill_rect per row when translucent. */
+static void draw_round_panel_ex(int x, int y, int w, int h, int r, uint16_t col, bool blend)
 {
+    uint16_t *fb = blend ? (uint16_t *)lcd_get_active_buffer() : NULL;
     for (int j = 0; j < h; j++) {
         int dy = (j < r) ? r - 1 - j : (j >= h - r ? j - (h - r - 1) : -1);
         int inset = 0;
@@ -974,12 +1031,20 @@ static void draw_round_panel(int x, int y, int w, int h, int r, uint16_t col)
             for (int k = r; k >= 0; k--)
                 if (k*k + dy*dy <= r*r) { inset = r - k; break; }
         }
-        int rx = x + inset, rw = w - 2*inset;
+        int rx = x + inset, rw = w - 2*inset, ry = y + j;
         if (rx < 0) { rw += rx; rx = 0; }
         if (rx + rw > GW_LCD_WIDTH) rw = GW_LCD_WIDTH - rx;
-        if (rw > 0) odroid_overlay_draw_fill_rect(rx, y + j, rw, 1, col);
+        if (rw <= 0 || ry < 0 || ry >= GW_LCD_HEIGHT) continue;
+        if (!blend) { odroid_overlay_draw_fill_rect(rx, ry, rw, 1, col); continue; }
+        for (int i = 0; i < rw; i++) {
+            int idx = ry * GW_LCD_WIDTH + rx + i;
+            fb[idx] = mix565(fb[idx], col, 8);   /* ~50/50 — wallpaper still reads through */
+        }
     }
 }
+
+static void draw_round_panel(int x, int y, int w, int h, int r, uint16_t col)
+{ draw_round_panel_ex(x, y, w, h, r, col, false); }
 
 static void draw_hintbar(const char *hint)
 {
@@ -1637,11 +1702,12 @@ static void clock_alarm_setup(void)
  * shortcuts on the clock face. */
 
 static const char *const THEME_LABEL[THEME_COUNT] =
-    { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate" };
+    { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate",
+      "Mint", "Sakura", "Arctic", "Forest", "OLED", "Term" };
 /* Face names are ASCII and NOT translated (same as the theme labels) — the
  * settings dialog shows them verbatim. Order matches digit_face_t. */
 static const char *const FACE_NAME[FACE_COUNT] = {
-    "7-seg", "Pixel", "Dot", "Thin", "Outline", "Nixie", "Flip", "LED", "LCD",
+    "7-seg", "Pixel", "Dot", "Thin", "Outline", "Facet", "Flip", "LED", "LCD",
 };
 static char v_theme[24], v_face[20], v_fmt[8], v_anim[44], v_scene[24],
             v_autodim[12], v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];

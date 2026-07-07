@@ -385,7 +385,7 @@ int main(void)
      * backgrounds), plus a couple in 24h to check the wider block. */
     {
         static const struct { int face; const char *name; } NF[] = {
-            { FACE_THIN, "thin" }, { FACE_OUTLINE, "outline" }, { FACE_NIXIE, "nixie" },
+            { FACE_THIN, "thin" }, { FACE_OUTLINE, "outline" }, { FACE_FACET, "facet" },
             { FACE_FLIP, "flip" }, { FACE_LED, "led" }, { FACE_LCD, "lcd" },
         };
         s_theme = 0; s_dnd = false;
@@ -405,14 +405,36 @@ int main(void)
         }
         /* 24h width check on two contrasting faces (leading zero shows) */
         s_hour24 = true; s_ghost_on = true;
-        s_face_override = FACE_NIXIE; s_theme = 6; /* Neon */
-        paint(MODE_CLOCK, 1000, false); dump("face_nixie_24h");
+        s_face_override = FACE_FACET; s_theme = 6; /* Neon */
+        paint(MODE_CLOCK, 1000, false); dump("face_facet_24h");
         s_face_override = FACE_LED; s_theme = 5;   /* Aqua */
         paint(MODE_CLOCK, 1000, false); dump("face_led_24h");
         s_hour24 = false;
         s_face_override = FACE_LCD; s_theme = 2;   /* Green LCD — ghost segments read clearly */
         paint(MODE_CLOCK, 1000, false); dump("face_lcd_green");
         s_face_override = -1; s_theme = 0;
+    }
+
+    /* 8c) Flip's translucent card, specifically over the Synthwave scene (the
+     * showcase live background) — the card must let the wallpaper read through
+     * while the seam/numeral stay fully legible. */
+    {
+        s_face_override = FACE_FLIP; s_theme = 0; s_hour24 = false;
+        s_anim = ANIM_SCENE; s_scene = 3 /* Synthwave */;
+        paint(MODE_CLOCK, 2200, false); dump("face_flip_synthwave");
+        s_anim = 0; s_scene = 0; s_face_override = -1;
+    }
+
+    /* 8d) every NEW theme: one clock face render each (own default face, own
+     * palette) so contrast/ghost/alarm-accent can be checked per theme. */
+    {
+        for (int th = 8; th < THEME_COUNT; th++) {
+            s_theme = th; s_face_override = -1; s_hour24 = false; s_ghost_on = true; s_anim = 0;
+            char nm[32];
+            paint(MODE_CLOCK, 1000, false);
+            snprintf(nm, sizeof nm, "theme_%s", THEME_LABEL[th]); dump(nm);
+        }
+        s_theme = 0;
     }
 
     /* 9) montage of every pixel scene (animated bg + the real clock face) */
