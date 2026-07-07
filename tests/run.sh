@@ -62,6 +62,10 @@ $CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/storage_stubs -ICore/Inc/re
     tests/test_storage.c Core/Src/retro-go/rg_storage.c \
     tests/storage_stubs/stubs.c tests/storage_stubs/fake_frogfs.c \
     -o /tmp/mtest/test_storage_sd0
+# clock photo-album loader: BMP header parse + BGR->565 + row flip + rejection
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/album_stubs -ICore/Inc/retro-go \
+    tests/test_album.c tests/album_stubs/album_stub_impl.c Core/Src/retro-go/rg_clock_album.c \
+    -o /tmp/mtest/test_album
 python3 - <<'PYEOF2'
 from PIL import Image, ImageDraw
 frames = []
@@ -91,6 +95,7 @@ fi
 /tmp/mtest/test_favorites   || rc=1
 /tmp/mtest/test_storage_sd1 || rc=1
 /tmp/mtest/test_storage_sd0 || rc=1
+/tmp/mtest/test_album      || rc=1
 
 # === merge-hygiene guard (red-green) ==================================
 # A merge that interleaves OUR logo additions with upstream's can silently
