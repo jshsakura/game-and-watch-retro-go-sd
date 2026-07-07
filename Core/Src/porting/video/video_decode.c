@@ -43,9 +43,15 @@ int  g_vdec_st = 0, g_vdec_w = 0, g_vdec_h = 0;
 long g_vdec_sz = 0, g_vdec_rc = 0;
 unsigned char g_vdec_b0 = 0, g_vdec_b1 = 0;   // first 2 bytes of the frame (FFD8 = JPEG SOI)
 
-// Split timing (ms): the SD fread vs the HW JPEG decode, so the HUD can tell
-// whether the ~40ms/frame cost is read-bound (slow SD) or decode-bound.
-int g_vdec_read_ms = 0, g_vdec_jpeg_ms = 0;
+// Split timing (ms) so the HUD can tell where a busy frame's cost went:
+//   g_vdec_read_ms  BLOCKING SD read — bytes the player had to wait on because the
+//                   frame was NOT already prefetched (the read that actually cost
+//                   the frame budget). ~0 when the jitter buffer absorbed the burst.
+//   g_vdec_pf_ms    read hidden during the pacing wait (prefetch overlap) — the
+//                   work that made the read_ms above small. High pf_ms + low read_ms
+//                   is the overlap paying off.
+//   g_vdec_jpeg_ms  HW JPEG decode of the frame just shown.
+int g_vdec_read_ms = 0, g_vdec_pf_ms = 0, g_vdec_jpeg_ms = 0;
 
 void video_decode_init(void)
 {

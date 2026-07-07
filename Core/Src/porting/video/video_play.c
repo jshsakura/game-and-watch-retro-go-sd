@@ -34,7 +34,8 @@ static const int SPD_DEN[] = { 2, 1, 1 };
 static const char *SPD_LBL[] = { "x0.5", "x1", "x2" };
 
 extern uint8_t g_scratch[];
-extern int g_vdec_read_ms;      // read-time accumulator (video_decode.c diagnostics)
+extern int g_vdec_read_ms;      // BLOCKING read ms for the frame being delivered (video_decode.c)
+extern int g_vdec_pf_ms;        // read ms hidden during the pacing wait (prefetch overlap)
 extern int g_vdec_st;           // decode status code, set here on read-fail markers
 
 // Audio is synced only at 1x (the ring plays at a fixed 48kHz; speed-changing the
@@ -113,7 +114,11 @@ static bool pf_step(avi_t *a, int spd, bool paused, int *na_seen, bool force)
         long take = (!force && left > PF_STEP) ? PF_STEP : left;
         uint32_t t0 = HAL_GetTick();
         size_t got = avi_read(a, video_slot(pf_ip_slot) + pf_ip_got, (size_t)take);
-        g_vdec_read_ms += (int)(HAL_GetTick() - t0);
+        // Attribute the read time honestly: a forced read (consumer starving) is
+        // what the frame actually waited on -> rd=; a wait-time read is overlapped
+        // with pacing and hidden from the frame budget -> pf=.
+        int dt = (int)(HAL_GetTick() - t0);
+        if (force) g_vdec_read_ms += dt; else g_vdec_pf_ms += dt;
         pf_ip_got += (long)got;
         if (got < (size_t)take) {                // short read even after self-heal
             pf_busy &= ~(1 << pf_ip_slot);
@@ -152,7 +157,6 @@ static bool pf_step(avi_t *a, int spd, bool paused, int *na_seen, bool force)
     pf_ip_slot = slot;
     pf_ip_want = sz;
     pf_ip_got = 0;
-    g_vdec_read_ms = 0;                          // fresh read-time accumulation
     return true;
 }
 
@@ -160,6 +164,7 @@ static bool pf_step(avi_t *a, int spd, bool paused, int *na_seen, bool force)
 // now), feeding interleaved audio chunks along the way. false = end of stream.
 static bool pf_fetch(avi_t *a, pf_ent_t *out, int spd, bool paused, int *na_seen)
 {
+    g_vdec_read_ms = 0;              // blocking read time for the frame we deliver
     for (;;) {
         wdog_refresh();
         if (pf_n > 0) {
@@ -346,7 +351,8 @@ static void build_diag(const avi_t *a, int nv, int na)
 // diagnosable at a glance without reflashing. Default on; the video shows through.
 // Per-frame timing (ms): last decode, worst-case decode, last whole-iteration.
 // Reveals whether busy-scene judder is decode-bound (d/dmax spike toward the
-// frame budget) or pacing/other — the flash read itself is ~free (XIP).
+// frame budget), read-bound (rd= spikes = the jitter buffer drained) or overlapped
+// away (pf= carries the read while rd= stays ~0 — the prefetch paying off).
 static int g_vid_dms = 0, g_vid_dmax = 0, g_vid_fms = 0;
 
 static void draw_hud(int dec_ok, int seen, int na)
@@ -359,9 +365,10 @@ static void draw_hud(int dec_ok, int seen, int na)
 #else
     const char *sd = "--"; /* flash build: media streams from FrogFS, no SD path */
 #endif
-    extern int g_vdec_read_ms, g_vdec_jpeg_ms;
-    char l1[48], l2[48];
-    snprintf(l1, sizeof l1, "dec=%d v=%d rd=%dms jpg=%dms", dec_ok, seen, g_vdec_read_ms, g_vdec_jpeg_ms);
+    extern int g_vdec_read_ms, g_vdec_pf_ms, g_vdec_jpeg_ms;
+    char l1[64], l2[48];
+    snprintf(l1, sizeof l1, "dec=%d v=%d rd=%dms pf=%dms jpg=%dms",
+             dec_ok, seen, g_vdec_read_ms, g_vdec_pf_ms, g_vdec_jpeg_ms);
     snprintf(l2, sizeof l2, "sz=%ld dmx=%d sd=%s %dx%d", g_vdec_sz, g_vid_dmax, sd, g_vdec_w, g_vdec_h);
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t accent = curr_colors->sel_c;
@@ -548,7 +555,10 @@ vid_result_t video_play(const char *path)
         g_vid_fms = (int)(HAL_GetTick() - t_dec0);   // real work this frame (decode+draw), excl. vsync wait
 
         // Pacing wait doubles as prefetch time: read upcoming frames / feed
-        // audio in small steps until the presentation time arrives.
+        // audio in small steps until the presentation time arrives. The read time
+        // spent here is the overlap that keeps the next frame's rd= small; the HUD
+        // (drawn just above) reports this window's total as pf= on the next frame.
+        g_vdec_pf_ms = 0;
         while ((int32_t)(HAL_GetTick() - due) < 0) {
             wdog_refresh();
             if (!pf_step(&a, spd, paused, &na_seen, false))
