@@ -1,6 +1,8 @@
 #ifndef STUB_ODROID_OVERLAY_H
 #define STUB_ODROID_OVERLAY_H
 #include <stdint.h>
+#include <stddef.h>
+size_t odroid_overlay_cache_file_in_ram(const char *file_path, uint8_t *dest_address);
 typedef enum { ODROID_DIALOG_INIT, ODROID_DIALOG_PREV, ODROID_DIALOG_NEXT, ODROID_DIALOG_ENTER, ODROID_DIALOG_FOCUS_GAINED } odroid_dialog_event_t;
 typedef struct odroid_dialog_choice odroid_dialog_choice_t;
 typedef bool (*odroid_dialog_cb)(odroid_dialog_choice_t *, odroid_dialog_event_t, uint32_t);

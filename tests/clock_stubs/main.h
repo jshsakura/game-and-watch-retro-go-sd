@@ -7,4 +7,5 @@ void HAL_Delay(uint32_t ms); uint32_t HAL_GetTick(void);
 void wdog_refresh(void);
 int HAL_SAI_Transmit_DMA(SAI_HandleTypeDef*, uint8_t*, uint16_t);
 int HAL_SAI_DMAStop(SAI_HandleTypeDef*);
+void SCB_CleanDCache_by_Addr(uint32_t *addr, int32_t dsize);  /* CMSIS cache op (MP3-alarm staging) */
 #endif

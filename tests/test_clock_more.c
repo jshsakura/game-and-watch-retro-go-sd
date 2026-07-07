@@ -99,6 +99,12 @@ void clock_gif_blit(uint16_t*f,uint32_t n){(void)f;(void)n;}
 bool clock_gif_load(void){return false;} void clock_gif_free(void){}
 int clock_gif_status(void){return 1;}
 const char *clock_gif_diag(void){return "";}
+/* MP3-alarm engine — inert here (no alarm file, so ring_audio always beeps) */
+bool clock_alarm_mp3_available(void){ return false; }
+bool clock_alarm_mp3_start(void){ return false; }
+void clock_alarm_mp3_service(int v){ (void)v; }
+void clock_alarm_mp3_stop(void){}
+bool clock_alarm_mp3_active(void){ return false; }
 
 /* simulated SAI DMA (only linked because rg_clock_show/tone_feed reference it;
  * never exercised by these tests) */

@@ -28,6 +28,11 @@ $CC -O2 -Wall -std=gnu11 -Itests/clock_stubs -ICore/Src/porting/lib/gifdec \
     tests/test_clock_gif.c                               -o /tmp/mtest/test_clock_gif
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/clock_stubs \
     tests/test_clock_more.c                              -o /tmp/mtest/test_clock_more
+# MP3-alarm module: overlay SIZE linker symbols faked with --defsym (small, so the
+# staging memset stays in-bounds); -no-pie keeps those absolute symbols addressable.
+$CC -O2 -Wall -Wextra -std=gnu11 -no-pie -Itests/clock_stubs \
+    -Wl,--defsym=_OVERLAY_MUSIC_BSS_SIZE=64 -Wl,--defsym=_OVERLAY_MUSIC_SIZE=64 \
+    tests/test_clock_mp3.c                               -o /tmp/mtest/test_clock_mp3
 mkdir -p /tmp/favtest
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/fav_stubs \
     -DFAVORITES_FILE='"/tmp/favtest/favorites.txt"' \
@@ -64,6 +69,7 @@ fi
 /tmp/mtest/test_clock_alarm || rc=1
 /tmp/mtest/test_clock_gif   || rc=1
 /tmp/mtest/test_clock_more  || rc=1
+/tmp/mtest/test_clock_mp3   || rc=1
 /tmp/mtest/test_favorites   || rc=1
 /tmp/mtest/test_storage_sd1 || rc=1
 /tmp/mtest/test_storage_sd0 || rc=1

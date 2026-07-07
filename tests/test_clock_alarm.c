@@ -69,6 +69,16 @@ bool clock_gif_load(void){return false;} void clock_gif_free(void){}
 int clock_gif_status(void){return 1;}
 const char *clock_gif_diag(void){return "";}
 
+/* MP3-alarm engine — controllable stubs (its own logic is tested in
+ * tests/test_clock_mp3.c). Here we only need to steer ring_audio's source pick. */
+static int stub_mp3_avail = 0, stub_mp3_start_ok = 0;
+static int mp3_service_calls = 0, mp3_stop_calls = 0, mp3_active = 0, mp3_service_vol = -1;
+bool clock_alarm_mp3_available(void){ return stub_mp3_avail; }
+bool clock_alarm_mp3_start(void){ mp3_active = stub_mp3_start_ok; return stub_mp3_start_ok; }
+void clock_alarm_mp3_service(int v){ mp3_service_calls++; mp3_service_vol = v; }
+void clock_alarm_mp3_stop(void){ mp3_stop_calls++; mp3_active = 0; }
+bool clock_alarm_mp3_active(void){ return mp3_active; }
+
 /* simulated SAI DMA (mirrors gw_audio.c semantics) */
 uint32_t audio_mute;
 int16_t audiobuffer_dma[AUDIO_BUFFER_LENGTH * 2];
@@ -200,6 +210,34 @@ static void test_tone_dma_sync(void)
     CHECK(sum == 0, "buffer silenced after stop");
 }
 
+/* ring_audio picks the source ONCE at ring start: MP3 file -> MP3, else beep;
+ * a failed MP3 start falls straight back to the beep (never a silent alarm). */
+static void test_ring_source(void)
+{
+    /* no alarm file -> synth beep */
+    s_ring_mp3 = false; s_tone_on = false; s_anim = 0; s_album_used = false;
+    stub_mp3_avail = 0; mp3_service_calls = 0;
+    dma_state = DMA_TRANSFER_STATE_HF; dma_counter = 1;
+    ring_audio(0, true);
+    CHECK(!s_ring_mp3 && s_tone_on && mp3_service_calls == 0, "ring: beep when no MP3 file");
+
+    /* alarm file present + decodes -> MP3, beep untouched, lists flagged dirty */
+    s_ring_mp3 = false; s_tone_on = false; s_album_used = false;
+    stub_mp3_avail = 1; stub_mp3_start_ok = 1;
+    mp3_service_calls = 0; mp3_stop_calls = 0;
+    ring_audio(0, true);
+    CHECK(s_ring_mp3 && !s_tone_on && mp3_service_calls == 1, "ring: MP3 when file present + decodable");
+    CHECK(s_album_used, "ring: MP3 flags shared_files dirty (lists rebuilt on exit)");
+    ring_audio(0, false);   /* dismiss */
+    CHECK(!s_ring_mp3 && mp3_stop_calls == 1, "ring: dismiss stops the MP3");
+
+    /* file present but decode fails -> fall back to the beep */
+    s_ring_mp3 = false; s_tone_on = false;
+    stub_mp3_avail = 1; stub_mp3_start_ok = 0; mp3_service_calls = 0;
+    ring_audio(0, true);
+    CHECK(!s_ring_mp3 && s_tone_on && mp3_service_calls == 0, "ring: undecodable MP3 falls back to beep");
+}
+
 static void test_next_alarm(void)
 {
     reset_alarms(); add_alarm(7, 0, 1); add_alarm(22, 30, 1);
@@ -219,6 +257,7 @@ int main(void)
     test_window();
     test_cfg_roundtrip();
     test_tone_dma_sync();
+    test_ring_source();
     test_next_alarm();
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;

@@ -38,6 +38,7 @@
 #include "rg_clock.h"
 #include "rg_clock_gif.h"
 #include "rg_clock_album.h"
+#include "rg_clock_alarm_mp3.h"
 
 /* forward-declared to keep the heavy rg_emulators.h out of this TU (and the host
  * clock preview harness); rg_clock already pulls in gui.h for the tab accessors. */
@@ -1406,6 +1407,48 @@ static void tone_feed(uint32_t now, bool ringing)
     }
 }
 
+/* ---- alarm audio dispatch (MP3 file if present, else the synth beep) -----
+ *
+ * At ring start we pick ONCE: if /clock/alarm.mp3 exists it plays looped through
+ * the Music-overlay decoder (rg_clock_alarm_mp3.c); otherwise the synthesised
+ * beep above. The decoder overlay lives in RAM_EMU, which the GIF/photo
+ * background borrows as its decode arena, so an MP3 ring first SUSPENDS that
+ * background (freeing the arena) and RESTORES it when the alarm stops — the ring
+ * overlay dominates the screen anyway, so the background just goes solid for the
+ * ring. Any MP3 failure falls straight back to the beep here: the alarm is never
+ * silent. s_album_used is forced on so the launcher's ROM lists (which share the
+ * same arena) are rebuilt on exit. */
+static bool s_ring_mp3 = false;   /* this ring is playing the MP3, not the beep */
+
+static void clock_bg_suspend(void)   /* free the shared_files arena for the overlay */
+{
+    if (s_anim == ANIM_GIF)   clock_gif_free();
+    if (s_anim == ANIM_PHOTO) clock_album_close();
+}
+static void clock_bg_restore(void)   /* reload the background after the ring */
+{
+    if (s_anim == ANIM_GIF)   clock_gif_load();
+    if (s_anim == ANIM_PHOTO && clock_album_open()) s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS;
+}
+
+static void ring_audio(uint32_t now, bool ringing)
+{
+    if (!ringing) {                     /* dismissed / snoozed / stopped / leaving */
+        if (s_ring_mp3) { clock_alarm_mp3_stop(); clock_bg_restore(); s_ring_mp3 = false; }
+        tone_feed(now, false);          /* also stops the beep path if it was used */
+        return;
+    }
+    if (!s_ring_mp3 && !s_tone_on) {     /* ring just started — choose the source once */
+        if (clock_alarm_mp3_available()) {
+            clock_bg_suspend();
+            if (clock_alarm_mp3_start()) { s_ring_mp3 = true; s_album_used = true; }
+            else clock_bg_restore();     /* decode failed -> fall back to the beep */
+        }
+    }
+    if (s_ring_mp3) clock_alarm_mp3_service(volume_tbl[odroid_audio_volume_get()]);
+    else            tone_feed(now, true);
+}
+
 /* ---- main loop -------------------------------------------------------- */
 
 void rg_clock_show(void)
@@ -1464,7 +1507,7 @@ void rg_clock_show(void)
 
         if (ringing && (k.bitmask & ~prev.bitmask)) {
             alarm_ring_until = 0;
-            tone_feed(now, false);
+            ring_audio(now, false);
             if (pressed(&k, &prev, ODROID_INPUT_A))
                 s_snooze_tick = now + SNOOZE_MS;       /* A = snooze */
             else
@@ -1473,7 +1516,7 @@ void rg_clock_show(void)
             HAL_Delay(40);
             continue;
         }
-        tone_feed(now, ringing);   /* synthesised beep while the alarm rings */
+        ring_audio(now, ringing);   /* MP3 file if present, else the synthesised beep */
 
         /* POWER = SLEEP that RESUMES back into the clock — a bedside clock
          * should not quit on sleep. odroid_system_sleep() fades the CURRENT
@@ -1483,7 +1526,7 @@ void rg_clock_show(void)
          * across sleep, so drop and reload it. Exit is the PAUSE-menu "Exit"
          * item only. */
         if (pressed(&k, &prev, ODROID_INPUT_POWER)) {
-            tone_feed(now, false);
+            ring_audio(now, false);
             bool had_gif = (s_anim == ANIM_GIF);
             if (had_gif) clock_gif_free();
             odroid_system_sleep();          /* fade -> STOP sleep -> resume here */
@@ -1652,7 +1695,7 @@ void rg_clock_show(void)
         HAL_Delay(poll);
     }
 
-    tone_feed(0, false);   /* make sure the SAI is stopped on the way out */
+    ring_audio(0, false);   /* make sure the SAI is stopped (beep or MP3) on the way out */
     if (dimmed) lcd_backlight_set(odroid_display_get_backlight_raw());   /* never leave the launcher dimmed */
     clock_gif_free();      /* release the transient GIF cache */
     /* If we borrowed shared_files for photos, its contents are now overwritten.

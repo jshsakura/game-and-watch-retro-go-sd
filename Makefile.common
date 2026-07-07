@@ -429,6 +429,7 @@ Core/Src/retro-go/rg_favorites.c \
 Core/Src/retro-go/rg_clock.c \
 Core/Src/retro-go/rg_clock_gif.c \
 Core/Src/retro-go/rg_clock_album.c \
+Core/Src/retro-go/rg_clock_alarm_mp3.c \
 Core/Src/porting/lib/gifdec/gifdec.c \
 Core/Src/retro-go/gw_firmware_abi.c \
 Core/Src/retro-go/rg_storage.c \
@@ -1628,6 +1629,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	@$(CP) -O binary --only-section=.overlay_celeste $(BUILD_DIR)/$(TARGET).elf $(HOMEBREWS_FOLDER)/celeste.bin
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Music.bin"
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Video.bin"
+	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(CORES_DIR)/clockmp3.bin"   # Clock MP3-alarm decoder (headerless .overlay_music, staged into RAM_EMU by rg_clock_alarm_mp3.c)
 	@$(CP) -O binary --only-section=.overlay_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Zelda 3.bin"
 	@$(CP) -O binary --only-section=.rodata_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/zelda3.ro"
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
