@@ -1673,13 +1673,14 @@ static bool clock_settings_menu(void)
      * values ("Off"/"21:00"/...) and the brightness gauge */
     char v_night_start[8], v_night_end[8], v_bright[ODROID_BACKLIGHT_LEVEL_COUNT + 2];
     odroid_dialog_choice_t opts[] = {
-        {8, curr_lang->s_Clock_Set_Time, v_settime, 1, cb_enter},
-        {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
+        /* device-wide output controls first, like the common settings menu */
+        {15, curr_lang->s_Brightness, v_bright, 1, cb_bright},
         {7, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
 #if CLOCK_SD_MEDIA
         {12, curr_lang->s_Clock_Alarm_Sound, v_alarmsnd, 1, cb_alarmsnd},
 #endif
-        {15, curr_lang->s_Brightness, v_bright, 1, cb_bright},
+        {8, curr_lang->s_Clock_Set_Time, v_settime, 1, cb_enter},
+        {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
         {0, curr_lang->s_Clock_Theme,  v_theme,  1, cb_theme},
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},
         {2, curr_lang->s_Clock_Anim,   v_anim,   1, cb_anim},

@@ -97,7 +97,11 @@ static bool GLOBAL_DATA main_menu_timeout_cb(odroid_dialog_choice_t *option, odr
         timeout = MIN(timeout + TIMEOUT_STEP, TIMEOUT_MAX);
         odroid_settings_MainMenuTimeoutS_set(timeout);
     }
-    sprintf(option->value, "%d %s", odroid_settings_MainMenuTimeoutS_get() / TIMEOUT_STEP, curr_lang->s_Minute);
+    /* 0 already meant "never sleep" in the loop check — say so instead of "0 min" */
+    if (odroid_settings_MainMenuTimeoutS_get() == 0)
+        sprintf(option->value, "%s", curr_lang->s_Clock_Off);
+    else
+        sprintf(option->value, "%d %s", odroid_settings_MainMenuTimeoutS_get() / TIMEOUT_STEP, curr_lang->s_Minute);
     return event == ODROID_DIALOG_ENTER;
 }
 
