@@ -247,8 +247,58 @@ void odroid_overlay_draw_text(int x, int y, int w, const char *text, uint16_t co
     }
 }
 int odroid_overlay_get_font_width(void) { return 8; }
-int odroid_overlay_dialog(const char *h, odroid_dialog_choice_t *o, int s, void (*r)(void), int f)
-{ (void)h;(void)o;(void)s;(void)r;(void)f; return -1; }
+
+/* A faithful-enough render of the SHARED common dialog (odroid_overlay.c
+ * odroid_overlay_draw_dialog): centred panel, header bar, one row per option
+ * with the label LEFT and value RIGHT, the selected row highlighted. Both the
+ * clock settings menu AND the reworked alarm editor go through THIS one path in
+ * the harness — exactly as they both go through odroid_overlay_dialog on the
+ * device — so a preview of either proves they share the same panel + alignment.
+ * Draws one static frame (dialog over the live clock background) and returns -1
+ * (as if B/cancel), so the caller's loop renders once and exits. */
+static int s_dlg_sel_preview = 0;
+int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *o, int s, void (*repaint)(void), int f)
+{
+    (void)f;
+    int n = 0; while (o[n].update_cb || o[n].label) { if (o[n].id == 0x0F0F0F0F) break; n++; }
+    int sel = (s_dlg_sel_preview >= 0 && s_dlg_sel_preview < n) ? s_dlg_sel_preview : (s < 0 ? 0 : s);
+    for (int i = 0; i < n; i++) if (o[i].update_cb) o[i].update_cb(&o[i], ODROID_DIALOG_INIT, sel);
+
+    const clock_theme_t *t = TH();
+    if (repaint) repaint();                 /* live clock background under the panel */
+    for (int i = 0; i < W*H; i++) fb[i] = mix565(fb[i], CLOCK_BLACK, 6);  /* darken */
+
+    int rh = 16, pad = 8;
+    int maxl = header ? i18n_get_text_width(header) : 0, maxr = 0;
+    for (int i = 0; i < n; i++) {
+        int lw = i18n_get_text_width(o[i].label);
+        int rw = (o[i].value && o[i].value[0]) ? i18n_get_text_width(o[i].value) : 0;
+        if (lw > maxl) maxl = lw; if (rw > maxr) maxr = rw;
+        if (lw + rw + 14 > maxl + maxr + 14) {}
+    }
+    int inner = maxl + (maxr ? maxr + 14 : 0);
+    int pw = inner + pad*2; if (pw < 140) pw = 140; if (pw > 300) pw = 300;
+    int ph = 22 + n*rh + pad;
+    int px = (W - pw)/2, py = (H - ph)/2; if (py < 8) py = 8;
+    odroid_overlay_draw_fill_rect(px-2, py-2, pw+4, ph+4, mix565(t->scr, t->ink, 7));
+    odroid_overlay_draw_fill_rect(px, py, pw, ph, mix565(t->scr, t->ink, 1));
+    if (header) i18n_draw_text_line(px + pad, py + 4, pw - pad, header, t->alarm, CLOCK_BLACK, 1);
+    odroid_overlay_draw_fill_rect(px + pad, py + 18, pw - 2*pad, 1, mix565(t->scr, t->ink, 5));
+
+    int y = py + 22;
+    for (int i = 0; i < n; i++, y += rh) {
+        bool cur = (i == sel);
+        uint16_t col = (o[i].enabled >= 1) ? (cur ? t->ink : mix565(t->scr, t->ink, 9))
+                                           : mix565(t->scr, t->ink, 4);
+        if (cur) odroid_overlay_draw_fill_rect(px + 4, y - 1, pw - 8, rh - 1, mix565(t->scr, t->ink, 3));
+        i18n_draw_text_line(px + pad, y, pw - pad, o[i].label, col, CLOCK_BLACK, 1);
+        if (o[i].value && o[i].value[0]) {
+            int rw = i18n_get_text_width(o[i].value);
+            i18n_draw_text_line(px + pw - pad - rw, y, rw + 2, o[i].value, col, CLOCK_BLACK, 1);
+        }
+    }
+    return -1;
+}
 
 static odroid_gamepad_state_t stub_pad;
 void odroid_input_read_gamepad(odroid_gamepad_state_t *s){ *s = stub_pad; }
@@ -275,7 +325,7 @@ static const lang_t KO = {
     .s_Clock_Hint_Stop="A 시작/정지  B 리셋",
     .s_Clock_Hint_TimerStop="A 시작/정지  B 리셋  위아래 분",
     .s_Clock_Hint_Editor="A 편집  TIME 켬/끔  GAME 삭제  B 완료",
-    .s_Clock_Hint_Edit="좌우 자리  위아래 조절  A 확인  B 취소",
+    .s_Clock_Hint_Edit="좌우 자리  위아래 조절  A 확인  GAME 삭제  B 취소",
     .s_Clock_Add_Alarm="알람 추가", .s_Clock_Done="완료",
     .s_Clock_On="켬", .s_Clock_Off="끔",
     .s_Clock_Format="시간 형식", .s_Clock_DND="방해 금지",
@@ -375,8 +425,13 @@ int main(void)
     s_anim = ANIM_GIF; clock_gif_load();
     paint(MODE_CLOCK, 0, false); dump("clock_gif");
     clock_gif_free(); s_anim = 0;
-    /* 7) alarm editor popup (row 0 selected) */
-    render_alarm_setup(0); dump("editor");
+    /* 7) alarm editor — now the SHARED common dialog (odroid_overlay_dialog), so
+     * this goes through the same panel path as the settings dialog below; the
+     * harness dialog returns -1 (as if B) so it renders one frame and exits. */
+    s_dlg_sel_preview = 0; clock_alarm_setup(); dump("editor");
+    /* 7b) the clock SETTINGS dialog, same path — proves the alarm editor and the
+     * settings menu share one panel + alignment (device feedback: "왜 얘만 달라"). */
+    s_dlg_sel_preview = 4; clock_settings_menu(); dump("settings");
     /* 8) full-screen clone-view alarm editor (hour field lit phase) */
     render_alarm_edit(&s_alarms[0], 0, false); dump("editor_edit");
 
@@ -385,7 +440,7 @@ int main(void)
      * backgrounds), plus a couple in 24h to check the wider block. */
     {
         static const struct { int face; const char *name; } NF[] = {
-            { FACE_THIN, "thin" }, { FACE_OUTLINE, "outline" }, { FACE_FACET, "facet" },
+            { FACE_THIN, "thin" }, { FACE_OUTLINE, "outline" }, { FACE_BUBBLE, "bubble" },
             { FACE_FLIP, "flip" }, { FACE_LED, "led" }, { FACE_LCD, "lcd" },
         };
         s_theme = 0; s_dnd = false;
@@ -405,8 +460,8 @@ int main(void)
         }
         /* 24h width check on two contrasting faces (leading zero shows) */
         s_hour24 = true; s_ghost_on = true;
-        s_face_override = FACE_FACET; s_theme = 6; /* Neon */
-        paint(MODE_CLOCK, 1000, false); dump("face_facet_24h");
+        s_face_override = FACE_BUBBLE; s_theme = 6; /* Neon */
+        paint(MODE_CLOCK, 1000, false); dump("face_bubble_24h");
         s_face_override = FACE_LED; s_theme = 5;   /* Aqua */
         paint(MODE_CLOCK, 1000, false); dump("face_led_24h");
         s_hour24 = false;
