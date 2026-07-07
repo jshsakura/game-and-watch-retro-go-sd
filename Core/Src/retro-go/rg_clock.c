@@ -1483,6 +1483,22 @@ static void render_alarm_setup(int sel)
     const clock_theme_t *t = TH();
     uint16_t *fb = lcd_get_active_buffer();
     fb_fill_screen(fb, t->scr);
+    /* keep the user's living background behind the panel instead of a hard
+     * wipe (device feedback: the editor looked detached from the clock).
+     * One background frame per dirty-render + a dark scrim so the panel
+     * still dominates. */
+    if (s_anim != 0) {
+        uint32_t bt = HAL_GetTick();
+#if CLOCK_SD_MEDIA
+        if (s_anim == ANIM_GIF && clock_gif_ready()) clock_gif_blit(fb, bt);
+        else if (s_anim == ANIM_PHOTO && clock_album_ready())
+            memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
+        else
+#endif
+        if (s_anim == ANIM_SCENE) draw_scene(bt, t);
+        for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++)
+            fb[i] = mix565(fb[i], CLOCK_BLACK, 9);
+    }
 
     int rows = s_alarm_count + ALARM_EXTRA_ROWS, rh = 18;
     int pw = 240, ph = 30 + rows * rh + 10;
