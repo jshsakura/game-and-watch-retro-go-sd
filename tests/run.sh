@@ -39,6 +39,10 @@ $CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs \
     tests/test_clock_more.c                              -o /tmp/mtest/test_clock_more
 $CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/clock_stubs \
     tests/test_clock_sd0.c                               -o /tmp/mtest/test_clock_sd0
+# All-state alarm PURE logic (next-alarm epoch math, wake-cause table, tone
+# presets) — rg_alarm.c compiled with -DRG_ALARM_HOST so no HAL is needed.
+$CC -O2 -Wall -Wextra -std=gnu11 -DRG_ALARM_HOST -ICore/Inc/retro-go \
+    tests/test_alarm.c                                   -o /tmp/mtest/test_alarm
 # MP3-alarm module: overlay SIZE linker symbols faked with --defsym (small, so the
 # staging memset stays in-bounds); -no-pie keeps those absolute symbols addressable.
 $CC -O2 -Wall -Wextra -std=gnu11 -no-pie -Itests/clock_stubs \
@@ -82,6 +86,7 @@ fi
 /tmp/mtest/test_clock_gif   || rc=1
 /tmp/mtest/test_clock_more  || rc=1
 /tmp/mtest/test_clock_sd0   || rc=1
+/tmp/mtest/test_alarm       || rc=1
 /tmp/mtest/test_clock_mp3   || rc=1
 /tmp/mtest/test_favorites   || rc=1
 /tmp/mtest/test_storage_sd1 || rc=1

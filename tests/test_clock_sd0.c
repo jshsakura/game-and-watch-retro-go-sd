@@ -169,13 +169,19 @@ int main(void)
     clock_config_load();
     CHECK(s_anim == 0, "retired ambient (1) migrates to Off");
 
-    /* 5) save must NOT emit any SD-only media keys on a flash build */
+    /* 5) save must NOT emit SD-only MEDIA keys on a flash build, but DOES now
+     * persist the alarm sound as a synth-preset token (selectable on SD0 too) */
     s_anim = ANIM_SCENE; s_scene = 5;
     clock_config_save();
     CHECK(!file_contains("photospeed="), "flash save omits photospeed=");
     CHECK(!file_contains("bgfile="),     "flash save omits bgfile=");
-    CHECK(!file_contains("alarmsnd="),   "flash save omits alarmsnd=");
+    CHECK(file_contains("alarmsnd="),    "flash save writes the synth-preset token");
     CHECK(file_contains("anim=2"),       "flash save still writes anim/scene/theme");
+
+    /* 6) the synth preset round-trips through the alarmsnd= token on flash */
+    write_cfg("alarmsnd=Chirp\n");
+    clock_config_load();
+    CHECK(s_beep_preset == RG_TONE_CHIRP, "flash alarmsnd= token selects the synth preset");
 
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;

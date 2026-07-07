@@ -19,6 +19,7 @@
 #include "rg_i18n.h"
 #include "odroid_overlay.h"     // odroid_overlay_settings_menu + dialog choices
 #include "gui.h"                // curr_colors
+#include "rg_alarm.h"           // all-state alarm: ring during playback
 #include <string.h>
 #include <stdio.h>
 
@@ -427,6 +428,10 @@ vid_result_t video_play(const char *path)
     pf_ent_t ent;
     while (pf_fetch(&a, &ent, spd, paused, &na_seen)) {
         wdog_refresh();
+        /* All-state alarm: resuming a desynced AVI mid-stream is risky, so on a
+         * due alarm ring in place then STOP cleanly back to the browser (the
+         * accepted degraded behaviour for the media apps). */
+        if (rg_alarm_poll()) { stopped = true; break; }
         odroid_input_read_gamepad(&joy);
         #define HIT(b) (joy.values[b] && !prev.values[b])
         bool any_press = false;

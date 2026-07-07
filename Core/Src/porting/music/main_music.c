@@ -26,6 +26,7 @@
 #include "common.h"
 #include "gui.h"
 #include "main_music.h"
+#include "rg_alarm.h"   /* all-state alarm: ring while the music app is open */
 #include "music_id3.h"
 #include "music_audio.h"
 #include "music_cover.h"
@@ -887,6 +888,9 @@ static void music_player(int start_pi)
         if (recompose) { recompose = false; if (!screen_off) compose_static(&ps); dirty = true; }
 
         wdog_refresh();
+        /* All-state alarm: ring in place on a due alarm; playback pauses for the
+         * ring and the loop's own feed resumes it after dismissal. */
+        if (rg_alarm_poll()) { recompose = true; dirty = true; }
         odroid_input_read_gamepad(&joy);
         #define P(b) (joy.values[b] && !prev.values[b])
 
@@ -1015,6 +1019,7 @@ void app_main_music(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     while (true) {
         wdog_refresh();
+        if (rg_alarm_poll()) dirty = true;   /* all-state alarm: ring from the browser too */
         odroid_input_read_gamepad(&joy);
         #define PRESSED(b) (joy.values[b] && !prev.values[b])
 

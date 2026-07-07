@@ -20,6 +20,7 @@
 #include "gui.h"               // curr_colors
 #include "music_ui.h"          // ui_list_draw + list_view_t/list_item_t + LIST_*
 #include "main_video.h"
+#include "rg_alarm.h"          // all-state alarm: ring from the video browser
 #include "video_play.h"
 #include "video_ui.h"          // snapshot+overlay list (instant scrolling)
 
@@ -247,6 +248,7 @@ void app_main_video(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     while (true) {
         wdog_refresh();
+        if (rg_alarm_poll()) dirty = true;   /* all-state alarm: ring from the video browser */
         odroid_input_read_gamepad(&joy);
         #define HIT(b) (joy.values[b] && !prev.values[b])
 

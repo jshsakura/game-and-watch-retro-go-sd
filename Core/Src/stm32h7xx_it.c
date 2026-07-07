@@ -360,5 +360,22 @@ void OCTOSPI1_IRQHandler(void)
 
 /* USER CODE BEGIN 1 */
 
+/**
+  * @brief RTC Alarm A interrupt — wakes the device from STOP2 deep sleep for the
+  * all-state alarm. Overrides the weak default handler in the startup file. The
+  * wake itself is the whole point; HAL_RTC_AlarmIRQHandler() clears the flag and
+  * the EXTI line, and the resuming context checks the next-alarm cache and rings.
+  */
+void RTC_Alarm_IRQHandler(void)
+{
+  HAL_RTC_AlarmIRQHandler(&hrtc);
+}
+
+/* No-op override: we only care that the alarm woke us, not the callback. */
+void HAL_RTC_AlarmAEventCallback(RTC_HandleTypeDef *rtc)
+{
+  (void)rtc;
+}
+
 /* USER CODE END 1 */
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
