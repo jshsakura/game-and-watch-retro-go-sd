@@ -90,6 +90,13 @@ WWDG_HandleTypeDef hwwdg1;
 /* USER CODE BEGIN PV */
 
 PERSISTENT(boot_magic) volatile uint32_t boot_magic;
+/* Wake-cause flags latched at boot for the all-state alarm: the RTC Alarm A
+ * flag (an alarm woke us from deep sleep) and the power-button wakeup-pin flag.
+ * Read straight from the RTC/PWR registers BEFORE anything clears them (both
+ * live in the always-on backup / PWR domains, so they survive STANDBY where
+ * boot_magic does not). Consumed in app_main(). Plain globals, not PERSISTENT. */
+volatile uint8_t boot_alarm_flag;
+volatile uint8_t boot_wkup_flag;
 uint32_t log_idx PERSISTENT(log_idx);
 char logbuf[1024 * 4] PERSISTENT(logbuf) __attribute__((aligned(4)));
 
@@ -395,6 +402,13 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
+  // Latch the wake cause for the all-state alarm BEFORE the wakeup pin is
+  // reconfigured below: RTC Alarm A flag (deep-sleep alarm wake) and the
+  // power-button wakeup flag. Direct register reads — the RTC handle is not
+  // initialised yet, and both registers are in always-on domains.
+  boot_alarm_flag = (RTC->SR & RTC_SR_ALRAF) ? 1 : 0;
+  boot_wkup_flag  = (PWR->WKUPFR & PWR_WKUPFR_WKUPF1) ? 1 : 0;
+
   // Power pin as Input
   HAL_PWR_DisableWakeUpPin(PWR_WAKEUP_PIN1_LOW);
 
@@ -638,6 +652,12 @@ static void MX_NVIC_Init(void)
   /* OCTOSPI1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(OCTOSPI1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(OCTOSPI1_IRQn);
+
+  /* RTC Alarm A wakes the device from STOP2 deep sleep for the all-state alarm.
+   * The handler only needs to clear the flag (the wake itself is the point), so
+   * a low priority is fine. */
+  HAL_NVIC_SetPriority(RTC_Alarm_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(RTC_Alarm_IRQn);
 }
 
 /**

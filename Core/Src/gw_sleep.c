@@ -11,6 +11,7 @@
 #include "gw_lcd.h"
 #include "gw_audio.h"
 #include "rg_rtc.h"
+#include "rg_alarm.h"   /* refresh next-alarm cache + arm RTC Alarm A before sleep */
 #if SD_CARD == 1
 #include "gw_sdcard.h"
 #include "ff.h"
@@ -105,6 +106,15 @@ void GW_EnterDeepSleep(bool standby, sleep_pre_wakeup_callback_t pre_wakeup_call
 
   // Enable wakup by PIN1, the power button
   HAL_PWR_EnableWakeUpPin(PWR_WAKEUP_PIN1_LOW);
+
+  // All-state alarm: while the filesystem is still mounted, refresh the
+  // next-alarm cache from clock.cfg and arm RTC Alarm A (hour+minute match,
+  // date/seconds masked = daily) so this deep sleep still wakes to ring.
+  // rg_alarm_arm_rtc() deactivates + clears any stale alarm first, so re-arming
+  // on every sleep entry never leaves a stale ALRAF behind. Both work on SD1
+  // (FatFs still mounted here, before sdcard_deinit) and SD0 (LittleFS).
+  rg_alarm_cache_refresh();
+  rg_alarm_arm_rtc();
 
 #if SD_CARD == 1
   // Snapshot the clock while the SD is still mounted: if the battery fully

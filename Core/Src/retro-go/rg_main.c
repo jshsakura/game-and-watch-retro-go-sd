@@ -22,6 +22,10 @@
 #include "rg_welcome_prompt.h"
 #include "rg_clock.h"
 #include "rg_alarm.h"   /* resident all-state next-alarm cache */
+
+/* Wake-cause flags latched at reset in main.c (before anything clears them). */
+extern volatile uint8_t boot_alarm_flag;
+extern volatile uint8_t boot_wkup_flag;
 #include "rg_clock_gif.h"
 #include "bitmaps.h"
 #include "error_screens.h"
@@ -1072,6 +1076,17 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
      * a card-less unit is that much more likely to be used as a clock. */
     GW_RTC_RestoreIfLost();
 
+    /* Decide whether THIS boot is a deep-sleep alarm wake. Use the epoch that
+     * was armed (mirrored in RTC backup DR1, which survives STANDBY) — not a
+     * fresh recompute, which would point at the FUTURE next alarm and never look
+     * due. main() latched the RTC Alarm A + power-button flags at reset. */
+    rg_alarm_cache_load_backup();
+    bool alarm_wake = rg_alarm_wake_decide(boot_alarm_flag, boot_wkup_flag,
+                                           rg_alarm_cache_due()) == RG_WAKE_ALARM;
+    /* consume the standby alarm flag so a later normal boot can't re-trigger */
+    HAL_PWR_EnableBkUpAccess();
+    __HAL_RTC_ALARM_CLEAR_FLAG(&hrtc, RTC_FLAG_ALRAF);
+
     /* Prime the resident next-alarm cache from /clock/clock.cfg now that the
      * clock is valid and the FS is mounted: this is what lets the alarm ring in
      * every state (launcher, in-game, music/video) and arms the deep-sleep RTC
@@ -1103,6 +1118,15 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
 
     emulators_init();
     rg_emulators_restore_main_menu_browse_path();
+
+    /* All-state alarm: if a deep-sleep RTC alarm woke us, ring FIRST (the clock
+     * app rings immediately for a due alarm), then fall through to the normal
+     * startup-file auto-resume unchanged. The StartupFile setting is persisted,
+     * so nothing is lost by detouring through the clock first. Runs after
+     * emulators_init() so rg_clock_show()'s list rebuild on exit is valid. */
+    if (alarm_wake) {
+        rg_clock_show();
+    }
 
     // Start the previously running emulator directly if it's a valid pointer.
     // If the user holds down TIME during startup, skip resume lookup and go
