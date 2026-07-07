@@ -60,6 +60,7 @@ const lang_t lang_ru_ru LANG_DATA = {
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "Звук будильника",
     .s_Clock_Night_Off = "Ночью выкл",
+    .s_Clock_Night_End = "Конец ночи",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "Пиксель-фон",
     .s_Clock_Volume = "Alarm volume",

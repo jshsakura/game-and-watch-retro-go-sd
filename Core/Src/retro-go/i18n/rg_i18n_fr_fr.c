@@ -60,6 +60,7 @@ const lang_t lang_fr_fr LANG_DATA = {
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "Son alarme",
     .s_Clock_Night_Off = "Nuit éteinte",
+    .s_Clock_Night_End = "Fin nuit",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "Fond pixel",
     .s_Clock_Volume = "Alarm volume",

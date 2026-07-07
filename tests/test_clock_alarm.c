@@ -40,12 +40,14 @@ uint16_t *lcd_get_active_buffer(void) { return fb; }
 void lcd_swap(void) {}
 void lcd_sleep_while_swap_pending(void) {}
 void lcd_backlight_set(uint8_t b) { (void)b; }
-uint8_t odroid_display_get_backlight_raw(void) { return 178; }
-/* same raw table as odroid_display.c's backlightLevels[] — the clock's own
- * dedicated-brightness row indexes into this via odroid_display_backlight_raw_for_level */
-uint8_t odroid_display_backlight_raw_for_level(int level)
-{ static const uint8_t t[10] = {128,130,133,139,149,162,178,198,222,255};
-  if (level < 0) { level = 0; } if (level > 9) { level = 9; } return t[level]; }
+/* same raw table as odroid_display.c's backlightLevels[] / brightness_update_cb —
+ * the settings-menu Brightness row edits this directly via
+ * odroid_display_get_backlight()/set_backlight(), same as the common PAUSE menu */
+static const uint8_t backlightLevels[10] = {128,130,133,139,149,162,178,198,222,255};
+static int stub_backlight_level = 6;
+int odroid_display_get_backlight(void) { return stub_backlight_level; }
+void odroid_display_set_backlight(int level) { stub_backlight_level = level; }
+uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_backlight_level]; }
 /* rg_clock_show() (unused here, but compiled) reads the charger state for the
  * idle-backlight charging exception — not exercised by the alarm tests. */
 bq24072_state_t bq24072_get_state(void) { return BQ24072_STATE_DISCHARGING; }
