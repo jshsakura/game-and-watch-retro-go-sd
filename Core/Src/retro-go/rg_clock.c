@@ -1311,6 +1311,15 @@ static bool alarm_fired_in_window(int from_mod, int to_mod)
 
 /* ---- in-app alarm editor (opened from the PAUSE settings menu) --------- */
 
+/* forward decls: the Alarm Sound / DND rows folded into this popup (see
+ * ALARM_IDX_* below) reuse the same callbacks the main clock menu used to
+ * call directly for those rows; the callbacks themselves are defined later,
+ * next to the rest of the settings-menu callbacks. */
+static bool cb_dnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r);
+#if CLOCK_SD_MEDIA
+static bool cb_alarmsnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r);
+#endif
+
 static void alarm_time_str(char *out, size_t n, int h, int m)
 {
     if (s_hour24) snprintf(out, n, "%02d:%02d", h, m);
@@ -1386,6 +1395,21 @@ static bool alarm_edit_view(alarm_t *a)
     return result;
 }
 
+/* Row layout: [alarms...][+Add Alarm][Alarm Sound (SD builds only)][DND][Done].
+ * Alarm Sound and DND used to be their own rows on the main clock menu;
+ * folding them in here (right next to the alarms they gate) is what let the
+ * main popup drop under the no-scroll row budget (see clock_settings_menu). */
+#if CLOCK_SD_MEDIA
+#define ALARM_IDX_SOUND(cnt) ((cnt) + 1)
+#define ALARM_IDX_DND(cnt)   ((cnt) + 2)
+#define ALARM_EXTRA_ROWS     4   /* +Add, Alarm Sound, DND, Done */
+#else
+#define ALARM_IDX_DND(cnt)   ((cnt) + 1)
+#define ALARM_EXTRA_ROWS     3   /* +Add, DND, Done */
+#endif
+#define ALARM_IDX_ADD(cnt)   (cnt)
+#define ALARM_IDX_DONE(cnt)  ((cnt) + ALARM_EXTRA_ROWS - 1)
+
 /* A proper popup: clean solid base + bordered panel, repainted whole every
  * frame. (The old version re-scrimmed whatever was already on the swap
  * buffer, so each repaint stacked another darkening layer + stale rows.) */
@@ -1395,7 +1419,7 @@ static void render_alarm_setup(int sel)
     uint16_t *fb = lcd_get_active_buffer();
     fb_fill_screen(fb, t->scr);
 
-    int rows = s_alarm_count + 2, rh = 18;
+    int rows = s_alarm_count + ALARM_EXTRA_ROWS, rh = 18;
     int pw = 240, ph = 30 + rows * rh + 10;
     int px = (GW_LCD_WIDTH - pw) / 2, py = (GW_LCD_HEIGHT - 24 - ph) / 2;
     if (py < 6) py = 6;
@@ -1411,8 +1435,21 @@ static void render_alarm_setup(int sel)
             char ts[24]; alarm_time_str(ts, sizeof ts, s_alarms[i].hour, s_alarms[i].min);
             const char *tag = s_alarms[i].enabled ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off;
             snprintf(line, sizeof line, "%s        %s", ts, tag);
-        } else if (i == s_alarm_count) snprintf(line, sizeof line, "+ %s", curr_lang->s_Clock_Add_Alarm);
-        else snprintf(line, sizeof line, "%s", curr_lang->s_Clock_Done);
+        } else if (i == ALARM_IDX_ADD(s_alarm_count)) {
+            snprintf(line, sizeof line, "+ %s", curr_lang->s_Clock_Add_Alarm);
+#if CLOCK_SD_MEDIA
+        } else if (i == ALARM_IDX_SOUND(s_alarm_count)) {
+            odroid_dialog_choice_t tmp = {0}; char val[40] = "";
+            tmp.value = val; cb_alarmsnd(&tmp, ODROID_DIALOG_INIT, 0);
+            snprintf(line, sizeof line, "%s        %s", curr_lang->s_Clock_Alarm_Sound, tmp.value);
+#endif
+        } else if (i == ALARM_IDX_DND(s_alarm_count)) {
+            odroid_dialog_choice_t tmp = {0}; char val[12] = "";
+            tmp.value = val; cb_dnd(&tmp, ODROID_DIALOG_INIT, 0);
+            snprintf(line, sizeof line, "%s        %s", curr_lang->s_Clock_DND, tmp.value);
+        } else {
+            snprintf(line, sizeof line, "%s", curr_lang->s_Clock_Done);
+        }
         draw_centered_i18n(y, line, col);
     }
     draw_hintbar(curr_lang->s_Clock_Hint_Editor);
@@ -1529,11 +1566,26 @@ static void clock_alarm_setup(void)
     while (true) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
-        int rows = s_alarm_count + 2;
+        int rows = s_alarm_count + ALARM_EXTRA_ROWS;
 
         if (pressed(&k, &prev, ODROID_INPUT_B)) break;
         if (pressed(&k, &prev, ODROID_INPUT_UP))   { sel = (sel == 0) ? rows-1 : sel-1; dirty = true; }
         if (pressed(&k, &prev, ODROID_INPUT_DOWN)) { sel = (sel+1) % rows; dirty = true; }
+        if (pressed(&k, &prev, ODROID_INPUT_LEFT) || pressed(&k, &prev, ODROID_INPUT_RIGHT)) {
+            /* Alarm Sound / DND rows: L/R cycles the value, same as the
+             * generic dialog rows they used to be on the main clock menu. */
+            odroid_dialog_event_t ev = pressed(&k, &prev, ODROID_INPUT_LEFT) ? ODROID_DIALOG_PREV : ODROID_DIALOG_NEXT;
+#if CLOCK_SD_MEDIA
+            if (sel == ALARM_IDX_SOUND(s_alarm_count)) {
+                odroid_dialog_choice_t tmp = {0}; char val[40] = "";
+                tmp.value = val; cb_alarmsnd(&tmp, ev, 0); dirty = true;
+            } else
+#endif
+            if (sel == ALARM_IDX_DND(s_alarm_count)) {
+                odroid_dialog_choice_t tmp = {0}; char val[12] = "";
+                tmp.value = val; cb_dnd(&tmp, ev, 0); dirty = true;
+            }
+        }
         if (pressed(&k, &prev, ODROID_INPUT_A)) {
             if (sel < s_alarm_count) {
                 /* edit in the full-screen clone view; B there restores */
@@ -1541,7 +1593,7 @@ static void clock_alarm_setup(void)
                 if (!alarm_edit_view(&s_alarms[sel]))
                     s_alarms[sel] = backup;
                 odroid_input_read_gamepad(&prev);
-            } else if (sel == s_alarm_count) {
+            } else if (sel == ALARM_IDX_ADD(s_alarm_count)) {
                 if (s_alarm_count < MAX_ALARMS) {
                     s_alarms[s_alarm_count] = (alarm_t){ 7, 0, 1 };
                     sel = s_alarm_count; s_alarm_count++;
@@ -1553,7 +1605,9 @@ static void clock_alarm_setup(void)
                         alarm_delete_at(sel);
                     odroid_input_read_gamepad(&prev);
                 }
-            } else break;
+            } else if (sel == ALARM_IDX_DONE(s_alarm_count)) {
+                break;
+            }
             dirty = true;
         }
         else if (sel < s_alarm_count) {   /* exclusive with A: no same-frame edit+delete */
@@ -1589,10 +1643,15 @@ static const char *const THEME_LABEL[THEME_COUNT] =
 static const char *const FACE_NAME[FACE_COUNT] = {
     "7-seg", "Pixel", "Dot", "Thin", "Outline", "Nixie", "Flip", "LED", "LCD",
 };
-static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44], v_scene[24],
+static char v_theme[24], v_face[20], v_fmt[8], v_anim[44], v_scene[24],
             v_autodim[12], v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];
-/* v_night_start / v_night_end / v_bright live on clock_settings_menu()'s
- * STACK (with the SD pickers' buffers) — DTCM is bytes from full, so no new
+/* v_autodim also backs the main-menu "절전" group row's On/Off summary
+ * (cb_powersave_group) — safe to share since the main dialog is always fully
+ * closed before clock_powersave_menu() opens (never rendered together).
+ * v_dnd is gone: DND moved into the alarm popup, which uses its own stack
+ * buffer (see ALARM_IDX_DND in clock_alarm_setup). v_night_start / v_night_end
+ * / v_bright live on clock_settings_menu()'s and clock_powersave_menu()'s own
+ * STACKs (with the SD pickers' buffers) — DTCM is bytes from full, so no new
  * resident buffers. */
 /* SD-media picker value buffers (photo speed / GIF file / alarm sound) are NOT
  * resident: they live on clock_settings_menu()'s stack for the life of the
@@ -1856,6 +1915,17 @@ static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
 static bool cb_enter(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 { (void)r; o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
 
+/* "절전"(power-save) group row: collapses Auto-dim + Night-start + Night-end
+ * into a single main-menu entry (those 3 rows used to be separate; device
+ * feedback said the main popup had too many rows and started scrolling —
+ * see clock_settings_menu). The value mirrors the Auto-dim toggle; A/ENTER
+ * opens clock_powersave_menu() below with the full 3 rows. L/R deliberately
+ * do nothing here so there is only one place that actually changes Auto-dim
+ * (the sub-dialog's own row) — no risk of the two getting out of sync. */
+static bool cb_powersave_group(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{ (void)r; sprintf(o->value, "%s", s_autodim ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
+  return e == ODROID_DIALOG_ENTER; }
+
 static void clock_menu_repaint(void)
 {
     uint16_t *fb = lcd_get_active_buffer();
@@ -1871,34 +1941,59 @@ static void clock_menu_repaint(void)
     render_clock(HAL_GetTick(), false);
 }
 
+/* Sub-dialog opened from the main menu's "절전" group row: Auto-dim toggle +
+ * the two night-window hour rows. Reuses the SAME callbacks
+ * (cb_autodim/cb_night_start/cb_night_end) the main menu used to call
+ * directly for these three rows, so the persisted cfg keys and the
+ * conditional Night-end enable/disable logic (cb_night_start toggles o[1])
+ * are completely unchanged — only WHERE the rows are shown moved. A nested
+ * odroid_overlay_dialog call, exactly like the main clock menu dispatching
+ * to a second screen for Set Time / Alarms. */
+static void clock_powersave_menu(void)
+{
+    char v_night_start[8], v_night_end[8];
+    odroid_dialog_choice_t opts[] = {
+        {11, curr_lang->s_Clock_Auto_Dim, v_autodim, 1, cb_autodim},
+        {14, curr_lang->s_Clock_Night_Off, v_night_start, 1, cb_night_start},
+        {16, curr_lang->s_Clock_Night_End, v_night_end, (s_night_start == NIGHT_OFF) ? -1 : 1, cb_night_end},
+        ODROID_DIALOG_CHOICE_LAST
+    };
+    for (odroid_dialog_choice_t *o = opts; o->update_cb; o++)
+        o->update_cb(o, ODROID_DIALOG_FOCUS_GAINED, 0);
+    odroid_overlay_dialog(curr_lang->s_Clock_Auto_Dim, opts, 0, &clock_menu_repaint, 0);
+}
+
 /* returns true when the user picked "Exit" — the caller leaves the app */
 static bool clock_settings_menu(void)
 {
-    /* Order: the everyday actions first (set time, alarms, volume, alarm sound,
-     * brightness — device feedback asked for these grouped together instead of
-     * scattered), then the look-and-feel pickers. The choice `id`s are fixed
-     * (the post-dialog dispatch keys off them), so rows can be reordered
-     * freely. Anim/Scene/Photo-speed/GIF-file MUST stay adjacent in that order
-     * — cb_anim toggles the three that follow it via o[1]/o[2]/o[3]; likewise
-     * Night-start/Night-end MUST stay adjacent — cb_night_start toggles the
-     * row right after it (o[1]) the same way. The SD-media rows (alarm sound,
-     * photo speed, GIF file) are compiled out entirely on flash builds. */
+    /* Order: the everyday actions first (set time, format, alarms, volume,
+     * brightness, power-save — device feedback asked for these grouped
+     * together instead of scattered), then the look-and-feel pickers. The
+     * choice `id`s are fixed (the post-dialog dispatch keys off them), so
+     * rows can be reordered freely. Anim/Scene/Photo-speed/GIF-file MUST stay
+     * adjacent in that order — cb_anim toggles the three that follow it via
+     * o[1]/o[2]/o[3]. Alarm sound and DND now live inside the Alarms popup
+     * (clock_alarm_setup/ALARM_IDX_*) and Auto-dim/Night-start/Night-end now
+     * live inside the "절전" group's own sub-dialog (clock_powersave_menu) —
+     * both moved off this menu to stay under the no-scroll row budget (see
+     * odroid_overlay_draw_dialog's had_extent: header + N*14px rows + 34px
+     * padding must stay <= 230px, i.e. at most 14 rows; this menu has 13 with
+     * SD media compiled in, 11 without). The SD-media rows (photo speed, GIF
+     * file) are compiled out entirely on flash builds. */
+    /* stack-resident (DTCM is bytes from full): the brightness gauge, and
+     * (SD builds) the photo-speed / GIF-file picker values */
+    char v_bright[ODROID_BACKLIGHT_LEVEL_COUNT + 2];
 #if CLOCK_SD_MEDIA
-    /* stack-resident value buffers — see PICK_VAL: never held in DTCM */
-    char v_pspeed[PICK_VAL], v_bgfile[PICK_VAL], v_alarmsnd[PICK_VAL];
+    char v_pspeed[PICK_VAL], v_bgfile[PICK_VAL];
 #endif
-    /* also stack-resident (DTCM is bytes from full): the night start/end hour
-     * values ("Off"/"21:00"/...) and the brightness gauge */
-    char v_night_start[8], v_night_end[8], v_bright[ODROID_BACKLIGHT_LEVEL_COUNT + 2];
     odroid_dialog_choice_t opts[] = {
         /* device-wide output controls first, like the common settings menu */
         {15, curr_lang->s_Brightness, v_bright, 1, cb_bright},
         {7, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
-#if CLOCK_SD_MEDIA
-        {12, curr_lang->s_Clock_Alarm_Sound, v_alarmsnd, 1, cb_alarmsnd},
-#endif
         {8, curr_lang->s_Clock_Set_Time, v_settime, 1, cb_enter},
+        {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
         {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
+        {17, curr_lang->s_Clock_Auto_Dim, v_autodim, 1, cb_powersave_group},
         {0, curr_lang->s_Clock_Theme,  v_theme,  1, cb_theme},
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},
         {2, curr_lang->s_Clock_Anim,   v_anim,   1, cb_anim},
@@ -1907,24 +2002,19 @@ static bool clock_settings_menu(void)
         {4, curr_lang->s_Clock_Photo_Speed, v_pspeed, (s_anim == ANIM_PHOTO) ? 1 : -1, cb_pspeed},
         {13, curr_lang->s_Clock_Bg_File, v_bgfile, (s_anim == ANIM_GIF) ? 1 : -1, cb_bgfile},
 #endif
-        {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
-        {6, curr_lang->s_Clock_DND,    v_dnd,    1, cb_dnd},
-        {11, curr_lang->s_Clock_Auto_Dim, v_autodim, 1, cb_autodim},
-        {14, curr_lang->s_Clock_Night_Off, v_night_start, 1, cb_night_start},
-        {16, curr_lang->s_Clock_Night_End, v_night_end, (s_night_start == NIGHT_OFF) ? -1 : 1, cb_night_end},
         {10, curr_lang->s_Clock_Exit,  v_exit,   1, cb_enter},
         ODROID_DIALOG_CHOICE_LAST
     };
     /* Prime every row's value string (index-free so the SD-media rows can drop
-     * out cleanly). cb_anim/cb_night_start on FOCUS_GAINED do not touch their
-     * neighbours, so the Scene/Photo/GIF and Night-end `enabled` seeds set in
-     * the initializer above stand. */
+     * out cleanly). cb_anim on FOCUS_GAINED does not touch its neighbours, so
+     * the Scene/Photo/GIF `enabled` seeds set in the initializer above stand. */
     for (odroid_dialog_choice_t *o = opts; o->update_cb; o++)
         o->update_cb(o, ODROID_DIALOG_FOCUS_GAINED, 0);
 
     int sel = odroid_overlay_dialog(curr_lang->s_Clock, opts, 0, &clock_menu_repaint, 0);
     if (sel == 8) clock_edit_time();
     if (sel == 9) clock_alarm_setup();
+    if (sel == 17) clock_powersave_menu();
     clock_config_save();
     return sel == 10;
 }
