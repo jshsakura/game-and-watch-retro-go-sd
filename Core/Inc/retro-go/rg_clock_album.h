@@ -6,13 +6,16 @@
  *
  * While the clock runs it BORROWS the launcher's `shared_files` ROM-list buffer
  * (~500K) as a photo arena — the full-screen clock doesn't need the game list.
- * It scans /clock/album for RAW RGB565 photos (exactly 320x240x2 bytes) and
- * shows one at a time. On exit the caller (rg_clock) rebuilds the launcher's
+ * It scans /clock/album for 320x240 photos and shows one at a time — either a
+ * raw .565 dump (exactly 320x240x2 bytes, from the web tool) or an uncompressed
+ * 24/32-bit .bmp the user can export from any image editor (parsed + converted
+ * in place, no decoder). On exit the caller (rg_clock) rebuilds the launcher's
  * lists via rg_emulators_reset_all_lists() + a current-tab refresh, so nothing
  * is corrupted — no reboot, faster than one tab switch.
  *
- * Phase 2 = raw .565 only (isolates the borrow/exit from HW-JPEG risk). JPEG is
- * a later phase. Everything is defensive: any failure -> not ready -> the clock
+ * .565 + .bmp only — both are straight read/convert with no decoder (JPEG/PNG
+ * live in the music overlay, unreachable from launcher context). Everything is
+ * defensive: any failure -> not ready -> the clock
  * falls back to a solid background; NEVER asserts on the launcher's memory. */
 
 bool            clock_album_open(void);       /* borrow + scan + load first; false = none/no room */
