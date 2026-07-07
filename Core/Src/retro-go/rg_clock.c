@@ -630,8 +630,11 @@ static int8_t s_alarm_volume = 6;
 
 /* Synth-beep preset (RG_TONE_*): the non-SD alarm sound, and the SD fallback
  * when no MP3 plays. Selectable on BOTH builds; persisted inside the alarmsnd=
- * cfg key as an ASCII token (beep/beep2/chirp/siren). */
+ * cfg key as an ASCII token (matched case-insensitively, so these display
+ * labels double as the stored tokens — zero new i18n strings). */
 static int8_t s_beep_preset = RG_TONE_BEEP;
+static const char *const BEEP_LABELS[RG_TONE_COUNT] = { "Beep", "Beep2", "Chirp", "Siren" };
+#define BEEP_LABEL(p) BEEP_LABELS[((p) >= 0 && (p) < RG_TONE_COUNT) ? (p) : 0]
 
 static alarm_t  s_alarms[MAX_ALARMS];
 static int      s_alarm_count;
@@ -773,6 +776,9 @@ static void clock_config_save(void)
     fprintf(f, "photospeed=%d\n", s_photo_speed);
     if (s_bgfile[0])   fprintf(f, "bgfile=%s\n", s_bgfile);
     if (s_alarmsnd[0]) fprintf(f, "alarmsnd=%s\n", s_alarmsnd);
+#else
+    /* flash build: the alarm sound is a synth preset — persist it as a token */
+    fprintf(f, "alarmsnd=%s\n", BEEP_LABEL(s_beep_preset));
 #endif
     for (int i = 0; i < s_alarm_count; i++)   /* disabled alarms persist too */
         fprintf(f, "alarm=%02d%02d,%d\n", s_alarms[i].hour, s_alarms[i].min,
@@ -1507,20 +1513,41 @@ static bool alarm_edit_view(alarm_t *a)
     return result;
 }
 
-/* Row layout: [alarms...][+Add Alarm][Alarm Sound (SD builds only)][DND][Done].
- * Alarm Sound and DND used to be their own rows on the main clock menu;
- * folding them in here (right next to the alarms they gate) is what let the
- * main popup drop under the no-scroll row budget (see clock_settings_menu). */
-#if CLOCK_SD_MEDIA
+/* Row layout: [alarms...][+Add Alarm][Alarm Sound][DND][Done]. The Alarm Sound
+ * row is on BOTH builds now: SD builds pick synth presets + /clock sound files,
+ * flash builds pick the synth presets only (non-SD units still get to choose a
+ * sound). Alarm Sound and DND used to be their own rows on the main clock menu;
+ * folding them in here is what let the main popup drop under the no-scroll row
+ * budget (see clock_settings_menu). */
 #define ALARM_IDX_SOUND(cnt) ((cnt) + 1)
 #define ALARM_IDX_DND(cnt)   ((cnt) + 2)
 #define ALARM_EXTRA_ROWS     4   /* +Add, Alarm Sound, DND, Done */
-#else
-#define ALARM_IDX_DND(cnt)   ((cnt) + 1)
-#define ALARM_EXTRA_ROWS     3   /* +Add, DND, Done */
-#endif
 #define ALARM_IDX_ADD(cnt)   (cnt)
 #define ALARM_IDX_DONE(cnt)  ((cnt) + ALARM_EXTRA_ROWS - 1)
+
+/* Alarm-sound row value/cycle, build-agnostic so the row code stays simple:
+ * SD builds delegate to the preset+file picker; flash builds cycle the four
+ * synth presets directly (s_beep_preset). */
+static void alarm_sound_str(char *out, size_t n)
+{
+#if CLOCK_SD_MEDIA
+    odroid_dialog_choice_t tmp = {0}; char val[40] = ""; tmp.value = val;
+    cb_alarmsnd(&tmp, ODROID_DIALOG_INIT, 0);
+    snprintf(out, n, "%s", val);
+#else
+    snprintf(out, n, "%s", BEEP_LABEL(s_beep_preset));
+#endif
+}
+static void alarm_sound_cycle(odroid_dialog_event_t ev)
+{
+#if CLOCK_SD_MEDIA
+    odroid_dialog_choice_t tmp = {0}; char val[40] = ""; tmp.value = val;
+    cb_alarmsnd(&tmp, ev, 0);
+#else
+    if (ev == ODROID_DIALOG_PREV) s_beep_preset = (s_beep_preset == 0) ? RG_TONE_COUNT - 1 : s_beep_preset - 1;
+    else                          s_beep_preset = (int8_t)((s_beep_preset + 1) % RG_TONE_COUNT);
+#endif
+}
 
 /* A proper popup: clean solid base + bordered panel, repainted whole every
  * frame. (The old version re-scrimmed whatever was already on the swap
@@ -1549,12 +1576,9 @@ static void render_alarm_setup(int sel)
             snprintf(line, sizeof line, "%s        %s", ts, tag);
         } else if (i == ALARM_IDX_ADD(s_alarm_count)) {
             snprintf(line, sizeof line, "+ %s", curr_lang->s_Clock_Add_Alarm);
-#if CLOCK_SD_MEDIA
         } else if (i == ALARM_IDX_SOUND(s_alarm_count)) {
-            odroid_dialog_choice_t tmp = {0}; char val[40] = "";
-            tmp.value = val; cb_alarmsnd(&tmp, ODROID_DIALOG_INIT, 0);
-            snprintf(line, sizeof line, "%s        %s", curr_lang->s_Clock_Alarm_Sound, tmp.value);
-#endif
+            char val[40]; alarm_sound_str(val, sizeof val);
+            snprintf(line, sizeof line, "%s        %s", curr_lang->s_Clock_Alarm_Sound, val);
         } else if (i == ALARM_IDX_DND(s_alarm_count)) {
             odroid_dialog_choice_t tmp = {0}; char val[12] = "";
             tmp.value = val; cb_dnd(&tmp, ODROID_DIALOG_INIT, 0);
@@ -1687,12 +1711,9 @@ static void clock_alarm_setup(void)
             /* Alarm Sound / DND rows: L/R cycles the value, same as the
              * generic dialog rows they used to be on the main clock menu. */
             odroid_dialog_event_t ev = pressed(&k, &prev, ODROID_INPUT_LEFT) ? ODROID_DIALOG_PREV : ODROID_DIALOG_NEXT;
-#if CLOCK_SD_MEDIA
             if (sel == ALARM_IDX_SOUND(s_alarm_count)) {
-                odroid_dialog_choice_t tmp = {0}; char val[40] = "";
-                tmp.value = val; cb_alarmsnd(&tmp, ev, 0); dirty = true;
+                alarm_sound_cycle(ev); dirty = true;
             } else
-#endif
             if (sel == ALARM_IDX_DND(s_alarm_count)) {
                 odroid_dialog_choice_t tmp = {0}; char val[12] = "";
                 tmp.value = val; cb_dnd(&tmp, ev, 0); dirty = true;
@@ -1962,27 +1983,32 @@ static void pick_scan(filelist_t *L, const char *e1, const char *e2)
 }
 
 /* One shared file-picker row (DRY across the GIF-file and alarm-sound rows).
- *   special : slot-0 label present on every scan ("Beep"); NULL = files only
+ *   specials/nspecial : fixed leading slots present on every scan (the synth
+ *                       preset labels for the alarm-sound row); NULL/0 = files only
  *   dflt    : what an empty `store` resolves to (bg.gif / alarm.mp3)
- *   store   : the persistent chosen basename (updated on L/R); "special" forces it
+ *   store   : the persistent chosen basename (updated on L/R); a special forces it
  * Writes the resolved display name into o->value and returns the new selection in
- * *store. An empty folder with no special slot shows "(none)". */
+ * *store. An empty folder with no special slots shows "(none)". */
 static void pick_row(odroid_dialog_choice_t *o, odroid_dialog_event_t e,
-                     const char *e1, const char *e2, const char *special,
+                     const char *e1, const char *e2,
+                     const char *const *specials, int nspecial,
                      const char *dflt, char *store, size_t storesz)
 {
     filelist_t L; pick_scan(&L, e1, e2);
-    int base = special ? 1 : 0, total = L.count + base;
+    int base = nspecial, total = L.count + base;
     if (total == 0) { snprintf(o->value, PICK_VAL, "(none)"); return; }
     int idx = 0;
-    if (!(special && strcmp(store, special) == 0)) {
+    bool matched = false;
+    for (int i = 0; i < nspecial; i++)
+        if (strcasecmp(store, specials[i]) == 0) { idx = i; matched = true; break; }
+    if (!matched) {
         const char *want = store[0] ? store : dflt;
         for (int i = 0; i < L.count; i++)
             if (strcasecmp(want, L.n[i]) == 0) { idx = i + base; break; }
     }
     if (e == ODROID_DIALOG_PREV) idx = (idx == 0) ? total - 1 : idx - 1;
     if (e == ODROID_DIALOG_NEXT) idx = (idx + 1) % total;
-    const char *sel = (special && idx == 0) ? special : L.n[idx - base];
+    const char *sel = (idx < base) ? specials[idx] : L.n[idx - base];
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT)
         snprintf(store, storesz, "%s", sel);
     snprintf(o->value, PICK_VAL, "%s", sel);
@@ -1993,7 +2019,7 @@ static void pick_row(odroid_dialog_choice_t *o, odroid_dialog_event_t e,
 static bool cb_bgfile(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    pick_row(o, e, "gif", NULL, NULL, "bg.gif", s_bgfile, sizeof s_bgfile);
+    pick_row(o, e, "gif", NULL, NULL, 0, "bg.gif", s_bgfile, sizeof s_bgfile);
     if ((e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) && s_anim == ANIM_GIF) {
         clock_gif_set_file(s_bgfile);
         if (clock_gif_load()) s_album_used = true;
@@ -2001,12 +2027,15 @@ static bool cb_bgfile(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32
     return e == ODROID_DIALOG_ENTER;
 }
 
-/* Alarm sound: Beep (slot 0, default) then each /clock/*.mp3|*.wav. "" resolves
- * to alarm.mp3 (back-compat) if present, else Beep; "Beep" forces the synth. */
+/* Alarm sound: the four synth presets (leading slots) then each /clock/*.mp3
+ * |*.wav. "" resolves to alarm.mp3 (back-compat) if present, else the presets;
+ * a preset label forces the synth (and updates s_beep_preset). */
 static bool cb_alarmsnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    pick_row(o, e, "mp3", "wav", "Beep", "alarm.mp3", s_alarmsnd, sizeof s_alarmsnd);
+    pick_row(o, e, "mp3", "wav", BEEP_LABELS, RG_TONE_COUNT, "alarm.mp3", s_alarmsnd, sizeof s_alarmsnd);
+    int p = rg_tone_preset_from_token(s_alarmsnd);   /* a preset chosen -> keep it as the synth shape */
+    if (p >= 0) s_beep_preset = p;
     return e == ODROID_DIALOG_ENTER;
 }
 #endif /* CLOCK_SD_MEDIA */
@@ -2134,50 +2163,18 @@ static bool clock_settings_menu(void)
 
 /* ---- alarm tone (synthesised, no files) -------------------------------
  *
- * The SAI DMA is already running from boot (circular, double-buffered), so the
- * clock can beep without becoming a separate audio app: start the transmit,
- * fill the active half with a gated square wave each loop, stop on dismiss.
- * The DMA buffer lives in its own .audio section, so this never touches an
- * emulator's RAM. Tones are generated in code — no sound files, no SD needed;
- * user-supplied WAV/MP3 from SD can layer on later. */
-
-#define TONE_HZ   880
-static bool     s_tone_on = false;
-static uint32_t s_tone_phase = 0;
-static uint32_t s_tone_dma_mark = 0;   /* dma_counter of the half we last filled */
+ * Thin wrapper over the shared generator in rg_alarm.c so the clock ring and
+ * the all-state (in-game / music / video) ring use ONE tone implementation and
+ * the SAME synth presets. s_beep_preset selects the shape; s_alarm_volume the
+ * loudness (its OWN volume, not the system volume — so a quiet gaming volume
+ * can't mute the morning alarm; 0 = a silent, visual-only alarm). s_tone_on is
+ * kept only so ring_audio() below can tell "the ring just started". */
+static bool s_tone_on = false;
 
 static void tone_feed(uint32_t now, bool ringing)
 {
-    if (!ringing) {
-        if (s_tone_on) { audio_stop_playing(); s_tone_on = false; }
-        return;
-    }
-    if (!s_tone_on) { audio_start_playing(AUDIO_BUFFER_LENGTH); s_tone_on = true;
-                      s_tone_phase = 0; s_tone_dma_mark = dma_counter - 1; }
-
-    /* Fill each freed half exactly once — the SAI ISR bumps dma_counter per
-     * half. The ring loop runs ~8ms vs the 22.4ms half period; refilling the
-     * same half every pass advanced the phase 1077 samples per rewrite and put
-     * a phase jump at almost every half boundary (audible buzz). */
-    if (dma_counter == s_tone_dma_mark) return;
-    s_tone_dma_mark = dma_counter;
-
-    int16_t *buf = audio_get_active_buffer();
-    int len = audio_get_buffer_length();
-    /* alarm loudness follows the clock's OWN alarm volume (s_alarm_volume),
-     * NOT the system volume — same scale/curve, half-scale square scaled by
-     * volume_tbl; 0 correctly yields amp 0, a silent (visual-only) alarm */
-    int amp = (16000 * volume_tbl[s_alarm_volume]) >> 8;
-    bool on = ((now / 250) % 2) == 0;                       /* 250 ms beep / 250 ms gap */
-    int period = AUDIO_SAMPLE_RATE / TONE_HZ, half = period / 2;
-    for (int i = 0; i < len; i++) {
-        int16_t s = 0;
-        if (on && amp) {
-            s = (s_tone_phase < (uint32_t)half) ? (int16_t)amp : (int16_t)-amp;
-            if (++s_tone_phase >= (uint32_t)period) s_tone_phase = 0;
-        }
-        buf[i] = s;
-    }
+    s_tone_on = ringing;
+    rg_alarm_tone_feed(now, ringing, s_beep_preset, s_alarm_volume);
 }
 
 /* ---- alarm audio dispatch (MP3 file if present, else the synth beep) -----
@@ -2215,7 +2212,9 @@ static void ring_audio(uint32_t now, bool ringing)
         return;
     }
     if (!s_ring_mp3 && !s_tone_on) {     /* ring just started — choose the source once */
-        if (strcmp(s_alarmsnd, "Beep") != 0) {   /* "Beep" forces the synth tone */
+        /* A synth-preset token (Beep/Beep2/Chirp/Siren) forces the synth beep;
+         * anything else is a file name -> the MP3/WAV path ("" -> alarm.mp3). */
+        if (rg_tone_preset_from_token(s_alarmsnd) < 0) {
             clock_alarm_mp3_set_file(s_alarmsnd); /* "" -> alarm.mp3 (back-compat) */
             if (clock_alarm_mp3_available()) {
                 clock_bg_suspend();

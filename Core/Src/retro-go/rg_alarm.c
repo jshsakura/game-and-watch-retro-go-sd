@@ -5,6 +5,7 @@
 #include "rg_alarm.h"
 #include <time.h>
 #include <string.h>
+#include <strings.h>   /* strcasecmp — preset tokens match case-insensitively */
 
 #ifndef AUDIO_SAMPLE_RATE
 #define AUDIO_SAMPLE_RATE 48000        /* host build: gw_audio.h not included */
@@ -52,7 +53,7 @@ int rg_tone_preset_from_token(const char *tok)
 {
     if (tok)
         for (int i = 0; i < RG_TONE_COUNT; i++)
-            if (strcmp(tok, RG_TONE_TOK[i]) == 0) return i;
+            if (strcasecmp(tok, RG_TONE_TOK[i]) == 0) return i;   /* "Beep"/"beep" both match */
     return -1;
 }
 
