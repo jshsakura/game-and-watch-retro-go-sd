@@ -728,7 +728,10 @@ static void draw_topbar(clock_mode_t mode, bool show_pager)
     if (!s_ghost_on)   /* 1px drop shadow behind the logo over a live background */
         odroid_overlay_draw_logo(10, 9, RG_LOGO_GNW, CLOCK_BLACK);
     odroid_overlay_draw_logo(9, 8, RG_LOGO_GNW, t->ink);
-    odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 34, 18);
+    /* EXACTLY the launcher header's battery spot (gui.c: W-28, y=17) — the
+     * clock sat 6px left / 1px low of it and the mismatch showed when
+     * switching between the launcher and the clock */
+    odroid_overlay_draw_battery(odroid_input_read_battery(), GW_LCD_WIDTH - 28, 17);
     if (s_dnd) draw_moon(GW_LCD_WIDTH - 58, 16, 7, t->ink);
     /* The logo/battery stay; the mode pager auto-hides after a few idle seconds
      * (any key brings it back) so the clock face reads clean. */
