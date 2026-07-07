@@ -699,6 +699,25 @@ void retro_loop()
 
         idle_s = uptime_get() - gui.idle_start;
 
+        /* All-state alarm (launcher): once a second, if an alarm has come due,
+         * open the clock — which rings immediately for a due alarm, exactly as
+         * the SELECT/TIME entry does. On return the ROM list is rebuilt (SD
+         * media) and the loop's gui_redraw() repaints; reset the idle timer so
+         * we don't drop straight into sleep. */
+        {
+            static uint32_t alarm_last_s = 0;
+            uint32_t now_s = uptime_get();
+            if (now_s != alarm_last_s) {
+                alarm_last_s = now_s;
+                if (rg_alarm_cache_due()) {
+                    rg_clock_show();
+                    if (!rg_emulator_validate_browse_path_for_tab(tab))
+                        gui_refresh_tab(tab);
+                    gui.idle_start = uptime_get();
+                }
+            }
+        }
+
         odroid_input_read_gamepad(&gui.joystick);
 
         int key_up = ODROID_INPUT_UP;
