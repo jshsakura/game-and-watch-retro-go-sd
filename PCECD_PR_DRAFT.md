@@ -1,9 +1,18 @@
 # PC Engine CD (Super CD-ROM2) support — draft
 
-This is a draft for adding PC Engine CD-ROM² / Super CD-ROM² support to the
-SD-card build, on top of the existing HuCard `pce-go` core. It is opened as a
-draft because the submodule side still needs a push (see below) and because a
-couple of design points are better decided by you than guessed by me.
+These are reference notes for a PC Engine CD-ROM² / Super CD-ROM² port to the
+SD-card build, on top of the existing HuCard `pce-go` core. I'm not opening a
+PR with this — it lives on the `pcecd-upstream` branch for you to test and pick
+apart whenever you feel like it. Several design points are better decided by
+you than guessed by me.
+
+Two things from your notes are already addressed on this branch:
+
+- **CD-DA fade** (the Ys I & II music-keeps-playing issue): the `$180F`
+  CDDA fader command is implemented, so game-driven fades are performed.
+- **SD_CARD gating**: the CD stack is compiled only for `SD_CARD=1`; flash-only
+  builds link four tiny no-op stubs instead, so the HuCard core stays exactly
+  as small as before on 64/256MB systems.
 
 The disc is streamed from the SD card, so this is an **SD_CARD=1 only** feature.
 Flash-only (non-SD) builds compile the CD layer out and link tiny no-op stubs
@@ -41,6 +50,10 @@ Main repo:
   overlay, and lists `/roms/pcecd` recursively so per-game folders show their
   `.cue` flat instead of as folders to open. `MAX_EMULATORS` is bumped by one
   only in the `SD_CARD=1` build (DTCM is tight, so the non-SD build stays at 20).
+  **Note: these launcher-side edits are provisional** — minimal shims so the
+  branch runs standalone. If you take the feature, feel free to redo the
+  launcher integration however fits your codebase; only the CD stack itself
+  (pce_cd/pce_scsi/pce_adpcm + the core hooks) is meant as the substance here.
 - `Makefile` — `PCE_C_SOURCES` gets the CD sources for `SD_CARD=1` and the stub
   file otherwise.
 
