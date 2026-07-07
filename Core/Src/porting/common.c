@@ -15,6 +15,17 @@
 
 static void set_ingame_overlay(ingame_overlay_t type);
 
+/* Per-system CPU overclock helper. Cores that need a boost to keep up (e.g.
+ * WonderSwan) call this at startup. On the OSPI1 SD hardware variant the higher
+ * clock is unsafe for the card bus, so skip the boost there. */
+void common_emu_auto_oc(uint8_t level)
+{
+#if SD_CARD == 1
+    if (sdcard_hw_type == SDCARD_HW_OSPI1) return;
+#endif
+    SystemClock_Config(level);
+}
+
 cpumon_stats_t cpumon_stats = {0};
 
 const uint8_t volume_tbl[ODROID_AUDIO_VOLUME_MAX + 1] = {
