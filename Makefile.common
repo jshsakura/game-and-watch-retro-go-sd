@@ -1817,19 +1817,23 @@ help:
 #######################################
 # download SDK files
 #######################################
+# Retry on 429/5xx: parallel -j fetches from CI runners trip GitHub raw's
+# rate limit (wget exit 8), which fails the whole build.
+WGET_SDK := wget -q --tries=5 --waitretry=15 --retry-on-http-error=429,500,502,503
+
 $(HAL_DRIVER_DIR)/%: $(HAL_SENTINEL)
 	$(V)$(ECHO) [ WGET STM32CubeH7 HAL ] $(notdir $@)
 	$(V)mkdir -p $(dir $@)
-	$(V)wget -q $(HAL_DRIVER_URL)/$(HAL_DRIVER_VERSION)/$(patsubst $(HAL_DRIVER_DIR)/%,%,$@) -O $@
+	$(V)$(WGET_SDK) $(HAL_DRIVER_URL)/$(HAL_DRIVER_VERSION)/$(patsubst $(HAL_DRIVER_DIR)/%,%,$@) -O $@
 
 $(CMSIS_DEVICE_DIR)/%: $(CMSIS_DEV_SENTINEL)
 	$(V)$(ECHO) [ WGET STM32CubeH7 CMSIS ] $(notdir $@)
 	$(V)mkdir -p $(dir $@)
-	$(V)wget -q $(CMSIS_DEVICE_URL)/$(CMSIS_DEVICE_VERSION)/$(patsubst $(CMSIS_DEVICE_DIR)/%,%,$@) -O $@
+	$(V)$(WGET_SDK) $(CMSIS_DEVICE_URL)/$(CMSIS_DEVICE_VERSION)/$(patsubst $(CMSIS_DEVICE_DIR)/%,%,$@) -O $@
 
 $(SDK_DIR)/%: $(SDK_SENTINEL)
 	$(V)$(ECHO) [ WGET STM32CubeH7 ] $(notdir $@)
-	$(V)wget -q $(SDK_URL)/$(SDK_VERSION)/$@ -P $(dir $@)
+	$(V)$(WGET_SDK) $(SDK_URL)/$(SDK_VERSION)/$@ -P $(dir $@)
 
 .PHONY: download_sdk
 download_sdk: $(SDK_SENTINEL) $(HAL_SENTINEL) $(CMSIS_DEV_SENTINEL) $(SDK_HEADERS) $(SDK_C_SOURCES) $(SDK_ASM_SOURCES)
