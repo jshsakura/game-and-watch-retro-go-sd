@@ -1,0 +1,5 @@
+# Build + run recipe for tests/test_avi.c (also invoked by tests/run.sh).
+# Host-compiles the Video app's AVI demuxer (pure FILE* logic, no hardware).
+gcc -O2 -Wall -Wextra -std=gnu11 -ICore/Inc/porting/video \
+    tests/test_avi.c Core/Src/porting/video/avi.c -o /tmp/mtest/test_avi
+/tmp/mtest/test_avi

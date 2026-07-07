@@ -22,6 +22,12 @@ if [ -d "$SRC" ]; then
 else
     echo "media module not on this branch — skipping music-app tests"
 fi
+# Video-app AVI demuxer (pure FILE* logic — the read path the prefetch rd=/pf=
+# HUD accounting sits on). Compiled only where the video source is present.
+if [ -f "Core/Src/porting/video/avi.c" ]; then
+    $CC $FLAGS -ICore/Inc/porting/video \
+        tests/test_avi.c Core/Src/porting/video/avi.c        -o /tmp/mtest/test_avi
+fi
 # rg_clock.c is compiled as an SD-card build here (-DSD_CARD=1) so the alarm /
 # GIF / photo / picker logic is all present; test_clock_sd0.c below builds the
 # same source as a flash build (-DSD_CARD=0) to prove the media compile-out.
@@ -71,6 +77,7 @@ if [ -d "$SRC" ]; then
     /tmp/mtest/test_browser     || rc=1
     /tmp/mtest/test_color       || rc=1
 fi
+[ -x /tmp/mtest/test_avi ] && { /tmp/mtest/test_avi || rc=1; }
 /tmp/mtest/test_clock_alarm || rc=1
 /tmp/mtest/test_clock_gif   || rc=1
 /tmp/mtest/test_clock_more  || rc=1
