@@ -253,7 +253,7 @@ static void test_cfg_full_roundtrip(void)
 {
     remove(test_path(CLOCK_CFG_PATH));
     reset_cfg_fields();
-    s_theme = 5; s_face_override = FACE_DOT; s_hour24 = true;
+    s_theme = 5; s_face_override = FACE_LED; s_hour24 = true;  /* FACE_LED = the last (newest) face: proves the extended range persists */
     s_anim = ANIM_SCENE; s_scene = 7; s_photo_speed = 2; s_autodim = false;
     s_night_start = 22; s_night_end = 6; s_alarm_volume = 3;
     snprintf(s_bgfile, sizeof s_bgfile, "%s", "sunset.gif");
@@ -264,7 +264,7 @@ static void test_cfg_full_roundtrip(void)
     s_bgfile[0] = 0; s_alarmsnd[0] = 0;
     clock_config_load();
     CHECK(s_theme == 5,              "theme round-trips");
-    CHECK(s_face_override == FACE_DOT, "face override round-trips");
+    CHECK(s_face_override == FACE_LED, "face override round-trips (newest face in extended range)");
     CHECK(s_hour24 == true,          "hour24 round-trips");
     CHECK(s_anim == ANIM_SCENE,      "anim round-trips");
     CHECK(s_scene == 7,              "scene round-trips");
@@ -554,7 +554,7 @@ static void test_cfg_rejects_out_of_range(void)
     FILE *f = fopen(test_path(CLOCK_CFG_PATH), "w");
     fprintf(f, "theme=99\n");   /* >= THEME_COUNT: reject */
     fprintf(f, "theme=-1\n");   /* negative: reject */
-    fprintf(f, "face=9\n");     /* > FACE_DOT: reject */
+    fprintf(f, "face=99\n");    /* > FACE_LAST: reject (past the extended face range) */
     fprintf(f, "anim=1\n");     /* retired ambient value: migrates to off (0), not kept as 1 */
     fprintf(f, "nightstart=99\n");   /* not in {NIGHT_OFF}u{21,22,23,0,1}: reject */
     fprintf(f, "nightstart=-2\n");   /* not NIGHT_OFF(-1) and not a valid hour: reject */

@@ -66,7 +66,24 @@ extern void rg_emulators_reset_all_lists(void);
  * Every face keeps the LCD ghost treatment; text always uses the one
  * firmware i18n font. */
 
-typedef enum { FACE_SEG7 = 0, FACE_PIXEL, FACE_DOT } digit_face_t;
+/* Digit faces. The first three are the originals — their integer values are
+ * LOCKED because they are persisted verbatim in /clock/clock.cfg (face=N); new
+ * faces are only ever APPENDED after them so an old config still selects the
+ * same look. FACE_COUNT is the sentinel. Faces split into two geometry
+ * families: the vector 7-seg block (SEG_W..) and the 5x7 pixel grid (PIX_PX);
+ * face_is_pixel() classifies a face so the shared layout math (block width,
+ * AM/PM baseline, stopwatch) works for every face without per-face branches. */
+typedef enum {
+    FACE_SEG7 = 0, FACE_PIXEL, FACE_DOT,     /* originals — values locked */
+    FACE_THIN, FACE_OUTLINE, FACE_NIXIE, FACE_FLIP, FACE_LED, FACE_LCD,
+    FACE_COUNT
+} digit_face_t;
+#define FACE_LAST (FACE_COUNT - 1)
+
+/* pixel-grid family (square pixels / inset dots / round LEDs); everything else
+ * is a 7-seg-geometry face drawn in the SEG_W×SEG_H block. */
+static inline bool face_is_pixel(digit_face_t f)
+{ return f == FACE_PIXEL || f == FACE_DOT || f == FACE_LED; }
 
 typedef struct { uint16_t scr, ink, alarm; uint8_t face; } clock_theme_t;
 
@@ -139,6 +156,120 @@ static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t co
     }
 }
 
+/* forward decls: these decorative faces reuse the colour blend + rounded panel
+ * helpers that are defined further down (rendering section). */
+static uint16_t mix565(uint16_t a, uint16_t b, int t);
+static void draw_round_panel(int x, int y, int w, int h, int r, uint16_t col);
+
+/* ---- upright rectangular 7-seg engine (shared by Thin + Retro-LCD) ------
+ * One parameterised drawer covers both upright (non-italic) seg faces: `tt` is
+ * the stroke thickness, `hg`/`vg` the corner insets (small gaps so segments do
+ * not fuse), `rounded` picks capsule caps (Thin, a fine LCD-watch stroke) vs
+ * square ends (Retro-LCD, a fat calculator segment). Same SEG_W×SEG_H block as
+ * FACE_SEG7 so all the shared layout math still holds. */
+static void seg_bar(int x, int y, int len, int tt, bool vert, bool rounded, uint16_t col)
+{
+    for (int i = 0; i < len; i++) {
+        int cap = 0;
+        if (rounded) {
+            if (i < tt/2)              cap = tt/2 - i;
+            else if (i > len-1 - tt/2) cap = i - (len-1 - tt/2);
+        }
+        int th = tt - 2*cap; if (th < 1) continue;
+        if (vert) odroid_overlay_draw_fill_rect(x + cap, y + i, th, 1, col);
+        else      odroid_overlay_draw_fill_rect(x + i, y + cap, 1, th, col);
+    }
+}
+
+static void draw_rect7(int d, int x, int y, int w, int h, int tt, int hg, int vg,
+                       bool rounded, uint16_t col)
+{
+    if (d < 0 || d > 9) return;
+    if (s_outline) {
+        int o = s_outline; uint16_t oc = s_outline_col; s_outline = 0;
+        draw_rect7(d, x-o, y, w, h, tt, hg, vg, rounded, oc);
+        draw_rect7(d, x+o, y, w, h, tt, hg, vg, rounded, oc);
+        draw_rect7(d, x, y-o, w, h, tt, hg, vg, rounded, oc);
+        draw_rect7(d, x, y+o, w, h, tt, hg, vg, rounded, oc);
+        s_outline = o;
+    }
+    uint8_t m = SEG7[d];
+    int ym = y + (h - tt)/2;
+    int hx = x + hg, hw = w - 2*hg, xr = x + w - tt;
+    int vt = y + tt + vg, vtl = ym - (y + tt) - vg;            /* top half column */
+    int vb = ym + tt + vg, vbl = (y + h - tt) - (ym + tt) - vg;/* bottom half column */
+    if (m & (1<<0)) seg_bar(hx, y,        hw,  tt, false, rounded, col);  /* A */
+    if (m & (1<<6)) seg_bar(hx, ym,       hw,  tt, false, rounded, col);  /* G */
+    if (m & (1<<3)) seg_bar(hx, y + h-tt, hw,  tt, false, rounded, col);  /* D */
+    if (m & (1<<5)) seg_bar(x,  vt,       vtl, tt, true,  rounded, col);  /* F */
+    if (m & (1<<1)) seg_bar(xr, vt,       vtl, tt, true,  rounded, col);  /* B */
+    if (m & (1<<4)) seg_bar(x,  vb,       vbl, tt, true,  rounded, col);  /* E */
+    if (m & (1<<2)) seg_bar(xr, vb,       vbl, tt, true,  rounded, col);  /* C */
+}
+
+/* Thin: half-thickness rounded capsule strokes; the corners inset by the full
+ * stroke so the caps meet cleanly (vg=0). */
+static void draw_thin_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
+{ int tt = t/2; if (tt < 3) tt = 3; draw_rect7(d, x, y, w, h, tt, tt, 0, true, col); }
+
+/* Retro-LCD: full-thickness square segments with small joint gaps — see the
+ * strong ghost underlay applied by seg_cell for the "all-8 faintly on" look. */
+static void draw_lcd_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
+{ int g = t/3; if (g < 1) g = 1; draw_rect7(d, x, y, w, h, t, g, g, false, col); }
+
+/* ---- Outline: bold hollow 7-seg ----------------------------------------
+ * The base hexagon digit with a darker inner digit punched into it, leaving a
+ * ~2px rim — reads as an outlined/hollow numeral. Reuses draw_seg_digit twice
+ * (no new geometry). The inner "hole" is a near-black shade of the ink, which
+ * blends into the dark theme background (all themes have a dark screen). */
+static void draw_outline_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
+{
+    if (d < 0 || d > 9) return;
+    draw_seg_digit(d, x, y, w, h, t, col);        /* rim + s_outline halo */
+    int o = s_outline; s_outline = 0;
+    int t2 = t - 4;
+    if (t2 >= 2) draw_seg_digit(d, x+2, y+2, w-4, h-4, t2, mix565(col, CLOCK_BLACK, 13));
+    s_outline = o;
+}
+
+/* ---- Nixie: warm-glow tube digit ---------------------------------------
+ * A soft outer glow (dim ink, 4-way offset) under the ink body under a bright
+ * inner core — the tube-cathode look, tinted from the active theme ink so it
+ * respects the palette. All layers are draw_seg_digit calls + a colour blend. */
+static void draw_nixie_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
+{
+    if (d < 0 || d > 9) return;
+    int o = s_outline; s_outline = 0;             /* layer manually */
+    if (o) {                                       /* live-bg black halo */
+        draw_seg_digit(d, x-o, y, w, h, t, CLOCK_BLACK); draw_seg_digit(d, x+o, y, w, h, t, CLOCK_BLACK);
+        draw_seg_digit(d, x, y-o, w, h, t, CLOCK_BLACK); draw_seg_digit(d, x, y+o, w, h, t, CLOCK_BLACK);
+    }
+    uint16_t glow = mix565(col, CLOCK_BLACK, 9);   /* soft halo */
+    draw_seg_digit(d, x-1, y, w, h, t, glow); draw_seg_digit(d, x+1, y, w, h, t, glow);
+    draw_seg_digit(d, x, y-1, w, h, t, glow); draw_seg_digit(d, x, y+1, w, h, t, glow);
+    draw_seg_digit(d, x, y, w, h, t, col);         /* body */
+    if (t >= 8) draw_seg_digit(d, x+2, y+2, w-4, h-4, t-4, mix565(col, 0xFFFF, 7));  /* bright core */
+    s_outline = o;
+}
+
+/* ---- Flip: split-flap card ---------------------------------------------
+ * Each digit sits on a rounded dark "flap" card with a horizontal seam across
+ * the middle — the classic split-flap desk clock. The card is drawn for every
+ * digit (even over a live background, where dark flaps over wallpaper is the
+ * whole charm), the numeral (base seg face) on top, then the seam over both. */
+#define FLIP_PAD 1
+static void draw_flip_panel(int x, int y, int w, int h, uint16_t card)
+{
+    draw_round_panel(x - FLIP_PAD, y - 2, w + 2*FLIP_PAD, h + 4, 5, card);
+}
+static void draw_flip_seam(int x, int y, int w, int h, uint16_t seam)
+{
+    int sy = y + h/2 - 1, sx = x - FLIP_PAD, sw = w + 2*FLIP_PAD;   /* centre seam */
+    if (sx < 0) { sw += sx; sx = 0; }
+    if (sx + sw > GW_LCD_WIDTH) sw = GW_LCD_WIDTH - sx;
+    if (sw > 0) odroid_overlay_draw_fill_rect(sx, sy, sw, 2, seam);
+}
+
 /* ---- 5x7 pixel/dot faces (with an all-cells ghost glyph) --------------- */
 
 #define PIX_ALL 10
@@ -165,6 +296,38 @@ static void draw_pix_digit(int d, int x, int y, int px, uint16_t col, bool dot)
                 odroid_overlay_draw_fill_rect(x + c*px + inset, y + r*px + inset, sz, sz, col);
 }
 
+/* ---- LED: round dot-matrix ---------------------------------------------
+ * The same 5x7 glyphs as FACE_PIXEL/DOT but each lit cell is a filled circle
+ * — a true dot-matrix LED panel. Disc filled as one span per row (no sqrt),
+ * so it is as cheap as the square-pixel face. Shares the s_outline halo. */
+static void draw_disc(int cx, int cy, int r, uint16_t col)
+{
+    for (int dy = -r; dy <= r; dy++) {
+        int rr = r*r - dy*dy, sx = 0;
+        while ((sx + 1)*(sx + 1) <= rr) sx++;
+        int x = cx - sx, wv = 2*sx + 1;
+        if (x < 0) { wv += x; x = 0; }
+        if (x + wv > GW_LCD_WIDTH) wv = GW_LCD_WIDTH - x;
+        if (wv > 0) odroid_overlay_draw_fill_rect(x, cy + dy, wv, 1, col);
+    }
+}
+
+static void draw_led_digit(int d, int x, int y, int px, uint16_t col)
+{
+    if (d < 0 || d > PIX_ALL) return;
+    if (s_outline) {
+        int o = s_outline; uint16_t oc = s_outline_col; s_outline = 0;
+        draw_led_digit(d, x-o, y, px, oc); draw_led_digit(d, x+o, y, px, oc);
+        draw_led_digit(d, x, y-o, px, oc); draw_led_digit(d, x, y+o, px, oc);
+        s_outline = o;
+    }
+    int r = px/2;
+    for (int row = 0; row < 7; row++)
+        for (int c = 0; c < 5; c++)
+            if (DOT5x7[d][row] & (1 << (4 - c)))
+                draw_disc(x + c*px + r, y + row*px + r, r, col);
+}
+
 /* Geometry of the big "HH:MM" block per face, so callers can centre extras. */
 #define SEG_W    44
 #define SEG_H    92
@@ -176,9 +339,51 @@ static void draw_pix_digit(int d, int x, int y, int px, uint16_t col, bool dot)
 
 static int big_time_width(digit_face_t face)
 {
-    if (face == FACE_SEG7)
+    if (!face_is_pixel(face))
         return 4*SEG_W + 3*SEG_GAP + (SEG_T + 2*SEG_GAP);
     return 4*(5*PIX_PX) + 3*PIX_PX + (PIX_PX*3);
+}
+
+/* ---- per-face digit dispatch -------------------------------------------
+ * Every seg-geometry face is drawn in the same block, so the two big-time
+ * drawers just pick the right numeral style here. FACE_FLIP is handled by the
+ * cell wrapper (it needs a card behind the numeral), so it renders its numeral
+ * with the base seg face. */
+static void seg_glyph(digit_face_t face, int d, int x, int y, int w, int h, int t, uint16_t col)
+{
+    switch (face) {
+    case FACE_THIN:    draw_thin_digit(d, x, y, w, h, t, col);    break;
+    case FACE_OUTLINE: draw_outline_digit(d, x, y, w, h, t, col); break;
+    case FACE_NIXIE:   draw_nixie_digit(d, x, y, w, h, t, col);   break;
+    case FACE_LCD:     draw_lcd_digit(d, x, y, w, h, t, col);     break;
+    default:           draw_seg_digit(d, x, y, w, h, t, col);     break;   /* SEG7, FLIP numeral */
+    }
+}
+
+/* One seg-block cell: the ghost-8 backdrop (solid themes only) then the lit
+ * numeral. FLIP instead lays a flap card + seam around the numeral, always. */
+static void seg_cell(digit_face_t face, int d, int x, int y, int w, int h, int t,
+                     uint16_t col, uint16_t ghost, bool gh, bool blank)
+{
+    if (face == FACE_FLIP) {
+        uint16_t seam = mix565(ghost, CLOCK_BLACK, 8);
+        draw_flip_panel(x, y, w, h, ghost);            /* dark flap card */
+        if (!blank) draw_seg_digit(d, x, y, w, h, t, col);  /* numeral on the card */
+        draw_flip_seam(x, y, w, h, seam);              /* seam over both */
+        return;
+    }
+    /* Retro LCD lifts the ghost toward the lit ink so the unlit segments read
+     * clearly — the "all 8s faintly on" hallmark of a real LCD. */
+    uint16_t gcol = (face == FACE_LCD) ? mix565(ghost, col, 8) : ghost;
+    if (gh) seg_glyph(face, 8, x, y, w, h, t, gcol);
+    if (!blank) seg_glyph(face, d, x, y, w, h, t, col);
+}
+
+/* Pixel-family cell glyph: square pixels, inset dots, or round LEDs. */
+static void pix_glyph(digit_face_t face, int d, int x, int y, int px, uint16_t col)
+{
+    if (face == FACE_LED) draw_led_digit(d, x, y, px, col);
+    else                  draw_pix_digit(d, x, y, px, col, face == FACE_DOT);
 }
 
 /* Draw "HH:MM" centred; when colon=false the colon drops to the ghost shade.
@@ -205,14 +410,11 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
      * opaque theme-coloured grey that just floats over the photo/GIF/scene.
      * There the blink-off phase draws nothing at all — a true blink. */
     bool colon_draw = colon || gh;
-    if (face == FACE_SEG7) {
+    if (!face_is_pixel(face)) {
         int w = SEG_W, h = SEG_H, t = SEG_T, gap = SEG_GAP, y = SEG_Y;
-        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
-        if (!(blank_lead && a == 0))
-            draw_seg_digit(a, x, y, w, h, t, col_h);
+        seg_cell(face, a, x, y, w, h, t, col_h, ghost, gh, blank_lead && a == 0);
         x += w+gap;
-        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
-        draw_seg_digit(b, x, y, w, h, t, col_h); x += w+gap;
+        seg_cell(face, b, x, y, w, h, t, col_h, ghost, gh, false); x += w+gap;
         /* centre the colon in its slot: the slot is t+3*gap wide, so gap*1.5 on
          * each side (was x+gap, i.e. 2*gap left vs 1*gap right — visibly off) */
         if (colon_draw) {
@@ -220,28 +422,25 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
             odroid_overlay_draw_fill_rect(x+gap+gap/2, y+2*h/3, t, t, cc);
         }
         x += t+2*gap;
-        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
-        draw_seg_digit(c, x, y, w, h, t, col_m); x += w+gap;
-        if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
-        draw_seg_digit(e, x, y, w, h, t, col_m);
+        seg_cell(face, c, x, y, w, h, t, col_m, ghost, gh, false); x += w+gap;
+        seg_cell(face, e, x, y, w, h, t, col_m, ghost, gh, false);
     } else {
-        bool dot = (face == FACE_DOT);
         int px = PIX_PX, dw = 5*px, y = PIX_Y;
-        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
+        if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
         if (!(blank_lead && a == 0))
-            draw_pix_digit(a, x, y, px, col_h, dot);
+            pix_glyph(face, a, x, y, px, col_h);
         x += dw+px;
-        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
-        draw_pix_digit(b, x, y, px, col_h, dot); x += dw+px;
+        if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
+        pix_glyph(face, b, x, y, px, col_h); x += dw+px;
         if (colon_draw) {
             odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, cc);
             odroid_overlay_draw_fill_rect(x+px, y+4*px, px, px, cc);
         }
         x += px*3;
-        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
-        draw_pix_digit(c, x, y, px, col_m, dot); x += dw+px;
-        if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
-        draw_pix_digit(e, x, y, px, col_m, dot);
+        if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
+        pix_glyph(face, c, x, y, px, col_m); x += dw+px;
+        if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
+        pix_glyph(face, e, x, y, px, col_m);
     }
 }
 
@@ -443,7 +642,7 @@ static void clock_config_load(void)
     while (fgets(line, sizeof line, f)) {
         int v, en = 1;
         if (sscanf(line, "theme=%d", &v) == 1) { if (v >= 0 && v < THEME_COUNT) s_theme = v; }
-        else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_DOT) s_face_override = v; }
+        else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_LAST) s_face_override = v; }
         else if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
         else if (sscanf(line, "anim=%d", &v) == 1) {
@@ -895,7 +1094,7 @@ static void render_clock(uint32_t now, bool alarm_firing)
      * not a whole centred line of its own */
     if (!s_hour24) {
         int x = (GW_LCD_WIDTH + big_time_width(face)) / 2 + 6;
-        int yb = (face == FACE_SEG7) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
+        int yb = !face_is_pixel(face) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
         const char *ap = hh < 12 ? curr_lang->s_AM : curr_lang->s_PM;
         if (!s_ghost_on)   /* 1px drop shadow over a live background, like the other text */
             i18n_draw_text_line(x + 1, yb + 1, GW_LCD_WIDTH - x, ap, CLOCK_BLACK, CLOCK_BLACK, 1);
@@ -1003,13 +1202,12 @@ static void render_stopwatch(uint32_t now)
                  (int)((ms/10)    % 100) / 10, (int)((ms/10)    % 100) % 10 };
     digit_face_t face = cur_face();
 
-    if (face == FACE_SEG7) {
+    if (!face_is_pixel(face)) {
         const int w = 32, h = 68, tt = 8, g = 6, sep = tt + 2*g;
         int total = 6*w + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = SEG_Y + 12;
         for (int i = 0; i < 6; i++) {
-            if (gh) draw_seg_digit(8, x, y, w, h, tt, ghost);
-            draw_seg_digit(d[i], x, y, w, h, tt, col);
+            seg_cell(face, d[i], x, y, w, h, tt, col, ghost, gh, false);
             x += w + ((i == 1 || i == 3) ? 0 : g);
             if (i == 1) {           /* colon */
                 odroid_overlay_draw_fill_rect(x+g, y+h/3, tt, tt, col);
@@ -1021,13 +1219,12 @@ static void render_stopwatch(uint32_t now)
             }
         }
     } else {
-        bool dot = (face == FACE_DOT);
         const int px = 7, dw = 5*px, g = px, sep = px*3;
         int total = 6*dw + 3*g + 2*sep;
         int x = (GW_LCD_WIDTH - total) / 2, y = PIX_Y + 10;
         for (int i = 0; i < 6; i++) {
-                if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
-            draw_pix_digit(d[i], x, y, px, col, dot);
+            if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
+            pix_glyph(face, d[i], x, y, px, col);
             x += dw + ((i == 1 || i == 3) ? 0 : g);
             if (i == 1) {
                 odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, col);
@@ -1146,7 +1343,7 @@ static void render_alarm_edit(const alarm_t *a, int field, bool blink_off)
 
     if (!s_hour24) {
         int x = (GW_LCD_WIDTH + big_time_width(face)) / 2 + 6;
-        int yb = (face == FACE_SEG7) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
+        int yb = !face_is_pixel(face) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
         i18n_draw_text_line(x, yb, GW_LCD_WIDTH - x,
                             a->hour < 12 ? curr_lang->s_AM : curr_lang->s_PM, t->ink, CLOCK_BLACK, 1);
     }
@@ -1267,7 +1464,7 @@ static void render_datetime_edit(const struct tm *tm, int field, bool blink_off)
     draw_big_time_2c(dh, tm->tm_min, true, !s_hour24, face, ch, cm, ghost);
     if (!s_hour24) {
         int xx = (GW_LCD_WIDTH + big_time_width(face)) / 2 + 6;
-        int yb = (face == FACE_SEG7) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
+        int yb = !face_is_pixel(face) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
         i18n_draw_text_line(xx, yb, GW_LCD_WIDTH - xx,
                             tm->tm_hour < 12 ? curr_lang->s_AM : curr_lang->s_PM, t->ink, CLOCK_BLACK, 1);
     }
@@ -1387,7 +1584,11 @@ static void clock_alarm_setup(void)
 
 static const char *const THEME_LABEL[THEME_COUNT] =
     { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate" };
-static const char *const FACE_NAME[3] = { "7-seg", "Pixel", "Dot" };
+/* Face names are ASCII and NOT translated (same as the theme labels) — the
+ * settings dialog shows them verbatim. Order matches digit_face_t. */
+static const char *const FACE_NAME[FACE_COUNT] = {
+    "7-seg", "Pixel", "Dot", "Thin", "Outline", "Nixie", "Flip", "LED", "LCD",
+};
 static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44], v_scene[24],
             v_autodim[12], v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];
 /* v_night_start / v_night_end / v_bright live on clock_settings_menu()'s
@@ -1409,8 +1610,8 @@ static bool cb_theme(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_
 static bool cb_face(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    if (e == ODROID_DIALOG_PREV) s_face_override = (s_face_override <= -1) ? FACE_DOT : s_face_override-1;
-    if (e == ODROID_DIALOG_NEXT) s_face_override = (s_face_override >= FACE_DOT) ? -1 : s_face_override+1;
+    if (e == ODROID_DIALOG_PREV) s_face_override = (s_face_override <= -1) ? FACE_LAST : s_face_override-1;
+    if (e == ODROID_DIALOG_NEXT) s_face_override = (s_face_override >= FACE_LAST) ? -1 : s_face_override+1;
     if (s_face_override < 0) sprintf(o->value, "%s", curr_lang->s_Clock_Auto);
     else sprintf(o->value, "%s", FACE_NAME[s_face_override]);
     return e == ODROID_DIALOG_ENTER;
