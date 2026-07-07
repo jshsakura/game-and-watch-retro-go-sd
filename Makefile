@@ -540,7 +540,19 @@ $(CORE_WSV)/common/watara.c \
 $(CORE_WSV)/common/wsv_sound.c \
 Core/Src/porting/wsv/main_wsv.c
 
-MD_C_SOURCES = 
+# WonderSwan / WonderSwan Color (oswan-go core, NEC V30MZ + APU/render).
+WSWAN_C_SOURCES =
+
+CORE_WSWAN = external/oswan-go/main
+WSWAN_C_SOURCES += \
+$(CORE_WSWAN)/emu/WS.c \
+Core/Src/porting/wswan/ws_fileio.c \
+$(CORE_WSWAN)/emu/WSRender.c \
+$(CORE_WSWAN)/emu/WSApu.c \
+Core/Src/porting/wswan/nec.c \
+Core/Src/porting/wswan/main_wswan.c
+
+MD_C_SOURCES =
 
 CORE_GWENESIS = external/gwenesis
 MD_C_SOURCES += \
@@ -945,6 +957,20 @@ WSV_C_INCLUDES += \
 -I$(CORE_WSV)/common \
 -I./
 
+WSWAN_C_INCLUDES += \
+-ICore/Inc \
+-ICore/Inc/porting/wswan \
+-ICore/Src/porting/lib \
+-I$(CORE_WSWAN)/emu \
+-I$(CORE_WSWAN)/emu/cpu \
+-I$(CORE_WSWAN)/headers \
+-I$(CORE_WSWAN)/sound \
+-DNOSDL_FB \
+-DGNW_WSWAN \
+-DSOUND_ON \
+-DSOUND_EMULATION \
+-I./
+
 A2600_C_INCLUDES += \
 -ICore/Inc \
 -ICore/Src/porting/lib \
@@ -1047,7 +1073,7 @@ include Makefile.common
 
 $(BUILD_DIR)/$(TARGET)_extflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)
-	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini $< $(BUILD_DIR)/$(TARGET)_extflash.bin
+	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_wswan -j .overlay_md -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini $< $(BUILD_DIR)/$(TARGET)_extflash.bin
 
 $(BUILD_DIR)/$(TARGET)_intflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)
