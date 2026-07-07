@@ -11,6 +11,7 @@
 #include "gw_linker.h"
 #include "odroid_audio.h"
 #include "rg_i18n.h"
+#include "rg_alarm.h"   /* all-state alarm: in-place ring while a game runs */
 #include "gw_malloc.h"
 
 static void set_ingame_overlay(ingame_overlay_t type);
@@ -461,6 +462,20 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
         if (common_emu_state.pause_after_frames == 0) {
             pause_pressed = true;
             resume_pause_banner = true;   /* visible PAUSE banner, not a bare menu */
+        }
+    }
+
+    /* All-state alarm (in-game): every core passes through here each frame.
+     * Once a second, if an alarm has come due, take over in place — stop the
+     * emulator audio, beep + a pulsing banner until dismissed, then hand audio
+     * back and return to the game exactly where it was (no sleep, no savestate). */
+    {
+        static uint32_t alarm_last_s = 0;
+        uint32_t now_s = get_elapsed_time() / 1000;
+        if (now_s != alarm_last_s) {
+            alarm_last_s = now_s;
+            if (rg_alarm_cache_due())
+                rg_alarm_ring_inplace();
         }
     }
 }
