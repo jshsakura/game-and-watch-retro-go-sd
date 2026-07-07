@@ -914,9 +914,15 @@ static void render_clock(uint32_t now, bool alarm_firing)
             /* dimmed under DND — the alarm won't actually ring then */
             uint16_t alcol = s_dnd ? mix565(t->scr, t->ink, 6)
                                    : (alarm_firing ? t->ink : t->alarm);
-            int lx = (GW_LCD_WIDTH - i18n_get_text_width(line)) / 2;
-            draw_icon(&PIX_BELL, lx - 16, STATUS_Y + 1, alcol);
-            draw_centered_i18n(STATUS_Y, line, alcol);
+            /* centre the bell + text as ONE block (16px = icon + gap); centring
+             * only the text left the pair 8px off-centre */
+            int tw = i18n_get_text_width(line);
+            int bx = (GW_LCD_WIDTH - (tw + 16)) / 2;
+            if (bx < 0) bx = 0;
+            draw_icon(&PIX_BELL, bx, STATUS_Y + 1, alcol);
+            if (!s_ghost_on)   /* same 1px drop shadow as draw_centered_i18n */
+                i18n_draw_text_line(bx + 17, STATUS_Y + 1, GW_LCD_WIDTH - bx - 17, line, CLOCK_BLACK, CLOCK_BLACK, 1);
+            i18n_draw_text_line(bx + 16, STATUS_Y, GW_LCD_WIDTH - bx - 16, line, alcol, CLOCK_BLACK, 1);
         }
     }
 
