@@ -985,18 +985,19 @@ static void scene_city(uint32_t now, const clock_theme_t *t)
 
 /* pixel-scene registry — s_scene selects one; all are procedural (0 RAM). */
 typedef void (*scene_fn)(uint32_t, const clock_theme_t *);
-/* A curated 10-scene set (trimmed from 16 to free FLASH). Grid Pulse is reused
+/* A curated 8-scene set (16->10->8; Rain/Matrix/Forest delisted 0707 to fund the
+ * all-state alarm — Rain overlapped Snow, Matrix fought the digits). Grid Pulse is reused
  * as the alarm ring effect so it's not selectable. Several scenes remain defined
  * in the .inc but delisted here (gc-sections drops them): mountains, desert,
  * meteor, bubbles, fireworks, clouds, and the newer equalizer/plasma/helix —
  * any can be re-listed when there's budget. */
 static const scene_fn SCENES[] = {
-    scene_city, scene_ocean, scene_starfield, scene_synthwave, scene_rain,
-    scene_snow, scene_aurora, scene_forest, scene_matrix, scene_campfire,
+    scene_city, scene_ocean, scene_starfield, scene_synthwave,
+    scene_snow, scene_aurora, scene_campfire,
 };
 static const char *const SCENE_NAMES[] = {
-    "City", "Ocean", "Starfield", "Synthwave", "Rain",
-    "Snow", "Aurora", "Forest", "Matrix", "Campfire",
+    "City", "Ocean", "Starfield", "Synthwave",
+    "Snow", "Aurora", "Campfire",
 };
 #define SCENE_COUNT ((int)(sizeof(SCENES) / sizeof(SCENES[0])))
 
