@@ -286,7 +286,7 @@ static const lang_t KO = {
     .s_Clock_Set_Time="시간 설정", .s_Clock_Scene="씬", .s_Clock_Photo_Speed="사진 속도",
     .s_Clock_Anim_4="사진 앨범", .s_Clock_Auto_Dim="자동 절전",
     .s_Clock_Bg_File="GIF", .s_Clock_Alarm_Sound="알람 소리",
-    .s_Clock_Night_Off="야간 소등", .s_Clock_Night_End="소등 해제",
+    .s_Clock_Night_Off="절전 시작", .s_Clock_Night_End="절전 종료",
     .s_Brightness="밝기",
     .s_Full="\x7", .s_Fill="\x8",
 };
