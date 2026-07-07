@@ -14,8 +14,11 @@ static void srect(int x, int y, int w, int h, uint16_t col)
     if (w <= 0 || h <= 0) return;
     odroid_overlay_draw_fill_rect(x, y, w, h, col);
 }
-/* triangle wave, period 256, range -amp..amp (cheap stand-in for sine) */
-static int itri(int a, int amp)
+/* triangle wave, period 256, range -amp..amp (cheap stand-in for sine).
+ * Kept out-of-line: it's the shared per-pixel primitive for every wavy scene,
+ * so one copy in flash is far smaller than inlining it into each — and at the
+ * clock's ~1.5 fps repaint the call overhead is immeasurable. */
+static __attribute__((noinline)) int itri(int a, int amp)
 {
     unsigned p = (unsigned)a & 255u;
     int tri = (p < 128) ? (int)p : 256 - (int)p;   /* 0..128..0 */
@@ -49,32 +52,41 @@ static void scene_mountains(uint32_t now, const clock_theme_t *t)
     }
 }
 
-/* 2) ocean — shifting wave lines + moon + reflection shimmer */
+/* 2) ocean — phase-offset sine swells, foam caps, moon + reflected glint path.
+ * Horizon sits just below the digit block so the busy water never fights the
+ * clock; the moon is pushed to the right so the glint column stays off-centre. */
 static void scene_ocean(uint32_t now, const clock_theme_t *t)
 {
-    int horizon = 138;
+    const int hz = 152, mx = 250, my = 44;
     uint16_t star = mix565(t->scr, t->ink, 7);
-    for (int k = 0; k < 16; k++) {
-        int sx = (k * 83 + 7) % GW_LCD_WIDTH, sy = 8 + (k * 53) % (horizon - 30);
+    for (int k = 0; k < 14; k++) {
+        int sx = (k * 83 + 7) % GW_LCD_WIDTH, sy = 6 + (k * 53) % (hz - 40);
         if (((now / 800) + k) % 4 < 2) srect(sx, sy, 1, 1, star);
     }
-    uint16_t moon = mix565(t->scr, t->ink, 12);
-    int mx = 155, my = 40;
-    srect(mx - 5, my, 10, 12, moon); srect(mx - 7, my + 2, 14, 8, moon);
-    srect(mx - 3, my - 2, 6, 16, moon);
-    /* denser, brighter wave rows that brighten toward the foreground */
-    for (int y = horizon; y < GW_LCD_HEIGHT; y += 2) {
-        int depth = y - horizon, ph = now / 100 + depth;
-        uint16_t c = mix565(t->scr, t->ink, 3 + depth / 12);
-        for (int x = 0; x < GW_LCD_WIDTH; x += 5) {
-            int off = itri(x / 2 + ph, 2);
-            srect(x, y + off, 4 + ((x + ph) % 3), 1, c);
+    /* round-ish moon (chunky, no sqrt) */
+    uint16_t moon = mix565(t->scr, t->ink, 13);
+    srect(mx - 4, my - 6, 8, 12, moon); srect(mx - 6, my - 4, 12, 8, moon);
+    srect(mx - 5, my - 5, 10, 10, moon);
+    /* still-dark sea body, then wavy swell lines on top */
+    srect(0, hz, GW_LCD_WIDTH, GW_LCD_HEIGHT - hz, mix565(t->scr, t->ink, 2));
+    uint16_t foam = mix565(t->scr, t->ink, 13);
+    int span = GW_LCD_HEIGHT - hz;
+    for (int i = 0; i < 6; i++) {
+        int base = hz + 4 + i * (span - 4) / 6;
+        int amp  = 2 + i;                          /* taller waves in the foreground */
+        int ph   = (int)(now / 90) * (i + 2);      /* nearer layers scroll faster */
+        uint16_t c = mix565(t->scr, t->ink, 4 + i);
+        for (int x = 0; x <= GW_LCD_WIDTH; x += 3) {
+            int y = base + itri(x / 2 + ph + i * 40, amp)
+                         + itri(x / 5 - ph / 2 + i * 23, (amp + 1) / 2);
+            srect(x, y, 3, 2, c);
+            if ((x + i * 11 + (ph >> 2)) % 19 < 2) srect(x, y - 1, 2, 1, foam);  /* crest fleck */
         }
     }
-    /* moon reflection shimmer column under the moon */
-    for (int y = horizon; y < GW_LCD_HEIGHT; y += 3) {
-        int w = 9 + itri(y * 3 + now / 150, 7); if (w < 2) w = 2;
-        int lvl = 12 - (y - horizon) / 18; if (lvl < 5) lvl = 5;
+    /* moonlight glint: shimmering dashes reflected straight down from the moon */
+    for (int y = hz; y < GW_LCD_HEIGHT; y += 3) {
+        int w = 7 + itri(y * 3 + (int)(now / 150), 5); if (w < 2) w = 2;
+        int lvl = 12 - (y - hz) / 14; if (lvl < 5) lvl = 5;
         srect(mx - w / 2, y, w, 2, mix565(t->scr, t->ink, lvl));
     }
 }
@@ -104,25 +116,38 @@ static void scene_starfield(uint32_t now, const clock_theme_t *t)
     }
 }
 
-/* 4) synthwave — perspective grid + horizon sun */
+/* 4) synthwave — classic retrowave: banded sun over a horizon glow, with a
+ * perspective grid that scrolls toward the viewer and verticals fanning out
+ * from the vanishing point. Horizon low so the grid stays below the digits. */
 static void scene_synthwave(uint32_t now, const clock_theme_t *t)
 {
-    int hz = 176;                                  /* low horizon, below the digits */
-    uint16_t sun = mix565(t->scr, t->alarm, 12);
-    /* retro sun: banded disc rising just above the low horizon (stays clear of digits) */
-    for (int i = 0; i < 9; i++) {
-        int w = 58 - i * 4, y = hz - 2 - i * 4;
-        if (i % 2 == 0) srect(160 - w / 2, y, w, 3, sun);
-    }
+    const int hz = 172, cx = 160, span = GW_LCD_HEIGHT - hz;
     uint16_t grid = mix565(t->scr, t->alarm, 7);
-    for (int i = 1; i <= 14; i++) {
-        int y = hz + (i * i) / 2 + (int)((now / 60) % ((GW_LCD_HEIGHT - hz) / 6 + 1));
-        if (y < GW_LCD_HEIGHT) srect(0, y, GW_LCD_WIDTH, 1, grid);
+    /* horizon glow — wide bands warming toward the horizon line */
+    for (int i = 0; i < 7; i++) {
+        int lvl = 6 - i; if (lvl < 1) lvl = 1;
+        srect(0, hz - 2 - i * 6, GW_LCD_WIDTH, 6, mix565(t->scr, t->alarm, lvl));
     }
-    for (int vx = -8; vx <= 8; vx++)
-        for (int y = hz; y < GW_LCD_HEIGHT; y += 3) {
-            int x = 160 + vx * (y - hz) / 6;
-            if (x >= 0 && x < GW_LCD_WIDTH) srect(x, y, 1, 1, grid);
+    /* retro sun: banded disc sitting on the horizon, scanline gaps widen downward */
+    for (int dy = -28; dy <= 2; dy++) {
+        int q = 28 * 28 - dy * dy, hw = 0; while ((hw + 1) * (hw + 1) <= q) hw++;
+        if (dy > -6) { int g = 2 + dy / 4; if (((dy + 28) % (g + 2)) < g) continue; }
+        int lvl = 13 - (dy + 28) / 5; if (lvl < 6) lvl = 6;
+        srect(cx - hw, hz - 2 + dy, 2 * hw, 1, mix565(t->scr, t->alarm, lvl));
+    }
+    /* horizontal grid lines flowing toward the viewer (perspective 1/depth) */
+    int ph = (int)((now / 40) % 48);
+    for (int i = 1; i <= 16; i++) {
+        int d = i * 48 - ph; if (d <= 0) continue;
+        int yy = hz + (span * 48) / d;
+        if (yy < hz || yy >= GW_LCD_HEIGHT) continue;
+        srect(0, yy, GW_LCD_WIDTH, 1, mix565(t->scr, t->alarm, 5 + (yy - hz) * 5 / span));
+    }
+    /* verticals fanning from the vanishing point out to the screen edges */
+    for (int vx = -7; vx <= 7; vx++)
+        for (int yy = hz; yy < GW_LCD_HEIGHT; yy += 3) {
+            int x = cx + vx * (yy - hz) * 22 / span;
+            if (x >= 0 && x < GW_LCD_WIDTH) srect(x, yy, 1, 1, grid);
         }
 }
 
