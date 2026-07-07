@@ -436,7 +436,25 @@ retro-go-stm32/pce-go/components/pce-go/pce.c \
 Core/Src/porting/pce/sound_pce.c \
 Core/Src/porting/pce/main_pce.c
 
-MSX_C_SOURCES = 
+# PC Engine CD (Super CD-ROM2): SCSI target + ADPCM + CUE/BIN disc layer.
+# CD support enlarges the PCE core and the disc has to be streamed from storage,
+# so it is built only for SD_CARD=1; flash-only (non-SD) systems have no card to
+# stream from and can't fit CD games anyway. Default matches Makefile.common's
+# `SD_CARD ?= 1`; set here too since this block is read before Makefile.common.
+SD_CARD ?= 1
+ifeq ($(SD_CARD),1)
+PCE_C_SOURCES += \
+Core/Src/porting/pce/pce_cd.c \
+Core/Src/porting/pce/pce_scsi.c \
+Core/Src/porting/pce/pce_adpcm.c
+else
+# The pce-go core references the SCSI target from its IO decode even when the
+# CD stack isn't built; link no-op stubs instead so the non-SD build resolves.
+PCE_C_SOURCES += \
+Core/Src/porting/pce/pce_cd_stubs.c
+endif
+
+MSX_C_SOURCES =
 
 CORE_MSX = external/blueMSX-go
 LIBRETRO_COMM_DIR  = $(CORE_MSX)/libretro-common
