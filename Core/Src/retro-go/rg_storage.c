@@ -396,7 +396,7 @@ bool rg_storage_get_adjacent_files(const char *path, char *prev_path, char *next
             if (need_prev && cmp < 0) {
                 // If we don't have a previous file yet, or this one is higher than our current best
                 if (!best_prev[0] || strcasecmp(fno.fname, best_prev + strlen(dir) + 1) > 0) {
-                    sprintf(best_prev, "%s/%s", dir, fno.fname);
+                    snprintf(best_prev, sizeof(best_prev), "%s/%s", dir, fno.fname);
                 }
             }
             
@@ -404,7 +404,7 @@ bool rg_storage_get_adjacent_files(const char *path, char *prev_path, char *next
             if (need_next && cmp > 0) {
                 // If we don't have a next file yet, or this one is lower than our current best
                 if (!best_next[0] || strcasecmp(fno.fname, best_next + strlen(dir) + 1) < 0) {
-                    sprintf(best_next, "%s/%s", dir, fno.fname);
+                    snprintf(best_next, sizeof(best_next), "%s/%s", dir, fno.fname);
                 }
             }
         }
