@@ -422,6 +422,18 @@ int main(void)
         char nm[24]; snprintf(nm, sizeof nm, "zscene_%02d", sc);
         paint(MODE_CLOCK, 1500 + sc * 137, false); dump(nm);
     }
+    /* 9b) the reworked scenes (Ocean=1, Synthwave=3) sampled across time so the
+     * scroll/swell motion is visible in the committed previews, not just one frame */
+    {
+        static const int RW[] = { 1, 3 };
+        for (unsigned r = 0; r < sizeof RW / sizeof RW[0]; r++) {
+            s_scene = RW[r];
+            for (int ti = 0; ti < 3; ti++) {
+                char nm[24]; snprintf(nm, sizeof nm, "zscene_%02d_t%d", RW[r], ti);
+                paint(MODE_CLOCK, 800 + ti * 1300, false); dump(nm);
+            }
+        }
+    }
     s_anim = 0; s_scene = 0;
     return 0;
 }
