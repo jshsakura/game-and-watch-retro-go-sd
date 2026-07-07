@@ -14,4 +14,5 @@ const char *clock_gif_diag(void);
 bool clock_gif_load(void);
 void clock_gif_reserve(void);
 void clock_gif_free(void);
+void clock_gif_set_file(const char *name);
 #endif

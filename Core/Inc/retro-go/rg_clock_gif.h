@@ -16,6 +16,7 @@
 void clock_gif_reserve(void);                    /* at boot, before covers: pre-claim
                                                     the decode arena from the emu-RAM
                                                     pool per /clock/bg.gif's header */
+void clock_gif_set_file(const char *name);       /* basename under /clock; NULL/"" = bg.gif */
 int  clock_gif_status(void);                     /* why the last load failed */
 const char *clock_gif_diag(void);                /* human-readable failure detail */
 bool clock_gif_load(void);                       /* open + alloc; false if none/too big */

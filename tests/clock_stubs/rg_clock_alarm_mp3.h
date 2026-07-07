@@ -4,6 +4,7 @@
 #pragma once
 #include <stdbool.h>
 
+void clock_alarm_mp3_set_file(const char *name);
 bool clock_alarm_mp3_available(void);
 bool clock_alarm_mp3_start(void);
 void clock_alarm_mp3_service(int volume);

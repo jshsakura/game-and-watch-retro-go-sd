@@ -43,11 +43,31 @@ extern void audio_close(void);
 
 static bool s_active;
 
+/* Chosen alarm sound basename (settings picker). Only a POINTER into the caller's
+ * persistent buffer (rg_clock's s_alarmsnd) is kept — not a copy — so the tight
+ * DTCM gains no resident string buffer; the full path is built on the stack per
+ * use. NULL/"" = the default /clock/alarm.mp3 (back-compat with an old cfg). */
+static const char *s_mp3_name;
+
+void clock_alarm_mp3_set_file(const char *name)
+{
+    s_mp3_name = (name && name[0]) ? name : NULL;
+}
+
+/* Resolve the active alarm-sound path into `out` (or the static default). */
+static const char *mp3_resolve_path(char *out, size_t n)
+{
+    if (!s_mp3_name) return CLOCK_ALARM_MP3_PATH;
+    snprintf(out, n, "/clock/%s", s_mp3_name);
+    return out;
+}
+
 bool clock_alarm_mp3_active(void) { return s_active; }
 
 bool clock_alarm_mp3_available(void)
 {
-    FILE *f = fopen(CLOCK_ALARM_MP3_PATH, "rb");
+    char pbuf[64];
+    FILE *f = fopen(mp3_resolve_path(pbuf, sizeof pbuf), "rb");
     if (!f)
         return false;
     fclose(f);
@@ -69,7 +89,8 @@ bool clock_alarm_mp3_start(void)
                             (size_t)&_OVERLAY_MUSIC_SIZE);
     wdog_refresh();
 
-    if (!audio_open(CLOCK_ALARM_MP3_PATH))
+    char pbuf[64];
+    if (!audio_open(mp3_resolve_path(pbuf, sizeof pbuf)))
         return false;                       /* unreadable -> beep */
 
     /* Prime the ring; if nothing decodes (corrupt / empty file) fall back. */

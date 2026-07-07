@@ -99,12 +99,14 @@ void clock_gif_blit(uint16_t*f,uint32_t n){(void)f;(void)n;}
 bool clock_gif_load(void){return false;} void clock_gif_free(void){}
 int clock_gif_status(void){return 1;}
 const char *clock_gif_diag(void){return "";}
+void clock_gif_set_file(const char *n){ (void)n; }
 /* MP3-alarm engine — inert here (no alarm file, so ring_audio always beeps) */
 bool clock_alarm_mp3_available(void){ return false; }
 bool clock_alarm_mp3_start(void){ return false; }
 void clock_alarm_mp3_service(int v){ (void)v; }
 void clock_alarm_mp3_stop(void){}
 bool clock_alarm_mp3_active(void){ return false; }
+void clock_alarm_mp3_set_file(const char *n){ (void)n; }
 
 /* simulated SAI DMA (only linked because rg_clock_show/tone_feed reference it;
  * never exercised by these tests) */
@@ -242,9 +244,12 @@ static void test_cfg_full_roundtrip(void)
     reset_cfg_fields();
     s_theme = 5; s_face_override = FACE_DOT; s_hour24 = true;
     s_anim = ANIM_SCENE; s_scene = 7; s_photo_speed = 2; s_autodim = false;
+    snprintf(s_bgfile, sizeof s_bgfile, "%s", "sunset.gif");
+    snprintf(s_alarmsnd, sizeof s_alarmsnd, "%s", "chime.mp3");
     clock_config_save();
 
     reset_cfg_fields();
+    s_bgfile[0] = 0; s_alarmsnd[0] = 0;
     clock_config_load();
     CHECK(s_theme == 5,              "theme round-trips");
     CHECK(s_face_override == FACE_DOT, "face override round-trips");
@@ -253,7 +258,20 @@ static void test_cfg_full_roundtrip(void)
     CHECK(s_scene == 7,              "scene round-trips");
     CHECK(s_photo_speed == 2,        "photo speed round-trips");
     CHECK(s_autodim == false,        "auto-dim round-trips (non-default value)");
+    CHECK(strcmp(s_bgfile, "sunset.gif") == 0,    "bgfile round-trips");
+    CHECK(strcmp(s_alarmsnd, "chime.mp3") == 0,   "alarmsnd round-trips");
     s_autodim = true;   /* restore module default */
+
+    /* an empty (default) bgfile/alarmsnd must NOT be written — "" means the
+     * implicit bg.gif / alarm.mp3, and an old cfg without the key must stay
+     * clean so it keeps meaning "default". */
+    reset_cfg_fields();
+    s_bgfile[0] = 0; s_alarmsnd[0] = 0;
+    clock_config_save();
+    FILE *cf = fopen(test_path(CLOCK_CFG_PATH), "r");
+    char buf[512] = ""; if (cf) { size_t n = fread(buf, 1, sizeof buf - 1, cf); buf[n] = 0; fclose(cf); }
+    CHECK(strstr(buf, "bgfile=")   == NULL, "empty bgfile is not persisted");
+    CHECK(strstr(buf, "alarmsnd=") == NULL, "empty alarmsnd is not persisted");
 }
 
 /* ---- idle backlight: the pure 3-state decision function ------------------

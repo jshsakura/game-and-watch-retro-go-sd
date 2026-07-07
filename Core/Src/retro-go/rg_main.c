@@ -1072,8 +1072,12 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
      * screen of covers there may be <50K left, and a 320x240 GIF needs ~270K
      * ("no RAM need 273K free 41K"). Reserving up front (only if /clock/bg.gif
      * exists, sized from its header) makes the GIF background work no matter
-     * how long the launcher has been browsing. */
+     * how long the launcher has been browsing. The GIF background is an SD-card
+     * feature (a card-less unit has no way to receive a bg.gif), compiled out on
+     * SD_CARD=0 along with the rest of the clock's user-media. */
+#if SD_CARD == 1
     clock_gif_reserve();
+#endif
 
     // Re-initialize system now that the filesystem is mounted
     odroid_system_init(ODROID_APPID_LAUNCHER, 32000);

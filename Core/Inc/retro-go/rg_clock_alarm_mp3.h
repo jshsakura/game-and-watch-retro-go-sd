@@ -22,7 +22,11 @@
  * probes the file and touches nothing, so the caller can skip that dance (keep
  * the background live) whenever there is no alarm file. */
 
-/* /clock/alarm.mp3 present and openable — cheap probe, no side effects. */
+/* Point the alarm at a basename under /clock (from the settings picker); NULL or
+ * "" restores the default /clock/alarm.mp3 so an old cfg keeps working. */
+void clock_alarm_mp3_set_file(const char *name);
+
+/* /clock/alarm.mp3 (or the picked file) present and openable — cheap probe. */
 bool clock_alarm_mp3_available(void);
 
 /* Stage the decoder overlay and open the alarm file. Returns true if MP3/WAV

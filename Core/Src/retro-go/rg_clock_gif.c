@@ -36,6 +36,26 @@
 #define GIF_PATH "/clock/bg.gif"
 #endif
 
+/* Chosen background GIF basename (settings picker). We keep only a POINTER into
+ * the caller's persistent buffer (rg_clock's s_bgfile) — not a copy — so the
+ * launcher's tight DTCM gains no resident string buffer; the full path is built
+ * on the stack per load. NULL/"" = the default /clock/bg.gif, so an old cfg with
+ * no bgfile entry keeps working. */
+static const char *s_gif_name;   /* basename under /clock, or NULL for bg.gif */
+
+void clock_gif_set_file(const char *name)
+{
+    s_gif_name = (name && name[0]) ? name : NULL;
+}
+
+/* Resolve the active GIF path into `out` (or the static default string). */
+static const char *gif_resolve_path(char *out, size_t n)
+{
+    if (!s_gif_name) return GIF_PATH;
+    snprintf(out, n, "/clock/%s", s_gif_name);
+    return out;
+}
+
 static gd_GIF  *s_gif;
 static int      s_gw, s_gh;
 static uint32_t s_next_tick;
@@ -98,12 +118,15 @@ bool clock_gif_load(void)
 {
     clock_gif_free();
 
+    char pbuf[64];
+    const char *path = gif_resolve_path(pbuf, sizeof pbuf);
+
     /* Probe the header ourselves: separates "no file" / "not a GIF" / "no RAM"
      * (the launcher's covers+list already hold much of the emu-RAM pool, so a
      * full-screen GIF may simply not fit what's left). */
-    int probe = open(GIF_PATH, O_RDONLY);
+    int probe = open(path, O_RDONLY);
     if (probe < 0) { s_status = CLOCK_GIF_NO_FILE;
-        snprintf(s_diag, sizeof s_diag, "no file: %s", GIF_PATH); return false; }
+        snprintf(s_diag, sizeof s_diag, "no file: %s", path); return false; }
     uint8_t hdr[10];
     int hn = read(probe, hdr, 10);
     close(probe);
@@ -132,7 +155,7 @@ bool clock_gif_load(void)
     s_arena = arena; s_arena_size = arena_bytes; s_arena_off = 0;
     gd_set_allocator(arena_malloc, arena_calloc, gif_arena_free);
 
-    gd_GIF *g = gd_open_gif(GIF_PATH);
+    gd_GIF *g = gd_open_gif(path);
     if (!g) { s_status = CLOCK_GIF_BAD_FMT;
         snprintf(s_diag, sizeof s_diag, "decoder rejected %dx%d", gw, gh);
         clock_gif_free(); return false; }

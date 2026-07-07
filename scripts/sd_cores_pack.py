@@ -10,11 +10,13 @@ import pathlib
 
 # UI logos: built to sd_content/bios/logo.bin (FrogFS /bios when SD_CARD=0, SD path /bios when SD_CARD=1).
 # pico8_stub.bin is omitted (placeholder; use real pico8.bin on FrogFS/SD or skip).
-# clockmp3.bin backs the launcher-resident Clock app's optional MP3 alarm — it is
-# tied to no ROM system, so the ROM-scan core filter would drop it from LittleFS
-# (flash builds). Always pack it so /cores/clockmp3.bin exists on every build; the
-# Clock still falls back to the synth beep if it (or /clock/alarm.mp3) is missing.
-ALWAYS_PACK_REL = frozenset({"clockmp3.bin"})
+# ALWAYS_PACK_REL forces cores into the SD_CARD=0 LittleFS image regardless of the
+# ROM-scan filter. It is intentionally empty: clockmp3.bin backs the Clock app's
+# MP3/WAV alarm, which is an SD-card-only feature (a card-less unit has no way to
+# receive an alarm.mp3), compiled out on SD_CARD=0 — so its decoder core must not
+# be baked into flash builds. It is still produced under sd_content/cores for SD
+# workflows (SD_CARD=1 copies /cores straight to the card, bypassing this filter).
+ALWAYS_PACK_REL: frozenset[str] = frozenset()
 
 # Never copy these into LittleFS /cores (still produced under sd_content/cores for SD workflows).
 LITTLEFS_EXCLUDE_CORE_RELPATHS = frozenset({"pico8_stub.bin"})

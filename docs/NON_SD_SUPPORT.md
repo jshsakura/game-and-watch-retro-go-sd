@@ -31,8 +31,9 @@ make -j$(nproc) SD_CARD=0 INTFLASH_BANK=2 EXTFLASH_SIZE_MB=<N> all
 | everything else (`save`, `data`, `clock`, `favorites.txt`, `lang`, `music`, `video`, `CONFIG`, `cores/*.bin`) | LittleFS | yes |
 
 `rg_storage_scandir()` picks the backend per directory with the same rule
-(`gw_fs_is_frogfs_path()`), so LittleFS directories (music, video, clock
-album) enumerate correctly.
+(`gw_fs_is_frogfs_path()`), so LittleFS directories (music, video) enumerate
+correctly. (The clock's own media backgrounds are compiled out on flash builds
+— see the clock matrix below.)
 
 ## What the 2026-07-07 sweep fixed
 
@@ -72,35 +73,43 @@ Runtime-level (found by tracing every feature with no card present):
   SD_CARD=0 default, so hibernate writes `/save/off.sav` like SD builds.
 - **`make all` builds `littlefs.bin`** — flashing a firmware without its
   matching cores image fails every emulator launch.
-- Clock "Photo" background reports `(no photos)` in the settings menu when the
-  album is empty, mirroring the GIF diagnostics.
+- Clock user-media (photo album / GIF background / MP3-WAV alarm) is compiled
+  out on flash builds rather than shipped broken: a card-less unit cannot
+  receive the files, so the background picker offers only Off/Scene and the
+  alarm is beep-only (see the clock matrix below).
 
 ## Clock app: SD vs flash-only matrix
 
 The clock is a first-class feature on card-less units (it may well BE the
 device's day job there), so every clock feature branches deliberately:
 
+The user-media parts of the clock (photo album, GIF background, MP3/WAV alarm)
+all need a writable place to **receive** files, which a card-less unit has no
+way to do. Rather than pretend otherwise, they are compiled out entirely on
+`SD_CARD=0` (their `.c` files drop from the build, and the call sites in
+`rg_clock.c` / `rg_main.c` are `#if SD_CARD == 1`). The background picker then
+offers only Off/Scene and the alarm is beep-only.
+
 | clock feature | SD build (card) | flash build (LittleFS) |
 |---|---|---|
 | faces, themes, pixel scenes, timers, pomodoro | RAM/flash only — identical | identical |
 | settings / alarms / auto-dim (`/clock/clock.cfg`) | SD, editable on a PC | LittleFS, device-side edits persist |
-| photo album (`/clock/album/*.565`) | drop files on the card (web tool converts) | bake via `LITTLEFS_INCLUDE="… clock"`; empty album says `(no photos)` |
-| GIF background (`/clock/bg.gif`) | drop on card / web tool push | bake via `LITTLEFS_INCLUDE`; missing file says `(no file)` |
-| MP3/WAV alarm (`/clock/alarm.mp3` + `/cores/clockmp3.bin`) | both on card | both baked (clockmp3.bin is always packed); missing file → synth beep |
+| background picker | Off / Scene / GIF / Photo | **Off / Scene only** (GIF + Photo compiled out) |
+| photo album (`/clock/album/*.565`) | drop files on the card (web tool converts) | **not available** (compiled out — no way to receive files) |
+| GIF background (`/clock/*.gif`, picked in settings) | drop on card / web tool push | **not available** (compiled out) |
+| alarm sound (`/clock/*.mp3\|*.wav`, picked in settings) | Beep or any file on the card (`/cores/clockmp3.bin` decoder) | **synth beep only** (MP3/WAV alarm compiled out; `clockmp3.bin` not baked) |
 | RTC restore after battery drain (`/save/clock.bin`) | snapshot on card | snapshot on LittleFS (restore runs on both builds) |
 | hibernate save | dedicated `off.sav` | dedicated `off.sav` (`OFF_SAVESTATE=1` default) |
 
 ## Known limitations
 
-- No post-flash content push for LittleFS (no `sdpush` equivalent): adding
-  album photos / `bg.gif` / `alarm.mp3` / music / videos means rebuilding
-  `littlefs.bin` and reflashing that partition. Baking is one variable:
-  `make SD_CARD=0 LITTLEFS_INCLUDE="cores lang clock music video" all`
-  packs those `sd_content/` dirs into the image (cores+lang are the
-  required minimum). Saves live in the same partition — reflashing it
-  loses them.
-- Music/Video entries stay visible and show an empty list until content is
-  baked in (kept: they work fine once `/music`, `/video` are packed).
+- **User-media features are SD-card only.** The clock's photo album, GIF
+  background and MP3/WAV alarm are compiled out on flash builds; the Music and
+  Video apps stay visible but show an empty list. A card-less unit has no way to
+  receive files (no `sdpush`/`sdcopy` equivalent for LittleFS), so there is no
+  supported path to add media to a flash build — this is by design, not a gap to
+  bake around. The LittleFS image ships only what a card-less unit actually
+  needs: `cores` and `lang` (plus the writable `save`/`settings`/`clock.cfg`).
 - `release` remains SD_CARD=1-only: an SD_CARD=0 image embeds ROMs and is not
   redistributable.
 

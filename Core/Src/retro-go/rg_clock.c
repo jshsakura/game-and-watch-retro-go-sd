@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <strings.h>   /* strcasecmp — file-picker extension match (SD builds) */
 
 #include "main.h"
 #include "gw_lcd.h"
@@ -43,6 +44,19 @@
 /* forward-declared to keep the heavy rg_emulators.h out of this TU (and the host
  * clock preview harness); rg_clock already pulls in gui.h for the tab accessors. */
 extern void rg_emulators_reset_all_lists(void);
+
+/* User-media backgrounds/sounds (photo album, GIF background, MP3/WAV alarm) all
+ * need a writable place to RECEIVE files, which a card-less unit has no way to
+ * do — so they are compiled out entirely on SD_CARD=0 (their .c files are also
+ * dropped from the Makefile). The background picker then offers only Off/Scene
+ * (pixel scenes are procedural — kept on both builds), a saved GIF/photo anim is
+ * clamped back to Off, and the alarm is beep-only. SD_CARD is always -D'd by the
+ * firmware build; an undefined value (host logic tests) reads as the flash case. */
+#if SD_CARD == 1
+#define CLOCK_SD_MEDIA 1
+#else
+#define CLOCK_SD_MEDIA 0
+#endif
 
 #define C565(r,g,b) ((uint16_t)((((r)&0xF8)<<8)|(((g)&0xFC)<<3)|((b)>>3)))
 #define CLOCK_BLACK 0x0000
@@ -303,11 +317,20 @@ static int      s_theme;
 static int      s_face_override = -1;   /* -1 = the theme's face, else FACE_* */
 static bool     s_hour24;
 static bool     s_dnd;
-static int      s_anim;          /* 0 = off, 1 = ambient, 2 = GIF */
+static int      s_anim;          /* 0 = off, 1 = ambient(retired), 2 = scene, 3 = GIF, 4 = photo */
 static int      s_scene;         /* which pixel scene (0..SCENE_COUNT-1) when anim = SCENE */
 static bool     s_autodim = true;/* idle backlight auto-dim on the clock face (default on) */
 static alarm_t  s_alarms[MAX_ALARMS];
 static int      s_alarm_count;
+#if CLOCK_SD_MEDIA
+/* Chosen basenames from the settings pickers (rescanned on menu open, not held
+ * resident). "" = the implicit default: bg.gif / alarm.mp3. "Beep" forces the
+ * synth beep. The gif/mp3 modules keep only a POINTER into these persistent
+ * buffers, so these are the single resident copy (the launcher's DTCM is very
+ * tight). Bounded — the picker skips any name that would not fit. */
+static char     s_bgfile[32]   = "";   /* /clock/<name>.gif, "" = bg.gif */
+static char     s_alarmsnd[32] = "";   /* /clock/<name>.(mp3|wav), "" = alarm.mp3, "Beep" = synth */
+#endif
 
 static int alarms_armed(void)
 {
@@ -326,6 +349,7 @@ static int alarms_armed(void)
 #define ANIM_GIF   3
 #define ANIM_PHOTO 4   /* photo album from /clock/album (borrows shared_files) */
 
+#if CLOCK_SD_MEDIA
 /* set once the clock ever borrows shared_files for photos, so the exit path
  * rebuilds the launcher's ROM lists exactly once. */
 static bool s_album_used = false;
@@ -339,13 +363,18 @@ static const uint32_t PHOTO_HOLD_TBL[3] = { 15000, 8000, 4000 };
 static uint32_t s_photo_next   = 0;   /* tick to begin the next advance (0 = off) */
 static uint32_t s_fade_start   = 0;   /* tick the dip began (0 = steady) */
 static bool     s_fade_swapped = false;
+#endif
 
 static void clock_config_load(void)
 {
     s_theme = 0; s_face_override = -1;
-    s_hour24 = false; s_dnd = false; s_anim = 0; s_scene = 0; s_photo_speed = 1;
+    s_hour24 = false; s_dnd = false; s_anim = 0; s_scene = 0;
     s_autodim = true;
     s_alarm_count = 0;
+#if CLOCK_SD_MEDIA
+    s_photo_speed = 1;
+    s_bgfile[0] = 0; s_alarmsnd[0] = 0;
+#endif
     FILE *f = fopen(CLOCK_CFG_PATH, "r");
     if (!f) f = fopen(CLOCK_CFG_LEGACY, "r");   /* migrate: next save writes /clock/ */
     if (!f) return;
@@ -356,10 +385,22 @@ static void clock_config_load(void)
         else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_DOT) s_face_override = v; }
         else if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
         else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
-        else if (sscanf(line, "anim=%d", &v) == 1) { if (v == 1) v = 0; if (v >= 0 && v < ANIM_COUNT) s_anim = v; }   /* ambient(1) retired */
+        else if (sscanf(line, "anim=%d", &v) == 1) {
+            if (v == 1) v = 0;                       /* ambient(1) retired -> off */
+#if !CLOCK_SD_MEDIA
+            if (v == ANIM_GIF || v == ANIM_PHOTO) v = 0;   /* SD-only media -> off on flash builds */
+#endif
+            if (v >= 0 && v < ANIM_COUNT) s_anim = v;
+        }
         else if (sscanf(line, "scene=%d", &v) == 1) { if (v >= 0) s_scene = v; }  /* draw_scene clamps */
-        else if (sscanf(line, "photospeed=%d", &v) == 1) { if (v >= 0 && v < 3) s_photo_speed = v; }
         else if (sscanf(line, "autodim=%d", &v) == 1) s_autodim = v != 0;
+#if CLOCK_SD_MEDIA
+        else if (sscanf(line, "photospeed=%d", &v) == 1) { if (v >= 0 && v < 3) s_photo_speed = v; }
+        else if (strncmp(line, "bgfile=", 7) == 0)   { char *nl = strchr(line, '\n'); if (nl) *nl = 0;
+            if (strlen(line + 7) < sizeof s_bgfile)   snprintf(s_bgfile,   sizeof s_bgfile,   "%s", line + 7); }
+        else if (strncmp(line, "alarmsnd=", 9) == 0) { char *nl = strchr(line, '\n'); if (nl) *nl = 0;
+            if (strlen(line + 9) < sizeof s_alarmsnd) snprintf(s_alarmsnd, sizeof s_alarmsnd, "%s", line + 9); }
+#endif
         /* alarm=HHMM[,enabled] — the suffix is new; plain HHMM (older cfg) = enabled */
         else if (sscanf(line, "alarm=%d,%d", &v, &en) >= 1 && s_alarm_count < MAX_ALARMS) {
             int hr = v / 100, mn = v % 100;
@@ -384,8 +425,12 @@ static void clock_config_save(void)
     fprintf(f, "dnd=%d\n", s_dnd ? 1 : 0);
     fprintf(f, "anim=%d\n", s_anim);
     fprintf(f, "scene=%d\n", s_scene);
-    fprintf(f, "photospeed=%d\n", s_photo_speed);
     fprintf(f, "autodim=%d\n", s_autodim ? 1 : 0);
+#if CLOCK_SD_MEDIA
+    fprintf(f, "photospeed=%d\n", s_photo_speed);
+    if (s_bgfile[0])   fprintf(f, "bgfile=%s\n", s_bgfile);
+    if (s_alarmsnd[0]) fprintf(f, "alarmsnd=%s\n", s_alarmsnd);
+#endif
     for (int i = 0; i < s_alarm_count; i++)   /* disabled alarms persist too */
         fprintf(f, "alarm=%02d%02d,%d\n", s_alarms[i].hour, s_alarms[i].min,
                 s_alarms[i].enabled ? 1 : 0);
@@ -680,6 +725,7 @@ static inline void fb_fill_screen(uint16_t *fb, uint16_t c)
 }
 
 
+#if CLOCK_SD_MEDIA
 /* Dip-to-black progress: 0 at the ends (steady) .. 16 fully black at the midpoint
  * of the PHOTO_FADE_MS transition. Applied to the photo before the digits go on. */
 static int photo_fade_darkness(uint32_t now)
@@ -690,6 +736,7 @@ static int photo_fade_darkness(uint32_t now)
     int v = (int)(d * 16 / half);
     return v > 16 ? 16 : v;
 }
+#endif
 
 /* Alarm ring overlay — drawn AFTER the background + face so the pulse reads
  * over ANY background (GIF, photo, busy pixel scene). Two layers guarantee
@@ -781,11 +828,13 @@ static void render_clock(uint32_t now, bool alarm_firing)
         }
     }
 
+#if CLOCK_SD_MEDIA
     /* GIF selected but not showing? put the reason on screen (device = log) */
     if (s_anim == ANIM_GIF && !clock_gif_ready()) {
         char msg[80]; snprintf(msg, sizeof msg, "GIF: %s", clock_gif_diag());
         draw_centered_i18n(STATUS_Y + 22, msg, t->alarm);
     }
+#endif
 }
 
 static void render_mmss(uint32_t ms, uint16_t col, bool colon)
@@ -1238,8 +1287,12 @@ static void clock_alarm_setup(void)
 static const char *const THEME_LABEL[THEME_COUNT] =
     { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate" };
 static const char *const FACE_NAME[3] = { "7-seg", "Pixel", "Dot" };
-static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44], v_scene[24], v_pspeed[12],
+static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44], v_scene[24],
             v_autodim[12], v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];
+/* SD-media picker value buffers (photo speed / GIF file / alarm sound) are NOT
+ * resident: they live on clock_settings_menu()'s stack for the life of the
+ * blocking dialog only, so the tight launcher DTCM carries none of them. */
+#define PICK_VAL 40
 
 static bool cb_theme(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
@@ -1270,19 +1323,38 @@ static bool cb_autodim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint3
 { (void)r; if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_autodim = !s_autodim;
   sprintf(o->value, "%s", s_autodim ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
   return e == ODROID_DIALOG_ENTER; }
+/* Next selectable background value in `dir` (+1/-1). Ambient(1) is retired on
+ * every build; GIF/photo are compiled out on flash builds — so a card-less unit
+ * cycles only Off <-> Scene. */
+static int anim_step(int cur, int dir)
+{
+    for (;;) {
+        cur = (cur + dir + ANIM_COUNT) % ANIM_COUNT;
+        if (cur == 1) continue;                                 /* ambient retired */
+#if !CLOCK_SD_MEDIA
+        if (cur == ANIM_GIF || cur == ANIM_PHOTO) continue;     /* SD-only media */
+#endif
+        return cur;
+    }
+}
 static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    if (e == ODROID_DIALOG_PREV) s_anim = (s_anim == 0) ? ANIM_COUNT-1 : s_anim-1;
-    if (e == ODROID_DIALOG_NEXT) s_anim = (s_anim+1) % ANIM_COUNT;
-    if (s_anim == 1) s_anim = (e == ODROID_DIALOG_NEXT) ? ANIM_SCENE : 0;   /* ambient retired — skip it */
+    if (e == ODROID_DIALOG_PREV) s_anim = anim_step(s_anim, -1);
+    if (e == ODROID_DIALOG_NEXT) s_anim = anim_step(s_anim, +1);
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) {
+#if CLOCK_SD_MEDIA
+        clock_gif_set_file(s_bgfile);
         if (s_anim == ANIM_GIF) { if (clock_gif_load()) s_album_used = true; } else clock_gif_free();
         if (s_anim == ANIM_PHOTO) { if (!clock_album_ready()) clock_album_open(); s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
-        /* opts[] order after this row is: [+1] Scene, [+2] Photo speed. Each is
-         * live only for its own background (pixel scene / photo album). */
+#endif
+        /* opts[] order after this row is: [+1] Scene, [+2] Photo speed, [+3] GIF
+         * file. Each is live only for its own background. */
         o[1].enabled = (s_anim == ANIM_SCENE) ? 1 : -1;
+#if CLOCK_SD_MEDIA
         o[2].enabled = (s_anim == ANIM_PHOTO) ? 1 : -1;
+        o[3].enabled = (s_anim == ANIM_GIF)   ? 1 : -1;
+#endif
     }
     const char *lv = (s_anim == 0) ? curr_lang->s_Clock_Anim_0
                    : (s_anim == 1) ? curr_lang->s_Clock_Anim_1
@@ -1290,6 +1362,7 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
                    : (s_anim == ANIM_GIF) ? curr_lang->s_Clock_Anim_3
                    : curr_lang->s_Clock_Anim_4;
     const char *why = "";
+#if CLOCK_SD_MEDIA
     if (s_anim == ANIM_GIF && !clock_gif_ready()) {
         int st = clock_gif_status();
         why = (st == CLOCK_GIF_NO_RAM)  ? " (no RAM)"
@@ -1301,6 +1374,7 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
      * silently keeping the plain theme background (bit us on flash builds) */
     if (s_anim == ANIM_PHOTO && !clock_album_ready())
         why = " (no photos)";
+#endif
     snprintf(o->value, sizeof v_anim, "%s%s", lv, why);
     return e == ODROID_DIALOG_ENTER;
 }
@@ -1313,16 +1387,98 @@ static bool cb_scene(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_
     snprintf(o->value, sizeof v_scene, "%s", SCENE_NAMES[s_scene]);
     return e == ODROID_DIALOG_ENTER;
 }
+#if CLOCK_SD_MEDIA
 static bool cb_pspeed(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
     if (e == ODROID_DIALOG_PREV) s_photo_speed = (s_photo_speed == 0) ? 2 : s_photo_speed - 1;
     if (e == ODROID_DIALOG_NEXT) s_photo_speed = (s_photo_speed + 1) % 3;
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) { s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
-    snprintf(o->value, sizeof v_pspeed, "%s",
+    snprintf(o->value, PICK_VAL, "%s",
              (s_photo_speed == 0) ? "Slow" : (s_photo_speed == 2) ? "Fast" : "Normal");
     return e == ODROID_DIALOG_ENTER;
 }
+
+/* ---- menu-only file pickers (GIF background file / alarm sound) ----------
+ * Rescan /clock on every menu use so no file list is held resident — only the
+ * chosen basename lives in cfg. A name too long for the bounded buffer is
+ * skipped from the picker (never truncated, never a crash). */
+#define PICK_MAX  16
+/* n[] width matches s_bgfile/s_alarmsnd so any name the picker lists also fits
+ * the persistent store — pick_scan_cb skips names too long for this buffer. */
+typedef struct { char n[PICK_MAX][32]; int count; const char *e1, *e2; } filelist_t;
+
+/* case-insensitive extension match on a basename */
+static bool name_has_ext(const char *name, const char *ext)
+{
+    const char *dot = strrchr(name, '.');
+    return dot && strcasecmp(dot + 1, ext) == 0;
+}
+static int pick_scan_cb(const rg_scandir_t *f, void *arg)
+{
+    filelist_t *L = arg;
+    if (!f->is_file || f->basename[0] == '.' || L->count >= PICK_MAX) return RG_SCANDIR_CONTINUE;
+    if (!name_has_ext(f->basename, L->e1) && (!L->e2 || !name_has_ext(f->basename, L->e2)))
+        return RG_SCANDIR_CONTINUE;
+    if (strlen(f->basename) >= sizeof L->n[0]) return RG_SCANDIR_CONTINUE;   /* too long -> skip */
+    snprintf(L->n[L->count++], sizeof L->n[0], "%s", f->basename);
+    return RG_SCANDIR_CONTINUE;
+}
+static void pick_scan(filelist_t *L, const char *e1, const char *e2)
+{
+    L->count = 0; L->e1 = e1; L->e2 = e2;
+    rg_storage_scandir("/clock", pick_scan_cb, L, 0);
+}
+
+/* One shared file-picker row (DRY across the GIF-file and alarm-sound rows).
+ *   special : slot-0 label present on every scan ("Beep"); NULL = files only
+ *   dflt    : what an empty `store` resolves to (bg.gif / alarm.mp3)
+ *   store   : the persistent chosen basename (updated on L/R); "special" forces it
+ * Writes the resolved display name into o->value and returns the new selection in
+ * *store. An empty folder with no special slot shows "(none)". */
+static void pick_row(odroid_dialog_choice_t *o, odroid_dialog_event_t e,
+                     const char *e1, const char *e2, const char *special,
+                     const char *dflt, char *store, size_t storesz)
+{
+    filelist_t L; pick_scan(&L, e1, e2);
+    int base = special ? 1 : 0, total = L.count + base;
+    if (total == 0) { snprintf(o->value, PICK_VAL, "(none)"); return; }
+    int idx = 0;
+    if (!(special && strcmp(store, special) == 0)) {
+        const char *want = store[0] ? store : dflt;
+        for (int i = 0; i < L.count; i++)
+            if (strcasecmp(want, L.n[i]) == 0) { idx = i + base; break; }
+    }
+    if (e == ODROID_DIALOG_PREV) idx = (idx == 0) ? total - 1 : idx - 1;
+    if (e == ODROID_DIALOG_NEXT) idx = (idx + 1) % total;
+    const char *sel = (special && idx == 0) ? special : L.n[idx - base];
+    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT)
+        snprintf(store, storesz, "%s", sel);
+    snprintf(o->value, PICK_VAL, "%s", sel);
+}
+
+/* GIF background file: cycles the found /clock/*.gif. "" (default) resolves to
+ * bg.gif if present, else the first file; an empty folder shows "(none)". */
+static bool cb_bgfile(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{
+    (void)r;
+    pick_row(o, e, "gif", NULL, NULL, "bg.gif", s_bgfile, sizeof s_bgfile);
+    if ((e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) && s_anim == ANIM_GIF) {
+        clock_gif_set_file(s_bgfile);
+        if (clock_gif_load()) s_album_used = true;
+    }
+    return e == ODROID_DIALOG_ENTER;
+}
+
+/* Alarm sound: Beep (slot 0, default) then each /clock/*.mp3|*.wav. "" resolves
+ * to alarm.mp3 (back-compat) if present, else Beep; "Beep" forces the synth. */
+static bool cb_alarmsnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{
+    (void)r;
+    pick_row(o, e, "mp3", "wav", "Beep", "alarm.mp3", s_alarmsnd, sizeof s_alarmsnd);
+    return e == ODROID_DIALOG_ENTER;
+}
+#endif /* CLOCK_SD_MEDIA */
 static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {   /* edits the SYSTEM volume — same 0..9 scale, curve AND bar-gauge look
      * as the common volume row (odroid_overlay.c volume_update_cb) */
@@ -1344,7 +1500,9 @@ static void clock_menu_repaint(void)
     fb_fill_screen(fb, bg);
     if (s_anim == ANIM_SCENE) { draw_scene(HAL_GetTick(), TH()); s_ghost_on = false; }
     else if (s_anim == 1) { draw_ambient(HAL_GetTick(), TH()->ink); s_ghost_on = false; }
+#if CLOCK_SD_MEDIA
     else if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, HAL_GetTick()); s_ghost_on = false; }
+#endif
     else s_ghost_on = true;
     draw_topbar(MODE_CLOCK, true);   /* the live settings preview always shows the pager */
     render_clock(HAL_GetTick(), false);
@@ -1353,36 +1511,42 @@ static void clock_menu_repaint(void)
 /* returns true when the user picked "Exit" — the caller leaves the app */
 static bool clock_settings_menu(void)
 {
-    /* Order: the everyday actions first (set time, alarms, volume), then the
-     * look-and-feel pickers. The choice `id`s are fixed (the post-dialog
+    /* Order: the everyday actions first (set time, alarms, volume, alarm sound),
+     * then the look-and-feel pickers. The choice `id`s are fixed (the post-dialog
      * dispatch keys off them), so rows can be reordered freely. Anim/Scene/
-     * Photo-speed MUST stay adjacent in that order — cb_anim toggles the two
-     * that follow it via o[1]/o[2]. */
+     * Photo-speed/GIF-file MUST stay adjacent in that order — cb_anim toggles the
+     * three that follow it via o[1]/o[2]/o[3]. The SD-media rows (alarm sound,
+     * photo speed, GIF file) are compiled out entirely on flash builds. */
+#if CLOCK_SD_MEDIA
+    /* stack-resident value buffers — see PICK_VAL: never held in DTCM */
+    char v_pspeed[PICK_VAL], v_bgfile[PICK_VAL], v_alarmsnd[PICK_VAL];
+#endif
     odroid_dialog_choice_t opts[] = {
         {8, curr_lang->s_Clock_Set_Time, v_settime, 1, cb_enter},
         {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
         {7, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
+#if CLOCK_SD_MEDIA
+        {12, curr_lang->s_Clock_Alarm_Sound, v_alarmsnd, 1, cb_alarmsnd},
+#endif
         {0, curr_lang->s_Clock_Theme,  v_theme,  1, cb_theme},
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},
         {2, curr_lang->s_Clock_Anim,   v_anim,   1, cb_anim},
         {3, curr_lang->s_Clock_Scene,  v_scene,  (s_anim == ANIM_SCENE) ? 1 : -1, cb_scene},
+#if CLOCK_SD_MEDIA
         {4, curr_lang->s_Clock_Photo_Speed, v_pspeed, (s_anim == ANIM_PHOTO) ? 1 : -1, cb_pspeed},
+        {13, curr_lang->s_Clock_Bg_File, v_bgfile, (s_anim == ANIM_GIF) ? 1 : -1, cb_bgfile},
+#endif
         {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
         {6, curr_lang->s_Clock_DND,    v_dnd,    1, cb_dnd},
         {11, curr_lang->s_Clock_Auto_Dim, v_autodim, 1, cb_autodim},
         {10, curr_lang->s_Clock_Exit,  v_exit,   1, cb_enter},
         ODROID_DIALOG_CHOICE_LAST
     };
-    cb_vol(&opts[2], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_theme(&opts[3], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_face(&opts[4], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_anim(&opts[5], ODROID_DIALOG_FOCUS_GAINED, 0);   /* o[1]=Scene, o[2]=Photo speed */
-    cb_scene(&opts[6], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_pspeed(&opts[7], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_fmt(&opts[8], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_dnd(&opts[9], ODROID_DIALOG_FOCUS_GAINED, 0);
-    cb_autodim(&opts[10], ODROID_DIALOG_FOCUS_GAINED, 0);
-    v_settime[0] = 0; v_alarms[0] = 0; v_exit[0] = 0;
+    /* Prime every row's value string (index-free so the SD-media rows can drop
+     * out cleanly). cb_anim on FOCUS_GAINED does not touch its neighbours, so the
+     * Scene/Photo/GIF `enabled` seeds set in the initializer above stand. */
+    for (odroid_dialog_choice_t *o = opts; o->update_cb; o++)
+        o->update_cb(o, ODROID_DIALOG_FOCUS_GAINED, 0);
 
     int sel = odroid_overlay_dialog(curr_lang->s_Clock, opts, 0, &clock_menu_repaint, 0);
     if (sel == 8) clock_edit_time();
@@ -1449,6 +1613,7 @@ static void tone_feed(uint32_t now, bool ringing)
  * ring. Any MP3 failure falls straight back to the beep here: the alarm is never
  * silent. s_album_used is forced on so the launcher's ROM lists (which share the
  * same arena) are rebuilt on exit. */
+#if CLOCK_SD_MEDIA
 static bool s_ring_mp3 = false;   /* this ring is playing the MP3, not the beep */
 
 static void clock_bg_suspend(void)   /* free the shared_files arena for the overlay */
@@ -1461,23 +1626,39 @@ static void clock_bg_restore(void)   /* reload the background after the ring */
     if (s_anim == ANIM_GIF)   clock_gif_load();
     if (s_anim == ANIM_PHOTO && clock_album_open()) s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS;
 }
+#endif
 
 static void ring_audio(uint32_t now, bool ringing)
 {
+#if CLOCK_SD_MEDIA
     if (!ringing) {                     /* dismissed / snoozed / stopped / leaving */
         if (s_ring_mp3) { clock_alarm_mp3_stop(); clock_bg_restore(); s_ring_mp3 = false; }
         tone_feed(now, false);          /* also stops the beep path if it was used */
         return;
     }
     if (!s_ring_mp3 && !s_tone_on) {     /* ring just started — choose the source once */
-        if (clock_alarm_mp3_available()) {
-            clock_bg_suspend();
-            if (clock_alarm_mp3_start()) { s_ring_mp3 = true; s_album_used = true; }
-            else clock_bg_restore();     /* decode failed -> fall back to the beep */
+        if (strcmp(s_alarmsnd, "Beep") != 0) {   /* "Beep" forces the synth tone */
+            clock_alarm_mp3_set_file(s_alarmsnd); /* "" -> alarm.mp3 (back-compat) */
+            if (clock_alarm_mp3_available()) {
+                clock_bg_suspend();
+                /* mp3_start() stages the decoder overlay into the shared_files /
+                 * RAM_EMU arena (clobbering the launcher's ROM lists) BEFORE it can
+                 * still fail (unreadable / undecodable file). Mark the arena dirty
+                 * the moment it can be clobbered — not only on decode success — so
+                 * the exit path always rebuilds the lists. With a solid background
+                 * clock_bg_restore() is a no-op, so without this an mp3_start()
+                 * failure would leave the arena corrupt -> bad tabs / hard fault. */
+                s_album_used = true;
+                if (clock_alarm_mp3_start()) s_ring_mp3 = true;
+                else clock_bg_restore();          /* decode failed -> fall back to the beep */
+            }
         }
     }
     if (s_ring_mp3) clock_alarm_mp3_service(volume_tbl[odroid_audio_volume_get()]);
     else            tone_feed(now, true);
+#else
+    tone_feed(now, ringing);            /* flash builds: synth beep only (no SD files) */
+#endif
 }
 
 /* ---- main loop -------------------------------------------------------- */
@@ -1494,14 +1675,17 @@ void rg_clock_show(void)
 
     clock_config_load();
     rg_storage_mkdir("/clock");       /* ensure the clock's folders exist on first run */
-    rg_storage_mkdir("/clock/album"); /* the user drops 320x240 raw .565 photos here */
     s_snooze_tick = 0;
+#if CLOCK_SD_MEDIA
+    rg_storage_mkdir("/clock/album"); /* the user drops 320x240 raw .565 photos here */
     s_album_used = false;
-    if (s_anim == ANIM_GIF && clock_gif_load()) s_album_used = true;   /* GIF borrows shared_files -> restore lists on exit */
+    if (s_anim == ANIM_GIF) { clock_gif_set_file(s_bgfile);
+        if (clock_gif_load()) s_album_used = true; }   /* GIF borrows shared_files -> restore lists on exit */
     if (s_anim == ANIM_PHOTO) {                 /* borrow shared_files, load first photo */
         if (clock_album_open()) { s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; }
         else s_anim = 0;                        /* no photos / no room -> solid fallback */
     }
+#endif
     odroid_input_read_gamepad(&prev);   /* swallow the opening button */
 
     while (true) {
@@ -1573,10 +1757,14 @@ void rg_clock_show(void)
          * item only. */
         if (pressed(&k, &prev, ODROID_INPUT_POWER)) {
             ring_audio(now, false);
+#if CLOCK_SD_MEDIA
             bool had_gif = (s_anim == ANIM_GIF);
             if (had_gif) clock_gif_free();
+#endif
             odroid_system_sleep();          /* fade -> STOP sleep -> resume here */
+#if CLOCK_SD_MEDIA
             if (had_gif) clock_gif_load();   /* reopen: the pre-sleep fd is stale */
+#endif
             /* swallow the wake press so we neither re-sleep nor leak it out */
             do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); }
             while (k.values[ODROID_INPUT_POWER]);
@@ -1658,9 +1846,14 @@ void rg_clock_show(void)
          * defeating the event-driven loop and draining the battery. Reads
          * anim_now (frozen while DIM/OFF), so a paused background contributes
          * a constant term here instead of continuing to animate. */
+#if CLOCK_SD_MEDIA
         if (s_anim == ANIM_GIF)        { if (clock_gif_ready()) sig ^= (anim_now / 80); }
         else if (s_anim == ANIM_SCENE) sig ^= (anim_now / 32);   /* ~31fps, and 32ms = exactly 2 polls (16ms) so frames land evenly — no beat/jitter */
         else if (s_anim > 0)           sig ^= (anim_now / 320);  /* ambient ~3fps */
+#else
+        if (s_anim == ANIM_SCENE)      sig ^= (anim_now / 32);   /* pixel scene ~31fps */
+        else if (s_anim > 0)           sig ^= (anim_now / 320);  /* ambient ~3fps */
+#endif
 
         /* mode pager + hint fade out after a few idle seconds (any key restores
          * them) — fold into the signature so the hide itself triggers a repaint */
@@ -1671,6 +1864,7 @@ void rg_clock_show(void)
          * to the next photo at the midpoint, and dip back — no hard cut.
          * Skipped entirely while paused (bl_paused) so the slideshow does not
          * advance (and does not silently burn through the fade) while dim/off. */
+#if CLOCK_SD_MEDIA
         if (!bl_paused && s_anim == ANIM_PHOTO && clock_album_ready() && clock_album_count() > 1) {
             if (!s_fade_start && s_photo_next && now >= s_photo_next) { s_fade_start = now ? now : 1; s_fade_swapped = false; }
             if (s_fade_start) {
@@ -1680,6 +1874,7 @@ void rg_clock_show(void)
                 sig ^= (now / 33);   /* ~30fps repaint through the dip */
             }
         }
+#endif
 
         /* OFF: the backlight is literally 0, so skip render+flush altogether —
          * the loop above (alarm check, input poll) keeps running at full
@@ -1693,6 +1888,7 @@ void rg_clock_show(void)
             if (!flash) {   /* background layer, identical in every mode; anim_now is
                              * frozen while paused so a DIMmed background holds its
                              * last frame instead of continuing to animate */
+#if CLOCK_SD_MEDIA
                 if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, anim_now); bg_live = true; }
                 else if (s_anim == ANIM_PHOTO && clock_album_ready()) {
                     memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
@@ -1702,6 +1898,10 @@ void rg_clock_show(void)
                 }
                 else if (s_anim == ANIM_SCENE) { draw_scene(anim_now, TH()); bg_live = true; }
                 else if (s_anim == 1) { draw_ambient(anim_now, TH()->ink); bg_live = true; }
+#else
+                if (s_anim == ANIM_SCENE) { draw_scene(anim_now, TH()); bg_live = true; }
+                else if (s_anim == 1) { draw_ambient(anim_now, TH()->ink); bg_live = true; }
+#endif
             }
             s_ghost_on = !bg_live;   /* ghost only on a solid theme, not over art */
             switch (mode) {
@@ -1748,14 +1948,19 @@ void rg_clock_show(void)
          * instant, and the alarm check above still runs every iteration. */
         uint32_t poll = ringing ? 8
                       : bl_state == CLOCK_BL_OFF ? 80
+#if CLOCK_SD_MEDIA
                       : (s_fade_start || s_anim == ANIM_SCENE) ? 16
                       : (s_anim == ANIM_GIF && clock_gif_ready()) ? 24
+#else
+                      : (s_anim == ANIM_SCENE) ? 16
+#endif
                       : 40;
         HAL_Delay(poll);
     }
 
     ring_audio(0, false);   /* make sure the SAI is stopped (beep or MP3) on the way out */
     if (bl_state != CLOCK_BL_FULL) lcd_backlight_set(odroid_display_get_backlight_raw());   /* never leave the launcher dim/off */
+#if CLOCK_SD_MEDIA
     clock_gif_free();      /* release the transient GIF cache */
     /* If we borrowed shared_files for photos, its contents are now overwritten.
      * Rebuild the launcher's ROM lists: invalidate every tab, then re-scan the
@@ -1767,5 +1972,6 @@ void rg_clock_show(void)
         if (cur) gui_refresh_tab(cur);
         s_album_used = false;
     }
+#endif
     clock_config_save();
 }

@@ -275,6 +275,7 @@ static const lang_t KO = {
     .s_Clock_Hint_Ring="A 5분 스누즈  B 끄기", .s_Clock_Theme="테마", .s_Clock_Face="숫자 서체", .s_Clock_Auto="자동",
     .s_Clock_Set_Time="시간 설정", .s_Clock_Scene="씬", .s_Clock_Photo_Speed="사진 속도",
     .s_Clock_Anim_4="사진 앨범", .s_Clock_Auto_Dim="자동 절전",
+    .s_Clock_Bg_File="GIF", .s_Clock_Alarm_Sound="알람 소리",
     .s_Full="\x7", .s_Fill="\x8",
 };
 const lang_t *curr_lang = &KO;

@@ -68,6 +68,7 @@ void clock_gif_blit(uint16_t*f,uint32_t n){(void)f;(void)n;}
 bool clock_gif_load(void){return false;} void clock_gif_free(void){}
 int clock_gif_status(void){return 1;}
 const char *clock_gif_diag(void){return "";}
+void clock_gif_set_file(const char *n){ (void)n; }
 
 /* MP3-alarm engine — controllable stubs (its own logic is tested in
  * tests/test_clock_mp3.c). Here we only need to steer ring_audio's source pick. */
@@ -78,6 +79,7 @@ bool clock_alarm_mp3_start(void){ mp3_active = stub_mp3_start_ok; return stub_mp
 void clock_alarm_mp3_service(int v){ mp3_service_calls++; mp3_service_vol = v; }
 void clock_alarm_mp3_stop(void){ mp3_stop_calls++; mp3_active = 0; }
 bool clock_alarm_mp3_active(void){ return mp3_active; }
+void clock_alarm_mp3_set_file(const char *n){ (void)n; }
 
 /* simulated SAI DMA (mirrors gw_audio.c semantics) */
 uint32_t audio_mute;

@@ -22,12 +22,17 @@ if [ -d "$SRC" ]; then
 else
     echo "media module not on this branch — skipping music-app tests"
 fi
-$CC -O2 -Wall -Wextra -std=gnu11 -Itests/clock_stubs \
+# rg_clock.c is compiled as an SD-card build here (-DSD_CARD=1) so the alarm /
+# GIF / photo / picker logic is all present; test_clock_sd0.c below builds the
+# same source as a flash build (-DSD_CARD=0) to prove the media compile-out.
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs \
     tests/test_clock_alarm.c                             -o /tmp/mtest/test_clock_alarm
 $CC -O2 -Wall -std=gnu11 -Itests/clock_stubs -ICore/Src/porting/lib/gifdec \
     tests/test_clock_gif.c                               -o /tmp/mtest/test_clock_gif
-$CC -O2 -Wall -Wextra -std=gnu11 -Itests/clock_stubs \
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs \
     tests/test_clock_more.c                              -o /tmp/mtest/test_clock_more
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/clock_stubs \
+    tests/test_clock_sd0.c                               -o /tmp/mtest/test_clock_sd0
 # MP3-alarm module: overlay SIZE linker symbols faked with --defsym (small, so the
 # staging memset stays in-bounds); -no-pie keeps those absolute symbols addressable.
 $CC -O2 -Wall -Wextra -std=gnu11 -no-pie -Itests/clock_stubs \
@@ -69,6 +74,7 @@ fi
 /tmp/mtest/test_clock_alarm || rc=1
 /tmp/mtest/test_clock_gif   || rc=1
 /tmp/mtest/test_clock_more  || rc=1
+/tmp/mtest/test_clock_sd0   || rc=1
 /tmp/mtest/test_clock_mp3   || rc=1
 /tmp/mtest/test_favorites   || rc=1
 /tmp/mtest/test_storage_sd1 || rc=1

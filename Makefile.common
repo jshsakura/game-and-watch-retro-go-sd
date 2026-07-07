@@ -349,6 +349,14 @@ C_SOURCES += Core/src/gw_flash_alloc.c
 C_SOURCES += Core/Src/gw_sdcard.c
 C_SOURCES += Core/Src/gw_timer.c
 C_SOURCES += Core/src/softspi.c
+# Clock user-media (photo album, GIF background, MP3/WAV alarm) is SD-card only:
+# a card-less unit has no way to RECEIVE the files, so these are compiled out on
+# SD_CARD=0 and their call sites in rg_clock.c/rg_main.c are #if SD_CARD==1.
+# gifdec is used only by the GIF background, so it drops out too.
+C_SOURCES += Core/Src/retro-go/rg_clock_gif.c
+C_SOURCES += Core/Src/retro-go/rg_clock_album.c
+C_SOURCES += Core/Src/retro-go/rg_clock_alarm_mp3.c
+C_SOURCES += Core/Src/porting/lib/gifdec/gifdec.c
 C_DEFS += -DGNW_DISABLE_COMPRESSION
 EXTFLASH_TOTAL_LENGTH = 0
 TAMP_C_SOURCES :=
@@ -427,10 +435,6 @@ Core/Src/retro-go/rg_rtc.c \
 Core/Src/retro-go/rg_emulators.c \
 Core/Src/retro-go/rg_favorites.c \
 Core/Src/retro-go/rg_clock.c \
-Core/Src/retro-go/rg_clock_gif.c \
-Core/Src/retro-go/rg_clock_album.c \
-Core/Src/retro-go/rg_clock_alarm_mp3.c \
-Core/Src/porting/lib/gifdec/gifdec.c \
 Core/Src/retro-go/gw_firmware_abi.c \
 Core/Src/retro-go/rg_storage.c \
 Core/Src/retro-go/rg_welcome_prompt.c \
@@ -1689,12 +1693,6 @@ $(FROGFS_IMAGE): create_sd_data scripts/gen_frogfs_image.py scripts/rom_frogfs_l
 frogfs_image: $(FROGFS_IMAGE)
 .PHONY: frogfs_image
 
-# Top-level sd_content dirs baked into the RW LittleFS image (SD_CARD=0).
-# cores+lang are required; append to ship fork-feature content on card-less
-# devices, e.g. LITTLEFS_INCLUDE="cores lang clock music" bakes /clock
-# (alarm.mp3, bg.gif, album/*.565) and /music for the Clock/Music apps.
-LITTLEFS_INCLUDE ?= cores lang
-
 $(LITTLEFS_IMAGE): create_sd_data scripts/gen_littlefs_image.py scripts/sd_cores_pack.py scripts/nes_rom_mappers.py scripts/pico8_gnw_cores.py
 	$(V)$(PYTHON3) scripts/gen_littlefs_image.py \
 		--sd-content $(SD_FOLDER) \
@@ -1702,7 +1700,7 @@ $(LITTLEFS_IMAGE): create_sd_data scripts/gen_littlefs_image.py scripts/sd_cores
 		--build-dir $(LITTLEFS_BUILD_DIR) \
 		--size $(FILESYSTEM_SIZE) \
 		--block-size $(LITTLEFS_BLOCK_SIZE) \
-		$(foreach d,$(LITTLEFS_INCLUDE),--include $(d)) \
+		--include cores --include lang \
 		$(LITTLEFS_OMIT_PICO8_RO)
 
 littlefs_image: $(LITTLEFS_IMAGE)
