@@ -380,6 +380,41 @@ int main(void)
     /* 8) full-screen clone-view alarm editor (hour field lit phase) */
     render_alarm_edit(&s_alarms[0], 0, false); dump("editor_edit");
 
+    /* 8b) every NEW digit face: one on a solid theme (clean look) and one over
+     * a busy pixel scene (proves the halo/flap card keep it legible on live
+     * backgrounds), plus a couple in 24h to check the wider block. */
+    {
+        static const struct { int face; const char *name; } NF[] = {
+            { FACE_THIN, "thin" }, { FACE_OUTLINE, "outline" }, { FACE_NIXIE, "nixie" },
+            { FACE_FLIP, "flip" }, { FACE_LED, "led" }, { FACE_LCD, "lcd" },
+        };
+        s_theme = 0; s_dnd = false;
+        for (unsigned i = 0; i < sizeof NF / sizeof NF[0]; i++) {
+            s_face_override = NF[i].face;
+            char nm[32];
+            /* paint() only ever CLEARS s_ghost_on (for live bg); the device main
+             * loop re-sets it true for a solid theme, so mirror that here — else
+             * the ghost-8 (and the LCD face's signature ghost) would be missing. */
+            s_anim = 0; s_hour24 = false; s_ghost_on = true;
+            paint(MODE_CLOCK, 1000, false);
+            snprintf(nm, sizeof nm, "face_%s", NF[i].name); dump(nm);
+            s_anim = ANIM_SCENE;
+            paint(MODE_CLOCK, 1600 + i * 91, false);
+            snprintf(nm, sizeof nm, "face_%s_scene", NF[i].name); dump(nm);
+            s_anim = 0;
+        }
+        /* 24h width check on two contrasting faces (leading zero shows) */
+        s_hour24 = true; s_ghost_on = true;
+        s_face_override = FACE_NIXIE; s_theme = 6; /* Neon */
+        paint(MODE_CLOCK, 1000, false); dump("face_nixie_24h");
+        s_face_override = FACE_LED; s_theme = 5;   /* Aqua */
+        paint(MODE_CLOCK, 1000, false); dump("face_led_24h");
+        s_hour24 = false;
+        s_face_override = FACE_LCD; s_theme = 2;   /* Green LCD — ghost segments read clearly */
+        paint(MODE_CLOCK, 1000, false); dump("face_lcd_green");
+        s_face_override = -1; s_theme = 0;
+    }
+
     /* 9) montage of every pixel scene (animated bg + the real clock face) */
     s_anim = ANIM_SCENE;
     for (int sc = 0; sc < SCENE_COUNT; sc++) {
