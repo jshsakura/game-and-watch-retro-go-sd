@@ -201,6 +201,10 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
     int a = hh/10, b = hh%10, c = mm/10, e = mm%10;
     uint16_t cc = colon ? col_h : ghost;   /* blink: colon drops to the dim shade */
     bool gh = s_ghost_on;
+    /* Over a live background there IS no matching "dim shade": the ghost is an
+     * opaque theme-coloured grey that just floats over the photo/GIF/scene.
+     * There the blink-off phase draws nothing at all — a true blink. */
+    bool colon_draw = colon || gh;
     if (face == FACE_SEG7) {
         int w = SEG_W, h = SEG_H, t = SEG_T, gap = SEG_GAP, y = SEG_Y;
         if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
@@ -211,8 +215,10 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
         draw_seg_digit(b, x, y, w, h, t, col_h); x += w+gap;
         /* centre the colon in its slot: the slot is t+3*gap wide, so gap*1.5 on
          * each side (was x+gap, i.e. 2*gap left vs 1*gap right — visibly off) */
-        odroid_overlay_draw_fill_rect(x+gap+gap/2, y+h/3, t, t, cc);
-        odroid_overlay_draw_fill_rect(x+gap+gap/2, y+2*h/3, t, t, cc);
+        if (colon_draw) {
+            odroid_overlay_draw_fill_rect(x+gap+gap/2, y+h/3, t, t, cc);
+            odroid_overlay_draw_fill_rect(x+gap+gap/2, y+2*h/3, t, t, cc);
+        }
         x += t+2*gap;
         if (gh) draw_seg_digit(8, x, y, w, h, t, ghost);
         draw_seg_digit(c, x, y, w, h, t, col_m); x += w+gap;
@@ -227,8 +233,10 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
         x += dw+px;
         if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(b, x, y, px, col_h, dot); x += dw+px;
-        odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, cc);
-        odroid_overlay_draw_fill_rect(x+px, y+4*px, px, px, cc);
+        if (colon_draw) {
+            odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, cc);
+            odroid_overlay_draw_fill_rect(x+px, y+4*px, px, px, cc);
+        }
         x += px*3;
         if (gh) draw_pix_digit(PIX_ALL, x, y, px, ghost, dot);
         draw_pix_digit(c, x, y, px, col_m, dot); x += dw+px;
