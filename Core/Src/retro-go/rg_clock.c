@@ -421,16 +421,47 @@ static runner_t s_pomo = { RUN_STOPPED, 25*60*1000, 0, 0 };
 static uint32_t s_flash_until = 0;
 #define SNOOZE_MS (5u * 60u * 1000u)
 #define CLOCK_UI_HIDE_MS 8000u   /* idle time before the mode pager + hint fade away */
-#define CLOCK_DIM_IDLE_MS 30000u /* idle time on the clock face before the backlight auto-dims */
-#define CLOCK_DIM_LEVEL   48     /* raw 8-bit backlight while dimmed: low but still readable */
+#define CLOCK_DIM_IDLE_MS 15000u /* idle time on the clock face before the backlight auto-dims/turns off */
+#define CLOCK_DIM_FLOOR   16u    /* never dim below this raw level, even off a very low user brightness */
+#define CLOCK_NIGHT_START_MIN (23*60) /* night window start, minutes-of-day (23:00) */
+#define CLOCK_NIGHT_END_MIN   (7*60)  /* night window end, minutes-of-day (07:00) — wraps past midnight */
 static uint32_t s_snooze_tick = 0;   /* HAL tick when a snoozed alarm re-rings */
 
-/* Idle backlight auto-dim decision — pure logic, so it is unit-testable
- * (tests/test_clock_more.c). Dim only on the clock face, never over a running
- * timer/pomodoro/stopwatch and never while the alarm rings. */
-static bool clock_should_dim(clock_mode_t mode, bool ringing, uint32_t idle_ms)
+/* Idle backlight decision — pure logic, so it is unit-testable
+ * (tests/test_clock_more.c). Applies only on the clock face, never over a
+ * running timer/pomodoro/stopwatch and never while the alarm rings:
+ *   CLOCK_BL_FULL — awake, or the idle threshold hasn't been reached
+ *   CLOCK_BL_DIM  — idle during the day: half the user's brightness (floor-clamped)
+ *   CLOCK_BL_OFF  — idle during the night window: backlight fully off, like a
+ *                   bedside clock
+ * Ringing always forces FULL, including a wake from night-OFF. */
+typedef enum { CLOCK_BL_FULL = 0, CLOCK_BL_DIM, CLOCK_BL_OFF } clock_backlight_t;
+
+/* Same minutes-of-day wraparound idiom as alarm_fired_in_window() elsewhere in
+ * this file: "minutes since window start, modulo a day" compared against the
+ * window's span handles the midnight crossing without a branch per boundary. */
+static bool clock_in_night_window(int minute_of_day)
 {
-    return s_autodim && mode == MODE_CLOCK && !ringing && idle_ms >= CLOCK_DIM_IDLE_MS;
+    int day = 24 * 60;
+    int since_start = ((minute_of_day - CLOCK_NIGHT_START_MIN) % day + day) % day;
+    int span = ((CLOCK_NIGHT_END_MIN - CLOCK_NIGHT_START_MIN) % day + day) % day;
+    return since_start < span;
+}
+
+/* Half of the user's current configured brightness, clamped so dimming alone
+ * never goes fully dark (lcd_backlight_set takes a raw 0-255 DAC level). */
+static uint8_t clock_dim_level(uint8_t user_raw)
+{
+    uint8_t half = (uint8_t)(user_raw / 2);
+    return half < CLOCK_DIM_FLOOR ? CLOCK_DIM_FLOOR : half;
+}
+
+static clock_backlight_t clock_should_dim(clock_mode_t mode, bool ringing, bool autodim,
+                                           uint32_t idle_ms, int minute_of_day)
+{
+    if (ringing) return CLOCK_BL_FULL;   /* alarm always forces full brightness, even waking from night-OFF */
+    if (!autodim || mode != MODE_CLOCK || idle_ms < CLOCK_DIM_IDLE_MS) return CLOCK_BL_FULL;
+    return clock_in_night_window(minute_of_day) ? CLOCK_BL_OFF : CLOCK_BL_DIM;
 }
 
 static void tick_countdown(runner_t *r, uint32_t now)
@@ -1458,7 +1489,8 @@ void rg_clock_show(void)
     uint32_t alarm_ring_until = 0;
     uint32_t last_input = HAL_GetTick();   /* mode pager + hint auto-hide after idle */
     bool dirty = true;
-    bool dimmed = false;                   /* idle backlight auto-dim state */
+    clock_backlight_t bl_state = CLOCK_BL_FULL;   /* idle backlight state: full/dim/off */
+    uint32_t anim_freeze_tick = 0;   /* HAL tick background animation was frozen at (DIM/OFF power-save) */
 
     clock_config_load();
     rg_storage_mkdir("/clock");       /* ensure the clock's folders exist on first run */
@@ -1491,19 +1523,33 @@ void rg_clock_show(void)
         }
         bool ringing = alarm_ring_until > now;
 
-        /* Idle backlight auto-dim: after CLOCK_DIM_IDLE_MS with no input on the
-         * clock face, drop the backlight to a low-but-readable level; any input
+        /* Idle backlight: after CLOCK_DIM_IDLE_MS with no input on the clock
+         * face, drop the backlight to half the user's brightness (day) or off
+         * entirely (the night window, like a real bedside clock); any input
          * (last_input was just refreshed above) or a ringing alarm restores the
          * user's configured brightness at once. Only on the clock face — never
          * over a running timer/pomodoro/stopwatch the user is watching, and
          * never while the alarm rings. lcd_backlight_set() does NOT touch the
          * persisted odroid_settings brightness, so restoring reads back the
          * user's exact configured level (odroid_display_get_backlight_raw). */
-        bool want_dim = clock_should_dim(mode, ringing, now - last_input);
-        if (want_dim != dimmed) {
-            lcd_backlight_set(want_dim ? CLOCK_DIM_LEVEL : odroid_display_get_backlight_raw());
-            dimmed = want_dim;
+        clock_backlight_t want_bl = clock_should_dim(mode, ringing, s_autodim,
+                                                      now - last_input, hh * 60 + mm);
+        if (want_bl != bl_state) {
+            uint8_t user_raw = odroid_display_get_backlight_raw();
+            lcd_backlight_set(want_bl == CLOCK_BL_OFF ? 0
+                             : want_bl == CLOCK_BL_DIM ? clock_dim_level(user_raw)
+                             : user_raw);
+            if (bl_state == CLOCK_BL_FULL) anim_freeze_tick = now;   /* just started pausing: freeze the animation clock here */
+            if (bl_state == CLOCK_BL_OFF)  dirty = true;             /* leaving OFF: force a repaint (frames were skipped while off) */
+            bl_state = want_bl;
         }
+        /* DIM and OFF both pause background animation (GIF/scene/photo) to save
+         * power — everything that draws from "now" instead reads this frozen
+         * tick, so it neither advances nor jumps once brightness is restored.
+         * The digit/time face itself keeps using the real "now" below, so it
+         * still updates while merely DIMmed. */
+        bool bl_paused = bl_state != CLOCK_BL_FULL;
+        uint32_t anim_now = bl_paused ? anim_freeze_tick : now;
 
         if (ringing && (k.bitmask & ~prev.bitmask)) {
             alarm_ring_until = 0;
@@ -1536,7 +1582,7 @@ void rg_clock_show(void)
             while (k.values[ODROID_INPUT_POWER]);
             odroid_input_read_gamepad(&prev);
             s_last_fired_min = -1;   /* re-arm alarms after the sleep gap */
-            dimmed = false;          /* the sleep resume already restored full brightness */
+            bl_state = CLOCK_BL_FULL;   /* the sleep resume already restored full brightness */
             last_input = HAL_GetTick();   /* restart the idle timer on wake */
             dirty = true;
             continue;
@@ -1609,10 +1655,12 @@ void rg_clock_show(void)
          * one consistent set), so its repaint rate applies everywhere too.
          * A GIF that isn't loaded (missing / too big) must NOT keep bumping
          * the signature — else a static face repaints at 12fps for nothing,
-         * defeating the event-driven loop and draining the battery. */
-        if (s_anim == ANIM_GIF)        { if (clock_gif_ready()) sig ^= (now / 80); }
-        else if (s_anim == ANIM_SCENE) sig ^= (now / 32);   /* ~31fps, and 32ms = exactly 2 polls (16ms) so frames land evenly — no beat/jitter */
-        else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
+         * defeating the event-driven loop and draining the battery. Reads
+         * anim_now (frozen while DIM/OFF), so a paused background contributes
+         * a constant term here instead of continuing to animate. */
+        if (s_anim == ANIM_GIF)        { if (clock_gif_ready()) sig ^= (anim_now / 80); }
+        else if (s_anim == ANIM_SCENE) sig ^= (anim_now / 32);   /* ~31fps, and 32ms = exactly 2 polls (16ms) so frames land evenly — no beat/jitter */
+        else if (s_anim > 0)           sig ^= (anim_now / 320);  /* ambient ~3fps */
 
         /* mode pager + hint fade out after a few idle seconds (any key restores
          * them) — fold into the signature so the hide itself triggers a repaint */
@@ -1620,8 +1668,10 @@ void rg_clock_show(void)
         if (ui_show) sig ^= 0x02000000u;
 
         /* photo album auto-advance: hold PHOTO_HOLD_MS, then dip to black, swap
-         * to the next photo at the midpoint, and dip back — no hard cut. */
-        if (s_anim == ANIM_PHOTO && clock_album_ready() && clock_album_count() > 1) {
+         * to the next photo at the midpoint, and dip back — no hard cut.
+         * Skipped entirely while paused (bl_paused) so the slideshow does not
+         * advance (and does not silently burn through the fade) while dim/off. */
+        if (!bl_paused && s_anim == ANIM_PHOTO && clock_album_ready() && clock_album_count() > 1) {
             if (!s_fade_start && s_photo_next && now >= s_photo_next) { s_fade_start = now ? now : 1; s_fade_swapped = false; }
             if (s_fade_start) {
                 uint32_t el = now - s_fade_start;
@@ -1631,22 +1681,27 @@ void rg_clock_show(void)
             }
         }
 
-        if (dirty || sig != last_sig) {
+        /* OFF: the backlight is literally 0, so skip render+flush altogether —
+         * the loop above (alarm check, input poll) keeps running at full
+         * responsiveness, only the (invisible) paint work is saved. */
+        if (bl_state != CLOCK_BL_OFF && (dirty || sig != last_sig)) {
             last_sig = sig; dirty = false;
             uint16_t *fb = lcd_get_active_buffer();
             uint16_t bg = flash ? TH()->ink : TH()->scr;
             fb_fill_screen(fb, bg);
             bool bg_live = false;
-            if (!flash) {   /* background layer, identical in every mode */
-                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
+            if (!flash) {   /* background layer, identical in every mode; anim_now is
+                             * frozen while paused so a DIMmed background holds its
+                             * last frame instead of continuing to animate */
+                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, anim_now); bg_live = true; }
                 else if (s_anim == ANIM_PHOTO && clock_album_ready()) {
                     memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
-                    int fd = photo_fade_darkness(now);   /* dip to black across a photo swap */
+                    int fd = photo_fade_darkness(anim_now);   /* dip to black across a photo swap */
                     if (fd) for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = mix565(fb[i], CLOCK_BLACK, fd);
                     bg_live = true;
                 }
-                else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
-                else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
+                else if (s_anim == ANIM_SCENE) { draw_scene(anim_now, TH()); bg_live = true; }
+                else if (s_anim == 1) { draw_ambient(anim_now, TH()->ink); bg_live = true; }
             }
             s_ghost_on = !bg_live;   /* ghost only on a solid theme, not over art */
             switch (mode) {
@@ -1687,8 +1742,12 @@ void rg_clock_show(void)
         /* Poll fast enough for the active animation so it doesn't stutter: an
          * animated pixel scene runs ~30fps (a 40ms idle poll capped it at 25 and
          * beat against the 33ms frame clock — the "버버벅"). Static faces idle
-         * longer to save power. Ringing feeds audio so it polls fastest. */
+         * longer to save power. Ringing feeds audio so it polls fastest.
+         * Backlight OFF: nothing is animating or being rendered, so idle even
+         * longer — still well under the 100ms an input press needs to feel
+         * instant, and the alarm check above still runs every iteration. */
         uint32_t poll = ringing ? 8
+                      : bl_state == CLOCK_BL_OFF ? 80
                       : (s_fade_start || s_anim == ANIM_SCENE) ? 16
                       : (s_anim == ANIM_GIF && clock_gif_ready()) ? 24
                       : 40;
@@ -1696,7 +1755,7 @@ void rg_clock_show(void)
     }
 
     ring_audio(0, false);   /* make sure the SAI is stopped (beep or MP3) on the way out */
-    if (dimmed) lcd_backlight_set(odroid_display_get_backlight_raw());   /* never leave the launcher dimmed */
+    if (bl_state != CLOCK_BL_FULL) lcd_backlight_set(odroid_display_get_backlight_raw());   /* never leave the launcher dim/off */
     clock_gif_free();      /* release the transient GIF cache */
     /* If we borrowed shared_files for photos, its contents are now overwritten.
      * Rebuild the launcher's ROM lists: invalidate every tab, then re-scan the

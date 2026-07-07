@@ -256,28 +256,70 @@ static void test_cfg_full_roundtrip(void)
     s_autodim = true;   /* restore module default */
 }
 
-/* ---- idle backlight auto-dim: the pure decision function -----------------*/
-static void test_autodim_logic(void)
+/* ---- idle backlight: the pure 3-state decision function ------------------
+ * CLOCK_BL_FULL / CLOCK_BL_DIM / CLOCK_BL_OFF. Day dims to half brightness;
+ * the night window (23:00-07:00, wrapping past midnight) goes fully off
+ * instead, like a bedside clock. */
+static void test_backlight_logic(void)
 {
-    s_autodim = true;
-    CHECK(clock_should_dim(MODE_CLOCK, false, CLOCK_DIM_IDLE_MS) == true,
-          "dims on the clock face once idle >= the threshold");
-    CHECK(clock_should_dim(MODE_CLOCK, false, CLOCK_DIM_IDLE_MS - 1) == false,
+    int noon = 12 * 60;
+
+    /* ---- day dim, at and around the idle threshold ---- */
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, noon) == CLOCK_BL_DIM,
+          "dims (day) on the clock face once idle >= the threshold");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS - 1, noon) == CLOCK_BL_FULL,
           "does not dim before the idle threshold");
-    CHECK(clock_should_dim(MODE_CLOCK, false, 0) == false,
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, 0, noon) == CLOCK_BL_FULL,
           "fresh input (idle=0) keeps full brightness");
-    CHECK(clock_should_dim(MODE_CLOCK, true, CLOCK_DIM_IDLE_MS * 2) == false,
-          "never dims while the alarm is ringing (wakes to full)");
-    CHECK(clock_should_dim(MODE_TIMER, false, CLOCK_DIM_IDLE_MS * 2) == false,
+
+    /* ---- night-OFF window + midnight wraparound, all AT the idle threshold ---- */
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 22 * 60 + 59) == CLOCK_BL_DIM,
+          "22:59 is still day — dims, does not go dark");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 23 * 60) == CLOCK_BL_OFF,
+          "23:00 enters the night window — backlight off");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 3 * 60) == CLOCK_BL_OFF,
+          "03:00 is deep in the night window (past midnight) — off");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 6 * 60 + 59) == CLOCK_BL_OFF,
+          "06:59 is still inside the night window — off");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 7 * 60) == CLOCK_BL_DIM,
+          "07:00 exits the night window — back to a day dim");
+
+    /* ---- not idle yet: always FULL, day or night ---- */
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, 0, 23 * 60) == CLOCK_BL_FULL,
+          "fresh input at night keeps full brightness");
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS - 1, 3 * 60) == CLOCK_BL_FULL,
+          "just under the threshold at night is still full brightness");
+
+    /* ---- ringing always forces FULL, even waking from night-OFF ---- */
+    CHECK(clock_should_dim(MODE_CLOCK, true, true, CLOCK_DIM_IDLE_MS * 2, 3 * 60) == CLOCK_BL_FULL,
+          "a ringing alarm always forces full brightness, even at 03:00 idle");
+
+    /* ---- never touches a face the user is actively watching ---- */
+    CHECK(clock_should_dim(MODE_TIMER, false, true, CLOCK_DIM_IDLE_MS * 2, noon) == CLOCK_BL_FULL,
           "never dims the running-timer face the user is watching");
-    CHECK(clock_should_dim(MODE_POMODORO, false, CLOCK_DIM_IDLE_MS * 2) == false,
-          "never dims the pomodoro face");
-    CHECK(clock_should_dim(MODE_STOPWATCH, false, CLOCK_DIM_IDLE_MS * 2) == false,
+    CHECK(clock_should_dim(MODE_POMODORO, false, true, CLOCK_DIM_IDLE_MS * 2, 3 * 60) == CLOCK_BL_FULL,
+          "never dims the pomodoro face, even at night");
+    CHECK(clock_should_dim(MODE_STOPWATCH, false, true, CLOCK_DIM_IDLE_MS * 2, noon) == CLOCK_BL_FULL,
           "never dims the stopwatch face");
-    s_autodim = false;
-    CHECK(clock_should_dim(MODE_CLOCK, false, CLOCK_DIM_IDLE_MS * 2) == false,
-          "auto-dim off disables dimming entirely");
-    s_autodim = true;   /* restore default */
+
+    /* ---- the single autodim toggle governs BOTH day-dim and night-off ---- */
+    CHECK(clock_should_dim(MODE_CLOCK, false, false, CLOCK_DIM_IDLE_MS * 2, noon) == CLOCK_BL_FULL,
+          "auto-dim off disables day dimming");
+    CHECK(clock_should_dim(MODE_CLOCK, false, false, CLOCK_DIM_IDLE_MS * 2, 3 * 60) == CLOCK_BL_FULL,
+          "auto-dim off disables night-off too");
+}
+
+/* ---- dim level helper: half of the user's brightness, floor-clamped -----*/
+static void test_dim_level(void)
+{
+    CHECK(clock_dim_level(255) == 127, "half of max brightness (255/2 = 127)");
+    CHECK(clock_dim_level(128) == 64,  "half of the lowest odroid backlight level (128/2 = 64)");
+    CHECK(clock_dim_level(2 * CLOCK_DIM_FLOOR) == CLOCK_DIM_FLOOR,
+          "right at the floor boundary — half lands exactly on the floor");
+    CHECK(clock_dim_level(2 * CLOCK_DIM_FLOOR - 1) == CLOCK_DIM_FLOOR,
+          "just under the floor boundary — clamps up to the floor");
+    CHECK(clock_dim_level(0) == CLOCK_DIM_FLOOR,
+          "even a hypothetical zero brightness clamps to the floor — dimming alone never goes fully dark");
 }
 
 /* ---- alarm ring overlay: forced, legible, in-bounds ----------------------*/
@@ -524,7 +566,8 @@ int main(void)
     test_update_pomodoro_cycle();
     test_update_timer_flash_guard();
     test_clock_edit_time_rollover();
-    test_autodim_logic();
+    test_backlight_logic();
+    test_dim_level();
     test_ring_overlay();
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
