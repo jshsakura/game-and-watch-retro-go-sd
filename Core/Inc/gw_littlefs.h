@@ -48,6 +48,11 @@ int fs_dir_open(uint8_t dir_index, const char *path);
 int fs_dir_read(uint8_t dir_index, fs_folder_entry *entry);
 int fs_dir_close(uint8_t dir_index);
 
+/* Caller-owned-handle variants for recursive walks (see gw_littlefs.c). */
+int fs_diropen(lfs_dir_t *d, const char *path);
+int fs_dirread(lfs_dir_t *d, struct lfs_info *info);
+int fs_dirclose(lfs_dir_t *d);
+
 extern bool fs_mounted;
 
 #ifdef __cplusplus

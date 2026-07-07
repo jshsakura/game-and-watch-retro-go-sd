@@ -11,6 +11,8 @@
 #include "ff.h"
 #else
 #include "rg_frogfs.h"
+#include "gw_littlefs.h"
+bool gw_fs_is_frogfs_path(const char *path); /* syscalls.c: FrogFS-vs-LittleFS routing rule */
 #endif
 #include "rg_storage.h"
 #include <unistd.h>
@@ -220,6 +222,76 @@ bool rg_storage_scandir(const char *path, rg_scandir_cb_t *callback, void *arg, 
 
     return true;
 #else
+    if (!gw_fs_is_frogfs_path(path))
+    {
+        /* Writable LittleFS side (/retro-go/saves, /music, ...). FrogFS only
+         * holds the read-only tree, so anything not routed there must be walked
+         * with the LittleFS API — the FrogFS lookup below would just fail and
+         * report the directory as empty. */
+        lfs_dir_t dh;
+        struct lfs_info info;
+
+        if (fs_diropen(&dh, path) < 0)
+            return false;
+
+        rg_scandir_t *result = calloc(1, sizeof(rg_scandir_t));
+        if (!result)
+        {
+            fs_dirclose(&dh);
+            return false;
+        }
+
+        result->dirname = path;
+
+        while (fs_dirread(&dh, &info) > 0)
+        {
+            wdog_refresh();
+
+            if (info.name[0] == '.' && (!info.name[1] || (info.name[1] == '.' && !info.name[2])))
+                continue;
+
+            int written;
+            if (strcmp(path, "/") == 0)
+                written = snprintf(result->path, sizeof(result->path), "/%s", info.name);
+            else
+                written = snprintf(result->path, sizeof(result->path), "%s/%s", path, info.name);
+
+            if (written < 0 || (size_t)written >= sizeof(result->path))
+            {
+                printf("File path too long '%s'", path);
+                continue;
+            }
+
+            result->basename = strrchr(result->path, '/');
+            result->basename = result->basename ? result->basename + 1 : result->path;
+            result->is_dir = (info.type == LFS_TYPE_DIR);
+            result->is_file = !result->is_dir;
+            result->size = info.size;
+            result->mtime = 0;
+
+            if ((result->is_dir && types != RG_SCANDIR_FILES) || (result->is_file && types != RG_SCANDIR_DIRS))
+            {
+                int ret = (callback)(result, arg);
+
+                if (ret == RG_SCANDIR_STOP)
+                    break;
+
+                if (ret == RG_SCANDIR_SKIP)
+                    continue;
+            }
+
+            if ((flags & RG_SCANDIR_RECURSIVE) && result->is_dir)
+            {
+                rg_storage_scandir(result->path, callback, arg, flags);
+            }
+        }
+
+        fs_dirclose(&dh);
+        free(result);
+
+        return true;
+    }
+
     frogfs_fs_t *fs = rg_frogfs_get();
     if (!fs)
         return false;

@@ -448,6 +448,13 @@ static bool is_frogfs_path(const char *path)
            is_cores_pico8_ro_frogfs_path(path);
 }
 
+/* Public probe so other translation units (e.g. rg_storage.c's scandir) can
+ * apply the exact same FrogFS-vs-LittleFS routing rule used here for _open(). */
+bool gw_fs_is_frogfs_path(const char *path)
+{
+    return is_frogfs_path(path);
+}
+
 static const char *normalize_frogfs_path(const char *name, char *buffer, size_t buffer_size)
 {
     if (!name || !buffer || buffer_size < 2)

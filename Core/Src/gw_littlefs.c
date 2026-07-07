@@ -556,3 +556,20 @@ int fs_dir_read(uint8_t dir_index, fs_folder_entry *entry) {
 int fs_dir_close(uint8_t dir_index) {
     return lfs_dir_close(&lfs, &dir[dir_index]);
 }
+
+/* Caller-owned-handle directory variants. The fixed dir[2] pool above cannot
+ * serve a recursive walk (rg_storage_scandir recurses into sub-directories and
+ * would need more than 2 concurrent handles), and fs_dir_read stringifies the
+ * size into a fs_folder_entry. These expose the raw lfs_dir_t / lfs_info so the
+ * caller can recurse and read numeric sizes/types directly. */
+int fs_diropen(lfs_dir_t *d, const char *path) {
+    return lfs_dir_open(&lfs, d, path);
+}
+
+int fs_dirread(lfs_dir_t *d, struct lfs_info *info) {
+    return lfs_dir_read(&lfs, d, info);
+}
+
+int fs_dirclose(lfs_dir_t *d) {
+    return lfs_dir_close(&lfs, d);
+}
