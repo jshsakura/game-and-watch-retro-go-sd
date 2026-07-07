@@ -55,6 +55,7 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_Clock_Scene = "シーン",
     .s_Clock_Photo_Speed = "写真速度",
     .s_Clock_Anim_4 = "フォトアルバム",
+    .s_Clock_Auto_Dim = "自動減光",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "ピクセル背景",
     .s_Clock_Volume = "Alarm volume",

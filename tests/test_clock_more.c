@@ -52,6 +52,8 @@ static uint16_t fb[GW_LCD_WIDTH * GW_LCD_HEIGHT];
 uint16_t *lcd_get_active_buffer(void) { return fb; }
 void lcd_swap(void) {}
 void lcd_sleep_while_swap_pending(void) {}
+void lcd_backlight_set(uint8_t b) { (void)b; }
+uint8_t odroid_display_get_backlight_raw(void) { return 178; }
 
 /* every lang_t field is a `const char *` — point them all at one placeholder
  * so ANY string the renderer reaches for (not just the ones the alarm test
@@ -67,7 +69,22 @@ const lang_t *curr_lang = &L;
 int i18n_draw_text_line(int x,int y,int w,const char*t,uint16_t c,uint16_t bg,int f){(void)x;(void)y;(void)w;(void)t;(void)c;(void)bg;(void)f;return 0;}
 int i18n_get_text_width(const char *t){ return (int)strlen(t) * 6; }
 int odroid_overlay_dialog(const char*h,odroid_dialog_choice_t*o,int s,void(*r)(void),int f){(void)h;(void)o;(void)s;(void)r;(void)f;return -1;}
-void odroid_overlay_draw_fill_rect(int x,int y,int w,int h,uint16_t c){(void)x;(void)y;(void)w;(void)h;(void)c;}
+/* fill_rect that actually paints into fb with a hard bounds guard: the device
+ * blitter has NO clipping, so a stray off-screen rect wraps into the next row.
+ * g_oob counts any out-of-bounds pixel while g_check_bounds is armed, which the
+ * ring-overlay test uses to prove draw_ring_overlay stays inside 320x240. */
+static int g_oob = 0, g_check_bounds = 0;
+void odroid_overlay_draw_fill_rect(int x,int y,int w,int h,uint16_t c){
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++) {
+            int px = x + i, py = y + j;
+            if (px < 0 || px >= GW_LCD_WIDTH || py < 0 || py >= GW_LCD_HEIGHT) {
+                if (g_check_bounds) g_oob++;
+                continue;
+            }
+            fb[py * GW_LCD_WIDTH + px] = c;
+        }
+}
 void odroid_overlay_draw_text(int x,int y,int w,const char*t,uint16_t c,uint16_t b){(void)x;(void)y;(void)w;(void)t;(void)c;(void)b;}
 void odroid_overlay_draw_logo(int x,int y,int l,uint16_t c){(void)x;(void)y;(void)l;(void)c;}
 retro_logo_image *rg_get_logo(int16_t i){ (void)i; return NULL; }
@@ -218,7 +235,7 @@ static void test_cfg_full_roundtrip(void)
     remove(test_path(CLOCK_CFG_PATH));
     reset_cfg_fields();
     s_theme = 5; s_face_override = FACE_DOT; s_hour24 = true;
-    s_anim = ANIM_SCENE; s_scene = 7; s_photo_speed = 2;
+    s_anim = ANIM_SCENE; s_scene = 7; s_photo_speed = 2; s_autodim = false;
     clock_config_save();
 
     reset_cfg_fields();
@@ -229,6 +246,54 @@ static void test_cfg_full_roundtrip(void)
     CHECK(s_anim == ANIM_SCENE,      "anim round-trips");
     CHECK(s_scene == 7,              "scene round-trips");
     CHECK(s_photo_speed == 2,        "photo speed round-trips");
+    CHECK(s_autodim == false,        "auto-dim round-trips (non-default value)");
+    s_autodim = true;   /* restore module default */
+}
+
+/* ---- idle backlight auto-dim: the pure decision function -----------------*/
+static void test_autodim_logic(void)
+{
+    s_autodim = true;
+    CHECK(clock_should_dim(MODE_CLOCK, false, CLOCK_DIM_IDLE_MS) == true,
+          "dims on the clock face once idle >= the threshold");
+    CHECK(clock_should_dim(MODE_CLOCK, false, CLOCK_DIM_IDLE_MS - 1) == false,
+          "does not dim before the idle threshold");
+    CHECK(clock_should_dim(MODE_CLOCK, false, 0) == false,
+          "fresh input (idle=0) keeps full brightness");
+    CHECK(clock_should_dim(MODE_CLOCK, true, CLOCK_DIM_IDLE_MS * 2) == false,
+          "never dims while the alarm is ringing (wakes to full)");
+    CHECK(clock_should_dim(MODE_TIMER, false, CLOCK_DIM_IDLE_MS * 2) == false,
+          "never dims the running-timer face the user is watching");
+    CHECK(clock_should_dim(MODE_POMODORO, false, CLOCK_DIM_IDLE_MS * 2) == false,
+          "never dims the pomodoro face");
+    CHECK(clock_should_dim(MODE_STOPWATCH, false, CLOCK_DIM_IDLE_MS * 2) == false,
+          "never dims the stopwatch face");
+    s_autodim = false;
+    CHECK(clock_should_dim(MODE_CLOCK, false, CLOCK_DIM_IDLE_MS * 2) == false,
+          "auto-dim off disables dimming entirely");
+    s_autodim = true;   /* restore default */
+}
+
+/* ---- alarm ring overlay: forced, legible, in-bounds ----------------------*/
+static void test_ring_overlay(void)
+{
+    const uint16_t WHITE = 0xFFFF;
+    const clock_theme_t *t = TH();
+    int darkened = 0, accent = 0;
+    g_oob = 0; g_check_bounds = 1;
+    /* sweep a beat's worth of phases; a bright "photo" background each frame */
+    for (uint32_t now = 0; now < 400; now += 40) {
+        for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = WHITE;
+        draw_ring_overlay(fb, now, t);
+        for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) {
+            if (fb[i] != WHITE) darkened = 1;      /* scrim darkened the frame */
+            if (fb[i] == t->alarm) accent = 1;     /* bright pulse dot present */
+        }
+    }
+    g_check_bounds = 0;
+    CHECK(g_oob == 0, "ring overlay never draws outside 320x240 (no-clip blitter safe)");
+    CHECK(darkened, "ring overlay darkens the composed frame (guaranteed min contrast)");
+    CHECK(accent,   "ring overlay paints bright accent pulse dots over the frame");
 }
 
 static void test_cfg_rejects_out_of_range(void)
@@ -453,6 +518,8 @@ int main(void)
     test_update_pomodoro_cycle();
     test_update_timer_flash_guard();
     test_clock_edit_time_rollover();
+    test_autodim_logic();
+    test_ring_overlay();
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

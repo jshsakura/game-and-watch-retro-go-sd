@@ -52,6 +52,7 @@ const lang_t lang_ko_kr LANG_DATA = {
     .s_Clock_Scene = "씬",
     .s_Clock_Photo_Speed = "사진 속도",
     .s_Clock_Anim_4 = "사진 앨범",
+    .s_Clock_Auto_Dim = "자동 절전",
     .s_Clock_Anim_1 = "은은한 효과 (낮음)",
     .s_Clock_Anim_2 = "픽셀 배경",
     .s_Clock_Volume = "알람 음량",

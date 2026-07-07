@@ -54,6 +54,7 @@ const lang_t lang_zh_tw LANG_DATA = {
     .s_Clock_Scene = "場景",
     .s_Clock_Photo_Speed = "照片速度",
     .s_Clock_Anim_4 = "相簿",
+    .s_Clock_Auto_Dim = "自動變暗",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "像素背景",
     .s_Clock_Volume = "Alarm volume",

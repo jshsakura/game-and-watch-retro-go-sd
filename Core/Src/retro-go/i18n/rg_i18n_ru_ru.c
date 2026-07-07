@@ -56,6 +56,7 @@ const lang_t lang_ru_ru LANG_DATA = {
     .s_Clock_Scene = "Сцена",
     .s_Clock_Photo_Speed = "Скорость фото",
     .s_Clock_Anim_4 = "Фотоальбом",
+    .s_Clock_Auto_Dim = "Автозатемнение",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "Пиксель-фон",
     .s_Clock_Volume = "Alarm volume",

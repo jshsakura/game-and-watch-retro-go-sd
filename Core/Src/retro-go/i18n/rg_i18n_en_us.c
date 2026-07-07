@@ -54,6 +54,7 @@ const lang_t lang_en_us LANG_DATA = {
     .s_Clock_Scene = "Scene",
     .s_Clock_Photo_Speed = "Photo speed",
     .s_Clock_Anim_4 = "Photo album",
+    .s_Clock_Auto_Dim = "Auto-dim",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "Pixel bg",
     .s_Clock_Volume = "Alarm volume",

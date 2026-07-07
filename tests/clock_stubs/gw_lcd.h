@@ -6,4 +6,5 @@
 uint16_t *lcd_get_active_buffer(void);
 void lcd_swap(void);
 void lcd_sleep_while_swap_pending(void);
+void lcd_backlight_set(uint8_t brightness);
 #endif

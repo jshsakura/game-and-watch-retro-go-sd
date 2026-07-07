@@ -50,6 +50,8 @@ void ram_release(size_t m){ gpool_off=m-1; }
 uint16_t *lcd_get_active_buffer(void) { return fb; }
 void lcd_swap(void) {}
 void lcd_sleep_while_swap_pending(void) {}
+void lcd_backlight_set(uint8_t b) { (void)b; }
+uint8_t odroid_display_get_backlight_raw(void) { return 178; }
 
 /* ---- fill rect / text (atlas) ------------------------------------------ */
 void odroid_overlay_draw_fill_rect(int x, int y, int w, int h, uint16_t color)
@@ -272,7 +274,7 @@ static const lang_t KO = {
     .s_Clock_Volume="알람 음량", .s_Clock_Alarms="알람", .s_Clock_Exit="시계 나가기",
     .s_Clock_Hint_Ring="A 5분 스누즈  B 끄기", .s_Clock_Theme="테마", .s_Clock_Face="숫자 서체", .s_Clock_Auto="자동",
     .s_Clock_Set_Time="시간 설정", .s_Clock_Scene="씬", .s_Clock_Photo_Speed="사진 속도",
-    .s_Clock_Anim_4="사진 앨범",
+    .s_Clock_Anim_4="사진 앨범", .s_Clock_Auto_Dim="자동 절전",
     .s_Full="\x7", .s_Fill="\x8",
 };
 const lang_t *curr_lang = &KO;
@@ -303,6 +305,7 @@ static void paint(clock_mode_t mode, uint32_t now, bool ringing)
     case MODE_STOPWATCH: render_stopwatch(now); break;
     default: break;
     }
+    if (ringing) draw_ring_overlay(fb, now, TH());   /* legible pulse over any background */
     draw_topbar(mode, true);
     draw_hintbar(ringing ? curr_lang->s_Clock_Hint_Ring
         : mode == MODE_CLOCK     ? curr_lang->s_Clock_Hint_Clock
@@ -335,8 +338,16 @@ int main(void)
     s_anim = 1; s_dnd = true; paint(MODE_CLOCK, 1000, false); dump("clock_ambient"); s_anim = 0; s_dnd = false;
     /* 2b) built-in pixel scene */
     s_anim = ANIM_SCENE; paint(MODE_CLOCK, 1000, false); dump("clock_scene"); s_anim = 0;
-    /* 3) clock ringing (accent pulse frame + snooze legend) */
+    /* 3) clock ringing (full-strength pulse overlay + snooze legend) */
     paint(MODE_CLOCK, 1200, true); dump("clock_ringing");
+    /* 3b) ringing over a busy pixel scene — the pulse must still read clearly */
+    s_anim = ANIM_SCENE; paint(MODE_CLOCK, 1200, true); dump("clock_ringing_scene"); s_anim = 0;
+    /* 3c) idle auto-dim: the same clock face at the low backlight level. The
+     * device dims in the LCD DAC (backlight), not the framebuffer; here we
+     * scale the framebuffer toward black to approximate CLOCK_DIM_LEVEL. */
+    paint(MODE_CLOCK, 1000, false);
+    for (int i = 0; i < W * H; i++) fb[i] = mix565(fb[i], CLOCK_BLACK, 11);
+    dump("dimmed");
     /* 4) pomodoro running (13:37 left of work round 2) */
     s_pomo.state = RUN_RUNNING; s_pomo.remaining_ms = (13*60+37)*1000; s_pomo_cycles = 1;
     paint(MODE_POMODORO, 1000, false); dump("pomodoro");

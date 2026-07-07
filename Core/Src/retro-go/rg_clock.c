@@ -304,6 +304,7 @@ static bool     s_hour24;
 static bool     s_dnd;
 static int      s_anim;          /* 0 = off, 1 = ambient, 2 = GIF */
 static int      s_scene;         /* which pixel scene (0..SCENE_COUNT-1) when anim = SCENE */
+static bool     s_autodim = true;/* idle backlight auto-dim on the clock face (default on) */
 static alarm_t  s_alarms[MAX_ALARMS];
 static int      s_alarm_count;
 
@@ -342,6 +343,7 @@ static void clock_config_load(void)
 {
     s_theme = 0; s_face_override = -1;
     s_hour24 = false; s_dnd = false; s_anim = 0; s_scene = 0; s_photo_speed = 1;
+    s_autodim = true;
     s_alarm_count = 0;
     FILE *f = fopen(CLOCK_CFG_PATH, "r");
     if (!f) f = fopen(CLOCK_CFG_LEGACY, "r");   /* migrate: next save writes /clock/ */
@@ -356,6 +358,7 @@ static void clock_config_load(void)
         else if (sscanf(line, "anim=%d", &v) == 1) { if (v == 1) v = 0; if (v >= 0 && v < ANIM_COUNT) s_anim = v; }   /* ambient(1) retired */
         else if (sscanf(line, "scene=%d", &v) == 1) { if (v >= 0) s_scene = v; }  /* draw_scene clamps */
         else if (sscanf(line, "photospeed=%d", &v) == 1) { if (v >= 0 && v < 3) s_photo_speed = v; }
+        else if (sscanf(line, "autodim=%d", &v) == 1) s_autodim = v != 0;
         /* alarm=HHMM[,enabled] — the suffix is new; plain HHMM (older cfg) = enabled */
         else if (sscanf(line, "alarm=%d,%d", &v, &en) >= 1 && s_alarm_count < MAX_ALARMS) {
             int hr = v / 100, mn = v % 100;
@@ -381,6 +384,7 @@ static void clock_config_save(void)
     fprintf(f, "anim=%d\n", s_anim);
     fprintf(f, "scene=%d\n", s_scene);
     fprintf(f, "photospeed=%d\n", s_photo_speed);
+    fprintf(f, "autodim=%d\n", s_autodim ? 1 : 0);
     for (int i = 0; i < s_alarm_count; i++)   /* disabled alarms persist too */
         fprintf(f, "alarm=%02d%02d,%d\n", s_alarms[i].hour, s_alarms[i].min,
                 s_alarms[i].enabled ? 1 : 0);
@@ -416,7 +420,17 @@ static runner_t s_pomo = { RUN_STOPPED, 25*60*1000, 0, 0 };
 static uint32_t s_flash_until = 0;
 #define SNOOZE_MS (5u * 60u * 1000u)
 #define CLOCK_UI_HIDE_MS 8000u   /* idle time before the mode pager + hint fade away */
+#define CLOCK_DIM_IDLE_MS 30000u /* idle time on the clock face before the backlight auto-dims */
+#define CLOCK_DIM_LEVEL   48     /* raw 8-bit backlight while dimmed: low but still readable */
 static uint32_t s_snooze_tick = 0;   /* HAL tick when a snoozed alarm re-rings */
+
+/* Idle backlight auto-dim decision — pure logic, so it is unit-testable
+ * (tests/test_clock_more.c). Dim only on the clock face, never over a running
+ * timer/pomodoro/stopwatch and never while the alarm rings. */
+static bool clock_should_dim(clock_mode_t mode, bool ringing, uint32_t idle_ms)
+{
+    return s_autodim && mode == MODE_CLOCK && !ringing && idle_ms >= CLOCK_DIM_IDLE_MS;
+}
 
 static void tick_countdown(runner_t *r, uint32_t now)
 {
@@ -645,8 +659,35 @@ static int photo_fade_darkness(uint32_t now)
     return v > 16 ? 16 : v;
 }
 
-/* (The old square-ring alarm pulse was replaced by the grid-pulse scene, drawn
- * as the ringing background in the main loop — see scene_grid_pulse.) */
+/* Alarm ring overlay — drawn AFTER the background + face so the pulse reads
+ * over ANY background (GIF, photo, busy pixel scene). Two layers guarantee
+ * contrast on both bright and dark content: (1) a whole-frame scrim that THROBS
+ * with the 2.5 Hz alarm beat, so even a bright photo visibly darkens on the
+ * beat; (2) an outward ripple of accent dots, each drawn with a black halo so a
+ * bright dot still reads on bright content and the halo frames it on dark
+ * content. The blitter has NO clipping, so every rect stays inside 320x240. */
+#define RING_GRID   12
+#define RING_SPAN   150   /* how far the ring front travels before it restarts */
+static void draw_ring_overlay(uint16_t *fb, uint32_t now, const clock_theme_t *t)
+{
+    int dk = ((now / 200) & 1) ? 6 : 3;            /* throb 6/16 <-> 3/16 toward black */
+    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++)
+        fb[i] = mix565(fb[i], CLOCK_BLACK, dk);
+
+    int cx = GW_LCD_WIDTH / 2, cy = GW_LCD_HEIGHT / 2;
+    int pulse = (int)((now / 24) % RING_SPAN);     /* ring front sweeps outward */
+    uint16_t bright = t->alarm;
+    for (int y = RING_GRID; y < GW_LCD_HEIGHT - RING_GRID; y += RING_GRID)
+        for (int x = RING_GRID; x < GW_LCD_WIDTH - RING_GRID; x += RING_GRID) {
+            int a = x - cx, b = y - cy; if (a < 0) a = -a; if (b < 0) b = -b;
+            int d = (a > b) ? a + b/2 : b + a/2;   /* octagonal distance approx */
+            int diff = d - pulse; if (diff < 0) diff = -diff;
+            if (diff >= 7) continue;               /* draw only the moving ring front */
+            odroid_overlay_draw_fill_rect(x - 1, y - 1, 4, 4, CLOCK_BLACK);  /* halo */
+            int sz = (diff < 3) ? 3 : 2;
+            odroid_overlay_draw_fill_rect(x, y, sz, sz, bright);            /* core */
+        }
+}
 
 static void render_clock(uint32_t now, bool alarm_firing)
 {
@@ -1166,7 +1207,7 @@ static const char *const THEME_LABEL[THEME_COUNT] =
     { "Midnight", "Amber", "Green LCD", "Ivory", "Ember", "Aqua", "Neon", "Slate" };
 static const char *const FACE_NAME[3] = { "7-seg", "Pixel", "Dot" };
 static char v_theme[24], v_face[20], v_fmt[8], v_dnd[12], v_anim[44], v_scene[24], v_pspeed[12],
-            v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];
+            v_autodim[12], v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];
 
 static bool cb_theme(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
@@ -1192,6 +1233,10 @@ static bool cb_fmt(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
 static bool cb_dnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 { (void)r; if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_dnd = !s_dnd;
   sprintf(o->value, "%s", s_dnd ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
+  return e == ODROID_DIALOG_ENTER; }
+static bool cb_autodim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{ (void)r; if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_autodim = !s_autodim;
+  sprintf(o->value, "%s", s_autodim ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
   return e == ODROID_DIALOG_ENTER; }
 static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
@@ -1292,6 +1337,7 @@ static bool clock_settings_menu(void)
         {4, curr_lang->s_Clock_Photo_Speed, v_pspeed, (s_anim == ANIM_PHOTO) ? 1 : -1, cb_pspeed},
         {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
         {6, curr_lang->s_Clock_DND,    v_dnd,    1, cb_dnd},
+        {11, curr_lang->s_Clock_Auto_Dim, v_autodim, 1, cb_autodim},
         {10, curr_lang->s_Clock_Exit,  v_exit,   1, cb_enter},
         ODROID_DIALOG_CHOICE_LAST
     };
@@ -1303,6 +1349,7 @@ static bool clock_settings_menu(void)
     cb_pspeed(&opts[7], ODROID_DIALOG_FOCUS_GAINED, 0);
     cb_fmt(&opts[8], ODROID_DIALOG_FOCUS_GAINED, 0);
     cb_dnd(&opts[9], ODROID_DIALOG_FOCUS_GAINED, 0);
+    cb_autodim(&opts[10], ODROID_DIALOG_FOCUS_GAINED, 0);
     v_settime[0] = 0; v_alarms[0] = 0; v_exit[0] = 0;
 
     int sel = odroid_overlay_dialog(curr_lang->s_Clock, opts, 0, &clock_menu_repaint, 0);
@@ -1368,6 +1415,7 @@ void rg_clock_show(void)
     uint32_t alarm_ring_until = 0;
     uint32_t last_input = HAL_GetTick();   /* mode pager + hint auto-hide after idle */
     bool dirty = true;
+    bool dimmed = false;                   /* idle backlight auto-dim state */
 
     clock_config_load();
     rg_storage_mkdir("/clock");       /* ensure the clock's folders exist on first run */
@@ -1399,6 +1447,21 @@ void rg_clock_show(void)
             alarm_ring_until = now + 20000;
         }
         bool ringing = alarm_ring_until > now;
+
+        /* Idle backlight auto-dim: after CLOCK_DIM_IDLE_MS with no input on the
+         * clock face, drop the backlight to a low-but-readable level; any input
+         * (last_input was just refreshed above) or a ringing alarm restores the
+         * user's configured brightness at once. Only on the clock face — never
+         * over a running timer/pomodoro/stopwatch the user is watching, and
+         * never while the alarm rings. lcd_backlight_set() does NOT touch the
+         * persisted odroid_settings brightness, so restoring reads back the
+         * user's exact configured level (odroid_display_get_backlight_raw). */
+        bool want_dim = clock_should_dim(mode, ringing, now - last_input);
+        if (want_dim != dimmed) {
+            lcd_backlight_set(want_dim ? CLOCK_DIM_LEVEL : odroid_display_get_backlight_raw());
+            dimmed = want_dim;
+        }
+
         if (ringing && (k.bitmask & ~prev.bitmask)) {
             alarm_ring_until = 0;
             tone_feed(now, false);
@@ -1430,6 +1493,8 @@ void rg_clock_show(void)
             while (k.values[ODROID_INPUT_POWER]);
             odroid_input_read_gamepad(&prev);
             s_last_fired_min = -1;   /* re-arm alarms after the sleep gap */
+            dimmed = false;          /* the sleep resume already restored full brightness */
+            last_input = HAL_GetTick();   /* restart the idle timer on wake */
             dirty = true;
             continue;
         }
@@ -1458,6 +1523,7 @@ void rg_clock_show(void)
             if (alarm_fired_in_window(pre_mod, GW_GetCurrentHour() * 60 + GW_GetCurrentMinute()))
                 alarm_ring_until = HAL_GetTick() + 20000;
             if (exit_req) break;
+            last_input = HAL_GetTick();   /* the blocking menu counts as activity — don't dim on return */
             dirty = true;
         }
 
@@ -1529,8 +1595,7 @@ void rg_clock_show(void)
             fb_fill_screen(fb, bg);
             bool bg_live = false;
             if (!flash) {   /* background layer, identical in every mode */
-                if (ringing) { scene_grid_pulse(now, TH()); bg_live = true; }   /* alarm effect = the grid-pulse ripple (over any chosen background) */
-                else if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
+                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
                 else if (s_anim == ANIM_PHOTO && clock_album_ready()) {
                     memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
                     int fd = photo_fade_darkness(now);   /* dip to black across a photo swap */
@@ -1548,6 +1613,9 @@ void rg_clock_show(void)
             case MODE_STOPWATCH: render_stopwatch(now); break;
             default: break;
             }
+            /* a ringing alarm forces a full-strength pulse over the composed
+             * background + face, so it stays legible on GIF/photo/busy scenes */
+            if (ringing) draw_ring_overlay(fb, now, TH());
             draw_topbar(mode, ui_show);   /* over the background layers; pager auto-hides */
             /* the hint bar rides the same idle timer as the pager, but a ringing
              * alarm always shows its snooze/stop legend */
@@ -1585,6 +1653,7 @@ void rg_clock_show(void)
     }
 
     tone_feed(0, false);   /* make sure the SAI is stopped on the way out */
+    if (dimmed) lcd_backlight_set(odroid_display_get_backlight_raw());   /* never leave the launcher dimmed */
     clock_gif_free();      /* release the transient GIF cache */
     /* If we borrowed shared_files for photos, its contents are now overwritten.
      * Rebuild the launcher's ROM lists: invalidate every tab, then re-scan the

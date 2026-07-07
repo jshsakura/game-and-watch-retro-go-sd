@@ -39,6 +39,8 @@ static uint16_t fb[GW_LCD_WIDTH * GW_LCD_HEIGHT];
 uint16_t *lcd_get_active_buffer(void) { return fb; }
 void lcd_swap(void) {}
 void lcd_sleep_while_swap_pending(void) {}
+void lcd_backlight_set(uint8_t b) { (void)b; }
+uint8_t odroid_display_get_backlight_raw(void) { return 178; }
 
 static const lang_t L = { .s_AM="AM", .s_PM="PM", .s_Clock="Clock",
   .s_Weekday_Mon="Mon", .s_Weekday_Tue="Tue", .s_Weekday_Wed="Wed", .s_Weekday_Thu="Thu",
