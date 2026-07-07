@@ -1039,6 +1039,13 @@ PKMINI_C_INCLUDES +=  \
 -I$(CORE_PKMINI)/freebios \
 -I$(CORE_PKMINI)/libretro/libretro-common/include \
 -I./
+# Some distro arm-none-eabi toolchains (e.g. Debian/Ubuntu) ship gcc's own
+# freestanding stdint.h with no include_next to newlib's, so newlib
+# <inttypes.h> never sees __int64_t_defined and skips the PRI*64 macros;
+# PokeMini's retro_common_api.h then hits '#error inttypes.h is being screwy'.
+# newlib's sys/_stdint.h defines this same macro to 1, so it is a no-op on
+# toolchains without the quirk.
+PKMINI_C_INCLUDES += -D__int64_t_defined=1
 
 TAMP_C_INCLUDES += -I$(TAMP_DIR)
 

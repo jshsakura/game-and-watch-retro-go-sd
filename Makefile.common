@@ -353,6 +353,11 @@ C_SOURCES += $(FROGFS_C_SOURCES) \
              $(LITTLEFS_C_SOURCES) \
 			 Core/Src/gw_littlefs.c
 C_DEFS += -DLFS_NO_MALLOC
+# frogfs.c sizes path buffers with PATH_MAX. newlib's <limits.h> only exposes
+# PATH_MAX behind an #ifndef guard that some distro arm-none-eabi toolchains
+# (e.g. Debian/Ubuntu) never satisfy, so frogfs.c fails to compile there. The
+# guard means this -D is harmless (a no-op) on toolchains that do define it.
+C_DEFS += -DPATH_MAX=256
 C_INCLUDES += \
 -I$(FROGFS_DIR)/include \
 -I$(FROGFS_DIR)/src \
