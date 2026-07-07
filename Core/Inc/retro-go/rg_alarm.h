@@ -93,6 +93,11 @@ void rg_alarm_tone_feed(uint32_t now, bool ringing, int preset, int vol);
  * returns exactly where it left off. */
 void rg_alarm_ring_inplace(void);
 
+/* 1Hz-gated convenience for the app loops (in-game, music, video): at most once
+ * a second, if an alarm is due, run the in-place ring. Returns true if it rang
+ * (the caller may want to force a repaint). Call once per loop iteration. */
+bool rg_alarm_poll(void);
+
 #endif /* !RG_ALARM_HOST */
 
 #ifdef __cplusplus

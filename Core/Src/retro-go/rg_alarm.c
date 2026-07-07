@@ -260,4 +260,15 @@ void rg_alarm_ring_inplace(void)
     audio_start_playing_full_length(audio_get_buffer_full_length());
 }
 
+bool rg_alarm_poll(void)
+{
+    static uint32_t last_s;
+    uint32_t s = HAL_GetTick() / 1000;
+    if (s == last_s) return false;            /* at most once a second */
+    last_s = s;
+    if (!rg_alarm_cache_due()) return false;
+    rg_alarm_ring_inplace();
+    return true;
+}
+
 #endif /* !RG_ALARM_HOST */

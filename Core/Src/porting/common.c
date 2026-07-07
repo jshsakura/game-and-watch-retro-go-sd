@@ -466,18 +466,10 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
     }
 
     /* All-state alarm (in-game): every core passes through here each frame.
-     * Once a second, if an alarm has come due, take over in place — stop the
-     * emulator audio, beep + a pulsing banner until dismissed, then hand audio
-     * back and return to the game exactly where it was (no sleep, no savestate). */
-    {
-        static uint32_t alarm_last_s = 0;
-        uint32_t now_s = get_elapsed_time() / 1000;
-        if (now_s != alarm_last_s) {
-            alarm_last_s = now_s;
-            if (rg_alarm_cache_due())
-                rg_alarm_ring_inplace();
-        }
-    }
+     * The 1Hz-gated poll takes over in place on a due alarm — stop the emulator
+     * audio, beep + pulsing banner until dismissed, then hand audio back and
+     * return to the game exactly where it was (no sleep, no savestate). */
+    rg_alarm_poll();
 }
 
 void common_emu_input_loop_handle_turbo(odroid_gamepad_state_t *joystick) {
