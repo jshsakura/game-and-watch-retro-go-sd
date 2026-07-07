@@ -76,15 +76,15 @@ extern void rg_emulators_reset_all_lists(void);
  * AM/PM baseline, stopwatch) works for every face without per-face branches. */
 typedef enum {
     FACE_SEG7 = 0, FACE_PIXEL, FACE_DOT,     /* originals — values locked */
-    FACE_THIN, FACE_OUTLINE, FACE_FACET, FACE_FLIP, FACE_LED, FACE_LCD,
-    FACE_COUNT
+    FACE_THIN, FACE_OUTLINE, FACE_BUBBLE, FACE_FLIP, FACE_LED, FACE_LCD,
+    FACE_COUNT   /* slot 5 was FACE_FACET (dropped) — now the Bubble face */
 } digit_face_t;
 #define FACE_LAST (FACE_COUNT - 1)
 
 /* pixel-grid family (square pixels / inset dots / round LEDs); everything else
  * is a 7-seg-geometry face drawn in the SEG_W×SEG_H block. */
 static inline bool face_is_pixel(digit_face_t f)
-{ return f == FACE_PIXEL || f == FACE_DOT || f == FACE_LED; }
+{ return f == FACE_PIXEL || f == FACE_DOT || f == FACE_LED || f == FACE_BUBBLE; }
 
 typedef struct { uint16_t scr, ink, alarm; uint8_t face; } clock_theme_t;
 
@@ -249,55 +249,6 @@ static void draw_outline_digit(int d, int x, int y, int w, int h, int t, uint16_
     s_outline = o;
 }
 
-/* ---- Facet: low-poly stacked-triangle digit -----------------------------
- * Every 7-seg bar is split by ONE diagonal into two triangles — a lighter
- * tint on one side, a darker shade on the other — so each bar reads as a
- * faceted origami wedge instead of a flat block; the seven wedges stack into
- * a low-poly numeral. Same upright box layout as Thin/Retro-LCD (draw_rect7's
- * S[] geometry), but the fill is a per-row half-space test (pure scanline
- * triangle math) instead of a solid seg_bar — no new heavy primitive, still
- * just fill_rect calls, and every span stays inside the digit's own box so it
- * needs no extra clamping beyond that (same invariant as every other face). */
-static void seg_bar_facet(int x, int y, int len, int tt, bool vert, uint16_t hi, uint16_t lo)
-{
-    for (int r = 0; r < tt; r++) {
-        int split = len * (tt - r) / tt;    /* half-space cut: shrinks as r grows */
-        if (split > 0) {
-            if (vert) odroid_overlay_draw_fill_rect(x + r, y,         1, split, hi);
-            else      odroid_overlay_draw_fill_rect(x,     y + r, split,     1, hi);
-        }
-        if (split < len) {
-            int rem = len - split;
-            if (vert) odroid_overlay_draw_fill_rect(x + r, y + split, 1, rem, lo);
-            else      odroid_overlay_draw_fill_rect(x + split, y + r, rem, 1, lo);
-        }
-    }
-}
-
-static void draw_facet_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
-{
-    if (d < 0 || d > 9) return;
-    if (s_outline) {
-        int o = s_outline; uint16_t oc = s_outline_col; s_outline = 0;
-        draw_facet_digit(d, x-o, y, w, h, t, oc); draw_facet_digit(d, x+o, y, w, h, t, oc);
-        draw_facet_digit(d, x, y-o, w, h, t, oc); draw_facet_digit(d, x, y+o, w, h, t, oc);
-        s_outline = o;
-    }
-    uint8_t m = SEG7[d];
-    int tt = t - 2; if (tt < 4) tt = 4;      /* small gap so wedges read as separate facets */
-    int ym = y + (h - tt)/2;
-    int hx = x + 2, hw = w - 4, xr = x + w - tt;
-    int vt = y + tt + 2, vtl = ym - (y + tt) - 2;
-    int vb = ym + tt + 2, vbl = (y + h - tt) - (ym + tt) - 2;
-    uint16_t hi = mix565(col, 0xFFFF, 6), lo = mix565(col, CLOCK_BLACK, 8);
-    if (m & (1<<0)) seg_bar_facet(hx, y,        hw,  tt, false, hi, lo);  /* A */
-    if (m & (1<<6)) seg_bar_facet(hx, ym,       hw,  tt, false, hi, lo);  /* G */
-    if (m & (1<<3)) seg_bar_facet(hx, y + h-tt, hw,  tt, false, hi, lo);  /* D */
-    if (m & (1<<5)) seg_bar_facet(x,  vt,       vtl, tt, true,  hi, lo);  /* F */
-    if (m & (1<<1)) seg_bar_facet(xr, vt,       vtl, tt, true,  hi, lo);  /* B */
-    if (m & (1<<4)) seg_bar_facet(x,  vb,       vbl, tt, true,  hi, lo);  /* E */
-    if (m & (1<<2)) seg_bar_facet(xr, vb,       vbl, tt, true,  hi, lo);  /* C */
-}
 
 /* ---- Flip: split-flap card ---------------------------------------------
  * Each digit sits on a rounded dark "flap" card with a horizontal seam across
@@ -331,6 +282,20 @@ static const uint8_t DOT5x7[11][7] = {
     {14,17,17,14,17,17,14},{14,17,17,15,1,2,12},
     {31,31,31,31,31,31,31},
 };
+
+/* Centre a 5x7 pixel/dot/LED glyph in its 5*px-wide cell from its lit-column
+ * bounding box, so narrow digits sit dead-centre in their slot (same intent as
+ * seg_glyph_dx). PIX_ALL (the ghost 8) is full width -> 0. */
+static int pix_glyph_dx(int d, int px)
+{
+    if (d < 0 || d > PIX_ALL) return 0;
+    int minc = 5, maxc = -1;
+    for (int r = 0; r < 7; r++)
+        for (int c = 0; c < 5; c++)
+            if (DOT5x7[d][r] & (1 << (4 - c))) { if (c < minc) minc = c; if (c > maxc) maxc = c; }
+    if (maxc < 0) return 0;
+    return ((5 - (maxc - minc + 1)) * px) / 2 - minc * px;
+}
 
 static void draw_pix_digit(int d, int x, int y, int px, uint16_t col, bool dot)
 {
@@ -380,6 +345,34 @@ static void draw_led_digit(int d, int x, int y, int px, uint16_t col)
                 draw_disc(x + c*px + r, y + row*px + r, r, col);
 }
 
+/* ---- Bubble: soft-rounded balloon digit ---------------------------------
+ * The same 5x7 glyph, but each lit cell is an OVERSIZED disc (radius > px/2) so
+ * neighbouring cells fuse into one continuous thick rounded stroke — a friendly
+ * "bubble"/marker numeral that reads as a genuinely different typeface from the
+ * sharp 7-seg faces AND from the separated-dot LED panel. A darker core disc
+ * inside each gives a slight tube/inflated shading. Pixel-family layout; shares
+ * the s_outline halo for legibility over live backgrounds. */
+static void draw_bubble_digit(int d, int x, int y, int px, uint16_t col)
+{
+    if (d < 0 || d > PIX_ALL) return;
+    if (s_outline) {
+        int o = s_outline; uint16_t oc = s_outline_col; s_outline = 0;
+        draw_bubble_digit(d, x-o, y, px, oc); draw_bubble_digit(d, x+o, y, px, oc);
+        draw_bubble_digit(d, x, y-o, px, oc); draw_bubble_digit(d, x, y+o, px, oc);
+        s_outline = o;
+    }
+    int r = (px*7)/10;                 /* > px/2: adjacent discs overlap and merge */
+    int hr = r/2 + r/4; if (hr < 1) hr = 1;
+    uint16_t hi = mix565(col, 0xFFFF, 4);   /* soft inflated highlight */
+    for (int row = 0; row < 7; row++)
+        for (int c = 0; c < 5; c++)
+            if (DOT5x7[d][row] & (1 << (4 - c))) {
+                int cx = x + c*px + px/2, cy = y + row*px + px/2;
+                draw_disc(cx, cy, r, col);      /* fat merged stroke */
+                draw_disc(cx, cy, hr, hi);      /* lighter core */
+            }
+}
+
 /* Geometry of the big "HH:MM" block per face, so callers can centre extras. */
 #define SEG_W    44
 #define SEG_H    92
@@ -396,6 +389,37 @@ static int big_time_width(digit_face_t face)
     return 4*(5*PIX_PX) + 3*PIX_PX + (PIX_PX*3);
 }
 
+/* One leading-digit cell advance (cell width + inter-digit gap). When the 12h
+ * leading zero is suppressed, the whole visible block is one of these narrower,
+ * so it must be recentred rather than left floating in a 4-digit-wide slot (the
+ * old code reserved the blank cell and let the time drift RIGHT). */
+static int big_time_lead_adv(digit_face_t face)
+{ return face_is_pixel(face) ? (5*PIX_PX + PIX_PX) : (SEG_W + SEG_GAP); }
+static int big_time_vis_width(digit_face_t face, bool suppress)
+{ return big_time_width(face) - (suppress ? big_time_lead_adv(face) : 0); }
+/* left edge of the actually-drawn HH:MM block (recentred for a blanked lead) */
+static int big_time_start_x(digit_face_t face, bool suppress)
+{ return (GW_LCD_WIDTH - big_time_vis_width(face, suppress)) / 2; }
+/* right edge of that block — where AM/PM tucks in */
+static int big_time_end_x(digit_face_t face, bool suppress)
+{ return big_time_start_x(face, suppress) + big_time_vis_width(face, suppress); }
+
+/* Horizontal offset to centre a 7-seg glyph inside its w-wide cell. Digits like
+ * "1" (only the right verticals lit) would otherwise hug the cell's right edge —
+ * worst on the Flip cards. Derived from which segment groups are lit, so the
+ * glyph's true bounding box is centred (0 for full-width digits). */
+static int seg_glyph_dx(int d, int w, int t)
+{
+    if (d < 0 || d > 9) return 0;
+    uint8_t m = SEG7[d];
+    bool left  = m & 0x30;   /* E|F left verticals   (bits 4,5) */
+    bool right = m & 0x06;   /* B|C right verticals  (bits 1,2) */
+    bool horiz = m & 0x49;   /* A|D|G horizontals    (bits 0,3,6) */
+    int lo = left  ? 0 : (horiz ? t : (w - t));
+    int hi = right ? w : (horiz ? (w - t) : t);
+    return (w - (hi - lo)) / 2 - lo;
+}
+
 /* ---- per-face digit dispatch -------------------------------------------
  * Every seg-geometry face is drawn in the same block, so the two big-time
  * drawers just pick the right numeral style here. FACE_FLIP is handled by the
@@ -406,7 +430,6 @@ static void seg_glyph(digit_face_t face, int d, int x, int y, int w, int h, int 
     switch (face) {
     case FACE_THIN:    draw_thin_digit(d, x, y, w, h, t, col);    break;
     case FACE_OUTLINE: draw_outline_digit(d, x, y, w, h, t, col); break;
-    case FACE_FACET:   draw_facet_digit(d, x, y, w, h, t, col);  break;
     case FACE_LCD:     draw_lcd_digit(d, x, y, w, h, t, col);     break;
     default:           draw_seg_digit(d, x, y, w, h, t, col);     break;   /* SEG7, FLIP numeral */
     }
@@ -417,26 +440,32 @@ static void seg_glyph(digit_face_t face, int d, int x, int y, int w, int h, int 
 static void seg_cell(digit_face_t face, int d, int x, int y, int w, int h, int t,
                      uint16_t col, uint16_t ghost, bool gh, bool blank)
 {
+    /* the lit numeral is centred inside its cell (seg_glyph_dx); the ghost 8 and
+     * the Flip card/seam always fill the full cell so their frame stays put. */
     if (face == FACE_FLIP) {
         uint16_t seam = mix565(ghost, CLOCK_BLACK, 8);
-        draw_flip_panel(x, y, w, h, ghost);            /* dark flap card */
-        if (!blank) draw_seg_digit(d, x, y, w, h, t, col);  /* numeral on the card */
-        draw_flip_seam(x, y, w, h, seam);              /* seam over both */
+        draw_flip_panel(x, y, w, h, ghost);            /* dark flap card (full width) */
+        if (!blank) draw_seg_digit(d, x + seg_glyph_dx(d, w, t), y, w, h, t, col);  /* centred numeral */
+        draw_flip_seam(x, y, w, h, seam);              /* seam over both (full width) */
         return;
     }
     /* Retro LCD lifts the ghost toward the lit ink so the unlit segments read
      * as a faint "all 8s on" hallmark of a real LCD — faint, not half-lit. */
     uint16_t gcol = (face == FACE_LCD) ? mix565(ghost, col, 4) : ghost;
     if (gh) seg_glyph(face, 8, x, y, w, h, t, gcol);
-    if (!blank) seg_glyph(face, d, x, y, w, h, t, col);
+    if (!blank) seg_glyph(face, d, x + seg_glyph_dx(d, w, t), y, w, h, t, col);
 }
 
-/* Pixel-family cell glyph: square pixels, inset dots, or round LEDs. */
+/* Pixel-family cell glyph: square pixels, inset dots, round LEDs, or Bubble. */
 static void pix_glyph(digit_face_t face, int d, int x, int y, int px, uint16_t col)
 {
-    if (face == FACE_LED) draw_led_digit(d, x, y, px, col);
-    else                  draw_pix_digit(d, x, y, px, col, face == FACE_DOT);
+    if (face == FACE_LED)         draw_led_digit(d, x, y, px, col);
+    else if (face == FACE_BUBBLE) draw_bubble_digit(d, x, y, px, col);
+    else                          draw_pix_digit(d, x, y, px, col, face == FACE_DOT);
 }
+/* centred variant for the lit numeral (the ghost stays full-width) */
+static void pix_glyph_c(digit_face_t face, int d, int x, int y, int px, uint16_t col)
+{ pix_glyph(face, d, x + pix_glyph_dx(d, px), y, px, col); }
 
 /* Draw "HH:MM" centred; when colon=false the colon drops to the ghost shade.
  * Every segment is first drawn in a faint "ghost" colour, the lit ones on
@@ -454,8 +483,12 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
                              digit_face_t face, uint16_t col_h, uint16_t col_m,
                              uint16_t ghost)
 {
-    int x = (GW_LCD_WIDTH - big_time_width(face)) / 2;
     int a = hh/10, b = hh%10, c = mm/10, e = mm%10;
+    /* 12h drops the leading zero (9:41, not 09:41). The blanked cell is SKIPPED,
+     * not reserved, and the block is recentred (big_time_start_x) — the old code
+     * left the visible time drifting right in a 4-digit-wide slot. */
+    bool suppress = blank_lead && hh < 10;
+    int x = big_time_start_x(face, suppress);
     uint16_t cc = colon ? col_h : ghost;   /* blink: colon drops to the dim shade */
     bool gh = s_ghost_on;
     /* Over a live background there IS no matching "dim shade": the ghost is an
@@ -464,35 +497,34 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
     bool colon_draw = colon || gh;
     if (!face_is_pixel(face)) {
         int w = SEG_W, h = SEG_H, t = SEG_T, gap = SEG_GAP, y = SEG_Y;
-        seg_cell(face, a, x, y, w, h, t, col_h, ghost, gh, blank_lead && a == 0);
-        x += w+gap;
+        if (!suppress) { seg_cell(face, a, x, y, w, h, t, col_h, ghost, gh, false); x += w+gap; }
         seg_cell(face, b, x, y, w, h, t, col_h, ghost, gh, false); x += w+gap;
-        /* centre the colon in its slot: the slot is t+3*gap wide, so gap*1.5 on
-         * each side (was x+gap, i.e. 2*gap left vs 1*gap right — visibly off) */
+        /* colon dead-centre in its (t+2*gap)-wide slot: left margin = gap */
         if (colon_draw) {
-            odroid_overlay_draw_fill_rect(x+gap+gap/2, y+h/3, t, t, cc);
-            odroid_overlay_draw_fill_rect(x+gap+gap/2, y+2*h/3, t, t, cc);
+            odroid_overlay_draw_fill_rect(x+gap, y+h/3, t, t, cc);
+            odroid_overlay_draw_fill_rect(x+gap, y+2*h/3, t, t, cc);
         }
         x += t+2*gap;
         seg_cell(face, c, x, y, w, h, t, col_m, ghost, gh, false); x += w+gap;
         seg_cell(face, e, x, y, w, h, t, col_m, ghost, gh, false);
     } else {
         int px = PIX_PX, dw = 5*px, y = PIX_Y;
+        if (!suppress) {
+            if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
+            pix_glyph_c(face, a, x, y, px, col_h);
+            x += dw+px;
+        }
         if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
-        if (!(blank_lead && a == 0))
-            pix_glyph(face, a, x, y, px, col_h);
-        x += dw+px;
-        if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
-        pix_glyph(face, b, x, y, px, col_h); x += dw+px;
-        if (colon_draw) {
+        pix_glyph_c(face, b, x, y, px, col_h); x += dw+px;
+        if (colon_draw) {   /* colon dead-centre in its 3*px slot: left margin = px */
             odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, cc);
             odroid_overlay_draw_fill_rect(x+px, y+4*px, px, px, cc);
         }
         x += px*3;
         if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
-        pix_glyph(face, c, x, y, px, col_m); x += dw+px;
+        pix_glyph_c(face, c, x, y, px, col_m); x += dw+px;
         if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
-        pix_glyph(face, e, x, y, px, col_m);
+        pix_glyph_c(face, e, x, y, px, col_m);
     }
 }
 
@@ -985,19 +1017,20 @@ static void scene_city(uint32_t now, const clock_theme_t *t)
 
 /* pixel-scene registry — s_scene selects one; all are procedural (0 RAM). */
 typedef void (*scene_fn)(uint32_t, const clock_theme_t *);
-/* A curated 8-scene set (16->10->8; Rain/Matrix/Forest delisted 0707 to fund the
- * all-state alarm — Rain overlapped Snow, Matrix fought the digits). Grid Pulse is reused
- * as the alarm ring effect so it's not selectable. Several scenes remain defined
- * in the .inc but delisted here (gc-sections drops them): mountains, desert,
- * meteor, bubbles, fireworks, clouds, and the newer equalizer/plasma/helix —
- * any can be re-listed when there's budget. */
+/* A curated 8-scene set. Matrix returns (device feedback: "매트릭스 좋았는데")
+ * and Clouds returns re-tuned (fewer, airier); Aurora dropped ("안 이쁘고") and
+ * Rain/Forest stay delisted (Rain overlapped Snow). Grid Pulse is reused as the
+ * alarm ring effect so it's not selectable. Several scenes remain defined in the
+ * .inc but delisted here (gc-sections drops them): mountains, desert, meteor,
+ * bubbles, fireworks, aurora, forest, rain, and the newer equalizer/plasma/helix
+ * — any can be re-listed when there's budget. */
 static const scene_fn SCENES[] = {
     scene_city, scene_ocean, scene_starfield, scene_synthwave,
-    scene_snow, scene_aurora, scene_campfire,
+    scene_snow, scene_campfire, scene_matrix, scene_clouds,
 };
 static const char *const SCENE_NAMES[] = {
     "City", "Ocean", "Starfield", "Synthwave",
-    "Snow", "Aurora", "Campfire",
+    "Snow", "Campfire", "Matrix", "Clouds",
 };
 #define SCENE_COUNT ((int)(sizeof(SCENES) / sizeof(SCENES[0])))
 
@@ -1212,7 +1245,7 @@ static void render_clock(uint32_t now, bool alarm_firing)
     /* AM/PM tucked to the RIGHT of the digits at their baseline (G&W style),
      * not a whole centred line of its own */
     if (!s_hour24) {
-        int x = (GW_LCD_WIDTH + big_time_width(face)) / 2 + 6;
+        int x = big_time_end_x(face, dh < 10) + 6;
         int yb = !face_is_pixel(face) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
         const char *ap = hh < 12 ? curr_lang->s_AM : curr_lang->s_PM;
         if (!s_ghost_on)   /* 1px drop shadow over a live background, like the other text */
@@ -1435,6 +1468,7 @@ static bool alarm_fired_in_window(int from_mod, int to_mod)
  * call directly for those rows; the callbacks themselves are defined later,
  * next to the rest of the settings-menu callbacks. */
 static bool cb_dnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r);
+static void clock_menu_repaint(void);   /* shared dialog background painter (defined with the settings menu) */
 #if CLOCK_SD_MEDIA
 static bool cb_alarmsnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r);
 #endif
@@ -1470,7 +1504,7 @@ static void render_alarm_edit(const alarm_t *a, int field, bool blink_off)
     draw_big_time_2c(dh, a->min, true, !s_hour24, face, ch, cm, ghost);
 
     if (!s_hour24) {
-        int x = (GW_LCD_WIDTH + big_time_width(face)) / 2 + 6;
+        int x = big_time_end_x(face, dh < 10) + 6;
         int yb = !face_is_pixel(face) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
         i18n_draw_text_line(x, yb, GW_LCD_WIDTH - x,
                             a->hour < 12 ? curr_lang->s_AM : curr_lang->s_PM, t->ink, CLOCK_BLACK, 1);
@@ -1478,23 +1512,29 @@ static void render_alarm_edit(const alarm_t *a, int field, bool blink_off)
     draw_hintbar(curr_lang->s_Clock_Hint_Edit);
 }
 
-/* Returns true = confirmed (A), false = cancelled (B). Edits *a in place;
- * the caller keeps a backup for the cancel path. */
-static bool alarm_edit_view(alarm_t *a)
+/* Result of the full-screen time editor. DELETE (GAME/START) lets the user drop
+ * an alarm from inside its own edit view — the common dialog itself has no key
+ * to express a per-row delete, so it lives here (and the old list had GAME=del,
+ * so it keeps that muscle memory). */
+typedef enum { ALARM_EDIT_SAVE = 0, ALARM_EDIT_CANCEL, ALARM_EDIT_DELETE } alarm_edit_result_t;
+
+/* Edits *a in place; the caller keeps a backup for the cancel path. */
+static alarm_edit_result_t alarm_edit_view(alarm_t *a)
 {
     int field = 0; bool dirty = true;
     odroid_gamepad_state_t k, prev = {0};
     odroid_input_read_gamepad(&prev);
     uint32_t last_phase = ~0u;
-    bool result = true;
+    alarm_edit_result_t result = ALARM_EDIT_SAVE;
 
     while (true) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
         uint32_t now = HAL_GetTick();
 
-        if (pressed(&k, &prev, ODROID_INPUT_A)) { result = true; break; }
-        if (pressed(&k, &prev, ODROID_INPUT_B)) { result = false; break; }
+        if (pressed(&k, &prev, ODROID_INPUT_A)) { result = ALARM_EDIT_SAVE; break; }
+        if (pressed(&k, &prev, ODROID_INPUT_B)) { result = ALARM_EDIT_CANCEL; break; }
+        if (pressed(&k, &prev, ODROID_INPUT_START)) { result = ALARM_EDIT_DELETE; break; }  /* GAME = delete */
         if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { field = 0; dirty = true; }
         if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { field = 1; dirty = true; }
         if (pressed(&k, &prev, ODROID_INPUT_UP))   { if (field == 0) a->hour = (a->hour+1)%24; else a->min = (a->min+1)%60; dirty = true; }
@@ -1514,17 +1554,11 @@ static bool alarm_edit_view(alarm_t *a)
     return result;
 }
 
-/* Row layout: [alarms...][+Add Alarm][Alarm Sound][DND][Done]. The Alarm Sound
- * row is on BOTH builds now: SD builds pick synth presets + /clock sound files,
- * flash builds pick the synth presets only (non-SD units still get to choose a
- * sound). Alarm Sound and DND used to be their own rows on the main clock menu;
- * folding them in here is what let the main popup drop under the no-scroll row
- * budget (see clock_settings_menu). */
-#define ALARM_IDX_SOUND(cnt) ((cnt) + 1)
-#define ALARM_IDX_DND(cnt)   ((cnt) + 2)
-#define ALARM_EXTRA_ROWS     4   /* +Add, Alarm Sound, DND, Done */
-#define ALARM_IDX_ADD(cnt)   (cnt)
-#define ALARM_IDX_DONE(cnt)  ((cnt) + ALARM_EXTRA_ROWS - 1)
+/* The alarm editor is a SHARED common dialog (odroid_overlay_dialog), same as
+ * the clock settings + power-save menus — one row per alarm plus "+ Add alarm",
+ * "Alarm sound" and "Do Not Disturb". The Alarm sound row is on BOTH builds: SD
+ * builds pick synth presets + /clock sound files, flash builds cycle the synth
+ * presets only. See clock_alarm_setup() below. */
 
 /* Alarm-sound row value/cycle, build-agnostic so the row code stays simple:
  * SD builds delegate to the preset+file picker; flash builds cycle the four
@@ -1548,64 +1582,6 @@ static void alarm_sound_cycle(odroid_dialog_event_t ev)
     if (ev == ODROID_DIALOG_PREV) s_beep_preset = (s_beep_preset == 0) ? RG_TONE_COUNT - 1 : s_beep_preset - 1;
     else                          s_beep_preset = (int8_t)((s_beep_preset + 1) % RG_TONE_COUNT);
 #endif
-}
-
-/* A proper popup: clean solid base + bordered panel, repainted whole every
- * frame. (The old version re-scrimmed whatever was already on the swap
- * buffer, so each repaint stacked another darkening layer + stale rows.) */
-static void render_alarm_setup(int sel)
-{
-    const clock_theme_t *t = TH();
-    uint16_t *fb = lcd_get_active_buffer();
-    fb_fill_screen(fb, t->scr);
-    /* keep the user's living background behind the panel instead of a hard
-     * wipe (device feedback: the editor looked detached from the clock).
-     * One background frame per dirty-render + a dark scrim so the panel
-     * still dominates. */
-    if (s_anim != 0) {
-        uint32_t bt = HAL_GetTick();
-#if CLOCK_SD_MEDIA
-        if (s_anim == ANIM_GIF && clock_gif_ready()) clock_gif_blit(fb, bt);
-        else if (s_anim == ANIM_PHOTO && clock_album_ready())
-            memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
-        else
-#endif
-        if (s_anim == ANIM_SCENE) draw_scene(bt, t);
-        for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++)
-            fb[i] = mix565(fb[i], CLOCK_BLACK, 9);
-    }
-
-    int rows = s_alarm_count + ALARM_EXTRA_ROWS, rh = 18;
-    int pw = 240, ph = 30 + rows * rh + 10;
-    int px = (GW_LCD_WIDTH - pw) / 2, py = (GW_LCD_HEIGHT - 24 - ph) / 2;
-    if (py < 6) py = 6;
-    odroid_overlay_draw_fill_rect(px - 2, py - 2, pw + 4, ph + 4, mix565(t->scr, t->ink, 6));
-    odroid_overlay_draw_fill_rect(px, py, pw, ph, mix565(t->scr, t->ink, 1));
-
-    draw_centered_i18n(py + 6, curr_lang->s_Clock_Alarms, t->alarm);
-    int y = py + 30; char line[80];
-    for (int i = 0; i < rows; i++, y += rh) {
-        bool cur = (i == sel); uint16_t col = cur ? t->ink : mix565(t->scr, t->ink, 8);
-        if (cur) odroid_overlay_draw_fill_rect(px + 4, y - 2, pw - 8, rh - 2, mix565(t->scr, t->ink, 3));
-        if (i < s_alarm_count) {
-            char ts[24]; alarm_time_str(ts, sizeof ts, s_alarms[i].hour, s_alarms[i].min);
-            const char *tag = s_alarms[i].enabled ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off;
-            snprintf(line, sizeof line, "%s        %s", ts, tag);
-        } else if (i == ALARM_IDX_ADD(s_alarm_count)) {
-            snprintf(line, sizeof line, "+ %s", curr_lang->s_Clock_Add_Alarm);
-        } else if (i == ALARM_IDX_SOUND(s_alarm_count)) {
-            char val[40]; alarm_sound_str(val, sizeof val);
-            snprintf(line, sizeof line, "%s        %s", curr_lang->s_Clock_Alarm_Sound, val);
-        } else if (i == ALARM_IDX_DND(s_alarm_count)) {
-            odroid_dialog_choice_t tmp = {0}; char val[12] = "";
-            tmp.value = val; cb_dnd(&tmp, ODROID_DIALOG_INIT, 0);
-            snprintf(line, sizeof line, "%s        %s", curr_lang->s_Clock_DND, tmp.value);
-        } else {
-            snprintf(line, sizeof line, "%s", curr_lang->s_Clock_Done);
-        }
-        draw_centered_i18n(y, line, col);
-    }
-    draw_hintbar(curr_lang->s_Clock_Hint_Editor);
 }
 
 static void alarm_delete_at(int sel)
@@ -1653,7 +1629,7 @@ static void render_datetime_edit(const struct tm *tm, int field, bool blink_off)
     uint16_t cm = (field == 4 && blink_off) ? ghost : t->ink;
     draw_big_time_2c(dh, tm->tm_min, true, !s_hour24, face, ch, cm, ghost);
     if (!s_hour24) {
-        int xx = (GW_LCD_WIDTH + big_time_width(face)) / 2 + 6;
+        int xx = big_time_end_x(face, dh < 10) + 6;
         int yb = !face_is_pixel(face) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
         i18n_draw_text_line(xx, yb, GW_LCD_WIDTH - xx,
                             tm->tm_hour < 12 ? curr_lang->s_AM : curr_lang->s_PM, t->ink, CLOCK_BLACK, 1);
@@ -1709,74 +1685,106 @@ static void clock_edit_time(void)
     do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); } while (k.bitmask);
 }
 
+/* ---- alarm-sound preview (device feedback: "let me HEAR the choice") -----
+ * A short synth blip of `preset` at the alarm's own volume, so changing the
+ * alarm sound (or nudging the volume) plays what you'll wake up to. Bounded +
+ * always stops the SAI afterwards; the settings/alarm dialogs are modal so a
+ * brief blocking feed is fine (same feed cadence as the real ring loop in
+ * rg_alarm.c). Volume 0 = a silent alarm, so nothing plays. */
+#define ALARM_PREVIEW_MS   600u
+#define ALARM_VOL_BLIP_MS  160u
+static void alarm_tone_blip(int preset, int vol, uint32_t ms)
+{
+    if (vol <= 0) return;                       /* silent alarm: nothing to preview */
+    uint32_t start = HAL_GetTick();
+    while ((HAL_GetTick() - start) < ms) {
+        wdog_refresh();
+        rg_alarm_tone_feed(HAL_GetTick(), true, preset, vol);
+        HAL_Delay(8);
+    }
+    rg_alarm_tone_feed(0, false, preset, vol);   /* always stop the SAI */
+}
+static void alarm_sound_preview(void)
+{
+    int preset = s_beep_preset;
+#if CLOCK_SD_MEDIA
+    /* a chosen MP3/WAV file can't be synth-previewed here (it needs the decoder
+     * overlay) — skip the audible preview for files; the row value is the cue.
+     * Only the synth presets play. */
+    if (rg_tone_preset_from_token(s_alarmsnd) < 0) return;
+#endif
+    alarm_tone_blip(preset, s_alarm_volume, ALARM_PREVIEW_MS);
+}
+
+/* ---- alarm editor = the SHARED common dialog ----------------------------
+ * Row ids: each alarm's row uses its own index (0..MAX_ALARMS-1); the fixed
+ * rows use high ids that can't collide (MAX_ALARMS <= 8). One row per alarm
+ * (label = its time, value = On/Off; L/R toggles, A opens the time editor),
+ * then "+ Add alarm", "Alarm sound" (L/R cycles + audible preview) and DND. B
+ * closes. Delete lives inside the time editor (GAME) — the dialog has no key to
+ * express a per-row delete. */
+enum { AL_ID_ADD = 100, AL_ID_SOUND = 101, AL_ID_DND = 102 };
+#define AL_VAL 40
+
+static bool cb_alarm_row(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{
+    (void)r;
+    int i = o->id;
+    if (i < 0 || i >= s_alarm_count) { o->value[0] = 0; return false; }
+    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT)
+        s_alarms[i].enabled = !s_alarms[i].enabled;
+    snprintf(o->value, AL_VAL, "%s", s_alarms[i].enabled ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
+    return e == ODROID_DIALOG_ENTER;             /* A -> open the time editor */
+}
+static bool cb_add_alarm(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{ (void)r; o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
+static bool cb_alarm_sound(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{
+    (void)r;
+    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) { alarm_sound_cycle(e); alarm_sound_preview(); }
+    alarm_sound_str(o->value, AL_VAL);
+    return false;                                /* A does nothing (value row) */
+}
+
 static void clock_alarm_setup(void)
 {
     int sel = 0;
-    bool dirty = true;
-    odroid_gamepad_state_t k, prev = {0};
-    odroid_input_read_gamepad(&prev);
-
-    while (true) {
-        wdog_refresh();
-        odroid_input_read_gamepad(&k);
-        int rows = s_alarm_count + ALARM_EXTRA_ROWS;
-
-        if (pressed(&k, &prev, ODROID_INPUT_B)) break;
-        if (pressed(&k, &prev, ODROID_INPUT_UP))   { sel = (sel == 0) ? rows-1 : sel-1; dirty = true; }
-        if (pressed(&k, &prev, ODROID_INPUT_DOWN)) { sel = (sel+1) % rows; dirty = true; }
-        if (pressed(&k, &prev, ODROID_INPUT_LEFT) || pressed(&k, &prev, ODROID_INPUT_RIGHT)) {
-            /* Alarm Sound / DND rows: L/R cycles the value, same as the
-             * generic dialog rows they used to be on the main clock menu. */
-            odroid_dialog_event_t ev = pressed(&k, &prev, ODROID_INPUT_LEFT) ? ODROID_DIALOG_PREV : ODROID_DIALOG_NEXT;
-            if (sel == ALARM_IDX_SOUND(s_alarm_count)) {
-                alarm_sound_cycle(ev); dirty = true;
-            } else
-            if (sel == ALARM_IDX_DND(s_alarm_count)) {
-                odroid_dialog_choice_t tmp = {0}; char val[12] = "";
-                tmp.value = val; cb_dnd(&tmp, ev, 0); dirty = true;
-            }
+    for (;;) {
+        char lbl[MAX_ALARMS][16], aval[MAX_ALARMS][12];
+        char v_add[4] = "", v_sound[AL_VAL] = "", v_dnd[12] = "";
+        odroid_dialog_choice_t opts[MAX_ALARMS + 4];
+        int n = 0;
+        for (int i = 0; i < s_alarm_count; i++) {
+            alarm_time_str(lbl[i], sizeof lbl[i], s_alarms[i].hour, s_alarms[i].min);
+            opts[n++] = (odroid_dialog_choice_t){ i, lbl[i], aval[i], 1, cb_alarm_row };
         }
-        if (pressed(&k, &prev, ODROID_INPUT_A)) {
-            if (sel < s_alarm_count) {
-                /* edit in the full-screen clone view; B there restores */
-                alarm_t backup = s_alarms[sel];
-                if (!alarm_edit_view(&s_alarms[sel]))
-                    s_alarms[sel] = backup;
-                odroid_input_read_gamepad(&prev);
-            } else if (sel == ALARM_IDX_ADD(s_alarm_count)) {
-                if (s_alarm_count < MAX_ALARMS) {
-                    s_alarms[s_alarm_count] = (alarm_t){ 7, 0, 1 };
-                    sel = s_alarm_count; s_alarm_count++;
-                    /* cancel on a fresh add = the alarm never existed. No
-                     * cursor clamp here: sel == s_alarm_count is the still-valid
-                     * "+ Add" row, so the highlight stays put (unlike the
-                     * START-delete path, which may drop off a real last row). */
-                    if (!alarm_edit_view(&s_alarms[sel]))
-                        alarm_delete_at(sel);
-                    odroid_input_read_gamepad(&prev);
-                }
-            } else if (sel == ALARM_IDX_DONE(s_alarm_count)) {
-                break;
-            }
-            dirty = true;
-        }
-        else if (sel < s_alarm_count) {   /* exclusive with A: no same-frame edit+delete */
-            if (pressed(&k, &prev, ODROID_INPUT_SELECT)) { s_alarms[sel].enabled = !s_alarms[sel].enabled; dirty = true; }
-            if (pressed(&k, &prev, ODROID_INPUT_START)) {
-                alarm_delete_at(sel);
-                if (sel >= s_alarm_count && sel > 0) sel--;
-                dirty = true;
-            }
-        }
+        opts[n++] = (odroid_dialog_choice_t){ AL_ID_ADD, curr_lang->s_Clock_Add_Alarm, v_add, 1, cb_add_alarm };
+        opts[n++] = (odroid_dialog_choice_t){ AL_ID_SOUND, curr_lang->s_Clock_Alarm_Sound, v_sound, 1, cb_alarm_sound };
+        opts[n++] = (odroid_dialog_choice_t){ AL_ID_DND, curr_lang->s_Clock_DND, v_dnd, 1, cb_dnd };
+        opts[n] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
+        for (odroid_dialog_choice_t *o = opts; o->update_cb; o++)
+            o->update_cb(o, ODROID_DIALOG_FOCUS_GAINED, 0);
 
-        if (dirty) { dirty = false; render_alarm_setup(sel);
-                     lcd_swap(); lcd_sleep_while_swap_pending(); }
-        prev = k;
-        HAL_Delay(40);
+        if (sel >= n) sel = n - 1;
+        int id = odroid_overlay_dialog(curr_lang->s_Clock_Alarms, opts, sel, &clock_menu_repaint, 0);
+        if (id < 0) break;                       /* B -> done */
+
+        if (id >= 0 && id < s_alarm_count) {     /* A on an alarm row -> edit its time */
+            alarm_t backup = s_alarms[id];
+            alarm_edit_result_t res = alarm_edit_view(&s_alarms[id]);
+            if (res == ALARM_EDIT_CANCEL) s_alarms[id] = backup;
+            else if (res == ALARM_EDIT_DELETE) alarm_delete_at(id);
+            sel = id;
+        } else if (id == AL_ID_ADD && s_alarm_count < MAX_ALARMS) {
+            int i = s_alarm_count;
+            s_alarms[i] = (alarm_t){ 7, 0, 1 };
+            s_alarm_count++;
+            /* cancel/delete on a fresh add = the alarm never existed */
+            if (alarm_edit_view(&s_alarms[i]) != ALARM_EDIT_SAVE) alarm_delete_at(i);
+            sel = i;
+        }
+        /* SOUND / DND rows never return true on ENTER, so they never reach here */
     }
-    /* wait for release so the closing A/B press can't leak into the caller's
-     * loop and exit the whole app (odroid_overlay_dialog does the same) */
-    do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); } while (k.bitmask);
     clock_config_save();
     s_last_fired_min = -1;
 }
@@ -1792,7 +1800,7 @@ static const char *const THEME_LABEL[THEME_COUNT] =
 /* Face names are ASCII and NOT translated (same as the theme labels) — the
  * settings dialog shows them verbatim. Order matches digit_face_t. */
 static const char *const FACE_NAME[FACE_COUNT] = {
-    "7-seg", "Pixel", "Dot", "Thin", "Outline", "Facet", "Flip", "LED", "LCD",
+    "7-seg", "Pixel", "Dot", "Thin", "Outline", "Bubble", "Flip", "LED", "LCD",
 };
 static char v_theme[24], v_face[20], v_fmt[8], v_anim[44], v_scene[24],
             v_autodim[12], v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];
@@ -2066,6 +2074,9 @@ static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
     int lv = s_alarm_volume;
     if (e == ODROID_DIALOG_PREV && lv > 0) s_alarm_volume = --lv;
     if (e == ODROID_DIALOG_NEXT && lv < ODROID_AUDIO_VOLUME_MAX) s_alarm_volume = ++lv;
+    /* short blip at the NEW level so the loudness change is audible, not abstract */
+    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT)
+        alarm_tone_blip(s_beep_preset, s_alarm_volume, ALARM_VOL_BLIP_MS);
     char a = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
     char b = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
     for (int i = 0; i <= ODROID_AUDIO_VOLUME_MAX; i++) o->value[i] = (i <= lv) ? a : b;
@@ -2073,6 +2084,18 @@ static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
     return e == ODROID_DIALOG_ENTER; }
 static bool cb_enter(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 { (void)r; o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
+
+/* Main-menu "Alarms" row summary, exactly like cb_powersave_group's On/Off: the
+ * value shows how many alarms are ENABLED (a number needs no translation), or
+ * "-" when none are armed. A/ENTER still opens the alarm editor (returns true). */
+static bool cb_alarms_summary(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{
+    (void)r;
+    int n = alarms_armed();
+    if (n > 0) snprintf(o->value, 4, "%d", n);
+    else       snprintf(o->value, 4, "-");
+    return e == ODROID_DIALOG_ENTER;
+}
 
 /* "절전"(power-save) group row: collapses Auto-dim + Night-start + Night-end
  * into a single main-menu entry (those 3 rows used to be separate; device
@@ -2151,7 +2174,7 @@ static bool clock_settings_menu(void)
         {7, curr_lang->s_Clock_Volume, v_vol,    1, cb_vol},
         {8, curr_lang->s_Clock_Set_Time, v_settime, 1, cb_enter},
         {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
-        {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_enter},
+        {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_alarms_summary},
         {17, curr_lang->s_Clock_Auto_Dim, v_autodim, 1, cb_powersave_group},
         {0, curr_lang->s_Clock_Theme,  v_theme,  1, cb_theme},
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},

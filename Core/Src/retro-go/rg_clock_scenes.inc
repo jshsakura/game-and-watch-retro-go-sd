@@ -354,14 +354,16 @@ static void scene_clouds(uint32_t now, const clock_theme_t *t)
         int sx = (k * 97 + 7) % GW_LCD_WIDTH, sy = 6 + (k * 43) % 70;
         srect(sx, sy, 1, 1, star);
     }
-    for (int i = 0; i < 6; i++) {
+    /* Fewer clouds, spread across the sky in generous bands so it reads calm and
+     * airy rather than crowded (device feedback). Each band holds one cloud. */
+    for (int i = 0; i < 4; i++) {
         uint32_t h = shash(i * 7717u);
         int speed = 1 + (h % 2);
-        int cx = (int)((h % GW_LCD_WIDTH) + (now / 300) * speed) % (GW_LCD_WIDTH + 80) - 40;
-        int cy = 20 + (h >> 7) % 110;
+        int cx = (int)((h % GW_LCD_WIDTH) + (now / 320) * speed) % (GW_LCD_WIDTH + 90) - 45;
+        int cy = 16 + i * 30 + (int)((h >> 7) % 12);   /* one per band: ~16/46/76/106 */
         uint16_t c = mix565(t->scr, t->ink, 3 + (h >> 3) % 3);
-        srect(cx, cy, 30, 8, c);      srect(cx + 8, cy - 5, 20, 8, c);
-        srect(cx + 18, cy + 2, 22, 7, c); srect(cx - 4, cy + 4, 16, 6, c);
+        srect(cx, cy, 34, 9, c);          srect(cx + 9, cy - 6, 22, 9, c);
+        srect(cx + 20, cy + 2, 24, 8, c); srect(cx - 5, cy + 5, 18, 7, c);
     }
 }
 
