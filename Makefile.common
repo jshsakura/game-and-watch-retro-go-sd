@@ -1689,6 +1689,12 @@ $(FROGFS_IMAGE): create_sd_data scripts/gen_frogfs_image.py scripts/rom_frogfs_l
 frogfs_image: $(FROGFS_IMAGE)
 .PHONY: frogfs_image
 
+# Top-level sd_content dirs baked into the RW LittleFS image (SD_CARD=0).
+# cores+lang are required; append to ship fork-feature content on card-less
+# devices, e.g. LITTLEFS_INCLUDE="cores lang clock music" bakes /clock
+# (alarm.mp3, bg.gif, album/*.565) and /music for the Clock/Music apps.
+LITTLEFS_INCLUDE ?= cores lang
+
 $(LITTLEFS_IMAGE): create_sd_data scripts/gen_littlefs_image.py scripts/sd_cores_pack.py scripts/nes_rom_mappers.py scripts/pico8_gnw_cores.py
 	$(V)$(PYTHON3) scripts/gen_littlefs_image.py \
 		--sd-content $(SD_FOLDER) \
@@ -1696,7 +1702,7 @@ $(LITTLEFS_IMAGE): create_sd_data scripts/gen_littlefs_image.py scripts/sd_cores
 		--build-dir $(LITTLEFS_BUILD_DIR) \
 		--size $(FILESYSTEM_SIZE) \
 		--block-size $(LITTLEFS_BLOCK_SIZE) \
-		--include cores --include lang \
+		$(foreach d,$(LITTLEFS_INCLUDE),--include $(d)) \
 		$(LITTLEFS_OMIT_PICO8_RO)
 
 littlefs_image: $(LITTLEFS_IMAGE)

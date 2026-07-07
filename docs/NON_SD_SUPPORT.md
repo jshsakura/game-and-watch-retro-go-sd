@@ -78,9 +78,12 @@ Runtime-level (found by tracing every feature with no card present):
 ## Known limitations
 
 - No post-flash content push for LittleFS (no `sdpush` equivalent): adding
-  album photos / `bg.gif` / music / videos means rebuilding `littlefs.bin`
-  (`--include` the directories you want) and reflashing that partition.
-  Saves live in the same partition — reflashing it loses them.
+  album photos / `bg.gif` / `alarm.mp3` / music / videos means rebuilding
+  `littlefs.bin` and reflashing that partition. Baking is one variable:
+  `make SD_CARD=0 LITTLEFS_INCLUDE="cores lang clock music video" all`
+  packs those `sd_content/` dirs into the image (cores+lang are the
+  required minimum). Saves live in the same partition — reflashing it
+  loses them.
 - Music/Video entries stay visible and show an empty list until content is
   baked in (kept: they work fine once `/music`, `/video` are packed).
 - `release` remains SD_CARD=1-only: an SD_CARD=0 image embeds ROMs and is not
