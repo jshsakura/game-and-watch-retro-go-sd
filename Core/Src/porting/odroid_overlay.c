@@ -1536,9 +1536,14 @@ int odroid_savestate_menu(const char *title, const char *rom_path, bool show_pre
         rg_emu_slot_t *s = &savestates->slots[i];
         if (s->is_used) {
             struct tm *tm = localtime(&s->mtime);
-            char tbuf[24];
-            if (tm && strftime(tbuf, sizeof(tbuf), "%d/%m/%Y %H:%M:%S", tm) > 0)
-                snprintf(slot_labels[i], sizeof(slot_labels[i]), "Slot %d  %s", i, tbuf);
+            /* Format dd/mm/yyyy hh:mm:ss by hand: pulling in strftime() drags
+             * ~3.6 KB of newlib locale tables into the tight 256 KB intflash
+             * bank, for a fixed, locale-independent format we control anyway. */
+            if (tm)
+                snprintf(slot_labels[i], sizeof(slot_labels[i]),
+                         "Slot %d  %02d/%02d/%04d %02d:%02d:%02d", i,
+                         tm->tm_mday, tm->tm_mon + 1, tm->tm_year + 1900,
+                         tm->tm_hour, tm->tm_min, tm->tm_sec);
             else
                 snprintf(slot_labels[i], sizeof(slot_labels[i]), "Slot %d", i);
         } else {
