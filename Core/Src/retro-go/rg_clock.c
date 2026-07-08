@@ -86,6 +86,13 @@ typedef enum {
 static inline bool face_is_pixel(digit_face_t f)
 { return f == FACE_PIXEL || f == FACE_DOT || f == FACE_LED; }
 
+/* Faces that carry the faint "all 8s on" ghost backdrop behind the lit digit
+ * (a real unlit-LCD look). On these the lit digit sits in its TRUE segment
+ * position so it lines up with the fixed full-width ghost 8 — e.g. "1" hugs the
+ * right verticals. Every other seg face centres the digit in its cell. */
+static inline bool face_has_ghost(digit_face_t f)
+{ return f == FACE_SEG7 || f == FACE_OUTLINE || f == FACE_LCD; }
+
 typedef struct { uint16_t scr, ink, alarm; uint8_t face; } clock_theme_t;
 
 static const clock_theme_t THEMES[] = {
@@ -121,6 +128,28 @@ static const uint8_t SEG7[10] = { 0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0
 static int      s_outline = 0;
 static uint16_t s_outline_col = 0;
 
+/* Ghost translucency: when s_blend is set, seg-face fills BLEND into the pixels
+ * already in the framebuffer (mix toward the passed colour) instead of writing
+ * opaque — so the ghost 8 reads faintly over a live wallpaper rather than as a
+ * dark block. GHOST_BLEND keeps ~11/16 (~69%) of the background. Only the ghost
+ * draw sets it; the lit digits leave it clear and stay fully opaque. */
+static uint16_t mix565(uint16_t a, uint16_t b, int t);
+#define GHOST_BLEND 5
+static bool s_blend = false;
+static void clock_fill(int x, int y, int w, int h, uint16_t col)
+{
+    if (!s_blend) { odroid_overlay_draw_fill_rect(x, y, w, h, col); return; }
+    uint16_t *fb = lcd_get_active_buffer();
+    for (int j = 0; j < h; j++) {
+        int py = y + j; if (py < 0 || py >= GW_LCD_HEIGHT) continue;
+        for (int i = 0; i < w; i++) {
+            int px = x + i; if (px < 0 || px >= GW_LCD_WIDTH) continue;
+            uint16_t *p = &fb[py * GW_LCD_WIDTH + px];
+            *p = mix565(*p, col, GHOST_BLEND);
+        }
+    }
+}
+
 static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t col)
 {
     if (d < 0 || d > 9) return;
@@ -149,16 +178,16 @@ static void draw_seg_digit(int d, int x, int y, int w, int h, int t, uint16_t co
                 int c2 = 2*r - (t - 1), dc = c2 < 0 ? -c2 : c2;
                 int inset = (dc + 1) / 2 + 1;
                 int yr = S[s].y0 + r;
-                odroid_overlay_draw_fill_rect(x + S[s].x0 + inset,
-                                              y + yr, S[s].len - 2*inset, 1, col);
+                clock_fill(x + S[s].x0 + inset,
+                           y + yr, S[s].len - 2*inset, 1, col);
             }
         } else {
             for (int r = 0; r < S[s].len; r++) {    /* vertical hexagon */
                 int e = r < S[s].len - 1 - r ? r : S[s].len - 1 - r;
                 int wid = 2*e + 1; if (wid > t - 1) wid = t - 1;
                 int yr = S[s].y0 + r;
-                odroid_overlay_draw_fill_rect(x + S[s].x0 + (t - wid)/2,
-                                              y + yr, wid, 1, col);
+                clock_fill(x + S[s].x0 + (t - wid)/2,
+                           y + yr, wid, 1, col);
             }
         }
     }
@@ -189,8 +218,8 @@ static void seg_bar(int x, int y, int len, int tt, bool vert, bool rounded, uint
             else if (i > len-1 - tt/2) cap = i - (len-1 - tt/2);
         }
         int th = tt - 2*cap; if (th < 1) continue;
-        if (vert) odroid_overlay_draw_fill_rect(x + cap, y + i, th, 1, col);
-        else      odroid_overlay_draw_fill_rect(x + i, y + cap, 1, th, col);
+        if (vert) clock_fill(x + cap, y + i, th, 1, col);
+        else      clock_fill(x + i, y + cap, 1, th, col);
     }
 }
 
@@ -354,27 +383,26 @@ static void draw_led_digit(int d, int x, int y, int px, uint16_t col)
 #define PIX_PX   9
 #define PIX_Y    (SEG_Y + 6)
 
-static int big_time_width(digit_face_t face)
+/* THE alignment anchor: the blinking colon is centred on the screen midline for
+ * EVERY face and EVERY time value. big_time_colon_x is the LEFT pixel of the
+ * colon dots; HH is laid out ending one gap left of it, MM starting one gap
+ * right — so the colon never shifts between "12:00" and single-hour "9:41".
+ * (The old code centred the whole HH:MM block instead, which slid the colon.) */
+static int big_time_colon_x(digit_face_t face)
 {
-    if (!face_is_pixel(face))
-        return 4*SEG_W + 3*SEG_GAP + (SEG_T + 2*SEG_GAP);
-    return 4*(5*PIX_PX) + 3*PIX_PX + (PIX_PX*3);
+    int t = face_is_pixel(face) ? PIX_PX : SEG_T;
+    return GW_LCD_WIDTH/2 - t/2;
 }
-
-/* One leading-digit cell advance (cell width + inter-digit gap). When the 12h
- * leading zero is suppressed, the whole visible block is one of these narrower,
- * so it must be recentred rather than left floating in a 4-digit-wide slot (the
- * old code reserved the blank cell and let the time drift RIGHT). */
-static int big_time_lead_adv(digit_face_t face)
-{ return face_is_pixel(face) ? (5*PIX_PX + PIX_PX) : (SEG_W + SEG_GAP); }
-static int big_time_vis_width(digit_face_t face, bool suppress)
-{ return big_time_width(face) - (suppress ? big_time_lead_adv(face) : 0); }
-/* left edge of the actually-drawn HH:MM block (recentred for a blanked lead) */
-static int big_time_start_x(digit_face_t face, bool suppress)
-{ return (GW_LCD_WIDTH - big_time_vis_width(face, suppress)) / 2; }
-/* right edge of that block — where AM/PM tucks in */
+/* right edge of the MM block — where AM/PM tucks in (independent of the blanked
+ * leading zero, so AM/PM no longer jumps between single- and two-digit hours) */
 static int big_time_end_x(digit_face_t face, bool suppress)
-{ return big_time_start_x(face, suppress) + big_time_vis_width(face, suppress); }
+{
+    (void)suppress;
+    int cx = big_time_colon_x(face);
+    if (!face_is_pixel(face))
+        return cx + SEG_T + 2*SEG_GAP + 2*SEG_W;
+    return cx + 3*PIX_PX + 2*(5*PIX_PX);
+}
 
 /* Horizontal offset to centre a 7-seg glyph inside its w-wide cell. Digits like
  * "1" (only the right verticals lit) would otherwise hug the cell's right edge —
@@ -421,20 +449,26 @@ static void seg_cell(digit_face_t face, int d, int x, int y, int w, int h, int t
         draw_flip_seam(x, y, w, h, seam);              /* seam over both (full width) */
         return;
     }
-    /* Retro LCD keeps its signature faint "all 8s on" ghost behind the lit digit
-     * (a real LCD shows every segment dimly). The lit digit must sit in its TRUE
-     * segment position (NOT cell-centred) so it lines up with the fixed full-width
-     * ghost 8 — e.g. "1" lights the ghost's right verticals and rightly hugs the
-     * right, exactly like a real LCD alarm clock. Centring it would float it off
-     * the ghost. */
-    if (face == FACE_LCD) {
-        if (gh) seg_glyph(FACE_LCD, 8, x, y, w, h, t, mix565(ghost, col, 4));
-        if (!blank) seg_glyph(FACE_LCD, d, x, y, w, h, t, col);
+    /* Ghost faces (7-seg, Outline, Retro-LCD) keep the signature faint "all 8s
+     * on" backdrop. The lit digit sits in its TRUE segment position (NOT cell-
+     * centred) so it lines up with the fixed full-width ghost 8 — e.g. "1"
+     * lights the ghost's right verticals and rightly hugs the right, like a real
+     * LCD alarm clock. On a solid theme the ghost is an opaque faint tint; over
+     * a live wallpaper (gh false) it is drawn TRANSLUCENT, blended into the
+     * pixels below, so it reads faintly instead of as a dark block. */
+    if (face_has_ghost(face)) {
+        if (gh) {
+            seg_glyph(face, 8, x, y, w, h, t, mix565(ghost, col, 4));
+        } else {
+            int o = s_outline; s_outline = 0; s_blend = true;
+            seg_glyph(face, 8, x, y, w, h, t, col);
+            s_blend = false; s_outline = o;
+        }
+        if (!blank) seg_glyph(face, d, x, y, w, h, t, col);
         return;
     }
-    /* Plain 7-seg / Thin / Outline: no ghost-8 backdrop — it read like a dimmed
-     * power-save block sitting behind the number. Just the lit digit, centred in
-     * its cell so a narrow "1" doesn't hug the cell's right edge. */
+    /* Thin (and any other non-ghost seg face): no ghost-8 backdrop — just the
+     * lit digit, centred in its cell so a narrow "1" doesn't hug the right. */
     if (!blank) seg_glyph(face, d, x + seg_glyph_dx(d, w, t), y, w, h, t, col);
 }
 
@@ -465,47 +499,51 @@ static void draw_big_time_2c(int hh, int mm, bool colon, bool blank_lead,
                              uint16_t ghost)
 {
     int a = hh/10, b = hh%10, c = mm/10, e = mm%10;
-    /* 12h drops the leading zero (9:41, not 09:41). The blanked cell is SKIPPED,
-     * not reserved, and the block is recentred (big_time_start_x) — the old code
-     * left the visible time drifting right in a 4-digit-wide slot. */
+    /* 12h drops the leading zero (9:41, not 09:41): the tens cell is simply not
+     * drawn. Nothing else shifts — every digit position is derived from the
+     * screen-centred colon, so the colon stays put and HH just loses its tens. */
     bool suppress = blank_lead && hh < 10;
-    int x = big_time_start_x(face, suppress);
     uint16_t cc = colon ? col_h : ghost;   /* blink: colon drops to the dim shade */
     bool gh = s_ghost_on;
     /* Over a live background there IS no matching "dim shade": the ghost is an
      * opaque theme-coloured grey that just floats over the photo/GIF/scene.
      * There the blink-off phase draws nothing at all — a true blink. */
     bool colon_draw = colon || gh;
+    int cx = big_time_colon_x(face);   /* colon LEFT pixel, anchored on screen centre */
     if (!face_is_pixel(face)) {
         int w = SEG_W, h = SEG_H, t = SEG_T, gap = SEG_GAP, y = SEG_Y;
-        if (!suppress) { seg_cell(face, a, x, y, w, h, t, col_h, ghost, gh, false); x += w+gap; }
-        seg_cell(face, b, x, y, w, h, t, col_h, ghost, gh, false); x += w+gap;
-        /* colon dead-centre in its (t+2*gap)-wide slot: left margin = gap */
-        if (colon_draw) {
-            odroid_overlay_draw_fill_rect(x+gap, y+h/3, t, t, cc);
-            odroid_overlay_draw_fill_rect(x+gap, y+2*h/3, t, t, cc);
+        int ho = cx - gap - w;        /* HH ones: right edge one gap left of the colon */
+        int ht = ho - gap - w;        /* HH tens */
+        int mt = cx + t + gap;        /* MM tens: left edge one gap right of the colon */
+        int mo = mt + w + gap;        /* MM ones */
+        if (!suppress) seg_cell(face, a, ht, y, w, h, t, col_h, ghost, gh, false);
+        seg_cell(face, b, ho, y, w, h, t, col_h, ghost, gh, false);
+        if (colon_draw) {             /* colon dots at cx: dead-centre on GW_LCD_WIDTH/2 */
+            odroid_overlay_draw_fill_rect(cx, y+h/3,   t, t, cc);
+            odroid_overlay_draw_fill_rect(cx, y+2*h/3, t, t, cc);
         }
-        x += t+2*gap;
-        seg_cell(face, c, x, y, w, h, t, col_m, ghost, gh, false); x += w+gap;
-        seg_cell(face, e, x, y, w, h, t, col_m, ghost, gh, false);
+        seg_cell(face, c, mt, y, w, h, t, col_m, ghost, gh, false);
+        seg_cell(face, e, mo, y, w, h, t, col_m, ghost, gh, false);
     } else {
         int px = PIX_PX, dw = 5*px, y = PIX_Y;
+        int ho = cx - px - dw;        /* HH ones */
+        int ht = ho - px - dw;        /* HH tens */
+        int mt = cx + 2*px;           /* MM tens (colon px wide + px gap) */
+        int mo = mt + dw + px;        /* MM ones */
         if (!suppress) {
-            if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
-            pix_glyph_c(face, a, x, y, px, col_h);
-            x += dw+px;
+            if (gh) pix_glyph(face, PIX_ALL, ht, y, px, ghost);
+            pix_glyph_c(face, a, ht, y, px, col_h);
         }
-        if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
-        pix_glyph_c(face, b, x, y, px, col_h); x += dw+px;
-        if (colon_draw) {   /* colon dead-centre in its 3*px slot: left margin = px */
-            odroid_overlay_draw_fill_rect(x+px, y+2*px, px, px, cc);
-            odroid_overlay_draw_fill_rect(x+px, y+4*px, px, px, cc);
+        if (gh) pix_glyph(face, PIX_ALL, ho, y, px, ghost);
+        pix_glyph_c(face, b, ho, y, px, col_h);
+        if (colon_draw) {             /* colon dots at cx: dead-centre on GW_LCD_WIDTH/2 */
+            odroid_overlay_draw_fill_rect(cx, y+2*px, px, px, cc);
+            odroid_overlay_draw_fill_rect(cx, y+4*px, px, px, cc);
         }
-        x += px*3;
-        if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
-        pix_glyph_c(face, c, x, y, px, col_m); x += dw+px;
-        if (gh) pix_glyph(face, PIX_ALL, x, y, px, ghost);
-        pix_glyph_c(face, e, x, y, px, col_m);
+        if (gh) pix_glyph(face, PIX_ALL, mt, y, px, ghost);
+        pix_glyph_c(face, c, mt, y, px, col_m);
+        if (gh) pix_glyph(face, PIX_ALL, mo, y, px, ghost);
+        pix_glyph_c(face, e, mo, y, px, col_m);
     }
 }
 
