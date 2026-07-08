@@ -6,3 +6,4 @@
  * (backgrounds / fonts) layer on later. All faces are drawn in code — no
  * bundled art — so there is nothing copyrighted to ship. */
 void rg_clock_show(void);
+void clock_ensure_dirs(void);  /* mkdir /clock (+ gif/alarm/album on SD); boot + entry */

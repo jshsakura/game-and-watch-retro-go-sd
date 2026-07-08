@@ -2433,6 +2433,20 @@ static void ring_audio(uint32_t now, bool ringing)
 
 /* ---- main loop -------------------------------------------------------- */
 
+/* Create the clock's SD folders so a freshly-flashed card shows the user where
+ * to drop files — called both at boot (rg_main) and on clock entry. Harmless if
+ * they already exist. On flash builds only /clock is made (media is compiled
+ * out, so gif/alarm/album have no use there). */
+void clock_ensure_dirs(void)
+{
+    rg_storage_mkdir("/clock");
+#if CLOCK_SD_MEDIA
+    rg_storage_mkdir("/clock/gif");   /* GIF backgrounds (picked in settings) */
+    rg_storage_mkdir("/clock/alarm"); /* MP3/WAV alarm sounds (picked in settings) */
+    rg_storage_mkdir("/clock/album"); /* 320x240 .565 / .bmp photos */
+#endif
+}
+
 void rg_clock_show(void)
 {
     clock_mode_t mode = MODE_CLOCK;
@@ -2445,12 +2459,9 @@ void rg_clock_show(void)
 
     clock_config_load();
     lcd_backlight_set(odroid_display_get_backlight_raw());   /* apply the system brightness right on entry */
-    rg_storage_mkdir("/clock");       /* ensure the clock's folders exist on first run */
+    clock_ensure_dirs();              /* /clock (+ gif/alarm/album on SD) exist */
     s_snooze_tick = 0;
 #if CLOCK_SD_MEDIA
-    rg_storage_mkdir("/clock/album"); /* the user drops 320x240 raw .565 photos here */
-    rg_storage_mkdir("/clock/gif");   /* GIF backgrounds (picked in settings) */
-    rg_storage_mkdir("/clock/alarm"); /* MP3/WAV alarm sounds (picked in settings) */
     s_album_used = false;
     if (s_anim == ANIM_GIF) { clock_gif_set_file(s_bgfile);
         if (clock_gif_load()) s_album_used = true; }   /* GIF borrows shared_files -> restore lists on exit */

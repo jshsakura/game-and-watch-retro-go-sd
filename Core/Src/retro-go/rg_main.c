@@ -1121,6 +1121,7 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
      * feature (a card-less unit has no way to receive a bg.gif), compiled out on
      * SD_CARD=0 along with the rest of the clock's user-media. */
 #if SD_CARD == 1
+    clock_ensure_dirs();   /* create /clock/gif, /clock/alarm, /clock/album now so a fresh SD shows where to drop files */
     clock_gif_reserve();
 #endif
 
