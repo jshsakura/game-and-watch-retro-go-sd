@@ -61,6 +61,8 @@ static int stub_backlight_level = 6;
 int odroid_display_get_backlight(void) { return stub_backlight_level; }
 void odroid_display_set_backlight(int level) { stub_backlight_level = level; }
 uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_backlight_level]; }
+/* mirrors Core/Src/porting/odroid_display.c: the middle of the 10-level scale */
+uint8_t odroid_display_backlight_raw_mid(void) { return backlightLevels[5]; }
 /* rg_clock_show() (unused directly by these tests, but compiled) reads the
  * charger state for the idle-backlight charging exception. */
 bq24072_state_t bq24072_get_state(void) { return BQ24072_STATE_DISCHARGING; }
@@ -513,17 +515,50 @@ static void test_night_settings_rows_and_migration(void)
     reset_cfg_fields();
 }
 
-/* ---- dim level helper: half of the user's brightness, floor-clamped -----*/
+/* ---- dim level helper: clamp down to mid-scale, never up ------------------*/
 static void test_dim_level(void)
 {
-    CHECK(clock_dim_level(255) == 127, "half of max brightness (255/2 = 127)");
-    CHECK(clock_dim_level(128) == 64,  "half of the lowest odroid backlight level (128/2 = 64)");
-    CHECK(clock_dim_level(2 * CLOCK_DIM_FLOOR) == CLOCK_DIM_FLOOR,
-          "right at the floor boundary — half lands exactly on the floor");
-    CHECK(clock_dim_level(2 * CLOCK_DIM_FLOOR - 1) == CLOCK_DIM_FLOOR,
-          "just under the floor boundary — clamps up to the floor");
-    CHECK(clock_dim_level(0) == CLOCK_DIM_FLOOR,
-          "even a hypothetical zero brightness clamps to the floor — dimming alone never goes fully dark");
+    const uint8_t MID = 162;   /* backlightLevels[LEVEL_COUNT / 2] */
+
+    CHECK(clock_dim_raw(255, MID) == MID, "brightest setting dims to mid-scale");
+    CHECK(clock_dim_raw(198, MID) == MID, "above mid-scale dims to mid-scale");
+    CHECK(clock_dim_raw(MID, MID) == MID, "exactly mid-scale is left alone");
+    CHECK(clock_dim_raw(149, MID) == 149, "below mid-scale is left alone — never brighten to dim");
+    CHECK(clock_dim_raw(128, MID) == 128,
+          "dimmest selectable level survives: the old user_raw/2 gave 64, under the whole scale");
+}
+
+/* ---- second stage: sleep 30s after the dim, unless something says no ------*/
+static void test_should_sleep(void)
+{
+    const uint32_t DIM = CLOCK_DIM_IDLE_MS, SLP = CLOCK_SLEEP_IDLE_MS;
+    CHECK(SLP == DIM + 30000u, "sleep lands 30s after the dim");
+
+    CHECK(clock_should_sleep(MODE_CLOCK, false, true, SLP, false, false),
+          "idle past the threshold on the clock face -> sleep");
+    CHECK(!clock_should_sleep(MODE_CLOCK, false, true, SLP - 1, false, false),
+          "one tick short -> stay awake");
+    CHECK(!clock_should_sleep(MODE_CLOCK, false, true, DIM, false, false),
+          "merely dimmed (15s) -> stay awake, that is the whole point");
+
+    CHECK(!clock_should_sleep(MODE_CLOCK, true, true, SLP * 2, false, false),
+          "ringing never sleeps");
+    CHECK(!clock_should_sleep(MODE_CLOCK, false, true, SLP * 2, false, true),
+          "busy (running timer / pending snooze) never sleeps — sleep would lose it");
+    CHECK(!clock_should_sleep(MODE_CLOCK, false, false, SLP * 2, false, false),
+          "auto-dim off -> the user asked for the screen to stay up");
+    CHECK(!clock_should_sleep(MODE_CLOCK, false, true, SLP * 2, true, false),
+          "charging desk clock stays awake, same exception as the dim");
+    CHECK(!clock_should_sleep(MODE_TIMER, false, true, SLP * 2, false, false),
+          "never sleep out from under the timer face");
+    CHECK(!clock_should_sleep(MODE_POMODORO, false, true, SLP * 2, false, false),
+          "never sleep out from under the pomodoro face");
+    CHECK(!clock_should_sleep(MODE_STOPWATCH, false, true, SLP * 2, false, false),
+          "never sleep out from under the stopwatch face");
+
+    /* the dim must still be in force at the moment we decide to sleep */
+    CHECK(clock_should_dim(MODE_CLOCK, false, true, SLP, 12 * 60, -1, 0, false) == CLOCK_BL_DIM,
+          "the screen is dimmed, not full, right up to the sleep");
 }
 
 /* ---- alarm ring overlay: forced, legible, in-bounds ----------------------*/
@@ -784,6 +819,7 @@ int main(void)
     test_charging_exception();
     test_night_settings_rows_and_migration();
     test_dim_level();
+    test_should_sleep();
     test_ring_overlay();
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;

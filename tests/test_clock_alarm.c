@@ -48,6 +48,7 @@ static int stub_backlight_level = 6;
 int odroid_display_get_backlight(void) { return stub_backlight_level; }
 void odroid_display_set_backlight(int level) { stub_backlight_level = level; }
 uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_backlight_level]; }
+uint8_t odroid_display_backlight_raw_mid(void) { return backlightLevels[5]; }
 /* rg_clock_show() (unused here, but compiled) reads the charger state for the
  * idle-backlight charging exception — not exercised by the alarm tests. */
 bq24072_state_t bq24072_get_state(void) { return BQ24072_STATE_DISCHARGING; }
