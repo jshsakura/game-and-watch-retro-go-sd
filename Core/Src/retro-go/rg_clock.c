@@ -1051,11 +1051,11 @@ typedef void (*scene_fn)(uint32_t, const clock_theme_t *);
  * — any can be re-listed when there's budget. */
 static const scene_fn SCENES[] = {
     scene_city, scene_ocean, scene_starfield, scene_synthwave,
-    scene_snow, scene_campfire, scene_matrix, scene_clouds,
+    scene_snow, scene_matrix, scene_clouds,
 };
 static const char *const SCENE_NAMES[] = {
     "City", "Ocean", "Starfield", "Synthwave",
-    "Snow", "Campfire", "Matrix", "Clouds",
+    "Snow", "Matrix", "Clouds",
 };
 #define SCENE_COUNT ((int)(sizeof(SCENES) / sizeof(SCENES[0])))
 
