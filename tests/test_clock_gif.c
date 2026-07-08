@@ -38,7 +38,7 @@ size_t rg_emulators_shared_file_bytes(void)
 
 /* redirect the absolute SD path to the test file */
 static const char *gif_path(const char *p)
-{ return strcmp(p, "/clock/bg.gif") == 0 ? "/tmp/mtest/bg.gif" : p; }
+{ return strcmp(p, "/clock/gif/bg.gif") == 0 ? "/tmp/mtest/bg.gif" : p; }
 #define open(p, f) open(gif_path(p), f)
 #include "../Core/Src/porting/lib/gifdec/gifdec.c"
 #include "../Core/Src/retro-go/rg_clock_gif.c"   /* probe open() redirected too */

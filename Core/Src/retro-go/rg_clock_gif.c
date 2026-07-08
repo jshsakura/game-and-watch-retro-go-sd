@@ -33,15 +33,15 @@
 #include "rg_clock_gif.h"
 
 #ifndef GIF_PATH
-#define GIF_PATH "/clock/bg.gif"
+#define GIF_PATH "/clock/gif/bg.gif"
 #endif
 
 /* Chosen background GIF basename (settings picker). We keep only a POINTER into
  * the caller's persistent buffer (rg_clock's s_bgfile) — not a copy — so the
  * launcher's tight DTCM gains no resident string buffer; the full path is built
- * on the stack per load. NULL/"" = the default /clock/bg.gif, so an old cfg with
- * no bgfile entry keeps working. */
-static const char *s_gif_name;   /* basename under /clock, or NULL for bg.gif */
+ * on the stack per load. NULL/"" = the default /clock/gif/bg.gif, so an old cfg
+ * with no bgfile entry keeps working. */
+static const char *s_gif_name;   /* basename under /clock/gif, or NULL for bg.gif */
 
 void clock_gif_set_file(const char *name)
 {
@@ -52,7 +52,7 @@ void clock_gif_set_file(const char *name)
 static const char *gif_resolve_path(char *out, size_t n)
 {
     if (!s_gif_name) return GIF_PATH;
-    snprintf(out, n, "/clock/%s", s_gif_name);
+    snprintf(out, n, "/clock/gif/%s", s_gif_name);
     return out;
 }
 

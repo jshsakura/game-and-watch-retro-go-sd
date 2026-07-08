@@ -79,7 +79,7 @@ Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
   with **snooze** (ring → A = +5 min, anything else = stop); synthesised beep
   at the system volume; fully localized. The one visual customisation that
   *travels with every mode* is the **background**: off / ambient / built-in
-  pixel scene / animated GIF (`/clock/bg.gif`). GIF is decoded a frame at a time
+  pixel scene / animated GIF (`/clock/gif/bg.gif`). GIF is decoded a frame at a time
   straight to RGB565 from the emulator-RAM pool (borrowed and released, so it
   never permanently costs an emulator anything); it must be **320×240** (the LCD
   — the app scale-fills, so a bigger GIF only wastes memory). The companion

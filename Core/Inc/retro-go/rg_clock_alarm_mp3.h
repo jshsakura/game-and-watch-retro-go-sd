@@ -3,7 +3,7 @@
 
 /* Optional MP3/WAV alarm sound for the Clock app.
  *
- * When /clock/alarm.mp3 exists, a ringing alarm plays it (looped) instead of the
+ * When /clock/alarm/alarm.mp3 exists, a ringing alarm plays it (looped) instead of the
  * synthesised beep. The MP3 decoder is far too big for the ~full internal flash,
  * so it rides the Music overlay: while the Clock app is foreground no emulator is
  * loaded, so the RAM_EMU region (and the shared_files decode arena that the GIF /
@@ -22,11 +22,11 @@
  * probes the file and touches nothing, so the caller can skip that dance (keep
  * the background live) whenever there is no alarm file. */
 
-/* Point the alarm at a basename under /clock (from the settings picker); NULL or
- * "" restores the default /clock/alarm.mp3 so an old cfg keeps working. */
+/* Point the alarm at a basename under /clock/alarm (from the settings picker);
+ * NULL or "" restores the default /clock/alarm/alarm.mp3 so an old cfg keeps working. */
 void clock_alarm_mp3_set_file(const char *name);
 
-/* /clock/alarm.mp3 (or the picked file) present and openable — cheap probe. */
+/* /clock/alarm/alarm.mp3 (or the picked file) present and openable — cheap probe. */
 bool clock_alarm_mp3_available(void);
 
 /* Stage the decoder overlay and open the alarm file. Returns true if MP3/WAV
