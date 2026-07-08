@@ -141,6 +141,37 @@ static void test_refire_next_day(void)
     CHECK(alarm_should_fire(7, 0) == true,  "re-fires next day at 07:00");
 }
 
+/* Jumping onto an alarm's minute is not that alarm going off. Two ways to jump:
+ * saving the Set-time dialog, and leaving the alarm editor. Both call
+ * alarm_claim_minute() — reported on device as "I changed the clock and the
+ * alarm suddenly rang". */
+static void test_claimed_minute_does_not_ring(void)
+{
+    /* Set time: 15:20 -> 07:00, with a 07:00 alarm. */
+    reset_alarms(); add_alarm(7, 0, 1);
+    CHECK(alarm_should_fire(15, 20) == false, "15:20: quiet");
+    alarm_claim_minute(7, 0);                      /* what clock_edit_time() now does */
+    CHECK(alarm_should_fire(7, 0) == false,
+          "setting the clock ONTO 07:00 does not ring the 07:00 alarm");
+
+    /* ...but the clock keeps running, and tomorrow's 07:00 is a real 07:00. */
+    CHECK(alarm_should_fire(7, 1) == false, "07:01: quiet");
+    CHECK(alarm_should_fire(7, 0) == true,  "the next real 07:00 rings normally");
+
+    /* Alarm editor: dismiss the ringing 07:00, open the list, close it at 07:00. */
+    reset_alarms(); add_alarm(7, 0, 1);
+    CHECK(alarm_should_fire(7, 0) == true, "07:00 rings");
+    alarm_claim_minute(7, 0);                      /* what the editor now does on exit */
+    CHECK(alarm_should_fire(7, 0) == false,
+          "closing the alarm editor at 07:00 does not ring it straight back");
+
+    /* An alarm added for a LATER minute still fires today. */
+    reset_alarms(); add_alarm(7, 5, 1);
+    alarm_claim_minute(7, 0);                      /* editor closed at 07:00 */
+    CHECK(alarm_should_fire(7, 0) == false, "07:00: nothing due");
+    CHECK(alarm_should_fire(7, 5) == true,  "an alarm set for 07:05 still rings at 07:05");
+}
+
 static void test_dnd(void)
 {
     reset_alarms(); add_alarm(7, 0, 1); s_dnd = true;
@@ -293,6 +324,7 @@ static void test_next_alarm(void)
 int main(void)
 {
     test_refire_next_day();
+    test_claimed_minute_does_not_ring();
     test_dnd();
     test_window();
     test_cfg_roundtrip();
