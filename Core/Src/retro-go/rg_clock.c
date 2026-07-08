@@ -2117,8 +2117,18 @@ static bool cb_powersave_group(odroid_dialog_choice_t *o, odroid_dialog_event_t 
 { (void)r; sprintf(o->value, "%s", s_autodim ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
   return e == ODROID_DIALOG_ENTER; }
 
+static void tone_feed(uint32_t now, bool ringing);   /* fwd: defined with ring_audio */
+
 static void clock_menu_repaint(void)
 {
+    /* Defence line: this runs every frame a clock settings/alarm dialog is open,
+     * and the ring-dismiss logic lives in the main loop which is suspended while
+     * a modal is up. So force the alarm tone OFF here every frame — no tone may
+     * play behind a modal the user cannot dismiss, whatever started it. A no-op
+     * when nothing is playing. (The real ring is a main-loop-only path and never
+     * repaints through here.) */
+    tone_feed(HAL_GetTick(), false);
+
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t bg = TH()->scr;
     fb_fill_screen(fb, bg);
