@@ -1509,6 +1509,19 @@ static bool alarm_should_fire(int hh, int mm)
     return false;
 }
 
+/* Treat the minute we are standing on as already fired.
+ *
+ * alarm_should_fire() only knows "current minute == alarm minute"; it cannot see
+ * whether that minute ARRIVED or whether the user JUMPED onto it. Two ways to
+ * jump: setting the clock, and leaving the alarm editor (which used to clear the
+ * guard outright, so dismissing a 07:00 alarm and then opening the alarm list at
+ * 07:00 rang it straight back). Neither is the alarm's moment, so claim the
+ * minute. The next minute clears the guard again, and tomorrow rings as usual. */
+static void alarm_claim_minute(int hh, int mm)
+{
+    s_last_fired_min = hh * 60 + mm;
+}
+
 /* Did any enabled alarm's minute pass while a blocking menu held the loop?
  * Checks (from_mod, to_mod) EXCLUSIVE — to_mod itself is still the current
  * minute and is handled by the regular alarm_should_fire() check. */
@@ -1716,7 +1729,13 @@ static void clock_edit_time(void)
         odroid_input_read_gamepad(&k);
         uint32_t now = HAL_GetTick();
 
-        if (pressed(&k, &prev, ODROID_INPUT_A)) { tm.tm_sec = 0; GW_SetUnixTM(&tm); break; }
+        if (pressed(&k, &prev, ODROID_INPUT_A)) {
+            tm.tm_sec = 0;
+            GW_SetUnixTM(&tm);
+            /* landing ON an alarm's minute is not that alarm going off */
+            alarm_claim_minute(tm.tm_hour, tm.tm_min);
+            break;
+        }
         if (pressed(&k, &prev, ODROID_INPUT_B)) break;
         if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { field = (field == 0) ? 4 : field - 1; dirty = true; }
         if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { field = (field + 1) % 5; dirty = true; }
@@ -1960,7 +1979,11 @@ static void clock_alarm_setup(void)
     }
     s_sound_row_focused = false;   /* don't leak the GAME hint into other dialogs */
     clock_config_save();
-    s_last_fired_min = -1;
+    /* Leaving the editor must not ring the alarm the user is standing on — but
+     * every LATER minute re-arms normally, so edits still take effect today. */
+    struct tm now_tm;
+    GW_GetUnixTM(&now_tm);
+    alarm_claim_minute(now_tm.tm_hour, now_tm.tm_min);
 }
 
 /* ---- settings menu (opened with PAUSE/SET = ODROID_INPUT_VOLUME) --------
