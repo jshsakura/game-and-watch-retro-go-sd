@@ -235,24 +235,17 @@ void rg_alarm_ring_inplace(void)
 
     audio_stop_playing();                 /* silence the emulator/player audio */
 
-    odroid_gamepad_state_t k, prev, entry;
+    odroid_gamepad_state_t k, prev;
     odroid_input_read_gamepad(&prev);     /* swallow the key that may be held */
-    entry = prev;
     uint32_t start = HAL_GetTick(), last_draw = 0;
 
     while (true) {
         wdog_refresh();
         uint32_t now = HAL_GetTick();
         odroid_input_read_gamepad(&k);
-        /* A ringing alarm must always have an escape hatch: POWER and PAUSE work
-         * whether they are tapped or simply held down, and A/B keep their usual
-         * fresh-press dismiss. Keys already down when the alarm fired are excluded
-         * (`entry`) — waking on POWER must not swallow the alarm that woke you. */
-        bool escape = (k.values[ODROID_INPUT_POWER]  && !entry.values[ODROID_INPUT_POWER]) ||
-                      (k.values[ODROID_INPUT_VOLUME] && !entry.values[ODROID_INPUT_VOLUME]);
-        bool press = escape ||
-                     (k.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) ||
-                     (k.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B]);
+        bool press = (k.values[ODROID_INPUT_A]     && !prev.values[ODROID_INPUT_A]) ||
+                     (k.values[ODROID_INPUT_B]     && !prev.values[ODROID_INPUT_B]) ||
+                     (k.values[ODROID_INPUT_POWER] && !prev.values[ODROID_INPUT_POWER]);
         if (press || (now - start) >= RING_MS) break;
 
         rg_alarm_tone_feed(now, true, preset, vol);

@@ -58,11 +58,6 @@ static inline void rg_alarm_tone_feed(uint32_t now, bool ringing, int preset, in
     }
 }
 
-/* The clock rolls the resident all-state cache forward when its alarm fires; on
- * the host that cache does not exist, so this is a no-op counter the tests can
- * read if they ever need to assert the roll happened. */
-static inline void rg_alarm_cache_advance(void) {}
-
 /* defined in rg_clock.c itself (the exports under test elsewhere) */
 void rg_clock_query_alarms(rg_alarm_query_t *out);
 void rg_clock_alarm_prefs(int *preset, int *volume);

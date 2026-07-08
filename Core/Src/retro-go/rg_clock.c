@@ -6,11 +6,10 @@
  * font) — clock, Pomodoro,
  * countdown timer and stopwatch all read as one app. ONE fixed look (no theme
  * or font pickers); the customisable part is the background (off / ambient /
- * user GIF via /clock/gif/bg.gif). Every label comes from the firmware i18n
+ * user GIF via /clock/bg.gif). Every label comes from the firmware i18n
  * table (hint legends stay ASCII for the 8px font). Controls are uniform:
  * A start/pause, B reset, PAUSE = settings (incl. Exit); POWER sleeps and
- * resumes back INTO the clock (it does not quit), as does the idle timeout
- * (15s dim to mid brightness, 30s later sleep); while
+ * resumes back INTO the clock (it does not quit); while
  * the alarm rings A = snooze (5 min), anything else stops it. Alarm loudness
  * follows the SYSTEM volume. Config (24h, DND, alarms) = /clock.cfg.
  *
@@ -906,16 +905,8 @@ static uint32_t s_flash_until = 0;
 #define ALARM_RING_MS 60000u     /* auto-dismiss a ringing alarm after 60s if untouched (matches rg_alarm.c RING_MS) */
 #define CLOCK_UI_HIDE_MS 8000u   /* idle time before the mode pager + hint fade away */
 #define CLOCK_DIM_IDLE_MS 15000u /* idle time on the clock face before the backlight auto-dims/turns off */
-/* ...and 30s later, still untouched, the whole device sleeps. Waking is POWER,
- * and rg_alarm_arm_rtc() (gw_sleep.c) arms RTC Alarm A on the way down, so a
- * sleeping clock still rings. */
-#define CLOCK_SLEEP_IDLE_MS (CLOCK_DIM_IDLE_MS + 30000u)
+#define CLOCK_DIM_FLOOR   16u    /* never dim below this raw level, even off a very low user brightness */
 static uint32_t s_snooze_tick = 0;   /* HAL tick when a snoozed alarm re-rings */
-
-/* Middle of the brightness scale (Core/Src/porting/odroid_display.c). Declared
- * here because odroid_display.h belongs to the retro-go-stm32 submodule, which
- * this fork does not patch. */
-extern uint8_t odroid_display_backlight_raw_mid(void);
 
 /* Idle backlight decision — pure logic, so it is unit-testable
  * (tests/test_clock_more.c). Applies only on the clock face, never over a
@@ -938,15 +929,12 @@ static bool clock_in_night_window(int minute_of_day, int start_min, int end_min)
     return since_start < span;
 }
 
-/* Idle brightness: drop to the middle of the scale, but only if the user is
- * currently brighter than that — an already-dim screen is left alone.
- *
- * This used to be user_raw / 2. The backlight scale starts at 128, not 0, so
- * halving the raw produced 64..127 — below the dimmest selectable level, which
- * read as "the clock switched itself off after 15 seconds". */
-static uint8_t clock_dim_raw(uint8_t cur_raw, uint8_t mid_raw)
+/* Half of the user's current configured brightness, clamped so dimming alone
+ * never goes fully dark (lcd_backlight_set takes a raw 0-255 DAC level). */
+static uint8_t clock_dim_level(uint8_t user_raw)
 {
-    return cur_raw > mid_raw ? mid_raw : cur_raw;
+    uint8_t half = (uint8_t)(user_raw / 2);
+    return half < CLOCK_DIM_FLOOR ? CLOCK_DIM_FLOOR : half;
 }
 
 /*
@@ -971,32 +959,6 @@ static clock_backlight_t clock_should_dim(clock_mode_t mode, bool ringing, bool 
         return CLOCK_BL_OFF;
     if (charging) return CLOCK_BL_FULL;   /* desk clock on permanent power: skip the battery-saving day dim */
     return CLOCK_BL_DIM;
-}
-
-/*
- * Second stage: 30s after the dim (CLOCK_SLEEP_IDLE_MS since the last press),
- * an untouched clock puts the whole device to sleep instead of sitting there
- * lighting a dim screen. Pure logic, unit-tested alongside clock_should_dim.
- *
- * Refusals, highest first:
- *   1. ringing            — obviously
- *   2. busy               — a timer/pomodoro/stopwatch is RUNNING, or a snooze
- *      is pending. Sleep stops the HAL tick and only the clock.cfg alarms are
- *      re-armed in RTC, so either would be silently lost.
- *   3. auto-dim off       — the user asked for the screen to stay up
- *   4. not the clock face — never sleep out from under a mode being watched
- *   5. charging           — a desk clock on permanent power stays awake, the
- *      same exception clock_should_dim() makes
- *
- * The alarm itself survives: GW_EnterDeepSleep() calls rg_alarm_arm_rtc().
- */
-static bool clock_should_sleep(clock_mode_t mode, bool ringing, bool autodim,
-                               uint32_t idle_ms, bool charging, bool busy)
-{
-    if (ringing || busy) return false;
-    if (!autodim || mode != MODE_CLOCK) return false;
-    if (charging) return false;
-    return idle_ms >= CLOCK_SLEEP_IDLE_MS;
 }
 
 static void tick_countdown(runner_t *r, uint32_t now)
@@ -1080,23 +1042,19 @@ static void scene_city(uint32_t now, const clock_theme_t *t)
 
 /* pixel-scene registry — s_scene selects one; all are procedural (0 RAM). */
 typedef void (*scene_fn)(uint32_t, const clock_theme_t *);
-/* A curated 6-scene set. Matrix returns (device feedback: "매트릭스 좋았는데")
+/* A curated 8-scene set. Matrix returns (device feedback: "매트릭스 좋았는데")
  * and Clouds returns re-tuned (fewer, airier); Aurora dropped ("안 이쁘고") and
  * Rain/Forest stay delisted (Rain overlapped Snow). Grid Pulse is reused as the
  * alarm ring effect so it's not selectable. Several scenes remain defined in the
  * .inc but delisted here (gc-sections drops them): mountains, desert, meteor,
- * bubbles, fireworks, aurora, forest, rain, campfire, ocean and the newer
- * equalizer/plasma/helix — any can be re-listed when there's budget.
- *
- * Ocean went last, by measurement: intflash had FOUR bytes of headroom, so the
- * alarm fixes below could not link, and scene_ocean was the largest shipped
- * scene at 476 B. Re-list it once rg_logos is recompressed. */
+ * bubbles, fireworks, aurora, forest, rain, and the newer equalizer/plasma/helix
+ * — any can be re-listed when there's budget. */
 static const scene_fn SCENES[] = {
-    scene_city, scene_starfield, scene_synthwave,
+    scene_city, scene_ocean, scene_starfield, scene_synthwave,
     scene_snow, scene_matrix, scene_clouds,
 };
 static const char *const SCENE_NAMES[] = {
-    "City", "Starfield", "Synthwave",
+    "City", "Ocean", "Starfield", "Synthwave",
     "Snow", "Matrix", "Clouds",
 };
 #define SCENE_COUNT ((int)(sizeof(SCENES) / sizeof(SCENES[0])))
@@ -1513,19 +1471,6 @@ static bool alarm_should_fire(int hh, int mm)
     return false;
 }
 
-/* Treat the minute we are standing on as already fired.
- *
- * alarm_should_fire() only knows "current minute == alarm minute"; it cannot see
- * whether that minute ARRIVED or whether the user JUMPED onto it. Two ways to
- * jump: setting the clock, and leaving the alarm editor (which used to clear the
- * guard outright, so dismissing a 07:00 alarm and then opening the alarm list at
- * 07:00 rang it straight back). Neither is the alarm's moment, so claim the
- * minute. The next minute clears the guard again, and tomorrow rings as usual. */
-static void alarm_claim_minute(int hh, int mm)
-{
-    s_last_fired_min = hh * 60 + mm;
-}
-
 /* Did any enabled alarm's minute pass while a blocking menu held the loop?
  * Checks (from_mod, to_mod) EXCLUSIVE — to_mod itself is still the current
  * minute and is handled by the regular alarm_should_fire() check. */
@@ -1733,13 +1678,7 @@ static void clock_edit_time(void)
         odroid_input_read_gamepad(&k);
         uint32_t now = HAL_GetTick();
 
-        if (pressed(&k, &prev, ODROID_INPUT_A)) {
-            tm.tm_sec = 0;
-            GW_SetUnixTM(&tm);
-            /* landing ON an alarm's minute is not that alarm going off */
-            alarm_claim_minute(tm.tm_hour, tm.tm_min);
-            break;
-        }
+        if (pressed(&k, &prev, ODROID_INPUT_A)) { tm.tm_sec = 0; GW_SetUnixTM(&tm); break; }
         if (pressed(&k, &prev, ODROID_INPUT_B)) break;
         if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { field = (field == 0) ? 4 : field - 1; dirty = true; }
         if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { field = (field + 1) % 5; dirty = true; }
@@ -1780,31 +1719,6 @@ static void clock_edit_time(void)
  * only confused things, so it's gone. Everything is at the alarm's OWN volume
  * (0 = silent alarm, nothing plays) and always stops the SAI on the way out; the
  * dialog is modal so a blocking, key-interruptible feed is fine. */
-/* Both GAME previews (synth tone and SD file) cap here. */
-#define ALARM_AUDITION_MS   10000u
-
-/* Set when POWER or PAUSE cut a preview short: those two are guaranteed escapes,
- * and they don't just silence the sound — they close the dialog the preview was
- * running inside. Anything that makes noise while a modal is frozen behind it
- * needs a way OUT of the modal, not only a way to stop the noise. */
-static bool s_audition_escaped;
-
-/* Preview stop condition. POWER and PAUSE work whether tapped or merely held;
- * every other key needs a fresh press. Keys already down when the preview began
- * (`entry`, i.e. the GAME that triggered it) are excluded, so the trigger press
- * cannot dismiss the thing it just started. */
-static bool audition_stop(const odroid_gamepad_state_t *k,
-                          const odroid_gamepad_state_t *prev,
-                          const odroid_gamepad_state_t *entry)
-{
-    if ((k->values[ODROID_INPUT_POWER]  && !entry->values[ODROID_INPUT_POWER]) ||
-        (k->values[ODROID_INPUT_VOLUME] && !entry->values[ODROID_INPUT_VOLUME])) {
-        s_audition_escaped = true;
-        return true;
-    }
-    return (k->bitmask & ~prev->bitmask) != 0;
-}
-
 #define ALARM_VOL_BLIP_MS   160u
 static void alarm_tone_blip(int preset, int vol, uint32_t ms)
 {
@@ -1817,12 +1731,8 @@ static void alarm_tone_blip(int preset, int vol, uint32_t ms)
     }
     rg_alarm_tone_feed(0, false, preset, vol);   /* always stop the SAI */
 }
-/* A preview is a SAMPLE of the alarm, not the alarm. This used to run the full
- * 60s ALARM_RING_MS: a modal minute of beeping with the settings dialog frozen
- * behind it. Both previews now share ALARM_AUDITION_MS.
- *
- * GAME-to-hear: ring the REAL alarm pattern (same feed the live alarm uses) up
- * to that cap, but cut it short the instant ANY key is pressed; always stop
+/* GAME-to-hear: ring the REAL alarm pattern (same feed the live alarm uses) up
+ * to the 60s cap, but cut it short the instant ANY key is pressed; always stop
  * the SAI on the way out. Returns ODROID_DIALOG_PREV/NEXT when the interrupting
  * key was LEFT/RIGHT so the caller advances the selection in the same press,
  * else 0. In practice the user presses a key to stop it. */
@@ -1830,14 +1740,13 @@ static odroid_dialog_event_t alarm_tone_audition(int preset, int vol)
 {
     if (vol <= 0) return (odroid_dialog_event_t)0;   /* silent alarm: nothing to hear */
     odroid_dialog_event_t adv = (odroid_dialog_event_t)0;
-    odroid_gamepad_state_t k, prev, entry;
+    odroid_gamepad_state_t k, prev;
     odroid_input_read_gamepad(&prev);            /* swallow the GAME key that opened this */
-    entry = prev;
     uint32_t start = HAL_GetTick();
-    while ((HAL_GetTick() - start) < ALARM_AUDITION_MS) {
+    while ((HAL_GetTick() - start) < ALARM_RING_MS) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
-        if (audition_stop(&k, &prev, &entry)) {
+        if (k.bitmask & ~prev.bitmask) {         /* any NEW key press stops it early */
             if (pressed(&k, &prev, ODROID_INPUT_LEFT))       adv = ODROID_DIALOG_PREV;
             else if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) adv = ODROID_DIALOG_NEXT;
             break;
@@ -1869,6 +1778,7 @@ static void clock_bg_restore(void);
 /* GAME preview of a chosen MP3/WAV file, streamed for up to ~10s. It's streamed,
  * so its length costs no resident RAM (the decode-ahead ring is the same one the
  * live ring uses). */
+#define ALARM_AUDITION_MS 10000u
 
 /* GAME-to-hear for an SD alarm FILE: reuse the REAL alarm MP3 path — the same
  * overlay staged into RAM_EMU, the same ISR-fed ring — so there is NO new
@@ -1888,14 +1798,13 @@ static odroid_dialog_event_t alarm_file_audition(void)
     if (!clock_alarm_mp3_start()) { clock_bg_restore(); return (odroid_dialog_event_t)0; }
 
     odroid_dialog_event_t adv = (odroid_dialog_event_t)0;
-    odroid_gamepad_state_t k, prev, entry;
+    odroid_gamepad_state_t k, prev;
     odroid_input_read_gamepad(&prev);            /* swallow the GAME key that opened this */
-    entry = prev;
     uint32_t start = HAL_GetTick();
     while ((HAL_GetTick() - start) < ALARM_AUDITION_MS) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
-        if (audition_stop(&k, &prev, &entry)) {
+        if (k.bitmask & ~prev.bitmask) {         /* any NEW key press stops the preview */
             if (pressed(&k, &prev, ODROID_INPUT_LEFT))       adv = ODROID_DIALOG_PREV;
             else if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) adv = ODROID_DIALOG_NEXT;
             break;
@@ -1962,20 +1871,13 @@ static bool cb_alarm_sound(odroid_dialog_choice_t *o, odroid_dialog_event_t e, u
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) alarm_sound_cycle(e);  /* L/R just selects */
     bool game = (e == (odroid_dialog_event_t)ODROID_DIALOG_GAME);
     if (game) {                                  /* GAME = preview the real alarm, interruptible */
-        s_audition_escaped = false;
         odroid_dialog_event_t adv = alarm_sound_audition();
         /* Pressing LEFT/RIGHT during the preview cuts it AND moves to the next
          * sound in the same press ("미리듣는 도중에 방향키 옮기면 바로 종료하고" next). */
         if (adv == ODROID_DIALOG_PREV || adv == ODROID_DIALOG_NEXT) alarm_sound_cycle(adv);
-        alarm_sound_str(o->value, AL_VAL);
-        /* POWER/PAUSE did not merely silence the preview, they asked to LEAVE.
-         * Returning false closes the dialog: a modal that makes noise has to be
-         * escapable, not just quietenable. */
-        if (s_audition_escaped) return false;
-        return true;                             /* handled in place -> dialog stays open */
     }
     alarm_sound_str(o->value, AL_VAL);
-    return false;
+    return game;                                 /* GAME handled in place -> dialog stays open */
 }
 
 static void clock_alarm_setup(void)
@@ -2020,13 +1922,7 @@ static void clock_alarm_setup(void)
     }
     s_sound_row_focused = false;   /* don't leak the GAME hint into other dialogs */
     clock_config_save();
-    /* Leaving the editor must not ring the alarm the user is standing on — but
-     * every LATER minute re-arms normally, so edits still take effect today. */
-    alarm_claim_minute(GW_GetCurrentHour(), GW_GetCurrentMinute());
-    /* A snooze is a promise made by the OLD alarm list. The user has just told us
-     * what they want their alarms to be — turning one off and still being rung
-     * five minutes later ("알람을 종료 못하는게 말이되냐") is not defensible. */
-    s_snooze_tick = 0;
+    s_last_fired_min = -1;
 }
 
 /* ---- settings menu (opened with PAUSE/SET = ODROID_INPUT_VOLUME) --------
@@ -2588,17 +2484,7 @@ void rg_clock_show(void)
          * stop — a key already held when it fires must not swallow it, and
          * the press is CONSUMED so it can't fall through and reset a runner,
          * switch mode or open the menu. */
-        if (alarm_should_fire(hh, mm)) {
-            alarm_ring_until = now + ALARM_RING_MS;
-            /* Roll the resident all-state cache to the NEXT occurrence. Without
-             * this, s_next_epoch stays parked on the alarm that just rang, so
-             * rg_alarm_cache_due() keeps returning true: opening a game, the music
-             * player or a video then made rg_alarm_poll() ring the SAME alarm all
-             * over again via rg_alarm_ring_inplace() — the ring that used to
-             * accept only A/B/POWER. That is the alarm that "rang wrongly and
-             * nothing would stop it". */
-            rg_alarm_cache_advance();
-        }
+        if (alarm_should_fire(hh, mm)) alarm_ring_until = now + ALARM_RING_MS;
         if (s_snooze_tick && now >= s_snooze_tick) {   /* snooze expired */
             s_snooze_tick = 0;
             alarm_ring_until = now + ALARM_RING_MS;
@@ -2632,7 +2518,7 @@ void rg_clock_show(void)
         if (want_bl != bl_state) {
             uint8_t user_raw = odroid_display_get_backlight_raw();
             lcd_backlight_set(want_bl == CLOCK_BL_OFF ? 0
-                             : want_bl == CLOCK_BL_DIM ? clock_dim_raw(user_raw, odroid_display_backlight_raw_mid())
+                             : want_bl == CLOCK_BL_DIM ? clock_dim_level(user_raw)
                              : user_raw);
             if (bl_state == CLOCK_BL_FULL) anim_freeze_tick = now;   /* just started pausing: freeze the animation clock here */
             if (bl_state == CLOCK_BL_OFF)  dirty = true;             /* leaving OFF: force a repaint (frames were skipped while off) */
@@ -2659,21 +2545,14 @@ void rg_clock_show(void)
         }
         ring_audio(now, ringing);   /* MP3 file if present, else the synthesised beep */
 
-        /* Sleep that RESUMES back into the clock — a bedside clock should not
-         * quit on sleep. Entered two ways: POWER, or 30s after the idle dim with
-         * still no input (clock_should_sleep). odroid_system_sleep() fades the
-         * CURRENT (clock) frame out (no logo, no launcher flash), STOP-sleeps,
-         * and returns in place on wake — the same call the launcher makes on
-         * POWER. The GIF's open fd is invalidated by the SD unmount/remount
+        /* POWER = SLEEP that RESUMES back into the clock — a bedside clock
+         * should not quit on sleep. odroid_system_sleep() fades the CURRENT
+         * (clock) frame out (no logo, no launcher flash), STOP-sleeps, and
+         * returns in place on wake — the same call the launcher itself makes
+         * on POWER. The GIF's open fd is invalidated by the SD unmount/remount
          * across sleep, so drop and reload it. Exit is the PAUSE-menu "Exit"
          * item only. */
-        bool runner_busy = s_timer.state == RUN_RUNNING
-                        || s_pomo.state  == RUN_RUNNING
-                        || s_watch.state == RUN_RUNNING;
-        bool snooze_pending = s_snooze_tick != 0 && (int32_t)(s_snooze_tick - now) > 0;
-        if (pressed(&k, &prev, ODROID_INPUT_POWER)
-            || clock_should_sleep(mode, ringing, s_autodim, now - last_input,
-                                  charging, runner_busy || snooze_pending)) {
+        if (pressed(&k, &prev, ODROID_INPUT_POWER)) {
             ring_audio(now, false);
 #if CLOCK_SD_MEDIA
             bool had_gif = (s_anim == ANIM_GIF);

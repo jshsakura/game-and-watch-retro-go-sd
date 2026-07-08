@@ -56,19 +56,6 @@ uint8_t odroid_display_get_backlight_raw() {
     return backlightLevels[backlightLevel];
 }
 
-/* Raw DAC level for the middle of the brightness scale.
- *
- * The scale does NOT start at zero — backlightLevels[0] is 128, so half of a raw
- * value (e.g. 255 / 2 = 127) lands *below the dimmest level the user can even
- * select*, i.e. effectively off. The clock's idle dim clamps to this midpoint
- * instead of halving the raw, so "dimmed" stays readable.
- *
- * Declared where it is used (rg_clock.c): odroid_display.h lives in the
- * retro-go-stm32 submodule, which this fork does not patch. */
-uint8_t odroid_display_backlight_raw_mid(void) {
-    return backlightLevels[ODROID_BACKLIGHT_LEVEL_COUNT / 2];
-}
-
 odroid_display_scaling_t odroid_display_get_scaling_mode(void)
 {
     return scalingMode;
