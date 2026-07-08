@@ -618,7 +618,7 @@ static void draw_centered_i18n(int y, const char *text, uint16_t col)
 
 /* ---- config + alarms (/clock.cfg) ------------------------------------- */
 
-#define CLOCK_CFG_PATH    "/clock/clock.cfg"   /* lives with /clock/bg.gif */
+#define CLOCK_CFG_PATH    "/clock/clock.cfg"   /* cfg stays at the /clock root; media in /clock/gif, /clock/alarm, /clock/album */
 #define CLOCK_CFG_LEGACY  "/clock.cfg"          /* pre-move location, read-only fallback */
 #define MAX_ALARMS      8
 
@@ -700,8 +700,8 @@ static int      s_alarm_count;
  * synth beep. The gif/mp3 modules keep only a POINTER into these persistent
  * buffers, so these are the single resident copy (the launcher's DTCM is very
  * tight). Bounded — the picker skips any name that would not fit. */
-static char     s_bgfile[32]   = "";   /* /clock/<name>.gif, "" = bg.gif */
-static char     s_alarmsnd[32] = "";   /* /clock/<name>.(mp3|wav), "" = alarm.mp3, "Beep" = synth */
+static char     s_bgfile[32]   = "";   /* basename in /clock/gif, "" = bg.gif */
+static char     s_alarmsnd[32] = "";   /* basename in /clock/alarm, "" = alarm.mp3, "Beep" = synth */
 #endif
 
 static int alarms_armed(void)
@@ -1733,26 +1733,33 @@ static void alarm_tone_blip(int preset, int vol, uint32_t ms)
 }
 /* GAME-to-hear: ring the REAL alarm pattern (same feed the live alarm uses) up
  * to the 60s cap, but cut it short the instant ANY key is pressed; always stop
- * the SAI on the way out. In practice the user presses a key to stop it. */
-static void alarm_tone_audition(int preset, int vol)
+ * the SAI on the way out. Returns ODROID_DIALOG_PREV/NEXT when the interrupting
+ * key was LEFT/RIGHT so the caller advances the selection in the same press,
+ * else 0. In practice the user presses a key to stop it. */
+static odroid_dialog_event_t alarm_tone_audition(int preset, int vol)
 {
-    if (vol <= 0) return;                        /* silent alarm: nothing to hear */
+    if (vol <= 0) return (odroid_dialog_event_t)0;   /* silent alarm: nothing to hear */
+    odroid_dialog_event_t adv = (odroid_dialog_event_t)0;
     odroid_gamepad_state_t k, prev;
     odroid_input_read_gamepad(&prev);            /* swallow the GAME key that opened this */
     uint32_t start = HAL_GetTick();
     while ((HAL_GetTick() - start) < ALARM_RING_MS) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
-        if (k.bitmask & ~prev.bitmask) break;    /* any NEW key press stops it early */
+        if (k.bitmask & ~prev.bitmask) {         /* any NEW key press stops it early */
+            if (pressed(&k, &prev, ODROID_INPUT_LEFT))       adv = ODROID_DIALOG_PREV;
+            else if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) adv = ODROID_DIALOG_NEXT;
+            break;
+        }
         rg_alarm_tone_feed(HAL_GetTick(), true, preset, vol);
         prev = k;
         HAL_Delay(8);
     }
     rg_alarm_tone_feed(0, false, preset, vol);   /* always stop the SAI */
+    return adv;
 }
-/* The current sound-row choice as a synth preset, or -1 if it's an SD file (no
- * synth possible — the MP3/WAV decoder lives in the emulator overlay, so files
- * get no audible preview; the row value text is their cue). */
+/* The current sound-row choice as a synth preset, or -1 if it's an SD file (the
+ * MP3/WAV decoder lives in the emulator overlay — auditioned separately below). */
 static int alarm_sound_synth_preset(void)
 {
     int preset = s_beep_preset;
@@ -1761,8 +1768,70 @@ static int alarm_sound_synth_preset(void)
 #endif
     return preset;
 }
-static void alarm_sound_audition(void)  /* GAME: the full, interruptible real ring */
-{ int p = alarm_sound_synth_preset(); if (p >= 0) alarm_tone_audition(p, s_alarm_volume); }
+
+#if CLOCK_SD_MEDIA
+/* clock_bg_suspend/restore are defined with the ring path (they free/reload the
+ * shared_files decode arena the GIF/photo background borrows); forward-declared
+ * so the GAME file-audition can borrow the exact same arena dance the ring uses. */
+static void clock_bg_suspend(void);
+static void clock_bg_restore(void);
+/* GAME preview of a chosen MP3/WAV file, streamed for up to ~10s. It's streamed,
+ * so its length costs no resident RAM (the decode-ahead ring is the same one the
+ * live ring uses). */
+#define ALARM_AUDITION_MS 10000u
+
+/* GAME-to-hear for an SD alarm FILE: reuse the REAL alarm MP3 path — the same
+ * overlay staged into RAM_EMU, the same ISR-fed ring — so there is NO new
+ * decoder and NO new resident buffer. The GIF/photo background borrows that same
+ * arena, so (exactly like the ring) we suspend it first and restore it after.
+ * Missing core bin / unreadable / undecodable file -> just don't play (no crash).
+ * Any key stops the preview; LEFT/RIGHT additionally returns PREV/NEXT so the
+ * caller cuts the preview AND advances the selection in one press. */
+static odroid_dialog_event_t alarm_file_audition(void)
+{
+    if (s_alarm_volume <= 0) return (odroid_dialog_event_t)0;   /* silent alarm: nothing to hear */
+    clock_alarm_mp3_set_file(s_alarmsnd);                        /* "" -> alarm.mp3 (default) */
+    if (!clock_alarm_mp3_available()) return (odroid_dialog_event_t)0;
+
+    clock_bg_suspend();          /* free the shared_files/RAM_EMU arena for the overlay */
+    s_album_used = true;          /* the arena can now be clobbered -> exit rebuilds the lists */
+    if (!clock_alarm_mp3_start()) { clock_bg_restore(); return (odroid_dialog_event_t)0; }
+
+    odroid_dialog_event_t adv = (odroid_dialog_event_t)0;
+    odroid_gamepad_state_t k, prev;
+    odroid_input_read_gamepad(&prev);            /* swallow the GAME key that opened this */
+    uint32_t start = HAL_GetTick();
+    while ((HAL_GetTick() - start) < ALARM_AUDITION_MS) {
+        wdog_refresh();
+        odroid_input_read_gamepad(&k);
+        if (k.bitmask & ~prev.bitmask) {         /* any NEW key press stops the preview */
+            if (pressed(&k, &prev, ODROID_INPUT_LEFT))       adv = ODROID_DIALOG_PREV;
+            else if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) adv = ODROID_DIALOG_NEXT;
+            break;
+        }
+        clock_alarm_mp3_service(volume_tbl[s_alarm_volume]);
+        prev = k;
+        HAL_Delay(8);
+    }
+    clock_alarm_mp3_stop();
+    clock_bg_restore();          /* reload the GIF/photo background exactly like the ring path */
+    return adv;
+}
+#endif /* CLOCK_SD_MEDIA */
+
+/* GAME: audition the current sound-row choice — a synth preset via the real tone
+ * ring, or (SD builds) a chosen MP3/WAV file via the real alarm decoder path.
+ * Returns PREV/NEXT if LEFT/RIGHT cut the preview, so the caller advances. */
+static odroid_dialog_event_t alarm_sound_audition(void)
+{
+    int p = alarm_sound_synth_preset();
+    if (p >= 0) return alarm_tone_audition(p, s_alarm_volume);
+#if CLOCK_SD_MEDIA
+    return alarm_file_audition();
+#else
+    return (odroid_dialog_event_t)0;
+#endif
+}
 
 /* ---- alarm editor = the SHARED common dialog ----------------------------
  * Row ids: each alarm's row uses its own index (0..MAX_ALARMS-1); the fixed
@@ -1800,12 +1869,15 @@ static bool cb_alarm_sound(odroid_dialog_choice_t *o, odroid_dialog_event_t e, u
     (void)r;
     if (e == ODROID_DIALOG_FOCUS_GAINED) s_sound_row_focused = true;   /* show the GAME hint */
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) alarm_sound_cycle(e);  /* L/R just selects */
-    alarm_sound_str(o->value, AL_VAL);
-    if (e == (odroid_dialog_event_t)ODROID_DIALOG_GAME) {
-        alarm_sound_audition();                  /* GAME = ring the real alarm, interruptible */
-        return true;                             /* handled in place -> dialog stays open */
+    bool game = (e == (odroid_dialog_event_t)ODROID_DIALOG_GAME);
+    if (game) {                                  /* GAME = preview the real alarm, interruptible */
+        odroid_dialog_event_t adv = alarm_sound_audition();
+        /* Pressing LEFT/RIGHT during the preview cuts it AND moves to the next
+         * sound in the same press ("미리듣는 도중에 방향키 옮기면 바로 종료하고" next). */
+        if (adv == ODROID_DIALOG_PREV || adv == ODROID_DIALOG_NEXT) alarm_sound_cycle(adv);
     }
-    return false;
+    alarm_sound_str(o->value, AL_VAL);
+    return game;                                 /* GAME handled in place -> dialog stays open */
 }
 
 static void clock_alarm_setup(void)
@@ -2047,9 +2119,11 @@ static bool cb_pspeed(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32
 }
 
 /* ---- menu-only file pickers (GIF background file / alarm sound) ----------
- * Rescan /clock on every menu use so no file list is held resident — only the
- * chosen basename lives in cfg. A name too long for the bounded buffer is
- * skipped from the picker (never truncated, never a crash). */
+ * Rescan the media subfolder on every menu use so no file list is held resident
+ * — only the chosen basename lives in cfg. GIF backgrounds live in /clock/gif,
+ * alarm sounds in /clock/alarm (mirroring the album's /clock/album); a folder
+ * with no matching files degrades to "(none)" / the synth presets. A name too
+ * long for the bounded buffer is skipped from the picker (never truncated). */
 #define PICK_MAX  16
 /* n[] width matches s_bgfile/s_alarmsnd so any name the picker lists also fits
  * the persistent store — pick_scan_cb skips names too long for this buffer. */
@@ -2071,10 +2145,10 @@ static int pick_scan_cb(const rg_scandir_t *f, void *arg)
     snprintf(L->n[L->count++], sizeof L->n[0], "%s", f->basename);
     return RG_SCANDIR_CONTINUE;
 }
-static void pick_scan(filelist_t *L, const char *e1, const char *e2)
+static void pick_scan(filelist_t *L, const char *dir, const char *e1, const char *e2)
 {
     L->count = 0; L->e1 = e1; L->e2 = e2;
-    rg_storage_scandir("/clock", pick_scan_cb, L, 0);
+    rg_storage_scandir(dir, pick_scan_cb, L, 0);
 }
 
 /* One shared file-picker row (DRY across the GIF-file and alarm-sound rows).
@@ -2085,11 +2159,11 @@ static void pick_scan(filelist_t *L, const char *e1, const char *e2)
  * Writes the resolved display name into o->value and returns the new selection in
  * *store. An empty folder with no special slots shows "(none)". */
 static void pick_row(odroid_dialog_choice_t *o, odroid_dialog_event_t e,
-                     const char *e1, const char *e2,
+                     const char *dir, const char *e1, const char *e2,
                      const char *const *specials, int nspecial,
                      const char *dflt, char *store, size_t storesz)
 {
-    filelist_t L; pick_scan(&L, e1, e2);
+    filelist_t L; pick_scan(&L, dir, e1, e2);
     int base = nspecial, total = L.count + base;
     if (total == 0) { snprintf(o->value, PICK_VAL, "(none)"); return; }
     int idx = 0;
@@ -2109,12 +2183,12 @@ static void pick_row(odroid_dialog_choice_t *o, odroid_dialog_event_t e,
     snprintf(o->value, PICK_VAL, "%s", sel);
 }
 
-/* GIF background file: cycles the found /clock/*.gif. "" (default) resolves to
- * bg.gif if present, else the first file; an empty folder shows "(none)". */
+/* GIF background file: cycles the found /clock/gif/*.gif. "" (default) resolves
+ * to bg.gif if present, else the first file; an empty folder shows "(none)". */
 static bool cb_bgfile(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    pick_row(o, e, "gif", NULL, NULL, 0, "bg.gif", s_bgfile, sizeof s_bgfile);
+    pick_row(o, e, "/clock/gif", "gif", NULL, NULL, 0, "bg.gif", s_bgfile, sizeof s_bgfile);
     if ((e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) && s_anim == ANIM_GIF) {
         clock_gif_set_file(s_bgfile);
         if (clock_gif_load()) s_album_used = true;
@@ -2122,13 +2196,13 @@ static bool cb_bgfile(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32
     return e == ODROID_DIALOG_ENTER;
 }
 
-/* Alarm sound: the four synth presets (leading slots) then each /clock/*.mp3
- * |*.wav. "" resolves to alarm.mp3 (back-compat) if present, else the presets;
- * a preset label forces the synth (and updates s_beep_preset). */
+/* Alarm sound: the four synth presets (leading slots) then each
+ * /clock/alarm/*.mp3|*.wav. "" resolves to alarm.mp3 (default) if present, else
+ * the presets; a preset label forces the synth (and updates s_beep_preset). */
 static bool cb_alarmsnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    pick_row(o, e, "mp3", "wav", BEEP_LABELS, RG_TONE_COUNT, "alarm.mp3", s_alarmsnd, sizeof s_alarmsnd);
+    pick_row(o, e, "/clock/alarm", "mp3", "wav", BEEP_LABELS, RG_TONE_COUNT, "alarm.mp3", s_alarmsnd, sizeof s_alarmsnd);
     int p = rg_tone_preset_from_token(s_alarmsnd);   /* a preset chosen -> keep it as the synth shape */
     if (p >= 0) s_beep_preset = p;
     return e == ODROID_DIALOG_ENTER;
@@ -2375,6 +2449,8 @@ void rg_clock_show(void)
     s_snooze_tick = 0;
 #if CLOCK_SD_MEDIA
     rg_storage_mkdir("/clock/album"); /* the user drops 320x240 raw .565 photos here */
+    rg_storage_mkdir("/clock/gif");   /* GIF backgrounds (picked in settings) */
+    rg_storage_mkdir("/clock/alarm"); /* MP3/WAV alarm sounds (picked in settings) */
     s_album_used = false;
     if (s_anim == ANIM_GIF) { clock_gif_set_file(s_bgfile);
         if (clock_gif_load()) s_album_used = true; }   /* GIF borrows shared_files -> restore lists on exit */
