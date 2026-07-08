@@ -399,6 +399,42 @@ static void paint(clock_mode_t mode, uint32_t now, bool ringing)
     }
 }
 
+/* Measure the colon-slot centre column from the RENDERED framebuffer (solid
+ * theme only, where bg is uniform). Scans the narrow band strictly BETWEEN the
+ * HH-ones right edge and the MM-tens left edge — the only lit pixels there are
+ * the two colon dots — and returns their centre column (should be 160). */
+static int measure_colon(digit_face_t face)
+{
+    int cx  = big_time_colon_x(face);
+    int t   = face_is_pixel(face) ? PIX_PX : SEG_T;
+    int y   = face_is_pixel(face) ? (PIX_Y + 2*PIX_PX + PIX_PX/2)
+                                  : (SEG_Y + SEG_H/3 + SEG_T/2);
+    uint16_t bg = TH()->scr;
+    int minc = 99999, maxc = -1;
+    /* band == just the colon dots (± 2px): the HH/MM digits and even the Flip
+     * flap card sit well outside cx±t, so only the colon is measured here. */
+    for (int x = cx - 2; x <= cx + t + 1; x++) {
+        if (x < 0 || x >= W) continue;
+        if (fb[y * W + x] != bg) { if (x < minc) minc = x; if (x > maxc) maxc = x; }
+    }
+    if (maxc < 0) return -1;
+    return (minc + maxc + 1) / 2;
+}
+
+/* Render one face+time on a solid theme, dump a PNG, and report the measured
+ * colon centre so the invariance (always 160) is a number, not an eyeball. */
+static void face_shot(const char *fname, int face, int h, int m, bool h24)
+{
+    s_face_override = face; s_theme = 0; s_dnd = false;
+    s_anim = 0; s_hour24 = h24; s_ghost_on = true;
+    st_h = h; st_m = m;
+    paint(MODE_CLOCK, 1000, false);
+    dump(fname);
+    int col = measure_colon((digit_face_t)face);
+    printf("COLON %-16s %02d:%02d %s -> centre col = %d  (target 160, dx=%+d)\n",
+           fname, h, m, h24 ? "24h" : "12h", col, col - 160);
+}
+
 int main(void)
 {
     /* one enabled alarm so the next-alarm chip shows */
@@ -461,29 +497,58 @@ int main(void)
     /* 8) full-screen clone-view alarm editor (hour field lit phase) */
     render_alarm_edit(&s_alarms[0], 0, false); dump("editor_edit");
 
-    /* 8b) every NEW digit face: one on a solid theme (clean look) and one over
-     * a busy pixel scene (proves the halo/flap card keep it legible on live
-     * backgrounds), plus a couple in 24h to check the wider block. */
+    /* 8b) EVERY digit face rendered at four times — "12:00", "9:41" (12h single
+     * hour, leading zero suppressed), "11:11", and "23:59" (24h) — so the colon
+     * lands on x=160 for all of them (measured, printed below) and never shifts
+     * between single- and two-digit hours. Ghost faces (7-seg/Outline/LCD) also
+     * get a render over a live pixel scene, to prove the translucent ghost. */
     {
         static const struct { int face; const char *name; } NF[] = {
+            { FACE_SEG7, "seg7" }, { FACE_PIXEL, "pixel" }, { FACE_DOT, "dot" },
             { FACE_THIN, "thin" }, { FACE_OUTLINE, "outline" },
             { FACE_FLIP, "flip" }, { FACE_LED, "led" }, { FACE_LCD, "lcd" },
         };
-        s_theme = 0; s_dnd = false;
+        printf("=== colon-centre invariance (target col 160) ===\n");
         for (unsigned i = 0; i < sizeof NF / sizeof NF[0]; i++) {
-            s_face_override = NF[i].face;
-            char nm[32];
-            /* paint() only ever CLEARS s_ghost_on (for live bg); the device main
-             * loop re-sets it true for a solid theme, so mirror that here — else
-             * the ghost-8 (and the LCD face's signature ghost) would be missing. */
-            s_anim = 0; s_hour24 = false; s_ghost_on = true;
-            paint(MODE_CLOCK, 1000, false);
-            snprintf(nm, sizeof nm, "face_%s", NF[i].name); dump(nm);
+            char nm[40];
+            snprintf(nm, sizeof nm, "face_%s_1200", NF[i].name);
+            face_shot(nm, NF[i].face, 12, 0, false);
+            snprintf(nm, sizeof nm, "face_%s_941", NF[i].name);
+            face_shot(nm, NF[i].face, 9, 41, false);
+            snprintf(nm, sizeof nm, "face_%s_1111", NF[i].name);
+            face_shot(nm, NF[i].face, 11, 11, false);
+            snprintf(nm, sizeof nm, "face_%s_2359", NF[i].name);
+            face_shot(nm, NF[i].face, 23, 59, true);
+            /* the canonical single-frame face shot the older previews used */
+            snprintf(nm, sizeof nm, "face_%s", NF[i].name);
+            s_face_override = NF[i].face; s_anim = 0; s_hour24 = false;
+            s_ghost_on = true; st_h = 9; st_m = 41;
+            paint(MODE_CLOCK, 1000, false); dump(nm);
+            /* over a live pixel scene */
             s_anim = ANIM_SCENE;
             paint(MODE_CLOCK, 1600 + i * 91, false);
             snprintf(nm, sizeof nm, "face_%s_scene", NF[i].name); dump(nm);
             s_anim = 0;
         }
+        st_h = 9; st_m = 41;
+        s_face_override = -1; s_theme = 0; s_hour24 = false;
+
+        /* the three ghost faces over the Synthwave scene specifically — the
+         * showcase live background — to eyeball the subtle translucent ghost 8
+         * next to the crisp lit time (incl. a "1" to check ghost/1 alignment). */
+        static const struct { int face; const char *name; } GF[] = {
+            { FACE_SEG7, "seg7" }, { FACE_OUTLINE, "outline" }, { FACE_LCD, "lcd" },
+        };
+        for (unsigned i = 0; i < sizeof GF / sizeof GF[0]; i++) {
+            char nm[40];
+            s_face_override = GF[i].face; s_theme = 0; s_hour24 = false;
+            s_anim = ANIM_SCENE; s_scene = 3 /* Synthwave */; st_h = 11; st_m = 11;
+            paint(MODE_CLOCK, 2000 + i * 130, false);
+            snprintf(nm, sizeof nm, "face_%s_ghost_synthwave", GF[i].name); dump(nm);
+            s_anim = 0; s_scene = 0;
+        }
+        st_h = 9; st_m = 41; s_face_override = -1; s_theme = 0;
+
         /* 24h width check on two contrasting faces (leading zero shows) */
         s_hour24 = true; s_ghost_on = true;
         s_face_override = FACE_OUTLINE; s_theme = 6; /* Neon */
