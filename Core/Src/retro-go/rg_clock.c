@@ -1080,19 +1080,23 @@ static void scene_city(uint32_t now, const clock_theme_t *t)
 
 /* pixel-scene registry — s_scene selects one; all are procedural (0 RAM). */
 typedef void (*scene_fn)(uint32_t, const clock_theme_t *);
-/* A curated 8-scene set. Matrix returns (device feedback: "매트릭스 좋았는데")
+/* A curated 6-scene set. Matrix returns (device feedback: "매트릭스 좋았는데")
  * and Clouds returns re-tuned (fewer, airier); Aurora dropped ("안 이쁘고") and
  * Rain/Forest stay delisted (Rain overlapped Snow). Grid Pulse is reused as the
  * alarm ring effect so it's not selectable. Several scenes remain defined in the
  * .inc but delisted here (gc-sections drops them): mountains, desert, meteor,
- * bubbles, fireworks, aurora, forest, rain, and the newer equalizer/plasma/helix
- * — any can be re-listed when there's budget. */
+ * bubbles, fireworks, aurora, forest, rain, campfire, ocean and the newer
+ * equalizer/plasma/helix — any can be re-listed when there's budget.
+ *
+ * Ocean went last, by measurement: intflash had FOUR bytes of headroom, so the
+ * alarm fixes below could not link, and scene_ocean was the largest shipped
+ * scene at 476 B. Re-list it once rg_logos is recompressed. */
 static const scene_fn SCENES[] = {
-    scene_city, scene_ocean, scene_starfield, scene_synthwave,
+    scene_city, scene_starfield, scene_synthwave,
     scene_snow, scene_matrix, scene_clouds,
 };
 static const char *const SCENE_NAMES[] = {
-    "City", "Ocean", "Starfield", "Synthwave",
+    "City", "Starfield", "Synthwave",
     "Snow", "Matrix", "Clouds",
 };
 #define SCENE_COUNT ((int)(sizeof(SCENES) / sizeof(SCENES[0])))
@@ -1776,6 +1780,20 @@ static void clock_edit_time(void)
  * only confused things, so it's gone. Everything is at the alarm's OWN volume
  * (0 = silent alarm, nothing plays) and always stops the SAI on the way out; the
  * dialog is modal so a blocking, key-interruptible feed is fine. */
+/* Both GAME previews (synth tone and SD file) cap here. */
+#define ALARM_AUDITION_MS   10000u
+
+/* Stop a preview on a fresh key press — OR on any key merely being HELD, once the
+ * key that triggered the preview has been let go. Edge detection alone means a
+ * press that is only ever seen as "still down" rides out the whole cap, reported
+ * from the device as "no button worked, time fixed it". `prev` starts as the
+ * state at entry, so the trigger key itself is ignored until released. */
+static bool audition_should_stop(const odroid_gamepad_state_t *k,
+                                 const odroid_gamepad_state_t *prev)
+{
+    if (k->bitmask & ~prev->bitmask) return true;    /* a new press */
+    return k->bitmask != 0 && prev->bitmask == 0;    /* held, and not the trigger */
+}
 #define ALARM_VOL_BLIP_MS   160u
 static void alarm_tone_blip(int preset, int vol, uint32_t ms)
 {
@@ -1788,8 +1806,12 @@ static void alarm_tone_blip(int preset, int vol, uint32_t ms)
     }
     rg_alarm_tone_feed(0, false, preset, vol);   /* always stop the SAI */
 }
-/* GAME-to-hear: ring the REAL alarm pattern (same feed the live alarm uses) up
- * to the 60s cap, but cut it short the instant ANY key is pressed; always stop
+/* A preview is a SAMPLE of the alarm, not the alarm. This used to run the full
+ * 60s ALARM_RING_MS: a modal minute of beeping with the settings dialog frozen
+ * behind it. Both previews now share ALARM_AUDITION_MS.
+ *
+ * GAME-to-hear: ring the REAL alarm pattern (same feed the live alarm uses) up
+ * to that cap, but cut it short the instant ANY key is pressed; always stop
  * the SAI on the way out. Returns ODROID_DIALOG_PREV/NEXT when the interrupting
  * key was LEFT/RIGHT so the caller advances the selection in the same press,
  * else 0. In practice the user presses a key to stop it. */
@@ -1800,10 +1822,10 @@ static odroid_dialog_event_t alarm_tone_audition(int preset, int vol)
     odroid_gamepad_state_t k, prev;
     odroid_input_read_gamepad(&prev);            /* swallow the GAME key that opened this */
     uint32_t start = HAL_GetTick();
-    while ((HAL_GetTick() - start) < ALARM_RING_MS) {
+    while ((HAL_GetTick() - start) < ALARM_AUDITION_MS) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
-        if (k.bitmask & ~prev.bitmask) {         /* any NEW key press stops it early */
+        if (audition_should_stop(&k, &prev)) {   /* any key stops it early */
             if (pressed(&k, &prev, ODROID_INPUT_LEFT))       adv = ODROID_DIALOG_PREV;
             else if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) adv = ODROID_DIALOG_NEXT;
             break;
@@ -1835,7 +1857,6 @@ static void clock_bg_restore(void);
 /* GAME preview of a chosen MP3/WAV file, streamed for up to ~10s. It's streamed,
  * so its length costs no resident RAM (the decode-ahead ring is the same one the
  * live ring uses). */
-#define ALARM_AUDITION_MS 10000u
 
 /* GAME-to-hear for an SD alarm FILE: reuse the REAL alarm MP3 path — the same
  * overlay staged into RAM_EMU, the same ISR-fed ring — so there is NO new
@@ -1861,7 +1882,7 @@ static odroid_dialog_event_t alarm_file_audition(void)
     while ((HAL_GetTick() - start) < ALARM_AUDITION_MS) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
-        if (k.bitmask & ~prev.bitmask) {         /* any NEW key press stops the preview */
+        if (audition_should_stop(&k, &prev)) {   /* any key stops the preview */
             if (pressed(&k, &prev, ODROID_INPUT_LEFT))       adv = ODROID_DIALOG_PREV;
             else if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) adv = ODROID_DIALOG_NEXT;
             break;
@@ -1981,9 +2002,11 @@ static void clock_alarm_setup(void)
     clock_config_save();
     /* Leaving the editor must not ring the alarm the user is standing on — but
      * every LATER minute re-arms normally, so edits still take effect today. */
-    struct tm now_tm;
-    GW_GetUnixTM(&now_tm);
-    alarm_claim_minute(now_tm.tm_hour, now_tm.tm_min);
+    alarm_claim_minute(GW_GetCurrentHour(), GW_GetCurrentMinute());
+    /* A snooze is a promise made by the OLD alarm list. The user has just told us
+     * what they want their alarms to be — turning one off and still being rung
+     * five minutes later ("알람을 종료 못하는게 말이되냐") is not defensible. */
+    s_snooze_tick = 0;
 }
 
 /* ---- settings menu (opened with PAUSE/SET = ODROID_INPUT_VOLUME) --------
