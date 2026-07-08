@@ -422,12 +422,14 @@ static void seg_cell(digit_face_t face, int d, int x, int y, int w, int h, int t
         return;
     }
     /* Retro LCD keeps its signature faint "all 8s on" ghost behind the lit digit
-     * (a real LCD shows every segment dimly). The ghost lifts toward the ink so it
-     * reads as unlit-but-present, not half-lit; the digit stays in its true segment
-     * position, which is authentic for this face. */
+     * (a real LCD shows every segment dimly). The lit digit must sit in its TRUE
+     * segment position (NOT cell-centred) so it lines up with the fixed full-width
+     * ghost 8 — e.g. "1" lights the ghost's right verticals and rightly hugs the
+     * right, exactly like a real LCD alarm clock. Centring it would float it off
+     * the ghost. */
     if (face == FACE_LCD) {
         if (gh) seg_glyph(FACE_LCD, 8, x, y, w, h, t, mix565(ghost, col, 4));
-        if (!blank) seg_glyph(FACE_LCD, d, x + seg_glyph_dx(d, w, t), y, w, h, t, col);
+        if (!blank) seg_glyph(FACE_LCD, d, x, y, w, h, t, col);
         return;
     }
     /* Plain 7-seg / Thin / Outline: no ghost-8 backdrop — it read like a dimmed
