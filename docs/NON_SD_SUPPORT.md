@@ -95,7 +95,7 @@ offers only Off/Scene and the alarm is beep-only.
 | faces, themes, pixel scenes, timers, pomodoro | RAM/flash only — identical | identical |
 | settings / alarms / auto-dim (`/clock/clock.cfg`) | SD, editable on a PC | LittleFS, device-side edits persist |
 | background picker | Off / Scene / GIF / Photo | **Off / Scene only** (GIF + Photo compiled out) |
-| photo album (`/clock/album/*.565` or `*.bmp`) | drop files on the card (web tool, or any 320x240 24-bit BMP) | **not available** (compiled out — no way to receive files) |
+| photo album (`/clock/album/*.565` or `*.bmp`) | drop files on the card (web tool, or any 320x240 24/32-bit BMP) | **not available** (compiled out — no way to receive files) |
 | GIF background (`/clock/gif/*.gif`, picked in settings) | drop on card / web tool push | **not available** (compiled out) |
 | alarm sound (`/clock/alarm/*.mp3\|*.wav`, picked in settings; GAME previews the file ~10s) | Beep or any file on the card (`/cores/clockmp3.bin` decoder) | **synth beep only** (MP3/WAV alarm compiled out; `clockmp3.bin` not baked) |
 | RTC restore after battery drain (`/save/clock.bin`) | snapshot on card | snapshot on LittleFS (restore runs on both builds) |

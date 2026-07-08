@@ -1,6 +1,6 @@
 // Streaming MP3 audio engine for the Music app.
 //
-// minimp3 decode + downmix to mono + nearest-neighbour resample to 48 kHz,
+// minimp3 decode + downmix to mono + linear-interpolated resample to 48 kHz,
 // feeding a decoded-PCM ring buffer. The ring decouples the SD read/decode from
 // the audio DMA deadline (prevents the periodic stutter). Also provides seek and
 // duration estimation.
