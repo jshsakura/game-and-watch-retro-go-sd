@@ -61,6 +61,7 @@ const lang_t lang_ru_ru LANG_DATA = {
     .s_Clock_Alarm_Sound = "Звук будильника",
     .s_Clock_Night_Off = "Откл: начало",
     .s_Clock_Night_End = "Откл: конец",
+    .s_Clock_Snd_Preview = "GAME: прослушать",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "Пиксель-фон",
     .s_Clock_Volume = "Alarm volume",

@@ -2150,7 +2150,7 @@ static void clock_menu_repaint(void)
      * auditions the real alarm. Drawn behind the dialog box (which the overlay lays
      * on top), so it reads as a subtle bottom-strip hint. ASCII, like the other
      * hint legends. */
-    if (s_sound_row_focused) draw_hintbar("GAME: preview");
+    if (s_sound_row_focused) draw_hintbar(curr_lang->s_Clock_Snd_Preview);
 }
 
 /* Sub-dialog opened from the main menu's "절전" group row: Auto-dim toggle +

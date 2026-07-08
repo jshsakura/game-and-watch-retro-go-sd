@@ -57,6 +57,7 @@ const lang_t lang_ko_kr LANG_DATA = {
     .s_Clock_Alarm_Sound = "알람 소리",
     .s_Clock_Night_Off = "절전 시작",
     .s_Clock_Night_End = "절전 종료",
+    .s_Clock_Snd_Preview = "GAME: 미리듣기",
     .s_Clock_Anim_1 = "은은한 효과 (낮음)",
     .s_Clock_Anim_2 = "픽셀 배경",
     .s_Clock_Volume = "알람 음량",

@@ -340,6 +340,7 @@ static const lang_t KO = {
     .s_Clock_Anim_4="사진 앨범", .s_Clock_Auto_Dim="자동 절전",
     .s_Clock_Bg_File="GIF", .s_Clock_Alarm_Sound="알람 소리",
     .s_Clock_Night_Off="절전 시작", .s_Clock_Night_End="절전 종료",
+    .s_Clock_Snd_Preview="GAME: 미리듣기",
     .s_Brightness="밝기",
     .s_Full="\x7", .s_Fill="\x8",
 };

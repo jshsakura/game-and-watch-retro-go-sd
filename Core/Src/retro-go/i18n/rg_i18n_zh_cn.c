@@ -59,6 +59,7 @@ const lang_t lang_zh_cn LANG_DATA = {
     .s_Clock_Alarm_Sound = "闹钟声音",
     .s_Clock_Night_Off = "熄屏 开始",
     .s_Clock_Night_End = "熄屏 结束",
+    .s_Clock_Snd_Preview = "GAME: 试听",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "像素背景",
     .s_Clock_Volume = "Alarm volume",

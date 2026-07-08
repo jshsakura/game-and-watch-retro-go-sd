@@ -9,7 +9,7 @@ typedef struct { const char *s_AM, *s_PM, *s_Clock,
   *s_Clock_Format,*s_Clock_DND,*s_Clock_Anim,*s_Clock_Anim_0,*s_Clock_Anim_1,*s_Clock_Anim_2,
   *s_Clock_Volume,*s_Clock_Alarms,*s_Clock_Exit,*s_Clock_Hint_Ring,*s_Clock_Theme,*s_Clock_Face,*s_Clock_Auto,*s_Clock_Anim_3,
   *s_Clock_Set_Time,*s_Clock_Scene,*s_Clock_Photo_Speed,*s_Clock_Anim_4,*s_Clock_Auto_Dim,
-  *s_Clock_Bg_File,*s_Clock_Alarm_Sound,*s_Clock_Night_Off,*s_Clock_Night_End,
+  *s_Clock_Bg_File,*s_Clock_Alarm_Sound,*s_Clock_Night_Off,*s_Clock_Night_End,*s_Clock_Snd_Preview,
   *s_Brightness,
   *s_Full,*s_Fill; } lang_t;
 extern const lang_t *curr_lang;

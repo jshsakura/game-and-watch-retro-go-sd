@@ -61,6 +61,7 @@ const lang_t lang_de_de LANG_DATA = {
     .s_Clock_Alarm_Sound = "Alarmton",
     .s_Clock_Night_Off = "Aus-Zeit Start",
     .s_Clock_Night_End = "Aus-Zeit Ende",
+    .s_Clock_Snd_Preview = "GAME: Vorhören",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "Pixel-BG",
     .s_Clock_Volume = "Alarm volume",

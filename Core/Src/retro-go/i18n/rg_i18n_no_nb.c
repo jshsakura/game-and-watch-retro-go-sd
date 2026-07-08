@@ -236,6 +236,7 @@ const lang_t lang_no_nb LANG_DATA = {
     .s_Clock_Alarm_Sound = "Alarmlyd",
     .s_Clock_Night_Off = "Skjerm av fra",
     .s_Clock_Night_End = "Skjerm av til",
+    .s_Clock_Snd_Preview = "GAME: forhåndslytt",
     .s_Clock_Anim_1 = "Ambient (low)",
     .s_Clock_Anim_2 = "Pikselbakgrunn",
     .s_Clock_Volume = "Alarm volume",
