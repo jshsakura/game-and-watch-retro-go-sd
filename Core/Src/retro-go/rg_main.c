@@ -1102,9 +1102,15 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     rg_alarm_cache_load_backup();
     bool alarm_wake = rg_alarm_wake_decide(boot_alarm_flag, boot_wkup_flag,
                                            rg_alarm_cache_due()) == RG_WAKE_ALARM;
-    /* consume the standby alarm flag so a later normal boot can't re-trigger */
-    HAL_PWR_EnableBkUpAccess();
-    __HAL_RTC_ALARM_CLEAR_FLAG(&hrtc, RTC_FLAG_ALRAF);
+    /* consume the standby alarm flag so a later normal boot can't re-trigger,
+     * AND deactivate RTC Alarm A. It is armed with its interrupt enabled on every
+     * sleep entry (rg_alarm_arm_rtc, gw_sleep.c) purely to WAKE the device; left
+     * armed after the wake it keeps a daily H:M:S interrupt live on the running
+     * CPU. When the clock next reaches that minute while awake the RTC alarm IT
+     * fires on the running firmware — the device-only freeze that no host repro
+     * or ring-loop cap could explain. Disarm here; the next sleep re-arms it. The
+     * awake alarm rings via the epoch cache poll, which does not need the IT. */
+    rg_alarm_disarm_rtc();
 
     /* Prime the resident next-alarm cache from /clock/clock.cfg now that the
      * clock is valid and the FS is mounted: this is what lets the alarm ring in

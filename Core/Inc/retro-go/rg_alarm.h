@@ -79,6 +79,12 @@ void   rg_alarm_cache_advance(void);
  * daily), or deactivate it if nothing is armed. Idempotent: deactivates and
  * clears any stale flag first, so it is safe to call on every sleep entry. */
 void rg_alarm_arm_rtc(void);
+/* Deactivate RTC Alarm A and clear its flag. The alarm interrupt exists ONLY to
+ * wake the device from deep sleep; while the device is awake the alarm rings via
+ * the epoch cache poll, not the RTC IT. Left armed after a wake it keeps a daily
+ * H:M:S interrupt live on the running CPU, which must not happen. Call on every
+ * boot; the next sleep re-arms it. */
+void rg_alarm_disarm_rtc(void);
 /* Read the RTC Alarm A flag without clearing it (boot wake-cause check). */
 bool rg_alarm_rtc_flag(void);
 

@@ -148,6 +148,13 @@ bool rg_alarm_rtc_flag(void)
     return __HAL_RTC_ALARM_GET_FLAG(&hrtc, RTC_FLAG_ALRAF) != 0;
 }
 
+void rg_alarm_disarm_rtc(void)
+{
+    HAL_PWR_EnableBkUpAccess();
+    HAL_RTC_DeactivateAlarm(&hrtc, RTC_ALARM_A);   /* stop the daily H:M:S IT while awake */
+    __HAL_RTC_ALARM_CLEAR_FLAG(&hrtc, RTC_FLAG_ALRAF);
+}
+
 void rg_alarm_arm_rtc(void)
 {
     HAL_PWR_EnableBkUpAccess();
