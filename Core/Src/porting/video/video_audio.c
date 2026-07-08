@@ -22,6 +22,7 @@ static int16_t   g_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
 static int16_t   g_mono[MINIMP3_MAX_SAMPLES_PER_FRAME / 2];
 static int       g_frame_n;            // mono samples pending in g_mono
 static uint32_t  g_phase, g_step;      // 16.16 resample index / step
+static int16_t   g_prev;               // last sample of the PREVIOUS frame
 
 static uint8_t   g_in[VIN_MAX];        // leftover undecoded MP3 bytes
 static int       g_in_len;
@@ -43,6 +44,7 @@ void video_audio_start(void)
     g_head = g_tail = 0;
     g_frame_n = 0;
     g_phase = 0;
+    g_prev = 0;                                            // no left-hand sample yet
     g_step = ((uint32_t)44100 << 16) / AUDIO_SAMPLE_RATE;   // until the first frame
     g_in_len = 0;
     music_attach(g_ring, VR_SIZE, &g_head, &g_tail);        // ISR reads this ring
@@ -55,17 +57,30 @@ void video_audio_stop(void)
 {
     g_head = g_tail = 0;                 // drain -> silence (ISR reads an empty ring)
     g_frame_n = 0;
+    g_prev = 0;
     g_in_len = 0;
 }
 
 // Resample the pending mono frame to 48 kHz and push it to the ring. Returns 0
 // if the ring filled mid-frame (the rest stays for the next call).
+//
+// Linear interpolation, not nearest-sample: with g_step != 65536 (any source
+// that isn't 48 kHz — the encoder emits 44.1 kHz) picking the nearest sample
+// folds an image of the source rate into the audible band. Interpolating from
+// the PREVIOUS sample (g_prev covers index -1) avoids needing the next frame,
+// at the cost of a constant one-sample delay. See music_audio.c for the numbers.
 static int drain_pending(void)
 {
     while ((g_phase >> 16) < (uint32_t)g_frame_n) {
-        if (!ring_push(g_mono[g_phase >> 16])) return 0;    // ring full
+        const uint32_t i = g_phase >> 16;
+        const int32_t  a = (i == 0) ? g_prev : g_mono[i - 1];
+        const int32_t  b = g_mono[i];
+        // (b - a) spans 17 bits, the fraction 16 -> the product needs 64 bits
+        const int16_t  s = (int16_t)(a + (int32_t)(((int64_t)(b - a) * (g_phase & 0xFFFF)) >> 16));
+        if (!ring_push(s)) return 0;        // ring full: resume here next call
         g_phase += g_step;
     }
+    if (g_frame_n > 0) g_prev = g_mono[g_frame_n - 1];   // only once the frame is spent
     g_phase -= (uint32_t)g_frame_n << 16;   // carry the fractional remainder
     g_frame_n = 0;
     return 1;
