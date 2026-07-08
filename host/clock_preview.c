@@ -263,6 +263,9 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *o, int s, 
     int n = 0; while (o[n].update_cb || o[n].label) { if (o[n].id == 0x0F0F0F0F) break; n++; }
     int sel = (s_dlg_sel_preview >= 0 && s_dlg_sel_preview < n) ? s_dlg_sel_preview : (s < 0 ? 0 : s);
     for (int i = 0; i < n; i++) if (o[i].update_cb) o[i].update_cb(&o[i], ODROID_DIALOG_INIT, sel);
+    /* mirror the device dialog: the focused row gets FOCUS_GAINED (so per-row
+     * focus state, e.g. the alarm-sound GAME hint, matches on-device) */
+    if (o[sel].update_cb) o[sel].update_cb(&o[sel], ODROID_DIALOG_FOCUS_GAINED, sel);
 
     const clock_theme_t *t = TH();
     if (repaint) repaint();                 /* live clock background under the panel */
@@ -429,6 +432,10 @@ int main(void)
      * this goes through the same panel path as the settings dialog below; the
      * harness dialog returns -1 (as if B) so it renders one frame and exits. */
     s_dlg_sel_preview = 0; clock_alarm_setup(); dump("editor");
+    /* 7a) the alarm editor with the "Alarm sound" row focused — shows the
+     * "GAME: preview" hint that offers to audition the real alarm ring. */
+    s_dlg_sel_preview = 3; clock_alarm_setup(); dump("editor_sound");
+    s_dlg_sel_preview = 0;
     /* 7b) the clock SETTINGS dialog, same path — proves the alarm editor and the
      * settings menu share one panel + alignment (device feedback: "왜 얘만 달라"). */
     s_dlg_sel_preview = 4; clock_settings_menu(); dump("settings");
@@ -440,7 +447,7 @@ int main(void)
      * backgrounds), plus a couple in 24h to check the wider block. */
     {
         static const struct { int face; const char *name; } NF[] = {
-            { FACE_THIN, "thin" }, { FACE_OUTLINE, "outline" }, { FACE_BUBBLE, "bubble" },
+            { FACE_THIN, "thin" }, { FACE_OUTLINE, "outline" },
             { FACE_FLIP, "flip" }, { FACE_LED, "led" }, { FACE_LCD, "lcd" },
         };
         s_theme = 0; s_dnd = false;
@@ -460,8 +467,8 @@ int main(void)
         }
         /* 24h width check on two contrasting faces (leading zero shows) */
         s_hour24 = true; s_ghost_on = true;
-        s_face_override = FACE_BUBBLE; s_theme = 6; /* Neon */
-        paint(MODE_CLOCK, 1000, false); dump("face_bubble_24h");
+        s_face_override = FACE_OUTLINE; s_theme = 6; /* Neon */
+        paint(MODE_CLOCK, 1000, false); dump("face_outline_24h");
         s_face_override = FACE_LED; s_theme = 5;   /* Aqua */
         paint(MODE_CLOCK, 1000, false); dump("face_led_24h");
         s_hour24 = false;

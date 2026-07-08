@@ -211,7 +211,7 @@ void rg_alarm_tone_feed(uint32_t now, bool ringing, int preset, int vol)
 /* Minimal pulsing banner — no clip needed (odroid_overlay_draw_* clip to the
  * LCD), no background port.  ASCII text = zero new i18n strings. */
 #define RING_BANNER "* ALARM *"
-#define RING_MS     20000u        /* auto-dismiss after 20s if untouched */
+#define RING_MS     60000u        /* auto-dismiss after 60s if untouched */
 
 static void ring_draw(uint32_t now)
 {

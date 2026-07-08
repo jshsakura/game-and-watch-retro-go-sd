@@ -76,15 +76,15 @@ extern void rg_emulators_reset_all_lists(void);
  * AM/PM baseline, stopwatch) works for every face without per-face branches. */
 typedef enum {
     FACE_SEG7 = 0, FACE_PIXEL, FACE_DOT,     /* originals — values locked */
-    FACE_THIN, FACE_OUTLINE, FACE_BUBBLE, FACE_FLIP, FACE_LED, FACE_LCD,
-    FACE_COUNT   /* slot 5 was FACE_FACET (dropped) — now the Bubble face */
+    FACE_THIN, FACE_OUTLINE, FACE_FLIP, FACE_LED, FACE_LCD,
+    FACE_COUNT   /* slot 5 (Facet, then Bubble) removed — later faces renumber */
 } digit_face_t;
 #define FACE_LAST (FACE_COUNT - 1)
 
 /* pixel-grid family (square pixels / inset dots / round LEDs); everything else
  * is a 7-seg-geometry face drawn in the SEG_W×SEG_H block. */
 static inline bool face_is_pixel(digit_face_t f)
-{ return f == FACE_PIXEL || f == FACE_DOT || f == FACE_LED || f == FACE_BUBBLE; }
+{ return f == FACE_PIXEL || f == FACE_DOT || f == FACE_LED; }
 
 typedef struct { uint16_t scr, ink, alarm; uint8_t face; } clock_theme_t;
 
@@ -345,34 +345,6 @@ static void draw_led_digit(int d, int x, int y, int px, uint16_t col)
                 draw_disc(x + c*px + r, y + row*px + r, r, col);
 }
 
-/* ---- Bubble: soft-rounded balloon digit ---------------------------------
- * The same 5x7 glyph, but each lit cell is an OVERSIZED disc (radius > px/2) so
- * neighbouring cells fuse into one continuous thick rounded stroke — a friendly
- * "bubble"/marker numeral that reads as a genuinely different typeface from the
- * sharp 7-seg faces AND from the separated-dot LED panel. A darker core disc
- * inside each gives a slight tube/inflated shading. Pixel-family layout; shares
- * the s_outline halo for legibility over live backgrounds. */
-static void draw_bubble_digit(int d, int x, int y, int px, uint16_t col)
-{
-    if (d < 0 || d > PIX_ALL) return;
-    if (s_outline) {
-        int o = s_outline; uint16_t oc = s_outline_col; s_outline = 0;
-        draw_bubble_digit(d, x-o, y, px, oc); draw_bubble_digit(d, x+o, y, px, oc);
-        draw_bubble_digit(d, x, y-o, px, oc); draw_bubble_digit(d, x, y+o, px, oc);
-        s_outline = o;
-    }
-    int r = (px*7)/10;                 /* > px/2: adjacent discs overlap and merge */
-    int hr = r/2 + r/4; if (hr < 1) hr = 1;
-    uint16_t hi = mix565(col, 0xFFFF, 4);   /* soft inflated highlight */
-    for (int row = 0; row < 7; row++)
-        for (int c = 0; c < 5; c++)
-            if (DOT5x7[d][row] & (1 << (4 - c))) {
-                int cx = x + c*px + px/2, cy = y + row*px + px/2;
-                draw_disc(cx, cy, r, col);      /* fat merged stroke */
-                draw_disc(cx, cy, hr, hi);      /* lighter core */
-            }
-}
-
 /* Geometry of the big "HH:MM" block per face, so callers can centre extras. */
 #define SEG_W    44
 #define SEG_H    92
@@ -440,8 +412,8 @@ static void seg_glyph(digit_face_t face, int d, int x, int y, int w, int h, int 
 static void seg_cell(digit_face_t face, int d, int x, int y, int w, int h, int t,
                      uint16_t col, uint16_t ghost, bool gh, bool blank)
 {
-    /* the lit numeral is centred inside its cell (seg_glyph_dx); the ghost 8 and
-     * the Flip card/seam always fill the full cell so their frame stays put. */
+    /* the lit numeral is centred inside its cell (seg_glyph_dx); the Flip card and
+     * the LCD ghost-8 fill the full cell so their frame stays put. */
     if (face == FACE_FLIP) {
         uint16_t seam = mix565(ghost, CLOCK_BLACK, 8);
         draw_flip_panel(x, y, w, h, ghost);            /* dark flap card (full width) */
@@ -449,19 +421,26 @@ static void seg_cell(digit_face_t face, int d, int x, int y, int w, int h, int t
         draw_flip_seam(x, y, w, h, seam);              /* seam over both (full width) */
         return;
     }
-    /* Retro LCD lifts the ghost toward the lit ink so the unlit segments read
-     * as a faint "all 8s on" hallmark of a real LCD — faint, not half-lit. */
-    uint16_t gcol = (face == FACE_LCD) ? mix565(ghost, col, 4) : ghost;
-    if (gh) seg_glyph(face, 8, x, y, w, h, t, gcol);
+    /* Retro LCD keeps its signature faint "all 8s on" ghost behind the lit digit
+     * (a real LCD shows every segment dimly). The ghost lifts toward the ink so it
+     * reads as unlit-but-present, not half-lit; the digit stays in its true segment
+     * position, which is authentic for this face. */
+    if (face == FACE_LCD) {
+        if (gh) seg_glyph(FACE_LCD, 8, x, y, w, h, t, mix565(ghost, col, 4));
+        if (!blank) seg_glyph(FACE_LCD, d, x + seg_glyph_dx(d, w, t), y, w, h, t, col);
+        return;
+    }
+    /* Plain 7-seg / Thin / Outline: no ghost-8 backdrop — it read like a dimmed
+     * power-save block sitting behind the number. Just the lit digit, centred in
+     * its cell so a narrow "1" doesn't hug the cell's right edge. */
     if (!blank) seg_glyph(face, d, x + seg_glyph_dx(d, w, t), y, w, h, t, col);
 }
 
-/* Pixel-family cell glyph: square pixels, inset dots, round LEDs, or Bubble. */
+/* Pixel-family cell glyph: square pixels, inset dots, or round LEDs. */
 static void pix_glyph(digit_face_t face, int d, int x, int y, int px, uint16_t col)
 {
-    if (face == FACE_LED)         draw_led_digit(d, x, y, px, col);
-    else if (face == FACE_BUBBLE) draw_bubble_digit(d, x, y, px, col);
-    else                          draw_pix_digit(d, x, y, px, col, face == FACE_DOT);
+    if (face == FACE_LED) draw_led_digit(d, x, y, px, col);
+    else                  draw_pix_digit(d, x, y, px, col, face == FACE_DOT);
 }
 /* centred variant for the lit numeral (the ghost stays full-width) */
 static void pix_glyph_c(digit_face_t face, int d, int x, int y, int px, uint16_t col)
@@ -659,6 +638,11 @@ static const struct { int8_t start, end; } LEGACY_NIGHT_PRESET[4] = {
  * SILENT alarm — the ring's digit-pulse overlay is still the visual alert.
  * Persisted as cfg alarmvol=. */
 static int8_t s_alarm_volume = 6;
+
+/* True only while the alarm-editor's "Alarm sound" row is focused, so the shared
+ * dialog's background painter (clock_menu_repaint) shows the "GAME: preview"
+ * hint for that row alone. Set/cleared by the alarm-editor row callbacks. */
+static bool s_sound_row_focused;
 
 /* Synth-beep preset (RG_TONE_*): the non-SD alarm sound, and the SD fallback
  * when no MP3 plays. Selectable on BOTH builds; persisted inside the alarmsnd=
@@ -878,6 +862,7 @@ static bool s_pomo_on_break = false;
 static runner_t s_pomo = { RUN_STOPPED, 25*60*1000, 0, 0 };
 static uint32_t s_flash_until = 0;
 #define SNOOZE_MS (5u * 60u * 1000u)
+#define ALARM_RING_MS 60000u     /* auto-dismiss a ringing alarm after 60s if untouched (matches rg_alarm.c RING_MS) */
 #define CLOCK_UI_HIDE_MS 8000u   /* idle time before the mode pager + hint fade away */
 #define CLOCK_DIM_IDLE_MS 15000u /* idle time on the clock face before the backlight auto-dims/turns off */
 #define CLOCK_DIM_FLOOR   16u    /* never dim below this raw level, even off a very low user brightness */
@@ -1686,13 +1671,15 @@ static void clock_edit_time(void)
 }
 
 /* ---- alarm-sound preview (device feedback: "let me HEAR the choice") -----
- * A short synth blip of `preset` at the alarm's own volume, so changing the
- * alarm sound (or nudging the volume) plays what you'll wake up to. Bounded +
- * always stops the SAI afterwards; the settings/alarm dialogs are modal so a
- * brief blocking feed is fine (same feed cadence as the real ring loop in
- * rg_alarm.c). Volume 0 = a silent alarm, so nothing plays. */
-#define ALARM_PREVIEW_MS   600u
-#define ALARM_VOL_BLIP_MS  160u
+ * The volume row still plays a brief blip when nudged (alarm_tone_blip below).
+ * The alarm-sound row instead lets GAME AUDITION the REAL alarm: the exact same
+ * rg_alarm_tone_feed cadence, preset and volume the live alarm rings with, up to
+ * the 60s ALARM_RING_MS cap — so what you hear IS the alarm, not a token tone
+ * ("실제 알림에 쓰이는 링을 써야지"). L/R just selects; a single blip on cycle
+ * only confused things, so it's gone. Everything is at the alarm's OWN volume
+ * (0 = silent alarm, nothing plays) and always stops the SAI on the way out; the
+ * dialog is modal so a blocking, key-interruptible feed is fine. */
+#define ALARM_VOL_BLIP_MS   160u
 static void alarm_tone_blip(int preset, int vol, uint32_t ms)
 {
     if (vol <= 0) return;                       /* silent alarm: nothing to preview */
@@ -1704,31 +1691,60 @@ static void alarm_tone_blip(int preset, int vol, uint32_t ms)
     }
     rg_alarm_tone_feed(0, false, preset, vol);   /* always stop the SAI */
 }
-static void alarm_sound_preview(void)
+/* GAME-to-hear: ring the REAL alarm pattern (same feed the live alarm uses) up
+ * to the 60s cap, but cut it short the instant ANY key is pressed; always stop
+ * the SAI on the way out. In practice the user presses a key to stop it. */
+static void alarm_tone_audition(int preset, int vol)
+{
+    if (vol <= 0) return;                        /* silent alarm: nothing to hear */
+    odroid_gamepad_state_t k, prev;
+    odroid_input_read_gamepad(&prev);            /* swallow the GAME key that opened this */
+    uint32_t start = HAL_GetTick();
+    while ((HAL_GetTick() - start) < ALARM_RING_MS) {
+        wdog_refresh();
+        odroid_input_read_gamepad(&k);
+        if (k.bitmask & ~prev.bitmask) break;    /* any NEW key press stops it early */
+        rg_alarm_tone_feed(HAL_GetTick(), true, preset, vol);
+        prev = k;
+        HAL_Delay(8);
+    }
+    rg_alarm_tone_feed(0, false, preset, vol);   /* always stop the SAI */
+}
+/* The current sound-row choice as a synth preset, or -1 if it's an SD file (no
+ * synth possible — the MP3/WAV decoder lives in the emulator overlay, so files
+ * get no audible preview; the row value text is their cue). */
+static int alarm_sound_synth_preset(void)
 {
     int preset = s_beep_preset;
 #if CLOCK_SD_MEDIA
-    /* a chosen MP3/WAV file can't be synth-previewed here (it needs the decoder
-     * overlay) — skip the audible preview for files; the row value is the cue.
-     * Only the synth presets play. */
-    if (rg_tone_preset_from_token(s_alarmsnd) < 0) return;
+    if (rg_tone_preset_from_token(s_alarmsnd) < 0) return -1;
 #endif
-    alarm_tone_blip(preset, s_alarm_volume, ALARM_PREVIEW_MS);
+    return preset;
 }
+static void alarm_sound_audition(void)  /* GAME: the full, interruptible real ring */
+{ int p = alarm_sound_synth_preset(); if (p >= 0) alarm_tone_audition(p, s_alarm_volume); }
 
 /* ---- alarm editor = the SHARED common dialog ----------------------------
  * Row ids: each alarm's row uses its own index (0..MAX_ALARMS-1); the fixed
  * rows use high ids that can't collide (MAX_ALARMS <= 8). One row per alarm
  * (label = its time, value = On/Off; L/R toggles, A opens the time editor),
- * then "+ Add alarm", "Alarm sound" (L/R cycles + audible preview) and DND. B
- * closes. Delete lives inside the time editor (GAME) — the dialog has no key to
- * express a per-row delete. */
+ * then "+ Add alarm", "Alarm sound" (L/R selects, GAME auditions the real ring)
+ * and DND. B closes. Delete lives inside the time editor (GAME) — the dialog has
+ * no key to express a per-row delete. */
 enum { AL_ID_ADD = 100, AL_ID_SOUND = 101, AL_ID_DND = 102 };
 #define AL_VAL 40
+
+/* Fork opt-in dialog event: GAME(START) on a row whose callback handles this
+ * (returns true) runs an in-place action and keeps the dialog open, instead of
+ * the shared dialog's default "GAME closes". The value sits outside
+ * odroid_dialog_event_t so no stock callback ever matches it. MUST equal the
+ * ODROID_DIALOG_GAME hook value in Core/Src/porting/odroid_overlay.c. */
+#define ODROID_DIALOG_GAME 0x100
 
 static bool cb_alarm_row(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
+    if (e == ODROID_DIALOG_FOCUS_GAINED) s_sound_row_focused = false;
     int i = o->id;
     if (i < 0 || i >= s_alarm_count) { o->value[0] = 0; return false; }
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT)
@@ -1737,17 +1753,24 @@ static bool cb_alarm_row(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uin
     return e == ODROID_DIALOG_ENTER;             /* A -> open the time editor */
 }
 static bool cb_add_alarm(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{ (void)r; o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
+{ (void)r; if (e == ODROID_DIALOG_FOCUS_GAINED) s_sound_row_focused = false;
+  o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
 static bool cb_alarm_sound(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) { alarm_sound_cycle(e); alarm_sound_preview(); }
+    if (e == ODROID_DIALOG_FOCUS_GAINED) s_sound_row_focused = true;   /* show the GAME hint */
+    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) alarm_sound_cycle(e);  /* L/R just selects */
     alarm_sound_str(o->value, AL_VAL);
-    return false;                                /* A does nothing (value row) */
+    if (e == (odroid_dialog_event_t)ODROID_DIALOG_GAME) {
+        alarm_sound_audition();                  /* GAME = ring the real alarm, interruptible */
+        return true;                             /* handled in place -> dialog stays open */
+    }
+    return false;
 }
 
 static void clock_alarm_setup(void)
 {
+    s_sound_row_focused = false;   /* GAME hint off until the sound row is focused */
     int sel = 0;
     for (;;) {
         char lbl[MAX_ALARMS][16], aval[MAX_ALARMS][12];
@@ -1785,6 +1808,7 @@ static void clock_alarm_setup(void)
         }
         /* SOUND / DND rows never return true on ENTER, so they never reach here */
     }
+    s_sound_row_focused = false;   /* don't leak the GAME hint into other dialogs */
     clock_config_save();
     s_last_fired_min = -1;
 }
@@ -1800,7 +1824,7 @@ static const char *const THEME_LABEL[THEME_COUNT] =
 /* Face names are ASCII and NOT translated (same as the theme labels) — the
  * settings dialog shows them verbatim. Order matches digit_face_t. */
 static const char *const FACE_NAME[FACE_COUNT] = {
-    "7-seg", "Pixel", "Dot", "Thin", "Outline", "Bubble", "Flip", "LED", "LCD",
+    "7-seg", "Pixel", "Dot", "Thin", "Outline", "Flip", "LED", "LCD",
 };
 static char v_theme[24], v_face[20], v_fmt[8], v_anim[44], v_scene[24],
             v_autodim[12], v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];
@@ -1839,7 +1863,8 @@ static bool cb_fmt(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
 { (void)r; if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_hour24 = !s_hour24;
   sprintf(o->value, "%s", s_hour24 ? "24h" : "12h"); return e == ODROID_DIALOG_ENTER; }
 static bool cb_dnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{ (void)r; if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_dnd = !s_dnd;
+{ (void)r; if (e == ODROID_DIALOG_FOCUS_GAINED) s_sound_row_focused = false;
+  if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_dnd = !s_dnd;
   sprintf(o->value, "%s", s_dnd ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
   return e == ODROID_DIALOG_ENTER; }
 static bool cb_autodim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
@@ -2121,6 +2146,11 @@ static void clock_menu_repaint(void)
     else s_ghost_on = true;
     draw_topbar(MODE_CLOCK, true);   /* the live settings preview always shows the pager */
     render_clock(HAL_GetTick(), false);
+    /* Alarm editor only: when the "Alarm sound" row is focused, tell the user GAME
+     * auditions the real alarm. Drawn behind the dialog box (which the overlay lays
+     * on top), so it reads as a subtle bottom-strip hint. ASCII, like the other
+     * hint legends. */
+    if (s_sound_row_focused) draw_hintbar("GAME: preview");
 }
 
 /* Sub-dialog opened from the main menu's "절전" group row: Auto-dim toggle +
@@ -2313,15 +2343,15 @@ void rg_clock_show(void)
         if (k.bitmask & ~prev.bitmask) last_input = now;   /* any new press re-shows the pager + hint */
         int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
 
-        /* Alarm first (clock time). Ring = digit pulse + beep for 20s or a
+        /* Alarm first (clock time). Ring = digit pulse + beep for 60s or a
          * NEW key press: A = SNOOZE (ring again in 5 min), anything else =
          * stop — a key already held when it fires must not swallow it, and
          * the press is CONSUMED so it can't fall through and reset a runner,
          * switch mode or open the menu. */
-        if (alarm_should_fire(hh, mm)) alarm_ring_until = now + 20000;
+        if (alarm_should_fire(hh, mm)) alarm_ring_until = now + ALARM_RING_MS;
         if (s_snooze_tick && now >= s_snooze_tick) {   /* snooze expired */
             s_snooze_tick = 0;
-            alarm_ring_until = now + 20000;
+            alarm_ring_until = now + ALARM_RING_MS;
         }
         bool ringing = alarm_ring_until > now;
 
@@ -2430,7 +2460,7 @@ void rg_clock_show(void)
             int pre_mod = hh * 60 + mm;
             bool exit_req = clock_settings_menu();
             if (alarm_fired_in_window(pre_mod, GW_GetCurrentHour() * 60 + GW_GetCurrentMinute()))
-                alarm_ring_until = HAL_GetTick() + 20000;
+                alarm_ring_until = HAL_GetTick() + ALARM_RING_MS;
             if (exit_req) break;
             last_input = HAL_GetTick();   /* the blocking menu counts as activity — don't dim on return */
             dirty = true;
@@ -2609,5 +2639,14 @@ void rg_clock_show(void)
         s_album_used = false;
     }
 #endif
+    /* The clock paints the full 320x240 screen, but the launcher's gui_redraw only
+     * repaints header + status bar + list rows — it never clears the whole frame.
+     * Clock-era pixels (notably the strip above the status bar, or garbage left in a
+     * borrowed/failed background arena) would otherwise linger under the launcher's
+     * partial redraw until a game forces a full repaint. Clear BOTH double-buffered
+     * LCD buffers once here on the way out. One-time cost, no per-frame overhead. */
+    fb_fill_screen(lcd_get_active_buffer(), CLOCK_BLACK);
+    lcd_swap(); lcd_sleep_while_swap_pending();
+    fb_fill_screen(lcd_get_active_buffer(), CLOCK_BLACK);
     clock_config_save();
 }
