@@ -682,7 +682,6 @@ static int8_t s_alarm_volume = 6;
 /* True only while the alarm-editor's "Alarm sound" row is focused, so the shared
  * dialog's background painter (clock_menu_repaint) shows the "GAME: preview"
  * hint for that row alone. Set/cleared by the alarm-editor row callbacks. */
-static bool s_sound_row_focused;
 
 /* Synth-beep preset (RG_TONE_*): the non-SD alarm sound, and the SD fallback
  * when no MP3 plays. Selectable on BOTH builds; persisted inside the alarmsnd=
@@ -1710,134 +1709,15 @@ static void clock_edit_time(void)
     do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); } while (k.bitmask);
 }
 
-/* ---- alarm-sound preview (device feedback: "let me HEAR the choice") -----
- * The volume row still plays a brief blip when nudged (alarm_tone_blip below).
- * The alarm-sound row instead lets GAME AUDITION the REAL alarm: the exact same
- * rg_alarm_tone_feed cadence, preset and volume the live alarm rings with, up to
- * the 60s ALARM_RING_MS cap — so what you hear IS the alarm, not a token tone
- * ("실제 알림에 쓰이는 링을 써야지"). L/R just selects; a single blip on cycle
- * only confused things, so it's gone. Everything is at the alarm's OWN volume
- * (0 = silent alarm, nothing plays) and always stops the SAI on the way out; the
- * dialog is modal so a blocking, key-interruptible feed is fine. */
-#define ALARM_VOL_BLIP_MS   160u
-static void alarm_tone_blip(int preset, int vol, uint32_t ms)
-{
-    if (vol <= 0) return;                       /* silent alarm: nothing to preview */
-    uint32_t start = HAL_GetTick();
-    while ((HAL_GetTick() - start) < ms) {
-        wdog_refresh();
-        rg_alarm_tone_feed(HAL_GetTick(), true, preset, vol);
-        HAL_Delay(8);
-    }
-    rg_alarm_tone_feed(0, false, preset, vol);   /* always stop the SAI */
-}
-/* GAME-to-hear: ring the REAL alarm pattern (same feed the live alarm uses) up
- * to the 60s cap, but cut it short the instant ANY key is pressed; always stop
- * the SAI on the way out. Returns ODROID_DIALOG_PREV/NEXT when the interrupting
- * key was LEFT/RIGHT so the caller advances the selection in the same press,
- * else 0. In practice the user presses a key to stop it. */
-static odroid_dialog_event_t alarm_tone_audition(int preset, int vol)
-{
-    if (vol <= 0) return (odroid_dialog_event_t)0;   /* silent alarm: nothing to hear */
-    odroid_dialog_event_t adv = (odroid_dialog_event_t)0;
-    odroid_gamepad_state_t k, prev;
-    odroid_input_read_gamepad(&prev);            /* swallow the GAME key that opened this */
-    uint32_t start = HAL_GetTick();
-    while ((HAL_GetTick() - start) < ALARM_RING_MS) {
-        wdog_refresh();
-        odroid_input_read_gamepad(&k);
-        if (k.bitmask & ~prev.bitmask) {         /* any NEW key press stops it early */
-            if (pressed(&k, &prev, ODROID_INPUT_LEFT))       adv = ODROID_DIALOG_PREV;
-            else if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) adv = ODROID_DIALOG_NEXT;
-            break;
-        }
-        rg_alarm_tone_feed(HAL_GetTick(), true, preset, vol);
-        prev = k;
-        HAL_Delay(8);
-    }
-    rg_alarm_tone_feed(0, false, preset, vol);   /* always stop the SAI */
-    return adv;
-}
-/* The current sound-row choice as a synth preset, or -1 if it's an SD file (the
- * MP3/WAV decoder lives in the emulator overlay — auditioned separately below). */
-static int alarm_sound_synth_preset(void)
-{
-    int preset = s_beep_preset;
-#if CLOCK_SD_MEDIA
-    if (rg_tone_preset_from_token(s_alarmsnd) < 0) return -1;
-#endif
-    return preset;
-}
+/* Alarm-sound preview removed: it was the only code that fed the tone from
+ * inside the settings menu. */
 
-#if CLOCK_SD_MEDIA
-/* clock_bg_suspend/restore are defined with the ring path (they free/reload the
- * shared_files decode arena the GIF/photo background borrows); forward-declared
- * so the GAME file-audition can borrow the exact same arena dance the ring uses. */
-static void clock_bg_suspend(void);
-static void clock_bg_restore(void);
-/* GAME preview of a chosen MP3/WAV file, streamed for up to ~10s. It's streamed,
- * so its length costs no resident RAM (the decode-ahead ring is the same one the
- * live ring uses). */
-#define ALARM_AUDITION_MS 10000u
-
-/* GAME-to-hear for an SD alarm FILE: reuse the REAL alarm MP3 path — the same
- * overlay staged into RAM_EMU, the same ISR-fed ring — so there is NO new
- * decoder and NO new resident buffer. The GIF/photo background borrows that same
- * arena, so (exactly like the ring) we suspend it first and restore it after.
- * Missing core bin / unreadable / undecodable file -> just don't play (no crash).
- * Any key stops the preview; LEFT/RIGHT additionally returns PREV/NEXT so the
- * caller cuts the preview AND advances the selection in one press. */
-static odroid_dialog_event_t alarm_file_audition(void)
-{
-    if (s_alarm_volume <= 0) return (odroid_dialog_event_t)0;   /* silent alarm: nothing to hear */
-    clock_alarm_mp3_set_file(s_alarmsnd);                        /* "" -> alarm.mp3 (default) */
-    if (!clock_alarm_mp3_available()) return (odroid_dialog_event_t)0;
-
-    clock_bg_suspend();          /* free the shared_files/RAM_EMU arena for the overlay */
-    s_album_used = true;          /* the arena can now be clobbered -> exit rebuilds the lists */
-    if (!clock_alarm_mp3_start()) { clock_bg_restore(); return (odroid_dialog_event_t)0; }
-
-    odroid_dialog_event_t adv = (odroid_dialog_event_t)0;
-    odroid_gamepad_state_t k, prev;
-    odroid_input_read_gamepad(&prev);            /* swallow the GAME key that opened this */
-    uint32_t start = HAL_GetTick();
-    while ((HAL_GetTick() - start) < ALARM_AUDITION_MS) {
-        wdog_refresh();
-        odroid_input_read_gamepad(&k);
-        if (k.bitmask & ~prev.bitmask) {         /* any NEW key press stops the preview */
-            if (pressed(&k, &prev, ODROID_INPUT_LEFT))       adv = ODROID_DIALOG_PREV;
-            else if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) adv = ODROID_DIALOG_NEXT;
-            break;
-        }
-        clock_alarm_mp3_service(volume_tbl[s_alarm_volume]);
-        prev = k;
-        HAL_Delay(8);
-    }
-    clock_alarm_mp3_stop();
-    clock_bg_restore();          /* reload the GIF/photo background exactly like the ring path */
-    return adv;
-}
-#endif /* CLOCK_SD_MEDIA */
-
-/* GAME: audition the current sound-row choice — a synth preset via the real tone
- * ring, or (SD builds) a chosen MP3/WAV file via the real alarm decoder path.
- * Returns PREV/NEXT if LEFT/RIGHT cut the preview, so the caller advances. */
-static odroid_dialog_event_t alarm_sound_audition(void)
-{
-    int p = alarm_sound_synth_preset();
-    if (p >= 0) return alarm_tone_audition(p, s_alarm_volume);
-#if CLOCK_SD_MEDIA
-    return alarm_file_audition();
-#else
-    return (odroid_dialog_event_t)0;
-#endif
-}
 
 /* ---- alarm editor = the SHARED common dialog ----------------------------
  * Row ids: each alarm's row uses its own index (0..MAX_ALARMS-1); the fixed
  * rows use high ids that can't collide (MAX_ALARMS <= 8). One row per alarm
  * (label = its time, value = On/Off; L/R toggles, A opens the time editor),
- * then "+ Add alarm", "Alarm sound" (L/R selects, GAME auditions the real ring)
+ * then "+ Add alarm", "Alarm sound" (L/R selects)
  * and DND. B closes. Delete lives inside the time editor (GAME) — the dialog has
  * no key to express a per-row delete. */
 enum { AL_ID_ADD = 100, AL_ID_SOUND = 101, AL_ID_DND = 102 };
@@ -1853,7 +1733,6 @@ enum { AL_ID_ADD = 100, AL_ID_SOUND = 101, AL_ID_DND = 102 };
 static bool cb_alarm_row(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    if (e == ODROID_DIALOG_FOCUS_GAINED) s_sound_row_focused = false;
     int i = o->id;
     if (i < 0 || i >= s_alarm_count) { o->value[0] = 0; return false; }
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT)
@@ -1862,27 +1741,17 @@ static bool cb_alarm_row(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uin
     return e == ODROID_DIALOG_ENTER;             /* A -> open the time editor */
 }
 static bool cb_add_alarm(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{ (void)r; if (e == ODROID_DIALOG_FOCUS_GAINED) s_sound_row_focused = false;
-  o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
+{ (void)r;  o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
 static bool cb_alarm_sound(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
-    if (e == ODROID_DIALOG_FOCUS_GAINED) s_sound_row_focused = true;   /* show the GAME hint */
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) alarm_sound_cycle(e);  /* L/R just selects */
-    bool game = (e == (odroid_dialog_event_t)ODROID_DIALOG_GAME);
-    if (game) {                                  /* GAME = preview the real alarm, interruptible */
-        odroid_dialog_event_t adv = alarm_sound_audition();
-        /* Pressing LEFT/RIGHT during the preview cuts it AND moves to the next
-         * sound in the same press ("미리듣는 도중에 방향키 옮기면 바로 종료하고" next). */
-        if (adv == ODROID_DIALOG_PREV || adv == ODROID_DIALOG_NEXT) alarm_sound_cycle(adv);
-    }
     alarm_sound_str(o->value, AL_VAL);
-    return game;                                 /* GAME handled in place -> dialog stays open */
+    return false;                                /* no in-place action: the preview is gone */
 }
 
 static void clock_alarm_setup(void)
 {
-    s_sound_row_focused = false;   /* GAME hint off until the sound row is focused */
     int sel = 0;
     for (;;) {
         char lbl[MAX_ALARMS][16], aval[MAX_ALARMS][12];
@@ -1920,7 +1789,6 @@ static void clock_alarm_setup(void)
         }
         /* SOUND / DND rows never return true on ENTER, so they never reach here */
     }
-    s_sound_row_focused = false;   /* don't leak the GAME hint into other dialogs */
     clock_config_save();
     s_last_fired_min = -1;
 }
@@ -1975,8 +1843,7 @@ static bool cb_fmt(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
 { (void)r; if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_hour24 = !s_hour24;
   sprintf(o->value, "%s", s_hour24 ? "24h" : "12h"); return e == ODROID_DIALOG_ENTER; }
 static bool cb_dnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{ (void)r; if (e == ODROID_DIALOG_FOCUS_GAINED) s_sound_row_focused = false;
-  if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_dnd = !s_dnd;
+{ (void)r;  if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_dnd = !s_dnd;
   sprintf(o->value, "%s", s_dnd ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
   return e == ODROID_DIALOG_ENTER; }
 static bool cb_autodim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
@@ -2218,9 +2085,7 @@ static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
     int lv = s_alarm_volume;
     if (e == ODROID_DIALOG_PREV && lv > 0) s_alarm_volume = --lv;
     if (e == ODROID_DIALOG_NEXT && lv < ODROID_AUDIO_VOLUME_MAX) s_alarm_volume = ++lv;
-    /* short blip at the NEW level so the loudness change is audible, not abstract */
-    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT)
-        alarm_tone_blip(s_beep_preset, s_alarm_volume, ALARM_VOL_BLIP_MS);
+    /* no blip preview: the settings menu never feeds the tone now */
     char a = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
     char b = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
     for (int i = 0; i <= ODROID_AUDIO_VOLUME_MAX; i++) o->value[i] = (i <= lv) ? a : b;
@@ -2265,11 +2130,6 @@ static void clock_menu_repaint(void)
     else s_ghost_on = true;
     draw_topbar(MODE_CLOCK, true);   /* the live settings preview always shows the pager */
     render_clock(HAL_GetTick(), false);
-    /* Alarm editor only: when the "Alarm sound" row is focused, tell the user GAME
-     * auditions the real alarm. Drawn behind the dialog box (which the overlay lays
-     * on top), so it reads as a subtle bottom-strip hint. ASCII, like the other
-     * hint legends. */
-    if (s_sound_row_focused) draw_hintbar(curr_lang->s_Clock_Snd_Preview);
 }
 
 /* Sub-dialog opened from the main menu's "절전" group row: Auto-dim toggle +
