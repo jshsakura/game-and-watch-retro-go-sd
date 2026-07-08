@@ -19,7 +19,7 @@
 #include "odroid_overlay.h"  /* odroid_overlay_cache_file_in_ram */
 
 #ifndef CLOCK_ALARM_MP3_PATH
-#define CLOCK_ALARM_MP3_PATH "/clock/alarm.mp3"
+#define CLOCK_ALARM_MP3_PATH "/clock/alarm/alarm.mp3"
 #endif
 /* Headerless copy of .overlay_music shipped in /cores by the build (loaded with
  * the raw cache_file_in_ram path, like the homebrew Music.bin). */
@@ -46,7 +46,7 @@ static bool s_active;
 /* Chosen alarm sound basename (settings picker). Only a POINTER into the caller's
  * persistent buffer (rg_clock's s_alarmsnd) is kept — not a copy — so the tight
  * DTCM gains no resident string buffer; the full path is built on the stack per
- * use. NULL/"" = the default /clock/alarm.mp3 (back-compat with an old cfg). */
+ * use. NULL/"" = the default /clock/alarm/alarm.mp3 (back-compat with an old cfg). */
 static const char *s_mp3_name;
 
 void clock_alarm_mp3_set_file(const char *name)
@@ -58,7 +58,7 @@ void clock_alarm_mp3_set_file(const char *name)
 static const char *mp3_resolve_path(char *out, size_t n)
 {
     if (!s_mp3_name) return CLOCK_ALARM_MP3_PATH;
-    snprintf(out, n, "/clock/%s", s_mp3_name);
+    snprintf(out, n, "/clock/alarm/%s", s_mp3_name);
     return out;
 }
 

@@ -10,7 +10,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-/* /clock/alarm.mp3 -> a real temp file so the fopen probe works without root. */
+/* /clock/alarm/alarm.mp3 -> a real temp file so the fopen probe works without root. */
 static const char *test_path(const char *p)
 { static char b[256]; snprintf(b, sizeof b, "/tmp/mtest/m%s", p + 1);
   for (char *c = b + 11; *c; c++) if (*c == '/') *c = '_';   /* flatten subdirs */
@@ -62,16 +62,16 @@ static void reset_counts(void)
 /* These run AFTER #undef fopen, so use the real fopen with an explicit test_path
  * (the same flattened /tmp/mtest file the module's macro'd fopen probes). */
 static void write_alarm_file(void)
-{ FILE *f = fopen(test_path("/clock/alarm.mp3"), "wb"); if (f) { fputs("ID3fake", f); fclose(f); } }
+{ FILE *f = fopen(test_path("/clock/alarm/alarm.mp3"), "wb"); if (f) { fputs("ID3fake", f); fclose(f); } }
 static void remove_alarm_file(void)
-{ remove(test_path("/clock/alarm.mp3")); }
+{ remove(test_path("/clock/alarm/alarm.mp3")); }
 
 static void test_available(void)
 {
     remove_alarm_file();
     CHECK(clock_alarm_mp3_available() == false, "available: false when no file");
     write_alarm_file();
-    CHECK(clock_alarm_mp3_available() == true,  "available: true when /clock/alarm.mp3 exists");
+    CHECK(clock_alarm_mp3_available() == true,  "available: true when /clock/alarm/alarm.mp3 exists");
 }
 
 /* The fallback ladder: any missing/undecodable stage -> false (caller beeps). */
