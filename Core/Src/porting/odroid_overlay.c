@@ -60,6 +60,13 @@ static retro_emulator_file_t *CHOSEN_FILE = NULL;
 /* overlay_buffer removed — all drawing goes directly to LCD framebuffer */
 static short font_size = 8;
 
+/* Opt-in dialog event: a focused row's update_cb that handles ODROID_DIALOG_GAME
+ * (returns true) runs an in-place action on GAME(START) and keeps the dialog
+ * open, instead of GAME's default "close the dialog". The value is outside
+ * odroid_dialog_event_t so callbacks that don't opt in never match it, leaving
+ * every existing dialog unchanged. MUST equal ODROID_DIALOG_GAME in rg_clock.c. */
+#define ODROID_DIALOG_GAME 0x100
+
 #define MAX_OPTIONS_COUNT 18
 
 void odroid_overlay_init()
@@ -974,8 +981,15 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *options, i
             else if (joystick.values[ODROID_INPUT_START]) // G&W GAME button
             {
                 last_key = ODROID_INPUT_START;
-                sel = -1;
-                break;
+                /* Opt-in per-row GAME action: if the focused row's callback
+                 * handles ODROID_DIALOG_GAME (returns true) it runs in place and
+                 * the dialog stays open; otherwise GAME closes as usual. */
+                if (!(options[sel].enabled >= 1 && options[sel].update_cb &&
+                      options[sel].update_cb(&options[sel], (odroid_dialog_event_t)ODROID_DIALOG_GAME, 0)))
+                {
+                    sel = -1;
+                    break;
+                }
             }
             else if (joystick.values[ODROID_INPUT_Y]) // G&W (zelda) SELECT button
             {
