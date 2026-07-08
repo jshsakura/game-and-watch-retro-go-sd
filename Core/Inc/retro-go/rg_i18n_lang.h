@@ -329,8 +329,8 @@ typedef struct
     const char *s_Clock_Auto;      // face value: follow the theme
     const char *s_Clock_Anim_3;    // user GIF (high)
     const char *s_Clock_Set_Time;    // set the RTC date/time (settings row + editor title)
-    const char *s_Clock_Scene;         // pixel-scene picker row
-    const char *s_Clock_Photo_Speed;   // photo album transition speed row
+    const char *s_Clock_Scene;         // pixel-background STYLE picker row (which built-in scene), shown only while Background=Pixel
+    const char *s_Clock_Photo_Speed;   // photo album slideshow speed row, shown only while Background=Photo album
     const char *s_Clock_Anim_4;        // photo album background value
     const char *s_Clock_Auto_Dim;      // idle backlight auto-dim toggle row
     const char *s_Clock_Bg_File;       // GIF background file picker row (SD builds)
@@ -338,6 +338,9 @@ typedef struct
     const char *s_Clock_Night_Off;     // night full-off window start-hour row (Off/21:00/22:00/23:00/00:00/01:00)
     const char *s_Clock_Night_End;     // night full-off window end-hour row (05:00..09:00), shown only while start != Off
     const char *s_Clock_Snd_Preview;   // alarm-sound row: GAME auditions the real ring
+    const char *s_Speed_Slow;          // photo-speed value: slowest slideshow
+    const char *s_Speed_Normal;        // photo-speed value: default slideshow speed
+    const char *s_Speed_Fast;          // photo-speed value: fastest slideshow
     //=====================================================================
 
     const int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, const char *weekday, uint16_t hour, uint16_t minutes, uint16_t seconds);

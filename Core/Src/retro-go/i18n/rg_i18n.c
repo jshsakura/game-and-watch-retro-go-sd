@@ -523,7 +523,7 @@ static const lang_metadata_t lang_metadata[] = {
 #endif
 };
 
-/* The 215 s_XXX fields in lang_t are contiguous `const char *` pointers
+/* The 276 s_XXX fields in lang_t are contiguous `const char *` pointers
  * starting at &lang_t.s_LangUI (codepage precedes them, fn pointers
  * follow). Treating that region as a flat const-char-pointer array lets
  * the loader assign by index without naming each field. */

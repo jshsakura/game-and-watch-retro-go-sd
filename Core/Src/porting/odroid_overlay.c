@@ -622,6 +622,16 @@ void odroid_overlay_draw_dialog(const char *header, odroid_dialog_choice_t *opti
 
     for (int i = 0; i < options_count; i++)
     {
+        if (options[i].enabled == ODROID_DIALOG_HIDDEN)
+        {
+            // Fully omitted row: zero footprint, excluded from every max_*
+            // measurement so it can't widen/heighten the dialog either.
+            i_left[i] = 0;
+            i_right[i] = 0;
+            i_width[i] = 0;
+            i_height[i] = 0;
+            continue;
+        }
         if (options[i].value[0])
         {
             i_left[i] = i18n_get_text_width(options[i].label);
@@ -668,6 +678,8 @@ void odroid_overlay_draw_dialog(const char *header, odroid_dialog_choice_t *opti
 
     for (int i = 0; i < options_count; i++)
     {
+        if (options[i].enabled == ODROID_DIALOG_HIDDEN)
+            continue;   // stays zero-height (set above), never wraps
         if (options[i].value[0])
         {
             if (i_right[i] > max_right)
@@ -772,6 +784,8 @@ void odroid_overlay_draw_dialog(const char *header, odroid_dialog_choice_t *opti
 
     for (int i = start_index; i <= end_index; i++)
     {
+        if (options[i].enabled == ODROID_DIALOG_HIDDEN)
+            continue;   // 0-height already (see above): draw nothing, don't advance y
         color = options[i].enabled >= 0 ? box_text_color : curr_colors->dis_c;
         if (options[i].enabled >= 0)
         {

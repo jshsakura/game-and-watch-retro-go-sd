@@ -10,6 +10,18 @@
 #define HEIGHT 240
 #define BPP      4
 
+/* odroid_dialog_choice_t.enabled convention extension: the submodule
+ * (retro-go-stm32/components/odroid/odroid_overlay.h, upstream-pinned — not
+ * ours to edit) only documents >=1 selectable / -1 disabled-but-drawn-greyed.
+ * This project's odroid_overlay_dialog (Core/Src/porting/odroid_overlay.c)
+ * additionally treats this exact sentinel as "fully omitted": zero layout
+ * height, never drawn, never a navigation stop (odroid_overlay_dialog_find_
+ * next_item already skips any enabled < 1, so hidden rows are skipped there
+ * for free — only the layout/draw loops needed the extra check). Distinct
+ * from plain -1. Toggle it live from a sibling row's update_cb exactly like
+ * -1 already is (see rg_clock.c cb_anim). */
+#define ODROID_DIALOG_HIDDEN (-2)
+
 extern const uint8_t volume_tbl[ODROID_AUDIO_VOLUME_MAX + 1];
 
 void common_emu_frame_loop_reset(void);

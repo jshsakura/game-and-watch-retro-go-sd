@@ -272,16 +272,22 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *o, int s, 
     for (int i = 0; i < W*H; i++) fb[i] = mix565(fb[i], CLOCK_BLACK, 6);  /* darken */
 
     int rh = 16, pad = 8;
+    /* ODROID_DIALOG_HIDDEN rows are fully omitted on-device (odroid_overlay.c
+     * odroid_overlay_draw_dialog) — mirror that here: excluded from width/
+     * height measurement and never drawn, so the preview panel matches the
+     * shorter row count the real dialog shows. */
+    int visible_rows = 0;
     int maxl = header ? i18n_get_text_width(header) : 0, maxr = 0;
     for (int i = 0; i < n; i++) {
+        if (o[i].enabled == ODROID_DIALOG_HIDDEN) continue;
+        visible_rows++;
         int lw = i18n_get_text_width(o[i].label);
         int rw = (o[i].value && o[i].value[0]) ? i18n_get_text_width(o[i].value) : 0;
         if (lw > maxl) maxl = lw; if (rw > maxr) maxr = rw;
-        if (lw + rw + 14 > maxl + maxr + 14) {}
     }
     int inner = maxl + (maxr ? maxr + 14 : 0);
     int pw = inner + pad*2; if (pw < 140) pw = 140; if (pw > 300) pw = 300;
-    int ph = 22 + n*rh + pad;
+    int ph = 22 + visible_rows*rh + pad;
     int px = (W - pw)/2, py = (H - ph)/2; if (py < 8) py = 8;
     odroid_overlay_draw_fill_rect(px-2, py-2, pw+4, ph+4, mix565(t->scr, t->ink, 7));
     odroid_overlay_draw_fill_rect(px, py, pw, ph, mix565(t->scr, t->ink, 1));
@@ -289,7 +295,8 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *o, int s, 
     odroid_overlay_draw_fill_rect(px + pad, py + 18, pw - 2*pad, 1, mix565(t->scr, t->ink, 5));
 
     int y = py + 22;
-    for (int i = 0; i < n; i++, y += rh) {
+    for (int i = 0; i < n; i++) {
+        if (o[i].enabled == ODROID_DIALOG_HIDDEN) continue;   // no row, no y advance
         bool cur = (i == sel);
         uint16_t col = (o[i].enabled >= 1) ? (cur ? t->ink : mix565(t->scr, t->ink, 9))
                                            : mix565(t->scr, t->ink, 4);
@@ -299,6 +306,7 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *o, int s, 
             int rw = i18n_get_text_width(o[i].value);
             i18n_draw_text_line(px + pw - pad - rw, y, rw + 2, o[i].value, col, CLOCK_BLACK, 1);
         }
+        y += rh;
     }
     return -1;
 }
@@ -336,11 +344,12 @@ static const lang_t KO = {
     .s_Clock_Anim_1="은은한 효과 (낮음)", .s_Clock_Anim_2="픽셀 풍경 (낮음)", .s_Clock_Anim_3="GIF (높음)",
     .s_Clock_Volume="알람 음량", .s_Clock_Alarms="알람", .s_Clock_Exit="시계 나가기",
     .s_Clock_Hint_Ring="A 5분 스누즈  B 끄기", .s_Clock_Theme="테마", .s_Clock_Face="숫자 서체", .s_Clock_Auto="자동",
-    .s_Clock_Set_Time="시간 설정", .s_Clock_Scene="씬", .s_Clock_Photo_Speed="사진 속도",
+    .s_Clock_Set_Time="시간 설정", .s_Clock_Scene="픽셀 스타일", .s_Clock_Photo_Speed="전환 속도",
     .s_Clock_Anim_4="사진 앨범", .s_Clock_Auto_Dim="자동 절전",
     .s_Clock_Bg_File="GIF", .s_Clock_Alarm_Sound="알람 소리",
     .s_Clock_Night_Off="절전 시작", .s_Clock_Night_End="절전 종료",
     .s_Clock_Snd_Preview="GAME: 미리듣기",
+    .s_Speed_Slow="느림", .s_Speed_Normal="보통", .s_Speed_Fast="빠름",
     .s_Brightness="밝기",
     .s_Full="\x7", .s_Fill="\x8",
 };
@@ -440,6 +449,15 @@ int main(void)
     /* 7b) the clock SETTINGS dialog, same path — proves the alarm editor and the
      * settings menu share one panel + alignment (device feedback: "왜 얘만 달라"). */
     s_dlg_sel_preview = 4; clock_settings_menu(); dump("settings");
+    /* 7c/7d) background sub-row hiding (ODROID_DIALOG_HIDDEN): with background
+     * = Off, the Pixel-style row is fully absent (shorter menu, not greyed);
+     * with background = Pixel scene, it appears — same array slot, live toggle
+     * via cb_anim. (Photo-speed / GIF-file are the identical code path but only
+     * exist when CLOCK_SD_MEDIA=1, i.e. -DSD_CARD=1, which this host preview
+     * doesn't build with — so they aren't separately dumped here.) */
+    s_anim = 0; s_dlg_sel_preview = 8; clock_settings_menu(); dump("settings_bg_off");
+    s_anim = ANIM_SCENE; s_dlg_sel_preview = 9; clock_settings_menu(); dump("settings_bg_scene");
+    s_anim = 0;
     /* 8) full-screen clone-view alarm editor (hour field lit phase) */
     render_alarm_edit(&s_alarms[0], 0, false); dump("editor_edit");
 

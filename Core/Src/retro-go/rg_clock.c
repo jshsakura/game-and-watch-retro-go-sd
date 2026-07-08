@@ -1951,11 +1951,14 @@ static bool cb_anim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
         if (s_anim == ANIM_PHOTO) { if (!clock_album_ready()) clock_album_open(); s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
 #endif
         /* opts[] order after this row is: [+1] Scene, [+2] Photo speed, [+3] GIF
-         * file. Each is live only for its own background. */
-        o[1].enabled = (s_anim == ANIM_SCENE) ? 1 : -1;
+         * file. Each is live only for its own background — and fully hidden
+         * (not just greyed) for every other background, via ODROID_DIALOG_HIDDEN
+         * so the row list stays short instead of showing three mostly-irrelevant
+         * greyed rows at once. */
+        o[1].enabled = (s_anim == ANIM_SCENE) ? 1 : ODROID_DIALOG_HIDDEN;
 #if CLOCK_SD_MEDIA
-        o[2].enabled = (s_anim == ANIM_PHOTO) ? 1 : -1;
-        o[3].enabled = (s_anim == ANIM_GIF)   ? 1 : -1;
+        o[2].enabled = (s_anim == ANIM_PHOTO) ? 1 : ODROID_DIALOG_HIDDEN;
+        o[3].enabled = (s_anim == ANIM_GIF)   ? 1 : ODROID_DIALOG_HIDDEN;
 #endif
     }
     const char *lv = (s_anim == 0) ? curr_lang->s_Clock_Anim_0
@@ -1997,7 +2000,9 @@ static bool cb_pspeed(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32
     if (e == ODROID_DIALOG_NEXT) s_photo_speed = (s_photo_speed + 1) % 3;
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) { s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; s_fade_start = 0; }
     snprintf(o->value, PICK_VAL, "%s",
-             (s_photo_speed == 0) ? "Slow" : (s_photo_speed == 2) ? "Fast" : "Normal");
+             (s_photo_speed == 0) ? curr_lang->s_Speed_Slow
+             : (s_photo_speed == 2) ? curr_lang->s_Speed_Fast
+             : curr_lang->s_Speed_Normal);
     return e == ODROID_DIALOG_ENTER;
 }
 
@@ -2189,9 +2194,13 @@ static bool clock_settings_menu(void)
      * live inside the "절전" group's own sub-dialog (clock_powersave_menu) —
      * both moved off this menu to stay under the no-scroll row budget (see
      * odroid_overlay_draw_dialog's had_extent: header + N*14px rows + 34px
-     * padding must stay <= 230px, i.e. at most 14 rows; this menu has 13 with
-     * SD media compiled in, 11 without). The SD-media rows (photo speed, GIF
-     * file) are compiled out entirely on flash builds. */
+     * padding must stay <= 230px, i.e. at most 14 rows; this menu has 13 rows
+     * with SD media compiled in, 11 without — but Scene/Photo-speed/GIF-file
+     * are ODROID_DIALOG_HIDDEN (zero layout footprint) whenever their own
+     * background isn't the active one, and only one of the three can ever be
+     * active at once, so the row actually visible at a time is 11 max, never
+     * 13). The SD-media rows (photo speed, GIF file) are compiled out
+     * entirely on flash builds. */
     /* stack-resident (DTCM is bytes from full): the brightness gauge, and
      * (SD builds) the photo-speed / GIF-file picker values */
     char v_bright[ODROID_BACKLIGHT_LEVEL_COUNT + 2];
@@ -2209,10 +2218,10 @@ static bool clock_settings_menu(void)
         {0, curr_lang->s_Clock_Theme,  v_theme,  1, cb_theme},
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},
         {2, curr_lang->s_Clock_Anim,   v_anim,   1, cb_anim},
-        {3, curr_lang->s_Clock_Scene,  v_scene,  (s_anim == ANIM_SCENE) ? 1 : -1, cb_scene},
+        {3, curr_lang->s_Clock_Scene,  v_scene,  (s_anim == ANIM_SCENE) ? 1 : ODROID_DIALOG_HIDDEN, cb_scene},
 #if CLOCK_SD_MEDIA
-        {4, curr_lang->s_Clock_Photo_Speed, v_pspeed, (s_anim == ANIM_PHOTO) ? 1 : -1, cb_pspeed},
-        {13, curr_lang->s_Clock_Bg_File, v_bgfile, (s_anim == ANIM_GIF) ? 1 : -1, cb_bgfile},
+        {4, curr_lang->s_Clock_Photo_Speed, v_pspeed, (s_anim == ANIM_PHOTO) ? 1 : ODROID_DIALOG_HIDDEN, cb_pspeed},
+        {13, curr_lang->s_Clock_Bg_File, v_bgfile, (s_anim == ANIM_GIF) ? 1 : ODROID_DIALOG_HIDDEN, cb_bgfile},
 #endif
         {10, curr_lang->s_Clock_Exit,  v_exit,   1, cb_enter},
         ODROID_DIALOG_CHOICE_LAST
