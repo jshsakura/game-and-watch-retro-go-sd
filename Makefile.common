@@ -1642,6 +1642,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
 	@$(CP) -O binary --only-section=.coleco_bios_data $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/coleco/coleco.bin
 	@$(CP) -O binary --only-section=.overlay_graphics $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/logo.bin
+	@$(CP) -O binary --only-section=.overlay_icons $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/icons.bin
 	@rm -f $(FONTS_DIR)/cp1251_*.bin $(FONTS_DIR)/cp1252_*.bin $(FONTS_DIR)/unicode_*.bin
 ifeq ($(RU_RU),1)
 	@$(CP) -O binary --only-section=.sd_fonts_cp1251_serif $(BUILD_DIR)/$(TARGET).elf $(FONTS_DIR)/cp1251_serif.bin
@@ -1736,6 +1737,7 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(CORES_DIR)/tama.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/pkmini.bin --dest-path "/cores/" \
 		-- sdpush --file $(SD_FOLDER)/bios/logo.bin --dest-path "/bios/" \
+		-- sdpush --file $(SD_FOLDER)/bios/icons.bin --dest-path "/bios/" \
 		-- sdpush --file $(HOMEBREWS_FOLDER)/celeste.bin --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Music.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Video.bin" --dest-path "/roms/homebrew/" \

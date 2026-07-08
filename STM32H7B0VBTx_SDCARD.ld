@@ -889,6 +889,16 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(4);  /* pad the LAST logo so logo.bin readers don't over-read it */
   } > CORES
 
+  /* Colour tab icons: same trick as the logos above, but a SEPARATE file. They
+     must not share .overlay_graphics — rg_get_logo() walks logo.bin entry by
+     entry and a 28x28 icon header parses as a valid 1bpp logo, which would drift
+     the parser into the icon data. */
+  .overlay_icons : {
+    . = ALIGN(4);
+    KEEP(*(.sdcard_icon))
+    . = ALIGN(4);
+  } > CORES
+
   ._ram_space_check_md : {
     . = . + SIZEOF(.overlay_md);
     . = . + SIZEOF(.overlay_md_bss);
