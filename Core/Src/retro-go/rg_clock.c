@@ -1783,17 +1783,28 @@ static void clock_edit_time(void)
 /* Both GAME previews (synth tone and SD file) cap here. */
 #define ALARM_AUDITION_MS   10000u
 
-/* Stop a preview on a fresh key press — OR on any key merely being HELD, once the
- * key that triggered the preview has been let go. Edge detection alone means a
- * press that is only ever seen as "still down" rides out the whole cap, reported
- * from the device as "no button worked, time fixed it". `prev` starts as the
- * state at entry, so the trigger key itself is ignored until released. */
-static bool audition_should_stop(const odroid_gamepad_state_t *k,
-                                 const odroid_gamepad_state_t *prev)
+/* Set when POWER or PAUSE cut a preview short: those two are guaranteed escapes,
+ * and they don't just silence the sound — they close the dialog the preview was
+ * running inside. Anything that makes noise while a modal is frozen behind it
+ * needs a way OUT of the modal, not only a way to stop the noise. */
+static bool s_audition_escaped;
+
+/* Preview stop condition. POWER and PAUSE work whether tapped or merely held;
+ * every other key needs a fresh press. Keys already down when the preview began
+ * (`entry`, i.e. the GAME that triggered it) are excluded, so the trigger press
+ * cannot dismiss the thing it just started. */
+static bool audition_stop(const odroid_gamepad_state_t *k,
+                          const odroid_gamepad_state_t *prev,
+                          const odroid_gamepad_state_t *entry)
 {
-    if (k->bitmask & ~prev->bitmask) return true;    /* a new press */
-    return k->bitmask != 0 && prev->bitmask == 0;    /* held, and not the trigger */
+    if ((k->values[ODROID_INPUT_POWER]  && !entry->values[ODROID_INPUT_POWER]) ||
+        (k->values[ODROID_INPUT_VOLUME] && !entry->values[ODROID_INPUT_VOLUME])) {
+        s_audition_escaped = true;
+        return true;
+    }
+    return (k->bitmask & ~prev->bitmask) != 0;
 }
+
 #define ALARM_VOL_BLIP_MS   160u
 static void alarm_tone_blip(int preset, int vol, uint32_t ms)
 {
@@ -1819,13 +1830,14 @@ static odroid_dialog_event_t alarm_tone_audition(int preset, int vol)
 {
     if (vol <= 0) return (odroid_dialog_event_t)0;   /* silent alarm: nothing to hear */
     odroid_dialog_event_t adv = (odroid_dialog_event_t)0;
-    odroid_gamepad_state_t k, prev;
+    odroid_gamepad_state_t k, prev, entry;
     odroid_input_read_gamepad(&prev);            /* swallow the GAME key that opened this */
+    entry = prev;
     uint32_t start = HAL_GetTick();
     while ((HAL_GetTick() - start) < ALARM_AUDITION_MS) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
-        if (audition_should_stop(&k, &prev)) {   /* any key stops it early */
+        if (audition_stop(&k, &prev, &entry)) {
             if (pressed(&k, &prev, ODROID_INPUT_LEFT))       adv = ODROID_DIALOG_PREV;
             else if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) adv = ODROID_DIALOG_NEXT;
             break;
@@ -1876,13 +1888,14 @@ static odroid_dialog_event_t alarm_file_audition(void)
     if (!clock_alarm_mp3_start()) { clock_bg_restore(); return (odroid_dialog_event_t)0; }
 
     odroid_dialog_event_t adv = (odroid_dialog_event_t)0;
-    odroid_gamepad_state_t k, prev;
+    odroid_gamepad_state_t k, prev, entry;
     odroid_input_read_gamepad(&prev);            /* swallow the GAME key that opened this */
+    entry = prev;
     uint32_t start = HAL_GetTick();
     while ((HAL_GetTick() - start) < ALARM_AUDITION_MS) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
-        if (audition_should_stop(&k, &prev)) {   /* any key stops the preview */
+        if (audition_stop(&k, &prev, &entry)) {
             if (pressed(&k, &prev, ODROID_INPUT_LEFT))       adv = ODROID_DIALOG_PREV;
             else if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) adv = ODROID_DIALOG_NEXT;
             break;
@@ -1949,13 +1962,20 @@ static bool cb_alarm_sound(odroid_dialog_choice_t *o, odroid_dialog_event_t e, u
     if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) alarm_sound_cycle(e);  /* L/R just selects */
     bool game = (e == (odroid_dialog_event_t)ODROID_DIALOG_GAME);
     if (game) {                                  /* GAME = preview the real alarm, interruptible */
+        s_audition_escaped = false;
         odroid_dialog_event_t adv = alarm_sound_audition();
         /* Pressing LEFT/RIGHT during the preview cuts it AND moves to the next
          * sound in the same press ("미리듣는 도중에 방향키 옮기면 바로 종료하고" next). */
         if (adv == ODROID_DIALOG_PREV || adv == ODROID_DIALOG_NEXT) alarm_sound_cycle(adv);
+        alarm_sound_str(o->value, AL_VAL);
+        /* POWER/PAUSE did not merely silence the preview, they asked to LEAVE.
+         * Returning false closes the dialog: a modal that makes noise has to be
+         * escapable, not just quietenable. */
+        if (s_audition_escaped) return false;
+        return true;                             /* handled in place -> dialog stays open */
     }
     alarm_sound_str(o->value, AL_VAL);
-    return game;                                 /* GAME handled in place -> dialog stays open */
+    return false;
 }
 
 static void clock_alarm_setup(void)
@@ -2568,7 +2588,17 @@ void rg_clock_show(void)
          * stop — a key already held when it fires must not swallow it, and
          * the press is CONSUMED so it can't fall through and reset a runner,
          * switch mode or open the menu. */
-        if (alarm_should_fire(hh, mm)) alarm_ring_until = now + ALARM_RING_MS;
+        if (alarm_should_fire(hh, mm)) {
+            alarm_ring_until = now + ALARM_RING_MS;
+            /* Roll the resident all-state cache to the NEXT occurrence. Without
+             * this, s_next_epoch stays parked on the alarm that just rang, so
+             * rg_alarm_cache_due() keeps returning true: opening a game, the music
+             * player or a video then made rg_alarm_poll() ring the SAME alarm all
+             * over again via rg_alarm_ring_inplace() — the ring that used to
+             * accept only A/B/POWER. That is the alarm that "rang wrongly and
+             * nothing would stop it". */
+            rg_alarm_cache_advance();
+        }
         if (s_snooze_tick && now >= s_snooze_tick) {   /* snooze expired */
             s_snooze_tick = 0;
             alarm_ring_until = now + ALARM_RING_MS;
