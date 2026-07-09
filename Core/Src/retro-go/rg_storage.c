@@ -432,6 +432,10 @@ bool rg_storage_get_adjacent_files(const char *path, char *prev_path, char *next
     char *last_slash = strrchr(dir, '/');
     if (!last_slash) return false;
     *last_slash = '\0';
+    if (dir[0] == '\0') {
+        dir[0] = '/';
+        dir[1] = '\0';
+    }
 
     const char *ext = rg_extension(path);
     if (!ext) return false;

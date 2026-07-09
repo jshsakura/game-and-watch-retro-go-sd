@@ -285,7 +285,8 @@ static bool circular_flash_write(const char *file_path,
             break;
 
         if (byte_swap) {
-            for (size_t i = 0; i < bytes_read; i += 2) {
+            size_t swap_limit = bytes_read & ~(size_t)1; // last odd byte (if any) is left as-is
+            for (size_t i = 0; i < swap_limit; i += 2) {
                 uint8_t temp = buffer[i];
                 buffer[i] = buffer[i + 1];
                 buffer[i + 1] = temp;

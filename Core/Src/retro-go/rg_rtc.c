@@ -315,4 +315,5 @@ void GW_RTC_RestoreIfLost(void) {
     }
 
     HAL_RTCEx_BKUPWrite(&hrtc, CLOCK_BKP_REG, CLOCK_BKP_MAGIC);
+    HAL_PWR_DisableBkUpAccess();
 }

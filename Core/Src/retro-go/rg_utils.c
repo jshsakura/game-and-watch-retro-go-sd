@@ -31,17 +31,21 @@ char *rg_strtoupper(char *str)
 
 const char *rg_dirname(const char *path)
 {
-    static char buffer[100];
-    const char *basename = strrchr(path, '/');
-    ptrdiff_t length = basename - path;
+    static char buffer[RG_PATH_MAX];
 
-    if (!path || !basename)
+    if (!path)
+        return ".";
+
+    const char *basename = strrchr(path, '/');
+    if (!basename)
         return ".";
 
     if (path[0] == '/' && path[1] == 0)
         return "/";
 
-//    RG_ASSERT(length < 100, "to do: use heap");
+    ptrdiff_t length = basename - path;
+    if (length >= (ptrdiff_t)sizeof(buffer))
+        length = sizeof(buffer) - 1;
 
     strncpy(buffer, path, length);
     buffer[length] = 0;
