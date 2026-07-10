@@ -1100,19 +1100,6 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
      * fresh recompute, which would point at the FUTURE next alarm and never look
      * due. main() latched the RTC Alarm A + power-button flags at reset. */
     rg_alarm_cache_load_backup();
-    /* TEMP diagnostic: chasing a report of the boot-restored clock coinciding
-     * with an alarm and ringing right away. Delete /data/rtc_diag.txt before
-     * each test; safe to remove once the report is closed. e=cached epoch,
-     * t=GW_GetUnixTime() now, d=due, a=RTC alarm flag, w=wakeup-button flag. */
-    {
-        FILE *d = fopen(ODROID_BASE_PATH_SAVES "/rtc_diag.txt", "a");
-        if (d) {
-            fprintf(d, "B1 e=%ld t=%ld d=%d a=%d w=%d\n",
-                    (long)rg_alarm_cache_next_epoch(), (long)GW_GetUnixTime(),
-                    rg_alarm_cache_due(), boot_alarm_flag, boot_wkup_flag);
-            fclose(d);
-        }
-    }
     bool alarm_wake = rg_alarm_wake_decide(boot_alarm_flag, boot_wkup_flag,
                                            rg_alarm_cache_due()) == RG_WAKE_ALARM;
     /* consume the standby alarm flag so a later normal boot can't re-trigger,
@@ -1130,16 +1117,6 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
      * every state (launcher, in-game, music/video) and arms the deep-sleep RTC
      * alarm on the next sleep. Cheap (one small cfg parse). */
     rg_alarm_cache_refresh();
-    /* B2: e/t/d as above, w=alarm_wake decided above */
-    {
-        FILE *d = fopen(ODROID_BASE_PATH_SAVES "/rtc_diag.txt", "a");
-        if (d) {
-            fprintf(d, "B2 e=%ld t=%ld d=%d w=%d\n",
-                    (long)rg_alarm_cache_next_epoch(), (long)GW_GetUnixTime(),
-                    rg_alarm_cache_due(), alarm_wake);
-            fclose(d);
-        }
-    }
 
     /* Claim the clock-background GIF decode arena NOW, while the emu-RAM bump
      * pool is still empty. The pool never frees: once the launcher caches a
