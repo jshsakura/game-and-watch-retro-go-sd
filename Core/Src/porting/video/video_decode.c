@@ -106,7 +106,7 @@ bool video_decode_slot(const uint8_t *src, long size, uint16_t *fb, int fb_w, in
     SCB_CleanDCache_by_Addr((uint32_t *)src, (int32_t)((size + 31) & ~31L));
 
     uint32_t t_jpeg0 = HAL_GetTick();
-    g_vdec_rc = (long)JPEG_DecodeToFrame((uint32_t)src, (uint32_t)fb,
+    g_vdec_rc = (long)JPEG_DecodeToFrame((uint32_t)src, (uint32_t)size, (uint32_t)fb,
                                          (uint16_t)x, (uint16_t)y, 255);
     g_vdec_jpeg_ms = (int)(HAL_GetTick() - t_jpeg0);
     if (g_vdec_rc != 0) { g_vdec_st = 5; return false; }

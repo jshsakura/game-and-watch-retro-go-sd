@@ -3,7 +3,8 @@
 	url = https://github.com/jshsakura/retro-go-stm32
 [submodule "LCD-Game-Emulator"]
 	path = external/LCD-Game-Emulator
-	url = https://github.com/sylverb/LCD-Game-Emulator.git
+	url = https://github.com/jshsakura/LCD-Game-Emulator.git
+	branch = fix/jpeg-real-source-length
 [submodule "blueMSX-go"]
 	path = external/blueMSX-go
 	url = https://github.com/sylverb/blueMSX-go.git

@@ -49,9 +49,6 @@ static listbox_item_t *global_items = NULL;
 /* instances for JPEG decoder */
 #include "hw_jpeg_decoder.h"
 
-// reuse existing buffer from gw_lcd.h
-#define JPEG_BUFFER_SIZE 256*1024
-
 #define NOCOVER_HEIGHT ((uint32_t)(68))
 #define NOCOVER_WIDTH ((uint32_t)(68))
 #define COVER_420_SIZE ((uint32_t)(COVER_MAX_HEIGHT * COVER_MAX_WIDTH * 3 / 2))
@@ -264,7 +261,7 @@ void gui_init_tab(tab_t *tab)
         pJPEG_Buffer = (uint8_t *)ram_malloc(COVER_420_SIZE);
     if (pCover_Buffer == NULL)
         pCover_Buffer = (uint16_t *)ram_malloc(COVER_16BITS_SIZE);
-    assert(JPEG_DecodeToBufferInit((uint32_t)pJPEG_Buffer, JPEG_BUFFER_SIZE) == 0);
+    assert(JPEG_DecodeToBufferInit((uint32_t)pJPEG_Buffer, COVER_420_SIZE) == 0);
     //printf("JPEG init done\n");
     /* -------------------------- */
 #endif
@@ -757,6 +754,43 @@ static void initialize_cache()
     }
 }
 
+/* How many bytes the decoder may read at `addr`: the whole slot, or 0 if `addr`
+ * is not a live cache buffer. The exact JPEG length is not worth a byte of DTCM
+ * to remember — a valid image stops at its EOI marker long before the end of
+ * the slot, and an invalid one has to be stopped by the slot boundary anyway.
+ *
+ * The lookup doubles as the guard against a stale retro_emulator_file_t
+ * ::img_address: emulator_start() rewinds the ram_malloc bump pool,
+ * gui_reset_cover_buffers() drops every buffer, and an address left over from
+ * before that reset then matches nothing and never reaches the decoder. */
+static uint32_t cover_data_size(const uint8_t *addr)
+{
+    if (addr == NULL)
+        return 0;
+    for (int i = 0; i < MAX_COVERS; i++) {
+        if (cover_cache[i].buffer == addr && cover_cache[i].rom_path)
+            return COVER_SIZE;
+    }
+    return 0;
+}
+
+/* The counterpart of rg_reset_logo_buffers(): every pointer below came from the
+ * ram_malloc bump pool, which emulator_start() rewinds wholesale before loading
+ * an overlay. Without this the launcher comes back from a game, sees a cache hit
+ * on the rom path, and feeds the hardware JPEG decoder whatever the emulator
+ * left in that memory. */
+void gui_reset_cover_buffers(void)
+{
+    pJPEG_Buffer = NULL;
+    pCover_Buffer = NULL;
+    for (int i = 0; i < MAX_COVERS; i++) {
+        if (cover_cache[i].rom_path)
+            free(cover_cache[i].rom_path);
+        cover_cache[i].rom_path = NULL;
+        cover_cache[i].buffer = NULL;
+    }
+}
+
 static uint8_t *get_coverfile(char *rom_path)
 {
     static int next_cache_index = 0;
@@ -798,20 +832,27 @@ static uint8_t *get_coverfile(char *rom_path)
     long size = ftell(file);
     fseek(file, 0, SEEK_SET);
 
-    if (size > COVER_SIZE) {
-        // file too big, ignore it
+    if (size <= 0 || size > COVER_SIZE || cover_cache[next_cache_index].buffer == NULL) {
+        // File too big, empty, or the bump pool had nothing left: ignore it
         fclose(file);
         free (coverpath);
         return NULL;
     }
 
-    fread(cover_cache[next_cache_index].buffer, size, 1, file);
+    size_t got = fread(cover_cache[next_cache_index].buffer, 1, (size_t)size, file);
     fclose(file);
     free(coverpath);
 
     // If a previous file was cached, free text memory
     if (cover_cache[next_cache_index].rom_path) {
         free(cover_cache[next_cache_index].rom_path);
+        cover_cache[next_cache_index].rom_path = NULL;
+    }
+
+    if (got != (size_t)size) {
+        // Short read: the slot now holds a truncated image. Leave rom_path NULL
+        // so the slot is dead and cover_data_size() refuses to decode from it.
+        return NULL;
     }
 
     cover_cache[next_cache_index].rom_path = strdup(rom_path);
@@ -820,6 +861,34 @@ static uint8_t *get_coverfile(char *rom_path)
     next_cache_index = (next_cache_index + 1) % MAX_COVERS;
 
     return cover_cache[current_cache_index].buffer;
+}
+
+/* Decode file's cover into pCover_Buffer. Returns false when nothing was drawn.
+ *
+ * A missing cache entry means the buffer was dropped (a game ran, the bump pool
+ * was rewound) — leave img_state alone so the next draw re-reads it from the SD
+ * card. A decoder rejection means the image itself is unusable, so stop
+ * retrying it. */
+static bool cover_decode(retro_emulator_file_t *file, uint32_t *width, uint32_t *height, uint8_t luma_alpha)
+{
+    uint32_t size = cover_data_size(file->img_address);
+    bool ok = (size != 0) && (pCover_Buffer != NULL) &&
+              JPEG_DecodeToBuffer((uint32_t)(file->img_address), size, (uint32_t)pCover_Buffer,
+                                  width, height, luma_alpha) == 0;
+    if (ok)
+        return true;
+
+    if (size != 0)
+        file->img_state = IMG_STATE_NO_COVER; /* the image itself is unusable */
+
+    /* Hand the caller a blank, in-bounds cover rather than whatever the last
+     * decode left behind — the width/height the decoder reports on failure are
+     * not meaningful and the callers blit straight from pCover_Buffer. */
+    *width = NOCOVER_WIDTH;
+    *height = NOCOVER_HEIGHT;
+    if (pCover_Buffer != NULL)
+        memset(pCover_Buffer, 0, COVER_16BITS_SIZE);
+    return false;
 }
 
 static bool cover_slot_active(void)
@@ -949,7 +1018,9 @@ static bool gui_get_cover_size(retro_emulator_file_t *file, uint32_t *cov_width,
 
     if (file->img_state == IMG_STATE_COVER)
     {
-        if (JPEG_DecodeGetSize((uint32_t)(file->img_address), &jpeg_cov_width, &jpeg_cov_height) == 0)
+        uint32_t cov_size = cover_data_size(file->img_address);
+        if (cov_size != 0 &&
+            JPEG_DecodeGetSize((uint32_t)(file->img_address), cov_size, &jpeg_cov_width, &jpeg_cov_height) == 0)
         {
             /* ★ tab: layout always sees the fixed slot, not the native size */
             if (cover_slot_active())
@@ -992,7 +1063,7 @@ void gui_draw_coverlight_h(retro_emulator_file_t *file, int cover_position)
 
     if (file->img_state == IMG_STATE_COVER)
     {
-        JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &cover_width, &cover_height, cover_light[cover_position + 2]);
+        cover_decode(file, &cover_width, &cover_height, cover_light[cover_position + 2]);
         cover_slot_apply(&cover_width, &cover_height);
         if (nocover_width > cover_width)
             nocover_width = cover_width;
@@ -1139,7 +1210,7 @@ void gui_draw_coverlight_v(retro_emulator_file_t *file, int cover_position)
 
     if (file->img_state == IMG_STATE_COVER)
     {
-        JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &cover_width, &cover_height, cover_light3[-cover_position]);
+        cover_decode(file, &cover_width, &cover_height, cover_light3[-cover_position]);
         cover_slot_apply(&cover_width, &cover_height);
         if (nocover_width > cover_width)
             nocover_width = cover_width;
@@ -1335,7 +1406,7 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
         else
         {
             //draw the cover cenver
-            JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_decode(file, &jpeg_cover_width, &jpeg_cover_height, 255);
             cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             odroid_display_write_rect(start_xpos + p_width1 + p_width2 + 11, cover_top, jpeg_cover_width, jpeg_cover_height, jpeg_cover_width, pCover_Buffer);
             //draw the cover shadow
@@ -1371,7 +1442,7 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
         }
         else
         {
-            JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_decode(file, &jpeg_cover_width, &jpeg_cover_height, 255);
             cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             for (int y = 0; y < p_height2; y++)
                 for (int x = 0; x < p_width2; x++)
@@ -1407,7 +1478,7 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
         }
         else
         {
-            JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_decode(file, &jpeg_cover_width, &jpeg_cover_height, 255);
             cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             for (int y = 0; y < p_height2; y++)
                 for (int x = 0; x < p_width2; x++)
@@ -1437,7 +1508,7 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
         }
         if (file->img_state == IMG_STATE_COVER)
         {
-            JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_decode(file, &jpeg_cover_width, &jpeg_cover_height, 255);
             cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             for (int y = 0; y < p_height1; y++)
                 for (int x = 0; x < p_width1; x++)
@@ -1467,7 +1538,7 @@ void gui_draw_coverflow_h(tab_t *tab) //------------
         }
         if (file->img_state == IMG_STATE_COVER)
         {
-            JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_decode(file, &jpeg_cover_width, &jpeg_cover_height, 255);
             cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             for (int y = 0; y < p_height1; y++)
                 for (int x = 0; x < p_width1; x++)
@@ -1588,7 +1659,7 @@ void gui_draw_coverflow_v(tab_t *tab, int start_posx) // ||||||||
             draw_centered_local_text_line(start_ypos + p_height + 16 + (cover_height - font_height) / 2, gui_no_cover_text_for_item(item), start_posx + 3, start_posx + 3 + cover_width, get_darken_pixel(curr_colors->main_c, 80), curr_colors->bg_c);
         else
         {
-            JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+            cover_decode(file, &jpeg_cover_width, &jpeg_cover_height, 255);
             cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
             odroid_display_write_rect(start_posx + 3 + (cover_width - jpeg_cover_width) / 2, start_ypos + p_height + 16 + (cover_height - jpeg_cover_height) / 2, jpeg_cover_width, jpeg_cover_height, jpeg_cover_width, pCover_Buffer);
         };
@@ -1617,7 +1688,7 @@ void gui_draw_coverflow_v(tab_t *tab, int start_posx) // ||||||||
             else
             {
                 //draw the cover
-                JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+                cover_decode(file, &jpeg_cover_width, &jpeg_cover_height, 255);
                 cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
                 for (int y = 0; y < p_height; y++)
                     for (int x = 0; x < p_width1; x++)
@@ -1651,7 +1722,7 @@ void gui_draw_coverflow_v(tab_t *tab, int start_posx) // ||||||||
                 else
                 {
                     //draw the cover
-                    JPEG_DecodeToBuffer((uint32_t)(file->img_address), (uint32_t)pCover_Buffer, &jpeg_cover_width, &jpeg_cover_height, 255);
+                    cover_decode(file, &jpeg_cover_width, &jpeg_cover_height, 255);
                     cover_slot_apply(&jpeg_cover_width, &jpeg_cover_height);
 
                     for (int y = 0; y < p_height; y++)
@@ -1664,6 +1735,10 @@ void gui_draw_coverflow_v(tab_t *tab, int start_posx) // ||||||||
     }
     gui_draw_simple_list(start_posx + cover_width + 12, tab);
 }
+
+#else /* COVERFLOW == 0: no covers, nothing taken from the bump pool */
+
+void gui_reset_cover_buffers(void) { }
 
 #endif
 

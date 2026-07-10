@@ -1241,6 +1241,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
     gw_fs_relpath_prefix = NULL;
     // some pointers were freed, set them to null
     rg_reset_logo_buffers();
+    gui_reset_cover_buffers();
 
     // Refresh watchdog here in case previous actions did not refresh it
     wdog_refresh();
@@ -1450,6 +1451,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
     // some pointers were freed, set them to null
     rg_reset_logo_buffers();
 #endif
+    gui_reset_cover_buffers();
 }
 
 void emulators_init()

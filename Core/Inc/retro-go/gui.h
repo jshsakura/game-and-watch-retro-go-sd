@@ -82,6 +82,11 @@ tab_t *gui_add_tab(const char *name, int16_t logo_idx, int16_t header_idx, void 
 tab_t *gui_get_tab(int index);
 tab_t *gui_get_current_tab();
 tab_t *gui_set_current_tab(int index);
+/* Drop every cover buffer taken from the ram_malloc bump pool. Call whenever
+ * that pool is rewound (emulator_start), exactly as rg_reset_logo_buffers() is:
+ * the pointers survive the rewind but the memory behind them does not. */
+void gui_reset_cover_buffers(void);
+
 void gui_init_tab(tab_t *tab);
 void gui_init_colors(void);
 void gui_apply_colors_to_overlay_clut(void);
