@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "hw_jpeg_decoder.h"
 #include "main.h"
@@ -33,6 +34,15 @@ static uint32_t FrameBufferMode = 0;
 /* Bypass transfer ? */
 static uint32_t disable_transfer = 0;
 
+/* A malformed or truncated image must not take the console down with it, and a
+ * decoder that never reaches EOI must not spin forever. HAL only honours its
+ * timeout when it is not HAL_MAX_DELAY; the hardware clears a 320x240 frame in
+ * a couple of milliseconds, so this is orders of magnitude of slack. */
+#define JPEG_DECODE_TIMEOUT_MS 200
+
+/* Set when the image is rejected before any of it reaches the output buffer. */
+static uint32_t decode_rejected = 0;
+
 static void COPY_JpegOutInit();
 static void COPY_JpegOut();
 
@@ -64,25 +74,46 @@ uint32_t JPEG_DecodeToBufferInit(uint32_t JPEG_Buffer, uint32_t JPEG_Buffer_Size
     return JPEG_DecodeInit(JPEG_Buffer, JPEG_Buffer_Size);
 }
 
-uint32_t JPEG_DecodeGetSize(uint32_t SrcAddress, uint32_t *width, uint32_t *height)
+static uint32_t JPEG_Run(uint32_t SrcAddress, uint32_t SrcSize)
+{
+    if (SrcAddress == 0 || SrcSize == 0)
+        return 1;
+
+    decode_rejected = 0;
+    memset(&JPEG_info, 0, sizeof(JPEG_info));
+
+    HAL_StatusTypeDef st = HAL_JPEG_Decode(&JPEG_Handle, (uint8_t *)SrcAddress, SrcSize,
+                                           (uint8_t *)JPEGBufferAddress, JPEGBufferSize,
+                                           JPEG_DECODE_TIMEOUT_MS);
+    if (st != HAL_OK || decode_rejected)
+    {
+        /* A rejected image left the peripheral paused mid-frame; drop it so the
+         * next decode starts from a clean state. */
+        HAL_JPEG_Abort(&JPEG_Handle);
+        return 1;
+    }
+    return 0;
+}
+
+uint32_t JPEG_DecodeGetSize(uint32_t SrcAddress, uint32_t SrcSize, uint32_t *width, uint32_t *height)
 {
     uint32_t ret;
     disable_transfer = 1;
 
-    ret = HAL_JPEG_Decode(&JPEG_Handle, (uint8_t *)SrcAddress, JPEGBufferSize, (uint8_t *)JPEGBufferAddress, JPEGBufferSize, HAL_MAX_DELAY);
+    ret = JPEG_Run(SrcAddress, SrcSize);
 
     *width = JPEG_info.ImageWidth;
     *height = JPEG_info.ImageHeight;
     return ret;
 }
 
-uint32_t JPEG_DecodeToBuffer(uint32_t SrcAddress, uint32_t DestAddress, uint32_t *width, uint32_t *height, uint8_t luma_alpha)
+uint32_t JPEG_DecodeToBuffer(uint32_t SrcAddress, uint32_t SrcSize, uint32_t DestAddress, uint32_t *width, uint32_t *height, uint8_t luma_alpha)
 {
     uint32_t ret;
     ForegroundAlpha = luma_alpha;
-    
+
     disable_transfer = 0;
-    ret = JPEG_DecodeToFrame(SrcAddress, DestAddress, 0, 0, luma_alpha);
+    ret = JPEG_DecodeToFrame(SrcAddress, SrcSize, DestAddress, 0, 0, luma_alpha);
 
     *width = JPEG_info.ImageWidth;
     *height = JPEG_info.ImageHeight;
@@ -90,7 +121,7 @@ uint32_t JPEG_DecodeToBuffer(uint32_t SrcAddress, uint32_t DestAddress, uint32_t
     return ret;
 }
 
-uint32_t JPEG_DecodeToFrame(uint32_t SrcAddress, uint32_t DestAddress, uint16_t x, uint16_t y, uint8_t luma_alpha)
+uint32_t JPEG_DecodeToFrame(uint32_t SrcAddress, uint32_t SrcSize, uint32_t DestAddress, uint16_t x, uint16_t y, uint8_t luma_alpha)
 {
 
     FrameBufferAddress = DestAddress;
@@ -100,9 +131,7 @@ uint32_t JPEG_DecodeToFrame(uint32_t SrcAddress, uint32_t DestAddress, uint16_t 
     xPos = x;
     yPos = y;
 
-    // replace src size by JPEG_Buffer_Size...
-    // deliver wrong source size to reduce the number of input parameter
-    return HAL_JPEG_Decode(&JPEG_Handle, (uint8_t *)SrcAddress, JPEGBufferSize, (uint8_t *)JPEGBufferAddress, JPEGBufferSize, HAL_MAX_DELAY);
+    return JPEG_Run(SrcAddress, SrcSize);
 }
 
 void HAL_JPEG_DataReadyCallback(JPEG_HandleTypeDef *hJPEG, uint8_t *pDataOut, uint32_t OutDataLength)
@@ -111,14 +140,14 @@ void HAL_JPEG_DataReadyCallback(JPEG_HandleTypeDef *hJPEG, uint8_t *pDataOut, ui
 
 void HAL_JPEG_ErrorCallback(JPEG_HandleTypeDef *hJPEG)
 {
-    printf("JPEG error\n");
-    assert(0);
-    Error_Handler();
+    /* A bad cover or video frame is not a reason to kill the console. Flag it;
+     * HAL_JPEG_Decode returns non-OK and the caller falls back to no image. */
+    decode_rejected = 1;
 }
 
 void HAL_JPEG_DecodeCpltCallback(JPEG_HandleTypeDef *hJPEG)
 {
-    if (disable_transfer == 0)
+    if (disable_transfer == 0 && decode_rejected == 0)
         COPY_JpegOut();
 
 }
@@ -126,7 +155,11 @@ void HAL_JPEG_DecodeCpltCallback(JPEG_HandleTypeDef *hJPEG)
 void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pInfo)
 {
     if (HAL_OK != HAL_JPEG_GetInfo(hJPEG, &JPEG_info))
-        assert(0);
+    {
+        decode_rejected = 1;
+        HAL_JPEG_Pause(hJPEG, JPEG_PAUSE_RESUME_INPUT_OUTPUT);
+        return;
+    }
 
     uint32_t ImgSize = JPEG_info.ImageWidth * JPEG_info.ImageHeight;
 
@@ -147,17 +180,26 @@ void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pIn
         ImgSize = ImgSize * 3;
         //printf("JPEG %lux%lu 4:4:4\n", JPEG_info.ImageWidth, JPEG_info.ImageHeight);
     }
-    
+
     if (ImgSize > JPEGBufferSize)
     {
+        /* Headers are parsed before any MCU is written out, so pausing here
+         * keeps an oversized image from ever touching the output buffer. */
         printf("JPEG %lux%lu TOO LARGE:%lu > %lu \n", JPEG_info.ImageWidth, JPEG_info.ImageHeight, ImgSize, JPEGBufferSize);
-        assert(0);
+        decode_rejected = 1;
+        HAL_JPEG_Pause(hJPEG, JPEG_PAUSE_RESUME_INPUT_OUTPUT);
     }
 
 }
 
 void HAL_JPEG_GetDataCallback(JPEG_HandleTypeDef *hJPEG, uint32_t NbDecodedData)
 {
+    /* The whole image was handed to HAL up front, so being asked for more means
+     * the stream ended early. Report "no more input" — leaving InDataLength as
+     * it was would make HAL rewind JpegInCount to 0 and replay the buffer for
+     * ever. */
+    decode_rejected = 1;
+    HAL_JPEG_ConfigInputBuffer(hJPEG, NULL, 0);
 }
 
 static uint32_t cssMode = DMA2D_CSS_420, inputLineOffset = 0;
