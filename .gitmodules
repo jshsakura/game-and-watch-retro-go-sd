@@ -28,8 +28,8 @@
 	url = https://github.com/sylverb/tgbdual-go.git
 [submodule "zelda3"]
 	path = external/zelda3
-	url = https://github.com/sylverb/zelda3.git
-	branch = filesystem
+	url = https://github.com/jshsakura/zelda3.git
+	branch = ko-dialogue
 [submodule "smw"]
 	path = external/smw
 	url = https://github.com/jshsakura/smw.git
