@@ -10,11 +10,19 @@ typedef struct
 
 /* Full-colour console icon for the launcher header, stored 4bpp + a 16-entry
  * RGB565 palette to keep internal flash small. Palette index 0 is transparent
- * (skipped at blit time). data is flat 4bpp, 2 px/byte, even px = high nibble. */
+ * (skipped at blit time). data is flat 4bpp, 2 px/byte, even px = high nibble.
+ *
+ * Only the opaque bounding box is stored: the generator centres every icon in a
+ * uniform width x height footprint, and nearly half of that footprint was
+ * transparent padding the blit skipped anyway. `bw` x `bh` is what `data` holds,
+ * sitting at (ox, oy) inside the footprint. Lay out with width/height, blit with
+ * bw/bh at the offset. */
 typedef struct
 {
-    uint16_t width;
+    uint16_t width;   /* nominal footprint, for layout */
     uint16_t height;
+    uint8_t  ox, oy;  /* top-left of the stored bitmap within that footprint */
+    uint8_t  bw, bh;  /* size of the stored bitmap */
     const uint16_t *pal;
     const uint8_t  *data;
 } color_icon_t;

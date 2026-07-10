@@ -93,12 +93,22 @@ def render(d, name):
         pal.append(0)
     qpx, apx = q.load(), a.load()
     idx = [0 if apx[x, y] < 96 else qpx[x, y] + 1 for y in range(h) for x in range(w)]
+
+    # Store only the opaque bounding box. Index 0 is transparent and the blit
+    # skips it, so the centring padding above costs flash and buys nothing; the
+    # firmware re-centres with (ox, oy) inside the w x h footprint.
+    xs = [x for y in range(h) for x in range(w) if idx[y * w + x]]
+    ys = [y for y in range(h) for x in range(w) if idx[y * w + x]]
+    ox, oy = (min(xs), min(ys)) if xs else (0, 0)
+    bw, bh = (max(xs) - ox + 1, max(ys) - oy + 1) if xs else (w, h)
+    idx = [idx[(oy + y) * w + (ox + x)] for y in range(bh) for x in range(bw)]
+
     data = []
     for i in range(0, len(idx), 2):
         hi = idx[i] & 0xF
         lo = idx[i + 1] & 0xF if i + 1 < len(idx) else 0
         data.append((hi << 4) | lo)
-    return w, h, pal, data, q, a
+    return w, h, ox, oy, bw, bh, pal, data, q, a
 
 
 def main():
@@ -107,14 +117,14 @@ def main():
     chunks, table, prev = [], [], []
     total = 0
     for enum, name in MAP:
-        w, h, pal, data, q, a = render(d, name)
+        w, h, ox, oy, bw, bh, pal, data, q, a = render(d, name)
         var = "cicon_" + name
         chunks.append(f"static const uint16_t {var}_pal[16] = {{{','.join(f'0x{v:04x}' for v in pal)}}};")
         chunks.append(f"static const uint8_t {var}_data[{len(data)}] = {{{','.join(f'0x{v:02x}' for v in data)}}};")
-        chunks.append(f"const color_icon_t {var} = {{ {w}, {h}, {var}_pal, {var}_data }};")
+        chunks.append(f"const color_icon_t {var} = {{ {w}, {h}, {ox}, {oy}, {bw}, {bh}, {var}_pal, {var}_data }};")
         table.append((enum, var))
         total += len(data) + 32
-        print(f"{enum:22s} {name:10s} {w}x{h}")
+        print(f"{enum:22s} {name:10s} {w}x{h} box, {bw}x{bh} stored at +{ox},+{oy}")
         if preview:
             bg = Image.new("RGB", (w, h), (20, 24, 40))
             qq, apx = q.convert("RGB").load(), a.load()

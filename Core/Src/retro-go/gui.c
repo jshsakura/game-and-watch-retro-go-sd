@@ -489,23 +489,24 @@ void gui_draw_navbar()
     }
 }
 
-/* Blit a full-colour RGB565 console icon into the active LCD buffer,
- * skipping transparent (colour-key) pixels. */
+/* Blit a full-colour RGB565 console icon into the active LCD buffer, skipping
+ * transparent (colour-key) pixels. (x, y) is the icon's nominal footprint; the
+ * stored bitmap covers only its opaque bounding box, at (ic->ox, ic->oy). */
 static void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
 {
     uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
-    for (int row = 0; row < ic->height; row++) {
-        int py = y + row;
+    for (int row = 0; row < ic->bh; row++) {
+        int py = y + ic->oy + row;
         if (py < 0 || py >= GW_LCD_HEIGHT)
             continue;
         uint16_t *dst = fb + py * GW_LCD_WIDTH;
-        for (int col = 0; col < ic->width; col++) {
-            int i = row * ic->width + col;
+        for (int col = 0; col < ic->bw; col++) {
+            int i = row * ic->bw + col;
             uint8_t byte = ic->data[i >> 1];
             uint8_t idx = (i & 1) ? (byte & 0x0F) : (byte >> 4);
             if (idx == 0)
                 continue; // transparent
-            int px = x + col;
+            int px = x + ic->ox + col;
             if (px < 0 || px >= GW_LCD_WIDTH)
                 continue;
             dst[px] = ic->pal[idx];

@@ -123,6 +123,31 @@ fi
 /tmp/mtest/test_album      || rc=1
 /tmp/mtest/test_fw_tar     || rc=1
 
+# === colour tab icons: stored bbox must match its array and fit its box ====
+# gui_draw_color_icon() indexes data[] by bw*bh and blits at (ox,oy) inside the
+# width x height footprint. A generator change that desyncs those reads past the
+# end of the array, on a screen nobody looks at twice.
+echo "=== colour icon bbox invariants ==="
+python3 - <<'PYEOF3' || rc=1
+import re, sys
+src = open('Core/Src/retro-go/rg_logos.c').read()
+structs = re.findall(
+    r'const color_icon_t (cicon_\w+) = \{ (\d+), (\d+), (\d+), (\d+), (\d+), (\d+), \w+, (\w+) \};', src)
+if not structs:
+    print("FAIL no cicon_* structs parsed — did the generator format change?"); sys.exit(1)
+bad = 0
+for var, w, h, ox, oy, bw, bh, dname in structs:
+    w, h, ox, oy, bw, bh = map(int, (w, h, ox, oy, bw, bh))
+    m = re.search(r'static const uint8_t %s\[(\d+)\] = ' % dname, src)
+    n = int(m.group(1))
+    if n != (bw * bh + 1) // 2:
+        print(f"FAIL {var}: data[{n}] but bw*bh={bw*bh} needs {(bw*bh+1)//2}"); bad += 1
+    if ox + bw > w or oy + bh > h:
+        print(f"FAIL {var}: bbox {bw}x{bh}+{ox}+{oy} escapes the {w}x{h} footprint"); bad += 1
+print(f"OK  {len(structs)} colour icons: data length and bbox both consistent" if not bad else "")
+sys.exit(1 if bad else 0)
+PYEOF3
+
 # === merge-hygiene guard (red-green) ==================================
 # A merge that interleaves OUR logo additions with upstream's can silently
 # duplicate a RG_LOGO_* enumerator (→ compile error) or a logo blob (→ link
