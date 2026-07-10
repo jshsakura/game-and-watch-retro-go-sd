@@ -263,11 +263,12 @@ void gui_init_tab(tab_t *tab)
     // reuse emulator buffer for JPEG decoder & DMA2 buffering
     // Direct access to DTCM is not allowed for DMA2D :(
     // We use emulator ram.
-    if (pJPEG_Buffer == NULL)
+    if (pJPEG_Buffer == NULL && ram_start != 0)
         pJPEG_Buffer = (uint8_t *)ram_malloc(COVER_420_SIZE);
-    if (pCover_Buffer == NULL)
+    if (pCover_Buffer == NULL && ram_start != 0)
         pCover_Buffer = (uint16_t *)ram_malloc(COVER_16BITS_SIZE);
-    assert(JPEG_DecodeToBufferInit((uint32_t)pJPEG_Buffer, COVER_420_SIZE) == 0);
+    if (pJPEG_Buffer != NULL)
+        assert(JPEG_DecodeToBufferInit((uint32_t)pJPEG_Buffer, COVER_420_SIZE) == 0);
     //printf("JPEG init done\n");
     /* -------------------------- */
 #endif
@@ -753,6 +754,11 @@ static CoverCache cover_cache[MAX_COVERS] = {0};
 
 static void initialize_cache()
 {
+    /* ram_malloc() asserts on ram_start == 0, which is exactly the state
+     * emulator_start() leaves behind when a core fails to load and returns
+     * here. No pool, no covers. */
+    if (ram_start == 0)
+        return;
     for (int i = 0; i < MAX_COVERS; i++) {
         if (!cover_cache[i].buffer) {
             cover_cache[i].buffer = ram_malloc(COVER_SIZE);
@@ -780,20 +786,22 @@ static uint32_t cover_data_size(const uint8_t *addr)
     return 0;
 }
 
-/* The counterpart of rg_reset_logo_buffers(): every pointer below came from the
- * ram_malloc bump pool, which emulator_start() rewinds wholesale before loading
- * an overlay. Without this the launcher comes back from a game, sees a cache hit
- * on the rom path, and feeds the hardware JPEG decoder whatever the emulator
- * left in that memory. */
+/* Invalidate every cached cover. emulator_start() rewinds the ram_malloc bump
+ * pool before it loads an overlay, so any bytes still sitting in these buffers
+ * belong to whatever ran next — a cache hit on the rom path alone would hand
+ * them straight to the hardware JPEG decoder.
+ *
+ * Only the CONTENTS are dropped, never the pointers. emulator_start() also
+ * leaves ram_start == 0, so re-allocating would trip ram_malloc's assert, and a
+ * fresh allocation would start at the pool base — where shared_files, which
+ * nothing resets, still lives. Clearing rom_path is enough: the next draw
+ * re-reads the cover from the SD card into the same slot. */
 void gui_reset_cover_buffers(void)
 {
-    pJPEG_Buffer = NULL;
-    pCover_Buffer = NULL;
     for (int i = 0; i < MAX_COVERS; i++) {
         if (cover_cache[i].rom_path)
             free(cover_cache[i].rom_path);
         cover_cache[i].rom_path = NULL;
-        cover_cache[i].buffer = NULL;
     }
 }
 
