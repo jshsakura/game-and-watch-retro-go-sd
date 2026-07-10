@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <time.h>
 
 #include "main.h"
@@ -285,11 +286,27 @@ void GW_RTC_SnapshotToDisk(void) {
     fclose(f);
 }
 
+/* TEMP diagnostic: append-only, one line per boot, to chase reports of a
+ * restored time that looks off. Delete /data/rtc_diag.txt before each test
+ * so old lines don't get mixed in; safe to remove once the report is closed. */
+#define RTC_DIAG_FILE ODROID_BASE_PATH_SAVES "/rtc_diag.txt"
+static void rtc_diag_log(const char *fmt, ...) {
+    FILE *d = fopen(RTC_DIAG_FILE, "a");
+    if (!d) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(d, fmt, ap);
+    va_end(ap);
+    fclose(d);
+}
+
 /* Boot check: if the backup domain was wiped (full battery drain), restore
  * the clock from the last SD snapshot instead of starting at 2000-01-01.
  * Requires the SD to be mounted. */
 void GW_RTC_RestoreIfLost(void) {
-    if (HAL_RTCEx_BKUPRead(&hrtc, CLOCK_BKP_REG) == CLOCK_BKP_MAGIC) {
+    bool magic_ok = HAL_RTCEx_BKUPRead(&hrtc, CLOCK_BKP_REG) == CLOCK_BKP_MAGIC;
+    rtc_diag_log("restore: magic_ok=%d rtc_now=%ld\n", magic_ok, (long)GW_GetUnixTime());
+    if (magic_ok) {
         return; /* domain intact: the clock is whatever the user set */
     }
 
@@ -304,14 +321,20 @@ void GW_RTC_RestoreIfLost(void) {
                   (magic == CLOCK_BKP_MAGIC);
         fclose(f);
 
+        time_t rtc_now = GW_GetUnixTime();
+        rtc_diag_log("restore: snapshot_ok=%d snapshot_epoch=%lld rtc_now=%ld applied=%d\n",
+                      ok, (long long)epoch, (long)rtc_now, ok && (time_t)epoch > rtc_now);
+
         /* Only move forward: never rewind a clock the user already fixed. */
-        if (ok && (time_t)epoch > GW_GetUnixTime()) {
+        if (ok && (time_t)epoch > rtc_now) {
             time_t t = (time_t)epoch;
             struct tm tm;
             localtime_r(&t, &tm);
             GW_SetUnixTM(&tm);
             printf("rtc: clock restored from SD snapshot\n");
         }
+    } else {
+        rtc_diag_log("restore: no snapshot file\n");
     }
 
     HAL_RTCEx_BKUPWrite(&hrtc, CLOCK_BKP_REG, CLOCK_BKP_MAGIC);
