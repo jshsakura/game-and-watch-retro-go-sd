@@ -31,8 +31,8 @@
 	branch = filesystem
 [submodule "smw"]
 	path = external/smw
-	url = https://github.com/sylverb/smw.git
-	branch = filesystem
+	url = https://github.com/jshsakura/smw.git
+	branch = kr-msg-font
 [submodule "o2em-go"]
 	path = external/o2em-go
 	url = https://github.com/jshsakura/o2em-go.git
