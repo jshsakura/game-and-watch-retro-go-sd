@@ -710,13 +710,6 @@ void retro_loop()
             if (now_s != alarm_last_s) {
                 alarm_last_s = now_s;
                 if (rg_alarm_cache_due()) {
-                    /* TEMP diagnostic: see [[rtc_diag.txt]] note at boot above */
-                    FILE *d = fopen(ODROID_BASE_PATH_SAVES "/rtc_diag.txt", "a");
-                    if (d) {
-                        fprintf(d, "launcher: due epoch=%ld now=%ld\n",
-                                (long)rg_alarm_cache_next_epoch(), (long)GW_GetUnixTime());
-                        fclose(d);
-                    }
                     rg_clock_show();
                     if (!rg_emulator_validate_browse_path_for_tab(tab))
                         gui_refresh_tab(tab);
@@ -1109,11 +1102,12 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     rg_alarm_cache_load_backup();
     /* TEMP diagnostic: chasing a report of the boot-restored clock coinciding
      * with an alarm and ringing right away. Delete /data/rtc_diag.txt before
-     * each test; safe to remove once the report is closed. */
+     * each test; safe to remove once the report is closed. e=cached epoch,
+     * t=GW_GetUnixTime() now, d=due, a=RTC alarm flag, w=wakeup-button flag. */
     {
         FILE *d = fopen(ODROID_BASE_PATH_SAVES "/rtc_diag.txt", "a");
         if (d) {
-            fprintf(d, "boot: loaded_epoch=%ld now=%ld due=%d alraf=%d wkup=%d\n",
+            fprintf(d, "B1 e=%ld t=%ld d=%d a=%d w=%d\n",
                     (long)rg_alarm_cache_next_epoch(), (long)GW_GetUnixTime(),
                     rg_alarm_cache_due(), boot_alarm_flag, boot_wkup_flag);
             fclose(d);
@@ -1136,10 +1130,11 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
      * every state (launcher, in-game, music/video) and arms the deep-sleep RTC
      * alarm on the next sleep. Cheap (one small cfg parse). */
     rg_alarm_cache_refresh();
+    /* B2: e/t/d as above, w=alarm_wake decided above */
     {
         FILE *d = fopen(ODROID_BASE_PATH_SAVES "/rtc_diag.txt", "a");
         if (d) {
-            fprintf(d, "boot: refreshed_epoch=%ld now=%ld due=%d alarm_wake=%d\n",
+            fprintf(d, "B2 e=%ld t=%ld d=%d w=%d\n",
                     (long)rg_alarm_cache_next_epoch(), (long)GW_GetUnixTime(),
                     rg_alarm_cache_due(), alarm_wake);
             fclose(d);

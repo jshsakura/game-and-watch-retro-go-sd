@@ -288,7 +288,10 @@ void GW_RTC_SnapshotToDisk(void) {
 
 /* TEMP diagnostic: append-only, one line per boot, to chase reports of a
  * restored time that looks off. Delete /data/rtc_diag.txt before each test
- * so old lines don't get mixed in; safe to remove once the report is closed. */
+ * so old lines don't get mixed in; safe to remove once the report is closed.
+ * Kept terse (flash is tight): m=magic_ok, t=GW_GetUnixTime() now,
+ * s=snapshot_ok, e=snapshot epoch, a=applied. The B1/B2 lines logged from
+ * rg_main.c's boot path use the same e/t/d convention (d=alarm due). */
 #define RTC_DIAG_FILE ODROID_BASE_PATH_SAVES "/rtc_diag.txt"
 static void rtc_diag_log(const char *fmt, ...) {
     FILE *d = fopen(RTC_DIAG_FILE, "a");
@@ -305,7 +308,7 @@ static void rtc_diag_log(const char *fmt, ...) {
  * Requires the SD to be mounted. */
 void GW_RTC_RestoreIfLost(void) {
     bool magic_ok = HAL_RTCEx_BKUPRead(&hrtc, CLOCK_BKP_REG) == CLOCK_BKP_MAGIC;
-    rtc_diag_log("restore: magic_ok=%d rtc_now=%ld\n", magic_ok, (long)GW_GetUnixTime());
+    rtc_diag_log("R m=%d t=%ld\n", magic_ok, (long)GW_GetUnixTime());
     if (magic_ok) {
         return; /* domain intact: the clock is whatever the user set */
     }
@@ -322,7 +325,7 @@ void GW_RTC_RestoreIfLost(void) {
         fclose(f);
 
         time_t rtc_now = GW_GetUnixTime();
-        rtc_diag_log("restore: snapshot_ok=%d snapshot_epoch=%lld rtc_now=%ld applied=%d\n",
+        rtc_diag_log("R s=%d e=%lld t=%ld a=%d\n",
                       ok, (long long)epoch, (long)rtc_now, ok && (time_t)epoch > rtc_now);
 
         /* Only move forward: never rewind a clock the user already fixed. */
@@ -334,7 +337,7 @@ void GW_RTC_RestoreIfLost(void) {
             printf("rtc: clock restored from SD snapshot\n");
         }
     } else {
-        rtc_diag_log("restore: no snapshot file\n");
+        rtc_diag_log("R nofile\n");
     }
 
     HAL_RTCEx_BKUPWrite(&hrtc, CLOCK_BKP_REG, CLOCK_BKP_MAGIC);
