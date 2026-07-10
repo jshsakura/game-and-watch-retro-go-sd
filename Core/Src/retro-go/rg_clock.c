@@ -2336,6 +2336,7 @@ void rg_clock_show(void)
     bool dirty = true;
     clock_backlight_t bl_state = CLOCK_BL_FULL;   /* idle backlight state: full/dim/off */
     uint32_t anim_freeze_tick = 0;   /* HAL tick background animation was frozen at (DIM/OFF power-save) */
+    bool was_charging = false;   /* unplug edge: restart the idle countdown instead of snapping to dim/off */
 
     clock_config_load();
     lcd_backlight_set(odroid_display_get_backlight_raw());   /* apply the system brightness right on entry */
@@ -2390,6 +2391,14 @@ void rg_clock_show(void)
          * charging (see clock_should_dim's priority order). */
         bq24072_state_t chg_state = bq24072_get_state();
         bool charging = (chg_state == BQ24072_STATE_CHARGING) || (chg_state == BQ24072_STATE_FULL);
+        /* Unplug edge: idle_ms below is measured since the last KEY press, which
+         * may have been many minutes ago (the charging exception was masking it
+         * at FULL the whole time) — without this, the backlight would snap
+         * straight to DIM/OFF the instant the cable comes out. Treat the unplug
+         * itself as activity so the normal CLOCK_DIM_IDLE_MS countdown restarts
+         * from here instead. */
+        if (was_charging && !charging) last_input = now;
+        was_charging = charging;
         int night_start_min = (s_night_start == NIGHT_OFF) ? -1 : s_night_start * 60;
         int night_end_min   = s_night_end * 60;
         clock_backlight_t want_bl = clock_should_dim(mode, ringing, s_autodim,
