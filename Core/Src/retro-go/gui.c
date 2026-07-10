@@ -51,7 +51,13 @@ static listbox_item_t *global_items = NULL;
 
 #define NOCOVER_HEIGHT ((uint32_t)(68))
 #define NOCOVER_WIDTH ((uint32_t)(68))
-#define COVER_420_SIZE ((uint32_t)(COVER_MAX_HEIGHT * COVER_MAX_WIDTH * 3 / 2))
+
+/* The JPEG peripheral emits whole MCUs, so a 4:2:0 image lands in the output
+ * buffer padded up to a 16x16 grid — 186x100 occupies 192x112, not 186x100.
+ * Sizing this from the unpadded dimensions overran the buffer by 4,356 bytes on
+ * the widest cover the converter produces. */
+#define MCU_ROUND(v, n) (((uint32_t)(v) + (n) - 1) / (n) * (n))
+#define COVER_420_SIZE ((uint32_t)(MCU_ROUND(COVER_MAX_WIDTH, 16) * MCU_ROUND(COVER_MAX_HEIGHT, 16) * 3 / 2))
 #define COVER_16BITS_SIZE ((uint32_t)(COVER_MAX_HEIGHT * COVER_MAX_WIDTH * 2))
 
 static uint8_t *pJPEG_Buffer = NULL;

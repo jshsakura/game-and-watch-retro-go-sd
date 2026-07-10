@@ -30,11 +30,16 @@ jobs:
   host-tests:
     # Host unit tests (tests/run.sh): clock alarm/cfg/editor state machines,
     # favorites file ops, rg_storage compiled BOTH ways (FatFs + FrogFS stubs),
-    # GIF decode, merge-hygiene logo guard. Cheap, no toolchain: plain gcc.
+    # GIF decode, firmware-update tar extractor, merge-hygiene logo guard.
+    # Cheap, no toolchain: plain gcc.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+      - name: Fetch the firmware_update submodule
+        # tests/test_fw_tar.c compiles the real tar.c against the real FatFs from
+        # this submodule. Only this one — pulling them all costs minutes here.
+        run: git submodule update --init --depth 1 external/firmware_update
       - name: Install Pillow (GIF fixture generator)
         run: pip3 install --quiet Pillow
       - name: Run host test suite

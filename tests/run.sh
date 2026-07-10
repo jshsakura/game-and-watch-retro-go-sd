@@ -76,6 +76,11 @@ $CC -O2 -Wall -Wextra -std=gnu11 -Itests/album_stubs -ICore/Inc/retro-go \
 # the firmware's ffconf.h, and the diff below proves it.
 FF_SRC="external/firmware_update/Core/Src/porting/lib/FatFs"
 FF_COPY="/tmp/mtest/fw_fatfs"
+if [ ! -f "$FF_SRC/ff.c" ]; then
+    echo "FAIL $FF_SRC is missing."
+    echo "     run: git submodule update --init --depth 1 external/firmware_update"
+    exit 1
+fi
 rm -rf "$FF_COPY" && mkdir -p "$FF_COPY"
 cp "$FF_SRC"/ff.c "$FF_SRC"/ff.h "$FF_SRC"/ffconf.h "$FF_SRC"/ffunicode.c "$FF_SRC"/diskio.h "$FF_COPY"/
 sed -i 's/^#define FF_USE_MKFS\t*0/#define FF_USE_MKFS\t1/' "$FF_COPY/ffconf.h"

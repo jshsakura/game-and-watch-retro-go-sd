@@ -40,6 +40,9 @@ static uint32_t disable_transfer = 0;
  * a couple of milliseconds, so this is orders of magnitude of slack. */
 #define JPEG_DECODE_TIMEOUT_MS 200
 
+/* Round up to the MCU grid the peripheral writes in. */
+#define MCU_ROUND(v, n) (((uint32_t)(v) + (n) - 1) / (n) * (n))
+
 /* Set when the image is rejected before any of it reaches the output buffer. */
 static uint32_t decode_rejected = 0;
 
@@ -161,24 +164,23 @@ void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pIn
         return;
     }
 
-    uint32_t ImgSize = JPEG_info.ImageWidth * JPEG_info.ImageHeight;
+    /* The peripheral writes whole MCUs, so the output is padded up to the MCU
+     * grid: 16x16 for 4:2:0, 16x8 for 4:2:2, 8x8 for 4:4:4. Measuring the
+     * unpadded image understates what actually lands in the buffer — a 186x100
+     * 4:2:0 cover occupies 192x112. */
+    uint32_t ImgSize;
 
     if (JPEG_info.ChromaSubsampling == JPEG_420_SUBSAMPLING)
     {
-        ImgSize = ImgSize * 3 / 2;
-        //printf("JPEG %lux%lu 4:2:0\n", JPEG_info.ImageWidth, JPEG_info.ImageHeight);
+        ImgSize = MCU_ROUND(JPEG_info.ImageWidth, 16) * MCU_ROUND(JPEG_info.ImageHeight, 16) * 3 / 2;
     }
-
-    if (JPEG_info.ChromaSubsampling == JPEG_422_SUBSAMPLING)
+    else if (JPEG_info.ChromaSubsampling == JPEG_422_SUBSAMPLING)
     {
-        ImgSize = ImgSize * 2;
-        //printf("JPEG %lux%lu 4:2:2\n", JPEG_info.ImageWidth, JPEG_info.ImageHeight);
+        ImgSize = MCU_ROUND(JPEG_info.ImageWidth, 16) * MCU_ROUND(JPEG_info.ImageHeight, 8) * 2;
     }
-
-    if (JPEG_info.ChromaSubsampling == JPEG_444_SUBSAMPLING)
+    else /* JPEG_444_SUBSAMPLING, or grayscale which the blit path cannot use */
     {
-        ImgSize = ImgSize * 3;
-        //printf("JPEG %lux%lu 4:4:4\n", JPEG_info.ImageWidth, JPEG_info.ImageHeight);
+        ImgSize = MCU_ROUND(JPEG_info.ImageWidth, 8) * MCU_ROUND(JPEG_info.ImageHeight, 8) * 3;
     }
 
     if (ImgSize > JPEGBufferSize)
