@@ -904,7 +904,11 @@ static uint32_t s_flash_until = 0;
 #define ALARM_RING_MS 60000u     /* auto-dismiss a ringing alarm after 60s if untouched (matches rg_alarm.c RING_MS) */
 #define CLOCK_UI_HIDE_MS 8000u   /* idle time before the mode pager + hint fade away */
 #define CLOCK_DIM_IDLE_MS 15000u /* idle time on the clock face before the backlight auto-dims/turns off */
-#define CLOCK_DIM_FLOOR   16u    /* never dim below this raw level, even off a very low user brightness */
+/* backlightLevels[0] in odroid_display.c — the darkest level a user can pick
+ * manually. Dimming must never go below it: the panel is effectively unlit
+ * under that raw value, so a dim state darker than the device's own minimum
+ * setting reads as "screen is off" rather than "a bit dimmer". */
+#define CLOCK_DIM_FLOOR   128u
 static uint32_t s_snooze_tick = 0;   /* HAL tick when a snoozed alarm re-rings */
 
 /* Idle backlight decision — pure logic, so it is unit-testable
@@ -928,11 +932,13 @@ static bool clock_in_night_window(int minute_of_day, int start_min, int end_min)
     return since_start < span;
 }
 
-/* Half of the user's current configured brightness, clamped so dimming alone
- * never goes fully dark (lcd_backlight_set takes a raw 0-255 DAC level). */
+/* Halfway between the user's current brightness and CLOCK_DIM_FLOOR (not
+ * halfway to 0 — the device's own minimum is already 128, and users pick
+ * that low end on purpose, so dimming must scale off it, not below it).
+ * lcd_backlight_set takes a raw 0-255 DAC level. */
 static uint8_t clock_dim_level(uint8_t user_raw)
 {
-    uint8_t half = (uint8_t)(user_raw / 2);
+    uint8_t half = (uint8_t)(((uint16_t)user_raw + CLOCK_DIM_FLOOR) / 2);
     return half < CLOCK_DIM_FLOOR ? CLOCK_DIM_FLOOR : half;
 }
 
