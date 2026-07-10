@@ -1,0 +1,9 @@
+FF_SRC=external/firmware_update/Core/Src/porting/lib/FatFs
+FF_COPY=/tmp/mtest/fw_fatfs
+mkdir -p /tmp/mtest && rm -rf $FF_COPY && mkdir -p $FF_COPY
+cp $FF_SRC/ff.c $FF_SRC/ff.h $FF_SRC/ffconf.h $FF_SRC/ffunicode.c $FF_SRC/diskio.h $FF_COPY/
+sed -i 's/^#define FF_USE_MKFS\t*0/#define FF_USE_MKFS\t1/' $FF_COPY/ffconf.h
+gcc -O1 -g -std=gnu11 -w -fsanitize=address,undefined -fno-omit-frame-pointer -I$FF_COPY -c $FF_COPY/ff.c -o /tmp/mtest/fw_ff.o
+gcc -O1 -g -std=gnu11 -w -fsanitize=address,undefined -fno-omit-frame-pointer -I$FF_COPY -c $FF_COPY/ffunicode.c -o /tmp/mtest/fw_ffunicode.o
+gcc -O1 -g -std=gnu11 -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer -I$FF_COPY -Itests/fw_tar_stubs -Iexternal/firmware_update/Core/Inc tests/test_fw_tar.c tests/fw_tar_stubs/ram_diskio.c external/firmware_update/Core/Src/tar.c /tmp/mtest/fw_ff.o /tmp/mtest/fw_ffunicode.o -o /tmp/mtest/test_fw_tar
+/tmp/mtest/test_fw_tar

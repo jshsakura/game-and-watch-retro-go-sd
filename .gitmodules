@@ -51,7 +51,8 @@
 	branch = gnw-sd-fast-read
 [submodule "external/firmware_update"]
 	path = external/firmware_update
-	url = https://github.com/sylverb/firmware_update
+	url = https://github.com/jshsakura/firmware_update.git
+	branch = fix/tar-extract-error-handling
 [submodule "external/PokeMini-go"]
 	path = external/PokeMini-go
 	url = https://github.com/sylverb/PokeMini-go.git

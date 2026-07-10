@@ -66,6 +66,31 @@ $CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/storage_stubs -ICore/Inc/re
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/album_stubs -ICore/Inc/retro-go \
     tests/test_album.c tests/album_stubs/album_stub_impl.c Core/Src/retro-go/rg_clock_album.c \
     -o /tmp/mtest/test_album
+
+# === firmware-update tar extractor ====================================
+# The REAL external/firmware_update/Core/Src/tar.c against the REAL FatFs, on a
+# RAM disk, under ASan+UBSan. This is the code that unpacks retro-go_update.bin
+# onto the SD at boot; a silent failure here flashes a truncated image into
+# internal flash. f_mkfs is needed to format the test volume, so the FatFs
+# sources are copied and FF_USE_MKFS is flipped on — every other knob must match
+# the firmware's ffconf.h, and the diff below proves it.
+FF_SRC="external/firmware_update/Core/Src/porting/lib/FatFs"
+FF_COPY="/tmp/mtest/fw_fatfs"
+rm -rf "$FF_COPY" && mkdir -p "$FF_COPY"
+cp "$FF_SRC"/ff.c "$FF_SRC"/ff.h "$FF_SRC"/ffconf.h "$FF_SRC"/ffunicode.c "$FF_SRC"/diskio.h "$FF_COPY"/
+sed -i 's/^#define FF_USE_MKFS\t*0/#define FF_USE_MKFS\t1/' "$FF_COPY/ffconf.h"
+if ! diff -q <(grep -v FF_USE_MKFS "$FF_SRC/ffconf.h") <(grep -v FF_USE_MKFS "$FF_COPY/ffconf.h") >/dev/null; then
+    echo "FAIL test FatFs config drifted from the firmware's beyond FF_USE_MKFS"; rc=1
+fi
+SAN="-fsanitize=address,undefined -fno-omit-frame-pointer"
+# ChaN's FatFs is vendored third-party: build it warning-free, lint only our code.
+$CC -O1 -g -std=gnu11 -w $SAN -I"$FF_COPY" -c "$FF_COPY/ff.c"        -o /tmp/mtest/fw_ff.o
+$CC -O1 -g -std=gnu11 -w $SAN -I"$FF_COPY" -c "$FF_COPY/ffunicode.c" -o /tmp/mtest/fw_ffunicode.o
+$CC -O1 -g -std=gnu11 -Wall -Wextra $SAN \
+    -I"$FF_COPY" -Itests/fw_tar_stubs -Iexternal/firmware_update/Core/Inc \
+    tests/test_fw_tar.c tests/fw_tar_stubs/ram_diskio.c \
+    external/firmware_update/Core/Src/tar.c /tmp/mtest/fw_ff.o /tmp/mtest/fw_ffunicode.o \
+    -o /tmp/mtest/test_fw_tar
 python3 - <<'PYEOF2'
 from PIL import Image, ImageDraw
 frames = []
@@ -96,6 +121,7 @@ fi
 /tmp/mtest/test_storage_sd1 || rc=1
 /tmp/mtest/test_storage_sd0 || rc=1
 /tmp/mtest/test_album      || rc=1
+/tmp/mtest/test_fw_tar     || rc=1
 
 # === merge-hygiene guard (red-green) ==================================
 # A merge that interleaves OUR logo additions with upstream's can silently
