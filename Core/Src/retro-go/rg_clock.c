@@ -2353,8 +2353,13 @@ void rg_clock_show(void)
     if (s_anim == ANIM_GIF) { clock_gif_set_file(s_bgfile);
         if (clock_gif_load()) s_album_used = true; }   /* GIF borrows shared_files -> restore lists on exit */
     if (s_anim == ANIM_PHOTO) {                 /* borrow shared_files, load first photo */
+        /* On failure leave s_anim alone. Every draw and advance path below is
+         * already gated on clock_album_ready(), so the background simply falls
+         * back to the solid theme; zeroing s_anim instead threw the user's
+         * setting away — clock_config_save() writes it — so one empty scan or
+         * SD hiccup silently turned the photo background off for good. It also
+         * hid the settings menu's own " (no photos)" diagnostic. */
         if (clock_album_open()) { s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; }
-        else s_anim = 0;                        /* no photos / no room -> solid fallback */
     }
 #endif
     odroid_input_read_gamepad(&prev);   /* swallow the opening button */
