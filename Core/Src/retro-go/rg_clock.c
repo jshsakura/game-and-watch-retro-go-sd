@@ -1753,6 +1753,7 @@ static bool cb_alarm_sound(odroid_dialog_choice_t *o, odroid_dialog_event_t e, u
 static void clock_alarm_setup(void)
 {
     int sel = 0;
+    bool changed = false;
     for (;;) {
         char lbl[MAX_ALARMS][16], aval[MAX_ALARMS][12];
         char v_add[4] = "", v_sound[AL_VAL] = "", v_dnd[12] = "";
@@ -1776,8 +1777,12 @@ static void clock_alarm_setup(void)
         if (id >= 0 && id < s_alarm_count) {     /* A on an alarm row -> edit its time */
             alarm_t backup = s_alarms[id];
             alarm_edit_result_t res = alarm_edit_view(&s_alarms[id]);
-            if (res == ALARM_EDIT_CANCEL) s_alarms[id] = backup;
-            else if (res == ALARM_EDIT_DELETE) alarm_delete_at(id);
+            if (res == ALARM_EDIT_CANCEL) {
+                s_alarms[id] = backup;
+            } else {
+                changed = true;
+                if (res == ALARM_EDIT_DELETE) alarm_delete_at(id);
+            }
             sel = id;
         } else if (id == AL_ID_ADD && s_alarm_count < MAX_ALARMS) {
             int i = s_alarm_count;
@@ -1785,12 +1790,17 @@ static void clock_alarm_setup(void)
             s_alarm_count++;
             /* cancel/delete on a fresh add = the alarm never existed */
             if (alarm_edit_view(&s_alarms[i]) != ALARM_EDIT_SAVE) alarm_delete_at(i);
+            else changed = true;
             sel = i;
         }
         /* SOUND / DND rows never return true on ENTER, so they never reach here */
     }
     clock_config_save();
-    s_last_fired_min = -1;
+    /* Only re-arm the already-fired-this-minute guard when an alarm's time
+     * actually changed. Resetting it unconditionally on every menu exit meant
+     * just browsing the Alarms menu at an alarm's exact minute (after it had
+     * already rung once) re-triggered the ring on every entry/exit. */
+    if (changed) s_last_fired_min = -1;
 }
 
 /* ---- settings menu (opened with PAUSE/SET = ODROID_INPUT_VOLUME) --------
