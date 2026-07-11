@@ -64,6 +64,19 @@ Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
   frames' idle slack), and the companion encoder VBV-caps per-frame bytes on the
   heaviest scenes (easy scenes stay byte-identical to before).
 
+#### Korean text in the homebrew games
+
+- **Zelda 3 Korean dialogue** — a `ko` entry in the in-game language menu,
+  ported from the ZELDA3_K fan translation (a JP-ROM patch). Glyphs are the
+  patch's full 16×16 cells (up to 11px of ink) rendered variable-width with a
+  1px gap, so syllables come out complete — not the 8px-cropped look of a naive
+  port. Needs a `zelda3_assets.dat` built with `--languages ko`; the dat, the
+  `Zelda 3.bin` overlay and the firmware are a matched set (the update bundle
+  keeps them in sync). Translation data itself is not distributed here.
+- **Super Mario World Korean message boxes** — the level message-box font swaps
+  to Korean through an ExGFX slot, uploaded before and restored after each
+  message so normal level graphics are untouched.
+
 #### Clock (TIME menu → Clock)
 
 - A full-screen clock app benchmarked on the Game & Watch alarm clock, drawn
