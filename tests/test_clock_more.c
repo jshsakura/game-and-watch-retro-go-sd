@@ -513,19 +513,29 @@ static void test_night_settings_rows_and_migration(void)
     reset_cfg_fields();
 }
 
-/* ---- dim level helper: halfway to CLOCK_DIM_FLOOR, never below it -------*/
+/* ---- dim level helper: gentle 1/4-of-headroom drop, never below the floor ---*/
 static void test_dim_level(void)
 {
-    CHECK(clock_dim_level(255) == 191, "halfway from max brightness down to the floor ((255+128)/2 = 191)");
+    /* Drop is 1/4 of the headroom above CLOCK_DIM_FLOOR (128): a little dimmer,
+     * not half-off. 255 -> 255 - (127/4) = 224; 178 -> 178 - (50/4) = 166. */
+    CHECK(clock_dim_level(255) == 224, "max brightness dips gently (255 - 127/4 = 224), stays clearly readable");
     CHECK(clock_dim_level(128) == 128, "already at the lowest odroid backlight level — nothing lower to dim to");
-    CHECK(clock_dim_level(178) == 153, "mid-range user level dims partway toward the floor ((178+128)/2 = 153)");
+    CHECK(clock_dim_level(178) == 166, "mid-range user level dips a little (178 - 50/4 = 166)");
     CHECK(clock_dim_level(0) == CLOCK_DIM_FLOOR,
           "even a hypothetical zero brightness clamps to the floor — dimming never goes darker than the device's own minimum");
-    for (int v = 0; v <= 255; v++)
-        if (clock_dim_level((uint8_t)v) < CLOCK_DIM_FLOOR) {
+    /* The dim result must always sit strictly between the floor and the user's
+     * pick (or exactly the floor when the pick is already at/below it). */
+    for (int v = 0; v <= 255; v++) {
+        uint8_t d = clock_dim_level((uint8_t)v);
+        if (d < CLOCK_DIM_FLOOR) {
             CHECK(0, "clock_dim_level must never return below CLOCK_DIM_FLOOR for any input");
             break;
         }
+        if (v > CLOCK_DIM_FLOOR && d > v) {
+            CHECK(0, "dimming must never brighten past the user's own setting");
+            break;
+        }
+    }
 }
 
 /* ---- alarm ring overlay: forced, legible, in-bounds ----------------------*/
