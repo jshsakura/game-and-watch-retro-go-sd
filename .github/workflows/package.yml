@@ -11,6 +11,14 @@ on:
     branches:
       - main
 
+# One in-flight run per ref: a new push to a branch (or PR) cancels the older,
+# now-superseded run of that same ref. Tag runs publish a release, so they are
+# never cancelled — each ref is its own group, so a branch push and its release
+# tag do not cancel each other either.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   build-test:
     if: github.event_name == 'pull_request'
