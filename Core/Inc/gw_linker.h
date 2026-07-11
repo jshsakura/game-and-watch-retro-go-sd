@@ -179,7 +179,7 @@ extern uint8_t _OVERLAY_WSWAN_BSS_SIZE;
 
 extern void * _MSX_ROM_UNPACK_BUFFER[];
 extern uint8_t _MSX_ROM_UNPACK_BUFFER_SIZE;
-extern uint8_t *_PCE_ROM_UNPACK_BUFFER;
+extern uint8_t _PCE_ROM_UNPACK_BUFFER[];
 extern uint8_t _PCE_ROM_UNPACK_BUFFER_SIZE;
 
 extern void * __RAM_END__[];

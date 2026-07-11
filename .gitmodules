@@ -1,6 +1,7 @@
 [submodule "retro-go-stm32"]
 	path = retro-go-stm32
-	url = https://github.com/jshsakura/retro-go-stm32
+	url = https://github.com/jshsakura/retro-go-stm32.git
+	branch = fix/strncpy-on-upstream
 [submodule "LCD-Game-Emulator"]
 	path = external/LCD-Game-Emulator
 	url = https://github.com/jshsakura/LCD-Game-Emulator.git
@@ -49,11 +50,11 @@
 [submodule "Core/Src/porting/lib/FatFs"]
 	path = Core/Src/porting/lib/FatFs
 	url = https://github.com/jshsakura/FatFs.git
-	branch = gnw-sd-fast-read
+	branch = upstream-sd-perf
 [submodule "external/firmware_update"]
 	path = external/firmware_update
 	url = https://github.com/jshsakura/firmware_update.git
-	branch = fix/tar-extract-error-handling
+	branch = fix/tar-plus-sdperf
 [submodule "external/PokeMini-go"]
 	path = external/PokeMini-go
 	url = https://github.com/sylverb/PokeMini-go.git

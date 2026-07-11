@@ -18,11 +18,9 @@
 #include "rom_manager.h"
 #include "common.h"
 #include "sound_pce.h"
-#if SD_CARD
 #include "pce_cd.h"
 #include "pce_scsi.h"
 #include "pce_adpcm.h"
-#endif
 #include "appid.h"
 #ifndef GNW_DISABLE_COMPRESSION
 #include "lzma.h"
@@ -30,12 +28,7 @@
 #include "gw_malloc.h"
 
 //#define PCE_SHOW_DEBUG
-//#define XBUF_WIDTH 	(480 + 32)
-//#define XBUF_HEIGHT	(242 + 32)
-//#define GW_LCD_WIDTH  (320)
-//#define GW_LCD_HEIGHT (240)
 #define FPS_NTSC 60
-#if SD_CARD
 /* PC Engine CD: the boot ROM is the (user-supplied, copyrighted) System Card.
  * Super System Card 3.0 covers base + Super CD-ROM2 titles. The dump is a raw
  * HuCard image, so .bin and .pce are interchangeable (a 512-byte header, if
@@ -48,9 +41,9 @@ static const char *const PCE_SYSCARD_BIOS_PATHS[] = {
 
 /* Mounted PCE-CD disc table-of-contents (kept for the SCSI target's lifetime). */
 static pce_cd_toc_t s_pcecd_toc;
-#endif /* SD_CARD */
 
-#define FB_INTERNAL_OFFSET (((XBUF_HEIGHT - current_height) / 2 + 16) * XBUF_WIDTH + (XBUF_WIDTH - current_width) / 2)
+#define FB_INTERNAL_OFFSET_X  (((XBUF_WIDTH - current_width) / 2) > 0 ? ((XBUF_WIDTH - current_width) / 2) : 0)
+#define FB_INTERNAL_OFFSET    (((XBUF_HEIGHT - current_height) / 2 + 16) * XBUF_WIDTH + FB_INTERNAL_OFFSET_X)
 #define AUDIO_BUFFER_LENGTH_PCE  (PCE_SAMPLE_RATE / FPS_NTSC)
 #define JOY_A       0x01
 #define JOY_B       0x02
@@ -64,9 +57,9 @@ static pce_cd_toc_t s_pcecd_toc;
 #define COLOR_RGB(r, g, b) ((((r) << 13) & 0xf800) + (((g) << 8) & 0x07e0) + (((b) << 3) & 0x001f))
 
 static uint16_t mypalette[256];
-static int current_height, current_width;
+static int current_height = 224, current_width = 256;
 static short audioBuffer_pce[ AUDIO_BUFFER_LENGTH_PCE * 2];
-static uint8_t pce_framebuffer[XBUF_WIDTH * XBUF_HEIGHT * 2];
+static uint8_t pce_framebuffer[XBUF_WIDTH * XBUF_HEIGHT];
 /* Borrowed for CD-RAM banks (idle on CD; Populous HuCard uses only the first 0x8000).
  * NOTE: 32KB only. Growing this to fit big Super-CD games (Dynastic Hero ~232KB needs
  * 32 banks) links OK but at runtime the extra overlay BSS starves the PCE heap and ALL
@@ -126,7 +119,7 @@ static const struct
 
 	// VDC
 	SVAR_A("vdc_regs", PCE.VDC.regs),           SVAR_1("vdc_reg", PCE.VDC.reg),
-	SVAR_1("vdc_status", PCE.VDC.status),       SVAR_1("vdc_satb", PCE.VDC.vram),
+	SVAR_1("vdc_status", PCE.VDC.status),       SVAR_1("vdc_vram", PCE.VDC.vram),
 	SVAR_1("vdc_satb", PCE.VDC.satb),			SVAR_4("vdc_pen_irqs", PCE.VDC.pending_irqs),
 
 	// Timer
@@ -175,13 +168,6 @@ void osd_gfx_set_mode(int width, int height) {
 		printf("Correcting out of range screen h %d\n", height);
 		height = 224;
 	}
-    /* Games rewrite the VDC mode registers every frame; only a REAL dimension
-     * change moves FB_INTERNAL_OFFSET. When it does, the old picture is at the
-     * old offset — clear the buffer so the transition frame shows black rather
-     * than misaligned stale rows. */
-    if (width != current_width || height != current_height) {
-        memset(pce_framebuffer, 0, sizeof(pce_framebuffer));
-    }
     current_width = width;
     current_height = height;
 }
@@ -204,6 +190,36 @@ static void blit();
  * (Cotton) came back with the screen logic dead while CD-DA music (main-loop
  * driven) kept playing. */
 uint8_t save_buffer[SAVE_STATE_BUFFER_SIZE];
+#define PCE_SRAM_SIZE 0x800   /* 2KB usable BRAM (bank $F7 low mirror) */
+
+/* Load per-game BRAM from the standard .sram save file. */
+static void pce_sram_load(void)
+{
+    if (!ACTIVE_FILE || strcmp(ACTIVE_FILE->ext, "cue") != 0) return;
+    pce_bram_init();
+    char *path = odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path);
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        fread(PCE.bram, 1, PCE_SRAM_SIZE, f);
+        fclose(f);
+    }
+    free(path);
+    pce_bram_format_if_needed();
+}
+
+/* odroid sram_save callback: exit, sleep, app switch. */
+static void pce_sram_save_cb(void)
+{
+    if (!ACTIVE_FILE || strcmp(ACTIVE_FILE->ext, "cue") != 0) return;
+    char *path = odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path);
+    FILE *f = fopen(path, "wb");
+    if (f) {
+        fwrite(PCE.bram, 1, PCE_SRAM_SIZE, f);
+        fclose(f);
+    }
+    free(path);
+}
+
 static bool SaveState(const char *savePathName) {
     size_t pos = 0;
     FILE *file = fopen(savePathName, "wb");
@@ -229,7 +245,6 @@ static bool SaveState(const char *savePathName) {
             pos += fwrite(pad, 1, chunk, file);
         }
     }
-#if SD_CARD
     /* PCE-CD: the 256KB CD RAM (banks 0x68-0x87) holds the game's loaded code +
      * data and is far bigger than save_buffer, so stream it to the file right
      * after the core state. (HuCard .pce saves are unchanged.) */
@@ -257,18 +272,7 @@ static bool SaveState(const char *savePathName) {
         fwrite(&scsx, sizeof(scsx), 1, file);
         fwrite(&sst, sizeof(sst), 1, file);
     }
-#endif /* SD_CARD */
     fclose(file);
-#if SD_CARD
-    /* Persist BRAM to its OWN file (system-wide cabinet, not part of the per-game
-     * snapshot — deliberately absent from SaveStateVars). CD-only: BRAM is the
-     * CD-ROM2 System Card's battery-backed save cabinet. */
-    if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
-        odroid_sdcard_mkdir(ODROID_BASE_PATH_SAVES);   /* fresh SD: /data may not exist yet */
-        FILE *bf = fopen(ODROID_BASE_PATH_SAVES "/pcecd.bram", "wb");
-        if (bf) { fwrite(PCE.bram, 1, 0x800, bf); fclose(bf); }
-    }
-#endif /* SD_CARD */
     if (!written) {
         return false;
     }
@@ -276,14 +280,12 @@ static bool SaveState(const char *savePathName) {
     return true;
 }
 
-#if SD_CARD
 /* CD autostart = RUN injection for the "PUSH RUN BUTTON" boot screen. It must
  * NOT fire into a restored game: to a running game RUN is its own PAUSE, so a
  * power-on resume "froze" exactly 1s in (frame 60 = injection start) — the game
  * sat in its pause loop (SUBQ+DA issued, music held) looking dead. Set on any
  * successful state load; a failed/CRC-mismatched load keeps the boot injection. */
 static bool s_cd_state_loaded;
-#endif /* SD_CARD */
 
 static bool LoadState(const char *savePathName) {
     /* Streams the state straight from the file into the live structures —
@@ -311,7 +313,6 @@ static bool LoadState(const char *savePathName) {
         printf("Loading %s (%d)\n", SaveStateVars[i].key, (int)SaveStateVars[i].len);
         fread(SaveStateVars[i].ptr, 1, SaveStateVars[i].len, file);
     }
-#if SD_CARD
     /* PCE-CD: restore the 256KB CD RAM streamed after the fixed-size core
      * block, then reset the SCSI to idle (the disc stays mounted from launch;
      * saves are taken with no transfer in flight). */
@@ -332,6 +333,7 @@ static bool LoadState(const char *savePathName) {
         if (fread(adpc, sizeof(adpc), 1, file) == 1 && adpc[0] == 0x43504441u) {
             fread(pce_adpcm_ram(), 1, 0x10000, file);
             pce_adpcm_set(adpc + 1);
+            pce_adpcm_reconcile_load();
         } else {
             pce_adpcm_reset();
         }
@@ -343,8 +345,8 @@ static bool LoadState(const char *savePathName) {
             fread(&sst, sizeof(sst), 1, file) == 1) {
             pce_scsi_state_set(&sst);
         }
+        pce_scsi_post_restore();
     }
-#endif /* SD_CARD */
     fclose(file);
 
     for(int i = 0; i < 8; i++) {
@@ -352,9 +354,7 @@ static bool LoadState(const char *savePathName) {
     }
     gfx_reset(true);
     osd_gfx_set_mode(IO_VDC_SCREEN_WIDTH, IO_VDC_SCREEN_HEIGHT);
-#if SD_CARD
     s_cd_state_loaded = true;   /* suppress the boot RUN injection (see decl) */
-#endif /* SD_CARD */
     return true;
 }
 
@@ -487,7 +487,6 @@ pce_osd_getromdata(unsigned char **data)
 #endif
 #endif
     ram_start = (uint32_t)&_OVERLAY_PCE_BSS_END;
-#if SD_CARD
     if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
         /* PCE-CD: the "ROM" is the System Card BIOS (mapped at bank 0); the disc
          * image itself is streamed from SD separately. XIP it from flash like a
@@ -507,14 +506,6 @@ pce_osd_getromdata(unsigned char **data)
             pce_scsi_set_disc(NULL, false);
         return (*data != NULL && bios_size > 0) ? bios_size : 0;
     }
-#else
-    if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
-        /* Flash build: the CD stack is compiled out (pce_cd_stubs.c). Refuse the
-         * cue sheet instead of booting its text bytes as a garbage HuCard. */
-        *data = NULL;
-        return 0;
-    }
-#endif /* SD_CARD */
     uint32_t size = ACTIVE_FILE->size;
     if (size > ram_get_free_size()) {
         *data = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &size, false);
@@ -635,7 +626,6 @@ void LoadCartPCE() {
     else
         pce_rom_full_patch();
 
-#if SD_CARD
     /* PCE-CD: back the CD-ROM2 program-RAM banks with real RAM. The System Card
      * is XIP'd from flash (pce_osd_getromdata), so the entire ROM-unpack buffer
      * is free to host the CD RAM. Banks 0x68-0x87 are contiguous: 0x80-0x87 is
@@ -668,7 +658,12 @@ void LoadCartPCE() {
             PCE.MemoryMapW[v] = p;
         }
         if (from_exram) memset(PCE_EXRAM_BUF, 0, (uint32_t)from_exram * PCE_CD_RAM_BANK_SIZE);
-        if (mapped > from_exram) memset(buf, 0, (uint32_t)(mapped - from_exram) * PCE_CD_RAM_BANK_SIZE);
+        if (buf_banks > 0) {
+            uint32_t clear_sz = (uint32_t)buf_banks * PCE_CD_RAM_BANK_SIZE;
+            if (clear_sz > room)
+                clear_sz = room;
+            memset(buf, 0, clear_sz);
+        }
         /* STILL short of the full 32 banks (unpack ~174KB=21 + EXRAM 32KB=4 = 25 on
          * device, so 7 banks/56KB missing)? Borrow the save-state staging buffer
          * (save_buffer, SAVE_STATE_BUFFER_SIZE ~78KB). It is touched ONLY during
@@ -701,16 +696,9 @@ void LoadCartPCE() {
             fclose(cf);
         }
 #endif
-        /* BRAM: map bank $F7, load the shared system-wide cabinet from SD, and
-         * format-init if the file is absent/invalid. Independent of the .state save
-         * and of the 0x68-0x87 CD RAM above. ROM is flash-XIP here, so no other FILE
-         * is open during LoadCartPCE. */
-        pce_bram_init();
-        FILE *bf = fopen(ODROID_BASE_PATH_SAVES "/pcecd.bram", "rb");
-        if (bf) { fread(PCE.bram, 1, 0x800, bf); fclose(bf); }
-        pce_bram_format_if_needed();
+        /* BRAM: per-game .sram file (managed by the launcher like any SRAM). */
+        pce_sram_load();
     }
-#endif /* SD_CARD */
 }
 
 void ResetPCE(bool hard) {
@@ -733,26 +721,6 @@ void pce_input_read(odroid_gamepad_state_t* out_state) {
     PCE.Joypad.regs[0] = rc;
 }
 
-/* FULL-mode overscan handling: a FIXED, CRT-style rule — no content
- * detection. The crop changes ONLY with the video mode; a detector that
- * followed the picture content pumped the zoom on title screens and paused
- * frames. Measured on real games (host harness, frame dumps):
- *   - Cotton / Ai Chou Aniki (240-line mode): bottom 16 rows pure background
- *   - Galaga '90 (240-line mode): draws a real bar down to row 231
- *   - TwinBee (240-line mode): nothing below row 223
- *   - Dracula X (225-line mode): draws everything it outputs
- * No game draws below row 231, so cropping the excess over 224 lines from
- * the bottom is right in spirit but must be capped at 8 rows (the classic
- * CRT action-safe margin) or Galaga-style games lose their bottom bar. */
-#define PCE_CRT_VISIBLE_LINES 224
-#define PCE_CRT_MAX_CROP      8
-
-/* One generic nearest-neighbour scaler; the modes mean the same thing as in
- * the other cores (NES etc.):
- *   OFF    - 1:1, centred, cropped if larger than the LCD
- *   FIT    - preserve aspect ratio, as large as fits, black borders
- *   FULL   - fill the whole screen, fixed CRT overscan crop (above)
- *   CUSTOM - fill the whole screen, no overscan crop (plain stretch) */
 static void blit() {
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
 
@@ -760,68 +728,64 @@ static void blit() {
      * skip frames and blit can be called as the menu repaint callback. */
     uint8_t *emuFrameBuffer = pce_framebuffer + FB_INTERNAL_OFFSET;
     pixel_t *framebuffer_active = lcd_get_active_buffer();
+    int y=0, offsetY, offsetX = 0, cropX = 0;
+    int xScale = 0;
+    uint8_t *fbTmp;
 
-    int cropBot = 0;
-    if (scaling == ODROID_DISPLAY_SCALING_FULL &&
-        current_height > PCE_CRT_VISIBLE_LINES) {
-        cropBot = current_height - PCE_CRT_VISIBLE_LINES;
-        if (cropBot > PCE_CRT_MAX_CROP)
-            cropBot = PCE_CRT_MAX_CROP;
-    }
-
-    /* Source window (after FULL's fixed overscan crop) */
-    int srcX0 = 0, srcY0 = 0;
-    int srcW = current_width, srcH = current_height - cropBot;
-
-    /* Destination size per mode */
-    int dstW, dstH;
-    switch (scaling) {
-    case ODROID_DISPLAY_SCALING_OFF:
-        dstW = srcW;
-        dstH = srcH;
-        if (dstW > GW_LCD_WIDTH)  { srcX0 += (dstW - GW_LCD_WIDTH) / 2;  dstW = srcW = GW_LCD_WIDTH; }
-        if (dstH > GW_LCD_HEIGHT) { srcY0 += (dstH - GW_LCD_HEIGHT) / 2; dstH = srcH = GW_LCD_HEIGHT; }
-        break;
-    case ODROID_DISPLAY_SCALING_FIT: {
-        int fx = (GW_LCD_WIDTH << 8) / srcW;
-        int fy = (GW_LCD_HEIGHT << 8) / srcH;
-        int f = (fx < fy) ? fx : fy;
-        dstW = (srcW * f) >> 8;
-        dstH = (srcH * f) >> 8;
-        break;
-    }
-    default: /* FULL, CUSTOM */
-        dstW = GW_LCD_WIDTH;
-        dstH = GW_LCD_HEIGHT;
-        break;
-    }
-
-    int stepX = (srcW << 8) / dstW;   /* 8.8 fixed-point source step */
-    int stepY = (srcH << 8) / dstH;
-    int offX = (GW_LCD_WIDTH - dstW) / 2;
-    int offY = (GW_LCD_HEIGHT - dstH) / 2;
-
-    /* black the top/bottom borders */
-    memset(framebuffer_active, 0, (size_t)offY * GW_LCD_WIDTH * sizeof(pixel_t));
-    memset(framebuffer_active + (offY + dstH) * GW_LCD_WIDTH, 0,
-           (size_t)(GW_LCD_HEIGHT - offY - dstH) * GW_LCD_WIDTH * sizeof(pixel_t));
-
-    for (int y = 0; y < dstH; y++) {
-        uint8_t *src = emuFrameBuffer + (srcY0 + ((y * stepY) >> 8)) * XBUF_WIDTH + srcX0;
-        pixel_t *dstRow = framebuffer_active + (y + offY) * GW_LCD_WIDTH;
-        /* black the side borders */
-        for (int x = 0; x < offX; x++)
-            dstRow[x] = 0;
-        for (int x = offX + dstW; x < GW_LCD_WIDTH; x++)
-            dstRow[x] = 0;
-        pixel_t *dst = dstRow + offX;
-        if (stepX == 0x100) {
-            for (int x = 0; x < dstW; x++)
-                dst[x] = mypalette[src[x]];
-        } else {
-            for (int x = 0; x < dstW; x++)
-                dst[x] = mypalette[src[(x * stepX) >> 8]];
+    if (scaling == ODROID_DISPLAY_SCALING_FULL) {
+        /* Stretch BOTH axes to fill the screen, like the other cores' FULL mode.
+         * Without the Y stretch, 224-line games (most CD titles) leave 8px black
+         * bars top and bottom. Nearest-neighbour: 224->240 repeats 1 row in 15. */
+        xScale = (current_width << 8) / GW_LCD_WIDTH;
+        int yScale = (current_height << 8) / GW_LCD_HEIGHT;
+        for (y = 0; y < GW_LCD_HEIGHT; y++) {
+            fbTmp = emuFrameBuffer + ((y * yScale) >> 8) * XBUF_WIDTH;
+            pixel_t *dst = framebuffer_active + y * GW_LCD_WIDTH;
+            for (int x = 0; x < GW_LCD_WIDTH; x++) {
+                dst[x] = mypalette[fbTmp[(x * xScale) >> 8]];
+            }
         }
+        return;
+    }
+
+    if (scaling != ODROID_DISPLAY_SCALING_OFF ) {
+        xScale = (current_width << 8) / GW_LCD_WIDTH ;
+    } else if ( current_width < GW_LCD_WIDTH) {
+        offsetX = (GW_LCD_WIDTH - current_width)/2; //center the image horizontally
+    } else if ( current_width > GW_LCD_WIDTH) {
+        cropX = (current_width - GW_LCD_WIDTH)/2; //crop the image horizontally if it's bigger
+    }
+
+    int renderHeight = (current_height<=GW_LCD_HEIGHT)?current_height:GW_LCD_HEIGHT;
+    int renderWidth = (current_width<=GW_LCD_WIDTH)?current_width:GW_LCD_WIDTH;
+    /* Vertically CENTRE the picture (was top-aligned -> "lifted up" feel with black at the
+     * bottom). No Y scaling yet, so just letterbox the renderHeight rows. */
+    int offY = (GW_LCD_HEIGHT - renderHeight) / 2;
+    if (offY < 0) offY = 0;
+
+    /* black the top letterbox */
+    memset(framebuffer_active, 0, (size_t)offY * GW_LCD_WIDTH * sizeof(pixel_t));
+
+    for(y=0;y<renderHeight;y++) {
+        fbTmp = emuFrameBuffer+(y*XBUF_WIDTH);
+        offsetY = (y + offY)*GW_LCD_WIDTH;
+        if (xScale) {
+            // Horizontal - Scale
+            for(int x=0;x<GW_LCD_WIDTH;x++) {
+                framebuffer_active[offsetY+x]= mypalette[fbTmp[ (x * xScale) >> 8 ]];
+            }
+        } else {
+            // No scaling, 1:1
+            for(int x=0;x<renderWidth;x++) {
+                   framebuffer_active[offsetY+x+offsetX]=mypalette[fbTmp[x+cropX]];
+            }
+        }
+    }
+    // black the bottom letterbox
+    for(y = offY + renderHeight; y < GW_LCD_HEIGHT; y++) {
+        offsetY = y*GW_LCD_WIDTH;
+        for(int x=0;x<GW_LCD_WIDTH;x++)
+            framebuffer_active[offsetY+x]=0;
     }
 }
 
@@ -870,12 +834,8 @@ static void pce_sound_sync_with_prefetch(void)
         last_dma_counter = dma_counter;
     for (uint8_t p = 0; p < common_emu_state.pause_frames + 1; p++) {
         while (dma_counter == last_dma_counter) {
-#if SD_CARD
             if (!pce_scsi_cdda_prefetch())
                 cpumon_sleep();     /* FIFO full / no BGM: plain WFI as before */
-#else
-            cpumon_sleep();         /* no CD-DA to prefetch: plain WFI */
-#endif /* SD_CARD */
         }
         last_dma_counter = dma_counter;
     }
@@ -892,7 +852,6 @@ void pce_pcm_submit() {
     int16_t* sound_buffer = audio_get_active_buffer();
     uint16_t sound_buffer_length = audio_get_buffer_length();
 
-#if SD_CARD
     /* CD-DA (Red Book audio / BGM) + ADPCM (voice): pull this frame's samples and mix
      * with the PSG. CD-DA is now ON for device too. The old thrash that forced it off
      * was fopen/fclose-per-sector on a SINGLE shared .bin handle (a FatFs dir walk 60x/s
@@ -902,41 +861,46 @@ void pce_pcm_submit() {
      * The CD-DA decode is verified on the host harness (Dynastic Hero opening = 17s of real
      * stereo BGM, cdda.pcm 97% non-zero). ADPCM samples are already resident in ADPCM RAM
      * (adpcm_dma_drain), so pce_adpcm_fill is pure in-RAM decode. Both channels on. */
+    static const int s_pcecd_cd_audio = 1;
     static int16_t cdda_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
     static int16_t adpcm_buf[AUDIO_BUFFER_LENGTH_PCE * 2];
-    int cdda_n  = pce_scsi_cdda_fill(cdda_buf, AUDIO_BUFFER_LENGTH_PCE);
+    int cdda_n  = s_pcecd_cd_audio ? pce_scsi_cdda_fill(cdda_buf, AUDIO_BUFFER_LENGTH_PCE) : 0;
     int adpcm_n = pce_adpcm_fill(adpcm_buf, AUDIO_BUFFER_LENGTH_PCE);   /* in-RAM, cheap: always on */
-#endif /* SD_CARD */
 
-#if SD_CARD
-    /* $180F hardware fader: Q8 (256=full, 0=silent) multipliers, one per
-     * channel, driven by pce_scsi_run()'s per-frame ramp. Fixed for the
-     * whole buffer (it only changes once per frame) so this is a single
-     * read, not a per-sample call. Without this a fade-out write was a
-     * silent no-op and CD-DA/ADPCM BGM never faded/stopped (e.g. Ys I&II).
-     * Guarded by SD_CARD: pce_scsi.c (where these live) is excluded on
-     * flash-only builds. */
-    int32_t cdda_fade_q8  = pce_scsi_cdda_fade_q8();
-    int32_t adpcm_fade_q8 = pce_scsi_adpcm_fade_q8();
-#endif /* SD_CARD */
+    uint32_t adpcm_vol = pce_scsi_adpcm_volume();  /* Q16 fader volume for ADPCM */
 
     for (int i = 0; i < sound_buffer_length; i++) {
         /* mix left & right */
         int32_t sample = (audioBuffer_pce[i*2] + audioBuffer_pce[i*2+1]);
-#if SD_CARD
-        if (cdda_n && i < cdda_n) {
-            int32_t cdda_s = (cdda_buf[i*2] + cdda_buf[i*2+1]) >> 1;   /* CD-DA is full-scale PCM */
-            sample += (cdda_s * cdda_fade_q8) >> 8;
-        }
+        if (cdda_n && i < cdda_n)
+            sample += (cdda_buf[i*2] + cdda_buf[i*2+1]) >> 1;   /* CD-DA already fader-scaled */
         if (adpcm_n && i < adpcm_n) {
-            int32_t adpcm_s = adpcm_buf[i*2];                          /* ADPCM is mono (dup L/R) */
-            sample += (adpcm_s * adpcm_fade_q8) >> 8;
+            int32_t a = adpcm_buf[i*2];
+            if (adpcm_vol < 65536)
+                a = (int32_t)(((int64_t)a * adpcm_vol) >> 16);
+            sample += a;                                         /* ADPCM is mono (dup L/R) */
         }
-#endif /* SD_CARD */
         sample = (sample * factor) >> 8;
         if (sample > 32767) sample = 32767; else if (sample < -32768) sample = -32768;
         sound_buffer[i] = sample;
     }
+}
+
+static void apply_cpu_clock(void)
+{
+    /* PCE-CD only: auto-OC level 2 (353MHz, the max the firmware/menu offers —
+     * same level VB uses) for the extra CD load: SCSI engine + CD-DA
+     * fseek/fread/4-tap + ADPCM on top of the core. HuCard runs full speed at
+     * stock so it stays at the user's clock. Same VB pattern: NOT persisted
+     * (exit resets the clock), no-op on OSPI1 SD hardware (guarded inside). The
+     * actual clock is proven in /pcecd_diag.txt at disc mount ("clock=... MHz"). */
+     if (ACTIVE_FILE && ACTIVE_FILE->ext && strcmp(ACTIVE_FILE->ext, "cue") == 0)
+        SystemClock_Config(2);
+}
+
+static void sleep_wake_up()
+{
+    apply_cpu_clock();
 }
 
 int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
@@ -947,19 +911,11 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         common_emu_state.pause_after_frames = 0;
     }
 
-#if SD_CARD
-    /* PCE-CD only: auto-OC level 2 (353MHz, the max the firmware/menu offers —
-     * same level VB uses) for the extra CD load: SCSI engine + CD-DA
-     * fseek/fread/4-tap + ADPCM on top of the core. HuCard runs full speed at
-     * stock so it stays at the user's clock. Same VB pattern: NOT persisted
-     * (exit resets the clock), no-op on OSPI1 SD hardware (guarded inside). The
-     * actual clock is proven in /pcecd_diag.txt at disc mount ("clock=... MHz"). */
-    if (ACTIVE_FILE && ACTIVE_FILE->ext && strcmp(ACTIVE_FILE->ext, "cue") == 0)
-        common_emu_auto_oc(2);
-#endif /* SD_CARD */
+    // Apply OC if needed
+    apply_cpu_clock();
 
     odroid_system_init(APPID_PCE, PCE_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &sleep_wake_up, &pce_sram_save_cb);
     pce_log[0]=0;
 
     // Init Graphics
@@ -1023,7 +979,6 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         common_emu_input_loop(&joystick, options, &blit);
         common_emu_input_loop_handle_turbo(&joystick);
 
-#if SD_CARD
         /* PCE-CD: auto-press START (RUN) at the "CD-ROM SYSTEM" screen so the
          * disc boots without the user pressing it. Injected after the emu input
          * loop (so it can't trip the emulator menu) and only for a window early
@@ -1037,14 +992,11 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
                 if (s_autostart >= 60) joystick.values[ODROID_INPUT_START] = 1;
             }
         }
-#endif /* SD_CARD */
 
         pce_input_read(&joystick);
 
-#if SD_CARD
         /* Chunked SCSI->ADPCM DMA pump (<=8KB/frame) — see pce_scsi_run. */
         pce_scsi_run();
-#endif /* SD_CARD */
 
         s_skip_render = !drawFrame;   /* drop tile/sprite work on skip frames */
         for (PCE.Scanline = 0; PCE.Scanline < 263; ++PCE.Scanline) {

@@ -39,9 +39,6 @@ __attribute__((weak)) void pce_scsi_pc_tick(uint16_t pc) { (void)pc; }
    * global line count — was the FATAL risk, and it stays capped regardless), so this global
    * cap only buys headroom for the low-rate events we actually want (CD-DA / ADPCM start,
    * READ fails). 800 lines ~= 32KB, nothing on SD. Delete /pcecd_diag.txt first. */
-  /* OFF for the clean release: PCE-CD load/resume/Dynastic verification is
-   * complete (2026-07-04). Flip back to 1 if a new PCE-CD issue needs traces. */
-  #define PCECD_DIAG 0
   #define PCECD_DIAG_FILE "/pcecd_diag.txt"
   #define PCECD_DIAG_MAX  800
 #endif
@@ -96,6 +93,70 @@ static const uint8_t RequiredCDBLen[16] = {
     6, 6, 10, 10, 10, 10, 10, 10, 10, 10, 12, 12, 10, 10, 10, 10,
 };
 
+/* ---- CD-DA / ADPCM fader ($180F) ----
+ * Mednafen: Fader.Volume runs 65536→0 over 2.5s (bit2=1) or 6s (bit2=0).
+ * We are frame-based (60 fps), so we decrement per frame:
+ *   2.5s → 150 frames → step = 65536/150 ≈ 437
+ *   6.0s → 360 frames → step = 65536/360 ≈ 182
+ * Bit 1 of the command byte selects ADPCM fade (1) vs CD-DA fade (0).
+ * When bit 3 is clear the fade is cancelled (volume restored to max). */
+#define FADER_VOL_MAX   65536
+static uint32_t s_fader_cdda_vol;      /* Q16 volume: 0=silent, 65536=full (init to full) */
+static uint32_t s_fader_adpcm_vol;
+static uint32_t s_fader_step;          /* per-frame decrement (0 = not fading) */
+static bool     s_fader_adpcm;         /* true = ADPCM fade, false = CD-DA fade */
+
+static void fader_write(uint8_t val)
+{
+    diag("  FADER cmd=%02x\n", val);
+    if (!(val & 0x8)) {
+        /* Cancel: restore both to full volume */
+        s_fader_cdda_vol  = FADER_VOL_MAX;
+        s_fader_adpcm_vol = FADER_VOL_MAX;
+        s_fader_step = 0;
+    } else {
+        /* Start fade: bit2 selects duration (1=2.5s / 0=6.0s), bit1 selects target.
+         * Mednafen (pcecd.cpp L731): if(!Fader.Clocked) → only reset cycle counter if
+         * not already fading. Volume is NEVER reset on a re-start command.
+         * Re-asserting the same fade mid-fade must continue from the current level. */
+        bool was_fading = (s_fader_step > 0);
+        uint32_t frames = (val & 0x4) ? 150 : 360;     /* 2.5s or 6.0s at 60 fps */
+        s_fader_step  = (FADER_VOL_MAX + frames - 1) / frames;
+        s_fader_adpcm = (val & 0x2) != 0;
+        if (!was_fading) {
+            /* Fresh fade: start from full volume (Mednafen: only if !Clocked) */
+            s_fader_cdda_vol  = FADER_VOL_MAX;
+            s_fader_adpcm_vol = FADER_VOL_MAX;
+        }
+        /* If already fading: volume continues from its current level (no reset). */
+    }
+}
+
+/* Call once per frame (from pce_scsi_run) to advance the fade. */
+static void fader_run(void)
+{
+    if (s_fader_step == 0) return;
+    if (s_fader_adpcm) {
+        if (s_fader_adpcm_vol > s_fader_step)
+            s_fader_adpcm_vol -= s_fader_step;
+        else
+            s_fader_adpcm_vol = 0;
+    } else {
+        if (s_fader_cdda_vol > s_fader_step)
+            s_fader_cdda_vol -= s_fader_step;
+        else
+            s_fader_cdda_vol = 0;
+        /* NOTE: s_fader_step is NOT cleared here. Mednafen keeps Fader.Clocked=true
+         * even after Volume reaches 0 — it only resets on CANCEL ($180F=0x00).
+         * This prevents a re-assert of the same fade command from restarting from
+         * full volume (was_fading check in fader_write depends on step != 0). */
+    }
+}
+
+/* Q16 volume accessors for the mixer. */
+uint32_t pce_scsi_cdda_volume(void)  { return s_fader_cdda_vol; }
+uint32_t pce_scsi_adpcm_volume(void) { return s_fader_adpcm_vol; }
+
 /* ---- CD-DA (Red Book audio / BGM) ---- */
 static bool     s_cdda_play;            /* currently streaming audio */
 static bool     s_cdda_paused;          /* PAUSE(0xDA)/seek state: position held, not streaming */
@@ -123,11 +184,14 @@ static int      s_atrace;           /* trace ADPCM/idle-loop polls ($180A-F, $18
  * enable it via $1802 bit3 and SLEEP until the end IRQ to queue the next music
  * segment; without this wire a state-load that resumed mid-segment froze ~2s
  * later, exactly when the restored segment ran out (Cotton). */
-#define IRQ_ADPCM_END 0x08
+#define IRQ_ADPCM_HALF 0x04
+#define IRQ_ADPCM_END  0x08
 
 static uint8_t effective_port3(void)
 {
-    return (uint8_t)(s_port3 | (pce_adpcm_end_flag() ? IRQ_ADPCM_END : 0));
+    return (uint8_t)(s_port3
+                     | (pce_adpcm_half_flag() ? IRQ_ADPCM_HALF : 0)
+                     | (pce_adpcm_end_flag()  ? IRQ_ADPCM_END  : 0));
 }
 
 static void update_irq(void)
@@ -143,71 +207,6 @@ static void update_irq(void)
         CPU_PCE.irq_lines &= ~INT_IRQ2;
     }
 }
-
-/* ---- CD-DA / ADPCM hardware fader ($180F) ------------------------------
- * Was a silent no-op (fell to `default: break;` in pce_scsi_write), so games
- * (Ys I&II etc.) that fade/stop their BGM via this register never did.
- *
- * Bit decode SOURCE: Mednafen's pcecd.cpp — the `case 0xf:` register-write
- * handler plus Fader_SyncWhich()/Fader_Run() (a cached copy of that file was
- * available locally at /tmp/pcecd.c for this fix; it is the de-facto
- * reference implementation other PCE-CD emulators cite for this register):
- *   D3 (0x08) = fade enable. 0 = CANCEL: snap the affected channel straight
- *               back to full volume (no ramp) — this is also how games
- *               un-fade/restore volume for a new track. 1 = start/continue a
- *               fade-OUT ramp.
- *   D2 (0x04) = duration: 1 = short (~2.5s), 0 = long (~6.0s).
- *   D1 (0x02) = target channel: 1 = ADPCM, 0 = CD-DA.
- *   D0, D7    = UNDETERMINED even in Mednafen — its own source carries a
- *               literal TODO for both ("Determine what D0 of the fade
- *               control register does (maybe mutes the channel not being
- *               fade-controlled)" / "Determine what D7 ... does ('TEST')").
- *               Left unimplemented here too; flagging this as the one
- *               uncertain part of the decode.
- * Only ONE channel fades at a time — the register drives a single shared
- * hardware fader, and whichever channel is NOT currently selected is pinned
- * to full volume. Mednafen's model only ever ramps volume DOWN (Volume
- * decrements to 0 and stops); there is no gradual fade-IN, which matches the
- * reported symptom (BGM never fades/stops = fade-OUT never applied). */
-#define FADER_FULL_Q16          65536   /* full volume, Q16 (Mednafen's Volume scale) */
-#define PCE_FADER_SHORT_FRAMES  150     /* ~2.5s @ 60fps (D2=1) */
-#define PCE_FADER_LONG_FRAMES   360     /* ~6.0s @ 60fps (D2=0) */
-
-static bool     s_fader_adpcm_sel;      /* last-selected fade target: true=ADPCM, false=CD-DA */
-static bool     s_fader_active;         /* D3: a fade-out ramp is running */
-static int32_t  s_fader_level = FADER_FULL_Q16;  /* Q16 65536..0: level of the SELECTED channel */
-static int32_t  s_fader_step;           /* Q16 subtracted from s_fader_level per emulated frame */
-static int16_t  s_fade_cdda_q8  = 256;  /* Q8 0..256 multiplier consumed by pce_pcm_submit */
-static int16_t  s_fade_adpcm_q8 = 256;
-
-/* Recompute the two output multipliers from the single shared fader state:
- * the selected channel gets the ramping level, the other stays pinned full. */
-static void fader_sync(void)
-{
-    int32_t adpcm_lvl = s_fader_adpcm_sel ? s_fader_level : FADER_FULL_Q16;
-    int32_t cdda_lvl  = s_fader_adpcm_sel ? FADER_FULL_Q16 : s_fader_level;
-    s_fade_adpcm_q8 = (int16_t)(adpcm_lvl >> 8);
-    s_fade_cdda_q8  = (int16_t)(cdda_lvl  >> 8);
-}
-
-/* Advance the active fade-out by one emulated video frame. s_fader_step
- * already encodes the selected duration as a per-frame Q16 decrement, so
- * this is a plain linear ramp to 0 (called once/frame from pce_scsi_run). */
-static void fader_advance(void)
-{
-    if (!s_fader_active) return;
-    s_fader_level -= s_fader_step;
-    if (s_fader_level <= 0) {
-        s_fader_level  = 0;
-        s_fader_active = false;   /* ramp complete: silent until the next $180F write */
-    }
-    fader_sync();
-}
-
-/* Current CD-DA / ADPCM fade multipliers (Q8: 256=full, 0=silent) for the
- * mixer in main_pce.c pce_pcm_submit(). */
-int pce_scsi_cdda_fade_q8(void)  { return s_fade_cdda_q8; }
-int pce_scsi_adpcm_fade_q8(void) { return s_fade_adpcm_q8; }
 
 void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
 {
@@ -251,10 +250,9 @@ void pce_scsi_reset(void)
     s_adpcm_ctrl = 0;
     s_cdda_play = false;
     s_cdda_paused = false;
-    s_fader_adpcm_sel = false;
-    s_fader_active = false;
-    s_fader_level = FADER_FULL_Q16;
-    fader_sync();
+    s_fader_cdda_vol  = FADER_VOL_MAX;
+    s_fader_adpcm_vol = FADER_VOL_MAX;
+    s_fader_step = 0;
     pce_adpcm_reset();
     CPU_PCE.irq_lines &= ~INT_IRQ2;
 }
@@ -318,43 +316,44 @@ static void feed_din(void)
 }
 
 /* ADPCM ($180A-$180D). The System Card loads ADPCM (voice) data straight from CD
- * by issuing a READ(6) then enabling SCSI->ADPCM DMA via $180B bit1; it then polls
- * $180C (ADPCM busy) and $1803 (DATA_DONE) for completion. We don't run a real
- * DMA engine, so the transfer is PUMPED from the main loop (pce_scsi_run), up to
- * 4 sectors (8KB) per frame: the old drain-everything-now path pulled a 64KB FMV
- * load through SD in ONE frame = a 30-55ms single-shot stall (the pacer's worst
- * enemy). Chunked, the same load spreads over ~8 frames — still far faster than
- * the ~430ms a real 1x drive needed, so the BIOS poll loop ($1802/$1803) simply
- * sees "in progress" for a few frames, exactly as on hardware. */
+ * by issuing a READ(6) then enabling SCSI->ADPCM DMA via $180B (val & 0x3; $01
+ * is enough — Mednafen). It then polls $1800/$180B/$1803 for completion. The DMA
+ * is pumped on each $180x read during that poll (Sapphire level load) and in
+ * chunks from pce_scsi_run() for long FMV streams. */
 static bool     s_adpcm_dma_active;
 static uint32_t s_adpcm_dma_total;
 
-static void adpcm_dma_pump(void)
+static void adpcm_dma_try_start(void)
+{
+    /* Mednafen: DMA runs when (_Port[0xb] & 0x3) — bit0 alone ($01) is enough. */
+    if ((s_adpcm_ctrl & 0x03) && s_reading && !s_adpcm_dma_active) {
+        s_adpcm_dma_active = true;
+        s_adpcm_dma_total = 0;
+        /* the bus already PRESENTS the sector's first byte (feed_din ran at
+         * READ execute); rewind so the pump starts from it. */
+        if (s_req && s_din_pos > 0) s_din_pos--;
+    }
+}
+
+static void adpcm_dma_pump(int budget)
 {
     if (!s_adpcm_dma_active) return;
-    int budget = 4 * 2048;                              /* <=4 sectors per frame */
     int b = -1;
-    while (budget > 0 && (b = din_get()) >= 0) {
-        pce_adpcm_dma_byte((uint8_t)b);                 /* CD -> ADPCM RAM */
+    while (budget != 0 && (b = din_get()) >= 0) {
+        pce_adpcm_dma_byte((uint8_t)b);
         s_adpcm_dma_total++;
-        budget--;
+        if (budget > 0) budget--;
     }
-    if (b >= 0) return;                                 /* more next frame */
+    if (b >= 0) return;
     s_adpcm_dma_active = false;
     s_reading = false;
     diag("  ADPCM drain %lu B\n", (unsigned long)s_adpcm_dma_total);
-    /* Completion needs BOTH, in this order, for the System Card's ADPCM-load path:
-     *  - $1803 DATA_DONE set NOW (the transfer-complete IRQ flag the f3d0 loop polls
-     *    BEFORE the status handshake), and
-     *  - the bus presented in STATUS phase ($1800 & $F8 == $D8) so the following
-     *    $E9C5 status-wait can read the result byte and run the normal handshake. */
+    /* Mednafen clears _Port[0xb] bit0 when SCSI STATUS ACK completes (CD high);
+     * Sapphire spins on TST #$01,$180B until that bit drops after the DMA. */
+    s_adpcm_ctrl &= ~0x01u;
     send_status(STATUS_GOOD, 0);
     s_port3 |= IRQ_DATA_DONE;
-    update_irq();   /* refresh IRQ2 with the just-set DATA_DONE: send_status/change_phase
-                       ran update_irq() BEFORE we OR'd DATA_DONE in, so without this the
-                       ADPCM-load-complete IRQ never asserts and the System Card poll-loops
-                       $1802/$1803 forever right after the opening (Dracula X "opening then
-                       stops"). Every other DATA_DONE set refreshes the line via change_phase. */
+    update_irq();
 }
 
 static void do_data_in(const uint8_t *buf, uint32_t len)
@@ -533,12 +532,28 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
         if (s_cdda_pos + 4 > s_cdda_have) {
             /* FIFO dry: the stream ended, or a read could not keep up. Pad the
              * remainder with silence; stop only if the stream is genuinely over. */
-            if (s_cdda_lba >= s_cdda_end && s_cdda_mode != 1) s_cdda_play = false;
+            if (s_cdda_lba >= s_cdda_end && s_cdda_mode != 1) {
+                s_cdda_play = false;
+                /* Mednafen RunCDDA L876-878: mode INTERRUPT fires IRQ DATA_DONE
+                 * so the BIOS can chain the next audio segment without polling.
+                 * Without this IRQ, games using interrupt-mode audio hang waiting
+                 * for $1803 bit 0x20 (DATA_DONE). */
+                if (s_cdda_mode == 2) {
+                    s_port3 |= IRQ_DATA_DONE;
+                    update_irq();
+                }
+            }
             for (; i < frames; i++) { out[i * 2] = 0; out[i * 2 + 1] = 0; }
             return frames;
         }
-        out[i * 2]     = (int16_t)(s_cdda_sec[s_cdda_pos]     | (s_cdda_sec[s_cdda_pos + 1] << 8));
-        out[i * 2 + 1] = (int16_t)(s_cdda_sec[s_cdda_pos + 2] | (s_cdda_sec[s_cdda_pos + 3] << 8));
+        {
+            int16_t l = (int16_t)(s_cdda_sec[s_cdda_pos]     | (s_cdda_sec[s_cdda_pos + 1] << 8));
+            int16_t r = (int16_t)(s_cdda_sec[s_cdda_pos + 2] | (s_cdda_sec[s_cdda_pos + 3] << 8));
+            l = (int16_t)(((int32_t)l * (int32_t)s_fader_cdda_vol) >> 16);
+            r = (int16_t)(((int32_t)r * (int32_t)s_fader_cdda_vol) >> 16);
+            out[i * 2]     = l;
+            out[i * 2 + 1] = r;
+        }
         s_cdda_pos += 4;                            /* one CD frame in, one sample pair out */
     }
     return frames;
@@ -558,6 +573,10 @@ void pce_scsi_state_get(pce_scsi_state_t *st)
     st->read_lba = s_read_lba; st->read_remain = s_read_remain;
     st->port2 = s_port2; st->port3 = s_port3; st->adpcm_ctrl = s_adpcm_ctrl;
     st->adpcm_dma_total = s_adpcm_dma_total;
+    st->fader_cdda_vol  = s_fader_cdda_vol;
+    st->fader_adpcm_vol = s_fader_adpcm_vol;
+    st->fader_step      = s_fader_step;
+    st->fader_adpcm     = s_fader_adpcm ? 1u : 0u;
     memcpy(st->din, s_din, sizeof(s_din));
 }
 
@@ -576,10 +595,23 @@ void pce_scsi_state_set(const pce_scsi_state_t *st)
     s_read_lba = st->read_lba; s_read_remain = st->read_remain;
     s_port2 = st->port2; s_port3 = st->port3; s_adpcm_ctrl = st->adpcm_ctrl;
     s_adpcm_dma_total = st->adpcm_dma_total;
+    s_fader_cdda_vol  = st->fader_cdda_vol;
+    s_fader_adpcm_vol = st->fader_adpcm_vol;
+    s_fader_step      = st->fader_step;
+    s_fader_adpcm     = st->fader_adpcm != 0;
+    if (!st->fader_step && !st->fader_cdda_vol && !st->fader_adpcm_vol) {
+        s_fader_cdda_vol  = FADER_VOL_MAX;
+        s_fader_adpcm_vol = FADER_VOL_MAX;
+    }
     memcpy(s_din, st->din, sizeof(s_din));
     update_irq();
     diag("  SCSI restore phase=%d reading=%d remain=%lu p2=%02x p3=%02x\n",
          s_phase, (int)s_reading, (unsigned long)s_read_remain, s_port2, s_port3);
+}
+
+void pce_scsi_post_restore(void)
+{
+    update_irq();
 }
 
 /* Savestate snapshot of the CD-DA stream (see pce_scsi.h). */
@@ -630,6 +662,12 @@ static void execute_command(void)
         s_din_pos = s_din_len = 0;
         s_read_served = 0;
         s_trace = 0;   /* trace the System Card's register pattern for this READ */
+        /* Any data READ stops CD-DA (the laser can't be at two
+         * positions simultaneously; on real hardware seeking kills audio streaming).
+         * Also flush the FIFO so stale sectors don't leak into the next mix call. */
+        s_cdda_play   = false;
+        s_cdda_paused = false;
+        s_cdda_pos = 0; s_cdda_have = 0;
         diag("  READ lba=%lu cnt=%lu\n", (unsigned long)lba, (unsigned long)cnt);
         change_phase(PH_DATAIN);
         feed_din();
@@ -648,13 +686,25 @@ static void execute_command(void)
         s_cdda_paused = !s_cdda_play;    /* NEC: SAPSP w/o play = seek then PAUSE */
         diag("  CDDA SAPSP lba=%lu play=%d\n", (unsigned long)s_cdda_lba, s_cdda_play);
         send_status(STATUS_GOOD, 0);
+        /* Some titles wait for DATA_DONE right after SAPSP before consuming the
+         * status phase; mirror the ADPCM-complete path and assert it now. */
+        s_port3 |= IRQ_DATA_DONE;
+        update_irq();
         break;
     case 0xD9: /* SAPEP — set end position + play mode (1=loop 2=int 3=normal 0=stop) */
         s_cdda_end  = cdda_decode_pos(s_cmd);
         s_cdda_mode = s_cmd[1];
-        s_cdda_play = (s_cmd[1] != 0);
-        s_cdda_paused = !s_cdda_play;    /* mode 0 = stop-at-position -> PAUSED */
-        s_cdda_pos = 0; s_cdda_have = 0;
+        if (s_cmd[1] == 0) {
+            /* Mednafen DoNEC_PCE_SAPEP: mode 0 = SILENT → CDDAStatus = STOPPED
+             * (not PAUSED). SUBQ byte 0 must return 0x03 (stopped), not 0x02.
+             * Flush FIFO so stale sectors don't leak into the next mix call. */
+            s_cdda_play   = false;
+            s_cdda_paused = false;
+            s_cdda_pos = 0; s_cdda_have = 0;
+        } else {
+            s_cdda_play   = true;
+            s_cdda_paused = false;
+        }
         diag("  CDDA SAPEP end=%lu mode=%d\n", (unsigned long)s_cdda_end, s_cmd[1]);
         send_status(STATUS_GOOD, 0);
         break;
@@ -682,7 +732,11 @@ static void execute_command(void)
             uint32_t rel = lba - t->start_lba;
             uint32_t abs = lba + 150;
             #define TO_BCD(v) ((uint8_t)((((v) / 10) << 4) | ((v) % 10)))
-            q[1] = t->type ? 0x41 : 0x01;                 /* ctl/adr: data vs audio */
+            /* Mednafen DoNEC_PCE_READSUBQ: byte 1 is always 0 (memset), not ctl/adr.
+             * Games parse the 10-byte payload as: [0]=status [1]=0 [2]=track BCD
+             * [3]=index [4-6]=MSF rel [7-9]=MSF abs. Sending ctl/adr in byte 1
+             * shifts the interpretation and can confuse the music driver. */
+            q[1] = 0;
             q[2] = TO_BCD(t->number);
             q[3] = 0x01;
             q[4] = TO_BCD(rel / 4500); q[5] = TO_BCD((rel % 4500) / 75); q[6] = TO_BCD(rel % 75);
@@ -717,13 +771,24 @@ static void ack_deassert(void)
     switch (s_phase) {
     case PH_COMMAND: if (s_cmd_idx >= RequiredCDBLen[s_cmd[0] >> 4]) execute_command(); else s_req = 1; break;
     case PH_DATAIN:  feed_din(); break;  /* advance on ACK (TOC + manual-ack READs); $1808 reads advance separately */
-    case PH_STATUS:  change_phase(PH_MSGIN); break;
+    case PH_STATUS:
+        if (s_cd) s_adpcm_ctrl &= ~0x01u;   /* mednafen: DMA-end latch clear on STATUS ACK */
+        change_phase(PH_MSGIN);
+        break;
     case PH_MSGIN:   change_phase(PH_BUSFREE); break;
     }
 }
 
 uint8_t pce_scsi_read(uint8_t reg)
 {
+    /* ADPCM DMA path: the System Card polls $1800/$180B in a tight loop and
+     * expects SCSI->ADPCM to advance during those reads (Mednafen ADPCM_Run).
+     * Pumping only once/frame in pce_scsi_run() hangs Sapphire at level load. */
+    if ((s_adpcm_ctrl & 0x03) && s_reading) {
+        adpcm_dma_try_start();
+        adpcm_dma_pump(-1);
+    }
+
     if (s_bulk && s_phase == PH_DATAIN && s_trace < 12) {
         diag("R%x db=%02x\n", reg & 0xf, s_db);
         s_trace++;
@@ -768,6 +833,7 @@ uint8_t pce_scsi_read(uint8_t reg)
     case 0x0A: return pce_adpcm_read(0x0A);   /* ADPCM RAM data */
     case 0x0B: return s_adpcm_ctrl;
     case 0x0C: return pce_adpcm_read(0x0C);   /* ADPCM status (end/playing) */
+    case 0x0D: return pce_adpcm_read(0x0D);   /* ADPCM last command */
     default:   return 0;
     }
 }
@@ -810,18 +876,11 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
           if (!was_playing && pce_adpcm_playing())
               diag("  ADPCM PLAY start reg=%02x val=%02x freq=n/a\n", reg, val); }
         break;
-    case 0x0B: /* ADPCM DMA control: bit1 = enable SCSI->ADPCM auto-transfer */
+    case 0x0B: /* ADPCM DMA control ($180B): Mednafen runs DMA when val & 0x3 */
         s_adpcm_ctrl = val;
-        if ((val & 0x02) && s_reading && !s_adpcm_dma_active) {
-            s_adpcm_dma_active = true;      /* pumped per frame by pce_scsi_run */
-            s_adpcm_dma_total = 0;
-            /* the bus already PRESENTS the sector's first byte (feed_din ran at
-             * READ execute); rewind so the pump starts from it. Skipping it
-             * shifted the whole ADPCM image one byte vs disc — fatal for games
-             * that stream structured data through ADPCM RAM (Dynastic Hero),
-             * merely noisy for voice samples. */
-            if (s_req && s_din_pos > 0) s_din_pos--;
-        }
+        adpcm_dma_try_start();
+        if ((s_adpcm_ctrl & 0x03) && s_reading)
+            adpcm_dma_pump(-1);
         break;
     case 0x04: /* reset */
         if (val & 0x02) {
@@ -830,32 +889,14 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
             pce_scsi_reset();
         }
         break;
-    case 0x0F: { /* CD-DA / ADPCM fader — see the block comment above fader_sync(). */
-        s_fader_adpcm_sel = (val & 0x02) != 0;
-        if (!(val & 0x08)) {
-            /* D3=0: cancel — snap the selected channel back to full volume. */
-            s_fader_active = false;
-            s_fader_level  = FADER_FULL_Q16;
-        } else {
-            /* D3=1: (re)start a fade-out at the selected duration. Continues
-             * from the current level rather than resetting it — matches the
-             * reference (switching D1/D2 mid-fade doesn't restart the ramp). */
-            int frames = (val & 0x04) ? PCE_FADER_SHORT_FRAMES : PCE_FADER_LONG_FRAMES;
-            s_fader_step = FADER_FULL_Q16 / frames;
-            if (s_fader_step < 1) s_fader_step = 1;
-            s_fader_active = true;
-        }
-        fader_sync();
-        diag("  FADER cmd=%02x adpcm=%d active=%d level=%ld\n",
-             val, (int)s_fader_adpcm_sel, (int)s_fader_active, (long)s_fader_level);
+    case 0x0F: /* $180F — CD-DA / ADPCM fader (mednafen pcecd.cpp case 0xf) */
+        fader_write(val);
         break;
-    }
     default:
         break;
     }
 }
 
-/* Per-frame hook from the main loop: pump any active SCSI->ADPCM DMA, advance
- * the $180F fade-out ramp by one frame, and refresh the IRQ2 level (the
- * ADPCM-end bit can rise between register writes). */
-void pce_scsi_run(void) { adpcm_dma_pump(); fader_advance(); update_irq(); }
+/* Per-frame hook from the main loop: pump any active SCSI->ADPCM DMA,
+ * advance the CD-DA/ADPCM fader one step, and refresh the IRQ2 level. */
+void pce_scsi_run(void) { adpcm_dma_pump(4 * 2048); fader_run(); update_irq(); }

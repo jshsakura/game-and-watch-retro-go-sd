@@ -58,8 +58,11 @@ static void adpcm_tick(void)
     s_held = (int16_t)((adpcm_decode(nib) - 0x800) << 4);
     if (s_play_nibble) {
         s_read_addr++;
-        if (s_length) s_length--;
-        if (!s_length && !(s_last_cmd & 0x10)) { s_playing = false; s_end = true; }
+        if (!(s_last_cmd & 0x10)) {
+            if (s_length) s_length--;
+            s_half = (s_length < 32768);
+        }
+        if (!s_length && !(s_last_cmd & 0x10)) { s_playing = false; s_end = true; s_half = false; }
     }
     s_play_nibble = !s_play_nibble;
 }
@@ -88,9 +91,16 @@ void pce_adpcm_write(uint8_t reg, uint8_t val)
             s_cur = 0x800; s_ssi = 0;
             return;
         }
-        if (s_playing && !(val & 0x20)) s_playing = false;
+        if (s_playing && !(val & 0x20)) {
+            s_playing = false;
+            /* Valis II (and others) poll $180C bit0 after a control=0 stop before
+             * queuing the next SCSI refill — Mednafen doesn't model this but the
+             * post-stop wait at $f6db never exits if End stays clear. */
+            s_end = true;
+            s_half = false;
+        }
         if (!s_playing && (val & 0x20)) {        /* start playback */
-            s_playing = true; s_half = false; s_play_nibble = false;
+            s_playing = true; s_end = false; s_half = false; s_play_nibble = false;
             s_cur = 0x800; s_ssi = 0; s_phase = 0;
         }
         if (val & 0x10) { s_length = s_addr; s_end = false; }
@@ -122,6 +132,8 @@ uint8_t pce_adpcm_read(uint8_t reg)
     }
     case 0xC:                                   /* status */
         return (uint8_t)((s_end ? 0x01 : 0) | (s_playing ? 0x08 : 0));
+    case 0xD:                                   /* last control command (Mednafen) */
+        return s_last_cmd;
     default:
         return 0;
     }
@@ -131,10 +143,37 @@ uint8_t pce_adpcm_read(uint8_t reg)
 void pce_adpcm_dma_byte(uint8_t val)
 {
     s_ram[s_write_addr++] = val;
+    if (!(s_last_cmd & 0x10)) {
+        s_half = (s_length < 32768);
+        if (s_length < 0xFFFFu)
+            s_length++;
+    }
 }
 
-bool pce_adpcm_playing(void) { return s_playing; }
-bool pce_adpcm_end_flag(void) { return s_end; }
+bool     pce_adpcm_playing(void)    { return s_playing; }
+bool     pce_adpcm_end_flag(void)   { return s_end; }
+bool     pce_adpcm_half_flag(void)  { return s_half; }
+
+void pce_adpcm_reconcile_load(void)
+{
+    if (s_playing) {
+        s_end = false;
+        if (s_length == 0 && !(s_last_cmd & 0x10)) {
+            s_playing = false;
+            s_end = true;
+            s_half = false;
+        } else {
+            s_half = (s_length < 32768);
+        }
+    } else if (!s_end) {
+        /* Save captured between voice segments or after a stop: poll loops on
+         * $180C/$1803 wait for END before issuing the next READ refill. */
+        s_end = true;
+        s_half = false;
+    } else {
+        s_half = (s_length < 32768);
+    }
+}
 
 /* Savestate: the engine registers + RAM must round-trip, or a loaded state's
  * game-side audio sequencer (restored from game RAM) points at segment

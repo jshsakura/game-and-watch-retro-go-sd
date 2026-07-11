@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <SDL2/SDL.h>
+#include <SDL.h>
 
 #include "porting.h"
 #include "crc32.h"
@@ -18,9 +18,76 @@
 #include "pce_cd.h"
 #include "pce_scsi.h"
 #include "pce_adpcm.h"
+#include "syscard_load.h"
+#ifdef PCE_ENABLE_ARCADE_CARD
+#include "arcade_card.h"
+#endif
+#include "pce_input_sdl.h"
+#include "pce_audio.h"
+
+extern int linux_savestate_req;
+extern int linux_loadstate_req;
 
 /* Path to the disc .cue (argv[1]); NULL = run System Card only. */
 static const char *g_cue_path = NULL;
+
+static bool host_LoadState(const char *savePathName);
+static bool host_SaveState(const char *savePathName);
+
+static void pce_state_path(char *out, size_t out_size)
+{
+	snprintf(out, out_size, "%s.state", g_cue_path);
+}
+
+static void pce_state_alt_path(char *out, size_t out_size)
+{
+	snprintf(out, out_size, "%s.state2", g_cue_path);
+}
+
+static void pce_sram_path(char *out, size_t out_size)
+{
+	snprintf(out, out_size, "%s.sram", g_cue_path);
+}
+
+static void pce_sram_load(void)
+{
+	if (!g_cue_path) return;
+	pce_bram_init();
+	char path[1024];
+	pce_sram_path(path, sizeof(path));
+	FILE *f = fopen(path, "rb");
+	if (f) { fread(PCE.bram, 1, 0x800, f); fclose(f); }
+	pce_bram_format_if_needed();
+}
+
+static void pce_sram_save(void)
+{
+	if (!g_cue_path) return;
+	char path[1024];
+	pce_sram_path(path, sizeof(path));
+	FILE *f = fopen(path, "wb");
+	if (f) { fwrite(PCE.bram, 1, 0x800, f); fclose(f); }
+}
+
+static void pce_linux_save_state(void)
+{
+	if (!g_cue_path)
+		return;
+	char path[1024];
+	pce_state_path(path, sizeof(path));
+	if (!host_SaveState(path))
+		fprintf(stderr, "PCE: save failed '%s'\n", path);
+}
+
+static void pce_linux_load_state(void)
+{
+	if (!g_cue_path)
+		return;
+	char path[1024];
+	pce_state_path(path, sizeof(path));
+	if (!host_LoadState(path))
+		fprintf(stderr, "PCE: load failed '%s'\n", path);
+}
 
 /* Deterministic per-instruction PC trace (host only). h6280_run() calls
  * pce_scsi_pc_tick() each instruction when g_pcecd_trace is set; we turn it on
@@ -503,11 +570,9 @@ static uint16_t mypalette[256];
 #define AUDIO_BUFFER_LENGTH_GB (AUDIO_SAMPLE_RATE / 60)
 #define AUDIO_BUFFER_LENGTH_DMA_GB ((2 * AUDIO_SAMPLE_RATE) / 60)
 
-#define FB_INTERNAL_OFFSET (((XBUF_HEIGHT - current_height) / 2 + 16) * XBUF_WIDTH + (XBUF_WIDTH - current_width) / 2)
-static uint8_t emulator_framebuffer_pce[XBUF_WIDTH * XBUF_HEIGHT * 2];
-
-extern const unsigned char ROM_DATA[];
-extern unsigned int cart_rom_len;
+#define FB_INTERNAL_OFFSET_X  (((XBUF_WIDTH - current_width) / 2) > 0 ? ((XBUF_WIDTH - current_width) / 2) : 0)
+#define FB_INTERNAL_OFFSET    (((XBUF_HEIGHT - current_height) / 2 + 16) * XBUF_WIDTH + FB_INTERNAL_OFFSET_X)
+static uint8_t emulator_framebuffer_pce[XBUF_WIDTH * XBUF_HEIGHT];
 
 
 static odroid_video_frame_t update1 = {WIDTH, HEIGHT, WIDTH * 2, 2, 0xFF, -1, NULL, NULL, 0, {}};
@@ -526,9 +591,6 @@ uint16_t fb_data[WIDTH * HEIGHT * BPP];
 
 SDL_AudioSpec wanted;
 void fill_audio(void *udata, Uint8 *stream, int len);
-
-extern unsigned char cart_rom[];
-extern unsigned int cart_rom_len;
 
 static uint8_t PCE_EXRAM_BUF[0x8000];
 static int framePerSecond=0;
@@ -590,7 +652,7 @@ static const struct
 
 	// VDC
 	SVAR_A("vdc_regs", PCE.VDC.regs),           SVAR_1("vdc_reg", PCE.VDC.reg),
-	SVAR_1("vdc_status", PCE.VDC.status),       SVAR_1("vdc_satb", PCE.VDC.vram),
+	SVAR_1("vdc_status", PCE.VDC.status),       SVAR_1("vdc_vram", PCE.VDC.vram),
 	SVAR_1("vdc_satb", PCE.VDC.satb),			SVAR_4("vdc_pen_irqs", PCE.VDC.pending_irqs),
 
 	// Timer
@@ -670,7 +732,7 @@ void pce_input_read(odroid_gamepad_state_t* out_state) {
 
 int init_window(int width, int height)
 {
-    if (SDL_Init(SDL_INIT_VIDEO) != 0)
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0)
         return 0;
 
     window = SDL_CreateWindow("emulator",
@@ -701,7 +763,7 @@ static bool host_LoadState(const char *savePathName)
 
 	FILE *fp = fopen(savePathName, "rb");
 	if (fp == NULL)
-		return -1;
+		return false;
 
 	fread(&buffer, 8, 1, fp);
 
@@ -709,7 +771,7 @@ static bool host_LoadState(const char *savePathName)
 	{
 		MESSAGE_ERROR("Loading state failed: Header mismatch\n");
 		fclose(fp);
-		return -1;
+		return false;
 	}
 
 	for (int i = 0; SaveStateVars[i].len > 0; i++)
@@ -739,6 +801,17 @@ static bool host_LoadState(const char *savePathName)
 		  if (fread(&scsx, sizeof(scsx), 1, fp) == 1 && scsx == 0x58534353u &&
 		      fread(&sst, sizeof(sst), 1, fp) == 1)
 		      pce_scsi_state_set(&sst); }
+#ifdef PCE_ENABLE_ARCADE_CARD
+		{ long arc_pos = ftell(fp); uint32_t arcd = 0;
+		  static pce_arcade_card_state_t acst;
+		  if (fread(&arcd, sizeof(arcd), 1, fp) == 1 && arcd == PCE_ARCADE_CARD_STATE_MAGIC &&
+		      fread(&acst, sizeof(acst), 1, fp) == 1) {
+		      pce_arcade_card_state_set(&acst);
+		      if (acst.ram_used && pce_arcade_card_ram())
+		          fread(pce_arcade_card_ram(), 1, 0x200000, fp);
+		  } else if (arc_pos >= 0)
+		      fseek(fp, arc_pos, SEEK_SET);
+		}
 #endif
 	}
 
@@ -753,14 +826,8 @@ static bool host_LoadState(const char *savePathName)
 
 	fclose(fp);
 
-	/* Restore BRAM from its own file (the cabinet outlives any single .state). */
-	if (g_cue_path) {
-		FILE *bf = fopen("save_pce.bram", "rb");
-		if (bf) { fread(PCE.bram, 1, 0x800, bf); fclose(bf); }
-		pce_bram_format_if_needed();
-	}
-
-	return 0;
+	printf("Loaded state: %s\n", savePathName);
+	return true;
 }
 
 static bool host_SaveState(const char *savePathName)
@@ -769,7 +836,7 @@ static bool host_SaveState(const char *savePathName)
 
 	FILE *fp = fopen(savePathName, "wb");
 	if (fp == NULL)
-		return -1;
+		return false;
 
 	fwrite(SAVESTATE_HEADER, sizeof(SAVESTATE_HEADER), 1, fp);
 
@@ -798,18 +865,23 @@ static bool host_SaveState(const char *savePathName)
 		  pce_scsi_state_get(&sst);
 		  fwrite(&scsx, sizeof(scsx), 1, fp);
 		  fwrite(&sst, sizeof(sst), 1, fp); }
+#ifdef PCE_ENABLE_ARCADE_CARD
+		{ uint32_t arcd = PCE_ARCADE_CARD_STATE_MAGIC;
+		  static pce_arcade_card_state_t acst;
+		  pce_arcade_card_state_get(&acst);
+		  fwrite(&arcd, sizeof(arcd), 1, fp);
+		  fwrite(&acst, sizeof(acst), 1, fp);
+		  if (acst.ram_used && pce_arcade_card_ram())
+		      fwrite(pce_arcade_card_ram(), 1, 0x200000, fp);
+		}
+#endif
 #endif
 	}
 
 	fclose(fp);
 
-	/* BRAM persisted to its own file, independent of the .state snapshot. */
-	if (g_cue_path) {
-		FILE *bf = fopen("save_pce.bram", "wb");
-		if (bf) { fwrite(PCE.bram, 1, 0x800, bf); fclose(bf); }
-	}
-
-	return 0;
+	printf("Saved state: %s\n", savePathName);
+	return true;
 }
 
 void pcm_submit(void)
@@ -820,9 +892,7 @@ void pcm_submit(void)
 size_t
 pce_osd_getromdata(unsigned char **data)
 {
-    /* src pointer to the ROM data in the external flash (raw or LZ4) */
-    *data = (unsigned char *)ROM_DATA;
-    return cart_rom_len;
+    return syscard_get_data(data);
 }
 
 const struct {
@@ -964,11 +1034,16 @@ InitPCE(int samplerate, bool stereo, const char *huecard)
 			pce_scsi_set_disc(NULL, false);
 			printf("CD mount FAILED: %s\n", g_cue_path);
 		}
-		/* BRAM: map bank $F7, load save_pce.bram, format-init if absent. */
-		pce_bram_init();
-		FILE *bf = fopen("save_pce.bram", "rb");
-		if (bf) { fread(PCE.bram, 1, 0x800, bf); fclose(bf); }
-		pce_bram_format_if_needed();
+		/* BRAM: per-game .sram file. */
+		pce_sram_load();
+
+#ifdef PCE_ENABLE_ARCADE_CARD
+		if (!getenv("PCE_ARCADE_CARD") || strcmp(getenv("PCE_ARCADE_CARD"), "0") != 0) {
+			pce_arcade_card_init();
+			pce_arcade_card_map_banks();
+			printf("Arcade Card enabled (2MB RAM, banks $40-$43, I/O $1A00-$1BFF)\n");
+		}
+#endif
 	}
 
 	gfx_reset(0);
@@ -992,6 +1067,7 @@ void init(void)
 
     // Load ROM
     InitPCE(0,0,"game.pce");
+    pce_audio_init();
 
     // Video
     memset(fb_data, 0, sizeof(fb_data));
@@ -1013,6 +1089,13 @@ void pce_osd_gfx_blit(bool drawFrame) {
     uint32_t currentTime = HAL_GetTick();
     uint32_t delta = currentTime - lastFPSTime;
 
+    frames++;
+    if (delta >= 1000) {
+        framePerSecond = (10000 * frames) / delta;
+        printf("FPS: %d.%d, frames %d, delta %d ms\n", framePerSecond / 10, framePerSecond % 10, frames, delta);
+        frames = 0;
+        lastFPSTime = currentTime;
+    }
 
     odroid_display_scaling_t scaling = ODROID_DISPLAY_SCALING_OFF;
     
@@ -1026,13 +1109,6 @@ void pce_osd_gfx_blit(bool drawFrame) {
 
     uint8_t *emuFrameBuffer = osd_gfx_framebuffer();
     pixel_t *framebuffer_active = fb_data;//lcd_get_active_buffer();
-
-    if (delta >= 1000) {
-        framePerSecond = (10000 * frames) / delta;
-        printf("FPS: %d.%d, frames %d, delta %d ms\n", framePerSecond / 10, framePerSecond % 10, frames, delta);
-        frames = 0;
-        lastFPSTime = currentTime;
-    }
 
     for(y=0;y<renderHeight;y++) {
         fbTmp = emuFrameBuffer+(y*XBUF_WIDTH);
@@ -1073,88 +1149,6 @@ void pce_osd_gfx_blit(bool drawFrame) {
     }
 }
 
-
-void odroid_input_read_gamepad_pce(odroid_gamepad_state_t* out_state)
-{
-    SDL_Event event;
-    static SDL_Event last_down_event;
-
-    if (SDL_PollEvent(&event)) {
-        if (event.type == SDL_KEYDOWN) {
-            // printf("Press %d\n", event.key.keysym.sym);
-            switch (event.key.keysym.sym) {
-            case SDLK_x:
-                out_state->values[ODROID_INPUT_A] = 1;
-                break;
-            case SDLK_z:
-                out_state->values[ODROID_INPUT_B] = 1;
-                break;
-            case SDLK_LSHIFT:
-                out_state->values[ODROID_INPUT_START] = 1;
-                break;
-            case SDLK_LCTRL:
-                out_state->values[ODROID_INPUT_SELECT] = 1;
-                break;
-            case SDLK_UP:
-                out_state->values[ODROID_INPUT_UP] = 1;
-                break;
-            case SDLK_DOWN:
-                out_state->values[ODROID_INPUT_DOWN] = 1;
-                break;
-            case SDLK_LEFT:
-                out_state->values[ODROID_INPUT_LEFT] = 1;
-                break;
-            case SDLK_RIGHT:
-                out_state->values[ODROID_INPUT_RIGHT] = 1;
-                break;
-            case SDLK_ESCAPE:
-                exit(1);
-                break;
-            default:
-                break;
-            }
-            last_down_event = event;
-        } else if (event.type == SDL_KEYUP) {
-            // printf("Release %d\n", event.key.keysym.sym);
-            switch (event.key.keysym.sym) {
-            case SDLK_x:
-                out_state->values[ODROID_INPUT_A] = 0;
-                break;
-            case SDLK_z:
-                out_state->values[ODROID_INPUT_B] = 0;
-                break;
-            case SDLK_LSHIFT:
-                out_state->values[ODROID_INPUT_START] = 0;
-                break;
-            case SDLK_LCTRL:
-                out_state->values[ODROID_INPUT_SELECT] = 0;
-                break;
-            case SDLK_UP:
-                out_state->values[ODROID_INPUT_UP] = 0;
-                break;
-            case SDLK_DOWN:
-                out_state->values[ODROID_INPUT_DOWN] = 0;
-                break;
-            case SDLK_LEFT:
-                out_state->values[ODROID_INPUT_LEFT] = 0;
-                break;
-            case SDLK_RIGHT:
-                out_state->values[ODROID_INPUT_RIGHT] = 0;
-                break;
-            case SDLK_F1:
-                if (last_down_event.key.keysym.sym == SDLK_F1)
-                    host_SaveState("save_pce.bin");
-                break;
-            case SDLK_F4:
-                if (last_down_event.key.keysym.sym == SDLK_F4)
-                    host_LoadState("save_pce.bin");
-                break;                
-            default:
-                break;
-            }
-        }
-    }
-}
 
 void osd_log(int type, const char *format, ...) {
     va_list ap;
@@ -1203,14 +1197,24 @@ static void dump_state(const char *tag)
 int main(int argc, char *argv[])
 {
     if (argc > 1) g_cue_path = argv[1];
+    const char *syscard = syscard_find_default();
+    if (!syscard) {
+        fprintf(stderr, "No System Card found. Set PCE_SYSCARD or place syscard3.pce in cwd.\n");
+        return 1;
+    }
+    if (syscard_load_file(syscard))
+        return 1;
     if (getenv("PCE_KILL_TIMER")) { g_pce_kill_timer = 1; printf("[host] TIMER HARD-KILLED\n"); }
     /* Headless trace mode: argv[2] = number of frames to run then exit (so the
      * deterministic SCSI/PC diag can be inspected without an infinite loop). */
     int max_frames = (argc > 2) ? atoi(argv[2]) : 0;
 
-    init_window(WIDTH, HEIGHT);
+    printf("retro-go-pce debug mode (set PCE_TRACE=1 for CPU trace)\n");
+    printf("Savestates: F2 save / F4 load -> <cue>.state  (GWAUTOLOAD=1 to load at boot)\n");
 
+    init_window(WIDTH, HEIGHT);
     init();
+
     odroid_gamepad_state_t joystick = {0};
     int frame = 0;
     bool forced_cli = false;
@@ -1219,7 +1223,13 @@ int main(int argc, char *argv[])
      * it we observe the game's NATURAL init: does it CLI / register a vsync hook
      * on its own, or idle at 0x6257 with interrupts still masked? */
     bool do_cli = (argc > 3 && strcmp(argv[3], "cli") == 0);
-    g_pcecd_trace = 1;   /* tracer self-arms at first 0x6254 (game entry) */
+    g_pcecd_trace = getenv("PCE_TRACE") ? 1 : 0;
+
+    {
+        const char *al = getenv("GWAUTOLOAD");
+        if (al && al[0] && al[0] != '0')
+            linux_loadstate_req = 1;
+    }
 
     while (true)
     {
@@ -1229,23 +1239,31 @@ int main(int argc, char *argv[])
         //wdog_refresh();
         bool drawFrame = true;// common_emu_frame_loop();
 
-        odroid_input_read_gamepad_pce(&joystick);
+        pce_sdl_input_poll(&joystick);
+
+        if (linux_savestate_req) {
+            linux_savestate_req = 0;
+            pce_linux_save_state();
+        }
+        if (linux_loadstate_req) {
+            linux_loadstate_req = 0;
+            pce_linux_load_state();
+        }
+
         if (getenv("PCE_NO_MASH")) {
             /* Control run: NO injected input at all (the fixed-device resume path). */
         } else if (getenv("PCE_RESUME_RUNHOLD")) {
-            /* DEVICE-INPUT repro: the device autostart holds START (RUN) for
-             * frames 60-150 AFTER a resume load, then never presses anything
-             * again. Mimic exactly: no mash, just the one held window. */
             joystick.values[ODROID_INPUT_START] =
                 (g_load_frame && frame >= g_load_frame + 60 && frame < g_load_frame + 150) ? 1 : 0;
+        } else if (g_cue_path && !getenv("PCE_NO_AUTOSTART")) {
+            if (frame >= 45 && frame <= 90)
+                joystick.values[ODROID_INPUT_DOWN] = 1;
+            if (frame >= 90 && frame <= 210)
+                joystick.values[ODROID_INPUT_START] = 1;
         } else {
-        /* Headless: auto-press START (RUN) over frames 60-120 to boot the disc
-         * from the "CD-ROM SYSTEM" screen (no human to press it). */
         const char *mu = getenv("PCE_MASH_UNTIL");
         if (!mu || frame < atoi(mu)) {
         joystick.values[ODROID_INPUT_START] = ((frame % 200) >= 60 && (frame % 200) < 90) ? 1 : 0;
-        /* Also mash A (I button) in a separate window so menus whose confirm is
-         * I — e.g. Dynastic Hero's DYNA save-select — get past "New game". */
         joystick.values[ODROID_INPUT_A] = ((frame % 200) >= 140 && (frame % 200) < 170) ? 1 : 0;
         }
         }
@@ -1402,7 +1420,7 @@ int main(int argc, char *argv[])
             gfx_run();
         }
         pce_osd_gfx_blit(drawFrame);
-        //if(drawFrame) pce_pcm_submit();
+        pce_pcm_submit();
 
         /* CD-DA verify: dump this frame's CD-DA PCM (44100 stereo s16,
          * bit-perfect passthrough) to a raw file so we can confirm the audio
@@ -1432,13 +1450,17 @@ int main(int argc, char *argv[])
          * RAM at 1105, load at 1110 — the checksum must return to the saved one. */
         if (g_cue_path && max_frames >= 1115 && !getenv("PCE_NO_SELFTEST")) {
             static uint32_t sum_pre = 0;
+            char state_path[1024];
+            char state_alt_path[1024];
+            pce_state_path(state_path, sizeof(state_path));
+            pce_state_alt_path(state_alt_path, sizeof(state_alt_path));
             /* COLD-RESUME repro (device flow): fresh boot, then load a PREVIOUS
              * session's in-game save early — exactly what 'Resume game' does. */
             static int cold_done = 0;
             if (!cold_done && frame == 700 && getenv("PCE_COLD_RESUME")) {
                 cold_done = 1;
                 printf("[host] COLD-RESUME load @700\n");
-                host_LoadState("save_pce2.bin");
+                host_LoadState(state_alt_path);
                 g_load_frame = frame;
             }
             static int save2_f = 0;
@@ -1454,7 +1476,7 @@ int main(int argc, char *argv[])
                 pce_scsi_cdda_get(cst);
                 if ((cst[0] & 1u) && cst[1] >= (uint32_t)atoi(cdda_env)) {
                     save2_f = frame;
-                    host_SaveState("save_pce2.bin");
+                    host_SaveState(state_alt_path);
                     printf("[host] SAVE2 @%d (CDDA play lba=%lu end=%lu mode=%lu adpcm=%d)\n",
                            frame, (unsigned long)cst[1], (unsigned long)cst[3],
                            (unsigned long)cst[4], pce_adpcm_playing());
@@ -1462,16 +1484,16 @@ int main(int argc, char *argv[])
             }
             if (save2_f == 0 && !cdda_env && frame >= 5000 && pce_adpcm_playing()) {
                 save2_f = frame;
-                host_SaveState("save_pce2.bin");
+                host_SaveState(state_alt_path);
                 printf("[host] SAVE2 @%d (in-game, ADPCM PLAYING)\n", frame);
             } else if (save2_f > 0 && frame == save2_f + 10) {
-                host_LoadState("save_pce2.bin");
+                host_LoadState(state_alt_path);
                 g_load_frame = frame;
                 printf("[host] LOAD2 @%d (in-game)\n", frame);
             } else if (frame == 1100) {
                 for (int v = 0x68; v <= 0x87; v++)
                     for (int k = 0; k < 0x2000; k++) sum_pre += PCE.MemoryMapR[v][k];
-                host_SaveState("save_pce.bin");
+                host_SaveState(state_path);
                 printf("[host] SAVE @1100 cdram_sum=%08x\n", sum_pre);
             } else if (frame == 1105) {
                 memset(PCE.MemoryMapW[0x80], 0xEE, 0x2000);   /* corrupt one bank */
@@ -1480,37 +1502,13 @@ int main(int argc, char *argv[])
                     for (int k = 0; k < 0x2000; k++) s += PCE.MemoryMapR[v][k];
                 printf("[host] CORRUPT @1105 cdram_sum=%08x (should differ)\n", s);
             } else if (frame == 1110) {
-                host_LoadState("save_pce.bin");
+                host_LoadState(state_path);
                 uint32_t s = 0;
                 for (int v = 0x68; v <= 0x87; v++)
                     for (int k = 0; k < 0x2000; k++) s += PCE.MemoryMapR[v][k];
                 printf("[host] LOAD @1110 cdram_sum=%08x -> %s\n", s,
                        s == sum_pre ? "MATCH (save/load OK)" : "MISMATCH (BUG)");
             }
-        }
-
-        /* PCE_DUMP_EVERY=N: periodic PPM dumps (frame_00600.ppm ...) so we can
-         * see where the picture sits inside the VDC window over time. */
-        { static int dump_every = -1;
-          if (dump_every < 0) { const char *de = getenv("PCE_DUMP_EVERY"); dump_every = de ? atoi(de) : 0; }
-          if (dump_every > 0 && frame > 0 && (frame % dump_every) == 0) {
-              char name[64]; snprintf(name, sizeof name, "frame_%05d.ppm", frame);
-              FILE *pf = fopen(name, "wb");
-              if (pf) {
-                  uint8_t *efb = osd_gfx_framebuffer();
-                  fprintf(pf, "P6\n%d %d\n255\n", current_width, current_height);
-                  for (int yy = 0; yy < current_height; yy++) {
-                      uint8_t *rowp = efb + yy * XBUF_WIDTH;
-                      for (int xx = 0; xx < current_width; xx++) {
-                          uint16_t px = mypalette[rowp[xx]];
-                          fputc(((px >> 11) & 0x1f) << 3, pf);
-                          fputc(((px >> 5) & 0x3f) << 2, pf);
-                          fputc((px & 0x1f) << 3, pf);
-                      }
-                  }
-                  fclose(pf);
-              }
-          }
         }
 
         if (max_frames && ++frame >= max_frames) {
@@ -1550,6 +1548,7 @@ int main(int argc, char *argv[])
         }
     }
 
+    pce_sram_save();
     SDL_Quit();
 
     return 0;

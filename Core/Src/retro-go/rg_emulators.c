@@ -1155,6 +1155,13 @@ typedef struct {
     uint32_t    code_size;
     uint32_t    cpp_heap_end;   /* 0 = no cpp_heap_init() */
     void      (*entry)(uint8_t, uint8_t, int8_t);
+    /* Optional ITCM hot-code image appended to the core bin. The image is
+     * loaded into RAM_EMU at itc_lma_off (which overlaps the BSS VMA), so it
+     * MUST be copied to ITCM before the BSS memset wipes it. itc_size == 0
+     * means the core has no ITCM section. */
+    void       *itc_dest;
+    uint32_t    itc_lma_off;
+    uint32_t    itc_size;
 } emu_dispatch_t;
 
 __attribute__((noinline))
@@ -1162,6 +1169,10 @@ static void run_internal_emu(const emu_dispatch_t *e,
                              uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     if (load_core_bin_with_header(e->path, (uint8_t *)&__RAM_EMU_START__)) {
+        if (e->itc_size) {
+            memcpy(e->itc_dest, (uint8_t *)&__RAM_EMU_START__ + e->itc_lma_off, e->itc_size);
+            __DSB(); __ISB();   /* TCM stores drained before any fetch from ITCM */
+        }
         memset(e->bss_start, 0, e->bss_size);
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, e->code_size);
         if (e->cpp_heap_end) cpp_heap_init(e->cpp_heap_end);
@@ -1176,7 +1187,15 @@ static void run_internal_emu(const emu_dispatch_t *e,
 #define EMU_ENTRY(fn) ((void (*)(uint8_t, uint8_t, int8_t))(fn))
 
 static const emu_dispatch_t emu_tgb     = { "/cores/tgb.bin",     &_OVERLAY_TGB_BSS_START,     (uint32_t)&_OVERLAY_TGB_BSS_SIZE,     (uint32_t)&_OVERLAY_TGB_SIZE,     (uint32_t)&_OVERLAY_TGB_BSS_END,     EMU_ENTRY(app_main_gb_tgbdual) };
+#if SD_CARD == 1
+extern uint8_t __pce_itc_start__[];
+extern uint8_t _OVERLAY_PCE_ITC_LMA_OFFSET;
+extern uint8_t _OVERLAY_PCE_ITC_SIZE;
+static const emu_dispatch_t emu_pce     = { "/cores/pce.bin",     &_OVERLAY_PCE_BSS_START,     (uint32_t)&_OVERLAY_PCE_BSS_SIZE,     (uint32_t)&_OVERLAY_PCE_SIZE,     0, EMU_ENTRY(app_main_pce),
+                                            __pce_itc_start__, (uint32_t)&_OVERLAY_PCE_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_PCE_ITC_SIZE };
+#else
 static const emu_dispatch_t emu_pce     = { "/cores/pce.bin",     &_OVERLAY_PCE_BSS_START,     (uint32_t)&_OVERLAY_PCE_BSS_SIZE,     (uint32_t)&_OVERLAY_PCE_SIZE,     0, EMU_ENTRY(app_main_pce) };
+#endif
 static const emu_dispatch_t emu_msx     = { "/cores/msx.bin",     &_OVERLAY_MSX_BSS_START,     (uint32_t)&_OVERLAY_MSX_BSS_SIZE,     (uint32_t)&_OVERLAY_MSX_SIZE,     0, EMU_ENTRY(app_main_msx) };
 static const emu_dispatch_t emu_wsv     = { "/cores/wsv.bin",     &_OVERLAY_WSV_BSS_START,     (uint32_t)&_OVERLAY_WSV_BSS_SIZE,     (uint32_t)&_OVERLAY_WSV_SIZE,     0, EMU_ENTRY(app_main_wsv) };
 static const emu_dispatch_t emu_ngp     = { "/cores/ngp.bin",     &_OVERLAY_NGP_BSS_START,     (uint32_t)&_OVERLAY_NGP_BSS_SIZE,     (uint32_t)&_OVERLAY_NGP_SIZE,     0, EMU_ENTRY(app_main_ngp) };

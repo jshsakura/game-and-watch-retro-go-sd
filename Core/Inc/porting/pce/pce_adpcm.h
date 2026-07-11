@@ -9,7 +9,9 @@ void    pce_adpcm_write(uint8_t reg, uint8_t val);   /* reg = A & 0x0F */
 uint8_t pce_adpcm_read(uint8_t reg);
 void    pce_adpcm_dma_byte(uint8_t val);             /* SCSI->ADPCM DMA: one byte to RAM */
 bool    pce_adpcm_playing(void);
-bool    pce_adpcm_end_flag(void);                    /* level: sample ran to its end */
+bool    pce_adpcm_end_flag(void);                    /* EndReached → $1803 bit3 */
+bool    pce_adpcm_half_flag(void);                   /* HalfReached → $1803 bit2 */
+void    pce_adpcm_reconcile_load(void);              /* after savestate restore */
 int     pce_adpcm_fill(int16_t *out, int frames);    /* stereo @ OUT_RATE; 0 if idle */
 
 /* Savestate: engine registers packed into words + the 64KB sample RAM.

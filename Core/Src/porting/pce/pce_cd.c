@@ -130,13 +130,30 @@ int pce_cd_track_at_lba(const pce_cd_toc_t *toc, uint32_t lba)
  * Separate handles = no cross-track thrash. */
 static FILE *s_bin_f[2];
 static char  s_bin_path[2][256];
+/* Cached file offsets: skip f_lseek when the next read is sequential (CD-DA
+ * streaming is always linear; f_lseek on every batch was pure FatFs overhead). */
+static long  s_bin_pos[2] = { -1, -1 };
 
 void pce_cd_close(void)
 {
     for (int i = 0; i < 2; i++) {
         if (s_bin_f[i]) { fclose(s_bin_f[i]); s_bin_f[i] = NULL; }
         s_bin_path[i][0] = 0;
+        s_bin_pos[i] = -1;
     }
+}
+
+/* Seek only when the cached position diverges (non-sequential jump). */
+static bool bin_seek_slot(int slot, FILE *f, long offset)
+{
+    if (s_bin_pos[slot] == offset)
+        return true;
+    if (fseek(f, offset, SEEK_SET) != 0) {
+        s_bin_pos[slot] = -1;
+        return false;
+    }
+    s_bin_pos[slot] = offset;
+    return true;
 }
 
 static bool read_sector_slot(int slot, const pce_cd_toc_t *toc, uint32_t lba, uint8_t *buf)
@@ -156,25 +173,33 @@ static bool read_sector_slot(int slot, const pce_cd_toc_t *toc, uint32_t lba, ui
         if (!s_bin_f[slot] || strcmp(s_bin_path[slot], t->bin_path) != 0) {
             if (s_bin_f[slot]) fclose(s_bin_f[slot]);
             s_bin_f[slot] = fopen(t->bin_path, "rb");
-            if (!s_bin_f[slot]) { s_bin_path[slot][0] = 0; continue; }
+            if (!s_bin_f[slot]) { s_bin_path[slot][0] = 0; s_bin_pos[slot] = -1; continue; }
             strncpy(s_bin_path[slot], t->bin_path, sizeof(s_bin_path[slot]) - 1);
             s_bin_path[slot][sizeof(s_bin_path[slot]) - 1] = 0;
+            s_bin_pos[slot] = -1;
         }
         FILE *f = s_bin_f[slot];
-        if (fseek(f, offset, SEEK_SET) == 0) {
+        if (bin_seek_slot(slot, f, offset)) {
             if (t->sector_size == PCE_CD_SECTOR_RAW) {
-                if (fread(buf, 1, PCE_CD_SECTOR_RAW, f) == PCE_CD_SECTOR_RAW) return true;
+                if (fread(buf, 1, PCE_CD_SECTOR_RAW, f) == PCE_CD_SECTOR_RAW) {
+                    s_bin_pos[slot] += PCE_CD_SECTOR_RAW;
+                    return true;
+                }
             } else {
                 /* 2048-byte user data: place it where a MODE1 sector keeps user
                  * bytes (offset 16) and zero the sync/header/ECC frame around it. */
                 memset(buf, 0, PCE_CD_SECTOR_RAW);
-                if (fread(buf + 16, 1, 2048, f) == 2048) return true;
+                if (fread(buf + 16, 1, 2048, f) == 2048) {
+                    s_bin_pos[slot] += 2048;
+                    return true;
+                }
             }
         }
         /* stale/broken handle: force a fresh fopen on the retry */
         fclose(s_bin_f[slot]);
         s_bin_f[slot] = NULL;
         s_bin_path[slot][0] = 0;
+        s_bin_pos[slot] = -1;
     }
     return false;
 }
@@ -215,17 +240,23 @@ int pce_cd_read_sectors_audio(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *bu
         if (!s_bin_f[1] || strcmp(s_bin_path[1], t->bin_path) != 0) {
             if (s_bin_f[1]) fclose(s_bin_f[1]);
             s_bin_f[1] = fopen(t->bin_path, "rb");
-            if (!s_bin_f[1]) { s_bin_path[1][0] = 0; continue; }
+            if (!s_bin_f[1]) { s_bin_path[1][0] = 0; s_bin_pos[1] = -1; continue; }
             strncpy(s_bin_path[1], t->bin_path, sizeof(s_bin_path[1]) - 1);
             s_bin_path[1][sizeof(s_bin_path[1]) - 1] = 0;
+            s_bin_pos[1] = -1;
         }
-        if (fseek(s_bin_f[1], offset, SEEK_SET) == 0) {
-            size_t got = fread(buf, PCE_CD_SECTOR_RAW, n, s_bin_f[1]);
-            if (got > 0) return (int)got;
+        if (bin_seek_slot(1, s_bin_f[1], offset)) {
+            size_t want = (size_t)n * PCE_CD_SECTOR_RAW;
+            size_t got  = fread(buf, 1, want, s_bin_f[1]);
+            if (got > 0) {
+                s_bin_pos[1] += (long)got;
+                return (int)(got / PCE_CD_SECTOR_RAW);
+            }
         }
         fclose(s_bin_f[1]);
         s_bin_f[1] = NULL;
         s_bin_path[1][0] = 0;
+        s_bin_pos[1] = -1;
     }
     return 0;
 }
