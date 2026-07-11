@@ -932,14 +932,22 @@ static bool clock_in_night_window(int minute_of_day, int start_min, int end_min)
     return since_start < span;
 }
 
-/* Halfway between the user's current brightness and CLOCK_DIM_FLOOR (not
- * halfway to 0 — the device's own minimum is already 128, and users pick
- * that low end on purpose, so dimming must scale off it, not below it).
+/* Idle auto-dim brightness. The point is "a little dimmer", not "half off":
+ * dropping halfway to the floor pushed mid brightnesses down into the panel's
+ * barely-lit zone, so the clock read as OFF instead of dimmed. Instead drop a
+ * SMALL fraction of the headroom the user left above CLOCK_DIM_FLOOR — the
+ * device's own darkest pick, which dimming must never go below. Scaling off the
+ * headroom means a user already near the floor barely moves (nowhere to go),
+ * while a bright pick dips noticeably but stays clearly readable.
  * lcd_backlight_set takes a raw 0-255 DAC level. */
+#define CLOCK_DIM_DROP_NUM 1   /* drop CLOCK_DIM_DROP_NUM/CLOCK_DIM_DROP_DEN of the */
+#define CLOCK_DIM_DROP_DEN 4   /* headroom above the floor (1/4 = gentle) */
 static uint8_t clock_dim_level(uint8_t user_raw)
 {
-    uint8_t half = (uint8_t)(((uint16_t)user_raw + CLOCK_DIM_FLOOR) / 2);
-    return half < CLOCK_DIM_FLOOR ? CLOCK_DIM_FLOOR : half;
+    if (user_raw <= CLOCK_DIM_FLOOR)
+        return CLOCK_DIM_FLOOR;
+    uint16_t headroom = (uint16_t)user_raw - CLOCK_DIM_FLOOR;
+    return (uint8_t)(user_raw - headroom * CLOCK_DIM_DROP_NUM / CLOCK_DIM_DROP_DEN);
 }
 
 /*
