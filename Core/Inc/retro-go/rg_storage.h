@@ -74,5 +74,6 @@ typedef void (*file_progress_cb_t)(uint32_t total_size, uint32_t total_processed
 
 size_t rg_storage_copy_file_to_ram(char *file_path, uint8_t *ram_dest, file_progress_cb_t file_progress_cb);
 size_t rg_storage_copy_file_to_ram_with_offset(char *file_path, uint8_t *ram_dest, uint32_t offset, file_progress_cb_t file_progress_cb);
+size_t rg_storage_copy_file_range_to_ram(char *file_path, uint8_t *ram_dest, uint32_t offset, uint32_t length, file_progress_cb_t file_progress_cb);
 
 bool rg_storage_get_adjacent_files(const char *path, char *prev_path, char *next_path);
