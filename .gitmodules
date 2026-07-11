@@ -76,3 +76,7 @@
 [submodule "external/handy-go"]
 	path = external/handy-go
 	url = https://github.com/jshsakura/handy-go.git
+[submodule "external/sm"]
+	path = external/sm
+	url = https://github.com/jshsakura/sm.git
+	branch = gnw-port
