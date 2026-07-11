@@ -910,8 +910,11 @@ static bool cover_slot_active(void)
     return rg_favorites_is_current_tab();
 }
 
-/* Rescale the freshly decoded cover in pCover_Buffer into the fixed slot
- * (nearest-neighbour, aspect kept, black letterbox) and report slot dims.
+/* Rescale the freshly decoded cover in pCover_Buffer into the fixed slot and
+ * report slot dims. Fills the slot edge to edge the way CSS object-fit: cover
+ * does: keep the aspect ratio, scale until both axes reach the slot, and centre
+ * -crop the overflowing axis. Covers on the ★ tab are all shapes (square,
+ * portrait), and letterboxing them left the row looking ragged.
  * No-op outside the ★ tab. */
 static void cover_slot_apply(uint32_t *width, uint32_t *height)
 {
@@ -924,25 +927,33 @@ static void cover_slot_apply(uint32_t *width, uint32_t *height)
         return;
     if (pSlot_Buffer == NULL)
         pSlot_Buffer = (uint16_t *)ram_malloc(COVER_SLOT_BYTES);
+    if (pSlot_Buffer == NULL)
+        return; /* out of RAM: leave the cover at its decoded size */
 
-    uint32_t dst_w = COVER_SLOT_WIDTH;
-    uint32_t dst_h = (src_h * COVER_SLOT_WIDTH) / src_w;
-    if (dst_h > COVER_SLOT_HEIGHT)
+    /* Largest centred source rect that has the slot's aspect ratio. Comparing
+     * the cross-products avoids any division here. */
+    uint32_t crop_w = src_w, crop_h = src_h;
+    if ((uint64_t)src_w * COVER_SLOT_HEIGHT > (uint64_t)src_h * COVER_SLOT_WIDTH)
+        crop_w = (src_h * COVER_SLOT_WIDTH) / COVER_SLOT_HEIGHT; /* too wide: trim the sides */
+    else
+        crop_h = (src_w * COVER_SLOT_HEIGHT) / COVER_SLOT_WIDTH; /* too tall: trim top/bottom */
+
+    if (crop_w == 0)
+        crop_w = 1;
+    if (crop_h == 0)
+        crop_h = 1;
+
+    const uint32_t off_x = (src_w - crop_w) / 2;
+    const uint32_t off_y = (src_h - crop_h) / 2;
+
+    /* Every slot pixel is written, so the buffer needs no clearing. */
+    for (uint32_t y = 0; y < COVER_SLOT_HEIGHT; y++)
     {
-        dst_h = COVER_SLOT_HEIGHT;
-        dst_w = (src_w * COVER_SLOT_HEIGHT) / src_h;
-    }
-
-    memset(pSlot_Buffer, 0, COVER_SLOT_BYTES);
-
-    uint32_t x0 = (COVER_SLOT_WIDTH - dst_w) / 2;
-    uint32_t y0 = (COVER_SLOT_HEIGHT - dst_h) / 2;
-    for (uint32_t y = 0; y < dst_h; y++)
-    {
-        const uint16_t *src_row = &pCover_Buffer[((y * src_h) / dst_h) * src_w];
-        uint16_t *dst_row = &pSlot_Buffer[(y0 + y) * COVER_SLOT_WIDTH + x0];
-        for (uint32_t x = 0; x < dst_w; x++)
-            dst_row[x] = src_row[(x * src_w) / dst_w];
+        const uint32_t src_y = off_y + (y * crop_h) / COVER_SLOT_HEIGHT;
+        const uint16_t *src_row = &pCover_Buffer[src_y * src_w];
+        uint16_t *dst_row = &pSlot_Buffer[y * COVER_SLOT_WIDTH];
+        for (uint32_t x = 0; x < COVER_SLOT_WIDTH; x++)
+            dst_row[x] = src_row[off_x + (x * crop_w) / COVER_SLOT_WIDTH];
     }
 
     memcpy(pCover_Buffer, pSlot_Buffer, COVER_SLOT_BYTES);
