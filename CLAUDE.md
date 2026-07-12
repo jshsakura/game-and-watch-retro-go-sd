@@ -18,7 +18,18 @@ The build system is plain GNU Make. `Makefile` lists source files; `Makefile.com
 
 - `make help` — full list of build flags with current values.
 
-There are no automated tests. Verification is manual: build, flash, run on hardware.
+**A release MUST use the canonical flag set.** `make release DOCKER=1` on its own leaves every
+feature flag at its default of `0` — three builds shipped with no coverflow, no cheat codes, no
+overclock and no non-Latin locales (so the launcher could not even offer Korean). The set that
+CI uses lives in `.github/workflows/package.yml` and is the only correct one:
+
+```
+make release DOCKER=1 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 \
+             ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1
+```
+
+There are no automated tests. Verification is manual: build, flash, run on hardware —
+but see "Testing a core the way the device runs it" below before trusting a host harness.
 
 **Configuration knobs that change layout (not just behavior)** — pass on the make command line:
 
@@ -63,6 +74,66 @@ Emulator main loop happens in `Core/Src/porting/<system>/`, a loop iteration sho
 
 The `retro-go-stm32/components/odroid/` API (`odroid_system`, `odroid_overlay`, `odroid_display`, `odroid_input`, `odroid_audio`, `odroid_sdcard`, `odroid_netplay`) is the contract between the launcher and an emulator core. New cores implement against it.
 
+## Testing a core the way the device runs it
+
+A host harness that compiles *the core's whole source tree* is not testing the firmware. Three
+Super Metroid releases shipped that could not boot while the harness reported 4,000 frames with
+zero mismatches against the reference emulator, because the harness was a different program:
+
+- It compiled `sm_cpu_infra.c`, which the firmware excludes — and which **defines and sets
+  `g_snes`**, the pointer sm's whole register bus goes through. On the device nothing set it.
+- It compiled without `TARGET_GNW`, so it built itself a **real SPC700**. The device has
+  `snes->apu == NULL` (spc_player is the sound chip), and the runtime dereferenced it.
+
+Both are device-only faults that a host build simply cannot reach.
+
+Then a fourth release booted straight into a Hardfault anyway, because the same program on a
+different CPU is still not the same program:
+
+- **The host does not trap what ARM traps.** `ClearBackdrop()` (sm's `ppu.c`) fills a `uint16`
+  buffer through a `*(uint64*)` cast; on ARM that is **`STRD`, which faults unless the address is
+  word-aligned**, and the buffer sat at offset `0x702` inside `Ppu` — 2 mod 4. The device died on
+  the first rendered line; x86 and aarch64 store unaligned without complaint and rendered 4,000
+  happy frames. Note Cortex-M7 traps *only* 64-bit accesses this way — unaligned halfword/word
+  accesses are legal, and the SNES code does them constantly, so only the 64-bit ones matter.
+- **An implicit declaration is a lie that only 64-bit hosts catch.** `spc_player.c` called
+  `ahb_malloc()` with no prototype, so it returned `int`. On the 32-bit device the truncated
+  pointer is still the pointer; on a 64-bit host it is a wild address, and the harness died in
+  `SpcPlayer_Create` before reaching any emulation at all.
+
+Three things now close the gap, and a new core should copy all three:
+
+- **`tools/sm_harness/device_run.sh`** — compiles the core from the Makefile's own source list
+  (never a copy of it), with the device's defines (`-DTARGET_GNW`), and shims the firmware
+  allocators. It also forces the device's *CPU* rules on the host: `-fsanitize=alignment` (failing
+  only on the 64-bit violations, which is exactly what an M7 traps) and
+  `-Werror=implicit-function-declaration`. Revert any of the fixes above and it reproduces the
+  fault on the host. Give it a ROM path and it runs and gates: `device_run.sh <rom> [frames]`.
+- **`tools/sm_harness/device_parity.sh`** (in `tests/run.sh`) — links exactly what the device
+  links. Anything left undefined is a symbol the firmware linker would resolve *silently* to
+  another core's.
+- **A `_Static_assert` next to any type-punned store**, so an alignment assumption the code makes
+  is one the compiler has to prove rather than one the struct layout grants by luck.
+
+## Cores are overlays — a missing symbol does not fail the link, it aliases
+
+Every emulator core is an overlay linked at the same RAM address (`__RAM_EMU_START__`). If core A
+references a global that only core B defines, **the linker binds it, quietly**, to B's address —
+which, once A is loaded, holds A's own unrelated data. Super Metroid drove the SNES bus through
+Super Mario World's `g_snes` for three releases and asserted on the first register read.
+
+A core's globals must be renamed into its own namespace by its `<core>_redefines` file, so that a
+missing definition is a **link error** instead of an alias. `scripts/check_core_symbol_aliases.py`
+runs on every link and fails the build if any core reaches a symbol another core's overlay owns
+(it confirms by disassembly, so dead references do not trip it).
+
+## Adding an APPID resets every user's settings
+
+`/CONFIG` is a raw dump of `persistent_config_t`, and that struct contains `app[APPID_COUNT]`. Add
+an entry to `appid.h` and the struct grows, the saved file no longer matches, and the magic check
+throws it away — language, coverflow, backlight and volume all go back to defaults. The `version`
+field exists to make that deliberate. Do not add an APPID casually.
+
 ## Things that are easy to get wrong
 
 - **Don't edit files under submodules in `external/`.** Either fix upstream or add/update a patch. The build's submodule-dirty check will reject the build.
@@ -74,8 +145,8 @@ The `retro-go-stm32/components/odroid/` API (`odroid_system`, `odroid_overlay`, 
 
 ## Debugging crashes on hardware (BSOD / faults)
 
-- **Faults self-label.** `main()` sets `SCB->SHCSR` BUSFAULTENA/USGFAULTENA/MEMFAULTENA, so the BSOD title reads "Busfault" / "Usagefault" / "Memfault" instead of a generic "Hardfault". The BSOD also prints `CFSR/HFSR/BFAR/MMFAR/ABFSR`.
-- **Imprecise BusFault (`CFSR` bit10 IMPRECISERR, `CFSR=0x…400`, BFAR invalid) = a buffered store to a no-slave address; the reported PC is drain-time noise, not the culprit.** Read **`ABFSR` (`0xE000EFA8`, on the BSOD)** — it names the bus interface the wild access used: bit2 **AHBP** = peripheral space `0x40000000–0x5FFFFFFF`, bit3 **AXIM** = all RAM/flash, bit0/1 = ITCM/DTCM. This instantly tells you RAM-corruption vs a wild pointer into peripherals.
+- **Faults do NOT self-label — the BSOD gives you a title, a PC and an LR, and nothing else.** `SCB->SHCSR` is never written (grep it: no hit anywhere in `Core/`), so BusFault/UsageFault/MemFault are all disabled and every one of them escalates to a plain **"Hardfault"**. `CFSR/HFSR/BFAR/MMFAR/ABFSR` are not read and not printed. So the title tells you nothing about *why*, and "Hardfault" is compatible with an alignment fault, a null deref, and a wild store alike. Budget for that: the PC is the whole clue. (Super Metroid's unaligned `STRD` came up as a bare "Hardfault"; had UsageFault been enabled the title alone — "Usagefault" — would have named it.)
+- **If you do enable them**, `SCB->SHCSR |= USGFAULTENA|BUSFAULTENA|MEMFAULTENA` in `main()` makes the existing per-fault handlers in `stm32h7xx_it.c` fire and the title become "Busfault"/"Usagefault"/"Memfault". Then `CFSR` bit10 IMPRECISERR (`CFSR=0x…400`, BFAR invalid) = a buffered store to a no-slave address, whose reported PC is drain-time noise, not the culprit — and **`ABFSR` (`0xE000EFA8`)** names the bus interface the wild access used: bit2 **AHBP** = peripheral space `0x40000000–0x5FFFFFFF`, bit3 **AXIM** = all RAM/flash, bit0/1 = ITCM/DTCM.
 - **GDB over an ST-Link (or pico-probe).** `gnwmanager gdbserver` spawns OpenOCD (auto-detects the probe via `interface/*.cfg`) with a gdbserver on `:3333`; then `make gdb` (or `arm-none-eabi-gdb build/gw_retro_go.elf -ex 'target extended-remote :3333'`). Use **`hbreak`, not `break`, for flash addresses** (`0x08xxxxxx`) — a software breakpoint silently fails to write flash. RAM/overlay addresses (`0x24xxxxxx`) take either. This gdb build has **no Python**; use native `-ex printf`/`x`. To catch a fault with full context, `hbreak common_fault_handler_c` and read `*frame` (the stacked r0–r3/lr/PC) plus live r4–r11.
 - **Overlay RAM addresses alias.** Every core's overlay links at the same RAM_EMU VMA, so `gdb`/`addr2line` resolve a `0x24xxxxxx` address to *whichever* overlay's symbol it finds first (often zelda3/SMW, not the running core). Resolve EB addresses via `build/gw_retro_go.map` filtered to `build/earthbound/*.o`, or disassemble the specific `build/<core>/<file>.o`.
 

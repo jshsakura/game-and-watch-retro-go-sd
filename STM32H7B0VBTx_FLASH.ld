@@ -142,6 +142,7 @@ MEMORY
   CORES      (x  ) : ORIGIN = 0x0,                 LENGTH = 0xFFFFFFFF
   RODATA     (x  ) : ORIGIN = 0xCAFE0000,          LENGTH = 0xFFFFFFFF
   PICO8_CODE (x  ) : ORIGIN = 0xBEEF0000,          LENGTH = 512K
+  /* No SM_CODE region: Super Metroid is SD-card only (see below). */
   EXTFLASH   (xr ) : ORIGIN = __EXTFLASH_START__,  LENGTH = 32M
 }
 
@@ -639,6 +640,12 @@ INCLUDE build/fceumm_mappers.ld
     build/zelda3/*.o (.rodata .rodata*)
     __rodata_zelda3_end__ = .;
   } > RODATA
+
+  /* No Super Metroid here. The port is SD-card only (SM_OBJECTS is empty in this
+   * configuration — see Makefile.common and rg_emulators.c): FrogFS maps its files
+   * in place instead of copying them, so sm.xip could never be relocated, and there
+   * is nowhere to cache the 3 MB ROM the game reads at runtime. Its sections live
+   * in STM32H7B0VBTx_SDCARD.ld only. */
 
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);

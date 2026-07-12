@@ -899,6 +899,56 @@ Core/Src/porting/pico8/main_pico8_stub.c
 PICO8_CXX_STUBS =
 PICO8_CXX_SOURCES =
 
+# Super Metroid (snesrev/sm). NOT compiled: main.c/opengl/glsl (SDL frontend),
+# config.c (SDL keymap parser), tracing.c, sm_cpu_infra.c (the reference-emulator
+# compare machinery), snes/apu.c + snes/spc.c (the SPC700 emulator — spc_player
+# does the audio) and snes/snes_other.c (ROM loader; the glue fills the cart in).
+CORE_SM = external/sm
+SM_C_SOURCES = \
+$(CORE_SM)/src/sm_rtl.c \
+$(CORE_SM)/src/sm_80.c \
+$(CORE_SM)/src/sm_81.c \
+$(CORE_SM)/src/sm_82.c \
+$(CORE_SM)/src/sm_84.c \
+$(CORE_SM)/src/sm_85.c \
+$(CORE_SM)/src/sm_86.c \
+$(CORE_SM)/src/sm_87.c \
+$(CORE_SM)/src/sm_88.c \
+$(CORE_SM)/src/sm_89.c \
+$(CORE_SM)/src/sm_8b.c \
+$(CORE_SM)/src/sm_8d.c \
+$(CORE_SM)/src/sm_8f.c \
+$(CORE_SM)/src/sm_90.c \
+$(CORE_SM)/src/sm_91.c \
+$(CORE_SM)/src/sm_92.c \
+$(CORE_SM)/src/sm_93.c \
+$(CORE_SM)/src/sm_94.c \
+$(CORE_SM)/src/sm_9b.c \
+$(CORE_SM)/src/sm_a0.c \
+$(CORE_SM)/src/sm_a2.c \
+$(CORE_SM)/src/sm_a3.c \
+$(CORE_SM)/src/sm_a4.c \
+$(CORE_SM)/src/sm_a5.c \
+$(CORE_SM)/src/sm_a6.c \
+$(CORE_SM)/src/sm_a7.c \
+$(CORE_SM)/src/sm_a8.c \
+$(CORE_SM)/src/sm_a9.c \
+$(CORE_SM)/src/sm_aa.c \
+$(CORE_SM)/src/sm_ad.c \
+$(CORE_SM)/src/sm_b2.c \
+$(CORE_SM)/src/sm_b3.c \
+$(CORE_SM)/src/sm_b4.c \
+$(CORE_SM)/src/spc_player.c \
+$(CORE_SM)/src/util.c \
+$(CORE_SM)/src/snes/ppu.c \
+$(CORE_SM)/src/snes/dma.c \
+$(CORE_SM)/src/snes/dsp.c \
+$(CORE_SM)/src/snes/snes.c \
+$(CORE_SM)/src/snes/cpu.c \
+$(CORE_SM)/src/snes/cart.c \
+$(CORE_SM)/src/snes/input.c \
+Core/Src/porting/sm/main_sm.c
+
 CORE_ZELDA3 = external/zelda3
 ZELDA3_C_SOURCES = \
 $(CORE_ZELDA3)/zelda_rtl.c \

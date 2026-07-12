@@ -30,6 +30,7 @@
 #include "main_vb.h"
 #include "main_amstrad.h"
 #include "main_zelda3.h"
+#include "main_sm.h"
 #include "main_smw.h"
 #include "main_videopac.h"
 #include "main_zxs.h"
@@ -1353,6 +1354,18 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             memset(&_OVERLAY_ZELDA3_BSS_START, 0x0, (size_t)&_OVERLAY_ZELDA3_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_ZELDA3_SIZE);
             app_main_zelda3(load_state, start_paused, save_slot);
+        /* Super Metroid is SD-card only, and is compiled out entirely otherwise.
+         * It needs two files cached into external flash from the card: the original
+         * 3 MB ROM it reads at runtime, and sm.xip, whose sentinel addresses are
+         * relocated as it is written. A FrogFS build maps its files in place and
+         * never copies them, so there is nothing to relocate — and nowhere to put a
+         * 3 MB ROM. */
+#if SD_CARD == 1
+        } else if (strcmp(newfile->name,"Super Metroid") == 0) {
+            memset(&_OVERLAY_SM_BSS_START, 0x0, (size_t)&_OVERLAY_SM_BSS_SIZE);
+            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_SM_SIZE);
+            app_main_sm(load_state, start_paused, save_slot);
+#endif
         } else if (strcmp(newfile->name,"Super Mario World") == 0) {
             memset(&_OVERLAY_SMW_BSS_START, 0x0, (size_t)&_OVERLAY_SMW_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_SMW_SIZE);
