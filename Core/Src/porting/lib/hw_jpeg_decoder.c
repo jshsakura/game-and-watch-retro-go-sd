@@ -58,12 +58,31 @@ uint32_t g_jpeg_hal = 0, g_jpeg_err = 0, g_jpeg_rej = 0, g_jpeg_sub = 0, g_jpeg_
 static void COPY_JpegOutInit();
 static void COPY_JpegOut();
 
+/* Put the handle back to a state HAL will actually work from.
+ *
+ * HAL_JPEG_Init() restores State and ErrorCode, but it clears hjpeg->Lock ONLY
+ * inside `if (State == HAL_JPEG_STATE_RESET)` — the two assignments at
+ * stm32h7xx_hal_jpeg.c:520 and :541 are the only ones in the whole driver. So a
+ * handle that is ever left LOCKED stays LOCKED for the rest of the session, and
+ * HAL_JPEG_Decode's __HAL_LOCK then returns HAL_BUSY before it so much as looks
+ * at the image — with ErrorCode reading 0, because Init cleared it.
+ *
+ * That is exactly what the device reported: hal=2 (HAL_BUSY), err=0, rej=0, on
+ * every frame of every clip. Nothing was wrong with the video. */
+static void JPEG_HandleReset(void)
+{
+    JPEG_Handle.Instance = JPEG;
+    JPEG_Handle.State = HAL_JPEG_STATE_RESET;   /* so Init clears the lock */
+    JPEG_Handle.Lock = HAL_UNLOCKED;
+    JPEG_Handle.ErrorCode = HAL_JPEG_ERROR_NONE;
+}
+
 static uint32_t JPEG_DecodeInit(uint32_t JPEG_Buffer, uint32_t JPEG_Buffer_Size)
 {
     JPEGBufferAddress = JPEG_Buffer;
     JPEGBufferSize = JPEG_Buffer_Size;
 
-    JPEG_Handle.Instance = JPEG;
+    JPEG_HandleReset();
     return HAL_JPEG_Init(&JPEG_Handle);
 }
 
@@ -103,8 +122,17 @@ static uint32_t JPEG_Run(uint32_t SrcAddress, uint32_t SrcSize)
     if (st != HAL_OK || decode_rejected)
     {
         /* A rejected image left the peripheral paused mid-frame; drop it so the
-         * next decode starts from a clean state. */
+         * next decode starts from a clean state.
+         *
+         * Abort is not enough on its own. It leaves State = HAL_JPEG_STATE_ERROR
+         * whenever ErrorCode is set, and nothing in the driver ever clears the
+         * lock outside Init-from-RESET. Either one is permanent: one bad frame
+         * would wedge the decoder for the rest of the session and every frame
+         * after it would come back HAL_BUSY. Hand the handle back ourselves. */
         HAL_JPEG_Abort(&JPEG_Handle);
+        JPEG_Handle.Lock = HAL_UNLOCKED;
+        JPEG_Handle.ErrorCode = HAL_JPEG_ERROR_NONE;
+        JPEG_Handle.State = HAL_JPEG_STATE_READY;
         return 1;
     }
     return 0;
