@@ -175,8 +175,14 @@ echo "=== sm: device source set is symbol-complete ==="
 # three builds ship in which the linker bound sm's SNES bus to Super Mario World's
 # g_snes — the harness ran 4,000 clean frames while the device died on its first
 # register read. Link exactly what the device links, and nothing else.
-bash tools/sm_harness/device_parity.sh
-
-rc=$(( rc || $? ))
+#
+# CI's host-tests job checks out the repo without submodules, so external/sm is an
+# empty directory there. Skipping is honest; pretending to have checked is not.
+if [ -f external/sm/src/sm_rtl.c ]; then
+    bash tools/sm_harness/device_parity.sh
+    rc=$(( rc || $? ))
+else
+    echo "SKIP  external/sm is not checked out (no submodules in this job)"
+fi
 
 exit $rc
