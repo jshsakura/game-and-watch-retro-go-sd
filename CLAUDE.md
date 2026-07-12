@@ -18,7 +18,18 @@ The build system is plain GNU Make. `Makefile` lists source files; `Makefile.com
 
 - `make help` — full list of build flags with current values.
 
-There are no automated tests. Verification is manual: build, flash, run on hardware.
+**A release MUST use the canonical flag set.** `make release DOCKER=1` on its own leaves every
+feature flag at its default of `0` — three builds shipped with no coverflow, no cheat codes, no
+overclock and no non-Latin locales (so the launcher could not even offer Korean). The set that
+CI uses lives in `.github/workflows/package.yml` and is the only correct one:
+
+```
+make release DOCKER=1 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 \
+             ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1
+```
+
+There are no automated tests. Verification is manual: build, flash, run on hardware —
+but see "Testing a core the way the device runs it" below before trusting a host harness.
 
 **Configuration knobs that change layout (not just behavior)** — pass on the make command line:
 
@@ -62,6 +73,46 @@ Adding a new emulator means: add its sources to `Makefile`, give it a `.overlay_
 Emulator main loop happens in `Core/Src/porting/<system>/`, a loop iteration should run the generation of a frame and to write it in the framebuffer, and to generate the audio samples for the frame. The submodule under `external/<system>` contains machine emulation logic.
 
 The `retro-go-stm32/components/odroid/` API (`odroid_system`, `odroid_overlay`, `odroid_display`, `odroid_input`, `odroid_audio`, `odroid_sdcard`, `odroid_netplay`) is the contract between the launcher and an emulator core. New cores implement against it.
+
+## Testing a core the way the device runs it
+
+A host harness that compiles *the core's whole source tree* is not testing the firmware. Three
+Super Metroid releases shipped that could not boot while the harness reported 4,000 frames with
+zero mismatches against the reference emulator, because the harness was a different program:
+
+- It compiled `sm_cpu_infra.c`, which the firmware excludes — and which **defines and sets
+  `g_snes`**, the pointer sm's whole register bus goes through. On the device nothing set it.
+- It compiled without `TARGET_GNW`, so it built itself a **real SPC700**. The device has
+  `snes->apu == NULL` (spc_player is the sound chip), and the runtime dereferenced it.
+
+Both are device-only faults that a host build simply cannot reach. Two things now close the gap,
+and a new core should copy both:
+
+- **`tools/sm_harness/device_run.sh`** — compiles the core from the Makefile's own source list
+  (never a copy of it), with the device's defines (`-DTARGET_GNW`), and shims the firmware
+  allocators. Revert either fix above and it reproduces the fault on the host.
+- **`tools/sm_harness/device_parity.sh`** (in `tests/run.sh`) — links exactly what the device
+  links. Anything left undefined is a symbol the firmware linker would resolve *silently* to
+  another core's.
+
+## Cores are overlays — a missing symbol does not fail the link, it aliases
+
+Every emulator core is an overlay linked at the same RAM address (`__RAM_EMU_START__`). If core A
+references a global that only core B defines, **the linker binds it, quietly**, to B's address —
+which, once A is loaded, holds A's own unrelated data. Super Metroid drove the SNES bus through
+Super Mario World's `g_snes` for three releases and asserted on the first register read.
+
+A core's globals must be renamed into its own namespace by its `<core>_redefines` file, so that a
+missing definition is a **link error** instead of an alias. `scripts/check_core_symbol_aliases.py`
+runs on every link and fails the build if any core reaches a symbol another core's overlay owns
+(it confirms by disassembly, so dead references do not trip it).
+
+## Adding an APPID resets every user's settings
+
+`/CONFIG` is a raw dump of `persistent_config_t`, and that struct contains `app[APPID_COUNT]`. Add
+an entry to `appid.h` and the struct grows, the saved file no longer matches, and the magic check
+throws it away — language, coverflow, backlight and volume all go back to defaults. The `version`
+field exists to make that deliberate. Do not add an APPID casually.
 
 ## Things that are easy to get wrong
 
