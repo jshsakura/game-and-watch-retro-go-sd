@@ -72,12 +72,28 @@ static Snes *g_sm_snes;
 static int g_input1_state;
 static odroid_gamepad_state_t joystick;
 
-/* Language: the Korean patch swaps the Japanese text path for Korean, so this
- * one WRAM word is the switch. 0 = the game's own default (English). */
+/* Language. japanese_text_flag is one WRAM word, and it selects between the two
+ * languages the ROM itself carries: English, and whatever the second one is. On a
+ * stock Japanese ROM that is Japanese; with the Korean fan patch applied it is
+ * Korean. So name the second option after the ROM that is actually loaded rather
+ * than promising Korean to someone who supplied a stock image — the switch works
+ * either way, but the label should not lie.
+ *
+ * Detection: the patch redirects the intro's text tables, and the operand it
+ * rewrites is the one thing that is guaranteed to differ. See IntroTextTable() in
+ * external/sm's sm_8b.c, which follows the same redirect. */
+#define SM_LANG_SITE      0x8BB5A3   /* the LDY operand for the first intro page */
+#define SM_LANG_SITE_STOCK 0xD085    /* what a stock ROM names there */
+
 static int selected_language_index = 0;
 static char display_language_value[10];
-static const char *const kSmLanguages[] = { "English", "Korean" };
-#define SM_LANGUAGE_COUNT (sizeof(kSmLanguages) / sizeof(kSmLanguages[0]))
+static bool rom_is_patched = false;
+static const char *SmLanguageName(int index) {
+  if (index == 0)
+    return "English";
+  return rom_is_patched ? "Korean" : "Japanese";
+}
+#define SM_LANGUAGE_COUNT 2
 
 void NORETURN Die(const char *error) {
   printf("sm: %s\n", error);
@@ -250,7 +266,7 @@ static bool update_language_cb(odroid_dialog_choice_t *option, odroid_dialog_eve
   if (event == ODROID_DIALOG_NEXT)
     selected_language_index = selected_language_index < max_index ? selected_language_index + 1 : 0;
 
-  strcpy(option->value, kSmLanguages[selected_language_index]);
+  strcpy(option->value, SmLanguageName(selected_language_index));
   sm_apply_language();
   return event == ODROID_DIALOG_ENTER;
 }
@@ -273,6 +289,17 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   uint8 *rom = odroid_overlay_cache_file_in_flash(SM_ROM_PATH, &rom_length, false);
   if (rom == NULL)
     Die("Missing " SM_ROM_PATH);
+
+  /* Which ROM is this? LoROM: bank $8B lives at file offset 0x0B * 0x8000. */
+  {
+    uint32_t off = (uint32_t)((SM_LANG_SITE >> 16 & 0x7F) * 0x8000 + (SM_LANG_SITE & 0x7FFF));
+    if (off + 1 < rom_length) {
+      uint16_t operand = (uint16_t)(rom[off] | (rom[off + 1] << 8));
+      rom_is_patched = (operand != SM_LANG_SITE_STOCK);
+    }
+    printf("sm: rom is %s\n", rom_is_patched ? "fan-patched (2nd language = Korean)"
+                                             : "stock (2nd language = Japanese)");
+  }
 
   /* The cold banks and all of the game's rodata live in QSPI flash — neither
    * fits in the overlay pool. */
@@ -329,7 +356,7 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   }
   free(sram_path);
 
-  strcpy(display_language_value, kSmLanguages[selected_language_index]);
+  strcpy(display_language_value, SmLanguageName(selected_language_index));
   sm_apply_language();
 
   lcd_clear_buffers();
