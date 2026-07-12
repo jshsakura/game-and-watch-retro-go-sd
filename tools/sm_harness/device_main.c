@@ -59,7 +59,12 @@ static void RunFrame(uint16 input, int run_what) {
   RunOneFrameOfGame();
   g_snes->hPos = g_snes->vPos = 0;
   while (!g_snes->cpu->nmiWanted) {
+#ifdef SM_DOT_LOOP
+    /* the old per-dot walk, kept only so the batched one can be diffed against it */
     do { snes_handle_pos_stuff(g_snes); } while (g_snes->hPos != 0);
+#else
+    snes_run_line(g_snes);            /* what main_sm.c calls */
+#endif
     if (g_snes->vIrqEnabled && (g_snes->vPos - 1) == g_snes->vTimer) Vector_IRQ();
   }
   g_snes->cpu->nmiWanted = false;
@@ -97,6 +102,15 @@ int main(int argc, char **argv) {
     RtlRunFrame(0);
     RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
   }
-  printf("device-reality run: %d frames OK (apu=%p, must be NULL)\n", frames, (void *)g_snes->apu);
+  /* FNV-1a over everything the frame produced: the screen, the game's RAM and its
+   * save RAM. Two builds that claim to emulate the same machine must agree here. */
+  uint64_t h = 1469598103934665603ULL;
+  #define HASH(p, n) do { const uint8_t *b_ = (const uint8_t *)(p); \
+    for (size_t i_ = 0; i_ < (size_t)(n); i_++) { h ^= b_[i_]; h *= 1099511628211ULL; } } while (0)
+  HASH(g_fb, sizeof(g_fb));
+  HASH(g_ram, 0x20000);
+  HASH(g_sram, SM_SRAM_SIZE);
+  printf("device-reality run: %d frames OK (apu=%p, must be NULL) state=%016llx\n",
+         frames, (void *)g_snes->apu, (unsigned long long)h);
   return 0;
 }

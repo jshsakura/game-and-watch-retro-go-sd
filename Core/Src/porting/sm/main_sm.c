@@ -58,6 +58,13 @@
 #define SM_SRAM_SIZE (0x2000)
 #define SM_CART_LOROM (1)
 
+/* Declared in headers we do not pull in whole: funcs.h drags the game's entire
+ * symbol table, and sm_cpu_infra.h belongs to the emulator-comparison harness.
+ * Both were being called with no prototype at all, which the sm build used to
+ * hide behind -Wno-implicit-function-declaration. */
+void RunOneFrameOfGame(void);
+void Vector_IRQ(void);
+
 /* Globals that sm's SDL main.c owns upstream. */
 bool g_debug_flag;
 bool g_new_ppu = true;
@@ -203,9 +210,11 @@ static bool SmCacheXipToFlash(void) {
 static void SmDrawFrameToPpu(void) {
   g_sm_snes->hPos = g_sm_snes->vPos = 0;
   while (!g_sm_snes->cpu->nmiWanted) {
-    do {
-      snes_handle_pos_stuff(g_sm_snes);
-    } while (g_sm_snes->hPos != 0);
+    /* A line at a time. Walking the dot clock two dots at a time — which is what
+     * snes_handle_pos_stuff() does, and what this loop used to call 178,684 times
+     * a frame — burns most of those calls on a counter increment and six branches
+     * that never fire. */
+    snes_run_line(g_sm_snes);
     if (g_sm_snes->vIrqEnabled && (g_sm_snes->vPos - 1) == g_sm_snes->vTimer)
       Vector_IRQ();
   }
@@ -235,16 +244,24 @@ static void sm_sound_start(void) {
   audio_start_playing(SM_AUDIO_BUFFER_LENGTH);
 }
 
+/* Every emulated frame, drawn or skipped: this is what advances the SPC player.
+ * Tie it to the drawn frames and the music slows down with the video. */
+static void sm_audio_render(void) {
+  RtlRenderAudio(audiobuffer_sm, SM_AUDIO_BUFFER_LENGTH, 1);
+}
+
+/* Drawn frames only: hand the frame's samples to the DMA half that is free. */
 static void sm_sound_submit(void) {
   if (common_emu_sound_loop_is_muted())
     return;
 
   int16_t factor = common_emu_sound_get_volume();
   int16_t *sound_buffer = audio_get_active_buffer();
-  uint16_t sound_buffer_length = audio_get_buffer_length();
+  uint16_t n = audio_get_buffer_length();
+  if (n > SM_AUDIO_BUFFER_LENGTH)
+    n = SM_AUDIO_BUFFER_LENGTH;
 
-  RtlRenderAudio(audiobuffer_sm, sound_buffer_length, 1);
-  for (int i = 0; i < sound_buffer_length; i++)
+  for (int i = 0; i < n; i++)
     sound_buffer[i] = (audiobuffer_sm[i] * factor) >> 8;
 }
 
@@ -257,6 +274,63 @@ static void sm_system_SramSave(void) {
     fclose(f);
   }
   free(path);
+}
+
+/* -------------------------------------------------------------- savestate --- */
+/* RtlSaveLoadState streams the state through these; nothing is staged in RAM,
+ * because there is no RAM to stage ~270 KB in. */
+static FILE *savestate_file;
+
+static void sm_state_write(void *ctx, void *data, size_t size) {
+  (void)ctx;
+  wdog_refresh();
+  if (savestate_file)
+    fwrite(data, 1, size, savestate_file);
+}
+
+static void sm_state_read(void *ctx, void *data, size_t size) {
+  (void)ctx;
+  wdog_refresh();
+  if (savestate_file && fread(data, 1, size, savestate_file) == size)
+    return;
+  memset(data, 0, size);   /* short/absent file: zero rather than keep stale state */
+}
+
+static bool sm_system_SaveState(char *pathName) {
+  odroid_audio_mute(true);
+  savestate_file = fopen(pathName, "wb");
+  bool ok = savestate_file != NULL;
+  if (ok) {
+    RtlSaveLoadState(kSaveLoad_Save, &sm_state_write, NULL);
+    fclose(savestate_file);
+    savestate_file = NULL;
+  } else {
+    printf("sm: savestate fopen failed: %s\n", pathName);
+  }
+  odroid_audio_mute(false);
+  return ok;
+}
+
+static bool sm_system_LoadState(char *pathName) {
+  odroid_audio_mute(true);
+  savestate_file = fopen(pathName, "rb");
+  bool ok = savestate_file != NULL;
+  if (ok) {
+    RtlSaveLoadState(kSaveLoad_Load, &sm_state_read, NULL);
+    fclose(savestate_file);
+    savestate_file = NULL;
+  }
+  odroid_audio_mute(false);
+  return ok;
+}
+
+/* The PPU renders line by line while the frame runs, so there is no "draw the
+ * current frame again" call to make here — re-rendering would mean running the
+ * game another frame. Hand back the buffer the last frame actually landed in. */
+static uint16_t *sm_last_frame;
+
+static void *sm_system_Screenshot(void) {
+  return sm_last_frame ? sm_last_frame : lcd_get_active_buffer();
 }
 
 /* ----------------------------------------------------------------- dialog --- */
@@ -295,6 +369,11 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
    * the audio hardware keeps whatever rate the previous app left behind and the
    * game plays at the wrong pitch. zelda3 and smw both do this; sm did not. */
   odroid_system_init(APPID_SM, SM_AUDIO_SAMPLE_RATE);
+  /* Save/load state, screenshot and the SRAM autosave are all wired through
+   * here. sm never called it, so PAUSE+A / PAUSE+B did nothing at all and the
+   * SRAM was only ever written by the code path nothing called. */
+  odroid_system_emu_init(&sm_system_LoadState, &sm_system_SaveState,
+                         &sm_system_Screenshot, NULL, NULL, &sm_system_SramSave);
 
   /* The game reads the original ROM the whole way through (RomPtr). Cache the
    * 3 MB image in external flash and XIP it — copying it into RAM is not an
@@ -319,6 +398,10 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
     }
     printf("sm: rom is %s\n", rom_is_patched ? "fan-patched (2nd language = Korean)"
                                              : "stock (2nd language = Japanese)");
+    /* Someone who flashed the Korean patch onto the cart wants the Korean text —
+     * the title screen is already in it. Default to the ROM's second language,
+     * and leave the toggle for going back to English. */
+    selected_language_index = rom_is_patched ? 1 : 0;
   }
 
   /* The cold banks and all of the game's rodata live in QSPI flash — neither
@@ -384,7 +467,11 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   strcpy(display_language_value, SmLanguageName(selected_language_index));
   sm_apply_language();
 
-  lcd_clear_buffers();
+  if (load_state)
+    odroid_system_emu_load_state(save_slot);
+  else
+    lcd_clear_buffers();
+
   lcd_wait_for_vblank();
   sm_sound_start();
 
@@ -432,15 +519,26 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
 
     sm_apply_language();   /* the game clears it on init, so hold it */
 
+    /* Pacing, frameskip and the speedup toggle all live here — sm was the only
+     * core not calling it, which is why it could not hold 60 Hz, why PAUSE+TIME
+     * did nothing, and why the pause menu had no FPS to show. When we are behind,
+     * the frame still runs (the game must not slow down) but the PPU is told not
+     * to draw the pixels, which is the part that costs. */
+    bool draw_frame = common_emu_frame_loop();
+    g_ppu_skip_render = !draw_frame;
+
     screen = lcd_get_active_buffer();
     DrawPpuFrame(screen);
 
     RtlRunFrame(g_input1_state);
+    sm_audio_render();
 
-    common_ingame_overlay();
-    sm_sound_submit();
-
-    lcd_swap();
+    if (draw_frame) {
+      sm_last_frame = screen;
+      common_ingame_overlay();
+      sm_sound_submit();
+      lcd_swap();
+    }
 
     common_emu_sound_sync(false);
   }

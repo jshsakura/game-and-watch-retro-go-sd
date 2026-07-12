@@ -1255,13 +1255,21 @@ C_DEFS_SM = -DHEADLESS
 
 SM_C_INCLUDES = $(C_INCLUDES) -Iexternal/sm -Iexternal -I./
 
-# -Os, NOT the firmware's -O2: at -O2 sm's game logic is 799 KB of .text and
-# overflows the 724 KB RAM_EMU overlay pool. -Os brings it to 629 KB, which fits.
+# The game logic is built -Os, NOT the firmware's -O2: at -O2 sm's .text is 799 KB
+# and overflows the 724 KB RAM_EMU overlay pool. -Os brings it to 629 KB, which fits.
+#
+# The SNES emulation underneath it is a different trade. Profiling a frame (see
+# tools/sm_harness) puts ~83% of it in the PPU and the SPC's DSP and ~3% in all of
+# the game logic — and that whole emulation core is only 29 KB of code, where -O2
+# costs 4.5 KB. Paying 4.5 KB of a 50 KB headroom to speed up 83% of the frame is
+# the obvious side of that trade; paying 170 KB we do not have to speed up 3% is not.
+sm_is_hot = $(if $(findstring /snes/,$1),1,$(findstring spc_player.c,$1))
+
 define sm_obj_prereq_gen
 $$(BUILD_DIR)/sm/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC sm ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(subst -O2,-Os,$$(CFLAGS)) $$(C_DEFS_SM) $$(SM_C_INCLUDES) $$< -o $$@ \
-	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-implicit-function-declaration -Wno-discarded-qualifiers
+	$$(V)$$(CC) -c $(if $(call sm_is_hot,$1),$$(CFLAGS),$$(subst -O2,-Os,$$(CFLAGS))) $$(C_DEFS_SM) $$(SM_C_INCLUDES) $$< -o $$@ \
+	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers
 	$$(V)$$(CP) --redefine-syms=sm_redefines $$@
 
 endef

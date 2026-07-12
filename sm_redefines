@@ -33,6 +33,7 @@ RtlRenderAudio sm__RtlRenderAudio
 RtlReset sm__RtlReset
 RtlRunFrame sm__RtlRunFrame
 RtlSaveLoad sm__RtlSaveLoad
+RtlSaveLoadState sm__RtlSaveLoadState
 RtlSaveSnapshot sm__RtlSaveSnapshot
 RtlStopReplay sm__RtlStopReplay
 RtlWriteSram sm__RtlWriteSram
@@ -44,6 +45,7 @@ SpcPlayer_CopyVariablesToRam sm__SpcPlayer_CopyVariablesToRam
 SpcPlayer_Create sm__SpcPlayer_Create
 SpcPlayer_GenerateSamples sm__SpcPlayer_GenerateSamples
 SpcPlayer_Initialize sm__SpcPlayer_Initialize
+SpcPlayer_SaveLoad sm__SpcPlayer_SaveLoad
 SpcPlayer_Upload sm__SpcPlayer_Upload
 SplitKeyValue sm__SplitKeyValue
 StateRecorder_Init sm__StateRecorder_Init
@@ -100,6 +102,7 @@ g_fail sm__g_fail
 g_got_mismatch_count sm__g_got_mismatch_count
 g_new_ppu sm__g_new_ppu
 g_other_image sm__g_other_image
+g_ppu_skip_render sm__g_ppu_skip_render
 g_ram sm__g_ram
 g_rom sm__g_rom
 g_snes sm__g_snes
@@ -132,6 +135,7 @@ snes_init sm__snes_init
 snes_read sm__snes_read
 snes_readBBus sm__snes_readBBus
 snes_reset sm__snes_reset
+snes_run_line sm__snes_run_line
 snes_saveload sm__snes_saveload
 snes_write sm__snes_write
 snes_writeBBus sm__snes_writeBBus
