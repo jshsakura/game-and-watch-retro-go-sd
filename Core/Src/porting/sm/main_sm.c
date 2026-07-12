@@ -340,7 +340,8 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   Cart *cart = g_sm_snes->cart;
   cart->type = SM_CART_LOROM;
   cart->rom = rom;                       /* XIP out of external flash */
-  cart->romSize = (int)rom_length;
+  cart_setRomSize(cart, (int)rom_length); /* NOT cart->romSize = ...: the mirroring
+                                           * fast-path mask has to be derived with it */
   cart->ram = (uint8_t *)ram_calloc(1, SM_SRAM_SIZE);
   cart->ramSize = SM_SRAM_SIZE;
   g_rom = cart->rom;
