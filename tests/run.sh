@@ -169,4 +169,14 @@ else
     echo "OK no duplicate logo enums/blobs"
 fi
 
+echo "=== sm: device source set is symbol-complete ==="
+# The main sm harness compiles all of external/sm, including sm_cpu_infra.c, which
+# defines and sets g_snes. The device does not compile that file. That gap let
+# three builds ship in which the linker bound sm's SNES bus to Super Mario World's
+# g_snes — the harness ran 4,000 clean frames while the device died on its first
+# register read. Link exactly what the device links, and nothing else.
+bash tools/sm_harness/device_parity.sh
+
+rc=$(( rc || $? ))
+
 exit $rc
