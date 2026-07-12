@@ -40,6 +40,7 @@
 #include "sm/src/snes/snes.h"
 #include "sm/src/snes/ppu.h"
 #include "sm/src/snes/cart.h"
+#include "sm/src/snes/apu.h"
 #include "sm/src/sm_rtl.h"
 #include "sm/src/spc_player.h"
 #include "sm/src/types.h"
@@ -63,6 +64,20 @@ bool g_new_ppu = true;
 bool g_other_image;
 int g_got_mismatch_count;
 SpcPlayer *g_spc_player;
+
+/* ...and the ones sm_cpu_infra.c owned. That file is not compiled here (it is the
+ * emulator-comparison harness), and dropping it left these referenced but never
+ * defined. The linker does not complain about that across overlays: it quietly
+ * bound them to Super Mario World's identically-named globals, whose addresses lie
+ * inside OUR overlay's bss once we are loaded. So sm was driving the SNES bus
+ * through a pointer that was really some unrelated variable of its own — it died
+ * on the first register read.
+ *
+ * They are in sm_redefines now, so they are private to this overlay and a missing
+ * one is a link error instead of a silent cross-core alias. Keep it that way. */
+Snes *g_snes;                 /* THE bus pointer: sm_rtl.c's WriteReg/ReadReg use it */
+bool g_use_my_apu_code = true;
+bool g_fail;
 
 void RtlApuLock(void) {}      /* single-threaded here: no audio thread to fence */
 void RtlApuUnlock(void) {}
@@ -336,6 +351,10 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   }
 
   g_sm_snes = snes_init(g_ram);
+  g_snes = g_sm_snes;   /* sm_rtl.c drives every hardware register through g_snes.
+                         * Nothing was setting it: sm_cpu_infra.c used to, and that
+                         * file is gone. Without this the whole SNES bus runs off a
+                         * garbage pointer. */
 
   Cart *cart = g_sm_snes->cart;
   cart->type = SM_CART_LOROM;
@@ -462,4 +481,16 @@ void Call(uint32 addr) { (void)addr; }
 void DebugGameOverMenu(void) {}
 void RtlUpdateSnesPatchForBugfix(void) {}
 uint16 currently_installed_bug_fix_counter;
-void apu_reset(Apu *apu) { (void)apu; }   /* snes->apu is NULL here: spc_player does the audio */
+
+/* snes->apu is NULL here — spc_player makes the sound, and the 65816 interpreter
+ * is gc'd out, so none of these can run. They exist because snes.c and cpu.c still
+ * name them, and a name with no definition is not an error across overlays: it
+ * silently aliases another core's. Better a stub that cannot be reached than a
+ * jump into Super Mario World's address space. */
+void apu_reset(Apu *apu) { (void)apu; }
+void apu_cycle(Apu *apu) { (void)apu; }
+void apu_free(Apu *apu) { (void)apu; }
+void apu_saveload(Apu *apu, SaveLoadFunc *func, void *ctx) { (void)apu; (void)func; (void)ctx; }
+void ppu_copy(Ppu *ppu, Ppu *ppu_src) { (void)ppu; (void)ppu_src; }
+int  CpuOpcodeHook(uint32 addr) { (void)addr; return 0; }
+bool HookedFunctionRts(int is_long) { (void)is_long; return false; }
