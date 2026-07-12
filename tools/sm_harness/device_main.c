@@ -152,6 +152,17 @@ int main(int argc, char **argv) {
     }
     uint64_t a = fb_hash();
 
+    /* THEN GO SOMEWHERE ELSE. Loading back into the same scene proves nothing: the
+     * PPU's derived state — its palette cache, its brightness table — still holds
+     * values that happen to be right. A player saves in one place and loads in
+     * another, and anything the savestate does not carry and the load does not
+     * rebuild is stale by then. Drive the game 600 frames on before reloading. */
+    for (int i = 0; i < 600; i++) {
+      PpuBeginDrawing(g_snes->ppu, (uint8_t *)g_line, 0, 0);
+      RtlRunFrame(i < 300 ? 0 : (1 << 3));   /* press start: change the scene */
+      RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
+    }
+
     /* reload and run the same 60 frames.
      *
      * SM_COLD_LOAD models what the device actually does after a firmware update:

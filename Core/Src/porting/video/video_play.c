@@ -374,9 +374,13 @@ static void draw_hud(int dec_ok, int seen, int na)
     const char *sd = "--"; /* flash build: media streams from FrogFS, no SD path */
 #endif
     extern int g_vdec_read_ms, g_vdec_pf_ms, g_vdec_jpeg_ms;
-    char l1[64], l2[48];
-    snprintf(l1, sizeof l1, "dec=%d v=%d rd=%dms pf=%dms jpg=%dms",
-             dec_ok, seen, g_vdec_read_ms, g_vdec_pf_ms, g_vdec_jpeg_ms);
+    char l1[80], l2[48];
+    /* dec/v is the whole story when it reads 14/272: nine frames in ten are being
+     * REJECTED, not merely late. So the last rejection's reason belongs here, live,
+     * next to the count — not only on the giving-up screen. */
+    snprintf(l1, sizeof l1, "dec=%d v=%d rd=%dms jpg=%dms st=%d hal=%lu rej=%lu",
+             dec_ok, seen, g_vdec_read_ms, g_vdec_jpeg_ms,
+             g_vdec_st, (unsigned long)g_jpeg_hal, (unsigned long)g_jpeg_rej);
     // ring= is the A/V clock trim's servo error: it must sit near VR_TARGET
     // (~1200) for the whole clip. Climbing to 4095 is the drift that used to
     // close the prefetch gate and turn playback to stutter; falling to 0 is an
