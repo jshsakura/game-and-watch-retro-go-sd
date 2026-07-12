@@ -118,9 +118,9 @@ MEMORY
   /* PICO-8 code (sentinel address, patched to QSPI XIP at runtime) */
   PICO8_CODE (x) : ORIGIN = 0xBEEF0000,   LENGTH = 512K
 
-  /* Super Metroid cold banks: sentinel address, patched to QSPI XIP at runtime
-   * (same trick as PICO8_CODE). EXPERIMENT: is the RAM->XIP call veneer's
-   * literal placed in RAM (patchable) or in the flash section (not)? */
+  /* Super Metroid cold banks + all of its rodata: a sentinel address, patched to
+   * QSPI XIP at runtime (same trick as PICO8_CODE). Code and rodata share one
+   * region, and ship as one file, on purpose — see .xip_sm below. */
   SM_CODE    (x) : ORIGIN = 0xDEAD0000,   LENGTH = 512K
 
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
@@ -649,19 +649,13 @@ INCLUDE build/fceumm_mappers.ld
     __rodata_zelda3_end__ = .;
   } > RODATA
 
-  .rodata_sm :
-  {
-    . = ALIGN(4);
-    __rodata_sm_start__ = .;
-    build/sm/*.o (.rodata .rodata*)
-    __rodata_sm_end__ = .;
-  } > RODATA
-
+  /* Cold code, claimed before .overlay_sm so it does NOT land in the RAM pool.
+   * Only .text here: the rodata claim has to come after .overlay_sm (below), or
+   * it would swallow main_sm.o's string literals too. */
   .xip_sm : {
-    . = ALIGN(4);
+    . = ALIGN(8);
     __xip_sm_start__ = .;
-    build/sm/sm_8b.o (.text .text* .rodata .rodata*)
-    __xip_sm_end__ = .;
+    build/sm/sm_8b.o (.text .text*)
   } > SM_CODE
 
   .overlay_sm __RAM_EMU_START__ : {
@@ -669,6 +663,7 @@ INCLUDE build/fceumm_mappers.ld
     __ram_emu_sm_start__ = .;
     _SM_MAIN_CODE_START = .;
     build/sm/main_sm.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
     _SM_MAIN_CODE_END = .;
     build/sm/*.o (.data .data* .text .text* .noreloc)
     . = ALIGN(4);
@@ -688,6 +683,27 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(_OVERLAY_SM_BSS_END) < __RAM_EMU_END__, "Error: SM BSS overflow");
   }
   _OVERLAY_SM_BSS_SIZE = SIZEOF(.overlay_sm_bss);
+
+  /* The game's rodata, immediately after the cold code in the SAME region, so the
+   * two ship as one file (sm.xip) and land in flash as one cache entry.
+   *
+   * It must not be a second, separate cached file: the cold code holds ~90
+   * pointers into rodata, and baking one cache entry's address into another means
+   * the pair goes stale the moment the circular cache evicts only one of them.
+   * Sharing the region makes every such pointer a SM_CODE sentinel, fixed up by
+   * the one relocation pass that already runs over the blob.
+   *
+   * Declared after .overlay_sm on purpose (the zelda3 ordering): the overlay gets
+   * first claim on main_sm.o, so the glue's own literals stay in RAM and are
+   * readable before the blob has been cached and relocated. */
+  .rodata_sm : {
+    . = ALIGN(8);
+    __rodata_sm_start__ = .;
+    build/sm/*.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __rodata_sm_end__ = .;
+    __xip_sm_end__ = .;
+  } > SM_CODE
 
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);

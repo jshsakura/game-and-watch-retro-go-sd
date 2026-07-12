@@ -212,7 +212,8 @@ static bool circular_flash_write(const char *file_path,
                                  uint32_t *data_size,
                                  uint32_t *flash_address_out,
                                  bool byte_swap,
-                                 file_progress_cb_t progress_cb)
+                                 file_progress_cb_t progress_cb,
+                                 flash_relocate_cb_t relocate_cb)
 {
     uint8_t buffer[16 * 1024];
     uint32_t total_bytes_processed = 0;
@@ -293,6 +294,14 @@ static bool circular_flash_write(const char *file_path,
             }
         }
 
+        /* Last look at the data while it is still in RAM. The chunk size is a
+         * multiple of 4 except at end-of-file, and the file starts on an erase
+         * block, so a 32-bit field never straddles two chunks. */
+        if (relocate_cb) {
+            relocate_cb(buffer, bytes_read, total_bytes_processed,
+                        (uint8_t *)*flash_address_out, *data_size);
+        }
+
         OSPI_Program(address_in_flash, buffer, bytes_read);
 
         address_in_flash += bytes_read;
@@ -338,6 +347,12 @@ void flash_alloc_reset()
 
 uint8_t *store_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap, file_progress_cb_t progress_cb)
 {
+    return store_file_in_flash_relocate(file_path, file_size_p, byte_swap, progress_cb, NULL);
+}
+
+uint8_t *store_file_in_flash_relocate(const char *file_path, uint32_t *file_size_p, bool byte_swap,
+                                      file_progress_cb_t progress_cb, flash_relocate_cb_t relocate_cb)
+{
     initialize_metadata();
     initialize_flash_pointer();
     // TODO : append file modification time to filepath for crc32
@@ -352,7 +367,7 @@ uint8_t *store_file_in_flash(const char *file_path, uint32_t *file_size_p, bool 
         return (uint8_t *)flash_address;
     }
 
-    if (!circular_flash_write(file_path, file_size_p, &flash_address, byte_swap, progress_cb))
+    if (!circular_flash_write(file_path, file_size_p, &flash_address, byte_swap, progress_cb, relocate_cb))
     {
         free(metadata);
         metadata = NULL;

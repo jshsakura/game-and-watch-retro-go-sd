@@ -142,6 +142,8 @@ MEMORY
   CORES      (x  ) : ORIGIN = 0x0,                 LENGTH = 0xFFFFFFFF
   RODATA     (x  ) : ORIGIN = 0xCAFE0000,          LENGTH = 0xFFFFFFFF
   PICO8_CODE (x  ) : ORIGIN = 0xBEEF0000,          LENGTH = 512K
+  /* Super Metroid cold banks + all of its rodata (see the SDCARD linker script). */
+  SM_CODE    (x  ) : ORIGIN = 0xDEAD0000,          LENGTH = 512K
   EXTFLASH   (xr ) : ORIGIN = __EXTFLASH_START__,  LENGTH = 32M
 }
 
@@ -640,19 +642,13 @@ INCLUDE build/fceumm_mappers.ld
     __rodata_zelda3_end__ = .;
   } > RODATA
 
-  .rodata_sm :
-  {
-    . = ALIGN(4);
-    __rodata_sm_start__ = .;
-    build/sm/*.o (.rodata .rodata*)
-    __rodata_sm_end__ = .;
-  } > RODATA
-
+  /* Cold code, claimed before .overlay_sm so it does NOT land in the RAM pool.
+   * Only .text here: the rodata claim has to come after .overlay_sm (below), or
+   * it would swallow main_sm.o's string literals too. */
   .xip_sm : {
-    . = ALIGN(4);
+    . = ALIGN(8);
     __xip_sm_start__ = .;
-    build/sm/sm_8b.o (.text .text* .rodata .rodata*)
-    __xip_sm_end__ = .;
+    build/sm/sm_8b.o (.text .text*)
   } > SM_CODE
 
   .overlay_sm __RAM_EMU_START__ : {
@@ -660,6 +656,7 @@ INCLUDE build/fceumm_mappers.ld
     __ram_emu_sm_start__ = .;
     _SM_MAIN_CODE_START = .;
     build/sm/main_sm.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
     _SM_MAIN_CODE_END = .;
     build/sm/*.o (.data .data* .text .text* .noreloc)
     . = ALIGN(4);
@@ -679,6 +676,19 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(_OVERLAY_SM_BSS_END) < __RAM_EMU_END__, "Error: SM BSS overflow");
   }
   _OVERLAY_SM_BSS_SIZE = SIZEOF(.overlay_sm_bss);
+
+  /* The game's rodata, immediately after the cold code in the SAME region, so the
+   * two ship as one file (sm.xip) and land in flash as one cache entry. See the
+   * SDCARD linker script for why they must not be two separate cached files, and
+   * why this is declared after .overlay_sm. */
+  .rodata_sm : {
+    . = ALIGN(8);
+    __rodata_sm_start__ = .;
+    build/sm/*.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __rodata_sm_end__ = .;
+    __xip_sm_end__ = .;
+  } > SM_CODE
 
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);

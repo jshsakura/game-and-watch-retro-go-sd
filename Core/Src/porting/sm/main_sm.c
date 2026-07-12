@@ -27,6 +27,7 @@
 #include "gw_buttons.h"
 #include "gw_malloc.h"
 #include "gw_flash.h"
+#include "gw_flash_alloc.h"
 
 #include "bq24072.h"
 #include "stm32h7xx_hal.h"
@@ -88,65 +89,44 @@ void Warning(const char *error) {
   printf("sm warning: %s\n", error);
 }
 
-/* ---------------------------------------------------------------- rodata ---
- * .rodata_sm is not linked into the firmware image: it lands in the fake RODATA
- * region, gets objcopy'd out to /roms/homebrew/sm.ro, and is cached into flash
- * at boot. Every pointer in the overlay that still refers to the link-time base
- * has to be rewritten to wherever the cache actually landed. Same trick, and the
- * same reason, as zelda3: 24 KB of rodata does not fit in the RAM budget.
- */
-extern void *__rodata_sm_start__[];
-
-static void PatchCodeRodataOffset(uint8 *rodata, uint32_t rodata_length) {
-  uint32_t *ptr = (uint32_t *)__RAM_EMU_START__;
-  uint32_t *end = (uint32_t *)&_OVERLAY_SM_BSS_END;
-
-  uint32_t rodata_base = (uint32_t)__rodata_sm_start__;
-  int32_t offset = (uint32_t)rodata - rodata_base;
-
-  printf("sm rodata = %p base = 0x%08lX offset = 0x%08lX\n", rodata, rodata_base, offset);
-  while (ptr < end) {
-    if ((ptr < (uint32_t *)&_SM_MAIN_CODE_START) || (ptr > (uint32_t *)&_SM_MAIN_CODE_END)) {
-      uint32_t value = *ptr;
-      if ((value >= rodata_base) && (value < rodata_base + rodata_length)) {
-        *ptr = value + offset;
-        wdog_refresh();
-      }
-    }
-    ptr++;
-  }
-}
 
 
 /* ------------------------------------------------------------------- XIP ---
- * The overlay pool is 724 KB and the game needs more than that, so the cold
- * banks (cinematics and friends) are linked at a sentinel address into .xip_sm,
- * shipped as /roms/homebrew/sm.xip, and executed straight out of QSPI flash.
+ * The overlay pool is 724 KB and the game wants more, so the cold banks
+ * (cinematics and friends) plus ALL of the game's rodata are linked at a
+ * sentinel address, shipped as one file — /roms/homebrew/sm.xip — cached into
+ * QSPI flash, and executed and read straight out of it. Same trick as PICO-8
+ * (Pico8CacheCodeToFlash in rg_emulators.c).
  *
- * This is what PICO-8 already does (Pico8CacheCodeToFlash in rg_emulators.c),
- * with one difference: PICO-8 patches the blob in RAM_EMU because nothing is
- * loaded there yet. By the time we run, RAM_EMU holds the game. So the blob is
- * patched a 4 KB page at a time instead — read the page back through the
- * memory-mapped window, rewrite the sentinels, erase, program, repeat. One
- * page of scratch instead of 47 KB of it.
+ * Code and rodata share the region deliberately. The cold banks hold ~90
+ * pointers into rodata; if the two were separate cache entries, the copy of the
+ * code in flash would have another entry's address baked into it, and the pair
+ * would go stale the moment the circular cache evicted one and not the other.
+ * As one blob every such pointer is a sentinel into the blob itself, so one
+ * relocation against one base fixes all of them, and it stays fixed for as long
+ * as the entry lives.
  *
- * Both call directions work out (verified with nm on the veneers):
- *   RAM -> XIP: the veneer sits in the overlay and its literal is a sentinel,
- *               so the overlay scan below fixes it.
- *   XIP -> RAM: the veneer sits in the blob and its literal is the overlay's
- *               VMA, which IS the runtime address — already correct.
+ * The relocation happens on the way in — the cache hands each buffer to
+ * SmRelocateXip() before programming it — rather than by rewriting flash that is
+ * already written. A rewrite has to erase first, and an erase interrupted by a
+ * flat battery leaves a blank hole indistinguishable from a finished job. It
+ * would also have to erase in 4 KB pieces, which the 256 KB-sector chips cannot
+ * do at all. On a cache hit nothing is written and nothing needs to be: the copy
+ * in flash was relocated to that same address when it was first stored.
+ *
+ * Both call directions across the split work out (verified with nm on the
+ * veneers):
+ *   RAM -> XIP: the veneer sits in the overlay, its literal is a sentinel, and
+ *               the overlay scan in app_main_sm() rewrites it.
+ *   XIP -> RAM: the veneer sits in the blob, its literal is the overlay's VMA,
+ *               which IS the runtime address — already correct.
  */
 #define SM_CODE_BASE  0xDEAD0000u
 #define SM_XIP_PATH   "/roms/homebrew/sm.xip"
-#define FLASH_PAGE    4096u
-
-extern void *__xip_sm_start__[];
 
 static uint8_t *g_xip_addr;
 static uint32_t g_xip_size;
 static int32_t  g_xip_offset;
-
-static uint8_t g_xip_page[FLASH_PAGE];
 
 /* Rewrite every sentinel-range word in [start, end) to where the blob really
  * landed. Thumb bit included, hence the & ~1. */
@@ -162,9 +142,18 @@ static int PatchSmSentinels(uint32_t *start, uint32_t *end, int32_t offset, uint
   return patched;
 }
 
+/* Relocation hook: runs on each buffer of sm.xip on its way into the flash. */
+static void SmRelocateXip(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,
+                          uint8_t *file_address, uint32_t file_size) {
+  (void)offset_in_file;
+  int32_t offset = (int32_t)((uint32_t)file_address - SM_CODE_BASE);
+  PatchSmSentinels((uint32_t *)buffer, (uint32_t *)(buffer + (length & ~3u)), offset, file_size);
+}
+
 static bool SmCacheXipToFlash(void) {
   g_xip_size = 0;
-  g_xip_addr = odroid_overlay_cache_file_in_flash(SM_XIP_PATH, &g_xip_size, false);
+  g_xip_addr = odroid_overlay_cache_file_in_flash_relocate(SM_XIP_PATH, &g_xip_size, false,
+                                                           &SmRelocateXip);
   if (g_xip_addr == NULL || g_xip_size == 0) {
     printf("sm: %s missing\n", SM_XIP_PATH);
     return false;
@@ -172,31 +161,6 @@ static bool SmCacheXipToFlash(void) {
   g_xip_offset = (int32_t)((uint32_t)g_xip_addr - SM_CODE_BASE);
   printf("sm: xip blob at %p, %lu bytes, offset 0x%08lX\n",
          g_xip_addr, (unsigned long)g_xip_size, (unsigned long)g_xip_offset);
-
-  uint32_t flash_base = (uint32_t)g_xip_addr - (uint32_t)&__EXTFLASH_BASE__;
-  int total = 0;
-
-  for (uint32_t off = 0; off < g_xip_size; off += FLASH_PAGE) {
-    uint32_t n = g_xip_size - off;
-    if (n > FLASH_PAGE)
-      n = FLASH_PAGE;
-
-    memcpy(g_xip_page, g_xip_addr + off, n);   /* read back through the XIP window */
-
-    int patched = PatchSmSentinels((uint32_t *)g_xip_page,
-                                   (uint32_t *)(g_xip_page + (n & ~3u)),
-                                   g_xip_offset, g_xip_size);
-    total += patched;
-    if (patched == 0)
-      continue;                                 /* already patched on an earlier boot */
-
-    OSPI_DisableMemoryMappedMode();
-    OSPI_EraseSync(flash_base + off, FLASH_PAGE);
-    OSPI_Program(flash_base + off, g_xip_page, n);
-    OSPI_EnableMemoryMappedMode();
-    wdog_refresh();
-  }
-  printf("sm: patched %d sentinel refs in the xip blob\n", total);
   return true;
 }
 
@@ -296,24 +260,26 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   printf("Super Metroid start\n");
   ram_start = (uint32_t)&_OVERLAY_SM_BSS_END;
 
-  /* Cold banks execute from QSPI flash — they do not fit in the overlay pool. */
+  /* The cold banks and all of the game's rodata live in QSPI flash — neither
+   * fits in the overlay pool. */
   if (!SmCacheXipToFlash())
     Die("Missing " SM_XIP_PATH);
 
-  /* The overlay's RAM->XIP call veneers still hold sentinel addresses. */
+  /* Everything in the overlay that points into the blob — the RAM->XIP call
+   * veneers, and every reference to the game's rodata — still holds a sentinel.
+   *
+   * main_sm.o is skipped: SM_CODE_BASE is a literal in this file's own code, and
+   * a scan that could not tell it from a reference would rewrite the constant the
+   * scan is built on. That is also why the glue's rodata is kept in RAM (see the
+   * linker script) — its string literals have to be readable before this runs. */
   {
-    int n = PatchSmSentinels((uint32_t *)__RAM_EMU_START__,
-                             (uint32_t *)&_OVERLAY_SM_BSS_START,
+    int n = PatchSmSentinels((uint32_t *)__RAM_EMU_START__, (uint32_t *)&_SM_MAIN_CODE_START,
+                             g_xip_offset, g_xip_size)
+          + PatchSmSentinels((uint32_t *)&_SM_MAIN_CODE_END, (uint32_t *)&_OVERLAY_SM_BSS_START,
                              g_xip_offset, g_xip_size);
     printf("sm: patched %d sentinel refs in the overlay\n", n);
+    wdog_refresh();
   }
-
-  /* rodata out of RAM: cache it in flash and re-point the overlay at it. */
-  uint32_t sm_rodata_length = 0;
-  uint8 *sm_rodata = odroid_overlay_cache_file_in_flash("/roms/homebrew/sm.ro", &sm_rodata_length, false);
-  if (sm_rodata == NULL)
-    Die("Missing /roms/homebrew/sm.ro");
-  PatchCodeRodataOffset(sm_rodata, sm_rodata_length);
 
   /* The game reads the original ROM the whole way through (RomPtr). Cache the
    * 3 MB image in external flash and XIP it — copying it into RAM is not an

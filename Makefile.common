@@ -1364,6 +1364,7 @@ $(BUILD_DIR):
 	$(V)mkdir $@/amstrad
 	$(V)mkdir $@/zelda3
 	$(V)mkdir $@/smw
+	$(V)mkdir $@/sm
 	$(V)mkdir $@/videopac
 	$(V)mkdir $@/zxs
 	$(V)mkdir $@/c64
@@ -1669,8 +1670,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	@$(CP) -O binary --only-section=.overlay_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Zelda 3.bin"
 	@$(CP) -O binary --only-section=.rodata_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/zelda3.ro"
 	@$(CP) -O binary --only-section=.overlay_sm $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Metroid.bin"
-	@$(CP) -O binary --only-section=.rodata_sm $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/sm.ro"
-	@$(CP) -O binary --only-section=.xip_sm $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/sm.xip"
+	@$(CP) -O binary --only-section=.xip_sm --only-section=.rodata_sm $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/sm.xip"   # cold banks + rodata: contiguous in SM_CODE, ONE cache entry on purpose (see main_sm.c)
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
 	@$(CP) -O binary --only-section=.coleco_bios_data $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/coleco/coleco.bin
 	@$(CP) -O binary --only-section=.overlay_graphics $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/logo.bin
@@ -1775,7 +1775,6 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Zelda 3.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/zelda3.ro" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Super Metroid.bin" --dest-path "/roms/homebrew/" \
-		-- sdpush --file "$(HOMEBREWS_FOLDER)/sm.ro" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/sm.xip" --dest-path "/roms/homebrew/" \
 		-- sdpush --file $(MAPPERS_PACK) --dest-path "/cores/mappers/" \
 		-- sdpush --file $(MAPPERS_DIR)/ines_correct.bin --dest-path "/cores/mappers/" \
