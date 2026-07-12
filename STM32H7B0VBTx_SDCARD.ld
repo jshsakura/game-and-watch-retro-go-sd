@@ -118,6 +118,11 @@ MEMORY
   /* PICO-8 code (sentinel address, patched to QSPI XIP at runtime) */
   PICO8_CODE (x) : ORIGIN = 0xBEEF0000,   LENGTH = 512K
 
+  /* Super Metroid cold banks: sentinel address, patched to QSPI XIP at runtime
+   * (same trick as PICO8_CODE). EXPERIMENT: is the RAM->XIP call veneer's
+   * literal placed in RAM (patchable) or in the flash section (not)? */
+  SM_CODE    (x) : ORIGIN = 0xDEAD0000,   LENGTH = 512K
+
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
 }
@@ -651,6 +656,13 @@ INCLUDE build/fceumm_mappers.ld
     build/sm/*.o (.rodata .rodata*)
     __rodata_sm_end__ = .;
   } > RODATA
+
+  .xip_sm : {
+    . = ALIGN(4);
+    __xip_sm_start__ = .;
+    build/sm/sm_8b.o (.text .text* .rodata .rodata*)
+    __xip_sm_end__ = .;
+  } > SM_CODE
 
   .overlay_sm __RAM_EMU_START__ : {
     . = ALIGN(4);

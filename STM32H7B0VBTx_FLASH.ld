@@ -648,6 +648,13 @@ INCLUDE build/fceumm_mappers.ld
     __rodata_sm_end__ = .;
   } > RODATA
 
+  .xip_sm : {
+    . = ALIGN(4);
+    __xip_sm_start__ = .;
+    build/sm/sm_8b.o (.text .text* .rodata .rodata*)
+    __xip_sm_end__ = .;
+  } > SM_CODE
+
   .overlay_sm __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_sm_start__ = .;
