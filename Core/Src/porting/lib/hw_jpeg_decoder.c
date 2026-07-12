@@ -110,6 +110,26 @@ static uint32_t JPEG_Run(uint32_t SrcAddress, uint32_t SrcSize)
     if (SrcAddress == 0 || SrcSize == 0)
         return 1;
 
+    /* HAL floors the input length to a multiple of four:
+     *
+     *     hjpeg->InDataLength = InDataLength - (InDataLength % 4UL);   (hal_jpeg.c)
+     *
+     * so a 5,949-byte frame is handed over as 5,948 and the last byte never
+     * arrives. The last bytes of a JPEG are FF D9 — the end-of-image marker — and
+     * without it the peripheral never reaches EOC.
+     *
+     * Only one caller is hurt by that, and it is the one that passes an exact
+     * length: the video player, one AVI chunk per frame. Covers pass their cache
+     * slot's size and .gw artwork the rest of the ROM file, both comfortably larger
+     * than the image, so the bytes HAL drops off the end are rubbish well past the
+     * EOI and nobody notices. Three callers, one dead, and the two live ones swear
+     * the decoder is fine.
+     *
+     * Round up instead. The extra bytes are still inside the caller's buffer (a
+     * frame slot is 64 KB, a frame is not) and the decoder stops at EOI regardless,
+     * so they are never looked at. */
+    SrcSize = (SrcSize + 3u) & ~3u;
+
     decode_rejected = 0;
     g_jpeg_hal = g_jpeg_err = g_jpeg_rej = g_jpeg_sub = g_jpeg_need = 0;
     memset(&JPEG_info, 0, sizeof(JPEG_info));
