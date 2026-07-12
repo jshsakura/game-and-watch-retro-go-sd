@@ -425,20 +425,33 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
 }
 
 /* ============================================================================
- * MEASUREMENT STUBS — NOT SHIPPABLE. These exist only so the image links and we
- * can read the RAM_EMU budget off the map file. Two real problems hide behind
- * them, both discovered while wiring this up:
+ * sm_cpu_infra.c is not compiled in. It is the harness that runs the reference
+ * SNES emulator next to the reimplementation and diffs them, and it drags in the
+ * 65816 interpreter plus three ~200 KB Snapshot globals. The handful of symbols
+ * the game itself still needs from it are defined here instead.
  *
- *  - Call() runs original 65816 ROM code through the CPU emulator. Bang_Main()
- *    (sm_a3.c) does it on a live gameplay path, so sm's reimplementation is NOT
- *    complete — some enemy routines are still ROM asm. RunAsmCode() and the rest
- *    of sm_cpu_infra.c have to come along, minus its three ~200 KB Snapshot
- *    globals (the emulator-compare machinery), which would blow the budget.
+ * Nothing on the device executes 65816 code: the ROM is a read-only data source
+ * (RomPtr) and every routine runs as C. --gc-sections drops cpu_runOpcode()
+ * accordingly. That makes the two interesting stubs below correct, not merely
+ * convenient — each one was checked against the ROM:
  *
- *  - RtlUpdateSnesPatchForBugfix() PatchBytes()es the ROM at runtime. Our ROM is
- *    XIP out of read-only external flash. The three patch sites are ~4.5 KB apart
- *    in bank $85, so the fix is probably to pre-patch the .smc when it is pushed
- *    to the SD card and make PatchBytes a no-op here.
+ *  - Call() runs ROM asm through the interpreter. Its only live caller is
+ *    Bang_Main() (sm_a3.c), which tail-jumps into bank $A3 through a per-instance
+ *    function pointer (LDX cur_enemy_index; JMP ($0FB4,X)) that sm's decompiler
+ *    could not resolve. The Bang enemy ($A0:DB40) is unused in the retail ROM:
+ *    walking all 259 room headers and their 297 enemy-population lists turns up
+ *    140 distinct enemies and Bang is not one of them; its id appears nowhere in
+ *    bank $A1 (populations) or bank $B4 (enemy sets, without which its graphics
+ *    are never even loaded); and no C code hardcodes the id. It cannot spawn, so
+ *    this cannot be reached. If a ROM hack ever did spawn one, the enemy would
+ *    stand still rather than fault.
+ *
+ *  - RtlUpdateSnesPatchForBugfix() rewrites ROM bytes so the interpreter takes a
+ *    fixed path through HandleMessageBoxInteraction. With no interpreter running,
+ *    those bytes are never executed; they sit in bank $85 code that the C side
+ *    never reads as data. (Independently confirmed on the host harness: skipping
+ *    the patch left 100 sampled frames of a 6,000-frame run byte-identical.)
+ *    It could not be honoured anyway — our ROM is XIP out of read-only flash.
  * ========================================================================== */
 void Call(uint32 addr) { (void)addr; }
 void DebugGameOverMenu(void) {}
