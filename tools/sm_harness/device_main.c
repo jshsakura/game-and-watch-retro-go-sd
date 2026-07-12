@@ -49,6 +49,16 @@ void *ram_calloc(size_t n, size_t s) { return calloc(n, s); }
 #define SM_SRAM_SIZE 0x2000
 #define FRAME_SAMPLES (16000 / 60)
 static uint16_t g_fb[320 * 240];              /* RGB565, as on the device */
+
+/* main_sm.c renders through a one-line buffer and a callback now, so the screen
+ * can be scaled — and a harness that keeps pointing the PPU at the framebuffer is
+ * testing a path the device no longer takes. Same program, or it proves nothing. */
+static uint16_t g_line[256];
+
+static void blit_line(unsigned y, const uint16_t *line) {
+  if (y < 1 || y > 224) return;
+  memcpy(g_fb + (8 + y - 1) * 320 + 32, line, 256 * sizeof(uint16_t));   /* SCALING_OFF */
+}
 static int16_t  g_audio[FRAME_SAMPLES];
 
 static void RunFrame(uint16 input, int run_what) {
@@ -98,7 +108,8 @@ int main(int argc, char **argv) {
 
   for (int i = 0; i < frames; i++) {
     if (getenv("SM_KOREAN")) japanese_text_flag = 1;
-    PpuBeginDrawing(g_snes->ppu, (uint8_t *)(g_fb + 32), 320 * 2, 0);
+    g_ppu_line_cb = &blit_line;
+    PpuBeginDrawing(g_snes->ppu, (uint8_t *)g_line, 0, 0);
     RtlRunFrame(0);
     RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
   }

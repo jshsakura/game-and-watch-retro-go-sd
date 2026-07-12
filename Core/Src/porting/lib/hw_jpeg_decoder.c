@@ -46,6 +46,15 @@ static uint32_t disable_transfer = 0;
 /* Set when the image is rejected before any of it reaches the output buffer. */
 static uint32_t decode_rejected = 0;
 
+/* Why the last decode failed. "rc=1" collapses three unrelated failures into one
+ * number and we spent a release guessing between them:
+ *   hal   HAL_JPEG_Decode's return   (0=OK 1=ERROR 2=BUSY 3=TIMEOUT)
+ *   err   hjpeg->ErrorCode           (HAL_JPEG_ERROR_* bits)
+ *   rej   why we rejected it ourselves: 1=GetInfo failed, 2=output too large
+ *   sub   chroma subsampling         (0=4:2:0 1=4:2:2 2=4:4:4)
+ *   need  bytes the image needs in the output buffer, vs JPEGBufferSize */
+uint32_t g_jpeg_hal = 0, g_jpeg_err = 0, g_jpeg_rej = 0, g_jpeg_sub = 0, g_jpeg_need = 0;
+
 static void COPY_JpegOutInit();
 static void COPY_JpegOut();
 
@@ -83,11 +92,14 @@ static uint32_t JPEG_Run(uint32_t SrcAddress, uint32_t SrcSize)
         return 1;
 
     decode_rejected = 0;
+    g_jpeg_hal = g_jpeg_err = g_jpeg_rej = g_jpeg_sub = g_jpeg_need = 0;
     memset(&JPEG_info, 0, sizeof(JPEG_info));
 
     HAL_StatusTypeDef st = HAL_JPEG_Decode(&JPEG_Handle, (uint8_t *)SrcAddress, SrcSize,
                                            (uint8_t *)JPEGBufferAddress, JPEGBufferSize,
                                            JPEG_DECODE_TIMEOUT_MS);
+    g_jpeg_hal = (uint32_t)st;
+    g_jpeg_err = JPEG_Handle.ErrorCode;
     if (st != HAL_OK || decode_rejected)
     {
         /* A rejected image left the peripheral paused mid-frame; drop it so the
@@ -160,6 +172,7 @@ void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pIn
     if (HAL_OK != HAL_JPEG_GetInfo(hJPEG, &JPEG_info))
     {
         decode_rejected = 1;
+        g_jpeg_rej = 1;
         HAL_JPEG_Pause(hJPEG, JPEG_PAUSE_RESUME_INPUT_OUTPUT);
         return;
     }
@@ -170,6 +183,7 @@ void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pIn
      * 4:2:0 cover occupies 192x112. */
     uint32_t ImgSize;
 
+    g_jpeg_sub = JPEG_info.ChromaSubsampling;
     if (JPEG_info.ChromaSubsampling == JPEG_420_SUBSAMPLING)
     {
         ImgSize = MCU_ROUND(JPEG_info.ImageWidth, 16) * MCU_ROUND(JPEG_info.ImageHeight, 16) * 3 / 2;
@@ -183,12 +197,14 @@ void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pIn
         ImgSize = MCU_ROUND(JPEG_info.ImageWidth, 8) * MCU_ROUND(JPEG_info.ImageHeight, 8) * 3;
     }
 
+    g_jpeg_need = ImgSize;
     if (ImgSize > JPEGBufferSize)
     {
         /* Headers are parsed before any MCU is written out, so pausing here
          * keeps an oversized image from ever touching the output buffer. */
         printf("JPEG %lux%lu TOO LARGE:%lu > %lu \n", JPEG_info.ImageWidth, JPEG_info.ImageHeight, ImgSize, JPEGBufferSize);
         decode_rejected = 1;
+        g_jpeg_rej = 2;
         HAL_JPEG_Pause(hJPEG, JPEG_PAUSE_RESUME_INPUT_OUTPUT);
     }
 

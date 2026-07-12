@@ -102,6 +102,7 @@ g_fail sm__g_fail
 g_got_mismatch_count sm__g_got_mismatch_count
 g_new_ppu sm__g_new_ppu
 g_other_image sm__g_other_image
+g_ppu_line_cb sm__g_ppu_line_cb
 g_ppu_skip_render sm__g_ppu_skip_render
 g_ram sm__g_ram
 g_rom sm__g_rom

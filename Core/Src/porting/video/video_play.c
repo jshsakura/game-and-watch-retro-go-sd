@@ -332,7 +332,11 @@ static int open_video_menu(const avi_t *a)
 extern int  g_vdec_st, g_vdec_w, g_vdec_h;
 extern long g_vdec_sz, g_vdec_rc;
 extern unsigned char g_vdec_b0, g_vdec_b1;
-static char s_diag[200];
+/* Why the HW decode failed, rather than just that it did. "rc=1" is three
+ * unrelated failures wearing the same number, and a release went by guessing
+ * which one it was. See hw_jpeg_decoder.c. */
+extern uint32_t g_jpeg_hal, g_jpeg_err, g_jpeg_rej, g_jpeg_sub, g_jpeg_need;
+static char s_diag[256];
 const char *video_last_diag(void) { return s_diag[0] ? s_diag : "unsupported / unreadable"; }
 
 static void build_diag(const avi_t *a, int nv, int na)
@@ -340,10 +344,13 @@ static void build_diag(const avi_t *a, int nv, int na)
     int fps = a->usec_per_frame > 0 ? (1000000 + a->usec_per_frame / 2) / a->usec_per_frame : 0;
     snprintf(s_diag, sizeof s_diag,
              "open %dx%d %dfps f=%d|frame %02X%02X sz=%ld|decode st=%d %dx%d rc=%ld|"
-             "chunks v=%d a=%d",
+             "hal=%lu err=%lx rej=%lu sub=%lu need=%lu|chunks v=%d a=%d",
              a->width, a->height, fps, a->total_frames,
              g_vdec_b0, g_vdec_b1, g_vdec_sz,
-             g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_rc, nv, na);
+             g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_rc,
+             (unsigned long)g_jpeg_hal, (unsigned long)g_jpeg_err,
+             (unsigned long)g_jpeg_rej, (unsigned long)g_jpeg_sub, (unsigned long)g_jpeg_need,
+             nv, na);
 }
 
 // Live decoder overlay (toggle in the options menu via g_show_debug): a translucent

@@ -230,12 +230,74 @@ static void SmRunFrameDevice(uint16 input, int run_what) {
   g_sm_snes->runningWhichVersion = 0;
 }
 
-/* ------------------------------------------------------------------ video --- */
+/* ------------------------------------------------------------------ video ---
+ * The SNES is 256x224 and the screen is 320x240, and there is no room for a
+ * staging buffer to scale through — which is why this core used to ignore the
+ * launcher's scaling setting entirely and just centre the native image.
+ *
+ * So scale a line at a time. The PPU renders into a 256-pixel line buffer (512
+ * bytes, in cached RAM) and hands each finished line here, and this places it:
+ *
+ *   OFF   256x224, centred. Native, no filtering, black border.
+ *   FIT   256x240 — full height, black pillars. The 224->240 stretch duplicates
+ *         one line in every 14, which is what the sibling SNES ports do.
+ *   FULL  320x240 — fills the screen. 256->320 duplicates one pixel in every 4.
+ *
+ * Nearest-neighbour, because anything else costs a multiply per pixel and we are
+ * at 68% of the frame budget as it is. */
+#define SM_W 256
+#define SM_H 224
+
+static uint16_t sm_line[SM_W];
+static uint16_t *sm_fb;                       /* the framebuffer this frame lands in */
+static odroid_display_scaling_t sm_scaling = ODROID_DISPLAY_SCALING_COUNT;
+static uint16_t sm_xmap[GW_LCD_WIDTH];        /* dst x -> src x, for FULL */
+
+static void sm_blit_line(unsigned y, const uint16_t *line) {
+  if (y < 1 || y > SM_H || !sm_fb)
+    return;
+  unsigned s = y - 1;                          /* source row, 0-based */
+
+  switch (sm_scaling) {
+    case ODROID_DISPLAY_SCALING_OFF: {
+      uint16_t *dst = sm_fb + (unsigned)((240 - SM_H) / 2 + s) * GW_LCD_WIDTH + (GW_LCD_WIDTH - SM_W) / 2;
+      memcpy(dst, line, SM_W * sizeof(uint16_t));
+      break;
+    }
+    case ODROID_DISPLAY_SCALING_FULL: {
+      /* one source row covers one or two destination rows */
+      unsigned d0 = s * 240 / SM_H, d1 = (s + 1) * 240 / SM_H;
+      for (unsigned d = d0; d < d1; d++) {
+        uint16_t *dst = sm_fb + d * GW_LCD_WIDTH;
+        for (unsigned x = 0; x < GW_LCD_WIDTH; x++)
+          dst[x] = line[sm_xmap[x]];
+      }
+      break;
+    }
+    default: {                                 /* FIT and CUSTOM: full height, native width */
+      unsigned d0 = s * 240 / SM_H, d1 = (s + 1) * 240 / SM_H;
+      for (unsigned d = d0; d < d1; d++)
+        memcpy(sm_fb + d * GW_LCD_WIDTH + (GW_LCD_WIDTH - SM_W) / 2, line, SM_W * sizeof(uint16_t));
+      break;
+    }
+  }
+}
+
 static void DrawPpuFrame(uint16_t *framebuffer) {
   wdog_refresh();
-  /* The PPU writes RGB565 straight into the LCD framebuffer — there is no room
-   * for an intermediate buffer. 256 wide inside a 320-wide line, centred. */
-  PpuBeginDrawing(g_sm_snes->ppu, (uint8_t *)(framebuffer + 32), GW_LCD_WIDTH * 2, 0);
+
+  odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
+  if (scaling != sm_scaling) {
+    sm_scaling = scaling;
+    for (unsigned x = 0; x < GW_LCD_WIDTH; x++)
+      sm_xmap[x] = (uint16_t)(x * SM_W / GW_LCD_WIDTH);
+    /* The borders belong to whatever was on screen before; both buffers need it. */
+    lcd_clear_buffers();
+  }
+
+  sm_fb = framebuffer;
+  g_ppu_line_cb = &sm_blit_line;
+  PpuBeginDrawing(g_sm_snes->ppu, (uint8_t *)sm_line, 0, 0);  /* pitch 0: every line here */
 }
 
 /* ------------------------------------------------------------------ audio --- */
