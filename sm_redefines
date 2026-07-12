@@ -90,8 +90,13 @@ dsp_read sm__dsp_read
 dsp_reset sm__dsp_reset
 dsp_saveload sm__dsp_saveload
 dsp_write sm__dsp_write
+g_debug_flag sm__g_debug_flag
+g_got_mismatch_count sm__g_got_mismatch_count
+g_new_ppu sm__g_new_ppu
+g_other_image sm__g_other_image
 g_ram sm__g_ram
 g_rom sm__g_rom
+g_spc_player sm__g_spc_player
 g_sram sm__g_sram
 loadFunc sm__loadFunc
 mov24 sm__mov24

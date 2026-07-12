@@ -644,6 +644,39 @@ INCLUDE build/fceumm_mappers.ld
     __rodata_zelda3_end__ = .;
   } > RODATA
 
+  .rodata_sm :
+  {
+    . = ALIGN(4);
+    __rodata_sm_start__ = .;
+    build/sm/*.o (.rodata .rodata*)
+    __rodata_sm_end__ = .;
+  } > RODATA
+
+  .overlay_sm __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_sm_start__ = .;
+    _SM_MAIN_CODE_START = .;
+    build/sm/main_sm.o (.data .data* .text .text* .rodata .rodata*)
+    _SM_MAIN_CODE_END = .;
+    build/sm/*.o (.data .data* .text .text* .noreloc)
+    . = ALIGN(4);
+    _OVERLAY_SM_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_SM_LOAD_START = LOADADDR(.overlay_sm);
+  _OVERLAY_SM_SIZE = SIZEOF(.overlay_sm);
+
+  .overlay_sm_bss _OVERLAY_SM_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_SM_BSS_START = .;
+    build/sm/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/sm/*.o (COMMON)
+    __ram_emu_sm_end__ = .;
+    _OVERLAY_SM_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_SM_BSS_END) < __RAM_EMU_END__, "Error: SM BSS overflow");
+  }
+  _OVERLAY_SM_BSS_SIZE = SIZEOF(.overlay_sm_bss);
+
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_smw_start__ = .;
