@@ -260,6 +260,20 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   printf("Super Metroid start\n");
   ram_start = (uint32_t)&_OVERLAY_SM_BSS_END;
 
+  /* The game reads the original ROM the whole way through (RomPtr). Cache the
+   * 3 MB image in external flash and XIP it — copying it into RAM is not an
+   * option, which is why cart_load() is bypassed.
+   *
+   * The ROM goes in FIRST, and the order matters. The flash cache is circular:
+   * a file that does not fit at the write pointer rewinds it to the base and
+   * overwrites whatever is there. Caching the ROM after the code blob could
+   * therefore erase the blob we are about to execute from — with the pointer to
+   * it already in hand. Nothing is written after the blob, so nothing can. */
+  uint32_t rom_length = 0;
+  uint8 *rom = odroid_overlay_cache_file_in_flash(SM_ROM_PATH, &rom_length, false);
+  if (rom == NULL)
+    Die("Missing " SM_ROM_PATH);
+
   /* The cold banks and all of the game's rodata live in QSPI flash — neither
    * fits in the overlay pool. */
   if (!SmCacheXipToFlash())
@@ -280,14 +294,6 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
     printf("sm: patched %d sentinel refs in the overlay\n", n);
     wdog_refresh();
   }
-
-  /* The game reads the original ROM the whole way through (RomPtr). Cache the
-   * 3 MB image in external flash and XIP it — copying it into RAM is not an
-   * option, which is why cart_load() is bypassed. */
-  uint32_t rom_length = 0;
-  uint8 *rom = odroid_overlay_cache_file_in_flash(SM_ROM_PATH, &rom_length, false);
-  if (rom == NULL)
-    Die("Missing " SM_ROM_PATH);
 
   common_emu_state.frame_time_10us = (uint16_t)(100000 / FRAMERATE + 0.5f);
   if (start_paused) {
