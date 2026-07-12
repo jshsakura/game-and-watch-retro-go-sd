@@ -24,6 +24,7 @@ typedef enum {
     APPID_NGP      = 20,
     APPID_LYNX     = 21,
     APPID_VB       = 22,
+    APPID_SM       = 23,   /* Super Metroid (SD builds only) */
 
     APPID_COUNT,
 } appid_t;

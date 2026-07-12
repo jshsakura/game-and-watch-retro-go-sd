@@ -276,6 +276,11 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   printf("Super Metroid start\n");
   ram_start = (uint32_t)&_OVERLAY_SM_BSS_END;
 
+  /* Sets the SAI up for OUR sample rate, and loads the saved volume. Without it
+   * the audio hardware keeps whatever rate the previous app left behind and the
+   * game plays at the wrong pitch. zelda3 and smw both do this; sm did not. */
+  odroid_system_init(APPID_SM, SM_AUDIO_SAMPLE_RATE);
+
   /* The game reads the original ROM the whole way through (RomPtr). Cache the
    * 3 MB image in external flash and XIP it — copying it into RAM is not an
    * option, which is why cart_load() is bypassed.
