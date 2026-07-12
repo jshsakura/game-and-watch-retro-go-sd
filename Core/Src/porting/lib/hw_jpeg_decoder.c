@@ -196,11 +196,23 @@ void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pIn
 
 void HAL_JPEG_GetDataCallback(JPEG_HandleTypeDef *hJPEG, uint32_t NbDecodedData)
 {
-    /* The whole image was handed to HAL up front, so being asked for more means
-     * the stream ended early. Report "no more input" — leaving InDataLength as
-     * it was would make HAL rewind JpegInCount to 0 and replay the buffer for
-     * ever. */
-    decode_rejected = 1;
+    /* HAL asks for more input the moment it has pushed the last byte of the
+     * buffer (JpegInCount == InDataLength), which for a whole image handed over
+     * up front is the NORMAL end of the stream, not an error: the peripheral
+     * still has the tail of the image in its input FIFO and completes from
+     * there. Reporting "no more input" is the whole contract — leaving
+     * InDataLength as it was would make HAL rewind JpegInCount to 0 and replay
+     * the buffer for ever, which is the runaway this callback exists to stop.
+     *
+     * Do NOT flag the image as rejected here. Whether this fires at all depends
+     * only on how much of the source HAL had left when the decode ended, so a
+     * caller that passes the exact JPEG length (video, one frame per chunk) hits
+     * it on every good frame, while callers that pass a padded bound (covers use
+     * the slot size, .gw artwork the rest of the file) never do. Flagging it
+     * failed every video frame while leaving the others working.
+     *
+     * A stream that really is truncated ends the same way but never reaches EOC,
+     * so HAL_JPEG_Decode returns HAL_TIMEOUT and JPEG_Run rejects it there. */
     HAL_JPEG_ConfigInputBuffer(hJPEG, NULL, 0);
 }
 

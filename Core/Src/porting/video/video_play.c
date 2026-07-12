@@ -370,7 +370,12 @@ static void draw_hud(int dec_ok, int seen, int na)
     char l1[64], l2[48];
     snprintf(l1, sizeof l1, "dec=%d v=%d rd=%dms pf=%dms jpg=%dms",
              dec_ok, seen, g_vdec_read_ms, g_vdec_pf_ms, g_vdec_jpeg_ms);
-    snprintf(l2, sizeof l2, "sz=%ld dmx=%d sd=%s %dx%d", g_vdec_sz, g_vid_dmax, sd, g_vdec_w, g_vdec_h);
+    // ring= is the A/V clock trim's servo error: it must sit near VR_TARGET
+    // (~1200) for the whole clip. Climbing to 4095 is the drift that used to
+    // close the prefetch gate and turn playback to stutter; falling to 0 is an
+    // underrun. Either end means the trim is not holding.
+    snprintf(l2, sizeof l2, "sz=%ld dmx=%d sd=%s %dx%d ring=%d",
+             g_vdec_sz, g_vid_dmax, sd, g_vdec_w, g_vdec_h, video_audio_ring_count());
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t accent = curr_colors->sel_c;
     for (int y = 0; y < 26; y++) {                       // translucent panel (video shows through)
