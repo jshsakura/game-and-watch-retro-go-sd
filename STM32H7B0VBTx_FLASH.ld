@@ -142,8 +142,7 @@ MEMORY
   CORES      (x  ) : ORIGIN = 0x0,                 LENGTH = 0xFFFFFFFF
   RODATA     (x  ) : ORIGIN = 0xCAFE0000,          LENGTH = 0xFFFFFFFF
   PICO8_CODE (x  ) : ORIGIN = 0xBEEF0000,          LENGTH = 512K
-  /* Super Metroid cold banks + all of its rodata (see the SDCARD linker script). */
-  SM_CODE    (x  ) : ORIGIN = 0xDEAD0000,          LENGTH = 512K
+  /* No SM_CODE region: Super Metroid is SD-card only (see below). */
   EXTFLASH   (xr ) : ORIGIN = __EXTFLASH_START__,  LENGTH = 32M
 }
 
@@ -642,53 +641,11 @@ INCLUDE build/fceumm_mappers.ld
     __rodata_zelda3_end__ = .;
   } > RODATA
 
-  /* Cold code, claimed before .overlay_sm so it does NOT land in the RAM pool.
-   * Only .text here: the rodata claim has to come after .overlay_sm (below), or
-   * it would swallow main_sm.o's string literals too. */
-  .xip_sm : {
-    . = ALIGN(8);
-    __xip_sm_start__ = .;
-    build/sm/sm_8b.o (.text .text*)
-  } > SM_CODE
-
-  .overlay_sm __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_sm_start__ = .;
-    _SM_MAIN_CODE_START = .;
-    build/sm/main_sm.o (.data .data* .text .text* .rodata .rodata*)
-    . = ALIGN(4);
-    _SM_MAIN_CODE_END = .;
-    build/sm/*.o (.data .data* .text .text* .noreloc)
-    . = ALIGN(4);
-    _OVERLAY_SM_LOAD_END = .;
-  } AT > CORES
-  _OVERLAY_SM_LOAD_START = LOADADDR(.overlay_sm);
-  _OVERLAY_SM_SIZE = SIZEOF(.overlay_sm);
-
-  .overlay_sm_bss _OVERLAY_SM_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_SM_BSS_START = .;
-    build/sm/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/sm/*.o (COMMON)
-    __ram_emu_sm_end__ = .;
-    _OVERLAY_SM_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_SM_BSS_END) < __RAM_EMU_END__, "Error: SM BSS overflow");
-  }
-  _OVERLAY_SM_BSS_SIZE = SIZEOF(.overlay_sm_bss);
-
-  /* The game's rodata, immediately after the cold code in the SAME region, so the
-   * two ship as one file (sm.xip) and land in flash as one cache entry. See the
-   * SDCARD linker script for why they must not be two separate cached files, and
-   * why this is declared after .overlay_sm. */
-  .rodata_sm : {
-    . = ALIGN(8);
-    __rodata_sm_start__ = .;
-    build/sm/*.o (.rodata .rodata*)
-    . = ALIGN(4);
-    __rodata_sm_end__ = .;
-    __xip_sm_end__ = .;
-  } > SM_CODE
+  /* No Super Metroid here. The port is SD-card only (SM_OBJECTS is empty in this
+   * configuration — see Makefile.common and rg_emulators.c): FrogFS maps its files
+   * in place instead of copying them, so sm.xip could never be relocated, and there
+   * is nowhere to cache the 3 MB ROM the game reads at runtime. Its sections live
+   * in STM32H7B0VBTx_SDCARD.ld only. */
 
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);

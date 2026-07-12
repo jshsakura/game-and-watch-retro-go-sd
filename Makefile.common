@@ -851,7 +851,14 @@ VB_OBJECTS = $(addprefix $(BUILD_DIR)/vb/,$(notdir $(VB_C_SOURCES:.c=.o)))
 VB_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/vb/,$(notdir $(VB_CXX_SOURCES:.cpp=.o)))
 AMSTRAD_OBJECTS = $(addprefix $(BUILD_DIR)/amstrad/,$(notdir $(AMSTRAD_C_SOURCES:.c=.o)))
 ZELDA3_OBJECTS = $(addprefix $(BUILD_DIR)/zelda3/,$(notdir $(ZELDA3_C_SOURCES:.c=.o)))
+# Super Metroid is SD-card only — see rg_emulators.c. A FrogFS build cannot cache
+# and relocate sm.xip, nor hold the 3 MB ROM the port reads at runtime, so the core
+# is left out of the image rather than shipped as a dead menu entry.
+ifeq ($(SD_CARD),1)
 SM_OBJECTS = $(addprefix $(BUILD_DIR)/sm/,$(notdir $(SM_C_SOURCES:.c=.o)))
+else
+SM_OBJECTS =
+endif
 SMW_OBJECTS = $(addprefix $(BUILD_DIR)/smw/,$(notdir $(SMW_C_SOURCES:.c=.o)))
 VIDEOPAC_OBJECTS = $(addprefix $(BUILD_DIR)/videopac/,$(notdir $(VIDEOPAC_C_SOURCES:.c=.o)))
 ZX_OBJECTS = $(addprefix $(BUILD_DIR)/zxs/,$(notdir $(ZX_C_SOURCES:.c=.o)))
