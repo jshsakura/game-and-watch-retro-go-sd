@@ -81,6 +81,31 @@ static void RunFrame(uint16 input, int run_what) {
   g_snes->runningWhichVersion = 0;
 }
 
+/* Savestate round-trip. The device saves fine and then loads to a black screen,
+ * which means the state we write is not the whole state — or something outside it
+ * is stale after the load. Run, save, run on; then reload and run the same frames
+ * again. If the state is complete, the two runs are the same machine. */
+static uint8_t g_state[512 * 1024];
+static size_t  g_state_len, g_state_pos;
+
+static void state_write(void *ctx, void *data, size_t size) {
+  (void)ctx;
+  memcpy(g_state + g_state_len, data, size);
+  g_state_len += size;
+}
+static void state_read(void *ctx, void *data, size_t size) {
+  (void)ctx;
+  memcpy(data, g_state + g_state_pos, size);
+  g_state_pos += size;
+}
+
+static uint64_t fb_hash(void) {
+  uint64_t h = 1469598103934665603ULL;
+  const uint8_t *b = (const uint8_t *)g_fb;
+  for (size_t i = 0; i < sizeof(g_fb); i++) { h ^= b[i]; h *= 1099511628211ULL; }
+  return h;
+}
+
 int main(int argc, char **argv) {
   const char *path = argv[1];
   int frames = argc > 2 ? atoi(argv[2]) : 1200;
@@ -113,6 +138,46 @@ int main(int argc, char **argv) {
     RtlRunFrame(0);
     RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
   }
+  if (getenv("SM_SAVELOAD")) {
+    /* save here */
+    g_state_len = 0;
+    RtlSaveLoadState(kSaveLoad_Save, &state_write, NULL);
+    printf("savestate: %zu bytes\n", g_state_len);
+
+    /* run 60 frames from the save point and remember what the screen became */
+    for (int i = 0; i < 60; i++) {
+      PpuBeginDrawing(g_snes->ppu, (uint8_t *)g_line, 0, 0);
+      RtlRunFrame(0);
+      RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
+    }
+    uint64_t a = fb_hash();
+
+    /* reload and run the same 60 frames.
+     *
+     * SM_COLD_LOAD models what the device actually does after a firmware update:
+     * boot, launch, load a state immediately. The PPU has rendered nothing yet, so
+     * everything it caches is still zero — and a load restores cgram without
+     * touching any of that. */
+    if (getenv("SM_COLD_LOAD")) {
+      RtlReset(0);
+      printf("(cold: the PPU has drawn nothing yet, as after a reboot)\n");
+    }
+    g_state_pos = 0;
+    RtlSaveLoadState(kSaveLoad_Load, &state_read, NULL);
+    for (int i = 0; i < 60; i++) {
+      PpuBeginDrawing(g_snes->ppu, (uint8_t *)g_line, 0, 0);
+      RtlRunFrame(0);
+      RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
+    }
+    uint64_t b = fb_hash();
+
+    int lit = 0;
+    for (int i = 0; i < 320 * 240; i++) if (g_fb[i]) lit++;
+    printf("save/load round-trip: %s   (lit after reload: %d/76800)\n",
+           a == b ? "IDENTICAL" : "DIFFERENT — the state is incomplete", lit);
+    return a != b;
+  }
+
   /* FNV-1a over everything the frame produced: the screen, the game's RAM and its
    * save RAM. Two builds that claim to emulate the same machine must agree here. */
   uint64_t h = 1469598103934665603ULL;

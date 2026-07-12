@@ -340,22 +340,45 @@ static void sm_system_SramSave(void) {
 
 /* -------------------------------------------------------------- savestate --- */
 /* RtlSaveLoadState streams the state through these; nothing is staged in RAM,
- * because there is no RAM to stage ~270 KB in. */
+ * because there is no RAM to stage ~270 KB in.
+ *
+ * A header, because a savestate outlives the firmware that wrote it. The stream is
+ * a raw dump of live structs: change one of them and yesterday's file still opens,
+ * still reads, and quietly loads garbage — which on this core means a black screen
+ * and no clue why. So stamp it, and refuse to load a file this build did not write.
+ * SM_STATE_VERSION goes up whenever the serialized layout moves. */
+#define SM_STATE_MAGIC   0x314D5347u   /* "GSM1" */
+#define SM_STATE_VERSION 1u
+
+typedef struct {
+  uint32_t magic;
+  uint32_t version;
+  uint32_t bytes;      /* payload length, so a truncated file is caught too */
+} sm_state_header_t;
+
 static FILE *savestate_file;
+static size_t savestate_bytes;
+static bool savestate_short;
 
 static void sm_state_write(void *ctx, void *data, size_t size) {
   (void)ctx;
   wdog_refresh();
   if (savestate_file)
     fwrite(data, 1, size, savestate_file);
+  savestate_bytes += size;
 }
 
 static void sm_state_read(void *ctx, void *data, size_t size) {
   (void)ctx;
   wdog_refresh();
-  if (savestate_file && fread(data, 1, size, savestate_file) == size)
+  if (savestate_file && fread(data, 1, size, savestate_file) == size) {
+    savestate_bytes += size;
     return;
-  memset(data, 0, size);   /* short/absent file: zero rather than keep stale state */
+  }
+  /* Out of file. Zeroing is the least-bad thing to do mid-stream, but the load is
+   * now worthless — say so, and let the caller keep the game it already had. */
+  savestate_short = true;
+  memset(data, 0, size);
 }
 
 static bool sm_system_SaveState(char *pathName) {
@@ -363,9 +386,18 @@ static bool sm_system_SaveState(char *pathName) {
   savestate_file = fopen(pathName, "wb");
   bool ok = savestate_file != NULL;
   if (ok) {
+    sm_state_header_t hdr = { SM_STATE_MAGIC, SM_STATE_VERSION, 0 };
+    fwrite(&hdr, 1, sizeof(hdr), savestate_file);   /* patched below */
+
+    savestate_bytes = 0;
     RtlSaveLoadState(kSaveLoad_Save, &sm_state_write, NULL);
+
+    hdr.bytes = (uint32_t)savestate_bytes;
+    fseek(savestate_file, 0, SEEK_SET);
+    fwrite(&hdr, 1, sizeof(hdr), savestate_file);
     fclose(savestate_file);
     savestate_file = NULL;
+    printf("sm: saved %lu bytes\n", (unsigned long)hdr.bytes);
   } else {
     printf("sm: savestate fopen failed: %s\n", pathName);
   }
@@ -376,11 +408,36 @@ static bool sm_system_SaveState(char *pathName) {
 static bool sm_system_LoadState(char *pathName) {
   odroid_audio_mute(true);
   savestate_file = fopen(pathName, "rb");
-  bool ok = savestate_file != NULL;
-  if (ok) {
-    RtlSaveLoadState(kSaveLoad_Load, &sm_state_read, NULL);
+  if (savestate_file == NULL) {
+    odroid_audio_mute(false);
+    return false;
+  }
+
+  sm_state_header_t hdr = { 0, 0, 0 };
+  bool ok = fread(&hdr, 1, sizeof(hdr), savestate_file) == sizeof(hdr) &&
+            hdr.magic == SM_STATE_MAGIC && hdr.version == SM_STATE_VERSION;
+  if (!ok) {
+    /* Written by a different build. Loading it would restore a struct dump into
+     * structs that have since moved: the game does not crash, it just renders
+     * black, and nothing says why. Leave the running game alone. */
+    printf("sm: savestate is not this build's (magic=%08lx version=%lu) — refusing\n",
+           (unsigned long)hdr.magic, (unsigned long)hdr.version);
     fclose(savestate_file);
     savestate_file = NULL;
+    odroid_audio_mute(false);
+    return false;
+  }
+
+  savestate_bytes = 0;
+  savestate_short = false;
+  RtlSaveLoadState(kSaveLoad_Load, &sm_state_read, NULL);
+  fclose(savestate_file);
+  savestate_file = NULL;
+
+  if (savestate_short || savestate_bytes != hdr.bytes) {
+    printf("sm: savestate truncated (%lu of %lu bytes)\n",
+           (unsigned long)savestate_bytes, (unsigned long)hdr.bytes);
+    ok = false;
   }
   odroid_audio_mute(false);
   return ok;
