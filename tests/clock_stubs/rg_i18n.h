@@ -12,7 +12,8 @@ typedef struct { const char *s_AM, *s_PM, *s_Clock,
   *s_Clock_Bg_File,*s_Clock_Alarm_Sound,*s_Clock_Night_Off,*s_Clock_Night_End,*s_Clock_Snd_Preview,
   *s_Speed_Slow,*s_Speed_Normal,*s_Speed_Fast,
   *s_Brightness,
-  *s_Full,*s_Fill; } lang_t;
+  *s_Full,*s_Fill,
+  *s_Idle_power_off,*s_Minute; } lang_t;
 extern const lang_t *curr_lang;
 int i18n_draw_text_line(int x, int y, int w, const char *t, uint16_t c, uint16_t bg, int f);
 int i18n_get_text_width(const char *t);

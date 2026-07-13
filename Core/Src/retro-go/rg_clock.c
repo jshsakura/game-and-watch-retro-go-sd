@@ -46,6 +46,11 @@
  * clock preview harness); rg_clock already pulls in gui.h for the tab accessors. */
 extern void rg_emulators_reset_all_lists(void);
 
+/* rg_main.c's PAUSE-menu "Idle power off" row, reused verbatim (not copied) so
+ * the clock's own settings menu can show/edit the SAME global setting instead
+ * of growing a second one of its own — see clock_should_idle_sleep() above. */
+extern bool GLOBAL_DATA main_menu_timeout_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat);
+
 /* User-media backgrounds/sounds (photo album, GIF background, MP3/WAV alarm) all
  * need a writable place to RECEIVE files, which a card-less unit has no way to
  * do — so they are compiled out entirely on SD_CARD=0 (their .c files are also
@@ -1321,6 +1326,29 @@ static void render_stopwatch(uint32_t now)
 static bool pressed(odroid_gamepad_state_t *k, odroid_gamepad_state_t *p, int key)
 { return k->values[key] && !p->values[key]; }
 
+/* clock_edit_time() and alarm_edit_view() below each run their own for(;;)/
+ * while(true) loop instead of odroid_overlay_dialog() (the alarm list menu
+ * around them uses the shared dialog, but per-field time editing needs finer
+ * control than a dialog row gives). Neither loop asked the global idle
+ * timeout, so leaving either one open (e.g. mid-edit, then walking away) sat
+ * the screen lit forever regardless of "Idle power off" — the same class of
+ * bug rg_clock_show's main loop had before clock_should_idle_sleep() (see
+ * above). On expiry this sleeps and resumes in place, same as the main clock
+ * face's POWER handling, rather than silently discarding an in-progress edit.
+ * Returns true if it slept, so the caller redraws before reading input again. */
+static bool editor_idle_sleep_if_expired(uint32_t *last_input, odroid_gamepad_state_t *prev)
+{
+    uint32_t now = HAL_GetTick();
+    if (!odroid_idle_timeout_expired((now - *last_input) / 1000u)) return false;
+    odroid_system_sleep();
+    odroid_gamepad_state_t k;
+    do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); }
+    while (k.values[ODROID_INPUT_POWER]);
+    odroid_input_read_gamepad(prev);
+    *last_input = HAL_GetTick();
+    return true;
+}
+
 /* Runner controls, SAME in every mode: A = start/pause, B = reset.
  * (Exit lives in the PAUSE menu + POWER — never on a face button.) */
 static void input_pomodoro(odroid_gamepad_state_t *k, odroid_gamepad_state_t *p, uint32_t now)
@@ -1451,12 +1479,16 @@ static alarm_edit_result_t alarm_edit_view(alarm_t *a)
     odroid_gamepad_state_t k, prev = {0};
     odroid_input_read_gamepad(&prev);
     uint32_t last_phase = ~0u;
+    uint32_t last_input = HAL_GetTick();
     alarm_edit_result_t result = ALARM_EDIT_SAVE;
 
     while (true) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
         uint32_t now = HAL_GetTick();
+        if (k.bitmask & ~prev.bitmask) last_input = now;
+
+        if (editor_idle_sleep_if_expired(&last_input, &prev)) { dirty = true; last_phase = ~0u; continue; }
 
         if (pressed(&k, &prev, ODROID_INPUT_A)) { result = ALARM_EDIT_SAVE; break; }
         if (pressed(&k, &prev, ODROID_INPUT_B)) { result = ALARM_EDIT_CANCEL; break; }
@@ -1573,11 +1605,15 @@ static void clock_edit_time(void)
     int field = 0; bool dirty = true; uint32_t last_phase = ~0u;
     odroid_gamepad_state_t k, prev = {0};
     odroid_input_read_gamepad(&prev);
+    uint32_t last_input = HAL_GetTick();
 
     while (true) {
         wdog_refresh();
         odroid_input_read_gamepad(&k);
         uint32_t now = HAL_GetTick();
+        if (k.bitmask & ~prev.bitmask) last_input = now;
+
+        if (editor_idle_sleep_if_expired(&last_input, &prev)) { dirty = true; last_phase = ~0u; continue; }
 
         if (pressed(&k, &prev, ODROID_INPUT_A)) { tm.tm_sec = 0; GW_SetUnixTM(&tm); break; }
         if (pressed(&k, &prev, ODROID_INPUT_B)) break;
@@ -1769,6 +1805,12 @@ static bool cb_bright(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32
     if (e == ODROID_DIALOG_PREV && level > 0)   odroid_display_set_backlight(--level);
     if (e == ODROID_DIALOG_NEXT && level < max) odroid_display_set_backlight(++level);
 
+    /* `r` on INIT is "am I the selected row" (0/1), not this row's own .id —
+     * see odroid_overlay_draw_dialog's ODROID_DIALOG_INIT call site. Comparing
+     * against .id (as this row and cb_vol below both used to) only "worked"
+     * when a row's id happened to equal its position in opts[]; this row's id
+     * (15) never does, so the gauge here was NEVER compensated when actually
+     * selected. */
     char a = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
     char b = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
     for (int i = 0; i <= max; i++) o->value[i] = (i <= level) ? a : b;
@@ -1957,6 +1999,10 @@ static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
     if (e == ODROID_DIALOG_PREV && lv > 0) s_alarm_volume = --lv;
     if (e == ODROID_DIALOG_NEXT && lv < ODROID_AUDIO_VOLUME_MAX) s_alarm_volume = ++lv;
     /* no blip preview: the settings menu never feeds the tone now */
+    /* `r` = "am I selected" (0/1), not this row's .id — see cb_bright above.
+     * This row's id (7) collided with the background-effect row's ARRAY INDEX
+     * (7), so putting the cursor on Background flipped THIS gauge's glyphs
+     * even though Volume itself wasn't selected — the reported bug. */
     char a = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
     char b = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
     for (int i = 0; i <= ODROID_AUDIO_VOLUME_MAX; i++) o->value[i] = (i <= lv) ? a : b;
@@ -2006,7 +2052,7 @@ static void clock_menu_repaint(void)
 static bool clock_settings_menu(void)
 {
     /* Order: the everyday actions first (set time, format, alarms, volume,
-     * brightness, power-save — device feedback asked for these grouped
+     * brightness, idle power-off — device feedback asked for these grouped
      * together instead of scattered), then the look-and-feel pickers. The
      * choice `id`s are fixed (the post-dialog dispatch keys off them), so
      * rows can be reordered freely. Anim/Scene/Photo-speed/GIF-file MUST stay
@@ -2015,15 +2061,27 @@ static bool clock_settings_menu(void)
      * (clock_alarm_setup/ALARM_IDX_*) — moved off this menu to stay under the
      * no-scroll row budget (see odroid_overlay_draw_dialog's had_extent:
      * header + N*14px rows + 34px padding must stay <= 230px, i.e. at most 14
-     * rows; this menu has 13 rows with SD media compiled in, 11 without — but
+     * rows; this menu has 14 rows with SD media compiled in, 12 without — but
      * Scene/Photo-speed/GIF-file are ODROID_DIALOG_HIDDEN (zero layout
      * footprint) whenever their own background isn't the active one, and only
      * one of the three can ever be active at once, so the row actually
-     * visible at a time is 11 max, never 13). The SD-media rows (photo speed,
-     * GIF file) are compiled out entirely on flash builds. */
-    /* stack-resident (DTCM is bytes from full): the brightness gauge, and
-     * (SD builds) the photo-speed / GIF-file picker values */
+     * visible at a time is 12 max, never 14). The SD-media rows (photo speed,
+     * GIF file) are compiled out entirely on flash builds.
+     *
+     * "Idle power off" (id 6) is NOT a clock setting: it reads/writes the
+     * launcher's one global timeout setting (see odroid_settings.h) through
+     * main_menu_timeout_cb (rg_main.c, reused not copied), the same row the
+     * launcher's own PAUSE menu shows. The clock used to have its own
+     * auto-dim/night-off timers; they duplicated this rule, badly, and were
+     * removed (see clock_should_idle_sleep() above). This row exists only
+     * because reaching the launcher's settings to change the ONE value meant
+     * leaving the clock — it is a second place to see/edit it, never a second
+     * value. tests/test_idle_timeout_wired.sh fails if that stops being true. */
+    /* stack-resident (DTCM is bytes from full): the brightness gauge, the
+     * idle-timeout text, and (SD builds) the photo-speed / GIF-file picker
+     * values */
     char v_bright[ODROID_BACKLIGHT_LEVEL_COUNT + 2];
+    char v_timeout[16];
 #if CLOCK_SD_MEDIA
     char v_pspeed[PICK_VAL], v_bgfile[PICK_VAL];
 #endif
@@ -2034,6 +2092,7 @@ static bool clock_settings_menu(void)
         {8, curr_lang->s_Clock_Set_Time, v_settime, 1, cb_enter},
         {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
         {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_alarms_summary},
+        {6, curr_lang->s_Idle_power_off, v_timeout, 1, main_menu_timeout_cb},
         {0, curr_lang->s_Clock_Theme,  v_theme,  1, cb_theme},
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},
         {2, curr_lang->s_Clock_Anim,   v_anim,   1, cb_anim},

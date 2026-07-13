@@ -67,6 +67,12 @@ uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_bac
  * directly with an explicit timeout_expired argument, so this stub just needs
  * to link. */
 bool odroid_idle_timeout_expired(uint32_t idle_seconds) { (void)idle_seconds; return false; }
+/* rg_main.c's PAUSE-menu row, reused (not copied) by the clock's own settings
+ * menu (see rg_clock.c's clock_settings_menu) -- rg_main.c isn't compiled
+ * here, so link a stub. The gauge test below calls cb_vol/cb_bright directly,
+ * never this row itself, so the stub's actual behaviour is irrelevant. */
+bool main_menu_timeout_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{ (void)e; (void)r; if (o && o->value) o->value[0] = 0; return false; }
 
 /* every lang_t field is a `const char *` — point them all at one placeholder
  * so ANY string the renderer reaches for (not just the ones the alarm test
@@ -541,9 +547,70 @@ static void test_clock_should_idle_sleep(void)
           "never sleeps off the clock face — stopwatch");
 }
 
+/* ---- bug: the alarm-volume (and brightness) bar gauge inverted depending on
+ * WHICH row was selected, not whether THIS row was (see odroid_overlay.c's
+ * odroid_overlay_draw_dialog ODROID_DIALOG_INIT call site, and cb_vol/
+ * cb_bright above). The old code compared `option->id == repeat`, where
+ * `repeat` on INIT was actually the SELECTED ROW'S ARRAY INDEX, not an id to
+ * match — so a row's compensation only fired correctly if its own `.id`
+ * happened to equal its own position in the opts[] array. cb_vol's id (7)
+ * instead equalled the background-effect row's array index, so moving the
+ * cursor there flipped the volume row's glyphs though volume wasn't selected;
+ * cb_bright's id (15) never matched any real index, so brightness was NEVER
+ * compensated even when it truly was selected. The fix makes `repeat` on
+ * INIT mean "am I the selected row" (0/1) directly, so `.id` cannot alias.
+ * This exercises the REAL cb_vol/cb_bright, not a reimplementation of the
+ * fixed logic, with `.id` deliberately set to values that would have
+ * triggered the old alias, to prove id no longer matters at all. */
+static void test_gauge_selection_polarity(void)
+{
+    L.s_Full = "F";   /* lit-cell glyph when NOT compensated (not selected) */
+    L.s_Fill = ".";   /* empty-cell glyph when NOT compensated */
+
+    s_alarm_volume = 3;   /* cells 0..3 "filled", 4..9 "empty" */
+    char val[16];
+    /* id=7 is cb_vol's REAL id in clock_settings_menu() — the exact value
+     * that used to alias with the background row's array index. */
+    odroid_dialog_choice_t vol = { 7, "Volume", val, 1, cb_vol };
+
+    cb_vol(&vol, ODROID_DIALOG_INIT, 0);   /* not selected */
+    CHECK(memcmp(val, "FFFF......", 10) == 0,
+          "cb_vol not selected: normal polarity (lit=F, empty=.)");
+
+    cb_vol(&vol, ODROID_DIALOG_INIT, 1);   /* selected: must compensate */
+    CHECK(memcmp(val, "....FFFFFF", 10) == 0,
+          "cb_vol selected: compensated/inverted polarity (lit=., empty=F)");
+
+    /* the historical alias: repeat==7 (an array index elsewhere in the menu,
+     * not "selected") must NOT be treated as selected now that repeat is a
+     * plain 0/1 flag, regardless of this row's own id also being 7. */
+    cb_vol(&vol, ODROID_DIALOG_INIT, 7);
+    CHECK(memcmp(val, "....FFFFFF", 10) == 0,
+          "cb_vol: any nonzero repeat means selected (no id aliasing possible)");
+
+    int lvl = odroid_display_get_backlight();   /* whatever the stub currently holds */
+    char valb[16];
+    /* id=15 is cb_bright's REAL id — never equal to its own array index (0)
+     * in clock_settings_menu(), which is exactly why it was NEVER compensated
+     * pre-fix even when Brightness genuinely was the selected row. */
+    odroid_dialog_choice_t br = { 15, "Brightness", valb, 1, cb_bright };
+    cb_bright(&br, ODROID_DIALOG_INIT, 0);
+    char expect_off[16]; for (int i = 0; i <= lvl; i++) expect_off[i] = 'F';
+    for (int i = lvl + 1; i <= 9; i++) expect_off[i] = '.'; expect_off[10] = 0;
+    CHECK(memcmp(valb, expect_off, 10) == 0,
+          "cb_bright not selected: normal polarity");
+
+    cb_bright(&br, ODROID_DIALOG_INIT, 1);
+    char expect_on[16]; for (int i = 0; i <= lvl; i++) expect_on[i] = '.';
+    for (int i = lvl + 1; i <= 9; i++) expect_on[i] = 'F'; expect_on[10] = 0;
+    CHECK(memcmp(valb, expect_on, 10) == 0,
+          "cb_bright selected: compensated/inverted polarity (was NEVER true pre-fix)");
+}
+
 int main(void)
 {
     init_lang();
+    test_gauge_selection_polarity();
     test_days_in_month();
     test_cfg_legacy_migration();
     test_cfg_full_roundtrip();

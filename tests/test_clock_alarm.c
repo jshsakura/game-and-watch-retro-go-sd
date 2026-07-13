@@ -51,6 +51,11 @@ uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_bac
 /* rg_clock_show() (unused here, but compiled) asks the launcher's global idle
  * timeout — never expired, so it is not exercised by the alarm tests. */
 bool odroid_idle_timeout_expired(uint32_t idle_seconds) { (void)idle_seconds; return false; }
+/* rg_main.c's PAUSE-menu row, reused (not copied) by the clock's own settings
+ * menu (see rg_clock.c's clock_settings_menu) -- rg_main.c isn't compiled
+ * here, so link a stub; nothing in this file's tests exercises the row. */
+bool main_menu_timeout_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{ (void)e; (void)r; if (o && o->value) o->value[0] = 0; return false; }
 
 static const lang_t L = { .s_AM="AM", .s_PM="PM", .s_Clock="Clock",
   .s_Weekday_Mon="Mon", .s_Weekday_Tue="Tue", .s_Weekday_Wed="Wed", .s_Weekday_Thu="Thu",

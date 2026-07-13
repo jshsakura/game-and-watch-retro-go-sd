@@ -85,7 +85,12 @@ static bool GLOBAL_DATA main_menu_cpu_oc_cb(odroid_dialog_choice_t *option, odro
     return event == ODROID_DIALOG_ENTER;
 }
 
-static bool GLOBAL_DATA main_menu_timeout_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
+/* Not static: rg_clock.c's PAUSE menu reuses this exact row (same 60s steps,
+ * same "N minutes"/"off" text, same odroid_settings call) instead of copying
+ * it, so the clock's timeout row and this one are the SAME setting, edited by
+ * the same code — two copies of this rule is what "one setting decides when
+ * the screen sleeps" (see CLAUDE.md) was written to stop happening again. */
+bool GLOBAL_DATA main_menu_timeout_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
     const int TIMEOUT_STEP = 60;
     const int TIMEOUT_MIN = 0;

@@ -617,7 +617,13 @@ void odroid_overlay_draw_dialog(const char *header, odroid_dialog_choice_t *opti
 
     for (int i = 0; i < options_count; i++)
         if (options[i].update_cb != NULL)
-            options[i].update_cb(&options[i], ODROID_DIALOG_INIT, sel); // A hack to transport currently selected item
+            // Tell each row whether IT is the selected one (i == sel), not the raw
+            // sel index — a bar-gauge row used to compare sel against its own
+            // `.id` instead, which only worked when a row's id happened to equal
+            // its array position. rg_clock.c's alarm-volume row (id 7) sat at
+            // index 1 but shared its id with the background-effect row's index
+            // (7), so selecting THAT row flipped the volume gauge's glyphs too.
+            options[i].update_cb(&options[i], ODROID_DIALOG_INIT, i == sel);
 
     for (int i = 0; i < options_count; i++)
     {
@@ -1129,9 +1135,12 @@ static bool volume_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event
     if (event == ODROID_DIALOG_NEXT && level < max)
         odroid_audio_volume_set(++level);
 
-    // The swapping of colors is done for the selected option only to ensure a visual pleasing bar graph while being inverted
-    char a = event == ODROID_DIALOG_INIT && option->id == repeat ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
-    char b = event == ODROID_DIALOG_INIT && option->id == repeat ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
+    // The swapping of colors is done for the selected option only to ensure a
+    // visual pleasing bar graph while being inverted. `repeat` on INIT is
+    // "am I the selected row" (0/1, set by odroid_overlay_draw_dialog's i ==
+    // sel), not an id to match — see that call site for why.
+    char a = event == ODROID_DIALOG_INIT && repeat ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
+    char b = event == ODROID_DIALOG_INIT && repeat ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
 
     for (int i = ODROID_AUDIO_VOLUME_MIN; i <= ODROID_AUDIO_VOLUME_MAX; i++)
         volume_value[i - ODROID_AUDIO_VOLUME_MIN] = (i - ODROID_AUDIO_VOLUME_MIN) <= level ? a : b;
@@ -1153,8 +1162,9 @@ static bool brightness_update_cb(odroid_dialog_choice_t *option, odroid_dialog_e
     if (event == ODROID_DIALOG_NEXT && level < max)
         odroid_display_set_backlight(++level);
 
-    char a = event == ODROID_DIALOG_INIT && option->id == repeat ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
-    char b = event == ODROID_DIALOG_INIT && option->id == repeat ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
+    // Same "am I selected" flag as volume_update_cb above, not an id compare.
+    char a = event == ODROID_DIALOG_INIT && repeat ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
+    char b = event == ODROID_DIALOG_INIT && repeat ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
 
     for (int i = ODROID_BACKLIGHT_LEVEL0; i <= ODROID_BACKLIGHT_LEVEL9; i++)
         bright_value[i - ODROID_BACKLIGHT_LEVEL0] = (i - ODROID_BACKLIGHT_LEVEL0) <= level ? a : b;
