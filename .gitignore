@@ -68,3 +68,9 @@ clock_mockup.html
 
 # root-dropped clock preview copies (host/preview_out is the canonical set)
 /clock_*.png
+
+# Savestates / SRAM dropped in the repo root while debugging. They are the user's
+# game, not the project's source.
+*.sav
+*.sram
+*.raw
