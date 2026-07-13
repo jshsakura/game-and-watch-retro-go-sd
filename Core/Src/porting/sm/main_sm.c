@@ -419,14 +419,38 @@ static bool sm_system_LoadState(char *pathName) {
     return false;
   }
 
+  /* Check the length BEFORE streaming a byte. RtlSaveLoadState reads straight
+   * into g_ram, VRAM and the live Ppu — there is no RAM to stage 270 KB in — so
+   * by the time sm_state_read() runs out of file, the game it was going to fall
+   * back to is already half-overwritten, and sm_state_read()'s memset has filled
+   * the rest with zeroes. The old check below fired only after all of that: it
+   * reported the truncation correctly and returned false to a caller that had
+   * nothing left to keep. The header carries the payload length; the file either
+   * has it or it does not, and that is knowable now, for free. */
+  long here = ftell(savestate_file);
+  fseek(savestate_file, 0, SEEK_END);
+  long have = ftell(savestate_file) - here;
+  fseek(savestate_file, here, SEEK_SET);
+
+  if (have < (long)hdr.bytes) {
+    printf("sm: savestate truncated (%ld of %lu bytes) — refusing before it touches the game\n",
+           have, (unsigned long)hdr.bytes);
+    fclose(savestate_file);
+    savestate_file = NULL;
+    odroid_audio_mute(false);
+    return false;
+  }
+
   savestate_bytes = 0;
   savestate_short = false;
   RtlSaveLoadState(kSaveLoad_Load, &sm_state_read, NULL);
   fclose(savestate_file);
   savestate_file = NULL;
 
+  /* Belt and braces: the length said the bytes were there, so a short read now
+   * means the file changed under us or the stream disagrees with the header. */
   if (savestate_short || savestate_bytes != hdr.bytes) {
-    printf("sm: savestate truncated (%lu of %lu bytes)\n",
+    printf("sm: savestate stream did not match its header (%lu of %lu bytes)\n",
            (unsigned long)savestate_bytes, (unsigned long)hdr.bytes);
     ok = false;
   }

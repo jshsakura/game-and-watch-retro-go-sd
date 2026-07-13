@@ -106,6 +106,23 @@ $CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/storage_stubs -ICore/Inc/re
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/album_stubs -ICore/Inc/retro-go \
     tests/test_album.c tests/album_stubs/album_stub_impl.c Core/Src/retro-go/rg_clock_album.c \
     -o /tmp/mtest/test_album
+# Super Metroid savestate: links the REAL external/sm/src/snes/ppu.c, with the
+# device's defines. The PPU keeps its screen-enable registers twice — unpacked in
+# layer[], packed in screenEnabled[] — and only the packed copies are what the
+# compositor reads. They live past the end of the serialized range, so a load left
+# them at whatever they were: zero, on the launcher's resume path, which boots the
+# core and loads second. No layers enabled means every line comes out as backdrop:
+# a black screen, at full framerate, on almost no CPU. Skipped where the submodule
+# is not checked out (CI's host-tests job has no submodules) — honestly, and loudly.
+if [ -f external/sm/src/snes/ppu.c ]; then
+    $CC -O1 -g -std=gnu11 -w -DTARGET_GNW -DPPU_RGB565 \
+        -iquote external/sm/src -iquote tests/sm_stubs \
+        tests/test_sm_ppu_saveload.c tests/sm_stubs/sm_stubs.c external/sm/src/snes/ppu.c \
+        -o /tmp/mtest/test_sm_ppu_saveload
+else
+    echo "SKIP  external/sm is not checked out — sm savestate test not built"
+fi
+
 # System-grid layout: the REAL rg_system_grid_layout.c, which is dependency-free
 # precisely so this links it instead of re-deriving its rules.
 $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Inc/retro-go \
@@ -176,6 +193,7 @@ fi
 /tmp/mtest/test_album      || rc=1
 /tmp/mtest/test_fw_tar     || rc=1
 /tmp/mtest/test_system_grid || rc=1
+[ -x /tmp/mtest/test_sm_ppu_saveload ] && { /tmp/mtest/test_sm_ppu_saveload || rc=1; }
 
 # === colour tab icons: stored bbox must match its array and fit its box ====
 # gui_draw_color_icon() indexes data[] by bw*bh and blits at (ox,oy) inside the
