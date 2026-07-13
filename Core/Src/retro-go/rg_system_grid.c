@@ -18,10 +18,17 @@
 #include "bitmaps.h"
 #include "rg_system_grid.h"
 
+/* The scrollbar lives in the strip between the last column and the screen edge.
+ * Widening the cells eats that strip, so the compiler gets to check it. */
+#define GRID_BAR_W 2
+#define GRID_BAR_X (RG_GRID_X0 + RG_GRID_COLS * RG_GRID_CELL_W + 1)
+
 _Static_assert(RG_GRID_SCREEN_W == ODROID_SCREEN_WIDTH,
                "grid layout was computed for a 320px screen");
 _Static_assert(RG_GRID_X0 >= 0,
                "grid columns are wider than the screen");
+_Static_assert(GRID_BAR_X + GRID_BAR_W <= RG_GRID_SCREEN_W,
+               "no room left for the scrollbar beside the last column");
 
 /* The viewport the ROM list would have used. The grid never shows the subfolder
  * path strip, so unlike gui_draw_list() its viewport is always the full band. */
@@ -75,71 +82,68 @@ void rg_system_grid_step(int dx, int dy)
                                         GRID_VIEW_H);
 }
 
-/* How far each row of the tile is inset from the tile's edge, top-down; the same
- * table mirrors to the bottom and to both sides. This IS the rounded corner —
- * there is no circle to rasterise at 6px, and a hand-picked profile reads
- * smoother than anything sqrt() would hand back at this size. */
-static const uint8_t grid_corner[RG_GRID_RADIUS] = { 5, 3, 2, 1, 1, 0 };
-
-static int grid_tile_inset(int row)
-{
-    if (row < 0 || row >= RG_GRID_TILE)
-        return RG_GRID_TILE / 2; /* off the tile: treat as fully inset */
-    if (row < RG_GRID_RADIUS)
-        return grid_corner[row];
-    if (RG_GRID_TILE - 1 - row < RG_GRID_RADIUS)
-        return grid_corner[RG_GRID_TILE - 1 - row];
-
-    return 0;
-}
-
 /* The rounded plate every system sits on. Only its two colours change when the
- * cursor lands on it, so the grid reads as one surface with one thing lit up. */
+ * cursor lands on it, so the grid reads as one surface with one thing lit up.
+ *
+ * Everything between the corners is a plain rectangle, so it is drawn as one —
+ * only the 2 * RG_GRID_RADIUS corner rows need a scanline each. That is ~40
+ * fill_rect calls a tile instead of ~150, and the launcher repaints all 18 of
+ * them every frame. */
 static void grid_draw_tile(int x, int y, bool selected)
 {
-    uint16_t fill = selected
+    const uint16_t fill = selected
         ? curr_colors->main_c
         : get_darken_pixel_d(curr_colors->main_c, curr_colors->bg_c, 22);
-    uint16_t edge = selected
+    const uint16_t edge = selected
         ? curr_colors->sel_c
         : get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 40);
+    const int straight_y = y + RG_GRID_RADIUS;
+    const int straight_h = RG_GRID_TILE - 2 * RG_GRID_RADIUS;
 
-    for (int row = 0; row < RG_GRID_TILE; row++)
+    /* Body: the full-width middle, plus one scanline per corner row. */
+    odroid_overlay_draw_fill_rect(x, straight_y, RG_GRID_TILE, straight_h, fill);
+
+    for (int row = 0; row < RG_GRID_RADIUS; row++)
     {
-        int ins = grid_tile_inset(row);
+        int ins = rg_grid_tile_inset(row);
+        int w = RG_GRID_TILE - 2 * ins;
 
-        odroid_overlay_draw_fill_rect(x + ins, y + row, RG_GRID_TILE - 2 * ins, 1, fill);
+        odroid_overlay_draw_fill_rect(x + ins, y + row, w, 1, fill);
+        odroid_overlay_draw_fill_rect(x + ins, y + RG_GRID_TILE - 1 - row, w, 1, fill);
     }
 
-    /* Outline, following the same profile: the flat top and bottom rows are a
-     * full span, the straight sides are one pixel, and each corner step is the
-     * run between this row's inset and its neighbour's. */
-    for (int row = 0; row < RG_GRID_TILE; row++)
+    /* Outline: the two straight sides, then the corner steps. A corner row's
+     * edge run is everything between its own inset and its neighbour's — that
+     * run is what makes the diagonal read as a curve instead of a staircase. */
+    odroid_overlay_draw_fill_rect(x, straight_y, 1, straight_h, edge);
+    odroid_overlay_draw_fill_rect(x + RG_GRID_TILE - 1, straight_y, 1, straight_h, edge);
+
+    for (int row = 0; row < RG_GRID_RADIUS; row++)
     {
-        int ins = grid_tile_inset(row);
+        int ins = rg_grid_tile_inset(row);
+        int run;
 
-        if (row == 0 || row == RG_GRID_TILE - 1)
+        if (row == 0)
         {
-            odroid_overlay_draw_fill_rect(x + ins, y + row, RG_GRID_TILE - 2 * ins, 1, edge);
-            continue;
+            /* The flat cap: one span across the whole top (and bottom) edge. */
+            run = RG_GRID_TILE - 2 * ins;
+        }
+        else
+        {
+            /* Step out to where the row above starts. Insets only shrink going
+             * inward, so this run is what bridges one corner row to the next; a
+             * row whose neighbour has the same inset still owes its own pixel. */
+            run = rg_grid_tile_inset(row - 1) - ins;
+            if (run < 1)
+                run = 1;
         }
 
-        odroid_overlay_draw_fill_rect(x + ins, y + row, 1, 1, edge);
-        odroid_overlay_draw_fill_rect(x + RG_GRID_TILE - 1 - ins, y + row, 1, 1, edge);
+        int mirror = y + RG_GRID_TILE - 1 - row;
 
-        int step = grid_tile_inset(row - 1);
-        if (step > ins && row - 1 >= 0)
-        {
-            odroid_overlay_draw_fill_rect(x + ins, y + row, step - ins, 1, edge);
-            odroid_overlay_draw_fill_rect(x + RG_GRID_TILE - step, y + row, step - ins, 1, edge);
-        }
-
-        step = grid_tile_inset(row + 1);
-        if (step > ins && row + 1 < RG_GRID_TILE)
-        {
-            odroid_overlay_draw_fill_rect(x + ins, y + row, step - ins, 1, edge);
-            odroid_overlay_draw_fill_rect(x + RG_GRID_TILE - step, y + row, step - ins, 1, edge);
-        }
+        odroid_overlay_draw_fill_rect(x + ins, y + row, run, 1, edge);
+        odroid_overlay_draw_fill_rect(x + RG_GRID_TILE - ins - run, y + row, run, 1, edge);
+        odroid_overlay_draw_fill_rect(x + ins, mirror, run, 1, edge);
+        odroid_overlay_draw_fill_rect(x + RG_GRID_TILE - ins - run, mirror, run, 1, edge);
     }
 }
 
@@ -151,15 +155,15 @@ static void grid_draw_scrollbar(void)
     if (rows <= visible)
         return;
 
-    int x = RG_GRID_X0 + RG_GRID_COLS * RG_GRID_CELL_W + 3;
     int track_y = GRID_VIEW_Y0 + RG_GRID_MARGIN_Y;
     int track_h = visible * RG_GRID_CELL_H;
     int thumb_h = track_h * visible / rows;
     int thumb_y = track_y + (track_h - thumb_h) * grid_first_row / (rows - visible);
 
-    odroid_overlay_draw_fill_rect(x, track_y, 2, track_h,
+    odroid_overlay_draw_fill_rect(GRID_BAR_X, track_y, GRID_BAR_W, track_h,
                                   get_darken_pixel(curr_colors->dis_c, 50));
-    odroid_overlay_draw_fill_rect(x, thumb_y, 2, thumb_h, curr_colors->sel_c);
+    odroid_overlay_draw_fill_rect(GRID_BAR_X, thumb_y, GRID_BAR_W, thumb_h,
+                                  curr_colors->sel_c);
 }
 
 void rg_system_grid_draw(void)

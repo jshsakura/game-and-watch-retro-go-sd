@@ -8,6 +8,22 @@
 
 #include "rg_system_grid.h"
 
+/* Hand-picked, not a rasterised circle: at a 6px radius the arc sqrt() gives you
+ * reads as a staircase, and this reads as a curve. */
+static const unsigned char grid_corner[RG_GRID_RADIUS] = { 5, 3, 2, 1, 1, 0 };
+
+int rg_grid_tile_inset(int row)
+{
+    if (row < 0 || row >= RG_GRID_TILE)
+        return RG_GRID_TILE / 2; /* off the tile entirely */
+    if (row < RG_GRID_RADIUS)
+        return grid_corner[row];
+    if (RG_GRID_TILE - 1 - row < RG_GRID_RADIUS)
+        return grid_corner[RG_GRID_TILE - 1 - row];
+
+    return 0;
+}
+
 int rg_grid_row_count(int tab_count)
 {
     if (tab_count <= 0)

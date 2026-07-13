@@ -14,16 +14,20 @@
  */
 
 /* Cell grid. Each system sits on a rounded tile; the cell is the tile plus its
- * share of the gutter, so an 8px gap falls out of 50 - 42 in both axes.
+ * share of the gutter, so the gap between tiles falls out of CELL - TILE: 8px
+ * across, 6px down.
  *
- * 6 x 50 = 300 of the 320px screen, and 3 x 50 = 150 of the 160px viewport —
- * the 10px left over vertically is RG_GRID_MARGIN_Y at top and bottom, which is
- * what keeps the top row's tile off the status bar. gui.tabs[] is capped at 32,
- * so six columns can never need more than six rows. */
+ * 6 x 52 = 312 of the 320px screen, which leaves the tiles 8px clear of the
+ * side edges — wide cells rather than a wide margin, so the row does not float
+ * in the middle of the screen. Vertically 3 x 50 = 150 of the 160px viewport,
+ * and the 10px left over is RG_GRID_MARGIN_Y at top and bottom, which is what
+ * keeps the tiles off the status and header bars.
+ *
+ * gui.tabs[] is capped at 32, so six columns can never need more than six rows. */
 #define RG_GRID_COLS     (6)
-#define RG_GRID_CELL_W   (50)
+#define RG_GRID_CELL_W   (52)
 #define RG_GRID_CELL_H   (50)
-#define RG_GRID_TILE     (42) /* the rounded plate an icon sits on */
+#define RG_GRID_TILE     (44) /* the rounded plate an icon sits on */
 #define RG_GRID_RADIUS   (6)
 #define RG_GRID_MARGIN_Y (5)  /* clearance from the status/header bars */
 #define RG_GRID_SCREEN_W (320) /* asserted against ODROID_SCREEN_WIDTH in the .c */
@@ -48,6 +52,15 @@ int rg_grid_move(int cursor, int dx, int dy, int tab_count);
 /** Top-left of cell `index`. False when that cell is scrolled out of view. */
 bool rg_grid_cell_rect(int index, int first_row, int view_y0, int view_h,
                        int *x, int *y);
+
+/** How far row `row` of a tile is inset from the tile's edge — this IS the
+ * rounded corner. Rows outside the tile report a full inset.
+ *
+ * The profile must be non-increasing across the corner (row 0 is the most
+ * inset). The tile rasteriser leans on that: it draws each corner row's edge as
+ * a single run out to where the row above began, and the straight middle as one
+ * rectangle. A profile that bulged back out would leave holes in the outline. */
+int rg_grid_tile_inset(int row);
 
 /* ---- Screen (rg_system_grid.c) ---- */
 

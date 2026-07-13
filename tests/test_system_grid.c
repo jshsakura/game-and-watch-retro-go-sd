@@ -36,12 +36,57 @@ static void test_tile_fits_its_cell(void)
     CHECK(RG_GRID_TILE < RG_GRID_CELL_W && RG_GRID_TILE < RG_GRID_CELL_H,
           "the tile must leave a gutter: tile %d, cell %dx%d",
           RG_GRID_TILE, RG_GRID_CELL_W, RG_GRID_CELL_H);
-    CHECK(RG_GRID_CELL_W - RG_GRID_TILE == RG_GRID_CELL_H - RG_GRID_TILE,
-          "the gutter must be square, got %d horizontal vs %d vertical",
-          RG_GRID_CELL_W - RG_GRID_TILE, RG_GRID_CELL_H - RG_GRID_TILE);
+    /* The gutters need not match — the screen is wider than the viewport is tall,
+     * so the columns get more room than the rows. They do both need to exist, and
+     * to be even, or the tile does not centre on a whole pixel. */
+    CHECK(RG_GRID_CELL_W - RG_GRID_TILE >= 4,
+          "tiles would nearly touch across: gutter %d", RG_GRID_CELL_W - RG_GRID_TILE);
+    CHECK(RG_GRID_CELL_H - RG_GRID_TILE >= 4,
+          "tiles would nearly touch down: gutter %d", RG_GRID_CELL_H - RG_GRID_TILE);
+    CHECK((RG_GRID_CELL_W - RG_GRID_TILE) % 2 == 0 &&
+          (RG_GRID_CELL_H - RG_GRID_TILE) % 2 == 0,
+          "an odd gutter puts the tile half a pixel off centre");
     CHECK(RG_GRID_TILE >= 28, "a 28x28 icon must fit on the tile, tile is %d", RG_GRID_TILE);
     CHECK(RG_GRID_RADIUS * 2 <= RG_GRID_TILE,
           "the corner radius cannot exceed half the tile");
+}
+
+/* The tile rasteriser is cheap because it trusts the corner profile: it draws the
+ * middle as ONE rectangle and each corner row's outline as a single run out to
+ * where the row above started. Both shortcuts are only valid while the profile
+ * shrinks monotonically inward and is symmetric top-to-bottom. Edit the corner
+ * table into something that bulges and the outline silently grows holes — on a
+ * screen nobody diffs. So the property gets asserted, not the pixels. */
+static void test_corner_profile(void)
+{
+    CHECK(rg_grid_tile_inset(0) > 0, "the top row must be inset, or there is no corner");
+    CHECK(rg_grid_tile_inset(RG_GRID_RADIUS - 1) == 0,
+          "the corner must reach the tile edge by the last radius row, got %d",
+          rg_grid_tile_inset(RG_GRID_RADIUS - 1));
+
+    for (int row = 1; row < RG_GRID_RADIUS; row++)
+    {
+        CHECK(rg_grid_tile_inset(row) <= rg_grid_tile_inset(row - 1),
+              "the corner bulges back out at row %d (%d after %d) — the outline "
+              "rasteriser would leave a hole",
+              row, rg_grid_tile_inset(row), rg_grid_tile_inset(row - 1));
+    }
+
+    for (int row = 0; row < RG_GRID_TILE; row++)
+    {
+        CHECK(rg_grid_tile_inset(row) == rg_grid_tile_inset(RG_GRID_TILE - 1 - row),
+              "the tile must be symmetric top-to-bottom; row %d differs", row);
+        CHECK(2 * rg_grid_tile_inset(row) < RG_GRID_TILE,
+              "row %d is inset past the tile's own middle", row);
+    }
+
+    /* The straight middle, which is drawn as a single rectangle. */
+    for (int row = RG_GRID_RADIUS; row < RG_GRID_TILE - RG_GRID_RADIUS; row++)
+    {
+        CHECK(rg_grid_tile_inset(row) == 0,
+              "row %d is inside the straight band but reports inset %d",
+              row, rg_grid_tile_inset(row));
+    }
 }
 
 static void test_row_count(void)
@@ -176,6 +221,7 @@ static void test_open_on_any_tab(void)
 int main(void)
 {
     test_tile_fits_its_cell();
+    test_corner_profile();
     test_row_count();
     test_visible_rows();
     test_cells_stay_on_screen();
