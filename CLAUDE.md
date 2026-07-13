@@ -150,6 +150,59 @@ field exists to make that deliberate. Do not add an APPID casually.
 - **GDB over an ST-Link (or pico-probe).** `gnwmanager gdbserver` spawns OpenOCD (auto-detects the probe via `interface/*.cfg`) with a gdbserver on `:3333`; then `make gdb` (or `arm-none-eabi-gdb build/gw_retro_go.elf -ex 'target extended-remote :3333'`). Use **`hbreak`, not `break`, for flash addresses** (`0x08xxxxxx`) — a software breakpoint silently fails to write flash. RAM/overlay addresses (`0x24xxxxxx`) take either. This gdb build has **no Python**; use native `-ex printf`/`x`. To catch a fault with full context, `hbreak common_fault_handler_c` and read `*frame` (the stacked r0–r3/lr/PC) plus live r4–r11.
 - **Overlay RAM addresses alias.** Every core's overlay links at the same RAM_EMU VMA, so `gdb`/`addr2line` resolve a `0x24xxxxxx` address to *whichever* overlay's symbol it finds first (often zelda3/SMW, not the running core). Resolve EB addresses via `build/gw_retro_go.map` filtered to `build/earthbound/*.o`, or disassemble the specific `build/<core>/<file>.o`.
 
+## There are tests now, and a number
+
+`tests/run.sh` is the suite; `tests/coverage.sh` measures it; `tests/coverage_scope.txt`
+is the denominator, as data, with a reason per line. Coverage of the whole tree would be
+a lie — it holds the ST HAL, 29 third-party cores, and drivers that cannot run on a host.
+What is measured is the code we own and can run.
+
+Three rules, each of which was learned the expensive way in one week:
+
+- **A test must compile the file it claims to test.** `hw_jpeg_decoder.c` had three
+  dedicated tests and **0% coverage**: all three reimplemented the HAL state machine
+  instead of linking the driver. Three device-killing bugs shipped from that file while
+  its tests were green. If your harness is a different program, it proves nothing — the
+  same disease as `tools/sm_harness` above.
+- **RED before GREEN, and RED against the real thing.** `tools/jpeg_harness/run.sh`
+  compiles the actual pre-fix file out of git history (`git show 7ae5c0e8^:...`) and
+  shows it failing. A test that has never failed proves nothing. The savestate round-trip
+  written on day one never went red: it compared frame N+1 with N+2, and any cgram write
+  during the run healed the stale cache before the hash saw it.
+- **A safety net must not be the thing that breaks the build.** Twice in one day: the
+  cross-overlay symbol check failed the build when `nm` was missing, and the JPEG runner
+  failed it when CI's shallow clone had no pre-fix history to check against. Both teach
+  people to ignore CI. Skip, say you skipped, and keep the real check strict.
+
+## The bug is usually in the thing that never got wired
+
+Not in the thing you are testing. Three of this week's failures were a caller that never
+called:
+
+- Super Metroid never called `common_emu_frame_loop()` — so no pacing, no frameskip, no
+  speedup, no FPS counter. It never called `odroid_system_emu_init()` — so save and load
+  did nothing at all.
+- The clock app, added after the launcher's global "Idle power off" setting existed, has
+  a loop of its own and never asked `odroid_idle_timeout_expired()`. It sat lit for ever
+  at any setting.
+
+No unit test of those functions could have caught any of it, because the functions were
+fine. `tests/test_idle_timeout_wired.sh` is the shape of the test that can: it asserts
+every loop that can idle asks the one rule, and that nobody re-derives it. Write that
+kind of test when you add a contract, and again when you add a screen.
+
+## Two traps that break everything quietly
+
+- **`lang_t` is indexed by position** in the SD language binaries. Add a string only at
+  the **end**; never delete or insert one mid-struct — every language file after it
+  shifts. A retired string is commented `RETIRED ... slot kept, unused` and left in place.
+- **A savestate is a raw dump of live structs.** Move a field and yesterday's file still
+  opens, still reads to the end, and quietly restores nonsense — a black screen with the
+  sound running, and no way to tell that from a bug. Stamp the file (magic/version/length)
+  and refuse what this build did not write. And remember that a load restores *state*, not
+  the caches derived from it: `ppu_saveload` has to invalidate the palette and brightness
+  tables by hand, or the screen draws the scene you loaded in the colours of the one you left.
+
 ## Emulator-specific notes
 
 Detailed debugging guides live next to each porting layer (not in this file — keeps context lean when working on other cores). Cursor loads matching rules from `.cursor/rules/` when you edit files in those trees.
