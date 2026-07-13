@@ -515,8 +515,7 @@ void odroid_overlay_sleep_pause_banner(void_callback_t repaint, odroid_menu_flag
         }
 
         uint32_t idle_s = uptime_get() - gui.idle_start;
-        if (odroid_settings_MainMenuTimeoutS_get() != 0 &&
-            (idle_s > odroid_settings_MainMenuTimeoutS_get()))
+        if (odroid_idle_timeout_expired(idle_s))
         {
             _save_state_and_sleep();
         }

@@ -324,6 +324,10 @@ rc=$(( rc || $? ))
 
 exit $rc
 
+echo "=== idle power off: one setting, one rule, and every idle loop asks it ==="
+bash tests/test_idle_timeout_wired.sh
+rc=$(( rc || $? ))
+
 # Everything from here to EOF is re-run standalone by tests/test_sm_skip_guard.sh,
 # which is why nothing that is expensive or self-contained belongs below this line.
 echo "=== sm: device source set is symbol-complete ==="

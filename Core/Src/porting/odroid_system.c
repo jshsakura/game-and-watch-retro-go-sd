@@ -629,6 +629,12 @@ void odroid_system_sleep_ex(system_sleep_flags_t flags, sleep_pre_wakeup_callbac
     odroid_system_sleep_internal(flags, pre_wakeup_callback);
 }
 
+bool odroid_idle_timeout_expired(uint32_t idle_seconds)
+{
+    uint16_t timeout = odroid_settings_MainMenuTimeoutS_get();
+    return timeout != 0 && idle_seconds > timeout;
+}
+
 void odroid_system_sleep(void)
 {
     odroid_system_sleep_internal(SLEEP_ENTER_SLEEP_WITH_ANIMATION, NULL);

@@ -2460,7 +2460,17 @@ void rg_clock_show(void)
          * on POWER. The GIF's open fd is invalidated by the SD unmount/remount
          * across sleep, so drop and reload it. Exit is the PAUSE-menu "Exit"
          * item only. */
-        if (pressed(&k, &prev, ODROID_INPUT_POWER)) {
+        /* Idle power-off. The launcher's "Idle power off" is one global setting and
+         * the clock is the only loop that never honoured it — so a bedside clock sat
+         * lit all night whatever the user had chosen. Same rule
+         * (odroid_idle_timeout_expired), same sleep the POWER button takes, and the
+         * same idle clock the backlight dim already measures — and the same two
+         * refusals: never while an alarm rings, never off the clock face (a running
+         * timer or stopwatch lives in its own mode, and is being watched). */
+        bool idle_sleep = !ringing && mode == MODE_CLOCK &&
+                          odroid_idle_timeout_expired((now - last_input) / 1000u);
+
+        if (pressed(&k, &prev, ODROID_INPUT_POWER) || idle_sleep) {
             ring_audio(now, false);
 #if CLOCK_SD_MEDIA
             bool had_gif = (s_anim == ANIM_GIF);

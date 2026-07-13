@@ -880,8 +880,7 @@ void retro_loop()
         }
 
         idle_s = uptime_get() - gui.idle_start;
-        if (odroid_settings_MainMenuTimeoutS_get() != 0 &&
-            (idle_s > odroid_settings_MainMenuTimeoutS_get()))
+        if (odroid_idle_timeout_expired(idle_s))
         {
             printf("Idle timeout expired\n");
             odroid_system_sleep();
