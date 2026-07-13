@@ -28,6 +28,7 @@
 #define RG_GRID_CELL_W   (52)
 #define RG_GRID_CELL_H   (50)
 #define RG_GRID_TILE     (44) /* the rounded plate an icon sits on */
+#define RG_GRID_TILE_SEL (48) /* the highlighted one lifts, rather than only recolouring */
 #define RG_GRID_RADIUS   (6)
 #define RG_GRID_MARGIN_Y (5)  /* clearance from the status/header bars */
 #define RG_GRID_SCREEN_W (320) /* asserted against ODROID_SCREEN_WIDTH in the .c */
@@ -53,14 +54,15 @@ int rg_grid_move(int cursor, int dx, int dy, int tab_count);
 bool rg_grid_cell_rect(int index, int first_row, int view_y0, int view_h,
                        int *x, int *y);
 
-/** How far row `row` of a tile is inset from the tile's edge — this IS the
- * rounded corner. Rows outside the tile report a full inset.
+/** How far row `row` of a `tile`-pixel tile is inset from its edge — this IS the
+ * rounded corner. One profile serves both tile sizes; it only ever touches the
+ * outermost RG_GRID_RADIUS rows. Rows outside the tile report a full inset.
  *
  * The profile must be non-increasing across the corner (row 0 is the most
  * inset). The tile rasteriser leans on that: it draws each corner row's edge as
  * a single run out to where the row above began, and the straight middle as one
  * rectangle. A profile that bulged back out would leave holes in the outline. */
-int rg_grid_tile_inset(int row);
+int rg_grid_tile_inset(int row, int tile);
 
 /* ---- Screen (rg_system_grid.c) ---- */
 

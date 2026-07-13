@@ -109,6 +109,13 @@ listbox_item_t *gui_get_selected_item(tab_t *tab);
  * icon's nominal footprint; the stored bitmap covers only its opaque bbox. */
 void gui_draw_color_icon(int x, int y, const color_icon_t *ic);
 
+/** Same, but faded `strength` percent of the way from its own colours toward
+ * `toward` (pass the theme's background). Fading toward the ground is what makes
+ * an icon recede on a LIGHT theme as well as a dark one — darkening only works
+ * on the dark ones. 16 blends for the whole icon, not one per pixel. */
+void gui_draw_color_icon_fade(int x, int y, const color_icon_t *ic,
+                              uint16_t toward, int strength);
+
 void gui_event(gui_event_t event, tab_t *tab);
 /** Pop one ROM browse level if tab is inside a subfolder; refreshes list. */
 bool rg_emulator_browse_pop_if_in_subfolder(tab_t *tab);

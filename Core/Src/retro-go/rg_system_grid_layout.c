@@ -12,14 +12,14 @@
  * reads as a staircase, and this reads as a curve. */
 static const unsigned char grid_corner[RG_GRID_RADIUS] = { 5, 3, 2, 1, 1, 0 };
 
-int rg_grid_tile_inset(int row)
+int rg_grid_tile_inset(int row, int tile)
 {
-    if (row < 0 || row >= RG_GRID_TILE)
-        return RG_GRID_TILE / 2; /* off the tile entirely */
+    if (row < 0 || row >= tile)
+        return tile / 2; /* off the tile entirely */
     if (row < RG_GRID_RADIUS)
         return grid_corner[row];
-    if (RG_GRID_TILE - 1 - row < RG_GRID_RADIUS)
-        return grid_corner[RG_GRID_TILE - 1 - row];
+    if (tile - 1 - row < RG_GRID_RADIUS)
+        return grid_corner[tile - 1 - row];
 
     return 0;
 }

@@ -494,7 +494,7 @@ void gui_redraw()
 /* Blit a full-colour RGB565 console icon into the active LCD buffer, skipping
  * transparent (colour-key) pixels. (x, y) is the icon's nominal footprint; the
  * stored bitmap covers only its opaque bounding box, at (ic->ox, ic->oy). */
-void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
+static void gui_blit_color_icon(int x, int y, const color_icon_t *ic, const uint16_t *pal)
 {
     uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
     for (int row = 0; row < ic->bh; row++) {
@@ -511,9 +511,32 @@ void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
             int px = x + ic->ox + col;
             if (px < 0 || px >= GW_LCD_WIDTH)
                 continue;
-            dst[px] = ic->pal[idx];
+            dst[px] = pal[idx];
         }
     }
+}
+
+void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
+{
+    gui_blit_color_icon(x, y, ic, ic->pal);
+}
+
+/* Fade an icon TOWARDS a colour — the background, in practice — rather than
+ * towards black. Darkening only reads as "receding" on a dark theme; on the
+ * light ones (gui_colors[] has plenty) a darkened icon gains contrast against
+ * its ground and jumps forward instead, which is the opposite of the point.
+ *
+ * The icon is 4bpp, so this is SIXTEEN blends for the whole icon — fade the
+ * palette, not the pixels. The inner loop is untouched. */
+void gui_draw_color_icon_fade(int x, int y, const color_icon_t *ic,
+                              uint16_t toward, int strength)
+{
+    uint16_t pal[16];
+
+    for (int i = 0; i < 16; i++)
+        pal[i] = get_darken_pixel_d(ic->pal[i], toward, strength);
+
+    gui_blit_color_icon(x, y, ic, pal);
 }
 
 void gui_draw_header(tab_t *tab)

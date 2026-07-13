@@ -82,68 +82,76 @@ void rg_system_grid_step(int dx, int dy)
                                         GRID_VIEW_H);
 }
 
-/* The rounded plate every system sits on. Only its two colours change when the
- * cursor lands on it, so the grid reads as one surface with one thing lit up.
+/* How the unselected tiles hold back. The plate is barely there — 6% of the
+ * theme's mid colour over the background — so the row reads as a faint frame
+ * rather than 18 competing blocks, and the one tile that IS lit has the screen
+ * to itself. */
+#define GRID_TILE_FILL_PCT  (6)
+#define GRID_TILE_EDGE_PCT  (28)
+#define GRID_ICON_FADE_PCT  (62) /* how much of an unselected icon's own colour survives */
+
+/* The rounded plate a system sits on. The highlighted one is bigger, brighter and
+ * gold-rimmed; every other one is a whisper.
  *
  * Everything between the corners is a plain rectangle, so it is drawn as one —
  * only the 2 * RG_GRID_RADIUS corner rows need a scanline each. That is ~40
  * fill_rect calls a tile instead of ~150, and the launcher repaints all 18 of
  * them every frame. */
-static void grid_draw_tile(int x, int y, bool selected)
+static void grid_draw_tile(int x, int y, int tile, bool selected)
 {
     const uint16_t fill = selected
         ? curr_colors->main_c
-        : get_darken_pixel_d(curr_colors->main_c, curr_colors->bg_c, 22);
+        : get_darken_pixel_d(curr_colors->main_c, curr_colors->bg_c, GRID_TILE_FILL_PCT);
     const uint16_t edge = selected
         ? curr_colors->sel_c
-        : get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, 40);
+        : get_darken_pixel_d(curr_colors->dis_c, curr_colors->bg_c, GRID_TILE_EDGE_PCT);
     const int straight_y = y + RG_GRID_RADIUS;
-    const int straight_h = RG_GRID_TILE - 2 * RG_GRID_RADIUS;
+    const int straight_h = tile - 2 * RG_GRID_RADIUS;
 
     /* Body: the full-width middle, plus one scanline per corner row. */
-    odroid_overlay_draw_fill_rect(x, straight_y, RG_GRID_TILE, straight_h, fill);
+    odroid_overlay_draw_fill_rect(x, straight_y, tile, straight_h, fill);
 
     for (int row = 0; row < RG_GRID_RADIUS; row++)
     {
-        int ins = rg_grid_tile_inset(row);
-        int w = RG_GRID_TILE - 2 * ins;
+        int ins = rg_grid_tile_inset(row, tile);
+        int w = tile - 2 * ins;
 
         odroid_overlay_draw_fill_rect(x + ins, y + row, w, 1, fill);
-        odroid_overlay_draw_fill_rect(x + ins, y + RG_GRID_TILE - 1 - row, w, 1, fill);
+        odroid_overlay_draw_fill_rect(x + ins, y + tile - 1 - row, w, 1, fill);
     }
 
     /* Outline: the two straight sides, then the corner steps. A corner row's
      * edge run is everything between its own inset and its neighbour's — that
      * run is what makes the diagonal read as a curve instead of a staircase. */
     odroid_overlay_draw_fill_rect(x, straight_y, 1, straight_h, edge);
-    odroid_overlay_draw_fill_rect(x + RG_GRID_TILE - 1, straight_y, 1, straight_h, edge);
+    odroid_overlay_draw_fill_rect(x + tile - 1, straight_y, 1, straight_h, edge);
 
     for (int row = 0; row < RG_GRID_RADIUS; row++)
     {
-        int ins = rg_grid_tile_inset(row);
+        int ins = rg_grid_tile_inset(row, tile);
         int run;
 
         if (row == 0)
         {
             /* The flat cap: one span across the whole top (and bottom) edge. */
-            run = RG_GRID_TILE - 2 * ins;
+            run = tile - 2 * ins;
         }
         else
         {
             /* Step out to where the row above starts. Insets only shrink going
              * inward, so this run is what bridges one corner row to the next; a
              * row whose neighbour has the same inset still owes its own pixel. */
-            run = rg_grid_tile_inset(row - 1) - ins;
+            run = rg_grid_tile_inset(row - 1, tile) - ins;
             if (run < 1)
                 run = 1;
         }
 
-        int mirror = y + RG_GRID_TILE - 1 - row;
+        int mirror = y + tile - 1 - row;
 
         odroid_overlay_draw_fill_rect(x + ins, y + row, run, 1, edge);
-        odroid_overlay_draw_fill_rect(x + RG_GRID_TILE - ins - run, y + row, run, 1, edge);
+        odroid_overlay_draw_fill_rect(x + tile - ins - run, y + row, run, 1, edge);
         odroid_overlay_draw_fill_rect(x + ins, mirror, run, 1, edge);
-        odroid_overlay_draw_fill_rect(x + RG_GRID_TILE - ins - run, mirror, run, 1, edge);
+        odroid_overlay_draw_fill_rect(x + tile - ins - run, mirror, run, 1, edge);
     }
 }
 
@@ -178,19 +186,26 @@ void rg_system_grid_draw(void)
         if (!rg_grid_cell_rect(i, grid_first_row, GRID_VIEW_Y0, GRID_VIEW_H, &x, &y))
             continue;
 
-        grid_draw_tile(x + (RG_GRID_CELL_W - RG_GRID_TILE) / 2,
-                       y + (RG_GRID_CELL_H - RG_GRID_TILE) / 2,
-                       i == grid_cursor);
+        bool selected = (i == grid_cursor);
+        int tile = selected ? RG_GRID_TILE_SEL : RG_GRID_TILE;
+
+        grid_draw_tile(x + (RG_GRID_CELL_W - tile) / 2,
+                       y + (RG_GRID_CELL_H - tile) / 2, tile, selected);
 
         /* A tab with no colour art keeps its tile — an empty plate reads as
          * "no icon yet", an empty hole reads as a rendering bug. */
         const color_icon_t *icon = color_icon_for_logo(gui.tabs[i]->logo_idx);
 
-        if (icon)
-        {
-            gui_draw_color_icon(x + (RG_GRID_CELL_W - icon->width) / 2,
-                                y + (RG_GRID_CELL_H - icon->height) / 2, icon);
-        }
+        if (!icon)
+            continue;
+
+        int ix = x + (RG_GRID_CELL_W - icon->width) / 2;
+        int iy = y + (RG_GRID_CELL_H - icon->height) / 2;
+
+        if (selected)
+            gui_draw_color_icon(ix, iy, icon);
+        else
+            gui_draw_color_icon_fade(ix, iy, icon, curr_colors->bg_c, GRID_ICON_FADE_PCT);
     }
 
     grid_draw_scrollbar();
