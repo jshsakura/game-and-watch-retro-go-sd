@@ -1811,8 +1811,8 @@ static bool cb_bright(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32
      * when a row's id happened to equal its position in opts[]; this row's id
      * (15) never does, so the gauge here was NEVER compensated when actually
      * selected. */
-    char a = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
-    char b = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
+    char a = (e == ODROID_DIALOG_INIT && r) ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
+    char b = (e == ODROID_DIALOG_INIT && r) ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
     for (int i = 0; i <= max; i++) o->value[i] = (i <= level) ? a : b;
     o->value[max + 1] = 0;
     return e == ODROID_DIALOG_ENTER;
@@ -2003,8 +2003,8 @@ static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
      * This row's id (7) collided with the background-effect row's ARRAY INDEX
      * (7), so putting the cursor on Background flipped THIS gauge's glyphs
      * even though Volume itself wasn't selected — the reported bug. */
-    char a = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
-    char b = (e == ODROID_DIALOG_INIT && o->id == (int)r) ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
+    char a = (e == ODROID_DIALOG_INIT && r) ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
+    char b = (e == ODROID_DIALOG_INIT && r) ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
     for (int i = 0; i <= ODROID_AUDIO_VOLUME_MAX; i++) o->value[i] = (i <= lv) ? a : b;
     o->value[ODROID_AUDIO_VOLUME_MAX + 1] = 0;
     return e == ODROID_DIALOG_ENTER; }
