@@ -322,8 +322,6 @@ echo "=== jpeg: hw_jpeg_decoder.c lock/callback/floor-to-4 regressions ==="
 bash tools/jpeg_harness/run.sh
 rc=$(( rc || $? ))
 
-exit $rc
-
 echo "=== idle power off: one setting, one rule, and every idle loop asks it ==="
 bash tests/test_idle_timeout_wired.sh
 rc=$(( rc || $? ))
@@ -345,3 +343,5 @@ if [ -f external/sm/src/sm_rtl.c ]; then
 else
     echo "SKIP  external/sm is not checked out (no submodules in this job)"
 fi
+
+exit $rc

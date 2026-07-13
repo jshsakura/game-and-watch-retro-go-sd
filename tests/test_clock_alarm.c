@@ -48,9 +48,9 @@ static int stub_backlight_level = 6;
 int odroid_display_get_backlight(void) { return stub_backlight_level; }
 void odroid_display_set_backlight(int level) { stub_backlight_level = level; }
 uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_backlight_level]; }
-/* rg_clock_show() (unused here, but compiled) reads the charger state for the
- * idle-backlight charging exception — not exercised by the alarm tests. */
-bq24072_state_t bq24072_get_state(void) { return BQ24072_STATE_DISCHARGING; }
+/* rg_clock_show() (unused here, but compiled) asks the launcher's global idle
+ * timeout — never expired, so it is not exercised by the alarm tests. */
+bool odroid_idle_timeout_expired(uint32_t idle_seconds) { (void)idle_seconds; return false; }
 
 static const lang_t L = { .s_AM="AM", .s_PM="PM", .s_Clock="Clock",
   .s_Weekday_Mon="Mon", .s_Weekday_Tue="Tue", .s_Weekday_Wed="Wed", .s_Weekday_Thu="Thu",

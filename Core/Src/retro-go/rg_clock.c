@@ -36,7 +36,6 @@
 #include "odroid_audio.h"
 #include "common.h"   /* volume_tbl — shared 0..9 loudness curve (the alarm uses its own s_alarm_volume index, not the system volume) */
 #include "rg_storage.h" /* rg_storage_mkdir — ensure /clock exists on FatFs and LittleFS alike */
-#include "bq24072.h"  /* bq24072_get_state — charging exception for the idle backlight */
 #include "rg_clock.h"
 #include "rg_alarm.h"   /* resident next-alarm cache + shared tone presets (all-state alarm) */
 #include "rg_clock_gif.h"
@@ -630,47 +629,12 @@ static bool     s_hour24;
 static bool     s_dnd;
 static int      s_anim;          /* 0 = off, 1 = ambient(retired), 2 = scene, 3 = GIF, 4 = photo */
 static int      s_scene;         /* which pixel scene (0..SCENE_COUNT-1) when anim = SCENE */
-static bool     s_autodim = true;/* idle backlight auto-dim on the clock face (default on) */
 
-/* Night full-off window, as two independently configurable rows (start hour /
- * end hour) so any combination can be picked, rather than cycling a fixed list
- * of presets. Start cycles Off -> 21:00 -> 22:00 -> 23:00 -> 00:00 -> 01:00
- * (NIGHT_OFF disables the night full-off behaviour ONLY — day half-dim still
- * follows the autodim toggle as usual); End cycles 05:00..09:00 and only
- * matters once Start != Off. Defaults (23:00-07:00) match the original
- * always-on window from before presets/free combination existed, so existing
- * configs upgrade with unchanged behaviour. Persisted as cfg nightstart=/
- * nightend= (literal hour, NIGHT_OFF for "off"); a legacy nightoff= preset
- * (0..3) is migrated to the equivalent pair on load (see clock_config_load). */
-#define NIGHT_OFF (-1)
-static const int8_t NIGHT_START_HOURS[] = { 21, 22, 23, 0, 1 };
-#define NIGHT_START_COUNT (int)(sizeof NIGHT_START_HOURS / sizeof NIGHT_START_HOURS[0])
-static const int8_t NIGHT_END_HOURS[] = { 5, 6, 7, 8, 9 };
-#define NIGHT_END_COUNT (int)(sizeof NIGHT_END_HOURS / sizeof NIGHT_END_HOURS[0])
-static int8_t s_night_start = 23;   /* hour, or NIGHT_OFF */
-static int8_t s_night_end   = 7;    /* hour; meaningful only while s_night_start != NIGHT_OFF */
-
-/* index of `hour` in a table, or -1 if not present (used to validate loaded
- * cfg values and to drive the settings rows' PREV/NEXT cycling) */
-static int night_start_index(int hour)
-{
-    for (int i = 0; i < NIGHT_START_COUNT; i++) if (NIGHT_START_HOURS[i] == hour) return i;
-    return -1;
-}
-static int night_end_index(int hour)
-{
-    for (int i = 0; i < NIGHT_END_COUNT; i++) if (NIGHT_END_HOURS[i] == hour) return i;
-    return -1;
-}
-
-/* Legacy nightoff= preset (0..3) -> the equivalent {start,end} pair, for
- * migrating configs saved before the two-row free combination existed. */
-static const struct { int8_t start, end; } LEGACY_NIGHT_PRESET[4] = {
-    { NIGHT_OFF, 7 },   /* 0 = Off (end unused while off) */
-    { 22,        6 },
-    { 23,        7 },   /* 2 = the old always-on default */
-    {  0,        8 },
-};
+/* When to auto-sleep is the launcher's one global "Idle power off" setting
+ * (odroid_idle_timeout_expired) — the clock loop asks it below like every
+ * other idle-capable loop. No exception: the clock has no power setting of
+ * its own. A user who wants the screen lit forever sets the global to
+ * off, same as everywhere else in the firmware. */
 
 /* The alarm's OWN loudness, independent of the system volume (so turning the
  * system volume down for quiet gaming can't silently mute the morning alarm).
@@ -740,8 +704,7 @@ static void clock_config_load(void)
 {
     s_theme = 0; s_face_override = -1;
     s_hour24 = false; s_dnd = false; s_anim = 0; s_scene = 0;
-    s_autodim = true;
-    s_night_start = 23; s_night_end = 7;
+
     s_alarm_volume = 6;
     s_beep_preset = RG_TONE_BEEP;
     s_alarm_count = 0;
@@ -753,8 +716,6 @@ static void clock_config_load(void)
     if (!f) f = fopen(CLOCK_CFG_LEGACY, "r");   /* migrate: next save writes /clock/ */
     if (!f) return;
     char line[64];
-    bool have_nightstart = false;
-    int  legacy_nightoff = -1;
     while (fgets(line, sizeof line, f)) {
         int v, en = 1;
         if (sscanf(line, "theme=%d", &v) == 1) { if (v >= 0 && v < THEME_COUNT) s_theme = v; }
@@ -769,13 +730,6 @@ static void clock_config_load(void)
             if (v >= 0 && v < ANIM_COUNT) s_anim = v;
         }
         else if (sscanf(line, "scene=%d", &v) == 1) { if (v >= 0) s_scene = v; }  /* draw_scene clamps */
-        else if (sscanf(line, "autodim=%d", &v) == 1) s_autodim = v != 0;
-        else if (sscanf(line, "nightstart=%d", &v) == 1) {
-            have_nightstart = true;
-            if (v == NIGHT_OFF || night_start_index(v) >= 0) s_night_start = v;
-        }
-        else if (sscanf(line, "nightend=%d", &v) == 1) { if (night_end_index(v) >= 0) s_night_end = v; }
-        else if (sscanf(line, "nightoff=%d", &v) == 1) { if (v >= 0 && v < 4) legacy_nightoff = v; }
         else if (sscanf(line, "alarmvol=%d", &v) == 1) { if (v >= 0 && v <= ODROID_AUDIO_VOLUME_MAX) s_alarm_volume = v; }
         /* alarmsnd= holds either a synth-preset token (both builds) or, on SD
          * builds, an /clock sound-file basename. Set the preset from a token on
@@ -803,13 +757,6 @@ static void clock_config_load(void)
         }
     }
     fclose(f);
-    /* migrate an old single-preset nightoff= into the new start/end pair —
-     * only when the file never had the new keys, so a config already saved
-     * under the new scheme is never overwritten by a stale nightoff= line. */
-    if (!have_nightstart && legacy_nightoff >= 0) {
-        s_night_start = LEGACY_NIGHT_PRESET[legacy_nightoff].start;
-        s_night_end   = LEGACY_NIGHT_PRESET[legacy_nightoff].end;
-    }
 }
 
 static void clock_config_save(void)
@@ -823,9 +770,6 @@ static void clock_config_save(void)
     fprintf(f, "dnd=%d\n", s_dnd ? 1 : 0);
     fprintf(f, "anim=%d\n", s_anim);
     fprintf(f, "scene=%d\n", s_scene);
-    fprintf(f, "autodim=%d\n", s_autodim ? 1 : 0);
-    fprintf(f, "nightstart=%d\n", s_night_start);
-    fprintf(f, "nightend=%d\n", s_night_end);
     fprintf(f, "alarmvol=%d\n", s_alarm_volume);
 #if CLOCK_SD_MEDIA
     fprintf(f, "photospeed=%d\n", s_photo_speed);
@@ -903,75 +847,19 @@ static uint32_t s_flash_until = 0;
 #define SNOOZE_MS (5u * 60u * 1000u)
 #define ALARM_RING_MS 60000u     /* auto-dismiss a ringing alarm after 60s if untouched (matches rg_alarm.c RING_MS) */
 #define CLOCK_UI_HIDE_MS 8000u   /* idle time before the mode pager + hint fade away */
-#define CLOCK_DIM_IDLE_MS 15000u /* idle time on the clock face before the backlight auto-dims/turns off */
-/* backlightLevels[0] in odroid_display.c — the darkest level a user can pick
- * manually. Dimming must never go below it: the panel is effectively unlit
- * under that raw value, so a dim state darker than the device's own minimum
- * setting reads as "screen is off" rather than "a bit dimmer". */
-#define CLOCK_DIM_FLOOR   128u
 static uint32_t s_snooze_tick = 0;   /* HAL tick when a snoozed alarm re-rings */
 
-/* Idle backlight decision — pure logic, so it is unit-testable
- * (tests/test_clock_more.c). Applies only on the clock face, never over a
- * running timer/pomodoro/stopwatch and never while the alarm rings:
- *   CLOCK_BL_FULL — awake, or the idle threshold hasn't been reached
- *   CLOCK_BL_DIM  — idle during the day: half the user's brightness (floor-clamped)
- *   CLOCK_BL_OFF  — idle during the night window: backlight fully off, like a
- *                   bedside clock
- * Ringing always forces FULL, including a wake from night-OFF. */
-typedef enum { CLOCK_BL_FULL = 0, CLOCK_BL_DIM, CLOCK_BL_OFF } clock_backlight_t;
-
-/* Same minutes-of-day wraparound idiom as alarm_fired_in_window() elsewhere in
- * this file: "minutes since window start, modulo a day" compared against the
- * window's span handles the midnight crossing without a branch per boundary. */
-static bool clock_in_night_window(int minute_of_day, int start_min, int end_min)
+/* Whether the idle clock face should sleep right now — pure logic, so it is
+ * unit-testable (tests/test_clock_more.c) without driving the whole
+ * interactive loop. Mirrors rg_clock_show's guard: never while an alarm
+ * rings, never off the clock face (a running timer/pomodoro/stopwatch is
+ * being watched). No other exception — the clock has no power setting of
+ * its own. timeout_expired is the launcher's one global rule
+ * (odroid_idle_timeout_expired) — this function does not re-derive it, only
+ * gates it. */
+static bool clock_should_idle_sleep(bool ringing, clock_mode_t mode, bool timeout_expired)
 {
-    int day = 24 * 60;
-    int since_start = ((minute_of_day - start_min) % day + day) % day;
-    int span = ((end_min - start_min) % day + day) % day;
-    return since_start < span;
-}
-
-/* Idle auto-dim brightness. The point is "a little dimmer", not "half off":
- * dropping halfway to the floor pushed mid brightnesses down into the panel's
- * barely-lit zone, so the clock read as OFF instead of dimmed. Instead drop a
- * SMALL fraction of the headroom the user left above CLOCK_DIM_FLOOR — the
- * device's own darkest pick, which dimming must never go below. Scaling off the
- * headroom means a user already near the floor barely moves (nowhere to go),
- * while a bright pick dips noticeably but stays clearly readable.
- * lcd_backlight_set takes a raw 0-255 DAC level. */
-#define CLOCK_DIM_DROP_NUM 1   /* drop CLOCK_DIM_DROP_NUM/CLOCK_DIM_DROP_DEN of the */
-#define CLOCK_DIM_DROP_DEN 4   /* headroom above the floor (1/4 = gentle) */
-static uint8_t clock_dim_level(uint8_t user_raw)
-{
-    if (user_raw <= CLOCK_DIM_FLOOR)
-        return CLOCK_DIM_FLOOR;
-    uint16_t headroom = (uint16_t)user_raw - CLOCK_DIM_FLOOR;
-    return (uint8_t)(user_raw - headroom * CLOCK_DIM_DROP_NUM / CLOCK_DIM_DROP_DEN);
-}
-
-/*
- * Priority, highest first:
- *   1. ringing                                    -> FULL (never dim/hide an alarm)
- *   2. autodim off / not the clock face / not idle yet -> FULL
- *   3. night window enabled (night_start_min >= 0) AND currently inside it
- *                                                  -> OFF (dark-bedroom bedside
- *      clock; applies even while charging — a charger left plugged in
- *      overnight must not light the room up)
- *   4. charging (desk clock on permanent power)    -> FULL (the daytime
- *      half-dim exists to save battery; skip it when nothing is being spent)
- *   5. otherwise                                   -> DIM (half brightness)
- */
-static clock_backlight_t clock_should_dim(clock_mode_t mode, bool ringing, bool autodim,
-                                           uint32_t idle_ms, int minute_of_day,
-                                           int night_start_min, int night_end_min, bool charging)
-{
-    if (ringing) return CLOCK_BL_FULL;   /* alarm always forces full brightness, even waking from night-OFF */
-    if (!autodim || mode != MODE_CLOCK || idle_ms < CLOCK_DIM_IDLE_MS) return CLOCK_BL_FULL;
-    if (night_start_min >= 0 && clock_in_night_window(minute_of_day, night_start_min, night_end_min))
-        return CLOCK_BL_OFF;
-    if (charging) return CLOCK_BL_FULL;   /* desk clock on permanent power: skip the battery-saving day dim */
-    return CLOCK_BL_DIM;
+    return !ringing && mode == MODE_CLOCK && timeout_expired;
 }
 
 static void tick_countdown(runner_t *r, uint32_t now)
@@ -1831,15 +1719,11 @@ static const char *const FACE_NAME[FACE_COUNT] = {
     "7-seg", "Pixel", "Dot", "Thin", "Outline", "Flip", "LED", "LCD",
 };
 static char v_theme[24], v_face[20], v_fmt[8], v_anim[44], v_scene[24],
-            v_autodim[12], v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];
-/* v_autodim also backs the main-menu "절전" group row's On/Off summary
- * (cb_powersave_group) — safe to share since the main dialog is always fully
- * closed before clock_powersave_menu() opens (never rendered together).
- * v_dnd is gone: DND moved into the alarm popup, which uses its own stack
- * buffer (see ALARM_IDX_DND in clock_alarm_setup). v_night_start / v_night_end
- * / v_bright live on clock_settings_menu()'s and clock_powersave_menu()'s own
- * STACKs (with the SD pickers' buffers) — DTCM is bytes from full, so no new
- * resident buffers. */
+            v_vol[ODROID_AUDIO_VOLUME_MAX + 2], v_settime[4], v_alarms[4], v_exit[4];
+/* v_dnd is gone: DND moved into the alarm popup, which uses its own stack
+ * buffer (see ALARM_IDX_DND in clock_alarm_setup). v_bright lives on
+ * clock_settings_menu()'s own STACK (with the SD pickers' buffers) — DTCM is
+ * bytes from full, so no new resident buffers. */
 /* SD-media picker value buffers (photo speed / GIF file / alarm sound) are NOT
  * resident: they live on clock_settings_menu()'s stack for the life of the
  * blocking dialog only, so the tight launcher DTCM carries none of them. */
@@ -1870,43 +1754,6 @@ static bool cb_dnd(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
 { (void)r;  if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_dnd = !s_dnd;
   sprintf(o->value, "%s", s_dnd ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
   return e == ODROID_DIALOG_ENTER; }
-static bool cb_autodim(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{ (void)r; if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_autodim = !s_autodim;
-  sprintf(o->value, "%s", s_autodim ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
-  return e == ODROID_DIALOG_ENTER; }
-/* Night full-off window: start-hour row. Cycles Off -> 21:00 -> 22:00 ->
- * 23:00 (default) -> 00:00 -> 01:00. "Off" disables ONLY the night full-off
- * behaviour — day half-dim still follows the Auto-dim row above. The end-hour
- * row right after this one (opts[] index +1, like cb_anim's neighbour rows)
- * is only enabled while a start is chosen, so the two rows can freely combine
- * instead of cycling a fixed preset list. */
-static bool cb_night_start(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{
-    (void)r;
-    int idx = (s_night_start == NIGHT_OFF) ? -1 : night_start_index(s_night_start);
-    if (idx < -1) idx = -1;   /* defensive: a corrupt value behaves like Off */
-    if (e == ODROID_DIALOG_PREV) idx = (idx <= -1) ? NIGHT_START_COUNT - 1 : idx - 1;
-    if (e == ODROID_DIALOG_NEXT) idx = (idx >= NIGHT_START_COUNT - 1) ? -1 : idx + 1;
-    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT)
-        s_night_start = (idx < 0) ? NIGHT_OFF : NIGHT_START_HOURS[idx];
-    o[1].enabled = (s_night_start == NIGHT_OFF) ? -1 : 1;   /* the end-hour row right after this one */
-    if (s_night_start == NIGHT_OFF) sprintf(o->value, "%s", curr_lang->s_Clock_Off);
-    else sprintf(o->value, "%02d:00", s_night_start);
-    return e == ODROID_DIALOG_ENTER;
-}
-/* Night full-off window: end-hour row, cycling 05:00..09:00. Only meaningful
- * (and only enabled — see cb_night_start above) once Start != Off. */
-static bool cb_night_end(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{
-    (void)r;
-    int idx = night_end_index(s_night_end);
-    if (idx < 0) idx = 0;   /* defensive: a corrupt value snaps to the first entry */
-    if (e == ODROID_DIALOG_PREV) idx = (idx == 0) ? NIGHT_END_COUNT - 1 : idx - 1;
-    if (e == ODROID_DIALOG_NEXT) idx = (idx + 1) % NIGHT_END_COUNT;
-    if (e == ODROID_DIALOG_PREV || e == ODROID_DIALOG_NEXT) s_night_end = NIGHT_END_HOURS[idx];
-    sprintf(o->value, "%02d:00", s_night_end);
-    return e == ODROID_DIALOG_ENTER;
-}
 /* System backlight brightness — identical to the common PAUSE menu's row
  * (odroid_overlay.c brightness_update_cb): same odroid_display_get_backlight()
  * / odroid_display_set_backlight() calls, so a change here persists via
@@ -2118,9 +1965,9 @@ static bool cb_vol(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t 
 static bool cb_enter(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 { (void)r; o->value[0] = 0; return e == ODROID_DIALOG_ENTER; }
 
-/* Main-menu "Alarms" row summary, exactly like cb_powersave_group's On/Off: the
- * value shows how many alarms are ENABLED (a number needs no translation), or
- * "-" when none are armed. A/ENTER still opens the alarm editor (returns true). */
+/* Main-menu "Alarms" row summary: the value shows how many alarms are
+ * ENABLED (a number needs no translation), or "-" when none are armed. A/ENTER
+ * still opens the alarm editor (returns true). */
 static bool cb_alarms_summary(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
 {
     (void)r;
@@ -2129,17 +1976,6 @@ static bool cb_alarms_summary(odroid_dialog_choice_t *o, odroid_dialog_event_t e
     else       snprintf(o->value, 4, "-");
     return e == ODROID_DIALOG_ENTER;
 }
-
-/* "절전"(power-save) group row: collapses Auto-dim + Night-start + Night-end
- * into a single main-menu entry (those 3 rows used to be separate; device
- * feedback said the main popup had too many rows and started scrolling —
- * see clock_settings_menu). The value mirrors the Auto-dim toggle; A/ENTER
- * opens clock_powersave_menu() below with the full 3 rows. L/R deliberately
- * do nothing here so there is only one place that actually changes Auto-dim
- * (the sub-dialog's own row) — no risk of the two getting out of sync. */
-static bool cb_powersave_group(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{ (void)r; sprintf(o->value, "%s", s_autodim ? curr_lang->s_Clock_On : curr_lang->s_Clock_Off);
-  return e == ODROID_DIALOG_ENTER; }
 
 static void tone_feed(uint32_t now, bool ringing);   /* fwd: defined with ring_audio */
 
@@ -2166,28 +2002,6 @@ static void clock_menu_repaint(void)
     render_clock(HAL_GetTick(), false);
 }
 
-/* Sub-dialog opened from the main menu's "절전" group row: Auto-dim toggle +
- * the two night-window hour rows. Reuses the SAME callbacks
- * (cb_autodim/cb_night_start/cb_night_end) the main menu used to call
- * directly for these three rows, so the persisted cfg keys and the
- * conditional Night-end enable/disable logic (cb_night_start toggles o[1])
- * are completely unchanged — only WHERE the rows are shown moved. A nested
- * odroid_overlay_dialog call, exactly like the main clock menu dispatching
- * to a second screen for Set Time / Alarms. */
-static void clock_powersave_menu(void)
-{
-    char v_night_start[8], v_night_end[8];
-    odroid_dialog_choice_t opts[] = {
-        {11, curr_lang->s_Clock_Auto_Dim, v_autodim, 1, cb_autodim},
-        {14, curr_lang->s_Clock_Night_Off, v_night_start, 1, cb_night_start},
-        {16, curr_lang->s_Clock_Night_End, v_night_end, (s_night_start == NIGHT_OFF) ? -1 : 1, cb_night_end},
-        ODROID_DIALOG_CHOICE_LAST
-    };
-    for (odroid_dialog_choice_t *o = opts; o->update_cb; o++)
-        o->update_cb(o, ODROID_DIALOG_FOCUS_GAINED, 0);
-    odroid_overlay_dialog(curr_lang->s_Clock_Auto_Dim, opts, 0, &clock_menu_repaint, 0);
-}
-
 /* returns true when the user picked "Exit" — the caller leaves the app */
 static bool clock_settings_menu(void)
 {
@@ -2198,17 +2012,15 @@ static bool clock_settings_menu(void)
      * rows can be reordered freely. Anim/Scene/Photo-speed/GIF-file MUST stay
      * adjacent in that order — cb_anim toggles the three that follow it via
      * o[1]/o[2]/o[3]. Alarm sound and DND now live inside the Alarms popup
-     * (clock_alarm_setup/ALARM_IDX_*) and Auto-dim/Night-start/Night-end now
-     * live inside the "절전" group's own sub-dialog (clock_powersave_menu) —
-     * both moved off this menu to stay under the no-scroll row budget (see
-     * odroid_overlay_draw_dialog's had_extent: header + N*14px rows + 34px
-     * padding must stay <= 230px, i.e. at most 14 rows; this menu has 13 rows
-     * with SD media compiled in, 11 without — but Scene/Photo-speed/GIF-file
-     * are ODROID_DIALOG_HIDDEN (zero layout footprint) whenever their own
-     * background isn't the active one, and only one of the three can ever be
-     * active at once, so the row actually visible at a time is 11 max, never
-     * 13). The SD-media rows (photo speed, GIF file) are compiled out
-     * entirely on flash builds. */
+     * (clock_alarm_setup/ALARM_IDX_*) — moved off this menu to stay under the
+     * no-scroll row budget (see odroid_overlay_draw_dialog's had_extent:
+     * header + N*14px rows + 34px padding must stay <= 230px, i.e. at most 14
+     * rows; this menu has 13 rows with SD media compiled in, 11 without — but
+     * Scene/Photo-speed/GIF-file are ODROID_DIALOG_HIDDEN (zero layout
+     * footprint) whenever their own background isn't the active one, and only
+     * one of the three can ever be active at once, so the row actually
+     * visible at a time is 11 max, never 13). The SD-media rows (photo speed,
+     * GIF file) are compiled out entirely on flash builds. */
     /* stack-resident (DTCM is bytes from full): the brightness gauge, and
      * (SD builds) the photo-speed / GIF-file picker values */
     char v_bright[ODROID_BACKLIGHT_LEVEL_COUNT + 2];
@@ -2222,7 +2034,6 @@ static bool clock_settings_menu(void)
         {8, curr_lang->s_Clock_Set_Time, v_settime, 1, cb_enter},
         {5, curr_lang->s_Clock_Format, v_fmt,    1, cb_fmt},
         {9, curr_lang->s_Clock_Alarms, v_alarms, 1, cb_alarms_summary},
-        {17, curr_lang->s_Clock_Auto_Dim, v_autodim, 1, cb_powersave_group},
         {0, curr_lang->s_Clock_Theme,  v_theme,  1, cb_theme},
         {1, curr_lang->s_Clock_Face,   v_face,   1, cb_face},
         {2, curr_lang->s_Clock_Anim,   v_anim,   1, cb_anim},
@@ -2243,7 +2054,6 @@ static bool clock_settings_menu(void)
     int sel = odroid_overlay_dialog(curr_lang->s_Clock, opts, 0, &clock_menu_repaint, 0);
     if (sel == 8) clock_edit_time();
     if (sel == 9) clock_alarm_setup();
-    if (sel == 17) clock_powersave_menu();
     clock_config_save();
     return sel == 10;
 }
@@ -2348,9 +2158,6 @@ void rg_clock_show(void)
     uint32_t alarm_ring_until = 0;
     uint32_t last_input = HAL_GetTick();   /* mode pager + hint auto-hide after idle */
     bool dirty = true;
-    clock_backlight_t bl_state = CLOCK_BL_FULL;   /* idle backlight state: full/dim/off */
-    uint32_t anim_freeze_tick = 0;   /* HAL tick background animation was frozen at (DIM/OFF power-save) */
-    bool was_charging = false;   /* unplug edge: restart the idle countdown instead of snapping to dim/off */
 
     clock_config_load();
     lcd_backlight_set(odroid_display_get_backlight_raw());   /* apply the system brightness right on entry */
@@ -2391,55 +2198,6 @@ void rg_clock_show(void)
         }
         bool ringing = alarm_ring_until > now;
 
-        /* Idle backlight: after CLOCK_DIM_IDLE_MS with no input on the clock
-         * face, drop the backlight to half the user's brightness (day) or off
-         * entirely (the night window, like a real bedside clock); any input
-         * (last_input was just refreshed above) or a ringing alarm restores the
-         * user's configured brightness at once. Only on the clock face — never
-         * over a running timer/pomodoro/stopwatch the user is watching, and
-         * never while the alarm rings. lcd_backlight_set() does NOT touch the
-         * persisted odroid_settings brightness, so restoring simply reads it
-         * back via odroid_display_get_backlight_raw().
-         *
-         * Charging exception: a desk clock left on permanent power should not
-         * dim during the day. CHARGING and FULL (charge-complete, still on the
-         * charger) both mean externally powered — bq24072_get_state() only
-         * returns either while its power-good pin reads present — so both
-         * count here, same as the existing is_charging convention in
-         * odroid_input.c / main_zelda3.c. Night full-off still applies while
-         * charging (see clock_should_dim's priority order). */
-        bq24072_state_t chg_state = bq24072_get_state();
-        bool charging = (chg_state == BQ24072_STATE_CHARGING) || (chg_state == BQ24072_STATE_FULL);
-        /* Unplug edge: idle_ms below is measured since the last KEY press, which
-         * may have been many minutes ago (the charging exception was masking it
-         * at FULL the whole time) — without this, the backlight would snap
-         * straight to DIM/OFF the instant the cable comes out. Treat the unplug
-         * itself as activity so the normal CLOCK_DIM_IDLE_MS countdown restarts
-         * from here instead. */
-        if (was_charging && !charging) last_input = now;
-        was_charging = charging;
-        int night_start_min = (s_night_start == NIGHT_OFF) ? -1 : s_night_start * 60;
-        int night_end_min   = s_night_end * 60;
-        clock_backlight_t want_bl = clock_should_dim(mode, ringing, s_autodim,
-                                                      now - last_input, hh * 60 + mm,
-                                                      night_start_min, night_end_min, charging);
-        if (want_bl != bl_state) {
-            uint8_t user_raw = odroid_display_get_backlight_raw();
-            lcd_backlight_set(want_bl == CLOCK_BL_OFF ? 0
-                             : want_bl == CLOCK_BL_DIM ? clock_dim_level(user_raw)
-                             : user_raw);
-            if (bl_state == CLOCK_BL_FULL) anim_freeze_tick = now;   /* just started pausing: freeze the animation clock here */
-            if (bl_state == CLOCK_BL_OFF)  dirty = true;             /* leaving OFF: force a repaint (frames were skipped while off) */
-            bl_state = want_bl;
-        }
-        /* DIM and OFF both pause background animation (GIF/scene/photo) to save
-         * power — everything that draws from "now" instead reads this frozen
-         * tick, so it neither advances nor jumps once brightness is restored.
-         * The digit/time face itself keeps using the real "now" below, so it
-         * still updates while merely DIMmed. */
-        bool bl_paused = bl_state != CLOCK_BL_FULL;
-        uint32_t anim_now = bl_paused ? anim_freeze_tick : now;
-
         if (ringing && (k.bitmask & ~prev.bitmask)) {
             alarm_ring_until = 0;
             ring_audio(now, false);
@@ -2463,12 +2221,10 @@ void rg_clock_show(void)
         /* Idle power-off. The launcher's "Idle power off" is one global setting and
          * the clock is the only loop that never honoured it — so a bedside clock sat
          * lit all night whatever the user had chosen. Same rule
-         * (odroid_idle_timeout_expired), same sleep the POWER button takes, and the
-         * same idle clock the backlight dim already measures — and the same two
-         * refusals: never while an alarm rings, never off the clock face (a running
-         * timer or stopwatch lives in its own mode, and is being watched). */
-        bool idle_sleep = !ringing && mode == MODE_CLOCK &&
-                          odroid_idle_timeout_expired((now - last_input) / 1000u);
+         * (odroid_idle_timeout_expired), same sleep the POWER button takes; the three
+         * refusals live in clock_should_idle_sleep() above. */
+        bool idle_sleep = clock_should_idle_sleep(ringing, mode,
+                              odroid_idle_timeout_expired((now - last_input) / 1000u));
 
         if (pressed(&k, &prev, ODROID_INPUT_POWER) || idle_sleep) {
             ring_audio(now, false);
@@ -2485,8 +2241,7 @@ void rg_clock_show(void)
             while (k.values[ODROID_INPUT_POWER]);
             odroid_input_read_gamepad(&prev);
             s_last_fired_min = -1;   /* re-arm alarms after the sleep gap */
-            bl_state = CLOCK_BL_FULL;   /* the sleep resume already restored full brightness... */
-            lcd_backlight_set(odroid_display_get_backlight_raw());   /* ...make sure it's the system's configured level */
+            lcd_backlight_set(odroid_display_get_backlight_raw());   /* the sleep resume already restored full brightness — make sure it's the system's configured level */
             last_input = HAL_GetTick();   /* restart the idle timer on wake */
             dirty = true;
             continue;
@@ -2559,16 +2314,14 @@ void rg_clock_show(void)
          * one consistent set), so its repaint rate applies everywhere too.
          * A GIF that isn't loaded (missing / too big) must NOT keep bumping
          * the signature — else a static face repaints at 12fps for nothing,
-         * defeating the event-driven loop and draining the battery. Reads
-         * anim_now (frozen while DIM/OFF), so a paused background contributes
-         * a constant term here instead of continuing to animate. */
+         * defeating the event-driven loop and draining the battery. */
 #if CLOCK_SD_MEDIA
-        if (s_anim == ANIM_GIF)        { if (clock_gif_ready()) sig ^= (anim_now / 80); }
-        else if (s_anim == ANIM_SCENE) sig ^= (anim_now / 32);   /* ~31fps, and 32ms = exactly 2 polls (16ms) so frames land evenly — no beat/jitter */
-        else if (s_anim > 0)           sig ^= (anim_now / 320);  /* ambient ~3fps */
+        if (s_anim == ANIM_GIF)        { if (clock_gif_ready()) sig ^= (now / 80); }
+        else if (s_anim == ANIM_SCENE) sig ^= (now / 32);   /* ~31fps, and 32ms = exactly 2 polls (16ms) so frames land evenly — no beat/jitter */
+        else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
 #else
-        if (s_anim == ANIM_SCENE)      sig ^= (anim_now / 32);   /* pixel scene ~31fps */
-        else if (s_anim > 0)           sig ^= (anim_now / 320);  /* ambient ~3fps */
+        if (s_anim == ANIM_SCENE)      sig ^= (now / 32);   /* pixel scene ~31fps */
+        else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
 #endif
 
         /* mode pager + hint fade out after a few idle seconds (any key restores
@@ -2577,11 +2330,9 @@ void rg_clock_show(void)
         if (ui_show) sig ^= 0x02000000u;
 
         /* photo album auto-advance: hold PHOTO_HOLD_MS, then dip to black, swap
-         * to the next photo at the midpoint, and dip back — no hard cut.
-         * Skipped entirely while paused (bl_paused) so the slideshow does not
-         * advance (and does not silently burn through the fade) while dim/off. */
+         * to the next photo at the midpoint, and dip back — no hard cut. */
 #if CLOCK_SD_MEDIA
-        if (!bl_paused && s_anim == ANIM_PHOTO && clock_album_ready() && clock_album_count() > 1) {
+        if (s_anim == ANIM_PHOTO && clock_album_ready() && clock_album_count() > 1) {
             if (!s_fade_start && s_photo_next && now >= s_photo_next) { s_fade_start = now ? now : 1; s_fade_swapped = false; }
             if (s_fade_start) {
                 uint32_t el = now - s_fade_start;
@@ -2592,31 +2343,26 @@ void rg_clock_show(void)
         }
 #endif
 
-        /* OFF: the backlight is literally 0, so skip render+flush altogether —
-         * the loop above (alarm check, input poll) keeps running at full
-         * responsiveness, only the (invisible) paint work is saved. */
-        if (bl_state != CLOCK_BL_OFF && (dirty || sig != last_sig)) {
+        if (dirty || sig != last_sig) {
             last_sig = sig; dirty = false;
             uint16_t *fb = lcd_get_active_buffer();
             uint16_t bg = flash ? TH()->ink : TH()->scr;
             fb_fill_screen(fb, bg);
             bool bg_live = false;
-            if (!flash) {   /* background layer, identical in every mode; anim_now is
-                             * frozen while paused so a DIMmed background holds its
-                             * last frame instead of continuing to animate */
+            if (!flash) {   /* background layer, identical in every mode */
 #if CLOCK_SD_MEDIA
-                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, anim_now); bg_live = true; }
+                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
                 else if (s_anim == ANIM_PHOTO && clock_album_ready()) {
                     memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
-                    int fd = photo_fade_darkness(anim_now);   /* dip to black across a photo swap */
+                    int fd = photo_fade_darkness(now);   /* dip to black across a photo swap */
                     if (fd) for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = mix565(fb[i], CLOCK_BLACK, fd);
                     bg_live = true;
                 }
-                else if (s_anim == ANIM_SCENE) { draw_scene(anim_now, TH()); bg_live = true; }
-                else if (s_anim == 1) { draw_ambient(anim_now, TH()->ink); bg_live = true; }
+                else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
+                else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
 #else
-                if (s_anim == ANIM_SCENE) { draw_scene(anim_now, TH()); bg_live = true; }
-                else if (s_anim == 1) { draw_ambient(anim_now, TH()->ink); bg_live = true; }
+                if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
+                else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
 #endif
             }
             s_ghost_on = !bg_live;   /* ghost only on a solid theme, not over art */
@@ -2658,12 +2404,8 @@ void rg_clock_show(void)
         /* Poll fast enough for the active animation so it doesn't stutter: an
          * animated pixel scene runs ~30fps (a 40ms idle poll capped it at 25 and
          * beat against the 33ms frame clock — the "버버벅"). Static faces idle
-         * longer to save power. Ringing feeds audio so it polls fastest.
-         * Backlight OFF: nothing is animating or being rendered, so idle even
-         * longer — still well under the 100ms an input press needs to feel
-         * instant, and the alarm check above still runs every iteration. */
+         * longer to save power. Ringing feeds audio so it polls fastest. */
         uint32_t poll = ringing ? 8
-                      : bl_state == CLOCK_BL_OFF ? 80
 #if CLOCK_SD_MEDIA
                       : (s_fade_start || s_anim == ANIM_SCENE) ? 16
                       : (s_anim == ANIM_GIF && clock_gif_ready()) ? 24
@@ -2675,10 +2417,9 @@ void rg_clock_show(void)
     }
 
     ring_audio(0, false);   /* make sure the SAI is stopped (beep or MP3) on the way out */
-    /* Always restore the SYSTEM raw level on the way out — unconditionally,
-     * not just when leaving DIM/OFF: idle-dim can have left the physical
-     * backlight below the configured level. The launcher (and anything it
-     * launches next) must come back at the system's configured brightness. */
+    /* The clock never touches the backlight beyond entry, but the launcher (and
+     * anything it launches next) must still come back at the system's
+     * configured brightness — cheap, and one less thing to reason about. */
     lcd_backlight_set(odroid_display_get_backlight_raw());
 #if CLOCK_SD_MEDIA
     clock_gif_free();      /* release the transient GIF cache */

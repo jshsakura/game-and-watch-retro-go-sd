@@ -332,11 +332,15 @@ typedef struct
     const char *s_Clock_Scene;         // pixel-background STYLE picker row (which built-in scene), shown only while Background=Pixel
     const char *s_Clock_Photo_Speed;   // photo album slideshow speed row, shown only while Background=Photo album
     const char *s_Clock_Anim_4;        // photo album background value
-    const char *s_Clock_Auto_Dim;      // idle backlight auto-dim toggle row
+    const char *s_Clock_Keep_Awake;    // RETIRED (was s_Clock_Auto_Dim, then repurposed for a keep-awake toggle;
+                                        // the clock now has no power setting of its own — global "Idle power off"
+                                        // is the only rule) — slot kept, unused, per the positional-binary rule:
+                                        // lang_t fields are appended/retired in place, never removed or reordered
     const char *s_Clock_Bg_File;       // GIF background file picker row (SD builds)
     const char *s_Clock_Alarm_Sound;   // alarm sound picker row (Beep / SD file)
-    const char *s_Clock_Night_Off;     // night full-off window start-hour row (Off/21:00/22:00/23:00/00:00/01:00)
-    const char *s_Clock_Night_End;     // night full-off window end-hour row (05:00..09:00), shown only while start != Off
+    const char *s_Clock_Night_Off;     // RETIRED (night full-off window removed) — slot kept, unused, per the
+                                        // positional-binary rule above; do not repurpose without checking no build refers to it
+    const char *s_Clock_Night_End;     // RETIRED, same as s_Clock_Night_Off
     const char *s_Clock_Snd_Preview;   // alarm-sound row: GAME auditions the real ring
     const char *s_Speed_Slow;          // photo-speed value: slowest slideshow
     const char *s_Speed_Normal;        // photo-speed value: default slideshow speed
