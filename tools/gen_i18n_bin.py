@@ -42,7 +42,7 @@ MAGIC = 0x4E383149  # 'I18N' little-endian
 VERSION = 1
 
 # Field declaration in lang_t: `    const char *s_FieldName;`
-HEADER_FIELD_RE = re.compile(r'^\s*const\s+char\s*\*\s*s_(\w+)\s*;')
+HEADER_FIELD_RE = re.compile(r'^\s*const\s+char\s*\*\s*s_(\w+)\s*;', re.M)
 
 # Field initializer in a lang_xx_xx.c file: `    .s_FieldName = "string",`
 # Captures field name and the C string body (with escapes intact).
@@ -52,13 +52,24 @@ INIT_FIELD_RE = re.compile(
 
 # C block comment, non-greedy across newlines.
 BLOCK_COMMENT_RE = re.compile(r'/\*.*?\*/', re.DOTALL)
+LINE_COMMENT_RE = re.compile(r'//[^\n]*')
 
 
 def _strip_block_comments(text: str) -> str:
-    """Remove `/* ... */` blocks but preserve line numbering so any later
-    error message still points at the right source line. Each comment is
-    replaced with the same count of newlines it contained.
+    """Remove comments but preserve line numbering so any later error message
+    still points at the right source line. Each block comment is replaced with
+    the same count of newlines it contained.
+
+    Line comments go FIRST, and that ordering is the whole point. rg_i18n_lang.h
+    contains the line `// against an older /lang/*.bin.` — inside a `//` comment,
+    but `/*` all the same. Strip block comments first and that stray opener eats
+    everything up to the next `*/` anywhere in the file. It ate 50 lang_t fields
+    the moment somebody added a block comment below it, and the generator
+    cheerfully emitted a .bin with 227 of 277 strings — indices shifted, labels
+    scrambled, build green, "0 missing" printed. A comment is not a place a bug
+    is supposed to be able to hide.
     """
+    text = LINE_COMMENT_RE.sub('', text)
     def repl(m: re.Match) -> str:
         return '\n' * m.group(0).count('\n')
     return BLOCK_COMMENT_RE.sub(repl, text)
@@ -109,6 +120,20 @@ def parse_header_field_order(path: Path) -> list[str]:
             fields.append(name)
     if not fields:
         raise SystemExit(f'no s_XXX fields found in {path}')
+
+    # Every `const char *s_XXX;` in the file must have made it into the list.
+    # Comment-stripping is the one step that can silently drop a field, and a
+    # dropped field does not fail: it shifts every index after it and ships a
+    # .bin whose labels are one language's strings in another's slots. Count the
+    # declarations the dumbest way possible and refuse to disagree with it.
+    declared = HEADER_FIELD_RE.findall(path.read_text(encoding='utf-8'))
+    if len(declared) != len(fields):
+        lost = [f's_{n}' for n in declared if n not in set(fields)]
+        raise SystemExit(
+            f'{path}: parsed {len(fields)} string fields but {len(declared)} are '
+            f'declared. Comment stripping swallowed: {", ".join(lost) or "(order changed)"}.\n'
+            f'A stray "/*" inside a "//" comment will do this. Fix the comment.')
+
     return fields
 
 

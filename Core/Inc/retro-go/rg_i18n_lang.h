@@ -286,7 +286,7 @@ typedef struct
     // NEW FIELDS GO AT THE END of the string region (right before the fmt_*
     // pointers): the SD .bin loader assigns strings BY INDEX, so inserting a
     // field in the middle shifts every later label when the firmware runs
-    // against an older /lang/*.bin. Appended fields simply fall back to the
+    // against an older /lang/xx_xx.bin. Appended fields simply fall back to the
     // baked en_us text until the SD lang files are updated.
     const char *s_Add_favorite;    // A-menu: add game to favorites
     const char *s_Del_favorite;    // A-menu: remove game from favorites

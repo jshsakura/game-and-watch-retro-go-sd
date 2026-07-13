@@ -350,6 +350,36 @@ else
     echo "SKIP  external/sm is not checked out (no submodules in this job)"
 fi
 
+# === i18n: the generator must see every lang_t string field ==================
+# lang_t is indexed BY POSITION in /lang/*.bin. A field the generator fails to
+# parse is not a missing string — it shifts every index after it, and the .bin
+# ships one language's labels in another's slots. That is exactly what happened:
+# rg_i18n_lang.h had `// ... an older /lang/*.bin` — a "/*" inside a LINE comment
+# — and the block-comment stripper, being a regex, took it as an opener. It sat
+# harmless for months because no "*/" followed it. The day someone added a block
+# comment lower down, it ate 50 fields; the build stayed green and the tool
+# printed "0 missing". Nothing but this check would have caught it.
+echo "=== i18n: every lang_t field reaches the generator ==="
+python3 - <<'PYEOF4' || rc=1
+import importlib.util, re, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('g', 'tools/gen_i18n_bin.py')
+g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+hdr = Path('Core/Inc/retro-go/rg_i18n_lang.h')
+declared = re.findall(r'^\s*const\s+char\s*\*\s*s_(\w+)\s*;', hdr.read_text(encoding='utf-8'), re.M)
+try:
+    parsed = g.parse_header_field_order(hdr)
+except SystemExit as e:
+    print(f"FAIL generator refuses the header: {e}"); sys.exit(1)
+if len(parsed) != len(declared):
+    print(f"FAIL generator sees {len(parsed)} of {len(declared)} lang_t fields"); sys.exit(1)
+# And the trap itself: no "/*" may hide inside a "//" comment in the header.
+for i, line in enumerate(hdr.read_text(encoding='utf-8').splitlines(), 1):
+    if re.search(r'//.*/\*', line):
+        print(f"FAIL {hdr}:{i} has '/*' inside a '//' comment — this is the landmine"); sys.exit(1)
+print(f"OK  all {len(declared)} lang_t string fields parse; no '/*' hidden in a '//' comment")
+PYEOF4
+
 # === system grid: wired into retro_loop, and owning no loop of its own ======
 # Both halves of this matter, and neither is a unit test:
 #  - A screen that runs its own while(1) has to re-ask every rule the launcher
