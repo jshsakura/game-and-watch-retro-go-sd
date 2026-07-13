@@ -313,6 +313,19 @@ else
     echo "SKIP  needs external/sm checked out AND a ROM at \$SM_ROM (CI's host-tests job has neither)"
 fi
 
+echo "=== jpeg: hw_jpeg_decoder.c lock/callback/floor-to-4 regressions ==="
+# Three real bugs shipped in hw_jpeg_decoder.c in three consecutive releases, each
+# found only after the device died: a stuck HAL lock, HAL's end-of-input callback
+# misread as an error, and HAL flooring InDataLength to a multiple of 4 (dropping
+# the JPEG's trailing EOI). All three were pure state/arithmetic — no peripheral
+# needed to reproduce them on a host. See tools/jpeg_harness/run.sh.
+bash tools/jpeg_harness/run.sh
+rc=$(( rc || $? ))
+
+exit $rc
+
+# Everything from here to EOF is re-run standalone by tests/test_sm_skip_guard.sh,
+# which is why nothing that is expensive or self-contained belongs below this line.
 echo "=== sm: device source set is symbol-complete ==="
 # The main sm harness compiles all of external/sm, including sm_cpu_infra.c, which
 # defines and sets g_snes. The device does not compile that file. That gap let
@@ -328,14 +341,3 @@ if [ -f external/sm/src/sm_rtl.c ]; then
 else
     echo "SKIP  external/sm is not checked out (no submodules in this job)"
 fi
-
-echo "=== jpeg: hw_jpeg_decoder.c lock/callback/floor-to-4 regressions ==="
-# Three real bugs shipped in hw_jpeg_decoder.c in three consecutive releases, each
-# found only after the device died: a stuck HAL lock, HAL's end-of-input callback
-# misread as an error, and HAL flooring InDataLength to a multiple of 4 (dropping
-# the JPEG's trailing EOI). All three were pure state/arithmetic — no peripheral
-# needed to reproduce them on a host. See tools/jpeg_harness/run.sh.
-bash tools/jpeg_harness/run.sh
-rc=$(( rc || $? ))
-
-exit $rc
