@@ -18,7 +18,9 @@ int rg_grid_row_count(int tab_count)
 
 int rg_grid_visible_rows(int view_h)
 {
-    int rows = view_h / RG_GRID_CELL_H;
+    /* The margin is reserved first: a row that would only fit by sitting flush
+     * against the status bar is a row we do not show. */
+    int rows = (view_h - 2 * RG_GRID_MARGIN_Y) / RG_GRID_CELL_H;
 
     return (rows > 0) ? rows : 1;
 }

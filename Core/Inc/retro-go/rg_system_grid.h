@@ -13,11 +13,19 @@
  * named by the launcher's own header bar, which keeps drawing its wordmark.
  */
 
-/* Cell grid. 6 x 52 = 312 of the 320px screen; 4 x 40 = 160 == the list viewport.
- * gui.tabs[] is capped at 32, so six columns can never need more than six rows. */
+/* Cell grid. Each system sits on a rounded tile; the cell is the tile plus its
+ * share of the gutter, so an 8px gap falls out of 50 - 42 in both axes.
+ *
+ * 6 x 50 = 300 of the 320px screen, and 3 x 50 = 150 of the 160px viewport —
+ * the 10px left over vertically is RG_GRID_MARGIN_Y at top and bottom, which is
+ * what keeps the top row's tile off the status bar. gui.tabs[] is capped at 32,
+ * so six columns can never need more than six rows. */
 #define RG_GRID_COLS     (6)
-#define RG_GRID_CELL_W   (52)
-#define RG_GRID_CELL_H   (40)
+#define RG_GRID_CELL_W   (50)
+#define RG_GRID_CELL_H   (50)
+#define RG_GRID_TILE     (42) /* the rounded plate an icon sits on */
+#define RG_GRID_RADIUS   (6)
+#define RG_GRID_MARGIN_Y (5)  /* clearance from the status/header bars */
 #define RG_GRID_SCREEN_W (320) /* asserted against ODROID_SCREEN_WIDTH in the .c */
 #define RG_GRID_X0       ((RG_GRID_SCREEN_W - RG_GRID_COLS * RG_GRID_CELL_W) / 2)
 

@@ -28,6 +28,22 @@ static int failures;
         }                                                                       \
     } while (0)
 
+/* The tile is what the user actually sees; the cell is just its slot. If the tile
+ * ever outgrows the cell the gutters vanish and the grid goes back to looking
+ * like the cramped thing this replaced. */
+static void test_tile_fits_its_cell(void)
+{
+    CHECK(RG_GRID_TILE < RG_GRID_CELL_W && RG_GRID_TILE < RG_GRID_CELL_H,
+          "the tile must leave a gutter: tile %d, cell %dx%d",
+          RG_GRID_TILE, RG_GRID_CELL_W, RG_GRID_CELL_H);
+    CHECK(RG_GRID_CELL_W - RG_GRID_TILE == RG_GRID_CELL_H - RG_GRID_TILE,
+          "the gutter must be square, got %d horizontal vs %d vertical",
+          RG_GRID_CELL_W - RG_GRID_TILE, RG_GRID_CELL_H - RG_GRID_TILE);
+    CHECK(RG_GRID_TILE >= 28, "a 28x28 icon must fit on the tile, tile is %d", RG_GRID_TILE);
+    CHECK(RG_GRID_RADIUS * 2 <= RG_GRID_TILE,
+          "the corner radius cannot exceed half the tile");
+}
+
 static void test_row_count(void)
 {
     CHECK(rg_grid_row_count(0) == 0, "empty grid has no rows");
@@ -41,7 +57,10 @@ static void test_row_count(void)
 
 static void test_visible_rows(void)
 {
-    CHECK(rg_grid_visible_rows(VIEW_H) == 4, "4 rows of 40px fit the 160px viewport, got %d",
+    /* 160px viewport, 5px of clearance at each end, 50px rows -> 3. Reserving the
+     * margin first is the whole point: a 4th row would only fit by sitting flush
+     * against the status bar, which is exactly the look this replaced. */
+    CHECK(rg_grid_visible_rows(VIEW_H) == 3, "3 rows of 50px fit the 160px viewport, got %d",
           rg_grid_visible_rows(VIEW_H));
     CHECK(rg_grid_visible_rows(0) >= 1, "a degenerate viewport must not divide by zero rows");
 }
@@ -50,7 +69,7 @@ static void test_cells_stay_on_screen(void)
 {
     for (int i = 0; i < TABS; i++)
     {
-        for (int first = 0; first <= 2; first++)
+        for (int first = 0; first <= 3; first++)
         {
             int x = -1, y = -1;
 
@@ -59,8 +78,9 @@ static void test_cells_stay_on_screen(void)
 
             CHECK(x >= 0 && x + RG_GRID_CELL_W <= RG_GRID_SCREEN_W,
                   "cell %d (first_row %d) runs off the side: x=%d", i, first, x);
-            CHECK(y >= VIEW_Y0 && y + RG_GRID_CELL_H <= VIEW_Y0 + VIEW_H,
-                  "cell %d (first_row %d) escapes the viewport: y=%d", i, first, y);
+            CHECK(y >= VIEW_Y0 + RG_GRID_MARGIN_Y &&
+                  y + RG_GRID_CELL_H <= VIEW_Y0 + VIEW_H - RG_GRID_MARGIN_Y,
+                  "cell %d (first_row %d) crowds a bar: y=%d", i, first, y);
         }
     }
 }
@@ -70,18 +90,32 @@ static void test_cell_positions(void)
     int x = 0, y = 0;
 
     CHECK(rg_grid_cell_rect(0, 0, VIEW_Y0, VIEW_H, &x, &y), "cell 0 is visible");
-    CHECK(x == RG_GRID_X0 && y == VIEW_Y0, "cell 0 sits top-left, got (%d,%d)", x, y);
+    CHECK(x == RG_GRID_X0, "cell 0 sits at the left margin, got x=%d", x);
+    /* The complaint that produced this layout was "it's stuck to the bars". The
+     * clearance is what fixed it, so the clearance is what gets asserted. */
+    CHECK(y - VIEW_Y0 >= RG_GRID_MARGIN_Y,
+          "the top row must clear the status bar by %d px, got %d",
+          RG_GRID_MARGIN_Y, y - VIEW_Y0);
 
     CHECK(rg_grid_cell_rect(RG_GRID_COLS, 0, VIEW_Y0, VIEW_H, &x, &y), "cell 6 is visible");
-    CHECK(x == RG_GRID_X0 && y == VIEW_Y0 + RG_GRID_CELL_H,
+    CHECK(x == RG_GRID_X0 && y == VIEW_Y0 + RG_GRID_MARGIN_Y + RG_GRID_CELL_H,
           "cell 6 starts the 2nd row, got (%d,%d)", x, y);
 
-    /* Row 4 is below a 4-row viewport until the grid scrolls one row. */
-    CHECK(!rg_grid_cell_rect(24, 0, VIEW_Y0, VIEW_H, &x, &y),
-          "row 4 must be off-screen at first_row 0");
-    CHECK(rg_grid_cell_rect(24, 1, VIEW_Y0, VIEW_H, &x, &y),
-          "row 4 must be visible at first_row 1");
-    CHECK(y == VIEW_Y0 + 3 * RG_GRID_CELL_H, "scrolled row 4 lands on the 4th slot, y=%d", y);
+    /* Row 3 is below a 3-row viewport until the grid scrolls. */
+    CHECK(!rg_grid_cell_rect(18, 0, VIEW_Y0, VIEW_H, &x, &y),
+          "row 3 must be off-screen at first_row 0");
+    CHECK(rg_grid_cell_rect(18, 1, VIEW_Y0, VIEW_H, &x, &y),
+          "row 3 must be visible at first_row 1");
+    CHECK(y >= VIEW_Y0 + RG_GRID_MARGIN_Y + 2 * RG_GRID_CELL_H,
+          "scrolled row 3 lands on the last slot, y=%d", y);
+
+    /* And the bottom row must clear the header bar by the same amount. */
+    int last_visible = 2 * RG_GRID_COLS; /* first cell of the 3rd visible row */
+    CHECK(rg_grid_cell_rect(last_visible, 0, VIEW_Y0, VIEW_H, &x, &y),
+          "the 3rd row is on screen");
+    CHECK((VIEW_Y0 + VIEW_H) - (y + RG_GRID_CELL_H) >= RG_GRID_MARGIN_Y,
+          "the bottom row must clear the header bar by %d px, got %d",
+          RG_GRID_MARGIN_Y, (VIEW_Y0 + VIEW_H) - (y + RG_GRID_CELL_H));
 }
 
 static void test_move_bounds(void)
@@ -141,6 +175,7 @@ static void test_open_on_any_tab(void)
 
 int main(void)
 {
+    test_tile_fits_its_cell();
     test_row_count();
     test_visible_rows();
     test_cells_stay_on_screen();

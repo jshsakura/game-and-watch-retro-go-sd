@@ -1064,7 +1064,7 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     /* ROM name/type/size and "delete ROM" used to hang off the B button. B is the
      * back key now, so they live here — the only menu a ROM has. */
     choices[rows++] = sep;
-    choices[rows++] = (odroid_dialog_choice_t){6, curr_lang->s_File, (char *)"", 1, NULL};
+    choices[rows++] = (odroid_dialog_choice_t){6, curr_lang->s_GameProp, (char *)"", 1, NULL};
     choices[rows++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
     assert(rows <= (int)(sizeof(choices) / sizeof(choices[0])));
 
