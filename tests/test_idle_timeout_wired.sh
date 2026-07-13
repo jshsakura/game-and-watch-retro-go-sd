@@ -25,6 +25,16 @@ check Core/Src/retro-go/rg_main.c       "the launcher home loop"
 check Core/Src/porting/odroid_overlay.c "the in-game overlay loop"
 check Core/Src/retro-go/rg_clock.c      "the clock app loop"
 
+# The dialog is the one every screen borrows. It never asked, so ANY menu left open
+# — an emulator's options, the language picker, a theme — held the screen lit for
+# ever with a timeout configured. One loop, every screen in the firmware.
+if grep -q "dialog_idle_start" Core/Src/porting/odroid_overlay.c; then
+    echo "  OK   the shared dialog loop honours the global idle timeout"
+else
+    echo "  FAIL odroid_overlay_dialog() can sit open for ever — every menu in the firmware with it"
+    rc=1
+fi
+
 # The clock face's own loop asking (checked above) does not cover it: the
 # clock has two MORE loops of its own -- clock_edit_time() (set date/time) and
 # alarm_edit_view() (per-alarm time editor) -- that run their own for(;;)/

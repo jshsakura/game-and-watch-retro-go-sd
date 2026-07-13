@@ -944,6 +944,13 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *options, i
         }
     }
 
+    /* "Idle power off" applies here too. Every other loop that can sit idle asks —
+     * the launcher home, the in-game overlay, the clock — and this one never did, so
+     * ANY dialog left open (an emulator's options, the language picker, a theme) held
+     * the screen lit for ever with a timeout configured. Same rule, same sleep the
+     * launcher takes: STOP, resume in place, and the dialog is still here. */
+    uint32_t dialog_idle_start = uptime_get();
+
     while (1)
     {
         _repaint();
@@ -952,6 +959,17 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *options, i
         }
 
         odroid_input_read_gamepad(&joystick);
+
+        if (joystick.bitmask) {
+            dialog_idle_start = uptime_get();
+        } else if (odroid_idle_timeout_expired(uptime_get() - dialog_idle_start)) {
+            odroid_system_sleep();
+            dialog_idle_start = uptime_get();
+            /* the wake press must not leak into the menu underneath */
+            do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&joystick); }
+            while (joystick.values[ODROID_INPUT_POWER]);
+            continue;
+        }
 
         if (!joystick.values[ODROID_INPUT_POWER] && power_key_debounce) {
             power_key_debounce = false;
