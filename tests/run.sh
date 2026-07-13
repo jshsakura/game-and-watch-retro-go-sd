@@ -27,6 +27,46 @@ fi
 if [ -f "Core/Src/porting/video/avi.c" ]; then
     $CC $FLAGS -ICore/Inc/porting/video \
         tests/test_avi.c Core/Src/porting/video/avi.c        -o /tmp/mtest/test_avi
+
+    # video_decode.c: jpeg_dims() SOF-marker walk (reached only through the
+    # public video_decode_slot(), it's static) + the g_scratch slot-layout
+    # pin. Only hardware seam stubbed is the HW JPEG peripheral itself.
+    $CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc/porting/video \
+        -ICore/Src/porting/lib -ICore/Inc/porting/music \
+        tests/test_video_decode.c Core/Src/porting/video/video_decode.c \
+        -o /tmp/mtest/test_video_decode
+
+    # video_audio.c: the trim_step() clock-drift servo (see this dir's
+    # CLAUDE.md, "Nothing synchronises the two clocks" -- the shipped "fine
+    # for 4 minutes, then permanent stutter" bug). #includes video_audio.c
+    # directly for its static servo state, same pattern rg_clock.c's tests use.
+    $CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc/porting/video \
+        -ICore/Inc/porting/music \
+        tests/test_video_audio.c Core/Src/porting/music/music_minimp3.c \
+        -o /tmp/mtest/test_video_audio
+
+    # video_play.c: the pf_step()/pf_fetch()/pf_reset() prefetch state machine
+    # (jitter buffer + the audio-ring gate that jammed shut during the drift
+    # bug). #includes video_play.c directly for its statics; links the REAL
+    # avi.c/video_decode.c/video_audio.c it actually drives, not a reimplementation.
+    $CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc/porting/video \
+        -ICore/Src/porting/lib -ICore/Inc/porting/music \
+        tests/test_video_play.c Core/Src/porting/video/avi.c \
+        Core/Src/porting/video/video_decode.c Core/Src/porting/video/video_audio.c \
+        Core/Src/porting/music/music_minimp3.c \
+        -o /tmp/mtest/test_video_play
+
+    # Real MP3 fixture the trim_step()/audio-ring-gate tests above decode
+    # through the REAL minimp3 (servo behaviour depends on real frame sizes,
+    # not synthetic bytes -- see test_video_audio.c's header comment for why).
+    # CI's host-tests job runs on ubuntu-latest, which ships ffmpeg; if it's
+    # missing anyway, both tests print their own SKIP and still exit 0.
+    if command -v ffmpeg >/dev/null 2>&1; then
+        ffmpeg -y -loglevel error -f lavfi -i "sine=frequency=440:duration=45" \
+            -ar 44100 -ac 1 -b:a 128k /tmp/mtest/video_audio_test.mp3
+    else
+        echo "ffmpeg not found -- video_audio/video_play servo tests will SKIP their MP3-dependent checks"
+    fi
 fi
 # rg_clock.c is compiled as an SD-card build here (-DSD_CARD=1) so the alarm /
 # GIF / photo / picker logic is all present; test_clock_sd0.c below builds the
@@ -115,7 +155,10 @@ if [ -d "$SRC" ]; then
     /tmp/mtest/test_browser     || rc=1
     /tmp/mtest/test_color       || rc=1
 fi
-[ -x /tmp/mtest/test_avi ] && { /tmp/mtest/test_avi || rc=1; }
+[ -x /tmp/mtest/test_avi ]          && { /tmp/mtest/test_avi          || rc=1; }
+[ -x /tmp/mtest/test_video_decode ] && { /tmp/mtest/test_video_decode || rc=1; }
+[ -x /tmp/mtest/test_video_audio ]  && { /tmp/mtest/test_video_audio  || rc=1; }
+[ -x /tmp/mtest/test_video_play ]   && { /tmp/mtest/test_video_play   || rc=1; }
 /tmp/mtest/test_clock_alarm || rc=1
 /tmp/mtest/test_clock_gif   || rc=1
 /tmp/mtest/test_clock_more  || rc=1
@@ -169,6 +212,107 @@ else
     echo "OK no duplicate logo enums/blobs"
 fi
 
+echo "=== common.c: frame integrator clamp / skip_frames thresholds / speedup table / sound_sync ==="
+# common_emu_frame_loop() is the shared per-core pacing loop; the Super Metroid
+# port never called it at all (root CLAUDE.md), which starved it of pacing,
+# frameskip and a speedup toggle. That's a different bug (a call site, not
+# this logic), but the pacing math itself had no test before this one. Whole-
+# file #include (tests/test_common.c) so the file's static frame_integrator/
+# skip_streak are reachable; stubs in tests/common_stubs/ cover only the
+# hardware/menu seams this logic never touches.
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/common_stubs \
+    tests/test_common.c                                  -o /tmp/mtest/test_common
+/tmp/mtest/test_common || rc=1
+
+echo "=== gw_malloc.c: itc/ahb/ram bump allocators (alignment, ITC bounds, over-large fails) ==="
+# The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators behind "RAM
+# priority = emulators first" (root CLAUDE.md). Linker symbols
+# (__ITCMRAM_LENGTH__ etc.) are the SIZEOF-as-address trick gw_malloc.c reads
+# by taking their &address, not their value -- given real values here with
+# -Wl,--defsym, same technique test_clock_mp3.c already uses for the overlay
+# SIZE symbols. ram_start is a real writable global, set directly by the test.
+$CC -O2 -Wall -Wextra -std=gnu11 -no-pie \
+    -Itests/gw_malloc_stubs -ICore/Inc \
+    -Wl,--defsym=__RAM_EMU_END__=0x21000 \
+    -Wl,--defsym=__ahbram_heap_start__=0x30000 \
+    -Wl,--defsym=__ahbram_audio_start__=0x30100 \
+    -Wl,--defsym=__itcram_start__=0x1000 \
+    -Wl,--defsym=__itcram_end__=0x1010 \
+    -Wl,--defsym=__ITCMRAM_LENGTH__=0x40 \
+    -Wl,--defsym=__NULLPTR_LENGTH__=0x8 \
+    tests/test_gw_malloc.c Core/Src/gw_malloc.c           -o /tmp/mtest/test_gw_malloc
+/tmp/mtest/test_gw_malloc || rc=1
+
+echo "=== crc32.c: known-vector pins ==="
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/crc32_stubs -ICore/Inc/porting \
+    tests/test_crc32.c Core/Src/porting/crc32.c            -o /tmp/mtest/test_crc32
+/tmp/mtest/test_crc32 || rc=1
+
+echo "=== lz4_depack.c: round-trip + boundary cases ==="
+$CC -O2 -Wall -Wextra -std=gnu11 -ICore/Src/porting/lib \
+    tests/test_lz4_depack.c Core/Src/porting/lib/lz4_depack.c -o /tmp/mtest/test_lz4_depack
+/tmp/mtest/test_lz4_depack || rc=1
+
+# === safety nets must not be the thing that breaks the build =========
+# Two CI jobs went red once not from a real defect but from the safety nets
+# themselves: check_core_symbol_aliases.py crashing when nm wasn't on PATH,
+# and this file's sm block dying when external/sm wasn't checked out. Both
+# pinned below so that regresses instead of silently recurring.
+echo "=== check_core_symbol_aliases: nm-missing / alias / clean-tree pins ==="
+bash tests/test_check_core_symbol_aliases.sh || rc=1
+
+echo "=== tests/run.sh: sm parity SKIPS (not fails) without external/sm ==="
+bash tests/test_sm_skip_guard.sh || rc=1
+
+echo "=== sm: savestate header refuses a foreign or truncated file ==="
+# sm_system_SaveState/LoadState (main_sm.c) stamp every file with a magic/
+# version/length header and refuse to load one that doesn't match — a
+# savestate is a raw dump of live structs, and a file from a build whose
+# structs have since moved would otherwise still open, still read to the
+# end, and quietly restore nonsense (a black screen, no clue why). The
+# check itself lives in sm_state_header.h, factored out of main_sm.c so it
+# links here without the SNES core or the G&W HAL main_sm.c sits on top of.
+#
+# This block sits BEFORE "sm: device source set is symbol-complete" on
+# purpose: test_sm_skip_guard.sh re-runs everything from that marker to EOF
+# as its own standalone script to check the SKIP-without-external/sm path,
+# and it expects that slice to run clean. Anything placed after the marker
+# becomes part of what it exercises (and, since it has no $CC of its own,
+# ${CC:-gcc} rather than $CC matters there too — belt and suspenders).
+mkdir -p /tmp/mtest
+${CC:-gcc} -O2 -Wall -Wextra -std=c11 -ICore/Inc/porting/sm \
+    tests/test_sm_state_header.c -o /tmp/mtest/test_sm_state_header
+/tmp/mtest/test_sm_state_header || rc=1
+
+echo "=== sm: a load must invalidate the PPU's derived caches, not just restore state ==="
+# ppu_saveload() (external/sm/src/snes/ppu.c) does not serialise palette565 or
+# brightnessMult — they're caches derived from cgram+brightness, not state, and
+# they live past where the save/load stream stops (offsetof(Ppu,
+# pixelbuffer_placeholder)). A load restores cgram underneath them; unless
+# something invalidates them, the screen renders the loaded scene in the
+# colours of the one that was showing before the load.
+#
+# Runs the device's actual source set (tools/sm_harness/device_run.sh, built
+# with -DTARGET_GNW same as the parity check above) with SM_SAVELOAD=1, which
+# deliberately poisons those caches between save and load — see device_main.c
+# for why it does that instead of driving the game elsewhere with input, which
+# is what an earlier version of this harness tried and which did not catch
+# this bug. SM_COLD_LOAD additionally covers the "PPU has rendered nothing
+# yet" shape of the same bug (load right after boot, before any frame primed
+# the caches).
+#
+# Needs both external/sm AND a local ROM fixture — CI's host-tests job has
+# neither (no submodules, and this ROM is not something we can ship/commit).
+SM_ROM="${SM_ROM:-/home/ubuntu/app/jupyterLab/notebooks/game-and-what/backend/data/library/public/_data/Super Metroid (Japan, USA) (En,Ja).sfc}"
+if [ -f external/sm/src/sm_rtl.c ] && [ -f "$SM_ROM" ]; then
+    SM_SAVELOAD=1 bash tools/sm_harness/device_run.sh "$SM_ROM" 300
+    rc=$(( rc || $? ))
+    SM_SAVELOAD=1 SM_COLD_LOAD=1 bash tools/sm_harness/device_run.sh "$SM_ROM" 300
+    rc=$(( rc || $? ))
+else
+    echo "SKIP  needs external/sm checked out AND a ROM at \$SM_ROM (CI's host-tests job has neither)"
+fi
+
 echo "=== sm: device source set is symbol-complete ==="
 # The main sm harness compiles all of external/sm, including sm_cpu_infra.c, which
 # defines and sets g_snes. The device does not compile that file. That gap let
@@ -184,5 +328,14 @@ if [ -f external/sm/src/sm_rtl.c ]; then
 else
     echo "SKIP  external/sm is not checked out (no submodules in this job)"
 fi
+
+echo "=== jpeg: hw_jpeg_decoder.c lock/callback/floor-to-4 regressions ==="
+# Three real bugs shipped in hw_jpeg_decoder.c in three consecutive releases, each
+# found only after the device died: a stuck HAL lock, HAL's end-of-input callback
+# misread as an error, and HAL flooring InDataLength to a multiple of 4 (dropping
+# the JPEG's trailing EOI). All three were pure state/arithmetic — no peripheral
+# needed to reproduce them on a host. See tools/jpeg_harness/run.sh.
+bash tools/jpeg_harness/run.sh
+rc=$(( rc || $? ))
 
 exit $rc

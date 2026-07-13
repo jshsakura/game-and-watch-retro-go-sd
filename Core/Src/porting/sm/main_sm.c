@@ -45,6 +45,7 @@
 #include "sm/src/spc_player.h"
 #include "sm/src/types.h"
 #include "sm/src/variables.h"
+#include "sm_state_header.h"
 
 /* No -Ofast here: the overlay pool is full to the byte and the glue is not the
  * hot path — the game logic is, and it is built -Os for exactly this reason. */
@@ -342,19 +343,10 @@ static void sm_system_SramSave(void) {
 /* RtlSaveLoadState streams the state through these; nothing is staged in RAM,
  * because there is no RAM to stage ~270 KB in.
  *
- * A header, because a savestate outlives the firmware that wrote it. The stream is
- * a raw dump of live structs: change one of them and yesterday's file still opens,
- * still reads, and quietly loads garbage — which on this core means a black screen
- * and no clue why. So stamp it, and refuse to load a file this build did not write.
- * SM_STATE_VERSION goes up whenever the serialized layout moves. */
-#define SM_STATE_MAGIC   0x314D5347u   /* "GSM1" */
-#define SM_STATE_VERSION 1u
-
-typedef struct {
-  uint32_t magic;
-  uint32_t version;
-  uint32_t bytes;      /* payload length, so a truncated file is caught too */
-} sm_state_header_t;
+ * Header magic/version/struct and the validation logic live in
+ * sm_state_header.h, not here — that is what lets a host test exercise the
+ * "refuse a foreign or truncated file" behaviour without linking the SNES
+ * core this file drives. See that header for why the header exists at all. */
 
 static FILE *savestate_file;
 static size_t savestate_bytes;
@@ -414,8 +406,7 @@ static bool sm_system_LoadState(char *pathName) {
   }
 
   sm_state_header_t hdr = { 0, 0, 0 };
-  bool ok = fread(&hdr, 1, sizeof(hdr), savestate_file) == sizeof(hdr) &&
-            hdr.magic == SM_STATE_MAGIC && hdr.version == SM_STATE_VERSION;
+  bool ok = sm_state_header_read(savestate_file, &hdr);
   if (!ok) {
     /* Written by a different build. Loading it would restore a struct dump into
      * structs that have since moved: the game does not crash, it just renders

@@ -1,0 +1,89 @@
+# Coverage denominator for tests/coverage.sh.
+#
+# "Coverage of the whole tree" is meaningless here: the tree is mostly ST HAL
+# drivers, 29 third-party emulator cores, and LCD/SAI/SD peripheral code that
+# cannot run on a host at all. This file is the list of what CAN run on a host
+# AND is ours to fix, built from two things: what tests/run.sh already
+# compiles, and what has actually shipped broken (git log — see root
+# CLAUDE.md's "Debugging crashes on hardware" section and the fix(*) commits).
+#
+# Format: STATUS<TAB>path<TAB>reason. Blank lines and lines starting with #
+# are ignored. Paths are relative to the repo root; EXCLUDED entries may be a
+# directory prefix (matched by startswith) instead of a single file.
+#
+# STATUS:
+#   MEASURED   tests/coverage.sh compiles the REAL file with --coverage and
+#              runs a binary that exercises it (mirrors tests/run.sh). The
+#              number in the report for this file came from an actual run.
+#   UNMEASURED code we own, and nothing in its own body rules out a host
+#              build (grep for HAL_/SAI_/DMA_/SPI_/GPIO_ calls was the first
+#              filter) — but no test compiles the real file today, so
+#              tests/coverage.sh reports "NO HARNESS", not 0%. 0% would claim
+#              a measurement that was never taken. This list IS the work
+#              order the task asked for; priority notes are in the reason.
+#   EXCLUDED   out of the denominator, with why.
+
+# ── MEASURED ────────────────────────────────────────────────────────────────
+MEASURED	Core/Src/retro-go/rg_clock.c	tests/test_clock_alarm.c (SD_CARD=1), test_clock_more.c (SD_CARD=1), test_clock_sd0.c (SD_CARD=0) each #include this file directly
+MEASURED	Core/Src/retro-go/rg_clock_gif.c	tests/test_clock_gif.c #includes this + gifdec.c directly
+MEASURED	Core/Src/porting/lib/gifdec/gifdec.c	same binary as rg_clock_gif.c above
+MEASURED	Core/Src/retro-go/rg_clock_alarm_mp3.c	tests/test_clock_mp3.c #includes this directly
+MEASURED	Core/Src/retro-go/rg_clock_album.c	tests/test_album.c compiles this against tests/album_stubs
+MEASURED	Core/Src/retro-go/rg_alarm.c	tests/test_alarm.c #includes this directly (-DRG_ALARM_HOST compiles out the firmware half)
+MEASURED	Core/Src/retro-go/rg_favorites.c	tests/test_favorites.c compiles this against tests/fav_stubs
+MEASURED	Core/Src/retro-go/rg_storage.c	tests/test_storage.c compiles this TWICE (SD_CARD=1 FatFs stub, SD_CARD=0 FrogFS stub) against tests/storage_stubs
+MEASURED	Core/Src/porting/video/avi.c	tests/test_avi.c compiles this directly; only present on branches that carry the AVI demuxer. Covers the chunk walk/read/seek path plus the error paths a bad file can hit: every avi_open() fail: exit (bad RIFF/form-type magic, no movi found, a zero-size chunk making no progress), avi_reopen() self-heal from BOTH call sites (avi_read()'s short read and avi_next()'s own fseek/rd_fourcc, including giving up cleanly via AVI_END when the file is truly gone, and re-applying the caller's read-ahead buffer), the idx1-assisted seek (avi_build_index(), proven via ckpt[] contents so a brute-force fallback can't fake a pass, including scanning past non-idx1 padding and rejecting an unrecognisable idx1), a 'rec ' grouping LIST descent, a chunk before avih inside hdrl, a top-level JUNK chunk before movi, and a zero-size / oversized chunk inside movi (AVI_END is idempotent afterwards)
+MEASURED	Core/Src/porting/video/video_decode.c	tests/test_video_decode.c compiles this directly against tests/video_stubs (HW JPEG peripheral stubbed; g_scratch is a real 352KB buffer). Covers jpeg_dims()'s SOF-marker walk end to end (only reachable through the public video_decode_slot(), it's static) — malformed/no-marker streams, a truncated header, segments with no SOF present, a zero-encoded dimension, SOF0/SOF1/SOF2 all parsing identically, a standalone (no-length) marker being skipped correctly — the st=1..5 diagnostic codes (bad args/oversized/undersized, fread-fail-shaped, jpeg_dims fail, larger-than-screen, HW-decode-rc-nonzero), and video_slot()'s 3-slot + JPEG-work-area g_scratch partition pinned against overlap
+MEASURED	Core/Src/porting/video/video_audio.c	tests/test_video_audio.c #includes this file directly (its static servo state — g_fill_ema/g_step/g_step_base — is the thing under test, same pattern tests/test_clock_alarm.c uses for rg_clock.c) against tests/video_stubs, decoding a real ffmpeg-generated MP3 fixture through the real minimp3 (Core/Src/porting/music/music_minimp3.c). Covers video_audio_start()'s initial ring/servo state, the VR_TARGET/VR_SIZE/PF_AUDIO_HEADROOM cross-file coupling CLAUDE.md documents, trim_step()'s direction and its +/-1% clamp, video_audio_stop() resetting the servo (not just the ring), and the headline regression: trim_step() holding the ring at a stable plateau, comfortably above the prefetch gate, under a sustained real-decode drain mismatch (reverting trim_step() to a no-op makes this go RED — the ring plateaus far below the gate instead)
+MEASURED	Core/Src/porting/video/video_play.c	tests/test_video_play.c #includes this file directly (pf_step()/pf_fetch()/pf_reset() are static) against tests/video_stubs, linking the REAL avi.c/video_decode.c/video_audio.c (+ music_minimp3.c) it actually drives rather than reimplementing any of them — video_play() itself and all its LCD/input/overlay/i18n dependencies compile (the TU needs every symbol resolved) but are never invoked; only the prefetch state machine is exercised. Covers pf_reset() clearing every field, a burst frame already being in RAM when pf_fetch() hands it out (zero blocking read charged), the rd=/pf= HUD attribution (forced vs. wait-time reads charged to the right counter), and the audio-ring gate that jammed shut during the drift bug: a non-forced pf_step() makes zero progress (cursor doesn't move, nothing queued) once the REAL audio ring is past PF_AUDIO_HEADROOM, while force=true correctly bypasses that gate
+MEASURED	external/firmware_update/Core/Src/tar.c	tests/test_fw_tar.c compiles the real tar.c against the real vendored FatFs on a RAM disk under ASan+UBSan. Technically a submodule, but it is jshsakura's own fork (see .gitmodules) and CI's host-tests job explicitly `git submodule update --init` just this one submodule for this test — treated as ours for measurement purposes
+MEASURED	Core/Src/porting/common.c	tests/test_common.c #includes this file directly (whole-file, so the static frame_integrator/skip_streak are reachable) against tests/common_stubs. Pins the frame integrator's debt/credit clamp, the skip_frames 0/1/2 thresholds, the pause_frames branch, the overload guard (1 drawn frame per 4 skipped), the SPEEDUP_* scaling table, and common_emu_sound_sync()'s DMA-half wait contract. Only the pacing logic is exercised — the menu/overlay/screenshot code in the same file links (stubbed) but is not driven by any assertion
+MEASURED	Core/Src/gw_malloc.c	tests/test_gw_malloc.c compiles this real file against tests/gw_malloc_stubs, with the linker's SIZEOF-as-address symbols (__ITCMRAM_LENGTH__ etc.) given real values via -Wl,--defsym. Was EXCLUDED by the blanket "Core/Src/gw_" hardware-bring-up prefix below; carved out here the same way external/firmware_update/tar.c was carved out of the external/ exclusion — it has 0 HAL calls, it's a pure bump allocator, and it is the file root CLAUDE.md's "RAM priority = emulators first" rule actually enforces (itc_malloc/ahb_malloc/ram_malloc/ram_calloc). Pins 4-byte alignment of every returned pointer (including from a deliberately misaligned ram_start), the ITC pool bounds check, an over-large ram_malloc failing (NULL) rather than wrapping, and an over-large ahb_only_malloc asserting rather than wrapping into the DMA audio region
+MEASURED	Core/Src/porting/crc32.c	tests/test_crc32.c compiles this against tests/crc32_stubs (DEXTFLASH_ATTR/GLOBAL_DATA only — the real main.h/porting.h pull in the STM32 HAL). Pinned against the standard CRC-32 check vector ("123456789" -> 0xCBF43926) plus several known strings and a chained-call-equals-single-call property
+MEASURED	Core/Src/porting/lib/lz4_depack.c	tests/test_lz4_depack.c compiles this directly, no stubbing needed (lz4_depack.h has no external deps). Blocks are hand-built against the token grammar (no compressor exists in this tree to round-trip against) covering: leading-zero-byte empty input, a literal-only block that decompresses to exactly the destination's declared size (canary byte pins no overrun), a real LZ77 back-reference match, and a corrupt trailing sequence that the decoder's own end-of-block restriction check must reject
+MEASURED	Core/Src/porting/lib/hw_jpeg_decoder.c	tools/jpeg_harness/{lock,callback,floor}_test.c each compile this REAL file (not a reimplementation) against a faithful ST HAL fake (tools/jpeg_harness/hal_fake/, transcribed from Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_jpeg.c with line citations) and drive it through its real entry points (JPEG_DecodeToFrameInit/ToFrame/ToBuffer). Each test is RED against the real historical pre-fix file (git show <fix>^:...) and GREEN against current — see tools/jpeg_harness/run.sh
+
+# ── UNMEASURED (the work order, roughly risk-ranked) ───────────────────────
+# Tier S: directly implicated in a shipped device-killing bug this week, or
+# the file the bug lived in even if the fixed line was elsewhere.
+UNMEASURED	Core/Src/porting/video/video_ui.c	80 lines, 0 HAL calls
+UNMEASURED	Core/Src/retro-go/rg_rtc.c	RTC read/write; "RTC 드리프트" is an open backlog item. 9 HAL calls in 319 lines
+
+# Tier A: zero (or near-zero) direct HAL/DMA/SPI/GPIO calls — pure algorithms,
+# the cheapest real coverage to add, no peripheral to fake.
+UNMEASURED	Core/Src/porting/gw_alloc.c	NOT the RAM-priority allocator despite the name/location — it's _sbrk() (the newlib heap hook) plus a DEBUG_RG_ALLOC-gated malloc()-with-size-header wrapper (rg_alloc/rg_calloc/rg_free/rg_realloc); DEBUG_RG_ALLOC is defined unconditionally in Makefile.common so that wrapper IS compiled into every build. The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators this task's pins actually describe (4-byte alignment, ITC bounds check, over-large-fails) live in Core/Src/gw_malloc.c (see MEASURED above) — `grep -rn "void \*itc_malloc" .` confirms it's the only definition in the tree. 110 lines, 0 HAL, still a reasonable (smaller) follow-up target: _sbrk's OOM assert and the DEBUG_RG_ALLOC header bookkeeping are both untested
+UNMEASURED	Core/Src/retro-go/rg_utils.c	175 lines, 0 HAL
+UNMEASURED	Core/Src/retro-go/rg_frogfs.c	181 lines, 0 HAL
+UNMEASURED	Core/Src/retro-go/rg_welcome_prompt.c	88 lines, 0 HAL
+UNMEASURED	Core/Src/retro-go/gw_firmware_abi.c	256 lines, 2 HAL calls — the /CONFIG-adjacent ABI surface (appid.h struct dump); APPID_COUNT growth resets every user's settings per root CLAUDE.md, worth protecting with a real test
+UNMEASURED	Core/Src/porting/music/music_id3.c	ID3 tag parser, 293 lines, 0 HAL. tests/run.sh already has a $SRC="Core/Src/porting/media" branch-conditional block for a differently-named sibling module that does not exist on this branch — the music/ files here are currently wired to nothing
+UNMEASURED	Core/Src/porting/music/music_lyrics.c	LRC/lyrics parser, 57 lines, 0 HAL
+UNMEASURED	Core/Src/porting/music/music_cover.c	441 lines, 0 HAL
+UNMEASURED	Core/Src/porting/music/progjpeg.c	progressive JPEG decode, 480 lines, 0 HAL
+UNMEASURED	Core/Src/porting/music/tjpgd.c	baseline JPEG decode, 1143 lines, 0 HAL (vendored algorithm but modified/used directly by this port, not a git submodule)
+UNMEASURED	Core/Src/porting/music/music_lupng.c	PNG decode, 1312 lines, 0 HAL
+UNMEASURED	Core/Src/porting/music/music_ui.c	1002 lines, 0 direct HAL calls (menu/layout logic; may call gw_lcd wrappers that need light stubbing)
+UNMEASURED	Core/Src/porting/music/music_audio.c	495 lines, 0 direct HAL calls (calls gw_audio wrappers)
+
+# Tier B: real logic but a bigger stub surface (more HAL calls, or entangled
+# with the retro-go shell/menu state).
+UNMEASURED	Core/Src/retro-go/rg_emulators.c	emulator-list/state management that rg_favorites.c already depends on (via rg_emulators.h) without this .c file itself ever being compiled by a test. 1631 lines, 4 HAL calls
+UNMEASURED	Core/Src/retro-go/rg_main.c	launcher main loop / menu dispatch. 1188 lines, 14 HAL calls
+UNMEASURED	Core/Src/retro-go/gui.c	launcher rendering + cover JPEG/PNG loading (the Cover JPEG HardFault bug lived one layer down in hw_jpeg_decoder.c, but this is the caller). 1886 lines, 0 direct HAL_ calls but heavy odroid_display/gw_lcd + hw_jpeg_decoder use
+UNMEASURED	Core/Src/retro-go/rg_logos.c	2846 lines, but dominated by generated bitmap-blob arrays — tests/run.sh's "colour icon bbox invariants" python check already regex-validates the generated struct shape (not a gcov-measurable test). Low priority: little independent logic to unit test
+UNMEASURED	Core/Src/retro-go/rom_manager.c	129 own lines wrapping #include of a dozen generated *_roms.c/*_bios.c tables. Low priority: mostly generated data, thin logic layer
+
+# ── EXCLUDED ────────────────────────────────────────────────────────────────
+EXCLUDED	external/	third-party emulator cores/submodules with their own licenses and upstream ownership; root CLAUDE.md forbids editing them directly ("fix upstream or add/update a patch"). One exception is carved out above (firmware_update/Core/Src/tar.c, jshsakura's own fork, already tested). external/sm and external/firmware_update also have their OWN non-gcov harnesses (tools/sm_harness/device_run.sh + device_parity.sh) that check device-fidelity properties gcov cannot express (symbol-aliasing, ABI parity) — those are a parallel, deliberately different kind of check, not a gap in this list
+EXCLUDED	retro-go-stm32/	vendored upstream retro-go snapshot (launcher UI + 3 emulator cores); changes here should go upstream, not be host-unit-tested in this fork
+EXCLUDED	Core/Src/porting/lib/FatFs/	vendored third-party (ChaN's FatFs); tests/test_fw_tar.c already builds it warning-free as a dependency without linting/covering it, matching that test's own stated intent
+EXCLUDED	Core/Src/porting/lib/frogfs/	vendored third-party filesystem
+EXCLUDED	Core/Src/porting/lib/littlefs/	vendored third-party filesystem
+EXCLUDED	Core/Src/porting/lib/tamp/	vendored third-party compressor, bundled WITH its own upstream Unity test suite (ctests/, fuzz/) — none of that is our code or our test to run
+EXCLUDED	Core/Src/porting/lib/lzma/	vendored third-party (LZMA SDK)
+EXCLUDED	Core/Src/porting/lib/hw_sha1.c	thin wrapper over the HW SHA1 peripheral, 20 HAL calls in 80 lines (denser than hw_jpeg_decoder.c) and no bug history — lower priority than the JPEG decoder; revisit if it ever grows one
+EXCLUDED	Core/Src/porting/a2600/	Core/Src/porting/a7800/	Core/Src/porting/amstrad/	Core/Src/porting/c64/	Core/Src/porting/celeste/	Core/Src/porting/gamecom/	Core/Src/porting/gb_tgbdual/	Core/Src/porting/gw/	Core/Src/porting/gwenesis/	Core/Src/porting/lynx/	Core/Src/porting/msx/	Core/Src/porting/nes/	Core/Src/porting/nes_fceu/	Core/Src/porting/ngp/	Core/Src/porting/pce/	Core/Src/porting/pico8/	Core/Src/porting/pkmini/	Core/Src/porting/sm/	Core/Src/porting/smsplusgx/	Core/Src/porting/smw/	Core/Src/porting/tama/	Core/Src/porting/vb/	Core/Src/porting/videopac/	Core/Src/porting/wsv/	Core/Src/porting/wswan/	Core/Src/porting/zelda3/	Core/Src/porting/zxs/	each main_<system>.c drives a full third-party emulator core plus HW LCD/audio/input every frame; not host-runnable without a dedicated per-core harness. pce (linux/Makefile.pce) and sm (tools/sm_harness) have started that work, but neither compiles its real per-frame porting file under gcov today — out of scope for this pass, worth a follow-up once one of those harnesses stabilizes
+EXCLUDED	Core/Src/porting/odroid_display.c	Core/Src/porting/odroid_audio.c	Core/Src/porting/odroid_input.c	Core/Src/porting/odroid_netplay.c	Core/Src/porting/odroid_overlay.c	Core/Src/porting/odroid_sdcard.c	Core/Src/porting/odroid_settings.c	Core/Src/porting/odroid_system.c	the shell's HAL glue: LCD/SAI/SD/input/battery register access is the whole point of these files
+EXCLUDED	Core/Src/retro-go/i18n/	generated locale string tables, not logic
+EXCLUDED	Drivers/	ST HAL vendor code, not ours
+EXCLUDED	Core/Src/main.c	Core/Src/gw_	ST HAL bring-up, LCD, SAI, buttons, SD driver, RTC, battery, flash-chip access — hardware bring-up by construction

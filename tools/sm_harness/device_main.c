@@ -139,53 +139,85 @@ int main(int argc, char **argv) {
     RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
   }
   if (getenv("SM_SAVELOAD")) {
-    /* save here */
+    /* Capture state X, once, before anything renders past it. Also remember
+     * X's brightness register value directly (not read back off the live ppu
+     * later — the reference render below advances that forward) — it is what
+     * the reload restores ppu->brightness to, and the poison below needs it. */
     g_state_len = 0;
     RtlSaveLoadState(kSaveLoad_Save, &state_write, NULL);
     printf("savestate: %zu bytes\n", g_state_len);
+    uint8_t brightness_at_X = g_snes->ppu->brightness;
 
-    /* run 60 frames from the save point and remember what the screen became */
-    for (int i = 0; i < 60; i++) {
-      PpuBeginDrawing(g_snes->ppu, (uint8_t *)g_line, 0, 0);
-      RtlRunFrame(0);
-      RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
-    }
+    /* Reference: render the frame X -> X+1 with caches that organically match
+     * cgram (nothing has poisoned or reloaded anything yet). This is the frame
+     * a correct load-and-continue must reproduce. NOTE: this has to be the same
+     * transition (X -> X+1) that "b" below renders — comparing this frame to
+     * a LATER one (e.g. hashing 60 frames post-load instead of the very next
+     * one) is comparing two different game frames on principle, which will
+     * differ whether or not the cache bug exists. That mistake is what let
+     * this exact bug ship three times. */
+    PpuBeginDrawing(g_snes->ppu, (uint8_t *)g_line, 0, 0);
+    RtlRunFrame(0);
+    RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
     uint64_t a = fb_hash();
 
-    /* THEN GO SOMEWHERE ELSE. Loading back into the same scene proves nothing: the
-     * PPU's derived state — its palette cache, its brightness table — still holds
-     * values that happen to be right. A player saves in one place and loads in
-     * another, and anything the savestate does not carry and the load does not
-     * rebuild is stale by then. Drive the game 600 frames on before reloading. */
-    for (int i = 0; i < 600; i++) {
-      PpuBeginDrawing(g_snes->ppu, (uint8_t *)g_line, 0, 0);
-      RtlRunFrame(i < 300 ? 0 : (1 << 3));   /* press start: change the scene */
-      RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
-    }
-
-    /* reload and run the same 60 frames.
+    /* Earlier version of this harness tried to reach a "different palette" PPU
+     * state by driving the game elsewhere with button input before reloading,
+     * then diffing the framebuffer some frames later. Both halves of that were
+     * too weak to catch the bug: pressing Start for a few hundred frames does
+     * not reliably land on a visibly different palette before the harness's
+     * frame budget runs out, and ordinary gameplay (HUD flashes, palette
+     * cycling, the NMI handler) rewrites cgram within a handful of frames
+     * regardless of the bug, healing a stale cache before a later-frame hash
+     * ever sees it. It ran IDENTICAL clean at every frame count tried, on both
+     * fixed and reverted ppu_saveload().
      *
-     * SM_COLD_LOAD models what the device actually does after a firmware update:
-     * boot, launch, load a state immediately. The PPU has rendered nothing yet, so
-     * everything it caches is still zero — and a load restores cgram without
-     * touching any of that. */
+     * So: poison the caches directly instead. First, SM_COLD_LOAD (which models
+     * what the device does after a firmware update: boot, launch, load a state
+     * immediately) — has to run BEFORE the poisoning below, because RtlReset()
+     * runs ppu_init(), which memsets the whole Ppu (palette565, paletteDirty,
+     * lastBrightnessMult included) to 0. Poisoning first would just get thrown
+     * away here, and would test nothing. */
     if (getenv("SM_COLD_LOAD")) {
       RtlReset(0);
       printf("(cold: the PPU has drawn nothing yet, as after a reboot)\n");
     }
+
+    /* Then poison the caches on the state that is about to be overwritten by
+     * the reload below. This is exactly what "drive the game elsewhere, then
+     * load" leaves behind — palette565/brightnessMult holding a different
+     * scene's colours while cgram is about to become X's again — done without
+     * hoping a button sequence gets there in time. paletteDirty = false and
+     * lastBrightnessMult == brightness_at_X both assert "these caches already
+     * match the state that is about to be loaded" — the exact lie
+     * ppu_saveload's fix has to overrule. (lastBrightnessMult must equal what
+     * Load() is about to restore ppu->brightness to, brightness_at_X, not some
+     * other value — ppu_runLine() has its OWN brightness!=lastBrightnessMult
+     * check that rebuilds brightnessMult independently of the load path, and a
+     * mismatched poison gets "fixed" by THAT check regardless of whether
+     * ppu_saveload's fix exists, which proves nothing.) */
+    Ppu *ppu = g_snes->ppu;
+    for (int i = 0; i < 256; i++) ppu->palette565[i] = (uint16_t)~ppu->palette565[i];
+    memset(ppu->brightnessMult, 0x55, sizeof(ppu->brightnessMult));
+    ppu->paletteDirty = false;
+    ppu->lastBrightnessMult = brightness_at_X;
+
+    /* Reload state X. Restores cgram (and everything else ppu_saveload streams)
+     * back to X's values, underneath whatever the caches above were just set
+     * to — the same shape the real bug takes: load restores state, nothing
+     * tells the derived caches. */
     g_state_pos = 0;
     RtlSaveLoadState(kSaveLoad_Load, &state_read, NULL);
-    for (int i = 0; i < 60; i++) {
-      PpuBeginDrawing(g_snes->ppu, (uint8_t *)g_line, 0, 0);
-      RtlRunFrame(0);
-      RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
-    }
+
+    /* Same transition as the reference (X -> X+1, from the state the reload
+     * just restored), so a correct load must reproduce hash a exactly. */
+    PpuBeginDrawing(g_snes->ppu, (uint8_t *)g_line, 0, 0);
+    RtlRunFrame(0);
+    RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
     uint64_t b = fb_hash();
 
-    int lit = 0;
-    for (int i = 0; i < 320 * 240; i++) if (g_fb[i]) lit++;
-    printf("save/load round-trip: %s   (lit after reload: %d/76800)\n",
-           a == b ? "IDENTICAL" : "DIFFERENT — the state is incomplete", lit);
+    printf("save/load round-trip: %s\n",
+           a == b ? "IDENTICAL" : "DIFFERENT — a poisoned PPU cache survived the load");
     return a != b;
   }
 

@@ -1,114 +1,112 @@
-/* Why every video frame came back "hal=2 err=0" — and why the fix is the fix.
+/* Why every video frame came back "hal=2 err=0" -- and why the fix is the
+ * fix. Drives the REAL hw_jpeg_decoder.c (JPEG_DecodeToBufferInit/ToBuffer
+ * for the cover subsystem, JPEG_DecodeToFrameInit/ToFrame for video) against
+ * a faithful fake of the ST HAL it's written to (tools/jpeg_harness/hal_fake,
+ * transcribed from Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_jpeg.c with
+ * line citations). gcov sees every line of the real file this exercises.
  *
- * The JPEG peripheral cannot be driven on a host, so this does not decode
- * anything. It does not have to: the bug was never in the image. It was in the
- * HAL handle's lock, and that part of HAL is pure state, transcribed here from
- * the driver we ship, with line numbers so it can be checked:
+ * HAL_JPEG_Decode begins with __HAL_LOCK(hjpeg), which returns HAL_BUSY at
+ * once if the handle is locked (stm32h7xx_hal_jpeg.c:1641). The driver clears
+ * that lock in exactly two places (:520 and :541), both inside
+ * `if (State == HAL_JPEG_STATE_RESET)`. HAL_JPEG_Init restores State and
+ * ErrorCode but, called on a handle that is merely READY, never touches Lock.
  *
- *   Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_jpeg.c
- *     :520, :541   the ONLY two places the driver ever writes Lock = HAL_UNLOCKED,
- *                  and both sit inside `if (hjpeg->State == HAL_JPEG_STATE_RESET)`
- *     :1641        HAL_JPEG_Decode starts with __HAL_LOCK(hjpeg)
- *     :~1712       ...which returns HAL_BUSY at once if the handle is locked
- *     Init tail    State = READY, ErrorCode = HAL_JPEG_ERROR_NONE, Context = 0
+ * The device runs the cover subsystem and the video player over the SAME
+ * static JPEG handle in hw_jpeg_decoder.c, each initializing it once at their
+ * own startup (gui.c:271 JPEG_DecodeToBufferInit; video_play.c:416
+ * video_decode_init() -> JPEG_DecodeToFrameInit). If a cover-load session
+ * ever leaves the handle LOCKED -- production only ever saw the symptom
+ * (hal=2 err=0 rej=0 on every frame), never a diagnosed C-level cause, since
+ * HAL_JPEG_Decode unlocks on every one of its own return paths -- a later
+ * video session's Init call on the OLD code does not know to clear it, and
+ * every frame of that session opens locked. video_decode_init() now drives
+ * the handle to RESET before Init, so Init clears the lock regardless of
+ * what left it that way.
  *
- * Put those together and a handle that is ever left LOCKED is locked for the rest
- * of the session: Init will not clear it (State is READY, not RESET), so every
- * later decode returns HAL_BUSY without looking at the image, and ErrorCode reads
- * 0 because Init just cleared it. hal=2, err=0, rej=0 — the device's exact words.
+ * fakejpeg_inject_stuck_lock() drives exactly that precondition (see
+ * fakejpeg_control.h for why it has to work this way); everything after it
+ * is the real JPEG_DecodeToFrameInit/ToFrame call chain, unmodified.
  *
- *   cc -o lock_test lock_test.c && ./lock_test
+ *   cc ... -o lock_test lock_test.c hw_jpeg_decoder.c hal_jpeg_fake.c   # GREEN
+ *   (same, but hw_jpeg_decoder.c from before 7ae5c0e8)                 # RED
+ * both done by tools/jpeg_harness/run.sh.
  */
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 
-typedef enum { HAL_UNLOCKED = 0, HAL_LOCKED = 1 } HAL_LockTypeDef;
-typedef enum { HAL_OK = 0, HAL_ERROR = 1, HAL_BUSY = 2, HAL_TIMEOUT = 3 } HAL_StatusTypeDef;
-typedef enum {
-  HAL_JPEG_STATE_RESET = 0, HAL_JPEG_STATE_READY, HAL_JPEG_STATE_BUSY,
-  HAL_JPEG_STATE_BUSY_DECODING, HAL_JPEG_STATE_ERROR,
-} HAL_JPEG_STATETypeDef;
+#include "main.h"              /* JPEG_444_SUBSAMPLING etc. -- fake HAL constants */
+#include "hw_jpeg_decoder.h"
+#include "fakejpeg_control.h"
+#include "fakejpeg_buf.h"
 
-typedef struct { HAL_LockTypeDef Lock; HAL_JPEG_STATETypeDef State; unsigned ErrorCode; } JPEG_HandleTypeDef;
+#define LCD_X_SIZE 320
+#define LCD_Y_SIZE 240
 
-#define __HAL_LOCK(h)   do { if ((h)->Lock == HAL_LOCKED) return HAL_BUSY; (h)->Lock = HAL_LOCKED; } while (0)
-#define __HAL_UNLOCK(h) do { (h)->Lock = HAL_UNLOCKED; } while (0)
+static uint8_t g_work_buf[4096];   /* JPEG_Buffer given to *Init -- internal YCbCr staging */
+static uint8_t g_fb[LCD_X_SIZE * LCD_Y_SIZE * 2];  /* video frame destination */
+static uint8_t g_cover_dest[4096]; /* cover destination (JPEG_DecodeToBuffer) */
+static uint8_t g_src[256];         /* one small, well-formed 8x8 4:4:4 "image" */
 
-/* stm32h7xx_hal_jpeg.c:538-541 and the tail of HAL_JPEG_Init */
-static HAL_StatusTypeDef HAL_JPEG_Init(JPEG_HandleTypeDef *h) {
-  if (h->State == HAL_JPEG_STATE_RESET)
-    h->Lock = HAL_UNLOCKED;            /* :541 — the only unlock, and it is gated */
-  h->State = HAL_JPEG_STATE_READY;
-  h->ErrorCode = 0;
-  return HAL_OK;
-}
+static int g_failures = 0;
 
-/* HAL_JPEG_Decode, reduced to the two things that decide hal= */
-static HAL_StatusTypeDef HAL_JPEG_Decode(JPEG_HandleTypeDef *h, int image_is_good) {
-  __HAL_LOCK(h);                        /* :1641 — locked handle -> HAL_BUSY, at once */
-  if (h->State != HAL_JPEG_STATE_READY) { __HAL_UNLOCK(h); return HAL_BUSY; }
-  h->State = HAL_JPEG_STATE_BUSY_DECODING;
-  if (!image_is_good) { h->ErrorCode = 0x20; __HAL_UNLOCK(h); h->State = HAL_JPEG_STATE_READY; return HAL_TIMEOUT; }
-  __HAL_UNLOCK(h);
-  h->State = HAL_JPEG_STATE_READY;
-  return HAL_OK;
-}
-
-/* ------------------------------------------------------------------ ours --- */
-static JPEG_HandleTypeDef jpeg;
-
-static void JPEG_HandleReset(void) {         /* the fix, in hw_jpeg_decoder.c */
-  jpeg.State = HAL_JPEG_STATE_RESET;
-  jpeg.Lock = HAL_UNLOCKED;
-  jpeg.ErrorCode = 0;
-}
-
-static unsigned JPEG_Run(int good, int with_fix) {
-  HAL_StatusTypeDef st = HAL_JPEG_Decode(&jpeg, good);
-  unsigned hal = (unsigned)st, err = jpeg.ErrorCode;
-  if (st != HAL_OK) {
-    if (with_fix) {                          /* the recovery, in JPEG_Run */
-      jpeg.Lock = HAL_UNLOCKED;
-      jpeg.ErrorCode = 0;
-      jpeg.State = HAL_JPEG_STATE_READY;
+static void expect(const char *what, uint32_t got, uint32_t want)
+{
+    if (got == want) {
+        printf("  OK   %-56s -> %u\n", what, got);
+    } else {
+        printf("  FAIL %-56s -> got %u, want %u\n", what, got, want);
+        g_failures++;
     }
-    printf("      frame rejected: hal=%u err=%u\n", hal, err);
-    return 1;
-  }
-  return 0;
 }
 
-static int play(const char *what, int with_fix, int wedged_before_init) {
-  printf("  %s\n", what);
-  memset(&jpeg, 0, sizeof jpeg);
-  jpeg.State = HAL_JPEG_STATE_READY;
-  if (wedged_before_init) jpeg.Lock = HAL_LOCKED;   /* somebody left it locked */
+int main(void)
+{
+#ifdef PRE_FIX_BUILD
+    printf("=== lock_test [pre-fix hw_jpeg_decoder.c -- must FAIL] ===\n");
+#else
+    printf("=== lock_test [current hw_jpeg_decoder.c -- must PASS] ===\n");
+#endif
 
-  if (with_fix) JPEG_HandleReset();
-  HAL_JPEG_Init(&jpeg);                             /* video_decode_init() */
+    fakejpeg_reset();
+    fakejpeg_configure(8, 8, JPEG_444_SUBSAMPLING);   /* ImgSize=8*8*3=192B, well under g_work_buf */
+    fakejpeg_fill(g_src, sizeof g_src, sizeof g_src); /* EOI is the buffer's last 2 bytes */
 
-  int shown = 0;
-  for (int f = 0; f < 5; f++)
-    if (JPEG_Run(1, with_fix) == 0) shown++;        /* five perfectly good frames */
-  printf("      -> %d/5 frames decoded\n\n", shown);
-  return shown;
-}
+    uint32_t w, h;
 
-int main(void) {
-  printf("\nA handle left LOCKED, then Init, then five good frames:\n\n");
-  int broken = play("without the fix (what shipped)", 0, 1);
-  int fixed  = play("with the fix", 1, 1);
+    printf("\ncover subsystem starts first, decodes one cover successfully:\n\n");
+    expect("JPEG_DecodeToBufferInit", JPEG_DecodeToBufferInit(fakejpeg_addr(g_work_buf), sizeof g_work_buf), 0);
+    expect("cover decode",
+           JPEG_DecodeToBuffer(fakejpeg_addr(g_src), sizeof g_src, fakejpeg_addr(g_cover_dest), &w, &h, 0xFF), 0);
 
-  printf("A frame that really is bad, then four good ones:\n\n");
-  memset(&jpeg, 0, sizeof jpeg); jpeg.State = HAL_JPEG_STATE_READY;
-  JPEG_HandleReset(); HAL_JPEG_Init(&jpeg);
-  JPEG_Run(0, 1);                                   /* the bad one */
-  int after = 0;
-  for (int f = 0; f < 4; f++) if (JPEG_Run(1, 1) == 0) after++;
-  printf("      -> %d/4 frames after the bad one\n\n", after);
+    printf("\na fault (never diagnosed on the device beyond its symptom) leaves the\n"
+           "handle LOCKED before the video session starts:\n\n");
+    fakejpeg_inject_stuck_lock();
 
-  int ok = (broken == 0) && (fixed == 5) && (after == 4);
-  printf(ok ? "PASS: reproduces hal=2 err=0 on every frame, and the fix clears it\n\n"
-            : "FAIL\n\n");
-  return !ok;
+    printf("\nvideo_decode_init() -> JPEG_DecodeToFrameInit, then five good frames --\n"
+           "this is the exact call sequence video_play.c:416 + video_decode.c:109 make:\n\n");
+    expect("JPEG_DecodeToFrameInit", JPEG_DecodeToFrameInit(fakejpeg_addr(g_work_buf), sizeof g_work_buf), 0);
+
+    int shown = 0;
+    for (int f = 0; f < 5; f++) {
+        uint32_t rc = JPEG_DecodeToFrame(fakejpeg_addr(g_src), sizeof g_src, fakejpeg_addr(g_fb), 0, 0, 0xFF);
+        printf("      frame %d: rc=%u\n", f, rc);
+        if (rc == 0) shown++;
+    }
+    printf("      -> %d/5 frames decoded\n", shown);
+
+    /* Asserted unconditionally -- NOT weakened under PRE_FIX_BUILD -- so this
+     * is the RED signal: against pre-fix hw_jpeg_decoder.c, old JPEG_DecodeInit
+     * never reset State, so Init (called on a still-READY handle) skipped the
+     * gated unlock and frame 0 opens locked and is rejected. (HAL_JPEG_Abort's
+     * own unconditional tail unlock then clears it for frame 1 onward -- a
+     * one-frame drop, not every frame forever, but still a real,
+     * real-entry-point-observable regression: 4/5, not 5/5.) */
+    expect("all 5 frames decoded (JPEG_HandleReset cleared the stale lock)", shown, 5);
+
+    printf("\n%s\n\n", g_failures
+           ? "FAIL"
+           : "PASS: a handle left locked before a new *Init session is exactly what "
+             "JPEG_HandleReset protects against");
+    return g_failures ? 1 : 0;
 }
