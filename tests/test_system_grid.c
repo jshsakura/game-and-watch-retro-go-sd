@@ -89,30 +89,6 @@ static void test_corner_profile(void)
     }
 }
 
-/* The scanline pass darkens ~17,000 live pixels a frame with a bit-trick instead
- * of a multiply. That is only sound if each channel divides independently — a
- * mask that is off by one bit makes red bleed into green, and the only place that
- * shows up is on a screen, at runtime, in a colour nobody is diffing. So check it
- * against honest per-channel arithmetic, for every colour there is. */
-static void test_scanline_dim_never_bleeds(void)
-{
-    for (unsigned c = 0; c <= 0xFFFF; c++)
-    {
-        unsigned r = (c >> 11) & 0x1F, g = (c >> 5) & 0x3F, b = c & 0x1F;
-        unsigned want = (((r - (r >> 2)) & 0x1F) << 11) |
-                        (((g - (g >> 2)) & 0x3F) << 5)  |
-                        ((b - (b >> 2)) & 0x1F);
-        unsigned got = RGB565_DIM_75(c);
-
-        if (got != want)
-        {
-            CHECK(0, "RGB565_DIM_75(0x%04X) = 0x%04X, want 0x%04X "
-                     "(channels are bleeding into each other)", c, got, want);
-            return; /* one report is enough; do not print 65,536 of them */
-        }
-    }
-}
-
 static void test_row_count(void)
 {
     CHECK(rg_grid_row_count(0) == 0, "empty grid has no rows");
@@ -246,7 +222,6 @@ int main(void)
 {
     test_tile_fits_its_cell();
     test_corner_profile();
-    test_scanline_dim_never_bleeds();
     test_row_count();
     test_visible_rows();
     test_cells_stay_on_screen();

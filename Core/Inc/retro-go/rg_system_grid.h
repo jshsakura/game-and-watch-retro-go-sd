@@ -63,17 +63,6 @@ bool rg_grid_cell_rect(int index, int first_row, int view_y0, int view_h,
  * rectangle. A profile that bulged back out would leave holes in the outline. */
 int rg_grid_tile_inset(int row, int tile);
 
-/** 75% brightness on all three RGB565 channels at once — a shift, an AND and a
- * subtract, which is what makes a full-screen scanline pass affordable.
- *
- * The mask is the whole trick. `c >> 2` slides every channel two bits right and
- * lets each one's low bits fall into its neighbour's field; 0x39E7 is exactly the
- * bits that survive that shift within their own channel, so ANDing it back gives
- * an independent per-channel divide-by-four. Get the mask wrong by one bit and
- * red starts bleeding into green — on a screen, at runtime, silently. Hence the
- * exhaustive test over all 65,536 colours. */
-#define RGB565_DIM_75(c) ((unsigned short)((c) - (((c) >> 2) & 0x39E7)))
-
 /* ---- Screen (rg_system_grid.c) ---- */
 
 bool rg_system_grid_is_open(void);
