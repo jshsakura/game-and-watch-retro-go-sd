@@ -28,6 +28,7 @@
 #include "gw_malloc.h"
 #include "gw_flash.h"
 #include "gw_flash_alloc.h"
+#include "gw_ofw.h"
 
 #include "bq24072.h"
 #include "stm32h7xx_hal.h"
@@ -659,25 +660,42 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
     }
     common_emu_input_loop(&joystick, options, &_repaint);
 
-    /* SNES pad: B Y Select Start Up Down Left Right A X L R */
+    /* SNES pad: B Y Select Start Up Down Left Right A X L R
+     *
+     * ODROID_INPUT_Y and _X are the shell's SELECT and START keys, and those two
+     * are wired on Zelda units only (main.h: "Zelda only buttons; they are not
+     * connected on mario"). Bound to them directly, SNES Y (item cancel — how you
+     * fire a missile) and SNES Start (the map screen) were unpressable on a Mario
+     * unit, which is the default target. zelda3 solves this by branching on
+     * get_ofw_is_mario(); do the same and give those two a home on GAME + UP/DOWN.
+     *
+     * A direction has to step aside for that: with GAME held, UP/DOWN are the two
+     * buttons, so they must not also reach the game as a direction, or GAME+UP
+     * would fire the missile *while aiming up* instead of ahead. LEFT/RIGHT stay
+     * live — aiming diagonally with L/R needs them. */
     bool pause_mod = joystick.values[ODROID_INPUT_VOLUME];
     bool game_mod = joystick.values[ODROID_INPUT_START];
+    bool mario_btn_mod = game_mod && get_ofw_is_mario();
     int in = 0;
     if (!pause_mod) {
-      if (joystick.values[ODROID_INPUT_UP])    in |= 1 << 4;
-      if (joystick.values[ODROID_INPUT_DOWN])  in |= 1 << 5;
+      if (joystick.values[ODROID_INPUT_UP]   && !mario_btn_mod) in |= 1 << 4;
+      if (joystick.values[ODROID_INPUT_DOWN] && !mario_btn_mod) in |= 1 << 5;
       if (joystick.values[ODROID_INPUT_LEFT])  in |= 1 << 6;
       if (joystick.values[ODROID_INPUT_RIGHT]) in |= 1 << 7;
       if (!game_mod) {
         if (joystick.values[ODROID_INPUT_A])      in |= 1 << 8;   /* A: jump   */
-        if (joystick.values[ODROID_INPUT_B])      in |= 1 << 0;   /* B: shoot  */
+        if (joystick.values[ODROID_INPUT_B])      in |= 1 << 0;   /* B: dash   */
         if (joystick.values[ODROID_INPUT_SELECT]) in |= 1 << 9;   /* TIME:   X */
-        if (joystick.values[ODROID_INPUT_Y])      in |= 1 << 1;   /* SELECT: Y */
-        if (joystick.values[ODROID_INPUT_X])      in |= 1 << 3;   /* START     */
+        if (joystick.values[ODROID_INPUT_Y])      in |= 1 << 1;   /* SELECT: Y (Zelda unit) */
+        if (joystick.values[ODROID_INPUT_X])      in |= 1 << 3;   /* START     (Zelda unit) */
       } else {
         if (joystick.values[ODROID_INPUT_B])      in |= 1 << 10;  /* GAME+B: L */
         if (joystick.values[ODROID_INPUT_A])      in |= 1 << 11;  /* GAME+A: R */
         if (joystick.values[ODROID_INPUT_SELECT]) in |= 1 << 2;   /* GAME+TIME: Select */
+        if (mario_btn_mod) {
+          if (joystick.values[ODROID_INPUT_UP])   in |= 1 << 1;   /* GAME+UP:   Y     */
+          if (joystick.values[ODROID_INPUT_DOWN]) in |= 1 << 3;   /* GAME+DOWN: Start */
+        }
       }
     }
     g_input1_state = in;

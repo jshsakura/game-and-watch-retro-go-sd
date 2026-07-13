@@ -76,6 +76,12 @@ Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
 - **Super Mario World Korean message boxes** — the level message-box font swaps
   to Korean through an ExGFX slot, uploaded before and restored after each
   message so normal level graphics are untouched.
+- **Super Metroid** — the port reads the ROM you supply, so a fan-patched ROM simply
+  works: the game's second language is whatever the ROM carries (Japanese on a stock
+  image, Korean with the fan translation), selectable from the Options menu. The
+  Korean patch turned out to contain no 65816 code at all — what broke the intro was
+  14 text-table pointers the decompilation had baked in as C constants, so the port
+  reads them back out of the ROM instead. See [Super Metroid](#super-metroid).
 
 #### Clock (TIME menu → Clock)
 
@@ -104,6 +110,15 @@ Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
 
 #### Launcher
 
+- **System grid home** — with 28 systems, reaching the last tab meant 28 presses of a
+  shoulder-less d-pad. The grid shows every system at once as a 6×3 page of rounded tiles
+  (the same 28×28 colour icons the tabs use, so it costs no extra resident RAM), and picking
+  one drops you straight into that system's list: worst case 8 presses instead of 28. Enter it
+  by **holding LEFT or RIGHT** past the end of the tabs, or with **B** from a game list; **A**
+  opens the system. A cold boot lands on the grid, while returning from a game lands back on
+  the list you launched from, so the grid never gets in the way of "one more go". Unselected
+  tiles fade toward the background rather than toward black, which is what the device's own
+  panel — not a monitor — actually needs to keep them legible on the light themes.
 - **Favorites tab (★)** — plain-text `/favorites.txt` (one ROM path per line) shown as
   the first tab; costs zero resident RAM (reuses the shared list buffer). Toggle from
   the A-button menu; mixed-system covers letterbox into one poster slot so the carousel
@@ -226,6 +241,7 @@ If you are looking for the mod without SD Card (Flash mod only), check https://g
     - [The Legend of Zelda: A Link to the Past](#the-legend-of-zelda-a-link-to-the-past)
       - [Alternate languages](#alternate-languages)
     - [Super Mario World](#super-mario-world)
+    - [Super Metroid](#super-metroid)
     - [Celeste Classic](#celeste-classic)
   - [Pico-8](#pico-8)
     - [Compatibility and performance](#compatibility-and-performance)
@@ -370,6 +386,16 @@ To install the hardware mod, you need:
 
 ## Tools
 
+### Super Metroid ROM preparation (sm_prepare_rom.py)
+
+```bash
+python3 tools/sm_prepare_rom.py /path/to/your/super_metroid.smc -o sm.smc
+```
+
+Strips the 512-byte copier header if the dump has one, checks the size, reports whether the
+image is the stock ROM or a fan patch, and writes the `sm.smc` the port expects in
+`/roms/homebrew/`. See [Super Metroid](#super-metroid) for why the header matters.
+
 ### Cover Art Generator (gencovers.py + download_covers.py)
 
 Due to memory and power constrains of the Game & Watch hardware, it's not possible to use full size png/jpg/bmp images for cover art.
@@ -459,6 +485,7 @@ renders it with the PICO-8 palette, and saves as a JPEG cover.
 ### SNES Ports
 - The Legend of Zelda: A Link to the Past
 - Super Mario World
+- Super Metroid
 
 ### Homebrew Ports
 - Celeste Classic 
@@ -724,6 +751,69 @@ Some features can be configured with flags:
 | Build flag    | Description |
 | ------------- | ------------- |
 | `LIMIT_30FPS` | Limit to 30 fps for improved stability.<br>Enabled by default.<br>Disabling this flag will result in unsteady framerate and stuttering. |
+
+### Super Metroid
+
+A port of [snesrev/sm](https://github.com/snesrev/sm), the C reimplementation of Super
+Metroid — not an emulator. It runs at the full 60 fps, with savestates and the launcher's
+own pause menu.
+
+Unlike Zelda 3 and Super Mario World, it is **not** built from an assets file: the port
+reads the original ROM at runtime. What the SD card needs is the ROM itself.
+
+`/roms/homebrew/` must end up with three files:
+
+| File | What it is | Where it comes from |
+| ---- | ---------- | ------------------- |
+| `Super Metroid.bin` | the core overlay — this is the entry you launch | the update, automatically |
+| `sm.xip` | the game's cold code and rodata, cached into external flash on first launch | the update, automatically |
+| `sm.smc` | the 3 MB ROM | **you supply it** |
+
+The first two arrive on their own: `retro-go_update.bin` is a container — the updater app with
+the whole SD payload (`gw_update.tar`) concatenated onto it — so the normal
+[update steps](#retro-go-sd-update-steps) write them into `/roms/homebrew/` for you. They and
+the firmware are cut from one ELF and belong to the same release; that is why they travel
+together, and why you should not hand-copy an older `sm.xip` over a newer firmware.
+
+So the only file you have to put there yourself is `sm.smc`.
+
+To prepare the ROM:
+
+```
+python3 tools/sm_prepare_rom.py /path/to/your/super_metroid.smc -o sm.smc
+```
+
+Then copy `sm.smc` into `/roms/homebrew/`. The script exists because the port indexes the
+ROM as a flat LoROM, so a dump carrying the usual **512-byte copier header** puts every
+read 512 bytes off and the game dies without saying why. The script strips the header if
+there is one, checks the size, and tells you whether the image is the stock ROM
+(sha1 `da957f0d63d14cb441d215462904c4fa8519c613`) or something else.
+
+A fan-patched ROM is a supported input, not an error: the port takes its **second language
+from the ROM you supply**. With a stock image that second language is Japanese; with the
+Korean fan translation applied it is Korean, and the port defaults to it. Switch back to
+English in the emulator's Options menu at any time. No translation data is distributed here.
+
+Due to the limited set of buttons (especially on the Mario console), the controls are peculiar.
+Super Metroid needs more buttons than Zelda 3 or Super Mario World did — it actually uses `L`
+and `R` (aim down / aim up) — so on a Mario unit two of them live on `GAME` + a direction.
+While `GAME` is held on a Mario unit, `UP`/`DOWN` act as those buttons and are not passed to
+the game as directions; `LEFT`/`RIGHT` still are, so you can still aim diagonally.
+
+| Description | Binding on Mario units | Binding on Zelda units |
+| ----------- | ---------------------- | ---------------------- |
+| `A` button (Jump) | `A` | `A` |
+| `B` button (Dash) | `B` | `B` |
+| `X` button (Shoot) | `TIME` | `TIME` |
+| `Y` button (Item cancel — fire the selected item) | `GAME + UP` | `SELECT` |
+| `Select` button (Cycle item) | `GAME + TIME` | `GAME + TIME` |
+| `Start` button (Map / pause screen) | `GAME + DOWN` | `START` |
+| `L` button (Aim down) | `GAME + B` | `GAME + B` |
+| `R` button (Aim up) | `GAME + A` | `GAME + A` |
+
+Super Metroid is SD-card only. A flash-only (`SD_CARD=0`) build cannot cache and relocate
+`sm.xip`, nor hold the 3 MB ROM the port reads at runtime, so the core is left out of that
+image rather than shipped as a dead menu entry.
 
 ### Celeste Classic
 
