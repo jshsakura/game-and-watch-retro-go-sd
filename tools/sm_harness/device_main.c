@@ -99,6 +99,27 @@ static void state_read(void *ctx, void *data, size_t size) {
   g_state_pos += size;
 }
 
+/* How many pixels are not the backdrop. A hash tells you two frames are the same;
+ * it does not tell you they are the same BLACK. The device's symptom is a black
+ * screen at full framerate, so the harness has to be able to say the word "black"
+ * — otherwise "IDENTICAL" is a pass it can hand out for two identically empty
+ * frames, which is exactly how this bug got past it. */
+static size_t fb_lit_pixels(void) {
+  size_t lit = 0;
+  const uint16_t *p = (const uint16_t *)g_fb;
+  for (size_t i = 0; i < sizeof(g_fb) / sizeof(uint16_t); i++)
+    if (p[i] != 0) lit++;
+  return lit;
+}
+
+static void ppu_report(const char *when) {
+  Ppu *ppu = g_snes->ppu;
+  printf("  ppu %-14s TM=%02X TS=%02X TMW=%02X TSW=%02X wsel=%06X forcedBlank=%d brightness=%d\n",
+         when, ppu->screenEnabled[0], ppu->screenEnabled[1],
+         ppu->screenWindowed[0], ppu->screenWindowed[1],
+         (unsigned)ppu->windowsel, (int)ppu->forcedBlank, ppu->brightness);
+}
+
 static uint64_t fb_hash(void) {
   uint64_t h = 1469598103934665603ULL;
   const uint8_t *b = (const uint8_t *)g_fb;
@@ -138,6 +159,66 @@ int main(int argc, char **argv) {
     RtlRunFrame(0);
     RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
   }
+  /* Load a savestate FILE the device wrote. The device's black screen is not
+   * reproducible from a state this harness made itself, so let it eat the real
+   * one — header and all — exactly as main_sm.c does. */
+  /* Where does the byte stream actually go? A savestate that disagrees with the
+   * build by N bytes is misaligned from the first segment that changed size — and
+   * everything after it reads garbage. Print the segments so the delta can be
+   * pinned to one of them instead of guessed at. */
+  if (getenv("SM_SEGMENTS")) {
+    size_t mark = 0;
+    #define SEG(name, call) do { g_state_len = mark; call; \
+        printf("  %-22s %8zu bytes\n", name, g_state_len - mark); mark = g_state_len; } while (0)
+    g_state_len = 0;
+    SEG("cpu_saveload",  cpu_saveload(g_snes->cpu, &state_write, NULL));
+    SEG("dma_saveload",  dma_saveload(g_snes->dma, &state_write, NULL));
+    SEG("ppu_saveload",  ppu_saveload(g_snes->ppu, &state_write, NULL));
+    SEG("cart_saveload", cart_saveload(g_snes->cart, &state_write, NULL));
+    SEG("snes hPos..openBus", state_write(NULL, &g_snes->hPos,
+            offsetof(Snes, openBus) + 1 - offsetof(Snes, hPos)));
+    SEG("snes->ram",     state_write(NULL, g_snes->ram, 0x20000));
+    SEG("snes->ramAdr",  state_write(NULL, &g_snes->ramAdr, 4));
+    SEG("SpcPlayer",     SpcPlayer_SaveLoad(g_spc_player, &state_write, NULL));
+    printf("  %-22s %8zu bytes  (file says 276275 -> delta %d)\n",
+           "TOTAL", g_state_len, (int)g_state_len - 276275);
+    return 0;
+  }
+
+  if (getenv("SM_LOAD_FILE")) {
+    const char *sp = getenv("SM_LOAD_FILE");
+    FILE *sf = fopen(sp, "rb");
+    if (!sf) { printf("no savestate: %s\n", sp); return 1; }
+    uint32_t hdr[3] = {0,0,0};
+    if (fread(hdr, 4, 3, sf) != 3) { printf("short header\n"); return 1; }
+    fseek(sf, 0, SEEK_END); long fsz = ftell(sf); fseek(sf, 12, SEEK_SET);
+    printf("file: %ld bytes  magic=%08X version=%u payload_says=%u  (file has %ld after header)\n",
+           fsz, hdr[0], hdr[1], hdr[2], fsz - 12);
+
+    /* What THIS build streams, counted without writing anything. */
+    g_state_len = 0;
+    RtlSaveLoadState(kSaveLoad_Save, &state_write, NULL);
+    printf("this build streams: %zu bytes  -> %s\n", g_state_len,
+           g_state_len == hdr[2] ? "MATCHES the file"
+                                 : "DOES NOT MATCH — the stream is misaligned from here on");
+
+    g_state_len = fread(g_state, 1, sizeof(g_state), sf);
+    fclose(sf);
+
+    RtlReset(0);                       /* the launcher's resume path */
+    g_state_pos = 0;
+    RtlSaveLoadState(kSaveLoad_Load, &state_read, NULL);
+    ppu_report("after load");
+
+    PpuBeginDrawing(g_snes->ppu, (uint8_t *)g_line, 0, 0);
+    RtlRunFrame(0);
+    size_t lit = fb_lit_pixels();
+    printf("first frame after loading YOUR file: %zu lit pixels of %zu -> %s\n",
+           lit, sizeof(g_fb) / sizeof(uint16_t),
+           lit == 0 ? "BLACK SCREEN — reproduced" : "a picture");
+    return lit == 0;
+  }
+
   if (getenv("SM_SAVELOAD")) {
     /* Capture state X, once, before anything renders past it. Also remember
      * X's brightness register value directly (not read back off the live ppu
@@ -147,6 +228,7 @@ int main(int argc, char **argv) {
     RtlSaveLoadState(kSaveLoad_Save, &state_write, NULL);
     printf("savestate: %zu bytes\n", g_state_len);
     uint8_t brightness_at_X = g_snes->ppu->brightness;
+    ppu_report("at save");
 
     /* Reference: render the frame X -> X+1 with caches that organically match
      * cgram (nothing has poisoned or reloaded anything yet). This is the frame
@@ -160,6 +242,7 @@ int main(int argc, char **argv) {
     RtlRunFrame(0);
     RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
     uint64_t a = fb_hash();
+    size_t lit_a = fb_lit_pixels();
 
     /* Earlier version of this harness tried to reach a "different palette" PPU
      * state by driving the game elsewhere with button input before reloading,
@@ -215,10 +298,30 @@ int main(int argc, char **argv) {
     RtlRunFrame(0);
     RtlRenderAudio(g_audio, FRAME_SAMPLES, 1);
     uint64_t b = fb_hash();
+    size_t lit_b = fb_lit_pixels();
+    ppu_report("after load");
 
-    printf("save/load round-trip: %s\n",
-           a == b ? "IDENTICAL" : "DIFFERENT — a poisoned PPU cache survived the load");
-    return a != b;
+    printf("  lit pixels: reference %zu   after load %zu   (of %zu)\n",
+           lit_a, lit_b, sizeof(g_fb) / sizeof(uint16_t));
+
+    /* Two ways to fail, and the harness used to be able to see only one.
+     * 1. The frames differ  -> something the load did not restore.
+     * 2. The frames MATCH and both are black -> the game was on a black screen
+     *    when we saved, so the round-trip proves nothing at all. Say so instead
+     *    of printing a pass. */
+    if (lit_a == 0) {
+      printf("save/load round-trip: VACUOUS — the reference frame is already black, "
+             "so this run compares nothing. Save from a frame with a picture on it.\n");
+      return 2;
+    }
+    if (a != b) {
+      printf("save/load round-trip: DIFFERENT — the load did not restore everything "
+             "the renderer reads%s\n",
+             lit_b == 0 ? " (and the loaded frame is BLACK — the device's symptom)" : "");
+      return 1;
+    }
+    printf("save/load round-trip: IDENTICAL (%zu lit pixels, so this was a real picture)\n", lit_b);
+    return 0;
   }
 
   /* FNV-1a over everything the frame produced: the screen, the game's RAM and its

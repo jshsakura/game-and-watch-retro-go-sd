@@ -352,6 +352,18 @@ static FILE *savestate_file;
 static size_t savestate_bytes;
 static bool savestate_short;
 
+/* How many bytes THIS build's savestate is, measured rather than assumed: with
+ * savestate_file NULL, sm_state_write() writes nothing and only counts. Taken
+ * once at boot, before the game has anything to lose. See sm_state_header.h for
+ * why the length, and not SM_STATE_VERSION, is what a load is checked against. */
+static uint32_t savestate_expected_bytes;
+
+/* Set while loading a file from the older layout, whose last four bytes (the tail
+ * of the SPC player's state) simply are not there. sm_state_read() takes them as
+ * zero, and that is not a truncation — it is the only difference between the two
+ * layouts, and it is in the last segment. */
+static bool savestate_allow_short_tail;
+
 static void sm_state_write(void *ctx, void *data, size_t size) {
   (void)ctx;
   wdog_refresh();
@@ -363,14 +375,17 @@ static void sm_state_write(void *ctx, void *data, size_t size) {
 static void sm_state_read(void *ctx, void *data, size_t size) {
   (void)ctx;
   wdog_refresh();
-  if (savestate_file && fread(data, 1, size, savestate_file) == size) {
-    savestate_bytes += size;
+  size_t got = savestate_file ? fread(data, 1, size, savestate_file) : 0;
+  savestate_bytes += got;
+  if (got == size)
     return;
-  }
-  /* Out of file. Zeroing is the least-bad thing to do mid-stream, but the load is
-   * now worthless — say so, and let the caller keep the game it already had. */
-  savestate_short = true;
-  memset(data, 0, size);
+
+  /* Short. On a legacy file this is expected exactly once, at the very end, and
+   * zero is the right value; anywhere else it means the file lied about its own
+   * length, which sm_state_load_verdict() should already have refused. */
+  memset((uint8_t *)data + got, 0, size - got);
+  if (!savestate_allow_short_tail)
+    savestate_short = true;
 }
 
 static bool sm_system_SaveState(char *pathName) {
@@ -419,38 +434,43 @@ static bool sm_system_LoadState(char *pathName) {
     return false;
   }
 
-  /* Check the length BEFORE streaming a byte. RtlSaveLoadState reads straight
-   * into g_ram, VRAM and the live Ppu — there is no RAM to stage 270 KB in — so
-   * by the time sm_state_read() runs out of file, the game it was going to fall
-   * back to is already half-overwritten, and sm_state_read()'s memset has filled
-   * the rest with zeroes. The old check below fired only after all of that: it
-   * reported the truncation correctly and returned false to a caller that had
-   * nothing left to keep. The header carries the payload length; the file either
-   * has it or it does not, and that is knowable now, for free. */
+  /* Decide BEFORE streaming a byte. RtlSaveLoadState reads straight into g_ram,
+   * VRAM and the live Ppu — there is nowhere to stage 270 KB — so by the time a
+   * mid-stream read runs out of file, the game it was going to fall back to is
+   * already half-overwritten. Everything the verdict needs is knowable now: the
+   * header, the file's size, and what this build itself streams. */
   long here = ftell(savestate_file);
   fseek(savestate_file, 0, SEEK_END);
-  long have = ftell(savestate_file) - here;
+  long avail = ftell(savestate_file) - here;
   fseek(savestate_file, here, SEEK_SET);
 
-  if (have < (long)hdr.bytes) {
-    printf("sm: savestate truncated (%ld of %lu bytes) — refusing before it touches the game\n",
-           have, (unsigned long)hdr.bytes);
+  sm_state_load_t verdict =
+      sm_state_load_verdict(hdr, savestate_expected_bytes, avail);
+
+  if (verdict == SM_STATE_LOAD_REFUSE) {
+    printf("sm: savestate says %lu bytes, this build writes %lu, file holds %ld — "
+           "a different layout or a truncated file; refusing before it touches the game\n",
+           (unsigned long)hdr.bytes, (unsigned long)savestate_expected_bytes, avail);
     fclose(savestate_file);
     savestate_file = NULL;
     odroid_audio_mute(false);
     return false;
   }
 
+  savestate_allow_short_tail = (verdict == SM_STATE_LOAD_SHORT_TAIL);
+  if (savestate_allow_short_tail)
+    printf("sm: savestate is the older layout (%lu bytes) — the music player's last "
+           "4 bytes are absent; loading it as zeroes\n", (unsigned long)hdr.bytes);
+
   savestate_bytes = 0;
   savestate_short = false;
   RtlSaveLoadState(kSaveLoad_Load, &sm_state_read, NULL);
   fclose(savestate_file);
   savestate_file = NULL;
+  savestate_allow_short_tail = false;
 
-  /* Belt and braces: the length said the bytes were there, so a short read now
-   * means the file changed under us or the stream disagrees with the header. */
-  if (savestate_short || savestate_bytes != hdr.bytes) {
-    printf("sm: savestate stream did not match its header (%lu of %lu bytes)\n",
+  if (savestate_short) {
+    printf("sm: savestate ran short mid-stream (%lu of %lu bytes)\n",
            (unsigned long)savestate_bytes, (unsigned long)hdr.bytes);
     ok = false;
   }
@@ -588,6 +608,17 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
 
   RtlSetupEmuCallbacks(NULL, &SmRunFrameDevice, NULL);
   RtlReset(0);
+
+  /* Count what a save of THIS build streams. savestate_file is NULL, so
+   * sm_state_write() writes nothing and only adds up the sizes. Done here, on a
+   * freshly reset core, where there is no game state to disturb — and before any
+   * load, which is the thing that needs the number. */
+  savestate_file = NULL;
+  savestate_bytes = 0;
+  RtlSaveLoadState(kSaveLoad_Save, &sm_state_write, NULL);
+  savestate_expected_bytes = (uint32_t)savestate_bytes;
+  printf("sm: this build's savestate is %lu bytes\n",
+         (unsigned long)savestate_expected_bytes);
 
   /* Battery-backed save */
   char *sram_path = odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path);
