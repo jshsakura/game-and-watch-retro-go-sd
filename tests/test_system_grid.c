@@ -36,19 +36,8 @@ static void test_tile_fits_its_cell(void)
     CHECK(RG_GRID_TILE < RG_GRID_CELL_W && RG_GRID_TILE < RG_GRID_CELL_H,
           "the tile must leave a gutter: tile %d, cell %dx%d",
           RG_GRID_TILE, RG_GRID_CELL_W, RG_GRID_CELL_H);
-    /* The highlighted tile lifts. It may grow into the gutter, but not out of
-     * its own cell — that would paint over the neighbour it is sitting beside. */
-    CHECK(RG_GRID_TILE_SEL > RG_GRID_TILE,
-          "the selected tile must actually be bigger, got %d vs %d",
-          RG_GRID_TILE_SEL, RG_GRID_TILE);
-    CHECK(RG_GRID_TILE_SEL <= RG_GRID_CELL_W && RG_GRID_TILE_SEL <= RG_GRID_CELL_H,
-          "the selected tile escapes its cell: %d in %dx%d",
-          RG_GRID_TILE_SEL, RG_GRID_CELL_W, RG_GRID_CELL_H);
-    CHECK((RG_GRID_CELL_W - RG_GRID_TILE_SEL) % 2 == 0 &&
-          (RG_GRID_CELL_H - RG_GRID_TILE_SEL) % 2 == 0,
-          "an odd margin puts the selected tile half a pixel off centre");
     CHECK(2 * RG_GRID_RADIUS <= RG_GRID_TILE,
-          "the corner profile must fit the SMALLER tile too");
+          "the corner radius cannot exceed half the tile");
     /* The gutters need not match — the screen is wider than the viewport is tall,
      * so the columns get more room than the rows. They do both need to exist, and
      * to be even, or the tile does not centre on a whole pixel. */
@@ -60,8 +49,6 @@ static void test_tile_fits_its_cell(void)
           (RG_GRID_CELL_H - RG_GRID_TILE) % 2 == 0,
           "an odd gutter puts the tile half a pixel off centre");
     CHECK(RG_GRID_TILE >= 28, "a 28x28 icon must fit on the tile, tile is %d", RG_GRID_TILE);
-    CHECK(RG_GRID_RADIUS * 2 <= RG_GRID_TILE,
-          "the corner radius cannot exceed half the tile");
 }
 
 /* The tile rasteriser is cheap because it trusts the corner profile: it draws the
@@ -99,6 +86,30 @@ static void test_corner_profile(void)
         CHECK(rg_grid_tile_inset(row, RG_GRID_TILE) == 0,
               "row %d is inside the straight band but reports inset %d",
               row, rg_grid_tile_inset(row, RG_GRID_TILE));
+    }
+}
+
+/* The scanline pass darkens ~17,000 live pixels a frame with a bit-trick instead
+ * of a multiply. That is only sound if each channel divides independently — a
+ * mask that is off by one bit makes red bleed into green, and the only place that
+ * shows up is on a screen, at runtime, in a colour nobody is diffing. So check it
+ * against honest per-channel arithmetic, for every colour there is. */
+static void test_scanline_dim_never_bleeds(void)
+{
+    for (unsigned c = 0; c <= 0xFFFF; c++)
+    {
+        unsigned r = (c >> 11) & 0x1F, g = (c >> 5) & 0x3F, b = c & 0x1F;
+        unsigned want = (((r - (r >> 2)) & 0x1F) << 11) |
+                        (((g - (g >> 2)) & 0x3F) << 5)  |
+                        ((b - (b >> 2)) & 0x1F);
+        unsigned got = RGB565_DIM_75(c);
+
+        if (got != want)
+        {
+            CHECK(0, "RGB565_DIM_75(0x%04X) = 0x%04X, want 0x%04X "
+                     "(channels are bleeding into each other)", c, got, want);
+            return; /* one report is enough; do not print 65,536 of them */
+        }
     }
 }
 
@@ -235,6 +246,7 @@ int main(void)
 {
     test_tile_fits_its_cell();
     test_corner_profile();
+    test_scanline_dim_never_bleeds();
     test_row_count();
     test_visible_rows();
     test_cells_stay_on_screen();

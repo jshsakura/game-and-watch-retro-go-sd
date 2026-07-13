@@ -14,6 +14,7 @@
 #include <odroid_system.h>
 
 #include "main.h" /* get_darken_pixel() */
+#include "gw_lcd.h"
 #include "gui.h"
 #include "bitmaps.h"
 #include "rg_system_grid.h"
@@ -82,15 +83,22 @@ void rg_system_grid_step(int dx, int dy)
                                         GRID_VIEW_H);
 }
 
-/* How the unselected tiles hold back. The plate is barely there — 6% of the
- * theme's mid colour over the background — so the row reads as a faint frame
- * rather than 18 competing blocks, and the one tile that IS lit has the screen
- * to itself. */
-#define GRID_TILE_FILL_PCT  (6)
-#define GRID_TILE_EDGE_PCT  (28)
+/* How the unselected tiles hold back.
+ *
+ * The plate stays a whisper — 6% of the theme's mid colour over the background —
+ * so the row reads as a frame rather than 18 competing blocks. The RIM is what
+ * had to come up: at 28% it was tuned on a monitor and simply disappeared on the
+ * device, whose LCD is dimmer than any screen you pick colours on and which
+ * people run with the backlight turned down.
+ *
+ * There is no size change on the selected tile any more. It was 44 -> 48 — four
+ * pixels — and on a 320x240 panel nobody saw it. The selection is carried by the
+ * plate lighting up, the rim turning gold, and every other icon fading back. */
+#define GRID_TILE_FILL_PCT  (14)
+#define GRID_TILE_EDGE_PCT  (75)
 #define GRID_ICON_FADE_PCT  (62) /* how much of an unselected icon's own colour survives */
 
-/* The rounded plate a system sits on. The highlighted one is bigger, brighter and
+/* The rounded plate a system sits on. The highlighted one is brighter and
  * gold-rimmed; every other one is a whisper.
  *
  * Everything between the corners is a plain rectangle, so it is drawn as one —
@@ -174,11 +182,43 @@ static void grid_draw_scrollbar(void)
                                   curr_colors->sel_c);
 }
 
+/* CRT scanlines, laid over the background and the tile plates — but UNDER the
+ * icons, which is why the draw below is in two passes.
+ *
+ * Over the plates is what makes them read as lit surfaces instead of flat blocks.
+ * Over the icons it would only have muddied them: they are 28x28, so a line every
+ * third row eats a tenth of an already-small drawing.
+ *
+ * Which means darkening what is already in the framebuffer — a read-modify-write,
+ * not a fill. In RGB565 that is nearly free:
+ *
+ *     c - ((c >> 2) & 0x39E7)   ==   75% brightness on all three channels at once
+ *
+ * a shift, an AND and a subtract. The mask is doing the real work: it drops the
+ * two low bits each channel loses to the shift, so no channel borrows from its
+ * neighbour. ~17,000 pixels a frame, against the 76,800 the LCD swap moves
+ * regardless. */
+#define GRID_SCANLINE_STEP (3)
+
+static void grid_draw_scanlines(void)
+{
+    uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
+
+    for (int y = GRID_VIEW_Y0; y < GRID_VIEW_Y0 + GRID_VIEW_H; y += GRID_SCANLINE_STEP)
+    {
+        uint16_t *row = fb + y * GW_LCD_WIDTH;
+
+        for (int x = 0; x < ODROID_SCREEN_WIDTH; x++)
+            row[x] = RGB565_DIM_75(row[x]);
+    }
+}
+
 void rg_system_grid_draw(void)
 {
     odroid_overlay_draw_fill_rect(0, GRID_VIEW_Y0, ODROID_SCREEN_WIDTH, GRID_VIEW_H,
                                   curr_colors->bg_c);
 
+    /* Pass 1: the plates. */
     for (int i = 0; i < gui.tabcount; i++)
     {
         int x, y;
@@ -186,14 +226,26 @@ void rg_system_grid_draw(void)
         if (!rg_grid_cell_rect(i, grid_first_row, GRID_VIEW_Y0, GRID_VIEW_H, &x, &y))
             continue;
 
-        bool selected = (i == grid_cursor);
-        int tile = selected ? RG_GRID_TILE_SEL : RG_GRID_TILE;
+        grid_draw_tile(x + (RG_GRID_CELL_W - RG_GRID_TILE) / 2,
+                       y + (RG_GRID_CELL_H - RG_GRID_TILE) / 2,
+                       RG_GRID_TILE, i == grid_cursor);
+    }
 
-        grid_draw_tile(x + (RG_GRID_CELL_W - tile) / 2,
-                       y + (RG_GRID_CELL_H - tile) / 2, tile, selected);
+    grid_draw_scrollbar();
 
-        /* A tab with no colour art keeps its tile — an empty plate reads as
-         * "no icon yet", an empty hole reads as a rendering bug. */
+    /* Scanlines fall on the background and the plates... */
+    grid_draw_scanlines();
+
+    /* ...and the icons go on top of them, untouched. */
+    for (int i = 0; i < gui.tabcount; i++)
+    {
+        int x, y;
+
+        if (!rg_grid_cell_rect(i, grid_first_row, GRID_VIEW_Y0, GRID_VIEW_H, &x, &y))
+            continue;
+
+        /* A tab with no colour art keeps its bare plate — that reads as "no icon
+         * yet", where an empty hole would read as a rendering bug. */
         const color_icon_t *icon = color_icon_for_logo(gui.tabs[i]->logo_idx);
 
         if (!icon)
@@ -202,11 +254,9 @@ void rg_system_grid_draw(void)
         int ix = x + (RG_GRID_CELL_W - icon->width) / 2;
         int iy = y + (RG_GRID_CELL_H - icon->height) / 2;
 
-        if (selected)
+        if (i == grid_cursor)
             gui_draw_color_icon(ix, iy, icon);
         else
             gui_draw_color_icon_fade(ix, iy, icon, curr_colors->bg_c, GRID_ICON_FADE_PCT);
     }
-
-    grid_draw_scrollbar();
 }
