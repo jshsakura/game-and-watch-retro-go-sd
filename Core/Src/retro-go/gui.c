@@ -17,17 +17,16 @@
 #include "rg_emulators.h"
 #include "favorites.h"
 #include "gw_malloc.h"
+#include "rg_system_grid.h"
 
 #if !defined(COVERFLOW)
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 
-#define IMAGE_LOGO_WIDTH (47)
-#define IMAGE_LOGO_HEIGHT (51)
 #define IMAGE_BANNER_WIDTH (ODROID_SCREEN_WIDTH)
 #define IMAGE_BANNER_HEIGHT (32)
-#define STATUS_HEIGHT (33)
-#define HEADER_HEIGHT (47)
+#define STATUS_HEIGHT RG_STATUS_HEIGHT
+#define HEADER_HEIGHT RG_HEADER_HEIGHT
 
 #define CRC_WIDTH (104)
 #define CRC_X_OFFSET (ODROID_SCREEN_WIDTH - CRC_WIDTH)
@@ -470,10 +469,19 @@ void gui_scroll_list(tab_t *tab, scroll_mode_t mode)
 
 void gui_redraw_callback()
 {
-    tab_t *tab = gui_get_current_tab();
+    /* In grid mode the chrome follows the highlighted system, not the selected
+     * one: the header bar is what names the icon the cursor is on. Dialogs opened
+     * over the grid take this same callback, so they repaint the grid too. */
+    tab_t *tab = rg_system_grid_is_open() ? gui_get_tab(rg_system_grid_cursor())
+                                          : gui_get_current_tab();
+
     gui_draw_header(tab);
     gui_draw_status(tab);
-    gui_draw_list(tab);
+
+    if (rg_system_grid_is_open())
+        rg_system_grid_draw();
+    else
+        gui_draw_list(tab);
 }
 
 void gui_redraw()
@@ -483,20 +491,10 @@ void gui_redraw()
     lcd_swap();
 }
 
-void gui_draw_navbar()
-{
-    for (int i = 0; i < gui.tabcount; i++)
-    {
-        retro_logo_image *logo = rg_get_logo(gui.tabs[i]->logo_idx);
-        if (logo)
-            odroid_display_write(i * IMAGE_LOGO_WIDTH, 0, IMAGE_LOGO_WIDTH, IMAGE_LOGO_HEIGHT, (const uint16_t*)logo);
-    }
-}
-
 /* Blit a full-colour RGB565 console icon into the active LCD buffer, skipping
  * transparent (colour-key) pixels. (x, y) is the icon's nominal footprint; the
  * stored bitmap covers only its opaque bounding box, at (ic->ox, ic->oy). */
-static void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
+void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
 {
     uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
     for (int row = 0; row < ic->bh; row++) {

@@ -1,8 +1,15 @@
 #pragma once
 
 #include <odroid_input.h>
+#include "bitmaps.h"
 #include "rg_emulators.h"
 #include "stdbool.h"
+
+/* Launcher chrome: the status bar along the top and the header bar along the
+ * bottom. Whatever is left between them is the list viewport — which the system
+ * grid borrows, so both it and gui.c have to agree on these. */
+#define RG_STATUS_HEIGHT (33)
+#define RG_HEADER_HEIGHT (47)
 
 typedef enum {
     KEY_PRESS_A,
@@ -97,6 +104,10 @@ void gui_sort_list(tab_t *tab, int sort_mode);
 void gui_scroll_list(tab_t *tab, scroll_mode_t mode);
 void gui_resize_list(tab_t *tab, int new_size);
 listbox_item_t *gui_get_selected_item(tab_t *tab);
+
+/** Blit a colour console icon, skipping its transparent pixels. (x, y) is the
+ * icon's nominal footprint; the stored bitmap covers only its opaque bbox. */
+void gui_draw_color_icon(int x, int y, const color_icon_t *ic);
 
 void gui_event(gui_event_t event, tab_t *tab);
 /** Pop one ROM browse level if tab is inside a subfolder; refreshes list. */

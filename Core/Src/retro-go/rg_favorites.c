@@ -310,14 +310,11 @@ static void favorites_event_handler(gui_event_t event, tab_t *tab)
         return;
 
     if (event == KEY_PRESS_A) {
+        /* The menu can un-favorite, reset, or delete the ROM outright — rebuild
+         * from the file either way. (B is "back to the system grid" now; ROM info
+         * moved into this menu.) */
         emulator_show_file_menu(file);
-        /* The menu can un-favorite (or reset) — rebuild from the file. */
         favorites_refresh_tab(tab);
-    }
-    else if (event == KEY_PRESS_B) {
-        emulator_show_file_info(file);
-        if (file->path[0] == '\0') /* ROM was deleted from the info dialog */
-            favorites_refresh_tab(tab);
     }
 }
 

@@ -533,18 +533,6 @@ static void event_handler(gui_event_t event, tab_t *tab)
         // array so the star/order updates immediately.
         emulator_fill_tab_list(tab, emu);
     }
-    else if (event == KEY_PRESS_B)
-    {
-        if (rg_rom_list_arg_is_parent(sel_arg))
-            return;
-        retro_emulator_file_t *file = (retro_emulator_file_t *)sel_arg;
-        emulator_show_file_info(file);
-
-        // Refresh if file was deleted
-        if (strlen(file->path) == 0) {
-            gui_event(TAB_REFRESH_LIST, tab);
-        }
-    }
     else if (event == TAB_IDLE)
     {
     }
@@ -1057,7 +1045,7 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     /* Built dynamically: the favorites rows vary, and the old fixed-array
      * "overwrite index N with LAST" cheat-row hack broke on every reshuffle. */
     const odroid_dialog_choice_t sep = ODROID_DIALOG_CHOICE_SEPARATOR;
-    odroid_dialog_choice_t choices[12];
+    odroid_dialog_choice_t choices[14];
     int rows = 0;
     choices[rows++] = (odroid_dialog_choice_t){0, curr_lang->s_Resume_game, (char *)"", (has_save) ? 1 : -1, NULL};
     choices[rows++] = (odroid_dialog_choice_t){1, curr_lang->s_New_game, (char *)"", 1, NULL};
@@ -1073,7 +1061,12 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
         choices[rows++] = (odroid_dialog_choice_t){4, curr_lang->s_Cheat_Codes, (char *)"", 1, NULL};
     }
 #endif
+    /* ROM name/type/size and "delete ROM" used to hang off the B button. B is the
+     * back key now, so they live here — the only menu a ROM has. */
+    choices[rows++] = sep;
+    choices[rows++] = (odroid_dialog_choice_t){6, curr_lang->s_File, (char *)"", 1, NULL};
     choices[rows++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
+    assert(rows <= (int)(sizeof(choices) / sizeof(choices[0])));
 
     int sel = odroid_overlay_dialog(file->name, choices, has_save ? 0 : 1, &gui_redraw_callback, 0);
 
@@ -1125,6 +1118,10 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
         force_redraw = true;
     }
 #endif
+    else if (sel == 6) { // File info (and delete ROM)
+        emulator_show_file_info(file);
+        force_redraw = true;
+    }
 
     free(sram_path);
     /* savestates is static — no free needed */

@@ -106,6 +106,11 @@ $CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/storage_stubs -ICore/Inc/re
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/album_stubs -ICore/Inc/retro-go \
     tests/test_album.c tests/album_stubs/album_stub_impl.c Core/Src/retro-go/rg_clock_album.c \
     -o /tmp/mtest/test_album
+# System-grid layout: the REAL rg_system_grid_layout.c, which is dependency-free
+# precisely so this links it instead of re-deriving its rules.
+$CC -O2 -Wall -Wextra -std=gnu11 -ICore/Inc/retro-go \
+    tests/test_system_grid.c Core/Src/retro-go/rg_system_grid_layout.c \
+    -o /tmp/mtest/test_system_grid
 
 # === firmware-update tar extractor ====================================
 # The REAL external/firmware_update/Core/Src/tar.c against the REAL FatFs, on a
@@ -170,6 +175,7 @@ fi
 /tmp/mtest/test_storage_sd0 || rc=1
 /tmp/mtest/test_album      || rc=1
 /tmp/mtest/test_fw_tar     || rc=1
+/tmp/mtest/test_system_grid || rc=1
 
 # === colour tab icons: stored bbox must match its array and fit its box ====
 # gui_draw_color_icon() indexes data[] by bw*bh and blits at (ox,oy) inside the
@@ -342,6 +348,42 @@ if [ -f external/sm/src/sm_rtl.c ]; then
     rc=$(( rc || $? ))
 else
     echo "SKIP  external/sm is not checked out (no submodules in this job)"
+fi
+
+# === system grid: wired into retro_loop, and owning no loop of its own ======
+# Both halves of this matter, and neither is a unit test:
+#  - A screen that runs its own while(1) has to re-ask every rule the launcher
+#    loop already asks (idle power-off, watchdog, the due-alarm poll). The clock
+#    app did exactly that, forgot odroid_idle_timeout_expired(), and sat lit for
+#    ever at any setting. The grid is a MODE of retro_loop(), so it inherits them
+#    — and this guard is what keeps it that way.
+#  - A perfectly correct screen nobody calls is the other half of the same bug.
+echo "=== system grid wiring ==="
+grid_bad=0
+if grep -qE 'odroid_input_read_gamepad|while *\( *(1|true) *\)' Core/Src/retro-go/rg_system_grid.c; then
+    echo "FAIL rg_system_grid.c grew a loop/input read of its own — it must stay a"
+    echo "     mode of retro_loop(), or it has to re-ask idle-timeout + watchdog itself"
+    grid_bad=1
+fi
+for sym in rg_system_grid_open rg_system_grid_close rg_system_grid_commit \
+           rg_system_grid_step rg_system_grid_is_open; do
+    grep -q "$sym" Core/Src/retro-go/rg_main.c || {
+        echo "FAIL retro_loop() never calls $sym — the grid is unreachable"; grid_bad=1; }
+done
+grep -q 'rg_system_grid_draw' Core/Src/retro-go/gui.c || {
+    echo "FAIL gui_redraw_callback() never draws the grid"; grid_bad=1; }
+# A fresh boot lands on the grid; quitting a game lands back in the ROM list you
+# were browsing. Both halves are the same one-line condition, so pin it.
+grep -q 'retro_loop(boot_mode != BOOT_MODE_HOT)' Core/Src/retro-go/rg_main.c || {
+    echo "FAIL a fresh boot no longer opens the grid — or quitting a game now does"
+    grid_bad=1; }
+# B is the back key now; ROM info/delete must still be reachable from the A menu.
+grep -q 'emulator_show_file_info' Core/Src/retro-go/rg_emulators.c || {
+    echo "FAIL ROM info/delete became unreachable when B stopped opening it"; grid_bad=1; }
+if [ "$grid_bad" = 0 ]; then
+    echo "OK  grid is a mode of retro_loop(), reachable, drawn; ROM info still reachable"
+else
+    rc=1
 fi
 
 exit $rc

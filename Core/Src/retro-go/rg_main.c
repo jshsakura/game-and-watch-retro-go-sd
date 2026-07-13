@@ -22,6 +22,7 @@
 #include "rg_welcome_prompt.h"
 #include "rg_clock.h"
 #include "rg_alarm.h"   /* resident all-state next-alarm cache */
+#include "rg_system_grid.h"
 
 /* Wake-cause flags latched at reset in main.c (before anything clears them). */
 extern volatile uint8_t boot_alarm_flag;
@@ -652,7 +653,16 @@ bool gui_change_tab(int direction) {
     return changed;
 }
 
-void retro_loop()
+/** How long LEFT/RIGHT must be held before the system grid opens. Short enough to
+ * beat the tab auto-repeat (which starts at ~30 frames), long enough that a tap
+ * still steps exactly one tab. */
+#define GRID_HOLD_MS (400)
+
+/** @param open_grid  Land on the system grid instead of a ROM list. True on a
+ * fresh start, false when we got here by quitting a game (BOOT_MODE_HOT) — the
+ * launcher restarts either way, and dumping the player on the grid every time
+ * they leave a ROM would lose their place in the list they were browsing. */
+void retro_loop(bool open_grid)
 {
     tab_t *tab;
     int last_key = -1;
@@ -660,12 +670,17 @@ void retro_loop()
     uint32_t idle_s;
     bool power_key_pressed = false;
     bool suppress_next_b_release = false;
+    /* Set when a gesture has already consumed the keys that are still held, so the
+     * dispatch below does not act on them a second time (holding LEFT opens the
+     * grid; without this the grid would then read that same LEFT as a cursor move). */
+    bool swallow_until_release = false;
 
     // Variable to measure the time the button has been pressed
     static uint32_t key_press_start_time = 0;
-    /* Inside a ROM subfolder: long B = parent folder; short B = KEY_PRESS_B (infos). */
-    static uint32_t b_subfolder_hold_t0 = 0;
-    static bool b_subfolder_long_consumed = false;
+    /* Hold LEFT/RIGHT to open the system grid rather than stepping one tab per
+     * press. Same shape as any other hold gesture in this loop. */
+    static uint32_t tab_hold_t0 = 0;
+    static bool tab_hold_consumed = false;
 
 #pragma GCC diagnostic ignored "-Wint-conversion"
 #pragma GCC diagnostic ignored "-Wdiscarded-qualifiers"
@@ -692,6 +707,11 @@ void retro_loop()
     update_debug_clock();
 
     rg_welcome_prompt_maybe_auto_show_on_launcher();
+
+    /* Opened AFTER the tab is prepared, so the grid highlights the system the
+     * user last used rather than tab 0. */
+    if (open_grid)
+        rg_system_grid_open();
 
     while (true)
     {
@@ -742,34 +762,38 @@ void retro_loop()
         }
 #endif
 
-        if (rg_emulator_tab_in_rom_subfolder(tab))
+        /* Tap LEFT/RIGHT = step one system, as before. Hold it and the grid opens,
+         * so the gesture that used to cost 28 presses now costs one. */
+        if (!rg_system_grid_is_open() &&
+            (gui.joystick.values[key_left] || gui.joystick.values[key_right]))
         {
-            if (gui.joystick.values[ODROID_INPUT_B])
+            if (tab_hold_t0 == 0)
             {
-                if (b_subfolder_hold_t0 == 0)
-                    b_subfolder_hold_t0 = get_elapsed_time();
-                else if (!b_subfolder_long_consumed &&
-                         get_elapsed_time() - b_subfolder_hold_t0 >= 500)
-                {
-                    if (rg_emulator_browse_pop_if_in_subfolder(tab))
-                        b_subfolder_long_consumed = true;
-                }
+                tab_hold_t0 = get_elapsed_time();
             }
-            else
+            else if (!tab_hold_consumed &&
+                     get_elapsed_time() - tab_hold_t0 >= GRID_HOLD_MS)
             {
-                if (b_subfolder_hold_t0 != 0 && !b_subfolder_long_consumed)
-                    gui_event(KEY_PRESS_B, tab);
-                b_subfolder_hold_t0 = 0;
-                b_subfolder_long_consumed = false;
+                rg_system_grid_open();
+                tab_hold_consumed = true;
+                swallow_until_release = true;
+                last_key = -1;
+                repeat = 0;
             }
         }
-        else
+        else if (!gui.joystick.values[key_left] && !gui.joystick.values[key_right])
         {
-            if (!gui.joystick.values[ODROID_INPUT_B])
-            {
-                b_subfolder_hold_t0 = 0;
-                b_subfolder_long_consumed = false;
-            }
+            tab_hold_t0 = 0;
+            tab_hold_consumed = false;
+        }
+
+        if (swallow_until_release)
+        {
+            if (gui.joystick.bitmask == 0)
+                swallow_until_release = false;
+
+            last_key = -1;
+            repeat = 0;
         }
 
         if (idle_s > 0 && gui.joystick.bitmask == 0)
@@ -777,7 +801,8 @@ void retro_loop()
             gui_event(TAB_IDLE, tab);
         }
 
-        if ((last_key < 0) || ((repeat >= 30) && (repeat % 5 == 0)))
+        if (!swallow_until_release &&
+            ((last_key < 0) || ((repeat >= 30) && (repeat % 5 == 0))))
         {
             for (int i = 0; i < ODROID_INPUT_MAX; i++)
             {
@@ -792,7 +817,50 @@ void retro_loop()
                 }
             }
 
-            if ((last_key == ODROID_INPUT_START) || (last_key == ODROID_INPUT_X))
+            /* The grid steers by raw direction — it is not a list, so the
+             * coverflow themes' axis swap must not reach it. Anything it does not
+             * claim (POWER, the menu keys) falls through to the handlers below. */
+            bool grid_handled = rg_system_grid_is_open();
+
+            if (grid_handled)
+            {
+                if (last_key == ODROID_INPUT_UP)
+                {
+                    rg_system_grid_step(0, -1);
+                    repeat++;
+                }
+                else if (last_key == ODROID_INPUT_DOWN)
+                {
+                    rg_system_grid_step(0, +1);
+                    repeat++;
+                }
+                else if (last_key == ODROID_INPUT_LEFT)
+                {
+                    rg_system_grid_step(-1, 0);
+                    repeat++;
+                }
+                else if (last_key == ODROID_INPUT_RIGHT)
+                {
+                    rg_system_grid_step(+1, 0);
+                    repeat++;
+                }
+                else if (last_key == ODROID_INPUT_A)
+                {
+                    rg_system_grid_commit();
+                    tab = gui_get_prepared_tab(gui.selected);
+                    swallow_until_release = true;
+                }
+                else
+                {
+                    grid_handled = false;
+                }
+            }
+
+            if (grid_handled)
+            {
+                /* claimed by the grid */
+            }
+            else if ((last_key == ODROID_INPUT_START) || (last_key == ODROID_INPUT_X))
             {
                 handle_about_menu();
             }
@@ -871,12 +939,18 @@ void retro_loop()
         {
             if (!gui.joystick.values[last_key])
             {
+                /* B goes up one level, always: grid -> back to the list you came
+                 * from, subfolder -> parent, list root -> the grid. (ROM info and
+                 * delete used to live here; they moved into the A menu, which is
+                 * where every other per-ROM action already was.) */
                 if (last_key == ODROID_INPUT_B)
                 {
                     if (suppress_next_b_release)
                         suppress_next_b_release = false;
-                    else if (!rg_emulator_tab_in_rom_subfolder(tab))
-                        gui_event(KEY_PRESS_B, tab);
+                    else if (rg_system_grid_is_open())
+                        rg_system_grid_close();
+                    else if (!rg_emulator_browse_pop_if_in_subfolder(tab))
+                        rg_system_grid_open();
                 }
                 last_key = -1;
                 repeat = 0;
@@ -1187,6 +1261,9 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
             app_start_logo();
 #endif
 
-        retro_loop();
+        /* BOOT_MODE_HOT is the launcher restarting because the user quit a game
+         * (see the app_logo() call above). Every other way of getting here is a
+         * fresh start, and a fresh start opens on the system grid. */
+        retro_loop(boot_mode != BOOT_MODE_HOT);
     }
 }
