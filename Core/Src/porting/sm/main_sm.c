@@ -29,6 +29,8 @@
 #include "gw_flash.h"
 #include "gw_flash_alloc.h"
 #include "gw_ofw.h"
+#include "gw_sleep.h"
+#include "error_screens.h"
 
 #include "bq24072.h"
 #include "stm32h7xx_hal.h"
@@ -59,6 +61,16 @@
 #define SM_ROM_PATH  "/roms/homebrew/sm.smc"
 #define SM_SRAM_SIZE (0x2000)
 #define SM_CART_LOROM (1)
+
+/* The port indexes the image as a flat LoROM (bank N at N * 0x8000), so the
+ * 512-byte copier header half the dumps in circulation carry would put every
+ * read 512 bytes off. It is unambiguous — nothing else is 3 MB + 512 — so skip
+ * it rather than refuse the file. Any other size is not this game. */
+#define SM_ROM_SIZE      (3u * 1024 * 1024)
+#define SM_COPIER_HEADER (512u)
+
+/* How long the fatal screen stays up before the console sleeps, in seconds. */
+#define SM_FATAL_SLEEP_S (600)
 
 /* Declared in headers we do not pull in whole: funcs.h drags the game's entire
  * symbol table, and sm_cpu_infra.h belongs to the emulator-comparison harness.
@@ -119,10 +131,34 @@ static const char *SmLanguageName(int index) {
 }
 #define SM_LANGUAGE_COUNT 2
 
-void NORETURN Die(const char *error) {
-  printf("sm: %s\n", error);
-  assert(0);
+/* A missing or wrong file has to say so on the LCD. Die() printf()s down a UART
+ * nobody has and then assert()s, which puts a fault screen up with a file and a
+ * line number on it — true, and of no use whatever to the person holding the
+ * console. Say the name of the file, and what to do about it, the way
+ * sdcard_error_screen() already does. */
+static void NORETURN SmFatal(const char *line_1, const char *line_2) {
+  printf("sm: FATAL %s / %s\n", line_1, line_2 ? line_2 : "");
+  lcd_backlight_set(180);
+  draw_error_screen("SUPER METROID", line_1, line_2);
+
+  int idle_s = uptime_get();
+  while (uptime_get() - idle_s < SM_FATAL_SLEEP_S) {
+    odroid_gamepad_state_t joystick;
+    wdog_refresh();
+    lcd_sync();
+    lcd_swap();
+    HAL_Delay(10);
+    odroid_input_read_gamepad(&joystick);
+    if (joystick.values[ODROID_INPUT_POWER] || joystick.values[ODROID_INPUT_A] ||
+        joystick.values[ODROID_INPUT_B])
+      break;
+  }
+  GW_EnterDeepSleep(true, NULL, NULL);
   while (1) {}
+}
+
+void NORETURN Die(const char *error) {
+  SmFatal(error, NULL);
 }
 
 void Warning(const char *error) {
@@ -542,7 +578,17 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   uint32_t rom_length = 0;
   uint8 *rom = odroid_overlay_cache_file_in_flash(SM_ROM_PATH, &rom_length, false);
   if (rom == NULL)
-    Die("Missing " SM_ROM_PATH);
+    SmFatal("Missing " SM_ROM_PATH, "Copy your ROM there - see README");
+
+  /* Nothing checked this before, and a wrong file did not fail: it was read as
+   * if it were the game, and the console died with no idea why. */
+  if (rom_length == SM_ROM_SIZE + SM_COPIER_HEADER) {
+    printf("sm: sm.smc carries a 512-byte copier header; skipping it\n");
+    rom += SM_COPIER_HEADER;
+    rom_length -= SM_COPIER_HEADER;
+  } else if (rom_length != SM_ROM_SIZE) {
+    SmFatal("sm.smc is not a 3 MB Super Metroid ROM", "Run tools/sm_prepare_rom.py on it");
+  }
 
   /* Which ROM is this? LoROM: bank $8B lives at file offset 0x0B * 0x8000. */
   {
@@ -562,7 +608,7 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   /* The cold banks and all of the game's rodata live in QSPI flash — neither
    * fits in the overlay pool. */
   if (!SmCacheXipToFlash())
-    Die("Missing " SM_XIP_PATH);
+    SmFatal("Missing " SM_XIP_PATH, "Re-run the retro-go_update.bin update");
 
   /* Everything in the overlay that points into the blob — the RAM->XIP call
    * veneers, and every reference to the game's rodata — still holds a sentinel.
