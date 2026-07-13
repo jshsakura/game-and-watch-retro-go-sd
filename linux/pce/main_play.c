@@ -44,7 +44,9 @@ extern int linux_loadstate_req;
 #define JOY_DOWN    0x40
 #define JOY_LEFT    0x80
 
-#define WIDTH    512
+/* Mednafen nominal PCE viewport: 320×240 (256/342/512-wide modes are aspect-
+ * corrected to 320px wide; default window scale is 3× → 960×720). */
+#define WIDTH    320
 #define HEIGHT   240
 #define BPP      2
 #define SCALE    2
@@ -181,29 +183,52 @@ static void init_color_pals(void)
 
 void odroid_display_force_refresh(void) {}
 
+static void pce_fb_clear(void)
+{
+	memset(emulator_framebuffer_pce, PCE.Palette[0], sizeof(emulator_framebuffer_pce));
+}
+
+static inline void pce_norm_vdc_size(int *w, int *h)
+{
+	if (*w < 8) *w = 8;
+	if (*w > 512) *w = 512;
+	if (*h < 8) *h = 8;
+	if (*h > 256) *h = 256;
+}
+
+static void pce_display_size(int *w, int *h)
+{
+	*w = IO_VDC_SCREEN_WIDTH;
+	*h = IO_VDC_SCREEN_HEIGHT;
+	pce_norm_vdc_size(w, h);
+}
+
+static int pce_fb_offset(void)
+{
+	int w = IO_VDC_SCREEN_WIDTH;
+	int h = IO_VDC_SCREEN_HEIGHT;
+	pce_norm_vdc_size(&w, &h);
+	int offx = (XBUF_WIDTH - w) / 2;
+	if (offx < 0) offx = 0;
+	return ((XBUF_HEIGHT - h) / 2 + 16) * XBUF_WIDTH + offx;
+}
+
 uint8_t *osd_gfx_framebuffer(void)
 {
-	return emulator_framebuffer_pce + FB_INTERNAL_OFFSET;
+	return emulator_framebuffer_pce + pce_fb_offset();
 }
 
 void osd_gfx_set_mode(int width, int height)
 {
 	init_color_pals();
-	if (width < 160 || width > 512) {
-		MESSAGE_ERROR("Correcting out of range screen w %d\n", width);
-		width = 256;
-	}
-	if (height < 160 || height > 256) {
-		MESSAGE_ERROR("Correcting out of range screen h %d\n", height);
-		height = 224;
+	pce_norm_vdc_size(&width, &height);
+	if (width != current_width || height != current_height) {
+		pce_fb_clear();
+		gfx_reset(false);
 	}
 	current_width = width;
 	current_height = height;
-	SDL_SetWindowSize(window, current_width * SCALE, current_height * SCALE);
-	SDL_DestroyTexture(fb_texture);
-	fb_texture = SDL_CreateTexture(renderer,
-	    SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING,
-	    current_width, current_height);
+	/* Fixed-size SDL window (see WIDTH/HEIGHT) — centre in pce_osd_gfx_blit(). */
 }
 
 void pce_input_read(odroid_gamepad_state_t *out_state)
@@ -335,6 +360,7 @@ static bool host_LoadState(const char *savePathName)
 
 	gfx_reset(true);
 	osd_gfx_set_mode(IO_VDC_SCREEN_WIDTH, IO_VDC_SCREEN_HEIGHT);
+	pce_fb_clear();
 	fclose(fp);
 
 	g_cd_state_loaded = true;
@@ -573,9 +599,7 @@ void pce_osd_gfx_blit(bool drawFrame)
 {
 	static uint32_t lastFPSTime = 0;
 	static uint32_t frames = 0;
-	static int wantedTime = 1000 / 60;
-	int offsetX = 0;
-	int y, offsetY;
+	int y;
 	uint8_t *fbTmp;
 
 	if (!drawFrame) {
@@ -594,28 +618,41 @@ void pce_osd_gfx_blit(bool drawFrame)
 		lastFPSTime = currentTime;
 	}
 
-	offsetX = 0;
-
-	int renderHeight = (current_height <= HEIGHT) ? current_height : HEIGHT;
-	uint8_t *emuFrameBuffer = osd_gfx_framebuffer();
-	pixel_t *framebuffer_active = fb_data;
-
-	for (y = 0; y < renderHeight; y++) {
-		fbTmp = emuFrameBuffer + (y * XBUF_WIDTH);
-		offsetY = y * current_width;
-		for (int x = 0; x < current_width; x++)
-			framebuffer_active[offsetY + x + offsetX] = mypalette[fbTmp[x]];
-	}
-
-	SDL_UpdateTexture(fb_texture, NULL, fb_data, current_width * BPP);
-	SDL_RenderCopy(renderer, fb_texture, NULL, NULL);
-	SDL_RenderPresent(renderer);
 	memset(fb_data, 0, sizeof(fb_data));
 
-	/* Frame pacing is done by pce_audio_pace() (audio-queue driven) in the main
-	 * loop; a second wall-clock SDL_Delay here would fight it and reintroduce
-	 * the audio-queue drift that caused the clicks/pops. */
-	(void)wantedTime;
+	int disp_w, disp_h;
+	pce_display_size(&disp_w, &disp_h);
+
+	int cropX = 0, cropY = 0;
+	int renderWidth = disp_w;
+	int renderHeight = disp_h;
+	int offsetX = 0, offsetY = 0;
+
+	if (renderWidth > WIDTH) {
+		cropX = (renderWidth - WIDTH) / 2;
+		renderWidth = WIDTH;
+	} else {
+		offsetX = (WIDTH - renderWidth) / 2;
+	}
+	if (renderHeight > HEIGHT) {
+		cropY = (renderHeight - HEIGHT) / 2;
+		renderHeight = HEIGHT;
+	} else {
+		offsetY = (HEIGHT - renderHeight) / 2;
+	}
+
+	uint8_t *emuFrameBuffer = osd_gfx_framebuffer();
+
+	for (y = 0; y < renderHeight; y++) {
+		fbTmp = emuFrameBuffer + ((y + cropY) * XBUF_WIDTH);
+		pixel_t *dst = fb_data + (y + offsetY) * WIDTH + offsetX;
+		for (int x = 0; x < renderWidth; x++)
+			dst[x] = mypalette[fbTmp[x + cropX]];
+	}
+
+	SDL_UpdateTexture(fb_texture, NULL, fb_data, WIDTH * BPP);
+	SDL_RenderCopy(renderer, fb_texture, NULL, NULL);
+	SDL_RenderPresent(renderer);
 }
 
 static void pce_cd_autostart_input(odroid_gamepad_state_t *joy, int frame)
@@ -765,6 +802,8 @@ int main(int argc, char *argv[])
 		pce_osd_gfx_blit(drawFrame);
 		pce_pcm_submit();
 		pce_audio_pace();
+
+		pce_adpcm_frame_end();
 
 		PCE.Timer.cycles_counter -= Cycles;
 		PCE.MaxCycles -= Cycles;

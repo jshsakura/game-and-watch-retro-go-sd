@@ -52,6 +52,8 @@ Padded format (current device / `main_play.c`):
 
 ## ADPCM / SCSI pitfalls
 
+## ADPCM / SCSI pitfalls
+
 - **ADPCM engine is Mednafen-style** (`pce_adpcm_run` / `pce_adpcm_sync`): `$180A` read/write use `ReadPending`/`WritePending` (57 / 33 cycles). `EndReached` when `LengthCount` hits 0 during playback fetch or read-complete — **not** on manual `$180D` stop. Audio decode runs in `pce_adpcm_fill` at the programmed rate (not the CPU `bigdiv` burst path) to avoid FIFO underrun stutter on short SFX/voice.
 - **Call `pce_adpcm_sync()` only on status/DMA polls** (`$1800`, `$1803`, `$180A`, `$180B`, `$180C`) plus once per frame before `Cycles` reset — not on every `$180x` read (IPL `$1808` path). Calling it on all register reads corrupts IPL/boot (`load error`).
 - **ADPCM RAM is 64 KB double-buffered** — voice dropouts after ~4–5 s often mean DMA completion handshake (`HALF`/`END`, `effective_port3()`) or drain timing, not sector I/O.

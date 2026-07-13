@@ -5,6 +5,9 @@
 #include <stdbool.h>
 
 void    pce_adpcm_reset(void);
+void    pce_adpcm_run(int32_t clocks);               /* advance engine (CPU cycles) */
+void    pce_adpcm_sync(void);                        /* run since last sync (Cycles) */
+void    pce_adpcm_frame_end(void);                   /* after Cycles reset each frame */
 void    pce_adpcm_write(uint8_t reg, uint8_t val);   /* reg = A & 0x0F */
 uint8_t pce_adpcm_read(uint8_t reg);
 void    pce_adpcm_dma_byte(uint8_t val);             /* SCSI->ADPCM DMA: one byte to RAM */

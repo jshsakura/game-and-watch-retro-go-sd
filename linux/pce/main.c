@@ -553,10 +553,11 @@ void pce_scsi_pc_tick(uint16_t pc)
 
 #define NVS_KEY_SAVE_SRAM "sram"
 
-#define WIDTH    352
-#define HEIGHT   242
+/* Mednafen nominal PCE viewport (see main_play.c). */
+#define WIDTH    320
+#define HEIGHT   240
 #define BPP      2
-#define SCALE    4
+#define SCALE    2
 
 typedef uint16_t pixel_t;
 static uint16_t mypalette[256];
@@ -692,29 +693,49 @@ void fill_audio(void *udata, Uint8 *stream, int len)
 
 }
 
+static void pce_fb_clear(void)
+{
+    memset(emulator_framebuffer_pce, PCE.Palette[0], sizeof(emulator_framebuffer_pce));
+}
+
+static inline void pce_norm_vdc_size(int *w, int *h)
+{
+    if (*w < 8) *w = 8;
+    if (*w > 512) *w = 512;
+    if (*h < 8) *h = 8;
+    if (*h > 256) *h = 256;
+}
+
+static void pce_display_size(int *w, int *h)
+{
+    *w = IO_VDC_SCREEN_WIDTH;
+    *h = IO_VDC_SCREEN_HEIGHT;
+    pce_norm_vdc_size(w, h);
+}
+
+static int pce_fb_offset(void)
+{
+    int w = IO_VDC_SCREEN_WIDTH;
+    int h = IO_VDC_SCREEN_HEIGHT;
+    pce_norm_vdc_size(&w, &h);
+    int offx = (XBUF_WIDTH - w) / 2;
+    if (offx < 0) offx = 0;
+    return ((XBUF_HEIGHT - h) / 2 + 16) * XBUF_WIDTH + offx;
+}
+
 uint8_t *osd_gfx_framebuffer(void){
-    return emulator_framebuffer_pce + FB_INTERNAL_OFFSET;
+    return emulator_framebuffer_pce + pce_fb_offset();
 }
 
 void osd_gfx_set_mode(int width, int height) {
 	init_color_pals();
-    printf("current_width: %d \ncurrent_height: %d\n", width, height);
-    if (width < 160 || width > 512) {
-		MESSAGE_ERROR("Correcting out of range screen w %d\n", width);
-		width = 256;
-	}
-	if (height < 160 || height > 256) {
-		MESSAGE_ERROR("Correcting out of range screen h %d\n", height);
-		height = 224;
-	}
+    pce_norm_vdc_size(&width, &height);
+    if (width != current_width || height != current_height) {
+        pce_fb_clear();
+        gfx_reset(false);
+    }
     current_width = width;
     current_height = height;
-    SDL_SetWindowSize( window, current_width * SCALE, current_height * SCALE);
-    SDL_DestroyTexture(fb_texture);
-    fb_texture = SDL_CreateTexture(renderer,
-        SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING,
-        current_width, current_height);
-
 }
 
 void pce_input_read(odroid_gamepad_state_t* out_state) {
@@ -823,6 +844,7 @@ static bool host_LoadState(const char *savePathName)
 	gfx_reset(true);
 
 	osd_gfx_set_mode(IO_VDC_SCREEN_WIDTH, IO_VDC_SCREEN_HEIGHT);
+	pce_fb_clear();
 
 	fclose(fp);
 
@@ -1098,47 +1120,53 @@ void pce_osd_gfx_blit(bool drawFrame) {
     }
 
     odroid_display_scaling_t scaling = ODROID_DISPLAY_SCALING_OFF;
-    
-    if (current_width > 0 && scaling != ODROID_DISPLAY_SCALING_OFF) {
-        xScale =  (current_width << 8) / WIDTH ;
-    } else offsetX = (WIDTH - current_width)/2; //center the image horizontally
 
-    offsetX = 0;
+    memset(fb_data, 0, sizeof(fb_data));
 
-    int renderHeight = (current_height<=HEIGHT)?current_height:HEIGHT;
+    int disp_w, disp_h;
+    pce_display_size(&disp_w, &disp_h);
+
+    int cropX = 0, cropY = 0;
+    int renderWidth = disp_w;
+    int renderHeight = disp_h;
+    int offsetX = 0, offsetY = 0;
+
+    if (renderWidth > WIDTH) {
+        cropX = (renderWidth - WIDTH) / 2;
+        renderWidth = WIDTH;
+    } else if (scaling == ODROID_DISPLAY_SCALING_OFF) {
+        offsetX = (WIDTH - renderWidth) / 2;
+    }
+
+    if (renderHeight > HEIGHT) {
+        cropY = (renderHeight - HEIGHT) / 2;
+        renderHeight = HEIGHT;
+    } else {
+        offsetY = (HEIGHT - renderHeight) / 2;
+    }
+
+    if (disp_w > 0 && scaling != ODROID_DISPLAY_SCALING_OFF) {
+        xScale = (disp_w << 8) / WIDTH;
+    }
 
     uint8_t *emuFrameBuffer = osd_gfx_framebuffer();
-    pixel_t *framebuffer_active = fb_data;//lcd_get_active_buffer();
+    pixel_t *framebuffer_active = fb_data;
 
-    for(y=0;y<renderHeight;y++) {
-        fbTmp = emuFrameBuffer+(y*XBUF_WIDTH);
-        offsetY = y*current_width;
+    for (y = 0; y < renderHeight; y++) {
+        fbTmp = emuFrameBuffer + ((y + cropY) * XBUF_WIDTH);
+        pixel_t *dst = framebuffer_active + (y + offsetY) * WIDTH + offsetX;
         if (xScale) {
-            // Horizontal - Scale 
-            for(int x=0;x<WIDTH;x++) {
-                framebuffer_active[offsetY+x]= mypalette[fbTmp[ (x * xScale) >> 8 ]];
-            }
+            for (int x = 0; x < WIDTH; x++)
+                dst[x] = mypalette[fbTmp[((x * xScale) >> 8) + cropX]];
         } else {
-            // No scaling, 1:1
-            for(int x=0;x<current_width;x++) {
-                   framebuffer_active[offsetY+x+offsetX]=mypalette[fbTmp[x]];
-            }
+            for (int x = 0; x < renderWidth; x++)
+                dst[x] = mypalette[fbTmp[x + cropX]];
         }
     }
-    //* Temporary, Y scaling is not yet implemented
-    /*for(;y<HEIGHT;y++) {
-        fbTmp = emuFrameBuffer+(y*XBUF_WIDTH);
-        offsetY = y*WIDTH;
-        for(int x=0;x<WIDTH;x++) {
-            framebuffer_active[offsetY+x+offsetX]=0;
-        }
-    }*/
 
-    SDL_UpdateTexture(fb_texture, NULL, fb_data, current_width * BPP);
+    SDL_UpdateTexture(fb_texture, NULL, fb_data, WIDTH * BPP);
     SDL_RenderCopy(renderer, fb_texture, NULL, NULL);
     SDL_RenderPresent(renderer);
-
-    memset(fb_data,0,sizeof(fb_data));
 
     //If frame finished early
     int frameTicks = SDL_GetTicks() - capTimer;
@@ -1440,6 +1468,8 @@ int main(int argc, char *argv[])
             int an = pce_adpcm_fill(ab, 735);
             if (af && an > 0) fwrite(ab, sizeof(int16_t) * 2, an, af);
         }
+
+        pce_adpcm_frame_end();
 
         // Prevent overflow
         PCE.Timer.cycles_counter -= Cycles;
