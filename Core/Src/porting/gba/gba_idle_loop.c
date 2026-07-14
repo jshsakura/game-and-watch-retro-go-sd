@@ -55,7 +55,6 @@ static const gba_idle_entry_t GBA_IDLE_LOOPS[] = {
     { "AUTJ", 0x800f272, 42011 },   // 라라 크로프트 툼레이더 - The Prophecy
     { "AGBJ", 0x8001d2e, 46573 },   // 닌텐도 클라이언트 바이너리
     { "A3GJ", 0x8000262, 47188 },   // 역전재판 2 (Gyakuten Saiban 2)
-    { "A7KJ", 0x8000f92, 47491 },   // 별의 커비 - 꿈의 샘 디럭스 (Kirby - Nightmare in Dream Land) (2)
     { "BDTE", 0x800065a, 49801 },   // 다운타운 열혈물어EX (한글패치)
     { "BATE", 0x80879f8, 53159 },   // 배트맨 - 라이즈 오브 신 츠
     { "B4ZJ", 0x8000914, 53533 },   // 록맨 제로 4 (한글패치)
@@ -63,6 +62,7 @@ static const gba_idle_entry_t GBA_IDLE_LOOPS[] = {
     { "AKRP", 0x8000422, 54570 },   // 쿠루 쿠루 쿠루린 (Kurukuru Kururin)
     { "AYWJ", 0x80896f2, 55395 },   // Yu-Gi-Oh! Duel Monsters International - Worldwide Edition (Korea-patch J-K v0.76)
     { "AY6J", 0x807928e, 56353 },   // Yu-Gi-Oh! Duel Monsters 6 Expert 2 (Korea-patch J-K v0.65)
+    { "A7KJ", 0x8000f92, 56392 },   // 별의 커비 - 꿈의 샘 디럭스 (Kirby - Nightmare in Dream Land) (2)
     { "AVLE", 0x80065a8, 58617 },   // 데어데블
     { "AFZJ", 0x8000c2e, 59709 },   // 에프제로 (F-Zero for Game Boy Advance)
     { "BHRJ", 0x8013f60, 59735 },   // 강철의 연금술사 - 미주의 윤무곡 (Hagane no Renkinjutsushi - Meisou no Rondo)
