@@ -141,24 +141,61 @@ static void NORETURN SmFatal(const char *line_1, const char *line_2) {
   lcd_backlight_set(180);
   draw_error_screen("SUPER METROID", line_1, line_2);
 
-  int idle_s = uptime_get();
-  while (uptime_get() - idle_s < SM_FATAL_SLEEP_S) {
-    odroid_gamepad_state_t joystick;
+  /* Hold the screen. Do NOT sleep: GW_EnterDeepSleep() came back through
+   * gw_sleep.c, whose sdcard_init() failed, and the last thing the player saw
+   * was "No SD CARD found" — a message about a card that was never the problem.
+   * A fatal screen has one job, which is to still be there when it is read. */
+  while (1) {
     wdog_refresh();
     lcd_sync();
     lcd_swap();
-    HAL_Delay(10);
-    odroid_input_read_gamepad(&joystick);
-    if (joystick.values[ODROID_INPUT_POWER] || joystick.values[ODROID_INPUT_A] ||
-        joystick.values[ODROID_INPUT_B])
-      break;
+    HAL_Delay(20);
   }
-  GW_EnterDeepSleep(true, NULL, NULL);
-  while (1) {}
 }
 
 void NORETURN Die(const char *error) {
   SmFatal(error, NULL);
+}
+
+/* Is the ROM in flash still the ROM on the card?
+ *
+ * A new game is a black screen while a save loads and plays, and the launch after
+ * that is fine. The suspicion is the flash cache: it is a ring, and the write that
+ * caches the code blob can come round onto the ROM whose pointer we are already
+ * holding. The port executes no 65816 — it only READS the ROM — so a hole takes out
+ * only the scenes that read from it, and the intro's text tables (bank $8B) are
+ * read by nothing else.
+ *
+ * That is a story, not a fact, and two attempts to fix it before proving it cost
+ * two broken builds. So prove it, or kill it. This writes nothing and erases
+ * nothing: it samples 64 bytes every 64 KB — no smaller than an erase block, so no
+ * hole can hide between samples — and compares flash against the card. ~3 KB of SD
+ * reads. If they agree, the cache is innocent and the bug is in the intro. */
+#define SM_VERIFY_STRIDE (64u * 1024)
+#define SM_VERIFY_BYTES  (64u)
+
+static void SmVerifyRomAgainstCard(const uint8 *rom, uint32_t rom_length,
+                                   uint32_t header_bytes) {
+  FILE *f = fopen(SM_ROM_PATH, "rb");
+  if (f == NULL)
+    return;                       /* it launched, so it is there; nothing to prove */
+
+  uint8_t from_card[SM_VERIFY_BYTES];
+  for (uint32_t off = 0; off + SM_VERIFY_BYTES <= rom_length; off += SM_VERIFY_STRIDE) {
+    if (fseek(f, (long)(off + header_bytes), SEEK_SET) != 0)
+      break;
+    if (fread(from_card, 1, SM_VERIFY_BYTES, f) != SM_VERIFY_BYTES)
+      break;
+
+    if (memcmp(from_card, rom + off, SM_VERIFY_BYTES) != 0) {
+      fclose(f);
+      char where[40];
+      snprintf(where, sizeof(where), "ROM cache damaged at 0x%06lX", (unsigned long)off);
+      SmFatal(where, "Flash copy differs from the SD file");
+    }
+  }
+  fclose(f);
+  printf("sm: rom in flash matches the card\n");
 }
 
 void Warning(const char *error) {
@@ -576,6 +613,7 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
    * therefore erase the blob we are about to execute from — with the pointer to
    * it already in hand. Nothing is written after the blob, so nothing can. */
   uint32_t rom_length = 0;
+  uint32_t rom_header_bytes = 0;
   uint8 *rom = odroid_overlay_cache_file_in_flash(SM_ROM_PATH, &rom_length, false);
   if (rom == NULL)
     SmFatal("Missing " SM_ROM_PATH, "Copy your ROM there - see README");
@@ -586,6 +624,7 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
     printf("sm: sm.smc carries a 512-byte copier header; skipping it\n");
     rom += SM_COPIER_HEADER;
     rom_length -= SM_COPIER_HEADER;
+    rom_header_bytes = SM_COPIER_HEADER;
   } else if (rom_length != SM_ROM_SIZE) {
     SmFatal("sm.smc is not a 3 MB Super Metroid ROM", "Run tools/sm_prepare_rom.py on it");
   }
@@ -609,6 +648,10 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
    * fits in the overlay pool. */
   if (!SmCacheXipToFlash())
     SmFatal("Missing " SM_XIP_PATH, "Re-run the retro-go_update.bin update");
+
+  /* The blob's write is the suspect, so ask right after it: does the ROM in flash
+   * still match the card? Reads only. */
+  SmVerifyRomAgainstCard(rom, rom_length, rom_header_bytes);
 
   /* Everything in the overlay that points into the blob — the RAM->XIP call
    * veneers, and every reference to the game's rodata — still holds a sentinel.
