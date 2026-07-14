@@ -42,6 +42,7 @@ static const gba_idle_entry_t GBA_IDLE_LOOPS[] = {
     { "ADSJ", 0x80006c4, 19697 },   // Daisenryaku for Game Boy Advance (Korea-patch J-K v20141222 v.01)
     { "A2DJ", 0x8001b0e, 21149 },   // 다리우스 R
     { "ASBJ", 0x8000252, 23995 },   // 역전재판
+    { "AKOJ", 0x8000332, 25949 },   // 킹 오브 파이터즈 EX 네오 블러드 + 33 NES
     { "BKCS", 0x80006b8, 26692 },   // 짱구는 못말려 - 시네랜드의 모험 (Shin chan - Aventuras en Cineland)
     { "BTME", 0x80138a0, 26988 },   // 마리오 테니스 파워 투어 (Mario Tennis - Power Tour)
     { "ABTE", 0x80596ce, 27068 },   // 배트맨 - 벤전스 (Batman - Vengeance)
@@ -52,7 +53,9 @@ static const gba_idle_entry_t GBA_IDLE_LOOPS[] = {
     { "AQ2J", 0x8000c14, 37276 },   // 쵸로Q어드밴스2 (Choro Q Advance 2)
     { "BEXE", 0x803b188, 41238 },   // TMNT (TMNT)
     { "AUTJ", 0x800f272, 42011 },   // 라라 크로프트 툼레이더 - The Prophecy
+    { "AGBJ", 0x8001d2e, 46573 },   // 닌텐도 클라이언트 바이너리
     { "A3GJ", 0x8000262, 47188 },   // 역전재판 2 (Gyakuten Saiban 2)
+    { "A7KJ", 0x8000f92, 47491 },   // 별의 커비 - 꿈의 샘 디럭스 (Kirby - Nightmare in Dream Land) (2)
     { "BDTE", 0x800065a, 49801 },   // 다운타운 열혈물어EX (한글패치)
     { "BATE", 0x80879f8, 53159 },   // 배트맨 - 라이즈 오브 신 츠
     { "B4ZJ", 0x8000914, 53533 },   // 록맨 제로 4 (한글패치)
