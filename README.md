@@ -40,6 +40,9 @@ this section is the full picture.)
 - **Virtual Boy** (red-viper) — honest caveat: **about 65-70% of full speed** with
   automatic overclock. Gapless audio, selectable pad presets (left pad / right pad /
   triggers as A/B). Several titles are enjoyable at that speed.
+- **Game Boy Advance** (gpSP) — Pokémon Ruby runs. See [Game Boy Advance](#game-boy-advance)
+  for what it took: the cart is never copied into RAM, and 89 measured idle-loop
+  addresses stop the games from busy-waiting through the frame they should be resting in.
 
 ##### BIOS files the added systems expect
 
@@ -232,6 +235,7 @@ If you are looking for the mod without SD Card (Flash mod only), check https://g
     - [Cheat codes on GB System](#cheat-codes-on-gb-system)
     - [Cheat codes on PCE System](#cheat-codes-on-pce-system)
     - [Cheat codes on MSX System](#cheat-codes-on-msx-system)
+  - [Game Boy Advance](#game-boy-advance)
   - [NES Emulator](#nes-emulator)
   - [MSX Emulator](#msx-emulator)
   - [Amstrad CPC6128 Emulator](#amstrad-cpc6128-emulator)
@@ -469,6 +473,7 @@ renders it with the PICO-8 palette, and saves as a JPEG cover.
 - Atari 7800
 - ColecoVision
 - Gameboy / Gameboy Color
+- Game Boy Advance
 - Game & Watch / LCD Games
 - MSX1/2/2+
 - Nintendo Entertainment System
@@ -598,6 +603,74 @@ _
 You can use blueMSX MCF cheat files with your Game & Watch. A nice collection of patch files is available [Here](http://bluemsx.msxblue.com/rel_download/Cheats.zip).
 Just copy the wanted MCF files in the /cheats/msx/ folder with the same name as the corresponding rom/dsk file.
 On MSX system, you can enable/disable cheats while playing. Just press the Pause/Set button and choose "Cheat Codes" menu to choose which cheats you want to enable or disable.
+
+## Game Boy Advance
+
+GBA emulation uses **gpSP**, running as an interpreter — there is no dynamic recompiler
+here, because gpSP's backends are x86/ARM32/ARM64/MIPS and none of them targets the
+Cortex-M's Thumb-2. Every GBA instruction is decoded and executed in software, on a
+microcontroller with 724 KB of RAM for the whole emulator. Pokémon Ruby runs.
+
+Put `.gba` files in `/roms/gba/`; saves land in `/saves/gba/`. Both folders are created
+on first boot. No BIOS file is needed — a clean-room replacement ships with the core.
+
+### The ROM never enters RAM
+
+A GBA cart is up to 32 MB. There is no RAM to put it in, so it is not put in RAM: the
+ROM is cached into the external QSPI flash and the emulator reads it **where it lies**,
+memory-mapped. A 16 MB Pokémon ROM costs zero bytes of the RAM budget. The first launch
+of a game spends a while writing it to flash; every launch after that is a cache hit and
+starts immediately.
+
+The one exception is the cart's first 32 KB, which gets a RAM shadow — because an RTC
+cart *writes* its clock registers back into "ROM" at `0x080000C4`, and flash does not
+take writes. Ruby, Sapphire and Emerald all keep time that way.
+
+### 89 measured idle-loop addresses
+
+A GBA game does its work for a frame and then **busy-waits** for the vertical blank —
+spinning on a single branch, doing nothing, sometimes for three quarters of the frame.
+gpSP can throw those cycles away, but only if it knows *where* that branch is, and it
+knows only for the carts in a hand-maintained table.
+
+A cart absent from that table spins through all 280,896 cycles of every frame. That is
+not "a bit slower" — it is the difference between doing 75,000 cycles of real work and
+pretending to do 280,896.
+
+This build ships **89 addresses measured by running the ROMs**: an address is only kept
+when the per-frame cycle count demonstrably collapses with it applied. It is applied over
+gpSP's own table rather than by patching it, which also corrects the three entries gpSP
+has *wrong* — FireRed and LeafGreen point at an address where there is no loop at all.
+
+(Ruby and Sapphire are deliberately absent. They have no busy-wait to skip: they idle
+through the BIOS, which gpSP already fast-forwards. 74% of their frame is rest.)
+
+### Where the emulator lives
+
+gpSP is 853 KB of code and data. The pool is 724 KB. It is split four ways, and each
+piece goes where its access pattern says it should:
+
+| where | what |
+| ----- | ---- |
+| ITCM (64 KB) | the ARM7 interpreter — the hottest code there is, a dispatch loop that would miss in flash on every opcode |
+| RAM pool | the memory bus, the tile renderer, all of the emulator's state |
+| AHB SRAM (120 KB) | the framebuffer, the BIOS image, the cheat table, the sound ring — the things read least, on the slower bus |
+| external flash | the sprite renderer, the cold code, and every read-only byte the interpreter never touches |
+
+The interpreter is built `-O3`; it runs from ITCM, so the code it grows by costs nothing
+but ITCM. The overclock is raised automatically to the top of the launcher's scale while
+a GBA game runs (and lowered again on exit) — and if you have chosen a *higher* level
+yourself, yours stands.
+
+### Honest caveats
+
+- **Speed is the limit, not compatibility.** Ruby runs in the high 50s. Heavier scenes
+  drop frames. The pause menu's **Settings** page reports where the frame actually goes
+  (`Emu+ppu`, `= PPU`, `Scale`, `LCD wait`) if you want to see it.
+- **No L / R buttons on a Mario unit.** The hardware has no shoulder buttons and no
+  physical X/Y either. Games that need L/R are not fully playable there yet.
+- **No link cable, no rumble.** Neither exists on this hardware, and both are switched
+  off rather than emulated.
 
 ## NES Emulator
 
