@@ -36,6 +36,7 @@ Core/Src/gw_audio.c \
 Core/Src/gw_malloc.c \
 Core/Src/gw_flash.c \
 Core/Src/gw_ofw.c \
+Core/Src/gba_probe.c \
 Core/Src/error_screens.c \
 Core/Src/main.c \
 Core/Src/syscalls.c \

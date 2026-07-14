@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "stm32h7xx_hal.h"
 #include "gw_buttons.h"
+#include "gba_probe.h"
 #include "gw_flash.h"
 #include "gw_lcd.h"
 #include "gw_sdcard.h"
@@ -467,6 +468,9 @@ int main(void)
   // Initialize the external flash
 
   OSPI_Init(&hospi1);
+
+  /* GAME+TIME at boot: measure what the XIP window costs, then halt. */
+  gba_probe_run_if_requested(boot_buttons);
 
   bq24072_init();
 
