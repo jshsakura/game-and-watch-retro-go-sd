@@ -1304,9 +1304,10 @@ C_DEFS_GBA = \
 -DROM_BUFFER_SIZE=0 \
 -DOBJ_PER_LINE_MAX=32 \
 -DBUFFER_SIZE=4096 \
--DGBA_SOUND_FREQUENCY=48000
+-DGBA_SOUND_FREQUENCY=48000 \
+-DGBA_M4A_HLE
 
-GBA_C_INCLUDES = $(C_INCLUDES) -Iexternal/gpsp -Iexternal/gpsp/libretro/libretro-common/include -I./
+GBA_C_INCLUDES = $(C_INCLUDES) -Iexternal/gpsp -Iexternal/gpsp/libretro/libretro-common/include -Itools/gba_m4a -I./
 
 GBA_WARN_OFF = -Wno-parentheses -Wno-unknown-pragmas -Wno-strict-aliasing -Wno-comment \
                -Wno-unused-function -Wno-stack-usage -Wno-unused-variable \

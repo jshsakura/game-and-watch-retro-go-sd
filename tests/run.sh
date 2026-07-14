@@ -297,6 +297,14 @@ bash tests/test_sm_skip_guard.sh || rc=1
 echo "=== gba: nothing cpu.o references may live in the XIP blob ==="
 bash tests/test_gba_xip_contract.sh || rc=1
 
+# GBA: the M4A mixer HLE is wired — cpu.o checks the hook, main.o scans for the
+# mixer, the six transliterations sit in the blob and their signatures in RAM.
+# Drop -DGBA_M4A_HLE and everything still builds and boots, just 27-60% slower;
+# this is the only thing in the tree that would say so. Same SKIP rules as the
+# XIP contract above. RED-verified: a relink without the define fails it.
+echo "=== gba: the M4A mixer HLE is wired, and each piece is on its side ==="
+bash tests/test_gba_m4a_wired.sh || rc=1
+
 # GBA: load_gamepak() on a memory-mapped cart. Runs gpSP's real load path on the
 # host BECAUSE the host traps what QEMU does not: an XIP build has no
 # gamepak_buffers, and the code that read the cart through them scanned a megabyte
