@@ -36,6 +36,18 @@ void     execute_arm(uint32_t cycles);
 void     gba_set_xip_rom(uint8_t *base, uint32_t size);
 void     gba_set_keys(uint32_t keys);
 uint32_t load_gamepak(const void *info, const char *name, int rtc, int rumble, int serial);
+/* load_gamepak's last three arguments. Spelled out here rather than included: gpSP's
+ * headers collide with CMSIS (see the note at the top of this file).
+ *
+ * The two scales are NOT the same, which is the trap. rtc and rumble are a tri-state
+ * where 0 means DISABLE and -1 means "ask the cart" (gba_memory.h:25-27). serial is a
+ * MODE, where 0 means disabled and "auto" is 6 (serial.h:20-26) — so a -1 there is not
+ * "no opinion", it is a serial mode that does not exist. */
+#define FEAT_AUTODETECT       (-1)
+#define FEAT_DISABLE            0
+#define FEAT_ENABLE             1
+#define SERIAL_MODE_DISABLED    0
+#define SERIAL_MODE_AUTO        6
 uint32_t sound_read_samples(int16_t *out, uint32_t frames);
 #if CHEAT_CODES == 1
 /* gpsp's cheat engine: GameShark / CodeBreaker / Action Replay, 20 slots. */
@@ -431,14 +443,36 @@ static inline void screen_blit_nn(int32_t dest_width, int32_t dest_height)
     for (int i = wpad + h2; i < LCD_HEIGHT; i++)
         memset(dest + i * LCD_WIDTH, 0, LCD_WIDTH * sizeof(uint16_t));
 
+    /* Two pixels per store.
+     *
+     * The LCD pool is uncached AND unbuffered (see ._ram_uc in the linker script), so
+     * every write to it is a bus round trip the CPU stalls on until it completes. FIT
+     * writes 320x213 pixels a frame; one 16-bit store each is 68,160 round trips, and
+     * that — not the scaling arithmetic — was 9.1 ms of a 16.67 ms frame. Packing two
+     * pixels into one 32-bit store halves the trips.
+     *
+     * 32-bit, not 64: a Cortex-M7 traps an unaligned STRD, and Super Metroid already
+     * died once on exactly that (see the root CLAUDE.md). Rows are 640 bytes, so a row
+     * start is always 4-byte aligned, and hpad is even for every scaling mode here —
+     * but a 64-bit store would need 8, which is not guaranteed. */
     for (int i = 0; i < h2; i++) {
         uint16_t *row = dest + (i + wpad) * LCD_WIDTH;
         int y2 = ((i * y_ratio) >> 16);
         const uint16_t *src_row = screen_buf + (y2 * w1);
+
         for (int j = 0; j < hpad; j++)
             row[j] = 0;
-        for (int j = 0; j < w2; j++)
-            row[j + hpad] = src_row[nn_xmap[j]];
+
+        uint32_t *out32 = (uint32_t *)(row + hpad);
+        int pairs = w2 >> 1;
+        for (int j = 0; j < pairs; j++) {
+            uint32_t lo = src_row[nn_xmap[j * 2]];
+            uint32_t hi = src_row[nn_xmap[j * 2 + 1]];
+            out32[j] = lo | (hi << 16);
+        }
+        if (w2 & 1)
+            row[hpad + w2 - 1] = src_row[nn_xmap[w2 - 1]];
+
         for (int j = hpad + w2; j < LCD_WIDTH; j++)
             row[j] = 0;
     }
@@ -623,7 +657,27 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     gba_set_xip_rom(rom, rom_size);
     init_gamepak_buffer();
 
-    if (load_gamepak(NULL, ACTIVE_FILE->path, 0, 0, 0) != 0)
+    /* force_rtc, force_rumble, force_serial — and only the first one changes.
+     *
+     * RTC: -1, not 0. Zero is not "no opinion" here, it is FEAT_DISABLE — an override
+     * that says turn the clock OFF. gpSP recognised Ruby, set rtc_enabled from the
+     * cart, and then the 0 we passed switched it straight back off. The game reported
+     * that its internal battery had run dry, which for a cart with no working clock is
+     * exactly true. Ruby, Sapphire and Emerald all keep time: berries grow, tides turn.
+     * Let the cart decide.
+     *
+     * Rumble: 0 stays. There is no motor in a Game & Watch, so emulating the pak is
+     * work with nowhere to land.
+     *
+     * Serial: 0 stays, and note it is NOT the same tri-state — it is a serial MODE
+     * (serial.h:20-26), where 0 is SERIAL_MODE_DISABLED and "auto" is 6. There is no
+     * link port either, and leaving it disabled also keeps gba_over.h from turning on
+     * Pokemon's serial emulation, which would be per-frame work for a cable that does
+     * not exist. */
+    if (load_gamepak(NULL, ACTIVE_FILE->path,
+                     FEAT_AUTODETECT,        /* rtc: ask the cart          */
+                     FEAT_DISABLE,           /* rumble: no motor           */
+                     SERIAL_MODE_DISABLED) != 0)   /* serial: no link port */
         gba_fatal("Not a Game Boy Advance ROM", "The header did not check out");
 
     /* After load_gamepak, on purpose: it is what sets idle_loop_target_pc from

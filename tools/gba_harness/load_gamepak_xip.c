@@ -35,6 +35,10 @@ void  init_main(void);
 void  gba_set_xip_rom(u8 *base, u32 size);
 void  init_gamepak_buffer(void);
 u32   load_gamepak(const void *info, const char *name, int rtc, int rumble, int serial);
+int   gba_rtc_is_enabled(void);
+#define FEAT_AUTODETECT      (-1)
+#define FEAT_DISABLE           0
+#define SERIAL_MODE_DISABLED   0
 
 /* A 16 MB Ruby: only the header matters to the code under test. The Korean fan
  * translation is what the device was running, so use its game code — AXVK — which
@@ -77,10 +81,29 @@ int main(void)
     printf("harness: load_gamepak() on a %d MB XIP cart...\n", ROM_SIZE / (1024 * 1024));
     fflush(stdout);
 
-    if (load_gamepak(NULL, "ruby.gba", 0, 0, 0) != 0) {
+    /* The same three arguments the firmware passes — a harness that passes different
+     * ones tests a different program.
+     *
+     * rtc is a tri-state where 0 means DISABLE, not "no opinion". The firmware passed 0
+     * and turned Ruby's clock off, and the game politely reported that its internal
+     * battery had run dry — which, for a cart whose RTC had just been force-disabled,
+     * it had. rumble and serial stay off on purpose: no motor, no link port. */
+    if (load_gamepak(NULL, "ruby.gba", FEAT_AUTODETECT, FEAT_DISABLE, SERIAL_MODE_DISABLED) != 0) {
         printf("FAIL: load_gamepak() rejected the cart\n");
         return 1;
     }
+
+    /* Ruby keeps time — berries grow, tides turn. gpSP works that out from the cart, and
+     * the only way it comes back off is if the front-end asked for it. Nothing else in
+     * the tree would notice; the game boots and plays either way, and only says so hours
+     * later, in a message about a battery. */
+    if (!gba_rtc_is_enabled()) {
+        printf("FAIL: the cart is an RTC cart and the clock is off.\n");
+        printf("      load_gamepak's last three args are force_rtc/rumble/serial, and\n");
+        printf("      0 means FEAT_DISABLE, not 'no opinion'. Pass FEAT_AUTODETECT (-1).\n");
+        return 1;
+    }
+    printf("harness: the cart's clock is running\n");
 
     printf("harness: the cart scan kicked the watchdog %u times\n", g_wdog_kicks);
     if (g_wdog_kicks == 0) {
