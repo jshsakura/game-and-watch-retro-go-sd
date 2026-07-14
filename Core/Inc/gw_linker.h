@@ -97,6 +97,10 @@ extern void * _OVERLAY_A7800_BSS_START[];
 extern void * _OVERLAY_A7800_BSS_END[];
 extern uint8_t _OVERLAY_A7800_BSS_SIZE;
 extern void * _OVERLAY_VB_LOAD_START[];
+extern uint8_t _OVERLAY_GBA_SIZE;
+extern void * _OVERLAY_GBA_BSS_START[];
+extern uint8_t _OVERLAY_GBA_BSS_SIZE;
+
 extern uint8_t _OVERLAY_VB_SIZE;
 extern void * _OVERLAY_VB_BSS_START[];
 extern void * _OVERLAY_VB_BSS_END[];

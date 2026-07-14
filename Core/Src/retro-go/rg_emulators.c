@@ -28,6 +28,7 @@
 #include "main_gwenesis.h"
 #include "main_a7800.h"
 #include "main_vb.h"
+#include "main_gba.h"
 #include "main_amstrad.h"
 #include "main_zelda3.h"
 #include "main_sm.h"
@@ -252,7 +253,7 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 28 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added. */
+#define MAX_EMULATORS 29 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added. */
 static retro_emulator_t emulators[MAX_EMULATORS];
 static rom_system_t systems[MAX_EMULATORS];
 static int emulators_count = 0;
@@ -1205,6 +1206,7 @@ static const emu_dispatch_t emu_a7800   = { "/cores/a7800.bin",   &_OVERLAY_A780
 static const emu_dispatch_t emu_vb      = { "/cores/vb.bin",      &_OVERLAY_VB_BSS_START,      (uint32_t)&_OVERLAY_VB_BSS_SIZE,      (uint32_t)&_OVERLAY_VB_SIZE,      0, EMU_ENTRY(app_main_vb) };
 static const emu_dispatch_t emu_amstrad = { "/cores/amstrad.bin", &_OVERLAY_AMSTRAD_BSS_START, (uint32_t)&_OVERLAY_AMSTRAD_BSS_SIZE, (uint32_t)&_OVERLAY_AMSTRAD_SIZE, 0, EMU_ENTRY(app_main_amstrad) };
 static const emu_dispatch_t emu_tama    = { "/cores/tama.bin",    &_OVERLAY_TAMA_BSS_START,    (uint32_t)&_OVERLAY_TAMA_BSS_SIZE,    (uint32_t)&_OVERLAY_TAMA_SIZE,    0, EMU_ENTRY(app_main_tama) };
+static const emu_dispatch_t emu_gba     = { "/cores/gba.bin",     &_OVERLAY_GBA_BSS_START,     (uint32_t)&_OVERLAY_GBA_BSS_SIZE,     (uint32_t)&_OVERLAY_GBA_SIZE,     0, EMU_ENTRY(app_main_gba) };
 static const emu_dispatch_t emu_pkmini  = { "/cores/pkmini.bin",  &_OVERLAY_PKMINI_BSS_START,  (uint32_t)&_OVERLAY_PKMINI_BSS_SIZE,  (uint32_t)&_OVERLAY_PKMINI_SIZE,  0, EMU_ENTRY(app_main_pkmini) };
 
 void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_paused, int8_t save_slot)
@@ -1285,6 +1287,8 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             if (! strcmp(system_name, "Sega SG-1000")) app_main_smsplusgx(load_state, start_paused, save_slot, SMSPLUSGX_ENGINE_SG1000);
             else                                            app_main_smsplusgx(load_state, start_paused, save_slot, SMSPLUSGX_ENGINE_OTHERS);
         }
+    } else if(strcmp(system_name, "Nintendo Gameboy Advance") == 0) {
+        run_internal_emu(&emu_gba, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Game & Watch") == 0 ) {
         if (load_core_bin_with_header("/cores/gw.bin", (uint8_t *)&__RAM_EMU_START__)) {
             memset(&_OVERLAY_GW_BSS_START, 0x0, (size_t)&_OVERLAY_GW_BSS_SIZE);
@@ -1506,6 +1510,9 @@ void emulators_init()
     add_emulator("Nintendo Entertainment System", "nes", "nes fds nsf lzma", RG_LOGO_PAD_NES, RG_LOGO_HEADER_NES, NO_GAME_DATA);
     add_emulator("Nintendo Gameboy", "gb", "gb gbc lzma", RG_LOGO_PAD_GB, RG_LOGO_HEADER_GB, NO_GAME_DATA);
     add_emulator("Nintendo Gameboy Color", "gbc", "gb gbc lzma", RG_LOGO_PAD_GBC, RG_LOGO_HEADER_GBC, NO_GAME_DATA);
+    /* GBA: the ROM (up to 32MB) stays memory-mapped in external flash and the
+     * core reads it there — no decompression step, so no .lzma. */
+    add_emulator("Nintendo Gameboy Advance", "gba", "gba", RG_LOGO_PAD_GBA, RG_LOGO_HEADER_GBA, NO_GAME_DATA);
     add_emulator("PC Engine", "pce", "pce lzma", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCE, NO_GAME_DATA);
     /* PC Engine CD (= TurboGrafx-CD): same HuC6280/VDC core as HuCard PCE; the
      * disc (.cue/.bin) is streamed from SD and the System Card BIOS is loaded as
