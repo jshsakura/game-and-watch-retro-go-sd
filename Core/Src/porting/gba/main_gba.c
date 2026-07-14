@@ -102,9 +102,17 @@ typedef struct {
 
 static gba_diag_t diag_emulate;
 static gba_diag_t diag_draw;
+static gba_diag_t diag_scale;
+static gba_diag_t diag_overlay;
 static uint32_t   diag_last_tick;
 static char       diag_emulate_str[16] = "-";
 static char       diag_draw_str[16]    = "-";
+static char       diag_scale_str[16]   = "-";
+static char       diag_overlay_str[16] = "-";
+/* Which of blit_emulator()'s branches actually ran. Scaling and filtering are user
+ * settings, and SOFT does not go anywhere near the nearest-neighbour scaler — it
+ * clears the whole 153 KB buffer and then runs a bilinear resample. */
+static char       diag_path_str[16]    = "-";
 
 static inline void gba_diag_add(gba_diag_t *d, uint32_t cycles)
 {
@@ -137,6 +145,8 @@ static void gba_diag_publish(void)
 
     gba_diag_format(&diag_emulate, diag_emulate_str, sizeof(diag_emulate_str));
     gba_diag_format(&diag_draw, diag_draw_str, sizeof(diag_draw_str));
+    gba_diag_format(&diag_scale, diag_scale_str, sizeof(diag_scale_str));
+    gba_diag_format(&diag_overlay, diag_overlay_str, sizeof(diag_overlay_str));
 }
 
 /* ------------------------------------------------------------------ fatal --- */
@@ -502,6 +512,14 @@ static void blit_emulator(void)
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
     odroid_display_filter_t filtering = odroid_display_get_filter_mode();
 
+    /* Which branch ran. SOFT does not touch the nearest-neighbour scaler at all: it
+     * clears all 153 KB of the buffer and then bilinear-resamples into it. */
+    snprintf(diag_path_str, sizeof(diag_path_str), "%s/%s",
+             scaling == ODROID_DISPLAY_SCALING_OFF  ? "off"
+           : scaling == ODROID_DISPLAY_SCALING_FIT  ? "fit"
+           : scaling == ODROID_DISPLAY_SCALING_FULL ? "full" : "cust",
+             filtering == ODROID_DISPLAY_FILTER_SOFT ? "soft" : "hard");
+
     static odroid_display_scaling_t last_scaling = -1;
     if (scaling != last_scaling) {
         lcd_clear_buffers();
@@ -536,10 +554,20 @@ static void blit_emulator(void)
     }
 }
 
+/* Draw is 9.1 ms of a 16.67 ms frame and halving the pixel stores changed it by
+ * 0.02 ms — which says the stores were never the cost, and that the code I changed
+ * may not even be the code that runs. blit() is three different things depending on
+ * two settings, so stop guessing and split it: the scaler, the overlay, and which
+ * path was taken. */
 static void blit(void)
 {
+    common_emu_clear_dwt_cycles();
     blit_emulator();
+    gba_diag_add(&diag_scale, common_emu_get_dwt_cycles());
+
+    common_emu_clear_dwt_cycles();
     common_ingame_overlay();
+    gba_diag_add(&diag_overlay, common_emu_get_dwt_cycles());
 }
 
 /* ------------------------------------------------------------------ input --- */
@@ -584,6 +612,9 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_dialog_choice_t options[] = {
         {0, "Emulate", diag_emulate_str, -1, NULL},
         {0, "Draw",    diag_draw_str,    -1, NULL},
+        {0, " Scale",  diag_scale_str,   -1, NULL},
+        {0, " Ovl",    diag_overlay_str, -1, NULL},
+        {0, " Path",   diag_path_str,    -1, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
 
