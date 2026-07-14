@@ -59,9 +59,19 @@ void gba_lpf_configure(uint32_t rate_hz)
 {
     if (rate_hz == s_rate_hz)
         return;
+
+    /* rate 0 means "no FIFO is being clocked at this instant" — a gap between
+     * a cry and the music, a song handoff — NOT "this cart mixes too high to
+     * need the filter". Keep the last cutoff through the gap: toggling to
+     * bypass and back stitches an unfiltered seam into the stream, and the
+     * seam is a click at exactly the moment a note ends. (Reported as
+     * "Pokemon crackles at note tails"; Pokemon is both a filtered-rate cart
+     * and the one that plays a cry at every turn.) */
+    if (rate_hz == 0)
+        return;
     s_rate_hz = rate_hz;
 
-    if (rate_hz == 0 || rate_hz >= GBA_LPF_BYPASS_HZ) {
+    if (rate_hz >= GBA_LPF_BYPASS_HZ) {
         s_cutoff_hz = 0;
         return;
     }

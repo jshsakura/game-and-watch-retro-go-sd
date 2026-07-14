@@ -490,7 +490,12 @@ static void gba_pcm_submit(void)
      * the debug log, only when there is something to say. Whichever counter
      * moves when the ear hears it names the culprit. */
     {
-        static uint32_t diag_clip, diag_hold, diag_calls;
+        static uint32_t diag_clip, diag_hold, diag_flip, diag_calls, diag_rate;
+        uint32_t rate_now = sound_fifo_rate_hz();
+        if (rate_now != diag_rate) {
+            diag_rate = rate_now;
+            diag_flip++;
+        }
         for (uint32_t i = 0; i < got && i < len; i++) {
             int16_t l = gba_audio_stereo[i * 2], r = gba_audio_stereo[i * 2 + 1];
             if (l >= 32752 || l <= -32752 || r >= 32752 || r <= -32752)
@@ -499,10 +504,11 @@ static void gba_pcm_submit(void)
         if (got < len)
             diag_hold += len - got;
         if (++diag_calls >= 300) {
-            if (diag_clip != 0 || diag_hold != 0)
-                printf("gba audio 5s: clip=%lu hold=%lu\n",
-                       (unsigned long)diag_clip, (unsigned long)diag_hold);
-            diag_clip = diag_hold = diag_calls = 0;
+            if (diag_clip != 0 || diag_hold != 0 || diag_flip != 0)
+                printf("gba audio 5s: clip=%lu hold=%lu rateflip=%lu\n",
+                       (unsigned long)diag_clip, (unsigned long)diag_hold,
+                       (unsigned long)diag_flip);
+            diag_clip = diag_hold = diag_flip = diag_calls = 0;
         }
     }
 }
