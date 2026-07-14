@@ -1010,6 +1010,49 @@ $(CORE_SMW)/src/snes/cart.c \
 $(CORE_SMW)/src/tracing.c \
 Core/Src/porting/smw/main_smw.c
 
+# Game Boy Advance (gpSP). NOT compiled:
+#   cpu_threaded.c  the dynamic recompiler — its backends are x86/A32/A64/MIPS,
+#                   and there is no Thumb-2 one. The interpreter (cpu.cc) is the
+#                   whole CPU here.
+#   memmap.c        host mmap/VirtualAlloc; this device has neither.
+#   gba_cc_lut.c    a 64 KB colour-correction LUT that nothing in this build
+#                   references (checked: no user outside the file itself).
+#
+# serial.c / gbp.c / rfu.c / serial_proto.c ARE compiled, even though the unit has
+# no link port and no wireless adapter. The plan said to drop them and save ~19 KB,
+# but gba_memory.c and main.c call into them from reachable code (write_rcnt,
+# update_serial, gbp_reset...) — and, decisively, the QEMU harness that proved this
+# core boots and renders compiled them. A device build that links a different set of
+# objects than the harness is a different program, which is exactly how three Super
+# Metroid releases shipped broken while the harness was green. Same program.
+#
+# cpu.cc and video.cc are C++ only in name — they are C compiled as C++ (no
+# classes, no globals with constructors), so no .init_array runs for this core.
+CORE_GBA = external/gpsp
+GBA_C_SOURCES = \
+$(CORE_GBA)/gba_memory.c \
+$(CORE_GBA)/sound.c \
+$(CORE_GBA)/main.c \
+$(CORE_GBA)/savestate.c \
+$(CORE_GBA)/input.c \
+$(CORE_GBA)/cheats.c \
+$(CORE_GBA)/serial.c \
+$(CORE_GBA)/serial_proto.c \
+$(CORE_GBA)/gbp.c \
+$(CORE_GBA)/rfu.c \
+Core/Src/porting/gba/gba_frontend.c \
+Core/Src/porting/gba/main_gba.c
+
+GBA_CXX_SOURCES = \
+$(CORE_GBA)/cpu.cc \
+$(CORE_GBA)/video.cc
+
+# The stock BIOS replacement, .incbin'd. gpSP's own bios_data.S puts it in .data
+# (16 KB of RAM_EMU for something never written); this one is read-only and rides
+# along in the XIP blob instead.
+GBA_ASM_SOURCES = \
+Core/Src/porting/gba/gba_bios.S
+
 GNUBOY_C_INCLUDES +=  \
 -ICore/Inc \
 -ICore/Src/porting/lib \

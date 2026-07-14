@@ -100,6 +100,9 @@ extern void * _OVERLAY_VB_LOAD_START[];
 extern uint8_t _OVERLAY_GBA_SIZE;
 extern void * _OVERLAY_GBA_BSS_START[];
 extern uint8_t _OVERLAY_GBA_BSS_SIZE;
+/* End of main_gba.o inside .overlay_gba: where the XIP sentinel pass starts, so
+ * that it does not walk over the constant it is built on (see main_gba.c). */
+extern void * _GBA_MAIN_CODE_END[];
 
 extern uint8_t _OVERLAY_VB_SIZE;
 extern void * _OVERLAY_VB_BSS_START[];

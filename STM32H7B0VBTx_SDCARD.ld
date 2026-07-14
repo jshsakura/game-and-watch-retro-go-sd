@@ -123,6 +123,11 @@ MEMORY
    * region, and ship as one file, on purpose — see .xip_sm below. */
   SM_CODE    (x) : ORIGIN = 0xDEAD0000,   LENGTH = 512K
 
+  /* GBA: gpSP's scanline renderer plus the 16 KB BIOS image. Same sentinel trick
+   * as SM_CODE — see .xip_gba below. The renderer is the one part of the core big
+   * enough to matter and linear enough not to mind the flash. */
+  GBA_CODE   (x) : ORIGIN = 0xDEC00000,   LENGTH = 512K
+
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
 }
@@ -704,6 +709,125 @@ INCLUDE build/fceumm_mappers.ld
     __rodata_sm_end__ = .;
     __xip_sm_end__ = .;
   } > SM_CODE
+
+  /* ------------------------------------------------------------------ GBA ---
+   * gpSP does not fit: 853 KB of core against a 724 KB pool. It is split four
+   * ways, and each piece goes where its access pattern says it should.
+   *
+   *   ITCM         cpu.o, the ARM7 interpreter — the hottest code there is, a
+   *                dispatch loop that would miss in flash on every opcode.
+   *   RAM_EMU      the code the interpreter calls every frame (the memory bus,
+   *                the frame driver, the cheat engine), all of the BSS, the glue.
+   *   AHB SRAM     the 75 KB framebuffer (ahb_malloc, see main_gba.c).
+   *   flash (XIP)  the renderer, the cold code, and every rodata byte the
+   *                interpreter does not read.
+   *
+   * What may go in the blob is decided by ONE rule, and it is not "is it cold":
+   *
+   *   cpu.o runs from ITCM, and the sentinel pass in main_gba.c does not scan
+   *   ITCM. So anything cpu.o points at must ALREADY be at its final address —
+   *   which means nothing cpu.o references may live in the blob.
+   *
+   * nm says what cpu.o references: functions in gba_memory.o, main.o, cheats.o and
+   * savestate.o — and no rodata of any object but its own. So those four keep their
+   * text in RAM, cpu.o keeps its own rodata in RAM, and everything else goes to
+   * flash. Move an object across that line without re-checking nm and the device
+   * jumps to 0xDEC0xxxx on the first frame. */
+
+  /* Claimed before .overlay_gba so none of this lands in the RAM pool. Only .text
+   * here — the rodata claim has to come after .overlay_gba, or it would swallow
+   * main_gba.o's string literals with it. */
+  .xip_gba : {
+    . = ALIGN(8);
+    __xip_gba_start__ = .;
+      /* The renderer. It streams — walks tiles, writes pixels forward — which is
+       * the one shape a flash line prefetch is actually good at. */
+      build/gba/video.o (.text .text*)
+      /* Cold, and none of it is reachable from cpu.o: the link cable, the Game Boy
+       * Player, the wireless adapter, the pad, and the front-end shims. */
+      build/gba/serial.o (.text .text*)
+      build/gba/serial_proto.o (.text .text*)
+      build/gba/gbp.o (.text .text*)
+      build/gba/rfu.o (.text .text*)
+      build/gba/input.o (.text .text*)
+      build/gba/gba_frontend.o (.text .text*)
+  } > GBA_CODE
+
+  .overlay_gba __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_gba_start__ = .;
+    _GBA_MAIN_CODE_START = .;
+      /* The glue goes first and whole — text, data AND rodata. It holds the
+       * sentinel base and the pass that rewrites it, so it is the one object the
+       * pass must not walk over; and its strings have to be readable before the
+       * blob has been cached. Its single pointer into the blob (the BIOS) is
+       * relocated by hand — see gba_xip_ptr() in main_gba.c. */
+      build/gba/main_gba.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _GBA_MAIN_CODE_END = .;
+      /* What is left of the text after .xip_gba took its share: gba_memory.o,
+       * main.o, cheats.o, savestate.o — the four cpu.o calls into. cpu.o's own text
+       * is excluded; it runs from ITCM (.overlay_gba_itc below).
+       *
+       * cpu.o's rodata is claimed here, and only cpu.o's: it is the one object
+       * whose text the sentinel pass cannot reach, so its rodata has to be at its
+       * final address already. */
+      build/gba/*.o (.data .data*)
+      EXCLUDE_FILE(*/cpu.o) build/gba/*.o (.text .text*)
+      build/gba/cpu.o (.rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_GBA_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_GBA_LOAD_START = LOADADDR(.overlay_gba);
+  _OVERLAY_GBA_SIZE = SIZEOF(.overlay_gba);
+
+  /* The ARM7 interpreter → ITCM (zero wait states, no I-cache to miss). The LMA
+   * is appended right after .overlay_gba in CORES, so objcopy of the two sections
+   * yields one contiguous gba.bin. At load time this image lands in RAM_EMU at
+   * _OVERLAY_GBA_LOAD_END — which overlaps the BSS VMA — and run_internal_emu()
+   * memcpy's it to ITCM BEFORE zeroing BSS. Base offset 0x4 keeps address 0 free,
+   * so no function compares equal to NULL. */
+  .overlay_gba_itc (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __gba_itc_start__ = .;
+    build/gba/cpu.o (.text .text*)
+    . = ALIGN(4);
+    __gba_itc_end__ = .;
+    ASSERT(ABSOLUTE(__gba_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: GBA ITC overflow");
+  } AT > CORES
+  _OVERLAY_GBA_ITC_SIZE = SIZEOF(.overlay_gba_itc);
+  _OVERLAY_GBA_ITC_LMA_OFFSET = LOADADDR(.overlay_gba_itc) - LOADADDR(.overlay_gba);
+
+  .overlay_gba_bss _OVERLAY_GBA_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_GBA_BSS_START = .;
+    build/gba/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/gba/*.o (COMMON)
+    . = ALIGN(4);
+    __ram_emu_gba_end__ = .;
+    _OVERLAY_GBA_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_GBA_BSS_END) < __RAM_EMU_END__, "Error: GBA BSS overflow");
+  }
+  _OVERLAY_GBA_BSS_SIZE = SIZEOF(.overlay_gba_bss);
+
+  /* All the rodata that is left, immediately after the code in the SAME region, so
+   * the two ship as one file (gba.xip) and land in flash as one cache entry — the
+   * reason is spelled out under .rodata_sm above.
+   *
+   * "What is left" is every object but main_gba.o and cpu.o, both of which
+   * .overlay_gba already claimed: the BIOS image, gpSP's per-game override table
+   * (gba_over.h — read once, at load), the renderer's tables, the sound tables.
+   * The code that reads them lives in the overlay, and the sentinel pass fixes up
+   * every reference before a frame runs. */
+  .rodata_gba : {
+    . = ALIGN(8);
+    __rodata_gba_start__ = .;
+    build/gba/*.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __rodata_gba_end__ = .;
+    __xip_gba_end__ = .;
+  } > GBA_CODE
 
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);

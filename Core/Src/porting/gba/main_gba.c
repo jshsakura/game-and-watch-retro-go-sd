@@ -7,11 +7,12 @@
 #include "rom_manager.h"
 #include "common.h"
 #include "gw_malloc.h"
+#include "gw_flash_alloc.h"
 #include "rg_storage.h"
 #include "odroid_overlay.h"
 #include "appid.h"
 #include "bilinear.h"
-#include "rg_i18n.h"
+#include "error_screens.h"
 
 /* gpsp. The core's own headers pull in libretro types and register-name macros
  * that collide with CMSIS, so we declare the handful of entry points we use. */
@@ -56,12 +57,131 @@ void cheat_clear(void);
 static int16_t gba_audio_stereo[GBA_AUDIO_FRAMES * 2];
 
 /* The GBA framebuffer. The LCD's own buffers live outside RAM_EMU, but the core
- * renders a 240x160 image that then has to be scaled, so it needs a source. */
-static uint16_t gba_framebuffer[GBA_WIDTH * GBA_HEIGHT];
+ * renders a 240x160 image that then has to be scaled, so it needs a source.
+ *
+ * It comes from AHB SRAM, not from the overlay: 75 KB of a 724 KB pool that this
+ * core has already very nearly spent, against 120 KB of AHB that nothing else is
+ * using while a game runs. The scaler reads it once per frame and the DMA never
+ * touches it, so the slower bus costs nothing that shows. */
+#define GBA_FRAMEBUFFER_BYTES  (GBA_WIDTH * GBA_HEIGHT * sizeof(uint16_t))
+static uint16_t *gba_framebuffer;
 
 static odroid_video_frame_t video_frame = {GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH * 2, 2, 0xFF, -1, NULL, NULL, 0, {}};
 
 static void blit_emulator(void);
+
+/* ------------------------------------------------------------------ fatal --- */
+/* Say which failure it was, and stay on screen while it is read.
+ *
+ * Not an alert-and-return-to-the-launcher: the two ways loading fails here (no
+ * room left in the flash cache for the cart, a cart the core will not take) are
+ * different problems with different fixes, and a single "load failed" toast that
+ * vanishes tells the player neither. Not a sleep either — deep sleep comes back
+ * through gw_sleep.c, whose sdcard_init() then fails, and the last thing left on
+ * screen is "No SD CARD found": a message about a card that was never the problem
+ * (this cost half a day once, on Super Metroid). */
+static void __attribute__((noreturn)) gba_fatal(const char *line_1, const char *line_2)
+{
+    printf("gba: FATAL %s / %s\n", line_1, line_2 ? line_2 : "");
+    lcd_backlight_set(180);
+    draw_error_screen("GAME BOY ADVANCE", line_1, line_2);
+
+    while (true) {
+        wdog_refresh();
+        lcd_sync();
+        lcd_swap();
+        HAL_Delay(20);
+    }
+}
+
+/* -------------------------------------------------------------------- XIP ---
+ * gpSP is 853 KB of core against a 724 KB pool. The scanline renderer (video.o)
+ * and the 16 KB BIOS image are linked at a sentinel address instead, shipped as
+ * one file — /roms/homebrew/gba.xip — cached into QSPI flash, and executed and
+ * read straight out of it. Same trick as Super Metroid's sm.xip; the linker
+ * script says which object goes where and why.
+ *
+ * Code and BIOS share the region, and therefore one cache entry, on purpose: the
+ * renderer's own rodata sits between them, and a pointer from one cache entry
+ * into another goes stale the moment the circular cache evicts one and not the
+ * other. As a single blob every such pointer is a sentinel into the blob itself,
+ * so one relocation against one base fixes all of them at once.
+ *
+ * The relocation happens on the way IN — the cache hands each buffer to
+ * gba_relocate_xip() before programming it — rather than by rewriting flash that
+ * has already been written. A rewrite would have to erase first, and an erase
+ * interrupted by a flat battery leaves a blank hole indistinguishable from a
+ * finished job. On a cache hit nothing is written and nothing needs to be: the
+ * copy in flash was relocated to that same address when it was first stored.
+ */
+#define GBA_CODE_BASE  0xDEC00000u
+#define GBA_XIP_PATH   "/roms/homebrew/gba.xip"
+
+static uint8_t *g_xip_addr;
+static uint32_t g_xip_size;
+static int32_t  g_xip_offset;
+
+/* Rewrite every sentinel-range word in [start, end) to where the blob really
+ * landed. Thumb bit included, hence the & ~1. */
+static int patch_gba_sentinels(uint32_t *start, uint32_t *end, int32_t offset, uint32_t size)
+{
+    int patched = 0;
+    for (uint32_t *p = start; p < end; p++) {
+        uint32_t v = *p;
+        if ((v & ~1u) >= GBA_CODE_BASE && (v & ~1u) < GBA_CODE_BASE + size) {
+            *p = (uint32_t)(v + offset);
+            patched++;
+        }
+    }
+    return patched;
+}
+
+/* Relocation hook: runs on each buffer of gba.xip on its way into the flash. */
+static void gba_relocate_xip(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,
+                             uint8_t *file_address, uint32_t file_size)
+{
+    (void)offset_in_file;
+    int32_t offset = (int32_t)((uint32_t)file_address - GBA_CODE_BASE);
+    patch_gba_sentinels((uint32_t *)buffer, (uint32_t *)(buffer + (length & ~3u)), offset, file_size);
+}
+
+/* Where a thing linked into the blob actually ended up. main_gba.o is the one
+ * object the sentinel pass below does not walk (it holds GBA_CODE_BASE itself, and
+ * a scan that could not tell the constant from a reference would rewrite the very
+ * constant it is built on), so the single blob pointer this file holds — the BIOS
+ * image — is relocated by hand, here. */
+static const void *gba_xip_ptr(const void *sentinel)
+{
+    return (const void *)((uint32_t)sentinel + g_xip_offset);
+}
+
+static bool gba_cache_xip_to_flash(void)
+{
+    g_xip_size = 0;
+    g_xip_addr = odroid_overlay_cache_file_in_flash_relocate(GBA_XIP_PATH, &g_xip_size, false,
+                                                             &gba_relocate_xip);
+    if (g_xip_addr == NULL || g_xip_size == 0) {
+        printf("gba: %s missing\n", GBA_XIP_PATH);
+        return false;
+    }
+    g_xip_offset = (int32_t)((uint32_t)g_xip_addr - GBA_CODE_BASE);
+    printf("gba: xip blob at %p, %lu bytes, offset 0x%08lX\n",
+           g_xip_addr, (unsigned long)g_xip_size, (unsigned long)g_xip_offset);
+
+    /* Everything in the overlay that points into the blob — the RAM->XIP call
+     * veneers into the renderer, and every reference to its rodata — still holds a
+     * sentinel. Fix them before a single line of core code runs.
+     *
+     * The ITCM image (cpu.o, the interpreter) is deliberately not scanned, and
+     * does not need to be: it references nothing in the blob. The linker script
+     * keeps its rodata in RAM to guarantee that, and nm confirms it calls no
+     * function of the renderer's. */
+    int n = patch_gba_sentinels((uint32_t *)_GBA_MAIN_CODE_END,
+                                (uint32_t *)_OVERLAY_GBA_BSS_START,
+                                g_xip_offset, g_xip_size);
+    printf("gba: patched %d sentinel refs in the overlay\n", n);
+    return true;
+}
 
 /* ------------------------------------------------------------------- SRAM --- */
 /* The cart's own save — the one the game writes when you save in-game. This is
@@ -368,6 +488,11 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     common_emu_state.frame_time_10us = (uint16_t)(100000 / GBA_FPS + 0.5f);
     lcd_set_refresh_rate(GBA_FPS);
 
+    gba_framebuffer = ahb_malloc(GBA_FRAMEBUFFER_BYTES);
+    if (gba_framebuffer == NULL)
+        gba_fatal("Out of AHB SRAM", "The 75KB framebuffer could not be allocated");
+    memset(gba_framebuffer, 0, GBA_FRAMEBUFFER_BYTES);
+
     video_frame.buffer = gba_framebuffer;
     gba_screen_pixels = gba_framebuffer;
 
@@ -382,11 +507,17 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     audio_start_playing(GBA_AUDIO_FRAMES);
 
+    /* Before any core code runs: init_main() and everything after it call into the
+     * renderer, and those calls are still pointing at the sentinel address until
+     * the blob has been cached and the overlay patched. */
+    if (!gba_cache_xip_to_flash())
+        gba_fatal("Missing " GBA_XIP_PATH, "Re-run the retro-go_update.bin update");
+
     init_main();
     init_memory();
     init_sound();
 
-    memcpy(bios_rom, open_gba_bios_rom, sizeof(bios_rom));
+    memcpy(bios_rom, gba_xip_ptr(open_gba_bios_rom), sizeof(bios_rom));
     memset(gamepak_backup, 0xFF, sizeof(gamepak_backup));
 
     /* The ROM is up to 32MB and stays in external flash, memory-mapped. Nothing
@@ -396,17 +527,13 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * a RAM shadow of it. Ruby, Sapphire and Emerald all keep time that way. */
     uint32_t rom_size = 0;
     uint8_t *rom = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &rom_size, false);
-    if (rom == NULL || rom_size == 0) {
-        odroid_overlay_alert(curr_lang->s_LoadFailed);
-        odroid_system_switch_app(0);
-    }
+    if (rom == NULL || rom_size == 0)
+        gba_fatal("Could not cache the ROM in flash", "The cart may be larger than the free flash");
     gba_set_xip_rom(rom, rom_size);
     init_gamepak_buffer();
 
-    if (load_gamepak(NULL, ACTIVE_FILE->path, 0, 0, 0) != 0) {
-        odroid_overlay_alert(curr_lang->s_LoadFailed);
-        odroid_system_switch_app(0);
-    }
+    if (load_gamepak(NULL, ACTIVE_FILE->path, 0, 0, 0) != 0)
+        gba_fatal("Not a Game Boy Advance ROM", "The header did not check out");
 
     gba_SramLoad();
     reset_gba();
