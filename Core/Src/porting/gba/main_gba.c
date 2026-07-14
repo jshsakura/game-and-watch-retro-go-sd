@@ -135,12 +135,14 @@ static gba_diag_t diag_emu_draw;
 static gba_diag_t diag_emu_skip;
 static gba_diag_t diag_scale;
 static gba_diag_t diag_overlay;
+static gba_diag_t diag_wait;
 static uint32_t   diag_last_tick;
 static char       diag_emu_draw_str[16] = "-";
 static char       diag_emu_skip_str[16] = "-";
 static char       diag_ppu_str[16]      = "-";
 static char       diag_scale_str[16]    = "-";
 static char       diag_overlay_str[16]  = "-";
+static char       diag_wait_str[16]     = "-";
 /* Which of blit_emulator()'s branches actually ran. Scaling and filtering are user
  * settings, and SOFT does not go anywhere near the nearest-neighbour scaler — it
  * clears the whole 153 KB buffer and then runs a bilinear resample. */
@@ -179,6 +181,7 @@ static void gba_diag_publish(void)
     gba_diag_format(&diag_emu_skip, diag_emu_skip_str, sizeof(diag_emu_skip_str));
     gba_diag_format(&diag_scale, diag_scale_str, sizeof(diag_scale_str));
     gba_diag_format(&diag_overlay, diag_overlay_str, sizeof(diag_overlay_str));
+    gba_diag_format(&diag_wait, diag_wait_str, sizeof(diag_wait_str));
 
     /* What the picture costs: the same emulation, once with the PPU drawing and once
      * without. Only meaningful when frameskip is actually skipping something. */
@@ -558,8 +561,14 @@ static void screen_blit_bilinear(int32_t dest_width)
 
 static void blit_emulator(void)
 {
-    lcd_sleep_while_swap_pending();
-
+    /* NOT lcd_sleep_while_swap_pending() — that is a wait, and a wait timed together
+     * with work reads as work. It moves to blit(), where it is timed on its own.
+     *
+     * This is the second time the same trap has cost a build. "Draw 9.1 ms" on the
+     * title screen was this wait; on a screen where the CPU had slack, the slack
+     * showed up there and read as an expensive renderer. Then Scale jumped from
+     * 1.99 ms to 4.47 ms between two scenes — for a fixed-size blit that cannot
+     * depend on the scene at all. Same wait, same lie. */
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
     odroid_display_filter_t filtering = odroid_display_get_filter_mode();
 
@@ -612,6 +621,13 @@ static void blit_emulator(void)
  * path was taken. */
 static void blit(void)
 {
+    /* The wait for the LCD's previous swap to finish. Idle time, not work — and the
+     * one number here that going FASTER makes bigger, because the slack has to land
+     * somewhere. Timed on its own so it stops being mistaken for the renderer. */
+    common_emu_clear_dwt_cycles();
+    lcd_sleep_while_swap_pending();
+    gba_diag_add(&diag_wait, common_emu_get_dwt_cycles());
+
     common_emu_clear_dwt_cycles();
     blit_emulator();
     gba_diag_add(&diag_scale, common_emu_get_dwt_cycles());
@@ -666,6 +682,7 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         {0, " = PPU",   diag_ppu_str,      -1, NULL},
         {0, "Scale",    diag_scale_str,    -1, NULL},
         {0, "Ovl",      diag_overlay_str,  -1, NULL},
+        {0, "LCD wait",  diag_wait_str,   -1, NULL},
         {0, "Path",     diag_path_str,     -1, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
