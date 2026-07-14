@@ -357,8 +357,13 @@ static int snap_take(m4a_snap *s, const unsigned int *regs)
 {
     uint32_t r4 = regs[4], r5 = regs[5] & 0x3FFFFFFFu, r8 = regs[8], sp = regs[13];
 
+    /* The block emits r8 samples, four to a word, so the LEFT mix pointer walks
+     * r8 bytes forward (plus the one extra word the partial flush can store). The
+     * stereo variant writes the RIGHT channel a fixed 0x630 further on, and a
+     * snapshot that stopped at the left one would compare half the music and call
+     * it identical. Cover both; the mono variant simply never touches the tail. */
     s->mix_addr = r5;
-    s->mix_len  = r8 + 8u;
+    s->mix_len  = 0x630u + r8 + 8u;
     s->mix = (unsigned char *)malloc(s->mix_len);
     if (!s->mix)
         return 0;

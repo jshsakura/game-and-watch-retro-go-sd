@@ -122,6 +122,26 @@ prove_e2e() {
     build e2e_on  "-DGBA_M4A_HLE -DM4A_HASH"   || return 1
 
     run_hashes e2e_off "$OUT/off.txt" || return 1
+
+    # Before comparing two builds, check that ONE build compares with itself.
+    #
+    # gpSP's RTC takes its baseline from the host's wall clock, so a cart with an
+    # RTC (Ruby, Sapphire, Emerald, Boktai) reads the real time into its own memory
+    # during boot — and two runs of the SAME BINARY then differ. The stereo variant
+    # "failed" this proof at frame 12 with the screen, the audio, the EWRAM and the
+    # emulated clock all bit-identical, and it was not the mixer. It was Tuesday.
+    #
+    # prove_main.c freezes time() so that a run is a function of the ROM alone. This
+    # is here so that if anything else ever leaks the outside world into the
+    # emulation, it says so instead of being blamed on the thing under test.
+    "$OUT/e2e_off/run" "$ROM" "$FRAMES" > "$OUT/off2.txt" 2>/dev/null
+    if ! cmp -s "$OUT/off.txt" "$OUT/off2.txt"; then
+        echo "FAIL: the emulator is not deterministic — the same build, run twice,"
+        echo "      does not agree with itself. Nothing can be proven against it."
+        echo "      (An RTC cart reading the host clock is the usual reason.)"
+        return 1
+    fi
+
     run_hashes e2e_on  "$OUT/on.txt"  || return 1
     grep -q "hooked at" "$OUT/e2e_on.log" || {
         echo "FAIL: nothing was hooked — this ROM proves nothing about the hook."

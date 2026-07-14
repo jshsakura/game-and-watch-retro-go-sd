@@ -117,6 +117,29 @@ static const char *const HNAME[8] = {
 /* gba_frontend.c routes the cart scan's yield to the firmware watchdog. */
 void wdog_refresh(void) {}
 
+/* Stop the clock.
+ *
+ * gpSP's RTC takes its baseline from the host's wall clock (gba_memory.c,
+ * rtc_init_base_time -> time()), and a cart with an RTC — Pokemon Ruby, Sapphire,
+ * EMERALD, Boktai — reads that straight into its own memory in the first seconds
+ * of boot. So two runs of the SAME BINARY produce different IWRAM, and a
+ * comparison of hook-off against hook-on is comparing two different afternoons.
+ *
+ * That is exactly what happened here: the stereo variant "failed" the end-to-end
+ * proof at frame 12 with every other region — screen, audio, EWRAM, the clock
+ * itself — bit-identical. It was not the mixer. It was Tuesday.
+ *
+ * Overriding time() in the harness is enough: gba_memory.o's call resolves here,
+ * and the whole run becomes a function of the ROM alone. It is also honest about
+ * what is being tested, which is the mixer and not the calendar. */
+time_t time(time_t *t)
+{
+    const time_t frozen = 1700000000;   /* an arbitrary, fixed instant */
+    if (t)
+        *t = frozen;
+    return frozen;
+}
+
 #ifdef M4A_COUNT_INSNS
 unsigned long long m4a_insns_interpreted;
 #endif
@@ -202,6 +225,21 @@ int main(int argc, char **argv)
         execute_arm(execute_cycles);
         sound_read_samples(audio, 804);
 #ifdef M4A_HASH
+        {
+            const char *df = getenv("M4A_DUMP_FRAME");
+            if (df && atoi(df) == f) {
+                const char *dp = getenv("M4A_DUMP_PATH");
+                FILE *o = fopen(dp ? dp : "/tmp/iwram_dump.bin", "wb");
+                if (o) {
+                    u32 a;
+                    for (a = 0x03000000u; a < 0x03008000u; a += 0x8000u) {
+                        unsigned char *pg = memory_map_read[a >> 15];
+                        if (pg) fwrite(pg, 1, 0x8000, o);
+                    }
+                    fclose(o);
+                }
+            }
+        }
         {
             u64 h[8];
             int k;

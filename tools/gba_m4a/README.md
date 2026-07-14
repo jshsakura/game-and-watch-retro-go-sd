@@ -145,9 +145,36 @@ both is a game that ships.
 
 ## Status
 
-- **`m4a-soundmainram-mono`** — proven, bit-exact, 29.3% of interpreted guest
-  instructions removed. FFTA (`AFXJ`) hooks it.
-- **stereo variant** — not written yet. It is the more common one (Pokémon Emerald
-  has it, `r6`/`r7` with the right channel at `+0x630`), so it is where the library
-  coverage is. Adding it is the same mechanical job: disassemble, transliterate,
-  and let `prove.sh` say whether you got it right.
+Both variants are proven bit-exact — every block, every register, every guest
+cycle, and the whole game frame-by-frame — with the RED for each.
+
+| variant | | guest instructions the interpreter still runs |
+|---|---|---|
+| `m4a-soundmainram-mono` | FFTA (`AFXJ`) | 76,857 → 55,973 per frame (**−27.2%**) |
+| `m4a-soundmainram-stereo` | Pokémon Emerald (`BPEK`) | 42,409 → 27,452 per frame (**−35.3%**) |
+
+The stereo one is the common build (two accumulators, right channel `0x630` past
+the left, phase in `r9` instead of `lr`). One path in it is deliberately **not**
+transliterated: when a channel's status has bit 4 or 5 set the routine calls a
+subroutine that sets a *sample* up — once per note, not once per sample. Those
+blocks are declined at the door, before anything is written, and the interpreter
+takes them. Emerald: 13 declined out of 8,448.
+
+### The trap that "failed" the stereo variant, and was not the stereo variant
+
+Its end-to-end proof failed at frame 12 — with the screen, the audio, the EWRAM
+and the emulated clock all bit-identical, and only IWRAM differing.
+
+**The same binary, run twice, did not agree with itself.** gpSP's RTC takes its
+baseline from the *host's wall clock* (`rtc_init_base_time` → `time()`), and
+Emerald is an RTC cart: it reads the real time into its own memory during boot. It
+was not the mixer. It was Tuesday.
+
+`prove_main.c` freezes `time()`, and `prove.sh` now runs the hook-**off** build
+twice and fails if it disagrees with itself, before it compares anything to
+anything. A comparator that cannot compare a thing with itself has no business
+saying two things differ.
+
+(On the device this is already right: `syscalls.c`'s `_gettimeofday` is backed by
+`GW_GetUnixTime()`, the Game & Watch's own RTC, and gpSP reads it once at cart load
+and derives the rest from `frame_counter`.)
