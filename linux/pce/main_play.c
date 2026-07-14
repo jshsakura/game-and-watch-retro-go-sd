@@ -78,6 +78,7 @@ static int framePerSecond = 0;
 static int capTimer;
 
 static const char *g_cue_path = NULL;
+static const char *g_hucard_path = NULL;
 static bool g_cd_state_loaded = false;
 
 static bool host_LoadState(const char *savePathName);
@@ -196,39 +197,30 @@ static inline void pce_norm_vdc_size(int *w, int *h)
 	if (*h > 256) *h = 256;
 }
 
-static void pce_display_size(int *w, int *h)
-{
-	*w = IO_VDC_SCREEN_WIDTH;
-	*h = IO_VDC_SCREEN_HEIGHT;
-	pce_norm_vdc_size(w, h);
-}
+static int s_fb_offset;
 
-static int pce_fb_offset(void)
+static void pce_layout_update(int w, int h)
 {
-	int w = IO_VDC_SCREEN_WIDTH;
-	int h = IO_VDC_SCREEN_HEIGHT;
-	pce_norm_vdc_size(&w, &h);
 	int offx = (XBUF_WIDTH - w) / 2;
 	if (offx < 0) offx = 0;
-	return ((XBUF_HEIGHT - h) / 2 + 16) * XBUF_WIDTH + offx;
+	s_fb_offset = ((XBUF_HEIGHT - h) / 2 + 16) * XBUF_WIDTH + offx;
 }
 
 uint8_t *osd_gfx_framebuffer(void)
 {
-	return emulator_framebuffer_pce + pce_fb_offset();
+	return emulator_framebuffer_pce + s_fb_offset;
 }
 
 void osd_gfx_set_mode(int width, int height)
 {
-	init_color_pals();
 	pce_norm_vdc_size(&width, &height);
-	if (width != current_width || height != current_height) {
-		pce_fb_clear();
-		gfx_reset(false);
-	}
+	if (width == current_width && height == current_height)
+		return;
+	pce_fb_clear();
+	gfx_reset(false);
 	current_width = width;
 	current_height = height;
-	/* Fixed-size SDL window (see WIDTH/HEIGHT) — centre in pce_osd_gfx_blit(). */
+	pce_layout_update(width, height);
 }
 
 void pce_input_read(odroid_gamepad_state_t *out_state)
@@ -432,6 +424,8 @@ void pcm_submit(void) {}
 
 size_t pce_osd_getromdata(unsigned char **data)
 {
+	if (g_hucard_path)
+		return hucard_get_data(data);
 	return syscard_get_data(data);
 }
 
@@ -592,6 +586,8 @@ static void init_emu(void)
 
 	pce_audio_init();
 
+	init_color_pals();
+	pce_layout_update(current_width, current_height);
 	memset(fb_data, 0, sizeof(fb_data));
 }
 
@@ -620,8 +616,8 @@ void pce_osd_gfx_blit(bool drawFrame)
 
 	memset(fb_data, 0, sizeof(fb_data));
 
-	int disp_w, disp_h;
-	pce_display_size(&disp_w, &disp_h);
+	const int disp_w = current_width;
+	const int disp_h = current_height;
 
 	int cropX = 0, cropY = 0;
 	int renderWidth = disp_w;
@@ -691,9 +687,10 @@ static const char *find_default_syscard(void)
 static void usage(const char *argv0)
 {
 	fprintf(stderr,
-	    "PC Engine CD — Linux/SDL test harness\n\n"
+	    "PC Engine — Linux/SDL test harness\n\n"
 	    "Usage:\n"
-	    "  %s [--syscard FILE.pce] GAME.cue\n"
+	    "  %s GAME.pce                         HuCard\n"
+	    "  %s [--syscard FILE.pce] GAME.cue    PCE CD\n"
 	    "  %s SYSCARD.pce GAME.cue\n\n"
 	    "Environment:\n"
 	    "  PCE_SYSCARD       path to System Card ROM (default: ./syscard3.pce)\n"
@@ -703,13 +700,15 @@ static void usage(const char *argv0)
 	    "  Shift/Return/Space  RUN      Ctrl  SELECT\n"
 	    "  At boot: Down selects CD-ROM SYSTEM, then Run starts the disc\n"
 	    "  F2 save state    F4 load state    Esc quit\n",
-	    argv0, argv0);
+	    argv0, argv0, argv0);
 }
 
-static int parse_args(int argc, char *argv[], const char **syscard, const char **cue)
+static int parse_args(int argc, char *argv[], const char **syscard, const char **cue,
+                      const char **hucard)
 {
 	*syscard = NULL;
 	*cue = NULL;
+	*hucard = NULL;
 
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--syscard") == 0 && i + 1 < argc) {
@@ -720,14 +719,20 @@ static int parse_args(int argc, char *argv[], const char **syscard, const char *
 		} else if (path_has_ext(argv[i], ".cue")) {
 			*cue = argv[i];
 		} else if (path_has_ext(argv[i], ".pce")) {
-			if (*syscard)
-				*cue = *syscard; /* unlikely */
-			*syscard = argv[i];
+			if (*cue)
+				*syscard = argv[i];
+			else if (!*hucard)
+				*hucard = argv[i];
+			else
+				*syscard = argv[i];
 		} else {
 			fprintf(stderr, "Unknown argument: %s\n", argv[i]);
 			return -1;
 		}
 	}
+
+	if (*hucard && !*cue)
+		return 0;
 
 	if (!*syscard)
 		*syscard = find_default_syscard();
@@ -750,12 +755,19 @@ static int parse_args(int argc, char *argv[], const char **syscard, const char *
 int main(int argc, char *argv[])
 {
 	const char *syscard_path = NULL;
-	int pr = parse_args(argc, argv, &syscard_path, &g_cue_path);
+	const char *hucard_path = NULL;
+	int pr = parse_args(argc, argv, &syscard_path, &g_cue_path, &hucard_path);
 	if (pr != 0)
 		return pr == 1 ? 0 : 1;
 
-	if (syscard_load_file(syscard_path))
+	g_hucard_path = hucard_path;
+
+	if (hucard_path) {
+		if (hucard_load_file(hucard_path))
+			return 1;
+	} else if (syscard_load_file(syscard_path)) {
 		return 1;
+	}
 
 	if (init_window(WIDTH, HEIGHT)) {
 		fprintf(stderr, "SDL init failed: %s\n", SDL_GetError());
@@ -768,7 +780,10 @@ int main(int argc, char *argv[])
 	int frame = 0;
 
 	printf("retro-go-pce play mode\n");
-	printf("Running: syscard=%s  cue=%s\n", syscard_path, g_cue_path);
+	if (hucard_path)
+		printf("Running HuCard: %s\n", hucard_path);
+	else
+		printf("Running: syscard=%s  cue=%s\n", syscard_path, g_cue_path);
 	printf("Boot menu: press Down then Run (Shift/Return), or wait for autostart.\n");
 
 	{
@@ -777,11 +792,17 @@ int main(int argc, char *argv[])
 			linux_loadstate_req = 1;
 	}
 
+	const char *mf = getenv("PCE_MAX_FRAMES");
+	const int max_frames = (mf && mf[0]) ? atoi(mf) : 0;
+
 	while (true) {
 		capTimer = SDL_GetTicks();
 		bool drawFrame = true;
 
 		pce_sdl_input_poll(&joystick);
+
+		if (linux_quit_req)
+			break;
 
 		if (linux_savestate_req) {
 			linux_savestate_req = 0;
@@ -809,6 +830,11 @@ int main(int argc, char *argv[])
 		PCE.MaxCycles -= Cycles;
 		Cycles = 0;
 		frame++;
+		if (max_frames > 0 && frame >= max_frames) {
+			printf("PCE_MAX_FRAMES reached: PC=%04X A=%02X P=%02X scanline=%u\n",
+			       CPU_PCE.PC, CPU_PCE.A, CPU_PCE.P, (unsigned)PCE.Scanline);
+			break;
+		}
 	}
 
 	pce_sram_save();

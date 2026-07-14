@@ -153,25 +153,20 @@ static inline void pce_norm_vdc_size(int *w, int *h)
     if (*h > 256) *h = 256;
 }
 
-static void pce_display_size(int *w, int *h)
-{
-    *w = IO_VDC_SCREEN_WIDTH;
-    *h = IO_VDC_SCREEN_HEIGHT;
-    pce_norm_vdc_size(w, h);
-}
+/* Cached layout — recomputed only in osd_gfx_set_mode() when the VDC viewport
+ * size actually changes. Reading IO_VDC + division on every render_lines()
+ * (via osd_gfx_framebuffer) was a steady-state CPU regression on device. */
+static int s_fb_offset;
 
-static int pce_fb_offset(void)
+static void pce_layout_update(int w, int h)
 {
-    int w = IO_VDC_SCREEN_WIDTH;
-    int h = IO_VDC_SCREEN_HEIGHT;
-    pce_norm_vdc_size(&w, &h);
     int offx = (XBUF_WIDTH - w) / 2;
     if (offx < 0) offx = 0;
-    return ((XBUF_HEIGHT - h) / 2 + 16) * XBUF_WIDTH + offx;
+    s_fb_offset = ((XBUF_HEIGHT - h) / 2 + 16) * XBUF_WIDTH + offx;
 }
 
 uint8_t *osd_gfx_framebuffer(void){
-    return s_skip_render ? NULL : pce_framebuffer + pce_fb_offset();
+    return s_skip_render ? NULL : pce_framebuffer + s_fb_offset;
 }
 
 void set_color(int index, uint8_t r, uint8_t g, uint8_t b) {
@@ -196,14 +191,14 @@ static void pce_fb_clear(void)
 }
 
 void osd_gfx_set_mode(int width, int height) {
-    init_color_pals();
     pce_norm_vdc_size(&width, &height);
-    if (width != current_width || height != current_height) {
-        pce_fb_clear();
-        gfx_reset(false);
-    }
+    if (width == current_width && height == current_height)
+        return;
+    pce_fb_clear();
+    gfx_reset(false);
     current_width = width;
     current_height = height;
+    pce_layout_update(width, height);
 }
 
 void osd_log(int type, const char *format, ...) {
@@ -759,12 +754,12 @@ void pce_input_read(odroid_gamepad_state_t* out_state) {
 
 static void blit() {
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
-    int disp_w, disp_h;
-    pce_display_size(&disp_w, &disp_h);
+    const int disp_w = current_width;
+    const int disp_h = current_height;
 
     /* Direct pointer, NOT osd_gfx_framebuffer(): that hook returns NULL on
      * skip frames and blit can be called as the menu repaint callback. */
-    uint8_t *emuFrameBuffer = pce_framebuffer + pce_fb_offset();
+    uint8_t *emuFrameBuffer = pce_framebuffer + s_fb_offset;
     pixel_t *framebuffer_active = lcd_get_active_buffer();
     int y=0, offsetY, offsetX = 0, cropX = 0;
     int xScale = 0;
@@ -919,9 +914,10 @@ void pce_pcm_submit() {
     for (int i = 0; i < sound_buffer_length; i++) {
         /* mix left & right */
         int32_t sample = (audioBuffer_pce[i*2] + audioBuffer_pce[i*2+1]);
-        if (cdda_n && i < cdda_n)
-            sample += (((int32_t)cdda_buf[i*2] + (int32_t)cdda_buf[i*2+1]) >> 1)
-                      * (int32_t)PCE_CDDA_MIX_GAIN;   /* CD-DA already fader-scaled */
+        if (cdda_n && i < cdda_n) {
+            /* stereo sum (= ((L+R)>>1)<<1); CD-DA already fader-scaled */
+            sample += (int32_t)cdda_buf[i * 2] + (int32_t)cdda_buf[i * 2 + 1];
+        }
         if (adpcm_n && i < adpcm_n) {
             int32_t a = adpcm_buf[i*2];
             if (adpcm_vol < 65536)
@@ -968,6 +964,7 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
 
     // Init Graphics
     init_color_pals();
+    pce_layout_update(current_width, current_height);
     const int refresh_rate = FPS_NTSC;
     sprintf(pce_log,"%d",refresh_rate);
 

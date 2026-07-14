@@ -11,11 +11,6 @@
 #include <stdbool.h>
 #include "pce_cd.h"
 
-/* Extra CD-DA gain in pce_pcm_submit (PSG+ADPCM+CD-DA mix). 1 = unity, 2 = 2× (volume test). */
-#ifndef PCE_CDDA_MIX_GAIN
-#define PCE_CDDA_MIX_GAIN 2
-#endif
-
 /* Attach (or detach) the mounted disc. Called at .cue launch. */
 void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present);
 

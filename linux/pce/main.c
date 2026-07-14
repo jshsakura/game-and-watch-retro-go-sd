@@ -1269,6 +1269,9 @@ int main(int argc, char *argv[])
 
         pce_sdl_input_poll(&joystick);
 
+        if (linux_quit_req)
+            break;
+
         if (linux_savestate_req) {
             linux_savestate_req = 0;
             pce_linux_save_state();

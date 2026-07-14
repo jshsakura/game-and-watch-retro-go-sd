@@ -362,6 +362,14 @@ int GuessROM(const uint8_t *buf,int size)
     /* No result yet */
     mapper = ROM_UNKNOWN;
 
+    if (size >= 0x18 && memcmp(buf + 0x10, "ASCII16X", 8) == 0) {
+        return ROM_ASCII16X;
+    }
+
+    if (size >= 0x18 && memcmp(buf + 0x10, "ROM_NE16", 8) == 0) {
+        return ROM_NEO16;
+    }
+
     if (size <= 0x10000) {
         if (size == 0x10000) {
             if (buf[0x4000] == 'A' && buf[0x4001] == 'B') mapper = ROM_PLAIN;
@@ -2201,5 +2209,12 @@ void update_cheats_msx() {
             }
         }
     }
+}
+#endif
+
+#ifdef MSX_NO_FILESYSTEM
+const char* boardGetBaseDirectory(void)
+{
+    return "";
 }
 #endif

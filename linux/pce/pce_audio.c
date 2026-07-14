@@ -42,8 +42,7 @@ void pce_pcm_submit(void)
 	for (int i = 0; i < AUDIO_BUFFER_LENGTH_PCE; i++) {
 		int32_t sample = (int32_t)audioBuffer_pce[i * 2] + (int32_t)audioBuffer_pce[i * 2 + 1];
 		if (cdda_n && i < cdda_n)
-			sample += (((int32_t)cdda_buf[i * 2] + (int32_t)cdda_buf[i * 2 + 1]) >> 1)
-			          * (int32_t)PCE_CDDA_MIX_GAIN;
+			sample += (int32_t)cdda_buf[i * 2] + (int32_t)cdda_buf[i * 2 + 1];
 		if (adpcm_n && i < adpcm_n) {
 			int32_t a = adpcm_buf[i * 2];
 			if (adpcm_vol < 65536)
