@@ -19,36 +19,95 @@ typedef struct {
 } gba_idle_entry_t;
 
 static const gba_idle_entry_t GBA_IDLE_LOOPS[] = {
-    { "ADKP", 0x8002f30, 16664 },   // 도날드덕 어드밴스
-    { "AFZE", 0x8000c2e, 61334 },   // F-제로 맥시멈 벨로시티 (F-Zero - Maximum Velocity)
-    { "APDE", 0x8000300, 63154 },   // 핀볼 오브 데드 (Pinball of the Dead, The)
-    { "BDTE", 0x800065a, 65065 },   // 다운타운 열혈물어EX (한글패치)
-    { "V49J", 0x80006c2, 66296 },   // 스크류 브레이커
-    { "BPYP", 0x80900f2, 68058 },   // 페르시아의 왕자 - 시간의 모래
-    { "APLP", 0x80075a6, 68473 },   // 핀볼 챌린지 디럭스 (Pinball Challenge Deluxe)
-    { "BTMJ", 0x8013888, 70699 },   // 마리오 테니스 어드밴스 (Mario Tennis Advance)
-    { "A7KE", 0x8000fae, 71428 },   // 별의 커비 - 꿈의 샘 디럭스 (Kirby - Nightmare in Dream Land)
-    { "BMGE", 0x8014e0a, 71769 },   // 마리오 골프 어드밴스 투어 (Mario Golf - Advance Tour)
-    { "BRIJ", 0x80013d4, 75039 },   // 리듬세상 (한글패치)
-    { "AAMJ", 0x80003ce, 76293 },   // 캐슬바니아 - 서클 오브 더 문 (한글패치)
-    { "BPGE", 0x80008c6, 77946 },   // 포켓몬스터 리프그린 (한글패치, 미국판 헤더)
-    { "BPEK", 0x80008ce, 78796 },   // 포켓몬스터 에메랄드 (정식 한국판)
-    { "BPRE", 0x80008c6, 78916 },   // 포켓몬스터 파이어레드 (한글패치, 미국판 헤더)
-    { "AX4J", 0x8000732, 81845 },   // 슈퍼마리오 브라더스3 (Super Mario Advance 4 - Super Mario 3 + Mario Brothers)
-    { "BM5E", 0x8033eec, 87371 },   // 마리오 vs. 동키콩 (Mario vs. Donkey Kong)
-    { "AGAE", 0x8013844, 93880 },   // 그라디우스 갤럭시즈 (Gradius Galaxies)
-    { "ARZJ", 0x80004f6, 98249 },   // 록맨 제로 1 (Megaman Zero 1)
-    { "AGFJ", 0x8013542, 102002 },   // 황금의 태양 2 - 잃어버린 시대 (Ougon no Taiyou - Ushinawareshi Toki)
-    { "AREJ", 0x8000338, 106477 },   // 록맨 에그제
-    { "BSME", 0x8000298, 111771 },   // 메탈슬러그 어드밴스 (Metal Slug Advance)
-    { "B4ZJ", 0x8000914, 115793 },   // 록맨 제로 4 (한글패치)
-    { "AFXJ", 0x8000428, 117713 },   // 파이널 판타지 택틱스 어드밴스 (한글패치)
-    { "A62J", 0x800066c, 121001 },   // 록맨 제로 2 (Megaman Zero 2)
-    { "AA2C", 0x80005ec, 137673 },   // 슈퍼마리오월드 (한글패치)
-    { "BZ3J", 0x80019c4, 137998 },   // 록맨 제로 3 (한글패치)
-    { "AZWJ", 0x8000f5e, 142521 },   // 메이드 인 와리오 (한글패치)
-    { "AZ8E", 0x8002b5e, 152070 },   // 슈퍼 퍼즐파이터II Turbo터보
-    { "A3AJ", 0x8002ba4, 175310 },   // 슈퍼마리오 요시아일랜드 (Super Mario Advance 3 - Yoshi's Island + Mario Brothers)
+    { "ADKP", 0x8002f30, 6134 },   // 도날드덕 어드밴스
+    { "BCKE", 0x80a0922, 8793 },   // 스타워즈 트릴로지 - 어프렌티스 오브 더 포스 (Star Wars Trilogy - Apprentice of the Force)
+    { "ASHJ", 0x80130a8, 10269 },   // 사일런트힐 플레이노벨 (Play Novel - Silent Hill)
+    { "AGKJ", 0x8072f52, 10703 },   // 환상수호전 카드 스토리즈 (Gensou Suikoden - Card Stories)
+    { "AM7J", 0x8000598, 16135 },   // 도쿄뮤뮤 (Hamepane - Tokyo Mew Mew)
+    { "A3CE", 0x8016234, 17119 },   // 크레이지택시 (Crazy Taxi - Catch a Ride)
+    { "APDE", 0x8000300, 25802 },   // 핀볼 오브 데드 (Pinball of the Dead, The)
+    { "BTME", 0x80138a0, 26988 },   // 마리오 테니스 파워 투어 (Mario Tennis - Power Tour)
+    { "ABTE", 0x80596ce, 27068 },   // 배트맨 - 벤전스 (Batman - Vengeance)
+    { "APHE", 0x801e40e, 30968 },   // 고인돌
+    { "AWSE", 0x80027f4, 35606 },   // 타이니 툰 어드벤처 - 와키 스태커즈 (Tiny Toon Adventures - Wacky Stackers)
+    { "ASWE", 0x80001da, 36014 },   // 스타워즈 - 제다이 파워 배틀 (Star Wars - Jedi Power Battles)
+    { "AQ2J", 0x8000c14, 37276 },   // 쵸로Q어드밴스2 (Choro Q Advance 2)
+    { "BEXE", 0x803b188, 41238 },   // TMNT (TMNT)
+    { "AUTJ", 0x800f272, 42011 },   // 라라 크로프트 툼레이더 - The Prophecy
+    { "AKRJ", 0x8000422, 54364 },   // 쿠루쿠루쿠루링
+    { "AKRP", 0x8000422, 54570 },   // 쿠루 쿠루 쿠루린 (Kurukuru Kururin)
+    { "BDTE", 0x800065a, 55917 },   // 다운타운 열혈물어EX (한글패치)
+    { "AVLE", 0x80065a8, 58617 },   // 데어데블
+    { "AFZJ", 0x8000c2e, 59709 },   // 에프제로 (F-Zero for Game Boy Advance)
+    { "AFZE", 0x8000c2e, 59738 },   // F-제로 맥시멈 벨로시티 (F-Zero - Maximum Velocity)
+    { "AMQE", 0x80052a2, 59925 },   // 미드나이트 클럽 스트리트 레이싱 (Midnight Club - Street Racing)
+    { "AJKJ", 0x80003d8, 60688 },   // 실황 월드사커 포켓2 (Jikkyou World Soccer Pocket 2)
+    { "ACJJ", 0x8000522, 61618 },   // 초마계촌R
+    { "BPYP", 0x80900f2, 61756 },   // 페르시아의 왕자 - 시간의 모래
+    { "ABPE", 0x8047038, 62420 },   // 베이스볼 어드밴스 (Baseball Advance)
+    { "BFZJ", 0x8000c32, 64359 },   // 에프제로 - 팔콘 전설 (F-Zero - Falcon Densetsu)
+    { "V49J", 0x80006c2, 64359 },   // 스크류 브레이커
+    { "BFZE", 0x8000c32, 64480 },   // 에프제로 GP 레전드 (F-Zero - GP Legend)
+    { "AIDJ", 0x802cea4, 64578 },   // 스페이스 인베이더EX
+    { "BMGE", 0x8014e0a, 65567 },   // 마리오 골프 어드밴스 투어 (Mario Golf - Advance Tour)
+    { "AR6E", 0x8005b36, 65659 },   // 레인보우 식스 - 로그 스피어 (Tom Clancy's Rainbow Six - Rogue Spear)
+    { "BC2S", 0x8000934, 67175 },   // 짱구는 못말려 - 쇼크 가언의 인형들에 대항하여 (Shin chan contra los Munecos de Shock Gahn)
+    { "A9SJ", 0x8000234, 67766 },   // 댄싱스워드 - 섬광
+    { "APLP", 0x80075a6, 68413 },   // 핀볼 챌린지 디럭스 (Pinball Challenge Deluxe)
+    { "AKYJ", 0x80042dc, 69325 },   // 캡틴 츠바사 - 영광의 기적 (Captain Tsubasa - Eikou no Kiseki)
+    { "B2DJ", 0x80003d4, 69569 },   // 슈퍼 동키콩2 (Super Donkey Kong 2)
+    { "B2DE", 0x80003d4, 69587 },   // 동키콩 컨트리 2 (Donkey Kong Country 2)
+    { "A7KE", 0x8000fae, 70574 },   // 별의 커비 - 꿈의 샘 디럭스 (Kirby - Nightmare in Dream Land)
+    { "BTMJ", 0x8013888, 71646 },   // 마리오 테니스 어드밴스 (Mario Tennis Advance)
+    { "AJZJ", 0x8002226, 72267 },   // 봄버맨 제터즈
+    { "AFZC", 0x8000c82, 73351 },   // 지쑤 F-ZERO 웨이라이 사이체 (Jisu F-Zero Weilai Saiche)
+    { "BM5J", 0x80355b8, 74248 },   // 마리오 vs. 동키콩 (Mario vs. Donkey Kong)
+    { "BPGE", 0x80008c6, 74872 },   // 포켓몬스터 리프그린 (한글패치, 미국판 헤더)
+    { "AAMJ", 0x80003ce, 76369 },   // 캐슬바니아 - 서클 오브 더 문 (한글패치)
+    { "BPRE", 0x80008c6, 76509 },   // 포켓몬스터 파이어레드 (한글패치, 미국판 헤더)
+    { "BRIJ", 0x80013d4, 78061 },   // 리듬세상 (한글패치)
+    { "BPEK", 0x80008ce, 78294 },   // 포켓몬스터 에메랄드 (정식 한국판)
+    { "A2WE", 0x801601e, 78358 },   // 스타워즈 - 디 뉴 드로이드 아미 (Star Wars - The New Droid Army)
+    { "BDBE", 0x814cf8e, 79640 },   // 드래곤볼 Z - 무공투극 (Dragon Ball Z - Taiketsu)
+    { "AZ2J", 0x8060834, 81163 },   // 조이드 사가 2 (Zoids Saga II)
+    { "AG9J", 0x8064694, 83073 },   // 그레이티스트 나인 (Greatest Nine)
+    { "ADNE", 0x8000470, 85016 },   // 쥬라기공원III - 잃어버린 유전자
+    { "BM5E", 0x8033eec, 85587 },   // 마리오 vs. 동키콩 (Mario vs. Donkey Kong)
+    { "BC2J", 0x8000934, 86072 },   // 크레용신짱 - 전설을 부르는 부록의 고향 쇼크건
+    { "AGFJ", 0x8013542, 90148 },   // 황금의 태양 2 - 잃어버린 시대 (Ougon no Taiyou - Ushinawareshi Toki)
+    { "ABUE", 0x8004cbe, 93471 },   // 얼티밋 브레인 게임즈 (Ultimate Brain Games)
+    { "AGAE", 0x8013844, 94167 },   // 그라디우스 갤럭시즈 (Gradius Galaxies)
+    { "ARZJ", 0x80004f6, 94981 },   // 록맨 제로 1 (Megaman Zero 1)
+    { "BSME", 0x8000298, 96147 },   // 메탈슬러그 어드밴스 (Metal Slug Advance)
+    { "A5DE", 0x8000434, 103765 },   // 디즈니 스포츠 - 스노보딩 (Disney Sports - Snowboarding)
+    { "AREJ", 0x8000338, 106473 },   // 록맨 에그제
+    { "BY3J", 0x80831da, 106583 },   // 유희왕! 듀얼 몬스터즈 익스퍼트 3 (Yu-Gi-Oh! Duel Monsters Expert 3)
+    { "ANCJ", 0x8007ee8, 106976 },   // 주큐브 (ZooCube)
+    { "AKWE", 0x8000422, 110630 },   // 크레이지 레이서즈 (Konami Krazy Racers)
+    { "AKWJ", 0x8000422, 112635 },   // 코나미 와이와이 레이싱 (Konami Wai Wai Racing Advance)
+    { "BYIJ", 0x8118882, 115052 },   // 유희왕! - 듀얼 몬스터즈 인터네셔널2
+    { "AFXJ", 0x8000428, 116375 },   // 파이널 판타지 택틱스 어드밴스 (한글패치)
+    { "B4ZJ", 0x8000914, 119971 },   // 록맨 제로 4 (한글패치)
+    { "AGOJ", 0x802a7da, 120415 },   // 검은수염의 골프합시다 (Kurohige no Golf Shiyouyo)
+    { "A6DP", 0x8000424, 121504 },   // 디즈니 스포츠 - 풋볼 (Disney Sports - Football)
+    { "A6DE", 0x8000424, 122019 },   // 디즈니 스포츠 - 축구 (Disney Sports - Soccer)
+    { "A62J", 0x800066c, 124222 },   // 록맨 제로 2 (Megaman Zero 2)
+    { "ATKJ", 0x800074a, 126045 },   // 철권 어드밴스
+    { "ASRJ", 0x80003ec, 128676 },   // 슈퍼로봇대전 OG (Super Robot Taisen - Original Generation)
+    { "BSMJ", 0x8000298, 129199 },   // 메탈슬러그 어드밴스 (Metal Slug Advance) (2)
+    { "AEMJ", 0x8002df2, 131969 },   // 에그 매니아 (Egg Mania - Tsukande! Mawashite! Dossun Puzzle!!)
+    { "AEMP", 0x80031b6, 132729 },   // 에고 매니아 (Eggomania)
+    { "B3MJ", 0x8000a20, 135133 },   // 인어공주 멜로디 피치피치피치 피치피칫 라이브 스타트 (Mermaid Melody - Pichi Pichi Pitch - Pichi Pichitto Live Start!)
+    { "ATKE", 0x800074a, 136502 },   // 철권 어드밴스 (Tekken Advance)
+    { "AA2C", 0x80005ec, 137516 },   // 슈퍼마리오월드 (한글패치)
+    { "AX4J", 0x8000732, 139692 },   // 슈퍼마리오 브라더스3 (Super Mario Advance 4 - Super Mario 3 + Mario Brothers)
+    { "AZWJ", 0x8000f5e, 140911 },   // 메이드 인 와리오 (한글패치)
+    { "BZ3J", 0x80019c4, 142669 },   // 록맨 제로 3 (한글패치)
+    { "AZ8E", 0x8002b5e, 148774 },   // 슈퍼 퍼즐파이터II Turbo터보
+    { "BMAJ", 0x80007fc, 164366 },   // 인어공주 멜로디 피치피치피치 (Mermaid Melody - Pichi Pichi Pitch)
+    { "A3AJ", 0x8002ba4, 173660 },   // 슈퍼마리오 요시아일랜드 (Super Mario Advance 3 - Yoshi's Island + Mario Brothers)
+    { "BDQE", 0x80003a8, 178575 },   // 동키콩 컨트리 3 (Donkey Kong Country 3)
+    { "BDQJ", 0x80003a8, 178881 },   // 슈퍼 동키콩3 (Super Donkey Kong 3)
 };
 
 uint32_t gba_idle_loop_lookup(const char *gamepak_code) {

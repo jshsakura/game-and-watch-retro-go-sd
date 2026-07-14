@@ -760,6 +760,11 @@ INCLUDE build/fceumm_mappers.ld
     build/gba/gba_memory.o (.bss.bios_rom)
     build/gba/cheats.o (.bss.cheats)
     build/gba/sound.o (.bss.sound_buffer)
+    /* The link-cable protocol's state. It is 8 KB that this device can never use —
+     * there is no link port — but the file is compiled (gba_memory.c calls into it
+     * from reachable code, and the harness compiled it, so we do too). Its BSS may
+     * as well be spent somewhere the renderer does not need. */
+    build/gba/serial_proto.o (.bss.serstate)
     . = ALIGN(8);
     __gba_ahb_end__ = .;
     /* What is left has to still hold the framebuffer (240*160*2), which main_gba.c
@@ -769,25 +774,9 @@ INCLUDE build/fceumm_mappers.ld
            "Error: GBA AHB SRAM overflow (no room left for the framebuffer)");
   } > AHBRAM
 
-  /* Claimed before .overlay_gba so none of this lands in the RAM pool. Only .text
-   * here — the rodata claim has to come after .overlay_gba, or it would swallow
-   * main_gba.o's string literals with it. */
-  .xip_gba : {
-    . = ALIGN(8);
-    __xip_gba_start__ = .;
-      /* The renderer. It streams — walks tiles, writes pixels forward — which is
-       * the one shape a flash line prefetch is actually good at. */
-      build/gba/video.o (.text .text*)
-      /* Cold, and none of it is reachable from cpu.o: the link cable, the Game Boy
-       * Player, the wireless adapter, the pad, and the front-end shims. */
-      build/gba/serial.o (.text .text*)
-      build/gba/serial_proto.o (.text .text*)
-      build/gba/gbp.o (.text .text*)
-      build/gba/rfu.o (.text .text*)
-      build/gba/input.o (.text .text*)
-      build/gba/gba_frontend.o (.text .text*)
-  } > GBA_CODE
-
+  /* Declared BEFORE .xip_gba, and that ordering is the whole point: input sections
+   * go to whichever output section claims them first, so what the overlay names
+   * here is what stays in RAM, and .xip_gba gets the leftovers. */
   .overlay_gba __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_gba_start__ = .;
@@ -800,19 +789,64 @@ INCLUDE build/fceumm_mappers.ld
       build/gba/main_gba.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _GBA_MAIN_CODE_END = .;
-      /* What is left of the text after .xip_gba took its share: gba_memory.o,
-       * main.o, cheats.o, savestate.o — the four cpu.o calls into. cpu.o's own text
-       * is excluded; it runs from ITCM (.overlay_gba_itc below).
+
+      /* The renderer's hot core, pulled OUT of the flash blob and into RAM.
        *
-       * cpu.o's rodata is claimed here, and only cpu.o's: it is the one object
-       * whose text the sentinel pass cannot reach, so its rodata has to be at its
-       * final address already. */
+       * Pokemon Ruby ran the emulator at 40 fps of a needed 60 — the game at two
+       * thirds speed, which is also why the sound dragged: the audio DMA ticks at
+       * 60 Hz and a frame that misses its tick waits for the next one.
+       *
+       * These are the functions that run 160 times a frame: the tile-map scanline
+       * renderers, the sprite scanline renderers, the blending pass, and the
+       * per-scanline dispatch. Everything else in video.o — the bitmap modes, the
+       * affine paths, the setup — runs rarely or not at all for a mode-0 game like
+       * Pokemon, and stays in flash.
+       *
+       * These are section names, not symbol names. objcopy --redefine-syms renames
+       * symbols; it leaves sections alone. So update_scanline is .text.update_scanline
+       * even though its symbol is gba__update_scanline. */
+      build/gba/video.o (.text._Z20render_scanline_text*)
+      build/gba/video.o (.text._Z13render_object*)
+      build/gba/video.o (.text._ZL16render_w_effects*)
+      build/gba/video.o (.text._ZL9order_obj*)
+      build/gba/video.o (.text.update_scanline)
+      /* NOT render_scanline_objs: it is 21 KB across its variants, the pool does not
+       * have that on top of the rest, and it is the piece that minds flash least —
+       * one variant runs for a given game and each is ~4 KB, small enough to sit in
+       * the 16 KB I-cache once fetched. The tile renderers above are the ones that
+       * run for every layer of every scanline. */
+
+      /* The rest of the text: gba_memory.o, main.o, cheats.o, savestate.o — the four
+       * cpu.o calls into. cpu.o's own text is excluded; it runs from ITCM. video.o
+       * and the cold files are excluded so that .xip_gba can have what is left of
+       * them; without that this glob would swallow the whole blob back into RAM.
+       *
+       * cpu.o's rodata is claimed here, and only cpu.o's: it is the one object whose
+       * text the sentinel pass cannot reach, so its rodata has to be at its final
+       * address already. */
       build/gba/*.o (.data .data*)
-      EXCLUDE_FILE(*/cpu.o) build/gba/*.o (.text .text*)
+      EXCLUDE_FILE(*/cpu.o */video.o */serial.o */serial_proto.o */gbp.o */rfu.o
+                   */input.o */gba_frontend.o) build/gba/*.o (.text .text*)
       build/gba/cpu.o (.rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_GBA_LOAD_END = .;
   } AT > CORES
+
+  .xip_gba : {
+    . = ALIGN(8);
+    __xip_gba_start__ = .;
+      /* Whatever of the renderer the overlay did not take: the bitmap modes, the
+       * affine paths, the setup. Cold for a mode-0 game. */
+      build/gba/video.o (.text .text*)
+      /* Cold, and none of it is reachable from cpu.o: the link cable, the Game Boy
+       * Player, the wireless adapter, the pad, and the front-end shims. */
+      build/gba/serial.o (.text .text*)
+      build/gba/serial_proto.o (.text .text*)
+      build/gba/gbp.o (.text .text*)
+      build/gba/rfu.o (.text .text*)
+      build/gba/input.o (.text .text*)
+      build/gba/gba_frontend.o (.text .text*)
+  } > GBA_CODE
   _OVERLAY_GBA_LOAD_START = LOADADDR(.overlay_gba);
   _OVERLAY_GBA_SIZE = SIZEOF(.overlay_gba);
 
