@@ -305,6 +305,15 @@ bash tests/test_gba_xip_contract.sh || rc=1
 echo "=== gba: the M4A mixer HLE is wired, and each piece is on its side ==="
 bash tests/test_gba_m4a_wired.sh || rc=1
 
+# GBA: the output low-pass — passband, stopband, bypass and stability, against
+# tones, compiling the real gba_audio_filter.c. RED-verified: flipping a
+# coefficient sign fails it.
+echo "=== gba: the output low-pass does what its header promises ==="
+$CC -O2 -Wall -Wextra -std=gnu11 \
+    tests/test_gba_audio_filter.c Core/Src/porting/gba/gba_audio_filter.c \
+    -lm -o /tmp/mtest/test_gba_audio_filter
+/tmp/mtest/test_gba_audio_filter || rc=1
+
 # GBA: load_gamepak() on a memory-mapped cart. Runs gpSP's real load path on the
 # host BECAUSE the host traps what QEMU does not: an XIP build has no
 # gamepak_buffers, and the code that read the cart through them scanned a megabyte

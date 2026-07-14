@@ -18,6 +18,7 @@
  * that collide with CMSIS, so we declare the handful of entry points we use. */
 #include "gba_savestate_abi.h"
 #include "gba_idle_loop.h"
+#include "gba_audio_filter.h"
 
 extern uint32_t  idle_loop_target_pc; /* gpSP's; gba_frontend.c owns the storage */
 extern uint16_t *gba_screen_pixels; /* the core renders straight into this, RGB565 */
@@ -49,6 +50,7 @@ uint32_t load_gamepak(const void *info, const char *name, int rtc, int rumble, i
 #define SERIAL_MODE_DISABLED    0
 #define SERIAL_MODE_AUTO        6
 uint32_t sound_read_samples(int16_t *out, uint32_t frames);
+uint32_t sound_fifo_rate_hz(void);
 #if CHEAT_CODES == 1
 /* gpsp's cheat engine: GameShark / CodeBreaker / Action Replay, 20 slots. */
 int  cheat_parse(unsigned index, const char *code);
@@ -467,8 +469,17 @@ static void gba_pcm_submit(void)
             last_mono = (int16_t)(((int32_t)gba_audio_stereo[i * 2] +
                                    gba_audio_stereo[i * 2 + 1]) / 2);
         }
-        out[i] = (int16_t)(((int32_t)last_mono * factor) >> 8);
+        out[i] = last_mono;
     }
+
+    /* The analog rolloff the real console has and our clean DAC does not —
+     * cutoff follows the rate this cart is clocking its FIFOs at, so the
+     * resampling images go and the music stays. See gba_audio_filter.h. */
+    gba_lpf_configure(sound_fifo_rate_hz());
+    gba_lpf_apply(out, len);
+
+    for (uint16_t i = 0; i < len; i++)
+        out[i] = (int16_t)(((int32_t)out[i] * factor) >> 8);
 }
 
 /* ------------------------------------------------------------------ video --- */
@@ -735,6 +746,7 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         odroid_display_set_scaling_mode(ODROID_DISPLAY_SCALING_FIT);
 
     audio_start_playing(GBA_AUDIO_FRAMES);
+    gba_lpf_reset();
 
     /* Before any core code runs: init_main() and everything after it call into the
      * renderer, and those calls are still pointing at the sentinel address until
