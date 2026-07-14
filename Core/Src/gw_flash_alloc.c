@@ -350,6 +350,35 @@ uint8_t *store_file_in_flash(const char *file_path, uint32_t *file_size_p, bool 
     return store_file_in_flash_relocate(file_path, file_size_p, byte_swap, progress_cb, NULL);
 }
 
+bool flash_alloc_is_cached(const char *file_path)
+{
+    initialize_metadata();
+    uint32_t flash_address = 0, file_size = 0;
+    bool cached = is_file_in_flash(compute_file_crc32(file_path), &flash_address, &file_size);
+    free(metadata);
+    metadata = NULL;
+    return cached;
+}
+
+void flash_alloc_invalidate(const char *file_path)
+{
+    initialize_metadata();
+    uint32_t file_crc32 = compute_file_crc32(file_path);
+    bool changed = false;
+
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (metadata->files[i].valid && metadata->files[i].file_crc32 == file_crc32) {
+            metadata->files[i].valid = false;
+            changed = true;
+        }
+    }
+    if (changed)
+        save_metadata();
+
+    free(metadata);
+    metadata = NULL;
+}
+
 uint8_t *store_file_in_flash_relocate(const char *file_path, uint32_t *file_size_p, bool byte_swap,
                                       file_progress_cb_t progress_cb, flash_relocate_cb_t relocate_cb)
 {
