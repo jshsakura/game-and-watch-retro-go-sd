@@ -58,7 +58,12 @@ void cheat_clear(void);
 
 #define GBA_WIDTH   240
 #define GBA_HEIGHT  160
-#define GBA_FPS     60
+/* The GBA's real frame: 280,896 cycles of a 16.777216 MHz clock. That is 59.7275 fps,
+ * and every rate below is derived from it rather than from a rounded 60 — a 0.45%
+ * error is a sample buffer lapping itself every nine seconds. */
+#define GBA_FRAME_CYCLES  280896.0f
+#define GBA_CPU_HZ        16777216.0f
+#define GBA_FPS     60          /* only for anything that must name a whole number */
 #define LCD_WIDTH   320
 #define LCD_HEIGHT  240
 
@@ -67,7 +72,21 @@ void cheat_clear(void);
  * The device has one speaker, so the core's stereo pair is folded to mono on the
  * way out — half the samples to touch, and nothing is lost that could be heard. */
 #define GBA_SAMPLE_RATE          48000
-#define GBA_AUDIO_FRAMES         (GBA_SAMPLE_RATE / GBA_FPS)   /* mono samples per frame */
+
+/* Samples per frame — and NOT 48000/60.
+ *
+ * A GBA frame is 280,896 cycles of a 16.777216 MHz clock: 16.7427 ms, which is
+ * 59.7275 fps, not 60. At 48 kHz that is 803.65 samples a frame, and gpSP produces
+ * exactly that many. Asking for 800 left 3.65 of them behind every frame, and gpSP's
+ * ring holds 2048 — so it filled and lapped itself about every nine seconds, after
+ * which sound_read_samples() returned a nonsense count and the code below filled the
+ * rest of the buffer with ZEROES. A waveform yanked to zero and back is a click. That
+ * was the crackle, and it was never the speaker.
+ *
+ * 804 is a hair more than is produced, which is the safe side to err on: the ring
+ * drains to its floor and stays there instead of lapping, and the shortfall is about
+ * a third of a sample per frame — held, not zeroed, below. */
+#define GBA_AUDIO_FRAMES         804
 static int16_t gba_audio_stereo[GBA_AUDIO_FRAMES * 2];
 
 /* The GBA framebuffer. The LCD's own buffers live outside RAM_EMU, but the core
@@ -430,13 +449,22 @@ static void gba_pcm_submit(void)
     if (len > GBA_AUDIO_FRAMES)
         len = GBA_AUDIO_FRAMES;
 
+    /* Hold the last sample when the core comes up short; do not slam to zero.
+     *
+     * A shortfall is normal here — we ask for a hair more than a frame produces, on
+     * purpose (see GBA_AUDIO_FRAMES) — so this runs a fraction of a sample per frame.
+     * Repeating a sample for 20 microseconds is inaudible. Dropping the waveform to
+     * zero and back is a click, and doing it every frame is a crackle. */
+    static int16_t last_mono = 0;
+
     for (uint16_t i = 0; i < len; i++) {
         /* One speaker: fold the pair rather than throw a channel away. Anything
          * panned hard to the side would otherwise vanish. */
-        int32_t mono = (i < got)
-            ? ((int32_t)gba_audio_stereo[i * 2] + gba_audio_stereo[i * 2 + 1]) / 2
-            : 0;
-        out[i] = (int16_t)((mono * factor) >> 8);
+        if (i < got) {
+            last_mono = (int16_t)(((int32_t)gba_audio_stereo[i * 2] +
+                                   gba_audio_stereo[i * 2 + 1]) / 2);
+        }
+        out[i] = (int16_t)(((int32_t)last_mono * factor) >> 8);
     }
 }
 
@@ -648,8 +676,12 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     } else {
         common_emu_state.pause_after_frames = 0;
     }
-    common_emu_state.frame_time_10us = (uint16_t)(100000 / GBA_FPS + 0.5f);
-    lcd_set_refresh_rate(GBA_FPS);
+    /* 1674, not 1667. A GBA frame is 16.7427 ms — 59.7275 fps, not 60 — and the pacing
+     * loop's idea of a frame has to be the same one the audio DMA enforces, or the two
+     * fight and the loser is a dropped frame. The LCD is told 60 because its refresh
+     * rate is a hardware setting with no 59.7 to choose. */
+    common_emu_state.frame_time_10us = (uint16_t)(100000.0f * GBA_FRAME_CYCLES / GBA_CPU_HZ + 0.5f);
+    lcd_set_refresh_rate(60);
 
     /* Level 2 (353MHz), the top of the launcher's own scale — the same one Virtual
      * Boy and PC Engine CD take, and for the same reason: the interpreter IS the
