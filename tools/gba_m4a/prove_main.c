@@ -232,8 +232,13 @@ int main(int argc, char **argv)
         const char *ip = getenv("IDLE_PC");
         if (ip) {
             extern u32 idle_loop_target_pc;
+            extern u32 idle_loop_cond;
             idle_loop_target_pc = (u32)strtoul(ip, NULL, 0);
-            fprintf(stderr, "idle: halting slices at %08x\n", idle_loop_target_pc);
+            /* IDLE_COND=ne: burn the slice only while the branch at the target
+             * will loop back (Z clear) — the raster-poll semantic. */
+            idle_loop_cond = (getenv("IDLE_COND") != NULL) ? 1u : 0u;
+            fprintf(stderr, "idle: halting slices at %08x cond=%s\n",
+                    idle_loop_target_pc, idle_loop_cond ? "when-NE" : "always");
         }
     }
 
@@ -255,11 +260,26 @@ int main(int argc, char **argv)
      * the experiment. */
     const int no_keys = getenv("NO_KEYS") != NULL;
 
+    /* IDLE_TRACE=1: one line per frame on stderr — where the CPU stood when the
+     * frame completed, and the interrupt/display state. For post-morteming a
+     * candidate idle address that freezes a game: the freeze frame's PC and
+     * IE/IF/IME say whether it is stuck in the poll, stuck halted, or stuck
+     * somewhere else entirely. */
+    const int idle_trace = getenv("IDLE_TRACE") != NULL;
+
     t0 = now_sec();
     for (f = 0; f < frames; f++) {
         gba_set_keys(no_keys ? 0 : scripted_keys(f));
         execute_arm(execute_cycles);
         sound_read_samples(audio, 804);
+        if (idle_trace) {
+            extern unsigned int reg[64];
+            extern unsigned short io_registers[512];
+            fprintf(stderr,
+                    "T%06d pc=%08x halt=%u vcount=%3u dispstat=%04x ie=%04x if=%04x ime=%x\n",
+                    f, reg[15], reg[18], io_registers[3], io_registers[2],
+                    io_registers[0x100], io_registers[0x101], io_registers[0x104]);
+        }
         if (araw)
             fwrite(audio, sizeof(int16_t) * 2, 804, araw);
 #ifdef M4A_HASH
