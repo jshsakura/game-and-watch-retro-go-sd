@@ -268,6 +268,11 @@ int main(int argc, char **argv)
 
     fprintf(stderr, "%d frames in %.2f s  (%.0f fps on this host)\n",
             frames, t1 - t0, frames / (t1 - t0));
+    {
+        unsigned int sound_fifo_rate_hz(void);
+        fprintf(stderr, "DS FIFO rate: %u Hz (what the output filter keys on)\n",
+                sound_fifo_rate_hz());
+    }
 #ifdef M4A_COUNT_INSNS
     fprintf(stderr, "guest instructions still interpreted: %llu  (%.0f per frame)\n",
             m4a_insns_interpreted, (double)m4a_insns_interpreted / frames);
