@@ -1315,10 +1315,16 @@ GBA_WARN_OFF = -Wno-parentheses -Wno-unknown-pragmas -Wno-strict-aliasing -Wno-c
 # gpSP's filenames are as generic as they come (main.c, sound.c, input.c). They are
 # built by explicit rule and deliberately kept OUT of vpath, so they cannot shadow
 # another core's same-named file — the trap NGP already documents above.
+# gba_memory.c is the guest's memory bus: every load and store the interpreter does
+# goes through it, so it is second only to cpu.cc in a frame. -O3, like cpu.cc. It
+# lives in RAM rather than ITCM, so the code it grows by does cost the pool — but
+# the pool has the room and this is where the frames are.
+gba_is_hot = $(findstring gba_memory.c,$1)
+
 define gba_obj_prereq_gen
 $$(BUILD_DIR)/gba/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC gba ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) $$(C_DEFS_GBA) $$(GBA_C_INCLUDES) $$(GBA_WARN_OFF) $$< -o $$@
+	$$(V)$$(CC) -c $(if $(call gba_is_hot,$1),$$(subst -O2,-O3,$$(CFLAGS)),$$(CFLAGS)) $$(C_DEFS_GBA) $$(GBA_C_INCLUDES) $$(GBA_WARN_OFF) $$< -o $$@
 	$$(V)$$(CP) --redefine-syms=gba_redefines $$@
 
 endef
