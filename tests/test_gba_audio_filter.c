@@ -53,6 +53,15 @@ static int failures;
 
 int main(void)
 {
+    /* --- fresh state: nothing configured yet is a bit-identical bypass --- */
+    int16_t a0[256], b0[256];
+    for (int i = 0; i < 256; i++)
+        a0[i] = b0[i] = (int16_t)((i * 40503u) >> 3);
+    gba_lpf_configure(0);
+    CHECK(gba_lpf_cutoff_hz() == 0, "fresh + rate 0 -> still bypass");
+    gba_lpf_apply(a0, 256);
+    CHECK(memcmp(a0, b0, sizeof a0) == 0, "fresh bypass is bit-identical");
+
     /* --- a Pokemon-rate cart: pass the music, kill the images --- */
     gba_lpf_configure(13379);
     CHECK(gba_lpf_cutoff_hz() == 13379 * 42 / 100,
@@ -65,15 +74,18 @@ int main(void)
     CHECK(g12k < -20.0,     "12 kHz dies: %+.1f dB (want < -20)", g12k);
     CHECK(g18k < -35.0,     "18 kHz dies harder: %+.1f dB (want < -35)", g18k);
 
-    /* --- bypass must be bit-exact, both ways in --- */
+    /* --- a rate-0 GAP must NOT toggle the filter: the seam is a click.
+     * (Pokemon plays a cry, the FIFO timer rests for a moment, the music
+     * carries on. "Crackles at note tails, mostly in Pokemon" was this.) --- */
+    gba_lpf_configure(0);
+    CHECK(gba_lpf_cutoff_hz() == 13379 * 42 / 100,
+          "a rate-0 gap KEEPS the cutoff (%u Hz), no bypass seam",
+          gba_lpf_cutoff_hz());
+
+    /* --- true bypass is for genuinely high mixer rates, bit-exact --- */
     int16_t a[512], b[512];
     for (int i = 0; i < 512; i++)
         a[i] = b[i] = (int16_t)((i * 2654435761u) >> 17);
-
-    gba_lpf_configure(0);
-    CHECK(gba_lpf_cutoff_hz() == 0, "rate 0 -> bypass");
-    gba_lpf_apply(a, 512);
-    CHECK(memcmp(a, b, sizeof a) == 0, "bypass at rate 0 is bit-identical");
 
     gba_lpf_configure(42048);
     CHECK(gba_lpf_cutoff_hz() == 0, "42048 Hz cart -> bypass (images inaudible)");

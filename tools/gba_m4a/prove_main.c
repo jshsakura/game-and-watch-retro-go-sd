@@ -282,6 +282,19 @@ int main(int argc, char **argv)
         }
         if (araw)
             fwrite(audio, sizeof(int16_t) * 2, 804, araw);
+        /* RATE_TRACE=1: log every change in the DS FIFO rate — the value the
+         * device's output low-pass keys on. A cart that flips it (a cry
+         * restarting the timer, a song handoff) makes the filter toggle
+         * between engaged and bypass, and the seam is a click. */
+        if (getenv("RATE_TRACE")) {
+            unsigned int sound_fifo_rate_hz(void);
+            static unsigned last_rate = 0xFFFFFFFF;
+            unsigned r = sound_fifo_rate_hz();
+            if (r != last_rate) {
+                fprintf(stderr, "RATE frame %06d: %u -> %u Hz\n", f, last_rate, r);
+                last_rate = r;
+            }
+        }
 #ifdef M4A_HASH
         {
             const char *df = getenv("M4A_DUMP_FRAME");
