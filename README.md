@@ -41,7 +41,7 @@ this section is the full picture.)
   automatic overclock. Gapless audio, selectable pad presets (left pad / right pad /
   triggers as A/B). Several titles are enjoyable at that speed.
 - **Game Boy Advance** (gpSP) — Pokémon Ruby runs. See [Game Boy Advance](#game-boy-advance)
-  for what it took: the cart is never copied into RAM, and 89 measured idle-loop
+  for what it took: the cart is never copied into RAM, and 121 measured idle-loop
   addresses stop the games from busy-waiting through the frame they should be resting in.
 
 ##### BIOS files the added systems expect
@@ -626,7 +626,7 @@ The one exception is the cart's first 32 KB, which gets a RAM shadow — because
 cart *writes* its clock registers back into "ROM" at `0x080000C4`, and flash does not
 take writes. Ruby, Sapphire and Emerald all keep time that way.
 
-### 89 measured idle-loop addresses
+### 121 measured idle-loop addresses
 
 A GBA game does its work for a frame and then **busy-waits** for the vertical blank —
 spinning on a single branch, doing nothing, sometimes for three quarters of the frame.
@@ -637,7 +637,7 @@ A cart absent from that table spins through all 280,896 cycles of every frame. T
 not "a bit slower" — it is the difference between doing 75,000 cycles of real work and
 pretending to do 280,896.
 
-This build ships **89 addresses measured by running the ROMs**: an address is only kept
+This build ships **121 addresses measured by running the ROMs**: an address is only kept
 when the per-frame cycle count demonstrably collapses with it applied. It is applied over
 gpSP's own table rather than by patching it, which also corrects the three entries gpSP
 has *wrong* — FireRed and LeafGreen point at an address where there is no loop at all.
