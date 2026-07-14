@@ -167,6 +167,14 @@ else
     echo "      run: git submodule update --init --depth 1 external/firmware_update"
 fi
 
+# --- Core/Src/gw_flash_alloc.c: the ring every core's ROM goes through. It was
+# inside the blanket "Core/Src/gw_ = hardware bring-up" exclusion, and it is not:
+# it is an allocator, pure logic, and it holed Super Metroid's ROM. Measured now.
+build_and_run flash_alloc test_flash_alloc \
+    -- -Itests/flash_alloc_stubs -ICore/Inc \
+       tests/test_flash_alloc.c tests/flash_alloc_stubs/flash_stubs.c \
+       Core/Src/gw_flash_alloc.c
+
 # --- Core/Src/porting/lib/hw_jpeg_decoder.c: three binaries drive the REAL
 # file through its three real entry points (JPEG_DecodeToFrameInit/ToFrame/
 # ToBuffer) against a faithful ST HAL fake (tools/jpeg_harness/hal_fake/);

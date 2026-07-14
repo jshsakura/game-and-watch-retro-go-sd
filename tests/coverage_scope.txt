@@ -86,4 +86,5 @@ EXCLUDED	Core/Src/porting/a2600/	Core/Src/porting/a7800/	Core/Src/porting/amstra
 EXCLUDED	Core/Src/porting/odroid_display.c	Core/Src/porting/odroid_audio.c	Core/Src/porting/odroid_input.c	Core/Src/porting/odroid_netplay.c	Core/Src/porting/odroid_overlay.c	Core/Src/porting/odroid_sdcard.c	Core/Src/porting/odroid_settings.c	Core/Src/porting/odroid_system.c	the shell's HAL glue: LCD/SAI/SD/input/battery register access is the whole point of these files
 EXCLUDED	Core/Src/retro-go/i18n/	generated locale string tables, not logic
 EXCLUDED	Drivers/	ST HAL vendor code, not ours
+MEASURED	Core/Src/gw_flash_alloc.c	tests/test_flash_alloc.c drives the real ring against a fake flash (erase clears a block, program only clears bits). It sat inside the gw_ blanket exclusion below as if it were hardware bring-up; it is not — it is an allocator, and it holed Super Metroid's ROM while nothing measured it
 EXCLUDED	Core/Src/main.c	Core/Src/gw_	ST HAL bring-up, LCD, SAI, buttons, SD driver, RTC, battery, flash-chip access — hardware bring-up by construction
