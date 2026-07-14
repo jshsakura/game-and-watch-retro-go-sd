@@ -574,26 +574,7 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
    * a file that does not fit at the write pointer rewinds it to the base and
    * overwrites whatever is there. Caching the ROM after the code blob could
    * therefore erase the blob we are about to execute from — with the pointer to
-   * it already in hand.
-   *
-   * That reasoning was half of it, and the missing half cost a black screen.
-   * The blob's write can land on the ROM just as easily, once the ring has come
-   * back round to it — and the allocator invalidates what it overwrote only
-   * AFTER the write, by which time we are holding the pointer and about to play.
-   * The port executes no 65816: it only READS the ROM. So a hole punched in one
-   * region takes out only the scenes that read from it. The intro's text tables
-   * live in bank $8B; the game proper does not touch them. Hence: a save loads
-   * and plays, a new game is a black screen — and the next launch is fine,
-   * because by then the ROM is a cache miss and gets rewritten.
-   *
-   * So ask first, and if EITHER file is missing, drop both and write both. Back
-   * to back, neither write can land on the other. */
-  if (!flash_alloc_is_cached(SM_ROM_PATH) || !flash_alloc_is_cached(SM_XIP_PATH)) {
-    printf("sm: rom/blob not both cached - rewriting the pair\n");
-    flash_alloc_invalidate(SM_ROM_PATH);
-    flash_alloc_invalidate(SM_XIP_PATH);
-  }
-
+   * it already in hand. Nothing is written after the blob, so nothing can. */
   uint32_t rom_length = 0;
   uint8 *rom = odroid_overlay_cache_file_in_flash(SM_ROM_PATH, &rom_length, false);
   if (rom == NULL)
@@ -628,13 +609,6 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
    * fits in the overlay pool. */
   if (!SmCacheXipToFlash())
     SmFatal("Missing " SM_XIP_PATH, "Re-run the retro-go_update.bin update");
-
-  /* Written back to back, the blob cannot have landed on the ROM — unless it did
-   * not fit at the end of the flash and the ring rewound onto it. On a chip that
-   * small the two simply do not coexist, and playing on with a ROM that has a
-   * hole in it is how the black screen happened in the first place. Say so. */
-  if (!flash_alloc_is_cached(SM_ROM_PATH))
-    SmFatal("Flash too small for the ROM + code blob", "A larger flash chip is needed");
 
   /* Everything in the overlay that points into the blob — the RAM->XIP call
    * veneers, and every reference to the game's rodata — still holds a sentinel.

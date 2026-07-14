@@ -31,20 +31,6 @@ typedef void (*flash_relocate_cb_t)(uint8_t *buffer, uint32_t length, uint32_t o
 void flash_alloc_reset();
 uint8_t *store_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap, file_progress_cb_t progress_cb);
 
-/* Is this file in the cache right now?
- *
- * A caller that needs TWO files to be in flash at once has to ask, because the
- * allocator is circular: storing the second can erase the first. It invalidates
- * what it overwrote, but only after the fact — a caller already holding a pointer
- * to the erased file gets no say. Ask about both up front, and if either is
- * missing, invalidate both (below) so they are rewritten back to back, where
- * neither write can land on the other. */
-bool flash_alloc_is_cached(const char *file_path);
-
-/* Drop a file's cache entry, so the next store rewrites it. The data in flash is
- * left alone; only the metadata says it is gone. */
-void flash_alloc_invalidate(const char *file_path);
-
 /* As store_file_in_flash(), but relocate_cb (if non-NULL) gets a crack at the
  * data before it is programmed. On a cache hit nothing is written and the
  * callback does not run — the copy in flash was already relocated, to the same
