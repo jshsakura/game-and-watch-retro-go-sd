@@ -352,6 +352,44 @@ rc=$(( rc || $? ))
 
 # Everything from here to EOF is re-run standalone by tests/test_sm_skip_guard.sh,
 # which is why nothing that is expensive or self-contained belongs below this line.
+# ---------------------------------------------------------------- flash cache --
+# The ring every core's ROM goes through. It had no tests, and it holed Super
+# Metroid's ROM: the launcher caches the ROM and hands the core its address, the
+# core then caches its code blob, and once the ring has come round that write
+# lands on the ROM being read. New Game was a black screen; Continue was fine.
+#
+# RED first, and against the real thing: the same test runs over the allocator as
+# it was BEFORE the fix (git show), where it must fail. A test that has never
+# failed proves nothing.
+echo "=== flash cache: a write must not land on a file being read ==="
+FA_DIR=/tmp/mtest/flash_alloc
+rm -rf "$FA_DIR"; mkdir -p "$FA_DIR/saves"
+FA_PREFIX_REV=e51ed278          # the allocator as it was, before the live set
+
+$CC -O1 -g -std=gnu11 -Wall $SAN -Itests/flash_alloc_stubs -ICore/Inc \
+    tests/test_flash_alloc.c tests/flash_alloc_stubs/flash_stubs.c \
+    Core/Src/gw_flash_alloc.c -o "$FA_DIR/test_flash_alloc" || rc=1
+
+if git cat-file -e "$FA_PREFIX_REV:Core/Src/gw_flash_alloc.c" 2>/dev/null; then
+    git show "$FA_PREFIX_REV:Core/Src/gw_flash_alloc.c" > "$FA_DIR/prefix.c"
+    echo 'void flash_alloc_forget_live_files(void) {}' > "$FA_DIR/shim.c"
+    $CC -O1 -g -std=gnu11 -w $SAN -Itests/flash_alloc_stubs -ICore/Inc \
+        tests/test_flash_alloc.c tests/flash_alloc_stubs/flash_stubs.c \
+        "$FA_DIR/prefix.c" "$FA_DIR/shim.c" -o "$FA_DIR/test_prefix" || rc=1
+    if ( cd "$FA_DIR" && ./test_prefix > /dev/null 2>&1 ); then
+        echo "FAIL the pre-fix allocator passed - this test cannot see the bug it is for"
+        rc=1
+    else
+        echo "OK  the pre-fix allocator fails it, as the shipped bug did"
+    fi
+else
+    # A shallow clone has no history to check against. Skip, and say so: a safety
+    # net that fails the build when it cannot run teaches people to ignore CI.
+    echo "SKIP no $FA_PREFIX_REV in this clone (shallow?) - RED check not run"
+fi
+
+( cd "$FA_DIR" && ./test_flash_alloc ) || rc=1
+
 echo "=== sm: device source set is symbol-complete ==="
 # The main sm harness compiles all of external/sm, including sm_cpu_infra.c, which
 # defines and sets g_snes. The device does not compile that file. That gap let
