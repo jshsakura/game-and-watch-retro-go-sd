@@ -58,7 +58,12 @@ void cheat_clear(void);
 
 #define GBA_WIDTH   240
 #define GBA_HEIGHT  160
-#define GBA_FPS     60
+/* The GBA's real frame: 280,896 cycles of a 16.777216 MHz clock. That is 59.7275 fps,
+ * and every rate below is derived from it rather than from a rounded 60 — a 0.45%
+ * error is a sample buffer lapping itself every nine seconds. */
+#define GBA_FRAME_CYCLES  280896.0f
+#define GBA_CPU_HZ        16777216.0f
+#define GBA_FPS     60          /* only for anything that must name a whole number */
 #define LCD_WIDTH   320
 #define LCD_HEIGHT  240
 
@@ -67,7 +72,21 @@ void cheat_clear(void);
  * The device has one speaker, so the core's stereo pair is folded to mono on the
  * way out — half the samples to touch, and nothing is lost that could be heard. */
 #define GBA_SAMPLE_RATE          48000
-#define GBA_AUDIO_FRAMES         (GBA_SAMPLE_RATE / GBA_FPS)   /* mono samples per frame */
+
+/* Samples per frame — and NOT 48000/60.
+ *
+ * A GBA frame is 280,896 cycles of a 16.777216 MHz clock: 16.7427 ms, which is
+ * 59.7275 fps, not 60. At 48 kHz that is 803.65 samples a frame, and gpSP produces
+ * exactly that many. Asking for 800 left 3.65 of them behind every frame, and gpSP's
+ * ring holds 2048 — so it filled and lapped itself about every nine seconds, after
+ * which sound_read_samples() returned a nonsense count and the code below filled the
+ * rest of the buffer with ZEROES. A waveform yanked to zero and back is a click. That
+ * was the crackle, and it was never the speaker.
+ *
+ * 804 is a hair more than is produced, which is the safe side to err on: the ring
+ * drains to its floor and stays there instead of lapping, and the shortfall is about
+ * a third of a sample per frame — held, not zeroed, below. */
+#define GBA_AUDIO_FRAMES         804
 static int16_t gba_audio_stereo[GBA_AUDIO_FRAMES * 2];
 
 /* The GBA framebuffer. The LCD's own buffers live outside RAM_EMU, but the core
@@ -100,15 +119,28 @@ typedef struct {
     uint32_t us;       /* published: microseconds per frame */
 } gba_diag_t;
 
-static gba_diag_t diag_emulate;
-static gba_diag_t diag_draw;
+/* execute_arm() is TWO things. gpSP renders the picture from inside it — the PPU runs
+ * per scanline, as the ARM7 executes — so "Emulate" is the interpreter AND the
+ * renderer added together, and the two want opposite fixes.
+ *
+ * A skipped frame is what tells them apart: skip_next_frame makes the PPU evaluate the
+ * scanline but not draw it. So time execute_arm() separately on frames that drew and
+ * frames that did not, and the difference IS the renderer.
+ *
+ *   Emu+ppu   execute_arm() on a frame that rendered
+ *   Emu only  execute_arm() on a frame that skipped rendering
+ *   PPU       the difference — what drawing the picture actually costs
+ */
+static gba_diag_t diag_emu_draw;
+static gba_diag_t diag_emu_skip;
 static gba_diag_t diag_scale;
 static gba_diag_t diag_overlay;
 static uint32_t   diag_last_tick;
-static char       diag_emulate_str[16] = "-";
-static char       diag_draw_str[16]    = "-";
-static char       diag_scale_str[16]   = "-";
-static char       diag_overlay_str[16] = "-";
+static char       diag_emu_draw_str[16] = "-";
+static char       diag_emu_skip_str[16] = "-";
+static char       diag_ppu_str[16]      = "-";
+static char       diag_scale_str[16]    = "-";
+static char       diag_overlay_str[16]  = "-";
 /* Which of blit_emulator()'s branches actually ran. Scaling and filtering are user
  * settings, and SOFT does not go anywhere near the nearest-neighbour scaler — it
  * clears the whole 153 KB buffer and then runs a bilinear resample. */
@@ -143,10 +175,20 @@ static void gba_diag_publish(void)
         return;
     diag_last_tick = now;
 
-    gba_diag_format(&diag_emulate, diag_emulate_str, sizeof(diag_emulate_str));
-    gba_diag_format(&diag_draw, diag_draw_str, sizeof(diag_draw_str));
+    gba_diag_format(&diag_emu_draw, diag_emu_draw_str, sizeof(diag_emu_draw_str));
+    gba_diag_format(&diag_emu_skip, diag_emu_skip_str, sizeof(diag_emu_skip_str));
     gba_diag_format(&diag_scale, diag_scale_str, sizeof(diag_scale_str));
     gba_diag_format(&diag_overlay, diag_overlay_str, sizeof(diag_overlay_str));
+
+    /* What the picture costs: the same emulation, once with the PPU drawing and once
+     * without. Only meaningful when frameskip is actually skipping something. */
+    if (diag_emu_draw.us > diag_emu_skip.us && diag_emu_skip.us > 0) {
+        uint32_t ppu = diag_emu_draw.us - diag_emu_skip.us;
+        snprintf(diag_ppu_str, sizeof(diag_ppu_str), "%lu.%02lu ms",
+                 (unsigned long)(ppu / 1000), (unsigned long)((ppu % 1000) / 10));
+    } else {
+        snprintf(diag_ppu_str, sizeof(diag_ppu_str), "no skips");
+    }
 }
 
 /* ------------------------------------------------------------------ fatal --- */
@@ -407,13 +449,22 @@ static void gba_pcm_submit(void)
     if (len > GBA_AUDIO_FRAMES)
         len = GBA_AUDIO_FRAMES;
 
+    /* Hold the last sample when the core comes up short; do not slam to zero.
+     *
+     * A shortfall is normal here — we ask for a hair more than a frame produces, on
+     * purpose (see GBA_AUDIO_FRAMES) — so this runs a fraction of a sample per frame.
+     * Repeating a sample for 20 microseconds is inaudible. Dropping the waveform to
+     * zero and back is a click, and doing it every frame is a crackle. */
+    static int16_t last_mono = 0;
+
     for (uint16_t i = 0; i < len; i++) {
         /* One speaker: fold the pair rather than throw a channel away. Anything
          * panned hard to the side would otherwise vanish. */
-        int32_t mono = (i < got)
-            ? ((int32_t)gba_audio_stereo[i * 2] + gba_audio_stereo[i * 2 + 1]) / 2
-            : 0;
-        out[i] = (int16_t)((mono * factor) >> 8);
+        if (i < got) {
+            last_mono = (int16_t)(((int32_t)gba_audio_stereo[i * 2] +
+                                   gba_audio_stereo[i * 2 + 1]) / 2);
+        }
+        out[i] = (int16_t)(((int32_t)last_mono * factor) >> 8);
     }
 }
 
@@ -610,11 +661,12 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * is spending it. If Emulate dominates, the answer is clock and the interpreter.
      * If Draw does, the answer is the renderer and where its code lives. */
     odroid_dialog_choice_t options[] = {
-        {0, "Emulate", diag_emulate_str, -1, NULL},
-        {0, "Draw",    diag_draw_str,    -1, NULL},
-        {0, " Scale",  diag_scale_str,   -1, NULL},
-        {0, " Ovl",    diag_overlay_str, -1, NULL},
-        {0, " Path",   diag_path_str,    -1, NULL},
+        {0, "Emu+ppu",  diag_emu_draw_str, -1, NULL},
+        {0, "Emu only", diag_emu_skip_str, -1, NULL},
+        {0, " = PPU",   diag_ppu_str,      -1, NULL},
+        {0, "Scale",    diag_scale_str,    -1, NULL},
+        {0, "Ovl",      diag_overlay_str,  -1, NULL},
+        {0, "Path",     diag_path_str,     -1, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
 
@@ -624,8 +676,12 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     } else {
         common_emu_state.pause_after_frames = 0;
     }
-    common_emu_state.frame_time_10us = (uint16_t)(100000 / GBA_FPS + 0.5f);
-    lcd_set_refresh_rate(GBA_FPS);
+    /* 1674, not 1667. A GBA frame is 16.7427 ms — 59.7275 fps, not 60 — and the pacing
+     * loop's idea of a frame has to be the same one the audio DMA enforces, or the two
+     * fight and the loser is a dropped frame. The LCD is told 60 because its refresh
+     * rate is a hardware setting with no 59.7 to choose. */
+    common_emu_state.frame_time_10us = (uint16_t)(100000.0f * GBA_FRAME_CYCLES / GBA_CPU_HZ + 0.5f);
+    lcd_set_refresh_rate(60);
 
     /* Level 2 (353MHz), the top of the launcher's own scale — the same one Virtual
      * Boy and PC Engine CD take, and for the same reason: the interpreter IS the
@@ -757,15 +813,20 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         gba_input_read(&joystick);
 
-        /* execute_arm() returns when the frame driver says the frame is done. */
+        /* execute_arm() returns when the frame driver says the frame is done — and it
+         * has drawn the picture along the way, unless skip_next_frame said not to. */
         common_emu_clear_dwt_cycles();
         execute_arm(execute_cycles);
-        gba_diag_add(&diag_emulate, common_emu_get_dwt_cycles());
+        gba_diag_add(drawFrame ? &diag_emu_draw : &diag_emu_skip,
+                     common_emu_get_dwt_cycles());
 
         if (drawFrame) {
-            common_emu_clear_dwt_cycles();
+            /* No outer timer around blit(): blit() clears the DWT counter itself, and
+             * an outer read would then only see whatever came after the last inner
+             * clear. That is what made "Draw" report 0.22 ms — exactly the overlay's
+             * number — while Scale alone was 1.99 ms. A measurement that quietly
+             * measures something else is worse than none. */
             blit();
-            gba_diag_add(&diag_draw, common_emu_get_dwt_cycles());
             lcd_swap();
         }
         gba_diag_publish();
