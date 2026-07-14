@@ -52,6 +52,9 @@ void wdog_refresh(void);
  * biggest saving in the core, so a cart that is not in the table is not broken,
  * only slower. 0xFFFFFFFF is "no idle loop known", never a real PC. */
 unsigned int idle_loop_target_pc = 0xFFFFFFFF;
+/* 0 = ALWAYS (the classic table entries); 1 = WHEN_NE, for raster polls whose
+ * callers burst through them — see IDLE_COND_* in gpsp's cpu.h. */
+unsigned int idle_loop_cond = 0;
 
 /* Only the dynamic recompiler uses these; the interpreter is what runs here, and
  * cpu_threaded.c is not compiled at all (no Thumb-2 backend exists). They stay

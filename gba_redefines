@@ -108,6 +108,7 @@ gbp_reset gba__gbp_reset
 gbp_set_state gba__gbp_set_state
 gbp_transfer gba__gbp_transfer
 gpio_regs gba__gpio_regs
+idle_loop_cond gba__idle_loop_cond
 idle_loop_target_pc gba__idle_loop_target_pc
 init_cpu gba__init_cpu
 init_gamepak_buffer gba__init_gamepak_buffer

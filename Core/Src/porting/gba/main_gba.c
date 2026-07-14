@@ -481,6 +481,30 @@ static void gba_pcm_submit(void)
 
     for (uint16_t i = 0; i < len; i++)
         out[i] = (int16_t)(((int32_t)out[i] * factor) >> 8);
+
+    /* Diagnostics only — nothing here touches the audio. Two suspects remain
+     * for the "note tails crackle now and then" report, and they cannot be
+     * told apart off-device: gpSP's mix accumulator hard-clips at +-2047
+     * (x16 = +-32752 in the stereo stream), and a short frame leaves the tail
+     * of the buffer holding one sample flat. Count both; say so every ~5 s in
+     * the debug log, only when there is something to say. Whichever counter
+     * moves when the ear hears it names the culprit. */
+    {
+        static uint32_t diag_clip, diag_hold, diag_calls;
+        for (uint32_t i = 0; i < got && i < len; i++) {
+            int16_t l = gba_audio_stereo[i * 2], r = gba_audio_stereo[i * 2 + 1];
+            if (l >= 32752 || l <= -32752 || r >= 32752 || r <= -32752)
+                diag_clip++;
+        }
+        if (got < len)
+            diag_hold += len - got;
+        if (++diag_calls >= 300) {
+            if (diag_clip != 0 || diag_hold != 0)
+                printf("gba audio 5s: clip=%lu hold=%lu\n",
+                       (unsigned long)diag_clip, (unsigned long)diag_hold);
+            diag_clip = diag_hold = diag_calls = 0;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ video --- */
