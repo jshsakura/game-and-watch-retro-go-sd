@@ -143,15 +143,69 @@ real hardware?* — and neither answer is complete without the other. A game wit
 idle loop but a hooked mixer is 29% cheaper than the sweep thinks; a game with
 both is a game that ships.
 
+## Six variants cover the library — that is the whole point
+
+The question is never "which games". M4A is a **library**: the same bytes in every
+cart that links the same build of it. So the unit of work is a **variant**, not a
+game, and one transliteration covers every cart that carries it — for ever, with
+no per-game data and no per-game work.
+
+`./census.py <romdir>` counts them. It does not emulate anything: the block sits
+verbatim in the ROM (the library copies it to IWRAM at boot) and is delimited by
+two fingerprints ordinary code does not carry — `str r8,[sp]` at the top, and
+`ldr r8,[sp] / add r0,pc,#1 / bx r0` at the bottom. Find the exit, walk back to
+the entry, hash what is between.
+
+**633 carts. Six mixers.**
+
+| mixer | carts | cum. | block | status | example |
+|---|---|---|---|---|---|
+| `ffd1701f04cd` | **210** | 33.2% | 488 B / 122 | ✅ `stereo2` | Zelda: A Link to the Past |
+| `72315cec4e04` | 99 | 48.8% | 412 B / 103 | ✅ `mono` | Final Fantasy Tactics Advance |
+| `64c146fc6c75` | 15 | 51.2% | 488 B / 122 | ✅ `stereo3` | Gachinko Pro Yakyuu |
+| `af4efd159d68` | 14 | 53.4% | 336 B / 84 | ⬜ | GT Advance 2 |
+| `3237f8b38509` | 8 | 54.7% | 508 B / 127 | ✅ `stereo` | Pokémon Emerald |
+| `676b454b42c6` | 1 | 54.8% | 300 B / 75 | ⬜ | Mr. Driller 2 |
+
+**Covered: 332 of 633 (52.4%)** — and **95.7% of every cart that has an M4A mixer
+at all**. The 286 with none are the carts that do not use this sound library:
+homebrew, the NES-e classics, the TV tuner, a movie player.
+
+Two of the six differ by **two instructions swapped**:
+
+```
+    stereo2              stereo3
+    ldrb fp, [r4,#11]    lsl  sl, sl, #16
+    lsl  sl, sl, #16     ldrb fp, [r4,#11]
+```
+
+The block computes the same thing either way, and they are still different
+programs — because the block gives way to the hardware **between** instructions,
+and in the gap between those two the machine is in one state or the other. Sharing
+one transliteration would resume the interpreter into a register that had not been
+shifted yet, or had been shifted twice: one wrong note, hours in, on fifteen games.
+So it costs a copy and two swapped lines, and the census is what told us it was
+worth 15 carts.
+
+`census.py --csv` emits one row per cart — game, code, mixer hash, block size,
+variant — which is the row `game-and-what` should put in its database, next to the
+one `idlefind` already writes.
+
 ## Status
 
 Both variants are proven bit-exact — every block, every register, every guest
 cycle, and the whole game frame-by-frame — with the RED for each.
 
-| variant | | guest instructions the interpreter still runs |
+| variant | measured on | guest instructions the interpreter still runs |
 |---|---|---|
-| `m4a-soundmainram-mono` | FFTA (`AFXJ`) | 76,857 → 55,973 per frame (**−27.2%**) |
-| `m4a-soundmainram-stereo` | Pokémon Emerald (`BPEK`) | 42,409 → 27,452 per frame (**−35.3%**) |
+| `stereo2` | Zelda: A Link to the Past (`AZLE`) | 42,417 → 16,891 per frame (**−60.2%**) |
+| `stereo3` | Gachinko Pro Yakyuu | 52,127 → 37,182 per frame (**−28.7%**) |
+| `stereo` | Pokémon Emerald (`BPEK`) | 42,409 → 27,452 per frame (**−35.3%**) |
+| `mono` | Final Fantasy Tactics Advance (`AFXJ`) | 76,857 → 55,973 per frame (**−27.2%**) |
+
+Zelda is the striking one: **60% of everything its CPU does is the music.** The
+lighter the game, the more of it the mixer is — which is the same sentence as "the
+mixer's cost is a per-frame constant", read from the other end.
 
 The stereo one is the common build (two accumulators, right channel `0x630` past
 the left, phase in `r9` instead of `lr`). One path in it is deliberately **not**
