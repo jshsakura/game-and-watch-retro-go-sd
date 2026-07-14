@@ -826,8 +826,19 @@ INCLUDE build/fceumm_mappers.ld
        * address already. */
       build/gba/*.o (.data .data*)
       EXCLUDE_FILE(*/cpu.o */video.o */serial.o */serial_proto.o */gbp.o */rfu.o
-                   */input.o */gba_frontend.o) build/gba/*.o (.text .text*)
+                   */input.o */gba_frontend.o */m4a_hle.o) build/gba/*.o (.text .text*)
       build/gba/cpu.o (.rodata .rodata*)
+      /* The M4A mixer HLE splits like the renderer does. m4a_gpsp.o is the thin
+       * side cpu.o actually calls (m4a_hle_execute, m4a_hook_pc) — it stays in
+       * RAM, because cpu.o runs from ITCM outside the sentinel scan and must
+       * reference nothing that moves. m4a_hle.o's rodata — the six mixer
+       * signatures the per-frame scan memcmps, and the variant table whose run
+       * pointers the sentinel pass patches — is 3.3 KB, hot, and dereferenced
+       * from RAM, so it lives here too. m4a_hle.o's TEXT is the six
+       * transliterations, 102 KB of resumable state machine the pool cannot
+       * hold; it is excluded above and .xip_gba takes it. */
+      build/gba/m4a_hle.o (.rodata .rodata*)
+      build/gba/m4a_gpsp.o (.rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_GBA_LOAD_END = .;
   } AT > CORES
@@ -846,6 +857,13 @@ INCLUDE build/fceumm_mappers.ld
       build/gba/rfu.o (.text .text*)
       build/gba/input.o (.text .text*)
       build/gba/gba_frontend.o (.text .text*)
+      /* The six M4A mixer transliterations. One runs per game, once per frame,
+       * as a single sequential sweep — the same access pattern as the renderer
+       * variants above, and the same reasoning: each is 12–20 KB, the pool has
+       * no 102 KB to give, and a function that runs once a frame minds flash
+       * least. Reached only through the variant table's run pointers, which the
+       * sentinel pass patches; cpu.o never references this object. */
+      build/gba/m4a_hle.o (.text .text*)
   } > GBA_CODE
   _OVERLAY_GBA_LOAD_START = LOADADDR(.overlay_gba);
   _OVERLAY_GBA_SIZE = SIZEOF(.overlay_gba);
