@@ -219,6 +219,24 @@ int main(int argc, char **argv)
     gba_screen_pixels = framebuffer;
     reset_gba();
 
+    /* IDLE_PC=<hex>: halt the frame slice at this guest pc, exactly as the
+     * firmware's idle table does (gpSP zeroes the remaining cycles when the
+     * interpreter's PC equals idle_loop_target_pc). This is the A/B rig for a
+     * CANDIDATE idle address: run OFF and ON, diff the per-frame hashes —
+     * screen, audio, RAM, IO and the clock — and if they are identical while
+     * the interpreted-instruction count drops, the skip is proven on the same
+     * program the device runs. (mGBA's remover cannot do this: forcing a pc
+     * there disables its detector, so a cart's EXISTING skip goes missing
+     * from the baseline.) */
+    {
+        const char *ip = getenv("IDLE_PC");
+        if (ip) {
+            extern u32 idle_loop_target_pc;
+            idle_loop_target_pc = (u32)strtoul(ip, NULL, 0);
+            fprintf(stderr, "idle: halting slices at %08x\n", idle_loop_target_pc);
+        }
+    }
+
     /* M4A_AUDIO_RAW=<path>: dump the 48 kHz s16 stereo stream, raw, for
      * listening or spectral analysis (sox/ffmpeg read it with
      * -t raw -r 48000 -e signed -b 16 -c 2). This is the stream the device
@@ -230,9 +248,16 @@ int main(int argc, char **argv)
         if (ap) araw = fopen(ap, "wb");
     }
 
+    /* NO_KEYS=1: attract mode — no scripted input. The key script presses at
+     * fixed FRAME numbers, so any change that shifts a menu by one frame turns
+     * the rest of the run into a different play-through and the diff into
+     * noise. An idle-skip A/B compares timing semantics; take input out of
+     * the experiment. */
+    const int no_keys = getenv("NO_KEYS") != NULL;
+
     t0 = now_sec();
     for (f = 0; f < frames; f++) {
-        gba_set_keys(scripted_keys(f));
+        gba_set_keys(no_keys ? 0 : scripted_keys(f));
         execute_arm(execute_cycles);
         sound_read_samples(audio, 804);
         if (araw)
