@@ -1,0 +1,100 @@
+# Harnesses — what proves what, and how to run it
+
+Every harness in this tree exists because something shipped broken while a
+different check was green. The one rule they all serve: **a harness must be the
+same program as the firmware** — same source list, same defines, real files,
+never a reimplementation. Three Super Metroid releases and a 0%-covered JPEG
+driver were the tuition for that rule (CLAUDE.md tells both stories).
+
+The device is still the final judge. A harness that cannot reproduce a device
+fault is a harness with a limit, not proof the fault is imaginary.
+
+## The suite
+
+| | |
+|---|---|
+| run | `tests/run.sh` (plain gcc, no ARM toolchain needed; ELF-inspection tests SKIP without one) |
+| coverage | `tests/coverage.sh`, denominator in `tests/coverage_scope.txt` — the code we own and can run, as data, with a reason per line |
+
+The suite compiles the real firmware files against fakes of the hardware
+(`tests/*_stubs/`, a fake flash that ANDs bits like NOR flash, a real FatFs on
+a RAM disk). Wiring tests (`test_idle_timeout_wired.sh`,
+`test_gba_m4a_wired.sh`) deserve special mention: they assert that callers
+call — this repo's bugs live in the function nobody wired, not the function
+that was wrong.
+
+## Per-core host harnesses — `linux/`
+
+One `Makefile.<core>` per system, sharing the `odroid_*.c` shims in the same
+directory. Builds the core's overlay sources into a desktop binary with SDL
+output. This is the everyday "does the core still boot and play" loop;
+`update_<core>_rom.sh` refreshes the test ROM each expects.
+
+Caveat that cost us: these run the core's *logic*, not the device's memory
+map, alignment traps, or linker layout. For those, see the device-shaped
+harnesses below.
+
+## Device-shaped harnesses — `tools/`
+
+### `tools/sm_harness` — Super Metroid, the way the device runs it
+- `device_run.sh <rom> [frames]` — compiles the core **from the Makefile's own
+  source list** with the device's defines (`-DTARGET_GNW`), shims the firmware
+  allocators, and forces the device CPU's rules on the host:
+  `-fsanitize=alignment` (M7 traps 64-bit unaligned) and
+  `-Werror=implicit-function-declaration`. Reverting any shipped fix
+  reproduces its fault here.
+- `device_parity.sh` (in the suite) — links exactly what the device links, so
+  a symbol the firmware would silently resolve into another core's overlay is
+  an error here.
+
+### `tools/gba_harness` — gpSP's load path on an honest address space
+- `run.sh` — the cart-load path with `ROM_BUFFER_SIZE=0` (XIP: the cart is
+  never buffered). QEMU maps address 0 and shrugs; a hosted OS SIGSEGVs, which
+  is what the device's bus fault actually meant. `--red` rebuilds the pre-fix
+  file from git history and shows it crash.
+- `host_stubs.c` is the shared firmware-allocator shim the other GBA tools
+  link.
+
+### `tools/gba_m4a` — the M4A mixer HLE, self-contained
+- `prove.sh [--blocks|--e2e|--speed] <rom> [frames]` — the full proof: every
+  hooked block run both ways and compared to the register, flag, cycle and
+  byte (`--blocks`); the whole game run hook-off vs hook-on and hashed —
+  screen, audio, RAM, IO **and the clock** — every frame (`--e2e`, which
+  first runs hook-off against itself, because Emerald's RTC taught us a
+  comparator must agree with itself before it may compare); and a sabotaged
+  build that must fail (RED).
+- `census.py` — counts mixers straight out of a ROM corpus, no emulation.
+- `prove_main.c` also takes `M4A_AUDIO_RAW=<path>` to dump the 48 kHz s16
+  stereo stream the device would hand the SAI — for listening to, or for
+  spectral analysis when someone reports the sound is off.
+
+### `tools/jpeg_harness` — the HW JPEG driver against a fake HAL
+- `run.sh` — compiles `hw_jpeg_decoder.c` itself (its three previous tests
+  reimplemented the HAL and covered 0% of it) against `hal_fake/`, including
+  the lock-poisoning and input-end-callback cases that killed two releases.
+  RED comes from `git show <fix>^:` — the actual pre-fix file must fail.
+
+### `tools/snes_harness` — closed initiative, kept for the record
+The SNES-emulation feasibility rig (verdict: ⛔ the PPU alone is 14 ms of a
+16.6 ms frame; do not reopen). Kept because it is the working example of the
+event-scheduler experiment and boots zelda3/SMW against the shared core.
+
+## On-device instrumentation — branch `feat/gba-probe`
+
+The probe that measured what QEMU could not: guest-PC histogram, DWT cycle
+counters, and the frame-budget breakdown that told *wait* from *work* (the
+distinction that saved two builds — a number that grows when everything else
+gets faster is a wait, not a cost). Not on `testbed`; cherry-pick it onto a
+work branch when a core needs to answer "what is it actually doing" on the
+hardware itself.
+
+## Choosing
+
+| question | harness |
+|---|---|
+| does the core still boot/play after my change | `linux/Makefile.<core>` |
+| will it survive the device's CPU and memory map | `tools/sm_harness/device_run.sh` (copy its pattern for a new core) |
+| does the firmware link the same program I tested | `device_parity.sh`, `scripts/check_core_symbol_aliases.py` |
+| is my HLE/optimization bit-exact, including time | `tools/gba_m4a/prove.sh` (the model to copy) |
+| is the thing actually *wired* | a `tests/test_*_wired.sh` — write one |
+| what is the device really spending a frame on | `feat/gba-probe` |

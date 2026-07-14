@@ -219,11 +219,24 @@ int main(int argc, char **argv)
     gba_screen_pixels = framebuffer;
     reset_gba();
 
+    /* M4A_AUDIO_RAW=<path>: dump the 48 kHz s16 stereo stream, raw, for
+     * listening or spectral analysis (sox/ffmpeg read it with
+     * -t raw -r 48000 -e signed -b 16 -c 2). This is the stream the device
+     * hands the SAI, minus the mono fold — the right tap for "what does the
+     * output actually contain", which no per-frame hash can answer. */
+    FILE *araw = NULL;
+    {
+        const char *ap = getenv("M4A_AUDIO_RAW");
+        if (ap) araw = fopen(ap, "wb");
+    }
+
     t0 = now_sec();
     for (f = 0; f < frames; f++) {
         gba_set_keys(scripted_keys(f));
         execute_arm(execute_cycles);
         sound_read_samples(audio, 804);
+        if (araw)
+            fwrite(audio, sizeof(int16_t) * 2, 804, araw);
 #ifdef M4A_HASH
         {
             const char *df = getenv("M4A_DUMP_FRAME");

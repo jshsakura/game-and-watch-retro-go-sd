@@ -205,6 +205,14 @@ kind of test when you add a contract, and again when you add a screen.
   the caches derived from it: `ppu_saveload` has to invalidate the palette and brightness
   tables by hand, or the screen draws the scene you loaded in the colours of the one you left.
 
+## Harness index
+
+Every harness — the suite, the per-core `linux/` builds, the device-shaped
+`tools/*_harness` rigs, the M4A prover, the on-device probe branch — is
+catalogued in **[docs/HARNESSES.md](docs/HARNESSES.md)**: what each proves,
+how to run it, and which one answers which question. Read it before writing a
+new harness; the pattern you need probably exists.
+
 ## Emulator-specific notes
 
 Detailed debugging guides live next to each porting layer (not in this file — keeps context lean when working on other cores). Cursor loads matching rules from `.cursor/rules/` when you edit files in those trees.
