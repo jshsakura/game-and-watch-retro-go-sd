@@ -80,3 +80,7 @@
 	path = external/sm
 	url = https://github.com/jshsakura/sm.git
 	branch = gnw-port
+[submodule "external/gpsp"]
+	path = external/gpsp
+	url = https://github.com/jshsakura/gpsp.git
+	branch = gnw-port

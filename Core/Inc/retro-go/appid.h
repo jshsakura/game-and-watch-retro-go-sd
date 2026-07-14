@@ -25,6 +25,7 @@ typedef enum {
     APPID_LYNX     = 21,
     APPID_VB       = 22,
     APPID_SM       = 23,   /* Super Metroid (SD builds only) */
+    APPID_GBA      = 24,   /* Game Boy Advance (gpsp) */
 
     APPID_COUNT,
 } appid_t;

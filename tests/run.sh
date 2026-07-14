@@ -288,6 +288,15 @@ bash tests/test_check_core_symbol_aliases.sh || rc=1
 echo "=== tests/run.sh: sm parity SKIPS (not fails) without external/sm ==="
 bash tests/test_sm_skip_guard.sh || rc=1
 
+# GBA: the flash-XIP split is a contract the compiler cannot check. cpu.o runs
+# from ITCM, which the sentinel pass does not scan, so nothing cpu.o references
+# may live in the blob — move one file across that line in the linker script and
+# the build stays green while the device faults on the first frame. Counts the
+# sentinels in the linked image. Skips (loudly) without an ELF or a toolchain,
+# which is the host-tests CI job's situation.
+echo "=== gba: nothing cpu.o references may live in the XIP blob ==="
+bash tests/test_gba_xip_contract.sh || rc=1
+
 echo "=== sm: savestate header refuses a foreign or truncated file ==="
 # sm_system_SaveState/LoadState (main_sm.c) stamp every file with a magic/
 # version/length header and refuse to load one that doesn't match — a
