@@ -21,6 +21,7 @@
 #include "gba_audio_filter.h"
 
 extern uint32_t  idle_loop_target_pc; /* gpSP's; gba_frontend.c owns the storage */
+extern uint32_t  idle_loop_cond;      /* 0 = always burn; 1 = only while the branch loops */
 extern uint16_t *gba_screen_pixels; /* the core renders straight into this, RGB565 */
 extern uint32_t  execute_cycles;    /* cycles the core wants to run before the next event */
 extern uint32_t  skip_next_frame;   /* set and the PPU evaluates but does not draw */
@@ -805,6 +806,35 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     if (idle_pc != 0) {
         idle_loop_target_pc = idle_pc;
         printf("gba: idle loop at 0x%08lX\n", (unsigned long)idle_pc);
+    }
+
+    /* The OTHER kind of wait: a raster poll — `ldrh rN,[VCOUNT]; cmp; bne` —
+     * that the classic always-burn skip must not touch, because these games'
+     * delay code CALLS the poll in a counted burst and on hardware ~120 calls
+     * fit inside the matching scanline; burn every arrival and a six-frame
+     * intro becomes seven hundred (proven: Super Robot Taisen D froze). So the
+     * target is the poll's closing branch and the slice burns only while the
+     * branch will loop (IDLE_COND_WHEN_NE; the check costs nothing off-match).
+     *
+     * Hand-curated, one entry per game PROVEN on the host A/B rig
+     * (tools/gba_m4a/prove_main.c, IDLE_PC= + IDLE_COND=ne): screens 99.8%
+     * identical at a two-frame shift, interpreted instructions -15..-17%.
+     * Only for carts with NO entry in the generated idle table — the two
+     * waits would otherwise fight over one target slot. */
+    static const struct { char code[5]; uint32_t branch_pc; } vcount_polls[] = {
+        { "A6SJ", 0x8932178 },   /* Super Robot Taisen D  (-15.2%) */
+        { "ATIJ", 0x858f088 },   /* Tennis no Ouji-sama Genius Boys Academy (-16.8%) */
+    };
+    if (idle_pc == 0) {
+        for (size_t i = 0; i < sizeof(vcount_polls) / sizeof(vcount_polls[0]); i++) {
+            if (memcmp(vcount_polls[i].code, &rom[0xAC], 4) == 0) {
+                idle_loop_target_pc = vcount_polls[i].branch_pc;
+                idle_loop_cond = 1;   /* IDLE_COND_WHEN_NE */
+                printf("gba: vcount poll at 0x%08lX (cond NE)\n",
+                       (unsigned long)idle_loop_target_pc);
+                break;
+            }
+        }
     }
 
     gba_SramLoad();
