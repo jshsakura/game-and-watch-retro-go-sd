@@ -100,15 +100,28 @@ typedef struct {
     uint32_t us;       /* published: microseconds per frame */
 } gba_diag_t;
 
-static gba_diag_t diag_emulate;
-static gba_diag_t diag_draw;
+/* execute_arm() is TWO things. gpSP renders the picture from inside it — the PPU runs
+ * per scanline, as the ARM7 executes — so "Emulate" is the interpreter AND the
+ * renderer added together, and the two want opposite fixes.
+ *
+ * A skipped frame is what tells them apart: skip_next_frame makes the PPU evaluate the
+ * scanline but not draw it. So time execute_arm() separately on frames that drew and
+ * frames that did not, and the difference IS the renderer.
+ *
+ *   Emu+ppu   execute_arm() on a frame that rendered
+ *   Emu only  execute_arm() on a frame that skipped rendering
+ *   PPU       the difference — what drawing the picture actually costs
+ */
+static gba_diag_t diag_emu_draw;
+static gba_diag_t diag_emu_skip;
 static gba_diag_t diag_scale;
 static gba_diag_t diag_overlay;
 static uint32_t   diag_last_tick;
-static char       diag_emulate_str[16] = "-";
-static char       diag_draw_str[16]    = "-";
-static char       diag_scale_str[16]   = "-";
-static char       diag_overlay_str[16] = "-";
+static char       diag_emu_draw_str[16] = "-";
+static char       diag_emu_skip_str[16] = "-";
+static char       diag_ppu_str[16]      = "-";
+static char       diag_scale_str[16]    = "-";
+static char       diag_overlay_str[16]  = "-";
 /* Which of blit_emulator()'s branches actually ran. Scaling and filtering are user
  * settings, and SOFT does not go anywhere near the nearest-neighbour scaler — it
  * clears the whole 153 KB buffer and then runs a bilinear resample. */
@@ -143,10 +156,20 @@ static void gba_diag_publish(void)
         return;
     diag_last_tick = now;
 
-    gba_diag_format(&diag_emulate, diag_emulate_str, sizeof(diag_emulate_str));
-    gba_diag_format(&diag_draw, diag_draw_str, sizeof(diag_draw_str));
+    gba_diag_format(&diag_emu_draw, diag_emu_draw_str, sizeof(diag_emu_draw_str));
+    gba_diag_format(&diag_emu_skip, diag_emu_skip_str, sizeof(diag_emu_skip_str));
     gba_diag_format(&diag_scale, diag_scale_str, sizeof(diag_scale_str));
     gba_diag_format(&diag_overlay, diag_overlay_str, sizeof(diag_overlay_str));
+
+    /* What the picture costs: the same emulation, once with the PPU drawing and once
+     * without. Only meaningful when frameskip is actually skipping something. */
+    if (diag_emu_draw.us > diag_emu_skip.us && diag_emu_skip.us > 0) {
+        uint32_t ppu = diag_emu_draw.us - diag_emu_skip.us;
+        snprintf(diag_ppu_str, sizeof(diag_ppu_str), "%lu.%02lu ms",
+                 (unsigned long)(ppu / 1000), (unsigned long)((ppu % 1000) / 10));
+    } else {
+        snprintf(diag_ppu_str, sizeof(diag_ppu_str), "no skips");
+    }
 }
 
 /* ------------------------------------------------------------------ fatal --- */
@@ -610,11 +633,12 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * is spending it. If Emulate dominates, the answer is clock and the interpreter.
      * If Draw does, the answer is the renderer and where its code lives. */
     odroid_dialog_choice_t options[] = {
-        {0, "Emulate", diag_emulate_str, -1, NULL},
-        {0, "Draw",    diag_draw_str,    -1, NULL},
-        {0, " Scale",  diag_scale_str,   -1, NULL},
-        {0, " Ovl",    diag_overlay_str, -1, NULL},
-        {0, " Path",   diag_path_str,    -1, NULL},
+        {0, "Emu+ppu",  diag_emu_draw_str, -1, NULL},
+        {0, "Emu only", diag_emu_skip_str, -1, NULL},
+        {0, " = PPU",   diag_ppu_str,      -1, NULL},
+        {0, "Scale",    diag_scale_str,    -1, NULL},
+        {0, "Ovl",      diag_overlay_str,  -1, NULL},
+        {0, "Path",     diag_path_str,     -1, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
 
@@ -757,15 +781,20 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         gba_input_read(&joystick);
 
-        /* execute_arm() returns when the frame driver says the frame is done. */
+        /* execute_arm() returns when the frame driver says the frame is done — and it
+         * has drawn the picture along the way, unless skip_next_frame said not to. */
         common_emu_clear_dwt_cycles();
         execute_arm(execute_cycles);
-        gba_diag_add(&diag_emulate, common_emu_get_dwt_cycles());
+        gba_diag_add(drawFrame ? &diag_emu_draw : &diag_emu_skip,
+                     common_emu_get_dwt_cycles());
 
         if (drawFrame) {
-            common_emu_clear_dwt_cycles();
+            /* No outer timer around blit(): blit() clears the DWT counter itself, and
+             * an outer read would then only see whatever came after the last inner
+             * clear. That is what made "Draw" report 0.22 ms — exactly the overlay's
+             * number — while Scale alone was 1.99 ms. A measurement that quietly
+             * measures something else is worse than none. */
             blit();
-            gba_diag_add(&diag_draw, common_emu_get_dwt_cycles());
             lcd_swap();
         }
         gba_diag_publish();
