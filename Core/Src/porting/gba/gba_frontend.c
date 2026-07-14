@@ -17,6 +17,10 @@
 #include <stddef.h>
 #include <string.h>
 
+/* Declared, not included: "main.h" from this directory finds gpSP's, not the
+ * firmware's — the same collision the note below describes. */
+void wdog_refresh(void);
+
 /* gpSP's own headers are not included here, for the reason main_gba.c gives: they
  * pull in libretro types and register-name macros that collide with CMSIS. And a
  * quoted "common.h" from this directory would find the FIRMWARE's, not gpSP's —
@@ -82,6 +86,18 @@ void netpacket_send(uint16_t client_id, const void *buf, size_t len)
 
 void netpacket_poll_receive(void)
 {
+}
+
+/* ------------------------------------------------------------- watchdog ---
+ * gpSP calls this every 64 KB of its save-type scan. That scan reads a megabyte
+ * of the cart, and on this device the cart is memory-mapped in QSPI flash, so a
+ * megabyte of it takes far longer than the ~472 ms window watchdog allows. It
+ * reset the machine mid-scan and dropped the player straight back to the game
+ * list: no fault, no BSOD, no message — the emulator simply never appeared to
+ * start. Overriding gpSP's weak no-op is the whole fix. */
+void gba_scan_yield(void)
+{
+    wdog_refresh();
 }
 
 /* ------------------------------------------------------------------- VFS ---

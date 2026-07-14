@@ -42,6 +42,21 @@ u32   load_gamepak(const void *info, const char *name, int rtc, int rumble, int 
  * That is why the save-type scan runs at all. */
 #define ROM_SIZE (16 * 1024 * 1024)
 
+/* The device's watchdog, stubbed so we can count it.
+ *
+ * This counts the WHOLE chain, which is the point: gpSP's save-type scan calls
+ * gba_scan_yield(), gba_frontend.c overrides that weak no-op with wdog_refresh(),
+ * and wdog_refresh() is what keeps the machine alive. The scan reads a megabyte of
+ * cart — memory-mapped QSPI flash on the device — which is many times the ~472 ms
+ * watchdog window. Without the kick the machine resets in the middle of it and the
+ * player lands back on the game list: no fault, no BSOD, no message, the emulator
+ * simply never appears to start.
+ *
+ * A unit test of wdog_refresh() could never have caught that, because
+ * wdog_refresh() was never broken. What was missing was the CALL. So count calls. */
+static unsigned g_wdog_kicks;
+void wdog_refresh(void) { g_wdog_kicks++; }
+
 int main(void)
 {
     u8 *rom = calloc(1, ROM_SIZE);
@@ -67,6 +82,15 @@ int main(void)
         return 1;
     }
 
-    printf("PASS: load_gamepak() read the cart through the XIP pointer, not NULL\n");
+    printf("harness: the cart scan kicked the watchdog %u times\n", g_wdog_kicks);
+    if (g_wdog_kicks == 0) {
+        printf("FAIL: the save-type scan never kicked the watchdog.\n");
+        printf("      On the device that is a watchdog reset in the middle of the\n");
+        printf("      scan: back to the game list, no fault, nothing on screen.\n");
+        return 1;
+    }
+
+    printf("PASS: load_gamepak() read the cart through the XIP pointer, not NULL,\n");
+    printf("      and kicked the watchdog while it scanned it\n");
     return 0;
 }
