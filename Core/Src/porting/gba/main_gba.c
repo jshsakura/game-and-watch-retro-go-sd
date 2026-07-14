@@ -17,7 +17,9 @@
 /* gpsp. The core's own headers pull in libretro types and register-name macros
  * that collide with CMSIS, so we declare the handful of entry points we use. */
 #include "gba_savestate_abi.h"
+#include "gba_idle_loop.h"
 
+extern uint32_t  idle_loop_target_pc; /* gpSP's; gba_frontend.c owns the storage */
 extern uint16_t *gba_screen_pixels; /* the core renders straight into this, RGB565 */
 extern uint32_t  execute_cycles;    /* cycles the core wants to run before the next event */
 extern uint32_t  skip_next_frame;   /* set and the PPU evaluates but does not draw */
@@ -540,6 +542,17 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     if (load_gamepak(NULL, ACTIVE_FILE->path, 0, 0, 0) != 0)
         gba_fatal("Not a Game Boy Advance ROM", "The header did not check out");
+
+    /* After load_gamepak, on purpose: it is what sets idle_loop_target_pc from
+     * gpSP's own gba_over.h, and ours has to win. A game with no busy-wait PC
+     * spins through the whole 280,896-cycle frame instead of doing ~75,000 cycles
+     * of work and stopping — so this is not a tuning knob, it is the difference
+     * between full speed and no chance of it. See gba_idle_loop.c. */
+    uint32_t idle_pc = gba_idle_loop_lookup((const char *)&rom[0xAC]);
+    if (idle_pc != 0) {
+        idle_loop_target_pc = idle_pc;
+        printf("gba: idle loop at 0x%08lX\n", (unsigned long)idle_pc);
+    }
 
     gba_SramLoad();
     reset_gba();

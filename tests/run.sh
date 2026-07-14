@@ -297,6 +297,15 @@ bash tests/test_sm_skip_guard.sh || rc=1
 echo "=== gba: nothing cpu.o references may live in the XIP blob ==="
 bash tests/test_gba_xip_contract.sh || rc=1
 
+# GBA: load_gamepak() on a memory-mapped cart. Runs gpSP's real load path on the
+# host BECAUSE the host traps what QEMU does not: an XIP build has no
+# gamepak_buffers, and the code that read the cart through them scanned a megabyte
+# from address 0. On an mps2-an500 that is mapped and the scan shrugged; on the
+# device the first 64 KB is ITCM and the next byte is a bus fault, which is how
+# Pokemon Ruby died. Page zero is unmapped here, so it is a SIGSEGV instead.
+echo "=== gba: load_gamepak reads an XIP cart through the cart, not through NULL ==="
+bash tools/gba_harness/run.sh || rc=1
+
 echo "=== sm: savestate header refuses a foreign or truncated file ==="
 # sm_system_SaveState/LoadState (main_sm.c) stamp every file with a magic/
 # version/length header and refuse to load one that doesn't match — a
