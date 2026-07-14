@@ -34,6 +34,12 @@ void     gba_set_xip_rom(uint8_t *base, uint32_t size);
 void     gba_set_keys(uint32_t keys);
 uint32_t load_gamepak(const void *info, const char *name, int rtc, int rumble, int serial);
 uint32_t sound_read_samples(int16_t *out, uint32_t frames);
+#if CHEAT_CODES == 1
+/* gpsp's cheat engine: GameShark / CodeBreaker / Action Replay, 20 slots. */
+int  cheat_parse(unsigned index, const char *code);
+void cheat_clear(void);
+#define GBA_MAX_CHEAT_SLOTS 20
+#endif
 
 #define GBA_WIDTH   240
 #define GBA_HEIGHT  160
@@ -404,6 +410,18 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     gba_SramLoad();
     reset_gba();
+
+#if CHEAT_CODES == 1
+    /* After reset: parsing a code installs the hook the engine watches for, and a
+     * reset would throw it away again. Only the codes the user actually ticked on
+     * for this ROM go in. */
+    cheat_clear();
+    unsigned slot = 0;
+    for (int i = 0; i < ACTIVE_FILE->cheat_count && slot < GBA_MAX_CHEAT_SLOTS; i++) {
+        if (odroid_settings_ActiveGameGenieCodes_is_enabled(ACTIVE_FILE->path, i))
+            cheat_parse(slot++, ACTIVE_FILE->cheat_codes[i]);
+    }
+#endif
 
     if (load_state) {
         odroid_system_emu_load_state(save_slot);
