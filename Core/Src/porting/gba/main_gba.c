@@ -72,6 +72,61 @@ static odroid_video_frame_t video_frame = {GBA_WIDTH, GBA_HEIGHT, GBA_WIDTH * 2,
 
 static void blit_emulator(void);
 
+/* ------------------------------------------------------------------- diag ---
+ * Where the frame actually goes.
+ *
+ * The overlay says FPS 40 and CPU 69% — enough to know we are waiting on the audio
+ * tick, not enough to know WHAT is late. Emulating the ARM7 and drawing the screen
+ * are the only two candidates and they want opposite fixes: the interpreter wants
+ * clock and ITCM, the renderer wants to be out of flash. Guessing which cost two
+ * builds already. So measure both, and put the answer in the pause menu.
+ *
+ * Averaged over a second so a single heavy frame does not read as a trend. */
+typedef struct {
+    uint32_t cycles;   /* accumulated since the last publish */
+    uint32_t frames;
+    uint32_t us;       /* published: microseconds per frame */
+} gba_diag_t;
+
+static gba_diag_t diag_emulate;
+static gba_diag_t diag_draw;
+static uint32_t   diag_last_tick;
+static char       diag_emulate_str[16] = "-";
+static char       diag_draw_str[16]    = "-";
+
+static inline void gba_diag_add(gba_diag_t *d, uint32_t cycles)
+{
+    d->cycles += cycles;
+    d->frames++;
+}
+
+static void gba_diag_format(gba_diag_t *d, char *out, size_t out_len)
+{
+    if (d->frames == 0) {
+        snprintf(out, out_len, "-");
+    } else {
+        /* SystemCoreClock is whatever the overclock left us at, so this stays true
+         * across the OC levels rather than assuming 280MHz. */
+        uint32_t per_frame = d->cycles / d->frames;
+        d->us = (uint32_t)((uint64_t)per_frame * 1000000u / SystemCoreClock);
+        snprintf(out, out_len, "%lu.%02lu ms",
+                 (unsigned long)(d->us / 1000), (unsigned long)((d->us % 1000) / 10));
+    }
+    d->cycles = 0;
+    d->frames = 0;
+}
+
+static void gba_diag_publish(void)
+{
+    uint32_t now = HAL_GetTick();
+    if (now - diag_last_tick < 1000)
+        return;
+    diag_last_tick = now;
+
+    gba_diag_format(&diag_emulate, diag_emulate_str, sizeof(diag_emulate_str));
+    gba_diag_format(&diag_draw, diag_draw_str, sizeof(diag_draw_str));
+}
+
 /* ------------------------------------------------------------------ fatal --- */
 /* Say which failure it was, and stay on screen while it is read.
  *
@@ -341,6 +396,12 @@ static void gba_pcm_submit(void)
 }
 
 /* ------------------------------------------------------------------ video --- */
+/* The nearest-neighbour source column for every destination column. It is the same
+ * for all 213 rows, so it is computed once per scaling mode instead of doing a
+ * multiply and a shift for each of ~68,000 pixels, every frame. */
+static uint16_t nn_xmap[LCD_WIDTH];
+static int32_t  nn_xmap_width = -1;
+
 __attribute__((optimize("unroll-loops")))
 static inline void screen_blit_nn(int32_t dest_width, int32_t dest_height)
 {
@@ -349,10 +410,16 @@ static inline void screen_blit_nn(int32_t dest_width, int32_t dest_height)
     int w2 = dest_width;
     int h2 = dest_height;
 
-    int x_ratio = (int)((w1 << 16) / w2) + 1;
     int y_ratio = (int)((h1 << 16) / h2) + 1;
     int hpad = (LCD_WIDTH - dest_width) / 2;
     int wpad = (LCD_HEIGHT - dest_height) / 2;
+
+    if (nn_xmap_width != dest_width) {
+        int x_ratio = (int)((w1 << 16) / w2) + 1;
+        for (int j = 0; j < w2; j++)
+            nn_xmap[j] = (uint16_t)((j * x_ratio) >> 16);
+        nn_xmap_width = dest_width;
+    }
 
     uint16_t *screen_buf = (uint16_t *)video_frame.buffer;
     uint16_t *dest = lcd_get_active_buffer();
@@ -371,7 +438,7 @@ static inline void screen_blit_nn(int32_t dest_width, int32_t dest_height)
         for (int j = 0; j < hpad; j++)
             row[j] = 0;
         for (int j = 0; j < w2; j++)
-            row[j + hpad] = src_row[(j * x_ratio) >> 16];
+            row[j + hpad] = src_row[nn_xmap[j]];
         for (int j = hpad + w2; j < LCD_WIDTH; j++)
             row[j] = 0;
     }
@@ -477,7 +544,12 @@ static void gba_input_read(odroid_gamepad_state_t *joystick)
 void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     odroid_gamepad_state_t joystick;
+    /* Read-only (enabled = -1): the frame budget is 16.67ms, and these two say who
+     * is spending it. If Emulate dominates, the answer is clock and the interpreter.
+     * If Draw does, the answer is the renderer and where its code lives. */
     odroid_dialog_choice_t options[] = {
+        {0, "Emulate", diag_emulate_str, -1, NULL},
+        {0, "Draw",    diag_draw_str,    -1, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
 
@@ -490,11 +562,16 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     common_emu_state.frame_time_10us = (uint16_t)(100000 / GBA_FPS + 0.5f);
     lcd_set_refresh_rate(GBA_FPS);
 
-    /* The interpreter is the whole CPU here, and it is not cheap. Same scoped,
-     * non-persisted mild boost WonderSwan and VB take: level 1 (312MHz), not the
-     * maximum. A user who has chosen a higher level keeps it — common_emu_auto_oc()
-     * is a floor, not a setting. Reset on exit. */
-    common_emu_auto_oc(1);
+    /* Level 2 (353MHz), the top of the launcher's own scale — the same one Virtual
+     * Boy and PC Engine CD take, and for the same reason: the interpreter IS the
+     * CPU here, and there is nothing else to trade.
+     *
+     * It started at level 1 (312MHz, WonderSwan's mild boost). Pokemon Ruby ran the
+     * emulator at 40 fps there. Level 2 is only +13% over that and cannot by itself
+     * buy the 1.5x that 40 -> 60 needs, so this is not the fix; it is the part of
+     * the fix that is free. Scoped and not persisted, and a user who has chosen
+     * more keeps it — common_emu_auto_oc() is a floor, not a setting. */
+    common_emu_auto_oc(2);
 
     /* The BIOS image, the cheat table and the sound ring live in AHB SRAM (see the
      * linker script), which puts them outside .overlay_gba_bss — so the memset in
@@ -581,6 +658,8 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         lcd_clear_buffers();
     }
 
+    common_emu_enable_dwt_cycles();
+
     while (true) {
         wdog_refresh();
 
@@ -594,12 +673,17 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         gba_input_read(&joystick);
 
         /* execute_arm() returns when the frame driver says the frame is done. */
+        common_emu_clear_dwt_cycles();
         execute_arm(execute_cycles);
+        gba_diag_add(&diag_emulate, common_emu_get_dwt_cycles());
 
         if (drawFrame) {
+            common_emu_clear_dwt_cycles();
             blit();
+            gba_diag_add(&diag_draw, common_emu_get_dwt_cycles());
             lcd_swap();
         }
+        gba_diag_publish();
 
         gba_pcm_submit();
 
