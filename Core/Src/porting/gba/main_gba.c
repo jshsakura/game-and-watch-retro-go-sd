@@ -488,6 +488,12 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     common_emu_state.frame_time_10us = (uint16_t)(100000 / GBA_FPS + 0.5f);
     lcd_set_refresh_rate(GBA_FPS);
 
+    /* The BIOS image, the cheat table and the sound ring live in AHB SRAM (see the
+     * linker script), which puts them outside .overlay_gba_bss — so the memset in
+     * run_internal_emu() that zeroes this core's BSS does not reach them. Nothing
+     * else will: AHB holds whatever the last core left there. */
+    memset(__gba_ahb_start__, 0, (size_t)(__gba_ahb_end__ - __gba_ahb_start__));
+
     gba_framebuffer = ahb_malloc(GBA_FRAMEBUFFER_BYTES);
     if (gba_framebuffer == NULL)
         gba_fatal("Out of AHB SRAM", "The 75KB framebuffer could not be allocated");

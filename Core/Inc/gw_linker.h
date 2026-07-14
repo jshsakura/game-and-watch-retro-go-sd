@@ -103,6 +103,11 @@ extern uint8_t _OVERLAY_GBA_BSS_SIZE;
 /* End of main_gba.o inside .overlay_gba: where the XIP sentinel pass starts, so
  * that it does not walk over the constant it is built on (see main_gba.c). */
 extern void * _GBA_MAIN_CODE_END[];
+/* gpSP's BIOS image, cheat table and sound ring, kept in AHB SRAM rather than in
+ * the overlay pool. They are .bss but they are NOT inside .overlay_gba_bss, so
+ * run_internal_emu()'s memset never reaches them — main_gba.c zeroes this range. */
+extern uint8_t __gba_ahb_start__[];
+extern uint8_t __gba_ahb_end__[];
 
 extern uint8_t _OVERLAY_VB_SIZE;
 extern void * _OVERLAY_VB_BSS_START[];

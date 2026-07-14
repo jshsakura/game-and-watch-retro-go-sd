@@ -734,6 +734,41 @@ INCLUDE build/fceumm_mappers.ld
    * flash. Move an object across that line without re-checking nm and the device
    * jumps to 0xDEC0xxxx on the first frame. */
 
+  /* Three of gpSP's BSS arrays, moved out of the overlay pool into AHB SRAM.
+   *
+   * AHB is 120 KB of RAM that no core but this one has any real use for (only
+   * smsplusgx touches it, for an 8 KB BIOS, and never at the same time). The
+   * framebuffer already lives there, taking 75 KB of the 120 KB heap; this claims
+   * another 34 KB of it statically, which is 34 KB the 724 KB pool does not have
+   * to find.
+   *
+   * Which three is decided by bus traffic, not by size: AHB SRAM is on a slower
+   * bus than the AXI SRAM the pool lives in, so what goes here is what is read
+   * least. The BIOS is read a few times a frame at most; the cheat table is
+   * scanned once; the sound ring is written once per sample. NOT here:
+   * gamepak_page0_shadow (32 KB, and it holds the first 32 KB of the cart — the
+   * game's own startup code, read constantly) and the ewram/iwram/vram that the
+   * interpreter lives in.
+   *
+   * These are .bss, and they sit OUTSIDE .overlay_gba_bss — so run_internal_emu()'s
+   * memset does not reach them. main_gba.c zeroes this range by hand; the symbols
+   * below are what it uses. Forget that and the core starts with a cheat table full
+   * of whatever the last game left in AHB. */
+  .gba_ahbram (NOLOAD) : {
+    . = ALIGN(8);
+    __gba_ahb_start__ = .;
+    build/gba/gba_memory.o (.bss.bios_rom)
+    build/gba/cheats.o (.bss.cheats)
+    build/gba/sound.o (.bss.sound_buffer)
+    . = ALIGN(8);
+    __gba_ahb_end__ = .;
+    /* What is left has to still hold the framebuffer (240*160*2), which main_gba.c
+     * takes from the same 120 KB with ahb_malloc(). */
+    ASSERT(ABSOLUTE(__gba_ahb_end__) + 240 * 160 * 2 <=
+             ORIGIN(AHBRAM) + LENGTH(AHBRAM) - __AHBRAM_AUDIO_RESERVE__,
+           "Error: GBA AHB SRAM overflow (no room left for the framebuffer)");
+  } > AHBRAM
+
   /* Claimed before .overlay_gba so none of this lands in the RAM pool. Only .text
    * here — the rodata claim has to come after .overlay_gba, or it would swallow
    * main_gba.o's string literals with it. */
