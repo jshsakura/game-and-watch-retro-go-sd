@@ -158,18 +158,27 @@ the entry, hash what is between.
 
 **633 carts. Six mixers.**
 
-| mixer | carts | cum. | block | status | example |
+| mixer | carts | cum. | block | variant | example |
 |---|---|---|---|---|---|
 | `ffd1701f04cd` | **210** | 33.2% | 488 B / 122 | ✅ `stereo2` | Zelda: A Link to the Past |
 | `72315cec4e04` | 99 | 48.8% | 412 B / 103 | ✅ `mono` | Final Fantasy Tactics Advance |
 | `64c146fc6c75` | 15 | 51.2% | 488 B / 122 | ✅ `stereo3` | Gachinko Pro Yakyuu |
-| `af4efd159d68` | 14 | 53.4% | 336 B / 84 | ⬜ | GT Advance 2 |
+| `af4efd159d68` | 14 | 53.4% | 336 B / 84 | ✅ `bytes` | GT Advance 2 |
 | `3237f8b38509` | 8 | 54.7% | 508 B / 127 | ✅ `stereo` | Pokémon Emerald |
-| `676b454b42c6` | 1 | 54.8% | 300 B / 75 | ⬜ | Mr. Driller 2 |
+| `676b454b42c6` | 1 | 54.8% | 300 B / 75 | ✅ `bytes-mono` | Mr. Driller 2 |
 
-**Covered: 332 of 633 (52.4%)** — and **95.7% of every cart that has an M4A mixer
-at all**. The 286 with none are the carts that do not use this sound library:
+**All six. 347 of 633 carts — which is every single cart in the corpus that has an
+M4A mixer at all.** The 286 with none simply do not use this sound library:
 homebrew, the NES-e classics, the TV tuner, a movie player.
+
+The last two are a different mixer, not a rearrangement of the first four. They
+write the mix buffer a **byte at a time** (`ldrb / add r0, r0, r1, asr #8 / strb`)
+instead of packing four output samples into the byte lanes of a word, so there is
+no counter hidden in the top bits of the mix pointer and no partial-word flush.
+Their resampler is cheaper too — it strides the phase forward by four, then two,
+then one, skipping whole input samples when the pitch is high — which is why they
+are the variants with the least to gain: GT Advance 2 only drops 8.4%. It still
+costs nothing, and now the census has no holes in it.
 
 Two of the six differ by **two instructions swapped**:
 

@@ -8,7 +8,7 @@ This is the generator. It answers the only question that actually scales:
 **not "which games", but "which variants"**. M4A is a library — the same bytes
 in every cart that links the same build of it — so one transliteration covers
 every game that carries it, for ever, with no per-game data and no per-game work.
-633 carts turned out to hold **six** distinct mixers.
+633 carts turned out to hold **six** distinct mixers. All six are done.
 
 Nothing here emulates anything. The block sits verbatim in the ROM (the sound
 library copies it to IWRAM at boot), and it is delimited by two fingerprints no
@@ -43,10 +43,12 @@ EXIT = bytes.fromhex("00809de5") + bytes.fromhex("01008fe2") + bytes.fromhex("10
 
 # The variants m4a_hle.c can already run. Keep in step with m4a_variants[].
 KNOWN = {
-    "72315cec4e045f69": "m4a-soundmainram-mono",
-    "3237f8b3":         "m4a-soundmainram-stereo",
-    "ffd1701f04cd":     "m4a-soundmainram-stereo2",
-    "64c146fc6c75":     "m4a-soundmainram-stereo3",
+    "ffd1701f04cd": "m4a-soundmainram-stereo2",
+    "72315cec4e04": "m4a-soundmainram-mono",
+    "64c146fc6c75": "m4a-soundmainram-stereo3",
+    "af4efd159d68": "m4a-soundmainram-bytes",
+    "3237f8b38509": "m4a-soundmainram-stereo",
+    "676b454b42c6": "m4a-soundmainram-bytes-mono",
 }
 
 
