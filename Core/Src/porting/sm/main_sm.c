@@ -576,24 +576,11 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
    * therefore erase the blob we are about to execute from — with the pointer to
    * it already in hand.
    *
-   * That reasoning was half of it, and the missing half cost a black screen.
-   * The blob's write can land on the ROM just as easily, once the ring has come
-   * back round to it — and the allocator invalidates what it overwrote only
-   * AFTER the write, by which time we are holding the pointer and about to play.
-   * The port executes no 65816: it only READS the ROM. So a hole punched in one
-   * region takes out only the scenes that read from it. The intro's text tables
-   * live in bank $8B; the game proper does not touch them. Hence: a save loads
-   * and plays, a new game is a black screen — and the next launch is fine,
-   * because by then the ROM is a cache miss and gets rewritten.
-   *
-   * So ask first, and if EITHER file is missing, drop both and write both. Back
-   * to back, neither write can land on the other. */
-  if (!flash_alloc_is_cached(SM_ROM_PATH) || !flash_alloc_is_cached(SM_XIP_PATH)) {
-    printf("sm: rom/blob not both cached - rewriting the pair\n");
-    flash_alloc_invalidate(SM_ROM_PATH);
-    flash_alloc_invalidate(SM_XIP_PATH);
-  }
-
+   * That reasoning was half of it, and the missing half cost a black screen: the
+   * blob's write could land on the ROM just as easily, once the ring came back
+   * round to it. The allocator now knows which files are being read (its live
+   * set) and steps over them, so the order here is no longer load-bearing — but
+   * it is still the right order, and the check below still asks. */
   uint32_t rom_length = 0;
   uint8 *rom = odroid_overlay_cache_file_in_flash(SM_ROM_PATH, &rom_length, false);
   if (rom == NULL)
@@ -625,16 +612,26 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   }
 
   /* The cold banks and all of the game's rodata live in QSPI flash — neither
-   * fits in the overlay pool. */
-  if (!SmCacheXipToFlash())
-    SmFatal("Missing " SM_XIP_PATH, "Re-run the retro-go_update.bin update");
+   * fits in the overlay pool.
+   *
+   * Two different failures reach this line and they need different words. The
+   * file can be absent, or it can be present with nowhere to go: the allocator
+   * will not erase the ROM to make room any more, so on a flash chip too small
+   * for both it says no. Ask which one it was rather than blame the file. */
+  if (!SmCacheXipToFlash()) {
+    FILE *f = fopen(SM_XIP_PATH, "rb");
+    if (f == NULL) {
+      SmFatal("Missing " SM_XIP_PATH, "Re-run the retro-go_update.bin update");
+    } else {
+      fclose(f);
+      SmFatal("Flash has no room for the ROM + code", "A larger flash chip is needed");
+    }
+  }
 
-  /* Written back to back, the blob cannot have landed on the ROM — unless it did
-   * not fit at the end of the flash and the ring rewound onto it. On a chip that
-   * small the two simply do not coexist, and playing on with a ROM that has a
-   * hole in it is how the black screen happened in the first place. Say so. */
+  /* The allocator steps over files in use, so the blob cannot have holed the ROM.
+   * Check anyway: this is the invariant the black screen was made of. */
   if (!flash_alloc_is_cached(SM_ROM_PATH))
-    SmFatal("Flash too small for the ROM + code blob", "A larger flash chip is needed");
+    SmFatal("The ROM was evicted while in use", "This is a bug - please report it");
 
   /* Everything in the overlay that points into the blob — the RAM->XIP call
    * veneers, and every reference to the game's rodata — still holds a sentinel.
