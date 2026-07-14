@@ -1324,10 +1324,17 @@ $$(BUILD_DIR)/gba/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile 
 endef
 # note: the blank line above is intentional
 
+# cpu.cc — the ARM7 interpreter — is built -O3, not the firmware's -O2. It is a
+# dispatch loop, which is the one shape where the extra unrolling and inlining pay
+# for themselves, and it is the single biggest cost in a frame. It also runs from
+# ITCM, so the code it grows by costs nothing but ITCM, and ITCM has 20 KB spare.
+# video.cc stays -O2: most of it lives in flash, where bigger code is slower code.
+gba_is_interp = $(findstring cpu.cc,$1)
+
 define gba_cxx_obj_prereq_gen
 $$(BUILD_DIR)/gba/$(patsubst %.cc,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CXX gba ] $$(notdir $$<)
-	$$(V)$$(CXX) -c $$(CXXFLAGS) $$(C_DEFS_GBA) $$(GBA_C_INCLUDES) $$(GBA_WARN_OFF) -fno-rtti -fno-exceptions $$< -o $$@
+	$$(V)$$(CXX) -c $(if $(call gba_is_interp,$1),$$(subst -O2,-O3,$$(CXXFLAGS)),$$(CXXFLAGS)) $$(C_DEFS_GBA) $$(GBA_C_INCLUDES) $$(GBA_WARN_OFF) -fno-rtti -fno-exceptions $$< -o $$@
 	$$(V)$$(CP) --redefine-syms=gba_redefines $$@
 
 endef
