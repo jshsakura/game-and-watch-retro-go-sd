@@ -1041,6 +1041,7 @@ $(CORE_GBA)/serial_proto.c \
 $(CORE_GBA)/gbp.c \
 $(CORE_GBA)/rfu.c \
 Core/Src/porting/gba/gba_frontend.c \
+Core/Src/porting/gba/gba_idle_loop.c \
 Core/Src/porting/gba/main_gba.c
 
 GBA_CXX_SOURCES = \
