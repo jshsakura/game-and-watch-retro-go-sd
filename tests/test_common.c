@@ -26,7 +26,9 @@ uint32_t audio_mute = 0;
 #include "../Core/Src/porting/common.c"
 
 /* ---- stubs: none of these are pacing logic, bodies are inert ---------- */
-void SystemClock_Config(uint8_t level) { (void)level; }
+/* Records what common_emu_auto_oc() actually asked the clock for. */
+static int stub_clock_level = -1;
+void SystemClock_Config(uint8_t level) { stub_clock_level = level; }
 
 static rg_app_desc_t g_app;
 rg_app_desc_t *odroid_system_get_app(void) { return &g_app; }
@@ -61,6 +63,10 @@ static int8_t stub_turbo = 0;
 bool odroid_button_turbos(void) { return false; }
 int8_t odroid_settings_turbo_buttons_get(void) { return stub_turbo; }
 void odroid_settings_turbo_buttons_set(int8_t t) { stub_turbo = t; }
+
+/* The overclock level the user chose in the launcher menu. */
+static uint8_t stub_user_oc = 0;
+uint8_t odroid_settings_cpu_oc_level_get(void) { return stub_user_oc; }
 
 static pixel_t fb[GW_LCD_WIDTH * GW_LCD_HEIGHT];
 pixel_t *lcd_get_active_buffer(void) { return fb; }
@@ -272,6 +278,31 @@ static void test_sound_sync(void) {
     printf("  sound_sync: skip_frames skips the wait; waits pause_frames+1 DMA halves otherwise\n");
 }
 
+/* common_emu_auto_oc() is a FLOOR, not a setting.
+ *
+ * It used to call SystemClock_Config(level) flat, which meant a core asking for its
+ * mild level-1 boost would clock a user who had chosen level 2 back DOWN to 1 — the
+ * "boost" made their machine slower than they had asked for, and only on the systems
+ * that call it (Virtual Boy, WonderSwan, and now GBA). Nothing said so; the machine
+ * just ran slower than the menu claimed.
+ *
+ * Whoever wants more wins. */
+static void test_auto_oc_is_a_floor(void) {
+    stub_user_oc = 0;  stub_clock_level = -1;
+    common_emu_auto_oc(1);
+    CHECK(stub_clock_level == 1, "a core's boost applies when the user asked for less");
+
+    stub_user_oc = 2;  stub_clock_level = -1;
+    common_emu_auto_oc(1);
+    CHECK(stub_clock_level == 2, "a core's boost never clocks the user DOWN");
+
+    stub_user_oc = 1;  stub_clock_level = -1;
+    common_emu_auto_oc(2);
+    CHECK(stub_clock_level == 2, "the core still wins when it wants more than the user");
+
+    printf("  auto_oc: a floor, not a setting -- whoever wants more wins\n");
+}
+
 int main(void) {
     printf("=== common.c: frame loop + speedup table + sound_sync ===\n");
     test_speedup_table();
@@ -279,6 +310,7 @@ int main(void) {
     test_debt_clamp_recovery();
     test_overload_guard();
     test_sound_sync();
+    test_auto_oc_is_a_floor();
 
     if (failures) {
         printf("%d assertion(s) FAILED\n", failures);

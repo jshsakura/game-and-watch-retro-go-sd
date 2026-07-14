@@ -27,14 +27,20 @@ static void set_ingame_overlay(ingame_overlay_t type);
  * back DOWN to 1 — the core's "boost" made their machine slower than they asked
  * for, on the systems that call this and nowhere else. Whoever wants more wins. */
 #include "main.h"
+/* Declared, not implied. Without this the call below is an implicit declaration —
+ * it returns uint8_t and C would have assumed int. On a 32-bit device that happens
+ * to work, which is exactly why the root CLAUDE.md calls an implicit declaration a
+ * lie that only some machines catch. The host test suite caught this one. */
+uint8_t odroid_settings_cpu_oc_level_get(void);
+
 void common_emu_auto_oc(uint8_t level)
 {
 #if SD_CARD == 1
     if (sdcard_hw_type == SDCARD_HW_OSPI1) return;
 #endif
-    int user_level = odroid_settings_cpu_oc_level_get();
-    if (user_level > (int)level)
-        level = (uint8_t)user_level;
+    uint8_t user_level = odroid_settings_cpu_oc_level_get();
+    if (user_level > level)
+        level = user_level;
 
     SystemClock_Config(level);
 }
