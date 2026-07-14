@@ -1509,10 +1509,10 @@ void emulators_init()
     add_emulator("Neo Geo Pocket", "ngp", "ngp ngc ngpc", RG_LOGO_PAD_NGP, RG_LOGO_HEADER_NGP, NO_GAME_DATA);
     add_emulator("Nintendo Entertainment System", "nes", "nes fds nsf lzma", RG_LOGO_PAD_NES, RG_LOGO_HEADER_NES, NO_GAME_DATA);
     add_emulator("Nintendo Gameboy", "gb", "gb gbc lzma", RG_LOGO_PAD_GB, RG_LOGO_HEADER_GB, NO_GAME_DATA);
-    add_emulator("Nintendo Gameboy Color", "gbc", "gb gbc lzma", RG_LOGO_PAD_GBC, RG_LOGO_HEADER_GBC, NO_GAME_DATA);
     /* GBA: the ROM (up to 32MB) stays memory-mapped in external flash and the
      * core reads it there — no decompression step, so no .lzma. */
     add_emulator("Nintendo Gameboy Advance", "gba", "gba", RG_LOGO_PAD_GBA, RG_LOGO_HEADER_GBA, NO_GAME_DATA);
+    add_emulator("Nintendo Gameboy Color", "gbc", "gb gbc lzma", RG_LOGO_PAD_GBC, RG_LOGO_HEADER_GBC, NO_GAME_DATA);
     add_emulator("PC Engine", "pce", "pce lzma", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCE, NO_GAME_DATA);
     /* PC Engine CD (= TurboGrafx-CD): same HuC6280/VDC core as HuCard PCE; the
      * disc (.cue/.bin) is streamed from SD and the System Card BIOS is loaded as
