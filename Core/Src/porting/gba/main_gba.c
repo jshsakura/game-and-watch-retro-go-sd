@@ -490,6 +490,12 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     common_emu_state.frame_time_10us = (uint16_t)(100000 / GBA_FPS + 0.5f);
     lcd_set_refresh_rate(GBA_FPS);
 
+    /* The interpreter is the whole CPU here, and it is not cheap. Same scoped,
+     * non-persisted mild boost WonderSwan and VB take: level 1 (312MHz), not the
+     * maximum. A user who has chosen a higher level keeps it — common_emu_auto_oc()
+     * is a floor, not a setting. Reset on exit. */
+    common_emu_auto_oc(1);
+
     /* The BIOS image, the cheat table and the sound ring live in AHB SRAM (see the
      * linker script), which puts them outside .overlay_gba_bss — so the memset in
      * run_internal_emu() that zeroes this core's BSS does not reach them. Nothing
