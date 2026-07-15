@@ -33,6 +33,7 @@ static bool force_launcher = false;
 #include "main.h"
 #include "gw_buttons.h"
 #include "gw_lcd.h"
+#include "odroid_colors.h"
 #include "odroid_display.h"
 #include "odroid_overlay.h"
 
