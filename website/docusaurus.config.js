@@ -142,11 +142,6 @@ const config = {
           },
           {to: '/devlog', label: 'Devlog', position: 'left'},
           {
-            href: 'https://github.com/sylverb/game-and-watch-retro-go-sd',
-            label: '★ Upstream (sylverb)',
-            position: 'right',
-          },
-          {
             href: `https://github.com/${ORG}/${PROJECT}/releases`,
             label: 'Releases',
             position: 'right',
@@ -177,7 +172,7 @@ const config = {
             ],
           },
         ],
-        copyright: `A derivative fork, built with respect on sylverb's retro-go-sd · GPLv2 · © ${2026}`,
+        copyright: `A derivative, experimental fork · GPLv2 · © ${2026}`,
       },
       prism: {
         theme: prismThemes.github,

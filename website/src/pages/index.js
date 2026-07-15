@@ -40,16 +40,12 @@ export default function Home() {
       <main className="container margin-vert--lg">
         <div className="row">
           <div className="col col--8 col--offset-2">
-            <div className="upstream-credit">
-              <strong>Built on — and part of — <a href="https://github.com/sylverb/game-and-watch-retro-go-sd">sylverb/game-and-watch-retro-go-sd</a>.</strong>{' '}
-              None of this exists without the upstream project and the retro-go contributors. If you
-              just want a stable console to play games on, <a href="https://github.com/sylverb/game-and-watch-retro-go-sd">use sylverb&rsquo;s build</a> —
-              and if anything here is useful, please take it upstream. ★
-            </div>
             <p>
-              This is a <strong>personal experimental lab</strong> built on top of that project.
-              It is rough around the edges and a bit of a mess — a place to try things, not a
-              &ldquo;better&rdquo; build.
+              This is a <strong>personal experimental lab</strong> built on{' '}
+              <a href="https://github.com/sylverb/game-and-watch-retro-go-sd">sylverb</a>&rsquo;s
+              game-and-watch-retro-go-sd. It is rough around the edges and a bit of a mess — a place
+              to try things, not a &ldquo;better&rdquo; build. If you just want to play games, use
+              sylverb&rsquo;s stable release.
             </p>
             <p>
               These pages document only what this fork <em>adds or changes</em>. Everything else —

@@ -178,19 +178,6 @@ html:not([data-edition]) {
   letter-spacing: 0.3px;
 }
 
-/* --- Upstream credit callout (respect, always visible) ------------------ */
-.upstream-credit {
-  border-left: 4px solid var(--gw-gold);
-  background: color-mix(in srgb, var(--gw-gold) 12%, transparent);
-  border-radius: 0 8px 8px 0;
-  padding: 1rem 1.15rem;
-  margin-bottom: 1.5rem;
-  line-height: 1.6;
-}
-.upstream-credit a {
-  font-weight: 700;
-}
-
 /* --- Footer: kept clean and quiet -------------------------------------- */
 .footer {
   border-top: 3px solid var(--gw-gold);
