@@ -72,3 +72,8 @@ EXPECT_REFUSE=1 "$O/save_test" B "$SFC/젤다의전설 신들의트라이포스 
 # 3. truncated payload (keep header + half the payload)
 SZ=$(stat -c%s "$ST"); head -c $(( 12 + (SZ-12)/2 )) "$ST" > "$O/truncated.sav"
 EXPECT_REFUSE=1 "$O/save_test" B "$SFC/젤다의전설 신들의트라이포스 (Zelda A Link to the Past).smc" "$O/truncated.sav" $SAVE $END 2>/dev/null | grep REFUSAL_RESULT | sed 's/^/truncated:       /'
+
+# NOTE: this cold-resume round-trip needs a ROM (boots Zelda/DKC/TMNT) and
+# external/sm — it is a LOCAL proof, NOT run in CI. The CI-safe slices of the
+# same code (mapper gate, savestate stamp refusal) live in tests/run.sh via
+# tests/test_snes_cart_gate.c and tests/test_snes_state_header.c.

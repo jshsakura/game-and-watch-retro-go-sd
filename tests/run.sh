@@ -277,6 +277,23 @@ $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Src/porting/lib \
     tests/test_lz4_depack.c Core/Src/porting/lib/lz4_depack.c -o /tmp/mtest/test_lz4_depack
 /tmp/mtest/test_lz4_depack || rc=1
 
+# === SNES: the two host-checkable gates in main_snes.c ======================
+# Both were factored into headers (snes_cart_header.h / snes_state_header.h) so
+# these link the REAL logic without external/sm or a ROM — CI-safe, unlike the
+# cold-resume round-trip in tools/snes_save_test (that one needs a ROM; it's a
+# local-only proof). The stamp test pins defect #2 from commit 2f4f1343 (a
+# truncated savestate was ACCEPTED); RED-verified by dropping the filesize check.
+# The mapper gate keeps enhancement-chip carts (SA-1/SuperFX/DSP/…) out of a
+# mid-boot Hardfault; RED-verified by breaking the >=0x03 type threshold.
+echo "=== snes: mapper/coprocessor gate refuses what the core cannot run ==="
+$CC -O2 -Wall -Wextra -std=c11 -ICore/Inc/porting/snes \
+    tests/test_snes_cart_gate.c    -o /tmp/mtest/test_snes_cart_gate
+/tmp/mtest/test_snes_cart_gate || rc=1
+echo "=== snes: savestate stamp refuses a foreign, mislabelled or truncated file ==="
+$CC -O2 -Wall -Wextra -std=c11 -ICore/Inc/porting/snes \
+    tests/test_snes_state_header.c -o /tmp/mtest/test_snes_state_header
+/tmp/mtest/test_snes_state_header || rc=1
+
 # === safety nets must not be the thing that breaks the build =========
 # Two CI jobs went red once not from a real defect but from the safety nets
 # themselves: check_core_symbol_aliases.py crashing when nm wasn't on PATH,
