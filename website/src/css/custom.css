@@ -1,48 +1,30 @@
 /* ===========================================================================
    Game & Watch design DNA — adopted from the companion `game-and-what` project.
-   Olive LCD, sage-green accent, signature gold ring, Press Start 2P pixel font,
-   CRT scanlines. Skins the chrome (navbar, footer, hero, links, code) while
-   keeping doc body text fully readable.
+   The theme axis is the EDITION switch: Zelda (green) ↔ Mario (red), not
+   light/dark. Signature gold ring, Press Start 2P pixel font, CRT scanlines.
    ========================================================================== */
 
 :root {
-  /* Shared G&W hardware tones (from game-and-what theme.css) */
-  --gw-gold: #c9a227;
-  --gw-lcd: #949e74;
-  --gw-lcd-ink: #161a08;
-  --gw-shell: #2c4a38; /* Zelda edition forest green */
-  --gw-shell-2: #3c5f49;
-  --gw-accent: #5ea27a; /* sage green */
-  --gw-accent-2: #93cda6; /* soft mint */
-  --gw-card: #2c331c; /* deep tile */
-  --gw-card-ink: #f4f6e6;
+  --gw-gold: #c9a227; /* signature gold ring — shared by both editions */
 
   --gw-pixel: 'Press Start 2P', 'Noto Sans KR', ui-monospace, monospace;
-
-  /* Fonts */
   --ifm-font-family-base: 'Noto Sans KR', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --ifm-font-family-monospace: ui-monospace, 'SFMono-Regular', Menlo, monospace;
 
-  /* Primary = sage green, tuned darker for contrast on white (light mode) */
-  --ifm-color-primary: #3f8a5b;
-  --ifm-color-primary-dark: #397d52;
-  --ifm-color-primary-darker: #35764d;
-  --ifm-color-primary-darkest: #2c6140;
-  --ifm-color-primary-light: #479864;
-  --ifm-color-primary-lighter: #52a570;
-  --ifm-color-primary-lightest: #6fba89;
-
   --ifm-code-font-size: 92%;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
 
-  --ifm-navbar-background-color: var(--gw-shell);
   --ifm-navbar-link-color: #eef3e6;
   --ifm-navbar-link-hover-color: var(--gw-gold);
-  --ifm-footer-background-color: #1a3022;
 }
 
-[data-theme='dark'] {
-  /* Dark mode leans into the shell-green look */
+/* --- Zelda edition (green) — the default -------------------------------- */
+html[data-edition='zelda'] {
+  --gw-shell: #2c4a38;
+  --gw-shell-2: #3c5f49;
+  --gw-accent: #5ea27a;
+  --gw-accent-2: #93cda6;
+
   --ifm-color-primary: #7dc496;
   --ifm-color-primary-dark: #5db97e;
   --ifm-color-primary-darker: #4faf70;
@@ -53,10 +35,64 @@
 
   --ifm-background-color: #16221a;
   --ifm-background-surface-color: #1c2b20;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
-
   --ifm-navbar-background-color: #21382a;
   --ifm-footer-background-color: #12211a;
+}
+
+/* --- Mario edition (red) ------------------------------------------------ */
+html[data-edition='mario'] {
+  --gw-shell: #8a443c;
+  --gw-shell-2: #ab5a50;
+  --gw-accent: #df6f62;
+  --gw-accent-2: #f3a89e;
+
+  --ifm-color-primary: #ef8f83;
+  --ifm-color-primary-dark: #ea6f60;
+  --ifm-color-primary-darker: #e75d4c;
+  --ifm-color-primary-darkest: #d13c29;
+  --ifm-color-primary-light: #f3a89e;
+  --ifm-color-primary-lighter: #f6bab2;
+  --ifm-color-primary-lightest: #fbdcd7;
+
+  --ifm-background-color: #21140f;
+  --ifm-background-surface-color: #2b1a14;
+  --ifm-navbar-background-color: #3a1f19;
+  --ifm-footer-background-color: #1c110d;
+}
+
+/* Fallback before the client module sets the attribute → default to Zelda. */
+html:not([data-edition]) {
+  --gw-shell: #2c4a38;
+  --gw-shell-2: #3c5f49;
+  --gw-accent: #5ea27a;
+  --gw-accent-2: #93cda6;
+  --ifm-color-primary: #7dc496;
+  --ifm-background-color: #16221a;
+  --ifm-navbar-background-color: #21382a;
+  --ifm-footer-background-color: #12211a;
+}
+
+/* --- Edition toggle pill (injected into the navbar) --------------------- */
+.gw-edition-toggle {
+  font-family: var(--gw-pixel);
+  font-size: 0.58rem;
+  line-height: 1;
+  padding: 0.5rem 0.7rem;
+  margin: 0 0.6rem;
+  border-radius: 999px;
+  border: 2px solid var(--gw-gold);
+  background: var(--gw-shell-2);
+  color: #f4f1e6;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, transform 0.1s;
+}
+.gw-edition-toggle:hover {
+  background: var(--gw-accent);
+  color: #12211a;
+}
+.gw-edition-toggle:active {
+  transform: translateY(1px);
 }
 
 /* --- Navbar: gold pixel brand ------------------------------------------- */
@@ -89,16 +125,14 @@
   color: #1c150a;
 }
 
-/* --- Hero: the physical device — gold ring + olive LCD + scanlines ------ */
+/* --- Hero: the physical device — gold ring + shell + scanlines ---------- */
 .hero--lab {
   position: relative;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 50% -10%, var(--gw-shell-2), var(--gw-shell) 70%);
+  background: radial-gradient(circle at 50% -10%, var(--gw-shell-2), var(--gw-shell) 70%);
   color: #f4f1e6;
   padding: 3rem 1rem 3.5rem;
 }
-/* CRT scanlines across the hero */
 .hero--lab::after {
   content: '';
   position: absolute;
@@ -124,8 +158,6 @@
   margin: 1rem auto 1.5rem;
   color: #e8ecd8;
 }
-
-/* The clock photo, framed like the console: gold ring on a dark shell */
 .hero__photo {
   max-width: 560px;
   width: 100%;
@@ -146,6 +178,19 @@
   letter-spacing: 0.3px;
 }
 
+/* --- Upstream credit callout (respect, always visible) ------------------ */
+.upstream-credit {
+  border-left: 4px solid var(--gw-gold);
+  background: color-mix(in srgb, var(--gw-gold) 12%, transparent);
+  border-radius: 0 8px 8px 0;
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+}
+.upstream-credit a {
+  font-weight: 700;
+}
+
 /* --- Footer accent ------------------------------------------------------ */
 .footer {
   border-top: 3px solid var(--gw-gold);
@@ -155,19 +200,6 @@
   font-family: var(--gw-pixel);
   font-size: 0.62rem;
   letter-spacing: 0.4px;
-}
-
-/* --- Upstream credit callout (respect, always visible) ------------------ */
-.upstream-credit {
-  border-left: 4px solid var(--gw-gold);
-  background: color-mix(in srgb, var(--gw-gold) 10%, transparent);
-  border-radius: 0 8px 8px 0;
-  padding: 1rem 1.15rem;
-  margin-bottom: 1.5rem;
-  line-height: 1.6;
-}
-.upstream-credit a {
-  font-weight: 700;
 }
 
 /* --- Page H1 gets a subtle gold underline to echo the ring -------------- */

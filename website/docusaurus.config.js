@@ -43,6 +43,9 @@ const config = {
     'https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Noto+Sans+KR:wght@400;500;700&display=swap',
   ],
 
+  // Game & Watch edition switch (Zelda green ↔ Mario red), like game-and-what.
+  clientModules: ['./src/clientModules/edition.js'],
+
   presets: [
     [
       'classic',
@@ -107,8 +110,10 @@ const config = {
         textColor: '#1c150a',
         isCloseable: true,
       },
+      // No light/dark toggle — the theme axis is the Zelda/Mario edition switch.
       colorMode: {
         defaultMode: 'dark',
+        disableSwitch: true,
         respectPrefersColorScheme: false,
       },
       docs: {
