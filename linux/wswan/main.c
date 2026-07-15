@@ -162,7 +162,8 @@ static void run_cross(const uint8_t *rom, uint32_t rom_len, int total)
         strict_hash = (strict_hash ^ fnv1a(FrameBuffer, sizeof(FrameBuffer))) * 16777619u;
         strict_hash = (strict_hash ^ fnv1a(IRAM, 0x10000)) * 16777619u;
         if (dump_from >= 0 && s_frame >= dump_from)
-            printf("  f%05d fb=%08x iram=%08x\n", s_frame, h, fnv1a(IRAM, 0x10000));
+            printf("  f%05d fb=%08x iram=%08x fbfull=%08x\n", s_frame, h,
+                   fnv1a(IRAM, 0x10000), fnv1a(FrameBuffer, sizeof(FrameBuffer)));
         if (getenv("WS_FBDUMP") && s_frame == atoi(getenv("WS_FBDUMP"))) {
             FILE *f = fopen(getenv("WS_FBOUT"), "wb");
             if (f) { fwrite(FrameBuffer, sizeof(FrameBuffer), 1, f); fclose(f); }
