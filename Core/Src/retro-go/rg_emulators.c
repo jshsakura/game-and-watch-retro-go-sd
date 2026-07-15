@@ -1554,7 +1554,7 @@ void emulators_init()
      * delivery as SM/GBA (cart flash-cached from SD; no lzma). LoROM/HiROM only;
      * enhancement-chip carts are rejected at load. No header logo yet (0). */
 #if SD_CARD == 1
-    add_emulator("Super Famicom", "sfc", "sfc smc fig swc", RG_LOGO_PAD_SNES, 0, NO_GAME_DATA);
+    add_emulator("Super Famicom", "sfc", "sfc smc fig swc", RG_LOGO_PAD_SNES, RG_LOGO_HEADER_SNES, NO_GAME_DATA);
 #endif
     add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
     add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);

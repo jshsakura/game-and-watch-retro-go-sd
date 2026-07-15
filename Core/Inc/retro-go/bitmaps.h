@@ -119,6 +119,11 @@ enum {
     // the last logo.bin-backed header and BEFORE the colour-only pad block, so
     // enum value == 3 + logo.bin index stays exact.
     RG_LOGO_HEADER_GBA,
+    // Super Famicom name header (matches header_snes — appended as the NEW last
+    // LOGO_DATA struct in rg_logos.c). Same rule as VB/GBA above: it MUST sit here,
+    // after the last logo.bin-backed header and BEFORE the colour-only pad block,
+    // so enum value == 3 + logo.bin index stays exact.
+    RG_LOGO_HEADER_SNES,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
@@ -153,6 +158,8 @@ extern const retro_logo_image logo_rgw;
 extern const retro_logo_image logo_gnw;
 extern const retro_logo_image header_gba;
 extern const color_icon_t cicon_gba;
+extern const retro_logo_image header_snes;
+extern const color_icon_t cicon_snes;
 
 extern const retro_logo_image header_sg1000;
 extern const retro_logo_image header_col;
