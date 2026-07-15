@@ -9,7 +9,7 @@ const PROJECT = 'game-and-watch-retro-go-sd';
 const config = {
   title: 'Game & Watch Retro-Go — Experimental Lab',
   tagline: 'A personal experimental fork: GBA, Super Metroid, a clock, and other rough experiments on the Nintendo Game & Watch.',
-  favicon: 'img/favicon.png',
+  favicon: 'img/favicon.svg',
 
   url: `https://${ORG}.github.io`,
   baseUrl: `/${PROJECT}/`,
@@ -32,6 +32,16 @@ const config = {
     defaultLocale: 'en',
     locales: ['en'],
   },
+
+  // Game & Watch design DNA — pixel display font + Korean-capable body font,
+  // matching the companion game-and-what project.
+  headTags: [
+    {tagName: 'link', attributes: {rel: 'preconnect', href: 'https://fonts.googleapis.com'}},
+    {tagName: 'link', attributes: {rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: 'anonymous'}},
+  ],
+  stylesheets: [
+    'https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Noto+Sans+KR:wght@400;500;700&display=swap',
+  ],
 
   presets: [
     [
@@ -72,10 +82,15 @@ const config = {
     ({
       image: 'img/clock-hero.jpg',
       colorMode: {
-        respectPrefersColorScheme: true,
+        defaultMode: 'dark',
+        respectPrefersColorScheme: false,
       },
       navbar: {
         title: 'G&W Retro-Go Lab',
+        logo: {
+          alt: 'Game & Watch pixel logo',
+          src: 'img/favicon.svg',
+        },
         items: [
           {
             type: 'docSidebar',

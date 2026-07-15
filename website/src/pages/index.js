@@ -10,7 +10,7 @@ function Hero() {
   return (
     <header className={clsx('hero hero--lab')}>
       <div className="container">
-        <h1 className="hero__title">🧪 {siteConfig.title}</h1>
+        <h1 className="hero__title">🧪 G&amp;W Retro-Go Lab</h1>
         <p className="hero__subtitle">{siteConfig.tagline}</p>
         <div>
           <Link className="button button--secondary button--lg" to="/docs/intro">

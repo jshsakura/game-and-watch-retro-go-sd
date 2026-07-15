@@ -1,50 +1,164 @@
-/**
- * Game & Watch green — the console's own palette, used lightly.
- */
+/* ===========================================================================
+   Game & Watch design DNA — adopted from the companion `game-and-what` project.
+   Olive LCD, sage-green accent, signature gold ring, Press Start 2P pixel font,
+   CRT scanlines. Skins the chrome (navbar, footer, hero, links, code) while
+   keeping doc body text fully readable.
+   ========================================================================== */
 
 :root {
-  --ifm-color-primary: #2f7d32;
-  --ifm-color-primary-dark: #2a711d;
-  --ifm-color-primary-darker: #276b2b;
-  --ifm-color-primary-darkest: #205823;
-  --ifm-color-primary-light: #359a3a;
-  --ifm-color-primary-lighter: #3aa53f;
-  --ifm-color-primary-lightest: #46b94c;
-  --ifm-code-font-size: 95%;
+  /* Shared G&W hardware tones (from game-and-what theme.css) */
+  --gw-gold: #c9a227;
+  --gw-lcd: #949e74;
+  --gw-lcd-ink: #161a08;
+  --gw-shell: #2c4a38; /* Zelda edition forest green */
+  --gw-shell-2: #3c5f49;
+  --gw-accent: #5ea27a; /* sage green */
+  --gw-accent-2: #93cda6; /* soft mint */
+  --gw-card: #2c331c; /* deep tile */
+  --gw-card-ink: #f4f6e6;
+
+  --gw-pixel: 'Press Start 2P', 'Noto Sans KR', ui-monospace, monospace;
+
+  /* Fonts */
+  --ifm-font-family-base: 'Noto Sans KR', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --ifm-font-family-monospace: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* Primary = sage green, tuned darker for contrast on white (light mode) */
+  --ifm-color-primary: #3f8a5b;
+  --ifm-color-primary-dark: #397d52;
+  --ifm-color-primary-darker: #35764d;
+  --ifm-color-primary-darkest: #2c6140;
+  --ifm-color-primary-light: #479864;
+  --ifm-color-primary-lighter: #52a570;
+  --ifm-color-primary-lightest: #6fba89;
+
+  --ifm-code-font-size: 92%;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+
+  --ifm-navbar-background-color: var(--gw-shell);
+  --ifm-navbar-link-color: #eef3e6;
+  --ifm-navbar-link-hover-color: var(--gw-gold);
+  --ifm-footer-background-color: #1a3022;
 }
 
 [data-theme='dark'] {
-  --ifm-color-primary: #6cd36f;
-  --ifm-color-primary-dark: #4fca53;
-  --ifm-color-primary-darker: #41c645;
-  --ifm-color-primary-darkest: #33a336;
-  --ifm-color-primary-light: #89dc8b;
-  --ifm-color-primary-lighter: #98e099;
-  --ifm-color-primary-lightest: #c3eec4;
+  /* Dark mode leans into the shell-green look */
+  --ifm-color-primary: #7dc496;
+  --ifm-color-primary-dark: #5db97e;
+  --ifm-color-primary-darker: #4faf70;
+  --ifm-color-primary-darkest: #3f9159;
+  --ifm-color-primary-light: #9dd3ae;
+  --ifm-color-primary-lighter: #addbbc;
+  --ifm-color-primary-lightest: #c9e8d3;
+
+  --ifm-background-color: #16221a;
+  --ifm-background-surface-color: #1c2b20;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+
+  --ifm-navbar-background-color: #21382a;
+  --ifm-footer-background-color: #12211a;
 }
 
+/* --- Navbar: gold pixel brand ------------------------------------------- */
+.navbar__title {
+  font-family: var(--gw-pixel);
+  font-size: 0.72rem;
+  letter-spacing: 0.5px;
+  color: var(--gw-gold);
+  text-shadow: 1.5px 1.5px 0 #00000088;
+}
+.navbar__brand:hover .navbar__title {
+  color: var(--gw-accent-2);
+}
+.navbar__logo {
+  height: 1.9rem;
+}
+.navbar {
+  border-bottom: 3px solid var(--gw-gold);
+}
+
+/* --- Links & buttons ---------------------------------------------------- */
+.button--secondary {
+  --ifm-button-background-color: var(--gw-gold);
+  --ifm-button-border-color: var(--gw-gold);
+  color: #1c150a;
+  font-weight: 700;
+}
+.button--secondary:hover {
+  --ifm-button-background-color: #ddb63c;
+  color: #1c150a;
+}
+
+/* --- Hero: the physical device — gold ring + olive LCD + scanlines ------ */
 .hero--lab {
-  background: linear-gradient(135deg, #1f5c22 0%, #2f7d32 60%, #3aa53f 100%);
-  color: #fff;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% -10%, var(--gw-shell-2), var(--gw-shell) 70%);
+  color: #f4f1e6;
+  padding: 3rem 1rem 3.5rem;
 }
-
+/* CRT scanlines across the hero */
+.hero--lab::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.06) 0 1px, transparent 1px 3px);
+  opacity: 0.55;
+}
+.hero--lab .container {
+  position: relative;
+  z-index: 1;
+}
+.hero--lab .hero__title {
+  font-family: var(--gw-pixel);
+  font-size: clamp(1.05rem, 3.4vw, 1.9rem);
+  line-height: 1.5;
+  letter-spacing: 0.5px;
+  color: var(--gw-gold);
+  text-shadow: 2px 2px 0 #00000088;
+}
 .hero--lab .hero__subtitle {
-  max-width: 40rem;
-  margin: 0 auto 1.5rem;
+  max-width: 42rem;
+  margin: 1rem auto 1.5rem;
+  color: #e8ecd8;
 }
 
+/* The clock photo, framed like the console: gold ring on a dark shell */
 .hero__photo {
   max-width: 560px;
   width: 100%;
-  border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
-  margin-top: 1.25rem;
+  border-radius: 16px;
+  border: 5px solid var(--gw-gold);
+  background: var(--gw-shell);
+  padding: 6px;
+  box-shadow:
+    inset 0 0 0 3px #00000055,
+    0 16px 44px rgba(0, 0, 0, 0.45);
+  margin-top: 1.5rem;
+}
+.hero__caption {
+  font-size: 0.85rem;
+  opacity: 0.85;
+  margin-top: 0.85rem;
+  font-family: var(--gw-pixel);
+  letter-spacing: 0.3px;
 }
 
-.hero__caption {
-  font-size: 0.9rem;
-  opacity: 0.85;
-  margin-top: 0.75rem;
+/* --- Footer accent ------------------------------------------------------ */
+.footer {
+  border-top: 3px solid var(--gw-gold);
+}
+.footer__title {
+  color: var(--gw-gold);
+  font-family: var(--gw-pixel);
+  font-size: 0.62rem;
+  letter-spacing: 0.4px;
+}
+
+/* --- Page H1 gets a subtle gold underline to echo the ring -------------- */
+.markdown > h1:first-child {
+  border-bottom: 2px solid var(--gw-gold);
+  padding-bottom: 0.3rem;
 }
