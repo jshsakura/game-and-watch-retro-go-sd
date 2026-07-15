@@ -185,7 +185,7 @@ with frequency.
 | **Intermediate** | 312 MHz | 104 MHz | ≈ **+11 %** |
 | **Maximum** | 340 MHz | ~97 MHz | ≈ **+21 %** |
 
-\* Derived from the clock ratio at fixed voltage — **not a measured figure** (see the honesty note).
+\* Rough estimate from the clock ratio at fixed voltage — approximate, not a measured figure.
 
 Two things make the **whole-device** impact much smaller than those numbers look:
 
@@ -221,12 +221,8 @@ you actually chose. (On the one SD-adapter design that is unstable when overcloc
 faster start-up; once the launcher finishes booting it applies your saved setting, so it does not
 change your steady-state clock.
 
-### Honesty note
-
-There are **no measured mA or battery-life numbers** for any of this — it has never been
-bench-measured in this repo. The percentages above are derived from the clock ratios and the
-fixed-voltage fact, not from a power meter, so treat them as *relative* guidance, not a spec.
-Actual drain depends on backlight, core and workload.
+*The percentages above are rough, ballpark estimates from the clock ratios — not bench
+measurements. Real drain depends on backlight, core and workload.*
 
 ---
 
