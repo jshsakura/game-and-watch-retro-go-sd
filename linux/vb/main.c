@@ -217,5 +217,12 @@ int main(int argc, char **argv)
     dump_ppm("vb_end.ppm", s_fb);
     printf("[vb-host] done %d frames RUNHASH=%08x PC=%08x\n",
            max_frames, run_hash, (unsigned)vb_state->v810_state.PC);
+#ifdef VB_PC_HISTOGRAM
+    /* Where did the interpreter actually live? Top ROM PCs by executed
+     * instruction count — concentrated peaks are escaped poll loops or a
+     * hot inner routine, a flat tail is honest work. */
+    void vb_pc_hist_dump(int top_n);
+    vb_pc_hist_dump(40);
+#endif
     return 0;
 }
