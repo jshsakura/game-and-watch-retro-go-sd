@@ -1090,11 +1090,11 @@ $(BUILD_DIR)/a7800/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DI
 # headroom after the tileCache shrink and the linker ASSERT catches any overflow.
 $(BUILD_DIR)/vb/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC vb ] $(notdir $<)
-	$(V)$(CC) -c $(patsubst -O2,-O3,$(CFLAGS)) -DGNW_VB_DEVICE -DDEBUGLEVEL=0 -Dsound_init=vb_sound_init -Dsound_update=vb_sound_update $(VB_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/vb/$(notdir $(<:.c=.lst)) $< -o $@
+	$(V)$(CC) -c $(patsubst -O2,-O3,$(CFLAGS)) -DGNW_VB_DEVICE -DDEBUGLEVEL=0 -DVB_LEFT_EYE_ONLY -Dsound_init=vb_sound_init -Dsound_update=vb_sound_update $(VB_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/vb/$(notdir $(<:.c=.lst)) $< -o $@
 
 $(BUILD_DIR)/vb/%.o: %.cpp Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CXX vb ] $(notdir $<)
-	$(V)$(CXX) -c $(patsubst -O2,-O3,$(CXXFLAGS)) -DGNW_VB_DEVICE -DDEBUGLEVEL=0 -Dsound_init=vb_sound_init -Dsound_update=vb_sound_update -fno-rtti -fno-exceptions $(VB_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/vb/$(notdir $(<:.cpp=.lst)) $< -o $@
+	$(V)$(CXX) -c $(patsubst -O2,-O3,$(CXXFLAGS)) -DGNW_VB_DEVICE -DDEBUGLEVEL=0 -DVB_LEFT_EYE_ONLY -Dsound_init=vb_sound_init -Dsound_update=vb_sound_update -fno-rtti -fno-exceptions $(VB_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/vb/$(notdir $(<:.cpp=.lst)) $< -o $@
 
 $(BUILD_DIR)/a2600/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC a2600 ] $(notdir $<)

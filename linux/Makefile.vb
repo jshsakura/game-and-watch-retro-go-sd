@@ -21,7 +21,7 @@ CXX = g++
 
 # Device parity: GNW_VB_DEVICE picks the exact firmware ifdef branches
 # (vb_dev_calloc RAM regions, external ROM pointer). DEBUGLEVEL=0 as on device.
-DEFS = -DGNW_VB_DEVICE -DDEBUGLEVEL=0
+DEFS = -DGNW_VB_DEVICE -DDEBUGLEVEL=0 -DVB_LEFT_EYE_ONLY
 INCS = -I$(CORE) -I../external/red-viper/include -I$(CORE)/inih
 OPT  = -O2 -g -fno-strict-aliasing
 
