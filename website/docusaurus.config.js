@@ -51,6 +51,8 @@ const config = {
         docs: {
           sidebarPath: './sidebars.js',
           editUrl: `https://github.com/${ORG}/${PROJECT}/edit/testbed/website/`,
+          showLastUpdateTime: true,
+          showLastUpdateAuthor: true,
         },
         blog: {
           path: 'blog',
@@ -77,16 +79,51 @@ const config = {
     ],
   ],
 
+  // Free, offline, no-signup full-text search (indexes docs + devlog).
+  themes: [
+    [
+      '@easyops-cn/docusaurus-search-local',
+      {
+        hashed: true,
+        indexBlog: true,
+        indexPages: true,
+        docsRouteBasePath: '/docs',
+        blogRouteBasePath: '/devlog',
+        highlightSearchTermsOnTargetPage: true,
+        searchResultLimits: 8,
+      },
+    ],
+  ],
+
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
       image: 'img/clock-hero.jpg',
+      announcementBar: {
+        id: 'experimental',
+        content:
+          '🧪 Experimental test builds — back up your SD card / saves before flashing.',
+        backgroundColor: '#c9a227',
+        textColor: '#1c150a',
+        isCloseable: true,
+      },
       colorMode: {
         defaultMode: 'dark',
         respectPrefersColorScheme: false,
       },
+      docs: {
+        sidebar: {
+          hideable: true,
+          autoCollapseCategories: true,
+        },
+      },
+      tableOfContents: {
+        minHeadingLevel: 2,
+        maxHeadingLevel: 4,
+      },
       navbar: {
         title: 'G&W Retro-Go Lab',
+        hideOnScroll: true,
         logo: {
           alt: 'Game & Watch pixel logo',
           src: 'img/favicon.svg',
@@ -99,6 +136,11 @@ const config = {
             label: 'Docs',
           },
           {to: '/devlog', label: 'Devlog', position: 'left'},
+          {
+            href: 'https://github.com/sylverb/game-and-watch-retro-go-sd',
+            label: '★ Upstream (sylverb)',
+            position: 'right',
+          },
           {
             href: `https://github.com/${ORG}/${PROJECT}/releases`,
             label: 'Releases',
@@ -139,11 +181,12 @@ const config = {
             ],
           },
         ],
-        copyright: `Experimental lab fork · built on sylverb's retro-go-sd · GPLv2. Copyright © ${2026}.`,
+        copyright: `A derivative, experimental fork — built with respect and gratitude on sylverb's retro-go-sd and the work of the retro-go contributors. GPLv2 · © ${2026}.`,
       },
       prism: {
         theme: prismThemes.github,
         darkTheme: prismThemes.dracula,
+        additionalLanguages: ['bash', 'c', 'diff', 'makefile', 'ini', 'json'],
       },
     }),
 };
