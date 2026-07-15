@@ -11,170 +11,201 @@ The integration branch is **`testbed`** (this repo's default) — release builds
 from it as `testbed-full-*` tags on the
 [releases page](https://github.com/jshsakura/game-and-watch-retro-go-sd/releases).
 
-### How this fork differs from upstream
+> **This README documents only what this fork adds or changes.** Everything else — the
+> hardware mod, installation, controls, per-emulator notes for the stock systems, the FAQ
+> — lives in the [upstream README](https://github.com/sylverb/game-and-watch-retro-go-sd)
+> and applies here unchanged. See [Full documentation → upstream](#-full-documentation--upstream).
 
-Upstream is the reference; this is simply a list of the differences, with honest
-caveats where things fall short. (Release notes list only what changed in each build —
-this section is the full picture.)
+---
 
-#### Additional systems
+## Additional to the upstream firmware
 
-- **PC Engine CD** — SCSI CD drive emulation on top of the existing pce-go port:
-  CD-DA audio, ADPCM (MSM5205) streaming, BRAM saves on SD, savestate/resume including
-  mid-ADPCM and CD-DA state. Per-game folder layout (`/roms/pcecd/<game>/` with
-  cue+tracks), cover art per folder. Verified through four full playthroughs.
-- **Atari Lynx** (handy) — runs with in-game save/load and resume; 512K carts execute
-  bank0 in place from flash when RAM is tight.
-- **WonderSwan / Color** (oswan) — 8 MB carts incl. One Piece: Grand Battle (missing V30
-  instructions implemented), sound-DMA boot hang fixed, FIT-scaling artifacts fixed.
-  Known limit: One Piece's savestate resume needs more cycle accuracy than oswan has.
-- **Neo Geo Pocket / Color** (RACE) — runs from flash, flicker/scaling fixes, sound
-  correctly resumes after loading a savestate.
-- **ZX Spectrum** (floooh's chips core) — BIOS from SD, auto-fit screen, PAUSE-menu
-  configurable GAME/TIME/B key mapping.
-- **Commodore 64** (Frodo) — `.d64` loading with autostart (LOAD/RUN + warp), both
-  joystick ports, pause/exit menu.
-- **Odyssey² / Videopac** (O2EM, already in the upstream tree) — enabled, with the
-  raw-ROM `getromdata` path fixed; save/load/resume; multi-game cart select overlay.
-- **game.com** (Tiger) — plays the library; the 4-action pad mapped onto G&W buttons.
-- **Virtual Boy** (red-viper) — honest caveat: **about 65-70% of full speed** with
-  automatic overclock. Gapless audio, selectable pad presets (left pad / right pad /
-  triggers as A/B). Several titles are enjoyable at that speed.
-- **Game Boy Advance** (gpSP) — Pokémon Ruby and Emerald run at full speed. See
-  [Game Boy Advance](#game-boy-advance) for what it took: the cart is never copied into
-  RAM, 131 measured idle-loop addresses stop games from busy-waiting through the frame,
-  and the M4A sound driver's software mixer — a quarter to half of many games' guest
-  instructions — is executed as native code instead of instruction-by-instruction.
+This fork is the **same upstream firmware, plus a grab-bag of extra experimental features I
+added to my own taste.** It's rough around the edges and a bit of a mess — this is a personal
+lab, not a "better" build, and nothing here is meant to replace sylverb's. It only *adds* on
+top, for anyone who wants to try the experiments.
 
-##### BIOS files the added systems expect
+There is no in-app "labs" switch: **the experimental firmware is simply a different firmware.**
+Both this fork and upstream install the same way (`retro-go_update.bin` on the SD root) and
+share your ROMs and SD layout, so you can move between them freely:
+
+- For the **stable base**, flash sylverb's `retro-go_update.bin`.
+- To try the **experimental additions**, flash this fork's `retro-go_update.bin`
+  (`testbed-full-*` from the [releases page](https://github.com/jshsakura/game-and-watch-retro-go-sd/releases)).
+
+Only savestates may differ between the two, so keep a backup. (The companion asset tool,
+[game-and-what](#-companion-game-and-what), is a separate web app controlled by its own env
+configuration — it's not part of the firmware you flash.)
+
+---
+
+## Supported systems
+
+🧪 = added or enabled by this Lab fork · everything else is upstream and documented there.
+
+| System | Emulator / port | Origin | Notes |
+| --- | --- | --- | --- |
+| **Game Boy Advance** | gpSP | 🧪 Lab | Pokémon Ruby & Emerald **full speed**; heavier titles vary. ROM stays in flash (never in RAM). [Details](#game-boy-advance) |
+| **PC Engine CD** | pce-go + CD | 🧪 Lab | CD-DA, ADPCM, BRAM saves, savestate/resume. `/roms/pcecd/<game>/`. 4 playthroughs verified |
+| **Atari Lynx** | handy | 🧪 Lab | in-game save/load + resume; 512K carts run from flash when RAM is tight |
+| **WonderSwan / Color** | oswan | 🧪 Lab | 8 MB carts (One Piece), sound-DMA boot hang fixed, FIT-scaling fixed |
+| **Neo Geo Pocket / Color** | RACE | 🧪 Lab | runs from flash, flicker/scaling fixes, sound resumes after loading a state |
+| **Virtual Boy** | red-viper | 🧪 Lab | ⚠️ **~65-70% speed** with auto-overclock; gapless audio, selectable pad presets |
+| **Commodore 64** | Frodo | 🧪 Lab | `.d64` autostart (LOAD/RUN + warp), both joystick ports, pause/exit menu |
+| **ZX Spectrum** | floooh's chips | 🧪 Lab | BIOS from SD, auto-fit screen, configurable GAME/TIME/B mapping |
+| **game.com** | Tiger | 🧪 Lab | plays the library; 4-action pad mapped onto G&W buttons |
+| **Odyssey² / Videopac** | O2EM | 🧪 Lab (enabled) | raw-ROM path fixed; save/load/resume; multi-game cart select |
+| **Super Metroid** | snesrev/sm port | 🧪 Lab | native C reimplementation, 60 fps, savestates. [Details](#super-metroid) |
+| Tamagotchi | TamaLib | Upstream (P2 🧪) | P1 upstream; P2 experimental in this fork |
+| NES, Game Boy / Color, Master System, Game Gear, Genesis, SG-1000 | fceumm / gnuboy / smsplusgx / gwenesis | Upstream | see upstream docs |
+| MSX 1/2/2+, Amstrad CPC6128 | blueMSX / caprice32 | Upstream | preview-quality; see upstream docs |
+| PC Engine / TG-16, ColecoVision | pce-go / smsplusgx | Upstream | see upstream docs |
+| Atari 2600 / 7800, Watara Supervision, Pokémon Mini | stella / prosystem / potator / PokeMini | Upstream | see upstream docs |
+| Game & Watch / LCD Games | LCD-Game-Emulator | Upstream | `.gw` files |
+| SNES: Zelda 3, Super Mario World | homebrew C ports | Upstream | asset-file build; see upstream docs |
+| Celeste Classic | Pico-8 port | Upstream | see upstream docs |
+| Pico-8 | macs75 engine | Upstream | separate package install; see upstream docs |
+
+### BIOS files the added systems expect
 
 | System | SD path | Files |
-|---|---|---|
-| PC Engine CD | `/bios/pce/` | `syscard3.pce` (Super CD-ROM² System Card 3.0; `syscard3.bin` is accepted too) |
+| --- | --- | --- |
+| PC Engine CD | `/bios/pce/` | `syscard3.pce` (Super CD-ROM² System Card 3.0; `syscard3.bin` also accepted) |
 | ZX Spectrum | `/bios/zxs/` | `48.rom` |
 | Commodore 64 | `/bios/c64/` | `kernal.bin`, `basic.bin`, `chargen.bin` |
 | Odyssey² / Videopac | `/bios/videopac/` | `o2rom.bin` |
 | game.com | `/bios/gamecom/` | `internal.bin`, `external.bin` |
 
-Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
+Atari Lynx, WonderSwan, Neo Geo Pocket, Virtual Boy and Game Boy Advance need no BIOS files.
 
-#### Apps (homebrew overlays)
+---
 
-- **Music player (MP3)** — minimp3 streaming, album art (HW JPEG + PNG, correct
-  colours), ID3 tags, duration/seek; keeps playing across device sleep and while
-  browsing the list.
-- **Video player (MJPEG-AVI)** — watchable, with faster SD reads and sleep recovery.
-  Busy-scene judder is addressed two ways: the player now reads frames ahead into a
-  jitter buffer during each frame's pacing wait (a burst frame is absorbed by earlier
-  frames' idle slack), and the companion encoder VBV-caps per-frame bytes on the
-  heaviest scenes (easy scenes stay byte-identical to before).
+## What this fork adds
 
-#### Korean text in the homebrew games
+### Apps (homebrew overlays)
 
-- **Zelda 3 Korean dialogue** — a `ko` entry in the in-game language menu,
-  ported from the ZELDA3_K fan translation (a JP-ROM patch). Glyphs are the
-  patch's full 16×16 cells (up to 11px of ink) rendered variable-width with a
-  1px gap, so syllables come out complete — not the 8px-cropped look of a naive
-  port. Needs a `zelda3_assets.dat` built with `--languages ko`; the dat, the
-  `Zelda 3.bin` overlay and the firmware are a matched set (the update bundle
-  keeps them in sync). Translation data itself is not distributed here.
-- **Super Mario World Korean message boxes** — the level message-box font swaps
-  to Korean through an ExGFX slot, uploaded before and restored after each
-  message so normal level graphics are untouched.
-- **Super Metroid** — the port reads the ROM you supply, so a fan-patched ROM simply
-  works: the game's second language is whatever the ROM carries (Japanese on a stock
-  image, Korean with the fan translation), selectable from the Options menu. The
-  Korean patch turned out to contain no 65816 code at all — what broke the intro was
-  14 text-table pointers the decompilation had baked in as C constants, so the port
-  reads them back out of the ROM instead. See [Super Metroid](#super-metroid).
+| App | What it does |
+| --- | --- |
+| **Music player (MP3)** | minimp3 streaming, album art (HW JPEG + PNG, correct colours), ID3 tags, seek; keeps playing across sleep and while browsing |
+| **Video player (MJPEG-AVI)** | faster SD reads, sleep recovery, jitter-buffer read-ahead; companion encoder VBV-caps heavy scenes |
+| **Clock** | full clock suite — see [below](#clock-time-menu--clock) |
 
-#### Clock (TIME menu → Clock)
+### Clock (TIME menu → Clock)
 
-- A full-screen clock app benchmarked on the Game & Watch alarm clock, drawn
-  entirely in code so nothing copyrighted ships. Big crisp **7-segment digits**
-  (a subtle unlit-segment "ghost" on the plain face) with a shared top bar —
-  real G&W logo, a **mode-icon pager** (clock / pomodoro / timer / stopwatch,
-  Lucide icons baked to 1-bit), `<>` chevrons, battery, DND moon — localized
-  date/weekday, AM/PM beside the digits, next-alarm with a bell, and a rounded
-  hint strip. Clock, **Pomodoro, countdown timer and stopwatch** share the
-  layout and controls (A start/pause, B reset, PAUSE = settings incl. Exit).
-  **8 colour themes × 3 digit faces** (7-seg / pixel / dot). **Alarms are set on
-  a full-screen clone of the clock face** (the field you're editing blinks),
-  with **snooze** (ring → A = +5 min, anything else = stop); synthesised beep
-  at the system volume; fully localized. The one visual customisation that
-  *travels with every mode* is the **background**: off / ambient / built-in
-  pixel scene / animated GIF (`/clock/gif/bg.gif`). GIF is decoded a frame at a time
-  straight to RGB565 from the emulator-RAM pool (borrowed and released, so it
-  never permanently costs an emulator anything); it must be **320×240** (the LCD
-  — the app scale-fills, so a bigger GIF only wastes memory). The companion
-  **game-and-what** web tool turns any image/video into a clock-ready 320×240
-  GIF (`encode_to_clock_gif`: palette-optimized, dithered for RGB565). Config
-  lives in `/clock/clock.cfg`. `host/clock_preview.c` renders the real draw
-  code to pixel-exact PNGs (real font bins + logo) for design review before
-  flashing; `tests/` has host unit tests for the alarm logic and GIF pipeline.
+A full-screen clock app benchmarked on the Game & Watch alarm clock, drawn entirely in code
+so nothing copyrighted ships.
 
-#### Launcher
+| Aspect | What |
+| --- | --- |
+| Modes | Clock · Pomodoro · countdown Timer · Stopwatch (shared layout — `A` start/pause, `B` reset, `PAUSE` = settings incl. Exit) |
+| Look | 7-segment / pixel / dot faces × **8 colour themes**; real G&W logo, mode-icon pager, `<>` chevrons, battery, DND moon, localized date/weekday, AM/PM |
+| Alarms | set on a full-screen clone of the clock face (edited field blinks); **snooze** (ring → `A` = +5 min, anything else = stop); synthesised beep at system volume; localized |
+| Background | off / ambient / built-in pixel scene / animated GIF (`/clock/gif/bg.gif`, must be **320×240**, decoded a frame at a time to RGB565 from the emulator-RAM pool, borrowed and released) |
+| Assets | GIFs & icons prepared by the companion **[game-and-what](#-companion-game-and-what)** tool (`encode_to_clock_gif`: palette-optimized, dithered for RGB565) |
+| Config / dev | config in `/clock/clock.cfg`; `host/clock_preview.c` renders pixel-exact PNGs for design review; `tests/` has host unit tests for the alarm logic and GIF pipeline |
 
-- **System grid home** — with 28 systems, reaching the last tab meant 28 presses of a
-  shoulder-less d-pad. The grid shows every system at once as a 6×3 page of rounded tiles
-  (the same 28×28 colour icons the tabs use, so it costs no extra resident RAM), and picking
-  one drops you straight into that system's list: worst case 8 presses instead of 28. Enter it
-  by **holding LEFT or RIGHT** past the end of the tabs, or with **B** from a game list; **A**
-  opens the system. A cold boot lands on the grid, while returning from a game lands back on
-  the list you launched from, so the grid never gets in the way of "one more go". Unselected
-  tiles fade toward the background rather than toward black, which is what the device's own
-  panel — not a monitor — actually needs to keep them legible on the light themes.
-- **Favorites tab (★)** — plain-text `/favorites.txt` (one ROM path per line) shown as
-  the first tab; costs zero resident RAM (reuses the shared list buffer). Toggle from
-  the A-button menu; mixed-system covers letterbox into one poster slot so the carousel
-  stays aligned.
-- **Wordmarks & icons** — per-system name headers in one font at one letter size,
-  28×28 colour tab icons. NES is labelled `NES (FAMICOM)`, MSX `MSX / MSX2+`.
-- **Carousel wrap** — lists that fit on one screen no longer repeat to fill the view;
-  only lists longer than a page connect end-to-start.
-- **i18n** — the added strings are translated across the 12 supported languages; older
-  SD language bins remain compatible.
+### Launcher
 
-#### System-wide
+| Change | What |
+| --- | --- |
+| **System-grid home** | all 28 systems on a 6×3 page of rounded tiles (reuses the tab icons — 0 extra resident RAM). Worst case 8 presses to any system instead of 28. Hold `LEFT`/`RIGHT` past the tabs, or `B` from a list; `A` opens. Cold boot → grid, return-from-game → the list you launched from |
+| **Favorites tab (★)** | plain-text `/favorites.txt` shown first; 0 resident RAM (shared list buffer). Toggle from the A-button menu; mixed-system covers letterbox into one poster slot |
+| **Wordmarks & icons** | per-system name headers in one font/size, 28×28 colour tab icons. NES → `NES (FAMICOM)`, MSX → `MSX / MSX2+` |
+| **Carousel wrap** | single-screen lists no longer repeat to fill the view; only multi-page lists connect end-to-start |
+| **i18n** | added strings translated across the 12 supported languages; older SD language bins stay compatible |
 
-- **Game caching speed** — the ROM flash cache erases with the chip's largest erase
-  command instead of per-4KB sectors; "Caching game" is several times shorter. Two
-  latent edge cases fixed along the way (a buffer overflow on 256KB-sector chips, and
-  a missed invalidation of the erased tail).
-- **Blit speed** — the framebuffer MPU regions are Normal non-cacheable instead of
-  Strongly-Ordered, saving ~1.4-2.1 ms per full-screen blit on every system, with
-  explicit ordering guards (DSB before the vblank flip; per-frame clears wait out a
-  pending flip).
-- **Battery gauge** — filter state persists across power-off in an RTC backup
-  register, with a time-based display limiter and a sleep-entry quiescent reference,
-  so the shown percent neither seesaws between boots nor sticks to a stale value
-  after charging while asleep.
-- **Idle auto-sleep** — an untouched game puts the device to sleep instead of draining
-  the battery.
-- **Sleep recovery** — SD file handles (music, video, PCE-CD streams) self-heal after
-  the SD card is power-cycled by sleep.
-- **Boot-loop rescue** — the power button is a GPIO the firmware reads, so a firmware
-  that hung during boot used to leave a dark unit whose only way out was a flat battery.
-  Now the watchdog is armed from the first line of `main()` for every boot; two
-  consecutive failed boots stop the third at a **rescue screen** — shown *before* the SD
-  card, the config or the game auto-resume are touched — offering boot-to-menu (skip
-  resume), normal boot, or power off, and powering itself off after 60 s if unattended.
-  POWER on the crash (BSOD) screen now really powers off instead of rebooting into the
-  same fault. Holding **TIME at power-on** still skips the game auto-resume manually.
+### System-wide
 
-### How it's built (the honest part)
+| Change | What |
+| --- | --- |
+| **Game caching speed** | ROM flash cache erases with the chip's largest erase command instead of per-4KB; "Caching game" is several times shorter. Fixed a 256KB-sector buffer overflow and a missed erased-tail invalidation along the way |
+| **Blit speed** | framebuffer MPU regions are Normal non-cacheable, saving ~1.4-2.1 ms per full-screen blit on every system, with explicit ordering guards |
+| **Battery gauge** | filter state persists across power-off in an RTC backup register, with a display limiter and a sleep-entry reference — no seesaw between boots, no stale value after charging asleep |
+| **Idle auto-sleep** | an untouched game sleeps the device instead of draining the battery |
+| **Sleep recovery** | SD file handles (music, video, PCE-CD) self-heal after the card is power-cycled by sleep |
+| **Boot-loop rescue** | watchdog armed from the first line of `main()`; two consecutive failed boots stop the third at a **rescue screen** (boot-to-menu / normal boot / power off) *before* SD, config or auto-resume are touched. POWER on the crash screen really powers off. `TIME` at power-on still skips auto-resume |
 
-I don't come from an embedded background and I don't debug with JTAG. Most of the work
-is done with Claude (AI-assisted), and it earns its keep through two things: **host
-harnesses** under `linux/<sys>/` that link the *same core source* the firmware ships and
-reproduce bugs deterministically on a PC, and **SD-card logs** read back from the real
-hardware. Everything was tested by one person on one device, so it will not be perfect.
-Findings are kept fact-based and tagged by how they were verified — the full engineering
-log is in [docs/UPSTREAM_ENGINEERING_NOTES.md](docs/UPSTREAM_ENGINEERING_NOTES.md), and
-the fork is introduced to upstream in
+### Korean text in the homebrew games
+
+| Game | How Korean is provided |
+| --- | --- |
+| **Zelda 3** | a `ko` entry in the language menu, from the ZELDA3_K fan translation; full 16×16 glyphs rendered variable-width so syllables come out complete. Needs a `zelda3_assets.dat` built with `--languages ko` (dat + overlay + firmware are a matched set) |
+| **Super Mario World** | the level message-box font swaps to Korean through an ExGFX slot, uploaded before and restored after each message |
+| **Super Metroid** | the port reads the ROM you supply — a fan-patched ROM's second language (Korean) is selectable from Options. The patch has no 65816 code; the fix was reading 14 text-table pointers back out of the ROM |
+
+Translation data itself is **not** distributed here.
+
+---
+
+## Build-time feature flags (env)
+
+Beyond choosing which firmware to flash, what gets *compiled in* is controlled by make/env
+flags. The canonical release set (from `.github/workflows/package.yml`) is:
+
+```bash
+make release DOCKER=1 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 \
+             ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1
+```
+
+| Flag | Default | Toggles |
+| --- | --- | --- |
+| `COVERFLOW` | 0 | cover-art carousel views |
+| `CHEAT_CODES` | 0 | Game Genie / cheat support (GB, GBC, NES, PCE, MSX) |
+| `ENABLE_BOOT_OC` | 0 | overclock at boot |
+| `ENABLE_SCREENSHOT` | 1 | `PAUSE`+`GAME` screenshot capture |
+| `SHARED_HIBERNATE_SAVESTATE` | 0 | separate savestate for off/on hibernate |
+| `DISABLE_SPLASH_SCREEN` | 0 | skip the startup splash animation |
+| `ZH_CN` `ZH_TW` `KO_KR` `JA_JP` `RU_RU` `FR_FR` … | varies | per-language UI + fonts on SD `/lang` and `/fonts` |
+| `GNW_TARGET` | mario | `mario` / `zelda` button mapping & default extflash size |
+| `INTFLASH_BANK` | 2 | which internal-flash bank to link into (dual-boot = 2) |
+| `SD_CARD` | 1 | SD-card variant (`0` = the all-in-flash build — different link script & feature set) |
+
+Run `make help` for the authoritative, current list. Note the lab apps (grid home, favorites,
+clock, media players) are always compiled in — they have no on/off flag.
+
+---
+
+## How it's built (the honest part)
+
+I don't come from an embedded background and I don't debug with JTAG. I'm a web developer,
+and almost all of the low-level work here is done with Claude (AI-assisted). That's also why
+none of this is pushed upstream directly: it isn't clean enough for that, and I can't
+personally vouch for every line — so it stays here, in my own lab, shared only so people can
+see this approach is even possible. What keeps it honest is two things: **host harnesses**
+under `linux/<sys>/` that link the *same core source* the firmware ships and reproduce bugs
+deterministically on a PC, and **SD-card logs** read back from the real hardware. Everything
+was tested by one person on one device, so it will not be perfect. Findings are kept
+fact-based and tagged by how they were verified — the full engineering log is in
+[docs/UPSTREAM_ENGINEERING_NOTES.md](docs/UPSTREAM_ENGINEERING_NOTES.md), and the fork is
+introduced to upstream in
 [sylverb's discussions #94](https://github.com/sylverb/game-and-watch-retro-go-sd/discussions/94).
 
-### ⚠️ Before you flash
+## 🙏 A note to upstream and the community
+
+This is an **experimental fork, nothing more.** If any idea here turns out to be useful,
+**please take it upstream** — open a PR or a feature request on
+[sylverb's repository](https://github.com/sylverb/game-and-watch-retro-go-sd) and let the
+stable project decide what fits. I'd be genuinely happy if any part of this helps you or the
+Game & Watch community. Everything here is offered in that spirit, with respect and gratitude
+to sylverb and the retro-go contributors — without their work, none of this would exist.
+
+## 🌐 Companion: game-and-what
+
+The web tool **[jshsakura/game-and-what](https://github.com/jshsakura/game-and-what)** — a
+sibling project by the same author, kept in the parent folder (`../game-and-what`) next to this
+one — prepares the assets this firmware uses:
+
+- renders the per-system launcher **icons**,
+- encodes any image or video into a **clock-ready 320×240 GIF** (`encode_to_clock_gif`),
+- generates the **GBA idle-loop / cart tables** the emulator ships with.
+
+It's a separate web app, **configured through its own env variables**, and the asset-generation
+scripts here read from it (defaulting to the `../game-and-what` sibling folder). It exists to
+feed this fork; you don't need it to *use* the firmware, only to make new assets.
+
+---
+
+## ⚠️ Before you flash
 
 > Releases here are **test builds, not stable**.
 >
@@ -202,436 +233,42 @@ the fork is introduced to upstream in
 
 ---
 
-# Upstream documentation (sylverb/game-and-watch-retro-go-sd)
+# 📖 Full documentation → upstream
 
-Everything below is the **original documentation from
-[sylverb's repository](https://github.com/sylverb/game-and-watch-retro-go-sd)**, kept
-intact because it fully applies here too — hardware mod, SD-card layout, building,
-flashing, troubleshooting. All credit for the project and its documentation goes to
-sylverb and the retro-go contributors.
+This README covers **only what this fork adds or changes.** Everything else is documented in
+full by the upstream project and applies here unchanged — please read it there:
 
-![](assets/gnw.gif)
+### 👉 [sylverb/game-and-watch-retro-go-sd](https://github.com/sylverb/game-and-watch-retro-go-sd)
 
-# Nintendo® Game & Watch™ Retro-Go SD
+That upstream README is where you'll find, all still accurate for this fork:
 
-A comprehensive emulator collection for the Nintendo® Game & Watch™ with SD Card support, allowing you to play your favorite retro games on the go!
+| Topic | Where |
+| --- | --- |
+| Hardware mod — flash chip, SD flex PCB, shell cutting/replacement | upstream README |
+| Installation, bootloader / dual-boot one-time setup | upstream README |
+| SD-card layout and the firmware-update flow | upstream README |
+| Controls, macros, troubleshooting, FAQ | upstream README |
+| Cheat-code file formats (NES / GB / PCE / MSX) | upstream README |
+| Stock-system notes (NES, MSX, Amstrad CPC, Pokémon Mini, …) | upstream README |
+| Zelda 3 / Super Mario World ports & asset-file generation | upstream README |
+| Pico-8, cover-art tools, Docker build | upstream README |
 
-If you are looking for the mod without SD Card (Flash mod only), check https://github.com/sylverb/game-and-watch-retro-go
+All credit for the project, the hardware mod and its documentation goes to sylverb and the
+retro-go contributors. Read theirs first; then come back here for the fork-specific details
+below.
 
-## Table of Contents
-- [Nintendo® Game \& Watch™ Retro-Go SD](#nintendo-game--watch-retro-go-sd)
-  - [Table of Contents](#table-of-contents)
-  - [Support Development](#support-development)
-  - [Features](#features)
-  - [Installation](#installation)
-    - [Pre-modded Options](#pre-modded-options)
-    - [Hardware Requirements](#hardware-requirements)
-    - [Installation Steps](#installation-steps)
-    - [Cutting the shell for SD Card slot](#cutting-the-shell-for-sd-card-slot)
-    - [Shell Replacement](#shell-replacement)
-    - [Retro-Go-SD Update Steps](#retro-go-sd-update-steps)
-    - [Bootloader Update Steps](#bootloader-update-steps)
-  - [Tools](#tools)
-    - [Cover Art Generator (gencovers.py)](#cover-art-generator-gencoverspy)
-      - [Usage](#usage)
-      - [Options](#options)
-    - [Pico-8 Cover Art  Generator ( pico8covers.py )](#pico-8-cover-art--generator--pico8coverspy-)
-      - [Usage:](#usage-1)
-  - [Supported Systems](#supported-systems)
-    - [Emulators](#emulators)
-    - [SNES Ports](#snes-ports)
-    - [Homebrew Ports](#homebrew-ports)
-  - [Controls](#controls)
-    - [Button Mappings](#button-mappings)
-    - [Macros](#macros)
-  - [Troubleshooting](#troubleshooting)
-  - [FAQ](#faq)
-  - [Cheat codes](#cheat-codes)
-    - [Cheat codes on NES System](#cheat-codes-on-nes-system)
-    - [Cheat codes on GB System](#cheat-codes-on-gb-system)
-    - [Cheat codes on PCE System](#cheat-codes-on-pce-system)
-    - [Cheat codes on MSX System](#cheat-codes-on-msx-system)
-  - [Game Boy Advance](#game-boy-advance)
-  - [NES Emulator](#nes-emulator)
-  - [MSX Emulator](#msx-emulator)
-  - [Amstrad CPC6128 Emulator](#amstrad-cpc6128-emulator)
-  - [Vectrex/Odyssey2 Emulator (not included in SD Card version yet)](#vectrexodyssey2-emulator-not-included-in-sd-card-version-yet)
-- [Pokémon Mini Emulator](#pokémon-mini-emulator)
-  - [Homebrew ports](#homebrew-ports-1)
-    - [The Legend of Zelda: A Link to the Past](#the-legend-of-zelda-a-link-to-the-past)
-      - [Alternate languages](#alternate-languages)
-    - [Super Mario World](#super-mario-world)
-    - [Super Metroid](#super-metroid)
-    - [Celeste Classic](#celeste-classic)
-  - [Pico-8](#pico-8)
-    - [Compatibility and performance](#compatibility-and-performance)
-    - [Installation](#installation-1)
-    - [Loading carts](#loading-carts)
-    - [Covers](#covers)
-  - [Developer info](#developer-info)
-    - [Build and flash using Docker](#build-and-flash-using-docker)
-  - [Discord, support and discussion](#discord-support-and-discussion)
-  - [License](#license)
+> **Install in one line:** flash the latest `retro-go_update.bin` from this fork's
+> [releases page](https://github.com/jshsakura/game-and-watch-retro-go-sd/releases) — it
+> carries the matching SD payload (cores, homebrew overlays, BIOS logo) and installs it on
+> first boot. The hardware mod and one-time bootloader setup are the upstream steps linked
+> above.
 
-## Support Development
+---
 
-You can support the development by donating via [PayPal](https://paypal.me/revlys)
+# Fork-specific details
 
-## Features
-
-- 🎮 Support for multiple retro gaming systems
-- 💾 SD Card storage for ROMs and games
-- 💾 4 save state slots per game
-- 🎨 Cover art support
-- 🔄 Easy firmware updates
-- 🌐 Unicode support (Latin and Cyrillic, more to come)
-- 🎯 Cheat code support for multiple systems
-- 🔄 Dual boot capability (original firmware preservation)
-
-Current limitations :
-- Up to 1000 roms/disks will be visible for each system
-- CJK characters not yet visible
-
-## Installation
-
-### Pre-modded Options
-
-If you prefer professional installation, contact:
-- **Europe**: Sylver ([u/Sylver7667](https://www.reddit.com/user/Sylver7667/) on Reddit, sylver__ on Discord)
-- **USA**: hundshamer ([u/hundshamer](https://www.reddit.com/user/hundshamer/) on Reddit)
-
-
-### Hardware Requirements
-
-To install the hardware mod, you need:
-
-- SD Card flex PCB adapter: 
-
-  <img src="assets/sm_black_top.png" height="150">
-
-  - [Tim Schuerewegen / hundshamer Zelda v2 Gerber file](https://github.com/sylverb/game-and-watch-retro-go-sd/raw/refs/heads/main/assets/GnW_SD_v2.zip) (recommended for Zelda install)
-
-  <img src="assets/MicroSD_Mario.png" height="200">
-  <img src="assets/MicroSD_Zelda.png" height="200">
-  
-  - [PrimoAngelo Mario Gerber file](https://github.com/sylverb/game-and-watch-retro-go-sd/raw/refs/heads/main/assets/MicroSD_Mario_Final.zip) (recommended for Mario install)
-  - [PrimoAngelo Zelda Gerber file](https://github.com/sylverb/game-and-watch-retro-go-sd/raw/refs/heads/main/assets/MicroSD_Zelda_Final.zip)  
-
-- 1x MX25U51245GZ4I00 (64MB SPI flash 1.8v) or bigger
-- 1x 0402 100k resistor (0805 will fit too)
-- 2x 0402 1uf (0805 will fit too)
-- 1x RT9193-28GB LDO regulator
-- 1x Micro SD card slot SMD 9Pin ([here](https://www.aliexpress.com/item/1005002829329826.html), [here](https://www.aliexpress.com/item/1005001331379046.html), [here](https://www.aliexpress.com/item/32802051702.html), ...)
-
-### Installation Steps
-
-1. **Original Firmware Backup / Unlock**
-   - Install [gnwmanager](https://github.com/BrianPugh/gnwmanager), follow [installation instructions](https://github.com/BrianPugh/gnwmanager/blob/main/tutorials/installation.md)
-   - Connect your JTAG device (ST-Link v2 or others supported devices)
-   - Run `gnwmanager unlock` to backup and unlock the console. Follow instructions on computer's screen with attention.
-   - If you already have a backup, use `gnwmanager unlock --no-backup` to skip the backup steps
-
-2. **Flash Chip Installation**
-   - Install the MX25U51245GZ4I00 flash chip, follow instructions in [this video](https://www.youtube.com/watch?v=mYvK7LyHh1Y) if needed
-
-3. **Patched OFW / Bootloader Installation**
-   - For dual boot (recommended):
-     * Zelda model :
-       ```bash
-       gnwmanager flash-patch zelda internal_flash_backup_zelda.bin flash_backup_zelda.bin --bootloader
-       ```
-     * Mario model :
-       ```bash
-       gnwmanager flash-patch mario internal_flash_backup_mario.bin flash_backup_mario.bin --bootloader
-       ```
-   - Without dual boot (not recommended but could help troubleshooting issues if dual boot fails to install):
-     ```bash
-     gnwmanager flash-bootloader bank1
-     ```
-
-   - You can now use bootloader to check that your flash chip is correctly installed. Power on the console (and press GAME+Left if patched OFW is installed) to run the bootloader. You should see a screen like this:
-
-      ![Bootloader screen showing flash chip information](assets/bootloader_flash_installed.png)
-
-      > Note: If you installed the recommended 64MB chip, you should see "MX25U51245G (64MB)" on the screen.
-
-4. **SD Card Mod Installation**   
-   Check this great install video by NaGa :
-   
-   [![Install](https://img.youtube.com/vi/dlssD4C8pJk/0.jpg)](https://www.youtube.com/watch?v=dlssD4C8pJk)
-
-5. **Retro-Go-SD Installation**
-   - Format micro SD card as exFAT (recommended) or FAT32
-   - Download latest `retro-go_update.bin` from [releases page](https://github.com/sylverb/game-and-watch-retro-go-sd/releases/latest)
-   - Place the file in the root folder of your SD card
-   - Insert SD card and start the console
-
-      ![](assets/firmware_update.png)
-   - You can start filling the created folders on your sd card with uncompressed roms (in /roms/gb, roms/gbc, roms/nes, ...)
-  
-6. **Pico-8**
-   - Requires a separate package installation, please refer to the [Pico-8](#pico-8) section for more details
-
-### Cutting the shell for SD Card slot
-   To help to properly cut the shell, facelesstech designed some drill jig, they can be found [here](https://www.printables.com/model/1269910-zelda-game-and-watch-sd-card-drill-jig/files)
-
-### Shell Replacement
-   For people who do not want to cut their original shell, Aradia (on Discord) has designed a replacement back shell with SD card access.
-   Note that this shell is designed for the GnW_SD_v2.zip version of the flex cable (the one provided earlier on this page)
-   The 3D printable file can be downloaded [here](https://github.com/sylverb/game-and-watch-retro-go-sd/raw/refs/heads/main/assets/GnW_Zelda_back_shell.stl).
-
-### Retro-Go-SD Update Steps
-
-   When there is a new Retro-Go-SD release available on github, to install it, just proceed as described :
-   - Download latest `retro-go_update.bin` from [releases page](https://github.com/sylverb/game-and-watch-retro-go-sd/releases/latest)
-   - Place the file in the root folder of your SD card
-   - Insert SD card and start the console
-   - Turn on the Game & Watch and wait for the installation to complete. Once the update is done, you are ready to use new version
-
-### Bootloader Update Steps
-   The bootloader is the application which is allowing to install/update retro-go from update file as described in [Retro-Go-SD Update Steps](#retro-go-sd-update-steps).
-
-   It is possible to update the bootloader (check bootloader changelog to check if you have latest version and if it could be useful for you to update).
-   
-   Even if the operation should be safe, be aware that in case of problem during the bootloader update, you'll have to reprogram the bootloader using JTAG as described in [Installation] chapter.
-
-   To perform a bootloader update, perform the following steps :
-   - Download latest gnw_bootloader.bin (no dual boot) / gnw_bootloader_0x08032000.bin (dual boot) files from [Bootloader releases page](https://github.com/sylverb/game-and-watch-bootloader/releases)
-   - Copy these files to the root folder of the SD Card.
-   - Copy the `retro-go_update.bin` (v1.1.1 above) file to the root directory of your micro SD card (check previous chapter for instructions)
-   - Insert the micro SD card into your Game & Watch.
-   - Turn on the Game & Watch and wait for the installation to complete. It will update Retro-Go and also update the bootloader.
-
-   Note that the update process will detect if you have dual boot or not and will try to install gnw_bootloader.bin if you don't have dual boot and gnw_bootloader_0x08032000.bin if you have dual boot. If you are not sure of what is the right file for you, just put both files and the correct one will be used.
-
-## Tools
-
-### Super Metroid ROM preparation (sm_prepare_rom.py)
-
-```bash
-python3 tools/sm_prepare_rom.py /path/to/your/super_metroid.smc -o sm.smc
-```
-
-Strips the 512-byte copier header if the dump has one, checks the size, reports whether the
-image is the stock ROM or a fan patch, and writes the `sm.smc` the port expects in
-`/roms/homebrew/`. See [Super Metroid](#super-metroid) for why the header matters.
-
-### Cover Art Generator (gencovers.py + download_covers.py)
-
-Due to memory and power constrains of the Game & Watch hardware, it's not possible to use full size png/jpg/bmp images for cover art.
-**Automation:** When building with `COVERFLOW=1`, covers are automatically downloaded and processed.
-- **Scraping**: `tools/download_covers.py` fetches raw images into `roms/`. GitHub limits unauthenticated requests to **60/hr**. Large collections may require multiple runs or a token (`GITHUB_TOKEN=xxx` via make, or manually with `--token`). Use `DOWNLOAD_COVERS=0` to disable.
-- **Thumbnailing**: `tools/gencovers.py` converts images into optimized `.img` files in `sd_content/covers/`.
-
-Due to current implementation of the covers management, having covers with different sizes for a given system can cause incorrect alignement of images in "CoverLight H" view
-
-User dadagm wrote a macos/windows tool to convert covers in an easy way ! Check https://github.com/dadagm/GameWatchCoverMaker to get his application !
-
-The `tools/gencovers.py` script helps you generate cover art thumbnails for your games. It can process individual images or batch process all images in a directory.
-
-Note that you will have to run `python3 -m pip install -r requirements.txt` once to install dependencies required by the script.
-
-#### Usage
-
-**Process a single image:**
-```bash
-python tools/gencovers.py --image /path/to/image.png
-# Creates image.img in the same directory
-
-python tools/gencovers.py --image /path/to/image.png --output /path/to/output.img
-# Creates the .img file at the specified location
-```
-
-**Batch process all images in a directory:**
-```bash
-python tools/gencovers.py --src roms --dst covers
-# Processes all images in the 'roms' directory and creates thumbnails in 'covers'
-```
-
-#### Options
-
-- `--image`: Path to a single image file to process (PNG, JPG, JPEG, BMP)
-- `--output`: Output path for the single image (only used with --image)
-- `--src`: Source directory for batch processing (default: "roms")
-- `--dst`: Destination directory for batch processing (default: "covers")
-- `--width`: Thumbnail width (default: 128)
-- `--height`: Thumbnail height (default: None, uses width-based scaling)
-- `--jpg_quality`: JPEG quality 0-100 (default: 85)
-
-The script automatically resizes images to fit within 186x100 pixels while maintaining aspect ratio, and saves them as optimized JPEG files with the `.img` extension.
-
-The `.img` files have to be stored in the /covers folder of your sd card : for the game `/roms/msx/Aleste.rom`, the cover file should be `/covers/msx/Aleste.img`.
-
-### Pico-8 Cover Art  Generator ( pico8covers.py ) 
-
-Extract PICO-8 cart labels and generate G&W cover art (.img JPEG files).
-
-Reads .p8 (text) or .p8.png (PNG) carts, extracts the 128x128 label,
-renders it with the PICO-8 palette, and saves as a JPEG cover.
-
-#### Usage:
-```bash
-  # Single cart:
-  python3 pico8covers.py --cart celeste.p8 --output covers/pico8/celeste.img
-
-  # All carts in a directory:
-  python3 pico8covers.py --src roms/pico8 --dst covers/pico8
-
-  # Custom size/quality:
-  python3 pico8covers.py --src roms/pico8 --dst covers/pico8 --width 128 --jpg_quality 90
-```
-
-## Supported Systems
-
-### Emulators
-- Amstrad CPC6128 (beta)
-- Atari 2600
-- Atari 7800
-- Atari Lynx *(this fork)*
-- ColecoVision
-- Commodore 64 *(this fork)*
-- Gameboy / Gameboy Color
-- Game Boy Advance
-- Game & Watch / LCD Games
-- game.com *(this fork)*
-- MSX1/2/2+
-- Neo Geo Pocket / Color *(this fork)*
-- Nintendo Entertainment System
-- Odyssey² / Videopac *(enabled in this fork)*
-- Pico-8
-- PC Engine / TurboGrafx-16
-- PC Engine CD *(this fork)*
-- Pokémon Mini
-- Sega Game Gear
-- Sega Genesis / Megadrive
-- Sega Master System
-- Sega SG-1000
-- Tamagotchi P1 (P2 experimental in this fork)
-- Virtual Boy *(this fork — ~65-70% speed, honest caveat)*
-- Watara Supervision
-- WonderSwan / Color *(this fork)*
-- ZX Spectrum *(this fork)*
-
-### SNES Ports
-- The Legend of Zelda: A Link to the Past
-- Super Mario World
-- Super Metroid
-
-### Homebrew Ports
-- Celeste Classic
-
-### Apps
-- Clock (alarm clock / pomodoro / timer / stopwatch, photo album & GIF backgrounds) *(this fork)*
-- Music player (MP3) and video player (MJPEG-AVI) *(this fork)*
-
-## Controls
-
-### Button Mappings
-- `GAME` → `START`
-- `TIME` → `SELECT`
-- `PAUSE/SET` → Emulator menu
-
-### Macros
-| Button combination    | Action                                                                 |
-| --------------------- | ---------------------------------------------------------------------- |
-| `PAUSE/SET` + `GAME`  | Store a screenshot (Disabled by default on 1MB flash builds)          |
-| `PAUSE/SET` + `TIME`  | Toggle speedup (1x/1.5x)                                               |
-| `PAUSE/SET` + `UP`    | Brightness up                                                          |
-| `PAUSE/SET` + `DOWN`  | Brightness down                                                        |
-| `PAUSE/SET` + `RIGHT` | Volume up                                                              |
-| `PAUSE/SET` + `LEFT`  | Volume down                                                            |
-| `PAUSE/SET` + `B`     | Load state                                                             |
-| `PAUSE/SET` + `A`     | Save state                                                             |
-| `PAUSE/SET` + `POWER` | Poweroff without save-state                                            |
-
-## Troubleshooting
-
-- Bootloader as a diagnostic menu, you can show it by booting with PAUSE/SET button pressed at startup.
-- If a savestate is causing crash when power on the console, boot with TIME button pressed to force system to boot in games list menu.
-
-## FAQ
-
-- I'd like to play Zelda 3 in French/Italian/German/... How to change language ?
-
-   First follow the steps to create a zelda3_assets.dat file including wanted languages.
-   Load Zelda 3, press Pause/Set button to enter menu, select Options, select Language line and press left/right to change current language. Text for Player Select/Create/... is always in English, but dialogs will be in selected language. Do not change language when a dialog is shown on the screen, it can cause some issues.
-
-- Can you add [new system name] support ?
-
-   Maybe ... Probably not ! G&W system is very limited, it has only about 1MB of RAM free for code + dynamic ressources for each emulator. Most of the time emulators have to be deeply optimized to reduce their memory use so they can fit. Each emulator port is a challenge and some have failed already (fake-08, picodrive, ...).
-
-## Cheat codes
-
-Note: Currently cheat codes are only working with GB, GBC, NES, PCE and MSX games.
-
-To enable, add CHEAT_CODES=1 to your make command. If you have already compiled without CHEAT_CODES=1, I recommend running make clean first.
-To enable or disable cheats, select a game then select "Cheat Codes". You will be able to select cheats you want to enable/disable. Then you can start/resume a game and selected cheats will be applied.
-On GB, GBC and MSX systems, you can enable/disable cheats during game.
-
-### Cheat codes on NES System
-
-To add Game Genie codes, create a file ending in .ggcodes in the /cheats/nes/ directory with the same name as your rom. For instance, for
-"/roms/nes/Super Mario Bros.nes" make a file called "/cheats/nes/Super Mario Bros.ggcodes". In that file, each line can have up to 3 Game Genie codes and a maximum
-of 16 lines of active codes (for a max of 3 x 16 = 48 codes). Each line can also have a description (up to 25 characters long).
-You can comment out a line by prefixing with # or //. For example:
-```
-SXIOPO, Inf lives
-APZLGG+APZLTG+GAZUAG, Mega jump
-YSAOPE+YEAOZA+YEAPYA, Start on World 8-1
-YSAOPE+YEAOZA+LXAPYA, Start on World -1
-GOZSXX, Invincibility
-# TVVOAE, Circus music
-```
-You can enable / disable each of your codes in the game selection screen.
-
-A collection of codes can be found [here](https://github.com/martaaay/game-and-watch-retro-go-game-genie-codes).
-
-### Cheat codes on GB System
-
-To add Game Genie/Game Shark codes, create a file ending in .ggcodes in the /cheats/gb/ or /cheats/gbc/ directory with the same name as your rom. For instance, for
-"/roms/gb/Wario Land 3.gb" make a file called "/cheats/gb/Wario Land 3.ggcodes". In that file, each line can have several Game Genie / Game Shark codes
-(separate them using a +) and a maximum of 16 lines of active codes. Each line can also have a description (up to 25 characters long).
-You can comment out a line by prefixing with # or //. For example:
-```
-SXIOPO, Inf lives
-APZLGG+APZLTG+GAZUAG, Mega jump
-YSAOPE+YEAOZA+YEAPYA, Start on World 8-1
-YSAOPE+YEAOZA+LXAPYA, Start on World -1
-GOZSXX, Invincibility
-# TVVOAE, Circus music
-```
-You can enable / disable each of your codes in the game selection screen or during game.
-
-### Cheat codes on PCE System
-
-Now you can define rom patch for PCE Roms. You can found patch info from [Here](https://krikzz.com/forum/index.php?topic=1004.0).
-To add PCE rom patcher, create a file ending in .pceplus in the /cheats/pce/ directory with the same name as your rom. For instance, for
-"/roms/pce/1943 Kai (J).pce" make a file called "/cheats/pce/1943 Kai (J).pceplus".
-A collection of codes file can be found [here](https://github.com/olderzeus/game-genie-codes-nes/tree/master/pceplus).
-
-Each line of pceplus is defined as:
-```
-01822fbd,018330bd,0188fcbd,	Hacked Version
-[patchcommand],[...], patch desc
-
-```
-
-Each patch command is a hex string defined as:
-```
-01822fbd
-_
-|how much byte to patched
- _____
-   |patch start address, subtract pce rom header size if had.
-      __...
-       |bytes data to patched from start address
-
-```
-### Cheat codes on MSX System
-
-You can use blueMSX MCF cheat files with your Game & Watch. A nice collection of patch files is available [Here](http://bluemsx.msxblue.com/rel_download/Cheats.zip).
-Just copy the wanted MCF files in the /cheats/msx/ folder with the same name as the corresponding rom/dsk file.
-On MSX system, you can enable/disable cheats while playing. Just press the Pause/Set button and choose "Cheat Codes" menu to choose which cheats you want to enable or disable.
+The two write-ups below are features this fork adds that upstream does not document, so they
+live here in full.
 
 ## Game Boy Advance
 
@@ -733,160 +370,7 @@ yourself, yours stands.
 - **No link cable, no rumble.** Neither exists on this hardware, and both are switched
   off rather than emulated.
 
-## NES Emulator
-
-NES emulation uses **fceumm** (FCEUmm). It has very good compatibility but uses significant CPU: typically about 65–85% depending on games; FDS titles can reach about 95%.
-
-Mappers compatibility is basically the same as fceumm version from 01/01/2023. Testing all mappers is not possible, so some mappers that could try to allocate too much ram will probably crash. If you find any mapper that crash, please report on discord support, or by opening a ticket on github.
-
-As Game & Watch CPU is not able to emulate YM2413 at 48kHz, mapper 85 (VRC-7) sound will play at 18kHz instead of 48kHz.
-
-FDS support requires you to put the FDS firmware in `/bios/nes/disksys.rom` file
-
-## MSX Emulator
-
-MSX system is a computer with a keyboard and with multiple extensions possible (like sound cartridges).
-The system needs bios files to be in the roms/msx_bios folder. Check roms/msx_bios/README.md file for details.
-
-What is supported :
-- MSX1/2/2+ system are supported. MSX Turbo-R will probably not work on the G&W.
-- ROM cartridges images : roms have to be named with rom, mx1 or mx2 extension.
-- Disks images : disks images have to be named with dsk extension. Multiple disks games are supported and user can change the current disk using the "Pause/Options/Change Dsk" menu.
-- Cheat codes support (MCF files in old or new format as described [Here](http://www.msxblue.com/manual/trainermcf_c.htm))
-- The file roms/msx_bios/msxromdb.xml contains control profiles for some games, it allows to configure controls in the best way for some games. If a game has no control profile defined in msxromdb.xml, then controls will be configured as joystick emulation mode.
-- Sometimes games require the user to enter his name using the keyboard, and some games like Metal Gear 1/2 are using F1-F5 keys to acces items/radio/... menus. It is possible to virtually press these keys using the "Pause/Options/Press Key" menu.
-
-Note that the MSX support is done using blueMsx 2.8.2, any game that is not working correctly using this emulator will not work on the Game & Watch. To fit in the G&W, a some features have been removed, so it's possible that some games running on blueMSX will not work in the G&W port. The emulator port is still in progress, consider it as a preview version.
-
-## Amstrad CPC6128 Emulator
-
-Amstrad CPC6128 system is a computer with a keyboard and disk drive.
-
-What is supported :
-- Amstrad CPC6128 system is the only supported system. CPC464 could be added if there is any interest in doing this. Note that CPC464+/6128+ systems are not supported (running a around 40% of their normal speed so it has been removed)
-- Disks images : disks images have to be named with dsk extension. Due to memory constraints, disks images are read only. Multiple disks games are supported and user can change the current disk using the "Pause/Options/Change Dsk" menu.  Both standard and extended dsk format are supported.
-- Normally when the amstrad system starts, it will wait the user to enter a run"file or |CPM command to load the content of the disk. As it's not very friendly, the emulator is detecting the name of the file to run and enter automatically the right command at startup
-- Sometimes games require the user to enter his name using the keyboard. It is possible to virtually press these keys using the "Pause/Options/Press Key" menu.
-- Amstrad screen resolution is 384x272 pixels while G&W resolution is 320x240. The standard screen mode (with no scaling) will show the screen without the borders which will be ok in most cases, but in some cases games are using borders to show some content. If you want to see the whole Amstrad screen on the G&W, set options/scaling to "fit".
-
-Tape support has not been ported, if there is any interest in adding this, it could be considered.
-
-Note that the Amstrad CPC6128 support is done using caprice32 emulator, any game that is not working correctly using this emulator will not work on the Game & Watch. To fit in the G&W, a some features have been removed, so it's possible that some games running on caprice32 will not work in the G&W port. The emulator port is still in progress, consider it as a preview version.
-
-## Vectrex/Odyssey2 Emulator (not included in SD Card version yet)
-Vectrex/Odyssey2 is provided by a modified version of o2em emulator.
-Support is currently in development so it's unstable, has lots of bugs and it's not really playable.
-To play, you need a bios file, for now rename your bios file to bios.bin and put it in the roms/vectrex folder
-
-# Pokémon Mini Emulator
-https://github.com/libretro/PokeMini was used for porting. You can provide a bios file in /bios/mini/bios.min file, but it's optional : if no bios file is provided, an integrated open source bios will be used.
-
-## Homebrew ports
-
-Some homebrew/SNES games have been _ported_ to the G&W.
-
-### The Legend of Zelda: A Link to the Past
-
-To play The Legend of Zelda: A Link to the Past, you need to generate the zelda3_assets.dat file by following these steps :
-- clone the project with submodules if not already done :
-```git clone --recurse-submodules https://github.com/sylverb/game-and-watch-retro-go-sd```
-- install python requirements : ```python3 -m pip install -r requirements.txt```
-- copy zelda3.sfc (USA version, sha1 = '6d4f10a8b10e10dbe624cb23cf03b88bb8252973') rom to external/zelda3/tables/
-- run 'make -C external/zelda3 tables/zelda3_assets.dat' command
-
-The file zelda3_assets.dat will be created in external/zelda3/tables. Copy the zelda3_assets.dat file in /roms/homebrew/ folder of your sd card.
-
-If you want to create zelda3_assets.dat file with several languages, the steps are :
-- copy all zelda3_xx.sfc files (including us zelda3.sfc) from languages you want to include (check names and sha1 below)
-- go in tables folder : 'cd external/zelda3/tables'
-- for each rom run this command : 'python3 restool.py --extract-dialogue -r ./zelda3_xx.sfc' (replace _xx with real rom names)
-- run the command to build assets file : 'python3 restool.py --extract-from-rom --languages=fr,fr-c,de,en,es,pl,pt,nl' (adapt the languages list to fit the languages you did provide)
-
-The file zelda3_assets.dat will be created in external/zelda3/tables. Copy the zelda3_assets.dat file in /roms/homebrew/ folder of your sd card.
-
-When playing, you'll be able to change current language by going in the options menu.
-
-Due to the limited set of buttons (especially on the Mario console), the controls are peculiar:
-
-| Description | Binding on Mario units | Binding on Zelda units |
-| ----------- | ---------------------- | ---------------------- |
-| `A` button (Pegasus Boots / Interacting) | `A` | `A` |
-| `B` button (Sword) | `B` | `B` |
-| `X` button (Show Map) | `GAME + B` | `TIME` |
-| `Y` button (Use Item) | `TIME` | `SELECT` |
-| `Select` button (Save Screen) | `GAME + TIME` | `GAME + TIME` |
-| `Start` button (Item Selection Screen) | `GAME + A` | `START` |
-| `L` button (Quick-swapping, if enabled) | `-` | `GAME + B` |
-| `R` button (Quick-swapping, if enabled) | `-` | `GAME + A` |
-
-Some features can be configured with flags:
-
-| Build flag    | Description |
-| ------------- | ------------- |
-| `LIMIT_30FPS` | Limit to 30 fps for improved stability.<br>Enabled by default.<br>Disabling this flag will result in unsteady framerate and stuttering. |
-| `FASTER_UI` | Increase UI speed (item menu, etc.).<br>Enabled by default. |
-| `BATTERY_INDICATOR` | Display battery indicator in item menu.<br>Enabled by default. |
-| `FEATURE_SWITCH_LR` | Item switch on L/R. Also allows reordering of items in inventory by pressing Y+direction.<br>Hold X, L, or R inside of the item selection screen to assign items to those buttons.<br>If X is reassigned, Select opens the map. Push Select while paused to save or quit.<br>When L or R are assigned items, those buttons will no longer cycle items. |
-| `FEATURE_TURN_WHILE_DASHING` | Allow turning while dashing. |
-| `FEATURE_MIRROR_TO_DARK_WORLD` | Allow mirror to be used to warp to the Dark World. |
-| `FEATURE_COLLECT_ITEMS_WITH_SWORD` | Collect items (like hearts) with sword instead of having to touch them. |
-| `FEATURE_BREAK_POTS_WITH_SWORD` | Level 2-4 sword can be used to break pots. |
-| `FEATURE_DISABLE_LOW_HEALTH_BEEP` | Disable the low health beep. |
-| `FEATURE_SKIP_INTRO_ON_KEYPRESS` | Avoid waiting too much at the start.<br>Enabled by default. |
-| `FEATURE_SHOW_MAX_ITEMS_IN_YELLOW` | Display max rupees/bombs/arrows with orange/yellow color. |
-| `FEATURE_MORE_ACTIVE_BOMBS` | Allows up to four bombs active at a time instead of two. |
-| `FEATURE_CARRY_MORE_RUPEES` | Can carry 9999 rupees instead of 999. |
-| `FEATURE_MISC_BUG_FIXES` | Enable various zelda bug fixes. |
-| `FEATURE_CANCEL_BIRD_TRAVEL` | Allow bird travel to be cancelled by hitting the X key. |
-| `FEATURE_GAME_CHANGING_BUG_FIXES` | Enable some more advanced zelda bugfixes that change game behavior. |
-| `FEATURE_SWITCH_LR_LIMIT` | Enable this to limit the ItemSwitchLR item cycling to the first 4 items. |
-
-#### Alternate languages
-
-By default, dialogues extracted from the US ROM are in english. You can replace dialogues with another language by using a localized ROM file. Supported alternate languages are:
-
-| Language | Origin | Naming | SHA1 hash |
-| -------- | ------ | ------ | --------- |
-| German   | Original | zelda3_de.sfc | 2E62494967FB0AFDF5DA1635607F9641DF7C6559 |
-| French   | Original | zelda3_fr.sfc | 229364A1B92A05167CD38609B1AA98F7041987CC |
-| French (Canada) | Original | zelda3_fr-c.sfc | C1C6C7F76FFF936C534FF11F87A54162FC0AA100 |
-| English (Europe) | Original | zelda3_en.sfc | 7C073A222569B9B8E8CA5FCB5DFEC3B5E31DA895 |
-| Spanish  | Romhack | zelda3_es.sfc | 461FCBD700D1332009C0E85A7A136E2A8E4B111E |
-| Polish   | Romhack | zelda3_pl.sfc | 3C4D605EEFDA1D76F101965138F238476655B11D |
-| Portuguese | Romhack | zelda3_pt.sfc | D0D09ED41F9C373FE6AFDCCAFBF0DA8C88D3D90D |
-| Dutch    | Romhack | zelda3_nl.sfc | FA8ADFDBA2697C9A54D583A1284A22AC764C7637 |
-| Swedish  | Romhack | zelda3_sv.sfc | 43CD3438469B2C3FE879EA2F410B3EF3CB3F1CA4 |
-
-### Super Mario World
-
-To play Super Mario world you need to copy the smw_assets.dat file in /roms/homebrew/ folder of your sd card.
-the smw_assets.dat file can be generated by doing the following steps :
-- clone the project with submodules if not already done :
-```git clone --recurse-submodules https://github.com/sylverb/game-and-watch-retro-go-sd```
-- install python requirements : ```python3 -m pip install -r requirements.txt```
-- copy smw.sfc (USA version, sha1 = '6B47BB75D16514B6A476AA0C73A683A2A4C18765') rom to external/smw/assets/
-- run 'make -C external/smw smw_assets.dat' command
-The file smw_assets.dat will be created in external/smw.
-
-Due to the limited set of buttons (especially on the Mario console), the controls are peculiar:
-
-| Description | Binding on Mario units | Binding on Zelda units |
-| ----------- | ---------------------- | ---------------------- |
-| `A` button (Spin Jump) | `GAME + A` | `SELECT` |
-| `B` button (Regular Jump) | `A` | `A` |
-| `X`/`Y` button (Dash/Shoot) | `B` | `B` |
-| `Select` button (Use Reserve Item) | `TIME` | `TIME` |
-| `Start` button (Pause Game) | `GAME + TIME` | `START` |
-| `L` button (Scroll Screen Left) | `-` | `GAME + B` |
-| `R` button (Scroll Screen Right) | `-` | `GAME + A` |
-
-Some features can be configured with flags:
-
-| Build flag    | Description |
-| ------------- | ------------- |
-| `LIMIT_30FPS` | Limit to 30 fps for improved stability.<br>Enabled by default.<br>Disabling this flag will result in unsteady framerate and stuttering. |
-
-### Super Metroid
+## Super Metroid
 
 A port of [snesrev/sm](https://github.com/snesrev/sm), the C reimplementation of Super
 Metroid — not an emulator. It runs at the full 60 fps, with savestates and the launcher's
@@ -905,7 +389,8 @@ reads the original ROM at runtime. What the SD card needs is the ROM itself.
 
 The first two arrive on their own: `retro-go_update.bin` is a container — the updater app with
 the whole SD payload (`gw_update.tar`) concatenated onto it — so the normal
-[update steps](#retro-go-sd-update-steps) write them into `/roms/homebrew/` for you. They and
+[update steps](https://github.com/sylverb/game-and-watch-retro-go-sd#retro-go-sd-update-steps)
+write them into `/roms/homebrew/` for you. They and
 the firmware are cut from one ELF and belong to the same release; that is why they travel
 together, and why you should not hand-copy an older `sm.xip` over a newer firmware.
 
@@ -949,131 +434,9 @@ Super Metroid is SD-card only. A flash-only (`SD_CARD=0`) build cannot cache and
 `sm.xip`, nor hold the 3 MB ROM the port reads at runtime, so the core is left out of that
 image rather than shipped as a dead menu entry.
 
-### Celeste Classic
-
-This is a port of the Pico-8 version of Celeste Classic. Not a Pico-8 emulator.
-
-## Pico-8
-
-An original implementation of the [PICO-8](https://www.lexaloffle.com/pico-8.php) fantasy console engine for Game & Watch hardware, developed by [macs75](https://github.com/Macs75). The engine core is written from scratch in C/C++ and tailored to the STM32H7B0's tight memory budget, while a modified version of [Z8lua](https://github.com/samhocevar/z8lua) by Sam Hocevar serves as the Lua interpreter — providing the 16.16 fixed-point math and PICO-8 dialect extensions that real cartridges expect.
-
-### Compatibility and performance
-
-The G&W hardware (STM32H7B0VBT6, 1.4 MB SRAM) is significantly more constrained than a desktop PICO-8 host, so behavior varies between cartridges:
-
-- Most simple and mid-complexity carts run at full 30/60 FPS.
-- More demanding carts may drop frames, especially those with heavy per-frame Lua workloads or large draw call counts.
-- A small number of carts will exceed the available memory budget and fail to load.
-
-**Enabling overclock in the retro-go settings is strongly recommended** — it noticeably improves frame pacing and broadens the set of carts that run at full speed.
-
-### Installation
-
-The PICO-8 binaries are **not bundled** with the retro-go G&W firmware and must be installed separately.
-
-1. Download the latest release from the [pico8_gnw_distro releases page](https://github.com/Macs75/pico8_gnw_distro/releases).
-2. Unzip the archive at the **root** of your SD card.
-3. Three files will be placed in the `cores/` directory:
-   - `pico8.bin` — main engine binary
-   - `pico8.ro` — read-only data segment
-   - `pico8_itcm.bin` — performance-critical code loaded into ITCM RAM
-
-Once installed, PICO-8 carts placed in the appropriate roms folder will be picked up by the retro-go launcher.
-
-### Loading carts
-
-Place `.p8` or `.p8.png` cartridge files in your SD card's PICO-8 roms directory and select them from the retro-go menu like any other system.
-If the game requires to load other carts put them in a ".multicarts" subfolder. The code will be able to find them and they will not appear in the game list.
-
-### Covers 
-
-If you want to have the official carts covers use the specific python toolpico8covers.py. More details in the [Tools](#tools) section.
-
-## Developer info
-
-### Local build, flash, and SD-card workflow
-
-For development on macOS/Linux without Docker you need `arm-none-eabi-gcc` v10+ (tested against 15.2.rel1) and the Python `requirements.txt` (`python3 -m pip install -r requirements.txt`, which installs `gnwmanager`).
-
-#### One-time per-device setup
-
-The device needs SylverB's bootloader in bank 1, with Retro-Go-SD in bank 2. Without it, the firmware-update flow that creates the SD card directory tree (`/cores`, `/bios`, `/roms/homebrew`, …) cannot run.
-
-```bash
-# Install the bootloader to bank 1 (one-time):
-gnwmanager flash-bootloader bank1
-```
-
-The `Makefile` defaults `INTFLASH_BANK=2` to match that bootloader. Pass `make INTFLASH_BANK=1` only if you installed without it.
-
-#### First-time SD-card bootstrap
-
-A freshly formatted (exFAT or FAT32) SD card lacks the directories `sdpush` needs as parents; the bootloader creates them when it unpacks `retro-go_update.bin`:
-
-```bash
-make release_sdpush GNW_TARGET=mario
-```
-
-Wait for the launcher menu to appear on the device before running any other `gnwmanager` command, or the extraction is interrupted and aborted.
-
-#### Fast-iteration workflow
-
-Once the directory tree exists, flash the firmware and regenerate the SD content locally:
-
-```bash
-make flash create_sd_data GNW_TARGET=mario
-```
-
-`create_sd_data` writes the SD files under `sd_content/`. Push only the ones you changed instead of re-sending every core, e.g.:
-
-```bash
-gnwmanager sdpush --file sd_content/cores/nes.bin --dest-path /cores/
-```
-
-#### Common gotchas
-
-- **Debug-probe `BAD_DECOMPRESS`.** Some CMSIS-DAP probes drop LZMA chunks at gnwmanager's default speed. Lower it with `make GNWMANAGER="gnwmanager --frequency 1000000"`.
-- **Stale objects after toggling a `-D` flag.** Make doesn't track `-D` changes, so toggling `CHEAT_CODES`/`COVERFLOW`/etc. between builds mixes definitions and causes link errors. Run `make clean` when you change one.
-
-### Build and flash using Docker
-
-<details>
-  <summary>
-    If you are familiar with Docker and prefer a solution where you don't have to manually install toolchains and so on, expand this section and read on.
-  </summary>
-
-  To reduce the number of potential pitfalls in installation of various software, a Dockerfile is provided containing everything needed to compile and flash retro-go to your Nintendo® Game & Watch™ (Mario/Zelda) system. This Dockerfile is written tageting an x86-64 and arm64 machine running Linux or macOS.
-
-  Steps to build and flash from a docker container (running on Linux/macOS, e.g. Archlinux, Ubuntu or macOS):
-
-  ```bash
-  # Clone this repo
-  git clone --recursive https://github.com/sylverb/game-and-watch-retro-go-sd
-
-  # cd into it
-  cd game-and-watch-retro-go-sd
-
-  # Optional : Build the docker image (takes a while)
-  # You can generate the docker image locally but it's
-  # not needed as generated image is available on
-  # https://hub.docker.com/repository/docker/sylverb/retro-go-sd-builder
-  # for x86-64 and arm64 architectures.
-  make docker_build
-
-  # Run the container.
-  # The current directory will be mounted into the container and the current user/group will be used.
-  make docker
-  ```
-  The install/update file will be available in release/retro-go_update.bin
-
-</details>
-
-## Discord, support and discussion 
-
-Please join the [Discord](https://discord.gg/vVcwrrHTNJ).
-
 ## License
 
-This project uses Fusion Pixel Font (SIL Open Font License 1.1)
+This project uses Fusion Pixel Font (SIL Open Font License 1.1).
 
-This project is licensed under the GPLv2. Some components are available under the MIT license. Respective copyrights apply to each component.
+This project is licensed under the GPLv2. Some components are available under the MIT
+license. Respective copyrights apply to each component.
