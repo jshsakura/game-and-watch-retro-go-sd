@@ -43,7 +43,7 @@ NAMES = {
     "header_c64":      "COMMODORE 64",
     "header_gamecom":  "GAME.COM",
     "header_favorites": "FAVORITES",
-    "header_snes":     "SUPER FAMICOM",
+    "header_snes":     "SNES (SUPER FAMICOM)",
 }
 
 TARGET_H = 18      # matches existing header height

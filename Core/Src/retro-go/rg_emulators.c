@@ -1323,7 +1323,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
     } else if(strcmp(system_name, "WonderSwan") == 0) {
         run_internal_emu(&emu_wswan, load_state, start_paused, save_slot);
 #if SD_CARD == 1
-    } else if(strcmp(system_name, "Super Famicom") == 0) {
+    } else if(strcmp(system_name, "SNES") == 0) {
         run_internal_emu(&emu_snes, load_state, start_paused, save_slot);
 #endif
     } else if(strcmp(system_name, "Sega Genesis") == 0)  {
@@ -1554,7 +1554,7 @@ void emulators_init()
      * delivery as SM/GBA (cart flash-cached from SD; no lzma). LoROM/HiROM only;
      * enhancement-chip carts are rejected at load. No header logo yet (0). */
 #if SD_CARD == 1
-    add_emulator("Super Famicom", "sfc", "sfc smc fig swc", RG_LOGO_PAD_SNES, RG_LOGO_HEADER_SNES, NO_GAME_DATA);
+    add_emulator("SNES", "snes", "sfc smc fig swc", RG_LOGO_PAD_SNES, RG_LOGO_HEADER_SNES, NO_GAME_DATA);
 #endif
     add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
     add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);
