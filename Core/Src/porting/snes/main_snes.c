@@ -51,7 +51,7 @@ bool snes_loadRom(Snes *snes, const uint8_t *data, int length);   /* snes_other.
 /* Savestate stamp: a raw struct dump must refuse files this build didn't
  * write (project rule — a stale state "loads" and restores nonsense). */
 #define SNES_STATE_MAGIC    0x31534E53u   /* "SNS1" */
-#define SNES_STATE_VERSION  1
+#define SNES_STATE_VERSION  2   /* v2: + controller shift registers (see below) */
 
 /* ---- hooks the snes lib links against ------------------------------------
  * These are the Super Metroid RTL hooks; a generic core has no reimplementation
@@ -253,10 +253,30 @@ typedef struct {
   uint32_t length;    /* payload bytes after this header */
 } snes_state_header_t;
 
+/* The lib chain (snes_saveload) covers cpu/apu+dsp/dma/ppu/cart/wram but NOT
+ * the controller shift registers (Input.latchLine/latchedState) — SM never
+ * reads a port serially so the lib never needed them. Real games do: DKC
+ * manual-reads $4016 and a cold resume handed it a zeroed shift register
+ * where the live machine returns 1s after the auto-joy shift-out (found by
+ * the two-process cold-resume proof, tools/snes_save_test). Serialize them
+ * here, after the lib stream, without touching the lib. */
+static void state_io_input(SaveLoadFunc *func) {
+  Input *pads[2] = { snes->input1, snes->input2 };
+  for (int i = 0; i < 2; i++) {
+    func(NULL, &pads[i]->latchLine, sizeof(pads[i]->latchLine));
+    func(NULL, &pads[i]->latchedState, sizeof(pads[i]->latchedState));
+  }
+}
+
+static void state_stream(SaveLoadFunc *func) {
+  snes_saveload(snes, func, NULL);
+  state_io_input(func);
+}
+
 static bool snes_SaveState(const char *pathName) {
   /* Pass 1: count. Pass 2: write behind an accurate header. */
   state_file = NULL; state_bytes = 0;
-  snes_saveload(snes, &state_write, NULL);
+  state_stream(&state_write);
   uint32_t payload = state_bytes;
 
   FILE *f = fopen(pathName, "wb");
@@ -264,7 +284,7 @@ static bool snes_SaveState(const char *pathName) {
   snes_state_header_t h = { SNES_STATE_MAGIC, SNES_STATE_VERSION, payload };
   if (fwrite(&h, 1, sizeof(h), f) != sizeof(h)) { fclose(f); return false; }
   state_file = f; state_bytes = 0;
-  snes_saveload(snes, &state_write, NULL);
+  state_stream(&state_write);
   fclose(f);
   state_file = NULL;
   return state_bytes == payload;
@@ -280,8 +300,27 @@ static bool snes_LoadState(const char *pathName) {
     fclose(f);
     return false;
   }
+  /* Refuse BEFORE touching the machine, not after: (a) the payload must be
+   * exactly the size this build streams (a lying length would otherwise be
+   * caught only after the machine is clobbered), (b) the file must actually
+   * contain it (state_read zero-fills past EOF, so a truncated file would
+   * "load" a half-zeroed machine and report success — proven by the refusal
+   * test before this check existed). */
+  /* Dry run with the WRITE counter (file==NULL: counts, reads nothing into
+   * the machine — state_read would zero-fill the live machine here). */
+  state_file = NULL; state_bytes = 0;
+  state_stream(&state_write);          /* what this build expects, in bytes */
+  uint32_t expected = state_bytes;
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  if (h.length != expected ||
+      fsize != (long)(sizeof(h) + expected)) {
+    fclose(f);
+    return false;
+  }
+  fseek(f, sizeof(h), SEEK_SET);
   state_file = f; state_bytes = 0;
-  snes_saveload(snes, &state_read, NULL);
+  state_stream(&state_read);
   fclose(f);
   state_file = NULL;
   lcd_clear_active_buffer();
