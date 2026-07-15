@@ -26,7 +26,12 @@ mkdir -p "$OUT"
 
 CC=arm-none-eabi-gcc
 CXX=arm-none-eabi-g++
-ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=soft"
+# Hard float — MUST match the device (Makefile.common: -mfloat-abi=hard
+# -mfpu=fpv5-d16). The V810 has an FPU and 3D games lean on it; a soft-float
+# rig counts each float op as a multi-instruction libgcc call and overstates
+# the emulation cost the device pays in one VFP instruction. -ffp-contract=off
+# keeps results reproducible (no surprise FMA fusion).
+ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -ffp-contract=off"
 OPT="-O2 -g -fno-strict-aliasing -ffunction-sections -fdata-sections"
 DEF="-DGNW_VB_DEVICE -DDEBUGLEVEL=0 -DVB_LEFT_EYE_ONLY -DRIG_FRAMES=$FRAMES"
 INC="-I$RV/source/common -I$RV/include -I$RV/source/common/inih"
