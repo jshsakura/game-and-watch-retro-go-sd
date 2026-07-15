@@ -64,6 +64,31 @@ We are the ones who are poor. So we took their **hook** and left their mixer.
 The gpSP fork carries **one `if`** in `cpu.cc` and a per-frame callback in
 `main.c`, both behind `GBA_M4A_HLE`.
 
+## The rig's knobs
+
+`prove_main.c` is by now the GBA investigation rig, not just the M4A prover:
+the same binary that proves the mixer also traced an idle-skip freeze to its
+caller and taped the audio a sound report was about. Every knob is an
+environment variable, so one build answers many questions:
+
+| knob | what it does | the investigation it earned its keep in |
+|---|---|---|
+| `M4A_AUDIO_RAW=<path>` | dump the 48 kHz s16 stereo stream (`sox`/`ffmpeg`: `-t raw -r 48000 -e signed -b 16 -c 2`) | "Ruby sounds gritty" → spectrum showed resampling images |
+| `M4A_DUMP_FRAME=<n>` + `M4A_DUMP_PATH` | dump IWRAM at frame n | extracting a live mixer for byte-matching |
+| `IDLE_PC=<hex>` | halt frame slices at this guest pc, exactly as the firmware's idle table does | judging a CANDIDATE idle address (mGBA's remover can't: forcing a pc disables its detector, so the baseline loses the cart's existing skip) |
+| `IDLE_COND=ne` | burn the slice only while the branch at the target will loop (Z clear) — the raster-poll semantic | SRT D / Tennis VCOUNT polls |
+| `IDLE_TRACE=1` | one line per frame: pc, halt state, VCOUNT, DISPSTAT, IE/IF/IME | found SRT D "frozen" parked in the poll with IRQs off |
+| `NO_KEYS=1` | attract mode — no scripted input | the key script presses at fixed FRAME numbers, so any timing change becomes a different play-through and the diff turns to noise |
+| `RATE_TRACE=1` | log every DS FIFO rate change | testing whether cries flip the rate the output filter keys on |
+
+(Caution from the day they were added: `getenv` does not read values, so
+`NO_KEYS=0` still means ON. Set or unset, nothing in between.)
+
+The fork's `cpu.cc` carries one more, compile-time: `-DIDLE_SKIP_TRACE`, the
+host-only forensics that print what a parked idle loop actually observes and
+where it goes next — the probe that proved the SRT D poll was innocent and its
+caller was the loop.
+
 ## The proof
 
 ```

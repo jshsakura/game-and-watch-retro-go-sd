@@ -55,7 +55,7 @@ harnesses below.
 - `host_stubs.c` is the shared firmware-allocator shim the other GBA tools
   link.
 
-### `tools/gba_m4a` — the M4A mixer HLE, self-contained
+### `tools/gba_m4a` — the M4A mixer HLE, and the GBA investigation rig
 - `prove.sh [--blocks|--e2e|--speed] <rom> [frames]` — the full proof: every
   hooked block run both ways and compared to the register, flag, cycle and
   byte (`--blocks`); the whole game run hook-off vs hook-on and hashed —
@@ -64,9 +64,13 @@ harnesses below.
   comparator must agree with itself before it may compare); and a sabotaged
   build that must fail (RED).
 - `census.py` — counts mixers straight out of a ROM corpus, no emulation.
-- `prove_main.c` also takes `M4A_AUDIO_RAW=<path>` to dump the 48 kHz s16
-  stereo stream the device would hand the SAI — for listening to, or for
-  spectral analysis when someone reports the sound is off.
+- `prove_main.c` has grown into the general GBA rig: `M4A_AUDIO_RAW=` (audio
+  tap), `IDLE_PC=`/`IDLE_COND=ne` (idle-skip A/B on the device's own
+  semantics — mGBA cannot: forcing its remover disables its detector),
+  `IDLE_TRACE=1` (per-frame pc/halt/VCOUNT/interrupt state), `NO_KEYS=1`,
+  `RATE_TRACE=1`. The full knob table with the investigation each knob earned
+  its keep in: `tools/gba_m4a/README.md`. The playbook that says which rig
+  answers which GBA question: `Core/Src/porting/gba/CLAUDE.md`.
 
 ### `tools/jpeg_harness` — the HW JPEG driver against a fake HAL
 - `run.sh` — compiles `hw_jpeg_decoder.c` itself (its three previous tests
