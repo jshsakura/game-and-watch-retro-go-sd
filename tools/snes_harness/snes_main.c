@@ -219,6 +219,24 @@ static void run_frame_events(Snes *snes) {
 }
 
 /* ------------------------------------------------------------------- main --- */
+/* Dump the 320x240 RGB565 framebuffer as a P6 PPM so a human can SEE that the
+ * ROM actually renders — the state hash proves determinism, not that anything is
+ * on screen. SNES_FRAMEDIR=<dir> SNES_FRAMEEVERY=<n> (default 60). */
+static void dump_ppm(const uint16_t *fb, const char *dir, int idx) {
+  char path[512];
+  snprintf(path, sizeof(path), "%s/frame_%05d.ppm", dir, idx);
+  FILE *f = fopen(path, "wb");
+  if (!f) return;
+  fprintf(f, "P6\n320 240\n255\n");
+  for (int i = 0; i < 320 * 240; i++) {
+    uint16_t px = fb[i];
+    uint8_t r5 = (px >> 11) & 0x1f, g6 = (px >> 5) & 0x3f, b5 = px & 0x1f;
+    uint8_t rgb[3] = { (r5 << 3) | (r5 >> 2), (g6 << 2) | (g6 >> 4), (b5 << 3) | (b5 >> 2) };
+    fwrite(rgb, 1, 3, f);
+  }
+  fclose(f);
+}
+
 static uint64_t hash_state(Snes *snes) {
   uint64_t h = 1469598103934665603ULL;
   #define HASH(p, n) do { const uint8_t *b_ = (const uint8_t *)(p); \
@@ -261,6 +279,10 @@ int main(int argc, char **argv) {
         apu_cycle(snes->apu);
       dsp_getSamples(snes->apu->dsp, g_audio, 16000 / 60, 1);
     }
+    { const char *fd = getenv("SNES_FRAMEDIR");
+      if (fd) { const char *ev = getenv("SNES_FRAMEEVERY");
+        int every = ev ? atoi(ev) : 60;
+        if (every > 0 && i % every == 0) dump_ppm(g_fb, fd, i); } }
     if (getenv("SNES_DBG") && i % 120 == 0) {
       int wram_nz = 0;
       for (int q = 0; q < 0x20000; q++) if (g_wram[q]) wram_nz++;
