@@ -1,1 +1,3 @@
 snes_analysis.sqlite
+# per-ROM tier dump derived from the DB above -- same policy, stays local
+rom_tiers.csv
