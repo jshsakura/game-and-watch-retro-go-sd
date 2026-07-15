@@ -155,18 +155,27 @@ const char *font_files[] = {
     "/fonts/cp1252_haeberli12.bin"
 };
 
-// Cyrillic fonts
+// Cyrillic fonts. Must have FONT_COUNT entries — get_font_file() indexes it
+// with the same curr_font as the 9-entry Latin list. A missing comma here
+// once string-concatenated two entries into one bogus path, leaving 8 entries
+// and an out-of-bounds read for the last font index.
 const char *font_files_cp1251[] = {
     "/fonts/cp1251_serif.bin",
     "/fonts/cp1251_serif_bold.bin",
     "/fonts/cp1251_serif.bin",
     "/fonts/cp1251_sans_serif.bin",
     "/fonts/cp1251_sans_serif_bold.bin",
-    "/fonts/cp1251_greybeard.bin"
+    "/fonts/cp1251_greybeard.bin",
     "/fonts/cp1251_serif_bold.bin",
     "/fonts/cp1251_serif_bold.bin",
     "/fonts/cp1251_serif_bold.bin",
 };
+
+_Static_assert(sizeof(font_files_cp1251) / sizeof(font_files_cp1251[0]) == FONT_COUNT,
+               "font_files_cp1251 must have FONT_COUNT entries (a missing comma "
+               "silently concatenates two literals and shrinks the array)");
+_Static_assert(sizeof(font_files) / sizeof(font_files[0]) == FONT_COUNT,
+               "font_files must have FONT_COUNT entries");
 
 const char *get_font_file(uint32_t codepoint) {
     if (codepoint >= 0x0400 && codepoint <= 0x04FF) {
