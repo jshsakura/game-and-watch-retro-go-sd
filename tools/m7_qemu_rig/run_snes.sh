@@ -24,7 +24,7 @@ mkdir -p "$OUT"
 CC=arm-none-eabi-gcc
 ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=soft"
 OPT="-O2 -g -ffunction-sections -fdata-sections"
-DEF="-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS -DRIG_FRAMES=$FRAMES -DRIG_WINDOW=${RIG_WINDOW:-200}"
+DEF="-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS -DRIG_FRAMES=$FRAMES -DRIG_WINDOW=${RIG_WINDOW:-200} ${RIG_EXTRA_DEF:-}"
 INC="-I$SM -I$RIG/shim -Itools/sm_harness/shim"
 
 # ROM -> object (symbols _binary_rom_smc_start/end)

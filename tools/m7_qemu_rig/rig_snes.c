@@ -54,6 +54,7 @@ bool g_new_ppu = true;
 void Die(const char *s) { printf("Die: %s\n", s); exit(1); }
 void Warning(const char *s) { (void)s; }
 
+extern bool g_ppu_skip_render;   /* frameskip: skip PPU compositing, keep logic */
 static Snes *g_the_snes;
 void RtlApuWrite(uint32_t adr, uint8_t val) {
   snes_catchupApu(g_the_snes);
@@ -174,9 +175,19 @@ int main(void) {
   uint64_t win_emu = 0, win_apu = 0, tot_emu = 0, tot_apu = 0;
 
   for (int frame = 0; frame < RIG_FRAMES; frame++) {
+#ifdef RIG_INPUT_TAP
+    /* Tap Start (bit 3) periodically to walk title/menus into gameplay; only for
+     * measurement runs (changes state, so not for the input=0 host cross-check). */
+    snes->input1->currentState = (frame >= 40 && (frame % 24) < 6) ? 0x0008 : 0;
+#else
     snes->input1->currentState = 0;
+#endif
     PpuBeginDrawing(snes->ppu, (uint8_t *)(g_fb + 32), 320 * 2, 0);
 
+#ifdef RIG_FRAMESKIP
+    g_ppu_skip_render = true;   /* measure CPU+APU+timing without PPU compositing;
+                                 * render-on minus this = the PPU's share of a frame */
+#endif
     uint32_t t0 = rig_timer_now();
     run_frame_events(snes);
     uint32_t t1 = rig_timer_now();
