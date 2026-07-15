@@ -63,6 +63,7 @@ WriteReg sm__WriteReg
 WriteRegWord sm__WriteRegWord
 apu_cycle sm__apu_cycle
 apu_free sm__apu_free
+apu_run sm__apu_run
 apu_saveload sm__apu_saveload
 cart_free sm__cart_free
 cart_init sm__cart_init

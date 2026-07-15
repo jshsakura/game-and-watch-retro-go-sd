@@ -456,6 +456,27 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_WSWAN_BSS_SIZE = SIZEOF(.overlay_wswan_bss);
 
+  .overlay_snes __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_snes_start__ = .;
+    build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_SNES_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_SNES_LOAD_START = LOADADDR(.overlay_snes);
+  _OVERLAY_SNES_SIZE = SIZEOF(.overlay_snes);
+  .overlay_snes_bss _OVERLAY_SNES_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_SNES_BSS_START = .;
+    build/snes/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/snes/*.o (COMMON)
+    __ram_emu_snes_end__ = .;
+    _OVERLAY_SNES_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_SNES_BSS_END) < __RAM_EMU_END__, "Error: SNES BSS overflow");
+  }
+  _OVERLAY_SNES_BSS_SIZE = SIZEOF(.overlay_snes_bss);
+
   .overlay_gw __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_gw_start__ = .;

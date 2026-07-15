@@ -859,6 +859,9 @@ uint16 currently_installed_bug_fix_counter;
  * jump into Super Mario World's address space. */
 void apu_reset(Apu *apu) { (void)apu; }
 void apu_cycle(Apu *apu) { (void)apu; }
+/* snes_catchupApu batches through apu_run since snes-perf a8f4dd7; SM never
+ * executes it (snes->apu == NULL) but the symbol must exist to link. */
+void apu_run(Apu *apu, int cyclesToRun) { (void)apu; (void)cyclesToRun; }
 void apu_free(Apu *apu) { (void)apu; }
 void apu_saveload(Apu *apu, SaveLoadFunc *func, void *ctx) { (void)apu; (void)func; (void)ctx; }
 void ppu_copy(Ppu *ppu, Ppu *ppu_src) { (void)ppu; (void)ppu_src; }

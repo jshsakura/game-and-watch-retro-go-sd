@@ -74,3 +74,9 @@ clock_mockup.html
 *.sav
 *.sram
 *.raw
+
+# SNES tooling: build artifacts and ROM-derived generated code (never publish)
+tools/m7_qemu_rig/build_*/
+# per-ROM generated translation units are ROM-derived — never commit
+tools/sfc_recomp/*_gen.c
+tools/sfc_recomp/rc_core_*.c
