@@ -150,13 +150,20 @@ static void run_cross(const uint8_t *rom, uint32_t rom_len, int total)
     machine_reset(rom, rom_len);
     int dump_from = getenv("WS_DUMP_FROM") ? atoi(getenv("WS_DUMP_FROM")) : -1;
     uint32_t run_hash = 2166136261u;
+    /* STRICT: full framebuffer (margins included) + all of IRAM, every frame.
+     * The cycle-exact idle-skip must match this — visible-only leniency is
+     * for humans, not for the gate. */
+    uint32_t strict_hash = 2166136261u;
     for (s_frame = 0; s_frame < total; s_frame++) {
         ws_render_enabled = 1;
         WsRun();
         uint32_t h = fnv_visible(FrameBuffer);
         run_hash = (run_hash ^ h) * 16777619u;
+        strict_hash = (strict_hash ^ fnv1a(FrameBuffer, sizeof(FrameBuffer))) * 16777619u;
+        strict_hash = (strict_hash ^ fnv1a(IRAM, 0x10000)) * 16777619u;
         if (dump_from >= 0 && s_frame >= dump_from)
-            printf("  f%05d fb=%08x iram=%08x\n", s_frame, h, fnv1a(IRAM, 0x10000));
+            printf("  f%05d fb=%08x iram=%08x fbfull=%08x\n", s_frame, h,
+                   fnv1a(IRAM, 0x10000), fnv1a(FrameBuffer, sizeof(FrameBuffer)));
         if (getenv("WS_FBDUMP") && s_frame == atoi(getenv("WS_FBDUMP"))) {
             FILE *f = fopen(getenv("WS_FBOUT"), "wb");
             if (f) { fwrite(FrameBuffer, sizeof(FrameBuffer), 1, f); fclose(f); }
@@ -164,7 +171,7 @@ static void run_cross(const uint8_t *rom, uint32_t rom_len, int total)
         if ((s_frame + 1) % 200 == 0)
             printf("[ws-host] f%05d fb=%08x\n", s_frame + 1, h);
     }
-    printf("[ws-host] cross done %d frames RUNHASH=%08x\n", total, run_hash);
+    printf("[ws-host] cross done %d frames RUNHASH=%08x STRICT=%08x\n", total, run_hash, strict_hash);
 #ifdef WS_IDLE_LOG
     ws_idle_log_dump();
 #endif

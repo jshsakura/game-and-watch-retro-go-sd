@@ -464,6 +464,12 @@ uint32_t WsLoadState(const char *savename, uint32_t num)
 		printf("Cannot load save state\n");
 		return 1;
 	}
+	{	/* idle-skip: a warm load replaces the machine under a possibly-parked
+		 * CPU — a stale loop pattern must not survive into the loaded state.
+		 * (Cold loads get this via WsReset -> nec_reset already.) */
+		extern void nec_idle_reset(void);
+		nec_idle_reset();
+	}
 	MacroLoadNecRegisterFromFile(fp,NEC_IP);
 	MacroLoadNecRegisterFromFile(fp,NEC_AW);
 	MacroLoadNecRegisterFromFile(fp,NEC_BW);

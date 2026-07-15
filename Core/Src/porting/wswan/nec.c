@@ -44,6 +44,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "nec.h"
@@ -118,6 +119,12 @@ void nec_reset (void *param)
 	memset( &I, 0, sizeof(I) );
 
 	no_interrupt=0;
+	{	/* idle-skip state must not survive a reset (or the savestate load
+		 * that follows one): a stale pattern could replay code from a bank
+		 * that is no longer mapped. */
+		extern void nec_idle_reset(void);
+		nec_idle_reset();
+	}
 	I.sregs[CS] = 0xffff;
 
 
@@ -149,6 +156,13 @@ void nec_reset (void *param)
 void nec_int(uint32_t wektor)
 {
 	uint32_t dest_seg, dest_off;
+
+	{	/* idle-skip: a delivered interrupt mid-recording would log ISR
+		 * instructions into the loop pattern — abort the recording. (The
+		 * ISR's stack pushes also dirty the loop, so this is a second net.) */
+		extern void nec_idle_rec_abort(void);
+		nec_idle_rec_abort();
+	}
 
 	if(I.IF)
 	{
@@ -985,20 +999,116 @@ int ws_pc_hist_on = 0;
  * ~83% of guest instructions). Such a loop makes ZERO progress: an iteration
  * leaves every register, segment and flag unchanged AND writes no memory, so
  * only an interrupt (which the WsRun loop keeps advancing) can ever change the
- * branch. When we detect a taken backward branch whose iteration was provably
- * a no-op like that, we END the slice (nec_ICount = -1) so WsRun advances the
- * hardware to the event instead of re-running the poll thousands of times.
+ * branch. While it spins, WsRun stops running the CPU (cpu_idle) and advances
+ * only the hardware; the delivered interrupt un-parks it.
  *
- * Bit-exact by construction: identical (regs|segs|flags) + no write => the
- * machine is in the identical state, so skipping to the next hardware event
- * cannot change what the game computes. A delay loop that counts a register
- * (DEC CX) or a memory cell (INC [n]) changes the hash / sets nec_idle_dirty
- * and is never skipped. Proven with the host RUNHASH gate across the library. */
+ * CYCLE-exact, not merely state-exact. Parking must reproduce two things the
+ * real interpreter would have produced, or mid-frame raster effects shift by a
+ * scanline (27 of 93 games showed 1-frame glitches from exactly this):
+ *   1. nec_execute's per-slice return value — ws_run_period (the slice budget
+ *      carry) must evolve identically while parked.
+ *   2. The CPU's position (and thus its live registers and IF) at the slice
+ *      boundary where the interrupt lands — nec_int() checks I.IF and pushes
+ *      the boundary's CS:IP, so delivery must see the true mid-loop state.
+ * So before parking we RECORD one loop iteration's per-instruction cycle
+ * pattern; parked slices then replay the interpreter's cycle arithmetic
+ * (ic -= cost until ic < 0) without dispatching instructions, and on wake the
+ * CPU really executes the (state-invariant) partial iteration from where it
+ * physically stopped to where the spin would be — same registers, same stacked
+ * PC, same IF, same carry. A loop that changes state (DEC CX, INC [n]) breaks
+ * the hash / dirties and is never parked. */
 int nec_idle_dirty = 0;               /* memory write since last backward branch (WSHard.h) */
 int nec_loop_io    = 0;               /* IO access since last backward branch (nec.h) */
 int cpu_idle       = 0;               /* WsRun skips the CPU while set; interrupt clears it */
 static uint32_t idle_pc = 0xFFFFFFFFu; /* cs:ip of the last backward-branch target */
 static uint32_t idle_hash = 0;         /* regs|segs|flags hash there */
+
+#define IDLE_PAT_MAX 48
+static uint16_t idle_pat_ip[IDLE_PAT_MAX];  /* ip of each instruction of one iteration */
+static uint8_t  idle_pat_cyc[IDLE_PAT_MAX]; /* its cycle cost (constant: state-invariant loop) */
+static int idle_pat_n = 0;                  /* pattern length; 0 = no valid pattern */
+static int idle_rec = 0, idle_rec_n = 0;    /* recording pass in progress */
+static int idle_sim_k = -1;                 /* pattern index of the next virtual instruction */
+static int idle_suspend = 0;                /* wake replay in progress: hooks off */
+
+/* Forget everything. Reset / savestate load / delivered interrupt: a pattern
+ * is single-use — reuse across a bank switch could replay stale code. */
+void nec_idle_reset(void)
+{
+	cpu_idle = 0; idle_rec = 0; idle_pat_n = 0; idle_sim_k = -1;
+	idle_pc = 0xFFFFFFFFu;
+}
+
+void nec_idle_rec_abort(void)
+{
+	idle_rec = 0;
+}
+
+static int idle_locate(uint16_t ip)
+{
+	for (int j = 0; j < idle_pat_n; j++)
+		if (idle_pat_ip[j] == ip) return j;
+	return -1;
+}
+
+/* One parked slice: what would nec_execute(budget) have returned, and where
+ * would the CPU have stopped? Pure arithmetic over the recorded pattern —
+ * this is the whole saving. Returns -1 if the CPU's position is not in the
+ * pattern (never expected; caller falls back to really executing). */
+int32_t nec_idle_sim_slice(int32_t budget)
+{
+	if (idle_sim_k < 0) {
+		idle_sim_k = idle_locate(I.ip);
+		if (idle_sim_k < 0) return -1;
+	}
+	int32_t ic = budget;
+	int k = idle_sim_k;
+	while (ic >= 0) {
+		ic -= idle_pat_cyc[k];
+		k = (k + 1 == idle_pat_n) ? 0 : k + 1;
+	}
+#ifdef WS_IDLE_VERIFY
+	/* Self-proving mode (host harness): ALSO run the real interpreter and
+	 * demand the prediction match it, every slice, cycle for cycle. */
+	{
+		idle_suspend = 1;
+		int32_t real = nec_execute(budget);
+		idle_suspend = 0;
+		if (real != budget - ic || I.ip != idle_pat_ip[k]) {
+			fprintf(stderr, "WS_IDLE_VERIFY: slice mismatch — sim %d/ip %04x, real %d/ip %04x\n",
+			        budget - ic, idle_pat_ip[k], real, I.ip);
+			abort();
+		}
+	}
+#endif
+	idle_sim_k = k;
+	return budget - ic;
+}
+
+/* An interrupt is about to be delivered to a parked CPU. Materialize the CPU
+ * where the spin would really be: execute the partial iteration from where it
+ * physically stopped (idle detection lets the detecting slice finish normally)
+ * to the simulated boundary. The loop is state-invariant and side-effect-free,
+ * so this replay IS the real execution — registers, flags (incl. IF, which
+ * nec_int checks), and the CS:IP the ISR will stack all come out exactly as an
+ * unskipped run's. Cycles were already accounted by the simulation; budget
+ * S-1 executes exactly m instructions under the while(ICount>=0) rule. */
+void nec_idle_wake(void)
+{
+	if (idle_sim_k >= 0) {
+		int k0 = idle_locate(I.ip);
+		int m = (k0 < 0) ? 0 : (idle_sim_k - k0 + idle_pat_n) % idle_pat_n;
+		if (m > 0) {
+			int32_t s = 0;
+			for (int j = 0; j < m; j++)
+				s += idle_pat_cyc[(k0 + j) % idle_pat_n];
+			idle_suspend = 1;
+			nec_execute(s - 1);
+			idle_suspend = 0;
+		}
+	}
+	nec_idle_reset();
+}
 
 int32_t nec_execute(int32_t cycles)
 {
@@ -1012,10 +1122,23 @@ int32_t nec_execute(int32_t cycles)
 			ws_pc_hist[((I.sregs[CS] << 4) + I.ip) & 0x1FFFFF]++;
 #endif
 		uint16_t ip0 = I.ip;
+		int32_t ic0 = nec_ICount;
 		nec_instruction[FETCHOP]();
 
+		if (idle_rec) {
+			/* Recording pass: log this instruction's boundary and cost. */
+			int32_t c = ic0 - nec_ICount;
+			if (idle_rec_n >= IDLE_PAT_MAX || c < 1 || c > 255) {
+				idle_rec = 0;   /* loop too long / cost out of range: never park it */
+			} else {
+				idle_pat_ip[idle_rec_n] = ip0;
+				idle_pat_cyc[idle_rec_n] = (uint8_t)c;
+				idle_rec_n++;
+			}
+		}
+
 		/* taken backward branch to a tight loop? */
-		if (I.ip < ip0 && (uint16_t)(ip0 - I.ip) < 0x100)
+		if (!idle_suspend && I.ip < ip0 && (uint16_t)(ip0 - I.ip) < 0x100)
 		{
 			uint32_t pc = (I.sregs[CS] << 16) | I.ip;
 			uint32_t h = 2166136261u;
@@ -1024,22 +1147,31 @@ int32_t nec_execute(int32_t cycles)
 			h = (h ^ CompressFlags()) * 16777619u;
 			/* Provably idle: this iteration returned to the same PC with every
 			 * register, segment and flag unchanged, wrote no memory (!dirty) and
-			 * touched no IO (!loop_io, since IO reads can have side effects and
-			 * IO the CPU polls is changed outside it). Its only escape is an
-			 * interrupt. With interrupts enabled (IF), tell WsRun to stop running
-			 * the CPU and just advance the hardware to that interrupt — the CPU
-			 * does nothing in the meantime, and nothing writes the memory it polls
-			 * while it is parked (only its own ISR does, and that needs the
-			 * interrupt, which un-parks it). Bit-exact by construction, and it
-			 * skips WHOLE slices, not just within one. */
+			 * touched no IO (!loop_io — IO reads can have side effects, and IO
+			 * the CPU polls is changed outside it). Its only escape is an
+			 * interrupt. Iteration one makes it a candidate; iteration two is
+			 * recorded (cycle pattern for the parked-slice arithmetic); park on
+			 * the recording coming back still clean. */
 			if (pc == idle_pc && h == idle_hash && !nec_idle_dirty && !nec_loop_io && I.IF) {
+				/* idle_rec_n >= 2: a 1-instruction loop is JMP $, whose handler
+				 * applies oswan's own nonlinear nec_ICount%=12 hack — the sim
+				 * cannot replay that, so leave those to the interpreter. */
+				if (idle_rec && idle_rec_n >= 2) {
+					idle_rec = 0;
+					idle_pat_n = idle_rec_n;
+					idle_sim_k = -1;
 #ifndef WS_IDLE_DISABLE
-				cpu_idle = 1;
+					cpu_idle = 1;
 #endif
 #ifdef WS_IDLE_LOG
-				extern void ws_idle_log(uint32_t);
-				ws_idle_log(pc);
+					extern void ws_idle_log(uint32_t);
+					ws_idle_log(pc);
 #endif
+				} else if (!cpu_idle) {
+					idle_rec = 1; idle_rec_n = 0;   /* candidate: record one iteration */
+				}
+			} else {
+				idle_rec = 0;
 			}
 			idle_pc = pc; idle_hash = h; nec_idle_dirty = 0; nec_loop_io = 0;
 		}
