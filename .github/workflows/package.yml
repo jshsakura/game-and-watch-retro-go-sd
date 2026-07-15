@@ -130,7 +130,12 @@ jobs:
             # Subject as a heading, full commit body as the explanation —
             # the bodies are written to be read, so the release explains
             # itself instead of listing bare one-liners.
-            git log --no-merges --pretty=format:'### %s%n%n%b%n' $RANGE
+            #
+            # Exclude docs commits: a firmware release's changelog is firmware
+            # changes. The docs-site / devlog series (docs(site): …) is website
+            # work and only cluttered the notes.
+            git log --no-merges --invert-grep --grep='^docs' \
+              --pretty=format:'### %s%n%n%b%n' $RANGE
             echo ""
           } > RELEASE_NOTES.md
 
