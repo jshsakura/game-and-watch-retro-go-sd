@@ -34,6 +34,16 @@ Caveat that cost us: these run the core's *logic*, not the device's memory
 map, alignment traps, or linker layout. For those, see the device-shaped
 harnesses below.
 
+`Makefile.wswan` is the exception in shape: headless (no SDL), and it runs a
+**two-process** savestate round-trip — `record` snapshots in one process, then
+`resume` in a FRESH process is a real device COLD boot (every static at its
+reset value, not warmed by a prior pass). A single process carries statics
+across passes and hides cold-boot-only bugs — this rig is what reproduced, on
+the host, the One Piece Grand Battle resume hang (MemDummy scratch the save
+never captured) that only ever showed on hardware. `cross` mode prints a
+RUNHASH that must equal the m7 rig's. Pin `time()` (it does) so RTC-reading
+games gate reproducibly.
+
 ## Device-shaped harnesses — `tools/`
 
 ### `tools/sm_harness` — Super Metroid, the way the device runs it
@@ -88,6 +98,13 @@ on itself at boot — 40.000 insn/tick — and prints it).
   belongs to the device ledger. First result: the VB eye-skip + spin-credit
   pair measured **emu −75.9%, total −54.2%** insn/frame on Wario Land, with
   identical RUNHASH old-vs-new — numbers the x86 host undersold by 3x.
+- `run_wswan.sh <rom.ws> [frames]` — the WonderSwan (oswan) variant, split
+  three ways: CPU / PPU / blit. It builds twice (render on/off) and subtracts,
+  because the PPU is per-scanline inside WsRun. A dedicated `mps2_an500_ws.ld`
+  XIPs the up-to-16MB ROM in PSRAM. `profile_ws_layers.sh` attributes the PPU
+  cost across BG/FG/sprite (via a non-const `Layer[]`). First result: One Piece
+  Grand Battle's battle frame is PPU-bound (2.2M insn), and the WSRender tile
+  rewrite cut it ~32% at identical RUNHASH.
 - `rig_runtime.c`/`mps2_an500.ld` are core-agnostic: copy `rig_vb.c`'s shape
   to put any other core on the same scale.
 
