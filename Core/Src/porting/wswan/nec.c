@@ -99,7 +99,13 @@ char seg_prefix;		/* prefix segment indicator */
 #include "necea.h"
 #include "necmodrm.h"
 
-static uint32_t no_interrupt;
+/* Non-static so savestates can capture it. It is a STICKY flag — set to 1 by
+ * POP SS / MOV SS / LOCK and cleared only by nec_reset — so after any run it is
+ * 1, but a cold-booted resume starts it at 0. It gates the idle cycle-skip at
+ * the bottom of nec_execute (nec_ICount%=12 only when no_interrupt==0), so a
+ * mismatched value shifts cycle accounting and interrupt timing on resume and
+ * sends the CPU off the rails (One Piece Grand Battle cold-resume hang). */
+uint32_t no_interrupt;
 static uint8_t parity_table[256];
 
 /***************************************************************************/

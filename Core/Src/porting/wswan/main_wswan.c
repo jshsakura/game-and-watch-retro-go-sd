@@ -276,8 +276,17 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     video_frame.buffer = FrameBuffer;
 
-    /* WonderSwan runs close to the edge on stock 280MHz in heavy games — same
-     * scoped, non-persisted mild boost as VB (level 1 = 312MHz; reset on exit). */
+    /* Mild, scoped, non-persisted boost — level 1 = 312MHz, reset on exit; a
+     * FLOOR, so a user who set a higher clock keeps it. NOT full (that is 2).
+     *
+     * After the WSRender BG/FG rewrite the heaviest battle frame (One Piece)
+     * dropped from ~4.27M to ~3.64M insn/frame on the M7 rig — now just under
+     * the STOCK 280MHz budget (~3.73M) rather than over even the OC budget. So
+     * level 1 is no longer raw-instruction necessity; it is headroom for what
+     * the rig cannot see — the D-cache misses and OSPI flash-XIP latency of an
+     * 8MB ROM fetched every instruction, which stock's ~2.4% margin would not
+     * absorb. Keep level 1 (not full); revisit dropping to stock only once the
+     * device confirms full speed there. */
     common_emu_auto_oc(1);
 
     odroid_system_init(APPID_WSWAN, WS_SAMPLE_RATE);
