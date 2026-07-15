@@ -39,6 +39,8 @@
 #include "snes/dma.h"
 #include "snes/input.h"
 #include "snes/saveload.h"
+#include "snes_cart_header.h"    /* snes_cart_needs_coprocessor() — host-tested */
+#include "snes_state_header.h"   /* stamp struct + refusal predicates — host-tested */
 
 bool snes_loadRom(Snes *snes, const uint8_t *data, int length);   /* snes_other.c */
 
@@ -47,11 +49,6 @@ bool snes_loadRom(Snes *snes, const uint8_t *data, int length);   /* snes_other.
 #define SNES_HEIGHT         224
 #define SNES_AUDIO_RATE     16000
 #define SNES_AUDIO_SAMPLES  (SNES_AUDIO_RATE / SNES_FPS)   /* 266/frame */
-
-/* Savestate stamp: a raw struct dump must refuse files this build didn't
- * write (project rule — a stale state "loads" and restores nonsense). */
-#define SNES_STATE_MAGIC    0x31534E53u   /* "SNS1" */
-#define SNES_STATE_VERSION  2   /* v2: + controller shift registers (see below) */
 
 /* ---- hooks the snes lib links against ------------------------------------
  * These are the Super Metroid RTL hooks; a generic core has no reimplementation
@@ -247,11 +244,8 @@ static void state_read(void *ctx, void *data, size_t size) {
   state_bytes += size;
 }
 
-typedef struct {
-  uint32_t magic;
-  uint32_t version;
-  uint32_t length;    /* payload bytes after this header */
-} snes_state_header_t;
+/* snes_state_header_t + its refusal predicates live in snes_state_header.h so a
+ * host test drives them directly (tests/test_snes_state_header.c). */
 
 /* The lib chain (snes_saveload) covers cpu/apu+dsp/dma/ppu/cart/wram but NOT
  * the controller shift registers (Input.latchLine/latchedState) — SM never
@@ -294,8 +288,7 @@ static bool snes_LoadState(const char *pathName) {
   FILE *f = fopen(pathName, "rb");
   if (!f) return false;
   snes_state_header_t h;
-  if (fread(&h, 1, sizeof(h), f) != sizeof(h) ||
-      h.magic != SNES_STATE_MAGIC || h.version != SNES_STATE_VERSION) {
+  if (fread(&h, 1, sizeof(h), f) != sizeof(h) || !snes_state_header_valid(&h)) {
     /* Not ours / other build: refuse rather than restore nonsense. */
     fclose(f);
     return false;
@@ -313,8 +306,7 @@ static bool snes_LoadState(const char *pathName) {
   uint32_t expected = state_bytes;
   fseek(f, 0, SEEK_END);
   long fsize = ftell(f);
-  if (h.length != expected ||
-      fsize != (long)(sizeof(h) + expected)) {
+  if (!snes_state_payload_ok(&h, expected, fsize)) {
     fclose(f);
     return false;
   }
@@ -338,22 +330,8 @@ static void *snes_Screenshot(void) {
 static const uint8_t *snes_rom;
 static uint32_t snes_rom_len;
 
-/* $ffd6 (ROM type): 0=ROM 1=ROM+RAM 2=ROM+RAM+battery; 3+ = coprocessor
- * (DSP-x/SA-1/SuperFX/...) which this core cannot run yet. Find the header the
- * same way the loader scores it: the offset whose checksum ^ complement is
- * 0xFFFF wins; if neither validates, let snes_loadRom decide. */
-static bool cart_needs_coprocessor(const uint8_t *rom, uint32_t len) {
-  static const uint32_t offs[2] = { 0x7fb0, 0xffb0 };   /* LoROM, HiROM */
-  for (int i = 0; i < 2; i++) {
-    if (offs[i] + 0x30 > len) continue;
-    const uint8_t *h = rom + offs[i];
-    uint16_t cks  = h[0x2e] | (h[0x2f] << 8);
-    uint16_t icks = h[0x2c] | (h[0x2d] << 8);
-    if ((cks ^ icks) == 0xffff)
-      return h[0x26] >= 0x03;    /* $ffd6 = header+0x26 */
-  }
-  return false;
-}
+/* snes_cart_needs_coprocessor() lives in snes_cart_header.h so a host test
+ * drives it on synthetic headers (tests/test_snes_cart_gate.c). */
 
 void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
@@ -394,7 +372,7 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   snes = snes_init(snes_wram);
   g_the_snes = snes;
 
-  bool ok = (rom != NULL) && !cart_needs_coprocessor(rom, sz) &&
+  bool ok = (rom != NULL) && !snes_cart_needs_coprocessor(rom, sz) &&
             snes_loadRom(snes, rom, (int)sz);
   if (!ok) {
     /* No lang_t entry on purpose: strings are positional in the SD language
