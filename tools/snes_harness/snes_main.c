@@ -72,6 +72,32 @@ static uint8_t  g_wram[0x20000];
 static uint16_t g_fb[320 * 240];
 static int16_t  g_audio[16000 / 60];
 static uint64_t g_audiohash = 1469598103934665603ULL;
+#ifdef SNES_PC_HISTOGRAM
+uint32_t *g_pchist;   /* 16M entries, one per 24-bit opcode address (cpu.c bumps it) */
+static void dump_pchist(void) {
+  uint64_t total = 0;
+  for (int i = 0; i < 0x1000000; i++) total += g_pchist[i];
+  if (!total) { printf("[pchist] no samples\n"); return; }
+  /* top-40 hottest opcode addresses */
+  uint32_t top[40] = {0}; uint32_t topc[40] = {0};
+  for (int i = 0; i < 0x1000000; i++) {
+    uint32_t c = g_pchist[i];
+    if (c <= topc[39]) continue;
+    int j = 39; while (j > 0 && topc[j-1] < c) { topc[j]=topc[j-1]; top[j]=top[j-1]; j--; }
+    topc[j] = c; top[j] = i;
+  }
+  printf("[pchist] total opcodes=%llu\n", (unsigned long long)total);
+  /* per-bank rollup */
+  uint64_t bank[256] = {0};
+  for (int i = 0; i < 0x1000000; i++) bank[i >> 16] += g_pchist[i];
+  printf("[pchist] hot banks (>=1%%):\n");
+  for (int b = 0; b < 256; b++) if (bank[b] * 100 >= total)
+    printf("   bank $%02x  %6.2f%%  (%llu)\n", b, 100.0*bank[b]/total, (unsigned long long)bank[b]);
+  printf("[pchist] top-40 hot opcode addresses:\n");
+  for (int k = 0; k < 40 && topc[k]; k++)
+    printf("   $%02x:%04x  %6.3f%%  (%u)\n", top[k]>>16, top[k]&0xffff, 100.0*topc[k]/total, topc[k]);
+}
+#endif
 
 static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
@@ -238,6 +264,27 @@ static void dump_ppm(const uint16_t *fb, const char *dir, int idx) {
   fclose(f);
 }
 
+/* Accumulate the mono 16 kHz stream and write a WAV so a human can JUDGE the
+ * audio (SNES_WAV=<path>). The audio hash proves whether samples changed; only
+ * ears say whether the change is acceptable. */
+static int16_t g_wavbuf[16000 * 30];   /* up to 30 s */
+static int g_wavlen = 0;
+static void wav_append(const int16_t *s, int n) {
+  for (int i = 0; i < n && g_wavlen < (int)(sizeof(g_wavbuf)/2); i++) g_wavbuf[g_wavlen++] = s[i];
+}
+static void wav_write(const char *path) {
+  FILE *f = fopen(path, "wb");
+  if (!f) return;
+  int rate = 16000, data = g_wavlen * 2;
+  void *hdrw; (void)hdrw;
+  #define W16(v) do { uint16_t x=(v); fwrite(&x,2,1,f); } while(0)
+  #define W32(v) do { uint32_t x=(v); fwrite(&x,4,1,f); } while(0)
+  fwrite("RIFF",1,4,f); W32(36 + data); fwrite("WAVE",1,4,f);
+  fwrite("fmt ",1,4,f); W32(16); W16(1); W16(1); W32(rate); W32(rate*2); W16(2); W16(16);
+  fwrite("data",1,4,f); W32(data); fwrite(g_wavbuf,1,data,f);
+  fclose(f);
+}
+
 static uint64_t hash_state(Snes *snes) {
   uint64_t h = 1469598103934665603ULL;
   #define HASH(p, n) do { const uint8_t *b_ = (const uint8_t *)(p); \
@@ -264,6 +311,9 @@ int main(int argc, char **argv) {
   Snes *snes = snes_init(g_wram);
   g_the_snes = snes;
   if (!snes_loadRom(snes, rom, (int)n)) { printf("unsupported ROM\n"); return 1; }
+#ifdef SNES_PC_HISTOGRAM
+  g_pchist = calloc(0x1000000, sizeof(uint32_t));
+#endif
 
   struct timespec t0, t1;
   clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -285,6 +335,7 @@ int main(int argc, char **argv) {
        * optimization keeps BOTH hashes; a reduced-accuracy one moves audio only. */
       const uint8_t *ab = (const uint8_t *)g_audio;
       for (size_t q = 0; q < sizeof(g_audio); q++) { g_audiohash ^= ab[q]; g_audiohash *= 1099511628211ULL; }
+      if (getenv("SNES_WAV")) wav_append(g_audio, 16000 / 60);
     }
     { const char *fd = getenv("SNES_FRAMEDIR");
       if (fd) { const char *ev = getenv("SNES_FRAMEEVERY");
@@ -314,5 +365,9 @@ int main(int argc, char **argv) {
          "event",
 #endif
          ms, (unsigned long long)hash_state(snes), (unsigned long long)g_audiohash, lit);
+  { const char *wp = getenv("SNES_WAV"); if (wp) wav_write(wp); }
+#ifdef SNES_PC_HISTOGRAM
+  dump_pchist();
+#endif
   return 0;
 }
