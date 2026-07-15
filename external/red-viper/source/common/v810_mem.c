@@ -19,6 +19,18 @@ bool vb_idle_wrote;
 bool vb_idle_hwread;
 WORD vb_idle_raddr;   /* read-sequence signature for the current loop iteration; a true
                          poll repeats the same signature every spin, scans don't */
+WORD vb_idle_last_rw_addr; /* last WRAM word READ (addr+value): lets the store side
+                              recognise the one write a poll loop is allowed — the
+                              "spins++" self-increment (Wario Land counts its VIP-busy
+                              spins into a WRAM word and READS it back afterwards, so
+                              the skip must credit the skipped spins, not freeze them) */
+WORD vb_idle_last_rw_val;
+bool vb_idle_benign;       /* this iteration's only write was that self-increment */
+bool vb_idle_hwtrue;       /* this iteration read a TRUE hw/VIP register (not WRAM):
+                              required for the closed-form counter skip — a delay loop
+                              counting a WRAM word up to a limit exits on the COUNTER,
+                              not on an event, and must run for real */
+WORD vb_idle_benign_addr;  /* ...of this WRAM word, which the skip must advance by k */
 #define VB_ROM_MASK vb_rom_mask
 #else
 #define VB_ROM_MASK (MAX_ROM_SIZE - 1)
@@ -321,6 +333,7 @@ WORD mem_vsu_write(WORD addr, WORD data) {
 uint64_t mem_hw_read(WORD addr) {
     uint64_t wait = 0LL;
     vb_idle_hwread = true;
+    vb_idle_hwtrue = true;
     return (WORD)hcreg_rbyte(addr & 0x3c) | wait;
 }
 
@@ -414,6 +427,7 @@ uint64_t mem_rbyte(WORD addr) {
     { WORD sp = addr & 0x7000000;   /* poll signature: any read that an event/ISR
        could change (VIP/hw/WRAM/GRAM). ROM(7) never changes; VSU(1) is write-only. */
       if (sp != 0x7000000 && sp != 0x1000000) { vb_idle_hwread = true;
+          if (sp == 0x0000000 || sp == 0x2000000) vb_idle_hwtrue = true;
           vb_idle_raddr = vb_idle_raddr * 31 + addr; } }   /* per-iteration READ-SEQUENCE
           signature: multi-address polls (INTPND + a WRAM flag etc.) repeat the same
           sequence every spin; scans produce a different signature each time */
@@ -438,6 +452,7 @@ uint64_t mem_rhword(WORD addr) {
     { WORD sp = addr & 0x7000000;   /* poll signature: any read that an event/ISR
        could change (VIP/hw/WRAM/GRAM). ROM(7) never changes; VSU(1) is write-only. */
       if (sp != 0x7000000 && sp != 0x1000000) { vb_idle_hwread = true;
+          if (sp == 0x0000000 || sp == 0x2000000) vb_idle_hwtrue = true;
           vb_idle_raddr = vb_idle_raddr * 31 + addr; } }   /* per-iteration READ-SEQUENCE
           signature: multi-address polls (INTPND + a WRAM flag etc.) repeat the same
           sequence every spin; scans produce a different signature each time */
@@ -463,6 +478,7 @@ uint64_t mem_rword(WORD addr) {
     { WORD sp = addr & 0x7000000;   /* poll signature: any read that an event/ISR
        could change (VIP/hw/WRAM/GRAM). ROM(7) never changes; VSU(1) is write-only. */
       if (sp != 0x7000000 && sp != 0x1000000) { vb_idle_hwread = true;
+          if (sp == 0x0000000 || sp == 0x2000000) vb_idle_hwtrue = true;
           vb_idle_raddr = vb_idle_raddr * 31 + addr; } }   /* per-iteration READ-SEQUENCE
           signature: multi-address polls (INTPND + a WRAM flag etc.) repeat the same
           sequence every spin; scans produce a different signature each time */
@@ -722,6 +738,7 @@ static WORD hcreg_wbyte(WORD addr, BYTE data) {
 
 static SBYTE vipcreg_rbyte(WORD addr) {
     vb_idle_hwread = true;
+    vb_idle_hwtrue = true;
     HWORD data = vipcreg_rhword(addr);
     if (addr & 1) data >>= 8;
     return (SBYTE)data;
@@ -734,6 +751,7 @@ static WORD vipcreg_wbyte(WORD addr, WORD data) {
 
 static HWORD vipcreg_rhword(WORD addr) {
     vb_idle_hwread = true;
+    vb_idle_hwtrue = true;
     addr=(addr&0x0005007E); //Bring it into line
     addr=(addr|0x0005F800); //make sure all the right bits are on
     switch(addr) {
