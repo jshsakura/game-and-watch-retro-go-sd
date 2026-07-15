@@ -26,6 +26,18 @@ extern m68ki_cpu_core m68k;
 #define PAGE_SIZE  0x10000
 #define PAGE(addr) (((addr) >> PAGE_SHIFT) & 0xFF)
 
+/* idle-skip: after this many unchanged reads of the same GA status reg, the
+ * sub-68K is judged to be spin-waiting and its timeslices are skipped until a
+ * write re-arms it. Small so it triggers fast; the wake is exact. */
+#define SEGACD_POLL_THRESHOLD 64
+
+/* A write that could change what the sub is polling wakes it. */
+void segacd_poll_wake(void)
+{
+    SCD.sub_idle   = 0;
+    SCD.poll_count = 0;
+}
+
 /* ---- sub-CPU $FF0000 page: PCM (low) + gate array/CDC/CDD (high) ---- */
 
 static unsigned int sub_ff_read8(unsigned int address)
@@ -33,7 +45,18 @@ static unsigned int sub_ff_read8(unsigned int address)
     unsigned int off = address & 0xFFFF;
     if (off < 0x8000)                       /* $FF0000-$FF7FFF: PCM window */
         return SCD.pcm_ram[off & (SEGACD_PCM_RAM_SIZE - 1)];  /* TODO ph4: banked */
-    return SCD.s68k_regs[off & (SEGACD_GA_REGS - 1)];         /* TODO ph3: CDC/CDD */
+
+    /* $FF8000+: gate array / CDC / CDD. Track repeated reads of the same status
+     * reg to detect a spin-wait and skip the sub's timeslices (idle-skip). */
+    uint8_t reg = (uint8_t)(off & (SEGACD_GA_REGS - 1));
+    if (reg == SCD.poll_reg) {
+        if (SCD.poll_count < 0xFFFF && ++SCD.poll_count >= SEGACD_POLL_THRESHOLD)
+            SCD.sub_idle = 1;
+    } else {
+        SCD.poll_reg = reg;
+        SCD.poll_count = 0;
+    }
+    return SCD.s68k_regs[reg];                                /* TODO ph3: CDC/CDD */
 }
 
 static unsigned int sub_ff_read16(unsigned int address)
@@ -117,6 +140,9 @@ static void main_ga_write8(unsigned int address, unsigned int data)
 {
     unsigned int reg = address & (SEGACD_GA_REGS - 1);
     SCD.s68k_regs[reg] = (uint8_t)data;
+
+    /* Any main write into the gate array can change what the sub polls. */
+    segacd_poll_wake();
 
     switch (address & 0xFFF) {
     case 0x001:

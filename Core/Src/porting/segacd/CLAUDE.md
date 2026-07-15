@@ -68,6 +68,31 @@ gwenesis:
 - **Phase 5**: device bring-up, per-title debugging. Frameskip tuning (research says
   the dual-68K load likely needs it).
 
+## Speed strategy (THE priority — analysis says ~1.8-2.3x MD, so frameskip + skips are mandatory)
+
+Levers, most-effective first. Build them in from the start; do not bolt on later.
+
+1. **Sub-68K idle-skip** (biggest). The sub spends most cycles spinning on a GA
+   status reg waiting for the main / CDD. `segacd_bus.c` counts unchanged reads
+   of the same reg → `SCD.sub_idle`; `segacd_run_sub` then skips the slice; any
+   GA/CDD write calls `segacd_poll_wake()`. Correctness rule: EVERY state change
+   the sub could wait on must wake it, or it hangs. Same lever as GBA/VB/WS.
+2. **Main-68K idle-skip.** The main also polls (BIOS wait loops, giveWord). Add
+   the same poll/wake on the main GA reads.
+3. **Frameskip.** `common_emu_frame_loop()` already gates draw; on skip frames
+   run CPUs+CDD but drop VDP render AND the Word-RAM ASIC blit.
+4. **Coarse interleave.** Context-swap main<->sub a few times per frame, not per
+   scanline — each swap is two struct copies. Sync only at CDD/GA events.
+5. **ASIC on-demand only.** Run `gfx.c` when a GA op is started, never per frame;
+   its cost is O(pixels), so heavy roto (Sonic CD, Silpheed) is where fps dies —
+   those may stay frameskip-heavy or unsupported.
+6. **Batch audio.** PCM + CD-DA generated once per frame into the mix buffer, not
+   per sample.
+
+Watch-out: XIP code from external flash is a *speed cost* (slower fetch than
+internal). Keep the hottest inner loops (68K dispatch) in internal flash/RAM if
+the budget allows; XIP the cold CD/BIOS code.
+
 ## Test path
 
 - Host: extend `linux/Makefile.wswan`-style two-process cold-boot harness for CD.

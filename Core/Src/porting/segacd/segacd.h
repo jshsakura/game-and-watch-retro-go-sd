@@ -60,6 +60,15 @@ typedef struct {
     int  sub_running;         /* cleared while sub is BUSREQ'd / reset-held */
     int  sub_idle;            /* set by poll/sleep fast-path (idle-skip lever) */
 
+    /* ---- idle-skip (THE top speed lever) ----
+     * The sub-68K spends most cycles spinning on a gate-array status register
+     * waiting for the main CPU / CDD. When it reads the same GA reg in a tight
+     * loop with no intervening write, we mark it idle and skip its remaining
+     * timeslice; any write that could change what it polls re-arms it. Same
+     * lever proven on GBA/VB/WonderSwan here. */
+    uint8_t  poll_reg;        /* last GA reg the sub read */
+    uint16_t poll_count;      /* consecutive unchanged reads of poll_reg */
+
     segacd_pcm_t pcm;         /* RF5C164 8-channel PCM */
 
     /* --- CDC/CDD state lives in the adapted pd_cd/ layer --- */
@@ -78,6 +87,7 @@ void segacd_sub_hold(void);             /* hold sub in reset / bus-request */
 void segacd_sub_build_memory_map(void); /* fill SCD.sub_ctx.memory_map */
 void segacd_main_map_cd_space(void);    /* patch main map: PRG win / Word / GA */
 void segacd_map_bios(const uint8_t *bios); /* map region BIOS at main $000000 */
+void segacd_poll_wake(void);            /* re-arm the sub after a GA/CDD change */
 
 /* backup RAM (BRAM) persistence — 8 KB, per-game save file (segacd_cd.c) */
 int  segacd_bram_load(const char *path);
