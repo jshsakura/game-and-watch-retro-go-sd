@@ -385,6 +385,22 @@ echo "=== idle power off: one setting, one rule, and every idle loop asks it ===
 bash tests/test_idle_timeout_wired.sh
 rc=$(( rc || $? ))
 
+echo "=== boot rescue: a bricked boot must end somewhere a person can act ==="
+# A bad firmware hung the device dark with the power button dead — firmware
+# reads that button, so a hang can only be escaped by a flat battery. The
+# rescue counter/screen/power-off only work if every hook is CALLED (wiring),
+# and the counter logic itself runs here against a fake backup register
+# (compiling the real gw_boot_rescue.c, per the flash-cache lesson).
+bash tests/test_boot_rescue_wired.sh
+rc=$(( rc || $? ))
+BR_DIR=/tmp/mtest/boot_rescue
+rm -rf "$BR_DIR"; mkdir -p "$BR_DIR"
+$CC -O1 -g -std=gnu11 -Wall $SAN -DBOOT_RESCUE_HOST_TEST \
+    -Itests/boot_rescue_stubs -ICore/Inc \
+    tests/test_boot_rescue.c Core/Src/gw_boot_rescue.c \
+    -o "$BR_DIR/test_boot_rescue" || rc=1
+"$BR_DIR/test_boot_rescue" || rc=1
+
 # Everything from here to EOF is re-run standalone by tests/test_sm_skip_guard.sh,
 # which is why nothing that is expensive or self-contained belongs below this line.
 # ---------------------------------------------------------------- flash cache --

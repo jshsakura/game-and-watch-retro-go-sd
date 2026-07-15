@@ -8,6 +8,7 @@
 
 #include "appid.h"
 #include "main.h"
+#include "gw_boot_rescue.h"
 #include "rg_emulators.h"
 #include "gui.h"
 #include "gittag.h"
@@ -1235,7 +1236,10 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     // Start the previously running emulator directly if it's a valid pointer.
     // If the user holds down TIME during startup, skip resume lookup and go
     // straight to launcher UI (avoids an unnecessary full ROM scan at boot).
-    const bool force_launcher = ((GW_GetBootButtons() & B_TIME) != 0);
+    // The boot-rescue screen ("boot to menu") forces the same skip: when the
+    // last boots died, the auto-resumed game is the prime suspect.
+    const bool force_launcher = ((GW_GetBootButtons() & B_TIME) != 0)
+                                || boot_rescue_force_launcher();
     char *startup_file = odroid_settings_StartupFile_get();
     retro_emulator_file_t *file = NULL;
     if (!force_launcher && strlen(startup_file) > 0) {
