@@ -194,9 +194,11 @@ int main(void) {
     if ((frame + 1) % RIG_WINDOW == 0) {
       uint64_t emu_i = win_emu * ipt_x1000 / 1000 / RIG_WINDOW;
       uint64_t apu_i = win_apu * ipt_x1000 / 1000 / RIG_WINDOW;
-      printf("w%05d emu=%lu apu=%lu insn/frame fb=%08lx\n",
+      int lit = 0;
+      for (int q = 0; q < 320 * 240; q++) if (g_fb[q]) lit++;
+      printf("w%05d emu=%lu apu=%lu insn/frame fb=%08lx lit=%d\n",
              frame + 1, (unsigned long)emu_i, (unsigned long)apu_i,
-             (unsigned long)(uint32_t)h);
+             (unsigned long)(uint32_t)h, lit);
       tot_emu += win_emu; tot_apu += win_apu;
       win_emu = win_apu = 0;
     }
