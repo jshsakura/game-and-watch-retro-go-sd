@@ -27,3 +27,8 @@ savestate:
   label: savestate
   permalink: /savestate
   description: Save/resume and state serialization
+
+video:
+  label: video
+  permalink: /video
+  description: Video player (MJPEG-AVI) work

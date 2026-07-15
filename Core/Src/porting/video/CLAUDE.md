@@ -53,18 +53,34 @@ read becomes a blocking one, and playback goes from smooth to permanently stutte
 the whole shape of the user report: fine at first, progressively worse, worse still on a long
 clip, never recovers.
 
-`trim_step()` closes the loop: it holds the ring near `VR_TARGET` by trimming the resample step
-within ±1% (17 cents — inaudible). Consuming input slightly faster emits fewer samples per MP3
-frame and drains a filling ring.
+`trim_step()` closes the loop as a **PI servo**: it holds the ring near `VR_TARGET` by trimming
+the resample step within ±1% (17 cents — inaudible). Consuming input slightly faster emits fewer
+samples per MP3 frame and drains a filling ring. A pure-proportional trim needs a *standing* fill
+error to command a standing correction, so under sustained drift it plateaus **above** `VR_TARGET`
+— and a 1% mismatch demands the full ±1% deflection, only reachable with the ring already past the
+gate. The **integral term** (`TRIM_KI_DIV`, `g_fill_integ`) drives that steady-state error to zero,
+so the ring converges *on* `VR_TARGET`. Anti-windup pins the integrator at the authority edge, so
+it never winds past what the step can express and unwinds the instant the error reverses.
+
+Beyond ±1% mismatch the trim runs out of authority and cannot cancel the drift at all. So a
+**non-latching valve** backs it up: if `ring_count()` exceeds `VR_VALVE_CAP` (2560) the oldest
+sample is dropped, which **guarantees** the ring can never pin full and latch the prefetch gate
+shut. Inside authority the PI keeps the ring at target and the valve is dormant (only a ~13 ms
+startup blip); beyond it the valve sheds exactly the excess (~600 ms/min at a full 2% mismatch) —
+a tiny periodic audio drop instead of the progressive-stutter cliff. `g_video_audio_drops` counts it.
 
 **Rules:**
 - `VR_TARGET` must stay **below** `VR_SIZE - 1 - PF_AUDIO_HEADROOM` (1695 samples), or holding
   the target would itself be what keeps the prefetcher off. These two constants are coupled;
   move one and you must re-check the other.
+- `VR_VALVE_CAP` (2560) must stay low enough that a valve-pinned ring still drains below the 1695
+  gate within one frame (pinned trough ≈ cap − one chunk ≈ 895). Coupled to `PF_AUDIO_HEADROOM`
+  and `VR_SIZE` — re-check all three together.
 - Servo on a low-passed level, never the instantaneous one: the ring swings by a whole chunk
   within one video frame, and servoing on that just modulates pitch at the frame rate.
-- Reset the servo (`g_fill_ema`, `g_step`) wherever the ring is flushed — `video_audio_stop()`,
-  which a seek goes through — or the empty ring reads as "starving" and the trim slams.
+- Reset the servo (`g_fill_ema`, `g_step`, `g_fill_integ`) wherever the ring is flushed —
+  `video_audio_stop()`, which a seek goes through — or the empty ring reads as "starving" and the
+  trim slams.
 
 ## Verifying on device
 
@@ -76,5 +92,13 @@ near 1200 the whole time. Climbing toward 4095 means the trim is not holding and
 coming back; falling to 0 is an underrun. `rd=` staying near 0 (with the work showing up in
 `pf=`) means the prefetcher is alive — that is what the full ring used to destroy.
 
-No host harness covers any of this: the JPEG peripheral, the SAI clock and the SD read latency
-are all device-only. Test on hardware, with a long clip.
+There is now a **QEMU Cortex-M7 rig** for the drift/latch specifically: `tools/m7_qemu_rig/rig_video.c`
++ `run_video.sh` boot the *real* video source on an emulated M7 with two independent clocks (video
+SysTick vs an audio ISR at a settable ppm offset) and a synthetic AVI, printing a per-frame ledger
+(ring trough, gate reopen, `rd`/`pf`). It reproduces the slowdown deterministically —
+`run_video.sh <ppm> <frames>`: at ppm ≥ 10000 (=1%, the servo authority) the old code latches at a
+fixed *time* independent of clip length; the PI+valve code stays bounded and never latches. That is
+what proved the fix (RED→GREEN). What the rig does **not** model is absolute timing — the JPEG
+peripheral, the real SAI clock and SD read latency are injected models, not hardware — so device
+fps is still the device's call. Verify on hardware with a long clip; `ring=` must sit near 1200 the
+whole time.
