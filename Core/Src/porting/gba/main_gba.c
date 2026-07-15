@@ -314,6 +314,8 @@ static bool gba_cache_xip_to_flash(void)
 /* The cart's own save — the one the game writes when you save in-game. This is
  * what a Pokemon player actually cares about; a savestate is a convenience on
  * top of it. */
+static void gba_diag_flush(void);   /* audio diagnostics, defined with them */
+
 static void gba_SramSave(void)
 {
     char *path = odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path);
@@ -323,6 +325,8 @@ static void gba_SramSave(void)
         fclose(f);
     }
     free(path);
+    /* Already a moment the SD is being written: piggyback the audio diary. */
+    gba_diag_flush();
 }
 
 static void gba_SramLoad(void)
@@ -441,17 +445,51 @@ static void *gba_Screenshot(void)
 }
 
 /* ------------------------------------------------------------------ audio --- */
-/* The last 5-second diagnostic window, for the on-screen line: there is no
- * reachable log screen in-game, so if the numbers are not on the LCD they do
- * not exist. Written by gba_pcm_submit, drawn next to the overlay. */
-static uint32_t gba_diag_osd_clip, gba_diag_osd_hold, gba_diag_osd_flip;
+/* Audio diagnostic windows, kept in RAM during play — an SD write mid-game
+ * would stall the frame and MANUFACTURE the very crackle it is measuring — and
+ * flushed to /gba_audio_diag.txt only when the menu mutes the audio, and once
+ * more on quit. The user plays, hears the crackle, quits, reads the file. */
+#define GBA_DIAG_RING 64
+static struct { uint32_t sec, clip, hold, flip; } gba_diag_ring[GBA_DIAG_RING];
+static uint32_t gba_diag_n;        /* windows recorded since last flush */
+static uint32_t gba_diag_dropped;  /* windows lost to a full ring */
+static uint32_t gba_diag_seconds;  /* run time, in 5 s ticks x 5 */
+
+static void gba_diag_flush(void)
+{
+    if (gba_diag_n == 0)
+        return;
+    FILE *f = fopen("/gba_audio_diag.txt", "a");
+    if (f == NULL) {
+        gba_diag_n = 0;
+        return;
+    }
+    fprintf(f, "# clip=mixer saturated, hold=frame came up short, "
+               "rateflip=fifo rate changed; 5s windows, quiet ones omitted\n");
+    for (uint32_t i = 0; i < gba_diag_n; i++)
+        fprintf(f, "t=%lus clip=%lu hold=%lu rateflip=%lu\n",
+                (unsigned long)gba_diag_ring[i].sec,
+                (unsigned long)gba_diag_ring[i].clip,
+                (unsigned long)gba_diag_ring[i].hold,
+                (unsigned long)gba_diag_ring[i].flip);
+    if (gba_diag_dropped != 0)
+        fprintf(f, "(+%lu windows dropped, ring full)\n",
+                (unsigned long)gba_diag_dropped);
+    fclose(f);
+    gba_diag_n = 0;
+    gba_diag_dropped = 0;
+}
 
 static void gba_pcm_submit(void)
 {
     uint32_t got = sound_read_samples(gba_audio_stereo, GBA_AUDIO_FRAMES);
 
-    if (common_emu_sound_loop_is_muted())
+    if (common_emu_sound_loop_is_muted()) {
+        /* The menu just muted us — the one moment an SD write cannot put a
+         * crackle into the audio, because there is no audio. */
+        gba_diag_flush();
         return;
+    }
 
     int32_t   factor = common_emu_sound_get_volume();
     int16_t  *out    = audio_get_active_buffer();
@@ -509,13 +547,21 @@ static void gba_pcm_submit(void)
         if (got < len)
             diag_hold += len - got;
         if (++diag_calls >= 300) {
-            if (diag_clip != 0 || diag_hold != 0 || diag_flip != 0)
+            gba_diag_seconds += 5;
+            if (diag_clip != 0 || diag_hold != 0 || diag_flip != 0) {
                 printf("gba audio 5s: clip=%lu hold=%lu rateflip=%lu\n",
                        (unsigned long)diag_clip, (unsigned long)diag_hold,
                        (unsigned long)diag_flip);
-            gba_diag_osd_clip = diag_clip;
-            gba_diag_osd_hold = diag_hold;
-            gba_diag_osd_flip = diag_flip;
+                if (gba_diag_n < GBA_DIAG_RING) {
+                    gba_diag_ring[gba_diag_n].sec  = gba_diag_seconds;
+                    gba_diag_ring[gba_diag_n].clip = diag_clip;
+                    gba_diag_ring[gba_diag_n].hold = diag_hold;
+                    gba_diag_ring[gba_diag_n].flip = diag_flip;
+                    gba_diag_n++;
+                } else {
+                    gba_diag_dropped++;
+                }
+            }
             diag_clip = diag_hold = diag_flip = diag_calls = 0;
         }
     }
@@ -684,20 +730,6 @@ static void blit(void)
 
     common_emu_clear_dwt_cycles();
     common_ingame_overlay();
-
-    /* The audio diagnostic, on the LCD: the last 5-second window's counters,
-     * drawn only while there is something to report. clip = gpSP's mix
-     * accumulator saturated, hold = the frame came up short and a sample was
-     * held, flip = the FIFO rate changed. Whichever number is moving when the
-     * ear hears a crackle names the culprit. */
-    if (gba_diag_osd_clip != 0 || gba_diag_osd_hold != 0 || gba_diag_osd_flip != 0) {
-        char line[40];
-        snprintf(line, sizeof(line), "SND C:%lu H:%lu R:%lu",
-                 (unsigned long)gba_diag_osd_clip,
-                 (unsigned long)gba_diag_osd_hold,
-                 (unsigned long)gba_diag_osd_flip);
-        odroid_overlay_draw_text(4, GW_LCD_HEIGHT - 12, 0, line, C_YELLOW, C_BLACK);
-    }
     gba_diag_add(&diag_overlay, common_emu_get_dwt_cycles());
 }
 
