@@ -499,5 +499,7 @@ int main(void)
         printf("[video-qemu] gate closed transiently but kept reopening (no permanent latch)\n");
     printf("[video-qemu] presented=%ld attempts=%ld drops=%ld\n",
            g_swaps, g_attempt, g_attempt - g_swaps);
+    extern uint32_t g_video_audio_drops;
+    printf("[video-qemu] valve_drops=%u samples\n", (unsigned)g_video_audio_drops);
     return 0;
 }

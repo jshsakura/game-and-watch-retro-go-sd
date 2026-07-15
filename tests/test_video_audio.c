@@ -167,10 +167,13 @@ static void test_stop_resets_servo(void)
  * The regression this file exists for. Feed REAL decoded audio, one MP3
  * frame at a time, while draining it slightly slower than it's produced (a
  * fixed-rate mismatch well inside the servo's +/-1% authority — the drifting-
- * clock scenario CLAUDE.md describes). With trim_step() doing its job the
- * ring converges to a stable plateau comfortably above the prefetch gate
- * (PF_AUDIO_HEADROOM=2400 in video_play.c); the "calibration" pass first
- * measures this fixture's true untrimmed production rate (resetting the
+ * clock scenario CLAUDE.md describes). With the PI servo doing its job the
+ * ring CONVERGES ON VR_TARGET — not merely to some plateau above the prefetch
+ * gate. A pure-proportional servo needs a standing fill error to command the
+ * standing correction a sustained mismatch requires, so it settles at an OFFSET
+ * above target (which can park the ring near the gate that latches playback);
+ * the integral term drives that steady-state error to zero. The "calibration"
+ * pass first measures this fixture's true untrimmed production rate (resetting the
  * servo state after each frame so its own reaction doesn't contaminate the
  * measurement) instead of hardcoding a rate that only holds for one exact
  * ffmpeg/lame version's frame sizes.
@@ -254,13 +257,29 @@ static void test_servo_holds_under_sustained_mismatch(const uint8_t *mp3, long *
     printf("  (ring_free avg: 3rd quarter=%d, 4th quarter=%d, PF_AUDIO_HEADROOM=2400)\n", q3_avg, q4_avg);
 
     CHECK(q4_avg > 2400, "servo holds ring_free() above the prefetch gate under sustained under-drain");
-    /* Plateaued, not just still-above-threshold-by-luck: the 3rd and 4th
+    /* Converged, not just still-above-threshold-by-luck: the 3rd and 4th
      * quarter averages should be close to each other, not still trending
      * down (which is what "reverted trim_step" looks like — see RED proof). */
     int drift = q3_avg - q4_avg;
     if (drift < 0) drift = -drift;
-    CHECK(drift < 150, "ring_free() has plateaued by the back half, not still declining");
-    OK("trim_step holds the ring at a stable plateau under a sustained drain mismatch");
+    CHECK(drift < 150, "ring_free() has settled by the back half, not still declining");
+
+    /* The PI invariant (this is the strengthening over the old proportional-only
+     * assertion, which accepted any plateau below the gate): the ring converges
+     * ON VR_TARGET, not to an offset above it. ring_count = (VR_SIZE-1) - free,
+     * so the back-half ring level is (VR_SIZE-1) - q4_avg. A pure-proportional
+     * servo settles ~100 samples above target at this ~0.3% mismatch (it needs
+     * the standing error to hold the standing trim); the integral term erases
+     * that. Require the converged level within 50 of VR_TARGET — met by PI
+     * (offset ~5) and FAILED by a proportional-only servo (offset ~109, proven
+     * by rebuilding this file with -DTRIM_KI_DIV=1000000000 to null the
+     * integral: the RED the strengthening is written against). */
+    int q4_ring = (VR_SIZE - 1) - q4_avg;
+    int off = q4_ring - VR_TARGET;
+    if (off < 0) off = -off;
+    printf("  (converged ring level=%d, VR_TARGET=%d, offset=%d)\n", q4_ring, VR_TARGET, off);
+    CHECK(off < 50, "PI servo converges the ring ON VR_TARGET (no proportional plateau offset)");
+    OK("trim_step converges the ring to VR_TARGET under a sustained drain mismatch");
 }
 
 int main(void)

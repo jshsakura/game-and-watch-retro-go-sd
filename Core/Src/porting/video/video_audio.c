@@ -34,8 +34,23 @@
 // (VR_SIZE-1 - PF_AUDIO_HEADROOM = 1695 samples), or holding the target would
 // itself be what keeps the prefetcher off.
 #define VR_TARGET  1200        // ~25ms held in the ring
-#define TRIM_SPAN  1024        // fill error at which the trim reaches full scale
-#define TRIM_MAX_PCT_X100  100 // 1.00% maximum step deflection
+#define TRIM_SPAN  1024        // fill error at which the PROPORTIONAL term reaches full scale
+#define TRIM_MAX_PCT_X100  100 // 1.00% maximum step deflection (servo authority)
+
+// The trim is a PI servo. A pure proportional term needs a standing fill error
+// to command a standing correction, so under a sustained clock mismatch it
+// settles at a PLATEAU offset above VR_TARGET (e.g. a 1% mismatch demands the
+// full 1% deflection, which a P-only servo can only reach with err ~= TRIM_SPAN
+// = the ring parked at VR_TARGET+1024 = 2224, well above the 1695 gate — so the
+// prefetcher stays latched off exactly when the servo is "working"). The slow
+// integral term drives that steady-state error to zero: the ring converges ON
+// VR_TARGET for any mismatch inside authority, not to an offset near the gate.
+// TRIM_KI_DIV is the integrator gain denominator (bigger = slower); tuned on the
+// QEMU M7 rig so ppm=0 stays flat (no hunting) and 1% mismatch converges to
+// VR_TARGET rather than plateauing high.
+#ifndef TRIM_KI_DIV
+#define TRIM_KI_DIV  256       // integral gain denominator (err-per-call -> 0.01%)
+#endif
 
 static int16_t           g_ring[VR_SIZE];
 static volatile uint16_t g_head, g_tail;
@@ -50,6 +65,7 @@ static int       g_frame_n;            // mono samples pending in g_mono
 static uint32_t  g_phase, g_step;      // 16.16 resample index / step (trimmed)
 static uint32_t  g_step_base;          // ...and its untrimmed source-rate value
 static int       g_fill_ema;           // low-passed ring level the trim servos on
+static int32_t   g_fill_integ;         // integral accumulator (err summed over calls)
 static int16_t   g_prev;               // last sample of the PREVIOUS frame
 
 static uint8_t   g_in[VIN_MAX];        // leftover undecoded MP3 bytes
@@ -71,17 +87,70 @@ static void trim_step(void)
     if (err >  TRIM_SPAN) err =  TRIM_SPAN;
     if (err < -TRIM_SPAN) err = -TRIM_SPAN;
 
-    int32_t adj = (int32_t)(((int64_t)g_step_base * err * TRIM_MAX_PCT_X100)
-                            / ((int64_t)TRIM_SPAN * 10000));
+    // Proportional and integral terms, both in units of 0.01% of the step.
+    int32_t p = (int32_t)err * TRIM_MAX_PCT_X100 / TRIM_SPAN;   // +/-100 for err = +/-TRIM_SPAN
+    g_fill_integ += err;                                        // slow error accumulation
+    int32_t pct = p + g_fill_integ / TRIM_KI_DIV;
+
+    // Anti-windup: the TOTAL deflection is the servo's only authority, so clamp
+    // it to +/-TRIM_MAX_PCT_X100 and, when it saturates, hold the integrator at
+    // exactly the value that keeps the total on the edge — it never winds up past
+    // what the step can express (so it unwinds the instant the error reverses).
+    if (pct > TRIM_MAX_PCT_X100) {
+        pct = TRIM_MAX_PCT_X100;
+        g_fill_integ = (int32_t)(TRIM_MAX_PCT_X100 - p) * TRIM_KI_DIV;
+    } else if (pct < -TRIM_MAX_PCT_X100) {
+        pct = -TRIM_MAX_PCT_X100;
+        g_fill_integ = (int32_t)(-TRIM_MAX_PCT_X100 - p) * TRIM_KI_DIV;
+    }
+
+    int32_t adj = (int32_t)(((int64_t)g_step_base * pct) / 10000);
     g_step = (uint32_t)((int32_t)g_step_base + adj);
 }
+
+// --- non-latching saturation valve ------------------------------------------
+// The PI servo cancels any mismatch INSIDE its +/-1% authority, but a real crystal
+// pair (or a badly muxed clip) can drift faster than that. Then production beats
+// consumption for good and the ring would fill to VR_SIZE and PIN there — its
+// per-frame trough parked above the prefetch gate (VR_SIZE-1-PF_AUDIO_HEADROOM =
+// 1695), which is the latch. VR_SIZE (4095) is just an accidental, far-too-high
+// ceiling; replace it with a deliberate one.
+//
+// VR_VALVE_CAP is the highest count we let the ring hold. Its job is that a
+// valve-PINNED ring (drift beyond the servo's authority) still drains below the
+// prefetch gate (1695) within one frame — pinned trough ~= cap - one drained
+// chunk (~895 on the rig) — so the gate always reopens and prefetch keeps hiding
+// the bursty MJPEG reads (rd stays ~0). That needs cap < ~2590. The prefetcher's
+// own healthy peak is ~2620 (it fills to the 1695 gate then pushes one whole
+// ~1152-sample audio chunk past it before the next gate check), so a cap in this
+// range clips a one-off ~13ms of audio during the startup pre-roll ramp; steady
+// state peaks ~2480 and the valve never fires again. That one-time pre-roll blip
+// is the price of keeping playback smooth at the very edge of authority, where a
+// higher cap would park the ring above the gate and let burst frames blow the
+// per-frame budget. Inside authority the PI holds the ring at VR_TARGET and the
+// valve is dormant.
+#ifndef VR_VALVE_CAP
+#define VR_VALVE_CAP 2560
+#endif
+
+uint32_t g_video_audio_drops;          // samples the valve has dropped (diagnostic)
 
 static int ring_push(int16_t s)
 {
     uint16_t n = (g_head + 1) & VR_MASK;
-    if (n == g_tail) return 0;          // full
+    if (n == g_tail) return 0;          // full (unreachable while the valve holds)
     g_ring[g_head] = s;
     g_head = n;
+    // Valve: if the ring has climbed past the cap, drop the OLDEST sample so the
+    // count can never sit high enough to hold the prefetch gate shut. Dropping
+    // the stale end (advance tail) keeps A/V sync tighter than refusing the fresh
+    // one. The SAI ISR also advances g_tail, but the store is a single aligned
+    // 16-bit write and the valve fires only under out-of-authority drift, so a
+    // lost-update race is at worst one stale sample — never a corrupt index.
+    if (ring_count() > VR_VALVE_CAP) {
+        g_tail = (g_tail + 1) & VR_MASK;
+        g_video_audio_drops++;
+    }
     return 1;
 }
 
@@ -95,6 +164,7 @@ void video_audio_start(void)
     g_step_base = ((uint32_t)44100 << 16) / AUDIO_SAMPLE_RATE;  // until the first frame
     g_step = g_step_base;
     g_fill_ema = VR_TARGET;                                // start centred: no kick at t=0
+    g_fill_integ = 0;                                      // integrator starts unwound
     g_in_len = 0;
     music_attach(g_ring, VR_SIZE, &g_head, &g_tail);        // ISR reads this ring
 }
@@ -109,7 +179,8 @@ void video_audio_stop(void)
     g_prev = 0;
     g_in_len = 0;
     g_fill_ema = VR_TARGET;              // a seek empties the ring; don't let the
-    g_step = g_step_base;                // servo read that as "starving" and slam
+    g_fill_integ = 0;                    // servo read that as "starving" and slam
+    g_step = g_step_base;
 
 }
 
