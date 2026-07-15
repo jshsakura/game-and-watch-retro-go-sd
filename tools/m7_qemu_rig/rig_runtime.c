@@ -23,6 +23,16 @@ extern int main(void);
 
 void Reset_Handler(void)
 {
+    /* Enable the FPU (CPACR CP10/CP11 full access) before any code runs. A
+     * hard-float build (the device's ABI: -mfloat-abi=hard -mfpu=fpv5-d16)
+     * emits VFP instructions that trap without this; a soft-float build never
+     * touches it, so the write is harmless either way. Matching the device
+     * float ABI matters for FP-heavy cores (V810's FPU: 3D games) — a
+     * soft-float rig counts each float op as a libgcc call and grossly
+     * overstates the emulation cost the device pays in one VFP instruction. */
+    *(volatile uint32_t *)0xE000ED88 |= (0xFu << 20);
+    __asm__ volatile("dsb; isb");
+
     uint32_t *src = &_sidata, *dst = &_sdata;
     while (dst < &_edata) *dst++ = *src++;
     for (dst = &_sbss; dst < &_ebss; dst++) *dst = 0;
