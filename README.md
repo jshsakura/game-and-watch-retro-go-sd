@@ -1,5 +1,11 @@
 # 🧪 Experimental Lab Fork ⚠️ — read before flashing
 
+<p align="center">
+  <img src="assets/lab_clock_zelda.jpg" width="560" alt="The Clock app running on a Game & Watch (Zelda model), pixel-scene background">
+  <br>
+  <em>The built-in Clock app — pixel-scene background, on real hardware.</em>
+</p>
+
 This is a **personal experimental lab** built on top of
 [sylverb/game-and-watch-retro-go-sd](https://github.com/sylverb/game-and-watch-retro-go-sd),
 the excellent SD-card fork of retro-go for the Nintendo® Game & Watch™. Everything here
