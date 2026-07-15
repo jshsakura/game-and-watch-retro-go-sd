@@ -220,5 +220,6 @@ Detailed debugging guides live next to each porting layer (not in this file — 
 | System | Guide |
 |--------|-------|
 | PCE / PCE CD | [Core/Src/porting/pce/CLAUDE.md](Core/Src/porting/pce/CLAUDE.md) — harness `linux/Makefile.pce` |
+| GBA | [Core/Src/porting/gba/CLAUDE.md](Core/Src/porting/gba/CLAUDE.md) — rig `tools/gba_m4a/` (M4A HLE proof + idle A/B + audio taps), idle-skip semantics, sound path, XIP contract |
 
 Add a `CLAUDE.md` under `Core/Src/porting/<system>/` (and optionally `.cursor/rules/<system>.mdc`) when an emulator accumulates non-obvious debug knowledge.
