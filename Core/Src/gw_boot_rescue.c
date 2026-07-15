@@ -33,6 +33,7 @@ static bool force_launcher = false;
 #include "main.h"
 #include "gw_buttons.h"
 #include "gw_lcd.h"
+#include "gw_ofw.h"
 #include "odroid_colors.h"
 #include "odroid_display.h"
 #include "odroid_overlay.h"
@@ -121,6 +122,11 @@ void boot_rescue_screen_show(void)
 {
   char line[44];
   int y = 8;
+  /* "Boot the original firmware" is only real on dual-boot installs, where
+   * bank 1 holds the patched OFW and clearing the DR0 "BOOT" flag makes the
+   * patch boot it instead of us (same mechanism the launcher's own OFW menu
+   * item uses, rg_main.c). */
+  const bool have_ofw = get_ofw_is_present();
 
   lcd_sync();
   lcd_reset_active_buffer();
@@ -132,6 +138,9 @@ void boot_rescue_screen_show(void)
   y += odroid_overlay_draw_text(0, y, GW_LCD_WIDTH, line, C_WHITE, C_BLACK) * 2;
   y += odroid_overlay_draw_text(0, y, GW_LCD_WIDTH, "TIME : boot to menu, skip resume", C_WHITE, C_BLACK);
   y += odroid_overlay_draw_text(0, y, GW_LCD_WIDTH, "A    : boot normally", C_WHITE, C_BLACK);
+  if (have_ofw) {
+    y += odroid_overlay_draw_text(0, y, GW_LCD_WIDTH, "GAME : boot original firmware", C_WHITE, C_BLACK);
+  }
   y += odroid_overlay_draw_text(0, y, GW_LCD_WIDTH, "POWER: power off", C_WHITE, C_BLACK);
   y += odroid_overlay_draw_text(0, y, GW_LCD_WIDTH, "Powers off by itself in 60s.", C_GRAY, C_BLACK) * 2;
 
@@ -158,6 +167,12 @@ void boot_rescue_screen_show(void)
     }
     if (buttons & B_A) {
       return;
+    }
+    if (have_ofw && (buttons & B_GAME)) {
+      /* Tell the patched OFW to stop booting Retro-Go, then reset into it. */
+      HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0x00000000);
+      boot_rescue_mark_clean_shutdown();
+      HAL_NVIC_SystemReset();
     }
     if (rescue_now_ms() - start > RESCUE_SCREEN_TIMEOUT_MS) {
       boot_rescue_power_off_now();
