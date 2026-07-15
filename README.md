@@ -6,6 +6,13 @@
   <em>The built-in Clock app — pixel-scene background, on real hardware.</em>
 </p>
 
+<p align="center">
+  <strong>📖 Full documentation &amp; devlog →
+  <a href="https://jshsakura.github.io/game-and-watch-retro-go-sd/">jshsakura.github.io/game-and-watch-retro-go-sd</a></strong>
+  <br>
+  <sub>Browsable docs, per-system deep dives, and a dated development journal. This README is the short version.</sub>
+</p>
+
 This is a **personal experimental lab** built on top of
 [sylverb/game-and-watch-retro-go-sd](https://github.com/sylverb/game-and-watch-retro-go-sd),
 the excellent SD-card fork of retro-go for the Nintendo® Game & Watch™. Everything here

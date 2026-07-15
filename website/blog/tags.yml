@@ -1,0 +1,19 @@
+gba:
+  label: GBA
+  permalink: /gba
+  description: Game Boy Advance work
+
+performance:
+  label: performance
+  permalink: /performance
+  description: Speed and CPU-budget work
+
+audio:
+  label: audio
+  permalink: /audio
+  description: Sound path work
+
+release:
+  label: release
+  permalink: /release
+  description: Release notes and milestones

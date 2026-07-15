@@ -1,0 +1,50 @@
+/**
+ * Game & Watch green — the console's own palette, used lightly.
+ */
+
+:root {
+  --ifm-color-primary: #2f7d32;
+  --ifm-color-primary-dark: #2a711d;
+  --ifm-color-primary-darker: #276b2b;
+  --ifm-color-primary-darkest: #205823;
+  --ifm-color-primary-light: #359a3a;
+  --ifm-color-primary-lighter: #3aa53f;
+  --ifm-color-primary-lightest: #46b94c;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #6cd36f;
+  --ifm-color-primary-dark: #4fca53;
+  --ifm-color-primary-darker: #41c645;
+  --ifm-color-primary-darkest: #33a336;
+  --ifm-color-primary-light: #89dc8b;
+  --ifm-color-primary-lighter: #98e099;
+  --ifm-color-primary-lightest: #c3eec4;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
+
+.hero--lab {
+  background: linear-gradient(135deg, #1f5c22 0%, #2f7d32 60%, #3aa53f 100%);
+  color: #fff;
+}
+
+.hero--lab .hero__subtitle {
+  max-width: 40rem;
+  margin: 0 auto 1.5rem;
+}
+
+.hero__photo {
+  max-width: 560px;
+  width: 100%;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  margin-top: 1.25rem;
+}
+
+.hero__caption {
+  font-size: 0.9rem;
+  opacity: 0.85;
+  margin-top: 0.75rem;
+}
