@@ -591,6 +591,26 @@ $(CORE_WSWAN)/emu/WSApu.c \
 Core/Src/porting/wswan/nec.c \
 Core/Src/porting/wswan/main_wswan.c
 
+# Generic SNES core (LakeSnes interpreter, shared sources with the SM port —
+# but compiled into its OWN overlay with its OWN symbol namespace, see
+# snes_redefines; the SM port's copies are renamed sm__*). EXPERIMENTAL.
+SNES_C_SOURCES =
+
+CORE_SNES = external/sm
+SNES_C_SOURCES += \
+$(CORE_SNES)/src/snes/apu.c \
+$(CORE_SNES)/src/snes/cart.c \
+$(CORE_SNES)/src/snes/cpu.c \
+$(CORE_SNES)/src/snes/dma.c \
+$(CORE_SNES)/src/snes/dsp.c \
+$(CORE_SNES)/src/snes/input.c \
+$(CORE_SNES)/src/snes/ppu.c \
+$(CORE_SNES)/src/snes/snes.c \
+$(CORE_SNES)/src/snes/snes_other.c \
+$(CORE_SNES)/src/snes/spc.c \
+$(CORE_SNES)/src/tracing.c \
+Core/Src/porting/snes/main_snes.c
+
 MD_C_SOURCES =
 
 CORE_GWENESIS = external/gwenesis
@@ -1199,6 +1219,14 @@ NGP_C_INCLUDES += \
 -D_MAX_PATH=260 \
 -I./
 
+# Same base as the SM port (the odroid/firmware headers come from C_INCLUDES);
+# -Iexternal/sm/src so the lib's #include "snes/xxx.h" resolve.
+SNES_C_INCLUDES = $(C_INCLUDES) \
+-ICore/Inc/porting/snes \
+-I$(CORE_SNES)/src \
+-I$(CORE_SNES) \
+-I./
+
 WSWAN_C_INCLUDES += \
 -ICore/Inc \
 -ICore/Inc/porting/wswan \
@@ -1355,7 +1383,7 @@ include Makefile.common
 
 $(BUILD_DIR)/$(TARGET)_extflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)
-	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
+	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_snes -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
 
 $(BUILD_DIR)/$(TARGET)_intflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)

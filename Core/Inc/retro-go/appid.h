@@ -26,6 +26,7 @@ typedef enum {
     APPID_VB       = 22,
     APPID_SM       = 23,   /* Super Metroid (SD builds only) */
     APPID_GBA      = 24,   /* Game Boy Advance (gpsp) */
+    APPID_SNES     = 25,   /* generic SNES core (LakeSnes, SD builds only) */
 
     APPID_COUNT,
 } appid_t;
