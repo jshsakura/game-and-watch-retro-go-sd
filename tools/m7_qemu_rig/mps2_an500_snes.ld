@@ -30,6 +30,6 @@ SECTIONS
   .data : { . = ALIGN(4); _sdata = .; *(.data*) . = ALIGN(4); _edata = .; } > RAM AT> CODE
   .bss : { . = ALIGN(4); _sbss = .; *(.bss*) *(COMMON) . = ALIGN(4); _ebss = .; } > RAM
 
-  .heap (NOLOAD) : { . = ALIGN(8); _sheap = .; . += 10M; _eheap = .; } > BIG
+  .heap (NOLOAD) : { . = ALIGN(8); _sheap = .; . += 4M; _eheap = .; } > BIG
   .stack (NOLOAD) : { . = ALIGN(8); . += 1M; _estack = .; } > BIG
 }
