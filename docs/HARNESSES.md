@@ -72,6 +72,25 @@ harnesses below.
   its keep in: `tools/gba_m4a/README.md`. The playbook that says which rig
   answers which GBA question: `Core/Src/porting/gba/CLAUDE.md`.
 
+### `tools/m7_qemu_rig` — executed-instruction counts on a real ARMv7-M stream
+The GBA feasibility study's QEMU trick, rebuilt as a tool this time. QEMU's
+mps2-an500 (Cortex-M7) with `-icount shift=0` makes virtual time tick exactly
+1 ns per executed instruction; the board's CMSDK timer runs on virtual time,
+so a timer delta IS an instruction count (the rig calibrates the exact scale
+on itself at boot — 40.000 insn/tick — and prints it).
+- `run_vb.sh <rom.vb> [frames]` — the linux/vb harness driver, bare-metal:
+  same core sources, same input script, so its frame hashes must equal the
+  host harness's for the same ROM (they do — that's the cross-validation).
+  Prints per-window `emu=`/`blit=` instructions/frame.
+- What it answers: instructions-per-frame A/B of algorithmic changes, and
+  budget math against the CPU clock, in the device's OWN ISA. What it cannot
+  answer: caches and wait states (QEMU models neither) — absolute fps still
+  belongs to the device ledger. First result: the VB eye-skip + spin-credit
+  pair measured **emu −75.9%, total −54.2%** insn/frame on Wario Land, with
+  identical RUNHASH old-vs-new — numbers the x86 host undersold by 3x.
+- `rig_runtime.c`/`mps2_an500.ld` are core-agnostic: copy `rig_vb.c`'s shape
+  to put any other core on the same scale.
+
 ### `tools/jpeg_harness` — the HW JPEG driver against a fake HAL
 - `run.sh` — compiles `hw_jpeg_decoder.c` itself (its three previous tests
   reimplemented the HAL and covered 0% of it) against `hal_fake/`, including
