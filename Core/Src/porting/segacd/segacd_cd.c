@@ -59,53 +59,97 @@ static segacd_cd_t CD;
 enum { CDD_STOP = 0, CDD_PLAY = 1, CDD_SEEK = 2, CDD_PAUSE = 4,
        CDD_READY = 9, CDD_TRAY = 0xE };
 
-/* ---- cue/TOC parse (structure mirrors pce_cd.c) ---- */
+/* ---- cue/TOC parse (faithfully mirrors pce_cd.c:pce_cd_parse_cue) ---- */
+
+/* Resolve a .cue FILE reference (relative) against the cue's own directory. */
+static void resolve_bin_path(const char *cue_path, const char *name, char *out, size_t out_size)
+{
+    const char *slash = strrchr(cue_path, '/');
+    if (slash) {
+        size_t dir_len = (size_t)(slash - cue_path) + 1;   /* keep trailing '/' */
+        if (dir_len >= out_size) dir_len = out_size - 1;
+        memcpy(out, cue_path, dir_len);
+        out[dir_len] = '\0';
+        strncat(out, name, out_size - strlen(out) - 1);
+    } else {
+        snprintf(out, out_size, "%s", name);
+    }
+}
+
+static long file_size_bytes(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fclose(f);
+    return sz;
+}
+
+static char *cue_trim(char *s)
+{
+    char *e = s + strlen(s);
+    while (e > s && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' ' || e[-1] == '\t')) *--e = '\0';
+    while (*s == ' ' || *s == '\t') s++;
+    return s;
+}
 
 static int parse_cue(const char *cue_path)
 {
     FILE *cue = fopen(cue_path, "rb");
     if (!cue) return -1;
 
-    char line[512], cur_bin[256] = {0};
-    uint32_t base_lba = 0, running_lba = 0;
+    char     cur_bin[256] = {0};
+    uint32_t cur_file_base_lba = 0;   /* absolute LBA at offset 0 of cur_bin */
+    uint32_t running_lba = 0;         /* total sectors across files seen so far */
+    int      ti = -1;
+    char     line[512];
     CD.num_tracks = 0;
 
     while (fgets(line, sizeof(line), cue)) {
-        char *p = line;
-        while (*p == ' ' || *p == '\t') p++;
+        char *p = cue_trim(line);
 
         if (!strncmp(p, "FILE", 4)) {
-            char *q = strchr(p, '"'), *r = q ? strchr(q + 1, '"') : NULL;
-            if (q && r) { size_t n = (size_t)(r - q - 1);
-                if (n >= sizeof(cur_bin)) n = sizeof(cur_bin) - 1;
-                memcpy(cur_bin, q + 1, n); cur_bin[n] = 0; }
-            base_lba = running_lba;
-            /* running_lba advanced when we know the file's sector count below */
+            const char *q1 = strchr(p, '"'), *q2 = q1 ? strchr(q1 + 1, '"') : NULL;
+            if (!q1 || !q2) continue;
+            char name[256];
+            size_t n = (size_t)(q2 - q1 - 1);
+            if (n >= sizeof(name)) n = sizeof(name) - 1;
+            memcpy(name, q1 + 1, n); name[n] = '\0';
+
+            resolve_bin_path(cue_path, name, cur_bin, sizeof(cur_bin));
+            cur_file_base_lba = running_lba;               /* this FILE starts here */
+            long sz = file_size_bytes(cur_bin);
+            if (sz > 0) running_lba += (uint32_t)(sz / CD_SECTOR_RAW);
         } else if (!strncmp(p, "TRACK", 5) && CD.num_tracks < CD_MAX_TRACKS) {
-            cd_track_t *t = &CD.tracks[CD.num_tracks++];
+            int num = 0; char mode[32] = {0};
+            if (sscanf(p, "TRACK %d %31s", &num, mode) != 2) continue;
+            ti = CD.num_tracks++;
+            cd_track_t *t = &CD.tracks[ti];
             memset(t, 0, sizeof(*t));
             snprintf(t->bin_path, sizeof(t->bin_path), "%s", cur_bin);
-            t->is_audio     = (strstr(p, "AUDIO") != NULL);
-            t->sector_size  = strstr(p, "/2048") ? CD_SECTOR_DATA : CD_SECTOR_RAW;
-        } else if (!strncmp(p, "INDEX", 5) && CD.num_tracks > 0) {
-            int mm = 0, ss = 0, ff = 0;
-            if (sscanf(p, "INDEX %*d %d:%d:%d", &mm, &ss, &ff) == 3) {
-                uint32_t frames = (uint32_t)((mm * 60 + ss) * 75 + ff);
-                cd_track_t *t = &CD.tracks[CD.num_tracks - 1];
-                t->start_lba   = base_lba + frames;
-                t->file_offset = frames * t->sector_size;
-            }
+            t->is_audio    = (strncmp(mode, "AUDIO", 5) == 0);
+            t->sector_size = strstr(mode, "/2048") ? CD_SECTOR_DATA : CD_SECTOR_RAW;
+        } else if (!strncmp(p, "INDEX", 5) && ti >= 0) {
+            int idx = 0, mm = 0, ss = 0, ff = 0;
+            if (sscanf(p, "INDEX %d %d:%d:%d", &idx, &mm, &ss, &ff) != 4) continue;
+            if (idx != 1) continue;                        /* INDEX 01 = track start */
+            uint32_t frames = (uint32_t)((mm * 60 + ss) * 75 + ff);
+            cd_track_t *t = &CD.tracks[ti];
+            t->start_lba   = cur_file_base_lba + frames;
+            t->file_offset = frames * t->sector_size;
         }
     }
     fclose(cue);
 
-    /* total length: last track to EOF of its bin (best-effort) */
+    if (CD.num_tracks == 0) return -1;
+
+    CD.total_lba = running_lba;
     for (int i = 0; i < CD.num_tracks; i++) {
-        uint32_t end = (i + 1 < CD.num_tracks) ? CD.tracks[i + 1].start_lba : running_lba;
+        uint32_t end = (i + 1 < CD.num_tracks) ? CD.tracks[i + 1].start_lba : CD.total_lba;
         CD.tracks[i].length_lba = end > CD.tracks[i].start_lba ? end - CD.tracks[i].start_lba : 0;
-        if (end > CD.total_lba) CD.total_lba = end;
     }
-    return CD.num_tracks > 0 ? 0 : -1;
+    return 0;
 }
 
 static cd_track_t *track_at_lba(uint32_t lba)
