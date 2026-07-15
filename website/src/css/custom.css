@@ -191,15 +191,21 @@ html:not([data-edition]) {
   font-weight: 700;
 }
 
-/* --- Footer accent ------------------------------------------------------ */
+/* --- Footer: kept clean and quiet -------------------------------------- */
 .footer {
   border-top: 3px solid var(--gw-gold);
+  --ifm-footer-padding-vertical: 2rem;
 }
 .footer__title {
   color: var(--gw-gold);
-  font-family: var(--gw-pixel);
-  font-size: 0.62rem;
-  letter-spacing: 0.4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.footer__copyright {
+  opacity: 0.7;
+  font-size: 0.85rem;
 }
 
 /* --- Page H1 gets a subtle gold underline to echo the ring -------------- */

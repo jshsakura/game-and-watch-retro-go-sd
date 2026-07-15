@@ -166,27 +166,18 @@ const config = {
             items: [
               {label: 'Overview', to: '/docs/intro'},
               {label: 'Supported systems', to: '/docs/systems'},
-              {label: 'Game Boy Advance', to: '/docs/game-boy-advance'},
-              {label: 'Overclock & power', to: '/docs/overclock-and-power'},
-            ],
-          },
-          {
-            title: 'Project',
-            items: [
               {label: 'Devlog', to: '/devlog'},
-              {label: 'About / credits', to: '/docs/about'},
-              {label: 'Releases', href: `https://github.com/${ORG}/${PROJECT}/releases`},
             ],
           },
           {
             title: 'Upstream',
             items: [
-              {label: 'sylverb/game-and-watch-retro-go-sd', href: 'https://github.com/sylverb/game-and-watch-retro-go-sd'},
+              {label: 'sylverb/retro-go-sd', href: 'https://github.com/sylverb/game-and-watch-retro-go-sd'},
               {label: 'Companion: game-and-what', href: 'https://github.com/jshsakura/game-and-what'},
             ],
           },
         ],
-        copyright: `A derivative, experimental fork — built with respect and gratitude on sylverb's retro-go-sd and the work of the retro-go contributors. GPLv2 · © ${2026}.`,
+        copyright: `A derivative fork, built with respect on sylverb's retro-go-sd · GPLv2 · © ${2026}`,
       },
       prism: {
         theme: prismThemes.github,
