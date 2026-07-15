@@ -1,0 +1,212 @@
+/*
+ * VGMTrans (c) 2002-2024
+ * Licensed under the zlib license,
+ * refer to the included LICENSE.txt file
+ */
+
+#include "base/Types.h"
+#include "RareSnesInstr.h"
+#include "RareSnesSeq.h"
+#include "ScannerManager.h"
+#include "SNESDSP.h"
+
+namespace vgmtrans::scanners {
+ScannerRegistration<RareSnesScanner> s_raresnes("RareSnes", {"spc"});
+}
+
+// ; Load DIR address
+// 10df: 8f 5d f2  mov   $f2,#$5d
+// 10e2: 8f 32 f3  mov   $f3,#$32
+BytePattern RareSnesScanner::ptnLoadDIR(
+	"\x8f\x5d\xf2\x8f\x32\xf3"
+	,
+	"xxxx?x"
+	,
+	6);
+
+//; Donkey Kong Country SPC
+// 0ac0: 4d        push  x
+// 0ac1: f7 01     mov   a,($01)+y
+// 0ac3: 5d        mov   x,a
+// 0ac4: f5 e0 04  mov   a,$04e0+x         ; read SRCN table
+// 0ac7: ce        pop   x
+BytePattern RareSnesScanner::ptnReadSRCNTable(
+	"\x4d\xf7\x01\x5d\xf5\xe0\x04\xce"
+	,
+	"xx?xx??x"
+	,
+	8);
+
+//; Donkey Kong Country SPC
+//1123: e8 01     mov   a,#$01
+//1125: d4 3c     mov   $3c+x,a
+//1127: d5 10 01  mov   $0110+x,a
+//112a: f6 a0 12  mov   a,$12a0+y
+//112d: d4 4c     mov   $4c+x,a
+//112f: f6 a1 12  mov   a,$12a1+y
+//1132: d4 5c     mov   $5c+x,a           ; set pointer for each track
+BytePattern RareSnesScanner::ptnSongLoadDKC(
+	"\xe8\x01\xd4\x3c\xd5\x10\x01\xf6"
+	"\xa0\x12\xd4\x4c\xf6\xa1\x12\xd4"
+	"\x5c"
+	,
+	"xxx?x??x"
+	"??x?x??x"
+	"?"
+	,
+	17);
+
+//; Donkey Kong Country 2 SPC
+//10a9: e8 01     mov   a,#$01
+//10ab: d4 34     mov   $34+x,a
+//10ad: d5 10 01  mov   $0110+x,a
+//10b0: f7 e5     mov   a,($e5)+y
+//10b2: d4 44     mov   $44+x,a
+//10b4: fc        inc   y
+//10b5: f7 e5     mov   a,($e5)+y
+//10b7: d4 54     mov   $54+x,a           ; set pointer for each track
+BytePattern RareSnesScanner::ptnSongLoadDKC2(
+	"\xe8\x01\xd4\x34\xd5\x10\x01\xf7"
+	"\xe5\xd4\x44\xfc\xf7\xe5\xd4\x54"
+	,
+	"xxx?x??x"
+	"?x?xx?x?"
+	,
+	16);
+
+//; Donkey Kong Country SPC
+//078e: 8d 00     mov   y,#$00
+//0790: f7 01     mov   a,($01)+y
+//0792: 68 00     cmp   a,#$00
+//0794: 30 06     bmi   $079c
+//0796: 4d        push  x
+//0797: 1c        asl   a
+//0798: 5d        mov   x,a
+//0799: 1f 0f 10  jmp   ($100f+x)
+BytePattern RareSnesScanner::ptnVCmdExecDKC(
+	"\x8d\x00\xf7\x01\x68\x00\x30\x06"
+	"\x4d\x1c\x5d\x1f\x0f\x10"
+	,
+	"xxx?xxxx"
+	"xxxx??"
+	,
+	14);
+
+//;Donkey Kong Country 2 SPC
+//0856: 8d 00     mov   y,#$00
+//0858: f7 00     mov   a,($00)+y
+//085a: 30 06     bmi   $0862
+//085c: 4d        push  x
+//085d: 1c        asl   a
+//085e: 5d        mov   x,a
+//085f: 1f a5 0f  jmp   ($0fa5+x)
+BytePattern RareSnesScanner::ptnVCmdExecDKC2(
+	"\x8d\x00\xf7\x00\x30\x06\x4d\x1c"
+	"\x5d\x1f\xa5\x0f"
+	,
+	"xxx?xxxx"
+	"xx??"
+	,
+	12);
+
+void RareSnesScanner::scan(RawFile *file, void *info) {
+  size_t nFileLength = file->size();
+  if (nFileLength == 0x10000) {
+    searchForRareSnesFromARAM(file);
+  } else {
+    // Search from ROM unimplemented
+  }
+}
+
+void RareSnesScanner::searchForRareSnesFromARAM(RawFile *file) {
+  RareSnesVersion version = RARESNES_NONE;
+  u32 ofsSongLoadASM;
+  u32 ofsVCmdExecASM;
+  u32 addrSeqHeader;
+  u32 addrVCmdTable;
+  std::string name = file->tag.hasTitle() ? file->tag.title : file->stem();
+
+  // find a sequence
+  if (file->searchBytePattern(ptnSongLoadDKC2, ofsSongLoadASM)) {
+    addrSeqHeader = file->readShort(file->readByte(ofsSongLoadASM + 8));
+  } else if (file->searchBytePattern(ptnSongLoadDKC, ofsSongLoadASM) &&
+      file->readShort(ofsSongLoadASM + 13) == file->readShort(ofsSongLoadASM + 8) + 1) {
+    addrSeqHeader = file->readShort(ofsSongLoadASM + 8);
+  } else {
+    return;
+  }
+
+  // guess engine version
+  if (file->searchBytePattern(ptnVCmdExecDKC2, ofsVCmdExecASM)) {
+    addrVCmdTable = file->readShort(ofsVCmdExecASM + 10);
+    if (file->readShort(addrVCmdTable + (0x0c * 2)) != 0) {
+      if (file->readShort(addrVCmdTable + (0x11 * 2)) != 0) {
+        version = RARESNES_WNRN;
+      } else {
+        version = RARESNES_DKC2;
+      }
+    } else {
+      version = RARESNES_KI;
+    }
+  } else if (file->searchBytePattern(ptnVCmdExecDKC, ofsVCmdExecASM)) {
+    addrVCmdTable = file->readShort(ofsVCmdExecASM + 12);
+    version = RARESNES_DKC;
+  } else {
+    return;
+  }
+
+  // load sequence
+  auto* newSeq = pRoot->loadVGMFile<RareSnesSeq>(file, version, addrSeqHeader, name);
+  if (!newSeq) {
+    return;
+  }
+
+  // Rare engine has a instrument # <--> SRCN # table, find it
+  u32 ofsReadSRCNASM;
+  if (!file->searchBytePattern(ptnReadSRCNTable, ofsReadSRCNASM)) {
+    return;
+  }
+  u32 addrSRCNTable = file->readShort(ofsReadSRCNASM + 5);
+  if (addrSRCNTable + 0x100 > 0x10000) {
+    return;
+  }
+
+  // find DIR address
+  u32 ofsSetDIRASM;
+  if (!file->searchBytePattern(ptnLoadDIR, ofsSetDIRASM)) {
+    return;
+  }
+  u32 spcDirAddr = file->readByte(ofsSetDIRASM + 4) << 8;
+
+  // scan SRCN table
+  auto* newInstrSet = pRoot->loadVGMFile<RareSnesInstrSet>(
+      file, addrSRCNTable, spcDirAddr, newSeq->instrUnityKeyHints,
+      newSeq->instrPitchHints, newSeq->instrADSRHints);
+  if (!newInstrSet) {
+    return;
+  }
+
+  // get SRCN # range
+  u8 maxSRCN = 0;
+  std::vector<u8> usedSRCNs;
+  const std::vector<u8> &availInstruments = newInstrSet->getAvailableInstruments();
+  for (std::vector<u8>::const_iterator itr = availInstruments.begin(); itr != availInstruments.end(); ++itr) {
+    u8 inst = (*itr);
+    u8 srcn = file->readByte(addrSRCNTable + inst);
+
+    if (maxSRCN < srcn) {
+      maxSRCN = srcn;
+    }
+
+    std::vector<u8>::iterator itrSRCN = find(usedSRCNs.begin(), usedSRCNs.end(), srcn);
+    if (itrSRCN == usedSRCNs.end()) {
+      usedSRCNs.push_back(srcn);
+    }
+  }
+  std::sort(usedSRCNs.begin(), usedSRCNs.end());
+
+  // load BRR samples
+  if (!pRoot->loadVGMFile<SNESSampColl>(RareSnesFormat::name, file, spcDirAddr, usedSRCNs)) {
+    return;
+  }
+}
