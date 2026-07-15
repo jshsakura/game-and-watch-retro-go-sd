@@ -32,6 +32,14 @@ need Core/Src/gw_sleep.c "boot_rescue_mark_clean_shutdown" \
     "a deliberate sleep is not a failed boot"
 need Makefile "gw_boot_rescue.c" \
     "the rescue module is in the build"
+need Makefile "gw_update_guard.c" \
+    "the update pre-flight gate is in the build"
+need Core/Src/gw_sleep.c "update_guard_check_and_quarantine" \
+    "the reboot into the flasher is gated on the file validating"
+need Core/Src/gw_sleep.c "odroid_overlay_alert" \
+    "a rejected update file is announced, not silently ignored"
+need Core/Src/gw_boot_rescue.c "RTC_BKP_DR0" \
+    "the rescue screen can hand the unit to the original firmware"
 
 # The watchdog must be armed for EVERY boot before bring-up starts, not only
 # for hot boots: an unconditional wdog_enable() must appear before MPU_Config()

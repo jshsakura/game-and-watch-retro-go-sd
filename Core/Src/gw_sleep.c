@@ -11,6 +11,8 @@
 #include "gw_buttons.h"
 #include "gw_lcd.h"
 #include "gw_audio.h"
+#include "gw_update_guard.h"
+#include "odroid_overlay.h"
 #include "rg_rtc.h"
 #include "rg_alarm.h"   /* refresh next-alarm cache + arm RTC Alarm A before sleep */
 #if SD_CARD == 1
@@ -77,11 +79,25 @@ static void SleepModeEnterAndResume(sleep_pre_wakeup_callback_t pre_wakeup_callb
   if (update_file_res == FR_OK) {
       f_close(&update_file);
 
-      sdcard_deinit();
+      // The bootloader stage validates nothing: a truncated or corrupt file
+      // would be burned into bank 2 as-is and the unit would go dark until
+      // its battery ran flat. The firmware is the gate into that stage, so
+      // validate here. A bad file is not silently ignored: it is renamed to
+      // *.bad (so a cold boot cannot pick it up either) and announced.
+      update_guard_result_t guard;
+      if (update_guard_check_and_quarantine(UPDATE_ARCHIVE_FILE, &guard)) {
+          sdcard_deinit();
 
-      while(1) {
-        HAL_NVIC_SystemReset();
+          while(1) {
+            HAL_NVIC_SystemReset();
+          }
       }
+
+      char guard_msg[96];
+      snprintf(guard_msg, sizeof(guard_msg),
+               "Update file rejected: %s. Renamed to retro-go_update.bin.bad — not installing.",
+               update_guard_reason(guard));
+      odroid_overlay_alert(guard_msg);
   }
 #endif
 

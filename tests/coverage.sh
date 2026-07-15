@@ -182,6 +182,13 @@ build_and_run boot_rescue test_boot_rescue \
     -- -DBOOT_RESCUE_HOST_TEST -Itests/boot_rescue_stubs -ICore/Inc \
        tests/test_boot_rescue.c Core/Src/gw_boot_rescue.c
 
+# --- Core/Src/gw_update_guard.c: the pre-flight gate in front of the
+# bootloader's blind flash of /retro-go_update.bin. Pure logic over a read
+# callback; the FatFs wrapper is compiled out on the host.
+build_and_run update_guard test_update_guard \
+    -- -DUPDATE_GUARD_HOST_TEST -ICore/Inc \
+       tests/test_update_guard.c Core/Src/gw_update_guard.c
+
 # --- Core/Src/porting/lib/hw_jpeg_decoder.c: three binaries drive the REAL
 # file through its three real entry points (JPEG_DecodeToFrameInit/ToFrame/
 # ToBuffer) against a faithful ST HAL fake (tools/jpeg_harness/hal_fake/);

@@ -401,6 +401,16 @@ $CC -O1 -g -std=gnu11 -Wall $SAN -DBOOT_RESCUE_HOST_TEST \
     -o "$BR_DIR/test_boot_rescue" || rc=1
 "$BR_DIR/test_boot_rescue" || rc=1
 
+echo "=== update guard: a truncated update file must not reach the flasher ==="
+# The bootloader validates nothing; the firmware is the gate. The validator
+# runs here against synthetic images in the release script's real layout,
+# with truncation — the classic brick — as the headline case.
+$CC -O1 -g -std=gnu11 -Wall $SAN -DUPDATE_GUARD_HOST_TEST \
+    -ICore/Inc \
+    tests/test_update_guard.c Core/Src/gw_update_guard.c \
+    -o "$BR_DIR/test_update_guard" || rc=1
+"$BR_DIR/test_update_guard" || rc=1
+
 # Everything from here to EOF is re-run standalone by tests/test_sm_skip_guard.sh,
 # which is why nothing that is expensive or self-contained belongs below this line.
 # ---------------------------------------------------------------- flash cache --
