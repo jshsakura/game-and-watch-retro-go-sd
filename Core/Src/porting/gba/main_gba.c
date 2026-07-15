@@ -441,6 +441,11 @@ static void *gba_Screenshot(void)
 }
 
 /* ------------------------------------------------------------------ audio --- */
+/* The last 5-second diagnostic window, for the on-screen line: there is no
+ * reachable log screen in-game, so if the numbers are not on the LCD they do
+ * not exist. Written by gba_pcm_submit, drawn next to the overlay. */
+static uint32_t gba_diag_osd_clip, gba_diag_osd_hold, gba_diag_osd_flip;
+
 static void gba_pcm_submit(void)
 {
     uint32_t got = sound_read_samples(gba_audio_stereo, GBA_AUDIO_FRAMES);
@@ -508,6 +513,9 @@ static void gba_pcm_submit(void)
                 printf("gba audio 5s: clip=%lu hold=%lu rateflip=%lu\n",
                        (unsigned long)diag_clip, (unsigned long)diag_hold,
                        (unsigned long)diag_flip);
+            gba_diag_osd_clip = diag_clip;
+            gba_diag_osd_hold = diag_hold;
+            gba_diag_osd_flip = diag_flip;
             diag_clip = diag_hold = diag_flip = diag_calls = 0;
         }
     }
@@ -676,6 +684,20 @@ static void blit(void)
 
     common_emu_clear_dwt_cycles();
     common_ingame_overlay();
+
+    /* The audio diagnostic, on the LCD: the last 5-second window's counters,
+     * drawn only while there is something to report. clip = gpSP's mix
+     * accumulator saturated, hold = the frame came up short and a sample was
+     * held, flip = the FIFO rate changed. Whichever number is moving when the
+     * ear hears a crackle names the culprit. */
+    if (gba_diag_osd_clip != 0 || gba_diag_osd_hold != 0 || gba_diag_osd_flip != 0) {
+        char line[40];
+        snprintf(line, sizeof(line), "SND C:%lu H:%lu R:%lu",
+                 (unsigned long)gba_diag_osd_clip,
+                 (unsigned long)gba_diag_osd_hold,
+                 (unsigned long)gba_diag_osd_flip);
+        odroid_overlay_draw_text(4, GW_LCD_HEIGHT - 12, 0, line, C_YELLOW, C_BLACK);
+    }
     gba_diag_add(&diag_overlay, common_emu_get_dwt_cycles());
 }
 
