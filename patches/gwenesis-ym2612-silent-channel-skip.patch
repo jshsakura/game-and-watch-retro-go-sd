@@ -1,0 +1,35 @@
+diff --git a/src/sound/ym2612.c b/src/sound/ym2612.c
+index 3cf2a5a..b1194f2 100644
+--- a/src/sound/ym2612.c
++++ b/src/sound/ym2612.c
+@@ -1514,6 +1514,22 @@ INLINE void chan_calc(FM_CH *CH, int num)
+   do
+   {
+     INT32 out = 0;
++
++    /* Silent-channel skip (lossless): when all four operators are fully off
++     * (EG_OFF), every op_calc below is already gated out by eg_out>=ENV_QUIET,
++     * the output is 0 and op1_out/mem decay to 0 — so the whole compute block
++     * collapses to those side-effects. Skip straight to them and let the phase
++     * update below still run (KEYON does NOT reset phase, so phase must keep
++     * advancing). Byte-identical to the full path; only the wasted work is cut. */
++    if ((CH->SLOT[SLOT1].state | CH->SLOT[SLOT2].state |
++         CH->SLOT[SLOT3].state | CH->SLOT[SLOT4].state) == EG_OFF)
++    {
++      CH->op1_out[0] = CH->op1_out[1];
++      CH->op1_out[1] = 0;
++      CH->mem_value  = 0;
++    }
++    else
++    {
+     UINT32 AM = ym2612.OPN.LFO_AM >> CH->ams;
+     unsigned int eg_out = volume_calc(&CH->SLOT[SLOT1]);
+     UINT32 *mask = op_mask[CH->ALGO];
+@@ -1556,6 +1572,7 @@ INLINE void chan_calc(FM_CH *CH, int num)
+ 
+     /* store current MEM */
+     CH->mem_value = mem;
++    }
+ 
+     /* update phase counters AFTER output calculations */
+     if (CH->pms)

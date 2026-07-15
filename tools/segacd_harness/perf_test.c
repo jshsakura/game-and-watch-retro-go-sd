@@ -64,6 +64,8 @@ static double now_ns(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t)
  * cpu68k x (208333 / main_cycles_per_frame). Safe (no run into unmapped space). */
 static double g_cpu68k;
 static unsigned g_main_cycles;   /* main-68K cycles advanced this frame */
+static uint32_t g_audio_hash = 2166136261u;   /* YM2612 output hash (losslessness) */
+static double g_ym_ns;                          /* time in ym2612_run */
 #define RUN68K(t) do { unsigned _b=m68k.cycles; double _c=now_ns(); m68k_run(t); \
     g_cpu68k += now_ns()-_c; g_main_cycles += (unsigned)(m68k.cycles-_b); } while(0)
 
@@ -114,8 +116,13 @@ int main(int argc, char **argv)
             RUN68K(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE);
             gwenesis_vdp_render_line(line); system_clock+=VDP_CYCLES_PER_LINE; }
           skip_first_vint=0; }
-        gwenesis_SN76489_run(system_clock); ym2612_run(system_clock); m68k.cycles-=system_clock;
+        gwenesis_SN76489_run(system_clock);
+        double y0=now_ns(); ym2612_run(system_clock); g_ym_ns += now_ns()-y0;
+        m68k.cycles-=system_clock;
         double t1=now_ns();
+        /* Losslessness check: hash the YM2612 output each frame. A correct sound
+         * optimization must leave this byte-identical. */
+        for(int k=0;k<GWENESIS_AUDIO_BUFFER_CAPACITY;k++){ g_audio_hash=(g_audio_hash^(uint32_t)(uint16_t)gwenesis_ym2612_buffer[k])*16777619u; }
 
         /* sub cost = cpu68k scaled to the sub's 12.5MHz cycle budget. */
         double sub = (g_main_cycles>0) ? g_cpu68k * (double)SUB_CYCLES_PER_FRAME / g_main_cycles : 0;
@@ -125,5 +132,6 @@ int main(int argc, char **argv)
     double mul = (tot_emu>0)?(tot_emu+tot_sub)/tot_emu:0;
     printf("emu=%.0fns sub=%.0fns  ->  dual/MD multiplier = x%.2f  (+PCM/ASIC ~+15%% => ~x%.2f)\n",
            tot_emu, tot_sub, mul, mul*1.15);
+    printf("YM2612: %.0fns total  audio_hash=%08x\n", g_ym_ns, g_audio_hash);
     return 0;
 }
