@@ -175,6 +175,13 @@ build_and_run flash_alloc test_flash_alloc \
        tests/test_flash_alloc.c tests/flash_alloc_stubs/flash_stubs.c \
        Core/Src/gw_flash_alloc.c
 
+# --- Core/Src/gw_boot_rescue.c: the failed-boot counter that turns a bricked
+# unit into a rescue screen. Same carve-out as gw_flash_alloc above: it lives
+# under the gw_ prefix but the counter is pure logic on one backup register.
+build_and_run boot_rescue test_boot_rescue \
+    -- -DBOOT_RESCUE_HOST_TEST -Itests/boot_rescue_stubs -ICore/Inc \
+       tests/test_boot_rescue.c Core/Src/gw_boot_rescue.c
+
 # --- Core/Src/porting/lib/hw_jpeg_decoder.c: three binaries drive the REAL
 # file through its three real entry points (JPEG_DecodeToFrameInit/ToFrame/
 # ToBuffer) against a faithful ST HAL fake (tools/jpeg_harness/hal_fake/);
