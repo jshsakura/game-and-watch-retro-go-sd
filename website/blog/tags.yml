@@ -17,3 +17,13 @@ release:
   label: release
   permalink: /release
   description: Release notes and milestones
+
+wonderswan:
+  label: WonderSwan
+  permalink: /wonderswan
+  description: WonderSwan / WonderSwan Color work
+
+savestate:
+  label: savestate
+  permalink: /savestate
+  description: Save/resume and state serialization
