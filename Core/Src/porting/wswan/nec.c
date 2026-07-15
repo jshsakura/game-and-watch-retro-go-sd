@@ -736,7 +736,9 @@ OP( 0xf3, i_repe	 ) { uint32_t next = FETCHOP; uint16_t c = I.regs.w[CW];
 	}
 	seg_prefix=FALSE;
 }
-OP( 0xf4, i_hlt ) { nec_ICount=0; }
+OP( 0xf4, i_hlt ) { nec_ICount=0; nec_idle_dirty=1; } /* HLT already yields the
+	slice; mark it progress so the idle-skip leaves HLT-wait loops to oswan's own
+	HLT handling (skipping the HLT itself shifts the loop's interrupt phase). */
 
 
 
@@ -970,6 +972,34 @@ void nec_set_reg(int32_t regnum, uint32_t val)
 }
 
 
+#ifdef WS_PC_HIST
+/* Host-only PC histogram: which linear PCs the V30 spends its frame on. A tight
+ * range that dominates is a spin/idle-wait loop — an idle-skip candidate. The
+ * harness allocates ws_pc_hist[1<<21] and reads the top entries. */
+uint32_t *ws_pc_hist = 0;
+int ws_pc_hist_on = 0;
+#endif
+
+/* Idle-skip. Many WS games burn most of a frame in a tight loop that polls a
+ * memory flag an interrupt will set (e.g. One Piece: CMP [3764],0 / JZ back —
+ * ~83% of guest instructions). Such a loop makes ZERO progress: an iteration
+ * leaves every register, segment and flag unchanged AND writes no memory, so
+ * only an interrupt (which the WsRun loop keeps advancing) can ever change the
+ * branch. When we detect a taken backward branch whose iteration was provably
+ * a no-op like that, we END the slice (nec_ICount = -1) so WsRun advances the
+ * hardware to the event instead of re-running the poll thousands of times.
+ *
+ * Bit-exact by construction: identical (regs|segs|flags) + no write => the
+ * machine is in the identical state, so skipping to the next hardware event
+ * cannot change what the game computes. A delay loop that counts a register
+ * (DEC CX) or a memory cell (INC [n]) changes the hash / sets nec_idle_dirty
+ * and is never skipped. Proven with the host RUNHASH gate across the library. */
+int nec_idle_dirty = 0;               /* memory write since last backward branch (WSHard.h) */
+int nec_loop_io    = 0;               /* IO access since last backward branch (nec.h) */
+int cpu_idle       = 0;               /* WsRun skips the CPU while set; interrupt clears it */
+static uint32_t idle_pc = 0xFFFFFFFFu; /* cs:ip of the last backward-branch target */
+static uint32_t idle_hash = 0;         /* regs|segs|flags hash there */
+
 int32_t nec_execute(int32_t cycles)
 {
 	nec_ICount=cycles;
@@ -977,7 +1007,42 @@ int32_t nec_execute(int32_t cycles)
 	while(nec_ICount>=0)
 	{
 		cs_base = I.sregs[CS] << 4;
+#ifdef WS_PC_HIST
+		if (ws_pc_hist_on && ws_pc_hist)
+			ws_pc_hist[((I.sregs[CS] << 4) + I.ip) & 0x1FFFFF]++;
+#endif
+		uint16_t ip0 = I.ip;
 		nec_instruction[FETCHOP]();
+
+		/* taken backward branch to a tight loop? */
+		if (I.ip < ip0 && (uint16_t)(ip0 - I.ip) < 0x100)
+		{
+			uint32_t pc = (I.sregs[CS] << 16) | I.ip;
+			uint32_t h = 2166136261u;
+			for (int r = 0; r < 8; r++) h = (h ^ I.regs.w[r]) * 16777619u;
+			for (int r = 0; r < 4; r++) h = (h ^ I.sregs[r]) * 16777619u;
+			h = (h ^ CompressFlags()) * 16777619u;
+			/* Provably idle: this iteration returned to the same PC with every
+			 * register, segment and flag unchanged, wrote no memory (!dirty) and
+			 * touched no IO (!loop_io, since IO reads can have side effects and
+			 * IO the CPU polls is changed outside it). Its only escape is an
+			 * interrupt. With interrupts enabled (IF), tell WsRun to stop running
+			 * the CPU and just advance the hardware to that interrupt — the CPU
+			 * does nothing in the meantime, and nothing writes the memory it polls
+			 * while it is parked (only its own ISR does, and that needs the
+			 * interrupt, which un-parks it). Bit-exact by construction, and it
+			 * skips WHOLE slices, not just within one. */
+			if (pc == idle_pc && h == idle_hash && !nec_idle_dirty && !nec_loop_io && I.IF) {
+#ifndef WS_IDLE_DISABLE
+				cpu_idle = 1;
+#endif
+#ifdef WS_IDLE_LOG
+				extern void ws_idle_log(uint32_t);
+				ws_idle_log(pc);
+#endif
+			}
+			idle_pc = pc; idle_hash = h; nec_idle_dirty = 0; nec_loop_io = 0;
+		}
 	}
 
 	return cycles - nec_ICount;
