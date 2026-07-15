@@ -91,20 +91,37 @@ static void vb_blit(void)
         if (b > 255) b = 255;
         pal565[v] = (uint16_t)((b >> 3) << 11);
     }
-    int sy_acc = 0, sy = 0;
-    for (int ry = 0; ry < dst_h; ry++) {
-        const uint16_t *col = vb_fb + (sy >> 3);
-        int shift = (sy & 7) * 2;
-        uint16_t *dst = out + (y0 + ry) * GW_LCD_WIDTH;
-        int sx_acc = 0;
-        const uint16_t *src = col;
+    /* Cache-friendly transpose-scale — see main_vb.c for the rationale. Column-
+     * outer so each source column's cache lines are read once and reused down
+     * the output rows, instead of a 64-byte hop per source pixel. Bit-for-bit
+     * identical to the old output-driven loop (same Bresenham maps). */
+    static uint16_t col_word[GW_LCD_WIDTH];
+    static uint8_t  row_woff[GW_LCD_HEIGHT];
+    static uint8_t  row_shift[GW_LCD_HEIGHT];
+    static int      maps_ready = 0;
+    if (!maps_ready) {
+        int sx_acc = 0, col = 0;
         for (int dx = 0; dx < dst_w; dx++) {
-            dst[dx] = pal565[(*src >> shift) & 3];
+            col_word[dx] = (uint16_t)(col * 32);
             sx_acc += 384;
-            while (sx_acc >= dst_w) { sx_acc -= dst_w; src += 32; }
+            while (sx_acc >= dst_w) { sx_acc -= dst_w; col++; }
         }
-        sy_acc += 224;
-        while (sy_acc >= dst_h) { sy_acc -= dst_h; sy++; }
+        int sy_acc = 0, sy = 0;
+        for (int ry = 0; ry < dst_h; ry++) {
+            row_woff[ry]  = (uint8_t)(sy >> 3);
+            row_shift[ry] = (uint8_t)((sy & 7) * 2);
+            sy_acc += 224;
+            while (sy_acc >= dst_h) { sy_acc -= dst_h; sy++; }
+        }
+        maps_ready = 1;
+    }
+    for (int dx = 0; dx < dst_w; dx++) {
+        const uint16_t *column = vb_fb + col_word[dx];
+        uint16_t *dst = out + y0 * GW_LCD_WIDTH + dx;
+        for (int ry = 0; ry < dst_h; ry++) {
+            *dst = pal565[(column[row_woff[ry]] >> row_shift[ry]) & 3];
+            dst += GW_LCD_WIDTH;
+        }
     }
 }
 
