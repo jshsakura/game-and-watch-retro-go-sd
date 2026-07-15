@@ -83,6 +83,8 @@ void *_sbrk(ptrdiff_t incr)
     return prev;
 }
 
+int _open(const char *path, int flags, int mode) { (void)path; (void)flags; (void)mode; return -1; }
+int _gettimeofday(void *tv, void *tz) { (void)tv; (void)tz; return -1; }
 int _close(int fd) { (void)fd; return -1; }
 int _fstat(int fd, struct stat *st) { (void)fd; st->st_mode = S_IFCHR; return 0; }
 int _isatty(int fd) { (void)fd; return 1; }
