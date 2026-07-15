@@ -71,6 +71,7 @@ void RtlApuWrite(uint32_t adr, uint8_t val) {
 static uint8_t  g_wram[0x20000];
 static uint16_t g_fb[320 * 240];
 static int16_t  g_audio[16000 / 60];
+static uint64_t g_audiohash = 1469598103934665603ULL;
 
 static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
@@ -278,6 +279,12 @@ int main(int argc, char **argv) {
       while (snes->apu->dsp->sampleOffset < 534)
         apu_cycle(snes->apu);
       dsp_getSamples(snes->apu->dsp, g_audio, 16000 / 60, 1);
+      /* Fold the frame's audio into a running hash. The state hash (fb+wram+sram)
+       * does NOT cover DSP output — a change that alters only the samples leaves it
+       * identical. This makes an audio-only regression visible: a bit-identical DSP
+       * optimization keeps BOTH hashes; a reduced-accuracy one moves audio only. */
+      const uint8_t *ab = (const uint8_t *)g_audio;
+      for (size_t q = 0; q < sizeof(g_audio); q++) { g_audiohash ^= ab[q]; g_audiohash *= 1099511628211ULL; }
     }
     { const char *fd = getenv("SNES_FRAMEDIR");
       if (fd) { const char *ev = getenv("SNES_FRAMEEVERY");
@@ -300,12 +307,12 @@ int main(int argc, char **argv) {
   double ms = ((t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6) / frames;
   int lit = 0;
   for (int i = 0; i < 320 * 240; i++) if (g_fb[i]) lit++;
-  printf("%-10s %6.3f ms/frame  state=%016llx  lit=%d\n",
+  printf("%-10s %6.3f ms/frame  state=%016llx  audio=%016llx  lit=%d\n",
 #ifdef SNES_DOT_LOOP
          "dot-loop",
 #else
          "event",
 #endif
-         ms, (unsigned long long)hash_state(snes), lit);
+         ms, (unsigned long long)hash_state(snes), (unsigned long long)g_audiohash, lit);
   return 0;
 }
