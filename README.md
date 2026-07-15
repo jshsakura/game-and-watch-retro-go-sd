@@ -40,9 +40,11 @@ this section is the full picture.)
 - **Virtual Boy** (red-viper) — honest caveat: **about 65-70% of full speed** with
   automatic overclock. Gapless audio, selectable pad presets (left pad / right pad /
   triggers as A/B). Several titles are enjoyable at that speed.
-- **Game Boy Advance** (gpSP) — Pokémon Ruby runs. See [Game Boy Advance](#game-boy-advance)
-  for what it took: the cart is never copied into RAM, and 121 measured idle-loop
-  addresses stop the games from busy-waiting through the frame they should be resting in.
+- **Game Boy Advance** (gpSP) — Pokémon Ruby and Emerald run at full speed. See
+  [Game Boy Advance](#game-boy-advance) for what it took: the cart is never copied into
+  RAM, 131 measured idle-loop addresses stop games from busy-waiting through the frame,
+  and the M4A sound driver's software mixer — a quarter to half of many games' guest
+  instructions — is executed as native code instead of instruction-by-instruction.
 
 ##### BIOS files the added systems expect
 
@@ -151,6 +153,14 @@ Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files.
   the battery.
 - **Sleep recovery** — SD file handles (music, video, PCE-CD streams) self-heal after
   the SD card is power-cycled by sleep.
+- **Boot-loop rescue** — the power button is a GPIO the firmware reads, so a firmware
+  that hung during boot used to leave a dark unit whose only way out was a flat battery.
+  Now the watchdog is armed from the first line of `main()` for every boot; two
+  consecutive failed boots stop the third at a **rescue screen** — shown *before* the SD
+  card, the config or the game auto-resume are touched — offering boot-to-menu (skip
+  resume), normal boot, or power off, and powering itself off after 60 s if unattended.
+  POWER on the crash (BSOD) screen now really powers off instead of rebooting into the
+  same fault. Holding **TIME at power-on** still skips the game auto-resume manually.
 
 ### How it's built (the honest part)
 
@@ -174,6 +184,12 @@ the fork is introduced to upstream in
 >   support files (`/cores/*`, `/bios/logo.bin`, homebrew overlays) automatically.
 > - Test builds may show **on-screen debug overlays** and may be unstable or change without
 >   notice.
+> - Builds from **2026-07-15 on include boot-loop rescue**: if a build fails to boot twice
+>   in a row, the third power-on stops at a rescue screen (boot to menu / normal boot /
+>   power off) instead of hanging dark until the battery drains — and POWER on a crash
+>   screen really powers off. Recovery from a truly dead firmware is still possible
+>   without opening the shell: put a known-good `retro-go_update.bin` on the SD root and
+>   power on; the bootloader flashes it before the firmware runs.
 > - For the stable, official project use
 >   [sylverb/game-and-watch-retro-go-sd](https://github.com/sylverb/game-and-watch-retro-go-sd)
 >   (or [game-and-watch-retro-go](https://github.com/sylverb/game-and-watch-retro-go) for the
@@ -471,21 +487,30 @@ renders it with the PICO-8 palette, and saves as a JPEG cover.
 - Amstrad CPC6128 (beta)
 - Atari 2600
 - Atari 7800
+- Atari Lynx *(this fork)*
 - ColecoVision
+- Commodore 64 *(this fork)*
 - Gameboy / Gameboy Color
 - Game Boy Advance
 - Game & Watch / LCD Games
+- game.com *(this fork)*
 - MSX1/2/2+
+- Neo Geo Pocket / Color *(this fork)*
 - Nintendo Entertainment System
+- Odyssey² / Videopac *(enabled in this fork)*
 - Pico-8
 - PC Engine / TurboGrafx-16
+- PC Engine CD *(this fork)*
 - Pokémon Mini
 - Sega Game Gear
 - Sega Genesis / Megadrive
 - Sega Master System
 - Sega SG-1000
-- Tamagotchi P1
+- Tamagotchi P1 (P2 experimental in this fork)
+- Virtual Boy *(this fork — ~65-70% speed, honest caveat)*
 - Watara Supervision
+- WonderSwan / Color *(this fork)*
+- ZX Spectrum *(this fork)*
 
 ### SNES Ports
 - The Legend of Zelda: A Link to the Past
@@ -493,7 +518,11 @@ renders it with the PICO-8 palette, and saves as a JPEG cover.
 - Super Metroid
 
 ### Homebrew Ports
-- Celeste Classic 
+- Celeste Classic
+
+### Apps
+- Clock (alarm clock / pomodoro / timer / stopwatch, photo album & GIF backgrounds) *(this fork)*
+- Music player (MP3) and video player (MJPEG-AVI) *(this fork)*
 
 ## Controls
 
@@ -609,7 +638,9 @@ On MSX system, you can enable/disable cheats while playing. Just press the Pause
 GBA emulation uses **gpSP**, running as an interpreter — there is no dynamic recompiler
 here, because gpSP's backends are x86/ARM32/ARM64/MIPS and none of them targets the
 Cortex-M's Thumb-2. Every GBA instruction is decoded and executed in software, on a
-microcontroller with 724 KB of RAM for the whole emulator. Pokémon Ruby runs.
+microcontroller with 724 KB of RAM for the whole emulator. Pokémon Ruby and Emerald run
+at full speed; heavier titles vary (FFTA sits just under — its interpreter work alone
+exceeds the frame budget).
 
 Put `.gba` files in `/roms/gba/`; saves land in `/saves/gba/`. Both folders are created
 on first boot. No BIOS file is needed — a clean-room replacement ships with the core.
@@ -626,7 +657,7 @@ The one exception is the cart's first 32 KB, which gets a RAM shadow — because
 cart *writes* its clock registers back into "ROM" at `0x080000C4`, and flash does not
 take writes. Ruby, Sapphire and Emerald all keep time that way.
 
-### 121 measured idle-loop addresses
+### 131 measured idle-loop addresses
 
 A GBA game does its work for a frame and then **busy-waits** for the vertical blank —
 spinning on a single branch, doing nothing, sometimes for three quarters of the frame.
@@ -637,13 +668,37 @@ A cart absent from that table spins through all 280,896 cycles of every frame. T
 not "a bit slower" — it is the difference between doing 75,000 cycles of real work and
 pretending to do 280,896.
 
-This build ships **121 addresses measured by running the ROMs**: an address is only kept
+This build ships **131 addresses measured by running the ROMs**: an address is only kept
 when the per-frame cycle count demonstrably collapses with it applied. It is applied over
 gpSP's own table rather than by patching it, which also corrects the three entries gpSP
 has *wrong* — FireRed and LeafGreen point at an address where there is no loop at all.
 
 (Ruby and Sapphire are deliberately absent. They have no busy-wait to skip: they idle
 through the BIOS, which gpSP already fast-forwards. 74% of their frame is rest.)
+
+Some games poll VCOUNT in a loop whose *caller* is the real waiter (Super Robot Taisen D,
+Nintendo's tennis engine). Skipping such a poll unconditionally can multiply the caller's
+work instead of saving it, so those get a **conditional skip** that only fires while the
+poll would keep spinning — measured −15.2% and −16.8% guest instructions with the
+rendered frames 99.8% identical. Korean fan-translated carts change the region byte in
+the ROM header (`BPEK`, `AXVK`, …), which used to make every per-cart table miss — idle
+skip, 128K save size, RTC; entries for the common K-region releases are included.
+
+### The music was a third of the game
+
+Almost every commercial GBA cart ships Nintendo's **M4A** (aka MusicPlayer2000) sound
+driver, and that driver **software-mixes its PCM channels on the guest CPU** — every
+frame, scene-independent, whether anything moves on screen or not. Measured across six
+engine variants: **27-60% of all guest instructions are the mixer**, not the game.
+
+This build recognises the mixer by signature and executes a **native transcription** of
+it instead of interpreting it instruction-by-instruction: same registers, same memory,
+same cycle count, stopping at exactly the instruction the interpreter would have stopped
+at (proven bit-identical against 40,000+ interpreter-executed blocks and 13,000+ frames
+of lockstep). **347 of 633 tested carts** — every cart that carries the mixer — hook
+automatically; the rest simply run as before. Measured effect: Zelda: The Minish Cap −60%,
+Emerald −35%, FFTA −27% guest instructions. The transcribed code lives in external
+flash (XIP) like the sprite renderer, so it costs the RAM pool nothing.
 
 ### Where the emulator lives
 
@@ -664,9 +719,15 @@ yourself, yours stands.
 
 ### Honest caveats
 
-- **Speed is the limit, not compatibility.** Ruby runs in the high 50s. Heavier scenes
-  drop frames. The pause menu's **Settings** page reports where the frame actually goes
+- **Speed is the limit, not compatibility.** Ruby and Emerald hold 60; heavier titles
+  drop frames, and FFTA sits just under full speed even with the mixer natively
+  executed. The pause menu's **Settings** page reports where the frame actually goes
   (`Emu+ppu`, `= PPU`, `Scale`, `LCD wait`) if you want to see it.
+- **Audio is verified by ear on six carts** after the mixer work (plus a resample
+  low-pass tied to the cart's mixing rate, and a PSG pitch fix — notes used to come out
+  5 semitones flat at 48 kHz). One intermittent tick remains under investigation; the
+  core keeps a small audio diary it flushes to `/gba_audio_diag.txt` on exit to pin it
+  down.
 - **No L / R buttons on a Mario unit.** The hardware has no shoulder buttons and no
   physical X/Y either. Games that need L/R are not fully playable there yet.
 - **No link cable, no rumble.** Neither exists on this hardware, and both are switched
