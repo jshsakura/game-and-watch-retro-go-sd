@@ -29,7 +29,7 @@ INC="-I$SM -I$RIG/shim -Itools/sm_harness/shim"
 
 # ROM -> object (symbols _binary_rom_smc_start/end)
 cp "$ROM" "$OUT/rom.smc"
-(cd "$OUT" && arm-none-eabi-objcopy -I binary -O elf32-littlearm -B arm rom.smc rom.o)
+(cd "$OUT" && arm-none-eabi-objcopy -I binary -O elf32-littlearm -B arm --rename-section .data=.rom_blob,alloc,load,readonly,data,contents rom.smc rom.o)
 
 SRCS="$SM/src/snes/apu.c $SM/src/snes/cart.c $SM/src/snes/cpu.c \
       $SM/src/snes/dma.c $SM/src/snes/dsp.c $SM/src/snes/input.c \
@@ -45,7 +45,7 @@ for s in $SRCS; do
 done
 OBJS="$OBJS $OUT/rom.o"
 
-$CC $ARCH -T "$RIG/mps2_an500.ld" -nostartfiles -Wl,--gc-sections \
+$CC $ARCH -T "$RIG/mps2_an500_snes.ld" -nostartfiles -Wl,--gc-sections \
     $OBJS -lm -o "$OUT/rig_snes.elf"
 
 arm-none-eabi-size "$OUT/rig_snes.elf"
