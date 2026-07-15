@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stm32h7xx_hal.h"
+#include "gw_boot_rescue.h"
 #include "gw_buttons.h"
 #include "gw_flash.h"
 #include "gw_lcd.h"
@@ -213,10 +214,25 @@ __attribute__((optimize("-O0"))) void BSOD(BSOD_t fault, uint32_t pc, uint32_t l
     }
   }
 
-  // Wait for a button press (allows a user to hold and release a button when the BSOD occurs)
+  // Wait for a button press (allows a user to hold and release a button when the BSOD occurs).
+  // POWER really powers off: without that, a fault that reboots into another
+  // fault can only be escaped by letting the battery run flat — the power
+  // button is firmware, and the firmware is what just died.
   uint32_t old_buttons = buttons_get();
-  while ((buttons_get() == 0 || (buttons_get() == old_buttons))) {
+  uint32_t new_buttons;
+  for (;;) {
+    new_buttons = buttons_get();
     wdog_refresh();
+    if (new_buttons == 0) {
+      old_buttons = 0;
+      continue;
+    }
+    if (new_buttons != old_buttons) {
+      break;
+    }
+  }
+  if (new_buttons & B_POWER) {
+    boot_rescue_power_off_now();
   }
 
   // Encode the fault type in the boot magic
@@ -387,6 +403,14 @@ int main(void)
     break;
   }
 
+  // Watchdog from the top for EVERY boot, not just hot ones: a hang anywhere
+  // in bring-up (LCD, OSPI, charger, SD probe) must become a reset — and from
+  // there a rescue screen — instead of a dark unit whose only way out is a
+  // flat battery. The hot-boot path has always run the whole bring-up under
+  // the watchdog enabled this early, so the timing is proven on device.
+  wdog_enable();
+  wdog_refresh();
+
   // Leave a trace that indicates a warm reset
   boot_magic = BOOT_MAGIC_RESET;
 
@@ -445,12 +469,25 @@ int main(void)
   // Save the button states as early as possible
   boot_buttons = buttons_get();
 
+  // Count this boot attempt (RTC backup register, survives resets). Cleared
+  // only once the firmware has demonstrably been alive for a while, or by a
+  // deliberate shutdown — a boot that hangs never clears it.
+  boot_rescue_note_boot_start();
+
   /* Power on LCD and external Flash */
   lcd_backlight_off();
   lcd_init(&hspi2, &hltdc, LCD_INIT_CLEAR_BUFFERS);
 
   if (trigger_wdt_bsod) {
     BSOD(BSOD_WATCHDOG, 0, 0);
+  }
+
+  // Two consecutive boots died before proving themselves alive: stop HERE,
+  // before the SD card, the config and the game auto-resume — one of those is
+  // probably what kept dying. Offers launcher-only boot, normal boot or power
+  // off, and powers off by itself if nobody answers.
+  if (boot_rescue_screen_due()) {
+    boot_rescue_screen_show();
   }
 
   /* USER CODE END 2 */

@@ -30,6 +30,7 @@ Core/Src/porting/lib/lzma/LzmaDec.c \
 Core/Src/porting/lib/lzma/lzma.c \
 Core/Src/bilinear.c \
 Core/Src/cpp_init_array.c \
+Core/Src/gw_boot_rescue.c \
 Core/Src/gw_buttons.c \
 Core/Src/gw_lcd.c \
 Core/Src/gw_audio.c \

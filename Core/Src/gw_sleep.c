@@ -7,6 +7,7 @@
 #include "odroid_settings.h"
 #include "odroid_display.h"
 #include "odroid_audio.h"
+#include "gw_boot_rescue.h"
 #include "gw_buttons.h"
 #include "gw_lcd.h"
 #include "gw_audio.h"
@@ -97,6 +98,10 @@ static void SleepModeEnterAndResume(sleep_pre_wakeup_callback_t pre_wakeup_callb
 }
 
 void GW_EnterDeepSleep(bool standby, sleep_pre_wakeup_callback_t pre_wakeup_callback, sleep_post_wakeup_callback_t post_wakeup_callback) {
+  // A deliberate sleep/power-off is not a failed boot: clear the boot-rescue
+  // counter so quick on/off cycles never look like a boot loop.
+  boot_rescue_mark_clean_shutdown();
+
   // Turn off speaker
   HAL_GPIO_WritePin(GPIO_Speaker_enable_GPIO_Port, GPIO_Speaker_enable_Pin, GPIO_PIN_RESET);
 
