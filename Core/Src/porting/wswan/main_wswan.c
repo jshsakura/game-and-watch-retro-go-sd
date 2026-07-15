@@ -276,18 +276,14 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     video_frame.buffer = FrameBuffer;
 
-    /* Mild, scoped, non-persisted boost — level 1 = 312MHz, reset on exit; a
-     * FLOOR, so a user who set a higher clock keeps it. NOT full (that is 2).
-     *
-     * After the WSRender BG/FG rewrite the heaviest battle frame (One Piece)
-     * dropped from ~4.27M to ~3.64M insn/frame on the M7 rig — now just under
-     * the STOCK 280MHz budget (~3.73M) rather than over even the OC budget. So
-     * level 1 is no longer raw-instruction necessity; it is headroom for what
-     * the rig cannot see — the D-cache misses and OSPI flash-XIP latency of an
-     * 8MB ROM fetched every instruction, which stock's ~2.4% margin would not
-     * absorb. Keep level 1 (not full); revisit dropping to stock only once the
-     * device confirms full speed there. */
-    common_emu_auto_oc(1);
+    /* Stock clock. The cycle-exact idle-skip + WSRender rewrite put the
+     * heaviest One Piece battle frame at ~2.30M insn/frame on the M7 rig —
+     * 61% of the STOCK 280MHz budget (~3.73M), leaving ~1.4M/frame of margin
+     * for what the rig cannot see (D-cache misses, OSPI flash-XIP latency).
+     * The device confirmed a smooth 75 fps on the level-1 build with that
+     * margin unused, so the scoped boost is gone. Level 0 still honours a
+     * user-set global OC level as a floor (common_emu_auto_oc semantics). */
+    common_emu_auto_oc(0);
 
     odroid_system_init(APPID_WSWAN, WS_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);

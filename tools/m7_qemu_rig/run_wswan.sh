@@ -28,7 +28,9 @@ mkdir -p "$OUT"
 CC=arm-none-eabi-gcc
 ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=soft"
 OPT="-Os -g -fno-strict-aliasing -ffunction-sections -fdata-sections"
-DEF="-DGNW_WSWAN -DNOSDL_FB -DSOUND_ON -DSOUND_EMULATION -DRIG_FRAMES=$FRAMES"
+# EXTRA_DEF: extra -D flags from the environment (e.g. -DWS_IDLE_DISABLE for
+# an idle-skip A/B on the same script).
+DEF="-DGNW_WSWAN -DNOSDL_FB -DSOUND_ON -DSOUND_EMULATION -DRIG_FRAMES=$FRAMES ${EXTRA_DEF:-}"
 INC="-ICore/Inc/porting/wswan -ICore/Src/porting/lib \
      -I$CW/emu -I$CW/emu/cpu -I$CW/headers -I$CW/sound -I."
 
