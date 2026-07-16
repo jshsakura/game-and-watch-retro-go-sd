@@ -204,13 +204,13 @@ void odroid_settings_init()
     }
 
     if (persistent_config_ram.magic != CONFIG_MAGIC) {
-        printf("Config: Magic mismatch. Expected 0x%08x, got 0x%08lx\n", CONFIG_MAGIC, persistent_config_ram.magic);
+        printf("CONFIG magic %08x/%08lx\n", CONFIG_MAGIC, persistent_config_ram.magic);
         odroid_settings_reset();
         return;
     }
 
     if (persistent_config_ram.version != persistent_config_default.version) {
-        printf("Config: New config version, resetting settings.\n");
+        printf("CONFIG ver reset\n");
         odroid_settings_reset();
         return;
     }
