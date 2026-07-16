@@ -101,6 +101,25 @@ typedef struct {
      * main_ga_read8/write8 reg 0. */
     uint8_t  ga_ifl2;
 
+    /* MAIN's SRES/SBRQ control shadow — mirrors PicoDrive's Pico_mcd->m.busreq
+     * (pd_cd/memory.c m68k_reg_write8 case 1: `Pico_mcd->m.busreq = d; return;`
+     * — note it does NOT touch s68k_regs[1] at all). bit0 = SRES (0 = sub
+     * held in reset, 1 = running), bit1 = SBRQ (1 = main holds the sub bus).
+     *
+     * Kept as its OWN field, separate from SCD.s68k_regs[1], for the exact
+     * reason documented on ga_ifl2 above: $A12001 (main's reset/busreq
+     * control) and $FF8001 (sub's own LED/soft-reset-trigger register,
+     * pd_cd/memory.c s68k_reg_write8 case 1: `if (!(d&1)) pcd_soft_reset();
+     * return;` — no persistent store either) are genuinely DIFFERENT
+     * registers that happen to share offset 1 from each CPU's own base.
+     * Routing both through the shared regs[1] byte let a SUB write to its
+     * own $FF8001 (segacd_bus.c sub_ff_write8's generic default case)
+     * silently clobber MAIN's SRES=1/SBRQ=0 state — main's 0x1252-style
+     * "send next CDD command" routine gates on reading back exactly that
+     * bit, so the clobber permanently blocked every doorbell after the
+     * first. See segacd_bus.c main_ga_read8/write8 reg 1. */
+    uint8_t  main_busreq;
+
     segacd_pcm_t pcm;         /* RF5C164 8-channel PCM */
 
     /* --- CDC/CDD state lives in the adapted pd_cd/ layer --- */

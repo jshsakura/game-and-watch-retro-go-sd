@@ -52,6 +52,15 @@ uint32_t scd_sga_rd[SEGACD_GA_REGS], scd_sga_wr[SEGACD_GA_REGS];     /* sub side
 extern int scd_dbg_frame;
 uint32_t scd_dbg_a12000_frame[SCD_DBG_A12000_LOG_N], scd_dbg_a12000_pc[SCD_DBG_A12000_LOG_N];
 int scd_dbg_a12000_n;
+/* $FF800E/F comm-flag writer trace — which sub PC sets which bits, and when
+ * (to find where a "TOC complete" flag would need to land). */
+uint32_t scd_dbg_800f_pc[32]; uint8_t scd_dbg_800f_val[32]; int scd_dbg_800f_n;
+/* regs[0x0e]/[0x0f] snapshot at the instant each $A12000 doorbell write fires. */
+uint8_t scd_dbg_a12000_regef[8][2]; int scd_dbg_a12000_regef_n;
+/* MAIN's own writes into regs[0x0e] (its half of the comm-flag word). */
+uint32_t scd_dbg_a1200e_pc[32]; uint8_t scd_dbg_a1200e_val[32]; int scd_dbg_a1200e_n;
+/* $A12001 (SRES/SBRQ) writes — which PC, when, what value. */
+uint32_t scd_dbg_reg1_pc[32]; uint8_t scd_dbg_reg1_val[32]; uint32_t scd_dbg_reg1_frame[32]; int scd_dbg_reg1_n;
 #define GA_RD(reg)  (scd_ga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
 #define GA_WR(reg)  (scd_ga_wr[(reg) & (SEGACD_GA_REGS-1)]++)
 #define SGA_RD(reg) (scd_sga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
@@ -169,6 +178,10 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
             /* $FF800E/F comm flag: SUB's half always targets regs[0x0f]
              * regardless of which byte of the word was addressed —
              * pd_cd/memory.c s68k_reg_write8 `case 0x0e: a++`. */
+#ifdef SEGACD_GA_TRACE
+            extern uint32_t scd_dbg_800f_pc[]; extern uint8_t scd_dbg_800f_val[]; extern int scd_dbg_800f_n;
+            if (scd_dbg_800f_n < 32) { scd_dbg_800f_pc[scd_dbg_800f_n] = m68k.pc; scd_dbg_800f_val[scd_dbg_800f_n] = (uint8_t)data; scd_dbg_800f_n++; }
+#endif
             SCD.s68k_regs[0x0f] = (uint8_t)data;
             return;
         }
@@ -346,6 +359,15 @@ static unsigned int main_ga_read8(unsigned int address)
          * SCD.ga_ifl2 for why $A12000 (main) and $FF8000 (sub: gate-array
          * version + LEDs) must not alias through the same byte. */
         return SCD.ga_ifl2 & 0x01;
+    if (reg == 0x001)
+        /* $A12001 = MAIN's SRES/SBRQ readback. Deliberately NOT the shared
+         * regs[] array — see main_ga_write8 case reg==1 and segacd.h
+         * SCD.main_busreq for why $A12001 (main) and $FF8001 (sub: LED +
+         * soft-reset trigger, no persistent store on real hardware) must
+         * not alias through the same byte. pd_cd/memory.c s68k_reg_read16
+         * case 0 returns busreq packed into the low byte of the $A12000
+         * word — this is that same value read as a lone byte. */
+        return SCD.main_busreq & 0x03;
     if (reg == 0x003)
         /* MAIN's masked view of reg3: bits 3-5 are not visible to MAIN —
          * pd_cd/memory.c m68k_reg_read16 case 2: `s68k_regs[3] & 0xc7`. */
@@ -397,6 +419,12 @@ static void main_ga_write8(unsigned int address, unsigned int data)
             scd_dbg_a12000_frame[scd_dbg_a12000_n] = (uint32_t)scd_dbg_frame;
             scd_dbg_a12000_pc[scd_dbg_a12000_n] = m68k.pc;
             scd_dbg_a12000_n++;
+        }
+        extern uint8_t scd_dbg_a12000_regef[][2]; extern int scd_dbg_a12000_regef_n;
+        if (scd_dbg_a12000_regef_n < 8) {
+            scd_dbg_a12000_regef[scd_dbg_a12000_regef_n][0] = SCD.s68k_regs[0x0e];
+            scd_dbg_a12000_regef[scd_dbg_a12000_regef_n][1] = SCD.s68k_regs[0x0f];
+            scd_dbg_a12000_regef_n++;
         }
 #endif
         return;
@@ -457,6 +485,13 @@ static void main_ga_write8(unsigned int address, unsigned int data)
             SCD.s68k_regs[0x0e] = (uint8_t)data;
             segacd_poll_wake();
         }
+#ifdef SEGACD_GA_TRACE
+        if (scd_dbg_a1200e_n < 32) {
+            scd_dbg_a1200e_pc[scd_dbg_a1200e_n] = m68k.pc;
+            scd_dbg_a1200e_val[scd_dbg_a1200e_n] = (uint8_t)data;
+            scd_dbg_a1200e_n++;
+        }
+#endif
         return;
     }
 
@@ -467,20 +502,36 @@ static void main_ga_write8(unsigned int address, unsigned int data)
         return;
     }
 
-    SCD.s68k_regs[reg] = (uint8_t)data;
-
-    /* Any main write into the gate array can change what the sub polls. */
-    segacd_poll_wake();
-
     if (reg == 0x001) {
         /* $A12001: bit0 SRES (0=sub in reset, 1=run), bit1 SBRQ (1=main holds
-         * sub bus). Sub runs only when released AND its bus is granted. */
+         * sub bus). Sub runs only when released AND its bus is granted.
+         * Stored in SCD.main_busreq, NOT the shared regs[] array — see
+         * segacd.h SCD.main_busreq for why aliasing it onto regs[1] let a
+         * SUB write to its own $FF8001 permanently clobber this state. */
+#ifdef SEGACD_GA_TRACE
+        extern uint32_t scd_dbg_reg1_pc[]; extern uint8_t scd_dbg_reg1_val[]; extern uint32_t scd_dbg_reg1_frame[]; extern int scd_dbg_reg1_n;
+        extern int scd_dbg_frame;
+        if (scd_dbg_reg1_n < 32) {
+            scd_dbg_reg1_pc[scd_dbg_reg1_n] = m68k.pc;
+            scd_dbg_reg1_val[scd_dbg_reg1_n] = (uint8_t)data;
+            scd_dbg_reg1_frame[scd_dbg_reg1_n] = (uint32_t)scd_dbg_frame;
+            scd_dbg_reg1_n++;
+        }
+#endif
+        SCD.main_busreq = (uint8_t)(data & 0x03);
+        segacd_poll_wake();
         if ((data & 0x01) && !(data & 0x02)) {
             if (!SCD.sub_running) segacd_sub_release();
         } else {
             segacd_sub_hold();
         }
+        return;
     }
+
+    SCD.s68k_regs[reg] = (uint8_t)data;
+
+    /* Any main write into the gate array can change what the sub polls. */
+    segacd_poll_wake();
 }
 static void main_ga_write16(unsigned int address, unsigned int data)
 {
