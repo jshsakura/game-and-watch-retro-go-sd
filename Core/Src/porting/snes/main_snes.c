@@ -189,29 +189,39 @@ static uint16_t read_snes_pad(odroid_gamepad_state_t *joy) {
  * 32 px left margin and NO top margin — exactly the harness placement. An
  * overscan title renders up to 239 lines; a top margin would run the last
  * rows past the framebuffer. */
-/* Per-line hand-off — the same contract the SM port uses (the proven on-device
- * path). The recent PPU refactor (681371b) made g_ppu_line_cb the delivery path
- * for the fast line renderer; the old "PpuBeginDrawing straight into the LCD
- * framebuffer" wiring left the callback NULL and drew nothing on the device
- * (black screen, strobing after an overlay toggle). Render one line at a time
- * into snes_line (renderPitch 0 → every line lands in the same scratch) and copy
- * it out here: 256 px wide, 32 px left margin, no top margin — the native image. */
+/* Video. The PPU renders one line at a time into snes_line (renderPitch 0 → every
+ * line lands in the same scratch) and hands it to g_ppu_line_cb — the contract the
+ * recent PPU refactor (681371b) introduced and the SM port already uses. We place
+ * each line into a PRIVATE persistent framebuffer (snes_frame), then copy the whole
+ * frame to the LCD's active buffer at present time. That is the robust pattern GBA
+ * uses: the LCD is double-buffered, and painting a full frame into whichever buffer
+ * is active each present keeps BOTH buffers complete — rendering per-line straight
+ * into the active buffer left the OTHER buffer stale (black on the device, strobing
+ * after an overlay toggle). 256 px wide, 32 px left margin, no top margin; the
+ * private buffer's borders are cleared once and stay black. */
 static uint16_t snes_line[256];
-static uint16_t *snes_fb;
+static uint16_t snes_frame[GW_LCD_WIDTH * GW_LCD_HEIGHT];
 
 static void snes_blit_line(unsigned y, const uint16_t *line) {
-  if (y < 1 || y > 240 || !snes_fb)   /* y is 1-based; guard the 240-row panel */
+  if (y < 1 || y > GW_LCD_HEIGHT)   /* y is 1-based; guard the 240-row panel */
     return;
-  memcpy(snes_fb + (y - 1) * GW_LCD_WIDTH + 32, line, sizeof(snes_line));
+  memcpy(snes_frame + (y - 1) * GW_LCD_WIDTH + 32, line, sizeof(snes_line));
 }
 
 static void render_frame_into_active_buffer(void) {
-  snes_fb = lcd_get_active_buffer();
   g_ppu_line_cb = &snes_blit_line;
   PpuBeginDrawing(snes->ppu, (uint8_t *)snes_line, 0, 0);  /* pitch 0: every line here */
 }
 
+static void present_frame(void) {
+  memcpy(lcd_get_active_buffer(), snes_frame, sizeof(snes_frame));
+}
+
+/* Present the last rendered frame and draw the in-game overlay on top. Used both
+ * as the normal per-frame present and as the overlay's repaint callback, so the
+ * pause menu keeps the game behind it instead of a stale/black background. */
 static void blit(void) {
+  present_frame();
   common_ingame_overlay();
 }
 
@@ -430,6 +440,7 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   } else {
     lcd_clear_buffers();
   }
+  memset(snes_frame, 0, sizeof(snes_frame));   /* borders start black and stay black */
 
   while (1) {
     wdog_refresh();
@@ -443,12 +454,11 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     snes->input1->currentState = read_snes_pad(&joystick);
 
     g_ppu_skip_render = !drawFrame;
-    if (drawFrame)
-      render_frame_into_active_buffer();
+    render_frame_into_active_buffer();   /* arm the line callback every frame */
     run_frame_events(snes);
 
     if (drawFrame) {
-      blit();
+      blit();          /* present_frame() + in-game overlay */
       lcd_swap();
     }
 
