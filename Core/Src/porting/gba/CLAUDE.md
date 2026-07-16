@@ -46,11 +46,12 @@ gaps KEEP the cutoff — toggling was a click) → volume ×(≤1.0) → SAI.
 Sound bugs shipped and fixed, so far: resample imaging ("gritty", the filter),
 PSG note-ons a fourth flat (65536 Hz constants duplicated in two files — one
 formula, one definition now, `_Static_assert`-pinned), filter toggle seams.
-Still open: an occasional note-tail crackle. The **audio diary** exists for
-it: 5-second windows with nonzero `clip`/`hold`/`rateflip` counters collect in
-RAM and flush to `/gba_audio_diag.txt` when the menu mutes audio or on quit —
-never during play, because an SD write mid-game manufactures the crackle it
-measures. Host-side, 90 s of the Ruby opening through the exact device math
+Still open: an occasional note-tail crackle. The audio diary that hunted it
+(`/gba_audio_diag.txt`) was removed when GBA work wrapped up — per-system
+test logs now belong only to the systems in active bring-up. If the crackle
+hunt resumes, restore it from git history (`git log -S gba_audio_diag`); the
+design rule it encoded still stands: never write SD mid-play, flush only on
+mute/quit. Host-side, 90 s of the Ruby opening through the exact device math
 contains zero clicks: whatever it is, it is born on the device.
 
 ## Memory layout — the contract in one breath
