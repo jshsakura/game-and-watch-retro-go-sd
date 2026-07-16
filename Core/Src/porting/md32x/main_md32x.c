@@ -40,6 +40,7 @@
 
 #include "pico/pico_types.h"   /* s8/s16/s32 — MUST precede pico.h */
 #include "pico/pico.h"
+#include "pico/pico_int.h"     /* Pico.est.Draw2FB binding (Draw2 shim below) */
 
 /* ---- geometry / rates ----------------------------------------------------- */
 #define MD32X_FPS            60
@@ -93,16 +94,41 @@ int   inflateInit2_(void *strm, int wbits, const char *ver, int ssize)
 int   inflate(void *strm, int flush) { (void)strm; (void)flush; return -2; }
 int   inflateReset(void *strm) { (void)strm; return -2; }
 int   inflateEnd(void *strm) { (void)strm; return 0; }
-/* draw2 (POPT_ALT_RENDERER) and SMS renderer entry points: those TUs are
- * excluded; unreachable for 32X (spike: PicoFrameFull called 0x in 300f). */
-void PicoDraw2SetOutBuf(void *dest, int increment) { (void)dest; (void)increment; }
+/* SMS renderer TU is excluded; unreachable for 32X. */
 void PicoDrawSetOutputSMS(int which) { (void)which; }
-/* The 68K's 64K bank image (0x100 stub + ROM copy, composed once in
- * get_bios()) comes from AHB SRAM: RAM_EMU can't afford it, and a runtime
- * ahb_calloc costs only this core (a static AHB section would permanently
- * shrink every core's pool — see the linker note). */
+
+/* Draw2FB: with draw2.c excluded this binding still matters — the 32X
+ * compositor points the MD line renderer INTO this 328x(8+240+8) CLUT frame
+ * and reads it back per-pixel (pmd) for MD/32X layer priority. A no-op stub
+ * left it NULL = wild reads (QEMU rig proof: SIGSEGV at pmd=0xa48; on the
+ * device a Hardfault). ~84K, from AHB at load — per-core, nobody's pool
+ * shrinks (the m68k bank no longer lives there, see below). */
+#define MD32X_D2FB_LINE   328
+#define MD32X_D2FB_BYTES  (MD32X_D2FB_LINE * (8 + 240 + 8) + 8)
+static uint8_t *md32x_draw2fb;
+
+void PicoDraw2SetOutBuf(void *dest, int increment) {
+  /* draw2.c's binding, verbatim minus the renderer (cf. rig_32x_draw2fb.c).
+   * References to Pico resolve to md32x__Pico — the redefine pass renames
+   * references in this object too, so this binds the overlay's own state. */
+  if (dest) {
+    Pico.est.Draw2FB = dest;
+    Pico.est.Draw2Width = increment;
+  } else {
+    if (md32x_draw2fb == NULL)
+      md32x_draw2fb = (uint8_t *)ahb_calloc(1, MD32X_D2FB_BYTES);
+    Pico.est.Draw2FB = md32x_draw2fb;
+    Pico.est.Draw2Width = MD32X_D2FB_LINE;
+  }
+}
+
+/* The 68K page-0 image is NOT a 64K RAM copy anymore: reads >= 0x100 come
+ * straight from the flash-mapped ROM via PicoRead8/16_gnwbank (fork), and
+ * only the synthesized 0x100 stub (incl. the writable H-int vector at 0x70)
+ * needs RAM. 256 bytes, static. */
+static unsigned char md32x_m68k_stub[0x100];
 unsigned char *gnw_m68k_bank_alloc(void) {
-  return (unsigned char *)ahb_calloc(1, 0x10000);
+  return md32x_m68k_stub;
 }
 
 /* ---- audio ----------------------------------------------------------------
@@ -161,8 +187,17 @@ static void set_out_buffer(void) {
 }
 
 /* picodrive frontend hooks (referenced by pico/draw.c and pico/32x/32x.c). Not
- * in md32x_redefines, so the core's extern refs resolve straight here. */
-void emu_32x_startup(void) { /* 32X hardware engaged — nothing needed for M1 */ }
+ * in md32x_redefines, so the core's extern refs resolve straight here.
+ *
+ * Fired by the LAZY Pico32xStartup (the game's own 68K writes ADEN at
+ * 0xA15101). PicoDrawSetOutFormat/SetOutBuf route to their 32X variants only
+ * once PAHW_32X is set, so they MUST be re-applied here — otherwise the 32X
+ * layer renders into picodrive's internal DefOutBuff and the screen stays
+ * black (QEMU-rig-proven; libretro's hook does the same re-apply). */
+void emu_32x_startup(void) {
+  PicoDrawSetOutFormat(PDF_RGB555, 0);
+  set_out_buffer();
+}
 
 void emu_video_mode_change(int start_line, int line_count, int start_col, int col_count) {
   (void)start_line; (void)start_col;
@@ -293,12 +328,20 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   memset(__md32x_itc_bss_start__, 0,
          (size_t)(__md32x_itc_bss_end__ - __md32x_itc_bss_start__));
 
-  /* --- full picodrive init (frontend order; a partial init hangs PicoFrame) - */
+  /* --- picodrive init, libretro (upstream frontend) order — QEMU-rig-proven.
+   * 32X startup is LAZY: the game's own MD-mode boot code writes ADEN at
+   * 0xA15101 and PicoWrite8_32x calls Pico32xStartup (which runs
+   * Pico32xPrepare + our emu_32x_startup hook). Calling Pico32xStartup up
+   * front — the old order — pre-enables the adapter and breaks the boot
+   * handshake (VF's 68K parks in an idle loop forever). PicoReset is not
+   * called either: PicoLoadMedia -> PicoCartInsert -> PicoPower already
+   * reset the machine. */
   PicoInit();
-  PicoIn.opt   = POPT_EN_32X | POPT_ACC_SPRITES;   /* mono: no POPT_EN_STEREO */
-  PicoIn.sndRate  = MD32X_AUDIO_RATE;
-  PicoIn.sndOut   = md32x_snd;
-  PicoIn.writeSound = md32x_write_sound;
+  PicoIn.opt = POPT_EN_FM | POPT_EN_PSG | POPT_EN_Z80
+             | POPT_EN_32X | POPT_EN_PWM
+             | POPT_ACC_SPRITES | POPT_DIS_32C_BORDER;   /* mono: no EN_STEREO */
+  PicoIn.sndRate = MD32X_AUDIO_RATE;
+  PicoIn.autoRgnOrder = 0x184;   /* US, EU, JP */
 
   enum media_type_e mt = PicoLoadMedia(ACTIVE_FILE->path, (unsigned char *)rom, sz,
                                        NULL, NULL, NULL, NULL);
@@ -308,16 +351,12 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     return;
   }
 
-  { extern void Pico32xStartup(void); Pico32xStartup(); }
-  { extern void Pico32xPrepare(void); Pico32xPrepare(); }
-
-  PicoDrawSetOutFormat(PDF_RGB555, 0);   /* despite the name: RGB565 out on this config (cf. rig) */
-  set_out_buffer();
-
-  PicoReset();
   PicoLoopPrepare();
+  PicoIn.sndOut = md32x_snd;
+  PicoIn.writeSound = md32x_write_sound;
   PsndRerate(0);
-  { extern void Pico32xPrepare(void); Pico32xPrepare(); }  /* re-set post-reset */
+  PicoDrawSetOutFormat(PDF_RGB555, 0);   /* despite the name: RGB565 out on this config */
+  set_out_buffer();
 
   if (load_state)
     odroid_system_emu_load_state(save_slot);
