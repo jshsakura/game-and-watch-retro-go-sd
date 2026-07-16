@@ -134,6 +134,12 @@ int main(int argc, char **argv)
         }
     }
     printf("[boot] done %d frames. sub_running=%d\n", FRAMES, SCD.sub_running);
+    /* did the main copy a sub program into PRG-RAM, and is the sub past reset? */
+    { long nz=0; for(int i=0;i<SEGACD_PRG_RAM_SIZE;i++) if(SCD.prg_ram[i]) nz++;
+      long wz=0; for(int i=0;i<SEGACD_WORD_RAM_SIZE;i++) if(SCD.word_ram[i]) wz++;
+      printf("[boot] PRG-RAM %ld/%d non-zero, Word-RAM %ld/%d non-zero, sub PC=%06x $A12003=%02x\n",
+             nz, SEGACD_PRG_RAM_SIZE, wz, SEGACD_WORD_RAM_SIZE,
+             (unsigned)SCD.sub_ctx.pc, SCD.s68k_regs[0x03]); }
 
 #ifdef SEGACD_GA_TRACE
     extern uint32_t scd_ga_rd[], scd_ga_wr[];
