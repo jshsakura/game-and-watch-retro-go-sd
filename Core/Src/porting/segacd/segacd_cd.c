@@ -256,6 +256,9 @@ int segacd_bram_save(const char *path)
 void segacd_cdc_dma_sector(uint8_t *dst, int len)
 {
     if (!dst || len <= 0) return;
+#ifdef SEGACD_GA_TRACE
+    { extern uint32_t scd_dbg_dma_sector; scd_dbg_dma_sector++; }
+#endif
     int n = len < CDC_RING_SIZE ? len : CDC_RING_SIZE;
     memcpy(dst, CD.cdc_ram, (size_t)n);
 }
@@ -300,6 +303,16 @@ static void cdd_status_checksum(void)
  * the trigger byte $FF804B (segacd_bus.c). */
 #ifdef SEGACD_GA_TRACE
 uint32_t scd_dbg_cdd_cmd_hist[16];
+/* CDC data-path visibility (0716 boot-stall): where does disc data get stuck? */
+uint32_t scd_dbg_dec_calls;    /* cdc_decoder_update entered with DECEN set */
+uint32_t scd_dbg_dec_wrrq;     /* ...and WRRQ set -> sector written to ring */
+uint32_t scd_dbg_cdupd_read;   /* segacd_cd_update read a data sector */
+uint32_t scd_dbg_host_sub;     /* $FF8008 host-port reads by the sub */
+uint32_t scd_dbg_host_sub_adv; /* ...that actually advanced (dir==3, real xfer) */
+uint32_t scd_dbg_host_main;    /* $A12008 host-port reads by the main */
+uint32_t scd_dbg_dma_sector;   /* segacd_cdc_dma_sector (the stubbed DMA) calls */
+uint32_t scd_dbg_ctrl0_w;      /* sub writes to CTRL0 */
+uint32_t scd_dbg_ctrl0_wrrq;   /* ...that set WRRQ (buffer-write request) */
 #endif
 
 void segacd_cdd_command(void)
@@ -701,6 +714,10 @@ void segacd_cdc_reg_w(uint8_t data)
         SCD.s68k_regs[0x05] = 0x0a;
         break;
     case 0x0a:  /* CTRL0 */
+#ifdef SEGACD_GA_TRACE
+        { extern uint32_t scd_dbg_ctrl0_w, scd_dbg_ctrl0_wrrq;
+          scd_dbg_ctrl0_w++; if (data & CDC_CTRL0_WRRQ) scd_dbg_ctrl0_wrrq++; }
+#endif
         if (!(data & CDC_CTRL0_DECEN))
             CDC.ifstat |= CDC_IFSTAT_DECI;
         CDC.stat2 = (uint8_t)((data & CDC_CTRL0_AUTORQ)
@@ -747,6 +764,10 @@ void segacd_cdc_reg_w(uint8_t data)
 uint16_t segacd_cdc_host_r(int sub)
 {
     int dir = SCD.s68k_regs[0x04] & 0x07;
+#ifdef SEGACD_GA_TRACE
+    { extern uint32_t scd_dbg_host_sub, scd_dbg_host_main;
+      if (sub) scd_dbg_host_sub++; else scd_dbg_host_main++; }
+#endif
 
     if (CDC.ifstat & CDC_IFSTAT_DTEN)
         return 0xffff;   /* no data available */
@@ -757,6 +778,9 @@ uint16_t segacd_cdc_host_r(int sub)
     if ((sub && dir != 3) || (!sub && dir != 2))
         return data;     /* not the configured destination: peek only */
 
+#ifdef SEGACD_GA_TRACE
+    { extern uint32_t scd_dbg_host_sub_adv; scd_dbg_host_sub_adv++; }
+#endif
     CDC.dac = (uint16_t)(CDC.dac + 2);
     CDC.dbc = (uint16_t)(CDC.dbc - 2);
 
@@ -785,6 +809,9 @@ uint16_t segacd_cdc_host_r(int sub)
 static void cdc_decoder_update(const uint8_t header[4], const uint8_t *sector_data)
 {
     if (!(CDC.ctrl0 & CDC_CTRL0_DECEN)) return;
+#ifdef SEGACD_GA_TRACE
+    { extern uint32_t scd_dbg_dec_calls; scd_dbg_dec_calls++; }
+#endif
 
     memcpy(CDC.head, header, 4);
     CDC.stat3 = 0x00;                 /* !VALST: data is valid */
@@ -795,6 +822,9 @@ static void cdc_decoder_update(const uint8_t header[4], const uint8_t *sector_da
         SCD.cdc_int_pending = 1;
 
     if ((CDC.ctrl0 & CDC_CTRL0_WRRQ) && sector_data) {
+#ifdef SEGACD_GA_TRACE
+        { extern uint32_t scd_dbg_dec_wrrq; scd_dbg_dec_wrrq++; }
+#endif
         CDC.pt = (uint16_t)(CDC.pt + CD_SECTOR_RAW);
         CDC.wa = (uint16_t)(CDC.wa + CD_SECTOR_RAW);
         unsigned int offset = CDC.pt & (CDC_RING_SIZE - 1);
@@ -824,12 +854,19 @@ void segacd_cd_update(void)
     if (t && !t->is_audio) {
         static uint8_t sector_buf[CD_SECTOR_DATA];
         if (read_sector(CD.cur_lba, sector_buf, CD_SECTOR_DATA) == 0) {
+#ifdef SEGACD_GA_TRACE
+            { extern uint32_t scd_dbg_cdupd_read; scd_dbg_cdupd_read++; }
+#endif
             uint32_t msf = CD.cur_lba + 150;
             uint8_t header[4];
             header[0] = bcd8((int)((msf / 75) / 60));
             header[1] = bcd8((int)((msf / 75) % 60));
             header[2] = bcd8((int)(msf % 75));
             header[3] = 0x01;   /* CD-ROM Mode 1 */
+#ifdef SEGACD_GA_TRACE
+            { extern void scd_dbg_log_hdr(uint32_t lba, const uint8_t *h, const uint8_t *data);
+              scd_dbg_log_hdr(CD.cur_lba, header, sector_buf); }
+#endif
             cdc_decoder_update(header, sector_buf);
         }
     }
@@ -847,3 +884,36 @@ void segacd_cd_update(void)
         }
     }
 }
+
+#ifdef SEGACD_GA_TRACE
+/* Boot-stall visibility accessor: expose the file-static CDC/CD fields the
+ * host boot harness prints, without making the whole struct external. */
+uint16_t segacd_cdc_ctrl_dbg(int which)
+{
+    switch (which) {
+    case 0: return CDC.ctrl0;
+    case 1: return CDC.ctrl1;
+    case 2: return CDC.ifctrl;
+    case 3: return CDC.ifstat;
+    case 4: return (uint16_t)CD.status;
+    case 5: return (uint16_t)CD.cur_lba;
+    default: return 0;
+    }
+}
+#endif
+
+#ifdef SEGACD_GA_TRACE
+/* Boot-stall: log the first data sectors we feed the decoder — LBA, the 4-byte
+ * MSF/mode header the sub reads from HEAD0-3, and whether the 2048 bytes look
+ * like the Sega CD boot descriptor ("SEGADISCSYSTEM"). */
+static int scd_dbg_hdr_n;
+void scd_dbg_log_hdr(uint32_t lba, const uint8_t *h, const uint8_t *data)
+{
+    if (scd_dbg_hdr_n >= 16) return;
+    char sig[17]; memcpy(sig, data, 16); sig[16]=0;
+    for (int i=0;i<16;i++) if (sig[i]<32||sig[i]>126) sig[i]='.';
+    printf("[boot] sector LBA=%u HEAD=%02x %02x %02x %02x  data[0..15]='%s'\n",
+           lba, h[0],h[1],h[2],h[3], sig);
+    scd_dbg_hdr_n++;
+}
+#endif

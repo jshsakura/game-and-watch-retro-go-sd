@@ -42,6 +42,10 @@ void *itc_malloc(size_t s){return malloc(s);} void *itc_calloc(size_t n,size_t s
 void *ram_malloc(size_t s){return malloc(s);} void *ram_calloc(size_t n,size_t s){return calloc(n,s);}
 
 int system_clock, scan_line, hint_counter, skip_first_vint, drawFrame=1;
+/* boot-stall (0716): count MAIN VINT raises vs. VBlank-ISR entries. The ISR at
+ * BIOS 0x9a4/0x9dc is the ONLY thing that clears the $fe26 WaitVSync semaphore;
+ * if the main spins at 0xa1a it's because this ISR never runs. */
+long g_vint_raised=0, g_vint_taken=0; int g_reg1_at_stall=0;
 int sn76489_clock, sn76489_index, ym2612_clock, ym2612_index, vert_screen_offset, hori_screen_offset;
 unsigned int lines_per_frame = LINES_PER_FRAME_NTSC;
 int16_t gwenesis_ym2612_buffer[GWENESIS_AUDIO_BUFFER_CAPACITY];
@@ -73,7 +77,7 @@ static void md_scanline_frame(void)
     gwenesis_vdp_status^=STATUS_ODDFRAME;
     scan_line=(int)screen_height;
     if(!skip_first_vint){ gwenesis_vdp_status|=STATUS_VIRQPENDING;
-      if(REG1_VBLANK_INTERRUPT)m68k_set_irq(6); z80_irq_line(1); }
+      if(REG1_VBLANK_INTERRUPT){m68k_set_irq(6); g_vint_raised++;} z80_irq_line(1); }
     m68k_run(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE);
     system_clock+=VDP_CYCLES_PER_LINE; z80_irq_line(0);
     for(line=(int)screen_height+1; line<(int)lines_per_frame-1; line++){ scan_line=line;
@@ -183,6 +187,26 @@ int main(int argc, char **argv)
         }
     }
     printf("[boot] done %d frames. sub_running=%d\n", FRAMES, SCD.sub_running);
+    /* boot-stall probe: is MAIN's VBlank interrupt actually being raised, and
+     * is the main CPU able to take it (SR mask), at the moment we stopped? */
+    printf("[boot] MAIN VINT raised=%ld times; VDP reg1=%02x (VINT-enable bit5=%d, disp-en bit6=%d); "
+           "main SR int_mask=%u pc=%06x int_level=%u\n",
+           g_vint_raised, gwenesis_vdp_regs[1], (gwenesis_vdp_regs[1]>>5)&1,
+           (gwenesis_vdp_regs[1]>>6)&1, (unsigned)m68k.int_mask, (unsigned)m68k.pc,
+           (unsigned)m68k.int_level);
+    /* Dump the MAIN stack so we can see WHICH caller of WaitVSync (0xa0c) the
+     * main is parked in — the return address sits at the top of its stack while
+     * it spins inside WaitVSync. main RAM is M68K_RAM[addr^1] (BE pair-swap). */
+    { extern unsigned char *M68K_RAM;
+      unsigned sp = m68k.dar[15] & 0xffff;
+      #define MRW(o) ((M68K_RAM[((o)+1)^1]<<8)|M68K_RAM[(o)^1])
+      #define MRL(o) ((MRW(o)<<16)|MRW((o)+2))
+      printf("[boot] MAIN SP=%06x stack longs:", m68k.dar[15]);
+      for (int i=0;i<10;i++) printf(" %06x", MRL((sp+i*4)&0xffff));
+      printf("\n");
+      #undef MRW
+      #undef MRL
+    }
     /* did the main copy a sub program into PRG-RAM, and is the sub past reset? */
     { long nz=0; for(int i=0;i<SEGACD_PRG_RAM_SIZE;i++) if(SCD.prg_ram[i]) nz++;
       long wz=0; for(int i=0;i<SEGACD_WORD_RAM_SIZE;i++) if(SCD.word_ram[i]) wz++;
@@ -319,6 +343,23 @@ int main(int argc, char **argv)
      * IFL2/CDD delivery. --- */
     printf("[boot] REG1 VBLANK_INTERRUPT (IE0) first seen enabled at frame=%d (-1=never)\n",
            vblank_ie_first_frame);
+    /* CDC data-path: where does the disc data get stuck on the way to Word-RAM? */
+    { extern uint32_t scd_dbg_dec_calls, scd_dbg_dec_wrrq, scd_dbg_cdupd_read,
+                      scd_dbg_host_sub, scd_dbg_host_sub_adv, scd_dbg_host_main,
+                      scd_dbg_dma_sector;
+      extern uint16_t segacd_cdc_ctrl_dbg(int which);
+      extern uint32_t scd_dbg_ctrl0_w, scd_dbg_ctrl0_wrrq;
+      printf("[boot] CDC CTRL0 writes by sub=%u, of which set WRRQ=%u\n", scd_dbg_ctrl0_w, scd_dbg_ctrl0_wrrq);
+      printf("[boot] CDC data-path: cd_update sector-reads=%u  decoder(DECEN)=%u  ring-writes(WRRQ)=%u  "
+             "|  host-port sub=%u (advanced=%u) main=%u  |  DMA-stub calls=%u\n",
+             scd_dbg_cdupd_read, scd_dbg_dec_calls, scd_dbg_dec_wrrq,
+             scd_dbg_host_sub, scd_dbg_host_sub_adv, scd_dbg_host_main, scd_dbg_dma_sector);
+      printf("[boot] CDC state: ctrl0=%02x(DECEN=%d WRRQ=%d) ctrl1=%02x ifctrl=%02x ifstat=%02x  "
+             "CD.status=%u cur_lba=%u  reg[4](DTRG/dir)=%02x\n",
+             segacd_cdc_ctrl_dbg(0), (segacd_cdc_ctrl_dbg(0)>>7)&1, (segacd_cdc_ctrl_dbg(0)>>2)&1,
+             segacd_cdc_ctrl_dbg(1), segacd_cdc_ctrl_dbg(2), segacd_cdc_ctrl_dbg(3),
+             segacd_cdc_ctrl_dbg(4), segacd_cdc_ctrl_dbg(5), SCD.s68k_regs[0x04]);
+    }
     extern uint32_t scd_dbg_a12000_frame[], scd_dbg_a12000_pc[]; extern int scd_dbg_a12000_n;
     printf("[boot] $A12000 doorbell writes (%d logged, total wr=%u): ", scd_dbg_a12000_n, scd_ga_wr[0]);
     for (int i = 0; i < scd_dbg_a12000_n; i++)
@@ -333,6 +374,11 @@ int main(int argc, char **argv)
     printf("[boot] level-4 (CDD) delivered to SUB (%d logged): ", scd_dbg_deliver4_n);
     for (int i = 0; i < scd_dbg_deliver4_n; i++)
         printf("[f%u subPC=%06x] ", scd_dbg_deliver4_frame[i], scd_dbg_deliver4_pc[i]);
+    printf("\n");
+    extern uint32_t scd_dbg_deliver5_total, scd_dbg_deliver5_frame[], scd_dbg_deliver5_pc[]; extern int scd_dbg_deliver5_n;
+    printf("[boot] level-5 (CDC/DECI) delivered to SUB total=%u (%d logged): ", scd_dbg_deliver5_total, scd_dbg_deliver5_n);
+    for (int i = 0; i < scd_dbg_deliver5_n; i++)
+        printf("[f%u subPC=%06x] ", scd_dbg_deliver5_frame[i], scd_dbg_deliver5_pc[i]);
     printf("\n");
 
     /* Dump MAIN's work RAM (BE-reconstructed, same ^1 pair-swap convention as

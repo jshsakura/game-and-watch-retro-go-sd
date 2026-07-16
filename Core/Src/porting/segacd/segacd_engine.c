@@ -53,6 +53,9 @@ uint32_t scd_dbg_deliver2_frame[SCD_DBG_DELIVER_LOG_N], scd_dbg_deliver2_pc[SCD_
 int scd_dbg_deliver2_n;
 uint32_t scd_dbg_deliver4_frame[SCD_DBG_DELIVER_LOG_N], scd_dbg_deliver4_pc[SCD_DBG_DELIVER_LOG_N];
 int scd_dbg_deliver4_n;
+uint32_t scd_dbg_deliver5_total;
+uint32_t scd_dbg_deliver5_frame[SCD_DBG_DELIVER_LOG_N], scd_dbg_deliver5_pc[SCD_DBG_DELIVER_LOG_N];
+int scd_dbg_deliver5_n;
 #endif
 
 /* Saved MAIN context while the sub-CPU is running. Static, one level of
@@ -242,6 +245,14 @@ int segacd_run_sub(int cycle_target)
         int want2 = !want5 && !want4 && SCD.ga_ifl2 && (SCD.s68k_regs[0x33] & 0x04);
 #ifdef SEGACD_GA_TRACE
         scd_dbg_chunks++;
+        if (want5) {
+            scd_dbg_deliver5_total++;
+            if (scd_dbg_deliver5_n < SCD_DBG_DELIVER_LOG_N) {
+                scd_dbg_deliver5_frame[scd_dbg_deliver5_n] = (uint32_t)scd_dbg_frame;
+                scd_dbg_deliver5_pc[scd_dbg_deliver5_n] = m68k.pc;
+                scd_dbg_deliver5_n++;
+            }
+        }
         if (want4) {
             scd_dbg_deliver4++;
             if (scd_dbg_deliver4_n < SCD_DBG_DELIVER_LOG_N) {
