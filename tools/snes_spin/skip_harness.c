@@ -33,6 +33,7 @@
 #include "src/snes/cpu.h"
 #include "src/snes/dma.h"
 #include "src/snes/input.h"
+#include "src/snes/spin_skip.h"   /* the ONE learner: same code the device runs */
 
 bool snes_loadRom(Snes* snes, const uint8_t* data, int length);
 
@@ -62,80 +63,11 @@ static int16_t  g_audio[16000 / 60];
 
 static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
-/* ---- purity counters (instrumented cpu.c copy) ---- */
-uint64_t g_write_seq;
-static uint64_t g_io_seq;
-void snes_spin_read(Cpu *cpu, uint32_t adr) {
-  uint32_t pcb = ((uint32_t)cpu->k << 16) | cpu->pc;
-  if (adr - (pcb - 6) <= 12) return;
-  uint8_t bank = adr >> 16;
-  uint16_t off = (uint16_t)adr;
-  bool wram = (bank == 0x7e || bank == 0x7f) ||
-              (off < 0x2000 && (bank < 0x40 || (bank >= 0x80 && bank < 0xc0)));
-  if (wram) return;
-  bool rom = (off >= 0x8000) || (bank >= 0x40 && bank < 0x7e) || (bank >= 0xc0);
-  if (rom) return;
-  g_io_seq++;
-}
-
-/* ---- spin skip machinery ---- */
+/* The purity hooks, the learning ring and spin_note() live in
+ * src/snes/spin_skip.c now (cpu.c calls the hooks itself under SNES_SPIN_SKIP) —
+ * this harness compiles the exact files the device compiles and only keeps the
+ * event loop + hashing around them. */
 static int g_skip_enabled;
-static uint64_t g_ops_real, g_ops_virtual;
-
-#define PMAX 8
-static struct { uint32_t pc[PMAX]; uint8_t charge[PMAX]; int len, idx; bool on; } sp;
-
-#define LR 16
-static struct { uint32_t pc; uint8_t charge; uint64_t w, io, r1, r2; } lr[LR];
-static int lr_h, lr_n;
-
-/* Record one real opcode call (pre-call pc24, total ccl charge, pre-call regs).
- * Keeps the pattern index in sync with real execution; learns a new pattern when
- * two consecutive pure iterations match. `dispatched` = an interrupt entered
- * cpu_runOpcode before the opcode — the executed opcode is NOT at pc24, so the
- * pattern must drop.
- *
- * Register identity is REQUIRED, not optional: a delay loop (`dey / bne`) writes
- * nothing and reads nothing yet terminates on its own — without the regs check
- * it gets adopted and replayed forever (first build did exactly that and died in
- * cart_readLorom). Equal regs at the same PC + no writes + no IO reads = the
- * machine state truly recurred, so the loop provably cannot exit by itself. */
-static void spin_note(uint32_t pc24, uint8_t charge, int dispatched,
-                      uint64_t r1, uint64_t r2) {
-  if (sp.on) {
-    if (dispatched || pc24 != sp.pc[sp.idx]) sp.on = false;
-    else sp.idx = (sp.idx + 1) % sp.len;
-  }
-  lr[lr_h].pc = pc24; lr[lr_h].charge = charge;
-  lr[lr_h].w = g_write_seq; lr[lr_h].io = g_io_seq;
-  lr[lr_h].r1 = r1; lr[lr_h].r2 = r2;
-  lr_h = (lr_h + 1) % LR; if (lr_n < LR) lr_n++;
-  if (sp.on || !g_skip_enabled || dispatched) return;
-
-  for (int d = 1; d <= PMAX && 2 * d + 1 <= lr_n; d++) {
-    int j = (lr_h - 1 - d + LR) % LR;
-    if (lr[j].pc != pc24) continue;
-    /* regs identical at this PC on both prior visits */
-    if (lr[j].r1 != r1 || lr[j].r2 != r2) return;
-    /* wseq/ioseq frozen across the last TWO iterations */
-    int oldest = (lr_h - 1 - 2 * d + LR) % LR;
-    if (lr[oldest].w != g_write_seq || lr[oldest].io != g_io_seq) return;
-    if (lr[oldest].pc != pc24) return;
-    if (lr[oldest].r1 != r1 || lr[oldest].r2 != r2) return;
-    for (int q = 1; q < d; q++) {
-      int a = (lr_h - 1 - q + LR) % LR, b = (lr_h - 1 - q - d + LR) % LR;
-      if (lr[a].pc != lr[b].pc || lr[a].charge != lr[b].charge) return;
-    }
-    /* adopt: entries [lr_h-d .. lr_h-1] are one iteration ending at pc24;
-     * the next opcode to execute is the one that followed the previous pc24 */
-    for (int q = 0; q < d; q++) {
-      int a = (lr_h - d + q + LR) % LR;
-      sp.pc[q] = lr[a].pc; sp.charge[q] = lr[a].charge;
-    }
-    sp.len = d; sp.idx = 0; sp.on = true;
-    return;
-  }
-}
 
 /* ---- event loop (snes_main.c layout; run_dots grows the replay branch) ---- */
 static int dots_to_next_event(Snes *snes) {
@@ -171,7 +103,7 @@ static int run_one_opcode(Snes *snes) {  /* shared: real call + note */
   snes->cpuMemOps = 0;
   int cycles = cpu_runOpcode(cpu);
   snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
-  g_ops_real++;
+  g_spin.ops_real++;
   spin_note(pc24, (uint8_t)snes->cpuCyclesLeft, disp, r1, r2);
   return cycles;
 }
@@ -193,16 +125,16 @@ static void run_dots(Snes *snes, int dots) {
     bool started_dma = false;
     if (snes->cpuCyclesLeft == 0) {
       /* ---- replay branch: virtual no-op iteration, no interpreter ---- */
-      if (sp.on && g_skip_enabled &&
+      if (g_spin.on &&
           !cpu->nmiWanted && !cpu->irqWanted && !cpu->waiting && !cpu->stopped &&
           !snes->hIrqEnabled &&
           !(snes->vIrqEnabled && snes->vPos == snes->vTimer) &&
-          (((uint32_t)cpu->k << 16) | cpu->pc) == sp.pc[sp.idx]) {
-        snes->cpuCyclesLeft += sp.charge[sp.idx];
-        sp.idx = (sp.idx + 1) % sp.len;
-        cpu->k  = (uint8_t)(sp.pc[sp.idx] >> 16);   /* pc parks at next opcode, */
-        cpu->pc = (uint16_t)sp.pc[sp.idx];          /* exactly as after a real call */
-        g_ops_virtual++;
+          (((uint32_t)cpu->k << 16) | cpu->pc) == g_spin.pc[g_spin.idx]) {
+        snes->cpuCyclesLeft += g_spin.charge[g_spin.idx];
+        g_spin.idx = (g_spin.idx + 1) % g_spin.len;
+        cpu->k  = (uint8_t)(g_spin.pc[g_spin.idx] >> 16);   /* pc parks at next opcode, */
+        cpu->pc = (uint16_t)g_spin.pc[g_spin.idx];          /* exactly as after a real call */
+        g_spin.ops_virtual++;
         /* fall through to the shared bulk-consume: same chunks, same FMAs */
       } else {
         apply_irq_match(snes);
@@ -234,6 +166,7 @@ static void run_frame_events(Snes *snes) {
     run_dots(snes, dots_to_next_event(snes));
   }
   snes_catchupApu(snes);
+  spin_frame_tick();   /* the device runs the auto-gate; so does the gate harness */
 }
 
 static uint64_t hash_state(Snes *snes) {
@@ -251,6 +184,8 @@ int main(int argc, char **argv) {
   int frames = argc > 2 ? atoi(argv[2]) : 1500;
   const char *sk = getenv("SNES_SKIP");
   g_skip_enabled = sk ? atoi(sk) : 0;
+  spin_reset();
+  g_spin.gate_on = g_skip_enabled != 0;   /* skip=0: learner parked forever = pure interpreter */
 
   FILE *f = fopen(argv[1], "rb");
   if (!f) { printf("no rom: %s\n", argv[1]); return 1; }
@@ -284,10 +219,12 @@ int main(int argc, char **argv) {
   double ms = ((t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6) / frames;
   int lit = 0;
   for (int i = 0; i < 320 * 240; i++) if (g_fb[i]) lit++;
-  printf("skip=%d %7.3f ms/frame  state=%016llx  audio=%016llx  lit=%d  real=%llu virt=%llu (%.1f%% skipped)\n",
+  printf("skip=%d %7.3f ms/frame  state=%016llx  audio=%016llx  lit=%d  real=%llu virt=%llu (%.1f%% skipped)%s\n",
          g_skip_enabled, ms,
          (unsigned long long)hash_state(snes), (unsigned long long)g_audiohash, lit,
-         (unsigned long long)g_ops_real, (unsigned long long)g_ops_virtual,
-         (g_ops_real + g_ops_virtual) ? 100.0 * g_ops_virtual / (g_ops_real + g_ops_virtual) : 0.0);
+         (unsigned long long)g_spin.ops_real, (unsigned long long)g_spin.ops_virtual,
+         (g_spin.ops_real + g_spin.ops_virtual)
+             ? 100.0 * g_spin.ops_virtual / (g_spin.ops_real + g_spin.ops_virtual) : 0.0,
+         (g_skip_enabled && !g_spin.gate_on) ? "  [auto-gate PARKED]" : "");
   return 0;
 }

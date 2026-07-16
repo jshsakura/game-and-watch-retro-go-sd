@@ -39,6 +39,7 @@
 #include "snes/dma.h"
 #include "snes/input.h"
 #include "snes/saveload.h"
+#include "snes/spin_skip.h"
 
 bool snes_loadRom(Snes *snes, const uint8_t *data, int length);   /* snes_other.c */
 
@@ -113,17 +114,34 @@ static void apply_irq_match(Snes *s) {
   s->cpu->irqWanted = true;
 }
 
+/* One real interpreter call, with the spin learner watching (harness-identical:
+ * tools/snes_spin compiles the same spin_skip.c and gates skip-off vs skip-on to
+ * bit-identical state+audio hashes). */
+static int run_one_opcode(Snes *s) {
+  Cpu *cpu = s->cpu;
+  uint32_t pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
+  int disp = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) && !cpu->stopped;
+  uint64_t r1 = (uint64_t)cpu->a | ((uint64_t)cpu->x << 16) |
+                ((uint64_t)cpu->y << 32) | ((uint64_t)cpu->sp << 48);
+  uint64_t r2 = (uint64_t)cpu->dp | ((uint64_t)cpu->k << 16) |
+                ((uint64_t)cpu->db << 24) | ((uint64_t)cpu_getFlags(cpu) << 32) |
+                ((uint64_t)cpu->e << 40);
+  s->cpuMemOps = 0;
+  int cycles = cpu_runOpcode(cpu);
+  s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
+  g_spin.ops_real++;
+  spin_note(pc24, (uint8_t)s->cpuCyclesLeft, disp, r1, r2);
+  return cycles;
+}
+
 static void cpu_tick(Snes *s) {
   if (dma_cycle(s->dma)) return;
-  if (s->cpuCyclesLeft == 0) {
-    s->cpuMemOps = 0;
-    int cycles = cpu_runOpcode(s->cpu);
-    s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
-  }
+  if (s->cpuCyclesLeft == 0) run_one_opcode(s);
   s->cpuCyclesLeft -= 2;
 }
 
 static void run_dots(Snes *s, int dots) {
+  Cpu *cpu = s->cpu;
   while (dots > 0) {
     if (s->dma->dmaBusy || s->dma->hdmaTimer > 0) {
       dma_cycle(s->dma);
@@ -132,11 +150,25 @@ static void run_dots(Snes *s, int dots) {
     }
     bool started_dma = false;
     if (s->cpuCyclesLeft == 0) {
-      apply_irq_match(s);
-      s->cpuMemOps = 0;
-      int cycles = cpu_runOpcode(s->cpu);
-      s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
-      started_dma = s->dma->dmaBusy || s->dma->hdmaTimer > 0;
+      /* Replay branch: a learned pure wait-loop iteration is a no-op — charge
+       * the recorded cycle pattern and park the pc where the real call would
+       * have, WITHOUT the interpreter. Falls through to the shared bulk-consume
+       * so hPos steps and the apuCatchupCycles FMA sequence stay bit-identical. */
+      if (g_spin.on &&
+          !cpu->nmiWanted && !cpu->irqWanted && !cpu->waiting && !cpu->stopped &&
+          !s->hIrqEnabled &&
+          !(s->vIrqEnabled && s->vPos == s->vTimer) &&
+          (((uint32_t)cpu->k << 16) | cpu->pc) == g_spin.pc[g_spin.idx]) {
+        s->cpuCyclesLeft += g_spin.charge[g_spin.idx];
+        g_spin.idx = (g_spin.idx + 1) % g_spin.len;
+        cpu->k  = (uint8_t)(g_spin.pc[g_spin.idx] >> 16);
+        cpu->pc = (uint16_t)g_spin.pc[g_spin.idx];
+        g_spin.ops_virtual++;
+      } else {
+        apply_irq_match(s);
+        run_one_opcode(s);
+        started_dma = s->dma->dmaBusy || s->dma->hdmaTimer > 0;
+      }
     }
     int step;
     if (s->cpuCyclesLeft >= 2 && !started_dma) {
@@ -162,6 +194,7 @@ static void run_frame_events(Snes *s) {
     run_dots(s, dots_to_next_event(s));
   }
   snes_catchupApu(s);
+  spin_frame_tick();   /* auto-gate: park the learner on non-spinning carts */
 }
 
 /* ---- input ----------------------------------------------------------------
@@ -351,6 +384,9 @@ static bool snes_LoadState(const char *pathName) {
   fclose(f);
   state_file = NULL;
   lcd_clear_active_buffer();
+  /* A load replaces the whole machine: a learned spin pattern (and its purity
+   * sequence history) now describes a machine that no longer exists. Relearn. */
+  spin_reset();
   return state_bytes == h.length;
 }
 
@@ -420,6 +456,8 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
   snes = snes_init(snes_wram);
   g_the_snes = snes;
+  spin_reset();   /* spin-skip learner: clean slate per launch (overlay BSS is
+                   * zeroed anyway, but the gate flag must start true explicitly) */
 
   bool ok = (rom != NULL) && !cart_needs_coprocessor(rom, sz) &&
             snes_loadRom(snes, rom, (int)sz);
@@ -434,6 +472,36 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * flash-cached image — no malloc'd copy exists to free. Do NOT free cart->rom
    * here: it is read-only flash, not heap, and the header-skip may have offset
    * it past a copier header (snes_rom + 0x200). */
+
+  /* DEBUG (strip later): SAFE one-shot probe at LOAD time — before the frame loop,
+   * SD idle, never mid-play. Writes straight from the overlay (extflash has room;
+   * the resident sd_save_log path would overflow intflash) to /snes_diag.txt.
+   * Reports whether the flash-cached ROM reads back sane (internal title +
+   * checksum), the #1 suspect for a device-only black screen. Read off the SD. */
+  {
+    FILE *df = fopen("/snes_diag.txt", "w");
+    if (df) {
+      const uint8_t *r = snes->cart->rom;
+      uint32_t rs = (uint32_t)snes->cart->romSize;
+      uint32_t off = (snes->cart->type == 2) ? 0xFFC0u : 0x7FC0u;   /* HiROM : LoROM */
+      char title[22];
+      for (int i = 0; i < 21; i++) {
+        uint8_t c = (r && (off + i) < rs) ? r[off + i] : 0;
+        title[i] = (c >= 0x20 && c < 0x7f) ? (char)c : '.';
+      }
+      title[21] = 0;
+      uint32_t sum = 0;
+      for (uint32_t i = 0; r && i < rs && i < 0x10000; i++) sum += r[i];
+      fprintf(df, "SNES load: type=%d size=%lu title=[%s] sum64k=%08lX\n",
+              snes->cart->type, (unsigned long)rs, title, (unsigned long)sum);
+      fclose(df);
+    }
+  }
+
+  /* (Profile probe removed — it measured, on device: 312 MHz, budget 5.2M
+   * cyc/frame; interpreter+APU 7.12M (137% of budget, the bottleneck), PPU line
+   * renderer +2.82M, audio 0.71M → ~29 fps raw, 13.7 shown via the overload
+   * guard. Rig insn ≈ device cycle ~1:1. Next lever: spin-skip.) */
 
   if (load_state) {
     odroid_system_emu_load_state(save_slot);

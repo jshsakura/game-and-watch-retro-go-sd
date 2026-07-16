@@ -61,6 +61,7 @@ g_fail gsnes__g_fail
 g_new_ppu gsnes__g_new_ppu
 g_ppu_line_cb gsnes__g_ppu_line_cb
 g_ppu_skip_render gsnes__g_ppu_skip_render
+g_spin gsnes__g_spin
 getProcessorStateCpu gsnes__getProcessorStateCpu
 getProcessorStateSpc gsnes__getProcessorStateSpc
 input_free gsnes__input_free
@@ -101,3 +102,7 @@ spc_init gsnes__spc_init
 spc_reset gsnes__spc_reset
 spc_runOpcode gsnes__spc_runOpcode
 spc_saveload gsnes__spc_saveload
+spin_frame_tick gsnes__spin_frame_tick
+spin_hook_read gsnes__spin_hook_read
+spin_note gsnes__spin_note
+spin_reset gsnes__spin_reset
