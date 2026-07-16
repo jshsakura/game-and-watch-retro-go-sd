@@ -31,6 +31,7 @@ extern m68ki_cpu_core m68k;
 extern void m68k_run(unsigned int cycles);
 extern void m68k_init(void);
 extern void m68k_pulse_reset(void);
+extern void m68k_set_irq(unsigned int int_level);
 
 segacd_state SCD;
 
@@ -94,12 +95,25 @@ void segacd_sub_hold(void)
  * Returns cycles actually consumed. No-op while the sub is held or idle. */
 int segacd_run_sub(int cycle_target)
 {
-    if (!SCD.sub_running || SCD.sub_idle)
+    if (!SCD.sub_running)
         return 0;
+    /* An interrupt must wake a spin-idled sub; only skip when truly idle. */
+    if (SCD.sub_idle && !SCD.cdd_int_pending)
+        return 0;
+    SCD.sub_idle = 0;
 
     /* save main -> load sub */
     memcpy(&s_main_saved, &m68k, sizeof(m68ki_cpu_core));
     memcpy(&m68k, &SCD.sub_ctx, sizeof(m68ki_cpu_core));
+
+    /* Deliver the CDD interrupt (level 4). The sub-CPU BIOS is interrupt-driven
+     * — after init it waits for the periodic CDD IRQ to run its drive state
+     * machine. Without this the sub sits idle forever. Masked by the sub's SR /
+     * gate-array IEN, so it's a no-op until the sub enables it. */
+    if (SCD.cdd_int_pending) {
+        SCD.cdd_int_pending = 0;
+        m68k_set_irq(4);
+    }
 
     int before = m68k.cycles;
     m68k_run((unsigned int)cycle_target);

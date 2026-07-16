@@ -268,6 +268,7 @@ void segacd_cdd_process(void)
         break;
     }
     SCD.s68k_regs[0x38 & (SEGACD_GA_REGS - 1)] = (uint8_t)CD.status;
+    SCD.cdd_int_pending = 1;   /* periodic CDD IRQ (level 4) drives the sub-BIOS */
     segacd_poll_wake();   /* CDD status changed — a spin-waiting sub must re-check */
 }
 

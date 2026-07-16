@@ -137,16 +137,25 @@ int main(int argc, char **argv)
     /* did the main copy a sub program into PRG-RAM, and is the sub past reset? */
     { long nz=0; for(int i=0;i<SEGACD_PRG_RAM_SIZE;i++) if(SCD.prg_ram[i]) nz++;
       long wz=0; for(int i=0;i<SEGACD_WORD_RAM_SIZE;i++) if(SCD.word_ram[i]) wz++;
-      printf("[boot] PRG-RAM %ld/%d non-zero, Word-RAM %ld/%d non-zero, sub PC=%06x $A12003=%02x\n",
+      printf("[boot] PRG-RAM %ld/%d nz, Word-RAM %ld/%d nz, sub PC=%06x $A12003=%02x stopped=%u int_mask=%u\n",
              nz, SEGACD_PRG_RAM_SIZE, wz, SEGACD_WORD_RAM_SIZE,
-             (unsigned)SCD.sub_ctx.pc, SCD.s68k_regs[0x03]); }
+             (unsigned)SCD.sub_ctx.pc, SCD.s68k_regs[0x03],
+             (unsigned)SCD.sub_ctx.stopped, (unsigned)SCD.sub_ctx.int_mask);
+      unsigned pc = SCD.sub_ctx.pc & (SEGACD_PRG_RAM_SIZE-1);
+      printf("[boot] sub code @PC:");
+      for (int i=0;i<16;i++) printf(" %02x", SCD.prg_ram[(pc+i)&(SEGACD_PRG_RAM_SIZE-1)]);
+      printf("  (IEN $FF8033=%02x)\n", SCD.s68k_regs[0x33]); }
 
 #ifdef SEGACD_GA_TRACE
-    extern uint32_t scd_ga_rd[], scd_ga_wr[];
-    printf("[boot] gate-array access histogram (reg: reads/writes) — what the BIOS wants:\n");
+    extern uint32_t scd_ga_rd[], scd_ga_wr[], scd_sga_rd[], scd_sga_wr[];
+    printf("[boot] MAIN gate-array access (reg: rd/wr):\n");
     for (int r = 0; r < SEGACD_GA_REGS; r++)
         if (scd_ga_rd[r] || scd_ga_wr[r])
             printf("  $A120%02x  rd=%-8u wr=%-8u\n", r, scd_ga_rd[r], scd_ga_wr[r]);
+    printf("[boot] SUB gate-array access ($FF80xx, reg: rd/wr) — what the sub-BIOS wants:\n");
+    for (int r = 0; r < SEGACD_GA_REGS; r++)
+        if (scd_sga_rd[r] || scd_sga_wr[r])
+            printf("  $FF80%02x  rd=%-8u wr=%-8u\n", r, scd_sga_rd[r], scd_sga_wr[r]);
 #endif
     return 0;
 }

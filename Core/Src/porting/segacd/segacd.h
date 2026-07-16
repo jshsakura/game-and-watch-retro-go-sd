@@ -69,6 +69,8 @@ typedef struct {
     uint8_t  poll_reg;        /* last GA reg the sub read */
     uint16_t poll_count;      /* consecutive unchanged reads of poll_reg */
 
+    int  cdd_int_pending;     /* CDD level-4 interrupt to deliver to the sub */
+
     segacd_pcm_t pcm;         /* RF5C164 8-channel PCM */
 
     /* --- CDC/CDD state lives in the adapted pd_cd/ layer --- */

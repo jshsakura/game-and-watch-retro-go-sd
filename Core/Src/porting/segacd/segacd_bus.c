@@ -40,12 +40,17 @@ void segacd_poll_wake(void)
 
 /* ---- gate-array access trace (boot debugging; harness-first) ---- */
 #ifdef SEGACD_GA_TRACE
-uint32_t scd_ga_rd[SEGACD_GA_REGS], scd_ga_wr[SEGACD_GA_REGS];
-#define GA_RD(reg) (scd_ga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
-#define GA_WR(reg) (scd_ga_wr[(reg) & (SEGACD_GA_REGS-1)]++)
+uint32_t scd_ga_rd[SEGACD_GA_REGS], scd_ga_wr[SEGACD_GA_REGS];       /* main side */
+uint32_t scd_sga_rd[SEGACD_GA_REGS], scd_sga_wr[SEGACD_GA_REGS];     /* sub side  */
+#define GA_RD(reg)  (scd_ga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
+#define GA_WR(reg)  (scd_ga_wr[(reg) & (SEGACD_GA_REGS-1)]++)
+#define SGA_RD(reg) (scd_sga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
+#define SGA_WR(reg) (scd_sga_wr[(reg) & (SEGACD_GA_REGS-1)]++)
 #else
 #define GA_RD(reg) ((void)0)
 #define GA_WR(reg) ((void)0)
+#define SGA_RD(reg) ((void)0)
+#define SGA_WR(reg) ((void)0)
 #endif
 
 /* ---- sub-CPU $FF0000 page: PCM (low) + gate array/CDC/CDD (high) ---- */
@@ -59,6 +64,7 @@ static unsigned int sub_ff_read8(unsigned int address)
     /* $FF8000+: gate array / CDC / CDD. Track repeated reads of the same status
      * reg to detect a spin-wait and skip the sub's timeslices (idle-skip). */
     uint8_t reg = (uint8_t)(off & (SEGACD_GA_REGS - 1));
+    SGA_RD(reg);
     if (reg == SCD.poll_reg) {
         if (SCD.poll_count < 0xFFFF && ++SCD.poll_count >= SEGACD_POLL_THRESHOLD)
             SCD.sub_idle = 1;
@@ -83,6 +89,7 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
         unsigned int a = (unsigned)SCD.pcm.bank * 0x1000 + (off & 0x0FFF);
         SCD.pcm_ram[a & (SEGACD_PCM_RAM_SIZE - 1)] = (uint8_t)data;
     } else if (off >= 0x8000) {            /* $FF8000+: gate array / CDC / CDD */
+        SGA_WR(off);
         SCD.s68k_regs[off & (SEGACD_GA_REGS - 1)] = (uint8_t)data;
     }
 }
