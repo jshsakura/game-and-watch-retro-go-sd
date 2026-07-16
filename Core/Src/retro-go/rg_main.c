@@ -148,6 +148,25 @@ static bool GLOBAL_DATA theme_update_cb(odroid_dialog_choice_t *option, odroid_d
     sprintf(option->value, "%s", (char *)GW_Themes[theme]);
     return event == ODROID_DIALOG_ENTER;
 }
+
+static bool GLOBAL_DATA cover_style_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
+{
+    const char *style_labels[ODROID_COVER_STYLE_COUNT] = {
+        curr_lang->s_Cover_Style_Poster, curr_lang->s_Cover_Style_Square};
+    uint8_t style = odroid_settings_CoverStyle_get();
+
+    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT)
+    {
+        /* two values: PREV and NEXT both toggle */
+        style = (style == ODROID_COVER_STYLE_POSTER) ? ODROID_COVER_STYLE_SQUARE
+                                                     : ODROID_COVER_STYLE_POSTER;
+        odroid_settings_CoverStyle_set(style);
+        /* per-tab cover-size caches baked in the old style; force a re-probe */
+        gui_cover_style_changed();
+    }
+    sprintf(option->value, "%s", (char *)style_labels[style]);
+    return event == ODROID_DIALOG_ENTER;
+}
 #endif
 
 static bool GLOBAL_DATA colors_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
@@ -493,6 +512,7 @@ static void GLOBAL_DATA handle_options_menu()
     char timeout_value[16];
 #if COVERFLOW != 0
     char theme_value[32];
+    char cover_style_value[32];
 #endif
     char colors_value[16];
     char lang_value[64];
@@ -504,6 +524,7 @@ static void GLOBAL_DATA handle_options_menu()
         {0, curr_lang->s_LangUI, lang_value, 1, &lang_update_cb},
 #if COVERFLOW != 0
         {0, curr_lang->s_Theme_Title, theme_value, 1, &theme_update_cb},
+        {0, curr_lang->s_Cover_Style, cover_style_value, 1, &cover_style_update_cb},
 #endif
         {0x0F0F0E0E, curr_lang->s_Colors, colors_value, 1, &colors_update_cb},
         ODROID_DIALOG_CHOICE_SEPARATOR,

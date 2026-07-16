@@ -86,6 +86,15 @@ typedef struct persistent_config {
 
     bool debug_clock_always_on;
 
+    /** Launcher cover style (odroid_cover_style_t). Occupies what used to be
+     * the single alignment-padding byte between debug_clock_always_on and the
+     * 4-aligned welcome_prompt — struct size and every other field offset are
+     * unchanged, so existing v14 /CONFIG files load as-is (the padding byte in
+     * files written by older builds is 0 = poster, today's behavior). NO
+     * version bump needed. If another field is ever added here, that free
+     * lunch is gone: re-check offsets and bump the version. */
+    uint8_t cover_style;
+
     /** Welcome prompt: 0 = not anchored, 1 = message already shown, else YYYYMMDD anchor (RTC >= 2026). */
     uint32_t welcome_prompt;
 
@@ -97,6 +106,15 @@ typedef struct persistent_config {
 
     uint32_t crc32;
 } persistent_config_t;
+
+/* cover_style must live entirely inside the padding that already existed
+ * before welcome_prompt: welcome_prompt has to sit exactly where a build
+ * WITHOUT cover_style put it, or every saved /CONFIG shifts and silently
+ * misreads. If this fires, the byte is no longer free — move the field to
+ * the end and bump the version instead. */
+_Static_assert(offsetof(persistent_config_t, welcome_prompt) ==
+                   ((offsetof(persistent_config_t, debug_clock_always_on) + 1 + 3) / 4) * 4,
+               "cover_style must fit in pre-existing padding before welcome_prompt");
 
 static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
@@ -142,6 +160,7 @@ static const persistent_config_t persistent_config_default = {
     .main_menu_cursor = 0,
     .main_menu_browse_subpath = {0},
     .debug_clock_always_on = false,
+    .cover_style = ODROID_COVER_STYLE_POSTER,
     .welcome_prompt = 0,
     .sort_mode = 0,
     .app = {
@@ -749,5 +768,17 @@ uint8_t odroid_settings_SortMode_get(void)
 void odroid_settings_SortMode_set(uint8_t mode)
 {
     persistent_config_ram.sort_mode = (mode < ODROID_SORT_COUNT) ? mode : ODROID_SORT_NAME;
+}
+
+uint8_t odroid_settings_CoverStyle_get(void)
+{
+    uint8_t style = persistent_config_ram.cover_style;
+    return (style < ODROID_COVER_STYLE_COUNT) ? style : ODROID_COVER_STYLE_POSTER;
+}
+
+void odroid_settings_CoverStyle_set(uint8_t style)
+{
+    persistent_config_ram.cover_style =
+        (style < ODROID_COVER_STYLE_COUNT) ? style : ODROID_COVER_STYLE_POSTER;
 }
 
