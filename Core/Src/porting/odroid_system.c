@@ -75,14 +75,6 @@ rg_app_desc_t *odroid_system_get_app()
     return &currentApp;
 }
 
-static char *extract_system(const char *filename) {
-    char *last_slash = strrchr(filename, '/');
-    char *directory = malloc(last_slash - filename + 2);
-    strncpy(directory, filename, last_slash - filename + 1);
-    directory[last_slash - filename + 1] = '\0';
-    return directory;
-}
-
 /* Build a path into the provided buffer. If out_buf is NULL, allocates
  * via strdup (legacy behavior). Callers that provide a buffer avoid heap. */
 static void odroid_system_get_path_buf(emu_path_type_t type, const char *_romPath, char *out, int out_size)
