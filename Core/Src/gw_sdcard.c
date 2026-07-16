@@ -17,6 +17,8 @@
 #include "error_screens.h"
 #include "ff.h"
 #include "gw_sdcard.h"
+#include "gw_ofw.h"
+#include "gw_buttons.h"
 
 bool fs_mounted = false;
 static FRESULT cause;
@@ -27,12 +29,20 @@ void sdcard_error_screen(void) {
     char buf[64];
     int idle_s = uptime_get();
 
+    /* On a dual-boot unit the device need not sit dead when its SD is gone or
+     * unreadable: clearing the DR0 "BOOT" flag makes the patched OFW boot the
+     * original Game & Watch instead of us (same mechanism as the boot-rescue and
+     * the launcher's OFW menu). Only offer it when OFW is actually present. */
+    bool have_ofw = get_ofw_is_present();
+    const char *hint = have_ofw ? "GAME: original system   POWER: off"
+                                : "Press any key to power off";
+
     switch (cause) {
         case FR_NOT_READY:
-            draw_error_screen("No SD CARD found", "Insert SD Card", "Press any key to power off");
+            draw_error_screen("No SD CARD found", "Insert or repair the SD card", hint);
             break;
         default:
-            draw_error_screen("SD CARD ERROR", "Unable to mount SD Card", "Press any key to power off");
+            draw_error_screen("SD CARD ERROR", "SD card unreadable or corrupted", hint);
             break;
     }
 
@@ -50,6 +60,12 @@ void sdcard_error_screen(void) {
         HAL_Delay(10);
         if (steps >= 600)
             break;
+
+        if (have_ofw && (buttons_get() & B_GAME)) {
+            HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0x00000000);
+            HAL_NVIC_SystemReset();   /* does not return */
+        }
+
         odroid_input_read_gamepad(&joystick);
         if (joystick.values[ODROID_INPUT_POWER] || joystick.values[ODROID_INPUT_A] || joystick.values[ODROID_INPUT_B]){
             break;

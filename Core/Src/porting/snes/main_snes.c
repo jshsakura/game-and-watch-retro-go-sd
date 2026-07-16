@@ -189,12 +189,39 @@ static uint16_t read_snes_pad(odroid_gamepad_state_t *joy) {
  * 32 px left margin and NO top margin — exactly the harness placement. An
  * overscan title renders up to 239 lines; a top margin would run the last
  * rows past the framebuffer. */
-static void render_frame_into_active_buffer(void) {
-  uint16_t *fb = lcd_get_active_buffer();
-  PpuBeginDrawing(snes->ppu, (uint8_t *)(fb + 32), 320 * 2, 0);
+/* Video. The PPU renders one line at a time into snes_line (renderPitch 0 → every
+ * line lands in the same scratch) and hands it to g_ppu_line_cb — the contract the
+ * recent PPU refactor (681371b) introduced and the SM port already uses. We place
+ * each line into a PRIVATE persistent framebuffer (snes_frame), then copy the whole
+ * frame to the LCD's active buffer at present time. That is the robust pattern GBA
+ * uses: the LCD is double-buffered, and painting a full frame into whichever buffer
+ * is active each present keeps BOTH buffers complete — rendering per-line straight
+ * into the active buffer left the OTHER buffer stale (black on the device, strobing
+ * after an overlay toggle). 256 px wide, 32 px left margin, no top margin; the
+ * private buffer's borders are cleared once and stay black. */
+static uint16_t snes_line[256];
+static uint16_t snes_frame[GW_LCD_WIDTH * GW_LCD_HEIGHT];
+
+static void snes_blit_line(unsigned y, const uint16_t *line) {
+  if (y < 1 || y > GW_LCD_HEIGHT)   /* y is 1-based; guard the 240-row panel */
+    return;
+  memcpy(snes_frame + (y - 1) * GW_LCD_WIDTH + 32, line, sizeof(snes_line));
 }
 
+static void render_frame_into_active_buffer(void) {
+  g_ppu_line_cb = &snes_blit_line;
+  PpuBeginDrawing(snes->ppu, (uint8_t *)snes_line, 0, 0);  /* pitch 0: every line here */
+}
+
+static void present_frame(void) {
+  memcpy(lcd_get_active_buffer(), snes_frame, sizeof(snes_frame));
+}
+
+/* Present the last rendered frame and draw the in-game overlay on top. Used both
+ * as the normal per-frame present and as the overlay's repaint callback, so the
+ * pause menu keeps the game behind it instead of a stale/black background. */
 static void blit(void) {
+  present_frame();
   common_ingame_overlay();
 }
 
@@ -403,19 +430,17 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_switch_app(0);   /* back to launcher */
     return;
   }
-  /* The loader mallocs a second copy of the ROM; the flash-cached image is
-   * already memory-mapped and read-only for the core — point cart->rom back
-   * at it and free the copy (same trick as the M7 rig; saves up to 6 MB). */
-  if (snes->cart->rom && snes->cart->rom != snes_rom) {
-    free(snes->cart->rom);
-    snes->cart->rom = (uint8_t *)snes_rom;
-  }
+  /* The loader (GNW_SNES_CORE build) already points cart->rom straight at the
+   * flash-cached image — no malloc'd copy exists to free. Do NOT free cart->rom
+   * here: it is read-only flash, not heap, and the header-skip may have offset
+   * it past a copier header (snes_rom + 0x200). */
 
   if (load_state) {
     odroid_system_emu_load_state(save_slot);
   } else {
     lcd_clear_buffers();
   }
+  memset(snes_frame, 0, sizeof(snes_frame));   /* borders start black and stay black */
 
   while (1) {
     wdog_refresh();
@@ -429,12 +454,11 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     snes->input1->currentState = read_snes_pad(&joystick);
 
     g_ppu_skip_render = !drawFrame;
-    if (drawFrame)
-      render_frame_into_active_buffer();
+    render_frame_into_active_buffer();   /* arm the line callback every frame */
     run_frame_events(snes);
 
     if (drawFrame) {
-      blit();
+      blit();          /* present_frame() + in-game overlay */
       lcd_swap();
     }
 

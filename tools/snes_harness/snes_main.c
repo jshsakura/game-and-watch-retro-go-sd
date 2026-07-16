@@ -70,6 +70,16 @@ void RtlApuWrite(uint32_t adr, uint8_t val) {
 
 static uint8_t  g_wram[0x20000];
 static uint16_t g_fb[320 * 240];
+
+/* SNES_LINE_CB: exercise the DEVICE render path (main_snes.c) — the PPU renders
+ * one line into a scratch and hands it to g_ppu_line_cb, which the port copies
+ * into the framebuffer. Verifies that path is pixel-identical to the direct
+ * PpuBeginDrawing-into-the-framebuffer method the rest of this harness uses. */
+static uint16_t hb_line[256];
+static void hb_blit_line(unsigned y, const uint16_t *line) {
+  if (y < 1 || y > 240) return;
+  memcpy(g_fb + (y - 1) * 320 + 32, line, sizeof(hb_line));
+}
 static int16_t  g_audio[16000 / 60];
 static uint64_t g_audiohash = 1469598103934665603ULL;
 #ifdef SNES_PC_HISTOGRAM
@@ -319,7 +329,12 @@ int main(int argc, char **argv) {
   clock_gettime(CLOCK_MONOTONIC, &t0);
   for (int i = 0; i < frames; i++) {
     snes->input1->currentState = 0;
+#ifdef SNES_LINE_CB
+    g_ppu_line_cb = &hb_blit_line;
+    PpuBeginDrawing(snes->ppu, (uint8_t *)hb_line, 0, 0);   /* device path: pitch 0 + callback */
+#else
     PpuBeginDrawing(snes->ppu, (uint8_t *)(g_fb + 32), 320 * 2, 0);
+#endif
 #ifdef SNES_DOT_LOOP
     run_frame_dots(snes);
 #else
