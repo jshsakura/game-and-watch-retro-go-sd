@@ -137,15 +137,25 @@ int main(int argc, char **argv)
 
         int sample_period = (frame > 60 && frame < 140) ? 5 : 60;
         if ((frame % sample_period) == 0) {
+#ifdef SEGACD_GA_TRACE
+            extern uint32_t scd_dbg_chunks, scd_dbg_deliver4, scd_dbg_deliver2;
+#endif
             uint32_t h = 2166136261u; for(int k=0;k<320*240;k++) h=(h^s_fb[k])*16777619u;
             printf("[boot] f%-4d sub_running=%d subPC=%06x mainPC=%06x idle=%u cdd_status=%02x "
-                   "cmd=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x ga_ifl2=%u cdd_pend=%d ien=%02x %s\n",
+                   "cmd=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x ga_ifl2=%u cdd_pend=%d ien=%02x "
+#ifdef SEGACD_GA_TRACE
+                   "chunks=%u d4=%u d2=%u "
+#endif
+                   "%s\n",
                    frame, SCD.sub_running, (unsigned)SCD.sub_ctx.pc, (unsigned)m68k.pc, (unsigned)SCD.sub_idle,
                    SCD.s68k_regs[0x38 & (SEGACD_GA_REGS-1)],
                    SCD.s68k_regs[0x42],SCD.s68k_regs[0x43],SCD.s68k_regs[0x44],SCD.s68k_regs[0x45],
                    SCD.s68k_regs[0x46],SCD.s68k_regs[0x47],SCD.s68k_regs[0x48],SCD.s68k_regs[0x49],
                    SCD.s68k_regs[0x4a],SCD.s68k_regs[0x4b],
                    (unsigned)SCD.ga_ifl2, SCD.cdd_int_pending, SCD.s68k_regs[0x33],
+#ifdef SEGACD_GA_TRACE
+                   scd_dbg_chunks, scd_dbg_deliver4, scd_dbg_deliver2,
+#endif
                    (h!=last_fb)?"(VDP active)":"");
             last_fb = h;
             /* $5e8/$5ee = this bios_CD_U.bin's sub-BIOS "wait for main's IFL2

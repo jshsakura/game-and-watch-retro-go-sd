@@ -71,14 +71,25 @@ typedef struct {
 
     int  cdd_int_pending;     /* CDD level-4 interrupt (periodic status export) armed */
 
-    /* MAIN->SUB "IFL2" doorbell latch — mirrors real hardware's $A12000 bit0
-     * (main side) / real SUB-side level-2 IRQ trigger. Kept as its OWN field,
-     * separate from SCD.s68k_regs[0], because $A12000 (main view) and $FF8000
-     * (sub view: gate-array version + LED bits) are genuinely DIFFERENT
-     * registers on real hardware that happen to share offset 0 from each
-     * CPU's own base — routing both through the same shared regs[0] byte
-     * aliases the sub's frequent LED-status writes onto what main reads back
-     * as the doorbell flag. See segacd_bus.c main_ga_read8/write8 reg 0. */
+    /* MAIN->SUB "IFL2" doorbell — mirrors real hardware's $A12000 bit0 (main
+     * side) / the sub's level-2 IRQ input. Set by main's write; consumed
+     * (cleared to 0) the instant the sub's level-2 interrupt is actually
+     * delivered — a ONE-SHOT pulse, not a held level. This was tested and
+     * confirmed against PicoDrive's own Musashi ack callback (pd_cd/sek.c
+     * SekIntAckMS68k -> new_irq_level(2) does `state_flags &=
+     * ~PCD_ST_S68K_IFL2` on ACK, unconditionally) before trusting it — see
+     * segacd_run_sub's delivery loop for the "why one-shot, not level"
+     * writeup and why one delivery per frame wasn't always enough anyway
+     * (CDD/level-4 can legitimately win several slots in the same frame
+     * ahead of it).
+     *
+     * Kept as its OWN field, separate from SCD.s68k_regs[0], because $A12000
+     * (main view) and $FF8000 (sub view: gate-array version + LED bits) are
+     * genuinely DIFFERENT registers on real hardware that happen to share
+     * offset 0 from each CPU's own base — routing both through the same
+     * shared regs[0] byte aliases the sub's frequent LED-status writes onto
+     * what main reads back as the doorbell flag. See segacd_bus.c
+     * main_ga_read8/write8 reg 0. */
     uint8_t  ga_ifl2;
 
     segacd_pcm_t pcm;         /* RF5C164 8-channel PCM */

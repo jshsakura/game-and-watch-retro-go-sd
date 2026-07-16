@@ -37,6 +37,7 @@ segacd_state SCD;
 
 #ifdef SEGACD_GA_TRACE
 int scd_dbg_sum_seen; uint32_t scd_dbg_sum_a0, scd_dbg_sum_d0, scd_dbg_cmp_d0, scd_dbg_cmp_d1, scd_dbg_maxpc;
+uint32_t scd_dbg_chunks, scd_dbg_deliver4, scd_dbg_deliver2;
 #endif
 
 /* Saved MAIN context while the sub-CPU is running. Static, one level of
@@ -118,42 +119,6 @@ int segacd_run_sub(int cycle_target)
     memcpy(&s_main_saved, &m68k, sizeof(m68ki_cpu_core));
     memcpy(&m68k, &SCD.sub_ctx, sizeof(m68ki_cpu_core));
 
-    /* Deliver the higher-priority of the two interrupt sources the CDD
-     * protocol uses first, gated on the sub's own IEN mask ($FF8033) exactly
-     * like real hardware (pd_cd/memory.c:463-491 `case 0x33`/`case 0x37`) —
-     * a source stays "pending" (not consumed) until its IEN bit is enabled,
-     * so an early doorbell/status tick isn't lost while the sub is still
-     * setting up. CDD (level 4, periodic status) outranks IFL2 (level 2,
-     * main->sub doorbell) at any single instant, matching real 68000
-     * interrupt priority.
-     *
-     * BUT: don't let that permanently starve IFL2. segacd_cdd_process() (the
-     * ~75 Hz tick) re-arms cdd_int_pending EVERY call to this function once
-     * the sub has armed the export ($FF8037 bit2), so a naive "higher level
-     * always wins, pick one" model never lets a still-pending IFL2 doorbell
-     * win the race — it loses on every single frame, forever. That is
-     * exactly the boot deadlock this port shipped with: the sub parks in its
-     * boot-time "wait for main's IFL2 ack" spin (PRG-RAM flag, cleared only
-     * by the level-2 handler) and never gets the level-2 interrupt because
-     * level-4 keeps re-firing first. Real hardware doesn't have this
-     * problem: both IPL lines are asserted simultaneously and, once the
-     * level-4 handler RTEs (restoring an SR mask that still admits level 2),
-     * the CPU takes the still-asserted level-2 line within the SAME
-     * timeslice — it isn't limited to "one interrupt per call". Reproduce
-     * that here with a second m68k_run() pass, using a little extra cycle
-     * budget, so IFL2 gets its turn in the same timeslice level-4 did rather
-     * than being deferred to (and re-losing) the next one. */
-    int deliver4 = SCD.cdd_int_pending && (SCD.s68k_regs[0x33] & 0x10);
-    int deliver2 = SCD.ga_ifl2        && (SCD.s68k_regs[0x33] & 0x04);
-
-    if (deliver4) {
-        SCD.cdd_int_pending = 0;
-        m68k_set_irq(4);
-    } else if (deliver2) {
-        SCD.ga_ifl2 = 0;
-        m68k_set_irq(2);
-    }
-
     /* m68k_run() takes an ABSOLUTE cycle target, and the sub's cycle counter
      * persists in sub_ctx across timeslices. If we passed a fixed target the
      * sub would run one timeslice's worth of cycles ONCE and then every later
@@ -162,20 +127,87 @@ int segacd_run_sub(int cycle_target)
      * sum loop at PC 0x2e0). Rebase to 0 each slice, exactly as the main frame
      * loop does with `m68k.cycles -= system_clock`. */
     m68k.cycles = 0;
-    m68k_run((unsigned int)cycle_target);
 
-    if (deliver4 && deliver2) {
-        /* Level 2 hasn't had its turn yet this call. m68k_run() re-checks
-         * CPU_INT_LEVEL on entry (m68kcpu.c m68ki_check_interrupts), so this
-         * both delivers the doorbell and lets the sub run the short ISR —
-         * a small grace budget is enough (the level-2 handler here is a
-         * handful of instructions, not another 208333-cycle slice). */
-        #define SEGACD_IFL2_GRACE_CYCLES 4000u
-        SCD.ga_ifl2 = 0;
-        m68k_set_irq(2);
-        m68k_run((unsigned int)cycle_target + SEGACD_IFL2_GRACE_CYCLES);
-        #undef SEGACD_IFL2_GRACE_CYCLES
+    /* IFL2 delivery: TESTED AND REJECTED the "IFL2 is a held level, re-taken
+     * after every RTE for as long as main leaves it asserted" hypothesis.
+     * PicoDrive's OWN Musashi ack callback (pd_cd/sek.c SekIntAckMS68k ->
+     * new_irq_level(2)) does `state_flags &= ~PCD_ST_S68K_IFL2` — i.e. real
+     * hardware/PicoDrive auto-clears the pending IFL2 flag the instant the
+     * sub ACKs the interrupt, same as gwenesis's Musashi
+     * (default_int_ack_callback zeroing CPU_INT_LEVEL on take). So IFL2
+     * really is one-shot-per-assertion, exactly like our ORIGINAL model —
+     * that was not the bug. (Confirmed by testing the level-triggered
+     * version first, per the debugging playbook: it desynced into an
+     * interrupt storm — see commit history — because nothing on real
+     * hardware ever re-fires it either.)
+     *
+     * The actual gap: the OLD code allowed AT MOST ONE level-4 (CDD) and ONE
+     * level-2 (IFL2) delivery per segacd_run_sub() CALL (one video frame),
+     * via a hardcoded "first pass, then one grace pass" structure. But
+     * SCD.cdd_int_pending can legitimately re-arm itself MORE than once
+     * per frame: the sub's own level-4 handler re-arms the CDD export
+     * ("HOCK", $FF8037 bit2) as part of finishing one status packet, and
+     * segacd_bus.c's case 0x37 fires that immediately when IEN4 is already
+     * on (matching pd_cd/memory.c case 0x37) — this is a real, sub-driven,
+     * same-frame re-trigger, not an artifact. A single frame's sub timeslice
+     * can legitimately need several level-4 deliveries in a row (each one
+     * one-shot, each individually gated on IEN4) before the doorbell
+     * (IFL2, level 2, lower priority) ever gets its turn. Chunk the
+     * timeslice so any number of one-shot deliveries can happen across the
+     * SAME frame, each still consumed exactly once — level 4 wins the slot
+     * over level 2 whenever both are live at once, matching real 68000 IPL
+     * priority (CPU_INT_LEVEL is the single highest-asserted level, like the
+     * physical IPL0-2 priority encoder). Both still gate on the sub's own
+     * IEN mask ($FF8033), matching real hardware/pd_cd (memory.c:463-491
+     * `case 0x33`/`case 0x37`). */
+    #define SEGACD_IRQ_CHUNK_CYCLES 400u
+    #define SEGACD_IRQ_CHUNK_GUARD  4096
+    int guard = 0;
+#ifdef SEGACD_GA_TRACE
+    extern uint32_t scd_dbg_chunks, scd_dbg_deliver4, scd_dbg_deliver2;
+    scd_dbg_chunks = scd_dbg_deliver4 = scd_dbg_deliver2 = 0;
+#endif
+    for (;;) {
+        int want4 = SCD.cdd_int_pending && (SCD.s68k_regs[0x33] & 0x10);
+        int want2 = !want4 && SCD.ga_ifl2 && (SCD.s68k_regs[0x33] & 0x04);
+#ifdef SEGACD_GA_TRACE
+        scd_dbg_chunks++;
+        if (want4) scd_dbg_deliver4++;
+        if (want2) scd_dbg_deliver2++;
+#endif
+
+        /* Re-present the level every chunk, including 0 — a stale
+         * CPU_INT_LEVEL left over from a source that's since gone quiet
+         * (consumed, or main/sub cleared it) must be retracted explicitly,
+         * or the CPU could still take an interrupt that is no longer
+         * logically pending. Both sources are one-shot: consumed (cleared)
+         * the moment they win a slot, exactly like real hardware's ack. */
+        m68k_set_irq((unsigned int)(want4 ? 4 : (want2 ? 2 : 0)));
+        if (want4) SCD.cdd_int_pending = 0;
+        if (want2) SCD.ga_ifl2 = 0;
+
+        if (!want4 && !want2) {
+            /* Nothing to chunk for: run the rest of the slice in one go
+             * (the common case — no cost over the old unchunked path). */
+            m68k_run((unsigned int)cycle_target);
+            break;
+        }
+
+        unsigned int next = m68k.cycles + SEGACD_IRQ_CHUNK_CYCLES;
+        if (next > (unsigned int)cycle_target) next = (unsigned int)cycle_target;
+        m68k_run(next);
+
+        if (m68k.cycles >= (unsigned int)cycle_target) break;
+        if (++guard >= SEGACD_IRQ_CHUNK_GUARD) {
+            /* Safety valve: something is re-arming want2/want4 every single
+             * chunk for an implausibly long time. Finish the slice
+             * unchunked rather than spin here forever. */
+            m68k_run((unsigned int)cycle_target);
+            break;
+        }
     }
+    #undef SEGACD_IRQ_CHUNK_CYCLES
+    #undef SEGACD_IRQ_CHUNK_GUARD
 
     int used = m68k.cycles;
 #ifdef SEGACD_GA_TRACE
