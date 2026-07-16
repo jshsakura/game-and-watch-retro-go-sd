@@ -41,6 +41,7 @@
 #include "pico/pico_types.h"   /* s8/s16/s32 — MUST precede pico.h */
 #include "pico/pico.h"
 #include "pico/pico_int.h"     /* Pico.est.Draw2FB binding (Draw2 shim below) */
+#include "pico/state.h"
 
 /* ---- geometry / rates ----------------------------------------------------- */
 #define MD32X_FPS            60
@@ -213,15 +214,57 @@ void emu_video_mode_change(int start_line, int line_count, int start_col, int co
 }
 
 /* ---- savestate (M2) --------------------------------------------------------
- * DEFERRED for the M1 feasibility milestone (boot + fps first). picodrive's
- * PicoState(fname,is_save) in pico/state.c is entangled with ym2413 (SMS FM),
- * megasd (Sega CD) and zlib — none of which the trimmed 32X build compiles.
- * M2 wires it behind these stubs by guarding those chunks out in state.c (a
- * GNW_32X_CORE fork guard) and stamping the file with MD32X_STATE_MAGIC.
- * Returning false here is honest: the launcher shows save/load as unavailable
- * rather than silently doing nothing (the "never wired" trap). */
-static bool md32x_SaveState(const char *pathName) { (void)pathName; return false; }
-static bool md32x_LoadState(const char *pathName) { (void)pathName; return false; }
+ * PicoStateFP keeps our project stamp and picodrive's versioned chunk stream in
+ * one file without reopening/truncating it. These callbacks deliberately match
+ * picodrive's area I/O ABI instead of casting the libc function pointers. */
+static size_t md32x_state_read(void *ptr, size_t size, size_t count, void *file) {
+  return fread(ptr, size, count, (FILE *)file);
+}
+
+static size_t md32x_state_write(void *ptr, size_t size, size_t count, void *file) {
+  return fwrite(ptr, size, count, (FILE *)file);
+}
+
+static size_t md32x_state_eof(void *file) {
+  return (size_t)feof((FILE *)file);
+}
+
+static int md32x_state_seek(void *file, long offset, int whence) {
+  return fseek((FILE *)file, offset, whence);
+}
+
+static bool md32x_SaveState(const char *pathName) {
+  const uint32_t header[2] = { MD32X_STATE_MAGIC, MD32X_STATE_VERSION };
+  FILE *file = fopen(pathName, "wb");
+  if (file == NULL)
+    return false;
+
+  bool ok = fwrite(header, sizeof(header), 1, file) == 1 &&
+            PicoStateFP(file, 1, md32x_state_read, md32x_state_write,
+                        md32x_state_eof, md32x_state_seek) == 0;
+  if (fclose(file) != 0)
+    ok = false;
+  if (!ok)
+    remove(pathName);
+  return ok;
+}
+
+static bool md32x_LoadState(const char *pathName) {
+  uint32_t header[2];
+  FILE *file = fopen(pathName, "rb");
+  if (file == NULL)
+    return false;
+
+  bool ok = fread(header, sizeof(header), 1, file) == 1 &&
+            header[0] == MD32X_STATE_MAGIC &&
+            header[1] == MD32X_STATE_VERSION &&
+            PicoStateFP(file, 0, md32x_state_read, md32x_state_write,
+                        md32x_state_eof, md32x_state_seek) == 0;
+  fclose(file);
+  if (ok)
+    set_out_buffer();
+  return ok;
+}
 
 static void *md32x_Screenshot(void) {
   lcd_wait_for_vblank();

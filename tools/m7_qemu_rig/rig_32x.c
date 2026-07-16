@@ -27,6 +27,9 @@
  *                    find the first divergence frame).
  *   -DRIG_TRACE_PC   print the 68K PC every frame (where does a dead boot
  *                    park?). g68k backend only.
+ *   -DRIG_STATE_TEST save after 120 warm-up frames, run 30 frames, restore,
+ *                    replay those frames, and require identical framebuffer
+ *                    checksums. Exercises the device's PicoStateFP path.
  *   -DRIG_PHASE_PROF per-phase cost table (PHASE_PROF=1 to run_32x.sh): rides
  *                    picodrive's pprof probes with the icount timer as clock,
  *                    so every bucket is an executed-instruction count. Buckets
@@ -43,6 +46,9 @@
 
 #include "pico/pico_types.h"
 #include "pico/pico.h"
+#ifdef RIG_STATE_TEST
+#include "pico/state.h"
+#endif
 #ifdef RIG_TRACE_PC
 #include <cpu/gwenesis68k/g68k.h>   /* the g68k global context (m68k.pc) */
 #endif
@@ -257,6 +263,103 @@ static unsigned short pad_script(int f) {
 static unsigned short pad_script(int f) { (void)f; return 0; }
 #endif
 
+#ifdef RIG_STATE_TEST
+#define RIG_STATE_CAP (1024u * 1024u)
+
+struct rig_state_stream {
+    unsigned char *data;
+    size_t capacity;
+    size_t length;
+    size_t position;
+};
+
+static size_t rig_state_read(void *ptr, size_t size, size_t count, void *opaque) {
+    struct rig_state_stream *stream = opaque;
+    if (size == 0) return 0;
+    size_t available = (stream->length - stream->position) / size;
+    if (count > available) count = available;
+    memcpy(ptr, stream->data + stream->position, size * count);
+    stream->position += size * count;
+    return count;
+}
+
+static size_t rig_state_write(void *ptr, size_t size, size_t count, void *opaque) {
+    struct rig_state_stream *stream = opaque;
+    if (size != 0 && count > (stream->capacity - stream->position) / size)
+        return 0;
+    memcpy(stream->data + stream->position, ptr, size * count);
+    stream->position += size * count;
+    if (stream->length < stream->position) stream->length = stream->position;
+    return count;
+}
+
+static size_t rig_state_eof(void *opaque) {
+    struct rig_state_stream *stream = opaque;
+    return stream->position >= stream->length;
+}
+
+static int rig_state_seek(void *opaque, long offset, int whence) {
+    struct rig_state_stream *stream = opaque;
+    long base;
+    if (whence == SEEK_SET) base = 0;
+    else if (whence == SEEK_CUR) base = (long)stream->position;
+    else if (whence == SEEK_END) base = (long)stream->length;
+    else return -1;
+    long position = base + offset;
+    if (position < 0 || (size_t)position > stream->length) return -1;
+    stream->position = (size_t)position;
+    return 0;
+}
+
+static int state_roundtrip_test(void) {
+    struct rig_state_stream stream = {
+        .data = malloc(RIG_STATE_CAP),
+        .capacity = RIG_STATE_CAP,
+    };
+    if (stream.data == NULL) {
+        printf("[32x-state] FAIL: buffer allocation\n");
+        return -1;
+    }
+
+    for (int f = 0; f < 120; f++) {
+        PicoIn.skipFrame = 0;
+        PicoIn.pad[0] = pad_script(f);
+        PicoFrame();
+    }
+    int save_ret = PicoStateFP(&stream, 1, rig_state_read, rig_state_write,
+                               rig_state_eof, rig_state_seek);
+
+    for (int f = 120; f < 150; f++) {
+        PicoIn.skipFrame = 0;
+        PicoIn.pad[0] = pad_script(f);
+        PicoFrame();
+    }
+    int nonblank_a;
+    uint32_t checksum_a = fb_checksum(&nonblank_a);
+
+    stream.position = 0;
+    int load_ret = PicoStateFP(&stream, 0, rig_state_read, rig_state_write,
+                               rig_state_eof, rig_state_seek);
+    set_out_buffer();
+    for (int f = 120; f < 150; f++) {
+        PicoIn.skipFrame = 0;
+        PicoIn.pad[0] = pad_script(f);
+        PicoFrame();
+    }
+    int nonblank_b;
+    uint32_t checksum_b = fb_checksum(&nonblank_b);
+
+    int pass = save_ret == 0 && load_ret == 0 && nonblank_a && nonblank_b &&
+               checksum_a == checksum_b;
+    printf("[32x-state] %s: bytes=%lu save=%d load=%d checksum=%08lx/%08lx AHW=%x\n",
+           pass ? "PASS" : "FAIL", (unsigned long)stream.length, save_ret, load_ret,
+           (unsigned long)checksum_a, (unsigned long)checksum_b,
+           (unsigned)PicoIn.AHW);
+    free(stream.data);
+    return pass ? 0 : -1;
+}
+#endif
+
 #ifdef RIG_TRACE_PC
 /* peek 68K memory the way the g68k core does (I/O handler or direct base) —
  * lets the trace dump the supervisor stack, so a parked "unexpected
@@ -322,6 +425,10 @@ int main(void) {
     PsndRerate(0);
     PicoDrawSetOutFormat(PDF_RGB555, 0);
     set_out_buffer();
+
+#ifdef RIG_STATE_TEST
+    if (state_roundtrip_test() != 0) return 5;
+#endif
 
     uint64_t tot = 0, mn = ~0ull, mx = 0, sh2_tot = 0;
     uint64_t tot_drawn = 0, tot_skip = 0;
