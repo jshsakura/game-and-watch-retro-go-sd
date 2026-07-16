@@ -253,9 +253,16 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
   } else {
     nspc_variant_std();
   }
+  /* The sig-extracted "songList" is the driver's COMPILED literal for
+   * songList + (a-1)*2, i.e. the true base minus 2 (SM: 581e -> 5820,
+   * ALttP: cffe -> d000 — both verified against the native decomp players).
+   * The engine re-applies (a-1)*2, so feed it the true base or every song
+   * command is off by one and song 1 reads an empty cell (instant stop —
+   * ALttP's intro went silent exactly this way). std/YI share this codegen. */
+  int isStdFamily = !strcmp(np->variant, "std") || !strcmp(np->variant, "YI");
   g_nspc_cfg.instrTable = np->instrTab >= 0 ? np->instrTab : 0x6c00;
-  g_nspc_cfg.songList   = np->songList;
-  g_nspc_cfg.songCur    = np->songList - 2;
+  g_nspc_cfg.songList   = isStdFamily ? np->songList + 2 : np->songList;
+  g_nspc_cfg.songCur    = np->songList - (isStdFamily ? 0 : 2);
   g_nspc_cfg.dirPage    = ((np->dir >= 0 ? np->dir : 0x6d00) >> 8) & 0xff;
 
   SpcPlayer *p = SpcPlayer_Create();
@@ -283,9 +290,16 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
   /* Resume the current song (music restarts from its top — a documented
    * behavior of the swap, not a bug). Best source: the REAL driver's own echo
    * on out-port 0 — N-SPC echoes the accepted song id there, and it is the
-   * same engine we are swapping in. Fallback: last sniffed command write. */
+   * same engine we are swapping in. Fallback: last sniffed command write.
+   * Last resort: the driver's own current-song cell in the adopted ARAM
+   * (songList-2 by N-SPC engine layout — ALttP-style mailboxes idle port0
+   * at 00, so both port sources come up empty there and only this works). */
   uint8_t cur = snes->apu->outPorts[0];
   if (!(cur > 0 && cur < 0xf0)) cur = g_last_p0;
+  if (!(cur > 0 && cur < 0xf0)) {
+    uint8_t cell = aram[(g_nspc_cfg.songCur) & 0xffff];
+    if (cell > 0 && cell < 0xf0) cur = cell;
+  }
   p->port_to_snes[0] = 0;
   p->input_ports[0] = (cur > 0 && cur < 0xf0) ? cur : 255;
   p->input_ports[1] = p->input_ports[2] = p->input_ports[3] = 0;

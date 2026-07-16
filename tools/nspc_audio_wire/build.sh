@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 HERE=tools/nspc_audio_wire
 HLE=tools/nspc_hle
-O=/tmp/nspc_wire_build; mkdir -p "$O"; rm -f "$O"/*.o
+O="${NSPC_WIRE_BUILD:-$ROOT/tools/nspc_audio_wire/build}"; mkdir -p "$O"; rm -f "$O"/*.o
 
 # 1) parametrized player copy (address sed + dialect rewrites, from nspc_hle)
 sed -e 's/instrument \* 6 + 0x6c00/instrument * 6 + NSPC_INSTR/' \

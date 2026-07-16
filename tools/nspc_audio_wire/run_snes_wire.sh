@@ -11,8 +11,8 @@ FRAMES="${2:-1500}"
 
 SM=external/sm
 RIG=tools/m7_qemu_rig
-GEN=/tmp/nspc_wire_build
 HERE=tools/nspc_audio_wire
+GEN="${NSPC_WIRE_BUILD:-$HERE/build}"
 OUT="$GEN/rig"
 mkdir -p "$OUT"
 
@@ -41,7 +41,7 @@ $CC -c $ARCH $OPT $DEF $INC -iquote $SM/src/snes -w "$GEN/apu_wire.c" -o "$OUT/a
 $CC -c $ARCH $OPT $DEF $INC $SMINC -include tools/nspc_hle/nspc_config.h -w "$GEN/nspc_player_gen.c" -o "$OUT/nspc_player_gen.o"
 $CC -c $ARCH $OPT $DEF $INC $SMINC -Itools/nspc_hle -w tools/nspc_hle/nspc_variant.c -o "$OUT/nspc_variant.o"
 $CC -c $ARCH $OPT $DEF $INC $SMINC -Itools/nspc_hle -I"$HERE" -Itools/snes_survey -w "$HERE/wire.c" -o "$OUT/wire.o"
-$CC -c $ARCH $OPT $DEF $INC -w "$GEN/rig_snes_wire.c" -o "$OUT/rig_snes_wire.o"
+$CC -c $ARCH $OPT $DEF $INC -w "$HERE/rig_snes_wire.c" -o "$OUT/rig_snes_wire.o"
 OBJS="$OBJS $OUT/apu_wire.o $OUT/nspc_player_gen.o $OUT/nspc_variant.o $OUT/wire.o $OUT/rig_snes_wire.o $OUT/rom.o"
 
 $CC $ARCH -T "$RIG/mps2_an500_snes.ld" -nostartfiles -Wl,--gc-sections \
