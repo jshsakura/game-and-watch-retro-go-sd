@@ -38,11 +38,65 @@ segacd_state SCD;
 #ifdef SEGACD_GA_TRACE
 int scd_dbg_sum_seen; uint32_t scd_dbg_sum_a0, scd_dbg_sum_d0, scd_dbg_cmp_d0, scd_dbg_cmp_d1, scd_dbg_maxpc;
 uint32_t scd_dbg_chunks, scd_dbg_deliver4, scd_dbg_deliver2;
+
+/* Boot-stall investigation (0716): frame counter the harness stamps every
+ * iteration, so bus/engine-side trace points can log WHICH frame something
+ * happened in without threading a frame argument through every call site. */
+int scd_dbg_frame;
+
+/* Ring buffers of (frame, PC) for the first few times each interrupt source
+ * actually wins a delivery slot in segacd_run_sub's chunk loop — PC is the
+ * SUB's PC (m68k == sub context here), captured BEFORE the chunk's m68k_run,
+ * i.e. where the sub was parked when the interrupt was asserted to it. */
+#define SCD_DBG_DELIVER_LOG_N 8
+uint32_t scd_dbg_deliver2_frame[SCD_DBG_DELIVER_LOG_N], scd_dbg_deliver2_pc[SCD_DBG_DELIVER_LOG_N];
+int scd_dbg_deliver2_n;
+uint32_t scd_dbg_deliver4_frame[SCD_DBG_DELIVER_LOG_N], scd_dbg_deliver4_pc[SCD_DBG_DELIVER_LOG_N];
+int scd_dbg_deliver4_n;
 #endif
 
 /* Saved MAIN context while the sub-CPU is running. Static, one level of
  * nesting only — the sub never re-enters the main. */
 static m68ki_cpu_core s_main_saved;
+
+/* The sub-CPU's own interrupt-ack callback (M68K_EMULATE_INT_ACK=OPT_ON calls
+ * this on EVERY interrupt the sub actually takes — i.e. exactly when
+ * m68ki_check_interrupts() finds CPU_INT_LEVEL > FLAG_INT_MASK and the
+ * exception really fires, NOT merely when we've asked for one via
+ * m68k_set_irq()). This must NOT be gwenesis's own m68k_irq_acked
+ * (gwenesis_vdp_mem.c) — that function unconditionally reads/writes
+ * gwenesis_vdp_status/hint_pending, which are MAIN's VDP globals, not
+ * per-CPU state; the sub inheriting it via the segacd_reset() memcpy means
+ * every sub interrupt ack (IFL2/CDD/CDC — all of them, several times a
+ * frame) can spuriously steal MAIN's own pending-VBLANK flag or assert a
+ * bogus level onto the sub's own core. Giving the sub this minimal callback
+ * both stops that cross-contamination and is the correct place to clear our
+ * one-shot pending flags: clearing them here (at ACTUAL ack time) instead of
+ * at m68k_set_irq() PRESENT time (the old segacd_run_sub behavior) is what
+ * fixes the race where a request presented while the sub's SR interrupt mask
+ * still blocks it (e.g. immediately after entering a higher-priority
+ * handler) got silently retracted next chunk before the sub ever took it —
+ * see segacd_run_sub's delivery loop. */
+static int segacd_sub_int_ack(int int_level)
+{
+    switch (int_level) {
+    case 5: SCD.cdc_int_pending = 0; break;
+    case 4: SCD.cdd_int_pending = 0; break;
+    case 2: SCD.ga_ifl2         = 0; break;
+    default: break;
+    }
+    /* Mirror default_int_ack_callback (m68kcpu.c): retract CPU_INT_LEVEL on
+     * ack. Required, not optional — m68ki_exception_interrupt() raises
+     * FLAG_INT_MASK to int_level but does NOT itself clear CPU_INT_LEVEL, so
+     * without this the same still-asserted level re-triggers the instant RTE
+     * drops the mask back down (the "interrupt storm" the level-triggered
+     * design was rejected for — see segacd_run_sub's delivery-loop comment).
+     * m68k.int_level is the public name of the internal CPU_INT_LEVEL field
+     * (m68k.h); `m68k` here is the SUB's context (int_ack_callback only
+     * fires from inside that CPU's own m68k_run). */
+    m68k.int_level = 0;
+    return M68K_INT_ACK_AUTOVECTOR;
+}
 
 void segacd_init(void)
 {
@@ -87,6 +141,7 @@ void segacd_reset(void)
      * m68k_pulse_reset() sets SP/PC from the reset vectors when the sub is
      * released, and each timeslice rebases cycles to 0. */
     memcpy(&SCD.sub_ctx, &m68k, sizeof(SCD.sub_ctx));
+    SCD.sub_ctx.int_ack_callback = segacd_sub_int_ack;
     segacd_sub_build_memory_map();
 }
 
@@ -187,21 +242,48 @@ int segacd_run_sub(int cycle_target)
         int want2 = !want5 && !want4 && SCD.ga_ifl2 && (SCD.s68k_regs[0x33] & 0x04);
 #ifdef SEGACD_GA_TRACE
         scd_dbg_chunks++;
-        if (want4) scd_dbg_deliver4++;
-        if (want2) scd_dbg_deliver2++;
+        if (want4) {
+            scd_dbg_deliver4++;
+            if (scd_dbg_deliver4_n < SCD_DBG_DELIVER_LOG_N) {
+                scd_dbg_deliver4_frame[scd_dbg_deliver4_n] = (uint32_t)scd_dbg_frame;
+                scd_dbg_deliver4_pc[scd_dbg_deliver4_n] = m68k.pc;
+                scd_dbg_deliver4_n++;
+            }
+        }
+        if (want2) {
+            scd_dbg_deliver2++;
+            if (scd_dbg_deliver2_n < SCD_DBG_DELIVER_LOG_N) {
+                scd_dbg_deliver2_frame[scd_dbg_deliver2_n] = (uint32_t)scd_dbg_frame;
+                scd_dbg_deliver2_pc[scd_dbg_deliver2_n] = m68k.pc;
+                scd_dbg_deliver2_n++;
+            }
+        }
 #endif
 
         /* Re-present the level every chunk, including 0 — a stale
          * CPU_INT_LEVEL left over from a source that's since gone quiet
-         * (consumed, or main/sub cleared it) must be retracted explicitly,
+         * (consumed via ack, or IEN turned off) must be retracted explicitly,
          * or the CPU could still take an interrupt that is no longer
-         * logically pending. All three sources are one-shot: consumed
-         * (cleared) the moment they win a slot, exactly like real
-         * hardware's ack. */
+         * logically pending/enabled.
+         *
+         * Do NOT clear the pending flags here. The old code cleared
+         * cdc/cdd_int_pending / ga_ifl2 the instant a source WON a chunk's
+         * priority arbitration (i.e. the instant we asked for it), not when
+         * the sub's core actually TOOK it. That's a race: if the sub's SR
+         * interrupt mask still blocks the level this chunk (e.g. it just
+         * entered a higher-priority handler and hasn't RTE'd back down yet —
+         * observed at the boot stall: level-2 "won" a chunk while the sub's
+         * PC was sitting at the level-4 handler's own entry, mask still 4),
+         * m68ki_check_interrupts() silently does NOT take it, yet we'd
+         * already cleared the flag — so the NEXT chunk finds want2 false and
+         * re-presents 0, retracting the request before the sub ever got a
+         * chance to. The doorbell pulse was lost with no trace beyond "sub
+         * never left the wait loop". Fix: keep the flag (and keep
+         * re-presenting the level) until segacd_sub_int_ack ACTUALLY fires —
+         * that only happens when m68ki_exception_interrupt truly runs, i.e.
+         * the sub really took it. Still one-shot (cleared exactly once, at
+         * ack), just correctly timed instead of optimistically early. */
         m68k_set_irq((unsigned int)(want5 ? 5 : (want4 ? 4 : (want2 ? 2 : 0))));
-        if (want5) SCD.cdc_int_pending = 0;
-        if (want4) SCD.cdd_int_pending = 0;
-        if (want2) SCD.ga_ifl2 = 0;
 
         if (!want5 && !want4 && !want2) {
             /* Nothing to chunk for: run the rest of the slice in one go
