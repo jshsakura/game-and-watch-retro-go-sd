@@ -369,6 +369,14 @@ int main(int argc, char **argv)
      * IFL2/CDD delivery. --- */
     printf("[boot] REG1 VBLANK_INTERRUPT (IE0) first seen enabled at frame=%d (-1=never)\n",
            vblank_ie_first_frame);
+    { extern uint32_t scd_dbg_mainstamp_hits;
+      printf("[boot] MAIN stamp-draw (0x5f00-0x6e00) sub-slice hits=%u  %s\n",
+             scd_dbg_mainstamp_hits,
+             scd_dbg_mainstamp_hits ? "(main draws stamps)" : "(MAIN NEVER DRAWS STAMPS -> Word-RAM stamps empty)"); }
+    { extern uint32_t scd_dbg_state8_hits, scd_dbg_stampwr_hits;
+      printf("[boot] boot-logo state machine: STATE-8(stamp loader 0x7136) sub-slice hits=%u  stamp-draw hits=%u  %s\n",
+             scd_dbg_state8_hits, scd_dbg_stampwr_hits,
+             scd_dbg_state8_hits ? "(state 8 RAN)" : "(STATE 8 NEVER ENTERED -> stamps never loaded)"); }
     { extern uint32_t scd_dbg_gfx_ops, scd_dbg_gfx_lines, scd_dbg_gfx_mapnz;
       printf("[boot] GFX ASIC: start-ops=%u lines-rendered=%u  stamp-map max-nonzero(of 512)=%u %s\n",
              scd_dbg_gfx_ops, scd_dbg_gfx_lines, scd_dbg_gfx_mapnz,

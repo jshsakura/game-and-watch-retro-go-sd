@@ -177,6 +177,15 @@ int segacd_run_sub(int cycle_target)
 {
     if (!SCD.sub_running)
         return 0;
+#ifdef SEGACD_GA_TRACE
+    /* At entry, m68k is still the MAIN context (the caller just ran it). Does
+     * the MAIN ever reach its stamp-draw routines (0x619e fills Word-RAM
+     * $220000+, callers 0x5f22..0x6de8)? GPGX runs these every frame to build
+     * the logo the GFX ASIC renders from; if ours never does, the stamp map
+     * stays empty and the render is blank. */
+    { extern uint32_t scd_dbg_mainstamp_hits;
+      if (m68k.pc >= 0x5f00 && m68k.pc < 0x6e00) scd_dbg_mainstamp_hits++; }
+#endif
 
     /* Frame-pace the GFX ASIC completion: an op armed by a $FF8066 write last
      * frame becomes deliverable this frame (the animation is timed against the
@@ -340,6 +349,12 @@ int segacd_run_sub(int cycle_target)
      * sum 0x200..0x5800 == 0xe9bb). */
     extern uint32_t scd_dbg_maxpc;
     if (m68k.pc > scd_dbg_maxpc && m68k.pc < 0x6000) scd_dbg_maxpc = m68k.pc;
+    /* Boot-logo state machine: does the sub ever enter STATE 8 (0x7136, the
+     * stamp-graphics loader) and its stamp-draw path (0x74cc/0x7586/0x75ca)? */
+    extern uint32_t scd_dbg_state8_hits, scd_dbg_stampwr_hits;
+    if (m68k.pc >= 0x7136 && m68k.pc < 0x7600) scd_dbg_state8_hits++;
+    if ((m68k.pc >= 0x74b6 && m68k.pc < 0x74e0) ||
+        (m68k.pc >= 0x7586 && m68k.pc < 0x75e0)) scd_dbg_stampwr_hits++;
 #endif
 
     /* save sub -> restore main */
@@ -348,3 +363,11 @@ int segacd_run_sub(int cycle_target)
 
     return used;
 }
+
+#ifdef SEGACD_GA_TRACE
+uint32_t scd_dbg_state8_hits, scd_dbg_stampwr_hits;
+#endif
+
+#ifdef SEGACD_GA_TRACE
+uint32_t scd_dbg_mainstamp_hits;
+#endif
