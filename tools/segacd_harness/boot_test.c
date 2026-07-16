@@ -144,7 +144,11 @@ int main(int argc, char **argv)
       unsigned pc = SCD.sub_ctx.pc & (SEGACD_PRG_RAM_SIZE-1);
       printf("[boot] sub code @PC:");
       for (int i=0;i<16;i++) printf(" %02x", SCD.prg_ram[(pc+i)&(SEGACD_PRG_RAM_SIZE-1)]);
-      printf("  (IEN $FF8033=%02x)\n", SCD.s68k_regs[0x33]); }
+      printf("  (IEN $FF8033=%02x)\n", SCD.s68k_regs[0x33]);
+      printf("[boot] PRG reset vec (raw bytes 0..7):");
+      for (int i=0;i<8;i++) printf(" %02x", SCD.prg_ram[i]);
+      extern uint32_t scd_dbg_prgwin_w;
+      printf("   main->PRGwin writes=%u\n", scd_dbg_prgwin_w); }
 
 #ifdef SEGACD_GA_TRACE
     extern uint32_t scd_ga_rd[], scd_ga_wr[], scd_sga_rd[], scd_sga_wr[];

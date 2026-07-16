@@ -123,21 +123,41 @@ void segacd_sub_build_memory_map(void)
     map[0xFF].write16= sub_ff_write16;
 }
 
-/* ---- main-CPU view of CD space (handlers; PRG window is bank-selected) ---- */
-
+/* ---- main-CPU view of CD space (handlers; PRG window is bank-selected) ----
+ *
+ * BYTE ORDER (critical): the sub-68K reaches PRG-RAM through a *direct* memory_map
+ * base (segacd_sub_build_memory_map), so it uses gwenesis's byte-swapped storage
+ * convention on this LSB_FIRST host — READ_BYTE/WRITE_BYTE index base[addr^1], and
+ * 16-bit accesses are *(uint16*)(base+addr) (little-endian read of a pair-swapped
+ * word). The main-68K reaches the same PRG-RAM through *these handlers* (the bank-
+ * selected $020000 window), so they MUST store in the identical swapped layout, or
+ * the sub-BIOS the main copies in comes out with every word's bytes transposed and
+ * the sub executes garbage (it did: sub wandered to PC=0x7762 fetching data).
+ *
+ * Fix: the 8-bit accessors apply the same `^1` the sub's READ_BYTE/WRITE_BYTE do;
+ * the 16-bit wrappers compose two 8-bit accesses in big-endian order, which — with
+ * the `^1` in place — writes/reads the little-endian pair the sub's direct base
+ * expects. Word-RAM needs no such handler: main and sub both see it via direct base
+ * (same convention), so it is already consistent. */
 static unsigned int main_prgwin_read8(unsigned int address)
 {
     unsigned int off = (address & 0x1FFFF) + (unsigned)SCD.prg_bank * 0x20000;
-    return SCD.prg_ram[off & (SEGACD_PRG_RAM_SIZE - 1)];
+    return SCD.prg_ram[(off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1)];
 }
 static unsigned int main_prgwin_read16(unsigned int address)
 {
     return (main_prgwin_read8(address) << 8) | main_prgwin_read8(address + 1);
 }
+#ifdef SEGACD_GA_TRACE
+uint32_t scd_dbg_prgwin_w;   /* count of main-CPU writes into the PRG window */
+#endif
 static void main_prgwin_write8(unsigned int address, unsigned int data)
 {
     unsigned int off = (address & 0x1FFFF) + (unsigned)SCD.prg_bank * 0x20000;
-    SCD.prg_ram[off & (SEGACD_PRG_RAM_SIZE - 1)] = (uint8_t)data;
+#ifdef SEGACD_GA_TRACE
+    scd_dbg_prgwin_w++;
+#endif
+    SCD.prg_ram[(off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1)] = (uint8_t)data;
 }
 static void main_prgwin_write16(unsigned int address, unsigned int data)
 {
