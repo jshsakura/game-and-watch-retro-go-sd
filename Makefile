@@ -657,6 +657,7 @@ $(CORE_PICODRIVE)/pico/misc.c \
 $(CORE_PICODRIVE)/pico/patch.c \
 $(CORE_PICODRIVE)/pico/z80if.c \
 $(CORE_PICODRIVE)/pico/eeprom.c \
+$(CORE_PICODRIVE)/pico/state.c \
 $(CORE_PICODRIVE)/pico/sound/sound.c \
 $(CORE_PICODRIVE)/pico/sound/mix.c \
 $(CORE_PICODRIVE)/pico/sound/sn76496.c \
