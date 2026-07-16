@@ -74,7 +74,9 @@ static void run_dots(Snes *snes, int dots) {
     bool started_dma = false;
     if (snes->cpuCyclesLeft == 0) {
       apply_irq_match(snes); snes->cpuMemOps = 0;
-      int cycles = cpu_runOpcode(snes->cpu); g_opcodes++;
+      int cycles = wire_pre_opcode(snes);
+      if (cycles == 0) cycles = cpu_runOpcode(snes->cpu);
+      g_opcodes++;
       snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
       started_dma = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
     }
@@ -94,7 +96,9 @@ static void run_frame_events(Snes *snes) {
     if (dma_cycle(snes->dma)) {} else {
       if (snes->cpuCyclesLeft == 0) {
         snes->cpuMemOps = 0;
-        int cycles = cpu_runOpcode(snes->cpu); g_opcodes++;
+        int cycles = wire_pre_opcode(snes);
+        if (cycles == 0) cycles = cpu_runOpcode(snes->cpu);
+        g_opcodes++;
         snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
       }
       snes->cpuCyclesLeft -= 2;

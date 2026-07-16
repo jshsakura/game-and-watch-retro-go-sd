@@ -60,6 +60,10 @@ static int g_frac = 0;             /* APU-cycle remainder (32 = one sample) */
 static uint8_t g_ack[3];           /* instant-ack values for ports 1-3 */
 static uint8_t g_last_p0 = 0;      /* last port-0 command seen during LLE */
 static int g_ok_streak = 0;
+static int g_native_ports = 0;     /* SM-exact layout: player IS the game's own
+                                    * driver — feed all 4 ports, mirror all 4
+                                    * echoes (SM handshakes on ports 1-3 and
+                                    * black-screens on instant-acks). */
 
 /* ---- one 32 kHz sample step: exactly SpcPlayer_GenerateSamples' semantics -- */
 static inline void wire_step_sample(SpcPlayer *p) {
@@ -74,9 +78,15 @@ static inline void wire_step_sample(SpcPlayer *p) {
 
 static inline void wire_mirror_ports(Apu *apu, SpcPlayer *p) {
   apu->outPorts[0] = p->port_to_snes[0];
-  apu->outPorts[1] = g_ack[0];
-  apu->outPorts[2] = g_ack[1];
-  apu->outPorts[3] = g_ack[2];
+  if (g_native_ports) {
+    apu->outPorts[1] = p->port_to_snes[1];
+    apu->outPorts[2] = p->port_to_snes[2];
+    apu->outPorts[3] = p->port_to_snes[3];
+  } else {
+    apu->outPorts[1] = g_ack[0];
+    apu->outPorts[2] = g_ack[1];
+    apu->outPorts[3] = g_ack[2];
+  }
 }
 
 /* Replaces apu.c's apu_run (renamed apu_run_lle in the copied file). */
@@ -109,7 +119,9 @@ void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val) {
     static int tr = 0;
     if (tr < 4000 && port == 0) { fprintf(stderr, "[wire] p0<=%02x\n", val); tr++; }
   }
-  if (port == 0) {
+  if (g_native_ports) {
+    g_wire_p->input_ports[port] = val;   /* the player is this game's own driver */
+  } else if (port == 0) {
     /* ALttP-style mailboxes write 00 when idle; SM's engine reads a 0 that
      * differs from the current song as a "stop" command. Idle-zero is not a
      * command — drop it (games stop via 0xf0 pause / 0xf1 fade instead). */
@@ -120,6 +132,62 @@ void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val) {
     g_wire_p->input_ports[port] = 0;
   }
   wire_mirror_ports(snes->apu, g_wire_p);
+}
+
+/* SM streams driver-level bank uploads through $80:8028 (block list in ROM:
+ * {u16 numbytes, u16 target, bytes...}, 0-terminated — the exact format
+ * SpcPlayer_Upload consumes). Against the real driver that routine port-
+ * handshakes every byte; the native player cannot ack the stream, so the
+ * game hangs. HLE the whole routine at entry: feed the blocks straight into
+ * the player's ARAM and return as the homebrew's own RTS patch does
+ * (sm_cpu_infra.c PatchBytes(0x808028, {0x60})). Called before every opcode by
+ * the harness/porting loop; returns nonzero if the opcode was replaced. */
+int wire_pre_opcode(Snes *snes) {
+  if (!g_wire_on || !g_native_ports) return 0;
+  Cpu *c = snes->cpu;
+  if (getenv("WIRE_TRACE")) {                 /* where does the 65816 spin? */
+    static int smp = 0;
+    if ((++smp & 0xfffff) == 0)
+      fprintf(stderr, "[wire] pc sample %02x:%04x\n", c->k, c->pc);
+  }
+  if (c->k != 0x80 || c->pc != 0x8028) return 0;
+  SpcPlayer *p = g_wire_p;
+  /* 24-bit source address lives in the direct page, not registers — the
+   * routine's own prologue is LDY $00 / LDA $02 / PLB (disassembled from the
+   * ROM): dp+$00 = address word, dp+$02 = bank. */
+  uint16_t dp = c->dp;
+  uint16_t adr = (uint16_t)(snes->ram[(dp + 0) & 0x1fff] |
+                            (snes->ram[(dp + 1) & 0x1fff] << 8));
+  uint8_t bank = snes->ram[(dp + 2) & 0x1fff];
+  if (getenv("WIRE_TRACE"))
+    fprintf(stderr, "[wire] upload hook dp=%04x -> %02x:%04x\n", dp, bank, adr);
+  dsp_write(p->dsp, 0x2c, 0);            /* EVOLL: echo off during upload */
+  dsp_write(p->dsp, 0x3c, 0);            /* EVOLR */
+  dsp_write(p->dsp, 0x5c, 0xff);         /* KOF: key off all voices */
+  for (;;) {
+    uint16_t numbytes = cart_read(snes->cart, bank, adr) |
+                        (cart_read(snes->cart, bank, adr + 1) << 8);
+    if (numbytes == 0) break;
+    uint16_t target = cart_read(snes->cart, bank, adr + 2) |
+                      (cart_read(snes->cart, bank, adr + 3) << 8);
+    adr += 4;
+    while (numbytes--) {
+      p->ram[target++ & 0xffff] = cart_read(snes->cart, bank, adr++);
+      if (adr == 0) bank++;              /* block lists can straddle banks */
+    }
+  }
+  /* SpcPlayer_Upload's own tail: reset ports, arm the song at ram[$581e]. */
+  p->port_to_snes[0] = 0;
+  p->input_ports[0] = p->input_ports[1] = p->input_ports[2] = p->input_ports[3] = 255;
+  p->music_ptr_toplevel = (uint16_t)(p->ram[0x581e] | (p->ram[0x581f] << 8));
+  p->counter_sf0c = 2;
+  p->key_OFF |= ~p->is_chan_on;
+  wire_mirror_ports(snes->apu, p);
+  /* Emulate the RTS the patch left behind: pull the 16-bit return address. */
+  uint8_t lo = snes->ram[++c->sp & 0x1fff];   /* bank-0 stack = WRAM mirror */
+  uint8_t hi = snes->ram[++c->sp & 0x1fff];
+  c->pc = (uint16_t)(((hi << 8) | lo) + 1);
+  return 6;                              /* RTS master-clock-ish cycle count */
 }
 
 /* Fill the player's DSP to a full 534-sample frame and fetch 16 kHz mono. */
@@ -294,15 +362,29 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
    * Last resort: the driver's own current-song cell in the adopted ARAM
    * (songList-2 by N-SPC engine layout — ALttP-style mailboxes idle port0
    * at 00, so both port sources come up empty there and only this works). */
-  uint8_t cur = snes->apu->outPorts[0];
-  if (!(cur > 0 && cur < 0xf0)) cur = g_last_p0;
-  if (!(cur > 0 && cur < 0xf0)) {
-    uint8_t cell = aram[(g_nspc_cfg.songCur) & 0xffff];
-    if (cell > 0 && cell < 0xf0) cur = cell;
+  g_native_ports = (np->songList == 0x581e && np->instrTab == 0x6c00 &&
+                    np->dir == 0x6d00);
+  if (g_native_ports) {
+    /* SM-exact layout: this ROM runs the very driver the player was decompiled
+     * from. Start playback the way the engine's own SpcPlayer_Upload does —
+     * the game keeps the current song pointer at ram[$581e], adopted with the
+     * ARAM — and let every port speak the native protocol. */
+    p->port_to_snes[0] = 0;
+    p->input_ports[0] = p->input_ports[1] = p->input_ports[2] = p->input_ports[3] = 255;
+    p->music_ptr_toplevel = (uint16_t)(p->ram[0x581e] | (p->ram[0x581f] << 8));
+    p->counter_sf0c = 2;
+    p->key_OFF |= ~p->is_chan_on;
+  } else {
+    uint8_t cur = snes->apu->outPorts[0];
+    if (!(cur > 0 && cur < 0xf0)) cur = g_last_p0;
+    if (!(cur > 0 && cur < 0xf0)) {
+      uint8_t cell = aram[(g_nspc_cfg.songCur) & 0xffff];
+      if (cell > 0 && cell < 0xf0) cur = cell;
+    }
+    p->port_to_snes[0] = 0;
+    p->input_ports[0] = (cur > 0 && cur < 0xf0) ? cur : 255;
+    p->input_ports[1] = p->input_ports[2] = p->input_ports[3] = 0;
   }
-  p->port_to_snes[0] = 0;
-  p->input_ports[0] = (cur > 0 && cur < 0xf0) ? cur : 255;
-  p->input_ports[1] = p->input_ports[2] = p->input_ports[3] = 0;
 
   g_wire_p = p;
   g_wire_variant = np->variant;
@@ -327,6 +409,13 @@ int wire_try_swap(Snes *snes, int frame) {
    * is implemented — other variants stay LLE unless WIRE_ALL=1 (research). */
   if (strcmp(np.variant, "std") && strcmp(np.variant, "YI") && !getenv("WIRE_ALL"))
     { g_ok_streak = 0; return 0; }
+  /* SM streams driver-level bank uploads through $80:8028-$8110; swapping
+   * while the 65816 is inside that routine freezes the handshake it is mid-
+   * way through (black screen). Defer — LLE finishes the upload, the next
+   * 60-frame check lands outside. */
+  if (np.songList == 0x581e && np.instrTab == 0x6c00 && np.dir == 0x6d00 &&
+      snes->cpu->k == 0x80 && snes->cpu->pc >= 0x8028 && snes->cpu->pc < 0x8111)
+    return 0;
   if (++g_ok_streak < 2) return 0;   /* stable across two checks 60 frames apart */
   wire_swap(snes, &np, snes->apu->ram);
   fprintf(stderr, "[wire] frame %d: swapped to native N-SPC (variant=%s song=%04x instr=%04x dir=%02x00 chOK=%d lastp0=%02x)\n",
