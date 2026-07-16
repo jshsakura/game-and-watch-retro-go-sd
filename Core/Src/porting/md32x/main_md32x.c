@@ -253,6 +253,13 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   /* Dual-SH-2 interpreter is CPU-bound; take the scoped, non-persisted boost. */
   common_emu_auto_oc(1);
 
+  /* Spare-RAM allocator base (gwenesis pattern). ahb_calloc() tries ram_malloc
+   * FIRST and ram_malloc asserts on ram_start==0 — first device boot died
+   * exactly there when gnw_m68k_bank_alloc() ran. The overlay margin (~9K) is
+   * too small for the 64K bank, so it falls through to AHB as intended. */
+  extern void *_OVERLAY_MD32X_BSS_END[];
+  ram_start = (uint32_t)&_OVERLAY_MD32X_BSS_END;
+
   odroid_system_init(APPID_32X, MD32X_AUDIO_RATE);
   odroid_system_emu_init(&md32x_LoadState, &md32x_SaveState, &md32x_Screenshot,
                          NULL, NULL, NULL);
