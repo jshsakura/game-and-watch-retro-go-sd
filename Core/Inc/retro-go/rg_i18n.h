@@ -47,6 +47,18 @@ bool odroid_button_turbos(void);
 int8_t odroid_settings_theme_get();
 void odroid_settings_theme_set(int8_t theme);
 
+/** Launcher cover-art rendering style (declared here beside the theme
+ * accessors so the submodule's odroid_settings.h stays untouched). */
+typedef enum
+{
+    ODROID_COVER_STYLE_POSTER = 0, /* native aspect (default, today's behavior) */
+    ODROID_COVER_STYLE_SQUARE = 1, /* uniform square tile, center-crop to fill */
+    ODROID_COVER_STYLE_COUNT
+} odroid_cover_style_t;
+
+uint8_t odroid_settings_CoverStyle_get(void);
+void odroid_settings_CoverStyle_set(uint8_t style);
+
 int8_t odroid_settings_colors_get();
 void odroid_settings_colors_set(int8_t colors);
 int8_t odroid_settings_turbo_buttons_get();

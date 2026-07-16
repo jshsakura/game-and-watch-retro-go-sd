@@ -545,10 +545,11 @@ static const lang_metadata_t lang_metadata[] = {
  * fmt_* pointers is silently dropped here AND inflates the generated .bin's
  * field count past LANG_T_STRING_COUNT+4, which makes i18n_load_language()
  * reject the whole file so every language falls back to English.
- * s_PM is the last declared string field; if it ever lands after
- * the fmt pointers this fails the build instead of shipping an English-only
- * firmware. */
-_Static_assert(offsetof(lang_t, s_PM) < offsetof(lang_t, fmt_Title_Date_Format),
+ * s_Cover_Style_Square is the last declared string field; if it ever lands
+ * after the fmt pointers this fails the build instead of shipping an
+ * English-only firmware. (Update this to the new last field whenever one is
+ * appended.) */
+_Static_assert(offsetof(lang_t, s_Cover_Style_Square) < offsetof(lang_t, fmt_Title_Date_Format),
                "lang_t s_XXX fields must precede the fmt_* function pointers");
 
 static lang_t  lang_active;
