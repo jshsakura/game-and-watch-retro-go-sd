@@ -57,8 +57,6 @@ static void SleepModeEnterAndResume(sleep_pre_wakeup_callback_t pre_wakeup_callb
     pre_wakeup_callback();
   }
 
-  // Not sure why two swaps are needed, but without them, there's random gfx corruption until first repaint
-  lcd_swap();
   lcd_swap();
 
   // We want to keep this fade-in short because while it happens,
