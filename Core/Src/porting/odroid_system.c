@@ -16,6 +16,8 @@
 #include "ff.h"
 #endif
 
+extern SPI_HandleTypeDef hspi2;
+
 static rg_app_desc_t currentApp;
 static runtime_stats_t statistics;
 static runtime_counters_t counters;
@@ -508,6 +510,14 @@ void odroid_system_switch_app(int app)
 
         app_animate_lcd_brightness(odroid_display_get_backlight_raw(), 0, 10);
 
+        /* Full panel power-down before hot boot. Previously we only
+         * HAL_DeInit()'d LTDC and left 1V8/3V3 up, so the next lcd_init()
+         * re-ran the SPI bring-up on a still-powered glass — intermittent
+         * mis-init / visual glitches. Match the sleep path: cut rails, wait
+         * for collapse, then the post-boot lcd_init does a clean power cycle. */
+        lcd_deinit(&hspi2);
+        HAL_Delay(20);
+
         HAL_DeInit();
 
         /* Clean+Invalidate (not Invalidate alone): discard-only would drop
@@ -523,6 +533,10 @@ void odroid_system_switch_app(int app)
 #else
         // Retro-go is in bank1 with no bootloader present.
         // Reset directly back into retro-go.
+
+        app_animate_lcd_brightness(odroid_display_get_backlight_raw(), 0, 10);
+        lcd_deinit(&hspi2);
+        HAL_Delay(20);
 
         NVIC_SystemReset();
 #endif
