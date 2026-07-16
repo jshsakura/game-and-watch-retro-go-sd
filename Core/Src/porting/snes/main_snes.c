@@ -468,35 +468,55 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     }
   }
 
-  /* DEBUG (strip later): ROM is byte-perfect, so the black screen is PPU-render
-   * or display. Run a headless warm-up here (before the interactive loop, SD idle,
-   * wdog kicked each frame — SAFE) so SMW is past its intro, then measure whether
-   * the callback actually filled snes_frame on the DEVICE. lit=0 => the PPU makes
-   * no pixels here (emulation diverges on hardware); lit>0 => pixels exist and the
-   * bug is display/present. Also log forcedBlank/brightness (a game blanking the
-   * screen) and the layer-enable byte. Appended to /snes_diag.txt. */
+  /* DEBUG (strip later): device frame-cost PROFILE. The screen renders now
+   * (disableRender fix) but the game paces at ~13.7 fps — the frame_loop's
+   * overload guard (1 forced draw in 4), which means the emu misses the 16.7 ms
+   * budget. CPU% looks low, so measure, don't guess: run 250 frames with the
+   * renderer OFF and 250 with it ON (headless, before the interactive loop, SD
+   * idle, wdog kicked — SAFE), timing each phase with the DWT cycle counter.
+   *   emu_skip = interpreter+APU alone, emu_draw = same + PPU line renderer,
+   *   audio    = the pcm top-up/downmix per frame.
+   * Appended to /snes_diag.txt with SystemCoreClock so cycles map to ms. */
   {
+    extern uint32_t SystemCoreClock;
+    common_emu_enable_dwt_cycles();
+    uint64_t cyc_skip = 0, cyc_draw = 0, cyc_audio = 0;
+
+    for (int i = 0; i < 250; i++) {           /* interpreter+APU only */
+      wdog_refresh();
+      g_ppu_skip_render = true;
+      render_frame_into_active_buffer();
+      common_emu_clear_dwt_cycles();
+      run_frame_events(snes);
+      cyc_skip += common_emu_get_dwt_cycles();
+    }
+
     memset(snes_frame, 0, sizeof(snes_frame));
     g_dbg_cb_count = 0; g_dbg_line_or = 0;
-    for (int i = 0; i < 500; i++) {
+    for (int i = 0; i < 250; i++) {           /* + PPU line renderer + audio */
       wdog_refresh();
       g_ppu_skip_render = false;
       render_frame_into_active_buffer();
+      common_emu_clear_dwt_cycles();
       run_frame_events(snes);
+      cyc_draw += common_emu_get_dwt_cycles();
+
+      common_emu_clear_dwt_cycles();
+      snes_pcm_submit();
+      cyc_audio += common_emu_get_dwt_cycles();
     }
+
     int lit = 0;
     for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++)
       if (snes_frame[i]) lit++;
-    uint16_t cg0 = snes->ppu->cgram[0], cg1 = snes->ppu->cgram[1],
-             cg2 = snes->ppu->cgram[2], cgFF = snes->ppu->cgram[255];
     FILE *df = fopen("/snes_diag.txt", "a");
     if (df) {
-      fprintf(df, "SNES warmup500: lit=%d/%d cb=%lu lineOR=%04X fblank=%d bright=%d "
-                  "mode=%d cgram=%04X %04X %04X ..%04X\n",
-              lit, GW_LCD_WIDTH * GW_LCD_HEIGHT, (unsigned long)g_dbg_cb_count,
-              (unsigned)g_dbg_line_or, (int)snes->ppu->forcedBlank,
-              (int)snes->ppu->brightness,
-              (int)snes->ppu->mode, cg0, cg1, cg2, cgFF);
+      fprintf(df, "SNES profile: clk=%lu emu_skip=%lu emu_draw=%lu audio=%lu "
+                  "cyc/frame, lit=%d cb=%lu\n",
+              (unsigned long)SystemCoreClock,
+              (unsigned long)(cyc_skip / 250), (unsigned long)(cyc_draw / 250),
+              (unsigned long)(cyc_audio / 250), lit,
+              (unsigned long)g_dbg_cb_count);
       fclose(df);
     }
   }
