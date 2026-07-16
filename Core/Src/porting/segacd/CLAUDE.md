@@ -1,9 +1,57 @@
 # Sega/Mega CD port — playbook
 
-Status: **IN PROGRESS, phase 1.** This is a large multi-session port (PCE-CD took
-several). The feasibility research (memory `segacd-feasibility`) established the
-path; the user directed a full build. This file is the durable plan so any
-session can continue.
+Status: **IN PROGRESS.** This is a large multi-session port (PCE-CD took several).
+The feasibility research (memory `segacd-feasibility`) established the path; the
+user directed a full build. This file is the durable plan so any session can
+continue. **For the live boot state + next task, read memory
+`session-handoff-0716-segacd` first** — it's ahead of this file.
+
+## Boot sequence — how the BIOS logo actually works (0717, all runtime-verified)
+
+The whole boot is a chain of two-CPU handshakes. As of 0717 every stage runs
+except the final drive-status gate. Host harness: `tools/segacd_harness/boot_test.c`
+(build in the handoff memory), interleaves the sub per scanline. Disassemblers:
+`/tmp/{m68kdis,subdis,ramdis}.py`.
+
+1. **Both 68Ks boot.** Main from region BIOS at $0; sub released by the main
+   clearing SRES ($A12001). Byte-order: PRG-RAM uses the `^1` swap (see
+   `main_prgwin_read8`); Word-RAM too — a `uint16*` of an even offset reads the
+   logical BE word, identical to GPGX's `word_ram2M`.
+2. **CD data read.** Sub drives the CDD (Read-TOC/Play/Seek), CDC decodes sectors.
+   KEY: the sub-BIOS CDC position gate only sets WRRQ (buffer-write) when the head
+   is **1-4 sectors BEFORE the target**, so `CD.cur_lba` is SIGNED and Play/Seek
+   starts at `lba-3` with NO clamp; `segacd_cd_update` feeds the decoder EVERY
+   play tick incl. pre-target/pregap sectors (zeroed data, correct HEAD). Data
+   reaches the sub via **DTRG dest=3 host-read** ($FF8008), not Word-RAM DMA.
+3. **Main↔sub comm is LOCKSTEP.** The BIOS logo handshake needs intra-frame
+   ping-pong (main rings $A12000 doorbell → sub L2 ISR acks $FF800F bit1 → main
+   grants DMNA $A12003 bit1). Our engine therefore **interleaves the sub per
+   scanline** (`md_scanline_frame` / on device: needs a segacd-specific frame
+   loop, NOT a change to the shared `gwenesis_md_frame`). Running the sub once
+   per whole frame deadlocks the toggle handshake.
+4. **Word-RAM GFX ASIC** (`segacd_gfx.c`, ported from `pd_cd/gfx.c`): a $FF8066
+   write triggers `segacd_gfx_start`, which single-shot renders the rotated/scaled
+   image from stamps+trace-vectors into the Word-RAM image buffer and arms a
+   frame-paced level-1 (INT1) completion interrupt (gated on IEN1 $FF8033 bit1).
+   The sub's animation loop (0x7a06) blocks on the frame counter its INT1 handler
+   (0x7ace) toggles. **This is done and verified** (renders every frame, no crash).
+5. **The stamps are drawn by the MAIN, not the sub** (GPGX-confirmed). The main
+   copies BIOS-ROM $c608/$db60/$db08 → Word-RAM $200080/$201880/$220608 at main PC
+   0x1b00, reached via the **$FFFDA8 RAM trampoline** (a `4EF9 <addr>` the BIOS
+   installs; it flips to `jmp $1eda` at the logo frame). The per-frame Word-RAM→
+   VRAM DMA is $1eda, indexed by Word-RAM $219E00 (the sub's frame counter) via
+   the table at $1f66. Gated by the `$fe26` VBlank semaphore + $A12003 RET.
+
+### THE remaining gate (next task)
+The main's **top-level boot-mode machine ($FFFDDA, dispatcher 0x05c2) is stuck in
+mode 4 (disc-detect, 0x1d58)**. It climbs mode 4→8→**0x10 (LOGO)** only when
+`$FFFE20 & 0xF0 != 0` (gate 0x1d8e) then `$FFD007` bit7 = disc-present (0x2244).
+**Our $FFFE20 = 0.** The controller port $A10003 (read by the VBlank ISR
+0x1162→0x1180 into $FE20) correctly returns 0x7f (idle), so $FE20 is the processed
+**drive/controller-status mirror**, and our CDD status path never sets its high
+nibble. Find what writes $FFFE20 / $FFD0xx (relay 0x4c28 copies $D0xx→Word-RAM)
+and make the CDD report drive-ready-with-disc. Then everything above runs and the
+logo renders. Harness prints a `BOOT-MODE` line with $FFFDDA/$FFFE20/$A10003.
 
 ## The one-line architecture
 
