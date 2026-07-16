@@ -35,6 +35,10 @@ extern void m68k_set_irq(unsigned int int_level);
 
 segacd_state SCD;
 
+#ifdef SEGACD_GA_TRACE
+int scd_dbg_sum_seen; uint32_t scd_dbg_sum_a0, scd_dbg_sum_d0, scd_dbg_cmp_d0, scd_dbg_cmp_d1, scd_dbg_maxpc;
+#endif
+
 /* Saved MAIN context while the sub-CPU is running. Static, one level of
  * nesting only — the sub never re-enters the main. */
 static m68ki_cpu_core s_main_saved;
@@ -63,10 +67,16 @@ void segacd_reset(void)
     if (SCD.pcm_ram)  memset(SCD.pcm_ram,  0, SEGACD_PCM_RAM_SIZE);
     memset(SCD.s68k_regs, 0, sizeof(SCD.s68k_regs));
 
-    /* Build the sub-CPU context: zeroed core, then its memory_map over
-     * PRG-RAM / Word-RAM / gate array. Sub stays held (sub_running = 0) until
-     * the BIOS release path (phase 3) sets its reset vector and starts it. */
-    memset(&SCD.sub_ctx, 0, sizeof(SCD.sub_ctx));
+    /* Build the sub-CPU context by INHERITING the already-initialized main
+     * context, then overriding its memory_map for the sub's address space.
+     * Inheriting matters: m68ki_cpu_core holds CPU config the sub needs —
+     * cpu_type, sr_mask, and the callback function pointers. With
+     * M68K_EMULATE_INT_ACK=OPT_ON the interrupt path calls int_ack_callback on
+     * EVERY interrupt; a zeroed context makes it NULL and the sub jumps to 0 the
+     * first time it takes an IRQ. The registers/PC/cycles here are throwaway —
+     * m68k_pulse_reset() sets SP/PC from the reset vectors when the sub is
+     * released, and each timeslice rebases cycles to 0. */
+    memcpy(&SCD.sub_ctx, &m68k, sizeof(SCD.sub_ctx));
     segacd_sub_build_memory_map();
 }
 
@@ -115,9 +125,22 @@ int segacd_run_sub(int cycle_target)
         m68k_set_irq(4);
     }
 
-    int before = m68k.cycles;
+    /* m68k_run() takes an ABSOLUTE cycle target, and the sub's cycle counter
+     * persists in sub_ctx across timeslices. If we passed a fixed target the
+     * sub would run one timeslice's worth of cycles ONCE and then every later
+     * call would find m68k.cycles already past the target and do nothing — the
+     * sub would freeze mid-instruction (it froze inside the BIOS self-checksum
+     * sum loop at PC 0x2e0). Rebase to 0 each slice, exactly as the main frame
+     * loop does with `m68k.cycles -= system_clock`. */
+    m68k.cycles = 0;
     m68k_run((unsigned int)cycle_target);
-    int used = m68k.cycles - before;
+    int used = m68k.cycles;
+#ifdef SEGACD_GA_TRACE
+    /* Track the furthest PC the sub reaches past the self-checksum (which PASSES:
+     * sum 0x200..0x5800 == 0xe9bb). */
+    extern uint32_t scd_dbg_maxpc;
+    if (m68k.pc > scd_dbg_maxpc && m68k.pc < 0x6000) scd_dbg_maxpc = m68k.pc;
+#endif
 
     /* save sub -> restore main */
     memcpy(&SCD.sub_ctx, &m68k, sizeof(m68ki_cpu_core));
