@@ -69,7 +69,17 @@ typedef struct {
     uint8_t  poll_reg;        /* last GA reg the sub read */
     uint16_t poll_count;      /* consecutive unchanged reads of poll_reg */
 
-    int  cdd_int_pending;     /* CDD level-4 interrupt to deliver to the sub */
+    int  cdd_int_pending;     /* CDD level-4 interrupt (periodic status export) armed */
+
+    /* MAIN->SUB "IFL2" doorbell latch — mirrors real hardware's $A12000 bit0
+     * (main side) / real SUB-side level-2 IRQ trigger. Kept as its OWN field,
+     * separate from SCD.s68k_regs[0], because $A12000 (main view) and $FF8000
+     * (sub view: gate-array version + LED bits) are genuinely DIFFERENT
+     * registers on real hardware that happen to share offset 0 from each
+     * CPU's own base — routing both through the same shared regs[0] byte
+     * aliases the sub's frequent LED-status writes onto what main reads back
+     * as the doorbell flag. See segacd_bus.c main_ga_read8/write8 reg 0. */
+    uint8_t  ga_ifl2;
 
     segacd_pcm_t pcm;         /* RF5C164 8-channel PCM */
 
@@ -98,9 +108,10 @@ int  segacd_bram_save(const char *path);
 /* CD drive / controller / BIOS (segacd_cd.c) */
 int  segacd_cd_open(const char *cue_path);
 int  segacd_load_bios(const char *bios_path, uint8_t *dst, int max);
-void segacd_cdd_process(void);          /* decode CDD command, update status */
+void segacd_cdd_process(void);          /* 75 Hz tick: latency/export cadence */
+void segacd_cdd_command(void);          /* decode+respond to a 10-byte CDD command */
 void segacd_cdc_dma_sector(uint8_t *dst, int len);
-void segacd_cd_update(void);            /* 75 Hz tick: pull next data sector */
+void segacd_cd_update(void);            /* 75 Hz tick: drive mechanics (lba/track) */
 int  segacd_cdda_fill(int16_t *dst, int frames);  /* stream CD-DA from SD */
 int  segacd_cdda_prefetch(void);
 void segacd_cdda_play(uint32_t lba);

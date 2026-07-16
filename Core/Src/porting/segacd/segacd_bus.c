@@ -99,8 +99,41 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
         unsigned int a = (unsigned)SCD.pcm.bank * 0x1000 + (off & 0x0FFF);
         SCD.pcm_ram[a & (SEGACD_PCM_RAM_SIZE - 1)] = (uint8_t)data;
     } else if (off >= 0x8000) {            /* $FF8000+: gate array / CDC / CDD */
+        unsigned int reg = off & (SEGACD_GA_REGS - 1);
         SGA_WR(off);
-        SCD.s68k_regs[off & (SEGACD_GA_REGS - 1)] = (uint8_t)data;
+
+        switch (reg) {
+        case 0x33:   /* IEN mask. IEN4 turning on while the CDD export is
+                       * already armed ($FF8037 bit2) fires immediately rather
+                       * than waiting up to one tick — pd_cd/memory.c:463-475
+                       * `case 0x33`. */
+            SCD.s68k_regs[reg] = (uint8_t)(data & 0x7e);
+            if ((data & 0x10) && (SCD.s68k_regs[0x37] & 0x04))
+                SCD.cdd_int_pending = 1;
+            segacd_poll_wake();
+            return;
+
+        case 0x37:   /* CDD control. Bit2 ("HOCK"/export-armed) is set by the
+                       * sub to request the periodic status transfer; setting
+                       * it while IEN4 is already on fires immediately —
+                       * pd_cd/memory.c:481-491 `case 0x37`. */
+            SCD.s68k_regs[reg] = (uint8_t)(data & 0x07);
+            if ((data & 0x04) && (SCD.s68k_regs[0x33] & 0x10))
+                SCD.cdd_int_pending = 1;
+            segacd_poll_wake();
+            return;
+
+        case 0x4b:   /* Command trigger: writing the 10th command byte fires
+                       * decode+response. Cleared to 0 first, matching real
+                       * hardware/pd_cd/memory.c:492-510 `case 0x4b`. */
+            SCD.s68k_regs[reg] = 0;
+            segacd_cdd_command();
+            return;
+
+        default:
+            SCD.s68k_regs[reg] = (uint8_t)data;
+            return;
+        }
     }
 }
 
@@ -213,7 +246,14 @@ static unsigned int main_ga_read8(unsigned int address)
 {
     if (!is_cd_ga(address)) return orig_a1_read8(address);
     GA_RD(address);
-    return SCD.s68k_regs[address & (SEGACD_GA_REGS - 1)];   /* TODO ph3: real GA */
+    unsigned int reg = address & (SEGACD_GA_REGS - 1);
+    if (reg == 0x000)
+        /* $A12000 low byte = IFL2 doorbell readback. Deliberately NOT the
+         * shared regs[] array — see main_ga_write8 case reg==0 and segacd.h
+         * SCD.ga_ifl2 for why $A12000 (main) and $FF8000 (sub: gate-array
+         * version + LEDs) must not alias through the same byte. */
+        return SCD.ga_ifl2 & 0x01;
+    return SCD.s68k_regs[reg];
 }
 static unsigned int main_ga_read16(unsigned int address)
 {
@@ -226,6 +266,22 @@ static void main_ga_write8(unsigned int address, unsigned int data)
     if (!is_cd_ga(address)) { orig_a1_write8(address, data); return; }
     unsigned int reg = address & (SEGACD_GA_REGS - 1);
     GA_WR(address);
+
+    if (reg == 0x000) {
+        /* $A12000 bit0 = IFL2 doorbell to the sub (level-2 IRQ, "INT2").
+         * Real hardware/PicoDrive gate this on the sub's IEN2 bit AT WRITE
+         * TIME (pd_cd/memory.c:171-182 `case 0: ... if (d && IEN2) ...`) —
+         * a pulse sent before the sub has armed IEN2 is simply lost. We
+         * defer the IEN2 check to delivery time instead (segacd_run_sub in
+         * segacd_engine.c), so an early doorbell stays "pending" until the
+         * sub catches up and enables IEN2, rather than requiring the main
+         * BIOS to re-pulse it — this is the sub-BIOS's actual boot order
+         * (it enables interrupts only after the doorbell already arrived). */
+        SCD.ga_ifl2 = (uint8_t)(data & 0x01);
+        segacd_poll_wake();
+        return;
+    }
+
     SCD.s68k_regs[reg] = (uint8_t)data;
 
     /* Any main write into the gate array can change what the sub polls. */

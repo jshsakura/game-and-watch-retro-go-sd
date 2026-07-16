@@ -107,8 +107,10 @@ int segacd_run_sub(int cycle_target)
 {
     if (!SCD.sub_running)
         return 0;
-    /* An interrupt must wake a spin-idled sub; only skip when truly idle. */
-    if (SCD.sub_idle && !SCD.cdd_int_pending)
+    /* Either pending interrupt must wake a spin-idled sub; only skip when
+     * truly idle. (IEN gating happens below — an interrupt "pending" here
+     * but not yet enabled still needs the sub to run so it CAN enable it.) */
+    if (SCD.sub_idle && !SCD.cdd_int_pending && !SCD.ga_ifl2)
         return 0;
     SCD.sub_idle = 0;
 
@@ -116,13 +118,21 @@ int segacd_run_sub(int cycle_target)
     memcpy(&s_main_saved, &m68k, sizeof(m68ki_cpu_core));
     memcpy(&m68k, &SCD.sub_ctx, sizeof(m68ki_cpu_core));
 
-    /* Deliver the CDD interrupt (level 4). The sub-CPU BIOS is interrupt-driven
-     * — after init it waits for the periodic CDD IRQ to run its drive state
-     * machine. Without this the sub sits idle forever. Masked by the sub's SR /
-     * gate-array IEN, so it's a no-op until the sub enables it. */
-    if (SCD.cdd_int_pending) {
+    /* Deliver the higher-priority of the two interrupt sources the CDD
+     * protocol uses, gated on the sub's own IEN mask ($FF8033) exactly like
+     * real hardware (pd_cd/memory.c:463-491 `case 0x33`/`case 0x37`) — a
+     * source stays "pending" (not consumed) until its IEN bit is enabled, so
+     * an early doorbell/status tick isn't lost while the sub is still
+     * setting up. Only ONE level is deliverable per call in this model
+     * (m68k_set_irq takes a single IPL), so CDD (level 4, periodic status)
+     * wins over IFL2 (level 2, main->sub doorbell) when both are pending —
+     * matching real 68000 interrupt priority (higher level always wins). */
+    if (SCD.cdd_int_pending && (SCD.s68k_regs[0x33] & 0x10)) {
         SCD.cdd_int_pending = 0;
         m68k_set_irq(4);
+    } else if (SCD.ga_ifl2 && (SCD.s68k_regs[0x33] & 0x04)) {
+        SCD.ga_ifl2 = 0;
+        m68k_set_irq(2);
     }
 
     /* m68k_run() takes an ABSOLUTE cycle target, and the sub's cycle counter

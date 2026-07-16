@@ -39,6 +39,9 @@ typedef struct {
 
     uint32_t   cur_lba;            /* CDD head position */
     int        status;            /* CDD status (STOP/PLAY/SEEK/READY...) */
+    int        index;             /* current track index (CDD "RS2-RS3" reports) */
+    int        latency;           /* CDD ticks left before a SEEK/PLAY settles */
+    int        pending_play;      /* latency elapses into PLAY (1) or READY (0) */
 
     uint8_t    cdc_ram[CDC_RING_SIZE];
     int        cdc_head;
@@ -55,9 +58,13 @@ typedef struct {
 
 static segacd_cd_t CD;
 
-/* CDD status codes (subset; PicoDrive cdd.h). */
-enum { CDD_STOP = 0, CDD_PLAY = 1, CDD_SEEK = 2, CDD_PAUSE = 4,
-       CDD_READY = 9, CDD_TRAY = 0xE };
+/* CDD status codes — the exact values real hardware/firmware expect in RS0,
+ * not arbitrary: mirrors pd_cd/cdd.h NO_DISC/CD_PLAY/CD_SEEK/CD_SCAN/
+ * CD_READY/CD_OPEN/CD_STOP/CD_END. (An earlier version of this enum used
+ * invented values — CDD_STOP=0, CDD_READY=9 — inverted from real hardware;
+ * a sub-BIOS that branches on the actual status byte would misbehave.) */
+enum { CDD_NODISC = 0x00, CDD_PLAY = 0x01, CDD_SEEK = 0x02, CDD_SCAN = 0x03,
+       CDD_READY = 0x04, CDD_OPEN = 0x05, CDD_STOP = 0x09, CDD_END = 0x0C };
 
 /* ---- cue/TOC parse (faithfully mirrors pce_cd.c:pce_cd_parse_cue) ---- */
 
@@ -161,6 +168,15 @@ static cd_track_t *track_at_lba(uint32_t lba)
     return CD.num_tracks ? &CD.tracks[0] : NULL;
 }
 
+static int track_index_at_lba(uint32_t lba)
+{
+    for (int i = 0; i < CD.num_tracks; i++) {
+        cd_track_t *t = &CD.tracks[i];
+        if (lba >= t->start_lba && lba < t->start_lba + t->length_lba) return i;
+    }
+    return CD.num_tracks > 0 ? CD.num_tracks - 1 : 0;
+}
+
 /* ---- persistent-handle sector read (the reusable PCE-CD trick) ---- */
 
 static int read_sector(uint32_t lba, uint8_t *dst, int want)
@@ -192,7 +208,11 @@ int segacd_cd_open(const char *cue_path)
 {
     memset(&CD, 0, sizeof(CD));
     if (parse_cue(cue_path) != 0) return -1;
-    CD.status = CDD_READY;
+    /* NO_DISC until the sub issues its first CDD command (Stop/Read TOC),
+     * exactly like real hardware — pd_cd/cdd.c:461 `cdd.status = NO_DISC;`
+     * after cdd_load(). The 10-byte protocol itself drives the STOP
+     * transition (segacd_cdd_command() case 0x01/0x02). */
+    CD.status = CDD_NODISC;
     CD.opened = 1;
     return 0;
 }
@@ -239,37 +259,201 @@ void segacd_cdc_dma_sector(uint8_t *dst, int len)
     memcpy(dst, CD.cdc_ram, (size_t)n);
 }
 
-/* Process one CDD command from the gate-array command buffer and update status.
- * Command/status live in SCD.s68k_regs (CDD command $A12042.., status $A12038..).
- * TODO(ph3d): full 10-byte command decode + checksum + subcode. This handles the
- * load-bearing ones so the BIOS can seek and read. */
-void segacd_cdd_process(void)
+/* ---- CDD (disc drive) 10-byte command/status protocol ----
+ *
+ * Command:  $FF8042-$FF804B, sub-written. c[0] low nibble selects the
+ *           command; writing the LAST byte ($FF804B) is the hardware trigger
+ *           that fires processing (segacd_bus.c sub_ff_write8, mirrors
+ *           pd_cd/memory.c:492-510 `case 0x4b: ...; cdd_process();`).
+ * Status:   $FF8038-$FF8041, we fill. Byte $FF8041 is a 4-bit checksum.
+ *
+ * Each byte of both packets holds ONE decimal digit (0-9), not a packed BCD
+ * nibble pair — mirrors PicoDrive's own convention (`c[0]*10 + c[1]` to read
+ * a two-digit BCD field, `set_reg16(r, lut_BCD_16[v])` to write one; see
+ * pd_cd/cdd.c:852-1229 `cdd_process()`, the behavioral reference this is
+ * adapted from). Latency uses a flat tick count instead of PicoDrive's
+ * distance-proportional model — adequate for a boot harness; revisit once
+ * seek timing actually matters for game compatibility. */
+
+/* Two adjacent status/command bytes hold a 0-99 value as separate decimal
+ * digits (tens, ones) — arithmetic equivalent of PicoDrive's 100-entry
+ * lut_BCD_16[] + set_reg16() (pd_cd/cdd.c:70-82,846-850). */
+static void set_status_pair(int reg, int val)
 {
-    uint8_t cmd = SCD.s68k_regs[0x42 & (SEGACD_GA_REGS - 1)];
+    if (val < 0) val = 0;
+    if (val > 99) val = 99;
+    SCD.s68k_regs[reg]     = (uint8_t)(val / 10);
+    SCD.s68k_regs[reg + 1] = (uint8_t)(val % 10);
+}
+
+/* Sum the 9 status digits, checksum = ~sum & 0xf into the 10th byte.
+ * pd_cd/cdd.c:1222-1228. */
+static void cdd_status_checksum(void)
+{
+    uint8_t *s = &SCD.s68k_regs[0x38];
+    unsigned sum = s[0]+s[1]+s[2]+s[3]+s[4]+s[5]+s[6]+s[7]+s[8];
+    s[9] = (uint8_t)(~sum & 0x0f);
+}
+
+/* Decode and respond to one 10-byte CDD command. Called when the sub writes
+ * the trigger byte $FF804B (segacd_bus.c). */
+#ifdef SEGACD_GA_TRACE
+uint32_t scd_dbg_cdd_cmd_hist[16];
+#endif
+
+void segacd_cdd_command(void)
+{
+    uint8_t *c = &SCD.s68k_regs[0x42];
+    uint8_t *s = &SCD.s68k_regs[0x38];
+    uint8_t cmd = c[0] & 0x0f;
+#ifdef SEGACD_GA_TRACE
+    scd_dbg_cdd_cmd_hist[cmd]++;
+#endif
+
     switch (cmd) {
-    case 0x00:  /* status / no-op */
-        break;
-    case 0x02:  /* read TOC — report total length / track info */
-        CD.status = CDD_READY;
-        break;
-    case 0x03:  /* play from LBA */
-        CD.status = CDD_PLAY;
-        break;
-    case 0x04:  /* seek to LBA */
-        CD.status = CDD_SEEK;
-        break;
-    case 0x06:  /* pause */
-        CD.status = CDD_PAUSE;
-        break;
-    case 0x08:  /* resume */
-        CD.status = CDD_PLAY;
-        break;
-    default:
+    case 0x00: {  /* Drive Status — current status + absolute head position */
+        cd_track_t *t = track_at_lba(CD.cur_lba);
+        int lba = (int)CD.cur_lba + 150;
+        s[0] = (uint8_t)CD.status;
+        s[1] = 0x00;
+        set_status_pair(0x3a, lba/75/60);
+        set_status_pair(0x3c, (lba/75)%60);
+        set_status_pair(0x3e, lba%75);
+        s[8] = (uint8_t)((t && !t->is_audio) ? 0x04 : 0x00);
         break;
     }
-    SCD.s68k_regs[0x38 & (SEGACD_GA_REGS - 1)] = (uint8_t)CD.status;
-    SCD.cdd_int_pending = 1;   /* periodic CDD IRQ (level 4) drives the sub-BIOS */
+
+    case 0x01:  /* Stop Drive — RS1-RS8 ignored, report all-zero/0xf per spec */
+        CD.status = CD.opened ? CDD_STOP : CDD_NODISC;
+        CD.cur_lba = 0; CD.index = 0; CD.latency = 0;
+        s[0] = (uint8_t)CD.status; s[1] = 0; s[2] = 0; s[3] = 0;
+        s[4] = 0; s[5] = 0; s[6] = 0; s[7] = 0; s[8] = 0x0f;
+        break;
+
+    case 0x02:  /* Read TOC — c[1] selects which field (Q-channel infos) */
+        if (CD.status == CDD_NODISC)
+            CD.status = CD.opened ? CDD_STOP : CDD_NODISC;
+        switch (c[1] & 0x0f) {
+        case 0x00: {  /* current absolute time (MM:SS:FF) */
+            cd_track_t *t = track_at_lba(CD.cur_lba);
+            int lba = (int)CD.cur_lba + 150;
+            s[0] = (uint8_t)CD.status; s[1] = 0x00;
+            set_status_pair(0x3a, lba/75/60);
+            set_status_pair(0x3c, (lba/75)%60);
+            set_status_pair(0x3e, lba%75);
+            s[8] = (uint8_t)((t && !t->is_audio) ? 0x04 : 0x00);
+            break;
+        }
+        case 0x01: {  /* current track relative time */
+            cd_track_t *t = track_at_lba(CD.cur_lba);
+            int lba = t ? (int)(CD.cur_lba - t->start_lba) : 0;
+            if (lba < 0) lba = 0;
+            s[0] = (uint8_t)CD.status; s[1] = 0x01;
+            set_status_pair(0x3a, lba/75/60);
+            set_status_pair(0x3c, (lba/75)%60);
+            set_status_pair(0x3e, lba%75);
+            s[8] = (uint8_t)((t && !t->is_audio) ? 0x04 : 0x00);
+            break;
+        }
+        case 0x02:  /* current track number */
+            s[0] = (uint8_t)CD.status; s[1] = 0x02;
+            set_status_pair(0x3a, track_index_at_lba(CD.cur_lba) + 1);
+            s[4] = 0; s[5] = 0; s[6] = 0; s[7] = 0; s[8] = 0;
+            break;
+        case 0x03: {  /* total disc length */
+            int lba = (int)CD.total_lba + 150;
+            s[0] = (uint8_t)CD.status; s[1] = 0x03;
+            set_status_pair(0x3a, lba/75/60);
+            set_status_pair(0x3c, (lba/75)%60);
+            set_status_pair(0x3e, lba%75);
+            s[8] = 0;
+            break;
+        }
+        case 0x04:  /* first & last track numbers */
+            s[0] = (uint8_t)CD.status; s[1] = 0x04;
+            set_status_pair(0x3a, 1);
+            set_status_pair(0x3c, CD.num_tracks);
+            s[6] = 0; s[7] = 0; s[8] = 0;
+            break;
+        case 0x05: {  /* track start time; track number requested in c[2..3] */
+            int trk = c[2]*10 + c[3];
+            int lba = (trk >= 1 && trk <= CD.num_tracks)
+                        ? (int)CD.tracks[trk-1].start_lba + 150 : 150;
+            s[0] = (uint8_t)CD.status; s[1] = 0x05;
+            set_status_pair(0x3a, lba/75/60);
+            set_status_pair(0x3c, (lba/75)%60);
+            set_status_pair(0x3e, lba%75);
+            s[8] = (uint8_t)(trk % 10);
+            if (trk == 1) s[6] |= 0x08;   /* bit3: first (DATA) track */
+            break;
+        }
+        default:  /* 0x06 latest error, and anything unhandled: zeroed */
+            s[0] = (uint8_t)CD.status; s[1] = c[1] & 0x0f;
+            s[2] = 0; s[3] = 0; s[4] = 0; s[5] = 0; s[6] = 0; s[7] = 0; s[8] = 0;
+            break;
+        }
+        break;
+
+    case 0x03:    /* Play from LBA */
+    case 0x04: {  /* Seek to LBA — same addressing, only the settle state differs */
+        int lba = ((c[2]*10+c[3])*60 + (c[4]*10+c[5]))*75 + (c[6]*10+c[7]) - 150;
+        if (lba < 0) lba = 0;
+        CD.index        = track_index_at_lba((uint32_t)lba);
+        CD.cur_lba      = (uint32_t)(lba > 3 ? lba - 3 : 0);  /* playback starts a few blocks early, pd_cd/cdd.c:1059 */
+        CD.latency      = 2;      /* flat settle delay (CDD ticks); see file header note */
+        CD.pending_play = (cmd == 0x03);
+        CD.status       = CDD_SEEK;
+        /* RS1=0x0f invalidates RS2-RS8 while seeking — pd_cd/cdd.c:1080-1085 */
+        s[0] = CDD_SEEK; s[1] = 0x0f;
+        s[2] = 0; s[3] = 0; s[4] = 0; s[5] = 0; s[6] = 0; s[7] = 0;
+        s[8] = (uint8_t)(~(CDD_SEEK + 0xf) & 0x0f);
+        break;
+    }
+
+    case 0x06:  /* Pause — RS1-RS8 left as-is */
+        CD.status = CDD_READY;
+        s[0] = (uint8_t)CD.status;
+        break;
+
+    case 0x07:  /* Resume — RS1-RS8 left as-is */
+        CD.status = CDD_PLAY;
+        s[0] = (uint8_t)CD.status;
+        break;
+
+    default:   /* Scan/track-jump/tray control — not modelled; echo status */
+        s[0] = (uint8_t)CD.status;
+        break;
+    }
+
+    cdd_status_checksum();
     segacd_poll_wake();   /* CDD status changed — a spin-waiting sub must re-check */
+}
+
+/* Periodic (~75 Hz) CDD tick: settles pending seeks and, while the sub has
+ * armed the transfer ($FF8037 bit2 — see segacd_bus.c sub_ff_write8), keeps
+ * the status packet's RS0 byte current and arms the level-4 export
+ * interrupt. IEN4 gating happens in segacd_run_sub (segacd_engine.c) — real
+ * hardware only actually asserts the line when both the arm bit and the
+ * mask are set (pd_cd/mcd.c:190-200 `pcd_cdc_event()`). */
+void segacd_cdd_process(void)
+{
+    if (!CD.opened) return;
+
+    if (CD.latency > 0) {
+        CD.latency--;
+        if (CD.latency == 0) {
+            CD.status = CD.pending_play ? CDD_PLAY : CDD_READY;
+            SCD.s68k_regs[0x38] = (uint8_t)CD.status;
+            cdd_status_checksum();
+            segacd_poll_wake();
+        }
+    }
+
+    if (SCD.s68k_regs[0x37] & 0x04) {
+        SCD.s68k_regs[0x38] = (uint8_t)CD.status;
+        cdd_status_checksum();
+        SCD.cdd_int_pending = 1;   /* periodic CDD IRQ (level 4) drives the sub-BIOS */
+    }
 }
 
 /* ---- CD-DA streaming (audio tracks) ---- */
@@ -317,17 +501,29 @@ int segacd_cdda_fill(int16_t *dst, int frames)
     return done;
 }
 
-/* Advance the drive: if reading, pull the next data sector into the CDC ring.
- * Called once per CDD tick (75 Hz) from the frame loop. */
+/* Advance the drive mechanics: while playing, pull the next data sector into
+ * the CDC ring and step the head, crossing track boundaries and stopping at
+ * the end of the disc — mirrors pd_cd/cdd.c:723-793 `cdd_update()` (minus its
+ * CD-DA fader/scan handling, which we don't model yet). Called once per CDD
+ * tick (75 Hz) from the frame loop, alongside segacd_cdd_process(). */
 void segacd_cd_update(void)
 {
-    if (!CD.opened) return;
-    if (CD.status == CDD_PLAY) {
-        cd_track_t *t = track_at_lba(CD.cur_lba);
-        if (t && !t->is_audio) {
-            read_sector(CD.cur_lba, CD.cdc_ram, CD_SECTOR_DATA);
-            CD.cur_lba++;
+    if (!CD.opened || CD.status != CDD_PLAY) return;
+
+    cd_track_t *t = track_at_lba(CD.cur_lba);
+    if (t && !t->is_audio)
+        read_sector(CD.cur_lba, CD.cdc_ram, CD_SECTOR_DATA);
+    /* TODO(ph4): CD-DA audio tracks -> stream to mixer, not the CDC ring. */
+
+    CD.cur_lba++;
+
+    if (!t || CD.cur_lba >= t->start_lba + t->length_lba) {
+        /* crossed into the next track, or ran off a track we couldn't find */
+        if (CD.index + 1 < CD.num_tracks) {
+            CD.index++;
+            CD.cur_lba = CD.tracks[CD.index].start_lba;
+        } else {
+            CD.status = CDD_END;
         }
-        /* TODO(ph4): CD-DA audio tracks -> stream to mixer, not the CDC ring. */
     }
 }
