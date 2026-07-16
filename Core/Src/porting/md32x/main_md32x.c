@@ -224,6 +224,8 @@ static void *md32x_Screenshot(void) {
   return lcd_get_active_buffer();
 }
 
+static void diag_log(const char *fmt, ...);   /* boot diag, defined below */
+
 /* ---- XIP: cold code + rodata from flash (the SM/GBA sentinel pattern) ------
  * .xip_md32x + .rodata_md32x are linked at MD32X_CODE_BASE (a sentinel — nothing
  * lives there), shipped as /cores/32x.xip, cached into QSPI at load, and every
