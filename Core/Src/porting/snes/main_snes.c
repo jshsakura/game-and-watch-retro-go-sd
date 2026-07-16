@@ -460,6 +460,34 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     }
   }
 
+  /* DEBUG (strip later): ROM is byte-perfect, so the black screen is PPU-render
+   * or display. Run a headless warm-up here (before the interactive loop, SD idle,
+   * wdog kicked each frame — SAFE) so SMW is past its intro, then measure whether
+   * the callback actually filled snes_frame on the DEVICE. lit=0 => the PPU makes
+   * no pixels here (emulation diverges on hardware); lit>0 => pixels exist and the
+   * bug is display/present. Also log forcedBlank/brightness (a game blanking the
+   * screen) and the layer-enable byte. Appended to /snes_diag.txt. */
+  {
+    memset(snes_frame, 0, sizeof(snes_frame));
+    for (int i = 0; i < 500; i++) {
+      wdog_refresh();
+      g_ppu_skip_render = false;
+      render_frame_into_active_buffer();
+      run_frame_events(snes);
+    }
+    int lit = 0;
+    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++)
+      if (snes_frame[i]) lit++;
+    FILE *df = fopen("/snes_diag.txt", "a");
+    if (df) {
+      fprintf(df, "SNES warmup500: lit=%d/%d forcedBlank=%d brightness=%d line0=%04X\n",
+              lit, GW_LCD_WIDTH * GW_LCD_HEIGHT,
+              (int)snes->ppu->forcedBlank, (int)snes->ppu->brightness,
+              snes_frame[120 * GW_LCD_WIDTH + 160]);   /* a center pixel */
+      fclose(df);
+    }
+  }
+
   if (load_state) {
     odroid_system_emu_load_state(save_slot);
   } else {
