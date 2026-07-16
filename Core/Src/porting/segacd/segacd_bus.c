@@ -61,6 +61,11 @@ uint8_t scd_dbg_a12000_regef[8][2]; int scd_dbg_a12000_regef_n;
 uint32_t scd_dbg_a1200e_pc[32]; uint8_t scd_dbg_a1200e_val[32]; int scd_dbg_a1200e_n;
 /* $A12001 (SRES/SBRQ) writes — which PC, when, what value. */
 uint32_t scd_dbg_reg1_pc[32]; uint8_t scd_dbg_reg1_val[32]; uint32_t scd_dbg_reg1_frame[32]; int scd_dbg_reg1_n;
+/* Boot-mode-4 gate: the VBlank ISR reads controller-1 ($A10003) into $FFFE20;
+ * the disc-detect driver spins until $FE20's high nibble is nonzero. Track what
+ * our emulation returns for $A10003 to tell a harness controller-stub artifact
+ * (returns 0) from a real gap. */
+uint32_t scd_dbg_a10003_reads; uint8_t scd_dbg_a10003_last;
 #define GA_RD(reg)  (scd_ga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
 #define GA_WR(reg)  (scd_ga_wr[(reg) & (SEGACD_GA_REGS-1)]++)
 #define SGA_RD(reg) (scd_sga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
@@ -372,7 +377,20 @@ static inline int is_cd_ga(unsigned int address)
 
 static unsigned int main_ga_read8(unsigned int address)
 {
-    if (!is_cd_ga(address)) return orig_a1_read8(address);
+    if (!is_cd_ga(address)) {
+        unsigned int v = orig_a1_read8(address);
+#ifdef SEGACD_GA_TRACE
+        /* Boot-mode-4 gate: the VBlank ISR reads controller-1 ($A10003) into
+         * $FFFE20; the disc-detect driver spins until $FE20's high nibble is
+         * nonzero. Log the first reads so we can see if the controller returns
+         * idle (nonzero) or 0. */
+        if ((address & 0xFFFFFF) == 0xA10003) {
+            extern uint32_t scd_dbg_a10003_reads; extern uint8_t scd_dbg_a10003_last;
+            scd_dbg_a10003_reads++; scd_dbg_a10003_last = (uint8_t)v;
+        }
+#endif
+        return v;
+    }
     GA_RD(address);
     unsigned int reg = address & (SEGACD_GA_REGS - 1);
     if (reg == 0x000)

@@ -369,6 +369,14 @@ int main(int argc, char **argv)
      * IFL2/CDD delivery. --- */
     printf("[boot] REG1 VBLANK_INTERRUPT (IE0) first seen enabled at frame=%d (-1=never)\n",
            vblank_ie_first_frame);
+    { extern uint32_t scd_dbg_a10003_reads; extern uint8_t scd_dbg_a10003_last;
+      extern unsigned char *M68K_RAM;
+      unsigned bootmode = (M68K_RAM[0xfdda^1]<<8)|M68K_RAM[0xfddb^1];
+      unsigned fe20 = M68K_RAM[0xfe20^1];
+      printf("[boot] BOOT-MODE $FFFDDA=%#06x (4=disc-detect 8=? 0x10=LOGO)  $FFFE20=%#04x (&0xf0=%#04x)  "
+             "$A10003 reads=%u last=%#04x %s\n",
+             bootmode, fe20, fe20&0xf0, scd_dbg_a10003_reads, scd_dbg_a10003_last,
+             (fe20&0xf0)?"(gate PASSES)":"(gate BLOCKS boot-mode advance)"); }
     { extern uint32_t scd_dbg_mainstamp_hits;
       printf("[boot] MAIN stamp-draw (0x5f00-0x6e00) sub-slice hits=%u  %s\n",
              scd_dbg_mainstamp_hits,
