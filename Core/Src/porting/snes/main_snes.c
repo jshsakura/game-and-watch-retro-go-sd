@@ -403,13 +403,10 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_switch_app(0);   /* back to launcher */
     return;
   }
-  /* The loader mallocs a second copy of the ROM; the flash-cached image is
-   * already memory-mapped and read-only for the core — point cart->rom back
-   * at it and free the copy (same trick as the M7 rig; saves up to 6 MB). */
-  if (snes->cart->rom && snes->cart->rom != snes_rom) {
-    free(snes->cart->rom);
-    snes->cart->rom = (uint8_t *)snes_rom;
-  }
+  /* The loader (GNW_SNES_CORE build) already points cart->rom straight at the
+   * flash-cached image — no malloc'd copy exists to free. Do NOT free cart->rom
+   * here: it is read-only flash, not heap, and the header-skip may have offset
+   * it past a copier header (snes_rom + 0x200). */
 
   if (load_state) {
     odroid_system_emu_load_state(save_slot);
