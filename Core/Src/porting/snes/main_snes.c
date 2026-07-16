@@ -189,9 +189,26 @@ static uint16_t read_snes_pad(odroid_gamepad_state_t *joy) {
  * 32 px left margin and NO top margin — exactly the harness placement. An
  * overscan title renders up to 239 lines; a top margin would run the last
  * rows past the framebuffer. */
+/* Per-line hand-off — the same contract the SM port uses (the proven on-device
+ * path). The recent PPU refactor (681371b) made g_ppu_line_cb the delivery path
+ * for the fast line renderer; the old "PpuBeginDrawing straight into the LCD
+ * framebuffer" wiring left the callback NULL and drew nothing on the device
+ * (black screen, strobing after an overlay toggle). Render one line at a time
+ * into snes_line (renderPitch 0 → every line lands in the same scratch) and copy
+ * it out here: 256 px wide, 32 px left margin, no top margin — the native image. */
+static uint16_t snes_line[256];
+static uint16_t *snes_fb;
+
+static void snes_blit_line(unsigned y, const uint16_t *line) {
+  if (y < 1 || y > 240 || !snes_fb)   /* y is 1-based; guard the 240-row panel */
+    return;
+  memcpy(snes_fb + (y - 1) * GW_LCD_WIDTH + 32, line, sizeof(snes_line));
+}
+
 static void render_frame_into_active_buffer(void) {
-  uint16_t *fb = lcd_get_active_buffer();
-  PpuBeginDrawing(snes->ppu, (uint8_t *)(fb + 32), 320 * 2, 0);
+  snes_fb = lcd_get_active_buffer();
+  g_ppu_line_cb = &snes_blit_line;
+  PpuBeginDrawing(snes->ppu, (uint8_t *)snes_line, 0, 0);  /* pitch 0: every line here */
 }
 
 static void blit(void) {
