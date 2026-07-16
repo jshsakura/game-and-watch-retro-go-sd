@@ -38,6 +38,16 @@ void segacd_poll_wake(void)
     SCD.poll_count = 0;
 }
 
+/* ---- gate-array access trace (boot debugging; harness-first) ---- */
+#ifdef SEGACD_GA_TRACE
+uint32_t scd_ga_rd[SEGACD_GA_REGS], scd_ga_wr[SEGACD_GA_REGS];
+#define GA_RD(reg) (scd_ga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
+#define GA_WR(reg) (scd_ga_wr[(reg) & (SEGACD_GA_REGS-1)]++)
+#else
+#define GA_RD(reg) ((void)0)
+#define GA_WR(reg) ((void)0)
+#endif
+
 /* ---- sub-CPU $FF0000 page: PCM (low) + gate array/CDC/CDD (high) ---- */
 
 static unsigned int sub_ff_read8(unsigned int address)
@@ -128,17 +138,40 @@ static void main_prgwin_write16(unsigned int address, unsigned int data)
     main_prgwin_write8(address + 1, data & 0xFF);
 }
 
+/* Page 0xA1 holds MUCH more than the CD gate array ($A12000-$A120FF): the Z80
+ * bus/reset regs ($A11100/$A11200), controller I/O ($A10xxx), cart regs
+ * ($A13xxx), TMSS ($A14xxx). gwenesis dispatches all of those in its own
+ * page-0xA1 handler; we save those pointers and chain to them for anything
+ * outside the gate array, or the BIOS spins forever polling $A11100 (Z80
+ * BUSREQ) that our handler was wrongly swallowing. */
+static unsigned int (*orig_a1_read8)(unsigned int);
+static unsigned int (*orig_a1_read16)(unsigned int);
+static void         (*orig_a1_write8)(unsigned int, unsigned int);
+static void         (*orig_a1_write16)(unsigned int, unsigned int);
+
+static inline int is_cd_ga(unsigned int address)
+{
+    unsigned int a = address & 0xFFFF;   /* gate array = $A12000-$A120FF */
+    return a >= 0x2000 && a <= 0x20FF;
+}
+
 static unsigned int main_ga_read8(unsigned int address)
 {
+    if (!is_cd_ga(address)) return orig_a1_read8(address);
+    GA_RD(address);
     return SCD.s68k_regs[address & (SEGACD_GA_REGS - 1)];   /* TODO ph3: real GA */
 }
 static unsigned int main_ga_read16(unsigned int address)
 {
+    if (!is_cd_ga(address)) return orig_a1_read16(address);
     return (main_ga_read8(address) << 8) | main_ga_read8(address + 1);
 }
+static void main_ga_write16(unsigned int address, unsigned int data);
 static void main_ga_write8(unsigned int address, unsigned int data)
 {
+    if (!is_cd_ga(address)) { orig_a1_write8(address, data); return; }
     unsigned int reg = address & (SEGACD_GA_REGS - 1);
+    GA_WR(address);
     SCD.s68k_regs[reg] = (uint8_t)data;
 
     /* Any main write into the gate array can change what the sub polls. */
@@ -163,6 +196,7 @@ static void main_ga_write8(unsigned int address, unsigned int data)
 }
 static void main_ga_write16(unsigned int address, unsigned int data)
 {
+    if (!is_cd_ga(address)) { orig_a1_write16(address, data); return; }
     main_ga_write8(address, data >> 8);
     main_ga_write8(address + 1, data & 0xFF);
 }
@@ -203,8 +237,15 @@ void segacd_main_map_cd_space(void)
     for (int p = 0; p < 4; p++)
         map[0x20 + p].base = SCD.word_ram + p * PAGE_SIZE;
 
-    /* $A12000 page : gate array registers (shares page $A1 with other I/O —
-     * install handlers; they only claim the $A120xx sub-range). */
+    /* $A12000 page : gate array registers. Page $A1 also carries Z80/io/cart/
+     * TMSS, all handled by gwenesis's own dispatcher — save it and chain to it
+     * for everything outside $A12000-$A120FF (see is_cd_ga / main_ga_read8). */
+    if (map[0xA1].read8 != main_ga_read8) {  /* don't capture our own on re-map */
+        orig_a1_read8  = map[0xA1].read8;
+        orig_a1_read16 = map[0xA1].read16;
+        orig_a1_write8 = map[0xA1].write8;
+        orig_a1_write16= map[0xA1].write16;
+    }
     map[0xA1].base   = NULL;
     map[0xA1].read8  = main_ga_read8;
     map[0xA1].read16 = main_ga_read16;

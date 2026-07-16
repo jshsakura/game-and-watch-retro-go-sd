@@ -134,5 +134,13 @@ int main(int argc, char **argv)
         }
     }
     printf("[boot] done %d frames. sub_running=%d\n", FRAMES, SCD.sub_running);
+
+#ifdef SEGACD_GA_TRACE
+    extern uint32_t scd_ga_rd[], scd_ga_wr[];
+    printf("[boot] gate-array access histogram (reg: reads/writes) — what the BIOS wants:\n");
+    for (int r = 0; r < SEGACD_GA_REGS; r++)
+        if (scd_ga_rd[r] || scd_ga_wr[r])
+            printf("  $A120%02x  rd=%-8u wr=%-8u\n", r, scd_ga_rd[r], scd_ga_wr[r]);
+#endif
     return 0;
 }
