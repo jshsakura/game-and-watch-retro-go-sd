@@ -576,7 +576,7 @@ int InitPCE(int samplerate, bool stereo, const char *huecard)
 static void init_emu(void)
 {
 	odroid_system_init(APP_ID, AUDIO_SAMPLE_RATE);
-	odroid_system_emu_init(&host_LoadState, &host_SaveState, NULL, NULL, NULL, NULL);
+	odroid_system_emu_init(&host_LoadState, &host_SaveState, NULL, NULL, NULL, NULL, NULL);
 	update1.buffer = fb_data;
 	update2.buffer = fb_data;
 	saveSRAM = false;

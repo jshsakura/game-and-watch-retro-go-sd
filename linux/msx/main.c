@@ -1177,7 +1177,7 @@ int main(int argc, char *argv[])
     init_window(width, height);
 
     odroid_system_init(APP_ID, AUDIO_MSX_SAMPLE_RATE);
-//    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, NULL, NULL, NULL, NULL);
+//    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, NULL, NULL, NULL, NULL, NULL);
 
     /* Init controls */
     memset(&previous_joystick_state,0, sizeof(odroid_gamepad_state_t));

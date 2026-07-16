@@ -936,7 +936,7 @@ int app_main_nes_fceu(uint8_t load_state, uint8_t start_paused, int8_t save_slot
     FCEUI_SetSoundVolume(150);
 
     odroid_system_init(APPID_NES, sndsamplerate);
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &nes_fceu_sleep_wake_up, &nes_fceu_sram_save_cb);
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &nes_fceu_sleep_wake_up, &nes_fceu_sram_save_cb, NULL);
 
     if (FSettings.PAL) {
         lcd_set_refresh_rate(50);

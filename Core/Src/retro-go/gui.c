@@ -238,7 +238,7 @@ void gui_event(gui_event_t event, tab_t *tab)
 
 tab_t *gui_add_tab(const char *name, int16_t logo_idx, int16_t header_idx, void *arg, void *event_handler)
 {
-    tab_t *tab = rg_calloc(1, sizeof(tab_t));
+    tab_t *tab = ahb_calloc(1, sizeof(tab_t));
 
     sprintf(tab->name, "%s", name);
     sprintf(tab->status, "Loading...");

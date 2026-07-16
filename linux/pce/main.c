@@ -1078,7 +1078,7 @@ void init(void)
 {
     printf("init()\n");
     odroid_system_init(APP_ID, AUDIO_SAMPLE_RATE);
-    odroid_system_emu_init(&host_LoadState, &host_SaveState, NULL, NULL, NULL, NULL);
+    odroid_system_emu_init(&host_LoadState, &host_SaveState, NULL, NULL, NULL, NULL, NULL);
 
     // Hack: Use the same buffer twice
     update1.buffer = fb_data;

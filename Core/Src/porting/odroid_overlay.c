@@ -51,9 +51,6 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
 #include "rg_frogfs.h"
 #endif
 #if CHEAT_CODES == 1
-#include "main_msx.h"
-#include "main_gb_tgbdual.h"
-
 static retro_emulator_file_t *CHOSEN_FILE = NULL;
 #endif
 
@@ -1455,14 +1452,9 @@ static bool cheat_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_
     }
     strcpy(option->value, is_on ? curr_lang->s_Cheat_Codes_ON : curr_lang->s_Cheat_Codes_OFF);
     if (event == ODROID_DIALOG_ENTER) {
-        rom_system_t *system = (rom_system_t *)CHOSEN_FILE->system;
-        if(strcmp(system->system_name, "MSX") == 0) {
-            update_cheats_msx();
-        }
-        if((strcmp(system->system_name, "Nintendo Gameboy") == 0) ||
-           (strcmp(system->system_name, "Nintendo Gameboy Color") == 0)) {
-            update_cheats_gb();
-        }
+        cheat_update_handler_t update = odroid_system_get_app()->handlers.cheat_update;
+        if (update)
+            update();
     }
 
     return event == ODROID_DIALOG_ENTER;
@@ -1661,15 +1653,9 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
     }
 
 #if CHEAT_CODES == 1
-    odroid_dialog_choice_t choices[13];
-    bool cheat_update_support = false;
+    odroid_dialog_choice_t choices[12];
     CHOSEN_FILE = ACTIVE_FILE;
-    rom_system_t *system = (rom_system_t *)CHOSEN_FILE->system;
-    if((strcmp(system->system_name, "MSX") == 0) ||
-       (strcmp(system->system_name, "Nintendo Gameboy") == 0) ||
-       (strcmp(system->system_name, "Nintendo Gameboy Color") == 0)) {
-        cheat_update_support = true;
-    }
+    bool cheat_update_support = odroid_system_get_app()->handlers.cheat_update != NULL;
 
     int index=0;
     choices[index].id = 10;

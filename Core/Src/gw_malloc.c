@@ -1,6 +1,7 @@
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "main.h"
 #include "gw_malloc.h"
 
@@ -124,4 +125,26 @@ void *itc_calloc(size_t count,size_t size) {
   if (pointer != (void *)0xffffffff)
     memset(pointer,0,count*size);
   return pointer;
+}
+
+/* DTCM stdlib heap — the linker places _heap_start/_heap_end in DTCMRAM. */
+void *
+dtcm_malloc(size_t size)
+{
+  printf("dtcm_malloc 0x%x\n", size);
+	return malloc(size);
+}
+
+void *
+dtcm_calloc(size_t count, size_t size)
+{
+  printf("dtcm_calloc 0x%x\n", size*count);
+	return calloc(count, size);
+}
+
+void
+dtcm_free(void *ptr)
+{
+  printf("dtcm_free %p\n", ptr);
+	free(ptr);
 }

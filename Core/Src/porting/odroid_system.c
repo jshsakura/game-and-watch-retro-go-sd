@@ -56,7 +56,8 @@ void odroid_system_emu_init(state_handler_t load_cb,
                             screenshot_handler_t screenshot_cb,
                             shutdown_handler_t shutdown_cb,
                             sleep_post_wakeup_handler_t sleep_post_wakeup_cb,
-                            sram_save_handler_t sram_save_cb)
+                            sram_save_handler_t sram_save_cb,
+                            cheat_update_handler_t cheat_update_cb)
 {
     // currentApp.gameId = crc32_le(0, buffer, sizeof(buffer));
     currentApp.gameId = 0;
@@ -66,6 +67,7 @@ void odroid_system_emu_init(state_handler_t load_cb,
     currentApp.handlers.shutdown = shutdown_cb;
     currentApp.handlers.sleep_post_wakeup = sleep_post_wakeup_cb;
     currentApp.handlers.sram_save = sram_save_cb;
+    currentApp.handlers.cheat_update = cheat_update_cb;
     
     printf("emu init id=%08lX\n", currentApp.gameId);
 }
@@ -453,8 +455,13 @@ void odroid_system_switch_app(int app)
     /* Restore default LCD pixel format on app exit. Emulators that switched
      * the LTDC into LUT8 mode (PICO-8, NES) leave the LCD configured for
      * indexed color — the retro-go launcher and other targets expect
-     * RGB565. Catch-all here so every emulator's exit path resets cleanly. */
+     * RGB565. Catch-all here so every emulator's exit path resets cleanly.
+     * lcd_setup_framebuffers() flushes the LCD-pool D-cache and waits for
+     * the LTDC VBLANK reload; one extra vsync here guarantees the new
+     * RGB565 pitch has been scanned out before we tear the peripheral down
+     * for the hot boot. */
     lcd_setup_framebuffers(LCD_MODE_RGB565);
+    lcd_wait_for_vblank();
 
     odroid_system_sram_save();
 
@@ -503,7 +510,11 @@ void odroid_system_switch_app(int app)
 
         HAL_DeInit();
 
-        SCB_InvalidateDCache();
+        /* Clean+Invalidate (not Invalidate alone): discard-only would drop
+         * any still-dirty AXI SRAM lines written after the LCD restore
+         * above, and left the L1 in a state that could confuse the next
+         * MPU_Config on hot boot. */
+        SCB_CleanInvalidateDCache();
         SCB_InvalidateICache();
 
         while (1) {

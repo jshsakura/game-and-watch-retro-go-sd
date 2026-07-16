@@ -55,6 +55,7 @@
 #include "main.h"
 #include "odroid_system.h"
 #include "odroid_overlay.h"
+#include "gw_malloc.h"
 
 static uint8_t curr_font = 0;
 
@@ -232,8 +233,8 @@ static FontEntry *get_font_data(uint32_t codepoint) {
     FILE *file;
 
     if (font_cache == NULL) {
-        font_cache = (FontEntry *)malloc(CACHE_SIZE * sizeof(FontEntry));
-        font_data_cache = (uint8_t *)malloc(FONT_CACHE_SIZE * sizeof(uint8_t));
+        font_cache = (FontEntry *)dtcm_malloc(CACHE_SIZE * sizeof(FontEntry));
+        font_data_cache = (uint8_t *)dtcm_malloc(FONT_CACHE_SIZE * sizeof(uint8_t));
         init_font_cache();
     }
 
@@ -648,7 +649,7 @@ static bool i18n_cache_load(int idx)
     }
     fseek(f, header_end, SEEK_SET);
 
-    char *buf = malloc((size_t)strings_size);
+    char *buf = (char *)dtcm_malloc((size_t)strings_size);
     if (!buf) {
         fprintf(stderr, "i18n_load: '%s' OOM allocating %ld bytes — using en_us\n",
                 m->bin_path, strings_size);
@@ -658,19 +659,19 @@ static bool i18n_cache_load(int idx)
     /* Pointer table lives in malloc'd RAM too — keeping it out of the
      * static cache struct saves ~13KB BSS on a build with LANG_CACHE_MAX
      * entries pre-reserved. */
-    const char **strings = calloc(LANG_T_STRING_COUNT, sizeof(const char *));
+    const char **strings = (const char **)dtcm_calloc(LANG_T_STRING_COUNT, sizeof(const char *));
     if (!strings) {
         fprintf(stderr, "i18n_load: '%s' OOM allocating pointer table — using en_us\n",
                 m->bin_path);
-        free(buf);
+        dtcm_free(buf);
         fclose(f);
         return false;
     }
     if (fread(buf, 1, (size_t)strings_size, f) != (size_t)strings_size) {
         fprintf(stderr, "i18n_load: '%s' short read of strings — using en_us\n",
                 m->bin_path);
-        free(strings);
-        free(buf);
+        dtcm_free(strings);
+        dtcm_free(buf);
         fclose(f);
         return false;
     }

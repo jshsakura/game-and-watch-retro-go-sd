@@ -255,9 +255,9 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 31 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance), 29->30 (SNES, SD only), 30->31 (Sega 32X, SD only). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added. */
-static retro_emulator_t emulators[MAX_EMULATORS];
-static rom_system_t systems[MAX_EMULATORS];
+#define MAX_EMULATORS 31 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance), 29->30 (SNES, SD only), 30->31 (Sega 32X, SD only). Upstream (8caa3e45) moved this to ahb_calloc at init instead of a static DTCM array -- kept our count, adopted their allocation scheme. Bump ONLY when the add_emulator call is actually added. */
+static retro_emulator_t *emulators;
+static rom_system_t *systems;
 static int emulators_count = 0;
 
 #if CHEAT_CODES == 1
@@ -832,7 +832,7 @@ static bool show_cheat_dialog()
     static odroid_dialog_choice_t last = ODROID_DIALOG_CHOICE_LAST;
 
     // +1 for the terminator sentinel
-    odroid_dialog_choice_t *choices = rg_alloc((CHOSEN_FILE->cheat_count + 1) * sizeof(odroid_dialog_choice_t), MEM_ANY);
+    odroid_dialog_choice_t *choices = malloc((CHOSEN_FILE->cheat_count + 1) * sizeof(odroid_dialog_choice_t));
     char svalues[MAX_CHEAT_CODES][10];
     for(int i=0; i<CHOSEN_FILE->cheat_count; i++) 
     {
@@ -849,7 +849,7 @@ static bool show_cheat_dialog()
     choices[CHOSEN_FILE->cheat_count] = last;
     odroid_overlay_dialog(curr_lang->s_Cheat_Codes_Title, choices, 0, NULL, 0);
 
-    rg_free(choices);
+    free(choices);
     odroid_settings_commit();
     return false;
 }
@@ -1276,6 +1276,10 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         }
     }
 
+    /* systems[] lives in AHB and is wiped by ahb_init(). In-game code must
+     * not touch ACTIVE_FILE->system (use handlers / path instead). */
+    newfile->system = NULL;
+
     // It will free all ram allocated memory for use by emulators
     ahb_init();
     itc_init();
@@ -1525,11 +1529,18 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 
 void emulators_init()
 {
+    if (!emulators) {
+        emulators = (retro_emulator_t *)ahb_calloc(MAX_EMULATORS, sizeof(retro_emulator_t));
+        systems = (rom_system_t *)ahb_calloc(MAX_EMULATORS, sizeof(rom_system_t));
+    }
+
     /* ★ Favorites must be the FIRST tab (index 0), before every system tab. */
     rg_favorites_register_tab();
 
     /* Tab order == registration order. Kept ALPHABETICAL by display name so the
-     * launcher list is predictable — insert new systems in their sorted slot. */
+     * launcher list is predictable — insert new systems in their sorted slot.
+     * Upstream (8caa3e45) reordered its own copy of this list historically and
+     * moved the array to ahb_calloc — we kept the ahb_calloc, kept our order. */
     add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
     add_emulator("Atari 2600", "a2600", "a26 bin lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_A2600, NO_GAME_DATA);
     add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
