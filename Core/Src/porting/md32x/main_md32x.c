@@ -95,7 +95,7 @@ int   inflate(void *strm, int flush) { (void)strm; (void)flush; return -2; }
 int   inflateReset(void *strm) { (void)strm; return -2; }
 int   inflateEnd(void *strm) { (void)strm; return 0; }
 /* SMS renderer TU is excluded; unreachable for 32X. */
-void PicoDrawSetOutputSMS(int which) { (void)which; }
+void PicoDrawSetOutputSMS(pdso_t which) { (void)which; }
 
 /* Draw2FB: with draw2.c excluded this binding still matters — the 32X
  * compositor points the MD line renderer INTO this 328x(8+240+8) CLUT frame
