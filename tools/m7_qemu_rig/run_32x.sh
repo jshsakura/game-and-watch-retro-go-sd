@@ -13,7 +13,7 @@ FRAMES="${2:-600}"
 
 PD="${PD_DIR:-external/picodrive}"
 RIG=tools/m7_qemu_rig
-OUT="$RIG/build/32x"
+OUT="${RIG_OUT:-$RIG/build/32x}"   # override for parallel lanes (objects clash otherwise)
 mkdir -p "$OUT"
 
 CC=arm-none-eabi-gcc

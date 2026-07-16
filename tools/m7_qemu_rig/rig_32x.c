@@ -13,7 +13,22 @@
  * pico/cart.c binds Pico.rom to the passed buffer and skips Byteswap().
  *
  * SUCCESS = PicoFrame returns continuously, framebuffer non-blank and
- * changing across frames, avg host insn/frame reported. */
+ * changing across frames, avg host insn/frame reported.
+ *
+ * Optional modes (pass via EXTRA_DEF to run_32x.sh):
+ *   -DRIG_SKIP3      device-shaped frameskip: PicoIn.skipFrame=1 on 2 of every
+ *                    3 frames (common_emu_frame_loop drops frames under load).
+ *                    Reports drawn-frame vs skipped-frame insn averages —
+ *                    the frameskip headroom the device leans on.
+ *   -DRIG_PAD_SCRIPT scripted PicoIn.pad[0] (START around f120, then
+ *                    directional+button mash) — proves the pad reaches the
+ *                    68K IO when the fb trace diverges from a no-input run.
+ *   -DRIG_TRACE_CKS  print the fb checksum EVERY frame (diff two runs to
+ *                    find the first divergence frame).
+ *   -DRIG_TRACE_PC   print the 68K PC every frame (where does a dead boot
+ *                    park?). g68k backend only.
+ * Soak drift (first-500 vs last-500 post-warmup insn/frame) is reported
+ * automatically when RIG_FRAMES is large enough for disjoint windows. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +37,9 @@
 
 #include "pico/pico_types.h"
 #include "pico/pico.h"
+#ifdef RIG_TRACE_PC
+#include <cpu/gwenesis68k/g68k.h>   /* the g68k global context (m68k.pc) */
+#endif
 
 #ifndef RIG_FRAMES
 #define RIG_FRAMES 600
@@ -120,6 +138,66 @@ static short s_snd[4096];
 static unsigned s_snd_calls, s_snd_samples;
 static void rig_write_sound(int len) { s_snd_calls++; s_snd_samples += (unsigned)len; }
 
+/* ==== optional-mode helpers =============================================== */
+
+/* PicoIn.pad format: MXYZ SACB RLDU (pico.h) */
+#define PAD_UP    (1u << 0)
+#define PAD_DOWN  (1u << 1)
+#define PAD_LEFT  (1u << 2)
+#define PAD_RIGHT (1u << 3)
+#define PAD_B     (1u << 4)
+#define PAD_C     (1u << 5)
+#define PAD_A     (1u << 6)
+#define PAD_START (1u << 7)
+
+#ifdef RIG_PAD_SCRIPT
+/* Plausible VF session: START held around f120 (title/menu advance), a second
+ * START window for the next screen, then directional+button mashing. */
+static unsigned short pad_script(int f) {
+    if (f >= 118 && f < 130) return PAD_START;
+    if (f >= 200 && f < 212) return PAD_START;
+    if (f >= 260) {
+        switch ((f / 8) % 6) {
+        case 0:  return PAD_RIGHT;
+        case 1:  return PAD_RIGHT | PAD_B;
+        case 2:  return PAD_LEFT;
+        case 3:  return PAD_LEFT | PAD_C;
+        case 4:  return PAD_A;
+        default: return PAD_DOWN | PAD_B;
+        }
+    }
+    return 0;
+}
+#else
+static unsigned short pad_script(int f) { (void)f; return 0; }
+#endif
+
+#ifdef RIG_TRACE_PC
+/* peek 68K memory the way the g68k core does (I/O handler or direct base) —
+ * lets the trace dump the supervisor stack, so a parked "unexpected
+ * exception" loop still names its culprit via the stacked SR/PC frame */
+static unsigned rig_m68k_peek16(unsigned a) {
+    const cpu_memory_map *mm = &m68k.memory_map[(a >> 16) & 0xff];
+    if (mm->read16) return mm->read16(a) & 0xffff;
+    if (mm->base)   return *(const unsigned short *)(mm->base + (a & 0xfffe));
+    return 0xdead;
+}
+#endif
+
+#ifdef RIG_SKIP3
+/* draw 1 of every 3 frames — the device's frame_loop under sustained load */
+static int skip_this_frame(int f) { return (f % 3) != 0; }
+/* checksum checkpoints must land on DRAWN frames */
+#define CK_LAST (RIG_FRAMES - 1 - ((RIG_FRAMES - 1) % 3))
+#define CK_A 99
+#define CK_B 300
+#else
+static int skip_this_frame(int f) { (void)f; return 0; }
+#define CK_LAST (RIG_FRAMES - 1)
+#define CK_A 99
+#define CK_B 299
+#endif
+
 /* ==== main ================================================================= */
 int main(void) {
     setvbuf(stdout, 0, _IONBF, 0);
@@ -161,13 +239,18 @@ int main(void) {
     set_out_buffer();
 
     uint64_t tot = 0, mn = ~0ull, mx = 0, sh2_tot = 0;
+    uint64_t tot_drawn = 0, tot_skip = 0;
+    uint32_t n_drawn = 0, n_skip = 0;
+    uint64_t tot_w1 = 0, tot_w2 = 0;   /* soak drift windows (first/last 500) */
     unsigned long long sh2_prev = g_sh2_insns;
     uint32_t cks100 = 0, cks300 = 0, cksend = 0;
     int nb100 = 0, nb300 = 0, nbend = 0;
 
     for (int f = 0; f < RIG_FRAMES; f++) {
+        int skipf = skip_this_frame(f);
+        PicoIn.skipFrame = (unsigned short)skipf;
+        PicoIn.pad[0] = pad_script(f);
         uint32_t t0 = rig_timer_now();
-        PicoIn.pad[0] = 0;
         PicoFrame();
         uint32_t t1 = rig_timer_now();
         uint64_t insn = (uint64_t)(uint32_t)(t1 - t0) * ipt_x1000 / 1000;
@@ -182,19 +265,43 @@ int main(void) {
             tot += insn; sh2_tot += sh2_d;
             if (insn < mn) mn = insn;
             if (insn > mx) mx = insn;
+            if (skipf) { tot_skip += insn; n_skip++; }
+            else       { tot_drawn += insn; n_drawn++; }
+            if (f < RIG_WARMUP + 500)   tot_w1 += insn;
+            if (f >= RIG_FRAMES - 500)  tot_w2 += insn;
         }
-        if (f == 99)  cks100 = fb_checksum(&nb100);
-        if (f == 299) cks300 = fb_checksum(&nb300);
-        if (f == RIG_FRAMES - 1) cksend = fb_checksum(&nbend);
+#ifdef RIG_TRACE_CKS
+        { int nbt; uint32_t ck = fb_checksum(&nbt);
+          printf("cks f%04d=%08lx nb=%d\n", f, (unsigned long)ck, nbt); }
+#endif
+#ifdef RIG_TRACE_PC
+        { unsigned sp = m68k.dar[15] & 0x00ffffff;
+          printf("pc  f%04d=%06lx im=%x sp=%06x stk=", f,
+                 (unsigned long)(m68k.pc & 0x00ffffff),
+                 (unsigned)(m68k.int_mask >> 8), sp);
+          for (int k = 0; k < 8; k++) printf("%04x ", rig_m68k_peek16(sp + 2u * k));
+          printf("\n"); }
+#endif
+        if (f == CK_A)    cks100 = fb_checksum(&nb100);
+        if (f == CK_B)    cks300 = fb_checksum(&nb300);
+        if (f == CK_LAST) cksend = fb_checksum(&nbend);
     }
 
     int n = RIG_FRAMES - RIG_WARMUP;
     printf("[32x-qemu] done %d frames  avg host=%lu  min=%lu  max=%lu insn/frame  avg sh2=%llu\n",
            RIG_FRAMES, (unsigned long)(n > 0 ? tot / n : 0), (unsigned long)mn,
            (unsigned long)mx, (unsigned long long)(n > 0 ? sh2_tot / n : 0));
-    printf("[32x-qemu] fb f100=%08lx(nb=%d) f300=%08lx(nb=%d) f%d=%08lx(nb=%d)\n",
-           (unsigned long)cks100, nb100, (unsigned long)cks300, nb300,
-           RIG_FRAMES, (unsigned long)cksend, nbend);
+    if (n_skip > 0 && n_drawn > 0)
+        printf("[32x-qemu] skip3: drawn avg=%lu (n=%lu)  skipped avg=%lu (n=%lu)  skip/drawn=%lu%%\n",
+               (unsigned long)(tot_drawn / n_drawn), (unsigned long)n_drawn,
+               (unsigned long)(tot_skip / n_skip),   (unsigned long)n_skip,
+               (unsigned long)(100 * (tot_skip / n_skip) / (tot_drawn / n_drawn)));
+    if (RIG_FRAMES >= RIG_WARMUP + 1000)   /* disjoint windows only */
+        printf("[32x-qemu] drift: first500 avg=%lu  last500 avg=%lu\n",
+               (unsigned long)(tot_w1 / 500), (unsigned long)(tot_w2 / 500));
+    printf("[32x-qemu] fb f%d=%08lx(nb=%d) f%d=%08lx(nb=%d) f%d=%08lx(nb=%d)\n",
+           CK_A, (unsigned long)cks100, nb100, CK_B, (unsigned long)cks300, nb300,
+           CK_LAST, (unsigned long)cksend, nbend);
 
     int pass = (nb100 || nb300 || nbend) &&
                (cks100 != cks300 || cks300 != cksend) &&
