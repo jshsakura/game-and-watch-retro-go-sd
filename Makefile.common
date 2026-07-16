@@ -1316,7 +1316,7 @@ $(eval $(foreach obj,$(SM_C_SOURCES),$(call sm_obj_prereq_gen,$(obj))))
 define snes_obj_prereq_gen
 $$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile snes_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $$(SNES_C_INCLUDES) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP $$(SNES_C_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
 

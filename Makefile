@@ -608,6 +608,7 @@ $(CORE_SNES)/src/snes/ppu.c \
 $(CORE_SNES)/src/snes/snes.c \
 $(CORE_SNES)/src/snes/snes_other.c \
 $(CORE_SNES)/src/snes/spc.c \
+$(CORE_SNES)/src/snes/spin_skip.c \
 $(CORE_SNES)/src/tracing.c \
 Core/Src/porting/snes/main_snes.c
 

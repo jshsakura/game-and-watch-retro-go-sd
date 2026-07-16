@@ -39,6 +39,7 @@
 #include "snes/dma.h"
 #include "snes/input.h"
 #include "snes/saveload.h"
+#include "snes/spin_skip.h"
 
 bool snes_loadRom(Snes *snes, const uint8_t *data, int length);   /* snes_other.c */
 
@@ -113,17 +114,34 @@ static void apply_irq_match(Snes *s) {
   s->cpu->irqWanted = true;
 }
 
+/* One real interpreter call, with the spin learner watching (harness-identical:
+ * tools/snes_spin compiles the same spin_skip.c and gates skip-off vs skip-on to
+ * bit-identical state+audio hashes). */
+static int run_one_opcode(Snes *s) {
+  Cpu *cpu = s->cpu;
+  uint32_t pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
+  int disp = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) && !cpu->stopped;
+  uint64_t r1 = (uint64_t)cpu->a | ((uint64_t)cpu->x << 16) |
+                ((uint64_t)cpu->y << 32) | ((uint64_t)cpu->sp << 48);
+  uint64_t r2 = (uint64_t)cpu->dp | ((uint64_t)cpu->k << 16) |
+                ((uint64_t)cpu->db << 24) | ((uint64_t)cpu_getFlags(cpu) << 32) |
+                ((uint64_t)cpu->e << 40);
+  s->cpuMemOps = 0;
+  int cycles = cpu_runOpcode(cpu);
+  s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
+  g_spin.ops_real++;
+  spin_note(pc24, (uint8_t)s->cpuCyclesLeft, disp, r1, r2);
+  return cycles;
+}
+
 static void cpu_tick(Snes *s) {
   if (dma_cycle(s->dma)) return;
-  if (s->cpuCyclesLeft == 0) {
-    s->cpuMemOps = 0;
-    int cycles = cpu_runOpcode(s->cpu);
-    s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
-  }
+  if (s->cpuCyclesLeft == 0) run_one_opcode(s);
   s->cpuCyclesLeft -= 2;
 }
 
 static void run_dots(Snes *s, int dots) {
+  Cpu *cpu = s->cpu;
   while (dots > 0) {
     if (s->dma->dmaBusy || s->dma->hdmaTimer > 0) {
       dma_cycle(s->dma);
@@ -132,11 +150,25 @@ static void run_dots(Snes *s, int dots) {
     }
     bool started_dma = false;
     if (s->cpuCyclesLeft == 0) {
-      apply_irq_match(s);
-      s->cpuMemOps = 0;
-      int cycles = cpu_runOpcode(s->cpu);
-      s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
-      started_dma = s->dma->dmaBusy || s->dma->hdmaTimer > 0;
+      /* Replay branch: a learned pure wait-loop iteration is a no-op — charge
+       * the recorded cycle pattern and park the pc where the real call would
+       * have, WITHOUT the interpreter. Falls through to the shared bulk-consume
+       * so hPos steps and the apuCatchupCycles FMA sequence stay bit-identical. */
+      if (g_spin.on &&
+          !cpu->nmiWanted && !cpu->irqWanted && !cpu->waiting && !cpu->stopped &&
+          !s->hIrqEnabled &&
+          !(s->vIrqEnabled && s->vPos == s->vTimer) &&
+          (((uint32_t)cpu->k << 16) | cpu->pc) == g_spin.pc[g_spin.idx]) {
+        s->cpuCyclesLeft += g_spin.charge[g_spin.idx];
+        g_spin.idx = (g_spin.idx + 1) % g_spin.len;
+        cpu->k  = (uint8_t)(g_spin.pc[g_spin.idx] >> 16);
+        cpu->pc = (uint16_t)g_spin.pc[g_spin.idx];
+        g_spin.ops_virtual++;
+      } else {
+        apply_irq_match(s);
+        run_one_opcode(s);
+        started_dma = s->dma->dmaBusy || s->dma->hdmaTimer > 0;
+      }
     }
     int step;
     if (s->cpuCyclesLeft >= 2 && !started_dma) {
@@ -162,6 +194,7 @@ static void run_frame_events(Snes *s) {
     run_dots(s, dots_to_next_event(s));
   }
   snes_catchupApu(s);
+  spin_frame_tick();   /* auto-gate: park the learner on non-spinning carts */
 }
 
 /* ---- input ----------------------------------------------------------------
@@ -351,6 +384,9 @@ static bool snes_LoadState(const char *pathName) {
   fclose(f);
   state_file = NULL;
   lcd_clear_active_buffer();
+  /* A load replaces the whole machine: a learned spin pattern (and its purity
+   * sequence history) now describes a machine that no longer exists. Relearn. */
+  spin_reset();
   return state_bytes == h.length;
 }
 
@@ -420,6 +456,8 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
   snes = snes_init(snes_wram);
   g_the_snes = snes;
+  spin_reset();   /* spin-skip learner: clean slate per launch (overlay BSS is
+                   * zeroed anyway, but the gate flag must start true explicitly) */
 
   bool ok = (rom != NULL) && !cart_needs_coprocessor(rom, sz) &&
             snes_loadRom(snes, rom, (int)sz);

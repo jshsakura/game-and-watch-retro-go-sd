@@ -8,8 +8,8 @@ set -e
 cd "$(dirname "$0")/.."
 T=$(mktemp -d)
 CC=arm-none-eabi-gcc
-CF="-mcpu=cortex-m7 -mthumb -O1 -c -DTARGET_GNW -DGNW_SNES_CORE -Iexternal/sm/src -Iexternal/sm -ICore/Inc -w"
-for f in apu cart cpu dma dsp input ppu snes snes_other spc; do
+CF="-mcpu=cortex-m7 -mthumb -O1 -c -DTARGET_GNW -DGNW_SNES_CORE -DSNES_SPIN_SKIP -Iexternal/sm/src -Iexternal/sm -ICore/Inc -w"
+for f in apu cart cpu dma dsp input ppu snes snes_other spc spin_skip; do
   $CC $CF external/sm/src/snes/$f.c -o "$T/$f.o"
 done
 $CC $CF external/sm/src/tracing.c -o "$T/tracing.o"
