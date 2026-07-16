@@ -1,3 +1,9 @@
 snes_analysis.sqlite
 # per-ROM tier dump derived from the DB above -- same policy, stays local
 rom_tiers.csv
+spin_gate_rpi5-2504.tsv
+# full 2,497-ROM benchmark export (per-ROM filenames) -- same policy as above.
+# export_benchmark.py itself is NOT ignored: it holds no ROM identity and is
+# meant to be committed so the export is reproducible.
+snes_benchmark_2497.csv
+BENCHMARK_INDEX.md

@@ -45,6 +45,11 @@ uint16 currently_installed_bug_fix_counter;
 void apu_reset(Apu *a) { (void)a; }
 void apu_cycle(Apu *a) { (void)a; }
 void apu_free(Apu *a) { (void)a; }
+/* snes_catchupApu batches through apu_run since snes-perf a8f4dd7; SM stubs it
+ * in main_sm.c (SM never runs the SPC700 — spc_player is its sound chip). This
+ * parity link excludes main_sm.c, so it must stub apu_run too or snes.c's ref
+ * is undefined and the check false-flags a cross-overlay alias. */
+void apu_run(Apu *a, int c) { (void)a; (void)c; }
 void apu_saveload(Apu *a, SaveLoadFunc *f, void *c) { (void)a; (void)f; (void)c; }
 void ppu_copy(Ppu *a, Ppu *b) { (void)a; (void)b; }
 int  CpuOpcodeHook(uint32 addr) { (void)addr; return 0; }
