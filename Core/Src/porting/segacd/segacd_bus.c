@@ -84,12 +84,29 @@ static unsigned int sub_ff_read8(unsigned int address)
     case 0x03: return SCD.s68k_regs[0x03] & 0x1f;    /* SUB's masked view of
                        * reg3 — pd_cd/memory.c s68k_reg_read16 case 2:
                        * `s68k_regs[3] & 0x1f`. */
-    default:   return SCD.s68k_regs[reg];            /* TODO ph3: CDC/CDD data */
+    case 0x06: return 0x00;                          /* $FF8006: high byte of
+                       * the CDC data-port word read is always 0 —
+                       * pd_cd/memory.c s68k_reg_read16 case 6 assigns
+                       * cdc_reg_r()'s byte result to the whole u32 d. */
+    case 0x07: return segacd_cdc_reg_r();            /* $FF8007: CDC register[idx] */
+    default:   return SCD.s68k_regs[reg];
     }
 }
 
 static unsigned int sub_ff_read16(unsigned int address)
 {
+    unsigned int off = address & 0xFFFF;
+    if (off >= 0x8000 && (off & (SEGACD_GA_REGS - 1)) == 0x08) {
+        /* $FF8008 host data port: a genuinely 16-bit register — must be
+         * read ONCE (segacd_cdc_host_r has side effects: DAC advances,
+         * DBC decrements), not composed from two independent 8-bit calls,
+         * or a word access would double-consume. pd_cd/memory.c
+         * s68k_reg_read16 case 8. Byte access to $FF8008/9 alone falls
+         * through to the plain sub_ff_read8 path below (not a real
+         * hardware access pattern; left unspecialized). */
+        SGA_RD(0x08);
+        return segacd_cdc_host_r(1);
+    }
     return (sub_ff_read8(address) << 8) | sub_ff_read8(address + 1);
 }
 
@@ -153,6 +170,22 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
         }
 
         switch (reg) {
+        case 0x04:   /* CDC transfer destination select (bits 0-2). Also
+                       * resets the DMA address registers 0xa/0xb —
+                       * pd_cd/memory.c s68k_reg_write8 case 4. */
+            SCD.s68k_regs[reg] = (uint8_t)(data & 0x07);
+            SCD.s68k_regs[0x0a] = SCD.s68k_regs[0x0b] = 0;
+            return;
+
+        case 0x05:   /* CDC register-index latch — pd_cd/memory.c
+                       * s68k_reg_write8 case 5. */
+            SCD.s68k_regs[reg] = (uint8_t)(data & 0x1f);
+            return;
+
+        case 0x07:   /* CDC register data port write. */
+            segacd_cdc_reg_w((uint8_t)data);
+            return;
+
         case 0x33:   /* IEN mask. IEN4 turning on while the CDD export is
                        * already armed ($FF8037 bit2) fires immediately rather
                        * than waiting up to one tick — pd_cd/memory.c:463-475
@@ -307,11 +340,27 @@ static unsigned int main_ga_read8(unsigned int address)
         /* MAIN's masked view of reg3: bits 3-5 are not visible to MAIN —
          * pd_cd/memory.c m68k_reg_read16 case 2: `s68k_regs[3] & 0xc7`. */
         return SCD.s68k_regs[0x03] & 0xc7;
+    if (reg == 0x005)
+        /* $A12005: low byte of the $A12004 word is always 0 for MAIN — it
+         * would otherwise leak the SUB's CDC register-index latch, which
+         * lives in the same shared regs[5] byte but is SUB-only.
+         * pd_cd/memory.c m68k_reg_read16 case 4: `d = s68k_regs[4]<<8;`
+         * (low byte never comes from regs[5]). */
+        return 0x00;
     return SCD.s68k_regs[reg];
 }
 static unsigned int main_ga_read16(unsigned int address)
 {
     if (!is_cd_ga(address)) return orig_a1_read16(address);
+    unsigned int reg = address & (SEGACD_GA_REGS - 1);
+    if (reg == 0x008) {
+        /* $A12008 host data port: a genuinely 16-bit register — must be
+         * read ONCE (segacd_cdc_host_r has side effects), not composed
+         * from two independent 8-bit calls. pd_cd/memory.c
+         * m68k_reg_read16 case 8. */
+        GA_RD(address);
+        return segacd_cdc_host_r(0);
+    }
     return (main_ga_read8(address) << 8) | main_ga_read8(address + 1);
 }
 static void main_ga_write16(unsigned int address, unsigned int data);
@@ -364,6 +413,22 @@ static void main_ga_write8(unsigned int address, unsigned int data)
         SCD.prg_bank  = (uint8_t)((d >> 6) & 3);
         SCD.word_mode = (uint8_t)((d >> 2) & 1);
         segacd_poll_wake();
+        return;
+    }
+
+    if (reg == 0x008) {
+        /* $A12008: a MAIN write to the host data port acts the same as a
+         * read of it (advances DAC/DBC the same way) — real hardware
+         * quirk, pd_cd/memory.c m68k_reg_write8 case 8:
+         * `(void) cdc_host_r(0); return;`. Nothing is stored. */
+        (void)segacd_cdc_host_r(0);
+        return;
+    }
+    if (reg == 0x009) {
+        /* $A12009: not a valid MAIN write target either (reference falls
+         * through to its "invalid write" branch — never stored); the low
+         * byte of a 16-bit $A12008 write lands here and must not alias
+         * anything. */
         return;
     }
 

@@ -120,7 +120,7 @@ int segacd_run_sub(int cycle_target)
     /* Either pending interrupt must wake a spin-idled sub; only skip when
      * truly idle. (IEN gating happens below — an interrupt "pending" here
      * but not yet enabled still needs the sub to run so it CAN enable it.) */
-    if (SCD.sub_idle && !SCD.cdd_int_pending && !SCD.ga_ifl2)
+    if (SCD.sub_idle && !SCD.cdd_int_pending && !SCD.ga_ifl2 && !SCD.cdc_int_pending)
         return 0;
     SCD.sub_idle = 0;
 
@@ -177,8 +177,14 @@ int segacd_run_sub(int cycle_target)
     scd_dbg_chunks = scd_dbg_deliver4 = scd_dbg_deliver2 = 0;
 #endif
     for (;;) {
-        int want4 = SCD.cdd_int_pending && (SCD.s68k_regs[0x33] & 0x10);
-        int want2 = !want4 && SCD.ga_ifl2 && (SCD.s68k_regs[0x33] & 0x04);
+        /* CDC (level 5) outranks CDD (level 4) outranks the IFL2 doorbell
+         * (level 2) — matches real 68000 IPL priority (highest-asserted
+         * level wins) and pd_cd's own vector assignment (CDC is the
+         * highest-numbered CD interrupt source). Gated on IEN5 ($FF8033
+         * bit5), same one-shot-per-assertion contract as level 4/2. */
+        int want5 = SCD.cdc_int_pending && (SCD.s68k_regs[0x33] & 0x20);
+        int want4 = !want5 && SCD.cdd_int_pending && (SCD.s68k_regs[0x33] & 0x10);
+        int want2 = !want5 && !want4 && SCD.ga_ifl2 && (SCD.s68k_regs[0x33] & 0x04);
 #ifdef SEGACD_GA_TRACE
         scd_dbg_chunks++;
         if (want4) scd_dbg_deliver4++;
@@ -189,13 +195,15 @@ int segacd_run_sub(int cycle_target)
          * CPU_INT_LEVEL left over from a source that's since gone quiet
          * (consumed, or main/sub cleared it) must be retracted explicitly,
          * or the CPU could still take an interrupt that is no longer
-         * logically pending. Both sources are one-shot: consumed (cleared)
-         * the moment they win a slot, exactly like real hardware's ack. */
-        m68k_set_irq((unsigned int)(want4 ? 4 : (want2 ? 2 : 0)));
+         * logically pending. All three sources are one-shot: consumed
+         * (cleared) the moment they win a slot, exactly like real
+         * hardware's ack. */
+        m68k_set_irq((unsigned int)(want5 ? 5 : (want4 ? 4 : (want2 ? 2 : 0))));
+        if (want5) SCD.cdc_int_pending = 0;
         if (want4) SCD.cdd_int_pending = 0;
         if (want2) SCD.ga_ifl2 = 0;
 
-        if (!want4 && !want2) {
+        if (!want5 && !want4 && !want2) {
             /* Nothing to chunk for: run the rest of the slice in one go
              * (the common case — no cost over the old unchunked path). */
             m68k_run((unsigned int)cycle_target);

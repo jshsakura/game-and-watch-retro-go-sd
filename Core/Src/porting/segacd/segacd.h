@@ -78,6 +78,7 @@ typedef struct {
     uint16_t poll_count;      /* consecutive unchanged reads of poll_reg */
 
     int  cdd_int_pending;     /* CDD level-4 interrupt (periodic status export) armed */
+    int  cdc_int_pending;     /* CDC level-5 interrupt (DECI/DTEI) armed — segacd_cd.c */
 
     /* MAIN->SUB "IFL2" doorbell — mirrors real hardware's $A12000 bit0 (main
      * side) / the sub's level-2 IRQ input. Set by main's write; consumed
@@ -131,6 +132,16 @@ void segacd_cdd_process(void);          /* 75 Hz tick: latency/export cadence */
 void segacd_cdd_command(void);          /* decode+respond to a 10-byte CDD command */
 void segacd_cdc_dma_sector(uint8_t *dst, int len);
 void segacd_cd_update(void);            /* 75 Hz tick: drive mechanics (lba/track) */
+
+/* CDC (data controller, LC89510-compatible) — segacd_cd.c. Register-index
+ * protocol at $FF8005 (index)/$FF8007 (data); host data port at
+ * $A12008 (main)/$FF8008 (sub). See segacd_cd.c's CDC section for the
+ * behavioral reference (pd_cd/cdc.c) and what is deliberately not modeled
+ * (PRG/Word/PCM DMA destinations). */
+void     segacd_cdc_reset(void);
+void     segacd_cdc_reg_w(uint8_t data);
+uint8_t  segacd_cdc_reg_r(void);
+uint16_t segacd_cdc_host_r(int sub);
 int  segacd_cdda_fill(int16_t *dst, int frames);  /* stream CD-DA from SD */
 int  segacd_cdda_prefetch(void);
 void segacd_cdda_play(uint32_t lba);

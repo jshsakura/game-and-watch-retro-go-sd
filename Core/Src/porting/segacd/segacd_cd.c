@@ -214,6 +214,7 @@ int segacd_cd_open(const char *cue_path)
      * transition (segacd_cdd_command() case 0x01/0x02). */
     CD.status = CDD_NODISC;
     CD.opened = 1;
+    segacd_cdc_reset();
     return 0;
 }
 
@@ -505,18 +506,333 @@ int segacd_cdda_fill(int16_t *dst, int frames)
     return done;
 }
 
-/* Advance the drive mechanics: while playing, pull the next data sector into
- * the CDC ring and step the head, crossing track boundaries and stopping at
- * the end of the disc — mirrors pd_cd/cdd.c:723-793 `cdd_update()` (minus its
- * CD-DA fader/scan handling, which we don't model yet). Called once per CDD
- * tick (75 Hz) from the frame loop, alongside segacd_cdd_process(). */
+/* ---- CDC (data controller, LC89510-compatible) ----
+ *
+ * Behavioral reference: PicoDrive pd_cd/cdc.c. Minimal subset implemented:
+ *   - register-index protocol: sub write $FF8005 latches the register index
+ *     (segacd_bus.c sub_ff_write8 reg==5); sub write/read $FF8007 access
+ *     CDC register[idx] via segacd_cdc_reg_w/r below, auto-incrementing idx
+ *     exactly like cdc.c's cdc_reg_w/cdc_reg_r (:474-823).
+ *   - decoder: segacd_cd_update() (75 Hz) calls cdc_decoder_update() below
+ *     for the current sector, mirroring cdd_update()'s call into
+ *     cdc_decoder_update() (cdc.c:408-472): when CTRL0's DECEN bit is set it
+ *     captures the sector header, and if WRRQ is also set, writes
+ *     header+data into the CDC ring at the PT/WA cursor and arms the level-5
+ *     "DECI" interrupt (gated on IEN5, $FF8033 bit5).
+ *   - host data port: MAIN reads $A12008 / SUB reads $FF8008 pull one 16-bit
+ *     word via segacd_cdc_host_r() (cdc.c:825-895), advancing DAC/DBC only
+ *     when the destination selected by the last DTRG (regs[4] bits 0-2 ==
+ *     2 MAIN / 3 SUB) matches the caller.
+ *
+ * NOT modeled (deferred — add only if a GA trace shows the BIOS using it):
+ *   - PRG-RAM/Word-RAM/PCM-RAM DMA destinations (regs[4] bits 0-2 == 4/5/7).
+ *   - cdc.c's cycle-accurate DECI timing window (check_decoder_irq_pending's
+ *     67250-cycle phase) — this engine's whole interrupt model is one-shot
+ *     pulses delivered at the next sub timeslice (segacd_run_sub), not held
+ *     levels, so DECI is simply armed the instant the decoder produces data.
+ */
+#define CDC_IFSTAT_DTEI    0x40
+#define CDC_IFSTAT_DECI    0x20
+#define CDC_IFSTAT_DTBSY   0x08
+#define CDC_IFSTAT_DTEN    0x02
+
+#define CDC_IFCTRL_DTEIEN  0x40
+#define CDC_IFCTRL_DECIEN  0x20
+#define CDC_IFCTRL_DOUTEN  0x02
+
+#define CDC_CTRL0_DECEN    0x80
+#define CDC_CTRL0_AUTORQ   0x10
+#define CDC_CTRL0_WRRQ     0x04
+
+#define CDC_CTRL1_MODRQ    0x08
+#define CDC_CTRL1_FORMRQ   0x04
+
+typedef struct {
+    uint8_t  ifstat;
+    uint8_t  ifctrl;
+    uint16_t dbc;             /* data byte counter */
+    uint16_t dac;             /* data address counter (host-read pointer) */
+    uint16_t pt;              /* block pointer (decoder write cursor) */
+    uint16_t wa;               /* write address (mirrors pt on decode) */
+    uint8_t  ctrl0, ctrl1;
+    uint8_t  head[4];          /* last decoded sector header (MM SS FF mode) */
+    uint8_t  stat0, stat2, stat3;
+} segacd_cdc_t;
+
+static segacd_cdc_t CDC;
+
+void segacd_cdc_reset(void)
+{
+    memset(&CDC, 0, sizeof(CDC));
+    CDC.ifstat = 0xff;
+    CDC.stat3  = 0x80;             /* !VALST: no valid data yet */
+    SCD.s68k_regs[0x05] = 0x00;    /* register index — cdc.c cdc_reset() */
+}
+
+static uint8_t bcd8(int v)
+{
+    if (v < 0) v = 0;
+    if (v > 99) v = 99;
+    return (uint8_t)(((v / 10) << 4) | (v % 10));
+}
+
+uint8_t segacd_cdc_reg_r(void)
+{
+    uint8_t idx = SCD.s68k_regs[0x05] & 0x1f;
+    switch (idx) {
+    case 0x00:
+        SCD.s68k_regs[0x05] = 0x01;
+        return 0xff;
+    case 0x01:  /* IFSTAT */
+        SCD.s68k_regs[0x05] = 0x02;
+        return CDC.ifstat;
+    case 0x02:  /* DBCL */
+        SCD.s68k_regs[0x05] = 0x03;
+        return (uint8_t)(CDC.dbc & 0xff);
+    case 0x03:  /* DBCH */
+        SCD.s68k_regs[0x05] = 0x04;
+        return (uint8_t)((CDC.dbc >> 8) & 0xff);
+    case 0x04:  /* HEAD0 */
+        SCD.s68k_regs[0x05] = 0x05;
+        return CDC.head[0];
+    case 0x05:  /* HEAD1 */
+        SCD.s68k_regs[0x05] = 0x06;
+        return CDC.head[1];
+    case 0x06:  /* HEAD2 */
+        SCD.s68k_regs[0x05] = 0x07;
+        return CDC.head[2];
+    case 0x07:  /* HEAD3 */
+        SCD.s68k_regs[0x05] = 0x08;
+        return CDC.head[3];
+    case 0x08:  /* PTL */
+        SCD.s68k_regs[0x05] = 0x09;
+        return (uint8_t)(CDC.pt & 0xff);
+    case 0x09:  /* PTH */
+        SCD.s68k_regs[0x05] = 0x0a;
+        return (uint8_t)((CDC.pt >> 8) & 0xff);
+    case 0x0a:  /* WAL */
+        SCD.s68k_regs[0x05] = 0x0b;
+        return (uint8_t)(CDC.wa & 0xff);
+    case 0x0b:  /* WAH */
+        SCD.s68k_regs[0x05] = 0x0c;
+        return (uint8_t)((CDC.wa >> 8) & 0xff);
+    case 0x0c:  /* STAT0 */
+        SCD.s68k_regs[0x05] = 0x0d;
+        return CDC.stat0;
+    case 0x0d:  /* STAT1 — always 0 */
+        SCD.s68k_regs[0x05] = 0x0e;
+        return 0x00;
+    case 0x0e:  /* STAT2 */
+        SCD.s68k_regs[0x05] = 0x0f;
+        return CDC.stat2;
+    case 0x0f: {  /* STAT3 */
+        uint8_t data = CDC.stat3;
+        CDC.stat3 = 0x80;                    /* !VALST set back (cdc.c note:
+                                               * "not 100% correct but BIOS
+                                               * do not seem to care") */
+        CDC.ifstat |= CDC_IFSTAT_DECI;       /* clear pending decoder IRQ condition */
+        SCD.s68k_regs[0x05] = 0x10;
+        return data;
+    }
+    default:  /* COMIN — always empty */
+        SCD.s68k_regs[0x05] = (uint8_t)((idx + 1) & 0x1f);
+        return 0xff;
+    }
+}
+
+void segacd_cdc_reg_w(uint8_t data)
+{
+    uint8_t idx = SCD.s68k_regs[0x05] & 0x1f;
+    switch (idx) {
+    case 0x00:
+        break;
+    case 0x01:  /* IFCTRL */
+        CDC.ifctrl = data;
+        if (!(data & CDC_IFCTRL_DOUTEN))
+            CDC.ifstat |= (uint8_t)(CDC_IFSTAT_DTBSY | CDC_IFSTAT_DTEN);
+        SCD.s68k_regs[0x05] = 0x02;
+        break;
+    case 0x02:  /* DBCL */
+        CDC.dbc = (uint16_t)((CDC.dbc & 0xff00) | data);
+        SCD.s68k_regs[0x05] = 0x03;
+        break;
+    case 0x03:  /* DBCH */
+        CDC.dbc = (uint16_t)((CDC.dbc & 0x00ff) | ((data & 0x0f) << 8));
+        SCD.s68k_regs[0x05] = 0x04;
+        break;
+    case 0x04:  /* DACL */
+        CDC.dac = (uint16_t)((CDC.dac & 0xff00) | data);
+        SCD.s68k_regs[0x05] = 0x05;
+        break;
+    case 0x05:  /* DACH */
+        CDC.dac = (uint16_t)((CDC.dac & 0x00ff) | (data << 8));
+        SCD.s68k_regs[0x05] = 0x06;
+        break;
+    case 0x06:  /* DTRG: start data transfer if output enabled */
+        if (CDC.ifctrl & CDC_IFCTRL_DOUTEN) {
+            CDC.ifstat &= (uint8_t)~CDC_IFSTAT_DTBSY;
+            CDC.dbc &= 0x0fff;
+            SCD.s68k_regs[0x04] &= 0x07;
+            switch (SCD.s68k_regs[0x04] & 0x07) {
+            case 0x02: case 0x03:  /* MAIN/SUB host read */
+                CDC.ifstat &= (uint8_t)~CDC_IFSTAT_DTEN;
+                SCD.s68k_regs[0x04] |= 0x40;   /* set DSR */
+                break;
+            default:
+                /* PCM-RAM (4) / PRG-RAM (5) / Word-RAM (7) DMA — not
+                 * modeled; TODO(ph3d) if a GA trace shows the BIOS relying
+                 * on it instead of a host-read loop. */
+                break;
+            }
+        }
+        SCD.s68k_regs[0x05] = 0x07;
+        break;
+    case 0x07:  /* DTACK */
+        CDC.ifstat |= CDC_IFSTAT_DTEI;
+        CDC.dbc &= 0x0fff;
+        SCD.s68k_regs[0x05] = 0x08;
+        break;
+    case 0x08:  /* WAL */
+        CDC.wa = (uint16_t)((CDC.wa & 0xff00) | data);
+        SCD.s68k_regs[0x05] = 0x09;
+        break;
+    case 0x09:  /* WAH */
+        CDC.wa = (uint16_t)((CDC.wa & 0x00ff) | (data << 8));
+        SCD.s68k_regs[0x05] = 0x0a;
+        break;
+    case 0x0a:  /* CTRL0 */
+        if (!(data & CDC_CTRL0_DECEN))
+            CDC.ifstat |= CDC_IFSTAT_DECI;
+        CDC.stat2 = (uint8_t)((data & CDC_CTRL0_AUTORQ)
+                                ? (CDC.ctrl1 & CDC_CTRL1_MODRQ)
+                                : (CDC.ctrl1 & (CDC_CTRL1_MODRQ | CDC_CTRL1_FORMRQ)));
+        CDC.ctrl0 = data;
+        SCD.s68k_regs[0x05] = 0x0b;
+        break;
+    case 0x0b:  /* CTRL1 */
+        CDC.stat2 = (uint8_t)((CDC.ctrl0 & CDC_CTRL0_AUTORQ)
+                                ? (data & CDC_CTRL1_MODRQ)
+                                : (data & (CDC_CTRL1_MODRQ | CDC_CTRL1_FORMRQ)));
+        CDC.ctrl1 = data;
+        SCD.s68k_regs[0x05] = 0x0c;
+        break;
+    case 0x0c:  /* PTL */
+        CDC.pt = (uint16_t)((CDC.pt & 0xff00) | data);
+        SCD.s68k_regs[0x05] = 0x0d;
+        break;
+    case 0x0d:  /* PTH */
+        CDC.pt = (uint16_t)((CDC.pt & 0x00ff) | (data << 8));
+        SCD.s68k_regs[0x05] = 0x0e;
+        break;
+    case 0x0e:  /* CTRL2 — unused */
+        SCD.s68k_regs[0x05] = 0x0f;
+        break;
+    case 0x0f:  /* RESET */
+        segacd_cdc_reset();
+        break;
+    default:
+        SCD.s68k_regs[0x05] = (uint8_t)((idx + 1) & 0x1f);
+        break;
+    }
+}
+
+/* Host data port ($A12008 main / $FF8008 sub) — pulls one 16-bit word from
+ * the CDC ring at the current DAC pointer. Only the destination selected by
+ * the last DTRG (regs[4] bits 0-2 == 2 MAIN / 3 SUB) actually advances the
+ * transfer; a read from the "wrong" side just peeks the same word. Mirrors
+ * cdc_host_r() (cdc.c:825-895), minus the mcd-verificator DSR-sync hack
+ * (that workaround exists because PicoDrive's two 68Ks run on independently
+ * scheduled event loops; our sub is a full, uninterrupted timeslice inside
+ * the main's frame, so there's no cross-CPU race to paper over here). */
+uint16_t segacd_cdc_host_r(int sub)
+{
+    int dir = SCD.s68k_regs[0x04] & 0x07;
+
+    if (CDC.ifstat & CDC_IFSTAT_DTEN)
+        return 0xffff;   /* no data available */
+
+    unsigned int off = CDC.dac & (CDC_RING_SIZE - 2);
+    uint16_t data = (uint16_t)((CD.cdc_ram[off] << 8) | CD.cdc_ram[off + 1]);
+
+    if ((sub && dir != 3) || (!sub && dir != 2))
+        return data;     /* not the configured destination: peek only */
+
+    CDC.dac = (uint16_t)(CDC.dac + 2);
+    CDC.dbc = (uint16_t)(CDC.dbc - 2);
+
+    if ((int16_t)CDC.dbc <= 0) {
+        CDC.dbc = 0xffff;
+        CDC.ifstat |= (uint8_t)(CDC_IFSTAT_DTBSY | CDC_IFSTAT_DTEN);
+        SCD.s68k_regs[0x04] = (uint8_t)((SCD.s68k_regs[0x04] & 0x07) | 0x80);   /* EDT, DSR cleared */
+    } else if ((int16_t)CDC.dbc <= 2) {
+        if (CDC.ifstat & CDC_IFSTAT_DTEI) {
+            CDC.ifstat &= (uint8_t)~CDC_IFSTAT_DTEI;
+            if (CDC.ifctrl & CDC_IFCTRL_DTEIEN)
+                SCD.cdc_int_pending = 1;
+        }
+        SCD.s68k_regs[0x04] = (uint8_t)((SCD.s68k_regs[0x04] & 0x07) | 0xc0);   /* DSR+EDT */
+    }
+
+    return data;
+}
+
+/* Decoder half of the CDC: called once per CDD tick (75 Hz) from
+ * segacd_cd_update() with the sector's 4-byte header and (for data tracks)
+ * its 2048 bytes of user data. When CTRL0's DECEN bit is set, captures the
+ * header/marks data valid, and if WRRQ is also set, writes header+data into
+ * the ring at the PT/WA cursor (wrapping) and arms the level-5 DECI
+ * interrupt. Mirrors cdc_decoder_update() (cdc.c:408-472). */
+static void cdc_decoder_update(const uint8_t header[4], const uint8_t *sector_data)
+{
+    if (!(CDC.ctrl0 & CDC_CTRL0_DECEN)) return;
+
+    memcpy(CDC.head, header, 4);
+    CDC.stat3 = 0x00;                 /* !VALST: data is valid */
+    CDC.stat0 = CDC_CTRL0_DECEN;      /* CRCOK */
+    CDC.ifstat &= (uint8_t)~CDC_IFSTAT_DECI;
+
+    if (CDC.ifctrl & CDC_IFCTRL_DECIEN)
+        SCD.cdc_int_pending = 1;
+
+    if ((CDC.ctrl0 & CDC_CTRL0_WRRQ) && sector_data) {
+        CDC.pt = (uint16_t)(CDC.pt + CD_SECTOR_RAW);
+        CDC.wa = (uint16_t)(CDC.wa + CD_SECTOR_RAW);
+        unsigned int offset = CDC.pt & (CDC_RING_SIZE - 1);
+        memcpy(CD.cdc_ram + offset, header, 4);
+
+        unsigned int room = CDC_RING_SIZE - (offset + 4);
+        if (CD_SECTOR_DATA <= room) {
+            memcpy(CD.cdc_ram + offset + 4, sector_data, CD_SECTOR_DATA);
+        } else {
+            memcpy(CD.cdc_ram + offset + 4, sector_data, room);
+            memcpy(CD.cdc_ram, sector_data + room, CD_SECTOR_DATA - room);
+        }
+    }
+}
+
+/* Advance the drive mechanics: while playing, pull the next data sector,
+ * hand it to the CDC decoder, and step the head, crossing track boundaries
+ * and stopping at the end of the disc — mirrors pd_cd/cdd.c:723-793
+ * `cdd_update()` (minus its CD-DA fader/scan handling, which we don't model
+ * yet). Called once per CDD tick (75 Hz) from the frame loop, alongside
+ * segacd_cdd_process(). */
 void segacd_cd_update(void)
 {
     if (!CD.opened || CD.status != CDD_PLAY) return;
 
     cd_track_t *t = track_at_lba(CD.cur_lba);
-    if (t && !t->is_audio)
-        read_sector(CD.cur_lba, CD.cdc_ram, CD_SECTOR_DATA);
+    if (t && !t->is_audio) {
+        static uint8_t sector_buf[CD_SECTOR_DATA];
+        if (read_sector(CD.cur_lba, sector_buf, CD_SECTOR_DATA) == 0) {
+            uint32_t msf = CD.cur_lba + 150;
+            uint8_t header[4];
+            header[0] = bcd8((int)((msf / 75) / 60));
+            header[1] = bcd8((int)((msf / 75) % 60));
+            header[2] = bcd8((int)(msf % 75));
+            header[3] = 0x01;   /* CD-ROM Mode 1 */
+            cdc_decoder_update(header, sector_buf);
+        }
+    }
     /* TODO(ph4): CD-DA audio tracks -> stream to mixer, not the CDC ring. */
 
     CD.cur_lba++;
