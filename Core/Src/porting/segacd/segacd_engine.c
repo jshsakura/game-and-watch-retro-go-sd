@@ -119,18 +119,37 @@ int segacd_run_sub(int cycle_target)
     memcpy(&m68k, &SCD.sub_ctx, sizeof(m68ki_cpu_core));
 
     /* Deliver the higher-priority of the two interrupt sources the CDD
-     * protocol uses, gated on the sub's own IEN mask ($FF8033) exactly like
-     * real hardware (pd_cd/memory.c:463-491 `case 0x33`/`case 0x37`) — a
-     * source stays "pending" (not consumed) until its IEN bit is enabled, so
-     * an early doorbell/status tick isn't lost while the sub is still
-     * setting up. Only ONE level is deliverable per call in this model
-     * (m68k_set_irq takes a single IPL), so CDD (level 4, periodic status)
-     * wins over IFL2 (level 2, main->sub doorbell) when both are pending —
-     * matching real 68000 interrupt priority (higher level always wins). */
-    if (SCD.cdd_int_pending && (SCD.s68k_regs[0x33] & 0x10)) {
+     * protocol uses first, gated on the sub's own IEN mask ($FF8033) exactly
+     * like real hardware (pd_cd/memory.c:463-491 `case 0x33`/`case 0x37`) —
+     * a source stays "pending" (not consumed) until its IEN bit is enabled,
+     * so an early doorbell/status tick isn't lost while the sub is still
+     * setting up. CDD (level 4, periodic status) outranks IFL2 (level 2,
+     * main->sub doorbell) at any single instant, matching real 68000
+     * interrupt priority.
+     *
+     * BUT: don't let that permanently starve IFL2. segacd_cdd_process() (the
+     * ~75 Hz tick) re-arms cdd_int_pending EVERY call to this function once
+     * the sub has armed the export ($FF8037 bit2), so a naive "higher level
+     * always wins, pick one" model never lets a still-pending IFL2 doorbell
+     * win the race — it loses on every single frame, forever. That is
+     * exactly the boot deadlock this port shipped with: the sub parks in its
+     * boot-time "wait for main's IFL2 ack" spin (PRG-RAM flag, cleared only
+     * by the level-2 handler) and never gets the level-2 interrupt because
+     * level-4 keeps re-firing first. Real hardware doesn't have this
+     * problem: both IPL lines are asserted simultaneously and, once the
+     * level-4 handler RTEs (restoring an SR mask that still admits level 2),
+     * the CPU takes the still-asserted level-2 line within the SAME
+     * timeslice — it isn't limited to "one interrupt per call". Reproduce
+     * that here with a second m68k_run() pass, using a little extra cycle
+     * budget, so IFL2 gets its turn in the same timeslice level-4 did rather
+     * than being deferred to (and re-losing) the next one. */
+    int deliver4 = SCD.cdd_int_pending && (SCD.s68k_regs[0x33] & 0x10);
+    int deliver2 = SCD.ga_ifl2        && (SCD.s68k_regs[0x33] & 0x04);
+
+    if (deliver4) {
         SCD.cdd_int_pending = 0;
         m68k_set_irq(4);
-    } else if (SCD.ga_ifl2 && (SCD.s68k_regs[0x33] & 0x04)) {
+    } else if (deliver2) {
         SCD.ga_ifl2 = 0;
         m68k_set_irq(2);
     }
@@ -144,6 +163,20 @@ int segacd_run_sub(int cycle_target)
      * loop does with `m68k.cycles -= system_clock`. */
     m68k.cycles = 0;
     m68k_run((unsigned int)cycle_target);
+
+    if (deliver4 && deliver2) {
+        /* Level 2 hasn't had its turn yet this call. m68k_run() re-checks
+         * CPU_INT_LEVEL on entry (m68kcpu.c m68ki_check_interrupts), so this
+         * both delivers the doorbell and lets the sub run the short ISR —
+         * a small grace budget is enough (the level-2 handler here is a
+         * handful of instructions, not another 208333-cycle slice). */
+        #define SEGACD_IFL2_GRACE_CYCLES 4000u
+        SCD.ga_ifl2 = 0;
+        m68k_set_irq(2);
+        m68k_run((unsigned int)cycle_target + SEGACD_IFL2_GRACE_CYCLES);
+        #undef SEGACD_IFL2_GRACE_CYCLES
+    }
+
     int used = m68k.cycles;
 #ifdef SEGACD_GA_TRACE
     /* Track the furthest PC the sub reaches past the self-checksum (which PASSES:

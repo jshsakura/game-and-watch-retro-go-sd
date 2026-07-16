@@ -139,14 +139,29 @@ int main(int argc, char **argv)
         if ((frame % sample_period) == 0) {
             uint32_t h = 2166136261u; for(int k=0;k<320*240;k++) h=(h^s_fb[k])*16777619u;
             printf("[boot] f%-4d sub_running=%d subPC=%06x mainPC=%06x idle=%u cdd_status=%02x "
-                   "cmd=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x %s\n",
+                   "cmd=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x ga_ifl2=%u cdd_pend=%d ien=%02x %s\n",
                    frame, SCD.sub_running, (unsigned)SCD.sub_ctx.pc, (unsigned)m68k.pc, (unsigned)SCD.sub_idle,
                    SCD.s68k_regs[0x38 & (SEGACD_GA_REGS-1)],
                    SCD.s68k_regs[0x42],SCD.s68k_regs[0x43],SCD.s68k_regs[0x44],SCD.s68k_regs[0x45],
                    SCD.s68k_regs[0x46],SCD.s68k_regs[0x47],SCD.s68k_regs[0x48],SCD.s68k_regs[0x49],
                    SCD.s68k_regs[0x4a],SCD.s68k_regs[0x4b],
+                   (unsigned)SCD.ga_ifl2, SCD.cdd_int_pending, SCD.s68k_regs[0x33],
                    (h!=last_fb)?"(VDP active)":"");
             last_fb = h;
+            /* $5e8/$5ee = this bios_CD_U.bin's sub-BIOS "wait for main's IFL2
+             * doorbell" primitive (bset $5ea4 bit0; btst/bne spin; cleared
+             * only by the level-2 ISR at $5f2 — see segacd/CLAUDE.md boot
+             * notes). Addresses are specific to this BIOS revision; when the
+             * sub parks here, print the return address off its stack so we
+             * know WHICH of the several call sites (there are 5: $3fe $436
+             * $4ca $50a $52e) is blocked, without re-disassembling by hand. */
+            if (SCD.sub_ctx.pc == 0x5e8 || SCD.sub_ctx.pc == 0x5ee) {
+                unsigned sp = SCD.sub_ctx.dar[15];
+                #define PRGWx(o) ((SCD.prg_ram[((o)+1)&(SEGACD_PRG_RAM_SIZE-1)]<<8) | SCD.prg_ram[(o)&(SEGACD_PRG_RAM_SIZE-1)])
+                unsigned ret = (PRGWx(sp)<<16) | PRGWx(sp+2);
+                #undef PRGWx
+                printf("[boot]   -> sub parked at wait-loop, SP=%06x return-addr=%06x\n", sp, ret);
+            }
         }
     }
     printf("[boot] done %d frames. sub_running=%d\n", FRAMES, SCD.sub_running);
