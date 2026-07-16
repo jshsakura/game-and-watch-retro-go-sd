@@ -73,6 +73,15 @@ static void md_scanline_frame(void)
     gwenesis_vdp_set_buffer(&s_fb[vert_screen_offset]); gwenesis_vdp_render_config();
     system_clock=0; zclk=0; ym2612_clock=ym2612_index=0; sn76489_clock=sn76489_index=0; scan_line=0;
     int line;
+    /* Interleave the SUB 68K per scanline, not once per whole frame. The BIOS
+     * logo animation runs a tight per-frame handshake — the main VBlank ISR
+     * rings the sub's level-2 doorbell ($A12000) and then SPINS waiting for the
+     * sub's $A1200F ack before it grants Word-RAM (DMNA). GPGX runs both CPUs
+     * lockstep per scanline, so the ack comes back mid-frame; running the sub
+     * only AFTER the whole main frame (the old model) means the main never sees
+     * the ack within its frame and the handshake deadlocks. Slice the sub's
+     * frame budget across the ~262 scanlines so it can respond intra-frame. */
+    int sub_slice = (int)(SUB_CYCLES_PER_FRAME / lines_per_frame);
     gwenesis_vdp_status=(unsigned short)((gwenesis_vdp_status&(unsigned short)~0x0112u)|STATUS_VBLANK);
     gwenesis_vdp_status^=STATUS_ODDFRAME;
     scan_line=(int)screen_height;
@@ -81,14 +90,16 @@ static void md_scanline_frame(void)
     m68k_run(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE);
     system_clock+=VDP_CYCLES_PER_LINE; z80_irq_line(0);
     for(line=(int)screen_height+1; line<(int)lines_per_frame-1; line++){ scan_line=line;
-      m68k_run(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE); system_clock+=VDP_CYCLES_PER_LINE; }
+      m68k_run(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE); system_clock+=VDP_CYCLES_PER_LINE;
+      segacd_run_sub(sub_slice); }
     scan_line=(int)lines_per_frame-1; hint_counter=(int)REG10_LINE_COUNTER;
     gwenesis_vdp_status&=(unsigned short)~STATUS_VBLANK;
     m68k_run(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE); system_clock+=VDP_CYCLES_PER_LINE;
     for(line=0; line<(int)screen_height; line++){ scan_line=line; gwenesis_vdp_latch_line_scroll(line);
       if(hint_counter==0){hint_counter=(int)REG10_LINE_COUNTER; hint_pending=1; if(REG0_LINE_INTERRUPT)m68k_update_irq(4);} else hint_counter--;
       m68k_run(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE);
-      gwenesis_vdp_render_line(line); system_clock+=VDP_CYCLES_PER_LINE; }
+      gwenesis_vdp_render_line(line); system_clock+=VDP_CYCLES_PER_LINE;
+      segacd_run_sub(sub_slice); }
     gwenesis_SN76489_run(system_clock); ym2612_run(system_clock); m68k.cycles-=system_clock;
     skip_first_vint=0;
 }
@@ -143,9 +154,24 @@ int main(int argc, char **argv)
                    frame, end, sum, PRGW(0x18e), (sum==PRGW(0x18e))?"MATCH":"MISMATCH");
             #undef PRGW
         }
-        segacd_run_sub(SUB_CYCLES_PER_FRAME);/* sub 68K once released by BIOS */
+        /* sub 68K now runs INTERLEAVED per-scanline inside md_scanline_frame
+         * (see the sub_slice calls there) so the intra-frame main<->sub comm
+         * handshake works; no longer run as one big slice here. */
         segacd_cdd_process();
         segacd_cd_update();
+
+        /* Dense per-frame handshake trace across the animation window: main PC
+         * (is it stuck at the $1288 comm spin or does it reach the $1F5E DMNA
+         * grant?), sub PC, the Word-RAM mode reg ($A12003), the sub->main comm
+         * flag ($A1200F=regs[0x0f]), the main->sub comm flag ($A1200E), the
+         * doorbell pending flag, and IEN. */
+        if (frame >= 122 && frame <= 175) {
+            printf("[hs] f%-3d mainPC=%06x subPC=%06x A12003=%02x A1200F=%02x A1200E=%02x ifl2=%u ien=%02x wordnz=%s\n",
+                   frame, (unsigned)m68k.pc, (unsigned)SCD.sub_ctx.pc,
+                   SCD.s68k_regs[0x03], SCD.s68k_regs[0x0f], SCD.s68k_regs[0x0e],
+                   (unsigned)SCD.ga_ifl2, SCD.s68k_regs[0x33],
+                   "");
+        }
 
         int sample_period = (frame > 60 && frame < 140) ? 5 : 60;
         if ((frame % sample_period) == 0) {
