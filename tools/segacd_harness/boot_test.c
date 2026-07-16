@@ -145,6 +145,19 @@ int main(int argc, char **argv)
 #endif
         button_state[0]=0xFF;
         md_scanline_frame();                 /* main 68K + VDP (BIOS runs here) */
+        { extern unsigned char *M68K_RAM;    /* boot-mode ($FFFDDA) transition log */
+          static unsigned prev_bm = 0xffff;
+          unsigned bm = (M68K_RAM[0xfdda^1]<<8)|M68K_RAM[0xfddb^1];
+          if (bm != prev_bm) {
+              printf("[mode] f%-3d $FFFDDA %#06x -> %#06x  $FFD007=%02x $FE3A=%02x $FFFDDC=%02x $FE51=%02x $FE52=%02x\n",
+                     frame, prev_bm, bm, M68K_RAM[0xd007^1], M68K_RAM[0xfe3a^1],
+                     M68K_RAM[0xfddc^1], M68K_RAM[0xfe51^1], M68K_RAM[0xfe52^1]);
+              prev_bm = bm; } }
+        if ((frame % 100) == 0) { extern unsigned char *M68K_RAM;  /* where is the main stuck? */
+            unsigned c100 = (M68K_RAM[0xc101^1]<<8)|M68K_RAM[0xc100^1];
+            printf("[main] f%-4d PC=%06x $C100(cnt)=%04x $FFFDDC=%02x $FE3A=%02x $FE51=%02x $FE52=%02x\n",
+                   frame, (unsigned)m68k.pc, c100, M68K_RAM[0xfddc^1], M68K_RAM[0xfe3a^1],
+                   M68K_RAM[0xfe51^1], M68K_RAM[0xfe52^1]); }
         if (!prev_running && SCD.sub_running) {  /* sub just released — pristine image */
             prev_running = 1;
             #define PRGW(o) ((SCD.prg_ram[((o)+1)&(SEGACD_PRG_RAM_SIZE-1)]<<8) | SCD.prg_ram[(o)&(SEGACD_PRG_RAM_SIZE-1)])
@@ -377,6 +390,20 @@ int main(int argc, char **argv)
              "$A10003 reads=%u last=%#04x %s\n",
              bootmode, fe20, fe20&0xf0, scd_dbg_a10003_reads, scd_dbg_a10003_last,
              (fe20&0xf0)?"(gate PASSES)":"(gate BLOCKS boot-mode advance)"); }
+    /* --- DRIVE-STATUS relay chain (0718): sub writes CDD/drive status to its
+     * comm regs $FF8020-2F -> main comm handler copies to $FDF0-FF -> $FE3A
+     * (disc-ready == 0x40 hi-byte, gate 0x1d34) & $FFFDDC (drive-busy bit7,
+     * gate 0x1d66). If this chain is empty the main never leaves disc-detect. */
+    { extern unsigned char *M68K_RAM;
+      printf("[boot] DRIVE-STATUS chain:\n  sub-comm $FF8020-2F(=s68k_regs):");
+      for (int i = 0x20; i < 0x30; i++) printf(" %02x", SCD.s68k_regs[i]);
+      printf("\n  main copy $FDF0-FF          :");
+      for (unsigned o = 0xfdf0; o < 0xfe00; o++) printf(" %02x", M68K_RAM[o ^ 1]);
+      printf("\n  $FE3A=%02x%02x (disc-ready hi==0x40?)  $FE51=%02x $FE52=%02x  $FFFDDC=%02x (busy bit7)"
+             "  $FDDE=%02x $FDDF=%02x\n",
+             M68K_RAM[0xfe3a ^ 1], M68K_RAM[0xfe3b ^ 1], M68K_RAM[0xfe51 ^ 1],
+             M68K_RAM[0xfe52 ^ 1], M68K_RAM[0xfddc ^ 1], M68K_RAM[0xfdde ^ 1],
+             M68K_RAM[0xfddf ^ 1]); }
     { extern uint32_t scd_dbg_mainstamp_hits;
       printf("[boot] MAIN stamp-draw (0x5f00-0x6e00) sub-slice hits=%u  %s\n",
              scd_dbg_mainstamp_hits,

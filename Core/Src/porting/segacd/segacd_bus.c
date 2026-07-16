@@ -291,6 +291,17 @@ void segacd_sub_build_memory_map(void)
     for (int p = 0; p < 4; p++)
         map[0x08 + p].base = SCD.word_ram + p * PAGE_SIZE;
 
+    /* $0C0000-$0DFFFF : Word-RAM 1M-mode cell-arranged / linear bank view. The
+     * boot-logo sub-BIOS sets up its stamp graphics here (sub PC 0x70f0: clears
+     * $C0000.. and writes a header at $CE080). We do NOT model 1M banking yet
+     * (see ph2b) — but leaving this NULL segfaults the sub the moment it touches
+     * the region. DIAGNOSTIC: point it at a dedicated scratch bank so the sub can
+     * run and we can observe the boot-mode progression; real 1M cell-mapping is a
+     * follow-up once the reference confirms the sub is meant to be here now. */
+    static uint8_t wram_1m_cell[2 * PAGE_SIZE];   /* $0C-$0D, 128 KB */
+    map[0x0C].base = wram_1m_cell;
+    map[0x0D].base = wram_1m_cell + PAGE_SIZE;
+
     /* $FF0000-$FFFFFF : PCM + gate array, handler page */
     map[0xFF].base   = NULL;
     map[0xFF].read8  = sub_ff_read8;
