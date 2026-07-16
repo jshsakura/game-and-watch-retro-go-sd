@@ -65,8 +65,10 @@ static double now_ns(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t)
 static double g_cpu68k;
 static unsigned g_main_cycles;   /* main-68K cycles advanced this frame */
 static uint32_t g_audio_hash = 2166136261u;   /* YM2612+PSG output hash (losslessness) */
+static uint32_t g_fb_hash = 2166136261u;      /* framebuffer hash (VDP losslessness) */
 static double g_ym_ns;                          /* time in ym2612_run */
 static double g_psg_ns;                          /* time in gwenesis_SN76489_run */
+static double g_vdp_ns;                          /* time in gwenesis_vdp_render_line */
 #define RUN68K(t) do { unsigned _b=m68k.cycles; double _c=now_ns(); m68k_run(t); \
     g_cpu68k += now_ns()-_c; g_main_cycles += (unsigned)(m68k.cycles-_b); } while(0)
 
@@ -120,7 +122,7 @@ int main(int argc, char **argv)
           for(line=0; line<(int)screen_height; line++){ scan_line=line; gwenesis_vdp_latch_line_scroll(line);
             if(hint_counter==0){hint_counter=(int)REG10_LINE_COUNTER; hint_pending=1; if(REG0_LINE_INTERRUPT)m68k_update_irq(4);} else hint_counter--;
             RUN68K(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE);
-            gwenesis_vdp_render_line(line); system_clock+=VDP_CYCLES_PER_LINE; }
+            { double r0=now_ns(); gwenesis_vdp_render_line(line); g_vdp_ns+=now_ns()-r0; } system_clock+=VDP_CYCLES_PER_LINE; }
           skip_first_vint=0; }
         double p0=now_ns(); gwenesis_SN76489_run(system_clock); g_psg_ns += now_ns()-p0;
         double y0=now_ns(); ym2612_run(system_clock); g_ym_ns += now_ns()-y0;
@@ -131,6 +133,7 @@ int main(int argc, char **argv)
         for(int k=0;k<GWENESIS_AUDIO_BUFFER_CAPACITY;k++){
             g_audio_hash=(g_audio_hash^(uint32_t)(uint16_t)gwenesis_ym2612_buffer[k])*16777619u;
             g_audio_hash=(g_audio_hash^(uint32_t)(uint16_t)gwenesis_sn76489_buffer[k])*16777619u; }
+        for(int k=0;k<320*240;k++){ g_fb_hash=(g_fb_hash^(uint32_t)s_fb[k])*16777619u; }
 
         /* sub cost = cpu68k scaled to the sub's 12.5MHz cycle budget. */
         double sub = (g_main_cycles>0) ? g_cpu68k * (double)SUB_CYCLES_PER_FRAME / g_main_cycles : 0;
@@ -141,5 +144,6 @@ int main(int argc, char **argv)
     printf("emu=%.0fns sub=%.0fns  ->  dual/MD multiplier = x%.2f  (+PCM/ASIC ~+15%% => ~x%.2f)\n",
            tot_emu, tot_sub, mul, mul*1.15);
     printf("YM2612: %.0fns  SN76489: %.0fns  audio_hash=%08x\n", g_ym_ns, g_psg_ns, g_audio_hash);
+    printf("VDP_render: %.0fns  fb_hash=%08x\n", g_vdp_ns, g_fb_hash);
     return 0;
 }
