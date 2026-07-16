@@ -88,6 +88,8 @@ mps2-an500 (Cortex-M7) with `-icount shift=0` makes virtual time tick exactly
 1 ns per executed instruction; the board's CMSDK timer runs on virtual time,
 so a timer delta IS an instruction count (the rig calibrates the exact scale
 on itself at boot — 40.000 insn/tick — and prints it).
+- The end-to-end 32X histogram, hot-loop, correctness, and on-device DWT
+  workflow is in `docs/32X_PERFORMANCE_HISTOGRAM_GUIDE.md`.
 - `run_vb.sh <rom.vb> [frames]` — the linux/vb harness driver, bare-metal:
   same core sources, same input script, so its frame hashes must equal the
   host harness's for the same ROM (they do — that's the cross-validation).
