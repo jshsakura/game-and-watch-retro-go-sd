@@ -187,10 +187,10 @@ int main(int argc, char **argv)
         /* Dump what the sub sees (BE-reconstructed) for 0x100..0x5800 so we can
          * diff against the sub-BIOS source embedded in the region BIOS image. */
         FILE *d=fopen("/tmp/scd/prg_subbios.bin","wb");
-        if(d){ for(unsigned o=0x100;o<0x5800;o+=2){ uint16_t w=PRGW(o);
+        if(d){ for(unsigned o=0x0;o<0x5800;o+=2){ uint16_t w=PRGW(o);
                  unsigned char be[2]={(unsigned char)(w>>8),(unsigned char)(w&0xff)};
                  fwrite(be,1,2,d);} fclose(d);
-               printf("[boot] wrote /tmp/scd/prg_subbios.bin (0x100..0x5800 BE)\n"); }
+               printf("[boot] wrote /tmp/scd/prg_subbios.bin (0x0..0x5800 BE)\n"); }
         /* Was every byte of the checksummed region written by the main PRG window,
          * or did non-zero bytes arrive via some path our ^1 fix doesn't cover? */
         extern uint8_t scd_dbg_prg_written[];
@@ -200,7 +200,26 @@ int main(int argc, char **argv)
             else if (SCD.prg_ram[o]) nz_uncovered++;
         }
         printf("[boot] checksum-region write coverage: %ld/%d bytes written via PRG-window, "
-               "%ld non-zero bytes NEVER written by it\n", covered, 0x5800-0x202, nz_uncovered); }
+               "%ld non-zero bytes NEVER written by it\n", covered, 0x5800-0x202, nz_uncovered);
+        extern uint32_t scd_dbg_wpc[]; extern int scd_dbg_wpc_n;
+        printf("[boot] distinct main PCs that store into PRG (%d): ", scd_dbg_wpc_n);
+        for (int i=0;i<scd_dbg_wpc_n;i++) printf("%06x ", scd_dbg_wpc[i]);
+        printf("\n");
+        extern uint32_t scd_dbg_first_a0, scd_dbg_first_a1, scd_dbg_first_ea;
+        printf("[boot] decompressor first store: A0(src)=%06x A1(dst)=%06x storeEA=%06x\n",
+               scd_dbg_first_a0, scd_dbg_first_a1, scd_dbg_first_ea);
+        extern uint32_t scd_dbg_maxpc;
+        printf("[boot] sub-BIOS self-checksum PASSES (0x200..0x5800 == 0xe9bb). furthest sub PC=%06x\n",
+               scd_dbg_maxpc);
+        /* Dump the compressed source region from the BIOS (logical BE bytes the
+         * main reads) so we can decompress it independently in Python. A0 points
+         * a few bytes past the start after the first control word+byte. */
+        { FILE *c=fopen("/tmp/scd/compressed_src.bin","wb");
+          if(c){ for(unsigned o=(scd_dbg_first_a0-0x40)&~1u; o<(scd_dbg_first_a0+0x4000); o++)
+                    { unsigned char b = bios[(o^1) & (ROM_DATA_LENGTH-1)]; fwrite(&b,1,1,c);}
+                 fclose(c);
+                 printf("[boot] wrote /tmp/scd/compressed_src.bin from BIOS @%06x\n",
+                        (scd_dbg_first_a0-0x40)&~1u); } } }
       #undef PRGW
     }
 

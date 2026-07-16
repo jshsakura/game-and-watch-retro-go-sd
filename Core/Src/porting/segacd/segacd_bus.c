@@ -72,7 +72,17 @@ static unsigned int sub_ff_read8(unsigned int address)
         SCD.poll_reg = reg;
         SCD.poll_count = 0;
     }
-    return SCD.s68k_regs[reg];                                /* TODO ph3: CDC/CDD */
+
+    /* Reset register ($FF8000-$FF8001). $FF8001 bit0 is the "peripheral not in
+     * reset" ready flag — the sub-BIOS resets the CDC (writes bit0=0) then spins
+     * on `btst #0,$8001` until it reads back 1. Hardware always reports ready, so
+     * bit0 reads as 1 (matches PicoDrive s68k_reg_read16 case 0: `... | 1`).
+     * $FF8000 high byte is the gate-array version (0). */
+    switch (reg) {
+    case 0x00: return SCD.s68k_regs[0x00] & 0x03;   /* version 0 + LED bits */
+    case 0x01: return 0x01;                          /* CDC ready (not in reset) */
+    default:   return SCD.s68k_regs[reg];            /* TODO ph3: CDC/CDD data */
+    }
 }
 
 static unsigned int sub_ff_read16(unsigned int address)
@@ -151,6 +161,9 @@ static unsigned int main_prgwin_read16(unsigned int address)
 #ifdef SEGACD_GA_TRACE
 uint32_t scd_dbg_prgwin_w;              /* count of main-CPU writes into the PRG window */
 uint8_t  scd_dbg_prg_written[0x5800];   /* coverage of the sub-BIOS region by main writes */
+uint32_t scd_dbg_wpc[64]; int scd_dbg_wpc_n;   /* distinct main PCs that store into PRG */
+int scd_dbg_first_store_seen; uint32_t scd_dbg_first_a0, scd_dbg_first_a1, scd_dbg_first_ea;
+extern m68ki_cpu_core m68k;             /* to read the writer's PC (locate the decompressor) */
 #endif
 static void main_prgwin_write8(unsigned int address, unsigned int data)
 {
@@ -159,6 +172,17 @@ static void main_prgwin_write8(unsigned int address, unsigned int data)
     scd_dbg_prgwin_w++;
     { unsigned physoff = (off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1);
       if (physoff < sizeof(scd_dbg_prg_written)) scd_dbg_prg_written[physoff] = 1; }
+    { unsigned pc = m68k.pc; int seen = 0;
+      for (int i = 0; i < scd_dbg_wpc_n; i++) if (scd_dbg_wpc[i] == pc) { seen = 1; break; }
+      if (!seen && scd_dbg_wpc_n < 64) scd_dbg_wpc[scd_dbg_wpc_n++] = pc; }
+    /* Capture A0(src)/A1(dst) at the LZSS decompressor's first store only
+     * (PC 0x926 = literal copy, 0x988 = back-ref copy), not the PRG-clear loop. */
+    if (!scd_dbg_first_store_seen && (m68k.pc == 0x926 || m68k.pc == 0x988)) {
+        scd_dbg_first_store_seen = 1;
+        scd_dbg_first_a0 = m68k.dar[8];
+        scd_dbg_first_a1 = m68k.dar[9];
+        scd_dbg_first_ea = address;
+    }
 #endif
     SCD.prg_ram[(off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1)] = (uint8_t)data;
 }
