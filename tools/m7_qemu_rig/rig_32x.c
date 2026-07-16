@@ -27,6 +27,12 @@
  *                    find the first divergence frame).
  *   -DRIG_TRACE_PC   print the 68K PC every frame (where does a dead boot
  *                    park?). g68k backend only.
+ *   -DRIG_PHASE_PROF per-phase cost table (PHASE_PROF=1 to run_32x.sh): rides
+ *                    picodrive's pprof probes with the icount timer as clock,
+ *                    so every bucket is an executed-instruction count. Buckets
+ *                    are disjoint (nested phases pause the enclosing one via
+ *                    pprof_end_sub); "other" = PicoFrame minus the sum =
+ *                    scheduler, events, timers, memory glue.
  * Soak drift (first-500 vs last-500 post-warmup insn/frame) is reported
  * automatically when RIG_FRAMES is large enough for disjoint windows. */
 #include <stdio.h>
@@ -98,6 +104,85 @@ void PicoDrawSetOutputSMS(int which) { (void)which; }
 /* 68K 64K bank image — device: ahb_calloc(1, 0x10000); rig: static (zeroed) */
 static unsigned char s_m68k_bank[0x10000];
 unsigned char *gnw_m68k_bank_alloc(void) { return s_m68k_bank; }
+
+/* ==== phase profiler ======================================================= */
+#ifdef RIG_PHASE_PROF
+/* Counter storage for picodrive's pprof probes (pico_int.h defines PPROF when
+ * RIG_PHASE_PROF is set; platform/linux/pprof.h routes pprof_get_one() to
+ * rig_timer_now(), so a bucket delta IS an executed-instruction count after
+ * the insn/tick calibration). */
+#include "platform/linux/pprof.h"
+
+static struct pp_counters s_pp_counters;
+struct pp_counters *pp_counters = &s_pp_counters;
+static int s_pp_refcounts[pp_total_points];
+int *refcounts = s_pp_refcounts;
+
+static pp_type s_pp_base[pp_total_points];
+
+static const struct { unsigned char pt; const char *name; } k_phase_rows[] = {
+    { pp_m68k,    "m68k (interp+bus)" },
+    { pp_msh2,    "msh2 (interp+bus)" },
+    { pp_ssh2,    "ssh2 (interp+bus)" },
+    { pp_z80,     "z80  (interp+bus)" },
+    { pp_fm,      "fm   (ym2612)"     },
+    { pp_pwm,     "pwm  (chip)"       },
+    { pp_sound,   "snd  (psg+dac+mix)"},
+    { pp_draw,    "draw (MD VDP line)"},
+    { pp_draw32x, "32x  (compositor)" },
+};
+#define N_PHASE_ROWS ((int)(sizeof(k_phase_rows) / sizeof(k_phase_rows[0])))
+
+static void phase_snapshot(void) {
+    memcpy(s_pp_base, s_pp_counters.counter, sizeof(s_pp_base));
+}
+
+/* post-warmup insn/frame for one bucket */
+static uint64_t phase_insn(int pt, int frames, uint32_t ipt_x1000) {
+    pp_type ticks = s_pp_counters.counter[pt] - s_pp_base[pt];
+    return (uint64_t)ticks * ipt_x1000 / 1000 / (uint32_t)(frames > 0 ? frames : 1);
+}
+
+static void phase_print_row(const char *name, uint64_t v, uint64_t total) {
+    uint64_t pm = total ? v * 1000 / total : 0;   /* permille */
+    printf("[32x-phase]   %-20s %9llu  %3llu.%llu%%\n", name,
+           (unsigned long long)v, (unsigned long long)(pm / 10),
+           (unsigned long long)(pm % 10));
+}
+
+static void phase_report(int frames, uint32_t ipt_x1000, uint64_t sh2_guest_avg) {
+    uint64_t total = phase_insn(pp_frame, frames, ipt_x1000);
+    uint64_t sum = 0;
+    printf("[32x-phase] host insn/frame by phase (%d frames post-warmup):\n", frames);
+    for (int i = 0; i < N_PHASE_ROWS; i++) {
+        uint64_t v = phase_insn(k_phase_rows[i].pt, frames, ipt_x1000);
+        sum += v;
+        phase_print_row(k_phase_rows[i].name, v, total);
+    }
+    phase_print_row("other(sched/ev/mem)", total > sum ? total - sum : 0, total);
+    phase_print_row("PicoFrame TOTAL", total, total);
+
+    /* SH-2 interpreter host-per-guest ratio (x1000) */
+    {
+        uint64_t sh2_host = phase_insn(pp_msh2, frames, ipt_x1000)
+                          + phase_insn(pp_ssh2, frames, ipt_x1000);
+        uint64_t r_x1000 = sh2_guest_avg ? sh2_host * 1000 / sh2_guest_avg : 0;
+        printf("[32x-phase] sh2 host/guest: %llu host / %llu guest insn = %llu.%03llu\n",
+               (unsigned long long)sh2_host, (unsigned long long)sh2_guest_avg,
+               (unsigned long long)(r_x1000 / 1000), (unsigned long long)(r_x1000 % 1000));
+    }
+
+    /* refcount leak = a pprof scope escaped (early return) — data suspect */
+    for (int i = 0; i < pp_total_points; i++)
+        if (s_pp_refcounts[i] != 0)
+            printf("[32x-phase] WARN refcount leak: point %d = %d\n", i, s_pp_refcounts[i]);
+}
+#else
+static void phase_snapshot(void) {}
+static void phase_report(int frames, uint32_t ipt_x1000, uint64_t sh2_guest_avg) {
+    (void)frames; (void)ipt_x1000; (void)sh2_guest_avg;
+}
+#endif
 
 /* ==== video ================================================================ */
 static uint16_t s_fb[320 * 240];
@@ -247,6 +332,7 @@ int main(void) {
     int nb100 = 0, nb300 = 0, nbend = 0;
 
     for (int f = 0; f < RIG_FRAMES; f++) {
+        if (f == RIG_WARMUP) phase_snapshot();
         int skipf = skip_this_frame(f);
         PicoIn.skipFrame = (unsigned short)skipf;
         PicoIn.pad[0] = pad_script(f);
@@ -299,6 +385,7 @@ int main(void) {
     if (RIG_FRAMES >= RIG_WARMUP + 1000)   /* disjoint windows only */
         printf("[32x-qemu] drift: first500 avg=%lu  last500 avg=%lu\n",
                (unsigned long)(tot_w1 / 500), (unsigned long)(tot_w2 / 500));
+    phase_report(n, ipt_x1000, n > 0 ? sh2_tot / n : 0);
     printf("[32x-qemu] fb f%d=%08lx(nb=%d) f%d=%08lx(nb=%d) f%d=%08lx(nb=%d)\n",
            CK_A, (unsigned long)cks100, nb100, CK_B, (unsigned long)cks300, nb300,
            CK_LAST, (unsigned long)cksend, nbend);

@@ -21,6 +21,8 @@ ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -ffp-contract=off"
 OPT="-O2 -g -fno-strict-aliasing -ffunction-sections -fdata-sections -fcommon"
 # Device defines (cf. tools/gen_md32x_redefines.sh / Makefile MD32X) + rig counters
 DEF="-DGNW_32X_CORE -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DRIG_SH2_COUNT -DRIG_FRAMES=$FRAMES ${EXTRA_DEF:-}"
+# PHASE_PROF=1: per-phase cost table (picodrive pprof probes, icount clock)
+if [ "${PHASE_PROF:-0}" = "1" ]; then DEF="$DEF -DRIG_PHASE_PROF"; fi
 INC="-I$PD -I$PD/pico -I$PD/cpu -I$PD/zlib"
 
 # ROM -> byteswap (mirror the device flash cache byte_swap=true: the GNW
