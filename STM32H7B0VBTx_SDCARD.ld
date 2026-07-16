@@ -890,7 +890,11 @@ INCLUDE build/fceumm_mappers.ld
      * there is no link port — but the file is compiled (gba_memory.c calls into it
      * from reachable code, and the harness compiled it, so we do too). Its BSS may
      * as well be spent somewhere the renderer does not need. */
-    build/gba/serial_proto.o (.bss.serstate)
+    /* serstate (8K link-cable state, "never used - no link port") moved BACK
+     * to .overlay_gba_bss: the AHB heap pool it was shrinking is shared with
+     * every core, and the 32X's 84K Draw2FB frame missed the pool by 4.4K.
+     * GBA's overlay has the headroom (~46K); the launcher memset even zeroes
+     * it for free now. (Was: build/gba/serial_proto.o (.bss.serstate)) */
     . = ALIGN(8);
     __gba_ahb_end__ = .;
     /* What is left has to still hold the framebuffer (240*160*2), which main_gba.c
