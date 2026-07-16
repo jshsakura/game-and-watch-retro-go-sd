@@ -403,7 +403,23 @@ int main(int argc, char **argv)
              "  $FDDE=%02x $FDDF=%02x\n",
              M68K_RAM[0xfe3a ^ 1], M68K_RAM[0xfe3b ^ 1], M68K_RAM[0xfe51 ^ 1],
              M68K_RAM[0xfe52 ^ 1], M68K_RAM[0xfddc ^ 1], M68K_RAM[0xfdde ^ 1],
-             M68K_RAM[0xfddf ^ 1]); }
+             M68K_RAM[0xfddf ^ 1]);
+      /* --- mode-8 CROSSING chain (0718, decoded from BIOS 0x4bd0/0x2e2e/0x3bae):
+       * sub writes a disc-status block to Word-RAM $200400; the $A12003 DMNA/RET
+       * swap hands it to main; 0x4bd0 copies WordRAM $200400/402/404 -> $FFD01C/
+       * 1E/20; 0x2e2e turns a nonzero $D01C into $D04A bit1/2; the $D000 state
+       * machine then climbs to 0x3bae which sets $D007 bit7 -> mode 0x10. The
+       * dead link (ours AND picodrive): $FFD01C stays 0. Show the whole chain. */
+      #define WRAM(o) ((SCD.word_ram[((o)+1)^1]<<8)|SCD.word_ram[(o)^1])
+      printf("  CROSSING chain: WordRAM $200400=%04x $200402=%04x $200404=%04x  ->"
+             "  $D01C=%02x%02x $D01E=%02x%02x $D020=%02x%02x  |  $D000(state)=%02x%02x"
+             "  $D04A=%02x%02x  $D007=%02x  A12003(DMNA/RET)=%02x\n",
+             WRAM(0x400), WRAM(0x402), WRAM(0x404),
+             M68K_RAM[0xd01c^1], M68K_RAM[0xd01d^1], M68K_RAM[0xd01e^1], M68K_RAM[0xd01f^1],
+             M68K_RAM[0xd020^1], M68K_RAM[0xd021^1], M68K_RAM[0xd000^1], M68K_RAM[0xd001^1],
+             M68K_RAM[0xd04a^1], M68K_RAM[0xd04b^1], M68K_RAM[0xd007^1], SCD.s68k_regs[0x03]);
+      #undef WRAM
+    }
     { extern uint32_t scd_dbg_mainstamp_hits;
       printf("[boot] MAIN stamp-draw (0x5f00-0x6e00) sub-slice hits=%u  %s\n",
              scd_dbg_mainstamp_hits,
