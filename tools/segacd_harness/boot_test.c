@@ -119,7 +119,15 @@ int main(int argc, char **argv)
     /* --- run frames, watch boot progress --- */
     uint32_t last_fb = 0;
     int prev_running = 0;
+#ifdef SEGACD_GA_TRACE
+    extern int scd_dbg_frame;
+    int vblank_ie_first_frame = -1;
+#endif
     for (int frame=0; frame<FRAMES; frame++) {
+#ifdef SEGACD_GA_TRACE
+        scd_dbg_frame = frame;
+        if (vblank_ie_first_frame < 0 && REG1_VBLANK_INTERRUPT) vblank_ie_first_frame = frame;
+#endif
         button_state[0]=0xFF;
         md_scanline_frame();                 /* main 68K + VDP (BIOS runs here) */
         if (!prev_running && SCD.sub_running) {  /* sub just released — pristine image */
@@ -270,6 +278,43 @@ int main(int argc, char **argv)
     for (int i = 0; i < 16; i++)
         if (scd_dbg_cdd_cmd_hist[i])
             printf("  cmd 0x%x: %u\n", i, scd_dbg_cdd_cmd_hist[i]);
+
+    /* --- boot-stall investigation (0716): who pulses $A12000, is MAIN's
+     * VBlank interrupt-enable ever set, and where was the sub parked at each
+     * IFL2/CDD delivery. --- */
+    printf("[boot] REG1 VBLANK_INTERRUPT (IE0) first seen enabled at frame=%d (-1=never)\n",
+           vblank_ie_first_frame);
+    extern uint32_t scd_dbg_a12000_frame[], scd_dbg_a12000_pc[]; extern int scd_dbg_a12000_n;
+    printf("[boot] $A12000 doorbell writes (%d logged, total wr=%u): ", scd_dbg_a12000_n, scd_ga_wr[0]);
+    for (int i = 0; i < scd_dbg_a12000_n; i++)
+        printf("[f%u pc=%06x] ", scd_dbg_a12000_frame[i], scd_dbg_a12000_pc[i]);
+    printf("\n");
+    extern uint32_t scd_dbg_deliver2_frame[], scd_dbg_deliver2_pc[]; extern int scd_dbg_deliver2_n;
+    printf("[boot] level-2 (IFL2) delivered to SUB (%d logged): ", scd_dbg_deliver2_n);
+    for (int i = 0; i < scd_dbg_deliver2_n; i++)
+        printf("[f%u subPC=%06x] ", scd_dbg_deliver2_frame[i], scd_dbg_deliver2_pc[i]);
+    printf("\n");
+    extern uint32_t scd_dbg_deliver4_frame[], scd_dbg_deliver4_pc[]; extern int scd_dbg_deliver4_n;
+    printf("[boot] level-4 (CDD) delivered to SUB (%d logged): ", scd_dbg_deliver4_n);
+    for (int i = 0; i < scd_dbg_deliver4_n; i++)
+        printf("[f%u subPC=%06x] ", scd_dbg_deliver4_frame[i], scd_dbg_deliver4_pc[i]);
+    printf("\n");
+
+    /* Dump MAIN's work RAM (BE-reconstructed, same ^1 pair-swap convention as
+     * PRG-RAM — see segacd_bus.c's byte-order comment) so the installed
+     * exception vector handlers (copied into RAM by the BIOS at boot; the
+     * vector table in ROM points into $FFxxxx, not ROM) can be disassembled
+     * offline. */
+    { extern unsigned char *M68K_RAM;
+      FILE *r = fopen("/tmp/scd/main_ram.bin", "wb");
+      if (r) { for (unsigned o = 0; o < 0x10000; o += 2) {
+                  /* M68K_RAM[addr^1] holds the logical big-endian byte at
+                   * `addr` (same ^1 pair-swap READ_BYTE/WRITE_BYTE convention
+                   * as PRG-RAM — verified against main_prgwin_write8/PRGW). */
+                  unsigned char be[2] = { M68K_RAM[o^1], M68K_RAM[(o+1)^1] };
+                  fwrite(be, 1, 2, r); }
+               fclose(r);
+               printf("[boot] wrote /tmp/scd/main_ram.bin (0x0..0x10000 BE, addr base $FF0000)\n"); } }
 #endif
     return 0;
 }

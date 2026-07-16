@@ -42,6 +42,16 @@ void segacd_poll_wake(void)
 #ifdef SEGACD_GA_TRACE
 uint32_t scd_ga_rd[SEGACD_GA_REGS], scd_ga_wr[SEGACD_GA_REGS];       /* main side */
 uint32_t scd_sga_rd[SEGACD_GA_REGS], scd_sga_wr[SEGACD_GA_REGS];     /* sub side  */
+
+/* Boot-stall investigation (0716): who wrote $A12000 (the IFL2/INT2 doorbell)
+ * and when. On real hardware this is MAIN's own VBlank ISR, pulsed every
+ * frame; our run showed exactly one pulse ever (see segacd/CLAUDE.md /
+ * session notes) — log (frame, PC) for every write so we can tell whether it
+ * came from a VINT handler (expected to repeat) or a one-shot boot-time poke. */
+#define SCD_DBG_A12000_LOG_N 8
+extern int scd_dbg_frame;
+uint32_t scd_dbg_a12000_frame[SCD_DBG_A12000_LOG_N], scd_dbg_a12000_pc[SCD_DBG_A12000_LOG_N];
+int scd_dbg_a12000_n;
 #define GA_RD(reg)  (scd_ga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
 #define GA_WR(reg)  (scd_ga_wr[(reg) & (SEGACD_GA_REGS-1)]++)
 #define SGA_RD(reg) (scd_sga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
@@ -382,6 +392,13 @@ static void main_ga_write8(unsigned int address, unsigned int data)
          * (it enables interrupts only after the doorbell already arrived). */
         SCD.ga_ifl2 = (uint8_t)(data & 0x01);
         segacd_poll_wake();
+#ifdef SEGACD_GA_TRACE
+        if (scd_dbg_a12000_n < SCD_DBG_A12000_LOG_N) {
+            scd_dbg_a12000_frame[scd_dbg_a12000_n] = (uint32_t)scd_dbg_frame;
+            scd_dbg_a12000_pc[scd_dbg_a12000_n] = m68k.pc;
+            scd_dbg_a12000_n++;
+        }
+#endif
         return;
     }
 
