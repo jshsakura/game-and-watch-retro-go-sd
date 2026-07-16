@@ -190,6 +190,123 @@ static void phase_report(int frames, uint32_t ipt_x1000, uint64_t sh2_guest_avg)
 }
 #endif
 
+/* ==== frame histogram ====================================================== */
+#ifdef RIG_FRAME_HIST
+/* Per-frame host-instruction cost distribution. The single average hides
+ * bimodal drawn/skip cost and demo-scene drift; the histogram exposes the
+ * spread (p50/p90/p95/p99) so two runs can be compared by distribution
+ * shape, not just mean. Byte-identical to an off build: collects data only,
+ * never alters PicoFrame's control flow. */
+static uint32_t s_fh_drawn[RIG_FRAMES];
+static uint32_t s_fh_skip[RIG_FRAMES];
+static uint32_t s_fh_n_drawn, s_fh_n_skip;
+
+static int fh_cmp(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return (x < y) ? -1 : (x > y) ? 1 : 0;
+}
+
+static void fh_report(const char *tag, const uint32_t *arr, uint32_t n) {
+    if (n == 0) { printf("[32x-hist] %s: n=0\n", tag); return; }
+    uint32_t *tmp = (uint32_t *)malloc(sizeof(uint32_t) * n);
+    if (!tmp) { printf("[32x-hist] %s: alloc fail n=%u\n", tag, n); return; }
+    memcpy(tmp, arr, sizeof(uint32_t) * n);
+    qsort(tmp, n, sizeof(uint32_t), fh_cmp);
+    uint32_t mn = tmp[0], mx = tmp[n - 1];
+    uint64_t sum = 0;
+    for (uint32_t i = 0; i < n; i++) sum += tmp[i];
+    printf("[32x-hist] %s: n=%u min=%u max=%u avg=%llu p50=%u p90=%u p95=%u p99=%u\n",
+           tag, n, mn, mx, (unsigned long long)(sum / n),
+           tmp[(uint32_t)((uint64_t)n * 50 / 100)],
+           tmp[(uint32_t)((uint64_t)n * 90 / 100)],
+           tmp[(uint32_t)((uint64_t)n * 95 / 100)],
+           tmp[(uint32_t)((uint64_t)n * 99 / 100)]);
+    if (mx > mn) {
+        uint32_t bins[20] = {0};
+        uint64_t span = (uint64_t)mx - mn;
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t b = (uint32_t)(((uint64_t)(tmp[i] - mn) * 20) / span);
+            if (b >= 20) b = 19;
+            bins[b]++;
+        }
+        printf("[32x-hist] %s 20-bin distribution:\n", tag);
+        for (int b = 0; b < 20; b++) {
+            uint64_t lo = mn + span * (unsigned)b / 20;
+            uint64_t hi = mn + span * (unsigned)(b + 1) / 20;
+            int bar = (int)((uint64_t)bins[b] * 40 / n);
+            printf("[32x-hist]   [%9llu-%9llu) %6u  %.*s\n",
+                   (unsigned long long)lo, (unsigned long long)hi, bins[b],
+                   bar, "****************************************");
+        }
+    }
+    free(tmp);
+}
+#endif /* RIG_FRAME_HIST */
+
+/* ==== SH-2 guest-PC histogram ============================================== */
+#ifdef RIG_SH2_PC_HIST
+/* Reads the sparse tables filled by sh2pico.c's RIG_PC_HIST_TICK (one per core:
+ * master/slave). Top-N PCs by total guest-instruction count, with direct vs
+ * delay-slot breakdown, cumulative %, and SH-2 disassembly of each hot PC.
+ * Run fastloop-OFF first to see the loops fastloop kills, then ON to see the
+ * residual hot set. */
+#include "cpu/sh2/mame/sh2dasm.h"
+#define RIG_PC_HIST_SLOTS 8192
+struct rig_pc_slot {
+    uint32_t pc;
+    uint32_t occupied;
+    uint16_t opcode;
+    unsigned long long dir;
+    unsigned long long dly;
+};
+extern struct rig_pc_slot rig_pchist[2][RIG_PC_HIST_SLOTS];
+
+struct rig_pc_top { uint32_t pc; uint32_t core; uint16_t opcode; unsigned long long dir, dly, total; };
+
+static int rig_pchist_cmp(const void *a, const void *b) {
+    const struct rig_pc_top *x = a, *y = b;
+    return (x->total < y->total) ? 1 : (x->total > y->total) ? -1 : 0;
+}
+
+static void rig_pchist_report(void) {
+    struct rig_pc_top *top = (struct rig_pc_top *)malloc(sizeof(*top) * 2 * RIG_PC_HIST_SLOTS);
+    if (!top) { printf("[32x-pchist] alloc fail\n"); return; }
+    unsigned long long grand = 0;
+    unsigned n = 0;
+    for (int c = 0; c < 2; c++) {
+        for (unsigned i = 0; i < RIG_PC_HIST_SLOTS; i++) {
+            if (!rig_pchist[c][i].occupied) continue;
+            unsigned long long d = rig_pchist[c][i].dir;
+            unsigned long long dl = rig_pchist[c][i].dly;
+            unsigned long long t = d + dl;
+            if (t == 0) continue;
+            top[n].pc = rig_pchist[c][i].pc;
+            top[n].core = (uint32_t)c;
+            top[n].opcode = rig_pchist[c][i].opcode;
+            top[n].dir = d; top[n].dly = dl; top[n].total = t;
+            grand += t;
+            n++;
+        }
+    }
+    qsort(top, n, sizeof(*top), rig_pchist_cmp);
+    unsigned shown = n < 50 ? n : 50;
+    printf("[32x-pchist] %u unique PCs, %llu total guest SH-2 insns; top %u:\n",
+           n, grand, shown);
+    unsigned long long acc = 0;
+    for (unsigned i = 0; i < shown; i++) {
+        acc += top[i].total;
+        char dasm[80] = "";
+        DasmSH2(dasm, top[i].pc, top[i].opcode);
+        printf("[32x-pchist]  #%-2u %-6s 0x%08x  dir=%-10llu dly=%-10llu  %5.2f%%  cum %5.2f%%  %s\n",
+               i + 1, top[i].core ? "slave" : "master", top[i].pc,
+               top[i].dir, top[i].dly,
+               grand ? 100.0 * top[i].total / grand : 0.0,
+               grand ? 100.0 * acc / grand : 0.0, dasm);
+    }
+    free(top);
+}
+#endif /* RIG_SH2_PC_HIST */
+
 /* ==== video ================================================================ */
 static uint16_t s_fb[320 * 240];
 static int out_line = (240 - 224) / 2;
@@ -458,8 +575,16 @@ int main(void) {
             tot += insn; sh2_tot += sh2_d;
             if (insn < mn) mn = insn;
             if (insn > mx) mx = insn;
-            if (skipf) { tot_skip += insn; n_skip++; }
-            else       { tot_drawn += insn; n_drawn++; }
+            if (skipf) { tot_skip += insn; n_skip++;
+#ifdef RIG_FRAME_HIST
+                         if (s_fh_n_skip < RIG_FRAMES) s_fh_skip[s_fh_n_skip++] = (uint32_t)insn;
+#endif
+                       }
+            else       { tot_drawn += insn; n_drawn++;
+#ifdef RIG_FRAME_HIST
+                         if (s_fh_n_drawn < RIG_FRAMES) s_fh_drawn[s_fh_n_drawn++] = (uint32_t)insn;
+#endif
+                       }
             if (f < RIG_WARMUP + 500)   tot_w1 += insn;
             if (f >= RIG_FRAMES - 500)  tot_w2 += insn;
         }
@@ -491,7 +616,14 @@ int main(void) {
                (unsigned long)(100 * (tot_skip / n_skip) / (tot_drawn / n_drawn)));
     if (RIG_FRAMES >= RIG_WARMUP + 1000)   /* disjoint windows only */
         printf("[32x-qemu] drift: first500 avg=%lu  last500 avg=%lu\n",
-               (unsigned long)(tot_w1 / 500), (unsigned long)(tot_w2 / 500));
+                (unsigned long)(tot_w1 / 500), (unsigned long)(tot_w2 / 500));
+#ifdef RIG_FRAME_HIST
+    fh_report("drawn", s_fh_drawn, s_fh_n_drawn);
+    fh_report("skipped", s_fh_skip, s_fh_n_skip);
+#endif
+#ifdef RIG_SH2_PC_HIST
+    rig_pchist_report();
+#endif
     phase_report(n, ipt_x1000, n > 0 ? sh2_tot / n : 0);
     printf("[32x-qemu] fb f%d=%08lx(nb=%d) f%d=%08lx(nb=%d) f%d=%08lx(nb=%d)\n",
            CK_A, (unsigned long)cks100, nb100, CK_B, (unsigned long)cks300, nb300,

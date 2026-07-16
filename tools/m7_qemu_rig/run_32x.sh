@@ -23,6 +23,10 @@ OPT="-O2 -g -fno-strict-aliasing -ffunction-sections -fdata-sections -fcommon"
 DEF="-DGNW_32X_CORE -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DRIG_SH2_COUNT -DRIG_FRAMES=$FRAMES ${EXTRA_DEF:-}"
 # PHASE_PROF=1: per-phase cost table (picodrive pprof probes, icount clock)
 if [ "${PHASE_PROF:-0}" = "1" ]; then DEF="$DEF -DRIG_PHASE_PROF"; fi
+# FRAME_HIST=1: per-frame host-instruction distribution (p50/p90/p95/p99 + 20 bins)
+if [ "${FRAME_HIST:-0}" = "1" ]; then DEF="$DEF -DRIG_FRAME_HIST"; fi
+# SH2_PC_HIST=1: SH-2 guest-PC histogram (top-50 hot PCs per core, direct/delay split)
+if [ "${SH2_PC_HIST:-0}" = "1" ]; then DEF="$DEF -DRIG_SH2_PC_HIST"; fi
 INC="-I$PD -I$PD/pico -I$PD/cpu -I$PD/zlib"
 
 # ROM -> byteswap (mirror the device flash cache byte_swap=true: the GNW
@@ -41,7 +45,7 @@ EOF
 # The device overlay's trimmed picodrive set (Makefile MD32X_C_SOURCES /
 # gen_md32x_redefines.sh) + zlib/crc32.c standing in for the firmware crc32_le.
 SRCS="
-cpu/sh2/sh2.c cpu/sh2/mame/sh2pico.c
+cpu/sh2/sh2.c cpu/sh2/mame/sh2pico.c cpu/sh2/mame/sh2dasm.c
 cpu/gwenesis68k/m68kcpu.c cpu/gwenesis68k/g68k_bus.c cpu/cz80/cz80.c
 pico/32x/32x.c pico/32x/draw.c pico/32x/memory.c pico/32x/pwm.c pico/32x/sh2soc.c
 pico/cart.c pico/memory.c pico/draw.c pico/sek.c pico/videoport.c
