@@ -64,8 +64,9 @@ static double now_ns(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t)
  * cpu68k x (208333 / main_cycles_per_frame). Safe (no run into unmapped space). */
 static double g_cpu68k;
 static unsigned g_main_cycles;   /* main-68K cycles advanced this frame */
-static uint32_t g_audio_hash = 2166136261u;   /* YM2612 output hash (losslessness) */
+static uint32_t g_audio_hash = 2166136261u;   /* YM2612+PSG output hash (losslessness) */
 static double g_ym_ns;                          /* time in ym2612_run */
+static double g_psg_ns;                          /* time in gwenesis_SN76489_run */
 #define RUN68K(t) do { unsigned _b=m68k.cycles; double _c=now_ns(); m68k_run(t); \
     g_cpu68k += now_ns()-_c; g_main_cycles += (unsigned)(m68k.cycles-_b); } while(0)
 
@@ -79,8 +80,13 @@ int main(int argc, char **argv)
     fseek(f,0,SEEK_END); long n=ftell(f); fseek(f,0,SEEK_SET);
     unsigned char *rom = malloc(n); if(fread(rom,1,n,f)!=(size_t)n){return 1;} fclose(f);
 
-    /* Under LINUX_EMU, load_cartridge byte-swaps in place — feed the raw
-     * big-endian .bin (no pre-swap, or the ROM double-swaps to garbage). */
+    /* HARNESS-FIRST: the 68K reads code through the bus ROM_SWAP path, which is
+     * NOT the same path load_cartridge reads the header through — so a correct
+     * header does NOT prove correct code. update_gwenesis_rom.sh pair-swaps the
+     * .bin before the core sees it; do the same, or the 68K executes wrong-endian
+     * garbage (illegal-op storm, no register writes, all games hash identically —
+     * the tell that the games are NOT running). */
+    for(long i=0;i+1<n;i+=2){ unsigned char t=rom[i]; rom[i]=rom[i+1]; rom[i+1]=t; }
     ROM_DATA = rom; ROM_DATA_LENGTH = (unsigned)n;
     /* Order matches linux/gwenesis/main.c (works on x86): power_on builds the
      * memory_map + m68k_init, THEN reset_emulation pulse-resets. */
@@ -116,13 +122,15 @@ int main(int argc, char **argv)
             RUN68K(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE);
             gwenesis_vdp_render_line(line); system_clock+=VDP_CYCLES_PER_LINE; }
           skip_first_vint=0; }
-        gwenesis_SN76489_run(system_clock);
+        double p0=now_ns(); gwenesis_SN76489_run(system_clock); g_psg_ns += now_ns()-p0;
         double y0=now_ns(); ym2612_run(system_clock); g_ym_ns += now_ns()-y0;
         m68k.cycles-=system_clock;
         double t1=now_ns();
-        /* Losslessness check: hash the YM2612 output each frame. A correct sound
-         * optimization must leave this byte-identical. */
-        for(int k=0;k<GWENESIS_AUDIO_BUFFER_CAPACITY;k++){ g_audio_hash=(g_audio_hash^(uint32_t)(uint16_t)gwenesis_ym2612_buffer[k])*16777619u; }
+        /* Losslessness check: hash BOTH sound chip outputs each frame. A correct
+         * sound optimization must leave this byte-identical. */
+        for(int k=0;k<GWENESIS_AUDIO_BUFFER_CAPACITY;k++){
+            g_audio_hash=(g_audio_hash^(uint32_t)(uint16_t)gwenesis_ym2612_buffer[k])*16777619u;
+            g_audio_hash=(g_audio_hash^(uint32_t)(uint16_t)gwenesis_sn76489_buffer[k])*16777619u; }
 
         /* sub cost = cpu68k scaled to the sub's 12.5MHz cycle budget. */
         double sub = (g_main_cycles>0) ? g_cpu68k * (double)SUB_CYCLES_PER_FRAME / g_main_cycles : 0;
@@ -132,6 +140,6 @@ int main(int argc, char **argv)
     double mul = (tot_emu>0)?(tot_emu+tot_sub)/tot_emu:0;
     printf("emu=%.0fns sub=%.0fns  ->  dual/MD multiplier = x%.2f  (+PCM/ASIC ~+15%% => ~x%.2f)\n",
            tot_emu, tot_sub, mul, mul*1.15);
-    printf("YM2612: %.0fns total  audio_hash=%08x\n", g_ym_ns, g_audio_hash);
+    printf("YM2612: %.0fns  SN76489: %.0fns  audio_hash=%08x\n", g_ym_ns, g_psg_ns, g_audio_hash);
     return 0;
 }
