@@ -135,11 +135,16 @@ int main(int argc, char **argv)
         segacd_cdd_process();
         segacd_cd_update();
 
-        if ((frame % 60) == 0) {
+        int sample_period = (frame > 60 && frame < 140) ? 5 : 60;
+        if ((frame % sample_period) == 0) {
             uint32_t h = 2166136261u; for(int k=0;k<320*240;k++) h=(h^s_fb[k])*16777619u;
-            printf("[boot] f%-4d sub_running=%d subPC=%06x idle=%u cdd_status=%02x fb=%08x %s\n",
-                   frame, SCD.sub_running, (unsigned)SCD.sub_ctx.pc, (unsigned)SCD.sub_idle,
-                   SCD.s68k_regs[0x38 & (SEGACD_GA_REGS-1)], h,
+            printf("[boot] f%-4d sub_running=%d subPC=%06x mainPC=%06x idle=%u cdd_status=%02x "
+                   "cmd=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x %s\n",
+                   frame, SCD.sub_running, (unsigned)SCD.sub_ctx.pc, (unsigned)m68k.pc, (unsigned)SCD.sub_idle,
+                   SCD.s68k_regs[0x38 & (SEGACD_GA_REGS-1)],
+                   SCD.s68k_regs[0x42],SCD.s68k_regs[0x43],SCD.s68k_regs[0x44],SCD.s68k_regs[0x45],
+                   SCD.s68k_regs[0x46],SCD.s68k_regs[0x47],SCD.s68k_regs[0x48],SCD.s68k_regs[0x49],
+                   SCD.s68k_regs[0x4a],SCD.s68k_regs[0x4b],
                    (h!=last_fb)?"(VDP active)":"");
             last_fb = h;
         }
@@ -184,13 +189,15 @@ int main(int argc, char **argv)
         for (unsigned o=0x202; o<end; o+=2) sum += PRGW(o);
         printf("[boot] checksum sum(0x202..%06x)=%04x  expected@0x18e=%04x  %s\n",
                end, sum, PRGW(0x18e), (sum==PRGW(0x18e))?"MATCH":"MISMATCH");
-        /* Dump what the sub sees (BE-reconstructed) for 0x100..0x5800 so we can
-         * diff against the sub-BIOS source embedded in the region BIOS image. */
+        /* Dump what the sub sees (BE-reconstructed) for 0x0..0x10000 so we can
+         * diff against the sub-BIOS source embedded in the region BIOS image.
+         * Wider than the checksummed region (0x5800): interrupt vectors/handlers
+         * and CDD command tables live past the checksum window. */
         FILE *d=fopen("/tmp/scd/prg_subbios.bin","wb");
-        if(d){ for(unsigned o=0x0;o<0x5800;o+=2){ uint16_t w=PRGW(o);
+        if(d){ for(unsigned o=0x0;o<0x10000;o+=2){ uint16_t w=PRGW(o);
                  unsigned char be[2]={(unsigned char)(w>>8),(unsigned char)(w&0xff)};
                  fwrite(be,1,2,d);} fclose(d);
-               printf("[boot] wrote /tmp/scd/prg_subbios.bin (0x0..0x5800 BE)\n"); }
+               printf("[boot] wrote /tmp/scd/prg_subbios.bin (0x0..0x10000 BE)\n"); }
         /* Was every byte of the checksummed region written by the main PRG window,
          * or did non-zero bytes arrive via some path our ^1 fix doesn't cover? */
         extern uint8_t scd_dbg_prg_written[];
@@ -233,6 +240,11 @@ int main(int argc, char **argv)
     for (int r = 0; r < SEGACD_GA_REGS; r++)
         if (scd_sga_rd[r] || scd_sga_wr[r])
             printf("  $FF80%02x  rd=%-8u wr=%-8u\n", r, scd_sga_rd[r], scd_sga_wr[r]);
+    extern uint32_t scd_dbg_cdd_cmd_hist[];
+    printf("[boot] CDD command histogram (nibble: count):\n");
+    for (int i = 0; i < 16; i++)
+        if (scd_dbg_cdd_cmd_hist[i])
+            printf("  cmd 0x%x: %u\n", i, scd_dbg_cdd_cmd_hist[i]);
 #endif
     return 0;
 }
