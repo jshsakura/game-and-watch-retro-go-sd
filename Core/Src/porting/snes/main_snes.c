@@ -202,7 +202,15 @@ static uint16_t read_snes_pad(odroid_gamepad_state_t *joy) {
 static uint16_t snes_line[256];
 static uint16_t snes_frame[GW_LCD_WIDTH * GW_LCD_HEIGHT];
 
+/* DEBUG (strip later): does the PPU line callback fire on device, and does it hand
+ * us any non-black pixels? cb=0 => callback never invoked (linkage). cb>0 & or=0 =>
+ * PpuDrawWholeLine writes an all-black scratch line (compositing/palette diverges). */
+static volatile uint32_t g_dbg_cb_count;
+static volatile uint16_t g_dbg_line_or;
+
 static void snes_blit_line(unsigned y, const uint16_t *line) {
+  g_dbg_cb_count++;
+  for (int i = 0; i < 256; i++) g_dbg_line_or |= line[i];
   if (y < 1 || y > GW_LCD_HEIGHT)   /* y is 1-based; guard the 240-row panel */
     return;
   memcpy(snes_frame + (y - 1) * GW_LCD_WIDTH + 32, line, sizeof(snes_line));
@@ -469,6 +477,7 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * screen) and the layer-enable byte. Appended to /snes_diag.txt. */
   {
     memset(snes_frame, 0, sizeof(snes_frame));
+    g_dbg_cb_count = 0; g_dbg_line_or = 0;
     for (int i = 0; i < 500; i++) {
       wdog_refresh();
       g_ppu_skip_render = false;
@@ -478,12 +487,16 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     int lit = 0;
     for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++)
       if (snes_frame[i]) lit++;
+    uint16_t cg0 = snes->ppu->cgram[0], cg1 = snes->ppu->cgram[1],
+             cg2 = snes->ppu->cgram[2], cgFF = snes->ppu->cgram[255];
     FILE *df = fopen("/snes_diag.txt", "a");
     if (df) {
-      fprintf(df, "SNES warmup500: lit=%d/%d forcedBlank=%d brightness=%d line0=%04X\n",
-              lit, GW_LCD_WIDTH * GW_LCD_HEIGHT,
-              (int)snes->ppu->forcedBlank, (int)snes->ppu->brightness,
-              snes_frame[120 * GW_LCD_WIDTH + 160]);   /* a center pixel */
+      fprintf(df, "SNES warmup500: lit=%d/%d cb=%lu lineOR=%04X fblank=%d bright=%d "
+                  "mode=%d cgram=%04X %04X %04X ..%04X\n",
+              lit, GW_LCD_WIDTH * GW_LCD_HEIGHT, (unsigned long)g_dbg_cb_count,
+              (unsigned)g_dbg_line_or, (int)snes->ppu->forcedBlank,
+              (int)snes->ppu->brightness,
+              (int)snes->ppu->mode, cg0, cg1, cg2, cgFF);
       fclose(df);
     }
   }
