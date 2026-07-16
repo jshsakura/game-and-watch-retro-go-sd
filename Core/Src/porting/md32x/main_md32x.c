@@ -180,12 +180,15 @@ static uint16_t read_md_pad(odroid_gamepad_state_t *j) {
  * buffer intact). Geometry is centered from picodrive's own mode callback so
  * H32(256)/H40(320) and PAL/NTSC line counts stay centered with no stale
  * margins. */
-static int md32x_out_line = (240 - 224) / 2;   /* top margin, updated on mode change */
-static int md32x_out_col  = 0;                 /* left margin */
-
+/* Buffer stays at the framebuffer ORIGIN, full 320x240 pitch. picodrive
+ * CENTERS content itself (V28 renders at rows 8..231; 32X is always 320
+ * wide) and emu_video_mode_change only REPORTS the content rect — the
+ * libretro frontend crops, it never re-points the buffer. The first device
+ * build added its own margin on top: top band doubled to 16 rows and the
+ * bottom 8 content rows were written PAST the framebuffer (into the other
+ * buffer's head). */
 static void set_out_buffer(void) {
-  uint16_t *fb = lcd_get_active_buffer();
-  PicoDrawSetOutBuf(fb + md32x_out_line * 320 + md32x_out_col, 320 * 2);
+  PicoDrawSetOutBuf(lcd_get_active_buffer(), 320 * 2);
 }
 
 /* picodrive frontend hooks (referenced by pico/draw.c and pico/32x/32x.c). Not
@@ -202,9 +205,10 @@ void emu_32x_startup(void) {
 }
 
 void emu_video_mode_change(int start_line, int line_count, int start_col, int col_count) {
-  (void)start_line; (void)start_col;
-  md32x_out_line = (240 - line_count) / 2; if (md32x_out_line < 0) md32x_out_line = 0;
-  md32x_out_col  = (320 - col_count)  / 2; if (md32x_out_col  < 0) md32x_out_col  = 0;
+  (void)start_line; (void)line_count; (void)start_col; (void)col_count;
+  /* Mode changes are rare; wipe both buffers so stale borders don't linger
+   * (libretro memsets its vout buffer here for the same reason). */
+  lcd_clear_buffers();
   set_out_buffer();
 }
 
