@@ -493,7 +493,7 @@ int main(int argc, char *argv[])
     init_window(WIDTH, HEIGHT);
 
     odroid_system_init(APP_ID, AUDIO_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL);
+    odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL, NULL);
 
     FCEUI_Initialize();
 
