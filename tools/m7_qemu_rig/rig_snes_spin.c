@@ -24,6 +24,7 @@
 #include "src/snes/cpu.h"
 #include "src/snes/dma.h"
 #include "src/snes/input.h"
+#include "src/snes/spin_skip.h"   /* the ONE learner (core code, device-identical) */
 
 #ifndef RIG_FRAMES
 #define RIG_FRAMES 1200
@@ -66,64 +67,8 @@ static uint16_t g_fb[320 * 240];
 static int16_t  g_audio[16000 / 60];
 static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
-/* ---- purity counters (hooked cpu copy calls these) ---- */
-uint64_t g_write_seq;
-static uint64_t g_io_seq;
-void snes_spin_read(Cpu *cpu, uint32_t adr) {
-  uint32_t pcb = ((uint32_t)cpu->k << 16) | cpu->pc;
-  if (adr - (pcb - 6) <= 12) return;
-  uint8_t bank = adr >> 16;
-  uint16_t off = (uint16_t)adr;
-  bool wram = (bank == 0x7e || bank == 0x7f) ||
-              (off < 0x2000 && (bank < 0x40 || (bank >= 0x80 && bank < 0xc0)));
-  if (wram) return;
-  bool rom = (off >= 0x8000) || (bank >= 0x40 && bank < 0x7e) || (bank >= 0xc0);
-  if (rom) return;
-  g_io_seq++;
-}
-
-/* ---- spin skip machinery (verbatim from skip_harness.c) ---- */
-static uint64_t g_ops_real, g_ops_virtual;
-
-#define PMAX 8
-static struct { uint32_t pc[PMAX]; uint8_t charge[PMAX]; int len, idx; bool on; } sp;
-
-#define LR 16
-static struct { uint32_t pc; uint8_t charge; uint64_t w, io, r1, r2; } lr[LR];
-static int lr_h, lr_n;
-
-static void spin_note(uint32_t pc24, uint8_t charge, int dispatched,
-                      uint64_t r1, uint64_t r2) {
-  if (sp.on) {
-    if (dispatched || pc24 != sp.pc[sp.idx]) sp.on = false;
-    else sp.idx = (sp.idx + 1) % sp.len;
-  }
-  lr[lr_h].pc = pc24; lr[lr_h].charge = charge;
-  lr[lr_h].w = g_write_seq; lr[lr_h].io = g_io_seq;
-  lr[lr_h].r1 = r1; lr[lr_h].r2 = r2;
-  lr_h = (lr_h + 1) % LR; if (lr_n < LR) lr_n++;
-  if (sp.on || dispatched) return;
-
-  for (int d = 1; d <= PMAX && 2 * d + 1 <= lr_n; d++) {
-    int j = (lr_h - 1 - d + LR) % LR;
-    if (lr[j].pc != pc24) continue;
-    if (lr[j].r1 != r1 || lr[j].r2 != r2) return;
-    int oldest = (lr_h - 1 - 2 * d + LR) % LR;
-    if (lr[oldest].w != g_write_seq || lr[oldest].io != g_io_seq) return;
-    if (lr[oldest].pc != pc24) return;
-    if (lr[oldest].r1 != r1 || lr[oldest].r2 != r2) return;
-    for (int q = 1; q < d; q++) {
-      int a = (lr_h - 1 - q + LR) % LR, b = (lr_h - 1 - q - d + LR) % LR;
-      if (lr[a].pc != lr[b].pc || lr[a].charge != lr[b].charge) return;
-    }
-    for (int q = 0; q < d; q++) {
-      int a = (lr_h - d + q + LR) % LR;
-      sp.pc[q] = lr[a].pc; sp.charge[q] = lr[a].charge;
-    }
-    sp.len = d; sp.idx = 0; sp.on = true;
-    return;
-  }
-}
+/* Learner + purity hooks live in src/snes/spin_skip.c (cpu.c calls them under
+ * SNES_SPIN_SKIP) — this rig compiles the exact core the device compiles. */
 
 /* ---- event loop (rig layout; run_dots grows the replay branch) ---- */
 static int dots_to_next_event(Snes *snes) {
@@ -151,16 +96,11 @@ static int run_one_opcode(Snes *snes) {
   Cpu *cpu = snes->cpu;
   uint32_t pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
   int disp = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) && !cpu->stopped;
-  uint64_t r1 = (uint64_t)cpu->a | ((uint64_t)cpu->x << 16) |
-                ((uint64_t)cpu->y << 32) | ((uint64_t)cpu->sp << 48);
-  uint64_t r2 = (uint64_t)cpu->dp | ((uint64_t)cpu->k << 16) |
-                ((uint64_t)cpu->db << 24) | ((uint64_t)cpu_getFlags(cpu) << 32) |
-                ((uint64_t)cpu->e << 40);
   snes->cpuMemOps = 0;
   int cycles = cpu_runOpcode(cpu);
   snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
-  g_ops_real++;
-  spin_note(pc24, (uint8_t)snes->cpuCyclesLeft, disp, r1, r2);
+  g_spin.ops_real++;
+  spin_note(cpu, pc24, (uint8_t)snes->cpuCyclesLeft, disp);
   return cycles;
 }
 
@@ -180,16 +120,16 @@ static void run_dots(Snes *snes, int dots) {
     }
     bool started_dma = false;
     if (snes->cpuCyclesLeft == 0) {
-      if (sp.on &&
+      if (g_spin.on &&
           !cpu->nmiWanted && !cpu->irqWanted && !cpu->waiting && !cpu->stopped &&
           !snes->hIrqEnabled &&
           !(snes->vIrqEnabled && snes->vPos == snes->vTimer) &&
-          (((uint32_t)cpu->k << 16) | cpu->pc) == sp.pc[sp.idx]) {
-        snes->cpuCyclesLeft += sp.charge[sp.idx];
-        sp.idx = (sp.idx + 1) % sp.len;
-        cpu->k  = (uint8_t)(sp.pc[sp.idx] >> 16);
-        cpu->pc = (uint16_t)sp.pc[sp.idx];
-        g_ops_virtual++;
+          (((uint32_t)cpu->k << 16) | cpu->pc) == g_spin.pc[g_spin.idx]) {
+        snes->cpuCyclesLeft += g_spin.charge[g_spin.idx];
+        g_spin.idx = (g_spin.idx + 1) % g_spin.len;
+        cpu->k  = (uint8_t)(g_spin.pc[g_spin.idx] >> 16);
+        cpu->pc = (uint16_t)g_spin.pc[g_spin.idx];
+        g_spin.ops_virtual++;
       } else {
         apply_irq_match(snes);
         run_one_opcode(snes);
@@ -220,6 +160,7 @@ static void run_frame_events(Snes *snes) {
     run_dots(snes, dots_to_next_event(snes));
   }
   snes_catchupApu(snes);
+  spin_frame_tick();   /* device-identical auto-gate */
 }
 
 static uint64_t fnv1a(const void *data, size_t len) {
@@ -250,9 +191,15 @@ int main(void) {
 
   Snes *snes = snes_init(g_wram);
   g_the_snes = snes;
+  spin_reset();
   if (!snes_loadRom(snes, rom, (int)rom_len)) { printf("unsupported ROM\n"); return 1; }
+#if !defined(GNW_SNES_CORE)
+  /* Host builds: the loader malloc'd a pow2 copy; reuse the linked-in image.
+   * GNW_SNES_CORE builds: cart_load already points at `rom` IN PLACE (zero-copy)
+   * — freeing it here would free the ROM itself. */
   free(snes->cart->rom);
   snes->cart->rom = rom;
+#endif
   printf("[snes-qemu] rom len=%lu frames=%d\n", (unsigned long)rom_len, RIG_FRAMES);
 
   uint64_t run_hash = 1469598103934665603ULL;
@@ -302,10 +249,10 @@ int main(void) {
          RIG_FRAMES, (unsigned long)(uint32_t)(run_hash ^ sh),
          (unsigned long)(tot_emu * ipt_x1000 / 1000 / frames),
          (unsigned long)(tot_apu * ipt_x1000 / 1000 / frames));
-  { double tot = (double)(g_ops_real + g_ops_virtual);
-    printf("[spin] real=%llu virt=%llu skipped=%.4f%%\n",
-           (unsigned long long)g_ops_real, (unsigned long long)g_ops_virtual,
-           tot > 0 ? 100.0 * g_ops_virtual / tot : 0.0); }
+  { double tot = (double)(g_spin.ops_real + g_spin.ops_virtual);
+    printf("[spin] real=%llu virt=%llu skipped=%.4f%% gate=%d\n",
+           (unsigned long long)g_spin.ops_real, (unsigned long long)g_spin.ops_virtual,
+           tot > 0 ? 100.0 * g_spin.ops_virtual / tot : 0.0, (int)g_spin.gate_on); }
 #ifdef RC_STATS
   { extern uint64_t g_rc_native, g_rc_interp;
     double tot = (double)(g_rc_native + g_rc_interp);

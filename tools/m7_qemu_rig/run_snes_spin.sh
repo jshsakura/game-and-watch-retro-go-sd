@@ -16,15 +16,11 @@ mkdir -p "$OUT"
 CC=arm-none-eabi-gcc
 ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
 OPT="-O2 -g -ffunction-sections -fdata-sections -ffp-contract=off"
-DEF="-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS -DRIG_FRAMES=$FRAMES -DRIG_WINDOW=${RIG_WINDOW:-200} ${RIG_EXTRA_DEF:-}"
+DEF="-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DHEADLESS -DRIG_FRAMES=$FRAMES -DRIG_WINDOW=${RIG_WINDOW:-200} ${RIG_EXTRA_DEF:-}"
 INC="-I$SM -I$RIG/shim -Itools/sm_harness/shim"
 
-# purity-hooked interpreter copy (same sed as tools/snes_spin/run_skip.sh)
-sed -e 's#return snes_cpuRead((Snes\*) cpu->mem, adr);#{ extern void snes_spin_read(Cpu*, uint32_t); snes_spin_read(cpu, adr); } return snes_cpuRead((Snes*) cpu->mem, adr);#' \
-    -e 's#snes_cpuWrite((Snes\*) cpu->mem, adr, val);#{ extern unsigned long long g_write_seq; g_write_seq++; } snes_cpuWrite((Snes*) cpu->mem, adr, val);#' \
-    "$SM/src/snes/cpu.c" > "$OUT/cpu_spin.c"
-grep -q "snes_spin_read" "$OUT/cpu_spin.c" || { echo "sed miss: spin_read" >&2; exit 1; }
-grep -q "g_write_seq"    "$OUT/cpu_spin.c" || { echo "sed miss: write_seq" >&2; exit 1; }
+# The purity hooks are IN cpu.c now (-DSNES_SPIN_SKIP): no sed copy — this rig
+# compiles the exact interpreter the device firmware compiles.
 
 cp "$ROM" "$OUT/rom.smc"
 (cd "$OUT" && arm-none-eabi-objcopy -I binary -O elf32-littlearm -B arm --rename-section .data=.rom_blob,alloc,load,readonly,data,contents rom.smc rom.o)
@@ -32,7 +28,7 @@ cp "$ROM" "$OUT/rom.smc"
 SRCS="$SM/src/snes/apu.c $SM/src/snes/cart.c \
       $SM/src/snes/dma.c $SM/src/snes/dsp.c $SM/src/snes/input.c \
       $SM/src/snes/ppu.c $SM/src/snes/snes.c $SM/src/snes/snes_other.c \
-      $SM/src/snes/spc.c $SM/src/tracing.c \
+      $SM/src/snes/spc.c $SM/src/snes/spin_skip.c $SM/src/snes/cpu.c $SM/src/tracing.c \
       $RIG/rig_runtime_hf.c $RIG/rig_snes_spin.c"
 
 OBJS=""
@@ -41,8 +37,7 @@ for s in $SRCS; do
     $CC -c $ARCH $OPT $DEF $INC -w "$s" -o "$o"
     OBJS="$OBJS $o"
 done
-$CC -c $ARCH $OPT $DEF $INC -I$SM/src/snes -w "$OUT/cpu_spin.c" -o "$OUT/cpu_spin.o"
-OBJS="$OBJS $OUT/cpu_spin.o $OUT/rom.o"
+OBJS="$OBJS $OUT/rom.o"
 
 $CC $ARCH -T "$RIG/mps2_an500_snes.ld" -nostartfiles -Wl,--gc-sections \
     $OBJS -lm -o "$OUT/rig_snes_spin.elf"
