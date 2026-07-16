@@ -55,11 +55,9 @@ ENTRY(Reset_Handler)
 /* Highest address of the user mode stack */
 _estack = _stack_top;    /* end of RAM */
 
-/* Generate a link error if heap and stack don't fit into RAM */
-_Heap_Size = 81 * 1024;     /* p8ram section removed — PICO-8 allocates from heap at runtime.
-                               Trimmed 85->81K to free DTCM after Atari Lynx (MAX_EMULATORS 22)
-                               grew emulators[]/systems[]; the stack-padding ASSERT was 64B over. */
-
+/* Stack is fixed at the top of DTCM; the stdlib heap (_heap_start.._heap_end)
+ * automatically fills whatever remains after .data/.bss (no hardcoded size).
+ * PICO-8 and other overlays allocate from this heap at runtime. */
 _Stack_Redzone_Size = 256;  /* size of stack overflow protection */
 _Min_Stack_Size = 24 * 1024; /* required amount of stack */
 
@@ -1543,26 +1541,30 @@ INCLUDE build/fceumm_mappers.ld
     __bss_end__ = _ebss;
   } >DTCMRAM
 
-  /* PICO-8 RAM removed — engine allocates 64KB from DTCM heap via dtcm_malloc */
-
-  ._user_heap :
+  /* Heap fills all DTCM left after .data/.bss up to the fixed stack at the
+   * top (redzone + _Min_Stack_Size + optional remote-input reserve). */
+  ._user_heap (NOLOAD) :
   {
     . = ALIGN(16);
-    _heap_start = . ;
-    . = . + _Heap_Size;
-    . = ALIGN(16);
-    _heap_end = . ;
+    _heap_start = .;
+    /* Alias for scripts/size.sh — "padding" is now the whole flexible heap. */
+    __dtc_padding_start__ = .;
+
+    /* Align down so . = _heap_limit never steps into the stack. */
+    _heap_limit = (ORIGIN(DTCMRAM) + LENGTH(DTCMRAM)
+                - __REMOTE_INPUT_RESERVE__
+                - _Min_Stack_Size
+                - _Stack_Redzone_Size) & ~15;
+    ASSERT(_heap_start <= _heap_limit,
+           "DTCM overflow: .data/.bss leave no room for stack");
+
+    . = _heap_limit;
+    _heap_end = .;
+    __dtc_padding_end__ = .;
   } >DTCMRAM
 
-  /* User_heap_stack section, used to check that there is enough RAM left */
-  ._user_stack :
+  ._user_stack (NOLOAD) :
   {
-    /* Pad the unused area between the last symbol and the start of the redzone.
-       We reserve space at the top of DTCMRAM for boot magic and remote input if enabled. */
-    __dtc_padding_start__ = .;
-    . = . + __DTCMRAM_LENGTH__ - __REMOTE_INPUT_RESERVE__ - (_Min_Stack_Size + _Stack_Redzone_Size) - (__dtc_padding_start__ - __dtcram_start__);
-    __dtc_padding_end__ = .;
-
     _stack_redzone = .;
     . = . + _Stack_Redzone_Size;
     _stack_bottom = .;

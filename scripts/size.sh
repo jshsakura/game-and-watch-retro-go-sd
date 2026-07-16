@@ -43,11 +43,12 @@ function print_simple_usage {
 
 print_usage itcram   __ITCMRAM_LENGTH__
 
-# DTCRAM is a special case
+# DTCRAM: heap fills all space after .data/.bss up to the fixed stack.
+# __dtc_padding_* aliases _heap_start.._heap_end (flexible region).
 dtc_size=$(get_symbol __DTCMRAM_LENGTH__)
-dtc_free=$(get_section_length dtc_padding)
-dtc_usage=$(( dtc_size - dtc_free ))
-echo -e "dtcram\t$dtc_usage / $dtc_size ($dtc_free bytes free)"
+dtc_heap=$(get_section_length dtc_padding)
+dtc_static=$(( dtc_size - dtc_heap ))
+echo -e "dtcram\t$dtc_static static + $dtc_heap heap / $dtc_size"
 
 print_usage ram_uc   __RAM_UC_LENGTH__
 print_usage ram      __RAM_CORE_LENGTH__
