@@ -17,6 +17,9 @@
  * `& 0xFFFF` index is correct across a multi-page array.
  */
 #include <string.h>
+#ifdef SEGACD_GA_TRACE
+#include <stdio.h>
+#endif
 #include "segacd.h"
 #include "gwenesis_bus.h"
 
@@ -173,8 +176,17 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
                 d = (uint8_t)((d & ~0x03) | SCD.dmna_ret_2m);
             }
 
+#ifdef SEGACD_GA_TRACE
+            extern int scd_dbg_frame;
+            uint8_t old_mode = SCD.word_mode;
+#endif
             SCD.s68k_regs[0x03] = d;
             SCD.word_mode = (uint8_t)((d >> 2) & 1);
+#ifdef SEGACD_GA_TRACE
+            if (SCD.word_mode != old_mode)
+                printf("[wram-mode] f%d SUB wrote reg3=%02x -> word_mode %u->%u  subPC=%06x\n",
+                       scd_dbg_frame, d, old_mode, SCD.word_mode, (unsigned)SCD.sub_ctx.pc);
+#endif
             segacd_poll_wake();
             return;
         }
