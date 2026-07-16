@@ -224,6 +224,20 @@ static void *md32x_Screenshot(void) {
   return lcd_get_active_buffer();
 }
 
+/* Pause/menu repaint. The pause banner calls this through the pointer given
+ * to common_emu_input_loop — a NULL there was the device's PC=0 Hardfault
+ * (LR = odroid_overlay_sleep_pause_banner; the C64-era rule: a custom-loop
+ * core MUST pass a non-NULL repaint). We can't cheaply re-render a picodrive
+ * frame on demand, so copy the SHOWN frame into the active buffer and draw
+ * the overlay on top. */
+static void md32x_repaint(void) {
+  uint16_t *active = lcd_get_active_buffer();
+  uint16_t *shown  = (active == (uint16_t *)framebuffer1)
+                       ? (uint16_t *)framebuffer2 : (uint16_t *)framebuffer1;
+  memcpy(active, shown, 320 * 240 * sizeof(uint16_t));
+  common_ingame_overlay();
+}
+
 static void diag_log(const char *fmt, ...);   /* boot diag, defined below */
 
 /* ---- XIP: cold code + rodata from flash (the SM/GBA sentinel pattern) ------
@@ -453,7 +467,7 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     bool drawFrame = common_emu_frame_loop();
 
     odroid_input_read_gamepad(&joystick);
-    common_emu_input_loop(&joystick, options, NULL);
+    common_emu_input_loop(&joystick, options, &md32x_repaint);
     common_emu_input_loop_handle_turbo(&joystick);
 
     PicoIn.pad[0] = read_md_pad(&joystick);
