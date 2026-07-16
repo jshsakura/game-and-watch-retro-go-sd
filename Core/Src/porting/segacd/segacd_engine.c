@@ -68,6 +68,15 @@ void segacd_reset(void)
     if (SCD.pcm_ram)  memset(SCD.pcm_ram,  0, SEGACD_PCM_RAM_SIZE);
     memset(SCD.s68k_regs, 0, sizeof(SCD.s68k_regs));
 
+    /* Word-RAM ownership at reset: RET=1 (main owns), 2M mode, PRG bank 0 —
+     * matches PicoDrive's PicoMemSetupCD (remap_prg_window(2,1)/
+     * remap_word_ram(1), i.e. reg3 reset value 0x01). The dmna_ret_2m shadow
+     * starts in sync with it. */
+    SCD.s68k_regs[0x03] = 0x01;
+    SCD.dmna_ret_2m     = 0x01;
+    SCD.prg_bank  = 0;
+    SCD.word_mode = 0;
+
     /* Build the sub-CPU context by INHERITING the already-initialized main
      * context, then overriding its memory_map for the sub's address space.
      * Inheriting matters: m68ki_cpu_core holds CPU config the sub needs —

@@ -54,6 +54,14 @@ typedef struct {
     uint8_t   word_mode;                    /* 0 = 2M, 1 = 1M/1M */
     uint8_t   word_owner;                   /* which CPU owns Word-RAM / active 1M bank */
 
+    /* Word-RAM DMNA/RET handshake shadow (2M mode), mirroring PicoDrive's
+     * dmna_ret_2m (pd_cd/memory.c): bit0 = RET, bit1 = DMNA. This is the
+     * persistent source of truth for $A12003/$FF8003 bits 0-1 — every MAIN
+     * or SUB write to that register folds the CURRENT value of this shadow
+     * into the bits it doesn't own (see main_ga_write8/sub_ff_write8 reg==3
+     * in segacd_bus.c). Reset state is RET=1 (main owns Word-RAM). */
+    uint8_t   dmna_ret_2m;
+
     /* --- the sub-CPU: one m68ki_cpu_core context we swap in/out of the
      *     global `m68k` around each timeslice (see segacd_engine.c). --- */
     m68ki_cpu_core sub_ctx;

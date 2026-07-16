@@ -81,6 +81,9 @@ static unsigned int sub_ff_read8(unsigned int address)
     switch (reg) {
     case 0x00: return SCD.s68k_regs[0x00] & 0x03;   /* version 0 + LED bits */
     case 0x01: return 0x01;                          /* CDC ready (not in reset) */
+    case 0x03: return SCD.s68k_regs[0x03] & 0x1f;    /* SUB's masked view of
+                       * reg3 — pd_cd/memory.c s68k_reg_read16 case 2:
+                       * `s68k_regs[3] & 0x1f`. */
     default:   return SCD.s68k_regs[reg];            /* TODO ph3: CDC/CDD data */
     }
 }
@@ -101,6 +104,53 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
     } else if (off >= 0x8000) {            /* $FF8000+: gate array / CDC / CDD */
         unsigned int reg = off & (SEGACD_GA_REGS - 1);
         SGA_WR(off);
+
+        if (reg == 0x02 || reg == 0x03) {
+            /* $FF8002/3: Word-RAM DMNA/RET handshake (2M mode) + MODE/PM
+             * bits. $FF8002 is byte-access only and aliases reg3 —
+             * pd_cd/memory.c s68k_reg_write8 `case 2: a++`. SUB owns bits
+             * 0 (RET), 2 (MODE), 3-4 (PM priority); bits 1(DMNA)/6-7(bank)
+             * are preserved from the old value, then bits 0-1 are
+             * recomposed from the dmna_ret_2m shadow so a SUB write can't
+             * resurrect a DMNA the main already cleared. 1M-mode swap
+             * semantics are NOT modeled (deferred — boot is 2M). */
+            uint8_t dold = SCD.s68k_regs[0x03];
+            uint8_t d    = (uint8_t)data & 0x1d;   /* SUB may supply bits 0,2,3,4 */
+            d |= dold & 0xc2;                       /* preserve DMNA(1)/bank(6-7) */
+
+            if (d & 0x01) {                 /* SUB sets RET: return Word-RAM to MAIN */
+                SCD.dmna_ret_2m |= 0x01;
+                SCD.dmna_ret_2m &= (uint8_t)~0x02;
+            }
+
+            if (d & 0x04) {
+                /* 1M mode — TODO(ph2c): real bank-swap semantics if a
+                 * 1M-mode title needs them; approximate the swap-complete
+                 * DMNA clear only. */
+                if ((d ^ dold) & 0x05) d &= (uint8_t)~0x02;
+            } else {
+                d = (uint8_t)((d & ~0x03) | SCD.dmna_ret_2m);
+            }
+
+            SCD.s68k_regs[0x03] = d;
+            SCD.word_mode = (uint8_t)((d >> 2) & 1);
+            segacd_poll_wake();
+            return;
+        }
+
+        if (reg == 0x0e || reg == 0x0f) {
+            /* $FF800E/F comm flag: SUB's half always targets regs[0x0f]
+             * regardless of which byte of the word was addressed —
+             * pd_cd/memory.c s68k_reg_write8 `case 0x0e: a++`. */
+            SCD.s68k_regs[0x0f] = (uint8_t)data;
+            return;
+        }
+
+        if (reg >= 0x10 && reg <= 0x1f) {
+            /* $FF8010-1F comm command half: MAIN-owned. SUB writes are
+             * ignored (pd_cd/memory.c: (a&0x1f0)==0x10 -> invalid write). */
+            return;
+        }
 
         switch (reg) {
         case 0x33:   /* IEN mask. IEN4 turning on while the CDD export is
@@ -253,6 +303,10 @@ static unsigned int main_ga_read8(unsigned int address)
          * SCD.ga_ifl2 for why $A12000 (main) and $FF8000 (sub: gate-array
          * version + LEDs) must not alias through the same byte. */
         return SCD.ga_ifl2 & 0x01;
+    if (reg == 0x003)
+        /* MAIN's masked view of reg3: bits 3-5 are not visible to MAIN —
+         * pd_cd/memory.c m68k_reg_read16 case 2: `s68k_regs[3] & 0xc7`. */
+        return SCD.s68k_regs[0x03] & 0xc7;
     return SCD.s68k_regs[reg];
 }
 static unsigned int main_ga_read16(unsigned int address)
@@ -282,13 +336,61 @@ static void main_ga_write8(unsigned int address, unsigned int data)
         return;
     }
 
+    if (reg == 0x003) {
+        /* $A12003: MAIN owns bits 6-7 (PRG bank) and requests bit1 (DMNA);
+         * bits 2-4 (MODE/PM, owned by SUB) are preserved from the old value;
+         * bits 0-1 (RET/DMNA) are recomposed from the persistent dmna_ret_2m
+         * shadow so a MAIN write can't clobber a RET the sub already gave
+         * back. 1M-mode swap semantics are NOT modeled (deferred — boot is
+         * 2M). pd_cd/memory.c m68k_reg_write8 case 3. */
+        uint8_t dold = SCD.s68k_regs[0x03];
+        uint8_t d    = (uint8_t)data;
+
+        if (d & 0x02) {                 /* MAIN requests DMNA: hand Word-RAM to SUB */
+            SCD.dmna_ret_2m |= 0x02;
+            SCD.dmna_ret_2m &= (uint8_t)~0x01;
+        }
+
+        if (dold & 0x04) {
+            /* 1M mode — TODO(ph2c): real bank-swap semantics if a 1M-mode
+             * title needs them; approximate the DMNA toggle only. */
+            d ^= 0x02;
+            d  = (uint8_t)((d & 0xc2) | (dold & 0x1f));
+        } else {
+            d = (uint8_t)((d & 0xc0) | (dold & 0x1c) | SCD.dmna_ret_2m);
+        }
+
+        SCD.s68k_regs[0x03] = d;
+        SCD.prg_bank  = (uint8_t)((d >> 6) & 3);
+        SCD.word_mode = (uint8_t)((d >> 2) & 1);
+        segacd_poll_wake();
+        return;
+    }
+
+    if (reg == 0x00e || reg == 0x00f) {
+        /* $A1200E/F comm flag: MAIN's half always targets regs[0x0e]
+         * regardless of which byte of the word was addressed —
+         * pd_cd/memory.c m68k_reg_write8 `case 0x0f: a = 0x0e;`. */
+        if (SCD.s68k_regs[0x0e] != (uint8_t)data) {
+            SCD.s68k_regs[0x0e] = (uint8_t)data;
+            segacd_poll_wake();
+        }
+        return;
+    }
+
+    if (reg >= 0x020 && reg <= 0x02f) {
+        /* $A12020-2F comm status half: SUB-owned. MAIN writes are ignored,
+         * matching real hardware/PicoDrive (falls through to the invalid-
+         * write branch in m68k_reg_write8, i.e. never stored). */
+        return;
+    }
+
     SCD.s68k_regs[reg] = (uint8_t)data;
 
     /* Any main write into the gate array can change what the sub polls. */
     segacd_poll_wake();
 
-    switch (address & 0xFFF) {
-    case 0x001:
+    if (reg == 0x001) {
         /* $A12001: bit0 SRES (0=sub in reset, 1=run), bit1 SBRQ (1=main holds
          * sub bus). Sub runs only when released AND its bus is granted. */
         if ((data & 0x01) && !(data & 0x02)) {
@@ -296,12 +398,6 @@ static void main_ga_write8(unsigned int address, unsigned int data)
         } else {
             segacd_sub_hold();
         }
-        break;
-    case 0x003:
-        /* PRG-RAM 128 KB bank select (BK0/BK1) + Word-RAM mode/owner bits. */
-        SCD.prg_bank  = (uint8_t)((data >> 6) & 3);
-        SCD.word_mode = (uint8_t)((data >> 2) & 1);   /* DMNA/MODE — refine ph2b */
-        break;
     }
 }
 static void main_ga_write16(unsigned int address, unsigned int data)
