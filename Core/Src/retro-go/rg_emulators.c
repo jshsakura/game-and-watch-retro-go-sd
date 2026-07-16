@@ -1188,15 +1188,11 @@ static void run_internal_emu(const emu_dispatch_t *e,
 #define EMU_ENTRY(fn) ((void (*)(uint8_t, uint8_t, int8_t))(fn))
 
 static const emu_dispatch_t emu_tgb     = { "/cores/tgb.bin",     &_OVERLAY_TGB_BSS_START,     (uint32_t)&_OVERLAY_TGB_BSS_SIZE,     (uint32_t)&_OVERLAY_TGB_SIZE,     (uint32_t)&_OVERLAY_TGB_BSS_END,     EMU_ENTRY(app_main_gb_tgbdual) };
-#if SD_CARD == 1
-extern uint8_t __pce_itc_start__[];
+extern uint8_t __ram_itc_pce_start__[];
 extern uint8_t _OVERLAY_PCE_ITC_LMA_OFFSET;
 extern uint8_t _OVERLAY_PCE_ITC_SIZE;
 static const emu_dispatch_t emu_pce     = { "/cores/pce.bin",     &_OVERLAY_PCE_BSS_START,     (uint32_t)&_OVERLAY_PCE_BSS_SIZE,     (uint32_t)&_OVERLAY_PCE_SIZE,     0, EMU_ENTRY(app_main_pce),
-                                            __pce_itc_start__, (uint32_t)&_OVERLAY_PCE_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_PCE_ITC_SIZE };
-#else
-static const emu_dispatch_t emu_pce     = { "/cores/pce.bin",     &_OVERLAY_PCE_BSS_START,     (uint32_t)&_OVERLAY_PCE_BSS_SIZE,     (uint32_t)&_OVERLAY_PCE_SIZE,     0, EMU_ENTRY(app_main_pce) };
-#endif
+                                            __ram_itc_pce_start__, (uint32_t)&_OVERLAY_PCE_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_PCE_ITC_SIZE };
 static const emu_dispatch_t emu_msx     = { "/cores/msx.bin",     &_OVERLAY_MSX_BSS_START,     (uint32_t)&_OVERLAY_MSX_BSS_SIZE,     (uint32_t)&_OVERLAY_MSX_SIZE,     0, EMU_ENTRY(app_main_msx) };
 static const emu_dispatch_t emu_wsv     = { "/cores/wsv.bin",     &_OVERLAY_WSV_BSS_START,     (uint32_t)&_OVERLAY_WSV_BSS_SIZE,     (uint32_t)&_OVERLAY_WSV_SIZE,     0, EMU_ENTRY(app_main_wsv) };
 static const emu_dispatch_t emu_ngp     = { "/cores/ngp.bin",     &_OVERLAY_NGP_BSS_START,     (uint32_t)&_OVERLAY_NGP_BSS_SIZE,     (uint32_t)&_OVERLAY_NGP_SIZE,     0, EMU_ENTRY(app_main_ngp) };

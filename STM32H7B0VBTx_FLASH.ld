@@ -335,12 +335,33 @@ INCLUDE build/fceumm_mappers.ld
    .overlay_pce __RAM_EMU_START__ : {
       . = ALIGN(4);
     __ram_emu_pce_start__ = .;
-      build/pce/*.o (.data .data* .text .text* .rodata .rodata*)
+      /* Data/rodata for all PCE objects; main_pce .text stays here — it calls
+       * launcher APIs (settings, overlay, audio) and ITCM→flash veneers fail on
+       * arm-none-eabi 15.x ("Unknown destination type ARM/Thumb"). */
+      build/pce/*.o (.data .data* .rodata .rodata*)
+      build/pce/main_pce.o (.text .text*)
       . = ALIGN(4);
       _OVERLAY_PCE_LOAD_END = .;
   } AT > CORES
   _OVERLAY_PCE_LOAD_START = LOADADDR(.overlay_pce);
   _OVERLAY_PCE_SIZE = SIZEOF(.overlay_pce);
+
+  /* PCE hot code → ITCM (zero-wait-state, no I-cache miss). The LMA is appended
+     right after .overlay_pce in CORES so `objcopy --only-section` of both
+     sections yields one contiguous pce.bin. At load time the ITC image lands in
+     RAM_EMU at _OVERLAY_PCE_LOAD_END (overlapping the BSS VMA!) — the launcher
+     (run_internal_emu) memcpy's it to ITCM BEFORE zeroing BSS.
+     Base offset 0x4: keeps address 0 free so no function == NULL. */
+  .overlay_pce_itc (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __ram_itc_pce_start__ = .;
+    EXCLUDE_FILE(*/main_pce.o) build/pce/*.o (.text .text*)
+    . = ALIGN(4);
+    __ram_itc_pce_end__ = .;
+    ASSERT(ABSOLUTE(__ram_itc_pce_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: PCE ITC overflow");
+  } AT > CORES
+  _OVERLAY_PCE_ITC_SIZE = SIZEOF(.overlay_pce_itc);
+  _OVERLAY_PCE_ITC_LMA_OFFSET = LOADADDR(.overlay_pce_itc) - LOADADDR(.overlay_pce);
 
   .overlay_pce_bss _OVERLAY_PCE_LOAD_END : {
     . = ALIGN(4);

@@ -216,9 +216,7 @@ ifeq ($(GAME_GENIE),1)
 endif
 
 ifeq ($(CHEAT_CODES),1)
-	ifeq ($(SD_CARD),1)
-		MAX_CHEAT_CODES = 13
-	endif
+	MAX_CHEAT_CODES ?= 13
 else
 	# blueMSX-go SlotManager.c (TARGET_GNW path) references MAX_CHEAT_CODES unconditionally.
 	MAX_CHEAT_CODES ?= 1

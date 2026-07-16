@@ -56,6 +56,7 @@ print_usage ram_emu_nes_fceu  __RAM_EMU_LENGTH__
 print_usage ram_emu_tgb __RAM_EMU_LENGTH__
 print_usage ram_emu_sms  __RAM_EMU_LENGTH__
 print_usage ram_emu_pce  __RAM_EMU_LENGTH__
+print_usage ram_itc_pce  __ITCMRAM_LENGTH__
 print_usage ram_emu_gw   __RAM_EMU_LENGTH__
 print_usage ram_emu_msx  __RAM_EMU_LENGTH__
 print_usage ram_emu_wsv  __RAM_EMU_LENGTH__

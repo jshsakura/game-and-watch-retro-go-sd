@@ -355,11 +355,11 @@ INCLUDE build/fceumm_mappers.ld
      Base offset 0x4: keeps address 0 free so no function == NULL. */
   .overlay_pce_itc (ORIGIN(ITCMRAM) + 0x4) : {
     . = ALIGN(4);
-    __pce_itc_start__ = .;
+    __ram_itc_pce_start__ = .;
     EXCLUDE_FILE(*/main_pce.o) build/pce/*.o (.text .text*)
     . = ALIGN(4);
-    __pce_itc_end__ = .;
-    ASSERT(ABSOLUTE(__pce_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: PCE ITC overflow");
+    __ram_itc_pce_end__ = .;
+    ASSERT(ABSOLUTE(__ram_itc_pce_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: PCE ITC overflow");
   } AT > CORES
   _OVERLAY_PCE_ITC_SIZE = SIZEOF(.overlay_pce_itc);
   _OVERLAY_PCE_ITC_LMA_OFFSET = LOADADDR(.overlay_pce_itc) - LOADADDR(.overlay_pce);
