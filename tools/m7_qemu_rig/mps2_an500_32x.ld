@@ -20,7 +20,7 @@ SECTIONS
   .isr_vector : { KEEP(*(.isr_vector)) } > CODE
   .text : { *(.text*) *(.glue_7) *(.glue_7t) } > CODE
   .rodata : { *(.rodata*) . = ALIGN(4); } > CODE
-  .ARM.exidx : { *(.ARM.exidx*) } > CODE
+  .ARM.exidx : { __exidx_start = .; *(.ARM.exidx*) __exidx_end = .; } > CODE
 
   _sidata = LOADADDR(.data);
   .data : { . = ALIGN(4); _sdata = .; *(.data*) . = ALIGN(4); _edata = .; } > RAM AT> CODE
