@@ -126,8 +126,8 @@ int main(int argc, char **argv)
             prev_running = 1;
             #define PRGW(o) ((SCD.prg_ram[((o)+1)&(SEGACD_PRG_RAM_SIZE-1)]<<8) | SCD.prg_ram[(o)&(SEGACD_PRG_RAM_SIZE-1)])
             unsigned end = (PRGW(0x1a4)<<16)|PRGW(0x1a6); uint16_t sum=0;
-            for (unsigned o=0x202; o<end; o+=2) sum += PRGW(o);
-            printf("[boot] >>> at sub-release f%d: checksum sum(0x202..%06x)=%04x expected=%04x %s\n",
+            for (unsigned o=0x200; o<end; o+=2) sum += PRGW(o);
+            printf("[boot] >>> at sub-release f%d: checksum sum(0x200..%06x)=%04x expected=%04x %s\n",
                    frame, end, sum, PRGW(0x18e), (sum==PRGW(0x18e))?"MATCH":"MISMATCH");
             #undef PRGW
         }
@@ -186,8 +186,8 @@ int main(int argc, char **argv)
       /* Recompute the sub-BIOS self-checksum exactly as the routine does:
        * sum BE words from 0x202 up to end=(*0x1a4), compare to word @0x18e. */
       { unsigned end = (len_lo<<16)|len_hi; uint16_t sum=0;
-        for (unsigned o=0x202; o<end; o+=2) sum += PRGW(o);
-        printf("[boot] checksum sum(0x202..%06x)=%04x  expected@0x18e=%04x  %s\n",
+        for (unsigned o=0x200; o<end; o+=2) sum += PRGW(o);
+        printf("[boot] checksum sum(0x200..%06x)=%04x  expected@0x18e=%04x  %s\n",
                end, sum, PRGW(0x18e), (sum==PRGW(0x18e))?"MATCH":"MISMATCH");
         /* Dump what the sub sees (BE-reconstructed) for 0x0..0x10000 so we can
          * diff against the sub-BIOS source embedded in the region BIOS image.
