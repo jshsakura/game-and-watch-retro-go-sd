@@ -65,6 +65,32 @@ static int g_native_ports = 0;     /* SM-exact layout: player IS the game's own
                                     * echoes (SM handshakes on ports 1-3 and
                                     * black-screens on instant-acks). */
 
+/* The generated player's SpcPlayer_Create allocates through this. On the
+ * device the LLE Apu already owns 66 KB of the 120 KB AHB pool, so a second
+ * 66 KB block cannot come from there — it lives in the overlay BSS (the
+ * generic SNES overlay uses <30% of RAM_EMU). Host/rig: plain malloc. */
+void *nspc_player_storage(void) {
+#ifdef NSPC_WIRE_STATIC_PLAYER
+  static SpcPlayer storage;
+  return &storage;
+#else
+  return malloc(sizeof(SpcPlayer));
+#endif
+}
+
+/* Between ROMs / on savestate load: back to LLE; detection re-runs and
+ * re-swaps ~2 s in. (The static player storage is reused on the next swap.) */
+void wire_reset(void) {
+  g_wire_on = 0;
+  g_wire_p = NULL;
+  g_wire_variant = "-";
+  g_frac = 0;
+  g_ok_streak = 0;
+  g_last_p0 = 0;
+  g_native_ports = 0;
+  g_ack[0] = g_ack[1] = g_ack[2] = 0;
+}
+
 /* ---- one 32 kHz sample step: exactly SpcPlayer_GenerateSamples' semantics -- */
 static inline void wire_step_sample(SpcPlayer *p) {
   if (p->timer_cycles >= 64) {
@@ -145,11 +171,9 @@ void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val) {
 int wire_pre_opcode(Snes *snes) {
   if (!g_wire_on || !g_native_ports) return 0;
   Cpu *c = snes->cpu;
-  if (getenv("WIRE_TRACE")) {                 /* where does the 65816 spin? */
-    static int smp = 0;
-    if ((++smp & 0xfffff) == 0)
-      fprintf(stderr, "[wire] pc sample %02x:%04x\n", c->k, c->pc);
-  }
+  /* Nothing above this line may be more than a compare: this runs once per
+   * OPCODE. A getenv() trace probe sat here and cost SM +0.67M insn/frame —
+   * two thirds of what the whole HLE saves. */
   if (c->k != 0x80 || c->pc != 0x8028) return 0;
   SpcPlayer *p = g_wire_p;
   /* 24-bit source address lives in the direct page, not registers — the
@@ -333,7 +357,17 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
   g_nspc_cfg.songCur    = np->songList - (isStdFamily ? 0 : 2);
   g_nspc_cfg.dirPage    = ((np->dir >= 0 ? np->dir : 0x6d00) >> 8) & 0xff;
 
-  SpcPlayer *p = SpcPlayer_Create();
+  /* One player per session, reused across re-swaps (savestate load resets the
+   * wire; a fresh SpcPlayer_Create would leak a second Dsp on the device). */
+  static SpcPlayer *player_cache = NULL;
+  SpcPlayer *p = player_cache;
+  if (p == NULL) {
+    p = player_cache = SpcPlayer_Create();
+  } else {
+    Dsp *d = p->dsp;                   /* separate allocation — keep it */
+    memset(p, 0, sizeof(*p));
+    p->dsp = d;                        /* d->apu_ram still points at p->ram */
+  }
   memcpy(p->ram, aram, 0x10000);
   SpcPlayer_Initialize(p);
   memcpy(p->ram, aram, 0x10000);       /* re-seed what Vector_Reset memset */

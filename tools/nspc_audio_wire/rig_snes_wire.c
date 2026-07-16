@@ -58,6 +58,7 @@ extern bool g_ppu_skip_render;   /* frameskip: skip PPU compositing, keep logic 
 static Snes *g_the_snes;
 void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val);
 int  wire_try_swap(Snes *snes, int frame);
+int  wire_pre_opcode(Snes *snes);   /* $80:8028 upload HLE; 0 = not hooked */
 void wire_frame_audio(int16_t *buf, int n);
 extern int g_wire_on;
 void RtlApuWrite(uint32_t adr, uint8_t val) {
@@ -94,7 +95,8 @@ static void cpu_tick(Snes *snes) {
   if (dma_cycle(snes->dma)) return;
   if (snes->cpuCyclesLeft == 0) {
     snes->cpuMemOps = 0;
-    int cycles = cpu_runOpcode(snes->cpu);
+    int cycles = wire_pre_opcode(snes);
+    if (cycles == 0) cycles = cpu_runOpcode(snes->cpu);
     snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
   }
   snes->cpuCyclesLeft -= 2;
@@ -110,7 +112,8 @@ static void run_dots(Snes *snes, int dots) {
     if (snes->cpuCyclesLeft == 0) {
       apply_irq_match(snes);
       snes->cpuMemOps = 0;
-      int cycles = cpu_runOpcode(snes->cpu);
+      int cycles = wire_pre_opcode(snes);
+      if (cycles == 0) cycles = cpu_runOpcode(snes->cpu);
       snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
       started_dma = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
     }
@@ -172,12 +175,17 @@ int main(void) {
   Snes *snes = snes_init(g_wram);
   g_the_snes = snes;
   if (!snes_loadRom(snes, rom, (int)rom_len)) { printf("unsupported ROM\n"); return 1; }
-  /* snes_loadRom malloc'd a second copy of the ROM. The ELF already carries the
-   * blob in PSRAM — point cart->rom back at it and free the copy, so a 6 MB cart
-   * costs 6 MB, not 12. The core only reads cart->rom; SRAM writes go to cart->ram.
-   * Rig-only: the device streams the ROM from SD, it never double-stores. */
+#if !defined(GNW_SNES_CORE)
+  /* Host builds: snes_loadRom malloc'd a second, pow2-expanded copy of the ROM.
+   * The ELF already carries the blob — point cart->rom back at it and free the
+   * copy, so a 6 MB cart costs 6 MB, not 12.
+   * GNW_SNES_CORE builds: cart_load already points at `rom` IN PLACE (zero-copy,
+   * cart_fold() mirrors at access time) — freeing it here frees the linked-in
+   * blob, i.e. a non-heap pointer, and the corrupted allocator then spins
+   * forever inside init (77% CPU, no output past the boot calibration). */
   free(snes->cart->rom);
   snes->cart->rom = rom;
+#endif
   printf("[snes-qemu] rom len=%lu frames=%d\n", (unsigned long)rom_len, RIG_FRAMES);
 
   uint64_t run_hash = 1469598103934665603ULL;
