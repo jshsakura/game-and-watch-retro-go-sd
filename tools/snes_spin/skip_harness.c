@@ -69,6 +69,34 @@ static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
  * event loop + hashing around them. */
 static int g_skip_enabled;
 
+#ifdef SNES_PC_HISTOGRAM
+/* With skip=1 the histogram counts only the opcodes the interpreter STILL runs —
+ * i.e. exactly the residue the next lever must attack. (Same dump as
+ * tools/snes_harness/snes_main.c.) */
+uint32_t *g_pchist;
+static void dump_pchist(void) {
+  uint64_t total = 0;
+  for (int i = 0; i < 0x1000000; i++) total += g_pchist[i];
+  if (!total) { printf("[pchist] no samples\n"); return; }
+  uint32_t top[40] = {0}; uint32_t topc[40] = {0};
+  for (int i = 0; i < 0x1000000; i++) {
+    uint32_t c = g_pchist[i];
+    if (c <= topc[39]) continue;
+    int j = 39; while (j > 0 && topc[j-1] < c) { topc[j]=topc[j-1]; top[j]=top[j-1]; j--; }
+    topc[j] = c; top[j] = i;
+  }
+  printf("[pchist] total opcodes=%llu\n", (unsigned long long)total);
+  uint64_t bank[256] = {0};
+  for (int i = 0; i < 0x1000000; i++) bank[i >> 16] += g_pchist[i];
+  printf("[pchist] hot banks (>=1%%):\n");
+  for (int b = 0; b < 256; b++) if (bank[b] * 100 >= total)
+    printf("   bank $%02x  %6.2f%%  (%llu)\n", b, 100.0*bank[b]/total, (unsigned long long)bank[b]);
+  printf("[pchist] top-40 hot opcode addresses:\n");
+  for (int k = 0; k < 40 && topc[k]; k++)
+    printf("   $%02x:%04x  %6.3f%%  (%u)\n", top[k]>>16, top[k]&0xffff, 100.0*topc[k]/total, topc[k]);
+}
+#endif
+
 /* ---- event loop (snes_main.c layout; run_dots grows the replay branch) ---- */
 static int dots_to_next_event(Snes *snes) {
   int h = snes->hPos;
@@ -95,16 +123,11 @@ static int run_one_opcode(Snes *snes) {  /* shared: real call + note */
   Cpu *cpu = snes->cpu;
   uint32_t pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
   int disp = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) && !cpu->stopped;
-  uint64_t r1 = (uint64_t)cpu->a | ((uint64_t)cpu->x << 16) |
-                ((uint64_t)cpu->y << 32) | ((uint64_t)cpu->sp << 48);
-  uint64_t r2 = (uint64_t)cpu->dp | ((uint64_t)cpu->k << 16) |
-                ((uint64_t)cpu->db << 24) | ((uint64_t)cpu_getFlags(cpu) << 32) |
-                ((uint64_t)cpu->e << 40);
   snes->cpuMemOps = 0;
   int cycles = cpu_runOpcode(cpu);
   snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
   g_spin.ops_real++;
-  spin_note(pc24, (uint8_t)snes->cpuCyclesLeft, disp, r1, r2);
+  spin_note(cpu, pc24, (uint8_t)snes->cpuCyclesLeft, disp);
   return cycles;
 }
 
@@ -186,6 +209,9 @@ int main(int argc, char **argv) {
   g_skip_enabled = sk ? atoi(sk) : 0;
   spin_reset();
   g_spin.gate_on = g_skip_enabled != 0;   /* skip=0: learner parked forever = pure interpreter */
+#ifdef SNES_PC_HISTOGRAM
+  g_pchist = calloc(0x1000000, sizeof(uint32_t));
+#endif
 
   FILE *f = fopen(argv[1], "rb");
   if (!f) { printf("no rom: %s\n", argv[1]); return 1; }
@@ -226,5 +252,8 @@ int main(int argc, char **argv) {
          (g_spin.ops_real + g_spin.ops_virtual)
              ? 100.0 * g_spin.ops_virtual / (g_spin.ops_real + g_spin.ops_virtual) : 0.0,
          (g_skip_enabled && !g_spin.gate_on) ? "  [auto-gate PARKED]" : "");
+#ifdef SNES_PC_HISTOGRAM
+  dump_pchist();
+#endif
   return 0;
 }
