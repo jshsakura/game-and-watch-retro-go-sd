@@ -369,6 +369,10 @@ int main(int argc, char **argv)
      * IFL2/CDD delivery. --- */
     printf("[boot] REG1 VBLANK_INTERRUPT (IE0) first seen enabled at frame=%d (-1=never)\n",
            vblank_ie_first_frame);
+    { extern uint32_t scd_dbg_gfx_ops, scd_dbg_gfx_lines, scd_dbg_gfx_mapnz;
+      printf("[boot] GFX ASIC: start-ops=%u lines-rendered=%u  stamp-map max-nonzero(of 512)=%u %s\n",
+             scd_dbg_gfx_ops, scd_dbg_gfx_lines, scd_dbg_gfx_mapnz,
+             scd_dbg_gfx_mapnz ? "(stamps loaded)" : "(STAMP MAP EMPTY -> render is blank)"); }
     /* CDC data-path: where does the disc data get stuck on the way to Word-RAM? */
     { extern uint32_t scd_dbg_dec_calls, scd_dbg_dec_wrrq, scd_dbg_cdupd_read,
                       scd_dbg_host_sub, scd_dbg_host_sub_adv, scd_dbg_host_main,

@@ -175,6 +175,12 @@ void     segacd_cdc_reset(void);
 void     segacd_cdc_reg_w(uint8_t data);
 uint8_t  segacd_cdc_reg_r(void);
 uint16_t segacd_cdc_host_r(int sub);
+/* Word-RAM graphics-transform ASIC (segacd_gfx.c, ported from pd_cd/gfx.c).
+ * segacd_gfx_start() renders the rotated/scaled image into Word-RAM in one shot
+ * on a $FF8066 (start) write and returns 1 if an op ran (arm level-1 INT1). */
+void segacd_gfx_init(void);
+int  segacd_gfx_start(uint32_t base);
+
 int  segacd_cdda_fill(int16_t *dst, int frames);  /* stream CD-DA from SD */
 int  segacd_cdda_prefetch(void);
 void segacd_cdda_play(uint32_t lba);

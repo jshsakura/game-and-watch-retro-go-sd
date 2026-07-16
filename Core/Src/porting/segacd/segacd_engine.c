@@ -116,6 +116,7 @@ void segacd_init(void)
     SCD.word_owner = 0;   /* main-CPU owns Word-RAM after reset */
     SCD.sub_running = 0;  /* sub held in reset until BIOS releases it */
 
+    segacd_gfx_init();    /* build the graphics-ASIC lookup tables */
     segacd_reset();
 }
 
