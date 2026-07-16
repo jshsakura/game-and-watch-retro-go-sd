@@ -330,10 +330,12 @@ void segacd_cdd_command(void)
         s[4] = 0; s[5] = 0; s[6] = 0; s[7] = 0; s[8] = 0x0f;
         break;
 
-    case 0x02:  /* Read TOC — c[1] selects which field (Q-channel infos) */
+    case 0x02:  /* Read TOC — c[3] ($FF8045) selects which field (Q-channel
+                 * infos); c[1] ($FF8043) is a reserved always-0 byte —
+                 * pd_cd/cdd.c:913 reads s68k_regs[0x44+1] = c[3]. */
         if (CD.status == CDD_NODISC)
             CD.status = CD.opened ? CDD_STOP : CDD_NODISC;
-        switch (c[1] & 0x0f) {
+        switch (c[3] & 0x0f) {
         case 0x00: {  /* current absolute time (MM:SS:FF) */
             cd_track_t *t = track_at_lba(CD.cur_lba);
             int lba = (int)CD.cur_lba + 150;
@@ -375,8 +377,10 @@ void segacd_cdd_command(void)
             set_status_pair(0x3c, CD.num_tracks);
             s[6] = 0; s[7] = 0; s[8] = 0;
             break;
-        case 0x05: {  /* track start time; track number requested in c[2..3] */
-            int trk = c[2]*10 + c[3];
+        case 0x05: {  /* track start time; track number requested in c[4..5]
+                       * ($FF8046-$FF8047) — pd_cd/cdd.c:971 uses
+                       * s68k_regs[0x46+0]*10 + s68k_regs[0x46+1] = c[4],c[5]. */
+            int trk = c[4]*10 + c[5];
             int lba = (trk >= 1 && trk <= CD.num_tracks)
                         ? (int)CD.tracks[trk-1].start_lba + 150 : 150;
             s[0] = (uint8_t)CD.status; s[1] = 0x05;
@@ -388,7 +392,7 @@ void segacd_cdd_command(void)
             break;
         }
         default:  /* 0x06 latest error, and anything unhandled: zeroed */
-            s[0] = (uint8_t)CD.status; s[1] = c[1] & 0x0f;
+            s[0] = (uint8_t)CD.status; s[1] = c[3] & 0x0f;
             s[2] = 0; s[3] = 0; s[4] = 0; s[5] = 0; s[6] = 0; s[7] = 0; s[8] = 0;
             break;
         }
