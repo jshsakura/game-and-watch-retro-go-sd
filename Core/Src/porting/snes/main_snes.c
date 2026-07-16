@@ -435,6 +435,31 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * here: it is read-only flash, not heap, and the header-skip may have offset
    * it past a copier header (snes_rom + 0x200). */
 
+  /* DEBUG (strip later): SAFE one-shot probe at LOAD time — before the frame loop,
+   * SD idle, never mid-play. Writes straight from the overlay (extflash has room;
+   * the resident sd_save_log path would overflow intflash) to /snes_diag.txt.
+   * Reports whether the flash-cached ROM reads back sane (internal title +
+   * checksum), the #1 suspect for a device-only black screen. Read off the SD. */
+  {
+    FILE *df = fopen("/snes_diag.txt", "w");
+    if (df) {
+      const uint8_t *r = snes->cart->rom;
+      uint32_t rs = (uint32_t)snes->cart->romSize;
+      uint32_t off = (snes->cart->type == 2) ? 0xFFC0u : 0x7FC0u;   /* HiROM : LoROM */
+      char title[22];
+      for (int i = 0; i < 21; i++) {
+        uint8_t c = (r && (off + i) < rs) ? r[off + i] : 0;
+        title[i] = (c >= 0x20 && c < 0x7f) ? (char)c : '.';
+      }
+      title[21] = 0;
+      uint32_t sum = 0;
+      for (uint32_t i = 0; r && i < rs && i < 0x10000; i++) sum += r[i];
+      fprintf(df, "SNES load: type=%d size=%lu title=[%s] sum64k=%08lX\n",
+              snes->cart->type, (unsigned long)rs, title, (unsigned long)sum);
+      fclose(df);
+    }
+  }
+
   if (load_state) {
     odroid_system_emu_load_state(save_slot);
   } else {
