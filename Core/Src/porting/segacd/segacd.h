@@ -80,6 +80,20 @@ typedef struct {
     int  cdd_int_pending;     /* CDD level-4 interrupt (periodic status export) armed */
     int  cdc_int_pending;     /* CDC level-5 interrupt (DECI/DTEI) armed — segacd_cd.c */
 
+    /* Word-RAM graphics-transform ASIC completion interrupt (level 1, "GFX").
+     * The real gate array renders a rotated/scaled image into Word-RAM after
+     * the sub triggers an op ($FF8066 write) and asserts INT1 when the line
+     * counter runs out, gated by IEN1 ($FF8033 bit1). The sub's BIOS boot
+     * animation loop (sub PC 0x7a06) blocks on the frame-counter toggle its
+     * INT1 handler (0x7ace) produces, so without this the boot logo never
+     * advances. Full stamp/trace rendering (pd_cd/gfx.c) is TODO; for now we
+     * model only the completion interrupt so the sub's state machine runs.
+     * gfx_op_armed is set when the op is triggered and promoted to a
+     * deliverable gfx_int_pending once per frame (frame-paced, mirroring the
+     * ~1-frame ASIC latency the animation is timed against). */
+    int  gfx_op_armed;
+    int  gfx_int_pending;
+
     /* MAIN->SUB "IFL2" doorbell — mirrors real hardware's $A12000 bit0 (main
      * side) / the sub's level-2 IRQ input. Set by main's write; consumed
      * (cleared to 0) the instant the sub's level-2 interrupt is actually

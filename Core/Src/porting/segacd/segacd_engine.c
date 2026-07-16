@@ -86,6 +86,7 @@ static int segacd_sub_int_ack(int int_level)
     case 5: SCD.cdc_int_pending = 0; break;
     case 4: SCD.cdd_int_pending = 0; break;
     case 2: SCD.ga_ifl2         = 0; break;
+    case 1: SCD.gfx_int_pending = 0; break;   /* GFX ASIC completion (level 1) */
     default: break;
     }
     /* Mirror default_int_ack_callback (m68kcpu.c): retract CPU_INT_LEVEL on
@@ -175,10 +176,18 @@ int segacd_run_sub(int cycle_target)
 {
     if (!SCD.sub_running)
         return 0;
+
+    /* Frame-pace the GFX ASIC completion: an op armed by a $FF8066 write last
+     * frame becomes deliverable this frame (the animation is timed against the
+     * ~1-frame render latency; delivering it in the same timeslice it was
+     * triggered would let the animation loop run away at unbounded speed). */
+    if (SCD.gfx_op_armed) { SCD.gfx_int_pending = 1; SCD.gfx_op_armed = 0; }
+
     /* Either pending interrupt must wake a spin-idled sub; only skip when
      * truly idle. (IEN gating happens below — an interrupt "pending" here
      * but not yet enabled still needs the sub to run so it CAN enable it.) */
-    if (SCD.sub_idle && !SCD.cdd_int_pending && !SCD.ga_ifl2 && !SCD.cdc_int_pending)
+    if (SCD.sub_idle && !SCD.cdd_int_pending && !SCD.ga_ifl2 &&
+        !SCD.cdc_int_pending && !SCD.gfx_int_pending)
         return 0;
     SCD.sub_idle = 0;
 
@@ -243,6 +252,11 @@ int segacd_run_sub(int cycle_target)
         int want5 = SCD.cdc_int_pending && (SCD.s68k_regs[0x33] & 0x20);
         int want4 = !want5 && SCD.cdd_int_pending && (SCD.s68k_regs[0x33] & 0x10);
         int want2 = !want5 && !want4 && SCD.ga_ifl2 && (SCD.s68k_regs[0x33] & 0x04);
+        /* GFX ASIC completion, level 1 — lowest priority, gated on IEN1
+         * ($FF8033 bit1). One-shot per assertion like the others; cleared at
+         * ACK in segacd_sub_int_ack case 1. */
+        int want1 = !want5 && !want4 && !want2 &&
+                    SCD.gfx_int_pending && (SCD.s68k_regs[0x33] & 0x02);
 #ifdef SEGACD_GA_TRACE
         scd_dbg_chunks++;
         if (want5) {
@@ -294,9 +308,9 @@ int segacd_run_sub(int cycle_target)
          * that only happens when m68ki_exception_interrupt truly runs, i.e.
          * the sub really took it. Still one-shot (cleared exactly once, at
          * ack), just correctly timed instead of optimistically early. */
-        m68k_set_irq((unsigned int)(want5 ? 5 : (want4 ? 4 : (want2 ? 2 : 0))));
+        m68k_set_irq((unsigned int)(want5 ? 5 : (want4 ? 4 : (want2 ? 2 : (want1 ? 1 : 0)))));
 
-        if (!want5 && !want4 && !want2) {
+        if (!want5 && !want4 && !want2 && !want1) {
             /* Nothing to chunk for: run the rest of the slice in one go
              * (the common case — no cost over the old unchunked path). */
             m68k_run((unsigned int)cycle_target);

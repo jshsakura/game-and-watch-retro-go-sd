@@ -236,6 +236,20 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
             segacd_cdd_command();
             return;
 
+        case 0x66:   /* Word-RAM graphics-transform TRIGGER ($FF8066, the
+                       * trace-vector base / "start" write, sub PC 0x7f6a). The
+                       * real gate-array ASIC renders into Word-RAM and asserts
+                       * level-1 (GFX) when done; we don't render yet (TODO:
+                       * pd_cd/gfx.c) but must model the completion interrupt or
+                       * the sub's boot-animation loop (0x7a06) never advances.
+                       * Arm it here; segacd_run_sub promotes it to a
+                       * deliverable, frame-paced level-1 pending. Clear GRON
+                       * (reg 0x58 bit7) to report "op complete" on readback. */
+            SCD.s68k_regs[reg] = (uint8_t)data;
+            SCD.gfx_op_armed = 1;
+            SCD.s68k_regs[0x58] &= (uint8_t)~0x80;
+            return;
+
         default:
             SCD.s68k_regs[reg] = (uint8_t)data;
             return;
