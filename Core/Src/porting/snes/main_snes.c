@@ -202,15 +202,7 @@ static uint16_t read_snes_pad(odroid_gamepad_state_t *joy) {
 static uint16_t snes_line[256];
 static uint16_t snes_frame[GW_LCD_WIDTH * GW_LCD_HEIGHT];
 
-/* DEBUG (strip later): does the PPU line callback fire on device, and does it hand
- * us any non-black pixels? cb=0 => callback never invoked (linkage). cb>0 & or=0 =>
- * PpuDrawWholeLine writes an all-black scratch line (compositing/palette diverges). */
-static volatile uint32_t g_dbg_cb_count;
-static volatile uint16_t g_dbg_line_or;
-
 static void snes_blit_line(unsigned y, const uint16_t *line) {
-  g_dbg_cb_count++;
-  for (int i = 0; i < 256; i++) g_dbg_line_or |= line[i];
   if (y < 1 || y > GW_LCD_HEIGHT)   /* y is 1-based; guard the 240-row panel */
     return;
   memcpy(snes_frame + (y - 1) * GW_LCD_WIDTH + 32, line, sizeof(snes_line));
@@ -468,58 +460,10 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     }
   }
 
-  /* DEBUG (strip later): device frame-cost PROFILE. The screen renders now
-   * (disableRender fix) but the game paces at ~13.7 fps — the frame_loop's
-   * overload guard (1 forced draw in 4), which means the emu misses the 16.7 ms
-   * budget. CPU% looks low, so measure, don't guess: run 250 frames with the
-   * renderer OFF and 250 with it ON (headless, before the interactive loop, SD
-   * idle, wdog kicked — SAFE), timing each phase with the DWT cycle counter.
-   *   emu_skip = interpreter+APU alone, emu_draw = same + PPU line renderer,
-   *   audio    = the pcm top-up/downmix per frame.
-   * Appended to /snes_diag.txt with SystemCoreClock so cycles map to ms. */
-  {
-    extern uint32_t SystemCoreClock;
-    common_emu_enable_dwt_cycles();
-    uint64_t cyc_skip = 0, cyc_draw = 0, cyc_audio = 0;
-
-    for (int i = 0; i < 250; i++) {           /* interpreter+APU only */
-      wdog_refresh();
-      g_ppu_skip_render = true;
-      render_frame_into_active_buffer();
-      common_emu_clear_dwt_cycles();
-      run_frame_events(snes);
-      cyc_skip += common_emu_get_dwt_cycles();
-    }
-
-    memset(snes_frame, 0, sizeof(snes_frame));
-    g_dbg_cb_count = 0; g_dbg_line_or = 0;
-    for (int i = 0; i < 250; i++) {           /* + PPU line renderer + audio */
-      wdog_refresh();
-      g_ppu_skip_render = false;
-      render_frame_into_active_buffer();
-      common_emu_clear_dwt_cycles();
-      run_frame_events(snes);
-      cyc_draw += common_emu_get_dwt_cycles();
-
-      common_emu_clear_dwt_cycles();
-      snes_pcm_submit();
-      cyc_audio += common_emu_get_dwt_cycles();
-    }
-
-    int lit = 0;
-    for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++)
-      if (snes_frame[i]) lit++;
-    FILE *df = fopen("/snes_diag.txt", "a");
-    if (df) {
-      fprintf(df, "SNES profile: clk=%lu emu_skip=%lu emu_draw=%lu audio=%lu "
-                  "cyc/frame, lit=%d cb=%lu\n",
-              (unsigned long)SystemCoreClock,
-              (unsigned long)(cyc_skip / 250), (unsigned long)(cyc_draw / 250),
-              (unsigned long)(cyc_audio / 250), lit,
-              (unsigned long)g_dbg_cb_count);
-      fclose(df);
-    }
-  }
+  /* (Profile probe removed — it measured, on device: 312 MHz, budget 5.2M
+   * cyc/frame; interpreter+APU 7.12M (137% of budget, the bottleneck), PPU line
+   * renderer +2.82M, audio 0.71M → ~29 fps raw, 13.7 shown via the overload
+   * guard. Rig insn ≈ device cycle ~1:1. Next lever: spin-skip.) */
 
   if (load_state) {
     odroid_system_emu_load_state(save_slot);
