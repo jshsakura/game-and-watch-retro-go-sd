@@ -69,6 +69,7 @@ configuration — it's not part of the firmware you flash.)
 | **game.com** | Tiger | 🧪 Lab | plays the library; 4-action pad mapped onto G&W buttons |
 | **Odyssey² / Videopac** | O2EM | 🧪 Lab (enabled) | raw-ROM path fixed; save/load/resume; multi-game cart select |
 | **Super Metroid** | snesrev/sm port | 🧪 Lab | native C reimplementation, 60 fps, savestates. [Details](#super-metroid) |
+| **Sega 32X** | PicoDrive | 🧪 Lab | ⚠️ **experimental / in progress** — SD builds only, `/roms/32x` |
 | Tamagotchi | TamaLib | Upstream (P2 🧪) | P1 upstream; P2 experimental in this fork |
 | NES, Game Boy / Color, Master System, Game Gear, Genesis, SG-1000 | fceumm / gnuboy / smsplusgx / gwenesis | Upstream | see upstream docs |
 | MSX 1/2/2+, Amstrad CPC6128 | blueMSX / caprice32 | Upstream | preview-quality; see upstream docs |

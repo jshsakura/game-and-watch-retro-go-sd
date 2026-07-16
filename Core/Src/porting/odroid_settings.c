@@ -100,7 +100,7 @@ typedef struct persistent_config {
 
 static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
-    .version = 13,  /* 12->13: APPID_SNES grows app[APPID_COUNT] (one-time settings reset on upgrade) */
+    .version = 14,  /* 13->14: APPID_32X grows app[APPID_COUNT] (one-time settings reset on upgrade) */
 
     .backlight = ODROID_BACKLIGHT_LEVEL6,
     .start_action = ODROID_START_ACTION_RESUME,

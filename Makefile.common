@@ -725,6 +725,7 @@ C_INCLUDES +=  \
 -ICore/Inc/porting/ngp \
 -ICore/Inc/porting/wswan \
 -ICore/Inc/porting/snes \
+-ICore/Inc/porting/md32x \
 -ICore/Inc/porting/gw \
 -ICore/Inc/porting/gwenesis \
 -ICore/Inc/porting/a2600 \
@@ -849,6 +850,13 @@ WSV_OBJECTS = $(addprefix $(BUILD_DIR)/wsv/,$(notdir $(WSV_C_SOURCES:.c=.o)))
 NGP_OBJECTS = $(addprefix $(BUILD_DIR)/ngp/,$(notdir $(NGP_C_SOURCES:.c=.o)))
 WSWAN_OBJECTS = $(addprefix $(BUILD_DIR)/wswan/,$(notdir $(WSWAN_C_SOURCES:.c=.o)))
 MD_OBJECTS = $(addprefix $(BUILD_DIR)/md/,$(notdir $(MD_C_SOURCES:.c=.o)))
+# MD32X_C_SOURCES is empty unless SD_CARD=1 (gated in Makefile), so this is
+# naturally empty for FrogFS/flash builds.
+# Object names are path-flattened, NOT $(notdir): picodrive has both
+# pico/memory.c and pico/32x/memory.c (likewise draw.c) — plain basenames
+# would collide in build/md32x/ and one file would silently shadow the other.
+md32x_obj_name = $(subst /,__,$(patsubst external/picodrive/%,%,$(patsubst Core/Src/porting/md32x/%,%,$(1:.c=.o))))
+MD32X_OBJECTS = $(addprefix $(BUILD_DIR)/md32x/,$(foreach s,$(MD32X_C_SOURCES),$(call md32x_obj_name,$(s))))
 A2600_OBJECTS = $(addprefix $(BUILD_DIR)/a2600/,$(notdir $(A2600_C_SOURCES:.c=.o)))
 A7800_OBJECTS = $(addprefix $(BUILD_DIR)/a7800/,$(notdir $(A7800_C_SOURCES:.c=.o)))
 VB_OBJECTS = $(addprefix $(BUILD_DIR)/vb/,$(notdir $(VB_C_SOURCES:.c=.o)))
@@ -1023,9 +1031,9 @@ $(BUILD_DIR)/memcpy-armv7m.o: Core/Src/memcpy-armv7m.s Makefile.common Makefile 
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
-	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
+	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
 	@# Every core is an overlay at the same RAM address, so a core that names a
 	@# global only another core defines gets silently bound to it — and reads that
 	@# core's address, which by then holds its own data. That is how Super Metroid
@@ -1317,6 +1325,24 @@ endef
 
 $(eval $(foreach obj,$(SNES_C_SOURCES),$(call snes_obj_prereq_gen,$(obj))))
 
+# -------------------------------------------------------------- Sega 32X (pico)
+# picodrive's trimmed 32X interpreter subset, compiled into build/md32x/ with
+# -DGNW_32X_CORE (static Pico32xMem, ROM zero-copy, ym2413/CD/DRC out, cz80
+# computed flags) and every picodrive global renamed via md32x_redefines so it
+# can never alias gwenesis's un-namespaced Genesis core (z80/m68k/VDP/ym share
+# names). main_md32x.o goes through the same rule; app_main_md32x and the
+# plat_* hooks are absent from the redefines list, so they stay unrenamed.
+define md32x_obj_prereq_gen
+$$(BUILD_DIR)/md32x/$(call md32x_obj_name,$1): $1 Makefile.common Makefile md32x_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
+	$$(V)$$(ECHO) [ CC md32x ] $$(notdir $$<)
+	$$(V)$$(CC) -c $$(CFLAGS) $$(MD32X_C_DEFS) $$(MD32X_C_INCLUDES) $$< -o $$@ \
+	-w -Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough -Wno-implicit-function-declaration
+	$$(V)$$(CP) --redefine-syms=md32x_redefines $$@
+
+endef
+# note: the blank line above is intentional
+$(eval $(foreach obj,$(MD32X_C_SOURCES),$(call md32x_obj_prereq_gen,$(obj))))
+
 # ------------------------------------------------------------------- GBA (gpSP)
 # ROM_BUFFER_SIZE=0    the cart is not buffered in RAM at all — the core reads it
 #                      memory-mapped out of QSPI flash (gba_set_xip_rom()).
@@ -1488,6 +1514,7 @@ $(BUILD_DIR):
 	$(V)mkdir $@/ngp
 	$(V)mkdir $@/wswan
 	$(V)mkdir $@/md
+	$(V)mkdir $@/md32x
 	$(V)mkdir $@/a2600
 	$(V)mkdir $@/lynx
 	$(V)mkdir $@/a7800
@@ -1786,6 +1813,8 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_snes,$(CORES_DIR)/snes.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_gw,$(CORES_DIR)/gw.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md,$(CORES_DIR)/md.bin)
+	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md32x,$(CORES_DIR)/32x.bin)
+	@$(CP) -O binary --only-section=.xip_md32x --only-section=.rodata_md32x $(BUILD_DIR)/$(TARGET).elf $(CORES_DIR)/32x.xip   # cold code + rodata (YM/68K const tables): contiguous in MD32X_CODE, ONE cache entry (see main_md32x.c)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_a2600,$(CORES_DIR)/a2600.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_lynx,$(CORES_DIR)/lynx.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_a7800,$(CORES_DIR)/a7800.bin)
@@ -1893,6 +1922,8 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(CORES_DIR)/snes.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/gw.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/md.bin --dest-path "/cores/" \
+		-- sdpush --file $(CORES_DIR)/32x.bin --dest-path "/cores/" \
+		-- sdpush --file $(CORES_DIR)/32x.xip --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/a2600.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/a2600_defprops.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/lynx.bin --dest-path "/cores/" \

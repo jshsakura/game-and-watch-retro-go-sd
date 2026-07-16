@@ -26,6 +26,7 @@
 #include "main_ngp.h"
 #include "main_wswan.h"
 #include "main_snes.h"
+#include "main_md32x.h"
 #include "main_gwenesis.h"
 #include "main_a7800.h"
 #include "main_vb.h"
@@ -254,7 +255,7 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 30 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance), 29->30 (SNES, SD only). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added. */
+#define MAX_EMULATORS 31 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance), 29->30 (SNES, SD only), 30->31 (Sega 32X, SD only). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added. */
 static retro_emulator_t emulators[MAX_EMULATORS];
 static rom_system_t systems[MAX_EMULATORS];
 static int emulators_count = 0;
@@ -1204,6 +1205,9 @@ static const emu_dispatch_t emu_wswan   = { "/cores/wswan.bin",   &_OVERLAY_WSWA
 static const emu_dispatch_t emu_snes    = { "/cores/snes.bin",    &_OVERLAY_SNES_BSS_START,    (uint32_t)&_OVERLAY_SNES_BSS_SIZE,    (uint32_t)&_OVERLAY_SNES_SIZE,    0, EMU_ENTRY(app_main_snes) };
 #endif
 static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
+#if SD_CARD == 1
+static const emu_dispatch_t emu_md32x   = { "/cores/32x.bin",    &_OVERLAY_MD32X_BSS_START,   (uint32_t)&_OVERLAY_MD32X_BSS_SIZE,   (uint32_t)&_OVERLAY_MD32X_SIZE,   0, EMU_ENTRY(app_main_md32x) };
+#endif
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
 static const emu_dispatch_t emu_lynx    = { "/cores/lynx.bin",    &_OVERLAY_LYNX_BSS_START,    (uint32_t)&_OVERLAY_LYNX_BSS_SIZE,    (uint32_t)&_OVERLAY_LYNX_SIZE,    (uint32_t)&_OVERLAY_LYNX_BSS_END, EMU_ENTRY(app_main_lynx) };
 static const emu_dispatch_t emu_a7800   = { "/cores/a7800.bin",   &_OVERLAY_A7800_BSS_START,   (uint32_t)&_OVERLAY_A7800_BSS_SIZE,   (uint32_t)&_OVERLAY_A7800_SIZE,   0, EMU_ENTRY(app_main_a7800) };
@@ -1325,6 +1329,10 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 #if SD_CARD == 1
     } else if(strcmp(system_name, "SNES") == 0) {
         run_internal_emu(&emu_snes, load_state, start_paused, save_slot);
+#endif
+#if SD_CARD == 1
+    } else if(strcmp(system_name, "Sega 32X") == 0) {
+        run_internal_emu(&emu_md32x, load_state, start_paused, save_slot);
 #endif
     } else if(strcmp(system_name, "Sega Genesis") == 0)  {
         run_internal_emu(&emu_md, load_state, start_paused, save_slot);
@@ -1558,6 +1566,13 @@ void emulators_init()
 #endif
     add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
     add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);
+    /* Sega 32X (picodrive) — EXPERIMENTAL, SD builds only. /roms/32x, ext .32x.
+     * NO_GAME_DATA: the core does its own byteswapped flash-cache in
+     * app_main_md32x (the zero-copy cart path needs the ROM 16-bit-word-swapped),
+     * like SM/SNES self-cache. */
+#if SD_CARD == 1
+    add_emulator("Sega 32X", "32x", "32x", RG_LOGO_PAD_32X, RG_LOGO_HEADER_32X, NO_GAME_DATA);
+#endif
     add_emulator("Sega Master System", "sms", "sms lzma", RG_LOGO_PAD_SMS, RG_LOGO_HEADER_SMS, NO_GAME_DATA);
     add_emulator("Sega SG-1000", "sg", "sg lzma", RG_LOGO_PAD_SG1000, RG_LOGO_HEADER_SG1000, NO_GAME_DATA);
     add_emulator("Tamagotchi", "tama", "b", RG_LOGO_PAD_TAMA, RG_LOGO_HEADER_TAMA, NO_GAME_DATA);
