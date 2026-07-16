@@ -242,11 +242,9 @@ static bool GLOBAL_DATA lang_update_cb(odroid_dialog_choice_t *option, odroid_di
      * dereference curr_lang->s_X each redraw, e.g. to format an ON/OFF
      * state) live-update as the user navigates languages.
      *
-     * Captured options[i].label pointers from the dialog's local
-     * choices array stay valid because i18n_load_language() caches
-     * each language's strings buffer per-idx and never frees it for
-     * the session — even after the user has cycled through every
-     * language in the menu. */
+     * Only one non-en_us language buffer is kept in RAM; browsing
+     * frees the previous. Dialog labels/header were snapshotted at
+     * open by odroid_overlay_dialog, so they stay valid. */
     curr_lang = i18n_load_language(lang);
     /* Use the baked native name from lang_metadata for the lang
      * option's own value so it reads correctly even when this

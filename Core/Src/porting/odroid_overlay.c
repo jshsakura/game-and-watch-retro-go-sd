@@ -922,6 +922,40 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *options, i
     bool power_key_debounce = false;
     odroid_gamepad_state_t joystick;
 
+    /* Snapshot header + labels (+ values that may point into lang
+     * strings). i18n_load_language() keeps only one non-en_us language
+     * in RAM and frees the previous when browsing the language picker;
+     * without this copy, options[i].label pointers captured at dialog
+     * construction would dangle. update_cb writes still go through
+     * option->value into these local buffers.
+     *
+     * Only the first MAX_OPTIONS_COUNT entries are snapshotted — that
+     * covers the settings menu (where language browsing happens).
+     * Longer dialogs (e.g. cheat lists) do not switch languages. */
+#define DIALOG_STR_MAX 64
+    char header_buf[DIALOG_STR_MAX];
+    char label_bufs[MAX_OPTIONS_COUNT][DIALOG_STR_MAX];
+    char value_bufs[MAX_OPTIONS_COUNT][DIALOG_STR_MAX];
+    if (header) {
+        strncpy(header_buf, header, DIALOG_STR_MAX - 1);
+        header_buf[DIALOG_STR_MAX - 1] = '\0';
+        header = header_buf;
+    }
+    const int snap_count = options_count < MAX_OPTIONS_COUNT ? options_count : MAX_OPTIONS_COUNT;
+    for (int i = 0; i < snap_count; i++) {
+        if (options[i].label) {
+            strncpy(label_bufs[i], options[i].label, DIALOG_STR_MAX - 1);
+            label_bufs[i][DIALOG_STR_MAX - 1] = '\0';
+            options[i].label = label_bufs[i];
+        }
+        if (options[i].value) {
+            strncpy(value_bufs[i], options[i].value, DIALOG_STR_MAX - 1);
+            value_bufs[i][DIALOG_STR_MAX - 1] = '\0';
+            options[i].value = value_bufs[i];
+        }
+    }
+#undef DIALOG_STR_MAX
+
     void _repaint()
     {
         wdog_refresh();
