@@ -114,7 +114,7 @@ static const clock_theme_t THEMES[] = {
     { C565(0x05,0x0c,0x14), C565(0xd7,0xef,0xff), C565(0x5a,0xd8,0xff), FACE_LCD     }, /* Arctic   */
     { C565(0x07,0x0d,0x08), C565(0x9b,0xd9,0x7a), C565(0xe0,0xb8,0x4a), FACE_SEG7    }, /* Forest   */
     { C565(0x00,0x00,0x00), C565(0xff,0xff,0xff), C565(0xff,0x33,0x33), FACE_OUTLINE }, /* OLED     */
-    { C565(0x00,0x00,0x00), C565(0xff,0xb0,0x00), C565(0xff,0xe0,0x66), FACE_LED     }, /* Term     */
+    { C565(0x00,0x00,0x00), C565(0xff,0xb0,0x00), C565(0xff,0xe0,0x66), FACE_DOT     }, /* Term     */
 };
 #define THEME_COUNT ((int)(sizeof(THEMES) / sizeof(THEMES[0])))
 
@@ -346,37 +346,9 @@ static void draw_pix_digit(int d, int x, int y, int px, uint16_t col, bool dot)
                 odroid_overlay_draw_fill_rect(x + c*px + inset, y + r*px + inset, sz, sz, col);
 }
 
-/* ---- LED: round dot-matrix ---------------------------------------------
- * The same 5x7 glyphs as FACE_PIXEL/DOT but each lit cell is a filled circle
- * — a true dot-matrix LED panel. Disc filled as one span per row (no sqrt),
- * so it is as cheap as the square-pixel face. Shares the s_outline halo. */
-static void draw_disc(int cx, int cy, int r, uint16_t col)
-{
-    for (int dy = -r; dy <= r; dy++) {
-        int rr = r*r - dy*dy, sx = 0;
-        while ((sx + 1)*(sx + 1) <= rr) sx++;
-        int x = cx - sx, wv = 2*sx + 1;
-        if (x < 0) { wv += x; x = 0; }
-        if (x + wv > GW_LCD_WIDTH) wv = GW_LCD_WIDTH - x;
-        if (wv > 0) odroid_overlay_draw_fill_rect(x, cy + dy, wv, 1, col);
-    }
-}
-
-static void draw_led_digit(int d, int x, int y, int px, uint16_t col)
-{
-    if (d < 0 || d > PIX_ALL) return;
-    if (s_outline) {
-        int o = s_outline; uint16_t oc = s_outline_col; s_outline = 0;
-        draw_led_digit(d, x-o, y, px, oc); draw_led_digit(d, x+o, y, px, oc);
-        draw_led_digit(d, x, y-o, px, oc); draw_led_digit(d, x, y+o, px, oc);
-        s_outline = o;
-    }
-    int r = px/2;
-    for (int row = 0; row < 7; row++)
-        for (int c = 0; c < 5; c++)
-            if (DOT5x7[d][row] & (1 << (4 - c)))
-                draw_disc(x + c*px + r, y + row*px + r, r, col);
-}
+/* FACE_LED (round dot-matrix, drawn via draw_led_digit/draw_disc) removed for
+ * flash headroom — the enum slot, its name and its persisted index stay put
+ * (see the digit_face_t comment); pix_glyph() now renders it as FACE_DOT. */
 
 /* Geometry of the big "HH:MM" block per face, so callers can centre extras. */
 #define SEG_W    44
@@ -479,8 +451,7 @@ static void seg_cell(digit_face_t face, int d, int x, int y, int w, int h, int t
 /* Pixel-family cell glyph: square pixels, inset dots, or round LEDs. */
 static void pix_glyph(digit_face_t face, int d, int x, int y, int px, uint16_t col)
 {
-    if (face == FACE_LED) draw_led_digit(d, x, y, px, col);
-    else                  draw_pix_digit(d, x, y, px, col, face == FACE_DOT);
+    draw_pix_digit(d, x, y, px, col, face == FACE_DOT || face == FACE_LED);
 }
 /* centred variant for the lit numeral (the ghost stays full-width) */
 static void pix_glyph_c(digit_face_t face, int d, int x, int y, int px, uint16_t col)
@@ -948,19 +919,21 @@ static void scene_city(uint32_t now, const clock_theme_t *t)
 
 /* pixel-scene registry — s_scene selects one; all are procedural (0 RAM). */
 typedef void (*scene_fn)(uint32_t, const clock_theme_t *);
-/* A curated 8-scene set. Matrix returns (device feedback: "매트릭스 좋았는데")
+/* A curated scene set. Matrix returns (device feedback: "매트릭스 좋았는데")
  * and Clouds returns re-tuned (fewer, airier); Aurora dropped ("안 이쁘고") and
  * Rain/Forest stay delisted (Rain overlapped Snow). Grid Pulse is reused as the
- * alarm ring effect so it's not selectable. Several scenes remain defined in the
- * .inc but delisted here (gc-sections drops them): mountains, desert, meteor,
- * bubbles, fireworks, aurora, forest, rain, and the newer equalizer/plasma/helix
+ * alarm ring effect so it's not selectable. Ocean delisted too (flash headroom
+ * — biggest of the set at 474B, picked over Clouds/Snow/Matrix which had
+ * positive user feedback). Several scenes remain defined in the .inc but
+ * delisted here (gc-sections drops them): mountains, desert, meteor, bubbles,
+ * fireworks, aurora, forest, rain, ocean, and the newer equalizer/plasma/helix
  * — any can be re-listed when there's budget. */
 static const scene_fn SCENES[] = {
-    scene_city, scene_ocean, scene_starfield, scene_synthwave,
+    scene_city, scene_starfield, scene_synthwave,
     scene_snow, scene_matrix, scene_clouds,
 };
 static const char *const SCENE_NAMES[] = {
-    "City", "Ocean", "Starfield", "Synthwave",
+    "City", "Starfield", "Synthwave",
     "Snow", "Matrix", "Clouds",
 };
 #define SCENE_COUNT ((int)(sizeof(SCENES) / sizeof(SCENES[0])))
@@ -1455,7 +1428,9 @@ static void render_alarm_edit(const alarm_t *a, int field, bool blink_off)
     uint16_t ghost = mix565(t->scr, t->ink, 2);
     uint16_t ch = (field == 0 && blink_off) ? ghost : t->ink;
     uint16_t cm = (field == 1 && blink_off) ? ghost : t->ink;
-    draw_big_time_2c(dh, a->min, true, !s_hour24, face, ch, cm, ghost);
+    /* Same reasoning as render_datetime_edit: keep the hour at 2 digits while
+     * editing so the display doesn't shift width as it cycles past 9 -> 10. */
+    draw_big_time_2c(dh, a->min, true, false, face, ch, cm, ghost);
 
     if (!s_hour24) {
         int x = big_time_end_x(face, dh < 10) + 6;
@@ -1585,7 +1560,10 @@ static void render_datetime_edit(const struct tm *tm, int field, bool blink_off)
     uint16_t ghost = mix565(t->scr, t->ink, 2);
     uint16_t ch = (field == 3 && blink_off) ? ghost : t->ink;
     uint16_t cm = (field == 4 && blink_off) ? ghost : t->ink;
-    draw_big_time_2c(dh, tm->tm_min, true, !s_hour24, face, ch, cm, ghost);
+    /* Editing screen: always show 2 digits (blank_lead=false) even in 12h mode,
+     * so the hour digit doesn't shift the whole display width as it cycles
+     * 9 <-> 10 while scrolling. */
+    draw_big_time_2c(dh, tm->tm_min, true, false, face, ch, cm, ghost);
     if (!s_hour24) {
         int xx = big_time_end_x(face, dh < 10) + 6;
         int yb = !face_is_pixel(face) ? SEG_Y + SEG_H - 12 : PIX_Y + 7*PIX_PX - 12;
@@ -1778,6 +1756,10 @@ static bool cb_face(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t
     (void)r;
     if (e == ODROID_DIALOG_PREV) s_face_override = (s_face_override <= -1) ? FACE_LAST : s_face_override-1;
     if (e == ODROID_DIALOG_NEXT) s_face_override = (s_face_override >= FACE_LAST) ? -1 : s_face_override+1;
+    /* FACE_LED's own renderer is gone (pix_glyph aliases it to FACE_DOT) — skip
+     * the now-redundant menu entry rather than show two identical "Dot" looks. */
+    if (s_face_override == FACE_LED)
+        s_face_override = (e == ODROID_DIALOG_PREV) ? s_face_override - 1 : s_face_override + 1;
     if (s_face_override < 0) sprintf(o->value, "%s", curr_lang->s_Clock_Auto);
     else sprintf(o->value, "%s", FACE_NAME[s_face_override]);
     return e == ODROID_DIALOG_ENTER;
