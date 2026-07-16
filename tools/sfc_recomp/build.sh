@@ -11,7 +11,7 @@ FRAMES="${2:-1500}"
 DUMP_FRAMES=2000
 
 HERE=tools/sfc_recomp
-O=/tmp/sfc_recomp_build
+O="${SFC_RECOMP_OUT:-/tmp/sfc_recomp_build}"
 mkdir -p "$O"
 
 CF="-O2 -DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS -w \

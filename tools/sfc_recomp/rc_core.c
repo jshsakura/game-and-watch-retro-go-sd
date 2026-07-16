@@ -16,8 +16,45 @@
 
 /* ---- constant-folded fetch + addressing (each mirrors cpu.c exactly) ---- */
 
+#ifdef RC_VERIFY
+/* Debug build (-DRC_VERIFY): compare every baked fetch constant against the
+ * byte the live cart would serve at (k:pc). Aborts on the first mismatch, so a
+ * translator/cart-model bug names its site instead of drifting the state hash. */
+static uint32_t rc_lorom_idx(uint32_t adr) {
+  return (((adr >> 16) & 0x7f) << 15) | (adr & 0x7fff);
+}
+static uint32_t rc_hirom_idx(uint32_t adr) {
+  return (((adr >> 16) & 0x3f) << 16) | (adr & 0xffff);
+}
+static uint32_t rc_fold(uint32_t addr, uint32_t size) {   /* cart.c cart_fold */
+  if (size == 0) return 0;
+  uint32_t base = 0, mask = 1u << 31;
+  while (addr >= size) {
+    while (!(addr & mask)) mask >>= 1;
+    addr -= mask;
+    if (size > mask) { size -= mask; base += mask; }
+  }
+  return base + addr;
+}
+static void rc_verify8(Cpu *cpu, uint8_t v) {
+  Snes *s = (Snes *)cpu->mem;
+  Cart *c = s->cart;
+  uint32_t adr = ((uint32_t)cpu->k << 16) | cpu->pc;
+  uint32_t idx = (c->type == 1) ? rc_lorom_idx(adr) : rc_hirom_idx(adr);
+  idx = c->romMask ? (idx & c->romMask) : rc_fold(idx, (uint32_t)c->romSize);
+  if (c->rom[idx] != v) {
+    fprintf(stderr, "[rc-verify] MISMATCH at %02x:%04x: baked %02x, cart %02x (idx %x)\n",
+            cpu->k, cpu->pc, v, c->rom[idx], idx);
+    exit(2);
+  }
+}
+#endif
+
 static inline uint8_t rc_fetch8(Cpu *cpu, uint8_t v) {
   Snes *s = (Snes *)cpu->mem;
+#ifdef RC_VERIFY
+  rc_verify8(cpu, v);
+#endif
   s->cpuMemOps++;
   s->cpuCyclesLeft += 8;
   cpu->pc++;
@@ -25,6 +62,10 @@ static inline uint8_t rc_fetch8(Cpu *cpu, uint8_t v) {
 }
 static inline uint16_t rc_fetch16(Cpu *cpu, uint16_t v) {
   Snes *s = (Snes *)cpu->mem;
+#ifdef RC_VERIFY
+  rc_verify8(cpu, (uint8_t)v);
+  cpu->pc++; rc_verify8(cpu, (uint8_t)(v >> 8)); cpu->pc--;
+#endif
   s->cpuMemOps += 2;
   s->cpuCyclesLeft += 16;
   cpu->pc += 2;
