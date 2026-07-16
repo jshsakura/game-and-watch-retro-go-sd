@@ -37,7 +37,14 @@ typedef struct {
     char       fh_path[256];       /* which bin fh points at (avoid reopen) */
     uint32_t   fh_pos;             /* cached byte offset (skip lseek if sequential) */
 
-    uint32_t   cur_lba;            /* CDD head position */
+    int32_t    cur_lba;            /* CDD head position — SIGNED: playback starts
+                                    * 3 sectors BEFORE the target, so it walks
+                                    * through pre-target (negative) LBAs. The
+                                    * sub-BIOS CDC position gate only enables
+                                    * buffer-write (WRRQ) while the head is 1-4
+                                    * sectors ahead of the wanted sector, i.e.
+                                    * it must reach the target from behind
+                                    * (pd_cd/cdd.c uses a signed lba too). */
     int        status;            /* CDD status (STOP/PLAY/SEEK/READY...) */
     int        index;             /* current track index (CDD "RS2-RS3" reports) */
     int        latency;           /* CDD ticks left before a SEEK/PLAY settles */
@@ -417,7 +424,14 @@ void segacd_cdd_command(void)
         int lba = ((c[2]*10+c[3])*60 + (c[4]*10+c[5]))*75 + (c[6]*10+c[7]) - 150;
         if (lba < 0) lba = 0;
         CD.index        = track_index_at_lba((uint32_t)lba);
-        CD.cur_lba      = (uint32_t)(lba > 3 ? lba - 3 : 0);  /* playback starts a few blocks early, pd_cd/cdd.c:1059 */
+        /* Start 3 sectors early WITHOUT clamping to 0 — for the boot read
+         * (target LBA 0) the head must walk 147,148,149 (abs) before 150 so
+         * the sub-BIOS's CDC position gate (target-current in [1,4]) fires and
+         * sets WRRQ. Clamping to 0 made the head start AT the target, the gate
+         * never matched, WRRQ never set, and the boot hung. pd_cd/cdd.c seeks
+         * to (lba-3) with a signed lba. Verified against a GPGX boot trace:
+         * WRRQ first asserts at head LBA -1. */
+        CD.cur_lba      = lba - 3;
         CD.latency      = 2;      /* flat settle delay (CDD ticks); see file header note */
         CD.pending_play = (cmd == 0x03);
         CD.status       = CDD_SEEK;
@@ -850,37 +864,55 @@ void segacd_cd_update(void)
 {
     if (!CD.opened || CD.status != CDD_PLAY) return;
 
-    cd_track_t *t = track_at_lba(CD.cur_lba);
-    if (t && !t->is_audio) {
-        static uint8_t sector_buf[CD_SECTOR_DATA];
-        if (read_sector(CD.cur_lba, sector_buf, CD_SECTOR_DATA) == 0) {
+    /* Feed the CDC decoder on EVERY play tick, mirroring pd_cd/cdd.c
+     * cdd_update() — the head walks up to the target from 3 sectors behind, and
+     * the decoder must present a HEAD (MSF) for those pre-target/pregap sectors
+     * too (cur_lba < 0), because the sub-BIOS's CDC position gate examines the
+     * decoded HEAD to decide when to enable buffer-write (WRRQ). Only real
+     * data-track sectors (cur_lba >= 0, non-audio) carry payload; pregap
+     * sectors get the correct HEAD with a zeroed data buffer (their payload is
+     * never buffered — WRRQ only turns on once the head is 1-4 sectors from the
+     * wanted sector). Gating the decode on a successful read_sector() (the old
+     * behavior) skipped the pregap entirely and the gate never fired. */
+    static uint8_t sector_buf[CD_SECTOR_DATA];
+    cd_track_t *t = (CD.cur_lba >= 0) ? track_at_lba((uint32_t)CD.cur_lba) : NULL;
+    int on_data = (CD.cur_lba < 0) || (t && !t->is_audio);
+
+    if (on_data) {
+        int have_data = 0;
+        if (CD.cur_lba >= 0 && t && !t->is_audio)
+            have_data = (read_sector((uint32_t)CD.cur_lba, sector_buf, CD_SECTOR_DATA) == 0);
+        if (!have_data)
+            memset(sector_buf, 0, CD_SECTOR_DATA);   /* pregap / unreadable: HEAD only */
+
+        int32_t msf = CD.cur_lba + 150;              /* >= 0 for cur_lba >= -150 */
+        uint8_t header[4];
+        header[0] = bcd8((int)((msf / 75) / 60));
+        header[1] = bcd8((int)((msf / 75) % 60));
+        header[2] = bcd8((int)(msf % 75));
+        header[3] = 0x01;   /* CD-ROM Mode 1 */
 #ifdef SEGACD_GA_TRACE
-            { extern uint32_t scd_dbg_cdupd_read; scd_dbg_cdupd_read++; }
+        if (have_data) { extern uint32_t scd_dbg_cdupd_read; scd_dbg_cdupd_read++; }
+        { extern void scd_dbg_log_hdr(int32_t lba, const uint8_t *h, const uint8_t *data);
+          scd_dbg_log_hdr(CD.cur_lba, header, sector_buf); }
 #endif
-            uint32_t msf = CD.cur_lba + 150;
-            uint8_t header[4];
-            header[0] = bcd8((int)((msf / 75) / 60));
-            header[1] = bcd8((int)((msf / 75) % 60));
-            header[2] = bcd8((int)(msf % 75));
-            header[3] = 0x01;   /* CD-ROM Mode 1 */
-#ifdef SEGACD_GA_TRACE
-            { extern void scd_dbg_log_hdr(uint32_t lba, const uint8_t *h, const uint8_t *data);
-              scd_dbg_log_hdr(CD.cur_lba, header, sector_buf); }
-#endif
-            cdc_decoder_update(header, sector_buf);
-        }
+        cdc_decoder_update(header, sector_buf);
     }
     /* TODO(ph4): CD-DA audio tracks -> stream to mixer, not the CDC ring. */
 
     CD.cur_lba++;
 
-    if (!t || CD.cur_lba >= t->start_lba + t->length_lba) {
-        /* crossed into the next track, or ran off a track we couldn't find */
-        if (CD.index + 1 < CD.num_tracks) {
-            CD.index++;
-            CD.cur_lba = CD.tracks[CD.index].start_lba;
-        } else {
-            CD.status = CDD_END;
+    /* Track-cross / end-of-disc only applies once the head is on a real track
+     * (>= 0) — never during the pre-target pregap walk. */
+    if (CD.cur_lba >= 0) {
+        cd_track_t *ct = track_at_lba((uint32_t)CD.cur_lba);
+        if (!ct || (uint32_t)CD.cur_lba >= ct->start_lba + ct->length_lba) {
+            if (CD.index + 1 < CD.num_tracks) {
+                CD.index++;
+                CD.cur_lba = (int32_t)CD.tracks[CD.index].start_lba;
+            } else {
+                CD.status = CDD_END;
+            }
         }
     }
 }
@@ -907,12 +939,12 @@ uint16_t segacd_cdc_ctrl_dbg(int which)
  * MSF/mode header the sub reads from HEAD0-3, and whether the 2048 bytes look
  * like the Sega CD boot descriptor ("SEGADISCSYSTEM"). */
 static int scd_dbg_hdr_n;
-void scd_dbg_log_hdr(uint32_t lba, const uint8_t *h, const uint8_t *data)
+void scd_dbg_log_hdr(int32_t lba, const uint8_t *h, const uint8_t *data)
 {
-    if (scd_dbg_hdr_n >= 16) return;
+    if (scd_dbg_hdr_n >= 24) return;
     char sig[17]; memcpy(sig, data, 16); sig[16]=0;
     for (int i=0;i<16;i++) if (sig[i]<32||sig[i]>126) sig[i]='.';
-    printf("[boot] sector LBA=%u HEAD=%02x %02x %02x %02x  data[0..15]='%s'\n",
+    printf("[boot] sector LBA=%d HEAD=%02x %02x %02x %02x  data[0..15]='%s'\n",
            lba, h[0],h[1],h[2],h[3], sig);
     scd_dbg_hdr_n++;
 }
