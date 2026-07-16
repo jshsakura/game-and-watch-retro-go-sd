@@ -279,6 +279,41 @@ int main(int argc, char **argv)
         if (scd_dbg_cdd_cmd_hist[i])
             printf("  cmd 0x%x: %u\n", i, scd_dbg_cdd_cmd_hist[i]);
 
+    extern uint32_t scd_dbg_800f_pc[]; extern uint8_t scd_dbg_800f_val[]; extern int scd_dbg_800f_n;
+    printf("[boot] sub writes to $FF800E/F comm-flag (%d logged): ", scd_dbg_800f_n);
+    for (int i = 0; i < scd_dbg_800f_n; i++)
+        printf("[pc=%06x val=%02x] ", scd_dbg_800f_pc[i], scd_dbg_800f_val[i]);
+    printf("\n");
+    extern uint32_t scd_dbg_a1200e_pc[]; extern uint8_t scd_dbg_a1200e_val[]; extern int scd_dbg_a1200e_n;
+    printf("[boot] main writes to $A1200E/F comm-flag (%d logged): ", scd_dbg_a1200e_n);
+    for (int i = 0; i < scd_dbg_a1200e_n; i++)
+        printf("[pc=%06x val=%02x] ", scd_dbg_a1200e_pc[i], scd_dbg_a1200e_val[i]);
+    printf("\n");
+    extern uint8_t scd_dbg_a12000_regef[][2]; extern int scd_dbg_a12000_regef_n;
+    printf("[boot] regs[0x0e]/[0x0f] at each $A12000 doorbell write (%d logged): ", scd_dbg_a12000_regef_n);
+    for (int i = 0; i < scd_dbg_a12000_regef_n; i++)
+        printf("[e=%02x f=%02x] ", scd_dbg_a12000_regef[i][0], scd_dbg_a12000_regef[i][1]);
+    printf("\n");
+    /* regs[0x01] here is now only ever SUB's own $FF8001 (LED/soft-reset
+     * trigger) writes — main_busreq is MAIN's separate SRES/SBRQ shadow,
+     * see segacd.h. Printing both makes the post-fix split visible. */
+    printf("[boot] final regs[0x0e]=%02x regs[0x0f]=%02x regs[0x01](sub)=%02x main_busreq=%02x\n",
+           SCD.s68k_regs[0x0e], SCD.s68k_regs[0x0f], SCD.s68k_regs[0x01], SCD.main_busreq);
+    extern uint32_t scd_dbg_reg1_pc[]; extern uint8_t scd_dbg_reg1_val[]; extern uint32_t scd_dbg_reg1_frame[]; extern int scd_dbg_reg1_n;
+    printf("[boot] $A12001 (SRES/SBRQ) writes (%d logged): ", scd_dbg_reg1_n);
+    for (int i = 0; i < scd_dbg_reg1_n; i++)
+        printf("[f%u pc=%06x val=%02x] ", scd_dbg_reg1_frame[i], scd_dbg_reg1_pc[i], scd_dbg_reg1_val[i]);
+    printf("\n");
+
+    /* Sub work-RAM CDD/TOC state machine variables ($5800-$587F), the ones
+     * decoded by disassembling the level-4 (CDD) ISR chain at PRG 0x610. */
+    printf("[boot] sub work-RAM CDD state ($5800-$587f):");
+    for (unsigned o = 0x5800; o < 0x5880; o++) {
+        printf(" %02x", SCD.prg_ram[o ^ 1]);
+        if ((o & 0xf) == 0xf) printf("\n  ");
+    }
+    printf("\n");
+
     /* --- boot-stall investigation (0716): who pulses $A12000, is MAIN's
      * VBlank interrupt-enable ever set, and where was the sub parked at each
      * IFL2/CDD delivery. --- */
