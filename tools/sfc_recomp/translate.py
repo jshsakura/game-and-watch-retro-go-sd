@@ -90,12 +90,25 @@ def max_consumption(body):
     return total
 
 
+def has_fetch(text):
+    return any(pat in text for pat, _, _ in MODE_XFORMS)
+
+
 def transform_body(body, operands):
     """Replace fetch/addressing calls left-to-right with constant-folded forms.
 
-    Textual order == execution order for every body in cpu.c's switch (verified:
-    multi-fetch bodies are sequential statements). Returns None if a fetch call
-    survives (unknown pattern -> fallback)."""
+    Textual order == execution order for every body in cpu.c's switch EXCEPT
+    opcode 0x89 (biti imm): its 8-bit and 16-bit fetches sit in mutually
+    exclusive if/else arms, so both arms must fold from operand byte 0 — a
+    linear cursor bakes the 16-bit immediate from bytes +2/+3 instead of +1/+2
+    (caught by -DRC_VERIFY on Super Metroid). Fold each arm independently.
+    Returns None if a fetch call survives (unknown pattern -> fallback)."""
+    if "} else {" in body:
+        i = body.index("} else {")
+        if has_fetch(body[:i]) and has_fetch(body[i:]):
+            a = transform_body(body[:i], operands)
+            b = transform_body(body[i:], operands)
+            return None if a is None or b is None else a + b
     out = []
     pos = 0
     cur = 0  # operand-byte cursor
@@ -136,12 +149,31 @@ def main():
     cases = parse_cases(cpu_src)
     assert len(cases) == 256, "expected 256 cases, got %d" % len(cases)
 
+    def cart_fold(addr, size):
+        """Mirror of cart.c's cart_fold(): non-power-of-2 images (romMask==0
+        since sm 94869fb keeps the raw image instead of a pow2 expansion) fold
+        out-of-range addresses onto the last power-of-2 chunk, exactly like the
+        cart's chip-select decoding."""
+        if size == 0:
+            return 0
+        base, mask = 0, 1 << 31
+        while addr >= size:
+            while not (addr & mask):
+                mask >>= 1
+            addr -= mask
+            if size > mask:
+                size -= mask
+                base += mask
+        return base + addr
+
     def rom_byte(bank, off):
         if cart_type == 1:
             idx = ((bank & 0x7F) << 15) | (off & 0x7FFF)
         else:
             idx = ((bank & 0x3F) << 16) | off
-        return cart[idx & rom_mask]
+        # cart.c cart_romIndex(): one AND for power-of-2 images, fold otherwise
+        idx = (idx & rom_mask) if rom_mask else cart_fold(idx, len(cart))
+        return cart[idx]
 
     def is_rom_site(a):
         bank = a >> 16
