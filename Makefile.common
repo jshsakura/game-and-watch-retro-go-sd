@@ -1046,7 +1046,7 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_
 # other flag (incl. -ggdb3) intact and does NOT touch the emulator core rules.
 $(BUILD_DIR)/core/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC core ] $(notdir $<)
-	$(V)$(CC) -c $(patsubst -O2,-Os,$(CFLAGS)) -Wa,-a,-ad,-alms=$(BUILD_DIR)/core/$(notdir $(<:.c=.lst)) $< -o $@
+	$(V)$(CC) -c $(patsubst -O2,-Oz,$(CFLAGS)) -Oz -falign-functions=1 -falign-jumps=1 -falign-loops=1 -Wa,-a,-ad,-alms=$(BUILD_DIR)/core/$(notdir $(<:.c=.lst)) $< -o $@
 
 ifeq ($(SD_CARD), 1)
 $(BUILD_DIR)/fatfs/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
@@ -1206,7 +1206,7 @@ $(BUILD_DIR)/pkmini/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_D
 # CXX
 $(BUILD_DIR)/core/%.o: %.cpp Makefile Makefile.common $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CXX core ] $(notdir $<)
-	$(V)$(CXX) -c $(CXXFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/core/$(notdir $(<:.cpp=.lst)) $< -o $@
+	$(V)$(CXX) -c $(CXXFLAGS) -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wa,-a,-ad,-alms=$(BUILD_DIR)/core/$(notdir $(<:.cpp=.lst)) $< -o $@
 
 $(BUILD_DIR)/tgbdual/%.o: %.cpp Makefile Makefile.common $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CXX GB TGB Dual ] $(notdir $<)
@@ -1335,7 +1335,7 @@ $(eval $(foreach obj,$(SNES_C_SOURCES),$(call snes_obj_prereq_gen,$(obj))))
 define md32x_obj_prereq_gen
 $$(BUILD_DIR)/md32x/$(call md32x_obj_name,$1): $1 Makefile.common Makefile md32x_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC md32x ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) $$(MD32X_C_DEFS) $$(MD32X_C_INCLUDES) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(CFLAGS) -fno-strict-aliasing $$(MD32X_C_DEFS) $$(MD32X_C_INCLUDES) $$< -o $$@ \
 	-w -Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough -Wno-implicit-function-declaration
 	$$(V)$$(CP) --redefine-syms=md32x_redefines $$@
 

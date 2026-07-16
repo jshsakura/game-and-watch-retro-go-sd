@@ -13,7 +13,7 @@ FRAMES="${2:-600}"
 
 PD="${PD_DIR:-external/picodrive}"
 RIG=tools/m7_qemu_rig
-OUT="$RIG/build/32x"
+OUT="${RIG_OUT:-$RIG/build/32x}"   # override for parallel lanes (objects clash otherwise)
 mkdir -p "$OUT"
 
 CC=arm-none-eabi-gcc
@@ -21,6 +21,8 @@ ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -ffp-contract=off"
 OPT="-O2 -g -fno-strict-aliasing -ffunction-sections -fdata-sections -fcommon"
 # Device defines (cf. tools/gen_md32x_redefines.sh / Makefile MD32X) + rig counters
 DEF="-DGNW_32X_CORE -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DRIG_SH2_COUNT -DRIG_FRAMES=$FRAMES ${EXTRA_DEF:-}"
+# PHASE_PROF=1: per-phase cost table (picodrive pprof probes, icount clock)
+if [ "${PHASE_PROF:-0}" = "1" ]; then DEF="$DEF -DRIG_PHASE_PROF"; fi
 INC="-I$PD -I$PD/pico -I$PD/cpu -I$PD/zlib"
 
 # ROM -> byteswap (mirror the device flash cache byte_swap=true: the GNW
@@ -44,7 +46,7 @@ cpu/gwenesis68k/m68kcpu.c cpu/gwenesis68k/g68k_bus.c cpu/cz80/cz80.c
 pico/32x/32x.c pico/32x/draw.c pico/32x/memory.c pico/32x/pwm.c pico/32x/sh2soc.c
 pico/cart.c pico/memory.c pico/draw.c pico/sek.c pico/videoport.c
 pico/media.c pico/pico.c pico/misc.c pico/patch.c pico/z80if.c
-pico/eeprom.c
+pico/eeprom.c pico/state.c
 pico/sound/sound.c pico/sound/mix.c pico/sound/sn76496.c pico/sound/ym2612.c
 pico/sound/resampler.c
 zlib/crc32.c

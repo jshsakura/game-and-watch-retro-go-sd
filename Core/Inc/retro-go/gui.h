@@ -93,6 +93,10 @@ tab_t *gui_set_current_tab(int index);
  * that pool is rewound (emulator_start), exactly as rg_reset_logo_buffers() is:
  * the pointers survive the rewind but the memory behind them does not. */
 void gui_reset_cover_buffers(void);
+/* Invalidate the per-tab cached cover dimensions after the "Cover style"
+ * option (Poster/Square) changes, so every tab re-probes its layout size.
+ * COVERFLOW builds only. */
+void gui_cover_style_changed(void);
 
 void gui_init_tab(tab_t *tab);
 void gui_init_colors(void);

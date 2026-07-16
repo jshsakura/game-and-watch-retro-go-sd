@@ -41,6 +41,7 @@
 #include "pico/pico_types.h"   /* s8/s16/s32 — MUST precede pico.h */
 #include "pico/pico.h"
 #include "pico/pico_int.h"     /* Pico.est.Draw2FB binding (Draw2 shim below) */
+#include "pico/state.h"
 
 /* ---- geometry / rates ----------------------------------------------------- */
 #define MD32X_FPS            60
@@ -138,6 +139,8 @@ unsigned char *gnw_m68k_bank_alloc(void) {
 static short md32x_snd[MD32X_AUDIO_MAX];
 
 static void md32x_write_sound(int len) {
+  len >>= 1;   /* picodrive passes BYTES (sound.c: curr_pos * 2 for mono) —
+                * NTSC only worked by accident through the min() clamp (audit) */
   int16_t *dst = audio_get_active_buffer();
   uint16_t dst_len = audio_get_buffer_length();
   if (common_emu_sound_loop_is_muted()) return;
@@ -178,12 +181,15 @@ static uint16_t read_md_pad(odroid_gamepad_state_t *j) {
  * buffer intact). Geometry is centered from picodrive's own mode callback so
  * H32(256)/H40(320) and PAL/NTSC line counts stay centered with no stale
  * margins. */
-static int md32x_out_line = (240 - 224) / 2;   /* top margin, updated on mode change */
-static int md32x_out_col  = 0;                 /* left margin */
-
+/* Buffer stays at the framebuffer ORIGIN, full 320x240 pitch. picodrive
+ * CENTERS content itself (V28 renders at rows 8..231; 32X is always 320
+ * wide) and emu_video_mode_change only REPORTS the content rect — the
+ * libretro frontend crops, it never re-points the buffer. The first device
+ * build added its own margin on top: top band doubled to 16 rows and the
+ * bottom 8 content rows were written PAST the framebuffer (into the other
+ * buffer's head). */
 static void set_out_buffer(void) {
-  uint16_t *fb = lcd_get_active_buffer();
-  PicoDrawSetOutBuf(fb + md32x_out_line * 320 + md32x_out_col, 320 * 2);
+  PicoDrawSetOutBuf(lcd_get_active_buffer(), 320 * 2);
 }
 
 /* picodrive frontend hooks (referenced by pico/draw.c and pico/32x/32x.c). Not
@@ -200,27 +206,86 @@ void emu_32x_startup(void) {
 }
 
 void emu_video_mode_change(int start_line, int line_count, int start_col, int col_count) {
-  (void)start_line; (void)start_col;
-  md32x_out_line = (240 - line_count) / 2; if (md32x_out_line < 0) md32x_out_line = 0;
-  md32x_out_col  = (320 - col_count)  / 2; if (md32x_out_col  < 0) md32x_out_col  = 0;
+  (void)start_line; (void)line_count; (void)start_col; (void)col_count;
+  /* Mode changes are rare; wipe both buffers so stale borders don't linger
+   * (libretro memsets its vout buffer here for the same reason). */
+  lcd_clear_buffers();
   set_out_buffer();
 }
 
 /* ---- savestate (M2) --------------------------------------------------------
- * DEFERRED for the M1 feasibility milestone (boot + fps first). picodrive's
- * PicoState(fname,is_save) in pico/state.c is entangled with ym2413 (SMS FM),
- * megasd (Sega CD) and zlib — none of which the trimmed 32X build compiles.
- * M2 wires it behind these stubs by guarding those chunks out in state.c (a
- * GNW_32X_CORE fork guard) and stamping the file with MD32X_STATE_MAGIC.
- * Returning false here is honest: the launcher shows save/load as unavailable
- * rather than silently doing nothing (the "never wired" trap). */
-static bool md32x_SaveState(const char *pathName) { (void)pathName; return false; }
-static bool md32x_LoadState(const char *pathName) { (void)pathName; return false; }
+ * PicoStateFP keeps our project stamp and picodrive's versioned chunk stream in
+ * one file without reopening/truncating it. These callbacks deliberately match
+ * picodrive's area I/O ABI instead of casting the libc function pointers. */
+static size_t md32x_state_read(void *ptr, size_t size, size_t count, void *file) {
+  return fread(ptr, size, count, (FILE *)file);
+}
+
+static size_t md32x_state_write(void *ptr, size_t size, size_t count, void *file) {
+  return fwrite(ptr, size, count, (FILE *)file);
+}
+
+static size_t md32x_state_eof(void *file) {
+  return (size_t)feof((FILE *)file);
+}
+
+static int md32x_state_seek(void *file, long offset, int whence) {
+  return fseek((FILE *)file, offset, whence);
+}
+
+static bool md32x_SaveState(const char *pathName) {
+  const uint32_t header[2] = { MD32X_STATE_MAGIC, MD32X_STATE_VERSION };
+  FILE *file = fopen(pathName, "wb");
+  if (file == NULL)
+    return false;
+
+  bool ok = fwrite(header, sizeof(header), 1, file) == 1 &&
+            PicoStateFP(file, 1, md32x_state_read, md32x_state_write,
+                        md32x_state_eof, md32x_state_seek) == 0;
+  if (fclose(file) != 0)
+    ok = false;
+  if (!ok)
+    remove(pathName);
+  return ok;
+}
+
+static bool md32x_LoadState(const char *pathName) {
+  uint32_t header[2];
+  FILE *file = fopen(pathName, "rb");
+  if (file == NULL)
+    return false;
+
+  bool ok = fread(header, sizeof(header), 1, file) == 1 &&
+            header[0] == MD32X_STATE_MAGIC &&
+            header[1] == MD32X_STATE_VERSION &&
+            PicoStateFP(file, 0, md32x_state_read, md32x_state_write,
+                        md32x_state_eof, md32x_state_seek) == 0;
+  fclose(file);
+  if (ok)
+    set_out_buffer();
+  return ok;
+}
 
 static void *md32x_Screenshot(void) {
   lcd_wait_for_vblank();
   return lcd_get_active_buffer();
 }
+
+/* Pause/menu repaint. The pause banner calls this through the pointer given
+ * to common_emu_input_loop — a NULL there was the device's PC=0 Hardfault
+ * (LR = odroid_overlay_sleep_pause_banner; the C64-era rule: a custom-loop
+ * core MUST pass a non-NULL repaint). We can't cheaply re-render a picodrive
+ * frame on demand, so copy the SHOWN frame into the active buffer and draw
+ * the overlay on top. */
+static void md32x_repaint(void) {
+  uint16_t *active = lcd_get_active_buffer();
+  uint16_t *shown  = (active == (uint16_t *)framebuffer1)
+                       ? (uint16_t *)framebuffer2 : (uint16_t *)framebuffer1;
+  memcpy(active, shown, 320 * 240 * sizeof(uint16_t));
+  common_ingame_overlay();
+}
+
+static void diag_log(const char *fmt, ...);   /* boot diag, defined below */
 
 /* ---- XIP: cold code + rodata from flash (the SM/GBA sentinel pattern) ------
  * .xip_md32x + .rodata_md32x are linked at MD32X_CODE_BASE (a sentinel — nothing
@@ -258,13 +323,51 @@ static void Md32xRelocateXip(uint8_t *buffer, uint32_t length, uint32_t offset_i
 }
 
 static bool Md32xCacheXipToFlash(void) {
+  extern uint8_t __xip_md32x_start__[], __xip_md32x_end__[];
+  const uint32_t expected = (uint32_t)(__xip_md32x_end__ - __xip_md32x_start__);
   g_xip_size = 0;
   g_xip_addr = odroid_overlay_cache_file_in_flash_relocate(MD32X_XIP_PATH, &g_xip_size,
                                                            false, &Md32xRelocateXip);
   if (g_xip_addr == NULL || g_xip_size == 0)
     return false;
+  /* A stale 32x.xip against a new firmware = mismatched sentinel offsets =
+   * wild jumps with no message (audit: bin is CORI-tagged, xip was not).
+   * Size is a strong cheap proxy — refuse loudly instead of booting garbage. */
+  if (g_xip_size != expected) {
+    diag_log("FATAL: 32x.xip size %lu != firmware's %lu (stale xip? re-copy /cores)\n",
+             (unsigned long)g_xip_size, (unsigned long)expected);
+    return false;
+  }
   g_xip_offset = (int32_t)((uint32_t)g_xip_addr - MD32X_CODE_BASE);
   return true;
+}
+
+/* ---- one-shot boot diagnostic (strip later) --------------------------------
+ * The SNES /snes_diag.txt pattern: breadcrumbs accumulate in RAM and the file
+ * is REWRITTEN (open/write/close) at each boot stage, so a crash mid-boot
+ * leaves the last completed stage on the SD — read the file on a PC instead
+ * of photographing a BSOD. HARD RULE: never written after the main loop
+ * starts (mid-play SD writes corrupt the card — the /snes_diag saga). The
+ * headless warm-up below runs BEFORE audio starts, so its writes are
+ * boot-time too. */
+#define MD32X_DIAG_PATH "/32x_diag.txt"
+static char md32x_diag[2048];
+static uint16_t md32x_diag_len;
+static bool md32x_diag_sealed;   /* true once the main loop starts: no more writes */
+
+static void diag_log(const char *fmt, ...) {
+  if (md32x_diag_sealed) return;
+  va_list ap; va_start(ap, fmt);
+  int n = vsnprintf(md32x_diag + md32x_diag_len,
+                    sizeof(md32x_diag) - md32x_diag_len, fmt, ap);
+  va_end(ap);
+  if (n > 0) {
+    md32x_diag_len += (uint16_t)((n < (int)(sizeof(md32x_diag) - md32x_diag_len))
+                                 ? n : (int)(sizeof(md32x_diag) - md32x_diag_len) - 1);
+  }
+  wdog_refresh();
+  FILE *f = fopen(MD32X_DIAG_PATH, "wb");
+  if (f) { fwrite(md32x_diag, 1, md32x_diag_len, f); fclose(f); }
 }
 
 /* ---- ROM load ------------------------------------------------------------- */
@@ -298,35 +401,49 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   odroid_system_init(APPID_32X, MD32X_AUDIO_RATE);
   odroid_system_emu_init(&md32x_LoadState, &md32x_SaveState, &md32x_Screenshot,
                          NULL, NULL, NULL);
-
-  audio_start_playing(MD32X_AUDIO_RATE / MD32X_FPS);
+  /* audio_start_playing happens AFTER the warm-up frame below, with the
+   * region-correct per-frame sample count (audit bug: PAL carts pace 50fps). */
 
   /* ROM: memory-mapped in external flash, read-only, zero-copy (cart.c's
    * GNW_32X_CORE guard binds Pico.rom here rather than copying). The zero-copy
    * path SKIPS picodrive's in-place Byteswap(), and its 68K/SH-2 handlers
    * expect the ROM stored 16-bit-word-swapped — so cache it byteswapped here
    * (true), the swap the normal PicoCartLoad would have done. */
+  diag_log("32x diag v1 (boot breadcrumbs; last line = last completed stage)\n"
+           "rom=%s\n", ACTIVE_FILE->path);
+
   uint32_t sz = 0;
   const uint8_t *rom = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &sz, true);
   md32x_rom = rom; md32x_rom_len = sz;
+  diag_log("rom cached: addr=%p len=%lu head=%02x%02x%02x%02x\n",
+           (void *)rom, (unsigned long)sz,
+           rom ? rom[0] : 0, rom ? rom[1] : 0, rom ? rom[2] : 0, rom ? rom[3] : 0);
 
   /* XIP cold code+rodata MUST be cached and the overlay's sentinel pointers
    * patched BEFORE the first picodrive call — PicoInit itself lives in XIP. */
   if (!Md32xCacheXipToFlash()) {
+    diag_log("FATAL: xip cache failed (missing %s?)\n", MD32X_XIP_PATH);
     odroid_overlay_alert("Missing " MD32X_XIP_PATH " - re-run the update");
     odroid_system_switch_app(0);
     return;
   }
-  PatchMd32xSentinels((uint32_t *)&__RAM_EMU_START__, _MD32X_MAIN_CODE_START,
-                      g_xip_offset, g_xip_size);
-  PatchMd32xSentinels(_MD32X_MAIN_CODE_END, (uint32_t *)&_OVERLAY_MD32X_BSS_START,
-                      g_xip_offset, g_xip_size);
+  diag_log("xip cached: addr=%p size=%lu off=%ld\n",
+           (void *)g_xip_addr, (unsigned long)g_xip_size, (long)g_xip_offset);
+  {
+    int n1 = PatchMd32xSentinels((uint32_t *)&__RAM_EMU_START__, _MD32X_MAIN_CODE_START,
+                                 g_xip_offset, g_xip_size);
+    int n2 = PatchMd32xSentinels(_MD32X_MAIN_CODE_END, (uint32_t *)&_OVERLAY_MD32X_BSS_START,
+                                 g_xip_offset, g_xip_size);
+    diag_log("sentinels patched: %d+%d\n", n1, n2);
+  }
 
   /* Hot writable state (bus map tables, YM/Z80/draw contexts) lives in ITCM
    * (.overlay_md32x_itc_bss) — outside the overlay BSS the launcher memsets,
    * so zero it here or it starts as the previous core's ITCM contents. */
   memset(__md32x_itc_bss_start__, 0,
          (size_t)(__md32x_itc_bss_end__ - __md32x_itc_bss_start__));
+  diag_log("itc zeroed: %u B\n",
+           (unsigned)(__md32x_itc_bss_end__ - __md32x_itc_bss_start__));
 
   /* --- picodrive init, libretro (upstream frontend) order — QEMU-rig-proven.
    * 32X startup is LAZY: the game's own MD-mode boot code writes ADEN at
@@ -351,12 +468,40 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     return;
   }
 
+  diag_log("PicoLoadMedia: mt=%d AHW=%x romsize=%lu pal=%d\n",
+           (int)mt, (unsigned)PicoIn.AHW, (unsigned long)Pico.romsize,
+           (int)Pico.m.pal);
+
+  /* Region pacing (audit: a PAL-only cart selected via autoRgnOrder ran 20%
+   * fast with 147 samples/frame silently dropped). gwenesis does the same. */
+  int md32x_fps = Pico.m.pal ? 50 : 60;
+  common_emu_state.frame_time_10us = (uint16_t)(100000 / md32x_fps);
+  lcd_set_refresh_rate(md32x_fps);
+
   PicoLoopPrepare();
   PicoIn.sndOut = md32x_snd;
   PicoIn.writeSound = md32x_write_sound;
   PsndRerate(0);
   PicoDrawSetOutFormat(PDF_RGB555, 0);   /* despite the name: RGB565 out on this config */
   set_out_buffer();
+  diag_log("init done (draw fmt set, snd ready)\n");
+
+  /* One headless warm-up frame BEFORE audio starts: if the device hangs in
+   * the first PicoFrame, the diag file ends at 'warmup f0...' and we know.
+   * Boot-time SD write, allowed; the file is sealed before the main loop. */
+  diag_log("warmup f0 (32X engages lazily when the 68K writes ADEN)...\n");
+  PicoIn.pad[0] = 0;
+  PicoFrame();
+  {
+    uint16_t *fb = lcd_get_active_buffer();
+    uint32_t nz = 0;
+    for (int i = 0; i < 320 * 240; i++) nz |= fb[i];
+    diag_log("warmup f0 done: AHW=%x fb_nonblank=%d\n",
+             (unsigned)PicoIn.AHW, nz != 0);
+  }
+  audio_start_playing(MD32X_AUDIO_RATE / md32x_fps);
+  diag_log("entering main loop (fps=%d, diag sealed - no more SD writes)\n", md32x_fps);
+  md32x_diag_sealed = true;
 
   if (load_state)
     odroid_system_emu_load_state(save_slot);
@@ -369,7 +514,7 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     bool drawFrame = common_emu_frame_loop();
 
     odroid_input_read_gamepad(&joystick);
-    common_emu_input_loop(&joystick, options, NULL);
+    common_emu_input_loop(&joystick, options, &md32x_repaint);
     common_emu_input_loop_handle_turbo(&joystick);
 
     PicoIn.pad[0] = read_md_pad(&joystick);

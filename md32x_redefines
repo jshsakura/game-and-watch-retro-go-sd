@@ -76,6 +76,7 @@ PicoIn md32x__PicoIn
 PicoInit md32x__PicoInit
 PicoLineHook md32x__PicoLineHook
 PicoLoadMedia md32x__PicoLoadMedia
+PicoLoadStateHook md32x__PicoLoadStateHook
 PicoLoopPrepare md32x__PicoLoopPrepare
 PicoMem md32x__PicoMem
 PicoMemSetup md32x__PicoMemSetup
@@ -103,7 +104,13 @@ PicoScan32xEnd md32x__PicoScan32xEnd
 PicoScanBegin md32x__PicoScanBegin
 PicoScanEnd md32x__PicoScanEnd
 PicoSetInputDevice md32x__PicoSetInputDevice
+PicoState md32x__PicoState
+PicoStateFP md32x__PicoStateFP
+PicoStateLoadGfx md32x__PicoStateLoadGfx
+PicoStateProgressCB md32x__PicoStateProgressCB
 PicoSyncZ80 md32x__PicoSyncZ80
+PicoTmpStateRestore md32x__PicoTmpStateRestore
+PicoTmpStateSave md32x__PicoTmpStateSave
 PicoUnload32x md32x__PicoUnload32x
 PicoVideoCacheSAT md32x__PicoVideoCacheSAT
 PicoVideoFIFOHint md32x__PicoVideoFIFOHint
@@ -171,6 +178,7 @@ YM2612UpdateOne_ md32x__YM2612UpdateOne_
 YM2612Write_ md32x__YM2612Write_
 ar_decode_ms md32x__ar_decode_ms
 blockcpy_or md32x__blockcpy_or
+carthw_chunks md32x__carthw_chunks
 carthw_ssf2_active md32x__carthw_ssf2_active
 carthw_ssf2_banks md32x__carthw_ssf2_banks
 cpu68k_map_all_funcs md32x__cpu68k_map_all_funcs
@@ -189,6 +197,7 @@ g68k_map_sync_range md32x__g68k_map_sync_range
 g68k_not_polling md32x__g68k_not_polling
 g68k_s68k_stub md32x__g68k_s68k_stub
 genie_decode_ms md32x__genie_decode_ms
+gnw_sh2_fastloops md32x__gnw_sh2_fastloops
 gwenesis_m68k_load_state md32x__gwenesis_m68k_load_state
 gwenesis_m68k_save_state md32x__gwenesis_m68k_save_state
 io_ports_pack md32x__io_ports_pack

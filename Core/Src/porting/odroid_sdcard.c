@@ -32,7 +32,7 @@ int odroid_sdcard_read_file(const char* path, void* buf, size_t buf_size)
         fclose(f);
     }
     else
-        printf("%s: fopen failed. path='%s'\n", __func__, path);
+        printf("sd open fail: %s\n", path);
 
     SDCARD_ACCESS_END();
 
@@ -52,7 +52,7 @@ int odroid_sdcard_write_file(const char* path, void* buf, size_t buf_size)
         fclose(f);
     }
     else
-        printf("%s: fopen failed. path='%s'\n", __func__, path);
+        printf("sd open fail: %s\n", path);
 
     SDCARD_ACCESS_END();
 
@@ -126,7 +126,7 @@ int odroid_sdcard_get_filesize(const char* path)
         fclose(f);
     }
     else
-        printf("odroid_sdcard_get_filesize: fopen failed. path='%s'\n",path);
+        printf("sd fsize fail: %s\n", path);
 
     SDCARD_ACCESS_END();
 

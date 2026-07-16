@@ -48,7 +48,7 @@ void odroid_system_init(int appId, int sampleRate)
 
     counters.resetTime = get_elapsed_time();
 
-    printf("%s: System ready!\n\n", __func__);
+    printf("sys ready\n");
 }
 
 void odroid_system_emu_init(state_handler_t load_cb,
@@ -67,7 +67,7 @@ void odroid_system_emu_init(state_handler_t load_cb,
     currentApp.handlers.sleep_post_wakeup = sleep_post_wakeup_cb;
     currentApp.handlers.sram_save = sram_save_cb;
     
-    printf("%s: Init done. GameId=%08lX\n", __func__, currentApp.gameId);
+    printf("emu init id=%08lX\n", currentApp.gameId);
 }
 
 rg_app_desc_t *odroid_system_get_app()

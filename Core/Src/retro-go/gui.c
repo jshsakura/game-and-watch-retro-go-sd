@@ -69,7 +69,15 @@ static uint16_t *pCover_Buffer = NULL;
  * at the slot size, so all four themes lay out identical frames. */
 #define COVER_SLOT_WIDTH ((uint32_t)75)
 #define COVER_SLOT_HEIGHT ((uint32_t)100)
-#define COVER_SLOT_BYTES ((uint32_t)(COVER_SLOT_WIDTH * COVER_SLOT_HEIGHT * 2))
+
+/* "Square" cover style (user option): every cover everywhere is center-crop
+ * -filled into one square tile. COVER_MAX_HEIGHT (100) is the tallest box the
+ * coverflow layouts allot, so the square is 100x100 — as large as the layouts
+ * can host without repositioning anything. */
+#define COVER_SQUARE_SIZE ((uint32_t)COVER_MAX_HEIGHT)
+
+/* One scratch buffer serves both slot shapes; size it for the biggest. */
+#define COVER_SLOT_MAX_BYTES ((uint32_t)(COVER_SQUARE_SIZE * COVER_SQUARE_SIZE * 2))
 
 const uint8_t cover_light[5] = {60, 120, 255, 120, 60};
 const uint8_t cover_light3[3] = {255, 120, 60};
@@ -926,38 +934,59 @@ static bool cover_decode(retro_emulator_file_t *file, uint32_t *width, uint32_t 
     return false;
 }
 
-static bool cover_slot_active(void)
+/* Which fixed slot (if any) covers are normalized into right now.
+ * Returns false when covers draw at their native decoded size.
+ *
+ * Two sources of truth, square first:
+ *  - the "Square" cover-style user option forces one square tile everywhere;
+ *  - the ★ tab always normalizes (mixed-system art made the row ragged), to
+ *    a poster-shaped 75x100 when the style is Poster. */
+static bool cover_slot_dims(uint32_t *slot_w, uint32_t *slot_h)
 {
-    return rg_favorites_is_current_tab();
+    if (odroid_settings_CoverStyle_get() == ODROID_COVER_STYLE_SQUARE)
+    {
+        *slot_w = COVER_SQUARE_SIZE;
+        *slot_h = COVER_SQUARE_SIZE;
+        return true;
+    }
+    if (rg_favorites_is_current_tab())
+    {
+        *slot_w = COVER_SLOT_WIDTH;
+        *slot_h = COVER_SLOT_HEIGHT;
+        return true;
+    }
+    return false;
 }
 
-/* Rescale the freshly decoded cover in pCover_Buffer into the fixed slot and
- * report slot dims. Fills the slot edge to edge the way CSS object-fit: cover
- * does: keep the aspect ratio, scale until both axes reach the slot, and centre
- * -crop the overflowing axis. Covers on the ★ tab are all shapes (square,
- * portrait), and letterboxing them left the row looking ragged.
- * No-op outside the ★ tab. */
+/* Rescale the freshly decoded cover in pCover_Buffer into the active fixed
+ * slot and report slot dims. Fills the slot edge to edge the way CSS
+ * object-fit: cover does: keep the aspect ratio, scale (nearest-neighbor, up
+ * or down) until both axes reach the slot, and centre-crop the overflowing
+ * axis. The decoded rows in pCover_Buffer are packed at exactly the reported
+ * width (the DMA2D conversion strips the JPEG MCU padding via its input line
+ * offset), so src_w IS the stride. No-op when no slot is active. */
 static void cover_slot_apply(uint32_t *width, uint32_t *height)
 {
     static uint16_t *pSlot_Buffer = NULL;
     uint32_t src_w = *width, src_h = *height;
+    uint32_t slot_w, slot_h;
 
-    if (!cover_slot_active() || src_w == 0 || src_h == 0)
+    if (!cover_slot_dims(&slot_w, &slot_h) || src_w == 0 || src_h == 0)
         return;
-    if ((src_w == COVER_SLOT_WIDTH) && (src_h == COVER_SLOT_HEIGHT))
+    if ((src_w == slot_w) && (src_h == slot_h))
         return;
     if (pSlot_Buffer == NULL)
-        pSlot_Buffer = (uint16_t *)ram_malloc(COVER_SLOT_BYTES);
+        pSlot_Buffer = (uint16_t *)ram_malloc(COVER_SLOT_MAX_BYTES);
     if (pSlot_Buffer == NULL)
         return; /* out of RAM: leave the cover at its decoded size */
 
     /* Largest centred source rect that has the slot's aspect ratio. Comparing
      * the cross-products avoids any division here. */
     uint32_t crop_w = src_w, crop_h = src_h;
-    if ((uint64_t)src_w * COVER_SLOT_HEIGHT > (uint64_t)src_h * COVER_SLOT_WIDTH)
-        crop_w = (src_h * COVER_SLOT_WIDTH) / COVER_SLOT_HEIGHT; /* too wide: trim the sides */
+    if ((uint64_t)src_w * slot_h > (uint64_t)src_h * slot_w)
+        crop_w = (src_h * slot_w) / slot_h; /* too wide: trim the sides */
     else
-        crop_h = (src_w * COVER_SLOT_HEIGHT) / COVER_SLOT_WIDTH; /* too tall: trim top/bottom */
+        crop_h = (src_w * slot_h) / slot_w; /* too tall: trim top/bottom */
 
     if (crop_w == 0)
         crop_w = 1;
@@ -968,18 +997,40 @@ static void cover_slot_apply(uint32_t *width, uint32_t *height)
     const uint32_t off_y = (src_h - crop_h) / 2;
 
     /* Every slot pixel is written, so the buffer needs no clearing. */
-    for (uint32_t y = 0; y < COVER_SLOT_HEIGHT; y++)
+    for (uint32_t y = 0; y < slot_h; y++)
     {
-        const uint32_t src_y = off_y + (y * crop_h) / COVER_SLOT_HEIGHT;
+        const uint32_t src_y = off_y + (y * crop_h) / slot_h;
         const uint16_t *src_row = &pCover_Buffer[src_y * src_w];
-        uint16_t *dst_row = &pSlot_Buffer[y * COVER_SLOT_WIDTH];
-        for (uint32_t x = 0; x < COVER_SLOT_WIDTH; x++)
-            dst_row[x] = src_row[off_x + (x * crop_w) / COVER_SLOT_WIDTH];
+        uint16_t *dst_row = &pSlot_Buffer[y * slot_w];
+        for (uint32_t x = 0; x < slot_w; x++)
+            dst_row[x] = src_row[off_x + (x * crop_w) / slot_w];
     }
 
-    memcpy(pCover_Buffer, pSlot_Buffer, COVER_SLOT_BYTES);
-    *width = COVER_SLOT_WIDTH;
-    *height = COVER_SLOT_HEIGHT;
+    memcpy(pCover_Buffer, pSlot_Buffer, slot_w * slot_h * 2);
+    *width = slot_w;
+    *height = slot_h;
+}
+
+/* Both slot shapes must round-trip through pCover_Buffer. */
+_Static_assert(COVER_SLOT_MAX_BYTES <= COVER_16BITS_SIZE,
+               "cover slot must fit in the decoded-cover buffer");
+_Static_assert(COVER_SLOT_WIDTH * COVER_SLOT_HEIGHT * 2 <= COVER_SLOT_MAX_BYTES,
+               "slot scratch buffer must hold the poster slot");
+
+/* The per-emulator cover-size cache (emu->cover_width/height, probed once by
+ * gui_draw_coverflow_h) bakes in whichever slot was active at probe time.
+ * Called when the user flips the cover-style option so every tab re-probes. */
+void gui_cover_style_changed(void)
+{
+    for (int i = 0; i < gui.tabcount; i++)
+    {
+        tab_t *tab = gui.tabs[i];
+        if (tab == NULL || tab->arg == NULL)
+            continue;
+        retro_emulator_t *emu = (retro_emulator_t *)tab->arg;
+        emu->cover_width = 0;
+        emu->cover_height = 0;
+    }
 }
 
 static void draw_centered_local_text_line(uint16_t y_pos,
@@ -1068,11 +1119,13 @@ static bool gui_get_cover_size(retro_emulator_file_t *file, uint32_t *cov_width,
         if (cov_size != 0 &&
             JPEG_DecodeGetSize((uint32_t)(file->img_address), cov_size, &jpeg_cov_width, &jpeg_cov_height) == 0)
         {
-            /* ★ tab: layout always sees the fixed slot, not the native size */
-            if (cover_slot_active())
+            /* slot active (★ tab or Square style): layout always sees the
+             * fixed slot, not the native size */
+            uint32_t slot_w, slot_h;
+            if (cover_slot_dims(&slot_w, &slot_h))
             {
-                *cov_width = COVER_SLOT_WIDTH;
-                *cov_height = COVER_SLOT_HEIGHT;
+                *cov_width = slot_w;
+                *cov_height = slot_h;
             }
             else
             {
@@ -1116,10 +1169,9 @@ void gui_draw_coverlight_h(retro_emulator_file_t *file, int cover_position)
         if (nocover_height > cover_height)
             nocover_height = cover_height;
     }
-    else if (cover_slot_active())
+    else if (cover_slot_dims(&cover_width, &cover_height))
     {
-        cover_width = COVER_SLOT_WIDTH;
-        cover_height = COVER_SLOT_HEIGHT;
+        /* no cover art: the grey box takes the slot's shape */
     }
     else
     {
@@ -1263,10 +1315,9 @@ void gui_draw_coverlight_v(retro_emulator_file_t *file, int cover_position)
         if (nocover_height > cover_height)
             nocover_height = cover_height;
     }
-    else if (cover_slot_active())
+    else if (cover_slot_dims(&cover_width, &cover_height))
     {
-        cover_width = COVER_SLOT_WIDTH;
-        cover_height = COVER_SLOT_HEIGHT;
+        /* no cover art: the grey box takes the slot's shape */
     }
     else
     {
