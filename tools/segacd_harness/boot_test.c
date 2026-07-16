@@ -118,17 +118,28 @@ int main(int argc, char **argv)
 
     /* --- run frames, watch boot progress --- */
     uint32_t last_fb = 0;
+    int prev_running = 0;
     for (int frame=0; frame<FRAMES; frame++) {
         button_state[0]=0xFF;
         md_scanline_frame();                 /* main 68K + VDP (BIOS runs here) */
+        if (!prev_running && SCD.sub_running) {  /* sub just released — pristine image */
+            prev_running = 1;
+            #define PRGW(o) ((SCD.prg_ram[((o)+1)&(SEGACD_PRG_RAM_SIZE-1)]<<8) | SCD.prg_ram[(o)&(SEGACD_PRG_RAM_SIZE-1)])
+            unsigned end = (PRGW(0x1a4)<<16)|PRGW(0x1a6); uint16_t sum=0;
+            for (unsigned o=0x202; o<end; o+=2) sum += PRGW(o);
+            printf("[boot] >>> at sub-release f%d: checksum sum(0x202..%06x)=%04x expected=%04x %s\n",
+                   frame, end, sum, PRGW(0x18e), (sum==PRGW(0x18e))?"MATCH":"MISMATCH");
+            #undef PRGW
+        }
         segacd_run_sub(SUB_CYCLES_PER_FRAME);/* sub 68K once released by BIOS */
         segacd_cdd_process();
         segacd_cd_update();
 
         if ((frame % 60) == 0) {
             uint32_t h = 2166136261u; for(int k=0;k<320*240;k++) h=(h^s_fb[k])*16777619u;
-            printf("[boot] f%-4d sub_running=%d cdd_status=%02x fb=%08x %s\n",
-                   frame, SCD.sub_running, SCD.s68k_regs[0x38 & (SEGACD_GA_REGS-1)], h,
+            printf("[boot] f%-4d sub_running=%d subPC=%06x idle=%u cdd_status=%02x fb=%08x %s\n",
+                   frame, SCD.sub_running, (unsigned)SCD.sub_ctx.pc, (unsigned)SCD.sub_idle,
+                   SCD.s68k_regs[0x38 & (SEGACD_GA_REGS-1)], h,
                    (h!=last_fb)?"(VDP active)":"");
             last_fb = h;
         }
@@ -148,7 +159,50 @@ int main(int argc, char **argv)
       printf("[boot] PRG reset vec (raw bytes 0..7):");
       for (int i=0;i<8;i++) printf(" %02x", SCD.prg_ram[i]);
       extern uint32_t scd_dbg_prgwin_w;
-      printf("   main->PRGwin writes=%u\n", scd_dbg_prgwin_w); }
+      printf("   main->PRGwin writes=%u\n", scd_dbg_prgwin_w);
+      printf("[boot] sub regs D0-D7:");
+      for (int i=0;i<8;i++) printf(" %08x", SCD.sub_ctx.dar[i]);
+      printf("\n[boot] sub regs A0-A7:");
+      for (int i=8;i<16;i++) printf(" %08x", SCD.sub_ctx.dar[i]);
+      printf("\n[boot] sub int_mask=%u  A1+0x8e=%06x\n",
+             (unsigned)SCD.sub_ctx.int_mask,
+             (unsigned)(SCD.sub_ctx.dar[9] + 0x8e));
+      /* PRG is stored byte-swapped (sub reads via direct base); reconstruct the
+       * big-endian instruction/data words the sub actually sees. */
+      #define PRGW(o) ((SCD.prg_ram[((o)+1)&(SEGACD_PRG_RAM_SIZE-1)]<<8) | SCD.prg_ram[(o)&(SEGACD_PRG_RAM_SIZE-1)])
+      printf("[boot] sub code words @0x2c0-0x300 (BE):");
+      for (unsigned o=0x2c0;o<0x300;o+=2) printf(" %04x", PRGW(o));
+      printf("\n[boot] PRG comm words @0x180-0x1a0 (BE):");
+      for (unsigned o=0x180;o<0x1a0;o+=2) printf(" %04x", PRGW(o));
+      printf("\n[boot] poll target word @0x18e (BE)=%04x\n", PRGW(0x18e));
+      unsigned len_lo = PRGW(0x1a4), len_hi = PRGW(0x1a6);
+      printf("[boot] hdr sig@0x100 (BE)=%04x%04x  len@0x1a4 (BE.L)=%04x%04x\n",
+             PRGW(0x100), PRGW(0x102), len_lo, len_hi);
+      /* Recompute the sub-BIOS self-checksum exactly as the routine does:
+       * sum BE words from 0x202 up to end=(*0x1a4), compare to word @0x18e. */
+      { unsigned end = (len_lo<<16)|len_hi; uint16_t sum=0;
+        for (unsigned o=0x202; o<end; o+=2) sum += PRGW(o);
+        printf("[boot] checksum sum(0x202..%06x)=%04x  expected@0x18e=%04x  %s\n",
+               end, sum, PRGW(0x18e), (sum==PRGW(0x18e))?"MATCH":"MISMATCH");
+        /* Dump what the sub sees (BE-reconstructed) for 0x100..0x5800 so we can
+         * diff against the sub-BIOS source embedded in the region BIOS image. */
+        FILE *d=fopen("/tmp/scd/prg_subbios.bin","wb");
+        if(d){ for(unsigned o=0x100;o<0x5800;o+=2){ uint16_t w=PRGW(o);
+                 unsigned char be[2]={(unsigned char)(w>>8),(unsigned char)(w&0xff)};
+                 fwrite(be,1,2,d);} fclose(d);
+               printf("[boot] wrote /tmp/scd/prg_subbios.bin (0x100..0x5800 BE)\n"); }
+        /* Was every byte of the checksummed region written by the main PRG window,
+         * or did non-zero bytes arrive via some path our ^1 fix doesn't cover? */
+        extern uint8_t scd_dbg_prg_written[];
+        long covered=0, nz_uncovered=0;
+        for (unsigned o=0x202; o<0x5800; o++) {
+            if (scd_dbg_prg_written[o^1]) covered++;
+            else if (SCD.prg_ram[o]) nz_uncovered++;
+        }
+        printf("[boot] checksum-region write coverage: %ld/%d bytes written via PRG-window, "
+               "%ld non-zero bytes NEVER written by it\n", covered, 0x5800-0x202, nz_uncovered); }
+      #undef PRGW
+    }
 
 #ifdef SEGACD_GA_TRACE
     extern uint32_t scd_ga_rd[], scd_ga_wr[], scd_sga_rd[], scd_sga_wr[];

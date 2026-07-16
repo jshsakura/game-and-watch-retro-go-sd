@@ -149,13 +149,16 @@ static unsigned int main_prgwin_read16(unsigned int address)
     return (main_prgwin_read8(address) << 8) | main_prgwin_read8(address + 1);
 }
 #ifdef SEGACD_GA_TRACE
-uint32_t scd_dbg_prgwin_w;   /* count of main-CPU writes into the PRG window */
+uint32_t scd_dbg_prgwin_w;              /* count of main-CPU writes into the PRG window */
+uint8_t  scd_dbg_prg_written[0x5800];   /* coverage of the sub-BIOS region by main writes */
 #endif
 static void main_prgwin_write8(unsigned int address, unsigned int data)
 {
     unsigned int off = (address & 0x1FFFF) + (unsigned)SCD.prg_bank * 0x20000;
 #ifdef SEGACD_GA_TRACE
     scd_dbg_prgwin_w++;
+    { unsigned physoff = (off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1);
+      if (physoff < sizeof(scd_dbg_prg_written)) scd_dbg_prg_written[physoff] = 1; }
 #endif
     SCD.prg_ram[(off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1)] = (uint8_t)data;
 }
