@@ -245,7 +245,22 @@ int segacd_run_sub(int cycle_target)
 
     /* Either pending interrupt must wake a spin-idled sub; only skip when
      * truly idle. (IEN gating happens below — an interrupt "pending" here
-     * but not yet enabled still needs the sub to run so it CAN enable it.) */
+     * but not yet enabled still needs the sub to run so it CAN enable it.)
+     * Clear sub_idle HERE: the flag was set by poll detection during a
+     * previous slice. If we reach this point (didn't return above), the sub
+     * will actually run, so clear the idle flag — the sub will re-set it
+     * via poll detection if it re-enters a spin loop.
+     *
+     * LANDMINE: this list is only 4 of the sub's interrupt levels (1/2/4/5).
+     * Level 6 (subcode) is not modeled anywhere in this engine yet, and the
+     * mode-8 boot-crossing investigation's leading suspect for what clears
+     * $36a9 is exactly a level-6 delivery we haven't wired
+     * (session-handoff-0716-segacd.md). It's harmless today because level 6
+     * doesn't exist here to be missed. The day someone adds a
+     * subcode_int_pending flag for that fix, it MUST be added to this
+     * condition too — otherwise this idle-skip gate silently swallows the
+     * fix by returning 0 forever without ever giving the sub a chance to
+     * see the new interrupt. */
     if (SCD.sub_idle && !SCD.cdd_int_pending && !SCD.ga_ifl2 &&
         !SCD.cdc_int_pending && !SCD.gfx_int_pending)
         return 0;
@@ -394,19 +409,12 @@ int segacd_run_sub(int cycle_target)
 
         if (!want5 && !want4 && !want2 && !want1) {
             /* Nothing to chunk for: run the rest of the slice in one go
-             * (the common case — no cost over the old unchunked path). */
-            if (scd_sub_idle_skip && scd_m68k_is_spin(m68k.pc)) {
-                /* General-purpose idle-skip: the sub is parked in a tight
-                 * spin loop (TST/BTST + BNE, or BRA-self) with no pending
-                 * IRQ this chunk. Fast-forward to the slice target — the
-                 * wakeup can only come from outside this slice (main sets
-                 * doorbell, CDD timer fires, etc.), so executing the spin
-                 * literally is pure waste. The sub stays at the spin PC;
-                 * next slice's IRQ delivery vectors it away. */
-                scd_sub_idle_hits++;
-                m68k.cycles = (unsigned int)cycle_target;
-                break;
-            }
+             * (the common case — no cost over the old unchunked path).
+             * Poll detection (sub_ff_read8) handles idle-skip at the
+             * memory-access level — no opcode-pattern matching needed. */
+            m68k_run((unsigned int)cycle_target);
+            break;
+        }
             m68k_run((unsigned int)cycle_target);
             break;
         }
@@ -428,6 +436,11 @@ int segacd_run_sub(int cycle_target)
     #undef SEGACD_IRQ_CHUNK_GUARD
 
     int used = m68k.cycles;
+    /* Accumulate absolute sub cycles for poll-timing (POLL_CYCLES check in
+     * sub_ff_read8 needs an absolute counter that survives the per-slice
+     * rebase at line 278). m68k.cycles is rebased to 0 each slice, so
+     * adding it here gives the true total. */
+    SCD.sub_cycle_accum += (uint32_t)used;
 #ifdef SEGACD_GA_TRACE
     /* Track the furthest PC the sub reaches past the self-checksum (which PASSES:
      * sum 0x200..0x5800 == 0xe9bb). */

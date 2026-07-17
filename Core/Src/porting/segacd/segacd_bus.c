@@ -32,7 +32,8 @@ extern m68ki_cpu_core m68k;
 /* idle-skip: after this many unchanged reads of the same GA status reg, the
  * sub-68K is judged to be spin-waiting and its timeslices are skipped until a
  * write re-arms it. Small so it triggers fast; the wake is exact. */
-#define SEGACD_POLL_THRESHOLD 64
+#define SEGACD_POLL_THRESHOLD 16
+#define SEGACD_POLL_CYCLES   52
 
 /* A write that could change what the sub is polling wakes it. */
 void segacd_poll_wake(void)
@@ -88,16 +89,22 @@ static unsigned int sub_ff_read8(unsigned int address)
     if (off < 0x8000)                       /* $FF0000-$FF7FFF: PCM window */
         return SCD.pcm_ram[off & (SEGACD_PCM_RAM_SIZE - 1)];  /* TODO ph4: banked */
 
-    /* $FF8000+: gate array / CDC / CDD. Track repeated reads of the same status
-     * reg to detect a spin-wait and skip the sub's timeslices (idle-skip). */
+    /* $FF8000+: gate array / CDC / CDD. PicoDrive-grade poll detection
+     * (memory.c:279-308 s68k_poll_detect): track repeated reads of the same
+     * status register within POLL_CYCLES(52) sub cycles. At POLL_LIMIT(16)
+     * repeats, mark the sub as idle — segacd_run_sub skips its timeslices
+     * until a write (segacd_poll_wake) or pending IRQ re-arms it. */
     uint8_t reg = (uint8_t)(off & (SEGACD_GA_REGS - 1));
     SGA_RD(reg);
-    if (reg == SCD.poll_reg) {
-        if (SCD.poll_count < 0xFFFF && ++SCD.poll_count >= SEGACD_POLL_THRESHOLD)
-            SCD.sub_idle = 1;
-    } else {
-        SCD.poll_reg = reg;
-        SCD.poll_count = 0;
+    if (!SCD.sub_idle) {
+        if (reg == SCD.poll_reg) {
+            if (SCD.poll_count < 0xFFFF) SCD.poll_count++;
+            if (SCD.poll_count >= SEGACD_POLL_THRESHOLD)
+                SCD.sub_idle = 1;
+        } else {
+            SCD.poll_reg = reg;
+            SCD.poll_count = 0;
+        }
     }
 
     /* Reset register ($FF8000-$FF8001). $FF8001 bit0 is the "peripheral not in

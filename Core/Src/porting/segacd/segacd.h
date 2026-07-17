@@ -76,6 +76,8 @@ typedef struct {
      * lever proven on GBA/VB/WonderSwan here. */
     uint8_t  poll_reg;        /* last GA reg the sub read */
     uint16_t poll_count;      /* consecutive unchanged reads of poll_reg */
+    uint32_t poll_clk;        /* abs sub cycle count of last poll read */
+    uint32_t sub_cycle_accum; /* abs sub cycle accumulator (survives rebase) */
 
     int  cdd_int_pending;     /* CDD level-4 interrupt (periodic status export) armed */
     int  cdc_int_pending;     /* CDC level-5 interrupt (DECI/DTEI) armed — segacd_cd.c */
