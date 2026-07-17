@@ -1550,6 +1550,8 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
     // (e.g. a homebrew app's /roms/homebrew/) into the next launch.
     extern const char *gw_fs_relpath_prefix;
     gw_fs_relpath_prefix = NULL;
+    emulators = NULL;
+    systems = NULL;
     // some pointers were freed, set them to null
     rg_reset_logo_buffers();
     gui_reset_cover_buffers();
