@@ -27,6 +27,10 @@ if [ "${PHASE_PROF:-0}" = "1" ]; then DEF="$DEF -DRIG_PHASE_PROF"; fi
 if [ "${FRAME_HIST:-0}" = "1" ]; then DEF="$DEF -DRIG_FRAME_HIST"; fi
 # SH2_PC_HIST=1: SH-2 guest-PC histogram (top-50 hot PCs per core, direct/delay split)
 if [ "${SH2_PC_HIST:-0}" = "1" ]; then DEF="$DEF -DRIG_SH2_PC_HIST"; fi
+# POLL_PEEK=1: dump r[]/gbr at each distinct backward-branch site (resolves poll region)
+if [ "${POLL_PEEK:-0}" = "1" ]; then DEF="$DEF -DRIG_POLL_PEEK"; fi
+# SDRAM_POLL_DIAG=1: counters + samples for the SDRAM poll case of gnw_sh2_fastloop
+if [ "${SDRAM_POLL_DIAG:-0}" = "1" ]; then DEF="$DEF -DRIG_SDRAM_POLL_DIAG"; fi
 INC="-I$PD -I$PD/pico -I$PD/cpu -I$PD/zlib"
 
 # ROM -> byteswap (mirror the device flash cache byte_swap=true: the GNW

@@ -307,6 +307,84 @@ static void rig_pchist_report(void) {
 }
 #endif /* RIG_SH2_PC_HIST */
 
+#ifdef RIG_POLL_PEEK
+/* Diagnostic: prints every distinct backward-branch site (BF/BFS/BT/BTS with
+ * negative disp8) discovered by sh2pico.c's RIG_POLL_PEEK hook, with the full
+ * register snapshot taken on first visit. The "target" is the loop top
+ * (ppc + disp8*2 + 4); the body between target and ppc is the poll loop body,
+ * and the poll address is r[base_reg] (for MOV.W/L @Rn forms) or gbr+disp
+ * (for @(disp,GBR) forms). Region = top byte of poll_addr: 0x06=SDRAM,
+ * 0x00/0x20=CS0 sysreg (comm/VDP/H-count/PWM), 0x02/0x22=cart ROM,
+ * 0x04/0x24=DRAM, 0xC0=data array, 0xFF=peripheral. Resolves which region
+ * each no-match ROM spins on. */
+struct rig_peek_entry {
+    uint32_t pc;
+    uint16_t op;
+    int core;
+    uint32_t r[16];
+    uint32_t gbr, vbr, sr;
+};
+extern struct rig_peek_entry rig_peek_log[128];
+extern int rig_peek_n;
+
+static const char *rig_peek_region(uint32_t a) {
+    switch ((a >> 24) & 0xff) {
+        case 0x06: return "SDRAM";
+        case 0x00: case 0x20: return "CS0-sysreg";
+        case 0x02: case 0x22: return "cart-ROM";
+        case 0x04: case 0x24: return "DRAM";
+        case 0xc0: return "data-array";
+        case 0xff: return "periph";
+        default: return "other";
+    }
+}
+
+static void rig_peek_report(void) {
+    printf("[32x-peek] %d unique backward-branch sites:\n", rig_peek_n);
+    for (int i = 0; i < rig_peek_n; i++) {
+        struct rig_peek_entry *e = &rig_peek_log[i];
+        int disp8 = (int)(signed char)(e->op & 0xff);
+        uint32_t target = e->pc + disp8 * 2 + 4;
+        printf("[32x-peek]  #%d pc=%08x core=%c op=%04x gbr=%08x target=%08x\n",
+               i, e->pc, e->core ? 'S' : 'M', e->op, e->gbr, target);
+        printf("[32x-peek]    R0=%08x R1=%08x R2=%08x R3=%08x  R4=%08x R5=%08x R6=%08x R7=%08x\n",
+               e->r[0], e->r[1], e->r[2], e->r[3], e->r[4], e->r[5], e->r[6], e->r[7]);
+        printf("[32x-peek]    R8=%08x R9=%08x R10=%08x R11=%08x R12=%08x R13=%08x R14=%08x R15=%08x\n",
+               e->r[8], e->r[9], e->r[10], e->r[11], e->r[12], e->r[13], e->r[14], e->r[15]);
+    }
+}
+#endif /* RIG_POLL_PEEK */
+
+#ifdef RIG_SDRAM_POLL_DIAG
+/* Diagnostic for the SDRAM poll case of gnw_sh2_fastloop: counts how often the
+ * case is entered (tries), how often it matches a real SDRAM poll (hits), and
+ * why it rejects the rest (bad body opcodes / non-SDRAM poll address), with up
+ * to 64 samples. Off => byte-identical. */
+struct rig_spd_sample { uint32_t pc, bop1, bop2, pa; };
+extern struct rig_spd_sample rig_spd_log[];
+extern volatile uint32_t rig_spd_tries, rig_spd_hits;
+extern volatile uint32_t rig_spd_bad_bop, rig_spd_bad_addr;
+extern volatile uint32_t rig_spd_addr_06, rig_spd_addr_00, rig_spd_addr_02;
+extern volatile uint32_t rig_spd_addr_22, rig_spd_addr_40, rig_spd_addr_other;
+extern volatile uint32_t rig_spd_log_n;
+
+static void rig_spd_report(void) {
+    printf("[32x-spd] tries=%u hits=%u  bad_bop=%u  bad_addr=%u\n",
+           rig_spd_tries, rig_spd_hits, rig_spd_bad_bop, rig_spd_bad_addr);
+    printf("[32x-spd] bad_addr by region: 06(sdram)=%u 00/20(cs0)=%u "
+           "02/22(rom)=%u 22(dram)=%u 40(comm)=%u other=%u\n",
+           rig_spd_addr_06, rig_spd_addr_00, rig_spd_addr_02,
+           rig_spd_addr_22, rig_spd_addr_40, rig_spd_addr_other);
+    uint32_t n = rig_spd_log_n;
+    if (n > 64) n = 64;
+    for (uint32_t i = 0; i < n; i++) {
+        printf("[32x-spd]  #%u pc=%08x bop1=%04x bop2=%04x pa=%08x\n",
+               i, rig_spd_log[i].pc, rig_spd_log[i].bop1,
+               rig_spd_log[i].bop2, rig_spd_log[i].pa);
+    }
+}
+#endif /* RIG_SDRAM_POLL_DIAG */
+
 /* ==== video ================================================================ */
 static uint16_t s_fb[320 * 240];
 static int out_line = (240 - 224) / 2;
@@ -623,6 +701,12 @@ int main(void) {
 #endif
 #ifdef RIG_SH2_PC_HIST
     rig_pchist_report();
+#endif
+#ifdef RIG_POLL_PEEK
+    rig_peek_report();
+#endif
+#ifdef RIG_SDRAM_POLL_DIAG
+    rig_spd_report();
 #endif
     phase_report(n, ipt_x1000, n > 0 ? sh2_tot / n : 0);
     printf("[32x-qemu] fb f%d=%08lx(nb=%d) f%d=%08lx(nb=%d) f%d=%08lx(nb=%d)\n",
