@@ -15,7 +15,7 @@ HIST=tools/segacd_harness
 
 gcc -O2 -DLINUX_EMU -DTARGET_GNW -DIS_LITTLE_ENDIAN \
   -DSD_CARD=0 -DCHEAT_CODES=0 -DLSB_FIRST -DTABLES_FULL \
-  -DSCD_BENCH_VDP -DSCD_Z80_IDLE_SKIP -DSCD_YM_PROBE \
+  -DSCD_BENCH_VDP -DSCD_Z80_IDLE_SKIP -DSCD_YM_PROBE -DSCD_YM_SILENCE_SKIP \
   -Itools/m7_qemu_rig/md_shim -I$GW/cpus/M68K -I$GW/cpus/Z80 -I$GW/sound \
   -I$GW/bus -I$GW/vdp -I$GW/io -I$GW/savestate -ICore/Inc -ICore/Inc/retro-go \
   -ICore/Src/porting/lib -Iretro-go-stm32/components/odroid -I$SC -I$HIST \

@@ -65,6 +65,10 @@ static int g_main_idle_hits;
 uint32_t scd_z80_idle_hits; /* referenced by z80inst.c under SCD_Z80_IDLE_SKIP */
 #ifdef SCD_YM_PROBE
 extern uint32_t g_ym_opcalc_total, g_ym_opcalc_skip, g_ym_samples;
+extern uint32_t g_ym_chan_silent[6], g_ym_chan_total[6], g_ym_all_silent_samples;
+#endif
+#ifdef SCD_YM_SILENCE_SKIP
+extern unsigned int g_ym_silence_skipped_samples;
 #endif
 /* VDP sub-component skip flags (only active when gwenesis_vdp_gfx.c is
  * compiled with -DSCD_BENCH_VDP). */
@@ -374,12 +378,27 @@ int main(int argc, char **argv)
         printf("\n");
     }
     printf("[boot] done %d frames. sub_running=%d\n", FRAMES, SCD.sub_running);
+#ifdef SCD_YM_SILENCE_SKIP
+    printf("[ym_silence] skipped=%u/%lu (%.1f%%)\n",
+           g_ym_silence_skipped_samples,
+           (unsigned long)(FRAMES * (GWENESIS_AUDIO_BUFFER_CAPACITY > 0 ? 889 : 889)),
+           (FRAMES > 0) ? 100.0 * g_ym_silence_skipped_samples / (unsigned long)(FRAMES * 889) : 0.0);
+#endif
 #ifdef SCD_YM_PROBE
     printf("[ym_probe] samples=%lu opcalc_total=%lu opcalc_skip=%lu skip_rate=%.1f%%\n",
            (unsigned long)g_ym_samples,
            (unsigned long)g_ym_opcalc_total,
            (unsigned long)g_ym_opcalc_skip,
            g_ym_opcalc_total ? 100.0 * g_ym_opcalc_skip / g_ym_opcalc_total : 0.0);
+    printf("[ym_chan] all_silent=%lu/%lu (%.1f%%)\n",
+           (unsigned long)g_ym_all_silent_samples,
+           (unsigned long)g_ym_samples,
+           g_ym_samples ? 100.0 * g_ym_all_silent_samples / g_ym_samples : 0.0);
+    for (int i = 0; i < 6; i++)
+        printf("  ch%d: silent=%lu/%lu (%.1f%%)\n", i,
+               (unsigned long)g_ym_chan_silent[i],
+               (unsigned long)g_ym_chan_total[i],
+               g_ym_chan_total[i] ? 100.0 * g_ym_chan_silent[i] / g_ym_chan_total[i] : 0.0);
 #endif
 #ifdef HOOK_CPU
     /* dump top-20 opcode + top-20 PC for each 68K — same shape as the 32X
