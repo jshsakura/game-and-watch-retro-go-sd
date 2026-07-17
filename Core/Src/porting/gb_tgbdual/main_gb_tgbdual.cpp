@@ -441,6 +441,16 @@ static bool palette_update_cb(odroid_dialog_choice_t *option, odroid_dialog_even
     if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
         g_gb->get_lcd()->set_palette(index_palette);
         odroid_settings_Palette_set(index_palette);
+
+        /* Re-paint the paused frame with the new palette so the
+         * overlay background updates immediately (tgb_buffer is RGB565,
+         * not indexed — set_palette alone only affects future frames). */
+        if (tgb_buffer) {
+            g_gb->get_lcd()->clear_win_count();
+            for (int y = 0; y < GB_HEIGHT; y++) {
+                g_gb->get_lcd()->render(tgb_buffer, y);
+            }
+        }
     }
 
     sprintf(option->value, "%d/%d", index_palette+1, max+1);
