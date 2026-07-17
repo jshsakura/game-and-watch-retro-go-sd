@@ -54,6 +54,8 @@
 #include "gw_flash_alloc.h"
 #if SD_CARD == 0
 #include "rg_frogfs.h"
+#else
+#include "ff.h"
 #endif
 
 #define CORE_HEADER_MAGIC_INTERNAL "CORI"
@@ -637,34 +639,191 @@ static bool emulator_is_pcecd(const retro_emulator_t *emu)
     return strcmp(emu->dirname, "pcecd") == 0;
 }
 
-/* True if path contains at least one .cue as a direct child (game folder). */
-static int pcecd_probe_cue_cb(const rg_scandir_t *entry, void *arg)
+/* Case-insensitive ".cue" — avoid snprintf/strtolower/strstr on every SD entry. */
+static bool filename_is_cue(const char *name)
 {
-    bool *found = (bool *)arg;
-    const char *ext;
-
-    if (!entry->is_file)
-        return RG_SCANDIR_CONTINUE;
-    ext = rg_extension(entry->basename);
-    if (ext && ext[0])
-    {
-        char ext_buf[8];
-        snprintf(ext_buf, sizeof(ext_buf), "%s", ext);
-        if (strcmp(rg_strtolower(ext_buf), "cue") == 0)
-        {
-            *found = true;
-            return RG_SCANDIR_STOP;
-        }
-    }
-    return RG_SCANDIR_CONTINUE;
+    const char *ext = strrchr(name, '.');
+    if (!ext || ext == name || !ext[1])
+        return false;
+    ext++;
+    return ((ext[0] | 0x20) == 'c')
+        && ((ext[1] | 0x20) == 'u')
+        && ((ext[2] | 0x20) == 'e')
+        && (ext[3] == '\0');
 }
 
-static bool pcecd_dir_has_cue(const char *path)
+static bool emulator_add_rom_file(retro_emulator_t *emu, const char *path,
+                                  const char *basename, uint32_t size)
 {
+    retro_emulator_file_t *slot;
+
+    if (emu->roms.count + 1 > emu->roms.maxcount)
+        return false;
+
+    slot = &emu->roms.files[emu->roms.count];
+    memset(slot, 0, sizeof(*slot));
+    slot->address = 0;
+    slot->size = size;
+    slot->system = emu->system;
+    slot->region = REGION_NTSC;
+    strncpy(slot->path, path, sizeof(slot->path) - 1);
+    slot->path[sizeof(slot->path) - 1] = '\0';
+    remove_extension(basename, slot->name);
+    slot->ext = (char *)get_extension(slot->path);
+#if COVERFLOW != 0
+    slot->img_state = IMG_STATE_UNKNOWN;
+#endif
+#if CHEAT_CODES == 1
+    slot->cheat_count = 0;
+    slot->cheat_codes = NULL;
+    slot->cheat_descs = NULL;
+#endif
+    emu->roms.count++;
+    emu->system->roms_count = emu->roms.count;
+    return true;
+}
+
+static bool emulator_add_folder_row(retro_emulator_t *emu, const char *path,
+                                    const char *basename)
+{
+    retro_emulator_file_t *slot;
+    size_t nl;
+
+    if (emu->roms.count + 1 > emu->roms.maxcount)
+        return false;
+
+    slot = &emu->roms.files[emu->roms.count];
+    memset(slot, 0, sizeof(*slot));
+    slot->address = 0;
+    slot->size = 0;
+    slot->system = emu->system;
+    slot->region = REGION_NTSC;
+    strncpy(slot->path, path, sizeof(slot->path) - 1);
+    slot->path[sizeof(slot->path) - 1] = '\0';
+    strncpy(slot->name, basename, sizeof(slot->name) - 1);
+    slot->name[sizeof(slot->name) - 1] = '\0';
+    slot->ext = NULL;
+    nl = strlen(slot->name);
+    if (nl + 3 < sizeof(slot->name))
+    {
+        memmove(slot->name + 2, slot->name, nl + 1);
+        slot->name[0] = '>';
+        slot->name[1] = ' ';
+    }
+#if COVERFLOW != 0
+    slot->img_state = IMG_STATE_NO_COVER;
+#endif
+    emu->roms.count++;
+    emu->system->roms_count = emu->roms.count;
+    return true;
+}
+
+#if SD_CARD == 1
+/* Open a child dir and stop at the first .cue found.
+ * Must not run while another DIR is open (FatFs LFN uses a shared static buffer). */
+static bool pcecd_collapse_game_dir(retro_emulator_t *emu, const char *path)
+{
+    DIR dir;
+    FILINFO fno;
+    size_t path_len = strlen(path);
+    char fullpath[RG_PATH_MAX];
+
+    if (path_len + 6 >= RG_PATH_MAX)
+        return false;
+    if (f_opendir(&dir, path) != FR_OK)
+        return false;
+
     bool found = false;
-    rg_storage_scandir(path, pcecd_probe_cue_cb, &found, RG_SCANDIR_FILES);
+    while (emu->roms.count < emu->roms.maxcount)
+    {
+        wdog_refresh();
+        if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == 0)
+            break;
+        if (fno.fname[0] == '.')
+            continue;
+        if (fno.fattrib & AM_DIR)
+            continue;
+        if (!filename_is_cue(fno.fname))
+            continue;
+        if (path_len + 1 + strlen(fno.fname) >= sizeof(fullpath))
+            continue;
+
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, fno.fname);
+        found = emulator_add_rom_file(emu, fullpath, fno.fname, (uint32_t)fno.fsize);
+        break;
+    }
+    f_closedir(&dir);
     return found;
 }
+
+/* Scan one PCE CD browse folder without nesting FatFs DIR handles and without
+ * nesting FatFs DIR handles. Parent directory is scanned once, child names are
+ * collected, then children are processed after parent close (FatFs LFN safety). */
+static void emulator_scan_pcecd_folder(retro_emulator_t *emu, const char *folder)
+{
+    DIR dir;
+    FILINFO fno;
+    size_t folder_len = strlen(folder);
+    char fullpath[RG_PATH_MAX];
+    char **subdirs = NULL;
+    int subdir_count = 0;
+    int subdir_cap = 0;
+
+    /* Pass 1: process .cue files at this level and collect child directories. */
+    if (f_opendir(&dir, folder) == FR_OK)
+    {
+        while (emu->roms.count < emu->roms.maxcount)
+        {
+            wdog_refresh();
+            if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == 0)
+                break;
+            if (fno.fname[0] == '.')
+                continue;
+            if (fno.fattrib & AM_DIR)
+            {
+                char *name_copy;
+                if (subdir_count >= subdir_cap)
+                {
+                    int new_cap = subdir_cap ? (subdir_cap * 2) : 16;
+                    char **new_subdirs = realloc(subdirs, (size_t)new_cap * sizeof(*new_subdirs));
+                    if (!new_subdirs)
+                        break;
+                    subdirs = new_subdirs;
+                    subdir_cap = new_cap;
+                }
+                name_copy = strdup(fno.fname);
+                if (!name_copy)
+                    break;
+                subdirs[subdir_count++] = name_copy;
+                continue;
+            }
+            if (!filename_is_cue(fno.fname))
+                continue;
+            if (folder_len + 1 + strlen(fno.fname) >= sizeof(fullpath))
+                continue;
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", folder, fno.fname);
+            if (!emulator_add_rom_file(emu, fullpath, fno.fname, (uint32_t)fno.fsize))
+                break;
+        }
+        f_closedir(&dir);
+    }
+
+    /* Pass 2: process each child dir after parent has been closed. */
+    for (int i = 0; i < subdir_count && emu->roms.count < emu->roms.maxcount; i++)
+    {
+        wdog_refresh();
+        if (folder_len + 1 + strlen(subdirs[i]) >= sizeof(fullpath))
+            continue;
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", folder, subdirs[i]);
+        if (!pcecd_collapse_game_dir(emu, fullpath))
+            emulator_add_folder_row(emu, fullpath, subdirs[i]);
+    }
+
+    for (int i = 0; i < subdir_count; i++)
+        free(subdirs[i]);
+    free(subdirs);
+}
+#endif /* SD_CARD == 1 */
 
 static int scan_folder_cb(const rg_scandir_t *entry, void *arg)
 {
@@ -686,70 +845,23 @@ static int scan_folder_cb(const rg_scandir_t *entry, void *arg)
     }
     else if (entry->is_dir)
     {
-        if (emulator_is_pcecd(emu) && pcecd_dir_has_cue(entry->path))
-        {
-            /* Game folder (cue+bin): list its .cue files here, omit the folder row.
-             *   /roms/pcecd/a/b.cue           → root shows "b"
-             *   /roms/pcecd/news/a/b.cue      → root shows "> news", inside: "b"
-             */
-            rg_storage_scandir(entry->path, scan_folder_cb, emu, RG_SCANDIR_FILES);
-            return (emu->roms.count >= emu->roms.maxcount) ? RG_SCANDIR_STOP
-                                                           : RG_SCANDIR_CONTINUE;
-        }
         is_valid = true;
     }
 
     if (!is_valid)
         return RG_SCANDIR_CONTINUE;
 
-    if (emu->roms.count + 1 > emu->roms.maxcount)
-        return RG_SCANDIR_STOP;
-
-    retro_emulator_file_t *slot = &emu->roms.files[emu->roms.count];
-    memset(slot, 0, sizeof(*slot));
-    slot->address = 0;
-    slot->size = entry->size;
-    slot->system = emu->system;
-    slot->region = REGION_NTSC;
-    strncpy(slot->path, entry->path, sizeof(slot->path) - 1);
-    slot->path[sizeof(slot->path) - 1] = '\0';
-
     if (entry->is_dir)
     {
-        strncpy(slot->name, entry->basename, sizeof(slot->name) - 1);
-        slot->name[sizeof(slot->name) - 1] = '\0';
-        slot->ext = NULL;
-        {
-            size_t nl = strlen(slot->name);
-            if (nl + 3 < sizeof(slot->name))
-            {
-                memmove(slot->name + 2, slot->name, nl + 1);
-                slot->name[0] = '>';
-                slot->name[1] = ' ';
-            }
-        }
-#if COVERFLOW != 0
-        /* Folders are not ROM-named cover files; avoid fopen on SD for each folder row. */
-        slot->img_state = IMG_STATE_NO_COVER;
-#endif
-    }
-    else
-    {
-        remove_extension(entry->basename, slot->name);
-        slot->ext = (char *)get_extension(slot->path);
-#if COVERFLOW != 0
-        slot->img_state = IMG_STATE_UNKNOWN;
-#endif
-#if CHEAT_CODES == 1
-        slot->cheat_count = 0;
-        slot->cheat_codes = NULL;
-        slot->cheat_descs = NULL;
-#endif
+        if (!emulator_add_folder_row(emu, entry->path, entry->basename))
+            return RG_SCANDIR_STOP;
+        return RG_SCANDIR_CONTINUE;
     }
 
-    emu->roms.count++;
-    emu->system->roms_count = emu->roms.count;
-
+    if (!emulator_add_rom_file(emu, entry->path, entry->basename, (uint32_t)entry->size))
+        return RG_SCANDIR_STOP;
+    /* Non-pcecd uses same adder; extension already validated. For non-cue systems
+     * get_extension still points at the real ext in path. */
     return RG_SCANDIR_CONTINUE;
 }
 
@@ -776,10 +888,12 @@ void emulator_init(retro_emulator_t *emu)
     rg_storage_mkdir(folder);
 
     emulator_browse_folder_path(emu, folder, sizeof(folder));
-    /* PCE CD: recurse so every .cue under /roms/pcecd (incl. per-game folders)
-     * is listed flat, instead of showing folders to drill into. */
-    uint32_t scan_flags = (strcmp(emu->dirname, "pcecd") == 0) ? RG_SCANDIR_RECURSIVE : 0;
-    rg_storage_scandir(folder, scan_folder_cb, emu, scan_flags);
+#if SD_CARD == 1
+    if (emulator_is_pcecd(emu))
+        emulator_scan_pcecd_folder(emu, folder);
+    else
+#endif
+        rg_storage_scandir(folder, scan_folder_cb, emu, 0);
 }
 
 void emulator_refresh_list(retro_emulator_t *emu)
@@ -790,10 +904,12 @@ void emulator_refresh_list(retro_emulator_t *emu)
     rg_storage_mkdir(folder);
 
     emulator_browse_folder_path(emu, folder, sizeof(folder));
-    /* PCE CD: recurse so every .cue under /roms/pcecd (incl. per-game folders)
-     * is listed flat, instead of showing folders to drill into. */
-    uint32_t scan_flags = (strcmp(emu->dirname, "pcecd") == 0) ? RG_SCANDIR_RECURSIVE : 0;
-    rg_storage_scandir(folder, scan_folder_cb, emu, scan_flags);
+#if SD_CARD == 1
+    if (emulator_is_pcecd(emu))
+        emulator_scan_pcecd_folder(emu, folder);
+    else
+#endif
+        rg_storage_scandir(folder, scan_folder_cb, emu, 0);
 }
 
 void emulator_show_file_info(retro_emulator_file_t *file)
