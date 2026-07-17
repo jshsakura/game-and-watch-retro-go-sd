@@ -63,6 +63,9 @@ static int g_skip_audio, g_skip_vdp, g_skip_sub, g_main_idle_skip;
 static int g_skip_ym, g_skip_psg, g_skip_z80;
 static int g_main_idle_hits;
 uint32_t scd_z80_idle_hits; /* referenced by z80inst.c under SCD_Z80_IDLE_SKIP */
+#ifdef SCD_YM_PROBE
+extern uint32_t g_ym_opcalc_total, g_ym_opcalc_skip, g_ym_samples;
+#endif
 /* VDP sub-component skip flags (only active when gwenesis_vdp_gfx.c is
  * compiled with -DSCD_BENCH_VDP). */
 int g_vdp_skip_b, g_vdp_skip_aw, g_vdp_skip_sp;
@@ -371,6 +374,13 @@ int main(int argc, char **argv)
         printf("\n");
     }
     printf("[boot] done %d frames. sub_running=%d\n", FRAMES, SCD.sub_running);
+#ifdef SCD_YM_PROBE
+    printf("[ym_probe] samples=%lu opcalc_total=%lu opcalc_skip=%lu skip_rate=%.1f%%\n",
+           (unsigned long)g_ym_samples,
+           (unsigned long)g_ym_opcalc_total,
+           (unsigned long)g_ym_opcalc_skip,
+           g_ym_opcalc_total ? 100.0 * g_ym_opcalc_skip / g_ym_opcalc_total : 0.0);
+#endif
 #ifdef HOOK_CPU
     /* dump top-20 opcode + top-20 PC for each 68K — same shape as the 32X
      * Phase-1.7 histogram (memory sega32x-feasibility.md). Output is what we
