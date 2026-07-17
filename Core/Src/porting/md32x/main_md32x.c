@@ -370,6 +370,191 @@ static void diag_log(const char *fmt, ...) {
   if (f) { fwrite(md32x_diag, 1, md32x_diag_len, f); fclose(f); }
 }
 
+/* ---- device-side DWT performance profile (MD32X_DEVICE_PROFILE only) --------
+ *
+ * PURPOSE: verify that a QEMU-rig relative win (e.g. Metal Head −51.3%) shows
+ * up as an ABSOLUTE fps/cycle improvement on the real STM32H7. QEMU instruction
+ * counts are not device cycle counts; only DWT settles the question (see
+ * docs/32X_PERFORMANCE_HISTOGRAM_GUIDE.md §8).
+ *
+ * BYTE-IDENTICAL GUARANTEE: every line in this section is compiled ONLY when
+ * -DMD32X_DEVICE_PROFILE is passed on the compile line. The default release
+ * build never sees it — the preprocessor strips the whole block — so
+ * build/md32x/main_md32x.o is code-identical with and without the flag (verify
+ * by diffing the objdump -d output; only debug-info line numbers shift).
+ *
+ * SD-WRITE-ONCE RULE: profiling data is accumulated in RAM and written to
+ * /32x_dwt.txt EXACTLY ONCE, after MD32X_PROFILE_FRAMES frames. Reopening the
+ * file mid-emulation would distort the very pacing we measure and risks card
+ * corruption (the /32x_diag.txt saga above). A `prof_dumped` flag makes the
+ * write strictly one-shot; after it fires, recording stops forever.
+ *
+ * BUCKET MEANING (disjoint — see main-loop instrumentation for the clear/get
+ * sequence):
+ *   pace  : common_emu_frame_loop()              — frame pacing / wait
+ *   proc  : input + pad read + out-buffer setup  — front-end, before PicoFrame
+ *   pico  : PicoFrame()                          — the emulation (heaviest)
+ *   blit  : common_ingame_overlay() + lcd_swap() — drawn frames only (skip → ~0)
+ *   audio : common_emu_sound_sync(false)         — audio submit/sync
+ *   total : one whole loop iteration             — over-budget gate uses this
+ *
+ * The five phase buckets are EXACTLY disjoint: a single DWT clear at the top of
+ * each loop iteration, then cumulative reads at every phase boundary; disjoint
+ * deltas are the differences between consecutive reads (the proven pattern in
+ * Core/Src/porting/tama/main_tama.c). `total` is the final cumulative read, so
+ * it equals the sum of the five phases plus negligible inter-phase branch cost.
+ * No nested or overlapping intervals are ever summed. The DWT helpers used here
+ * (common_emu_enable/clear/get_dwt_cycles) live in Core/Src/porting/common.c;
+ * no DWT register is touched directly here.
+ *
+ * MEMORY PLACEMENT: the md32x overlay is at ~99.8 % of RAM_EMU (only ~1.6 KB of
+ * BSS headroom), so the 28.8 KB of per-frame delta pools CANNOT be static —
+ * they would blow the link ASSERT. They are ahb_calloc'd from the SEPARATE
+ * 120 KB AHB SRAM pool (the draw2fb buffer already takes ~82 KB of it, leaving
+ * ~38 KB — plenty for two 14.4 KB pools). If the allocation fails, profiling
+ * is silently inert (prof_active = false). Only the tiny accumulators/counters
+ * below are static (~120 B of overlay BSS, well within headroom).
+ */
+#ifdef MD32X_DEVICE_PROFILE
+#define MD32X_PROFILE_FRAMES  600u   /* ~10 s @60 fps / ~12 s @50 fps; then dump */
+#define MD32X_PROF_PATH       "/32x_dwt.txt"
+
+enum {
+  PROF_BUCK_PACE = 0,   /* common_emu_frame_loop()                    */
+  PROF_BUCK_PROC,       /* input/pad/out-buffer before PicoFrame      */
+  PROF_BUCK_PICO,       /* PicoFrame() — the emulation                */
+  PROF_BUCK_BLIT,       /* overlay + lcd_swap (drawn only; skip ≈ 0)  */
+  PROF_BUCK_AUDIO,      /* common_emu_sound_sync(false)               */
+  PROF_BUCK_TOTAL,      /* whole loop iteration                       */
+  PROF_BUCK_COUNT
+};
+
+/* Per-frame 32-bit DWT delta pools — AHB-allocated (see MEMORY PLACEMENT above).
+ * Separate drawn/skip pools so render cost does not average into compute-only
+ * skips. A per-frame delta at 340 MHz fits easily in 32 bits (60 fps budget is
+ * ~5.7 M cycles; the raw counter wraps only every ~12.6 s). */
+static uint32_t *prof_delta_drawn;  /* [PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES] */
+static uint32_t *prof_delta_skip;   /* [PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES] */
+/* uint64 accumulators: 600 hot pico frames can sum past 2^32, so accumulate
+ * the per-frame 32-bit deltas in 64 bits even though each sample is 32-bit. */
+static uint64_t prof_sum_drawn[PROF_BUCK_COUNT];
+static uint64_t prof_sum_skip[PROF_BUCK_COUNT];
+static uint32_t prof_drawn_count;
+static uint32_t prof_skip_count;
+static bool prof_dumped;    /* strictly one-shot SD write  */
+static bool prof_active;    /* false if AHB alloc failed   */
+
+/* flat index into the AHB pools: bucket-major so each bucket's frames are
+ * contiguous (qsort in the dump operates on a bucket's slice in place). */
+#define PROF_AT(pool, bucket, i)  ((pool)[(bucket) * MD32X_PROFILE_FRAMES + (i)])
+
+/* Allocate the two delta pools from AHB SRAM. Called once before the main
+ * loop. On failure, prof_active stays false and profiling is silently inert. */
+static void md32x_profile_init(void) {
+  prof_delta_drawn = ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
+                                sizeof(uint32_t));
+  prof_delta_skip  = ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
+                                sizeof(uint32_t));
+  prof_active = (prof_delta_drawn != NULL && prof_delta_skip != NULL);
+}
+
+static int prof_u32_cmp(const void *a, const void *b) {
+  uint32_t ua = *(const uint32_t *)a, ub = *(const uint32_t *)b;
+  return (ua > ub) - (ua < ub);
+}
+
+/* nearest-rank percentile from an ALREADY SORTED array of n elements (p:0..100) */
+static uint32_t prof_pct_sorted(const uint32_t *sorted, uint32_t n, uint32_t p) {
+  if (n == 0) return 0;
+  uint32_t idx = (n * p) / 100u;
+  if (idx >= n) idx = n - 1u;
+  return sorted[idx];
+}
+
+/* Emit one bucket line to an open file. Sorts the per-frame delta slice IN
+ * PLACE — safe because data is dead after the single dump. kind 0=drawn,1=skip. */
+static void prof_emit_bucket(FILE *f, const char *label, uint32_t kind,
+                              uint32_t *pool, uint32_t n, uint64_t sum) {
+  if (n == 0) {
+    fprintf(f, "  %-6s[%c]: n=0\n", label, kind ? 'S' : 'D');
+    return;
+  }
+  qsort(pool, n, sizeof(uint32_t), prof_u32_cmp);
+  fprintf(f, "  %-6s[%c]: n=%u avg=%llu p50=%llu p90=%llu p95=%llu p99=%llu\n",
+          label, kind ? 'S' : 'D', (unsigned)n,
+          (unsigned long long)(sum / n),
+          (unsigned long long)prof_pct_sorted(pool, n, 50),
+          (unsigned long long)prof_pct_sorted(pool, n, 90),
+          (unsigned long long)prof_pct_sorted(pool, n, 95),
+          (unsigned long long)prof_pct_sorted(pool, n, 99));
+}
+
+/* One controlled dump to /32x_dwt.txt: mute audio, open/write/close once,
+ * refresh the watchdog around each slow step, unmute. Never called more than
+ * once (guarded by prof_dumped at the call site). */
+static void md32x_profile_dump(void) {
+  extern uint32_t SystemCoreClock;   /* system_stm32h7xx.c */
+
+  /* Budget: cycles available per frame at the current clock and region.
+   *   frame_time_10us is in 10-us ticks; SystemCoreClock/100000 converts a
+   *   10-us tick to cycles (10 us = 1e-4 s; clk * 1e-4 = clk/100000). */
+  uint64_t budget = (uint64_t)common_emu_state.frame_time_10us
+                    * (uint64_t)(SystemCoreClock / 100000u);
+
+  /* Over-budget frames (loop_total > budget) for drawn and skip separately. */
+  uint32_t over_drawn = 0, over_skip = 0;
+  uint32_t *total_drawn = prof_delta_drawn + PROF_BUCK_TOTAL * MD32X_PROFILE_FRAMES;
+  uint32_t *total_skip  = prof_delta_skip  + PROF_BUCK_TOTAL * MD32X_PROFILE_FRAMES;
+  for (uint32_t i = 0; i < prof_drawn_count; i++)
+    if (total_drawn[i] > budget) over_drawn++;
+  for (uint32_t i = 0; i < prof_skip_count; i++)
+    if (total_skip[i] > budget) over_skip++;
+
+  /* Mute so the dump does not buzz; harmless if already muted. */
+  odroid_audio_mute(true);
+  wdog_refresh();
+
+  FILE *f = fopen(MD32X_PROF_PATH, "wb");
+  wdog_refresh();
+  if (f == NULL) { odroid_audio_mute(false); return; }
+
+  fprintf(f, "=== 32X DWT device profile ===\n");
+  fprintf(f, "build: MD32X_DEVICE_PROFILE=1 (opt switch ON)\n");
+  /* No firmware-commit symbol is exported by this build (no _build_version /
+   * git-rev global); the file path + opt-switch line identify the run. */
+  fprintf(f, "clk=%lu Hz  region=%s  oc_user=%u (common_emu_auto_oc floor=1)\n",
+          (unsigned long)SystemCoreClock,
+          Pico.m.pal ? "PAL" : "NTSC",
+          (unsigned)odroid_settings_cpu_oc_level_get());
+  fprintf(f, "frame_budget=%llu cycles  frames_drawn=%u frames_skip=%u  total=%u\n",
+          (unsigned long long)budget,
+          (unsigned)prof_drawn_count, (unsigned)prof_skip_count,
+          (unsigned)(prof_drawn_count + prof_skip_count));
+  fprintf(f, "over_budget_total(drawn)=%u/%u  over_budget_total(skip)=%u/%u\n",
+          (unsigned)over_drawn, (unsigned)prof_drawn_count,
+          (unsigned)over_skip, (unsigned)prof_skip_count);
+  fprintf(f, "buckets (D=drawn, S=skip; values are DWT cycles):\n");
+  wdog_refresh();
+
+  static const char *const names[PROF_BUCK_COUNT] = {
+    "pace", "proc", "pico", "blit", "audio", "total"
+  };
+  for (uint32_t b = 0; b < PROF_BUCK_COUNT; b++) {
+    prof_emit_bucket(f, names[b], 0,
+                     prof_delta_drawn + b * MD32X_PROFILE_FRAMES,
+                     prof_drawn_count, prof_sum_drawn[b]);
+    prof_emit_bucket(f, names[b], 1,
+                     prof_delta_skip + b * MD32X_PROFILE_FRAMES,
+                     prof_skip_count, prof_sum_skip[b]);
+  }
+
+  wdog_refresh();
+  fclose(f);
+  wdog_refresh();
+  odroid_audio_mute(false);
+}
+#endif /* MD32X_DEVICE_PROFILE */
+
 /* ---- ROM load ------------------------------------------------------------- */
 static const uint8_t *md32x_rom;
 static uint32_t md32x_rom_len;
@@ -503,6 +688,15 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   diag_log("entering main loop (fps=%d, diag sealed - no more SD writes)\n", md32x_fps);
   md32x_diag_sealed = true;
 
+#ifdef MD32X_DEVICE_PROFILE
+  /* Arm the DWT cycle counter and allocate the delta pools AFTER the diag file
+   * is sealed, so neither interferes with boot-time SD writes. The counter
+   * then runs free for the whole main loop; per-frame deltas are safe (wrap
+   * ≈ 12.6 s @ 340 MHz). Pools come from AHB SRAM (see MEMORY PLACEMENT above). */
+  md32x_profile_init();
+  common_emu_enable_dwt_cycles();
+#endif
+
   if (load_state)
     odroid_system_emu_load_state(save_slot);
   else
@@ -511,7 +705,19 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   while (1) {
     wdog_refresh();
 
+#ifdef MD32X_DEVICE_PROFILE
+    /* Single DWT clear for the whole iteration. Cumulative reads at each phase
+     * boundary below give EXACTLY disjoint deltas (tama pattern): the five
+     * phase buckets never overlap, and the final read is loop_total. No nested
+     * intervals, no double-counting. */
+    common_emu_clear_dwt_cycles();
+#endif
+
     bool drawFrame = common_emu_frame_loop();
+
+#ifdef MD32X_DEVICE_PROFILE
+    uint32_t t_pace = common_emu_get_dwt_cycles();   /* after pace, before proc */
+#endif
 
     odroid_input_read_gamepad(&joystick);
     common_emu_input_loop(&joystick, options, &md32x_repaint);
@@ -522,13 +728,65 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     if (drawFrame) set_out_buffer();
     /* skip_frame tells picodrive to run emulation but not rasterize */
     PicoIn.skipFrame = drawFrame ? 0 : 1;
+
+#ifdef MD32X_DEVICE_PROFILE
+    uint32_t t_proc = common_emu_get_dwt_cycles();   /* after proc, before pico */
+#endif
+
     PicoFrame();
+
+#ifdef MD32X_DEVICE_PROFILE
+    uint32_t t_pico = common_emu_get_dwt_cycles();   /* after pico, before blit */
+#endif
 
     if (drawFrame) {
       common_ingame_overlay();
       lcd_swap();
     }
 
+#ifdef MD32X_DEVICE_PROFILE
+    uint32_t t_blit = common_emu_get_dwt_cycles();   /* after blit, before audio */
+#endif
+
     common_emu_sound_sync(false);
+
+#ifdef MD32X_DEVICE_PROFILE
+    uint32_t t_audio = common_emu_get_dwt_cycles();  /* after audio == loop_total */
+
+    /* Record per-frame disjoint deltas into the drawn or skip pool, then
+     * one-shot dump when the window fills. After the dump, recording stops
+     * forever (prof_dumped) so steady-state play is never disturbed. If the
+     * AHB allocation failed at init (prof_active false), skip entirely. */
+    if (prof_active && !prof_dumped) {
+      uint32_t total = prof_drawn_count + prof_skip_count;
+      if (total < MD32X_PROFILE_FRAMES) {
+        uint32_t delta[PROF_BUCK_COUNT];
+        delta[PROF_BUCK_PACE]  = t_pace;
+        delta[PROF_BUCK_PROC]  = t_proc - t_pace;
+        delta[PROF_BUCK_PICO]  = t_pico - t_proc;
+        delta[PROF_BUCK_BLIT]  = t_blit - t_pico;   /* ~0 on skip: nothing renders */
+        delta[PROF_BUCK_AUDIO] = t_audio - t_blit;
+        delta[PROF_BUCK_TOTAL] = t_audio;           /* since the single clear */
+        if (drawFrame) {
+          uint32_t i = prof_drawn_count++;
+          for (uint32_t b = 0; b < PROF_BUCK_COUNT; b++) {
+            PROF_AT(prof_delta_drawn, b, i) = delta[b];
+            prof_sum_drawn[b] += delta[b];
+          }
+        } else {
+          uint32_t i = prof_skip_count++;
+          for (uint32_t b = 0; b < PROF_BUCK_COUNT; b++) {
+            PROF_AT(prof_delta_skip, b, i) = delta[b];
+            prof_sum_skip[b] += delta[b];
+          }
+        }
+      } else {
+        /* Window full: one controlled SD dump (mutes audio, kicks wdog
+         * internally), then never record or write again. */
+        md32x_profile_dump();
+        prof_dumped = true;
+      }
+    }
+#endif
   }
 }
