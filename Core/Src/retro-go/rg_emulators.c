@@ -912,6 +912,112 @@ void emulator_refresh_list(retro_emulator_t *emu)
         rg_storage_scandir(folder, scan_folder_cb, emu, 0);
 }
 
+#if SD_CARD == 1
+/* Copy dirname of `path` into `out` (no trailing slash). */
+static void path_dirname_copy(const char *path, char *out, size_t out_size)
+{
+    const char *slash = path ? strrchr(path, '/') : NULL;
+    if (!slash || out_size == 0) {
+        if (out_size > 0) {
+            out[0] = '.';
+            if (out_size > 1)
+                out[1] = '\0';
+        }
+        return;
+    }
+    size_t len = (size_t)(slash - path);
+    if (len >= out_size)
+        len = out_size - 1;
+    memcpy(out, path, len);
+    out[len] = '\0';
+}
+
+/* True when cue lives in a per-game folder under /roms/pcecd/<game>/… */
+static bool pcecd_cue_in_game_folder(const char *cue_path, char *parent_out, size_t parent_size)
+{
+    char root[RG_PATH_MAX];
+    size_t root_len;
+
+    path_dirname_copy(cue_path, parent_out, parent_size);
+    snprintf(root, sizeof(root), "%s/pcecd", RG_BASE_PATH_ROMS);
+    if (strcmp(parent_out, root) == 0)
+        return false; /* flat layout: cue directly under /roms/pcecd */
+
+    root_len = strlen(root);
+    if (strncmp(parent_out, root, root_len) != 0 || parent_out[root_len] != '/')
+        return false;
+    /* Must be exactly one level under pcecd (…/pcecd/<game>), not deeper
+     * nested junk we might not want to wipe wholesale — still OK to delete
+     * that folder if the cue is there; collapse only uses one level. */
+    return true;
+}
+
+/* Flat PCE CD layout: delete FILE "…" siblings referenced by the cue, then the cue. */
+static void emulator_delete_pcecd_flat(const char *cue_path)
+{
+    char parent[RG_PATH_MAX];
+    char line[512];
+    FILE *cue;
+
+    path_dirname_copy(cue_path, parent, sizeof(parent));
+    cue = fopen(cue_path, "rb");
+    if (cue) {
+        while (fgets(line, sizeof(line), cue)) {
+            char *p = line;
+            const char *q1, *q2;
+            char name[256];
+            char binpath[RG_PATH_MAX];
+            size_t n;
+
+            while (*p == ' ' || *p == '\t')
+                p++;
+            if (strncmp(p, "FILE", 4) != 0)
+                continue;
+            q1 = strchr(p, '"');
+            q2 = q1 ? strchr(q1 + 1, '"') : NULL;
+            if (!q1 || !q2)
+                continue;
+            n = (size_t)(q2 - q1 - 1);
+            if (n == 0 || n >= sizeof(name))
+                continue;
+            memcpy(name, q1 + 1, n);
+            name[n] = '\0';
+            /* Reject path traversal / absolute refs — only same-dir siblings. */
+            if (strchr(name, '/') || strchr(name, '\\') || strstr(name, ".."))
+                continue;
+            snprintf(binpath, sizeof(binpath), "%s/%s", parent, name);
+            rg_storage_delete(binpath);
+            wdog_refresh();
+        }
+        fclose(cue);
+    }
+    rg_storage_delete(cue_path);
+}
+
+/* Delete ROM storage for a list entry. PCE CD games are multi-file (cue+bins,
+ * often in a per-game folder); a plain unlink of the .cue would leave orphans. */
+static void emulator_delete_rom_storage(retro_emulator_file_t *file)
+{
+    char parent[RG_PATH_MAX];
+    char pcecd_prefix[64];
+
+    if (!file || !file->path[0])
+        return;
+
+    snprintf(pcecd_prefix, sizeof(pcecd_prefix), "%s/pcecd/", RG_BASE_PATH_ROMS);
+    if (file->ext && strcasecmp(file->ext, "cue") == 0 &&
+        strncmp(file->path, pcecd_prefix, strlen(pcecd_prefix)) == 0) {
+        if (pcecd_cue_in_game_folder(file->path, parent, sizeof(parent)))
+            rg_storage_delete(parent);
+        else
+            emulator_delete_pcecd_flat(file->path);
+        return;
+    }
+
+    rg_storage_delete(file->path);
+}
+#endif /* SD_CARD == 1 */
+
 void emulator_show_file_info(retro_emulator_file_t *file)
 {
     char filename_value[128];
@@ -923,7 +1029,7 @@ void emulator_show_file_info(retro_emulator_file_t *file)
         {-1, curr_lang->s_File, filename_value, 0, NULL},
         {-1, curr_lang->s_Type, type_value, 0, NULL},
         {-1, curr_lang->s_Size, size_value, 0, NULL},
-#if SD_CARD != 0 // Can't delete file on FrogFS
+#if SD_CARD == 1 // Can't delete file on FrogFS
         ODROID_DIALOG_CHOICE_SEPARATOR,
         {10, curr_lang->s_Delete_Rom_File, "", no_delete ? -1 : 1, NULL},
 #endif
@@ -944,6 +1050,7 @@ void emulator_show_file_info(retro_emulator_file_t *file)
 
     while (1) {
         int sel = odroid_overlay_dialog(curr_lang->s_GameProp, choices, -1, &gui_redraw_callback, 0);
+#if SD_CARD == 1
         switch (sel)
         {
         case 10: {
@@ -957,7 +1064,7 @@ void emulator_show_file_info(retro_emulator_file_t *file)
             );
 
             if (delete_confirm_sel == 1) {
-                odroid_sdcard_unlink(file->path);
+                emulator_delete_rom_storage(file);
                 rg_favorites_remove(file->path); /* drop any stale ★ entry */
                 strcpy(file->path, "");
             } else {
@@ -967,6 +1074,7 @@ void emulator_show_file_info(retro_emulator_file_t *file)
         }
 
         }
+#endif
 
         break;
     }

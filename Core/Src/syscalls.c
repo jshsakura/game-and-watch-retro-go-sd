@@ -28,7 +28,7 @@ typedef struct {
     int is_open;
 } FatFSFile;
 
-#define MAX_OPEN_FILES 2
+#define MAX_OPEN_FILES 3
 FatFSFile file_table[MAX_OPEN_FILES];
 
 void init_file_table() {
