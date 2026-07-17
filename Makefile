@@ -58,6 +58,15 @@ Core/Src/stm32h7xx_hal_msp.c \
 Core/Src/stm32h7xx_it.c \
 Core/Src/system_stm32h7xx.c
 
+# On-device rc dispatch probe (65816->C static recompiler feasibility).
+# Default OFF: the release build is byte-identical to a tree without it.
+# Enable with RC_PROBE=1 (e.g. `make release DOCKER=1 RC_PROBE=1 ...`).
+RC_PROBE ?= 0
+ifeq ($(RC_PROBE),1)
+  C_SOURCES += Core/Src/rc_probe.c
+  C_DEFS += -DRC_PROBE=1
+endif
+
 FATFS_DIR = Core/Src/porting/lib/FatFs
 FATFS_C_SOURCES = \
 $(FATFS_DIR)/user_diskio.c \

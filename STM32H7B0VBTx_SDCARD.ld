@@ -1046,6 +1046,29 @@ INCLUDE build/fceumm_mappers.ld
     __xip_gba_end__ = .;
   } > GBA_CODE
 
+  /* ------------------------------------------------------------ rc_probe XIP -
+   * On-device probe site functions for the 65816->C static recompiler's
+   * dispatch-path measurement. Placed at a REAL external-flash VMA (NOT a
+   * sentinel) so that a direct BL from internal-flash .text forces the
+   * linker to emit a long-branch veneer — the RAM->XIP crossing whose cost
+   * and correctness Stage 2 measures.
+   *
+   * CAVEAT (SD-card builds): extflash.bin is NOT flashed to the external
+   * flash chip on SD_CARD=1 builds (only intflash.bin is flashed; cores
+   * stream from SD at runtime). So the bytes at 0x9001xxxx are whatever the
+   * OFW/chainloader left there — NOT this section's code. Stage 2 therefore
+   * stubs the runtime measurement and documents the reason. The section
+   * exists in the ELF for objdump veneer verification and for non-SD builds
+   * where extflash.bin IS flashed. Offset 0x10000 avoids the first 64 KB
+   * (OFW/chainloader reservation at the bottom of external flash). */
+  .xip_rcprobe (__EXTFLASH_START__ + 0x10000) : {
+    . = ALIGN(4);
+    __xip_rcprobe_start__ = .;
+    KEEP(*(.xip_rcprobe))
+    . = ALIGN(4);
+    __xip_rcprobe_end__ = .;
+  } > EXTFLASH
+
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_smw_start__ = .;

@@ -169,12 +169,13 @@ int main(void) {
   Snes *snes = snes_init(g_wram);
   g_the_snes = snes;
   if (!snes_loadRom(snes, rom, (int)rom_len)) { printf("unsupported ROM\n"); return 1; }
-  /* snes_loadRom malloc'd a second copy of the ROM. The ELF already carries the
-   * blob in PSRAM — point cart->rom back at it and free the copy, so a 6 MB cart
-   * costs 6 MB, not 12. The core only reads cart->rom; SRAM writes go to cart->ram.
-   * Rig-only: the device streams the ROM from SD, it never double-stores. */
+  /* Host builds: the loader malloc'd a pow2 copy; reuse the linked-in image.
+   * GNW_SNES_CORE builds: cart_load already points at `rom` IN PLACE (zero-copy)
+   * — freeing it here would free the ROM itself (newlib arena loop). */
+#if !defined(GNW_SNES_CORE)
   free(snes->cart->rom);
   snes->cart->rom = rom;
+#endif
   printf("[snes-qemu] rom len=%lu frames=%d\n", (unsigned long)rom_len, RIG_FRAMES);
 
   uint64_t run_hash = 1469598103934665603ULL;

@@ -41,6 +41,14 @@
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
+
+#ifndef RC_PROBE
+#define RC_PROBE 0
+#endif
+#if RC_PROBE
+#include "rc_probe.h"
+#endif
+
 #if SD_CARD == 1
 #include "ff.h"
 #endif
@@ -504,6 +512,12 @@ int main(void)
   // Initialize the external flash
 
   OSPI_Init(&hospi1);
+
+  // On-device rc dispatch probe — inert unless GAME+TIME held at boot.
+  // Compile-gated by RC_PROBE so the default build is byte-identical.
+#if RC_PROBE
+  rc_probe_run_if_requested(boot_buttons);
+#endif
 
   bq24072_init();
 
