@@ -632,6 +632,40 @@ static const char *get_extension(const char *filename) {
     return NULL;
 }
 
+static bool emulator_is_pcecd(const retro_emulator_t *emu)
+{
+    return strcmp(emu->dirname, "pcecd") == 0;
+}
+
+/* True if path contains at least one .cue as a direct child (game folder). */
+static int pcecd_probe_cue_cb(const rg_scandir_t *entry, void *arg)
+{
+    bool *found = (bool *)arg;
+    const char *ext;
+
+    if (!entry->is_file)
+        return RG_SCANDIR_CONTINUE;
+    ext = rg_extension(entry->basename);
+    if (ext && ext[0])
+    {
+        char ext_buf[8];
+        snprintf(ext_buf, sizeof(ext_buf), "%s", ext);
+        if (strcmp(rg_strtolower(ext_buf), "cue") == 0)
+        {
+            *found = true;
+            return RG_SCANDIR_STOP;
+        }
+    }
+    return RG_SCANDIR_CONTINUE;
+}
+
+static bool pcecd_dir_has_cue(const char *path)
+{
+    bool found = false;
+    rg_storage_scandir(path, pcecd_probe_cue_cb, &found, RG_SCANDIR_FILES);
+    return found;
+}
+
 static int scan_folder_cb(const rg_scandir_t *entry, void *arg)
 {
     retro_emulator_t *emu = (retro_emulator_t *)arg;
@@ -652,9 +686,17 @@ static int scan_folder_cb(const rg_scandir_t *entry, void *arg)
     }
     else if (entry->is_dir)
     {
-        /* PCE CD lists every .cue flat (recursive scan descends game folders),
-         * so its sub-folders are not shown as browse rows. */
-        is_valid = (strcmp(emu->dirname, "pcecd") != 0);
+        if (emulator_is_pcecd(emu) && pcecd_dir_has_cue(entry->path))
+        {
+            /* Game folder (cue+bin): list its .cue files here, omit the folder row.
+             *   /roms/pcecd/a/b.cue           → root shows "b"
+             *   /roms/pcecd/news/a/b.cue      → root shows "> news", inside: "b"
+             */
+            rg_storage_scandir(entry->path, scan_folder_cb, emu, RG_SCANDIR_FILES);
+            return (emu->roms.count >= emu->roms.maxcount) ? RG_SCANDIR_STOP
+                                                           : RG_SCANDIR_CONTINUE;
+        }
+        is_valid = true;
     }
 
     if (!is_valid)
