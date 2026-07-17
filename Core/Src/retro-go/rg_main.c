@@ -23,6 +23,7 @@
 #include "rg_welcome_prompt.h"
 #include "rg_clock.h"
 #include "rg_alarm.h"   /* resident all-state next-alarm cache */
+#include "rc_probe.h"   /* RC_PROBE default + probe prototype */
 #include "rg_system_grid.h"
 
 /* Wake-cause flags latched at reset in main.c (before anything clears them). */
@@ -1185,6 +1186,17 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
 #else
     // Initialize the littleFS filesystem
     fs_init();
+#endif
+
+    /* rc on-device dispatch probe — inert unless GAME+TIME held at boot.
+     * Lives here (not main.c) because Stage 2 caches rcprobe.xip from SD,
+     * which requires sdcard_init() above to have run. RC_PROBE-gated so
+     * the default build is byte-identical. */
+#if RC_PROBE
+    {
+        extern uint32_t boot_buttons;   /* plain global from main.c */
+        rc_probe_run_if_requested(boot_buttons);
+    }
 #endif
 
     /* Full battery drain wipes the RTC: quietly restore the clock from the

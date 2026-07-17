@@ -3,6 +3,13 @@
 
 #include <stdint.h>
 
+/* Compile gate. The Makefile passes -DRC_PROBE=1 when RC_PROBE=1; this default
+ * keeps the include harmless in any translation unit (main.c, rg_main.c) when
+ * the macro is unset, so the release build is byte-identical. */
+#ifndef RC_PROBE
+#define RC_PROBE 0
+#endif
+
 /* On-device feasibility probe for the 65816->C static recompiler's dispatch
  * path (map lookup + XIP site call) on the STM32H7B0.
  *

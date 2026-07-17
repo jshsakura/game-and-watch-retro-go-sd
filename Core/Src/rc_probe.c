@@ -30,18 +30,17 @@
  *     The PLACEMENT axis is the decisive one: it determines whether a D-cache
  *     miss per lookup blows the cycle budget.
  *
- *   Stage 2 (XIP veneer — stubbed on SD-card builds): measures the cost and
- *     correctness of calling K=64 site functions that execute from external
- *     flash (0x9001xxxx). The .xip_rcprobe linker section exists at a real
- *     EXTFLASH VMA, and the linker emits a long-branch veneer for direct BL
- *     from .text (confirmed via objdump). BUT on SD_CARD=1 builds extflash.bin
- *     is NOT flashed to the external flash chip (only intflash.bin is flashed;
- *     cores stream from SD at runtime). The bytes at 0x9001xxxx are therefore
- *     whatever the OFW/chainloader left there — NOT this section's code — and
- *     executing them would fault. Stage 2 stubs the runtime measurement with
- *     a clear reason. The veneer wiring is verified at link time (objdump).
- *     On non-SD builds (where extflash.bin IS flashed) the measurement could
- *     run; that is a TODO for a FLASH.ld build.
+ *   Stage 2 (XIP veneer — FUNCTIONAL): measures the cost and correctness of
+ *     the REAL rc dispatch mechanism — an indirect call (blx reg) from a RAM
+ *     loop to K=64 site functions executing from external flash. The
+ *     .xip_rcprobe section is linked at the RCPROBE_CODE sentinel
+ *     (0xD0D0xxxx); at runtime odroid_overlay_cache_file_in_flash_relocate
+ *     caches rcprobe.xip into QSPI flash (the same mechanism SM/GBA use), and
+ *     the sites are called through REAL flash exec addresses computed as
+ *     sentinel_sym + (flash_base - RCPROBE_CODE_BASE). A cold pass (I+D cache
+ *     invalidated) vs a warm pass (I-cache-hot) isolates the XIP I-cache miss
+ *     penalty per call — the KEY XIP-hazard number. A correctness FAIL (wrong
+ *     counter / corruption) is the DOOM-hazard signal.
  *
  *   Stage 3 (combined per-opcode dispatch): hash-lookup (DTCM, the winning
  *     placement) + indirect call to a RAM-resident stub site + return. The
@@ -50,13 +49,12 @@
  *     budget (~240-480 cycles total emulation at 480 MHz / 1-2M dispatches-sec).
  *
  * WHAT EACH OUTCOME MEANS
- *   - map-in-DTCM cheap + (Stage2) veneer correct/fast => rc viable.
+ *   - map-in-DTCM cheap + Stage2 veneer correct/fast => rc viable.
  *   - map-in-flash expensive => the map MUST live in DTCM (0x20000000); any
  *     cached/flash placement is a cache-miss-per-opcode catastrophe.
- *   - Stage2 runtime FAIL (if it could run) => the "DOOM XIP veneer" hazard
- *     is real at rc call frequency. On SD-card builds the hazard is that the
- *     code isn't in flash at all, which is a deployment constraint, not a
- *     hardware limit (SM/GBA prove flash exec works via the runtime cache).
+ *   - Stage2 runtime FAIL (wrong counter / corruption) => the "DOOM XIP
+ *     veneer" hazard is real at rc call frequency. A large cold-warm delta
+ *     => the I-cache miss penalty per XIP call is the binding cost.
  *
  * SHAPE (copied from gba_probe): always compiled (when RC_PROBE=1), RUNTIME-
  * gated by a boot button combo (returns immediately if not held), DWT cycle
@@ -82,6 +80,7 @@
 #include "odroid_overlay.h"
 #include "odroid_display.h"
 #include "odroid_colors.h"
+#include "gw_flash_alloc.h"    /* odroid_overlay_cache_file_in_flash_relocate + flash_relocate_cb_t */
 
 #define RC_COMBO       (B_GAME | B_TIME)   /* no other boot hook uses this    */
 
@@ -100,30 +99,82 @@
 #define RC_K_SITES     64U
 #define RC_S3_CALLS    1000000U
 
-/* ---- XIP site functions (Stage 2) --------------------------------------- *
- * Placed in .xip_rcprobe (EXTFLASH VMA 0x90010000). On SD-card builds these
- * bytes are NOT in external flash at boot (extflash.bin is not flashed), so
- * they cannot be executed — Stage 2 stubs the measurement. The functions
- * exist so the linker resolves .xip_rcprobe and emits a veneer for the
- * direct BL in rc_force_veneer(). */
+ /* ---- XIP site functions (Stage 2) --------------------------------------- *
+ * Placed in .xip_rcprobe, linked at the RCPROBE_CODE sentinel (0xD0D0xxxx).
+ * At runtime Stage 2 caches rcprobe.xip into QSPI flash and calls these
+ * through REAL flash exec addresses (sentinel + offset) — the genuine rc
+ * indirect-dispatch (blx reg) path. rc_force_veneer (below) keeps a direct
+ * BL to site 0 in .text purely so the linker emits a long-branch veneer for
+ * objdump verification; it is never executed.
+ *
+ * Each site body is deliberately DISTINCT (the `+ n` addend in the hash mix)
+ * so -fipa-icf / identical-code-folding cannot merge the 64 functions into
+ * fewer bodies — merging would make the K=64 dispatch actually test <64
+ * distinct I-cache lines and corrupt the cold/warm measurement. */
 #define RC_XIP_SITE(n) \
     void __attribute__((section(".xip_rcprobe"), noinline, used)) \
     rc_xip_site_##n(uint32_t sid, volatile uint32_t *ctrs, volatile uint32_t *snk) { \
-        uint32_t a = sid * 2654435761u; \
+        uint32_t a = sid * 2654435761u + n * 0x00010000u; \
         ctrs[sid]++; \
         *snk ^= a >> 16; \
     }
 
-RC_XIP_SITE(0)  RC_XIP_SITE(1)  RC_XIP_SITE(2)  RC_XIP_SITE(3)
+RC_XIP_SITE(0)   RC_XIP_SITE(1)   RC_XIP_SITE(2)   RC_XIP_SITE(3)
+RC_XIP_SITE(4)   RC_XIP_SITE(5)   RC_XIP_SITE(6)   RC_XIP_SITE(7)
+RC_XIP_SITE(8)   RC_XIP_SITE(9)   RC_XIP_SITE(10)  RC_XIP_SITE(11)
+RC_XIP_SITE(12)  RC_XIP_SITE(13)  RC_XIP_SITE(14)  RC_XIP_SITE(15)
+RC_XIP_SITE(16)  RC_XIP_SITE(17)  RC_XIP_SITE(18)  RC_XIP_SITE(19)
+RC_XIP_SITE(20)  RC_XIP_SITE(21)  RC_XIP_SITE(22)  RC_XIP_SITE(23)
+RC_XIP_SITE(24)  RC_XIP_SITE(25)  RC_XIP_SITE(26)  RC_XIP_SITE(27)
+RC_XIP_SITE(28)  RC_XIP_SITE(29)  RC_XIP_SITE(30)  RC_XIP_SITE(31)
+RC_XIP_SITE(32)  RC_XIP_SITE(33)  RC_XIP_SITE(34)  RC_XIP_SITE(35)
+RC_XIP_SITE(36)  RC_XIP_SITE(37)  RC_XIP_SITE(38)  RC_XIP_SITE(39)
+RC_XIP_SITE(40)  RC_XIP_SITE(41)  RC_XIP_SITE(42)  RC_XIP_SITE(43)
+RC_XIP_SITE(44)  RC_XIP_SITE(45)  RC_XIP_SITE(46)  RC_XIP_SITE(47)
+RC_XIP_SITE(48)  RC_XIP_SITE(49)  RC_XIP_SITE(50)  RC_XIP_SITE(51)
+RC_XIP_SITE(52)  RC_XIP_SITE(53)  RC_XIP_SITE(54)  RC_XIP_SITE(55)
+RC_XIP_SITE(56)  RC_XIP_SITE(57)  RC_XIP_SITE(58)  RC_XIP_SITE(59)
+RC_XIP_SITE(60)  RC_XIP_SITE(61)  RC_XIP_SITE(62)  RC_XIP_SITE(63)
 
 /* Function-pointer table — forces symbol retention and provides the
- * indirect-call path the real dispatch loop would use. */
+ * indirect-call path the real dispatch loop uses. Each entry is the site's
+ * sentinel symbol (0xD0D0xxxx | 1, Thumb); Stage 2 adds the runtime flash
+ * offset to get the real exec address. */
 typedef void (*rc_xip_fn)(uint32_t, volatile uint32_t *, volatile uint32_t *);
 static rc_xip_fn const rc_xip_table[] = {
-    rc_xip_site_0, rc_xip_site_1, rc_xip_site_2, rc_xip_site_3,
+    rc_xip_site_0,  rc_xip_site_1,  rc_xip_site_2,  rc_xip_site_3,
+    rc_xip_site_4,  rc_xip_site_5,  rc_xip_site_6,  rc_xip_site_7,
+    rc_xip_site_8,  rc_xip_site_9,  rc_xip_site_10, rc_xip_site_11,
+    rc_xip_site_12, rc_xip_site_13, rc_xip_site_14, rc_xip_site_15,
+    rc_xip_site_16, rc_xip_site_17, rc_xip_site_18, rc_xip_site_19,
+    rc_xip_site_20, rc_xip_site_21, rc_xip_site_22, rc_xip_site_23,
+    rc_xip_site_24, rc_xip_site_25, rc_xip_site_26, rc_xip_site_27,
+    rc_xip_site_28, rc_xip_site_29, rc_xip_site_30, rc_xip_site_31,
+    rc_xip_site_32, rc_xip_site_33, rc_xip_site_34, rc_xip_site_35,
+    rc_xip_site_36, rc_xip_site_37, rc_xip_site_38, rc_xip_site_39,
+    rc_xip_site_40, rc_xip_site_41, rc_xip_site_42, rc_xip_site_43,
+    rc_xip_site_44, rc_xip_site_45, rc_xip_site_46, rc_xip_site_47,
+    rc_xip_site_48, rc_xip_site_49, rc_xip_site_50, rc_xip_site_51,
+    rc_xip_site_52, rc_xip_site_53, rc_xip_site_54, rc_xip_site_55,
+    rc_xip_site_56, rc_xip_site_57, rc_xip_site_58, rc_xip_site_59,
+    rc_xip_site_60, rc_xip_site_61, rc_xip_site_62, rc_xip_site_63,
 };
 
 static volatile uint32_t g_sink;
+
+/* ---- Stage 2 sentinel-cache wiring (mirrors SM's SmCacheXipToFlash) ----- */
+#define RCPROBE_CODE_BASE 0xD0D00000u
+#define RCPROBE_PATH      "/roms/homebrew/rcprobe.xip"
+
+/* NOTE on relocate_cb: SM/GBA pass a callback (SmRelocateXip) that rewrites
+ * sentinel-range words inside the blob once the real flash address is known.
+ * The rc_probe site functions are leaf bodies that reference only RAM globals
+ * (g_site_ctrs, g_sink) resolved at link time — there are NO sentinel-range
+ * absolute refs inside .xip_rcprobe, so a relocate pass would be a no-op. We
+ * therefore pass NULL here. (The fn-ptr table rc_xip_table lives in .rodata,
+ * NOT in the blob, and is patched arithmetically in RAM by Stage 2 itself via
+ * sentinel_sym + offset.) If sites ever grow sentinel rodata refs, add a cb
+ * matching flash_relocate_cb_t here — see SmRelocateXip for the template. */
 
 /* ---- helpers ------------------------------------------------------------ */
 
@@ -282,12 +333,20 @@ static void __attribute__((noinline)) rc_stub_site(
 }
 
 /* ---- Force linker veneer for objdump verification ----------------------- *
- * Never executed (trigger is always 0); exists solely so .text contains a
- * direct BL to 0x9001xxxx, which the linker MUST bridge with a long-branch
- * veneer (BL range is +/-16 MB; 0x90010000 is ~2 GB from .text at 0x081xxxxx).
- * The veneer is the artifact Stage 2 would measure if the code were in flash. */
+ * Link-time veneer artifact ONLY — DO NOT CALL AT RUNTIME. The direct BL
+ * below targets rc_xip_site_0's sentinel address (0xD0D0xxxx); executing it
+ * would fault (sentinel is unmapped until the runtime cache remaps it, and
+ * even then rc dispatch is indirect blx, not this direct-call path). The body
+ * is guarded so a stray call returns harmlessly.
+ *
+ * Because the function is never called, --gc-sections would normally collect
+ * its .text.rc_force_veneer section. It is retained by a KEEP() rule in the
+ * linker script (STM32H7B0VBTx_SDCARD.ld, .text output) so the long-branch
+ * veneer (BL range is +/-16 MB; 0xD0D0xxxx is ~3 GB from .text at 0x081xxxxx)
+ * is emitted for objdump verification. `used` additionally stops the compiler
+ * dropping it pre-link. This is the ONLY purpose of the function. */
 static volatile uint32_t rc_veneer_trigger;
-static void __attribute__((noinline)) rc_force_veneer(void)
+static void __attribute__((noinline, used)) rc_force_veneer(void)
 {
     if (rc_veneer_trigger == 0xDEAD1234u)
         rc_xip_site_0(0, g_site_ctrs, &g_sink);
@@ -455,27 +514,83 @@ void rc_probe_run_if_requested(uint32_t boot_buttons)
     lcd_sync();
 
     /* =======================================================================
-     *  Stage 2: XIP veneer call cost + correctness
-     * ======================================================================= *
-     * The .xip_rcprobe section is linked at 0x90010000 (EXTFLASH VMA). On
-     * SD_CARD=1 builds extflash.bin is NOT flashed to the external flash chip,
-     * so the bytes at 0x90010000 are not this section's code. Executing them
-     * would fault or produce garbage. We therefore stub the measurement.
-     *
-     * The linker veneer IS emitted (verified via objdump of the ELF) — a
-     * direct BL from rc_force_veneer (.text) to rc_xip_site_0 (.xip_rcprobe)
-     * crosses the +/-16 MB BL range, forcing a long-branch stub. That stub is
-     * the artifact whose cost Stage 2 would measure if the code were in flash.
-     *
-     * TODO: run this measurement on a non-SD build (SD_CARD=0, FLASH.ld) where
-     * extflash.bin IS flashed, or after manually flashing extflash.bin.
-     */
-    rc_force_veneer();   /* never calls through (trigger==0); keeps veneer live */
-    rc_line(C_YELLOW, "S2 SKIP extflash-not-flashed");
-    printf("rc: S2 SKIP: SD-card builds do not flash extflash.bin to the flash chip.\n");
-    printf("rc:   .xip_rcprobe at %p (VMA 0x9001xxxx) — verify veneer via objdump.\n",
-           (void*)rc_xip_table[0]);
-    lcd_sync();
+     *  Stage 2: REAL indirect RAM->XIP call cost + correctness
+     * =======================================================================
+     * The .xip_rcprobe site functions are linked at the RCPROBE_CODE sentinel
+     * (0xD0D0xxxx). At runtime we cache rcprobe.xip into external QSPI flash
+     * via odroid_overlay_cache_file_in_flash_relocate (the same mechanism SM's
+     * SmCacheXipToFlash uses), then call the sites through REAL flash exec
+     * addresses computed as sentinel_sym + (flash_base - RCPROBE_CODE_BASE).
+     * This measures the actual rc dispatch mechanism: indirect blx from a RAM
+     * loop into XIP code + execution + return. A cold pass (I+D caches
+     * invalidated) vs a warm pass (I-cache-hot) isolates the XIP I-cache miss
+     * penalty per call. A correctness FAIL (wrong counter) = the DOOM hazard. */
+    {
+        uint32_t xsize = 0;
+        uint8_t *xbase = odroid_overlay_cache_file_in_flash_relocate(
+                             RCPROBE_PATH, &xsize, false, NULL);   /* no relocate_cb: sites have no sentinel refs (see note above) */
+        if (xbase == NULL || xsize == 0) {
+            rc_line(C_YELLOW, "S2 SKIP cache-fail");
+            printf("rc: S2 SKIP: %s not cached (SD missing file?)\n", RCPROBE_PATH);
+            lcd_sync();
+        } else {
+            int32_t xoff = (int32_t)((uint32_t)xbase - RCPROBE_CODE_BASE);
+            rc_xip_fn real_fns[RC_K_SITES];
+            uint32_t cold, warm, m2 = RC_S3_CALLS, j2, sum2, ok2 = 1, each;
+
+            /* Build RAM-local fn-ptr table of REAL flash exec addresses.
+             * rc_xip_table[i] holds the sentinel sym (0xD0D0xxxx | 1, Thumb);
+             * adding xoff (word-aligned) yields the real address and the low
+             * Thumb bit is preserved. */
+            for (i = 0; i < RC_K_SITES; i++) {
+                real_fns[i] = (rc_xip_fn)((uint32_t)rc_xip_table[i] + xoff);
+                g_site_ctrs[i] = 0;
+            }
+            g_sink = 0;
+
+            /* COLD pass: invalidate I-cache AND D-cache, then round-robin. */
+            SCB_InvalidateICache();
+            SCB_InvalidateDCache();
+            __DSB();
+            __ISB();
+            common_emu_clear_dwt_cycles();
+            for (j2 = 0; j2 < m2; j2++) {
+                uint32_t sid = j2 % RC_K_SITES;
+                real_fns[sid](sid, g_site_ctrs, &g_sink);
+            }
+            cold = common_emu_get_dwt_cycles() / m2;
+
+            /* correctness: every call lands in exactly one counter, and each
+             * counter is m2/K (m2 is divisible by K). Corruption here = the
+             * XIP execution faulted/clobbered state = the DOOM-hazard signal. */
+            each = m2 / RC_K_SITES;
+            for (i = 0, sum2 = 0; i < RC_K_SITES; i++) {
+                sum2 += g_site_ctrs[i];
+                if (g_site_ctrs[i] != each) ok2 = 0;
+            }
+            if (sum2 != m2) ok2 = 0;
+
+            /* WARM pass: sites now I-cache-hot (no invalidation). The delta
+             * cold-warm = the I-cache miss penalty per call, the KEY number. */
+            common_emu_clear_dwt_cycles();
+            for (j2 = 0; j2 < m2; j2++) {
+                uint32_t sid = j2 % RC_K_SITES;
+                real_fns[sid](sid, g_site_ctrs, &g_sink);
+            }
+            warm = common_emu_get_dwt_cycles() / m2;
+
+            rc_line(ok2 ? C_GREEN : C_RED, "S2 COLD cyc/op=%lu %s",
+                    (unsigned long)cold, ok2 ? "ok" : "FAIL");
+            rc_line(C_WHITE, "S2 WARM cyc/op=%lu", (unsigned long)warm);
+            rc_line(C_WHITE, "S2 cold-warm delta=%ld",
+                    (long)cold - (long)warm);
+            rc_line(ok2 ? C_GREEN : C_RED, "S2 correct=%s sum=%lu",
+                    ok2 ? "PASS" : "FAIL", (unsigned long)sum2);
+            /* rc_line already logs each line via printf; the xip-blob printf
+             * above carries the address/size/offset detail. */
+            lcd_sync();
+        }
+    }
 
     /* =======================================================================
      *  Stage 3: combined per-opcode dispatch (LOWER BOUND — no flash veneer)

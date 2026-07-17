@@ -135,6 +135,11 @@ MEMORY
    * const tables alone approach 1M and the space is free (it's a sentinel). */
   MD32X_CODE (x) : ORIGIN = 0xDEB00000,   LENGTH = 2M
 
+  /* rc on-device probe: XIP site functions (sentinel address, cached to QSPI
+   * XIP at runtime by odroid_overlay_cache_file_in_flash_relocate — same trick
+   * as SM_CODE/GBA_CODE). RC_PROBE-gated; absent in release builds. */
+  RCPROBE_CODE (x) : ORIGIN = 0xD0D00000,   LENGTH = 64K
+
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
 }
@@ -1048,26 +1053,26 @@ INCLUDE build/fceumm_mappers.ld
 
   /* ------------------------------------------------------------ rc_probe XIP -
    * On-device probe site functions for the 65816->C static recompiler's
-   * dispatch-path measurement. Placed at a REAL external-flash VMA (NOT a
-   * sentinel) so that a direct BL from internal-flash .text forces the
-   * linker to emit a long-branch veneer — the RAM->XIP crossing whose cost
-   * and correctness Stage 2 measures.
+   * dispatch-path measurement. Linked at the RCPROBE_CODE sentinel
+   * (0xD0D0xxxx) — NOT a real flash VMA — exactly like .xip_sm/.xip_gba.
+   * The section ships as a standalone rcprobe.xip (RC_PROBE-gated) and is
+   * cached into external QSPI flash at runtime by
+   * odroid_overlay_cache_file_in_flash_relocate; Stage 2 then measures the
+   * REAL indirect RAM->XIP call through runtime-computed flash exec
+   * addresses (sentinel_sym + (flash_base - RCPROBE_CODE_BASE)).
    *
-   * CAVEAT (SD-card builds): extflash.bin is NOT flashed to the external
-   * flash chip on SD_CARD=1 builds (only intflash.bin is flashed; cores
-   * stream from SD at runtime). So the bytes at 0x9001xxxx are whatever the
-   * OFW/chainloader left there — NOT this section's code. Stage 2 therefore
-   * stubs the runtime measurement and documents the reason. The section
-   * exists in the ELF for objdump veneer verification and for non-SD builds
-   * where extflash.bin IS flashed. Offset 0x10000 avoids the first 64 KB
-   * (OFW/chainloader reservation at the bottom of external flash). */
-  .xip_rcprobe (__EXTFLASH_START__ + 0x10000) : {
-    . = ALIGN(4);
+   * A direct BL from internal-flash .text (rc_force_veneer) to the sentinel
+   * still forces the linker to emit a long-branch veneer — the artifact
+   * objdump verifies at link time. That veneer is never executed at runtime
+   * (rc dispatch is indirect blx, not a linker veneer); it exists only to
+   * prove the sentinel link resolves. */
+  .xip_rcprobe : {
+    . = ALIGN(8);
     __xip_rcprobe_start__ = .;
     KEEP(*(.xip_rcprobe))
-    . = ALIGN(4);
+    . = ALIGN(8);
     __xip_rcprobe_end__ = .;
-  } > EXTFLASH
+  } > RCPROBE_CODE
 
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);
@@ -1378,6 +1383,7 @@ INCLUDE build/fceumm_mappers.ld
   .text :
   {
     . = ALIGN(4);
+    KEEP(*(.text.rc_force_veneer))   /* rc probe: objdump-veneer artifact (RC_PROBE), unreferenced — survives --gc-sections via KEEP */
     *(.text)           /* .text sections (code) */
     *(.text*)          /* .text* sections (code) */
     *(.glue_7)         /* glue arm to thumb code */
