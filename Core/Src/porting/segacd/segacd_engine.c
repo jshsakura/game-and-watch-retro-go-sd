@@ -62,6 +62,56 @@ int scd_dbg_deliver5_n;
  * nesting only — the sub never re-enters the main. */
 static m68ki_cpu_core s_main_saved;
 
+/* Per-ISR chunk attribution for the b9 ISR-budget subdivision (always-on,
+ * 32 bytes BSS, 1 inc/chunk — negligible). Bucket 0 = foreground; 1/2/4/5 =
+ * GFX/IFL2/CDD/CDC. Multiply by SEGACD_IRQ_CHUNK_CYCLES (400) for emulated
+ * cycles. Reset externally before a benchmark window. */
+uint32_t scd_sub_isr_chunks[8];
+
+/* General-purpose idle-skip controls (harness-side optimization preview).
+ * When scd_sub_idle_skip is set, the sub-CPU's chunk loop will fast-forward
+ * through tight spin loops instead of executing the TST/BNE literally.
+ * scd_sub_idle_hits counts how many slices were skipped this way. Both
+ * default to 0 — no behavior change unless explicitly enabled. */
+int scd_sub_idle_skip;
+uint32_t scd_sub_idle_hits;
+
+/* Detect a tight spin loop at the given PC. Returns 1 if the instructions
+ * at PC form a backward-branching loop of <= 6 bytes — the canonical 68K
+ * wait-for-interrupt idiom. Covers every pattern observed in the SegaCD
+ * histogram (main $fe26 WaitVSync, sub $36a9 semaphore, sub $6194 reg-poll,
+ * main BTST poll, and the 32X-style BRA-self):
+ *
+ *   <test/poll op> + Bcc.S *-N   (op is 2, 4, or 6 bytes)
+ *   BRA.S self (0x60FE)
+ *
+ * The Bcc.S displacement is the signal: a negative branch landing at or
+ * before the loop entry PC. Uses m68k_read_disassembler_16 (already linked
+ * for the z80inst disassembler path) — not REG_IR, which isn't set yet at
+ * the run-site call. Game/BIOS-agnostic: matches the OPCODE pattern, not
+ * specific PCs. */
+int scd_m68k_is_spin(unsigned int pc)
+{
+    unsigned int op = m68k_read_disassembler_16(pc);
+
+    /* BRA.S self — tightest possible spin (0x60FE) */
+    if (op == 0x60FE) return 1;
+
+    /* Scan for a Bcc.S at +2, +4, or +6 (2/4/6-byte op1) that branches
+     * backward to <= pc. Bcc.S high nibble 0x6, displacement is low byte
+     * sign-extended. Target = bcc_addr + 2 + disp (68K PC-relative math). */
+    unsigned int offs[3] = {2, 4, 6};
+    for (int i = 0; i < 3; i++) {
+        unsigned int bcc = m68k_read_disassembler_16(pc + offs[i]);
+        if ((bcc & 0xF000) != 0x6000) continue;
+        int disp = (int)(int8_t)(bcc & 0xFF);
+        if (disp >= 0) continue;                 /* forward branch = not a spin */
+        unsigned int target = pc + offs[i] + 2 + (unsigned int)disp;
+        if (target <= pc) return 1;              /* loops back to entry */
+    }
+    return 0;
+}
+
 /* The sub-CPU's own interrupt-ack callback (M68K_EMULATE_INT_ACK=OPT_ON calls
  * this on EVERY interrupt the sub actually takes — i.e. exactly when
  * m68ki_check_interrupts() finds CPU_INT_LEVEL > FLAG_INT_MASK and the
@@ -204,6 +254,19 @@ int segacd_run_sub(int cycle_target)
     /* save main -> load sub */
     memcpy(&s_main_saved, &m68k, sizeof(m68ki_cpu_core));
     memcpy(&m68k, &SCD.sub_ctx, sizeof(m68ki_cpu_core));
+#ifdef HOOK_CPU
+    /* histogram attribution: sub-68K context is now in the shared `m68k`
+     * global, so per-insn samples taken by the HOOK_CPU path from here on
+     * must be attributed to SUB, not MAIN. */
+    extern int g_scd_hist_issub;
+    g_scd_hist_issub = 1;
+#endif
+#if defined(HOOK_CPU) && defined(SCD_CACHE)
+    /* cache-only build: enable hook only during sub execution to avoid
+     * ~10M wasted calls during main 68K run */
+    extern void scd_cache_hook_enable(int);
+    scd_cache_hook_enable(1);
+#endif
 
     /* m68k_run() takes an ABSOLUTE cycle target, and the sub's cycle counter
      * persists in sub_ctx across timeslices. If we passed a fixed target the
@@ -253,6 +316,13 @@ int segacd_run_sub(int cycle_target)
     extern uint32_t scd_dbg_chunks, scd_dbg_deliver4, scd_dbg_deliver2;
     scd_dbg_chunks = scd_dbg_deliver4 = scd_dbg_deliver2 = 0;
 #endif
+    /* Per-ISR chunk histogram (b9 ISR-budget subdivision). Each chunk is
+     * SEGACD_IRQ_CHUNK_CYCLES (400) cycles, so chunks_per_level * 400 is the
+     * emulated-cycle cost of that level. Bucket 0 = foreground (no IRQ won
+     * the priority arbitration that chunk). Always-on: tiny overhead (1 inc
+     * per chunk, max GUARD chunks/slice), useful in both bench and hist builds,
+     * firmware-safe. */
+    extern uint32_t scd_sub_isr_chunks[8];
     for (;;) {
         /* CDC (level 5) outranks CDD (level 4) outranks the IFL2 doorbell
          * (level 2) — matches real 68000 IPL priority (highest-asserted
@@ -267,6 +337,8 @@ int segacd_run_sub(int cycle_target)
          * ACK in segacd_sub_int_ack case 1. */
         int want1 = !want5 && !want4 && !want2 &&
                     SCD.gfx_int_pending && (SCD.s68k_regs[0x33] & 0x02);
+        /* per-ISR chunk attribution (bucket 0 = foreground/no-IRQ chunk) */
+        scd_sub_isr_chunks[want5 ? 5 : (want4 ? 4 : (want2 ? 2 : (want1 ? 1 : 0)))]++;
 #ifdef SEGACD_GA_TRACE
         scd_dbg_chunks++;
         if (want5) {
@@ -323,6 +395,18 @@ int segacd_run_sub(int cycle_target)
         if (!want5 && !want4 && !want2 && !want1) {
             /* Nothing to chunk for: run the rest of the slice in one go
              * (the common case — no cost over the old unchunked path). */
+            if (scd_sub_idle_skip && scd_m68k_is_spin(m68k.pc)) {
+                /* General-purpose idle-skip: the sub is parked in a tight
+                 * spin loop (TST/BTST + BNE, or BRA-self) with no pending
+                 * IRQ this chunk. Fast-forward to the slice target — the
+                 * wakeup can only come from outside this slice (main sets
+                 * doorbell, CDD timer fires, etc.), so executing the spin
+                 * literally is pure waste. The sub stays at the spin PC;
+                 * next slice's IRQ delivery vectors it away. */
+                scd_sub_idle_hits++;
+                m68k.cycles = (unsigned int)cycle_target;
+                break;
+            }
             m68k_run((unsigned int)cycle_target);
             break;
         }
@@ -360,6 +444,15 @@ int segacd_run_sub(int cycle_target)
     /* save sub -> restore main */
     memcpy(&SCD.sub_ctx, &m68k, sizeof(m68ki_cpu_core));
     memcpy(&m68k, &s_main_saved, sizeof(m68ki_cpu_core));
+#ifdef HOOK_CPU
+    /* histogram attribution: sub no longer loaded into `m68k`. */
+    extern int g_scd_hist_issub;
+    g_scd_hist_issub = 0;
+#endif
+#if defined(HOOK_CPU) && defined(SCD_CACHE)
+    extern void scd_cache_hook_enable(int);
+    scd_cache_hook_enable(0);
+#endif
 
     return used;
 }

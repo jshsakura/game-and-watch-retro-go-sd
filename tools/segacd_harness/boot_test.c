@@ -21,6 +21,7 @@
 #include "gwenesis_bus.h"
 #include "gwenesis_io.h"
 #include "gwenesis_vdp.h"
+#include "gwenesis_sn76489.h"
 #include "m68k.h"
 #include "z80inst.h"
 #include "ym2612.h"
@@ -46,12 +47,50 @@ int system_clock, scan_line, hint_counter, skip_first_vint, drawFrame=1;
  * BIOS 0x9a4/0x9dc is the ONLY thing that clears the $fe26 WaitVSync semaphore;
  * if the main spins at 0xa1a it's because this ISR never runs. */
 long g_vint_raised=0, g_vint_taken=0; int g_reg1_at_stall=0;
+
+/* --- budget-table A/B probes (b2 SNES methodology) ---
+ * Set via getenv at startup so a single binary can run all variants. Each flag
+ * stubs one component so its wall-clock cost can be measured by subtraction.
+ *   SCD_SKIP_AUDIO=1 -> stub z80_run + SN76489_run + ym2612_run
+ *   SCD_SKIP_VDP=1   -> stub gwenesis_vdp_render_line
+ *   SCD_SKIP_SUB=1   -> stub segacd_run_sub
+ *   SCD_MAIN_IDLE_SKIP=1 -> skip m68k_run slice when PC is at a spin loop
+ *                           (general-purpose opcode-pattern detection, not
+ *                           hardcoded PCs). Real-optimization preview.
+ *   SCD_SUB_IDLE_SKIP=1  -> same for sub-68K inside segacd_run_sub's chunk loop.
+ */
+static int g_skip_audio, g_skip_vdp, g_skip_sub, g_main_idle_skip;
+static int g_skip_ym, g_skip_psg, g_skip_z80;
+static int g_main_idle_hits;
+uint32_t scd_z80_idle_hits; /* referenced by z80inst.c under SCD_Z80_IDLE_SKIP */
+/* VDP sub-component skip flags (only active when gwenesis_vdp_gfx.c is
+ * compiled with -DSCD_BENCH_VDP). */
+int g_vdp_skip_b, g_vdp_skip_aw, g_vdp_skip_sp;
+/* General-purpose spin detector + sub idle-skip controls (defined in
+ * segacd_engine.c). Main uses the same detector so both CPUs share one
+ * pattern-matching codebase. */
+extern int scd_m68k_is_spin(unsigned int pc);
+extern int scd_sub_idle_skip;
+extern uint32_t scd_sub_idle_hits;
 int sn76489_clock, sn76489_index, ym2612_clock, ym2612_index, vert_screen_offset, hori_screen_offset;
 unsigned int lines_per_frame = LINES_PER_FRAME_NTSC;
 int16_t gwenesis_ym2612_buffer[GWENESIS_AUDIO_BUFFER_CAPACITY];
 int16_t gwenesis_sn76489_buffer[GWENESIS_AUDIO_BUFFER_CAPACITY];
 const unsigned char *ROM_DATA; unsigned int ROM_DATA_LENGTH;
 void gwenesis_io_get_buttons(void){} void wdog_refresh(void){}
+
+/* When SEGACD_GA_TRACE is off (build_bench.sh variant), the scd_dbg_* counters
+ * are not defined anywhere. Provide weak zero/null instances so boot_test.c
+ * still links without modification. The values just read as 0/empty, which is
+ * correct for the un-instrumented build. */
+__attribute__((weak)) uint32_t scd_dbg_prgwin_w;
+__attribute__((weak)) uint8_t scd_dbg_prg_written[1];
+__attribute__((weak)) uint32_t scd_dbg_wpc[1];
+__attribute__((weak)) int scd_dbg_wpc_n;
+__attribute__((weak)) uint32_t scd_dbg_first_a0, scd_dbg_first_a1, scd_dbg_first_ea;
+__attribute__((weak)) uint32_t scd_dbg_maxpc;
+__attribute__((weak)) uint32_t scd_dbg_chunks, scd_dbg_deliver4, scd_dbg_deliver2;
+__attribute__((weak)) int scd_dbg_frame;
 
 static uint16_t s_fb[320*240];
 uint16_t *lcd_get_active_buffer(void){return s_fb;}
@@ -63,6 +102,45 @@ void odroid_audio_init(int f){(void)f;} void odroid_audio_submit(int16_t*b,uint1
 /* The region BIOS pointer segacd_bus.c maps at main $000000 (weak in main_segacd
  * on device; here we provide it from the loaded file). */
 const uint8_t *segacd_bios;
+
+/* Wrappers so the budget probes can stub one component at a time without
+ * touching call sites. MAIN_IDLE_SKIP short-circuits m68k_run when the main
+ * is parked in a spin loop — detected by the general-purpose opcode-pattern
+ * matcher scd_m68k_is_spin() (covers $fe26 WaitVSync, BTST polls, BRA-self,
+ * etc. — not hardcoded PCs). */
+static inline void run_main(uint32_t target){
+    /* Probe-then-skip idle detection: run a small slice (16 cycles ≈ 2
+     * spin iterations). If the main is in a spin loop, it'll still be at
+     * the spin PC afterward (the probe didn't have enough work to leave
+     * the loop). If an interrupt fired or real work was pending, the PC
+     * will have moved elsewhere — fall through to normal execution.
+     *
+     * This naturally handles the int_level problem: even when a hardware
+     * IRQ line is asserted (int_level > 0), if the CPU's SR mask blocks
+     * it (or the handler already ran and RTE'd back), the probe will show
+     * the main spinning, and we skip safely. No need to inspect int_level
+     * or SR — the probe IS the check. */
+    if (g_main_idle_skip && target > m68k.cycles + 16) {
+        unsigned int pc_before = m68k.pc;
+        unsigned int probe = m68k.cycles + 16;
+        m68k_run(probe);
+        if (m68k.cycles < target && scd_m68k_is_spin(m68k.pc)) {
+            g_main_idle_hits++;
+            m68k.cycles = target;
+            return;
+        }
+        if (m68k.cycles >= target) return; /* probe consumed the whole slice */
+    }
+    m68k_run(target);
+}
+static inline void run_z80(uint32_t target){ if(!g_skip_audio && !g_skip_z80) z80_run(target); }
+static inline void run_audio(uint32_t target_system_clock){
+    if(g_skip_audio) return;
+    if(!g_skip_psg) gwenesis_SN76489_run(target_system_clock);
+    if(!g_skip_ym)  ym2612_run(target_system_clock);
+}
+static inline void run_sub(int slice){ if(!g_skip_sub) segacd_run_sub(slice); }
+static inline void render_line(int line){ if(!g_skip_vdp) gwenesis_vdp_render_line(line); }
 
 static void md_scanline_frame(void)
 {
@@ -87,20 +165,20 @@ static void md_scanline_frame(void)
     scan_line=(int)screen_height;
     if(!skip_first_vint){ gwenesis_vdp_status|=STATUS_VIRQPENDING;
       if(REG1_VBLANK_INTERRUPT){m68k_set_irq(6); g_vint_raised++;} z80_irq_line(1); }
-    m68k_run(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE);
+    run_main(system_clock+VDP_CYCLES_PER_LINE); run_z80(system_clock+VDP_CYCLES_PER_LINE);
     system_clock+=VDP_CYCLES_PER_LINE; z80_irq_line(0);
     for(line=(int)screen_height+1; line<(int)lines_per_frame-1; line++){ scan_line=line;
-      m68k_run(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE); system_clock+=VDP_CYCLES_PER_LINE;
-      segacd_run_sub(sub_slice); }
+      run_main(system_clock+VDP_CYCLES_PER_LINE); run_z80(system_clock+VDP_CYCLES_PER_LINE); system_clock+=VDP_CYCLES_PER_LINE;
+      run_sub(sub_slice); }
     scan_line=(int)lines_per_frame-1; hint_counter=(int)REG10_LINE_COUNTER;
     gwenesis_vdp_status&=(unsigned short)~STATUS_VBLANK;
-    m68k_run(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE); system_clock+=VDP_CYCLES_PER_LINE;
+    run_main(system_clock+VDP_CYCLES_PER_LINE); run_z80(system_clock+VDP_CYCLES_PER_LINE); system_clock+=VDP_CYCLES_PER_LINE;
     for(line=0; line<(int)screen_height; line++){ scan_line=line; gwenesis_vdp_latch_line_scroll(line);
       if(hint_counter==0){hint_counter=(int)REG10_LINE_COUNTER; hint_pending=1; if(REG0_LINE_INTERRUPT)m68k_update_irq(4);} else hint_counter--;
-      m68k_run(system_clock+VDP_CYCLES_PER_LINE); z80_run(system_clock+VDP_CYCLES_PER_LINE);
-      gwenesis_vdp_render_line(line); system_clock+=VDP_CYCLES_PER_LINE;
-      segacd_run_sub(sub_slice); }
-    gwenesis_SN76489_run(system_clock); ym2612_run(system_clock); m68k.cycles-=system_clock;
+      run_main(system_clock+VDP_CYCLES_PER_LINE); run_z80(system_clock+VDP_CYCLES_PER_LINE);
+      render_line(line); system_clock+=VDP_CYCLES_PER_LINE;
+      run_sub(sub_slice); }
+    run_audio(system_clock); m68k.cycles-=system_clock;
     skip_first_vint=0;
 }
 
@@ -108,6 +186,31 @@ int main(int argc, char **argv)
 {
     if (argc < 3) { fprintf(stderr,"usage: boot_test <bios.bin> <game.cue> [frames]\n"); return 2; }
     int FRAMES = argc > 3 ? atoi(argv[3]) : 600;
+
+    /* budget-table probes — env-driven so a single binary runs every variant */
+    g_skip_audio      = getenv("SCD_SKIP_AUDIO")      ? atoi(getenv("SCD_SKIP_AUDIO"))      : 0;
+    g_skip_vdp        = getenv("SCD_SKIP_VDP")        ? atoi(getenv("SCD_SKIP_VDP"))        : 0;
+    g_skip_sub        = getenv("SCD_SKIP_SUB")        ? atoi(getenv("SCD_SKIP_SUB"))        : 0;
+    g_main_idle_skip  = getenv("SCD_MAIN_IDLE_SKIP")  ? atoi(getenv("SCD_MAIN_IDLE_SKIP"))  : 0;
+    g_skip_ym         = getenv("SCD_SKIP_YM")         ? atoi(getenv("SCD_SKIP_YM"))         : 0;
+    g_skip_psg        = getenv("SCD_SKIP_PSG")        ? atoi(getenv("SCD_SKIP_PSG"))        : 0;
+    g_skip_z80        = getenv("SCD_SKIP_Z80")        ? atoi(getenv("SCD_SKIP_Z80"))        : 0;
+    g_vdp_skip_b      = getenv("SCD_SKIP_PLANEB")     ? atoi(getenv("SCD_SKIP_PLANEB"))     : 0;
+    g_vdp_skip_aw     = getenv("SCD_SKIP_PLANEA")     ? atoi(getenv("SCD_SKIP_PLANEA"))     : 0;
+    g_vdp_skip_sp     = getenv("SCD_SKIP_SPRITES")    ? atoi(getenv("SCD_SKIP_SPRITES"))    : 0;
+    /* SCD_SUB_IDLE_SKIP is intentionally NOT parsed: the $36a9 spin is a
+     * bidirectional handshake (sub must process L2 ISR and write ack before
+     * main re-pulses doorbell). Skipping the sub's execution prevents the
+     * handshake from completing — L2 count drops to 0 and boot stalls.
+     * Sub idle-skip is unsound for handshake spins; only a true hardware
+     * sleep (STOP instruction, or BRA-self with no observer) could use it. */
+    scd_sub_idle_skip = 0;
+    int quiet = getenv("SCD_QUIET") ? atoi(getenv("SCD_QUIET")) : 0;
+    if (!quiet) {
+        printf("[probe] flags: audio=%d vdp=%d sub=%d main_idle=%d sub_idle=%d ym=%d psg=%d z80=%d frames=%d\n",
+               g_skip_audio, g_skip_vdp, g_skip_sub, g_main_idle_skip, scd_sub_idle_skip,
+               g_skip_ym, g_skip_psg, g_skip_z80, FRAMES);
+    }
 
     /* --- load region BIOS (becomes the main-CPU boot ROM at $000000) --- */
     FILE *bf = fopen(argv[1],"rb");
@@ -138,12 +241,33 @@ int main(int argc, char **argv)
     extern int scd_dbg_frame;
     int vblank_ie_first_frame = -1;
 #endif
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    /* per-ISR chunk counters: zero at the start of the timed window so the
+     * dump covers exactly the bench window (matches the histogram, which also
+     * starts cold-boot around frame 120). */
+    extern uint32_t scd_sub_isr_chunks[8];
+    for (int i = 0; i < 8; i++) scd_sub_isr_chunks[i] = 0;
+    scd_z80_idle_hits = 0;
     for (int frame=0; frame<FRAMES; frame++) {
 #ifdef SEGACD_GA_TRACE
         scd_dbg_frame = frame;
         if (vblank_ie_first_frame < 0 && REG1_VBLANK_INTERRUPT) vblank_ie_first_frame = frame;
 #endif
         button_state[0]=0xFF;
+#ifdef HOOK_CPU
+        { extern int g_scd_frame; g_scd_frame = frame; }
+        /* 32X-style histogram: discard the cold-boot warmup, sample from
+         * frame 120 (well past the sub-release + checksum phase, where the
+         * mode-8 spin loop has settled in). Schedule a lazy clear: the
+         * histogram fires the actual memset on the next cpu_hook tick, so
+         * we don't half-clear between main and sub work. */
+        if (frame == 120) {
+            extern void scd_hist_clear(void);
+            scd_hist_clear();
+            printf("[hist] clear scheduled at frame 120\n");
+        }
+#endif
         md_scanline_frame();                 /* main 68K + VDP (BIOS runs here) */
         { extern unsigned char *M68K_RAM;    /* boot-mode ($FFFDDA) transition log */
           static unsigned prev_bm = 0xffff;
@@ -225,7 +349,34 @@ int main(int argc, char **argv)
             }
         }
     }
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    long ms_total = (t1.tv_sec - t0.tv_sec)*1000L + (t1.tv_nsec - t0.tv_nsec)/1000000L;
+    /* Single-line BUDGET marker parsed by bench.sh. Always emitted (even in
+     * SCD_QUIET) so the script can grep it cleanly. Format:
+     *   BUDGET ms=<total> frames=<n> mspf=<x.xx> idle_hits=<n> */
+    printf("BUDGET ms=%ld frames=%d mspf=%.2f idle_hits=%d sub_idle_hits=%lu z80_idle_hits=%lu\n",
+           ms_total, FRAMES, (double)ms_total / FRAMES, g_main_idle_hits,
+           (unsigned long)scd_sub_idle_hits, (unsigned long)scd_z80_idle_hits);
+    /* per-ISR chunk dump (b9 subdivision of sub-68K cost). chunks * 400 = cycles. */
+    {
+        extern uint32_t scd_sub_isr_chunks[8];
+        uint64_t total = 0;
+        for (int i = 0; i < 8; i++) total += scd_sub_isr_chunks[i];
+        printf("BUDGET_ISR total=%llu", (unsigned long long)total);
+        const char *names[8] = {"fg","L1gfx","L2ifl","r3","L4cdd","L5cdc","r6","r7"};
+        for (int i = 0; i < 8; i++) {
+            double pct = total ? 100.0 * scd_sub_isr_chunks[i] / total : 0.0;
+            printf(" %s=%u(%.1f%%)", names[i], scd_sub_isr_chunks[i], pct);
+        }
+        printf("\n");
+    }
     printf("[boot] done %d frames. sub_running=%d\n", FRAMES, SCD.sub_running);
+#ifdef HOOK_CPU
+    /* dump top-20 opcode + top-20 PC for each 68K — same shape as the 32X
+     * Phase-1.7 histogram (memory sega32x-feasibility.md). Output is what we
+     * build the budget table from. */
+    { extern void scd_hist_dump(void); scd_hist_dump(); }
+#endif
     /* boot-stall probe: is MAIN's VBlank interrupt actually being raised, and
      * is the main CPU able to take it (SR mask), at the moment we stopped? */
     printf("[boot] MAIN VINT raised=%ld times; VDP reg1=%02x (VINT-enable bit5=%d, disp-en bit6=%d); "
@@ -290,10 +441,10 @@ int main(int argc, char **argv)
          * Wider than the checksummed region (0x5800): interrupt vectors/handlers
          * and CDD command tables live past the checksum window. */
         FILE *d=fopen("/tmp/scd/prg_subbios.bin","wb");
-        if(d){ for(unsigned o=0x0;o<0x10000;o+=2){ uint16_t w=PRGW(o);
+        if(d){ for(unsigned o=0x0;o<0x20000;o+=2){ uint16_t w=PRGW(o);
                  unsigned char be[2]={(unsigned char)(w>>8),(unsigned char)(w&0xff)};
                  fwrite(be,1,2,d);} fclose(d);
-               printf("[boot] wrote /tmp/scd/prg_subbios.bin (0x0..0x10000 BE)\n"); }
+               printf("[boot] wrote /tmp/scd/prg_subbios.bin (0x0..0x20000 BE)\n"); }
         /* Was every byte of the checksummed region written by the main PRG window,
          * or did non-zero bytes arrive via some path our ^1 fix doesn't cover? */
         extern uint8_t scd_dbg_prg_written[];
@@ -484,7 +635,14 @@ int main(int argc, char **argv)
                   unsigned char be[2] = { M68K_RAM[o^1], M68K_RAM[(o+1)^1] };
                   fwrite(be, 1, 2, r); }
                fclose(r);
-               printf("[boot] wrote /tmp/scd/main_ram.bin (0x0..0x10000 BE, addr base $FF0000)\n"); } }
+                printf("[boot] wrote /tmp/scd/main_ram.bin (0x0..0x10000 BE, addr base $FF0000)\n"); } }
+
 #endif
+    /* Dump Z80 RAM (8KB) for offline idle-loop analysis */
+    { extern unsigned char *Z80_RAM[];
+      FILE *z = fopen("/tmp/scd/z80_ram.bin", "wb");
+      if (z) { fwrite(Z80_RAM[0], 1, 0x2000, z);
+               fclose(z);
+               printf("[boot] wrote /tmp/scd/z80_ram.bin (0x0..0x2000)\n"); } }
     return 0;
 }
