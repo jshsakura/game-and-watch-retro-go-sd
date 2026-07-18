@@ -553,10 +553,13 @@ INCLUDE build/fceumm_mappers.ld
     build/md32x/cpu__sh2__sh2.o          (.text .text*)
     build/md32x/cpu__sh2__mame__sh2pico.o (.text .text*)
     build/md32x/cpu__gwenesis68k__g68k_bus.o (.text .text*)
-    build/md32x/pico__32x__memory.o      (.text .text*)
-    build/md32x/pico__32x__pwm.o         (.text .text*)
-    build/md32x/pico__memory.o           (.text .text*)
-    build/md32x/*.o (.data .data*)
+     build/md32x/pico__32x__memory.o      (.text .text*)
+     build/md32x/pico__32x__pwm.o         (.text .text*)
+     build/md32x/pico__memory.o           (.text .text*)
+     /* 32X compositor hot path: FinalizeLine (224x/frame) + layer blits.
+      * Rest of draw.o stays in XIP (cold setup, unused pixel-format variants). */
+     build/md32x/pico__32x__draw.o        (.text.FinalizeLine32xRGB555 .text.PicoDraw32xLayer .text.PicoDraw32xLayerMdOnly)
+     build/md32x/*.o (.data .data*)
     . = ALIGN(4);
     _OVERLAY_MD32X_LOAD_END = .;
   } AT > CORES
