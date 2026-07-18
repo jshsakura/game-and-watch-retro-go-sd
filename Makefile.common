@@ -879,6 +879,12 @@ SNES_OBJECTS = $(addprefix $(BUILD_DIR)/snes/,$(notdir $(SNES_C_SOURCES:.c=.o)))
 else
 SNES_OBJECTS =
 endif
+# rc SMW XIP sites: RCSMW-gated. Empty (no objects, no blob) when RCSMW=0.
+ifeq ($(RCSMW),1)
+RCSMW_OBJECTS = $(addprefix $(BUILD_DIR)/rc_smw/,$(notdir $(RCSMW_C_SOURCES:.c=.o)))
+else
+RCSMW_OBJECTS =
+endif
 # GBA is SD-card only, for the same reasons as Super Metroid: a FrogFS build can
 # neither cache and relocate gba.xip nor hold the up-to-32 MB cart the core reads
 # straight out of flash.
@@ -1031,9 +1037,9 @@ $(BUILD_DIR)/memcpy-armv7m.o: Core/Src/memcpy-armv7m.s Makefile.common Makefile 
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
-	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(LDFLAGS) -o $@
+	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) $(LDFLAGS) -o $@
 	@# Every core is an overlay at the same RAM address, so a core that names a
 	@# global only another core defines gets silently bound to it — and reads that
 	@# core's address, which by then holds its own data. That is how Super Metroid
@@ -1325,6 +1331,32 @@ endef
 
 $(eval $(foreach obj,$(SNES_C_SOURCES),$(call snes_obj_prereq_gen,$(obj))))
 
+# -------------------------------------------------------------- rc SMW XIP sites
+# SMW per-ROM static recompilation: 8371 native site functions, compiled into
+# build/rc_smw/ and linked at the RCSMW_CODE sentinel (0xD1D0xxxx). Ships as
+# rc_smw.xip on SD, cached to QSPI XIP at runtime. RCSMW-gated.
+#
+# Same snes_redefines as the SNES overlay so externs (snes_cpuRead,
+# HookedFunctionRts, ...) resolve to the overlay's gsnes__* via linker
+# veneers. NO -DSNES_SPIN_SKIP: rc replaces the interpreter, so the spin
+# hooks are not needed in the XIP path. -DGNW_SNES_CORE matches the
+# overlay's memory-access path. The generated rc_sites.inc and cpu_copy.c
+# are found via -Igenerated/rc_smw; cpu_copy.c's relative includes
+# (../types.h etc.) resolve via -I$(CORE_SNES)/src/snes.
+ifeq ($(RCSMW),1)
+define rc_smw_obj_prereq_gen
+$$(BUILD_DIR)/rc_smw/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile snes_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
+	$$(V)$$(ECHO) [ CC rc_smw ] $$(notdir $$<)
+	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $$(SNES_C_INCLUDES) $$(RCSMW_C_INCLUDES) $$< -o $$@ \
+	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
+	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
+
+endef
+# note: the blank line above is intentional
+
+$(eval $(foreach obj,$(RCSMW_C_SOURCES),$(call rc_smw_obj_prereq_gen,$(obj))))
+endif
+
 # -------------------------------------------------------------- Sega 32X (pico)
 # picodrive's trimmed 32X interpreter subset, compiled into build/md32x/ with
 # -DGNW_32X_CORE (static Pico32xMem, ROM zero-copy, ym2413/CD/DRC out, cz80
@@ -1534,6 +1566,7 @@ $(BUILD_DIR):
 	$(V)mkdir $@/pico8
 	$(V)mkdir $@/tama
 	$(V)mkdir $@/pkmini
+	$(V)mkdir $@/rc_smw
 
 #######################################
 # Flashing
@@ -1839,6 +1872,9 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 ifeq ($(RC_PROBE),1)
 	@$(CP) -O binary --only-section=.xip_rcprobe $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/rcprobe.xip"   # rc on-device probe XIP sites (RC_PROBE-gated; sentinel-linked, cached to QSPI at runtime)
 endif
+ifeq ($(RCSMW),1)
+	@$(CP) -O binary --only-section=.xip_rc_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/rc_smw.xip"   # rc SMW native sites (RCSMW-gated; sentinel-linked, cached to QSPI at runtime — see main_snes.c)
+endif
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
 	@$(CP) -O binary --only-section=.coleco_bios_data $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/coleco/coleco.bin
 	@$(CP) -O binary --only-section=.overlay_graphics $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/logo.bin
@@ -1948,6 +1984,7 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Super Metroid.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/sm.xip" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/gba.xip" --dest-path "/roms/homebrew/" \
+		$(if $(filter 1,$(RCSMW)),-- sdpush --file "$(HOMEBREWS_FOLDER)/rc_smw.xip" --dest-path "/roms/homebrew/") \
 		-- sdpush --file $(MAPPERS_PACK) --dest-path "/cores/mappers/" \
 		-- sdpush --file $(MAPPERS_DIR)/ines_correct.bin --dest-path "/cores/mappers/" \
 		-- sdpush --file $(SD_FOLDER)/bios/nes/palettes.bin --dest-path "/bios/nes/" \

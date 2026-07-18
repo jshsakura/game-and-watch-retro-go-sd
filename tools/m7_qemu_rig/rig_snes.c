@@ -183,6 +183,7 @@ int main(void) {
   printf("[snes-qemu] rom len=%lu frames=%d\n", (unsigned long)rom_len, RIG_FRAMES);
 
   uint64_t run_hash = 1469598103934665603ULL;
+  uint64_t audio_hash = 1469598103934665603ULL;   /* per-frame g_audio fold (audio-path gate) */
   uint64_t win_emu = 0, win_apu = 0, tot_emu = 0, tot_apu = 0;
 
   for (int frame = 0; frame < RIG_FRAMES; frame++) {
@@ -213,14 +214,19 @@ int main(void) {
     uint64_t h = fnv1a(g_fb, sizeof(g_fb));
     run_hash = (run_hash ^ h) * 1099511628211ULL;
 
+    /* Audio-path gate: g_audio is overwritten every frame, so fold it here.
+     * STATEHASH alone (fb+wram+cart) cannot detect an audio divergence. */
+    uint64_t ah = fnv1a(g_audio, sizeof(g_audio));
+    audio_hash = (audio_hash ^ ah) * 1099511628211ULL;
+
     if ((frame + 1) % RIG_WINDOW == 0) {
       uint64_t emu_i = win_emu * ipt_x1000 / 1000 / RIG_WINDOW;
       uint64_t apu_i = win_apu * ipt_x1000 / 1000 / RIG_WINDOW;
       int lit = 0;
       for (int q = 0; q < 320 * 240; q++) if (g_fb[q]) lit++;
-      printf("w%05d emu=%lu apu=%lu insn/frame fb=%08lx lit=%d\n",
+      printf("w%05d emu=%lu apu=%lu insn/frame fb=%08lx audio=%08lx lit=%d\n",
              frame + 1, (unsigned long)emu_i, (unsigned long)apu_i,
-             (unsigned long)(uint32_t)h, lit);
+             (unsigned long)(uint32_t)h, (unsigned long)(uint32_t)ah, lit);
       tot_emu += win_emu; tot_apu += win_apu;
       win_emu = win_apu = 0;
     }
@@ -228,8 +234,9 @@ int main(void) {
   uint64_t frames = (RIG_FRAMES / RIG_WINDOW) * RIG_WINDOW;
   if (frames == 0) frames = 1;
   uint64_t sh = fnv1a(g_wram, sizeof(g_wram)) ^ fnv1a(snes->cart->ram, snes->cart->ramSize);
-  printf("[snes-qemu] done %d frames STATEHASH=%08lx avg emu=%lu apu=%lu insn/frame\n",
+  printf("[snes-qemu] done %d frames STATEHASH=%08lx AUDIOHASH=%08lx avg emu=%lu apu=%lu insn/frame\n",
          RIG_FRAMES, (unsigned long)(uint32_t)(run_hash ^ sh),
+         (unsigned long)(uint32_t)audio_hash,
          (unsigned long)(tot_emu * ipt_x1000 / 1000 / frames),
          (unsigned long)(tot_apu * ipt_x1000 / 1000 / frames));
   return 0;

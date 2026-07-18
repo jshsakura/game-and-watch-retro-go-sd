@@ -141,3 +141,8 @@ snes_run_line sm__snes_run_line
 snes_saveload sm__snes_saveload
 snes_write sm__snes_write
 snes_writeBBus sm__snes_writeBBus
+g_rc_active sm__g_rc_active
+g_rc_fns sm__g_rc_fns
+rc_dispatch_init sm__rc_dispatch_init
+rc_dispatch_reset sm__rc_dispatch_reset
+rc_dispatch_lookup sm__rc_dispatch_lookup

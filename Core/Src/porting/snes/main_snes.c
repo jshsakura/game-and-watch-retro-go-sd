@@ -29,6 +29,7 @@
 #include "odroid_overlay.h"
 #include "appid.h"
 #include "rg_i18n.h"
+#include "gw_flash_alloc.h"
 
 #include "snes/snes.h"
 #include "snes/cart.h"
@@ -40,6 +41,8 @@
 #include "snes/input.h"
 #include "snes/saveload.h"
 #include "snes/spin_skip.h"
+#include "snes/rc_dispatch.h"
+#include "crc32.h"
 
 bool snes_loadRom(Snes *snes, const uint8_t *data, int length);   /* snes_other.c */
 
@@ -413,6 +416,88 @@ static bool cart_needs_coprocessor(const uint8_t *rom, uint32_t len) {
   return false;
 }
 
+/* ---- rc SMW native optimization ---------------------------------------------
+ * Per-ROM static recompilation: SMW's 65816 code translated into 8371 C site
+ * functions, shipped as rc_smw.xip on SD and cached into QSPI XIP at runtime.
+ * The overlay's cpu_runOpcode fast path (g_rc_active) dispatches to sites
+ * instead of interpreting. Rig-measured: -42.3% insn/frame on SMW.
+ *
+ * Mirrors the SM XIP pattern (main_sm.c SmCacheXipToFlash): sentinel-linked
+ * at RCSMW_CODE (0xD1D0xxxx), cached via odroid_overlay_cache_file_in_flash_relocate,
+ * and every sentinel-range word is rewritten to where the blob really landed.
+ * rc takes priority over spin-skip (rc replaces the interpreter entirely). */
+#define RCSMW_CODE_BASE  0xD1D00000u
+#define RCSMW_XIP_PATH   "/roms/homebrew/rc_smw.xip"
+#define RCSMW_ROM_CRC32  0xB19ED489u   /* CRC32 of external/smw/smw.sfc (512KB) */
+#define RC_SMW_MAGIC     0x4D534352u   /* 'RCSM' little-endian — blob header */
+
+/* Blob header layout (matches rc_smw_sites.c's rc_smw_header). The sentinel
+ * pointer fields are patched by RcSmwRelocateXip to the real flash addresses. */
+typedef struct {
+  uint32_t magic;
+  uint32_t nsites;
+  const uint32_t *addrs;   /* patched to flash addr of rc_addrs[] */
+  const void **fns;        /* patched to flash addr of rc_fns[] */
+} rc_smw_header_t;
+
+static int RcSmwPatchSentinels(uint32_t *start, uint32_t *end, int32_t offset, uint32_t size) {
+  int patched = 0;
+  for (uint32_t *p = start; p < end; p++) {
+    uint32_t v = *p;
+    if ((v & ~1u) >= RCSMW_CODE_BASE && (v & ~1u) < RCSMW_CODE_BASE + size) {
+      *p = (uint32_t)(v + offset);
+      patched++;
+    }
+  }
+  return patched;
+}
+
+static void RcSmwRelocateXip(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,
+                             uint8_t *file_address, uint32_t file_size) {
+  (void)offset_in_file;
+  int32_t offset = (int32_t)((uint32_t)file_address - RCSMW_CODE_BASE);
+  RcSmwPatchSentinels((uint32_t *)buffer, (uint32_t *)(buffer + (length & ~3u)), offset, file_size);
+}
+
+static bool rc_smw_activate(const uint8_t *rom, uint32_t len) {
+#if RCSMW
+  /* SMW detection: CRC32 of the ROM (copier header already stripped by caller). */
+  if (len == 0 || rom == NULL) return false;
+  unsigned int crc = crc32_le(0, rom, len);
+  if (crc != RCSMW_ROM_CRC32) return false;
+
+  /* Cache rc_smw.xip into QSPI flash, relocating sentinel addresses. */
+  uint32_t xip_size = 0;
+  uint8_t *xip_addr = odroid_overlay_cache_file_in_flash_relocate(
+      RCSMW_XIP_PATH, &xip_size, false, &RcSmwRelocateXip);
+  if (xip_addr == NULL || xip_size < sizeof(rc_smw_header_t)) {
+    printf("rc_smw: %s missing or too small (%lu bytes)\n",
+           RCSMW_XIP_PATH, (unsigned long)xip_size);
+    return false;
+  }
+
+  /* Read the discovery header (at blob offset 0). Its sentinel pointers have
+   * been patched by RcSmwRelocateXip to the real flash addresses. */
+  const rc_smw_header_t *hdr = (const rc_smw_header_t *)xip_addr;
+  if (hdr->magic != RC_SMW_MAGIC || hdr->nsites == 0) {
+    printf("rc_smw: bad header (magic=0x%08lX nsites=%lu)\n",
+           (unsigned long)hdr->magic, (unsigned long)hdr->nsites);
+    return false;
+  }
+
+  /* Build the hash dispatch table. rc_fns[] entries (function pointers) were
+   * patched to real flash addresses by the relocation pass. After this call,
+   * g_rc_active is true and cpu_runOpcode uses the rc fast path. */
+  rc_dispatch_init(hdr->addrs, hdr->nsites, (void (**)(Cpu *))hdr->fns);
+  printf("rc_smw: activated — %lu sites, blob %lu bytes at %p\n",
+         (unsigned long)hdr->nsites, (unsigned long)xip_size, xip_addr);
+  return true;
+#else
+  (void)rom; (void)len;
+  return false;
+#endif
+}
+
 void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
   odroid_gamepad_state_t joystick;
@@ -451,8 +536,13 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
   snes = snes_init(snes_wram);
   g_the_snes = snes;
-  spin_whitelist_set(rom, sz);   /* enable spin-skip only for high-spin ROMs */
-  spin_reset();   /* spin-skip learner: clean slate (gate_on set by whitelist) */
+  /* rc SMW activation takes priority over spin-skip (rc replaces the
+   * interpreter entirely; -42.3% vs spin-skip's -1.14%). If rc_smw.xip
+   * is absent or the ROM is not SMW, fall back to the spin-skip whitelist. */
+  if (!rc_smw_activate(rom, sz)) {
+    spin_whitelist_set(rom, sz);   /* enable spin-skip only for high-spin ROMs */
+  }
+  spin_reset();   /* clean slate either way (spin-skip learner / rc dispatch) */
 
   bool ok = (rom != NULL) && !cart_needs_coprocessor(rom, sz) &&
             snes_loadRom(snes, rom, (int)sz);

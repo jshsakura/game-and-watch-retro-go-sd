@@ -67,6 +67,19 @@ ifeq ($(RC_PROBE),1)
   C_DEFS += -DRC_PROBE=1
 endif
 
+# rc SMW native optimization: per-ROM static recompilation of SMW's 65816
+# code into 8371 C site functions, shipped as rc_smw.xip on SD and cached
+# into QSPI XIP at runtime. Rig-measured: -42.3% insn/frame on SMW.
+# Default OFF: the release build is byte-identical to a tree without it
+# (rc_smw_sites.c is not compiled, .xip_rc_smw is empty, no rc_smw.xip).
+# Enable with RCSMW=1 (e.g. `make release DOCKER=1 RCSMW=1 ...`).
+RCSMW ?= 0
+ifeq ($(RCSMW),1)
+  RCSMW_C_SOURCES = Core/Src/porting/snes/rc_smw_sites.c
+  RCSMW_C_INCLUDES = -Igenerated/rc_smw -I$(CORE_SNES)/src/snes
+  C_DEFS += -DRCSMW=1
+endif
+
 FATFS_DIR = Core/Src/porting/lib/FatFs
 FATFS_C_SOURCES = \
 $(FATFS_DIR)/user_diskio.c \
@@ -618,6 +631,7 @@ $(CORE_SNES)/src/snes/snes.c \
 $(CORE_SNES)/src/snes/snes_other.c \
 $(CORE_SNES)/src/snes/spc.c \
 $(CORE_SNES)/src/snes/spin_skip.c \
+$(CORE_SNES)/src/snes/rc_dispatch.c \
 $(CORE_SNES)/src/tracing.c \
 Core/Src/porting/snes/main_snes.c
 
@@ -1015,6 +1029,7 @@ $(CORE_SM)/src/snes/snes.c \
 $(CORE_SM)/src/snes/cpu.c \
 $(CORE_SM)/src/snes/cart.c \
 $(CORE_SM)/src/snes/input.c \
+$(CORE_SM)/src/snes/rc_dispatch.c \
 Core/Src/porting/sm/main_sm.c
 
 CORE_ZELDA3 = external/zelda3

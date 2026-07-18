@@ -106,3 +106,8 @@ spin_frame_tick gsnes__spin_frame_tick
 spin_hook_read gsnes__spin_hook_read
 spin_note gsnes__spin_note
 spin_reset gsnes__spin_reset
+g_rc_active gsnes__g_rc_active
+g_rc_fns gsnes__g_rc_fns
+rc_dispatch_init gsnes__rc_dispatch_init
+rc_dispatch_reset gsnes__rc_dispatch_reset
+rc_dispatch_lookup gsnes__rc_dispatch_lookup

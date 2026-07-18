@@ -26,8 +26,8 @@ mkdir -p "$OUT"
 # rc_core for the rig: same file as the host PoC up to the dispatch marker,
 # then the bank-table dispatch. Byte-identical folded helpers + generated sites.
 awk '/---- hybrid dispatch/{exit} {print}' tools/sfc_recomp/rc_core.c > "$OUT/rc_core_rig.c"
-cat "$RIG/rc_dispatch_rig.c" >> "$OUT/rc_core_rig.c"
-grep -q "rc_banks" "$OUT/rc_core_rig.c" || { echo "tail splice failed" >&2; exit 1; }
+cat "$RIG/rc_dispatch_hash.c" >> "$OUT/rc_core_rig.c"
+grep -q "rc_lookup" "$OUT/rc_core_rig.c" || { echo "tail splice failed" >&2; exit 1; }
 
 CC=arm-none-eabi-gcc
 ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
