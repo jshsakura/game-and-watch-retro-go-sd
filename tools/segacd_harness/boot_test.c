@@ -212,11 +212,16 @@ int main(int argc, char **argv)
      * Sub idle-skip is unsound for handshake spins; only a true hardware
      * sleep (STOP instruction, or BRA-self with no observer) could use it. */
     scd_sub_idle_skip = 0;
+    /* HLE fast-boot gate injection (SEGACD_BOOT_CROSSING_RE.md §7).
+     * Skips the 750-frame CDD state machine by directly injecting the
+     * disc-present flag the BIOS is polling for. */
+    extern int scd_fast_boot;
+    scd_fast_boot = getenv("SCD_FAST_BOOT") ? atoi(getenv("SCD_FAST_BOOT")) : 0;
     int quiet = getenv("SCD_QUIET") ? atoi(getenv("SCD_QUIET")) : 0;
     if (!quiet) {
-        printf("[probe] flags: audio=%d vdp=%d sub=%d main_idle=%d sub_idle=%d ym=%d psg=%d z80=%d frames=%d\n",
+        printf("[probe] flags: audio=%d vdp=%d sub=%d main_idle=%d sub_idle=%d ym=%d psg=%d z80=%d fast_boot=%d frames=%d\n",
                g_skip_audio, g_skip_vdp, g_skip_sub, g_main_idle_skip, scd_sub_idle_skip,
-               g_skip_ym, g_skip_psg, g_skip_z80, FRAMES);
+               g_skip_ym, g_skip_psg, g_skip_z80, scd_fast_boot, FRAMES);
     }
 
     /* --- load region BIOS (becomes the main-CPU boot ROM at $000000) --- */
@@ -276,13 +281,117 @@ int main(int argc, char **argv)
         }
 #endif
         md_scanline_frame();                 /* main 68K + VDP (BIOS runs here) */
+
+        /* HLE fast-boot per-frame injection (§7.3 gate 1 + §7.7 $FFDDC).
+         * Update boot mode global + inject gates.
+         * Gate 1 ($FFFE20): re-injected every frame (VBlank ISR may clear).
+         * Gate 4 ($FFDDC=0x04): drive-status byte, BIOS $14be checks ==4 or ==6.
+         *   Stuck at 0x03 because CDD RS1-RS8 not continuously updated (unlike PicoDrive).
+         *   Inject 0x04 during mode 8 phase to unblock mode 8→0x10 crossing.
+         * Stop after boot reaches mode 0x10 (LOGO = crossing success). */
+        if (scd_fast_boot) {
+            extern unsigned int scd_boot_mode;
+            extern unsigned char *M68K_RAM;
+            scd_boot_mode = (M68K_RAM[0xfdda^1]<<8)|M68K_RAM[0xfddb^1];
+            if (scd_boot_mode < 0x10) {
+                M68K_RAM[0xfe20^1] = 0x40;  /* $FFFE20 hi-byte = disc-present */
+                /* $FFDDC drive-status: inject 0x04 (READY) during mode >= 8 to
+                 * unblock BIOS $14be state-machine check. Mode 8 is where the
+                 * sub stalls at $6132 because CDD status fields are frozen. */
+                if (scd_boot_mode >= 8) {
+                    M68K_RAM[0xfddc^1] = 0x04;
+                    /* 궁극의 HLE 바이패스: mode 8 도달 시 main PC를 강제로 $064C로
+                     * 세팅하여 BIOS mode8 루프 전체를 스킵. $064C는 BIOS의
+                     * game-program-entry 루틴 (ROM→RAM 매핑 전환 후 IP 진입).
+                     * 단 한 번만 실행 (static forced). */
+                    static int forced_entry = 0;
+                    if (!forced_entry) {
+                        forced_entry = 1;
+                        extern unsigned int m68k_get_reg(m68k_register_t reg);
+                        extern void m68k_set_reg(m68k_register_t reg, unsigned int value);
+                        unsigned int oldpc = m68k_get_reg(M68K_REG_PC);
+                        m68k_set_reg(M68K_REG_PC, 0x064C);
+                        printf("[HLE] f%d: FORCE main PC %06x -> $064C (skip BIOS mode8 loop)\n",
+                               frame, oldpc);
+                    }
+                    /* 경로 B: HLE IP load — bypass CDC/CDD DMA entirely.
+                     * Read IP (Initial Program) directly from CD image sector 0
+                     * and memcpy into main RAM. BIOS mode 8 loop will JMP $064C
+                     * (IP entry) once $FE20 high nibble is nonzero + $FFDDC check
+                     * passes + $C100 counter expires.
+                     * IP header (sector 0 user data): load addr=$0200, size=$0600.
+                     * IP code starts at user data offset $100 (after 256-byte header).
+                     * MODE1/2352: user data at file offset 0x10. */
+                    static int ip_loaded = 0;
+                    if (!ip_loaded) {
+                        ip_loaded = 1;
+                        /* Parse cue to find .bin path, then read IP directly.
+                         * MODE1/2352: sector 0 user data at file offset 0x10. */
+                        char binpath[512];
+                        FILE *cf = fopen(argv[2], "r");  /* cue = text */
+                        if (cf) {
+                            char line[512];
+                            binpath[0] = 0;
+                            while (fgets(line, sizeof(line), cf)) {
+                                char *p = strstr(line, "FILE ");
+                                if (p) {
+                                    p += 5;  /* skip "FILE " */
+                                    if (*p == '"') p++;
+                                    char *q = strchr(p, '"');
+                                    int len = q ? (int)(q-p) : strlen(p);
+                                    /* Resolve relative to cue dir */
+                                    const char *slash = strrchr(argv[2], '/');
+                                    if (slash) {
+                                        int dlen = (int)(slash - argv[2]) + 1;
+                                        memcpy(binpath, argv[2], dlen);
+                                        memcpy(binpath+dlen, p, len);
+                                        binpath[dlen+len] = 0;
+                                    } else {
+                                        memcpy(binpath, p, len);
+                                        binpath[len] = 0;
+                                    }
+                                    break;
+                                }
+                            }
+                            fclose(cf);
+                        }
+                        if (binpath[0]) {
+                            FILE *bf2 = fopen(binpath, "rb");
+                            if (bf2) {
+                                unsigned char hdr[0x100];
+                                fseek(bf2, 0x10, SEEK_SET);  /* MODE1/2352 user data */
+                                fread(hdr, 1, sizeof(hdr), bf2);
+                                /* IP load addr (longword at IP $40) + size (IP $44) */
+                                unsigned ip_load = (hdr[0x40]<<24)|(hdr[0x41]<<16)|(hdr[0x42]<<8)|hdr[0x43];
+                                unsigned ip_size = (hdr[0x44]<<24)|(hdr[0x45]<<16)|(hdr[0x46]<<8)|hdr[0x47];
+                                if (ip_size > 0 && ip_size <= 0x10000 && ip_load < 0x10000) {
+                                    unsigned char *ipbuf = malloc(ip_size);
+                                    fseek(bf2, 0x10 + 0x100, SEEK_SET);  /* IP code after header */
+                                    fread(ipbuf, 1, ip_size, bf2);
+                                    for (unsigned i = 0; i+1 < ip_size; i += 2) {
+                                        M68K_RAM[(ip_load + i) ^ 1] = ipbuf[i];
+                                        M68K_RAM[(ip_load + i + 1) ^ 1] = ipbuf[i+1];
+                                    }
+                                    free(ipbuf);
+                                    printf("[HLE] f%d: IP loaded from %s — addr=$%04X size=$%04X entry=$064C\n",
+                                           frame, binpath, ip_load, ip_size);
+                                }
+                                fclose(bf2);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         { extern unsigned char *M68K_RAM;    /* boot-mode ($FFFDDA) transition log */
           static unsigned prev_bm = 0xffff;
           unsigned bm = (M68K_RAM[0xfdda^1]<<8)|M68K_RAM[0xfddb^1];
           if (bm != prev_bm) {
-              printf("[mode] f%-3d $FFFDDA %#06x -> %#06x  $FFD007=%02x $FE3A=%02x $FFFDDC=%02x $FE51=%02x $FE52=%02x\n",
+              printf("[mode] f%-3d $FFFDDA %#06x -> %#06x  $FFD007=%02x $FE3A=%02x $FFFDDC=%02x $FE51=%02x $FE52=%02x $FE26=%02x\n",
                      frame, prev_bm, bm, M68K_RAM[0xd007^1], M68K_RAM[0xfe3a^1],
-                     M68K_RAM[0xfddc^1], M68K_RAM[0xfe51^1], M68K_RAM[0xfe52^1]);
+                     M68K_RAM[0xfddc^1], M68K_RAM[0xfe51^1], M68K_RAM[0xfe52^1],
+                     M68K_RAM[0xfe26^1]);
               prev_bm = bm; } }
         if ((frame % 100) == 0) { extern unsigned char *M68K_RAM;  /* where is the main stuck? */
             unsigned c100 = (M68K_RAM[0xc101^1]<<8)|M68K_RAM[0xc100^1];
@@ -367,12 +476,17 @@ int main(int argc, char **argv)
     /* PRG-RAM bank usage — determines device feasibility (256K vs 384K vs 512K) */
     {
         extern uint8_t scd_prg_bank_written, scd_prg_bank_accessed, scd_word_mode_seen;
+#ifdef HOOK_CPU
         extern uint32_t scd_sub_max_addr, scd_sub_max_addr_frame;
         extern uint32_t scd_sub_max_prg_addr, scd_sub_max_prg_frame;
         printf("[prg_banks] written=0x%x accessed=0x%x word_mode=0x%x sub_max_addr=0x%06x@f%u sub_max_prg=0x%06x@f%u\n",
                scd_prg_bank_written, scd_prg_bank_accessed, scd_word_mode_seen,
                scd_sub_max_addr, scd_sub_max_addr_frame,
                scd_sub_max_prg_addr, scd_sub_max_prg_frame);
+#else
+        printf("[prg_banks] written=0x%x accessed=0x%x word_mode=0x%x (sub_max needs HOOK_CPU)\n",
+               scd_prg_bank_written, scd_prg_bank_accessed, scd_word_mode_seen);
+#endif
     }
     /* per-ISR chunk dump (b9 subdivision of sub-68K cost). chunks * 400 = cycles. */
     {
@@ -386,6 +500,11 @@ int main(int argc, char **argv)
             printf(" %s=%u(%.1f%%)", names[i], scd_sub_isr_chunks[i], pct);
         }
         printf("\n");
+    }
+    /* CD data feed diagnostic */
+    {
+        extern uint32_t scd_cdupd_pass, scd_cdupd_feed;
+        printf("[cdupd] gate_pass=%u data_feed=%u\n", scd_cdupd_pass, scd_cdupd_feed);
     }
     printf("[boot] done %d frames. sub_running=%d\n", FRAMES, SCD.sub_running);
 #ifdef SCD_YM_SILENCE_SKIP

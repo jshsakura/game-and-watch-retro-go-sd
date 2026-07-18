@@ -65,6 +65,18 @@ typedef struct {
 
 static segacd_cd_t CD;
 
+/* ---- HLE fast-boot gate injection (SEGACD_BOOT_CROSSING_RE.md §7) ----
+ * Gate 3 ($FF8020 = s68k_regs[0x20]): disc-present flag byte. BIOS checks
+ * $FE3A == 0x40 (bit6 = disc-present). Sub-BIOS overwrites $FF8020 every
+ * CDD response, so we must re-inject continuously until boot mode 0x10. */
+int scd_fast_boot = 0;          /* set by SCD_FAST_BOOT env var */
+unsigned int scd_boot_mode = 0; /* updated per-frame by harness (M68K_RAM[$FFFDDA]) */
+#define SCD_BOOT_MODE_LOGO 0x10 /* target: LOGO screen = crossing success */
+
+/* Diagnostic: track how often segacd_cd_update() passes the gate */
+uint32_t scd_cdupd_pass = 0;
+uint32_t scd_cdupd_feed = 0;
+
 /* CDD status codes — the exact values real hardware/firmware expect in RS0,
  * not arbitrary: mirrors pd_cd/cdd.h NO_DISC/CD_PLAY/CD_SEEK/CD_SCAN/
  * CD_READY/CD_OPEN/CD_STOP/CD_END. (An earlier version of this enum used
@@ -459,6 +471,12 @@ void segacd_cdd_command(void)
 
     cdd_status_checksum();
     segacd_poll_wake();   /* CDD status changed — a spin-waiting sub must re-check */
+
+    /* HLE fast-boot: re-inject gate 3 after sub-BIOS command response
+     * (sub-BIOS just wrote its own status to $FF8020). §7.3 caveat 2. */
+    if (scd_fast_boot && scd_boot_mode < SCD_BOOT_MODE_LOGO) {
+        SCD.s68k_regs[0x20] = 0x40;  /* disc-present flag */
+    }
 }
 
 /* Periodic (~75 Hz) CDD tick: settles pending seeks and, while the sub has
@@ -482,9 +500,63 @@ void segacd_cdd_process(void)
     }
 
     if (SCD.s68k_regs[0x37] & 0x04) {
-        SCD.s68k_regs[0x38] = (uint8_t)CD.status;
+        /* PicoDrive-grade CDD status response: update RS0-RS8 every 75Hz tick
+         * (pd_cd/cdd.c:852). Guard on CD.status: only fill RS1-RS8 after the
+         * BIOS has actually issued a CDD command (status transitions away
+         * from NODISC=0). Early boot expects RS1-RS8 = 0. */
+        uint8_t *rs   = &SCD.s68k_regs[0x38];          /* RS0-RS8 */
+        uint8_t  cmd  = SCD.s68k_regs[0x42] & 0x0f;    /* current CDD command */
+        rs[0] = (uint8_t)CD.status;                     /* RS0 = drive status */
+
+        if (CD.status >= CDD_PLAY) {   /* only when drive has been commanded */
+            int lba = (int)CD.cur_lba + 150;
+            if (lba < 0) lba = 0;
+            int mm = (lba / 75) / 60; if (mm > 99) mm = 99;
+            int ss = (lba / 75) % 60;
+            int ff =  lba % 75;
+            uint8_t bcd_mm = (uint8_t)(((mm/10)<<4)|(mm%10));
+            uint8_t bcd_ss = (uint8_t)(((ss/10)<<4)|(ss%10));
+            uint8_t bcd_ff = (uint8_t)(((ff/10)<<4)|(ff%10));
+
+            switch (cmd) {
+            case 0x00:      /* Drive Status */
+                if (rs[1] == 0x0f || rs[1] == 0x00 || rs[1] == 0x01) {
+                    if (rs[1] == 0x0f) rs[1] = 0x00;
+                    rs[2]=bcd_mm; rs[3]=bcd_mm;
+                    rs[4]=bcd_ss; rs[5]=bcd_ss;
+                    rs[6]=bcd_ff; rs[7]=bcd_ff;
+                    rs[8] = 0x04;
+                }
+                break;
+            case 0x02:      /* Read TOC */
+                switch (SCD.s68k_regs[0x45] & 0x0f) {
+                case 0x00:
+                    rs[1]=0x00; rs[2]=bcd_mm; rs[3]=bcd_mm;
+                    rs[4]=bcd_ss; rs[5]=bcd_ss; rs[6]=bcd_ff; rs[7]=bcd_ff; rs[8]=0x04;
+                    break;
+                case 0x01:
+                    rs[1]=0x01; rs[2]=bcd_mm; rs[3]=bcd_mm;
+                    rs[4]=bcd_ss; rs[5]=bcd_ss; rs[6]=bcd_ff; rs[7]=bcd_ff; rs[8]=0x04;
+                    break;
+                case 0x02:
+                    rs[1]=0x02; rs[2]=0x01; rs[3]=0x01;
+                    break;
+                default: break;
+                }
+                break;
+            default: break;
+            }
+        }
+
         cdd_status_checksum();
         SCD.cdd_int_pending = 1;   /* periodic CDD IRQ (level 4) drives the sub-BIOS */
+    }
+
+    /* HLE fast-boot: inject gate 3 ($FF8020 = disc-present flag 0x40).
+     * Sub-BIOS overwrites this byte with its own CDD status every response,
+     * so we must re-inject on every 75Hz tick until boot reaches mode 0x10. */
+    if (scd_fast_boot && scd_boot_mode < SCD_BOOT_MODE_LOGO) {
+        SCD.s68k_regs[0x20] = 0x40;  /* disc-present flag (bit 6) */
     }
 }
 
@@ -859,10 +931,18 @@ static void cdc_decoder_update(const uint8_t header[4], const uint8_t *sector_da
  * and stopping at the end of the disc — mirrors pd_cd/cdd.c:723-793
  * `cdd_update()` (minus its CD-DA fader/scan handling, which we don't model
  * yet). Called once per CDD tick (75 Hz) from the frame loop, alongside
- * segacd_cdd_process(). */
+ * segacd_cdd_process().
+ *
+ * On real hardware the CDC reads data autonomously after a Seek, regardless
+ * of whether CDD is in PLAY mode. The BIOS sends Seek (0x04) — never Play
+ * (0x03) — for program/data reads, so we must feed sectors during READY too.
+ * Without this, the BIOS can't load the game program and mode 0x10 is
+ * unreachable (L5cdc=4 interrupts in 1500 frames = zero data delivery). */
 void segacd_cd_update(void)
 {
-    if (!CD.opened || CD.status != CDD_PLAY) return;
+    /* Feed during PLAY (audio/streaming) OR READY (post-Seek data read). */
+    if (!CD.opened || (CD.status != CDD_PLAY && CD.status != CDD_READY)) return;
+    scd_cdupd_pass++;
 
     /* Feed the CDC decoder on EVERY play tick, mirroring pd_cd/cdd.c
      * cdd_update() — the head walks up to the target from 3 sectors behind, and
@@ -879,6 +959,7 @@ void segacd_cd_update(void)
     int on_data = (CD.cur_lba < 0) || (t && !t->is_audio);
 
     if (on_data) {
+        scd_cdupd_feed++;
         int have_data = 0;
         if (CD.cur_lba >= 0 && t && !t->is_audio)
             have_data = (read_sector((uint32_t)CD.cur_lba, sector_buf, CD_SECTOR_DATA) == 0);
