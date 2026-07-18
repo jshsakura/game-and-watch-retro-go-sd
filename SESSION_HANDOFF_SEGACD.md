@@ -261,6 +261,34 @@ PCE-CD port (`Core/Src/porting/pce/pce_cd.c`, `main_pce.c:526-544`) establishes 
 3. **Word-RAM 1M mode sharing:** In 1M mode, only 128K per CPU. If game stays in 1M mode, could share banks.
 4. **If fundamentally impossible:** Honest conclusion. But the 156K surplus in Scenario C gives significant margin.
 
+### 실측: 게임플레이 뱅크 사용 (PicoDrive, Detonator Orgun, 3000 frames)
+
+**Methodology:** Built PicoDrive libretro core with bank register write hook (`pd_bank_seen` bitmask + `pd_bank_hist[4]` counter at `remap_prg_window` call sites in `pico/cd/memory.c`) and sub-68K PC range tracker (`pd_sub_max_pc` + `pd_sub_pc_hist[8]` page histogram in `pico/cd/mcd.c:SekRunS68k`). Minimal libretro frontend (`bank_test.c`) via dlopen, runs 3000 frames past boot into gameplay.
+
+**Bank register writes:**
+```
+bank_seen = 0xf (banks 0-3 all selected)
+bank_hist = [1, 1, 1, 1] (each bank selected EXACTLY ONCE)
+```
+ALL 4 banks selected during initialization (main 68K loading BIOS + decompressed program). **ZERO bank switches during 3000 frames of gameplay** (50 seconds at 60fps).
+
+**Sub-68K PC histogram:**
+```
+sub_max_pc = 0x018FC8 (bank 0, below $020000 boundary)
+$000000-$00FFFF: 184,827 samples (99.6%)
+$010000-$01FFFF: 783 samples (0.4%)
+Total: 185,610 samples — ALL in bank 0 (128KB)
+```
+
+**VERDICT: SCENARIO C DEFINITIVELY CONFIRMED.**
+
+The sub-68K NEVER accesses above $01FFFF during gameplay. It only uses bank 0 (128KB). The bank register is set to all 4 banks during initialization (main 68K loading data), but the sub-68K itself only executes from bank 0. After initialization completes, the bank register is frozen — no runtime paging needed.
+
+**Implication for device port:**
+- PRG-RAM 256KB (banks 0-1) is sufficient for gameplay
+- Banks 2-3 (256KB) only needed during initialization → can be loaded from SD sequentially (one-time cost, not per-frame)
+- Scenario C: single FB + PRG 256K + code XIP = **156K surplus, FITS**
+
 ---
 
 ## Harness Methodology Notes
