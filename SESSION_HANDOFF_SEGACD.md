@@ -1,7 +1,7 @@
 # SegaCD Optimization Session Handoff
 
-**Last updated:** 2026-07-18
-**Branch:** `feat/segacd` @ `5919121c`
+**Last updated:** 2026-07-18 (RAM budget analysis added)
+**Branch:** `feat/segacd` @ `5919121c` (uncommitted: RAM budget instrumentation)
 **gwenesis submodule:** `f4cedb7`
 **Worktree:** `/home/ubuntu/app/jupyterLab/notebooks/gnw-segacd`
 
@@ -25,9 +25,10 @@ gwenesis submodule: f4cedb7 (probe: YM2612 op_calc skip-rate)
 All changes committed. No uncommitted work.
 
 ### Next steps (priority order)
-1. **YM2612 silence-skip**: 76% of operators already skipped by ENV_QUIET check. The remaining 24% (~1M op_calc calls over 200 frames) are still active. Investigate which channels are active at boot-stall and whether they can be skipped. Potential savings: up to ~109ms (17%).
-2. **Firmware integration**: `segacd_cache.c` written and compile-verified (452B text + 212B BSS). Needs Makefile integration when SegaCD port is ready for device testing.
-3. **Device testing**: All optimizations are host-verified only. The $7c80 delta cache and main idle-skip can't be measured on host due to HOOK_CPU overhead — device measurement is the real gate.
+1. **Device RAM budget CONFIRMED feasible** (Scenario C): single FB + PRG 256K + code XIP → 156K surplus. See "Device RAM Budget Analysis" section below. Real ROM test needed to confirm sub doesn't bank-switch beyond bank 1 during gameplay.
+2. **Firmware integration**: `segacd_cache.c` compile-verified (452B text + 212B BSS). Makefile flags: `-DHOOK_CPU -DSCD_CACHE -DSCD_Z80_IDLE_SKIP`. Needs device Makefile wiring when port is ready.
+3. **Device testing**: $7c80 delta cache + main idle-skip can't be measured on host (HOOK_CPU overhead). Device measurement is the real gate. Combined estimate: ~180-210ms (28-32%) savings.
+4. **Real ROM gameplay profiling**: Current measurements are boot-stall only. Real games may use more PRG-RAM banks, 1M Word-RAM mode, and active audio channels.
 
 ---
 
@@ -169,6 +170,79 @@ env SCD_SKIP_Z80=1 /tmp/boot_bench ...
 - **Probe data (200 frames):** samples=177,600, opcalc_total=4,262,400, opcalc_skip=3,244,537, **skip_rate=76.1%**.
 - **Remaining work:** 24% of operators (~1M calls) are still active at boot-stall. Need to identify which channels and why. If all can be skipped when truly silent: up to ~109ms (17%) savings.
 - **Next:** Per-channel probe (which of the 6 channels have active operators). If channels 0-5 are all key-off at boot-stall, the 24% active operators might be in release/decay phase.
+
+---
+
+## Device RAM Budget Analysis (CRITICAL FEASIBILITY)
+
+### The Crux
+
+SegaCD work RAM (PRG-RAM 512K + Word-RAM 256K) = 768KB, already exceeds RAM_EMU (724KB with double FB, 874KB with single FB). Unlike GBA (where overflow was code → flash XIP), SegaCD's overflow is **work RAM** (read-write) → XIP is impossible. The only path is reducing/paging work RAM itself.
+
+### PRG-RAM Banking Discovery
+
+**PicoDrive + gwenesis both implement PRG-RAM as banked, NOT flat:**
+- $000000-$01FFFF: 128KB fixed (bank 0, always visible to sub-68K)
+- $020000-$03FFFF: 128KB bank window — 1 of 4 banks selected by $FF8033 bits 6-7
+- Sub-68K sees only 256KB at any time
+
+**gwenesis caveat:** `segacd_sub_build_memory_map()` (segacd_bus.c:312) maps PRG-RAM as FLAT 512KB (8 pages × 64KB base pointers). This is incorrect vs hardware but harmless if sub never accesses $040000+.
+
+### Measured Bank Usage (900 frames boot-stall)
+
+```
+[prg_banks] written=0xf accessed=0xf word_mode=0x1 sub_max_prg=0x01ffe6@f105
+```
+
+| Metric | Value | Meaning |
+|--------|-------|---------|
+| `written` | 0xf (banks 0-3) | Main 68K selects all 4 banks during boot |
+| `accessed` | 0xf (banks 0-3) | Main 68K reads/writes all 4 banks (BIOS + program load) |
+| `word_mode` | 0x1 (2M only) | Never entered 1M mode during boot |
+| **`sub_max_prg`** | **$01FFE6** | **Sub-68K highest PRG access = bank 0 only (128KB!)** |
+
+**KEY: Sub only uses bank 0 (128KB) during boot.** Main writes all banks (loading sub-BIOS + decompressed program), but sub executes/reads from bank 0 only.
+
+### RAM Budget Scenarios
+
+| Scenario | PRG | FB | RAM_EMU avail | Work RAM needed | Result |
+|----------|-----|-----|---------------|-----------------|--------|
+| A | 512K | Double | 724K | 974K | **SHORT 250K** |
+| B | 512K | Single | 874K | 974K | **SHORT 100K** |
+| C | **256K** | **Single** | **874K** | **718K** | **SURPLUS 156K — FITS** |
+| D | 384K | Single | 874K | 846K | SURPLUS 28K — FITS |
+
+**Work RAM breakdown (Scenario C, 718K):**
+| Item | Size | Pool |
+|------|------|------|
+| PRG-RAM (banks 0-1) | 256K | RAM_EMU |
+| Word-RAM (2M) | 256K | RAM_EMU |
+| M68K_RAM | 64K | RAM_EMU |
+| VRAM | 64K | RAM_EMU |
+| SCD struct | 14K | RAM_EMU |
+| CD buffers | 47K | RAM_EMU |
+| Audio/GFX/misc | 17K | RAM_EMU |
+| PCM RAM | 64K | AHB SRAM |
+| Z80 RAM | 8K | AHB SRAM |
+| BRAM | 8K | DTCM |
+
+**Code XIP:** ~672KB text (m68kcpu 462K + Z80 49K + gwenesis ~150K + segacd ~11K) → XIP from ext flash (sm.xip precedent). Without XIP, overlay alone exceeds 724KB.
+
+### Feasibility Verdict
+
+**CONDITIONALLY POSSIBLE.** Single FB + PRG 256K + code XIP fits within 724KB RAM_EMU with 156KB surplus.
+
+**Caveats:**
+1. **Boot-stall measurement only.** Real gameplay may use more PRG-RAM (sub bank-switching for game code) or 1M Word-RAM mode. Need real ROM test.
+2. **Single framebuffer** means tearing or careful timing (no double-buffer).
+3. **wram_1m_cell (128KB static)** at segacd_bus.c:328 is ADDITIONAL to word_ram allocation. On device, must carve from word_ram pointer, not separate BSS.
+4. **ROM_DATA (32MB)** is host-only. Device must use SD streaming.
+
+### Escape Hatches (if real games need >256K PRG)
+1. **PRG 384K (Scenario D):** Still fits with 28K surplus. Requires bank 0-2.
+2. **PRG paging from SD:** Load banks 2-3 on demand from SD card. Slow but possible.
+3. **Word-RAM 1M mode sharing:** In 1M mode, only 128K per CPU. If game stays in 1M mode, could share banks.
+4. **If fundamentally impossible:** Honest conclusion. But the 156K surplus in Scenario C gives significant margin.
 
 ---
 

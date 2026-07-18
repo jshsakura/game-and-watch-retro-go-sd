@@ -42,6 +42,14 @@ void segacd_poll_wake(void)
     SCD.poll_count = 0;
 }
 
+/* ---- PRG-RAM bank usage tracker (RAM budget feasibility) ----
+ * Bitmask of all bank values (0-3) ever selected via $FF8033 write AND
+ * actually accessed via the banked window. Determines whether the full
+ * 512KB PRG-RAM is needed or if 256KB/384KB suffices. */
+uint8_t scd_prg_bank_written;   /* banks ever SELECTED via register write */
+uint8_t scd_prg_bank_accessed;  /* banks actually READ/WRITTEN through window */
+uint8_t scd_word_mode_seen;     /* bit0=2M seen, bit1=1M seen */
+
 /* ---- gate-array access trace (boot debugging; harness-first) ---- */
 #ifdef SEGACD_GA_TRACE
 uint32_t scd_ga_rd[SEGACD_GA_REGS], scd_ga_wr[SEGACD_GA_REGS];       /* main side */
@@ -348,6 +356,7 @@ void segacd_sub_build_memory_map(void)
 static unsigned int main_prgwin_read8(unsigned int address)
 {
     unsigned int off = (address & 0x1FFFF) + (unsigned)SCD.prg_bank * 0x20000;
+    scd_prg_bank_accessed |= (uint8_t)(1 << SCD.prg_bank);
     return SCD.prg_ram[(off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1)];
 }
 static unsigned int main_prgwin_read16(unsigned int address)
@@ -364,6 +373,7 @@ extern m68ki_cpu_core m68k;             /* to read the writer's PC (locate the d
 static void main_prgwin_write8(unsigned int address, unsigned int data)
 {
     unsigned int off = (address & 0x1FFFF) + (unsigned)SCD.prg_bank * 0x20000;
+    scd_prg_bank_accessed |= (uint8_t)(1 << SCD.prg_bank);
 #ifdef SEGACD_GA_TRACE
     scd_dbg_prgwin_w++;
     { unsigned physoff = (off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1);
@@ -527,6 +537,8 @@ static void main_ga_write8(unsigned int address, unsigned int data)
         SCD.s68k_regs[0x03] = d;
         SCD.prg_bank  = (uint8_t)((d >> 6) & 3);
         SCD.word_mode = (uint8_t)((d >> 2) & 1);
+        scd_prg_bank_written |= (uint8_t)(1 << SCD.prg_bank);
+        scd_word_mode_seen   |= (uint8_t)(1 << SCD.word_mode);
         segacd_poll_wake();
         return;
     }

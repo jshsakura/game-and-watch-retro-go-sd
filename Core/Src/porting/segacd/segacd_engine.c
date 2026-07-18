@@ -415,9 +415,6 @@ int segacd_run_sub(int cycle_target)
             m68k_run((unsigned int)cycle_target);
             break;
         }
-            m68k_run((unsigned int)cycle_target);
-            break;
-        }
 
         unsigned int next = m68k.cycles + SEGACD_IRQ_CHUNK_CYCLES;
         if (next > (unsigned int)cycle_target) next = (unsigned int)cycle_target;

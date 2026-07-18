@@ -138,9 +138,31 @@ void scd_cache_hook_enable(int enable)
 
 extern unsigned int m68k_read_disassembler_16(unsigned int addr);  /* gwenesis bus */
 
+uint32_t scd_sub_max_addr = 0;       /* max sub-68K data access address */
+uint32_t scd_sub_max_addr_frame = 0; /* frame at which max was seen */
+uint32_t scd_sub_max_prg_addr = 0;   /* max sub-68K access addr in PRG-RAM (< 0x080000) */
+uint32_t scd_sub_max_prg_frame = 0;  /* frame at which PRG max was seen */
+
 static void scd_hist_hook(int type, int size, unsigned int addr, unsigned int val)
 {
     (void)size; (void)val;
+
+    /* Track sub-68K data access range (for PRG-RAM sizing decision) */
+    if ((type == HOOK_M68K_R || type == HOOK_M68K_W) && g_scd_hist_issub) {
+        if (addr > scd_sub_max_addr) {
+            scd_sub_max_addr = addr;
+            scd_sub_max_addr_frame = (uint32_t)g_scd_frame;
+        }
+        /* PRG-RAM is $000000-$07FFFF. Filter out GA regs ($FF8000+), Word-RAM
+         * ($080000-$0BFFFF), etc. This tells us the highest PRG-RAM byte the
+         * sub ever touches → determines minimum PRG-RAM size needed. */
+        if (addr < 0x080000 && addr > scd_sub_max_prg_addr) {
+            scd_sub_max_prg_addr = addr;
+            scd_sub_max_prg_frame = (uint32_t)g_scd_frame;
+        }
+        return;
+    }
+
     if (type != HOOK_M68K_E) return;
     unsigned int pc = addr;
 

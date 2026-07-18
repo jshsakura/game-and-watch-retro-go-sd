@@ -364,6 +364,16 @@ int main(int argc, char **argv)
     printf("BUDGET ms=%ld frames=%d mspf=%.2f idle_hits=%d sub_idle_hits=%lu z80_idle_hits=%lu\n",
            ms_total, FRAMES, (double)ms_total / FRAMES, g_main_idle_hits,
            (unsigned long)scd_sub_idle_hits, (unsigned long)scd_z80_idle_hits);
+    /* PRG-RAM bank usage — determines device feasibility (256K vs 384K vs 512K) */
+    {
+        extern uint8_t scd_prg_bank_written, scd_prg_bank_accessed, scd_word_mode_seen;
+        extern uint32_t scd_sub_max_addr, scd_sub_max_addr_frame;
+        extern uint32_t scd_sub_max_prg_addr, scd_sub_max_prg_frame;
+        printf("[prg_banks] written=0x%x accessed=0x%x word_mode=0x%x sub_max_addr=0x%06x@f%u sub_max_prg=0x%06x@f%u\n",
+               scd_prg_bank_written, scd_prg_bank_accessed, scd_word_mode_seen,
+               scd_sub_max_addr, scd_sub_max_addr_frame,
+               scd_sub_max_prg_addr, scd_sub_max_prg_frame);
+    }
     /* per-ISR chunk dump (b9 subdivision of sub-68K cost). chunks * 400 = cycles. */
     {
         extern uint32_t scd_sub_isr_chunks[8];
