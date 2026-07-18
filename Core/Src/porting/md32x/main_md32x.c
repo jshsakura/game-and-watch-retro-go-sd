@@ -52,9 +52,12 @@
 #define MD32X_AUDIO_MAX      (MD32X_AUDIO_RATE / 50 + 16) /* worst-case/frame   */
 
 /* Savestate stamp: refuse a file this build did not write (project rule). The
- * payload itself is picodrive's own versioned PicoState stream. */
+ * payload itself is picodrive's own versioned PicoState stream.
+ * V2: lazy-T decomposed the SH2 T-bit into sh2->t_flag (SH2_REG_SIZE 92->100),
+ *     shifting the extra pack fields (pending_int_irq/vector/m68krcycles_done)
+ *     by 8 bytes. V1 savestates would misparse and corrupt CPU state. */
 #define MD32X_STATE_MAGIC    0x4D583258u  /* "MX2X" */
-#define MD32X_STATE_VERSION  1
+#define MD32X_STATE_VERSION  2
 
 /* ---- picodrive platform hooks --------------------------------------------
  * On the device there is no large malloc heap. With the GNW_32X_CORE guards
