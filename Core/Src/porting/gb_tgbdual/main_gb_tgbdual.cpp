@@ -47,10 +47,15 @@ static void gb_process_blit();
 #include <algorithm>
 #include <cmath>
 #include "gb_core/gb.h"
+#include "gb_core/tgbdual_sgb.h"
 #include "gw_renderer.h"
 
 // GB Palettes
 int index_palette = 0;
+static int gb_console_mode = GB_CONSOLE_DMG;
+static char system_values[16];
+static uint8_t rom_cgb_flag = 0;
+static bool rom_sgb_compatible = false;
 
 static gb *g_gb = nullptr;
 static gw_renderer *render = nullptr;
@@ -422,23 +427,102 @@ static bool reset_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event
 {
     if (event == ODROID_DIALOG_ENTER) {
         g_gb->reset();
+        /* Custom DMG palettes only in pure GB mode — never overwrite SGB colors. */
+        if (g_gb->get_rom()->get_info()->gb_type == 1)
+            g_gb->get_lcd()->set_palette(index_palette);
     }
+    return event == ODROID_DIALOG_ENTER;
+}
+
+static void gb_console_label(int mode, char *out, size_t out_len)
+{
+    switch (mode) {
+    case GB_CONSOLE_CGB: snprintf(out, out_len, "GBC"); break;
+    case GB_CONSOLE_SGB: snprintf(out, out_len, "SGB"); break;
+    default:             snprintf(out, out_len, "GB"); break;
+    }
+}
+
+static int gb_console_default(void)
+{
+    /* GBC carts → GBC. Everything else (DMG / SGB-enhanced) → GB. */
+    return (rom_cgb_flag & 0x80) ? GB_CONSOLE_CGB : GB_CONSOLE_DMG;
+}
+
+static int gb_console_options(int *opts, int max_opts)
+{
+    /* GBC: only GBC. GB/SGB: GB, plus SGB when the cart supports it. */
+    int n = 0;
+    if (rom_cgb_flag & 0x80) {
+        if (n < max_opts)
+            opts[n++] = GB_CONSOLE_CGB;
+    } else {
+        if (n < max_opts)
+            opts[n++] = GB_CONSOLE_DMG;
+        if (rom_sgb_compatible && n < max_opts)
+            opts[n++] = GB_CONSOLE_SGB;
+    }
+    return n;
+}
+
+static int gb_console_next(int mode, int dir)
+{
+    int opts[3];
+    int n = gb_console_options(opts, 3);
+    if (n <= 0)
+        return GB_CONSOLE_DMG;
+
+    int idx = 0;
+    for (int i = 0; i < n; i++) {
+        if (opts[i] == mode) { idx = i; break; }
+    }
+    idx = (idx + dir + n) % n;
+    return opts[idx];
+}
+
+static bool system_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
+{
+    if (event == ODROID_DIALOG_PREV)
+        gb_console_mode = gb_console_next(gb_console_mode, -1);
+    if (event == ODROID_DIALOG_NEXT)
+        gb_console_mode = gb_console_next(gb_console_mode, +1);
+
+    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
+        odroid_settings_app_int32_set("GBSystem", gb_console_mode);
+        g_gb->set_console_mode(gb_console_mode);
+        g_gb->reset();
+        /* GB: restore user palette. SGB/GBC: leave default / let the game paint. */
+        if (g_gb->get_rom()->get_info()->gb_type == 1)
+            g_gb->get_lcd()->set_palette(index_palette);
+        if (tgb_buffer && g_gb->get_rom()->get_info()->gb_type < 3) {
+            g_gb->get_lcd()->clear_win_count();
+            for (int y = 0; y < GB_HEIGHT; y++)
+                g_gb->get_lcd()->render(tgb_buffer, y);
+        }
+    }
+
+    gb_console_label(gb_console_mode, option->value, sizeof(system_values));
     return event == ODROID_DIALOG_ENTER;
 }
 
 static bool palette_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
+    /* Dynamic: GB only. Re-evaluated on every dialog redraw (INIT) so toggling
+     * System GB↔SGB greys out / re-enables this row immediately. */
+    bool gb_mode = (gb_console_mode == GB_CONSOLE_DMG);
+    option->enabled = gb_mode ? 1 : -1;
+
     int max = g_gb->get_lcd()->get_palette_count() - 1;
 
-    if (event == ODROID_DIALOG_PREV) {
+    if (gb_mode && event == ODROID_DIALOG_PREV) {
         index_palette = index_palette > 0 ? index_palette - 1 : max;
     }
 
-    if (event == ODROID_DIALOG_NEXT) {
+    if (gb_mode && event == ODROID_DIALOG_NEXT) {
         index_palette = index_palette < max ? index_palette + 1 : 0;
     }
 
-    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
+    if (gb_mode && (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT)) {
         g_gb->get_lcd()->set_palette(index_palette);
         odroid_settings_Palette_set(index_palette);
 
@@ -453,8 +537,7 @@ static bool palette_update_cb(odroid_dialog_choice_t *option, odroid_dialog_even
         }
     }
 
-    sprintf(option->value, "%d/%d", index_palette+1, max+1);
-
+    sprintf(option->value, "%d/%d", index_palette + 1, max + 1);
     return event == ODROID_DIALOG_ENTER;
 }
 
@@ -551,13 +634,25 @@ void app_main_gb_tgbdual_cpp(uint8_t load_state, uint8_t start_paused, int8_t sa
 
     uint8_t ram_size = 0;
     uint8_t is_gbcolor = 0;
+    uint8_t sgb_flag = 0;
+    uint8_t old_licensee = 0;
+    rom_cgb_flag = 0;
+    rom_sgb_compatible = false;
     FILE *hdr_file = fopen(ACTIVE_FILE->path, "rb");
     if (hdr_file) {
         if (fseek(hdr_file, 0x149, SEEK_SET) == 0)
             fread(&ram_size, 1, 1, hdr_file);
         if (fseek(hdr_file, 0x143, SEEK_SET) == 0)
-            fread(&is_gbcolor, 1, 1, hdr_file);
-        is_gbcolor = !((is_gbcolor & 0x80) == 0);
+            fread(&rom_cgb_flag, 1, 1, hdr_file);
+        if (fseek(hdr_file, 0x146, SEEK_SET) == 0)
+            fread(&sgb_flag, 1, 1, hdr_file);
+        if (fseek(hdr_file, 0x14B, SEEK_SET) == 0)
+            fread(&old_licensee, 1, 1, hdr_file);
+        is_gbcolor = !((rom_cgb_flag & 0x80) == 0);
+        /* Pan Docs: SGB functions unlocked when $0146==0x03 and $014B==0x33.
+         * CGB-only carts ($0143==0xC0) cannot usefully run as SGB. */
+        rom_sgb_compatible = (sgb_flag == 0x03) && (old_licensee == 0x33) &&
+                             ((rom_cgb_flag & 0xC0) != 0xC0);
         fclose(hdr_file);
     }
 
@@ -593,6 +688,11 @@ void app_main_gb_tgbdual_cpp(uint8_t load_state, uint8_t start_paused, int8_t sa
     render = new gw_renderer(0);
     g_gb = new gb(render, true, true);
 
+    gb_console_mode = odroid_settings_app_int32_get("GBSystem", gb_console_default());
+    /* Clamp to a mode valid for this cartridge. */
+    gb_console_mode = gb_console_next(gb_console_mode, 0);
+    g_gb->set_console_mode(gb_console_mode);
+
     if (!g_gb->load_rom(data, size, NULL, 0, true))
         return;
 
@@ -620,7 +720,9 @@ void app_main_gb_tgbdual_cpp(uint8_t load_state, uint8_t start_paused, int8_t sa
     if (index_palette < 0 || index_palette > max_palette) {
         index_palette = g_gb->get_lcd()->get_current_palette();
     }
-    g_gb->get_lcd()->set_palette(index_palette);
+    /* User DMG palettes only in pure GB mode (never in SGB — that wipes game colors). */
+    if (g_gb->get_rom()->get_info()->gb_type == 1)
+        g_gb->get_lcd()->set_palette(index_palette);
 
 #if CHEAT_CODES == 1
     for(int i=0; i<MAX_CHEAT_CODES && i<ACTIVE_FILE->cheat_count; i++) {
@@ -630,8 +732,12 @@ void app_main_gb_tgbdual_cpp(uint8_t load_state, uint8_t start_paused, int8_t sa
     }
 #endif
 
+    gb_console_label(gb_console_mode, system_values, sizeof(system_values));
     odroid_dialog_choice_t options[] = {
-        {300, curr_lang->s_Palette, (char *)palette_values, (g_gb->get_rom()->get_info()->gb_type!=3)?1:-1, &palette_update_cb},
+        /* Only cycle when more than one mode is valid (GB↔SGB). GBC is fixed. */
+        {301, curr_lang->s_System, system_values, 1, &system_update_cb},
+        /* enabled updated each frame: custom palettes only in GB (type 1) */
+        {300, curr_lang->s_Palette, (char *)palette_values, 1, &palette_update_cb},
         {300, curr_lang->s_Reset, NULL, 1, &reset_cb},
         ODROID_DIALOG_CHOICE_LAST
     };

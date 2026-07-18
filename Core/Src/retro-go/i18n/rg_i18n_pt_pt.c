@@ -96,6 +96,7 @@ const lang_t lang_pt_pt LANG_DATA = {
 
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "Paleta",
+    .s_System = "Sistema",
     //=====================================================================
 
     // Core\Src\porting\nes\main_nes.c =====================================

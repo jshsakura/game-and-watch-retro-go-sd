@@ -152,7 +152,8 @@ $(CORE_TGBDUAL)/gb_core/tgbdual_cpu.cpp \
 $(CORE_TGBDUAL)/gb_core/tgbdual_gb.cpp \
 $(CORE_TGBDUAL)/gb_core/tgbdual_lcd.cpp \
 $(CORE_TGBDUAL)/gb_core/tgbdual_mbc.cpp \
-$(CORE_TGBDUAL)/gb_core/tgbdual_rom.cpp
+$(CORE_TGBDUAL)/gb_core/tgbdual_rom.cpp \
+$(CORE_TGBDUAL)/gb_core/tgbdual_sgb.cpp
 
 NES_C_SOURCES = 
 

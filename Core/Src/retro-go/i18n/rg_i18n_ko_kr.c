@@ -97,6 +97,7 @@ const lang_t lang_ko_kr LANG_DATA = {
 
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "팔레트",
+    .s_System = "시스템",
     //=====================================================================
 
     // Core\Src\porting\nes\main_nes.c =====================================

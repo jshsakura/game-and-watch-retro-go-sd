@@ -94,6 +94,7 @@ const lang_t lang_zh_tw LANG_DATA = {
 
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "調色盤",
+    .s_System = "系統",
     //=====================================================================
 
     // Core\Src\porting\md\main_gwenesis.c ================================

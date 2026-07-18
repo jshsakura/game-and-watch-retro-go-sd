@@ -422,7 +422,8 @@ int main()
 
     printf("load rom done\n");
 
-    g_gb->get_lcd()->set_palette(0);
+    if (g_gb->get_rom()->get_info()->gb_type == 1)
+        g_gb->get_lcd()->set_palette(0);
 
 /*************/
 //apply_cheat_code("09C56BE6E+09C74AE6E");
@@ -480,7 +481,6 @@ int main()
         for (int line = 0;line < 154; line++) {
                 g_gb->run();
         }
-
 //        blit(video_buf);
         // Tick before submitting audio/syncing
 //        odroid_system_tick(!drawFrame, fullFrame, get_elapsed_time_since(startTime));
