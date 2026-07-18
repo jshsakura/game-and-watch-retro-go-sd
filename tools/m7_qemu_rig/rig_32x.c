@@ -506,6 +506,19 @@ static int rig_state_seek(void *opaque, long offset, int whence) {
     return 0;
 }
 
+/* State round-trip test: warm up to a stable non-blank state, save, run N
+ * frames forward, capture fb; load (restore), re-run the same N frames,
+ * capture fb; PASS iff both non-blank and identical.  The warm-up and test
+ * windows are chosen to avoid game-specific blank transitions (Doom 32X
+ * blanks around f140-f150 during a loading screen, so we test in f50-f80
+ * where the framebuffer is stably non-blank). */
+#ifndef RIG_STATE_WARMUP
+#define RIG_STATE_WARMUP 50
+#endif
+#ifndef RIG_STATE_TESTFRAMES
+#define RIG_STATE_TESTFRAMES 30
+#endif
+
 static int state_roundtrip_test(void) {
     struct rig_state_stream stream = {
         .data = malloc(RIG_STATE_CAP),
@@ -516,7 +529,7 @@ static int state_roundtrip_test(void) {
         return -1;
     }
 
-    for (int f = 0; f < 120; f++) {
+    for (int f = 0; f < RIG_STATE_WARMUP; f++) {
         PicoIn.skipFrame = 0;
         PicoIn.pad[0] = pad_script(f);
         PicoFrame();
@@ -524,7 +537,9 @@ static int state_roundtrip_test(void) {
     int save_ret = PicoStateFP(&stream, 1, rig_state_read, rig_state_write,
                                rig_state_eof, rig_state_seek);
 
-    for (int f = 120; f < 150; f++) {
+    const int f0 = RIG_STATE_WARMUP;
+    const int f1 = RIG_STATE_WARMUP + RIG_STATE_TESTFRAMES;
+    for (int f = f0; f < f1; f++) {
         PicoIn.skipFrame = 0;
         PicoIn.pad[0] = pad_script(f);
         PicoFrame();
@@ -536,7 +551,7 @@ static int state_roundtrip_test(void) {
     int load_ret = PicoStateFP(&stream, 0, rig_state_read, rig_state_write,
                                rig_state_eof, rig_state_seek);
     set_out_buffer();
-    for (int f = 120; f < 150; f++) {
+    for (int f = f0; f < f1; f++) {
         PicoIn.skipFrame = 0;
         PicoIn.pad[0] = pad_script(f);
         PicoFrame();

@@ -52,9 +52,12 @@
 #define MD32X_AUDIO_MAX      (MD32X_AUDIO_RATE / 50 + 16) /* worst-case/frame   */
 
 /* Savestate stamp: refuse a file this build did not write (project rule). The
- * payload itself is picodrive's own versioned PicoState stream. */
+ * payload itself is picodrive's own versioned PicoState stream.
+ * V2: lazy-T decomposed the SH2 T-bit into sh2->t_flag (SH2_REG_SIZE 92->100),
+ *     shifting the extra pack fields (pending_int_irq/vector/m68krcycles_done)
+ *     by 8 bytes. V1 savestates would misparse and corrupt CPU state. */
 #define MD32X_STATE_MAGIC    0x4D583258u  /* "MX2X" */
-#define MD32X_STATE_VERSION  1
+#define MD32X_STATE_VERSION  2
 
 /* ---- picodrive platform hooks --------------------------------------------
  * On the device there is no large malloc heap. With the GNW_32X_CORE guards
@@ -207,9 +210,14 @@ void emu_32x_startup(void) {
 
 void emu_video_mode_change(int start_line, int line_count, int start_col, int col_count) {
   (void)start_line; (void)line_count; (void)start_col; (void)col_count;
-  /* Mode changes are rare; wipe both buffers so stale borders don't linger
-   * (libretro memsets its vout buffer here for the same reason). */
-  lcd_clear_buffers();
+  /* Mode changes are rare; wipe the ACTIVE buffer so stale borders don't
+   * linger.  Previously this called lcd_clear_buffers() (both buffers), which
+   * has NO lcd_sleep_while_swap_pending() guard — the write-buffered clear
+   * overtook the scanout beam and produced a bottom black band (the exact
+   * race lcd_clear_active_buffer() was written to prevent).  The inactive
+   * buffer is overwritten on the next lcd_swap() anyway, so clearing only
+   * the active buffer is sufficient and race-free. */
+  lcd_clear_active_buffer();
   set_out_buffer();
 }
 
@@ -276,12 +284,30 @@ static void *md32x_Screenshot(void) {
  * (LR = odroid_overlay_sleep_pause_banner; the C64-era rule: a custom-loop
  * core MUST pass a non-NULL repaint). We can't cheaply re-render a picodrive
  * frame on demand, so copy the SHOWN frame into the active buffer and draw
- * the overlay on top. */
+ * the overlay on top.
+ *
+ * The overlay's _repaint() clears the active buffer, calls us, then lcd_swap()s.
+ * After the first swap the DISPLAYED buffer holds the menu composite (game +
+ * darken + dialog), not the pure game frame.  A naive "copy displayed into
+ * active" would therefore smear the previous menu state onto every subsequent
+ * repaint.  We freeze the game-frame pointer on the FIRST call (when the
+ * displayed buffer is still the pure game frame) and keep copying from THAT
+ * frozen buffer for the lifetime of this menu session.  The flag resets when
+ * the main loop renders a fresh frame (md32x_repaint_reset). */
+static int md32x_repaint_first = 1;
+
+void md32x_repaint_reset(void) { md32x_repaint_first = 1; }
+
 static void md32x_repaint(void) {
   uint16_t *active = lcd_get_active_buffer();
-  uint16_t *shown  = (active == (uint16_t *)framebuffer1)
-                       ? (uint16_t *)framebuffer2 : (uint16_t *)framebuffer1;
-  memcpy(active, shown, 320 * 240 * sizeof(uint16_t));
+  static uint16_t *frozen;
+  if (md32x_repaint_first) {
+    /* displayed (inactive) buffer still holds the pure game frame */
+    frozen = (active == (uint16_t *)framebuffer1)
+                 ? (uint16_t *)framebuffer2 : (uint16_t *)framebuffer1;
+    md32x_repaint_first = 0;
+  }
+  if (frozen) memcpy(active, frozen, 320 * 240 * sizeof(uint16_t));
   common_ingame_overlay();
 }
 
@@ -742,6 +768,9 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     if (drawFrame) {
       common_ingame_overlay();
       lcd_swap();
+      /* A fresh game frame is now on display — next menu open should freeze
+       * THIS frame as the menu background, not a stale menu composite. */
+      md32x_repaint_reset();
     }
 
 #ifdef MD32X_DEVICE_PROFILE
