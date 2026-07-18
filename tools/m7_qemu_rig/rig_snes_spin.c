@@ -191,6 +191,7 @@ int main(void) {
 
   Snes *snes = snes_init(g_wram);
   g_the_snes = snes;
+  spin_whitelist_set(rom, rom_len);
   spin_reset();
   if (!snes_loadRom(snes, rom, (int)rom_len)) { printf("unsupported ROM\n"); return 1; }
 #if !defined(GNW_SNES_CORE)

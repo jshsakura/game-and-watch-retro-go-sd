@@ -451,8 +451,8 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
   snes = snes_init(snes_wram);
   g_the_snes = snes;
-  spin_reset();   /* spin-skip learner: clean slate per launch (overlay BSS is
-                   * zeroed anyway, but the gate flag must start true explicitly) */
+  spin_whitelist_set(rom, sz);   /* enable spin-skip only for high-spin ROMs */
+  spin_reset();   /* spin-skip learner: clean slate (gate_on set by whitelist) */
 
   bool ok = (rom != NULL) && !cart_needs_coprocessor(rom, sz) &&
             snes_loadRom(snes, rom, (int)sz);
