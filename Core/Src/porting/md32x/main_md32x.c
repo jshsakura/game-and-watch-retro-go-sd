@@ -279,6 +279,61 @@ static void *md32x_Screenshot(void) {
   return lcd_get_active_buffer();
 }
 
+/* ---- cart SRAM (M2) --------------------------------------------------------
+ * PicoStateFP saves CPU/memory state into versioned slot files but does NOT
+ * save cart save-RAM — that lives in a separate .sram file, persisted across
+ * sessions (not per-slot), exactly like every other core in this project.
+ * Pico.sv.data holds both plain SRAM and EEPROM-backed data; Pico.sv.size is
+ * 0 for carts with no battery.  We skip the write when no SRAM is allocated
+ * or the data is all-zero (matches libretro's retro_get_memory_size rule so
+ * we don't sprinkle empty .sram files for games that never wrote any). */
+static void md32x_SramSave(void) {
+  if (Pico.sv.data == NULL || Pico.sv.size == 0)
+    return;
+  /* quick all-zero check: don't create a file for a game that never wrote */
+  unsigned int sum = 0;
+  for (unsigned int i = 0; i < Pico.sv.size; i++)
+    sum |= Pico.sv.data[i];
+  if (sum == 0)
+    return;
+
+  char *sram_path = odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path);
+  if (sram_path == NULL) return;
+  FILE *file = fopen(sram_path, "wb");
+  if (file) {
+    size_t n = fwrite(Pico.sv.data, 1, Pico.sv.size, file);
+    (void)n;
+    fclose(file);
+  }
+  free(sram_path);
+}
+
+static void md32x_SramLoad(void) {
+  if (Pico.sv.data == NULL || Pico.sv.size == 0)
+    return;
+  char *sram_path = odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path);
+  if (sram_path == NULL) return;
+  FILE *file = fopen(sram_path, "rb");
+  if (file) {
+    size_t n = fread(Pico.sv.data, 1, Pico.sv.size, file);
+    (void)n;
+    fclose(file);
+  }
+  free(sram_path);
+}
+
+/* ---- sleep wake-up (M2) ----------------------------------------------------
+ * gw_sleep() restores the *settings* OC level on wake, but 32X forces the
+ * scoped maximum boost during gameplay (common_emu_auto_oc(1) in app_main).
+ * Re-apply the boost and reinit audio (SystemClock_Config also reprograms
+ * the audio PLL).  Mirrors the gwenesis pattern. */
+static void md32x_SleepWakeUp(void) {
+  common_emu_auto_oc(1);
+  odroid_audio_init(odroid_audio_sample_rate_get());
+  audio_start_playing_full_length(audio_get_buffer_full_length());
+  set_out_buffer();
+}
+
 /* Pause/menu repaint. The pause banner calls this through the pointer given
  * to common_emu_input_loop — a NULL there was the device's PC=0 Hardfault
  * (LR = odroid_overlay_sleep_pause_banner; the C64-era rule: a custom-loop
@@ -426,7 +481,7 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
   odroid_system_init(APPID_32X, MD32X_AUDIO_RATE);
   odroid_system_emu_init(&md32x_LoadState, &md32x_SaveState, &md32x_Screenshot,
-                         NULL, NULL, NULL);
+                         NULL, &md32x_SleepWakeUp, &md32x_SramSave);
   /* audio_start_playing happens AFTER the warm-up frame below, with the
    * region-correct per-frame sample count (audit bug: PAL carts pace 50fps). */
 
@@ -497,6 +552,13 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   diag_log("PicoLoadMedia: mt=%d AHW=%x romsize=%lu pal=%d\n",
            (int)mt, (unsigned)PicoIn.AHW, (unsigned long)Pico.romsize,
            (int)Pico.m.pal);
+
+  /* Load cart SRAM (battery save) before the first frame.  PicoLoadMedia ->
+   * PicoCartInsert allocates Pico.sv.data for carts that have SRAM/EEPROM;
+   * carts without it have sv.size==0 and SramLoad is a no-op. */
+  md32x_SramLoad();
+  diag_log("sram: size=%u flags=%02x\n",
+           (unsigned)Pico.sv.size, (unsigned)Pico.sv.flags);
 
   /* Region pacing (audit: a PAL-only cart selected via autoRgnOrder ran 20%
    * fast with 147 samples/frame silently dropped). gwenesis does the same. */
