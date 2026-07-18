@@ -186,11 +186,18 @@ __attribute__((section(".rc_smw_hdr"), used))
 const struct rc_smw_header {
   uint32_t magic;            /* RC_SMW_MAGIC */
   uint32_t nsites;           /* RC_NSITES */
+  uint32_t code_hash;        /* FNV-1a of consumed bytes (opcode + operands) at all
+                               * site PCs — "the bytes are identity" (same principle
+                               * as GBA M4A HLE). Accepts any dump/patch with the same
+                               * code at the translated PCs; rejects any code change. */
   const uint32_t *addrs;     /* sentinel addr of rc_addrs[] — patched at cache time */
   const rc_smw_fn_t *fns;    /* sentinel addr of rc_fns[] — patched at cache time */
+  const uint8_t *lens;       /* sentinel addr of rc_site_lens[] — patched at cache time */
 } rc_smw_header = {
   RC_SMW_MAGIC,
   RC_NSITES,
+  RC_CODE_HASH,              /* FNV-1a of 8371 sites' consumed bytes in smw.sfc */
   rc_addrs,
   rc_fns,
+  rc_site_lens,
 };

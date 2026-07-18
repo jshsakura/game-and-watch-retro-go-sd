@@ -217,9 +217,9 @@ static uint16_t read_snes_pad(odroid_gamepad_state_t *joy) {
 
 /* ---- video ----------------------------------------------------------------
  * The line renderer writes RGB565. 256 px wide into the 320x240 panel with a
- * 32 px left margin and NO top margin — exactly the harness placement. An
- * overscan title renders up to 239 lines; a top margin would run the last
- * rows past the framebuffer. */
+ * 32 px left margin and 8 px top margin — vertically centred (matches the SM
+ * homebrew placement in main_sm.c). SNES renders up to 224 visible lines; the
+ * row guard clips any overscan that would run past the framebuffer. */
 /* Video. The PPU renders one line at a time into snes_line (renderPitch 0 → every
  * line lands in the same scratch) and hands it to g_ppu_line_cb — the contract the
  * recent PPU refactor (681371b) introduced and the SM port already uses. We place
@@ -228,15 +228,18 @@ static uint16_t read_snes_pad(odroid_gamepad_state_t *joy) {
  * uses: the LCD is double-buffered, and painting a full frame into whichever buffer
  * is active each present keeps BOTH buffers complete — rendering per-line straight
  * into the active buffer left the OTHER buffer stale (black on the device, strobing
- * after an overlay toggle). 256 px wide, 32 px left margin, no top margin; the
+ * after an overlay toggle). 256 px wide, 32 px left margin, 8 px top margin; the
  * private buffer's borders are cleared once and stay black. */
+#define SNES_TOP_MARGIN  ((GW_LCD_HEIGHT - SNES_HEIGHT) / 2)   /* (240-224)/2 = 8 */
+#define SNES_LEFT_MARGIN ((GW_LCD_WIDTH - SNES_WIDTH) / 2)     /* (320-256)/2 = 32 */
 static uint16_t snes_line[256];
 static uint16_t snes_frame[GW_LCD_WIDTH * GW_LCD_HEIGHT];
 
 static void snes_blit_line(unsigned y, const uint16_t *line) {
-  if (y < 1 || y > GW_LCD_HEIGHT)   /* y is 1-based; guard the 240-row panel */
-    return;
-  memcpy(snes_frame + (y - 1) * GW_LCD_WIDTH + 32, line, sizeof(snes_line));
+  if (y < 1) return;   /* y is 1-based */
+  unsigned row = (y - 1) + SNES_TOP_MARGIN;
+  if (row >= GW_LCD_HEIGHT) return;   /* clip overscan past the panel */
+  memcpy(snes_frame + row * GW_LCD_WIDTH + SNES_LEFT_MARGIN, line, sizeof(snes_line));
 }
 
 static void render_frame_into_active_buffer(void) {
@@ -428,17 +431,28 @@ static bool cart_needs_coprocessor(const uint8_t *rom, uint32_t len) {
  * rc takes priority over spin-skip (rc replaces the interpreter entirely). */
 #define RCSMW_CODE_BASE  0xD1D00000u
 #define RCSMW_XIP_PATH   "/roms/homebrew/rc_smw.xip"
-#define RCSMW_ROM_CRC32  0xB19ED489u   /* CRC32 of external/smw/smw.sfc (512KB) */
 #define RC_SMW_MAGIC     0x4D534352u   /* 'RCSM' little-endian — blob header */
+
+/* Diag: code-region hash computed at activation time, reported in profile2 so
+ * a mismatch (user's dump has different code at translated PCs) is visible
+ * without a debugger. */
+static uint32_t s_rc_diag_crc = 0;   /* computed code hash (name kept for diag fmt) */
+static uint32_t s_rc_diag_exp = 0;   /* expected code hash from blob header */
 
 /* Blob header layout (matches rc_smw_sites.c's rc_smw_header). The sentinel
  * pointer fields are patched by RcSmwRelocateXip to the real flash addresses. */
 typedef struct {
   uint32_t magic;
   uint32_t nsites;
+  uint32_t code_hash;   /* FNV-1a of consumed bytes (opcode+operands) at all site PCs */
   const uint32_t *addrs;   /* patched to flash addr of rc_addrs[] */
   const void **fns;        /* patched to flash addr of rc_fns[] */
+  const uint8_t *lens;     /* patched to flash addr of rc_site_lens[] */
 } rc_smw_header_t;
+
+/* SMW title hash (FNV-1a of 21-byte internal title at LoROM 0x7FC0).
+ * Same value the spin-skip whitelist uses — quick reject for non-SMW ROMs. */
+#define RCSMW_TITLE_HASH  0xFB0BD0ECu
 
 static int RcSmwPatchSentinels(uint32_t *start, uint32_t *end, int32_t offset, uint32_t size) {
   int patched = 0;
@@ -461,10 +475,21 @@ static void RcSmwRelocateXip(uint8_t *buffer, uint32_t length, uint32_t offset_i
 
 static bool rc_smw_activate(const uint8_t *rom, uint32_t len) {
 #if RCSMW
-  /* SMW detection: CRC32 of the ROM (copier header already stripped by caller). */
   if (len == 0 || rom == NULL) return false;
-  unsigned int crc = crc32_le(0, rom, len);
-  if (crc != RCSMW_ROM_CRC32) return false;
+
+  /* Quick reject: SMW internal title hash (21 bytes at LoROM 0x7FC0).
+   * Same FNV-1a the spin-skip whitelist uses — cheap reject for non-SMW ROMs. */
+  if (len < 0x7FD5) return false;
+  uint32_t th = 0x811C9DC5u;
+  for (int i = 0; i < 21; i++) {
+    th ^= rom[0x7FC0 + i];
+    th *= 0x01000193u;
+  }
+  if (th != RCSMW_TITLE_HASH) {
+    printf("rc_smw: not SMW (title hash %08lX != %08lX)\n",
+           (unsigned long)th, (unsigned long)RCSMW_TITLE_HASH);
+    return false;
+  }
 
   /* Cache rc_smw.xip into QSPI flash, relocating sentinel addresses. */
   uint32_t xip_size = 0;
@@ -482,6 +507,32 @@ static bool rc_smw_activate(const uint8_t *rom, uint32_t len) {
   if (hdr->magic != RC_SMW_MAGIC || hdr->nsites == 0) {
     printf("rc_smw: bad header (magic=0x%08lX nsites=%lu)\n",
            (unsigned long)hdr->magic, (unsigned long)hdr->nsites);
+    return false;
+  }
+
+  /* Code-region hash gate: FNV-1a of consumed bytes (opcode + operands) at
+   * every translated site PC. "The bytes are identity" — same principle as
+   * GBA M4A HLE. Accepts any dump/patch/hack whose CODE at the translated PCs
+   * is byte-identical to the reference dump; rejects any code change.
+   * Text/graphics hacks (different data, same code) pass correctly. */
+  uint32_t rom_mask = len - 1;
+  uint32_t ch = 0x811C9DC5u;
+  for (uint32_t i = 0; i < hdr->nsites; i++) {
+    uint32_t a = hdr->addrs[i];
+    uint8_t bank = a >> 16;
+    uint16_t off = a & 0xFFFF;
+    uint32_t idx = ((uint32_t)(bank & 0x7F) << 15) | (off & 0x7FFF);
+    int nbytes = 1 + hdr->lens[i];   /* opcode + operand bytes */
+    for (int j = 0; j < nbytes; j++) {
+      ch ^= rom[(idx + j) & rom_mask];
+      ch *= 0x01000193u;
+    }
+  }
+  s_rc_diag_crc = ch;
+  s_rc_diag_exp = hdr->code_hash;
+  if (ch != hdr->code_hash) {
+    printf("rc_smw: code hash mismatch (got %08lX want %08lX) — not activating\n",
+           (unsigned long)ch, (unsigned long)hdr->code_hash);
     return false;
   }
 
@@ -623,12 +674,14 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     FILE *df = fopen("/snes_diag.txt", "a");
     if (df) {
       fprintf(df, "SNES profile2: clk=%lu emu_skip=%lu emu_draw=%lu audio=%lu cyc/frame "
-                  "spin=%lu%%(gate=%d)\n",
+                  "spin=%lu%%(gate=%d) rc=%d(hash=%08lX/exp=%08lX)\n",
               (unsigned long)SystemCoreClock,
               (unsigned long)(cyc_skip / 250), (unsigned long)(cyc_draw / 250),
               (unsigned long)(cyc_audio / 250),
               (unsigned long)((vd + rd) ? (100 * vd / (vd + rd)) : 0),
-              (int)g_spin.gate_on);
+              (int)g_spin.gate_on,
+              (int)g_rc_active,
+              (unsigned long)s_rc_diag_crc, (unsigned long)s_rc_diag_exp);
       fclose(df);
     }
   }
