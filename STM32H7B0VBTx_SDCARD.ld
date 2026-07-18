@@ -550,15 +550,17 @@ INCLUDE build/fceumm_mappers.ld
      * compositor + PWM. Everything else — the 68K interpreter (161K, its const
      * dispatch tables ride .rodata_md32x), Z80, VDP, cart, sound gen — starts
      * in XIP flash: iterate with the device, not by faith. */
-    build/md32x/cpu__sh2__sh2.o          (.text .text*)
+    /* sh2.o (reset/init, 392B, cold) stays in XIP — called once at boot */
     build/md32x/cpu__sh2__mame__sh2pico.o (.text .text*)
     build/md32x/cpu__gwenesis68k__g68k_bus.o (.text .text*)
      build/md32x/pico__32x__memory.o      (.text .text*)
      build/md32x/pico__32x__pwm.o         (.text .text*)
      build/md32x/pico__memory.o           (.text .text*)
-     /* 32X compositor hot path: FinalizeLine (224x/frame) + layer blits.
-      * Rest of draw.o stays in XIP (cold setup, unused pixel-format variants). */
-     build/md32x/pico__32x__draw.o        (.text.FinalizeLine32xRGB555 .text.PicoDraw32xLayer .text.PicoDraw32xLayerMdOnly)
+      /* 32X compositor hot path: do_loop variants (18, per-line renderers
+       * called 224x/frame) + convert_pal555 + FinalizeLine (224x/frame) +
+       * layer blits. Rest of draw.o stays in XIP (cold setup, unused
+       * pixel-format variants). */
+      build/md32x/pico__32x__draw.o (.text.convert_pal555 .text.do_loop_dc .text.do_loop_dc_h32 .text.do_loop_dc_md .text.do_loop_dc_scan .text.do_loop_dc_scan_h32 .text.do_loop_dc_scan_md .text.do_loop_pp .text.do_loop_pp_h32 .text.do_loop_pp_md .text.do_loop_pp_scan .text.do_loop_pp_scan_h32 .text.do_loop_pp_scan_md .text.do_loop_rl .text.do_loop_rl_h32 .text.do_loop_rl_md .text.do_loop_rl_scan .text.do_loop_rl_scan_h32 .text.do_loop_rl_scan_md .text.FinalizeLine32xRGB555 .text.PicoDraw32xLayer .text.PicoDraw32xLayerMdOnly)
      build/md32x/*.o (.data .data*)
     . = ALIGN(4);
     _OVERLAY_MD32X_LOAD_END = .;
@@ -572,7 +574,7 @@ INCLUDE build/fceumm_mappers.ld
     /* Hot writable state (bus maps, YM/Z80/draw contexts) rides ITCM below. */
     EXCLUDE_FILE(*pico__sound__ym2612.o *pico__draw.o *pico__32x__memory.o
                  *pico__sound__sound.o *pico__memory.o *cpu__cz80__cz80.o
-                 *pico__z80if.o) build/md32x/*.o (.bss .bss*)
+                 *pico__z80if.o *cpu__gwenesis68k__m68kcpu.o) build/md32x/*.o (.bss .bss*)
     . = ALIGN(4);
     build/md32x/*.o (COMMON)
     __ram_emu_md32x_end__ = .;
@@ -602,12 +604,10 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(__md32x_itc_bss_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM),
            "Error: MD32X ITC BSS overflow");
   }
-  /* NOTE deliberately NO static .md32x_ahb section: __ahbram_heap_start__ sits
-   * after all static AHBRAM sections, so 32X statics there would permanently
-   * shrink EVERY core's ahb_malloc pool (gwenesis needs 64K, GBA's framebuffer
-   * 75K, SNES's Apu 66K — all would break). If the overlay BSS gets tight, move
-   * buffers to runtime ahb_malloc via fork-side pointers (the GBA fb pattern),
-   * which costs only the running core. */
+  /* MD32X m68k register state (5.5KB) rides a static AHB section (.md32x_m68k_ahb
+   * above, before the heap) to free RAM_EMU for compositor do_loop variants.
+   * Costs 5.5KB of the shared AHB pool — verified GBA fb (75K), SNES Apu (66K),
+   * gwenesis (64K) all still fit in the ~80K pool that remains. */
 
   /* Cold code sweep: every build/md32x .text not claimed by the overlay above.
    * Linked at the MD32X_CODE sentinel, shipped as /cores/32x.xip, cached to
@@ -1322,6 +1322,18 @@ INCLUDE build/fceumm_mappers.ld
 
   /* only use ahb_malloc/ahb_calloc to use ahb memory ! */
   /* only audio buffer is statically allocated */
+  /* MD32X 68000 register state (5.5KB) moved from overlay BSS to static AHB
+   * to free RAM_EMU for compositor do_loop variants. Zeroed by main_md32x.c
+   * at load (the launcher memset only covers overlay BSS in RAM_EMU).
+   * Costs 5.5KB of the shared AHB pool; other cores don't use ahb_malloc. */
+  .md32x_m68k_ahb (NOLOAD) : {
+    . = ALIGN(8);
+    __md32x_m68k_ahb_start__ = .;
+    build/md32x/cpu__gwenesis68k__m68kcpu.o (.bss.m68k)
+    . = ALIGN(8);
+    __md32x_m68k_ahb_end__ = .;
+  } > AHBRAM
+
   ._ahbram (NOLOAD) :
   {
     __ahbram_start__ = .;
