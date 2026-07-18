@@ -1,6 +1,6 @@
 # SegaCD Optimization Session Handoff
 
-**Last updated:** 2026-07-18 (RAM budget analysis added)
+**Last updated:** 2026-07-18 (PCE-CD pattern applied to RAM budget)
 **Branch:** `feat/segacd` @ `5919121c` (uncommitted: RAM budget instrumentation)
 **gwenesis submodule:** `f4cedb7`
 **Worktree:** `/home/ubuntu/app/jupyterLab/notebooks/gnw-segacd`
@@ -25,7 +25,7 @@ gwenesis submodule: f4cedb7 (probe: YM2612 op_calc skip-rate)
 All changes committed. No uncommitted work.
 
 ### Next steps (priority order)
-1. **Device RAM budget CONFIRMED feasible** (Scenario C): single FB + PRG 256K + code XIP → 156K surplus. See "Device RAM Budget Analysis" section below. Real ROM test needed to confirm sub doesn't bank-switch beyond bank 1 during gameplay.
+1. **Device RAM budget CONFIRMED feasible** (Scenario C + PCE-CD pattern): single FB + PRG 256K resident + BIOS XIP + PRG bank 2-3 SD paging → 156K surplus. See "Device RAM Budget Analysis" section below. Real ROM test needed to confirm sub doesn't bank-switch beyond bank 1 during gameplay.
 2. **Firmware integration**: `segacd_cache.c` compile-verified (452B text + 212B BSS). Makefile flags: `-DHOOK_CPU -DSCD_CACHE -DSCD_Z80_IDLE_SKIP`. Needs device Makefile wiring when port is ready.
 3. **Device testing**: $7c80 delta cache + main idle-skip can't be measured on host (HOOK_CPU overhead). Device measurement is the real gate. Combined estimate: ~180-210ms (28-32%) savings.
 4. **Real ROM gameplay profiling**: Current measurements are boot-stall only. Real games may use more PRG-RAM banks, 1M Word-RAM mode, and active audio channels.
@@ -228,9 +228,26 @@ SegaCD work RAM (PRG-RAM 512K + Word-RAM 256K) = 768KB, already exceeds RAM_EMU 
 
 **Code XIP:** ~672KB text (m68kcpu 462K + Z80 49K + gwenesis ~150K + segacd ~11K) → XIP from ext flash (sm.xip precedent). Without XIP, overlay alone exceeds 724KB.
 
-### Feasibility Verdict
+### PCE-CD Pattern Applied (SD-only model)
 
-**CONDITIONALLY POSSIBLE.** Single FB + PRG 256K + code XIP fits within 724KB RAM_EMU with 156KB surplus.
+PCE-CD port (`Core/Src/porting/pce/pce_cd.c`, `main_pce.c:526-544`) establishes three patterns SegaCD can follow:
+
+**1. CD data streaming — ALREADY IMPLEMENTED** ✅
+- `segacd_cd.c:189 read_sector(lba, dst, want)` uses persistent FILE* + fseek + fread (identical to PCE-CD's `pce_cd_read_sector`).
+- CD-DA audio also streamed. No disc image in RAM.
+
+**2. Sub-BIOS flash XIP — 128KB savings** ✅
+- PCE-CD XIPs its 256KB System Card BIOS via `odroid_overlay_cache_file_in_flash()`.
+- SegaCD sub-BIOS (128KB) currently RAM-loaded (`segacd_cd.c:231 segacd_load_bios`). Flash XIP candidate.
+
+**3. PRG bank 2-3 SD paging — 256KB savings** ✅
+- Bank switches via $FF8033 register write (rare, not per-instruction).
+- Banks 0-1 (256K) resident in RAM. Banks 2-3 loaded from SD on demand.
+- Boot-stall measurement: sub only uses bank 0 (128K). Main writes all banks during boot (BIOS + program load).
+
+### Feasibility Verdict (updated with PCE-CD pattern)
+
+**CONDITIONALLY POSSIBLE.** Single FB + PRG 256K resident + BIOS XIP + PRG bank 2-3 SD paging → RAM_EMU 718K / 874K available = **156K surplus. FITS.**
 
 **Caveats:**
 1. **Boot-stall measurement only.** Real gameplay may use more PRG-RAM (sub bank-switching for game code) or 1M Word-RAM mode. Need real ROM test.
