@@ -78,6 +78,16 @@ endif
 # build_snes_cost.sh but uses DWT_CYCCNT instead of rig_timer_now().
 SNES_LOAD_DIAG ?= 0
 
+# On-device 32X frame-cost breakdown. Default OFF: the release build is
+# byte-identical (no -DMD32X_DEVICE_PROFILE; picodrive's pprof probes stay
+# no-ops). Enable with MD32X_DEVICE_PROFILE=1 to arm DWT_CYCCNT and split
+# PicoFrame() into master/slave SH-2, 68K, MD VDP draw, 32X compositor draw,
+# FM/PWM sound — riding picodrive's existing pprof_start/pprof_end probes
+# (see external/picodrive/platform/linux/pprof.h) instead of duplicating
+# instrumentation. The coarse pace/proc/pico/blit/audio/total buckets in
+# Core/Src/porting/md32x/main_md32x.c dump to /32x_dwt.txt at the same time.
+MD32X_DEVICE_PROFILE ?= 0
+
 # rc SMW native optimization: per-ROM static recompilation of SMW's 270
 # hottest 65816 sites. The ~12 KB native subset is appended to snes.bin and
 # copied into ITCM at core load; cold sites fall through to the interpreter.
@@ -1251,6 +1261,9 @@ MD32X_C_INCLUDES = \
 # TABLES_FULL is REQUIRED — the compact jump table truncates at 0xEFC0 and
 # line-F opcodes would index out of bounds.
 MD32X_C_DEFS = -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DGNW_32X_CORE -DLSB_FIRST
+ifeq ($(MD32X_DEVICE_PROFILE),1)
+MD32X_C_DEFS += -DMD32X_DEVICE_PROFILE
+endif
 
 C_INCLUDES +=  \
 -ICore/Inc \

@@ -535,6 +535,32 @@ static bool prof_active;    /* false if AHB alloc failed   */
  * contiguous (qsort in the dump operates on a bucket's slice in place). */
 #define PROF_AT(pool, bucket, i)  ((pool)[(bucket) * MD32X_PROFILE_FRAMES + (i)])
 
+/* ---- PicoFrame() sub-phase breakdown (rides picodrive's pprof probes) ----
+ *
+ * The PROF_BUCK_PICO bucket above says how much of the frame is PicoFrame().
+ * It does not say WHICH part dominates: master SH-2, slave SH-2, 68K, MD VDP
+ * draw, 32X compositor draw (Draw2FB/FinalizeLine32x), or FM/PWM mixing.
+ * picodrive already brackets every one of these with pprof_start/pprof_end
+ * (external/picodrive/platform/linux/pprof.h and the call sites in
+ * pico/32x/32x.c, pico/draw.c, pico/sound/sound.c) — normally live only for
+ * the QEMU rig's RIG_PHASE_PROF build. Defining MD32X_DEVICE_PROFILE routes
+ * the SAME probes to DWT_CYCCNT (md32x_dwt_now() below) instead of the rig's
+ * icount timer, so the exact disjoint accounting the rig used to rank ROMs
+ * (docs/32X_PERFORMANCE_RESULTS.md) now runs on real hardware.
+ *
+ * Storage: pico_int.h declares `pp_counters`/`refcounts` extern; something
+ * has to define them once the firmware links picodrive in, same as the QEMU
+ * rig does in tools/m7_qemu_rig/rig_32x.c. Sum-only over the whole profiling
+ * window (no percentile pools) — the open question is which phase dominates
+ * PicoFrame() on average, not its frame-to-frame variance.
+ */
+static struct pp_counters s_pp_counters;
+struct pp_counters *pp_counters = &s_pp_counters;
+static int s_pp_refcounts[pp_total_points];
+int *refcounts = s_pp_refcounts;
+
+unsigned int md32x_dwt_now(void) { return common_emu_get_dwt_cycles(); }
+
 /* Allocate the two delta pools from AHB SRAM. Called once before the main
  * loop. On failure, prof_active stays false and profiling is silently inert. */
 static void md32x_profile_init(void) {
@@ -633,6 +659,46 @@ static void md32x_profile_dump(void) {
     prof_emit_bucket(f, names[b], 1,
                      prof_delta_skip + b * MD32X_PROFILE_FRAMES,
                      prof_skip_count, prof_sum_skip[b]);
+  }
+
+  /* PicoFrame() sub-phase breakdown (picodrive pprof probes, sum-only —
+   * see the block comment above pp_counters/refcounts). pico_total is the
+   * SAME quantity PROF_BUCK_PICO measured from the outside; it is printed
+   * so the two can be cross-checked against each other. Any nonzero
+   * refcount below means a pprof_start/pprof_end pair leaked (should never
+   * happen — see the widened gates in draw.c/32x.c/sound.c) and the sums
+   * above it are suspect. */
+  {
+    uint32_t total_frames = prof_drawn_count + prof_skip_count;
+    uint64_t pico_total = prof_sum_drawn[PROF_BUCK_PICO] + prof_sum_skip[PROF_BUCK_PICO];
+    static const struct { int point; const char *label; } phases[] = {
+      { pp_frame,   "frame"   },  /* whole PicoFrame() — cross-check vs pico above */
+      { pp_msh2,    "msh2"    },  /* master SH-2 interpreter                       */
+      { pp_ssh2,    "ssh2"    },  /* slave SH-2 interpreter                        */
+      { pp_m68k,    "m68k"    },  /* 68000 interpreter                            */
+      { pp_draw,    "draw_md" },  /* MD VDP line render (pico/draw.c)             */
+      { pp_draw32x, "draw32x" },  /* 32X compositor layer merge (pico/32x/draw.c) */
+      { pp_sound,   "sound"   },  /* PSG/mix, excludes fm/pwm paused sub-windows   */
+      { pp_fm,      "fm"      },  /* YM2612 render                                */
+      { pp_pwm,     "pwm"     },  /* 32X PWM chip render                          */
+    };
+    int leaked = 0;
+    for (uint32_t i = 0; i < ARRAY_SIZE(phases); i++)
+      if (s_pp_refcounts[phases[i].point] != 0) leaked++;
+
+    fprintf(f, "picoframe sub-phases (sum over whole window, refcount_leaks=%d):\n",
+            leaked);
+    fprintf(f, "  pico_total(outside)=%llu  frame_total(pprof)=%llu\n",
+            (unsigned long long)pico_total,
+            (unsigned long long)s_pp_counters.counter[pp_frame]);
+    for (uint32_t i = 0; i < ARRAY_SIZE(phases); i++) {
+      uint64_t sum = (uint64_t)s_pp_counters.counter[phases[i].point];
+      uint64_t avg = total_frames ? sum / total_frames : 0;
+      unsigned pct_x10 = pico_total ? (unsigned)((sum * 1000) / pico_total) : 0;
+      fprintf(f, "  %-8s: sum=%llu avg/frame=%llu pct_of_pico=%u.%u%%\n",
+              phases[i].label, (unsigned long long)sum,
+              (unsigned long long)avg, pct_x10 / 10, pct_x10 % 10);
+    }
   }
 
   wdog_refresh();
