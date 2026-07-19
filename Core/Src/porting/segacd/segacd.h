@@ -11,7 +11,7 @@
 #include <stdio.h>   /* m68k.h uses FILE in its savestate prototypes */
 #include "m68k.h"   /* m68ki_cpu_core — the sub-CPU context type */
 
-#define SEGACD_PRG_RAM_SIZE   (512 * 1024)   /* sub-CPU program/work RAM */
+#define SEGACD_PRG_RAM_SIZE   (256 * 1024)   /* sub-CPU program/work RAM */
 #define SEGACD_WORD_RAM_SIZE  (256 * 1024)   /* shared graphics RAM (2M mode) */
 #define SEGACD_PCM_RAM_SIZE   (64  * 1024)   /* RF5C164 waveform RAM */
 #define SEGACD_BRAM_SIZE      (8   * 1024)   /* internal battery backup */
