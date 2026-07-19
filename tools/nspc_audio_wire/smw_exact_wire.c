@@ -29,11 +29,7 @@ void SmwSpcPlayer_FinishRawUpload(SpcPlayer *p);
 void apu_run_lle(Apu *apu, int cyclesToRun);
 
 int g_wire_on;
-#ifdef SNES_SMW_HLE_PRODUCT
-int g_wire_enable;              /* enabled only by full-ROM identity gate */
-#else
-int g_wire_enable = 1;
-#endif
+int g_wire_enable = 1;          /* master switch; detection stays ARAM-based */
 const char *g_wire_variant = "-";
 
 static SpcPlayer *g_player;
@@ -52,14 +48,24 @@ static bool g_upload_finish_ack;
 static void adopt_lle_state(Snes *snes);
 
 bool wire_configure_rom(const uint8_t *rom, uint32_t len) {
-  uint32_t h = 0x811c9dc5u;
-  for (uint32_t i = 0; i < len; i++) {
-    h ^= rom[i];
-    h *= 0x01000193u;
-  }
-  /* Exact US vanilla image used by external/smw. Hacks and other revisions
-   * retain the fully compatible LLE path instead of risking wrong tables. */
-  g_wire_enable = (len == 524288u && h == 0xae8466a1u);
+  /* Identity is established by the ARAM driver signature (ptnJumpToVcmdSMW),
+   * not by a full-ROM hash.  The SMW sound engine is byte-identical across
+   * the US vanilla image, Korean translations, bug-fix hacks and most
+   * level packs — they all upload the same N-SPC driver blob to ARAM, where
+   * wire_try_swap() detects it via SNES_DRIVER_SIGS.  A full-ROM CRC (or an
+   * exact-title compare) would deny HLE to every translated or hacked SMW,
+   * and to boot would be plain wrong: the real internal title has no space
+   * between MARIO and WORLD ("SUPER MARIOWORLD", external/sm's
+   * spin_skip.c:156), not "SUPER MARIO WORLD" — a 21-byte compare against
+   * that never matched vanilla SMW at all (g_wire_enable stuck at 0, pure
+   * SPC700 LLE, 55.4fps -> 46fps).  The LoROM internal-title field (0x7FC0)
+   * is now only a cheap boot-log hint; detection itself is unconditionally
+   * armed and stays ARAM-based so a title-hacked ROM is still covered by
+   * has_smw_driver() in wire_try_swap(). */
+  static const char smw_title_prefix[16] = "SUPER MARIOWORLD";
+  const uint8_t *title = (len >= 0x7FD0u) ? rom + 0x7FC0u : NULL;
+  bool title_hint = title && memcmp(title, smw_title_prefix, sizeof(smw_title_prefix)) == 0;
+  g_wire_enable = 1;
   g_wire_on = 0;
   g_player = NULL;
   g_apu = NULL;
@@ -68,7 +74,7 @@ bool wire_configure_rom(const uint8_t *rom, uint32_t len) {
   g_upload_mode = UPLOAD_IDLE;
   g_upload_finish_ack = false;
   g_frame = 0;
-  return g_wire_enable != 0;
+  return title_hint;
 }
 
 void wire_prepare_save(void) {

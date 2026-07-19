@@ -101,7 +101,10 @@ static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
 #ifdef RIG_DEVICE_VIDEO
 static uint16_t g_line[256];
-static uint16_t g_device_frame[320 * 240];
+/* The normal 224-line image starts at row 8.  Keep eight hidden tail rows so
+ * an overscan frame (240 lines) can still render directly without writing
+ * beyond the backing store; only the visible first 240 rows are presented. */
+static uint16_t g_device_frame[320 * (240 + 8)];
 static uint16_t g_lcd_frame[320 * 240];
 static void rig_blit_line(unsigned y, const uint16_t *line) {
   if (y < 1) return;
@@ -306,8 +309,15 @@ int main(void) {
     snes->input1->currentState = 0;
 #endif
 #ifdef RIG_DEVICE_VIDEO
+#ifdef RIG_DIRECT_VIDEO
+    g_ppu_line_cb = NULL;
+    PpuBeginDrawing(snes->ppu,
+                    (uint8_t *)(g_device_frame + 8 * 320 + 32),
+                    320 * 2, 0);
+#else
     g_ppu_line_cb = &rig_blit_line;
     PpuBeginDrawing(snes->ppu, (uint8_t *)g_line, 0, 0);
+#endif
 #else
     PpuBeginDrawing(snes->ppu, (uint8_t *)(g_fb + 32), 320 * 2, 0);
 #endif
@@ -337,7 +347,9 @@ int main(void) {
     win_apu += (uint32_t)(t2 - ta);
 
 #ifdef RIG_DEVICE_VIDEO
-    uint64_t h = fnv1a(g_device_frame, sizeof(g_device_frame));
+    /* The extra eight rows only make direct overscan writes memory-safe; they
+     * are outside the LCD image and must not participate in the video gate. */
+    uint64_t h = fnv1a(g_device_frame, sizeof(g_lcd_frame));
 #else
     uint64_t h = fnv1a(g_fb, sizeof(g_fb));
 #endif

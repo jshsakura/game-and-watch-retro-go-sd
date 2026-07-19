@@ -234,39 +234,87 @@ static uint16_t read_snes_pad(odroid_gamepad_state_t *joy) {
 }
 
 /* ---- video ----------------------------------------------------------------
- * The line renderer writes RGB565. 256 px wide into the 320x240 panel with a
- * 32 px left margin and 8 px top margin — vertically centred (matches the SM
- * homebrew placement in main_sm.c). SNES renders up to 224 visible lines; the
- * row guard clips any overscan that would run past the framebuffer. */
-/* Video. The PPU renders one line at a time into snes_line (renderPitch 0 → every
- * line lands in the same scratch) and hands it to g_ppu_line_cb — the contract the
- * recent PPU refactor (681371b) introduced and the SM port already uses. We place
- * each line into a PRIVATE persistent framebuffer (snes_frame), then copy the whole
- * frame to the LCD's active buffer at present time. That is the robust pattern GBA
- * uses: the LCD is double-buffered, and painting a full frame into whichever buffer
- * is active each present keeps BOTH buffers complete — rendering per-line straight
- * into the active buffer left the OTHER buffer stale (black on the device, strobing
- * after an overlay toggle). 256 px wide, 32 px left margin, 8 px top margin; the
- * private buffer's borders are cleared once and stay black. */
+ * Render into a PRIVATE persistent framebuffer, then copy the complete visible
+ * 320x240 image to whichever LCD buffer is active.  This keeps both LCD buffers
+ * complete across swaps/overlays.  SNES_DIRECT_VIDEO lets the PPU write its RGB565
+ * scanlines directly into that private framebuffer, removing the old 512-byte
+ * scratch-to-frame memcpy on every visible line. */
 #define SNES_TOP_MARGIN  ((GW_LCD_HEIGHT - SNES_HEIGHT) / 2)   /* (240-224)/2 = 8 */
 #define SNES_LEFT_MARGIN ((GW_LCD_WIDTH - SNES_WIDTH) / 2)     /* (320-256)/2 = 32 */
+#ifdef SNES_DIRECT_VIDEO
+/* Overscan can produce 240 lines.  Starting at row 8 therefore needs eight
+ * hidden tail rows; present_frame still copies only the visible 240 rows. */
+#define SNES_FRAME_ROWS (GW_LCD_HEIGHT + SNES_TOP_MARGIN)
+#else
+#define SNES_FRAME_ROWS GW_LCD_HEIGHT
 static uint16_t snes_line[256];
-static uint16_t snes_frame[GW_LCD_WIDTH * GW_LCD_HEIGHT];
+#endif
+static uint16_t snes_frame[GW_LCD_WIDTH * SNES_FRAME_ROWS];
 
+#ifndef SNES_DIRECT_VIDEO
 static void snes_blit_line(unsigned y, const uint16_t *line) {
   if (y < 1) return;   /* y is 1-based */
   unsigned row = (y - 1) + SNES_TOP_MARGIN;
   if (row >= GW_LCD_HEIGHT) return;   /* clip overscan past the panel */
   memcpy(snes_frame + row * GW_LCD_WIDTH + SNES_LEFT_MARGIN, line, sizeof(snes_line));
 }
+#endif
 
 static void render_frame_into_active_buffer(void) {
+#ifdef SNES_DIRECT_VIDEO
+  g_ppu_line_cb = NULL;
+  PpuBeginDrawing(snes->ppu,
+                  (uint8_t *)(snes_frame + SNES_TOP_MARGIN * GW_LCD_WIDTH +
+                              SNES_LEFT_MARGIN),
+                  GW_LCD_WIDTH * sizeof(uint16_t), 0);
+#else
   g_ppu_line_cb = &snes_blit_line;
   PpuBeginDrawing(snes->ppu, (uint8_t *)snes_line, 0, 0);  /* pitch 0: every line here */
+#endif
 }
 
 static void present_frame(void) {
-  memcpy(lcd_get_active_buffer(), snes_frame, sizeof(snes_frame));
+  uint16_t *dst = lcd_get_active_buffer();
+  odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
+
+  if (scaling == ODROID_DISPLAY_SCALING_OFF) {
+    /* 1:1 centred (256x224 in 320x240): snes_frame already has black borders
+     * baked in (cleared once at init), so a straight memcpy is correct and
+     * the cheapest path — the one every shipped build took until now. */
+    memcpy(dst, snes_frame, GW_LCD_WIDTH * GW_LCD_HEIGHT * sizeof(uint16_t));
+    return;
+  }
+
+  if (scaling == ODROID_DISPLAY_SCALING_FULL) {
+    /* Stretch 256x224 → 320x240 (fills the panel, slight aspect distortion).
+     * Nearest-neighbour: for each dest pixel, pick the closest source pixel. */
+    for (int y = 0; y < GW_LCD_HEIGHT; y++) {
+      int sy = (y * SNES_HEIGHT) / GW_LCD_HEIGHT;
+      const uint16_t *srow = snes_frame + (sy + SNES_TOP_MARGIN) * GW_LCD_WIDTH + SNES_LEFT_MARGIN;
+      uint16_t *drow = dst + y * GW_LCD_WIDTH;
+      for (int x = 0; x < GW_LCD_WIDTH; x++)
+        drow[x] = srow[(x * SNES_WIDTH) / GW_LCD_WIDTH];
+    }
+    return;
+  }
+
+  /* FIT (and CUSTOM, treated the same): aspect-preserving. SNES 256:224 =
+   * 8:7 ≈ 1.143. The LCD 320:240 = 4:3 ≈ 1.333 is wider, so fill the height
+   * (240) and letterbox the width: fit_w = 240 * 256/224 ≈ 274, side borders
+   * ≈ 23 px each. */
+  {
+    int fit_w = (SNES_WIDTH * GW_LCD_HEIGHT + SNES_HEIGHT / 2) / SNES_HEIGHT;
+    int lpad = (GW_LCD_WIDTH - fit_w) / 2;
+    for (int y = 0; y < GW_LCD_HEIGHT; y++) {
+      int sy = (y * SNES_HEIGHT) / GW_LCD_HEIGHT;
+      const uint16_t *srow = snes_frame + (sy + SNES_TOP_MARGIN) * GW_LCD_WIDTH + SNES_LEFT_MARGIN;
+      uint16_t *drow = dst + y * GW_LCD_WIDTH;
+      for (int x = 0; x < lpad; x++) drow[x] = 0;          /* left border */
+      for (int x = 0; x < fit_w; x++)
+        drow[lpad + x] = srow[(x * SNES_WIDTH) / fit_w];   /* scaled image */
+      for (int x = lpad + fit_w; x < GW_LCD_WIDTH; x++) drow[x] = 0;  /* right */
+    }
+  }
 }
 
 /* Present the last rendered frame and draw the in-game overlay on top. Used both
@@ -792,6 +840,49 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     snes_pcm_submit();
 
-    common_emu_sound_sync(false);
+    /* Pace the loop by the audio DMA UNCONDITIONALLY (WS pattern,
+     * main_wswan.c:348-366). common_emu_sound_sync skips this wait when
+     * skip_frames>0, which let heavy SNES games run ahead of real time and
+     * play audio at fast-forward speed (SMW 55fps = 92% speed, SM 31fps =
+     * half speed). Waiting for one DMA tick every frame caps the emulator at
+     * real time so the tempo is correct; on frames that genuinely overran,
+     * the DMA has already advanced so this passes through with no delay.
+     *
+     * Catch-up: if the DMA advanced multiple periods during a slow frame,
+     * produce extra audio batches so the next periods have fresh data. Stale
+     * audio from the underrun period itself is irrecoverable, but this
+     * prevents compounding — both half-buffers end up fresh. HLE (SMW)
+     * produces audio cheaply (no SPC700); LLE (Zelda/SM) pays ~0.5ms per
+     * extra batch (one DSP frame of apu_cycle). Port sync for LLE: extra
+     * apu_cycle calls advance SPC700 beyond the CPU frame; SPC700 reads
+     * stale $2140-43 ports — inaudible for music (N-SPC polls ports
+     * periodically, not per-sample). */
+    if (odroid_system_get_app()->speedupEnabled == SPEEDUP_1x) {
+        static uint32_t snes_last_dma = 0;
+        if (snes_last_dma == 0) snes_last_dma = dma_counter;
+        while (dma_counter == snes_last_dma)
+            cpumon_sleep();
+        uint32_t elapsed = dma_counter - snes_last_dma;
+        snes_last_dma = dma_counter;
+        /* Catch-up only for HLE: wire_frame_audio produces samples without
+         * advancing the SPC700, so extra batches are free and tempo stays
+         * exact. For LLE, extra apu_cycle calls would drift the SPC700's
+         * internal timer relative to the CPU, changing music tempo (the
+         * port-sync-drift the user flagged). LLE accepts the underrun
+         * (stale audio for one DMA period on slow frames) rather than
+         * distorting tempo — the WS unconditional wait above already
+         * guarantees correct playback speed. */
+#ifdef SNES_SMW_HLE_PRODUCT
+        if (g_wire_on) {
+            while (elapsed > 1) {
+                snes_pcm_submit();
+                while (dma_counter == snes_last_dma)
+                    cpumon_sleep();
+                snes_last_dma = dma_counter;
+                elapsed--;
+            }
+        }
+#endif
+    }
   }
 }
