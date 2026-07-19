@@ -520,3 +520,68 @@ tcache 4MB 기본)이 RAM_EMU 724KB 초과 → **불가**.
 - (b) keep 5종 커밋(picodrive: SDRAM poll + BFS GBR poll; memory.c: PWM poll) + push.
 - (c) 디바이스 DWT 검증(QEMU rig 수치 → 실제 fps 환산).
 - (d) 세가CD 작업으로 전환.
+
+## 측정 9 — 실기 DWT: idle-skip 효과 0, 진짜 병목은 미확인 (0720, Sonnet)
+
+**실기(하드웨어) 보고**: Doom 32X 는 13–16fps, idle-skip(마스터 SH-2 idle 스킵) 적용해도
+효과 0. 측정 1–8 은 전부 QEMU rig icount 기준 — 리그가 "keep" 판정한 레버(BFS countdown,
+SDRAM poll, PWM poll)가 **실기에서는 이득이 측정되지 않았다.** `명령어 수 ≠ 기기 사이클
+(캐시/XIP 스톨)` 원칙([[vb-blit-memory-stall]] 규칙과 동일 계열) — QEMU icount 리그는
+캐시미스나 SDRAM 대역폭 스톨을 못 본다. 결론: 다음 최적화를 리그 수치만으로 결정하면 안
+되고, **기기 DWT 로 진짜 병목을 먼저 특정**해야 한다.
+
+### 작업 1 — 오프태스크 오버클럭 커밋 정리
+
+`3eca6340 "md32x: Overclock SH-2 for Doom 32X"` (GLM) 가 idle-skip 여유를 근거로 SH-2
+클럭을 2배로 올리는 우회를 했었다 — 병목을 찾지 않고 클럭으로 덮는 것은 이 프로젝트 원칙
+("CPU 로 찍어누르지 말고 기술로 우회하라")에 위배. `git revert 3eca6340` 는 같은 커밋에
+섞여 있던 SNES DSP A/B 게이트 인프라(`build_snes_cost.sh`, `run_snes_ppu_deep.py`, 이후
+커밋 `96cfb21d` 가 의존)까지 지워버려 사용 불가 — 4개 32X 전용 파일(main_md32x.c 오버클록
+호출부, rig_32x.c 컴파일타임 Pico32xSetClocks, run_32x.sh 프레임 기본값, picodrive
+서브모듈 포인터)만 손으로 골라 되돌림. picodrive 는 `e3de4645`(출하된 idle-skip+워치독)
+로 복귀. 커밋 `89878265`.
+
+### 작업 2 — MD32X_DEVICE_PROFILE 서브페이즈 분해 추가
+
+기존 코어스 버킷(pace/proc/pico/blit/audio/total)은 "PicoFrame() 이 비싸다"까지만 말하고
+**어느 부분**(마스터 SH-2 / 슬레이브 SH-2 / 68K / MD VDP draw / 32X compositor draw
+(Draw2FB·FinalizeLine32x) / FM·PWM)이 지배적인지는 말 못함. picodrive 에 이미 QEMU 리그용
+`RIG_PHASE_PROF` 하에서 정확히 이 경계들을 감싸는 `pprof_start`/`pprof_end` 계측이 있음
+(`platform/linux/pprof.h`, `pico/32x/32x.c`, `pico/draw.c`, `pico/sound/sound.c`) — 별도
+계측을 새로 안 만들고 이 프로브를 재사용:
+
+- `pico_int.h`: `PPROF` 게이트를 `RIG_PHASE_PROF || MD32X_DEVICE_PROFILE` 로 확장.
+- `platform/linux/pprof.h`: `pprof_get_one()` 에 기기 분기 추가 —
+  `md32x_dwt_now()`(main_md32x.c 에서 `common_emu_get_dwt_cycles()` 래핑) 로 라우팅.
+  `pp_fm`/`pp_pwm`/`pp_draw32x` enum 항목도 같은 조건으로 확장.
+- `32x.c`/`draw.c`/`sound.c`: 3곳의 `#ifdef RIG_PHASE_PROF` CPU-pause 쌍을 확장. **주의**:
+  `draw.c` 에 `#ifndef RIG_PHASE_PROF { ... return; }` 조기 리턴이 하나 있었는데, 이건
+  PPROF 가 아예 undef 일 때만 안전(매크로가 no-op 이므로) — MD32X_DEVICE_PROFILE 만 켠
+  상태에서 이 가드를 안 넓혔으면 `pp_draw` refcount 가 영구 누수됐을 것. 발견 즉시 같이
+  넓힘(`#if !RIG_PHASE_PROF && !MD32X_DEVICE_PROFILE`).
+- `main_md32x.c`: `pp_counters`/`refcounts` 스토리지 정의(QEMU 리그의 `rig_32x.c` 패턴과
+  동일), `md32x_dwt_now()` 구현, `/32x_dwt.txt` 덤프에 "picoframe sub-phases" 절 추가 —
+  각 phase 의 sum/avg-per-frame/pico 대비 %, refcount 누수 체크.
+- Makefile: `MD32X_DEVICE_PROFILE ?= 0` (SNES_LOAD_DIAG 와 동일 패턴, 기본 OFF 시
+  바이트동일).
+
+**설계**: 코어스 버킷과 달리 서브페이즈는 **합계만**(퍼센타일 풀 없음) — 질문이 "프레임마다
+편차가 얼마냐"가 아니라 "평균적으로 어느 phase 가 지배적이냐"이기 때문.
+
+**자체검증(로컬, docker 미사용 — 메인 repo 도커 빌드는 Opus 전담)**: 정확한 Makefile 플래그
+셋으로 `32x.c`/`draw.c`/`sound.c`/`main_md32x.c` 를 MD32X_DEVICE_PROFILE=1 켠 것과 끈 것
+양쪽 다 arm-none-eabi-gcc 로 단독 컴파일 성공(경고 0). 커밋 `60681f01`.
+
+### 다음 (device 실측 — Opus/기기 보유 세션)
+
+1. `make release DOCKER=1 MD32X_DEVICE_PROFILE=1 ...` (다른 정식 플래그와 함께) 빌드.
+2. 실기에서 Doom 32X 를 켜고 ~600 프레임(NTSC 10초) 플레이 — 덤프는 자동 1회.
+3. `/32x_dwt.txt` 를 받아 "picoframe sub-phases" 절을 읽는다: `msh2`/`ssh2`/`m68k`/
+   `draw_md`/`draw32x`/`sound`/`fm`/`pwm` 의 `pct_of_pico` 를 비교 — 어느 것이 지배적인지가
+   다음 레버를 결정한다(슬레이브 SH-2 인터프리트 vs 드로잉이라는 이번 임무의 핵심 질문).
+   `refcount_leaks` 가 0인지도 확인(0이 아니면 계측 자체가 깨진 것 — 수치 무시).
+4. `frame_total(pprof)` 과 `pico_total(outside)` 이 서로 근사한지 확인(둘 다 PicoFrame()
+   전체를 재는 독립적인 두 경로 — 크게 어긋나면 계측 버그).
+5. 결과에 따라: 슬레이브 SH-2 지배적이면 인터프리터 최적화(레이지플래그/스레디드디스패치,
+   위 프로젝트 철학 항목 ②)로, draw32x/draw_md 지배적이면 렌더러 최적화(④)로 방향을 튼다 —
+   측정 없이 추측하지 않는다.
