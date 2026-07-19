@@ -619,12 +619,10 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * here: it is read-only flash, not heap, and the header-skip may have offset
    * it past a copier header (snes_rom + 0x200). */
 
-#ifdef SNES_LOAD_DIAG
-  /* Load-time SD diagnostics + headless DWT profile. Gated OFF by default:
-   * the profile2 block below runs 500 headless frames (~11-18 s) and would
-   * otherwise stall every SNES boot on the "loading" screen. Build with
-   * -DSNES_LOAD_DIAG to re-enable when a device measurement is needed. */
-  /* DEBUG: SAFE one-shot probe at LOAD time — before the frame loop,
+  /* Cheap one-shot boot log — always on (instant, SD idle). The expensive
+   * 500-frame DWT profile further below is gated behind SNES_LOAD_DIAG so it
+   * never stalls the loading screen.
+   * SAFE one-shot probe at LOAD time — before the frame loop,
    * SD idle, never mid-play. Writes straight from the overlay (extflash has room;
    * the resident sd_save_log path would overflow intflash) to /snes_diag.txt.
    * Reports whether the flash-cached ROM reads back sane (internal title +
@@ -643,8 +641,10 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
       title[21] = 0;
       uint32_t sum = 0;
       for (uint32_t i = 0; r && i < rs && i < 0x10000; i++) sum += r[i];
-      fprintf(df, "SNES load: type=%d size=%lu title=[%s] sum64k=%08lX\n",
-              snes->cart->type, (unsigned long)rs, title, (unsigned long)sum);
+      extern bool g_rc_active;
+      fprintf(df, "SNES load: type=%d size=%lu title=[%s] sum64k=%08lX rc=%d\n",
+              snes->cart->type, (unsigned long)rs, title, (unsigned long)sum,
+              (int)g_rc_active);
       fclose(df);
     }
   }
@@ -653,7 +653,10 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * interpreter+APU 7.12M, PPU +2.82M, audio 0.71M → ~29 fps raw. Rig insn ≈
    * device cycle ~1:1.) */
 
-  /* DEBUG (strip later): post-lever frame-cost PROFILE — same DWT probe, now
+#ifdef SNES_LOAD_DIAG
+  /* Headless 500-frame DWT profile (~11-18 s stall). Gated OFF by default;
+   * build -DSNES_LOAD_DIAG to measure emu_skip/emu_draw/audio on device.
+   * post-lever frame-cost PROFILE — same DWT probe, now
    * with spin-skip stats, so the next lever is aimed at a measured number, not
    * a guess. Headless, before the interactive loop, SD idle, wdog kicked. */
   {
