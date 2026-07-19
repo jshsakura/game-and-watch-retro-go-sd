@@ -67,6 +67,17 @@ ifeq ($(RC_PROBE),1)
   C_DEFS += -DRC_PROBE=1
 endif
 
+# On-device SNES APU cost breakdown. Default OFF: the release build is
+# byte-identical (no Python script runs, no -DSNES_LOAD_DIAG, apu.c and
+# dsp.c compile from external/sm untouched). Enable with SNES_LOAD_DIAG=1
+# to swap in DWT-instrumented copies that bracket spc_runOpcode /
+# dsp_cycle / dsp_handleEcho with cycle deltas. The wiring lives in
+# Makefile.common (search SNES_DIAG_DIR); the SNES_LOAD_DIAG block in
+# Core/Src/porting/snes/main_snes.c dumps the buckets to /snes_diag.txt
+# at load time, before the frame loop. Mirrors tools/m7_qemu_rig's
+# build_snes_cost.sh but uses DWT_CYCCNT instead of rig_timer_now().
+SNES_LOAD_DIAG ?= 0
+
 # rc SMW native optimization: per-ROM static recompilation of SMW's 270
 # hottest 65816 sites. The ~12 KB native subset is appended to snes.bin and
 # copied into ITCM at core load; cold sites fall through to the interpreter.

@@ -626,12 +626,24 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
 #ifdef SNES_LOAD_DIAG
   /* Headless 500-frame DWT profile (~11-18 s stall). Gated OFF by default;
-   * build -DSNES_LOAD_DIAG to measure emu_skip/emu_draw/audio on device.
-   * post-lever frame-cost PROFILE — same DWT probe, now
-   * with spin-skip stats, so the next lever is aimed at a measured number, not
-   * a guess. Headless, before the interactive loop, SD idle, wdog kicked. */
+   * build with -DSNES_LOAD_DIAG (the Makefile's SNES_LOAD_DIAG=1 flag wires
+   * it up and swaps in DWT-instrumented apu.c/dsp.c copies that feed the
+   * three g_diag_* buckets below). Post-lever frame-cost PROFILE -- same
+   * DWT probe, now with spin-skip stats AND an APU split (SPC700 vs DSP,
+   * DSP further split into echo FIR vs the rest), so the next lever is
+   * aimed at a measured number, not a guess. Headless, before the
+   * interactive loop, SD idle, wdog kicked.
+   *
+   * The g_diag_* counters are defined in the generated apu.c and incremented
+   * at every spc_runOpcode / dsp_cycle / dsp_handleEcho call site. They are
+   * read ONCE after the 250-frame draw loop and divided by 250 for a per-
+   * frame average; DWT_CYCCNT is reset per frame (preserving the existing
+   * cyc_skip/cyc_draw measurement), and the per-call deltas the
+   * instrumentation accumulates are independent of that reset. */
   {
     extern uint32_t SystemCoreClock;
+    extern uint64_t gsnes__g_diag_spc_cycles, gsnes__g_diag_dsp_cycles,
+                    gsnes__g_diag_dsp_echo_cycles;
     common_emu_enable_dwt_cycles();
     uint64_t cyc_skip = 0, cyc_draw = 0, cyc_audio = 0;
 
@@ -644,6 +656,13 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
       cyc_skip += common_emu_get_dwt_cycles();
     }
     uint64_t spin_v0 = g_spin.ops_virtual, spin_r0 = g_spin.ops_real;
+
+    /* Zero the APU buckets AFTER the skip loop (which also runs the APU) so
+     * the read below captures the draw loop only -- the path the device
+     * actually takes when PPU is on and audio is streaming. */
+    gsnes__g_diag_spc_cycles = 0;
+    gsnes__g_diag_dsp_cycles = 0;
+    gsnes__g_diag_dsp_echo_cycles = 0;
 
     memset(snes_frame, 0, sizeof(snes_frame));
     for (int i = 0; i < 250; i++) {           /* + PPU line renderer + audio */
@@ -660,13 +679,37 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     }
     uint64_t vd = g_spin.ops_virtual - spin_v0, rd = g_spin.ops_real - spin_r0;
 
+    /* 250-frame sums -> per-frame averages. skeleton = interpreter+memory
+     * alone (cyc_skip minus the APU work that the skip loop also ran);
+     * PPU = cyc_draw - cyc_skip (the line renderer + mode 7 the skip loop
+     * skipped); DSP non-echo = dsp - echo (the channel mix path a 16 kHz
+     * mono decimation would NOT touch); echo = the FIR filter work it
+     * WOULD halve. audio = snes_pcm_submit (the DMA buffer handoff). */
+    uint64_t skel_pf = cyc_skip / 250 - gsnes__g_diag_spc_cycles / 250
+                     - gsnes__g_diag_dsp_cycles / 250;
+    uint64_t ppu_pf  = (cyc_draw - cyc_skip) / 250;
+    uint64_t spc_pf  = gsnes__g_diag_spc_cycles / 250;
+    uint64_t dsp_pf  = gsnes__g_diag_dsp_cycles / 250;
+    uint64_t echo_pf = gsnes__g_diag_dsp_echo_cycles / 250;
+    uint64_t nonecho_pf = dsp_pf - echo_pf;
+    uint64_t audio_pf = cyc_audio / 250;
+    uint64_t total_pf = skel_pf + ppu_pf + spc_pf + dsp_pf + audio_pf;
+
     FILE *df = fopen("/snes_diag.txt", "a");
     if (df) {
-      fprintf(df, "SNES profile2: clk=%lu emu_skip=%lu emu_draw=%lu audio=%lu cyc/frame "
-                  "spin=%lu%%(gate=%d) rc=%d(hash=%08lX/exp=%08lX)\n",
+      fprintf(df, "SNES profile3: clk=%lu skel=%lu(%lu%%) ppu=%lu(%lu%%) "
+                  "spc=%lu(%lu%%) dsp=%lu(%lu%%) [echo=%lu(%lu%%) non_echo=%lu(%lu%%)] "
+                  "audio=%lu(%lu%%) total=%lu spin=%lu%%(gate=%d) rc=%d "
+                  "hash=%08lX/exp=%08lX\n",
               (unsigned long)SystemCoreClock,
-              (unsigned long)(cyc_skip / 250), (unsigned long)(cyc_draw / 250),
-              (unsigned long)(cyc_audio / 250),
+              (unsigned long)skel_pf,  (unsigned long)(total_pf ? 100*skel_pf/total_pf : 0),
+              (unsigned long)ppu_pf,   (unsigned long)(total_pf ? 100*ppu_pf/total_pf : 0),
+              (unsigned long)spc_pf,   (unsigned long)(total_pf ? 100*spc_pf/total_pf : 0),
+              (unsigned long)dsp_pf,   (unsigned long)(total_pf ? 100*dsp_pf/total_pf : 0),
+              (unsigned long)echo_pf,  (unsigned long)(dsp_pf ? 100*echo_pf/dsp_pf : 0),
+              (unsigned long)nonecho_pf,(unsigned long)(dsp_pf ? 100*nonecho_pf/dsp_pf : 0),
+              (unsigned long)audio_pf, (unsigned long)(total_pf ? 100*audio_pf/total_pf : 0),
+              (unsigned long)total_pf,
               (unsigned long)((vd + rd) ? (100 * vd / (vd + rd)) : 0),
               (int)g_spin.gate_on,
               (int)g_rc_active,
