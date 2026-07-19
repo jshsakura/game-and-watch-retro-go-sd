@@ -417,7 +417,11 @@ void odroid_settings_theme_set(int8_t theme)
         theme = 4;
     persistent_config_ram.theme = theme;
 }
+#else
+int8_t odroid_settings_theme_get() { return 0; }
+void odroid_settings_theme_set(int8_t theme) { (void)theme; }
 #endif
+
 
 int32_t odroid_settings_app_int32_get(const char *key, int32_t default_value)
 {
@@ -719,7 +723,11 @@ bool odroid_settings_ActiveGameGenieCodes_set(char *game_path, int code_index, b
 
     return true;
 }
+#else
+bool odroid_settings_ActiveGameGenieCodes_is_enabled(char *game_path, int code_index) { return false; }
+bool odroid_settings_ActiveGameGenieCodes_set(char *game_path, int code_index, bool enable) { return false; }
 #endif
+
 
 bool odroid_settings_DebugMenuDebugClockAlwaysOn_get()
 {

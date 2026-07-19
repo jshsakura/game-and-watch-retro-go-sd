@@ -496,7 +496,6 @@ void segacd_cdd_command(void)
     if (c[0] == 0x02) {
         static unsigned int h_cdd02_count = 0;
         if (h_cdd02_count < 40) {
-            extern unsigned int m68k_get_reg(unsigned int reg);
             printf("[CDD02] #%u sub=%X st=%02X lba=%u idx=%u rs=%02X%02X %02X%02X %02X%02X %02X%02X %02X ien=%02X pc=%06X\n",
                    h_cdd02_count,
                    c[3] & 0x0f,
@@ -1148,8 +1147,8 @@ void segacd_cdc_dma_update(void)
             /* CDC ring is big-endian; PRG-RAM byte writes use (off^1) so
              * subsequent sub-68K word reads reconstruct the same big-endian
              * word the disc had. */
-            SCD.prg_ram[d ^ 1]                       = CD.cdc_ram[s];
-            SCD.prg_ram[(d + 1) ^ 1]                 = CD.cdc_ram[(s + 1) & (CDC_RING_SIZE - 1)];
+            sub_prg_paged_write8(d ^ 1, CD.cdc_ram[s]);
+            sub_prg_paged_write8((d + 1) ^ 1, CD.cdc_ram[(s + 1) & (CDC_RING_SIZE - 1)]);
         }
     }
     /* TODO: DMA types 4 (PCM-RAM, dst = (dma_addr<<2)&0xffc into pcm_ram)

@@ -70,7 +70,7 @@ __NULLPTR_LENGTH__  = 0x0;
 __ITCMRAM_LENGTH__  = 64K;
 __DTCMRAM_LENGTH__  = 128K;
 __REMOTE_INPUT_RESERVE__ = DEFINED(REMOTE_INPUT) ? REMOTE_INPUT * 12 : 0;
-__RAM_UC_LENGTH__   = 300K; /* framebuffer : 2 x 320 x 240 x 16 bits */
+__RAM_UC_LENGTH__   = 150K; /* framebuffer : 1 x 320 x 240 x 16 bits (SINGLE FB) */
 __RAM_EMU_LENGTH__  = 1024K - __RAM_UC_LENGTH__;
 __AHBRAM_LENGTH__   = 128K;
 __AHBRAM_AUDIO_RESERVE__ = 8K; /* MPU non-cacheable slot for .audio DMA buffer at end of AHB SRAM */
@@ -127,6 +127,16 @@ MEMORY
    * as SM_CODE — see .xip_gba below. The renderer is the one part of the core big
    * enough to matter and linear enough not to mind the flash. */
   GBA_CODE   (x) : ORIGIN = 0xDEC00000,   LENGTH = 512K
+
+  /* Sega/Mega CD: cold code + rodata for the shared gwenesis M68K/Z80/VDP/YM
+   * engine, XIP'd out of external flash via store_file_in_flash_relocate().
+   * Same sentinel trick as SM_CODE/GBA_CODE — see .xip_segacd below. The hot
+   * interpreter objects that need to be in RAM are claimed by .overlay_segacd
+   * BEFORE the cold sweep runs (32X .xip_md32x pattern). m68kcpu.c's switch
+   * dispatch is cache-friendlier than SNES rc's hash dispatch, so the cold
+   * sweep is safe here in a way it was NOT for sm.xip — see
+   * docs/snes-hotpath-rc-itcm.md for the cautionary tale. */
+  SEGACD_CODE (x) : ORIGIN = 0xDEC80000,  LENGTH = 2M
 
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
@@ -499,6 +509,96 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(_OVERLAY_MD_BSS_END) < __RAM_EMU_END__, "Error: MD BSS overflow");
   }
   _OVERLAY_MD_BSS_SIZE = SIZEOF(.overlay_md_bss);
+
+  /* Sega/Mega CD — shares the gwenesis M68K/Z80/VDP/YM core with MD but has its
+   * own build/segacd/*.o set plus the sub-68K + CDD/CDC porting layer. The
+   * BIOS is XIP'd from flash (0 RAM). CD data streams from SD. The heavy
+   * RAM cost is PRG-RAM (256K) + Word-RAM (256K) + PCM (64K) + BRAM (8K)
+   * = ~584K BSS, which must fit under RAM_EMU's 724K.
+   *
+   * The 12 gwenesis engine objects (m68kcpu, Z80, ym2612, gwenesis_* — the
+   * same .c files MD compiles) total ~602K of text+rodata and cannot share
+   * RAM_EMU with that BSS. They are swept to SEGACD_CODE (sentinel XIP) by
+   * .xip_segacd/.rodata_segacd below, mirroring the 32X .xip_md32x recipe
+   * (see gnw-32x/STM32H7B0VBTx_SDCARD.ld). Only the 7 porting files
+   * (main_segacd + 6 segacd_*) stay in RAM. -ffunction-sections is on for
+   * SEGACD_C_DEFS so Anti#1 can later refine the hot list function-by-
+   * function once a boot_test PC histogram identifies the hot interpreter
+   * subset; the default contract keeps ALL gwenesis .text in XIP, matching
+   * what 32X shipped (it runs fine with m68kcpu.o entirely in XIP). */
+
+  /* Cold code, claimed BEFORE .overlay_segacd so it does NOT land in the RAM
+   * pool. The 12 gwenesis shared objects, named explicitly — keeps the
+   * contract self-documenting and lets Anti#1 promote a function-level hot
+   * subset of any of them into .overlay_segacd later without touching this
+   * list (the overlay's hot claim always wins when declared after .xip). */
+  .xip_segacd : {
+    . = ALIGN(8);
+    __xip_segacd_start__ = .;
+    build/segacd/m68kcpu.o           (.text .text*)
+    build/segacd/Z80.o               (.text .text*)
+    build/segacd/z80inst.o           (.text .text*)
+    build/segacd/ym2612.o            (.text .text*)
+    build/segacd/gwenesis_sn76489.o  (.text .text*)
+    build/segacd/gwenesis_bus.o      (.text .text*)
+    build/segacd/gwenesis_sram.o     (.text .text*)
+    build/segacd/gwenesis_eeprom.o   (.text .text*)
+    build/segacd/gwenesis_io.o       (.text .text*)
+    build/segacd/gwenesis_vdp_mem.o  (.text .text*)
+    build/segacd/gwenesis_vdp_gfx.o  (.text .text*)
+    build/segacd/gwenesis_savestate.o (.text .text*)
+  } > SEGACD_CODE
+
+  .overlay_segacd __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_segacd_start__ = .;
+    /* Porting glue whole — main_segacd.o holds the SEGACD_CODE_BASE literal
+     * and runs the sentinel relocation pass, so it must be readable before
+     * the XIP blob has been cached (same reason main_sm.o stays in RAM). */
+    build/segacd/main_segacd.o     (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_engine.o   (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_bus.o      (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_cd.o       (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_audio.o    (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_gfx.o      (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_cache.o    (.data .data* .text .text* .rodata .rodata*)
+    /* All .data from every build/segacd/*.o — small and RAM-resident, even
+     * for the gwenesis objects whose .text/.rodata are in SEGACD_CODE. */
+    build/segacd/*.o (.data .data*)
+    . = ALIGN(4);
+    _OVERLAY_SEGACD_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_SEGACD_LOAD_START = LOADADDR(.overlay_segacd);
+  _OVERLAY_SEGACD_SIZE = SIZEOF(.overlay_segacd);
+
+  .overlay_segacd_bss _OVERLAY_SEGACD_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_SEGACD_BSS_START = .;
+    build/segacd/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/segacd/*.o (COMMON)
+    __ram_emu_segacd_end__ = .;
+    _OVERLAY_SEGACD_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_SEGACD_BSS_END) < __RAM_EMU_END__, "Error: SEGACD BSS overflow (RAM_EMU is 724K, need PRG256K+WordRAM+PCM+BRAM)");
+  }
+  _OVERLAY_SEGACD_BSS_SIZE = SIZEOF(.overlay_segacd_bss);
+
+  /* Cold rodata, immediately after the cold code in the SAME region, so the
+   * two ship as one file (segacd.xip) and land in flash as ONE cache entry.
+   * Sharing the region is the same point made under .rodata_sm: cold code
+   * holds ~hundreds of pointers into rodata, and baking one cache entry's
+   * address into another means the pair goes stale the moment the circular
+   * cache evicts only one of them. Declared AFTER .overlay_segacd so the
+   * porting glue's own literals stay in RAM (readable before the blob is
+   * cached and relocated) and only the gwenesis .o rodata falls through. */
+  .rodata_segacd : {
+    . = ALIGN(8);
+    __rodata_segacd_start__ = .;
+    build/segacd/*.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __rodata_segacd_end__ = .;
+    __xip_segacd_end__ = .;
+  } > SEGACD_CODE
 
   .overlay_a2600 __RAM_EMU_START__ : {
     . = ALIGN(4);
@@ -1185,6 +1285,11 @@ INCLUDE build/fceumm_mappers.ld
   ._ram_space_check_md : {
     . = . + SIZEOF(.overlay_md);
     . = . + SIZEOF(.overlay_md_bss);
+  } >RAM_EMU
+
+  ._ram_space_check_segacd : {
+    . = . + SIZEOF(.overlay_segacd);
+    . = . + SIZEOF(.overlay_segacd_bss);
   } >RAM_EMU
 
   /* only use ahb_malloc/ahb_calloc to use ahb memory ! */

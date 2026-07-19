@@ -304,19 +304,35 @@ static void sub_ff_write16(unsigned int address, unsigned int data)
 }
 
 /* Build the sub-CPU's 256-entry memory_map into SCD.sub_ctx. */
+static unsigned int sub_prg_paged_read16(unsigned int address);
+static void sub_prg_paged_write16(unsigned int address, unsigned int data);
+
 void segacd_sub_build_memory_map(void)
 {
     cpu_memory_map *map = SCD.sub_ctx.memory_map;
     memset(map, 0, sizeof(SCD.sub_ctx.memory_map));
 
-    /* $000000-$07FFFF : PRG-RAM, 8 direct pages */
-    for (int p = 0; p < 8; p++)
+    /* $000000-$01FFFF : PRG-RAM (128KB resident) */
+    for (int p = 0; p < (128 * 1024 / PAGE_SIZE); p++) {
         map[p].base = SCD.prg_ram + p * PAGE_SIZE;
+        map[p].read8  = NULL;  /* NULL = direct access via .base */
+        map[p].read16 = NULL;
+        map[p].write8 = NULL;
+        map[p].write16= NULL;
+    }
+    /* $020000-$07FFFF : PRG-RAM (paged to SD) */
+    for (int p = (128 * 1024 / PAGE_SIZE); p < 8; p++) {
+        map[p].base   = NULL;
+        map[p].read8  = sub_prg_paged_read8;
+        map[p].read16 = sub_prg_paged_read16;
+        map[p].write8 = sub_prg_paged_write8;
+        map[p].write16= sub_prg_paged_write16;
+    }
 
-    /* $080000-$0BFFFF : Word-RAM (2M mode, sub owns), 4 direct pages.
-     * TODO(ph2b): honor word_mode/word_owner — NULL out + handler when main owns. */
-    for (int p = 0; p < 4; p++)
+    /* $080000-$0BFFFF : Word-RAM 2M-mode linear view (256 KB) */
+    for (int p = 0; p < (SEGACD_WORD_RAM_SIZE / PAGE_SIZE); p++) {
         map[0x08 + p].base = SCD.word_ram + p * PAGE_SIZE;
+    }
 
     /* $0C0000-$0DFFFF : Word-RAM 1M-mode cell-arranged / linear bank view. The
      * boot-logo sub-BIOS sets up its stamp graphics here (sub PC 0x70f0: clears
@@ -325,9 +341,8 @@ void segacd_sub_build_memory_map(void)
      * the region. DIAGNOSTIC: point it at a dedicated scratch bank so the sub can
      * run and we can observe the boot-mode progression; real 1M cell-mapping is a
      * follow-up once the reference confirms the sub is meant to be here now. */
-    static uint8_t wram_1m_cell[2 * PAGE_SIZE];   /* $0C-$0D, 128 KB */
-    map[0x0C].base = wram_1m_cell;
-    map[0x0D].base = wram_1m_cell + PAGE_SIZE;
+    map[0x0C].base = SCD.word_ram;
+    map[0x0D].base = SCD.word_ram + PAGE_SIZE;
 
     /* $FF0000-$FFFFFF : PCM + gate array, handler page */
     map[0xFF].base   = NULL;
@@ -335,6 +350,27 @@ void segacd_sub_build_memory_map(void)
     map[0xFF].read16 = sub_ff_read16;
     map[0xFF].write8 = sub_ff_write8;
     map[0xFF].write16= sub_ff_write16;
+}
+
+/* ---- PRG-RAM SD paging handlers (banks 1-3) ---- */
+unsigned int sub_prg_paged_read8(unsigned int address) {
+    if (address < 128 * 1024) return SCD.prg_ram[address ^ 1];
+    uint8_t val = 0;
+    FILE *f = fopen("/tmp/scd_prg.bin", "rb");
+    if (f) { fseek(f, address - (128 * 1024), SEEK_SET); fread(&val, 1, 1, f); fclose(f); }
+    return val;
+}
+static unsigned int sub_prg_paged_read16(unsigned int address) {
+    return (sub_prg_paged_read8(address) << 8) | sub_prg_paged_read8(address + 1);
+}
+void sub_prg_paged_write8(unsigned int address, unsigned int data) {
+    if (address < 128 * 1024) { SCD.prg_ram[address ^ 1] = (uint8_t)data; return; }
+    FILE *f = fopen("/tmp/scd_prg.bin", "r+b");
+    if (!f) f = fopen("/tmp/scd_prg.bin", "w+b");
+    if (f) { fseek(f, address - (128 * 1024), SEEK_SET); uint8_t v = (uint8_t)data; fwrite(&v, 1, 1, f); fclose(f); }
+}
+static void sub_prg_paged_write16(unsigned int address, unsigned int data) {
+    sub_prg_paged_write8(address, data >> 8); sub_prg_paged_write8(address + 1, data & 0xFF);
 }
 
 /* ---- main-CPU view of CD space (handlers; PRG window is bank-selected) ----
@@ -357,7 +393,7 @@ static unsigned int main_prgwin_read8(unsigned int address)
 {
     unsigned int off = (address & 0x1FFFF) + (unsigned)SCD.prg_bank * 0x20000;
     scd_prg_bank_accessed |= (uint8_t)(1 << SCD.prg_bank);
-    return SCD.prg_ram[(off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1)];
+    return sub_prg_paged_read8(off ^ 1);
 }
 static unsigned int main_prgwin_read16(unsigned int address)
 {
@@ -390,7 +426,7 @@ static void main_prgwin_write8(unsigned int address, unsigned int data)
         scd_dbg_first_ea = address;
     }
 #endif
-    SCD.prg_ram[(off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1)] = (uint8_t)data;
+    sub_prg_paged_write8(off ^ 1, data);
 }
 static void main_prgwin_write16(unsigned int address, unsigned int data)
 {

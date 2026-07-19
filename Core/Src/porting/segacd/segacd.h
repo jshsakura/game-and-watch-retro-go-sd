@@ -11,7 +11,7 @@
 #include <stdio.h>   /* m68k.h uses FILE in its savestate prototypes */
 #include "m68k.h"   /* m68ki_cpu_core — the sub-CPU context type */
 
-#define SEGACD_PRG_RAM_SIZE   (256 * 1024)   /* sub-CPU program/work RAM */
+#define SEGACD_PRG_RAM_SIZE   (128 * 1024)   /* sub-CPU program/work RAM (paged) */
 #define SEGACD_WORD_RAM_SIZE  (256 * 1024)   /* shared graphics RAM (2M mode) */
 #define SEGACD_PCM_RAM_SIZE   (64  * 1024)   /* RF5C164 waveform RAM */
 #define SEGACD_BRAM_SIZE      (8   * 1024)   /* internal battery backup */
@@ -163,6 +163,9 @@ int  segacd_bram_save(const char *path);
 /* CD drive / controller / BIOS (segacd_cd.c) */
 int  segacd_cd_open(const char *cue_path);
 int  segacd_load_bios(const char *bios_path, uint8_t *dst, int max);
+
+unsigned int sub_prg_paged_read8(unsigned int address);
+void sub_prg_paged_write8(unsigned int address, unsigned int data);
 void segacd_cdd_process(void);          /* 75 Hz tick: latency/export cadence */
 void segacd_cdd_command(void);          /* decode+respond to a 10-byte CDD command */
 void segacd_cdc_dma_sector(uint8_t *dst, int len);
