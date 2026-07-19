@@ -56,6 +56,7 @@ static int gb_console_mode = GB_CONSOLE_DMG;
 static char system_values[16];
 static uint8_t rom_cgb_flag = 0;
 static bool rom_sgb_compatible = false;
+static bool sgb_border_enabled = true;
 
 static gb *g_gb = nullptr;
 static gw_renderer *render = nullptr;
@@ -362,6 +363,16 @@ static void gb_process_blit()
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
     odroid_display_filter_t filtering = odroid_display_get_filter_mode();
 
+    /* SGB with border: composite 256×224 centered on the LCD (trial). */
+    if (sgb_border_enabled &&
+        g_gb && g_gb->get_sgb() && g_gb->get_sgb()->enabled() &&
+        g_gb->get_sgb()->has_border() && tgb_buffer) {
+        uint16_t *lcd = (uint16_t *)lcd_get_active_buffer();
+        g_gb->get_sgb()->blit_frame(lcd, 320, 240,
+                                    tgb_buffer, GB_WIDTH, GB_HEIGHT);
+        return;
+    }
+
     switch (scaling) {
     case ODROID_DISPLAY_SCALING_OFF:
         // Original Resolution
@@ -538,6 +549,23 @@ static bool palette_update_cb(odroid_dialog_choice_t *option, odroid_dialog_even
     }
 
     sprintf(option->value, "%d/%d", index_palette + 1, max + 1);
+    return event == ODROID_DIALOG_ENTER;
+}
+
+static bool sgb_border_update_cb(odroid_dialog_choice_t *option,
+                                 odroid_dialog_event_t event, uint32_t repeat)
+{
+    bool sgb_mode = (gb_console_mode == GB_CONSOLE_SGB);
+    option->enabled = sgb_mode ? 1 : -1;
+
+    if (sgb_mode &&
+        (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT)) {
+        sgb_border_enabled = !sgb_border_enabled;
+        odroid_settings_app_int32_set("SGBBorder", sgb_border_enabled ? 1 : 0);
+    }
+
+    snprintf(option->value, 16, "%s",
+             sgb_border_enabled ? curr_lang->s_Yes : curr_lang->s_No);
     return event == ODROID_DIALOG_ENTER;
 }
 
@@ -724,6 +752,9 @@ void app_main_gb_tgbdual_cpp(uint8_t load_state, uint8_t start_paused, int8_t sa
     if (g_gb->get_rom()->get_info()->gb_type == 1)
         g_gb->get_lcd()->set_palette(index_palette);
 
+    sgb_border_enabled =
+        odroid_settings_app_int32_get("SGBBorder", 1) != 0;
+
 #if CHEAT_CODES == 1
     for(int i=0; i<MAX_CHEAT_CODES && i<ACTIVE_FILE->cheat_count; i++) {
         if (odroid_settings_ActiveGameGenieCodes_is_enabled(ACTIVE_FILE->path, i)) {
@@ -733,10 +764,12 @@ void app_main_gb_tgbdual_cpp(uint8_t load_state, uint8_t start_paused, int8_t sa
 #endif
 
     gb_console_label(gb_console_mode, system_values, sizeof(system_values));
+    char sgb_border_values[16] = {0};
     odroid_dialog_choice_t options[] = {
         /* Only cycle when more than one mode is valid (GB↔SGB). GBC is fixed. */
         {301, curr_lang->s_System, system_values, 1, &system_update_cb},
         /* enabled updated each frame: custom palettes only in GB (type 1) */
+        {302, curr_lang->s_SGB_Border, sgb_border_values, -1, &sgb_border_update_cb},
         {300, curr_lang->s_Palette, (char *)palette_values, 1, &palette_update_cb},
         {300, curr_lang->s_Reset, NULL, 1, &reset_cb},
         ODROID_DIALOG_CHOICE_LAST

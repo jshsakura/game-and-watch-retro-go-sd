@@ -97,6 +97,7 @@ const lang_t lang_fr_fr LANG_DATA = {
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "Palette",
     .s_System = "Système",
+    .s_SGB_Border = "Cadre SGB",
     //=====================================================================
 
     // Core\Src\porting\nes\main_nes.c =====================================

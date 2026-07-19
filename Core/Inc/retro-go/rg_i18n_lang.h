@@ -22,6 +22,7 @@ typedef struct
     // Core\Src\porting\gb\main_gb.c =======================================
     const char *s_Palette;
     const char *s_System;
+    const char *s_SGB_Border;
     //=====================================================================
     // Core\Src\porting\nes\main_nes.c =====================================
     // const char *s_Palette "Palette" dul

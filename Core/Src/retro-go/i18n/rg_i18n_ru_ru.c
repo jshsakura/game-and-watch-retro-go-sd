@@ -97,6 +97,7 @@ const lang_t lang_ru_ru LANG_DATA = {
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "Палитра",
     .s_System = "Система",
+    .s_SGB_Border = "Рамка SGB",
     //=====================================================================
 
     // Core\Src\porting\nes\main_nes.c =====================================

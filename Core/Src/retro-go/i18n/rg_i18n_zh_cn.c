@@ -95,6 +95,7 @@ const lang_t lang_zh_cn LANG_DATA = {
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "调色板",
     .s_System = "系统",
+    .s_SGB_Border = "SGB 边框",
     //=====================================================================
 
     // Core\Src\porting\md\main_gwenesis.c ================================
