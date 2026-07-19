@@ -619,7 +619,12 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * here: it is read-only flash, not heap, and the header-skip may have offset
    * it past a copier header (snes_rom + 0x200). */
 
-  /* DEBUG (strip later): SAFE one-shot probe at LOAD time — before the frame loop,
+#ifdef SNES_LOAD_DIAG
+  /* Load-time SD diagnostics + headless DWT profile. Gated OFF by default:
+   * the profile2 block below runs 500 headless frames (~11-18 s) and would
+   * otherwise stall every SNES boot on the "loading" screen. Build with
+   * -DSNES_LOAD_DIAG to re-enable when a device measurement is needed. */
+  /* DEBUG: SAFE one-shot probe at LOAD time — before the frame loop,
    * SD idle, never mid-play. Writes straight from the overlay (extflash has room;
    * the resident sd_save_log path would overflow intflash) to /snes_diag.txt.
    * Reports whether the flash-cached ROM reads back sane (internal title +
@@ -695,6 +700,7 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
       fclose(df);
     }
   }
+#endif /* SNES_LOAD_DIAG */
 
   if (load_state) {
     odroid_system_emu_load_state(save_slot);
