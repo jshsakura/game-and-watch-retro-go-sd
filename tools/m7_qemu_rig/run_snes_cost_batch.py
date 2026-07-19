@@ -28,10 +28,12 @@ COST_RE = re.compile(
     r"cpu=(\d+) spc700=(\d+) dsp=(\d+) present=(\d+) "
     r"dsp_samples=(\d+) active_voices_x1000=(\d+) "
     r"echo_voices_x1000=(\d+) echo_write_frames=(\d+)")
+SPIN_RE = re.compile(r"\[spin\].*skipped=([0-9.]+)% gate=(\d+)")
 FIELDS = [
     "rom", "rom_sha256", "build_id", "frames", "status", "statehash", "audiohash",
     "corehash", "emu", "audio", "cpu65816",
-    "spc700", "dsp", "ppu", "present", "skeleton", "dsp_samples",
+    "spc700", "dsp", "ppu", "present", "skeleton", "spin_skipped_pct",
+    "spin_gate", "dsp_samples",
     "active_voices", "echo_voices", "echo_write_frames", "error",
 ]
 
@@ -96,7 +98,8 @@ def run_elf(elf: Path, rom: Path, timeout: int) -> tuple[dict[str, int | str], s
                               stderr=subprocess.STDOUT, timeout=timeout)
     final = FINAL_RE.search(proc.stdout)
     cost = COST_RE.search(proc.stdout)
-    if proc.returncode or not final or not cost:
+    spin = SPIN_RE.search(proc.stdout)
+    if proc.returncode or not final or not cost or not spin:
         tail = " | ".join(proc.stdout.splitlines()[-5:])
         raise RuntimeError(f"qemu rc={proc.returncode}; {tail}")
     keys = ("cpu", "spc", "dsp", "present", "samples", "active", "echo", "echo_frames")
@@ -106,6 +109,8 @@ def run_elf(elf: Path, rom: Path, timeout: int) -> tuple[dict[str, int | str], s
         "emu": int(final.group(4)), "audio": int(final.group(5)),
     }
     values.update(zip(keys, map(int, cost.groups())))
+    values["spin_skipped"] = spin.group(1)
+    values["spin_gate"] = int(spin.group(2))
     return values, proc.stdout
 
 
@@ -143,6 +148,7 @@ def profile(rom: Path, rom_hash: str, build_id: str, frames: int,
             "emu": on["emu"], "audio": on["audio"], "cpu65816": on["cpu"],
             "spc700": on["spc"], "dsp": on["dsp"], "ppu": ppu,
             "present": on["present"], "skeleton": skeleton,
+            "spin_skipped_pct": on["spin_skipped"], "spin_gate": on["spin_gate"],
             "dsp_samples": on["samples"], "active_voices": f'{int(on["active"])/1000:.3f}',
             "echo_voices": f'{int(on["echo"])/1000:.3f}',
             "echo_write_frames": on["echo_frames"],

@@ -38,12 +38,12 @@ EOF
 CC=arm-none-eabi-gcc
 ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
 OPT="-O2 -g -ffunction-sections -fdata-sections -ffp-contract=off"
-BASE_DEF="-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS -DRIG_ROM_LOADER -DRIG_COST_PROF -DRIG_DEVICE_VIDEO -DRIG_INPUT_TAP -DRIG_FRAMES=$FRAMES -DRIG_WINDOW=${RIG_WINDOW:-100}"
+BASE_DEF="-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DHEADLESS -DRIG_ROM_LOADER -DRIG_COST_PROF -DRIG_DEVICE_VIDEO -DRIG_INPUT_TAP -DRIG_FRAMES=$FRAMES -DRIG_WINDOW=${RIG_WINDOW:-100}"
 INC="-I$SM -I$RIG/shim -Itools/sm_harness/shim"
 SRCS="$SM/src/snes/cart.c $SM/src/snes/cpu.c $SM/src/snes/dma.c \
       $SM/src/snes/dsp.c $SM/src/snes/input.c $SM/src/snes/ppu.c \
       $SM/src/snes/snes.c $SM/src/snes/snes_other.c $SM/src/snes/spc.c \
-      $SM/src/snes/rc_dispatch.c $SM/src/tracing.c $RIG/rig_runtime_hf.c \
+      $SM/src/snes/spin_skip.c $SM/src/snes/rc_dispatch.c $SM/src/tracing.c $RIG/rig_runtime_hf.c \
       $RIG/rig_snes.c"
 
 build_one() {

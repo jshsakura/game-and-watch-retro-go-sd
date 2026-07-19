@@ -2,7 +2,8 @@
 
 This runner profiles a SNES ROM collection without flashing the Game & Watch and
 without rebuilding the emulator for every cartridge. It builds two Cortex-M7,
-hard-float ELFs once, then injects each ROM into QEMU PSRAM at run time.
+hard-float ELFs once, including the device's `SNES_SPIN_SKIP` whitelist/learner
+and exact replay loop, then injects each ROM into QEMU PSRAM at run time.
 
 ```sh
 tools/m7_qemu_rig/run_snes_cost_batch.py /path/to/snes-roms \
@@ -16,7 +17,7 @@ emulated machine. The device video path is reproduced in the
 rig: 256-pixel line copies into a private 320x240 framebuffer plus the full
 320x240 present copy. The CSV also records 65816, SPC700 and DSP instruction
 costs, generated DSP samples, average active/echo voices, state/audio hashes,
-timeouts and unsupported loads.
+spin-skip coverage/gate state, timeouts and unsupported loads.
 
 The CSV is append-only and flushed after every ROM. Re-running the same command
 skips completed rows only when the ROM SHA-256, reusable-ELF build ID and frame

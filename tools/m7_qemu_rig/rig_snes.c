@@ -22,6 +22,9 @@
 #include "src/snes/cpu.h"
 #include "src/snes/dma.h"
 #include "src/snes/input.h"
+#ifdef SNES_SPIN_SKIP
+#include "src/snes/spin_skip.h"
+#endif
 
 #ifndef RIG_FRAMES
 #define RIG_FRAMES 1200
@@ -115,12 +118,32 @@ static void apply_irq_match(Snes *snes) {
   snes->inIrq = true;
   snes->cpu->irqWanted = true;
 }
+
+#ifdef SNES_SPIN_SKIP
+static int run_one_opcode(Snes *snes) {
+  Cpu *cpu = snes->cpu;
+  uint32_t pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
+  int dispatch = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) &&
+                 !cpu->stopped;
+  snes->cpuMemOps = 0;
+  int cycles = PROFILE_CPU(cpu_runOpcode(cpu));
+  snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
+  g_spin.ops_real++;
+  spin_note(cpu, pc24, (uint8_t)snes->cpuCyclesLeft, dispatch);
+  return cycles;
+}
+#endif
+
 static void cpu_tick(Snes *snes) {
   if (dma_cycle(snes->dma)) return;
   if (snes->cpuCyclesLeft == 0) {
+#ifdef SNES_SPIN_SKIP
+    run_one_opcode(snes);
+#else
     snes->cpuMemOps = 0;
     int cycles = PROFILE_CPU(cpu_runOpcode(snes->cpu));
     snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
+#endif
   }
   snes->cpuCyclesLeft -= 2;
 }
@@ -133,11 +156,30 @@ static void run_dots(Snes *snes, int dots) {
     }
     bool started_dma = false;
     if (snes->cpuCyclesLeft == 0) {
+#ifdef SNES_SPIN_SKIP
+      Cpu *cpu = snes->cpu;
+      if (g_spin.on &&
+          !cpu->nmiWanted && !cpu->irqWanted && !cpu->waiting && !cpu->stopped &&
+          !snes->hIrqEnabled &&
+          !(snes->vIrqEnabled && snes->vPos == snes->vTimer) &&
+          (((uint32_t)cpu->k << 16) | cpu->pc) == g_spin.pc[g_spin.idx]) {
+        snes->cpuCyclesLeft += g_spin.charge[g_spin.idx];
+        g_spin.idx = (g_spin.idx + 1) % g_spin.len;
+        cpu->k = (uint8_t)(g_spin.pc[g_spin.idx] >> 16);
+        cpu->pc = (uint16_t)g_spin.pc[g_spin.idx];
+        g_spin.ops_virtual++;
+      } else {
+        apply_irq_match(snes);
+        run_one_opcode(snes);
+        started_dma = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
+      }
+#else
       apply_irq_match(snes);
       snes->cpuMemOps = 0;
       int cycles = PROFILE_CPU(cpu_runOpcode(snes->cpu));
       snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
       started_dma = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
+#endif
     }
     int step;
     if (snes->cpuCyclesLeft >= 2 && !started_dma) {
@@ -162,6 +204,9 @@ static void run_frame_events(Snes *snes) {
     run_dots(snes, dots_to_next_event(snes));
   }
   snes_catchupApu(snes);
+#ifdef SNES_SPIN_SKIP
+  spin_frame_tick();
+#endif
 }
 
 static uint64_t fnv1a(const void *data, size_t len) {
@@ -208,6 +253,10 @@ int main(void) {
 
   Snes *snes = snes_init(g_wram);
   g_the_snes = snes;
+#ifdef SNES_SPIN_SKIP
+  spin_whitelist_set(rom, rom_len);
+  spin_reset();
+#endif
   if (!snes_loadRom(snes, rom, (int)rom_len)) { printf("unsupported ROM\n"); return 1; }
   /* snes_loadRom malloc'd a second copy of the ROM. The ELF already carries the
    * blob in PSRAM — point cart->rom back at it and free the copy, so a 6 MB cart
@@ -329,6 +378,13 @@ int main(void) {
          (unsigned long)(g_active_voice_sum * 1000 / RIG_FRAMES),
          (unsigned long)(g_echo_voice_sum * 1000 / RIG_FRAMES),
          (unsigned long)g_echo_write_frames);
+#ifdef SNES_SPIN_SKIP
+  { double n = (double)(g_spin.ops_real + g_spin.ops_virtual);
+    printf("[spin] real=%llu virt=%llu skipped=%.4f%% gate=%d\n",
+           (unsigned long long)g_spin.ops_real,
+           (unsigned long long)g_spin.ops_virtual,
+           n ? 100.0 * g_spin.ops_virtual / n : 0.0, (int)g_spin.gate_on); }
+#endif
 #else
   printf("[snes-qemu] done %d frames STATEHASH=%08lx AUDIOHASH=%08lx avg emu=%lu apu=%lu insn/frame\n",
          RIG_FRAMES, (unsigned long)(uint32_t)(run_hash ^ sh),
