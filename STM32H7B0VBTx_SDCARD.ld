@@ -487,6 +487,8 @@ INCLUDE build/fceumm_mappers.ld
     _OVERLAY_SNES_BSS_START = .;
     build/snes/*.o (.bss .bss*)
     . = ALIGN(4);
+    build/rc_smw/*.o (.bss .bss*)
+    . = ALIGN(4);
     build/snes/*.o (COMMON)
     __ram_emu_snes_end__ = .;
     _OVERLAY_SNES_BSS_END = .;

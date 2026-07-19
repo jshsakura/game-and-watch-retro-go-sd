@@ -77464,6 +77464,7 @@ static void rc_s_0db915(Cpu *cpu) { /* 0d:b915 op 60 */
 
 #define RC_NSITES 8371
 #define RC_CODE_HASH 0x5a04e964U
+#define RC_HASH_CAP 21760
 static void (*const rc_fns[RC_NSITES])(Cpu*) = {
   rc_s_008000,
   rc_s_008001,

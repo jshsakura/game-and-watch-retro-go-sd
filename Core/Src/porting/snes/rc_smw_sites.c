@@ -174,6 +174,27 @@ static inline uint32_t rc_adrAlx(Cpu *cpu, uint32_t *low, uint32_t adr) {
 /* ---- the 8371 site functions + rc_fns[] + rc_addrs[] ---- */
 #include "rc_sites.inc"
 
+/* ---- SNES-overlay-resident dispatch table (NO DTCM heap) ----
+ * rc_smw_activate() in main_snes.c passes these to rc_dispatch_init().
+ * Lives in .overlay_snes_bss (the linker routes build/rc_smw/*.o(.bss) there),
+ * NOT in the 81 KB DTCM heap that the old heap-based dispatch consumed.
+ *
+ * Build-time budget assert: the dispatch table must fit in the SNES overlay
+ * BSS (RAM_EMU). Catches the OOM class at COMPILE time, not on device. */
+#include "rc_dispatch.h"   /* for rc_entry_t */
+
+#define RC_DISPATCH_BUDGET_BYTES  (96 * 1024)
+#define RC_DISPATCH_ACTUAL_BYTES  (RC_HASH_CAP * (uint32_t)sizeof(rc_entry_t) \
+                                   + 2 * 256 * (uint32_t)sizeof(uint32_t))
+_Static_assert(RC_DISPATCH_ACTUAL_BYTES <= RC_DISPATCH_BUDGET_BYTES,
+    "rc dispatch hash exceeds SNES overlay BSS budget");
+
+/* Open-addressing hash storage. RC_HASH_CAP = sum of per-bank next_pow2(count*2)
+ * slots, computed by translate.py from the bank distribution (~85 KB for SMW). */
+rc_entry_t rc_hash_storage[RC_HASH_CAP];
+uint32_t   rc_bank_off[256];
+uint32_t   rc_bank_mask[256];
+
 /* ---- runtime discovery header (placed at blob offset 0 by the linker) ----
  * main_snes.c reads this after caching to find rc_fns/rc_addrs. The
  * sentinel pointer values are patched by the cache-relocation pass

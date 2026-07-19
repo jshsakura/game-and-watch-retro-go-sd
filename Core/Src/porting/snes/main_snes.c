@@ -450,6 +450,13 @@ typedef struct {
   const uint8_t *lens;     /* patched to flash addr of rc_site_lens[] */
 } rc_smw_header_t;
 
+/* SNES-overlay-resident hash storage (defined in rc_smw_sites.c, linked into
+ * .overlay_snes_bss). Passed to rc_dispatch_init() so it never touches the
+ * 81 KB DTCM heap. ~85 KB for SMW's 8371 sites. */
+extern rc_entry_t rc_hash_storage[];
+extern uint32_t rc_bank_off[];
+extern uint32_t rc_bank_mask[];
+
 /* SMW title hash (FNV-1a of 21-byte internal title at LoROM 0x7FC0).
  * Same value the spin-skip whitelist uses — quick reject for non-SMW ROMs. */
 #define RCSMW_TITLE_HASH  0xFB0BD0ECu
@@ -536,10 +543,13 @@ static bool rc_smw_activate(const uint8_t *rom, uint32_t len) {
     return false;
   }
 
-  /* Build the hash dispatch table. rc_fns[] entries (function pointers) were
-   * patched to real flash addresses by the relocation pass. After this call,
-   * g_rc_active is true and cpu_runOpcode uses the rc fast path. */
-  rc_dispatch_init(hdr->addrs, hdr->nsites, (void (**)(Cpu *))hdr->fns);
+  /* Build the dispatch table. rc_fns[] entries (function pointers) were
+   * patched to real flash addresses by the relocation pass. The table and
+   * bank arrays live in SNES overlay BSS (rc_smw_sites.c) — NOT the DTCM
+   * heap. After this call, g_rc_active is true and cpu_runOpcode uses the
+   * rc fast path. */
+   rc_dispatch_init(rc_hash_storage, rc_bank_off, rc_bank_mask,
+                    hdr->addrs, hdr->nsites, (void (**)(Cpu *))hdr->fns);
   printf("rc_smw: activated — %lu sites, blob %lu bytes at %p\n",
          (unsigned long)hdr->nsites, (unsigned long)xip_size, xip_addr);
   return true;
