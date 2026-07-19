@@ -5,6 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 FRAMES="${1:-300}"
+WINDOW="${RIG_WINDOW:-100}"
+if (( WINDOW > FRAMES )); then WINDOW="$FRAMES"; fi
 SM=external/sm
 RIG=tools/m7_qemu_rig
 OUT="$RIG/build_cost"
@@ -23,6 +25,26 @@ src = src.replace(
     "dsp_cycle(apu->dsp);",
     "{ uint32_t _t=rig_timer_now(); dsp_cycle(apu->dsp); "
     "g_dsp_ticks += (uint32_t)(rig_timer_now()-_t); g_dsp_calls++; }")
+open(sys.argv[2], "w", encoding="utf-8").write(src)
+PY
+
+# A/B baseline for the dormant-echo optimization.  It is generated from the
+# current production DSP so every unrelated optimization stays identical; only
+# the six-line fast path is removed.  The corpus runner compares all hashes and
+# instruction counts between this ELF and snes_cost_on.elf.
+python3 - "$SM/src/snes/dsp.c" "$OUT/dsp_echo_baseline.c" <<'PY'
+import sys
+
+src = open(sys.argv[1], encoding="utf-8").read()
+fast = (
+    "  /* If echo cannot affect this output or ARAM, the FIR sum and eight-channel\n"
+    "   * feedback mix are dead work. Loading the current delay-line values and\n"
+    "   * advancing both indexes preserves the exact history for a later enable. */\n"
+    "  if (!dsp->echoWrites && dsp->echoVolumeL == 0 && dsp->echoVolumeR == 0)\n"
+    "    goto handle_indexes;\n")
+assert src.count(fast) == 1
+assert src.count("handle_indexes:\n") == 1
+src = src.replace(fast, "").replace("handle_indexes:\n", "")
 open(sys.argv[2], "w", encoding="utf-8").write(src)
 PY
 
@@ -228,7 +250,7 @@ EOF
 CC=arm-none-eabi-gcc
 ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
 OPT="-O2 -g -ffunction-sections -fdata-sections -ffp-contract=off"
-BASE_DEF="-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DHEADLESS -DRIG_ROM_LOADER -DRIG_COST_PROF -DRIG_DEVICE_VIDEO -DRIG_INPUT_TAP -DRIG_FRAMES=$FRAMES -DRIG_WINDOW=${RIG_WINDOW:-100}"
+BASE_DEF="-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DHEADLESS -DRIG_ROM_LOADER -DRIG_COST_PROF -DRIG_DEVICE_VIDEO -DRIG_INPUT_TAP -DRIG_FRAMES=$FRAMES -DRIG_WINDOW=$WINDOW"
 INC="-I$SM -I$RIG/shim -Itools/sm_harness/shim"
 SRCS="$SM/src/snes/cart.c $SM/src/snes/cpu.c $SM/src/snes/dma.c \
       $SM/src/snes/dsp.c $SM/src/snes/input.c $SM/src/snes/ppu.c \
@@ -254,6 +276,28 @@ build_one() {
 
 build_one on ""
 build_one off "-DRIG_FRAMESKIP"
+
+build_dsp_baseline() {
+  local dir="$OUT/dsp_baseline" defs="$BASE_DEF" objs=""
+  mkdir -p "$dir"
+  $CC -c $ARCH $OPT $defs $INC -iquote "$SM/src/snes" -iquote "$SM/src" \
+      -include "$OUT/cost_defs.h" -w "$OUT/apu_cost.c" -o "$dir/apu_cost.o"
+  objs="$dir/apu_cost.o"
+  $CC -c $ARCH $OPT $defs $INC -iquote "$SM/src/snes" -iquote "$SM/src" \
+      -w "$OUT/dsp_echo_baseline.c" \
+      -o "$dir/dsp_echo_baseline.o"
+  objs="$objs $dir/dsp_echo_baseline.o"
+  for src in $SRCS; do
+    [[ "$src" == "$SM/src/snes/dsp.c" ]] && continue
+    local obj="$dir/$(basename "${src%.c}").o"
+    $CC -c $ARCH $OPT $defs $INC -w "$src" -o "$obj"
+    objs="$objs $obj"
+  done
+  $CC $ARCH -T "$RIG/mps2_an500_snes.ld" -nostartfiles -Wl,--gc-sections \
+      $objs -lm -o "$OUT/snes_dsp_baseline.elf"
+}
+
+build_dsp_baseline
 
 build_deep() {
   local dir="$OUT/deep" defs="$BASE_DEF -DRIG_PPU_DEEP" objs=""
@@ -299,5 +343,6 @@ build_dsp_deep
 arm-none-eabi-size "$OUT/snes_cost_on.elf" "$OUT/snes_cost_off.elf"
 arm-none-eabi-size "$OUT/snes_ppu_deep.elf"
 arm-none-eabi-size "$OUT/snes_dsp_deep.elf"
+arm-none-eabi-size "$OUT/snes_dsp_baseline.elf"
 printf '%s\n' "$FRAMES" > "$OUT/frames.txt"
 printf 'SNES cost ELFs ready: %s frames per ROM\n' "$FRAMES"

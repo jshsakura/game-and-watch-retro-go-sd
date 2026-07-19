@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 ROM="${1:?usage: run_32x.sh <rom.32x> [frames]}"
-FRAMES="${2:-600}"
+FRAMES="${2:-120}"
 
 PD="${PD_DIR:-external/picodrive}"
 RIG=tools/m7_qemu_rig

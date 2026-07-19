@@ -633,6 +633,9 @@ int main(void) {
     {
         extern int gnw_sh2_idle_skip;
         gnw_sh2_idle_skip = 1;
+        
+        extern void Pico32xSetClocks(int, int);
+        Pico32xSetClocks(23011360 * 2, 23011360 * 2);
         printf("[32x-qemu] idle_skip ENABLED (compile-time)\n");
     }
 #endif

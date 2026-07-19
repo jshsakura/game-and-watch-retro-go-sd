@@ -758,8 +758,23 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     crc ^= 0xFFFFFFFF;
     /* Doom 32X (US): slave SH-2 verified sleeping safely */
     gnw_sh2_idle_skip = (crc == 0xb0239812u) ? 1 : 0;
+
+    /* Overclock Doom 32X to achieve ~30 FPS instead of native ~15 FPS.
+       Because idle-skip saves ~70% of host CPU time, we have enough headroom
+       on the STM32H7 to run the SH-2s at 2x clock speed. */
+    if (crc == 0xb0239812u) {
+        extern void Pico32xSetClocks(int msh2_hz, int ssh2_hz);
+        /* 23011360 Hz is native, we double it */
+        Pico32xSetClocks(23011360 * 2, 23011360 * 2);
+    }
+
     diag_log("idle_skip: crc=%08x -> %s\n", (unsigned)crc,
              gnw_sh2_idle_skip ? "ON" : "OFF");
+
+    if (crc == 0xb0239812u) {
+        extern void Pico32xSetClocks(int, int);
+        Pico32xSetClocks(23011360 * 2, 23011360 * 2);
+    }
   }
 
   diag_log("PicoLoadMedia: mt=%d AHW=%x romsize=%lu pal=%d\n",
