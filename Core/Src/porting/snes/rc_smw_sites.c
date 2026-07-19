@@ -1,33 +1,32 @@
-/* rc_smw_sites.c — SMW per-ROM static recompilation, XIP compilation unit.
+/* rc_smw_sites.c — SMW per-ROM static recompilation, ITCM compilation unit.
  *
- * Ships as rc_smw.xip on SD, cached into QSPI XIP at runtime (sentinel
- * RCSMW_CODE 0xD1D0xxxx, same trick as sm.xip). Contains:
+ * The 270-site hot subset is linked at ITCM VMA and appended to snes.bin;
+ * the common core loader copies it into ITCM before app_main. Contains:
  *
  *   1. cpu_copy.c  — the interpreter's own static helpers (cpu_read,
  *                    cpu_write, cpu_setZN, cyclesPerOpcode, ...). Included
  *                    wholesale because every site calls them and they are
  *                    `static` in the overlay's cpu.c — invisible to other
- *                    TUs, so the XIP blob MUST carry its own copy. Both
+ *                    TUs, so the ITCM unit MUST carry its own copy. Both
  *                    copies are file-scope local; no symbol clash.
  *   2. rc_fetch8 / rc_adr* — the rc constant-folded fetch + addressing
  *                    helpers (from tools/sfc_recomp/rc_core.c). These are
  *                    NOT in the device's cpu.c.
- *   3. rc_sites.inc — 8371 native site functions + rc_fns[] + rc_addrs[].
- *   4. rc_smw_header — a discovery struct at blob offset 0 whose sentinel
- *                    pointers the cache-relocation pass patches to the
- *                    real flash addresses of rc_fns/rc_addrs.
+ *   3. rc_sites.inc — 270 native site functions + rc_fns[] + rc_addrs[].
+ *   4. rc_smw_header — discovery metadata whose pointers link directly to
+ *                    the ITCM VMA of rc_fns/rc_addrs.
  *
  * Compiled with the SAME flags and snes_redefines as the SNES overlay so
  * that externs (snes_cpuRead, HookedFunctionRts, ...) resolve to the
- * overlay's renamed gsnes__* definitions via linker-generated XIP->RAM
+ * overlay's renamed gsnes__* definitions via linker-generated ITCM->RAM
  * veneers. cpu_copy.c's own globals (cpu_init, cpu_reset, ...) are #define-
  * renamed to unique names before inclusion so they cannot clash with the
  * overlay's gsnes__* versions; they are dead code (the sites never call
- * them) and --gc-sections discards them. NO -DSNES_SPIN_SKIP: rc replaces
- * the interpreter, so the spin hooks are not needed in the XIP path.
+ * them) and --gc-sections discards them. NO -DSNES_SPIN_SKIP: native sites
+ * do not use the interpreter's spin hooks.
  *
- * Activation (main_snes.c rc_smw_activate): CRC32-detect SMW, cache the
- * blob, read the header, rc_dispatch_init(rc_addrs, nsites, rc_fns). The
+ * Activation (main_snes.c rc_smw_activate): identify SMW, validate the code
+ * bytes, then rc_dispatch_init(rc_addrs, nsites, rc_fns). The
  * overlay's cpu_runOpcode fast path then dispatches to sites instead of
  * interpreting. Rig-measured: -42.3% insn/frame on SMW, bit-identical
  * state hash. */
@@ -171,7 +170,7 @@ static inline uint32_t rc_adrAlx(Cpu *cpu, uint32_t *low, uint32_t adr) {
   return (adr + cpu->x + 1) & 0xffffff;
 }
 
-/* ---- the 8371 site functions + rc_fns[] + rc_addrs[] ---- */
+/* ---- the 270 hot-site functions + rc_fns[] + rc_addrs[] ---- */
 #include "rc_sites.inc"
 
 /* ---- SNES-overlay-resident dispatch table (NO DTCM heap) ----
@@ -195,7 +194,7 @@ rc_entry_t rc_hash_storage[RC_HASH_CAP];
 uint32_t   rc_bank_off[256];
 uint32_t   rc_bank_mask[256];
 
-/* ---- runtime discovery header (linked into .rodata, caught by .overlay_snes_itc) ----
+/* ---- runtime discovery header (linked into .rodata, caught by .itcm_rc_hot) ----
  * main_snes.c reads this after the loader copies the ITC blob to ITCM.
  * Pointer fields (addrs/fns/lens) are linked at ITCM VMA directly — no sentinel
  * patching needed (unlike the old XIP/QSPI-cache design). */
@@ -217,7 +216,7 @@ const struct rc_smw_header {
 } rc_smw_header = {
   RC_SMW_MAGIC,
   RC_NSITES,
-  RC_CODE_HASH,              /* FNV-1a of 8371 sites' consumed bytes in smw.sfc */
+  RC_CODE_HASH,              /* FNV-1a of 270 sites' consumed bytes in smw.sfc */
   rc_addrs,
   rc_fns,
   rc_site_lens,

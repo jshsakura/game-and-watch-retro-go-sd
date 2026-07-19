@@ -420,8 +420,7 @@ static bool cart_needs_coprocessor(const uint8_t *rom, uint32_t len) {
 }
 
 /* ---- rc SMW native optimization ---------------------------------------------
- * Per-ROM static recompilation: SMW's 65816 code translated into 8371 C site
- * functions, shipped as rc_smw.xip on SD and cached into QSPI XIP at runtime.
+ * Per-ROM static recompilation: SMW's 270 hottest 65816 sites translated to C.
  * The overlay's cpu_runOpcode fast path (g_rc_active) dispatches to sites
  * instead of interpreting. Rig-measured: -42.3% insn/frame on SMW.
  *
@@ -448,7 +447,7 @@ typedef struct {
   const uint8_t *lens;     /* ITCM VMA of rc_site_lens[] */
 } rc_smw_header_t;
 
-/* The header symbol — defined in rc_smw_sites.c, linked into .overlay_snes_itc
+/* The header symbol — defined in rc_smw_sites.c, linked into .itcm_rc_hot
  * (ITCM VMA). Available as a direct extern because run_internal_emu copies the
  * ITC blob to ITCM before app_main runs. */
 extern const rc_smw_header_t rc_smw_header;
@@ -570,9 +569,8 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
   snes = snes_init(snes_wram);
   g_the_snes = snes;
-  /* rc SMW activation takes priority over spin-skip (rc replaces the
-   * interpreter entirely; -42.3% vs spin-skip's -1.14%). If rc_smw.xip
-   * is absent or the ROM is not SMW, fall back to the spin-skip whitelist. */
+  /* rc SMW activation takes priority over spin-skip. If the ITCM metadata or
+   * ROM identity check fails, fall back to the spin-skip whitelist. */
   if (!rc_smw_activate(rom, sz)) {
     spin_whitelist_set(rom, sz);   /* enable spin-skip only for high-spin ROMs */
   }

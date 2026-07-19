@@ -140,11 +140,6 @@ MEMORY
    * as SM_CODE/GBA_CODE). RC_PROBE-gated; absent in release builds. */
   RCPROBE_CODE (x) : ORIGIN = 0xD0D00000,   LENGTH = 64K
 
-  /* rc SMW per-ROM static recompilation: 8371 site functions shipped as
-   * rc_smw.xip on SD, cached to QSPI XIP at runtime — same sentinel trick
-   * as SM_CODE. RCSMW-gated; absent in non-SMW-rc builds. */
-  RCSMW_CODE  (x) : ORIGIN = 0xD1D00000,   LENGTH = 2M
-
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
 }
@@ -490,16 +485,16 @@ INCLUDE build/fceumm_mappers.ld
      _OVERLAY_SNES_LOAD_END (overlapping the BSS VMA!) — run_internal_emu
      memcpy's it to ITCM BEFORE zeroing BSS.
      Base offset 0x4: keeps address 0 free so no function == NULL. */
-  .overlay_snes_itc (ORIGIN(ITCMRAM) + 0x4) : {
+  .itcm_rc_hot (ORIGIN(ITCMRAM) + 0x4) : {
     . = ALIGN(4);
-    __snes_itc_start__ = .;
+    __snes_rc_hot_start__ = .;
     build/rc_smw/*.o (.text .text* .rodata .rodata*)
     . = ALIGN(4);
-    __snes_itc_end__ = .;
-    ASSERT(ABSOLUTE(__snes_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: SNES ITC overflow");
+    __snes_rc_hot_end__ = .;
+    ASSERT(ABSOLUTE(__snes_rc_hot_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: SNES rc hot ITCM overflow");
   } AT > CORES
-  _OVERLAY_SNES_ITC_SIZE = SIZEOF(.overlay_snes_itc);
-  _OVERLAY_SNES_ITC_LMA_OFFSET = LOADADDR(.overlay_snes_itc) - LOADADDR(.overlay_snes);
+  _OVERLAY_SNES_ITC_SIZE = SIZEOF(.itcm_rc_hot);
+  _OVERLAY_SNES_ITC_LMA_OFFSET = LOADADDR(.itcm_rc_hot) - LOADADDR(.overlay_snes);
 
   .overlay_snes_bss _OVERLAY_SNES_LOAD_END : {
     . = ALIGN(4);
@@ -1102,22 +1097,6 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(8);
     __xip_rcprobe_end__ = .;
   } > RCPROBE_CODE
-
-  /* ----------------------------------------------------------- rc SMW XIP -
-   * SMW per-ROM static recompilation: 8371 native site functions shipped
-   * as rc_smw.xip on SD, cached into QSPI XIP at runtime. Linked at the
-   * RCSMW_CODE sentinel (0xD1D0xxxx) — NOT a real flash VMA — exactly
-   * like .xip_sm/.xip_rcprobe. The header section (.rc_smw_hdr) is placed
-   * first so main_snes.c can find rc_fns/rc_addrs at blob offset 0.
-   * RCSMW-gated; absent (empty) in non-rc builds. */
-  .xip_rc_smw : {
-    . = ALIGN(8);
-    __xip_rc_smw_start__ = .;
-    KEEP(*(.rc_smw_hdr))
-    build/rc_smw/*.o (.text .text* .rodata .rodata*)
-    . = ALIGN(8);
-    __xip_rc_smw_end__ = .;
-  } > RCSMW_CODE
 
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);

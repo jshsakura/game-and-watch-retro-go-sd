@@ -67,11 +67,11 @@ ifeq ($(RC_PROBE),1)
   C_DEFS += -DRC_PROBE=1
 endif
 
-# rc SMW native optimization: per-ROM static recompilation of SMW's 65816
-# code into 8371 C site functions, shipped as rc_smw.xip on SD and cached
-# into QSPI XIP at runtime. Rig-measured: -42.3% insn/frame on SMW.
+# rc SMW native optimization: per-ROM static recompilation of SMW's 270
+# hottest 65816 sites. The ~12 KB native subset is appended to snes.bin and
+# copied into ITCM at core load; cold sites fall through to the interpreter.
 # Default OFF: the release build is byte-identical to a tree without it
-# (rc_smw_sites.c is not compiled, .xip_rc_smw is empty, no rc_smw.xip).
+# (rc_smw_sites.c is not compiled and .itcm_rc_hot is empty).
 # Enable with RCSMW=1 (e.g. `make release DOCKER=1 RCSMW=1 ...`).
 RCSMW ?= 0
 ifeq ($(RCSMW),1)

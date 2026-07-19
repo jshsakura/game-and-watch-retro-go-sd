@@ -879,7 +879,7 @@ SNES_OBJECTS = $(addprefix $(BUILD_DIR)/snes/,$(notdir $(SNES_C_SOURCES:.c=.o)))
 else
 SNES_OBJECTS =
 endif
-# rc SMW XIP sites: RCSMW-gated. Empty (no objects, no blob) when RCSMW=0.
+# rc SMW ITCM sites: RCSMW-gated. Empty when RCSMW=0.
 ifeq ($(RCSMW),1)
 RCSMW_OBJECTS = $(addprefix $(BUILD_DIR)/rc_smw/,$(notdir $(RCSMW_C_SOURCES:.c=.o)))
 else
@@ -1331,15 +1331,16 @@ endef
 
 $(eval $(foreach obj,$(SNES_C_SOURCES),$(call snes_obj_prereq_gen,$(obj))))
 
-# -------------------------------------------------------------- rc SMW XIP sites
-# SMW per-ROM static recompilation: 8371 native site functions, compiled into
-# build/rc_smw/ and linked at the RCSMW_CODE sentinel (0xD1D0xxxx). Ships as
-# rc_smw.xip on SD, cached to QSPI XIP at runtime. RCSMW-gated.
+# ------------------------------------------------------------- rc SMW ITCM sites
+# SMW per-ROM static recompilation: the 270 hottest native site functions,
+# compiled into build/rc_smw/ and linked at ITCM VMA. Their LMA is appended to
+# snes.bin and the common core loader copies it to ITCM before clearing BSS.
+# RCSMW-gated; the output section is empty when disabled.
 #
 # Same snes_redefines as the SNES overlay so externs (snes_cpuRead,
 # HookedFunctionRts, ...) resolve to the overlay's gsnes__* via linker
 # veneers. NO -DSNES_SPIN_SKIP: rc replaces the interpreter, so the spin
-# hooks are not needed in the XIP path. -DGNW_SNES_CORE matches the
+# hooks are not needed in the native path. -DGNW_SNES_CORE matches the
 # overlay's memory-access path. The generated rc_sites.inc and cpu_copy.c
 # are found via -Igenerated/rc_smw; cpu_copy.c's relative includes
 # (../types.h etc.) resolve via -I$(CORE_SNES)/src/snes.
@@ -1843,7 +1844,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_wsv,$(CORES_DIR)/wsv.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_ngp,$(CORES_DIR)/ngp.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_wswan,$(CORES_DIR)/wswan.bin)
-	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_snes --only-section=.overlay_snes_itc,$(CORES_DIR)/snes.bin)
+	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_snes --only-section=.itcm_rc_hot,$(CORES_DIR)/snes.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_gw,$(CORES_DIR)/gw.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md,$(CORES_DIR)/md.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md32x,$(CORES_DIR)/32x.bin)
@@ -1869,9 +1870,9 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	@$(CP) -O binary --only-section=.overlay_sm $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Metroid.bin"
 	@$(CP) -O binary --only-section=.xip_sm --only-section=.rodata_sm $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/sm.xip"   # cold banks + rodata: contiguous in SM_CODE, ONE cache entry on purpose (see main_sm.c)
 	@$(CP) -O binary --only-section=.xip_gba --only-section=.rodata_gba $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/gba.xip"   # renderer + its rodata + BIOS: contiguous in GBA_CODE, ONE cache entry on purpose (see main_gba.c)
- ifeq ($(RC_PROBE),1)
+ifeq ($(RC_PROBE),1)
 	@$(CP) -O binary --only-section=.xip_rcprobe $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/rcprobe.xip"   # rc on-device probe XIP sites (RC_PROBE-gated; sentinel-linked, cached to QSPI at runtime)
- endif
+endif
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
 	@$(CP) -O binary --only-section=.coleco_bios_data $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/coleco/coleco.bin
 	@$(CP) -O binary --only-section=.overlay_graphics $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/logo.bin
