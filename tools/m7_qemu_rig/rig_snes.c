@@ -59,6 +59,14 @@ static uint64_t g_present_ticks;
 #define PROFILE_CPU(expr) (expr)
 #endif
 
+#ifdef RIG_PPU_DEEP
+uint64_t g_ppu_bg_ticks[3];
+uint64_t g_ppu_sprite_eval_ticks, g_ppu_sprite_draw_ticks;
+uint64_t g_ppu_clear_ticks, g_ppu_palette_ticks;
+uint64_t g_ppu_fast_ticks, g_ppu_math_ticks, g_ppu_line_ticks;
+uint64_t g_ppu_fast_pixels, g_ppu_math_pixels;
+#endif
+
 /* ---- firmware allocators (rig heap via _sbrk) ---- */
 void *itc_calloc(size_t n, size_t s) { return calloc(n, s); }
 void *itc_malloc(size_t s) { return malloc(s); }
@@ -92,8 +100,16 @@ static uint16_t g_lcd_frame[320 * 240];
 static void rig_blit_line(unsigned y, const uint16_t *line) {
   if (y < 1) return;
   unsigned row = (y - 1) + 8;
-  if (row < 240)
+  if (row < 240) {
+#ifdef RIG_PPU_DEEP
+    uint32_t _lt = rig_timer_now();
+#endif
     memcpy(g_device_frame + row * 320 + 32, line, sizeof(g_line));
+#ifdef RIG_PPU_DEEP
+    __asm__ volatile("" :: "r"(g_device_frame) : "memory");
+    g_ppu_line_ticks += (uint32_t)(rig_timer_now() - _lt);
+#endif
+  }
 }
 #endif
 
@@ -384,6 +400,23 @@ int main(void) {
            (unsigned long long)g_spin.ops_real,
            (unsigned long long)g_spin.ops_virtual,
            n ? 100.0 * g_spin.ops_virtual / n : 0.0, (int)g_spin.gate_on); }
+#endif
+#ifdef RIG_PPU_DEEP
+  printf("[ppu-deep] bg1=%lu bg2=%lu bg3=%lu sprite_eval=%lu sprite_draw=%lu "
+         "clear=%lu palette=%lu fast=%lu math=%lu linecopy=%lu "
+         "fast_pixels=%lu math_pixels=%lu insn/frame\n",
+         (unsigned long)(g_ppu_bg_ticks[0] * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_ppu_bg_ticks[1] * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_ppu_bg_ticks[2] * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_ppu_sprite_eval_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_ppu_sprite_draw_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_ppu_clear_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_ppu_palette_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_ppu_fast_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_ppu_math_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_ppu_line_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_ppu_fast_pixels / RIG_FRAMES),
+         (unsigned long)(g_ppu_math_pixels / RIG_FRAMES));
 #endif
 #else
   printf("[snes-qemu] done %d frames STATEHASH=%08lx AUDIOHASH=%08lx avg emu=%lu apu=%lu insn/frame\n",

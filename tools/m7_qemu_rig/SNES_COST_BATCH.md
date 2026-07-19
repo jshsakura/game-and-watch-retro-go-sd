@@ -26,6 +26,17 @@ results cannot turn a new core build green.
 Use `--rerun` to replace it. A short 300-frame pass is the library-wide smoke
 gate; rebuild with `--frames 1500` for a smaller, representative deep set.
 
+For PPU-heavy cartridges, split that total into BG1/BG2/BG3, sprite evaluation
+and draw, backdrop clears, palette rebuild, fast palette conversion, color math
+and line-copy stages:
+
+```sh
+tools/m7_qemu_rig/run_snes_ppu_deep.py game.sfc --frames 1200
+```
+
+The deep runner executes baseline, render-off and instrumented builds and rejects
+the result unless all three retain identical `COREHASH` and `AUDIOHASH`.
+
 Boundary: this is real ARMv7-M code and device compile flags, but QEMU reports
 executed instructions, not STM32H7 cache/XIP stalls. A small fixed device corpus
 calibrates that model; the full ROM library remains a host-only automated gate.
