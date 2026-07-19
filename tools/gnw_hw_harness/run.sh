@@ -10,11 +10,15 @@ config="${GNW_BUILD_CONFIG:-}"
 output="$repo/build/gnw_hw_contract.json"
 golden=""
 run_tests=0
+run_all=0
+require_device=0
+verbose=0
 declare -a proposals=()
 
 usage() {
     echo "usage: $0 [--map FILE] [--elf FILE] [--profile FILE] [--config FILE] [--output FILE]" >&2
     echo "          [--golden FILE] [--proposal REGION:BYTES:LABEL] [--tests]" >&2
+    echo "          [--all] [--require-device] [--verbose]" >&2
 }
 
 while (($#)); do
@@ -27,10 +31,20 @@ while (($#)); do
         --golden) golden=$2; shift 2 ;;
         --proposal) proposals+=("$2"); shift 2 ;;
         --tests) run_tests=1; shift ;;
+        --all) run_all=1; shift ;;
+        --require-device) require_device=1; shift ;;
+        --verbose) verbose=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage; exit 2 ;;
     esac
 done
+
+if ((run_all)); then
+    super_args=()
+    ((require_device)) && super_args+=(--require-device)
+    ((verbose)) && super_args+=(--verbose)
+    exec python3 "$here/super_gate.py" "${super_args[@]}"
+fi
 
 if ((run_tests)); then
     "$here/run_tests.sh"

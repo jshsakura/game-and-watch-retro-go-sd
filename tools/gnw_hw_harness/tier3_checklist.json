@@ -1,0 +1,14 @@
+{
+  "host_boundary": [
+    "QEMU instruction counts are not STM32H7 cycles",
+    "state-exact does not prove interrupt or raster delivery timing",
+    "watchdog window and SD/OSPI/cache stalls require silicon"
+  ],
+  "device_required": [
+    "profile clk= and DWT cycles are bound to map/ELF/config hashes",
+    "at least two calibration samples are required for an error band",
+    "record CFSR/HFSR/BFAR/MMFAR/ABFSR for every fault",
+    "measure the longest load/save/SD loop against the watchdog window",
+    "compare frame/audio/state hashes and delivery timestamps"
+  ]
+}

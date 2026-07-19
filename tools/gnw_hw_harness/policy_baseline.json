@@ -1,0 +1,41 @@
+{
+  "appid": {
+    "count": 27,
+    "ordered_prefix_sha256": "97bacc1a99764ece5e56c0598ff36d4b5f0c7067208b7f846732a0318b089cba",
+    "config_version": 14
+  },
+  "lang": {
+    "count": 279,
+    "ordered_prefix_sha256": "92330008e5bc8ebc8a7cc20d99a0823db48f795998cc6186faf6225390242b42"
+  },
+  "soft_float_exceptions": {
+    "tools/m7_qemu_rig/profile_ws_layers.sh": "legacy WS layer-attribution experiment; not an absolute device-cost oracle",
+    "tools/m7_qemu_rig/run_mcd.sh": "legacy feasibility rig; migrate before using performance numbers",
+    "tools/m7_qemu_rig/run_md.sh": "legacy feasibility rig; migrate before using performance numbers",
+    "tools/m7_qemu_rig/run_snes.sh": "legacy soft-float baseline; use run_snes_hf.sh for device estimates",
+    "tools/m7_qemu_rig/run_snes_hle.sh": "legacy feasibility rig; superseded by hard-float SNES runners",
+    "tools/m7_qemu_rig/run_snes_softfc.sh": "deliberate soft-float A/B control, never a device estimate",
+    "tools/m7_qemu_rig/run_video.sh": "legacy feasibility rig; migrate before using performance numbers",
+    "tools/m7_qemu_rig/run_wswan.sh": "legacy WS rig; state/correctness only until migrated"
+  },
+  "unstamped_savestate_exceptions": {
+    "Core/Src/porting/a7800/main_a7800.c": "2c2e3ed948a5086100c78bd25d25d2cf8c32827213cfae924372eceab9e12c11",
+    "Core/Src/porting/amstrad/main_amstrad.c": "6dd0ad417d12ee9fde35ccf3dfa691ecb3191c0178daeb4ec5a85de018618aaa",
+    "Core/Src/porting/c64/main_c64.c": "b8d331ffb7974b67b3d1a76bdf5db3c49714d7831ac5764d7663bfd78a1b14a0",
+    "Core/Src/porting/celeste/main_celeste.c": "eda91d042400ecfd0e446e1ccca1dcf169b2b9d07c5962e8782efd9ba68b18d1",
+    "Core/Src/porting/gamecom/main_gamecom.c": "af9838a0988d88163e6f64917d9e5a097f7477412b58032ef066495b998d5cc7",
+    "Core/Src/porting/gb_tgbdual/main_gb_tgbdual.cpp": "f9b74e9975b07a93b0a3390369b2ce99b208e117b9f23b696fa9bb9fc721857c",
+    "Core/Src/porting/msx/main_msx.c": "55002a232942e438e10f3e14bfd2b3793b3d048a104e7518167d5f27e3a23920",
+    "Core/Src/porting/nes/main_nes.c": "e9203b112299246a2a585cc0ba5835100c6da4f4e221332eb09447270913e7f2",
+    "Core/Src/porting/nes_fceu/main_nes_fceu.c": "b787af177cee4afae4b936d0b3f73b9f353da80df739d44cdfb1a54cf2faad85",
+    "Core/Src/porting/ngp/main_ngp.c": "d4700c773112c896eacfb56409cc00353763bd7bc3297c82dd32bbacf3ab3c49",
+    "Core/Src/porting/pce/main_pce.c": "18c09db3340e0e3688742daa5793079595a01346189d5e5e9d0567bf09199581",
+    "Core/Src/porting/pkmini/main_pkmini.c": "57cf3476e9e84500a15e97b6aad0f3237e8ffeeaf9c3a76f8ed21017e7cd58f9",
+    "Core/Src/porting/smsplusgx/main_smsplusgx.c": "197243b5edd564d4b5a8ac7dacccaadfc4d6a3347b46387e2a7ee1f46ac9a6c9",
+    "Core/Src/porting/tama/main_tama.c": "5d50e35dc8db01512c8946d021caf629db3fdc6605fc6c3fef8637d20c23f270",
+    "Core/Src/porting/vb/vb_savestate.c": "c677e8fa9eb9efe84c2fdd37002c4e087d58883a40f570d9e21e0b2bdc44b856",
+    "Core/Src/porting/videopac/main_videopac.c": "7d7de914bd4bcd9bb56398776131cb22e8b2252653bb1b1ea059f875f8680b39",
+    "Core/Src/porting/wsv/main_wsv.c": "3c07d15199626fc8e705e32d68306c9eda9eb7d61b059e869ef7adde76f5d526",
+    "Core/Src/porting/zxs/main_zxs.c": "bbad6946aaa9c7d48e7b4842d0cd4648e96da599c46aeae96b706ce06677e025"
+  }
+}
