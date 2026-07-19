@@ -362,7 +362,13 @@ static void md32x_repaint(void) {
                  ? (uint16_t *)framebuffer2 : (uint16_t *)framebuffer1;
     md32x_repaint_first = 0;
   }
-  if (frozen) memcpy(active, frozen, 320 * 240 * sizeof(uint16_t));
+  /* After lcd_swap toggles the double buffer, frozen aliases the *same*
+   * physical FB as active.  A self-memcpy is a no-op (harmless) but we
+   * skip it to stay explicit.  The overlay _repaint no longer pre-clears
+   * the active buffer for NO_BG_DARKEN callers (us), so frozen is never
+   * wiped by lcd_clear_active_buffer — the original 92425edd bug. */
+  if (frozen && frozen != active)
+    memcpy(active, frozen, 320 * 240 * sizeof(uint16_t));
   common_ingame_overlay();
 }
 
