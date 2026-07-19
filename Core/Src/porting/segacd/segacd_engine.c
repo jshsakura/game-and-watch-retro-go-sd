@@ -221,6 +221,72 @@ void segacd_sub_hold(void)
     SCD.sub_running = 0;
 }
 
+/* Rebuild Word-RAM ownership in both CPUs' memory maps — see segacd.h for the
+ * contract. Mirrors PicoDrive's remap_word_ram() (pd_cd/memory.c):
+ *
+ *   2M mode: a single 256KB block. Both CPUs' windows point at the same
+ *   SCD.word_ram regardless of the RET/DMNA ownership bit — real hardware
+ *   lets the non-owning side's access through too (data-wise identical; it
+ *   just stalls that CPU on the bus as an arbitration side effect we don't
+ *   model, since well-behaved software honors DMNA/RET and doesn't rely on
+ *   the stall). This matches the ORIGINAL static mapping this port shipped
+ *   with, so 2M-mode behavior is unchanged.
+ *
+ *   1M mode: two independent 128KB banks (the two halves of the same
+ *   256KB SCD.word_ram buffer — no separate cell-interleaved storage, see
+ *   below). Bit0 of reg3 ("b0") selects which half MAIN sees at
+ *   $200000-$21FFFF; SUB always gets the OTHER half at $0C0000-$0DFFFF.
+ *   This is the actual hardware ownership split — each CPU has its own
+ *   private bank with no aliasing, unlike the single-buffer placeholder
+ *   this port shipped with (see the removed comments at the old static
+ *   map[0x0C]/map[0x20+p] assignments this replaces).
+ *
+ * NOT implemented: the "cell arrange"/"decode format" dot-transform views
+ * real hardware exposes at $220000-$23FFFF (main) / $080000-$0BFFFF (sub)
+ * in 1M mode for the GFX ASIC's interleaved addressing (pd_cd/memory.c,
+ * the m68k_cell and s68k_dec handler families). No boot-path or currently-
+ * ported GFX ASIC code depends on that byte layout; those windows are
+ * pointed at the OTHER bank in plain linear form (better than aliasing
+ * onto the CPU's own bank, not byte-accurate cell-interleave) as a
+ * documented approximation. TODO: real cell/dot-decode transform if a
+ * title's renderer needs it. */
+void segacd_word_ram_remap(int called_from_sub)
+{
+    cpu_memory_map *main_map = called_from_sub ? s_main_saved.memory_map : m68k.memory_map;
+    cpu_memory_map *sub_map  = called_from_sub ? m68k.memory_map : SCD.sub_ctx.memory_map;
+    uint8_t r3 = SCD.s68k_regs[0x03];
+    int p;
+
+    if (!(r3 & 0x04)) {
+        /* 2M mode */
+        for (p = 0; p < 4; p++) {
+            main_map[0x20 + p].base = SCD.word_ram + (unsigned)p * 0x10000u;
+            sub_map [0x08 + p].base = SCD.word_ram + (unsigned)p * 0x10000u;
+        }
+        /* $0C0000-$0DFFFF is only meaningful in 1M mode; point it at
+         * word_ram start so a stray 2M-mode access doesn't fault. */
+        sub_map[0x0C].base = SCD.word_ram;
+        sub_map[0x0D].base = SCD.word_ram + 0x10000u;
+    } else {
+        /* 1M mode: bank[b0] -> MAIN, bank[b0^1] -> SUB. */
+        int b0 = r3 & 1;
+        unsigned char *main_bank = SCD.word_ram + (unsigned)b0 * 0x20000u;
+        unsigned char *sub_bank  = SCD.word_ram + (unsigned)(b0 ^ 1) * 0x20000u;
+
+        main_map[0x20].base = main_bank;
+        main_map[0x21].base = main_bank + 0x10000u;
+        sub_map [0x0C].base = sub_bank;
+        sub_map [0x0D].base = sub_bank + 0x10000u;
+
+        /* Approximated cell-arrange views (see function comment). */
+        main_map[0x22].base = sub_bank;
+        main_map[0x23].base = sub_bank + 0x10000u;
+        for (p = 0; p < 4; p++)
+            sub_map[0x08 + p].base = SCD.word_ram + (unsigned)p * 0x10000u;
+    }
+    SCD.word_owner = (uint8_t)(r3 & 1);
+}
+
 /* DEBUG: dump interrupt state at segacd_run_sub entry */
 void segacd_dump_int_state(int frame)
 {

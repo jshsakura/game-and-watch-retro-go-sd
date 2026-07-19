@@ -150,6 +150,17 @@ int  segacd_run_sub(int cycle_target);  /* context-swap, run sub-68K, swap back 
 void segacd_sub_release(void);          /* pulse-reset sub, start it (SRES clear) */
 void segacd_sub_hold(void);             /* hold sub in reset / bus-request */
 
+/* Rebuild both CPUs' Word-RAM mapping (.base pointers only) from the CURRENT
+ * SCD.word_mode / SCD.s68k_regs[0x03] bit0 state — 2M mode: one shared 256KB
+ * block; 1M mode: two independent 128KB banks, swapped by bit0, so main and
+ * sub never alias the same physical bytes. Call after ANY write that changes
+ * reg3 bits 0/2 (from either CPU's write handler in segacd_bus.c) and once at
+ * init. `called_from_sub` must say which CPU context is CURRENTLY active in
+ * the shared `m68k` global (segacd_engine.c's s_main_saved swap shadow only
+ * holds a valid main snapshot while sub is active) — get this wrong and the
+ * remap corrupts the wrong CPU's memory map. */
+void segacd_word_ram_remap(int called_from_sub);
+
 /* bus (segacd_bus.c) */
 void segacd_sub_build_memory_map(void); /* fill SCD.sub_ctx.memory_map */
 void segacd_main_map_cd_space(void);    /* patch main map: PRG win / Word / GA */

@@ -171,8 +171,9 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
              * 0 (RET), 2 (MODE), 3-4 (PM priority); bits 1(DMNA)/6-7(bank)
              * are preserved from the old value, then bits 0-1 are
              * recomposed from the dmna_ret_2m shadow so a SUB write can't
-             * resurrect a DMNA the main already cleared. 1M-mode swap
-             * semantics are NOT modeled (deferred — boot is 2M). */
+             * resurrect a DMNA the main already cleared. Bit0 doubles as the
+             * 1M-mode bank-select ("b0") — segacd_word_ram_remap() below
+             * does the actual bank swap. */
             uint8_t dold = SCD.s68k_regs[0x03];
             uint8_t d    = (uint8_t)data & 0x1d;   /* SUB may supply bits 0,2,3,4 */
             d |= dold & 0xc2;                       /* preserve DMNA(1)/bank(6-7) */
@@ -183,9 +184,8 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
             }
 
             if (d & 0x04) {
-                /* 1M mode — TODO(ph2c): real bank-swap semantics if a
-                 * 1M-mode title needs them; approximate the swap-complete
-                 * DMNA clear only. */
+                /* 1M mode — bit0 selects which bank SUB sees; the DMNA bit
+                 * clears on any bank/mode transition (swap-complete). */
                 if ((d ^ dold) & 0x05) d &= (uint8_t)~0x02;
             } else {
                 d = (uint8_t)((d & ~0x03) | SCD.dmna_ret_2m);
@@ -197,6 +197,7 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
 #endif
             SCD.s68k_regs[0x03] = d;
             SCD.word_mode = (uint8_t)((d >> 2) & 1);
+            segacd_word_ram_remap(1);   /* called from SUB's own write handler */
 #ifdef SEGACD_GA_TRACE
             if (SCD.word_mode != old_mode)
                 printf("[wram-mode] f%d SUB wrote reg3=%02x -> word_mode %u->%u  subPC=%06x\n",
@@ -329,18 +330,17 @@ void segacd_sub_build_memory_map(void)
         map[p].write16= sub_prg_paged_write16;
     }
 
-    /* $080000-$0BFFFF : Word-RAM 2M-mode linear view (256 KB) */
+    /* $080000-$0BFFFF (2M linear view) / $0C0000-$0DFFFF (1M bank view):
+     * placeholder pointers only, so the sub never touches an unmapped (NULL)
+     * page before Word-RAM ownership is known — segacd_word_ram_remap(),
+     * called from segacd_main_map_cd_space() right after this and on every
+     * reg3 write thereafter, is the real, ownership-aware source of truth
+     * for both of these regions (see segacd.h). Do not rely on these values
+     * directly; they only exist to avoid a segfault in the init window
+     * before the first remap runs. */
     for (int p = 0; p < (SEGACD_WORD_RAM_SIZE / PAGE_SIZE); p++) {
         map[0x08 + p].base = SCD.word_ram + p * PAGE_SIZE;
     }
-
-    /* $0C0000-$0DFFFF : Word-RAM 1M-mode cell-arranged / linear bank view. The
-     * boot-logo sub-BIOS sets up its stamp graphics here (sub PC 0x70f0: clears
-     * $C0000.. and writes a header at $CE080). We do NOT model 1M banking yet
-     * (see ph2b) — but leaving this NULL segfaults the sub the moment it touches
-     * the region. DIAGNOSTIC: point it at a dedicated scratch bank so the sub can
-     * run and we can observe the boot-mode progression; real 1M cell-mapping is a
-     * follow-up once the reference confirms the sub is meant to be here now. */
     map[0x0C].base = SCD.word_ram;
     map[0x0D].base = SCD.word_ram + PAGE_SIZE;
 
@@ -551,8 +551,10 @@ static void main_ga_write8(unsigned int address, unsigned int data)
          * bits 2-4 (MODE/PM, owned by SUB) are preserved from the old value;
          * bits 0-1 (RET/DMNA) are recomposed from the persistent dmna_ret_2m
          * shadow so a MAIN write can't clobber a RET the sub already gave
-         * back. 1M-mode swap semantics are NOT modeled (deferred — boot is
-         * 2M). pd_cd/memory.c m68k_reg_write8 case 3. */
+         * back. MAIN never changes bit0 (1M bank-select, SUB-owned) — this
+         * write can't move it — but still calls segacd_word_ram_remap() so
+         * a DMNA-driven ownership change re-syncs the map. pd_cd/memory.c
+         * m68k_reg_write8 case 3. */
         uint8_t dold = SCD.s68k_regs[0x03];
         uint8_t d    = (uint8_t)data;
 
@@ -562,8 +564,8 @@ static void main_ga_write8(unsigned int address, unsigned int data)
         }
 
         if (dold & 0x04) {
-            /* 1M mode — TODO(ph2c): real bank-swap semantics if a 1M-mode
-             * title needs them; approximate the DMNA toggle only. */
+            /* 1M mode — bit0 (bank-select) is SUB-owned, stays from dold;
+             * DMNA clears on any bank/mode transition (swap-complete). */
             d ^= 0x02;
             d  = (uint8_t)((d & 0xc2) | (dold & 0x1f));
         } else {
@@ -575,6 +577,7 @@ static void main_ga_write8(unsigned int address, unsigned int data)
         SCD.word_mode = (uint8_t)((d >> 2) & 1);
         scd_prg_bank_written |= (uint8_t)(1 << SCD.prg_bank);
         scd_word_mode_seen   |= (uint8_t)(1 << SCD.word_mode);
+        segacd_word_ram_remap(0);   /* called from MAIN's own write handler */
         segacd_poll_wake();
         return;
     }
@@ -689,10 +692,11 @@ void segacd_main_map_cd_space(void)
         map[p].write16= main_prgwin_write16;
     }
 
-    /* $200000-$23FFFF : Word-RAM (2M mode, main owns after reset), 4 pages.
-     * TODO(ph2b): arbitration — NULL + handler when sub owns. */
-    for (int p = 0; p < 4; p++)
-        map[0x20 + p].base = SCD.word_ram + p * PAGE_SIZE;
+    /* $200000-$23FFFF : Word-RAM. Ownership/bank-swap arbitration (ph2b) is
+     * segacd_word_ram_remap() below — it needs SCD.sub_ctx.memory_map
+     * already built (segacd_sub_build_memory_map(), called from
+     * segacd_init() before this function runs) and m68k.memory_map to be
+     * MAIN's context (true here: init never runs with sub active). */
 
     /* $A12000 page : gate array registers. Page $A1 also carries Z80/io/cart/
      * TMSS, all handled by gwenesis's own dispatcher — save it and chain to it
@@ -708,4 +712,8 @@ void segacd_main_map_cd_space(void)
     map[0xA1].read16 = main_ga_read16;
     map[0xA1].write8 = main_ga_write8;
     map[0xA1].write16= main_ga_write16;
+
+    /* Finalize Word-RAM ownership from the CURRENT reg3 state (segacd_init
+     * already reset it to 2M/RET=1) — m68k is MAIN's context here. */
+    segacd_word_ram_remap(0);
 }
