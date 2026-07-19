@@ -392,6 +392,21 @@ int main(int argc, char **argv) {
         fprintf(stderr, "[sitedump] %u sites -> %s\n", nsites, sp);
       }
     } }
+  { const char *hp = getenv("SNES_HISTDUMP");
+    if (hp && g_pchist) {
+      FILE *hf = fopen(hp, "wb");
+      if (hf) {
+        for (uint32_t a = 0; a < (1u << 24); a++) {
+          if (g_pchist[a]) {
+            uint32_t count = g_pchist[a];
+            fwrite(&a, 4, 1, hf);
+            fwrite(&count, 4, 1, hf);
+          }
+        }
+        fclose(hf);
+        fprintf(stderr, "[histdump] -> %s\n", hp);
+      }
+    } }
   /* Dump the live expanded cart image + mapping params: the exact bytes and
    * formula snes_cpuRead's ROM fast path serves fetches from. */
   { const char *cp = getenv("SNES_CARTDUMP");

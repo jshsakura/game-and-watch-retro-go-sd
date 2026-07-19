@@ -13,7 +13,7 @@
 
 uint64_t g_rc_native, g_rc_interp;
 
-typedef struct { uint16_t pc; uint16_t id; } rc_entry_t;
+
 static rc_entry_t *rc_hash[256];
 static int rc_hash_mask[256];
 static int rc_ready;

@@ -103,12 +103,20 @@ else
 fi
 
 echo "=== check_core_symbol_aliases: a clean tree passes ==="
-mkdir -p "$T/build_clean/coreC" "$T/build_clean/coreD" "$T/image_clean.elf"
+mkdir -p "$T/build_clean/coreC" "$T/build_clean/coreD" \
+    "$T/build_clean/rc_smw_hot" "$T/image_clean.elf"
 cat > "$T/build_clean/coreC/coreC.o" <<'EOF'
 00000000 T coreC_entry
 EOF
 cat > "$T/build_clean/coreD/coreD.o" <<'EOF'
 00000000 T coreD_entry
+EOF
+# The hot RC unit intentionally references SNES globals. It is part of that
+# overlay, not another same-address core, and must therefore be ignored by the
+# cross-core ownership scan.
+cat > "$T/build_clean/rc_smw_hot/hot.o" <<'EOF'
+         U coreC_entry
+00000020 T rc_hot_site_1
 EOF
 cat > "$T/image_clean.elf/nm.txt" <<'EOF'
 24000000 T coreC_entry

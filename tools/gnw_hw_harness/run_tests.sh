@@ -7,6 +7,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 python3 "$here/test_gnw_hw.py"
 python3 "$here/test_timing_oracle.py"
+python3 "$here/test_verify_snes_rc_hot.py"
 ${CC:-gcc} -O2 -Wall -Wextra -Werror -std=c11 \
     -I"$here" "$here/alloc_model.c" "$here/test_alloc_model.c" \
     -o "$tmp/test_alloc_model"
