@@ -37,8 +37,24 @@ void rig_timer_init(void);
 uint32_t rig_timer_now(void);
 uint32_t rig_calibrate(uint32_t n);
 
+#ifndef RIG_ROM_LOADER
 extern unsigned char _binary_rom_smc_start[];
 extern unsigned char _binary_rom_smc_end[];
+#endif
+
+#ifdef RIG_COST_PROF
+uint64_t g_cpu_ticks, g_spc_ticks, g_dsp_ticks, g_dsp_calls;
+static uint64_t g_active_voice_sum, g_echo_voice_sum, g_echo_write_frames;
+static uint64_t g_present_ticks;
+#define PROFILE_CPU(expr) ({ \
+  uint32_t _ct = rig_timer_now(); \
+  int _cycles = (expr); \
+  g_cpu_ticks += (uint32_t)(rig_timer_now() - _ct); \
+  _cycles; \
+})
+#else
+#define PROFILE_CPU(expr) (expr)
+#endif
 
 /* ---- firmware allocators (rig heap via _sbrk) ---- */
 void *itc_calloc(size_t n, size_t s) { return calloc(n, s); }
@@ -66,6 +82,18 @@ static uint16_t g_fb[320 * 240];
 static int16_t  g_audio[16000 / 60];
 static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
+#ifdef RIG_DEVICE_VIDEO
+static uint16_t g_line[256];
+static uint16_t g_device_frame[320 * 240];
+static uint16_t g_lcd_frame[320 * 240];
+static void rig_blit_line(unsigned y, const uint16_t *line) {
+  if (y < 1) return;
+  unsigned row = (y - 1) + 8;
+  if (row < 240)
+    memcpy(g_device_frame + row * 320 + 32, line, sizeof(g_line));
+}
+#endif
+
 /* ---- event loop, verbatim from snes_main.c ---- */
 static int dots_to_next_event(Snes *snes) {
   int h = snes->hPos;
@@ -91,7 +119,7 @@ static void cpu_tick(Snes *snes) {
   if (dma_cycle(snes->dma)) return;
   if (snes->cpuCyclesLeft == 0) {
     snes->cpuMemOps = 0;
-    int cycles = cpu_runOpcode(snes->cpu);
+    int cycles = PROFILE_CPU(cpu_runOpcode(snes->cpu));
     snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
   }
   snes->cpuCyclesLeft -= 2;
@@ -107,7 +135,7 @@ static void run_dots(Snes *snes, int dots) {
     if (snes->cpuCyclesLeft == 0) {
       apply_irq_match(snes);
       snes->cpuMemOps = 0;
-      int cycles = cpu_runOpcode(snes->cpu);
+      int cycles = PROFILE_CPU(cpu_runOpcode(snes->cpu));
       snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
       started_dma = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
     }
@@ -144,8 +172,20 @@ static uint64_t fnv1a(const void *data, size_t len) {
 }
 
 int main(void) {
+#ifdef RIG_ROM_LOADER
+  /* The batch runner injects a ROM and its little-endian length directly into
+   * otherwise-unused MPS2 PSRAM with QEMU's generic loader.  The core ELF is
+   * therefore built once and reused for thousands of cartridges. */
+  unsigned char *raw = (unsigned char *)0x60800000u;
+  uint32_t raw_len = *(volatile uint32_t *)0x607ffffcu;
+  if (raw_len == 0 || raw_len > 0x800000u) {
+    printf("[snes-qemu] invalid injected ROM length=%lu\n", (unsigned long)raw_len);
+    return 2;
+  }
+#else
   unsigned char *raw = _binary_rom_smc_start;
   uint32_t raw_len = (uint32_t)(_binary_rom_smc_end - _binary_rom_smc_start);
+#endif
   uint32_t hdr = (raw_len % 1024 == 512) ? 512 : 0;
   unsigned char *rom = raw + hdr;
   uint32_t rom_len = raw_len - hdr;
@@ -194,7 +234,12 @@ int main(void) {
 #else
     snes->input1->currentState = 0;
 #endif
+#ifdef RIG_DEVICE_VIDEO
+    g_ppu_line_cb = &rig_blit_line;
+    PpuBeginDrawing(snes->ppu, (uint8_t *)g_line, 0, 0);
+#else
     PpuBeginDrawing(snes->ppu, (uint8_t *)(g_fb + 32), 320 * 2, 0);
+#endif
 
 #ifdef RIG_FRAMESKIP
     g_ppu_skip_render = true;   /* measure CPU+APU+timing without PPU compositing;
@@ -203,16 +248,43 @@ int main(void) {
     uint32_t t0 = rig_timer_now();
     run_frame_events(snes);
     uint32_t t1 = rig_timer_now();
+#ifdef RIG_DEVICE_VIDEO
+    uint32_t tp = rig_timer_now();
+    memcpy(g_lcd_frame, g_device_frame, sizeof(g_lcd_frame));
+    __asm__ volatile("" :: "r"(g_lcd_frame) : "memory");
+    g_present_ticks += (uint32_t)(rig_timer_now() - tp);
+    uint32_t ta = rig_timer_now();
+#else
+    uint32_t ta = t1;
+#endif
     if (snes->apu) {
       while (snes->apu->dsp->sampleOffset < 534) apu_cycle(snes->apu);
       dsp_getSamples(snes->apu->dsp, g_audio, 16000 / 60, 1);
     }
     uint32_t t2 = rig_timer_now();
     win_emu += (uint32_t)(t1 - t0);
-    win_apu += (uint32_t)(t2 - t1);
+    win_apu += (uint32_t)(t2 - ta);
 
+#ifdef RIG_DEVICE_VIDEO
+    uint64_t h = fnv1a(g_device_frame, sizeof(g_device_frame));
+#else
     uint64_t h = fnv1a(g_fb, sizeof(g_fb));
+#endif
     run_hash = (run_hash ^ h) * 1099511628211ULL;
+
+#ifdef RIG_COST_PROF
+    if (snes->apu) {
+      unsigned active = 0, echo = 0;
+      for (int ch = 0; ch < 8; ch++) {
+        DspChannel *c = &snes->apu->dsp->channel[ch];
+        if (c->gain != 0 || c->adsrState != 4) active++;
+        if (c->echoEnable) echo++;
+      }
+      g_active_voice_sum += active;
+      g_echo_voice_sum += echo;
+      if (snes->apu->dsp->echoWrites) g_echo_write_frames++;
+    }
+#endif
 
     /* Audio-path gate: g_audio is overwritten every frame, so fold it here.
      * STATEHASH alone (fb+wram+cart) cannot detect an audio divergence. */
@@ -223,7 +295,13 @@ int main(void) {
       uint64_t emu_i = win_emu * ipt_x1000 / 1000 / RIG_WINDOW;
       uint64_t apu_i = win_apu * ipt_x1000 / 1000 / RIG_WINDOW;
       int lit = 0;
-      for (int q = 0; q < 320 * 240; q++) if (g_fb[q]) lit++;
+      const uint16_t *lit_fb =
+#ifdef RIG_DEVICE_VIDEO
+        g_device_frame;
+#else
+        g_fb;
+#endif
+      for (int q = 0; q < 320 * 240; q++) if (lit_fb[q]) lit++;
       printf("w%05d emu=%lu apu=%lu insn/frame fb=%08lx audio=%08lx lit=%d\n",
              frame + 1, (unsigned long)emu_i, (unsigned long)apu_i,
              (unsigned long)(uint32_t)h, (unsigned long)(uint32_t)ah, lit);
@@ -234,10 +312,29 @@ int main(void) {
   uint64_t frames = (RIG_FRAMES / RIG_WINDOW) * RIG_WINDOW;
   if (frames == 0) frames = 1;
   uint64_t sh = fnv1a(g_wram, sizeof(g_wram)) ^ fnv1a(snes->cart->ram, snes->cart->ramSize);
+#ifdef RIG_COST_PROF
+  printf("[snes-qemu] done %d frames STATEHASH=%08lx AUDIOHASH=%08lx COREHASH=%08lx avg emu=%lu apu=%lu insn/frame\n",
+         RIG_FRAMES, (unsigned long)(uint32_t)(run_hash ^ sh),
+         (unsigned long)(uint32_t)audio_hash,
+         (unsigned long)(uint32_t)sh,
+         (unsigned long)(tot_emu * ipt_x1000 / 1000 / frames),
+         (unsigned long)(tot_apu * ipt_x1000 / 1000 / frames));
+  printf("[cost] cpu=%lu spc700=%lu dsp=%lu present=%lu dsp_samples=%lu "
+         "active_voices_x1000=%lu echo_voices_x1000=%lu echo_write_frames=%lu insn/frame\n",
+         (unsigned long)(g_cpu_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_spc_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_dsp_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_present_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_dsp_calls / RIG_FRAMES),
+         (unsigned long)(g_active_voice_sum * 1000 / RIG_FRAMES),
+         (unsigned long)(g_echo_voice_sum * 1000 / RIG_FRAMES),
+         (unsigned long)g_echo_write_frames);
+#else
   printf("[snes-qemu] done %d frames STATEHASH=%08lx AUDIOHASH=%08lx avg emu=%lu apu=%lu insn/frame\n",
          RIG_FRAMES, (unsigned long)(uint32_t)(run_hash ^ sh),
          (unsigned long)(uint32_t)audio_hash,
          (unsigned long)(tot_emu * ipt_x1000 / 1000 / frames),
          (unsigned long)(tot_apu * ipt_x1000 / 1000 / frames));
+#endif
   return 0;
 }
