@@ -827,27 +827,18 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     return;
   }
 
-  /* SH-2 BRA-self idle-skip whitelist: only verified ROMs get scheduler
-   * SLEEP on BRA-self (saves ~99% of sleeping SH-2 cost). Unverified
-   * ROMs use the safe icount-burn path. CRC32 computed from raw ROM
-   * data (pre-byteswap). Add verified CRCs here as games are tested. */
-  extern int gnw_sh2_idle_skip;
-  {
-    uint32_t crc = 0xFFFFFFFF;
-    for (unsigned i = 0; i < sz; i++) {
-      crc ^= rom[i];
-      for (int b = 0; b < 8; b++)
-        crc = (crc >> 1) ^ (0xEDB88320u & -(crc & 1));
-      if ((i & 0xFFFFu) == 0) wdog_refresh();   /* 3 MB CRC over slow QSPI XIP
-                                                   overruns the ~472 ms watchdog
-                                                   window → reset (device 즉사) */
-    }
-    crc ^= 0xFFFFFFFF;
-    /* Doom 32X (US): slave SH-2 verified sleeping safely */
-    gnw_sh2_idle_skip = (crc == 0xb0239812u) ? 1 : 0;
-    diag_log("idle_skip: crc=%08x -> %s\n", (unsigned)crc,
-             gnw_sh2_idle_skip ? "ON" : "OFF");
-  }
+  /* No SH-2 BRA-self idle-skip whitelist here. It was gated by a full-ROM
+   * CRC32 (one dump only, every variant/region falls through) AND it
+   * measured 0 device fps effect (docs/32X_PERFORMANCE_RESULTS.md 측정10 —
+   * QEMU rig instruction-count savings didn't translate to device cycles)
+   * AND it broke Doom's gunshot PWM SFX: the whitelisted BRA-self spin was
+   * the SH-2 code path leading into the sound-effect trigger, so scheduler
+   * SLEEP was skipping state a game-code-driven pattern match wouldn't have
+   * (state-exact != cycle-exact, the WS idle-skip lesson). Net: pure loss,
+   * removed. gnw_sh2_idle_skip stays at its compiled-in default (0 — see
+   * sh2pico.c GNW_SH2_IDLE_SKIP_DEFAULT). If this class of optimization
+   * returns, it must key off an opcode-pattern fingerprint (like SegaCD's
+   * poll detector) — never a whole-ROM CRC. */
 
   diag_log("PicoLoadMedia: mt=%d AHW=%x romsize=%lu pal=%d\n",
            (int)mt, (unsigned)PicoIn.AHW, (unsigned long)Pico.romsize,
