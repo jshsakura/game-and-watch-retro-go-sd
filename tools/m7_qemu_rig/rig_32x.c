@@ -629,6 +629,14 @@ int main(void) {
     printf("[32x-qemu] PicoLoadMedia -> media_type=%d AHW=%x\n", (int)mt, (unsigned)PicoIn.AHW);
     if (mt == PM_ERROR) { printf("[32x-qemu] LOAD FAILED\n"); return 3; }
 
+#ifdef RIG_IDLE_SKIP
+    {
+        extern int gnw_sh2_idle_skip;
+        gnw_sh2_idle_skip = 1;
+        printf("[32x-qemu] idle_skip ENABLED (compile-time)\n");
+    }
+#endif
+
     PicoLoopPrepare();
     PicoIn.sndOut = s_snd;
     PicoIn.writeSound = rig_write_sound;
