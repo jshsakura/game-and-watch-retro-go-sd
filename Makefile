@@ -25,7 +25,6 @@ ROMS_VIDEOPAC :=
 ######################################
 # C sources
 C_SOURCES =  \
-Core/Src/porting/lib/lz4_depack.c \
 Core/Src/porting/lib/lzma/LzmaDec.c \
 Core/Src/porting/lib/lzma/lzma.c \
 Core/Src/bilinear.c \
@@ -583,9 +582,12 @@ Core/Src/porting/msx/save_msx.c
 GW_C_SOURCES = 
 
 CORE_GW = external/LCD-Game-Emulator
-#TODO : change linking so lz4/lzma libraries are in LCD emulator section
-#       and not in internal flash
+# lz4 moved here: gw_romloader.c is its only caller anywhere in the tree, so it
+# belongs in this overlay, not the resident image. lzma stays resident
+# (Core/Src/porting/lib/lzma/LzmaDec.c) because nes/nes_fceu/a7800/smsplusgx/msx/
+# videopac/wsv/pce/gnuboy all share the same compiled copy.
 GW_C_SOURCES += \
+Core/Src/porting/lib/lz4_depack.c \
 $(CORE_GW)/src/cpus/sm500op.c \
 $(CORE_GW)/src/cpus/sm510op.c \
 $(CORE_GW)/src/cpus/sm500core.c \
