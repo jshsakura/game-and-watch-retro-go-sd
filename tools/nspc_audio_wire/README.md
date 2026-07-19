@@ -59,3 +59,43 @@ Files: `wire.c/.h` (dispatch + detection + swap), `host_main.c`,
 `build.sh` (generated-copy discipline: player dialect pipeline from nspc_hle
 + `apu_run`->`apu_run_lle` rename in a copied apu.c; submodule untouched),
 `run_snes_wire.sh` (+ generated `rig_snes_wire.c`).
+
+## SMW exact-player path
+
+The generic dialect adapter above can decode SMW streams, but its live port
+protocol is wrong for SMW. `smw_exact_wire.c` instead adopts the running LLE
+state into `external/smw/src/smw_spc_player.c`, the project's exact SMW music
+and SFX reimplementation. It is generated with zero-copy ARAM/DSP pointers, so
+it does not allocate a second 64 KiB APU RAM.
+
+SMW reloads APU blocks at runtime. The exact wire implements the AA/BB mailbox,
+counter echo and direct ARAM receiver; the uploaded `0x1360..0x5fff` gameplay
+image was compared against LLE and matched byte-for-byte. This fixes the old
+post-swap black-screen wait and preserves music/SFX after reloads.
+
+```bash
+bash tools/nspc_audio_wire/build_smw_exact.sh
+WIRE=0 /tmp/smw_exact_wire_build/wire_smw_host external/smw/smw.sfc 2400
+/tmp/smw_exact_wire_build/wire_smw_host external/smw/smw.sfc 2400
+
+# Cortex-M7, hard-float, spin-skip in both arms
+WIRE_OFF=1 bash tools/nspc_audio_wire/run_snes_smw_exact.sh external/smw/smw.sfc 1200
+bash tools/nspc_audio_wire/run_snes_smw_exact.sh external/smw/smw.sfc 1200
+```
+
+Measured on the M7 rig (1200 frames, periodic Start input):
+
+| | emu | audio pull | total | 340 MHz equivalent |
+|---|---:|---:|---:|---:|
+| LLE + spin-skip | 6.365M | 0.477M | 6.842M | 49.69 fps |
+| exact SMW HLE + spin-skip | 5.723M | 0.531M | 6.255M | **54.36 fps** |
+
+That removes 587,287 instructions/frame (8.58%). Scaling the measured-device
+46 fps spin baseline by the same total-work ratio gives 50.32 fps; device
+measurement remains the release oracle.
+
+Boundary: framebuffer window hashes match through the first 1200 frames. A
+later APU reload is handled faster than the real SPC700 transfer, so transition
+timing and subsequent state hashes differ even though the game proceeds,
+renders, and produces audio. This is therefore a performance/productization
+candidate, not a bit-exact audio-timing replacement.
