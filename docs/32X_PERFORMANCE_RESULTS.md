@@ -585,6 +585,10 @@ SDRAM poll, PWM poll)가 **실기에서는 이득이 측정되지 않았다.** `
 5. 결과에 따라: 슬레이브 SH-2 지배적이면 인터프리터 최적화(레이지플래그/스레디드디스패치,
    위 프로젝트 철학 항목 ②)로, draw32x/draw_md 지배적이면 렌더러 최적화(④)로 방향을 튼다 —
    측정 없이 추측하지 않는다.
+6. **(측정 11 추가)** "sh2 cycles/guest-insn" 절의 `msh2`/`ssh2` ratio 를 비교. msh2 ratio 가
+   ssh2 보다 훨씬 크면 XIP/I-캐시 스톨 가설 확정 → 다음 레버는 SH2_PC_HIST 로 식별된 핫
+   주소(게임 ROM `0x02036220-0x02036f3e`+`0x02037c52-c60`, 약 3.5KB)를 ITCM 에 상주시키는
+   것(SMW rc 패턴과 동일). ratio 가 비슷하면 순수 디스패치 오버헤드 쪽(②)으로 방향 확정.
 
 ## 측정 10 — Doom 현재(e3de4645) rig 재측정 + idle-skip rig/기기 불일치 (0720)
 
@@ -632,16 +636,48 @@ DWT sub-phase 실측만이 할 수 있다** (rig icount 는 스톨을 못 봄, [
 프레임당 ~3000번**이라 collapsed-overhead 합만으로도 여전히 최상위. 즉 "이 루프 하나가
 62.68%"이던 측정 1 시절과 달리, 지금은 **단일 핫루프가 없다** — 대신:
 
-- `0x02036f36` BFS countdown (7.98%): 이미 keep 적용됨, 호출빈도(~3000/frame)가 지분의 근원.
+- `0x02036f36` BFS countdown (7.98%): 이미 keep 적용됨, 호출빈도(~3000/frame, 게임 ROM 코드
+  0x0203xxxx 영역이라 매 프레임 재실행)가 지분의 근원.
 - `0x02036222-26` GBR-relative 4-insn 읽기(`LDC R1,GBR; MOV.W @(0x22,GBR),R0; ...`, 9.52%,
   ~2676회/frame): 통신/상태 레지스터 접근자로 보임 — 폴링은 아니고 순수 accessor 함수.
-- `0x00000210` 전역 BT 카운트다운(5.82%, ~2185회/frame): 측정 4의 Metal Head/VR 과 동일한
-  BIOS/SDK 공용 딜레이 루틴.
+- `0x00000210` 전역 BT 카운트다운(5.82%): **정정** — 이건 프레임당 반복이 아니라 **부팅 시
+  단 한 번**뿐이다. 주소가 게임 ROM이 아니라 picodrive 자체가 합성한 가짜 마스터 BIOS
+  스텁(`external/picodrive/pico/32x/memory.c`의 `msh2_code[]`, 실제 세가 BIOS 없이 도는
+  `p32x_bios_m==NULL` 경로에서 씀) 안이고, 카운트 65536 은 스텁의 `_cnt` 상수(0x00010000)와
+  정확히 일치 — "m68k 초기화 대기" 1회성 딜레이(`Tempo` 레이스 방지 주석 있음) 다. 부팅 후
+  `jmp @r8` 로 게임 코드로 넘어가면 다시는 안 감. 즉 **이 3개는 FPS 와 무관**(30프레임
+  측정창 안에 부팅이 끼어 있어 비중이 부풀려짐) — 측정 4 의 Metal Head/VR "#6-8"/"#14-16"
+  기록도 같은 스텁이라 동일하게 1회성으로 재해석해야 함.
 - `0x020366ac-fc` + `0x02037c52-60` (합 ~24%, PC 20여개 각 1.19%): push/JSR R8·R9/compare 로
-  된 실제 함수 호출 체인 — 딜레이 루프가 아니라 **진짜 작업**(디스패처, ~1338회/frame).
+  된 실제 함수 호출 체인(게임 ROM 코드) — 딜레이 루프가 아니라 **진짜 작업**(디스패처,
+  ~1338회/frame).
 
 **결론:** Doom 은 "keep" 5종이 이미 적용된 지금, 패턴매칭식 fastloop 레버의 수익이 줄고 있다
-— 남은 비용은 여러 실제 호출 지점에 분산된 순수 인터프리터 디스패치 오버헤드. 추가 rig
-icount 레버는 한계 체감 중; **다음 레버는 기기 DWT 로 실제 사이클 비용을 보고 결정해야
-한다** (인터프리터 디스패치 오버헤드 자체를 줄이는 레이지플래그/스레디드디스패치 vs
-GBR-accessor/dispatcher 캐시 지역성 vs 드로잉).
+— 남은 비용(부팅1회성 스텁 제외, 실질 ~64%)은 여러 실제 호출 지점에 분산된 순수 인터프리터
+디스패치 오버헤드. 추가 rig icount 레버는 한계 체감 중; **다음 레버는 기기 DWT 로 실제
+사이클 비용을 보고 결정해야 한다**(인터프리터 디스패치 오버헤드 자체를 줄이는 레이지플래그/
+스레디드디스패치 vs GBR-accessor/dispatcher 캐시 지역성 vs 드로잉).
+
+## 측정 11 — XIP/I-캐시 가설 + cycles-per-guest-insn 계측 추가 (0720)
+
+측정 10 의 idle-skip 불일치(rig −18.4% vs 기기 0%)에 구체적 가설을 세움: **msh2 가 실행하는
+"진짜 작업"(디스패처·GBR accessor·BFS countdown 전부)은 카트리지 ROM 안에 있고, 이 ROM 은
+`pico/cart.c`(`GNW_32X_CORE` 가드)에서 **zero-copy 로 외부 QSPI 플래시에 직접 바인딩**된다
+(`rom_data = (unsigned char *)rom;` — 복사 없음, XIP). ssh2 의 idle-spin(`BRA $`)이 없앤
+명령어들은 picodrive 가 합성한 짧은 BIOS 스텁(`msh2_code[]`/`ssh2_code[]`, RAM 상주 —
+`Pico32xMem->sh2_rom_m/s`)에서 실행되던 것들 — 캐시상주라 명령어당 사이클이 이미 쌌을 것.
+반면 마스터의 실작업은 3MB ROM 여기저기로 JSR 하는 분산된 코드라 M7 의 16KB I-cache 를
+쉽게 스래싱한다. **명령어 수를 크게 줄여도(ssh2 −100%) 사이클은 거의 안 줄어든(기기 0%)
+이유가 설명됨** — 없앤 쪽이 원래 쌌고 남은 쪽이 원래 비쌌다면.
+
+이 가설은 QEMU rig 로는 검증 불가(icount 모델에 캐시가 없음, [[vb-blit-memory-stall]] 규칙
+반복). 그래서 **DWT 사이드에 직접 검증 수단을 추가**: `external/picodrive/cpu/sh2/mame/
+sh2pico.c` 에 `gnw_sh2_insn_count[2]`(마스터/슬레이브 게스트 명령어 카운터, `MD32X_DEVICE_
+PROFILE` 게이트, `sh2_execute_interpreter` 의 실제 인터프리터 루프에 1줄 tick) 추가 —
+picodrive submodule 커밋 `61750e52`. `main_md32x.c` 의 `/32x_dwt.txt` 덤프에 "sh2 cycles/
+guest-insn" 절 추가(`msh2`/`ssh2` 각각 cyc/insn/ratio) — 커밋 `f9868e32`. **msh2 ratio 가
+ssh2 ratio 보다 훨씬 크면 XIP/캐시 스톨 가설 확정** — 그러면 다음 레버는 SMW 의 rc 히트사이트
+ITCM 캐싱과 같은 패턴(SH2_PC_HIST 로 이미 식별된 핫 주소 클러스터, 게임 ROM 쪽 `0x02036220-
+0x02036f3e`+`0x02037c52-c60` 약 3.5KB)을 ITCM(64KB, 여유 있음)에 상주시키는 것. 자체검증:
+로컬 arm-none-eabi-gcc 로 sh2pico.c/main_md32x.c 플래그 on/off 양쪽 단독 컴파일 성공.
+**아직 미확인** — 기기 DWT 실측 전까지는 가설이지 결론 아님.
