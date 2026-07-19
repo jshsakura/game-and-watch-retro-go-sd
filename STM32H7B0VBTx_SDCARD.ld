@@ -555,10 +555,46 @@ INCLUDE build/fceumm_mappers.ld
     build/md32x/cpu__gwenesis68k__g68k_bus.o (.text .text*)
      build/md32x/pico__32x__memory.o      (.text .text*)
      build/md32x/pico__32x__pwm.o         (.text .text*)
-     build/md32x/pico__memory.o           (.text .text*)
-     /* 32X compositor hot path: FinalizeLine (224x/frame) + layer blits.
+     /* pico__memory.o: hot memory handlers stay in RAM; cold code
+      * (PicoMemSetup 1.3K boot-once, ym2612 pack/unpack save-load,
+      * io_ports pack/unpack save-load, ctl_write_z80* rare, read_pad
+      * mouse/team/4way unused) falls through to .xip_md32x below.
+      * Frees ~3.5K for the compositor do_loop variants. */
+     build/md32x/pico__memory.o (
+         .text.m68k_unmapped_write8
+         .text.read_pad_3btn .text.read_pad_6btn .text.read_nothing
+         .text.port_read
+         .text.ym2612_read_local_z80
+         .text.z80_md_in .text.z80_md_out
+         .text.xmap_set
+         .text.PicoRead16_vdp
+         .text.PicoWrite16_sram .text.PicoWrite8_sram
+         .text.z80_md_vdp_br_write .text.z80_md_vdp_read
+         .text.m68k_unmapped_write16
+         .text.z80_md_bank_write .text.z80_md_bank_read
+         .text.PicoWrite16_vdp .text.PicoWrite8_vdp
+         .text.m68k_unmapped_read16 .text.m68k_unmapped_read8
+         .text.PicoRead16_sram .text.PicoRead8_sram
+         .text.PicoRead8_vdp .text.PicoRead8_z80 .text.PicoRead16_z80
+         .text.z80_map_set .text.cpu68k_map_set .text.cpu68k_map_read_mem .text.cpu68k_map_read_funcs
+         .text.PicoRead16_floating
+         .text.m68k_read8 .text.m68k_read16 .text.m68k_write8 .text.m68k_write16
+         .text.PicoSetInputDevice
+         .text.io_ports_read .text.PicoRead8_io .text.PicoRead16_io
+         .text.io_ports_write .text.PicoWrite8_io .text.PicoWrite16_io
+         .text.z80_md_ym2612_write .text.PicoWrite8_z80 .text.PicoWrite16_z80
+         .text.ym2612_write_local*
+     )
+     /* 32X compositor hot path: FinalizeLine (224x/frame) + layer blits +
+      * do_loop per-line renderers (224x/frame, 18 variants ~5K).
       * Rest of draw.o stays in XIP (cold setup, unused pixel-format variants). */
-     build/md32x/pico__32x__draw.o        (.text.FinalizeLine32xRGB555 .text.PicoDraw32xLayer .text.PicoDraw32xLayerMdOnly)
+     build/md32x/pico__32x__draw.o (
+         .text.convert_pal555
+         .text.do_loop_dc .text.do_loop_dc_h32 .text.do_loop_dc_md .text.do_loop_dc_scan .text.do_loop_dc_scan_h32 .text.do_loop_dc_scan_md
+         .text.do_loop_pp .text.do_loop_pp_h32 .text.do_loop_pp_md .text.do_loop_pp_scan .text.do_loop_pp_scan_h32 .text.do_loop_pp_scan_md
+         .text.do_loop_rl .text.do_loop_rl_h32 .text.do_loop_rl_md .text.do_loop_rl_scan .text.do_loop_rl_scan_h32 .text.do_loop_rl_scan_md
+         .text.FinalizeLine32xRGB555 .text.PicoDraw32xLayer .text.PicoDraw32xLayerMdOnly
+     )
      build/md32x/*.o (.data .data*)
     . = ALIGN(4);
     _OVERLAY_MD32X_LOAD_END = .;
