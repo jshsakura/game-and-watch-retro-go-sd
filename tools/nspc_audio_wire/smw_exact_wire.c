@@ -29,7 +29,11 @@ void SmwSpcPlayer_FinishRawUpload(SpcPlayer *p);
 void apu_run_lle(Apu *apu, int cyclesToRun);
 
 int g_wire_on;
+#ifdef SNES_SMW_HLE_PRODUCT
+int g_wire_enable;              /* enabled only by full-ROM identity gate */
+#else
 int g_wire_enable = 1;
+#endif
 const char *g_wire_variant = "-";
 
 static SpcPlayer *g_player;
@@ -45,6 +49,44 @@ static uint16_t g_upload_addr;
 static uint8_t g_upload_counter;
 static bool g_upload_first_byte;
 static bool g_upload_finish_ack;
+static void adopt_lle_state(Snes *snes);
+
+bool wire_configure_rom(const uint8_t *rom, uint32_t len) {
+  uint32_t h = 0x811c9dc5u;
+  for (uint32_t i = 0; i < len; i++) {
+    h ^= rom[i];
+    h *= 0x01000193u;
+  }
+  /* Exact US vanilla image used by external/smw. Hacks and other revisions
+   * retain the fully compatible LLE path instead of risking wrong tables. */
+  g_wire_enable = (len == 524288u && h == 0xae8466a1u);
+  g_wire_on = 0;
+  g_player = NULL;
+  g_apu = NULL;
+  g_detect_streak = 0;
+  g_upload_request_frame = -1;
+  g_upload_mode = UPLOAD_IDLE;
+  g_upload_finish_ack = false;
+  g_frame = 0;
+  return g_wire_enable != 0;
+}
+
+void wire_prepare_save(void) {
+  if (g_wire_on && g_player)
+    g_player->copy_vars(g_player, true);
+}
+
+void wire_restore_after_load(Snes *snes) {
+  if (!g_wire_enable || !snes || !snes->apu)
+    return;
+  /* prepare_save serialized native variables into the shared ARAM; rebuild
+   * the private ~600-byte C state and continue without running stale SPC CPU. */
+  g_upload_mode = UPLOAD_IDLE;
+  g_upload_finish_ack = false;
+  g_upload_request_frame = -1;
+  g_detect_streak = 0;
+  adopt_lle_state(snes);
+}
 
 static void mirror_ports(Apu *apu) {
   memcpy(apu->outPorts, g_player->port_to_snes, 4);
@@ -125,9 +167,11 @@ static bool handle_upload_write(int port, uint8_t val) {
   g_player->port_to_snes[0] = val;
   g_upload_finish_ack = true;
   mirror_ports(g_apu);
+#ifndef SNES_SMW_HLE_PRODUCT
   if (getenv("WIRE_TRACE"))
     fprintf(stderr, "[smw-upload] f=%d complete entry=%02x%02x\n",
             g_frame, g_upload_ports[3], g_upload_ports[2]);
+#endif
   return true;
 }
 
@@ -137,22 +181,25 @@ void apu_run(Apu *apu, int cyclesToRun) {
     return;
   }
   /* The exact player advances when the frontend requests the frame's audio,
-   * matching external/smw's production integration.  Catch-up calls only
-   * expose the most recently completed native port state. */
+   * matching external/smw's production integration.  Native ticks and upload
+   * writes already publish ports, so the very frequent CPU catch-up calls have
+   * no work left; snes_catchupApu still consumes their fractional cycle debt. */
+  (void)apu;
   (void)cyclesToRun;
-  mirror_ports(apu);
 }
 
 void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val) {
   snes_catchupApu(snes);
   int port = adr & 3;
   if (!g_wire_on) {
+#ifndef SNES_SMW_HLE_PRODUCT
     if (getenv("WIRE_TRACE") && val)
       fprintf(stderr, "[lle-port] f=%d p%d<=%02x out=%02x,%02x,%02x,%02x pc=%04x\n",
               g_frame, port, val,
               snes->apu->outPorts[0], snes->apu->outPorts[1],
               snes->apu->outPorts[2], snes->apu->outPorts[3],
               snes->apu->spc->pc);
+#endif
     snes->apu->inPorts[port] = val;
     /* Vanilla SMW replaces its boot/title APU image just before gameplay.
      * $ff on port 1 enters the driver's upload receiver.  Swapping before this
@@ -162,12 +209,14 @@ void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val) {
       g_upload_request_frame = g_frame;
     return;
   }
+#ifndef SNES_SMW_HLE_PRODUCT
   if (getenv("WIRE_TRACE") && val)
     fprintf(stderr, "[smw-port] f=%d p%d<=%02x out=%02x,%02x,%02x,%02x pc=%04x\n",
             g_frame, port, val,
             g_player->port_to_snes[0], g_player->port_to_snes[1],
             g_player->port_to_snes[2], g_player->port_to_snes[3],
             snes->apu->spc->pc);
+#endif
   if (handle_upload_write(port, val))
     return;
   /* Do not instant-ack.  SMW detects edges and maintains independent music
@@ -233,12 +282,20 @@ int wire_try_swap(Snes *snes, int frame) {
   g_frame = frame;
   if (g_wire_on || !g_wire_enable || !snes->apu)
     return 0;
+#ifdef SNES_SMW_HLE_PRODUCT
+  const int min_frame = 120;
+#else
   const char *sf = getenv("WIRE_SWAP_FRAME");
   int min_frame = sf ? atoi(sf) : 120;
+#endif
   if (frame < min_frame || frame % 60)
     return 0;
+#ifdef SNES_SMW_HLE_PRODUCT
+  if (g_upload_request_frame < 0 || frame - g_upload_request_frame < 60)
+#else
   if (!getenv("WIRE_ALLOW_EARLY") &&
       (g_upload_request_frame < 0 || frame - g_upload_request_frame < 60))
+#endif
     return 0;
   if (snes->apu->spc->pc >= 0xffc0 || !has_smw_driver(snes->apu->ram)) {
     g_detect_streak = 0;

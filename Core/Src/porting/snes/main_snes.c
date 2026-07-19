@@ -69,12 +69,27 @@ bool g_new_ppu = true;                 /* the fast line renderer, as measured */
 
 static Snes *g_the_snes;
 
+#ifdef SNES_SMW_HLE_PRODUCT
+extern int g_wire_on;
+void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val);
+int wire_try_swap(Snes *snes, int frame);
+void wire_frame_audio(int16_t *buf, int n);
+bool wire_configure_rom(const uint8_t *rom, uint32_t len);
+void wire_prepare_save(void);
+void wire_restore_after_load(Snes *snes);
+static int smw_hle_frame;
+#endif
+
 /* The lib routes $2140-43 writes through this (snes.c). Catch the APU up and
  * write the CPU-visible mailbox — NOT apu_cpuWrite(), which is the SPC's own
  * bus and would leave inPorts stale (boot then spins on the port echo). */
 void RtlApuWrite(uint32_t adr, uint8_t val) {
+#ifdef SNES_SMW_HLE_PRODUCT
+  wire_apu_write(g_the_snes, adr, val);
+#else
   snes_catchupApu(g_the_snes);
   g_the_snes->apu->inPorts[adr & 0x3] = val;
+#endif
 }
 
 void Die(const char *s) {
@@ -193,6 +208,9 @@ static void run_frame_events(Snes *s) {
   }
   snes_catchupApu(s);
   spin_frame_tick();   /* auto-gate: park the learner on non-spinning carts */
+#ifdef SNES_SMW_HLE_PRODUCT
+  wire_try_swap(s, smw_hle_frame++);
+#endif
 }
 
 /* ---- input ----------------------------------------------------------------
@@ -264,9 +282,16 @@ static void blit(void) {
  * downmix to 16 kHz mono, exactly like the harness/rig. */
 static void snes_pcm_submit(void) {
   if (snes->apu) {
+#ifdef SNES_SMW_HLE_PRODUCT
+    if (g_wire_on) {
+      wire_frame_audio(audio_buf, SNES_AUDIO_SAMPLES);
+    } else
+#endif
+    {
     while (snes->apu->dsp->sampleOffset < 534)
       apu_cycle(snes->apu);
     dsp_getSamples(snes->apu->dsp, audio_buf, SNES_AUDIO_SAMPLES, 1);
+    }
   } else {
     memset(audio_buf, 0, sizeof(audio_buf));
   }
@@ -335,6 +360,9 @@ static void state_stream(SaveLoadFunc *func) {
 }
 
 static bool snes_SaveState(const char *pathName) {
+#ifdef SNES_SMW_HLE_PRODUCT
+  wire_prepare_save();
+#endif
   /* Pass 1: count. Pass 2: write behind an accurate header. */
   state_file = NULL; state_bytes = 0;
   state_stream(&state_write);
@@ -388,6 +416,9 @@ static bool snes_LoadState(const char *pathName) {
   /* A load replaces the whole machine: a learned spin pattern (and its purity
    * sequence history) now describes a machine that no longer exists. Relearn. */
   spin_reset();
+#ifdef SNES_SMW_HLE_PRODUCT
+  wire_restore_after_load(snes);
+#endif
   return state_bytes == h.length;
 }
 
@@ -566,6 +597,12 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     sz  -= 512;
   }
   snes_rom = rom; snes_rom_len = sz;
+
+#ifdef SNES_SMW_HLE_PRODUCT
+  smw_hle_frame = 0;
+  printf("SNES SMW audio HLE: %s\n",
+         wire_configure_rom(rom, sz) ? "armed (exact ROM)" : "LLE fallback");
+#endif
 
   snes = snes_init(snes_wram);
   g_the_snes = snes;

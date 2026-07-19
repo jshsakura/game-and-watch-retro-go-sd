@@ -99,3 +99,15 @@ later APU reload is handled faster than the real SPC700 transfer, so transition
 timing and subsequent state hashes differ even though the game proceeds,
 renders, and produces audio. This is therefore a performance/productization
 candidate, not a bit-exact audio-timing replacement.
+
+The firmware integration is opt-in and must retain the faster spin path:
+
+```bash
+make SD_CARD=1 SNES_SMW_HLE=1 RCSMW=0 build/gw_retro_go.elf
+```
+
+It enables HLE only for the headerless 512 KiB US vanilla ROM with full-image
+FNV-1a `ae8466a1`; every other SNES image stays on the original LLE APU. The
+firmware and proof both consume `gen_smw_exact.py`, preventing their generated
+APU/player sources from drifting apart. `SNES_SPIN_SKIP` and `SNES_DSP_MONO`
+remain enabled in the same build. Final speed claims require a device run.

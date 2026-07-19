@@ -1332,6 +1332,19 @@ $(eval $(foreach obj,$(SM_C_SOURCES),$(call sm_obj_prereq_gen,$(obj))))
 SNES_LOAD_DIAG ?= 0
 SNES_DIAG_DIR := $(BUILD_DIR)/snes_diag
 SNES_DIAG_DEFS :=
+SNES_HLE_DEFS :=
+SNES_HLE_INCLUDES :=
+ifeq ($(SNES_SMW_HLE),1)
+  SNES_HLE_DEFS += -DSNES_SMW_HLE_PRODUCT=1
+  SNES_HLE_INCLUDES += -I$(CORE_SNES)/src/snes -Iexternal/smw/src -Itools/nspc_audio_wire -Itools/snes_survey
+  $(SNES_SMW_HLE_DIR)/.stamp: external/smw/src/smw_spc_player.c $(CORE_SNES)/src/snes/apu.c tools/nspc_audio_wire/gen_smw_exact.py
+	@mkdir -p $(SNES_SMW_HLE_DIR)
+	$(V)$(ECHO) [ GEN snes ] exact SMW audio HLE
+	$(V)python3 tools/nspc_audio_wire/gen_smw_exact.py external/smw/src/smw_spc_player.c $(CORE_SNES)/src/snes/apu.c $(SNES_SMW_HLE_DIR)
+	@touch $@
+  $(SNES_SMW_HLE_DIR)/apu_wire.c $(SNES_SMW_HLE_DIR)/smw_spc_player_gen.c: $(SNES_SMW_HLE_DIR)/.stamp
+	@test -f $@ || { echo "SNES_SMW_HLE: $@ missing after stamp"; exit 1; }
+endif
 define snes_diag_pick
 $1
 endef
@@ -1357,9 +1370,9 @@ $(if $(filter apu.c dsp.c,$(notdir $1)),$(SNES_DIAG_DIR)/$(notdir $1),$1)
 	@test -f $@ || { echo "SNES_LOAD_DIAG: $@ missing after stamp"; exit 1; }
 endif
 define snes_obj_prereq_gen
-$$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_diag_pick,$1) Makefile.common Makefile snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) | $$(BUILD_DIR)
+$$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_diag_pick,$1) Makefile.common Makefile snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO $(SNES_DIAG_DEFS) $$(SNES_C_INCLUDES) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
 

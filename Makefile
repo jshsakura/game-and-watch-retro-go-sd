@@ -88,6 +88,10 @@ SNES_LOAD_DIAG ?= 0
 # Core/Src/porting/md32x/main_md32x.c dump to /32x_dwt.txt at the same time.
 MD32X_DEVICE_PROFILE ?= 0
 
+# Exact native SMW SPC/SFX engine. Device candidate only: vanilla US SMW is
+# gated by full-ROM FNV before the live SPC700 is replaced.
+SNES_SMW_HLE ?= 0
+
 # rc SMW native optimization: per-ROM static recompilation of SMW's 270
 # hottest 65816 sites. The ~12 KB native subset is appended to snes.bin and
 # copied into ITCM at core load; cold sites fall through to the interpreter.
@@ -95,6 +99,9 @@ MD32X_DEVICE_PROFILE ?= 0
 # (rc_smw_sites.c is not compiled and .itcm_rc_hot is empty).
 # Enable with RCSMW=1 (e.g. `make release DOCKER=1 RCSMW=1 ...`).
 RCSMW ?= 0
+ifeq ($(SNES_SMW_HLE)$(RCSMW),11)
+  $(error SNES_SMW_HLE=1 requires RCSMW=0: rc disables the faster SMW spin-skip path)
+endif
 ifeq ($(RCSMW),1)
   RCSMW_C_SOURCES = Core/Src/porting/snes/rc_smw_sites.c
   RCSMW_C_INCLUDES = -Igenerated/rc_smw -I$(CORE_SNES)/src/snes
@@ -640,8 +647,16 @@ Core/Src/porting/wswan/main_wswan.c
 SNES_C_SOURCES =
 
 CORE_SNES = external/sm
+SNES_APU_SOURCE = $(CORE_SNES)/src/snes/apu.c
+ifeq ($(SNES_SMW_HLE),1)
+SNES_SMW_HLE_DIR = $(BUILD_DIR)/snes_smw_hle
+SNES_APU_SOURCE = $(SNES_SMW_HLE_DIR)/apu_wire.c
 SNES_C_SOURCES += \
-$(CORE_SNES)/src/snes/apu.c \
+$(SNES_SMW_HLE_DIR)/smw_spc_player_gen.c \
+tools/nspc_audio_wire/smw_exact_wire.c
+endif
+SNES_C_SOURCES += \
+$(SNES_APU_SOURCE) \
 $(CORE_SNES)/src/snes/cart.c \
 $(CORE_SNES)/src/snes/cpu.c \
 $(CORE_SNES)/src/snes/dma.c \

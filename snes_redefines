@@ -6,6 +6,8 @@ LogWrite gsnes__LogWrite
 PpuBeginDrawing gsnes__PpuBeginDrawing
 PpuGetCurrentRenderScale gsnes__PpuGetCurrentRenderScale
 RtlApuWrite gsnes__RtlApuWrite
+SmwSpcPlayer_CreateWithState gsnes__SmwSpcPlayer_CreateWithState
+SmwSpcPlayer_FinishRawUpload gsnes__SmwSpcPlayer_FinishRawUpload
 Warning gsnes__Warning
 apu_cpuRead gsnes__apu_cpuRead
 apu_cpuWrite gsnes__apu_cpuWrite
@@ -14,6 +16,7 @@ apu_free gsnes__apu_free
 apu_init gsnes__apu_init
 apu_reset gsnes__apu_reset
 apu_run gsnes__apu_run
+apu_run_lle gsnes__apu_run_lle
 apu_saveload gsnes__apu_saveload
 cart_attachDsp1 gsnes__cart_attachDsp1
 cart_free gsnes__cart_free
@@ -62,6 +65,9 @@ g_new_ppu gsnes__g_new_ppu
 g_ppu_line_cb gsnes__g_ppu_line_cb
 g_ppu_skip_render gsnes__g_ppu_skip_render
 g_spin gsnes__g_spin
+g_wire_enable gsnes__g_wire_enable
+g_wire_on gsnes__g_wire_on
+g_wire_variant gsnes__g_wire_variant
 getProcessorStateCpu gsnes__getProcessorStateCpu
 getProcessorStateSpc gsnes__getProcessorStateSpc
 input_free gsnes__input_free
@@ -106,6 +112,12 @@ spin_frame_tick gsnes__spin_frame_tick
 spin_hook_read gsnes__spin_hook_read
 spin_note gsnes__spin_note
 spin_reset gsnes__spin_reset
+wire_apu_write gsnes__wire_apu_write
+wire_configure_rom gsnes__wire_configure_rom
+wire_frame_audio gsnes__wire_frame_audio
+wire_prepare_save gsnes__wire_prepare_save
+wire_restore_after_load gsnes__wire_restore_after_load
+wire_try_swap gsnes__wire_try_swap
 g_rc_active gsnes__g_rc_active
 g_rc_fns gsnes__g_rc_fns
 rc_dispatch_init gsnes__rc_dispatch_init
