@@ -37,6 +37,7 @@
 #include "gw_flash_alloc.h"   /* odroid_overlay_cache_file_in_flash_relocate */
 #include "appid.h"
 #include "main_md32x.h"
+#include "md32x_border_clear.h"
 
 #include "pico/pico_types.h"   /* s8/s16/s32 — MUST precede pico.h */
 #include "pico/pico.h"
@@ -209,7 +210,8 @@ void emu_32x_startup(void) {
 }
 
 void emu_video_mode_change(int start_line, int line_count, int start_col, int col_count) {
-  (void)start_line; (void)line_count; (void)start_col; (void)col_count;
+  (void)start_col; (void)col_count;   /* 32X: always full 320 wide, see md32x_border_clear.c */
+  md32x_border_clear_set_content_rect(start_line, line_count);
   /* Mode changes are rare; wipe the ACTIVE buffer so stale borders don't
    * linger.  Previously this called lcd_clear_buffers() (both buffers), which
    * has NO lcd_sleep_while_swap_pending() guard — the write-buffered clear
@@ -354,6 +356,7 @@ static int md32x_repaint_first = 1;
 void md32x_repaint_reset(void) { md32x_repaint_first = 1; }
 
 static void md32x_repaint(void) {
+  md32x_border_clear_notify_menu_open();
   uint16_t *active = lcd_get_active_buffer();
   static uint16_t *frozen;
   if (md32x_repaint_first) {
@@ -655,6 +658,11 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_input_read_gamepad(&joystick);
     common_emu_input_loop(&joystick, options, &md32x_repaint);
     common_emu_input_loop_handle_turbo(&joystick);
+
+    /* md32x_border_clear.h: fixes border-row flicker after closing the
+     * overlay. Must see the SAME drawFrame value used below to decide
+     * set_out_buffer()/lcd_swap(), or its two-buffers guarantee breaks. */
+    md32x_border_clear_tick(drawFrame);
 
     PicoIn.pad[0] = read_md_pad(&joystick);
 

@@ -663,7 +663,8 @@ $(CORE_PICODRIVE)/pico/sound/mix.c \
 $(CORE_PICODRIVE)/pico/sound/sn76496.c \
 $(CORE_PICODRIVE)/pico/sound/ym2612.c \
 $(CORE_PICODRIVE)/pico/sound/resampler.c \
-Core/Src/porting/md32x/main_md32x.c
+Core/Src/porting/md32x/main_md32x.c \
+Core/Src/porting/md32x/md32x_border_clear.c
 endif
 # md32x_profile.c is only compiled when MD32X_DEVICE_PROFILE=1 so the default
 # release link graph (and therefore intflash.bin) is byte-identical without it.
