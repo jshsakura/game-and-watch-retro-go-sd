@@ -30,7 +30,8 @@ def ensure_build(frames: int) -> None:
     stamp = RIG / "build_cost/frames.txt"
     elfs = [RIG / "build_cost/snes_cost_on.elf",
             RIG / "build_cost/snes_cost_off.elf",
-            RIG / "build_cost/snes_ppu_deep.elf"]
+            RIG / "build_cost/snes_ppu_deep.elf",
+            RIG / "build_cost/snes_dsp_deep.elf"]
     deps = [RIG / "build_snes_cost.sh", RIG / "rig_snes.c",
             RIG / "rig_runtime_hf.c", RIG / "mps2_an500_snes.ld"]
     deps += list((ROOT / "external/sm/src/snes").glob("*.[ch]"))

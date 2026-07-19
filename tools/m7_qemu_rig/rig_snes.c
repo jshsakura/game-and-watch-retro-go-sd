@@ -48,6 +48,8 @@ extern unsigned char _binary_rom_smc_end[];
 #ifdef RIG_COST_PROF
 uint64_t g_cpu_ticks, g_spc_ticks, g_dsp_ticks, g_dsp_calls;
 static uint64_t g_active_voice_sum, g_echo_voice_sum, g_echo_write_frames;
+uint64_t g_dsp_channel_ticks, g_dsp_mix_ticks, g_dsp_echo_ticks;
+uint64_t g_dsp_noise_ticks, g_dsp_store_ticks;
 static uint64_t g_present_ticks;
 #define PROFILE_CPU(expr) ({ \
   uint32_t _ct = rig_timer_now(); \
@@ -398,6 +400,14 @@ int main(void) {
          (unsigned long)(g_active_voice_sum * 1000 / RIG_FRAMES),
          (unsigned long)(g_echo_voice_sum * 1000 / RIG_FRAMES),
          (unsigned long)g_echo_write_frames);
+#ifdef RIG_DSP_DEEP
+  printf("[dsp-deep] channels=%lu mix=%lu echo=%lu noise=%lu store=%lu insn/frame\n",
+         (unsigned long)(g_dsp_channel_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_dsp_mix_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_dsp_echo_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_dsp_noise_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)(g_dsp_store_ticks * ipt_x1000 / 1000 / frames));
+#endif
 #ifdef SNES_SPIN_SKIP
   { double n = (double)(g_spin.ops_real + g_spin.ops_virtual);
     printf("[spin] real=%llu virt=%llu skipped=%.4f%% gate=%d\n",

@@ -26,6 +26,69 @@ src = src.replace(
 open(sys.argv[2], "w", encoding="utf-8").write(src)
 PY
 
+# Deep DSP copy: separate stateful voice advancement from disposable output
+# mixing.  The two-loop form is semantically identical: the mix only reads the
+# sampleOut values produced by all eight sequential channel cycles.
+python3 - "$SM/src/snes/dsp.c" "$OUT/dsp_deep.c" <<'PY'
+import sys
+
+src = open(sys.argv[1], encoding="utf-8").read()
+
+def one(old, new):
+    global src
+    count = src.count(old)
+    assert count == 1, (old[:60], count)
+    src = src.replace(old, new)
+
+one(
+    "  for(int i = 0; i < 8; i++) {\n"
+    "    dsp_cycleChannel(dsp, i);\n"
+    "    totalL += (dsp->channel[i].sampleOut * dsp->channel[i].volumeL) >> 6;\n"
+    "    totalR += (dsp->channel[i].sampleOut * dsp->channel[i].volumeR) >> 6;\n"
+    "    totalL = totalL < -0x8000 ? -0x8000 : (totalL > 0x7fff ? 0x7fff : totalL); // clamp 16-bit\n"
+    "    totalR = totalR < -0x8000 ? -0x8000 : (totalR > 0x7fff ? 0x7fff : totalR); // clamp 16-bit\n"
+    "  }\n"
+    "  totalL = (totalL * dsp->masterVolumeL) >> 7;\n"
+    "  totalR = (totalR * dsp->masterVolumeR) >> 7;\n"
+    "  totalL = totalL < -0x8000 ? -0x8000 : (totalL > 0x7fff ? 0x7fff : totalL); // clamp 16-bit\n"
+    "  totalR = totalR < -0x8000 ? -0x8000 : (totalR > 0x7fff ? 0x7fff : totalR); // clamp 16-bit\n",
+    "  uint32_t _dt = rig_timer_now();\n"
+    "  for(int i = 0; i < 8; i++)\n"
+    "    dsp_cycleChannel(dsp, i);\n"
+    "  g_dsp_channel_ticks += (uint32_t)(rig_timer_now() - _dt);\n"
+    "  _dt = rig_timer_now();\n"
+    "  for(int i = 0; i < 8; i++) {\n"
+    "    totalL += (dsp->channel[i].sampleOut * dsp->channel[i].volumeL) >> 6;\n"
+    "    totalR += (dsp->channel[i].sampleOut * dsp->channel[i].volumeR) >> 6;\n"
+    "    totalL = totalL < -0x8000 ? -0x8000 : (totalL > 0x7fff ? 0x7fff : totalL);\n"
+    "    totalR = totalR < -0x8000 ? -0x8000 : (totalR > 0x7fff ? 0x7fff : totalR);\n"
+    "  }\n"
+    "  totalL = (totalL * dsp->masterVolumeL) >> 7;\n"
+    "  totalR = (totalR * dsp->masterVolumeR) >> 7;\n"
+    "  totalL = totalL < -0x8000 ? -0x8000 : (totalL > 0x7fff ? 0x7fff : totalL);\n"
+    "  totalR = totalR < -0x8000 ? -0x8000 : (totalR > 0x7fff ? 0x7fff : totalR);\n"
+    "  g_dsp_mix_ticks += (uint32_t)(rig_timer_now() - _dt);\n")
+
+one(
+    "  dsp_handleEcho(dsp, &totalL, &totalR);",
+    "  _dt = rig_timer_now();\n"
+    "  dsp_handleEcho(dsp, &totalL, &totalR);\n"
+    "  g_dsp_echo_ticks += (uint32_t)(rig_timer_now() - _dt);")
+one(
+    "  dsp_handleNoise(dsp);\n  // put it in the samplebuffer",
+    "  _dt = rig_timer_now();\n"
+    "  dsp_handleNoise(dsp);\n"
+    "  g_dsp_noise_ticks += (uint32_t)(rig_timer_now() - _dt);\n"
+    "  _dt = rig_timer_now();\n"
+    "  // put it in the samplebuffer")
+one(
+    "  dsp->evenCycle = !dsp->evenCycle;",
+    "  g_dsp_store_ticks += (uint32_t)(rig_timer_now() - _dt);\n"
+    "  dsp->evenCycle = !dsp->evenCycle;")
+
+open(sys.argv[2], "w", encoding="utf-8").write(src)
+PY
+
 # Deep PPU copy: instrument static stage call sites without touching external/sm.
 python3 - "$SM/src/snes/ppu.c" "$OUT/ppu_deep.c" <<'PY'
 import sys
@@ -147,6 +210,8 @@ cat > "$OUT/cost_defs.h" <<'EOF'
 #define COST_DEFS_H
 #include <stdint.h>
 extern uint64_t g_spc_ticks, g_dsp_ticks, g_dsp_calls;
+extern uint64_t g_dsp_channel_ticks, g_dsp_mix_ticks, g_dsp_echo_ticks;
+extern uint64_t g_dsp_noise_ticks, g_dsp_store_ticks;
 extern uint64_t g_ppu_bg_ticks[3];
 extern uint64_t g_ppu_sprite_eval_ticks, g_ppu_sprite_draw_ticks;
 extern uint64_t g_ppu_clear_ticks, g_ppu_palette_ticks;
@@ -210,7 +275,29 @@ build_deep() {
 }
 
 build_deep
+
+build_dsp_deep() {
+  local dir="$OUT/dsp_deep" defs="$BASE_DEF -DRIG_DSP_DEEP" objs=""
+  mkdir -p "$dir"
+  $CC -c $ARCH $OPT $defs $INC -iquote "$SM/src/snes" -iquote "$SM/src" \
+      -include "$OUT/cost_defs.h" -w "$OUT/apu_cost.c" -o "$dir/apu_cost.o"
+  objs="$dir/apu_cost.o"
+  $CC -c $ARCH $OPT $defs $INC -iquote "$SM/src/snes" -iquote "$SM/src" \
+      -include "$OUT/cost_defs.h" -w "$OUT/dsp_deep.c" -o "$dir/dsp_deep.o"
+  objs="$objs $dir/dsp_deep.o"
+  for src in $SRCS; do
+    [[ "$src" == "$SM/src/snes/dsp.c" ]] && continue
+    local obj="$dir/$(basename "${src%.c}").o"
+    $CC -c $ARCH $OPT $defs $INC -w "$src" -o "$obj"
+    objs="$objs $obj"
+  done
+  $CC $ARCH -T "$RIG/mps2_an500_snes.ld" -nostartfiles -Wl,--gc-sections \
+      $objs -lm -o "$OUT/snes_dsp_deep.elf"
+}
+
+build_dsp_deep
 arm-none-eabi-size "$OUT/snes_cost_on.elf" "$OUT/snes_cost_off.elf"
 arm-none-eabi-size "$OUT/snes_ppu_deep.elf"
+arm-none-eabi-size "$OUT/snes_dsp_deep.elf"
 printf '%s\n' "$FRAMES" > "$OUT/frames.txt"
 printf 'SNES cost ELFs ready: %s frames per ROM\n' "$FRAMES"
