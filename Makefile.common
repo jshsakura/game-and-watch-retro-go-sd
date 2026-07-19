@@ -1813,7 +1813,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_snes,$(CORES_DIR)/snes.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_gw,$(CORES_DIR)/gw.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md,$(CORES_DIR)/md.bin)
-	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md32x,$(CORES_DIR)/32x.bin)
+	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md32x --only-section=.overlay_md32x_itc,$(CORES_DIR)/32x.bin)
 	@$(CP) -O binary --only-section=.xip_md32x --only-section=.rodata_md32x $(BUILD_DIR)/$(TARGET).elf $(CORES_DIR)/32x.xip   # cold code + rodata (YM/68K const tables): contiguous in MD32X_CODE, ONE cache entry (see main_md32x.c)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_a2600,$(CORES_DIR)/a2600.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_lynx,$(CORES_DIR)/lynx.bin)

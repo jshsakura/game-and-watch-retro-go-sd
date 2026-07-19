@@ -1206,7 +1206,11 @@ static const emu_dispatch_t emu_snes    = { "/cores/snes.bin",    &_OVERLAY_SNES
 #endif
 static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
 #if SD_CARD == 1
-static const emu_dispatch_t emu_md32x   = { "/cores/32x.bin",    &_OVERLAY_MD32X_BSS_START,   (uint32_t)&_OVERLAY_MD32X_BSS_SIZE,   (uint32_t)&_OVERLAY_MD32X_SIZE,   0, EMU_ENTRY(app_main_md32x) };
+extern uint8_t __md32x_itc_start__[];
+extern uint8_t _OVERLAY_MD32X_ITC_LMA_OFFSET;
+extern uint8_t _OVERLAY_MD32X_ITC_SIZE;
+static const emu_dispatch_t emu_md32x   = { "/cores/32x.bin",    &_OVERLAY_MD32X_BSS_START,   (uint32_t)&_OVERLAY_MD32X_BSS_SIZE,   (uint32_t)&_OVERLAY_MD32X_SIZE,   0, EMU_ENTRY(app_main_md32x),
+                                            __md32x_itc_start__, (uint32_t)&_OVERLAY_MD32X_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_MD32X_ITC_SIZE };
 #endif
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
 static const emu_dispatch_t emu_lynx    = { "/cores/lynx.bin",    &_OVERLAY_LYNX_BSS_START,    (uint32_t)&_OVERLAY_LYNX_BSS_SIZE,    (uint32_t)&_OVERLAY_LYNX_SIZE,    (uint32_t)&_OVERLAY_LYNX_BSS_END, EMU_ENTRY(app_main_lynx) };

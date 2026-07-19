@@ -546,12 +546,12 @@ INCLUDE build/fceumm_mappers.ld
     build/md32x/main_md32x.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _MD32X_MAIN_CODE_END = .;
-    /* Hot text, first cut: SH-2 interpreter + SH-2/68K bus handlers + the 32X
-     * compositor + PWM. Everything else — the 68K interpreter (161K, its const
-     * dispatch tables ride .rodata_md32x), Z80, VDP, cart, sound gen — starts
-     * in XIP flash: iterate with the device, not by faith. */
+    /* Hot text, first cut: SH-2 wrapper (init/irq/pack, not the dispatcher —
+     * that lives in ITCM below) + SH-2/68K bus handlers + the 32X compositor
+     * + PWM. Everything else — the 68K interpreter (161K, its const dispatch
+     * tables ride .rodata_md32x), Z80, VDP, cart, sound gen — starts in XIP
+     * flash: iterate with the device, not by faith. */
     build/md32x/cpu__sh2__sh2.o          (.text .text*)
-    build/md32x/cpu__sh2__mame__sh2pico.o (.text .text*)
     build/md32x/cpu__gwenesis68k__g68k_bus.o (.text .text*)
      build/md32x/pico__32x__memory.o      (.text .text*)
      build/md32x/pico__32x__pwm.o         (.text .text*)
@@ -602,12 +602,44 @@ INCLUDE build/fceumm_mappers.ld
   _OVERLAY_MD32X_LOAD_START = LOADADDR(.overlay_md32x);
   _OVERLAY_MD32X_SIZE = SIZEOF(.overlay_md32x);
 
+  /* SH-2 interpreter -> ITCM (zero-wait-state, no I-cache miss). Computed-goto
+   * dispatch (GNW_SH2_FASTLOOPS) requires every gnw_op* label in the SAME
+   * function as the goto — that rules out a hot/cold split, so the whole
+   * dispatcher (sh2_execute_interpreter + its op0000/MAC_W/MAC_L/ILLEGAL
+   * helpers, ~7.9K incl. the 64B jump table) moves as one unit. Budget was
+   * short by ~1.7K against the ~4.8K then free; PsndBuffer (8664B, the
+   * biggest ITCM bss occupant) shrank instead — sound.c's generic 54kHz
+   * worst-case buffer sizing never applies to GNW's fixed-rate 44.1kHz core
+   * (see PSND_BUFFER_SAMPLES in pico/sound/sound.c) — and the shrunk
+   * sound.o bss moved to RAM_EMU below (freed there by this same section:
+   * moving 7.9K of .text out of RAM_EMU into ITCM more than pays for 7K of
+   * bss moving the other way). AHB was considered and rejected: 32X
+   * unconditionally ahb_calloc's an 82K Draw2FB in PicoDraw2Init (called
+   * from PicoInit, not lazy), which alone leaves only ~5.8K of the 87.9K AHB
+   * dynamic pool — nowhere near enough. See 32X_SH2_ITCM_ANALYSIS.md. Same
+   * LMA-in-CORES / memcpy-before-BSS-zero mechanism as .overlay_pce_itc /
+   * .overlay_gba_itc (run_internal_emu in rg_emulators.c). Base offset 0x4
+   * keeps address 0 free. */
+  .overlay_md32x_itc (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __md32x_itc_start__ = .;
+    build/md32x/cpu__sh2__mame__sh2pico.o (.text .text* .rodata)
+    . = ALIGN(4);
+    __md32x_itc_end__ = .;
+    ASSERT(ABSOLUTE(__md32x_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: MD32X ITC overflow");
+  } AT > CORES
+  _OVERLAY_MD32X_ITC_SIZE = SIZEOF(.overlay_md32x_itc);
+  _OVERLAY_MD32X_ITC_LMA_OFFSET = LOADADDR(.overlay_md32x_itc) - LOADADDR(.overlay_md32x);
+
   .overlay_md32x_bss _OVERLAY_MD32X_LOAD_END : {
     . = ALIGN(4);
     _OVERLAY_MD32X_BSS_START = .;
-    /* Hot writable state (bus maps, YM/Z80/draw contexts) rides ITCM below. */
+    /* Hot writable state (bus maps, YM/Z80/draw contexts) rides ITCM below;
+     * pico__sound__sound.o (PsndBuffer, shrunk — see .overlay_md32x_itc
+     * above) rides here instead: mixing touches it sequentially once per
+     * frame, not per CPU cycle, so it doesn't need zero-wait ITCM. */
     EXCLUDE_FILE(*pico__sound__ym2612.o *pico__draw.o *pico__32x__memory.o
-                 *pico__sound__sound.o *pico__memory.o *cpu__cz80__cz80.o
+                 *pico__memory.o *cpu__cz80__cz80.o
                  *pico__z80if.o) build/md32x/*.o (.bss .bss*)
     . = ALIGN(4);
     build/md32x/*.o (COMMON)
@@ -619,17 +651,17 @@ INCLUDE build/fceumm_mappers.ld
 
   /* Hottest writable state -> ITCM (zero-wait): the SH-2/68K bus MAP TABLES
    * (read on every guest memory access), YM/Z80 contexts, line-render caches.
-   * NOLOAD at the same per-core ITCM base the PCE/GBA code images use — a
-   * per-core overlay, NOT a resident static, so nobody's itc_malloc shrinks.
-   * Zeroed by main_md32x.c at load (the launcher's memset covers only the
-   * RAM_EMU bss). ~62.7K of the 64K; the ASSERT guards the rest. */
-  .overlay_md32x_itc_bss (ORIGIN(ITCMRAM) + 0x4) (NOLOAD) : {
+   * Chained right after .overlay_md32x_itc (the SH-2 interpreter code) rather
+   * than fixed at ITCM+0x4 — the two share the 64K bank. NOLOAD, a per-core
+   * overlay, NOT a resident static, so nobody's itc_malloc shrinks. Zeroed by
+   * main_md32x.c at load (the launcher's memset covers only the RAM_EMU
+   * bss); the ASSERT guards the rest. */
+  .overlay_md32x_itc_bss __md32x_itc_end__ (NOLOAD) : {
     . = ALIGN(8);
     __md32x_itc_bss_start__ = .;
     build/md32x/pico__sound__ym2612.o (.bss .bss*)
     build/md32x/pico__draw.o          (.bss .bss*)
     build/md32x/pico__32x__memory.o   (.bss .bss*)
-    build/md32x/pico__sound__sound.o  (.bss .bss*)
     build/md32x/pico__memory.o        (.bss .bss*)
     build/md32x/cpu__cz80__cz80.o     (.bss .bss*)
     build/md32x/pico__z80if.o         (.bss .bss*)
