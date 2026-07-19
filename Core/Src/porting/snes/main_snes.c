@@ -275,16 +275,22 @@ static void render_frame_into_active_buffer(void) {
 
 /* DMA2D M2M offload for the OFF-scaling copy below. snes_frame -> LCD active
  * buffer is a flat 320x240 RGB565 copy with no pixel-format conversion or
- * scaling, the textbook DMA2D_M2M case. The peripheral clock is already on
- * unconditionally (HAL_MspInit -> __HAL_RCC_DMA2D_CLK_ENABLE), so a plain
- * Init is enough; done once and kept live for the app's lifetime instead of
- * hw_jpeg_decoder.c's per-use Init/DeInit, since this runs every frame. */
+ * scaling, the textbook DMA2D_M2M case.
+ *
+ * DMA2D is a single shared peripheral — hw_jpeg_decoder.c also drives it
+ * (cover art, YCbCr M2M_BLEND, non-zero InputOffset) through its own,
+ * separate DMA2D_HandleTypeDef. Two handles, same hardware CR/OPFCCR/OOR/FGOR
+ * registers underneath: if that code runs between two of our frames (e.g. a
+ * savestate thumbnail while paused) and we only configured once at startup,
+ * our next HAL_DMA2D_Start would fire with its leftover Mode/offset instead
+ * of ours — wrong stride, garbage on screen. So reconfigure (Init +
+ * foreground ConfigLayer, both idempotent register writes) every call
+ * instead of caching a "ready" flag; the cost is a handful of register
+ * writes against a ~150KB transfer, noise either way. */
 static DMA2D_HandleTypeDef snes_dma2d;
-static bool snes_dma2d_ready;
 static bool snes_dma2d_pending;
 
-static void snes_dma2d_init_once(void) {
-  if (snes_dma2d_ready) return;
+static bool snes_dma2d_configure(void) {
   snes_dma2d.Instance = DMA2D;
   snes_dma2d.Init.Mode = DMA2D_M2M;
   snes_dma2d.Init.ColorMode = DMA2D_OUTPUT_RGB565;
@@ -293,7 +299,18 @@ static void snes_dma2d_init_once(void) {
   snes_dma2d.Init.RedBlueSwap = DMA2D_RB_REGULAR;
   snes_dma2d.Init.BytesSwap = DMA2D_BYTES_REGULAR;
   snes_dma2d.Init.LineOffsetMode = DMA2D_LOM_PIXELS;
-  snes_dma2d_ready = (HAL_DMA2D_Init(&snes_dma2d) == HAL_OK);
+  if (HAL_DMA2D_Init(&snes_dma2d) != HAL_OK)
+    return false;
+
+  /* Foreground (source) layer: RGB565, zero offset — snes_frame's rows are
+   * tightly packed at exactly GW_LCD_WIDTH pixels, matching source stride. */
+  snes_dma2d.LayerCfg[1].InputColorMode = DMA2D_INPUT_RGB565;
+  snes_dma2d.LayerCfg[1].InputOffset = 0;
+  snes_dma2d.LayerCfg[1].AlphaMode = DMA2D_NO_MODIF_ALPHA;
+  snes_dma2d.LayerCfg[1].InputAlpha = 0xFF;
+  snes_dma2d.LayerCfg[1].AlphaInverted = DMA2D_REGULAR_ALPHA;
+  snes_dma2d.LayerCfg[1].RedBlueSwap = DMA2D_RB_REGULAR;
+  return HAL_DMA2D_ConfigLayer(&snes_dma2d, 1) == HAL_OK;
 }
 
 /* Block until a DMA2D copy started by present_frame() has landed. Must run
@@ -317,8 +334,7 @@ static void present_frame(void) {
      * into the background so the CPU can spend that time on audio/pacing
      * instead of blocked on an uncached memcpy — the caller MUST reach
      * present_frame_wait() before touching dst again. */
-    snes_dma2d_init_once();
-    if (snes_dma2d_ready) {
+    if (snes_dma2d_configure()) {
       /* snes_frame lives in cacheable RAM_EMU; SNES_DIRECT_VIDEO's PPU write
        * this frame's pixels via normal cached stores. DMA2D is a bus master
        * and cache-blind, so any dirty line not yet evicted would be read as
