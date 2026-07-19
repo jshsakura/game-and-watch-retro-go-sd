@@ -751,6 +751,9 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
       crc ^= rom[i];
       for (int b = 0; b < 8; b++)
         crc = (crc >> 1) ^ (0xEDB88320u & -(crc & 1));
+      if ((i & 0xFFFFu) == 0) wdog_refresh();   /* 3 MB CRC over slow QSPI XIP
+                                                   overruns the ~472 ms watchdog
+                                                   window → reset (device 즉사) */
     }
     crc ^= 0xFFFFFFFF;
     /* Doom 32X (US): slave SH-2 verified sleeping safely */
