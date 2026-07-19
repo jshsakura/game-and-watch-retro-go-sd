@@ -334,6 +334,7 @@ static void present_frame(void) {
      * into the background so the CPU can spend that time on audio/pacing
      * instead of blocked on an uncached memcpy — the caller MUST reach
      * present_frame_wait() before touching dst again. */
+#ifdef SNES_PRESENT_DMA2D
     if (snes_dma2d_configure()) {
       /* snes_frame lives in cacheable RAM_EMU; SNES_DIRECT_VIDEO's PPU write
        * this frame's pixels via normal cached stores. DMA2D is a bus master
@@ -348,6 +349,10 @@ static void present_frame(void) {
       return;
     }
     /* DMA2D unavailable for some reason — fall back to the plain CPU copy. */
+#endif
+    /* Revert switch: drop -DSNES_PRESENT_DMA2D in Makefile.common's SNES
+     * recipe to force this path unconditionally (present_frame_wait() stays
+     * a safe no-op either way, snes_dma2d_pending never becomes true). */
     memcpy(dst, snes_frame, GW_LCD_WIDTH * GW_LCD_HEIGHT * sizeof(uint16_t));
     return;
   }

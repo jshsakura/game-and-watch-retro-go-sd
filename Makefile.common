@@ -1369,10 +1369,16 @@ $(if $(filter apu.c dsp.c,$(notdir $1)),$(SNES_DIAG_DIR)/$(notdir $1),$1)
   $(SNES_DIAG_DIR)/apu.c $(SNES_DIAG_DIR)/dsp.c $(SNES_DIAG_DIR)/snes_diag_accum.h: $(SNES_DIAG_DIR)/.stamp
 	@test -f $@ || { echo "SNES_LOAD_DIAG: $@ missing after stamp"; exit 1; }
 endif
+# SNES_PRESENT_DMA2D: present_frame()'s OFF-scaling copy uses an async DMA2D
+# M2M transfer instead of a blocking CPU memcpy (see main_snes.c). Unverified
+# on real hardware as of this flag's introduction — if a device build shows
+# screen tearing/corruption in the SNES core, delete just this one -D flag
+# and rebuild; main_snes.c's #else path is the plain synchronous memcpy that
+# shipped before, no other code changes needed to revert.
 define snes_obj_prereq_gen
 $$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_diag_pick,$1) Makefile.common Makefile snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
 
