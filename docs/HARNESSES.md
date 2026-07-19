@@ -140,3 +140,49 @@ hardware itself.
 | is my HLE/optimization bit-exact, including time | `tools/gba_m4a/prove.sh` (the model to copy) |
 | is the thing actually *wired* | a `tests/test_*_wired.sh` — write one |
 | what is the device really spending a frame on | `feat/gba-probe` |
+
+## `tools/gnw_hw_harness/` — the device memory-budget contract (the missing gate)
+
+Built 2026-07-19 after two builds shipped that passed docker (link-only) and
+the QEMU rig (flat, huge RAM) but **died on real hardware**: rc's dispatch
+table OOM'd the DTCM heap, and a 32X static-AHB section overran the Draw2FB
+pool. Neither the rig nor docker models the constrained runtime memory, so
+this closes that gap. Three tiers:
+
+1. **Static budgets (Tier 1).** Extracts every region's real size from the
+   `.map`/ELF of a canonical-flags build — never from docs (the docs said
+   480 MHz; the firmware PLL is 280/312/340). Link-time `ASSERT`s fail the
+   build when an overlay/BSS/pool is exceeded.
+2. **Effective-free caps (Tier 2).** The trap that got rc: the DTCM heap is
+   82,944 B but the launcher has already taken 74,728 B at emu-init, so a
+   core has only **8,216 B** free — not 81 KB. The harness caps allocations
+   at the *resident-subtracted effective free* (from a bound device profile,
+   never hardcoded, so a flag change can't silently pass), with a 0xAA-poison
+   allocator (calloc zeroes) to surface uninitialised-field bugs the host
+   would otherwise hide as zero.
+3. **DWT-calibrated timing oracle (Tier 3).** QEMU counts instructions;
+   real-device DWT traces calibrate the cost model; fps is predicted with a
+   stated error band. Host-hash == QEMU-hash == device-hash for correctness.
+
+It is **not** a full STM32H7 peripheral/cycle sim (a custom QEMU board was
+deliberately deferred — months of work, still approximate). It's a budget
+contract. Pinned GCC 15.2.1 + QEMU 8.2.2 container (`container.sh`).
+
+**Run it before committing any new `malloc`/`ahb_malloc`/`itc_malloc` or
+static section:**
+```
+tools/gnw_hw_harness/run.sh --map build/gw_retro_go.map \
+  --profile <device-profile.json> \
+  --proposal dtcm:61440:rc_dispatch     # FAILs against 8,216 B effective free
+  --proposal ahb:86016:Draw2FB
+tools/gnw_hw_harness/run.sh --tests      # reproduces both 2026-07-19 regressions
+```
+Its regression tests (`test_old_32x_ahb_layout_reproduces_overflow`, the rc
+DTCM OOM, `tests/test_rc_dispatch_heap.c`) reproduce today's two device-only
+faults on the host — proof the class is now caught before a flash.
+
+### Choosing (add to the table above)
+
+| question | harness |
+|---|---|
+| will my new allocation fit the device's real (resident-subtracted) memory | `tools/gnw_hw_harness/run.sh --proposal <region>:<bytes>:<label>` |
