@@ -119,6 +119,7 @@ enum {
     // the last logo.bin-backed header and BEFORE the colour-only pad block, so
     // enum value == 3 + logo.bin index stays exact.
     RG_LOGO_HEADER_GBA,
+    RG_LOGO_HEADER_SEGACD,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
@@ -141,6 +142,7 @@ enum {
     // Game Boy Advance colour tab icon (cicon_gba; color_icon_for_logo only, no
     // logo.bin entry -> rg_get_logo() returns NULL, bounds-checked)
     RG_LOGO_PAD_GBA,
+    RG_LOGO_PAD_SEGACD,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);

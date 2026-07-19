@@ -139,6 +139,52 @@ static void sleep_wake_up(void) {}
 static void sram_save_cb(void) { segacd_bram_save(s_bram_path); }
 
 extern void blit(void);   /* provided by the gwenesis blit path */
+extern uint8_t *odroid_overlay_cache_file_in_flash_relocate(const char *file_path, uint32_t *file_size_p, bool byte_swap, void (*relocate_cb)(uint8_t *, uint32_t, uint32_t, uint8_t *, uint32_t));
+extern uint8_t *odroid_overlay_cache_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap);
+
+#define SEGACD_CODE_BASE  0xDEC80000u
+#define SEGACD_XIP_PATH   "/cores/segacd.xip"
+
+static uint8_t *g_xip_addr;
+static uint32_t g_xip_size;
+static int32_t  g_xip_offset;
+
+static int PatchSegaCdSentinels(uint32_t *start, uint32_t *end, int32_t offset, uint32_t size) {
+  int patched = 0;
+  for (uint32_t *p = start; p < end; p++) {
+    uint32_t v = *p;
+    if ((v & ~1u) >= SEGACD_CODE_BASE && (v & ~1u) < SEGACD_CODE_BASE + size) {
+      *p = (uint32_t)(v + offset);
+      patched++;
+    }
+  }
+  return patched;
+}
+
+static void SegaCdRelocateXip(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,
+                              uint8_t *file_address, uint32_t file_size) {
+  (void)offset_in_file;
+  int32_t offset = (int32_t)((uint32_t)file_address - SEGACD_CODE_BASE);
+  PatchSegaCdSentinels((uint32_t *)buffer, (uint32_t *)(buffer + (length & ~3u)), offset, file_size);
+}
+
+static bool SegaCdCacheXipToFlash(void) {
+  g_xip_size = 0;
+  g_xip_addr = odroid_overlay_cache_file_in_flash_relocate(SEGACD_XIP_PATH, &g_xip_size, false,
+                                                           &SegaCdRelocateXip);
+  if (g_xip_addr == NULL || g_xip_size == 0) {
+    printf("segacd: %s missing\n", SEGACD_XIP_PATH);
+    return false;
+  }
+  g_xip_offset = (int32_t)((uint32_t)g_xip_addr - SEGACD_CODE_BASE);
+  printf("segacd: xip blob at %p, %lu bytes, offset 0x%08lX\n",
+         g_xip_addr, (unsigned long)g_xip_size, (unsigned long)g_xip_offset);
+  
+  extern uint32_t __RAM_EMU_START__[];
+  extern uint32_t __RAM_EMU_END__[];
+  PatchSegaCdSentinels(__RAM_EMU_START__, __RAM_EMU_END__, g_xip_offset, g_xip_size);
+  return true;
+}
 
 /* ---- entry point (called by the launcher, like app_main_pce) ---- */
 int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
@@ -148,6 +194,24 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_system_init(APPID_SEGACD, SEGACD_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &sleep_wake_up, &sram_save_cb);
+
+    if (!SegaCdCacheXipToFlash()) {
+        printf("Failed to cache segacd.xip\n");
+        return 0;
+    }
+
+    uint32_t bios_size = 0;
+    segacd_bios = odroid_overlay_cache_file_in_flash("/bios/segacd/bios_CD_U.bin", &bios_size, false);
+    if (!segacd_bios) {
+        segacd_bios = odroid_overlay_cache_file_in_flash("/bios/segacd/bios_CD_E.bin", &bios_size, false);
+    }
+    if (!segacd_bios) {
+        segacd_bios = odroid_overlay_cache_file_in_flash("/bios/segacd/bios_CD_J.bin", &bios_size, false);
+    }
+    if (!segacd_bios) {
+        printf("SegaCD BIOS not found in /bios/segacd/!\n");
+        return 0;
+    }
 
     /* base Mega Drive core + Sega CD hardware */
     load_cartridge();

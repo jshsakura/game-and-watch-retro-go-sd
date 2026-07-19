@@ -393,7 +393,7 @@ static unsigned int main_prgwin_read8(unsigned int address)
 {
     unsigned int off = (address & 0x1FFFF) + (unsigned)SCD.prg_bank * 0x20000;
     scd_prg_bank_accessed |= (uint8_t)(1 << SCD.prg_bank);
-    return sub_prg_paged_read8(off ^ 1);
+    return sub_prg_paged_read8(off);
 }
 static unsigned int main_prgwin_read16(unsigned int address)
 {
@@ -426,7 +426,7 @@ static void main_prgwin_write8(unsigned int address, unsigned int data)
         scd_dbg_first_ea = address;
     }
 #endif
-    sub_prg_paged_write8(off ^ 1, data);
+    sub_prg_paged_write8(off, data);
 }
 static void main_prgwin_write16(unsigned int address, unsigned int data)
 {
