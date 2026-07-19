@@ -905,6 +905,21 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(__gba_ahb_end__) + 240 * 160 * 2 <=
              ORIGIN(AHBRAM) + LENGTH(AHBRAM) - __AHBRAM_AUDIO_RESERVE__,
            "Error: GBA AHB SRAM overflow (no room left for the framebuffer)");
+
+    /* Per-core AHB pool budget - recurrence prevention for the 6755fbb7
+     * regression (m68k BSS->AHB shrank the pool past Draw2FB's 83976-byte
+     * runtime allocation, crashing the device at draw init; QEMU rig and
+     * Docker could not catch it because neither models the AHB heap).
+     *
+     * Each core is an exclusive overlay, so we check each max independently,
+     * not their sum. Any new static AHB section (e.g. a future .md32x_m68k_ahb)
+     * pushes __gba_ahb_end__ upward and trips the largest consumer first.
+     * 32X Draw2FB (83976 B) is the tightest; GBA fb (76800 B) is already
+     * covered by the ASSERT above, and SNES Apu (~66 KB) / gwenesis (~64 KB)
+     * are smaller still, so Draw2FB is the gate. */
+    ASSERT(ABSOLUTE(__gba_ahb_end__) + 328 * (8 + 240 + 8) + 8 <=
+             ORIGIN(AHBRAM) + LENGTH(AHBRAM) - __AHBRAM_AUDIO_RESERVE__,
+           "Error: AHB pool too small for 32X Draw2FB (md32x_draw2fb, 83976 B)");
   } > AHBRAM
 
   /* Declared BEFORE .xip_gba, and that ordering is the whole point: input sections
