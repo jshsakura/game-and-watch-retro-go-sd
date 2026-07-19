@@ -1,0 +1,23 @@
+Memory Configuration
+
+Name             Origin             Length             Attributes
+ITCMRAM          0x00000000         0x00010000         xrw
+DTCMRAM          0x20000000         0x00020000         xrw
+RAM_UC           0x24000000         0x0004b000         xrw
+RAM_EMU          0x2404b000         0x000b5000         xrw
+AHBRAM           0x30000000         0x00020000         xrw
+
+                0x00014400                        _Heap_Size = 0x14400
+                0x00010000                        __ITCMRAM_LENGTH__ = 0x10000
+                0x0004b000                        __RAM_UC_LENGTH__ = 0x4b000
+                0x000b5000                        __RAM_EMU_LENGTH__ = 0xb5000
+                0x00020000                        __AHBRAM_LENGTH__ = 0x20000
+                0x00002000                        __AHBRAM_AUDIO_RESERVE__ = 0x2000
+                0x2404b000                        __RAM_EMU_START__ = 0x2404b000
+                0x24100000                        __RAM_EMU_END__ = 0x24100000
+                0x00030000                        _OVERLAY_SNES_SIZE = 0x30000
+                0x00010000                        _OVERLAY_SNES_BSS_SIZE = 0x10000
+                0x300088a0                        __ahbram_heap_start__ = 0x300088a0
+                0x3001e000                        __ahbram_audio_start__ = 0x3001e000
+                0x20005770                        _heap_start = 0x20005770
+                0x20019b70                        _heap_end = 0x20019b70

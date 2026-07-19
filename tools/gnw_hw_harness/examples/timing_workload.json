@@ -1,0 +1,9 @@
+{
+  "clock_profile": "profile2",
+  "name": "candidate-frame-window",
+  "qemu_units": {
+    "audio": 174444,
+    "emu": 4565161
+  },
+  "schema_version": 1
+}

@@ -123,6 +123,18 @@ else
     echo "SKIP  external/sm is not checked out — sm savestate test not built"
 fi
 
+# rc_dispatch heap-allocation gate: the REAL rc_dispatch.c (whole-file #include
+# in the test, with malloc redirected to a counter). The old hash design
+# OOM-crashed the device because the per-bank tables totaled ~85 KB on a 81 KB
+# DTCM heap. This test fails if anyone adds a single malloc back. RED-verified:
+# the counter mechanism catches the old code's per-bank allocations.
+if [ -f external/sm/src/snes/rc_dispatch.c ]; then
+    $CC -O2 -Wall -Wextra -std=c11 -Iexternal/sm/src/snes \
+        tests/test_rc_dispatch_heap.c -o /tmp/mtest/test_rc_dispatch_heap
+else
+    echo "SKIP  external/sm is not checked out — rc_dispatch heap test not built"
+fi
+
 # System-grid layout: the REAL rg_system_grid_layout.c, which is dependency-free
 # precisely so this links it instead of re-deriving its rules.
 $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Inc/retro-go \
@@ -194,6 +206,7 @@ fi
 /tmp/mtest/test_fw_tar     || rc=1
 /tmp/mtest/test_system_grid || rc=1
 [ -x /tmp/mtest/test_sm_ppu_saveload ] && { /tmp/mtest/test_sm_ppu_saveload || rc=1; }
+[ -x /tmp/mtest/test_rc_dispatch_heap ] && { /tmp/mtest/test_rc_dispatch_heap || rc=1; }
 
 # === colour tab icons: stored bbox must match its array and fit its box ====
 # gui_draw_color_icon() indexes data[] by bw*bh and blits at (ox,oy) inside the

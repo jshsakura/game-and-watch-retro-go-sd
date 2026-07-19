@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "build": {
+      "additionalProperties": true,
+      "properties": {
+        "config": {"type": "string"},
+        "config_sha256": {"pattern": "^[0-9a-f]{64}$", "type": ["string", "null"]},
+        "elf_sha256": {"type": ["string", "null"]},
+        "map_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+      },
+      "required": ["map_sha256"],
+      "type": "object"
+    },
+    "clock_profiles": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "core_hz": {"minimum": 1, "type": "integer"},
+          "name": {"minLength": 1, "type": "string"},
+          "source": {"const": "device-log"}
+        },
+        "required": ["name", "core_hz", "source"],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "device": {
+      "additionalProperties": true,
+      "properties": {
+        "sd_hardware": {"type": "string"},
+        "target": {"enum": ["mario", "zelda"]}
+      },
+      "type": "object"
+    },
+    "runtime": {
+      "additionalProperties": false,
+      "properties": {
+        "dtcm_used_at_emu_init_bytes": {"minimum": 0, "type": "integer"}
+      },
+      "required": ["dtcm_used_at_emu_init_bytes"],
+      "type": "object"
+    },
+    "schema_version": {"const": 1}
+  },
+  "required": ["schema_version", "build", "runtime", "clock_profiles"],
+  "title": "GNW SD device profile",
+  "type": "object"
+}

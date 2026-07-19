@@ -46,7 +46,11 @@ if NM is None:
 
 # Directories under build/ that are emulator-core overlays. Everything else
 # (core/, fatfs/, tamp/, ...) is resident firmware and is shared on purpose.
-NON_CORE_DIRS = {"core", "cores", "fatfs", "tamp", "mappers"}
+# rc_smw is the SNES core's static-recompilation XIP blob — compiled with
+# snes_redefines, its BSS routes into .overlay_snes_bss, its code into
+# .xip_rc_smw. It is NOT a standalone overlay; its symbols are in the SNES
+# (gsnes__) namespace and main_snes.c references them directly.
+NON_CORE_DIRS = {"core", "cores", "fatfs", "tamp", "mappers", "rc_smw"}
 
 DEFINED_TYPES = "BbDdTtGgRrVvWw"
 

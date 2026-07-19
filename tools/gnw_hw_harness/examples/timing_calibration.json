@@ -1,0 +1,17 @@
+{
+  "samples": [
+    {
+      "device_cycles": {
+        "audio": 615009,
+        "emu": 6446520
+      },
+      "fixed_cycles": 1168800,
+      "name": "zelda-profile2-device-window",
+      "qemu_units": {
+        "audio": 174444,
+        "emu": 6264539
+      }
+    }
+  ],
+  "schema_version": 1
+}
