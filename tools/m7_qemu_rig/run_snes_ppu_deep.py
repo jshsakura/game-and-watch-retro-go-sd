@@ -17,10 +17,13 @@ DEEP_RE = re.compile(
     r"\[ppu-deep\] bg1=(\d+) bg2=(\d+) bg3=(\d+) "
     r"sprite_eval=(\d+) sprite_draw=(\d+) clear=(\d+) palette=(\d+) "
     r"fast=(\d+) math=(\d+) linecopy=(\d+) fast_pixels=(\d+) "
-    r"math_pixels=(\d+)")
+    r"math_pixels=(\d+) applied=(\d+) bypass=(\d+) fixed=(\d+) "
+    r"subscreen=(\d+) add=(\d+) subtract=(\d+) half=(\d+)")
 FIELDS = ["rom", "frames", "ppu_total", "bg1", "bg2", "bg3",
           "sprite_eval", "sprite_draw", "clear", "palette", "fast", "math",
-          "linecopy", "residual", "fast_pixels", "math_pixels", "status", "error"]
+          "linecopy", "residual", "fast_pixels", "math_pixels", "math_applied",
+          "math_bypass", "math_fixed", "math_subscreen", "math_add",
+          "math_subtract", "math_half", "status", "error"]
 
 
 def ensure_build(frames: int) -> None:
@@ -55,7 +58,9 @@ def profile(rom: Path, frames: int, timeout: int) -> dict[str, object]:
         if not match:
             raise RuntimeError("deep ELF did not print stage counters")
         keys = ("bg1", "bg2", "bg3", "sprite_eval", "sprite_draw", "clear",
-                "palette", "fast", "math", "linecopy", "fast_pixels", "math_pixels")
+                "palette", "fast", "math", "linecopy", "fast_pixels", "math_pixels",
+                "math_applied", "math_bypass", "math_fixed", "math_subscreen",
+                "math_add", "math_subtract", "math_half")
         values = dict(zip(keys, map(int, match.groups())))
         ppu = max(0, int(on["emu"]) - int(off["emu"]))
         accounted = sum(values[key] for key in
@@ -93,7 +98,9 @@ def main() -> int:
               f"BG={row['bg1']}/{row['bg2']}/{row['bg3']} "
               f"SPR={row['sprite_draw']} FAST={row['fast']} MATH={row['math']} "
               f"LINE={row['linecopy']} RESID={row['residual']} "
-              f"PIX={row['fast_pixels']}/{row['math_pixels']}")
+              f"PIX={row['fast_pixels']}/{row['math_pixels']} "
+              f"APPLY={row['math_applied']} FIX={row['math_fixed']} "
+              f"SUBSCR={row['math_subscreen']} HALF={row['math_half']}")
     return 1 if any(row["status"] != "PASS" for row in rows) else 0
 
 

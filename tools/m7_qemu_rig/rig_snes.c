@@ -65,6 +65,10 @@ uint64_t g_ppu_sprite_eval_ticks, g_ppu_sprite_draw_ticks;
 uint64_t g_ppu_clear_ticks, g_ppu_palette_ticks;
 uint64_t g_ppu_fast_ticks, g_ppu_math_ticks, g_ppu_line_ticks;
 uint64_t g_ppu_fast_pixels, g_ppu_math_pixels;
+uint64_t g_ppu_math_applied_pixels, g_ppu_math_bypass_pixels;
+uint64_t g_ppu_math_fixed_pixels, g_ppu_math_subscreen_pixels;
+uint64_t g_ppu_math_add_pixels, g_ppu_math_subtract_pixels, g_ppu_math_half_pixels;
+uint64_t g_ppu_math_rebuild_ticks, g_ppu_math_rebuild_calls;
 #endif
 
 /* ---- firmware allocators (rig heap via _sbrk) ---- */
@@ -404,7 +408,8 @@ int main(void) {
 #ifdef RIG_PPU_DEEP
   printf("[ppu-deep] bg1=%lu bg2=%lu bg3=%lu sprite_eval=%lu sprite_draw=%lu "
          "clear=%lu palette=%lu fast=%lu math=%lu linecopy=%lu "
-         "fast_pixels=%lu math_pixels=%lu insn/frame\n",
+         "fast_pixels=%lu math_pixels=%lu applied=%lu bypass=%lu "
+         "fixed=%lu subscreen=%lu add=%lu subtract=%lu half=%lu insn/frame\n",
          (unsigned long)(g_ppu_bg_ticks[0] * ipt_x1000 / 1000 / frames),
          (unsigned long)(g_ppu_bg_ticks[1] * ipt_x1000 / 1000 / frames),
          (unsigned long)(g_ppu_bg_ticks[2] * ipt_x1000 / 1000 / frames),
@@ -416,7 +421,17 @@ int main(void) {
          (unsigned long)(g_ppu_math_ticks * ipt_x1000 / 1000 / frames),
          (unsigned long)(g_ppu_line_ticks * ipt_x1000 / 1000 / frames),
          (unsigned long)(g_ppu_fast_pixels / RIG_FRAMES),
-         (unsigned long)(g_ppu_math_pixels / RIG_FRAMES));
+         (unsigned long)(g_ppu_math_pixels / RIG_FRAMES),
+         (unsigned long)(g_ppu_math_applied_pixels / RIG_FRAMES),
+         (unsigned long)(g_ppu_math_bypass_pixels / RIG_FRAMES),
+         (unsigned long)(g_ppu_math_fixed_pixels / RIG_FRAMES),
+         (unsigned long)(g_ppu_math_subscreen_pixels / RIG_FRAMES),
+         (unsigned long)(g_ppu_math_add_pixels / RIG_FRAMES),
+         (unsigned long)(g_ppu_math_subtract_pixels / RIG_FRAMES),
+         (unsigned long)(g_ppu_math_half_pixels / RIG_FRAMES));
+  printf("[ppu-cache] rebuild=%lu calls=%lu insn/frame\n",
+         (unsigned long)(g_ppu_math_rebuild_ticks * ipt_x1000 / 1000 / frames),
+         (unsigned long)g_ppu_math_rebuild_calls);
 #endif
 #else
   printf("[snes-qemu] done %d frames STATEHASH=%08lx AUDIOHASH=%08lx avg emu=%lu apu=%lu insn/frame\n",

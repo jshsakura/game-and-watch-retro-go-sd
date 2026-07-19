@@ -77,12 +77,22 @@ one(
     "  g_ppu_clear_ticks += (uint32_t)(rig_timer_now()-_pt);\n}")
 
 one(
-    "  if (ppu->paletteDirty)\n"
+    "  if (palette_was_dirty)\n"
     "    PpuRebuildPalette(ppu);   /* cgram or brightness moved since the last line */",
-    "  if (ppu->paletteDirty) {\n"
+    "  if (palette_was_dirty) {\n"
     "    uint32_t _pt=rig_timer_now();\n"
     "    PpuRebuildPalette(ppu);   /* cgram or brightness moved since the last line */\n"
     "    g_ppu_palette_ticks += (uint32_t)(rig_timer_now()-_pt);\n"
+    "  }")
+
+one(
+    "  if (palette_was_dirty || math_fixed_key != ppu->mathFixedKey)\n"
+    "    PpuRebuildMathFixed(ppu, math_fixed_key);",
+    "  if (palette_was_dirty || math_fixed_key != ppu->mathFixedKey) {\n"
+    "    uint32_t _pt=rig_timer_now();\n"
+    "    PpuRebuildMathFixed(ppu, math_fixed_key);\n"
+    "    g_ppu_math_rebuild_ticks += (uint32_t)(rig_timer_now()-_pt);\n"
+    "    g_ppu_math_rebuild_calls++;\n"
     "  }")
 
 one(
@@ -97,6 +107,27 @@ one(
     "    } else {\n"
     "      uint32_t _prof_math_t=rig_timer_now();\n"
     "      uint8 *half_color_map = ppu->halfColor ? ppu->brightnessMultHalf : ppu->brightnessMult;")
+
+one(
+    "        uint8 main_layer = (main_z >> 8) & 0xf;",
+    "        uint8 main_layer = (main_z >> 8) & 0xf;\n"
+    "        if (math_enabled_cur & (1 << main_layer)) {\n"
+    "          uint8_t _prof_subidx = (math_enabled_cur & 0x100) ? "
+    "(ppu->bgBuffers[1].data[i] & 0xff) : 0;\n"
+    "          g_ppu_math_applied_pixels++;\n"
+    "          if (math_enabled_cur & 0x200) g_ppu_math_subtract_pixels++; "
+    "else g_ppu_math_add_pixels++;\n"
+    "          if ((math_enabled_cur & 0x100) && _prof_subidx != 0) {\n"
+    "            g_ppu_math_subscreen_pixels++;\n"
+    "            if (ppu->halfColor) g_ppu_math_half_pixels++;\n"
+    "          } else {\n"
+    "            g_ppu_math_fixed_pixels++;\n"
+    "            if (ppu->halfColor && !(math_enabled_cur & 0x100)) "
+    "g_ppu_math_half_pixels++;\n"
+    "          }\n"
+    "        } else {\n"
+    "          g_ppu_math_bypass_pixels++;\n"
+    "        }")
 
 tail = "      } while (dst++, ++i < right);\n    }\n  } while (cw_clip_math >>= 1, ++windex < cwin.nr);"
 assert tail in src
@@ -121,6 +152,10 @@ extern uint64_t g_ppu_sprite_eval_ticks, g_ppu_sprite_draw_ticks;
 extern uint64_t g_ppu_clear_ticks, g_ppu_palette_ticks;
 extern uint64_t g_ppu_fast_ticks, g_ppu_math_ticks, g_ppu_line_ticks;
 extern uint64_t g_ppu_fast_pixels, g_ppu_math_pixels;
+extern uint64_t g_ppu_math_applied_pixels, g_ppu_math_bypass_pixels;
+extern uint64_t g_ppu_math_fixed_pixels, g_ppu_math_subscreen_pixels;
+extern uint64_t g_ppu_math_add_pixels, g_ppu_math_subtract_pixels, g_ppu_math_half_pixels;
+extern uint64_t g_ppu_math_rebuild_ticks, g_ppu_math_rebuild_calls;
 uint32_t rig_timer_now(void);
 #endif
 EOF
