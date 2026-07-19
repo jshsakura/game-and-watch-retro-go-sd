@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 from concurrent.futures import ThreadPoolExecutor
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -30,9 +31,7 @@ def ensure_build(frames: int) -> None:
     stamp = RIG / "build_cost/frames.txt"
     elfs = [RIG / "build_cost/snes_cost_on.elf",
             RIG / "build_cost/snes_cost_off.elf",
-            RIG / "build_cost/snes_ppu_deep.elf",
-            RIG / "build_cost/snes_dsp_deep.elf",
-            RIG / "build_cost/snes_dsp_baseline.elf"]
+            RIG / "build_cost/snes_ppu_deep.elf"]
     deps = [RIG / "build_snes_cost.sh", RIG / "rig_snes.c",
             RIG / "rig_runtime_hf.c", RIG / "mps2_an500_snes.ld"]
     deps += list((ROOT / "external/sm/src/snes").glob("*.[ch]"))
@@ -41,8 +40,10 @@ def ensure_build(frames: int) -> None:
              min(path.stat().st_mtime for path in elfs))
     current = stamp.read_text().strip() if stamp.exists() else ""
     if current != str(frames) or stale:
+        env = os.environ.copy()
+        env["SNES_COST_PPU_ONLY"] = "1"
         subprocess.run([str(RIG / "build_snes_cost.sh"), str(frames)],
-                       cwd=ROOT, check=True)
+                       cwd=ROOT, check=True, env=env)
 
 
 def profile(rom: Path, frames: int, timeout: int) -> dict[str, object]:

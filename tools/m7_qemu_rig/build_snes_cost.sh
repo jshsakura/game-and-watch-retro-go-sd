@@ -32,6 +32,7 @@ PY
 # current production DSP so every unrelated optimization stays identical; only
 # the six-line fast path is removed.  The corpus runner compares all hashes and
 # instruction counts between this ELF and snes_cost_on.elf.
+if [[ "${SNES_COST_PPU_ONLY:-0}" != 1 ]]; then
 python3 - "$SM/src/snes/dsp.c" "$OUT/dsp_echo_baseline.c" <<'PY'
 import sys
 
@@ -47,10 +48,12 @@ assert src.count("handle_indexes:\n") == 1
 src = src.replace(fast, "").replace("handle_indexes:\n", "")
 open(sys.argv[2], "w", encoding="utf-8").write(src)
 PY
+fi
 
 # Deep DSP copy: separate stateful voice advancement from disposable output
 # mixing.  The two-loop form is semantically identical: the mix only reads the
 # sampleOut values produced by all eight sequential channel cycles.
+if [[ "${SNES_COST_PPU_ONLY:-0}" != 1 ]]; then
 python3 - "$SM/src/snes/dsp.c" "$OUT/dsp_deep.c" <<'PY'
 import sys
 
@@ -110,6 +113,7 @@ one(
 
 open(sys.argv[2], "w", encoding="utf-8").write(src)
 PY
+fi
 
 # Deep PPU copy: instrument static stage call sites without touching external/sm.
 python3 - "$SM/src/snes/ppu.c" "$OUT/ppu_deep.c" <<'PY'
@@ -297,7 +301,9 @@ build_dsp_baseline() {
       $objs -lm -o "$OUT/snes_dsp_baseline.elf"
 }
 
-build_dsp_baseline
+if [[ "${SNES_COST_PPU_ONLY:-0}" != 1 ]]; then
+  build_dsp_baseline
+fi
 
 build_deep() {
   local dir="$OUT/deep" defs="$BASE_DEF -DRIG_PPU_DEEP" objs=""
@@ -339,10 +345,16 @@ build_dsp_deep() {
       $objs -lm -o "$OUT/snes_dsp_deep.elf"
 }
 
-build_dsp_deep
+if [[ "${SNES_COST_PPU_ONLY:-0}" != 1 ]]; then
+  build_dsp_deep
+fi
 arm-none-eabi-size "$OUT/snes_cost_on.elf" "$OUT/snes_cost_off.elf"
 arm-none-eabi-size "$OUT/snes_ppu_deep.elf"
-arm-none-eabi-size "$OUT/snes_dsp_deep.elf"
-arm-none-eabi-size "$OUT/snes_dsp_baseline.elf"
+if [[ "${SNES_COST_PPU_ONLY:-0}" != 1 ]]; then
+  arm-none-eabi-size "$OUT/snes_dsp_deep.elf"
+fi
+if [[ "${SNES_COST_PPU_ONLY:-0}" != 1 ]]; then
+  arm-none-eabi-size "$OUT/snes_dsp_baseline.elf"
+fi
 printf '%s\n' "$FRAMES" > "$OUT/frames.txt"
 printf 'SNES cost ELFs ready: %s frames per ROM\n' "$FRAMES"
