@@ -681,3 +681,21 @@ ITCM 캐싱과 같은 패턴(SH2_PC_HIST 로 이미 식별된 핫 주소 클러�
 0x02036f3e`+`0x02037c52-c60` 약 3.5KB)을 ITCM(64KB, 여유 있음)에 상주시키는 것. 자체검증:
 로컬 arm-none-eabi-gcc 로 sh2pico.c/main_md32x.c 플래그 on/off 양쪽 단독 컴파일 성공.
 **아직 미확인** — 기기 DWT 실측 전까지는 가설이지 결론 아님.
+
+## 측정 12 — Doom idle-skip 완전 제거: 총소리 SFX 회귀 (0720, 유저 실기 제보)
+
+유저 실기 제보 2건: (1) 무기 총소리 SFX 소실, (2) 15fps@83%CPU(순수CPU 아니라 대기 병목).
+유저 진단: **`main_md32x.c` 의 `gnw_sh2_idle_skip=(crc==0xb0239812)?1:0` 자체가 문제** —
+①전체-ROM CRC 하드코딩 게이트(그 둠 덤프 1개만 커버, 리전/변종 전부 탈락 — 금지 패턴),
+②측정10 에서 이미 기기 fps 효과 0 으로 확인됨, ③지금 **총소리 SFX 를 깨먹음**(BRA-self
+idle-skip 이 SLEEP 시킨 SH-2 코드 경로가 하필 PWM 총소리 트리거로 이어지는 경로 — SLEEP 의
+깨우는 조건(`sh2_internal_irq`/`p32x_sh2_poll_event`, 타이머·VBlank 한정)이 게임 자체
+로직이 기대하는 조건과 달라서 조용히 어긋남, WS 아이들스킵 "state-exact≠cycle-exact"
+교훈과 동일 — fb 체크섬은 이 세션 내내 bit-identical 이었는데 그게 바로 이 회귀를 fb 게이트가
+못 잡는 이유였음). **순수 손해 확정 → 지문화 대신 완전 제거.**
+
+수정: `main_md32x.c` 에서 CRC32 계산 루프 + `gnw_sh2_idle_skip=1` 대입을 통째로 삭제.
+`gnw_sh2_idle_skip` 은 컴파일 기본값 0(`sh2pico.c` `GNW_SH2_IDLE_SKIP_DEFAULT`)에 영구 고정.
+커밋 `62a10da6`. **재도입 규칙**: 전체-ROM CRC 절대 금지, 반드시 opcode 패턴매칭 지문
+(SegaCD poll detector 선례)으로만. 자체검증: 플래그 on/off 양쪽 단독 컴파일 성공(경고 0).
+Opus 빌드 대기 — 총소리 복구 + fps(측정10 기준 원래부터 idle-skip 무관) 유지 확인 필요.
