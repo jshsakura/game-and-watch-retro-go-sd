@@ -555,6 +555,25 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     return;
   }
 
+  /* SH-2 BRA-self idle-skip whitelist: only verified ROMs get scheduler
+   * SLEEP on BRA-self (saves ~99% of sleeping SH-2 cost). Unverified
+   * ROMs use the safe icount-burn path. CRC32 computed from raw ROM
+   * data (pre-byteswap). Add verified CRCs here as games are tested. */
+  extern int gnw_sh2_idle_skip;
+  {
+    uint32_t crc = 0xFFFFFFFF;
+    for (unsigned i = 0; i < sz; i++) {
+      crc ^= rom[i];
+      for (int b = 0; b < 8; b++)
+        crc = (crc >> 1) ^ (0xEDB88320u & -(crc & 1));
+    }
+    crc ^= 0xFFFFFFFF;
+    /* Doom 32X (US): slave SH-2 verified sleeping safely */
+    gnw_sh2_idle_skip = (crc == 0xb0239812u) ? 1 : 0;
+    diag_log("idle_skip: crc=%08x -> %s\n", (unsigned)crc,
+             gnw_sh2_idle_skip ? "ON" : "OFF");
+  }
+
   diag_log("PicoLoadMedia: mt=%d AHW=%x romsize=%lu pal=%d\n",
            (int)mt, (unsigned)PicoIn.AHW, (unsigned long)Pico.romsize,
            (int)Pico.m.pal);
