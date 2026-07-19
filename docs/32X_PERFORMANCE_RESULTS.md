@@ -585,3 +585,63 @@ SDRAM poll, PWM poll)가 **실기에서는 이득이 측정되지 않았다.** `
 5. 결과에 따라: 슬레이브 SH-2 지배적이면 인터프리터 최적화(레이지플래그/스레디드디스패치,
    위 프로젝트 철학 항목 ②)로, draw32x/draw_md 지배적이면 렌더러 최적화(④)로 방향을 튼다 —
    측정 없이 추측하지 않는다.
+
+## 측정 10 — Doom 현재(e3de4645) rig 재측정 + idle-skip rig/기기 불일치 (0720)
+
+기기 접근이 없어 DWT 값은 못 얻었지만, rig(QEMU icount)로 갈 수 있는 데까지 감. 측정 1–8은
+이후 여러 "keep" 커밋(BFS countdown, SDRAM poll, BFS GBR poll)이 쌓이기 전 수치라 낡음 —
+**현재 HEAD(`e3de4645`) 기준 재측정**이 필요했음. `bash tools/m7_qemu_rig/run_32x.sh
+/tmp/doom_unswapped.32x 50` (PHASE_PROF=1), GATE3 PASS, fb `de099d9f` 전부 동일.
+
+### 현재 baseline (idle_skip OFF, rig 기본값)
+
+```
+m68k   5.4%   msh2  51.5%   ssh2  18.1%   draw(MD VDP)  8.5%   32x(compositor) 13.3%
+snd 1.3%  fm/pwm ≈0%  other 1.5%   TOTAL host=8,713,161 insn/frame
+sh2 host/guest = 86.689x
+```
+
+msh2+ssh2 = **69.6%**, draw+32x = **21.8%** — SH-2 인터프리트가 드로잉의 ~3.2배. 이번 임무의
+핵심 질문(슬레이브 SH-2 vs 드로잉)에 대해 **rig 는 SH-2 쪽(특히 마스터)이라고 답한다.**
+
+### idle-skip A/B — rig 는 여전히 이득을 본다 (기기와 반대)
+
+`EXTRA_DEF='-DRIG_IDLE_SKIP'` (실제 펌웨어의 CRC 화이트리스트가 Doom 에 하는 것과 동일):
+
+```
+TOTAL host: 8,713,161 -> 7,110,369  (−18.4%)
+ssh2:          18.1%  ->    0.0%   (슬레이브가 거의 전부 BRA-self idle spin 이었음)
+msh2:          51.5%  ->   63.3%   (분모가 줄어 비중 증가, 절대값은 4.49M -> 4.50M 로 불변)
+fb 체크섬 동일 (de099d9f) — 동작 불변, 순수 성능차.
+```
+
+**이게 바로 유저가 보고한 "idle-skip 기기효과 0"과 정면으로 어긋나는 지점.** rig 는 host
+명령어 수 기준 −18.4%를 보는데 기기는 0%. 두 측정 도구가 다른 답을 준 사례 — 이번 DWT
+서브페이즈 인프라(측정 9)가 풀어야 할 **바로 그 불일치**. 가설: 제거된 슬레이브 idle-spin
+명령어들은 짧고 캐시상주(ITCM/hot dispatch loop)라 기기에서 **명령어당 사이클이 이미 쌌던**
+반면, 마스터의 실제 작업(디스패처/GBR 접근자, 아래 참고)은 명령어당 캐시미스/XIP스톨 비용이
+더 클 가능성 — "많이 없앴지만 원래 싼 것들"이라 사이클 절감은 미미했을 수 있음. **확인은
+DWT sub-phase 실측만이 할 수 있다** (rig icount 는 스톨을 못 봄, [[vb-blit-memory-stall]]
+규칙과 동일).
+
+### `SH2_PC_HIST` — 마스터 SH-2는 더 이상 단일 핫루프가 아니다
+
+`SH2_PC_HIST=1` (idle_skip ON, 즉 실제 출하 상태) 로 재측정: top-50 PC 가 guest 명령어의
+70.65%(1665개 고유 PC 중). 측정 1의 그 루프(`0x02036f36/38/3a` BFS countdown)가 **여전히
+#1–3위(합 7.98%)** 로 남아있음 — 이미 fastloop 로 반복당 비용은 눌렸지만, **호출 자체가
+프레임당 ~3000번**이라 collapsed-overhead 합만으로도 여전히 최상위. 즉 "이 루프 하나가
+62.68%"이던 측정 1 시절과 달리, 지금은 **단일 핫루프가 없다** — 대신:
+
+- `0x02036f36` BFS countdown (7.98%): 이미 keep 적용됨, 호출빈도(~3000/frame)가 지분의 근원.
+- `0x02036222-26` GBR-relative 4-insn 읽기(`LDC R1,GBR; MOV.W @(0x22,GBR),R0; ...`, 9.52%,
+  ~2676회/frame): 통신/상태 레지스터 접근자로 보임 — 폴링은 아니고 순수 accessor 함수.
+- `0x00000210` 전역 BT 카운트다운(5.82%, ~2185회/frame): 측정 4의 Metal Head/VR 과 동일한
+  BIOS/SDK 공용 딜레이 루틴.
+- `0x020366ac-fc` + `0x02037c52-60` (합 ~24%, PC 20여개 각 1.19%): push/JSR R8·R9/compare 로
+  된 실제 함수 호출 체인 — 딜레이 루프가 아니라 **진짜 작업**(디스패처, ~1338회/frame).
+
+**결론:** Doom 은 "keep" 5종이 이미 적용된 지금, 패턴매칭식 fastloop 레버의 수익이 줄고 있다
+— 남은 비용은 여러 실제 호출 지점에 분산된 순수 인터프리터 디스패치 오버헤드. 추가 rig
+icount 레버는 한계 체감 중; **다음 레버는 기기 DWT 로 실제 사이클 비용을 보고 결정해야
+한다** (인터프리터 디스패치 오버헤드 자체를 줄이는 레이지플래그/스레디드디스패치 vs
+GBR-accessor/dispatcher 캐시 지역성 vs 드로잉).
