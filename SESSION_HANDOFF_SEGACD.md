@@ -291,6 +291,57 @@ The sub-68K NEVER accesses above $01FFFF during gameplay. It only uses bank 0 (1
 
 ---
 
+## Boot Crossing HLE Bypass (mode 8→0x10 ACHIEVED)
+
+### Background
+Boot stalled at mode 8 (sub at $6132 $36a9 spin, main at $a1e WaitVSync). Root cause: CDC/CDD protocol emulation incomplete — BIOS never sets CDC WRRQ, so no CD data → no DMA → no PRG-RAM data → sub never exits handshake spin. PicoDrive comparison revealed our `segacd_cdd_process()` only updates RS0 (status byte), while PicoDrive updates RS0-RS8 (including BCD time/track) every 75Hz tick. But RS1-RS8 fix alone (경로 A) didn't unblock — the fundamental deadlock required HLE bypass (경로 B).
+
+### HLE Implementation (commit 6791b045)
+
+**4-layer HLE bypass:**
+
+1. **Gate 3 ($FF8020=0x40)** — CDD status disc-present flag. Injected continuously in `segacd_cdd_process()` and `segacd_cdd_command()` (sub-BIOS overwrites every response).
+
+2. **Gate 1 ($FFFE20=0x40)** — Per-frame injection in boot_test.c. High nibble nonzero for BIOS $1d96 check.
+
+3. **IP load** — Parse .cue → .bin, read sector 0 user data at file offset $10 (MODE1/2352), extract IP header fields ($40=load addr, $44=size), memcpy to M68K_RAM at IP-specified offset. Detonator Orgun: addr=$0800, size=$7800 (30720 bytes).
+
+4. **Forced PC=$064C** — When mode 8 detected, `m68k_set_reg(M68K_REG_PC, 0x064C)` forces main 68K to BIOS game-entry routine, skipping entire mode8 WaitVSync loop.
+
+### Test Result (SCD_FAST_BOOT=1, 900 frames, detonator_single.cue)
+
+```
+f0:   mode 0 (cold reset)
+f66:  mode 0→4 (sub-release, checksum e9bb PASS)
+f738: mode 4→8 (gate 3+1 working, $FE3A=40, $FFDDC=04)
+f738: HLE IP loaded (30720 bytes to M68K_RAM[$0800])
+f738: FORCE main PC → $064C (skip BIOS mode8 loop)
+f739: mode 8→0x1C ★ CROSSING ACHIEVED (0x10 threshold passed)
+```
+
+**Mode 0x10 (LOGO) threshold passed at f739** — 1 frame after forced PC jump. Sub-BIOS checksum PASSES, no crash/fault.
+
+### Secondary Issues (for future refinement)
+- At f800: main re-enters WaitVSync (next mode transition waiting)
+- $FE3A regresses to 0x05 (gate 3 injection not continuous enough — sub-BIOS overwrites)
+- Sub PC tracking shows furthest=0 (possible tracking issue, not crash)
+- Gate 3 injection should continue until mode 0x10 confirmed stable
+
+### How to Use
+```bash
+# Build
+cd gnw-segacd && bash tools/segacd_harness/build_bench.sh
+
+# Run with HLE fast-boot
+SCD_FAST_BOOT=1 /tmp/boot_bench /tmp/scd/bios_CD_U.bin "/tmp/scd/detonator_single.cue" 900
+```
+
+### Code Locations
+- `segacd_cd.c`: `scd_fast_boot`/`scd_boot_mode` globals (line 68-76), gate 3 injection (line 557-559), READY gate fix (line 886), RS1-RS8 v2 guard (line 502-552)
+- `boot_test.c`: `SCD_FAST_BOOT` env (line 215), gate 1+2 injection + IP load + forced PC (line 292-305)
+
+---
+
 ## Harness Methodology Notes
 
 ### Host vs Device Measurement Gap

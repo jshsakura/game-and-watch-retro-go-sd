@@ -221,6 +221,20 @@ void segacd_sub_hold(void)
     SCD.sub_running = 0;
 }
 
+/* DEBUG: dump interrupt state at segacd_run_sub entry */
+void segacd_dump_int_state(int frame)
+{
+    /* Sub SR interrupt mask: bits 10-8 of SR */
+    uint16_t sub_sr = SCD.sub_ctx.int_level << 8; /* FLAG_INT_MASK field */
+    extern uint32_t scd_dbg_dump_seen;
+    if (!scd_dbg_dump_seen) scd_dbg_dump_seen = 0;
+    printf("[irqst] f%d entry: cdd_pend=%d cdc_pend=%d ga_ifl2=%d ien=%02x reg37=%02x subPC=%06x sub_intmask=%d\n",
+           frame,
+           SCD.cdd_int_pending, SCD.cdc_int_pending, SCD.ga_ifl2,
+           SCD.s68k_regs[0x33], SCD.s68k_regs[0x37],
+           SCD.sub_ctx.pc, (sub_sr >> 8) & 7);
+}
+
 /* Run the sub-68K up to a cycle target, with its context swapped in.
  * Returns cycles actually consumed. No-op while the sub is held or idle. */
 int segacd_run_sub(int cycle_target)
@@ -265,6 +279,16 @@ int segacd_run_sub(int cycle_target)
         !SCD.cdc_int_pending && !SCD.gfx_int_pending)
         return 0;
     SCD.sub_idle = 0;
+
+    /* DEBUG: dump interrupt state at entry for critical frames */
+    {
+        extern int scd_dbg_frame;
+        if ((scd_dbg_frame >= 735 && scd_dbg_frame <= 760) ||
+            (scd_dbg_frame >= 83 && scd_dbg_frame <= 90)) {
+            extern void segacd_dump_int_state(int frame);
+            segacd_dump_int_state(scd_dbg_frame);
+        }
+    }
 
     /* save main -> load sub */
     memcpy(&s_main_saved, &m68k, sizeof(m68ki_cpu_core));

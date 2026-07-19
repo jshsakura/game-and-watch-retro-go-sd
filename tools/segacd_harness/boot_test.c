@@ -310,8 +310,11 @@ int main(int argc, char **argv)
                         extern unsigned int m68k_get_reg(m68k_register_t reg);
                         extern void m68k_set_reg(m68k_register_t reg, unsigned int value);
                         unsigned int oldpc = m68k_get_reg(M68K_REG_PC);
-                        m68k_set_reg(M68K_REG_PC, 0x064C);
-                        printf("[HLE] f%d: FORCE main PC %06x -> $064C (skip BIOS mode8 loop)\n",
+                        /* Force main directly to $FF0000 (IP entry in main RAM).
+                         * Skip BIOS dispatch entirely — it gets stuck in sub-handshake
+                         * loops and resets the sub via $A12000 writes. */
+                        m68k_set_reg(M68K_REG_PC, 0xFF0000);
+                        printf("[HLE] f%d: FORCE main PC %06x -> $FF0000 (direct IP entry)\n",
                                frame, oldpc);
                     }
                     /* 경로 B: HLE IP load — bypass CDC/CDD DMA entirely.
@@ -325,7 +328,7 @@ int main(int argc, char **argv)
                     static int ip_loaded = 0;
                     if (!ip_loaded) {
                         ip_loaded = 1;
-                        /* Parse cue to find .bin path, then read IP directly.
+                        /* Parse cue to find .bin path, then read IP/SP directly.
                          * MODE1/2352: sector 0 user data at file offset 0x10. */
                         char binpath[512];
                         FILE *cf = fopen(argv[2], "r");  /* cue = text */
@@ -361,21 +364,152 @@ int main(int argc, char **argv)
                                 unsigned char hdr[0x100];
                                 fseek(bf2, 0x10, SEEK_SET);  /* MODE1/2352 user data */
                                 fread(hdr, 1, sizeof(hdr), bf2);
-                                /* IP load addr (longword at IP $40) + size (IP $44) */
-                                unsigned ip_load = (hdr[0x40]<<24)|(hdr[0x41]<<16)|(hdr[0x42]<<8)|hdr[0x43];
-                                unsigned ip_size = (hdr[0x44]<<24)|(hdr[0x45]<<16)|(hdr[0x46]<<8)|hdr[0x47];
-                                if (ip_size > 0 && ip_size <= 0x10000 && ip_load < 0x10000) {
-                                    unsigned char *ipbuf = malloc(ip_size);
-                                    fseek(bf2, 0x10 + 0x100, SEEK_SET);  /* IP code after header */
-                                    fread(ipbuf, 1, ip_size, bf2);
-                                    for (unsigned i = 0; i+1 < ip_size; i += 2) {
-                                        M68K_RAM[(ip_load + i) ^ 1] = ipbuf[i];
-                                        M68K_RAM[(ip_load + i + 1) ^ 1] = ipbuf[i+1];
+
+                                /* IP (main 68K program): BIOS loads 32KB from disc $200 → main RAM $FF0000.
+                                 * This includes security code (at disc $200) + IP program.
+                                 * Multi-sector read: disc byte offset → file offset needs per-sector calc. */
+                                {
+                                    unsigned ip_total = 0x8000;  /* 32KB */
+                                    unsigned char *ipbuf = malloc(ip_total);
+                                    unsigned ip_off_in_buf = 0;
+                                    unsigned disc_byte = 0x200;
+                                    while (ip_off_in_buf < ip_total) {
+                                        unsigned sec = disc_byte / 2048;
+                                        unsigned byt = disc_byte % 2048;
+                                        unsigned long foff = (unsigned long)sec * 2352 + 16 + byt;
+                                        unsigned chunk = 2048 - byt;
+                                        if (chunk > ip_total - ip_off_in_buf) chunk = ip_total - ip_off_in_buf;
+                                        fseek(bf2, foff, SEEK_SET);
+                                        fread(ipbuf + ip_off_in_buf, 1, chunk, bf2);
+                                        ip_off_in_buf += chunk;
+                                        disc_byte += chunk;
+                                    }
+                                    for (unsigned i = 0; i+1 < ip_total; i += 2) {
+                                        M68K_RAM[(0 + i) ^ 1] = ipbuf[i];
+                                        M68K_RAM[(0 + i + 1) ^ 1] = ipbuf[i+1];
                                     }
                                     free(ipbuf);
-                                    printf("[HLE] f%d: IP loaded from %s — addr=$%04X size=$%04X entry=$064C\n",
-                                           frame, binpath, ip_load, ip_size);
+                                    printf("[HLE] f%d: IP loaded from %s — 32KB disc $200 → main RAM $FF0000\n",
+                                           frame, binpath);
                                 }
+
+                                /* SP (sub 68K program): load from disc $40/$44 → PRG-RAM $06000.
+                                 * Raw copy (NOT compressed). SP header "MAIN..." at $06000.
+                                 * Entry-point table at SP+$18: SPInit, SPMain, SPInt2, SPNull. */
+                                unsigned sp_disc = (hdr[0x40]<<24)|(hdr[0x41]<<16)|(hdr[0x42]<<8)|hdr[0x43];
+                                unsigned sp_size = (hdr[0x44]<<24)|(hdr[0x45]<<16)|(hdr[0x46]<<8)|hdr[0x47];
+                                if (sp_size > 0 && sp_size <= 0x20000 && sp_disc < 0x80000) {
+                                    unsigned char *spbuf = malloc(sp_size);
+                                    /* disc byte offset → file offset:
+                                     * sector = sp_disc / 2048, byte_in = sp_disc % 2048
+                                     * file_offset = sector * 2352 + 16 + byte_in */
+                                    unsigned sp_sector = sp_disc / 2048;
+                                    unsigned sp_byte = sp_disc % 2048;
+                                    unsigned long sp_file_off = (unsigned long)sp_sector * 2352 + 16 + sp_byte;
+                                    fseek(bf2, sp_file_off, SEEK_SET);
+                                    fread(spbuf, 1, sp_size, bf2);
+                                    /* PRG-RAM $06000, XOR byte-swap for little-endian host.
+                                     * WARNING: SP at $06000 OVERWRITES sub-BIOS runtime code at
+                                     * $6100+ (CDD command cycle). Must force sub PC to SPInit
+                                     * BEFORE the sub tries to execute the overwritten code. */
+                                    for (unsigned i = 0; i+1 < sp_size; i += 2) {
+                                        SCD.prg_ram[(0x06000 + i) ^ 1] = spbuf[i];
+                                        SCD.prg_ram[(0x06000 + i + 1) ^ 1] = spbuf[i+1];
+                                    }
+                                    /* SP entry-point table at SP+$18 (longword offset to table).
+                                     * Table entries are WORD OFFSETS from the TABLE ADDRESS
+                                     * (not from SP start): SPInit, SPMain, SPInt2, SPNull.
+                                     * E.g. Sonic CD: table at $06020, SPInit word=$000A
+                                     * → SPInit = $06020 + $000A = $0602A (valid code:
+                                     *   lea $FF8020,a0; moveq #0,d0; ...). */
+                                    unsigned sp_ept_off = (spbuf[0x18]<<24)|(spbuf[0x19]<<16)|(spbuf[0x1a]<<8)|spbuf[0x1b];
+                                    /* Entry-point table entries (WORDS): SPInit, SPMain, SPInt2, SPNull.
+                                     * Values are offsets from the TABLE ADDRESS.
+                                     * Full HLE fallback: skip SPInit (it writes to gate-array regs which
+                                     * triggers side effects when sub-BIOS ISR vectors are overwritten by SP).
+                                     * Jump directly to SPMain with interrupts disabled.
+                                     * Patch level-2 ISR vector to SPInt2 so the game's interrupt handler
+                                     * runs correctly. */
+                                    unsigned sp_init_addr = 0, sp_main_addr = 0, sp_int2_addr = 0;
+                                    if (sp_ept_off > 0 && sp_ept_off + 7 < sp_size) {
+                                        unsigned tb = 0x06000 + sp_ept_off;  /* table base in PRG-RAM */
+                                        unsigned w0 = (spbuf[sp_ept_off]<<8)|spbuf[sp_ept_off+1];
+                                        unsigned w1 = (spbuf[sp_ept_off+2]<<8)|spbuf[sp_ept_off+3];
+                                        unsigned w2 = (spbuf[sp_ept_off+4]<<8)|spbuf[sp_ept_off+5];
+                                        sp_init_addr = tb + w0;
+                                        sp_main_addr = tb + w1;
+                                        sp_int2_addr = tb + w2;
+                                    }
+                                    free(spbuf);
+                                    printf("[HLE] f%d: SP loaded — disc=$%05X size=$%04X -> PRG-RAM $06000 (ept=%X SPInit=$%06X SPMain=$%06X SPInt2=$%06X)\n",
+                                           frame, sp_disc, sp_size, sp_ept_off, sp_init_addr, sp_main_addr, sp_int2_addr);
+                                    /* FULL HLE FALLBACK: skip SPInit, enter SPMain directly.
+                                     * SPInit writes to $FF800F/$FF8020+ which triggers level-2 interrupt
+                                     * via ga_ifl2. The level-2 ISR vector ($0610) is now SP data → crash.
+                                     * Fix: (1) patch level-2 ISR to SPInt2, (2) enter SPMain with SR=$2700. */
+                                    if (sp_main_addr > 0x06000 && sp_main_addr < 0x80000) {
+                                        /* Patch exception vector table in PRG-RAM.
+                                         * Vectors are at PRG-RAM offset = vec_num * 4 (bytes 0-1023).
+                                         * Stored big-endian with XOR ^1 byte-swap.
+                                         * vec26 (offset $68) = level-2 ISR → SPInt2
+                                         * vec28 (offset $70) = level-4 ISR → RTE stub (sub-BIOS CDD handler dead)
+                                         * vec29 (offset $74) = level-5 ISR → RTE stub
+                                         * vec30 (offset $78) = level-6 ISR → RTE stub
+                                         * Also write RTE stubs at the JMP targets to catch any stale vectors. */
+                                        unsigned long sp_stack = 0xFFFFFD00;
+                                        /* Helper macro to write a 32-bit big-endian value to PRG-RAM with XOR swap */
+                                        #define PRG_WRITE32(off, val) do { \
+                                            SCD.prg_ram[((off)+0)^1] = ((val)>>24)&0xFF; \
+                                            SCD.prg_ram[((off)+1)^1] = ((val)>>16)&0xFF; \
+                                            SCD.prg_ram[((off)+2)^1] = ((val)>>8)&0xFF; \
+                                            SCD.prg_ram[((off)+3)^1] = (val)&0xFF; \
+                                        } while(0)
+                                        /* Reset vector: SP=$FFFFFD00, PC=SPMain */
+                                        PRG_WRITE32(0x00, sp_stack);
+                                        PRG_WRITE32(0x04, sp_main_addr);
+                                        /* Level-2 ISR (vec26 @ $68) → SPInt2 (game's graphics handler) */
+                                        if (sp_int2_addr > 0x06000)
+                                            PRG_WRITE32(0x68, sp_int2_addr);
+                                        /* Level 4/5/6 ISRs → RTE stub at $06004 (we'll write 4E73 there).
+                                         * Use a single RTE stub address for all unused vectors. */
+                                        unsigned long rte_stub = 0x0006004;  /* PRG-RAM $6004 */
+                                        PRG_WRITE32(0x70, rte_stub);  /* vec28 level-4 */
+                                        PRG_WRITE32(0x74, rte_stub);  /* vec29 level-5 */
+                                        PRG_WRITE32(0x78, rte_stub);  /* vec30 level-6 */
+                                        /* Write RTE instruction ($4E73) at $06004 (big-endian, XOR swap).
+                                         * $06004 is within SP header area (offset 4 from SP base $06000),
+                                         * which is typically zero/padding in the "MAIN..." header. */
+                                        SCD.prg_ram[(0x6004)^1] = 0x4E;
+                                        SCD.prg_ram[(0x6005)^1] = 0x73;
+                                        /* Also overwrite the JMP stub at $5F88 (sub-BIOS level-2 dispatch)
+                                         * with RTE, in case any stale vector still points there. */
+                                        SCD.prg_ram[(0x5F88)^1] = 0x4E;
+                                        SCD.prg_ram[(0x5F89)^1] = 0x73;
+                                        #undef PRG_WRITE32
+                                        /* Pulse-reset the sub so it fetches the patched reset vector.
+                                         * After reset, SR=$2700 (interrupts disabled), PC=SPMain. */
+                                        extern void segacd_sub_release(void);
+                                        segacd_sub_release();
+                                        /* Force SR=$2700 (supervisor, interrupt mask 7) to prevent
+                                         * any interrupt from firing before SPMain sets up its own state.
+                                         * gwenesis m68k uses individual flag fields, not a single SR. */
+                                        SCD.sub_ctx.s_flag = 0x2000;  /* S bit set (supervisor) */
+                                        SCD.sub_ctx.int_mask = 0x0700;  /* I2/I1/I0 = 7 (all masked) */
+                                        SCD.sub_ctx.t1_flag = 0;
+                                        SCD.sub_ctx.int_level = 0;  /* no pending interrupt */
+                                        /* Also clear all interrupt sources so segacd_run_sub's delivery
+                                         * loop finds nothing to deliver for the first few frames.
+                                         * SPMain will re-enable interrupts when it's ready. */
+                                        SCD.s68k_regs[0x33] = 0;  /* IEN mask = 0 (all disabled) */
+                                        SCD.ga_ifl2 = 0;          /* level-2 doorbell clear */
+                                        SCD.cdd_int_pending = 0;  /* CDD interrupt clear */
+                                        SCD.cdc_int_pending = 0;  /* CDC interrupt clear */
+                                        SCD.gfx_int_pending = 0;  /* GFX interrupt clear */
+                                        printf("[HLE] f%d: FULL HLE sub boot — skip SPInit, enter SPMain=$%06X SR=$2700 IEN=0 (sub_ctx.pc=$%06X)\n",
+                                               frame, sp_main_addr, (unsigned)SCD.sub_ctx.pc);
+                                    }
+                                }
+
                                 fclose(bf2);
                             }
                         }
@@ -427,6 +561,7 @@ int main(int argc, char **argv)
         }
 
         int sample_period = (frame > 60 && frame < 140) ? 5 : 60;
+        if (frame >= 771 && frame <= 790) sample_period = 1;
         if ((frame % sample_period) == 0) {
 #ifdef SEGACD_GA_TRACE
             extern uint32_t scd_dbg_chunks, scd_dbg_deliver4, scd_dbg_deliver2;

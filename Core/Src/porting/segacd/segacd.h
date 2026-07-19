@@ -177,6 +177,8 @@ void     segacd_cdc_reset(void);
 void     segacd_cdc_reg_w(uint8_t data);
 uint8_t  segacd_cdc_reg_r(void);
 uint16_t segacd_cdc_host_r(int sub);
+void     segacd_cdc_dma_update(void);     /* one-shot PRG/PCM/Word-RAM DMA (DTRG=4/5/7) */
+void     segacd_subcode_q_update(void);   /* synthesize subchannel Q → $FF8100 + $FF8069 */
 /* Word-RAM graphics-transform ASIC (segacd_gfx.c, ported from pd_cd/gfx.c).
  * segacd_gfx_start() renders the rotated/scaled image into Word-RAM in one shot
  * on a $FF8066 (start) write and returns 1 if an op ran (arm level-1 INT1). */

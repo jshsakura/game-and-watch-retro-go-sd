@@ -333,6 +333,10 @@ uint32_t scd_dbg_dma_sector;   /* segacd_cdc_dma_sector (the stubbed DMA) calls 
 uint32_t scd_dbg_ctrl0_w;      /* sub writes to CTRL0 */
 uint32_t scd_dbg_ctrl0_wrrq;   /* ...that set WRRQ (buffer-write request) */
 #endif
+/* Unconditional DMA trace (0718 PRG-RAM DMA wiring): counts DTRG arming and
+ * actual firings — visible in the default build_bench.sh (no -DGA_TRACE). */
+uint32_t scd_dbg_dtrg_dma;     /* DTRG writes with DDS=4/5/7 (DMA armed) */
+uint32_t scd_dbg_dma_fire;     /* segacd_cdc_dma_update armed-DMA firings */
 
 void segacd_cdd_command(void)
 {
@@ -479,6 +483,105 @@ void segacd_cdd_command(void)
     }
 }
 
+/* ---- Subchannel Q synthesis ----
+ * Real CD hardware: the servo reads subchannel Q from each sector's
+ * subchannel bytes and feeds it to the sub-68K via a buffer at $FF8100
+ * with a write index at $FF8069. The level-4 ISR ($2532) reads the index,
+ * validates it (bit7 clear AND index >= 0x62 after debounce subtract),
+ * then copies 96 bytes of Q data from $FF8100+index into a ring buffer.
+ *
+ * Without this feed, the ISR debounce path always fails ($FF8069 == 0),
+ * the sub-BIOS never gets subchannel Q updates, and the CDD command retry
+ * loop ($7028) never validates the disc → sub never sends cmd 3 (Play)
+ * → CDC DMA never fires → no game data reaches PRG-RAM.
+ *
+ * We synthesize Q data the same way real hardware does: compute track /
+ * index / relative-MSF / absolute-MSF from the cue sheet's track table
+ * and the current CDD head position. CRC-16 per ISO 10149 (CRC-CCITT
+ * poly 0x1021, init 0, complemented). */
+
+static uint16_t q_crc16(const uint8_t *d, int len)
+{
+    uint16_t crc = 0x0000;
+    for (int i = 0; i < len; i++) {
+        crc ^= (uint16_t)d[i] << 8;
+        for (int b = 0; b < 8; b++) {
+            if (crc & 0x8000) crc = (uint16_t)((crc << 1) ^ 0x1021);
+            else              crc = (uint16_t)(crc << 1);
+        }
+    }
+    return (uint16_t)(~crc);
+}
+
+static uint8_t to_bcd(int v)
+{
+    if (v < 0) v = 0;
+    if (v > 99) v = 99;
+    return (uint8_t)(((v / 10) << 4) | (v % 10));
+}
+
+void segacd_subcode_q_update(void)
+{
+    if (!CD.opened || CD.num_tracks == 0) return;
+
+    /* CDD head position. cur_lba is signed (can be negative during seek-in). */
+    int32_t lba = CD.cur_lba;
+    if (lba < 0) lba = 0;
+
+    cd_track_t *t = track_at_lba((uint32_t)lba);
+    if (!t) t = &CD.tracks[0];
+    int track_no = (int)(t - CD.tracks) + 1;
+
+    /* Q-word (12 bytes): control/ADR, track BCD, index BCD, rel MSF BCD,
+     * reserved, abs MSF BCD, CRC-16 big-endian. */
+    uint8_t q[12];
+    /* Control/ADR: bit2 of control = data track (4-bit data); ADR=1 (Q-Mode1).
+     * Audio tracks: control=0x00. Data track: control=0x40. */
+    q[0] = (uint8_t)(t->is_audio ? 0x01 : 0x41);
+    q[1] = to_bcd(track_no);
+    q[2] = 0x01;                         /* index 01 (normal playback) */
+
+    /* Relative MSF within track (from track start). */
+    int32_t rel = lba - (int32_t)t->start_lba;
+    if (rel < 0) rel = 0;
+    int rel_mm = (rel / 75) / 60;  if (rel_mm > 99) rel_mm = 99;
+    int rel_ss = (rel / 75) % 60;
+    int rel_ff =  rel % 75;
+    q[3] = to_bcd(rel_mm);
+    q[4] = to_bcd(rel_ss);
+    q[5] = to_bcd(rel_ff);
+    q[6] = 0x00;                         /* reserved (frame within pregap) */
+
+    /* Absolute MSF from disc start (LBA + 150 frames pregap). */
+    int32_t abl = lba + 150;
+    int abs_mm = (abl / 75) / 60;  if (abs_mm > 99) abs_mm = 99;
+    int abs_ss = (abl / 75) % 60;
+    int abs_ff =  abl % 75;
+    q[7]  = to_bcd(abs_mm);
+    q[8]  = to_bcd(abs_ss);
+    q[9]  = to_bcd(abs_ff);
+
+    /* CRC-16 over bytes 0..9, complemented, big-endian. */
+    uint16_t crc = q_crc16(q, 10);
+    q[10] = (uint8_t)(crc >> 8);
+    q[11] = (uint8_t)(crc & 0xFF);
+
+    /* Replicate the Q-word across the entire $FF8100-$FF81FF buffer
+     * (256 bytes = 21 Q-words + 4 pad). The ISR reads 96 bytes from
+     * $FF8100+index, so any starting offset within the buffer yields
+     * valid data. */
+    uint8_t *buf = &SCD.s68k_regs[0x100];
+    for (int i = 0; i < SEGACD_GA_REGS - 0x100; i++) {
+        buf[i] = q[i % 12];
+    }
+
+    /* $FF8069: subchannel Q write index. The ISR debounce requires:
+     *   bit7 clear AND (index - $5AB6) & 0x7F >= 0x62
+     * Since $5AB6 = 0x80 at init, this simplifies to index >= 0x62.
+     * We set 0x62 — within the 256-byte buffer, 0x62 + 96 = 0xC2 ≤ 0xFF. */
+    SCD.s68k_regs[0x69] = 0x62;
+}
+
 /* Periodic (~75 Hz) CDD tick: settles pending seeks and, while the sub has
  * armed the transfer ($FF8037 bit2 — see segacd_bus.c sub_ff_write8), keeps
  * the status packet's RS0 byte current and arms the level-4 export
@@ -488,6 +591,11 @@ void segacd_cdd_command(void)
 void segacd_cdd_process(void)
 {
     if (!CD.opened) return;
+
+    /* Feed subchannel Q data every 75Hz tick. Real hardware's servo does
+     * this continuously; without it the level-4 ISR can never validate
+     * disc position and the sub-BIOS never advances past TOC reading. */
+    segacd_subcode_q_update();
 
     if (CD.latency > 0) {
         CD.latency--;
@@ -656,6 +764,7 @@ typedef struct {
     uint8_t  ctrl0, ctrl1;
     uint8_t  head[4];          /* last decoded sector header (MM SS FF mode) */
     uint8_t  stat0, stat2, stat3;
+    int     dma_w;             /* armed DMA destination (0=none, 4=PCM, 5=PRG, 7=Word) */
 } segacd_cdc_t;
 
 static segacd_cdc_t CDC;
@@ -777,10 +886,21 @@ void segacd_cdc_reg_w(uint8_t data)
                 CDC.ifstat &= (uint8_t)~CDC_IFSTAT_DTEN;
                 SCD.s68k_regs[0x04] |= 0x40;   /* set DSR */
                 break;
+            case 0x04:  /* PCM-RAM DMA */
+            case 0x05:  /* PRG-RAM DMA */
+            case 0x07:  /* Word-RAM DMA */
+                /* Arm the transfer; segacd_cdc_dma_update() fires it on the
+                 * next CDD tick. Mirrors pd_cd/cdc.c do_dma() — the BIOS
+                 * relies on this for game-program loads ($15800/$13400/$19800
+                 * before the $0656 decompressor). PRG-RAM (5) is wired
+                 * through; PCM (4) / Word-RAM (7) are armed but the actual
+                 * transfer is a no-op until a trace needs them. */
+                CDC.dma_w = (int)(SCD.s68k_regs[0x04] & 0x07);
+                CDC.ifstat &= (uint8_t)~CDC_IFSTAT_DTEN;
+                SCD.s68k_regs[0x04] |= 0x40;   /* DSR */
+                scd_dbg_dtrg_dma++;
+                break;
             default:
-                /* PCM-RAM (4) / PRG-RAM (5) / Word-RAM (7) DMA — not
-                 * modeled; TODO(ph3d) if a GA trace shows the BIOS relying
-                 * on it instead of a host-read loop. */
                 break;
             }
         }
@@ -884,6 +1004,65 @@ uint16_t segacd_cdc_host_r(int sub)
     }
 
     return data;
+}
+
+/* One-shot CDC DMA to PRG-RAM/Word-RAM/PCM-RAM. Armed by a DTRG write with
+ * DDS=4/5/7; fires on the next segacd_cdc_dma_update() call (once per CDD
+ * tick from the frame loop). Mirrors pd_cd/cdc.c:358-406 cdc_dma_update() +
+ * cdc.c:258-356 do_dma(), adapted to the harness's byte-swapped PRG-RAM
+ * layout (off^1 stores — see segacd_bus.c:360).
+ *
+ * PRG-RAM (DDS=5) is the only destination the sub-BIOS is known to use for
+ * game-program loads: the $0656 decompressor reads compressed blobs from
+ * $15800/$13400/$19800 that the BIOS DMA'd in from disc. Without this path
+ * the decompressor reads zeros and the game never boots past the BIOS.
+ *
+ * PCM-RAM (4) and Word-RAM (7) are armed but the transfer is a no-op until
+ * a GA trace shows the BIOS relying on them. */
+void segacd_cdc_dma_update(void)
+{
+    if (!CDC.dma_w) return;
+
+    scd_dbg_dma_fire++;
+
+    unsigned int dma_addr = ((unsigned int)SCD.s68k_regs[0x0a] << 8)
+                          |  (unsigned int)SCD.s68k_regs[0x0b];
+    unsigned int src_addr = CDC.dac & (CDC_RING_SIZE - 1);
+    unsigned int bytes_in = (unsigned int)CDC.dbc + 1;
+
+    if (CDC.dma_w == 5 && bytes_in && bytes_in <= SEGACD_PRG_RAM_SIZE) {
+        /* PRG-RAM: dst = dma_addr << 3 (the LC89510 shifts the 16-bit DMA
+         * pointer left by 3 to produce a 19-bit PRG-RAM byte address). */
+        unsigned int dst_addr = (dma_addr << 3) & (SEGACD_PRG_RAM_SIZE - 1);
+        for (unsigned int i = 0; i < bytes_in; i += 2) {
+            unsigned int s = (src_addr + i) & (CDC_RING_SIZE - 1);
+            unsigned int d = (dst_addr + i) & (SEGACD_PRG_RAM_SIZE - 1);
+            /* CDC ring is big-endian; PRG-RAM byte writes use (off^1) so
+             * subsequent sub-68K word reads reconstruct the same big-endian
+             * word the disc had. */
+            SCD.prg_ram[d ^ 1]                       = CD.cdc_ram[s];
+            SCD.prg_ram[(d + 1) ^ 1]                 = CD.cdc_ram[(s + 1) & (CDC_RING_SIZE - 1)];
+        }
+    }
+    /* TODO: DMA types 4 (PCM-RAM, dst = (dma_addr<<2)&0xffc into pcm_ram)
+     * and 7 (Word-RAM, 2M/1M bank dependent) if a trace needs them. */
+
+    /* Post-DMA state — mirrors pd_cd/cdc.c:380-406. */
+    CDC.dac = (uint16_t)(CDC.dac + bytes_in);
+    dma_addr += bytes_in >> 3;
+    SCD.s68k_regs[0x0a] = (uint8_t)(dma_addr >> 8);
+    SCD.s68k_regs[0x0b] = (uint8_t)(dma_addr & 0xff);
+    CDC.dbc = 0xffff;
+    CDC.ifstat |= (uint8_t)(CDC_IFSTAT_DTBSY | CDC_IFSTAT_DTEN);   /* idle: busy+disabled */
+    SCD.s68k_regs[0x04] = (uint8_t)((SCD.s68k_regs[0x04] & 0x07) | 0x80);  /* EDT, DSR cleared */
+
+    /* DTEI end-of-transfer IRQ (level 5) — active-low bit, so clearing it
+     * signals the interrupt condition. */
+    CDC.ifstat &= (uint8_t)~CDC_IFSTAT_DTEI;
+    if (CDC.ifctrl & CDC_IFCTRL_DTEIEN)
+        SCD.cdc_int_pending = 1;
+
+    CDC.dma_w = 0;
 }
 
 /* Decoder half of the CDC: called once per CDD tick (75 Hz) from
@@ -992,7 +1171,15 @@ void segacd_cd_update(void)
                 CD.index++;
                 CD.cur_lba = (int32_t)CD.tracks[CD.index].start_lba;
             } else {
-                CD.status = CDD_END;
+                /* End of disc: wrap back to track 0 instead of transitioning
+                 * to CDD_END. CDD_END (0x0C) does NOT set $583A in the sub-BIOS
+                 * level-2 ISR jump table (only statuses 1,5,6,8,9,D,E,F set it),
+                 * which blocks the level-4 ISR body ($2532 subchannel Q
+                 * processing) and deadlocks the sub-BIOS CDD command loop.
+                 * Wrapping keeps the status at READY/PLAY so $583A can be set
+                 * through the normal status transition path. */
+                CD.index = 0;
+                CD.cur_lba = (int32_t)CD.tracks[0].start_lba;
             }
         }
     }

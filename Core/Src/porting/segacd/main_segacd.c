@@ -175,6 +175,7 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         for (int t = 0; t < CDD_TICKS_PER_FRAME; t++) {
             segacd_cdd_process();
             segacd_cd_update();
+            segacd_cdc_dma_update();
         }
 
         if (drawFrame) blit();

@@ -102,7 +102,7 @@ static unsigned int sub_ff_read8(unsigned int address)
      * status register within POLL_CYCLES(52) sub cycles. At POLL_LIMIT(16)
      * repeats, mark the sub as idle — segacd_run_sub skips its timeslices
      * until a write (segacd_poll_wake) or pending IRQ re-arms it. */
-    uint8_t reg = (uint8_t)(off & (SEGACD_GA_REGS - 1));
+    unsigned int reg = off & (SEGACD_GA_REGS - 1);
     SGA_RD(reg);
     if (!SCD.sub_idle) {
         if (reg == SCD.poll_reg) {
