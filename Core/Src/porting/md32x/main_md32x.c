@@ -379,7 +379,6 @@ static void diag_log(const char *fmt, ...);   /* boot diag, defined below */
 
 extern uint32_t _MD32X_MAIN_CODE_START[], _MD32X_MAIN_CODE_END[];
 extern uint8_t __md32x_itc_bss_start__[], __md32x_itc_bss_end__[];
-extern uint8_t __md32x_m68k_ahb_start__[], __md32x_m68k_ahb_end__[];
 
 static uint8_t *g_xip_addr;
 static uint32_t g_xip_size;
@@ -524,15 +523,8 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * so zero it here or it starts as the previous core's ITCM contents. */
   memset(__md32x_itc_bss_start__, 0,
          (size_t)(__md32x_itc_bss_end__ - __md32x_itc_bss_start__));
-   diag_log("itc zeroed: %u B\n",
+  diag_log("itc zeroed: %u B\n",
            (unsigned)(__md32x_itc_bss_end__ - __md32x_itc_bss_start__));
-
-  /* 68000 register state lives in a static AHB section (.md32x_m68k_ahb) —
-   * also outside the overlay BSS the launcher memsets, so zero it here. */
-  memset(__md32x_m68k_ahb_start__, 0,
-         (size_t)(__md32x_m68k_ahb_end__ - __md32x_m68k_ahb_start__));
-  diag_log("m68k ahb zeroed: %u B\n",
-           (unsigned)(__md32x_m68k_ahb_end__ - __md32x_m68k_ahb_start__));
 
   /* --- picodrive init, libretro (upstream frontend) order — QEMU-rig-proven.
    * 32X startup is LAZY: the game's own MD-mode boot code writes ADEN at
