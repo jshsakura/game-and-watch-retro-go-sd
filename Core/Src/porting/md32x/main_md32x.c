@@ -699,6 +699,27 @@ static void md32x_profile_dump(void) {
               phases[i].label, (unsigned long long)sum,
               (unsigned long long)avg, pct_x10 / 10, pct_x10 % 10);
     }
+
+    /* cycles-per-guest-instruction: is msh2/ssh2 cost dispatch overhead
+     * (both cores' ratio close together) or memory-stall-bound (one core's
+     * ratio far higher — e.g. it executes more game code straight out of
+     * XIP flash than the other)? The QEMU rig can only report this ratio
+     * against host INSTRUCTIONS (no cache model); this is the same ratio
+     * against real DWT CYCLES, the number the rig cannot produce. */
+    extern unsigned long long gnw_sh2_insn_count[2];
+    uint64_t msh2_cyc = (uint64_t)s_pp_counters.counter[pp_msh2];
+    uint64_t ssh2_cyc = (uint64_t)s_pp_counters.counter[pp_ssh2];
+    uint64_t msh2_insn = gnw_sh2_insn_count[0];
+    uint64_t ssh2_insn = gnw_sh2_insn_count[1];
+    fprintf(f, "sh2 cycles/guest-insn (device, DWT cycles / dispatched guest insns):\n");
+    fprintf(f, "  msh2: cyc=%llu insn=%llu ratio=%llu.%llu\n",
+            (unsigned long long)msh2_cyc, (unsigned long long)msh2_insn,
+            msh2_insn ? (unsigned long long)(msh2_cyc / msh2_insn) : 0ull,
+            msh2_insn ? (unsigned long long)((msh2_cyc * 10 / msh2_insn) % 10) : 0ull);
+    fprintf(f, "  ssh2: cyc=%llu insn=%llu ratio=%llu.%llu\n",
+            (unsigned long long)ssh2_cyc, (unsigned long long)ssh2_insn,
+            ssh2_insn ? (unsigned long long)(ssh2_cyc / ssh2_insn) : 0ull,
+            ssh2_insn ? (unsigned long long)((ssh2_cyc * 10 / ssh2_insn) % 10) : 0ull);
   }
 
   wdog_refresh();
