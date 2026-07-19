@@ -13,7 +13,7 @@ GW=external/gwenesis/src
 SC=Core/Src/porting/segacd
 HIST=tools/segacd_harness
 
-gcc -O2 -DLINUX_EMU -DTARGET_GNW -DIS_LITTLE_ENDIAN \
+gcc -g -O2 -DLINUX_EMU -DTARGET_GNW -DIS_LITTLE_ENDIAN \
   -DSD_CARD=0 -DCHEAT_CODES=0 -DLSB_FIRST -DTABLES_FULL \
   -DSCD_BENCH_VDP -DSCD_Z80_IDLE_SKIP -DSCD_YM_PROBE -DSCD_YM_SILENCE_SKIP \
   -Itools/m7_qemu_rig/md_shim -I$GW/cpus/M68K -I$GW/cpus/Z80 -I$GW/sound \

@@ -336,7 +336,6 @@ uint32_t scd_dbg_ctrl0_wrrq;   /* ...that set WRRQ (buffer-write request) */
 /* Unconditional DMA trace (0718 PRG-RAM DMA wiring): counts DTRG arming and
  * actual firings — visible in the default build_bench.sh (no -DGA_TRACE). */
 uint32_t scd_dbg_dtrg_dma;     /* DTRG writes with DDS=4/5/7 (DMA armed) */
-static int scd_cdd_seek_seen = 0;  /* set when first Seek/Play command received */
 uint32_t scd_dbg_dma_fire;     /* segacd_cdc_dma_update armed-DMA firings */
 
 void segacd_cdd_command(void)
@@ -363,15 +362,9 @@ void segacd_cdd_command(void)
 
     case 0x01:  /* Stop Drive — RS1-RS8 ignored, report all-zero/0xf per spec */
         CD.status = CD.opened ? CDD_STOP : CDD_NODISC;
-        CD.cur_lba = 0; CD.index = 0;
-        /* Set latency so the status naturally transitions back to READY (or
-         * STOP if still in the initial Q-processing phase) after the drive
-         * settles. Without this, a Stop command permanently locks the status
-         * at STOP, preventing the sub from advancing past TOC reading. */
-        CD.latency = 50;
-        CD.pending_play = 0;
+        CD.cur_lba = 0; CD.index = 0; CD.latency = 0;
         s[0] = (uint8_t)CD.status; s[1] = 0; s[2] = 0; s[3] = 0;
-        s[4] = 0; s[5] = 0; s[6] = 0; s[7] = 0; s[8] = 0;
+        s[4] = 0; s[5] = 0; s[6] = 0; s[7] = 0; s[8] = 0x0f;
         break;
 
     case 0x02:  /* Read TOC — c[3] ($FF8045) selects which field (Q-channel
@@ -379,14 +372,6 @@ void segacd_cdd_command(void)
                  * pd_cd/cdd.c:913 reads s68k_regs[0x44+1] = c[3]. */
         if (CD.status == CDD_NODISC)
             CD.status = CD.opened ? CDD_STOP : CDD_NODISC;
-        /* Transition to PLAY during TOC reading: the sub-BIOS level-2
-         * ISR only sets $583A (Q-processor gate) for statuses {1,5,6,8,9,
-         * D,E,F}. READY (4) is NOT in the set. PicoDrive's CDD naturally
-         * reaches PLAY (1) during TOC reading; we replicate that here.
-         * Force PLAY unconditionally during Read TOC so the status doesn't
-         * oscillate (oscillation confuses the sub-BIOS boot sequence). */
-        if (CD.status != CDD_PLAY)
-            CD.status = CDD_PLAY;
         switch (c[3] & 0x0f) {
         case 0x00: {  /* current absolute time (MM:SS:FF) */
             cd_track_t *t = track_at_lba(CD.cur_lba);
@@ -452,7 +437,6 @@ void segacd_cdd_command(void)
 
     case 0x03:    /* Play from LBA */
     case 0x04: {  /* Seek to LBA — same addressing, only the settle state differs */
-        scd_cdd_seek_seen = 1;  /* mark that boot has reached seek phase */
         int lba = ((c[2]*10+c[3])*60 + (c[4]*10+c[5]))*75 + (c[6]*10+c[7]) - 150;
         if (lba < 0) lba = 0;
         CD.index        = track_index_at_lba((uint32_t)lba);
@@ -470,7 +454,7 @@ void segacd_cdd_command(void)
         /* RS1=0x0f invalidates RS2-RS8 while seeking — pd_cd/cdd.c:1080-1085 */
         s[0] = CDD_SEEK; s[1] = 0x0f;
         s[2] = 0; s[3] = 0; s[4] = 0; s[5] = 0; s[6] = 0; s[7] = 0;
-        s[8] = 0;
+        s[8] = (uint8_t)(~(CDD_SEEK + 0xf) & 0x0f);
         break;
     }
 
@@ -621,9 +605,6 @@ void segacd_subcode_q_update(void)
  * mask are set (pd_cd/mcd.c:190-200 `pcd_cdc_event()`). */
 void segacd_cdd_process(void)
 {
-    static unsigned int stop_ticks = 0;
-    static int stop_to_ready_done = 0;
-
     if (!CD.opened) return;
 
     /* Feed subchannel Q data every 75Hz tick. Real hardware's servo does
@@ -631,48 +612,13 @@ void segacd_cdd_process(void)
      * disc position and the sub-BIOS never advances past TOC reading. */
     segacd_subcode_q_update();
 
-    /* Advance the read head when the disc is spinning (PLAY). PicoDrive's
-     * cdd_update() (pico/cd/cdd.c:723) does `cdd.lba++` every tick during
-     * CD_PLAY — this is how the sub-BIOS sees TOC progress: as the head
-     * walks through different track boundaries, the Q-channel track-number
-     * field changes and the level-4 ISR records each track start. Without
-     * this advancement the head sits at one LBA forever, the sub sees the
-     * same track info on every Read TOC poll, and the TOC scan never
-     * completes — the sub never advances to cmd 0x03 (Play). */
-    if (CD.status == CDD_PLAY && CD.latency == 0) {
-        CD.cur_lba++;
-        if (CD.cur_lba >= CD.total_lba)
-            CD.cur_lba = 0;
-    }
-
     if (CD.latency > 0) {
         CD.latency--;
         if (CD.latency == 0) {
-            /* Initial phase (before any seek): use CDD_STOP to set $583A
-             * for Q processing. After the first seek command, use READY
-             * (normal seek completion). The one-shot below handles the
-             * case where the sub never sends a seek (stuck polling). */
-            if (!scd_cdd_seek_seen && !stop_to_ready_done) {
-                CD.status = CD.pending_play ? CDD_PLAY : CDD_STOP;
-            } else {
-                CD.status = CD.pending_play ? CDD_PLAY : CDD_READY;
-            }
+            CD.status = CD.pending_play ? CDD_PLAY : CDD_READY;
             SCD.s68k_regs[0x38] = (uint8_t)CD.status;
             cdd_status_checksum();
             segacd_poll_wake();
-        }
-    }
-
-    /* One-shot STOP→READY transition after 500 CDD ticks (6.7s at 75Hz).
-     * By this point the sub-BIOS has finished Q processing and is polling
-     * Drive Status in the main loop. Switching to READY lets it advance
-     * to Read TOC / Play. Only fires once. */
-    if (!stop_to_ready_done && !CD.pending_play && CD.latency == 0) {
-        stop_ticks++;
-        if (stop_ticks >= 500) {
-            CD.status = CDD_READY;
-            SCD.s68k_regs[0x38] = (uint8_t)CD.status;
-            stop_to_ready_done = 1;
         }
     }
 
