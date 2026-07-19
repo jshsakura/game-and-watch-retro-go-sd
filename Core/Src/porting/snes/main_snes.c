@@ -273,14 +273,65 @@ static void render_frame_into_active_buffer(void) {
 #endif
 }
 
+/* DMA2D M2M offload for the OFF-scaling copy below. snes_frame -> LCD active
+ * buffer is a flat 320x240 RGB565 copy with no pixel-format conversion or
+ * scaling, the textbook DMA2D_M2M case. The peripheral clock is already on
+ * unconditionally (HAL_MspInit -> __HAL_RCC_DMA2D_CLK_ENABLE), so a plain
+ * Init is enough; done once and kept live for the app's lifetime instead of
+ * hw_jpeg_decoder.c's per-use Init/DeInit, since this runs every frame. */
+static DMA2D_HandleTypeDef snes_dma2d;
+static bool snes_dma2d_ready;
+static bool snes_dma2d_pending;
+
+static void snes_dma2d_init_once(void) {
+  if (snes_dma2d_ready) return;
+  snes_dma2d.Instance = DMA2D;
+  snes_dma2d.Init.Mode = DMA2D_M2M;
+  snes_dma2d.Init.ColorMode = DMA2D_OUTPUT_RGB565;
+  snes_dma2d.Init.OutputOffset = 0;
+  snes_dma2d.Init.AlphaInverted = DMA2D_REGULAR_ALPHA;
+  snes_dma2d.Init.RedBlueSwap = DMA2D_RB_REGULAR;
+  snes_dma2d.Init.BytesSwap = DMA2D_BYTES_REGULAR;
+  snes_dma2d.Init.LineOffsetMode = DMA2D_LOM_PIXELS;
+  snes_dma2d_ready = (HAL_DMA2D_Init(&snes_dma2d) == HAL_OK);
+}
+
+/* Block until a DMA2D copy started by present_frame() has landed. Must run
+ * before anything else touches the destination buffer (overlay draw,
+ * lcd_swap, or a later present_frame call) — DMA2D is cache-blind and races
+ * with the CPU exactly like any other bus master would. No-op when the OFF
+ * path didn't use DMA2D (fallback, or a scaling mode change this frame). */
+static void present_frame_wait(void) {
+  if (!snes_dma2d_pending) return;
+  HAL_DMA2D_PollForTransfer(&snes_dma2d, 100);
+  snes_dma2d_pending = false;
+}
+
 static void present_frame(void) {
   uint16_t *dst = lcd_get_active_buffer();
   odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
 
   if (scaling == ODROID_DISPLAY_SCALING_OFF) {
     /* 1:1 centred (256x224 in 320x240): snes_frame already has black borders
-     * baked in (cleared once at init), so a straight memcpy is correct and
-     * the cheapest path — the one every shipped build took until now. */
+     * baked in (cleared once at init). DMA2D moves the 320x240 straight copy
+     * into the background so the CPU can spend that time on audio/pacing
+     * instead of blocked on an uncached memcpy — the caller MUST reach
+     * present_frame_wait() before touching dst again. */
+    snes_dma2d_init_once();
+    if (snes_dma2d_ready) {
+      /* snes_frame lives in cacheable RAM_EMU; SNES_DIRECT_VIDEO's PPU write
+       * this frame's pixels via normal cached stores. DMA2D is a bus master
+       * and cache-blind, so any dirty line not yet evicted would be read as
+       * stale — clean (not invalidate: the next frame's PPU render is about
+       * to overwrite this same buffer through the cache again) before
+       * handing the address to hardware. */
+      SCB_CleanDCache_by_Addr((uint32_t *)snes_frame, sizeof(snes_frame));
+      HAL_DMA2D_Start(&snes_dma2d, (uint32_t)snes_frame, (uint32_t)dst,
+                       GW_LCD_WIDTH, GW_LCD_HEIGHT);
+      snes_dma2d_pending = true;
+      return;
+    }
+    /* DMA2D unavailable for some reason — fall back to the plain CPU copy. */
     memcpy(dst, snes_frame, GW_LCD_WIDTH * GW_LCD_HEIGHT * sizeof(uint16_t));
     return;
   }
@@ -319,9 +370,13 @@ static void present_frame(void) {
 
 /* Present the last rendered frame and draw the in-game overlay on top. Used both
  * as the normal per-frame present and as the overlay's repaint callback, so the
- * pause menu keeps the game behind it instead of a stale/black background. */
+ * pause menu keeps the game behind it instead of a stale/black background.
+ * Fully synchronous (waits out any DMA2D copy immediately) — callers that want
+ * the async overlap split present_frame()/present_frame_wait() themselves; see
+ * the main loop below. */
 static void blit(void) {
   present_frame();
+  present_frame_wait();
   common_ingame_overlay();
 }
 
@@ -834,11 +889,20 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     run_frame_events(snes);
 
     if (drawFrame) {
-      blit();          /* present_frame() + in-game overlay */
-      lcd_swap();
+      present_frame();   /* OFF scaling: kicks an async DMA2D copy, doesn't wait */
     }
 
+    /* Audio runs while the DMA2D copy above is still in flight in the AXI SRAM
+     * background — genuine overlap, not just moving the same blocking wait
+     * around. present_frame_wait() below is what actually drains it, right
+     * before anything else touches the destination buffer. */
     snes_pcm_submit();
+
+    if (drawFrame) {
+      present_frame_wait();
+      common_ingame_overlay();
+      lcd_swap();
+    }
 
     /* Pace the loop by the audio DMA UNCONDITIONALLY (WS pattern,
      * main_wswan.c:348-366). common_emu_sound_sync skips this wait when

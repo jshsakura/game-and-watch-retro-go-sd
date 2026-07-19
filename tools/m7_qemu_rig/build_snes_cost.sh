@@ -189,11 +189,20 @@ one(
     "    if (math_enabled_cur == 0 || fixed_color == 0 && !ppu->halfColor && !rendered_subscreen) {\n"
     "      uint32_t _prof_fast_t=rig_timer_now();")
 one(
-    "#endif\n    } else {\n      uint8 *half_color_map = ppu->halfColor ? ppu->brightnessMultHalf : ppu->brightnessMult;",
+    "#endif\n    } else {\n",
     "#endif\n"
     "      g_ppu_fast_ticks += (uint32_t)(rig_timer_now()-_prof_fast_t);\n"
     "      g_ppu_fast_pixels += right - left;\n"
-    "    } else {\n"
+    "    } else {\n")
+# The flatten commit (dee4e03) inserted a #if defined(PPU_RGB565) &&
+# defined(SNES_PPU_DIRECT_MATH) fast path (no-subscreen direct lookup,
+# ending in `continue`) between the `} else {` above and half_color_map.
+# That path's own cost is NOT double-counted into fast/math here — it falls
+# out as residual (ppu_total minus every named bucket), same as any other
+# unattributed stage; see run_snes_ppu_deep.py's `residual` field.
+one(
+    "#endif\n      uint8 *half_color_map = ppu->halfColor ? ppu->brightnessMultHalf : ppu->brightnessMult;",
+    "#endif\n"
     "      uint32_t _prof_math_t=rig_timer_now();\n"
     "      uint8 *half_color_map = ppu->halfColor ? ppu->brightnessMultHalf : ppu->brightnessMult;")
 
