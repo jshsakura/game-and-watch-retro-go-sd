@@ -373,7 +373,6 @@ static void md32x_repaint(void) {
 }
 
 static void diag_log(const char *fmt, ...);   /* boot diag, defined below */
-
 /* ---- XIP: cold code + rodata from flash (the SM/GBA sentinel pattern) ------
  * .xip_md32x + .rodata_md32x are linked at MD32X_CODE_BASE (a sentinel — nothing
  * lives there), shipped as /cores/32x.xip, cached into QSPI at load, and every
@@ -456,6 +455,21 @@ static void diag_log(const char *fmt, ...) {
   FILE *f = fopen(MD32X_DIAG_PATH, "wb");
   if (f) { fwrite(md32x_diag, 1, md32x_diag_len, f); fclose(f); }
 }
+
+/* ---- Device-side DWT phase profiler ----------------------------------------
+ * Enabled only with MD32X_DEVICE_PROFILE=1. The pprof probes in picodrive
+ * (pico/pico.c, draw.c, 32x/32x.c, sound/sound.c) accumulate per-phase cycle
+ * counts into pp_counters via md32x_dwt_now() (DWT_CYCCNT read). All storage,
+ * the DWT read, and the 120-frame profile loop live in md32x_profile.c —
+ * kept in a separate TU so its .text/.rodata land in .xip_md32x (QSPI flash)
+ * via the linker script's `build/md32x/*.o` sweep, NOT in this file's overlay
+ * RAM (main_md32x.o's .text is explicitly forced into overlay by the linker
+ * script, and the profile code overflows RAM_EMU by ~1.1 KB if kept here).
+ * Only the ~156 B of .bss (pp_counters + refcounts) stays in overlay, which
+ * fits the 188 B baseline headroom. */
+#ifdef MD32X_DEVICE_PROFILE
+#include "md32x_profile.h"
+#endif
 
 /* ---- ROM load ------------------------------------------------------------- */
 static const uint8_t *md32x_rom;
@@ -612,6 +626,18 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     diag_log("warmup f0 done: AHW=%x fb_nonblank=%d\n",
              (unsigned)PicoIn.AHW, nz != 0);
   }
+
+#ifdef MD32X_DEVICE_PROFILE
+  /* Device-side phase profile: 120 headless frames (2s @ 60fps) with all
+   * pprof probes accumulating into pp_counters. Boot-time SD write only.
+   * wdog_refresh() every iteration — 32X died from a missed kick today.
+   * This block answers: slave SH-2 interpret vs draw/composite, which is the
+   * frame-time max consumer? Output in /32x_dwt.txt. Implemented in
+   * md32x_profile.c so the heavy snprintf/fopen code lands in XIP flash,
+   * not overlay RAM (see comment near the #include above). */
+  md32x_run_profile();
+#endif /* MD32X_DEVICE_PROFILE */
+
   audio_start_playing(MD32X_AUDIO_RATE / md32x_fps);
   diag_log("entering main loop (fps=%d, diag sealed - no more SD writes)\n", md32x_fps);
   md32x_diag_sealed = true;
