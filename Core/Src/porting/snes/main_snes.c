@@ -425,12 +425,10 @@ static bool cart_needs_coprocessor(const uint8_t *rom, uint32_t len) {
  * The overlay's cpu_runOpcode fast path (g_rc_active) dispatches to sites
  * instead of interpreting. Rig-measured: -42.3% insn/frame on SMW.
  *
- * Mirrors the SM XIP pattern (main_sm.c SmCacheXipToFlash): sentinel-linked
- * at RCSMW_CODE (0xD1D0xxxx), cached via odroid_overlay_cache_file_in_flash_relocate,
- * and every sentinel-range word is rewritten to where the blob really landed.
+ * ITCM-resident: the rc hot subset (270 sites, ~12 KB) is linked at ITCM VMA
+ * and copied there by run_internal_emu BEFORE app_main runs. Zero wait-state
+ * execution — no QSPI cache, no sentinel patching, no XIP thrash.
  * rc takes priority over spin-skip (rc replaces the interpreter entirely). */
-#define RCSMW_CODE_BASE  0xD1D00000u
-#define RCSMW_XIP_PATH   "/roms/homebrew/rc_smw.xip"
 #define RC_SMW_MAGIC     0x4D534352u   /* 'RCSM' little-endian — blob header */
 
 /* Diag: code-region hash computed at activation time, reported in profile2 so
@@ -439,20 +437,25 @@ static bool cart_needs_coprocessor(const uint8_t *rom, uint32_t len) {
 static uint32_t s_rc_diag_crc = 0;   /* computed code hash (name kept for diag fmt) */
 static uint32_t s_rc_diag_exp = 0;   /* expected code hash from blob header */
 
-/* Blob header layout (matches rc_smw_sites.c's rc_smw_header). The sentinel
- * pointer fields are patched by RcSmwRelocateXip to the real flash addresses. */
+/* Blob header layout (matches rc_smw_sites.c's rc_smw_header). Pointer fields
+ * are linked at ITCM VMA directly — no sentinel patching needed. */
 typedef struct {
   uint32_t magic;
   uint32_t nsites;
   uint32_t code_hash;   /* FNV-1a of consumed bytes (opcode+operands) at all site PCs */
-  const uint32_t *addrs;   /* patched to flash addr of rc_addrs[] */
-  const void **fns;        /* patched to flash addr of rc_fns[] */
-  const uint8_t *lens;     /* patched to flash addr of rc_site_lens[] */
+  const uint32_t *addrs;   /* ITCM VMA of rc_addrs[] */
+  const void **fns;        /* ITCM VMA of rc_fns[] */
+  const uint8_t *lens;     /* ITCM VMA of rc_site_lens[] */
 } rc_smw_header_t;
+
+/* The header symbol — defined in rc_smw_sites.c, linked into .overlay_snes_itc
+ * (ITCM VMA). Available as a direct extern because run_internal_emu copies the
+ * ITC blob to ITCM before app_main runs. */
+extern const rc_smw_header_t rc_smw_header;
 
 /* SNES-overlay-resident hash storage (defined in rc_smw_sites.c, linked into
  * .overlay_snes_bss). Passed to rc_dispatch_init() so it never touches the
- * 81 KB DTCM heap. ~85 KB for SMW's 8371 sites. */
+ * 81 KB DTCM heap. */
 extern rc_entry_t rc_hash_storage[];
 extern uint32_t rc_bank_off[];
 extern uint32_t rc_bank_mask[];
@@ -460,25 +463,6 @@ extern uint32_t rc_bank_mask[];
 /* SMW title hash (FNV-1a of 21-byte internal title at LoROM 0x7FC0).
  * Same value the spin-skip whitelist uses — quick reject for non-SMW ROMs. */
 #define RCSMW_TITLE_HASH  0xFB0BD0ECu
-
-static int RcSmwPatchSentinels(uint32_t *start, uint32_t *end, int32_t offset, uint32_t size) {
-  int patched = 0;
-  for (uint32_t *p = start; p < end; p++) {
-    uint32_t v = *p;
-    if ((v & ~1u) >= RCSMW_CODE_BASE && (v & ~1u) < RCSMW_CODE_BASE + size) {
-      *p = (uint32_t)(v + offset);
-      patched++;
-    }
-  }
-  return patched;
-}
-
-static void RcSmwRelocateXip(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,
-                             uint8_t *file_address, uint32_t file_size) {
-  (void)offset_in_file;
-  int32_t offset = (int32_t)((uint32_t)file_address - RCSMW_CODE_BASE);
-  RcSmwPatchSentinels((uint32_t *)buffer, (uint32_t *)(buffer + (length & ~3u)), offset, file_size);
-}
 
 static bool rc_smw_activate(const uint8_t *rom, uint32_t len) {
 #if RCSMW
@@ -498,19 +482,9 @@ static bool rc_smw_activate(const uint8_t *rom, uint32_t len) {
     return false;
   }
 
-  /* Cache rc_smw.xip into QSPI flash, relocating sentinel addresses. */
-  uint32_t xip_size = 0;
-  uint8_t *xip_addr = odroid_overlay_cache_file_in_flash_relocate(
-      RCSMW_XIP_PATH, &xip_size, false, &RcSmwRelocateXip);
-  if (xip_addr == NULL || xip_size < sizeof(rc_smw_header_t)) {
-    printf("rc_smw: %s missing or too small (%lu bytes)\n",
-           RCSMW_XIP_PATH, (unsigned long)xip_size);
-    return false;
-  }
-
-  /* Read the discovery header (at blob offset 0). Its sentinel pointers have
-   * been patched by RcSmwRelocateXip to the real flash addresses. */
-  const rc_smw_header_t *hdr = (const rc_smw_header_t *)xip_addr;
+  /* The header is a direct symbol at ITCM VMA — code already copied by
+   * run_internal_emu. No fopen/QSPI cache/sentinel patching. */
+  const rc_smw_header_t *hdr = &rc_smw_header;
   if (hdr->magic != RC_SMW_MAGIC || hdr->nsites == 0) {
     printf("rc_smw: bad header (magic=0x%08lX nsites=%lu)\n",
            (unsigned long)hdr->magic, (unsigned long)hdr->nsites);
@@ -543,15 +517,14 @@ static bool rc_smw_activate(const uint8_t *rom, uint32_t len) {
     return false;
   }
 
-  /* Build the dispatch table. rc_fns[] entries (function pointers) were
-   * patched to real flash addresses by the relocation pass. The table and
-   * bank arrays live in SNES overlay BSS (rc_smw_sites.c) — NOT the DTCM
-   * heap. After this call, g_rc_active is true and cpu_runOpcode uses the
-   * rc fast path. */
-   rc_dispatch_init(rc_hash_storage, rc_bank_off, rc_bank_mask,
-                    hdr->addrs, hdr->nsites, (void (**)(Cpu *))hdr->fns);
-  printf("rc_smw: activated — %lu sites, blob %lu bytes at %p\n",
-         (unsigned long)hdr->nsites, (unsigned long)xip_size, xip_addr);
+  /* Build the dispatch table. rc_fns[] pointers are at ITCM VMA (linked
+   * directly, no patching). The hash storage lives in SNES overlay BSS
+   * (rc_smw_sites.c) — NOT the DTCM heap. After this call, g_rc_active is
+   * true and cpu_runOpcode uses the rc fast path. */
+  rc_dispatch_init(rc_hash_storage, rc_bank_off, rc_bank_mask,
+                   hdr->addrs, hdr->nsites, (void (**)(Cpu *))hdr->fns);
+  printf("rc_smw: activated — %lu sites, ITCM header at %p\n",
+         (unsigned long)hdr->nsites, hdr);
   return true;
 #else
   (void)rom; (void)len;

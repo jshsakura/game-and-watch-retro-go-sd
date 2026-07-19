@@ -1202,7 +1202,11 @@ static const emu_dispatch_t emu_wsv     = { "/cores/wsv.bin",     &_OVERLAY_WSV_
 static const emu_dispatch_t emu_ngp     = { "/cores/ngp.bin",     &_OVERLAY_NGP_BSS_START,     (uint32_t)&_OVERLAY_NGP_BSS_SIZE,     (uint32_t)&_OVERLAY_NGP_SIZE,     0, EMU_ENTRY(app_main_ngp) };
 static const emu_dispatch_t emu_wswan   = { "/cores/wswan.bin",   &_OVERLAY_WSWAN_BSS_START,   (uint32_t)&_OVERLAY_WSWAN_BSS_SIZE,   (uint32_t)&_OVERLAY_WSWAN_SIZE,   0, EMU_ENTRY(app_main_wswan) };
 #if SD_CARD == 1
-static const emu_dispatch_t emu_snes    = { "/cores/snes.bin",    &_OVERLAY_SNES_BSS_START,    (uint32_t)&_OVERLAY_SNES_BSS_SIZE,    (uint32_t)&_OVERLAY_SNES_SIZE,    0, EMU_ENTRY(app_main_snes) };
+extern uint8_t __snes_itc_start__[];
+extern uint8_t _OVERLAY_SNES_ITC_LMA_OFFSET;
+extern uint8_t _OVERLAY_SNES_ITC_SIZE;
+static const emu_dispatch_t emu_snes    = { "/cores/snes.bin",    &_OVERLAY_SNES_BSS_START,    (uint32_t)&_OVERLAY_SNES_BSS_SIZE,    (uint32_t)&_OVERLAY_SNES_SIZE,    0, EMU_ENTRY(app_main_snes),
+                                            __snes_itc_start__, (uint32_t)&_OVERLAY_SNES_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_SNES_ITC_SIZE };
 #endif
 static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
 #if SD_CARD == 1

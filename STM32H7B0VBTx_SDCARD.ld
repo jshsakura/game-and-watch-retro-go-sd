@@ -482,6 +482,25 @@ INCLUDE build/fceumm_mappers.ld
   } AT > CORES
   _OVERLAY_SNES_LOAD_START = LOADADDR(.overlay_snes);
   _OVERLAY_SNES_SIZE = SIZEOF(.overlay_snes);
+
+  /* SNES rc hot code → ITCM (zero-wait-state, no I-cache miss). Same pattern
+     as .overlay_pce_itc. The LMA is appended right after .overlay_snes in
+     CORES so objcopy --only-section of both sections yields one contiguous
+     snes.bin. At load time the ITC image lands in RAM_EMU at
+     _OVERLAY_SNES_LOAD_END (overlapping the BSS VMA!) — run_internal_emu
+     memcpy's it to ITCM BEFORE zeroing BSS.
+     Base offset 0x4: keeps address 0 free so no function == NULL. */
+  .overlay_snes_itc (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __snes_itc_start__ = .;
+    build/rc_smw/*.o (.text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    __snes_itc_end__ = .;
+    ASSERT(ABSOLUTE(__snes_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: SNES ITC overflow");
+  } AT > CORES
+  _OVERLAY_SNES_ITC_SIZE = SIZEOF(.overlay_snes_itc);
+  _OVERLAY_SNES_ITC_LMA_OFFSET = LOADADDR(.overlay_snes_itc) - LOADADDR(.overlay_snes);
+
   .overlay_snes_bss _OVERLAY_SNES_LOAD_END : {
     . = ALIGN(4);
     _OVERLAY_SNES_BSS_START = .;

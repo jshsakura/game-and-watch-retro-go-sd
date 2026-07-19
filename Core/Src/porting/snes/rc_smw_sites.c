@@ -195,15 +195,15 @@ rc_entry_t rc_hash_storage[RC_HASH_CAP];
 uint32_t   rc_bank_off[256];
 uint32_t   rc_bank_mask[256];
 
-/* ---- runtime discovery header (placed at blob offset 0 by the linker) ----
- * main_snes.c reads this after caching to find rc_fns/rc_addrs. The
- * sentinel pointer values are patched by the cache-relocation pass
- * (RcSmwRelocateXip, same scan as PatchSmSentinels). */
+/* ---- runtime discovery header (linked into .rodata, caught by .overlay_snes_itc) ----
+ * main_snes.c reads this after the loader copies the ITC blob to ITCM.
+ * Pointer fields (addrs/fns/lens) are linked at ITCM VMA directly — no sentinel
+ * patching needed (unlike the old XIP/QSPI-cache design). */
 #define RC_SMW_MAGIC  0x4D534352u   /* 'RCSM' little-endian */
 
 typedef void (*rc_smw_fn_t)(Cpu *);
 
-__attribute__((section(".rc_smw_hdr"), used))
+__attribute__((used))
 const struct rc_smw_header {
   uint32_t magic;            /* RC_SMW_MAGIC */
   uint32_t nsites;           /* RC_NSITES */
@@ -211,9 +211,9 @@ const struct rc_smw_header {
                                * site PCs — "the bytes are identity" (same principle
                                * as GBA M4A HLE). Accepts any dump/patch with the same
                                * code at the translated PCs; rejects any code change. */
-  const uint32_t *addrs;     /* sentinel addr of rc_addrs[] — patched at cache time */
-  const rc_smw_fn_t *fns;    /* sentinel addr of rc_fns[] — patched at cache time */
-  const uint8_t *lens;       /* sentinel addr of rc_site_lens[] — patched at cache time */
+  const uint32_t *addrs;     /* ITCM VMA of rc_addrs[] — linked directly */
+  const rc_smw_fn_t *fns;    /* ITCM VMA of rc_fns[] — linked directly */
+  const uint8_t *lens;       /* ITCM VMA of rc_site_lens[] — linked directly */
 } rc_smw_header = {
   RC_SMW_MAGIC,
   RC_NSITES,

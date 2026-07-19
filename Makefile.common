@@ -1843,7 +1843,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_wsv,$(CORES_DIR)/wsv.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_ngp,$(CORES_DIR)/ngp.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_wswan,$(CORES_DIR)/wswan.bin)
-	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_snes,$(CORES_DIR)/snes.bin)
+	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_snes --only-section=.overlay_snes_itc,$(CORES_DIR)/snes.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_gw,$(CORES_DIR)/gw.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md,$(CORES_DIR)/md.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md32x,$(CORES_DIR)/32x.bin)
@@ -1869,12 +1869,9 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	@$(CP) -O binary --only-section=.overlay_sm $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Metroid.bin"
 	@$(CP) -O binary --only-section=.xip_sm --only-section=.rodata_sm $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/sm.xip"   # cold banks + rodata: contiguous in SM_CODE, ONE cache entry on purpose (see main_sm.c)
 	@$(CP) -O binary --only-section=.xip_gba --only-section=.rodata_gba $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/gba.xip"   # renderer + its rodata + BIOS: contiguous in GBA_CODE, ONE cache entry on purpose (see main_gba.c)
-ifeq ($(RC_PROBE),1)
+ ifeq ($(RC_PROBE),1)
 	@$(CP) -O binary --only-section=.xip_rcprobe $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/rcprobe.xip"   # rc on-device probe XIP sites (RC_PROBE-gated; sentinel-linked, cached to QSPI at runtime)
-endif
-ifeq ($(RCSMW),1)
-	@$(CP) -O binary --only-section=.xip_rc_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/rc_smw.xip"   # rc SMW native sites (RCSMW-gated; sentinel-linked, cached to QSPI at runtime — see main_snes.c)
-endif
+ endif
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
 	@$(CP) -O binary --only-section=.coleco_bios_data $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/coleco/coleco.bin
 	@$(CP) -O binary --only-section=.overlay_graphics $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/logo.bin
@@ -1984,7 +1981,6 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Super Metroid.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/sm.xip" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/gba.xip" --dest-path "/roms/homebrew/" \
-		$(if $(filter 1,$(RCSMW)),-- sdpush --file "$(HOMEBREWS_FOLDER)/rc_smw.xip" --dest-path "/roms/homebrew/") \
 		-- sdpush --file $(MAPPERS_PACK) --dest-path "/cores/mappers/" \
 		-- sdpush --file $(MAPPERS_DIR)/ines_correct.bin --dest-path "/cores/mappers/" \
 		-- sdpush --file $(SD_FOLDER)/bios/nes/palettes.bin --dest-path "/bios/nes/" \
