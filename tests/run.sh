@@ -261,6 +261,19 @@ $CC -O2 -Wall -Wextra -std=gnu11 -Itests/common_stubs \
     tests/test_common.c                                  -o /tmp/mtest/test_common
 /tmp/mtest/test_common || rc=1
 
+echo "=== md32x_border_clear.c: border-row clear survives frame-skip (32X overlay-close flicker) ==="
+# common.c's generic clear_frames mechanism decrements once per LOOP
+# ITERATION regardless of whether that iteration draws+swaps -- under 32X's
+# frame-skip pacing, two skipped iterations right after menu close can both
+# land on the same still-active physical buffer, leaving the other one's
+# border rows stuck with the overlay's status-bar remnant forever (visible
+# as the top/bottom bands flickering every other frame). Whole-file #include
+# (tests/test_md32x_border_clear.c) reuses tests/common_stubs/gw_lcd.h's
+# declarations with a 2-buffer fake.
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/common_stubs \
+    tests/test_md32x_border_clear.c                      -o /tmp/mtest/test_md32x_border_clear
+/tmp/mtest/test_md32x_border_clear || rc=1
+
 echo "=== gw_malloc.c: itc/ahb/ram bump allocators (alignment, ITC bounds, over-large fails) ==="
 # The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators behind "RAM
 # priority = emulators first" (root CLAUDE.md). Linker symbols
