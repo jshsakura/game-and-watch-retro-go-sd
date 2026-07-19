@@ -564,6 +564,13 @@ static bool rc_smw_activate(const uint8_t *rom, uint32_t len) {
 
 void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
+  /* Level-1 OC (312 MHz) to defend the SNES framerate — never downclock a
+   * user who chose higher (level 2 = 340). SNES is heavy; stock 280 loses
+   * frames the audio HLE just bought back. */
+  extern void SystemClock_Config(uint8_t oc_level);
+  extern uint8_t odroid_settings_cpu_oc_level_get(void);
+  if (odroid_settings_cpu_oc_level_get() < 1) SystemClock_Config(1);
+
   odroid_gamepad_state_t joystick;
   odroid_dialog_choice_t options[] = {
       ODROID_DIALOG_CHOICE_LAST
