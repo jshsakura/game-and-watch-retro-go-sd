@@ -23,6 +23,7 @@
 #include "gwenesis_bus.h"
 #include "gwenesis_vdp.h"
 #include "gwenesis_savestate.h"
+#include "gwenesis_io.h"
 #include "m68k.h"
 #include "segacd.h"
 
@@ -60,6 +61,35 @@ const uint8_t *segacd_bios __attribute__((weak)) = 0;
 static void segacd_bram_path(void)
 {
     snprintf(s_bram_path, sizeof(s_bram_path), "%s.brm", ACTIVE_FILE->path);
+}
+
+/* gwenesis_io.c (shared MD/32X/SegaCD engine) calls this on every emulated
+ * joypad-port read to refresh button_state[] from the host gamepad — every
+ * porting layer that uses the gwenesis engine must define it (see
+ * Core/Src/porting/gwenesis/main_gwenesis.c for the MD original this is
+ * ported from). segacd/ never had its own copy: the reference was silently
+ * missing, the linker resolved it to MD's overlay (both overlays share the
+ * same RAM_EMU VMA — see CLAUDE.md "Cores are overlays"), and on real
+ * hardware MD's overlay is not loaded when SegaCD runs, so no button press
+ * ever reached the emulated console. 0720 night 22 finding. */
+void gwenesis_io_get_buttons()
+{
+    odroid_gamepad_state_t host_joystick;
+    odroid_input_read_gamepad(&host_joystick);
+
+    /* No dedicated third face button on the G&W pad; VOLUME is the least-bad
+     * fixed default for Genesis C (MD's main_gwenesis.c instead offers a
+     * runtime remap UI for this — out of scope here, add later if needed). */
+    button_state[0] = host_joystick.values[ODROID_INPUT_UP]    << PAD_UP    |
+                       host_joystick.values[ODROID_INPUT_DOWN]  << PAD_DOWN  |
+                       host_joystick.values[ODROID_INPUT_LEFT]  << PAD_LEFT  |
+                       host_joystick.values[ODROID_INPUT_RIGHT] << PAD_RIGHT |
+                       host_joystick.values[ODROID_INPUT_A]     << PAD_A    |
+                       host_joystick.values[ODROID_INPUT_B]     << PAD_B    |
+                       host_joystick.values[ODROID_INPUT_VOLUME]<< PAD_C    |
+                       host_joystick.values[ODROID_INPUT_START] << PAD_S;
+
+    button_state[0] = ~button_state[0];
 }
 
 /* ---- savestate: base MD state + magic-stamped CD RAM (PCE pattern) ---- */
