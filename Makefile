@@ -792,12 +792,11 @@ endif
 # separately into build/segacd/ so the overlay has its own .o set), plus
 # the sub-68K + CDD/CDC + graphics + audio porting layer. CD data is
 # streamed from SD; the BIOS is XIP'd from flash (0 RAM). SD builds only.
-# Sega CD does not fit RAM_EMU at the standard 724K budget: it overflows by
-# ~145K, which is exactly the second framebuffer the branch used to reclaim.
-# Double buffering is an invariant (every overlay and screenshot path assumes a
-# back buffer), so the core stays out of the build until its own RAM campaign
-# lands. Enable with SEGACD=1 to work on it.
-SEGACD ?= 0
+# Sega CD fits RAM_EMU fine — the 148,760-byte "overflow" was a linker-script
+# bug: ._ram_space_check_md and ._ram_space_check_segacd stacked in the same
+# region, summing two overlays that never load together. Both are independent
+# ASSERTs now. SEGACD=0 still excludes the core.
+SEGACD ?= 1
 SEGACD_C_SOURCES =
 ifeq ($(SEGACD),1)
 SEGACD_C_SOURCES += \

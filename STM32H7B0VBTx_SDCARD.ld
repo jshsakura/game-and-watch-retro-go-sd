@@ -1530,15 +1530,16 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(4);  /* pad the LAST logo so logo.bin readers don't over-read it */
   } > CORES
 
-  ._ram_space_check_md : {
-    . = . + SIZEOF(.overlay_md);
-    . = . + SIZEOF(.overlay_md_bss);
-  } >RAM_EMU
-
-  ._ram_space_check_segacd : {
-    . = . + SIZEOF(.overlay_segacd);
-    . = . + SIZEOF(.overlay_segacd_bss);
-  } >RAM_EMU
+  /* MD and Sega CD are overlays at the same VMA and never load together, so
+     they must be checked INDEPENDENTLY against RAM_EMU. Two consecutive
+     sections in >RAM_EMU stacked them instead: the region cursor kept MD's
+     681K and then added Sega CD on top, reporting a 148,760-byte overflow that
+     was simply the sum of two cores. Every other core uses a standalone
+     ASSERT; these two now do the same. */
+  ASSERT(SIZEOF(.overlay_md) + SIZEOF(.overlay_md_bss) <= __RAM_EMU_LENGTH__,
+         "Error: MD overlay+BSS exceeds RAM_EMU")
+  ASSERT(SIZEOF(.overlay_segacd) + SIZEOF(.overlay_segacd_bss) <= __RAM_EMU_LENGTH__,
+         "Error: SEGACD overlay+BSS exceeds RAM_EMU")
 
   /* only use ahb_malloc/ahb_calloc to use ahb memory ! */
   /* only audio buffer is statically allocated */
