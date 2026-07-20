@@ -72,3 +72,50 @@ To bypass the complex, bloated libretro wrapper of FB Alpha, the port must extra
 1. **Memory feasibility is verified**. Do not attempt to run a generic MAME/FBA package; it will crash due to heap fragmentation.
 2. Port only the **CPS-1 specific standalone core** using the proposed static memory layout.
 3. Start by verifying boot on the PC/SDL host harness (`linux/Makefile.cps1`) with a lightweight 1.5MB ROM (e.g., *Dynasty Wars / Tenchi wo Kurau I*) before flashing the G&W target.
+
+---
+
+## 6. Phase 1+2 status (this branch)
+
+Everything above is a design projection, not a verified result -- "memory
+feasibility is verified" means the arithmetic in section 2 adds up to 740KB,
+not that any allocation exists yet. What actually exists on
+`explore/cps1-feasibility` right now:
+
+- **Phase 1**: this branch, in its own worktree, isolated from `main` and
+  every other core.
+- **Phase 2**: a shared, freestanding stub core
+  (`Core/Src/porting/cps1/cps1_core.{h,c}`) compiled unmodified by two
+  harnesses -- no 68000/Z80/PPU/sound emulation exists yet, only the
+  plumbing each will plug into:
+  - `linux/Makefile.cps1` + `linux/cps1/main.c` -- headless x86 build,
+    `--engine=interpreter|recompiler|diff` (diff is default: runs both
+    "engines" every frame and fails loudly on any checksum mismatch),
+    `--dump-ppm` for a visual sanity check. Both engines currently run
+    identical logic, so a passing diff proves the harness compares
+    correctly, not that emulation is correct.
+  - `tools/m7_qemu_rig/rig_cps1.c` + `run_cps1.sh` -- the same stub built
+    hard-float and run as a real ARMv7-M instruction stream under QEMU's
+    mps2-an500 (`rig_runtime.c`/`mps2_an500.ld` reused verbatim from the
+    Virtual Boy rig -- both are core-agnostic). Reports instructions/frame
+    on the device's own ISA, which is the closer-to-hardware number this
+    initiative needs before trusting any of section 2/3's percentages --
+    QEMU still can't model caches or flash wait states, so it bounds
+    instruction count, not fps.
+
+```
+cd linux && make -f Makefile.cps1
+./build/retro-go-cps1 --frames=600 --engine=diff --dump-ppm
+
+cd .. && bash tools/m7_qemu_rig/run_cps1.sh 600
+```
+
+**Not yet done, and not safe to assume**: any real 68000/Z80 interpreter,
+any PPU/sprite rendering, any static recompiler, any ROM loading format
+(CPS-1 ships as multiple PRG/GFX/audio ROM files per game -- host layout
+undecided), YM2151/OKI6295 audio in any form, and every hardware-fidelity
+claim in section 3 of `CPS1_SENIOR_TRICKS_ANALYSIS.md` (DMA2D dual-layer,
+LTDC CLUT, OctoSPI XIP execution). Those are the next milestones, each of
+which should get its own RED-before-GREEN proof the way
+`tools/sm_harness`/`tools/gba_m4a` did for their cores, not a port of the
+whole claim at once.
