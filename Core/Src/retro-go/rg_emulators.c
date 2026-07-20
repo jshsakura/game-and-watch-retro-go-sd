@@ -1201,9 +1201,6 @@ static const emu_dispatch_t emu_ngp     = { "/cores/ngp.bin",     &_OVERLAY_NGP_
 static const emu_dispatch_t emu_wswan   = { "/cores/wswan.bin",   &_OVERLAY_WSWAN_BSS_START,   (uint32_t)&_OVERLAY_WSWAN_BSS_SIZE,   (uint32_t)&_OVERLAY_WSWAN_SIZE,   0, EMU_ENTRY(app_main_wswan) };
 static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
 #if SD_CARD == 1
-extern uint8_t _OVERLAY_SEGACD_BSS_START[];
-extern uint8_t _OVERLAY_SEGACD_BSS_SIZE;
-extern uint8_t _OVERLAY_SEGACD_SIZE;
 extern int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot);
 static const emu_dispatch_t emu_segacd = { "/cores/segacd.bin", &_OVERLAY_SEGACD_BSS_START, (uint32_t)&_OVERLAY_SEGACD_BSS_SIZE, (uint32_t)&_OVERLAY_SEGACD_SIZE, 0, EMU_ENTRY(app_main_segacd) };
 #endif

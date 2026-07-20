@@ -24,6 +24,8 @@
 #include "gwenesis_vdp.h"
 #include "gwenesis_savestate.h"
 #include "gwenesis_io.h"
+#include "gw_linker.h"
+#include "gw_malloc.h"
 #include "m68k.h"
 #include "segacd.h"
 
@@ -224,9 +226,7 @@ static bool SegaCdCacheXipToFlash(void) {
   printf("segacd: xip blob at %p, %lu bytes, offset 0x%08lX\n",
          g_xip_addr, (unsigned long)g_xip_size, (unsigned long)g_xip_offset);
   
-  extern uint32_t __RAM_EMU_START__[];
-  extern uint32_t __RAM_EMU_END__[];
-  PatchSegaCdSentinels(__RAM_EMU_START__, __RAM_EMU_END__, g_xip_offset, g_xip_size);
+  PatchSegaCdSentinels((uint32_t *)__RAM_EMU_START__, (uint32_t *)__RAM_EMU_END__, g_xip_offset, g_xip_size);
   return true;
 }
 
@@ -238,6 +238,14 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_system_init(APPID_SEGACD, SEGACD_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &sleep_wake_up, &sram_save_cb);
+
+    /* Every core that calls ram_malloc() for its own buffers must point
+     * ram_start past its own static overlay+bss first (see main_gwenesis.c's
+     * ram_start = &_OVERLAY_MD_BSS_END for the pattern this copies) — this was
+     * missing here, so SCD.prg_ram/word_ram (ram_malloc, below) would have
+     * started allocating at RAM_EMU's very start, colliding with this core's
+     * own overlay code+data+bss instead of the free space after it. 0720. */
+    ram_start = (uint32_t)&_OVERLAY_SEGACD_BSS_END;
 
     if (!SegaCdCacheXipToFlash()) {
         printf("Failed to cache segacd.xip\n");
