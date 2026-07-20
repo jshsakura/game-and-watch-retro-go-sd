@@ -825,7 +825,15 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
        * that HLE ended up running; a later separate one-shot (e.g. logged
        * once from the pause/quit path, never per-frame) would be needed to
        * prove the swap itself succeeded on device. */
+      /* This diag block is always compiled, but the wire globals only exist
+       * when smw_exact_wire.c is (SNES_SMW_HLE=1) -- an unguarded extern here
+       * left gsnes__g_wire_on/g_wire_enable undefined in every SNES_SMW_HLE=0
+       * link. Report zeros in that build so the line keeps one shape. */
+#ifdef SNES_SMW_HLE_PRODUCT
       extern int g_wire_enable, g_wire_on;
+#else
+      const int g_wire_enable = 0, g_wire_on = 0;
+#endif
       fprintf(df, "SNES load: type=%d size=%lu title=[%s] sum64k=%08lX rc=%d "
                   "wire_armed=%d g_wire_enable=%d g_wire_on=%d\n",
               snes->cart->type, (unsigned long)rs, title, (unsigned long)sum,
