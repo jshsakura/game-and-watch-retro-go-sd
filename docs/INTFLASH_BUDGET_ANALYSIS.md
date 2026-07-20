@@ -342,6 +342,49 @@ but it touches four different overlay blocks, and needs a real build
 member before it's excluded from the resident catch-all. Rough combined upside
 if all five are moved: **~14–16 KB**. Worth a follow-up pass, not blocking.
 
+### ⛔ CLOSED (2026-07-20): the ~14–16 KB estimate is refuted by `--cref`
+
+The estimate above assumed each libm member was needed by a single overlay
+core. It was never verified — and the whole premise fails when actually
+checked with the Cross Reference Table (the tool this document elsewhere says
+to use instead of first-referencer traces). Referencers per symbol:
+
+| symbol | referencing modules | single-core? |
+|---|---|---|
+| `atof` | `vb` | yes — but `libc_a-atof.o` is **0 B resident** (nothing to win) |
+| `atan` | `nes_fceu` | **yes — 596 B, the only real candidate** |
+| `strtod` | `build/core/` (`gw_firmware_abi.o`) | **no — resident, must stay** |
+| `sqrt` | `md32x`, `zelda3` | no |
+| `exp` | `amstrad`, `zelda3` | no |
+| `log` | `md`, `nes_fceu` | no |
+| `cos` | `msx`, `nes_fceu`, `zelda3` | no |
+| `sin` | `md`, `md32x`, `msx`, `nes_fceu` | no |
+
+Six of eight are shared by two to four overlay cores; capturing them into any
+one core's block would bind the other cores' references to that core's overlay
+address — the aliasing failure `CLAUDE.md` warns about. `strtod` (and with it
+the 5,774 B `strtod`+`mprec` chain, the single biggest item in the original
+estimate) is referenced by resident launcher code and can never move.
+
+**Realistic total for this entire technique: ~596 B**, not 14–16 KB. Not worth
+the linker-script surgery. Closed.
+
+### ⛔ CLOSED (2026-07-20): a2600 unwind-runtime capture, same reason
+
+Also checked with `--cref`, and also rejected. `unwind-arm.o` +
+`pr-support.o` (**3,612 B resident** — note: 3.6 KB, not the 14–16 KB this
+item was sometimes quoted at; that figure belonged to the libm item above) are
+referenced by **a2600 (78 refs), tgbdual (13), lynx (6), libgcc-internal (11),
+and libc_nano's `setjmp.o` (1)**. Capturing them into `.overlay_a2600` would
+point tgbdual's and lynx's references at a different overlay's address, and
+`setjmp` is resident. Not a2600-only, so the technique does not apply.
+
+Flagging for completeness: even after giving tgbdual and lynx the C64
+treatment (both are verified exception-free, so `-fno-exceptions` would drop
+their 19 references), a2600 still genuinely throws (`Thumbulator.cxx:156`) and
+resident `setjmp.o` still references the personality routine — so the runtime
+stays resident either way. There is no path to those 3,612 B.
+
 ## What was ruled out, with numbers
 
 - **Dropping a locale (ZH_CN/ZH_TW/KO_KR/JA_JP/etc.) saves almost nothing.**
