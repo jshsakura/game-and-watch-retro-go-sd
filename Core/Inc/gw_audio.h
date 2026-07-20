@@ -22,7 +22,12 @@ typedef enum {
 
 extern int16_t audiobuffer_dma[AUDIO_BUFFER_LENGTH * 2] __attribute__((section (".audio")));
 extern dma_transfer_state_t dma_state;
-extern uint32_t dma_counter;
+/* Written by the audio DMA half/full-transfer ISR (gw_audio.c) and read by
+ * every core's frame-pacing spin. Without volatile the compiler may keep it
+ * in a register across the loop, so the exit condition never re-reads memory
+ * and the wait cannot end -- whether it does depends on inlining, which is why
+ * this surfaced and vanished across builds that changed nothing nearby. */
+extern volatile uint32_t dma_counter;
 
 // Music app: ISR-fed playback. The fill routine lives in the main firmware
 // (gw_audio.c) so the audio ISR never calls overlay code; the overlay owns the

@@ -1043,8 +1043,31 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     if (odroid_system_get_app()->speedupEnabled == SPEEDUP_1x) {
         static uint32_t snes_last_dma = 0;
         if (snes_last_dma == 0) snes_last_dma = dma_counter;
-        while (dma_counter == snes_last_dma)
-            cpumon_sleep();
+        /* Feed the watchdog and give up eventually. This wait blocks until the
+         * audio DMA advances, and it had neither guard: if dma_counter stops
+         * moving the loop spins forever, WWDG fires, and a watchdog reset
+         * leaves no BSOD and no log -- the device simply drops out.
+         *
+         * That is what killed SMW after closing the pause menu. The comment
+         * above is the reason it was SMW-only: a frame that overran finds the
+         * DMA already advanced and passes straight through, so Zelda (35 fps)
+         * and Super Metroid (30 fps) never actually wait here. Only SMW with
+         * the audio HLE is fast enough to arrive before the DMA ticks -- and
+         * if the menu left the DMA stopped, that arrival never ends. Turning
+         * the HLE off "fixed" it by making the emulator too slow to reach the
+         * wait, which is why every other explanation fit some of the evidence
+         * and none of it fit all.
+         *
+         * The bound is generous (~100 ms, several audio periods): a frame that
+         * legitimately waits is far under it, so pacing is unchanged. */
+        {
+            uint32_t spin_guard = 0;
+            while (dma_counter == snes_last_dma && spin_guard < 100000u) {
+                wdog_refresh();
+                cpumon_sleep();
+                spin_guard++;
+            }
+        }
         uint32_t elapsed = dma_counter - snes_last_dma;
         snes_last_dma = dma_counter;
         /* Catch-up only for HLE: wire_frame_audio produces samples without
