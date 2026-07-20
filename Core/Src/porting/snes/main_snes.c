@@ -551,6 +551,32 @@ static void *snes_Screenshot(void) {
   return lcd_get_active_buffer();
 }
 
+#ifdef SNES_SMW_HLE_PRODUCT
+/* One-shot, quit-time-only flush of the audio-HLE swap status. Registered
+ * below as BOTH sram_save_cb (fires from odroid_system_switch_app, i.e. the
+ * in-game pause menu's Quit/Save&Quit) and shutdown_cb (fires from
+ * odroid_system_shutdown, i.e. power-off/standby) -- SNES has no cart-SRAM
+ * handler of its own to conflict with, and both call sites are single,
+ * quit-time events, never the frame loop (rule-no-sd-write-during-play).
+ * The load-time probe further below can only ever say the gate was ARMED
+ * (wire_try_swap() needs ~180+ live frames it doesn't have yet at load) --
+ * this is what actually answers whether the swap happened, and if not, the
+ * concrete reason, without needing a second device round-trip to find out.
+ * Appends a second line to the same /snes_diag.txt so one file covers both
+ * halves. */
+static void snes_wire_diag_flush(void) {
+  extern int g_wire_enable, g_wire_on, g_wire_attempt_count, g_wire_swap_frame;
+  extern const char *g_wire_last_fail_reason;
+  FILE *df = fopen("/snes_diag.txt", "a");
+  if (!df) return;
+  fprintf(df, "SNES wire at quit: g_wire_enable=%d g_wire_on=%d attempts=%d "
+              "swap_frame=%d last_fail=[%s]\n",
+          g_wire_enable, g_wire_on, g_wire_attempt_count, g_wire_swap_frame,
+          g_wire_last_fail_reason);
+  fclose(df);
+}
+#endif
+
 /* ---- ROM loading -----------------------------------------------------------
  * The cart stays memory-mapped in external flash (flash-cache machinery); the
  * core only reads it. Copier headers (512 bytes) are skipped in place. */
@@ -714,8 +740,13 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   common_emu_auto_oc(1);
 
   odroid_system_init(APPID_SNES, SNES_AUDIO_RATE);
+#ifdef SNES_SMW_HLE_PRODUCT
+  odroid_system_emu_init(&snes_LoadState, &snes_SaveState, &snes_Screenshot,
+                         &snes_wire_diag_flush, NULL, &snes_wire_diag_flush);
+#else
   odroid_system_emu_init(&snes_LoadState, &snes_SaveState, &snes_Screenshot,
                          NULL, NULL, NULL);
+#endif
 
   audio_start_playing(SNES_AUDIO_SAMPLES);
 

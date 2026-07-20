@@ -32,6 +32,13 @@ int g_wire_on;
 int g_wire_enable = 1;          /* master switch; detection stays ARAM-based */
 const char *g_wire_variant = "-";
 
+/* Exit-time diagnostic only (read by main_snes.c's quit/shutdown flush, never
+ * per-frame) -- who called wire_try_swap and why it hasn't swapped yet.
+ * g_wire_swap_frame stays -1 until the swap actually succeeds. */
+int g_wire_attempt_count;         /* real checks reached (past the min_frame/60 gate) */
+int g_wire_swap_frame = -1;
+const char *g_wire_last_fail_reason = "not attempted yet";
+
 static SpcPlayer *g_player;
 static Apu *g_apu;
 static int g_detect_streak;
@@ -286,8 +293,16 @@ static void adopt_lle_state(Snes *snes) {
 
 int wire_try_swap(Snes *snes, int frame) {
   g_frame = frame;
-  if (g_wire_on || !g_wire_enable || !snes->apu)
+  if (g_wire_on)
     return 0;
+  if (!g_wire_enable) {
+    g_wire_last_fail_reason = "g_wire_enable is 0";
+    return 0;
+  }
+  if (!snes->apu) {
+    g_wire_last_fail_reason = "snes->apu is NULL";
+    return 0;
+  }
 #ifdef SNES_SMW_HLE_PRODUCT
   const int min_frame = 120;
 #else
@@ -295,22 +310,38 @@ int wire_try_swap(Snes *snes, int frame) {
   int min_frame = sf ? atoi(sf) : 120;
 #endif
   if (frame < min_frame || frame % 60)
-    return 0;
+    return 0;   /* not a real attempt: too early, or not a check-cadence frame */
+  g_wire_attempt_count++;
 #ifdef SNES_SMW_HLE_PRODUCT
   if (g_upload_request_frame < 0 || frame - g_upload_request_frame < 60)
 #else
   if (!getenv("WIRE_ALLOW_EARLY") &&
       (g_upload_request_frame < 0 || frame - g_upload_request_frame < 60))
 #endif
-    return 0;
-  if (snes->apu->spc->pc >= 0xffc0 || !has_smw_driver(snes->apu->ram)) {
-    g_detect_streak = 0;
+  {
+    g_wire_last_fail_reason = (g_upload_request_frame < 0)
+        ? "boot/title APU image not replaced yet (no upload seen on port1)"
+        : "upload seen but <60 frames since (settling)";
     return 0;
   }
-  if (++g_detect_streak < 2)
+  if (snes->apu->spc->pc >= 0xffc0) {
+    g_detect_streak = 0;
+    g_wire_last_fail_reason = "SPC700 PC still in IPL ROM (driver not running yet)";
     return 0;
+  }
+  if (!has_smw_driver(snes->apu->ram)) {
+    g_detect_streak = 0;
+    g_wire_last_fail_reason = "ptnJumpToVcmdSMW signature not found in ARAM";
+    return 0;
+  }
+  if (++g_detect_streak < 2) {
+    g_wire_last_fail_reason = "signature found once, awaiting 2nd consecutive confirmation";
+    return 0;
+  }
 
   adopt_lle_state(snes);
+  g_wire_swap_frame = frame;
+  g_wire_last_fail_reason = "swapped";
   fprintf(stderr, "[wire] frame %d: adopted exact SMW SPC state (zero-copy ARAM/DSP)\n", frame);
   return 1;
 }
