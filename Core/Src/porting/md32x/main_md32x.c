@@ -507,7 +507,7 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
   odroid_system_init(APPID_32X, MD32X_AUDIO_RATE);
   odroid_system_emu_init(&md32x_LoadState, &md32x_SaveState, &md32x_Screenshot,
-                         NULL, &md32x_SleepWakeUp, &md32x_SramSave);
+                         NULL, &md32x_SleepWakeUp, &md32x_SramSave, NULL);
   /* audio_start_playing happens AFTER the warm-up frame below, with the
    * region-correct per-frame sample count (audit bug: PAL carts pace 50fps). */
 

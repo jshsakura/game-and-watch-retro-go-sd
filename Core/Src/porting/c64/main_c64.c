@@ -123,7 +123,7 @@ static void type_char(uint8_t ascii)
 static bool init(void)
 {
     odroid_system_init(APPID_GB, C64_AUDIO_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL);
+    odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL, NULL);
 
     c64_desc_t desc = {0};
     desc.joystick_type       = C64_JOYSTICKTYPE_DIGITAL_12;  /* route input to both ports */

@@ -342,7 +342,7 @@ extern "C" void app_main_c64(uint8_t load_state, uint8_t start_paused, int8_t sa
 
     odroid_system_init(APPID_GB, 22050);
     /* Register the real save/load handlers (deferred; see c64_SaveState/c64_LoadState). */
-    odroid_system_emu_init(&c64_LoadState, &c64_SaveState, NULL, NULL, NULL, NULL);
+    odroid_system_emu_init(&c64_LoadState, &c64_SaveState, NULL, NULL, NULL, NULL, NULL);
 
     heap_itc_alloc(true);   /* small allocs in ITCM, big spill to AXI heap (Lynx pattern) */
 

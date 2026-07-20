@@ -740,7 +740,7 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_system_init(APPID_GBA, GBA_SAMPLE_RATE);
     odroid_system_emu_init(&gba_LoadState, &gba_SaveState, &gba_Screenshot,
-                           NULL, NULL, &gba_SramSave);
+                           NULL, NULL, &gba_SramSave, NULL);
 
     /* Native 240x160 is a small island on a 320x240 panel; FIT is the sane
      * first-run default. Any choice the user makes afterwards is theirs. */

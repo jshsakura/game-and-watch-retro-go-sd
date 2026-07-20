@@ -742,10 +742,10 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   odroid_system_init(APPID_SNES, SNES_AUDIO_RATE);
 #ifdef SNES_SMW_HLE_PRODUCT
   odroid_system_emu_init(&snes_LoadState, &snes_SaveState, &snes_Screenshot,
-                         &snes_wire_diag_flush, NULL, &snes_wire_diag_flush);
+                         &snes_wire_diag_flush, NULL, &snes_wire_diag_flush, NULL);
 #else
   odroid_system_emu_init(&snes_LoadState, &snes_SaveState, &snes_Screenshot,
-                         NULL, NULL, NULL);
+                         NULL, NULL, NULL, NULL);
 #endif
 
   audio_start_playing(SNES_AUDIO_SAMPLES);

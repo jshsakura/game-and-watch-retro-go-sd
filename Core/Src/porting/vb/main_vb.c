@@ -322,7 +322,7 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     { extern uint32_t HAL_RCC_GetSysClockFreq(void);
       vb_diag("clock=%lu MHz (auto-OC lvl2 requested)\n",
               (unsigned long)(HAL_RCC_GetSysClockFreq() / 1000000)); }
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL, NULL);
 
     /* getromdata() sets ram_start (heap past overlay BSS) — MUST precede the
      * v810_init() region allocations, which pull from that heap. */

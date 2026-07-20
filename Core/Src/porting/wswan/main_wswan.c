@@ -286,7 +286,7 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     common_emu_auto_oc(0);
 
     odroid_system_init(APPID_WSWAN, WS_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL, NULL);
 
     /* First-run default = FIT (global OFF = tiny native, too small here). FIT
      * fills the screen while preserving the 224:144 aspect ratio — sensible,

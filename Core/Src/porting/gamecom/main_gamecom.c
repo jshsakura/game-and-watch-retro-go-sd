@@ -153,7 +153,7 @@ static const uint8_t *cache_rom(const char *path, uint32_t want, uint32_t *sz_ou
 static bool init(void)
 {
     odroid_system_init(APPID_GB, GAMECOM_AUDIO_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, &SaveSram);
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, &SaveSram, NULL);
     /* Start the audio DMA: the per-frame common_emu_sound_sync busy-waits for the DMA
      * counter, so without this the first frame hangs forever (no audio = no DMA tick). */
     audio_start_playing(GAMECOM_AUDIO_SAMPLE_RATE / 60);

@@ -601,7 +601,7 @@ int app_main_sm(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
    * here. sm never called it, so PAUSE+A / PAUSE+B did nothing at all and the
    * SRAM was only ever written by the code path nothing called. */
   odroid_system_emu_init(&sm_system_LoadState, &sm_system_SaveState,
-                         &sm_system_Screenshot, NULL, NULL, &sm_system_SramSave);
+                         &sm_system_Screenshot, NULL, NULL, &sm_system_SramSave, NULL);
 
   /* The game reads the original ROM the whole way through (RomPtr). Cache the
    * 3 MB image in external flash and XIP it — copying it into RAM is not an

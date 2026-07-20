@@ -145,7 +145,7 @@ static bool load_bios(zx_desc_t *desc)
 static bool init(void)
 {
     odroid_system_init(APPID_GB, ZX_AUDIO_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL);
+    odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL, NULL);
     /* Start the audio DMA: common_emu_sound_sync busy-waits on the DMA counter every
      * frame, so without this the FIRST frame hangs forever (no DMA tick). */
     audio_start_playing(ZX_AUDIO_SAMPLES);
