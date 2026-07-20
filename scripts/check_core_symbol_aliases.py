@@ -104,10 +104,19 @@ def main():
     disasm = {}
 
     def overlay_text(core):
-        """Disassembly of this core's overlay, or '' if it has no overlay section."""
+        """Disassembly of this core's overlay, or '' if it has no overlay section.
+
+        Some cores (SegaCD, Super Metroid, GBA — see SEGACD_CODE/SM_CODE/GBA_CODE
+        in the linker script) keep cold code+rodata out of RAM_EMU via a sentinel
+        XIP section (.xip_<core>) instead of .overlay_<core>. A call site that
+        lives there is just as real as one in the RAM overlay, so it must be
+        checked too — 0720: this is exactly why check_core_symbol_aliases missed
+        the SegaCD gwenesis_io_get_buttons alias (its call site is in
+        .xip_segacd), and the same blind spot applies to sm/gba."""
         if core not in disasm:
+            sections = [f"--section=.overlay_{core}", f"--section=.xip_{core}"]
             r = subprocess.run(
-                [objdump, "-d", f"--section=.overlay_{core}", elf],
+                [objdump, "-d"] + sections + [elf],
                 capture_output=True, text=True)
             disasm[core] = r.stdout
         return disasm[core]
@@ -122,7 +131,19 @@ def main():
             # annotates both a branch target and a literal-pool word with the name
             # it resolved to ("bl 240aaaa0 <snes_read>"), so that is what to look
             # for — the bare address turns up by coincidence far too often.
-            if f"{addr[s]} <{s}>" in overlay_text(core):
+            #
+            # A direct "bl <addr> <sym>" is not the only shape this takes: a
+            # call from XIP-relocated code (SEGACD_CODE/SM_CODE/GBA_CODE, ~2MB+
+            # away from RAM_EMU) is out of BL range, so the linker inserts an
+            # interworking veneer ("bl ... <__sym_veneer>") that loads the real
+            # address from a literal pool instead. The veneer itself lives in
+            # the same XIP section and is named after the symbol it targets, so
+            # that name is just as reliable a live-reference marker as the
+            # direct-branch annotation — 0720: this is the second (and the
+            # decisive) reason the SegaCD gwenesis_io_get_buttons alias slipped
+            # through even after XIP sections were added to overlay_text().
+            text = overlay_text(core)
+            if f"{addr[s]} <{s}>" in text or f"<__{s}_veneer>" in text:
                 failures.append((core, s, sorted(foreign)))
 
     if failures:
