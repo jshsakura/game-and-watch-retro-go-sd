@@ -50,6 +50,7 @@ static int run_diff(int frames, int dump_ppm)
 
     int mismatches = 0;
     uint32_t run_hash = 0;
+    uint32_t cpu_hash = 0;
 
     for (int f = 0; f < frames; f++) {
         cps1_core_run_frame(CPS1_ENGINE_INTERPRETER);
@@ -57,12 +58,17 @@ static int run_diff(int frames, int dump_ppm)
 
         uint32_t hi = fb_crc32(cps1_core_get_framebuffer(CPS1_ENGINE_INTERPRETER));
         uint32_t hr = fb_crc32(cps1_core_get_framebuffer(CPS1_ENGINE_RECOMPILER));
-        if (hi != hr) {
-            fprintf(stderr, "[cps1] MISMATCH frame %d: interpreter=%08x recompiler=%08x\n",
-                    f, hi, hr);
+        uint32_t ci = cps1_core_cpu_state_hash(CPS1_ENGINE_INTERPRETER);
+        uint32_t cr = cps1_core_cpu_state_hash(CPS1_ENGINE_RECOMPILER);
+        if (hi != hr || ci != cr) {
+            fprintf(stderr,
+                    "[cps1] MISMATCH frame %d: fb interpreter=%08x recompiler=%08x | "
+                    "cpu interpreter=%08x recompiler=%08x\n",
+                    f, hi, hr, ci, cr);
             mismatches++;
         }
         run_hash = hi;
+        cpu_hash = ci;
     }
 
     if (mismatches) {
@@ -70,7 +76,14 @@ static int run_diff(int frames, int dump_ppm)
         return 1;
     }
 
-    printf("[cps1] OK: %d frames bit-identical, RUNHASH=%08x\n", frames, run_hash);
+    uint32_t illegal = cps1_core_cpu_illegal_count(CPS1_ENGINE_INTERPRETER);
+    if (illegal) {
+        fprintf(stderr, "[cps1] FAIL: interpreter hit %u unimplemented opcode(s)\n", illegal);
+        return 1;
+    }
+
+    printf("[cps1] OK: %d frames bit-identical, RUNHASH=%08x CPUHASH=%08x\n",
+           frames, run_hash, cpu_hash);
     if (dump_ppm)
         write_ppm("build/cps1_last_frame.ppm", cps1_core_get_framebuffer(CPS1_ENGINE_INTERPRETER));
     return 0;

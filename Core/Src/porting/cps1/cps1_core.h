@@ -26,3 +26,10 @@ void cps1_core_reset(cps1_engine_kind_t engine);
 void cps1_core_run_frame(cps1_engine_kind_t engine);
 const uint16_t *cps1_core_get_framebuffer(cps1_engine_kind_t engine);
 uint32_t cps1_core_checksum(cps1_engine_kind_t engine);
+
+/* 68000 CPU state (Core/Src/porting/cps1/cps1_cpu68k.{h,c}): runs a fixed,
+ * hand-assembled test program (see cps1_core.c) until it RTS's, so the
+ * fetch/decode/execute path is real and observable before any ROM-loading
+ * format exists. Independent from the framebuffer hash above. */
+uint32_t cps1_core_cpu_state_hash(cps1_engine_kind_t engine);
+uint32_t cps1_core_cpu_illegal_count(cps1_engine_kind_t engine);

@@ -35,6 +35,9 @@ int main(void)
            (unsigned long)(ipt_x1000 / 1000), (unsigned long)(ipt_x1000 % 1000));
 
     cps1_core_reset(CPS1_ENGINE_INTERPRETER);
+    printf("[cps1-qemu] cpu test program halted -- initial state hash=%08x illegal=%u\n",
+           (unsigned)cps1_core_cpu_state_hash(CPS1_ENGINE_INTERPRETER),
+           (unsigned)cps1_core_cpu_illegal_count(CPS1_ENGINE_INTERPRETER));
 
     uint32_t run_hash = 2166136261u;
     uint64_t win_ticks = 0, tot_ticks = 0;
@@ -62,5 +65,8 @@ int main(void)
     printf("[cps1-qemu] done %d frames RUNHASH=%08x avg emu=%lu insn/frame\n",
            RIG_FRAMES, (unsigned)run_hash,
            (unsigned long)(tot_ticks * ipt_x1000 / 1000 / frames));
+    printf("[cps1-qemu] cpu final state hash=%08x illegal=%u\n",
+           (unsigned)cps1_core_cpu_state_hash(CPS1_ENGINE_INTERPRETER),
+           (unsigned)cps1_core_cpu_illegal_count(CPS1_ENGINE_INTERPRETER));
     return 0;
 }

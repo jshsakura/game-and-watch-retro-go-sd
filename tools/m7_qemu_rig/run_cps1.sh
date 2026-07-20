@@ -26,7 +26,9 @@ OPT="-O2 -g -fno-strict-aliasing -ffunction-sections -fdata-sections"
 DEF="-DRIG_FRAMES=$FRAMES"
 INC="-ICore/Src/porting/cps1 -I$RIG"
 
-SRCS_C="Core/Src/porting/cps1/cps1_core.c $RIG/rig_runtime.c $RIG/rig_cps1.c"
+SRCS_C="Core/Src/porting/cps1/cps1_core.c Core/Src/porting/cps1/cps1_cpu68k.c \
+        Core/Src/porting/cps1/cps1_rc_runtime.c Core/Src/porting/cps1/cps1_rc_generated.c \
+        $RIG/rig_runtime.c $RIG/rig_cps1.c"
 
 OBJS=""
 for s in $SRCS_C; do
