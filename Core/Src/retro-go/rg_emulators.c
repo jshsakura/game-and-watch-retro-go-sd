@@ -1429,6 +1429,16 @@ typedef struct {
     void       *itc_dest;
     uint32_t    itc_lma_off;
     uint32_t    itc_size;
+    /* Optional SECOND, independent ITCM image (same copy-before-bss-zero
+     * contract as above). Only SNES uses this today: itc_* carries the RC
+     * hot-site subset (.itcm_rc_hot, RCSMW-gated, usually empty), itc2_*
+     * carries the interpreter's cpu.o+ppu.o (.itcm_snes_interp, always
+     * populated) -- two independent features sharing the ITCM budget, see
+     * STM32H7B0VBTx_SDCARD.ld's .itcm_snes_interp comment. itc2_size == 0
+     * means unused (every other core). */
+    void       *itc2_dest;
+    uint32_t    itc2_lma_off;
+    uint32_t    itc2_size;
 } emu_dispatch_t;
 
 __attribute__((noinline))
@@ -1439,6 +1449,10 @@ static void run_internal_emu(const emu_dispatch_t *e,
         if (e->itc_size) {
             memcpy(e->itc_dest, (uint8_t *)&__RAM_EMU_START__ + e->itc_lma_off, e->itc_size);
             __DSB(); __ISB();   /* TCM stores drained before any fetch from ITCM */
+        }
+        if (e->itc2_size) {
+            memcpy(e->itc2_dest, (uint8_t *)&__RAM_EMU_START__ + e->itc2_lma_off, e->itc2_size);
+            __DSB(); __ISB();
         }
         memset(e->bss_start, 0, e->bss_size);
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, e->code_size);
@@ -1467,8 +1481,12 @@ static const emu_dispatch_t emu_wswan   = { "/cores/wswan.bin",   &_OVERLAY_WSWA
 extern uint8_t __snes_rc_hot_start__[];
 extern uint8_t _OVERLAY_SNES_ITC_LMA_OFFSET;
 extern uint8_t _OVERLAY_SNES_ITC_SIZE;
+extern uint8_t __snes_interp_itc_start__[];
+extern uint8_t _OVERLAY_SNES_INTERP_ITC_LMA_OFFSET;
+extern uint8_t _OVERLAY_SNES_INTERP_ITC_SIZE;
 static const emu_dispatch_t emu_snes    = { "/cores/snes.bin",    &_OVERLAY_SNES_BSS_START,    (uint32_t)&_OVERLAY_SNES_BSS_SIZE,    (uint32_t)&_OVERLAY_SNES_SIZE,    0, EMU_ENTRY(app_main_snes),
-                                            __snes_rc_hot_start__, (uint32_t)&_OVERLAY_SNES_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_SNES_ITC_SIZE };
+                                            __snes_rc_hot_start__, (uint32_t)&_OVERLAY_SNES_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_SNES_ITC_SIZE,
+                                            __snes_interp_itc_start__, (uint32_t)&_OVERLAY_SNES_INTERP_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_SNES_INTERP_ITC_SIZE };
 #endif
 static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
 #if SD_CARD == 1

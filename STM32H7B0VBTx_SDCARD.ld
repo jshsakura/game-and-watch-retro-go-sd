@@ -469,7 +469,10 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_snes __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_snes_start__ = .;
-    build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
+    /* cpu.o (65816 opcode dispatcher, cpu_runOpcode) and ppu.o (PPU line
+     * renderer, ppu_runLine) are excluded here and placed whole into
+     * .itcm_snes_hot below instead — see that section's comment. */
+    EXCLUDE_FILE(*cpu.o *ppu.o) build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_SNES_LOAD_END = .;
   } AT > CORES
@@ -493,6 +496,38 @@ INCLUDE build/fceumm_mappers.ld
   } AT > CORES
   _OVERLAY_SNES_ITC_SIZE = SIZEOF(.itcm_rc_hot);
   _OVERLAY_SNES_ITC_LMA_OFFSET = LOADADDR(.itcm_rc_hot) - LOADADDR(.overlay_snes);
+
+  /* SNES interpreter core → ITCM (zero-wait-state, no I-cache miss). A
+     SEPARATE mechanism from .itcm_rc_hot above (that is the statically-
+     recompiled hot-SITE subset, RCSMW-gated, a different feature entirely —
+     see rc_smw_sites.c / verify_snes_rc_hot.py, do not conflate the two).
+     This section instead moves the EXISTING interpreter's hottest files
+     WHOLE, unmodified, uncompiled-differently — cpu.o (65816 opcode
+     dispatcher, cpu_runOpcode) and ppu.o (PPU line renderer, ppu_runLine).
+     Same rationale as .overlay_md32x_itc's SH-2 dispatcher: a partial
+     function-level split risks leaving half a call graph split between ITCM
+     and RAM_EMU (the same class of bug as cross-overlay symbol aliasing —
+     see CLAUDE.md), and at 33,692B combined there is no budget pressure
+     forcing a surgical per-function cut.
+     Device-measured precedent: 32X moved its whole SH-2 interpreter (7,921B)
+     into ITCM for a device-measured +30% fps at an UNCHANGED instruction
+     count — pure memory-stall removal, a win QEMU (no wait states modeled)
+     cannot see. Only STATEHASH/AUDIOHASH bit-identity is a rig-checkable
+     gate for this change; fps needs the real device.
+     Chained after .itcm_rc_hot (not at ORIGIN(ITCMRAM)+0x4 like it) so the
+     two coexist safely if a future RCSMW build ever links both — the ASSERT
+     below still catches it if the combined total ever exceeds budget. */
+  .itcm_snes_interp (ADDR(.itcm_rc_hot) + SIZEOF(.itcm_rc_hot)) : {
+    . = ALIGN(4);
+    __snes_interp_itc_start__ = .;
+    build/snes/cpu.o (.text .text* .rodata .rodata*)
+    build/snes/ppu.o (.text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    __snes_interp_itc_end__ = .;
+    ASSERT(ABSOLUTE(__snes_interp_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: SNES interpreter ITC overflow");
+  } AT > CORES
+  _OVERLAY_SNES_INTERP_ITC_SIZE = SIZEOF(.itcm_snes_interp);
+  _OVERLAY_SNES_INTERP_ITC_LMA_OFFSET = LOADADDR(.itcm_snes_interp) - LOADADDR(.overlay_snes);
 
   .overlay_snes_bss _OVERLAY_SNES_LOAD_END : {
     . = ALIGN(4);
