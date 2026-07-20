@@ -129,11 +129,29 @@ static void fill_common(unsigned char *remap, unsigned char *vlen) {
 
 void nspc_variant_std(void) {
   fill_common(std_remap, std_vlen);
-  for (int op = 0xe0; op <= 0xfa; op++) {        /* VGMTrans std map ends at 0xfa */
+  /* VGMTrans's cross-game std map only documents through 0xfa, but SM's own
+   * HandleEffect() (spc_player.c) implements real cases through 0xfe --
+   * 0xfb (skip-2 marker), 0xfc (cutk), 0xfd/0xfe (fast_forward, which
+   * Music_HandleCmdFromSnes's `do {...} while (p->fast_forward)` loop
+   * depends on). Treating them as "no standard equivalent" silently dropped
+   * fast_forward triggers a song needs. kEffectByteLength[27..30] in
+   * spc_player.c (the operand-byte counts) already agreed with kStdLen's
+   * tail for these ops -- only the remap-to-"do nothing" was wrong, not the
+   * stream alignment, so this is a safe, provably-correct extension, not a
+   * guess: HandleEffect's own switch statement is the ground truth for what
+   * these opcodes do. On real Super Metroid this measurably fixed a gross
+   * symptom (rapid, nonsensical incrementing song IDs after swap -- the
+   * downstream effect of the stream desync this caused) but did NOT fully
+   * fix the deeper issue: the swapped-in player still eventually drifts
+   * into a state where on-screen content stops updating, well past where
+   * pure LLE has already recovered. See nspc_wire.c's wire_swap() comment
+   * and the memory writeup for the open investigation. */
+  for (int op = 0xe0; op <= 0xfe; op++) {
     std_remap[op] = (unsigned char)op;
     std_vlen[op] = kStdLen[op - 0xe0];
   }
-  for (int op = 0xfb; op <= 0xff; op++) std_vlen[op] = 0;  /* SM extras: skip+log */
+  std_vlen[0xff] = 0;  /* HandleEffect has no 0xff case (falls to Not_Implemented(),
+                         * and kStdLen has no [31] entry) -- must stay skip+log. */
   g_nspc_cfg.vcmdStart = 0xe0; g_nspc_cfg.tieOp = 0xc8; g_nspc_cfg.callOp = 0xef;
   g_nspc_cfg.pslideOp = 0xf9; g_nspc_cfg.stride = 6; g_nspc_cfg.baseAddr = 0;
   g_nspc_cfg.tunLow = 0; g_nspc_cfg.tunCnt = 0;
