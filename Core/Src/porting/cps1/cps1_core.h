@@ -54,3 +54,16 @@ uint16_t cps1_core_palette_peek(unsigned bank, unsigned color);
  * engine slots also render from -- it's a build-verification tool, call it
  * before running real frames, not interleaved with them. */
 int cps1_core_selftest_vdp_bus(void);
+
+/* Sound HLE (Core/Src/porting/cps1/cps1_sound_hle.{h,c}): reachable ONLY
+ * through the 68000 bus write intercept at the sound-command address, the
+ * same way real hardware's Z80 is only reachable through a shared latch --
+ * no direct C-to-C shortcut from CPU tests into the mixer. */
+int cps1_core_sound_tone_active(unsigned channel);
+void cps1_core_sound_mix(int16_t *out, uint32_t count);
+
+/* Hand-assembled program writes a "play tone" command through MOVEA/
+ * MOVE.W to the real bus dispatcher, then checks the sound HLE's tone
+ * channel 0 actually activated with a non-zero frequency -- proving the
+ * 68000 can reach the mixer, not just that cps1_sound_hle.c compiles. */
+int cps1_core_selftest_sound_bus(void);

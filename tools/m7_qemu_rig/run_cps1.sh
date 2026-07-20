@@ -29,6 +29,7 @@ INC="-ICore/Src/porting/cps1 -I$RIG"
 SRCS_C="Core/Src/porting/cps1/cps1_core.c Core/Src/porting/cps1/cps1_cpu68k.c \
         Core/Src/porting/cps1/cps1_rc_runtime.c Core/Src/porting/cps1/cps1_rc_generated.c \
         Core/Src/porting/cps1/cps1_rom.c Core/Src/porting/cps1/cps1_ppu.c \
+        Core/Src/porting/cps1/cps1_bg.c Core/Src/porting/cps1/cps1_sound_hle.c \
         $RIG/rig_runtime.c $RIG/rig_cps1.c"
 
 OBJS=""
