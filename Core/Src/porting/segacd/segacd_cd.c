@@ -528,11 +528,36 @@ static uint16_t q_crc16(const uint8_t *d, int len)
     return (uint16_t)(~crc);
 }
 
+/* Subcode Q-channel packed BCD (CD Red Book): one byte holds both decimal
+ * digits, nibble-packed (v=25 -> 0x25). This is the correct, real-hardware
+ * encoding for Q-channel data — do NOT "fix" it to match cdd_put_bcd_digits()
+ * below. The CDD *serial command interface* (RS0-RS8) uses a DIFFERENT,
+ * unrelated convention: each decimal digit gets its own byte (see
+ * cdd_put_bcd_digits). Two genuinely different BCD conventions coexist in
+ * this file because they're two different hardware interfaces — an earlier
+ * version of this file conflated them (0720, cmd=2 subcommand responses were
+ * built with this function's nibble-packing instead of digit-per-byte,
+ * which stalled the sub-BIOS's TOC scan forever). */
 static uint8_t to_bcd(int v)
 {
     if (v < 0) v = 0;
     if (v > 99) v = 99;
     return (uint8_t)(((v / 10) << 4) | (v % 10));
+}
+
+/* CDD serial command interface BCD: each decimal digit (0-9) gets its own
+ * byte, NOT nibble-packed like to_bcd() above — real hardware and reference
+ * emulators (PicoDrive's lut_BCD_16) split e.g. v=25 into rs[idx]=0x02,
+ * rs[idx+1]=0x05. Writing the same nibble-packed byte into both halves (the
+ * old bug here) is byte-identical to the correct encoding only for v<10,
+ * which is why it went undetected through several fields/frames before the
+ * first two-digit value exposed it. */
+static void cdd_put_bcd_digits(uint8_t *rs, int idx, int v)
+{
+    if (v < 0) v = 0;
+    if (v > 99) v = 99;
+    rs[idx]     = (uint8_t)(v / 10);
+    rs[idx + 1] = (uint8_t)(v % 10);
 }
 
 void segacd_subcode_q_update(void)
@@ -637,25 +662,25 @@ void segacd_cdd_process(void)
             int mm = (lba / 75) / 60; if (mm > 99) mm = 99;
             int ss = (lba / 75) % 60;
             int ff =  lba % 75;
-            uint8_t bcd_mm = (uint8_t)(((mm/10)<<4)|(mm%10));
-            uint8_t bcd_ss = (uint8_t)(((ss/10)<<4)|(ss%10));
-            uint8_t bcd_ff = (uint8_t)(((ff/10)<<4)|(ff%10));
 
             switch (cmd) {
             case 0x00:      /* Drive Status */
                 if (rs[1] == 0x0f || rs[1] == 0x00 || rs[1] == 0x01) {
                     if (rs[1] == 0x0f) rs[1] = 0x00;
-                    rs[2]=bcd_mm; rs[3]=bcd_mm;
-                    rs[4]=bcd_ss; rs[5]=bcd_ss;
-                    rs[6]=bcd_ff; rs[7]=bcd_ff;
+                    cdd_put_bcd_digits(rs, 2, mm);
+                    cdd_put_bcd_digits(rs, 4, ss);
+                    cdd_put_bcd_digits(rs, 6, ff);
                     rs[8] = 0x04;
                 }
                 break;
             case 0x02:      /* Read TOC */
                 switch (SCD.s68k_regs[0x45] & 0x0f) {
                 case 0x00:  /* absolute MS */
-                    rs[1]=0x00; rs[2]=bcd_mm; rs[3]=bcd_mm;
-                    rs[4]=bcd_ss; rs[5]=bcd_ss; rs[6]=bcd_ff; rs[7]=bcd_ff; rs[8]=0x04;
+                    rs[1]=0x00;
+                    cdd_put_bcd_digits(rs, 2, mm);
+                    cdd_put_bcd_digits(rs, 4, ss);
+                    cdd_put_bcd_digits(rs, 6, ff);
+                    rs[8]=0x04;
                     break;
                 case 0x01: { /* track-relative MS — must be relative to the
                               * current track, NOT the disc start. The cmd
@@ -670,12 +695,9 @@ void segacd_cdd_process(void)
                     int rss = (rel / 75) % 60;
                     int rff =  rel % 75;
                     rs[1]=0x01;
-                    rs[2]=(uint8_t)(((rmm/10)<<4)|(rmm%10));
-                    rs[3]=(uint8_t)(((rmm/10)<<4)|(rmm%10));
-                    rs[4]=(uint8_t)(((rss/10)<<4)|(rss%10));
-                    rs[5]=(uint8_t)(((rss/10)<<4)|(rss%10));
-                    rs[6]=(uint8_t)(((rff/10)<<4)|(rff%10));
-                    rs[7]=(uint8_t)(((rff/10)<<4)|(rff%10));
+                    cdd_put_bcd_digits(rs, 2, rmm);
+                    cdd_put_bcd_digits(rs, 4, rss);
+                    cdd_put_bcd_digits(rs, 6, rff);
                     rs[8]=0x04;
                     break;
                 }
@@ -686,8 +708,8 @@ void segacd_cdd_process(void)
                               * and the sub-BIOS records each track start. */
                     cd_track_t *t2 = track_at_lba(CD.cur_lba);
                     int trk_no = t2 ? (int)(t2 - CD.tracks) + 1 : 1;
-                    uint8_t bcd_trk = (uint8_t)(((trk_no/10)<<4)|(trk_no%10));
-                    rs[1]=0x02; rs[2]=bcd_trk; rs[3]=bcd_trk;
+                    rs[1]=0x02;
+                    cdd_put_bcd_digits(rs, 2, trk_no);
                     rs[4]=0; rs[5]=0; rs[6]=0; rs[7]=0; rs[8]=0;
                     break;
                 }
