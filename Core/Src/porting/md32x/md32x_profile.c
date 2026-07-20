@@ -228,13 +228,18 @@ static void prof_emit_bucket(FILE *f, const char *label, uint32_t kind,
     return;
   }
   qsort(pool, n, sizeof(uint32_t), prof_u32_cmp);
-  fprintf(f, "  %-6s[%c]: n=%u avg=%llu p50=%llu p90=%llu p95=%llu p99=%llu\n",
+  /* %u, not %lu/%llu: nano.specs' printf here does not parse the 'l'/'ll'
+   * length modifier -- it printed the literal characters "lu" on device
+   * (0720 /32x_dwt.txt). Values fit unsigned int at this window size
+   * (MD32X_PROFILE_FRAMES=64, budget ~5.7M cycles/frame -- nowhere near
+   * 2^32) so a plain cast is exact, not truncating. */
+  fprintf(f, "  %-6s[%c]: n=%u avg=%u p50=%u p90=%u p95=%u p99=%u\n",
           label, kind ? 'S' : 'D', (unsigned)n,
-          (unsigned long long)(sum / n),
-          (unsigned long long)prof_pct_sorted(pool, n, 50),
-          (unsigned long long)prof_pct_sorted(pool, n, 90),
-          (unsigned long long)prof_pct_sorted(pool, n, 95),
-          (unsigned long long)prof_pct_sorted(pool, n, 99));
+          (unsigned)(sum / n),
+          (unsigned)prof_pct_sorted(pool, n, 50),
+          (unsigned)prof_pct_sorted(pool, n, 90),
+          (unsigned)prof_pct_sorted(pool, n, 95),
+          (unsigned)prof_pct_sorted(pool, n, 99));
 }
 
 /* One controlled dump to /32x_dwt.txt: mute audio, open/write/close once,
@@ -270,12 +275,12 @@ static void md32x_profile_dump(void) {
   fprintf(f, "build: MD32X_DEVICE_PROFILE=1 (opt switch ON)\n");
   /* No firmware-commit symbol is exported by this build (no _build_version /
    * git-rev global); the file path + opt-switch line identify the run. */
-  fprintf(f, "clk=%lu Hz  region=%s  oc_user=%u (common_emu_auto_oc floor=1)\n",
-          (unsigned long)SystemCoreClock,
+  fprintf(f, "clk=%u Hz  region=%s  oc_user=%u (common_emu_auto_oc floor=1)\n",
+          (unsigned)SystemCoreClock,
           Pico.m.pal ? "PAL" : "NTSC",
           (unsigned)odroid_settings_cpu_oc_level_get());
-  fprintf(f, "frame_budget=%llu cycles  frames_drawn=%u frames_skip=%u  total=%u\n",
-          (unsigned long long)budget,
+  fprintf(f, "frame_budget=%u cycles  frames_drawn=%u frames_skip=%u  total=%u\n",
+          (unsigned)budget,
           (unsigned)prof_drawn_count, (unsigned)prof_skip_count,
           (unsigned)(prof_drawn_count + prof_skip_count));
   fprintf(f, "over_budget_total(drawn)=%u/%u  over_budget_total(skip)=%u/%u\n",
@@ -326,16 +331,16 @@ static void md32x_profile_dump(void) {
 
     fprintf(f, "picoframe sub-phases (sum over whole window, refcount_leaks=%d):\n",
             leaked);
-    fprintf(f, "  pico_total(outside)=%llu  frame_total(pprof)=%llu\n",
-            (unsigned long long)pico_total,
-            (unsigned long long)s_pp_counters.counter[pp_frame]);
+    fprintf(f, "  pico_total(outside)=%u  frame_total(pprof)=%u\n",
+            (unsigned)pico_total,
+            (unsigned)s_pp_counters.counter[pp_frame]);
     for (uint32_t i = 0; i < ARRAY_SIZE(phases); i++) {
       uint64_t sum = (uint64_t)s_pp_counters.counter[phases[i].point];
       uint64_t avg = total_frames ? sum / total_frames : 0;
       unsigned pct_x10 = pico_total ? (unsigned)((sum * 1000) / pico_total) : 0;
-      fprintf(f, "  %-8s: sum=%llu avg/frame=%llu pct_of_pico=%u.%u%%\n",
-              phases[i].label, (unsigned long long)sum,
-              (unsigned long long)avg, pct_x10 / 10, pct_x10 % 10);
+      fprintf(f, "  %-8s: sum=%u avg/frame=%u pct_of_pico=%u.%u%%\n",
+              phases[i].label, (unsigned)sum,
+              (unsigned)avg, pct_x10 / 10, pct_x10 % 10);
     }
 
     /* cycles-per-guest-instruction: is msh2/ssh2 cost dispatch overhead
@@ -350,14 +355,14 @@ static void md32x_profile_dump(void) {
     uint64_t msh2_insn = gnw_sh2_insn_count[0];
     uint64_t ssh2_insn = gnw_sh2_insn_count[1];
     fprintf(f, "sh2 cycles/guest-insn (device, DWT cycles / dispatched guest insns):\n");
-    fprintf(f, "  msh2: cyc=%llu insn=%llu ratio=%llu.%llu\n",
-            (unsigned long long)msh2_cyc, (unsigned long long)msh2_insn,
-            msh2_insn ? (unsigned long long)(msh2_cyc / msh2_insn) : 0ull,
-            msh2_insn ? (unsigned long long)((msh2_cyc * 10 / msh2_insn) % 10) : 0ull);
-    fprintf(f, "  ssh2: cyc=%llu insn=%llu ratio=%llu.%llu\n",
-            (unsigned long long)ssh2_cyc, (unsigned long long)ssh2_insn,
-            ssh2_insn ? (unsigned long long)(ssh2_cyc / ssh2_insn) : 0ull,
-            ssh2_insn ? (unsigned long long)((ssh2_cyc * 10 / ssh2_insn) % 10) : 0ull);
+    fprintf(f, "  msh2: cyc=%u insn=%u ratio=%u.%u\n",
+            (unsigned)msh2_cyc, (unsigned)msh2_insn,
+            msh2_insn ? (unsigned)(msh2_cyc / msh2_insn) : 0u,
+            msh2_insn ? (unsigned)((msh2_cyc * 10 / msh2_insn) % 10) : 0u);
+    fprintf(f, "  ssh2: cyc=%u insn=%u ratio=%u.%u\n",
+            (unsigned)ssh2_cyc, (unsigned)ssh2_insn,
+            ssh2_insn ? (unsigned)(ssh2_cyc / ssh2_insn) : 0u,
+            ssh2_insn ? (unsigned)((ssh2_cyc * 10 / ssh2_insn) % 10) : 0u);
   }
 
   wdog_refresh();
