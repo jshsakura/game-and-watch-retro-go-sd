@@ -146,6 +146,41 @@ recovers more than (a) because it also drops the runtime.
 core), then verify with `make docker` that the intflash size drops by roughly
 5.6 KB and C64 still boots/saves/loads on device.
 
+**Update — commits landed (`d1dc577d`, `2f36536b`), host-level regression audit done:**
+
+- `throw`/`catch`/`dynamic_cast`/`typeid` grepped across every file in
+  `Core/Src/porting/c64/` and `Core/Inc/porting/c64/`, headers included (the
+  original check only covered `.c`/`.cpp`, not headers) — zero hits. Since
+  `-fno-exceptions` turns any `throw`/`try`/`catch` into a hard **compile
+  error** (not a silent behavior change), this also means the ARM build
+  cannot fail to compile from this change — there's nothing for the flag to
+  reject.
+- `new`/`new[]`/`delete`/`delete[]` are globally overridden
+  (`Core/Src/heap.cpp:43,49,55,62`) to route through a custom bump allocator
+  (`heap_alloc_mem()`) that signals OOM via a plain C `assert()`, not the
+  standard-mandated `throw std::bad_alloc`. This override is global (applies
+  to the whole firmware, not just C64), so C64's several `new`/`new[]` call
+  sites (`C64.cpp`, `IEC.cpp`, `SID.cpp`, `1541d64.cpp`, `1541t64.cpp`,
+  `main_c64_dev.cpp`) never relied on real exception-throwing `new` in the
+  first place — `-fno-exceptions` changes nothing about their OOM behavior.
+- No STL headers (`<vector>`, `<string>`, `<map>`, etc.) included anywhere in
+  the C64 tree — rules out libstdc++-internal throw paths hiding inside
+  template code that wouldn't show up in a plain grep for `throw`.
+  No `__builtin_return_address`/backtrace usage either.
+- The existing `.init_array` ctor-overlay fix
+  (`STM32H7B0VBTx_SDCARD.ld:1174-1176`, `c64-frodo-overlay-ctor-bootcrash`) is
+  untouched by this change — constructor ordering and exception-unwind tables
+  are orthogonal ABI mechanisms; nothing here reopens that bug.
+
+**Net: host-level static audit found nothing that could regress.** The only
+way this specific flag change could break anything is a compile error, which
+would be caught immediately and loudly by the next build — not a silent
+runtime regression. What a host audit *can't* substitute for: confirm on
+device that C64 still boots, loads a ROM, and does one save/load round-trip
+— not because anything above suggests it won't, but because that's the
+cheapest way to close the loop on "did the build actually succeed" for a
+change to a whole translation unit's compile flags.
+
 ## Fix #2 (small, same root cause, worth doing while you're in there): `lz4_depack.c` is resident but has exactly one caller, and it's an overlay
 
 `Core/Src/porting/lib/lz4_depack.c` is listed directly in the top-level
