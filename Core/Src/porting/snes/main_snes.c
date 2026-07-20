@@ -320,7 +320,20 @@ static bool snes_dma2d_configure(void) {
  * path didn't use DMA2D (fallback, or a scaling mode change this frame). */
 static void present_frame_wait(void) {
   if (!snes_dma2d_pending) return;
-  HAL_DMA2D_PollForTransfer(&snes_dma2d, 100);
+  /* Poll in slices, refreshing the watchdog between them, instead of one
+   * blocking 100 ms call. odroid_overlay_dialog() refreshes once per menu-loop
+   * iteration, but that is OUTSIDE this function -- the whole wait happens
+   * inside a single _repaint() call, so a long transfer spends all of it with
+   * the watchdog unfed. Slicing keeps the same worst-case wait while never
+   * leaving the watchdog starved for more than one slice.
+   * HAL_DMA2D_PollForTransfer returns HAL_TIMEOUT without disturbing the
+   * transfer, so re-entering it simply continues waiting. */
+  for (int i = 0; i < 10; i++) {
+    wdog_refresh();
+    if (HAL_DMA2D_PollForTransfer(&snes_dma2d, 10) != HAL_TIMEOUT)
+      break;
+  }
+  wdog_refresh();
   snes_dma2d_pending = false;
 }
 

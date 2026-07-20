@@ -1051,15 +1051,47 @@ CheckTools:
 endif
 .PHONY: CheckTools
 
-$(BUILD_DIR)/%.o: %.s Makefile.common Makefile | $(BUILD_DIR)
+# --- feature-flag stamp ------------------------------------------------------
+# make decides what to rebuild from file timestamps, and a command-line variable
+# (`make ... SNES_SMW_HLE=1`) changes no file. Objects compiled before the flag
+# was set stay "up to date", so their #ifdef bodies remain compiled out while
+# the build still succeeds and produces an artifact -- a silently half-applied
+# build. That shipped twice on 0720: a "profiler" release whose profiler call
+# site was absent (main_md32x.o stale), and a link failure where main_snes.o
+# still referenced the audio-HLE wire after the flag was turned back off.
+#
+# Fix: materialise the compile flags into a file and make every object depend
+# on it. The file is only rewritten when the contents actually change, so a
+# no-op re-run of the same command rebuilds nothing.
+#
+# The stamp deliberately lives OUTSIDE $(BUILD_DIR): creating build/ here (at
+# parse time) would satisfy the `| $(BUILD_DIR)` order-only prerequisite, and
+# the $(BUILD_DIR) rule -- which is what mkdir's every per-core subdirectory --
+# would never run, breaking any build that starts from a wiped build/.
+FLAGS_STAMP := .build-flags
+$(shell printf '%s\n' \
+          'C_DEFS=$(C_DEFS)' \
+          'MD_C_DEFS=$(MD_C_DEFS)' \
+          'MD32X_C_DEFS=$(MD32X_C_DEFS)' \
+          'SEGACD_C_DEFS=$(SEGACD_C_DEFS)' \
+          'CFLAGS=$(CFLAGS)' \
+          'CXXFLAGS=$(CXXFLAGS)' \
+          > $(FLAGS_STAMP).new; \
+        cmp -s $(FLAGS_STAMP).new $(FLAGS_STAMP) \
+          || mv -f $(FLAGS_STAMP).new $(FLAGS_STAMP); \
+        rm -f $(FLAGS_STAMP).new)
+
+$(FLAGS_STAMP): ;
+
+$(BUILD_DIR)/%.o: %.s Makefile.common Makefile $(FLAGS_STAMP) | $(BUILD_DIR)
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/memcpy-armv7m.o: Core/Src/memcpy-armv7m.s Makefile.common Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/memcpy-armv7m.o: Core/Src/memcpy-armv7m.s Makefile.common Makefile $(FLAGS_STAMP) | $(BUILD_DIR)
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(SEGACD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) Makefile.common Makefile $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(SEGACD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) Makefile.common Makefile $(FLAGS_STAMP) $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
 	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(SEGACD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) $(LDFLAGS) -o $@
 	@# Every core is an overlay at the same RAM address, so a core that names a
@@ -1072,64 +1104,64 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_
 # RAM-overlay cores, which keep their own -O2. Build the resident core -Os to claw back
 # internal-FLASH (Bank 1, 256 KB) headroom as the system count grows. patsubst keeps every
 # other flag (incl. -ggdb3) intact and does NOT touch the emulator core rules.
-$(BUILD_DIR)/core/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/core/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC core ] $(notdir $<)
 	$(V)$(CC) -c $(patsubst -O2,-Oz,$(CFLAGS)) -Oz -falign-functions=1 -falign-jumps=1 -falign-loops=1 -Wa,-a,-ad,-alms=$(BUILD_DIR)/core/$(notdir $(<:.c=.lst)) $< -o $@
 
 ifeq ($(SD_CARD), 1)
-$(BUILD_DIR)/fatfs/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/fatfs/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC FatFs ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(FATFS_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/fatfs/$(notdir $(<:.c=.lst)) $< -o $@
 endif
 
 ifneq ($(SD_CARD), 1)
-$(TAMP_OBJECTS): $(BUILD_DIR)/tamp/%.o: $(TAMP_DIR)tamp/%.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(TAMP_OBJECTS): $(BUILD_DIR)/tamp/%.o: $(TAMP_DIR)tamp/%.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC tamp ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(TAMP_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/tamp/$(notdir $(<:.c=.lst)) $< -o $@
 endif
 
-$(BUILD_DIR)/nes/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/nes/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC nes ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(NES_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/nes/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/nes_fceu/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/nes_fceu/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC nes-fceu ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(NES_FCEU_C_INCLUDES) -Wno-sequence-point -Wno-parentheses -Wa,-a,-ad,-alms=$(BUILD_DIR)/nes_fceu/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/tgbdual/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/tgbdual/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC GB TGB Dual ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(TGBDUAL_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/tgbdual/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/smsplusgx/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/smsplusgx/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC sms ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(SMSPLUSGX_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/smsplusgx/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/pce/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/pce/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC pce ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(PCE_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/pce/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/msx/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/msx/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC msx ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(MSX_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/msx/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/gw/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/gw/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC gw ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(GW_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/gw/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/wsv/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/wsv/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC wsv ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(WSV_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/wsv/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/md/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/md/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC md ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(MD_C_DEFS) $(MD_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/md/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/segacd/%.o: %.c Makefile.common Makefile segacd_redefines $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/segacd/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) segacd_redefines $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC segacd ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(SEGACD_C_DEFS) $(SEGACD_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/segacd/$(notdir $(<:.c=.lst)) $< -o $@
 	$(V)$(CP) --redefine-syms=segacd_redefines $@
 
-$(BUILD_DIR)/a7800/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/a7800/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC a7800 ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(A7800_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/a7800/$(notdir $(<:.c=.lst)) $< -o $@
 
@@ -1137,28 +1169,28 @@ $(BUILD_DIR)/a7800/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DI
 # -O3 (not the global -O2): the interpreter is CPU-bound on the M7 (the whole VB
 # frame budget is 20ms); code-size growth is fine — the RAM_EMU overlay has ~145KB
 # headroom after the tileCache shrink and the linker ASSERT catches any overflow.
-$(BUILD_DIR)/vb/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/vb/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC vb ] $(notdir $<)
 	$(V)$(CC) -c $(patsubst -O2,-O3,$(CFLAGS)) -DGNW_VB_DEVICE -DDEBUGLEVEL=0 -DVB_LEFT_EYE_ONLY -Dsound_init=vb_sound_init -Dsound_update=vb_sound_update $(VB_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/vb/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/vb/%.o: %.cpp Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/vb/%.o: %.cpp Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CXX vb ] $(notdir $<)
 	$(V)$(CXX) -c $(patsubst -O2,-O3,$(CXXFLAGS)) -DGNW_VB_DEVICE -DDEBUGLEVEL=0 -DVB_LEFT_EYE_ONLY -Dsound_init=vb_sound_init -Dsound_update=vb_sound_update -fno-rtti -fno-exceptions $(VB_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/vb/$(notdir $(<:.cpp=.lst)) $< -o $@
 
-$(BUILD_DIR)/a2600/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/a2600/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC a2600 ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(A2600_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/a2600/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/amstrad/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/amstrad/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC amstrad CPC ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(AMSTRAD_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/amstrad/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/videopac/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/videopac/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC o2em ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(VIDEOPAC_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/videopac/$(notdir $(<:.c=.lst)) $< -o $@
 
 GAMECOM_C_INCLUDES = -ICore/Src/porting/gamecom
-$(BUILD_DIR)/gamecom/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/gamecom/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC gamecom ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(GAMECOM_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/gamecom/$(notdir $(<:.c=.lst)) $< -o $@
 
@@ -1166,7 +1198,7 @@ $(BUILD_DIR)/gamecom/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_
 # collide with the smsplusgx/msx Z80 cores at link time (they live in separate
 # overlays but the linker sees duplicate globals). It's a single TU, so localize
 # everything except the small zx_* API that main_zx.o needs.
-$(BUILD_DIR)/zxs/zxs_impl.o: Core/Src/porting/zxs/zxs_impl.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/zxs/zxs_impl.o: Core/Src/porting/zxs/zxs_impl.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC zxs-core ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(ZX_C_INCLUDES) $< -o $@
 	$(V)$(CP) --keep-global-symbol=zx_init --keep-global-symbol=zx_exec \
@@ -1175,14 +1207,14 @@ $(BUILD_DIR)/zxs/zxs_impl.o: Core/Src/porting/zxs/zxs_impl.c Makefile.common Mak
 		--keep-global-symbol=kbd_key_down --keep-global-symbol=kbd_key_up \
 		--keep-global-symbol=zx_display_info $@
 
-$(BUILD_DIR)/zxs/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/zxs/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC zxs ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(ZX_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/zxs/$(notdir $(<:.c=.lst)) $< -o $@
 
 # The chips C64 core (c64_impl.o) exports generic m6502_*/m6526_*/mem_*/kbd_* symbols
 # that collide with other cores' CPUs at link time. It's a single TU, so localize
 # everything except the small c64_* API that main_c64.o needs.
-$(BUILD_DIR)/c64/c64_impl.o: Core/Src/porting/c64/c64_impl.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/c64/c64_impl.o: Core/Src/porting/c64/c64_impl.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC c64-core ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(C64_C_INCLUDES) $< -o $@
 	$(V)$(CP) --keep-global-symbol=c64_init --keep-global-symbol=c64_exec \
@@ -1190,7 +1222,7 @@ $(BUILD_DIR)/c64/c64_impl.o: Core/Src/porting/c64/c64_impl.c Makefile.common Mak
 		--keep-global-symbol=c64_key_down --keep-global-symbol=c64_key_up \
 		--keep-global-symbol=c64_display_info $@
 
-$(BUILD_DIR)/c64/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/c64/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC c64 ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(C64_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/c64/$(notdir $(<:.c=.lst)) $< -o $@
 
@@ -1198,15 +1230,15 @@ $(BUILD_DIR)/c64/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 # Frodo is a large C++ core; build the overlay -Os so its code leaves enough RAM_EMU
 # free for the run-time heap (the 64KB C64 RAM + ROMs are new[]'d from badheap). At
 # -O2 the overlay left only ~56KB heap -> the 64KB RAM alloc asserted.
-$(BUILD_DIR)/c64/%.o: %.cpp Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/c64/%.o: %.cpp Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CXX c64 ] $(notdir $<)
 	$(V)$(CXX) -c $(patsubst -O2,-Os,$(CXXFLAGS)) $(C64_C_INCLUDES) -fpermissive -fno-strict-aliasing -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wa,-a,-ad,-alms=$(BUILD_DIR)/c64/$(notdir $(<:.cpp=.lst)) $< -o $@
 
-$(BUILD_DIR)/celeste/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/celeste/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC celeste ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(CELESTE_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/celeste/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/music/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/music/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC music ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(MUSIC_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/music/$(notdir $(<:.c=.lst)) $< -o $@
 
@@ -1224,15 +1256,15 @@ $(BUILD_DIR)/music/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DI
 # that includes the ABI redefine step.
 PICO8_EXTRA_FLAGS = -fno-exceptions
 
-$(BUILD_DIR)/pico8/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/pico8/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CXX pico8 ] $(notdir $<)
 	$(V)$(CXX) -c $(CXXFLAGS) $(PICO8_EXTRA_FLAGS) $(PICO8_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/pico8/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/tama/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/tama/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC tama ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(TAMA_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/tama/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/pkmini/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/pkmini/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC Pokemon Mini ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(PKMINI_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/pkmini/$(notdir $(<:.c=.lst)) $< -o $@
 
@@ -1328,7 +1360,7 @@ SM_C_INCLUDES = $(C_INCLUDES) -Iexternal/sm -Iexternal -I./
 sm_is_hot = $(if $(findstring /snes/,$1),1,$(findstring spc_player.c,$1))
 
 define sm_obj_prereq_gen
-$$(BUILD_DIR)/sm/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/sm/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $(FLAGS_STAMP) $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC sm ] $$(notdir $$<)
 	$$(V)$$(CC) -c $(if $(call sm_is_hot,$1),$$(CFLAGS),$$(subst -O2,-Os,$$(CFLAGS))) $$(C_DEFS_SM) $$(SM_C_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers
@@ -1426,7 +1458,7 @@ endif
 # and rebuild; main_snes.c's #else path is the plain synchronous memcpy that
 # shipped before, no other code changes needed to revert.
 define snes_obj_prereq_gen
-$$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_diag_pick,$1) Makefile.common Makefile snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) $(if $(filter 1,$(SNES_NSPC_HLE)),$(SNES_NSPC_HLE_DIR)/.stamp) | $$(BUILD_DIR)
+$$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_diag_pick,$1) Makefile.common Makefile $(FLAGS_STAMP) snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) $(if $(filter 1,$(SNES_NSPC_HLE)),$(SNES_NSPC_HLE_DIR)/.stamp) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
@@ -1451,14 +1483,14 @@ SNES_HLE_COEXIST_FILES :=
 ifeq ($(SNES_HLE_COEXIST),1)
 SNES_HLE_COEXIST_FILES := tools/nspc_audio_wire/smw_exact_wire.c tools/nspc_audio_wire/nspc_wire.c
 
-$(BUILD_DIR)/snes/smw_exact_wire.o: tools/nspc_audio_wire/smw_exact_wire.c Makefile.common Makefile snes_redefines smwx_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
+$(BUILD_DIR)/snes/smw_exact_wire.o: tools/nspc_audio_wire/smw_exact_wire.c Makefile.common Makefile $(FLAGS_STAMP) snes_redefines smwx_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC snes ] smw_exact_wire.c \(coexist\)
 	$(V)$(CC) -c $(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) tools/nspc_audio_wire/smw_exact_wire.c -o $@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$(V)$(CP) --redefine-syms=smwx_redefines $@
 	$(V)$(CP) --redefine-syms=snes_redefines $@
 
-$(BUILD_DIR)/snes/nspc_wire.o: tools/nspc_audio_wire/nspc_wire.c Makefile.common Makefile snes_redefines nspc_wire_coexist_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
+$(BUILD_DIR)/snes/nspc_wire.o: tools/nspc_audio_wire/nspc_wire.c Makefile.common Makefile $(FLAGS_STAMP) snes_redefines nspc_wire_coexist_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC snes ] nspc_wire.c \(coexist\)
 	$(V)$(CC) -c $(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) tools/nspc_audio_wire/nspc_wire.c -o $@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
@@ -1483,7 +1515,7 @@ $(eval $(foreach obj,$(filter-out $(SNES_HLE_COEXIST_FILES),$(SNES_C_SOURCES)),$
 # (../types.h etc.) resolve via -I$(CORE_SNES)/src/snes.
 ifeq ($(RCSMW),1)
 define rc_smw_obj_prereq_gen
-$$(BUILD_DIR)/rc_smw/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile snes_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/rc_smw/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $(FLAGS_STAMP) snes_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC rc_smw ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $$(SNES_C_INCLUDES) $$(RCSMW_C_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
@@ -1503,7 +1535,7 @@ endif
 # names). main_md32x.o goes through the same rule; app_main_md32x and the
 # plat_* hooks are absent from the redefines list, so they stay unrenamed.
 define md32x_obj_prereq_gen
-$$(BUILD_DIR)/md32x/$(call md32x_obj_name,$1): $1 Makefile.common Makefile md32x_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/md32x/$(call md32x_obj_name,$1): $1 Makefile.common Makefile $(FLAGS_STAMP) md32x_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC md32x ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) -fno-strict-aliasing $$(MD32X_C_DEFS) $$(MD32X_C_INCLUDES) $$< -o $$@ \
 	-w -Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough -Wno-implicit-function-declaration
@@ -1546,7 +1578,7 @@ GBA_WARN_OFF = -Wno-parentheses -Wno-unknown-pragmas -Wno-strict-aliasing -Wno-c
 gba_is_hot = $(findstring gba_memory.c,$1)
 
 define gba_obj_prereq_gen
-$$(BUILD_DIR)/gba/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/gba/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $(FLAGS_STAMP) $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC gba ] $$(notdir $$<)
 	$$(V)$$(CC) -c $(if $(call gba_is_hot,$1),$$(subst -O2,-O3,$$(CFLAGS)),$$(CFLAGS)) $$(C_DEFS_GBA) $$(GBA_C_INCLUDES) $$(GBA_WARN_OFF) $$< -o $$@
 	$$(V)$$(CP) --redefine-syms=gba_redefines $$@
@@ -1562,7 +1594,7 @@ endef
 gba_is_interp = $(findstring cpu.cc,$1)
 
 define gba_cxx_obj_prereq_gen
-$$(BUILD_DIR)/gba/$(patsubst %.cc,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/gba/$(patsubst %.cc,%.o,$(notdir $1)): $1 Makefile.common Makefile $(FLAGS_STAMP) $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CXX gba ] $$(notdir $$<)
 	$$(V)$$(CXX) -c $(if $(call gba_is_interp,$1),$$(subst -O2,-O3,$$(CXXFLAGS)),$$(CXXFLAGS)) $$(C_DEFS_GBA) $$(GBA_C_INCLUDES) $$(GBA_WARN_OFF) -fno-rtti -fno-exceptions $$< -o $$@
 	$$(V)$$(CP) --redefine-syms=gba_redefines $$@
@@ -1571,7 +1603,7 @@ endef
 # note: the blank line above is intentional
 
 define gba_asm_obj_prereq_gen
-$$(BUILD_DIR)/gba/$(patsubst %.S,%.o,$(notdir $1)): $1 Makefile.common Makefile | $$(BUILD_DIR)
+$$(BUILD_DIR)/gba/$(patsubst %.S,%.o,$(notdir $1)): $1 Makefile.common Makefile $(FLAGS_STAMP) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ AS gba ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(ASFLAGS) $$< -o $$@
 	$$(V)$$(CP) --redefine-syms=gba_redefines $$@
@@ -1593,7 +1625,7 @@ C_DEFS_ZELDA3 =  \
 
 # function used to generate prerequisite rules for zelda3 objects
 define zelda3_obj_prereq_gen
-$$(BUILD_DIR)/zelda3/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/zelda3/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $(FLAGS_STAMP) $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC zelda3 ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) $$(C_DEFS_ZELDA3) $$(ZELDA3_C_INCLUDES)-Wa,-a,-ad,-alms=$$(BUILD_DIR)/zelda3/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable
@@ -1625,7 +1657,7 @@ C_DEFS_SMW =  \
 
 # function used to generate prerequisite rules for smw objects
 define smw_obj_prereq_gen
-$$(BUILD_DIR)/smw/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/smw/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $(FLAGS_STAMP) $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC smw ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) $$(C_DEFS_SMW) $$(SMW_C_INCLUDES) -Wa,-a,-ad,-alms=$$(BUILD_DIR)/smw/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-const-variable -Wno-int-in-bool-context -Wno-unused-value -Wno-unused-function -Wno-incompatible-pointer-types -Wno-implicit-function-declaration -Wno-format -Wno-array-bounds -Wno-strict-aliasing -Wno-maybe-uninitialized
@@ -1638,7 +1670,7 @@ endef
 $(eval $(foreach obj,$(SMW_C_SOURCES),$(call smw_obj_prereq_gen,$(obj))))
 
 define ngp_obj_prereq_gen
-$$(BUILD_DIR)/ngp/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/ngp/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $(FLAGS_STAMP) $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC ngp ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) $$(NGP_C_INCLUDES) -Os $(if $(filter %/cz80.c,$1),-fno-jump-tables,) -Wa,-a,-ad,-alms=$$(BUILD_DIR)/ngp/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
 	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-const-variable -Wno-unused-parameter -Wno-sign-compare -Wno-strict-aliasing -Wno-implicit-fallthrough -Wno-parentheses -Wno-unknown-pragmas -Wno-comment -Wno-int-in-bool-context -Wno-maybe-uninitialized
@@ -1651,7 +1683,7 @@ endef
 $(eval $(foreach obj,$(NGP_C_SOURCES),$(call ngp_obj_prereq_gen,$(obj))))
 
 define wswan_obj_prereq_gen
-$$(BUILD_DIR)/wswan/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/wswan/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $(FLAGS_STAMP) $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC wswan ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) $$(WSWAN_C_INCLUDES) -O3 -Wa,-a,-ad,-alms=$$(BUILD_DIR)/wswan/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
 	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-const-variable -Wno-unused-parameter -Wno-sign-compare -Wno-strict-aliasing -Wno-implicit-fallthrough -Wno-parentheses -Wno-unknown-pragmas -Wno-comment -Wno-int-in-bool-context -Wno-maybe-uninitialized -Wno-format
