@@ -18,6 +18,14 @@
 #define CD_SECTOR_RAW    2352
 #define CDC_RING_SIZE    0x4000        /* 16 KB, matches PicoDrive cdc.ram */
 #define CD_MAX_TRACKS    100
+/* A CUE's TRACK entries share whichever FILE line precedes them — a
+ * single-BIN cue (the common case) has ONE distinct path repeated across all
+ * of its (up to 100) TRACK lines. Storing a full 256-byte path per track
+ * (25.6 KB) duplicates that path up to 100x; a small shared table + a 1-byte
+ * index per track holds the same information for a fraction of the RAM_EMU
+ * budget. 16 distinct FILE lines is generous headroom for even a multi-BIN
+ * cue. */
+#define CD_MAX_FILES     16
 
 typedef struct {
     uint32_t start_lba;
@@ -25,13 +33,16 @@ typedef struct {
     uint32_t file_offset;
     uint16_t sector_size;    /* 2048 or 2352 */
     uint8_t  is_audio;
-    char     bin_path[256];
+    uint8_t  file_idx;       /* index into segacd_cd_t.file_paths */
 } cd_track_t;
 
 typedef struct {
     cd_track_t tracks[CD_MAX_TRACKS];
     int        num_tracks;
     uint32_t   total_lba;
+
+    char       file_paths[CD_MAX_FILES][256]; /* shared table, see CD_MAX_FILES */
+    int        num_files;
 
     FILE      *fh;                 /* persistent handle to the currently-open bin */
     char       fh_path[256];       /* which bin fh points at (avoid reopen) */
@@ -126,11 +137,13 @@ static int parse_cue(const char *cue_path)
     if (!cue) return -1;
 
     char     cur_bin[256] = {0};
+    int      cur_file_idx = -1;
     uint32_t cur_file_base_lba = 0;   /* absolute LBA at offset 0 of cur_bin */
     uint32_t running_lba = 0;         /* total sectors across files seen so far */
     int      ti = -1;
     char     line[512];
     CD.num_tracks = 0;
+    CD.num_files  = 0;
 
     while (fgets(line, sizeof(line), cue)) {
         char *p = cue_trim(line);
@@ -147,13 +160,17 @@ static int parse_cue(const char *cue_path)
             cur_file_base_lba = running_lba;               /* this FILE starts here */
             long sz = file_size_bytes(cur_bin);
             if (sz > 0) running_lba += (uint32_t)(sz / CD_SECTOR_RAW);
+            if (CD.num_files < CD_MAX_FILES) {
+                cur_file_idx = CD.num_files++;
+                snprintf(CD.file_paths[cur_file_idx], sizeof(CD.file_paths[cur_file_idx]), "%s", cur_bin);
+            }
         } else if (!strncmp(p, "TRACK", 5) && CD.num_tracks < CD_MAX_TRACKS) {
             int num = 0; char mode[32] = {0};
             if (sscanf(p, "TRACK %d %31s", &num, mode) != 2) continue;
             ti = CD.num_tracks++;
             cd_track_t *t = &CD.tracks[ti];
             memset(t, 0, sizeof(*t));
-            snprintf(t->bin_path, sizeof(t->bin_path), "%s", cur_bin);
+            t->file_idx    = (uint8_t)(cur_file_idx >= 0 ? cur_file_idx : 0);
             t->is_audio    = (strncmp(mode, "AUDIO", 5) == 0);
             t->sector_size = strstr(mode, "/2048") ? CD_SECTOR_DATA : CD_SECTOR_RAW;
         } else if (!strncmp(p, "INDEX", 5) && ti >= 0) {
@@ -203,11 +220,12 @@ static int read_sector(uint32_t lba, uint8_t *dst, int want)
     cd_track_t *t = track_at_lba(lba);
     if (!t) return -1;
 
-    if (CD.fh == NULL || strcmp(CD.fh_path, t->bin_path) != 0) {
+    const char *bin_path = CD.file_paths[t->file_idx];
+    if (CD.fh == NULL || strcmp(CD.fh_path, bin_path) != 0) {
         if (CD.fh) fclose(CD.fh);
-        CD.fh = fopen(t->bin_path, "rb");
+        CD.fh = fopen(bin_path, "rb");
         if (!CD.fh) return -1;
-        snprintf(CD.fh_path, sizeof(CD.fh_path), "%s", t->bin_path);
+        snprintf(CD.fh_path, sizeof(CD.fh_path), "%s", bin_path);
         CD.fh_pos = 0xFFFFFFFFu;
     }
 

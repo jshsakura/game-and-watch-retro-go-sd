@@ -32,7 +32,7 @@ int main(int argc, char **argv)
         cd_track_t *t = &CD.tracks[i];
         printf("  track %02d  %-5s  start_lba=%-7u  size=%u  bin=%s\n",
                i + 1, t->is_audio ? "AUDIO" : "DATA", t->start_lba,
-               t->sector_size, t->bin_path);
+               t->sector_size, CD.file_paths[t->file_idx]);
     }
 
     /* Sega CD boot signature at data-track sector 0 (user bytes). */
