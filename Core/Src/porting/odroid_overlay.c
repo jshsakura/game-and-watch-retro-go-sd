@@ -476,6 +476,11 @@ void odroid_overlay_sleep_pause_banner(void_callback_t repaint, odroid_menu_flag
 
     while (1)
     {
+        /* Same watchdog gap as odroid_overlay_dialog() below -- this loop's
+         * repaint callback can also be SNES's blit() (open_pause_menu's
+         * pause_banner path), which synchronously waits out a DMA2D
+         * transfer. See the comment there for the full mechanism. */
+        wdog_refresh();
         _repaint(false);
 
         odroid_input_read_gamepad(&joystick);
@@ -998,6 +1003,21 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *options, i
 
     while (1)
     {
+        /* wdog_refresh() below used to only fire from the debounce/idle-sleep
+         * branches further down, not every iteration. Most repaint callbacks
+         * are cheap enough that the gap never mattered, but SNES's overlay
+         * repaint is main_snes.c's blit(), which synchronously waits out a
+         * DMA2D transfer (present_frame_wait(), up to a 100ms poll) on every
+         * call -- and the window watchdog (WWDG1, prescaler 128 / counter
+         * 127) times out in well under that. A single slow DMA2D wait with
+         * no refresh in between resets the device mid-menu: no BSOD (WWDG
+         * resets don't show one), just the boot logo and a clean drop back
+         * to the launcher -- exactly the SNES-only, "used to work" report
+         * this fixes. Refreshing here is safe for every other repaint
+         * callback too (wdog_refresh() itself is a no-op unless the
+         * watchdog is enabled), so this is a general fix, not an SNES
+         * special-case. */
+        wdog_refresh();
         _repaint();
         if (flags & ODROID_MENU_FLAG_DRAW_ONLY) {
             return sel;
