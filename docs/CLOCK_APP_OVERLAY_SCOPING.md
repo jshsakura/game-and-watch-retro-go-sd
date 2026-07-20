@@ -136,3 +136,17 @@ dispatch table already uses instead of a direct function call.
 Recommend implementing only after the two landed fixes (`d1dc577d`,
 `2f36536b`) are confirmed on device, given this is materially more invasive
 than either of those.
+
+## Status: DEFERRED (2026-07-20, user decision)
+
+**보류 사유:** intflash 압박 해소 — 아침의 여유 44 B 위기는 끝났고(회수분 + 업스트림
+병합분으로 ~2.2 KB 확보), 출하된 앱의 부팅경로를 건드리는 작업은 그 공간이 실제로 필요할
+때 한다. **재개 조건: 여유가 다시 1 KB 밑으로 떨어질 때.**
+
+**재개 시 재조사 불필요 — 자산 외부화는 이미 측정으로 기각됐다.** "배경/폰트 자산을
+SD로 빼자"는 접근은 이 앱에 해당사항이 없다: map 실측 결과 클록+알람 21,403 B는
+**코드 20,670 B (96.6%) / rodata 733 B (3.4%)**이고, 733 B의 최대 항목이 `THEMES`
+112 B다. 배경 GIF·사진앨범·MP3 알람은 **이미 SD에서 로드**하고 시계 페이스·씬은 전부
+코드로 그린다(`rg_clock.h`: "All faces are drawn in code — no bundled art"). 733 B를
+전부 빼도 SD 읽기 경로와 폴백 코드가 붙어 순증가할 공산이 크다. 따라서 이 문서의
+**오버레이화가 20 KB를 회수하는 유일한 경로**다.
