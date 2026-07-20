@@ -41,6 +41,22 @@ const FEATURED_DEVLOG = [
     tags: ['snes', 'fault'],
   },
   {
+    slug: 'earthbound-the-memmove-that-ran-into-peripheral-space',
+    date: '2026-07-20',
+    title: 'EarthBound: the memmove that ran off into peripheral space',
+    excerpt:
+      'A 300 MB copy. A pointer in the size register. The compiler\u2019s register allocator, honouring an alignment annotation, silently shifted every argument one slot over.',
+    tags: ['snes', 'fault'],
+  },
+  {
+    slug: 'sega-cd-the-sub-cpu-that-waited-for-a-dead-main',
+    date: '2026-07-20',
+    title: 'Sega CD: the sub-CPU that waited for a dead main',
+    excerpt:
+      'The sub spun at $6132 waiting for a handshake. The main had died at $FF0000 \u2014 we had jumped it into the ASCII string "SEGA" and asked it to execute a header.',
+    tags: ['segacd', 'fault'],
+  },
+  {
     slug: 'boot-rescue-when-a-hung-boot-was-a-dead-battery',
     date: '2026-07-20',
     title: 'Boot rescue: when a hung boot was a dead battery',
@@ -49,12 +65,44 @@ const FEATURED_DEVLOG = [
     tags: ['boot', 'fault'],
   },
   {
+    slug: 'clock-alarm-the-one-you-couldnt-turn-off',
+    date: '2026-07-20',
+    title: 'The clock alarm you couldn\u2019t turn off',
+    excerpt:
+      'Four separate device-only bugs, each reported as "the alarm went off and nothing would stop it." A confirm button wired as snooze. An RTC alarm that stayed armed while awake.',
+    tags: ['clock', 'fault'],
+  },
+  {
+    slug: 'c64-when-cpp-exceptions-leaked-into-the-launcher',
+    date: '2026-07-20',
+    title: 'C64: when C++ exceptions leaked into the launcher',
+    excerpt:
+      'A C++ core\u2019s exception tables \u2014 for exceptions it never throws \u2014 quietly walked out of the overlay and into the resident launcher, eating 5.6 KB of a 44-byte budget.',
+    tags: ['c64', 'hardware'],
+  },
+  {
     slug: '32x-fighting-for-1740-bytes-of-itcm',
     date: '2026-07-20',
     title: '32X: fighting for 1740 bytes of ITCM',
     excerpt:
       'The SH-2 interpreter would not fit in instruction TCM by 1740 bytes. The computed-goto dispatch could not be split. We had to move something cold out.',
     tags: ['32x', 'performance'],
+  },
+  {
+    slug: 'virtual-boy-black-screen-crushed-audio-three-bugs-one-port',
+    date: '2026-07-20',
+    title: 'Virtual Boy: black screen, crushed audio, and the DRC that couldn\u2019t run',
+    excerpt:
+      'A silent divide-by-zero (ARM doesn\u2019t trap it, x86 does). A decimation without filtering. A DRC built for A32 on a Thumb-2-only core. Three bugs, one port, one week.',
+    tags: ['fault', 'hardware'],
+  },
+  {
+    slug: 'jpeg-decoder-the-last-byte-and-the-eoi-that-never-came',
+    date: '2026-07-20',
+    title: 'JPEG decoder: the last byte, and the EOI that never came',
+    excerpt:
+      'Nine frames in ten were rejected. The HAL was flooring the input length to a multiple of four \u2014 truncating the FF D9 end-of-image marker. Only the video player suffered.',
+    tags: ['video', 'fault'],
   },
 ];
 

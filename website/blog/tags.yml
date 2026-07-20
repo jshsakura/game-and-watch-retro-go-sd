@@ -62,3 +62,18 @@ hardware:
   label: hardware
   permalink: /hardware
   description: Device-only behaviour and the host/device gap
+
+clock:
+  label: clock
+  permalink: /clock
+  description: Clock app, alarms, and the RTC
+
+c64:
+  label: C64
+  permalink: /c64
+  description: Commodore 64 / Frodo port work
+
+i18n:
+  label: i18n
+  permalink: /i18n
+  description: Language binaries, fonts, and codepages
