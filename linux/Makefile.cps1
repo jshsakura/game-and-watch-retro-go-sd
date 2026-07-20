@@ -13,7 +13,7 @@ BUILD_DIR = build
 OPT ?= -O2 -g
 
 C_SOURCES = \
-cps1/main.c \
+cps1/main_cps1.c \
 ../Core/Src/porting/cps1/cps1_core.c \
 crc32.c
 
