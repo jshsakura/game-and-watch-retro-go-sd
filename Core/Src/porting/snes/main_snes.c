@@ -558,6 +558,19 @@ static bool snes_LoadState(const char *pathName) {
   /* A load replaces the whole machine: a learned spin pattern (and its purity
    * sequence history) now describes a machine that no longer exists. Relearn. */
   spin_reset();
+#ifdef SNES_LINE_CACHE
+  /* Same reason, for the scanline reuse cache: it decides a line is reusable by
+   * comparing against state captured from the machine that just got replaced,
+   * while snes_frame still holds the pre-load image (lcd_clear_active_buffer()
+   * above clears the LCD buffer, not the PPU's persistent render target). Skip
+   * this and the loaded game draws with rows left over from the state you left
+   * -- silent, and only visible as scattered stale lines.
+   *
+   * The startup-resume path is already covered further below (load, then
+   * memset(snes_frame) + invalidate); this covers the in-game load, i.e. the
+   * pause menu's Reload, which runs inside the frame loop with no memset. */
+  ppu_lineCacheInvalidate();
+#endif
 #ifdef SNES_SMW_HLE_PRODUCT
   wire_restore_after_load(snes);
 #endif
