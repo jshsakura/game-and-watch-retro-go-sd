@@ -667,7 +667,9 @@ Core/Src/porting/md32x/main_md32x.c \
 Core/Src/porting/md32x/md32x_border_clear.c
 endif
 # md32x_profile.c is only compiled when MD32X_DEVICE_PROFILE=1 so the default
-# release link graph (and therefore intflash.bin) is byte-identical without it.
+# release link graph (and therefore intflash.bin) is byte-identical without
+# it — see the file's own header comment for why it's a separate TU (routes
+# its code to XIP flash instead of the RAM_EMU overlay).
 ifdef MD32X_DEVICE_PROFILE
 ifneq ($(MD32X_DEVICE_PROFILE),0)
 MD32X_C_SOURCES += Core/Src/porting/md32x/md32x_profile.c
@@ -1225,21 +1227,19 @@ MD32X_C_INCLUDES = \
 # line-F opcodes would index out of bounds.
 MD32X_C_DEFS = -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DGNW_32X_CORE -DLSB_FIRST
 
-# MD32X_DEVICE_PROFILE=1 — device-side DWT phase profiler. PicoDrive's pprof
-# probes (pico/pico.c, draw.c, 32x/32x.c, sound/sound.c) accumulate DWT_CYCCNT
-# deltas per phase; main_md32x.c runs 120 headless frames at boot and writes
-# /32x_dwt.txt. Zero impact on the default release build (all flags off).
-# - PPROF: activate pprof_start/end macros (else no-ops via pico_int.h)
-# - GNW_32X_DWT_PROF: select the DWT timer branch in pprof.h (calls
-#   md32x_dwt_now() -> common_emu_get_dwt_cycles()) and widen the pprof enum
-#   so the struct layout matches. RIG_PHASE_PROF is intentionally NOT defined
-#   here: it adds pp_fm/pp_pwm/pp_draw32x instrumentation whose extra text
-#   pushes the md32x overlay + BSS past the 724 KB RAM_EMU budget (BSS
-#   overflow at link). The base probes (frame/msh2/ssh2/m68k/draw/sound) are
-#   sufficient to answer "slave SH-2 interpret vs draw/composite".
+# MD32X_DEVICE_PROFILE=1 — device-side DWT phase profiler (coarse pace/proc/
+# pico/blit/audio buckets + picodrive's pprof-based PicoFrame sub-phase
+# breakdown, both live in main_md32x.c, dumping to /32x_dwt.txt over 600
+# real gameplay frames). Zero impact on the default release build. Only
+# -DMD32X_DEVICE_PROFILE needs passing: pico_int.h auto-defines PPROF from
+# it (`(RIG_PHASE_PROF || MD32X_DEVICE_PROFILE) && !PPROF`), which is enough
+# to widen every pprof guard in picodrive (pico.c/draw.c/32x/32x.c/
+# sound/sound.c) — including pp_fm/pp_pwm/pp_draw32x, which used to be
+# RIG_PHASE_PROF-only over RAM_EMU budget concerns the AHB-allocated delta
+# pools (see main_md32x.c's MEMORY PLACEMENT comment) no longer apply to.
 ifdef MD32X_DEVICE_PROFILE
 ifneq ($(MD32X_DEVICE_PROFILE),0)
-MD32X_C_DEFS += -DPPROF -DGNW_32X_DWT_PROF -DMD32X_DEVICE_PROFILE
+MD32X_C_DEFS += -DMD32X_DEVICE_PROFILE
 endif
 endif
 
