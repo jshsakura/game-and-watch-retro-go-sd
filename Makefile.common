@@ -860,6 +860,25 @@ MD_OBJECTS = $(addprefix $(BUILD_DIR)/md/,$(notdir $(MD_C_SOURCES:.c=.o)))
 md32x_obj_name = $(subst /,__,$(patsubst external/picodrive/%,%,$(patsubst Core/Src/porting/md32x/%,%,$(1:.c=.o))))
 MD32X_OBJECTS = $(addprefix $(BUILD_DIR)/md32x/,$(foreach s,$(MD32X_C_SOURCES),$(call md32x_obj_name,$(s))))
 SEGACD_OBJECTS = $(addprefix $(BUILD_DIR)/segacd/,$(notdir $(SEGACD_C_SOURCES:.c=.o)))
+
+# With SEGACD=0 the core is not compiled, but the linker script still names
+# build/segacd/*.o explicitly (ld has no conditionals), so ld would fail to
+# open them. Emit empty objects instead: the segacd sections end up zero-sized
+# and RAM_EMU is untouched. Drops out entirely once SEGACD=1.
+C_DEFS += -DSEGACD_ENABLED=$(if $(filter 1,$(SEGACD)),1,0)
+
+SEGACD_STUB_NAMES = Z80 gwenesis_bus gwenesis_eeprom gwenesis_io gwenesis_savestate \
+                    gwenesis_sn76489 gwenesis_sram gwenesis_vdp_gfx gwenesis_vdp_mem \
+                    m68kcpu main_segacd segacd_audio segacd_bus segacd_cache \
+                    segacd_cd segacd_engine segacd_gfx ym2612 z80inst
+ifneq ($(SEGACD),1)
+SEGACD_OBJECTS = $(addprefix $(BUILD_DIR)/segacd/,$(addsuffix .o,$(SEGACD_STUB_NAMES)))
+$(BUILD_DIR)/segacd/%.o: | $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)/segacd
+	$(V)$(ECHO) [ STUB segacd ] $(notdir $@)
+	$(V)$(ECHO) "" | $(CC) $(CFLAGS) -x c -c - -o $@
+endif
+
 A2600_OBJECTS = $(addprefix $(BUILD_DIR)/a2600/,$(notdir $(A2600_C_SOURCES:.c=.o)))
 A7800_OBJECTS = $(addprefix $(BUILD_DIR)/a7800/,$(notdir $(A7800_C_SOURCES:.c=.o)))
 VB_OBJECTS = $(addprefix $(BUILD_DIR)/vb/,$(notdir $(VB_C_SOURCES:.c=.o)))

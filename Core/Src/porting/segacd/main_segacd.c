@@ -237,7 +237,9 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     else              { common_emu_state.pause_after_frames = 0; }
 
     odroid_system_init(APPID_SEGACD, SEGACD_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &sleep_wake_up, &sram_save_cb);
+    /* 7th arg (cheat_update_cb) added by upstream 8caa3e45; Sega CD has no
+     * cheat handler, same as the other cores that pass NULL here. */
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &sleep_wake_up, &sram_save_cb, NULL);
 
     /* Every core that calls ram_malloc() for its own buffers must point
      * ram_start past its own static overlay+bss first (see main_gwenesis.c's

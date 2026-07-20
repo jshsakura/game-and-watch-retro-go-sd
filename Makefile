@@ -792,7 +792,14 @@ endif
 # separately into build/segacd/ so the overlay has its own .o set), plus
 # the sub-68K + CDD/CDC + graphics + audio porting layer. CD data is
 # streamed from SD; the BIOS is XIP'd from flash (0 RAM). SD builds only.
+# Sega CD does not fit RAM_EMU at the standard 724K budget: it overflows by
+# ~145K, which is exactly the second framebuffer the branch used to reclaim.
+# Double buffering is an invariant (every overlay and screenshot path assumes a
+# back buffer), so the core stays out of the build until its own RAM campaign
+# lands. Enable with SEGACD=1 to work on it.
+SEGACD ?= 0
 SEGACD_C_SOURCES =
+ifeq ($(SEGACD),1)
 SEGACD_C_SOURCES += \
 $(CORE_GWENESIS)/src/cpus/M68K/m68kcpu.c \
 $(CORE_GWENESIS)/src/cpus/Z80/Z80.c \
@@ -813,6 +820,7 @@ Core/Src/porting/segacd/segacd_cd.c \
 Core/Src/porting/segacd/segacd_audio.c \
 Core/Src/porting/segacd/segacd_gfx.c \
 Core/Src/porting/segacd/segacd_cache.c
+endif
 
 A2600_C_SOURCES =
 A2600_CXX_SOURCES =
