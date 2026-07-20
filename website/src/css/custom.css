@@ -85,14 +85,11 @@ html:not([data-edition]) {
   color: #f4f1e6;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s, transform 0.1s;
+  transition: background 0.15s;
 }
 .gw-edition-toggle:hover {
   background: var(--gw-accent);
   color: #12211a;
-}
-.gw-edition-toggle:active {
-  transform: translateY(1px);
 }
 
 /* --- Navbar: gold pixel brand ------------------------------------------- */
@@ -123,6 +120,12 @@ html:not([data-edition]) {
 .button--secondary:hover {
   --ifm-button-background-color: #ddb63c;
   color: #1c150a;
+}
+
+/* --- Links: no underline on hover, color shift only (no jank) ----------- */
+a:hover,
+a:focus {
+  text-decoration: none;
 }
 
 /* --- Hero: the physical device — gold ring + shell + scanlines ---------- */
@@ -245,12 +248,10 @@ html:not([data-edition]) {
   text-decoration: none;
   color: inherit;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  transition: border-color 0.18s ease;
 }
 .gw-card:hover {
-  transform: translateY(-3px);
   border-color: var(--gw-gold);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
 }
 .gw-card__icon {
   font-size: 1.7rem;
@@ -284,10 +285,9 @@ html:not([data-edition]) {
   padding: 1.15rem 1.25rem;
   text-decoration: none;
   color: inherit;
-  transition: transform 0.18s ease, background 0.18s ease, border-left-color 0.18s ease;
+  transition: background 0.18s ease, border-left-color 0.18s ease;
 }
 .gw-feature:hover {
-  transform: translateY(-2px);
   background: var(--gw-shell);
   border-left-color: var(--gw-accent-2);
 }
@@ -364,11 +364,10 @@ html:not([data-edition]) {
   border-radius: 10px;
   padding: 1.1rem 1.25rem;
   margin-bottom: 1.1rem;
-  transition: border-color 0.18s ease, transform 0.18s ease;
+  transition: border-color 0.18s ease;
 }
 .blog-post-item:hover {
   border-color: rgba(201, 162, 39, 0.4);
-  transform: translateY(-1px);
 }
 
 /* --- Accessibility: visible focus on the gold ring --------------------- */
@@ -423,6 +422,31 @@ button:focus-visible {
    only a partial last row (1–2 cards) gets the free space split evenly. */
 .row:has(.gw-feature) {
   justify-content: center;
+}
+
+/* --- Card gutters: Infima zeroed .col padding, cards touched edge-to-edge */
+.row:has(.gw-feature),
+.row:has(.gw-card) {
+  gap: 1.25rem;
+  margin: 0; /* cancel the negative row margin that expected col padding */
+}
+
+/* --- Equal-height cards: make each col a flex container so cards stretch -- */
+.row:has(.gw-feature) .col,
+.row:has(.gw-card) .col {
+  display: flex;
+}
+.gw-feature,
+.gw-card {
+  width: 100%;
+}
+
+/* --- Uniform excerpt height: clamp to 3 lines so cards align cleanly ------ */
+.gw-feature__excerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* --- Markdown tables: scroll instead of overflowing the page ------------ */
