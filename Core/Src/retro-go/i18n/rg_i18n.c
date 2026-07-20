@@ -182,25 +182,25 @@ const char *get_font_file(uint32_t codepoint) {
     if (codepoint >= 0x0400 && codepoint <= 0x04FF) {
         return font_files_cp1251[curr_font];        // Cyrillic (CP1251)
     } else if (codepoint >= 0x0370 && codepoint <= 0x03FF) {
-        return "fonts/unicode_greek.bin";           // Greek and Coptic
+        return "/fonts/unicode_greek.bin";           // Greek and Coptic
     } else if (codepoint >= 0x2200 && codepoint <= 0x22FF) {
-        return "fonts/unicode_math_operators.bin";  // Mathematical Operators
+        return "/fonts/unicode_math_operators.bin";  // Mathematical Operators
     } else if (codepoint >= 0x25A0 && codepoint <= 0x25FF) {
-        return "fonts/unicode_geometric.bin";       // Geometric Shapes
+        return "/fonts/unicode_geometric.bin";       // Geometric Shapes
     } else if (codepoint >= 0x2600 && codepoint <= 0x26FF) {
-        return "fonts/unicode_misc_symbols.bin";    // Miscellaneous Symbols
+        return "/fonts/unicode_misc_symbols.bin";    // Miscellaneous Symbols
     } else if (codepoint >= 0x3000 && codepoint <= 0x303F) {
-        return "fonts/unicode_cjk_punct.bin";       // CJK Symbols and Punctuation
+        return "/fonts/unicode_cjk_punct.bin";       // CJK Symbols and Punctuation
     } else if (codepoint >= 0x3040 && codepoint <= 0x309F) {
-        return "fonts/unicode_hiragana.bin";        // Hiragana
+        return "/fonts/unicode_hiragana.bin";        // Hiragana
     } else if (codepoint >= 0x30A0 && codepoint <= 0x30FF) {
-        return "fonts/unicode_katakana.bin";        // Katakana
+        return "/fonts/unicode_katakana.bin";        // Katakana
     } else if (codepoint >= 0x4E00 && codepoint <= 0x9FFF) {
-        return "fonts/unicode_cjk.bin";             // CJK Unified Ideographs
+        return "/fonts/unicode_cjk.bin";             // CJK Unified Ideographs
     } else if (codepoint >= 0xAC00 && codepoint <= 0xD7A3) {
-        return "fonts/unicode_hangul.bin";          // Hangul Syllables
+        return "/fonts/unicode_hangul.bin";          // Hangul Syllables
     } else if (codepoint >= 0xFF00 && codepoint <= 0xFFEF) {
-        return "fonts/unicode_fullwidth.bin";       // Halfwidth and Fullwidth Forms
+        return "/fonts/unicode_fullwidth.bin";       // Halfwidth and Fullwidth Forms
     }
     return font_files[curr_font];  // CP1252 latin font
 }
