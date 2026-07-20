@@ -5,20 +5,32 @@
 # stub -- see its header comment). Headless, like Makefile.wswan: there is
 # nothing to render yet.
 #
-#   make -f Makefile.cps1                                    -> build/retro-go-cps1
+#   make -f Makefile.cps1                                    -> build/retro-go-cps1, build/cps1-ppu-selftest
 #   ./build/retro-go-cps1 --frames=600 --engine=diff --dump-ppm
+#   ./build/cps1-ppu-selftest
 TARGET = retro-go-cps1
+SELFTEST = cps1-ppu-selftest
 BUILD_DIR = build
 
 OPT ?= -O2 -g
 
+CPS1DIR = ../Core/Src/porting/cps1
+
 C_SOURCES = \
 cps1/main_cps1.c \
-../Core/Src/porting/cps1/cps1_core.c \
-../Core/Src/porting/cps1/cps1_cpu68k.c \
-../Core/Src/porting/cps1/cps1_rc_runtime.c \
-../Core/Src/porting/cps1/cps1_rc_generated.c \
+$(CPS1DIR)/cps1_core.c \
+$(CPS1DIR)/cps1_cpu68k.c \
+$(CPS1DIR)/cps1_rc_runtime.c \
+$(CPS1DIR)/cps1_rc_generated.c \
+$(CPS1DIR)/cps1_rom.c \
+$(CPS1DIR)/cps1_ppu.c \
+cps1/cps1_rom_linux.c \
 crc32.c
+
+SELFTEST_SOURCES = \
+cps1/ppu_selftest.c \
+$(CPS1DIR)/cps1_rom.c \
+$(CPS1DIR)/cps1_ppu.c
 
 PREFIX =
 CC = $(PREFIX)gcc
@@ -27,7 +39,7 @@ SZ = $(PREFIX)size
 C_INCLUDES = \
 -I. \
 -Icps1 \
--I../Core/Src/porting/cps1
+-I$(CPS1DIR)
 
 CFLAGS = $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
 CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
@@ -36,16 +48,24 @@ LDFLAGS = -lm -Wl,--gc-sections
 
 .PHONY: all clean
 
-all: $(BUILD_DIR)/$(TARGET)
+all: $(BUILD_DIR)/$(TARGET) $(BUILD_DIR)/$(SELFTEST)
 
 OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
-vpath %.c $(sort $(dir $(C_SOURCES)))
+SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/selftest_,$(notdir $(SELFTEST_SOURCES:.c=.o)))
+vpath %.c $(sort $(dir $(C_SOURCES)) $(dir $(SELFTEST_SOURCES)))
 
 $(BUILD_DIR)/%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
+$(BUILD_DIR)/selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
 $(BUILD_DIR)/$(TARGET): $(OBJECTS) Makefile.cps1
 	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(SELFTEST): $(SELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(SELFTEST_OBJECTS) $(LDFLAGS) -o $@
 	$(SZ) $@
 
 $(BUILD_DIR):
