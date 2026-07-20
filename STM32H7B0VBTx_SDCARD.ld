@@ -1683,6 +1683,21 @@ INCLUDE build/fceumm_mappers.ld
     __flash_end__ = .;
   } >FLASH
 
+  /* Internal flash is the scarcest resource in this build and it has no
+   * natural owner, so anything added anywhere quietly eats it and the only
+   * symptom is `region FLASH overflowed by N bytes` at link time -- a message
+   * that names neither the culprit nor the budget. A 2.8 KB diagnostic probe
+   * overflowed it by 2,560 B on 0720 and cost several build cycles to trace.
+   *
+   * Name the budget instead. Diagnostics and probes do NOT belong here: link
+   * them at the RCPROBE_CODE sentinel (0xD0D00000, 64 KB, absent from release
+   * builds) the way Core/Src/rc_probe.c does, so measurement code can never
+   * displace firmware.
+   *
+   * This is a floor, not a target -- if real functionality legitimately needs
+   * the room, lower it deliberately in the same commit that spends it. */
+  __intflash_headroom__ = ORIGIN(FLASH) + LENGTH(FLASH) - __flash_end__;
+
   /* Uninitialized data section */
   . = ALIGN(4);
   .bss :
@@ -1741,3 +1756,9 @@ INCLUDE build/fceumm_mappers.ld
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
 }
+
+/* Internal-flash floor. Placed after SECTIONS because a bare ASSERT is a
+ * script-level statement, not something that can sit between output section
+ * descriptions -- see the comment at __intflash_headroom__ above for why the
+ * budget is named at all. */
+ASSERT(__intflash_headroom__ >= 512, "Error: internal flash headroom below 512 B -- put diagnostics/probes in RCPROBE_CODE (cf. Core/Src/rc_probe.c), or lower this floor deliberately")
