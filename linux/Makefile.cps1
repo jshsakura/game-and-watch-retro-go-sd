@@ -5,13 +5,15 @@
 # stub -- see its header comment). Headless, like Makefile.wswan: there is
 # nothing to render yet.
 #
-#   make -f Makefile.cps1   -> build/retro-go-cps1, build/cps1-ppu-selftest, build/cps1-vdp-bus-selftest
+#   make -f Makefile.cps1   -> retro-go-cps1, cps1-ppu-selftest, cps1-vdp-bus-selftest, cps1-bg-selftest
 #   ./build/retro-go-cps1 --frames=600 --engine=diff --dump-ppm
 #   ./build/cps1-ppu-selftest
 #   ./build/cps1-vdp-bus-selftest
+#   ./build/cps1-bg-selftest
 TARGET      = retro-go-cps1
 SELFTEST    = cps1-ppu-selftest
 BUSSELFTEST = cps1-vdp-bus-selftest
+BGSELFTEST  = cps1-bg-selftest
 BUILD_DIR   = build
 
 OPT ?= -O2 -g
@@ -23,7 +25,8 @@ $(CPS1DIR)/cps1_cpu68k.c \
 $(CPS1DIR)/cps1_rc_runtime.c \
 $(CPS1DIR)/cps1_rc_generated.c \
 $(CPS1DIR)/cps1_rom.c \
-$(CPS1DIR)/cps1_ppu.c
+$(CPS1DIR)/cps1_ppu.c \
+$(CPS1DIR)/cps1_bg.c
 
 C_SOURCES = \
 cps1/main_cps1.c \
@@ -39,6 +42,12 @@ $(CPS1DIR)/cps1_ppu.c
 BUSSELFTEST_SOURCES = \
 cps1/vdp_bus_selftest.c \
 $(CORE_SOURCES)
+
+BGSELFTEST_SOURCES = \
+cps1/bg_selftest.c \
+$(CPS1DIR)/cps1_rom.c \
+$(CPS1DIR)/cps1_ppu.c \
+$(CPS1DIR)/cps1_bg.c
 
 PREFIX =
 CC = $(PREFIX)gcc
@@ -56,12 +65,13 @@ LDFLAGS = -lm -Wl,--gc-sections
 
 .PHONY: all clean
 
-all: $(BUILD_DIR)/$(TARGET) $(BUILD_DIR)/$(SELFTEST) $(BUILD_DIR)/$(BUSSELFTEST)
+all: $(BUILD_DIR)/$(TARGET) $(BUILD_DIR)/$(SELFTEST) $(BUILD_DIR)/$(BUSSELFTEST) $(BUILD_DIR)/$(BGSELFTEST)
 
 OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/selftest_,$(notdir $(SELFTEST_SOURCES:.c=.o)))
 BUSSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/busselftest_,$(notdir $(BUSSELFTEST_SOURCES:.c=.o)))
-vpath %.c $(sort $(dir $(C_SOURCES)) $(dir $(SELFTEST_SOURCES)) $(dir $(BUSSELFTEST_SOURCES)))
+BGSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/bgselftest_,$(notdir $(BGSELFTEST_SOURCES:.c=.o)))
+vpath %.c $(sort $(dir $(C_SOURCES)) $(dir $(SELFTEST_SOURCES)) $(dir $(BUSSELFTEST_SOURCES)) $(dir $(BGSELFTEST_SOURCES)))
 
 $(BUILD_DIR)/%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
@@ -70,6 +80,9 @@ $(BUILD_DIR)/selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/busselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/bgselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/$(TARGET): $(OBJECTS) Makefile.cps1
@@ -82,6 +95,10 @@ $(BUILD_DIR)/$(SELFTEST): $(SELFTEST_OBJECTS) Makefile.cps1
 
 $(BUILD_DIR)/$(BUSSELFTEST): $(BUSSELFTEST_OBJECTS) Makefile.cps1
 	$(CC) $(BUSSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(BGSELFTEST): $(BGSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(BGSELFTEST_OBJECTS) $(LDFLAGS) -o $@
 	$(SZ) $@
 
 $(BUILD_DIR):

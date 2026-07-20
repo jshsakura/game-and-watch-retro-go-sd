@@ -89,3 +89,9 @@ typedef struct {
  * docs/CPS1_ULTIMATE_PORTING_PLAN.md techniques 4/8 for what replaces it. */
 void cps1_ppu_render(const cps1_oam_t *oam, const cps1_rom_t *rom, cps1_tile_cache_t *cache,
                       const cps1_palette_t *pal, uint16_t *fb);
+
+/* Shared by cps1_ppu_render (sprites) and cps1_bg.c (scroll layers): unpacks
+ * one cached 4bpp tile's nibbles and writes non-transparent (index != 0)
+ * pixels into fb at (dst_x,dst_y), clipped to CPS1_FB_WIDTH/HEIGHT. */
+void cps1_blit8x8_indexed(const uint8_t *tile4bpp, unsigned palette_bank,
+                           const cps1_palette_t *pal, int dst_x, int dst_y, uint16_t *fb);
