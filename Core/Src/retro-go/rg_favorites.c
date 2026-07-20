@@ -13,6 +13,7 @@
 #include "rg_i18n.h"
 #include "bitmaps.h"
 #include "gui.h"
+#include "gw_malloc.h"
 /* Delete/atomic-rename primitives. newlib rename() has no syscall on either
  * build, so each storage backend supplies its own: FatFs on SD builds,
  * LittleFS (the RW partition) on SD_CARD=0 flash builds. */
@@ -49,8 +50,10 @@ static bool fav_delete(const char *path)
 
 /* Pseudo-emulator behind the ★ tab (tab->arg must be a retro_emulator_t for
  * the generic launcher code that casts it, e.g. gui_save_current_tab).
- * rg_calloc'd like the tab_t structs — deliberately NOT a static: launcher
- * .bss lives in DTCM, which is emulator-priority and historically tight. */
+ * ahb_calloc'd like the tab_t structs — deliberately NOT a static: launcher
+ * .bss lives in DTCM, which is emulator-priority and historically tight.
+ * Same lifetime as emulators[]/systems[] (allocated from emulators_init, and
+ * invalidated by the ahb_init() that precedes every core launch). */
 static retro_emulator_t *favorites_emu;
 
 /** fgets + strip trailing CR/LF. Returns false at EOF/error. */
@@ -320,7 +323,7 @@ static void favorites_event_handler(gui_event_t event, tab_t *tab)
 
 void rg_favorites_register_tab(void)
 {
-    favorites_emu = rg_calloc(1, sizeof(*favorites_emu));
+    favorites_emu = ahb_calloc(1, sizeof(*favorites_emu));
     strcpy(favorites_emu->system_name, "Favorites");
     strcpy(favorites_emu->dirname, "favorites");
     /* The shared file buffer does not exist yet (first add_emulator call
