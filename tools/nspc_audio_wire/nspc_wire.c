@@ -33,6 +33,7 @@
 #include "src/snes/apu.h"
 #include "src/snes/spc.h"
 #include "src/snes/dsp.h"
+#include "src/snes/dsp_regs.h"
 #include "spc_player_gen.h"         /* generated zero-copy struct */
 #include "nspc_config.h"            /* g_nspc_cfg, NSPC_* macros */
 #include "snes_driver_sigs.h"       /* VGMTrans ARAM signatures */
@@ -73,6 +74,15 @@ static int g_frame = 0;
  * needs to clear). See wire_restore_after_load(). */
 static int g_load_pending_resume = 0;
 
+/* Upload mailbox state (mid-game bank reload) -- see handle_upload_write()
+ * further below for the protocol this implements and why. */
+enum { NSPC_UPLOAD_IDLE, NSPC_UPLOAD_READY, NSPC_UPLOAD_DATA };
+static int g_upload_mode = NSPC_UPLOAD_IDLE;
+static uint8_t g_upload_ports[4];
+static uint16_t g_upload_addr;
+static uint8_t g_upload_counter;
+static bool g_upload_first_byte;
+
 /* Live outPorts[0] stability tracking (see wire_try_swap()'s gate below).
  * Sampled once per video frame regardless of the coarse 60-frame detection
  * cadence, so it reflects real elapsed-frame history by the time detection
@@ -95,9 +105,24 @@ static int g_p0_stable = 0;
 /* ===================== one 32 kHz sample step ============================ */
 /* Exactly SpcPlayer_GenerateSamples' semantics: advance the 500 Hz N-SPC
  * driver tick (Spc_Loop_Part2 + Part1) when timer_cycles wraps, then one
- * dsp_cycle to produce one sample pair. */
+ * dsp_cycle to produce one sample pair.
+ * The sequencer tick is skipped while an upload mailbox transfer is in
+ * flight (g_upload_mode != IDLE) -- matching smw_exact_wire.c's own
+ * wire_frame_audio(), which calls bare dsp_cycle() during upload instead
+ * of gen_samples()'s full tick. Without this, Music_HandleCmdFromSnes kept
+ * running on its normal per-tick gate concurrently with the upload, and
+ * could overwrite port_to_snes[0] with a stale pending command from BEFORE
+ * the upload started (start_playing_sound fires whenever input_ports[0] is
+ * a fresh, non-255, non-0xf1 value that differs from the current
+ * port_to_snes[0]) -- clobbering the upload ack/counter echo the 65816 is
+ * actively polling for. Confirmed empirically on Samurai Spirits: the
+ * first two (rapid, back-to-back) upload cycles happened to not race this
+ * way, but every game upload after that got the ack overwritten and hung
+ * forever -- a real hardware SPC700 does not have this problem because it
+ * physically jumps out of the music loop into a dedicated upload receiver
+ * for the duration, so there is nothing left running to race with. */
 static inline void wire_step_sample(SpcPlayer *p) {
-  if (p->timer_cycles >= 64) {
+  if (g_upload_mode == NSPC_UPLOAD_IDLE && p->timer_cycles >= 64) {
     Spc_Loop_Part2(p, p->timer_cycles >> 6);
     Spc_Loop_Part1(p);
     p->timer_cycles &= 63;
@@ -129,6 +154,10 @@ void apu_run(Apu *apu, int cyclesToRun) {
 }
 
 /* ===================== port-write protocol =============================== */
+/* Forward declaration: defined further below (needs SpcPlayer/upload state
+ * declared there), called from here. */
+static bool handle_upload_write(Snes *snes, int port, uint8_t val);
+
 /* The 65816 writes to $2140-43; we route through here.  During LLE, we sniff
  * port-0 song commands.  During HLE, port-0 drives the music engine and
  * ports 1-3 are instant-acked (foreign SFX protocols are NOT implemented —
@@ -147,6 +176,8 @@ void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val) {
       g_last_p0 = val;
     return;
   }
+  if (handle_upload_write(snes, port, val))
+    return;
   if (port == 0) {
     /* ALttP-style mailboxes write 00 when idle; SM's engine reads a 0 that
      * differs from the current song as "stop".  Idle-zero is not a command
@@ -164,6 +195,15 @@ void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val) {
 /* Top the player's DSP up to a full 534-sample frame and fetch 16 kHz mono. */
 void wire_frame_audio(int16_t *buf, int n) {
   SpcPlayer *p = g_wire_p;
+  /* No timed clear of the finish-counter echo here (earlier versions
+   * cleared it back to 0 a fixed number of ticks after FINISH). Samurai
+   * Spirits fires back-to-back upload cycles within a single real frame;
+   * a timer sized for one cycle's pacing clears the echo before the CPU's
+   * poll gets back around to reading it for the very next cycle (read
+   * trace confirmed: the poll saw the PREVIOUS cycle's stale echo once,
+   * then 0 forever -- the fresh echo was already timer-cleared). The next
+   * real write (a new trigger's 0xaa, or the next finish's own counter)
+   * overwrites this port naturally, so no schedule-based clear is needed. */
   while (p->dsp->sampleOffset < 534) wire_step_sample(p);
   dsp_getSamples(p->dsp, buf, n, 1);
 }
@@ -267,6 +307,157 @@ static int nspc_extract(const uint8_t *ram, NspcParams *o) {
   return 1;
 }
 
+/* ===================== sequencer reset (shared) ============================ */
+/* Clears native sequencer state (matching host wire.c post-Initialize).
+ * Used both at initial adoption (wire_swap) and after a mid-game upload
+ * completes (handle_upload_write) -- both cases restart playback from ARAM
+ * that is now known-good, and both need the same clean slate. */
+static void nspc_reset_sequencer_state(SpcPlayer *p) {
+  p->is_chan_on = 0; p->fast_forward = 0;
+  p->key_ON = p->key_OFF = 0; p->cur_chan_bit = 0;
+  p->vol_dirty = 0; p->sfx_timer_accum = 0; p->disable_sfx2 = 0;
+  memset(&p->sfx1, 0, sizeof(p->sfx1));
+  memset(&p->sfx2, 0, sizeof(p->sfx2));
+  memset(&p->sfx3, 0, sizeof(p->sfx3));
+  memset(p->sfx_chans_1, 0, sizeof(p->sfx_chans_1));
+  memset(p->sfx_chans_2, 0, sizeof(p->sfx_chans_2));
+  memset(p->sfx_chans_3, 0, sizeof(p->sfx_chans_3));
+  for (int ch = 0; ch < 8; ch++) {
+    p->channel[ch].pattern_order_ptr_for_chan = 0;
+    p->channel[ch].cutk = 0;
+    p->channel[ch].index = ch;
+  }
+}
+
+/* ===================== upload mailbox (mid-game bank reload) =============== */
+/* N-SPC engines reload music/SFX banks mid-game by replacing the SPC-side
+ * driver's data through a port mailbox handshake, not just once at boot --
+ * confirmed empirically on Samurai Spirits via a sequential $2140-2143
+ * trace (LLE reference): write 0xff on port 0 (trigger) -> engine echoes
+ * 0xaa on port_to_snes[0] and 0xbb on port 1 (the CPU polls for port1==0xbb
+ * specifically) -> CPU writes the upload address low/high on ports 2/3, a
+ * transfer-mode byte on port 1, then 0xcc on port 0 to start the transfer
+ * -> a counter (0,1,2,...) on port 0 paired with one data byte per counter
+ * on port 1, ram[addr++] = data each time the counter matches expected+1.
+ * Byte-for-byte identical to smw_exact_wire.c's handle_upload_write()
+ * protocol, EXCEPT the trigger port: SMW's own driver uses port 1, this
+ * dialect uses port 0 -- confirmed by direct trace comparison, not assumed.
+ * The generic wire previously had no support for this at all: the trigger
+ * byte (0xff) landed in input_ports[0] and got silently treated as a
+ * "start playing song 0xff" request, which Music_HandleCmdFromSnes's own
+ * sentinel check (a != 255) discards as a no-op (0xff == 255, colliding
+ * with the "no command pending" marker) -- so nothing ever advanced the
+ * SPC-side, and the CPU's poll for the ack spun forever. This was a
+ * general protocol coverage gap in the generic wire, not the swap-timing
+ * bug fixed in nspc-swap-transient-fix-0720 -- unrelated bug, found only
+ * once sampling moved past the original three-game gate (see that memory
+ * doc for the wider distinction).
+ * State (g_upload_mode etc) is declared up in the state block above. */
+static bool handle_upload_write(Snes *snes, int port, uint8_t val) {
+  Apu *apu = snes->apu;
+  if (g_upload_mode == NSPC_UPLOAD_IDLE) {
+    if (port != 0 || val != 0xff)
+      return false;
+    g_upload_mode = NSPC_UPLOAD_READY;
+    memset(g_upload_ports, 0, sizeof(g_upload_ports));
+    g_wire_p->port_to_snes[0] = 0xaa;
+    /* outPorts[1] mirrors g_ack[0] (see wire_mirror_ports), NOT
+     * port_to_snes[1] -- ports 1-3 use the separate instant-ack array for
+     * the normal SFX protocol. The upload ack needs to go through the same
+     * path or the CPU's poll for port1==0xbb never resolves. */
+    g_ack[0] = 0xbb;
+    dsp_write(g_wire_p->dsp, FLG, 0x60);
+    dsp_write(g_wire_p->dsp, KOF, 0xff);
+    wire_mirror_ports(apu, g_wire_p);
+    return true;
+  }
+
+  g_upload_ports[port] = val;
+  if (g_upload_mode == NSPC_UPLOAD_READY) {
+    if (port == 0 && val == 0xcc) {
+      g_upload_addr = g_upload_ports[2] | (g_upload_ports[3] << 8);
+      g_upload_counter = val;
+      g_upload_first_byte = true;
+      g_upload_mode = NSPC_UPLOAD_DATA;
+      g_wire_p->port_to_snes[0] = val;
+      wire_mirror_ports(apu, g_wire_p);
+    }
+    return true;
+  }
+
+  if (port != 0)
+    return true;
+
+  if (g_upload_first_byte) {
+    g_upload_first_byte = false;
+    g_upload_counter = val;
+    g_wire_p->port_to_snes[0] = val;
+    wire_mirror_ports(apu, g_wire_p);
+    return true;
+  }
+
+  if (val == (uint8_t)(g_upload_counter + 1)) {
+    g_wire_p->ram[g_upload_addr++] = g_upload_ports[1];
+    g_upload_counter = val;
+    g_wire_p->port_to_snes[0] = val;
+    wire_mirror_ports(apu, g_wire_p);
+    return true;
+  }
+
+  if (g_upload_ports[1] != 0) {
+    /* Another block follows: this counter is the block handshake, the
+     * first data byte arrives with the next counter write. */
+    g_upload_addr = g_upload_ports[2] | (g_upload_ports[3] << 8);
+    g_upload_counter = val;
+    g_upload_first_byte = true;
+    g_wire_p->port_to_snes[0] = val;
+    wire_mirror_ports(apu, g_wire_p);
+    return true;
+  }
+
+  /* port1=0 with a non-sequential counter means the transfer is done.
+   * The uploaded ARAM region is now current -- reset the sequencer the
+   * same way a fresh adoption does; the game's next port-0 song command
+   * restarts playback from the (now correct) data.
+   *
+   * nspc_reset_sequencer_state() alone is NOT enough here: it only clears
+   * per-channel/SFX runtime state, matching what wire_swap() needs. Finish
+   * additionally has to match smw_exact_wire.c's SmwSpcPlayer_FinishRawUpload
+   * (the proven-correct reference for this exact transition), which also
+   * zeroes music_ptr_toplevel/input_ports/last_value_from_snes and clears
+   * FLG to 0x20.
+   *
+   * ROOT CAUSE of the Samurai Spirits stall-after-5-uploads, confirmed by
+   * reading the generated driver (spc_player.c's Music_HandleCmdFromSnes):
+   * two tries below this comment (input_ports[0]=255 instead of 0, and
+   * dropping the finish-echo's timed auto-clear) both measured ZERO effect
+   * on STATEHASH/AUDIOHASH -- the real mechanism is different. Setting
+   * port_to_snes[0]=val (the raw upload-protocol counter byte, e.g. 0x09)
+   * doubles as the driver's OWN "a song is active" flag: the very next
+   * Music_HandleCmdFromSnes tick skips its early "port_to_snes[0]==0 ->
+   * return" gate (since val != 0), falls into the "process next phrase"
+   * path once counter_sf0c decrements to 0, reads music_ptr_toplevel as a
+   * real sequence pointer, hits t==0 on the garbage there, and takes that
+   * engine's own "a=0 -> start_playing_sound -> port_to_snes[0]=0" branch
+   * -- clobbering the echo via the DRIVER's own logic, not any race in
+   * this file. counter_sf0c is what gates reaching that path; holding it
+   * away from 0 keeps the driver idle until a real start_playing_sound
+   * (which sets counter_sf0c=2 itself) supersedes it. */
+  nspc_reset_sequencer_state(g_wire_p);
+  g_wire_p->music_ptr_toplevel = 0;
+  g_wire_p->counter_sf0c = 0xffff;
+  memset(g_wire_p->input_ports, 0, sizeof(g_wire_p->input_ports));
+  g_wire_p->input_ports[0] = 255;
+  memset(g_wire_p->last_value_from_snes, 0, sizeof(g_wire_p->last_value_from_snes));
+  g_wire_p->port_to_snes[1] = g_wire_p->port_to_snes[2] = g_wire_p->port_to_snes[3] = 0;
+  g_ack[0] = g_ack[1] = g_ack[2] = 0;
+  dsp_write(g_wire_p->dsp, FLG, 0x20);
+  g_upload_mode = NSPC_UPLOAD_IDLE;
+  g_wire_p->port_to_snes[0] = val;
+  wire_mirror_ports(apu, g_wire_p);
+  return true;
+}
+
 /* ===================== swap: adopt live ARAM (zero-copy) ================== */
 static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
   /* Dialect setup — same as host wire.c */
@@ -296,23 +487,7 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
    * DSP.  The native C struct starts zeroed (CreateWithState memsets it),
    * then we set the fields the song-start needs. */
   SpcPlayer *p = SpcPlayer_CreateWithState((uint8 *)aram, snes->apu->dsp);
-
-  /* Clear native sequencer state (matching host wire.c post-Initialize).
-   * The song command restarts playback from ARAM, which is uncorrupted. */
-  p->is_chan_on = 0; p->fast_forward = 0;
-  p->key_ON = p->key_OFF = 0; p->cur_chan_bit = 0;
-  p->vol_dirty = 0; p->sfx_timer_accum = 0; p->disable_sfx2 = 0;
-  memset(&p->sfx1, 0, sizeof(p->sfx1));
-  memset(&p->sfx2, 0, sizeof(p->sfx2));
-  memset(&p->sfx3, 0, sizeof(p->sfx3));
-  memset(p->sfx_chans_1, 0, sizeof(p->sfx_chans_1));
-  memset(p->sfx_chans_2, 0, sizeof(p->sfx_chans_2));
-  memset(p->sfx_chans_3, 0, sizeof(p->sfx_chans_3));
-  for (int ch = 0; ch < 8; ch++) {
-    p->channel[ch].pattern_order_ptr_for_chan = 0;
-    p->channel[ch].cutk = 0;
-    p->channel[ch].index = ch;
-  }
+  nspc_reset_sequencer_state(p);
 
   /* Resume the current song.  Best source: the real driver's echo on
    * out-port 0 (N-SPC echoes the accepted song id); fallback: last sniffed
@@ -387,8 +562,12 @@ void wire_debug_dump(int frame) {
 }
 
 /* ===================== per-frame detection gate ========================== */
+int g_real_frame = 0;  /* DEBUG ONLY: unlike g_frame (a write-event counter
+                         * despite its name), this is the actual video-frame
+                         * number, for debug-print correlation. */
 int wire_try_swap(Snes *snes, int frame) {
   g_frame = frame;
+  g_real_frame = frame;
   if (g_wire_on || !g_wire_enable || !snes->apu) return 0;
 
   /* Track live outPorts[0] stability every frame -- see NSPC_SWAP_STABLE_
@@ -471,6 +650,8 @@ bool wire_configure_rom(const uint8_t *rom, uint32_t len) {
   g_p0_last = 0;
   g_p0_stable = 0;
   g_load_pending_resume = 0;
+  g_upload_mode = NSPC_UPLOAD_IDLE;
+  g_upload_first_byte = false;
   return true;  /* detection armed; actual gate is in wire_try_swap */
 }
 
