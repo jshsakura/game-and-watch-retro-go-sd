@@ -44,6 +44,10 @@ uint16 currently_installed_bug_fix_counter;
 
 void apu_reset(Apu *a) { (void)a; }
 void apu_cycle(Apu *a) { (void)a; }
+/* snes.c batches through apu_run since the snes-perf bump; main_sm.c stubs it
+ * on device, and main_sm.c is excluded here, so the stub must exist on both
+ * sides or this parity link reports a false "would alias another core". */
+void apu_run(Apu *a, int cyclesToRun) { (void)a; (void)cyclesToRun; }
 void apu_free(Apu *a) { (void)a; }
 void apu_saveload(Apu *a, SaveLoadFunc *f, void *c) { (void)a; (void)f; (void)c; }
 void ppu_copy(Ppu *a, Ppu *b) { (void)a; (void)b; }
