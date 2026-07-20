@@ -388,3 +388,64 @@ button:focus-visible {
   opacity: 0.5;
   max-width: 32rem;
 }
+
+/* ==========================================================================
+   Responsive + overflow hardening.
+   The Infima grid ships col--N as a fixed percentage with no breakpoints,
+   so col--4 stays 33% on a 375 px phone and the featured cards crush to
+   ~115 px. Markdown tables render with no scroll wrapper, so any wide
+   table pushes the whole page into horizontal scroll. Both read as "broken
+   CSS" on mobile and narrow desktop windows.
+   ========================================================================== */
+
+/* --- Responsive grids: 2-up on tablet, 1-up on phone ------------------- */
+@media (max-width: 996px) {
+  .row > .col.col--4,
+  .row > .col.col--3 {
+    --ifm-col-width: 50%;
+  }
+}
+@media (max-width: 600px) {
+  .row > .col.col--4,
+  .row > .col.col--3 {
+    --ifm-col-width: 100%;
+  }
+  /* Pixel-font eyebrows/tags are unreadable below ~8 px — bump slightly. */
+  .gw-eyebrow,
+  .gw-tag,
+  .gw-feature__date {
+    font-size: 0.58rem;
+  }
+}
+
+/* --- Featured grid: center the orphan cards in the last row ------------- */
+/* A full row of three col--4 cards fills 100 % so centering is a no-op;
+   only a partial last row (1–2 cards) gets the free space split evenly. */
+.row:has(.gw-feature) {
+  justify-content: center;
+}
+
+/* --- Markdown tables: scroll instead of overflowing the page ------------ */
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* --- Card text: never let a long token overflow its card ---------------- */
+.gw-feature__title,
+.gw-feature__excerpt,
+.gw-card__title,
+.gw-card__body {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* --- Inline code in headings: don't let it blow out line height --------- */
+.markdown h2 code,
+.markdown h3 code,
+.markdown h4 code {
+  font-size: 0.82em;
+  word-break: break-word;
+}
