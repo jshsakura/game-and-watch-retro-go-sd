@@ -44,6 +44,8 @@
 #include "pico/pico_int.h"     /* Pico.est.Draw2FB binding (Draw2 shim below) */
 #include "pico/state.h"
 
+static void diag_log(const char *fmt, ...);   /* boot diag, defined below */
+
 /* ---- geometry / rates ----------------------------------------------------- */
 #define MD32X_FPS            60
 #define MD32X_WIDTH          320          /* 32X is H40 (320) most of the time  */
@@ -107,9 +109,9 @@ void PicoDrawSetOutputSMS(pdso_t which) { (void)which; }
  * and reads it back per-pixel (pmd) for MD/32X layer priority. A no-op stub
  * left it NULL = wild reads (QEMU rig proof: SIGSEGV at pmd=0xa48; on the
  * device a Hardfault). ~84K, from AHB at load — per-core, nobody's pool
- * shrinks (the m68k bank no longer lives there, see below). */
-#define MD32X_D2FB_LINE   328
-#define MD32X_D2FB_BYTES  (MD32X_D2FB_LINE * (8 + 240 + 8) + 8)
+ * shrinks (the m68k bank no longer lives there, see below).
+ * MD32X_D2FB_LINE/BYTES now live in main_md32x.h (shared with
+ * md32x_profile.c's AHB budget _Static_assert, 0720 overflow fix). */
 static uint8_t *md32x_draw2fb;
 
 void PicoDraw2SetOutBuf(void *dest, int increment) {
@@ -120,8 +122,18 @@ void PicoDraw2SetOutBuf(void *dest, int increment) {
     Pico.est.Draw2FB = dest;
     Pico.est.Draw2Width = increment;
   } else {
-    if (md32x_draw2fb == NULL)
+    if (md32x_draw2fb == NULL) {
+      /* ahb_only_malloc does NOT return NULL on pool overflow -- it hits an
+       * assert (0720 device Hardfault triage: assert() is live here, this
+       * TU isn't built with NDEBUG). Log headroom BEFORE the call so the
+       * number survives even if the call itself never returns. */
+      extern size_t ahb_get_free_size(void);
+      diag_log("draw2fb: ahb_free_before=%u need=%u\n",
+               (unsigned)ahb_get_free_size(), (unsigned)MD32X_D2FB_BYTES);
       md32x_draw2fb = (uint8_t *)ahb_calloc(1, MD32X_D2FB_BYTES);
+      diag_log("draw2fb: alloc=%p ahb_free_after=%u\n",
+               (void *)md32x_draw2fb, (unsigned)ahb_get_free_size());
+    }
     Pico.est.Draw2FB = md32x_draw2fb;
     Pico.est.Draw2Width = MD32X_D2FB_LINE;
   }
@@ -374,8 +386,6 @@ static void md32x_repaint(void) {
     memcpy(active, frozen, 320 * 240 * sizeof(uint16_t));
   common_ingame_overlay();
 }
-
-static void diag_log(const char *fmt, ...);   /* boot diag, defined below */
 
 /* ---- XIP: cold code + rodata from flash (the SM/GBA sentinel pattern) ------
  * .xip_md32x + .rodata_md32x are linked at MD32X_CODE_BASE (a sentinel — nothing

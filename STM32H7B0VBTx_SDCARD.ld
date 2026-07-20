@@ -602,9 +602,12 @@ INCLUDE build/fceumm_mappers.ld
    * sound.o bss moved to RAM_EMU below (freed there by this same section:
    * moving 7.9K of .text out of RAM_EMU into ITCM more than pays for 7K of
    * bss moving the other way). AHB was considered and rejected: 32X
-   * unconditionally ahb_calloc's an 82K Draw2FB in PicoDraw2Init (called
-   * from PicoInit, not lazy), which alone leaves only ~5.8K of the 87.9K AHB
-   * dynamic pool — nowhere near enough. See 32X_SH2_ITCM_ANALYSIS.md. Same
+   * unconditionally ahb_calloc's an 83,976B Draw2FB in PicoDraw2Init (called
+   * from PicoInit, not lazy), which alone leaves only ~3.9K of the 87,904B
+   * AHB dynamic pool — nowhere near enough (this ~5.8K estimate was itself
+   * off by ~2K; the exact 3,928B margin is what the 0720 device Hardfault
+   * — MD32X_PROFILE_FRAMES requesting 28.8K into it — pinned down for real,
+   * see main_md32x.h / md32x_profile.c). See 32X_SH2_ITCM_ANALYSIS.md. Same
    * LMA-in-CORES / memcpy-before-BSS-zero mechanism as .overlay_pce_itc /
    * .overlay_gba_itc (run_internal_emu in rg_emulators.c). Base offset 0x4
    * keeps address 0 free. */

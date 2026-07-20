@@ -14,6 +14,12 @@ void ahb_init();
 void *ahb_malloc(size_t size);
 void *ahb_only_malloc(size_t size);
 void *ahb_calloc(size_t count,size_t size);
+/* Headroom left in the AHB dynamic pool before ahb_only_malloc's bound
+ * assert (__ahbram_audio_start__) fires. ahb_only_malloc does NOT return
+ * NULL on overflow like ram_malloc does -- it advances the bump pointer
+ * past the bound and hits that assert, so callers that need to fail soft
+ * must check headroom BEFORE allocating, not after. */
+size_t ahb_get_free_size();
 
 void itc_init();
 void *itc_malloc(size_t size);

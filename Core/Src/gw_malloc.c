@@ -90,6 +90,11 @@ void *ahb_only_malloc(size_t size) {
   return pointer;
 }
 
+size_t ahb_get_free_size() {
+  uint32_t p = current_ahb_pointer ? current_ahb_pointer : (uint32_t)&__ahbram_heap_start__;
+  return ((uint32_t)&__ahbram_audio_start__) - p;
+}
+
 void *ahb_calloc(size_t count,size_t size) {
   size_t bytes = count * size;
   void *pointer = ram_malloc(bytes);
