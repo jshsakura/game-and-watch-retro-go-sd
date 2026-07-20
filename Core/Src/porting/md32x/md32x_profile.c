@@ -58,9 +58,13 @@ struct pp_counters *pp_counters = &md32x_pp_counters;
 int *refcounts = md32x_refcounts;
 
 /* DWT_CYCCNT read for pprof_get_one() (platform/linux/pprof.h calls this under
- * the GNW_32X_DWT_PROF branch). 32-bit, wraps at ~10 s @ 400 MHz — per-frame
- * deltas are tiny and unsigned arithmetic handles wrap correctly. */
-uint32_t md32x_dwt_now(void) {
+ * the MD32X_DEVICE_PROFILE branch). 32-bit, wraps at ~10 s @ 400 MHz —
+ * per-frame deltas are tiny and unsigned arithmetic handles wrap correctly.
+ * Return type must be plain `unsigned int`, matching pprof.h's extern decl
+ * exactly -- `uint32_t` is `unsigned long` on this ABI (arm-none-eabi
+ * ILP32: same width, distinct type), a conflicting-types build error even
+ * though the two are bit-identical. */
+unsigned int md32x_dwt_now(void) {
   return common_emu_get_dwt_cycles();
 }
 
