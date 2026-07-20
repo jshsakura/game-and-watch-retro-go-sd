@@ -251,6 +251,24 @@ static uint16_t snes_line[256];
 #endif
 static uint16_t snes_frame[GW_LCD_WIDTH * SNES_FRAME_ROWS];
 
+#ifdef SNES_LOAD_DIAG
+/* DWT profiling accumulators for the SNES_LOAD_DIAG block further below.
+ * Defined here rather than in the generated apu.c (where they used to live)
+ * because SNES_APU_SOURCE replaces that file with the audio HLE's apu_wire.c
+ * whenever SNES_SMW_HLE=1 / SNES_NSPC_HLE=1 -- so the definitions dropped out
+ * of the link precisely when HLE was enabled, and SNES_LOAD_DIAG=1 could not
+ * be combined with it. That combination is the interesting one (HLE is what
+ * ships), and it was never profiled on device for exactly this reason.
+ * main_snes.c always compiles, so the counters always exist; the instrumented
+ * apu.c/dsp.c reach them as externs through the forced -include of
+ * snes_diag_accum.h. With HLE active nothing increments the spc counter --
+ * a 0 there is the correct reading, not a missing probe: the SPC700
+ * interpreter genuinely no longer runs. */
+uint64_t gsnes__g_diag_spc_cycles = 0;
+uint64_t gsnes__g_diag_dsp_cycles = 0;
+uint64_t gsnes__g_diag_dsp_echo_cycles = 0;
+#endif
+
 #ifndef SNES_DIRECT_VIDEO
 static void snes_blit_line(unsigned y, const uint16_t *line) {
   if (y < 1) return;   /* y is 1-based */
