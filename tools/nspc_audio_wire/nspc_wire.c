@@ -67,6 +67,25 @@ static int g_ok_streak = 0;
 static int g_was_hle = 0;          /* 1 if HLE was active (for savestate) */
 static int g_frame = 0;
 
+/* Live outPorts[0] stability tracking (see wire_try_swap()'s gate below).
+ * Sampled once per video frame regardless of the coarse 60-frame detection
+ * cadence, so it reflects real elapsed-frame history by the time detection
+ * is ready to fire. */
+static uint8_t g_p0_last = 0;
+static int g_p0_stable = 0;
+/* wire_swap() must never adopt a live outPorts[0] echo while the real N-SPC
+ * driver is still mid-handshake -- confirmed on Super Metroid (frames
+ * 340-420 read-hook comparison): outPorts[0] can sit on a transient byte
+ * the real SPC700 clears within a few ticks, but our snapshot-based
+ * bootstrap freezes it as if settled, so the CPU's poll for the next
+ * transition never resolves under HLE. This is a general timing race in
+ * the swap mechanism (any game's swap frame can land mid-handshake), not
+ * a Super Metroid-specific defect -- Zelda's swap merely happened to land
+ * on an already-settled byte. Requiring N consecutive unchanged frames
+ * before swapping is a game-agnostic gate: no hardcoded "settled value"
+ * list, because the settled value differs per game and per song. */
+#define NSPC_SWAP_STABLE_FRAMES 30
+
 /* ===================== one 32 kHz sample step ============================ */
 /* Exactly SpcPlayer_GenerateSamples' semantics: advance the 500 Hz N-SPC
  * driver tick (Spc_Loop_Part2 + Part1) when timer_cycles wraps, then one
@@ -359,7 +378,27 @@ void wire_debug_dump(int frame) {
 int wire_try_swap(Snes *snes, int frame) {
   g_frame = frame;
   if (g_wire_on || !g_wire_enable || !snes->apu) return 0;
-  if (frame < 120 || (frame % 60) != 0) return 0;
+
+  /* Track live outPorts[0] stability every frame -- see NSPC_SWAP_STABLE_
+   * FRAMES comment above.  Runs unconditionally (not gated on frame % 60)
+   * so the streak reflects real history by the time detection is ready. */
+  {
+    uint8_t p0 = snes->apu->outPorts[0];
+    if (p0 == g_p0_last) {
+      if (g_p0_stable < 0x7fffffff) g_p0_stable++;
+    } else {
+      g_p0_last = p0;
+      g_p0_stable = 0;
+    }
+  }
+
+#ifndef NSPC_SWAP_MIN_FRAME
+#define NSPC_SWAP_MIN_FRAME 120  /* test-only override, e.g. -DNSPC_SWAP_MIN_FRAME=300,
+                                  * to wobble the detection window and confirm the
+                                  * stability gate holds at any swap timing, not just
+                                  * the one the ROM happens to produce by default. */
+#endif
+  if (frame < NSPC_SWAP_MIN_FRAME || (frame % 60) != 0) return 0;
   /* Driver must actually be running (upload done, PC out of IPL ROM). */
   if (snes->apu->spc->pc >= 0xffc0) { g_ok_streak = 0; return 0; }
   NspcParams np;
@@ -374,6 +413,7 @@ int wire_try_swap(Snes *snes, int frame) {
     return 0;
   }
   if (++g_ok_streak < 2) return 0;   /* stable across two checks 60 frames apart */
+  if (g_p0_stable < NSPC_SWAP_STABLE_FRAMES) return 0;  /* handshake in flight; defer */
   wire_swap(snes, &np, snes->apu->ram);
   return 1;
 }
@@ -393,6 +433,8 @@ bool wire_configure_rom(const uint8_t *rom, uint32_t len) {
   g_was_hle = 0;
   g_last_p0 = 0;
   g_ack[0] = g_ack[1] = g_ack[2] = 0;
+  g_p0_last = 0;
+  g_p0_stable = 0;
   return true;  /* detection armed; actual gate is in wire_try_swap */
 }
 
