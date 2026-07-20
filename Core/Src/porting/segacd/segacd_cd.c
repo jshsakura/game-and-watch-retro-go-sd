@@ -279,13 +279,42 @@ int segacd_load_bios(const char *bios_path, uint8_t *dst, int max)
 
 /* ---- backup RAM (BRAM) persistence — PCE pce_sram_load/save pattern ---- */
 
+/* Mega CD backup RAM carries a 64-byte footer the BIOS and games check before
+ * they will use it: "SEGA_CD_ROM" + "RAM_CARTRIDGE___" plus the free-block
+ * count. An all-zero BRAM is *unformatted*, and code that queries it can sit
+ * in a wait loop rather than proceed -- which is what a title screen that
+ * ignores START looks like from the outside.
+ *
+ * We only ever memset(0) here, so every first boot handed the BIOS an
+ * unformatted cartridge. picodrive stamps this footer unconditionally on
+ * reset (pico/cd/mcd.c); these are its bytes verbatim (pico/cd/misc.c
+ * formatted_bram) rather than a format invented here. */
+static const uint8_t segacd_formatted_bram[0x40] = {
+    0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x00,0x00,0x00,0x00,0x40,
+    0x00,0x7d,0x00,0x7d,0x00,0x7d,0x00,0x7d,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x53,0x45,0x47,0x41,0x5f,0x43,0x44,0x5f,0x52,0x4f,0x4d,0x00,0x01,0x00,0x00,0x00,
+    0x52,0x41,0x4d,0x5f,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x5f,0x5f,0x5f,
+};
+
+static void segacd_bram_format(void)
+{
+    memset(SCD.bram, 0, sizeof(SCD.bram));
+    memcpy(SCD.bram + sizeof(SCD.bram) - sizeof(segacd_formatted_bram),
+           segacd_formatted_bram, sizeof(segacd_formatted_bram));
+}
+
 int segacd_bram_load(const char *path)
 {
     FILE *f = fopen(path, "rb");
-    if (!f) { memset(SCD.bram, 0, sizeof(SCD.bram)); return -1; }
+    if (!f) { segacd_bram_format(); return -1; }
     size_t n = fread(SCD.bram, 1, sizeof(SCD.bram), f);
     fclose(f);
     if (n < sizeof(SCD.bram)) memset(SCD.bram + n, 0, sizeof(SCD.bram) - n);
+    /* A short or corrupt file leaves no valid footer either -- treat anything
+     * without the signature as unformatted rather than trusting the file. */
+    if (memcmp(SCD.bram + sizeof(SCD.bram) - sizeof(segacd_formatted_bram) + 0x20,
+               "SEGA_CD_ROM", 11) != 0)
+        segacd_bram_format();
     return 0;
 }
 

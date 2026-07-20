@@ -308,6 +308,41 @@ static void sub_ff_write16(unsigned int address, unsigned int data)
 static unsigned int sub_prg_paged_read16(unsigned int address);
 static void sub_prg_paged_write16(unsigned int address, unsigned int data);
 
+/* $FE0000-$FEFFFF : internal backup RAM, seen by the SUB only.
+ *
+ * This mapping did not exist at all. Measured on the host rig: reads=0,
+ * writes=0, and map[0xFE] left base and every handler NULL -- so the SUB
+ * could not reach BRAM, and anything that queries it (the BIOS's save
+ * manager, a game checking for existing saves before it will leave its
+ * title screen) read from an unmapped page.
+ *
+ * 8 KB of BRAM is spread over the 64 KB window on ODD bytes only: byte n
+ * lives at $FE0001 + 2n. Indexing and the write-side odd-address guard are
+ * picodrive's (pico/cd/memory.c PicoReadS68k8_bram / PicoWriteS68k8_bram)
+ * rather than something derived here. A word read returns the single byte,
+ * matching that reference -- games use byte access; a word access is
+ * already flagged as anomalous there. */
+static unsigned int sub_bram_read8(unsigned int address)
+{
+    return SCD.bram[(address >> 1) & (SEGACD_BRAM_SIZE - 1)];
+}
+
+static unsigned int sub_bram_read16(unsigned int address)
+{
+    return SCD.bram[(address >> 1) & (SEGACD_BRAM_SIZE - 1)];
+}
+
+static void sub_bram_write8(unsigned int address, unsigned int data)
+{
+    if (address & 1)
+        SCD.bram[(address >> 1) & (SEGACD_BRAM_SIZE - 1)] = (uint8_t)data;
+}
+
+static void sub_bram_write16(unsigned int address, unsigned int data)
+{
+    SCD.bram[(address >> 1) & (SEGACD_BRAM_SIZE - 1)] = (uint8_t)data;
+}
+
 void segacd_sub_build_memory_map(void)
 {
     cpu_memory_map *map = SCD.sub_ctx.memory_map;
@@ -350,6 +385,13 @@ void segacd_sub_build_memory_map(void)
     map[0xFF].read16 = sub_ff_read16;
     map[0xFF].write8 = sub_ff_write8;
     map[0xFF].write16= sub_ff_write16;
+
+    /* $FE0000 : internal BRAM (see the handlers above) — was never mapped. */
+    map[0xFE].base   = NULL;
+    map[0xFE].read8  = sub_bram_read8;
+    map[0xFE].read16 = sub_bram_read16;
+    map[0xFE].write8 = sub_bram_write8;
+    map[0xFE].write16= sub_bram_write16;
 }
 
 /* ---- PRG-RAM SD paging handlers (banks 1-3) ---- */
