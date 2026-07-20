@@ -28,6 +28,7 @@ typedef enum {
     APPID_GBA      = 24,   /* Game Boy Advance (gpsp) */
     APPID_SNES     = 25,   /* generic SNES core (LakeSnes, SD builds only) */
     APPID_32X      = 26,   /* Sega 32X (picodrive, SD builds only) */
+    APPID_SEGACD   = 27,   /* Sega/Mega CD (SD builds only) */
 
     APPID_COUNT,
 } appid_t;

@@ -34,7 +34,7 @@
 #ifndef RIG_FRAMES
 #define RIG_FRAMES 3000
 #endif
-#define RIG_WINDOW 20
+#define RIG_WINDOW 200
 
 /* VINT delay cycles — defined in linux/gwenesis/main.c, not a core header. */
 #define VINT_H32_CYCLES 770u
@@ -51,16 +51,6 @@ extern int mode_pal;
 void rig_timer_init(void);
 uint32_t rig_timer_now(void);
 uint32_t rig_calibrate(uint32_t n);
-
-/* Time just the main-68K interpretation, separately from Z80/VDP/sound. The
- * Sega CD adds a SECOND 68K at 12.5 MHz vs this one's 7.67 MHz, so its cost is
- * ~this x (12.5/7.67) = x1.63 (Musashi interpreter cost is ~linear in cycles).
- * That lets a single MD run estimate the dual-68K frame without a working CD
- * core: dual_est = emu_full + 1.63 x cpu68k. */
-static uint64_t g_cpu68k_ticks;
-#define RUN68K(t) do { uint32_t _c = rig_timer_now(); m68k_run(t); \
-                       g_cpu68k_ticks += (uint32_t)(rig_timer_now() - _c); } while (0)
-#define SUB68K_SCALE_X1000  1630u   /* 12.5 MHz / 7.67 MHz */
 
 extern unsigned char _binary_rom_md_start[];
 extern unsigned char _binary_rom_md_end[];

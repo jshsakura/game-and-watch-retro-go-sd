@@ -25,6 +25,7 @@ NAMES = {
     "header_gg":       "GAME GEAR",
     "header_sms":      "MASTER SYSTEM",
     "header_gen":      "GENESIS",
+    "header_segacd":   "SEGA CD",
     "header_sg1000":   "SG-1000",
     "header_col":      "COLECOVISION",
     "header_wsv":      "SUPERVISION",

@@ -736,6 +736,31 @@ ifneq ($(MD32X_DEVICE_PROFILE),0)
 MD32X_C_SOURCES += Core/Src/porting/md32x/md32x_profile.c
 endif
 endif
+# Sega/Mega CD — shares the gwenesis M68K/Z80/VDP core with MD (compiled
+# separately into build/segacd/ so the overlay has its own .o set), plus
+# the sub-68K + CDD/CDC + graphics + audio porting layer. CD data is
+# streamed from SD; the BIOS is XIP'd from flash (0 RAM). SD builds only.
+SEGACD_C_SOURCES =
+SEGACD_C_SOURCES += \
+$(CORE_GWENESIS)/src/cpus/M68K/m68kcpu.c \
+$(CORE_GWENESIS)/src/cpus/Z80/Z80.c \
+$(CORE_GWENESIS)/src/sound/z80inst.c \
+$(CORE_GWENESIS)/src/sound/ym2612.c \
+$(CORE_GWENESIS)/src/sound/gwenesis_sn76489.c \
+$(CORE_GWENESIS)/src/bus/gwenesis_bus.c \
+$(CORE_GWENESIS)/src/bus/gwenesis_sram.c \
+$(CORE_GWENESIS)/src/bus/gwenesis_eeprom.c \
+$(CORE_GWENESIS)/src/io/gwenesis_io.c \
+$(CORE_GWENESIS)/src/vdp/gwenesis_vdp_mem.c \
+$(CORE_GWENESIS)/src/vdp/gwenesis_vdp_gfx.c \
+$(CORE_GWENESIS)/src/savestate/gwenesis_savestate.c \
+Core/Src/porting/segacd/main_segacd.c \
+Core/Src/porting/segacd/segacd_engine.c \
+Core/Src/porting/segacd/segacd_bus.c \
+Core/Src/porting/segacd/segacd_cd.c \
+Core/Src/porting/segacd/segacd_audio.c \
+Core/Src/porting/segacd/segacd_gfx.c \
+Core/Src/porting/segacd/segacd_cache.c
 
 A2600_C_SOURCES =
 A2600_CXX_SOURCES =
@@ -1291,6 +1316,29 @@ MD32X_C_DEFS = -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DGNW_32X_CORE -DLS
 ifeq ($(MD32X_DEVICE_PROFILE),1)
 MD32X_C_DEFS += -DMD32X_DEVICE_PROFILE
 endif
+# Sega CD uses the same gwenesis core defs as MD plus the segacd porting dir.
+# -ffunction-sections -fdata-sections: enables the function-level hot/cold
+# split (32X pico__memory.o pattern). The current .overlay_segacd default
+# keeps the 7 porting files whole in RAM and sweeps the 12 gwenesis engine
+# .o to SEGACD_CODE XIP; Anti#1 can later promote hot function subsets of
+# any gwenesis .o into .overlay_segacd by listing .text.<funcname> patterns
+# in the overlay, with no SEGACD_C_DEFS change required.
+SEGACD_C_INCLUDES +=  \
+-ICore/Inc \
+-ICore/Src/porting/lib \
+-ICore/Src/porting/lib/lzma \
+-ICore/Src/porting/segacd \
+-Iretro-go-stm32/components/odroid \
+-I$(CORE_GWENESIS)/src/cpus/M68K \
+-I$(CORE_GWENESIS)/src/cpus/Z80 \
+-I$(CORE_GWENESIS)/src/sound \
+-I$(CORE_GWENESIS)/src/bus \
+-I$(CORE_GWENESIS)/src/vdp \
+-I$(CORE_GWENESIS)/src/io \
+-I$(CORE_GWENESIS)/src/savestate \
+-I./
+
+SEGACD_C_DEFS = -DLSB_FIRST -DTABLES_FULL -ffunction-sections -fdata-sections
 
 C_INCLUDES +=  \
 -ICore/Inc \
@@ -1516,6 +1564,7 @@ include Makefile.common
 $(BUILD_DIR)/$(TARGET)_extflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)
 	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_md32x -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_snes -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
+	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_segacd -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
 
 $(BUILD_DIR)/$(TARGET)_intflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)
