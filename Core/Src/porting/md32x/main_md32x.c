@@ -434,8 +434,8 @@ static bool Md32xCacheXipToFlash(void) {
    * wild jumps with no message (audit: bin is CORI-tagged, xip was not).
    * Size is a strong cheap proxy — refuse loudly instead of booting garbage. */
   if (g_xip_size != expected) {
-    diag_log("FATAL: 32x.xip size %lu != firmware's %lu (stale xip? re-copy /cores)\n",
-             (unsigned long)g_xip_size, (unsigned long)expected);
+    diag_log("FATAL: 32x.xip size %u != firmware's %u (stale xip? re-copy /cores)\n",
+             (unsigned)g_xip_size, (unsigned)expected);
     return false;
   }
   g_xip_offset = (int32_t)((uint32_t)g_xip_addr - MD32X_CODE_BASE);
@@ -532,8 +532,8 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   uint32_t sz = 0;
   const uint8_t *rom = odroid_overlay_cache_file_in_flash(ACTIVE_FILE->path, &sz, true);
   md32x_rom = rom; md32x_rom_len = sz;
-  diag_log("rom cached: addr=%p len=%lu head=%02x%02x%02x%02x\n",
-           (void *)rom, (unsigned long)sz,
+  diag_log("rom cached: addr=%p len=%u head=%02x%02x%02x%02x\n",
+           (void *)rom, (unsigned)sz,
            rom ? rom[0] : 0, rom ? rom[1] : 0, rom ? rom[2] : 0, rom ? rom[3] : 0);
 
   /* XIP cold code+rodata MUST be cached and the overlay's sentinel pointers
@@ -544,8 +544,8 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_switch_app(0);
     return;
   }
-  diag_log("xip cached: addr=%p size=%lu off=%ld\n",
-           (void *)g_xip_addr, (unsigned long)g_xip_size, (long)g_xip_offset);
+  diag_log("xip cached: addr=%p size=%u off=%d\n",
+           (void *)g_xip_addr, (unsigned)g_xip_size, (int)g_xip_offset);
   {
     int n1 = PatchMd32xSentinels((uint32_t *)&__RAM_EMU_START__, _MD32X_MAIN_CODE_START,
                                  g_xip_offset, g_xip_size);
@@ -598,8 +598,8 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * returns, it must key off an opcode-pattern fingerprint (like SegaCD's
    * poll detector) — never a whole-ROM CRC. */
 
-  diag_log("PicoLoadMedia: mt=%d AHW=%x romsize=%lu pal=%d\n",
-           (int)mt, (unsigned)PicoIn.AHW, (unsigned long)Pico.romsize,
+  diag_log("PicoLoadMedia: mt=%d AHW=%x romsize=%u pal=%d\n",
+           (int)mt, (unsigned)PicoIn.AHW, (unsigned)Pico.romsize,
            (int)Pico.m.pal);
 
   /* Load cart SRAM (battery save) before the first frame.  PicoLoadMedia ->
