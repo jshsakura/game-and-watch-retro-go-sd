@@ -578,8 +578,6 @@ static void update_sound_nes(int32_t *sound, uint16_t size) {
         sound_buffer[i] = ((sample * factor) >> 8) & 0xFFFF;
     }
 }
-extern uint32_t __RAM_EMU_END__;
-
 static size_t nes_getromdata(unsigned char **data)
 {
     uint32_t size = ACTIVE_FILE->size; 
