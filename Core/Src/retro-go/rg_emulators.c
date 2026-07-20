@@ -1495,9 +1495,8 @@ extern uint8_t _OVERLAY_MD32X_ITC_LMA_OFFSET;
 extern uint8_t _OVERLAY_MD32X_ITC_SIZE;
 static const emu_dispatch_t emu_md32x   = { "/cores/32x.bin",    &_OVERLAY_MD32X_BSS_START,   (uint32_t)&_OVERLAY_MD32X_BSS_SIZE,   (uint32_t)&_OVERLAY_MD32X_SIZE,   0, EMU_ENTRY(app_main_md32x),
                                             __md32x_itc_start__, (uint32_t)&_OVERLAY_MD32X_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_MD32X_ITC_SIZE };
-extern uint8_t _OVERLAY_SEGACD_BSS_START[];
-extern uint8_t _OVERLAY_SEGACD_BSS_SIZE;
-extern uint8_t _OVERLAY_SEGACD_SIZE;
+/* SEGACD overlay symbols now come from gw_linker.h (8e47e219) — the local
+ * externs here had different types and hid the missing declarations. */
 extern int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot);
 static const emu_dispatch_t emu_segacd = { "/cores/segacd.bin", &_OVERLAY_SEGACD_BSS_START, (uint32_t)&_OVERLAY_SEGACD_BSS_SIZE, (uint32_t)&_OVERLAY_SEGACD_SIZE, 0, EMU_ENTRY(app_main_segacd) };
 #endif

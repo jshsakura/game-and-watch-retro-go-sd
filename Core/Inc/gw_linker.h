@@ -30,6 +30,7 @@ extern uint32_t __itcram_hot_end__;
 
 // If this is not an array the compiler might put in a memory_chk with dest_size 1...
 extern void * __RAM_EMU_START__[];
+extern void * __RAM_EMU_END__[];
 extern void * _OVERLAY_NES_LOAD_START[];
 extern uint8_t _OVERLAY_NES_SIZE;
 extern void * _OVERLAY_NES_BSS_START[];
@@ -146,6 +147,11 @@ extern uint8_t _OVERLAY_SMW_SIZE;
 extern void * _OVERLAY_SMW_BSS_START[];
 extern void * _OVERLAY_SMW_BSS_END[];
 extern uint8_t _OVERLAY_SMW_BSS_SIZE;
+extern void * _OVERLAY_SEGACD_LOAD_START[];
+extern uint8_t _OVERLAY_SEGACD_SIZE;
+extern void * _OVERLAY_SEGACD_BSS_START[];
+extern void * _OVERLAY_SEGACD_BSS_END[];
+extern uint8_t _OVERLAY_SEGACD_BSS_SIZE;
 extern void * _OVERLAY_VIDEOPAC_LOAD_START[];
 extern uint8_t _OVERLAY_VIDEOPAC_SIZE;
 extern void * _OVERLAY_VIDEOPAC_BSS_START[];
