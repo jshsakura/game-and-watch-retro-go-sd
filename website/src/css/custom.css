@@ -85,14 +85,11 @@ html:not([data-edition]) {
   color: #f4f1e6;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s, transform 0.1s;
+  transition: background 0.15s;
 }
 .gw-edition-toggle:hover {
   background: var(--gw-accent);
   color: #12211a;
-}
-.gw-edition-toggle:active {
-  transform: translateY(1px);
 }
 
 /* --- Navbar: gold pixel brand ------------------------------------------- */
@@ -125,6 +122,12 @@ html:not([data-edition]) {
   color: #1c150a;
 }
 
+/* --- Links: no underline on hover, color shift only (no jank) ----------- */
+a:hover,
+a:focus {
+  text-decoration: none;
+}
+
 /* --- Hero: the physical device — gold ring + shell + scanlines ---------- */
 .hero--lab {
   position: relative;
@@ -144,6 +147,7 @@ html:not([data-edition]) {
 .hero--lab .container {
   position: relative;
   z-index: 1;
+  text-align: center;
 }
 .hero--lab .hero__title {
   font-family: var(--gw-pixel);
@@ -168,14 +172,17 @@ html:not([data-edition]) {
   box-shadow:
     inset 0 0 0 3px #00000055,
     0 16px 44px rgba(0, 0, 0, 0.45);
-  margin-top: 1.5rem;
+  margin: 1.5rem auto 0;
+  display: block;
 }
 .hero__caption {
   font-size: 0.85rem;
   opacity: 0.85;
-  margin-top: 0.85rem;
+  margin: 0.85rem auto 0;
+  max-width: 560px;
   font-family: var(--gw-pixel);
   letter-spacing: 0.3px;
+  text-align: center;
 }
 
 /* --- Footer: kept clean and quiet -------------------------------------- */
@@ -199,4 +206,284 @@ html:not([data-edition]) {
 .markdown > h1:first-child {
   border-bottom: 2px solid var(--gw-gold);
   padding-bottom: 0.3rem;
+}
+
+/* ==========================================================================
+   Design polish: cards, depth, featured-devlog, prose refinement.
+   The raw hero+plain-list homepage read as "unstyled". These surfaces give
+   the page a real information architecture without abandoning the
+   gold-ring / pixel-font / edition-switch DNA above.
+   ========================================================================== */
+
+/* --- Section heading block: pixel eyebrow + clean gold title ------------- */
+.gw-section {
+  margin: 3rem 0 1.5rem;
+}
+.gw-section--first {
+  margin-top: 0;
+}
+.gw-eyebrow {
+  font-family: var(--gw-pixel);
+  font-size: 0.5rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--gw-accent-2);
+  text-align: center;
+  margin-bottom: 0.75rem;
+  opacity: 0.75;
+}
+.gw-section-title {
+  font-family: var(--ifm-font-family-base);
+  font-size: clamp(1.3rem, 3vw, 1.7rem);
+  font-weight: 700;
+  color: var(--gw-gold);
+  text-align: center;
+  letter-spacing: -0.01em;
+  margin-bottom: 2rem;
+}
+.gw-section-title::after {
+  content: '';
+  display: block;
+  width: 3rem;
+  height: 2px;
+  background: var(--gw-gold);
+  margin: 0.75rem auto 0;
+  opacity: 0.5;
+}
+
+/* --- Doc-nav card surface ---------------------------------------------- */
+.gw-card {
+  display: block;
+  height: 100%;
+  background: var(--ifm-background-surface-color);
+  border: 1px solid rgba(201, 162, 39, 0.18);
+  border-radius: 12px;
+  padding: 1.3rem 1.35rem;
+  text-decoration: none;
+  color: inherit;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  transition: border-color 0.18s ease;
+}
+.gw-card:hover {
+  border-color: var(--gw-gold);
+}
+.gw-card__icon {
+  font-size: 1.7rem;
+  line-height: 1;
+  margin-bottom: 0.65rem;
+  display: block;
+}
+.gw-card__title {
+  font-family: var(--gw-pixel);
+  font-size: 0.72rem;
+  color: var(--gw-gold);
+  letter-spacing: 0.3px;
+  margin-bottom: 0.55rem;
+  line-height: 1.4;
+}
+.gw-card__body {
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: #d6dac6;
+  opacity: 0.92;
+}
+
+/* --- Featured devlog card: gold rail + tag pills ----------------------- */
+.gw-feature {
+  display: block;
+  height: 100%;
+  background: var(--ifm-background-surface-color);
+  border: 1px solid rgba(201, 162, 39, 0.22);
+  border-left: 4px solid var(--gw-gold);
+  border-radius: 10px;
+  padding: 1.15rem 1.25rem;
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.18s ease, border-left-color 0.18s ease;
+}
+.gw-feature:hover {
+  background: var(--gw-shell);
+  border-left-color: var(--gw-accent-2);
+}
+.gw-feature__date {
+  font-family: var(--gw-pixel);
+  font-size: 0.55rem;
+  letter-spacing: 0.1em;
+  color: var(--gw-accent-2);
+  margin-bottom: 0.45rem;
+}
+.gw-feature__title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f4f1e6;
+  line-height: 1.35;
+  margin-bottom: 0.55rem;
+}
+.gw-feature__excerpt {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: #cfd3bf;
+  opacity: 0.92;
+  margin-bottom: 0.8rem;
+}
+.gw-feature__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.gw-tag {
+  font-family: var(--gw-pixel);
+  font-size: 0.5rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(201, 162, 39, 0.12);
+  color: var(--gw-gold);
+  border: 1px solid rgba(201, 162, 39, 0.3);
+}
+
+/* --- Lead paragraph under hero ----------------------------------------- */
+.gw-lead {
+  max-width: 42rem;
+  margin: 0 auto 1.5rem;
+  text-align: center;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: #d6dac6;
+  opacity: 0.95;
+}
+
+/* --- Prose polish: blockquote, inline code ----------------------------- */
+.markdown blockquote {
+  border-left: 3px solid var(--gw-gold);
+  background: rgba(201, 162, 39, 0.06);
+  padding: 0.6rem 1rem;
+  border-radius: 0 6px 6px 0;
+  color: #e8ecd8;
+}
+.markdown :not(pre) > code {
+  background: rgba(201, 162, 39, 0.12);
+  color: var(--gw-accent-2);
+  border: 1px solid rgba(201, 162, 39, 0.2);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+/* --- Blog list page: surface each item --------------------------------- */
+.blog-post-item {
+  background: var(--ifm-background-surface-color);
+  border: 1px solid rgba(201, 162, 39, 0.15);
+  border-radius: 10px;
+  padding: 1.1rem 1.25rem;
+  margin-bottom: 1.1rem;
+  transition: border-color 0.18s ease;
+}
+.blog-post-item:hover {
+  border-color: rgba(201, 162, 39, 0.4);
+}
+
+/* --- Accessibility: visible focus on the gold ring --------------------- */
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--gw-gold);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* --- Slim gold divider ------------------------------------------------- */
+.gw-divider {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--gw-gold), transparent);
+  border: 0;
+  margin: 2.5rem auto;
+  opacity: 0.5;
+  max-width: 32rem;
+}
+
+/* ==========================================================================
+   Responsive + overflow hardening.
+   The Infima grid ships col--N as a fixed percentage with no breakpoints,
+   so col--4 stays 33% on a 375 px phone and the featured cards crush to
+   ~115 px. Markdown tables render with no scroll wrapper, so any wide
+   table pushes the whole page into horizontal scroll. Both read as "broken
+   CSS" on mobile and narrow desktop windows.
+   ========================================================================== */
+
+/* --- Responsive grids: 2-up on tablet, 1-up on phone ------------------- */
+@media (max-width: 996px) {
+  .row > .col.col--4,
+  .row > .col.col--3 {
+    --ifm-col-width: 50%;
+  }
+}
+@media (max-width: 600px) {
+  .row > .col.col--4,
+  .row > .col.col--3 {
+    --ifm-col-width: 100%;
+  }
+  /* Pixel-font eyebrows/tags are unreadable below ~8 px — bump slightly. */
+  .gw-eyebrow,
+  .gw-tag,
+  .gw-feature__date {
+    font-size: 0.58rem;
+  }
+}
+
+/* --- Featured grid: center the orphan cards in the last row ------------- */
+/* A full row of three col--4 cards fills 100 % so centering is a no-op;
+   only a partial last row (1–2 cards) gets the free space split evenly. */
+.row:has(.gw-feature) {
+  justify-content: center;
+}
+
+/* --- Card gutters: Infima zeroed .col padding, cards touched edge-to-edge */
+.row:has(.gw-feature),
+.row:has(.gw-card) {
+  gap: 1.25rem;
+  margin: 0; /* cancel the negative row margin that expected col padding */
+}
+
+/* --- Equal-height cards: make each col a flex container so cards stretch -- */
+.row:has(.gw-feature) .col,
+.row:has(.gw-card) .col {
+  display: flex;
+}
+.gw-feature,
+.gw-card {
+  width: 100%;
+}
+
+/* --- Uniform excerpt height: clamp to 3 lines so cards align cleanly ------ */
+.gw-feature__excerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* --- Markdown tables: scroll instead of overflowing the page ------------ */
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* --- Card text: never let a long token overflow its card ---------------- */
+.gw-feature__title,
+.gw-feature__excerpt,
+.gw-card__title,
+.gw-card__body {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* --- Inline code in headings: don't let it blow out line height --------- */
+.markdown h2 code,
+.markdown h3 code,
+.markdown h4 code {
+  font-size: 0.82em;
+  word-break: break-word;
 }
