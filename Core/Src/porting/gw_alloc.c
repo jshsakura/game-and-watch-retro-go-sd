@@ -8,6 +8,22 @@
 
 static char *heap_end = 0;
 
+/* Bytes handed out of the DTCM stdlib heap so far. Reported around the
+ * logo-cache free at emulator_start so a device log says how much the
+ * leak was actually worth on this card, instead of only telling us after
+ * an allocation has already failed. */
+size_t gw_heap_used(void)
+{
+    if (heap_end == 0)
+        return 0;
+    return (size_t)(heap_end - (char *)&_heap_start);
+}
+
+size_t gw_heap_total(void)
+{
+    return (size_t)((char *)&_heap_end - (char *)&_heap_start);
+}
+
 void *
 _sbrk (int incr)
 {
@@ -20,7 +36,15 @@ _sbrk (int incr)
         printf("HEAP OOM: need=%d used=%d/%d\n",
                incr, (int)(heap_end - (char *)&_heap_start),
                (int)((char *)&_heap_end - (char *)&_heap_start));
-        assert(0);
+        /* POSIX contract: sbrk reports failure with (void *)-1, which makes
+         * malloc() return NULL so the caller's own out-of-memory path runs.
+         * This used to assert(0) instead, which turned every soft-handled
+         * allocation failure into a fatal exception — picodrive, for one,
+         * already degrades cleanly (cart.c: "if (Pico.sv.data == NULL)
+         * Pico.sv.flags &= ~SRF_ENABLED"), but never got the chance.
+         * The log line above stays, so an OOM is still loud and traceable;
+         * it just no longer kills a core that was prepared to cope. */
+        return (void *)-1;
     }
 
     prev_heap_end = heap_end;

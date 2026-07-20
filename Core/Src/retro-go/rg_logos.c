@@ -19,7 +19,55 @@
 static retro_logo_image** logo_image_cache;
 static int logo_image_count = 0; /* # entries loaded from logo.bin (for bounds check) */
 
+/* Logos are allocated from ITCM first and spill to the DTCM stdlib heap once
+ * ITCM fills (see rg_get_logo). itc_init() rewinds ITCM at emulator_start, so
+ * the ITCM ones cost nothing once a core takes over — but the heap ones are
+ * real malloc()s that nothing ever freed. rg_reset_logo_buffers() only NULLed
+ * the pointers, so every spilled logo stayed resident for the whole lifetime
+ * of the running core, on a heap that is only ~82 KB to begin with.
+ *
+ * That is what killed 32X Doom: picodrive asks for a 16 KB cart-SRAM buffer
+ * during PicoLoadMedia (cart.c, the bad-header 0x200000-0x203FFF default) and
+ * the heap was 748 B short, so _sbrk asserted. The size of the leak scales
+ * with how many systems have logos AND with how full ITCM already is, which
+ * is why the same core booted fine on other cards.
+ *
+ * Tracked here rather than by walking logo_image_cache[] because both callers
+ * run AFTER itc_init(): if the cache array itself landed in ITCM, walking it
+ * would be reading rewound memory. This array lives in .bss and is always
+ * valid, and we only ever compare pointers, never dereference them. */
+static void  *heap_logos[MAX_LOGO_COUNT + 1];
+static size_t heap_logo_sizes[MAX_LOGO_COUNT + 1];
+static int    heap_logo_count = 0;
+
+static void track_heap_logo(void *p, size_t size) {
+    if (p != NULL && heap_logo_count < (int)(sizeof(heap_logos) / sizeof(heap_logos[0]))) {
+        heap_logo_sizes[heap_logo_count] = size;
+        heap_logos[heap_logo_count++] = p;
+    }
+}
+
 void rg_reset_logo_buffers() {
+    extern size_t gw_heap_used(void);
+    extern size_t gw_heap_total(void);
+    size_t freed = 0;
+    for (int i = 0; i < heap_logo_count; i++) {
+        freed += heap_logo_sizes[i];
+        free(heap_logos[i]);
+    }
+
+    /* free() returns blocks to newlib's free list; it does NOT move the sbrk
+     * break, so heap-used will not drop here. What decides whether a core's
+     * later allocation fits is whether these blocks coalesce into a run big
+     * enough for it (32X wants 16 KB of cart SRAM). They were allocated back
+     * to back while parsing logo.bin, so they should -- but print the total
+     * so a device log can be checked against the request that failed rather
+     * than assumed. */
+    printf("logo cache: freed %d heap logo(s), %u B; heap used=%u/%u\n",
+           heap_logo_count, (unsigned)freed,
+           (unsigned)gw_heap_used(), (unsigned)gw_heap_total());
+
+    heap_logo_count = 0;
     logo_image_cache = NULL;
     logo_image_count = 0;
 }
@@ -59,8 +107,10 @@ retro_logo_image *rg_get_logo(int16_t logo_index) {
      * added it can no longer hold the whole logo cache. Fall back to the main heap
      * (logos are drawn rarely, so they don't need fast TCM) and never crash on OOM. */
     logo_image_cache = itc_malloc(MAX_LOGO_COUNT * sizeof(retro_logo_image*));
-    if (logo_image_cache == (void *)0xffffffff)
+    if (logo_image_cache == (void *)0xffffffff) {
         logo_image_cache = malloc(MAX_LOGO_COUNT * sizeof(retro_logo_image*));
+        track_heap_logo(logo_image_cache, MAX_LOGO_COUNT * sizeof(retro_logo_image*));
+    }
     if (logo_image_cache == NULL) { fclose(file); return NULL; }
 
     int current_logo_index = 0;
@@ -86,8 +136,10 @@ retro_logo_image *rg_get_logo(int16_t logo_index) {
         size_t data_size = ((width + 7) >> 3) * height;
 
         retro_logo_image* dest = itc_malloc(sizeof(retro_logo_image) + data_size);
-        if (dest == (void *)0xffffffff)
+        if (dest == (void *)0xffffffff) {
             dest = malloc(sizeof(retro_logo_image) + data_size);
+            track_heap_logo(dest, sizeof(retro_logo_image) + data_size);
+        }
         if (dest == NULL) break;
         dest->width = width;
         dest->height = height;
