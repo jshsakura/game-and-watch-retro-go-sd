@@ -249,8 +249,16 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * own overlay code+data+bss instead of the free space after it. 0720. */
     ram_start = (uint32_t)&_OVERLAY_SEGACD_BSS_END;
 
+    /* Returning from app_main is NOT a way out: emulator_start() has already
+     * torn the launcher down (ahb_init/itc_init, ram_start=0, emulators and
+     * systems NULLed) before handing over, so a plain return unwinds into
+     * state that no longer exists and takes a HardFault. Every other core
+     * alerts and reboots to the launcher instead (cf. main_md32x.c's missing
+     * -xip path); Sega CD returned 0 and died there. */
     if (!SegaCdCacheXipToFlash()) {
         printf("Failed to cache segacd.xip\n");
+        odroid_overlay_alert("Missing /cores/segacd.xip - re-run the update");
+        odroid_system_switch_app(0);
         return 0;
     }
 
@@ -264,6 +272,8 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     }
     if (!segacd_bios) {
         printf("SegaCD BIOS not found in /bios/segacd/!\n");
+        odroid_overlay_alert("Sega CD BIOS missing - put bios_CD_U/E/J.bin in /bios/segacd/");
+        odroid_system_switch_app(0);
         return 0;
     }
 
