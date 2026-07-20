@@ -1,17 +1,28 @@
 /*
  * CPS-1 PC host harness -- skeleton (Phase 2 of the CPS-1 feasibility
- * protocol, docs/CPS1_SENIOR_TRICKS_ANALYSIS.md section 4). Headless: there
- * is nothing to look at yet (see Core/Src/porting/cps1/cps1_core.c, a stub).
- * Its job is the interpreter-vs-recompiler bit-identical diff loop the real
- * cores will plug into once they exist -- and to fail loudly (mismatched
- * checksums) the day one of them diverges from the other.
+ * protocol, docs/CPS1_SENIOR_TRICKS_ANALYSIS.md section 4), now integrating
+ * every piece built since: 68000 interpreter+recompiler with a real WRAM/
+ * OBJ-RAM/palette-RAM/BG-tilemap/sound-command bus, a 3-layer BG renderer
+ * + host compositor, and a sound HLE mixer -- all against synthetic ROM/
+ * scene data (see Core/Src/porting/cps1/cps1_core.c), since no real CPS-1
+ * ROM exists yet.
  *
  *   ./build/retro-go-cps1 [--frames=N] [--engine=interpreter|recompiler|diff] [--dump-ppm]
+ *   ./build/retro-go-cps1 --profile [--frames=N]
+ *
+ * --profile times cps1_core_run_frame_device_cost() (CPU+SCROLL3+sprites
+ * only -- the cheat-8 device-realistic path, NOT the full host-compositor
+ * pipeline) on THIS x86 host. Wall-clock ms/frame here says nothing about
+ * device fps (different ISA, no cache/wait-state model) -- it is a sanity
+ * check that the reference path runs in a sane amount of time, not a fps
+ * verdict. The QEMU M7 rig (tools/m7_qemu_rig/run_cps1.sh) is what measures
+ * instructions/frame against the device's actual 340MHz/60fps budget.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "cps1_core.h"
 #include "crc32.h"
@@ -103,10 +114,45 @@ static int run_single(cps1_engine_kind_t engine, int frames, int dump_ppm)
     return 0;
 }
 
+static double now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
+
+static int run_profile(int frames)
+{
+    cps1_core_reset(CPS1_ENGINE_INTERPRETER);
+
+    /* Warm up the tile cache so the first measured frames aren't paying a
+     * one-time cold-cache cost that a real running game wouldn't repeat. */
+    for (int f = 0; f < 5; f++)
+        cps1_core_run_frame_device_cost(CPS1_ENGINE_INTERPRETER);
+
+    double total_ms = 0.0, min_ms = 1e9, max_ms = 0.0;
+    for (int f = 0; f < frames; f++) {
+        double t0 = now_ms();
+        cps1_core_run_frame_device_cost(CPS1_ENGINE_INTERPRETER);
+        double dt = now_ms() - t0;
+        total_ms += dt;
+        if (dt < min_ms) min_ms = dt;
+        if (dt > max_ms) max_ms = dt;
+    }
+
+    double avg_ms = total_ms / frames;
+    printf("[cps1-profile] x86 HOST wall-clock, device_cost path (CPU+SCROLL3+sprites), %d frames\n",
+           frames);
+    printf("[cps1-profile] avg=%.4f ms/frame min=%.4f max=%.4f (16.6ms budget line is NOT a device fps verdict here -- see file header)\n",
+           avg_ms, min_ms, max_ms);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     int frames = 60;
     int dump_ppm = 0;
+    int profile = 0;
     const char *engine_arg = "diff";
 
     for (int i = 1; i < argc; i++) {
@@ -116,11 +162,21 @@ int main(int argc, char **argv)
             engine_arg = argv[i] + 9;
         else if (!strcmp(argv[i], "--dump-ppm"))
             dump_ppm = 1;
+        else if (!strcmp(argv[i], "--profile"))
+            profile = 1;
         else
             fprintf(stderr, "cps1: ignoring unrecognized argument '%s'\n", argv[i]);
     }
 
-    printf("[cps1] STUB harness -- no real 68000/Z80/PPU/sound yet, see docs/CPS1_FEASIBILITY.md\n");
+    printf("[cps1] integrated harness: 68000+bus (WRAM/OBJ/palette/BG-tilemap/sound-cmd), "
+           "3-layer BG+compositor, sound HLE -- all synthetic scene/ROM data, see "
+           "docs/CPS1_FEASIBILITY.md\n");
+
+    if (profile) {
+        printf("[cps1] profile mode, frames=%d\n", frames);
+        return run_profile(frames);
+    }
+
     printf("[cps1] frames=%d engine=%s\n", frames, engine_arg);
 
     if (!strcmp(engine_arg, "diff"))

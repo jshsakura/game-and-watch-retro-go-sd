@@ -1,13 +1,31 @@
 /* CPS-1 on the M7 QEMU rig -- real ARMv7-M instruction stream.
  *
- * Compiles the SAME Core/Src/porting/cps1/cps1_core.c stub the linux/cps1
- * harness uses (docs/CPS1_FEASIBILITY.md Phase 2), so once real 68000/Z80/
- * PPU/sound code replaces the stub, this rig measures its instructions/frame
- * on a real ARMv7-M stream the same way rig_vb.c does for Virtual Boy.
- * Reuses rig_runtime.c and mps2_an500.ld verbatim -- both are core-agnostic
- * (docs/HARNESSES.md: "copy rig_vb.c's shape to put any other core on the
- * same scale"). Until a real core lands, this only proves the plumbing:
- * calibrated timer, frame loop, per-window instruction ledger, RUNHASH.
+ * Compiles the SAME Core/Src/porting/cps1/cps1_core.c the linux/cps1
+ * harness uses -- 68000 interpreter+bus, 3-layer BG+compositor, sound HLE,
+ * all against synthetic ROM/scene data -- so this rig measures the
+ * integrated pipeline's instructions/frame on a real ARMv7-M stream the
+ * same way rig_vb.c does for Virtual Boy. Reuses rig_runtime.c and
+ * mps2_an500.ld verbatim -- both are core-agnostic (docs/HARNESSES.md:
+ * "copy rig_vb.c's shape to put any other core on the same scale").
+ *
+ * Measures TWO paths, because they answer different questions:
+ *   - cps1_core_run_frame(): CPU + all 3 BG layers + sprites + the host
+ *     compositor stand-in for LTDC. This is what a host WITHOUT real LTDC
+ *     hardware has to pay -- not what the device pays.
+ *   - cps1_core_run_frame_device_cost(): CPU + SCROLL3 + sprites only.
+ *     SCROLL1/SCROLL2 render and the compositor blend are skipped, because
+ *     on real hardware those become LTDC hardware layers/scanout blending
+ *     and cost the CPU nothing (cheat 8). THIS is the number to check
+ *     against the 60fps budget.
+ *
+ * What this rig can and can't tell you: QEMU's -icount models a real
+ * ARMv7-M *instruction stream* (real Thumb-2 encoding, real hard-float
+ * ABI), so instructions/frame here is a real number on the device's own
+ * ISA -- not an x86 proxy. It does NOT model caches or flash wait states,
+ * so an instruction count under budget is necessary, not sufficient, for
+ * 60fps -- the device DWT/frame ledger is still the final judge (see
+ * CLAUDE.md's "Testing a core the way the device runs it" and every prior
+ * initiative in this repo that learned this the hard way).
  */
 #include <stdio.h>
 #include <stdint.h>
@@ -15,36 +33,35 @@
 #include "cps1_core.h"
 
 #ifndef RIG_FRAMES
-#define RIG_FRAMES 600
+#define RIG_FRAMES 300
 #endif
-#define RIG_WINDOW 100
+#define RIG_WINDOW 50
+
+/* Device clock assumption (STM32H7B0 PLL, matches the 340MHz figure in
+ * docs/CPS1_SENIOR_TRICKS_ANALYSIS.md section 4's "340MHz/60 = 5.6M cycles
+ * budget"). insn count is treated as a cycle-count proxy (1 insn ~= 1
+ * cycle) -- the same approximation this repo's other QEMU rigs use, and
+ * the same one that does NOT capture cache misses or flash wait states. */
+#define CPS1_DEVICE_CLOCK_HZ   340000000ull
+#define CPS1_FRAME_BUDGET_MS   16.6667
+#define CPS1_FRAME_BUDGET_CYC  ((uint64_t)(CPS1_DEVICE_CLOCK_HZ / 60ull)) /* ~5.667M */
 
 void rig_timer_init(void);
 uint32_t rig_timer_now(void);
 uint32_t rig_calibrate(uint32_t n);
 
-int main(void)
-{
-    rig_timer_init();
-    /* Calibrate ticks -> instructions: the loop body is exactly 3 insns. */
-    uint32_t cal_ticks = rig_calibrate(1000000);
-    uint32_t ipt_x1000 = (uint32_t)((3000000ull * 1000ull) / (cal_ticks ? cal_ticks : 1));
-    printf("[cps1-qemu] STUB rig -- no real core yet, see docs/CPS1_FEASIBILITY.md\n");
-    printf("[cps1-qemu] cal: 3.0M insns = %lu ticks -> %lu.%03lu insn/tick\n",
-           (unsigned long)cal_ticks,
-           (unsigned long)(ipt_x1000 / 1000), (unsigned long)(ipt_x1000 % 1000));
+typedef void (*frame_fn_t)(cps1_engine_kind_t);
 
+static uint64_t measure_path(const char *label, frame_fn_t fn, uint32_t ipt_x1000)
+{
     cps1_core_reset(CPS1_ENGINE_INTERPRETER);
-    printf("[cps1-qemu] cpu test program halted -- initial state hash=%08x illegal=%u\n",
-           (unsigned)cps1_core_cpu_state_hash(CPS1_ENGINE_INTERPRETER),
-           (unsigned)cps1_core_cpu_illegal_count(CPS1_ENGINE_INTERPRETER));
 
     uint32_t run_hash = 2166136261u;
     uint64_t win_ticks = 0, tot_ticks = 0;
 
     for (int frame = 0; frame < RIG_FRAMES; frame++) {
         uint32_t t0 = rig_timer_now();
-        cps1_core_run_frame(CPS1_ENGINE_INTERPRETER);
+        fn(CPS1_ENGINE_INTERPRETER);
         uint32_t t1 = rig_timer_now();
         win_ticks += (uint32_t)(t1 - t0);
 
@@ -53,20 +70,50 @@ int main(void)
 
         if ((frame + 1) % RIG_WINDOW == 0) {
             uint64_t emu_i = win_ticks * ipt_x1000 / 1000 / RIG_WINDOW;
-            printf("w%05d emu=%lu insn/frame fb=%08x\n",
-                   frame + 1, (unsigned long)emu_i, (unsigned)h);
+            printf("[%s] w%05d emu=%lu insn/frame fb=%08x\n",
+                   label, frame + 1, (unsigned long)emu_i, (unsigned)h);
             tot_ticks += win_ticks;
             win_ticks = 0;
         }
     }
 
-    uint64_t frames = (RIG_FRAMES / RIG_WINDOW) * RIG_WINDOW;
+    uint64_t frames = (uint64_t)((RIG_FRAMES / RIG_WINDOW) * RIG_WINDOW);
     if (frames == 0) frames = 1;
-    printf("[cps1-qemu] done %d frames RUNHASH=%08x avg emu=%lu insn/frame\n",
-           RIG_FRAMES, (unsigned)run_hash,
-           (unsigned long)(tot_ticks * ipt_x1000 / 1000 / frames));
-    printf("[cps1-qemu] cpu final state hash=%08x illegal=%u\n",
-           (unsigned)cps1_core_cpu_state_hash(CPS1_ENGINE_INTERPRETER),
-           (unsigned)cps1_core_cpu_illegal_count(CPS1_ENGINE_INTERPRETER));
+    uint64_t avg_insn = tot_ticks * ipt_x1000 / 1000 / frames;
+
+    double ms = (double)avg_insn * 1000.0 / (double)CPS1_DEVICE_CLOCK_HZ;
+    printf("[%s] done %d frames RUNHASH=%08x avg=%lu insn/frame ~= %.4f ms @ %lluMHz "
+           "(budget %.4f ms = %llu insn)\n",
+           label, RIG_FRAMES, (unsigned)run_hash, (unsigned long)avg_insn, ms,
+           (unsigned long long)(CPS1_DEVICE_CLOCK_HZ / 1000000ull),
+           CPS1_FRAME_BUDGET_MS, (unsigned long long)CPS1_FRAME_BUDGET_CYC);
+    printf("[%s] verdict: %s\n", label,
+           (avg_insn <= CPS1_FRAME_BUDGET_CYC) ? "UNDER 60fps insn budget" : "OVER 60fps insn budget");
+
+    return avg_insn;
+}
+
+int main(void)
+{
+    rig_timer_init();
+    /* Calibrate ticks -> instructions: the loop body is exactly 3 insns. */
+    uint32_t cal_ticks = rig_calibrate(1000000);
+    uint32_t ipt_x1000 = (uint32_t)((3000000ull * 1000ull) / (cal_ticks ? cal_ticks : 1));
+    printf("[cps1-qemu] integrated pipeline: 68000+bus, 3-layer BG+compositor, sound HLE "
+           "(synthetic ROM/scene, no real CPS-1 ROM yet)\n");
+    printf("[cps1-qemu] cal: 3.0M insns = %lu ticks -> %lu.%03lu insn/tick\n",
+           (unsigned long)cal_ticks,
+           (unsigned long)(ipt_x1000 / 1000), (unsigned long)(ipt_x1000 % 1000));
+
+    uint64_t full = measure_path("full", cps1_core_run_frame, ipt_x1000);
+    uint64_t device = measure_path("device-cost", cps1_core_run_frame_device_cost, ipt_x1000);
+
+    printf("[cps1-qemu] summary: full(host-compositor)=%lu insn/frame, "
+           "device-cost(cheat-8, real hardware pays this)=%lu insn/frame, saving=%.1f%%\n",
+           (unsigned long)full, (unsigned long)device,
+           full ? 100.0 * (1.0 - (double)device / (double)full) : 0.0);
+    printf("[cps1-qemu] NOTE: instruction count is a necessary, not sufficient, condition for "
+           "60fps -- QEMU models neither cache misses nor flash wait states. The device's own "
+           "DWT/frame ledger is the final judge.\n");
     return 0;
 }

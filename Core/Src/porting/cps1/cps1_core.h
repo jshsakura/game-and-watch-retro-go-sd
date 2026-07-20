@@ -23,7 +23,19 @@ typedef enum {
 } cps1_engine_kind_t;
 
 void cps1_core_reset(cps1_engine_kind_t engine);
+
+/* Full pipeline for correctness/visual verification: CPU + all 3 BG layers
+ * + sprites + the host-only compositor stand-in for LTDC. Use this for
+ * checksums/PPM dumps, NOT for fps profiling -- see the device-cost
+ * variant below for what real hardware actually pays per frame. */
 void cps1_core_run_frame(cps1_engine_kind_t engine);
+
+/* Device-realistic pipeline (cheat 8): CPU + SCROLL3 + sprites only.
+ * SCROLL1/SCROLL2 render and the compositor blend are skipped -- on real
+ * hardware those become LTDC hardware layers/scanout blending and cost
+ * the CPU nothing. Profile THIS against the 60fps budget. */
+void cps1_core_run_frame_device_cost(cps1_engine_kind_t engine);
+
 const uint16_t *cps1_core_get_framebuffer(cps1_engine_kind_t engine);
 uint32_t cps1_core_checksum(cps1_engine_kind_t engine);
 
@@ -67,3 +79,16 @@ void cps1_core_sound_mix(int16_t *out, uint32_t count);
  * channel 0 actually activated with a non-zero frequency -- proving the
  * 68000 can reach the mixer, not just that cps1_sound_hle.c compiles. */
 int cps1_core_selftest_sound_bus(void);
+
+/* Read-only inspection of a BG layer's tilemap cell -- same
+ * primitive-out-params pattern as cps1_core_oam_peek, for the same reason
+ * (keeps this header independent of cps1_bg.h). layer: 0=SCROLL1,
+ * 1=SCROLL2, 2=SCROLL3. */
+int cps1_core_bg_cell_peek(unsigned layer, uint32_t index, uint16_t *out_tile,
+                            uint8_t *out_palette, uint8_t *out_enabled);
+
+/* Hand-assembled program writes a tilemap cell (tile_index + palette/
+ * enabled word) through MOVEA/MOVE.W to the real bus dispatcher, then
+ * checks SCROLL1's cell 0 actually changed -- proving the 68000 can reach
+ * the BG tilemap, not just that cps1_bg.c compiles. */
+int cps1_core_selftest_bg_bus(void);

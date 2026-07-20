@@ -241,6 +241,16 @@ uint32_t cps1_cpu68k_step(cps1_cpu68k_t *cpu)
         if (val == 0)        cpu->sr |= CPS1_CPU68K_SR_Z;
         if (val & 0x8000u)   cpu->sr |= CPS1_CPU68K_SR_N;
         cycles = 8;
+    } else if ((op & 0xF1FF) == 0x303C) {
+        /* MOVE.W #imm16,Dn */
+        unsigned reg = (op >> 9) & 7;
+        uint16_t imm = fetch16(cpu);
+        write_dn_sized(cpu, reg, 1, imm);
+        cpu->sr = (uint16_t)(cpu->sr & ~(CPS1_CPU68K_SR_N | CPS1_CPU68K_SR_Z |
+                                          CPS1_CPU68K_SR_V | CPS1_CPU68K_SR_C));
+        if (imm == 0)        cpu->sr |= CPS1_CPU68K_SR_Z;
+        if (imm & 0x8000u)   cpu->sr |= CPS1_CPU68K_SR_N;
+        cycles = 8;
     } else {
         cps1_cpu68k_unimplemented(cpu, op);
     }
