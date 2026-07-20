@@ -14,7 +14,7 @@
 	url = https://github.com/sylverb/potator.git
 [submodule "gwenesis"]
 	path = external/gwenesis
-	url = https://github.com/sylverb/gwenesis
+	url = https://github.com/jshsakura/gwenesis
 [submodule "prosystem-go"]
 	path = external/prosystem-go
 	url = https://github.com/sylverb/prosystem-go.git
