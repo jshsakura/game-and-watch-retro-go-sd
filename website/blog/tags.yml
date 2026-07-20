@@ -32,3 +32,33 @@ video:
   label: video
   permalink: /video
   description: Video player (MJPEG-AVI) work
+
+snes:
+  label: SNES
+  permalink: /snes
+  description: Super Nintendo / Super Metroid / Zelda 3 port work
+
+segacd:
+  label: SegaCD
+  permalink: /segacd
+  description: Mega CD / Sega CD work
+
+32x:
+  label: 32X
+  permalink: /32x
+  description: Mega Drive 32X / PicoDrive port work
+
+boot:
+  label: boot
+  permalink: /boot
+  description: Boot path, rescue screen, and watchdog work
+
+fault:
+  label: fault
+  permalink: /fault
+  description: Hardware faults and crash post-mortems
+
+hardware:
+  label: hardware
+  permalink: /hardware
+  description: Device-only behaviour and the host/device gap
