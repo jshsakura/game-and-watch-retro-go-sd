@@ -634,9 +634,15 @@ static const char *get_extension(const char *filename) {
     return NULL;
 }
 
-static bool emulator_is_pcecd(const retro_emulator_t *emu)
+/* CD-based systems ship a game as a folder: one .cue plus its track .bin files.
+ * They need the recursive scan below rather than the flat scandir, or the only
+ * thing the launcher sees under /roms/<sys>/ is the game FOLDER — which lists
+ * with the folder's name and cannot be launched. Sega CD has exactly the PCE CD
+ * layout and was missing from this gate, so it fell to the flat scan. */
+static bool emulator_is_cd_system(const retro_emulator_t *emu)
 {
-    return strcmp(emu->dirname, "pcecd") == 0;
+    return strcmp(emu->dirname, "pcecd") == 0 ||
+           strcmp(emu->dirname, "segacd") == 0;
 }
 
 /* Case-insensitive ".cue" — avoid snprintf/strtolower/strstr on every SD entry. */
@@ -721,7 +727,7 @@ static bool emulator_add_folder_row(retro_emulator_t *emu, const char *path,
 #if SD_CARD == 1
 /* Open a child dir and stop at the first .cue found.
  * Must not run while another DIR is open (FatFs LFN uses a shared static buffer). */
-static bool pcecd_collapse_game_dir(retro_emulator_t *emu, const char *path)
+static bool cd_collapse_game_dir(retro_emulator_t *emu, const char *path)
 {
     DIR dir;
     FILINFO fno;
@@ -756,10 +762,10 @@ static bool pcecd_collapse_game_dir(retro_emulator_t *emu, const char *path)
     return found;
 }
 
-/* Scan one PCE CD browse folder without nesting FatFs DIR handles and without
+/* Scan one CD-system browse folder without nesting FatFs DIR handles and without
  * nesting FatFs DIR handles. Parent directory is scanned once, child names are
  * collected, then children are processed after parent close (FatFs LFN safety). */
-static void emulator_scan_pcecd_folder(retro_emulator_t *emu, const char *folder)
+static void emulator_scan_cd_folder(retro_emulator_t *emu, const char *folder)
 {
     DIR dir;
     FILINFO fno;
@@ -815,7 +821,7 @@ static void emulator_scan_pcecd_folder(retro_emulator_t *emu, const char *folder
         if (folder_len + 1 + strlen(subdirs[i]) >= sizeof(fullpath))
             continue;
         snprintf(fullpath, sizeof(fullpath), "%s/%s", folder, subdirs[i]);
-        if (!pcecd_collapse_game_dir(emu, fullpath))
+        if (!cd_collapse_game_dir(emu, fullpath))
             emulator_add_folder_row(emu, fullpath, subdirs[i]);
     }
 
@@ -889,8 +895,8 @@ void emulator_init(retro_emulator_t *emu)
 
     emulator_browse_folder_path(emu, folder, sizeof(folder));
 #if SD_CARD == 1
-    if (emulator_is_pcecd(emu))
-        emulator_scan_pcecd_folder(emu, folder);
+    if (emulator_is_cd_system(emu))
+        emulator_scan_cd_folder(emu, folder);
     else
 #endif
         rg_storage_scandir(folder, scan_folder_cb, emu, 0);
@@ -905,8 +911,8 @@ void emulator_refresh_list(retro_emulator_t *emu)
 
     emulator_browse_folder_path(emu, folder, sizeof(folder));
 #if SD_CARD == 1
-    if (emulator_is_pcecd(emu))
-        emulator_scan_pcecd_folder(emu, folder);
+    if (emulator_is_cd_system(emu))
+        emulator_scan_cd_folder(emu, folder);
     else
 #endif
         rg_storage_scandir(folder, scan_folder_cb, emu, 0);
@@ -932,28 +938,29 @@ static void path_dirname_copy(const char *path, char *out, size_t out_size)
     out[len] = '\0';
 }
 
-/* True when cue lives in a per-game folder under /roms/pcecd/<game>/… */
-static bool pcecd_cue_in_game_folder(const char *cue_path, char *parent_out, size_t parent_size)
+/* True when cue lives in a per-game folder under /roms/<sys>/<game>/… */
+static bool cd_cue_in_game_folder(const char *cue_path, const char *sys_dir,
+                                  char *parent_out, size_t parent_size)
 {
     char root[RG_PATH_MAX];
     size_t root_len;
 
     path_dirname_copy(cue_path, parent_out, parent_size);
-    snprintf(root, sizeof(root), "%s/pcecd", RG_BASE_PATH_ROMS);
+    snprintf(root, sizeof(root), "%s/%s", RG_BASE_PATH_ROMS, sys_dir);
     if (strcmp(parent_out, root) == 0)
-        return false; /* flat layout: cue directly under /roms/pcecd */
+        return false; /* flat layout: cue directly under /roms/<sys> */
 
     root_len = strlen(root);
     if (strncmp(parent_out, root, root_len) != 0 || parent_out[root_len] != '/')
         return false;
-    /* Must be exactly one level under pcecd (…/pcecd/<game>), not deeper
+    /* Must be exactly one level under <sys> (…/<sys>/<game>), not deeper
      * nested junk we might not want to wipe wholesale — still OK to delete
      * that folder if the cue is there; collapse only uses one level. */
     return true;
 }
 
-/* Flat PCE CD layout: delete FILE "…" siblings referenced by the cue, then the cue. */
-static void emulator_delete_pcecd_flat(const char *cue_path)
+/* Flat CD layout: delete FILE "…" siblings referenced by the cue, then the cue. */
+static void emulator_delete_cd_flat(const char *cue_path)
 {
     char parent[RG_PATH_MAX];
     char line[512];
@@ -998,20 +1005,26 @@ static void emulator_delete_pcecd_flat(const char *cue_path)
  * often in a per-game folder); a plain unlink of the .cue would leave orphans. */
 static void emulator_delete_rom_storage(retro_emulator_file_t *file)
 {
+    static const char *const cd_dirs[] = { "pcecd", "segacd" };
     char parent[RG_PATH_MAX];
-    char pcecd_prefix[64];
+    char prefix[64];
 
     if (!file || !file->path[0])
         return;
 
-    snprintf(pcecd_prefix, sizeof(pcecd_prefix), "%s/pcecd/", RG_BASE_PATH_ROMS);
-    if (file->ext && strcasecmp(file->ext, "cue") == 0 &&
-        strncmp(file->path, pcecd_prefix, strlen(pcecd_prefix)) == 0) {
-        if (pcecd_cue_in_game_folder(file->path, parent, sizeof(parent)))
-            rg_storage_delete(parent);
-        else
-            emulator_delete_pcecd_flat(file->path);
-        return;
+    /* Both CD systems store a game as cue + track bins, usually in a per-game
+     * folder; a plain unlink of the .cue would leave every track orphaned. */
+    if (file->ext && strcasecmp(file->ext, "cue") == 0) {
+        for (size_t i = 0; i < sizeof(cd_dirs) / sizeof(cd_dirs[0]); i++) {
+            snprintf(prefix, sizeof(prefix), "%s/%s/", RG_BASE_PATH_ROMS, cd_dirs[i]);
+            if (strncmp(file->path, prefix, strlen(prefix)) != 0)
+                continue;
+            if (cd_cue_in_game_folder(file->path, cd_dirs[i], parent, sizeof(parent)))
+                rg_storage_delete(parent);
+            else
+                emulator_delete_cd_flat(file->path);
+            return;
+        }
     }
 
     rg_storage_delete(file->path);

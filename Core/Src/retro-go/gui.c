@@ -858,11 +858,16 @@ static uint8_t *get_coverfile(char *rom_path)
 
     char *coverpath = odroid_system_get_path(ODROID_PATH_COVER_FILE, rom_path);
     FILE *file = fopen(coverpath, "rb");
-    if (!file && strstr(rom_path, "/pcecd/"))
+    if (!file && (strstr(rom_path, "/pcecd/") || strstr(rom_path, "/segacd/")))
     {
-        /* PCE CD = one folder per game; also accept a single cover named after
-         * the game FOLDER so /romart need not mirror the per-game sub-folders:
-         *   /romart/pcecd/<game folder>.img  */
+        /* CD systems = one folder per game (the .cue plus its track .bin files);
+         * also accept a single cover named after the game FOLDER so /romart need
+         * not mirror the per-game sub-folders:
+         *   /romart/pcecd/<game folder>.img
+         *   /romart/segacd/<game folder>.img
+         * Sega CD has the identical on-card layout, so it needs the identical
+         * fallback -- it was left out when the system was added, which is why
+         * its covers never resolved while PCE CD's did. */
         free(coverpath);
         char folder[300];
         strncpy(folder, rom_path, sizeof(folder) - 1);
