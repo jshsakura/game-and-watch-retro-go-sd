@@ -1,0 +1,54 @@
+# CPS-1 (Capcom Play System 1) -- Linux host harness skeleton.
+# Phase 2 of the feasibility protocol in docs/CPS1_SENIOR_TRICKS_ANALYSIS.md:
+# proves the interpreter-vs-recompiler frame-diff loop before any real
+# 68000/Z80/PPU/sound core exists (Core/Src/porting/cps1/cps1_core.c is a
+# stub -- see its header comment). Headless, like Makefile.wswan: there is
+# nothing to render yet.
+#
+#   make -f Makefile.cps1                                    -> build/retro-go-cps1
+#   ./build/retro-go-cps1 --frames=600 --engine=diff --dump-ppm
+TARGET = retro-go-cps1
+BUILD_DIR = build
+
+OPT ?= -O2 -g
+
+C_SOURCES = \
+cps1/main.c \
+../Core/Src/porting/cps1/cps1_core.c \
+crc32.c
+
+PREFIX =
+CC = $(PREFIX)gcc
+SZ = $(PREFIX)size
+
+C_INCLUDES = \
+-I. \
+-Icps1 \
+-I../Core/Src/porting/cps1
+
+CFLAGS = $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
+CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
+
+LDFLAGS = -lm -Wl,--gc-sections
+
+.PHONY: all clean
+
+all: $(BUILD_DIR)/$(TARGET)
+
+OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+vpath %.c $(sort $(dir $(C_SOURCES)))
+
+$(BUILD_DIR)/%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/$(TARGET): $(OBJECTS) Makefile.cps1
+	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR):
+	mkdir -p $@
+
+clean:
+	rm -rf $(BUILD_DIR)
+
+-include $(wildcard $(BUILD_DIR)/*.d)
