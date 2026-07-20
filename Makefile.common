@@ -1344,6 +1344,13 @@ SNES_HLE_DEFS :=
 SNES_HLE_INCLUDES :=
 ifeq ($(SNES_SMW_HLE),1)
   SNES_HLE_DEFS += -DSNES_SMW_HLE_PRODUCT=1
+  # Distinct from SNES_SMW_HLE_PRODUCT (which the NSPC block below also
+  # defines): this one specifically means smw_exact_wire.c's own per-attempt
+  # diagnostic globals (g_wire_attempt_count etc) are actually compiled and
+  # linkable. main_snes.c's quit-time diag flush guards on this, not the
+  # shared macro, so a generic-only build (SNES_NSPC_HLE=1, SNES_SMW_HLE=0)
+  # doesn't try to extern globals that were never compiled.
+  SNES_HLE_DEFS += -DSNES_SMW_HLE_PRESENT=1
   SNES_HLE_INCLUDES += -I$(CORE_SNES)/src/snes -Iexternal/smw/src -Itools/nspc_audio_wire -Itools/snes_survey
   $(SNES_SMW_HLE_DIR)/.stamp: external/smw/src/smw_spc_player.c $(CORE_SNES)/src/snes/apu.c tools/nspc_audio_wire/gen_smw_exact.py
 	@mkdir -p $(SNES_SMW_HLE_DIR)
@@ -1352,6 +1359,22 @@ ifeq ($(SNES_SMW_HLE),1)
 	@touch $@
   $(SNES_SMW_HLE_DIR)/apu_wire.c $(SNES_SMW_HLE_DIR)/smw_spc_player_gen.c: $(SNES_SMW_HLE_DIR)/.stamp
 	@test -f $@ || { echo "SNES_SMW_HLE: $@ missing after stamp"; exit 1; }
+endif
+ifeq ($(SNES_NSPC_HLE),1)
+  # SNES_SMW_HLE_PRODUCT also gates main_snes.c's wire_*() call sites -- they
+  # are already backend-agnostic (plain wire_try_swap/wire_apu_write/... calls,
+  # no SMW-specific naming), so the generic-only and coexistence builds reuse
+  # the same macro rather than needing a second one. See main_snes.c's
+  # #ifdef SNES_SMW_HLE_PRODUCT blocks.
+  SNES_HLE_DEFS += -DSNES_SMW_HLE_PRODUCT=1
+  SNES_HLE_INCLUDES += -I$(CORE_SNES)/src/snes -Itools/nspc_audio_wire -Itools/snes_survey -Itools/nspc_hle -I$(SNES_NSPC_HLE_DIR) -include tools/nspc_hle/nspc_config.h
+  $(SNES_NSPC_HLE_DIR)/.stamp: $(CORE_SNES)/src/spc_player.c $(CORE_SNES)/src/spc_player.h $(CORE_SNES)/src/snes/apu.c tools/nspc_audio_wire/gen_nspc_wire.py
+	@mkdir -p $(SNES_NSPC_HLE_DIR)
+	$(V)$(ECHO) [ GEN snes ] generic N-SPC audio HLE
+	$(V)python3 tools/nspc_audio_wire/gen_nspc_wire.py $(CORE_SNES)/src/spc_player.c $(CORE_SNES)/src/spc_player.h $(CORE_SNES)/src/snes/apu.c $(SNES_NSPC_HLE_DIR)
+	@touch $@
+  $(SNES_NSPC_HLE_DIR)/apu_wire.c $(SNES_NSPC_HLE_DIR)/spc_player_gen.c $(SNES_NSPC_HLE_DIR)/spc_player_gen.h: $(SNES_NSPC_HLE_DIR)/.stamp
+	@test -f $@ || { echo "SNES_NSPC_HLE: $@ missing after stamp"; exit 1; }
 endif
 define snes_diag_pick
 $1
@@ -1384,7 +1407,7 @@ endif
 # and rebuild; main_snes.c's #else path is the plain synchronous memcpy that
 # shipped before, no other code changes needed to revert.
 define snes_obj_prereq_gen
-$$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_diag_pick,$1) Makefile.common Makefile snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) | $$(BUILD_DIR)
+$$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_diag_pick,$1) Makefile.common Makefile snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) $(if $(filter 1,$(SNES_NSPC_HLE)),$(SNES_NSPC_HLE_DIR)/.stamp) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
@@ -1393,7 +1416,38 @@ $$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_diag_pick,$1) M
 endef
 # note: the blank line above is intentional
 
-$(eval $(foreach obj,$(SNES_C_SOURCES),$(call snes_obj_prereq_gen,$(obj))))
+# In coexistence mode (both SNES_SMW_HLE and SNES_NSPC_HLE), smw_exact_wire.c
+# and nspc_wire.c both define apu_run/wire_*()/g_wire_* -- same names, would
+# collide at link. Route them through smwx_redefines / nspc_wire_coexist_
+# redefines FIRST (renaming those 10 symbols to smwx_*/nspc_* respectively;
+# a no-op for every other snes object, since none of them define those
+# names), THEN the normal snes_redefines pass picks up everything else
+# (SmwSpcPlayer_CreateWithState, cross-references, ...) exactly as usual --
+# smwx_*/nspc_* aren't in snes_redefines' table, so that pass leaves them
+# alone. nspc_dispatch.c is the only file left owning the PLAIN apu_run/
+# wire_*/g_wire_* names, so it alone goes through the ordinary
+# snes_obj_prereq_gen path below and ends up as the real gsnes__-prefixed
+# exports main_snes.o expects.
+SNES_HLE_COEXIST_FILES :=
+ifeq ($(SNES_HLE_COEXIST),1)
+SNES_HLE_COEXIST_FILES := tools/nspc_audio_wire/smw_exact_wire.c tools/nspc_audio_wire/nspc_wire.c
+
+$(BUILD_DIR)/snes/smw_exact_wire.o: tools/nspc_audio_wire/smw_exact_wire.c Makefile.common Makefile snes_redefines smwx_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
+	$(V)$(ECHO) [ CC snes ] smw_exact_wire.c \(coexist\)
+	$(V)$(CC) -c $(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) tools/nspc_audio_wire/smw_exact_wire.c -o $@ \
+	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
+	$(V)$(CP) --redefine-syms=smwx_redefines $@
+	$(V)$(CP) --redefine-syms=snes_redefines $@
+
+$(BUILD_DIR)/snes/nspc_wire.o: tools/nspc_audio_wire/nspc_wire.c Makefile.common Makefile snes_redefines nspc_wire_coexist_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
+	$(V)$(ECHO) [ CC snes ] nspc_wire.c \(coexist\)
+	$(V)$(CC) -c $(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) tools/nspc_audio_wire/nspc_wire.c -o $@ \
+	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
+	$(V)$(CP) --redefine-syms=nspc_wire_coexist_redefines $@
+	$(V)$(CP) --redefine-syms=snes_redefines $@
+endif
+
+$(eval $(foreach obj,$(filter-out $(SNES_HLE_COEXIST_FILES),$(SNES_C_SOURCES)),$(call snes_obj_prereq_gen,$(obj))))
 
 # ------------------------------------------------------------- rc SMW ITCM sites
 # SMW per-ROM static recompilation: the 270 hottest native site functions,

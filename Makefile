@@ -87,9 +87,25 @@ SNES_LOAD_DIAG ?= 0
 # Core/Src/porting/md32x/main_md32x.c dump to /32x_dwt.txt at the same time.
 MD32X_DEVICE_PROFILE ?= 0
 
-# Exact native SMW SPC/SFX engine. Device candidate only: vanilla US SMW is
-# gated by full-ROM FNV before the live SPC700 is replaced.
+# Exact native SMW SPC/SFX engine (tools/nspc_audio_wire/smw_exact_wire.c).
+# Detection is ARAM-driver-signature based (ptnJumpToVcmdSMW), not a full-ROM
+# hash -- the internal title field is only a boot-log hint now, see
+# smw_exact_wire.c's wire_configure_rom() for why a hash/title gate denied
+# HLE to every translated or hacked SMW image (and to vanilla SMW too, for a
+# while: a stale 21-byte title compare never matched the real 16-byte
+# "SUPER MARIOWORLD" field).
 SNES_SMW_HLE ?= 0
+
+# Generic N-SPC engine HLE (tools/nspc_audio_wire/nspc_wire.c): the same
+# adoption technique generalized to any ROM whose ARAM uploads a recognized
+# N-SPC dialect (std/YI; SMW's own dialect is deliberately excluded here --
+# it stays on the more precise SNES_SMW_HLE path above). Independent flag:
+# either, both, or neither may be enabled. With both on, the two backends
+# are namespaced apart (smwx_redefines / nspc_wire_coexist_redefines) and a
+# small dispatcher (tools/nspc_audio_wire/nspc_dispatch.c) picks whichever
+# backend's own engine fingerprint matches at runtime -- never both, and no
+# full-ROM hash gating either side.
+SNES_NSPC_HLE ?= 0
 
 # rc SMW native optimization: per-ROM static recompilation of SMW's 270
 # hottest 65816 sites. The ~12 KB native subset is appended to snes.bin and
@@ -100,6 +116,9 @@ SNES_SMW_HLE ?= 0
 RCSMW ?= 0
 ifeq ($(SNES_SMW_HLE)$(RCSMW),11)
   $(error SNES_SMW_HLE=1 requires RCSMW=0: rc disables the faster SMW spin-skip path)
+endif
+ifeq ($(SNES_NSPC_HLE)$(RCSMW),11)
+  $(error SNES_NSPC_HLE=1 requires RCSMW=0: untested combination, rc replaces the interpreter the generic wire's fallback depends on)
 endif
 ifeq ($(RCSMW),1)
   RCSMW_C_SOURCES = Core/Src/porting/snes/rc_smw_sites.c
@@ -653,6 +672,17 @@ SNES_C_SOURCES =
 
 CORE_SNES = external/sm
 SNES_APU_SOURCE = $(CORE_SNES)/src/snes/apu.c
+
+# 1 when both audio-HLE backends are linked together: the two need namespacing
+# apart (smwx_redefines / nspc_wire_coexist_redefines) and a dispatcher
+# (nspc_dispatch.c) to pick between them, none of which is needed -- or
+# compiled -- when only one is enabled. See Makefile.common's SNES_C_SOURCES
+# object rules for where SNES_HLE_COEXIST changes the compile recipe.
+SNES_HLE_COEXIST = 0
+ifeq ($(SNES_SMW_HLE)$(SNES_NSPC_HLE),11)
+SNES_HLE_COEXIST = 1
+endif
+
 ifeq ($(SNES_SMW_HLE),1)
 SNES_SMW_HLE_DIR = $(BUILD_DIR)/snes_smw_hle
 SNES_APU_SOURCE = $(SNES_SMW_HLE_DIR)/apu_wire.c
@@ -660,6 +690,28 @@ SNES_C_SOURCES += \
 $(SNES_SMW_HLE_DIR)/smw_spc_player_gen.c \
 tools/nspc_audio_wire/smw_exact_wire.c
 endif
+
+ifeq ($(SNES_NSPC_HLE),1)
+SNES_NSPC_HLE_DIR = $(BUILD_DIR)/snes_nspc_hle
+# Only becomes the APU source when SMW's HLE isn't already providing one:
+# in coexistence mode either generated apu_wire.c is equivalent (both are
+# just apu.c with apu_run renamed to apu_run_lle -- see gen_nspc_wire.py /
+# gen_smw_exact.py, same anchor, same replacement, no wire-specific content),
+# so linking SMW's (selected above) is enough; a second, functionally
+# identical copy would just be a duplicate-symbol link error.
+ifneq ($(SNES_SMW_HLE),1)
+SNES_APU_SOURCE = $(SNES_NSPC_HLE_DIR)/apu_wire.c
+endif
+SNES_C_SOURCES += \
+$(SNES_NSPC_HLE_DIR)/spc_player_gen.c \
+tools/nspc_hle/nspc_variant.c \
+tools/nspc_audio_wire/nspc_wire.c
+endif
+
+ifeq ($(SNES_HLE_COEXIST),1)
+SNES_C_SOURCES += tools/nspc_audio_wire/nspc_dispatch.c
+endif
+
 SNES_C_SOURCES += \
 $(SNES_APU_SOURCE) \
 $(CORE_SNES)/src/snes/cart.c \

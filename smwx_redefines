@@ -1,0 +1,10 @@
+apu_run smwx_apu_run
+wire_apu_write smwx_wire_apu_write
+wire_try_swap smwx_wire_try_swap
+wire_frame_audio smwx_wire_frame_audio
+wire_configure_rom smwx_wire_configure_rom
+wire_restore_after_load smwx_wire_restore_after_load
+wire_prepare_save smwx_wire_prepare_save
+g_wire_on smwx_g_wire_on
+g_wire_enable smwx_g_wire_enable
+g_wire_variant smwx_g_wire_variant

@@ -565,14 +565,27 @@ static void *snes_Screenshot(void) {
  * Appends a second line to the same /snes_diag.txt so one file covers both
  * halves. */
 static void snes_wire_diag_flush(void) {
-  extern int g_wire_enable, g_wire_on, g_wire_attempt_count, g_wire_swap_frame;
-  extern const char *g_wire_last_fail_reason;
+  extern int g_wire_enable, g_wire_on;
   FILE *df = fopen("/snes_diag.txt", "a");
   if (!df) return;
+  /* g_wire_attempt_count/g_wire_swap_frame/g_wire_last_fail_reason are
+   * smw_exact_wire.c-specific (its own per-attempt diagnostics) -- they
+   * only exist when SMW's exact backend is actually compiled
+   * (SNES_SMW_HLE_PRESENT). A generic-only build (SNES_NSPC_HLE=1,
+   * SNES_SMW_HLE=0) has neither smw_exact_wire.c nor those globals; an
+   * unguarded extern here would be a link error in that configuration. */
+#ifdef SNES_SMW_HLE_PRESENT
+  extern int g_wire_attempt_count, g_wire_swap_frame;
+  extern const char *g_wire_last_fail_reason;
   fprintf(df, "SNES wire at quit: g_wire_enable=%d g_wire_on=%d attempts=%d "
               "swap_frame=%d last_fail=[%s]\n",
           g_wire_enable, g_wire_on, g_wire_attempt_count, g_wire_swap_frame,
           g_wire_last_fail_reason);
+#else
+  fprintf(df, "SNES wire at quit: g_wire_enable=%d g_wire_on=%d "
+              "(generic-only build, no SMW-exact attempt/fail diagnostics)\n",
+          g_wire_enable, g_wire_on);
+#endif
   fclose(df);
 }
 #endif
