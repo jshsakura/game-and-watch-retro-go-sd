@@ -147,6 +147,7 @@ a:focus {
 .hero--lab .container {
   position: relative;
   z-index: 1;
+  text-align: center;
 }
 .hero--lab .hero__title {
   font-family: var(--gw-pixel);
