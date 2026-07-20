@@ -174,6 +174,9 @@ int  segacd_bram_save(const char *path);
 /* CD drive / controller / BIOS (segacd_cd.c) */
 int  segacd_cd_open(const char *cue_path);
 int  segacd_load_bios(const char *bios_path, uint8_t *dst, int max);
+/* CD state is private to segacd_cd.c; this is the only window into it,
+ * for boot-path diagnostics after segacd_cd_open(). */
+void segacd_cd_diag_state(int *num_tracks, uint32_t *total_lba, int *status, int *opened);
 
 unsigned int sub_prg_paged_read8(unsigned int address);
 void sub_prg_paged_write8(unsigned int address, unsigned int data);

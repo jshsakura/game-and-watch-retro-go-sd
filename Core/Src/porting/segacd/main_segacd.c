@@ -277,6 +277,9 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         return 0;
     }
 
+    printf("segacd diag v1: bios=%p size=%lu\n", (void *)segacd_bios,
+           (unsigned long)bios_size);
+
     /* base Mega Drive core + Sega CD hardware */
     load_cartridge();
     m68k_init();
@@ -285,12 +288,30 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     segacd_init();
     segacd_map_bios(segacd_bios); /* main boots from BIOS, not a cart (0 RAM: XIP) */
     segacd_main_map_cd_space();
+    printf("segacd: hw init done\n");
 
     snprintf(s_cue_path, sizeof(s_cue_path), "%s", ACTIVE_FILE->path);
-    segacd_cd_open(s_cue_path);
+    /* The return value used to be discarded. A cue that fails to parse left
+     * CD zeroed and opened=0, and the BIOS then booted against no disc at
+     * all -- indistinguishable, from the outside, from an emulation bug.
+     * Report it, and say so on screen rather than sitting on a dead boot. */
+    int cd_rc = segacd_cd_open(s_cue_path);
+    int diag_num_tracks = 0, diag_status = 0, diag_opened = 0;
+    uint32_t diag_total_lba = 0;
+    segacd_cd_diag_state(&diag_num_tracks, &diag_total_lba, &diag_status, &diag_opened);
+    printf("segacd: cd_open rc=%d tracks=%d total_lba=%lu status=%d opened=%d\n",
+           cd_rc, diag_num_tracks, (unsigned long)diag_total_lba,
+           diag_status, diag_opened);
+    printf("segacd: cue=%s\n", s_cue_path);
+    if (cd_rc != 0) {
+        odroid_overlay_alert("Cannot read the .cue - check the track files next to it");
+        odroid_system_switch_app(0);
+        return 0;
+    }
 
     segacd_bram_path();
     segacd_bram_load(s_bram_path);   /* per-game BRAM, load before resume */
+    printf("segacd: entering main loop\n");
 
     if (load_state) odroid_system_emu_load_state(save_slot);
     else            lcd_clear_buffers();

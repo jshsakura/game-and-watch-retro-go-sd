@@ -237,6 +237,16 @@ int segacd_cd_open(const char *cue_path)
     return 0;
 }
 
+/* CD is static to this TU on purpose; expose only what the boot-path
+ * diagnostics in main_segacd.c need to log after segacd_cd_open(). */
+void segacd_cd_diag_state(int *num_tracks, uint32_t *total_lba, int *status, int *opened)
+{
+    if (num_tracks) *num_tracks = CD.num_tracks;
+    if (total_lba)  *total_lba  = CD.total_lba;
+    if (status)      *status     = CD.status;
+    if (opened)      *opened     = CD.opened;
+}
+
 /* Load the region BIOS (128 KB) into the main-CPU boot area. The Mega CD boots
  * the MAIN 68K from BIOS, not a cartridge. TODO(ph3b): wire main map $000000
  * to this buffer instead of the cart. */
