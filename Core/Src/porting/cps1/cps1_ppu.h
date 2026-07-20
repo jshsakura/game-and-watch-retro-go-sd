@@ -67,3 +67,25 @@ void cps1_tile_cache_reset(cps1_tile_cache_t *cache);
  * cps1_rom_decode_tile). */
 const uint8_t *cps1_tile_cache_fetch(cps1_tile_cache_t *cache, const cps1_rom_t *rom,
                                       uint32_t tile_index);
+
+/* Palette RAM skeleton: 32 banks x 16 colors, RGB565, index 0/bank is
+ * transparent by convention (never written to the framebuffer). Real
+ * CPS-1 palette RAM is bigger/laid out differently on hardware -- this is
+ * just enough to make cps1_ppu_render() produce a real, checkable image. */
+#define CPS1_PALETTE_BANKS  32
+#define CPS1_PALETTE_COLORS 16
+
+typedef struct {
+    uint16_t colors[CPS1_PALETTE_BANKS][CPS1_PALETTE_COLORS];
+} cps1_palette_t;
+
+/* Renders every visible OAM sprite into `fb` (CPS1_FB_WIDTH x
+ * CPS1_FB_HEIGHT, RGB565, NOT cleared by this function -- caller clears
+ * first). Fetches each sprite's tile through the cache (a "Flash dump" on
+ * miss), unpacks its 4bpp nibbles (high nibble = left pixel of each byte's
+ * pixel pair), and looks up color via pal->colors[attr & 0x1F][index].
+ * Index 0 is transparent and left unwritten. This is a straight 8x8
+ * unscaled blit -- no scroll layers, no priority/Z-order, no scaling; see
+ * docs/CPS1_ULTIMATE_PORTING_PLAN.md techniques 4/8 for what replaces it. */
+void cps1_ppu_render(const cps1_oam_t *oam, const cps1_rom_t *rom, cps1_tile_cache_t *cache,
+                      const cps1_palette_t *pal, uint16_t *fb);

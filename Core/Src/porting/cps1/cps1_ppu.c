@@ -66,3 +66,38 @@ const uint8_t *cps1_tile_cache_fetch(cps1_tile_cache_t *cache, const cps1_rom_t 
     slot->last_used = cache->clock;
     return slot->pixels;
 }
+
+void cps1_ppu_render(const cps1_oam_t *oam, const cps1_rom_t *rom, cps1_tile_cache_t *cache,
+                      const cps1_palette_t *pal, uint16_t *fb)
+{
+    for (uint32_t i = 0; i < oam->count; i++) {
+        const cps1_oam_entry_t *s = &oam->sprites[i];
+        if (!s->enabled)
+            continue;
+        if (s->x + 8 <= 0 || s->x >= CPS1_FB_WIDTH)
+            continue;
+        if (s->y + 8 <= 0 || s->y >= CPS1_FB_HEIGHT)
+            continue;
+
+        const uint8_t *tile = cps1_tile_cache_fetch(cache, rom, s->tile_index);
+        if (!tile)
+            continue;
+
+        unsigned bank = s->attr & (CPS1_PALETTE_BANKS - 1);
+        for (int row = 0; row < 8; row++) {
+            int py = s->y + row;
+            if (py < 0 || py >= CPS1_FB_HEIGHT)
+                continue;
+            for (int col = 0; col < 8; col++) {
+                int px = s->x + col;
+                if (px < 0 || px >= CPS1_FB_WIDTH)
+                    continue;
+                uint8_t byte = tile[row * 4 + col / 2];
+                uint8_t idx = (col & 1) ? (uint8_t)(byte & 0x0Fu) : (uint8_t)(byte >> 4);
+                if (idx == 0)
+                    continue; /* transparent */
+                fb[py * CPS1_FB_WIDTH + px] = pal->colors[bank][idx];
+            }
+        }
+    }
+}
