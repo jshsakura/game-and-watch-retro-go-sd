@@ -85,7 +85,80 @@ by:
 - PRG-RAM is NOT pageable from SD (live sub-CPU work RAM; research verdict final).
   What streams from SD is the **disc image** (172 KB/s, trivial — reuse PCE-CD path).
 
-## Integration seams (where PicoDrive's cd layer meets gwenesis)
+## Why CDD/CDC/gate-array logic is hand-written, not compiled from `pd_cd/` (0720, settled — do not relitigate)
+
+`Core/Src/porting/segacd/pd_cd/` still holds the vendored PicoDrive/Genesis-Plus-GX
+CD layer (`cdd.c` 1,231 lines, `cdc.c` 897, `mcd.c` 482, `memory.c` 1,359 — 5,556
+lines total). **None of it is in the Makefile's segacd source list** — the CDD/CDC/
+gate-array logic in `segacd_cd.c` (1,296 lines) is a from-scratch reimplementation,
+using `pd_cd/*.c` purely as a read-only behavioral reference (every non-trivial
+branch in `segacd_cd.c` cites the exact `pd_cd/cdd.c:LINE` it mirrors). The
+"Integration seams" table right below this section describes the *original* plan —
+symbol-rebinding `pd_cd/*.c` onto gwenesis — from the phase-1 scaffold. That plan
+was abandoned without ever recording why, which is a documentation bug: it let two
+real regressions ship through the hand-port (CDD response BCD encoding used the
+wrong convention, `c07d403b`; the CDD tick ran at 60Hz instead of the real 75Hz,
+`28e4c03f`) while this file kept describing "rebind and use `pd_cd/cdd.c` directly"
+as if it were still the live plan. Both bugs were only caught by byte-for-byte
+diffing our engine's trace against a PicoDrive run — see `session-handoff-0716-segacd.md`
+0720 nights 8-10 — exactly the kind of check a straight compile-and-rebind would
+have made unnecessary, which is why this question (why not just build `pd_cd/`?)
+matters and needed a real answer instead of an assumption.
+
+**The answer, checked 0720 (numbers, not impression):**
+
+1. **`pd_cd/*.c` cannot currently compile in this tree at all.** Its own includes:
+   `../pico_int.h` (PicoDrive's core header — not vendored, would need PicoDrive's
+   entire `pico/` tree, not just `pico/cd/`), `../pico_cmn.c` (a **.c file textually
+   `#include`d**, not linked — `mcd.c` shares a translation unit with PicoDrive's
+   base-Genesis rendering/memory code), `../sound/ym2612.h`, `megasd.h`,
+   `libchdr/cdrom.h` + `libchdr/chd.h` (CHD compressed-image support — a whole
+   separate third-party library we don't use, we go bin/cue via FatFs), and
+   `tremor/ivorbisfile.h` (Ogg Vorbis decoder — CD-DA here uses PCM via our own
+   `segacd_audio.c`, not Vorbis). None of these exist in this repo. This is not "a
+   few missing headers" — it is PicoDrive's entire emulation core.
+2. **Even fully vendored, `Pico_mcd` (the struct every `pd_cd/*.c` line reads/writes
+   through) doesn't fit `RAM_EMU` on its own.** It's one fixed-layout blob:
+   `bios[0x20000]` (128 KB — PicoDrive copies the whole region BIOS into RAM; we XIP
+   it straight from flash, zero RAM cost) + `prg_ram[0x80000]` (512 KB) +
+   `word_ram2M[0x40000]` plus its 1M-mode sibling in the same union (~384 KB with
+   padding) + `pcm_ram[0x10000]` (64 KB, bundled in the *same* struct as PRG/Word-RAM
+   — we specifically put PCM-RAM in AHB SRAM via `ahb_malloc()`, *outside*
+   `RAM_EMU`, an escape valve `Pico_mcd`'s single-struct layout has no way to use) +
+   misc/PCM-channel state. **Total ≈1,096 KB against a 724 KB budget — 51% over,
+   before any code, before the base PicoDrive `Pico`/`PicoMem` struct (VRAM/CRAM/
+   VSRAM) these files also assume, before CDC/CDD working state beyond `mcd_state`
+   itself.**
+3. **The CD-specific files pull in PicoDrive's own execution model, not just CD
+   logic.** `pd_cd/*.c` reference 24 distinct PicoDrive-core symbols beyond
+   `Pico_mcd` itself: `pcd_event_schedule`/`pcd_event`/`pcd_run_events` (PicoDrive's
+   own cycle-accurate event scheduler — how it gets the CDD tick to interleave with
+   68K execution at a precise cycle position, the actual mechanism behind the 0720
+   night-13 finding that our engine batches CDD ticks after a whole frame instead),
+   `pcd_run_cpus`/`pcd_run_cpus_lockstep`/`pcd_run_cpus_normal` (PicoDrive's own
+   main-loop orchestration of both 68Ks), `SekCyclesDone`/`SekPc`/
+   `SekShouldInterrupt` (PicoDrive's own Musashi wrapper — a **second, separate**
+   68K core from the gwenesis Musashi we already run the base MD emulation on).
+   Satisfying the "Integration seams" table's rebind list for these means
+   reimplementing PicoDrive's own scheduler and CPU-run loop against gwenesis's
+   timing model — at which point the result is not "`pd_cd/cdd.c` with symbols
+   rebound," it is a rewrite of `pd_cd/cdd.c`'s call sites, which is what
+   `segacd_cd.c`/`segacd_engine.c` already are.
+
+**Conclusion**: hand-writing was the only viable path given `RAM_EMU` and the
+decision (documented above, "Do NOT import PicoDrive's base emulator") to keep
+gwenesis as the only 68K core in the overlay — not an oversight, not laziness.
+**The actual lesson is process, not architecture**: a hand-port against a reference
+implementation needs byte-level diff testing against that reference *as a matter of
+routine*, not just careful reading — both 0720 bugs were structurally reasonable
+code that was simply wrong in a way structural review didn't catch, and only a
+literal trace comparison did. See memory `rule-cross-reference-before-trusting-own-chain`.
+`pd_cd/` stays in the tree as that reference corpus (same role as
+`retro-go-stm32/components/odroid/` for the launcher — read for behavior, not
+built) — do not delete it, do not try to wire it into the Makefile without
+addressing all three points above first.
+
+## Integration seams (where PicoDrive's cd layer meets gwenesis) — HISTORICAL, describes the abandoned symbol-rebind plan, see section above for why it wasn't taken
 
 The `pd_cd/*` files assume PicoDrive's `Pico`/`PicoMem` structs, `SekCycleCnt`, its
 own `m68k_*`, and endianness helpers (`genplus_macros.h`). Each must be rebound to
@@ -155,3 +228,10 @@ the budget allows; XIP the cold CD/BIOS code.
 cd_parse.c + headers. From `notaz/picodrive` `pico/cd/` @ the clone in scratchpad.
 Licenses: PicoDrive is MAME-derived / its own license — keep headers, add to
 attribution before any release.
+
+**Not in the Makefile and not meant to be — reference corpus, not a build target.**
+See "Why CDD/CDC/gate-array logic is hand-written, not compiled from `pd_cd/`"
+above for the full reasoning (incomplete dependency closure, RAM footprint ~1.1MB
+vs 724KB budget, coupled to PicoDrive's own CPU/scheduler). Keep it in the tree for
+behavioral reference (every hand-ported branch in `segacd_cd.c` etc. cites a
+`pd_cd/*.c:LINE`) — same role as `retro-go-stm32/components/odroid/`.
