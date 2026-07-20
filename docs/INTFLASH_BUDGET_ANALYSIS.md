@@ -181,6 +181,84 @@ device that C64 still boots, loads a ROM, and does one save/load round-trip
 cheapest way to close the loop on "did the build actually succeed" for a
 change to a whole translation unit's compile flags.
 
+## Reconciliation: measured result was −2,200 B, not the predicted −6.02 KB — here's why
+
+Real docker build, canonical flags, both fixes applied: **262,100 → 259,900
+(−2,200 B)**, not the predicted −6,016 B. 3,816 B unaccounted for. Diffed the
+actual before/after `build/gw_retro_go.map` section-by-section instead of
+re-deriving from theory:
+
+| Section | Before | After | Δ |
+|---|---:|---:|---:|
+| `.text` | 207,496 | 207,144 | −352 |
+| `.rodata` | 49,256 | 49,248 | −8 |
+| `.ARM.extab` | 344 | 24 | −320 |
+| `.ARM` (exidx) | 1,704 | 184 | −1,520 |
+| **Sum** | | | **−2,200** (matches measured total exactly) |
+
+So the section-level math *does* reconcile perfectly with the measured total
+— the error was in my prediction of what each section would drop to, not in
+how the sections sum. Specifically:
+
+- `.text`'s −352 matches the lz4 move almost exactly (predicted −356; the 4 B
+  gap is alignment noise). That part of the estimate was right.
+- `.ARM.extab`/`.ARM` didn't drop to ~0 as predicted — they dropped to 24 B /
+  184 B. Checked what's still there: **zero `build/c64/*.o` entries anywhere**
+  (C64's own contribution is fully gone, confirming the fix itself worked) —
+  but `libgcc.a(unwind-arm.o)` and `libgcc.a(pr-support.o)` are still fully
+  present, and the map's "Archive member included" trace now shows why:
+  `build/tgbdual/main_gb_tgbdual.o (__aeabi_unwind_cpp_pr0)` — **TGBDUAL was
+  always also pulling in the same unwind runtime, independently of C64.**
+  Measured `unwind-arm.o`+`pr-support.o`'s `.text` footprint before and after:
+  **3,612 B → 3,612 B, byte-for-byte unchanged.**
+
+**Root cause of the estimate error:** the map's "Archive member included"
+section lists only the *first* object that caused a given archive member to
+be linked in — not every object that references it. Before this fix, C64 was
+that first-listed cause (it needed far more of the runtime than TGBDUAL does,
+so it sorted first), which made it look like C64 was the *sole* reason
+`unwind-arm.o`/`pr-support.o` were resident. It wasn't — TGBDUAL was drawing
+on the same shared runtime the entire time, just hidden behind C64's larger
+reference. Removing C64 exposed TGBDUAL as the next cause instead of
+eliminating the dependency. The tool for "is X really the *only* reason Y is
+linked" is the Cross Reference Table (`Linker map`'s `--cref` output, already
+enabled by this build's `-Wl,--cref` — see line ~222929 of the map), not the
+Archive-member-included section's first-hit listing. Noting this for the
+methodology ledger: **first-referencer traces don't prove sole-causation.**
+
+**Follow-up candidate (not yet applied), found while explaining the gap:**
+checked whether TGBDUAL and LYNX — the two other cores that defend against
+this bug class via linker-capture rather than `-fno-exceptions` — could take
+the same flag fix C64 got. Grepped their real sources (both are
+`external/` submodules, not `Core/Src/porting/`, so the earlier per-core
+grep in this doc's "Fix #1" section didn't cover them — a gap in the
+original audit):
+
+- **TGBDUAL** (`external/tgbdual-go`): zero `throw`/`catch`/`dynamic_cast`/
+  `typeid` anywhere. Same shape as C64 — could safely take
+  `-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables` on its
+  compile rule (`Makefile.common:1219`) with the same reasoning: nothing to
+  break.
+- **LYNX** (`external/handy-go`): also zero hits, same story
+  (`Makefile.common:1227`).
+- **A2600** (`external/stella2014-go`): has a **real** `throw "HALT";` in
+  `Thumbulator.cxx:156`, confirmed compiled into its overlay content
+  (1,313 `.ARM.exidx.text*`/`.ARM.extab.text*` entries and 2,316
+  Thumbulator-symbol matches inside `.overlay_a2600`'s own map body — this
+  isn't dead code). A2600 **cannot** take the flag fix — it would be a
+  compile error. It would need the runtime captured into its own overlay
+  instead (`*libgcc.a:unwind-arm.o(...)` / `*libgcc.a:pr-support.o(...)`
+  added to `.overlay_a2600`'s linker block), the same `archive:member()`
+  technique already scoped for the libm/strtod Tier-2 investigation — this
+  is now a concrete validated use case for that technique, not just a
+  hypothesis.
+
+**Not applied yet, and not re-estimating a number this time** — the whole
+point of this reconciliation is that a static estimate just missed by 63%.
+If TGBDUAL+LYNX get the flag fix and A2600 gets the overlay-capture
+extension, the honest next step is: land it, then measure, the same way this
+round was measured — not predict another number and repeat the mistake.
+
 ## Fix #2 (small, same root cause, worth doing while you're in there): `lz4_depack.c` is resident but has exactly one caller, and it's an overlay
 
 `Core/Src/porting/lib/lz4_depack.c` is listed directly in the top-level
