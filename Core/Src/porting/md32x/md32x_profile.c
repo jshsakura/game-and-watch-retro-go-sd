@@ -47,13 +47,22 @@
  * so it equals the sum of the five phases plus negligible inter-phase branch
  * cost. No nested or overlapping intervals are ever summed.
  *
- * MEMORY PLACEMENT: the 28.8 KB of per-frame delta pools (2 x 6 buckets x
- * 600 frames x 4 bytes) CANNOT be static RAM_EMU BSS -- they alone would
- * blow the link ASSERT regardless of which TU they live in. They are
- * ahb_calloc'd from the separate 120 KB AHB SRAM pool (Draw2FB already takes
- * ~82 KB of it, leaving ~38 KB -- plenty for two 14.4 KB pools). If the
- * allocation fails, profiling is silently inert (prof_active = false). Only
- * the tiny accumulators/counters below are static RAM_EMU BSS.
+ * MEMORY PLACEMENT: the per-frame delta pools CANNOT be static RAM_EMU BSS
+ * -- at any usable frame count they would blow the link ASSERT regardless
+ * of which TU they live in. They are ahb_calloc'd from the AHB dynamic pool
+ * -- which is NOT the raw 120 KB AHBRAM-minus-audio span, it is
+ * MD32X_AHB_DYNAMIC_POOL_BYTES (87,904 B, main_md32x.h) after the GBA
+ * core's static .gba_ahbram reservation. Draw2FB (main_md32x.c) already
+ * takes 83,976 B of that at load, leaving only 3,928 B -- NOT the ~38 KB an
+ * earlier version of this comment assumed (that wrong assumption is what
+ * let a 28.8 KB request through review and crashed a real device, 0720:
+ * "current_ahb_pointer <= __ahbram_audio_start__" assert in
+ * gw_malloc.c:ahb_only_malloc). ahb_calloc does NOT fail soft on overflow
+ * -- see ahb_get_free_size()'s doc comment in gw_malloc.h -- so the
+ * prof_active NULL-fallback below is a real safety net only because
+ * MD32X_PROFILE_FRAMES is now sized to actually fit; the _Static_assert
+ * next to it is the real guard. Only the tiny accumulators/counters below
+ * are static RAM_EMU BSS.
  *
  * PicoFrame() SUB-PHASE BREAKDOWN (rides picodrive's pprof probes): the pico
  * bucket above says how much of the frame is PicoFrame(); it does not say
@@ -102,7 +111,20 @@
 
 #include "main_md32x.h"        /* Pico, PicoIn, MD32X_AUDIO_RATE contract */
 
-#define MD32X_PROFILE_FRAMES  600u   /* ~10 s @60 fps / ~12 s @50 fps; then dump */
+/* 0720 device Hardfault: this was 600 (~10 s @60 fps). 600 frames x 6
+ * buckets x 2 pools x 4 bytes = 28,800 B of AHB, requested AFTER Draw2FB
+ * (83,976 B, main_md32x.c) already ate nearly the whole 87,904 B dynamic
+ * pool -- 3,928 B of real headroom, nowhere near 28,800 B. ahb_calloc does
+ * not fail soft (see ahb_get_free_size()'s doc comment in gw_malloc.h): it
+ * asserts inside ahb_only_malloc, so the prof_active NULL-fallback below
+ * was unreachable dead code. Fixed the actual crash by shrinking the
+ * window, not by touching Draw2FB (that would change what's being
+ * measured) and not by making ahb_calloc fail soft (shared allocator, used
+ * by every core -- a separate, carefully-tested change if it happens at
+ * all). 64 frames = 3,072 B, leaving 856 B of real margin; the
+ * _Static_assert below turns any future regression of either side back
+ * into a build failure instead of a device Hardfault. */
+#define MD32X_PROFILE_FRAMES  64u   /* ~1.07 s @60 fps / ~1.28 s @50 fps; then dump */
 #define MD32X_PROF_PATH       "/32x_dwt.txt"
 
 enum {
@@ -114,6 +136,12 @@ enum {
   PROF_BUCK_TOTAL,      /* whole loop iteration                       */
   PROF_BUCK_COUNT
 };
+
+_Static_assert(2u * PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES * sizeof(uint32_t)
+               + MD32X_D2FB_BYTES <= MD32X_AHB_DYNAMIC_POOL_BYTES,
+               "32X profiler pools + Draw2FB overflow the AHB dynamic pool "
+               "(shrink MD32X_PROFILE_FRAMES) -- see the 0720 device "
+               "Hardfault this guards against");
 
 /* Per-frame 32-bit DWT delta pools -- AHB-allocated (see MEMORY PLACEMENT
  * above). Separate drawn/skip pools so render cost does not average into
@@ -142,11 +170,40 @@ int *refcounts = s_pp_refcounts;
 unsigned int md32x_dwt_now(void) { return common_emu_get_dwt_cycles(); }
 
 void md32x_profile_init(void) {
+  /* 0720 device Hardfault triage: ahb_only_malloc does NOT return NULL on
+   * pool overflow like ram_malloc does -- it advances the bump pointer past
+   * __ahbram_audio_start__ and hits gw_malloc.c's assert() (that TU is not
+   * built with NDEBUG), which never returns control here at all. The
+   * prof_active NULL-check below is therefore unreachable on overflow --
+   * this one-shot pre-flight line is the only way to see the real numbers.
+   * main_md32x.c's diag_log() is sealed by this point (called right after
+   * "entering main loop"), so this appends directly instead. One-shot,
+   * boot-adjacent (this function runs exactly once), same allowance as
+   * every other boot-time SD write in this file. */
+  {
+    size_t need = 2 * (size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES * sizeof(uint32_t);
+    size_t free_before = ahb_get_free_size();
+    FILE *df = fopen("/32x_diag.txt", "ab");
+    if (df) {
+      fprintf(df, "profiler init: ahb_free_before=%u need=%u\n",
+              (unsigned)free_before, (unsigned)need);
+      fclose(df);
+    }
+  }
   prof_delta_drawn = ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
                                 sizeof(uint32_t));
   prof_delta_skip  = ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
                                 sizeof(uint32_t));
   prof_active = (prof_delta_drawn != NULL && prof_delta_skip != NULL);
+  {
+    FILE *df = fopen("/32x_diag.txt", "ab");
+    if (df) {
+      fprintf(df, "profiler init: drawn=%p skip=%p active=%d ahb_free_after=%u\n",
+              (void *)prof_delta_drawn, (void *)prof_delta_skip, (int)prof_active,
+              (unsigned)ahb_get_free_size());
+      fclose(df);
+    }
+  }
 }
 
 static int prof_u32_cmp(const void *a, const void *b) {
