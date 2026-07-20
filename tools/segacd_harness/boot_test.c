@@ -410,8 +410,21 @@ int main(int argc, char **argv)
         /* sub 68K now runs INTERLEAVED per-scanline inside md_scanline_frame
          * (see the sub_slice calls there) so the intra-frame main<->sub comm
          * handshake works; no longer run as one big slice here. */
-        segacd_cdd_process();
-        segacd_cd_update();
+        /* True 75Hz CDD pacing, matching main_segacd.c's device loop fix —
+         * was 1 tick/video-frame (60Hz, 20% slow vs real 75Hz CD sector
+         * rate), which gave MAIN's polling loop a wider real-time window to
+         * rewrite the CDD command register before the drive's own next tick
+         * would have completed the previous seek/play. */
+        {
+            static int s_cdd_tick_accum;
+            int video_fps = mode_pal ? 50 : 60;
+            s_cdd_tick_accum += 75;
+            while (s_cdd_tick_accum >= video_fps) {
+                segacd_cdd_process();
+                segacd_cd_update();
+                s_cdd_tick_accum -= video_fps;
+            }
+        }
 
         /* Dense per-frame handshake trace across the animation window: main PC
          * (is it stuck at the $1288 comm spin or does it reach the $1F5E DMNA

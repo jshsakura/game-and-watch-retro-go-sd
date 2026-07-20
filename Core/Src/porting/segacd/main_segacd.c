@@ -32,7 +32,21 @@ extern int16_t gwenesis_ym2612_buffer[];
 extern int16_t gwenesis_sn76489_buffer[];
 
 #define SEGACD_SAMPLE_RATE 53267   /* NTSC audio rate, matches gwenesis */
-#define CDD_TICKS_PER_FRAME 1      /* 75 Hz CDD vs ~60 fps → ~1.25 ticks/frame */
+
+/* CDD ticks at a fixed 75Hz on real hardware (CD sector rate), independent of
+ * the 50/60Hz video frame rate — NOT 1:1 with the video frame. Real hardware
+ * and PicoDrive (pcd_cdc_event, cycle-scheduled) drive it at true 75Hz;
+ * running it once per video frame instead gave 60Hz (NTSC) — 20% slow — which
+ * widens the window MAIN has to write a new CDD command before the drive's
+ * own next tick would have completed the previous one (PicoDrive's cmd=3/4
+ * handlers are a 2-tick state-machine: tick 1 stages RS + arms a pending
+ * flag and returns, tick 2 does the real seek — only if MAIN hasn't already
+ * overwritten the command register in between). A slow tick rate gives MAIN
+ * more real time per tick to intervene, which is exactly the failure mode
+ * observed: MAIN rewrites the CDD command back to 0 one video frame (would
+ * be <1 real CDD tick at true 75Hz) after issuing seek/play. */
+extern int mode_pal;
+static int s_cdd_tick_accum;
 
 static char s_cue_path[512];
 static char s_bram_path[540];
@@ -245,10 +259,15 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         /* --- one frame of the machine --- */
         gwenesis_md_frame(drawFrame);           /* main 68K + Z80 + VDP + YM/SN + Sub 68K interleaved */
-        for (int t = 0; t < CDD_TICKS_PER_FRAME; t++) {
+        /* True 75Hz CDD pacing (see comment above s_cdd_tick_accum) — average
+         * 1.25 ticks/frame at NTSC 60fps, 1.5 ticks/frame at PAL 50fps. */
+        s_cdd_tick_accum += 75;
+        int video_fps = mode_pal ? 50 : 60;
+        while (s_cdd_tick_accum >= video_fps) {
             segacd_cdd_process();
             segacd_cd_update();
             segacd_cdc_dma_update();
+            s_cdd_tick_accum -= video_fps;
         }
 
         if (drawFrame) blit();
@@ -277,7 +296,6 @@ extern unsigned char gwenesis_vdp_regs[32];
 #define LINES_PER_FRAME_PAL 313
 #define VDP_CYCLES_PER_LINE 3420
 
-extern int mode_pal;
 extern unsigned int screen_height, screen_width;
 extern int system_clock, zclk, ym2612_clock, ym2612_index, sn76489_clock, sn76489_index, scan_line;
 extern int hint_pending;
