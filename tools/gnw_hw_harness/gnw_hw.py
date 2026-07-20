@@ -19,7 +19,6 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 REQUIRED_SYMBOLS = (
-    "_Heap_Size",
     "__ITCMRAM_LENGTH__",
     "__RAM_UC_LENGTH__",
     "__RAM_EMU_LENGTH__",
@@ -157,8 +156,16 @@ def extract_contract(
                 raise ContractError("stale device profile: config_sha256 does not match")
 
     dtcm_total = symbols["_heap_end"] - symbols["_heap_start"]
-    if dtcm_total <= 0 or dtcm_total != symbols["_Heap_Size"]:
-        raise ContractError("DTCM heap symbols disagree with _Heap_Size")
+    # Upstream f25539a2 removed the fixed _Heap_Size constant: the DTCM heap now
+    # simply fills whatever .data/.bss leave, so _heap_end-_heap_start IS the
+    # size and there is no declared value left to cross-check it against. The
+    # equivalent guard is that the heap must not grow into the stack reserve --
+    # _heap_limit is what the linker script clamps it to.
+    if dtcm_total <= 0:
+        raise ContractError("DTCM heap is empty or inverted (_heap_end <= _heap_start)")
+    heap_limit = symbols.get("_heap_limit")
+    if heap_limit is not None and symbols["_heap_end"] > heap_limit:
+        raise ContractError("DTCM heap runs past _heap_limit into the stack reserve")
     dtcm_used = _profile_runtime(profile, "dtcm_used_at_emu_init_bytes")
     if dtcm_used is not None and dtcm_used > dtcm_total:
         raise ContractError("device profile reports DTCM use beyond the heap")
