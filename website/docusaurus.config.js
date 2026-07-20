@@ -17,7 +17,13 @@ const config = {
   organizationName: ORG,
   projectName: PROJECT,
   deploymentBranch: 'gh-pages',
-  trailingSlash: false,
+
+  // GitHub Pages serves each route as `route/index.html` (directory-style),
+  // so we emit directory-style URLs. With `trailingSlash: false` Docusaurus
+  // emits `route.html`, and any visitor whose browser/search-engine adds a
+  // trailing slash (most do) hits a GitHub Pages 404 — which was the
+  // "clicking the title shows no body" bug.
+  trailingSlash: true,
 
   // Cross-links between ported docs are still being tidied — warn, don't fail the build.
   onBrokenLinks: 'warn',
