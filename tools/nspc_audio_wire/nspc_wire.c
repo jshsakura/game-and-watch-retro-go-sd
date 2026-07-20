@@ -66,6 +66,12 @@ static uint8_t g_last_p0 = 0;      /* last port-0 command seen during LLE */
 static int g_ok_streak = 0;
 static int g_was_hle = 0;          /* 1 if HLE was active (for savestate) */
 static int g_frame = 0;
+/* 1 after a load whose save was taken while HLE was active: wire_try_swap()
+ * should re-adopt as soon as outPorts[0] settles, skipping the slow "two
+ * checks 60 frames apart" driver re-confirmation below (the driver was
+ * already confirmed valid before the save -- only the NEW stability defense
+ * needs to clear). See wire_restore_after_load(). */
+static int g_load_pending_resume = 0;
 
 /* Live outPorts[0] stability tracking (see wire_try_swap()'s gate below).
  * Sampled once per video frame regardless of the coarse 60-frame detection
@@ -356,6 +362,12 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
 
 /* ===================== TEMP diagnostic (test rig only, not called from the
  * product path — remove before shipping) ================================== */
+/* Simulates "a savestate was taken while HLE was active" without needing a
+ * full save/load file round-trip -- sets the one flag wire_restore_after_
+ * load() gates on, so a test rig can call that function directly at a chosen
+ * frame and observe whether it adopts a transient outPorts[0] safely. */
+void wire_test_set_was_hle(int v) { g_was_hle = v; }
+
 void wire_debug_dump(int frame) {
   if (!g_wire_on) { printf("[nspc-dbg] f=%d LLE g_last_p0=%02x\n", frame, g_last_p0); return; }
   SpcPlayer *p = g_wire_p;
@@ -390,6 +402,29 @@ int wire_try_swap(Snes *snes, int frame) {
       g_p0_last = p0;
       g_p0_stable = 0;
     }
+  }
+
+  /* Fast re-resume after a savestate load (wire_restore_after_load() set
+   * this instead of adopting outPorts[0] immediately -- see that function's
+   * comment). The driver was already confirmed valid before the save, so
+   * skip the slow two-checks-60-apart re-confirmation below; only the
+   * stability gate (g_p0_stable, tracked above unconditionally every frame)
+   * needs to clear before it's safe to adopt. */
+  if (g_load_pending_resume) {
+    if (g_p0_stable < NSPC_SWAP_STABLE_FRAMES) return 0;
+    NspcParams np;
+    if (!nspc_extract(snes->apu->ram, &np) || np.chOK < 6 || !strcmp(np.variant, "?") ||
+        (strcmp(np.variant, "std") && strcmp(np.variant, "YI"))) {
+      /* Driver signature gone or changed since the save (unexpected for a
+       * same-game load) -- bail to the normal slow path rather than risk
+       * adopting something unconfirmed. */
+      g_load_pending_resume = 0;
+      g_ok_streak = 0;
+      return 0;
+    }
+    g_load_pending_resume = 0;
+    wire_swap(snes, &np, snes->apu->ram);
+    return 1;
   }
 
 #ifndef NSPC_SWAP_MIN_FRAME
@@ -435,6 +470,7 @@ bool wire_configure_rom(const uint8_t *rom, uint32_t len) {
   g_ack[0] = g_ack[1] = g_ack[2] = 0;
   g_p0_last = 0;
   g_p0_stable = 0;
+  g_load_pending_resume = 0;
   return true;  /* detection armed; actual gate is in wire_try_swap */
 }
 
@@ -448,20 +484,24 @@ void wire_prepare_save(void) {
   /* intentionally empty — see comment above */
 }
 
-/* restore_after_load: re-adopt immediately using the preserved g_nspc_cfg.
- * The loaded ARAM has the game's data; we re-create the native player from
- * it and restart the current song.  Music restarts from its top, matching
- * the documented swap behavior. */
+/* restore_after_load: do NOT adopt outPorts[0] immediately. The loaded value
+ * may be a transient mid-handshake byte saved by chance -- the exact same
+ * class of bug wire_swap()'s live-swap path had (see nspc-swap-transient-
+ * fix-0720 memory: confirmed on Super Metroid, a snapshot-adopted transient
+ * froze the CPU's poll for the next port-0 transition forever). Save/load is
+ * MORE frequent than the once-per-boot live swap, so this path needs the
+ * same defense, not a shortcut around it.
+ * Instead: stay in LLE (the just-restored real SPC700 state resumes exactly
+ * like any non-HLE game -- it doesn't need our help) and let wire_try_swap()
+ * re-adopt once outPorts[0] has genuinely settled, via the fast g_load_
+ * pending_resume path above (skips the slow driver re-detection, since it
+ * was already confirmed before the save). */
 void wire_restore_after_load(Snes *snes) {
   if (!g_was_hle || !g_wire_enable || !snes || !snes->apu)
     return;
-  /* Re-detect from the loaded ARAM to confirm the driver is still there. */
-  NspcParams np;
-  if (!nspc_extract(snes->apu->ram, &np) || np.chOK < 6) {
-    /* Driver gone from ARAM (unexpected for a same-game load) — stay LLE. */
-    g_wire_on = 0;
-    g_wire_p = NULL;
-    return;
-  }
-  wire_swap(snes, &np, snes->apu->ram);
+  g_wire_on = 0;
+  g_wire_p = NULL;
+  g_p0_last = snes->apu->outPorts[0];
+  g_p0_stable = 0;
+  g_load_pending_resume = 1;
 }
