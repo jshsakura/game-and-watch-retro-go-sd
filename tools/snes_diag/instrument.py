@@ -57,15 +57,14 @@ APU_PRELUDE = (
     "\n"
     + DWT_READER +
     "\n"
-    "/* Profiling accumulators. The gsnes__ prefix is already the post-rename\n"
-    " * name (snes_redefines maps the unprefixed token, not this one), so the\n"
-    " * --redefine-syms pass leaves them alone. main_snes.c references these by\n"
-    " * their full gsnes__ name; the generated dsp.c sees them via the forced\n"
-    " * -include of snes_diag_accum.h. */\n"
-    "uint64_t gsnes__g_diag_spc_cycles = 0;\n"
-    "uint64_t gsnes__g_diag_dsp_cycles = 0;\n"
-    "uint64_t gsnes__g_diag_dsp_echo_cycles = 0;\n"
-    "\n"
+    "/* The profiling accumulators are DEFINED in main_snes.c, not here: with\n"
+    " * SNES_SMW_HLE=1 (or SNES_NSPC_HLE=1) this generated apu.c is not built\n"
+    " * at all -- SNES_APU_SOURCE swaps it for the HLE wire's apu_wire.c -- so\n"
+    " * definitions living here vanished from the link exactly when the audio\n"
+    " * HLE was on, and SNES_LOAD_DIAG=1 + SNES_SMW_HLE=1 failed to link. That\n"
+    " * combination is the one worth profiling (it is what ships), so the\n"
+    " * definitions moved to main_snes.c, which is always compiled. This file\n"
+    " * sees them as externs via the forced -include of snes_diag_accum.h. */\n"
 )
 
 
