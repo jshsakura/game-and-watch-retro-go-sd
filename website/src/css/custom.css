@@ -211,7 +211,7 @@ a:focus {
    gold-ring / pixel-font / edition-switch DNA above.
    ========================================================================== */
 
-/* --- Section heading block: pixel eyebrow + gold-underline title -------- */
+/* --- Section heading block: pixel eyebrow + clean gold title ------------- */
 .gw-section {
   margin: 3rem 0 1.5rem;
 }
@@ -220,21 +220,31 @@ a:focus {
 }
 .gw-eyebrow {
   font-family: var(--gw-pixel);
-  font-size: 0.55rem;
-  letter-spacing: 0.18em;
+  font-size: 0.5rem;
+  letter-spacing: 0.25em;
   text-transform: uppercase;
   color: var(--gw-accent-2);
-  margin-bottom: 0.5rem;
+  text-align: center;
+  margin-bottom: 0.75rem;
+  opacity: 0.75;
 }
 .gw-section-title {
-  font-family: var(--gw-pixel);
-  font-size: clamp(0.85rem, 2vw, 1.15rem);
+  font-family: var(--ifm-font-family-base);
+  font-size: clamp(1.3rem, 3vw, 1.7rem);
+  font-weight: 700;
   color: var(--gw-gold);
-  letter-spacing: 0.5px;
-  text-shadow: 1.5px 1.5px 0 #00000088;
-  border-bottom: 2px solid var(--gw-gold);
-  padding-bottom: 0.45rem;
-  margin-bottom: 1.5rem;
+  text-align: center;
+  letter-spacing: -0.01em;
+  margin-bottom: 2rem;
+}
+.gw-section-title::after {
+  content: '';
+  display: block;
+  width: 3rem;
+  height: 2px;
+  background: var(--gw-gold);
+  margin: 0.75rem auto 0;
+  opacity: 0.5;
 }
 
 /* --- Doc-nav card surface ---------------------------------------------- */

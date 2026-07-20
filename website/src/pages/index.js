@@ -183,8 +183,8 @@ function DocCards() {
           &ldquo;better&rdquo; build. If you just want to play games, use the upstream stable
           release.
         </p>
-        <p className="gw-eyebrow" style={{textAlign: 'center'}}>Start here</p>
-        <h2 className="gw-section-title" style={{textAlign: 'center'}}>What&rsquo;s in this fork</h2>
+        <p className="gw-eyebrow">Start here</p>
+        <h2 className="gw-section-title">What&rsquo;s in this fork</h2>
         <div className="row">
           {DOC_CARDS.map((c) => (
             <div key={c.to} className="col col--3">
@@ -205,8 +205,8 @@ function FeaturedDevlog() {
   return (
     <section className="gw-section">
       <div className="container">
-        <p className="gw-eyebrow" style={{textAlign: 'center'}}>From the workbench</p>
-        <h2 className="gw-section-title" style={{textAlign: 'center'}}>Latest devlog entries</h2>
+        <p className="gw-eyebrow">From the workbench</p>
+        <h2 className="gw-section-title">Latest devlog entries</h2>
         <div className="row">
           {FEATURED_DEVLOG.map((p) => (
             <div key={p.slug} className="col col--4">
