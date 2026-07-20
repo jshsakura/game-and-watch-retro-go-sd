@@ -88,3 +88,53 @@ This investigation changed only `external/sm/src/snes/ppu.c` plus this report.
 Concurrent changes in `external/sm/src/snes/snes.c`, `snes.h`,
 `Core/Src/porting/snes/main_snes.c`, and `tools/snes_diag/instrument.py` are not
 part of these results and were left untouched.
+
+## Follow-up: persistent-framebuffer scanline reuse
+
+The follow-up was measured from submodule `4c64b00` with the shipping renderer
+flags `SNES_DSP_MONO` and `SNES_PPU_DIRECT_MATH`.  Its OFF baseline also includes
+two independently gated sprite micro-optimizations still present in the
+submodule working tree: one 4bpp decode per sprite tile and removal of a
+redundant cached-candidate height test.  Together those measured
+`-11,332 insn/frame`, bit-identical, for `+64 B` text.
+
+The observation-only predictor first rendered every line and compared the exact
+256-pixel RGB565 result with the preceding frame.  With exact renderer-register
+state, value-based VRAM/CGRAM/OAM generations, referenced VRAM-page masks,
+referenced CGRAM-entry masks, and old/new sprite-candidate OAM masks, it reported
+`135,704` reusable predictions out of `268,576`, with **zero false positives**.
+The final cache uses the same inputs, but conservatively groups VRAM into
+256-word pages.
+
+The first literal implementation was not acceptable despite correct hashes:
+
+| Cache policy | Overall emu insn/frame | Frames 900-1199 | Result |
+|---|---:|---:|---|
+| OFF | 6,613,231 | 7,451,306 | baseline |
+| Check all lines every frame | 6,431,761 | 8,333,336 | active-play regression |
+| Check only lines 0-63 and 192-223 | 6,548,159 | 7,858,237 | active-play regression |
+
+Both rejected variants were hash-identical.  Their problem was predictor and
+dependency-capture cost on continually changing lines, not correctness.
+
+The retained experiment cools a line down for 16 frames after its first miss;
+it then renders once to learn fresh dependencies and tests reuse on the next
+frame.  Stable lines continue to hit without cooldown.  The exact final A/B was:
+
+| Build | Overall emu insn/frame | Frames 900-1199 | STATEHASH | AUDIOHASH | text |
+|---|---:|---:|---|---|---:|
+| Cache OFF | 6,613,231 | 7,451,306 | `fd31800f` | `cf7c29b2` | 622,020 B |
+| Cache ON | 6,054,251 | 7,324,281 | `fd31800f` | `cf7c29b2` | 624,684 B |
+| Delta | **-558,980 (-8.45%)** | **-127,025 (-1.70%)** | identical | identical | **+2,664 B** |
+
+Actual skipped-line counts were `100,127 / 268,800` (**37.24%**) overall and
+`6,566 / 67,200` (**9.77%**) in frames 900-1199.  All four 300-frame framebuffer
+and audio hashes also matched the OFF run.  The linked BSS increase was 49,768 B;
+no pixel cache is allocated, because both the rig framebuffer and device
+`snes_frame` are persistent.
+
+`ppu_lineCacheInvalidate()` is called by `ppu_reset`, after `ppu_saveload`, after
+each explicit `snes_frame` clear, and whenever `common_emu_state.clear_frames`
+is active.  Thus the first frame, save/load boundary, and UI screen-clear
+boundary force complete redraws.  These numbers are QEMU M7 executed
+instructions only; they are not a device-fps prediction.

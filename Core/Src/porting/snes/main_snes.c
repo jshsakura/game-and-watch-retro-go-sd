@@ -918,6 +918,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     gsnes__g_diag_dsp_echo_cycles = 0;
 
     memset(snes_frame, 0, sizeof(snes_frame));
+#ifdef SNES_LINE_CACHE
+    ppu_lineCacheInvalidate();
+#endif
     for (int i = 0; i < 250; i++) {           /* + PPU line renderer + audio */
       wdog_refresh();
       g_ppu_skip_render = false;
@@ -978,10 +981,17 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     lcd_clear_buffers();
   }
   memset(snes_frame, 0, sizeof(snes_frame));   /* borders start black and stay black */
+#ifdef SNES_LINE_CACHE
+  ppu_lineCacheInvalidate();
+#endif
 
   while (1) {
     wdog_refresh();
 
+#ifdef SNES_LINE_CACHE
+    if (common_emu_state.clear_frames)
+      ppu_lineCacheInvalidate();
+#endif
     bool drawFrame = common_emu_frame_loop();
 
     odroid_input_read_gamepad(&joystick);

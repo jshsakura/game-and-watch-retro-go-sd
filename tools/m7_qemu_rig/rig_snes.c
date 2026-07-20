@@ -60,7 +60,6 @@ static uint64_t g_present_ticks;
 #else
 #define PROFILE_CPU(expr) (expr)
 #endif
-
 #ifdef RIG_PPU_DEEP
 uint64_t g_ppu_bg_ticks[3];
 uint64_t g_ppu_sprite_eval_ticks, g_ppu_sprite_draw_ticks;
@@ -461,6 +460,13 @@ int main(void) {
          (unsigned long)(uint32_t)audio_hash,
          (unsigned long)(tot_emu * ipt_x1000 / 1000 / frames),
          (unsigned long)(tot_apu * ipt_x1000 / 1000 / frames));
+#endif
+#ifdef SNES_LINE_REUSE_PROBE
+  ppu_lineReuseProbeReport();
+#endif
+#ifdef SNES_LINE_CACHE
+  printf("[line-cache-gate] COREHASH=%08lx\n", (unsigned long)(uint32_t)sh);
+  ppu_lineCacheReport();
 #endif
   return 0;
 }
