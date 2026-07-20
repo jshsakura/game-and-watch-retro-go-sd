@@ -250,6 +250,16 @@ void segacd_sub_hold(void)
  * onto the CPU's own bank, not byte-accurate cell-interleave) as a
  * documented approximation. TODO: real cell/dot-decode transform if a
  * title's renderer needs it. */
+static inline void segacd_map_direct(cpu_memory_map *map, int page,
+                                     unsigned char *base)
+{
+    map[page].base = base;
+    map[page].read8 = NULL;
+    map[page].read16 = NULL;
+    map[page].write8 = NULL;
+    map[page].write16 = NULL;
+}
+
 void segacd_word_ram_remap(int called_from_sub)
 {
     cpu_memory_map *main_map = called_from_sub ? s_main_saved.memory_map : m68k.memory_map;
@@ -260,29 +270,33 @@ void segacd_word_ram_remap(int called_from_sub)
     if (!(r3 & 0x04)) {
         /* 2M mode */
         for (p = 0; p < 4; p++) {
-            main_map[0x20 + p].base = SCD.word_ram + (unsigned)p * 0x10000u;
-            sub_map [0x08 + p].base = SCD.word_ram + (unsigned)p * 0x10000u;
+            segacd_map_direct(main_map, 0x20 + p,
+                              SCD.word_ram + (unsigned)p * 0x10000u);
+            segacd_map_direct(sub_map, 0x08 + p,
+                              SCD.word_ram + (unsigned)p * 0x10000u);
         }
         /* $0C0000-$0DFFFF is only meaningful in 1M mode; point it at
          * word_ram start so a stray 2M-mode access doesn't fault. */
-        sub_map[0x0C].base = SCD.word_ram;
-        sub_map[0x0D].base = SCD.word_ram + 0x10000u;
+        segacd_map_direct(sub_map, 0x0C, SCD.word_ram);
+        segacd_map_direct(sub_map, 0x0D, SCD.word_ram + 0x10000u);
     } else {
         /* 1M mode: bank[b0] -> MAIN, bank[b0^1] -> SUB. */
         int b0 = r3 & 1;
         unsigned char *main_bank = SCD.word_ram + (unsigned)b0 * 0x20000u;
         unsigned char *sub_bank  = SCD.word_ram + (unsigned)(b0 ^ 1) * 0x20000u;
 
-        main_map[0x20].base = main_bank;
-        main_map[0x21].base = main_bank + 0x10000u;
-        sub_map [0x0C].base = sub_bank;
-        sub_map [0x0D].base = sub_bank + 0x10000u;
+        segacd_map_direct(main_map, 0x20, main_bank);
+        segacd_map_direct(main_map, 0x21, main_bank + 0x10000u);
+        segacd_map_direct(sub_map, 0x0C, sub_bank);
+        segacd_map_direct(sub_map, 0x0D, sub_bank + 0x10000u);
 
         /* Approximated cell-arrange views (see function comment). */
-        main_map[0x22].base = sub_bank;
-        main_map[0x23].base = sub_bank + 0x10000u;
-        for (p = 0; p < 4; p++)
-            sub_map[0x08 + p].base = SCD.word_ram + (unsigned)p * 0x10000u;
+        segacd_map_direct(main_map, 0x22, sub_bank);
+        segacd_map_direct(main_map, 0x23, sub_bank + 0x10000u);
+        for (p = 0; p < 4; p++) {
+            segacd_map_direct(sub_map, 0x08 + p,
+                              SCD.word_ram + (unsigned)p * 0x10000u);
+        }
     }
     SCD.word_owner = (uint8_t)(r3 & 1);
 }

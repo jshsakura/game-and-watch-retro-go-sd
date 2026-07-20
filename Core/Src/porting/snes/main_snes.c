@@ -1080,10 +1080,28 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
          * guarantees correct playback speed. */
 #ifdef SNES_SMW_HLE_PRODUCT
         if (g_wire_on) {
+            /* Catch-up: replay the audio batches the DMA advanced past on a slow
+             * frame. But `elapsed` is unbounded -- after the pause menu it counts
+             * every audio period spent in the menu, so this tried to regenerate
+             * seconds of audio at once, and the inner DMA wait below had no
+             * watchdog feed or ceiling. That is the real SMW-menu death (Codex
+             * adversarial review of 15dd53c8, which had guarded the wrong wait).
+             *
+             * Backlog past a couple of frames is not worth replaying -- the audio
+             * for time spent paused is gone regardless -- so cap it and resync
+             * rather than grind through it. */
+            if (elapsed > 4) {
+                snes_last_dma = dma_counter;   /* drop the backlog, don't replay it */
+                elapsed = 0;
+            }
             while (elapsed > 1) {
                 snes_pcm_submit();
-                while (dma_counter == snes_last_dma)
+                uint32_t guard = 0;
+                while (dma_counter == snes_last_dma && guard < 20000u) {
+                    wdog_refresh();
                     cpumon_sleep();
+                    guard++;
+                }
                 snes_last_dma = dma_counter;
                 elapsed--;
             }
