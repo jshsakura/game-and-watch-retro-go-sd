@@ -33,3 +33,24 @@ uint32_t cps1_core_checksum(cps1_engine_kind_t engine);
  * format exists. Independent from the framebuffer hash above. */
 uint32_t cps1_core_cpu_state_hash(cps1_engine_kind_t engine);
 uint32_t cps1_core_cpu_illegal_count(cps1_engine_kind_t engine);
+
+/* Read-only inspection of the 68000<->VDP bus wired in cps1_core.c (WRAM,
+ * OBJ RAM / sprite table, palette RAM) -- for tests/build verification, not
+ * part of the per-frame loop. Kept as primitive out-params here (rather
+ * than exposing cps1_oam_entry_t) so this header stays independent of
+ * cps1_ppu.h. */
+uint16_t cps1_core_wram_peek16(uint32_t offset);
+int cps1_core_oam_peek(uint32_t index, int16_t *out_x, int16_t *out_y,
+                        uint16_t *out_tile, uint8_t *out_attr);
+uint16_t cps1_core_palette_peek(unsigned bank, unsigned color);
+
+/* Runs a small built-in program (its own standalone cps1_cpu68k_t, not an
+ * engine slot's) through the REAL cps1_bus_read16/write16 dispatcher in
+ * cps1_core.c -- MOVEA.L to set up a pointer, MOVE.W to write/read through
+ * it -- and checks: a WRAM round-trip, an OBJ-RAM write that actually moves
+ * sprite 0, and a palette-RAM write that actually recolors bank 1 color 2.
+ * Returns 1 if every check passes, 0 otherwise (prints nothing -- caller
+ * reports). NOTE: this mutates the shared WRAM/OAM/palette globals the
+ * engine slots also render from -- it's a build-verification tool, call it
+ * before running real frames, not interleaved with them. */
+int cps1_core_selftest_vdp_bus(void);

@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "cps1_cpu68k.h"
 
 /* ---- fetch ---- */
@@ -125,6 +127,12 @@ void cps1_cpu68k_reset(cps1_cpu68k_t *cpu, const uint8_t *code, uint32_t code_le
     cpu->halted = 0;
     cpu->code = code;
     cpu->code_len = code_len;
+    cpu->bus = NULL;
+}
+
+void cps1_cpu68k_attach_bus(cps1_cpu68k_t *cpu, const cps1_bus_t *bus)
+{
+    cpu->bus = bus;
 }
 
 uint32_t cps1_cpu68k_step(cps1_cpu68k_t *cpu)
@@ -194,6 +202,45 @@ uint32_t cps1_cpu68k_step(cps1_cpu68k_t *cpu)
         } else if (cps1_cpu68k_cc_test(cpu->sr, cc)) {
             cpu->pc = (uint32_t)((int32_t)branch_base + disp8);
         }
+    } else if ((op & 0xF1FF) == 0x207C) {
+        /* MOVEA.L #imm32,An -- loads a base pointer; does not affect flags
+         * (real 68000 MOVEA never does). */
+        unsigned reg = (op >> 9) & 7;
+        uint16_t hi = fetch16(cpu);
+        uint16_t lo = fetch16(cpu);
+        cpu->a[reg] = ((uint32_t)hi << 16) | lo;
+        cycles = 12;
+    } else if ((op & 0xF1F8) == 0x3010) {
+        /* MOVE.W (An),Dn */
+        unsigned dn = (op >> 9) & 7;
+        unsigned an = op & 7;
+        uint16_t val = 0;
+        if (cpu->bus) {
+            val = cpu->bus->read16(cpu->a[an]);
+        } else {
+            cpu->illegal_count++;
+        }
+        write_dn_sized(cpu, dn, 1, val);
+        cpu->sr = (uint16_t)(cpu->sr & ~(CPS1_CPU68K_SR_N | CPS1_CPU68K_SR_Z |
+                                          CPS1_CPU68K_SR_V | CPS1_CPU68K_SR_C));
+        if (val == 0)        cpu->sr |= CPS1_CPU68K_SR_Z;
+        if (val & 0x8000u)   cpu->sr |= CPS1_CPU68K_SR_N;
+        cycles = 8;
+    } else if ((op & 0xF1F8) == 0x3080) {
+        /* MOVE.W Dn,(An) */
+        unsigned an = (op >> 9) & 7;
+        unsigned dn = op & 7;
+        uint16_t val = (uint16_t)(cpu->d[dn] & 0xFFFFu);
+        if (cpu->bus) {
+            cpu->bus->write16(cpu->a[an], val);
+        } else {
+            cpu->illegal_count++;
+        }
+        cpu->sr = (uint16_t)(cpu->sr & ~(CPS1_CPU68K_SR_N | CPS1_CPU68K_SR_Z |
+                                          CPS1_CPU68K_SR_V | CPS1_CPU68K_SR_C));
+        if (val == 0)        cpu->sr |= CPS1_CPU68K_SR_Z;
+        if (val & 0x8000u)   cpu->sr |= CPS1_CPU68K_SR_N;
+        cycles = 8;
     } else {
         cps1_cpu68k_unimplemented(cpu, op);
     }

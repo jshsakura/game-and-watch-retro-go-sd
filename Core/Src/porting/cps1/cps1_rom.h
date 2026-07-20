@@ -36,12 +36,38 @@ int cps1_rom_attach(cps1_rom_t *rom, cps1_rom_region_t prg, cps1_rom_region_t gf
 #define CPS1_TILE_SIZE_BYTES 32 /* 8x8 pixels, 4bpp packed (1 nibble/pixel) */
 
 /* Copies one packed 4bpp 8x8 tile (32 bytes) from rom->gfx at `tile_index`
- * into `out`. Returns 0 on success, -1 if tile_index is out of range.
- *
- * TODO(cps1): this is a flat "tile_index * 32 bytes into one gfx blob"
- * decode -- real CPS-1 hardware spreads each tile's 4 bitplanes across
- * MULTIPLE separate ROM chips with a specific bit-interleave (see MAME's
- * cps1.cpp gfx_layout for the real wiring). Correct only for a
- * pre-flattened/pre-planar-merged GFX blob; a real ROM set needs a
- * per-game gfxdecode step before this function is accurate. */
+ * into `out`. Returns 0 on success, -1 if tile_index is out of range. Flat
+ * "tile_index * 32 bytes into one gfx blob" -- correct only if rom->gfx is
+ * ALREADY packed 4bpp (true for the synthetic test data in cps1_core.c;
+ * NOT true for a real CPS-1 GFX ROM dump -- use cps1_rom_decode_tile_planar
+ * for that). */
 int cps1_rom_decode_tile(const cps1_rom_t *rom, uint32_t tile_index, uint8_t *out);
+
+/*
+ * Real CPS-1 GFX ROMs store each tile as separate 1-bit-per-pixel
+ * bitplanes, not pre-packed 4bpp nibbles -- this is the generalization
+ * that decodes those, parameterized like MAME's gfx_layout (planes +
+ * per-plane offset) so a confirmed real layout is a constant swap, not a
+ * rewrite. Simplified vs. MAME's raw bit-level gfx_layout: offsets here
+ * are BYTE-granular (one plane byte per row, MSB = leftmost pixel), which
+ * covers the common byte-aligned-bitplane convention but not arbitrary
+ * bit-level interleaves.
+ *
+ * UNCONFIRMED for CPS-1 specifically: CPS1_GFX_LAYOUT_DEFAULT is the
+ * "4 contiguous 8-byte bitplanes per 8x8 tile" convention common to many
+ * Capcom-era boards -- NOT verified against MAME's cps1.cpp (this session
+ * could not retrieve that source; see docs/CPS1_FEASIBILITY.md section 6).
+ * Treat its output as unverified until cross-checked against a real ROM
+ * dump or MAME's actual gfx_layout for cps1.
+ */
+typedef struct {
+    uint8_t planes;                    /* bits per pixel, e.g. 4 */
+    uint16_t plane_byte_offset[8];     /* byte offset of plane p's row 0, within the tile block */
+    uint16_t bytes_per_row_per_plane;  /* usually 1 (8 pixels/row fits one byte) */
+    uint16_t tile_stride_bytes;        /* total bytes per tile in the gfx region */
+} cps1_gfx_layout_t;
+
+extern const cps1_gfx_layout_t CPS1_GFX_LAYOUT_DEFAULT;
+
+int cps1_rom_decode_tile_planar(const cps1_rom_t *rom, const cps1_gfx_layout_t *layout,
+                                 uint32_t tile_index, uint8_t *out);

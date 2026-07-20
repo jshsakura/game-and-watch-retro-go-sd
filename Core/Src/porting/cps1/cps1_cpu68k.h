@@ -4,13 +4,15 @@
  *
  * Covers only the opcodes needed to fetch/decode/execute a real instruction
  * stream end to end: NOP, MOVEQ, ADDQ/SUBQ (Dn direct), Bcc/BRA/BSR (8-bit
- * displacement), DBcc, RTS. Every other opcode is UNIMPLEMENTED and steps
- * through cps1_cpu68k_unimplemented() instead of crashing, so a real
- * instruction set can be filled in incrementally without re-architecting
- * the fetch/step loop. No addressing modes beyond Dn-direct and PC-relative
- * branches yet -- no memory bus, no An-indirect, no absolute addressing.
- * See docs/CPS1_ULTIMATE_PORTING_PLAN.md technique 1/2 for what replaces
- * this next (static recompiler, real addressing modes, WRAM/ROM bus).
+ * displacement), DBcc, RTS, MOVEA.L #imm32,An, MOVE.W (An),Dn / Dn,(An).
+ * Every other opcode is UNIMPLEMENTED and steps through
+ * cps1_cpu68k_unimplemented() instead of crashing, so a real instruction
+ * set can be filled in incrementally without re-architecting the fetch/step
+ * loop. Addressing modes beyond Dn/An-direct, An-indirect and PC-relative
+ * branches are still missing (no displacement, no absolute, no
+ * post-increment/pre-decrement). See docs/CPS1_ULTIMATE_PORTING_PLAN.md
+ * technique 1/2 for what replaces this next (static recompiler, the rest of
+ * the addressing modes).
  */
 #include <stdint.h>
 
@@ -20,19 +22,36 @@
 #define CPS1_CPU68K_SR_N 0x0008u
 #define CPS1_CPU68K_SR_X 0x0010u
 
+/* Memory bus: whatever cps1_core.c wires up (WRAM/OBJ-RAM/palette-RAM/PRG
+ * ROM dispatch) -- this file stays decoupled from cps1_rom.h/cps1_ppu.h on
+ * purpose, so the CPU core has no idea what's behind an address, only that
+ * something is. 16-bit only for now (word moves); byte/long bus access is
+ * not implemented. */
+typedef struct {
+    uint16_t (*read16)(uint32_t addr);
+    void (*write16)(uint32_t addr, uint16_t val);
+} cps1_bus_t;
+
 typedef struct {
     uint32_t d[8];
     uint32_t a[8]; /* a[7] is the active stack pointer for this skeleton */
     uint32_t pc;   /* byte offset into `code` */
     uint16_t sr;
     uint32_t cycles;
-    uint32_t illegal_count; /* opcodes seen but not implemented */
+    uint32_t illegal_count; /* opcodes seen but not implemented, OR a bus op
+                                attempted with no bus attached */
     int halted;             /* set by RTS (no call stack yet -- see header) */
     const uint8_t *code;
     uint32_t code_len;
+    const cps1_bus_t *bus;  /* NULL until cps1_cpu68k_attach_bus() is called */
 } cps1_cpu68k_t;
 
 void cps1_cpu68k_reset(cps1_cpu68k_t *cpu, const uint8_t *code, uint32_t code_len);
+
+/* Optional: without a bus, MOVE.W (An),Dn/Dn,(An) count as illegal instead
+ * of touching memory (see cps1_cpu68k_step) -- safe default for programs
+ * (like s_cpu_test_program) that never dereference memory. */
+void cps1_cpu68k_attach_bus(cps1_cpu68k_t *cpu, const cps1_bus_t *bus);
 
 /* Executes exactly one instruction (or does nothing if halted). Returns the
  * cycle count charged for that instruction (0 once halted). */

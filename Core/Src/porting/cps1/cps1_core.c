@@ -111,6 +111,69 @@ static void cps1_ppu_init_synthetic(void)
     cps1_tile_cache_reset(&s_tile_cache);
 }
 
+/*
+ * 68000 <-> VDP memory bus: WRAM (64KB, real read/write), OBJ RAM (sprite
+ * table -- writes update s_synthetic_oam directly), palette RAM (writes
+ * update s_synthetic_palette), and PRG ROM (read-only, falls through to
+ * s_synthetic_rom.prg). Addresses are placeholders, NOT the real CPS-1
+ * memory map (docs/CPS1_FEASIBILITY.md doesn't pin exact addresses either)
+ * -- what's real here is the DISPATCH mechanism: a 68000 write through this
+ * bus genuinely moves a sprite / recolors a palette entry, the same way it
+ * would need to on real hardware. Word-aligned 16-bit access only, matching
+ * cps1_cpu68k.c's MOVE.W-only memory support.
+ */
+#define CPS1_WRAM_BASE 0xFF0000u
+#define CPS1_WRAM_SIZE 0x10000u
+#define CPS1_OBJ_BASE  0x900000u
+#define CPS1_PAL_BASE  0x910000u
+
+static uint8_t s_wram[CPS1_WRAM_SIZE];
+
+static uint16_t cps1_bus_read16(uint32_t addr)
+{
+    if (addr >= CPS1_WRAM_BASE && addr < CPS1_WRAM_BASE + CPS1_WRAM_SIZE) {
+        uint32_t off = addr - CPS1_WRAM_BASE;
+        return (uint16_t)((s_wram[off] << 8) | s_wram[off + 1]);
+    }
+    if (addr + 1 < s_synthetic_rom.prg.size)
+        return (uint16_t)((s_synthetic_rom.prg.data[addr] << 8) | s_synthetic_rom.prg.data[addr + 1]);
+    return 0;
+}
+
+static void cps1_bus_write16(uint32_t addr, uint16_t val)
+{
+    if (addr >= CPS1_WRAM_BASE && addr < CPS1_WRAM_BASE + CPS1_WRAM_SIZE) {
+        uint32_t off = addr - CPS1_WRAM_BASE;
+        s_wram[off] = (uint8_t)(val >> 8);
+        s_wram[off + 1] = (uint8_t)(val & 0xFFu);
+        return;
+    }
+    if (addr >= CPS1_OBJ_BASE && addr < CPS1_OBJ_BASE + (uint32_t)s_synthetic_oam.count * 8u) {
+        uint32_t word_idx = (addr - CPS1_OBJ_BASE) / 2u;
+        uint32_t entry = word_idx / 4u;
+        uint32_t field = word_idx % 4u;
+        cps1_oam_entry_t *s = &s_synthetic_oam.sprites[entry];
+        switch (field) {
+        case 0: s->y = (int16_t)val; break;
+        case 1: s->tile_index = val; break;
+        case 2: s->attr = (uint8_t)val; break;
+        default: s->x = (int16_t)val; break;
+        }
+        return;
+    }
+    if (addr >= CPS1_PAL_BASE &&
+        addr < CPS1_PAL_BASE + (uint32_t)CPS1_PALETTE_BANKS * CPS1_PALETTE_COLORS * 2u) {
+        uint32_t word_idx = (addr - CPS1_PAL_BASE) / 2u;
+        unsigned bank = word_idx / CPS1_PALETTE_COLORS;
+        unsigned color = word_idx % CPS1_PALETTE_COLORS;
+        s_synthetic_palette.colors[bank][color] = val;
+        return;
+    }
+    /* PRG ROM / unmapped: writes are no-ops. */
+}
+
+static const cps1_bus_t s_bus = { cps1_bus_read16, cps1_bus_write16 };
+
 typedef struct {
     uint16_t fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
     uint32_t frame;
@@ -121,11 +184,14 @@ static cps1_engine_state_t s_engine[CPS1_ENGINE_COUNT];
 
 void cps1_core_reset(cps1_engine_kind_t engine)
 {
+    cps1_ppu_init_synthetic();
+
     cps1_engine_state_t *e = &s_engine[engine];
     e->frame = 0;
     for (int i = 0; i < CPS1_FB_WIDTH * CPS1_FB_HEIGHT; i++)
         e->fb[i] = 0;
     cps1_cpu68k_reset(&e->cpu, s_cpu_test_program, sizeof(s_cpu_test_program));
+    cps1_cpu68k_attach_bus(&e->cpu, &s_bus);
 }
 
 void cps1_core_run_frame(cps1_engine_kind_t engine)
@@ -170,4 +236,77 @@ uint32_t cps1_core_cpu_state_hash(cps1_engine_kind_t engine)
 uint32_t cps1_core_cpu_illegal_count(cps1_engine_kind_t engine)
 {
     return s_engine[engine].cpu.illegal_count;
+}
+
+uint16_t cps1_core_wram_peek16(uint32_t offset)
+{
+    if (offset + 1 >= CPS1_WRAM_SIZE)
+        return 0;
+    return (uint16_t)((s_wram[offset] << 8) | s_wram[offset + 1]);
+}
+
+int cps1_core_oam_peek(uint32_t index, int16_t *out_x, int16_t *out_y,
+                        uint16_t *out_tile, uint8_t *out_attr)
+{
+    if (index >= s_synthetic_oam.count)
+        return 0;
+    const cps1_oam_entry_t *s = &s_synthetic_oam.sprites[index];
+    if (out_x)    *out_x = s->x;
+    if (out_y)    *out_y = s->y;
+    if (out_tile) *out_tile = s->tile_index;
+    if (out_attr) *out_attr = s->attr;
+    return 1;
+}
+
+uint16_t cps1_core_palette_peek(unsigned bank, unsigned color)
+{
+    if (bank >= CPS1_PALETTE_BANKS || color >= CPS1_PALETTE_COLORS)
+        return 0;
+    return s_synthetic_palette.colors[bank][color];
+}
+
+/*
+ * Hand-assembled: sets up A0/A1/A2 to WRAM/OBJ-RAM(sprite 0's Y
+ * word)/palette-RAM(bank 1, color 2), writes a distinct MOVEQ-range value
+ * through each, and reads WRAM back into D1 to prove the round trip.
+ *   MOVEA.L #CPS1_WRAM_BASE,A0 ; MOVEQ #7,D0  ; MOVE.W D0,(A0) ; MOVE.W (A0),D1
+ *   MOVEA.L #CPS1_OBJ_BASE,A1  ; MOVEQ #99,D2 ; MOVE.W D2,(A1)
+ *   MOVEA.L #(CPS1_PAL_BASE+36),A2 ; MOVEQ #21,D3 ; MOVE.W D3,(A2)
+ *   RTS
+ * (palette bank 1 color 2 -> word index 1*16+2=18 -> byte offset 36)
+ */
+static const uint8_t s_vdp_bus_test_program[] = {
+    0x20, 0x7C, 0x00, 0xFF, 0x00, 0x00, /* MOVEA.L #0xFF0000,A0 */
+    0x70, 0x07,                         /* MOVEQ   #7,D0        */
+    0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
+    0x32, 0x10,                         /* MOVE.W  (A0),D1      */
+    0x22, 0x7C, 0x00, 0x90, 0x00, 0x00, /* MOVEA.L #0x900000,A1 */
+    0x74, 0x63,                         /* MOVEQ   #99,D2       */
+    0x32, 0x82,                         /* MOVE.W  D2,(A1)      */
+    0x24, 0x7C, 0x00, 0x91, 0x00, 0x24, /* MOVEA.L #0x910024,A2 */
+    0x76, 0x15,                         /* MOVEQ   #21,D3       */
+    0x34, 0x83,                         /* MOVE.W  D3,(A2)      */
+    0x4E, 0x75,                         /* RTS                  */
+};
+
+int cps1_core_selftest_vdp_bus(void)
+{
+    cps1_ppu_init_synthetic();
+
+    cps1_cpu68k_t cpu;
+    cps1_cpu68k_reset(&cpu, s_vdp_bus_test_program, sizeof(s_vdp_bus_test_program));
+    cps1_cpu68k_attach_bus(&cpu, &s_bus);
+    cps1_cpu68k_run(&cpu, 64);
+
+    if (!cpu.halted || cpu.illegal_count != 0)
+        return 0;
+    if (cpu.d[1] != 7)
+        return 0; /* WRAM round-trip, via register */
+    if (cps1_core_wram_peek16(0) != 7)
+        return 0; /* WRAM round-trip, via memory directly */
+    if (s_synthetic_oam.sprites[0].y != 99)
+        return 0; /* OBJ RAM write actually moved sprite 0 */
+    if (s_synthetic_palette.colors[1][2] != 21)
+        return 0; /* palette RAM write actually recolored bank 1 color 2 */
+    return 1;
 }

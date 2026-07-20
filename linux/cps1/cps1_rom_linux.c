@@ -56,3 +56,52 @@ int cps1_rom_load_linux(cps1_rom_t *rom, const char *prg_path, const char *gfx_p
 
     return cps1_rom_attach(rom, prg, gfx, z80, oki);
 }
+
+int cps1_rom_load_interleaved(cps1_rom_region_t *out, const char *const *paths, int chip_count)
+{
+    if (chip_count <= 0) {
+        fprintf(stderr, "cps1_rom: chip_count must be > 0\n");
+        return -1;
+    }
+
+    cps1_rom_region_t *chips = malloc((size_t)chip_count * sizeof(cps1_rom_region_t));
+    if (!chips)
+        return -1;
+
+    int ok = 1;
+    for (int i = 0; i < chip_count; i++) {
+        chips[i].data = NULL;
+        chips[i].size = 0;
+        if (read_file(paths[i], &chips[i]) != 0) {
+            ok = 0;
+            break;
+        }
+        if (i > 0 && chips[i].size != chips[0].size) {
+            fprintf(stderr, "cps1_rom: chip %d ('%s') size %u != chip 0 size %u\n",
+                    i, paths[i], chips[i].size, chips[0].size);
+            ok = 0;
+            break;
+        }
+    }
+
+    if (ok) {
+        uint32_t per_chip = chips[0].size;
+        uint32_t total = per_chip * (uint32_t)chip_count;
+        uint8_t *combined = malloc(total);
+        if (!combined) {
+            ok = 0;
+        } else {
+            for (uint32_t i = 0; i < per_chip; i++)
+                for (int c = 0; c < chip_count; c++)
+                    combined[i * (uint32_t)chip_count + (uint32_t)c] = chips[c].data[i];
+            out->data = combined;
+            out->size = total;
+        }
+    }
+
+    for (int i = 0; i < chip_count; i++)
+        free((void *)chips[i].data);
+    free(chips);
+
+    return ok ? 0 : -1;
+}
