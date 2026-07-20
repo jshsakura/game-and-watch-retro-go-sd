@@ -14,14 +14,14 @@ extern uint8_t __lcd_pool_start__[];
 extern uint8_t __lcd_pool_end__[];
 
 pixel_t *framebuffer1 = (pixel_t *)__lcd_pool_start__;
-pixel_t *framebuffer2 = (pixel_t *)__lcd_pool_start__; /* SINGLE FB */
+pixel_t *framebuffer2 = (pixel_t *)(__lcd_pool_start__ + GW_LCD_FRAME_SIZE);
 
 /* LTDC-side framebuffer pointers — same as framebuffer1/2 by default but
  * lcd_set_buffers() lets callers redirect the hardware to alternative
  * buffers (used by the welcome/error screen flows). Initialised from the
  * linker symbol so they're valid before lcd_init runs. */
 uint16_t *fb1 = (uint16_t *)__lcd_pool_start__;
-uint16_t *fb2 = (uint16_t *)__lcd_pool_start__; /* SINGLE FB */
+uint16_t *fb2 = (uint16_t *)(__lcd_pool_start__ + GW_LCD_FRAME_SIZE);
 
 extern LTDC_HandleTypeDef hltdc;
 
@@ -219,8 +219,7 @@ void lcd_swap(void)
    * so every pixel is in RAM before LTDC is told to flip at vblank. */
   __DSB();
   HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
-  /* SINGLE FB: do not toggle active_framebuffer */
-  // active_framebuffer = active_framebuffer ? 0 : 1;
+  active_framebuffer = active_framebuffer ? 0 : 1;
 }
 
 void lcd_sync(void)
@@ -310,9 +309,9 @@ void lcd_setup_framebuffers(lcd_mode_t mode)
    * caller works with the framebuffer as uint8_t* via cast. fb1/fb2 are
    * what the LTDC peripheral reads — must match the framebuffer layout. */
   framebuffer1 = (pixel_t *)(base);
-  framebuffer2 = (pixel_t *)(base); /* SINGLE FB */
+  framebuffer2 = (pixel_t *)(base + fb_size_bytes);
   fb1 = (uint16_t *)(base);
-  fb2 = (uint16_t *)(base); /* SINGLE FB */
+  fb2 = (uint16_t *)(base + fb_size_bytes);
 
   current_lcd_mode = mode;
   active_framebuffer = 0;
