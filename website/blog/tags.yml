@@ -77,3 +77,13 @@ i18n:
   label: i18n
   permalink: /i18n
   description: Language binaries, fonts, and codepages
+
+pce:
+  label: PCE
+  permalink: /pce
+  description: PC Engine / TurboGrafx-16 / CD-ROM² work
+
+security:
+  label: security
+  permalink: /security
+  description: Adversarial review, buffer-hardening, and exploit-surface work

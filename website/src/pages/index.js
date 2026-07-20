@@ -41,12 +41,28 @@ const FEATURED_DEVLOG = [
     tags: ['snes', 'fault'],
   },
   {
+    slug: 'six-overflows-in-a-toy-launcher',
+    date: '2026-07-20',
+    title: 'Six overflows in a toy launcher',
+    excerpt:
+      'It is a Game & Watch. It is not networked. There is nothing to attack. That is the lie I told myself until an adversarial pass found six buffer overflows \u2014 three of them hardfault-class on a long filename.',
+    tags: ['fault', 'security'],
+  },
+  {
     slug: 'earthbound-the-memmove-that-ran-into-peripheral-space',
     date: '2026-07-20',
     title: 'EarthBound: the memmove that ran off into peripheral space',
     excerpt:
       'A 300 MB copy. A pointer in the size register. The compiler\u2019s register allocator, honouring an alignment annotation, silently shifted every argument one slot over.',
     tags: ['snes', 'fault'],
+  },
+  {
+    slug: 'the-poll-was-innocent-the-caller-was-the-loop',
+    date: '2026-07-20',
+    title: 'GBA idle skip: the poll was innocent, the caller was the loop',
+    excerpt:
+      'A six-frame intro took seven hundred. The idle-skip table was correct \u2014 every entry in it was right. The detector had found the poll. It just could not tell spin from call.',
+    tags: ['gba', 'performance'],
   },
   {
     slug: 'sega-cd-the-sub-cpu-that-waited-for-a-dead-main',
@@ -57,6 +73,14 @@ const FEATURED_DEVLOG = [
     tags: ['segacd', 'fault'],
   },
   {
+    slug: 'the-fader-the-game-forgot-to-cancel',
+    date: '2026-07-20',
+    title: 'PCE CD: the fader the game forgot to cancel',
+    excerpt:
+      'The music was silent. The rip was good. The CD-DA volume register read zero \u2014 because the game had faded out for a cinematic and never written the cancel before the BGM started.',
+    tags: ['pce', 'audio'],
+  },
+  {
     slug: 'boot-rescue-when-a-hung-boot-was-a-dead-battery',
     date: '2026-07-20',
     title: 'Boot rescue: when a hung boot was a dead battery',
@@ -65,12 +89,28 @@ const FEATURED_DEVLOG = [
     tags: ['boot', 'fault'],
   },
   {
+    slug: 'the-85kb-hash-table-that-didnt-fit-in-8kb-of-dtcm',
+    date: '2026-07-20',
+    title: 'The 85 KB hash table that did not fit in 8 KB of DTCM',
+    excerpt:
+      'The data structure was right. The heap was wrong. A runtime OOM that became a link error is the whole win \u2014 the budget moved from "the device tells you in a second" to "the linker tells you before you flash."',
+    tags: ['snes', 'performance'],
+  },
+  {
     slug: 'clock-alarm-the-one-you-couldnt-turn-off',
     date: '2026-07-20',
     title: 'The clock alarm you couldn\u2019t turn off',
     excerpt:
       'Four separate device-only bugs, each reported as "the alarm went off and nothing would stop it." A confirm button wired as snooze. An RTC alarm that stayed armed while awake.',
     tags: ['clock', 'fault'],
+  },
+  {
+    slug: 'the-roms-that-didnt-speed-up-are-the-data',
+    date: '2026-07-20',
+    title: '32X: the ROMs that did not speed up are the data',
+    excerpt:
+      'Seven ROMs sped up 28\u201344%. Eight did not move. The temptation is to declare victory on the seven. The discipline is to read the eight \u2014 they tell you the bottleneck is somewhere else.',
+    tags: ['32x', 'performance'],
   },
   {
     slug: 'c64-when-cpp-exceptions-leaked-into-the-launcher',
