@@ -80,14 +80,29 @@ static const gfx_layout cps1_layout32x32 =    // 4 vertical 8-wide strips
 };
 ```
 
-**Bit extraction** (MAME's standard convention, `devices/emu/gfxdecode` semantics): for
-pixel (row, col) and plane p, the absolute bit index into the tile's byte block is
+**Bit extraction** (CONFIRMED against `src/emu/drawgfx.cpp`'s actual
+`gfx_element::decode()`, fetched and read directly — not assumed):
 
+```c
+// drawgfx.cpp:287-315, readbit at drawgfx.cpp:24-26
+for (plane = 0, planebit = 1 << (layout_planes - 1);   // plane[0] => MSB of the pixel
+     plane < layout_planes; plane++, planebit >>= 1)    // plane[last] => LSB
+{
+    int planeoffs = planeoffset[plane];                 // (+ code*charincrement, irrelevant here)
+    for (y) { int yoffs = planeoffs + yoffset[y];
+        for (x)
+            if (src[(yoffs + xoffset[x]) / 8] & (0x80 >> ((yoffs + xoffset[x]) % 8)))
+                pixel[x][y] |= planebit;
+    }
+}
 ```
-bitno = planeoffset[p] + yoffset[row] + xoffset[col]
-bit   = (rom_byte[bitno / 8] >> (7 - bitno % 8)) & 1     // bit0 of bitno-space = MSB
-pixel |= bit << p
-```
+
+So for pixel (row, col): `bitno = planeoffset[plane_array_index] + yoffset[row] +
+xoffset[col]`, and the bit read is `(rom_byte[bitno/8] >> (7 - bitno%8)) & 1` (bit 0 of
+bitno-space = the byte's MSB, `0x80`) — **but `plane_array_index 0` contributes the
+pixel's MSB, not its LSB** (`planebit` starts at `1 << (planes-1)` and shifts right
+each iteration). This is the one place an initial pass at this document had it
+backwards; corrected here after fetching `drawgfx.cpp` specifically to check.
 
 **What this means physically, for an 8x8 tile (64 bytes = 8 bytes/row):**
 - Each row occupies **8 consecutive bytes**, not 4. `yoffset[row] = row*64` (bits) =
@@ -108,6 +123,24 @@ pixel |= bit << p
   N" reading. `Core/Src/porting/cps1/cps1_rom.c`'s existing `cps1_rom_decode_tile_planar`
   already extracts MSB-first (`bit_pos = 7 - col`), which happens to match — that part
   needs no change, only the `CPS1_GFX_LAYOUT_DEFAULT` constants do (see §8).
+- Within one half-tile's 4 bytes (one row), `planeoffset={24,16,8,0}` (bits) =
+  `{3,2,1,0}` (byte-within-half-row) for **plane-array indices 0,1,2,3** -- and
+  plane-array index 0 contributes the pixel's **MSB**, index 3 the **LSB** (see the
+  boxed drawgfx.cpp excerpt above). So: **byte 3 (last of the four) holds plane-index
+  0 = the pixel's MSB; byte 0 (first) holds plane-index 3 = the pixel's LSB**; bytes 1
+  and 2 hold the middle two bits in between.
+  **Open implementation question, deliberately NOT resolved here**: the skeleton's
+  existing `cps1_rom_decode_tile_planar` (`cps1_rom.c`) builds its pixel value as
+  `idx |= bit << p` for loop index `p` counted low-to-high (p=0 -> pixel LSB) —
+  the OPPOSITE of MAME's plane-array convention (index 0 -> MSB) — so a naive
+  `plane_byte_offset = {3,2,1,0}` substitution is NOT simply "reverse the array";
+  it also needs `bytes_per_row_per_plane` changed from the skeleton's current `1`
+  (planes as contiguous per-plane row-blocks) to `8` (the real full row stride,
+  since CPS-1 interleaves all 4 planes' bytes WITHIN each row, not as separate
+  contiguous per-plane blocks), AND a way to address "which half of the 128-byte
+  16x16 block" (the current `tile_index * tile_stride_bytes` addressing has no
+  concept of a half-tile offset). This is real redesign work for Phase 8, not a
+  drop-in constant change — flagged here so it isn't mistaken for already solved.
 - 16x16 (SCROLL2) = the whole 128-byte block, both halves, used whole.
 - 32x32 (SCROLL3) = **four vertically-adjacent 8-pixel-wide × 32-row-tall strips**
   (`xoffset` groups at byte 0/4/8/12, `yoffset` steps 128 bits = 16 bytes/row over 32
@@ -380,7 +413,7 @@ and should be the first target.
 | File | Current (Phase 1-7 skeleton) | Confirmed real value | Action |
 |---|---|---|---|
 | `cps1_rom.h` `CPS1_TILE_SIZE_BYTES` | 32 | **64** (§1) | change constant, re-check every caller |
-| `cps1_rom.c` `CPS1_GFX_LAYOUT_DEFAULT` | planes=4, offsets `{0,8,16,24}`, 1 byte/row/plane | planes=4, `planeoffset={24,16,8,0}` (bit units), yoffset step 64 bits/row, **and a required second "layout8x8_2" (right-half) variant + the 16x16/32x32 shapes from §1** | replace with §1's exact layout; `cps1_rom_decode_tile_planar`'s MSB-first bit read is already correct, keep it |
+| `cps1_rom.c` `CPS1_GFX_LAYOUT_DEFAULT` + `cps1_rom_decode_tile_planar` | planes=4, offsets `{0,8,16,24}` bytes, 1 byte/row/plane, `idx \|= bit << p` (p=0 -> LSB) | real: byte-within-row assignment `{LSB..MSB} = {byte0..byte3}` i.e. **opposite** plane-index-to-bit direction from the skeleton's loop, `bytes_per_row_per_plane` must become 8 (interleaved-within-row, not contiguous-per-plane), plus half-tile-block addressing (§1) | the column (`7-col`) bit-within-byte extraction is already correct and needs no change; the plane-to-byte wiring and half-tile addressing need real redesign, not a constant swap — see the boxed caveat in §1 |
 | `cps1_ppu.h` `cps1_oam_entry_t` | `x,y,tile_index,attr` (4 separate fields, no block size) | word order **X,Y,tile,attr**; attr bits 0-4 color/5 xflip/6 yflip/7 offset-toggle/8-11 Xblock/12-15 Yblock (§5) | add block-size (multi-tile) rendering; fix bus word order in `cps1_core.c` |
 | `cps1_ppu.c` / `cps1_core.c` | sprites render same-frame from live OAM | **one-frame delayed** via a buffered copy latched at vblank (§5) | add a `cps1_oam_t m_buffered_obj` + a latch step in the frame loop, render from the buffer not the live table |
 | `cps1_bg.h` `cps1_bg_cell_t` | `tile_index, palette, enabled` (no priority, no flip) | `code, attr` 2-word cell; attr bits 0-4 color(+layer offset 0x20/0x40/0x60)/5 xflip/6 yflip/7-8 priority-group (§6) | rework cell struct + bus decode; flip not implemented at all yet |
