@@ -38,7 +38,16 @@
 
 static uint8_t  s_wram[WRAM_BYTES];
 static uint8_t  s_gfxram[GFXRAM_BYTES];
-static uint16_t s_regs[0x80];      /* 0x800000-0x8000FF word-indexed */
+static uint16_t s_regs[0xC0];      /* 0x800000-0x80017F word-indexed: covers IO,
+                                    * CPS-A (0x800100-0x80013F) and CPS-B
+                                    * (0x800140-0x80017F). An earlier window of
+                                    * 0x80 stopped at 0x8000FF and silently threw
+                                    * away every CPS-A/CPS-B write, making the
+                                    * probe report "no video setup" when the game
+                                    * had in fact programmed all four base regs. */
+/* QSound Z80 shared RAM, 0xF10000-0xF1FFFF backed flat (MAME maps the live
+ * parts at 0xF18000-0xF19FFF and 0xF1E000-0xF1FFFF). */
+static uint8_t  s_qram[0x10000];
 
 static unsigned s_gfxram_writes, s_reg_writes, s_unmapped_reads, s_input_reads;
 static uint8_t  s_gfxram_touched[GFXRAM_BYTES / 0x1000]; /* 4 KB granularity */
@@ -66,8 +75,12 @@ static uint16_t probe_read16(uint32_t addr)
         s_input_reads++;
         return 0xFFFFu;
     }
-    if (addr >= 0x800000u && addr < 0x800100u)
-        return s_regs[(addr & 0xFFu) >> 1];
+    if (addr >= 0x800000u && addr < 0x800180u)
+        return s_regs[(addr - 0x800000u) >> 1];
+    if (addr >= 0xF10000u && addr < 0xF20000u) {
+        uint32_t o = addr - 0xF10000u;
+        return (uint16_t)((s_qram[o] << 8) | s_qram[o + 1]);
+    }
     s_unmapped_reads++;
     return 0xFFFFu;
 }
@@ -82,8 +95,14 @@ static void probe_write16(uint32_t addr, uint16_t val)
         s_gfxram_writes++;
         return;
     }
-    if (addr >= 0x800000u && addr < 0x800100u) {
-        s_regs[(addr & 0xFFu) >> 1] = val;
+    if (addr >= 0xF10000u && addr < 0xF20000u) {
+        uint32_t o = addr - 0xF10000u;
+        s_qram[o] = (uint8_t)(val >> 8);
+        s_qram[o + 1] = (uint8_t)val;
+        return;
+    }
+    if (addr >= 0x800000u && addr < 0x800180u) {
+        s_regs[(addr - 0x800000u) >> 1] = val;
         s_reg_writes++;
         if (s_reglog_n < REGLOG_MAX) {
             s_reglog[s_reglog_n].addr = addr;
@@ -126,6 +145,14 @@ int main(int argc, char **argv)
 
     const uint8_t *prg = blob + h.prg_off;
     const cps1_m68k_io_t io = { probe_read16, probe_write16 };
+    /*
+     * Stand in for the QSound Z80. The real sound CPU boots and stamps 0x77
+     * into the shared RAM the main CPU polls at 0xF19FFE; with no Z80 here,
+     * seed it so the handshake completes. This is a STUB, not sound
+     * emulation -- it unblocks boot and nothing more.
+     */
+    s_qram[0xF19FFE - 0xF10000 + 1] = 0x77;
+
     cps1_m68k_init(prg, h.prg_size, s_wram, &io);
     cps1_m68k_reset();
 

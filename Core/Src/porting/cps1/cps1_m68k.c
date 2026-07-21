@@ -20,6 +20,18 @@ extern m68ki_cpu_core m68k;
 #define CPS1_GFXRAM_PAGE_FIRST 0x90u /* 0x900000-0x92FFFF, 192 KB */
 #define CPS1_GFXRAM_PAGE_COUNT 3u
 #define CPS1_WRAM_PAGE        0xFFu  /* 0xFF0000-0xFFFFFF, 64 KB */
+/*
+ * QSound board pages (MAME cps1.cpp qsound_main_map): 0xF00000-0xF0FFFF is
+ * the QSound ROM read-back used for protection, and 0xF10000-0xF1FFFF holds
+ * the Z80 shared RAM (0xF18000-0xF19FFF and 0xF1E000-0xF1FFFF) plus the
+ * player-3/4 and EEPROM ports. Tenchi wo Kurau II's boot code BLOCKS on
+ * this region -- it spins at 0x72A6 reading 0xF19FFE until the low byte
+ * reads 0x77, the sound CPU's "I am alive" signature. Leaving these pages
+ * as open bus returns 0xFFFF forever and the game never boots, which is
+ * exactly what the first real-ROM probe run showed.
+ */
+#define CPS1_QSOUND_ROM_PAGE  0xF0u
+#define CPS1_QSOUND_RAM_PAGE  0xF1u
 
 static const cps1_m68k_io_t *s_io;
 
@@ -163,6 +175,8 @@ void cps1_m68k_init(const uint8_t *prg, uint32_t prg_size, uint8_t *wram,
     cps1_map_page_io(CPS1_IO_PAGE);
     for (unsigned i = 0; i < CPS1_GFXRAM_PAGE_COUNT; i++)
         cps1_map_page_io(CPS1_GFXRAM_PAGE_FIRST + i);
+    cps1_map_page_io(CPS1_QSOUND_ROM_PAGE);
+    cps1_map_page_io(CPS1_QSOUND_RAM_PAGE);
 
     if (wram != NULL)
         cps1_map_page_base(CPS1_WRAM_PAGE, wram);
