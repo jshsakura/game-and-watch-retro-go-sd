@@ -73,6 +73,22 @@ typedef struct {
     uint32_t clock;
     uint32_t hits;
     uint32_t misses;
+    /*
+     * How to turn a tile index into 32 packed 4bpp bytes on a miss.
+     *
+     * NULL  -> cps1_rom_decode_tile(), the flat "index * 32 bytes" reader.
+     *          Correct ONLY when rom->gfx is already packed 4bpp, which is
+     *          true of cps1_core.c's synthetic test data and of every
+     *          selftest built on it. This stays the default so those keep
+     *          passing untouched.
+     * non-NULL -> cps1_rom_decode_tile_planar() with this layout, which is
+     *          what a REAL CPS-1 GFX ROM needs: the dump interleaves all
+     *          four bitplanes (MAME's gfx_layout, cps1.cpp:3837+), and
+     *          reading it flat produces one or two lit pixels per tile --
+     *          a regular dot grid, which is exactly what the first real-ROM
+     *          render produced before this field existed.
+     */
+    const cps1_gfx_layout_t *layout;
 } cps1_tile_cache_t;
 
 void cps1_tile_cache_reset(cps1_tile_cache_t *cache);

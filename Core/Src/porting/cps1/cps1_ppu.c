@@ -30,6 +30,12 @@ void cps1_tile_cache_reset(cps1_tile_cache_t *cache)
     cache->clock = 0;
     cache->hits = 0;
     cache->misses = 0;
+    /* MUST be cleared here: a cache that is not statically zero-initialised
+     * (any stack or ram_malloc'd one -- cps1-ppu-selftest has such a one)
+     * otherwise carries a garbage pointer into the miss path and segfaults
+     * on the first fetch. Callers wanting real-ROM decoding set ->layout
+     * AFTER calling this. */
+    cache->layout = NULL;
     for (int i = 0; i < CPS1_TILE_CACHE_SLOTS; i++) {
         cache->slots[i].valid = 0;
         cache->slots[i].last_used = 0;
@@ -60,7 +66,9 @@ const uint8_t *cps1_tile_cache_fetch(cps1_tile_cache_t *cache, const cps1_rom_t 
     }
 
     cache->misses++;
-    if (cps1_rom_decode_tile(rom, tile_index, slot->pixels) != 0) {
+    int rc = cache->layout ? cps1_rom_decode_tile_planar(rom, cache->layout, tile_index, slot->pixels)
+                           : cps1_rom_decode_tile(rom, tile_index, slot->pixels);
+    if (rc != 0) {
         slot->valid = 0;
         return NULL;
     }
