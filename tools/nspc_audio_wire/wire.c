@@ -61,6 +61,31 @@ static uint8_t g_ack[3];           /* instant-ack values for ports 1-3 */
 static uint8_t g_last_p0 = 0;      /* last port-0 command seen during LLE */
 static int g_ok_streak = 0;
 
+/* DIR-page-populated gate (EarthBound): the driver-signature detection below
+ * only proves the N-SPC *code* is uploaded and running -- it says nothing
+ * about whether the game's *sample data* has arrived. EarthBound's driver
+ * passes chOK>=6 and settles by frame 180, but its DSP sample directory (the
+ * DIR page nspc_extract() already recovers into np.dir) is confirmed
+ * all-zero at that moment: a second, independent upload burst at frames
+ * 343-345 is what actually registers samples. Swapping freezes the SPC700,
+ * so that burst never runs and the game is silent forever after.
+ * Fix: piggyback on the existing two-checks-60-frames-apart streak
+ * (g_ok_streak) instead of adding a new cadence. A check only counts toward
+ * the streak if the 256-byte DIR page is (a) not all zero and (b) identical
+ * to the snapshot taken at the previous check -- i.e. stable, not mid-burst.
+ * Any zero or changed page resets the streak, so the game re-arms and tries
+ * again 60 frames later once the upload settles.
+ * Keep in step with nspc_wire.c's identical copy -- see that file's comment
+ * for why divergence between the two is a device-only-bug generator. */
+static uint8_t g_dir_snapshot[256];
+static int g_dir_snapshot_valid = 0;
+
+static bool dir_page_all_zero(const uint8_t *ram, int dirAddr) {
+  const uint8_t *page = &ram[dirAddr & 0xffff];
+  for (int i = 0; i < 256; i++) if (page[i] != 0) return false;
+  return true;
+}
+
 /* ---- one 32 kHz sample step: exactly SpcPlayer_GenerateSamples' semantics -- */
 static inline void wire_step_sample(SpcPlayer *p) {
   if (p->timer_cycles >= 64) {
@@ -301,8 +326,18 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
   wire_mirror_ports(snes->apu, p);
 }
 
+/* DEBUG ONLY: nspc_variant.c's log_skip() reads this (declared there as
+ * `extern int g_real_frame`) for its diagnostic print. nspc_wire.c (device)
+ * defines and updates it; the host build links the same nspc_variant.c, so
+ * it needs a definition too or the link fails -- this file didn't track a
+ * frame number before, so provide one. Pre-existing baseline link break in
+ * this worktree, unrelated to the DIR-gate fix below; fixed here only so the
+ * harness builds at all. */
+int g_real_frame = 0;
+
 /* Called by the harness once per frame during LLE. Returns 1 on swap. */
 int wire_try_swap(Snes *snes, int frame) {
+  g_real_frame = frame;
   if (g_wire_on || !g_wire_enable || !snes->apu) return 0;
   if (frame < 120 || (frame % 60) != 0) return 0;
   /* driver must actually be running (upload done, PC out of the IPL ROM) */
@@ -316,6 +351,22 @@ int wire_try_swap(Snes *snes, int frame) {
    * is implemented — other variants stay LLE unless WIRE_ALL=1 (research). */
   if (strcmp(np.variant, "std") && strcmp(np.variant, "YI") && !getenv("WIRE_ALL"))
     { g_ok_streak = 0; return 0; }
+  /* Assets-uploaded gate (see g_dir_snapshot comment above): the driver
+   * being detected is not the same thing as its sample directory being
+   * populated. Require np.dir to be resolved, non-empty, and byte-identical
+   * to the snapshot taken at the PREVIOUS 60-frame check -- reusing the same
+   * streak this loop already maintains, so a stable DIR page still swaps at
+   * the normal two-check cadence and a mid-upload or not-yet-uploaded DIR
+   * page resets the streak instead of swapping into silence. */
+  if (np.dir < 0 || dir_page_all_zero(snes->apu->ram, np.dir)) {
+    g_ok_streak = 0;
+    g_dir_snapshot_valid = 0;
+    return 0;
+  }
+  if (g_dir_snapshot_valid && memcmp(g_dir_snapshot, &snes->apu->ram[np.dir & 0xffff], 256) != 0)
+    g_ok_streak = 0;   /* DIR changed since last check -- upload still in flight */
+  memcpy(g_dir_snapshot, &snes->apu->ram[np.dir & 0xffff], 256);
+  g_dir_snapshot_valid = 1;
   if (++g_ok_streak < 2) return 0;   /* stable across two checks 60 frames apart */
   wire_swap(snes, &np, snes->apu->ram);
   fprintf(stderr, "[wire] frame %d: swapped to native N-SPC (variant=%s song=%04x instr=%04x dir=%02x00 chOK=%d lastp0=%02x)\n",

@@ -102,6 +102,29 @@ static int g_p0_stable = 0;
  * list, because the settled value differs per game and per song. */
 #define NSPC_SWAP_STABLE_FRAMES 30
 
+/* DIR-page-populated gate (EarthBound): the driver-signature detection above
+ * only proves the N-SPC *code* is uploaded and running -- it says nothing
+ * about whether the game's *sample data* has arrived. EarthBound's driver
+ * passes chOK>=6 and settles by frame 180, but its DSP sample directory (the
+ * DIR page nspc_extract() already recovers into np.dir) is confirmed
+ * all-zero at that moment: a second, independent upload burst at frames
+ * 343-345 is what actually registers samples. Swapping freezes the SPC700,
+ * so that burst never runs and the game is silent forever after.
+ * Fix: piggyback on the existing two-checks-60-frames-apart streak
+ * (g_ok_streak) instead of adding a new cadence. A check only counts toward
+ * the streak if the 256-byte DIR page is (a) not all zero and (b) identical
+ * to the snapshot taken at the previous check -- i.e. stable, not mid-burst.
+ * Any zero or changed page resets the streak, so the game re-arms and tries
+ * again 60 frames later once the upload settles. */
+static uint8_t g_dir_snapshot[256];
+static int g_dir_snapshot_valid = 0;
+
+static bool dir_page_all_zero(const uint8_t *ram, int dirAddr) {
+  const uint8_t *page = &ram[dirAddr & 0xffff];
+  for (int i = 0; i < 256; i++) if (page[i] != 0) return false;
+  return true;
+}
+
 /* ===================== one 32 kHz sample step ============================ */
 /* Exactly SpcPlayer_GenerateSamples' semantics: advance the 500 Hz N-SPC
  * driver tick (Spc_Loop_Part2 + Part1) when timer_cycles wraps, then one
@@ -659,6 +682,22 @@ int wire_try_swap(Snes *snes, int frame) {
     g_ok_streak = 0;
     return 0;
   }
+  /* Assets-uploaded gate (see g_dir_snapshot comment above): the driver
+   * being detected is not the same thing as its sample directory being
+   * populated. Require np.dir to be resolved, non-empty, and byte-identical
+   * to the snapshot taken at the PREVIOUS 60-frame check -- reusing the same
+   * streak this loop already maintains, so a stable DIR page still swaps at
+   * the normal two-check cadence and a mid-upload or not-yet-uploaded DIR
+   * page resets the streak instead of swapping into silence. */
+  if (np.dir < 0 || dir_page_all_zero(snes->apu->ram, np.dir)) {
+    g_ok_streak = 0;
+    g_dir_snapshot_valid = 0;
+    return 0;
+  }
+  if (g_dir_snapshot_valid && memcmp(g_dir_snapshot, &snes->apu->ram[np.dir & 0xffff], 256) != 0)
+    g_ok_streak = 0;   /* DIR changed since last check -- upload still in flight */
+  memcpy(g_dir_snapshot, &snes->apu->ram[np.dir & 0xffff], 256);
+  g_dir_snapshot_valid = 1;
   if (++g_ok_streak < 2) return 0;   /* stable across two checks 60 frames apart */
   if (g_p0_stable < NSPC_SWAP_STABLE_FRAMES) return 0;  /* handshake in flight; defer */
   wire_swap(snes, &np, snes->apu->ram);
@@ -685,6 +724,7 @@ bool wire_configure_rom(const uint8_t *rom, uint32_t len) {
   g_load_pending_resume = 0;
   g_upload_mode = NSPC_UPLOAD_IDLE;
   g_upload_first_byte = false;
+  g_dir_snapshot_valid = 0;
   return true;  /* detection armed; actual gate is in wire_try_swap */
 }
 
