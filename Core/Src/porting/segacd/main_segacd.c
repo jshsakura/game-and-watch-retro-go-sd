@@ -231,6 +231,20 @@ static bool SegaCdCacheXipToFlash(void) {
 }
 
 /* ---- entry point (called by the launcher, like app_main_pce) ---- */
+
+/* Boot breadcrumbs flushed to SD, so a hardfault before "hw init done" still
+ * leaves the last completed stage on the card. Road Blaster FX faults with
+ * PC=0 in m68ki_read_8 (a NULL memory_map handler) somewhere in early init;
+ * printf only reaches the screen and dies with the rest, so persist it. */
+static void segacd_boot_trace(const char *what)
+{
+    FILE *f = fopen("/segacd_boot.txt", "a");
+    if (!f) return;
+    fprintf(f, "%s\n", what);
+    fflush(f);
+    fclose(f);
+}
+
 int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     if (start_paused) { common_emu_state.pause_after_frames = 2; odroid_audio_mute(true); }
@@ -281,13 +295,14 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
            (unsigned long)bios_size);
 
     /* base Mega Drive core + Sega CD hardware */
-    load_cartridge();
-    m68k_init();
-    reset_emulation();
-    power_on();
-    segacd_init();
-    segacd_map_bios(segacd_bios); /* main boots from BIOS, not a cart (0 RAM: XIP) */
-    segacd_main_map_cd_space();
+    segacd_boot_trace("A:load_cartridge");   load_cartridge();
+    segacd_boot_trace("B:m68k_init");        m68k_init();
+    segacd_boot_trace("C:reset_emulation");  reset_emulation();
+    segacd_boot_trace("D:power_on");         power_on();
+    segacd_boot_trace("E:segacd_init");      segacd_init();
+    segacd_boot_trace("F:map_bios");         segacd_map_bios(segacd_bios);
+    segacd_boot_trace("G:map_cd_space");     segacd_main_map_cd_space();
+    segacd_boot_trace("H:hw-init-done");
     printf("segacd: hw init done\n");
 
     snprintf(s_cue_path, sizeof(s_cue_path), "%s", ACTIVE_FILE->path);
@@ -295,7 +310,9 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * CD zeroed and opened=0, and the BIOS then booted against no disc at
      * all -- indistinguishable, from the outside, from an emulation bug.
      * Report it, and say so on screen rather than sitting on a dead boot. */
+    segacd_boot_trace("I:pre-cd-open");
     int cd_rc = segacd_cd_open(s_cue_path);
+    segacd_boot_trace("J:post-cd-open");
     int diag_num_tracks = 0, diag_status = 0, diag_opened = 0;
     uint32_t diag_total_lba = 0;
     segacd_cd_diag_state(&diag_num_tracks, &diag_total_lba, &diag_status, &diag_opened);
@@ -311,6 +328,7 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     segacd_bram_path();
     segacd_bram_load(s_bram_path);   /* per-game BRAM, load before resume */
+    segacd_boot_trace("K:entering-main-loop");
     printf("segacd: entering main loop\n");
 
     if (load_state) odroid_system_emu_load_state(save_slot);

@@ -51,9 +51,11 @@ static uint8_t  gd3_loop_count[8];
 
 /* log dropped opcodes once each so we know what a variant is missing */
 static uint32_t skipped_ops[8];   /* bitmask per 32-op block */
-extern int g_real_frame;  /* DEBUG ONLY: nspc_wire.c's real-frame tracker, for
-                            * correlating this skip against port-diag traces
-                            * without stdout/stderr interleaving ambiguity. */
+/* DEBUG ONLY: nspc_wire.c's real-frame tracker, for correlating a dropped
+ * opcode against port-diag traces. Weak so this TU links whether or not
+ * nspc_wire.c (the strong definition) is in the build -- some rig configs
+ * compile nspc_variant.c without it. */
+int g_real_frame __attribute__((weak));
 static void log_skip(unsigned char op) {
   if (skipped_ops[op >> 5] & (1u << (op & 31))) return;
   skipped_ops[op >> 5] |= 1u << (op & 31);
