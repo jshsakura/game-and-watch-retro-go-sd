@@ -189,7 +189,10 @@ one(
     "    if (math_enabled_cur == 0 || fixed_color == 0 && !ppu->halfColor && !rendered_subscreen) {\n"
     "      uint32_t _prof_fast_t=rig_timer_now();")
 one(
-    "#endif\n    } else {\n",
+    "      } while (dst++, ++i < right);\n"
+    "#endif\n"
+    "    } else {\n",
+    "      } while (dst++, ++i < right);\n"
     "#endif\n"
     "      g_ppu_fast_ticks += (uint32_t)(rig_timer_now()-_prof_fast_t);\n"
     "      g_ppu_fast_pixels += right - left;\n"
@@ -263,7 +266,7 @@ EOF
 CC=arm-none-eabi-gcc
 ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
 OPT="-O2 -g -ffunction-sections -fdata-sections -ffp-contract=off"
-BASE_DEF="-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DHEADLESS -DRIG_ROM_LOADER -DRIG_COST_PROF -DRIG_DEVICE_VIDEO -DRIG_INPUT_TAP -DRIG_FRAMES=$FRAMES -DRIG_WINDOW=$WINDOW"
+BASE_DEF="-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DHEADLESS -DRIG_ROM_LOADER -DRIG_COST_PROF -DRIG_DEVICE_VIDEO -DRIG_INPUT_TAP -DRIG_FRAMES=$FRAMES -DRIG_WINDOW=$WINDOW ${RIG_EXTRA_DEF:-}"
 INC="-I$SM -I$RIG/shim -Itools/sm_harness/shim"
 SRCS="$SM/src/snes/cart.c $SM/src/snes/cpu.c $SM/src/snes/dma.c \
       $SM/src/snes/dsp.c $SM/src/snes/input.c $SM/src/snes/ppu.c \
