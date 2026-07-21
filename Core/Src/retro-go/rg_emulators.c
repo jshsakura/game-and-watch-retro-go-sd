@@ -260,6 +260,15 @@ static retro_emulator_file_t *shared_files = NULL;
 #define MAX_EMULATORS 32 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance), 29->30 (SNES, SD only), 30->31 (Sega 32X, SD only), 31->32 (Sega CD, SD only). Upstream (8caa3e45) moved this to ahb_calloc at init instead of a static DTCM array -- kept our count, adopted their allocation scheme. Bump ONLY when the add_emulator call is actually added. */
 static retro_emulator_t *emulators;
 static rom_system_t *systems;
+/* Both halves of the tab budget, tied together. MAX_EMULATORS and gui.h's
+ * MAX_EMULATOR_TABS drifted apart once -- 32 emulators plus the Favorites tab
+ * is 33 gui_add_tab() calls into a 32-slot array -- and the last system
+ * silently became a blank tab. Bumping one without the other is now a build
+ * error, not a bug someone finds on the device weeks later. */
+_Static_assert(MAX_EMULATORS == MAX_EMULATOR_TABS,
+               "MAX_EMULATORS and gui.h's MAX_EMULATOR_TABS must match -- "
+               "raise both when adding a system");
+
 static int emulators_count = 0;
 
 #if CHEAT_CODES == 1
