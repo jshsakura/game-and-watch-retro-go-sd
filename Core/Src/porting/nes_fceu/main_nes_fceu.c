@@ -578,7 +578,10 @@ static void update_sound_nes(int32_t *sound, uint16_t size) {
         sound_buffer[i] = ((sample * factor) >> 8) & 0xFFFF;
     }
 }
-extern uint32_t __RAM_EMU_END__;
+/* __RAM_EMU_END__ is declared in gw_linker.h (as void*[], the array form that
+ * keeps the compiler from inserting a bogus 1-byte memory_chk). Don't add a
+ * locally-typed `extern uint32_t` duplicate here — it conflicts with that
+ * shared declaration once gw_linker.h is included. */
 
 static size_t nes_getromdata(unsigned char **data)
 {
@@ -590,7 +593,7 @@ static size_t nes_getromdata(unsigned char **data)
     unsigned char *dest = (unsigned char *)&_OVERLAY_NES_FCEU_BSS_END;
     ram_start = (uint32_t)dest;
     // We do not use ram_get_free_size as we may want to update ram_start after
-    uint32_t free_ram = ((uint32_t)&__RAM_EMU_END__) - ram_start;
+    uint32_t free_ram = ((uint32_t)__RAM_EMU_END__) - ram_start;
     if(strcmp(ACTIVE_FILE->ext, "lzma") == 0) {
         printf("Decompressing NES ROM...\n");
         uint32_t src_size = size;
