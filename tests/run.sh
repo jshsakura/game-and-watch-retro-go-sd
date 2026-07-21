@@ -68,23 +68,17 @@ if [ -f "Core/Src/porting/video/avi.c" ]; then
         echo "ffmpeg not found -- video_audio/video_play servo tests will SKIP their MP3-dependent checks"
     fi
 fi
-# rg_clock_ring.c/rg_clock.c are compiled as an SD-card build here (-DSD_CARD=1)
-# so the alarm / GIF / photo / picker logic is all present; test_clock_sd0.c
-# below builds the same source as a flash build (-DSD_CARD=0) to prove the
-# media compile-out. -no-pie + --defsym mirror test_clock_mp3.c's overlay-size
-# sentinel trick (rg_clock_ring.c's clock_stage_overlay()/clock_overlay_arena()
-# now reference the same class of linker-placed symbols).
-$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs -no-pie \
-    -Wl,--defsym=_OVERLAY_CLOCK_BSS_SIZE=64 -Wl,--defsym=_OVERLAY_CLOCK_SIZE=64 \
+# rg_clock.c is compiled as an SD-card build here (-DSD_CARD=1) so the alarm /
+# GIF / photo / picker logic is all present; test_clock_sd0.c below builds the
+# same source as a flash build (-DSD_CARD=0) to prove the media compile-out.
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs \
     tests/test_clock_alarm.c                             -o /tmp/mtest/test_clock_alarm
 $CC -O2 -Wall -std=gnu11 -Itests/clock_stubs -ICore/Src/porting/lib/gifdec \
     tests/test_clock_gif.c                               -o /tmp/mtest/test_clock_gif
-$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs -no-pie \
-    -Wl,--defsym=_OVERLAY_CLOCK_BSS_SIZE=64 -Wl,--defsym=_OVERLAY_CLOCK_SIZE=64 \
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs \
     tests/test_clock_more.c                              -o /tmp/mtest/test_clock_more
-$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/clock_stubs -no-pie \
-    -Wl,--defsym=_OVERLAY_CLOCK_BSS_SIZE=64 -Wl,--defsym=_OVERLAY_CLOCK_SIZE=64 \
-    tests/test_clock_sd0.c                                -o /tmp/mtest/test_clock_sd0
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/clock_stubs \
+    tests/test_clock_sd0.c                               -o /tmp/mtest/test_clock_sd0
 # All-state alarm PURE logic (next-alarm epoch math, wake-cause table, tone
 # presets) — rg_alarm.c compiled with -DRG_ALARM_HOST so no HAL is needed.
 $CC -O2 -Wall -Wextra -std=gnu11 -DRG_ALARM_HOST -ICore/Inc/retro-go \
@@ -415,10 +409,6 @@ rc=$(( rc || $? ))
 
 echo "=== idle power off: one setting, one rule, and every idle loop asks it ==="
 bash tests/test_idle_timeout_wired.sh
-rc=$(( rc || $? ))
-
-echo "=== clock ram_start restore: the only RAM_EMU overlay that returns in-process ==="
-bash tests/test_clock_ram_start_restored.sh
 rc=$(( rc || $? ))
 
 echo "=== boot rescue: a bricked boot must end somewhere a person can act ==="

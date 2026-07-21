@@ -1,10 +1,4 @@
-/* Clock app UI — rendering, settings menu, editors. Linked into
- * .overlay_clock (RAM_EMU), staged/re-staged by the resident driver in
- * rg_clock_ring.c, which owns the main loop, all persisted/runtime state
- * (rg_clock_state.h), config I/O, and the ring/MP3 dispatch — see that file's
- * header comment for why the split exists (an MP3 alarm sound stages the
- * Music-overlay decoder over this entire file's code+data; anything that
- * must survive that can't live here).
+/* Full-screen Clock app — see rg_clock.h.
  *
  * A mode switcher (Left/Right) over one shared layout: top bar (G&W logo,
  * "< MODE >" title, pager dots, battery), big 7-seg time with LCD ghost
@@ -17,7 +11,12 @@
  * A start/pause, B reset, PAUSE = settings (incl. Exit); POWER sleeps and
  * resumes back INTO the clock (it does not quit); while
  * the alarm rings A = snooze (5 min), anything else stops it. Alarm loudness
- * follows the SYSTEM volume. Config (24h, DND, alarms) = /clock.cfg. */
+ * follows the SYSTEM volume. Config (24h, DND, alarms) = /clock.cfg.
+ *
+ * Runs inside the launcher context (no APPID overlay), so it costs a handful
+ * of bytes of RAM and can never reduce an emulator's heap or DTCM. The paint
+ * loop only redraws when the visible frame changes, to spare the battery;
+ * host/clock_preview.c renders these exact draw calls to PNGs on a PC. */
 
 #include <odroid_system.h>
 #include <stdio.h>
@@ -27,6 +26,7 @@
 
 #include "main.h"
 #include "gw_lcd.h"
+#include "gw_audio.h"
 #include "rg_rtc.h"
 #include "rg_i18n.h"
 #include "gui.h"
@@ -34,17 +34,35 @@
 #include "odroid_overlay.h"
 #include "odroid_input.h"
 #include "odroid_audio.h"
-#include "common.h"     /* ODROID_DIALOG_HIDDEN */
-#include "rg_storage.h" /* rg_storage_scandir — GIF/alarm-sound file pickers */
-#include "rg_clock_state.h"
-#include "rg_alarm.h"   /* RG_TONE_* presets, rg_tone_preset_from_token */
+#include "common.h"   /* volume_tbl — shared 0..9 loudness curve (the alarm uses its own s_alarm_volume index, not the system volume) */
+#include "rg_storage.h" /* rg_storage_mkdir — ensure /clock exists on FatFs and LittleFS alike */
+#include "rg_clock.h"
+#include "rg_alarm.h"   /* resident next-alarm cache + shared tone presets (all-state alarm) */
 #include "rg_clock_gif.h"
 #include "rg_clock_album.h"
+#include "rg_clock_alarm_mp3.h"
+
+/* forward-declared to keep the heavy rg_emulators.h out of this TU (and the host
+ * clock preview harness); rg_clock already pulls in gui.h for the tab accessors. */
+extern void rg_emulators_reset_all_lists(void);
 
 /* rg_main.c's PAUSE-menu "Idle power off" row, reused verbatim (not copied) so
  * the clock's own settings menu can show/edit the SAME global setting instead
- * of growing a second one of its own. */
+ * of growing a second one of its own — see clock_should_idle_sleep() above. */
 extern bool GLOBAL_DATA main_menu_timeout_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat);
+
+/* User-media backgrounds/sounds (photo album, GIF background, MP3/WAV alarm) all
+ * need a writable place to RECEIVE files, which a card-less unit has no way to
+ * do — so they are compiled out entirely on SD_CARD=0 (their .c files are also
+ * dropped from the Makefile). The background picker then offers only Off/Scene
+ * (pixel scenes are procedural — kept on both builds), a saved GIF/photo anim is
+ * clamped back to Off, and the alarm is beep-only. SD_CARD is always -D'd by the
+ * firmware build; an undefined value (host logic tests) reads as the flash case. */
+#if SD_CARD == 1
+#define CLOCK_SD_MEDIA 1
+#else
+#define CLOCK_SD_MEDIA 0
+#endif
 
 #define C565(r,g,b) ((uint16_t)((((r)&0xF8)<<8)|(((g)&0xFC)<<3)|((b)>>3)))
 #define CLOCK_BLACK 0x0000
@@ -573,18 +591,57 @@ static void draw_centered_i18n(int y, const char *text, uint16_t col)
     i18n_draw_text_line(x, y, GW_LCD_WIDTH - x, text, col, CLOCK_BLACK, 1);
 }
 
-/* ---- config + alarms (/clock.cfg) -------------------------------------
- * All persisted/runtime state is DEFINED in rg_clock_ring.c (resident) and
- * declared extern via rg_clock_state.h — it must survive an MP3-alarm
- * interlude, which overwrites this whole overlay. clock_config_load/save()
- * live there too (this file only ever calls clock_config_save(), never
- * _load(), since rg_clock_show() loads once at entry before this overlay's
- * per-frame code runs). */
+/* ---- config + alarms (/clock.cfg) ------------------------------------- */
 
-/* Synth-beep preset labels: duplicated from rg_clock_ring.c's copy (both are
- * just a 4-entry string table, not worth extern plumbing for). */
+#define CLOCK_CFG_PATH    "/clock/clock.cfg"   /* cfg stays at the /clock root; media in /clock/gif, /clock/alarm, /clock/album */
+#define CLOCK_CFG_LEGACY  "/clock.cfg"          /* pre-move location, read-only fallback */
+#define MAX_ALARMS      8
+
+typedef struct { uint8_t hour, min, enabled; } alarm_t;
+
+static int      s_theme;
+static int      s_face_override = -1;   /* -1 = the theme's face, else FACE_* */
+static bool     s_hour24;
+static bool     s_dnd;
+static int      s_anim;          /* 0 = off, 1 = ambient(retired), 2 = scene, 3 = GIF, 4 = photo */
+static int      s_scene;         /* which pixel scene (0..SCENE_COUNT-1) when anim = SCENE */
+
+/* When to auto-sleep is the launcher's one global "Idle power off" setting
+ * (odroid_idle_timeout_expired) — the clock loop asks it below like every
+ * other idle-capable loop. No exception: the clock has no power setting of
+ * its own. A user who wants the screen lit forever sets the global to
+ * off, same as everywhere else in the firmware. */
+
+/* The alarm's OWN loudness, independent of the system volume (so turning the
+ * system volume down for quiet gaming can't silently mute the morning alarm).
+ * Same 0..ODROID_AUDIO_VOLUME_MAX scale/curve as the system volume; 0 means a
+ * SILENT alarm — the ring's digit-pulse overlay is still the visual alert.
+ * Persisted as cfg alarmvol=. */
+static int8_t s_alarm_volume = 6;
+
+/* True only while the alarm-editor's "Alarm sound" row is focused, so the shared
+ * dialog's background painter (clock_menu_repaint) shows the "GAME: preview"
+ * hint for that row alone. Set/cleared by the alarm-editor row callbacks. */
+
+/* Synth-beep preset (RG_TONE_*): the non-SD alarm sound, and the SD fallback
+ * when no MP3 plays. Selectable on BOTH builds; persisted inside the alarmsnd=
+ * cfg key as an ASCII token (matched case-insensitively, so these display
+ * labels double as the stored tokens — zero new i18n strings). */
+static int8_t s_beep_preset = RG_TONE_BEEP;
 static const char *const BEEP_LABELS[RG_TONE_COUNT] = { "Beep", "Beep2", "Chirp", "Siren" };
 #define BEEP_LABEL(p) BEEP_LABELS[((p) >= 0 && (p) < RG_TONE_COUNT) ? (p) : 0]
+
+static alarm_t  s_alarms[MAX_ALARMS];
+static int      s_alarm_count;
+#if CLOCK_SD_MEDIA
+/* Chosen basenames from the settings pickers (rescanned on menu open, not held
+ * resident). "" = the implicit default: bg.gif / alarm.mp3. "Beep" forces the
+ * synth beep. The gif/mp3 modules keep only a POINTER into these persistent
+ * buffers, so these are the single resident copy (the launcher's DTCM is very
+ * tight). Bounded — the picker skips any name that would not fit. */
+static char     s_bgfile[32]   = "";   /* basename in /clock/gif, "" = bg.gif */
+static char     s_alarmsnd[32] = "";   /* basename in /clock/alarm, "" = alarm.mp3, "Beep" = synth */
+#endif
 
 static int alarms_armed(void)
 {
@@ -593,40 +650,218 @@ static int alarms_armed(void)
     return n;
 }
 
+/* Background levels — THE one customisable visual. Each is labelled with its
+ * battery cost so the choice is informed: "off" keeps the fully event-driven,
+ * near-zero-draw loop; "ambient" (procedural twinkling dots) only bumps the
+ * repaint rate to ~3 fps; "GIF" (/clock/bg.gif, decoded on the fly — see
+ * rg_clock_gif) repaints the whole face at the GIF rate, hence "high". */
+#define ANIM_COUNT 5
+#define ANIM_SCENE 2   /* built-in pixel skyline (the mockup's bundled art) */
+#define ANIM_GIF   3
+#define ANIM_PHOTO 4   /* photo album from /clock/album (borrows shared_files) */
+
 #if CLOCK_SD_MEDIA
+/* set once the clock ever borrows shared_files for photos, so the exit path
+ * rebuilds the launcher's ROM lists exactly once. */
+static bool s_album_used = false;
+
 /* Photo album auto-advance: each photo holds, then a short dip-to-black swaps to
- * the next — never a hard "뿅" cut. Hold time is user-selectable (slow/normal/fast).
- * Duplicated from rg_clock_ring.c's copy (a lookup table over s_photo_speed,
- * not worth extern plumbing for). */
+ * the next — never a hard "뿅" cut. Hold time is user-selectable (slow/normal/fast). */
+static int s_photo_speed = 1;                          /* 0=slow 1=normal 2=fast */
 static const uint32_t PHOTO_HOLD_TBL[3] = { 15000, 8000, 4000 };
 #define PHOTO_HOLD_MS (PHOTO_HOLD_TBL[(s_photo_speed >= 0 && s_photo_speed < 3) ? s_photo_speed : 1])
 #define PHOTO_FADE_MS 260   /* the dip itself is snappy — a quick 샤라락, not a lingering fade */
+static uint32_t s_photo_next   = 0;   /* tick to begin the next advance (0 = off) */
+static uint32_t s_fade_start   = 0;   /* tick the dip began (0 = steady) */
+static bool     s_fade_swapped = false;
 #endif
 
-/* next_alarm() (minutes-from-now to the soonest enabled alarm) lives in
- * rg_clock_ring.c now -- pure logic over resident alarm state, tested
- * directly there (tests/test_clock_alarm.c), declared extern via
- * rg_clock_state.h for render_clock()'s "next alarm" line below. */
+static void clock_config_load(void)
+{
+    s_theme = 0; s_face_override = -1;
+    s_hour24 = false; s_dnd = false; s_anim = 0; s_scene = 0;
 
-/* ---- runners (pomodoro / timer / stopwatch) ---------------------------
- * clock_mode_t/runner_t and the runner state itself (s_timer/s_watch/s_pomo*)
- * live in rg_clock_state.h / rg_clock_ring.c — ticking (tick_countdown,
- * tick_countup, runner_toggle, update_pomodoro, update_timer) happens in the
- * resident main loop, not here, so a running timer/stopwatch/pomodoro session
- * survives an MP3-alarm interlude untouched. */
+    s_alarm_volume = 6;
+    s_beep_preset = RG_TONE_BEEP;
+    s_alarm_count = 0;
+#if CLOCK_SD_MEDIA
+    s_photo_speed = 1;
+    s_bgfile[0] = 0; s_alarmsnd[0] = 0;
+#endif
+    FILE *f = fopen(CLOCK_CFG_PATH, "r");
+    if (!f) f = fopen(CLOCK_CFG_LEGACY, "r");   /* migrate: next save writes /clock/ */
+    if (!f) return;
+    char line[64];
+    while (fgets(line, sizeof line, f)) {
+        int v, en = 1;
+        if (sscanf(line, "theme=%d", &v) == 1) { if (v >= 0 && v < THEME_COUNT) s_theme = v; }
+        else if (sscanf(line, "face=%d", &v) == 1) { if (v >= -1 && v <= FACE_LAST) s_face_override = v; }
+        else if (sscanf(line, "hour24=%d", &v) == 1) s_hour24 = v != 0;
+        else if (sscanf(line, "dnd=%d", &v) == 1) s_dnd = v != 0;
+        else if (sscanf(line, "anim=%d", &v) == 1) {
+            if (v == 1) v = 0;                       /* ambient(1) retired -> off */
+#if !CLOCK_SD_MEDIA
+            if (v == ANIM_GIF || v == ANIM_PHOTO) v = 0;   /* SD-only media -> off on flash builds */
+#endif
+            if (v >= 0 && v < ANIM_COUNT) s_anim = v;
+        }
+        else if (sscanf(line, "scene=%d", &v) == 1) { if (v >= 0) s_scene = v; }  /* draw_scene clamps */
+        else if (sscanf(line, "alarmvol=%d", &v) == 1) { if (v >= 0 && v <= ODROID_AUDIO_VOLUME_MAX) s_alarm_volume = v; }
+        /* alarmsnd= holds either a synth-preset token (both builds) or, on SD
+         * builds, an /clock sound-file basename. Set the preset from a token on
+         * either build; keep the raw string only where files are supported. */
+        else if (strncmp(line, "alarmsnd=", 9) == 0) { char *nl = strchr(line, '\n'); if (nl) *nl = 0;
+            int p = rg_tone_preset_from_token(line + 9);
+            if (p >= 0) s_beep_preset = p;
+#if CLOCK_SD_MEDIA
+            if (strlen(line + 9) < sizeof s_alarmsnd) snprintf(s_alarmsnd, sizeof s_alarmsnd, "%s", line + 9);
+#endif
+        }
+#if CLOCK_SD_MEDIA
+        else if (sscanf(line, "photospeed=%d", &v) == 1) { if (v >= 0 && v < 3) s_photo_speed = v; }
+        else if (strncmp(line, "bgfile=", 7) == 0)   { char *nl = strchr(line, '\n'); if (nl) *nl = 0;
+            if (strlen(line + 7) < sizeof s_bgfile)   snprintf(s_bgfile,   sizeof s_bgfile,   "%s", line + 7); }
+#endif
+        /* alarm=HHMM[,enabled] — the suffix is new; plain HHMM (older cfg) = enabled */
+        else if (sscanf(line, "alarm=%d,%d", &v, &en) >= 1 && s_alarm_count < MAX_ALARMS) {
+            int hr = v / 100, mn = v % 100;
+            if (v < 0 || hr > 23 || mn > 59) continue;   /* reject hand-edited junk */
+            s_alarms[s_alarm_count].hour = hr;
+            s_alarms[s_alarm_count].min  = mn;
+            s_alarms[s_alarm_count].enabled = en ? 1 : 0;
+            s_alarm_count++;
+        }
+    }
+    fclose(f);
+}
 
+static void clock_config_save(void)
+{
+    rg_storage_mkdir("/clock");   /* harmless if it already exists */
+    FILE *f = fopen(CLOCK_CFG_PATH, "w");
+    if (!f) return;
+    fprintf(f, "theme=%d\n", s_theme);
+    fprintf(f, "face=%d\n", s_face_override);
+    fprintf(f, "hour24=%d\n", s_hour24 ? 1 : 0);
+    fprintf(f, "dnd=%d\n", s_dnd ? 1 : 0);
+    fprintf(f, "anim=%d\n", s_anim);
+    fprintf(f, "scene=%d\n", s_scene);
+    fprintf(f, "alarmvol=%d\n", s_alarm_volume);
+#if CLOCK_SD_MEDIA
+    fprintf(f, "photospeed=%d\n", s_photo_speed);
+    if (s_bgfile[0])   fprintf(f, "bgfile=%s\n", s_bgfile);
+    if (s_alarmsnd[0]) fprintf(f, "alarmsnd=%s\n", s_alarmsnd);
+#else
+    /* flash build: the alarm sound is a synth preset — persist it as a token */
+    fprintf(f, "alarmsnd=%s\n", BEEP_LABEL(s_beep_preset));
+#endif
+    for (int i = 0; i < s_alarm_count; i++)   /* disabled alarms persist too */
+        fprintf(f, "alarm=%02d%02d,%d\n", s_alarms[i].hour, s_alarms[i].min,
+                s_alarms[i].enabled ? 1 : 0);
+    fclose(f);
+
+    /* keep the resident all-state next-alarm cache in step with the file */
+    rg_alarm_cache_refresh();
+}
+
+/* ---- exports for the resident all-state alarm cache (rg_alarm.c) -------
+ * These reuse clock_config_load()'s parser so there is exactly one place that
+ * understands clock.cfg. clock_config_load() only writes the file-static clock
+ * state, which rg_clock_show() reloads on entry anyway, so calling it here is
+ * side-effect-free for the launcher. */
+void rg_clock_query_alarms(rg_alarm_query_t *out)
+{
+    clock_config_load();
+    out->count = 0;
+    out->dnd = s_dnd;
+    for (int i = 0; i < s_alarm_count && out->count < RG_ALARM_MAX; i++)
+        if (s_alarms[i].enabled)
+            out->mins[out->count++] = (uint16_t)(s_alarms[i].hour * 60 + s_alarms[i].min);
+}
+
+void rg_clock_alarm_prefs(int *preset, int *volume)
+{
+    clock_config_load();
+    int p = s_beep_preset;
+#if CLOCK_SD_MEDIA
+    /* an SD file name is not a synth preset — the in-place ring is beep-only
+     * (the MP3 decoder needs the emulator's RAM), so fall back to the preset. */
+    int t = rg_tone_preset_from_token(s_alarmsnd);
+    if (t >= 0) p = t;
+#endif
+    if (preset) *preset = p;
+    if (volume) *volume = s_alarm_volume;
+}
+
+/* Minutes-from-now to the soonest enabled alarm; -1 if none. Fills *idx. */
+static int next_alarm(int now_h, int now_m, int *idx)
+{
+    int best = 100000, bi = -1, now = now_h * 60 + now_m;
+    for (int i = 0; i < s_alarm_count; i++) {
+        if (!s_alarms[i].enabled) continue;
+        int t = s_alarms[i].hour * 60 + s_alarms[i].min;
+        int d = t - now; if (d <= 0) d += 24 * 60;   /* next occurrence */
+        if (d < best) { best = d; bi = i; }
+    }
+    if (idx) *idx = bi;
+    return bi < 0 ? -1 : best;
+}
+
+/* ---- runners (pomodoro / timer / stopwatch) --------------------------- */
+
+typedef enum { MODE_CLOCK = 0, MODE_POMODORO, MODE_TIMER, MODE_STOPWATCH, MODE_COUNT } clock_mode_t;
+
+typedef enum { RUN_STOPPED = 0, RUN_RUNNING, RUN_PAUSED } run_state_t;
+typedef struct { run_state_t state; uint32_t remaining_ms, elapsed_ms, last_tick; } runner_t;
+
+static runner_t s_timer = { RUN_STOPPED, 5*60*1000, 0, 0 };
+static runner_t s_watch = { RUN_STOPPED, 0, 0, 0 };
+static int  s_pomo_work_min = 25, s_pomo_break_min = 5, s_pomo_cycles = 0;
+static bool s_pomo_on_break = false;
+static runner_t s_pomo = { RUN_STOPPED, 25*60*1000, 0, 0 };
+static uint32_t s_flash_until = 0;
+#define SNOOZE_MS (5u * 60u * 1000u)
+#define ALARM_RING_MS 60000u     /* auto-dismiss a ringing alarm after 60s if untouched (matches rg_alarm.c RING_MS) */
 #define CLOCK_UI_HIDE_MS 8000u   /* idle time before the mode pager + hint fade away */
+static uint32_t s_snooze_tick = 0;   /* HAL tick when a snoozed alarm re-rings */
+
+/* Whether the idle clock face should sleep right now — pure logic, so it is
+ * unit-testable (tests/test_clock_more.c) without driving the whole
+ * interactive loop. Mirrors rg_clock_show's guard: never while an alarm
+ * rings, never off the clock face (a running timer/pomodoro/stopwatch is
+ * being watched). No other exception — the clock has no power setting of
+ * its own. timeout_expired is the launcher's one global rule
+ * (odroid_idle_timeout_expired) — this function does not re-derive it, only
+ * gates it. */
+static bool clock_should_idle_sleep(bool ringing, clock_mode_t mode, bool timeout_expired)
+{
+    return !ringing && mode == MODE_CLOCK && timeout_expired;
+}
+
+static void tick_countdown(runner_t *r, uint32_t now)
+{
+    if (r->state != RUN_RUNNING) return;
+    uint32_t dt = now - r->last_tick; r->last_tick = now;
+    if (dt >= r->remaining_ms) { r->remaining_ms = 0; r->state = RUN_STOPPED; }
+    else r->remaining_ms -= dt;
+}
+static void tick_countup(runner_t *r, uint32_t now)
+{
+    if (r->state != RUN_RUNNING) return;
+    r->elapsed_ms += now - r->last_tick; r->last_tick = now;
+}
+static void runner_toggle(runner_t *r, uint32_t now)
+{
+    if (r->state == RUN_RUNNING) r->state = RUN_PAUSED;
+    else { r->state = RUN_RUNNING; r->last_tick = now; }
+}
 
 /* ---- rendering -------------------------------------------------------- */
 
-/* s_theme/s_face_override are validated against generous placeholder bounds
- * in the RESIDENT clock_config_load() (which no longer has this file's exact
- * THEME_COUNT/FACE_LAST), so clamp defensively here too before indexing. */
-static const clock_theme_t *TH(void)
-{ int t = s_theme; if (t < 0 || t >= THEME_COUNT) t = 0; return &THEMES[t]; }
+static const clock_theme_t *TH(void) { return &THEMES[s_theme]; }
 
 static digit_face_t cur_face(void)
-{ return (s_face_override >= 0 && s_face_override <= FACE_LAST) ? (digit_face_t)s_face_override : (digit_face_t)TH()->face; }
+{ return (s_face_override >= 0) ? (digit_face_t)s_face_override : (digit_face_t)TH()->face; }
 
 #define STATUS_Y 178   /* the one shared status-line row under the digits */
 
@@ -964,11 +1199,28 @@ static void render_mmss(uint32_t ms, uint16_t col, bool colon)
     draw_big_time(m, s, colon, false, cur_face(), col, mix565(TH()->scr, TH()->ink, 2));
 }
 
-/* Runner state advances in the resident MAIN LOOP (rg_clock_ring.c's
- * update_pomodoro/update_timer), never in the render functions: rendering is
- * gated on the frame signature, so a tick that only happens inside render
- * deadlocks — start a stopped runner and nothing changes on screen, hence no
- * repaint, hence no tick, forever. */
+/* Runner state advances in the MAIN LOOP (update_* below), never in the
+ * render functions: rendering is gated on the frame signature, so a tick that
+ * only happens inside render deadlocks — start a stopped runner and nothing
+ * changes on screen, hence no repaint, hence no tick, forever. */
+
+static void update_pomodoro(uint32_t now)
+{
+    tick_countdown(&s_pomo, now);
+    if (s_pomo.state == RUN_STOPPED && s_pomo.remaining_ms == 0) {
+        s_flash_until = now + 800; s_pomo_on_break = !s_pomo_on_break;
+        if (!s_pomo_on_break) s_pomo_cycles++;
+        s_pomo.remaining_ms = (s_pomo_on_break ? s_pomo_break_min : s_pomo_work_min) * 60u*1000u;
+        s_pomo.state = RUN_RUNNING; s_pomo.last_tick = now;
+    }
+}
+
+static void update_timer(uint32_t now)
+{
+    tick_countdown(&s_timer, now);
+    if (s_timer.state == RUN_STOPPED && s_timer.remaining_ms == 0 && s_flash_until < now)
+        s_flash_until = now + 800;
+}
 
 static void render_pomodoro(uint32_t now)
 {
@@ -1070,10 +1322,71 @@ static bool editor_idle_sleep_if_expired(uint32_t *last_input, odroid_gamepad_st
     return true;
 }
 
-/* Runner controls (input_pomodoro/input_timer/input_stopwatch) and alarm-fire
- * timing (alarm_should_fire/alarm_fired_in_window, s_last_fired_min) live in
- * the resident rg_clock_ring.c now -- both mutate state the main loop reads
- * every frame regardless of whether this overlay is even staged. */
+/* Runner controls, SAME in every mode: A = start/pause, B = reset.
+ * (Exit lives in the PAUSE menu + POWER — never on a face button.) */
+static void input_pomodoro(odroid_gamepad_state_t *k, odroid_gamepad_state_t *p, uint32_t now)
+{
+    if (pressed(k, p, ODROID_INPUT_A)) {
+        if (s_pomo.state == RUN_STOPPED) { s_pomo_on_break = false; s_pomo.remaining_ms = s_pomo_work_min*60u*1000u; }
+        runner_toggle(&s_pomo, now);
+    }
+    if (pressed(k, p, ODROID_INPUT_B)) {
+        s_pomo.state = RUN_STOPPED; s_pomo_on_break = false; s_pomo_cycles = 0;
+        s_pomo.remaining_ms = s_pomo_work_min*60u*1000u;
+    }
+    if (s_pomo.state != RUN_RUNNING) {
+        if (pressed(k, p, ODROID_INPUT_UP)   && s_pomo_work_min < 90) s_pomo.remaining_ms = (++s_pomo_work_min)*60u*1000u;
+        if (pressed(k, p, ODROID_INPUT_DOWN) && s_pomo_work_min > 1)  s_pomo.remaining_ms = (--s_pomo_work_min)*60u*1000u;
+    }
+}
+
+static void input_timer(odroid_gamepad_state_t *k, odroid_gamepad_state_t *p, uint32_t now)
+{
+    if (pressed(k, p, ODROID_INPUT_A)) runner_toggle(&s_timer, now);
+    if (pressed(k, p, ODROID_INPUT_B)) { s_timer.state = RUN_STOPPED; s_timer.remaining_ms = 5*60*1000; }
+    if (s_timer.state != RUN_RUNNING) {
+        if (pressed(k, p, ODROID_INPUT_UP)) s_timer.remaining_ms += 60*1000;
+        if (pressed(k, p, ODROID_INPUT_DOWN) && s_timer.remaining_ms >= 60*1000) s_timer.remaining_ms -= 60*1000;
+    }
+}
+
+static void input_stopwatch(odroid_gamepad_state_t *k, odroid_gamepad_state_t *p, uint32_t now)
+{
+    if (pressed(k, p, ODROID_INPUT_A)) runner_toggle(&s_watch, now);
+    if (pressed(k, p, ODROID_INPUT_B)) { s_watch.state = RUN_STOPPED; s_watch.elapsed_ms = 0; }
+}
+
+/* ---- alarm firing (while awake) --------------------------------------- */
+
+static int s_last_fired_min = -1;   /* minute-of-day we last fired, avoids re-fire */
+
+static bool alarm_should_fire(int hh, int mm)
+{
+    int mod = hh * 60 + mm;
+    if (mod != s_last_fired_min) s_last_fired_min = -1;   /* minute passed — re-arm (daily re-fire) */
+    if (s_dnd) return false;
+    if (mod == s_last_fired_min) return false;
+    for (int i = 0; i < s_alarm_count; i++)
+        if (s_alarms[i].enabled && s_alarms[i].hour == hh && s_alarms[i].min == mm) {
+            s_last_fired_min = mod; return true;
+        }
+    return false;
+}
+
+/* Did any enabled alarm's minute pass while a blocking menu held the loop?
+ * Checks (from_mod, to_mod) EXCLUSIVE — to_mod itself is still the current
+ * minute and is handled by the regular alarm_should_fire() check. */
+static bool alarm_fired_in_window(int from_mod, int to_mod)
+{
+    if (s_dnd) return false;
+    int day = 24 * 60, span = (to_mod - from_mod + day) % day;
+    for (int i = 0; i < s_alarm_count; i++) {
+        if (!s_alarms[i].enabled) continue;
+        int d = ((s_alarms[i].hour * 60 + s_alarms[i].min) - from_mod + day) % day;
+        if (d > 0 && d < span) return true;
+    }
+    return false;
+}
 
 /* ---- in-app alarm editor (opened from the PAUSE settings menu) --------- */
 
@@ -1692,6 +2005,8 @@ static bool cb_alarms_summary(odroid_dialog_choice_t *o, odroid_dialog_event_t e
     return e == ODROID_DIALOG_ENTER;
 }
 
+static void tone_feed(uint32_t now, bool ringing);   /* fwd: defined with ring_audio */
+
 static void clock_menu_repaint(void)
 {
     /* Defence line: this runs every frame a clock settings/alarm dialog is open,
@@ -1716,7 +2031,7 @@ static void clock_menu_repaint(void)
 }
 
 /* returns true when the user picked "Exit" — the caller leaves the app */
-bool clock_settings_menu(void)
+static bool clock_settings_menu(void)
 {
     /* Order: the everyday actions first (set time, format, alarms, volume,
      * brightness, idle power-off — device feedback asked for these grouped
@@ -1740,7 +2055,7 @@ bool clock_settings_menu(void)
      * main_menu_timeout_cb (rg_main.c, reused not copied), the same row the
      * launcher's own PAUSE menu shows. The clock used to have its own
      * auto-dim/night-off timers; they duplicated this rule, badly, and were
-     * removed (see rg_clock_ring.c's clock_should_idle_sleep()). This row exists only
+     * removed (see clock_should_idle_sleep() above). This row exists only
      * because reaching the launcher's settings to change the ONE value meant
      * leaving the clock — it is a second place to see/edit it, never a second
      * value. tests/test_idle_timeout_wired.sh fails if that stops being true. */
@@ -1784,129 +2099,390 @@ bool clock_settings_menu(void)
     return sel == 10;
 }
 
-/* ---- per-frame render (called from the resident main loop) -------------
+/* ---- alarm tone (synthesised, no files) -------------------------------
  *
- * ★ Never called while an MP3 alarm is playing (rg_clock_ring.c's
- * ring_audio() gates this): clock_alarm_mp3_start() stages the Music
- * decoder over this entire overlay's own code+data, so calling back in here
- * during that window would execute whatever bytes the decoder left behind.
- *
- * force_dirty covers the moments a plain signature-diff can't be trusted to
- * catch on its own (first frame after (re)staging, mode switch, back from a
- * blocking menu, wake from sleep) -- the caller (rg_clock_ring.c) sets it. */
-void clock_overlay_frame(clock_mode_t mode, bool ringing, uint32_t now, uint32_t last_input, bool force_dirty)
+ * Thin wrapper over the shared generator in rg_alarm.c so the clock ring and
+ * the all-state (in-game / music / video) ring use ONE tone implementation and
+ * the SAME synth presets. s_beep_preset selects the shape; s_alarm_volume the
+ * loudness (its OWN volume, not the system volume — so a quiet gaming volume
+ * can't mute the morning alarm; 0 = a silent, visual-only alarm). s_tone_on is
+ * kept only so ring_audio() below can tell "the ring just started". */
+static bool s_tone_on = false;
+
+static void tone_feed(uint32_t now, bool ringing)
 {
-    int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
+    s_tone_on = ringing;
+    rg_alarm_tone_feed(now, ringing, s_beep_preset, s_alarm_volume);
+}
 
-    /* Only repaint when the visible frame actually changes — saves battery.
-     * The signature captures everything on screen for the current mode. */
-    static uint32_t last_sig = 0xFFFFFFFF;
-    uint32_t sig;
-    if (mode == MODE_CLOCK) {
-        sig = (1u<<30) | (hh<<20) | (mm<<12) | ((GW_GetCurrentSubSeconds() <= 127)<<11)
-            | (s_theme<<7) | (s_hour24<<6) | (s_dnd<<5) | (ringing<<4);
-    }
-    else if (mode == MODE_STOPWATCH)
-        sig = (2u<<30) | ((s_watch.elapsed_ms / 10) << 2) | (uint32_t)s_watch.state;
-    else {
-        runner_t *r = (mode == MODE_TIMER) ? &s_timer : &s_pomo;
-        sig = ((uint32_t)mode<<28) | ((r->remaining_ms/500)<<4) | (s_pomo_on_break<<3)
-            | (uint32_t)r->state;
-    }
-    /* Full-screen flash is ONLY for the timer/pomodoro end (solid background).
-     * The clock alarm must NOT full-screen flash — that would wipe/hide a GIF
-     * or ambient background; instead render_clock pulses the time colour. */
-    bool flash = (mode == MODE_TIMER || mode == MODE_POMODORO)
-                 && s_flash_until > now && ((now/150) & 1);
-    if (flash) sig ^= 0x55555555;
-    if (ringing) sig ^= (now / 40);    /* ~25fps: smooth 8-bit ring pulse + digit flash */
-    /* the chosen background travels with EVERY mode (theme/face/bg stay
-     * one consistent set), so its repaint rate applies everywhere too.
-     * A GIF that isn't loaded (missing / too big) must NOT keep bumping
-     * the signature — else a static face repaints at 12fps for nothing,
-     * defeating the event-driven loop and draining the battery. */
+/* ---- alarm audio dispatch (MP3 file if present, else the synth beep) -----
+ *
+ * At ring start we pick ONCE: if /clock/alarm.mp3 exists it plays looped through
+ * the Music-overlay decoder (rg_clock_alarm_mp3.c); otherwise the synthesised
+ * beep above. The decoder overlay lives in RAM_EMU, which the GIF/photo
+ * background borrows as its decode arena, so an MP3 ring first SUSPENDS that
+ * background (freeing the arena) and RESTORES it when the alarm stops — the ring
+ * overlay dominates the screen anyway, so the background just goes solid for the
+ * ring. Any MP3 failure falls straight back to the beep here: the alarm is never
+ * silent. s_album_used is forced on so the launcher's ROM lists (which share the
+ * same arena) are rebuilt on exit. */
 #if CLOCK_SD_MEDIA
-    if (s_anim == ANIM_GIF)        { if (clock_gif_ready()) sig ^= (now / 80); }
-    else if (s_anim == ANIM_SCENE) sig ^= (now / 32);   /* ~31fps, and 32ms = exactly 2 polls (16ms) so frames land evenly — no beat/jitter */
-    else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
-#else
-    if (s_anim == ANIM_SCENE)      sig ^= (now / 32);   /* pixel scene ~31fps */
-    else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
+static bool s_ring_mp3 = false;   /* this ring is playing the MP3, not the beep */
+
+static void clock_bg_suspend(void)   /* free the shared_files arena for the overlay */
+{
+    if (s_anim == ANIM_GIF)   clock_gif_free();
+    if (s_anim == ANIM_PHOTO) clock_album_close();
+}
+static void clock_bg_restore(void)   /* reload the background after the ring */
+{
+    if (s_anim == ANIM_GIF)   clock_gif_load();
+    if (s_anim == ANIM_PHOTO && clock_album_open()) s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS;
+}
 #endif
 
-    /* mode pager + hint fade out after a few idle seconds (any key restores
-     * them) — fold into the signature so the hide itself triggers a repaint */
-    bool ui_show = (now - last_input) < CLOCK_UI_HIDE_MS;
-    if (ui_show) sig ^= 0x02000000u;
-
-    /* photo album auto-advance: hold PHOTO_HOLD_MS, then dip to black, swap
-     * to the next photo at the midpoint, and dip back — no hard cut. */
+static void ring_audio(uint32_t now, bool ringing)
+{
 #if CLOCK_SD_MEDIA
-    if (s_anim == ANIM_PHOTO && clock_album_ready() && clock_album_count() > 1) {
-        if (!s_fade_start && s_photo_next && now >= s_photo_next) { s_fade_start = now ? now : 1; s_fade_swapped = false; }
-        if (s_fade_start) {
-            uint32_t el = now - s_fade_start;
-            if (!s_fade_swapped && el >= PHOTO_FADE_MS/2) { clock_album_advance(); s_fade_swapped = true; }
-            if (el >= PHOTO_FADE_MS) { s_fade_start = 0; s_photo_next = now + PHOTO_HOLD_MS; }
-            sig ^= (now / 33);   /* ~30fps repaint through the dip */
+    if (!ringing) {                     /* dismissed / snoozed / stopped / leaving */
+        if (s_ring_mp3) { clock_alarm_mp3_stop(); clock_bg_restore(); s_ring_mp3 = false; }
+        tone_feed(now, false);          /* also stops the beep path if it was used */
+        return;
+    }
+    if (!s_ring_mp3 && !s_tone_on) {     /* ring just started — choose the source once */
+        /* A synth-preset token (Beep/Beep2/Chirp/Siren) forces the synth beep;
+         * anything else is a file name -> the MP3/WAV path ("" -> alarm.mp3). */
+        if (rg_tone_preset_from_token(s_alarmsnd) < 0) {
+            clock_alarm_mp3_set_file(s_alarmsnd); /* "" -> alarm.mp3 (back-compat) */
+            if (clock_alarm_mp3_available()) {
+                clock_bg_suspend();
+                /* mp3_start() stages the decoder overlay into the shared_files /
+                 * RAM_EMU arena (clobbering the launcher's ROM lists) BEFORE it can
+                 * still fail (unreadable / undecodable file). Mark the arena dirty
+                 * the moment it can be clobbered — not only on decode success — so
+                 * the exit path always rebuilds the lists. With a solid background
+                 * clock_bg_restore() is a no-op, so without this an mp3_start()
+                 * failure would leave the arena corrupt -> bad tabs / hard fault. */
+                s_album_used = true;
+                if (clock_alarm_mp3_start()) s_ring_mp3 = true;
+                else clock_bg_restore();          /* decode failed -> fall back to the beep */
+            }
         }
     }
-#endif
-
-    if (!force_dirty && sig == last_sig) return;
-    last_sig = sig;
-
-    uint16_t *fb = lcd_get_active_buffer();
-    uint16_t bg = flash ? TH()->ink : TH()->scr;
-    fb_fill_screen(fb, bg);
-    bool bg_live = false;
-    if (!flash) {   /* background layer, identical in every mode */
-#if CLOCK_SD_MEDIA
-        if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
-        else if (s_anim == ANIM_PHOTO && clock_album_ready()) {
-            memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
-            int fd = photo_fade_darkness(now);   /* dip to black across a photo swap */
-            if (fd) for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = mix565(fb[i], CLOCK_BLACK, fd);
-            bg_live = true;
-        }
-        else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
-        else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
+    if (s_ring_mp3) clock_alarm_mp3_service(volume_tbl[s_alarm_volume]);
+    else            tone_feed(now, true);
 #else
-        if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
-        else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
+    tone_feed(now, ringing);            /* flash builds: synth beep only (no SD files) */
 #endif
+}
+
+/* ---- main loop -------------------------------------------------------- */
+
+/* Create the clock's SD folders so a freshly-flashed card shows the user where
+ * to drop files — called both at boot (rg_main) and on clock entry. Harmless if
+ * they already exist. On flash builds only /clock is made (media is compiled
+ * out, so gif/alarm/album have no use there). */
+void clock_ensure_dirs(void)
+{
+    rg_storage_mkdir("/clock");
+#if CLOCK_SD_MEDIA
+    rg_storage_mkdir("/clock/gif");   /* GIF backgrounds (picked in settings) */
+    rg_storage_mkdir("/clock/alarm"); /* MP3/WAV alarm sounds (picked in settings) */
+    rg_storage_mkdir("/clock/album"); /* 320x240 .565 / .bmp photos */
+#endif
+}
+
+void rg_clock_show(void)
+{
+    clock_mode_t mode = MODE_CLOCK;
+    odroid_gamepad_state_t k, prev = {0};
+    uint32_t alarm_ring_until = 0;
+    uint32_t last_input = HAL_GetTick();   /* mode pager + hint auto-hide after idle */
+    bool dirty = true;
+
+    clock_config_load();
+    lcd_backlight_set(odroid_display_get_backlight_raw());   /* apply the system brightness right on entry */
+    clock_ensure_dirs();              /* /clock (+ gif/alarm/album on SD) exist */
+    s_snooze_tick = 0;
+#if CLOCK_SD_MEDIA
+    s_album_used = false;
+    if (s_anim == ANIM_GIF) { clock_gif_set_file(s_bgfile);
+        if (clock_gif_load()) s_album_used = true; }   /* GIF borrows shared_files -> restore lists on exit */
+    if (s_anim == ANIM_PHOTO) {                 /* borrow shared_files, load first photo */
+        /* On failure leave s_anim alone. Every draw and advance path below is
+         * already gated on clock_album_ready(), so the background simply falls
+         * back to the solid theme; zeroing s_anim instead threw the user's
+         * setting away — clock_config_save() writes it — so one empty scan or
+         * SD hiccup silently turned the photo background off for good. It also
+         * hid the settings menu's own " (no photos)" diagnostic. */
+        if (clock_album_open()) { s_album_used = true; s_photo_next = HAL_GetTick() + PHOTO_HOLD_MS; }
     }
-    s_ghost_on = !bg_live;   /* ghost only on a solid theme, not over art */
-    switch (mode) {
-    case MODE_CLOCK:     render_clock(now, ringing); break;
-    case MODE_POMODORO:  render_pomodoro(now);  break;
-    case MODE_TIMER:     render_timer(now);     break;
-    case MODE_STOPWATCH: render_stopwatch(now); break;
-    default: break;
+#endif
+    odroid_input_read_gamepad(&prev);   /* swallow the opening button */
+
+    while (true) {
+        wdog_refresh();
+        odroid_input_read_gamepad(&k);
+        uint32_t now = HAL_GetTick();
+        if (k.bitmask & ~prev.bitmask) last_input = now;   /* any new press re-shows the pager + hint */
+        int hh = GW_GetCurrentHour(), mm = GW_GetCurrentMinute();
+
+        /* Alarm first (clock time). Ring = digit pulse + beep for 60s or a
+         * NEW key press: A = SNOOZE (ring again in 5 min), anything else =
+         * stop — a key already held when it fires must not swallow it, and
+         * the press is CONSUMED so it can't fall through and reset a runner,
+         * switch mode or open the menu. */
+        if (alarm_should_fire(hh, mm)) alarm_ring_until = now + ALARM_RING_MS;
+        if (s_snooze_tick && now >= s_snooze_tick) {   /* snooze expired */
+            s_snooze_tick = 0;
+            alarm_ring_until = now + ALARM_RING_MS;
+        }
+        bool ringing = alarm_ring_until > now;
+
+        if (ringing && (k.bitmask & ~prev.bitmask)) {
+            alarm_ring_until = 0;
+            ring_audio(now, false);
+            if (pressed(&k, &prev, ODROID_INPUT_A))
+                s_snooze_tick = now + SNOOZE_MS;       /* A = snooze */
+            else
+                s_snooze_tick = 0;                     /* anything else = off */
+            prev = k; dirty = true;
+            HAL_Delay(40);
+            continue;
+        }
+        ring_audio(now, ringing);   /* MP3 file if present, else the synthesised beep */
+
+        /* POWER = SLEEP that RESUMES back into the clock — a bedside clock
+         * should not quit on sleep. odroid_system_sleep() fades the CURRENT
+         * (clock) frame out (no logo, no launcher flash), STOP-sleeps, and
+         * returns in place on wake — the same call the launcher itself makes
+         * on POWER. The GIF's open fd is invalidated by the SD unmount/remount
+         * across sleep, so drop and reload it. Exit is the PAUSE-menu "Exit"
+         * item only. */
+        /* Idle power-off. The launcher's "Idle power off" is one global setting and
+         * the clock is the only loop that never honoured it — so a bedside clock sat
+         * lit all night whatever the user had chosen. Same rule
+         * (odroid_idle_timeout_expired), same sleep the POWER button takes; the three
+         * refusals live in clock_should_idle_sleep() above. */
+        bool idle_sleep = clock_should_idle_sleep(ringing, mode,
+                              odroid_idle_timeout_expired((now - last_input) / 1000u));
+
+        if (pressed(&k, &prev, ODROID_INPUT_POWER) || idle_sleep) {
+            ring_audio(now, false);
+#if CLOCK_SD_MEDIA
+            bool had_gif = (s_anim == ANIM_GIF);
+            if (had_gif) clock_gif_free();
+#endif
+            odroid_system_sleep();          /* fade -> STOP sleep -> resume here */
+#if CLOCK_SD_MEDIA
+            if (had_gif) clock_gif_load();   /* reopen: the pre-sleep fd is stale */
+#endif
+            /* swallow the wake press so we neither re-sleep nor leak it out */
+            do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); }
+            while (k.values[ODROID_INPUT_POWER]);
+            odroid_input_read_gamepad(&prev);
+            s_last_fired_min = -1;   /* re-arm alarms after the sleep gap */
+            lcd_backlight_set(odroid_display_get_backlight_raw());   /* the sleep resume already restored full brightness — make sure it's the system's configured level */
+            last_input = HAL_GetTick();   /* restart the idle timer on wake */
+            dirty = true;
+            continue;
+        }
+
+        /* GAME (START) = quit straight back to the launcher home — the one-press
+         * exit that pairs with TIME opening the clock. (During a ring the alarm
+         * dismiss below consumes the press first.) Drain the press before leaving
+         * so the launcher doesn't read it as a fresh START and pop its About menu
+         * — from the clock, GAME just navigates home, nothing else. */
+        if (!ringing && pressed(&k, &prev, ODROID_INPUT_START)) {
+            do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&k); }
+            while (k.values[ODROID_INPUT_START]);
+            break;
+        }
+
+        if (pressed(&k, &prev, ODROID_INPUT_LEFT))  { mode = (mode == 0) ? MODE_COUNT-1 : mode-1; dirty = true; }
+        if (pressed(&k, &prev, ODROID_INPUT_RIGHT)) { mode = (mode+1) % MODE_COUNT; dirty = true; }
+
+        /* PAUSE/SET opens the settings menu in any mode — background, format,
+         * DND, alarm volume, alarms, exit. The dialog blocks this loop, so on
+         * return ring anything whose minute passed while it was open (the
+         * current minute is caught by the regular check above next pass). */
+        if (pressed(&k, &prev, ODROID_INPUT_VOLUME)) {
+            int pre_mod = hh * 60 + mm;
+            bool exit_req = clock_settings_menu();
+            if (alarm_fired_in_window(pre_mod, GW_GetCurrentHour() * 60 + GW_GetCurrentMinute()))
+                alarm_ring_until = HAL_GetTick() + ALARM_RING_MS;
+            if (exit_req) break;
+            last_input = HAL_GetTick();   /* the blocking menu counts as activity — don't dim on return */
+            dirty = true;
+        }
+
+        /* inputs + state ticks — ticking here (not in render) so a start/stop
+         * takes effect immediately even though rendering is signature-gated */
+        switch (mode) {
+        case MODE_POMODORO:  input_pomodoro(&k, &prev, now);  update_pomodoro(now); break;
+        case MODE_TIMER:     input_timer(&k, &prev, now);     update_timer(now);    break;
+        case MODE_STOPWATCH: input_stopwatch(&k, &prev, now); tick_countup(&s_watch, now); break;
+        default: break;
+        }
+
+        /* Only repaint when the visible frame actually changes — saves battery.
+         * The signature captures everything on screen for the current mode. */
+        static uint32_t last_sig = 0xFFFFFFFF;
+        uint32_t sig;
+        if (mode == MODE_CLOCK) {
+            sig = (1u<<30) | (hh<<20) | (mm<<12) | ((GW_GetCurrentSubSeconds() <= 127)<<11)
+                | (s_theme<<7) | (s_hour24<<6) | (s_dnd<<5) | (ringing<<4);
+        }
+        else if (mode == MODE_STOPWATCH)
+            sig = (2u<<30) | ((s_watch.elapsed_ms / 10) << 2) | (uint32_t)s_watch.state;
+        else {
+            runner_t *r = (mode == MODE_TIMER) ? &s_timer : &s_pomo;
+            sig = ((uint32_t)mode<<28) | ((r->remaining_ms/500)<<4) | (s_pomo_on_break<<3)
+                | (uint32_t)r->state;
+        }
+        /* Full-screen flash is ONLY for the timer/pomodoro end (solid background).
+         * The clock alarm must NOT full-screen flash — that would wipe/hide a GIF
+         * or ambient background; instead render_clock pulses the time colour. */
+        /* the end-of-countdown flash belongs to the timer/pomodoro only —
+         * scoping it here stops a rollover from full-screen-flashing (and
+         * wiping the GIF/ambient background of) the clock face if the user
+         * switches modes inside the 800ms flash window */
+        bool flash = (mode == MODE_TIMER || mode == MODE_POMODORO)
+                     && s_flash_until > now && ((now/150) & 1);
+        if (flash) sig ^= 0x55555555;
+        if (ringing) sig ^= (now / 40);    /* ~25fps: smooth 8-bit ring pulse + digit flash */
+        /* the chosen background travels with EVERY mode (theme/face/bg stay
+         * one consistent set), so its repaint rate applies everywhere too.
+         * A GIF that isn't loaded (missing / too big) must NOT keep bumping
+         * the signature — else a static face repaints at 12fps for nothing,
+         * defeating the event-driven loop and draining the battery. */
+#if CLOCK_SD_MEDIA
+        if (s_anim == ANIM_GIF)        { if (clock_gif_ready()) sig ^= (now / 80); }
+        else if (s_anim == ANIM_SCENE) sig ^= (now / 32);   /* ~31fps, and 32ms = exactly 2 polls (16ms) so frames land evenly — no beat/jitter */
+        else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
+#else
+        if (s_anim == ANIM_SCENE)      sig ^= (now / 32);   /* pixel scene ~31fps */
+        else if (s_anim > 0)           sig ^= (now / 320);  /* ambient ~3fps */
+#endif
+
+        /* mode pager + hint fade out after a few idle seconds (any key restores
+         * them) — fold into the signature so the hide itself triggers a repaint */
+        bool ui_show = (now - last_input) < CLOCK_UI_HIDE_MS;
+        if (ui_show) sig ^= 0x02000000u;
+
+        /* photo album auto-advance: hold PHOTO_HOLD_MS, then dip to black, swap
+         * to the next photo at the midpoint, and dip back — no hard cut. */
+#if CLOCK_SD_MEDIA
+        if (s_anim == ANIM_PHOTO && clock_album_ready() && clock_album_count() > 1) {
+            if (!s_fade_start && s_photo_next && now >= s_photo_next) { s_fade_start = now ? now : 1; s_fade_swapped = false; }
+            if (s_fade_start) {
+                uint32_t el = now - s_fade_start;
+                if (!s_fade_swapped && el >= PHOTO_FADE_MS/2) { clock_album_advance(); s_fade_swapped = true; }
+                if (el >= PHOTO_FADE_MS) { s_fade_start = 0; s_photo_next = now + PHOTO_HOLD_MS; }
+                sig ^= (now / 33);   /* ~30fps repaint through the dip */
+            }
+        }
+#endif
+
+        if (dirty || sig != last_sig) {
+            last_sig = sig; dirty = false;
+            uint16_t *fb = lcd_get_active_buffer();
+            uint16_t bg = flash ? TH()->ink : TH()->scr;
+            fb_fill_screen(fb, bg);
+            bool bg_live = false;
+            if (!flash) {   /* background layer, identical in every mode */
+#if CLOCK_SD_MEDIA
+                if (s_anim == ANIM_GIF && clock_gif_ready()) { clock_gif_blit(fb, now); bg_live = true; }
+                else if (s_anim == ANIM_PHOTO && clock_album_ready()) {
+                    memcpy(fb, clock_album_current(), (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
+                    int fd = photo_fade_darkness(now);   /* dip to black across a photo swap */
+                    if (fd) for (int i = 0; i < GW_LCD_WIDTH * GW_LCD_HEIGHT; i++) fb[i] = mix565(fb[i], CLOCK_BLACK, fd);
+                    bg_live = true;
+                }
+                else if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
+                else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
+#else
+                if (s_anim == ANIM_SCENE) { draw_scene(now, TH()); bg_live = true; }
+                else if (s_anim == 1) { draw_ambient(now, TH()->ink); bg_live = true; }
+#endif
+            }
+            s_ghost_on = !bg_live;   /* ghost only on a solid theme, not over art */
+            switch (mode) {
+            case MODE_CLOCK:     render_clock(now, ringing); break;
+            case MODE_POMODORO:  render_pomodoro(now);  break;
+            case MODE_TIMER:     render_timer(now);     break;
+            case MODE_STOPWATCH: render_stopwatch(now); break;
+            default: break;
+            }
+            /* a ringing alarm forces a full-strength pulse over the composed
+             * background + face, so it stays legible on GIF/photo/busy scenes */
+            if (ringing) draw_ring_overlay(fb, now, TH());
+            draw_topbar(mode, ui_show);   /* over the background layers; pager auto-hides */
+            /* the hint bar rides the same idle timer as the pager, but a ringing
+             * alarm always shows its snooze/stop legend */
+            if (ui_show || ringing)
+            draw_hintbar(ringing ? curr_lang->s_Clock_Hint_Ring
+                : mode == MODE_CLOCK     ? curr_lang->s_Clock_Hint_Clock
+                : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
+                                                                        : curr_lang->s_Clock_Hint_TimerStop)
+                : mode == MODE_TIMER     ? (s_timer.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
+                                                                         : curr_lang->s_Clock_Hint_TimerStop)
+                : curr_lang->s_Clock_Hint_Run);
+            /* the digit pulse only exists on the clock face — give the other
+             * modes a visible (and vol=0-proof) ring signal too */
+            if (ringing && mode != MODE_CLOCK && ((now / 200) & 1)) {
+                int bw = i18n_get_text_width(curr_lang->s_Clock_Ringing);
+                int bx = (GW_LCD_WIDTH - bw) / 2;
+                draw_icon(&PIX_BELL, bx - 18, 43, TH()->alarm);
+                draw_icon(&PIX_BELL, bx + bw + 7, 43, TH()->alarm);
+                draw_centered_i18n(42, curr_lang->s_Clock_Ringing, TH()->alarm);
+            }
+            lcd_swap();
+            lcd_sleep_while_swap_pending();
+        }
+
+        prev = k;
+        /* Poll fast enough for the active animation so it doesn't stutter: an
+         * animated pixel scene runs ~30fps (a 40ms idle poll capped it at 25 and
+         * beat against the 33ms frame clock — the "버버벅"). Static faces idle
+         * longer to save power. Ringing feeds audio so it polls fastest. */
+        uint32_t poll = ringing ? 8
+#if CLOCK_SD_MEDIA
+                      : (s_fade_start || s_anim == ANIM_SCENE) ? 16
+                      : (s_anim == ANIM_GIF && clock_gif_ready()) ? 24
+#else
+                      : (s_anim == ANIM_SCENE) ? 16
+#endif
+                      : 40;
+        HAL_Delay(poll);
     }
-    /* a ringing alarm forces a full-strength pulse over the composed
-     * background + face, so it stays legible on GIF/photo/busy scenes */
-    if (ringing) draw_ring_overlay(fb, now, TH());
-    draw_topbar(mode, ui_show);   /* over the background layers; pager auto-hides */
-    /* the hint bar rides the same idle timer as the pager, but a ringing
-     * alarm always shows its snooze/stop legend */
-    if (ui_show || ringing)
-    draw_hintbar(ringing ? curr_lang->s_Clock_Hint_Ring
-        : mode == MODE_CLOCK     ? curr_lang->s_Clock_Hint_Clock
-        : mode == MODE_POMODORO  ? (s_pomo.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
-                                                                : curr_lang->s_Clock_Hint_TimerStop)
-        : mode == MODE_TIMER     ? (s_timer.state == RUN_RUNNING ? curr_lang->s_Clock_Hint_Run
-                                                                 : curr_lang->s_Clock_Hint_TimerStop)
-        : curr_lang->s_Clock_Hint_Run);
-    /* the digit pulse only exists on the clock face — give the other
-     * modes a visible (and vol=0-proof) ring signal too */
-    if (ringing && mode != MODE_CLOCK && ((now / 200) & 1)) {
-        int bw = i18n_get_text_width(curr_lang->s_Clock_Ringing);
-        int bx = (GW_LCD_WIDTH - bw) / 2;
-        draw_icon(&PIX_BELL, bx - 18, 43, TH()->alarm);
-        draw_icon(&PIX_BELL, bx + bw + 7, 43, TH()->alarm);
-        draw_centered_i18n(42, curr_lang->s_Clock_Ringing, TH()->alarm);
+
+    ring_audio(0, false);   /* make sure the SAI is stopped (beep or MP3) on the way out */
+    /* The clock never touches the backlight beyond entry, but the launcher (and
+     * anything it launches next) must still come back at the system's
+     * configured brightness — cheap, and one less thing to reason about. */
+    lcd_backlight_set(odroid_display_get_backlight_raw());
+#if CLOCK_SD_MEDIA
+    clock_gif_free();      /* release the transient GIF cache */
+    /* If we borrowed shared_files for photos, its contents are now overwritten.
+     * Rebuild the launcher's ROM lists: invalidate every tab, then re-scan the
+     * current one so the list is whole on return (faster than one tab switch). */
+    if (s_album_used) {
+        clock_album_close();
+        rg_emulators_reset_all_lists();
+        tab_t *cur = gui_get_current_tab();
+        if (cur) gui_refresh_tab(cur);
+        s_album_used = false;
     }
-    lcd_swap();
-    lcd_sleep_while_swap_pending();
+#endif
+    /* The clock paints the full 320x240 screen, but the launcher's gui_redraw only
+     * repaints header + status bar + list rows — it never clears the whole frame.
+     * Clock-era pixels (notably the strip above the status bar, or garbage left in a
+     * borrowed/failed background arena) would otherwise linger under the launcher's
+     * partial redraw until a game forces a full repaint. Clear BOTH double-buffered
+     * LCD buffers once here on the way out. One-time cost, no per-frame overhead. */
+    fb_fill_screen(lcd_get_active_buffer(), CLOCK_BLACK);
+    lcd_swap(); lcd_sleep_while_swap_pending();
+    fb_fill_screen(lcd_get_active_buffer(), CLOCK_BLACK);
+    clock_config_save();
 }

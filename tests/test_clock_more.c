@@ -27,23 +27,6 @@ static const char *test_path(const char *p)
   for (char *c = b + 11; *c; c++) if (*c == '/') *c = '_';   /* flatten subdirs */
   return b; }
 #define fopen(p, m) fopen(test_path(p), m)
-/* This test spans BOTH halves of the split clock module: the resident driver
- * (rg_clock_ring.c -- state, config I/O, runner ticking, alarm timing) and the
- * overlay UI (rg_clock.c -- rendering, editors, settings menu). Including both
- * whole gives every static function direct access, exactly like the pre-split
- * single-file test did. Both files independently declare a few identically-
- * named private helpers (pressed/fb_fill_screen/PHOTO_HOLD_TBL) -- harmless in
- * the real build (separate translation units), but a duplicate-definition
- * error once concatenated here, so rename ring.c's copies before pulling it in. */
-#define pressed          pressed_ring_
-#define fb_fill_screen   fb_fill_screen_ring_
-#define PHOTO_HOLD_TBL   PHOTO_HOLD_TBL_ring_
-#define BEEP_LABELS      BEEP_LABELS_ring_
-#include "../Core/Src/retro-go/rg_clock_ring.c"
-#undef pressed
-#undef fb_fill_screen
-#undef PHOTO_HOLD_TBL
-#undef BEEP_LABELS
 #include "../Core/Src/retro-go/rg_clock.c"
 #undef fopen
 
@@ -84,19 +67,6 @@ uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_bac
  * directly with an explicit timeout_expired argument, so this stub just needs
  * to link. */
 bool odroid_idle_timeout_expired(uint32_t idle_seconds) { (void)idle_seconds; return false; }
-
-/* ---- .overlay_clock staging seams (rg_clock_ring.c's clock_stage_overlay()/
- * clock_overlay_arena() reference these; nothing here tests overlay-staging
- * correctness -- that's device-only, see CLAUDE.md). rg_clock_show() itself
- * is never called by this test, so these bodies never actually run. ------ */
-void   *__RAM_EMU_START__[512];
-void   *__RAM_EMU_END__[512];
-void   *_OVERLAY_CLOCK_BSS_START[512];
-void   *_OVERLAY_CLOCK_BSS_END[512];
-uint32_t ram_start;
-size_t odroid_overlay_cache_file_in_ram(const char *p, uint8_t *d) { (void)p; (void)d; return 0; }
-void SCB_CleanDCache_by_Addr(uint32_t *a, int32_t s) { (void)a; (void)s; }
-
 /* rg_main.c's PAUSE-menu row, reused (not copied) by the clock's own settings
  * menu (see rg_clock.c's clock_settings_menu) -- rg_main.c isn't compiled
  * here, so link a stub. The gauge test below calls cb_vol/cb_bright directly,
@@ -637,41 +607,6 @@ static void test_gauge_selection_polarity(void)
           "cb_bright selected: compensated/inverted polarity (was NEVER true pre-fix)");
 }
 
-/* ---- ram_start restore: the 0721 BusFault regression --------------------
- * The clock is the only RAM_EMU overlay that returns IN-PROCESS to the
- * launcher: clock_stage_overlay() moves ram_start past .overlay_clock's own
- * footprint, exactly like every emulator core's identical
- * `ram_start = &_OVERLAY_X_BSS_END` move (main_sm.c, main_vb.c, ~30 cores) --
- * but their return-to-launcher path is a reboot, so nothing ever comes back
- * to read the stale cursor. The clock does come back, and forgetting to
- * reset it left the launcher's OWN ram_calloc() user (rg_emulators.c's
- * shared_files ROM list) reading/writing through a cursor still pointed at
- * .overlay_clock's footprint -- a real device BusFault (get_darken_pixel_d /
- * gui_draw_item_postion_h reading garbage right after a "gui_resize list"
- * churn), not a hypothetical.
- *
- * Drives the REAL rg_clock_show() loop (not a reimplementation) with a
- * scripted START press -- not ringing, so it takes the immediate-exit branch
- * on the very first iteration -- and checks the postcondition every call
- * site implicitly relies on: the launcher's bump-allocator cursor must be
- * back at its "unowned" sentinel (0; see gui.c/rg_main.c's lazy
- * `if (ram_start == 0) ram_start = &__RAM_EMU_START__` reclaim) before
- * rg_clock_show() ever returns, structurally -- not by whichever exit path
- * happened to run remembering to do it. */
-static void test_ram_start_restored_on_exit(void)
-{
-    remove(test_path(CLOCK_CFG_PATH));
-
-    g_script_len = 0; g_script_pos = 0;
-    script_push(-1);                    /* swallow the opening button */
-    script_push(ODROID_INPUT_START);    /* new press, not ringing -> exit branch */
-    rg_clock_show();
-    CHECK(ram_start == 0,
-          "rg_clock_show() restores ram_start to the launcher's unowned sentinel on exit");
-
-    remove(test_path(CLOCK_CFG_PATH));
-}
-
 int main(void)
 {
     init_lang();
@@ -689,7 +624,6 @@ int main(void)
     test_clock_edit_time_rollover();
     test_clock_should_idle_sleep();
     test_ring_overlay();
-    test_ram_start_restored_on_exit();
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

@@ -285,6 +285,12 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(4);
     __ram_emu_nes_fceu_start__ = .;
     build/nes_fceu/*.o (.data .data* .text .text* .rodata .rodata*)
+    /* libm members only nes_fceu references (--cref verified: atan <- nsf.o,
+     * log10 <- fceu-emu2413.o). They land in resident flash otherwise, because
+     * the capture rules above only match build/<core>/*.o -- the same
+     * mis-scoping the C64 unwind tables had. */
+    *libm.a:libm_a-s_atan.o  (.text .text* .rodata .rodata*)
+    *libm.a:libm_a-w_log10.o (.text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_NES_FCEU_LOAD_END = .;
   } AT > CORES
@@ -1549,28 +1555,6 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(_OVERLAY_MUSIC_BSS_END) < __RAM_EMU_END__, "Error: MUSIC BSS overflow");
   }
   _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
-
-  .overlay_clock __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_clock_start__ = .;
-    build/clock/*.o (.data .data* .text .text* .rodata .rodata*)
-    . = ALIGN(4);
-    _OVERLAY_CLOCK_LOAD_END = .;
-  } AT > CORES
-  _OVERLAY_CLOCK_LOAD_START = LOADADDR(.overlay_clock);
-  _OVERLAY_CLOCK_SIZE = SIZEOF(.overlay_clock);
-
-  .overlay_clock_bss _OVERLAY_CLOCK_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_CLOCK_BSS_START = .;
-    build/clock/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/clock/*.o (COMMON)
-    __ram_emu_clock_end__ = .;
-    _OVERLAY_CLOCK_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_CLOCK_BSS_END) < __RAM_EMU_END__, "Error: CLOCK BSS overflow");
-  }
-  _OVERLAY_CLOCK_BSS_SIZE = SIZEOF(.overlay_clock_bss);
 
   /* PICO-8 stub overlay → RAM, placed at HIGH end of RAM_EMU.
      The GPL build only includes the install-prompt stub (main_pico8_stub.c).

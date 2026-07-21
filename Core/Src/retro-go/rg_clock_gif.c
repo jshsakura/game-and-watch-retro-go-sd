@@ -9,12 +9,14 @@
  *
  * MEMORY: a 320x240 GIF needs ~270 KB (indices + RGB565 canvas + LZW
  * table; frames compose straight into the 565 canvas, no extra buffer and
- * no per-pixel conversion at blit) — far beyond the ~80 KB launcher heap,
- * whose malloc ASSERTS on OOM instead of returning NULL (the 0131 boot
- * crash). The decode arena comes from clock_overlay_arena() (rg_clock_ring.c):
- * everything in RAM_EMU past .overlay_clock's own footprint, which is free
- * for the duration the clock app is open. A load with no room simply fails
- * (CLOCK_GIF_NO_RAM) -> background stays solid. */
+ * no per-pixel conversion at blit) — far beyond the ~80 KB
+ * launcher heap, whose malloc ASSERTS on OOM instead of returning NULL (the
+ * 0131 boot crash). So everything comes from the big emu-RAM bump pool
+ * (ram_malloc, the same pool the launcher uses for covers). That pool never
+ * frees, so clock_gif_reserve() claims the decode arena AT BOOT (before any
+ * cover is cached) — see its comment. Loads without a reservation fall back
+ * to pool-top with ram_mark()/ram_release() as before. ram_malloc returns
+ * NULL on exhaustion -> background stays solid. */
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -25,7 +27,7 @@
 #include "gifdec.h"
 #include "gw_lcd.h"
 #include "gw_malloc.h"
-#include "rg_clock_state.h"   /* clock_overlay_arena — decode arena past .overlay_clock's own footprint */
+#include "rg_emulators.h"   /* borrow shared_files as the decode arena */
 #include <string.h>
 #include <stdio.h>
 #include "rg_clock_gif.h"
@@ -94,9 +96,13 @@ static void *arena_calloc(size_t c, size_t n)
  * rolled back at clock_gif_free() via ram_release(). */
 static void gif_arena_free(void *p) { (void)p; }
 
-/* clock_gif_reserve() (the boot-time no-op call site in rg_main.c) now lives in
- * rg_clock_ring.c: it must be resident-callable even before/without the clock
- * app ever staging this overlay. */
+void clock_gif_reserve(void)
+{
+    /* No longer reserves from the emu-RAM pool (that permanently stole ~270KB
+     * from the emulators). The decode arena is borrowed from shared_files at
+     * load time — see clock_gif_load(). Kept as a no-op so the boot call site
+     * is undisturbed. */
+}
 
 bool clock_gif_ready(void) { return s_gif != NULL; }
 
@@ -131,13 +137,15 @@ bool clock_gif_load(void)
         snprintf(s_diag, sizeof s_diag, "bad dims %dx%d (max 480x320)", gw, gh); return false; }
     /* gifdec needs frame+565 canvas (3*w*h) + LZW table (~40KB) + slack */
     size_t need = (size_t)gw * gh * 3 + 48 * 1024;
-    /* Decode arena: everything in RAM_EMU past .overlay_clock's own bss end —
-     * see clock_overlay_arena() (rg_clock_ring.c) for why this replaced the old
-     * "borrow the launcher's shared_files buffer" trick: that pointer was
-     * computed BEFORE the clock itself became an overlay, so it aliased this
-     * very code once .overlay_clock started loading at __RAM_EMU_START__ too. */
-    size_t arena_bytes = 0;
-    uint8_t *arena = clock_overlay_arena(&arena_bytes);
+    /* Borrow the launcher's shared_files buffer (~527KB) as the decode arena —
+     * the same in-place trick the photo album uses. The emu-RAM pool is far too
+     * small once the launcher's covers fill it (~41KB left), which is why a
+     * full-screen GIF used to fail "no RAM". GIF and the photo album are
+     * mutually exclusive background modes, so this buffer is free while a GIF is
+     * shown; the clock's exit path re-scans the ROM lists to restore it. */
+    int maxcount = 0;
+    uint8_t *arena = (uint8_t *)rg_emulators_shared_file_buffer(&maxcount);
+    size_t arena_bytes = rg_emulators_shared_file_bytes();
     if (!arena || arena_bytes < need) {
         s_status = CLOCK_GIF_NO_RAM;
         snprintf(s_diag, sizeof s_diag, "no RAM: need %dK have %dK",
