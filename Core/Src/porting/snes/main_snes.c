@@ -100,6 +100,51 @@ void Warning(const char *s) { (void)s; }
 
 extern bool g_ppu_skip_render;   /* ppu.c: skip compositing on dropped frames */
 
+/*
+ * Stable render cadence.
+ *
+ * The SNES core does not skip work to go faster — the 65816, the APU and DMA
+ * run every frame regardless (run_frame_events / snes_pcm_submit below). A
+ * skipped frame drops exactly two things: the PPU line compositor
+ * (g_ppu_skip_render) and the present + LCD swap. Game state, timing, input
+ * latency and audio are untouched by it, which the rig confirms — the deep
+ * profile gates on baseline/off/deep agreeing on AUDIOHASH, and they do.
+ *
+ * What this adds is a CADENCE. The shared auto skip is a pacing integrator,
+ * and under sustained overload it pins at its debt cap: skip_frames stays 2
+ * and the only thing keeping the screen alive is the guard that forces one
+ * drawn frame in four. That is 15-18 fps of visible motion, and because it is
+ * driven by a debt signal it wanders. Drawing one frame in two instead is a
+ * steady 30, and the auto skip is still free to drop further underneath when
+ * a scene is heavier than the cadence. So the trade is not picture for speed;
+ * it is an unpredictable collapse for a predictable floor.
+ *
+ * SNES-only by construction: it lives here, in the SNES porting layer, and
+ * common.c is not touched. Every other system keeps exactly the behaviour it
+ * ships with.
+ */
+static uint8_t g_render_cadence = 1;    /* 0 = auto only; n = draw 1 frame in (n+1) */
+static uint32_t s_cadence_frame;
+#define SNES_CADENCE_MAX 3
+
+static bool render_cadence_cb(odroid_dialog_choice_t *option,
+                              odroid_dialog_event_t event, uint32_t repeat)
+{
+    (void)repeat;
+    if (event == ODROID_DIALOG_PREV)
+        g_render_cadence = g_render_cadence > 0 ? g_render_cadence - 1 : SNES_CADENCE_MAX;
+    if (event == ODROID_DIALOG_NEXT)
+        g_render_cadence = g_render_cadence < SNES_CADENCE_MAX ? g_render_cadence + 1 : 0;
+
+    /* Name the picture rate, not the ratio: "1:1" means nothing in a pause
+     * menu, "30 fps" is the thing actually being chosen. */
+    if (g_render_cadence == 0)
+        strcpy(option->value, "Auto");
+    else
+        sprintf(option->value, "%u fps", 60u / (g_render_cadence + 1u));
+    return event == ODROID_DIALOG_ENTER;
+}
+
 /* ---- state ---------------------------------------------------------------- */
 static Snes *snes;
 /* 128 KB WRAM lives in the overlay BSS (like the SM port's g_ram): the AHB
@@ -753,7 +798,14 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   if (odroid_settings_cpu_oc_level_get() < 1) SystemClock_Config(1);
 
   odroid_gamepad_state_t joystick;
+  char render_cadence_value[16];
+  if (g_render_cadence == 0)
+    strcpy(render_cadence_value, "Auto");
+  else
+    sprintf(render_cadence_value, "%u fps", 60u / (g_render_cadence + 1u));
+
   odroid_dialog_choice_t options[] = {
+      {310, "Render rate", render_cadence_value, 1, &render_cadence_cb},
       ODROID_DIALOG_CHOICE_LAST
   };
 
@@ -993,6 +1045,12 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
       ppu_lineCacheInvalidate();
 #endif
     bool drawFrame = common_emu_frame_loop();
+    /* Cadence floor. Only ever turns a draw INTO a skip, never the reverse, so
+     * a scene the auto skip is already dropping harder stays dropped. */
+    if (g_render_cadence != 0 &&
+        (s_cadence_frame % (uint32_t)(g_render_cadence + 1u)) != 0u)
+      drawFrame = false;
+    s_cadence_frame++;
 
     odroid_input_read_gamepad(&joystick);
     common_emu_input_loop(&joystick, options, &blit);
