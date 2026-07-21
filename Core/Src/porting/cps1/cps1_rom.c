@@ -256,3 +256,22 @@ int cps1_rom_decode_subtile(const cps1_rom_t *rom, unsigned sub, uint32_t code,
     }
     return 0;
 }
+
+uint8_t cps1_gfx_chip_byte(const cps1_gfx_chips_t *g, uint32_t off)
+{
+    if (!g || g->chip_count == 0 || g->chip_size == 0)
+        return 0;
+
+    /* Two 4-chip halves: 0x000000.. and 0x200000.. (see the header). A set
+     * with only 4 chips has no upper half and simply range-fails there. */
+    const uint32_t half_bytes = g->chip_size * 4u;
+    uint32_t half = off / half_bytes;
+    uint32_t o = off - half * half_bytes;
+
+    unsigned chip = (unsigned)(half * 4u + (o % 8u) / 2u);
+    uint32_t index = (o / 8u) * 2u + (o % 2u);
+
+    if (chip >= g->chip_count || index >= g->chip_size || !g->chip[chip])
+        return 0;
+    return g->chip[chip][index];
+}
