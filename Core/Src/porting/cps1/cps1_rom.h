@@ -20,18 +20,47 @@ typedef struct {
     uint32_t size;
 } cps1_rom_region_t;
 
+/* Forward declaration; the full struct is below, next to the interleave it
+ * describes. */
+typedef struct cps1_gfx_chips cps1_gfx_chips_t;
+
 typedef struct {
     cps1_rom_region_t prg; /* 68000 program ROM */
     cps1_rom_region_t gfx; /* CHR/tile graphics ROM(s), pre-swizzle */
     cps1_rom_region_t z80; /* Z80 sound program ROM */
     cps1_rom_region_t oki; /* OKI6295 ADPCM sample ROM */
+    /*
+     * Set this and `gfx` is ignored: graphics are read from the un-assembled
+     * MAME chips through cps1_gfx_chip_byte() instead of from one flat blob.
+     * That is what the device does -- an assembled CPS-1 GFX region is 4 MB
+     * and RAM_EMU is 724 KB, so the chips stay where they were cached in
+     * external flash and the interleave is done in the address calculation.
+     * NULL keeps the flat path, which is what every host selftest and the
+     * frame harness use.
+     */
+    const cps1_gfx_chips_t *chips;
 } cps1_rom_t;
+
+/* One graphics byte, from whichever of the two representations this ROM has.
+ * Every decoder goes through this rather than touching rom->gfx.data, so the
+ * flat and chip-gathered paths cannot drift apart. */
+uint8_t cps1_rom_gfx_byte(const cps1_rom_t *rom, uint32_t off);
+
+/* Total addressable graphics bytes -- the bound every decoder range-checks
+ * against before it starts. */
+uint32_t cps1_rom_gfx_size(const cps1_rom_t *rom);
 
 /* Validates and stores the regions the caller already mapped. prg and gfx
  * are required (z80/oki may be {0,0} while sound is unimplemented).
  * Returns 0 on success, -1 if a required region is missing/empty. */
 int cps1_rom_attach(cps1_rom_t *rom, cps1_rom_region_t prg, cps1_rom_region_t gfx,
                      cps1_rom_region_t z80, cps1_rom_region_t oki);
+
+/* The device's attach: graphics stay as un-assembled chips (see cps1_rom_t's
+ * `chips`). `chips` must outlive `rom`. Returns 0, or -1 if prg is empty or
+ * the chip set is not fully populated. */
+int cps1_rom_attach_chips(cps1_rom_t *rom, cps1_rom_region_t prg,
+                           const cps1_gfx_chips_t *chips);
 
 /*
  * Packed 4bpp OUTPUT size for an 8x8 tile: 2 pixels/byte * 64 pixels = 32
@@ -82,11 +111,11 @@ int cps1_rom_decode_tile(const cps1_rom_t *rom, uint32_t tile_index, uint8_t *ou
  */
 #define CPS1_GFX_MAX_CHIPS 8
 
-typedef struct {
+struct cps1_gfx_chips {
     const uint8_t *chip[CPS1_GFX_MAX_CHIPS];
     uint32_t chip_size;      /* every CPS-1 GFX chip in a set is the same size */
     unsigned chip_count;
-} cps1_gfx_chips_t;
+};
 
 /* Byte at interleaved offset `off`, gathered from whichever chip holds it.
  * Returns 0 if the offset falls outside the set. */

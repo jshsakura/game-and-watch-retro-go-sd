@@ -44,6 +44,9 @@ PHASE12SELFTEST = cps1-ltdc-bottom-selftest
 # real CPS-1 memory map (LEA/MOVE.L/JSR+RTS/CMPI/reset vector -- every one
 # of which the nine-opcode cps1_cpu68k.c skeleton could not execute).
 M68KSELFTEST   = cps1-m68k-selftest
+# Proves the DEVICE graphics path (un-assembled chips read in place, slots
+# assigned by CRC32) against the independently-built assembled image.
+GFXCHIPSSELFTEST = cps1-gfx-chips-selftest
 BUILD_DIR     = build
 
 OPT ?= -O2 -g
@@ -117,6 +120,12 @@ cps1/m68k_real_selftest.c \
 $(CPS1DIR)/cps1_m68k.c \
 $(M68KDIR)/m68kcpu.c
 
+GFXCHIPSSELFTEST_SOURCES = \
+cps1/gfx_chips_selftest.c \
+$(CPS1DIR)/cps1_rom.c \
+$(CPS1DIR)/cps1_romset.c \
+crc32.c
+
 PREFIX =
 CC = $(PREFIX)gcc
 SZ = $(PREFIX)size
@@ -140,7 +149,7 @@ all: $(BUILD_DIR)/$(TARGET) $(BUILD_DIR)/$(SELFTEST) $(BUILD_DIR)/$(BUSSELFTEST)
      $(BUILD_DIR)/$(SNDSELFTEST) $(BUILD_DIR)/$(SNDBUSSELFTEST) \
      $(BUILD_DIR)/$(PHASE9SELFTEST) $(BUILD_DIR)/$(PHASE10SELFTEST) \
      $(BUILD_DIR)/$(ROMLOADSELFTEST) $(BUILD_DIR)/$(PHASE12SELFTEST) \
-     $(BUILD_DIR)/$(M68KSELFTEST)
+     $(BUILD_DIR)/$(M68KSELFTEST) $(BUILD_DIR)/$(GFXCHIPSSELFTEST)
 
 OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/selftest_,$(notdir $(SELFTEST_SOURCES:.c=.o)))
@@ -154,12 +163,13 @@ PHASE10SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase10selftest_,$(notdir $(P
 ROMLOADSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/romloadselftest_,$(notdir $(ROMLOADSELFTEST_SOURCES:.c=.o)))
 PHASE12SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase12selftest_,$(notdir $(PHASE12SELFTEST_SOURCES:.c=.o)))
 M68KSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/m68kselftest_,$(notdir $(M68KSELFTEST_SOURCES:.c=.o)))
+GFXCHIPSSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/gfxchipsselftest_,$(notdir $(GFXCHIPSSELFTEST_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)) $(dir $(SELFTEST_SOURCES)) $(dir $(BUSSELFTEST_SOURCES)) \
                  $(dir $(BGSELFTEST_SOURCES)) $(dir $(BGBUSSELFTEST_SOURCES)) \
                  $(dir $(SNDSELFTEST_SOURCES)) $(dir $(SNDBUSSELFTEST_SOURCES)) \
                  $(dir $(PHASE9SELFTEST_SOURCES)) $(dir $(PHASE10SELFTEST_SOURCES)) \
                  $(dir $(ROMLOADSELFTEST_SOURCES)) $(dir $(PHASE12SELFTEST_SOURCES)) \
-                 $(dir $(M68KSELFTEST_SOURCES)))
+                 $(dir $(M68KSELFTEST_SOURCES)) $(dir $(GFXCHIPSSELFTEST_SOURCES)))
 
 $(BUILD_DIR)/%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
@@ -195,6 +205,9 @@ $(BUILD_DIR)/m68kselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/phase12selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/gfxchipsselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/$(TARGET): $(OBJECTS) Makefile.cps1
@@ -242,6 +255,10 @@ $(BUILD_DIR)/$(PHASE12SELFTEST): $(PHASE12SELFTEST_OBJECTS) Makefile.cps1
 
 $(BUILD_DIR)/$(M68KSELFTEST): $(M68KSELFTEST_OBJECTS) Makefile.cps1
 	$(CC) $(M68KSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(GFXCHIPSSELFTEST): $(GFXCHIPSSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(GFXCHIPSSELFTEST_OBJECTS) $(LDFLAGS) -o $@
 	$(SZ) $@
 
 $(BUILD_DIR):

@@ -830,6 +830,7 @@ INCLUDE build/fceumm_mappers.ld
     build/cps1/cps1_m68k.o   (.data .data* .text .text* .rodata .rodata*)
     build/cps1/cps1_eeprom.o (.data .data* .text .text* .rodata .rodata*)
     build/cps1/cps1_rom.o    (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_romset.o (.data .data* .text .text* .rodata .rodata*)
     build/cps1/cps1_ppu.o    (.data .data* .text .text* .rodata .rodata*)
     build/cps1/cps1_bg.o     (.data .data* .text .text* .rodata .rodata*)
     /* .data from every cps1 object, including Musashi's, stays RAM-resident. */

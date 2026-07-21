@@ -188,6 +188,26 @@ void cps1_m68k_init(const uint8_t *prg, uint32_t prg_size, uint8_t *wram,
         cps1_map_page_io(CPS1_WRAM_PAGE);
 }
 
+void cps1_m68k_map_prg_chip(uint32_t dest_offset, const uint8_t *data, uint32_t size)
+{
+    if (data == NULL || size == 0)
+        return;
+    /* Whole pages only, and wholly inside the program-ROM window. A partial
+     * mapping would leave the tail of a chip readable as open bus in the
+     * middle of code, which reads as a plausible instruction stream and hides
+     * the mistake -- refuse instead. */
+    if ((dest_offset % CPS1_M68K_PAGE_SIZE) != 0 || (size % CPS1_M68K_PAGE_SIZE) != 0)
+        return;
+    uint32_t first = dest_offset / CPS1_M68K_PAGE_SIZE;
+    uint32_t pages = size / CPS1_M68K_PAGE_SIZE;
+    if (first < CPS1_PRG_PAGE_FIRST || first + pages > CPS1_PRG_PAGE_LIMIT)
+        return;
+
+    for (uint32_t i = 0; i < pages; i++)
+        cps1_map_page_base((unsigned)(first + i),
+                            (uint8_t *)(uintptr_t)(data + (size_t)i * CPS1_M68K_PAGE_SIZE));
+}
+
 void cps1_m68k_reset(void)
 {
     m68k_pulse_reset();

@@ -1469,6 +1469,14 @@ INCLUDE build/fceumm_mappers.ld
     build/cps1/m68kcpu.o (.text .text*)
   } > CPS1_CODE
 
+  /* EVERY cps1 porting object must be listed here BY NAME. The list is
+   * explicit rather than a wildcard so that m68kcpu.o keeps the XIP placement
+   * .xip_cps1 gave it above -- but that means a new source file added to
+   * CPS1_C_SOURCES and NOT added here does not fail to link: its text and
+   * rodata quietly land in resident internal flash, where there are a few
+   * hundred bytes to spare for the whole firmware. cps1_romset.o did exactly
+   * that. The 512 B headroom floor is what catches it, and the error it
+   * produces says nothing about this list -- so check here first. */
   .overlay_cps1 __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_cps1_start__ = .;
@@ -1476,6 +1484,7 @@ INCLUDE build/fceumm_mappers.ld
     build/cps1/cps1_m68k.o   (.data .data* .text .text* .rodata .rodata*)
     build/cps1/cps1_eeprom.o (.data .data* .text .text* .rodata .rodata*)
     build/cps1/cps1_rom.o    (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_romset.o (.data .data* .text .text* .rodata .rodata*)
     build/cps1/cps1_ppu.o    (.data .data* .text .text* .rodata .rodata*)
     build/cps1/cps1_bg.o     (.data .data* .text .text* .rodata .rodata*)
     /* .data from every cps1 object, including Musashi's, stays RAM-resident. */

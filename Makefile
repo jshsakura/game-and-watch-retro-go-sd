@@ -1049,6 +1049,7 @@ Core/Src/porting/cps1/main_cps1.c \
 Core/Src/porting/cps1/cps1_m68k.c \
 Core/Src/porting/cps1/cps1_eeprom.c \
 Core/Src/porting/cps1/cps1_rom.c \
+Core/Src/porting/cps1/cps1_romset.c \
 Core/Src/porting/cps1/cps1_ppu.c \
 Core/Src/porting/cps1/cps1_bg.c \
 external/gwenesis/src/cpus/M68K/m68kcpu.c

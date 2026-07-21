@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "cps1_rom.h"
 
 int cps1_rom_attach(cps1_rom_t *rom, cps1_rom_region_t prg, cps1_rom_region_t gfx,
@@ -10,17 +12,53 @@ int cps1_rom_attach(cps1_rom_t *rom, cps1_rom_region_t prg, cps1_rom_region_t gf
     rom->gfx = gfx;
     rom->z80 = z80;
     rom->oki = oki;
+    rom->chips = NULL;
     return 0;
+}
+
+int cps1_rom_attach_chips(cps1_rom_t *rom, cps1_rom_region_t prg,
+                           const cps1_gfx_chips_t *chips)
+{
+    if (!rom || !prg.data || !prg.size || !chips)
+        return -1;
+    if (chips->chip_count == 0 || chips->chip_count > CPS1_GFX_MAX_CHIPS ||
+        chips->chip_size == 0)
+        return -1;
+    for (unsigned i = 0; i < chips->chip_count; i++)
+        if (chips->chip[i] == NULL)
+            return -1;
+
+    rom->prg = prg;
+    rom->gfx.data = NULL;
+    rom->gfx.size = 0;
+    rom->z80.data = NULL; rom->z80.size = 0;
+    rom->oki.data = NULL; rom->oki.size = 0;
+    rom->chips = chips;
+    return 0;
+}
+
+uint32_t cps1_rom_gfx_size(const cps1_rom_t *rom)
+{
+    if (rom->chips != NULL)
+        return rom->chips->chip_size * rom->chips->chip_count;
+    return rom->gfx.size;
+}
+
+uint8_t cps1_rom_gfx_byte(const cps1_rom_t *rom, uint32_t off)
+{
+    if (rom->chips != NULL)
+        return cps1_gfx_chip_byte(rom->chips, off);
+    return (off < rom->gfx.size) ? rom->gfx.data[off] : 0;
 }
 
 int cps1_rom_decode_tile(const cps1_rom_t *rom, uint32_t tile_index, uint8_t *out)
 {
     uint32_t offset = tile_index * CPS1_TILE_SIZE_BYTES;
-    if (offset + CPS1_TILE_SIZE_BYTES > rom->gfx.size)
+    if (offset + CPS1_TILE_SIZE_BYTES > cps1_rom_gfx_size(rom))
         return -1;
 
     for (uint32_t i = 0; i < CPS1_TILE_SIZE_BYTES; i++)
-        out[i] = rom->gfx.data[offset + i];
+        out[i] = cps1_rom_gfx_byte(rom, offset + i);
     return 0;
 }
 
@@ -173,7 +211,7 @@ int cps1_rom_decode_tile_planar(const cps1_rom_t *rom, const cps1_gfx_layout_t *
     uint32_t base_bit = tile_index * layout->bits_per_tile;
     uint32_t base_byte = base_bit / 8;
     uint32_t tile_bytes = (layout->bits_per_tile + 7) / 8;
-    if (base_byte + tile_bytes > rom->gfx.size)
+    if (base_byte + tile_bytes > cps1_rom_gfx_size(rom))
         return -1;
 
     unsigned row_bytes = layout->width / 2;
@@ -189,7 +227,7 @@ int cps1_rom_decode_tile_planar(const cps1_rom_t *rom, const cps1_gfx_layout_t *
                                   layout->xoffset[col];
                 uint32_t byte_idx = bitno / 8;
                 unsigned bit_in_byte = bitno % 8;
-                uint8_t bit = (uint8_t)((rom->gfx.data[byte_idx] >> (7 - bit_in_byte)) & 1u);
+                uint8_t bit = (uint8_t)((cps1_rom_gfx_byte(rom, byte_idx) >> (7 - bit_in_byte)) & 1u);
                 if (bit)
                     pixel = (uint8_t)(pixel | (1u << (layout->planes - 1 - p)));
             }
@@ -229,7 +267,7 @@ int cps1_rom_decode_tile_planar(const cps1_rom_t *rom, const cps1_gfx_layout_t *
 int cps1_rom_decode_subtile(const cps1_rom_t *rom, unsigned sub, uint32_t code,
                              unsigned qx, unsigned qy, uint8_t *out)
 {
-    if (!rom || !rom->gfx.data || !out || sub == 0 || sub > 4)
+    if (!rom || (!rom->gfx.data && !rom->chips) || !out || sub == 0 || sub > 4)
         return -1;
     if (qx >= sub || qy >= sub)
         return -1;
@@ -238,12 +276,19 @@ int cps1_rom_decode_subtile(const cps1_rom_t *rom, unsigned sub, uint32_t code,
     const uint32_t tile_bytes = sub * sub * 32u;
     const uint32_t base = code * tile_bytes + qy * (8u * row_stride) + qx * 4u;
 
-    if (base + 7u * row_stride + 4u > rom->gfx.size)
+    if (base + 7u * row_stride + 4u > cps1_rom_gfx_size(rom))
         return -1;
 
     for (unsigned y = 0; y < 8; y++) {
-        const uint8_t *p = rom->gfx.data + base + y * row_stride;
-        /* p[0]=plane0(LSB) p[1]=plane1 p[2]=plane2 p[3]=plane3(MSB) */
+        const uint32_t row = base + y * row_stride;
+        /* p[0]=plane0(LSB) p[1]=plane1 p[2]=plane2 p[3]=plane3(MSB). Lifted
+         * out of the pixel loop: with chip-gathered graphics each byte costs
+         * an interleave calculation, and the inner loop would otherwise pay
+         * it eight times over for the same four bytes. */
+        const uint8_t p[4] = {
+            cps1_rom_gfx_byte(rom, row + 0u), cps1_rom_gfx_byte(rom, row + 1u),
+            cps1_rom_gfx_byte(rom, row + 2u), cps1_rom_gfx_byte(rom, row + 3u),
+        };
         for (unsigned x = 0; x < 8; x += 2) {
             unsigned pix_hi = 0, pix_lo = 0;
             unsigned sh_hi = 7u - x, sh_lo = 7u - (x + 1u);

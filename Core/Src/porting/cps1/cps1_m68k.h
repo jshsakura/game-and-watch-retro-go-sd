@@ -83,6 +83,30 @@ typedef struct {
 void cps1_m68k_init(const uint8_t *prg, uint32_t prg_size, uint8_t *wram,
                      const cps1_m68k_io_t *io);
 
+/*
+ * Maps one program-ROM CHIP at `dest_offset` in the 68000 address space,
+ * after a cps1_m68k_init() that passed prg = NULL.
+ *
+ * A CPS-1 romset's program ROM is two separate 512 KB chips, and on the
+ * device each is cached into external flash as its own file -- so the two
+ * halves are at unrelated addresses and there is no 1 MB contiguous buffer to
+ * point a single base pointer at. There does not need to be: Musashi's map is
+ * one base pointer PER 64 KB PAGE, so each chip is simply mapped over its own
+ * eight pages. Both `dest_offset` and `size` must be whole 64 KB pages, and
+ * the whole span must fall inside the 0x000000-0x3FFFFF the map reserves for
+ * program ROM; anything else is ignored rather than half-applied.
+ *
+ * `data` must be byte-swapped exactly as cps1_m68k_init()'s `prg` must be --
+ * which for a real MAME CPS-1 chip dump means stored VERBATIM. MAME applies
+ * ROM_REVERSE when it builds its big-endian region; a little-endian
+ * `*(uint16*)` read of the raw chip bytes undoes precisely that, so the two
+ * cancel and the file is written to flash unmodified. Confirmed on the real
+ * dump: tk2j23c.bin starts ff 00 ee 62 00 00 a2 71, which reads back as
+ * SSP=0x00FF62EE / PC=0x000071A2 -- a stack pointer inside work RAM and an
+ * even PC, i.e. the pair cps1_rom_check_reset_vector() accepts.
+ */
+void cps1_m68k_map_prg_chip(uint32_t dest_offset, const uint8_t *data, uint32_t size);
+
 /* Real 68000 reset: loads SSP from 0x000000 and PC from 0x000004 through
  * the map built above -- i.e. it actually honours the ROM's reset vector,
  * which the nine-opcode skeleton had no concept of. */

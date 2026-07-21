@@ -52,8 +52,15 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+#include "ff.h"
+#include "rom_manager.h"
+#include "odroid_overlay.h"
+#include "gw_flash_alloc.h"
+#include "error_screens.h"
+
 #include "cps1_m68k.h"
 #include "cps1_rom.h"
+#include "cps1_romset.h"
 #include "cps1_ppu.h"
 #include "cps1_bg.h"
 #include "cps1_eeprom.h"
@@ -76,9 +83,9 @@ static uint8_t  s_qram[CPS1_QRAM_BYTES];
 static uint16_t s_regs[0xC0];              /* 0x800000-0x80017F, word indexed */
 
 static cps1_rom_t        s_rom;
-/* Filled by the folder ROM loader (TODO in app_main_cps1); read in place by
- * cps1_gfx_chip_byte() so the 8 GFX chips cost no RAM. */
-static cps1_gfx_chips_t  s_gfx_chips __attribute__((unused));
+/* Filled by cps1_load_folder_roms(); read in place by cps1_gfx_chip_byte() so
+ * the 8 GFX chips cost no RAM. */
+static cps1_gfx_chips_t  s_gfx_chips;
 static cps1_eeprom_t     s_eeprom;
 static cps1_tile_cache_t s_cache;
 static cps1_palette_t    s_pal;
@@ -270,6 +277,247 @@ static bool cps1_cache_xip_to_flash(void)
     return true;
 }
 
+/* -------------------------------------------------- folder ROM loader --- */
+/*
+ * A CPS-1 "game" on the SD card is a folder holding an extracted MAME romset:
+ * a dozen or so chip dumps, no index file, no container. The launcher lists
+ * the folder itself as the entry (emulator_is_folder_rom_system), so what
+ * arrives here in ACTIVE_FILE->path is a directory.
+ *
+ * Loading costs no RAM. Each chip is cached into external flash by
+ * odroid_overlay_cache_file_in_flash(), which hands back a memory-mapped (XIP)
+ * pointer -- the 4 MB of graphics are read where they lie, through
+ * cps1_gfx_chip_byte()'s address arithmetic, because an assembled GFX region
+ * is 4 MB against a 724 KB RAM_EMU.
+ *
+ * WHY THE CRC PASS RUNS OVER FLASH AND NOT OVER THE SD CARD: chips have to be
+ * identified by content hash (cps1_romset.h), and hashing 5 MB off the card
+ * would add seconds to every single launch. Caching first and hashing the XIP
+ * copy costs one SD pass on the first launch and none at all after that,
+ * because the second launch is a cache hit and the bytes are already mapped.
+ *
+ * THE PARENT-SET PROBLEM. A MAME clone archive holds only the chips unique to
+ * it: wofj's own zip has its two program chips and the four upper graphics
+ * chips, and none of the four lower ones, which are byte-identical to the
+ * parent's. Requiring every game folder to be self-contained would store those
+ * shared chips once per clone -- twice on the card, and twice in the flash
+ * cache, which keys on path and so cannot tell that two paths hold identical
+ * bytes. So missing chips are fetched from a shared pool:
+ *
+ *     /roms/cps1/<game>/            the game's own chips, original MAME names
+ *     /roms/cps1/.shared/<crc>.bin  chips common to several sets, stored once
+ *
+ * The launcher's folder scan skips names beginning with '.', so .shared never
+ * appears as a game.
+ *
+ * WHY THE SHARED POOL IS NAMED BY CRC AND NOT BY THE ORIGINAL FILENAME. Two
+ * reasons, and both are fatal to the obvious design:
+ *
+ *   1. MAME filenames are unique only within a game family. Every Street
+ *      Fighter II revision ships chips called s92_*.rom whose CONTENTS differ,
+ *      so a flat pool of original names collides and silently overwrites.
+ *      A CRC32 cannot collide with a different chip -- it IS the identity this
+ *      whole loader keys on, so making it the filename simply says so out loud.
+ *   2. A pool that has to be SCANNED is a pool every launch pays for. With ten
+ *      games' parents in it, booting wofj would cache 40 MB of chips belonging
+ *      to other games. Naming by CRC turns the search into a direct open of
+ *      exactly the chips this romset is missing -- no scan, nothing cached that
+ *      the game does not use.
+ *
+ * The name is checked, not trusted: a chip fetched as <crc>.bin is hashed like
+ * any other and dropped if it does not hash to its own name.
+ */
+#define CPS1_MAX_FOLDER_CHIPS 24
+#define CPS1_SHARED_CHIP_DIR  "/roms/cps1/.shared"
+
+static const uint8_t *s_chip_addr[CPS1_MAX_FOLDER_CHIPS];
+static uint32_t       s_chip_crc[CPS1_MAX_FOLDER_CHIPS];
+static unsigned       s_chip_count;
+/* The two program chips, in 68000 address order. */
+static const uint8_t *s_prg_lo;
+static const uint8_t *s_prg_hi;
+
+/* Caches one chip and records its hash. `expect_crc` non-zero means the caller
+ * already knows what this file must hash to (the shared pool, where the name
+ * is the hash) and the chip is rejected rather than trusted if it does not. */
+static bool cps1_cache_one_chip_expect(const char *dir_path, const char *name,
+                                        uint32_t expect_crc)
+{
+    if (s_chip_count >= CPS1_MAX_FOLDER_CHIPS)
+        return false;
+
+    char path[RG_PATH_MAX + 1];
+    int n = snprintf(path, sizeof(path), "%s/%s", dir_path, name);
+    if (n < 0 || (size_t)n >= sizeof(path)) {
+        printf("cps1: path too long, skipping %s\n", name);
+        return false;
+    }
+
+    uint32_t size = 0;
+    /* byte_swap = false. MAME applies ROM_REVERSE when it assembles its
+     * big-endian program region; a little-endian *(uint16*) read of the raw
+     * chip undoes exactly that, so the two cancel and the correct thing to
+     * store is the file verbatim. See cps1_m68k_map_prg_chip()'s comment for
+     * the reset vector that proves it on the real dump. */
+    const uint8_t *addr = odroid_overlay_cache_file_in_flash(path, &size, false);
+    if (addr == NULL || size != CPS1_ROMSET_CHIP_SIZE) {
+        printf("cps1: %s did not cache (size %lu)\n", name, (unsigned long)size);
+        return false;
+    }
+
+    uint32_t crc = cps1_crc32(addr, size);
+    if (expect_crc != 0 && crc != expect_crc) {
+        printf("cps1: %s hashes to %08lX, not its own name\n", path, (unsigned long)crc);
+        return false;
+    }
+    /* A chip present in both the game folder and the shared pool would
+     * otherwise occupy two flash-cache entries and two live-file slots for one
+     * set of bytes. */
+    for (unsigned i = 0; i < s_chip_count; i++)
+        if (s_chip_crc[i] == crc)
+            return true;
+
+    s_chip_addr[s_chip_count] = addr;
+    s_chip_crc[s_chip_count] = crc;
+    s_chip_count++;
+    return true;
+}
+
+static bool cps1_cache_one_chip(const char *dir_path, const char *name)
+{
+    return cps1_cache_one_chip_expect(dir_path, name, 0);
+}
+
+/* Pulls exactly the chips `set` is missing out of the shared pool, by hash.
+ * Returns how many were added. */
+static unsigned cps1_fetch_missing_from_shared(const cps1_romset_t *set)
+{
+    unsigned added = 0;
+    uint32_t wanted[CPS1_ROMSET_PRG_CHIPS + CPS1_ROMSET_GFX_CHIPS];
+    unsigned want_count = 0;
+
+    for (unsigned i = 0; i < CPS1_ROMSET_PRG_CHIPS; i++)
+        wanted[want_count++] = set->prg_crc[i];
+    for (unsigned i = 0; i < CPS1_ROMSET_GFX_CHIPS; i++)
+        wanted[want_count++] = set->gfx_crc[i];
+
+    for (unsigned w = 0; w < want_count; w++) {
+        wdog_refresh();
+        bool have = false;
+        for (unsigned i = 0; i < s_chip_count && !have; i++)
+            have = (s_chip_crc[i] == wanted[w]);
+        if (have)
+            continue;
+
+        char name[16];
+        snprintf(name, sizeof(name), "%08lx.bin", (unsigned long)wanted[w]);
+        if (cps1_cache_one_chip_expect(CPS1_SHARED_CHIP_DIR, name, wanted[w]))
+            added++;
+    }
+    return added;
+}
+
+/* Caches every chip-sized file in one directory. */
+static void cps1_scan_chip_dir(const char *dir_path)
+{
+    DIR dir;
+    FILINFO fno;
+
+    if (f_opendir(&dir, dir_path) != FR_OK)
+        return;
+
+    while (s_chip_count < CPS1_MAX_FOLDER_CHIPS) {
+        wdog_refresh();
+        if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == 0)
+            break;
+        if (fno.fname[0] == '.' || (fno.fattrib & AM_DIR))
+            continue;
+        /* Every CPS-1 chip in every supported set is 512 KB, so this skips
+         * the PAL dumps (279 B) and any stray file without reading it. */
+        if (fno.fsize != CPS1_ROMSET_CHIP_SIZE)
+            continue;
+        cps1_cache_one_chip(dir_path, fno.fname);
+    }
+    f_closedir(&dir);
+}
+
+static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
+{
+    s_chip_count = 0;
+
+    cps1_scan_chip_dir(dir_path);
+
+    int prg_index[CPS1_ROMSET_PRG_CHIPS], gfx_index[CPS1_ROMSET_GFX_CHIPS];
+    const cps1_romset_t *set = cps1_romset_match(s_chip_crc, s_chip_count,
+                                                  prg_index, gfx_index);
+    if (set == NULL) {
+        /* Incomplete on its own -- the ordinary case for a clone archive. Work
+         * out which set it is closest to and fetch precisely that set's
+         * missing chips from the shared pool, by hash. Nothing else is read
+         * and nothing else is cached, however many other games' parents happen
+         * to live there. */
+        unsigned missing = 0;
+        const cps1_romset_t *near = cps1_romset_closest(s_chip_crc, s_chip_count, &missing);
+        if (near != NULL && missing > 0) {
+            unsigned added = cps1_fetch_missing_from_shared(near);
+            if (added > 0) {
+                printf("cps1: %s needed %u chips, %u came from %s\n",
+                       near->name, missing, added, CPS1_SHARED_CHIP_DIR);
+                set = cps1_romset_match(s_chip_crc, s_chip_count, prg_index, gfx_index);
+            }
+        }
+    }
+    if (set == NULL) {
+        /*
+         * Say WHICH set the folder nearly is and HOW MANY chips are absent.
+         * The overwhelmingly common cause is a clone archive extracted on its
+         * own, and "wofj: 4 of 10 chips missing" points at the parent set,
+         * where a bare failure looks exactly like an unsupported game. This
+         * goes on screen, not just down the log -- a folder problem the player
+         * cannot see is a folder problem they cannot fix.
+         */
+        unsigned missing = 0;
+        const cps1_romset_t *near = cps1_romset_closest(s_chip_crc, s_chip_count, &missing);
+        char line[64];
+        if (near != NULL)
+            snprintf(line, sizeof(line), "%s: %u of %u chips missing", near->name, missing,
+                     CPS1_ROMSET_PRG_CHIPS + CPS1_ROMSET_GFX_CHIPS);
+        else
+            snprintf(line, sizeof(line), "%u chips found, no set matched", s_chip_count);
+        printf("cps1: incomplete romset in %s -- %s\n", dir_path, line);
+        draw_error_screen("Incomplete CPS-1 romset", line,
+                          "Add the parent set to /roms/cps1/.shared");
+        return NULL;
+    }
+
+    for (unsigned i = 0; i < CPS1_ROMSET_GFX_CHIPS; i++)
+        s_gfx_chips.chip[i] = s_chip_addr[gfx_index[i]];
+    s_gfx_chips.chip_size = CPS1_ROMSET_CHIP_SIZE;
+    s_gfx_chips.chip_count = CPS1_ROMSET_GFX_CHIPS;
+
+    s_prg_lo = s_chip_addr[prg_index[0]];
+    s_prg_hi = s_chip_addr[prg_index[1]];
+
+    cps1_rom_region_t prg = { s_prg_lo, CPS1_ROMSET_CHIP_SIZE };
+    if (cps1_rom_attach_chips(&s_rom, prg, &s_gfx_chips) != 0) {
+        printf("cps1: rom attach failed\n");
+        return NULL;
+    }
+    /* prg.size describes chip 0 only; the whole program is both chips, and
+     * cps1_rom_check_reset_vector() only ever looks at the first eight bytes,
+     * which live in chip 0. */
+    uint32_t ssp = 0, pc = 0;
+    if (cps1_rom_check_reset_vector(&s_rom.prg, &ssp, &pc) != 0) {
+        printf("cps1: %s reset vector rejected (SSP=%08lX PC=%08lX)\n",
+               set->name, (unsigned long)ssp, (unsigned long)pc);
+        return NULL;
+    }
+
+    printf("cps1: %s loaded, %u chips, SSP=%08lX PC=%08lX\n",
+           set->name, s_chip_count, (unsigned long)ssp, (unsigned long)pc);
+    return set;
+}
+
 /* --------------------------------------------------------------- init --- */
 
 /* Sound CPU stand-ins. The Z80 stamps 0x77 at 0xF19FFE to say it is alive
@@ -284,7 +532,7 @@ static void cps1_sound_stub_init(void)
     s_qram[0x001F] = 0x80;   /* 0xF1801F bit 7 */
 }
 
-static void cps1_machine_reset(const uint8_t *prg, uint32_t prg_size)
+static void cps1_machine_reset(const uint8_t *prg_lo, const uint8_t *prg_hi)
 {
     memset(s_gfxram, 0, sizeof(s_gfxram));
     memset(s_wram, 0, sizeof(s_wram));
@@ -301,7 +549,12 @@ static void cps1_machine_reset(const uint8_t *prg, uint32_t prg_size)
      * this game (the palette never fills) for a reason not yet isolated --
      * see the commit that found it. Do not "optimise" this back without
      * re-testing that the title screen still renders. */
-    cps1_m68k_init(prg, prg_size, NULL, &io);
+    /* prg = NULL: the two program chips are separate cached files at
+     * unrelated flash addresses, so each is mapped over its own 64 KB pages
+     * instead of through one base pointer over a contiguous 1 MB. */
+    cps1_m68k_init(NULL, 0, NULL, &io);
+    cps1_m68k_map_prg_chip(0x000000u, prg_lo, CPS1_ROMSET_CHIP_SIZE);
+    cps1_m68k_map_prg_chip(0x080000u, prg_hi, CPS1_ROMSET_CHIP_SIZE);
     cps1_m68k_reset();
 }
 
@@ -335,17 +588,10 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * own code. */
     ram_start = (uint32_t)&_OVERLAY_CPS1_BSS_END;
 
-    /* TODO(cps1): enumerate the game folder, cache each chip in external
-     * flash via odroid_overlay_cache_file_in_flash(), and identify the slots
-     * by CRC32 -- never by filename, because wof's tk2_gfx2.rom occupies the
-     * THIRD gfx slot while tk2_gfx3.rom occupies the second, and getting that
-     * backwards loads cleanly and corrupts only the picture. Until that lands
-     * s_rom/s_gfx_chips stay empty and this returns immediately rather than
-     * rendering garbage. */
-    if (s_rom.prg.data == NULL)
+    if (ACTIVE_FILE == NULL || cps1_load_folder_roms(ACTIVE_FILE->path) == NULL)
         return;
 
-    cps1_machine_reset(s_rom.prg.data, s_rom.prg.size);
+    cps1_machine_reset(s_prg_lo, s_prg_hi);
 
     while (true) {
         wdog_refresh();
