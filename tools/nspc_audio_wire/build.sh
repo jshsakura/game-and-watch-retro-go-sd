@@ -23,27 +23,24 @@ for tok in NSPC_INSTR NSPC_SONGLIST NSPC_SONGCUR NSPC_DIRPAGE; do
 done
 python3 "$HLE/gen_variant.py" "$O/nspc_player_gen.c"
 
-# 1a2) standard N-SPC phrase semantics: $00nn with nn>=0x80 is a JUMP (loop
-#      forever to the address that follows). SM's engine repurposed 0x80/0x81
-#      as fast-forward toggles — under that reading ALttP's title-loop gets
-#      fast-forwarded into the stop path (song plays once, then silence).
-python3 - "$O/nspc_player_gen.c" <<'PYEOF'
-import sys
-p = sys.argv[1]
-src = open(p).read()
-old = """      if (t == 0x80) {
-        p->fast_forward = 0x80;
-      } else if (t == 0x81) {
-        p->fast_forward = 0;
-      } else {"""
-new = """      if (t >= 0x80) {   /* std N-SPC: $00nn nn>=0x80 = jump (loop) */
-        t = WORD(p->ram[p->music_ptr_toplevel]);
-        p->music_ptr_toplevel = t;
-      } else {"""
-assert src.count(old) == 1, "phrase-branch anchor miss"
-open(p, "w").write(src.replace(old, new))
-print("phrase-jump semantics applied")
-PYEOF
+# 1a2 REMOVED (was: rewrite $00nn nn>=0x80 top-level phrase words into an
+# unconditional jump, on a theory that std N-SPC treats them that way and SM
+# "repurposed" 0x80/0x81 as fast-forward toggles). Checked against BOTH
+# independent std-family decompilations that exist in this tree --
+# external/sm/src/spc_player.c (Super Metroid) and external/zelda3/spc_player.c
+# (ALttP's own decompile, the very game this patch was written to fix) -- and
+# they agree with each other byte-for-byte on this branch: $0080 sets
+# fast_forward=0x80, $0081 clears it, nothing here is a jump. The jump
+# mechanics live in the *next* branch down (the block_count/loop-address
+# case) for every other nonzero low byte. So the patch encoded a semantics no
+# known std engine implements, and this host generator was the only one of
+# the two N-SPC pipelines applying it -- gen_nspc_wire.py (the device/firmware
+# generator, Makefile.common's SNES_NSPC_HLE=1 path) never had it. Verified
+# with tools/nspc_audio_wire's host + device harnesses: removing this step
+# changes nothing for Zelda/SM/MegaManX/EarthBound (identical fb hash + audio
+# rms in every window) -- the divergence was real but never observed by any
+# of these four ROMs, i.e. cosmetic for them. See
+# fix/nspc-generator-divergence for the full writeup.
 
 # 1b) export the tick so wire.c can step samples (SpcPlayer_GenerateSamples
 #     semantics at apu_run granularity)

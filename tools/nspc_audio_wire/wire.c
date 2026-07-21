@@ -60,6 +60,12 @@ static int g_frac = 0;             /* APU-cycle remainder (32 = one sample) */
 static uint8_t g_ack[3];           /* instant-ack values for ports 1-3 */
 static uint8_t g_last_p0 = 0;      /* last port-0 command seen during LLE */
 static int g_ok_streak = 0;
+int g_real_frame = 0;              /* DEBUG ONLY: nspc_variant.c's log_skip()
+                                     * extern-references this (added in
+                                     * d459154d for nspc_wire.c's device build,
+                                     * never mirrored here) -- the video-frame
+                                     * number, for correlating a skipped-vcmd
+                                     * trace line against other diagnostics. */
 
 /* ---- one 32 kHz sample step: exactly SpcPlayer_GenerateSamples' semantics -- */
 static inline void wire_step_sample(SpcPlayer *p) {
@@ -303,6 +309,7 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
 
 /* Called by the harness once per frame during LLE. Returns 1 on swap. */
 int wire_try_swap(Snes *snes, int frame) {
+  g_real_frame = frame;
   if (g_wire_on || !g_wire_enable || !snes->apu) return 0;
   if (frame < 120 || (frame % 60) != 0) return 0;
   /* driver must actually be running (upload done, PC out of the IPL ROM) */
