@@ -1,5 +1,16 @@
 # S-DSP block mixer (PoC)
 
+> **Verdict: no generic-LLE runtime benefit. Keep
+> `SNES_DSP_BLOCK_MIXER=0`.** The algorithm is bit-exact, but M7-rig runtime
+> instruction counts regressed in all four wired A/B tests (+4.1% to +86.1%).
+> The host replay speedups below measure an isolated workload and did not
+> survive SPC700 lazy-catchup integration.
+
+Unlike GBA M4A HLE, this does not replace an interpreted guest mixer with
+native code: the SNES DSP was already native C. SPC700-visible DSP registers
+and shared BRR/DIR/echo ARAM also force frequent synchronization, so the
+voice-major locality gain is smaller than the runtime bookkeeping cost.
+
 `external/sm/src/snes/dsp_block.c` re-implements the S-DSP sample loop
 voice-major instead of
 sample-major: per run of samples between DSP register writes, each voice is
@@ -27,7 +38,7 @@ bash tools/dsp_mixer/run_ab.sh <rom> [frames=1200] [bench-reps=3]
 # MIXER_ENGINE=ref|blk limits the bench phase to one engine
 ```
 
-## Results (2026-07-15, host)
+## Isolated replay results (2026-07-15, host; not runtime results)
 
 | ROM | gate (1200 frames) | ref ns/sample | block ns/sample | ratio |
 |---|---|---|---|---|

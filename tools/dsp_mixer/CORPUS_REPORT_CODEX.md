@@ -1,5 +1,38 @@
 # DSP block mixer corpus check (2026-07-21)
 
+## Final verdict
+
+**Do not enable `SNES_DSP_BLOCK_MIXER` in the generic LLE runtime.** The mixer
+is bit-exact in the tested corpus, but it delivered no runtime instruction-count
+benefit in any of the four M7-rig games. Total emulation+audio instructions rose
+by 4.1% (DKC), 12.5% (Chrono), 28.5% (Zelda), and 86.1% (Packy). Lazy catch-up
+splits the work into short blocks and adds dependency tracking, erasing the
+standalone host-mixer gain. Correctness coverage therefore does not make this a
+shipping optimization; the flag remains default-off.
+
+The 23-ROM offline result below proves only that the block algorithm and its
+echo/BRR fallback are correct when replaying pre-captured DSP work. It must not
+be cited as evidence of an end-to-end LLE performance win. No device-FPS claim
+was made; every available M7 instruction-count result is negative.
+
+### Why this is not the GBA M4A win
+
+The GBA optimization replaces a whole guest ARM M4A mixer routine with native
+C, removing the interpreter cost of executing that library instruction by
+instruction. Its recognized library entry point also provides a natural
+whole-mixer call boundary.
+
+The SNES S-DSP loop was already native C. Reordering it voice-major can only
+seek locality and loop-overhead savings; it removes no guest interpreter. At
+the same time the independently running SPC700 can read ENVX/OUTX/ENDX, write
+DSP registers, and modify the same ARAM used for BRR, directory, and echo data
+between samples. Preserving those observations repeatedly breaks the proposed
+block apart and adds hazard bookkeeping. The shipping mono path and existing
+silent-voice shortcuts further reduce the original work available to save.
+Thus the isolated host replay can improve while the complete LLE runtime gets
+slower—the missing interpreter tax and the forced synchronization boundaries
+are the decisive differences from GBA M4A HLE.
+
 Command: `bash tools/dsp_mixer/run_ab.sh <rom> 1200 3` on a 20-title primary
 corpus. Full logs are in `/tmp/codex-dsp-corpus-20260721/logs`.
 
@@ -88,6 +121,8 @@ Raw logs are in `/tmp/codex-dsp-runtime-20260721`. Packy required the same
 temporary lower-LoROM open-bus harness workaround used by the offline PMON
 gate; it was reverted after both runs. The M7 rig ELF text increased by 4,416
 bytes at `-O2` (Zelda/DKC/Chrono); data and BSS were unchanged. The instruction
-counts increased, especially for Packy's write-heavy driver. They are reported
-as raw rig evidence only, not as device-FPS claims; the feature stays opt-in for
-hardware measurement.
+counts increased in every tested game, especially for Packy's write-heavy
+driver. They are not device-FPS measurements, but they do establish that this
+implementation has no demonstrated LLE benefit. Keep the feature disabled; do
+not spend a device-validation build on it without a materially different
+batching design.
