@@ -119,12 +119,25 @@ int main(int argc, char **argv)
     cps1_m68k_reset();
 
     const uint32_t FRAME = 166666u * 7u;
+    /*
+     * Hold vblank asserted for a slice rather than pulsing it briefly: the
+     * main loop runs its flag check under `move.w #$2600,sr` (mask 6, which
+     * blocks level 2), so a short pulse that lands inside that window is
+     * simply LOST -- the line drops before the CPU is ever willing to look.
+     * Real hardware holds the line until the handler acknowledges it.
+     */
+    unsigned handler_hits = 0;
     for (unsigned i = 0; i < boot_frames; i++) {
         cps1_m68k_set_irq(2);
-        cps1_m68k_run(FRAME / 64u);
+        for (unsigned k = 0; k < 8; k++) {
+            cps1_m68k_run(FRAME / 16u);
+            uint32_t pc = cps1_m68k_get_pc();
+            if (pc >= 0x506u && pc < 0x600u) handler_hits++;
+        }
         cps1_m68k_set_irq(0);
-        cps1_m68k_run(FRAME - FRAME / 64u);
+        cps1_m68k_run(FRAME / 2u);
     }
+    printf("[frame] vblank handler PC samples: %u\n", handler_hits);
     printf("[frame] booted %u frames; PC=0x%06x SR=0x%04x\n",
            boot_frames, cps1_m68k_get_pc(), cps1_m68k_get_sr());
     printf("[frame] CPS-A bases: OBJ=%04x SCROLL1=%04x SCROLL2=%04x SCROLL3=%04x "
