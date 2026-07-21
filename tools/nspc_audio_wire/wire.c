@@ -254,8 +254,11 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
     nspc_variant_std();
   }
   g_nspc_cfg.instrTable = np->instrTab >= 0 ? np->instrTab : 0x6c00;
-  g_nspc_cfg.songList   = np->songList;
-  g_nspc_cfg.songCur    = np->songList - 2;
+  /* +2 -- see the long note in nspc_wire.c's wire_swap(). Detection recovers
+   * the driver instruction's base (entry for song 0, X = song*2); every
+   * decompiled player indexes table + (song-1)*2. Keep both copies in step. */
+  g_nspc_cfg.songList   = np->songList + 2;
+  g_nspc_cfg.songCur    = np->songList;
   g_nspc_cfg.dirPage    = ((np->dir >= 0 ? np->dir : 0x6d00) >> 8) & 0xff;
 
   SpcPlayer *p = SpcPlayer_Create();
