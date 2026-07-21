@@ -22,6 +22,7 @@
 #   ./build/cps1-priority-bus-selftest
 #   ./build/cps1-rom-load-selftest
 #   ./build/cps1-ltdc-bottom-selftest
+#   ./build/cps1-m68k-selftest
 TARGET        = retro-go-cps1
 SELFTEST      = cps1-ppu-selftest
 BUSSELFTEST   = cps1-vdp-bus-selftest
@@ -33,11 +34,18 @@ PHASE9SELFTEST = cps1-phase9-selftest
 PHASE10SELFTEST = cps1-priority-bus-selftest
 ROMLOADSELFTEST = cps1-rom-load-selftest
 PHASE12SELFTEST = cps1-ltdc-bottom-selftest
+# Phase 13: the Musashi-backed 68000 running REAL 68000 code through the
+# real CPS-1 memory map (LEA/MOVE.L/JSR+RTS/CMPI/reset vector -- every one
+# of which the nine-opcode cps1_cpu68k.c skeleton could not execute).
+M68KSELFTEST   = cps1-m68k-selftest
 BUILD_DIR     = build
 
 OPT ?= -O2 -g
 
 CPS1DIR = ../Core/Src/porting/cps1
+# Musashi, shared verbatim with Sega Genesis/Sega CD (build/md, build/segacd)
+# -- adopted rather than re-written; see Core/Src/porting/cps1/cps1_m68k.h.
+M68KDIR = ../external/gwenesis/src/cpus/M68K
 CORE_SOURCES = \
 $(CPS1DIR)/cps1_core.c \
 $(CPS1DIR)/cps1_cpu68k.c \
@@ -98,6 +106,11 @@ PHASE12SELFTEST_SOURCES = \
 cps1/ltdc_bottom_selftest.c \
 $(CORE_SOURCES)
 
+M68KSELFTEST_SOURCES = \
+cps1/m68k_real_selftest.c \
+$(CPS1DIR)/cps1_m68k.c \
+$(M68KDIR)/m68kcpu.c
+
 PREFIX =
 CC = $(PREFIX)gcc
 SZ = $(PREFIX)size
@@ -105,7 +118,9 @@ SZ = $(PREFIX)size
 C_INCLUDES = \
 -I. \
 -Icps1 \
--I$(CPS1DIR)
+-I$(CPS1DIR) \
+-I$(M68KDIR) \
+-I../Core/Inc
 
 CFLAGS = $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
 CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
@@ -118,7 +133,8 @@ all: $(BUILD_DIR)/$(TARGET) $(BUILD_DIR)/$(SELFTEST) $(BUILD_DIR)/$(BUSSELFTEST)
      $(BUILD_DIR)/$(BGSELFTEST) $(BUILD_DIR)/$(BGBUSSELFTEST) \
      $(BUILD_DIR)/$(SNDSELFTEST) $(BUILD_DIR)/$(SNDBUSSELFTEST) \
      $(BUILD_DIR)/$(PHASE9SELFTEST) $(BUILD_DIR)/$(PHASE10SELFTEST) \
-     $(BUILD_DIR)/$(ROMLOADSELFTEST) $(BUILD_DIR)/$(PHASE12SELFTEST)
+     $(BUILD_DIR)/$(ROMLOADSELFTEST) $(BUILD_DIR)/$(PHASE12SELFTEST) \
+     $(BUILD_DIR)/$(M68KSELFTEST)
 
 OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/selftest_,$(notdir $(SELFTEST_SOURCES:.c=.o)))
@@ -131,11 +147,13 @@ PHASE9SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase9selftest_,$(notdir $(PHA
 PHASE10SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase10selftest_,$(notdir $(PHASE10SELFTEST_SOURCES:.c=.o)))
 ROMLOADSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/romloadselftest_,$(notdir $(ROMLOADSELFTEST_SOURCES:.c=.o)))
 PHASE12SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase12selftest_,$(notdir $(PHASE12SELFTEST_SOURCES:.c=.o)))
+M68KSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/m68kselftest_,$(notdir $(M68KSELFTEST_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)) $(dir $(SELFTEST_SOURCES)) $(dir $(BUSSELFTEST_SOURCES)) \
                  $(dir $(BGSELFTEST_SOURCES)) $(dir $(BGBUSSELFTEST_SOURCES)) \
                  $(dir $(SNDSELFTEST_SOURCES)) $(dir $(SNDBUSSELFTEST_SOURCES)) \
                  $(dir $(PHASE9SELFTEST_SOURCES)) $(dir $(PHASE10SELFTEST_SOURCES)) \
-                 $(dir $(ROMLOADSELFTEST_SOURCES)) $(dir $(PHASE12SELFTEST_SOURCES)))
+                 $(dir $(ROMLOADSELFTEST_SOURCES)) $(dir $(PHASE12SELFTEST_SOURCES)) \
+                 $(dir $(M68KSELFTEST_SOURCES)))
 
 $(BUILD_DIR)/%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
@@ -165,6 +183,9 @@ $(BUILD_DIR)/phase10selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/romloadselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/m68kselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/phase12selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
@@ -212,6 +233,9 @@ $(BUILD_DIR)/$(ROMLOADSELFTEST): $(ROMLOADSELFTEST_OBJECTS) Makefile.cps1
 
 $(BUILD_DIR)/$(PHASE12SELFTEST): $(PHASE12SELFTEST_OBJECTS) Makefile.cps1
 	$(CC) $(PHASE12SELFTEST_OBJECTS) $(LDFLAGS) -o $@
+
+$(BUILD_DIR)/$(M68KSELFTEST): $(M68KSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(M68KSELFTEST_OBJECTS) $(LDFLAGS) -o $@
 	$(SZ) $@
 
 $(BUILD_DIR):
