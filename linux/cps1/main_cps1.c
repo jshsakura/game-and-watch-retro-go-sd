@@ -54,6 +54,20 @@ static void write_ppm(const char *path, const uint16_t *fb)
     printf("[cps1] wrote %s\n", path);
 }
 
+/* NOTE (Phase 9, docs/CPS1_MAME_ALIGNMENT.md section 5): expect exactly one
+ * frame-0 fb mismatch here, cpu hash still equal. The one-frame OBJ-RAM
+ * delay's latch (cps1_core_latch_obj) is shared/global state, but this
+ * diff mode calls cps1_core_run_frame() TWICE per logical frame index (once
+ * per engine) against that single shared bus -- so by the time RECOMPILER
+ * runs, INTERPRETER's call has already latched this frame's sprites, and
+ * RECOMPILER renders them one latch early. Both engines' CPU execution and
+ * every later frame are unaffected (confirmed: cpu hash matches every
+ * frame, and single-engine --engine=interpreter/--engine=recompiler runs
+ * are each internally consistent and converge to the same steady-state
+ * RUNHASH) -- this is a diff-harness artifact of sharing one hardware
+ * memory model across two verification engines, not a bug in the delay
+ * logic itself (see cps1_core_selftest_obj_delay, which proves the delay
+ * in isolation with a single engine). */
 static int run_diff(int frames, int dump_ppm)
 {
     cps1_core_reset(CPS1_ENGINE_INTERPRETER);

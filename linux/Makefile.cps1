@@ -7,7 +7,8 @@
 #
 #   make -f Makefile.cps1   -> retro-go-cps1, cps1-ppu-selftest, cps1-vdp-bus-selftest,
 #                              cps1-bg-selftest, cps1-bg-bus-selftest,
-#                              cps1-sound-hle-selftest, cps1-sound-bus-selftest
+#                              cps1-sound-hle-selftest, cps1-sound-bus-selftest,
+#                              cps1-phase9-selftest
 #   ./build/retro-go-cps1 --frames=600 --engine=diff --dump-ppm
 #   ./build/retro-go-cps1 --profile --frames=600
 #   ./build/cps1-ppu-selftest
@@ -16,6 +17,7 @@
 #   ./build/cps1-bg-bus-selftest
 #   ./build/cps1-sound-hle-selftest
 #   ./build/cps1-sound-bus-selftest
+#   ./build/cps1-phase9-selftest
 TARGET        = retro-go-cps1
 SELFTEST      = cps1-ppu-selftest
 BUSSELFTEST   = cps1-vdp-bus-selftest
@@ -23,6 +25,7 @@ BGSELFTEST    = cps1-bg-selftest
 BGBUSSELFTEST = cps1-bg-bus-selftest
 SNDSELFTEST   = cps1-sound-hle-selftest
 SNDBUSSELFTEST = cps1-sound-bus-selftest
+PHASE9SELFTEST = cps1-phase9-selftest
 BUILD_DIR     = build
 
 OPT ?= -O2 -g
@@ -71,6 +74,10 @@ SNDBUSSELFTEST_SOURCES = \
 cps1/sound_bus_selftest.c \
 $(CORE_SOURCES)
 
+PHASE9SELFTEST_SOURCES = \
+cps1/phase9_selftest.c \
+$(CORE_SOURCES)
+
 PREFIX =
 CC = $(PREFIX)gcc
 SZ = $(PREFIX)size
@@ -89,7 +96,8 @@ LDFLAGS = -lm -Wl,--gc-sections
 
 all: $(BUILD_DIR)/$(TARGET) $(BUILD_DIR)/$(SELFTEST) $(BUILD_DIR)/$(BUSSELFTEST) \
      $(BUILD_DIR)/$(BGSELFTEST) $(BUILD_DIR)/$(BGBUSSELFTEST) \
-     $(BUILD_DIR)/$(SNDSELFTEST) $(BUILD_DIR)/$(SNDBUSSELFTEST)
+     $(BUILD_DIR)/$(SNDSELFTEST) $(BUILD_DIR)/$(SNDBUSSELFTEST) \
+     $(BUILD_DIR)/$(PHASE9SELFTEST)
 
 OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/selftest_,$(notdir $(SELFTEST_SOURCES:.c=.o)))
@@ -98,9 +106,11 @@ BGSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/bgselftest_,$(notdir $(BGSELFTEST_
 BGBUSSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/bgbusselftest_,$(notdir $(BGBUSSELFTEST_SOURCES:.c=.o)))
 SNDSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/sndselftest_,$(notdir $(SNDSELFTEST_SOURCES:.c=.o)))
 SNDBUSSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/sndbusselftest_,$(notdir $(SNDBUSSELFTEST_SOURCES:.c=.o)))
+PHASE9SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase9selftest_,$(notdir $(PHASE9SELFTEST_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)) $(dir $(SELFTEST_SOURCES)) $(dir $(BUSSELFTEST_SOURCES)) \
                  $(dir $(BGSELFTEST_SOURCES)) $(dir $(BGBUSSELFTEST_SOURCES)) \
-                 $(dir $(SNDSELFTEST_SOURCES)) $(dir $(SNDBUSSELFTEST_SOURCES)))
+                 $(dir $(SNDSELFTEST_SOURCES)) $(dir $(SNDBUSSELFTEST_SOURCES)) \
+                 $(dir $(PHASE9SELFTEST_SOURCES)))
 
 $(BUILD_DIR)/%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
@@ -121,6 +131,9 @@ $(BUILD_DIR)/sndselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/sndbusselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/phase9selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/$(TARGET): $(OBJECTS) Makefile.cps1
@@ -149,6 +162,10 @@ $(BUILD_DIR)/$(SNDSELFTEST): $(SNDSELFTEST_OBJECTS) Makefile.cps1
 
 $(BUILD_DIR)/$(SNDBUSSELFTEST): $(SNDBUSSELFTEST_OBJECTS) Makefile.cps1
 	$(CC) $(SNDBUSSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(PHASE9SELFTEST): $(PHASE9SELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(PHASE9SELFTEST_OBJECTS) $(LDFLAGS) -o $@
 	$(SZ) $@
 
 $(BUILD_DIR):

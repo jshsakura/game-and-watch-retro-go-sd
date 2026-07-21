@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "cps1_core.h"
 #include "cps1_cpu68k.h"
 #include "cps1_ppu.h"
@@ -178,38 +180,146 @@ static void cps1_sound_init_synthetic(void)
 }
 
 /*
- * 68000 <-> VDP memory bus: WRAM (64KB, real read/write), OBJ RAM (sprite
- * table -- writes update s_synthetic_oam directly), palette RAM (writes
- * update s_synthetic_palette), and PRG ROM (read-only, falls through to
- * s_synthetic_rom.prg). Addresses are placeholders, NOT the real CPS-1
- * memory map (docs/CPS1_FEASIBILITY.md doesn't pin exact addresses either)
- * -- what's real here is the DISPATCH mechanism: a 68000 write through this
- * bus genuinely moves a sprite / recolors a palette entry, the same way it
- * would need to on real hardware. Word-aligned 16-bit access only, matching
- * cps1_cpu68k.c's MOVE.W-only memory support.
+ * 68000 <-> VDP memory bus -- Phase 9: real memory map
+ * (docs/CPS1_MAME_ALIGNMENT.md sections 3/4/9). WRAM stays a fixed 64KB
+ * region (that address was already correct from Phase 7). OBJ/SCROLL1/2/3/
+ * PALETTE are no longer separate fixed regions -- they are all VIEWS into
+ * one shared 192KB gfxram pool, at offsets the CPS-A registers (0x800100-
+ * 0x80013F) specify, exactly like real hardware's cps1_base()
+ * (base = reg*256, masked to a boundary, clamped into gfxram). A 68000
+ * write to a gfxram address is routed to whichever parsed view CURRENTLY
+ * claims that address (recomputed from the CURRENT register values on
+ * every write, not cached) -- so moving a base register genuinely
+ * relocates where subsequent writes land, the same as on real hardware.
  */
-#define CPS1_WRAM_BASE     0xFF0000u
-#define CPS1_WRAM_SIZE     0x10000u
-#define CPS1_OBJ_BASE      0x900000u
-#define CPS1_PAL_BASE      0x910000u
-#define CPS1_SOUND_CMD_BASE 0x920000u /* 68000 writes here -> cps1_sound_hle_trigger, no Z80 involved */
+#define CPS1_WRAM_BASE 0xFF0000u
+#define CPS1_WRAM_SIZE 0x10000u
 
-/* BG tilemap RAM: per layer, CPS1_BG_MAP_W*CPS1_BG_MAP_H cells (2 words/
- * cell: word0=tile_index, word1 low byte=palette/high byte=enabled),
- * followed by scroll_x, scroll_y (1 word each). CPS1_BG_LAYER_STRIDE (32KB)
- * is comfortably bigger than one layer's cell data (4096*4=16KB) so the
- * three layers' address ranges never overlap. */
-#define CPS1_BG_BASE          0x930000u
-#define CPS1_BG_LAYER_STRIDE  0x8000u
-#define CPS1_BG_CELLS_BYTES   ((uint32_t)CPS1_BG_MAP_W * CPS1_BG_MAP_H * 4u)
+#define CPS1_GFXRAM_BASE 0x900000u
+#define CPS1_GFXRAM_SIZE 0x30000u /* 192KB, matches the real qsound_main_map region */
+
+#define CPS1_CPSA_BASE  0x800100u
+#define CPS1_CPSA_SIZE  0x40u /* 32 words, 0x800100-0x80013F */
+#define CPS1_CPSA_COUNT (CPS1_CPSA_SIZE / 2u)
+
+/* Word offsets within the CPS-A register block, per
+ * docs/CPS1_MAME_ALIGNMENT.md section 4 (cps1.h:172-193). Only the base
+ * registers this phase wires up are named as enums the code branches on;
+ * unlisted offsets (OTHER_BASE, stars, rowscroll, videocontrol) are still
+ * stored in s_cps_a_regs but nothing reads them yet -- same "stored but
+ * inert until something consumes it" status real unused registers have. */
+enum {
+    CPS1_REG_OBJ_BASE        = 0x00 / 2,
+    CPS1_REG_SCROLL1_BASE    = 0x02 / 2,
+    CPS1_REG_SCROLL2_BASE    = 0x04 / 2,
+    CPS1_REG_SCROLL3_BASE    = 0x06 / 2,
+    CPS1_REG_OTHER_BASE      = 0x08 / 2,
+    CPS1_REG_PALETTE_BASE    = 0x0A / 2,
+    CPS1_REG_SCROLL1_SCROLLX = 0x0C / 2,
+    CPS1_REG_SCROLL1_SCROLLY = 0x0E / 2,
+    CPS1_REG_SCROLL2_SCROLLX = 0x10 / 2,
+    CPS1_REG_SCROLL2_SCROLLY = 0x12 / 2,
+    CPS1_REG_SCROLL3_SCROLLX = 0x14 / 2,
+    CPS1_REG_SCROLL3_SCROLLY = 0x16 / 2,
+};
+
+/* Sound command latch: moved OUT of the gfxram range it previously
+ * (incorrectly) overlapped in Phase 6/7. 0x800180 matches the real
+ * non-QSound soundlatch address (docs/CPS1_MAME_ALIGNMENT.md section 4) --
+ * Tenchi wo Kurau II itself uses QSound's shared-RAM protocol instead
+ * (section 6), which is a later phase; this address is still real, just
+ * for a different CPS-1 title's sound path, and doesn't collide with
+ * anything now that gfxram has its own real range. */
+#define CPS1_SOUND_CMD_BASE 0x800180u
+
+/* Base-register boundary mask: real hardware masks each base register to
+ * a game-dependent boundary (m_scroll_size/m_obj_size, "typically 0x4000"
+ * per the doc) -- using one boundary for every region is a documented
+ * skeleton simplification, not a confirmed per-region value. */
+#define CPS1_BASE_BOUNDARY 0x4000u
+
+/* BG tilemap cell data size per layer: CPS1_BG_MAP_W*CPS1_BG_MAP_H cells,
+ * 2 words (4 bytes) each -- word0=tile_index, word1 low byte=palette/high
+ * byte=enabled. Scroll position is NOT part of this range any more (it's
+ * the CPS1_REG_SCROLLn_SCROLLX/Y CPS-A registers instead, applied directly
+ * in cps1_bus_write16's CPS-A branch). */
+#define CPS1_BG_CELLS_BYTES ((uint32_t)CPS1_BG_MAP_W * CPS1_BG_MAP_H * 4u)
 
 static uint8_t s_wram[CPS1_WRAM_SIZE];
+static uint8_t s_gfxram[CPS1_GFXRAM_SIZE];
+static uint16_t s_cps_a_regs[CPS1_CPSA_COUNT];
+static int s_gfxram_initialized;
+
+/* One-frame-delayed OBJ RAM (docs/CPS1_MAME_ALIGNMENT.md section 5,
+ * cps1_objram_latch): s_synthetic_oam is what the CPU can see/write RIGHT
+ * NOW; s_buffered_obj is what actually gets rendered, latched from
+ * s_synthetic_oam once per frame (see cps1_core_run_frame's tail). */
+static cps1_oam_t s_buffered_obj;
+
+/* Default gfxram sub-offsets, applied at reset so the demo scene and
+ * every existing selftest resolve to a sane, non-overlapping layout even
+ * before any CPS-A register write -- arbitrary placeholders (documented
+ * as such, like the boundary above), not confirmed per-game values. */
+#define CPS1_DEFAULT_OBJ_OFFSET     0x00000u
+#define CPS1_DEFAULT_SCROLL1_OFFSET 0x04000u
+#define CPS1_DEFAULT_SCROLL2_OFFSET 0x08000u
+#define CPS1_DEFAULT_SCROLL3_OFFSET 0x0C000u
+#define CPS1_DEFAULT_OTHER_OFFSET   0x10000u
+#define CPS1_DEFAULT_PALETTE_OFFSET 0x14000u
+
+static void cps1_gfxram_init_synthetic(void)
+{
+    if (s_gfxram_initialized)
+        return;
+    s_gfxram_initialized = 1;
+
+    /* Register value = desired_offset / 256 -- inverse of cps1_resolve_base
+     * below, valid because every CPS1_DEFAULT_*_OFFSET here is already a
+     * multiple of both 256 and CPS1_BASE_BOUNDARY. */
+    s_cps_a_regs[CPS1_REG_OBJ_BASE]     = (uint16_t)(CPS1_DEFAULT_OBJ_OFFSET / 256u);
+    s_cps_a_regs[CPS1_REG_SCROLL1_BASE] = (uint16_t)(CPS1_DEFAULT_SCROLL1_OFFSET / 256u);
+    s_cps_a_regs[CPS1_REG_SCROLL2_BASE] = (uint16_t)(CPS1_DEFAULT_SCROLL2_OFFSET / 256u);
+    s_cps_a_regs[CPS1_REG_SCROLL3_BASE] = (uint16_t)(CPS1_DEFAULT_SCROLL3_OFFSET / 256u);
+    s_cps_a_regs[CPS1_REG_OTHER_BASE]   = (uint16_t)(CPS1_DEFAULT_OTHER_OFFSET / 256u);
+    s_cps_a_regs[CPS1_REG_PALETTE_BASE] = (uint16_t)(CPS1_DEFAULT_PALETTE_OFFSET / 256u);
+}
+
+static uint32_t cps1_resolve_base(uint16_t reg_value)
+{
+    uint32_t base = (uint32_t)reg_value * 256u;
+    base &= ~(CPS1_BASE_BOUNDARY - 1u);
+    /* CPS1_GFXRAM_SIZE (192KB) is NOT a power of two, so `& (SIZE-1)` is
+     * not a valid wrap/clamp here -- it silently corrupts any offset with
+     * bit 0x10000 set (e.g. 0x14000 & 0x2FFFF == 0x04000). Modulo is the
+     * correct operation regardless of whether SIZE is a power of two. */
+    return base % CPS1_GFXRAM_SIZE;
+}
+
+static uint32_t cps1_obj_base_addr(void)
+{
+    return CPS1_GFXRAM_BASE + cps1_resolve_base(s_cps_a_regs[CPS1_REG_OBJ_BASE]);
+}
+
+static uint32_t cps1_scroll_base_addr(unsigned layer)
+{
+    return CPS1_GFXRAM_BASE +
+           cps1_resolve_base(s_cps_a_regs[CPS1_REG_SCROLL1_BASE + layer]);
+}
+
+static uint32_t cps1_palette_base_addr(void)
+{
+    return CPS1_GFXRAM_BASE + cps1_resolve_base(s_cps_a_regs[CPS1_REG_PALETTE_BASE]);
+}
 
 static uint16_t cps1_bus_read16(uint32_t addr)
 {
     if (addr >= CPS1_WRAM_BASE && addr < CPS1_WRAM_BASE + CPS1_WRAM_SIZE) {
         uint32_t off = addr - CPS1_WRAM_BASE;
         return (uint16_t)((s_wram[off] << 8) | s_wram[off + 1]);
+    }
+    if (addr >= CPS1_GFXRAM_BASE && addr < CPS1_GFXRAM_BASE + CPS1_GFXRAM_SIZE) {
+        uint32_t off = addr - CPS1_GFXRAM_BASE;
+        return (uint16_t)((s_gfxram[off] << 8) | s_gfxram[off + 1]);
     }
     if (addr + 1 < s_synthetic_rom.prg.size)
         return (uint16_t)((s_synthetic_rom.prg.data[addr] << 8) | s_synthetic_rom.prg.data[addr + 1]);
@@ -224,57 +334,81 @@ static void cps1_bus_write16(uint32_t addr, uint16_t val)
         s_wram[off + 1] = (uint8_t)(val & 0xFFu);
         return;
     }
-    if (addr >= CPS1_OBJ_BASE && addr < CPS1_OBJ_BASE + (uint32_t)s_synthetic_oam.count * 8u) {
-        uint32_t word_idx = (addr - CPS1_OBJ_BASE) / 2u;
-        uint32_t entry = word_idx / 4u;
-        uint32_t field = word_idx % 4u;
-        cps1_oam_entry_t *s = &s_synthetic_oam.sprites[entry];
-        switch (field) {
-        case 0: s->y = (int16_t)val; break;
-        case 1: s->tile_index = val; break;
-        case 2: s->attr = (uint8_t)val; break;
-        default: s->x = (int16_t)val; break;
+
+    if (addr >= CPS1_CPSA_BASE && addr < CPS1_CPSA_BASE + CPS1_CPSA_SIZE) {
+        uint32_t word_idx = (addr - CPS1_CPSA_BASE) / 2u;
+        if (word_idx < CPS1_CPSA_COUNT)
+            s_cps_a_regs[word_idx] = val;
+        /* Scroll position registers apply immediately: they don't gate a
+         * gfxram view, they're consumed directly by the renderer. */
+        for (unsigned layer = 0; layer < CPS1_BG_LAYER_COUNT; layer++) {
+            if (word_idx == (uint32_t)(CPS1_REG_SCROLL1_SCROLLX + layer * 2))
+                s_bg.layers[layer].scroll_x = (int16_t)val;
+            if (word_idx == (uint32_t)(CPS1_REG_SCROLL1_SCROLLY + layer * 2))
+                s_bg.layers[layer].scroll_y = (int16_t)val;
         }
         return;
     }
-    if (addr >= CPS1_PAL_BASE &&
-        addr < CPS1_PAL_BASE + (uint32_t)CPS1_PALETTE_BANKS * CPS1_PALETTE_COLORS * 2u) {
-        uint32_t word_idx = (addr - CPS1_PAL_BASE) / 2u;
-        unsigned bank = word_idx / CPS1_PALETTE_COLORS;
-        unsigned color = word_idx % CPS1_PALETTE_COLORS;
-        /* `val` is a RAW palette word (12-bit RGB + 4-bit brightness, see
-         * cps1_palette_build's doc comment / docs/CPS1_MAME_ALIGNMENT.md
-         * section 2) -- convert at write time, not a direct RGB565 store. */
-        s_synthetic_palette.colors[bank][color] = cps1_palette_build(val);
-        return;
-    }
+
     if (addr == CPS1_SOUND_CMD_BASE) {
         cps1_sound_hle_trigger(&s_sound, (uint8_t)(val & 0xFFu));
         return;
     }
-    if (addr >= CPS1_BG_BASE && addr < CPS1_BG_BASE + CPS1_BG_LAYER_STRIDE * CPS1_BG_LAYER_COUNT) {
-        uint32_t rel = addr - CPS1_BG_BASE;
-        unsigned layer = rel / CPS1_BG_LAYER_STRIDE;
-        uint32_t layer_off = rel % CPS1_BG_LAYER_STRIDE;
-        cps1_bg_layer_t *L = &s_bg.layers[layer];
 
-        if (layer_off < CPS1_BG_CELLS_BYTES) {
-            uint32_t word_idx = layer_off / 2u;
-            uint32_t cell = word_idx / 2u;
-            uint32_t field = word_idx % 2u;
-            if (field == 0) {
-                L->cells[cell].tile_index = val;
-            } else {
-                L->cells[cell].palette = (uint8_t)(val & 0xFFu);
-                L->cells[cell].enabled = (uint8_t)((val >> 8) != 0);
+    if (addr >= CPS1_GFXRAM_BASE && addr < CPS1_GFXRAM_BASE + CPS1_GFXRAM_SIZE) {
+        uint32_t off = addr - CPS1_GFXRAM_BASE;
+        s_gfxram[off] = (uint8_t)(val >> 8);
+        s_gfxram[off + 1] = (uint8_t)(val & 0xFFu);
+
+        /* Route into whichever parsed view CURRENTLY claims this address
+         * (base recomputed from the live CPS-A registers every write) --
+         * a moved base register genuinely changes where this lands. */
+        uint32_t obj_base = cps1_obj_base_addr();
+        uint32_t obj_size = (uint32_t)s_synthetic_oam.count * 8u;
+        if (addr >= obj_base && addr < obj_base + obj_size) {
+            uint32_t word_idx = (addr - obj_base) / 2u;
+            uint32_t entry = word_idx / 4u;
+            uint32_t field = word_idx % 4u;
+            cps1_oam_entry_t *s = &s_synthetic_oam.sprites[entry];
+            switch (field) {
+            case 0: s->y = (int16_t)val; break;
+            case 1: s->tile_index = val; break;
+            case 2: s->attr = (uint8_t)val; break;
+            default: s->x = (int16_t)val; break;
             }
-        } else if (layer_off == CPS1_BG_CELLS_BYTES) {
-            L->scroll_x = (int16_t)val;
-        } else if (layer_off == CPS1_BG_CELLS_BYTES + 2u) {
-            L->scroll_y = (int16_t)val;
+            return;
         }
-        return;
+
+        uint32_t pal_base = cps1_palette_base_addr();
+        uint32_t pal_size = (uint32_t)CPS1_PALETTE_BANKS * CPS1_PALETTE_COLORS * 2u;
+        if (addr >= pal_base && addr < pal_base + pal_size) {
+            uint32_t word_idx = (addr - pal_base) / 2u;
+            unsigned bank = word_idx / CPS1_PALETTE_COLORS;
+            unsigned color = word_idx % CPS1_PALETTE_COLORS;
+            s_synthetic_palette.colors[bank][color] = cps1_palette_build(val);
+            return;
+        }
+
+        for (unsigned layer = 0; layer < CPS1_BG_LAYER_COUNT; layer++) {
+            uint32_t base = cps1_scroll_base_addr(layer);
+            if (addr >= base && addr < base + CPS1_BG_CELLS_BYTES) {
+                uint32_t word_idx = (addr - base) / 2u;
+                uint32_t cell = word_idx / 2u;
+                uint32_t field = word_idx % 2u;
+                cps1_bg_layer_t *L = &s_bg.layers[layer];
+                if (field == 0) {
+                    L->cells[cell].tile_index = val;
+                } else {
+                    L->cells[cell].palette = (uint8_t)(val & 0xFFu);
+                    L->cells[cell].enabled = (uint8_t)((val >> 8) != 0);
+                }
+                return;
+            }
+        }
+
+        return; /* plain gfxram byte, no region currently claims it */
     }
+
     /* PRG ROM / unmapped: writes are no-ops. */
 }
 
@@ -302,6 +436,7 @@ void cps1_core_reset(cps1_engine_kind_t engine)
     cps1_ppu_init_synthetic();
     cps1_bg_init_synthetic();
     cps1_sound_init_synthetic();
+    cps1_gfxram_init_synthetic();
 
     cps1_engine_state_t *e = &s_engine[engine];
     e->frame = 0;
@@ -309,6 +444,18 @@ void cps1_core_reset(cps1_engine_kind_t engine)
         e->fb[i] = 0;
     cps1_cpu68k_reset(&e->cpu, s_cpu_test_program, sizeof(s_cpu_test_program));
     cps1_cpu68k_attach_bus(&e->cpu, &s_bus);
+
+    /* Nothing has been latched yet -- matches real hardware's first frame
+     * showing no sprites until the first vblank latch happens. */
+    s_buffered_obj.count = 0;
+}
+
+/* docs/CPS1_MAME_ALIGNMENT.md section 5, cps1_objram_latch: copies the
+ * CURRENT (CPU-writable) OAM into the buffer the renderer actually reads,
+ * so this frame's CPU writes only become visible starting NEXT frame. */
+static void cps1_core_latch_obj(void)
+{
+    s_buffered_obj = s_synthetic_oam;
 }
 
 static void cps1_core_step_cpu(cps1_engine_state_t *e, cps1_engine_kind_t engine)
@@ -350,10 +497,11 @@ void cps1_core_run_frame(cps1_engine_kind_t engine)
                           &s_tile_cache, &s_synthetic_palette, s_middle_fb);
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL3], CPS1_BG_SCROLL3, &s_synthetic_rom,
                           &s_tile_cache, &s_synthetic_palette, s_top_fb);
-    cps1_ppu_render(&s_synthetic_oam, &s_synthetic_rom, &s_tile_cache, &s_synthetic_palette, s_top_fb);
+    cps1_ppu_render(&s_buffered_obj, &s_synthetic_rom, &s_tile_cache, &s_synthetic_palette, s_top_fb);
     cps1_compositor_blend(s_bottom_fb, s_middle_fb, s_top_fb, e->fb);
 
     cps1_core_mix_sound_frame();
+    cps1_core_latch_obj();
 }
 
 /*
@@ -376,9 +524,10 @@ void cps1_core_run_frame_device_cost(cps1_engine_kind_t engine)
         e->fb[i] = 0;
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL3], CPS1_BG_SCROLL3, &s_synthetic_rom,
                           &s_tile_cache, &s_synthetic_palette, e->fb);
-    cps1_ppu_render(&s_synthetic_oam, &s_synthetic_rom, &s_tile_cache, &s_synthetic_palette, e->fb);
+    cps1_ppu_render(&s_buffered_obj, &s_synthetic_rom, &s_tile_cache, &s_synthetic_palette, e->fb);
 
     cps1_core_mix_sound_frame();
+    cps1_core_latch_obj();
 }
 
 const uint16_t *cps1_core_get_framebuffer(cps1_engine_kind_t engine)
@@ -427,6 +576,19 @@ int cps1_core_oam_peek(uint32_t index, int16_t *out_x, int16_t *out_y,
     return 1;
 }
 
+int cps1_core_buffered_oam_peek(uint32_t index, int16_t *out_x, int16_t *out_y,
+                                 uint16_t *out_tile, uint8_t *out_attr)
+{
+    if (index >= s_buffered_obj.count)
+        return 0;
+    const cps1_oam_entry_t *s = &s_buffered_obj.sprites[index];
+    if (out_x)    *out_x = s->x;
+    if (out_y)    *out_y = s->y;
+    if (out_tile) *out_tile = s->tile_index;
+    if (out_attr) *out_attr = s->attr;
+    return 1;
+}
+
 uint16_t cps1_core_palette_peek(unsigned bank, unsigned color)
 {
     if (bank >= CPS1_PALETTE_BANKS || color >= CPS1_PALETTE_COLORS)
@@ -439,10 +601,12 @@ uint16_t cps1_core_palette_peek(unsigned bank, unsigned color)
  * word)/palette-RAM(bank 1, color 2), writes a distinct MOVEQ-range value
  * through each, and reads WRAM back into D1 to prove the round trip.
  *   MOVEA.L #CPS1_WRAM_BASE,A0 ; MOVEQ #7,D0  ; MOVE.W D0,(A0) ; MOVE.W (A0),D1
- *   MOVEA.L #CPS1_OBJ_BASE,A1  ; MOVEQ #99,D2 ; MOVE.W D2,(A1)
- *   MOVEA.L #(CPS1_PAL_BASE+36),A2 ; MOVEQ #21,D3 ; MOVE.W D3,(A2)
+ *   MOVEA.L #<default OBJ addr>,A1  ; MOVEQ #99,D2 ; MOVE.W D2,(A1)
+ *   MOVEA.L #<default PALETTE addr + 36>,A2 ; MOVEQ #21,D3 ; MOVE.W D3,(A2)
  *   RTS
- * (palette bank 1 color 2 -> word index 1*16+2=18 -> byte offset 36)
+ * (palette bank 1 color 2 -> word index 1*16+2=18 -> byte offset 36; Phase 9
+ * addresses: OBJ default offset 0 -> 0x900000, PALETTE default offset
+ * 0x14000 -> 0x914000+36=0x914024 -- see CPS1_DEFAULT_*_OFFSET above.)
  */
 static const uint8_t s_vdp_bus_test_program[] = {
     0x20, 0x7C, 0x00, 0xFF, 0x00, 0x00, /* MOVEA.L #0xFF0000,A0 */
@@ -452,7 +616,7 @@ static const uint8_t s_vdp_bus_test_program[] = {
     0x22, 0x7C, 0x00, 0x90, 0x00, 0x00, /* MOVEA.L #0x900000,A1 */
     0x74, 0x63,                         /* MOVEQ   #99,D2       */
     0x32, 0x82,                         /* MOVE.W  D2,(A1)      */
-    0x24, 0x7C, 0x00, 0x91, 0x00, 0x24, /* MOVEA.L #0x910024,A2 */
+    0x24, 0x7C, 0x00, 0x91, 0x40, 0x24, /* MOVEA.L #0x914024,A2 */
     0x76, 0x15,                         /* MOVEQ   #21,D3       */
     0x34, 0x83,                         /* MOVE.W  D3,(A2)      */
     0x4E, 0x75,                         /* RTS                  */
@@ -461,6 +625,7 @@ static const uint8_t s_vdp_bus_test_program[] = {
 int cps1_core_selftest_vdp_bus(void)
 {
     cps1_ppu_init_synthetic();
+    cps1_gfxram_init_synthetic(); /* OBJ/PALETTE resolve via CPS-A registers now (Phase 9) */
 
     cps1_cpu68k_t cpu;
     cps1_cpu68k_reset(&cpu, s_vdp_bus_test_program, sizeof(s_vdp_bus_test_program));
@@ -501,10 +666,12 @@ void cps1_core_sound_mix(int16_t *out, uint32_t count)
 /*
  * Hand-assembled: MOVEA.L #CPS1_SOUND_CMD_BASE,A0 ; MOVEQ #4,D0 (command
  * 0x04 = note 1, tone channel 0, see cps1_sound_hle_trigger) ;
- * MOVE.W D0,(A0) ; RTS.
+ * MOVE.W D0,(A0) ; RTS. Phase 9 moved CPS1_SOUND_CMD_BASE to 0x800180
+ * (the real non-QSound soundlatch address) since 0x920000 now falls
+ * inside the shared gfxram pool.
  */
 static const uint8_t s_sound_bus_test_program[] = {
-    0x20, 0x7C, 0x00, 0x92, 0x00, 0x00, /* MOVEA.L #0x920000,A0 */
+    0x20, 0x7C, 0x00, 0x80, 0x01, 0x80, /* MOVEA.L #0x800180,A0 */
     0x70, 0x04,                         /* MOVEQ   #4,D0        */
     0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
     0x4E, 0x75,                         /* RTS                  */
@@ -544,15 +711,17 @@ int cps1_core_bg_cell_peek(unsigned layer, uint32_t index, uint16_t *out_tile,
  * Hand-assembled: sets SCROLL1 (layer 0) cell 0's tile_index to 7 and its
  * palette/enabled word to 0x0105 (palette=5, enabled=1 -- needs the 16-bit
  * MOVE.W #imm,Dn immediate since 0x0105 is out of MOVEQ's -128..127 range).
- *   MOVEA.L #CPS1_BG_BASE,A0        ; MOVEQ #7,D0        ; MOVE.W D0,(A0)
- *   MOVEA.L #(CPS1_BG_BASE+2),A1    ; MOVE.W #0x0105,D1  ; MOVE.W D1,(A1)
+ * Phase 9: SCROLL1's default gfxram offset is 0x4000 -> absolute 0x904000
+ * (CPS1_DEFAULT_SCROLL1_OFFSET above), not the old fixed 0x930000.
+ *   MOVEA.L #0x904000,A0 ; MOVEQ #7,D0       ; MOVE.W D0,(A0)
+ *   MOVEA.L #0x904002,A1 ; MOVE.W #0x0105,D1 ; MOVE.W D1,(A1)
  *   RTS
  */
 static const uint8_t s_bg_bus_test_program[] = {
-    0x20, 0x7C, 0x00, 0x93, 0x00, 0x00, /* MOVEA.L #0x930000,A0 */
+    0x20, 0x7C, 0x00, 0x90, 0x40, 0x00, /* MOVEA.L #0x904000,A0 */
     0x70, 0x07,                         /* MOVEQ   #7,D0        */
     0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
-    0x22, 0x7C, 0x00, 0x93, 0x00, 0x02, /* MOVEA.L #0x930002,A1 */
+    0x22, 0x7C, 0x00, 0x90, 0x40, 0x02, /* MOVEA.L #0x904002,A1 */
     0x32, 0x3C, 0x01, 0x05,             /* MOVE.W  #0x0105,D1   */
     0x32, 0x81,                         /* MOVE.W  D1,(A1)      */
     0x4E, 0x75,                         /* RTS                  */
@@ -561,6 +730,7 @@ static const uint8_t s_bg_bus_test_program[] = {
 int cps1_core_selftest_bg_bus(void)
 {
     cps1_bg_init_synthetic();
+    cps1_gfxram_init_synthetic(); /* SCROLL1/2/3 resolve via CPS-A registers now (Phase 9) */
 
     cps1_cpu68k_t cpu;
     cps1_cpu68k_reset(&cpu, s_bg_bus_test_program, sizeof(s_bg_bus_test_program));
@@ -575,5 +745,160 @@ int cps1_core_selftest_bg_bus(void)
         return 0;
     if (tile != 7 || palette != 5 || enabled != 1)
         return 0;
+    return 1;
+}
+
+/*
+ * Hand-assembled template: MOVEA.L #0x900000,A0 (default OBJ base + sprite
+ * 0's Y word) ; MOVE.W #<Y>,D0 (patched per call) ; MOVE.W D0,(A0) ; RTS.
+ * A local (non-static) copy so the immediate at bytes [8:9] can be patched
+ * with a different Y value each call.
+ */
+static int cps1_run_obj_write_y(int16_t y_value)
+{
+    uint8_t prog[] = {
+        0x20, 0x7C, 0x00, 0x90, 0x00, 0x00, /* MOVEA.L #0x900000,A0 */
+        0x30, 0x3C, 0x00, 0x00,             /* MOVE.W  #<Y>,D0      */
+        0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
+        0x4E, 0x75,                         /* RTS                  */
+    };
+    prog[8] = (uint8_t)((uint16_t)y_value >> 8);
+    prog[9] = (uint8_t)((uint16_t)y_value & 0xFFu);
+
+    cps1_cpu68k_t writer;
+    cps1_cpu68k_reset(&writer, prog, sizeof(prog));
+    cps1_cpu68k_attach_bus(&writer, &s_bus);
+    cps1_cpu68k_run(&writer, 32);
+    return writer.halted && writer.illegal_count == 0;
+}
+
+int cps1_core_selftest_obj_delay(void)
+{
+    /* cps1_core_reset() also zeroes s_buffered_obj.count -- must run before
+     * any of this test's own bus writes, and this test must run before any
+     * OTHER test relocates OBJ_BASE away from its default (0x900000). */
+    cps1_core_reset(CPS1_ENGINE_INTERPRETER);
+
+    if (!cps1_run_obj_write_y(111))
+        return 0;
+    if (s_synthetic_oam.sprites[0].y != 111)
+        return 0; /* live table: immediate */
+
+    int16_t by = -1;
+    if (cps1_core_buffered_oam_peek(0, NULL, &by, NULL, NULL))
+        return 0; /* nothing latched yet (count==0 right after reset) */
+
+    cps1_core_run_frame(CPS1_ENGINE_INTERPRETER); /* runs+renders+LATCHES */
+
+    by = -1;
+    if (!cps1_core_buffered_oam_peek(0, NULL, &by, NULL, NULL) || by != 111)
+        return 0; /* frame 1's latch made it visible */
+
+    if (!cps1_run_obj_write_y(222))
+        return 0;
+    if (s_synthetic_oam.sprites[0].y != 222)
+        return 0; /* live table already shows the new write */
+
+    by = -1;
+    if (!cps1_core_buffered_oam_peek(0, NULL, &by, NULL, NULL) || by != 111)
+        return 0; /* buffered/rendered table must still show the OLD value */
+
+    cps1_core_run_frame(CPS1_ENGINE_INTERPRETER); /* second latch */
+
+    by = -1;
+    if (!cps1_core_buffered_oam_peek(0, NULL, &by, NULL, NULL) || by != 222)
+        return 0; /* now caught up */
+
+    return 1;
+}
+
+/*
+ * Hand-assembled: moves OBJ_BASE (CPS-A register at 0x800100) to gfxram
+ * offset 0x18000 (reg value 0x180 -- 0x18000/256), writes sprite 0's Y
+ * field at the NEWLY-resolved absolute address (0x900000+0x18000=
+ * 0x918000), then writes a different value at the OLD default OBJ address
+ * (0x900000) to prove that address no longer aliases sprite 0.
+ *   MOVEA.L #0x800100,A0 ; MOVE.W #0x0180,D0 ; MOVE.W D0,(A0)
+ *   MOVEA.L #0x918000,A1 ; MOVEQ #55,D1      ; MOVE.W D1,(A1)
+ *   MOVEA.L #0x900000,A2 ; MOVEQ #99,D2      ; MOVE.W D2,(A2)
+ *   RTS
+ */
+static const uint8_t s_obj_relocation_test_program[] = {
+    0x20, 0x7C, 0x00, 0x80, 0x01, 0x00, /* MOVEA.L #0x800100,A0 */
+    0x30, 0x3C, 0x01, 0x80,             /* MOVE.W  #0x0180,D0   */
+    0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
+    0x22, 0x7C, 0x00, 0x91, 0x80, 0x00, /* MOVEA.L #0x918000,A1 */
+    0x72, 0x37,                         /* MOVEQ   #55,D1       */
+    0x32, 0x81,                         /* MOVE.W  D1,(A1)      */
+    0x24, 0x7C, 0x00, 0x90, 0x00, 0x00, /* MOVEA.L #0x900000,A2 */
+    0x74, 0x63,                         /* MOVEQ   #99,D2       */
+    0x34, 0x82,                         /* MOVE.W  D2,(A2)      */
+    0x4E, 0x75,                         /* RTS                  */
+};
+
+int cps1_core_selftest_obj_relocation(void)
+{
+    cps1_ppu_init_synthetic();
+    cps1_gfxram_init_synthetic();
+
+    cps1_cpu68k_t cpu;
+    cps1_cpu68k_reset(&cpu, s_obj_relocation_test_program, sizeof(s_obj_relocation_test_program));
+    cps1_cpu68k_attach_bus(&cpu, &s_bus);
+    cps1_cpu68k_run(&cpu, 64);
+
+    if (!cpu.halted || cpu.illegal_count != 0)
+        return 0;
+    if (s_cps_a_regs[CPS1_REG_OBJ_BASE] != 0x0180)
+        return 0; /* the register write itself landed */
+    if (s_synthetic_oam.sprites[0].y != 55)
+        return 0; /* write at the NEW resolved address landed on sprite 0 */
+    return 1; /* the stray write to the OLD address (0x900000, now plain
+                 gfxram) must NOT have overwritten sprite 0.y back to 99 --
+                 already implied by the check above, since both writes ran
+                 and only one value can be there. */
+}
+
+/*
+ * Hand-assembled: moves PALETTE_BASE (CPS-A register at 0x80010A) to
+ * gfxram offset 0x1C000 (reg value 0x1C0), writes a raw palette word at
+ * the NEWLY-resolved absolute address for bank 0 color 1
+ * (0x900000+0x1C000+2=0x91C002), then writes a different raw word at the
+ * OLD default palette address for bank 0 color 1 (0x900000+0x14000+2=
+ * 0x914002) to prove that address no longer aliases that color.
+ *   MOVEA.L #0x80010A,A0 ; MOVE.W #0x01C0,D0 ; MOVE.W D0,(A0)
+ *   MOVEA.L #0x91C002,A1 ; MOVE.W #0x0F0F,D1 ; MOVE.W D1,(A1)
+ *   MOVEA.L #0x914002,A2 ; MOVEQ #7,D2       ; MOVE.W D2,(A2)
+ *   RTS
+ */
+static const uint8_t s_palette_relocation_test_program[] = {
+    0x20, 0x7C, 0x00, 0x80, 0x01, 0x0A, /* MOVEA.L #0x80010A,A0 */
+    0x30, 0x3C, 0x01, 0xC0,             /* MOVE.W  #0x01C0,D0   */
+    0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
+    0x22, 0x7C, 0x00, 0x91, 0xC0, 0x02, /* MOVEA.L #0x91C002,A1 */
+    0x32, 0x3C, 0x0F, 0x0F,             /* MOVE.W  #0x0F0F,D1   */
+    0x32, 0x81,                         /* MOVE.W  D1,(A1)      */
+    0x24, 0x7C, 0x00, 0x91, 0x40, 0x02, /* MOVEA.L #0x914002,A2 */
+    0x74, 0x07,                         /* MOVEQ   #7,D2        */
+    0x34, 0x82,                         /* MOVE.W  D2,(A2)      */
+    0x4E, 0x75,                         /* RTS                  */
+};
+
+int cps1_core_selftest_palette_relocation(void)
+{
+    cps1_ppu_init_synthetic();
+    cps1_gfxram_init_synthetic();
+
+    cps1_cpu68k_t cpu;
+    cps1_cpu68k_reset(&cpu, s_palette_relocation_test_program,
+                       sizeof(s_palette_relocation_test_program));
+    cps1_cpu68k_attach_bus(&cpu, &s_bus);
+    cps1_cpu68k_run(&cpu, 64);
+
+    if (!cpu.halted || cpu.illegal_count != 0)
+        return 0;
+    if (s_cps_a_regs[CPS1_REG_PALETTE_BASE] != 0x01C0)
+        return 0; /* the register write itself landed */
+    if (s_synthetic_palette.colors[0][1] != cps1_palette_build(0x0F0F))
+        return 0; /* write at the NEW resolved address landed, converted */
     return 1;
 }

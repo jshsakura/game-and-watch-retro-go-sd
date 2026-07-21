@@ -92,3 +92,49 @@ int cps1_core_bg_cell_peek(unsigned layer, uint32_t index, uint16_t *out_tile,
  * checks SCROLL1's cell 0 actually changed -- proving the 68000 can reach
  * the BG tilemap, not just that cps1_bg.c compiles. */
 int cps1_core_selftest_bg_bus(void);
+
+/*
+ * Phase 9 (docs/CPS1_MAME_ALIGNMENT.md sections 3/4/5/9): OBJ/SCROLL1/2/3/
+ * PALETTE are no longer separate fixed bus regions -- they're views into
+ * one shared 192KB gfxram pool (0x900000-0x92FFFF) at offsets the CPS-A
+ * registers (0x800100-0x80013F) specify, exactly like real hardware's
+ * cps1_base(). Moving a base register genuinely relocates where
+ * subsequent writes land.
+ */
+
+/* cps1_core_oam_peek (declared above) reads back what the CPU is
+ * CURRENTLY writing (immediate, not delayed) -- see
+ * cps1_core_buffered_oam_peek below for what's actually rendered.
+ *
+ * OBJ RAM is delayed one whole frame on real hardware
+ * (docs/CPS1_MAME_ALIGNMENT.md section 5, cps1_objram_latch): this frame's
+ * CPU writes (visible via cps1_core_oam_peek above) only show up in the
+ * buffer cps1_ppu_render actually reads starting NEXT frame. Same
+ * primitive-out-params shape as cps1_core_oam_peek, reading the latched
+ * copy instead of the live one. */
+int cps1_core_buffered_oam_peek(uint32_t index, int16_t *out_x, int16_t *out_y,
+                                 uint16_t *out_tile, uint8_t *out_attr);
+
+/* Hand-assembled program writes sprite 0's Y field through the bus,
+ * confirms it landed in the live table (cps1_core_oam_peek) but NOT yet
+ * in the buffered/rendered one; runs one cps1_core_run_frame(); confirms
+ * it's NOW in the buffered table; writes a second, different Y; confirms
+ * the buffer still shows the FIRST value (not yet re-latched); runs a
+ * second frame; confirms the buffer now shows the second value. Proves
+ * the one-frame delay persists across multiple writes, not just once. */
+int cps1_core_selftest_obj_delay(void);
+
+/* Hand-assembled program changes the OBJ_BASE CPS-A register to a new
+ * gfxram offset, writes sprite 0's Y field at the NEWLY-resolved absolute
+ * address, then writes a different value at the OLD default OBJ address
+ * -- and checks the write landed at the new location and the old
+ * location's write did NOT alias back onto sprite 0. Proves base-register
+ * relocation actually moves where writes land, not just that writes work
+ * at a fixed address. */
+int cps1_core_selftest_obj_relocation(void);
+
+/* Same proof for PALETTE_BASE: relocates it, writes a raw palette word at
+ * the new address (checked via cps1_palette_build), then writes a
+ * different raw word at the OLD default palette address and checks it did
+ * NOT change the color that was just set at the new location. */
+int cps1_core_selftest_palette_relocation(void);
