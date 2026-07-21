@@ -2,7 +2,7 @@
  * scandir that replays a settable file list. Compiled into the test binary. */
 #include <stdlib.h>
 #include <string.h>
-#include "rg_emulators.h"
+#include "rg_clock_state.h"
 #include "rg_storage.h"
 #include <stdio.h>
 
@@ -12,12 +12,11 @@
 
 static unsigned char g_arena[ARENA_BYTES];
 
-retro_emulator_file_t *rg_emulators_shared_file_buffer(int *maxcount)
+uint8_t *clock_overlay_arena(size_t *out_bytes)
 {
-    if (maxcount) *maxcount = 64;
-    return (retro_emulator_file_t *)g_arena;
+    if (out_bytes) *out_bytes = ARENA_BYTES;
+    return g_arena;
 }
-size_t rg_emulators_shared_file_bytes(void) { return ARENA_BYTES; }
 
 /* settable file list for the scandir replay */
 static const char **g_files;

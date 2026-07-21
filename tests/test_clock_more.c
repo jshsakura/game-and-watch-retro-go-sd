@@ -27,6 +27,23 @@ static const char *test_path(const char *p)
   for (char *c = b + 11; *c; c++) if (*c == '/') *c = '_';   /* flatten subdirs */
   return b; }
 #define fopen(p, m) fopen(test_path(p), m)
+/* This test spans BOTH halves of the split clock module: the resident driver
+ * (rg_clock_ring.c -- state, config I/O, runner ticking, alarm timing) and the
+ * overlay UI (rg_clock.c -- rendering, editors, settings menu). Including both
+ * whole gives every static function direct access, exactly like the pre-split
+ * single-file test did. Both files independently declare a few identically-
+ * named private helpers (pressed/fb_fill_screen/PHOTO_HOLD_TBL) -- harmless in
+ * the real build (separate translation units), but a duplicate-definition
+ * error once concatenated here, so rename ring.c's copies before pulling it in. */
+#define pressed          pressed_ring_
+#define fb_fill_screen   fb_fill_screen_ring_
+#define PHOTO_HOLD_TBL   PHOTO_HOLD_TBL_ring_
+#define BEEP_LABELS      BEEP_LABELS_ring_
+#include "../Core/Src/retro-go/rg_clock_ring.c"
+#undef pressed
+#undef fb_fill_screen
+#undef PHOTO_HOLD_TBL
+#undef BEEP_LABELS
 #include "../Core/Src/retro-go/rg_clock.c"
 #undef fopen
 
@@ -67,6 +84,19 @@ uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_bac
  * directly with an explicit timeout_expired argument, so this stub just needs
  * to link. */
 bool odroid_idle_timeout_expired(uint32_t idle_seconds) { (void)idle_seconds; return false; }
+
+/* ---- .overlay_clock staging seams (rg_clock_ring.c's clock_stage_overlay()/
+ * clock_overlay_arena() reference these; nothing here tests overlay-staging
+ * correctness -- that's device-only, see CLAUDE.md). rg_clock_show() itself
+ * is never called by this test, so these bodies never actually run. ------ */
+void   *__RAM_EMU_START__[512];
+void   *__RAM_EMU_END__[512];
+void   *_OVERLAY_CLOCK_BSS_START[512];
+void   *_OVERLAY_CLOCK_BSS_END[512];
+uint32_t ram_start;
+size_t odroid_overlay_cache_file_in_ram(const char *p, uint8_t *d) { (void)p; (void)d; return 0; }
+void SCB_CleanDCache_by_Addr(uint32_t *a, int32_t s) { (void)a; (void)s; }
+
 /* rg_main.c's PAUSE-menu row, reused (not copied) by the clock's own settings
  * menu (see rg_clock.c's clock_settings_menu) -- rg_main.c isn't compiled
  * here, so link a stub. The gauge test below calls cb_vol/cb_bright directly,

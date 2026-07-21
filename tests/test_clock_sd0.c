@@ -30,7 +30,9 @@ static const char *test_path(const char *p)
   for (char *c = b + 11; *c; c++) if (*c == '/') *c = '_';   /* flatten subdirs */
   return b; }
 #define fopen(p, m) fopen(test_path(p), m)
-#include "../Core/Src/retro-go/rg_clock.c"
+/* Only the resident config-load/save clamp logic is under test here --
+ * rg_clock_ring.c alone (the resident half; rg_clock.c is the overlay UI). */
+#include "../Core/Src/retro-go/rg_clock_ring.c"
 #undef fopen
 
 /* ---- firmware-seam stubs (superset of what SD_CARD=0 rg_clock.c needs) --- */
@@ -81,25 +83,21 @@ uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_bac
 /* rg_clock_show() (unused here, but compiled) asks the launcher's global idle
  * timeout — never expired, so it is not exercised by the SD0 clamp tests. */
 bool odroid_idle_timeout_expired(uint32_t idle_seconds) { (void)idle_seconds; return false; }
-/* rg_main.c's PAUSE-menu row, reused (not copied) by the clock's own settings
- * menu -- rg_main.c isn't compiled here, so link a stub. */
-bool main_menu_timeout_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
-{ (void)e; (void)r; if (o && o->value) o->value[0] = 0; return false; }
 
-static lang_t L;
-static void init_lang(void)
-{ const char **p = (const char **)&L;
-  for (size_t i = 0; i < sizeof(L) / sizeof(const char *); i++) p[i] = "x"; }
-const lang_t *curr_lang = &L;
-int i18n_draw_text_line(int x,int y,int w,const char*t,uint16_t c,uint16_t bg,int f){(void)x;(void)y;(void)w;(void)t;(void)c;(void)bg;(void)f;return 0;}
-int i18n_get_text_width(const char *t){ return (int)strlen(t) * 6; }
-int odroid_overlay_dialog(const char*h,odroid_dialog_choice_t*o,int s,void(*r)(void),int f){(void)h;(void)o;(void)s;(void)r;(void)f;return -1;}
-void odroid_overlay_draw_fill_rect(int x,int y,int w,int h,uint16_t c){(void)x;(void)y;(void)w;(void)h;(void)c;}
-void odroid_overlay_draw_text(int x,int y,int w,const char*t,uint16_t c,uint16_t b){(void)x;(void)y;(void)w;(void)t;(void)c;(void)b;}
-void odroid_overlay_draw_logo(int x,int y,int l,uint16_t c){(void)x;(void)y;(void)l;(void)c;}
-retro_logo_image *rg_get_logo(int16_t i){ (void)i; return NULL; }
-void odroid_overlay_draw_battery(int p,int x,int y){(void)p;(void)x;(void)y;}
-int odroid_overlay_get_font_width(void){return 8;}
+/* ---- .overlay_clock staging seams + the overlay half (rg_clock.c), never
+ * actually reached by this test (rg_clock_show() is never called) but needed
+ * to link -- see test_clock_alarm.c's identical block for why. ---------- */
+void   *__RAM_EMU_START__[512];
+void   *__RAM_EMU_END__[512];
+void   *_OVERLAY_CLOCK_BSS_START[512];
+void   *_OVERLAY_CLOCK_BSS_END[512];
+uint32_t ram_start;
+size_t odroid_overlay_cache_file_in_ram(const char *p, uint8_t *d) { (void)p; (void)d; return 0; }
+void SCB_CleanDCache_by_Addr(uint32_t *a, int32_t s) { (void)a; (void)s; }
+void clock_overlay_frame(clock_mode_t mode, bool ringing, uint32_t now, uint32_t last_input, bool force_dirty)
+{ (void)mode; (void)ringing; (void)now; (void)last_input; (void)force_dirty; }
+bool clock_settings_menu(void) { return false; }
+
 int odroid_input_read_battery(void){return 50;}
 int GW_GetCurrentHour(void){return 0;} int GW_GetCurrentMinute(void){return 0;}
 int GW_GetCurrentSubSeconds(void){return 0;} int GW_GetCurrentMonth(void){return 1;}
@@ -147,7 +145,6 @@ static bool file_contains(const char *needle)
 
 int main(void)
 {
-    init_lang();
     remove(test_path(CLOCK_CFG_PATH));
     remove(test_path(CLOCK_CFG_LEGACY));
 
