@@ -15,6 +15,7 @@
  * clock_settings_menu, clock_gif_*, clock_album_*) while s_ring_mp3 is true —
  * that memory holds Music-decoder bytes at that point, not clock UI code. */
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -460,7 +461,7 @@ void clock_gif_reserve(void)
 #define ALARM_RING_MS 60000u
 static uint32_t s_snooze_tick = 0;
 
-void rg_clock_show(void)
+static void clock_show_run(void)
 {
     clock_mode_t mode = MODE_CLOCK;
     odroid_gamepad_state_t k, prev = {0};
@@ -603,4 +604,42 @@ void rg_clock_show(void)
     lcd_swap(); lcd_sleep_while_swap_pending();
     fb_fill_screen(lcd_get_active_buffer(), 0x0000);
     clock_config_save();
+}
+
+/* ---- launcher entry point -------------------------------------------------
+ *
+ * ★ The clock is the ONLY RAM_EMU overlay that returns in-process to the
+ * launcher -- every emulator core's "exit" is a reboot (main_sm.c, main_vb.c,
+ * ~30 cores), so their identical `ram_start = &_OVERLAY_X_BSS_END` move
+ * (clock_stage_overlay() above does the same thing for .overlay_clock) is
+ * never restored and it has never mattered: nothing comes back to read it.
+ * The clock does come back, so it is the first thing to actually need the
+ * restore -- forgetting it left the launcher's OWN ram_calloc() user
+ * (rg_emulators.c's shared_files ROM list) reading/writing through a cursor
+ * still pointed at .overlay_clock's footprint, corrupting the list in place
+ * (the 0721 BusFault: get_darken_pixel_d / gui_draw_item_postion_h reading
+ * garbage right after a "gui_resize list snes 4->1 items" / "0->4" churn).
+ *
+ * This wrapper is the ONLY body of rg_clock_show(): whichever of
+ * clock_show_run()'s two `break`s (or any future exit path added inside it)
+ * returns, control comes back here before it can reach the launcher, so the
+ * restore below is structural, not something a future edit has to remember
+ * to call. rg_emulators.c's own return-to-launcher paths (after an emulator
+ * exits, before the reboot) reset the SAME cursor with `ram_start = 0` — the
+ * launcher's "unowned" sentinel (gui.c / rg_main.c lazily reclaim
+ * __RAM_EMU_START__ the next time something needs it) — so 0 is the value
+ * that matches convention here, not whatever ram_start held before entry. */
+void rg_clock_show(void)
+{
+    clock_show_run();
+
+    /* Fail loudly instead of quietly corrupting the launcher's ROM list:
+     * by the time clock_show_run() returns, ram_start must still be exactly
+     * what clock_stage_overlay() last set it to for this session (the
+     * ordinary case) or already reset to 0 by some path inside the body --
+     * anything else means something clobbered it (a stray write, a missed
+     * restage, memory corruption) and the launcher must not silently run
+     * with it. See tests/test_clock_ram_start_restored.sh. */
+    assert(ram_start == (uint32_t)&_OVERLAY_CLOCK_BSS_END || ram_start == 0);
+    ram_start = 0;
 }

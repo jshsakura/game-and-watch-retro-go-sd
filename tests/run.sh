@@ -417,6 +417,10 @@ echo "=== idle power off: one setting, one rule, and every idle loop asks it ===
 bash tests/test_idle_timeout_wired.sh
 rc=$(( rc || $? ))
 
+echo "=== clock ram_start restore: the only RAM_EMU overlay that returns in-process ==="
+bash tests/test_clock_ram_start_restored.sh
+rc=$(( rc || $? ))
+
 echo "=== boot rescue: a bricked boot must end somewhere a person can act ==="
 # A bad firmware hung the device dark with the power button dead — firmware
 # reads that button, so a hang can only be escaped by a flat battery. The

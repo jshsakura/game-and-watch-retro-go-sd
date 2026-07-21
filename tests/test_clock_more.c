@@ -637,6 +637,41 @@ static void test_gauge_selection_polarity(void)
           "cb_bright selected: compensated/inverted polarity (was NEVER true pre-fix)");
 }
 
+/* ---- ram_start restore: the 0721 BusFault regression --------------------
+ * The clock is the only RAM_EMU overlay that returns IN-PROCESS to the
+ * launcher: clock_stage_overlay() moves ram_start past .overlay_clock's own
+ * footprint, exactly like every emulator core's identical
+ * `ram_start = &_OVERLAY_X_BSS_END` move (main_sm.c, main_vb.c, ~30 cores) --
+ * but their return-to-launcher path is a reboot, so nothing ever comes back
+ * to read the stale cursor. The clock does come back, and forgetting to
+ * reset it left the launcher's OWN ram_calloc() user (rg_emulators.c's
+ * shared_files ROM list) reading/writing through a cursor still pointed at
+ * .overlay_clock's footprint -- a real device BusFault (get_darken_pixel_d /
+ * gui_draw_item_postion_h reading garbage right after a "gui_resize list"
+ * churn), not a hypothetical.
+ *
+ * Drives the REAL rg_clock_show() loop (not a reimplementation) with a
+ * scripted START press -- not ringing, so it takes the immediate-exit branch
+ * on the very first iteration -- and checks the postcondition every call
+ * site implicitly relies on: the launcher's bump-allocator cursor must be
+ * back at its "unowned" sentinel (0; see gui.c/rg_main.c's lazy
+ * `if (ram_start == 0) ram_start = &__RAM_EMU_START__` reclaim) before
+ * rg_clock_show() ever returns, structurally -- not by whichever exit path
+ * happened to run remembering to do it. */
+static void test_ram_start_restored_on_exit(void)
+{
+    remove(test_path(CLOCK_CFG_PATH));
+
+    g_script_len = 0; g_script_pos = 0;
+    script_push(-1);                    /* swallow the opening button */
+    script_push(ODROID_INPUT_START);    /* new press, not ringing -> exit branch */
+    rg_clock_show();
+    CHECK(ram_start == 0,
+          "rg_clock_show() restores ram_start to the launcher's unowned sentinel on exit");
+
+    remove(test_path(CLOCK_CFG_PATH));
+}
+
 int main(void)
 {
     init_lang();
@@ -654,6 +689,7 @@ int main(void)
     test_clock_edit_time_rollover();
     test_clock_should_idle_sleep();
     test_ring_overlay();
+    test_ram_start_restored_on_exit();
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }
