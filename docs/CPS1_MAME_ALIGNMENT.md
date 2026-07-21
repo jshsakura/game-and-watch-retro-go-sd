@@ -115,9 +115,6 @@ backwards; corrected here after fetching `drawgfx.cpp` specifically to check.
   *tilemap column index* (not the tile code), so it alternates by screen column, not by
   tile content. This is the exact behavior the source comment at `cps1.cpp:3833` warns
   about ("columns of the 8x8 tilemap alternate between sides of the 16x16 tile").
-- Within one half-tile's 4 bytes (one row), `planeoffset={24,16,8,0}` (bits) =
-  `{3,2,1,0}` (byte-within-half-row): **byte 3 holds plane 0 (LSB of the 4bpp pixel
-  index), byte 2 holds plane 1, byte 1 holds plane 2, byte 0 holds plane 3 (MSB)**.
 - `xoffset[col]=col` and MSB-first bit extraction means **column 0 = bit 7 of each
   plane byte, column 7 = bit 0** — i.e. bit-reversed relative to a naive "bit N = pixel
   N" reading. `Core/Src/porting/cps1/cps1_rom.c`'s existing `cps1_rom_decode_tile_planar`
