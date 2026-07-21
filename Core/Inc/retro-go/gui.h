@@ -68,8 +68,34 @@ typedef struct {
     gui_event_handler_t event_handler;
 } tab_t;
 
+/*
+ * Every tab the launcher can hold: one per emulator, plus the tabs that are
+ * not emulators (Favorites, registered directly by rg_favorites_register_tab).
+ *
+ * This was a bare 32 while there were 32 emulators AND a Favorites tab -- 33
+ * gui_add_tab() calls into a 32-slot array. The 33rd wrote the tab pointer
+ * straight into `tabcount`, which sits immediately after this array, and the
+ * next instruction wrote the correct count back over it (verified in the
+ * disassembly: `str r4,[r3,r2,lsl#2]` then `str r1,[r3,#128]`). So the count
+ * looked right and nothing crashed -- gui.tabs[32] simply read back as the
+ * integer 33, used as a tab_t *, and the LAST system in the list (ZX Spectrum,
+ * alphabetically last) appeared as a nameless, iconless blank.
+ *
+ * Worse than cosmetic: that fake tab points at address 0x21, in ITCM, and
+ * gui_init_tab() and the tab event handlers WRITE through it (`initialized`,
+ * `status[96]`), landing on 0x61-0xC5 -- which is inside the SNES core's
+ * ITCM-resident interpreter (.itcm_snes_interp starts at ORIGIN+4).
+ *
+ * MAX_EMULATOR_TABS is the other half of this number and must equal
+ * rg_emulators.c's MAX_EMULATORS; a _Static_assert there ties the two together
+ * so they cannot drift apart again silently, which is how this happened.
+ */
+#define MAX_EMULATOR_TABS      32
+#define GUI_NON_EMULATOR_TABS  1     /* Favorites */
+#define MAX_TABS               (MAX_EMULATOR_TABS + GUI_NON_EMULATOR_TABS)
+
 typedef struct {
-    tab_t *tabs[32];
+    tab_t *tabs[MAX_TABS];
     int tabcount;
     int selected;
     int theme;

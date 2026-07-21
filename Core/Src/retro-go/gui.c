@@ -239,6 +239,17 @@ void gui_event(gui_event_t event, tab_t *tab)
 
 tab_t *gui_add_tab(const char *name, int16_t logo_idx, int16_t header_idx, void *arg, void *event_handler)
 {
+    /* Refuse rather than write one past the end. The array used to be exactly
+     * one slot short and the overflow landed on `tabcount` itself, so the
+     * count stayed plausible and the only visible symptom was the last system
+     * turning into a blank tab -- see MAX_TABS in gui.h. A tab that is dropped
+     * loudly is a bug someone can find. */
+    if (gui.tabcount >= MAX_TABS) {
+        printf("gui_add_tab: no room for '%s' (MAX_TABS=%d) -- tab DROPPED\n",
+               name, MAX_TABS);
+        return NULL;
+    }
+
     tab_t *tab = ahb_calloc(1, sizeof(tab_t));
 
     sprintf(tab->name, "%s", name);
