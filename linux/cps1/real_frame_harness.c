@@ -374,6 +374,16 @@ int main(int argc, char **argv)
            100.0 * nonzero / (CPS1_FB_WIDTH * CPS1_FB_HEIGHT), distinct);
     printf("[frame] tile cache: %u hits, %u misses\n", s_cache.hits, s_cache.misses);
 
+    {   /* State dump for the M7 cost rig: gfxram plus the CPS-A registers
+         * are everything the renderer needs (it rebuilds tilemaps, palette
+         * and scroll from them exactly as this harness does). */
+        FILE *g = fopen("/tmp/cps1_rom/gfxram.bin", "wb");
+        if (g) { fwrite(s_gfxram, 1, GFXRAM_BYTES, g); fclose(g); }
+        FILE *r = fopen("/tmp/cps1_rom/cpsregs.bin", "wb");
+        if (r) { fwrite(s_regs, 2, 0xC0, r); fclose(r); }
+        printf("[frame] dumped gfxram.bin (%u B) + cpsregs.bin\n", GFXRAM_BYTES);
+    }
+
     FILE *o = fopen("/tmp/cps1_rom/frame.ppm", "wb");
     if (o) {
         fprintf(o, "P6\n%d %d\n255\n", CPS1_FB_WIDTH, CPS1_FB_HEIGHT);
