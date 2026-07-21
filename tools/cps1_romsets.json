@@ -1,0 +1,96 @@
+{
+  "_comment": [
+    "CANONICAL CPS-1 romset table. This file is the single source of truth and",
+    "is checked into BOTH repositories byte-for-byte identically:",
+    "  retro-go-sd     tools/cps1_romsets.json  -> generates cps1_romset.c",
+    "  game-and-what   tools/cps1_romsets.json  -> drives upload validation",
+    "Neither side hand-edits its generated artifact. tests/test_cps1_romset_generated.sh",
+    "fails the build if cps1_romset.c is stale, and the sha256 of this file is",
+    "recorded in docs/CPS1_LIBRARY_CONTRACT.md so a divergent copy is detectable",
+    "from either side alone.",
+    "",
+    "Transcribed from mamedev/mame src/mame/capcom/cps1.cpp ROM_START blocks.",
+    "The slot ORDER was independently re-derived from real dumps against the",
+    "assembled 4 MB GFX image the renderer draws a correct title screen from --",
+    "see linux/cps1/gfx_chips_selftest.c. It is data MAME owns; a new game means",
+    "reading its ROM_START, not inferring it.",
+    "",
+    "prg: two 512 KB chips in ascending 68000 address order. prg[0] holds",
+    "     0x000000-0x07FFFF and therefore the reset vector.",
+    "gfx: eight 512 KB chips in cps1_gfx_chip_byte() slot order -- slots 0-3 are",
+    "     the 0x000000 half, slots 4-7 the 0x200000 half. NOTE that this is NOT",
+    "     filename order: tk2_gfx3 is slot 1 and tk2_gfx2 is slot 2, and wofj's",
+    "     upper chips are named tk205..tk208 which sort ahead of tk2_gfx1..4",
+    "     entirely. Assigning by filename corrupts 85% of the region while every",
+    "     file still loads and every size still checks out.",
+    "",
+    "`parent` records MAME's cloneof relation. The firmware does not use it --",
+    "it matches on hashes alone -- but the library needs it to tell a user which",
+    "set to supply when a clone archive arrives on its own.",
+    "",
+    "`filename` fields are COMMENTS. Nothing may look a chip up by them."
+  ],
+  "version": 1,
+  "chip_size": 524288,
+  "romsets": [
+    {
+      "name": "wofj",
+      "title": "Tenchi wo Kurau II: Sekiheki no Tatakai (Japan 921031)",
+      "parent": "wof",
+      "prg": [
+        { "crc32": "9b215a68", "filename": "tk2j_23c.8f" },
+        { "crc32": "b74b09ac", "filename": "tk2j_22c.7f" }
+      ],
+      "gfx": [
+        { "crc32": "0d9cb9bf", "filename": "tk2_01.3a",  "shared_with_parent": true },
+        { "crc32": "45227027", "filename": "tk2_02.4a",  "shared_with_parent": true },
+        { "crc32": "c5ca2460", "filename": "tk2_03.5a",  "shared_with_parent": true },
+        { "crc32": "e349551c", "filename": "tk2_04.6a",  "shared_with_parent": true },
+        { "crc32": "e4a44d53", "filename": "tk2_05.7a" },
+        { "crc32": "58066ba8", "filename": "tk2_06.8a" },
+        { "crc32": "d706568e", "filename": "tk2_07.9a" },
+        { "crc32": "d4a19a02", "filename": "tk2_08.10a" }
+      ]
+    },
+    {
+      "name": "wofr1",
+      "title": "Warriors of Fate (World 921002)",
+      "parent": "wof",
+      "_note": "This is what the archive distributed as wof.zip actually contains: its program CRCs are wofr1's, not wof's. A zip's name does not describe its contents.",
+      "prg": [
+        { "crc32": "11fb2ed1", "filename": "tk2e_23b.8f" },
+        { "crc32": "479b3f24", "filename": "tk2e_22b.7f" }
+      ],
+      "gfx": [
+        { "crc32": "0d9cb9bf", "filename": "tk2-1m.3a" },
+        { "crc32": "45227027", "filename": "tk2-3m.5a" },
+        { "crc32": "c5ca2460", "filename": "tk2-2m.4a" },
+        { "crc32": "e349551c", "filename": "tk2-4m.6a" },
+        { "crc32": "291f0f0b", "filename": "tk2-5m.7a" },
+        { "crc32": "3edeb949", "filename": "tk2-7m.9a" },
+        { "crc32": "1abd14d6", "filename": "tk2-6m.8a" },
+        { "crc32": "b27948e3", "filename": "tk2-8m.10a" }
+      ]
+    },
+    {
+      "name": "wof",
+      "title": "Warriors of Fate (World 921031)",
+      "parent": null,
+      "_note": "No dump of this set has been seen by this port. The entry costs 40 bytes and means a user who has one is not told their complete romset is unrecognised.",
+      "prg": [
+        { "crc32": "0d708505", "filename": "tk2e_23c.8f" },
+        { "crc32": "608c17e3", "filename": "tk2e_22c.7f" }
+      ],
+      "gfx": [
+        { "crc32": "0d9cb9bf", "filename": "tk2-1m.3a" },
+        { "crc32": "45227027", "filename": "tk2-3m.5a" },
+        { "crc32": "c5ca2460", "filename": "tk2-2m.4a" },
+        { "crc32": "e349551c", "filename": "tk2-4m.6a" },
+        { "crc32": "291f0f0b", "filename": "tk2-5m.7a" },
+        { "crc32": "3edeb949", "filename": "tk2-7m.9a" },
+        { "crc32": "1abd14d6", "filename": "tk2-6m.8a" },
+        { "crc32": "b27948e3", "filename": "tk2-8m.10a" }
+      ]
+    }
+  ]
+}

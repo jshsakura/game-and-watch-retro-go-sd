@@ -1,4 +1,29 @@
-/*
+#!/usr/bin/env python3
+"""Generates Core/Src/porting/cps1/cps1_romset.c from tools/cps1_romsets.json.
+
+Two programs need the same CPS-1 chip table: this firmware, which assigns each
+chip to a slot at load time, and the library app, which validates a romset at
+upload time. Keeping two hand-written copies in step is a discipline, and the
+failure mode when the discipline slips is a game that loads cleanly and renders
+wrong -- the exact failure CRC identification exists to prevent. So there is one
+table, in JSON, and the C is generated from it.
+
+  tools/gen_cps1_romset.py              rewrite the .c
+  tools/gen_cps1_romset.py --check      exit 1 if the .c is stale (used by tests)
+
+Deliberately emits no filenames. They live in the JSON as comments for
+cross-referencing MAME, and nothing on the device may look a chip up by one.
+"""
+import argparse
+import json
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+JSON_PATH = ROOT / "tools" / "cps1_romsets.json"
+C_PATH = ROOT / "Core" / "Src" / "porting" / "cps1" / "cps1_romset.c"
+
+HEADER = '''/*
  * GENERATED FILE -- do not edit.
  *
  * Source:    tools/cps1_romsets.json
@@ -33,40 +58,9 @@ uint32_t cps1_crc32(const uint8_t *data, uint32_t len)
 }
 
 const cps1_romset_t cps1_romsets[] = {
+'''
 
-    /* Tenchi wo Kurau II: Sekiheki no Tatakai (Japan 921031)
-     * MAME clone of 'wof'.
-     */
-    {
-        .name = "wofj",
-        .prg_crc = { 0x9b215a68u, 0xb74b09acu },
-        .gfx_crc = { 0x0d9cb9bfu, 0x45227027u, 0xc5ca2460u, 0xe349551cu,
-                     0xe4a44d53u, 0x58066ba8u, 0xd706568eu, 0xd4a19a02u },
-    },
-    /* Warriors of Fate (World 921002)
-     * MAME clone of 'wof'.
-     * This is what the archive distributed as wof.zip actually contains: its
-     * program CRCs are wofr1's, not wof's. A zip's name does not describe its
-     * contents.
-     */
-    {
-        .name = "wofr1",
-        .prg_crc = { 0x11fb2ed1u, 0x479b3f24u },
-        .gfx_crc = { 0x0d9cb9bfu, 0x45227027u, 0xc5ca2460u, 0xe349551cu,
-                     0x291f0f0bu, 0x3edeb949u, 0x1abd14d6u, 0xb27948e3u },
-    },
-    /* Warriors of Fate (World 921031)
-     * No dump of this set has been seen by this port. The entry costs 40
-     * bytes and means a user who has one is not told their complete romset is
-     * unrecognised.
-     */
-    {
-        .name = "wof",
-        .prg_crc = { 0x0d708505u, 0x608c17e3u },
-        .gfx_crc = { 0x0d9cb9bfu, 0x45227027u, 0xc5ca2460u, 0xe349551cu,
-                     0x291f0f0bu, 0x3edeb949u, 0x1abd14d6u, 0xb27948e3u },
-    },
-};
+FOOTER = '''};
 
 const unsigned cps1_romset_count = sizeof(cps1_romsets) / sizeof(cps1_romsets[0]);
 
@@ -143,3 +137,75 @@ const cps1_romset_t *cps1_romset_closest(const uint32_t *crcs, unsigned count,
         *missing_out = best_missing;
     return best;
 }
+'''
+
+
+def render(data):
+    chip_size = data["chip_size"]
+    out = [HEADER]
+    for rs in data["romsets"]:
+        prg = rs["prg"]
+        gfx = rs["gfx"]
+        if len(prg) != 2:
+            sys.exit(f"{rs['name']}: expected 2 program chips, got {len(prg)}")
+        if len(gfx) != 8:
+            sys.exit(f"{rs['name']}: expected 8 graphics chips, got {len(gfx)}")
+
+        note = rs.get("_note")
+        out.append(f"    /* {rs['title']}")
+        if rs.get("parent"):
+            out.append(f"     * MAME clone of '{rs['parent']}'.")
+        if note:
+            # keep the note readable at 78 columns
+            words, line = note.split(), "     *"
+            for w in words:
+                if len(line) + 1 + len(w) > 78:
+                    out.append(line)
+                    line = "     *"
+                line += " " + w
+            out.append(line)
+        out.append("     */")
+        out.append("    {")
+        out.append(f'        .name = "{rs["name"]}",')
+        out.append("        .prg_crc = { " + ", ".join(f'0x{c["crc32"]}u' for c in prg) + " },")
+        out.append("        .gfx_crc = { " +
+                   ", ".join(f'0x{c["crc32"]}u' for c in gfx[:4]) + ",")
+        out.append("                     " +
+                   ", ".join(f'0x{c["crc32"]}u' for c in gfx[4:]) + " },")
+        out.append("    },")
+    out.append(FOOTER)
+    text = "\n".join(out)
+    # The chip size is a header constant; assert the JSON agrees rather than
+    # emitting a second definition that could disagree with it.
+    if chip_size != 0x80000:
+        sys.exit(f"chip_size {chip_size} is not the 512 KB CPS1_ROMSET_CHIP_SIZE assumes")
+    return text
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--check", action="store_true",
+                    help="exit 1 if the generated file is stale")
+    args = ap.parse_args()
+
+    data = json.loads(JSON_PATH.read_text())
+    text = render(data)
+
+    if args.check:
+        current = C_PATH.read_text() if C_PATH.exists() else ""
+        if current != text:
+            print(f"STALE: {C_PATH.relative_to(ROOT)} does not match "
+                  f"{JSON_PATH.relative_to(ROOT)}", file=sys.stderr)
+            print("       regenerate with: python3 tools/gen_cps1_romset.py", file=sys.stderr)
+            return 1
+        print(f"ok: {C_PATH.relative_to(ROOT)} matches {JSON_PATH.relative_to(ROOT)}")
+        return 0
+
+    C_PATH.write_text(text)
+    print(f"wrote {C_PATH.relative_to(ROOT)} "
+          f"({len(data['romsets'])} romsets from {JSON_PATH.relative_to(ROOT)})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

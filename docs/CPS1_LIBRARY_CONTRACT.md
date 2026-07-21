@@ -112,11 +112,26 @@ reporting an error.
 Measured, not asserted: the mutation test that assigns slots by filename makes
 **3,584,744 of 4,194,304 bytes (85 %)** differ from the reference image.
 
-The firmware's table is `Core/Src/porting/cps1/cps1_romset.c`
-(`wofj` / `wofr1` / `wof`), transcribed from MAME `src/mame/capcom/cps1.cpp`
-and independently re-derived from real dumps. The library side already has the
-same data in `tools/cps1_rom_pack.py`'s `ROMSETS`. **These two tables must not
-drift.**
+### 3.1 One table, generated — not two kept in step by hand
+
+```
+tools/cps1_romsets.json          ← THE source of truth, in BOTH repos, byte-identical
+  │                                sha256 c3d444ba457abaa5a103d38282a4cd782e3751ed78601f67b50611e79fb9e75c
+  ├─ retro-go-sd:   tools/gen_cps1_romset.py → Core/Src/porting/cps1/cps1_romset.c
+  └─ game-and-what: read directly for upload validation
+```
+
+`cps1_romset.c` says GENERATED FILE at the top and is not hand-edited.
+`tests/run.sh` runs `gen_cps1_romset.py --check`, which fails on **both**
+drift directions — an edit to the `.c`, and a JSON change nobody regenerated.
+Verified by breaking each on purpose.
+
+Record the sha256 above when the JSON changes, so a repo holding a stale copy
+is detectable from its own side without consulting the other.
+
+The library's older `tools/cps1_rom_pack.py` `ROMSETS` dict holds the same
+data, but that script is **retired** (it built the abandoned `.cps1`
+container). Read the JSON, not the dict.
 
 Note also that `wof.zip` as distributed actually contains the **wofr1** romset
 — its program CRCs are `11fb2ed1`/`479b3f24`, not `wof`'s. A zip's name does

@@ -303,6 +303,15 @@ $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Src/porting/lib \
     tests/test_lz4_depack.c Core/Src/porting/lib/lz4_depack.c -o /tmp/mtest/test_lz4_depack
 /tmp/mtest/test_lz4_depack || rc=1
 
+echo "=== cps1: the romset table is generated, and matches its source ==="
+# Two programs need the same CPS-1 chip table -- this firmware and the library
+# app that validates a romset at upload time. When they drift the failure is a
+# game that loads cleanly and renders wrong, which is the exact failure CRC
+# identification exists to prevent, so the agreement is a gate rather than a
+# discipline. Catches an edit to the generated .c AND a JSON change nobody
+# regenerated.
+python3 tools/gen_cps1_romset.py --check || rc=1
+
 # === safety nets must not be the thing that breaks the build =========
 # Two CI jobs went red once not from a real defect but from the safety nets
 # themselves: check_core_symbol_aliases.py crashing when nm wasn't on PATH,
