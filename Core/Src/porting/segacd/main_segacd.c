@@ -280,14 +280,28 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     printf("segacd diag v1: bios=%p size=%lu\n", (void *)segacd_bios,
            (unsigned long)bios_size);
 
-    /* base Mega Drive core + Sega CD hardware */
+    /* base Mega Drive core + Sega CD hardware.
+     *
+     * ORDER IS LOAD-BEARING. reset_emulation() calls m68k_pulse_reset(), which
+     * immediately fetches the MAIN 68K's initial SP/PC from $000000/$000004
+     * through the memory map. On a Mega CD the main 68K boots from the *BIOS*,
+     * not from ROM_DATA — and on device ROM_DATA is the CD image, not the BIOS
+     * (unlike the host harness, which aliases ROM_DATA = bios and so gets away
+     * with resetting earlier). So the reset MUST run last, after:
+     *   - power_on()               builds the base gwenesis memory map (page 0 = ROM_DATA)
+     *   - segacd_map_bios()        overrides page 0-1 with the BIOS
+     *   - segacd_main_map_cd_space() overlays PRG/GA/Word-RAM
+     * Only then does the vector fetch land in the BIOS. The previous order
+     * (reset before power_on) fetched vectors from an unbuilt map, leaving the
+     * MAIN 68K running from a garbage PC — a device-only boot Hardfault
+     * (m68ki_read_8 dispatching through a wild page handler). power_on() already
+     * calls m68k_init(), so no separate call is needed. */
     load_cartridge();
-    m68k_init();
-    reset_emulation();
     power_on();
     segacd_init();
     segacd_map_bios(segacd_bios); /* main boots from BIOS, not a cart (0 RAM: XIP) */
     segacd_main_map_cd_space();
+    reset_emulation();            /* pulse-reset MAIN 68K -> reads BIOS reset vectors */
     printf("segacd: hw init done\n");
 
     snprintf(s_cue_path, sizeof(s_cue_path), "%s", ACTIVE_FILE->path);
