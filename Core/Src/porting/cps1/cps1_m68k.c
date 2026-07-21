@@ -200,6 +200,11 @@ uint32_t cps1_m68k_get_areg(unsigned n)
     return m68k_get_reg((m68k_register_t)(M68K_REG_A0 + (n & 7)));
 }
 
+uint16_t cps1_m68k_get_sr(void)
+{
+    return (uint16_t)m68k_get_reg(M68K_REG_SR);
+}
+
 uint32_t cps1_m68k_state_hash(void)
 {
     uint32_t h = 2166136261u;

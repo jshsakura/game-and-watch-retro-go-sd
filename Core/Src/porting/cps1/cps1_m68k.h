@@ -102,4 +102,6 @@ uint32_t cps1_m68k_get_areg(unsigned n);
 
 /* FNV-1a over D0-D7/A0-A7/PC/SR -- the comparison anchor for harnesses,
  * same role cps1_cpu68k_state_hash() had. */
+uint16_t cps1_m68k_get_sr(void);
+
 uint32_t cps1_m68k_state_hash(void);
