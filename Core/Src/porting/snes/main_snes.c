@@ -443,6 +443,9 @@ static void snes_pcm_submit(void) {
     } else
 #endif
     {
+#ifdef SNES_DSP_BLOCK_MIXER
+    apu_catchupDsp(snes->apu);
+#endif
     while (snes->apu->dsp->sampleOffset < 534)
       apu_cycle(snes->apu);
     dsp_getSamples(snes->apu->dsp, audio_buf, SNES_AUDIO_SAMPLES, 1);

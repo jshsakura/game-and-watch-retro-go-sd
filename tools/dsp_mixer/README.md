@@ -1,6 +1,7 @@
 # S-DSP block mixer (PoC)
 
-`mixer_block.c` re-implements the S-DSP sample loop voice-major instead of
+`external/sm/src/snes/dsp_block.c` re-implements the S-DSP sample loop
+voice-major instead of
 sample-major: per run of samples between DSP register writes, each voice is
 mixed in a tight per-voice loop (state in locals, per-chunk constants hoisted,
 released-silent voices skipped ahead decode-to-decode in O(1)), then a mixdown
@@ -33,7 +34,9 @@ bash tools/dsp_mixer/run_ab.sh <rom> [frames=1200] [bench-reps=3]
 | Zelda ALttP (title, 6–7 dense voices) | **bit-identical** | 132.3 | 114.2 | **1.16×** |
 | DKC (echo-heavy, more idle voices) | **bit-identical** | 93.7 | 64.3 | **1.46×** |
 
-No feature forced a per-sample fallback (PMON/noise/KON/KOF all exact). One
+Chrono Trigger requires reference fallback when echo writes overlap a future
+BRR read; the runtime detects that hazard per chunk. PMON/noise/KON/KOF are
+otherwise exact. One
 real bug the gate caught: a BRR end-block (`previousFlags==1`) releases the
 voice *inside* the decoder; the voice loop's local state clobbered it — fixed
 by mirroring the release into the locals.
@@ -42,12 +45,10 @@ by mirroring the release into the locals.
 
 - The echo unit is the irreducible serial core (FIR state + ARAM traffic every
   sample, by SNES design) — it bounds the dense-voice ratio.
-- Integration home: the sound-HLE path (`SpcPlayer_GenerateSamples`), which
-  already calls the DSP in 64-sample runs. The LLE path interleaves `dsp_cycle`
-  with SPC700 opcodes every 32 APU cycles — batching there needs lazy catchup
-  (run blocks, catch up on SPC700 reads of ENVX/OUTX/ENDx), bounded follow-on.
-- M7 rig A/B pending (rig busy at time of writing); host OoO hides dispatch
-  costs the in-order M7 pays, so host ratios are likely conservative — but that
-  is a projection, not a measurement.
+- The LLE runtime integration is gated by `SNES_DSP_BLOCK_MIXER`. It batches
+  between observable dependencies and lazily catches up for ENVX/OUTX/ENDX,
+  DSP register writes, echo ARAM, and BRR/DIR ARAM hazards.
+- M7 runtime parity results are in `CORPUS_REPORT_CODEX.md`. Host timing and M7
+  instruction counts are not device-FPS measurements.
 - perf hardware counters unavailable on this box (`perf_event_paranoid=4`);
   timing ratios only.

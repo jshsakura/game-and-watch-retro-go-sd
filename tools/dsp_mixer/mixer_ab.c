@@ -1,4 +1,4 @@
-/* S-DSP block-mixer A/B: proves dspb_run() (mixer_block.c) is bit-identical to
+/* S-DSP block-mixer A/B: proves dsp_runBlock() (src/snes/dsp_block.c) is bit-identical to
  * the reference dsp_cycle() loop on real game audio, then times both.
  *
  * How: run the real emulation (65816 + SPC700 + reference DSP, the survey
@@ -9,7 +9,7 @@
  * cycle count, and the write stream tagged with its cycle position.
  *
  * Each frame is then replayed OFFLINE twice from the snapshot -- reference
- * dsp_cycle loop vs dspb_run -- on identical inputs (own ARAM copy each, echo
+ * dsp_cycle loop vs dsp_runBlock -- on identical inputs (own ARAM copy each, echo
  * writes included), and compared: full Dsp state (minus the apu_ram pointer),
  * the 64 KB ARAM, and all 534 stored samples. That is the gate.
  *
@@ -37,7 +37,7 @@
 #include "src/snes/input.h"
 
 bool snes_loadRom(Snes* snes, const uint8_t* data, int length);
-void dspb_run(Dsp *dsp, int n);   /* mixer_block.c */
+void dsp_runBlock(Dsp *dsp, int n);   /* external/sm/src/snes/dsp_block.c */
 #ifdef DSP_MIXER_DIAG
 extern uint64_t dspb_diag_block_samples, dspb_diag_ref_samples;
 extern uint64_t dspb_diag_hazard_chunks, dspb_diag_pmon_echo_chunks;
@@ -187,7 +187,7 @@ static void replay(const FrameRec *fr, Dsp *inst, uint8_t *ram, int engine) {
     int32_t run = next - done;
     if (run > 0) {
       if (engine == 0) { for (int32_t i = 0; i < run; i++) dsp_cycle(inst); }
-      else             dspb_run(inst, run);
+      else             dsp_runBlock(inst, run);
       done = next;
     }
     while (w < wend && g_writes[w].cyc <= done) {
@@ -226,7 +226,7 @@ static void debug_frame(const FrameRec *fr) {
       for (int32_t k = 0; k < run; k++) {
         Dsp saveB; memcpy(&saveB, &B, sizeof(Dsp));
         dsp_cycle(&R);
-        dspb_run(&B, 1);
+        dsp_runBlock(&B, 1);
         if (memcmp((uint8_t*)&R + cmpOff, (uint8_t*)&B + cmpOff, sizeof(Dsp) - cmpOff) ||
             memcmp(rr, rb, 0x10000)) {
           printf("first divergence: segment %d, sample %d of %d (abs cycle %d)\n",
@@ -271,7 +271,7 @@ static void debug_frame(const FrameRec *fr) {
       memcpy(&preR, &R, sizeof(Dsp)); memcpy(preRram, rr, 0x10000); preR.apu_ram = preRram;
       memcpy(&preB, &B, sizeof(Dsp)); memcpy(preBram, rb, 0x10000); preB.apu_ram = preBram;
       for (int32_t k = 0; k < run; k++) dsp_cycle(&R);
-      dspb_run(&B, run);
+      dsp_runBlock(&B, run);
       if (memcmp((uint8_t*)&R + cmpOff, (uint8_t*)&B + cmpOff, sizeof(Dsp) - cmpOff) ||
           memcmp(rr, rb, 0x10000)) {
         printf("first chunk divergence: segment %d abs cycle %d len %d",
@@ -287,7 +287,7 @@ static void debug_frame(const FrameRec *fr) {
           memcpy(&tryR, &preR, sizeof(Dsp)); memcpy(tryRram, preRram, 0x10000); tryR.apu_ram = tryRram;
           memcpy(&tryB, &preB, sizeof(Dsp)); memcpy(tryBram, preBram, 0x10000); tryB.apu_ram = tryBram;
           for (int32_t j = 0; j < k; j++) dsp_cycle(&tryR);
-          dspb_run(&tryB, k);
+          dsp_runBlock(&tryB, k);
           if (memcmp((uint8_t*)&tryR + cmpOff, (uint8_t*)&tryB + cmpOff, sizeof(Dsp) - cmpOff) ||
               memcmp(tryRram, tryBram, 0x10000)) {
             printf("shortest divergent one-shot prefix: %d samples (abs cycle %d)\n",

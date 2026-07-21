@@ -12,18 +12,20 @@ FRAMES="${2:-1200}"
 REPS="${3:-3}"
 
 O=/tmp/dsp_mixer_build; mkdir -p "$O"; rm -f "$O"/*.o
-CF="-O2 -DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS -DDSP_MIXER_DIAG -w -Iexternal/sm -Itools/sm_harness/shim"
+CF="-O2 -DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS ${DSP_MONO:+-DSNES_DSP_MONO} -w -Iexternal/sm -Itools/sm_harness/shim"
+MIXCF="$CF -DSNES_DSP_BLOCK_MIXER -DDSP_MIXER_DIAG"
 
 for f in external/sm/src/snes/*.c external/sm/src/tracing.c; do
   b="$(basename "${f%.c}")"
   if [ "$b" = "apu" ]; then
     gcc -c $CF -Ddsp_cycle=hook_dsp_cycle -Ddsp_write=hook_dsp_write "$f" -o "$O/apu.o"
+  elif [ "$b" = "dsp_block" ]; then
+    gcc -c $MIXCF "$f" -o "$O/$b.o"
   else
     gcc -c $CF "$f" -o "$O/$b.o"
   fi
 done
-gcc -c $CF tools/dsp_mixer/mixer_block.c -o "$O/mixer_block.o"
-gcc -c $CF tools/dsp_mixer/mixer_ab.c -o "$O/mixer_ab.o"
+gcc -c $MIXCF tools/dsp_mixer/mixer_ab.c -o "$O/mixer_ab.o"
 gcc -o "$O/mixer_ab" "$O"/*.o -lm
 
 "$O/mixer_ab" "$ROM" "$FRAMES" "$REPS"

@@ -62,6 +62,32 @@ Chrono to 1.21x.
   read which this stripped core turns into `Die`; for this test only that read
   returned `openBus`, and the unrelated cart change was then reverted.
 
-Worktree edits are the minimal hazard fallback in `mixer_block.c`, diagnostic
-counters/chunk bisection in `mixer_ab.c`, the harness-only diagnostic define in
-`run_ab.sh`, and this report. The `external/sm` submodule is clean.
+## Runtime integration
+
+The validated mixer now lives in `external/sm/src/snes/dsp_block.c` and is
+wired into the LLE APU path behind `SNES_DSP_BLOCK_MIXER` (default off).
+`apu_run` accumulates DSP ticks across calls and catches up at actual ordering
+boundaries: DSP register writes, SPC reads of ENVX/OUTX/ENDX, overlapping echo
+reads, and SPC ARAM writes that overlap pending echo or BRR/DIR accesses. The
+BRR/DIR dependencies are conservatively cached as 256-byte page bits once per
+block; echo uses an exact ring-span test. Save/load and PCM drain explicitly
+materialize pending DSP state.
+
+M7 QEMU runtime gates used the shipping `SNES_DSP_MONO` path. Zelda, DKC, and
+Chrono ran 1200 frames; Packy & Marlon ran 4000 frames to reach PMON=02. ON and
+OFF matched both hashes in all four cases:
+
+| ROM | Frames | STATEHASH | AUDIOHASH | OFF emu/apu insn/f | ON emu/apu insn/f |
+|---|---:|---:|---:|---:|---:|
+| Zelda ALttP | 1200 | `1d0d959d` | `4f118609` | 5,694,850 / 489,299 | 7,409,673 / 539,302 |
+| DKC | 1200 | `d8132a15` | `566dcf5c` | 6,572,009 / 598,474 | 6,765,465 / 696,604 |
+| Chrono Trigger | 1200 | `6c9ee7d2` | `878f36e1` | 5,907,696 / 744,031 | 6,645,775 / 837,384 |
+| Packy & Marlon | 4000 | `f4d014fe` | `1b77ae03` | 6,993,093 / 757,580 | 13,608,015 / 813,327 |
+
+Raw logs are in `/tmp/codex-dsp-runtime-20260721`. Packy required the same
+temporary lower-LoROM open-bus harness workaround used by the offline PMON
+gate; it was reverted after both runs. The M7 rig ELF text increased by 4,416
+bytes at `-O2` (Zelda/DKC/Chrono); data and BSS were unchanged. The instruction
+counts increased, especially for Packy's write-heavy driver. They are reported
+as raw rig evidence only, not as device-FPS claims; the feature stays opt-in for
+hardware measurement.

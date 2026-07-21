@@ -339,6 +339,9 @@ int main(void) {
     uint32_t ta = t1;
 #endif
     if (snes->apu) {
+#ifdef SNES_DSP_BLOCK_MIXER
+      apu_catchupDsp(snes->apu);
+#endif
       while (snes->apu->dsp->sampleOffset < 534) apu_cycle(snes->apu);
       dsp_getSamples(snes->apu->dsp, g_audio, 16000 / 60, 1);
     }
@@ -461,6 +464,17 @@ int main(void) {
          (unsigned long)(uint32_t)audio_hash,
          (unsigned long)(tot_emu * ipt_x1000 / 1000 / frames),
          (unsigned long)(tot_apu * ipt_x1000 / 1000 / frames));
+#endif
+#if defined(SNES_DSP_BLOCK_MIXER) && defined(DSP_MIXER_DIAG)
+  extern uint64_t dspb_diag_flushes, dspb_diag_flush_samples;
+  extern uint64_t dspb_diag_flush_reg, dspb_diag_flush_read, dspb_diag_flush_write;
+  extern uint64_t dspb_diag_flush_cap, dspb_diag_flush_audio;
+  printf("[dsp-block] flush=%lu avgK=%lu reg=%lu read=%lu write=%lu cap=%lu audio=%lu\n",
+         (unsigned long)dspb_diag_flushes,
+         (unsigned long)(dspb_diag_flushes ? dspb_diag_flush_samples / dspb_diag_flushes : 0),
+         (unsigned long)dspb_diag_flush_reg, (unsigned long)dspb_diag_flush_read,
+         (unsigned long)dspb_diag_flush_write, (unsigned long)dspb_diag_flush_cap,
+         (unsigned long)dspb_diag_flush_audio);
 #endif
   return 0;
 }
