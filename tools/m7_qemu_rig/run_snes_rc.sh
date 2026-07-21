@@ -16,8 +16,8 @@ FRAMES="${2:-1200}"
 
 SM=external/sm
 RIG=tools/m7_qemu_rig
-GEN=/tmp/sfc_recomp_build
-OUT="$RIG/build_rc"
+GEN="${SFC_RECOMP_OUT:-/tmp/sfc_recomp_build}"
+OUT="$GEN/rig"
 mkdir -p "$OUT"
 
 [ -f "$GEN/rc_sites.inc" ] && [ -f "$GEN/cpu_copy.c" ] || {

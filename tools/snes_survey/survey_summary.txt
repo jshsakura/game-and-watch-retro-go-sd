@@ -1,0 +1,642 @@
+============================================================
+SNES sound-driver survey  (2143 ROMs)
+============================================================
+
+Driver family histogram:
+  N-SPC                  1473   68.7%  #################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################
+  UNMATCHED               531   24.8%  ###################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################
+  WEAK_ONLY                78    3.6%  ##############################################################################
+  Capcom                   19    0.9%  ###################
+  SoftCreat                14    0.7%  ##############
+  Prism                     7    0.3%  #######
+  Neverland                 6    0.3%  ######
+  AsciiShuichi              5    0.2%  #####
+  Rare                      4    0.2%  ####
+  Konami                    4    0.2%  ####
+  Falcom                    2    0.1%  ##
+
+  N-SPC share of bootable+classified: 68.7% (1473/2143)
+
+N-SPC sub-variants (which fork of Nintendo's engine):
+  YoshisIsland            584
+  SMW-era                 464
+  Tose                    240
+  standard                137
+  Falcom-Ys4               25
+  Konami(GD3)              15
+  Lemmings                  4
+  Intelli-FE4               3
+  Intelli                   1
+
+WEAK_ONLY (only shared idioms hit -> engine not in our strong sigs):
+  미소녀전사 세일러문 S - 장외난투! 주역쟁탈전 (Bishoujo Senshi S [Akao/Capcom/Nin]
+  웜즈 (Worms).smc                                [Konami/Mori/Nin/Rare/Suzuki]
+  에이스를 노려라! (Ace o Nerae!).smc                  [Konami/Nin/Rare/Suzuki]
+  고! 고! 아크맨 2 (Go Go Ackman 2).smc              [Akao/Capcom/Nin]
+  제로 4 챔프 RR (Zero4 Champ RR).smc               [Akao/Capcom/Nin]
+  프랜틱 플리 (Frantic Flea).smc                     [Akao/Nin]
+  버브시 2 (Bubsy II).smc                          [Mori]
+  잔 III 스피리츠 (Zan III Spirits).smc              [Konami/Nin/Rare/Suzuki]
+  스트리트 레이서 (Street Racer).smc                   [Konami/Mori/Nin/Rare/Suzuki]
+  다크 킹덤 (Dark Kingdom).smc                      [Konami/Nin/Rare/Suzuki]
+  캐논 포더 (Cannon Fodder).smc                     [Konami/Mori/Nin/Rare/Suzuki]
+  미스터 터프.smc                                    [Konami/Mori/Nin/Rare/Suzuki]
+  플라잉 히어로 - 부규루의 대모험 (Flying Hero - Bugyuru no  [Akao/Nin]
+  피노키오 (Pinocchio).smc                          [Konami/Mori/Nin/Rare/Suzuki]
+  크레용 신짱 2 - 대마왕의 역습 (Crayon Shin-chan 2 - Daim [Akao/Nin]
+  드래곤 - 브루스 리 이야기 (Dragon - The Bruce Lee Story [Konami/Mori/Nin/Rare/Suzuki]
+  NBA 라이브 95 (NBA Live 95).smc                  [Konami/Nin/Rare/Suzuki]
+  검용전설 야이바 (Kenyuu Densetsu Yaiba).smc          [Akao/Nin]
+  배틀 레이서스 (Battle Racers).smc                   [Akao/Capcom/Nin]
+  유치원 전기 마두라 (Youchien Senki Madara).smc        [Akao/Capcom/Nin]
+  토이 스토리 (Toy Story).smc                        [Konami/Mori/Nin/Rare/Suzuki]
+  데니스 (Dennis).smc                              [Akao/HeartBeat/Nin]
+  언터처블 (Untouchables, The).smc                  [Akao/HeartBeat/Nin]
+  그레이트 배틀 3 (Great Battle III, The).smc         [Akao/Nin]
+  사이코 드림 (Psycho Dream).smc                     [Konami/Nin/Rare/Suzuki]
+  오오즈모 타마시이 (Oozumou Spirits).smc               [Akao/Nin]
+  바클리 파워 덩크 (Barkley no Power Dunk).smc         [Mori]
+  아구리 스즈키 F-1 슈퍼 드라이빙 (Aguri Suzuki F-1 Super D [Akao/Nin]
+  가면라이더 (Kamen Rider).smc                       [Akao/Nin]
+  그레이트 배틀III.smc                                [Akao/Nin]
+  FIFA 인터내셔널 사커 (FIFA International Soccer).smc [Konami/Nin/Rare/Suzuki]
+  강의 주인 낚시 2 (Kawa no Nushi Tsuri 2).smc        [Akao/Capcom/Nin]
+  엔비에이 라이브 96 (NBA Live 96).smc                 [Konami/Nin/Rare/Suzuki]
+  고고 악맨 3 (Go Go Ackman 3).smc                  [Akao/Capcom/Nin]
+  윙스 2 - 에이스 하이 (Wings 2 - Aces High).smc       [Akao/AsciiShuichi/Nin]
+  미스터 누츠 (Mr. Nutz).smc                         [Akao/HeartBeat/Nin]
+  고고 아쿠맨3.smc                                   [Akao/Capcom/Nin]
+  장난꾸러기 데니스 (Dennis the Menace).smc             [Akao/HeartBeat/Nin]
+  웨딩 피치 (Wedding Peach).smc                     [Akao/Capcom/Nin]
+  바클리 샷 업 앤 잼! (Barkley Shut Up and Jam!).smc   [Mori]
+  츠리 타로우 (Tsuri Tarou).smc                      [Akao/Nin]
+  A열차로 가자 3 슈퍼 버전 (AIII S.V. - A Ressha de Ikou [Akao/Capcom/Nin]
+  스카이 미션 (Sky Mission).smc                      [Akao/AsciiShuichi/Nin]
+  스타 트렉 - 넥스트 제너레이션 - 퓨처스 패스트 (Star Trek - The  [Akao/AsciiShuichi/Nin]
+  고고 아쿠맨2.smc                                   [Akao/Capcom/Nin]
+  다이너마이트 - 더 라스베이거스 (Dynamaite - The Las Vegas) [Konami/Nin/Rare/Suzuki]
+  대폭소 인생극장 (Daibakushou Jinsei Gekijou).smc     [Akao/Nin]
+  데니스 더 매너스.smc                                 [Akao/HeartBeat/Nin]
+  마이크로 머신즈 2 터보 토너먼트 (Micro Machines 2 - Turbo  [Konami/Mori/Nin/Rare/Suzuki]
+  싸이코 드림.smc                                    [Konami/Nin/Rare/Suzuki]
+  세일러 문 (Sailormoon).smc                        [Akao/Nin]
+  Pinocchio (U).smc                             [Konami/Mori/Nin/Rare/Suzuki]
+  미소녀전사 세일러문R (Bishoujo Senshi Sailor Moon R).s [Akao/Nin]
+  철완 아톰 (Tetsuwan Atom).smc                     [Akao/Nin]
+  배틀 커맨더 팔부주 수라의 병법 (Battle Commander - Hachibu [Akao/Nin]
+  슈퍼 패밀리 서킷 (Super Family Circuit).smc          [Mori]
+  사이버 스핀 (Cyber Spin).smc                       [Akao/Nin]
+  신 토겐쿄 (Shichuusuimei-gaku Nyuumon - Shin Toug [Konami/Nin/Rare/Suzuki]
+  법시II.smc                                      [Mori]
+  워드트리스 (Wordtris).smc                          [Akao/AsciiShuichi/Nin]
+  윌리엄스 아케이드 베스트 히츠 (Williams Arcade's Greatest  [Konami/Mori/Nin/Rare/Suzuki]
+  피구왕 통키 (Honoo no Toukyuuji - Dodge Danpei).sm [Akao/Nin]
+  크레용 신짱 - 폭풍을 부르는 그 아이 (Crayon Shin-chan - Ara [Akao/Nin]
+  Toy Story (U) [!].smc                         [Konami/Mori/Nin/Rare/Suzuki]
+  헤이세이 개 이야기 보우 - 팝앤 스매시!! (Heisei Inu Monogata [Akao/Nin]
+  에도노 키바 (Edono Kiba).smc                       [Konami/Nin/Rare/Suzuki]
+  울트라 세븐 (Ultra Seven).smc                      [Konami/Nin/Rare/Suzuki]
+  레드라인 F-1 레이서 (Redline F-1 Racer).smc          [Akao/Nin]
+  아카가와 지로 - 마녀들의 잠 (Akagawa Jirou - Majo-tachi  [Akao/Capcom/Nin]
+  이크! 더 캣 (Eek! The Cat).smc                    [Akao/HeartBeat/Nin]
+  캘리포니아 게임즈 2 (California Games II).smc         [Konami/Mori/Nin/Rare/Suzuki]
+  미소녀 전사 세일러 문 (Bishoujo Senshi Sailor Moon).sm [Akao/Nin]
+  하드볼 3 (HardBall III).smc                      [Mori]
+  미라클 피아노 티칭 시스템 (Miracle Piano Teaching System [Akao/AsciiShuichi/Nin]
+  효오덴 - 마물들과의 맹세 (Hiouden - Mamono-tachi to no  [Konami/Nin/Rare/Suzuki]
+  지미 코너스 프로 테니스 투어 (Jimmy Connors Pro Tennis To [Konami/Nin/Rare/Suzuki]
+  블레이징 스카이즈 (Blazing Skies).smc                 [Akao/AsciiShuichi/Nin]
+  스즈카 8 아워즈 (Suzuka 8 Hours).smc                [Akao/Nin]
+
+UNMATCHED (no signature at all -> unknown driver or too few boot frames):
+  Street Fighter II Turbo - Hyper Fighting (U)  lit=8659
+  나이젤 만셀의 월드 챔피언십 챌린지 (Nigel Mansell's World Ch lit=9177
+  모노폴리 (Monopoly).smc                           lit=54872
+  둠 (Doom).smc                                  lit=0
+  편의점 전쟁 바코드 배틀러 전기 - 슈퍼 전사 출격하라! (Conveni Wars lit=56747
+  텐류 겐이치로의 프로레슬링 레볼루션 (Tenryuu Genichirou no Pr lit=0
+  로키 로던트 (Rocky Rodent).smc                     lit=0
+  썬더버드 - 국제 구조대 출동하라! (Gerry Anderson's Thunder lit=487
+  스타 트렉 - 스타플릿 아카데미 스타십 브릿지 시뮬레이터 (Star Trek -  lit=3770
+  경마 예상 바켄 연금술 (Kachiuma Yosou Soft - Baken Ren lit=57344
+  벅스버니 - 엉망진창 대모험.smc                           lit=57344
+  나지 리브레 (Nage Libre - Seijaku no Suishin).smc  lit=0
+  미키 매니아 - 미키 마우스의 시대를 초월한 모험 (Mickey Mania - T lit=48659
+  라스트 바이블 3 (Last Bible III).smc                lit=1412
+  피스 키퍼스 (Peace Keepers, The).smc               lit=46920
+  차베즈 II (Chavez II).smc                        lit=0
+  마이티 맥스 (Mighty Max).smc                       lit=3959
+  슈퍼 인디 챔프 (Super Indy Champ).smc               lit=0
+  도라에몽 노비타와 요정의 나라 (Doraemon - Nobita to Yousei lit=56747
+  격주전대 카레인저 + ST BIOS.smc                       lit=4865
+  문명 (Sid Meier's Civilization).smc             lit=2057
+  바나나 인 파자마 (Bananas de Pijamas).smc            lit=867
+  슈퍼 스타워즈 (3).smc                               lit=0
+  피트폴 - 마야의 모험 (Pitfall - The Mayan Adventure). lit=5055
+  NBA 쇼다운 (NBA Showdown).smc                    lit=4820
+  리썰 웨폰 (Lethal Weapon).smc                     lit=3911
+  Yoshi no Cookie (J).smc                       lit=57344
+  터미네이터 2 심판의 날 (Terminator 2 - Judgment Day).s lit=4253
+  패성마작 료가 (Haisei Mahjong - Ryouga).smc         lit=2528
+  웨폰로드 (WeaponLord).smc                         lit=4296
+  쿠니오군의 닷지볼 - 전원 집합! (Kunio-kun no Dodge Ball D lit=1542
+  배틀 로봇 열전 (Battle Robot Retsuden).smc          lit=57344
+  슈퍼 4WD - 더 바자 (Super 4WD - The Baja).smc      lit=53348
+  레전드 (Legend).smc                              lit=7296
+  종합격투기 - 아스트랄 바우트 2 - 토탈 파이터즈 (Sougou Kakutoug lit=2143
+  리딕 보우 복싱 (Riddick Bowe Boxing).smc            lit=43236
+  안젤리크 프리미엄 박스 (Angelique - Premium Box).smc    lit=57344
+  풍래의 시렌 2 (Fushigi no Dungeon 2 - Fuurai no Sh lit=57344
+  장갑기병 보톰즈.smc                                  lit=1132
+  슈퍼 배틀쉽 (Super Battleship).smc                 lit=0
+  슈퍼 제임스 폰드 (Super James Pond).smc              lit=0
+  모탈컴뱃 (Mortal Kombat - Shinken Kourin Densetsu lit=5292
+  인디아나 존스의 위대한 모험 (Indiana Jones' Greatest Adve lit=6759
+  로보캅 3 (RoboCop 3).smc                         lit=42222
+  북두의 권 6 - 격투전승권 - 패왕으로의 길 (Hokuto no Ken 6 -  lit=2368
+  빌 왈시 칼리지 풋볼 (Bill Walsh College Football).smc lit=57344
+  마이클 안드레티의 인디카 챌린지 (Michael Andretti's Indy Ca lit=57344
+  슈퍼 볼링 (Super Bowling).smc                     lit=57344
+  슈퍼 노부나가의 야망 - 전국 판 (Super Nobunaga no Yabou - lit=57344
+  벅시 인 클로즈 인카운터스 오브 더 퍼드 카인드 (Bubsy in - Claws  lit=990
+  Aladdin (U) [!].smc                           lit=2948
+  슈퍼 하키 (Super Hockey).smc                      lit=0
+  격돌 탄환 자동차 결전 - 배틀 모바일 (Gekitotsu Dangan Jidou lit=0
+  초시공요새 마크로스 - 스크램블 발키리 (Choujikuu Yousai Macro lit=57344
+  SD 건담 제너레이션 C - 액시스 전기 + ST 바이오스.smc          lit=4865
+  슈퍼로봇대전 제4차.smc                                lit=52938
+  SD 울트라 배틀 - 세븐 앤 울트라맨 + ST 바이오스.smc           lit=4865
+  월드컵 USA 94 (World Cup USA 94).smc             lit=0
+  개조정인 슈비빈맨 제로.smc                              lit=0
+  슈퍼 오프 로드 (Super Off Road).smc                 lit=6177
+  우주 레이스 - 아스트로 고! 고! (Uchuu Race - Astro Go! G lit=57344
+  강철의 기사 2 - 사막의 롬멜 장군 (Koutetsu no Kishi 2 - S lit=3241
+  신일본 프로레슬링 '95 - 도쿄 돔 배틀 7 (Shin Nihon Pro Wre lit=0
+  마츠무라 쿠니 히로덴 - 최강의 역사를 다시 칠하라! (Matsumura Kuni lit=57344
+  레스터 더 언라이클리 (Lester the Unlikely).smc         lit=3007
+  로드 러너 대 와일 E 코요테 (Looney Tunes - Road Runner  lit=57344
+  슈퍼 인생 게임 (Super Jinsei Game).smc              lit=57344
+  엔에이치엘 94 (NHL '94).smc                        lit=57344
+  갤럭시 로보 (Galaxy Robo).smc                      lit=0
+  파워 애슬리트 (Power Athlete).smc                   lit=56320
+  도널드덕의 마우이 맬러드.smc                             lit=3746
+  모탈 컴뱃 3 (Mortal Kombat 3).smc                 lit=0
+  금어 주의보! 튀어나와라 게임 학원 (Kingyo Chuuihou! - Tobid lit=0
+  쿠니오군의 돗지볼 전원집합 (Kunio-kun no Dodge Ball Da yo lit=5843
+  휠 오브 포춘 (Wheel of Fortune).smc                lit=0
+  정글의 왕 타짱 - 세계 만유 대격투의 권 (Jungle no Ouja Tar-c lit=0
+  오스카 (Oscar).smc                               lit=3138
+  게게게의 키타로 - 요괴 돈자라 + ST BIOS.smc               lit=4865
+  꿈 미궁 - 키구루미 대모험 (Dream Maze - Kigurumi Daibou lit=1621
+  슈퍼 테트리스 + 봄브리스 (Super Tetris 2 + Bombliss).sm lit=0
+  매지컬 파픈 (Magical Pop'n).smc                    lit=0
+  아크로뱃 미션 (Acrobat Mission).smc                 lit=0
+  시간의 카르멘 산디에고 (Where in Time Is Carmen Sandieg lit=0
+  NCAA 농구 (NCAA Basketball).smc                 lit=57213
+  위저드리 외전 IV - 태마의 고동 (Wizardry Gaiden IV - Tai lit=20444
+  사이바라 리에코의 마작 방랑기 (Saibara Rieko no Mahjong Ho lit=57344
+  원조 파친코 왕 (Ganso Pachinko Ou).smc              lit=0
+  슈퍼 컵 사커 (Super Cup Soccer).smc                lit=0
+  노부나가의 야망 패왕전 (Nobunaga no Yabou - Haouden).sm lit=57344
+  클리프행어 (Cliffhanger).smc                       lit=20529
+  SD 울트라 배틀 - 울트라맨 전설 + ST 바이오스.smc             lit=4865
+  클레이 파이터 2 - 저지먼트 클레이 (Clay Fighter 2 - Judgme lit=0
+  모탈 컴뱃 (Mortal Kombat).smc                     lit=0
+  SD 건담 제너레이션 A - 1년 전쟁기 + ST 바이오스.smc          lit=4865
+  프로 마작 극 (Pro Mahjong Kiwame).smc              lit=0
+  본커스 - 헐리우드 대작전!.smc                           lit=0
+  캐리어 에이스 (Carrier Aces).smc                    lit=4892
+  정글북 (Jungle Book, The).smc                    lit=5557
+  브롤 브라더스 (Brawl Brothers).smc                  lit=0
+  신일본 프로레슬링 - 초전사 인 도쿄 돔 (Shin Nihon Pro Wrestl lit=0
+  노부나가의 야망 - 천성기 (Nobunaga no Yabou - Tenshouki lit=57344
+  워프스피드 (WarpSpeed).smc                         lit=1462
+  토탈 카니지 (Total Carnage).smc                    lit=57344
+  슈퍼 덩크 샷 (Super Dunk Shot).smc                 lit=57344
+  포키 앤 로키 2 (Pocky & Rocky 2).smc               lit=2396
+  슈퍼마리오 콜렉션.smc                                 lit=39942
+  슈퍼로봇대전 제3차.smc                                lit=53344
+  파치오군 스페셜 2 (Pachio-kun Special 2).smc         lit=0
+  슈퍼 닌자쿤 (Super Ninja-kun).smc                  lit=57344
+  슈퍼 패왕 '95 (Super Baken Ou '95).smc            lit=0
+  라이덴 트레이드 (Raiden Trad).smc                    lit=3108
+  한국프로야구 (Hanguk Pro Yagu).smc                  lit=0
+  슈퍼로봇대전 EX (Super Robot Taisen EX).smc         lit=53344
+  캡틴 노블린 (Captain Novolin).smc                  lit=1870
+  러싱 비트 수라 (Rushing Beat Shura).smc             lit=46920
+  울티마 - 공룡 제국 (Ultima - Kyouryuu Teikoku - The  lit=1157
+  이데아의 날 (Idea no Hi).smc                       lit=168
+  테크모 슈퍼 베이스볼 (Tecmo Super Baseball).smc        lit=12346
+  인터내셔널 테니스 투어 (International Tennis Tour).smc  lit=0
+  티몬과 품바의 정글 게임 (Timon & Pumbaa's Jungle Games) lit=3261
+  우리가 돌아왔어요! 공룡 이야기 (We're Back! - A Dinosaur's lit=0
+  리버티 오어 데스 (Liberty or Death).smc              lit=57344
+  세임 게임 + 천외마경 제로 자가제 - 데이터 팩.smc               lit=0
+  심슨 가족 - 바트의 악몽 (Simpsons, The - Bart's Nightm lit=57344
+  올리비아의 미스터리 (Olivia no Mystery).smc            lit=57344
+  디노 시티 (DinoCity).smc                          lit=38976
+  슈퍼 오프 로드 - 더 바하 (Super Off Road - The Baja).s lit=57344
+  전설의 오우거 배틀 - 검은 여왕의 행진.smc                    lit=57344
+  미소녀 마작사 스치파이 (Bishoujo Janshi Suchie-Pai).smc lit=1019
+  어스 라이트 - 루나 스트라이크 (Earth Light - Luna Strike) lit=0
+  심슨 가족 - 바트의 이상한 꿈의 대모험 (Simpsons, The - Bart  lit=57344
+  오데카케 레스터 - 레레레의 레 (Odekake Lester - Lelele no lit=3224
+  신쇼기 클럽 (Shin Shougi Club).smc                 lit=0
+  레볼루션 X (Revolution X).smc                     lit=5397
+  브레스 오브 파이어 2 (Breath of Fire 2).smc           lit=57344
+  NFL 프로 풋볼 94 (John Madden NFL Pro Football '9 lit=57344
+  얼티밋 모탈 컴뱃 3 (Ultimate Mortal Kombat 3).smc    lit=0
+  파이널 세트 테니스 (Finalset).smc                     lit=56222
+  슈퍼 스타워즈 제다이의 귀환 (Super Star Wars - Return of  lit=375
+  빙빙! 빙고 (Bing Bing! Bingo).smc                 lit=57344
+  니켈로디언 가츠 (Nickelodeon GUTS).smc               lit=5462
+  암흑의 바다 해적 (Pirates of Dark Water, The).smc    lit=57344
+  아이렘 스킨스 게임 (Irem Skins Game, The).smc         lit=39014
+  진 여신전생 2 (Shin Megami Tensei II).smc          lit=1412
+  타워 드림 (Tower Dream).smc                       lit=20444
+  미소녀전사 세일러문 슈퍼S - 후와후와 패닉 (Bishoujo Senshi Sai lit=43018
+  라이덴전설 (Raiden Densetsu).smc                   lit=2124
+  매든 NFL '95 (Madden NFL 95).smc                lit=57344
+  NHL 프로 하키 94 (NHL Pro Hockey '94).smc         lit=57344
+  멜판드 스토리즈 (Melfand Stories).smc                lit=2528
+  도날드 인 마우이 말라드 (Donald in Maui Mallard).smc    lit=4958
+  록맨 7 - 숙명의 대결! (Rockman 7 - Shukumei no Taike lit=2613
+  슈퍼 대니.smc                                     lit=57209
+  더비 스탈리온 3 (Derby Stallion III).smc            lit=2528
+  나이젤 맨셀의 F-1 챌린지 (Nigel Mansell F-1 Challenge) lit=9127
+  라모스 월드 와이드 사커 (Ramos Ruy no World Wide Soccer lit=0
+  라이즈 오브 더 로봇 (Rise of the Robots).smc          lit=0
+  WWF 로우 (WWF Raw).smc                          lit=9201
+  파이어 파이팅 (Fire Fighting).smc                   lit=2325
+  기동경찰 패트레이버 (Kidou Keisatsu Patlabor).smc      lit=57344
+  엔비에이 라이브 98 (NBA Live 98).smc                 lit=454
+  스포츠 일러스트레이티드 풋볼 앤 베이스볼 (Sports Illustrated -  lit=0
+  프로 마작 극 3 (Pro Mahjong Kiwame III).smc        lit=1072
+  윙 커맨더 (Wing Commander).smc                    lit=1811
+  체스터치타 - Too Cool to Fool.smc                  lit=2492
+  아랑전설 스페셜 (Garou Densetsu Special).smc         lit=5011
+  에어로비즈 슈퍼소닉 (Aerobiz Supersonic).smc           lit=57344
+  삼국지 4 (Sangokushi IV).smc                     lit=0
+  전일본 프로레슬링 - 파이트 다 폰! (Zen-Nihon Pro Wres - Fi lit=1427
+  대항해시대 2 (Daikoukai Jidai II).smc              lit=57344
+  마르코의 매직 풋볼 (Marko's Magic Football).smc       lit=0
+  니트로 펑크스 - 마이트 헤즈 (Nitropunks - Might Heads).s lit=0
+  클루 (Clue).smc                                 lit=57344
+  SD 울트라 배틀 - 세븐 전설 + ST 바이오스.smc               lit=4865
+  슬레이어즈 (Slayers).smc                           lit=53344
+  매든 NFL 97 (Madden NFL 97).smc                 lit=51354
+  슈퍼 노아의 방주 3D (Super Noah's Ark 3D).smc        lit=18245
+  줄의 꿈 모험 (Zool no Yume Bouken).smc             lit=57308
+  에너지 브레이커.smc                                  lit=49152
+  골!! (Goal!).smc                               lit=0
+  프로 풋볼 93 (Pro Football '93).smc               lit=0
+  퓨처 GPX 사이버 포뮬러 (Shinseiki GPX - Cyber Formula lit=0
+  주간 패미통 No.380 - 어른들의 시스템 - 환상의 대지의 시스템 1.smc  lit=52489
+  워 2410 (War 2410).smc                         lit=20182
+  슈퍼 삼국지 (Super Sangokushi).smc                 lit=57344
+  스트리트 파이터 제로2 (Street Fighter Zero 2).smc      lit=0
+  위저드리 V - 대유회의 심장 (Wizardry V - Heart of the M lit=6866
+  포이포이 닌자 월드.smc                                lit=4865
+  안젤리크 (Angelique).smc                          lit=57344
+  NBA 프로 농구 94 불스 vs 선스 (NBA Pro Basketball '94 lit=4820
+  Super R-Type (U) [!].smc                      lit=1476
+  트로들러스 (Troddlers).smc                         lit=57344
+  다이나워즈 - 공룡왕국으로의 대모험.smc                       lit=38976
+  소드 월드 SFC 2 (Sword World SFC 2 - Inishie no K lit=0
+  브레스 오브 파이어 (Breath of Fire).smc               lit=509
+  SD 울트라 배틀 - 울트라맨 앤 세븐 + ST 바이오스.smc           lit=4865
+  팩 인 타임 (Pac-In-Time).smc                      lit=290
+  피시즈 (Pieces).smc                              lit=1520
+  장갑기병 보톰즈 - 배틀링 로드 (Soukou Kihei Votoms - The  lit=1132
+  에릭 캔토나 풋볼 챌린지 (Eric Cantona Football Challeng lit=55114
+  키드 클리츠의 모험 (Adventures of Kid Kleets, The).sm lit=1280
+  엔에이치엘 98 (NHL 98).smc                         lit=57344
+  야마네코 법시의 대모험 (Yamaneko Bubsy no Daibouken).sm lit=1084
+  부거맨.smc                                       lit=0
+  인스펙터 가젯 (Inspector Gadget).smc                lit=2182
+  드래곤 퀘스트 I & II (Dragon Quest I & II).smc      lit=559
+  스노보드와 함께하는 스키 파라다이스 (Ski Paradise with Snowbo lit=5030
+  존 매든 NFL 94 (Madden NFL '94).smc              lit=57344
+  WWF 레슬매니아 아케이드 (WWF WrestleMania - The Arcade lit=6057
+  월드 리그 농구 (World League Basketball).smc        lit=3591
+  프로 마작 츠와모노 (Pro Mahjong Tsuwamono).smc        lit=57344
+  매직 보이 (Magic Boy).smc                         lit=2040
+  메탈 모프 (Metal Morph).smc                       lit=0
+  빨간망토 차차 (Akazukin Chacha).smc                 lit=57344
+  슈퍼 울트라 야구 2 (Super Ultra Baseball 2).smc      lit=61184
+  아서왕과 정의의 기사단 (King Arthur & The Knights of Ju lit=559
+  아케이드 베스트 히츠 아타리 컬렉션 1 (Arcade's Greatest Hits lit=0
+  사커 슛아웃 (Soccer Shootout).smc                  lit=1503
+  줄 (Zool - Ninja of the 'Nth' Dimension).smc   lit=806
+  RPM 레이싱 (Radical Psycho Machine Racing).smc   lit=0
+  배틀 서브마린 (Battle Submarine).smc                lit=3394
+  마멀레이드 보이 (Marmalade Boy).smc                  lit=0
+  솔리드 러너 (Solid Runner).smc                     lit=20444
+  제3차 슈퍼로봇대전 (Dai-3-ji Super Robot Taisen).smc  lit=53344
+  히어로 전기 - 프로젝트 올림포스 (Hero Senki - Project Olym lit=0
+  브런즈윅 월드 토너먼트 오브 챔피언스 (Brunswick World - Tourn lit=7401
+  초아니키 - 폭렬란투편 (Chou Aniki - Bakuretsu Rantou H lit=484
+  록 온 (Lock On).smc                             lit=0
+  UFO 가면 야키소반 - 케틀러의 검은 음모 (U.F.O. Kamen Yakiso lit=0
+  메가 로 매니아 (Mega-lo-Mania).smc                  lit=1782
+  노이기어 (Neugier - Umi to Kaze no Kodou).smc     lit=56447
+  북두의 권 7 - 성권열전 - 전승자로의 길 (Hokuto no Ken 7 - S lit=2821
+  데드 댄스 (Dead Dance).smc                        lit=0
+  아웃 투 런치 (Out to Lunch).smc                    lit=0
+  안젤리크 보이스 판타지 (Angelique - Voice Fantasy).smc  lit=57344
+  초시공요새 마크로스 - 스크램블 발키리 - 오버테크에디션.smc           lit=57344
+  슈퍼 스타워즈 - 제다이의 복수.smc                         lit=719
+  JWP 여자 프로레슬링 - 퓨어 레슬 퀸즈 (JWP Joshi Pro Wres - lit=0
+  오퍼레이션 유럽 승리의 길 1939-1945 (Operation Europe -  lit=0
+  카마이타치의 밤 (Kamaitachi no Yoru).smc             lit=0
+  엔에이치엘 97 (NHL 97).smc                         lit=57344
+  토니 메올라 사이드킥스 사커 (Tony Meola's Sidekicks Socce lit=0
+  X-Men - Mutant Apocalypse (U).smc             lit=5657
+  90분 유러피안 프라임 골 (90 Minutes - European Prime G lit=3
+  타케다 노부히로의 슈퍼 컵 사커 (Takeda Nobuhiro no Super C lit=38209
+  와일드 스네이크 (WildSnake).smc                      lit=543
+  렉스 로난 실험 외과의사 (Rex Ronan - Experimental Surge lit=2418
+  팝엔 트윈비 - 레인보우 벨 어드벤처 (Pop'n TwinBee - Rainbow lit=1834
+  스트리트 컴뱃 (Street Combat).smc                   lit=39572
+  나이츠 오브 더 라운드 (Knights of the Round).smc       lit=3659
+  타케다 노부히로의 슈퍼 리그 사커 (Takeda Nobuhiro no Super  lit=38209
+  로드 러너 (Looney Tunes - Road Runner).smc        lit=57344
+  SM 조교사 히토미 Vol 3.10.smc                       lit=0
+  스페이스 에이스 (Space Ace).smc                      lit=5458
+  킥 오프 3 유러피언 챌린지 (Kick Off 3 - European Challe lit=989
+  체스터 치타 (Chester Cheetah - Too Cool to Fool).s lit=2492
+  윙 커맨더 - 더 시크릿 미션 (Wing Commander - The Secret lit=0
+  블레이존 (BlaZeon - The Bio-Cyborg Challenge).smc lit=1412
+  마리오 이즈 미싱! (Mario is Missing!).smc            lit=57243
+  데어 랑그릿사 (Langrisser, Der).smc                 lit=0
+  다이노 워즈 공룡왕국 대모험 (Dinowars - Kyouryuu Oukoku e lit=38976
+  브론키 헬스 히어로 (Bronkie the Bronchiasaurus).smc   lit=57344
+  마작 대회 2 (Mahjong Taikai II).smc               lit=57344
+  노부나가의 야망 - 로드 오브 다크니스 (Lord of Darkness).smc  lit=0
+  GP-1 파트 2 (GP-1 - Part II).smc                lit=1412
+  아웃랜더 (Outlander).smc                          lit=0
+  스트리트 파이터 2 터보 (Street Fighter II Turbo).smc   lit=6332
+  NHL 스탠리 컵 (NHL Stanley Cup).smc               lit=0
+  요기 베어 (Adventures of Yogi Bear).smc           lit=14245
+  메이저 타이틀 (Major Title).smc                     lit=39014
+  신디케이트 (Syndicate).smc                         lit=0
+  모탈 컴뱃 2 (Mortal Kombat II).smc                lit=5593
+  파워 무브즈 (Power Moves).smc                      lit=56320
+  더 킹 오브 랠리 (King of Rally, The - Paris-Moscow- lit=0
+  스펙터 (Spectre).smc                             lit=4736
+  테트리스 & 닥터 마리오 (Tetris & Dr. Mario).smc        lit=3577
+  슈퍼 봄버맨 - 패닉 봄버 W (Super Bomberman - Panic Bom lit=0
+  이치 앤 스크래치 게임 (Itchy & Scratchy Game, The).smc lit=4454
+  캣츠 런 - 전일본 K-Car 선수권 (Kat's Run - Zen-Nihon K lit=1592
+  배틀 마스터 궁극의 전사들 (Battle Master - Kyuukyoku no  lit=1621
+  무사 성룡전 - 두 사람의 용사 (Bushi Seiryuuden - Futari  lit=57344
+  슈퍼 골! 2 (Super Goal! 2).smc                   lit=38209
+  씨퀘스트 DSV (seaQuest DSV).smc                   lit=57344
+  싱크 오어 스윔 (S.O.S - Sink or Swim).smc           lit=10714
+  윈터 익스트림 스키 앤 스노보딩 (Tommy Moe's Winter Extreme lit=5894
+  하타야마 핫치의 프로야구 뉴스! 실명판 (Hatayama Hatch no Pro  lit=0
+  프로 쿼터백 (Pro Quarterback).smc                  lit=52130
+  파치슬롯 이야기 - 유니버설 스페셜 (Pachi-Slot Monogatari -  lit=5094
+  태평양 전구 2 (P.T.O. II - Pacific Theater of Oper lit=2057
+  해머록 레슬링 (Hammerlock Wrestling).smc            lit=0
+  WWF 로열 럼블 (WWF Royal Rumble).smc              lit=6144
+  이밋 Vol.3 - 나에게 작별을 (Emit Vol. 3 - Watashi ni  lit=2557
+  전일본 프로레슬링 ' - 세계 최강 태그 (Zen-Nihon Pro Wres' - lit=55552
+  플린스톤 - 시에라 마드록의 보물 (Flintstones, The - The Tr lit=3296
+  오퍼레이션 로직 봄 (Operation Logic Bomb - The Ultima lit=61181
+  스타더스트 수플렉스 (Stardust Suplex).smc              lit=0
+  로저 클레멘스 MVP 베이스볼 (Roger Clemens' MVP Baseball lit=3974
+  크레용 신짱 - 장화를 풍덩!! + ST BIOS.smc               lit=4865
+  플래시백 - 아이덴티티를 찾아서 (Flashback - The Quest for  lit=0
+  아디 라이트풋 (Ardy Lightfoot).smc                  lit=0
+  슈퍼 레슬 엔젤스 (Super Wrestle Angels).smc          lit=4161
+  노부나가의 야망 (Nobunaga's Ambition).smc            lit=2057
+  슈퍼 스타워즈 제국의 역습 (Super Star Wars - The Empire  lit=0
+  브루탈 포스 오브 퓨리 (Brutal - Paws of Fury).smc      lit=1277
+  대피 덕 - 마빈 미션 (Daffy Duck - The Marvin Mission lit=8753
+  나츠메 챔피언십 레슬링 (Natsume Championship Wrestling) lit=57344
+  베스트 오브 더 베스트 챔피언십 가라테 (Best of the Best - Cha lit=831
+  레나스 - 고대기계의 기억 (Lennus - Kodai Kikai no Kioku lit=0
+  가부키 록스 (Kabuki Rocks).smc                     lit=1412
+  파이널 파이트 3 터프 (Final Fight Tough).smc          lit=1867
+  스토바스 야로 쇼 - 3 on 3 농구 (Sutobasu Yarou Show).s lit=1753
+  벅스 버니 - 래빗 램페이지 (Bugs Bunny - Rabbit Rampage) lit=57291
+  에어로 파이터즈 (Aero Fighters).smc                  lit=2804
+  스타 트렉 - 딥 스페이스 나인 - 크로스로드 오브 타임 (Star Trek -  lit=7227
+  Romance of the Three Kingdoms IV - Wall of Fi lit=0
+  요시의 쿠키 (Yoshi's Cookie).smc                   lit=57344
+  RHI 롤러 하키 95 (RHI Roller Hockey '95).smc      lit=0
+  슈퍼 마작 대회 (Super Mahjong Taikai).smc           lit=1542
+  클레이 파이터 토너먼트 에디션 (Clay Fighter - Tournament E lit=1555
+  배틀 사커 필드의 패자 (Battle Soccer - Field no Hasha) lit=53320
+  마우이 말라드 (Maui Mallard in Cold Shadow).smc     lit=4641
+  클레이 파이터 (ClayFighter).smc                     lit=1555
+  타이쿄쿠 이고 - 골리앗 (Taikyoku Igo - Goliath).smc    lit=10783
+  파이프 드림 (Pipe Dream).smc                       lit=10541
+  커비의 고스트 트랩 (Kirby's Ghost Trap).smc           lit=0
+  진 여신전생 if... (Shin Megami Tensei if...).smc   lit=1412
+  기갑경찰 메탈잭 (Armored Police - Metal Jack).smc    lit=1412
+  슈퍼 핀볼 2 - 어메이징 오디세이 (Super Pinball II - The A lit=42817
+  핑크 고즈 투 할리우드 (Pink Goes to Hollywood).smc     lit=426
+  맨체스터 유나이티드 챔피언십 사커 (Manchester United Champio lit=1408
+  미키의 얼티밋 챌린지 (Mickey's Ultimate Challenge).smc lit=56576
+  용기병단 단자루브 (Ryuukiheidan Dunzarv).smc          lit=49222
+  법시 산고양이의 대모험.smc                              lit=1084
+  마장기신 - 더 로드 오브 엘레멘탈 (Super Robot Taisen Gaide lit=0
+  페이스볼 2000 (Faceball 2000).smc                 lit=4593
+  와랏테 이이토모! 타모린픽 (Waratte Iitomo! Tamolympic).s lit=0
+  슈퍼 스매시 T.V. (Super Smash T.V.).smc            lit=5022
+  엔비에이 라이브 97 (NBA Live 97).smc                 lit=646
+  닌타마 란타로 3 (Nintama Rantarou 3).smc            lit=53817
+  슈퍼 인생 게임 2 (Super Jinsei Game 2).smc          lit=0
+  스크루볼 판타지 3 1st 베타.smc                         lit=0
+  마작 오공 천축 (Mahjong Gokuu Tenjiku).smc          lit=57252
+  슈퍼 펀치아웃!! (Super Punch-Out!!).smc             lit=426
+  스트리트 파이터II' 슈퍼 - 리로드.smc                      lit=4787
+  에어 캐벌리 (Air Cavalry).smc                      lit=4892
+  핏폴 - 마야의 대모험 (Pitfall - Maya no Daibouken).sm lit=5651
+  매든 NFL 98 (Madden NFL 98).smc                 lit=48304
+  캐슬바니아 - 뱀파이어 키스 (Castlevania - Vampire's Kiss lit=3208
+  테크모 슈퍼 NBA 농구 (Tecmo Super NBA Basketball).sm lit=5658
+  슈퍼 스네이키 (Super Snakey).smc                    lit=57332
+  파워 드라이브 (Power Drive).smc                     lit=2079
+  벅스 버니 - 엉뚱한 대모험 (Bugs Bunny - Hachamecha Daib lit=57344
+  이밋 Vol.1 - 시간의 미아 (Emit Vol. 1 - Toki no Maig lit=2557
+  이밋 Vol.2 - 목숨을 건 여행 (Emit Vol. 2 - Inochigake lit=2557
+  스트라이커 (Striker).smc                           lit=55114
+  미키의 플레이타운 어드벤처 발견의 날! (Mickey's Playtown Adve lit=57344
+  블루스 브라더스 (Blues Brothers, The).smc            lit=59322
+  슈퍼 파워 리그 4 (Super Power League 4).smc         lit=311
+  칭기즈 칸 2 회색 늑대의 씨족 (Genghis Khan II - Clan of  lit=2057
+  제독의 결단 2 (Teitoku no Ketsudan II).smc         lit=57344
+  오즈의 마법사 (Wizard of Oz, The).smc               lit=57344
+  안드레 아가시 테니스 (Andre Agassi Tennis).smc         lit=0
+  니시진 파친코 모노가타리 (Nishijin Pachinko Monogatari). lit=57344
+  엑스맨 - 뮤턴트 아포칼립스 (X-Men - Mutant Apocalypse).s lit=4678
+  북두의 권 5 - 천마유성전 애절장 (Hokuto no Ken 5 - Tenma  lit=0
+  스트라이크 거너 (Strike Gunner S.T.G).smc            lit=3201
+  슈퍼 아쿠아틱 게임 (Super Aquatic Games Starring the  lit=57344
+  미키와 도널드 매지컬 어드벤처 3 (Mickey to Donald - Magica lit=1750
+  마카마카 (Maka Maka).smc                          lit=0
+  밀란드라 (Milandra).smc                           lit=20444
+  짐 파워 - 사라진 3D 차원 (Jim Power - The Lost Dimens lit=2289
+  케빈 키건의 플레이어 매니저 (Kevin Keegan's Player Manage lit=534
+  WWF 슈퍼 레슬매니아 (WWF Super WrestleMania).smc     lit=8296
+  푸시 오버 (Push-Over).smc                         lit=19259
+  신일본 프로레슬링 '94 - 배틀필드 인 도쿄 돔 (Shin Nihon Pro W lit=0
+  배틀 조키 (Battle Jockey).smc                     lit=24450
+  아담스 패밀리 밸류스 (Addams Family Values).smc        lit=54517
+  고인돌가족 플린스톤 - 시에라 매드락의 보물.smc                  lit=2810
+  슈퍼 에어 다이버 2 (Super Air Diver 2).smc           lit=0
+  소드 월드 SFC (Sword World SFC).smc               lit=0
+  헤이와 파친코 월드 (Heiwa Pachinko World).smc         lit=0
+  페이탈 퓨리 (Fatal Fury).smc                       lit=0
+  메가로 매니아 시공대전략 (Mega lo Mania - Jikuu Daisenry lit=4916
+  발 디제르 챔피언십 (Val d'Isere Championship).smc     lit=21764
+  로드 러너 트윈 - 쥬스티와 리버티의 대모험 (Lode Runner Twin -  lit=0
+  사커 키드 (Soccer Kid).smc                        lit=2344
+  한나 바베라의 터보 툰 (Turbo Toons).smc                lit=57344
+  모모타로 전철 해피 (Momotarou Dentetsu Happy).smc     lit=311
+  태즈매니아 (Taz-Mania).smc                         lit=0
+  슈퍼 버스터 브로스 (Super Buster Bros.).smc           lit=962
+  아랑전설 (Art of Fighting).smc                    lit=0
+  SD 건담 제너레이션 B - 그리프스 전기 + ST 바이오스.smc         lit=4865
+  짐파워 - 더 로스트디멘션 인3D.smc                        lit=49523
+  로드 러너 데스 밸리 랠리 (Road Runner's Death Valley Ra lit=57344
+  파친코 이야기 - 파친슬롯도 있다구!! (Pachinko Monogatari -  lit=51615
+  에버모어의 비밀 (Secret of Evermore).smc             lit=17180
+  슈퍼 패미스타 (Super Famista).smc                   lit=4429
+  삼국지 영걸전 (Sangokushi - Eiketsuden).smc         lit=57344
+  SD 건담 제너레이션 D - 바빌로니아 건국 전기 + ST 바이오스.smc     lit=4865
+  슈퍼 스트라이크 이글 (Super Strike Eagle).smc          lit=56868
+  다크로우 - 죽음의 의미 (Dark Law - Meaning of Death).s lit=20444
+  드래곤 퀘스트 1 &amp; 2 (Dragon Quest I &amp; II).s lit=559
+  플래시백 (Flashback).smc                          lit=5739
+  SM 조교사 히토미 Vol 1 (SM Choukyoushi Hitomi Vol.  lit=38887
+  키테레츠 대백과 - 초시공 스고로쿠 (Kiteretsu Daihyakka - Ch lit=57344
+  트로이 에이크만 NFL 풋볼 (Troy Aikman NFL Football).sm lit=57344
+  프로 마작 극 2 (Pro Mahjong Kiwame II).smc         lit=0
+  로코의 모던 라이프 - 스펑키의 위험한 하루 (Rocko's Modern Life lit=0
+  록맨 7 (Mega Man 7).smc                         lit=1343
+  슈퍼 마리오 요시 아일랜드 (Super Mario - Yoshi Island).s lit=0
+  유니버설 솔저 (Universal Soldier).smc               lit=0
+  팬텀 2040 (Phantom 2040).smc                    lit=5676
+  도카포 외전 불꽃의 오디션 (Dokapon Gaiden - Honoo no Aud lit=0
+  제노사이드 2 (Genocide 2).smc                      lit=25856
+  쿨 월드 (Cool World).smc                         lit=10524
+  울티마 외전 - 흑기사의 음모 (Ultima Gaiden - Kuro Kishi  lit=350
+  슈퍼 포메이션 사커 2 (Super Formation Soccer II).smc  lit=1015
+  슈퍼마리오월드2 - 요시 아일랜드.smc                        lit=0
+  GP-1 (GP-1).smc                               lit=1412
+  파친코 이야기 2 - 나고야 사치호코의 제왕 (Pachinko Monogatari lit=16571
+  몬스타니아 (Monstania).smc                         lit=0
+  미소녀전사 세일러문 S - 후와후와 패닉 2 + ST 바이오스.smc        lit=4865
+  슈퍼 차이니즈월드3 (Super Chinese World 3 - Chou Jige lit=51712
+  도박 방랑기 (Gambling Hourouki).smc                lit=57344
+  슈퍼 코파 (Super Copa).smc                        lit=0
+  네트워크 Q 랠리 (Rally - The Final Round of the Wor lit=8685
+  바비 슈퍼 모델 (Barbie Super Model).smc             lit=54701
+  GP-1 래피드 스트림 (GP-1 RS - Rapid Stream).smc     lit=1412
+  슈퍼 튜리칸 (Super Turrican).smc                   lit=7296
+  줍 (Zoop).smc                                  lit=57344
+  용호의 권 2 (Ryuuko no Ken 2).smc                 lit=49920
+  심시티 주니어 (SimCity Jr.).smc                     lit=57344
+  엔에이치엘 95 (NHL 95).smc                         lit=57344
+  파이널 녹아웃 (Final Knockout).smc                  lit=54145
+  매지컬팝픈.smc                                     lit=0
+  복싱 레전즈 오브 더 링 (Boxing Legends of the Ring).sm lit=52947
+  슈퍼 프로야구 2 (Super Professional Baseball II).sm lit=57341
+  팔라딘 퀘스트 (Paladin's Quest).smc                 lit=0
+  제4차 슈퍼로봇대전 (Dai-4-ji Super Robot Taisen).smc  lit=52938
+  캐슬바니아 - 드라큘라 X (Castlevania - Dracula X).smc  lit=2242
+  마이크로 머신즈 (Micro Machines).smc                 lit=2244
+  아랑전설 스페셜 (Fatal Fury Special).smc             lit=3520
+  고스트 체이서 전정.smc                                lit=0
+  터프 이 너프 (Tuff E Nuff).smc                     lit=0
+  꼬마 괴물들의 모험 - 와일드 앤 와키 스포츠 (Tiny Toon Adventur lit=0
+  모탈 컴뱃 2 궁극신권 (Mortal Kombat II - Kyuukyoku Sh lit=5103
+  타임캅 (Timecop).smc                             lit=6869
+  존 매든 풋볼 '93 (John Madden Football '93).smc    lit=487
+  프로 야구 열투 - 퍼즐 스타디움 (Pro Yakyuu Nettou - Puzzl lit=0
+  베스트 샷 프로 골프 (Best Shot Pro Golf).smc          lit=20561
+  공룡기 (Kouryuuki).smc                           lit=57344
+  워 3010 - 더 레볼루션 (War 3010 - The Revolution).s lit=11872
+  로켓티어 (Rocketeer, The).smc                     lit=4216
+  슈퍼 제임스 폰드 2 (Super James Pond II).smc         lit=5696
+  슈퍼 스트리트 파이터 II - 새로운 도전자들 (Super Street Fight lit=3155
+  강철의 기사 (Koutetsu no Kishi).smc                lit=0
+  엔에이치엘 96 (NHL 96).smc                         lit=57344
+  독립전쟁 리버티 오어 데스 (Dokuritsu Sensou - Liberty or lit=57344
+  록맨7 - 숙명의 싸움!.smc                             lit=2613
+  대항해시대 2 (New Horizons).smc                    lit=2057
+  타임슬립 (Timeslip).smc                           lit=1836
+  플록! (Plok).smc                                lit=52686
+  러싱비트 란 (Rushing Beat Ran - Fukusei Toshi).smc lit=0
+  슈퍼 스타워즈.smc                                   lit=0
+  캐스퍼 (Casper).smc                              lit=52722
+  진 여신전생 (Shin Megami Tensei).smc               lit=1412
+  바이오 메탈 (BioMetal).smc                         lit=0
+  신 스타 트렉 - 넥스트 제너레이션 (Shin Star Trek - Ooinaru lit=1869
+  아르커스 스피리츠 (Arcus Spirits).smc                 lit=12755
+  삼국지 세이시 - 텐부 스피리츠 (Sangokushi Seishi - Tenbu  lit=57344
+  테마 파크 (Theme Park).smc                        lit=57344
+  로보캅 대 터미네이터 (RoboCop Versus The Terminator).s lit=25838
+  음악만들기 - 카나데루 (Ongaku Tsukuru Kanadeeru).smc   lit=20444
+  아처 맥클레인의 드롭존 (Archer Maclean's Super Dropzone lit=1082
+  드림 TV (Dream T.V.).smc                        lit=50471
+  슈퍼 위젯 (Super Widget).smc                      lit=1412
+  렐름 (Realm).smc                                lit=3986
+  본커스 (Bonkers).smc                             lit=0
+  올 아메리칸 챔피언십 풋볼 (All-American Championship Foo lit=0
+  이그니션 팩터 (Ignition Factor, The).smc            lit=2903
+  힘내라! 대공의 겐상 (Ganbare! Daiku no Gen-san).smc   lit=57328
+  구약 여신전생 (Kyuuyaku Megami Tensei).smc          lit=1412
+  스톤 프로텍터스 (Stone Protectors).smc               lit=30765
+  올림픽 썸머 게임 애틀랜타 96 (Olympic Summer Games).smc  lit=57344
+  슈퍼 킥복싱 (Super Kick Boxing - Best of the Best) lit=831
+  고스트 체이서 전성 (Ghost Chaser Densei).smc          lit=0
+  버추얼 바트 (Virtual Bart).smc                     lit=0
+  로타어 마테우스 슈퍼 사커 (Lothar Matthaeus Super Soccer lit=1408
+  울펜슈타인 3D (Wolfenstein 3-D).smc                lit=23256
+  SD 건담 제너레이션 F - 콜로니 카쿠 전기 + ST 바이오스.smc       lit=4865
+  SD 건담 제너레이션 E - 잔스카르 전기 + ST 바이오스.smc         lit=4865
+  배트맨 - 조커의 복수 (Batman - Revenge of the Joker). lit=0
+  슈퍼 인생 게임 3 (Super Jinsei Game 3).smc          lit=0
+  탑 매니지먼트 2 (Top Management II).smc             lit=57344
+  동계 올림픽 게임 - 릴레함메르 94 (Winter Olympic Games -  lit=54740
+  위즈 (Whizz).smc                                lit=4525
+  슈퍼 알프레드 치킨 (Super Alfred Chicken).smc         lit=0
+  알라딘 (Aladdin).smc                             lit=1533
+  잭 니클라스 골프 (Jack Nicklaus Golf).smc            lit=6586
+  꽃의 케이지 - 구름의 저편에 (Hana no Keiji - Kumo no Kan lit=0
+  이상한 던전2 - 풍래의 시렌.smc                          lit=57344
+  링에 걸어라 (Ring ni Kakero).smc                   lit=0
+  마징가 Z (Mazinger Z).smc                        lit=89
+  세계 속의 카르멘 산디에고 (Where in the World Is Carmen  lit=0
+  SD 울트라 배틀 - 세븐 전설.smc                         lit=0
+  파이널파이트3 (Final Fight 3).smc                   lit=2733
+  슈퍼로봇대전 배틀로봇열전.smc                             lit=57344
+  울티마 - 미덕의 룬 2 (Ultima - Runes of Virtue II).s lit=1214
+  체스터치타 - Wild Wild Quest.smc                   lit=57344
+  마신전생 2 - 스파이럴 네메시스 (Majin Tensei II - Spiral  lit=1412
+  아랑전설 - 숙명의 투쟁 (Garou Densetsu - Shukumei no T lit=57344
+  디노 디니 사커 (Dino Dini's Soccer!).smc            lit=0
+  브랜디쉬 (Brandish).smc                           lit=2057
+  상승 마작 텐파이 (Joushou Mahjong Tenpai).smc        lit=57344
+  슈퍼 알타입 (Super R-Type).smc                     lit=38976
+  노아기어 - 바다와 바람의 고동.smc                         lit=56447
+  슈퍼 고모쿠 나라베 렌주 (Super Gomoku Narabe - Renju).s lit=57344
+  슈퍼 터리칸 2 (Super Turrican 2).smc               lit=5730
+  슈퍼 베이스 로디드 2 (Super Bases Loaded 2).smc       lit=0
+  전국의 패자 (Sengoku no Hasha - Tenkafubu e no Mic lit=50846
+  이카리의 요새 (Ikari no Yousai).smc                 lit=4708
+  울티마 7 - 검은 문 (Ultima - The Black Gate).smc    lit=0
+  마리오 타임 머신 (Mario's Time Machine).smc          lit=3149
+  루니 툰 농구 (Looney Tunes B-Ball).smc             lit=89
+  원더러스 매직 (Wondrous Magic).smc                  lit=2528
+  블레이즈 온 (Blaze On).smc                         lit=1412
+  부거맨 - 어 픽 앤 플릭 어드벤처 (Boogerman - A Pick and F lit=0
+  슈퍼 핀볼 - 가면 뒤의 사나이 (Super Pinball - Behind the lit=1566
+  렌과 스팀피 쇼 타임 워프 (Ren & Stimpy Show, The - Time lit=13300
+  돌럭키의 퍼즐 투어 94 (Dolucky no Puzzle Tour '94).sm lit=49032
+  슈퍼 에어 다이버 (Super Air Diver).smc               lit=0

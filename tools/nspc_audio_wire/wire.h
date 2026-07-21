@@ -13,5 +13,6 @@ void wire_apu_write(struct Snes *snes, uint32_t adr, uint8_t val);
 int  wire_try_swap(struct Snes *snes, int frame);
 void wire_frame_audio(int16_t *buf, int n);
 int  wire_pre_opcode(struct Snes *snes);   /* $80:8028 upload HLE; 0 = not hooked */
+void wire_reset(void);                     /* between ROMs / on savestate load */
 
 #endif

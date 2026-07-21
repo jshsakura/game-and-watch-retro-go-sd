@@ -66,12 +66,12 @@ bool g_new_ppu = true;                 /* the fast line renderer, as measured */
 
 static Snes *g_the_snes;
 
-/* The lib routes $2140-43 writes through this (snes.c). Catch the APU up and
- * write the CPU-visible mailbox — NOT apu_cpuWrite(), which is the SPC's own
- * bus and would leave inPorts stale (boot then spins on the port echo). */
+/* The lib routes $2140-43 writes through this (snes.c). The wire owns the
+ * mailbox: pure LLE passthrough (catch up + write inPorts) until it swaps
+ * the SPC700 for the native N-SPC player, the player's ports after. */
+#include "wire.h"
 void RtlApuWrite(uint32_t adr, uint8_t val) {
-  snes_catchupApu(g_the_snes);
-  g_the_snes->apu->inPorts[adr & 0x3] = val;
+  wire_apu_write(g_the_snes, adr, val);
 }
 
 void Die(const char *s) {
@@ -122,7 +122,9 @@ static int run_one_opcode(Snes *s) {
   uint32_t pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
   int disp = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) && !cpu->stopped;
   s->cpuMemOps = 0;
-  int cycles = cpu_runOpcode(cpu);
+  int cycles = wire_pre_opcode(s);
+  if (cycles == 0)
+    cycles = cpu_runOpcode(cpu);
   s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
   g_spin.ops_real++;
   spin_note(cpu, pc24, (uint8_t)s->cpuCyclesLeft, disp);
@@ -257,7 +259,9 @@ static void blit(void) {
  * Top the DSP up to one frame of samples (534 stereo pairs internally) and
  * downmix to 16 kHz mono, exactly like the harness/rig. */
 static void snes_pcm_submit(void) {
-  if (snes->apu) {
+  if (g_wire_on) {
+    wire_frame_audio(audio_buf, SNES_AUDIO_SAMPLES);
+  } else if (snes->apu) {
     while (snes->apu->dsp->sampleOffset < 534)
       apu_cycle(snes->apu);
     dsp_getSamples(snes->apu->dsp, audio_buf, SNES_AUDIO_SAMPLES, 1);
@@ -346,6 +350,7 @@ static bool snes_SaveState(const char *pathName) {
 }
 
 static bool snes_LoadState(const char *pathName) {
+  wire_reset();   /* state restores the LLE APU; re-detect and re-swap after */
   FILE *f = fopen(pathName, "rb");
   if (!f) return false;
   snes_state_header_t h;
@@ -564,6 +569,14 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     g_ppu_skip_render = !drawFrame;
     render_frame_into_active_buffer();   /* arm the line callback every frame */
     run_frame_events(snes);
+
+    /* Audio HLE: once the uploaded N-SPC driver is recognized, retire the
+     * SPC700+DSP interpreter (~1.1-1.8M insn/frame) for the native player.
+     * Unrecognized drivers just stay LLE. */
+    {
+      static int wire_frame = 0;
+      wire_try_swap(snes, ++wire_frame);
+    }
 
     if (drawFrame) {
       blit();          /* present_frame() + in-game overlay */

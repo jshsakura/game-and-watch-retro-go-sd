@@ -1313,10 +1313,21 @@ $(eval $(foreach obj,$(SM_C_SOURCES),$(call sm_obj_prereq_gen,$(obj))))
 # symbol names alias silently at link (the g_snes saga), so the namespace
 # split is load-bearing. Hot (-O2, the CFLAGS default) throughout: the
 # interpreter+PPU ARE the frame here, unlike sm where game logic is cold.
+# The audio-HLE wire compiles a generated spc_player copy + apu_wire.c
+# (apu_run renamed) out of build/snes_gen — same pipeline as the host
+# harness (tools/nspc_audio_wire/gen_sources.sh), so the firmware runs the
+# program the harness gated.
+$(BUILD_DIR)/snes_gen/.stamp: external/sm/src/spc_player.c external/sm/src/snes/apu.c tools/nspc_audio_wire/gen_sources.sh tools/nspc_hle/gen_variant.py | $(BUILD_DIR)
+	$(V)$(ECHO) [ GEN snes ] nspc_player_gen.c apu_wire.c
+	$(V)bash tools/nspc_audio_wire/gen_sources.sh . $(BUILD_DIR)/snes_gen > /dev/null
+	$(V)touch $@
+$(BUILD_DIR)/snes_gen/nspc_player_gen.c: $(BUILD_DIR)/snes_gen/.stamp ;
+$(BUILD_DIR)/snes_gen/apu_wire.c: $(BUILD_DIR)/snes_gen/.stamp ;
+
 define snes_obj_prereq_gen
 $$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile snes_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP $$(SNES_C_INCLUDES) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DNSPC_WIRE_STATIC_PLAYER $(if $(findstring nspc_player_gen,$1),-include tools/nspc_hle/nspc_config.h) $(if $(findstring apu_wire,$1),-iquote $(CORE_SNES)/src/snes) $$(SNES_C_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
 

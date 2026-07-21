@@ -597,12 +597,19 @@ Core/Src/porting/wswan/main_wswan.c
 SNES_C_SOURCES =
 
 CORE_SNES = external/sm
+# apu.c is compiled via a generated copy (apu_wire.c: apu_run -> apu_run_lle);
+# wire.c owns apu_run and swaps in a native N-SPC player once the game's
+# uploaded driver is recognized (tools/nspc_audio_wire).
 SNES_C_SOURCES += \
-$(CORE_SNES)/src/snes/apu.c \
+$(BUILD_DIR)/snes_gen/apu_wire.c \
+$(BUILD_DIR)/snes_gen/nspc_player_gen.c \
+tools/nspc_hle/nspc_variant.c \
+tools/nspc_audio_wire/wire.c \
 $(CORE_SNES)/src/snes/cart.c \
 $(CORE_SNES)/src/snes/cpu.c \
 $(CORE_SNES)/src/snes/dma.c \
 $(CORE_SNES)/src/snes/dsp.c \
+$(CORE_SNES)/src/snes/dsp1_hle.c \
 $(CORE_SNES)/src/snes/input.c \
 $(CORE_SNES)/src/snes/ppu.c \
 $(CORE_SNES)/src/snes/snes.c \
@@ -1281,6 +1288,9 @@ SNES_C_INCLUDES = $(C_INCLUDES) \
 -ICore/Inc/porting/snes \
 -I$(CORE_SNES)/src \
 -I$(CORE_SNES) \
+-Itools/nspc_hle \
+-Itools/nspc_audio_wire \
+-Itools/snes_survey \
 -I./
 
 WSWAN_C_INCLUDES += \
