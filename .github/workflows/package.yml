@@ -130,41 +130,43 @@ jobs:
             # Subject as a heading, full commit body as the explanation —
             # the bodies are written to be read, so the release explains
             # itself instead of listing bare one-liners.
-            git log --no-merges --pretty=format:'### %s%n%n%b%n' $RANGE
+            #
+            # Exclude docs commits: a firmware release's changelog is firmware
+            # changes. The docs-site / devlog series (docs(site): …) is website
+            # work and only cluttered the notes.
+            git log --no-merges --invert-grep --grep='^docs' \
+              --pretty=format:'### %s%n%n%b%n' $RANGE
             echo ""
           } > RELEASE_NOTES.md
 
-      # 4. Create a release and upload files
-      - name: Create Release
-        uses: actions/create-release@v1
-        id: create_release
+      # 4. Publish. A release for this tag may already exist: some are cut by hand
+      #    (`gh release create`) with notes written for the occasion, and the tag
+      #    that creates lands here a moment later. actions/create-release@v1 could
+      #    only ever create, so it failed with "already_exists" on every one of
+      #    those — a red X on a workflow that had in fact built everything
+      #    correctly. A safety net that cries wolf on success is a safety net
+      #    people learn to scroll past.
+      #
+      #    So: create it if it is not there, and either way replace the artifacts
+      #    with the ones THIS job just built. A clean-checkout build is the one
+      #    that should ship, not whatever was lying in someone's release/ folder.
+      #    Hand-written notes are left alone — CI has nothing to add to them that
+      #    the author did not already say.
+      - name: Publish release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Release ${{ github.ref_name }}
-          body_path: RELEASE_NOTES.md
-          draft: false
-          prerelease: false
-
-      # 4. Add firmware update file as assets
-      - name: Upload retro-go_update.bin to Release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: release/retro-go_update.bin
-          asset_name: retro-go_update.bin
-          asset_content_type: application/octet-stream
-
-      # 5. SD content archive (cores + /roms/homebrew/*.bin)
-      - name: Upload gw_update.tar to Release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: release/gw_update.tar
-          asset_name: gw_update.tar
-          asset_content_type: application/x-tar
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — keeping its notes, replacing its artifacts."
+          else
+            echo "Creating release $TAG from the commit bodies."
+            gh release create "$TAG" \
+              --title "Release $TAG" \
+              --notes-file RELEASE_NOTES.md
+          fi
+          gh release upload "$TAG" \
+            release/retro-go_update.bin \
+            release/gw_update.tar \
+            --clobber

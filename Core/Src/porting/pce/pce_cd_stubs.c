@@ -54,6 +54,7 @@ void pce_scsi_cdda_get(uint32_t out[PCE_SCSI_CDDA_STATE_WORDS]) { (void)out; }
 void pce_scsi_cdda_set(const uint32_t in[PCE_SCSI_CDDA_STATE_WORDS]) { (void)in; }
 
 int  pce_adpcm_fill(int16_t *out, int frames) { (void)out; (void)frames; return 0; }
+void pce_adpcm_frame_end(void) { }           /* called every frame, CD unit or not */
 void pce_adpcm_reset(void) { }
 void pce_adpcm_reconcile_load(void) { }
 uint8_t *pce_adpcm_ram(void) { return 0; }  /* only reached inside the cue guard */

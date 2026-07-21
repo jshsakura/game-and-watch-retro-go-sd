@@ -1,0 +1,113 @@
+# N-SPC sound HLE, wired into the live emulator
+
+`tools/nspc_hle` proved the native player renders foreign N-SPC music from an
+ARAM snapshot. This wires it into the RUNNING emulator: boot LLE (the real
+SPC700 does the IPL upload), auto-detect the driver (survey signatures,
+chOK>=6 twice, 60 frames apart), swap to the native player, and from then on
+`apu_run()` advances the 500 Hz sequencer tick + `dsp_cycle` instead of SPC700
+opcodes. The game's $2140-43 traffic talks to the native engine.
+
+```
+bash tools/nspc_audio_wire/build.sh          # host harness -> /tmp/nspc_wire_build/wire_host
+WIRE=0 wire_host <rom> [frames]              # pure-LLE reference
+wire_host <rom> [frames]                     # wired (WIRE_WAV=/tmp/x.wav dumps audio)
+bash tools/nspc_audio_wire/run_snes_wire.sh <rom> [frames]   # hard-float M7 rig
+```
+
+## Measured (M7 rig, hard-float, Zelda ALttP gameplay windows, 340 MHz)
+
+| | emu | apu | total | fps |
+|---|---|---|---|---|
+| stock LLE (PPU commit in) | 6.31M | 0.60M | 6.90M | 49.2 |
+| **wired (std N-SPC native)** | **5.73M** | **0.195M** | **5.93M** | **57.3 (+16%)** |
+
+−0.98M/frame: SPC700 opcodes (0.37M) plus the per-APU-cycle `apu_cycle`
+bookkeeping (timers/dispatch at 1.024 MHz -> replaced by per-sample stepping,
+32× fewer iterations). **STATEHASH and every per-window fb hash identical to
+stock** — the game never observed a divergent port value in this run.
+
+## What works / what doesn't (the honest boundary)
+
+- **std-variant protocol (SM/ALttP lineage): works.** Zelda title music plays
+  natively; scene milestones identical; 3000-frame no-hang.
+- **Konami (GD3): sequence dialect solved, live PORT PROTOCOL not.** TMNT
+  hangs at boot on stateful driver responses that instant-acks cannot fake;
+  Gradius III proceeds but near-silent. **The swap is gated to std/YI** —
+  GD3/SMW/Tose/Intelli stay LLE (`WIRE_ALL=1` overrides for research).
+- Foreign SFX protocols (ports 1-3) are instant-acked, not played — music-only.
+- **Open issue:** ALttP's title theme one-shots natively (~19 s) where LLE
+  loops forever. The stop trace shows the engine taking the `t==0` end path;
+  the standard `$00nn (nn>=0x80)` phrase-jump patch (build.sh) did not change
+  it — the loop lives in a per-revision phrase/vcmd difference still to be
+  pinned. Bounded, not architectural.
+
+## Protocol nuances that cost hours (keep for the shipped integration)
+
+1. **Idle-zero**: ALttP's NMI mailbox writes 00 to port0 when idle; SM's
+   engine reads a 0 that differs from the current song as a STOP command.
+   The wire drops idle-zero writes (games stop via 0xf0/0xf1).
+2. **Song resume at swap**: the port0 value seen during boot is IPL upload
+   counter traffic, not a command; and the handshake clears the port after
+   ack. Recover the current song from the driver's own out-port echo, with a
+   pc<0xFFC0-filtered write sniff as fallback.
+3. **Re-upload risk**: games that re-upload banks mid-run (driver transfer
+   command) would break the native player — production needs unswap-to-LLE
+   (the frozen SPC700 state remains valid) and re-detection. Not yet needed by
+   the tested games, unimplemented.
+
+Files: `wire.c/.h` (dispatch + detection + swap), `host_main.c`,
+`build.sh` (generated-copy discipline: player dialect pipeline from nspc_hle
++ `apu_run`->`apu_run_lle` rename in a copied apu.c; submodule untouched),
+`run_snes_wire.sh` (+ generated `rig_snes_wire.c`).
+
+## SMW exact-player path
+
+The generic dialect adapter above can decode SMW streams, but its live port
+protocol is wrong for SMW. `smw_exact_wire.c` instead adopts the running LLE
+state into `external/smw/src/smw_spc_player.c`, the project's exact SMW music
+and SFX reimplementation. It is generated with zero-copy ARAM/DSP pointers, so
+it does not allocate a second 64 KiB APU RAM.
+
+SMW reloads APU blocks at runtime. The exact wire implements the AA/BB mailbox,
+counter echo and direct ARAM receiver; the uploaded `0x1360..0x5fff` gameplay
+image was compared against LLE and matched byte-for-byte. This fixes the old
+post-swap black-screen wait and preserves music/SFX after reloads.
+
+```bash
+bash tools/nspc_audio_wire/build_smw_exact.sh
+WIRE=0 /tmp/smw_exact_wire_build/wire_smw_host external/smw/smw.sfc 2400
+/tmp/smw_exact_wire_build/wire_smw_host external/smw/smw.sfc 2400
+
+# Cortex-M7, hard-float, spin-skip in both arms
+WIRE_OFF=1 bash tools/nspc_audio_wire/run_snes_smw_exact.sh external/smw/smw.sfc 1200
+bash tools/nspc_audio_wire/run_snes_smw_exact.sh external/smw/smw.sfc 1200
+```
+
+Measured on the M7 rig (1200 frames, periodic Start input):
+
+| | emu | audio pull | total | 340 MHz equivalent |
+|---|---:|---:|---:|---:|
+| LLE + spin-skip | 6.365M | 0.477M | 6.842M | 49.69 fps |
+| exact SMW HLE + spin-skip | 5.723M | 0.531M | 6.255M | **54.36 fps** |
+
+That removes 587,287 instructions/frame (8.58%). Scaling the measured-device
+46 fps spin baseline by the same total-work ratio gives 50.32 fps; device
+measurement remains the release oracle.
+
+Boundary: framebuffer window hashes match through the first 1200 frames. A
+later APU reload is handled faster than the real SPC700 transfer, so transition
+timing and subsequent state hashes differ even though the game proceeds,
+renders, and produces audio. This is therefore a performance/productization
+candidate, not a bit-exact audio-timing replacement.
+
+The firmware integration is opt-in and must retain the faster spin path:
+
+```bash
+make SD_CARD=1 SNES_SMW_HLE=1 RCSMW=0 build/gw_retro_go.elf
+```
+
+It enables HLE only for the headerless 512 KiB US vanilla ROM with full-image
+FNV-1a `ae8466a1`; every other SNES image stays on the original LLE APU. The
+firmware and proof both consume `gen_smw_exact.py`, preventing their generated
+APU/player sources from drifting apart. `SNES_SPIN_SKIP` and `SNES_DSP_MONO`
+remain enabled in the same build. Final speed claims require a device run.

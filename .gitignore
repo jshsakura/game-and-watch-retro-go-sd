@@ -68,3 +68,33 @@ clock_mockup.html
 
 # root-dropped clock preview copies (host/preview_out is the canonical set)
 /clock_*.png
+
+# Savestates / SRAM dropped in the repo root while debugging. They are the user's
+# game, not the project's source.
+*.sav
+*.sram
+*.raw
+
+# SNES tooling: build artifacts and ROM-derived generated code (never publish)
+tools/m7_qemu_rig/build_*/
+# per-ROM generated translation units are ROM-derived — never commit
+tools/sfc_recomp/*_gen.c
+tools/sfc_recomp/rc_core_*.c
+
+# --- agent scratch / analysis cruft (keep working tree clean; not source of truth) ---
+/*_ANALYSIS.md
+/RC_ACTIVATION_VERIFY.md
+/RC_DISPATCH_ANALYSIS.md
+/RESUME_GNW.md
+/SEGACD_INVESTIGATION.md
+/MD32X_MENU_FLICKER_ANALYSIS.md
+/docs/SNES_PERF_FINDINGS.md
+/parse_hist.py
+/patch.diff
+/patch_plan.txt
+/test_plan.txt
+/tools/sfc_recomp/smw_hot_sites.csv
+# SegaCD lives in the gnw-segacd worktree until firmware integration lands
+/Core/Src/porting/segacd/
+/tools/segacd_harness/
+/.build-flags

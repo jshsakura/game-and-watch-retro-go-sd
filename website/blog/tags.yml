@@ -1,0 +1,89 @@
+gba:
+  label: GBA
+  permalink: /gba
+  description: Game Boy Advance work
+
+performance:
+  label: performance
+  permalink: /performance
+  description: Speed and CPU-budget work
+
+audio:
+  label: audio
+  permalink: /audio
+  description: Sound path work
+
+release:
+  label: release
+  permalink: /release
+  description: Release notes and milestones
+
+wonderswan:
+  label: WonderSwan
+  permalink: /wonderswan
+  description: WonderSwan / WonderSwan Color work
+
+savestate:
+  label: savestate
+  permalink: /savestate
+  description: Save/resume and state serialization
+
+video:
+  label: video
+  permalink: /video
+  description: Video player (MJPEG-AVI) work
+
+snes:
+  label: SNES
+  permalink: /snes
+  description: Super Nintendo / Super Metroid / Zelda 3 port work
+
+segacd:
+  label: SegaCD
+  permalink: /segacd
+  description: Mega CD / Sega CD work
+
+32x:
+  label: 32X
+  permalink: /32x
+  description: Mega Drive 32X / PicoDrive port work
+
+boot:
+  label: boot
+  permalink: /boot
+  description: Boot path, rescue screen, and watchdog work
+
+fault:
+  label: fault
+  permalink: /fault
+  description: Hardware faults and crash post-mortems
+
+hardware:
+  label: hardware
+  permalink: /hardware
+  description: Device-only behaviour and the host/device gap
+
+clock:
+  label: clock
+  permalink: /clock
+  description: Clock app, alarms, and the RTC
+
+c64:
+  label: C64
+  permalink: /c64
+  description: Commodore 64 / Frodo port work
+
+i18n:
+  label: i18n
+  permalink: /i18n
+  description: Language binaries, fonts, and codepages
+
+pce:
+  label: PCE
+  permalink: /pce
+  description: PC Engine / TurboGrafx-16 / CD-ROM² work
+
+security:
+  label: security
+  permalink: /security
+  description: Adversarial review, buffer-hardening, and exploit-surface work

@@ -1,9 +1,9 @@
 /* Host test for the Clock GIF pipeline: compiles the REAL gifdec + rg_clock_gif
- * with a simulated emu-RAM pool AND a simulated shared_files buffer (the decode
- * arena the clock borrows — see rg_clock_gif.c), then decodes a real animated
- * GIF end to end, checking frames actually change and the blit produces
- * plausible pixels. Catches decoder/allocator regressions the device can only
- * report as a black background. */
+ * with a simulated emu-RAM pool AND a simulated clock_overlay_arena() (the
+ * decode arena past .overlay_clock's own footprint — see rg_clock_gif.c),
+ * then decodes a real animated GIF end to end, checking frames actually
+ * change and the blit produces plausible pixels. Catches decoder/allocator
+ * regressions the device can only report as a black background. */
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -25,16 +25,17 @@ size_t ram_get_free_size(void) { return sizeof pool - pool_off; }
 size_t ram_mark(void) { return pool_off + 1; }             /* +1: never 0 */
 void   ram_release(size_t m) { pool_off = m - 1; }
 
-/* ---- simulated shared_files buffer (rg_emulators) — the borrowed decode
- * arena, sized like the device's (1000 slots ≈ 527 KB). The size override
- * lets one test fake a buffer too small for the GIF. ---- */
-#include "rg_emulators.h"
+/* ---- simulated clock_overlay_arena() (rg_clock_ring.c) — the decode arena
+ * past .overlay_clock's own footprint, sized generously (527 KB). The size
+ * override lets one test fake a buffer too small for the GIF. ---- */
 static uint8_t shared_buf[527 * 1024];
 static size_t  shared_bytes_override = 0;
-retro_emulator_file_t *rg_emulators_shared_file_buffer(int *maxcount)
-{ if (maxcount) *maxcount = 0; return (retro_emulator_file_t *)shared_buf; }
-size_t rg_emulators_shared_file_bytes(void)
-{ return shared_bytes_override ? shared_bytes_override : sizeof shared_buf; }
+uint8_t *clock_overlay_arena(size_t *out_bytes)
+{ if (out_bytes) *out_bytes = shared_bytes_override ? shared_bytes_override : sizeof shared_buf;
+  return shared_buf; }
+
+/* boot call site is a no-op now (real definition moved to rg_clock_ring.c) */
+void clock_gif_reserve(void) {}
 
 /* redirect the absolute SD path to the test file */
 static const char *gif_path(const char *p)

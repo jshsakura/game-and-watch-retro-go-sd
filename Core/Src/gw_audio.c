@@ -6,7 +6,7 @@ uint32_t audio_mute;
 int16_t audiobuffer_dma[AUDIO_BUFFER_LENGTH * 2] __attribute__((section(".audio")));
 
 dma_transfer_state_t dma_state;
-uint32_t dma_counter;
+volatile uint32_t dma_counter;
 
 static uint16_t audiobuffer_full_length = AUDIO_BUFFER_LENGTH * 2;
 

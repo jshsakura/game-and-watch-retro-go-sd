@@ -332,7 +332,11 @@ static int open_video_menu(const avi_t *a)
 extern int  g_vdec_st, g_vdec_w, g_vdec_h;
 extern long g_vdec_sz, g_vdec_rc;
 extern unsigned char g_vdec_b0, g_vdec_b1;
-static char s_diag[200];
+/* Why the HW decode failed, rather than just that it did. "rc=1" is three
+ * unrelated failures wearing the same number, and a release went by guessing
+ * which one it was. See hw_jpeg_decoder.c. */
+extern uint32_t g_jpeg_hal, g_jpeg_err, g_jpeg_rej, g_jpeg_sub, g_jpeg_need;
+static char s_diag[256];
 const char *video_last_diag(void) { return s_diag[0] ? s_diag : "unsupported / unreadable"; }
 
 static void build_diag(const avi_t *a, int nv, int na)
@@ -340,10 +344,13 @@ static void build_diag(const avi_t *a, int nv, int na)
     int fps = a->usec_per_frame > 0 ? (1000000 + a->usec_per_frame / 2) / a->usec_per_frame : 0;
     snprintf(s_diag, sizeof s_diag,
              "open %dx%d %dfps f=%d|frame %02X%02X sz=%ld|decode st=%d %dx%d rc=%ld|"
-             "chunks v=%d a=%d",
+             "hal=%lu err=%lx rej=%lu sub=%lu need=%lu|chunks v=%d a=%d",
              a->width, a->height, fps, a->total_frames,
              g_vdec_b0, g_vdec_b1, g_vdec_sz,
-             g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_rc, nv, na);
+             g_vdec_st, g_vdec_w, g_vdec_h, g_vdec_rc,
+             (unsigned long)g_jpeg_hal, (unsigned long)g_jpeg_err,
+             (unsigned long)g_jpeg_rej, (unsigned long)g_jpeg_sub, (unsigned long)g_jpeg_need,
+             nv, na);
 }
 
 // Live decoder overlay (toggle in the options menu via g_show_debug): a translucent
@@ -367,10 +374,19 @@ static void draw_hud(int dec_ok, int seen, int na)
     const char *sd = "--"; /* flash build: media streams from FrogFS, no SD path */
 #endif
     extern int g_vdec_read_ms, g_vdec_pf_ms, g_vdec_jpeg_ms;
-    char l1[64], l2[48];
-    snprintf(l1, sizeof l1, "dec=%d v=%d rd=%dms pf=%dms jpg=%dms",
-             dec_ok, seen, g_vdec_read_ms, g_vdec_pf_ms, g_vdec_jpeg_ms);
-    snprintf(l2, sizeof l2, "sz=%ld dmx=%d sd=%s %dx%d", g_vdec_sz, g_vid_dmax, sd, g_vdec_w, g_vdec_h);
+    char l1[80], l2[48];
+    /* dec/v is the whole story when it reads 14/272: nine frames in ten are being
+     * REJECTED, not merely late. So the last rejection's reason belongs here, live,
+     * next to the count — not only on the giving-up screen. */
+    snprintf(l1, sizeof l1, "dec=%d v=%d rd=%dms jpg=%dms st=%d hal=%lu rej=%lu",
+             dec_ok, seen, g_vdec_read_ms, g_vdec_jpeg_ms,
+             g_vdec_st, (unsigned long)g_jpeg_hal, (unsigned long)g_jpeg_rej);
+    // ring= is the A/V clock trim's servo error: it must sit near VR_TARGET
+    // (~1200) for the whole clip. Climbing to 4095 is the drift that used to
+    // close the prefetch gate and turn playback to stutter; falling to 0 is an
+    // underrun. Either end means the trim is not holding.
+    snprintf(l2, sizeof l2, "sz=%ld dmx=%d sd=%s %dx%d ring=%d",
+             g_vdec_sz, g_vid_dmax, sd, g_vdec_w, g_vdec_h, video_audio_ring_count());
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t accent = curr_colors->sel_c;
     for (int y = 0; y < 26; y++) {                       // translucent panel (video shows through)

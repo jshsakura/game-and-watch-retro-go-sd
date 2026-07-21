@@ -25,6 +25,7 @@ NAMES = {
     "header_gg":       "GAME GEAR",
     "header_sms":      "MASTER SYSTEM",
     "header_gen":      "GENESIS",
+    "header_segacd":   "SEGA CD",
     "header_sg1000":   "SG-1000",
     "header_col":      "COLECOVISION",
     "header_wsv":      "SUPERVISION",
@@ -43,6 +44,8 @@ NAMES = {
     "header_c64":      "COMMODORE 64",
     "header_gamecom":  "GAME.COM",
     "header_favorites": "FAVORITES",
+    "header_snes":     "SNES (SUPER FAMICOM)",
+    "header_32x":      "SEGA 32X",
 }
 
 TARGET_H = 18      # matches existing header height

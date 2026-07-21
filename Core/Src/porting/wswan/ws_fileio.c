@@ -464,6 +464,12 @@ uint32_t WsLoadState(const char *savename, uint32_t num)
 		printf("Cannot load save state\n");
 		return 1;
 	}
+	{	/* idle-skip: a warm load replaces the machine under a possibly-parked
+		 * CPU — a stale loop pattern must not survive into the loaded state.
+		 * (Cold loads get this via WsReset -> nec_reset already.) */
+		extern void nec_idle_reset(void);
+		nec_idle_reset();
+	}
 	MacroLoadNecRegisterFromFile(fp,NEC_IP);
 	MacroLoadNecRegisterFromFile(fp,NEC_AW);
 	MacroLoadNecRegisterFromFile(fp,NEC_BW);
@@ -588,6 +594,19 @@ static const int ws_state_nec_regs[] = {
 #define WS_STATE_MAGIC   0x53575347u   /* 'GSWS' */
 #define WS_STATE_VERSION 1u
 
+/* Runtime scheduler/sound accumulators the WriteIO replay can't rebuild are
+ * APPENDED after the versioned body and read back only if present, so this stays
+ * backward-compatible: an old save (no trailer) still loads (accumulators left at
+ * reset, exactly as before); a new save carries them. No version bump, no save
+ * loss. WSApu.c: noise position, sound-DMA position, wave phase. */
+uint32_t apuStateSize(void);
+void     apuSaveState(uint8_t *p);
+void     apuLoadState(const uint8_t *p);
+/* nec.c sticky interrupt-suppression flag (see nec.c). Not architectural, but it
+ * gates the idle cycle-skip, so a cold resume needs it restored, not reset. */
+extern uint32_t no_interrupt;
+extern int32_t  ws_run_period;   /* WsRun cross-frame cycle-budget carry (WS.c) */
+
 uint32_t WsSaveStateToFile(FILE *fp)
 {
     uint32_t i;
@@ -607,6 +626,15 @@ uint32_t WsSaveStateToFile(FILE *fp)
     fwrite(IO,   1, 0x100,   fp);
     for (i = 0; i < RAMBanks; i++) fwrite(RAMMap[i], 1, bank, fp);
     fwrite(Palette, sizeof(uint16_t), 16 * 16, fp);
+    { uint8_t apu[32]; apuSaveState(apu);
+      if (fwrite(apu, 1, apuStateSize(), fp) != apuStateSize()) return 1; }
+    if (fwrite(&no_interrupt, sizeof(no_interrupt), 1, fp) != 1) return 1;
+    if (fwrite(&ws_run_period, sizeof(ws_run_period), 1, fp) != 1) return 1;
+    /* MemDummy: the shared "unmapped bank" scratch. A cart that parks segment 1
+     * on it (One Piece: IO[0xC1]=0xFF -> Page[1]=MemDummy) uses it as RAM and
+     * reads it back, but ws_create_from_flash memsets it to 0xA0 on load, so a
+     * cold resume reads garbage and diverges. Save it so resume matches. */
+    if (fwrite(MemDummy, 1, 0x10000, fp) != 0x10000) return 1;
     return 0;
 }
 
@@ -632,6 +660,17 @@ uint32_t WsLoadStateFromFile(FILE *fp)
         fread(RAMMap[i], 1, bank, fp);
     }
     fread(Palette, sizeof(uint16_t), 16 * 16, fp);
+    /* Optional trailer (see header note): APU accumulators + no_interrupt +
+     * ws_run_period. Present only in saves this build wrote; an older save ends
+     * at Palette, so a short/absent read just means "leave them at reset". */
+    uint8_t apu[32];
+    uint32_t saved_no_interrupt = 0;
+    int32_t  saved_ws_run_period = 0;
+    static uint8_t saved_memdummy[0x10000];
+    int have_trailer = (fread(apu, 1, apuStateSize(), fp) == apuStateSize())
+                    && (fread(&saved_no_interrupt, sizeof(saved_no_interrupt), 1, fp) == 1)
+                    && (fread(&saved_ws_run_period, sizeof(saved_ws_run_period), 1, fp) == 1);
+    int have_memdummy = have_trailer && (fread(saved_memdummy, 1, 0x10000, fp) == 0x10000);
 
     /* Rebuild derived state that WriteIO caches outside IO[]. The display
      * registers 0x00-0x3F are critical: WriteIO(0x07) recomputes Scr1TMap /
@@ -651,15 +690,16 @@ uint32_t WsLoadStateFromFile(FILE *fp)
      * so forcing CS=0 only SKIPPED that instruction and left the bank/CPU state
      * inconsistent, which is what corrupted One Piece's savestate resume. */
     WriteIO(0xC1, IO[0xC1]);
-    /* C1>=8 hits WriteIO's WonderWitch->MemDummy branch, but a real-SRAM cart
-     * aliases the bank to a valid one (One Piece leaves C1=0xFF at save time).
-     * Point Page[1] back at the mirrored real SRAM so resume reads valid data
-     * instead of 0xA0 garbage (which corrupted return addresses -> wrong jumps). */
-    { extern uint8_t *Page[16];
-      if (RAMBanks > 0 && RAMMap[0] != MemDummy && Page[1] == MemDummy)
-          Page[1] = RAMMap[IO[0xC1] % RAMBanks];
-      WriteIO(0xC2, IO[0xC2]);
-      WriteIO(0xC3, IO[0xC3]); }
+    /* Do NOT second-guess Page[1] here. WriteIO(0xC1) deterministically maps
+     * segment 1 from IO[0xC1] exactly as it did during live play -- and the save
+     * captured that live result -- so replaying it reproduces the machine bit for
+     * bit. One Piece leaves C1=0xFF (>=8 -> WonderWitch -> MemDummy), so at save
+     * Page[1] IS MemDummy; a former 'fixup' that forced Page[1]=RAMMap[0] made the
+     * resume disagree with the run it resumed (Page[1] MemDummy vs RAMMap[0]),
+     * which sent the CPU down a different branch on the first post-load frame and
+     * froze the game (reproduced + fixed via the host round-trip harness). */
+    WriteIO(0xC2, IO[0xC2]);
+    WriteIO(0xC3, IO[0xC3]);
     /* Skip WriteIO(0xC0)'s bank-delay nec_execute(1) during resume: it models
      * the 1-instruction delay after a LIVE 'OUT 0xC0', but on resume there is no
      * in-flight OUT -- it would run the resumed first instruction (e.g. B978:0D85
@@ -679,12 +719,35 @@ uint32_t WsLoadStateFromFile(FILE *fp)
      * fires, and a timer-driven counter the game's logic waits on never advances
      * -> it spins / recurses forever (exactly the B978:30xx recursion we see).
      * Replay the timer preset + control regs so WriteIO reloads HTimer/VTimer
-     * from the restored HPRE/VPRE and re-enables them. */
-    WriteIO(0xA4, IO[0xA4]);   /* HPRE lo -> HTimer */
-    WriteIO(0xA5, IO[0xA5]);   /* HPRE hi -> HTimer */
-    WriteIO(0xA6, IO[0xA6]);   /* VPRE lo -> VTimer */
-    WriteIO(0xA7, IO[0xA7]);   /* VPRE hi -> VTimer */
-    WriteIO(0xA2, IO[0xA2]);   /* TIMCTL -> enable + reload both */
+     * from the restored HPRE/VPRE and re-enables them.
+     *
+     * BUT WriteIO(0xA6/0xA7) has a side effect that corrupts the restore: its
+     * 'Dark eyes' branch does IO[A+4]=V, i.e. WriteIO(0xA6) writes IO[0xAA] and
+     * WriteIO(0xA7) writes IO[0xAB] -- which are VCNTL/VCNTH, the free-running
+     * VBlank frame counter. Replaying VPRE therefore overwrites the restored
+     * VCNT (e.g. 0x02BD) with VPRE (often 0). A game that parked a wake-up
+     * target like 'wait until VCNT >= saved+N' in IRAM (which we DID restore)
+     * then waits on a counter that jumped backwards to 0 and never gets there
+     * -> frozen after load (reproduced: One Piece Grand Battle, host harness).
+     * So snapshot HCNT/VCNT (0xA8-0xAB) across the replay and put them back. */
+    { uint8_t cnt[4] = { IO[0xA8], IO[0xA9], IO[0xAA], IO[0xAB] };
+      WriteIO(0xA4, IO[0xA4]);   /* HPRE lo -> HTimer */
+      WriteIO(0xA5, IO[0xA5]);   /* HPRE hi -> HTimer */
+      WriteIO(0xA6, IO[0xA6]);   /* VPRE lo -> VTimer (clobbers IO[0xAA]) */
+      WriteIO(0xA7, IO[0xA7]);   /* VPRE hi -> VTimer (clobbers IO[0xAB]) */
+      WriteIO(0xA2, IO[0xA2]);   /* TIMCTL -> enable + reload both */
+      IO[0xA8] = cnt[0]; IO[0xA9] = cnt[1]; IO[0xAA] = cnt[2]; IO[0xAB] = cnt[3];
+    }
+    /* Restore the sound accumulators last, after the WriteIO(0x80-0x90) replay
+     * has rebuilt the channel config, so the noise/DMA/wave phase resumes exactly
+     * where the save left it (not at cold-boot reset -> no poll hang). */
+    if (have_trailer) {
+        apuLoadState(apu);
+        no_interrupt = saved_no_interrupt;
+        ws_run_period = saved_ws_run_period;
+    }
+    if (have_memdummy)
+        memcpy(MemDummy, saved_memdummy, 0x10000);
     return 0;
 }
 

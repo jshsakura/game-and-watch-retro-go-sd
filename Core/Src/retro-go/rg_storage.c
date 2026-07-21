@@ -422,6 +422,52 @@ size_t rg_storage_copy_file_to_ram(char *file_path, uint8_t *ram_dest, file_prog
     return rg_storage_copy_file_to_ram_with_offset(file_path, ram_dest, 0, file_progress_cb);
 }
 
+/* copy at most `length` bytes starting at `offset` from a file into ram */
+size_t rg_storage_copy_file_range_to_ram(char *file_path, uint8_t *ram_dest, uint32_t offset, uint32_t length, file_progress_cb_t file_progress_cb) {
+    FILE *file;
+    size_t bytes_read;
+    uint32_t total_written;
+
+    if (length == 0) {
+        return 0;
+    }
+
+    file = fopen(file_path, "rb");
+    if (file == NULL) {
+        return 0;
+    }
+
+    if (fseek(file, (long)offset, SEEK_SET) != 0) {
+        fclose(file);
+        return 0;
+    }
+
+    total_written = 0;
+    if (file_progress_cb) {
+        file_progress_cb(length, 0, 0);
+    }
+
+    while (total_written < length) {
+        uint32_t chunk = length - total_written;
+        if (chunk > 32 * 1024) {
+            chunk = 32 * 1024;
+        }
+        bytes_read = fread(ram_dest + total_written, 1, chunk, file);
+        if (bytes_read == 0) {
+            break;
+        }
+        wdog_refresh();
+        total_written += bytes_read;
+        if (file_progress_cb) {
+            file_progress_cb(length, total_written, (uint8_t)((total_written * 100) / length));
+        }
+    }
+
+    fclose(file);
+
+    return total_written;
+}
+
 bool rg_storage_get_adjacent_files(const char *path, char *prev_path, char *next_path) {
     CHECK_PATH(path);
     

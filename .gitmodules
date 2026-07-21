@@ -14,7 +14,7 @@
 	url = https://github.com/sylverb/potator.git
 [submodule "gwenesis"]
 	path = external/gwenesis
-	url = https://github.com/sylverb/gwenesis
+	url = https://github.com/jshsakura/gwenesis
 [submodule "prosystem-go"]
 	path = external/prosystem-go
 	url = https://github.com/sylverb/prosystem-go.git
@@ -76,3 +76,15 @@
 [submodule "external/handy-go"]
 	path = external/handy-go
 	url = https://github.com/jshsakura/handy-go.git
+[submodule "external/sm"]
+	path = external/sm
+	url = https://github.com/jshsakura/sm.git
+	branch = gnw-port
+[submodule "external/gpsp"]
+	path = external/gpsp
+	url = https://github.com/jshsakura/gpsp.git
+	branch = gnw-port
+[submodule "external/picodrive"]
+	path = external/picodrive
+	url = https://github.com/jshsakura/picodrive.git
+	branch = gnw-port

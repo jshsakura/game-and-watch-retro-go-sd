@@ -362,6 +362,14 @@ int GuessROM(const uint8_t *buf,int size)
     /* No result yet */
     mapper = ROM_UNKNOWN;
 
+    if (size >= 0x18 && memcmp(buf + 0x10, "ASCII16X", 8) == 0) {
+        return ROM_ASCII16X;
+    }
+
+    if (size >= 0x18 && memcmp(buf + 0x10, "ROM_NE16", 8) == 0) {
+        return ROM_NEO16;
+    }
+
     if (size <= 0x10000) {
         if (size == 0x10000) {
             if (buf[0x4000] == 'A' && buf[0x4001] == 'B') mapper = ROM_PLAIN;
@@ -2046,7 +2054,11 @@ void app_main_msx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     common_emu_state.frame_time_10us = (uint16_t)(100000 / msx_fps + 0.5f);
 
     odroid_system_init(APPID_MSX, AUDIO_MSX_SAMPLE_RATE);
-    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, &msx_screenshot, NULL, &msx_sleep_wake_up, NULL);
+#if CHEAT_CODES == 1
+    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, &msx_screenshot, NULL, &msx_sleep_wake_up, NULL, &update_cheats_msx);
+#else
+    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, &msx_screenshot, NULL, &msx_sleep_wake_up, NULL, NULL);
+#endif
 
     image_buffer_base_width    =  272;
     image_buffer_current_width =  image_buffer_base_width;
@@ -2201,5 +2213,12 @@ void update_cheats_msx() {
             }
         }
     }
+}
+#endif
+
+#ifdef MSX_NO_FILESYSTEM
+const char* boardGetBaseDirectory(void)
+{
+    return "";
 }
 #endif

@@ -16,6 +16,8 @@
 #include "ff.h"
 #endif
 
+extern SPI_HandleTypeDef hspi2;
+
 static rg_app_desc_t currentApp;
 static runtime_stats_t statistics;
 static runtime_counters_t counters;
@@ -48,7 +50,7 @@ void odroid_system_init(int appId, int sampleRate)
 
     counters.resetTime = get_elapsed_time();
 
-    printf("%s: System ready!\n\n", __func__);
+    printf("sys ready\n");
 }
 
 void odroid_system_emu_init(state_handler_t load_cb,
@@ -56,7 +58,8 @@ void odroid_system_emu_init(state_handler_t load_cb,
                             screenshot_handler_t screenshot_cb,
                             shutdown_handler_t shutdown_cb,
                             sleep_post_wakeup_handler_t sleep_post_wakeup_cb,
-                            sram_save_handler_t sram_save_cb)
+                            sram_save_handler_t sram_save_cb,
+                            cheat_update_handler_t cheat_update_cb)
 {
     // currentApp.gameId = crc32_le(0, buffer, sizeof(buffer));
     currentApp.gameId = 0;
@@ -66,21 +69,14 @@ void odroid_system_emu_init(state_handler_t load_cb,
     currentApp.handlers.shutdown = shutdown_cb;
     currentApp.handlers.sleep_post_wakeup = sleep_post_wakeup_cb;
     currentApp.handlers.sram_save = sram_save_cb;
+    currentApp.handlers.cheat_update = cheat_update_cb;
     
-    printf("%s: Init done. GameId=%08lX\n", __func__, currentApp.gameId);
+    printf("emu init id=%08lX\n", currentApp.gameId);
 }
 
 rg_app_desc_t *odroid_system_get_app()
 {
     return &currentApp;
-}
-
-static char *extract_system(const char *filename) {
-    char *last_slash = strrchr(filename, '/');
-    char *directory = malloc(last_slash - filename + 2);
-    strncpy(directory, filename, last_slash - filename + 1);
-    directory[last_slash - filename + 1] = '\0';
-    return directory;
 }
 
 /* Build a path into the provided buffer. If out_buf is NULL, allocates
@@ -461,8 +457,13 @@ void odroid_system_switch_app(int app)
     /* Restore default LCD pixel format on app exit. Emulators that switched
      * the LTDC into LUT8 mode (PICO-8, NES) leave the LCD configured for
      * indexed color — the retro-go launcher and other targets expect
-     * RGB565. Catch-all here so every emulator's exit path resets cleanly. */
+     * RGB565. Catch-all here so every emulator's exit path resets cleanly.
+     * lcd_setup_framebuffers() flushes the LCD-pool D-cache and waits for
+     * the LTDC VBLANK reload; one extra vsync here guarantees the new
+     * RGB565 pitch has been scanned out before we tear the peripheral down
+     * for the hot boot. */
     lcd_setup_framebuffers(LCD_MODE_RGB565);
+    lcd_wait_for_vblank();
 
     odroid_system_sram_save();
 
@@ -509,9 +510,21 @@ void odroid_system_switch_app(int app)
 
         app_animate_lcd_brightness(odroid_display_get_backlight_raw(), 0, 10);
 
+        /* Full panel power-down before hot boot. Previously we only
+         * HAL_DeInit()'d LTDC and left 1V8/3V3 up, so the next lcd_init()
+         * re-ran the SPI bring-up on a still-powered glass — intermittent
+         * mis-init / visual glitches. Match the sleep path: cut rails, wait
+         * for collapse, then the post-boot lcd_init does a clean power cycle. */
+        lcd_deinit(&hspi2);
+        HAL_Delay(20);
+
         HAL_DeInit();
 
-        SCB_InvalidateDCache();
+        /* Clean+Invalidate (not Invalidate alone): discard-only would drop
+         * any still-dirty AXI SRAM lines written after the LCD restore
+         * above, and left the L1 in a state that could confuse the next
+         * MPU_Config on hot boot. */
+        SCB_CleanInvalidateDCache();
         SCB_InvalidateICache();
 
         while (1) {
@@ -520,6 +533,10 @@ void odroid_system_switch_app(int app)
 #else
         // Retro-go is in bank1 with no bootloader present.
         // Reset directly back into retro-go.
+
+        app_animate_lcd_brightness(odroid_display_get_backlight_raw(), 0, 10);
+        lcd_deinit(&hspi2);
+        HAL_Delay(20);
 
         NVIC_SystemReset();
 #endif
@@ -627,6 +644,12 @@ static void odroid_system_sleep_internal(system_sleep_flags_t flags, sleep_pre_w
 void odroid_system_sleep_ex(system_sleep_flags_t flags, sleep_pre_wakeup_callback_t pre_wakeup_callback)
 {
     odroid_system_sleep_internal(flags, pre_wakeup_callback);
+}
+
+bool odroid_idle_timeout_expired(uint32_t idle_seconds)
+{
+    uint16_t timeout = odroid_settings_MainMenuTimeoutS_get();
+    return timeout != 0 && idle_seconds > timeout;
 }
 
 void odroid_system_sleep(void)

@@ -1,0 +1,15 @@
+{
+  "description": "Stable SD linker constants plus the bound profile2 observation used by the regression fixture. Runtime values must still be rebound for every real firmware build.",
+  "expected": {
+    "clock_profiles.0.core_hz": 312000000,
+    "memory.ahb.allocatable_before_audio_bytes": 122880,
+    "memory.ahb.audio_reserved_bytes": 8192,
+    "memory.dtcm_heap.effective_free_at_emu_init_bytes": 8216,
+    "memory.dtcm_heap.total_bytes": 82944,
+    "memory.dtcm_heap.used_at_emu_init_bytes": 74728,
+    "memory.framebuffer_axi.reserved_bytes": 307200,
+    "memory.itcm.total_bytes": 65536,
+    "memory.ram_emu.total_bytes": 741376
+  },
+  "schema_version": 1
+}

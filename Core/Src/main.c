@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stm32h7xx_hal.h"
+#include "gw_boot_rescue.h"
 #include "gw_buttons.h"
 #include "gw_flash.h"
 #include "gw_lcd.h"
@@ -40,6 +41,10 @@
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
+
+#include "rc_probe.h"   /* RC_PROBE default + prototype; inert when RC_PROBE=0.
+                         * The runtime hook moved to rg_main.c (post-sdcard_init)
+                         * because Stage 2 caches rcprobe.xip from SD. */
 #if SD_CARD == 1
 #include "ff.h"
 #endif
@@ -170,7 +175,13 @@ __attribute__((optimize("-O0"))) void BSOD(BSOD_t fault, uint32_t pc, uint32_t l
   __disable_irq();
 
   snprintf(msg, sizeof(msg), "FATAL EXCEPTION: %s %s", fault_list[fault], GIT_TAG);
-  snprintf(regs, sizeof(regs), "PC=0x%08lx LR=0x%08lx", pc, lr);
+  /* Fold the fault-cause register into the existing PC/LR line — no extra
+   * string/line, so it costs a handful of bytes of near-full intflash. CFSR is
+   * THE register: UsageFault[31:16] (INVSTATE=NULL/garbage branch,
+   * UNALIGNED=64-bit mis-aligned store), BusFault[15:8] (IMPRECISERR),
+   * MemManage[7:0]. Decode with tools/crash_decode/decode.py. */
+  snprintf(regs, sizeof(regs), "PC=0x%08lx LR=0x%08lx CFSR=%08lx",
+           pc, lr, (unsigned long)SCB->CFSR);
 
   lcd_sync();
   lcd_reset_active_buffer();
@@ -213,10 +224,25 @@ __attribute__((optimize("-O0"))) void BSOD(BSOD_t fault, uint32_t pc, uint32_t l
     }
   }
 
-  // Wait for a button press (allows a user to hold and release a button when the BSOD occurs)
+  // Wait for a button press (allows a user to hold and release a button when the BSOD occurs).
+  // POWER really powers off: without that, a fault that reboots into another
+  // fault can only be escaped by letting the battery run flat — the power
+  // button is firmware, and the firmware is what just died.
   uint32_t old_buttons = buttons_get();
-  while ((buttons_get() == 0 || (buttons_get() == old_buttons))) {
+  uint32_t new_buttons;
+  for (;;) {
+    new_buttons = buttons_get();
     wdog_refresh();
+    if (new_buttons == 0) {
+      old_buttons = 0;
+      continue;
+    }
+    if (new_buttons != old_buttons) {
+      break;
+    }
+  }
+  if (new_buttons & B_POWER) {
+    boot_rescue_power_off_now();
   }
 
   // Encode the fault type in the boot magic
@@ -387,6 +413,14 @@ int main(void)
     break;
   }
 
+  // Watchdog from the top for EVERY boot, not just hot ones: a hang anywhere
+  // in bring-up (LCD, OSPI, charger, SD probe) must become a reset — and from
+  // there a rescue screen — instead of a dark unit whose only way out is a
+  // flat battery. The hot-boot path has always run the whole bring-up under
+  // the watchdog enabled this early, so the timing is proven on device.
+  wdog_enable();
+  wdog_refresh();
+
   // Leave a trace that indicates a warm reset
   boot_magic = BOOT_MAGIC_RESET;
 
@@ -401,6 +435,17 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+
+  /* Give bus/mem/usage faults their own handlers instead of escalating every
+   * one to a bare HardFault. Then the BSOD title NAMES the fault and the
+   * handler can read CFSR: a NULL/garbage-pointer branch shows as
+   * Usagefault(INVSTATE), a 64-bit STRD/LDRD to a mis-aligned address as
+   * Usagefault(UNALIGNED), a wild peripheral store as Busfault. We deliberately
+   * do NOT set CCR.UNALIGN_TRP — the cores do unaligned 16/32-bit access on
+   * purpose; only the architectural 64-bit trap is what we want. Decode the
+   * printed CFSR with tools/crash_decode/decode.py. */
+  SCB->SHCSR |= SCB_SHCSR_USGFAULTENA_Msk | SCB_SHCSR_BUSFAULTENA_Msk |
+                SCB_SHCSR_MEMFAULTENA_Msk;
 
   // Latch the wake cause for the all-state alarm BEFORE the wakeup pin is
   // reconfigured below: RTC Alarm A flag (deep-sleep alarm wake) and the
@@ -445,12 +490,25 @@ int main(void)
   // Save the button states as early as possible
   boot_buttons = buttons_get();
 
+  // Count this boot attempt (RTC backup register, survives resets). Cleared
+  // only once the firmware has demonstrably been alive for a while, or by a
+  // deliberate shutdown — a boot that hangs never clears it.
+  boot_rescue_note_boot_start();
+
   /* Power on LCD and external Flash */
   lcd_backlight_off();
   lcd_init(&hspi2, &hltdc, LCD_INIT_CLEAR_BUFFERS);
 
   if (trigger_wdt_bsod) {
     BSOD(BSOD_WATCHDOG, 0, 0);
+  }
+
+  // Two consecutive boots died before proving themselves alive: stop HERE,
+  // before the SD card, the config and the game auto-resume — one of those is
+  // probably what kept dying. Offers launcher-only boot, normal boot or power
+  // off, and powers off by itself if nobody answers.
+  if (boot_rescue_screen_due()) {
+    boot_rescue_screen_show();
   }
 
   /* USER CODE END 2 */
@@ -467,6 +525,9 @@ int main(void)
   // Initialize the external flash
 
   OSPI_Init(&hospi1);
+
+  // rc on-device dispatch probe hook moved to rg_main.c (after sdcard_init),
+  // because Stage 2 caches rcprobe.xip from SD which requires the FS mounted.
 
   bq24072_init();
 

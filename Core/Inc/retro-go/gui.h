@@ -1,8 +1,15 @@
 #pragma once
 
 #include <odroid_input.h>
+#include "bitmaps.h"
 #include "rg_emulators.h"
 #include "stdbool.h"
+
+/* Launcher chrome: the status bar along the top and the header bar along the
+ * bottom. Whatever is left between them is the list viewport — which the system
+ * grid borrows, so both it and gui.c have to agree on these. */
+#define RG_STATUS_HEIGHT (33)
+#define RG_HEADER_HEIGHT (47)
 
 typedef enum {
     KEY_PRESS_A,
@@ -86,6 +93,10 @@ tab_t *gui_set_current_tab(int index);
  * that pool is rewound (emulator_start), exactly as rg_reset_logo_buffers() is:
  * the pointers survive the rewind but the memory behind them does not. */
 void gui_reset_cover_buffers(void);
+/* Invalidate the per-tab cached cover dimensions after the "Cover style"
+ * option (Poster/Square) changes, so every tab re-probes its layout size.
+ * COVERFLOW builds only. */
+void gui_cover_style_changed(void);
 
 void gui_init_tab(tab_t *tab);
 void gui_init_colors(void);
@@ -97,6 +108,17 @@ void gui_sort_list(tab_t *tab, int sort_mode);
 void gui_scroll_list(tab_t *tab, scroll_mode_t mode);
 void gui_resize_list(tab_t *tab, int new_size);
 listbox_item_t *gui_get_selected_item(tab_t *tab);
+
+/** Blit a colour console icon, skipping its transparent pixels. (x, y) is the
+ * icon's nominal footprint; the stored bitmap covers only its opaque bbox. */
+void gui_draw_color_icon(int x, int y, const color_icon_t *ic);
+
+/** Same, but faded `strength` percent of the way from its own colours toward
+ * `toward` (pass the theme's background). Fading toward the ground is what makes
+ * an icon recede on a LIGHT theme as well as a dark one — darkening only works
+ * on the dark ones. 16 blends for the whole icon, not one per pixel. */
+void gui_draw_color_icon_fade(int x, int y, const color_icon_t *ic,
+                              uint16_t toward, int strength);
 
 void gui_event(gui_event_t event, tab_t *tab);
 /** Pop one ROM browse level if tab is inside a subfolder; refreshes list. */

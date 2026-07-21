@@ -1,5 +1,6 @@
 #include "odroid_system.h"
 #include "odroid_input.h"
+#include "gw_boot_rescue.h"
 #include "gw_buttons.h"
 #include "bq24072.h"
 #include "main.h"
@@ -42,6 +43,11 @@ void update_gamepad_state(odroid_gamepad_state_t *state, uint32_t buttons, odroi
  
  void odroid_input_read_gamepad(odroid_gamepad_state_t* out_state)
  {
+    // Every screen in the firmware — launcher and every core — polls input
+    // through here, and a hung boot never does: that makes this poll the
+    // "this boot is alive" signal for the boot-loop rescue counter.
+    boot_rescue_mark_alive_tick();
+
     memset(out_state, '\x00', sizeof(odroid_gamepad_state_t));
 
     uint32_t buttons = buttons_get();

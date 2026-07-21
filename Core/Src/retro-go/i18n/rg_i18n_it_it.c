@@ -56,7 +56,7 @@ const lang_t lang_it_it LANG_DATA = {
     .s_Clock_Scene = "Stile pixel",
     .s_Clock_Photo_Speed = "Vel. foto",
     .s_Clock_Anim_4 = "Album foto",
-    .s_Clock_Auto_Dim = "Oscura auto",
+    .s_Clock_Keep_Awake = "Sempre acceso",
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "Suono allarme",
     .s_Clock_Night_Off = "Spegnim. inizio",
@@ -96,6 +96,8 @@ const lang_t lang_it_it LANG_DATA = {
 
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "Palette",
+    .s_System = "Sistema",
+    .s_SGB_Border = "Cornice SGB",
     //=====================================================================
 
     // Core\Src\porting\nes\main_nes.c =====================================

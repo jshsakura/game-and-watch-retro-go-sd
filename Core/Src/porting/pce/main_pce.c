@@ -138,8 +138,35 @@ static const struct
  * this hook (direct pointer) so menu repaints can never see NULL. */
 static bool s_skip_render;
 
+/* Centre the active VDC picture inside the fixed-size core buffer. Must track
+ * IO_VDC_* directly — osd_gfx_set_mode() used to run at scanline 256 (after
+ * the draw), so for one frame the tile/sprite path wrote at the old FB offset
+ * while gfx_screen_width() already reflected the new resolution. Ys' world-map
+ * screen uses a smaller mode than field gameplay and hit this hardest. */
+static inline void pce_norm_vdc_size(int *w, int *h)
+{
+    /* PCE VDC can legitimately run small viewports (Ys world map ≈ 128×126).
+     * The old 160px floor forced 256×224 and mis-centred the blit. */
+    if (*w < 8) *w = 8;
+    if (*w > 512) *w = 512;
+    if (*h < 8) *h = 8;
+    if (*h > 256) *h = 256;
+}
+
+/* Cached layout — recomputed only in osd_gfx_set_mode() when the VDC viewport
+ * size actually changes. Reading IO_VDC + division on every render_lines()
+ * (via osd_gfx_framebuffer) was a steady-state CPU regression on device. */
+static int s_fb_offset;
+
+static void pce_layout_update(int w, int h)
+{
+    int offx = (XBUF_WIDTH - w) / 2;
+    if (offx < 0) offx = 0;
+    s_fb_offset = ((XBUF_HEIGHT - h) / 2 + 16) * XBUF_WIDTH + offx;
+}
+
 uint8_t *osd_gfx_framebuffer(void){
-    return s_skip_render ? NULL : pce_framebuffer + FB_INTERNAL_OFFSET;
+    return s_skip_render ? NULL : pce_framebuffer + s_fb_offset;
 }
 
 void set_color(int index, uint8_t r, uint8_t g, uint8_t b) {
@@ -158,18 +185,20 @@ void init_color_pals() {
     set_color(255, 0x3f, 0x3f, 0x3f);
 }
 
+static void pce_fb_clear(void)
+{
+    memset(pce_framebuffer, PCE.Palette[0], sizeof(pce_framebuffer));
+}
+
 void osd_gfx_set_mode(int width, int height) {
-    init_color_pals();
-    if (width < 160 || width > 512) {
-		printf("Correcting out of range screen w %d\n", width);
-		width = 256;
-	}
-	if (height < 160 || height > 256) {
-		printf("Correcting out of range screen h %d\n", height);
-		height = 224;
-	}
+    pce_norm_vdc_size(&width, &height);
+    if (width == current_width && height == current_height)
+        return;
+    pce_fb_clear();
+    gfx_reset(false);
     current_width = width;
     current_height = height;
+    pce_layout_update(width, height);
 }
 
 void osd_log(int type, const char *format, ...) {
@@ -354,6 +383,8 @@ static bool LoadState(const char *savePathName) {
     }
     gfx_reset(true);
     osd_gfx_set_mode(IO_VDC_SCREEN_WIDTH, IO_VDC_SCREEN_HEIGHT);
+    pce_fb_clear();   /* drop pixels from the pre-load screen / old FB offset */
+    common_emu_state.skip_frames = 0;
     s_cd_state_loaded = true;   /* suppress the boot RUN injection (see decl) */
     return true;
 }
@@ -723,10 +754,12 @@ void pce_input_read(odroid_gamepad_state_t* out_state) {
 
 static void blit() {
     odroid_display_scaling_t scaling = odroid_display_get_scaling_mode();
+    const int disp_w = current_width;
+    const int disp_h = current_height;
 
     /* Direct pointer, NOT osd_gfx_framebuffer(): that hook returns NULL on
      * skip frames and blit can be called as the menu repaint callback. */
-    uint8_t *emuFrameBuffer = pce_framebuffer + FB_INTERNAL_OFFSET;
+    uint8_t *emuFrameBuffer = pce_framebuffer + s_fb_offset;
     pixel_t *framebuffer_active = lcd_get_active_buffer();
     int y=0, offsetY, offsetX = 0, cropX = 0;
     int xScale = 0;
@@ -736,8 +769,8 @@ static void blit() {
         /* Stretch BOTH axes to fill the screen, like the other cores' FULL mode.
          * Without the Y stretch, 224-line games (most CD titles) leave 8px black
          * bars top and bottom. Nearest-neighbour: 224->240 repeats 1 row in 15. */
-        xScale = (current_width << 8) / GW_LCD_WIDTH;
-        int yScale = (current_height << 8) / GW_LCD_HEIGHT;
+        xScale = (disp_w << 8) / GW_LCD_WIDTH;
+        int yScale = (disp_h << 8) / GW_LCD_HEIGHT;
         for (y = 0; y < GW_LCD_HEIGHT; y++) {
             fbTmp = emuFrameBuffer + ((y * yScale) >> 8) * XBUF_WIDTH;
             pixel_t *dst = framebuffer_active + y * GW_LCD_WIDTH;
@@ -748,44 +781,53 @@ static void blit() {
         return;
     }
 
+    static int s_blit_w, s_blit_h;
+    bool vdc_res_changed = (disp_w != s_blit_w || disp_h != s_blit_h);
+    s_blit_w = disp_w;
+    s_blit_h = disp_h;
+
     if (scaling != ODROID_DISPLAY_SCALING_OFF ) {
-        xScale = (current_width << 8) / GW_LCD_WIDTH ;
-    } else if ( current_width < GW_LCD_WIDTH) {
-        offsetX = (GW_LCD_WIDTH - current_width)/2; //center the image horizontally
-    } else if ( current_width > GW_LCD_WIDTH) {
-        cropX = (current_width - GW_LCD_WIDTH)/2; //crop the image horizontally if it's bigger
+        xScale = (disp_w << 8) / GW_LCD_WIDTH ;
+    } else if ( disp_w < GW_LCD_WIDTH) {
+        offsetX = (GW_LCD_WIDTH - disp_w)/2;
+    } else if ( disp_w > GW_LCD_WIDTH) {
+        cropX = (disp_w - GW_LCD_WIDTH)/2;
     }
 
-    int renderHeight = (current_height<=GW_LCD_HEIGHT)?current_height:GW_LCD_HEIGHT;
-    int renderWidth = (current_width<=GW_LCD_WIDTH)?current_width:GW_LCD_WIDTH;
-    /* Vertically CENTRE the picture (was top-aligned -> "lifted up" feel with black at the
-     * bottom). No Y scaling yet, so just letterbox the renderHeight rows. */
+    int renderHeight = (disp_h<=GW_LCD_HEIGHT)?disp_h:GW_LCD_HEIGHT;
+    int renderWidth = (disp_w<=GW_LCD_WIDTH)?disp_w:GW_LCD_WIDTH;
     int offY = (GW_LCD_HEIGHT - renderHeight) / 2;
     if (offY < 0) offY = 0;
 
-    /* black the top letterbox */
-    memset(framebuffer_active, 0, (size_t)offY * GW_LCD_WIDTH * sizeof(pixel_t));
+    if (vdc_res_changed) {
+        /* Once per VDC mode change: drop stale pixels after offset/crop shift.
+         * Doing this every frame cost ~150KB memset @ 60fps and spiked CPU. */
+        memset(framebuffer_active, 0,
+               (size_t)GW_LCD_WIDTH * GW_LCD_HEIGHT * sizeof(pixel_t));
+    } else {
+        memset(framebuffer_active, 0,
+               (size_t)offY * GW_LCD_WIDTH * sizeof(pixel_t));
+    }
 
     for(y=0;y<renderHeight;y++) {
         fbTmp = emuFrameBuffer+(y*XBUF_WIDTH);
         offsetY = (y + offY)*GW_LCD_WIDTH;
         if (xScale) {
-            // Horizontal - Scale
             for(int x=0;x<GW_LCD_WIDTH;x++) {
                 framebuffer_active[offsetY+x]= mypalette[fbTmp[ (x * xScale) >> 8 ]];
             }
         } else {
-            // No scaling, 1:1
             for(int x=0;x<renderWidth;x++) {
                    framebuffer_active[offsetY+x+offsetX]=mypalette[fbTmp[x+cropX]];
             }
         }
     }
-    // black the bottom letterbox
-    for(y = offY + renderHeight; y < GW_LCD_HEIGHT; y++) {
-        offsetY = y*GW_LCD_WIDTH;
-        for(int x=0;x<GW_LCD_WIDTH;x++)
-            framebuffer_active[offsetY+x]=0;
+    if (!vdc_res_changed) {
+        for(y = offY + renderHeight; y < GW_LCD_HEIGHT; y++) {
+            offsetY = y*GW_LCD_WIDTH;
+            for(int x=0;x<GW_LCD_WIDTH;x++)
+                framebuffer_active[offsetY+x]=0;
+        }
     }
 }
 
@@ -872,8 +914,10 @@ void pce_pcm_submit() {
     for (int i = 0; i < sound_buffer_length; i++) {
         /* mix left & right */
         int32_t sample = (audioBuffer_pce[i*2] + audioBuffer_pce[i*2+1]);
-        if (cdda_n && i < cdda_n)
-            sample += (cdda_buf[i*2] + cdda_buf[i*2+1]) >> 1;   /* CD-DA already fader-scaled */
+        if (cdda_n && i < cdda_n) {
+            /* stereo sum (= ((L+R)>>1)<<1); CD-DA already fader-scaled */
+            sample += (int32_t)cdda_buf[i * 2] + (int32_t)cdda_buf[i * 2 + 1];
+        }
         if (adpcm_n && i < adpcm_n) {
             int32_t a = adpcm_buf[i*2];
             if (adpcm_vol < 65536)
@@ -915,11 +959,12 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
     apply_cpu_clock();
 
     odroid_system_init(APPID_PCE, PCE_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &sleep_wake_up, &pce_sram_save_cb);
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &sleep_wake_up, &pce_sram_save_cb, NULL);
     pce_log[0]=0;
 
     // Init Graphics
     init_color_pals();
+    pce_layout_update(current_width, current_height);
     const int refresh_rate = FPS_NTSC;
     sprintf(pce_log,"%d",refresh_rate);
 
@@ -1011,6 +1056,8 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
         pce_pcm_submit();
 
         pce_sound_sync_with_prefetch();   /* sound_sync + CD-DA prefetch in the wait */
+
+        pce_adpcm_frame_end();
 
         // Prevent overflow
         PCE.Timer.cycles_counter -= Cycles;

@@ -169,7 +169,7 @@ void lcd_init(SPI_HandleTypeDef *spi, LTDC_HandleTypeDef *ltdc, lcd_init_flags_t
     lcd_clear_buffers();
   }
 
-  HAL_LTDC_SetAddress(ltdc,(uint32_t) &fb1, 0);
+  HAL_LTDC_SetAddress(ltdc,(uint32_t) fb1, 0);
   HAL_LTDC_ProgramLineEvent(&hltdc, 239);
   __HAL_LTDC_ENABLE_IT(&hltdc, LTDC_IT_LI | LTDC_IT_RR);
 
@@ -329,11 +329,16 @@ void lcd_setup_framebuffers(lcd_mode_t mode)
   uint32_t fb_footprint = (mode == LCD_MODE_LUT8)
       ? (uint32_t)(2 * GW_LCD_WIDTH * GW_LCD_HEIGHT)        /* 154 KB */
       : (uint32_t)(2 * GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);   /* 300 KB */
+  SCB_CleanInvalidateDCache_by_Addr(
+      (uint32_t *)base,
+      (int32_t)((uintptr_t)__lcd_pool_end__ - (uintptr_t)base));
   HAL_MPU_Disable();
   mpu_set_lcd_pool_uncached_range(fb_footprint);
   HAL_MPU_Enable(MPU_HFNMI_PRIVDEF);
   __DSB();
   __ISB();
+
+  lcd_sleep_while_swap_pending();
 }
 
 void lcd_get_bonus_pool(uint8_t **out_ptr, size_t *out_size)

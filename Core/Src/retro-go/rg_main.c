@@ -8,6 +8,7 @@
 
 #include "appid.h"
 #include "main.h"
+#include "gw_boot_rescue.h"
 #include "rg_emulators.h"
 #include "gui.h"
 #include "gittag.h"
@@ -22,6 +23,8 @@
 #include "rg_welcome_prompt.h"
 #include "rg_clock.h"
 #include "rg_alarm.h"   /* resident all-state next-alarm cache */
+#include "rc_probe.h"   /* RC_PROBE default + probe prototype */
+#include "rg_system_grid.h"
 
 /* Wake-cause flags latched at reset in main.c (before anything clears them). */
 extern volatile uint8_t boot_alarm_flag;
@@ -85,7 +88,12 @@ static bool GLOBAL_DATA main_menu_cpu_oc_cb(odroid_dialog_choice_t *option, odro
     return event == ODROID_DIALOG_ENTER;
 }
 
-static bool GLOBAL_DATA main_menu_timeout_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
+/* Not static: rg_clock.c's PAUSE menu reuses this exact row (same 60s steps,
+ * same "N minutes"/"off" text, same odroid_settings call) instead of copying
+ * it, so the clock's timeout row and this one are the SAME setting, edited by
+ * the same code — two copies of this rule is what "one setting decides when
+ * the screen sleeps" (see CLAUDE.md) was written to stop happening again. */
+bool GLOBAL_DATA main_menu_timeout_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
     const int TIMEOUT_STEP = 60;
     const int TIMEOUT_MIN = 0;
@@ -139,6 +147,25 @@ static bool GLOBAL_DATA theme_update_cb(odroid_dialog_choice_t *option, odroid_d
         }
     }
     sprintf(option->value, "%s", (char *)GW_Themes[theme]);
+    return event == ODROID_DIALOG_ENTER;
+}
+
+static bool GLOBAL_DATA cover_style_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
+{
+    const char *style_labels[ODROID_COVER_STYLE_COUNT] = {
+        curr_lang->s_Cover_Style_Poster, curr_lang->s_Cover_Style_Square};
+    uint8_t style = odroid_settings_CoverStyle_get();
+
+    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT)
+    {
+        /* two values: PREV and NEXT both toggle */
+        style = (style == ODROID_COVER_STYLE_POSTER) ? ODROID_COVER_STYLE_SQUARE
+                                                     : ODROID_COVER_STYLE_POSTER;
+        odroid_settings_CoverStyle_set(style);
+        /* per-tab cover-size caches baked in the old style; force a re-probe */
+        gui_cover_style_changed();
+    }
+    sprintf(option->value, "%s", (char *)style_labels[style]);
     return event == ODROID_DIALOG_ENTER;
 }
 #endif
@@ -215,11 +242,9 @@ static bool GLOBAL_DATA lang_update_cb(odroid_dialog_choice_t *option, odroid_di
      * dereference curr_lang->s_X each redraw, e.g. to format an ON/OFF
      * state) live-update as the user navigates languages.
      *
-     * Captured options[i].label pointers from the dialog's local
-     * choices array stay valid because i18n_load_language() caches
-     * each language's strings buffer per-idx and never frees it for
-     * the session — even after the user has cycled through every
-     * language in the menu. */
+     * Only one non-en_us language buffer is kept in RAM; browsing
+     * frees the previous. Dialog labels/header were snapshotted at
+     * open by odroid_overlay_dialog, so they stay valid. */
     curr_lang = i18n_load_language(lang);
     /* Use the baked native name from lang_metadata for the lang
      * option's own value so it reads correctly even when this
@@ -486,6 +511,7 @@ static void GLOBAL_DATA handle_options_menu()
     char timeout_value[16];
 #if COVERFLOW != 0
     char theme_value[32];
+    char cover_style_value[32];
 #endif
     char colors_value[16];
     char lang_value[64];
@@ -497,6 +523,7 @@ static void GLOBAL_DATA handle_options_menu()
         {0, curr_lang->s_LangUI, lang_value, 1, &lang_update_cb},
 #if COVERFLOW != 0
         {0, curr_lang->s_Theme_Title, theme_value, 1, &theme_update_cb},
+        {0, curr_lang->s_Cover_Style, cover_style_value, 1, &cover_style_update_cb},
 #endif
         {0x0F0F0E0E, curr_lang->s_Colors, colors_value, 1, &colors_update_cb},
         ODROID_DIALOG_CHOICE_SEPARATOR,
@@ -647,7 +674,16 @@ bool gui_change_tab(int direction) {
     return changed;
 }
 
-void retro_loop()
+/** How long LEFT/RIGHT must be held before the system grid opens. Short enough to
+ * beat the tab auto-repeat (which starts at ~30 frames), long enough that a tap
+ * still steps exactly one tab. */
+#define GRID_HOLD_MS (400)
+
+/** @param open_grid  Land on the system grid instead of a ROM list. True on a
+ * fresh start, false when we got here by quitting a game (BOOT_MODE_HOT) — the
+ * launcher restarts either way, and dumping the player on the grid every time
+ * they leave a ROM would lose their place in the list they were browsing. */
+void retro_loop(bool open_grid)
 {
     tab_t *tab;
     int last_key = -1;
@@ -655,12 +691,17 @@ void retro_loop()
     uint32_t idle_s;
     bool power_key_pressed = false;
     bool suppress_next_b_release = false;
+    /* Set when a gesture has already consumed the keys that are still held, so the
+     * dispatch below does not act on them a second time (holding LEFT opens the
+     * grid; without this the grid would then read that same LEFT as a cursor move). */
+    bool swallow_until_release = false;
 
     // Variable to measure the time the button has been pressed
     static uint32_t key_press_start_time = 0;
-    /* Inside a ROM subfolder: long B = parent folder; short B = KEY_PRESS_B (infos). */
-    static uint32_t b_subfolder_hold_t0 = 0;
-    static bool b_subfolder_long_consumed = false;
+    /* Hold LEFT/RIGHT to open the system grid rather than stepping one tab per
+     * press. Same shape as any other hold gesture in this loop. */
+    static uint32_t tab_hold_t0 = 0;
+    static bool tab_hold_consumed = false;
 
 #pragma GCC diagnostic ignored "-Wint-conversion"
 #pragma GCC diagnostic ignored "-Wdiscarded-qualifiers"
@@ -687,6 +728,11 @@ void retro_loop()
     update_debug_clock();
 
     rg_welcome_prompt_maybe_auto_show_on_launcher();
+
+    /* Opened AFTER the tab is prepared, so the grid highlights the system the
+     * user last used rather than tab 0. */
+    if (open_grid)
+        rg_system_grid_open();
 
     while (true)
     {
@@ -737,34 +783,38 @@ void retro_loop()
         }
 #endif
 
-        if (rg_emulator_tab_in_rom_subfolder(tab))
+        /* Tap LEFT/RIGHT = step one system, as before. Hold it and the grid opens,
+         * so the gesture that used to cost 28 presses now costs one. */
+        if (!rg_system_grid_is_open() &&
+            (gui.joystick.values[key_left] || gui.joystick.values[key_right]))
         {
-            if (gui.joystick.values[ODROID_INPUT_B])
+            if (tab_hold_t0 == 0)
             {
-                if (b_subfolder_hold_t0 == 0)
-                    b_subfolder_hold_t0 = get_elapsed_time();
-                else if (!b_subfolder_long_consumed &&
-                         get_elapsed_time() - b_subfolder_hold_t0 >= 500)
-                {
-                    if (rg_emulator_browse_pop_if_in_subfolder(tab))
-                        b_subfolder_long_consumed = true;
-                }
+                tab_hold_t0 = get_elapsed_time();
             }
-            else
+            else if (!tab_hold_consumed &&
+                     get_elapsed_time() - tab_hold_t0 >= GRID_HOLD_MS)
             {
-                if (b_subfolder_hold_t0 != 0 && !b_subfolder_long_consumed)
-                    gui_event(KEY_PRESS_B, tab);
-                b_subfolder_hold_t0 = 0;
-                b_subfolder_long_consumed = false;
+                rg_system_grid_open();
+                tab_hold_consumed = true;
+                swallow_until_release = true;
+                last_key = -1;
+                repeat = 0;
             }
         }
-        else
+        else if (!gui.joystick.values[key_left] && !gui.joystick.values[key_right])
         {
-            if (!gui.joystick.values[ODROID_INPUT_B])
-            {
-                b_subfolder_hold_t0 = 0;
-                b_subfolder_long_consumed = false;
-            }
+            tab_hold_t0 = 0;
+            tab_hold_consumed = false;
+        }
+
+        if (swallow_until_release)
+        {
+            if (gui.joystick.bitmask == 0)
+                swallow_until_release = false;
+
+            last_key = -1;
+            repeat = 0;
         }
 
         if (idle_s > 0 && gui.joystick.bitmask == 0)
@@ -772,7 +822,8 @@ void retro_loop()
             gui_event(TAB_IDLE, tab);
         }
 
-        if ((last_key < 0) || ((repeat >= 30) && (repeat % 5 == 0)))
+        if (!swallow_until_release &&
+            ((last_key < 0) || ((repeat >= 30) && (repeat % 5 == 0))))
         {
             for (int i = 0; i < ODROID_INPUT_MAX; i++)
             {
@@ -787,7 +838,50 @@ void retro_loop()
                 }
             }
 
-            if ((last_key == ODROID_INPUT_START) || (last_key == ODROID_INPUT_X))
+            /* The grid steers by raw direction — it is not a list, so the
+             * coverflow themes' axis swap must not reach it. Anything it does not
+             * claim (POWER, the menu keys) falls through to the handlers below. */
+            bool grid_handled = rg_system_grid_is_open();
+
+            if (grid_handled)
+            {
+                if (last_key == ODROID_INPUT_UP)
+                {
+                    rg_system_grid_step(0, -1);
+                    repeat++;
+                }
+                else if (last_key == ODROID_INPUT_DOWN)
+                {
+                    rg_system_grid_step(0, +1);
+                    repeat++;
+                }
+                else if (last_key == ODROID_INPUT_LEFT)
+                {
+                    rg_system_grid_step(-1, 0);
+                    repeat++;
+                }
+                else if (last_key == ODROID_INPUT_RIGHT)
+                {
+                    rg_system_grid_step(+1, 0);
+                    repeat++;
+                }
+                else if (last_key == ODROID_INPUT_A)
+                {
+                    rg_system_grid_commit();
+                    tab = gui_get_prepared_tab(gui.selected);
+                    swallow_until_release = true;
+                }
+                else
+                {
+                    grid_handled = false;
+                }
+            }
+
+            if (grid_handled)
+            {
+                /* claimed by the grid */
+            }
+            else if ((last_key == ODROID_INPUT_START) || (last_key == ODROID_INPUT_X))
             {
                 handle_about_menu();
             }
@@ -866,12 +960,18 @@ void retro_loop()
         {
             if (!gui.joystick.values[last_key])
             {
+                /* B goes up one level, always: grid -> back to the list you came
+                 * from, subfolder -> parent, list root -> the grid. (ROM info and
+                 * delete used to live here; they moved into the A menu, which is
+                 * where every other per-ROM action already was.) */
                 if (last_key == ODROID_INPUT_B)
                 {
                     if (suppress_next_b_release)
                         suppress_next_b_release = false;
-                    else if (!rg_emulator_tab_in_rom_subfolder(tab))
-                        gui_event(KEY_PRESS_B, tab);
+                    else if (rg_system_grid_is_open())
+                        rg_system_grid_close();
+                    else if (!rg_emulator_browse_pop_if_in_subfolder(tab))
+                        rg_system_grid_open();
                 }
                 last_key = -1;
                 repeat = 0;
@@ -880,8 +980,7 @@ void retro_loop()
         }
 
         idle_s = uptime_get() - gui.idle_start;
-        if (odroid_settings_MainMenuTimeoutS_get() != 0 &&
-            (idle_s > odroid_settings_MainMenuTimeoutS_get()))
+        if (odroid_idle_timeout_expired(idle_s))
         {
             printf("Idle timeout expired\n");
             odroid_system_sleep();
@@ -1087,6 +1186,17 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     fs_init();
 #endif
 
+    /* rc on-device dispatch probe — inert unless GAME+TIME held at boot.
+     * Lives here (not main.c) because Stage 2 caches rcprobe.xip from SD,
+     * which requires sdcard_init() above to have run. RC_PROBE-gated so
+     * the default build is byte-identical. */
+#if RC_PROBE
+    {
+        extern uint32_t boot_buttons;   /* plain global from main.c */
+        rc_probe_run_if_requested(boot_buttons);
+    }
+#endif
+
     /* Full battery drain wipes the RTC: quietly restore the clock from the
      * snapshot written at the last sleep/power-off (off by the downtime,
      * not by decades - the true elapsed time is unknowable offline).
@@ -1157,7 +1267,10 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     // Start the previously running emulator directly if it's a valid pointer.
     // If the user holds down TIME during startup, skip resume lookup and go
     // straight to launcher UI (avoids an unnecessary full ROM scan at boot).
-    const bool force_launcher = ((GW_GetBootButtons() & B_TIME) != 0);
+    // The boot-rescue screen ("boot to menu") forces the same skip: when the
+    // last boots died, the auto-resumed game is the prime suspect.
+    const bool force_launcher = ((GW_GetBootButtons() & B_TIME) != 0)
+                                || boot_rescue_force_launcher();
     char *startup_file = odroid_settings_StartupFile_get();
     retro_emulator_file_t *file = NULL;
     if (!force_launcher && strlen(startup_file) > 0) {
@@ -1183,6 +1296,9 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
             app_start_logo();
 #endif
 
-        retro_loop();
+        /* BOOT_MODE_HOT is the launcher restarting because the user quit a game
+         * (see the app_logo() call above). Every other way of getting here is a
+         * fresh start, and a fresh start opens on the system grid. */
+        retro_loop(boot_mode != BOOT_MODE_HOT);
     }
 }

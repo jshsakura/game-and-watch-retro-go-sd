@@ -1,5 +1,10 @@
-/* Host unit test for the Clock alarm logic: includes rg_clock.c whole so the
- * static functions are directly callable, with stubbed firmware/HAL below. */
+/* Host unit test for the Clock alarm logic: includes rg_clock_ring.c whole so
+ * the static functions are directly callable, with stubbed firmware/HAL below.
+ * rg_clock_ring.c is the RESIDENT half (main loop, alarm timing, config I/O,
+ * ring/MP3 dispatch) -- see its header comment. The overlay half (rendering,
+ * settings menu) lives in rg_clock.c and is stubbed out here (clock_overlay_frame/
+ * clock_settings_menu are never actually reached while ringing is dispatched,
+ * per the resident/overlay split's own invariant). */
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -12,7 +17,7 @@ static const char *test_path(const char *p)
   for (char *c = b + 11; *c; c++) if (*c == '/') *c = '_';   /* flatten subdirs */
   return b; }
 #define fopen(p, m) fopen(test_path(p), m)
-#include "../Core/Src/retro-go/rg_clock.c"
+#include "../Core/Src/retro-go/rg_clock_ring.c"
 #undef fopen
 
 /* ---- stubs ------------------------------------------------------------- */
@@ -48,24 +53,28 @@ static int stub_backlight_level = 6;
 int odroid_display_get_backlight(void) { return stub_backlight_level; }
 void odroid_display_set_backlight(int level) { stub_backlight_level = level; }
 uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_backlight_level]; }
-/* rg_clock_show() (unused here, but compiled) reads the charger state for the
- * idle-backlight charging exception — not exercised by the alarm tests. */
-bq24072_state_t bq24072_get_state(void) { return BQ24072_STATE_DISCHARGING; }
+/* rg_clock_show() (unused here, but compiled) asks the launcher's global idle
+ * timeout — never expired, so it is not exercised by the alarm tests. */
+bool odroid_idle_timeout_expired(uint32_t idle_seconds) { (void)idle_seconds; return false; }
 
-static const lang_t L = { .s_AM="AM", .s_PM="PM", .s_Clock="Clock",
-  .s_Weekday_Mon="Mon", .s_Weekday_Tue="Tue", .s_Weekday_Wed="Wed", .s_Weekday_Thu="Thu",
-  .s_Weekday_Fri="Fri", .s_Weekday_Sat="Sat", .s_Weekday_Sun="Sun",
-  .s_Clock_On="On", .s_Clock_Off="Off" };
-const lang_t *curr_lang = &L;
-int i18n_draw_text_line(int x,int y,int w,const char*t,uint16_t c,uint16_t bg,int f){(void)x;(void)y;(void)w;(void)t;(void)c;(void)bg;(void)f;return 0;}
-int i18n_get_text_width(const char *t){ return (int)strlen(t) * 6; }
-int odroid_overlay_dialog(const char*h,odroid_dialog_choice_t*o,int s,void(*r)(void),int f){(void)h;(void)o;(void)s;(void)r;(void)f;return -1;}
-void odroid_overlay_draw_fill_rect(int x,int y,int w,int h,uint16_t c){(void)x;(void)y;(void)w;(void)h;(void)c;}
-void odroid_overlay_draw_text(int x,int y,int w,const char*t,uint16_t c,uint16_t b){(void)x;(void)y;(void)w;(void)t;(void)c;(void)b;}
-void odroid_overlay_draw_logo(int x,int y,int l,uint16_t c){(void)x;(void)y;(void)l;(void)c;}
-retro_logo_image *rg_get_logo(int16_t i){ (void)i; return NULL; }
-void odroid_overlay_draw_battery(int p,int x,int y){(void)p;(void)x;(void)y;}
-int odroid_overlay_get_font_width(void){return 8;}
+/* ---- .overlay_clock staging seams (rg_clock_ring.c's clock_stage_overlay()/
+ * clock_overlay_arena() reference these; nothing here tests overlay-staging
+ * correctness -- that's device-only, see CLAUDE.md) --------------------- */
+void   *__RAM_EMU_START__[512];
+void   *__RAM_EMU_END__[512];
+void   *_OVERLAY_CLOCK_BSS_START[512];
+void   *_OVERLAY_CLOCK_BSS_END[512];
+uint32_t ram_start;
+size_t odroid_overlay_cache_file_in_ram(const char *p, uint8_t *d) { (void)p; (void)d; return 0; }
+void SCB_CleanDCache_by_Addr(uint32_t *a, int32_t s) { (void)a; (void)s; }
+/* the overlay half (rg_clock.c) -- never reached while ringing (see
+ * rg_clock_ring.c's ring_audio: the settings-menu/render call sites are
+ * skipped whenever s_ring_mp3 is true, and this test never sets mode away
+ * from what these no-ops return) */
+void clock_overlay_frame(clock_mode_t mode, bool ringing, uint32_t now, uint32_t last_input, bool force_dirty)
+{ (void)mode; (void)ringing; (void)now; (void)last_input; (void)force_dirty; }
+bool clock_settings_menu(void) { return false; }
+
 void odroid_input_read_gamepad(odroid_gamepad_state_t *s){ memset(s,0,sizeof *s); }
 int odroid_input_read_battery(void){return 50;}
 void GW_GetUnixTM(struct tm *tm){ memset(tm,0,sizeof *tm); tm->tm_hour=9; tm->tm_min=41; }

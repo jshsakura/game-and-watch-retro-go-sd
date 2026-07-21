@@ -21,6 +21,8 @@ typedef struct
     //=====================================================================
     // Core\Src\porting\gb\main_gb.c =======================================
     const char *s_Palette;
+    const char *s_System;
+    const char *s_SGB_Border;
     //=====================================================================
     // Core\Src\porting\nes\main_nes.c =====================================
     // const char *s_Palette "Palette" dul
@@ -286,7 +288,7 @@ typedef struct
     // NEW FIELDS GO AT THE END of the string region (right before the fmt_*
     // pointers): the SD .bin loader assigns strings BY INDEX, so inserting a
     // field in the middle shifts every later label when the firmware runs
-    // against an older /lang/*.bin. Appended fields simply fall back to the
+    // against an older /lang/xx_xx.bin. Appended fields simply fall back to the
     // baked en_us text until the SD lang files are updated.
     const char *s_Add_favorite;    // A-menu: add game to favorites
     const char *s_Del_favorite;    // A-menu: remove game from favorites
@@ -332,15 +334,22 @@ typedef struct
     const char *s_Clock_Scene;         // pixel-background STYLE picker row (which built-in scene), shown only while Background=Pixel
     const char *s_Clock_Photo_Speed;   // photo album slideshow speed row, shown only while Background=Photo album
     const char *s_Clock_Anim_4;        // photo album background value
-    const char *s_Clock_Auto_Dim;      // idle backlight auto-dim toggle row
+    const char *s_Clock_Keep_Awake;    // RETIRED (was s_Clock_Auto_Dim, then repurposed for a keep-awake toggle;
+                                        // the clock now has no power setting of its own — global "Idle power off"
+                                        // is the only rule) — slot kept, unused, per the positional-binary rule:
+                                        // lang_t fields are appended/retired in place, never removed or reordered
     const char *s_Clock_Bg_File;       // GIF background file picker row (SD builds)
     const char *s_Clock_Alarm_Sound;   // alarm sound picker row (Beep / SD file)
-    const char *s_Clock_Night_Off;     // night full-off window start-hour row (Off/21:00/22:00/23:00/00:00/01:00)
-    const char *s_Clock_Night_End;     // night full-off window end-hour row (05:00..09:00), shown only while start != Off
+    const char *s_Clock_Night_Off;     // RETIRED (night full-off window removed) — slot kept, unused, per the
+                                        // positional-binary rule above; do not repurpose without checking no build refers to it
+    const char *s_Clock_Night_End;     // RETIRED, same as s_Clock_Night_Off
     const char *s_Clock_Snd_Preview;   // alarm-sound row: GAME auditions the real ring
     const char *s_Speed_Slow;          // photo-speed value: slowest slideshow
     const char *s_Speed_Normal;        // photo-speed value: default slideshow speed
     const char *s_Speed_Fast;          // photo-speed value: fastest slideshow
+    const char *s_Cover_Style;         // launcher options row: cover rendering style
+    const char *s_Cover_Style_Poster;  // cover style value: native aspect (default)
+    const char *s_Cover_Style_Square;  // cover style value: square tile, center-crop filled
     //=====================================================================
 
     const int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, const char *weekday, uint16_t hour, uint16_t minutes, uint16_t seconds);

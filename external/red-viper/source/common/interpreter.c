@@ -26,6 +26,10 @@ static inline HWORD fetch_hword(WORD PC) {
  * falls back to the full dispatchers for their side effects. */
 extern bool vb_idle_wrote, vb_idle_hwread;
 extern WORD vb_idle_raddr;
+extern WORD vb_idle_last_rw_addr, vb_idle_last_rw_val;
+extern bool vb_idle_benign;
+extern bool vb_idle_hwtrue;
+extern WORD vb_idle_benign_addr;
 static inline WORD data_rbyte(WORD addr) {
     if ((addr >> 24) == 0x05) { vb_idle_hwread = true; vb_idle_raddr = addr;
         return *(BYTE *)(vb_state->V810_VB_RAM.off + (addr & 0x0500ffff)); }
@@ -42,7 +46,9 @@ static inline WORD data_rhword(WORD addr) {
 }
 static inline WORD data_rword(WORD addr) {
     if ((addr >> 24) == 0x05) { vb_idle_hwread = true; vb_idle_raddr = addr;
-        return *(WORD *)(vb_state->V810_VB_RAM.off + (addr & 0x0500fffc)); }
+        WORD v = *(WORD *)(vb_state->V810_VB_RAM.off + (addr & 0x0500fffc));
+        vb_idle_last_rw_addr = addr; vb_idle_last_rw_val = v;
+        return v; }
     if ((addr & 0x07000000) == 0x07000000)
         return *(WORD *)(V810_ROM1.off + (addr & (0x07000000 | vb_rom_mask) & ~3));
     return (WORD)mem_rword(addr);
@@ -58,7 +64,18 @@ static inline void data_whword(WORD addr, WORD v) {
     mem_whword(addr, v);
 }
 static inline void data_wword(WORD addr, WORD v) {
-    if ((addr >> 24) == 0x05) { vb_idle_wrote = true;
+    if ((addr >> 24) == 0x05) {
+        /* The one write a poll loop may keep: incrementing the word it just
+         * read ("how long did I wait" spin counters — Wario Land ticks one
+         * while polling VIP-busy, then reads it back). A second benign write
+         * to a different word, or any other store, disqualifies the loop. */
+        if (addr == vb_idle_last_rw_addr && v == vb_idle_last_rw_val + 1) {
+            if (vb_idle_benign && vb_idle_benign_addr != addr)
+                vb_idle_wrote = true;
+            else { vb_idle_benign = true; vb_idle_benign_addr = addr; }
+        } else {
+            vb_idle_wrote = true;
+        }
         *(WORD *)(vb_state->V810_VB_RAM.off + (addr & 0x0500fffc)) = v; return; }
     mem_wword(addr, v);
 }
@@ -78,6 +95,35 @@ static bool get_cond(BYTE code, WORD psw) {
     if (code & 8) cond = !cond;
     return cond;
 }
+
+#ifdef VB_PC_HISTOGRAM
+#include <stdio.h>
+#include <stdint.h>
+/* Host-harness instrumentation: bucket every executed instruction by ROM PC.
+ * 1M entries cover a 2MB ROM at 2-byte granularity; non-ROM PCs (RAM-resident
+ * code) land in one overflow bucket. Never compiled on device. */
+uint32_t vb_pc_hist[1u << 20];
+uint64_t vb_pc_hist_other;
+void vb_pc_hist_dump(int top_n)
+{
+    for (int n = 0; n < top_n; n++) {
+        uint32_t best = 0, best_i = 0;
+        for (uint32_t i = 0; i < (1u << 20); i++) {
+            if (vb_pc_hist[i] > best) { best = vb_pc_hist[i]; best_i = i; }
+        }
+        if (!best) break;
+        printf("pchist %2d pc=07%06x count=%u\n", n, best_i << 1, best);
+        vb_pc_hist[best_i] = 0;
+    }
+    printf("pchist other(non-ROM)=%llu\n", (unsigned long long)vb_pc_hist_other);
+}
+#define VB_HIST(pc) do { \
+        if (((pc) & 0x07000000) == 0x07000000) vb_pc_hist[((pc) & 0x1ffffe) >> 1]++; \
+        else vb_pc_hist_other++; \
+    } while (0)
+#else
+#define VB_HIST(pc) do {} while (0)
+#endif
 
 int interpreter_run(void) {
     /* Hoist the cpu_state pointer: vb_state is a GLOBAL pointer, so without this
@@ -104,6 +150,7 @@ int interpreter_run(void) {
             target = cycles + CPU->cycles_until_event_partial;
         }
         HWORD instr = fetch_hword(PC);
+        VB_HIST(PC);
         PC += 2;
         BYTE opcode = instr >> 10;
         BYTE reg1 = instr & 31;
@@ -387,26 +434,51 @@ int interpreter_run(void) {
                  * polled state. Register-only delay loops never set hwread and
                  * are left untouched; any store disqualifies via vb_idle_wrote. */
                 if (disp < 0 && disp > -64) {
-                    extern bool vb_idle_wrote, vb_idle_hwread;
-                    extern WORD vb_idle_raddr;
                     extern unsigned int vb_stat_skips;
                     static WORD s_idle_pc, s_idle_raddr;
                     static int  s_idle_spins;
+                    static WORD s_idle_prev_cycles, s_idle_cost;
                     /* Same loop AND same polled address each spin: scan/checksum
                      * loops (advancing reads, register-only) must not skip — they
                      * would inflate emulated time and slow the GAME to a crawl. */
                     if (PC == s_idle_pc && vb_idle_raddr == s_idle_raddr) {
+                        WORD this_cost = cycles - s_idle_prev_cycles;
+                        bool cost_stable = (this_cost == s_idle_cost && this_cost > 0);
+                        s_idle_cost = this_cost;
                         if (vb_idle_hwread && !vb_idle_wrote && ++s_idle_spins >= 3) {
-                            if ((SWORD)(target - cycles) > 0) { cycles = target; vb_stat_skips++; }
+                            if (!vb_idle_benign) {
+                                /* Pure poll, no side effects: jump straight to the
+                                 * next event, where the polled state can change. */
+                                if ((SWORD)(target - cycles) > 0) { cycles = target; vb_stat_skips++; }
+                            } else if (vb_idle_hwtrue && cost_stable && (SWORD)(target - cycles) > 0) {
+                                /* Spin-counter poll (Wario Land): the loop's only
+                                 * side effect is counter++ per spin, and the game
+                                 * reads the count back. Credit k skipped spins in
+                                 * closed form — identical to executing them, since
+                                 * an iteration touches nothing else and the polled
+                                 * state cannot change before `target`. The partial
+                                 * iteration left over runs for real. */
+                                WORD k = (target - cycles) / s_idle_cost;
+                                if (k) {
+                                    cycles += k * s_idle_cost;
+                                    *(WORD *)(vb_state->V810_VB_RAM.off +
+                                              (vb_idle_benign_addr & 0x0500fffc)) += k;
+                                    vb_stat_skips++;
+                                }
+                            }
                             s_idle_spins = 0;
                         }
                     } else {
                         s_idle_pc = PC;
                         s_idle_raddr = vb_idle_raddr;
                         s_idle_spins = 0;
+                        s_idle_cost = 0;
                     }
+                    s_idle_prev_cycles = cycles;
                     vb_idle_wrote = false;
                     vb_idle_hwread = false;
+                    vb_idle_benign = false;
+                    vb_idle_hwtrue = false;
                     vb_idle_raddr = 0;   /* fresh signature for the next iteration */
                 }
             } else {

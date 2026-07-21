@@ -24,6 +24,7 @@ MAP = [
     ("RG_LOGO_PAD_GG",      "gg"),
     ("RG_LOGO_PAD_SMS",     "sms"),
     ("RG_LOGO_PAD_GEN",     "md"),
+    ("RG_LOGO_PAD_SEGACD",  "segacd"),
     ("RG_LOGO_PAD_SG1000",  "sg"),
     ("RG_LOGO_PAD_COL",     "col"),
     ("RG_LOGO_PAD_PCE",     "pce"),
@@ -45,7 +46,9 @@ MAP = [
     ("RG_LOGO_PAD_ZX",      "zxs"),
     ("RG_LOGO_PAD_C64",     "c64"),
     ("RG_LOGO_PAD_GAMECOM", "gamecom"),
-    ("RG_LOGO_PAD_VB",      "vb"),        # Virtual Boy (prepared ahead of the core)
+    ("RG_LOGO_PAD_VB",      "vb"),
+    ("RG_LOGO_PAD_SNES",    "snes"),      # Super Famicom (premultiply before scaling, cf. cicon_gba note)        # Virtual Boy (prepared ahead of the core)
+    ("RG_LOGO_PAD_32X",     "32x"),       # Sega 32X (RomM icon set)
     ("RG_LOGO_PAD_FAVORITES","favorites"),  # original gold-star icon for the favorites virtual tab
 ]
 

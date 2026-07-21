@@ -46,15 +46,43 @@ static uint32_t disable_transfer = 0;
 /* Set when the image is rejected before any of it reaches the output buffer. */
 static uint32_t decode_rejected = 0;
 
+/* Why the last decode failed. "rc=1" collapses three unrelated failures into one
+ * number and we spent a release guessing between them:
+ *   hal   HAL_JPEG_Decode's return   (0=OK 1=ERROR 2=BUSY 3=TIMEOUT)
+ *   err   hjpeg->ErrorCode           (HAL_JPEG_ERROR_* bits)
+ *   rej   why we rejected it ourselves: 1=GetInfo failed, 2=output too large
+ *   sub   chroma subsampling         (0=4:2:0 1=4:2:2 2=4:4:4)
+ *   need  bytes the image needs in the output buffer, vs JPEGBufferSize */
+uint32_t g_jpeg_hal = 0, g_jpeg_err = 0, g_jpeg_rej = 0, g_jpeg_sub = 0, g_jpeg_need = 0;
+
 static void COPY_JpegOutInit();
 static void COPY_JpegOut();
+
+/* Put the handle back to a state HAL will actually work from.
+ *
+ * HAL_JPEG_Init() restores State and ErrorCode, but it clears hjpeg->Lock ONLY
+ * inside `if (State == HAL_JPEG_STATE_RESET)` — the two assignments at
+ * stm32h7xx_hal_jpeg.c:520 and :541 are the only ones in the whole driver. So a
+ * handle that is ever left LOCKED stays LOCKED for the rest of the session, and
+ * HAL_JPEG_Decode's __HAL_LOCK then returns HAL_BUSY before it so much as looks
+ * at the image — with ErrorCode reading 0, because Init cleared it.
+ *
+ * That is exactly what the device reported: hal=2 (HAL_BUSY), err=0, rej=0, on
+ * every frame of every clip. Nothing was wrong with the video. */
+static void JPEG_HandleReset(void)
+{
+    JPEG_Handle.Instance = JPEG;
+    JPEG_Handle.State = HAL_JPEG_STATE_RESET;   /* so Init clears the lock */
+    JPEG_Handle.Lock = HAL_UNLOCKED;
+    JPEG_Handle.ErrorCode = HAL_JPEG_ERROR_NONE;
+}
 
 static uint32_t JPEG_DecodeInit(uint32_t JPEG_Buffer, uint32_t JPEG_Buffer_Size)
 {
     JPEGBufferAddress = JPEG_Buffer;
     JPEGBufferSize = JPEG_Buffer_Size;
 
-    JPEG_Handle.Instance = JPEG;
+    JPEG_HandleReset();
     return HAL_JPEG_Init(&JPEG_Handle);
 }
 
@@ -82,17 +110,49 @@ static uint32_t JPEG_Run(uint32_t SrcAddress, uint32_t SrcSize)
     if (SrcAddress == 0 || SrcSize == 0)
         return 1;
 
+    /* HAL floors the input length to a multiple of four:
+     *
+     *     hjpeg->InDataLength = InDataLength - (InDataLength % 4UL);   (hal_jpeg.c)
+     *
+     * so a 5,949-byte frame is handed over as 5,948 and the last byte never
+     * arrives. The last bytes of a JPEG are FF D9 — the end-of-image marker — and
+     * without it the peripheral never reaches EOC.
+     *
+     * Only one caller is hurt by that, and it is the one that passes an exact
+     * length: the video player, one AVI chunk per frame. Covers pass their cache
+     * slot's size and .gw artwork the rest of the ROM file, both comfortably larger
+     * than the image, so the bytes HAL drops off the end are rubbish well past the
+     * EOI and nobody notices. Three callers, one dead, and the two live ones swear
+     * the decoder is fine.
+     *
+     * Round up instead. The extra bytes are still inside the caller's buffer (a
+     * frame slot is 64 KB, a frame is not) and the decoder stops at EOI regardless,
+     * so they are never looked at. */
+    SrcSize = (SrcSize + 3u) & ~3u;
+
     decode_rejected = 0;
+    g_jpeg_hal = g_jpeg_err = g_jpeg_rej = g_jpeg_sub = g_jpeg_need = 0;
     memset(&JPEG_info, 0, sizeof(JPEG_info));
 
     HAL_StatusTypeDef st = HAL_JPEG_Decode(&JPEG_Handle, (uint8_t *)SrcAddress, SrcSize,
                                            (uint8_t *)JPEGBufferAddress, JPEGBufferSize,
                                            JPEG_DECODE_TIMEOUT_MS);
+    g_jpeg_hal = (uint32_t)st;
+    g_jpeg_err = JPEG_Handle.ErrorCode;
     if (st != HAL_OK || decode_rejected)
     {
         /* A rejected image left the peripheral paused mid-frame; drop it so the
-         * next decode starts from a clean state. */
+         * next decode starts from a clean state.
+         *
+         * Abort is not enough on its own. It leaves State = HAL_JPEG_STATE_ERROR
+         * whenever ErrorCode is set, and nothing in the driver ever clears the
+         * lock outside Init-from-RESET. Either one is permanent: one bad frame
+         * would wedge the decoder for the rest of the session and every frame
+         * after it would come back HAL_BUSY. Hand the handle back ourselves. */
         HAL_JPEG_Abort(&JPEG_Handle);
+        JPEG_Handle.Lock = HAL_UNLOCKED;
+        JPEG_Handle.ErrorCode = HAL_JPEG_ERROR_NONE;
+        JPEG_Handle.State = HAL_JPEG_STATE_READY;
         return 1;
     }
     return 0;
@@ -160,6 +220,7 @@ void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pIn
     if (HAL_OK != HAL_JPEG_GetInfo(hJPEG, &JPEG_info))
     {
         decode_rejected = 1;
+        g_jpeg_rej = 1;
         HAL_JPEG_Pause(hJPEG, JPEG_PAUSE_RESUME_INPUT_OUTPUT);
         return;
     }
@@ -170,6 +231,7 @@ void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pIn
      * 4:2:0 cover occupies 192x112. */
     uint32_t ImgSize;
 
+    g_jpeg_sub = JPEG_info.ChromaSubsampling;
     if (JPEG_info.ChromaSubsampling == JPEG_420_SUBSAMPLING)
     {
         ImgSize = MCU_ROUND(JPEG_info.ImageWidth, 16) * MCU_ROUND(JPEG_info.ImageHeight, 16) * 3 / 2;
@@ -183,12 +245,14 @@ void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pIn
         ImgSize = MCU_ROUND(JPEG_info.ImageWidth, 8) * MCU_ROUND(JPEG_info.ImageHeight, 8) * 3;
     }
 
+    g_jpeg_need = ImgSize;
     if (ImgSize > JPEGBufferSize)
     {
         /* Headers are parsed before any MCU is written out, so pausing here
          * keeps an oversized image from ever touching the output buffer. */
         printf("JPEG %lux%lu TOO LARGE:%lu > %lu \n", JPEG_info.ImageWidth, JPEG_info.ImageHeight, ImgSize, JPEGBufferSize);
         decode_rejected = 1;
+        g_jpeg_rej = 2;
         HAL_JPEG_Pause(hJPEG, JPEG_PAUSE_RESUME_INPUT_OUTPUT);
     }
 
@@ -196,11 +260,23 @@ void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hJPEG, JPEG_ConfTypeDef *pIn
 
 void HAL_JPEG_GetDataCallback(JPEG_HandleTypeDef *hJPEG, uint32_t NbDecodedData)
 {
-    /* The whole image was handed to HAL up front, so being asked for more means
-     * the stream ended early. Report "no more input" — leaving InDataLength as
-     * it was would make HAL rewind JpegInCount to 0 and replay the buffer for
-     * ever. */
-    decode_rejected = 1;
+    /* HAL asks for more input the moment it has pushed the last byte of the
+     * buffer (JpegInCount == InDataLength), which for a whole image handed over
+     * up front is the NORMAL end of the stream, not an error: the peripheral
+     * still has the tail of the image in its input FIFO and completes from
+     * there. Reporting "no more input" is the whole contract — leaving
+     * InDataLength as it was would make HAL rewind JpegInCount to 0 and replay
+     * the buffer for ever, which is the runaway this callback exists to stop.
+     *
+     * Do NOT flag the image as rejected here. Whether this fires at all depends
+     * only on how much of the source HAL had left when the decode ended, so a
+     * caller that passes the exact JPEG length (video, one frame per chunk) hits
+     * it on every good frame, while callers that pass a padded bound (covers use
+     * the slot size, .gw artwork the rest of the file) never do. Flagging it
+     * failed every video frame while leaving the others working.
+     *
+     * A stream that really is truncated ends the same way but never reaches EOC,
+     * so HAL_JPEG_Decode returns HAL_TIMEOUT and JPEG_Run rejects it there. */
     HAL_JPEG_ConfigInputBuffer(hJPEG, NULL, 0);
 }
 

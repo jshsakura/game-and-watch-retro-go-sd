@@ -1,0 +1,54 @@
+# Host harness for the WonderSwan core (oswan) — mirrors the DEVICE build:
+# same sources as Makefile WSWAN_C_SOURCES (minus main_wswan.c), same
+# -DGNW_WSWAN/-DNOSDL_FB/-DSOUND_ON defines, same software renderer.
+#
+#   make -f Makefile.wswan
+#   ./build/wswan/retro-go-wswan <rom.ws|.wsc> [total_frames] [save_frame]
+#
+# -Werror=implicit-function-declaration: a missing prototype returns int on a
+# 64-bit host and truncates a pointer -> the SM harness lesson, caught at compile.
+# -fsanitize=alignment: fail only on the 64-bit type-punned stores an M7 traps.
+
+CW    = ../external/oswan-go/main
+BUILD = build/wswan
+TARGET = $(BUILD)/retro-go-wswan
+
+CC = gcc
+
+DEFS = -DGNW_WSWAN -DNOSDL_FB -DSOUND_ON -DSOUND_EMULATION
+INCS = -I../Core/Inc/porting/wswan -I../Core/Src/porting/lib \
+       -I$(CW)/emu -I$(CW)/emu/cpu -I$(CW)/headers -I$(CW)/sound -I.
+OPT  = -O2 -g -fno-strict-aliasing
+
+CFLAGS = $(DEFS) $(INCS) $(OPT) -Wall -Werror=implicit-function-declaration \
+         -fsanitize=alignment -fno-sanitize-recover=alignment
+
+# device WSWAN_C_SOURCES minus main_wswan.c (wswan/main.c replaces it)
+SRCS_C = \
+	$(CW)/emu/WS.c \
+	../Core/Src/porting/wswan/ws_fileio.c \
+	$(CW)/emu/WSRender.c \
+	$(CW)/emu/WSApu.c \
+	../Core/Src/porting/wswan/nec.c \
+	wswan/main.c
+
+OBJS = $(addprefix $(BUILD)/,$(notdir $(SRCS_C:.c=.o)))
+
+all: $(TARGET)
+
+$(BUILD):
+	mkdir -p $(BUILD)
+
+vpath %.c $(CW)/emu ../Core/Src/porting/wswan wswan
+
+$(BUILD)/%.o: %.c | $(BUILD)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) $(OBJS) -lm -o $@
+	@echo "built $(TARGET)"
+
+clean:
+	rm -rf $(BUILD)
+
+.PHONY: all clean

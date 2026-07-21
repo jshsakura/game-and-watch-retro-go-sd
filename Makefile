@@ -25,12 +25,13 @@ ROMS_VIDEOPAC :=
 ######################################
 # C sources
 C_SOURCES =  \
-Core/Src/porting/lib/lz4_depack.c \
 Core/Src/porting/lib/lzma/LzmaDec.c \
 Core/Src/porting/lib/lzma/lzma.c \
 Core/Src/bilinear.c \
 Core/Src/cpp_init_array.c \
+Core/Src/gw_boot_rescue.c \
 Core/Src/gw_buttons.c \
+Core/Src/gw_update_guard.c \
 Core/Src/gw_lcd.c \
 Core/Src/gw_audio.c \
 Core/Src/gw_malloc.c \
@@ -55,6 +56,75 @@ Core/Src/porting/crc32.c \
 Core/Src/stm32h7xx_hal_msp.c \
 Core/Src/stm32h7xx_it.c \
 Core/Src/system_stm32h7xx.c
+
+# On-device rc dispatch probe (65816->C static recompiler feasibility).
+# Default OFF: the release build is byte-identical to a tree without it.
+# Enable with RC_PROBE=1 (e.g. `make release DOCKER=1 RC_PROBE=1 ...`).
+RC_PROBE ?= 0
+ifeq ($(RC_PROBE),1)
+  C_SOURCES += Core/Src/rc_probe.c
+  C_DEFS += -DRC_PROBE=1
+endif
+
+# On-device SNES APU cost breakdown. Default OFF: the release build is
+# byte-identical (no Python script runs, no -DSNES_LOAD_DIAG, apu.c and
+# dsp.c compile from external/sm untouched). Enable with SNES_LOAD_DIAG=1
+# to swap in DWT-instrumented copies that bracket spc_runOpcode /
+# dsp_cycle / dsp_handleEcho with cycle deltas. The wiring lives in
+# Makefile.common (search SNES_DIAG_DIR); the SNES_LOAD_DIAG block in
+# Core/Src/porting/snes/main_snes.c dumps the buckets to /snes_diag.txt
+# at load time, before the frame loop. Mirrors tools/m7_qemu_rig's
+# build_snes_cost.sh but uses DWT_CYCCNT instead of rig_timer_now().
+SNES_LOAD_DIAG ?= 0
+
+# On-device 32X frame-cost breakdown. Default OFF: the release build is
+# byte-identical (no -DMD32X_DEVICE_PROFILE; picodrive's pprof probes stay
+# no-ops). Enable with MD32X_DEVICE_PROFILE=1 to arm DWT_CYCCNT and split
+# PicoFrame() into master/slave SH-2, 68K, MD VDP draw, 32X compositor draw,
+# FM/PWM sound — riding picodrive's existing pprof_start/pprof_end probes
+# (see external/picodrive/platform/linux/pprof.h) instead of duplicating
+# instrumentation. The coarse pace/proc/pico/blit/audio/total buckets in
+# Core/Src/porting/md32x/main_md32x.c dump to /32x_dwt.txt at the same time.
+MD32X_DEVICE_PROFILE ?= 0
+
+# Exact native SMW SPC/SFX engine (tools/nspc_audio_wire/smw_exact_wire.c).
+# Detection is ARAM-driver-signature based (ptnJumpToVcmdSMW), not a full-ROM
+# hash -- the internal title field is only a boot-log hint now, see
+# smw_exact_wire.c's wire_configure_rom() for why a hash/title gate denied
+# HLE to every translated or hacked SMW image (and to vanilla SMW too, for a
+# while: a stale 21-byte title compare never matched the real 16-byte
+# "SUPER MARIOWORLD" field).
+SNES_SMW_HLE ?= 0
+
+# Generic N-SPC engine HLE (tools/nspc_audio_wire/nspc_wire.c): the same
+# adoption technique generalized to any ROM whose ARAM uploads a recognized
+# N-SPC dialect (std/YI; SMW's own dialect is deliberately excluded here --
+# it stays on the more precise SNES_SMW_HLE path above). Independent flag:
+# either, both, or neither may be enabled. With both on, the two backends
+# are namespaced apart (smwx_redefines / nspc_wire_coexist_redefines) and a
+# small dispatcher (tools/nspc_audio_wire/nspc_dispatch.c) picks whichever
+# backend's own engine fingerprint matches at runtime -- never both, and no
+# full-ROM hash gating either side.
+SNES_NSPC_HLE ?= 0
+
+# rc SMW native optimization: per-ROM static recompilation of SMW's 270
+# hottest 65816 sites. The ~12 KB native subset is appended to snes.bin and
+# copied into ITCM at core load; cold sites fall through to the interpreter.
+# Default OFF: the release build is byte-identical to a tree without it
+# (rc_smw_sites.c is not compiled and .itcm_rc_hot is empty).
+# Enable with RCSMW=1 (e.g. `make release DOCKER=1 RCSMW=1 ...`).
+RCSMW ?= 0
+ifeq ($(SNES_SMW_HLE)$(RCSMW),11)
+  $(error SNES_SMW_HLE=1 requires RCSMW=0: rc disables the faster SMW spin-skip path)
+endif
+ifeq ($(SNES_NSPC_HLE)$(RCSMW),11)
+  $(error SNES_NSPC_HLE=1 requires RCSMW=0: untested combination, rc replaces the interpreter the generic wire's fallback depends on)
+endif
+ifeq ($(RCSMW),1)
+  RCSMW_C_SOURCES = Core/Src/porting/snes/rc_smw_sites.c
+  RCSMW_C_INCLUDES = -Igenerated/rc_smw -I$(CORE_SNES)/src/snes
+  C_DEFS += -DRCSMW=1
+endif
 
 FATFS_DIR = Core/Src/porting/lib/FatFs
 FATFS_C_SOURCES = \
@@ -101,7 +171,8 @@ $(CORE_TGBDUAL)/gb_core/tgbdual_cpu.cpp \
 $(CORE_TGBDUAL)/gb_core/tgbdual_gb.cpp \
 $(CORE_TGBDUAL)/gb_core/tgbdual_lcd.cpp \
 $(CORE_TGBDUAL)/gb_core/tgbdual_mbc.cpp \
-$(CORE_TGBDUAL)/gb_core/tgbdual_rom.cpp
+$(CORE_TGBDUAL)/gb_core/tgbdual_rom.cpp \
+$(CORE_TGBDUAL)/gb_core/tgbdual_sgb.cpp
 
 NES_C_SOURCES = 
 
@@ -473,6 +544,8 @@ $(CORE_MSX)/Src/Memory/ramMapperIo.c \
 $(CORE_MSX)/Src/Memory/RomLoader.c \
 $(CORE_MSX)/Src/Memory/romMapperASCII8.c \
 $(CORE_MSX)/Src/Memory/romMapperASCII16.c \
+$(CORE_MSX)/Src/Memory/romMapperASCII16X.c \
+$(CORE_MSX)/Src/Memory/romMapperNEO16.c \
 $(CORE_MSX)/Src/Memory/romMapperASCII16nf.c \
 $(CORE_MSX)/Src/Memory/romMapperBasic.c \
 $(CORE_MSX)/Src/Memory/romMapperCasette.c \
@@ -531,9 +604,12 @@ Core/Src/porting/msx/save_msx.c
 GW_C_SOURCES = 
 
 CORE_GW = external/LCD-Game-Emulator
-#TODO : change linking so lz4/lzma libraries are in LCD emulator section
-#       and not in internal flash
+# lz4 moved here: gw_romloader.c is its only caller anywhere in the tree, so it
+# belongs in this overlay, not the resident image. lzma stays resident
+# (Core/Src/porting/lib/lzma/LzmaDec.c) because nes/nes_fceu/a7800/smsplusgx/msx/
+# videopac/wsv/pce/gnuboy all share the same compiled copy.
 GW_C_SOURCES += \
+Core/Src/porting/lib/lz4_depack.c \
 $(CORE_GW)/src/cpus/sm500op.c \
 $(CORE_GW)/src/cpus/sm510op.c \
 $(CORE_GW)/src/cpus/sm500core.c \
@@ -589,6 +665,69 @@ $(CORE_WSWAN)/emu/WSApu.c \
 Core/Src/porting/wswan/nec.c \
 Core/Src/porting/wswan/main_wswan.c
 
+# Generic SNES core (LakeSnes interpreter, shared sources with the SM port —
+# but compiled into its OWN overlay with its OWN symbol namespace, see
+# snes_redefines; the SM port's copies are renamed sm__*). EXPERIMENTAL.
+SNES_C_SOURCES =
+
+CORE_SNES = external/sm
+SNES_APU_SOURCE = $(CORE_SNES)/src/snes/apu.c
+
+# 1 when both audio-HLE backends are linked together: the two need namespacing
+# apart (smwx_redefines / nspc_wire_coexist_redefines) and a dispatcher
+# (nspc_dispatch.c) to pick between them, none of which is needed -- or
+# compiled -- when only one is enabled. See Makefile.common's SNES_C_SOURCES
+# object rules for where SNES_HLE_COEXIST changes the compile recipe.
+SNES_HLE_COEXIST = 0
+ifeq ($(SNES_SMW_HLE)$(SNES_NSPC_HLE),11)
+SNES_HLE_COEXIST = 1
+endif
+
+ifeq ($(SNES_SMW_HLE),1)
+SNES_SMW_HLE_DIR = $(BUILD_DIR)/snes_smw_hle
+SNES_APU_SOURCE = $(SNES_SMW_HLE_DIR)/apu_wire.c
+SNES_C_SOURCES += \
+$(SNES_SMW_HLE_DIR)/smw_spc_player_gen.c \
+tools/nspc_audio_wire/smw_exact_wire.c
+endif
+
+ifeq ($(SNES_NSPC_HLE),1)
+SNES_NSPC_HLE_DIR = $(BUILD_DIR)/snes_nspc_hle
+# Only becomes the APU source when SMW's HLE isn't already providing one:
+# in coexistence mode either generated apu_wire.c is equivalent (both are
+# just apu.c with apu_run renamed to apu_run_lle -- see gen_nspc_wire.py /
+# gen_smw_exact.py, same anchor, same replacement, no wire-specific content),
+# so linking SMW's (selected above) is enough; a second, functionally
+# identical copy would just be a duplicate-symbol link error.
+ifneq ($(SNES_SMW_HLE),1)
+SNES_APU_SOURCE = $(SNES_NSPC_HLE_DIR)/apu_wire.c
+endif
+SNES_C_SOURCES += \
+$(SNES_NSPC_HLE_DIR)/spc_player_gen.c \
+tools/nspc_hle/nspc_variant.c \
+tools/nspc_audio_wire/nspc_wire.c
+endif
+
+ifeq ($(SNES_HLE_COEXIST),1)
+SNES_C_SOURCES += tools/nspc_audio_wire/nspc_dispatch.c
+endif
+
+SNES_C_SOURCES += \
+$(SNES_APU_SOURCE) \
+$(CORE_SNES)/src/snes/cart.c \
+$(CORE_SNES)/src/snes/cpu.c \
+$(CORE_SNES)/src/snes/dma.c \
+$(CORE_SNES)/src/snes/dsp.c \
+$(CORE_SNES)/src/snes/input.c \
+$(CORE_SNES)/src/snes/ppu.c \
+$(CORE_SNES)/src/snes/snes.c \
+$(CORE_SNES)/src/snes/snes_other.c \
+$(CORE_SNES)/src/snes/spc.c \
+$(CORE_SNES)/src/snes/spin_skip.c \
+$(CORE_SNES)/src/snes/rc_dispatch.c \
+$(CORE_SNES)/src/tracing.c \
+Core/Src/porting/snes/main_snes.c
+
 MD_C_SOURCES =
 
 CORE_GWENESIS = external/gwenesis
@@ -606,6 +745,81 @@ $(CORE_GWENESIS)/src/vdp/gwenesis_vdp_mem.c \
 $(CORE_GWENESIS)/src/vdp/gwenesis_vdp_gfx.c \
 $(CORE_GWENESIS)/src/savestate/gwenesis_savestate.c \
 Core/Src/porting/gwenesis/main_gwenesis.c
+
+# Sega 32X (picodrive) — SD-card builds only (the overlay is streamed from SD;
+# the trimmed interpreter subset, no DRC/SMS/ym2413/SVP/CD/draw2/state).
+MD32X_C_SOURCES =
+CORE_PICODRIVE = external/picodrive
+ifeq ($(SD_CARD),1)
+MD32X_C_SOURCES += \
+$(CORE_PICODRIVE)/cpu/sh2/sh2.c \
+$(CORE_PICODRIVE)/cpu/sh2/mame/sh2pico.c \
+$(CORE_PICODRIVE)/cpu/gwenesis68k/m68kcpu.c \
+$(CORE_PICODRIVE)/cpu/gwenesis68k/g68k_bus.c \
+$(CORE_PICODRIVE)/cpu/cz80/cz80.c \
+$(CORE_PICODRIVE)/pico/32x/32x.c \
+$(CORE_PICODRIVE)/pico/32x/draw.c \
+$(CORE_PICODRIVE)/pico/32x/memory.c \
+$(CORE_PICODRIVE)/pico/32x/pwm.c \
+$(CORE_PICODRIVE)/pico/32x/sh2soc.c \
+$(CORE_PICODRIVE)/pico/cart.c \
+$(CORE_PICODRIVE)/pico/memory.c \
+$(CORE_PICODRIVE)/pico/draw.c \
+$(CORE_PICODRIVE)/pico/sek.c \
+$(CORE_PICODRIVE)/pico/videoport.c \
+$(CORE_PICODRIVE)/pico/media.c \
+$(CORE_PICODRIVE)/pico/pico.c \
+$(CORE_PICODRIVE)/pico/misc.c \
+$(CORE_PICODRIVE)/pico/patch.c \
+$(CORE_PICODRIVE)/pico/z80if.c \
+$(CORE_PICODRIVE)/pico/eeprom.c \
+$(CORE_PICODRIVE)/pico/state.c \
+$(CORE_PICODRIVE)/pico/sound/sound.c \
+$(CORE_PICODRIVE)/pico/sound/mix.c \
+$(CORE_PICODRIVE)/pico/sound/sn76496.c \
+$(CORE_PICODRIVE)/pico/sound/ym2612.c \
+$(CORE_PICODRIVE)/pico/sound/resampler.c \
+Core/Src/porting/md32x/main_md32x.c \
+Core/Src/porting/md32x/md32x_border_clear.c
+# Profiler recording/dump lives in its own TU: inlined into main_md32x.c it
+# lands in the RAM_EMU overlay (qsort + percentiles + a dozen fprintf calls,
+# ~2 KB) and overflows MD32X BSS by 2088 B. The AHB pool frees data, not code.
+ifneq ($(MD32X_DEVICE_PROFILE),0)
+MD32X_C_SOURCES += Core/Src/porting/md32x/md32x_profile.c
+endif
+endif
+# Sega/Mega CD — shares the gwenesis M68K/Z80/VDP core with MD (compiled
+# separately into build/segacd/ so the overlay has its own .o set), plus
+# the sub-68K + CDD/CDC + graphics + audio porting layer. CD data is
+# streamed from SD; the BIOS is XIP'd from flash (0 RAM). SD builds only.
+# Sega CD fits RAM_EMU fine — the 148,760-byte "overflow" was a linker-script
+# bug: ._ram_space_check_md and ._ram_space_check_segacd stacked in the same
+# region, summing two overlays that never load together. Both are independent
+# ASSERTs now. SEGACD=0 still excludes the core.
+SEGACD ?= 1
+SEGACD_C_SOURCES =
+ifeq ($(SEGACD),1)
+SEGACD_C_SOURCES += \
+$(CORE_GWENESIS)/src/cpus/M68K/m68kcpu.c \
+$(CORE_GWENESIS)/src/cpus/Z80/Z80.c \
+$(CORE_GWENESIS)/src/sound/z80inst.c \
+$(CORE_GWENESIS)/src/sound/ym2612.c \
+$(CORE_GWENESIS)/src/sound/gwenesis_sn76489.c \
+$(CORE_GWENESIS)/src/bus/gwenesis_bus.c \
+$(CORE_GWENESIS)/src/bus/gwenesis_sram.c \
+$(CORE_GWENESIS)/src/bus/gwenesis_eeprom.c \
+$(CORE_GWENESIS)/src/io/gwenesis_io.c \
+$(CORE_GWENESIS)/src/vdp/gwenesis_vdp_mem.c \
+$(CORE_GWENESIS)/src/vdp/gwenesis_vdp_gfx.c \
+$(CORE_GWENESIS)/src/savestate/gwenesis_savestate.c \
+Core/Src/porting/segacd/main_segacd.c \
+Core/Src/porting/segacd/segacd_engine.c \
+Core/Src/porting/segacd/segacd_bus.c \
+Core/Src/porting/segacd/segacd_cd.c \
+Core/Src/porting/segacd/segacd_audio.c \
+Core/Src/porting/segacd/segacd_gfx.c \
+Core/Src/porting/segacd/segacd_cache.c
+endif
 
 A2600_C_SOURCES =
 A2600_CXX_SOURCES =
@@ -899,6 +1113,57 @@ Core/Src/porting/pico8/main_pico8_stub.c
 PICO8_CXX_STUBS =
 PICO8_CXX_SOURCES =
 
+# Super Metroid (snesrev/sm). NOT compiled: main.c/opengl/glsl (SDL frontend),
+# config.c (SDL keymap parser), tracing.c, sm_cpu_infra.c (the reference-emulator
+# compare machinery), snes/apu.c + snes/spc.c (the SPC700 emulator — spc_player
+# does the audio) and snes/snes_other.c (ROM loader; the glue fills the cart in).
+CORE_SM = external/sm
+SM_C_SOURCES = \
+$(CORE_SM)/src/sm_rtl.c \
+$(CORE_SM)/src/sm_80.c \
+$(CORE_SM)/src/sm_81.c \
+$(CORE_SM)/src/sm_82.c \
+$(CORE_SM)/src/sm_84.c \
+$(CORE_SM)/src/sm_85.c \
+$(CORE_SM)/src/sm_86.c \
+$(CORE_SM)/src/sm_87.c \
+$(CORE_SM)/src/sm_88.c \
+$(CORE_SM)/src/sm_89.c \
+$(CORE_SM)/src/sm_8b.c \
+$(CORE_SM)/src/sm_8d.c \
+$(CORE_SM)/src/sm_8f.c \
+$(CORE_SM)/src/sm_90.c \
+$(CORE_SM)/src/sm_91.c \
+$(CORE_SM)/src/sm_92.c \
+$(CORE_SM)/src/sm_93.c \
+$(CORE_SM)/src/sm_94.c \
+$(CORE_SM)/src/sm_9b.c \
+$(CORE_SM)/src/sm_a0.c \
+$(CORE_SM)/src/sm_a2.c \
+$(CORE_SM)/src/sm_a3.c \
+$(CORE_SM)/src/sm_a4.c \
+$(CORE_SM)/src/sm_a5.c \
+$(CORE_SM)/src/sm_a6.c \
+$(CORE_SM)/src/sm_a7.c \
+$(CORE_SM)/src/sm_a8.c \
+$(CORE_SM)/src/sm_a9.c \
+$(CORE_SM)/src/sm_aa.c \
+$(CORE_SM)/src/sm_ad.c \
+$(CORE_SM)/src/sm_b2.c \
+$(CORE_SM)/src/sm_b3.c \
+$(CORE_SM)/src/sm_b4.c \
+$(CORE_SM)/src/spc_player.c \
+$(CORE_SM)/src/util.c \
+$(CORE_SM)/src/snes/ppu.c \
+$(CORE_SM)/src/snes/dma.c \
+$(CORE_SM)/src/snes/dsp.c \
+$(CORE_SM)/src/snes/snes.c \
+$(CORE_SM)/src/snes/cpu.c \
+$(CORE_SM)/src/snes/cart.c \
+$(CORE_SM)/src/snes/input.c \
+$(CORE_SM)/src/snes/rc_dispatch.c \
+Core/Src/porting/sm/main_sm.c
+
 CORE_ZELDA3 = external/zelda3
 ZELDA3_C_SOURCES = \
 $(CORE_ZELDA3)/zelda_rtl.c \
@@ -959,6 +1224,53 @@ $(CORE_SMW)/src/snes/cpu.c \
 $(CORE_SMW)/src/snes/cart.c \
 $(CORE_SMW)/src/tracing.c \
 Core/Src/porting/smw/main_smw.c
+
+# Game Boy Advance (gpSP). NOT compiled:
+#   cpu_threaded.c  the dynamic recompiler — its backends are x86/A32/A64/MIPS,
+#                   and there is no Thumb-2 one. The interpreter (cpu.cc) is the
+#                   whole CPU here.
+#   memmap.c        host mmap/VirtualAlloc; this device has neither.
+#   gba_cc_lut.c    a 64 KB colour-correction LUT that nothing in this build
+#                   references (checked: no user outside the file itself).
+#
+# serial.c / gbp.c / rfu.c / serial_proto.c ARE compiled, even though the unit has
+# no link port and no wireless adapter. The plan said to drop them and save ~19 KB,
+# but gba_memory.c and main.c call into them from reachable code (write_rcnt,
+# update_serial, gbp_reset...) — and, decisively, the QEMU harness that proved this
+# core boots and renders compiled them. A device build that links a different set of
+# objects than the harness is a different program, which is exactly how three Super
+# Metroid releases shipped broken while the harness was green. Same program.
+#
+# cpu.cc and video.cc are C++ only in name — they are C compiled as C++ (no
+# classes, no globals with constructors), so no .init_array runs for this core.
+CORE_GBA = external/gpsp
+GBA_C_SOURCES = \
+$(CORE_GBA)/gba_memory.c \
+$(CORE_GBA)/sound.c \
+$(CORE_GBA)/main.c \
+$(CORE_GBA)/savestate.c \
+$(CORE_GBA)/input.c \
+$(CORE_GBA)/cheats.c \
+$(CORE_GBA)/serial.c \
+$(CORE_GBA)/serial_proto.c \
+$(CORE_GBA)/gbp.c \
+$(CORE_GBA)/rfu.c \
+Core/Src/porting/gba/gba_frontend.c \
+Core/Src/porting/gba/gba_idle_loop.c \
+Core/Src/porting/gba/gba_audio_filter.c \
+Core/Src/porting/gba/main_gba.c \
+tools/gba_m4a/m4a_hle.c \
+tools/gba_m4a/m4a_gpsp.c
+
+GBA_CXX_SOURCES = \
+$(CORE_GBA)/cpu.cc \
+$(CORE_GBA)/video.cc
+
+# The stock BIOS replacement, .incbin'd. gpSP's own bios_data.S puts it in .data
+# (16 KB of RAM_EMU for something never written); this one is read-only and rides
+# along in the XIP blob instead.
+GBA_ASM_SOURCES = \
+Core/Src/porting/gba/gba_bios.S
 
 GNUBOY_C_INCLUDES +=  \
 -ICore/Inc \
@@ -1041,6 +1353,52 @@ MD_C_INCLUDES +=  \
 
 MD_C_DEFS = -DLSB_FIRST -DTABLES_FULL
 
+MD32X_C_INCLUDES = \
+-ICore/Inc \
+-ICore/Inc/porting \
+-ICore/Inc/porting/md32x \
+-ICore/Inc/retro-go \
+-ICore/Src/porting/lib \
+-Iretro-go-stm32/components/odroid \
+-I$(CORE_PICODRIVE) \
+-I$(CORE_PICODRIVE)/pico \
+-I$(CORE_PICODRIVE)/cpu \
+-I$(CORE_PICODRIVE)/cpu/fame \
+-I$(CORE_PICODRIVE)/zlib \
+-I./
+
+# Interpreter-only 32X (no DRC), GNW static/zero-copy guards on. LSB_FIRST: M7.
+# EMU_G68K: gwenesis's const-table 68K (RAM 5.5KB vs FAME's 262KB JumpTable);
+# TABLES_FULL is REQUIRED — the compact jump table truncates at 0xEFC0 and
+# line-F opcodes would index out of bounds.
+MD32X_C_DEFS = -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DGNW_32X_CORE -DLSB_FIRST
+ifeq ($(MD32X_DEVICE_PROFILE),1)
+MD32X_C_DEFS += -DMD32X_DEVICE_PROFILE
+endif
+# Sega CD uses the same gwenesis core defs as MD plus the segacd porting dir.
+# -ffunction-sections -fdata-sections: enables the function-level hot/cold
+# split (32X pico__memory.o pattern). The current .overlay_segacd default
+# keeps the 7 porting files whole in RAM and sweeps the 12 gwenesis engine
+# .o to SEGACD_CODE XIP; Anti#1 can later promote hot function subsets of
+# any gwenesis .o into .overlay_segacd by listing .text.<funcname> patterns
+# in the overlay, with no SEGACD_C_DEFS change required.
+SEGACD_C_INCLUDES +=  \
+-ICore/Inc \
+-ICore/Src/porting/lib \
+-ICore/Src/porting/lib/lzma \
+-ICore/Src/porting/segacd \
+-Iretro-go-stm32/components/odroid \
+-I$(CORE_GWENESIS)/src/cpus/M68K \
+-I$(CORE_GWENESIS)/src/cpus/Z80 \
+-I$(CORE_GWENESIS)/src/sound \
+-I$(CORE_GWENESIS)/src/bus \
+-I$(CORE_GWENESIS)/src/vdp \
+-I$(CORE_GWENESIS)/src/io \
+-I$(CORE_GWENESIS)/src/savestate \
+-I./
+
+SEGACD_C_DEFS = -DLSB_FIRST -DTABLES_FULL -ffunction-sections -fdata-sections
+
 C_INCLUDES +=  \
 -ICore/Inc \
 -ICore/Src/porting/lib \
@@ -1098,6 +1456,14 @@ NGP_C_INCLUDES += \
 -DCZ80 \
 -DGNW_NGP \
 -D_MAX_PATH=260 \
+-I./
+
+# Same base as the SM port (the odroid/firmware headers come from C_INCLUDES);
+# -Iexternal/sm/src so the lib's #include "snes/xxx.h" resolve.
+SNES_C_INCLUDES = $(C_INCLUDES) \
+-ICore/Inc/porting/snes \
+-I$(CORE_SNES)/src \
+-I$(CORE_SNES) \
 -I./
 
 WSWAN_C_INCLUDES += \
@@ -1256,7 +1622,8 @@ include Makefile.common
 
 $(BUILD_DIR)/$(TARGET)_extflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)
-	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
+	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_md32x -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_snes -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
+	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_segacd -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
 
 $(BUILD_DIR)/$(TARGET)_intflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)

@@ -20,13 +20,28 @@ static void set_ingame_overlay(ingame_overlay_t type);
  * 280MHz calls this once at app start (e.g. VB: the V810 interpreter). Level is
  * the launcher's own OC scale (0/1/2). NOT persisted: leaving an emulator resets
  * the system, restoring the user's configured clock. Same OSPI1-hardware guard
- * as the launcher menu (that SD design crashes when overclocked). */
+ * as the launcher menu (that SD design crashes when overclocked).
+ *
+ * It is a FLOOR, not a setting. This used to call SystemClock_Config(level) flat,
+ * which meant a core asking for level 1 would clock a user who had chosen level 2
+ * back DOWN to 1 — the core's "boost" made their machine slower than they asked
+ * for, on the systems that call this and nowhere else. Whoever wants more wins. */
 #include "main.h"
+/* Declared, not implied. Without this the call below is an implicit declaration —
+ * it returns uint8_t and C would have assumed int. On a 32-bit device that happens
+ * to work, which is exactly why the root CLAUDE.md calls an implicit declaration a
+ * lie that only some machines catch. The host test suite caught this one. */
+uint8_t odroid_settings_cpu_oc_level_get(void);
+
 void common_emu_auto_oc(uint8_t level)
 {
 #if SD_CARD == 1
     if (sdcard_hw_type == SDCARD_HW_OSPI1) return;
 #endif
+    uint8_t user_level = odroid_settings_cpu_oc_level_get();
+    if (user_level > level)
+        level = user_level;
+
     SystemClock_Config(level);
 }
 

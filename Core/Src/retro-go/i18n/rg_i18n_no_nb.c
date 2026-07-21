@@ -38,6 +38,8 @@ const lang_t lang_no_nb LANG_DATA = {
 
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "Palett",
+    .s_System = "System",
+    .s_SGB_Border = "SGB-ramme",
     //=====================================================================
 
     // Core\Src\porting\nes\main_nes.c =====================================
@@ -231,7 +233,7 @@ const lang_t lang_no_nb LANG_DATA = {
     .s_Clock_Scene = "Pikselstil",
     .s_Clock_Photo_Speed = "Fart",
     .s_Clock_Anim_4 = "Fotoalbum",
-    .s_Clock_Auto_Dim = "Auto-demping",
+    .s_Clock_Keep_Awake = "Skjerm på",
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "Alarmlyd",
     .s_Clock_Night_Off = "Skjerm av fra",

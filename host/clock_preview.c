@@ -59,9 +59,9 @@ static int stub_backlight_level = 6;
 int odroid_display_get_backlight(void) { return stub_backlight_level; }
 void odroid_display_set_backlight(int level) { stub_backlight_level = level; }
 uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_backlight_level]; }
-/* rg_clock_show() reads the charger state for the idle-backlight charging
- * exception; the preview harness never plugs in a charger. */
-bq24072_state_t bq24072_get_state(void) { return BQ24072_STATE_DISCHARGING; }
+/* rg_clock_show() asks the launcher's one global idle timeout; the preview
+ * harness never lets it fire (it renders single frames, not a loop). */
+bool odroid_idle_timeout_expired(uint32_t idle_seconds) { (void)idle_seconds; return false; }
 
 /* ---- fill rect / text (atlas) ------------------------------------------ */
 void odroid_overlay_draw_fill_rect(int x, int y, int w, int h, uint16_t color)
@@ -345,9 +345,8 @@ static const lang_t KO = {
     .s_Clock_Volume="알람 음량", .s_Clock_Alarms="알람", .s_Clock_Exit="시계 나가기",
     .s_Clock_Hint_Ring="A 5분 스누즈  B 끄기", .s_Clock_Theme="테마", .s_Clock_Face="숫자 서체", .s_Clock_Auto="자동",
     .s_Clock_Set_Time="시간 설정", .s_Clock_Scene="픽셀 스타일", .s_Clock_Photo_Speed="전환 속도",
-    .s_Clock_Anim_4="사진 앨범", .s_Clock_Auto_Dim="자동 절전",
+    .s_Clock_Anim_4="사진 앨범", .s_Clock_Keep_Awake="화면 항상 켜기",
     .s_Clock_Bg_File="GIF", .s_Clock_Alarm_Sound="알람 소리",
-    .s_Clock_Night_Off="절전 시작", .s_Clock_Night_End="절전 종료",
     .s_Clock_Snd_Preview="GAME: 미리듣기",
     .s_Speed_Slow="느림", .s_Speed_Normal="보통", .s_Speed_Fast="빠름",
     .s_Brightness="밝기",

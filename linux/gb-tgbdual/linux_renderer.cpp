@@ -32,7 +32,7 @@ extern "C" {
 
 #define SAMPLES_PER_FRAME (44100/60)
 
-extern gb *g_gb[2];
+extern gb *g_gb;
 static int16_t stream[SAMPLES_PER_FRAME*2];
 
 extern void blit(uint16_t *buffer);

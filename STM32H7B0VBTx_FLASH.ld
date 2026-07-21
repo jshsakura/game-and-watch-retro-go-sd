@@ -55,9 +55,9 @@ ENTRY(Reset_Handler)
 /* Highest address of the user mode stack */
 _estack = _stack_top;    /* end of RAM */
 
-/* Generate a link error if heap and stack don't fit into RAM */
-_Heap_Size = 85 * 1024;     /* p8ram section removed — PICO-8 allocates from heap at runtime */
-
+/* Stack is fixed at the top of DTCM; the stdlib heap (_heap_start.._heap_end)
+ * automatically fills whatever remains after .data/.bss (no hardcoded size).
+ * PICO-8 and other overlays allocate from this heap at runtime. */
 _Stack_Redzone_Size = 256;  /* size of stack overflow protection */
 _Min_Stack_Size = 20 * 1024; /* required amount of stack */
 
@@ -68,7 +68,7 @@ __NULLPTR_LENGTH__  = 0x0;
 __ITCMRAM_LENGTH__  = 64K;
 __DTCMRAM_LENGTH__  = 128K;
 __REMOTE_INPUT_RESERVE__ = DEFINED(REMOTE_INPUT) ? REMOTE_INPUT * 12 : 0;
-__RAM_UC_LENGTH__   = 300K;
+__RAM_UC_LENGTH__   = 150K; /* framebuffer : 1 x 320 x 240 x 16 bits (SINGLE FB) */
 __RAM_CORE_LENGTH__ = 0K;
 __RAM_EMU_LENGTH__  = 1024K - __RAM_UC_LENGTH__ - __RAM_CORE_LENGTH__;
 __RAM_FCEUMM_MAPPER_LENGTH__ = 48K; /* Current FCEUMM mapper code */
@@ -142,6 +142,7 @@ MEMORY
   CORES      (x  ) : ORIGIN = 0x0,                 LENGTH = 0xFFFFFFFF
   RODATA     (x  ) : ORIGIN = 0xCAFE0000,          LENGTH = 0xFFFFFFFF
   PICO8_CODE (x  ) : ORIGIN = 0xBEEF0000,          LENGTH = 512K
+  /* No SM_CODE region: Super Metroid is SD-card only (see below). */
   EXTFLASH   (xr ) : ORIGIN = __EXTFLASH_START__,  LENGTH = 32M
 }
 
@@ -334,12 +335,33 @@ INCLUDE build/fceumm_mappers.ld
    .overlay_pce __RAM_EMU_START__ : {
       . = ALIGN(4);
     __ram_emu_pce_start__ = .;
-      build/pce/*.o (.data .data* .text .text* .rodata .rodata*)
+      /* Data/rodata for all PCE objects; main_pce .text stays here — it calls
+       * launcher APIs (settings, overlay, audio) and ITCM→flash veneers fail on
+       * arm-none-eabi 15.x ("Unknown destination type ARM/Thumb"). */
+      build/pce/*.o (.data .data* .rodata .rodata*)
+      build/pce/main_pce.o (.text .text*)
       . = ALIGN(4);
       _OVERLAY_PCE_LOAD_END = .;
   } AT > CORES
   _OVERLAY_PCE_LOAD_START = LOADADDR(.overlay_pce);
   _OVERLAY_PCE_SIZE = SIZEOF(.overlay_pce);
+
+  /* PCE hot code → ITCM (zero-wait-state, no I-cache miss). The LMA is appended
+     right after .overlay_pce in CORES so `objcopy --only-section` of both
+     sections yields one contiguous pce.bin. At load time the ITC image lands in
+     RAM_EMU at _OVERLAY_PCE_LOAD_END (overlapping the BSS VMA!) — the launcher
+     (run_internal_emu) memcpy's it to ITCM BEFORE zeroing BSS.
+     Base offset 0x4: keeps address 0 free so no function == NULL. */
+  .overlay_pce_itc (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __ram_itc_pce_start__ = .;
+    EXCLUDE_FILE(*/main_pce.o) build/pce/*.o (.text .text*)
+    . = ALIGN(4);
+    __ram_itc_pce_end__ = .;
+    ASSERT(ABSOLUTE(__ram_itc_pce_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: PCE ITC overflow");
+  } AT > CORES
+  _OVERLAY_PCE_ITC_SIZE = SIZEOF(.overlay_pce_itc);
+  _OVERLAY_PCE_ITC_LMA_OFFSET = LOADADDR(.overlay_pce_itc) - LOADADDR(.overlay_pce);
 
   .overlay_pce_bss _OVERLAY_PCE_LOAD_END : {
     . = ALIGN(4);
@@ -442,6 +464,27 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(_OVERLAY_WSWAN_BSS_END) < __RAM_EMU_END__, "Error: WSWAN BSS overflow");
   }
   _OVERLAY_WSWAN_BSS_SIZE = SIZEOF(.overlay_wswan_bss);
+
+  .overlay_snes __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_snes_start__ = .;
+    build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_SNES_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_SNES_LOAD_START = LOADADDR(.overlay_snes);
+  _OVERLAY_SNES_SIZE = SIZEOF(.overlay_snes);
+  .overlay_snes_bss _OVERLAY_SNES_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_SNES_BSS_START = .;
+    build/snes/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/snes/*.o (COMMON)
+    __ram_emu_snes_end__ = .;
+    _OVERLAY_SNES_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_SNES_BSS_END) < __RAM_EMU_END__, "Error: SNES BSS overflow");
+  }
+  _OVERLAY_SNES_BSS_SIZE = SIZEOF(.overlay_snes_bss);
 
   .overlay_gw __RAM_EMU_START__ : {
     . = ALIGN(4);
@@ -640,6 +683,12 @@ INCLUDE build/fceumm_mappers.ld
     __rodata_zelda3_end__ = .;
   } > RODATA
 
+  /* No Super Metroid here. The port is SD-card only (SM_OBJECTS is empty in this
+   * configuration — see Makefile.common and rg_emulators.c): FrogFS maps its files
+   * in place instead of copying them, so sm.xip could never be relocated, and there
+   * is nowhere to cache the 3 MB ROM the game reads at runtime. Its sections live
+   * in STM32H7B0VBTx_SDCARD.ld only. */
+
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_smw_start__ = .;
@@ -800,6 +849,28 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(_OVERLAY_MUSIC_BSS_END) < __RAM_EMU_END__, "Error: MUSIC BSS overflow");
   }
   _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
+
+  .overlay_clock __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_clock_start__ = .;
+    build/clock/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_CLOCK_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_CLOCK_LOAD_START = LOADADDR(.overlay_clock);
+  _OVERLAY_CLOCK_SIZE = SIZEOF(.overlay_clock);
+
+  .overlay_clock_bss _OVERLAY_CLOCK_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_CLOCK_BSS_START = .;
+    build/clock/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/clock/*.o (COMMON)
+    __ram_emu_clock_end__ = .;
+    _OVERLAY_CLOCK_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_CLOCK_BSS_END) < __RAM_EMU_END__, "Error: CLOCK BSS overflow");
+  }
+  _OVERLAY_CLOCK_BSS_SIZE = SIZEOF(.overlay_clock_bss);
 
   /* PICO-8 stub overlay → RAM, placed at the LOW end of the LCD bonus
      area. Same VMA as the runtime-loaded pico8.bin so engine RAM refs
@@ -1031,26 +1102,32 @@ INCLUDE build/fceumm_mappers.ld
     __bss_end__ = _ebss;
   } >DTCMRAM
 
-  /* PICO-8 RAM removed — engine allocates 64KB from DTCM heap via dtcm_malloc */
-
-  ._user_heap :
+  /* PICO-8 RAM removed — engine allocates 64KB from DTCM heap via dtcm_malloc.
+   *
+   * Heap fills all DTCM left after .data/.bss up to the fixed stack at the
+   * top (redzone + _Min_Stack_Size + optional remote-input reserve). */
+  ._user_heap (NOLOAD) :
   {
     . = ALIGN(16);
-    _heap_start = . ;
-    . = . + _Heap_Size;
-    . = ALIGN(16);
-    _heap_end = . ;
+    _heap_start = .;
+    /* Alias for scripts/size.sh — "padding" is now the whole flexible heap. */
+    __dtc_padding_start__ = .;
+
+    /* Align down so . = _heap_limit never steps into the stack. */
+    _heap_limit = (ORIGIN(DTCMRAM) + LENGTH(DTCMRAM)
+                - __REMOTE_INPUT_RESERVE__
+                - _Min_Stack_Size
+                - _Stack_Redzone_Size) & ~15;
+    ASSERT(_heap_start <= _heap_limit,
+           "DTCM overflow: .data/.bss leave no room for stack");
+
+    . = _heap_limit;
+    _heap_end = .;
+    __dtc_padding_end__ = .;
   } >DTCMRAM
 
-  /* User_heap_stack section, used to check that there is enough RAM left */
-  ._user_stack :
+  ._user_stack (NOLOAD) :
   {
-    /* Pad the unused area between the last symbol and the start of the redzone.
-       We reserve space at the top of DTCMRAM for boot magic and remote input if enabled. */
-    __dtc_padding_start__ = .;
-    . = . + __DTCMRAM_LENGTH__ - __REMOTE_INPUT_RESERVE__ - (_Min_Stack_Size + _Stack_Redzone_Size) - (__dtc_padding_start__ - __dtcram_start__);
-    __dtc_padding_end__ = .;
-
     _stack_redzone = .;
     . = . + _Stack_Redzone_Size;
     _stack_bottom = .;

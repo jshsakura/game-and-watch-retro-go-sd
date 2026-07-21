@@ -51,9 +51,6 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
 #include "rg_frogfs.h"
 #endif
 #if CHEAT_CODES == 1
-#include "main_msx.h"
-#include "main_gb_tgbdual.h"
-
 static retro_emulator_file_t *CHOSEN_FILE = NULL;
 #endif
 
@@ -434,7 +431,12 @@ void odroid_overlay_sleep_pause_banner(void_callback_t repaint, odroid_menu_flag
         // Repaint background (if enabled)
         if (repaint != NULL)
         {
-            lcd_clear_active_buffer();
+            /* See comment in odroid_overlay_dialog _repaint: NO_BG_DARKEN
+             * cores fully overwrite the active buffer and must skip the
+             * pre-clear to avoid wiping the frozen game-frame FB after
+             * lcd_swap toggles the double buffer. */
+            if ((flags & ODROID_MENU_FLAG_NO_BG_DARKEN) == 0)
+                lcd_clear_active_buffer();
             repaint();
 
             // Darken background (if needed)
@@ -474,6 +476,11 @@ void odroid_overlay_sleep_pause_banner(void_callback_t repaint, odroid_menu_flag
 
     while (1)
     {
+        /* Same watchdog gap as odroid_overlay_dialog() below -- this loop's
+         * repaint callback can also be SNES's blit() (open_pause_menu's
+         * pause_banner path), which synchronously waits out a DMA2D
+         * transfer. See the comment there for the full mechanism. */
+        wdog_refresh();
         _repaint(false);
 
         odroid_input_read_gamepad(&joystick);
@@ -515,8 +522,7 @@ void odroid_overlay_sleep_pause_banner(void_callback_t repaint, odroid_menu_flag
         }
 
         uint32_t idle_s = uptime_get() - gui.idle_start;
-        if (odroid_settings_MainMenuTimeoutS_get() != 0 &&
-            (idle_s > odroid_settings_MainMenuTimeoutS_get()))
+        if (odroid_idle_timeout_expired(idle_s))
         {
             _save_state_and_sleep();
         }
@@ -618,7 +624,13 @@ void odroid_overlay_draw_dialog(const char *header, odroid_dialog_choice_t *opti
 
     for (int i = 0; i < options_count; i++)
         if (options[i].update_cb != NULL)
-            options[i].update_cb(&options[i], ODROID_DIALOG_INIT, sel); // A hack to transport currently selected item
+            // Tell each row whether IT is the selected one (i == sel), not the raw
+            // sel index — a bar-gauge row used to compare sel against its own
+            // `.id` instead, which only worked when a row's id happened to equal
+            // its array position. rg_clock.c's alarm-volume row (id 7) sat at
+            // index 1 but shared its id with the background-effect row's index
+            // (7), so selecting THAT row flipped the volume gauge's glyphs too.
+            options[i].update_cb(&options[i], ODROID_DIALOG_INIT, i == sel);
 
     for (int i = 0; i < options_count; i++)
     {
@@ -915,6 +927,40 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *options, i
     bool power_key_debounce = false;
     odroid_gamepad_state_t joystick;
 
+    /* Snapshot header + labels (+ values that may point into lang
+     * strings). i18n_load_language() keeps only one non-en_us language
+     * in RAM and frees the previous when browsing the language picker;
+     * without this copy, options[i].label pointers captured at dialog
+     * construction would dangle. update_cb writes still go through
+     * option->value into these local buffers.
+     *
+     * Only the first MAX_OPTIONS_COUNT entries are snapshotted — that
+     * covers the settings menu (where language browsing happens).
+     * Longer dialogs (e.g. cheat lists) do not switch languages. */
+#define DIALOG_STR_MAX 64
+    char header_buf[DIALOG_STR_MAX];
+    char label_bufs[MAX_OPTIONS_COUNT][DIALOG_STR_MAX];
+    char value_bufs[MAX_OPTIONS_COUNT][DIALOG_STR_MAX];
+    if (header) {
+        strncpy(header_buf, header, DIALOG_STR_MAX - 1);
+        header_buf[DIALOG_STR_MAX - 1] = '\0';
+        header = header_buf;
+    }
+    const int snap_count = options_count < MAX_OPTIONS_COUNT ? options_count : MAX_OPTIONS_COUNT;
+    for (int i = 0; i < snap_count; i++) {
+        if (options[i].label) {
+            strncpy(label_bufs[i], options[i].label, DIALOG_STR_MAX - 1);
+            label_bufs[i][DIALOG_STR_MAX - 1] = '\0';
+            options[i].label = label_bufs[i];
+        }
+        if (options[i].value) {
+            strncpy(value_bufs[i], options[i].value, DIALOG_STR_MAX - 1);
+            value_bufs[i][DIALOG_STR_MAX - 1] = '\0';
+            options[i].value = value_bufs[i];
+        }
+    }
+#undef DIALOG_STR_MAX
+
     void _repaint()
     {
         wdog_refresh();
@@ -923,7 +969,16 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *options, i
         // Repaint background (if enabled)
         if (repaint != NULL)
         {
-            lcd_clear_active_buffer();
+            /* Cores whose repaint() fully overwrites the active buffer
+             * (e.g. md32x copies a frozen game frame, gwenesis re-renders
+             * from VDP state) set NO_BG_DARKEN and don't need a pre-clear.
+             * Skipping lcd_clear here is essential for md32x: the frozen
+             * game-frame pointer aliases one of the two double-buffer FBs,
+             * and after lcd_swap() toggles them the frozen FB becomes the
+             * active one — lcd_clear would wipe it, producing a black
+             * background on every repaint after the first. */
+            if ((flags & ODROID_MENU_FLAG_NO_BG_DARKEN) == 0)
+                lcd_clear_active_buffer();
             repaint();
 
             // Darken background (if needed)
@@ -939,14 +994,47 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *options, i
         }
     }
 
+    /* "Idle power off" applies here too. Every other loop that can sit idle asks —
+     * the launcher home, the in-game overlay, the clock — and this one never did, so
+     * ANY dialog left open (an emulator's options, the language picker, a theme) held
+     * the screen lit for ever with a timeout configured. Same rule, same sleep the
+     * launcher takes: STOP, resume in place, and the dialog is still here. */
+    uint32_t dialog_idle_start = uptime_get();
+
     while (1)
     {
+        /* wdog_refresh() below used to only fire from the debounce/idle-sleep
+         * branches further down, not every iteration. Most repaint callbacks
+         * are cheap enough that the gap never mattered, but SNES's overlay
+         * repaint is main_snes.c's blit(), which synchronously waits out a
+         * DMA2D transfer (present_frame_wait(), up to a 100ms poll) on every
+         * call -- and the window watchdog (WWDG1, prescaler 128 / counter
+         * 127) times out in well under that. A single slow DMA2D wait with
+         * no refresh in between resets the device mid-menu: no BSOD (WWDG
+         * resets don't show one), just the boot logo and a clean drop back
+         * to the launcher -- exactly the SNES-only, "used to work" report
+         * this fixes. Refreshing here is safe for every other repaint
+         * callback too (wdog_refresh() itself is a no-op unless the
+         * watchdog is enabled), so this is a general fix, not an SNES
+         * special-case. */
+        wdog_refresh();
         _repaint();
         if (flags & ODROID_MENU_FLAG_DRAW_ONLY) {
             return sel;
         }
 
         odroid_input_read_gamepad(&joystick);
+
+        if (joystick.bitmask) {
+            dialog_idle_start = uptime_get();
+        } else if (odroid_idle_timeout_expired(uptime_get() - dialog_idle_start)) {
+            odroid_system_sleep();
+            dialog_idle_start = uptime_get();
+            /* the wake press must not leak into the menu underneath */
+            do { wdog_refresh(); HAL_Delay(20); odroid_input_read_gamepad(&joystick); }
+            while (joystick.values[ODROID_INPUT_POWER]);
+            continue;
+        }
 
         if (!joystick.values[ODROID_INPUT_POWER] && power_key_debounce) {
             power_key_debounce = false;
@@ -1130,9 +1218,12 @@ static bool volume_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event
     if (event == ODROID_DIALOG_NEXT && level < max)
         odroid_audio_volume_set(++level);
 
-    // The swapping of colors is done for the selected option only to ensure a visual pleasing bar graph while being inverted
-    char a = event == ODROID_DIALOG_INIT && option->id == repeat ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
-    char b = event == ODROID_DIALOG_INIT && option->id == repeat ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
+    // The swapping of colors is done for the selected option only to ensure a
+    // visual pleasing bar graph while being inverted. `repeat` on INIT is
+    // "am I the selected row" (0/1, set by odroid_overlay_draw_dialog's i ==
+    // sel), not an id to match — see that call site for why.
+    char a = event == ODROID_DIALOG_INIT && repeat ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
+    char b = event == ODROID_DIALOG_INIT && repeat ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
 
     for (int i = ODROID_AUDIO_VOLUME_MIN; i <= ODROID_AUDIO_VOLUME_MAX; i++)
         volume_value[i - ODROID_AUDIO_VOLUME_MIN] = (i - ODROID_AUDIO_VOLUME_MIN) <= level ? a : b;
@@ -1154,8 +1245,9 @@ static bool brightness_update_cb(odroid_dialog_choice_t *option, odroid_dialog_e
     if (event == ODROID_DIALOG_NEXT && level < max)
         odroid_display_set_backlight(++level);
 
-    char a = event == ODROID_DIALOG_INIT && option->id == repeat ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
-    char b = event == ODROID_DIALOG_INIT && option->id == repeat ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
+    // Same "am I selected" flag as volume_update_cb above, not an id compare.
+    char a = event == ODROID_DIALOG_INIT && repeat ? curr_lang->s_Fill[0] : curr_lang->s_Full[0];
+    char b = event == ODROID_DIALOG_INIT && repeat ? curr_lang->s_Full[0] : curr_lang->s_Fill[0];
 
     for (int i = ODROID_BACKLIGHT_LEVEL0; i <= ODROID_BACKLIGHT_LEVEL9; i++)
         bright_value[i - ODROID_BACKLIGHT_LEVEL0] = (i - ODROID_BACKLIGHT_LEVEL0) <= level ? a : b;
@@ -1414,14 +1506,9 @@ static bool cheat_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_
     }
     strcpy(option->value, is_on ? curr_lang->s_Cheat_Codes_ON : curr_lang->s_Cheat_Codes_OFF);
     if (event == ODROID_DIALOG_ENTER) {
-        rom_system_t *system = (rom_system_t *)CHOSEN_FILE->system;
-        if(strcmp(system->system_name, "MSX") == 0) {
-            update_cheats_msx();
-        }
-        if((strcmp(system->system_name, "Nintendo Gameboy") == 0) ||
-           (strcmp(system->system_name, "Nintendo Gameboy Color") == 0)) {
-            update_cheats_gb();
-        }
+        cheat_update_handler_t update = odroid_system_get_app()->handlers.cheat_update;
+        if (update)
+            update();
     }
 
     return event == ODROID_DIALOG_ENTER;
@@ -1620,15 +1707,9 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options, void_callbac
     }
 
 #if CHEAT_CODES == 1
-    odroid_dialog_choice_t choices[13];
-    bool cheat_update_support = false;
+    odroid_dialog_choice_t choices[12];
     CHOSEN_FILE = ACTIVE_FILE;
-    rom_system_t *system = (rom_system_t *)CHOSEN_FILE->system;
-    if((strcmp(system->system_name, "MSX") == 0) ||
-       (strcmp(system->system_name, "Nintendo Gameboy") == 0) ||
-       (strcmp(system->system_name, "Nintendo Gameboy Color") == 0)) {
-        cheat_update_support = true;
-    }
+    bool cheat_update_support = odroid_system_get_app()->handlers.cheat_update != NULL;
 
     int index=0;
     choices[index].id = 10;
@@ -1836,8 +1917,17 @@ void odroid_overlay_draw_progress_bar(const char *header, uint8_t progress)
 
 uint8_t *odroid_overlay_cache_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap)
 {
+    return odroid_overlay_cache_file_in_flash_relocate(file_path, file_size_p, byte_swap, NULL);
+}
+
+uint8_t *odroid_overlay_cache_file_in_flash_relocate(const char *file_path, uint32_t *file_size_p,
+                                                     bool byte_swap, flash_relocate_cb_t relocate_cb)
+{
 #if SD_CARD == 0
     (void)byte_swap;
+    /* FrogFS maps the file where it already sits in the firmware image, so there
+     * is no copy to relocate. Callers that need one must not use this build. */
+    (void)relocate_cb;
     const uint8_t *data = NULL;
     uint32_t file_size = 0;
 
@@ -1864,7 +1954,7 @@ uint8_t *odroid_overlay_cache_file_in_flash(const char *file_path, uint32_t *fil
         lcd_swap();
     }
 
-    return store_file_in_flash(file_path, file_size_p, byte_swap, progress_cb);
+    return store_file_in_flash_relocate(file_path, file_size_p, byte_swap, progress_cb, relocate_cb);
 #endif
 }
 

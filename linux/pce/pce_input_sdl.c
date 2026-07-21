@@ -12,16 +12,18 @@ static int key_down(SDL_Scancode sc)
 	return k && k[sc];
 }
 
+int linux_quit_req = 0;
+
 void pce_sdl_input_poll(odroid_gamepad_state_t *out_state)
 {
 	SDL_Event event;
 
 	while (SDL_PollEvent(&event)) {
 		if (event.type == SDL_QUIT)
-			exit(0);
+			linux_quit_req = 1;
 		if (event.type == SDL_KEYDOWN) {
 			if (event.key.keysym.sym == SDLK_ESCAPE)
-				exit(0);
+				linux_quit_req = 1;
 			if (event.key.keysym.sym == SDLK_F2)
 				linux_savestate_req = 1;
 			if (event.key.keysym.sym == SDLK_F4)

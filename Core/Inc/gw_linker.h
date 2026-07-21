@@ -30,6 +30,7 @@ extern uint32_t __itcram_hot_end__;
 
 // If this is not an array the compiler might put in a memory_chk with dest_size 1...
 extern void * __RAM_EMU_START__[];
+extern void * __RAM_EMU_END__[];
 extern void * _OVERLAY_NES_LOAD_START[];
 extern uint8_t _OVERLAY_NES_SIZE;
 extern void * _OVERLAY_NES_BSS_START[];
@@ -86,17 +87,39 @@ extern uint8_t _OVERLAY_WSWAN_SIZE;
 extern void * _OVERLAY_WSWAN_BSS_START[];
 extern void * _OVERLAY_WSWAN_BSS_END[];
 extern uint8_t _OVERLAY_WSWAN_BSS_SIZE;
+extern void * _OVERLAY_SNES_LOAD_START[];
+extern uint8_t _OVERLAY_SNES_SIZE;
+extern void * _OVERLAY_SNES_BSS_START[];
+extern void * _OVERLAY_SNES_BSS_END[];
+extern uint8_t _OVERLAY_SNES_BSS_SIZE;
 extern void * _OVERLAY_MD_LOAD_START[];
 extern uint8_t _OVERLAY_MD_SIZE;
 extern void * _OVERLAY_MD_BSS_START[];
 extern void * _OVERLAY_MD_BSS_END[];
 extern uint8_t _OVERLAY_MD_BSS_SIZE;
+extern void * _OVERLAY_MD32X_LOAD_START[];
+extern uint8_t _OVERLAY_MD32X_SIZE;
+extern void * _OVERLAY_MD32X_BSS_START[];
+extern void * _OVERLAY_MD32X_BSS_END[];
+extern uint8_t _OVERLAY_MD32X_BSS_SIZE;
 extern void * _OVERLAY_A7800_LOAD_START[];
 extern uint8_t _OVERLAY_A7800_SIZE;
 extern void * _OVERLAY_A7800_BSS_START[];
 extern void * _OVERLAY_A7800_BSS_END[];
 extern uint8_t _OVERLAY_A7800_BSS_SIZE;
 extern void * _OVERLAY_VB_LOAD_START[];
+extern uint8_t _OVERLAY_GBA_SIZE;
+extern void * _OVERLAY_GBA_BSS_START[];
+extern uint8_t _OVERLAY_GBA_BSS_SIZE;
+/* End of main_gba.o inside .overlay_gba: where the XIP sentinel pass starts, so
+ * that it does not walk over the constant it is built on (see main_gba.c). */
+extern void * _GBA_MAIN_CODE_END[];
+/* gpSP's BIOS image, cheat table and sound ring, kept in AHB SRAM rather than in
+ * the overlay pool. They are .bss but they are NOT inside .overlay_gba_bss, so
+ * run_internal_emu()'s memset never reaches them — main_gba.c zeroes this range. */
+extern uint8_t __gba_ahb_start__[];
+extern uint8_t __gba_ahb_end__[];
+
 extern uint8_t _OVERLAY_VB_SIZE;
 extern void * _OVERLAY_VB_BSS_START[];
 extern void * _OVERLAY_VB_BSS_END[];
@@ -112,11 +135,23 @@ extern void * _OVERLAY_ZELDA3_BSS_END[];
 extern uint8_t _OVERLAY_ZELDA3_BSS_SIZE;
 extern void * _ZELDA3_MAIN_CODE_START[];
 extern void * _ZELDA3_MAIN_CODE_END[];
+extern void * _OVERLAY_SM_LOAD_START[];
+extern uint8_t _OVERLAY_SM_SIZE;
+extern void * _OVERLAY_SM_BSS_START[];
+extern void * _OVERLAY_SM_BSS_END[];
+extern uint8_t _OVERLAY_SM_BSS_SIZE;
+extern void * _SM_MAIN_CODE_START[];
+extern void * _SM_MAIN_CODE_END[];
 extern void * _OVERLAY_SMW_LOAD_START[];
 extern uint8_t _OVERLAY_SMW_SIZE;
 extern void * _OVERLAY_SMW_BSS_START[];
 extern void * _OVERLAY_SMW_BSS_END[];
 extern uint8_t _OVERLAY_SMW_BSS_SIZE;
+extern void * _OVERLAY_SEGACD_LOAD_START[];
+extern uint8_t _OVERLAY_SEGACD_SIZE;
+extern void * _OVERLAY_SEGACD_BSS_START[];
+extern void * _OVERLAY_SEGACD_BSS_END[];
+extern uint8_t _OVERLAY_SEGACD_BSS_SIZE;
 extern void * _OVERLAY_VIDEOPAC_LOAD_START[];
 extern uint8_t _OVERLAY_VIDEOPAC_SIZE;
 extern void * _OVERLAY_VIDEOPAC_BSS_START[];
@@ -142,6 +177,11 @@ extern void * _OVERLAY_MUSIC_LOAD_START[];
 extern uint8_t _OVERLAY_MUSIC_SIZE;
 extern void * _OVERLAY_MUSIC_BSS_START[];
 extern uint8_t _OVERLAY_MUSIC_BSS_SIZE;
+extern void * _OVERLAY_CLOCK_LOAD_START[];
+extern uint8_t _OVERLAY_CLOCK_SIZE;
+extern void * _OVERLAY_CLOCK_BSS_START[];
+extern void * _OVERLAY_CLOCK_BSS_END[];
+extern uint8_t _OVERLAY_CLOCK_BSS_SIZE;
 extern void * _OVERLAY_PICO8_LOAD_START[];
 extern uint8_t _OVERLAY_PICO8_SIZE;
 extern void * _OVERLAY_PICO8_BSS_START[];

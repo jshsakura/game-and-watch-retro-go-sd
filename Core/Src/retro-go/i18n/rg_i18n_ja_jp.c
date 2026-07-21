@@ -55,7 +55,7 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_Clock_Scene = "スタイル",
     .s_Clock_Photo_Speed = "切替速度",
     .s_Clock_Anim_4 = "フォトアルバム",
-    .s_Clock_Auto_Dim = "自動減光",
+    .s_Clock_Keep_Awake = "常時点灯",
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "アラーム音",
     .s_Clock_Night_Off = "消灯 開始",
@@ -81,6 +81,8 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_lyrics = "歌詞",
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "パレット",
+    .s_System = "システム",
+    .s_SGB_Border = "SGBボーダー",
     //=====================================================================
 
     // Core\Src\porting\nes-fceu\main_nes_fceu.c ===========================

@@ -55,11 +55,9 @@ ENTRY(Reset_Handler)
 /* Highest address of the user mode stack */
 _estack = _stack_top;    /* end of RAM */
 
-/* Generate a link error if heap and stack don't fit into RAM */
-_Heap_Size = 81 * 1024;     /* p8ram section removed — PICO-8 allocates from heap at runtime.
-                               Trimmed 85->81K to free DTCM after Atari Lynx (MAX_EMULATORS 22)
-                               grew emulators[]/systems[]; the stack-padding ASSERT was 64B over. */
-
+/* Stack is fixed at the top of DTCM; the stdlib heap (_heap_start.._heap_end)
+ * automatically fills whatever remains after .data/.bss (no hardcoded size).
+ * PICO-8 and other overlays allocate from this heap at runtime. */
 _Stack_Redzone_Size = 256;  /* size of stack overflow protection */
 _Min_Stack_Size = 24 * 1024; /* required amount of stack */
 
@@ -117,6 +115,37 @@ MEMORY
 
   /* PICO-8 code (sentinel address, patched to QSPI XIP at runtime) */
   PICO8_CODE (x) : ORIGIN = 0xBEEF0000,   LENGTH = 512K
+
+  /* Super Metroid cold banks + all of its rodata: a sentinel address, patched to
+   * QSPI XIP at runtime (same trick as PICO8_CODE). Code and rodata share one
+   * region, and ship as one file, on purpose — see .xip_sm below. */
+  SM_CODE    (x) : ORIGIN = 0xDEAD0000,   LENGTH = 512K
+
+  /* GBA: gpSP's scanline renderer plus the 16 KB BIOS image. Same sentinel trick
+   * as SM_CODE — see .xip_gba below. The renderer is the one part of the core big
+   * enough to matter and linear enough not to mind the flash. */
+  GBA_CODE   (x) : ORIGIN = 0xDEC00000,   LENGTH = 512K
+
+  /* Sega 32X (picodrive): cold code + ALL swept rodata — including the ~351 KB
+   * precomputed YM2612 const tables and (once EMU_G68K lands) the ~300 KB 68K
+   * const dispatch tables. Same sentinel trick as SM_CODE/GBA_CODE; code and
+   * rodata share one region and ship as one /cores/32x.xip on purpose. 2M: the
+   * const tables alone approach 1M and the space is free (it's a sentinel). */
+  MD32X_CODE (x) : ORIGIN = 0xDEB00000,   LENGTH = 2M
+
+  /* rc on-device probe: XIP site functions (sentinel address, cached to QSPI
+   * XIP at runtime by odroid_overlay_cache_file_in_flash_relocate — same trick
+   * as SM_CODE/GBA_CODE). RC_PROBE-gated; absent in release builds. */
+  RCPROBE_CODE (x) : ORIGIN = 0xD0D00000,   LENGTH = 64K
+  /* Sega/Mega CD: cold code + rodata for the shared gwenesis M68K/Z80/VDP/YM
+   * engine, XIP'd out of external flash via store_file_in_flash_relocate().
+   * Same sentinel trick as SM_CODE/GBA_CODE — see .xip_segacd below. The hot
+   * interpreter objects that need to be in RAM are claimed by .overlay_segacd
+   * BEFORE the cold sweep runs (32X .xip_md32x pattern). m68kcpu.c's switch
+   * dispatch is cache-friendlier than SNES rc's hash dispatch, so the cold
+   * sweep is safe here in a way it was NOT for sm.xip — see
+   * docs/snes-hotpath-rc-itcm.md for the cautionary tale. */
+  SEGACD_CODE (x) : ORIGIN = 0xDEC80000,  LENGTH = 2M
 
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
@@ -335,11 +364,11 @@ INCLUDE build/fceumm_mappers.ld
      Base offset 0x4: keeps address 0 free so no function == NULL. */
   .overlay_pce_itc (ORIGIN(ITCMRAM) + 0x4) : {
     . = ALIGN(4);
-    __pce_itc_start__ = .;
+    __ram_itc_pce_start__ = .;
     EXCLUDE_FILE(*/main_pce.o) build/pce/*.o (.text .text*)
     . = ALIGN(4);
-    __pce_itc_end__ = .;
-    ASSERT(ABSOLUTE(__pce_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: PCE ITC overflow");
+    __ram_itc_pce_end__ = .;
+    ASSERT(ABSOLUTE(__ram_itc_pce_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: PCE ITC overflow");
   } AT > CORES
   _OVERLAY_PCE_ITC_SIZE = SIZEOF(.overlay_pce_itc);
   _OVERLAY_PCE_ITC_LMA_OFFSET = LOADADDR(.overlay_pce_itc) - LOADADDR(.overlay_pce);
@@ -488,6 +517,83 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_WSWAN_BSS_SIZE = SIZEOF(.overlay_wswan_bss);
 
+  .overlay_snes __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_snes_start__ = .;
+    /* cpu.o (65816 opcode dispatcher, cpu_runOpcode) and ppu.o (PPU line
+     * renderer, ppu_runLine) are excluded here and placed whole into
+     * .itcm_snes_hot below instead — see that section's comment. */
+    EXCLUDE_FILE(*cpu.o *ppu.o) build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_SNES_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_SNES_LOAD_START = LOADADDR(.overlay_snes);
+  _OVERLAY_SNES_SIZE = SIZEOF(.overlay_snes);
+
+  /* SNES rc hot code → ITCM (zero-wait-state, no I-cache miss). Same pattern
+     as .overlay_pce_itc. The LMA is appended right after .overlay_snes in
+     CORES so objcopy --only-section of both sections yields one contiguous
+     snes.bin. At load time the ITC image lands in RAM_EMU at
+     _OVERLAY_SNES_LOAD_END (overlapping the BSS VMA!) — run_internal_emu
+     memcpy's it to ITCM BEFORE zeroing BSS.
+     Base offset 0x4: keeps address 0 free so no function == NULL. */
+  .itcm_rc_hot (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __snes_rc_hot_start__ = .;
+    build/rc_smw/*.o (.text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    __snes_rc_hot_end__ = .;
+    ASSERT(ABSOLUTE(__snes_rc_hot_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: SNES rc hot ITCM overflow");
+  } AT > CORES
+  _OVERLAY_SNES_ITC_SIZE = SIZEOF(.itcm_rc_hot);
+  _OVERLAY_SNES_ITC_LMA_OFFSET = LOADADDR(.itcm_rc_hot) - LOADADDR(.overlay_snes);
+
+  /* SNES interpreter core → ITCM (zero-wait-state, no I-cache miss). A
+     SEPARATE mechanism from .itcm_rc_hot above (that is the statically-
+     recompiled hot-SITE subset, RCSMW-gated, a different feature entirely —
+     see rc_smw_sites.c / verify_snes_rc_hot.py, do not conflate the two).
+     This section instead moves the EXISTING interpreter's hottest files
+     WHOLE, unmodified, uncompiled-differently — cpu.o (65816 opcode
+     dispatcher, cpu_runOpcode) and ppu.o (PPU line renderer, ppu_runLine).
+     Same rationale as .overlay_md32x_itc's SH-2 dispatcher: a partial
+     function-level split risks leaving half a call graph split between ITCM
+     and RAM_EMU (the same class of bug as cross-overlay symbol aliasing —
+     see CLAUDE.md), and at 33,692B combined there is no budget pressure
+     forcing a surgical per-function cut.
+     Device-measured precedent: 32X moved its whole SH-2 interpreter (7,921B)
+     into ITCM for a device-measured +30% fps at an UNCHANGED instruction
+     count — pure memory-stall removal, a win QEMU (no wait states modeled)
+     cannot see. Only STATEHASH/AUDIOHASH bit-identity is a rig-checkable
+     gate for this change; fps needs the real device.
+     Chained after .itcm_rc_hot (not at ORIGIN(ITCMRAM)+0x4 like it) so the
+     two coexist safely if a future RCSMW build ever links both — the ASSERT
+     below still catches it if the combined total ever exceeds budget. */
+  .itcm_snes_interp (ADDR(.itcm_rc_hot) + SIZEOF(.itcm_rc_hot)) : {
+    . = ALIGN(4);
+    __snes_interp_itc_start__ = .;
+    build/snes/cpu.o (.text .text* .rodata .rodata*)
+    build/snes/ppu.o (.text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    __snes_interp_itc_end__ = .;
+    ASSERT(ABSOLUTE(__snes_interp_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: SNES interpreter ITC overflow");
+  } AT > CORES
+  _OVERLAY_SNES_INTERP_ITC_SIZE = SIZEOF(.itcm_snes_interp);
+  _OVERLAY_SNES_INTERP_ITC_LMA_OFFSET = LOADADDR(.itcm_snes_interp) - LOADADDR(.overlay_snes);
+
+  .overlay_snes_bss _OVERLAY_SNES_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_SNES_BSS_START = .;
+    build/snes/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/rc_smw/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/snes/*.o (COMMON)
+    __ram_emu_snes_end__ = .;
+    _OVERLAY_SNES_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_SNES_BSS_END) < __RAM_EMU_END__, "Error: SNES BSS overflow");
+  }
+  _OVERLAY_SNES_BSS_SIZE = SIZEOF(.overlay_snes_bss);
+
   .overlay_gw __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_gw_start__ = .;
@@ -531,6 +637,231 @@ INCLUDE build/fceumm_mappers.ld
     ASSERT(ABSOLUTE(_OVERLAY_MD_BSS_END) < __RAM_EMU_END__, "Error: MD BSS overflow");
   }
   _OVERLAY_MD_BSS_SIZE = SIZEOF(.overlay_md_bss);
+
+  /* ------------------------------------------------------------ Sega 32X ----
+   * picodrive, RAM-starved by design: the static 32X machine RAM (gnw_32xmem,
+   * 584K: SDRAM 256K + framebuffers 256K) plus PicoMem (136K) nearly fill
+   * RAM_EMU on their own. So the overlay keeps ONLY the hot interpreters/bus
+   * handlers in RAM; .xip_md32x (declared after — first claim wins, cf. the
+   * GBA note) sweeps every other object's text to flash, and .rodata_md32x
+   * sweeps ALL wildcard rodata (incl. the precomputed YM const tables).
+   * Sound/YM writable state rides AHB (.md32x_ahb below) to buy back pool. */
+  .overlay_md32x __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_md32x_start__ = .;
+    /* Porting glue stays whole (code+rodata) in RAM: it holds the
+     * MD32X_CODE_BASE literal and runs the sentinel patch — the patch skips
+     * this window (cf. main_sm.c). */
+    _MD32X_MAIN_CODE_START = .;
+    build/md32x/main_md32x.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _MD32X_MAIN_CODE_END = .;
+    /* Hot text, first cut: SH-2 wrapper (init/irq/pack, not the dispatcher —
+     * that lives in ITCM below) + SH-2/68K bus handlers + the 32X compositor
+     * + PWM. Everything else — the 68K interpreter (161K, its const dispatch
+     * tables ride .rodata_md32x), Z80, VDP, cart, sound gen — starts in XIP
+     * flash: iterate with the device, not by faith. */
+    build/md32x/cpu__sh2__sh2.o          (.text .text*)
+    build/md32x/cpu__gwenesis68k__g68k_bus.o (.text .text*)
+     build/md32x/pico__32x__memory.o      (.text .text*)
+     build/md32x/pico__32x__pwm.o         (.text .text*)
+     build/md32x/pico__memory.o           (.text .text*)
+     /* 32X compositor hot path: FinalizeLine (224x/frame) + layer blits.
+      * Rest of draw.o stays in XIP (cold setup, unused pixel-format variants). */
+     build/md32x/pico__32x__draw.o        (.text.FinalizeLine32xRGB555 .text.PicoDraw32xLayer .text.PicoDraw32xLayerMdOnly)
+     build/md32x/*.o (.data .data*)
+    . = ALIGN(4);
+    _OVERLAY_MD32X_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_MD32X_LOAD_START = LOADADDR(.overlay_md32x);
+  _OVERLAY_MD32X_SIZE = SIZEOF(.overlay_md32x);
+
+  /* SH-2 interpreter -> ITCM (zero-wait-state, no I-cache miss). Computed-goto
+   * dispatch (GNW_SH2_FASTLOOPS) requires every gnw_op* label in the SAME
+   * function as the goto — that rules out a hot/cold split, so the whole
+   * dispatcher (sh2_execute_interpreter + its op0000/MAC_W/MAC_L/ILLEGAL
+   * helpers, ~7.9K incl. the 64B jump table) moves as one unit. Budget was
+   * short by ~1.7K against the ~4.8K then free; PsndBuffer (8664B, the
+   * biggest ITCM bss occupant) shrank instead — sound.c's generic 54kHz
+   * worst-case buffer sizing never applies to GNW's fixed-rate 44.1kHz core
+   * (see PSND_BUFFER_SAMPLES in pico/sound/sound.c) — and the shrunk
+   * sound.o bss moved to RAM_EMU below (freed there by this same section:
+   * moving 7.9K of .text out of RAM_EMU into ITCM more than pays for 7K of
+   * bss moving the other way). AHB was considered and rejected: 32X
+   * unconditionally ahb_calloc's an 83,976B Draw2FB in PicoDraw2Init (called
+   * from PicoInit, not lazy), which alone leaves only ~3.9K of the 87,904B
+   * AHB dynamic pool — nowhere near enough (this ~5.8K estimate was itself
+   * off by ~2K; the exact 3,928B margin is what the 0720 device Hardfault
+   * — MD32X_PROFILE_FRAMES requesting 28.8K into it — pinned down for real,
+   * see main_md32x.h / md32x_profile.c). See 32X_SH2_ITCM_ANALYSIS.md. Same
+   * LMA-in-CORES / memcpy-before-BSS-zero mechanism as .overlay_pce_itc /
+   * .overlay_gba_itc (run_internal_emu in rg_emulators.c). Base offset 0x4
+   * keeps address 0 free. */
+  .overlay_md32x_itc (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __md32x_itc_start__ = .;
+    build/md32x/cpu__sh2__mame__sh2pico.o (.text .text* .rodata)
+    . = ALIGN(4);
+    __md32x_itc_end__ = .;
+    ASSERT(ABSOLUTE(__md32x_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: MD32X ITC overflow");
+  } AT > CORES
+  _OVERLAY_MD32X_ITC_SIZE = SIZEOF(.overlay_md32x_itc);
+  _OVERLAY_MD32X_ITC_LMA_OFFSET = LOADADDR(.overlay_md32x_itc) - LOADADDR(.overlay_md32x);
+
+  .overlay_md32x_bss _OVERLAY_MD32X_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_MD32X_BSS_START = .;
+    /* Hot writable state (bus maps, YM/Z80/draw contexts) rides ITCM below;
+     * pico__sound__sound.o (PsndBuffer, shrunk — see .overlay_md32x_itc
+     * above) rides here instead: mixing touches it sequentially once per
+     * frame, not per CPU cycle, so it doesn't need zero-wait ITCM. */
+    EXCLUDE_FILE(*pico__sound__ym2612.o *pico__draw.o *pico__32x__memory.o
+                 *pico__memory.o *cpu__cz80__cz80.o
+                 *pico__z80if.o) build/md32x/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/md32x/*.o (COMMON)
+    __ram_emu_md32x_end__ = .;
+    _OVERLAY_MD32X_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_MD32X_BSS_END) < __RAM_EMU_END__, "Error: MD32X BSS overflow");
+  }
+  _OVERLAY_MD32X_BSS_SIZE = SIZEOF(.overlay_md32x_bss);
+
+  /* Hottest writable state -> ITCM (zero-wait): the SH-2/68K bus MAP TABLES
+   * (read on every guest memory access), YM/Z80 contexts, line-render caches.
+   * Chained right after .overlay_md32x_itc (the SH-2 interpreter code) rather
+   * than fixed at ITCM+0x4 — the two share the 64K bank. NOLOAD, a per-core
+   * overlay, NOT a resident static, so nobody's itc_malloc shrinks. Zeroed by
+   * main_md32x.c at load (the launcher's memset covers only the RAM_EMU
+   * bss); the ASSERT guards the rest. */
+  .overlay_md32x_itc_bss __md32x_itc_end__ (NOLOAD) : {
+    . = ALIGN(8);
+    __md32x_itc_bss_start__ = .;
+    build/md32x/pico__sound__ym2612.o (.bss .bss*)
+    build/md32x/pico__draw.o          (.bss .bss*)
+    build/md32x/pico__32x__memory.o   (.bss .bss*)
+    build/md32x/pico__memory.o        (.bss .bss*)
+    build/md32x/cpu__cz80__cz80.o     (.bss .bss*)
+    build/md32x/pico__z80if.o         (.bss .bss*)
+    . = ALIGN(8);
+    __md32x_itc_bss_end__ = .;
+    ASSERT(ABSOLUTE(__md32x_itc_bss_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM),
+           "Error: MD32X ITC BSS overflow");
+  }
+  /* NOTE deliberately NO static .md32x_ahb section: __ahbram_heap_start__ sits
+   * after all static AHBRAM sections, so 32X statics there would permanently
+   * shrink EVERY core's ahb_malloc pool (gwenesis needs 64K, GBA's framebuffer
+   * 75K, SNES's Apu 66K — all would break). If the overlay BSS gets tight, move
+   * buffers to runtime ahb_malloc via fork-side pointers (the GBA fb pattern),
+   * which costs only the running core. */
+
+  /* Cold code sweep: every build/md32x .text not claimed by the overlay above.
+   * Linked at the MD32X_CODE sentinel, shipped as /cores/32x.xip, cached to
+   * QSPI and pointer-patched at load (see main_md32x.c). */
+  .xip_md32x : {
+    . = ALIGN(8);
+    __xip_md32x_start__ = .;
+    build/md32x/*.o (.text .text*)
+  } > MD32X_CODE
+
+  /* All wildcard rodata (the overlay claimed only main_md32x.o's), contiguous
+   * behind the cold code: one blob, one cache entry, one relocation base. */
+  .rodata_md32x : {
+    . = ALIGN(8);
+    __rodata_md32x_start__ = .;
+    build/md32x/*.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __rodata_md32x_end__ = .;
+    __xip_md32x_end__ = .;
+  } > MD32X_CODE
+  /* Sega/Mega CD — shares the gwenesis M68K/Z80/VDP/YM core with MD but has its
+   * own build/segacd/*.o set plus the sub-68K + CDD/CDC porting layer. The
+   * BIOS is XIP'd from flash (0 RAM). CD data streams from SD. The heavy
+   * RAM cost is PRG-RAM (256K) + Word-RAM (256K) + PCM (64K) + BRAM (8K)
+   * = ~584K BSS, which must fit under RAM_EMU's 724K.
+   *
+   * The 12 gwenesis engine objects (m68kcpu, Z80, ym2612, gwenesis_* — the
+   * same .c files MD compiles) total ~602K of text+rodata and cannot share
+   * RAM_EMU with that BSS. They are swept to SEGACD_CODE (sentinel XIP) by
+   * .xip_segacd/.rodata_segacd below, mirroring the 32X .xip_md32x recipe
+   * (see gnw-32x/STM32H7B0VBTx_SDCARD.ld). Only the 7 porting files
+   * (main_segacd + 6 segacd_*) stay in RAM. -ffunction-sections is on for
+   * SEGACD_C_DEFS so Anti#1 can later refine the hot list function-by-
+   * function once a boot_test PC histogram identifies the hot interpreter
+   * subset; the default contract keeps ALL gwenesis .text in XIP, matching
+   * what 32X shipped (it runs fine with m68kcpu.o entirely in XIP). */
+
+  /* Cold code, claimed BEFORE .overlay_segacd so it does NOT land in the RAM
+   * pool. The 12 gwenesis shared objects, named explicitly — keeps the
+   * contract self-documenting and lets Anti#1 promote a function-level hot
+   * subset of any of them into .overlay_segacd later without touching this
+   * list (the overlay's hot claim always wins when declared after .xip). */
+  .xip_segacd : {
+    . = ALIGN(8);
+    __xip_segacd_start__ = .;
+    build/segacd/m68kcpu.o           (.text .text*)
+    build/segacd/Z80.o               (.text .text*)
+    build/segacd/z80inst.o           (.text .text*)
+    build/segacd/ym2612.o            (.text .text*)
+    build/segacd/gwenesis_sn76489.o  (.text .text*)
+    build/segacd/gwenesis_bus.o      (.text .text*)
+    build/segacd/gwenesis_sram.o     (.text .text*)
+    build/segacd/gwenesis_eeprom.o   (.text .text*)
+    build/segacd/gwenesis_io.o       (.text .text*)
+    build/segacd/gwenesis_vdp_mem.o  (.text .text*)
+    build/segacd/gwenesis_vdp_gfx.o  (.text .text*)
+    build/segacd/gwenesis_savestate.o (.text .text*)
+  } > SEGACD_CODE
+
+  .overlay_segacd __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_segacd_start__ = .;
+    /* Porting glue whole — main_segacd.o holds the SEGACD_CODE_BASE literal
+     * and runs the sentinel relocation pass, so it must be readable before
+     * the XIP blob has been cached (same reason main_sm.o stays in RAM). */
+    build/segacd/main_segacd.o     (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_engine.o   (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_bus.o      (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_cd.o       (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_audio.o    (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_gfx.o      (.data .data* .text .text* .rodata .rodata*)
+    build/segacd/segacd_cache.o    (.data .data* .text .text* .rodata .rodata*)
+    /* All .data from every build/segacd/*.o — small and RAM-resident, even
+     * for the gwenesis objects whose .text/.rodata are in SEGACD_CODE. */
+    build/segacd/*.o (.data .data*)
+    . = ALIGN(4);
+    _OVERLAY_SEGACD_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_SEGACD_LOAD_START = LOADADDR(.overlay_segacd);
+  _OVERLAY_SEGACD_SIZE = SIZEOF(.overlay_segacd);
+
+  .overlay_segacd_bss _OVERLAY_SEGACD_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_SEGACD_BSS_START = .;
+    build/segacd/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/segacd/*.o (COMMON)
+    __ram_emu_segacd_end__ = .;
+    _OVERLAY_SEGACD_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_SEGACD_BSS_END) < __RAM_EMU_END__, "Error: SEGACD BSS overflow (RAM_EMU is 724K, need PRG256K+WordRAM+PCM+BRAM)");
+  }
+  _OVERLAY_SEGACD_BSS_SIZE = SIZEOF(.overlay_segacd_bss);
+
+  /* Cold rodata, immediately after the cold code in the SAME region, so the
+   * two ship as one file (segacd.xip) and land in flash as ONE cache entry.
+   * Sharing the region is the same point made under .rodata_sm: cold code
+   * holds ~hundreds of pointers into rodata, and baking one cache entry's
+   * address into another means the pair goes stale the moment the circular
+   * cache evicts only one of them. Declared AFTER .overlay_segacd so the
+   * porting glue's own literals stay in RAM (readable before the blob is
+   * cached and relocated) and only the gwenesis .o rodata falls through. */
+  .rodata_segacd : {
+    . = ALIGN(8);
+    __rodata_segacd_start__ = .;
+    build/segacd/*.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __rodata_segacd_end__ = .;
+    __xip_segacd_end__ = .;
+  } > SEGACD_CODE
 
   .overlay_a2600 __RAM_EMU_START__ : {
     . = ALIGN(4);
@@ -685,6 +1016,310 @@ INCLUDE build/fceumm_mappers.ld
     build/zelda3/*.o (.rodata .rodata*)
     __rodata_zelda3_end__ = .;
   } > RODATA
+
+  /* Cold code, claimed before .overlay_sm so it does NOT land in the RAM pool.
+   * Only .text here: the rodata claim has to come after .overlay_sm (below), or
+   * it would swallow main_sm.o's string literals too. */
+  .xip_sm : {
+    . = ALIGN(8);
+    __xip_sm_start__ = .;
+    build/sm/sm_8b.o (.text .text*)
+  } > SM_CODE
+
+  .overlay_sm __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_sm_start__ = .;
+    _SM_MAIN_CODE_START = .;
+    build/sm/main_sm.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _SM_MAIN_CODE_END = .;
+    build/sm/*.o (.data .data* .text .text* .noreloc)
+    . = ALIGN(4);
+    _OVERLAY_SM_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_SM_LOAD_START = LOADADDR(.overlay_sm);
+  _OVERLAY_SM_SIZE = SIZEOF(.overlay_sm);
+
+  .overlay_sm_bss _OVERLAY_SM_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_SM_BSS_START = .;
+    build/sm/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/sm/*.o (COMMON)
+    __ram_emu_sm_end__ = .;
+    _OVERLAY_SM_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_SM_BSS_END) < __RAM_EMU_END__, "Error: SM BSS overflow");
+  }
+  _OVERLAY_SM_BSS_SIZE = SIZEOF(.overlay_sm_bss);
+
+  /* The game's rodata, immediately after the cold code in the SAME region, so the
+   * two ship as one file (sm.xip) and land in flash as one cache entry.
+   *
+   * It must not be a second, separate cached file: the cold code holds ~90
+   * pointers into rodata, and baking one cache entry's address into another means
+   * the pair goes stale the moment the circular cache evicts only one of them.
+   * Sharing the region makes every such pointer a SM_CODE sentinel, fixed up by
+   * the one relocation pass that already runs over the blob.
+   *
+   * Declared after .overlay_sm on purpose (the zelda3 ordering): the overlay gets
+   * first claim on main_sm.o, so the glue's own literals stay in RAM and are
+   * readable before the blob has been cached and relocated. */
+  .rodata_sm : {
+    . = ALIGN(8);
+    __rodata_sm_start__ = .;
+    build/sm/*.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __rodata_sm_end__ = .;
+    __xip_sm_end__ = .;
+  } > SM_CODE
+
+  /* ------------------------------------------------------------------ GBA ---
+   * gpSP does not fit: 853 KB of core against a 724 KB pool. It is split four
+   * ways, and each piece goes where its access pattern says it should.
+   *
+   *   ITCM         cpu.o, the ARM7 interpreter — the hottest code there is, a
+   *                dispatch loop that would miss in flash on every opcode.
+   *   RAM_EMU      the code the interpreter calls every frame (the memory bus,
+   *                the frame driver, the cheat engine), all of the BSS, the glue.
+   *   AHB SRAM     the 75 KB framebuffer (ahb_malloc, see main_gba.c).
+   *   flash (XIP)  the renderer, the cold code, and every rodata byte the
+   *                interpreter does not read.
+   *
+   * What may go in the blob is decided by ONE rule, and it is not "is it cold":
+   *
+   *   cpu.o runs from ITCM, and the sentinel pass in main_gba.c does not scan
+   *   ITCM. So anything cpu.o points at must ALREADY be at its final address —
+   *   which means nothing cpu.o references may live in the blob.
+   *
+   * nm says what cpu.o references: functions in gba_memory.o, main.o, cheats.o and
+   * savestate.o — and no rodata of any object but its own. So those four keep their
+   * text in RAM, cpu.o keeps its own rodata in RAM, and everything else goes to
+   * flash. Move an object across that line without re-checking nm and the device
+   * jumps to 0xDEC0xxxx on the first frame. */
+
+  /* Three of gpSP's BSS arrays, moved out of the overlay pool into AHB SRAM.
+   *
+   * AHB is 120 KB of RAM that no core but this one has any real use for (only
+   * smsplusgx touches it, for an 8 KB BIOS, and never at the same time). The
+   * framebuffer already lives there, taking 75 KB of the 120 KB heap; this claims
+   * another 34 KB of it statically, which is 34 KB the 724 KB pool does not have
+   * to find.
+   *
+   * Which three is decided by bus traffic, not by size: AHB SRAM is on a slower
+   * bus than the AXI SRAM the pool lives in, so what goes here is what is read
+   * least. The BIOS is read a few times a frame at most; the cheat table is
+   * scanned once; the sound ring is written once per sample. NOT here:
+   * gamepak_page0_shadow (32 KB, and it holds the first 32 KB of the cart — the
+   * game's own startup code, read constantly) and the ewram/iwram/vram that the
+   * interpreter lives in.
+   *
+   * These are .bss, and they sit OUTSIDE .overlay_gba_bss — so run_internal_emu()'s
+   * memset does not reach them. main_gba.c zeroes this range by hand; the symbols
+   * below are what it uses. Forget that and the core starts with a cheat table full
+   * of whatever the last game left in AHB. */
+  .gba_ahbram (NOLOAD) : {
+    . = ALIGN(8);
+    __gba_ahb_start__ = .;
+    build/gba/gba_memory.o (.bss.bios_rom)
+    build/gba/cheats.o (.bss.cheats)
+    build/gba/sound.o (.bss.sound_buffer)
+    /* The link-cable protocol's state. It is 8 KB that this device can never use —
+     * there is no link port — but the file is compiled (gba_memory.c calls into it
+     * from reachable code, and the harness compiled it, so we do too). Its BSS may
+     * as well be spent somewhere the renderer does not need. */
+    /* serstate (8K link-cable state, "never used - no link port") moved BACK
+     * to .overlay_gba_bss: the AHB heap pool it was shrinking is shared with
+     * every core, and the 32X's 84K Draw2FB frame missed the pool by 4.4K.
+     * GBA's overlay has the headroom (~46K); the launcher memset even zeroes
+     * it for free now. (Was: build/gba/serial_proto.o (.bss.serstate)) */
+    . = ALIGN(8);
+    __gba_ahb_end__ = .;
+    /* What is left has to still hold the framebuffer (240*160*2), which main_gba.c
+     * takes from the same 120 KB with ahb_malloc(). */
+    ASSERT(ABSOLUTE(__gba_ahb_end__) + 240 * 160 * 2 <=
+             ORIGIN(AHBRAM) + LENGTH(AHBRAM) - __AHBRAM_AUDIO_RESERVE__,
+           "Error: GBA AHB SRAM overflow (no room left for the framebuffer)");
+
+    /* Per-core AHB pool budget - recurrence prevention for the 6755fbb7
+     * regression (m68k BSS->AHB shrank the pool past Draw2FB's 83976-byte
+     * runtime allocation, crashing the device at draw init; QEMU rig and
+     * Docker could not catch it because neither models the AHB heap).
+     *
+     * Each core is an exclusive overlay, so we check each max independently,
+     * not their sum. Any new static AHB section (e.g. a future .md32x_m68k_ahb)
+     * pushes __gba_ahb_end__ upward and trips the largest consumer first.
+     * 32X Draw2FB (83976 B) is the tightest; GBA fb (76800 B) is already
+     * covered by the ASSERT above, and SNES Apu (~66 KB) / gwenesis (~64 KB)
+     * are smaller still, so Draw2FB is the gate. */
+    ASSERT(ABSOLUTE(__gba_ahb_end__) + 328 * (8 + 240 + 8) + 8 <=
+             ORIGIN(AHBRAM) + LENGTH(AHBRAM) - __AHBRAM_AUDIO_RESERVE__,
+           "Error: AHB pool too small for 32X Draw2FB (md32x_draw2fb, 83976 B)");
+  } > AHBRAM
+
+  /* Declared BEFORE .xip_gba, and that ordering is the whole point: input sections
+   * go to whichever output section claims them first, so what the overlay names
+   * here is what stays in RAM, and .xip_gba gets the leftovers. */
+  .overlay_gba __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_gba_start__ = .;
+    _GBA_MAIN_CODE_START = .;
+      /* The glue goes first and whole — text, data AND rodata. It holds the
+       * sentinel base and the pass that rewrites it, so it is the one object the
+       * pass must not walk over; and its strings have to be readable before the
+       * blob has been cached. Its single pointer into the blob (the BIOS) is
+       * relocated by hand — see gba_xip_ptr() in main_gba.c. */
+      build/gba/main_gba.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _GBA_MAIN_CODE_END = .;
+
+      /* The renderer's hot core, pulled OUT of the flash blob and into RAM.
+       *
+       * Pokemon Ruby ran the emulator at 40 fps of a needed 60 — the game at two
+       * thirds speed, which is also why the sound dragged: the audio DMA ticks at
+       * 60 Hz and a frame that misses its tick waits for the next one.
+       *
+       * These are the functions that run 160 times a frame: the tile-map scanline
+       * renderers, the sprite scanline renderers, the blending pass, and the
+       * per-scanline dispatch. Everything else in video.o — the bitmap modes, the
+       * affine paths, the setup — runs rarely or not at all for a mode-0 game like
+       * Pokemon, and stays in flash.
+       *
+       * These are section names, not symbol names. objcopy --redefine-syms renames
+       * symbols; it leaves sections alone. So update_scanline is .text.update_scanline
+       * even though its symbol is gba__update_scanline. */
+      build/gba/video.o (.text._Z20render_scanline_text*)
+      build/gba/video.o (.text._Z13render_object*)
+      build/gba/video.o (.text._ZL16render_w_effects*)
+      build/gba/video.o (.text._ZL9order_obj*)
+      build/gba/video.o (.text.update_scanline)
+      /* NOT render_scanline_objs: it is 21 KB across its variants, the pool does not
+       * have that on top of the rest, and it is the piece that minds flash least —
+       * one variant runs for a given game and each is ~4 KB, small enough to sit in
+       * the 16 KB I-cache once fetched. The tile renderers above are the ones that
+       * run for every layer of every scanline. */
+
+      /* The rest of the text: gba_memory.o, main.o, cheats.o, savestate.o — the four
+       * cpu.o calls into. cpu.o's own text is excluded; it runs from ITCM. video.o
+       * and the cold files are excluded so that .xip_gba can have what is left of
+       * them; without that this glob would swallow the whole blob back into RAM.
+       *
+       * cpu.o's rodata is claimed here, and only cpu.o's: it is the one object whose
+       * text the sentinel pass cannot reach, so its rodata has to be at its final
+       * address already. */
+      build/gba/*.o (.data .data*)
+      EXCLUDE_FILE(*/cpu.o */video.o */serial.o */serial_proto.o */gbp.o */rfu.o
+                   */input.o */gba_frontend.o */m4a_hle.o) build/gba/*.o (.text .text*)
+      build/gba/cpu.o (.rodata .rodata*)
+      /* The M4A mixer HLE splits like the renderer does. m4a_gpsp.o is the thin
+       * side cpu.o actually calls (m4a_hle_execute, m4a_hook_pc) — it stays in
+       * RAM, because cpu.o runs from ITCM outside the sentinel scan and must
+       * reference nothing that moves. m4a_hle.o's rodata — the six mixer
+       * signatures the per-frame scan memcmps, and the variant table whose run
+       * pointers the sentinel pass patches — is 3.3 KB, hot, and dereferenced
+       * from RAM, so it lives here too. m4a_hle.o's TEXT is the six
+       * transliterations, 102 KB of resumable state machine the pool cannot
+       * hold; it is excluded above and .xip_gba takes it. */
+      build/gba/m4a_hle.o (.rodata .rodata*)
+      build/gba/m4a_gpsp.o (.rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_GBA_LOAD_END = .;
+  } AT > CORES
+
+  .xip_gba : {
+    . = ALIGN(8);
+    __xip_gba_start__ = .;
+      /* Whatever of the renderer the overlay did not take: the bitmap modes, the
+       * affine paths, the setup. Cold for a mode-0 game. */
+      build/gba/video.o (.text .text*)
+      /* Cold, and none of it is reachable from cpu.o: the link cable, the Game Boy
+       * Player, the wireless adapter, the pad, and the front-end shims. */
+      build/gba/serial.o (.text .text*)
+      build/gba/serial_proto.o (.text .text*)
+      build/gba/gbp.o (.text .text*)
+      build/gba/rfu.o (.text .text*)
+      build/gba/input.o (.text .text*)
+      build/gba/gba_frontend.o (.text .text*)
+      /* The six M4A mixer transliterations. One runs per game, once per frame,
+       * as a single sequential sweep — the same access pattern as the renderer
+       * variants above, and the same reasoning: each is 12–20 KB, the pool has
+       * no 102 KB to give, and a function that runs once a frame minds flash
+       * least. Reached only through the variant table's run pointers, which the
+       * sentinel pass patches; cpu.o never references this object. */
+      build/gba/m4a_hle.o (.text .text*)
+  } > GBA_CODE
+  _OVERLAY_GBA_LOAD_START = LOADADDR(.overlay_gba);
+  _OVERLAY_GBA_SIZE = SIZEOF(.overlay_gba);
+
+  /* The ARM7 interpreter → ITCM (zero wait states, no I-cache to miss). The LMA
+   * is appended right after .overlay_gba in CORES, so objcopy of the two sections
+   * yields one contiguous gba.bin. At load time this image lands in RAM_EMU at
+   * _OVERLAY_GBA_LOAD_END — which overlaps the BSS VMA — and run_internal_emu()
+   * memcpy's it to ITCM BEFORE zeroing BSS. Base offset 0x4 keeps address 0 free,
+   * so no function compares equal to NULL. */
+  .overlay_gba_itc (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __gba_itc_start__ = .;
+    build/gba/cpu.o (.text .text*)
+    . = ALIGN(4);
+    __gba_itc_end__ = .;
+    ASSERT(ABSOLUTE(__gba_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: GBA ITC overflow");
+  } AT > CORES
+  _OVERLAY_GBA_ITC_SIZE = SIZEOF(.overlay_gba_itc);
+  _OVERLAY_GBA_ITC_LMA_OFFSET = LOADADDR(.overlay_gba_itc) - LOADADDR(.overlay_gba);
+
+  .overlay_gba_bss _OVERLAY_GBA_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_GBA_BSS_START = .;
+    build/gba/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/gba/*.o (COMMON)
+    . = ALIGN(4);
+    __ram_emu_gba_end__ = .;
+    _OVERLAY_GBA_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_GBA_BSS_END) < __RAM_EMU_END__, "Error: GBA BSS overflow");
+  }
+  _OVERLAY_GBA_BSS_SIZE = SIZEOF(.overlay_gba_bss);
+
+  /* All the rodata that is left, immediately after the code in the SAME region, so
+   * the two ship as one file (gba.xip) and land in flash as one cache entry — the
+   * reason is spelled out under .rodata_sm above.
+   *
+   * "What is left" is every object but main_gba.o and cpu.o, both of which
+   * .overlay_gba already claimed: the BIOS image, gpSP's per-game override table
+   * (gba_over.h — read once, at load), the renderer's tables, the sound tables.
+   * The code that reads them lives in the overlay, and the sentinel pass fixes up
+   * every reference before a frame runs. */
+  .rodata_gba : {
+    . = ALIGN(8);
+    __rodata_gba_start__ = .;
+    build/gba/*.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __rodata_gba_end__ = .;
+    __xip_gba_end__ = .;
+  } > GBA_CODE
+
+  /* ------------------------------------------------------------ rc_probe XIP -
+   * On-device probe site functions for the 65816->C static recompiler's
+   * dispatch-path measurement. Linked at the RCPROBE_CODE sentinel
+   * (0xD0D0xxxx) — NOT a real flash VMA — exactly like .xip_sm/.xip_gba.
+   * The section ships as a standalone rcprobe.xip (RC_PROBE-gated) and is
+   * cached into external QSPI flash at runtime by
+   * odroid_overlay_cache_file_in_flash_relocate; Stage 2 then measures the
+   * REAL indirect RAM->XIP call through runtime-computed flash exec
+   * addresses (sentinel_sym + (flash_base - RCPROBE_CODE_BASE)).
+   *
+   * A direct BL from internal-flash .text (rc_force_veneer) to the sentinel
+   * still forces the linker to emit a long-branch veneer — the artifact
+   * objdump verifies at link time. That veneer is never executed at runtime
+   * (rc dispatch is indirect blx, not a linker veneer); it exists only to
+   * prove the sentinel link resolves. */
+  .xip_rcprobe : {
+    . = ALIGN(8);
+    __xip_rcprobe_start__ = .;
+    KEEP(*(.xip_rcprobe))
+    . = ALIGN(8);
+    __xip_rcprobe_end__ = .;
+  } > RCPROBE_CODE
 
   .overlay_smw __RAM_EMU_START__ : {
     . = ALIGN(4);
@@ -847,6 +1482,28 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
 
+  .overlay_clock __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_clock_start__ = .;
+    build/clock/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_CLOCK_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_CLOCK_LOAD_START = LOADADDR(.overlay_clock);
+  _OVERLAY_CLOCK_SIZE = SIZEOF(.overlay_clock);
+
+  .overlay_clock_bss _OVERLAY_CLOCK_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_CLOCK_BSS_START = .;
+    build/clock/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/clock/*.o (COMMON)
+    __ram_emu_clock_end__ = .;
+    _OVERLAY_CLOCK_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_CLOCK_BSS_END) < __RAM_EMU_END__, "Error: CLOCK BSS overflow");
+  }
+  _OVERLAY_CLOCK_BSS_SIZE = SIZEOF(.overlay_clock_bss);
+
   /* PICO-8 stub overlay → RAM, placed at HIGH end of RAM_EMU.
      The GPL build only includes the install-prompt stub (main_pico8_stub.c).
      The real engine is loaded from /cores/pico8.bin at runtime, replacing
@@ -952,10 +1609,16 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(4);  /* pad the LAST logo so logo.bin readers don't over-read it */
   } > CORES
 
-  ._ram_space_check_md : {
-    . = . + SIZEOF(.overlay_md);
-    . = . + SIZEOF(.overlay_md_bss);
-  } >RAM_EMU
+  /* MD and Sega CD are overlays at the same VMA and never load together, so
+     they must be checked INDEPENDENTLY against RAM_EMU. Two consecutive
+     sections in >RAM_EMU stacked them instead: the region cursor kept MD's
+     681K and then added Sega CD on top, reporting a 148,760-byte overflow that
+     was simply the sum of two cores. Every other core uses a standalone
+     ASSERT; these two now do the same. */
+  ASSERT(SIZEOF(.overlay_md) + SIZEOF(.overlay_md_bss) <= __RAM_EMU_LENGTH__,
+         "Error: MD overlay+BSS exceeds RAM_EMU")
+  ASSERT(SIZEOF(.overlay_segacd) + SIZEOF(.overlay_segacd_bss) <= __RAM_EMU_LENGTH__,
+         "Error: SEGACD overlay+BSS exceeds RAM_EMU")
 
   /* only use ahb_malloc/ahb_calloc to use ahb memory ! */
   /* only audio buffer is statically allocated */
@@ -995,6 +1658,7 @@ INCLUDE build/fceumm_mappers.ld
   .text :
   {
     . = ALIGN(4);
+    KEEP(*(.text.rc_force_veneer))   /* rc probe: objdump-veneer artifact (RC_PROBE), unreferenced — survives --gc-sections via KEEP */
     *(.text)           /* .text sections (code) */
     *(.text*)          /* .text* sections (code) */
     *(.glue_7)         /* glue arm to thumb code */
@@ -1083,6 +1747,21 @@ INCLUDE build/fceumm_mappers.ld
     __flash_end__ = .;
   } >FLASH
 
+  /* Internal flash is the scarcest resource in this build and it has no
+   * natural owner, so anything added anywhere quietly eats it and the only
+   * symptom is `region FLASH overflowed by N bytes` at link time -- a message
+   * that names neither the culprit nor the budget. A 2.8 KB diagnostic probe
+   * overflowed it by 2,560 B on 0720 and cost several build cycles to trace.
+   *
+   * Name the budget instead. Diagnostics and probes do NOT belong here: link
+   * them at the RCPROBE_CODE sentinel (0xD0D00000, 64 KB, absent from release
+   * builds) the way Core/Src/rc_probe.c does, so measurement code can never
+   * displace firmware.
+   *
+   * This is a floor, not a target -- if real functionality legitimately needs
+   * the room, lower it deliberately in the same commit that spends it. */
+  __intflash_headroom__ = ORIGIN(FLASH) + LENGTH(FLASH) - __flash_end__;
+
   /* Uninitialized data section */
   . = ALIGN(4);
   .bss :
@@ -1125,24 +1804,30 @@ INCLUDE build/fceumm_mappers.ld
 
   /* PICO-8 RAM removed — engine allocates 64KB from DTCM heap via dtcm_malloc */
 
-  ._user_heap :
+  /* Heap fills all DTCM left after .data/.bss up to the fixed stack at the
+   * top (redzone + _Min_Stack_Size + optional remote-input reserve). */
+  ._user_heap (NOLOAD) :
   {
     . = ALIGN(16);
-    _heap_start = . ;
-    . = . + _Heap_Size;
-    . = ALIGN(16);
-    _heap_end = . ;
+    _heap_start = .;
+    /* Alias for scripts/size.sh — "padding" is now the whole flexible heap. */
+    __dtc_padding_start__ = .;
+
+    /* Align down so . = _heap_limit never steps into the stack. */
+    _heap_limit = (ORIGIN(DTCMRAM) + LENGTH(DTCMRAM)
+                - __REMOTE_INPUT_RESERVE__
+                - _Min_Stack_Size
+                - _Stack_Redzone_Size) & ~15;
+    ASSERT(_heap_start <= _heap_limit,
+           "DTCM overflow: .data/.bss leave no room for stack");
+
+    . = _heap_limit;
+    _heap_end = .;
+    __dtc_padding_end__ = .;
   } >DTCMRAM
 
-  /* User_heap_stack section, used to check that there is enough RAM left */
-  ._user_stack :
+  ._user_stack (NOLOAD) :
   {
-    /* Pad the unused area between the last symbol and the start of the redzone.
-       We reserve space at the top of DTCMRAM for boot magic and remote input if enabled. */
-    __dtc_padding_start__ = .;
-    . = . + __DTCMRAM_LENGTH__ - __REMOTE_INPUT_RESERVE__ - (_Min_Stack_Size + _Stack_Redzone_Size) - (__dtc_padding_start__ - __dtcram_start__);
-    __dtc_padding_end__ = .;
-
     _stack_redzone = .;
     . = . + _Stack_Redzone_Size;
     _stack_bottom = .;
@@ -1162,3 +1847,9 @@ INCLUDE build/fceumm_mappers.ld
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
 }
+
+/* Internal-flash floor. Placed after SECTIONS because a bare ASSERT is a
+ * script-level statement, not something that can sit between output section
+ * descriptions -- see the comment at __intflash_headroom__ above for why the
+ * budget is named at all. */
+ASSERT(__intflash_headroom__ >= 512, "Error: internal flash headroom below 512 B -- put diagnostics/probes in RCPROBE_CODE (cf. Core/Src/rc_probe.c), or lower this floor deliberately")

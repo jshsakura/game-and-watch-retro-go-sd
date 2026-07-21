@@ -44,7 +44,9 @@ extern int linux_loadstate_req;
 #define JOY_DOWN    0x40
 #define JOY_LEFT    0x80
 
-#define WIDTH    512
+/* Mednafen nominal PCE viewport: 320×240 (256/342/512-wide modes are aspect-
+ * corrected to 320px wide; default window scale is 3× → 960×720). */
+#define WIDTH    320
 #define HEIGHT   240
 #define BPP      2
 #define SCALE    2
@@ -76,6 +78,7 @@ static int framePerSecond = 0;
 static int capTimer;
 
 static const char *g_cue_path = NULL;
+static const char *g_hucard_path = NULL;
 static bool g_cd_state_loaded = false;
 
 static bool host_LoadState(const char *savePathName);
@@ -181,29 +184,43 @@ static void init_color_pals(void)
 
 void odroid_display_force_refresh(void) {}
 
+static void pce_fb_clear(void)
+{
+	memset(emulator_framebuffer_pce, PCE.Palette[0], sizeof(emulator_framebuffer_pce));
+}
+
+static inline void pce_norm_vdc_size(int *w, int *h)
+{
+	if (*w < 8) *w = 8;
+	if (*w > 512) *w = 512;
+	if (*h < 8) *h = 8;
+	if (*h > 256) *h = 256;
+}
+
+static int s_fb_offset;
+
+static void pce_layout_update(int w, int h)
+{
+	int offx = (XBUF_WIDTH - w) / 2;
+	if (offx < 0) offx = 0;
+	s_fb_offset = ((XBUF_HEIGHT - h) / 2 + 16) * XBUF_WIDTH + offx;
+}
+
 uint8_t *osd_gfx_framebuffer(void)
 {
-	return emulator_framebuffer_pce + FB_INTERNAL_OFFSET;
+	return emulator_framebuffer_pce + s_fb_offset;
 }
 
 void osd_gfx_set_mode(int width, int height)
 {
-	init_color_pals();
-	if (width < 160 || width > 512) {
-		MESSAGE_ERROR("Correcting out of range screen w %d\n", width);
-		width = 256;
-	}
-	if (height < 160 || height > 256) {
-		MESSAGE_ERROR("Correcting out of range screen h %d\n", height);
-		height = 224;
-	}
+	pce_norm_vdc_size(&width, &height);
+	if (width == current_width && height == current_height)
+		return;
+	pce_fb_clear();
+	gfx_reset(false);
 	current_width = width;
 	current_height = height;
-	SDL_SetWindowSize(window, current_width * SCALE, current_height * SCALE);
-	SDL_DestroyTexture(fb_texture);
-	fb_texture = SDL_CreateTexture(renderer,
-	    SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING,
-	    current_width, current_height);
+	pce_layout_update(width, height);
 }
 
 void pce_input_read(odroid_gamepad_state_t *out_state)
@@ -335,6 +352,7 @@ static bool host_LoadState(const char *savePathName)
 
 	gfx_reset(true);
 	osd_gfx_set_mode(IO_VDC_SCREEN_WIDTH, IO_VDC_SCREEN_HEIGHT);
+	pce_fb_clear();
 	fclose(fp);
 
 	g_cd_state_loaded = true;
@@ -406,6 +424,8 @@ void pcm_submit(void) {}
 
 size_t pce_osd_getromdata(unsigned char **data)
 {
+	if (g_hucard_path)
+		return hucard_get_data(data);
 	return syscard_get_data(data);
 }
 
@@ -556,7 +576,7 @@ int InitPCE(int samplerate, bool stereo, const char *huecard)
 static void init_emu(void)
 {
 	odroid_system_init(APP_ID, AUDIO_SAMPLE_RATE);
-	odroid_system_emu_init(&host_LoadState, &host_SaveState, NULL, NULL, NULL, NULL);
+	odroid_system_emu_init(&host_LoadState, &host_SaveState, NULL, NULL, NULL, NULL, NULL);
 	update1.buffer = fb_data;
 	update2.buffer = fb_data;
 	saveSRAM = false;
@@ -566,6 +586,8 @@ static void init_emu(void)
 
 	pce_audio_init();
 
+	init_color_pals();
+	pce_layout_update(current_width, current_height);
 	memset(fb_data, 0, sizeof(fb_data));
 }
 
@@ -573,9 +595,7 @@ void pce_osd_gfx_blit(bool drawFrame)
 {
 	static uint32_t lastFPSTime = 0;
 	static uint32_t frames = 0;
-	static int wantedTime = 1000 / 60;
-	int offsetX = 0;
-	int y, offsetY;
+	int y;
 	uint8_t *fbTmp;
 
 	if (!drawFrame) {
@@ -594,28 +614,41 @@ void pce_osd_gfx_blit(bool drawFrame)
 		lastFPSTime = currentTime;
 	}
 
-	offsetX = 0;
-
-	int renderHeight = (current_height <= HEIGHT) ? current_height : HEIGHT;
-	uint8_t *emuFrameBuffer = osd_gfx_framebuffer();
-	pixel_t *framebuffer_active = fb_data;
-
-	for (y = 0; y < renderHeight; y++) {
-		fbTmp = emuFrameBuffer + (y * XBUF_WIDTH);
-		offsetY = y * current_width;
-		for (int x = 0; x < current_width; x++)
-			framebuffer_active[offsetY + x + offsetX] = mypalette[fbTmp[x]];
-	}
-
-	SDL_UpdateTexture(fb_texture, NULL, fb_data, current_width * BPP);
-	SDL_RenderCopy(renderer, fb_texture, NULL, NULL);
-	SDL_RenderPresent(renderer);
 	memset(fb_data, 0, sizeof(fb_data));
 
-	/* Frame pacing is done by pce_audio_pace() (audio-queue driven) in the main
-	 * loop; a second wall-clock SDL_Delay here would fight it and reintroduce
-	 * the audio-queue drift that caused the clicks/pops. */
-	(void)wantedTime;
+	const int disp_w = current_width;
+	const int disp_h = current_height;
+
+	int cropX = 0, cropY = 0;
+	int renderWidth = disp_w;
+	int renderHeight = disp_h;
+	int offsetX = 0, offsetY = 0;
+
+	if (renderWidth > WIDTH) {
+		cropX = (renderWidth - WIDTH) / 2;
+		renderWidth = WIDTH;
+	} else {
+		offsetX = (WIDTH - renderWidth) / 2;
+	}
+	if (renderHeight > HEIGHT) {
+		cropY = (renderHeight - HEIGHT) / 2;
+		renderHeight = HEIGHT;
+	} else {
+		offsetY = (HEIGHT - renderHeight) / 2;
+	}
+
+	uint8_t *emuFrameBuffer = osd_gfx_framebuffer();
+
+	for (y = 0; y < renderHeight; y++) {
+		fbTmp = emuFrameBuffer + ((y + cropY) * XBUF_WIDTH);
+		pixel_t *dst = fb_data + (y + offsetY) * WIDTH + offsetX;
+		for (int x = 0; x < renderWidth; x++)
+			dst[x] = mypalette[fbTmp[x + cropX]];
+	}
+
+	SDL_UpdateTexture(fb_texture, NULL, fb_data, WIDTH * BPP);
+	SDL_RenderCopy(renderer, fb_texture, NULL, NULL);
+	SDL_RenderPresent(renderer);
 }
 
 static void pce_cd_autostart_input(odroid_gamepad_state_t *joy, int frame)
@@ -654,9 +687,10 @@ static const char *find_default_syscard(void)
 static void usage(const char *argv0)
 {
 	fprintf(stderr,
-	    "PC Engine CD — Linux/SDL test harness\n\n"
+	    "PC Engine — Linux/SDL test harness\n\n"
 	    "Usage:\n"
-	    "  %s [--syscard FILE.pce] GAME.cue\n"
+	    "  %s GAME.pce                         HuCard\n"
+	    "  %s [--syscard FILE.pce] GAME.cue    PCE CD\n"
 	    "  %s SYSCARD.pce GAME.cue\n\n"
 	    "Environment:\n"
 	    "  PCE_SYSCARD       path to System Card ROM (default: ./syscard3.pce)\n"
@@ -666,13 +700,15 @@ static void usage(const char *argv0)
 	    "  Shift/Return/Space  RUN      Ctrl  SELECT\n"
 	    "  At boot: Down selects CD-ROM SYSTEM, then Run starts the disc\n"
 	    "  F2 save state    F4 load state    Esc quit\n",
-	    argv0, argv0);
+	    argv0, argv0, argv0);
 }
 
-static int parse_args(int argc, char *argv[], const char **syscard, const char **cue)
+static int parse_args(int argc, char *argv[], const char **syscard, const char **cue,
+                      const char **hucard)
 {
 	*syscard = NULL;
 	*cue = NULL;
+	*hucard = NULL;
 
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--syscard") == 0 && i + 1 < argc) {
@@ -683,14 +719,20 @@ static int parse_args(int argc, char *argv[], const char **syscard, const char *
 		} else if (path_has_ext(argv[i], ".cue")) {
 			*cue = argv[i];
 		} else if (path_has_ext(argv[i], ".pce")) {
-			if (*syscard)
-				*cue = *syscard; /* unlikely */
-			*syscard = argv[i];
+			if (*cue)
+				*syscard = argv[i];
+			else if (!*hucard)
+				*hucard = argv[i];
+			else
+				*syscard = argv[i];
 		} else {
 			fprintf(stderr, "Unknown argument: %s\n", argv[i]);
 			return -1;
 		}
 	}
+
+	if (*hucard && !*cue)
+		return 0;
 
 	if (!*syscard)
 		*syscard = find_default_syscard();
@@ -713,12 +755,19 @@ static int parse_args(int argc, char *argv[], const char **syscard, const char *
 int main(int argc, char *argv[])
 {
 	const char *syscard_path = NULL;
-	int pr = parse_args(argc, argv, &syscard_path, &g_cue_path);
+	const char *hucard_path = NULL;
+	int pr = parse_args(argc, argv, &syscard_path, &g_cue_path, &hucard_path);
 	if (pr != 0)
 		return pr == 1 ? 0 : 1;
 
-	if (syscard_load_file(syscard_path))
+	g_hucard_path = hucard_path;
+
+	if (hucard_path) {
+		if (hucard_load_file(hucard_path))
+			return 1;
+	} else if (syscard_load_file(syscard_path)) {
 		return 1;
+	}
 
 	if (init_window(WIDTH, HEIGHT)) {
 		fprintf(stderr, "SDL init failed: %s\n", SDL_GetError());
@@ -731,7 +780,10 @@ int main(int argc, char *argv[])
 	int frame = 0;
 
 	printf("retro-go-pce play mode\n");
-	printf("Running: syscard=%s  cue=%s\n", syscard_path, g_cue_path);
+	if (hucard_path)
+		printf("Running HuCard: %s\n", hucard_path);
+	else
+		printf("Running: syscard=%s  cue=%s\n", syscard_path, g_cue_path);
 	printf("Boot menu: press Down then Run (Shift/Return), or wait for autostart.\n");
 
 	{
@@ -740,11 +792,17 @@ int main(int argc, char *argv[])
 			linux_loadstate_req = 1;
 	}
 
+	const char *mf = getenv("PCE_MAX_FRAMES");
+	const int max_frames = (mf && mf[0]) ? atoi(mf) : 0;
+
 	while (true) {
 		capTimer = SDL_GetTicks();
 		bool drawFrame = true;
 
 		pce_sdl_input_poll(&joystick);
+
+		if (linux_quit_req)
+			break;
 
 		if (linux_savestate_req) {
 			linux_savestate_req = 0;
@@ -766,10 +824,17 @@ int main(int argc, char *argv[])
 		pce_pcm_submit();
 		pce_audio_pace();
 
+		pce_adpcm_frame_end();
+
 		PCE.Timer.cycles_counter -= Cycles;
 		PCE.MaxCycles -= Cycles;
 		Cycles = 0;
 		frame++;
+		if (max_frames > 0 && frame >= max_frames) {
+			printf("PCE_MAX_FRAMES reached: PC=%04X A=%02X P=%02X scanline=%u\n",
+			       CPU_PCE.PC, CPU_PCE.A, CPU_PCE.P, (unsigned)PCE.Scanline);
+			break;
+		}
 	}
 
 	pce_sram_save();

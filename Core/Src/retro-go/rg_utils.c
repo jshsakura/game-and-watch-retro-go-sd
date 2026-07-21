@@ -32,22 +32,20 @@ char *rg_strtoupper(char *str)
 const char *rg_dirname(const char *path)
 {
     static char buffer[RG_PATH_MAX];
-
-    if (!path)
-        return ".";
-
     const char *basename = strrchr(path, '/');
-    if (!basename)
+    ptrdiff_t length;
+
+    if (!path || !basename)
         return ".";
 
     if (path[0] == '/' && path[1] == 0)
         return "/";
 
-    ptrdiff_t length = basename - path;
+    length = basename - path;
     if (length >= (ptrdiff_t)sizeof(buffer))
-        length = sizeof(buffer) - 1;
+        length = (ptrdiff_t)sizeof(buffer) - 1;
 
-    strncpy(buffer, path, length);
+    memcpy(buffer, path, (size_t)length);
     buffer[length] = 0;
 
     return buffer;

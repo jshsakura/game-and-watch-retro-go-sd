@@ -114,6 +114,24 @@ enum {
     // so enum value == 3 + logo.bin index stays exact (the colour-only pads below shift
     // up one but remain past logo_image_count -> rg_get_logo() still returns NULL).
     RG_LOGO_HEADER_VB,
+    // Game Boy Advance name header (matches header_gba — appended as the NEW last
+    // LOGO_DATA struct in rg_logos.c). Same rule as VB above: it MUST sit here, after
+    // the last logo.bin-backed header and BEFORE the colour-only pad block, so
+    // enum value == 3 + logo.bin index stays exact.
+    RG_LOGO_HEADER_GBA,
+    // Super Famicom name header (matches header_snes — appended as the NEW last
+    // LOGO_DATA struct in rg_logos.c). Same rule as VB/GBA above: it MUST sit here,
+    // after the last logo.bin-backed header and BEFORE the colour-only pad block,
+    // so enum value == 3 + logo.bin index stays exact.
+    RG_LOGO_HEADER_SNES,
+    // Sega 32X name header (matches header_32x — appended as the NEW last
+    // LOGO_DATA struct in rg_logos.c). Same rule as VB/GBA/SNES above: it MUST
+    // sit here, after the last logo.bin-backed header and BEFORE the colour-only
+    // pad block, so enum value == 3 + logo.bin index stays exact.
+    RG_LOGO_HEADER_32X,
+    // Sega CD name header — same rule again; appended after 32X so the
+    // enum-to-logo.bin index correspondence stays exact.
+    RG_LOGO_HEADER_SEGACD,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
@@ -133,6 +151,14 @@ enum {
     // Virtual Boy colour tab icon (cicon_vb; color_icon_for_logo only, no logo.bin
     // entry). Prepared ahead of the VB core so the asset is ready to wire up.
     RG_LOGO_PAD_VB,
+    // Game Boy Advance colour tab icon (cicon_gba; color_icon_for_logo only, no
+    // logo.bin entry -> rg_get_logo() returns NULL, bounds-checked)
+    RG_LOGO_PAD_GBA,
+    // Sega 32X colour tab icon (cicon_32x; color_icon_for_logo only, no
+    // logo.bin entry -> rg_get_logo() returns NULL, bounds-checked)
+    RG_LOGO_PAD_32X,
+    // Sega CD colour tab icon (cicon_segacd; same colour-only rule as 32X)
+    RG_LOGO_PAD_SEGACD,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
@@ -143,6 +169,12 @@ extern const retro_logo_image logo_rgo;
 //extern const retro_logo_image logo_flash;
 extern const retro_logo_image logo_rgw;
 extern const retro_logo_image logo_gnw;
+extern const retro_logo_image header_gba;
+extern const color_icon_t cicon_gba;
+extern const retro_logo_image header_snes;
+extern const color_icon_t cicon_snes;
+extern const retro_logo_image header_32x;
+extern const color_icon_t cicon_32x;
 
 extern const retro_logo_image header_sg1000;
 extern const retro_logo_image header_col;

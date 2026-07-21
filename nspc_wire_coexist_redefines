@@ -1,0 +1,10 @@
+apu_run nspc_apu_run
+wire_apu_write nspc_wire_apu_write
+wire_try_swap nspc_wire_try_swap
+wire_frame_audio nspc_wire_frame_audio
+wire_configure_rom nspc_wire_configure_rom
+wire_restore_after_load nspc_wire_restore_after_load
+wire_prepare_save nspc_wire_prepare_save
+g_wire_on nspc_g_wire_on
+g_wire_enable nspc_g_wire_enable
+g_wire_variant nspc_g_wire_variant

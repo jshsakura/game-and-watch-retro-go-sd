@@ -1,0 +1,370 @@
+/*
+ * VGMTrans (c) 2002-2024
+ * Licensed under the zlib license,
+ * refer to the included LICENSE.txt file
+ */
+
+#include "base/Types.h"
+#include "CapcomSnesInstr.h"
+#include "CapcomSnesSeq.h"
+#include "ScannerManager.h"
+
+namespace vgmtrans::scanners {
+ScannerRegistration<CapcomSnesScanner> s_capcom_snes("CapcomSnes", {"spc"});
+}
+
+// ; Super Ghouls 'N Ghosts SPC
+// 03f5: 1c        asl   a
+// 03f6: 5d        mov   x,a
+// 03f7: f5 03 0e  mov   a,$0e03+x         ; NOTE: some games read LSB first!
+// 03fa: c4 c0     mov   $c0,a
+// 03fc: f5 02 0e  mov   a,$0e02+x         ; read song header address from song list
+// 03ff: c4 c1     mov   $c1,a
+// 0401: 04 c0     or    a,$c0
+// 0403: f0 dd     beq   $03e2             ; return if song header address == $0000
+BytePattern CapcomSnesScanner::ptnReadSongList(
+	"\x1c\x5d\xf5\x03\x0e\xc4\xc0\xf5"
+	"\x02\x0e\xc4\xc1\x04\xc0\xf0\xdd"
+	,
+	"xxx??x?x"
+	"??x?x?x?"
+	,
+	16);
+
+//; Mega Man X SPC
+// 059f: 6f        ret
+// 
+// 05a0: 3f ef 06  call  $06ef
+// 05a3: 8f 0d a1  mov   $a1,#$0d
+// 05a6: 8f af a0  mov   $a0,#$af          ; song address = $0daf (+1 for actual start address)
+// ; fall through...
+// ; or when song header first byte == 0:
+// 05a9: 3f 82 05  call  $0582
+// 05ac: 8d 00     mov   y,#$00
+// 05ae: dd        mov   a,y
+BytePattern CapcomSnesScanner::ptnReadBGMAddress(
+	"\x6f\x3f\xef\x06\x8f\x0d\xa1\x8f"
+	"\xaf\xa0\x3f\x82\x05\x8d\x00\xdd"
+	,
+	"xx??x??x"
+	"??x??xxx"
+	,
+	16);
+
+//; Mega Man X SPC
+// 0451: 8d 03     mov   y,#$03
+// 0453: f6 63 04  mov   a,$0463+y         ; DSP reg initialize table -1 (address)
+// 0456: c5 f2 00  mov   $00f2,a
+// 0459: f6 66 04  mov   a,$0466+y         ; DSP reg initialize table -1 (value)
+// 045c: c5 f3 00  mov   $00f3,a           ; initialize DSP reg
+// 045f: fe f2     dbnz  y,$0453
+BytePattern CapcomSnesScanner::ptnDspRegInit(
+	"\x8d\x03\xf6\x63\x04\xc5\xf2\x00"
+	"\xf6\x66\x04\xc5\xf3\x00\xfe\xf2"
+	,
+	"x?x??xxx"
+	"x??xxxx?"
+	,
+	16);
+
+// ; Super Ghouls 'N Ghosts SPC
+// 0b29: f5 f9 0b  mov   a,$0bf9+x         ; DSP reg initialize table (address)
+// 0b2c: fd        mov   y,a
+// 0b2d: f5 05 0c  mov   a,$0c05+x         ; DSP reg initialize table (value)
+// 0b30: 3f f2 0b  call  $0bf2             ; initialize DSP reg
+// 0b33: 3d        inc   x
+// 0b34: c8 0c     cmp   x,#$0c
+// 0b36: d0 f1     bne   $0b29
+BytePattern CapcomSnesScanner::ptnDspRegInitOldVer(
+	"\xf5\xf9\x0b\xfd\xf5\x05\x0c\x3f"
+	"\xf2\x0b\x3d\xc8\x0c\xd0\xf1"
+	,
+	"x??xx??x"
+	"??xx?x?"
+	,
+	15);
+
+//; Mega Man X SPC
+// 0974: 8d 06     mov   y,#$06
+// 0976: cf        mul   ya
+// 0977: da a0     movw  $a0,ya
+// 0979: 60        clrc
+// 097a: 98 ac a0  adc   $a0,#$ac
+// 097d: 98 47 a1  adc   $a1,#$47          ; $a0 = instrument entry address (0x47ac + (patch * 6))
+BytePattern CapcomSnesScanner::ptnLoadInstrTableAddress(
+	"\x8d\x06\xcf\xda\xa0\x60\x98\xac"
+	"\xa0\x98\x47\xa1"
+	,
+	"xxxx?xx?"
+	"?x??"
+	,
+	12);
+
+void CapcomSnesScanner::scan(RawFile *file, void *info) {
+  size_t nFileLength = file->size();
+  if (nFileLength == 0x10000) {
+    searchForCapcomSnesFromARAM(file);
+  }
+  else {
+    // Search from ROM unimplemented
+  }
+}
+
+void CapcomSnesScanner::searchForCapcomSnesFromARAM(RawFile *file) const {
+  CapcomSnesVersion version;
+
+  u32 ofsReadSongListASM;
+  u32 ofsReadBGMAddressASM;
+  u32 ofsLoadInstrTableAddressASM;
+  u32 addrSongList{0};
+  u32 addrBGMHeader{0};
+  u32 addrInstrTable;
+
+  std::string basefilename = file->stem();
+  std::string name = file->tag.hasTitle() ? file->tag.title : basefilename;
+
+  // find a song list
+  bool hasSongList = file->searchBytePattern(ptnReadSongList, ofsReadSongListASM);
+  if (hasSongList) {
+    addrSongList = std::min(file->readShort(ofsReadSongListASM + 3), file->readShort(ofsReadSongListASM + 8));
+  }
+
+  // find BGM address
+  bool bgmAtFixedAddress = file->searchBytePattern(ptnReadBGMAddress, ofsReadBGMAddressASM);
+  if (bgmAtFixedAddress) {
+    addrBGMHeader = (file->readByte(ofsReadBGMAddressASM + 5) << 8) | file->readByte(ofsReadBGMAddressASM + 8);
+  }
+
+  // guess engine version
+  if (hasSongList) {
+    if (bgmAtFixedAddress) {
+      version = CAPCOMSNES_V2_BGM_USUALLY_AT_FIXED_LOCATION;
+
+      // Some games still use BGM/SFX list, apparently.
+      // - The Magical Quest Starring Mickey Mouse
+      // - Captain Commando
+      bool bgmHeaderCoversSongList = (addrBGMHeader <= addrSongList && addrBGMHeader + 17 > addrSongList);
+      if (bgmHeaderCoversSongList || !isValidBGMHeader(file, addrBGMHeader)) {
+        bgmAtFixedAddress = false;
+      }
+    }
+    else {
+      version = CAPCOMSNES_V1_BGM_IN_LIST;
+    }
+  }
+  else if (bgmAtFixedAddress) {
+    version = CAPCOMSNES_V3_BGM_FIXED_LOCATION;
+  }
+  else {
+    return;
+  }
+
+  // load a sequence from BGM region
+  if (bgmAtFixedAddress) {
+    auto* newSeq = pRoot->loadVGMFile<CapcomSnesSeq>(file, version, addrBGMHeader + 1, false, name);
+    if (!newSeq) {
+      return;
+    }
+  }
+
+  // load songs from list
+  if (hasSongList) {
+    // guess current song number
+    s8 guessedSongIndex = -1;
+    if (!bgmAtFixedAddress) {
+      guessedSongIndex = guessCurrentSongFromARAM(file, version, addrSongList);
+    }
+
+    bool loadOnlyCurrentSong = true;
+    if (loadOnlyCurrentSong) {
+      // load current song if possible
+      if (guessedSongIndex != -1) {
+        u16 addrSongHeader = file->readShortBE(addrSongList + guessedSongIndex * 2);
+        auto* newSeq = pRoot->loadVGMFile<CapcomSnesSeq>(file, version, addrSongHeader, true, name);
+        if (!newSeq) {
+          return;
+        }
+      }
+    }
+    else {
+      // load all songs in the list
+      int songListLength = getLengthOfSongList(file, addrSongList);
+      for (int songIndex = 0; songIndex < songListLength; songIndex++) {
+        u16 addrSongHeader = file->readShortBE(addrSongList + songIndex * 2);
+        if (addrSongHeader == 0) {
+          continue;
+        }
+
+        auto* newSeq = pRoot->loadVGMFile<CapcomSnesSeq>(
+            file, version, addrSongHeader, true, (songIndex == guessedSongIndex) ? name : basefilename);
+        if (!newSeq) {
+          return;
+        }
+      }
+    }
+  }
+
+  // scan for instrument table
+  if (file->searchBytePattern(ptnLoadInstrTableAddress, ofsLoadInstrTableAddressASM)) {
+    addrInstrTable =
+        file->readByte(ofsLoadInstrTableAddressASM + 7) | (file->readByte(ofsLoadInstrTableAddressASM + 10) << 8);
+  }
+  else {
+    return;
+  }
+
+  // get sample map address from DIR register value
+  std::map<u8, u8> dspRegMap = getInitDspRegMap(file);
+  std::map<u8, u8>::iterator itSpcDIR = dspRegMap.find(0x5d);
+  if (itSpcDIR == dspRegMap.end()) {
+    return;
+  }
+  u8 spcDIR = itSpcDIR->second;
+
+  auto* newInstrSet = pRoot->loadVGMFile<CapcomSnesInstrSet>(file, addrInstrTable, spcDIR << 8);
+  if (!newInstrSet) {
+    return;
+  }
+}
+
+u16 CapcomSnesScanner::getCurrentPlayAddressFromARAM(const RawFile *file, CapcomSnesVersion version, u8 channel) {
+  u16 currentAddress;
+  if (version == CAPCOMSNES_V1_BGM_IN_LIST) {
+    currentAddress = file->readByte(0x00 + channel * 2 + 1) | (file->readByte(0x10 + channel * 2 + 1) << 8);
+  }
+  else {
+    currentAddress = file->readByte(0x00 + channel) | (file->readByte(0x08 + channel) << 8);
+  }
+  return currentAddress;
+}
+
+int CapcomSnesScanner::getLengthOfSongList(const RawFile *file, u16 addrSongList) {
+  int length = 0;
+
+  // do heuristic search for each songs
+  for (int songIndex = 0; songIndex <= 0x7f; songIndex++) {
+    // check the address range of song pointer
+    if (addrSongList + songIndex * 2 + 2 > 0x10000) {
+      break;
+    }
+
+    // get header address and validate it
+    u16 addrSongHeader = file->readShortBE(addrSongList + songIndex * 2);
+    if (addrSongHeader == 0) {
+      length++;
+      continue;
+    }
+    else if (!isValidBGMHeader(file, addrSongHeader)) {
+      break;
+    }
+
+    length++;
+  }
+
+  return length;
+}
+
+s8 CapcomSnesScanner::guessCurrentSongFromARAM(const RawFile *file, CapcomSnesVersion version, u16 addrSongList) const {
+  s8 guessedSongIndex = -1;
+  int guessBestScore = INT_MAX;
+
+  // do heuristic search for each songs
+  int songListLength = getLengthOfSongList(file, addrSongList);
+  for (int songIndex = 0; songIndex < songListLength; songIndex++) {
+    // get header address
+    u16 addrSongHeader = file->readShortBE(addrSongList + songIndex * 2);
+    if (addrSongHeader == 0) {
+      continue;
+    }
+
+    // read start address for each voices
+    int guessScore = 0;
+    int validTrackCount = 0;
+    for (int track = 0; track < 8; track++) {
+      u16 addrScoreData = file->readShortBE(addrSongHeader + 1 + track * 2);
+      u16 currentAddress = this->getCurrentPlayAddressFromARAM(file, version, 7 - track);
+
+      // next if the voice is stopped, or not loaded yet
+      if (currentAddress == 0) {
+        continue;
+      }
+
+      // current address must be greater than start address
+      if (addrScoreData > currentAddress) {
+        validTrackCount = 0;
+        break;
+      }
+
+      // measure the distance
+      guessScore += (currentAddress - addrScoreData);
+      validTrackCount++;
+    }
+
+    // update search result if necessary
+    if (validTrackCount > 0) {
+      // calculate the average score of all tracks
+      // (also, make it a fixed-point number)
+      guessScore = (guessScore * 16) / validTrackCount;
+      if (guessBestScore > guessScore) {
+        guessBestScore = guessScore;
+        guessedSongIndex = songIndex;
+      }
+    }
+  }
+
+  return guessedSongIndex;
+}
+
+bool CapcomSnesScanner::isValidBGMHeader(const RawFile *file, u32 addrSongHeader) {
+  if (addrSongHeader + 17 > 0x10000) {
+    return false;
+  }
+
+  for (int track = 0; track < 8; track++) {
+    u16 addrScoreData = file->readShortBE(addrSongHeader + 1 + track * 2);
+    if ((addrScoreData & 0xff00) == 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+std::map<u8, u8> CapcomSnesScanner::getInitDspRegMap(const RawFile *file) {
+  std::map<u8, u8> dspRegMap;
+
+  u32 ofsDspRegInitASM;
+  u32 ofsDspRegInitOldVerASM;
+  u32 dspRegCount;
+  u32 addrDspRegList;
+  u32 addrDspValueList;
+
+  // find a code block which initializes dsp registers
+  if (file->searchBytePattern(ptnDspRegInit, ofsDspRegInitASM)) {
+    dspRegCount = file->readByte(ofsDspRegInitASM + 1);
+    addrDspRegList = file->readShort(ofsDspRegInitASM + 3) + 1;
+    addrDspValueList = file->readShort(ofsDspRegInitASM + 9) + 1;
+  }
+  else if (file->searchBytePattern(ptnDspRegInitOldVer, ofsDspRegInitOldVerASM)) {
+    dspRegCount = file->readByte(ofsDspRegInitOldVerASM + 12);
+    addrDspRegList = file->readShort(ofsDspRegInitOldVerASM + 1);
+    addrDspValueList = file->readShort(ofsDspRegInitOldVerASM + 5);
+  }
+  else {
+    return dspRegMap;
+  }
+
+  // check address range
+  if (addrDspRegList + dspRegCount > 0x10000 || addrDspValueList + dspRegCount > 0x10000) {
+    return dspRegMap;
+  }
+
+  // store dsp reg/value pairs to map
+  for (u32 regIndex = 0; regIndex < dspRegCount; regIndex++) {
+    u8 dspReg = file->readByte(addrDspRegList + regIndex);
+    u8 dspValue = file->readByte(addrDspValueList + regIndex);
+    dspRegMap[dspReg] = dspValue;
+  }
+
+  return dspRegMap;
+}

@@ -223,21 +223,48 @@ static void vb_blit(void)
     memset(out + (y0 + dst_h) * GW_LCD_WIDTH, 0,
            (size_t)(GW_LCD_HEIGHT - y0 - dst_h) * GW_LCD_WIDTH * sizeof(uint16_t));
 
-    int sy_acc = 0;                                  /* += 224 per row, sy = acc/dst_h */
-    int sy = 0;
-    for (int ry = 0; ry < dst_h; ry++) {
-        const uint16_t *col = vb_fb + (sy >> 3);
-        int shift = (sy & 7) * 2;
-        uint16_t *dst = out + (y0 + ry) * GW_LCD_WIDTH;
-        int sx_acc = 0;                              /* += 384 per px, sx advances by carry */
-        const uint16_t *src = col;
-        for (int dx = 0; dx < dst_w; dx++) {
-            dst[dx] = pal565[(*src >> shift) & 3];
+    /* Cache-friendly transpose-scale. vb_fb is COLUMN-major (a column = 32 words
+     * = 64 bytes, one pixel-column of the VB screen). The natural output-driven
+     * order reads it ACROSS columns per output row — a 64-byte hop for every
+     * source pixel, i.e. a fresh 32-byte cache line touched for 2 bytes used,
+     * ~71k D-cache misses/frame. The QEMU rig (no cache model) cannot see this;
+     * the device pays it as real stall time and it dominates the blit.
+     *
+     * So iterate column-OUTER: precompute the same source column/row Bresenham
+     * maps the output-driven loop walked (identical sequence -> bit-for-bit the
+     * same pixels), then read each source column's 1-2 cache lines ONCE and fan
+     * them down all dst_h output rows. Reads become sequential-per-column and
+     * reused; output writes go column-strided, but they land in the uncached
+     * LCD framebuffer where strided and sequential cost the same. The maps are
+     * geometry-only (never change), so they are built once. */
+    static uint16_t col_word[GW_LCD_WIDTH];   /* dst col -> source column word base (col*32) */
+    static uint8_t  row_woff[GW_LCD_HEIGHT];  /* dst row -> source word offset (sy>>3)        */
+    static uint8_t  row_shift[GW_LCD_HEIGHT]; /* dst row -> source bit shift (sy&7)*2         */
+    static int      maps_ready = 0;
+    if (!maps_ready) {
+        int sx_acc = 0, col = 0;
+        for (int dx = 0; dx < dst_w; dx++) {         /* mirrors the old inner sx Bresenham */
+            col_word[dx] = (uint16_t)(col * 32);
             sx_acc += 384;
-            while (sx_acc >= dst_w) { sx_acc -= dst_w; src += 32; }
+            while (sx_acc >= dst_w) { sx_acc -= dst_w; col++; }
         }
-        sy_acc += 224;
-        while (sy_acc >= dst_h) { sy_acc -= dst_h; sy++; }
+        int sy_acc = 0, sy = 0;
+        for (int ry = 0; ry < dst_h; ry++) {         /* mirrors the old outer sy Bresenham */
+            row_woff[ry]  = (uint8_t)(sy >> 3);
+            row_shift[ry] = (uint8_t)((sy & 7) * 2);
+            sy_acc += 224;
+            while (sy_acc >= dst_h) { sy_acc -= dst_h; sy++; }
+        }
+        maps_ready = 1;
+    }
+
+    for (int dx = 0; dx < dst_w; dx++) {
+        const uint16_t *column = vb_fb + col_word[dx];
+        uint16_t *dst = out + y0 * GW_LCD_WIDTH + dx;
+        for (int ry = 0; ry < dst_h; ry++) {
+            *dst = pal565[(column[row_woff[ry]] >> row_shift[ry]) & 3];
+            dst += GW_LCD_WIDTH;
+        }
     }
 }
 
@@ -295,7 +322,7 @@ int app_main_vb(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     { extern uint32_t HAL_RCC_GetSysClockFreq(void);
       vb_diag("clock=%lu MHz (auto-OC lvl2 requested)\n",
               (unsigned long)(HAL_RCC_GetSysClockFreq() / 1000000)); }
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL, NULL);
 
     /* getromdata() sets ram_start (heap past overlay BSS) — MUST precede the
      * v810_init() region allocations, which pull from that heap. */

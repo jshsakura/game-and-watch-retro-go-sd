@@ -276,12 +276,17 @@ void app_main_wswan(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     video_frame.buffer = FrameBuffer;
 
-    /* WonderSwan runs close to the edge on stock 280MHz in heavy games — same
-     * scoped, non-persisted mild boost as VB (level 1 = 312MHz; reset on exit). */
-    common_emu_auto_oc(1);
+    /* Stock clock. The cycle-exact idle-skip + WSRender rewrite put the
+     * heaviest One Piece battle frame at ~2.30M insn/frame on the M7 rig —
+     * 61% of the STOCK 280MHz budget (~3.73M), leaving ~1.4M/frame of margin
+     * for what the rig cannot see (D-cache misses, OSPI flash-XIP latency).
+     * The device confirmed a smooth 75 fps on the level-1 build with that
+     * margin unused, so the scoped boost is gone. Level 0 still honours a
+     * user-set global OC level as a floor (common_emu_auto_oc semantics). */
+    common_emu_auto_oc(0);
 
     odroid_system_init(APPID_WSWAN, WS_SAMPLE_RATE);
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL);
+    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, NULL, NULL, NULL);
 
     /* First-run default = FIT (global OFF = tiny native, too small here). FIT
      * fills the screen while preserving the 224:144 aspect ratio — sensible,

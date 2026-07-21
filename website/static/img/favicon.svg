@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" shape-rendering="crispEdges">
+  <!-- Game & Watch shell: dark green body + gold ring -->
+  <rect x="1.5" y="1.5" width="29" height="29" rx="6" fill="#1f3d2b"/>
+  <rect x="1.5" y="1.5" width="29" height="29" rx="6" fill="none" stroke="#c9a227" stroke-width="2"/>
+  <!-- olive LCD screen -->
+  <rect x="6" y="5" width="20" height="13" rx="1.5" fill="#8b956d" stroke="#3b3f28" stroke-width="1.2"/>
+  <!-- pixel space invader -->
+  <g>
+    <rect x="11.6" y="6.4" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="19.4" y="6.4" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="12.9" y="7.7" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="18.1" y="7.7" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="11.6" y="9.0" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="12.9" y="9.0" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="14.2" y="9.0" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="15.5" y="9.0" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="16.8" y="9.0" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="18.1" y="9.0" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="19.4" y="9.0" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="10.3" y="10.3" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="11.6" y="10.3" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="14.2" y="10.3" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="15.5" y="10.3" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="16.8" y="10.3" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="19.4" y="10.3" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="20.7" y="10.3" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="9.0" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="10.3" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="11.6" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="12.9" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="14.2" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="15.5" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="16.8" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="18.1" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="19.4" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="20.7" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="22.0" y="11.6" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="9.0" y="12.9" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="11.6" y="12.9" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="12.9" y="12.9" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="14.2" y="12.9" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="15.5" y="12.9" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="16.8" y="12.9" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="18.1" y="12.9" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="19.4" y="12.9" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="22.0" y="12.9" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="9.0" y="14.2" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="11.6" y="14.2" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="19.4" y="14.2" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="22.0" y="14.2" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="12.9" y="15.5" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="14.2" y="15.5" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="16.8" y="15.5" width="1.3" height="1.3" fill="#2b3019"/>
+    <rect x="18.1" y="15.5" width="1.3" height="1.3" fill="#2b3019"/>
+  </g>
+  <!-- D-pad (parchment) -->
+  <rect x="9" y="21.5" width="2.4" height="7.2" rx="0.5" fill="#efecd6"/>
+  <rect x="6.6" y="23.9" width="7.2" height="2.4" rx="0.5" fill="#efecd6"/>
+  <!-- buttons: Mario red + Zelda green -->
+  <circle cx="22.5" cy="26.5" r="2.1" fill="#e60012"/>
+  <circle cx="26.6" cy="23.2" r="2.1" fill="#4a9d52"/>
+</svg>

@@ -17,17 +17,17 @@
 #include "rg_emulators.h"
 #include "favorites.h"
 #include "gw_malloc.h"
+#include "rg_system_grid.h"
+#include "appid.h"
 
 #if !defined(COVERFLOW)
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 
-#define IMAGE_LOGO_WIDTH (47)
-#define IMAGE_LOGO_HEIGHT (51)
 #define IMAGE_BANNER_WIDTH (ODROID_SCREEN_WIDTH)
 #define IMAGE_BANNER_HEIGHT (32)
-#define STATUS_HEIGHT (33)
-#define HEADER_HEIGHT (47)
+#define STATUS_HEIGHT RG_STATUS_HEIGHT
+#define HEADER_HEIGHT RG_HEADER_HEIGHT
 
 #define CRC_WIDTH (104)
 #define CRC_X_OFFSET (ODROID_SCREEN_WIDTH - CRC_WIDTH)
@@ -70,7 +70,15 @@ static uint16_t *pCover_Buffer = NULL;
  * at the slot size, so all four themes lay out identical frames. */
 #define COVER_SLOT_WIDTH ((uint32_t)75)
 #define COVER_SLOT_HEIGHT ((uint32_t)100)
-#define COVER_SLOT_BYTES ((uint32_t)(COVER_SLOT_WIDTH * COVER_SLOT_HEIGHT * 2))
+
+/* "Square" cover style (user option): every cover everywhere is center-crop
+ * -filled into one square tile. COVER_MAX_HEIGHT (100) is the tallest box the
+ * coverflow layouts allot, so the square is 100x100 — as large as the layouts
+ * can host without repositioning anything. */
+#define COVER_SQUARE_SIZE ((uint32_t)COVER_MAX_HEIGHT)
+
+/* One scratch buffer serves both slot shapes; size it for the biggest. */
+#define COVER_SLOT_MAX_BYTES ((uint32_t)(COVER_SQUARE_SIZE * COVER_SQUARE_SIZE * 2))
 
 const uint8_t cover_light[5] = {60, 120, 255, 120, 60};
 const uint8_t cover_light3[3] = {255, 120, 60};
@@ -231,7 +239,7 @@ void gui_event(gui_event_t event, tab_t *tab)
 
 tab_t *gui_add_tab(const char *name, int16_t logo_idx, int16_t header_idx, void *arg, void *event_handler)
 {
-    tab_t *tab = rg_calloc(1, sizeof(tab_t));
+    tab_t *tab = ahb_calloc(1, sizeof(tab_t));
 
     sprintf(tab->name, "%s", name);
     sprintf(tab->status, "Loading...");
@@ -316,7 +324,15 @@ tab_t *gui_set_current_tab(int index)
 
 void gui_save_current_tab()
 {
+    /* tab->arg points into AHB emulators[], discarded by ahb_init() when a
+     * core starts. Re-saving from inside an emulator (sleep path) would
+     * persist crushed browse_subpath. Values were already committed at launch. */
+    if (odroid_system_get_app()->id != APPID_LAUNCHER)
+        return;
+
     tab_t *tab = gui_get_current_tab();
+    if (!tab)
+        return;
 
     odroid_settings_MainMenuCursor_set(tab->listbox.cursor);
     odroid_settings_MainMenuSelectedTab_set(gui.selected);
@@ -470,10 +486,19 @@ void gui_scroll_list(tab_t *tab, scroll_mode_t mode)
 
 void gui_redraw_callback()
 {
-    tab_t *tab = gui_get_current_tab();
+    /* In grid mode the chrome follows the highlighted system, not the selected
+     * one: the header bar is what names the icon the cursor is on. Dialogs opened
+     * over the grid take this same callback, so they repaint the grid too. */
+    tab_t *tab = rg_system_grid_is_open() ? gui_get_tab(rg_system_grid_cursor())
+                                          : gui_get_current_tab();
+
     gui_draw_header(tab);
     gui_draw_status(tab);
-    gui_draw_list(tab);
+
+    if (rg_system_grid_is_open())
+        rg_system_grid_draw();
+    else
+        gui_draw_list(tab);
 }
 
 void gui_redraw()
@@ -483,20 +508,10 @@ void gui_redraw()
     lcd_swap();
 }
 
-void gui_draw_navbar()
-{
-    for (int i = 0; i < gui.tabcount; i++)
-    {
-        retro_logo_image *logo = rg_get_logo(gui.tabs[i]->logo_idx);
-        if (logo)
-            odroid_display_write(i * IMAGE_LOGO_WIDTH, 0, IMAGE_LOGO_WIDTH, IMAGE_LOGO_HEIGHT, (const uint16_t*)logo);
-    }
-}
-
 /* Blit a full-colour RGB565 console icon into the active LCD buffer, skipping
  * transparent (colour-key) pixels. (x, y) is the icon's nominal footprint; the
  * stored bitmap covers only its opaque bounding box, at (ic->ox, ic->oy). */
-static void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
+static void gui_blit_color_icon(int x, int y, const color_icon_t *ic, const uint16_t *pal)
 {
     uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
     for (int row = 0; row < ic->bh; row++) {
@@ -513,9 +528,32 @@ static void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
             int px = x + ic->ox + col;
             if (px < 0 || px >= GW_LCD_WIDTH)
                 continue;
-            dst[px] = ic->pal[idx];
+            dst[px] = pal[idx];
         }
     }
+}
+
+void gui_draw_color_icon(int x, int y, const color_icon_t *ic)
+{
+    gui_blit_color_icon(x, y, ic, ic->pal);
+}
+
+/* Fade an icon TOWARDS a colour — the background, in practice — rather than
+ * towards black. Darkening only reads as "receding" on a dark theme; on the
+ * light ones (gui_colors[] has plenty) a darkened icon gains contrast against
+ * its ground and jumps forward instead, which is the opposite of the point.
+ *
+ * The icon is 4bpp, so this is SIXTEEN blends for the whole icon — fade the
+ * palette, not the pixels. The inner loop is untouched. */
+void gui_draw_color_icon_fade(int x, int y, const color_icon_t *ic,
+                              uint16_t toward, int strength)
+{
+    uint16_t pal[16];
+
+    for (int i = 0; i < 16; i++)
+        pal[i] = get_darken_pixel_d(ic->pal[i], toward, strength);
+
+    gui_blit_color_icon(x, y, ic, pal);
 }
 
 void gui_draw_header(tab_t *tab)
@@ -820,11 +858,16 @@ static uint8_t *get_coverfile(char *rom_path)
 
     char *coverpath = odroid_system_get_path(ODROID_PATH_COVER_FILE, rom_path);
     FILE *file = fopen(coverpath, "rb");
-    if (!file && strstr(rom_path, "/pcecd/"))
+    if (!file && (strstr(rom_path, "/pcecd/") || strstr(rom_path, "/segacd/")))
     {
-        /* PCE CD = one folder per game; also accept a single cover named after
-         * the game FOLDER so /romart need not mirror the per-game sub-folders:
-         *   /romart/pcecd/<game folder>.img  */
+        /* CD systems = one folder per game (the .cue plus its track .bin files);
+         * also accept a single cover named after the game FOLDER so /romart need
+         * not mirror the per-game sub-folders:
+         *   /romart/pcecd/<game folder>.img
+         *   /romart/segacd/<game folder>.img
+         * Sega CD has the identical on-card layout, so it needs the identical
+         * fallback -- it was left out when the system was added, which is why
+         * its covers never resolved while PCE CD's did. */
         free(coverpath);
         char folder[300];
         strncpy(folder, rom_path, sizeof(folder) - 1);
@@ -905,49 +948,103 @@ static bool cover_decode(retro_emulator_file_t *file, uint32_t *width, uint32_t 
     return false;
 }
 
-static bool cover_slot_active(void)
+/* Which fixed slot (if any) covers are normalized into right now.
+ * Returns false when covers draw at their native decoded size.
+ *
+ * Two sources of truth, square first:
+ *  - the "Square" cover-style user option forces one square tile everywhere;
+ *  - the ★ tab always normalizes (mixed-system art made the row ragged), to
+ *    a poster-shaped 75x100 when the style is Poster. */
+static bool cover_slot_dims(uint32_t *slot_w, uint32_t *slot_h)
 {
-    return rg_favorites_is_current_tab();
+    if (odroid_settings_CoverStyle_get() == ODROID_COVER_STYLE_SQUARE)
+    {
+        *slot_w = COVER_SQUARE_SIZE;
+        *slot_h = COVER_SQUARE_SIZE;
+        return true;
+    }
+    if (rg_favorites_is_current_tab())
+    {
+        *slot_w = COVER_SLOT_WIDTH;
+        *slot_h = COVER_SLOT_HEIGHT;
+        return true;
+    }
+    return false;
 }
 
-/* Rescale the freshly decoded cover in pCover_Buffer into the fixed slot
- * (nearest-neighbour, aspect kept, black letterbox) and report slot dims.
- * No-op outside the ★ tab. */
+/* Rescale the freshly decoded cover in pCover_Buffer into the active fixed
+ * slot and report slot dims. Fills the slot edge to edge the way CSS
+ * object-fit: cover does: keep the aspect ratio, scale (nearest-neighbor, up
+ * or down) until both axes reach the slot, and centre-crop the overflowing
+ * axis. The decoded rows in pCover_Buffer are packed at exactly the reported
+ * width (the DMA2D conversion strips the JPEG MCU padding via its input line
+ * offset), so src_w IS the stride. No-op when no slot is active. */
 static void cover_slot_apply(uint32_t *width, uint32_t *height)
 {
     static uint16_t *pSlot_Buffer = NULL;
     uint32_t src_w = *width, src_h = *height;
+    uint32_t slot_w, slot_h;
 
-    if (!cover_slot_active() || src_w == 0 || src_h == 0)
+    if (!cover_slot_dims(&slot_w, &slot_h) || src_w == 0 || src_h == 0)
         return;
-    if ((src_w == COVER_SLOT_WIDTH) && (src_h == COVER_SLOT_HEIGHT))
+    if ((src_w == slot_w) && (src_h == slot_h))
         return;
     if (pSlot_Buffer == NULL)
-        pSlot_Buffer = (uint16_t *)ram_malloc(COVER_SLOT_BYTES);
+        pSlot_Buffer = (uint16_t *)ram_malloc(COVER_SLOT_MAX_BYTES);
+    if (pSlot_Buffer == NULL)
+        return; /* out of RAM: leave the cover at its decoded size */
 
-    uint32_t dst_w = COVER_SLOT_WIDTH;
-    uint32_t dst_h = (src_h * COVER_SLOT_WIDTH) / src_w;
-    if (dst_h > COVER_SLOT_HEIGHT)
+    /* Largest centred source rect that has the slot's aspect ratio. Comparing
+     * the cross-products avoids any division here. */
+    uint32_t crop_w = src_w, crop_h = src_h;
+    if ((uint64_t)src_w * slot_h > (uint64_t)src_h * slot_w)
+        crop_w = (src_h * slot_w) / slot_h; /* too wide: trim the sides */
+    else
+        crop_h = (src_w * slot_h) / slot_w; /* too tall: trim top/bottom */
+
+    if (crop_w == 0)
+        crop_w = 1;
+    if (crop_h == 0)
+        crop_h = 1;
+
+    const uint32_t off_x = (src_w - crop_w) / 2;
+    const uint32_t off_y = (src_h - crop_h) / 2;
+
+    /* Every slot pixel is written, so the buffer needs no clearing. */
+    for (uint32_t y = 0; y < slot_h; y++)
     {
-        dst_h = COVER_SLOT_HEIGHT;
-        dst_w = (src_w * COVER_SLOT_HEIGHT) / src_h;
+        const uint32_t src_y = off_y + (y * crop_h) / slot_h;
+        const uint16_t *src_row = &pCover_Buffer[src_y * src_w];
+        uint16_t *dst_row = &pSlot_Buffer[y * slot_w];
+        for (uint32_t x = 0; x < slot_w; x++)
+            dst_row[x] = src_row[off_x + (x * crop_w) / slot_w];
     }
 
-    memset(pSlot_Buffer, 0, COVER_SLOT_BYTES);
+    memcpy(pCover_Buffer, pSlot_Buffer, slot_w * slot_h * 2);
+    *width = slot_w;
+    *height = slot_h;
+}
 
-    uint32_t x0 = (COVER_SLOT_WIDTH - dst_w) / 2;
-    uint32_t y0 = (COVER_SLOT_HEIGHT - dst_h) / 2;
-    for (uint32_t y = 0; y < dst_h; y++)
+/* Both slot shapes must round-trip through pCover_Buffer. */
+_Static_assert(COVER_SLOT_MAX_BYTES <= COVER_16BITS_SIZE,
+               "cover slot must fit in the decoded-cover buffer");
+_Static_assert(COVER_SLOT_WIDTH * COVER_SLOT_HEIGHT * 2 <= COVER_SLOT_MAX_BYTES,
+               "slot scratch buffer must hold the poster slot");
+
+/* The per-emulator cover-size cache (emu->cover_width/height, probed once by
+ * gui_draw_coverflow_h) bakes in whichever slot was active at probe time.
+ * Called when the user flips the cover-style option so every tab re-probes. */
+void gui_cover_style_changed(void)
+{
+    for (int i = 0; i < gui.tabcount; i++)
     {
-        const uint16_t *src_row = &pCover_Buffer[((y * src_h) / dst_h) * src_w];
-        uint16_t *dst_row = &pSlot_Buffer[(y0 + y) * COVER_SLOT_WIDTH + x0];
-        for (uint32_t x = 0; x < dst_w; x++)
-            dst_row[x] = src_row[(x * src_w) / dst_w];
+        tab_t *tab = gui.tabs[i];
+        if (tab == NULL || tab->arg == NULL)
+            continue;
+        retro_emulator_t *emu = (retro_emulator_t *)tab->arg;
+        emu->cover_width = 0;
+        emu->cover_height = 0;
     }
-
-    memcpy(pCover_Buffer, pSlot_Buffer, COVER_SLOT_BYTES);
-    *width = COVER_SLOT_WIDTH;
-    *height = COVER_SLOT_HEIGHT;
 }
 
 static void draw_centered_local_text_line(uint16_t y_pos,
@@ -1036,11 +1133,13 @@ static bool gui_get_cover_size(retro_emulator_file_t *file, uint32_t *cov_width,
         if (cov_size != 0 &&
             JPEG_DecodeGetSize((uint32_t)(file->img_address), cov_size, &jpeg_cov_width, &jpeg_cov_height) == 0)
         {
-            /* ★ tab: layout always sees the fixed slot, not the native size */
-            if (cover_slot_active())
+            /* slot active (★ tab or Square style): layout always sees the
+             * fixed slot, not the native size */
+            uint32_t slot_w, slot_h;
+            if (cover_slot_dims(&slot_w, &slot_h))
             {
-                *cov_width = COVER_SLOT_WIDTH;
-                *cov_height = COVER_SLOT_HEIGHT;
+                *cov_width = slot_w;
+                *cov_height = slot_h;
             }
             else
             {
@@ -1084,10 +1183,9 @@ void gui_draw_coverlight_h(retro_emulator_file_t *file, int cover_position)
         if (nocover_height > cover_height)
             nocover_height = cover_height;
     }
-    else if (cover_slot_active())
+    else if (cover_slot_dims(&cover_width, &cover_height))
     {
-        cover_width = COVER_SLOT_WIDTH;
-        cover_height = COVER_SLOT_HEIGHT;
+        /* no cover art: the grey box takes the slot's shape */
     }
     else
     {
@@ -1231,10 +1329,9 @@ void gui_draw_coverlight_v(retro_emulator_file_t *file, int cover_position)
         if (nocover_height > cover_height)
             nocover_height = cover_height;
     }
-    else if (cover_slot_active())
+    else if (cover_slot_dims(&cover_width, &cover_height))
     {
-        cover_width = COVER_SLOT_WIDTH;
-        cover_height = COVER_SLOT_HEIGHT;
+        /* no cover art: the grey box takes the slot's shape */
     }
     else
     {

@@ -2,12 +2,13 @@
  * test_clock_gif.c: config round-trip breadth (theme/face/format/anim/scene/
  * photo-speed + legacy-path migration + out-of-range rejection + MAX_ALARMS
  * cap), alarm-list bookkeeping (delete/tie-break), the pomodoro/timer/
- * stopwatch runner state machine, and the date/time editor's month/day/year
- * rollover (Feb 29, month wrap, year clamp) — see rg_clock.c. Does NOT
- * duplicate anything already covered by test_clock_alarm.c (refire/DND/
+ * stopwatch runner state machine, the date/time editor's month/day/year
+ * rollover (Feb 29, month wrap, year clamp), and the clock_should_idle_sleep()
+ * guard (the clock has no power setting of its own — see rg_clock.c) — Does
+ * NOT duplicate anything already covered by test_clock_alarm.c (refire/DND/
  * window/cfg-alarms/tone-DMA/basic next_alarm).
  *
- * Build + run (NOT wired into tests/run.sh — run standalone):
+ * Build + run (wired into tests/run.sh):
  *   mkdir -p /tmp/mtest
  *   gcc -O2 -Wall -Wextra -std=gnu11 -Itests/clock_stubs tests/test_clock_more.c -o /tmp/mtest/test_clock_more
  *   /tmp/mtest/test_clock_more
@@ -26,6 +27,23 @@ static const char *test_path(const char *p)
   for (char *c = b + 11; *c; c++) if (*c == '/') *c = '_';   /* flatten subdirs */
   return b; }
 #define fopen(p, m) fopen(test_path(p), m)
+/* This test spans BOTH halves of the split clock module: the resident driver
+ * (rg_clock_ring.c -- state, config I/O, runner ticking, alarm timing) and the
+ * overlay UI (rg_clock.c -- rendering, editors, settings menu). Including both
+ * whole gives every static function direct access, exactly like the pre-split
+ * single-file test did. Both files independently declare a few identically-
+ * named private helpers (pressed/fb_fill_screen/PHOTO_HOLD_TBL) -- harmless in
+ * the real build (separate translation units), but a duplicate-definition
+ * error once concatenated here, so rename ring.c's copies before pulling it in. */
+#define pressed          pressed_ring_
+#define fb_fill_screen   fb_fill_screen_ring_
+#define PHOTO_HOLD_TBL   PHOTO_HOLD_TBL_ring_
+#define BEEP_LABELS      BEEP_LABELS_ring_
+#include "../Core/Src/retro-go/rg_clock_ring.c"
+#undef pressed
+#undef fb_fill_screen
+#undef PHOTO_HOLD_TBL
+#undef BEEP_LABELS
 #include "../Core/Src/retro-go/rg_clock.c"
 #undef fopen
 
@@ -61,9 +79,30 @@ static int stub_backlight_level = 6;
 int odroid_display_get_backlight(void) { return stub_backlight_level; }
 void odroid_display_set_backlight(int level) { stub_backlight_level = level; }
 uint8_t odroid_display_get_backlight_raw(void) { return backlightLevels[stub_backlight_level]; }
-/* rg_clock_show() (unused directly by these tests, but compiled) reads the
- * charger state for the idle-backlight charging exception. */
-bq24072_state_t bq24072_get_state(void) { return BQ24072_STATE_DISCHARGING; }
+/* rg_clock_show() (unused directly by these tests, but compiled) asks the
+ * launcher's global idle timeout; clock_should_idle_sleep() below is tested
+ * directly with an explicit timeout_expired argument, so this stub just needs
+ * to link. */
+bool odroid_idle_timeout_expired(uint32_t idle_seconds) { (void)idle_seconds; return false; }
+
+/* ---- .overlay_clock staging seams (rg_clock_ring.c's clock_stage_overlay()/
+ * clock_overlay_arena() reference these; nothing here tests overlay-staging
+ * correctness -- that's device-only, see CLAUDE.md). rg_clock_show() itself
+ * is never called by this test, so these bodies never actually run. ------ */
+void   *__RAM_EMU_START__[512];
+void   *__RAM_EMU_END__[512];
+void   *_OVERLAY_CLOCK_BSS_START[512];
+void   *_OVERLAY_CLOCK_BSS_END[512];
+uint32_t ram_start;
+size_t odroid_overlay_cache_file_in_ram(const char *p, uint8_t *d) { (void)p; (void)d; return 0; }
+void SCB_CleanDCache_by_Addr(uint32_t *a, int32_t s) { (void)a; (void)s; }
+
+/* rg_main.c's PAUSE-menu row, reused (not copied) by the clock's own settings
+ * menu (see rg_clock.c's clock_settings_menu) -- rg_main.c isn't compiled
+ * here, so link a stub. The gauge test below calls cb_vol/cb_bright directly,
+ * never this row itself, so the stub's actual behaviour is irrelevant. */
+bool main_menu_timeout_cb(odroid_dialog_choice_t *o, odroid_dialog_event_t e, uint32_t r)
+{ (void)e; (void)r; if (o && o->value) o->value[0] = 0; return false; }
 
 /* every lang_t field is a `const char *` — point them all at one placeholder
  * so ANY string the renderer reaches for (not just the ones the alarm test
@@ -196,7 +235,7 @@ static void reset_cfg_fields(void)
 {
     s_theme = 0; s_face_override = -1; s_hour24 = false; s_dnd = false;
     s_anim = 0; s_scene = 0; s_photo_speed = 1;
-    s_night_start = 23; s_night_end = 7; s_alarm_volume = 6;
+    s_alarm_volume = 6;
     s_alarm_count = 0; memset(s_alarms, 0, sizeof s_alarms);
 }
 
@@ -254,8 +293,8 @@ static void test_cfg_full_roundtrip(void)
     remove(test_path(CLOCK_CFG_PATH));
     reset_cfg_fields();
     s_theme = 5; s_face_override = FACE_LED; s_hour24 = true;  /* FACE_LED = the last (newest) face: proves the extended range persists */
-    s_anim = ANIM_SCENE; s_scene = 7; s_photo_speed = 2; s_autodim = false;
-    s_night_start = 22; s_night_end = 6; s_alarm_volume = 3;
+    s_anim = ANIM_SCENE; s_scene = 7; s_photo_speed = 2;
+    s_alarm_volume = 3;
     snprintf(s_bgfile, sizeof s_bgfile, "%s", "sunset.gif");
     snprintf(s_alarmsnd, sizeof s_alarmsnd, "%s", "chime.mp3");
     clock_config_save();
@@ -269,24 +308,9 @@ static void test_cfg_full_roundtrip(void)
     CHECK(s_anim == ANIM_SCENE,      "anim round-trips");
     CHECK(s_scene == 7,              "scene round-trips");
     CHECK(s_photo_speed == 2,        "photo speed round-trips");
-    CHECK(s_autodim == false,        "auto-dim round-trips (non-default value)");
-    CHECK(s_night_start == 22,       "night start hour round-trips (non-default value)");
-    CHECK(s_night_end == 6,          "night end hour round-trips (non-default value)");
     CHECK(s_alarm_volume == 3,       "alarm volume round-trips (non-default value)");
     CHECK(strcmp(s_bgfile, "sunset.gif") == 0,    "bgfile round-trips");
     CHECK(strcmp(s_alarmsnd, "chime.mp3") == 0,   "alarmsnd round-trips");
-    s_autodim = true;   /* restore module default */
-
-    /* NIGHT_OFF (start disabled) must round-trip too — it is a real, reachable
-     * setting, not just the default */
-    remove(test_path(CLOCK_CFG_PATH));
-    reset_cfg_fields();
-    s_night_start = NIGHT_OFF;
-    clock_config_save();
-    reset_cfg_fields();
-    s_night_start = 99;   /* poison so a no-op load would be caught */
-    clock_config_load();
-    CHECK(s_night_start == NIGHT_OFF, "night start Off round-trips");
 
     /* an empty (default) bgfile/alarmsnd must NOT be written — "" means the
      * implicit bg.gif / alarm.mp3, and an old cfg without the key must stay
@@ -298,244 +322,6 @@ static void test_cfg_full_roundtrip(void)
     char buf[512] = ""; if (cf) { size_t n = fread(buf, 1, sizeof buf - 1, cf); buf[n] = 0; fclose(cf); }
     CHECK(strstr(buf, "bgfile=")   == NULL, "empty bgfile is not persisted");
     CHECK(strstr(buf, "alarmsnd=") == NULL, "empty alarmsnd is not persisted");
-}
-
-/* ---- idle backlight: the pure 3-state decision function ------------------
- * CLOCK_BL_FULL / CLOCK_BL_DIM / CLOCK_BL_OFF. Day dims to half brightness;
- * the night window (23:00-07:00, wrapping past midnight) goes fully off
- * instead, like a bedside clock. night_start_min/night_end_min/charging are
- * the newest parameters — NP_START/NP_END ("23-07", the original always-on
- * default) and charging=false reproduce the exact behaviour this function had
- * before either feature existed, so the bulk of this test just threads those
- * constants through unchanged. */
-#define NP_START (23 * 60)   /* this test's baseline window: 23:00-07:00 */
-#define NP_END   (7 * 60)
-static void test_backlight_logic(void)
-{
-    int noon = 12 * 60;
-
-    /* ---- day dim, at and around the idle threshold ---- */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, noon, NP_START, NP_END, false) == CLOCK_BL_DIM,
-          "dims (day) on the clock face once idle >= the threshold");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS - 1, noon, NP_START, NP_END, false) == CLOCK_BL_FULL,
-          "does not dim before the idle threshold");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, 0, noon, NP_START, NP_END, false) == CLOCK_BL_FULL,
-          "fresh input (idle=0) keeps full brightness");
-
-    /* ---- night-OFF window + midnight wraparound, all AT the idle threshold ---- */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 22 * 60 + 59, NP_START, NP_END, false) == CLOCK_BL_DIM,
-          "22:59 is still day — dims, does not go dark");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 23 * 60, NP_START, NP_END, false) == CLOCK_BL_OFF,
-          "23:00 enters the night window — backlight off");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 3 * 60, NP_START, NP_END, false) == CLOCK_BL_OFF,
-          "03:00 is deep in the night window (past midnight) — off");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 6 * 60 + 59, NP_START, NP_END, false) == CLOCK_BL_OFF,
-          "06:59 is still inside the night window — off");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 7 * 60, NP_START, NP_END, false) == CLOCK_BL_DIM,
-          "07:00 exits the night window — back to a day dim");
-
-    /* ---- not idle yet: always FULL, day or night ---- */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, 0, 23 * 60, NP_START, NP_END, false) == CLOCK_BL_FULL,
-          "fresh input at night keeps full brightness");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS - 1, 3 * 60, NP_START, NP_END, false) == CLOCK_BL_FULL,
-          "just under the threshold at night is still full brightness");
-
-    /* ---- ringing always forces FULL, even waking from night-OFF, even while charging ---- */
-    CHECK(clock_should_dim(MODE_CLOCK, true, true, CLOCK_DIM_IDLE_MS * 2, 3 * 60, NP_START, NP_END, false) == CLOCK_BL_FULL,
-          "a ringing alarm always forces full brightness, even at 03:00 idle");
-    CHECK(clock_should_dim(MODE_CLOCK, true, true, CLOCK_DIM_IDLE_MS * 2, 3 * 60, NP_START, NP_END, true) == CLOCK_BL_FULL,
-          "ringing beats everything, including charging");
-
-    /* ---- never touches a face the user is actively watching ---- */
-    CHECK(clock_should_dim(MODE_TIMER, false, true, CLOCK_DIM_IDLE_MS * 2, noon, NP_START, NP_END, false) == CLOCK_BL_FULL,
-          "never dims the running-timer face the user is watching");
-    CHECK(clock_should_dim(MODE_POMODORO, false, true, CLOCK_DIM_IDLE_MS * 2, 3 * 60, NP_START, NP_END, false) == CLOCK_BL_FULL,
-          "never dims the pomodoro face, even at night");
-    CHECK(clock_should_dim(MODE_STOPWATCH, false, true, CLOCK_DIM_IDLE_MS * 2, noon, NP_START, NP_END, false) == CLOCK_BL_FULL,
-          "never dims the stopwatch face");
-
-    /* ---- the single autodim toggle governs BOTH day-dim and night-off ---- */
-    CHECK(clock_should_dim(MODE_CLOCK, false, false, CLOCK_DIM_IDLE_MS * 2, noon, NP_START, NP_END, false) == CLOCK_BL_FULL,
-          "auto-dim off disables day dimming");
-    CHECK(clock_should_dim(MODE_CLOCK, false, false, CLOCK_DIM_IDLE_MS * 2, 3 * 60, NP_START, NP_END, false) == CLOCK_BL_FULL,
-          "auto-dim off disables night-off too");
-}
-
-/* ---- night start/end rows: free-combination window mapping --------------
- * Replaces the old fixed-preset cycling (Off/22-06/23-07/00-08) with two
- * independent rows, so any start/end pair can be picked. Covers the three
- * old presets (now just particular combinations) plus two NEW combos that
- * were never expressible as a preset: 21-09 (widest) and 01-05 (latest
- * start, earliest end, no midnight wrap). */
-static void test_night_window_combos(void)
-{
-    int noon = 12 * 60;
-
-    /* start = NIGHT_OFF: the night window never fires, day dim still applies
-     * (end is irrelevant while off — passed as NP_END here, any value would do) */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 3 * 60, NIGHT_OFF, NP_END, false) == CLOCK_BL_DIM,
-          "Off: 03:00 (would be night under any other combo) just day-dims");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, noon, NIGHT_OFF, NP_END, false) == CLOCK_BL_DIM,
-          "Off: daytime still dims as usual");
-
-    /* 22-06 (old preset 1) */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 21 * 60 + 59, 22 * 60, 6 * 60, false) == CLOCK_BL_DIM,
-          "22-06: 21:59 is still day");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 22 * 60, 22 * 60, 6 * 60, false) == CLOCK_BL_OFF,
-          "22-06: 22:00 enters the window");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 5 * 60 + 59, 22 * 60, 6 * 60, false) == CLOCK_BL_OFF,
-          "22-06: 05:59 still inside (past midnight)");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 6 * 60, 22 * 60, 6 * 60, false) == CLOCK_BL_DIM,
-          "22-06: 06:00 exits the window");
-
-    /* 00-08 (old preset 3) */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 23 * 60 + 59, 0, 8 * 60, false) == CLOCK_BL_DIM,
-          "00-08: 23:59 is still day (window starts at 00:00)");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 0, 0, 8 * 60, false) == CLOCK_BL_OFF,
-          "00-08: 00:00 enters the window");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 7 * 60 + 59, 0, 8 * 60, false) == CLOCK_BL_OFF,
-          "00-08: 07:59 still inside");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 8 * 60, 0, 8 * 60, false) == CLOCK_BL_DIM,
-          "00-08: 08:00 exits the window");
-
-    /* NEW: 21-09 — the widest combo, only reachable now that start/end are free */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 20 * 60 + 59, 21 * 60, 9 * 60, false) == CLOCK_BL_DIM,
-          "21-09: 20:59 is still day");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 21 * 60, 21 * 60, 9 * 60, false) == CLOCK_BL_OFF,
-          "21-09: 21:00 enters the window");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 8 * 60 + 59, 21 * 60, 9 * 60, false) == CLOCK_BL_OFF,
-          "21-09: 08:59 still inside (past midnight)");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 9 * 60, 21 * 60, 9 * 60, false) == CLOCK_BL_DIM,
-          "21-09: 09:00 exits the window");
-
-    /* NEW: 01-05 — latest start, earliest end; no midnight wrap (end > start
-     * within the same day), the other boundary shape clock_in_night_window
-     * must also get right */
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 0 * 60 + 59, 1 * 60, 5 * 60, false) == CLOCK_BL_DIM,
-          "01-05: 00:59 is still day (before the window opens)");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 1 * 60, 1 * 60, 5 * 60, false) == CLOCK_BL_OFF,
-          "01-05: 01:00 enters the window");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 4 * 60 + 59, 1 * 60, 5 * 60, false) == CLOCK_BL_OFF,
-          "01-05: 04:59 still inside");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 5 * 60, 1 * 60, 5 * 60, false) == CLOCK_BL_DIM,
-          "01-05: 05:00 exits the window, same day");
-}
-
-/* ---- charging exception: suppresses the DAY dim, never the night-OFF --- */
-static void test_charging_exception(void)
-{
-    int noon = 12 * 60;
-
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, noon, NP_START, NP_END, true) == CLOCK_BL_FULL,
-          "charging suppresses the daytime idle half-dim (desk clock on permanent power)");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, noon, NP_START, NP_END, false) == CLOCK_BL_DIM,
-          "sanity: the same moment without charging still dims");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 3 * 60, NP_START, NP_END, true) == CLOCK_BL_OFF,
-          "night full-off STILL applies while charging — a charger overnight must not light the room");
-    CHECK(clock_should_dim(MODE_CLOCK, false, true, CLOCK_DIM_IDLE_MS, 3 * 60, NIGHT_OFF, NP_END, true) == CLOCK_BL_FULL,
-          "with the night window Off, charging suppresses the day-equivalent dim at night too");
-}
-
-/* ---- night-off cfg: cycling rows + legacy nightoff= preset migration ---- */
-static void test_night_settings_rows_and_migration(void)
-{
-    /* cb_night_start cycles Off -> 21 -> 22 -> 23 -> 0 -> 1 -> Off */
-    odroid_dialog_choice_t row[2] = {
-        { 14, "x", (char[16]){0}, 1, cb_night_start },
-        { 16, "x", (char[16]){0}, 1, cb_night_end },
-    };
-    s_night_start = NIGHT_OFF;
-    cb_night_start(&row[0], ODROID_DIALOG_NEXT, 0);
-    CHECK(s_night_start == 21, "start Off -NEXT-> 21:00");
-    CHECK(row[1].enabled == 1, "end row enables once start leaves Off");
-    for (int want = 22; want <= 23; want++) {
-        cb_night_start(&row[0], ODROID_DIALOG_NEXT, 0);
-        CHECK(s_night_start == want, "start cycles forward through 22/23");
-    }
-    cb_night_start(&row[0], ODROID_DIALOG_NEXT, 0);
-    CHECK(s_night_start == 0, "start 23 -NEXT-> 00:00 (wraps to the small hours)");
-    cb_night_start(&row[0], ODROID_DIALOG_NEXT, 0);
-    CHECK(s_night_start == 1, "start 00 -NEXT-> 01:00");
-    cb_night_start(&row[0], ODROID_DIALOG_NEXT, 0);
-    CHECK(s_night_start == NIGHT_OFF, "start 01 -NEXT-> Off (full cycle)");
-    CHECK(row[1].enabled == -1, "end row disables once start returns to Off");
-    cb_night_start(&row[0], ODROID_DIALOG_PREV, 0);
-    CHECK(s_night_start == 1, "start Off -PREV-> 01:00 (wraps the other way)");
-
-    /* cb_night_end cycles 05 -> 06 -> 07 -> 08 -> 09 -> 05 */
-    s_night_end = 5;
-    for (int want = 6; want <= 9; want++) {
-        cb_night_end(&row[1], ODROID_DIALOG_NEXT, 0);
-        CHECK(s_night_end == want, "end cycles forward through 06..09");
-    }
-    cb_night_end(&row[1], ODROID_DIALOG_NEXT, 0);
-    CHECK(s_night_end == 5, "end 09 -NEXT-> 05 (wraps)");
-    cb_night_end(&row[1], ODROID_DIALOG_PREV, 0);
-    CHECK(s_night_end == 9, "end 05 -PREV-> 09 (wraps the other way)");
-
-    /* legacy nightoff= preset migration: only applies when the file has no
-     * nightstart= key at all (a pre-two-row config) */
-    struct { int preset; int want_start, want_end; } cases[] = {
-        { 0, NIGHT_OFF, 0 },
-        { 1, 22,        6 },
-        { 2, 23,        7 },
-        { 3, 0,         8 },
-    };
-    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
-        remove(test_path(CLOCK_CFG_PATH));
-        FILE *f = fopen(test_path(CLOCK_CFG_PATH), "w");
-        fprintf(f, "nightoff=%d\n", cases[i].preset);
-        fclose(f);
-        reset_cfg_fields();
-        s_night_start = 99; s_night_end = 99;   /* poison */
-        clock_config_load();
-        CHECK(s_night_start == cases[i].want_start,
-              "legacy nightoff preset migrates to the right start hour");
-        if (cases[i].preset != 0)
-            CHECK(s_night_end == cases[i].want_end,
-                  "legacy nightoff preset migrates to the right end hour");
-    }
-
-    /* a config already saved under the new keys must NOT be re-migrated even
-     * if a stale nightoff= line is also present */
-    remove(test_path(CLOCK_CFG_PATH));
-    FILE *f = fopen(test_path(CLOCK_CFG_PATH), "w");
-    fprintf(f, "nightoff=1\n");       /* stale: would mean 22-06 if it won */
-    fprintf(f, "nightstart=1\n");     /* new-scheme value: 01:00 */
-    fprintf(f, "nightend=5\n");
-    fclose(f);
-    reset_cfg_fields();
-    clock_config_load();
-    CHECK(s_night_start == 1 && s_night_end == 5,
-          "nightstart=/nightend= win over a stale nightoff= in the same file");
-
-    remove(test_path(CLOCK_CFG_PATH));
-    reset_cfg_fields();
-}
-
-/* ---- dim level helper: gentle 1/4-of-headroom drop, never below the floor ---*/
-static void test_dim_level(void)
-{
-    /* Drop is 1/4 of the headroom above CLOCK_DIM_FLOOR (128): a little dimmer,
-     * not half-off. 255 -> 255 - (127/4) = 224; 178 -> 178 - (50/4) = 166. */
-    CHECK(clock_dim_level(255) == 224, "max brightness dips gently (255 - 127/4 = 224), stays clearly readable");
-    CHECK(clock_dim_level(128) == 128, "already at the lowest odroid backlight level — nothing lower to dim to");
-    CHECK(clock_dim_level(178) == 166, "mid-range user level dips a little (178 - 50/4 = 166)");
-    CHECK(clock_dim_level(0) == CLOCK_DIM_FLOOR,
-          "even a hypothetical zero brightness clamps to the floor — dimming never goes darker than the device's own minimum");
-    /* The dim result must always sit strictly between the floor and the user's
-     * pick (or exactly the floor when the pick is already at/below it). */
-    for (int v = 0; v <= 255; v++) {
-        uint8_t d = clock_dim_level((uint8_t)v);
-        if (d < CLOCK_DIM_FLOOR) {
-            CHECK(0, "clock_dim_level must never return below CLOCK_DIM_FLOOR for any input");
-            break;
-        }
-        if (v > CLOCK_DIM_FLOOR && d > v) {
-            CHECK(0, "dimming must never brighten past the user's own setting");
-            break;
-        }
-    }
 }
 
 /* ---- alarm ring overlay: forced, legible, in-bounds ----------------------*/
@@ -568,10 +354,6 @@ static void test_cfg_rejects_out_of_range(void)
     fprintf(f, "theme=-1\n");   /* negative: reject */
     fprintf(f, "face=99\n");    /* > FACE_LAST: reject (past the extended face range) */
     fprintf(f, "anim=1\n");     /* retired ambient value: migrates to off (0), not kept as 1 */
-    fprintf(f, "nightstart=99\n");   /* not in {NIGHT_OFF}u{21,22,23,0,1}: reject */
-    fprintf(f, "nightstart=-2\n");   /* not NIGHT_OFF(-1) and not a valid hour: reject */
-    fprintf(f, "nightend=99\n");     /* not in {5,6,7,8,9}: reject */
-    fprintf(f, "nightend=-1\n");     /* negative: reject */
     fprintf(f, "alarmvol=99\n");     /* > ODROID_AUDIO_VOLUME_MAX: reject */
     fprintf(f, "alarmvol=-1\n");     /* negative: reject */
     fclose(f);
@@ -581,8 +363,6 @@ static void test_cfg_rejects_out_of_range(void)
     CHECK(s_theme == 0,         "out-of-range theme rejected, default kept");
     CHECK(s_face_override == -1, "out-of-range face rejected, default kept");
     CHECK(s_anim == 0,          "retired ambient (anim=1) migrates to off, not ANIM_SCENE");
-    CHECK(s_night_start == 23,  "out-of-range nightstart rejected, default (23:00) kept");
-    CHECK(s_night_end == 7,     "out-of-range nightend rejected, default (07:00) kept");
     CHECK(s_alarm_volume == 6,  "out-of-range alarmvol rejected, default kept");
 
     remove(test_path(CLOCK_CFG_PATH));
@@ -777,9 +557,125 @@ static void test_clock_edit_time_rollover(void)
     }
 }
 
+/* ---- clock_should_idle_sleep: the pure guard rg_clock_show's idle-sleep
+ * check calls — see the comment at its definition in rg_clock.c. The clock
+ * has no power setting of its own (no keep-awake opt-out): the launcher's
+ * global "Idle power off" is the only rule, unconditionally. */
+static void test_clock_should_idle_sleep(void)
+{
+    CHECK(clock_should_idle_sleep(false, MODE_CLOCK, true) == true,
+          "sleeps: not ringing, on the clock face, timeout expired");
+    CHECK(clock_should_idle_sleep(false, MODE_CLOCK, false) == false,
+          "does not sleep: the global timeout has not expired yet");
+    CHECK(clock_should_idle_sleep(true, MODE_CLOCK, true) == false,
+          "never sleeps while an alarm is ringing");
+    CHECK(clock_should_idle_sleep(false, MODE_TIMER, true) == false,
+          "never sleeps off the clock face — a running timer is being watched");
+    CHECK(clock_should_idle_sleep(false, MODE_POMODORO, true) == false,
+          "never sleeps off the clock face — pomodoro");
+    CHECK(clock_should_idle_sleep(false, MODE_STOPWATCH, true) == false,
+          "never sleeps off the clock face — stopwatch");
+}
+
+/* ---- bug: the alarm-volume (and brightness) bar gauge inverted depending on
+ * WHICH row was selected, not whether THIS row was (see odroid_overlay.c's
+ * odroid_overlay_draw_dialog ODROID_DIALOG_INIT call site, and cb_vol/
+ * cb_bright above). The old code compared `option->id == repeat`, where
+ * `repeat` on INIT was actually the SELECTED ROW'S ARRAY INDEX, not an id to
+ * match — so a row's compensation only fired correctly if its own `.id`
+ * happened to equal its own position in the opts[] array. cb_vol's id (7)
+ * instead equalled the background-effect row's array index, so moving the
+ * cursor there flipped the volume row's glyphs though volume wasn't selected;
+ * cb_bright's id (15) never matched any real index, so brightness was NEVER
+ * compensated even when it truly was selected. The fix makes `repeat` on
+ * INIT mean "am I the selected row" (0/1) directly, so `.id` cannot alias.
+ * This exercises the REAL cb_vol/cb_bright, not a reimplementation of the
+ * fixed logic, with `.id` deliberately set to values that would have
+ * triggered the old alias, to prove id no longer matters at all. */
+static void test_gauge_selection_polarity(void)
+{
+    L.s_Full = "F";   /* lit-cell glyph when NOT compensated (not selected) */
+    L.s_Fill = ".";   /* empty-cell glyph when NOT compensated */
+
+    s_alarm_volume = 3;   /* cells 0..3 "filled", 4..9 "empty" */
+    char val[16];
+    /* id=7 is cb_vol's REAL id in clock_settings_menu() — the exact value
+     * that used to alias with the background row's array index. */
+    odroid_dialog_choice_t vol = { 7, "Volume", val, 1, cb_vol };
+
+    cb_vol(&vol, ODROID_DIALOG_INIT, 0);   /* not selected */
+    CHECK(memcmp(val, "FFFF......", 10) == 0,
+          "cb_vol not selected: normal polarity (lit=F, empty=.)");
+
+    cb_vol(&vol, ODROID_DIALOG_INIT, 1);   /* selected: must compensate */
+    CHECK(memcmp(val, "....FFFFFF", 10) == 0,
+          "cb_vol selected: compensated/inverted polarity (lit=., empty=F)");
+
+    /* the historical alias: repeat==7 (an array index elsewhere in the menu,
+     * not "selected") must NOT be treated as selected now that repeat is a
+     * plain 0/1 flag, regardless of this row's own id also being 7. */
+    cb_vol(&vol, ODROID_DIALOG_INIT, 7);
+    CHECK(memcmp(val, "....FFFFFF", 10) == 0,
+          "cb_vol: any nonzero repeat means selected (no id aliasing possible)");
+
+    int lvl = odroid_display_get_backlight();   /* whatever the stub currently holds */
+    char valb[16];
+    /* id=15 is cb_bright's REAL id — never equal to its own array index (0)
+     * in clock_settings_menu(), which is exactly why it was NEVER compensated
+     * pre-fix even when Brightness genuinely was the selected row. */
+    odroid_dialog_choice_t br = { 15, "Brightness", valb, 1, cb_bright };
+    cb_bright(&br, ODROID_DIALOG_INIT, 0);
+    char expect_off[16]; for (int i = 0; i <= lvl; i++) expect_off[i] = 'F';
+    for (int i = lvl + 1; i <= 9; i++) expect_off[i] = '.'; expect_off[10] = 0;
+    CHECK(memcmp(valb, expect_off, 10) == 0,
+          "cb_bright not selected: normal polarity");
+
+    cb_bright(&br, ODROID_DIALOG_INIT, 1);
+    char expect_on[16]; for (int i = 0; i <= lvl; i++) expect_on[i] = '.';
+    for (int i = lvl + 1; i <= 9; i++) expect_on[i] = 'F'; expect_on[10] = 0;
+    CHECK(memcmp(valb, expect_on, 10) == 0,
+          "cb_bright selected: compensated/inverted polarity (was NEVER true pre-fix)");
+}
+
+/* ---- ram_start restore: the 0721 BusFault regression --------------------
+ * The clock is the only RAM_EMU overlay that returns IN-PROCESS to the
+ * launcher: clock_stage_overlay() moves ram_start past .overlay_clock's own
+ * footprint, exactly like every emulator core's identical
+ * `ram_start = &_OVERLAY_X_BSS_END` move (main_sm.c, main_vb.c, ~30 cores) --
+ * but their return-to-launcher path is a reboot, so nothing ever comes back
+ * to read the stale cursor. The clock does come back, and forgetting to
+ * reset it left the launcher's OWN ram_calloc() user (rg_emulators.c's
+ * shared_files ROM list) reading/writing through a cursor still pointed at
+ * .overlay_clock's footprint -- a real device BusFault (get_darken_pixel_d /
+ * gui_draw_item_postion_h reading garbage right after a "gui_resize list"
+ * churn), not a hypothetical.
+ *
+ * Drives the REAL rg_clock_show() loop (not a reimplementation) with a
+ * scripted START press -- not ringing, so it takes the immediate-exit branch
+ * on the very first iteration -- and checks the postcondition every call
+ * site implicitly relies on: the launcher's bump-allocator cursor must be
+ * back at its "unowned" sentinel (0; see gui.c/rg_main.c's lazy
+ * `if (ram_start == 0) ram_start = &__RAM_EMU_START__` reclaim) before
+ * rg_clock_show() ever returns, structurally -- not by whichever exit path
+ * happened to run remembering to do it. */
+static void test_ram_start_restored_on_exit(void)
+{
+    remove(test_path(CLOCK_CFG_PATH));
+
+    g_script_len = 0; g_script_pos = 0;
+    script_push(-1);                    /* swallow the opening button */
+    script_push(ODROID_INPUT_START);    /* new press, not ringing -> exit branch */
+    rg_clock_show();
+    CHECK(ram_start == 0,
+          "rg_clock_show() restores ram_start to the launcher's unowned sentinel on exit");
+
+    remove(test_path(CLOCK_CFG_PATH));
+}
+
 int main(void)
 {
     init_lang();
+    test_gauge_selection_polarity();
     test_days_in_month();
     test_cfg_legacy_migration();
     test_cfg_full_roundtrip();
@@ -791,12 +687,9 @@ int main(void)
     test_update_pomodoro_cycle();
     test_update_timer_flash_guard();
     test_clock_edit_time_rollover();
-    test_backlight_logic();
-    test_night_window_combos();
-    test_charging_exception();
-    test_night_settings_rows_and_migration();
-    test_dim_level();
+    test_clock_should_idle_sleep();
     test_ring_overlay();
+    test_ram_start_restored_on_exit();
     printf(fails ? "\n%d FAILURES\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

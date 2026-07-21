@@ -105,15 +105,24 @@ static uint32_t s_fader_cdda_vol;      /* Q16 volume: 0=silent, 65536=full (init
 static uint32_t s_fader_adpcm_vol;
 static uint32_t s_fader_step;          /* per-frame decrement (0 = not fading) */
 static bool     s_fader_adpcm;         /* true = ADPCM fade, false = CD-DA fade */
+static uint8_t  s_fader_last_cmd;      /* last $180F write (for diag) */
+
+#if PCECD_DIAG
+static void fader_diag_vols(const char *tag);  /* defined after s_cdda_play */
+static void fader_diag_milestone(void);
+#endif
 
 static void fader_write(uint8_t val)
 {
-    diag("  FADER cmd=%02x\n", val);
+    s_fader_last_cmd = val;
     if (!(val & 0x8)) {
         /* Cancel: restore both to full volume */
         s_fader_cdda_vol  = FADER_VOL_MAX;
         s_fader_adpcm_vol = FADER_VOL_MAX;
         s_fader_step = 0;
+#if PCECD_DIAG
+        fader_diag_vols("CANCEL");
+#endif
     } else {
         /* Start fade: bit2 selects duration (1=2.5s / 0=6.0s), bit1 selects target.
          * Mednafen (pcecd.cpp L731): if(!Fader.Clocked) → only reset cycle counter if
@@ -128,7 +137,9 @@ static void fader_write(uint8_t val)
             s_fader_cdda_vol  = FADER_VOL_MAX;
             s_fader_adpcm_vol = FADER_VOL_MAX;
         }
-        /* If already fading: volume continues from its current level (no reset). */
+#if PCECD_DIAG
+        fader_diag_vols(was_fading ? "FADE_CONT" : "FADE_START");
+#endif
     }
 }
 
@@ -151,6 +162,9 @@ static void fader_run(void)
          * This prevents a re-assert of the same fade command from restarting from
          * full volume (was_fading check in fader_write depends on step != 0). */
     }
+#if PCECD_DIAG
+    fader_diag_milestone();
+#endif
 }
 
 /* Q16 volume accessors for the mixer. */
@@ -176,8 +190,80 @@ static uint8_t  s_cdda_sec[PCE_CD_SECTOR_RAW * PCE_CDDA_RING];
 static int      s_cdda_pos;             /* read cursor (bytes) */
 static int      s_cdda_have;            /* valid bytes (0 = empty FIFO) */
 static int      s_cdda_mode;            /* SAPEP play mode: 1=loop, 3=normal */
+static int16_t  s_raw_pcm_vol[2];       /* $1805/$1806 peak cache (L/R), latched on write */
+
+/* Sample current CD-DA level into s_raw_pcm_vol (Mednafen pcecd.cpp case 0x5/0x6 write). */
+static void peak_meter_sample(void)
+{
+    int16_t left = 0, right = 0;
+    if (s_cdda_play && !s_cdda_paused && s_cdda_pos + 4 <= s_cdda_have) {
+        left  = (int16_t)(s_cdda_sec[s_cdda_pos]     | (s_cdda_sec[s_cdda_pos + 1] << 8));
+        right = (int16_t)(s_cdda_sec[s_cdda_pos + 2] | (s_cdda_sec[s_cdda_pos + 3] << 8));
+    }
+    /* When fading ADPCM, CD-DA peak uses full scale; when fading CD-DA, apply fader. */
+    uint32_t fade = s_fader_adpcm ? FADER_VOL_MAX : s_fader_cdda_vol;
+    int32_t al = left  < 0 ? -(int32_t)left  : (int32_t)left;
+    int32_t ar = right < 0 ? -(int32_t)right : (int32_t)right;
+    s_raw_pcm_vol[0] = (int16_t)((al * (int32_t)fade) >> 16);
+    s_raw_pcm_vol[1] = (int16_t)((ar * (int32_t)fade) >> 16);
+}
+
+#if PCECD_DIAG
+static void fader_diag_vols(const char *tag)
+{
+    diag("  FADER %s pc=%04x cmd=%02x step=%lu target=%s cdda=%lu adpcm=%lu play=%d adpcm_on=%d\n",
+         tag, CPU_PCE.PC, s_fader_last_cmd, (unsigned long)s_fader_step,
+         s_fader_adpcm ? "ADPCM" : "CDDA",
+         (unsigned long)s_fader_cdda_vol, (unsigned long)s_fader_adpcm_vol,
+         (int)s_cdda_play, (int)pce_adpcm_playing());
+}
+
+static void fader_diag_milestone(void)
+{
+    static uint32_t last_cdda, last_adpcm;
+    static bool silent_warned;
+
+    if (s_fader_cdda_vol != last_cdda) {
+        if (s_fader_cdda_vol == 0)
+            fader_diag_vols("CDDA_VOL_0");
+        else if (last_cdda > 49152 && s_fader_cdda_vol <= 49152)
+            fader_diag_vols("CDDA_75pct");
+        else if (last_cdda > 32768 && s_fader_cdda_vol <= 32768)
+            fader_diag_vols("CDDA_50pct");
+        last_cdda = s_fader_cdda_vol;
+    }
+    if (s_fader_adpcm_vol != last_adpcm) {
+        if (s_fader_adpcm_vol == 0)
+            fader_diag_vols("ADPCM_VOL_0");
+        else if (last_adpcm > 32768 && s_fader_adpcm_vol <= 32768)
+            fader_diag_vols("ADPCM_50pct");
+        last_adpcm = s_fader_adpcm_vol;
+    }
+    if (!silent_warned && s_cdda_play &&
+        s_fader_cdda_vol < (FADER_VOL_MAX / 8) && !s_fader_adpcm) {
+        silent_warned = true;
+        fader_diag_vols("WARN_LOW_CDDAVOL");
+    }
+}
+#endif
+
 static int      s_trace;            /* trace register accesses during a bulk READ */
 static int      s_atrace;           /* trace ADPCM/idle-loop polls ($180A-F, $1803) */
+#if PCECD_DIAG
+static int      s_peak_trace;       /* uncapped $1805/$1806 access log (s_atrace dies at 130) */
+static bool     s_cdda_pregap_logged;
+static bool     s_cdda_sound_logged;
+static void peak_trace_read(uint8_t reg, uint8_t val)
+{
+    if (s_peak_trace >= 64) return;
+    s_peak_trace++;
+    diag("  PEAK_R $18%02x -> %02x p3=%02x play=%d pc=%04x cache L=%u R=%u\n",
+         reg, val, s_port3, (int)s_cdda_play, CPU_PCE.PC,
+         (unsigned)(uint16_t)s_raw_pcm_vol[0], (unsigned)(uint16_t)s_raw_pcm_vol[1]);
+}
+#else
+static void peak_trace_read(uint8_t reg, uint8_t val) { (void)reg; (void)val; }
+#endif
 
 /* $1803 bit 0x08 = ADPCM sample END — a LEVEL flag mirrored straight from the
  * ADPCM engine (cleared when a new play latches length, engine side). Games
@@ -214,6 +300,9 @@ void pce_scsi_set_disc(const pce_cd_toc_t *toc, bool present)
     s_present = present && toc && toc->num_tracks > 0;
 #if PCECD_DIAG
     s_diag_lines = 0;   /* fresh run */
+    s_peak_trace = 0;
+    s_cdda_pregap_logged = false;
+    s_cdda_sound_logged = false;
 #endif
     diag("=== BUILD adpcmshift-1 ===\n");
     diag("MOUNT present=%d tracks=%d total_lba=%lu\n", s_present,
@@ -253,6 +342,7 @@ void pce_scsi_reset(void)
     s_fader_cdda_vol  = FADER_VOL_MAX;
     s_fader_adpcm_vol = FADER_VOL_MAX;
     s_fader_step = 0;
+    s_raw_pcm_vol[0] = s_raw_pcm_vol[1] = 0;
     pce_adpcm_reset();
     CPU_PCE.irq_lines &= ~INT_IRQ2;
 }
@@ -528,6 +618,12 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
         cdda_topup((room < PCE_CDDA_TOPUP) ? room : PCE_CDDA_TOPUP);
     }
 
+#if PCECD_DIAG
+    int32_t peak_l = 0, peak_r = 0, peak_raw_l = 0, peak_raw_r = 0;
+    int64_t sum_sq = 0;
+    int from_disc = 0;
+#endif
+
     for (int i = 0; i < frames; i++) {
         if (s_cdda_pos + 4 > s_cdda_have) {
             /* FIFO dry: the stream ended, or a read could not keep up. Pad the
@@ -549,13 +645,61 @@ int pce_scsi_cdda_fill(int16_t *out, int frames)
         {
             int16_t l = (int16_t)(s_cdda_sec[s_cdda_pos]     | (s_cdda_sec[s_cdda_pos + 1] << 8));
             int16_t r = (int16_t)(s_cdda_sec[s_cdda_pos + 2] | (s_cdda_sec[s_cdda_pos + 3] << 8));
+#if PCECD_DIAG
+            {
+                int32_t al = l < 0 ? -(int32_t)l : (int32_t)l;
+                int32_t ar = r < 0 ? -(int32_t)r : (int32_t)r;
+                if (al > peak_raw_l) peak_raw_l = al;
+                if (ar > peak_raw_r) peak_raw_r = ar;
+            }
+#endif
             l = (int16_t)(((int32_t)l * (int32_t)s_fader_cdda_vol) >> 16);
             r = (int16_t)(((int32_t)r * (int32_t)s_fader_cdda_vol) >> 16);
             out[i * 2]     = l;
             out[i * 2 + 1] = r;
+#if PCECD_DIAG
+            {
+                int32_t al = l < 0 ? -(int32_t)l : (int32_t)l;
+                int32_t ar = r < 0 ? -(int32_t)r : (int32_t)r;
+                if (al > peak_l) peak_l = al;
+                if (ar > peak_r) peak_r = ar;
+                sum_sq += (int64_t)l * (int64_t)l + (int64_t)r * (int64_t)r;
+                from_disc++;
+            }
+#endif
         }
         s_cdda_pos += 4;                            /* one CD frame in, one sample pair out */
     }
+#if PCECD_DIAG
+    /* Level snapshot: first pregap silence, then first frame with real audio. */
+    if (from_disc > frames / 2) {
+        int32_t raw_peak = peak_raw_l > peak_raw_r ? peak_raw_l : peak_raw_r;
+        int32_t out_pk   = peak_l > peak_r ? peak_l : peak_r;
+        uint32_t rms = 0;
+        if (sum_sq > 0) {
+            uint64_t mean = sum_sq / ((uint64_t)from_disc * 2u);
+            uint64_t x = mean, y = (x + 1) >> 1;
+            while (y < x) { x = y; y = (x + mean / x) >> 1; }
+            rms = (uint32_t)x;
+        }
+        if (!s_cdda_pregap_logged && raw_peak < 512) {
+            s_cdda_pregap_logged = true;
+            diag("  CDDA_LEVEL pregap n=%d fifo=%d raw_peak=%ld lba=%lu "
+                 "(INDEX 01 silence on disc — not a read bug)\n",
+                 from_disc, s_cdda_have, (long)raw_peak,
+                 (unsigned long)(s_cdda_lba > 0 ? s_cdda_lba - 1u : 0u));
+        }
+        if (!s_cdda_sound_logged && raw_peak >= 1024) {
+            s_cdda_sound_logged = true;
+            diag("  CDDA_LEVEL sound n=%d fifo=%d raw_peak L=%ld R=%ld out_peak=%ld rms=%lu "
+                 "fader=%lu lba=%lu\n",
+                 from_disc, s_cdda_have,
+                 (long)peak_raw_l, (long)peak_raw_r, (long)out_pk,
+                 (unsigned long)rms, (unsigned long)s_fader_cdda_vol,
+                 (unsigned long)(s_cdda_lba > 0 ? s_cdda_lba - 1u : 0u));
+        }
+    }
+#endif
     return frames;
 }
 
@@ -684,7 +828,9 @@ static void execute_command(void)
         s_cdda_mode  = 3;
         s_cdda_play  = (s_cmd[1] != 0);
         s_cdda_paused = !s_cdda_play;    /* NEC: SAPSP w/o play = seek then PAUSE */
-        diag("  CDDA SAPSP lba=%lu play=%d\n", (unsigned long)s_cdda_lba, s_cdda_play);
+        diag("  CDDA SAPSP lba=%lu play=%d cdda_vol=%lu adpcm_vol=%lu\n",
+             (unsigned long)s_cdda_lba, s_cdda_play,
+             (unsigned long)s_fader_cdda_vol, (unsigned long)s_fader_adpcm_vol);
         send_status(STATUS_GOOD, 0);
         /* Some titles wait for DATA_DONE right after SAPSP before consuming the
          * status phase; mirror the ADPCM-complete path and assert it now. */
@@ -705,7 +851,9 @@ static void execute_command(void)
             s_cdda_play   = true;
             s_cdda_paused = false;
         }
-        diag("  CDDA SAPEP end=%lu mode=%d\n", (unsigned long)s_cdda_end, s_cmd[1]);
+        diag("  CDDA SAPEP end=%lu mode=%d cdda_vol=%lu adpcm_vol=%lu\n",
+             (unsigned long)s_cdda_end, s_cmd[1],
+             (unsigned long)s_fader_cdda_vol, (unsigned long)s_fader_adpcm_vol);
         send_status(STATUS_GOOD, 0);
         break;
     case 0xDA: /* PAUSE — hold position; SUBQ must report PAUSED(2), not stopped */
@@ -789,6 +937,9 @@ uint8_t pce_scsi_read(uint8_t reg)
         adpcm_dma_pump(-1);
     }
 
+    /* Clock ADPCM on every CD register touch (Mednafen PCECD_Run before each read). */
+    pce_adpcm_sync();
+
     if (s_bulk && s_phase == PH_DATAIN && s_trace < 12) {
         diag("R%x db=%02x\n", reg & 0xf, s_db);
         s_trace++;
@@ -812,14 +963,34 @@ uint8_t pce_scsi_read(uint8_t reg)
          * it high until the next SEL, so the "wait for clear" spun forever right after the
          * IPL read — the device "PUSH RUN BUTTON -> read 3596/3598 -> back to PUSH RUN"
          * loop. Return it once (satisfies wait-for-set), then clear (satisfies wait-for-
-         * clear). Only in BUSFREE, so an in-flight transfer's DATA_READY is untouched. */
+         * clear). Only in BUSFREE, so an in-flight transfer's DATA_READY is untouched.
+         * Toggle bit1 (L/R) for $1805/$1806 peak-meter reads (Mednafen). */
         uint8_t v = effective_port3();   /* incl. live ADPCM-end bit 0x08 */
         if (s_phase == PH_BUSFREE && (s_port3 & IRQ_DATA_DONE)) {
             s_port3 &= ~IRQ_DATA_DONE;
             update_irq();
         }
+        s_port3 ^= 0x02;
         return v;
     }
+    case 0x05:
+        if (s_port3 & 0x02) {
+            uint8_t v = (uint8_t)(s_raw_pcm_vol[1] & 0xff);
+            peak_trace_read(0x05, v);
+            return v;
+        }
+        { uint8_t v = (uint8_t)(s_raw_pcm_vol[0] & 0xff);
+          peak_trace_read(0x05, v);
+          return v; }
+    case 0x06:
+        if (s_port3 & 0x02) {
+            uint8_t v = (uint8_t)(((uint16_t)s_raw_pcm_vol[1]) >> 8);
+            peak_trace_read(0x06, v);
+            return v;
+        }
+        { uint8_t v = (uint8_t)(((uint16_t)s_raw_pcm_vol[0]) >> 8);
+          peak_trace_read(0x06, v);
+          return v; }
     case 0x04: return 0;
     case 0x08: {
         /* $1808 = SCSI auto-increment data read. The System Card pulls BULK READ
@@ -840,6 +1011,8 @@ uint8_t pce_scsi_read(uint8_t reg)
 
 void pce_scsi_write(uint8_t reg, uint8_t val)
 {
+    pce_adpcm_sync();
+
     if (s_bulk && s_phase == PH_DATAIN && s_trace < 12) {
         diag("W%x=%02x\n", reg & 0xf, val);
         s_trace++;
@@ -888,6 +1061,19 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
                  val, CPU_PCE.PC, (int)s_cdda_play, (unsigned long)s_cdda_lba);
             pce_scsi_reset();
         }
+        break;
+    case 0x05:
+    case 0x06: /* latch CD-DA peak level for meter reads (value written is ignored) */
+        peak_meter_sample();
+#if PCECD_DIAG
+        if (s_peak_trace < 64) {
+            s_peak_trace++;
+            diag("  PEAK_W $18%02x val=%02x L=%u R=%u play=%d pc=%04x\n",
+                 reg & 0x0f, val,
+                 (unsigned)(uint16_t)s_raw_pcm_vol[0], (unsigned)(uint16_t)s_raw_pcm_vol[1],
+                 (int)s_cdda_play, CPU_PCE.PC);
+        }
+#endif
         break;
     case 0x0F: /* $180F — CD-DA / ADPCM fader (mednafen pcecd.cpp case 0xf) */
         fader_write(val);

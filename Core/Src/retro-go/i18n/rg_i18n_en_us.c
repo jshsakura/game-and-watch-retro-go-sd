@@ -54,7 +54,7 @@ const lang_t lang_en_us LANG_DATA = {
     .s_Clock_Scene = "Pixel style",
     .s_Clock_Photo_Speed = "Slide speed",
     .s_Clock_Anim_4 = "Photo album",
-    .s_Clock_Auto_Dim = "Auto-dim",
+    .s_Clock_Keep_Awake = "Stay awake",
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "Alarm sound",
     .s_Clock_Night_Off = "Screen off from",
@@ -96,6 +96,8 @@ const lang_t lang_en_us LANG_DATA = {
 
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "Palette",
+    .s_System = "System",
+    .s_SGB_Border = "SGB Border",
     //=====================================================================
 
     // Core\Src\porting\nes\main_nes.c =====================================
@@ -242,6 +244,9 @@ const lang_t lang_en_us LANG_DATA = {
     .s_Theme_CoverH = "Coverflow H",
     .s_Theme_CoverLightV = "CoverLight V",
     .s_Theme_CoverLightH = "CoverLight H",
+    .s_Cover_Style = "Cover style",
+    .s_Cover_Style_Poster = "Poster",
+    .s_Cover_Style_Square = "Square",
     .s_Caching_Game = "Caching game file",
     .s_Loading_Banner = "Loading",
     .s_Pause_Banner = "PAUSE",

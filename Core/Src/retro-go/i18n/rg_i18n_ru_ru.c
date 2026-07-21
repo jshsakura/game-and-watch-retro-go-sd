@@ -56,7 +56,7 @@ const lang_t lang_ru_ru LANG_DATA = {
     .s_Clock_Scene = "Пиксель-стиль",
     .s_Clock_Photo_Speed = "Скорость",
     .s_Clock_Anim_4 = "Фотоальбом",
-    .s_Clock_Auto_Dim = "Автозатемнение",
+    .s_Clock_Keep_Awake = "Не гасить экран",
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "Звук будильника",
     .s_Clock_Night_Off = "Откл: начало",
@@ -96,6 +96,8 @@ const lang_t lang_ru_ru LANG_DATA = {
 
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "Палитра",
+    .s_System = "Система",
+    .s_SGB_Border = "Рамка SGB",
     //=====================================================================
 
     // Core\Src\porting\nes\main_nes.c =====================================

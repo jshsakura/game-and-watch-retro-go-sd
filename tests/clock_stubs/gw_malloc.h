@@ -1,6 +1,8 @@
 #ifndef STUB_GW_MALLOC_H
 #define STUB_GW_MALLOC_H
 #include <stddef.h>
+#include <stdint.h>
+extern uint32_t ram_start;
 void *ram_malloc(size_t size);
 void *ram_calloc(size_t count, size_t size);
 size_t ram_get_free_size(void);

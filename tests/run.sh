@@ -27,18 +27,64 @@ fi
 if [ -f "Core/Src/porting/video/avi.c" ]; then
     $CC $FLAGS -ICore/Inc/porting/video \
         tests/test_avi.c Core/Src/porting/video/avi.c        -o /tmp/mtest/test_avi
+
+    # video_decode.c: jpeg_dims() SOF-marker walk (reached only through the
+    # public video_decode_slot(), it's static) + the g_scratch slot-layout
+    # pin. Only hardware seam stubbed is the HW JPEG peripheral itself.
+    $CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc/porting/video \
+        -ICore/Src/porting/lib -ICore/Inc/porting/music \
+        tests/test_video_decode.c Core/Src/porting/video/video_decode.c \
+        -o /tmp/mtest/test_video_decode
+
+    # video_audio.c: the trim_step() clock-drift servo (see this dir's
+    # CLAUDE.md, "Nothing synchronises the two clocks" -- the shipped "fine
+    # for 4 minutes, then permanent stutter" bug). #includes video_audio.c
+    # directly for its static servo state, same pattern rg_clock.c's tests use.
+    $CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc/porting/video \
+        -ICore/Inc/porting/music \
+        tests/test_video_audio.c Core/Src/porting/music/music_minimp3.c \
+        -o /tmp/mtest/test_video_audio
+
+    # video_play.c: the pf_step()/pf_fetch()/pf_reset() prefetch state machine
+    # (jitter buffer + the audio-ring gate that jammed shut during the drift
+    # bug). #includes video_play.c directly for its statics; links the REAL
+    # avi.c/video_decode.c/video_audio.c it actually drives, not a reimplementation.
+    $CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc/porting/video \
+        -ICore/Src/porting/lib -ICore/Inc/porting/music \
+        tests/test_video_play.c Core/Src/porting/video/avi.c \
+        Core/Src/porting/video/video_decode.c Core/Src/porting/video/video_audio.c \
+        Core/Src/porting/music/music_minimp3.c \
+        -o /tmp/mtest/test_video_play
+
+    # Real MP3 fixture the trim_step()/audio-ring-gate tests above decode
+    # through the REAL minimp3 (servo behaviour depends on real frame sizes,
+    # not synthetic bytes -- see test_video_audio.c's header comment for why).
+    # CI's host-tests job runs on ubuntu-latest, which ships ffmpeg; if it's
+    # missing anyway, both tests print their own SKIP and still exit 0.
+    if command -v ffmpeg >/dev/null 2>&1; then
+        ffmpeg -y -loglevel error -f lavfi -i "sine=frequency=440:duration=45" \
+            -ar 44100 -ac 1 -b:a 128k /tmp/mtest/video_audio_test.mp3
+    else
+        echo "ffmpeg not found -- video_audio/video_play servo tests will SKIP their MP3-dependent checks"
+    fi
 fi
-# rg_clock.c is compiled as an SD-card build here (-DSD_CARD=1) so the alarm /
-# GIF / photo / picker logic is all present; test_clock_sd0.c below builds the
-# same source as a flash build (-DSD_CARD=0) to prove the media compile-out.
-$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs \
+# rg_clock_ring.c/rg_clock.c are compiled as an SD-card build here (-DSD_CARD=1)
+# so the alarm / GIF / photo / picker logic is all present; test_clock_sd0.c
+# below builds the same source as a flash build (-DSD_CARD=0) to prove the
+# media compile-out. -no-pie + --defsym mirror test_clock_mp3.c's overlay-size
+# sentinel trick (rg_clock_ring.c's clock_stage_overlay()/clock_overlay_arena()
+# now reference the same class of linker-placed symbols).
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs -no-pie \
+    -Wl,--defsym=_OVERLAY_CLOCK_BSS_SIZE=64 -Wl,--defsym=_OVERLAY_CLOCK_SIZE=64 \
     tests/test_clock_alarm.c                             -o /tmp/mtest/test_clock_alarm
 $CC -O2 -Wall -std=gnu11 -Itests/clock_stubs -ICore/Src/porting/lib/gifdec \
     tests/test_clock_gif.c                               -o /tmp/mtest/test_clock_gif
-$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs \
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=1 -Itests/clock_stubs -no-pie \
+    -Wl,--defsym=_OVERLAY_CLOCK_BSS_SIZE=64 -Wl,--defsym=_OVERLAY_CLOCK_SIZE=64 \
     tests/test_clock_more.c                              -o /tmp/mtest/test_clock_more
-$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/clock_stubs \
-    tests/test_clock_sd0.c                               -o /tmp/mtest/test_clock_sd0
+$CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/clock_stubs -no-pie \
+    -Wl,--defsym=_OVERLAY_CLOCK_BSS_SIZE=64 -Wl,--defsym=_OVERLAY_CLOCK_SIZE=64 \
+    tests/test_clock_sd0.c                                -o /tmp/mtest/test_clock_sd0
 # All-state alarm PURE logic (next-alarm epoch math, wake-cause table, tone
 # presets) — rg_alarm.c compiled with -DRG_ALARM_HOST so no HAL is needed.
 $CC -O2 -Wall -Wextra -std=gnu11 -DRG_ALARM_HOST -ICore/Inc/retro-go \
@@ -66,6 +112,40 @@ $CC -O2 -Wall -Wextra -std=gnu11 -DSD_CARD=0 -Itests/storage_stubs -ICore/Inc/re
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/album_stubs -ICore/Inc/retro-go \
     tests/test_album.c tests/album_stubs/album_stub_impl.c Core/Src/retro-go/rg_clock_album.c \
     -o /tmp/mtest/test_album
+# Super Metroid savestate: links the REAL external/sm/src/snes/ppu.c, with the
+# device's defines. The PPU keeps its screen-enable registers twice — unpacked in
+# layer[], packed in screenEnabled[] — and only the packed copies are what the
+# compositor reads. They live past the end of the serialized range, so a load left
+# them at whatever they were: zero, on the launcher's resume path, which boots the
+# core and loads second. No layers enabled means every line comes out as backdrop:
+# a black screen, at full framerate, on almost no CPU. Skipped where the submodule
+# is not checked out (CI's host-tests job has no submodules) — honestly, and loudly.
+if [ -f external/sm/src/snes/ppu.c ]; then
+    $CC -O1 -g -std=gnu11 -w -DTARGET_GNW -DPPU_RGB565 \
+        -iquote external/sm/src -iquote tests/sm_stubs \
+        tests/test_sm_ppu_saveload.c tests/sm_stubs/sm_stubs.c external/sm/src/snes/ppu.c \
+        -o /tmp/mtest/test_sm_ppu_saveload
+else
+    echo "SKIP  external/sm is not checked out — sm savestate test not built"
+fi
+
+# rc_dispatch heap-allocation gate: the REAL rc_dispatch.c (whole-file #include
+# in the test, with malloc redirected to a counter). The old hash design
+# OOM-crashed the device because the per-bank tables totaled ~85 KB on a 81 KB
+# DTCM heap. This test fails if anyone adds a single malloc back. RED-verified:
+# the counter mechanism catches the old code's per-bank allocations.
+if [ -f external/sm/src/snes/rc_dispatch.c ]; then
+    $CC -O2 -Wall -Wextra -std=c11 -Iexternal/sm/src/snes \
+        tests/test_rc_dispatch_heap.c -o /tmp/mtest/test_rc_dispatch_heap
+else
+    echo "SKIP  external/sm is not checked out — rc_dispatch heap test not built"
+fi
+
+# System-grid layout: the REAL rg_system_grid_layout.c, which is dependency-free
+# precisely so this links it instead of re-deriving its rules.
+$CC -O2 -Wall -Wextra -std=gnu11 -ICore/Inc/retro-go \
+    tests/test_system_grid.c Core/Src/retro-go/rg_system_grid_layout.c \
+    -o /tmp/mtest/test_system_grid
 
 # === firmware-update tar extractor ====================================
 # The REAL external/firmware_update/Core/Src/tar.c against the REAL FatFs, on a
@@ -115,7 +195,10 @@ if [ -d "$SRC" ]; then
     /tmp/mtest/test_browser     || rc=1
     /tmp/mtest/test_color       || rc=1
 fi
-[ -x /tmp/mtest/test_avi ] && { /tmp/mtest/test_avi || rc=1; }
+[ -x /tmp/mtest/test_avi ]          && { /tmp/mtest/test_avi          || rc=1; }
+[ -x /tmp/mtest/test_video_decode ] && { /tmp/mtest/test_video_decode || rc=1; }
+[ -x /tmp/mtest/test_video_audio ]  && { /tmp/mtest/test_video_audio  || rc=1; }
+[ -x /tmp/mtest/test_video_play ]   && { /tmp/mtest/test_video_play   || rc=1; }
 /tmp/mtest/test_clock_alarm || rc=1
 /tmp/mtest/test_clock_gif   || rc=1
 /tmp/mtest/test_clock_more  || rc=1
@@ -127,6 +210,9 @@ fi
 /tmp/mtest/test_storage_sd0 || rc=1
 /tmp/mtest/test_album      || rc=1
 /tmp/mtest/test_fw_tar     || rc=1
+/tmp/mtest/test_system_grid || rc=1
+[ -x /tmp/mtest/test_sm_ppu_saveload ] && { /tmp/mtest/test_sm_ppu_saveload || rc=1; }
+[ -x /tmp/mtest/test_rc_dispatch_heap ] && { /tmp/mtest/test_rc_dispatch_heap || rc=1; }
 
 # === colour tab icons: stored bbox must match its array and fit its box ====
 # gui_draw_color_icon() indexes data[] by bw*bh and blits at (ox,oy) inside the
@@ -167,6 +253,320 @@ if [ -n "$dup_enum" ] || [ -n "$dup_blob" ]; then
     echo "FAIL duplicate logo — enum:[$dup_enum] blob:[$dup_blob]"; rc=1
 else
     echo "OK no duplicate logo enums/blobs"
+fi
+
+echo "=== common.c: frame integrator clamp / skip_frames thresholds / speedup table / sound_sync ==="
+# common_emu_frame_loop() is the shared per-core pacing loop; the Super Metroid
+# port never called it at all (root CLAUDE.md), which starved it of pacing,
+# frameskip and a speedup toggle. That's a different bug (a call site, not
+# this logic), but the pacing math itself had no test before this one. Whole-
+# file #include (tests/test_common.c) so the file's static frame_integrator/
+# skip_streak are reachable; stubs in tests/common_stubs/ cover only the
+# hardware/menu seams this logic never touches.
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/common_stubs \
+    tests/test_common.c                                  -o /tmp/mtest/test_common
+/tmp/mtest/test_common || rc=1
+
+echo "=== md32x_border_clear.c: border-row clear survives frame-skip (32X overlay-close flicker) ==="
+# common.c's generic clear_frames mechanism decrements once per LOOP
+# ITERATION regardless of whether that iteration draws+swaps -- under 32X's
+# frame-skip pacing, two skipped iterations right after menu close can both
+# land on the same still-active physical buffer, leaving the other one's
+# border rows stuck with the overlay's status-bar remnant forever (visible
+# as the top/bottom bands flickering every other frame). Whole-file #include
+# (tests/test_md32x_border_clear.c) reuses tests/common_stubs/gw_lcd.h's
+# declarations with a 2-buffer fake.
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/common_stubs \
+    tests/test_md32x_border_clear.c                      -o /tmp/mtest/test_md32x_border_clear
+/tmp/mtest/test_md32x_border_clear || rc=1
+
+echo "=== gw_malloc.c: itc/ahb/ram bump allocators (alignment, ITC bounds, over-large fails) ==="
+# The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators behind "RAM
+# priority = emulators first" (root CLAUDE.md). Linker symbols
+# (__ITCMRAM_LENGTH__ etc.) are the SIZEOF-as-address trick gw_malloc.c reads
+# by taking their &address, not their value -- given real values here with
+# -Wl,--defsym, same technique test_clock_mp3.c already uses for the overlay
+# SIZE symbols. ram_start is a real writable global, set directly by the test.
+$CC -O2 -Wall -Wextra -std=gnu11 -no-pie \
+    -Itests/gw_malloc_stubs -ICore/Inc \
+    -Wl,--defsym=__RAM_EMU_END__=0x21000 \
+    -Wl,--defsym=__ahbram_heap_start__=0x30000 \
+    -Wl,--defsym=__ahbram_audio_start__=0x30100 \
+    -Wl,--defsym=__itcram_start__=0x1000 \
+    -Wl,--defsym=__itcram_end__=0x1010 \
+    -Wl,--defsym=__ITCMRAM_LENGTH__=0x40 \
+    -Wl,--defsym=__NULLPTR_LENGTH__=0x8 \
+    tests/test_gw_malloc.c Core/Src/gw_malloc.c           -o /tmp/mtest/test_gw_malloc
+/tmp/mtest/test_gw_malloc || rc=1
+
+echo "=== crc32.c: known-vector pins ==="
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/crc32_stubs -ICore/Inc/porting \
+    tests/test_crc32.c Core/Src/porting/crc32.c            -o /tmp/mtest/test_crc32
+/tmp/mtest/test_crc32 || rc=1
+
+echo "=== lz4_depack.c: round-trip + boundary cases ==="
+$CC -O2 -Wall -Wextra -std=gnu11 -ICore/Src/porting/lib \
+    tests/test_lz4_depack.c Core/Src/porting/lib/lz4_depack.c -o /tmp/mtest/test_lz4_depack
+/tmp/mtest/test_lz4_depack || rc=1
+
+# === safety nets must not be the thing that breaks the build =========
+# Two CI jobs went red once not from a real defect but from the safety nets
+# themselves: check_core_symbol_aliases.py crashing when nm wasn't on PATH,
+# and this file's sm block dying when external/sm wasn't checked out. Both
+# pinned below so that regresses instead of silently recurring.
+echo "=== check_core_symbol_aliases: nm-missing / alias / clean-tree pins ==="
+bash tests/test_check_core_symbol_aliases.sh || rc=1
+
+echo "=== tests/run.sh: sm parity SKIPS (not fails) without external/sm ==="
+bash tests/test_sm_skip_guard.sh || rc=1
+
+# GBA: the flash-XIP split is a contract the compiler cannot check. cpu.o runs
+# from ITCM, which the sentinel pass does not scan, so nothing cpu.o references
+# may live in the blob — move one file across that line in the linker script and
+# the build stays green while the device faults on the first frame. Counts the
+# sentinels in the linked image. Skips (loudly) without an ELF or a toolchain,
+# which is the host-tests CI job's situation.
+echo "=== gba: nothing cpu.o references may live in the XIP blob ==="
+bash tests/test_gba_xip_contract.sh || rc=1
+
+# GBA: the M4A mixer HLE is wired — cpu.o checks the hook, main.o scans for the
+# mixer, the six transliterations sit in the blob and their signatures in RAM.
+# Drop -DGBA_M4A_HLE and everything still builds and boots, just 27-60% slower;
+# this is the only thing in the tree that would say so. Same SKIP rules as the
+# XIP contract above. RED-verified: a relink without the define fails it.
+echo "=== gba: the M4A mixer HLE is wired, and each piece is on its side ==="
+bash tests/test_gba_m4a_wired.sh || rc=1
+
+# GBA: the output low-pass — passband, stopband, bypass and stability, against
+# tones, compiling the real gba_audio_filter.c. RED-verified: flipping a
+# coefficient sign fails it.
+echo "=== gba: the output low-pass does what its header promises ==="
+$CC -O2 -Wall -Wextra -std=gnu11 \
+    tests/test_gba_audio_filter.c Core/Src/porting/gba/gba_audio_filter.c \
+    -lm -o /tmp/mtest/test_gba_audio_filter
+/tmp/mtest/test_gba_audio_filter || rc=1
+
+# GBA: load_gamepak() on a memory-mapped cart. Runs gpSP's real load path on the
+# host BECAUSE the host traps what QEMU does not: an XIP build has no
+# gamepak_buffers, and the code that read the cart through them scanned a megabyte
+# from address 0. On an mps2-an500 that is mapped and the scan shrugged; on the
+# device the first 64 KB is ITCM and the next byte is a bus fault, which is how
+# Pokemon Ruby died. Page zero is unmapped here, so it is a SIGSEGV instead.
+echo "=== gba: load_gamepak reads an XIP cart through the cart, not through NULL ==="
+bash tools/gba_harness/run.sh || rc=1
+
+echo "=== sm: savestate header refuses a foreign or truncated file ==="
+# sm_system_SaveState/LoadState (main_sm.c) stamp every file with a magic/
+# version/length header and refuse to load one that doesn't match — a
+# savestate is a raw dump of live structs, and a file from a build whose
+# structs have since moved would otherwise still open, still read to the
+# end, and quietly restore nonsense (a black screen, no clue why). The
+# check itself lives in sm_state_header.h, factored out of main_sm.c so it
+# links here without the SNES core or the G&W HAL main_sm.c sits on top of.
+#
+# This block sits BEFORE "sm: device source set is symbol-complete" on
+# purpose: test_sm_skip_guard.sh re-runs everything from that marker to EOF
+# as its own standalone script to check the SKIP-without-external/sm path,
+# and it expects that slice to run clean. Anything placed after the marker
+# becomes part of what it exercises (and, since it has no $CC of its own,
+# ${CC:-gcc} rather than $CC matters there too — belt and suspenders).
+mkdir -p /tmp/mtest
+${CC:-gcc} -O2 -Wall -Wextra -std=c11 -ICore/Inc/porting/sm \
+    tests/test_sm_state_header.c -o /tmp/mtest/test_sm_state_header
+/tmp/mtest/test_sm_state_header || rc=1
+
+echo "=== sm: a load must invalidate the PPU's derived caches, not just restore state ==="
+# ppu_saveload() (external/sm/src/snes/ppu.c) does not serialise palette565 or
+# brightnessMult — they're caches derived from cgram+brightness, not state, and
+# they live past where the save/load stream stops (offsetof(Ppu,
+# pixelbuffer_placeholder)). A load restores cgram underneath them; unless
+# something invalidates them, the screen renders the loaded scene in the
+# colours of the one that was showing before the load.
+#
+# Runs the device's actual source set (tools/sm_harness/device_run.sh, built
+# with -DTARGET_GNW same as the parity check above) with SM_SAVELOAD=1, which
+# deliberately poisons those caches between save and load — see device_main.c
+# for why it does that instead of driving the game elsewhere with input, which
+# is what an earlier version of this harness tried and which did not catch
+# this bug. SM_COLD_LOAD additionally covers the "PPU has rendered nothing
+# yet" shape of the same bug (load right after boot, before any frame primed
+# the caches).
+#
+# Needs both external/sm AND a local ROM fixture — CI's host-tests job has
+# neither (no submodules, and this ROM is not something we can ship/commit).
+SM_ROM="${SM_ROM:-/home/ubuntu/app/jupyterLab/notebooks/game-and-what/backend/data/library/public/_data/Super Metroid (Japan, USA) (En,Ja).sfc}"
+if [ -f external/sm/src/sm_rtl.c ] && [ -f "$SM_ROM" ]; then
+    SM_SAVELOAD=1 bash tools/sm_harness/device_run.sh "$SM_ROM" 300
+    rc=$(( rc || $? ))
+    SM_SAVELOAD=1 SM_COLD_LOAD=1 bash tools/sm_harness/device_run.sh "$SM_ROM" 300
+    rc=$(( rc || $? ))
+else
+    echo "SKIP  needs external/sm checked out AND a ROM at \$SM_ROM (CI's host-tests job has neither)"
+fi
+
+echo "=== jpeg: hw_jpeg_decoder.c lock/callback/floor-to-4 regressions ==="
+# Three real bugs shipped in hw_jpeg_decoder.c in three consecutive releases, each
+# found only after the device died: a stuck HAL lock, HAL's end-of-input callback
+# misread as an error, and HAL flooring InDataLength to a multiple of 4 (dropping
+# the JPEG's trailing EOI). All three were pure state/arithmetic — no peripheral
+# needed to reproduce them on a host. See tools/jpeg_harness/run.sh.
+bash tools/jpeg_harness/run.sh
+rc=$(( rc || $? ))
+
+echo "=== idle power off: one setting, one rule, and every idle loop asks it ==="
+bash tests/test_idle_timeout_wired.sh
+rc=$(( rc || $? ))
+
+echo "=== clock ram_start restore: the only RAM_EMU overlay that returns in-process ==="
+bash tests/test_clock_ram_start_restored.sh
+rc=$(( rc || $? ))
+
+echo "=== boot rescue: a bricked boot must end somewhere a person can act ==="
+# A bad firmware hung the device dark with the power button dead — firmware
+# reads that button, so a hang can only be escaped by a flat battery. The
+# rescue counter/screen/power-off only work if every hook is CALLED (wiring),
+# and the counter logic itself runs here against a fake backup register
+# (compiling the real gw_boot_rescue.c, per the flash-cache lesson).
+bash tests/test_boot_rescue_wired.sh
+rc=$(( rc || $? ))
+BR_DIR=/tmp/mtest/boot_rescue
+rm -rf "$BR_DIR"; mkdir -p "$BR_DIR"
+$CC -O1 -g -std=gnu11 -Wall $SAN -DBOOT_RESCUE_HOST_TEST \
+    -Itests/boot_rescue_stubs -ICore/Inc \
+    tests/test_boot_rescue.c Core/Src/gw_boot_rescue.c \
+    -o "$BR_DIR/test_boot_rescue" || rc=1
+"$BR_DIR/test_boot_rescue" || rc=1
+
+echo "=== update guard: a truncated update file must not reach the flasher ==="
+# The bootloader validates nothing; the firmware is the gate. The validator
+# runs here against synthetic images in the release script's real layout,
+# with truncation — the classic brick — as the headline case.
+$CC -O1 -g -std=gnu11 -Wall $SAN -DUPDATE_GUARD_HOST_TEST \
+    -ICore/Inc \
+    tests/test_update_guard.c Core/Src/gw_update_guard.c \
+    -o "$BR_DIR/test_update_guard" || rc=1
+"$BR_DIR/test_update_guard" || rc=1
+
+# Everything from here to EOF is re-run standalone by tests/test_sm_skip_guard.sh,
+# which is why nothing that is expensive or self-contained belongs below this line.
+# ---------------------------------------------------------------- flash cache --
+# The ring every core's ROM goes through. It had no tests, and it holed Super
+# Metroid's ROM: the launcher caches the ROM and hands the core its address, the
+# core then caches its code blob, and once the ring has come round that write
+# lands on the ROM being read. New Game was a black screen; Continue was fine.
+#
+# RED first, and against the real thing: the same test runs over the allocator as
+# it was BEFORE the fix (git show), where it must fail. A test that has never
+# failed proves nothing.
+echo "=== flash cache: a write must not land on a file being read ==="
+FA_DIR=/tmp/mtest/flash_alloc
+rm -rf "$FA_DIR"; mkdir -p "$FA_DIR/saves"
+FA_PREFIX_REV=e51ed278          # the allocator as it was, before the live set
+
+$CC -O1 -g -std=gnu11 -Wall $SAN -Itests/flash_alloc_stubs -ICore/Inc \
+    tests/test_flash_alloc.c tests/flash_alloc_stubs/flash_stubs.c \
+    Core/Src/gw_flash_alloc.c -o "$FA_DIR/test_flash_alloc" || rc=1
+
+if git cat-file -e "$FA_PREFIX_REV:Core/Src/gw_flash_alloc.c" 2>/dev/null; then
+    git show "$FA_PREFIX_REV:Core/Src/gw_flash_alloc.c" > "$FA_DIR/prefix.c"
+    echo 'void flash_alloc_forget_live_files(void) {}' > "$FA_DIR/shim.c"
+    $CC -O1 -g -std=gnu11 -w $SAN -Itests/flash_alloc_stubs -ICore/Inc \
+        tests/test_flash_alloc.c tests/flash_alloc_stubs/flash_stubs.c \
+        "$FA_DIR/prefix.c" "$FA_DIR/shim.c" -o "$FA_DIR/test_prefix" || rc=1
+    if ( cd "$FA_DIR" && ./test_prefix > /dev/null 2>&1 ); then
+        echo "FAIL the pre-fix allocator passed - this test cannot see the bug it is for"
+        rc=1
+    else
+        echo "OK  the pre-fix allocator fails it, as the shipped bug did"
+    fi
+else
+    # A shallow clone has no history to check against. Skip, and say so: a safety
+    # net that fails the build when it cannot run teaches people to ignore CI.
+    echo "SKIP no $FA_PREFIX_REV in this clone (shallow?) - RED check not run"
+fi
+
+( cd "$FA_DIR" && ./test_flash_alloc ) || rc=1
+
+echo "=== sm: device source set is symbol-complete ==="
+# The main sm harness compiles all of external/sm, including sm_cpu_infra.c, which
+# defines and sets g_snes. The device does not compile that file. That gap let
+# three builds ship in which the linker bound sm's SNES bus to Super Mario World's
+# g_snes — the harness ran 4,000 clean frames while the device died on its first
+# register read. Link exactly what the device links, and nothing else.
+#
+# CI's host-tests job checks out the repo without submodules, so external/sm is an
+# empty directory there. Skipping is honest; pretending to have checked is not.
+if [ -f external/sm/src/sm_rtl.c ]; then
+    bash tools/sm_harness/device_parity.sh
+    rc=$(( rc || $? ))
+else
+    echo "SKIP  external/sm is not checked out (no submodules in this job)"
+fi
+
+# === i18n: the generator must see every lang_t string field ==================
+# lang_t is indexed BY POSITION in /lang/*.bin. A field the generator fails to
+# parse is not a missing string — it shifts every index after it, and the .bin
+# ships one language's labels in another's slots. That is exactly what happened:
+# rg_i18n_lang.h had `// ... an older /lang/*.bin` — a "/*" inside a LINE comment
+# — and the block-comment stripper, being a regex, took it as an opener. It sat
+# harmless for months because no "*/" followed it. The day someone added a block
+# comment lower down, it ate 50 fields; the build stayed green and the tool
+# printed "0 missing". Nothing but this check would have caught it.
+echo "=== i18n: every lang_t field reaches the generator ==="
+python3 - <<'PYEOF4' || rc=1
+import importlib.util, re, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('g', 'tools/gen_i18n_bin.py')
+g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+hdr = Path('Core/Inc/retro-go/rg_i18n_lang.h')
+declared = re.findall(r'^\s*const\s+char\s*\*\s*s_(\w+)\s*;', hdr.read_text(encoding='utf-8'), re.M)
+try:
+    parsed = g.parse_header_field_order(hdr)
+except SystemExit as e:
+    print(f"FAIL generator refuses the header: {e}"); sys.exit(1)
+if len(parsed) != len(declared):
+    print(f"FAIL generator sees {len(parsed)} of {len(declared)} lang_t fields"); sys.exit(1)
+# And the trap itself: no "/*" may hide inside a "//" comment in the header.
+for i, line in enumerate(hdr.read_text(encoding='utf-8').splitlines(), 1):
+    if re.search(r'//.*/\*', line):
+        print(f"FAIL {hdr}:{i} has '/*' inside a '//' comment — this is the landmine"); sys.exit(1)
+print(f"OK  all {len(declared)} lang_t string fields parse; no '/*' hidden in a '//' comment")
+PYEOF4
+
+# === system grid: wired into retro_loop, and owning no loop of its own ======
+# Both halves of this matter, and neither is a unit test:
+#  - A screen that runs its own while(1) has to re-ask every rule the launcher
+#    loop already asks (idle power-off, watchdog, the due-alarm poll). The clock
+#    app did exactly that, forgot odroid_idle_timeout_expired(), and sat lit for
+#    ever at any setting. The grid is a MODE of retro_loop(), so it inherits them
+#    — and this guard is what keeps it that way.
+#  - A perfectly correct screen nobody calls is the other half of the same bug.
+echo "=== system grid wiring ==="
+grid_bad=0
+if grep -qE 'odroid_input_read_gamepad|while *\( *(1|true) *\)' Core/Src/retro-go/rg_system_grid.c; then
+    echo "FAIL rg_system_grid.c grew a loop/input read of its own — it must stay a"
+    echo "     mode of retro_loop(), or it has to re-ask idle-timeout + watchdog itself"
+    grid_bad=1
+fi
+for sym in rg_system_grid_open rg_system_grid_close rg_system_grid_commit \
+           rg_system_grid_step rg_system_grid_is_open; do
+    grep -q "$sym" Core/Src/retro-go/rg_main.c || {
+        echo "FAIL retro_loop() never calls $sym — the grid is unreachable"; grid_bad=1; }
+done
+grep -q 'rg_system_grid_draw' Core/Src/retro-go/gui.c || {
+    echo "FAIL gui_redraw_callback() never draws the grid"; grid_bad=1; }
+# A fresh boot lands on the grid; quitting a game lands back in the ROM list you
+# were browsing. Both halves are the same one-line condition, so pin it.
+grep -q 'retro_loop(boot_mode != BOOT_MODE_HOT)' Core/Src/retro-go/rg_main.c || {
+    echo "FAIL a fresh boot no longer opens the grid — or quitting a game now does"
+    grid_bad=1; }
+# B is the back key now; ROM info/delete must still be reachable from the A menu.
+grep -q 'emulator_show_file_info' Core/Src/retro-go/rg_emulators.c || {
+    echo "FAIL ROM info/delete became unreachable when B stopped opening it"; grid_bad=1; }
+if [ "$grid_bad" = 0 ]; then
+    echo "OK  grid is a mode of retro_loop(), reachable, drawn; ROM info still reachable"
+else
+    rc=1
 fi
 
 exit $rc

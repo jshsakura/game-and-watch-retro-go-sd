@@ -25,11 +25,15 @@
 #include "main_wsv.h"
 #include "main_ngp.h"
 #include "main_wswan.h"
+#include "main_snes.h"
+#include "main_md32x.h"
 #include "main_gwenesis.h"
 #include "main_a7800.h"
 #include "main_vb.h"
+#include "main_gba.h"
 #include "main_amstrad.h"
 #include "main_zelda3.h"
+#include "main_sm.h"
 #include "main_smw.h"
 #include "main_videopac.h"
 #include "main_zxs.h"
@@ -50,6 +54,8 @@
 #include "gw_flash_alloc.h"
 #if SD_CARD == 0
 #include "rg_frogfs.h"
+#else
+#include "ff.h"
 #endif
 
 #define CORE_HEADER_MAGIC_INTERNAL "CORI"
@@ -251,9 +257,9 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 28 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy). DTCM (.bss) is tight: bump ONLY when the add_emulator call is actually added. */
-static retro_emulator_t emulators[MAX_EMULATORS];
-static rom_system_t systems[MAX_EMULATORS];
+#define MAX_EMULATORS 32 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance), 29->30 (SNES, SD only), 30->31 (Sega 32X, SD only), 31->32 (Sega CD, SD only). Upstream (8caa3e45) moved this to ahb_calloc at init instead of a static DTCM array -- kept our count, adopted their allocation scheme. Bump ONLY when the add_emulator call is actually added. */
+static retro_emulator_t *emulators;
+static rom_system_t *systems;
 static int emulators_count = 0;
 
 #if CHEAT_CODES == 1
@@ -532,18 +538,6 @@ static void event_handler(gui_event_t event, tab_t *tab)
         // array so the star/order updates immediately.
         emulator_fill_tab_list(tab, emu);
     }
-    else if (event == KEY_PRESS_B)
-    {
-        if (rg_rom_list_arg_is_parent(sel_arg))
-            return;
-        retro_emulator_file_t *file = (retro_emulator_file_t *)sel_arg;
-        emulator_show_file_info(file);
-
-        // Refresh if file was deleted
-        if (strlen(file->path) == 0) {
-            gui_event(TAB_REFRESH_LIST, tab);
-        }
-    }
     else if (event == TAB_IDLE)
     {
     }
@@ -640,6 +634,203 @@ static const char *get_extension(const char *filename) {
     return NULL;
 }
 
+/* CD-based systems ship a game as a folder: one .cue plus its track .bin files.
+ * They need the recursive scan below rather than the flat scandir, or the only
+ * thing the launcher sees under /roms/<sys>/ is the game FOLDER — which lists
+ * with the folder's name and cannot be launched. Sega CD has exactly the PCE CD
+ * layout and was missing from this gate, so it fell to the flat scan. */
+static bool emulator_is_cd_system(const retro_emulator_t *emu)
+{
+    return strcmp(emu->dirname, "pcecd") == 0 ||
+           strcmp(emu->dirname, "segacd") == 0;
+}
+
+/* Case-insensitive ".cue" — avoid snprintf/strtolower/strstr on every SD entry. */
+static bool filename_is_cue(const char *name)
+{
+    const char *ext = strrchr(name, '.');
+    if (!ext || ext == name || !ext[1])
+        return false;
+    ext++;
+    return ((ext[0] | 0x20) == 'c')
+        && ((ext[1] | 0x20) == 'u')
+        && ((ext[2] | 0x20) == 'e')
+        && (ext[3] == '\0');
+}
+
+static bool emulator_add_rom_file(retro_emulator_t *emu, const char *path,
+                                  const char *basename, uint32_t size)
+{
+    retro_emulator_file_t *slot;
+
+    if (emu->roms.count + 1 > emu->roms.maxcount)
+        return false;
+
+    slot = &emu->roms.files[emu->roms.count];
+    memset(slot, 0, sizeof(*slot));
+    slot->address = 0;
+    slot->size = size;
+    slot->system = emu->system;
+    slot->region = REGION_NTSC;
+    strncpy(slot->path, path, sizeof(slot->path) - 1);
+    slot->path[sizeof(slot->path) - 1] = '\0';
+    remove_extension(basename, slot->name);
+    slot->ext = (char *)get_extension(slot->path);
+#if COVERFLOW != 0
+    slot->img_state = IMG_STATE_UNKNOWN;
+#endif
+#if CHEAT_CODES == 1
+    slot->cheat_count = 0;
+    slot->cheat_codes = NULL;
+    slot->cheat_descs = NULL;
+#endif
+    emu->roms.count++;
+    emu->system->roms_count = emu->roms.count;
+    return true;
+}
+
+static bool emulator_add_folder_row(retro_emulator_t *emu, const char *path,
+                                    const char *basename)
+{
+    retro_emulator_file_t *slot;
+    size_t nl;
+
+    if (emu->roms.count + 1 > emu->roms.maxcount)
+        return false;
+
+    slot = &emu->roms.files[emu->roms.count];
+    memset(slot, 0, sizeof(*slot));
+    slot->address = 0;
+    slot->size = 0;
+    slot->system = emu->system;
+    slot->region = REGION_NTSC;
+    strncpy(slot->path, path, sizeof(slot->path) - 1);
+    slot->path[sizeof(slot->path) - 1] = '\0';
+    strncpy(slot->name, basename, sizeof(slot->name) - 1);
+    slot->name[sizeof(slot->name) - 1] = '\0';
+    slot->ext = NULL;
+    nl = strlen(slot->name);
+    if (nl + 3 < sizeof(slot->name))
+    {
+        memmove(slot->name + 2, slot->name, nl + 1);
+        slot->name[0] = '>';
+        slot->name[1] = ' ';
+    }
+#if COVERFLOW != 0
+    slot->img_state = IMG_STATE_NO_COVER;
+#endif
+    emu->roms.count++;
+    emu->system->roms_count = emu->roms.count;
+    return true;
+}
+
+#if SD_CARD == 1
+/* Open a child dir and stop at the first .cue found.
+ * Must not run while another DIR is open (FatFs LFN uses a shared static buffer). */
+static bool cd_collapse_game_dir(retro_emulator_t *emu, const char *path)
+{
+    DIR dir;
+    FILINFO fno;
+    size_t path_len = strlen(path);
+    char fullpath[RG_PATH_MAX];
+
+    if (path_len + 6 >= RG_PATH_MAX)
+        return false;
+    if (f_opendir(&dir, path) != FR_OK)
+        return false;
+
+    bool found = false;
+    while (emu->roms.count < emu->roms.maxcount)
+    {
+        wdog_refresh();
+        if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == 0)
+            break;
+        if (fno.fname[0] == '.')
+            continue;
+        if (fno.fattrib & AM_DIR)
+            continue;
+        if (!filename_is_cue(fno.fname))
+            continue;
+        if (path_len + 1 + strlen(fno.fname) >= sizeof(fullpath))
+            continue;
+
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, fno.fname);
+        found = emulator_add_rom_file(emu, fullpath, fno.fname, (uint32_t)fno.fsize);
+        break;
+    }
+    f_closedir(&dir);
+    return found;
+}
+
+/* Scan one CD-system browse folder without nesting FatFs DIR handles and without
+ * nesting FatFs DIR handles. Parent directory is scanned once, child names are
+ * collected, then children are processed after parent close (FatFs LFN safety). */
+static void emulator_scan_cd_folder(retro_emulator_t *emu, const char *folder)
+{
+    DIR dir;
+    FILINFO fno;
+    size_t folder_len = strlen(folder);
+    char fullpath[RG_PATH_MAX];
+    char **subdirs = NULL;
+    int subdir_count = 0;
+    int subdir_cap = 0;
+
+    /* Pass 1: process .cue files at this level and collect child directories. */
+    if (f_opendir(&dir, folder) == FR_OK)
+    {
+        while (emu->roms.count < emu->roms.maxcount)
+        {
+            wdog_refresh();
+            if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == 0)
+                break;
+            if (fno.fname[0] == '.')
+                continue;
+            if (fno.fattrib & AM_DIR)
+            {
+                char *name_copy;
+                if (subdir_count >= subdir_cap)
+                {
+                    int new_cap = subdir_cap ? (subdir_cap * 2) : 16;
+                    char **new_subdirs = realloc(subdirs, (size_t)new_cap * sizeof(*new_subdirs));
+                    if (!new_subdirs)
+                        break;
+                    subdirs = new_subdirs;
+                    subdir_cap = new_cap;
+                }
+                name_copy = strdup(fno.fname);
+                if (!name_copy)
+                    break;
+                subdirs[subdir_count++] = name_copy;
+                continue;
+            }
+            if (!filename_is_cue(fno.fname))
+                continue;
+            if (folder_len + 1 + strlen(fno.fname) >= sizeof(fullpath))
+                continue;
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", folder, fno.fname);
+            if (!emulator_add_rom_file(emu, fullpath, fno.fname, (uint32_t)fno.fsize))
+                break;
+        }
+        f_closedir(&dir);
+    }
+
+    /* Pass 2: process each child dir after parent has been closed. */
+    for (int i = 0; i < subdir_count && emu->roms.count < emu->roms.maxcount; i++)
+    {
+        wdog_refresh();
+        if (folder_len + 1 + strlen(subdirs[i]) >= sizeof(fullpath))
+            continue;
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", folder, subdirs[i]);
+        if (!cd_collapse_game_dir(emu, fullpath))
+            emulator_add_folder_row(emu, fullpath, subdirs[i]);
+    }
+
+    for (int i = 0; i < subdir_count; i++)
+        free(subdirs[i]);
+    free(subdirs);
+}
+#endif /* SD_CARD == 1 */
+
 static int scan_folder_cb(const rg_scandir_t *entry, void *arg)
 {
     retro_emulator_t *emu = (retro_emulator_t *)arg;
@@ -660,62 +851,23 @@ static int scan_folder_cb(const rg_scandir_t *entry, void *arg)
     }
     else if (entry->is_dir)
     {
-        /* PCE CD lists every .cue flat (recursive scan descends game folders),
-         * so its sub-folders are not shown as browse rows. */
-        is_valid = (strcmp(emu->dirname, "pcecd") != 0);
+        is_valid = true;
     }
 
     if (!is_valid)
         return RG_SCANDIR_CONTINUE;
 
-    if (emu->roms.count + 1 > emu->roms.maxcount)
-        return RG_SCANDIR_STOP;
-
-    retro_emulator_file_t *slot = &emu->roms.files[emu->roms.count];
-    memset(slot, 0, sizeof(*slot));
-    slot->address = 0;
-    slot->size = entry->size;
-    slot->system = emu->system;
-    slot->region = REGION_NTSC;
-    strncpy(slot->path, entry->path, sizeof(slot->path) - 1);
-    slot->path[sizeof(slot->path) - 1] = '\0';
-
     if (entry->is_dir)
     {
-        strncpy(slot->name, entry->basename, sizeof(slot->name) - 1);
-        slot->name[sizeof(slot->name) - 1] = '\0';
-        slot->ext = NULL;
-        {
-            size_t nl = strlen(slot->name);
-            if (nl + 3 < sizeof(slot->name))
-            {
-                memmove(slot->name + 2, slot->name, nl + 1);
-                slot->name[0] = '>';
-                slot->name[1] = ' ';
-            }
-        }
-#if COVERFLOW != 0
-        /* Folders are not ROM-named cover files; avoid fopen on SD for each folder row. */
-        slot->img_state = IMG_STATE_NO_COVER;
-#endif
-    }
-    else
-    {
-        remove_extension(entry->basename, slot->name);
-        slot->ext = (char *)get_extension(slot->path);
-#if COVERFLOW != 0
-        slot->img_state = IMG_STATE_UNKNOWN;
-#endif
-#if CHEAT_CODES == 1
-        slot->cheat_count = 0;
-        slot->cheat_codes = NULL;
-        slot->cheat_descs = NULL;
-#endif
+        if (!emulator_add_folder_row(emu, entry->path, entry->basename))
+            return RG_SCANDIR_STOP;
+        return RG_SCANDIR_CONTINUE;
     }
 
-    emu->roms.count++;
-    emu->system->roms_count = emu->roms.count;
-
+    if (!emulator_add_rom_file(emu, entry->path, entry->basename, (uint32_t)entry->size))
+        return RG_SCANDIR_STOP;
+    /* Non-pcecd uses same adder; extension already validated. For non-cue systems
+     * get_extension still points at the real ext in path. */
     return RG_SCANDIR_CONTINUE;
 }
 
@@ -742,10 +894,12 @@ void emulator_init(retro_emulator_t *emu)
     rg_storage_mkdir(folder);
 
     emulator_browse_folder_path(emu, folder, sizeof(folder));
-    /* PCE CD: recurse so every .cue under /roms/pcecd (incl. per-game folders)
-     * is listed flat, instead of showing folders to drill into. */
-    uint32_t scan_flags = (strcmp(emu->dirname, "pcecd") == 0) ? RG_SCANDIR_RECURSIVE : 0;
-    rg_storage_scandir(folder, scan_folder_cb, emu, scan_flags);
+#if SD_CARD == 1
+    if (emulator_is_cd_system(emu))
+        emulator_scan_cd_folder(emu, folder);
+    else
+#endif
+        rg_storage_scandir(folder, scan_folder_cb, emu, 0);
 }
 
 void emulator_refresh_list(retro_emulator_t *emu)
@@ -756,11 +910,126 @@ void emulator_refresh_list(retro_emulator_t *emu)
     rg_storage_mkdir(folder);
 
     emulator_browse_folder_path(emu, folder, sizeof(folder));
-    /* PCE CD: recurse so every .cue under /roms/pcecd (incl. per-game folders)
-     * is listed flat, instead of showing folders to drill into. */
-    uint32_t scan_flags = (strcmp(emu->dirname, "pcecd") == 0) ? RG_SCANDIR_RECURSIVE : 0;
-    rg_storage_scandir(folder, scan_folder_cb, emu, scan_flags);
+#if SD_CARD == 1
+    if (emulator_is_cd_system(emu))
+        emulator_scan_cd_folder(emu, folder);
+    else
+#endif
+        rg_storage_scandir(folder, scan_folder_cb, emu, 0);
 }
+
+#if SD_CARD == 1
+/* Copy dirname of `path` into `out` (no trailing slash). */
+static void path_dirname_copy(const char *path, char *out, size_t out_size)
+{
+    const char *slash = path ? strrchr(path, '/') : NULL;
+    if (!slash || out_size == 0) {
+        if (out_size > 0) {
+            out[0] = '.';
+            if (out_size > 1)
+                out[1] = '\0';
+        }
+        return;
+    }
+    size_t len = (size_t)(slash - path);
+    if (len >= out_size)
+        len = out_size - 1;
+    memcpy(out, path, len);
+    out[len] = '\0';
+}
+
+/* True when cue lives in a per-game folder under /roms/<sys>/<game>/… */
+static bool cd_cue_in_game_folder(const char *cue_path, const char *sys_dir,
+                                  char *parent_out, size_t parent_size)
+{
+    char root[RG_PATH_MAX];
+    size_t root_len;
+
+    path_dirname_copy(cue_path, parent_out, parent_size);
+    snprintf(root, sizeof(root), "%s/%s", RG_BASE_PATH_ROMS, sys_dir);
+    if (strcmp(parent_out, root) == 0)
+        return false; /* flat layout: cue directly under /roms/<sys> */
+
+    root_len = strlen(root);
+    if (strncmp(parent_out, root, root_len) != 0 || parent_out[root_len] != '/')
+        return false;
+    /* Must be exactly one level under <sys> (…/<sys>/<game>), not deeper
+     * nested junk we might not want to wipe wholesale — still OK to delete
+     * that folder if the cue is there; collapse only uses one level. */
+    return true;
+}
+
+/* Flat CD layout: delete FILE "…" siblings referenced by the cue, then the cue. */
+static void emulator_delete_cd_flat(const char *cue_path)
+{
+    char parent[RG_PATH_MAX];
+    char line[512];
+    FILE *cue;
+
+    path_dirname_copy(cue_path, parent, sizeof(parent));
+    cue = fopen(cue_path, "rb");
+    if (cue) {
+        while (fgets(line, sizeof(line), cue)) {
+            char *p = line;
+            const char *q1, *q2;
+            char name[256];
+            char binpath[RG_PATH_MAX];
+            size_t n;
+
+            while (*p == ' ' || *p == '\t')
+                p++;
+            if (strncmp(p, "FILE", 4) != 0)
+                continue;
+            q1 = strchr(p, '"');
+            q2 = q1 ? strchr(q1 + 1, '"') : NULL;
+            if (!q1 || !q2)
+                continue;
+            n = (size_t)(q2 - q1 - 1);
+            if (n == 0 || n >= sizeof(name))
+                continue;
+            memcpy(name, q1 + 1, n);
+            name[n] = '\0';
+            /* Reject path traversal / absolute refs — only same-dir siblings. */
+            if (strchr(name, '/') || strchr(name, '\\') || strstr(name, ".."))
+                continue;
+            snprintf(binpath, sizeof(binpath), "%s/%s", parent, name);
+            rg_storage_delete(binpath);
+            wdog_refresh();
+        }
+        fclose(cue);
+    }
+    rg_storage_delete(cue_path);
+}
+
+/* Delete ROM storage for a list entry. PCE CD games are multi-file (cue+bins,
+ * often in a per-game folder); a plain unlink of the .cue would leave orphans. */
+static void emulator_delete_rom_storage(retro_emulator_file_t *file)
+{
+    static const char *const cd_dirs[] = { "pcecd", "segacd" };
+    char parent[RG_PATH_MAX];
+    char prefix[64];
+
+    if (!file || !file->path[0])
+        return;
+
+    /* Both CD systems store a game as cue + track bins, usually in a per-game
+     * folder; a plain unlink of the .cue would leave every track orphaned. */
+    if (file->ext && strcasecmp(file->ext, "cue") == 0) {
+        for (size_t i = 0; i < sizeof(cd_dirs) / sizeof(cd_dirs[0]); i++) {
+            snprintf(prefix, sizeof(prefix), "%s/%s/", RG_BASE_PATH_ROMS, cd_dirs[i]);
+            if (strncmp(file->path, prefix, strlen(prefix)) != 0)
+                continue;
+            if (cd_cue_in_game_folder(file->path, cd_dirs[i], parent, sizeof(parent)))
+                rg_storage_delete(parent);
+            else
+                emulator_delete_cd_flat(file->path);
+            return;
+        }
+    }
+
+    rg_storage_delete(file->path);
+}
+#endif /* SD_CARD == 1 */
 
 void emulator_show_file_info(retro_emulator_file_t *file)
 {
@@ -773,7 +1042,7 @@ void emulator_show_file_info(retro_emulator_file_t *file)
         {-1, curr_lang->s_File, filename_value, 0, NULL},
         {-1, curr_lang->s_Type, type_value, 0, NULL},
         {-1, curr_lang->s_Size, size_value, 0, NULL},
-#if SD_CARD != 0 // Can't delete file on FrogFS
+#if SD_CARD == 1 // Can't delete file on FrogFS
         ODROID_DIALOG_CHOICE_SEPARATOR,
         {10, curr_lang->s_Delete_Rom_File, "", no_delete ? -1 : 1, NULL},
 #endif
@@ -794,6 +1063,7 @@ void emulator_show_file_info(retro_emulator_file_t *file)
 
     while (1) {
         int sel = odroid_overlay_dialog(curr_lang->s_GameProp, choices, -1, &gui_redraw_callback, 0);
+#if SD_CARD == 1
         switch (sel)
         {
         case 10: {
@@ -807,7 +1077,7 @@ void emulator_show_file_info(retro_emulator_file_t *file)
             );
 
             if (delete_confirm_sel == 1) {
-                odroid_sdcard_unlink(file->path);
+                emulator_delete_rom_storage(file);
                 rg_favorites_remove(file->path); /* drop any stale ★ entry */
                 strcpy(file->path, "");
             } else {
@@ -817,6 +1087,7 @@ void emulator_show_file_info(retro_emulator_file_t *file)
         }
 
         }
+#endif
 
         break;
     }
@@ -840,7 +1111,7 @@ static bool show_cheat_dialog()
     static odroid_dialog_choice_t last = ODROID_DIALOG_CHOICE_LAST;
 
     // +1 for the terminator sentinel
-    odroid_dialog_choice_t *choices = rg_alloc((CHOSEN_FILE->cheat_count + 1) * sizeof(odroid_dialog_choice_t), MEM_ANY);
+    odroid_dialog_choice_t *choices = malloc((CHOSEN_FILE->cheat_count + 1) * sizeof(odroid_dialog_choice_t));
     char svalues[MAX_CHEAT_CODES][10];
     for(int i=0; i<CHOSEN_FILE->cheat_count; i++) 
     {
@@ -857,7 +1128,7 @@ static bool show_cheat_dialog()
     choices[CHOSEN_FILE->cheat_count] = last;
     odroid_overlay_dialog(curr_lang->s_Cheat_Codes_Title, choices, 0, NULL, 0);
 
-    rg_free(choices);
+    free(choices);
     odroid_settings_commit();
     return false;
 }
@@ -1056,7 +1327,7 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
     /* Built dynamically: the favorites rows vary, and the old fixed-array
      * "overwrite index N with LAST" cheat-row hack broke on every reshuffle. */
     const odroid_dialog_choice_t sep = ODROID_DIALOG_CHOICE_SEPARATOR;
-    odroid_dialog_choice_t choices[12];
+    odroid_dialog_choice_t choices[14];
     int rows = 0;
     choices[rows++] = (odroid_dialog_choice_t){0, curr_lang->s_Resume_game, (char *)"", (has_save) ? 1 : -1, NULL};
     choices[rows++] = (odroid_dialog_choice_t){1, curr_lang->s_New_game, (char *)"", 1, NULL};
@@ -1072,7 +1343,12 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
         choices[rows++] = (odroid_dialog_choice_t){4, curr_lang->s_Cheat_Codes, (char *)"", 1, NULL};
     }
 #endif
+    /* ROM name/type/size and "delete ROM" used to hang off the B button. B is the
+     * back key now, so they live here — the only menu a ROM has. */
+    choices[rows++] = sep;
+    choices[rows++] = (odroid_dialog_choice_t){6, curr_lang->s_GameProp, (char *)"", 1, NULL};
     choices[rows++] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
+    assert(rows <= (int)(sizeof(choices) / sizeof(choices[0])));
 
     int sel = odroid_overlay_dialog(file->name, choices, has_save ? 0 : 1, &gui_redraw_callback, 0);
 
@@ -1124,6 +1400,10 @@ bool emulator_show_file_menu(retro_emulator_file_t *file)
         force_redraw = true;
     }
 #endif
+    else if (sel == 6) { // File info (and delete ROM)
+        emulator_show_file_info(file);
+        force_redraw = true;
+    }
 
     free(sram_path);
     /* savestates is static — no free needed */
@@ -1162,6 +1442,16 @@ typedef struct {
     void       *itc_dest;
     uint32_t    itc_lma_off;
     uint32_t    itc_size;
+    /* Optional SECOND, independent ITCM image (same copy-before-bss-zero
+     * contract as above). Only SNES uses this today: itc_* carries the RC
+     * hot-site subset (.itcm_rc_hot, RCSMW-gated, usually empty), itc2_*
+     * carries the interpreter's cpu.o+ppu.o (.itcm_snes_interp, always
+     * populated) -- two independent features sharing the ITCM budget, see
+     * STM32H7B0VBTx_SDCARD.ld's .itcm_snes_interp comment. itc2_size == 0
+     * means unused (every other core). */
+    void       *itc2_dest;
+    uint32_t    itc2_lma_off;
+    uint32_t    itc2_size;
 } emu_dispatch_t;
 
 __attribute__((noinline))
@@ -1172,6 +1462,10 @@ static void run_internal_emu(const emu_dispatch_t *e,
         if (e->itc_size) {
             memcpy(e->itc_dest, (uint8_t *)&__RAM_EMU_START__ + e->itc_lma_off, e->itc_size);
             __DSB(); __ISB();   /* TCM stores drained before any fetch from ITCM */
+        }
+        if (e->itc2_size) {
+            memcpy(e->itc2_dest, (uint8_t *)&__RAM_EMU_START__ + e->itc2_lma_off, e->itc2_size);
+            __DSB(); __ISB();
         }
         memset(e->bss_start, 0, e->bss_size);
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, e->code_size);
@@ -1187,26 +1481,57 @@ static void run_internal_emu(const emu_dispatch_t *e,
 #define EMU_ENTRY(fn) ((void (*)(uint8_t, uint8_t, int8_t))(fn))
 
 static const emu_dispatch_t emu_tgb     = { "/cores/tgb.bin",     &_OVERLAY_TGB_BSS_START,     (uint32_t)&_OVERLAY_TGB_BSS_SIZE,     (uint32_t)&_OVERLAY_TGB_SIZE,     (uint32_t)&_OVERLAY_TGB_BSS_END,     EMU_ENTRY(app_main_gb_tgbdual) };
-#if SD_CARD == 1
-extern uint8_t __pce_itc_start__[];
+extern uint8_t __ram_itc_pce_start__[];
 extern uint8_t _OVERLAY_PCE_ITC_LMA_OFFSET;
 extern uint8_t _OVERLAY_PCE_ITC_SIZE;
 static const emu_dispatch_t emu_pce     = { "/cores/pce.bin",     &_OVERLAY_PCE_BSS_START,     (uint32_t)&_OVERLAY_PCE_BSS_SIZE,     (uint32_t)&_OVERLAY_PCE_SIZE,     0, EMU_ENTRY(app_main_pce),
-                                            __pce_itc_start__, (uint32_t)&_OVERLAY_PCE_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_PCE_ITC_SIZE };
-#else
-static const emu_dispatch_t emu_pce     = { "/cores/pce.bin",     &_OVERLAY_PCE_BSS_START,     (uint32_t)&_OVERLAY_PCE_BSS_SIZE,     (uint32_t)&_OVERLAY_PCE_SIZE,     0, EMU_ENTRY(app_main_pce) };
-#endif
+                                            __ram_itc_pce_start__, (uint32_t)&_OVERLAY_PCE_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_PCE_ITC_SIZE };
 static const emu_dispatch_t emu_msx     = { "/cores/msx.bin",     &_OVERLAY_MSX_BSS_START,     (uint32_t)&_OVERLAY_MSX_BSS_SIZE,     (uint32_t)&_OVERLAY_MSX_SIZE,     0, EMU_ENTRY(app_main_msx) };
 static const emu_dispatch_t emu_wsv     = { "/cores/wsv.bin",     &_OVERLAY_WSV_BSS_START,     (uint32_t)&_OVERLAY_WSV_BSS_SIZE,     (uint32_t)&_OVERLAY_WSV_SIZE,     0, EMU_ENTRY(app_main_wsv) };
 static const emu_dispatch_t emu_ngp     = { "/cores/ngp.bin",     &_OVERLAY_NGP_BSS_START,     (uint32_t)&_OVERLAY_NGP_BSS_SIZE,     (uint32_t)&_OVERLAY_NGP_SIZE,     0, EMU_ENTRY(app_main_ngp) };
 static const emu_dispatch_t emu_wswan   = { "/cores/wswan.bin",   &_OVERLAY_WSWAN_BSS_START,   (uint32_t)&_OVERLAY_WSWAN_BSS_SIZE,   (uint32_t)&_OVERLAY_WSWAN_SIZE,   0, EMU_ENTRY(app_main_wswan) };
+#if SD_CARD == 1
+extern uint8_t __snes_rc_hot_start__[];
+extern uint8_t _OVERLAY_SNES_ITC_LMA_OFFSET;
+extern uint8_t _OVERLAY_SNES_ITC_SIZE;
+extern uint8_t __snes_interp_itc_start__[];
+extern uint8_t _OVERLAY_SNES_INTERP_ITC_LMA_OFFSET;
+extern uint8_t _OVERLAY_SNES_INTERP_ITC_SIZE;
+static const emu_dispatch_t emu_snes    = { "/cores/snes.bin",    &_OVERLAY_SNES_BSS_START,    (uint32_t)&_OVERLAY_SNES_BSS_SIZE,    (uint32_t)&_OVERLAY_SNES_SIZE,    0, EMU_ENTRY(app_main_snes),
+                                            __snes_rc_hot_start__, (uint32_t)&_OVERLAY_SNES_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_SNES_ITC_SIZE,
+                                            __snes_interp_itc_start__, (uint32_t)&_OVERLAY_SNES_INTERP_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_SNES_INTERP_ITC_SIZE };
+#endif
 static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
+#if SD_CARD == 1
+extern uint8_t __md32x_itc_start__[];
+extern uint8_t _OVERLAY_MD32X_ITC_LMA_OFFSET;
+extern uint8_t _OVERLAY_MD32X_ITC_SIZE;
+static const emu_dispatch_t emu_md32x   = { "/cores/32x.bin",    &_OVERLAY_MD32X_BSS_START,   (uint32_t)&_OVERLAY_MD32X_BSS_SIZE,   (uint32_t)&_OVERLAY_MD32X_SIZE,   0, EMU_ENTRY(app_main_md32x),
+                                            __md32x_itc_start__, (uint32_t)&_OVERLAY_MD32X_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_MD32X_ITC_SIZE };
+/* SEGACD overlay symbols now come from gw_linker.h (8e47e219) — the local
+ * externs here had different types and hid the missing declarations. */
+extern int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot);
+#if SEGACD_ENABLED
+static const emu_dispatch_t emu_segacd = { "/cores/segacd.bin", &_OVERLAY_SEGACD_BSS_START, (uint32_t)&_OVERLAY_SEGACD_BSS_SIZE, (uint32_t)&_OVERLAY_SEGACD_SIZE, 0, EMU_ENTRY(app_main_segacd) };
+#endif
+#endif
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
 static const emu_dispatch_t emu_lynx    = { "/cores/lynx.bin",    &_OVERLAY_LYNX_BSS_START,    (uint32_t)&_OVERLAY_LYNX_BSS_SIZE,    (uint32_t)&_OVERLAY_LYNX_SIZE,    (uint32_t)&_OVERLAY_LYNX_BSS_END, EMU_ENTRY(app_main_lynx) };
 static const emu_dispatch_t emu_a7800   = { "/cores/a7800.bin",   &_OVERLAY_A7800_BSS_START,   (uint32_t)&_OVERLAY_A7800_BSS_SIZE,   (uint32_t)&_OVERLAY_A7800_SIZE,   0, EMU_ENTRY(app_main_a7800) };
 static const emu_dispatch_t emu_vb      = { "/cores/vb.bin",      &_OVERLAY_VB_BSS_START,      (uint32_t)&_OVERLAY_VB_BSS_SIZE,      (uint32_t)&_OVERLAY_VB_SIZE,      0, EMU_ENTRY(app_main_vb) };
 static const emu_dispatch_t emu_amstrad = { "/cores/amstrad.bin", &_OVERLAY_AMSTRAD_BSS_START, (uint32_t)&_OVERLAY_AMSTRAD_BSS_SIZE, (uint32_t)&_OVERLAY_AMSTRAD_SIZE, 0, EMU_ENTRY(app_main_amstrad) };
 static const emu_dispatch_t emu_tama    = { "/cores/tama.bin",    &_OVERLAY_TAMA_BSS_START,    (uint32_t)&_OVERLAY_TAMA_BSS_SIZE,    (uint32_t)&_OVERLAY_TAMA_SIZE,    0, EMU_ENTRY(app_main_tama) };
+/* GBA is SD-card only, like Super Metroid: a FrogFS build can neither cache and
+ * relocate gba.xip nor hold the cart the core reads straight out of flash. The
+ * core is left out of that image rather than shipped as a dead menu entry, so
+ * every reference to it has to go with it. */
+#if SD_CARD == 1
+extern uint8_t __gba_itc_start__[];
+extern uint8_t _OVERLAY_GBA_ITC_LMA_OFFSET;
+extern uint8_t _OVERLAY_GBA_ITC_SIZE;
+static const emu_dispatch_t emu_gba     = { "/cores/gba.bin",     &_OVERLAY_GBA_BSS_START,     (uint32_t)&_OVERLAY_GBA_BSS_SIZE,     (uint32_t)&_OVERLAY_GBA_SIZE,     0, EMU_ENTRY(app_main_gba),
+                                            __gba_itc_start__, (uint32_t)&_OVERLAY_GBA_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_GBA_ITC_SIZE };
+#endif
 static const emu_dispatch_t emu_pkmini  = { "/cores/pkmini.bin",  &_OVERLAY_PKMINI_BSS_START,  (uint32_t)&_OVERLAY_PKMINI_BSS_SIZE,  (uint32_t)&_OVERLAY_PKMINI_SIZE,  0, EMU_ENTRY(app_main_pkmini) };
 
 void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_paused, int8_t save_slot)
@@ -1250,6 +1575,10 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         }
     }
 
+    /* systems[] lives in AHB and is wiped by ahb_init(). In-game code must
+     * not touch ACTIVE_FILE->system (use handlers / path instead). */
+    newfile->system = NULL;
+
     // It will free all ram allocated memory for use by emulators
     ahb_init();
     itc_init();
@@ -1258,6 +1587,8 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
     // (e.g. a homebrew app's /roms/homebrew/) into the next launch.
     extern const char *gw_fs_relpath_prefix;
     gw_fs_relpath_prefix = NULL;
+    emulators = NULL;
+    systems = NULL;
     // some pointers were freed, set them to null
     rg_reset_logo_buffers();
     gui_reset_cover_buffers();
@@ -1287,6 +1618,10 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             if (! strcmp(system_name, "Sega SG-1000")) app_main_smsplusgx(load_state, start_paused, save_slot, SMSPLUSGX_ENGINE_SG1000);
             else                                            app_main_smsplusgx(load_state, start_paused, save_slot, SMSPLUSGX_ENGINE_OTHERS);
         }
+#if SD_CARD == 1
+    } else if(strcmp(system_name, "Nintendo Gameboy Advance") == 0) {
+        run_internal_emu(&emu_gba, load_state, start_paused, save_slot);
+#endif
     } else if(strcmp(system_name, "Game & Watch") == 0 ) {
         if (load_core_bin_with_header("/cores/gw.bin", (uint8_t *)&__RAM_EMU_START__)) {
             memset(&_OVERLAY_GW_BSS_START, 0x0, (size_t)&_OVERLAY_GW_BSS_SIZE);
@@ -1304,8 +1639,22 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         run_internal_emu(&emu_ngp, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "WonderSwan") == 0) {
         run_internal_emu(&emu_wswan, load_state, start_paused, save_slot);
+#if SD_CARD == 1
+    } else if(strcmp(system_name, "SNES") == 0) {
+        run_internal_emu(&emu_snes, load_state, start_paused, save_slot);
+#endif
+#if SD_CARD == 1
+    } else if(strcmp(system_name, "Sega 32X") == 0) {
+        run_internal_emu(&emu_md32x, load_state, start_paused, save_slot);
+#endif
     } else if(strcmp(system_name, "Sega Genesis") == 0)  {
         run_internal_emu(&emu_md, load_state, start_paused, save_slot);
+#if SD_CARD == 1
+    } else if(strcmp(system_name, "Sega CD") == 0)  {
+#if SEGACD_ENABLED
+        run_internal_emu(&emu_segacd, load_state, start_paused, save_slot);
+#endif
+#endif
     } else if(strcmp(system_name, "Atari 2600") == 0) {
         run_internal_emu(&emu_a2600, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Atari Lynx") == 0) {
@@ -1353,6 +1702,18 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             memset(&_OVERLAY_ZELDA3_BSS_START, 0x0, (size_t)&_OVERLAY_ZELDA3_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_ZELDA3_SIZE);
             app_main_zelda3(load_state, start_paused, save_slot);
+        /* Super Metroid is SD-card only, and is compiled out entirely otherwise.
+         * It needs two files cached into external flash from the card: the original
+         * 3 MB ROM it reads at runtime, and sm.xip, whose sentinel addresses are
+         * relocated as it is written. A FrogFS build maps its files in place and
+         * never copies them, so there is nothing to relocate — and nowhere to put a
+         * 3 MB ROM. */
+#if SD_CARD == 1
+        } else if (strcmp(newfile->name,"Super Metroid") == 0) {
+            memset(&_OVERLAY_SM_BSS_START, 0x0, (size_t)&_OVERLAY_SM_BSS_SIZE);
+            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_SM_SIZE);
+            app_main_sm(load_state, start_paused, save_slot);
+#endif
         } else if (strcmp(newfile->name,"Super Mario World") == 0) {
             memset(&_OVERLAY_SMW_BSS_START, 0x0, (size_t)&_OVERLAY_SMW_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_SMW_SIZE);
@@ -1475,11 +1836,18 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 
 void emulators_init()
 {
+    if (!emulators) {
+        emulators = (retro_emulator_t *)ahb_calloc(MAX_EMULATORS, sizeof(retro_emulator_t));
+        systems = (rom_system_t *)ahb_calloc(MAX_EMULATORS, sizeof(rom_system_t));
+    }
+
     /* ★ Favorites must be the FIRST tab (index 0), before every system tab. */
     rg_favorites_register_tab();
 
     /* Tab order == registration order. Kept ALPHABETICAL by display name so the
-     * launcher list is predictable — insert new systems in their sorted slot. */
+     * launcher list is predictable — insert new systems in their sorted slot.
+     * Upstream (8caa3e45) reordered its own copy of this list historically and
+     * moved the array to ahb_calloc — we kept the ahb_calloc, kept our order. */
     add_emulator("Amstrad CPC", "amstrad", "dsk cdk", RG_LOGO_PAD_AMSTRAD, RG_LOGO_HEADER_AMSTRAD, NO_GAME_DATA);
     add_emulator("Atari 2600", "a2600", "a26 bin lzma", RG_LOGO_PAD_A2600, RG_LOGO_HEADER_A2600, NO_GAME_DATA);
     add_emulator("Atari 7800", "a7800", "a78 bin lzma", RG_LOGO_PAD_A7800, RG_LOGO_HEADER_A7800, NO_GAME_DATA);
@@ -1495,6 +1863,13 @@ void emulators_init()
     add_emulator("Neo Geo Pocket", "ngp", "ngp ngc ngpc", RG_LOGO_PAD_NGP, RG_LOGO_HEADER_NGP, NO_GAME_DATA);
     add_emulator("Nintendo Entertainment System", "nes", "nes fds nsf lzma", RG_LOGO_PAD_NES, RG_LOGO_HEADER_NES, NO_GAME_DATA);
     add_emulator("Nintendo Gameboy", "gb", "gb gbc lzma", RG_LOGO_PAD_GB, RG_LOGO_HEADER_GB, NO_GAME_DATA);
+    /* GBA: the ROM (up to 32MB) stays memory-mapped in external flash and the
+     * core reads it there — no decompression step, so no .lzma. SD builds only,
+     * for the reasons given at emu_gba: on a flash build the core is not there,
+     * so neither is the tab. */
+#if SD_CARD == 1
+    add_emulator("Nintendo Gameboy Advance", "gba", "gba", RG_LOGO_PAD_GBA, RG_LOGO_HEADER_GBA, NO_GAME_DATA);
+#endif
     add_emulator("Nintendo Gameboy Color", "gbc", "gb gbc lzma", RG_LOGO_PAD_GBC, RG_LOGO_HEADER_GBC, NO_GAME_DATA);
     add_emulator("PC Engine", "pce", "pce lzma", RG_LOGO_PAD_PCE, RG_LOGO_HEADER_PCE, NO_GAME_DATA);
     /* PC Engine CD (= TurboGrafx-CD): same HuC6280/VDC core as HuCard PCE; the
@@ -1509,6 +1884,22 @@ void emulators_init()
      * runtime; see the stub in Core/Src/porting/pico8/main_pico8.c. */
     add_emulator("PICO-8", "pico8", "p8 png", RG_LOGO_PAD_PICO8, RG_LOGO_HEADER_PICO8, GAME_DATA);
     add_emulator("Pokemon Mini", "mini", "min", RG_LOGO_PAD_PKMINI, RG_LOGO_HEADER_PKMINI, NO_GAME_DATA);
+#if SD_CARD == 1
+    add_emulator("SNES", "snes", "sfc smc fig swc", RG_LOGO_PAD_SNES, RG_LOGO_HEADER_SNES, NO_GAME_DATA);
+#endif
+    /* Generic SNES (LakeSnes interpreter) — EXPERIMENTAL, SD builds only, same
+     * delivery as SM/GBA (cart flash-cached from SD; no lzma). LoROM/HiROM only;
+     * enhancement-chip carts are rejected at load. No header logo yet (0). */
+    /* Sega 32X (picodrive) and Sega CD — EXPERIMENTAL, SD builds only.
+     * /roms/32x (.32x) and /roms/segacd (.cue). NO_GAME_DATA: both cores do
+     * their own byteswapped flash-cache (the zero-copy cart path needs the ROM
+     * 16-bit-word-swapped), like SM/SNES self-cache. */
+#if SD_CARD == 1
+    add_emulator("Sega 32X", "32x", "32x", RG_LOGO_PAD_32X, RG_LOGO_HEADER_32X, NO_GAME_DATA);
+#if SEGACD_ENABLED
+    add_emulator("Sega CD", "segacd", "cue", RG_LOGO_PAD_SEGACD, RG_LOGO_HEADER_SEGACD, NO_GAME_DATA);
+#endif
+#endif
     add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
     add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);
     add_emulator("Sega Master System", "sms", "sms lzma", RG_LOGO_PAD_SMS, RG_LOGO_HEADER_SMS, NO_GAME_DATA);

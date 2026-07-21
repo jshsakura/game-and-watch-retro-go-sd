@@ -52,7 +52,7 @@ const lang_t lang_ko_kr LANG_DATA = {
     .s_Clock_Scene = "픽셀 스타일",
     .s_Clock_Photo_Speed = "전환 속도",
     .s_Clock_Anim_4 = "사진 앨범",
-    .s_Clock_Auto_Dim = "자동 절전",
+    .s_Clock_Keep_Awake = "화면 항상 켜기",
     .s_Clock_Bg_File = "GIF",
     .s_Clock_Alarm_Sound = "알람 소리",
     .s_Clock_Night_Off = "절전 시작",
@@ -97,6 +97,8 @@ const lang_t lang_ko_kr LANG_DATA = {
 
     // Core\Src\porting\gb\main_gb.c =======================================
     .s_Palette = "팔레트",
+    .s_System = "시스템",
+    .s_SGB_Border = "SGB 테두리",
     //=====================================================================
 
     // Core\Src\porting\nes\main_nes.c =====================================
@@ -246,7 +248,10 @@ const lang_t lang_ko_kr LANG_DATA = {
     .s_Theme_CoverH = "커버플로우 가로",
     .s_Theme_CoverLightV = "커버라이트 세로",
     .s_Theme_CoverLightH = "커버라이트 가로",
-    .s_Caching_Game = "게임 캐싱 중",
+    .s_Cover_Style = "커버 스타일",
+    .s_Cover_Style_Poster = "포스터",
+    .s_Cover_Style_Square = "사각",
+    .s_Caching_Game = "게임 캐싱 중 (첫 실행만 느림)",
     .s_Loading_Banner = "로딩 중",
     .s_Pause_Banner = "일시정지",
 

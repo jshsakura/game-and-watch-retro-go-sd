@@ -74,6 +74,111 @@ static uint32_t align_to_next_block(uint32_t pointer)
     return (pointer + block_size - 1) & ~(block_size - 1);
 }
 
+/* ---------------------------------------------------------------- live set ---
+ *
+ * The ring was allowed to erase anything, and it said so afterwards:
+ * invalidate_overwritten_files() runs when the write is already done. That is no
+ * use to the caller who is HOLDING the address it just got — and that is the
+ * ordinary shape of a launch. The launcher caches the ROM and hands the core its
+ * address (rg_emulators.c); the core then caches its BIOS, its assets, its code
+ * blob. Once the ring has come back round, that second write lands on the ROM,
+ * and the core plays on out of a hole.
+ *
+ * Super Metroid is where it showed, because that port only READS its ROM: a hole
+ * took out the intro (bank $8B) and nothing else, so a save loaded and played
+ * while a new game was a black screen. tests/test_flash_alloc.c reproduces it.
+ *
+ * So the allocator has to know what is being read. Every address handed out this
+ * boot is live — a cache hit exactly as much as a fresh write, since the caller
+ * walks away holding it either way — and a write steps over live ranges instead
+ * of through them. Everything else in the ring is a game nobody is playing, and
+ * is overwritten as freely as before. Nothing to release: leaving a game reboots.
+ */
+#define MAX_LIVE_FILES 8
+
+static uint32_t get_extflash_base(void);
+
+typedef struct {
+    uint32_t address;
+    uint32_t size;
+} LiveRange;
+
+static LiveRange live_files[MAX_LIVE_FILES];
+static uint8_t live_file_count = 0;
+
+static void live_add(uint32_t address, uint32_t size)
+{
+    if (size == 0)
+        return;
+
+    for (uint8_t i = 0; i < live_file_count; i++) {
+        if (live_files[i].address == address) {
+            if (size > live_files[i].size)
+                live_files[i].size = size;
+            return;
+        }
+    }
+    if (live_file_count >= MAX_LIVE_FILES) {
+        /* More files in play than we can protect. The busiest core in the tree,
+         * PCE CD, holds three. Say it rather than let it pass unseen. */
+        printf("flash_alloc: live set full (%d) - a write may overwrite a file in use\n",
+               MAX_LIVE_FILES);
+        return;
+    }
+    live_files[live_file_count].address = address;
+    live_files[live_file_count].size = size;
+    live_file_count++;
+}
+
+/* A launch is a boot: leaving a game resets the machine, and .bss goes with it.
+ * Anything that does not reboot — a host test — has to say so itself. */
+void flash_alloc_forget_live_files(void)
+{
+    live_file_count = 0;
+}
+
+/* If [start, end) runs into a live file, say where that file ends. */
+static bool live_overlaps(uint32_t start, uint32_t end, uint32_t *live_end_out)
+{
+    for (uint8_t i = 0; i < live_file_count; i++) {
+        uint32_t file_start = live_files[i].address;
+        uint32_t file_end = file_start + live_files[i].size;
+        if (start < file_end && file_start < end) {
+            *live_end_out = file_end;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Where may this write go? The ring's own order, stepping over whatever a caller
+ * is reading right now. False when there is no gap — a real answer, and better
+ * than a hole in a file someone is using. */
+static bool find_write_slot(uint32_t start_pointer, uint32_t erase_size_total,
+                            uint32_t *out_pointer)
+{
+    const uint32_t base = get_extflash_base();
+    const uint32_t limit = (uint32_t)&__EXTFLASH_BASE__ + OSPI_GetFlashSize();
+    uint32_t p = start_pointer;
+
+    if (erase_size_total > limit - base)
+        return false;                       /* bigger than the whole cache */
+
+    /* Each live file can push us forward once, and we can wrap once. */
+    for (int attempt = 0; attempt < MAX_LIVE_FILES * 2 + 2; attempt++) {
+        if (p < base || p + erase_size_total > limit)
+            p = base;                       /* wrap */
+
+        uint32_t live_end;
+        if (!live_overlaps(p, p + erase_size_total, &live_end)) {
+            *out_pointer = p;
+            return true;
+        }
+        p = align_to_next_block(live_end);
+    }
+    return false;
+}
+
 /* Bytes to keep reserved at the bottom of external flash before the ROM cache may
  * write. We honor the LARGER of two reservations:
  *   1. get_ofw_extflash_size() - the active OFW's own external-flash footprint, read
@@ -92,7 +197,7 @@ static uint32_t get_reserved_extflash_size()
     return ofw > reserved ? ofw : reserved;
 }
 
-static uint32_t get_extflash_base()
+static uint32_t get_extflash_base(void)
 {
     return align_to_next_block(((uint32_t)&__EXTFLASH_BASE__) + get_reserved_extflash_size());
 }
@@ -212,7 +317,8 @@ static bool circular_flash_write(const char *file_path,
                                  uint32_t *data_size,
                                  uint32_t *flash_address_out,
                                  bool byte_swap,
-                                 file_progress_cb_t progress_cb)
+                                 file_progress_cb_t progress_cb,
+                                 flash_relocate_cb_t relocate_cb)
 {
     uint8_t buffer[16 * 1024];
     uint32_t total_bytes_processed = 0;
@@ -237,18 +343,20 @@ static bool circular_flash_write(const char *file_path,
     /* The erase (and thus the flash we consume) is block-aligned. */
     uint32_t erase_size_total = (*data_size + block_size - 1) & ~(block_size - 1);
 
-    // If there is not enough space available, write the file at the beginning of the flash
-    if (flash_write_pointer - flash_write_base + erase_size_total > OSPI_GetFlashSize() - get_reserved_extflash_size())
+    /* Wrap if it does not fit, step over whatever a caller is reading right now,
+     * and say no if there is nowhere left — rather than erase it. (Was: rewind to
+     * base and take what was there, including, once the ring came round, the ROM
+     * the core had just been handed. See the live set above.) */
+    (void)flash_write_base;
+    uint32_t slot;
+    if (!find_write_slot(flash_write_pointer, erase_size_total, &slot))
     {
-        flash_write_pointer = flash_write_base;
-    }
-
-    // Data are larger than flash size ... Abort
-    if (flash_write_pointer - flash_write_base + erase_size_total > OSPI_GetFlashSize() - get_reserved_extflash_size())
-    {
+        printf("flash_alloc: no room for %s (%lu bytes) clear of the files in use\n",
+               file_path, (unsigned long)*data_size);
         fclose(file);
         return false;
     }
+    flash_write_pointer = slot;
 
     uint32_t old_flash_write_pointer = flash_write_pointer;
     // Translates the address to an offset into external flash.
@@ -291,6 +399,14 @@ static bool circular_flash_write(const char *file_path,
                 buffer[i] = buffer[i + 1];
                 buffer[i + 1] = temp;
             }
+        }
+
+        /* Last look at the data while it is still in RAM. The chunk size is a
+         * multiple of 4 except at end-of-file, and the file starts on an erase
+         * block, so a 32-bit field never straddles two chunks. */
+        if (relocate_cb) {
+            relocate_cb(buffer, bytes_read, total_bytes_processed,
+                        (uint8_t *)*flash_address_out, *data_size);
         }
 
         OSPI_Program(address_in_flash, buffer, bytes_read);
@@ -338,6 +454,12 @@ void flash_alloc_reset()
 
 uint8_t *store_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap, file_progress_cb_t progress_cb)
 {
+    return store_file_in_flash_relocate(file_path, file_size_p, byte_swap, progress_cb, NULL);
+}
+
+uint8_t *store_file_in_flash_relocate(const char *file_path, uint32_t *file_size_p, bool byte_swap,
+                                      file_progress_cb_t progress_cb, flash_relocate_cb_t relocate_cb)
+{
     initialize_metadata();
     initialize_flash_pointer();
     // TODO : append file modification time to filepath for crc32
@@ -347,17 +469,22 @@ uint8_t *store_file_in_flash(const char *file_path, uint32_t *file_size_p, bool 
 
     if (is_file_in_flash(file_crc32, &flash_address, file_size_p))
     {
+        /* A hit is as live as a write: the caller walks away holding this address.
+         * Super Metroid's ROM was a hit, and the blob it cached next erased it. */
+        live_add(flash_address, *file_size_p);
         free(metadata);
         metadata = NULL;
         return (uint8_t *)flash_address;
     }
 
-    if (!circular_flash_write(file_path, file_size_p, &flash_address, byte_swap, progress_cb))
+    if (!circular_flash_write(file_path, file_size_p, &flash_address, byte_swap, progress_cb, relocate_cb))
     {
         free(metadata);
         metadata = NULL;
         return NULL;
     }
+
+    live_add(flash_address, *file_size_p);
 
     bool metadata_updated = false;
 

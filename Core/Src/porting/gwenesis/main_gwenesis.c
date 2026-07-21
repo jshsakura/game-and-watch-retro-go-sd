@@ -639,7 +639,7 @@ int app_main_gwenesis(uint8_t load_state, uint8_t start_paused, int8_t save_slot
                            &gwenesis_system_Screenshot,
                            NULL,
                            &gwenesis_sleep_wake_up,
-                           &gwenesis_system_SramSave);
+                           &gwenesis_system_SramSave, NULL);
    // rg_app_desc_t *app = odroid_system_get_app();
 
     if (start_paused) {
