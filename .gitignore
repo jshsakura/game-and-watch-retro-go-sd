@@ -82,12 +82,12 @@ tools/sfc_recomp/*_gen.c
 tools/sfc_recomp/rc_core_*.c
 
 # --- agent scratch / analysis cruft (keep working tree clean; not source of truth) ---
-/*_ANALYSIS.md
-/RC_ACTIVATION_VERIFY.md
-/RC_DISPATCH_ANALYSIS.md
-/RESUME_GNW.md
-/SEGACD_INVESTIGATION.md
-/MD32X_MENU_FLICKER_ANALYSIS.md
+/docs/*_ANALYSIS.md
+/docs/RC_ACTIVATION_VERIFY.md
+/docs/RC_DISPATCH_ANALYSIS.md
+/docs/RESUME_GNW.md
+/docs/SEGACD_INVESTIGATION.md
+/docs/MD32X_MENU_FLICKER_ANALYSIS.md
 /docs/SNES_PERF_FINDINGS.md
 /parse_hist.py
 /patch.diff
@@ -97,3 +97,7 @@ tools/sfc_recomp/rc_core_*.c
 # SegaCD lives in the gnw-segacd worktree until firmware integration lands
 /Core/Src/porting/segacd/
 /tools/segacd_harness/
+
+# CPS-1 arcade romsets (MAME zips) — ROM-derived, never commit
+/*.zip
+/Core/Src/porting/cps1/
