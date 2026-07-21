@@ -132,6 +132,9 @@ enum {
     // Sega CD name header — same rule again; appended after 32X so the
     // enum-to-logo.bin index correspondence stays exact.
     RG_LOGO_HEADER_SEGACD,
+    // CPS-1 name header — same rule again; appended after Sega CD so the
+    // enum-to-logo.bin index correspondence stays exact.
+    RG_LOGO_HEADER_CPS1,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
@@ -159,6 +162,8 @@ enum {
     RG_LOGO_PAD_32X,
     // Sega CD colour tab icon (cicon_segacd; same colour-only rule as 32X)
     RG_LOGO_PAD_SEGACD,
+    // CPS-1 colour tab icon (cicon_cps1; same colour-only rule as 32X/Sega CD)
+    RG_LOGO_PAD_CPS1,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);

@@ -212,6 +212,14 @@ extern void * _OVERLAY_WSWAN_BSS_START[];
 extern void * _OVERLAY_WSWAN_BSS_END[];
 extern uint8_t _OVERLAY_WSWAN_BSS_SIZE;
 
+/* CPS-1 (Capcom arcade) overlay. Same four symbols every core overlay
+ * defines; see .overlay_cps1 in the linker scripts. */
+extern void * _OVERLAY_CPS1_LOAD_START[];
+extern uint8_t _OVERLAY_CPS1_SIZE;
+extern void * _OVERLAY_CPS1_BSS_START[];
+extern uint8_t _OVERLAY_CPS1_BSS_SIZE;
+extern void * _OVERLAY_CPS1_BSS_END[];
+
 extern void * _MSX_ROM_UNPACK_BUFFER[];
 extern uint8_t _MSX_ROM_UNPACK_BUFFER_SIZE;
 extern uint8_t _PCE_ROM_UNPACK_BUFFER[];

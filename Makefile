@@ -1038,6 +1038,22 @@ Core/Src/porting/gamecom/sm8500.c \
 Core/Src/porting/gamecom/gamecom_core.c \
 Core/Src/porting/gamecom/main_gamecom.c
 
+# CPS-1 (Capcom Play System 1 arcade). 68000 is Musashi, shared verbatim with
+# Sega Genesis/Sega CD (external/gwenesis) rather than re-implemented. ROMs are
+# MAME romsets extracted into a per-game folder under /roms/cps1/ -- the GFX
+# chips are read in place, since MAME's interleave is address arithmetic (see
+# cps1_rom.h). cps1_core.c is deliberately NOT here: it is the synthetic-scene
+# host testbed and carries 2.25MB of BSS that cannot exist on the device.
+CPS1_C_SOURCES = \
+Core/Src/porting/cps1/main_cps1.c \
+Core/Src/porting/cps1/cps1_m68k.c \
+Core/Src/porting/cps1/cps1_eeprom.c \
+Core/Src/porting/cps1/cps1_rom.c \
+Core/Src/porting/cps1/cps1_romset.c \
+Core/Src/porting/cps1/cps1_ppu.c \
+Core/Src/porting/cps1/cps1_bg.c \
+external/gwenesis/src/cpus/M68K/m68kcpu.c
+
 TAMA_C_SOURCES =
 
 CORE_TAMA = external/tamalib

@@ -147,6 +147,20 @@ MEMORY
    * docs/snes-hotpath-rc-itcm.md for the cautionary tale. */
   SEGACD_CODE (x) : ORIGIN = 0xDEC80000,  LENGTH = 2M
 
+  /* CPS-1: Musashi's text plus its ~328 KB of constant dispatch/cycle tables.
+   * Same sentinel trick as SEGACD_CODE, and for the same reason -- CPS-1's own
+   * BSS is 422 KB (192 KB gfxram + 64 KB work RAM + tilemaps + cache, all
+   * hardware-mandated), so the 484 KB of Musashi text+rodata cannot also live
+   * in RAM_EMU: together they overflow the 724 KB pool by 161 KB, measured.
+   * m68kcpu.c's switch dispatch is cache-friendly enough to run from XIP --
+   * Sega CD and 32X both ship it that way.
+   *
+   * 0xDEF00000 because the sentinel regions must not overlap EACH OTHER even
+   * though only one core is ever resident: the linker places every region's
+   * LMA in the same ELF and rejects overlaps. SEGACD_CODE runs 0xDEC80000 +2M
+   * to 0xDEE80000, so the first free megabyte-aligned slot above it is this. */
+  CPS1_CODE  (x) : ORIGIN = 0xDEF00000,  LENGTH = 1M
+
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
 }
@@ -378,6 +392,48 @@ INCLUDE build/fceumm_mappers.ld
   } AT > CORES
   _OVERLAY_PCE_ITC_SIZE = SIZEOF(.overlay_pce_itc);
   _OVERLAY_PCE_ITC_LMA_OFFSET = LOADADDR(.overlay_pce_itc) - LOADADDR(.overlay_pce);
+
+  /* cps1 ITCM placement (optimization phase, docs/CPS1_MAME_ALIGNMENT.md
+   * section 9): a SIBLING convention to PCE's object-file-path-based
+   * .overlay_pce_itc above, not a replacement for it -- this one selects
+   * input sections by ATTRIBUTE NAME (__attribute__((section(".itcm_text")))
+   * via Core/Src/porting/cps1/cps1_core.h's CPS1_ITCM_TEXT macro) instead
+   * of by object-file path, because cps1 has no build/cps1/ directory in
+   * this Makefile's system list yet to select by path (it is still an
+   * isolated harness on explore/cps1-feasibility, not a linked system).
+   * EMPTY in EVERY build right now: nothing compiled into this firmware
+   * uses the ".itcm_text" section name yet (cps1_*.c isn't in C_SOURCES
+   * at all) -- safe by construction, the same way PCE's own ._itcram_hot
+   * above is documented "empty in GPL stub build". Still needs the SAME
+   * runtime copy step PCE's run_internal_emu does (memcpy LMA->VMA before
+   * BSS zero) once cps1 becomes a real linked system -- that integration
+   * doesn't exist yet, so this is section-placement scaffolding, not yet
+   * load-bearing.
+   *
+   * Address: same ORIGIN(ITCMRAM)+0x4 PCE's own .overlay_pce_itc uses,
+   * NOT "wherever PCE's section ends" (__pce_itc_end__) -- verified by a
+   * real full-firmware link attempt (see the optimization-phase commit)
+   * that GNU ld rejects a later section's explicit address as a symbol
+   * defined inside an earlier `AT >`-relocated section ("non constant or
+   * forward reference address expression"), even though the symbol is
+   * textually available by that point. A real address constant is the
+   * only construct ld accepts here. This is harmless overlap in practice:
+   * PCE's own section is confirmed 0 bytes in this build (same comment
+   * above), and so is this one -- two empty sections claiming the same
+   * starting address consume zero real space. If PCE's ITC section is
+   * ever actually populated in a future build, this address needs to
+   * chain onto ITS end via a different mechanism (e.g. a plain symbol
+   * assignment between the two, not an AT-relocated one) -- flagged here,
+   * not silently left for a future overlap bug to discover. */
+  .cps1_itcm_text (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __cps1_itc_start__ = .;
+    *(.itcm_text)
+    . = ALIGN(4);
+    __cps1_itc_end__ = .;
+    ASSERT(ABSOLUTE(__cps1_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: cps1 ITC overflow");
+  } AT > CORES
+  _CPS1_ITC_SIZE = SIZEOF(.cps1_itcm_text);
 
   .overlay_pce_bss _OVERLAY_PCE_LOAD_END : {
     . = ALIGN(4);
@@ -1402,6 +1458,69 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_GAMECOM_BSS_SIZE = SIZEOF(.overlay_gamecom_bss);
 
+  /* Musashi's code, claimed BEFORE .overlay_cps1 so it does NOT land in the
+   * RAM pool -- the .xip_segacd recipe. Only the cps1 porting files stay in
+   * RAM. main_cps1.o must stay resident: it holds the CPS1_CODE_BASE literal
+   * and runs the sentinel relocation pass, so it has to be readable before the
+   * XIP blob is cached (same reason main_segacd.o does). */
+  .xip_cps1 : {
+    . = ALIGN(8);
+    __xip_cps1_start__ = .;
+    build/cps1/m68kcpu.o (.text .text*)
+  } > CPS1_CODE
+
+  /* EVERY cps1 porting object must be listed here BY NAME. The list is
+   * explicit rather than a wildcard so that m68kcpu.o keeps the XIP placement
+   * .xip_cps1 gave it above -- but that means a new source file added to
+   * CPS1_C_SOURCES and NOT added here does not fail to link: its text and
+   * rodata quietly land in resident internal flash, where there are a few
+   * hundred bytes to spare for the whole firmware. cps1_romset.o did exactly
+   * that. The 512 B headroom floor is what catches it, and the error it
+   * produces says nothing about this list -- so check here first. */
+  .overlay_cps1 __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_cps1_start__ = .;
+    build/cps1/main_cps1.o   (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_m68k.o   (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_eeprom.o (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_rom.o    (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_romset.o (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_ppu.o    (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_bg.o     (.data .data* .text .text* .rodata .rodata*)
+    /* .data from every cps1 object, including Musashi's, stays RAM-resident. */
+    build/cps1/*.o (.data .data*)
+    . = ALIGN(4);
+    _OVERLAY_CPS1_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_CPS1_LOAD_START = LOADADDR(.overlay_cps1);
+  _OVERLAY_CPS1_SIZE = SIZEOF(.overlay_cps1);
+
+  .overlay_cps1_bss _OVERLAY_CPS1_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_CPS1_BSS_START = .;
+    build/cps1/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/cps1/*.o (COMMON)
+    __ram_emu_cps1_end__ = .;
+    . = ALIGN(4);
+    _OVERLAY_CPS1_BSS_END = .;
+  } >RAM_EMU
+  _OVERLAY_CPS1_BSS_SIZE = SIZEOF(.overlay_cps1_bss);
+
+  /* Musashi's constant tables -- the jump table (256 KB) and cycle table
+   * (64 KB) are the bulk of what could not fit RAM_EMU. Contiguous with
+   * .xip_cps1 in CPS1_CODE on purpose: the two ship as ONE file
+   * (/cores/cps1.xip) and land in flash as one cache entry. */
+  .rodata_cps1 : {
+    . = ALIGN(8);
+    __rodata_cps1_start__ = .;
+    build/cps1/m68kcpu.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __rodata_cps1_end__ = .;
+    __xip_cps1_end__ = .;
+  } > CPS1_CODE
+
+
   .overlay_celeste __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_celeste_start__ = .;
@@ -1718,6 +1837,33 @@ INCLUDE build/fceumm_mappers.ld
     _ebss = .;         /* define a global symbol at bss end */
     __bss_end__ = _ebss;
   } >DTCMRAM
+
+  /* cps1 DTCM placement (optimization phase, docs/CPS1_MAME_ALIGNMENT.md
+   * section 9): reserves space for __attribute__((section(".dtcm_bss")))
+   * objects (Core/Src/porting/cps1/cps1_core.h's CPS1_DTCM_BSS macro,
+   * currently just cps1's synthetic palette, 4KB). EMPTY in every build
+   * right now for the same reason .cps1_itcm_text above is -- cps1_*.c
+   * isn't in this Makefile's C_SOURCES, so nothing produces a ".dtcm_bss"
+   * section yet. Placed here (between the general .bss and the launcher's
+   * ._user_heap) so the existing ._user_stack section below -- which
+   * sizes itself as "whatever's left of DTCMRAM after everything already
+   * placed" via __dtc_padding_start__, captured fresh at ITS OWN start --
+   * automatically shrinks to make room for whatever this section ends up
+   * holding, with no separate budget arithmetic to keep in sync by hand.
+   * If cps1 code ever grows this past what's actually free, the standard
+   * GNU ld "region `DTCMRAM' overflowed" error is the backstop (same
+   * protection every other section sharing DTCMRAM already relies on) --
+   * not a hand-written ASSERT here, to avoid duplicating (and risking
+   * getting wrong) the padding formula ._user_stack already owns. */
+  .cps1_dtcm_bss (NOLOAD) : {
+    . = ALIGN(4);
+    __cps1_dtcm_start__ = .;
+    *(.dtcm_bss)
+    . = ALIGN(4);
+    __cps1_dtcm_end__ = .;
+  } >DTCMRAM
+
+  /* PICO-8 RAM removed — engine allocates 64KB from DTCM heap via dtcm_malloc */
 
   /* Heap fills all DTCM left after .data/.bss up to the fixed stack at the
    * top (redzone + _Min_Stack_Size + optional remote-input reserve). */

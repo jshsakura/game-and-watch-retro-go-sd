@@ -94,7 +94,14 @@ static uint32_t align_to_next_block(uint32_t pointer)
  * of through them. Everything else in the ring is a game nobody is playing, and
  * is overwritten as freely as before. Nothing to release: leaving a game reboots.
  */
-#define MAX_LIVE_FILES 8
+/* Was 8, chosen when PCE CD's three files were the busiest core in the tree.
+ * A MAME romset is a different shape: CPS-1 caches two program chips plus
+ * eight graphics chips plus its own XIP code blob, eleven addresses all held
+ * at once, and the ninth of them would have gone unprotected -- the exact
+ * shape of the Super Metroid bug this list exists to prevent, just with the
+ * hole landing in a bitplane instead of an intro. Sixteen entries cost 64
+ * bytes of .bss and are a capacity, not a per-core special case. */
+#define MAX_LIVE_FILES 16
 
 static uint32_t get_extflash_base(void);
 

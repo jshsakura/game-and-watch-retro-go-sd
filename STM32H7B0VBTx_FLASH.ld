@@ -812,6 +812,61 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_GAMECOM_BSS_SIZE = SIZEOF(.overlay_gamecom_bss);
 
+  /* Musashi's code, claimed BEFORE .overlay_cps1 so it does NOT land in the
+   * RAM pool -- the .xip_segacd recipe. Only the cps1 porting files stay in
+   * RAM. main_cps1.o must stay resident: it holds the CPS1_CODE_BASE literal
+   * and runs the sentinel relocation pass, so it has to be readable before the
+   * XIP blob is cached (same reason main_segacd.o does). */
+  .xip_cps1 : {
+    . = ALIGN(8);
+    __xip_cps1_start__ = .;
+    build/cps1/m68kcpu.o (.text .text*)
+  } > CPS1_CODE
+
+  .overlay_cps1 __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_cps1_start__ = .;
+    build/cps1/main_cps1.o   (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_m68k.o   (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_eeprom.o (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_rom.o    (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_romset.o (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_ppu.o    (.data .data* .text .text* .rodata .rodata*)
+    build/cps1/cps1_bg.o     (.data .data* .text .text* .rodata .rodata*)
+    /* .data from every cps1 object, including Musashi's, stays RAM-resident. */
+    build/cps1/*.o (.data .data*)
+    . = ALIGN(4);
+    _OVERLAY_CPS1_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_CPS1_LOAD_START = LOADADDR(.overlay_cps1);
+  _OVERLAY_CPS1_SIZE = SIZEOF(.overlay_cps1);
+
+  .overlay_cps1_bss _OVERLAY_CPS1_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_CPS1_BSS_START = .;
+    build/cps1/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/cps1/*.o (COMMON)
+    __ram_emu_cps1_end__ = .;
+    . = ALIGN(4);
+    _OVERLAY_CPS1_BSS_END = .;
+  } >RAM_EMU
+  _OVERLAY_CPS1_BSS_SIZE = SIZEOF(.overlay_cps1_bss);
+
+  /* Musashi's constant tables -- the jump table (256 KB) and cycle table
+   * (64 KB) are the bulk of what could not fit RAM_EMU. Contiguous with
+   * .xip_cps1 in CPS1_CODE on purpose: the two ship as ONE file
+   * (/cores/cps1.xip) and land in flash as one cache entry. */
+  .rodata_cps1 : {
+    . = ALIGN(8);
+    __rodata_cps1_start__ = .;
+    build/cps1/m68kcpu.o (.rodata .rodata*)
+    . = ALIGN(4);
+    __rodata_cps1_end__ = .;
+    __xip_cps1_end__ = .;
+  } > CPS1_CODE
+
+
   .overlay_celeste __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_celeste_start__ = .;

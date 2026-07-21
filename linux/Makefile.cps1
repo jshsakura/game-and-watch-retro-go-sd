@@ -1,0 +1,271 @@
+# CPS-1 (Capcom Play System 1) -- Linux host harness skeleton.
+# Phase 2 of the feasibility protocol in docs/CPS1_SENIOR_TRICKS_ANALYSIS.md:
+# proves the interpreter-vs-recompiler frame-diff loop before any real
+# 68000/Z80/PPU/sound core exists (Core/Src/porting/cps1/cps1_core.c is a
+# stub -- see its header comment). Headless, like Makefile.wswan: there is
+# nothing to render yet.
+#
+# NOTE: the host entry point is cps1/main.c, NOT main_cps1.c -- the device
+# entry point is Core/Src/porting/cps1/main_cps1.c and make's vpath matches on
+# BASENAME, so two files with that name silently compile the wrong one into
+# the host harness (this exact collision broke retro-go-cps1). Same reason
+# linux/vb uses main.c next to Core/Src/porting/vb/main_vb.c.
+#
+#   make -f Makefile.cps1   -> retro-go-cps1, cps1-ppu-selftest, cps1-vdp-bus-selftest,
+#                              cps1-bg-selftest, cps1-bg-bus-selftest,
+#                              cps1-sound-hle-selftest, cps1-sound-bus-selftest,
+#                              cps1-phase9-selftest, cps1-priority-bus-selftest,
+#                              cps1-rom-load-selftest, cps1-ltdc-bottom-selftest
+#   ./build/retro-go-cps1 --frames=600 --engine=diff --dump-ppm
+#   ./build/retro-go-cps1 --profile --frames=600
+#   ./build/cps1-ppu-selftest
+#   ./build/cps1-vdp-bus-selftest
+#   ./build/cps1-bg-selftest
+#   ./build/cps1-bg-bus-selftest
+#   ./build/cps1-sound-hle-selftest
+#   ./build/cps1-sound-bus-selftest
+#   ./build/cps1-phase9-selftest
+#   ./build/cps1-priority-bus-selftest
+#   ./build/cps1-rom-load-selftest
+#   ./build/cps1-ltdc-bottom-selftest
+#   ./build/cps1-m68k-selftest
+TARGET        = retro-go-cps1
+SELFTEST      = cps1-ppu-selftest
+BUSSELFTEST   = cps1-vdp-bus-selftest
+BGSELFTEST    = cps1-bg-selftest
+BGBUSSELFTEST = cps1-bg-bus-selftest
+SNDSELFTEST   = cps1-sound-hle-selftest
+SNDBUSSELFTEST = cps1-sound-bus-selftest
+PHASE9SELFTEST = cps1-phase9-selftest
+PHASE10SELFTEST = cps1-priority-bus-selftest
+ROMLOADSELFTEST = cps1-rom-load-selftest
+PHASE12SELFTEST = cps1-ltdc-bottom-selftest
+# Phase 13: the Musashi-backed 68000 running REAL 68000 code through the
+# real CPS-1 memory map (LEA/MOVE.L/JSR+RTS/CMPI/reset vector -- every one
+# of which the nine-opcode cps1_cpu68k.c skeleton could not execute).
+M68KSELFTEST   = cps1-m68k-selftest
+# Proves the DEVICE graphics path (un-assembled chips read in place, slots
+# assigned by CRC32) against the independently-built assembled image.
+GFXCHIPSSELFTEST = cps1-gfx-chips-selftest
+BUILD_DIR     = build
+
+OPT ?= -O2 -g
+
+CPS1DIR = ../Core/Src/porting/cps1
+# Musashi, shared verbatim with Sega Genesis/Sega CD (build/md, build/segacd)
+# -- adopted rather than re-written; see Core/Src/porting/cps1/cps1_m68k.h.
+M68KDIR = ../external/gwenesis/src/cpus/M68K
+CORE_SOURCES = \
+$(CPS1DIR)/cps1_core.c \
+$(CPS1DIR)/cps1_cpu68k.c \
+$(CPS1DIR)/cps1_rc_runtime.c \
+$(CPS1DIR)/cps1_rc_generated.c \
+$(CPS1DIR)/cps1_rom.c \
+$(CPS1DIR)/cps1_ppu.c \
+$(CPS1DIR)/cps1_bg.c \
+$(CPS1DIR)/cps1_sound_hle.c
+
+C_SOURCES = \
+cps1/main.c \
+$(CORE_SOURCES) \
+cps1/cps1_rom_linux.c \
+crc32.c
+
+SELFTEST_SOURCES = \
+cps1/ppu_selftest.c \
+$(CPS1DIR)/cps1_rom.c \
+$(CPS1DIR)/cps1_ppu.c
+
+BUSSELFTEST_SOURCES = \
+cps1/vdp_bus_selftest.c \
+$(CORE_SOURCES)
+
+BGSELFTEST_SOURCES = \
+cps1/bg_selftest.c \
+$(CPS1DIR)/cps1_rom.c \
+$(CPS1DIR)/cps1_ppu.c \
+$(CPS1DIR)/cps1_bg.c
+
+BGBUSSELFTEST_SOURCES = \
+cps1/bg_bus_selftest.c \
+$(CORE_SOURCES)
+
+SNDSELFTEST_SOURCES = \
+cps1/sound_hle_selftest.c \
+$(CPS1DIR)/cps1_sound_hle.c
+
+SNDBUSSELFTEST_SOURCES = \
+cps1/sound_bus_selftest.c \
+$(CORE_SOURCES)
+
+PHASE9SELFTEST_SOURCES = \
+cps1/phase9_selftest.c \
+$(CORE_SOURCES)
+
+PHASE10SELFTEST_SOURCES = \
+cps1/phase10_selftest.c \
+$(CORE_SOURCES)
+
+ROMLOADSELFTEST_SOURCES = \
+cps1/rom_load_selftest.c \
+$(CPS1DIR)/cps1_rom.c \
+$(CPS1DIR)/cps1_romset.c \
+cps1/cps1_rom_linux.c
+
+PHASE12SELFTEST_SOURCES = \
+cps1/ltdc_bottom_selftest.c \
+$(CORE_SOURCES)
+
+M68KSELFTEST_SOURCES = \
+cps1/m68k_real_selftest.c \
+$(CPS1DIR)/cps1_m68k.c \
+$(M68KDIR)/m68kcpu.c
+
+GFXCHIPSSELFTEST_SOURCES = \
+cps1/gfx_chips_selftest.c \
+$(CPS1DIR)/cps1_rom.c \
+$(CPS1DIR)/cps1_romset.c \
+crc32.c
+
+PREFIX =
+CC = $(PREFIX)gcc
+SZ = $(PREFIX)size
+
+C_INCLUDES = \
+-I. \
+-Icps1 \
+-I$(CPS1DIR) \
+-I$(M68KDIR) \
+-I../Core/Inc
+
+CFLAGS = $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
+CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
+
+LDFLAGS = -lm -Wl,--gc-sections
+
+.PHONY: all clean
+
+all: $(BUILD_DIR)/$(TARGET) $(BUILD_DIR)/$(SELFTEST) $(BUILD_DIR)/$(BUSSELFTEST) \
+     $(BUILD_DIR)/$(BGSELFTEST) $(BUILD_DIR)/$(BGBUSSELFTEST) \
+     $(BUILD_DIR)/$(SNDSELFTEST) $(BUILD_DIR)/$(SNDBUSSELFTEST) \
+     $(BUILD_DIR)/$(PHASE9SELFTEST) $(BUILD_DIR)/$(PHASE10SELFTEST) \
+     $(BUILD_DIR)/$(ROMLOADSELFTEST) $(BUILD_DIR)/$(PHASE12SELFTEST) \
+     $(BUILD_DIR)/$(M68KSELFTEST) $(BUILD_DIR)/$(GFXCHIPSSELFTEST)
+
+OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/selftest_,$(notdir $(SELFTEST_SOURCES:.c=.o)))
+BUSSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/busselftest_,$(notdir $(BUSSELFTEST_SOURCES:.c=.o)))
+BGSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/bgselftest_,$(notdir $(BGSELFTEST_SOURCES:.c=.o)))
+BGBUSSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/bgbusselftest_,$(notdir $(BGBUSSELFTEST_SOURCES:.c=.o)))
+SNDSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/sndselftest_,$(notdir $(SNDSELFTEST_SOURCES:.c=.o)))
+SNDBUSSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/sndbusselftest_,$(notdir $(SNDBUSSELFTEST_SOURCES:.c=.o)))
+PHASE9SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase9selftest_,$(notdir $(PHASE9SELFTEST_SOURCES:.c=.o)))
+PHASE10SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase10selftest_,$(notdir $(PHASE10SELFTEST_SOURCES:.c=.o)))
+ROMLOADSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/romloadselftest_,$(notdir $(ROMLOADSELFTEST_SOURCES:.c=.o)))
+PHASE12SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase12selftest_,$(notdir $(PHASE12SELFTEST_SOURCES:.c=.o)))
+M68KSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/m68kselftest_,$(notdir $(M68KSELFTEST_SOURCES:.c=.o)))
+GFXCHIPSSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/gfxchipsselftest_,$(notdir $(GFXCHIPSSELFTEST_SOURCES:.c=.o)))
+vpath %.c $(sort $(dir $(C_SOURCES)) $(dir $(SELFTEST_SOURCES)) $(dir $(BUSSELFTEST_SOURCES)) \
+                 $(dir $(BGSELFTEST_SOURCES)) $(dir $(BGBUSSELFTEST_SOURCES)) \
+                 $(dir $(SNDSELFTEST_SOURCES)) $(dir $(SNDBUSSELFTEST_SOURCES)) \
+                 $(dir $(PHASE9SELFTEST_SOURCES)) $(dir $(PHASE10SELFTEST_SOURCES)) \
+                 $(dir $(ROMLOADSELFTEST_SOURCES)) $(dir $(PHASE12SELFTEST_SOURCES)) \
+                 $(dir $(M68KSELFTEST_SOURCES)) $(dir $(GFXCHIPSSELFTEST_SOURCES)))
+
+$(BUILD_DIR)/%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/busselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/bgselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/bgbusselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/sndselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/sndbusselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/phase9selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/phase10selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/romloadselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/m68kselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/phase12selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/gfxchipsselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/$(TARGET): $(OBJECTS) Makefile.cps1
+	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(SELFTEST): $(SELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(SELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(BUSSELFTEST): $(BUSSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(BUSSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(BGSELFTEST): $(BGSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(BGSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(BGBUSSELFTEST): $(BGBUSSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(BGBUSSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(SNDSELFTEST): $(SNDSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(SNDSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(SNDBUSSELFTEST): $(SNDBUSSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(SNDBUSSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(PHASE9SELFTEST): $(PHASE9SELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(PHASE9SELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(PHASE10SELFTEST): $(PHASE10SELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(PHASE10SELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(ROMLOADSELFTEST): $(ROMLOADSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(ROMLOADSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(PHASE12SELFTEST): $(PHASE12SELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(PHASE12SELFTEST_OBJECTS) $(LDFLAGS) -o $@
+
+$(BUILD_DIR)/$(M68KSELFTEST): $(M68KSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(M68KSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(GFXCHIPSSELFTEST): $(GFXCHIPSSELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(GFXCHIPSSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR):
+	mkdir -p $@
+
+clean:
+	rm -rf $(BUILD_DIR)
+
+-include $(wildcard $(BUILD_DIR)/*.d)
