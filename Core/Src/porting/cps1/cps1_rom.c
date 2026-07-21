@@ -203,3 +203,56 @@ int cps1_rom_decode_tile_planar(const cps1_rom_t *rom, const cps1_gfx_layout_t *
     }
     return 0;
 }
+
+/*
+ * Decodes ONE 8x8 quadrant of a CPS-1 tile straight out of the raw GFX ROM,
+ * into the packed 4bpp form the blitter wants (32 bytes, high nibble = even
+ * pixel).
+ *
+ * This exists because the three scroll layers do NOT share a byte layout,
+ * and treating them as if they did is what made a real ROM render as a
+ * correct SCROLL1 over a scrambled SCROLL2/SCROLL3. From MAME's own
+ * gfx_layouts (cps1.cpp:3837+), all three put the four bitplanes of an
+ * 8-pixel span in FOUR CONSECUTIVE BYTES -- plane order LSB..MSB, MSB of
+ * each byte being the leftmost pixel -- but they differ in how rows and
+ * 8-pixel spans are spaced:
+ *
+ *   8x8    (cps1_layout8x8)    64 B/tile,  8 rows,  8 B/row, span at +0
+ *                              (its RIGHT-half partner lives at +4)
+ *   16x16  (cps1_layout16x16) 128 B/tile, 16 rows,  8 B/row, spans at +0,+4
+ *   32x32  (cps1_layout32x32) 512 B/tile, 32 rows, 16 B/row, spans at +0..+12
+ *
+ * So a quadrant (qx,qy) of a `sub`x`sub` block starts at
+ *     code * (sub*sub*32) + qy * (8 * row_stride) + qx * 4
+ * with row_stride 8 for sub 1 and 2, 16 for sub 4.
+ */
+int cps1_rom_decode_subtile(const cps1_rom_t *rom, unsigned sub, uint32_t code,
+                             unsigned qx, unsigned qy, uint8_t *out)
+{
+    if (!rom || !rom->gfx.data || !out || sub == 0 || sub > 4)
+        return -1;
+    if (qx >= sub || qy >= sub)
+        return -1;
+
+    const uint32_t row_stride = (sub == 4u) ? 16u : 8u;
+    const uint32_t tile_bytes = sub * sub * 32u;
+    const uint32_t base = code * tile_bytes + qy * (8u * row_stride) + qx * 4u;
+
+    if (base + 7u * row_stride + 4u > rom->gfx.size)
+        return -1;
+
+    for (unsigned y = 0; y < 8; y++) {
+        const uint8_t *p = rom->gfx.data + base + y * row_stride;
+        /* p[0]=plane0(LSB) p[1]=plane1 p[2]=plane2 p[3]=plane3(MSB) */
+        for (unsigned x = 0; x < 8; x += 2) {
+            unsigned pix_hi = 0, pix_lo = 0;
+            unsigned sh_hi = 7u - x, sh_lo = 7u - (x + 1u);
+            for (unsigned pl = 0; pl < 4; pl++) {
+                pix_hi |= ((p[pl] >> sh_hi) & 1u) << pl;
+                pix_lo |= ((p[pl] >> sh_lo) & 1u) << pl;
+            }
+            out[y * 4u + x / 2u] = (uint8_t)((pix_hi << 4) | pix_lo);
+        }
+    }
+    return 0;
+}

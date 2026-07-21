@@ -35,7 +35,7 @@ void cps1_tile_cache_reset(cps1_tile_cache_t *cache)
      * otherwise carries a garbage pointer into the miss path and segfaults
      * on the first fetch. Callers wanting real-ROM decoding set ->layout
      * AFTER calling this. */
-    cache->layout = NULL;
+    cache->real_gfx = 0;
     for (int i = 0; i < CPS1_TILE_CACHE_SLOTS; i++) {
         cache->slots[i].valid = 0;
         cache->slots[i].last_used = 0;
@@ -66,13 +66,59 @@ const uint8_t *cps1_tile_cache_fetch(cps1_tile_cache_t *cache, const cps1_rom_t 
     }
 
     cache->misses++;
-    int rc = cache->layout ? cps1_rom_decode_tile_planar(rom, cache->layout, tile_index, slot->pixels)
-                           : cps1_rom_decode_tile(rom, tile_index, slot->pixels);
+    /*
+     * real_gfx picks the decode that a REAL CPS-1 dump needs. It uses the
+     * 8x8 LEFT layout for every layer, at a per-8x8 index, because that is
+     * what empirically renders the game correctly -- it is the configuration
+     * the first legible title screen came out of.
+     *
+     * A per-layer decode using each gfx_layout's own geometry (16x16 at
+     * 128 B, 32x32 at 512 B, via cps1_rom_decode_subtile) is what MAME's
+     * layout structs say SHOULD be right, and it was tried here: it renders
+     * WORSE, scrambling the layers that the 8x8 path gets right. So the
+     * relationship between a cell's code and its ROM offset is not yet fully
+     * understood -- the shift/bank mapping in cps1_gfxrom_bank_mapper_wof is
+     * the likely missing link. Left as the honest state rather than reasoned
+     * into looking correct.
+     */
+    int rc = cache->real_gfx
+        ? cps1_rom_decode_tile_planar(rom, &CPS1_GFX_LAYOUT_8X8_LEFT, tile_index, slot->pixels)
+        : cps1_rom_decode_tile(rom, tile_index, slot->pixels);
     if (rc != 0) {
         slot->valid = 0;
         return NULL;
     }
-    slot->tile_index = (uint16_t)tile_index;
+    slot->tile_index = tile_index;
+    slot->valid = 1;
+    slot->last_used = cache->clock;
+    return slot->pixels;
+}
+
+const uint8_t *cps1_tile_cache_fetch_block(cps1_tile_cache_t *cache, const cps1_rom_t *rom,
+                                            unsigned sub, uint32_t code,
+                                            unsigned qx, unsigned qy)
+{
+    /* sub is 1, 2 or 4 -> 0, 1, 2, so the key stays compact and collision
+     * free across layers that happen to use the same numeric tile code. */
+    unsigned sub_idx = (sub == 1u) ? 0u : (sub == 2u) ? 1u : 2u;
+    uint32_t key = (code << 6) | (sub_idx << 4) | (qy << 2) | qx;
+
+    uint32_t idx = slot_for_tile(key);
+    cps1_tile_cache_slot_t *slot = &cache->slots[idx];
+    cache->clock++;
+
+    if (slot->valid && slot->tile_index == key) {
+        cache->hits++;
+        slot->last_used = cache->clock;
+        return slot->pixels;
+    }
+
+    cache->misses++;
+    if (cps1_rom_decode_subtile(rom, sub, code, qx, qy, slot->pixels) != 0) {
+        slot->valid = 0;
+        return NULL;
+    }
+    slot->tile_index = key;
     slot->valid = 1;
     slot->last_used = cache->clock;
     return slot->pixels;

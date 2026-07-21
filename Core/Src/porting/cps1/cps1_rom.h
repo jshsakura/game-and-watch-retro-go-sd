@@ -56,6 +56,14 @@ int cps1_rom_attach(cps1_rom_t *rom, cps1_rom_region_t prg, cps1_rom_region_t gf
  * for that). */
 int cps1_rom_decode_tile(const cps1_rom_t *rom, uint32_t tile_index, uint8_t *out);
 
+/* Decodes one 8x8 quadrant (qx,qy) of a sub x sub block (sub = 1, 2 or 4 for
+ * SCROLL1/SCROLL2/SCROLL3) from the raw GFX ROM into 32 packed 4bpp bytes.
+ * See the implementation comment for why each layer needs its own row
+ * stride and span offset. Returns 0, or -1 if the tile falls outside the
+ * ROM. */
+int cps1_rom_decode_subtile(const cps1_rom_t *rom, unsigned sub, uint32_t code,
+                             unsigned qx, unsigned qy, uint8_t *out);
+
 /*
  * Real CPS-1 GFX ROM bitplane layout -- CONFIRMED against MAME source
  * (docs/CPS1_MAME_ALIGNMENT.md section 1, `src/mame/capcom/cps1.cpp`'s

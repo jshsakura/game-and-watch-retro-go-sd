@@ -56,7 +56,7 @@ uint32_t cps1_oam_prescan(const cps1_oam_t *oam, uint16_t *out_visible_tile_ids,
 
 typedef struct {
     uint32_t last_used;
-    uint16_t tile_index;
+    uint32_t tile_index;   /* flat index, or a composed block key (see below) */
     uint8_t valid;
     uint8_t pixels[CPS1_TILE_SIZE_BYTES];
 } cps1_tile_cache_slot_t;
@@ -74,21 +74,18 @@ typedef struct {
     uint32_t hits;
     uint32_t misses;
     /*
-     * How to turn a tile index into 32 packed 4bpp bytes on a miss.
-     *
-     * NULL  -> cps1_rom_decode_tile(), the flat "index * 32 bytes" reader.
-     *          Correct ONLY when rom->gfx is already packed 4bpp, which is
-     *          true of cps1_core.c's synthetic test data and of every
-     *          selftest built on it. This stays the default so those keep
-     *          passing untouched.
-     * non-NULL -> cps1_rom_decode_tile_planar() with this layout, which is
-     *          what a REAL CPS-1 GFX ROM needs: the dump interleaves all
-     *          four bitplanes (MAME's gfx_layout, cps1.cpp:3837+), and
-     *          reading it flat produces one or two lit pixels per tile --
-     *          a regular dot grid, which is exactly what the first real-ROM
-     *          render produced before this field existed.
+     * 0 -> misses are served by cps1_rom_decode_tile(), the flat
+     *      "index * 32 bytes" reader. Correct only when rom->gfx is already
+     *      packed 4bpp, which is true of cps1_core.c's synthetic data and of
+     *      every selftest built on it, so this stays the default.
+     * 1 -> misses are served by cps1_rom_decode_subtile() with the layer's
+     *      real geometry. A real CPS-1 GFX dump gives each of SCROLL1/2/3 a
+     *      DIFFERENT byte layout (8/8/16-byte rows, 1/2/4 spans per row), so
+     *      decoding all three as 8x8 renders SCROLL1 correctly and scrambles
+     *      the other two -- which is exactly how the first real title screen
+     *      came out.
      */
-    const cps1_gfx_layout_t *layout;
+    uint8_t real_gfx;
 } cps1_tile_cache_t;
 
 void cps1_tile_cache_reset(cps1_tile_cache_t *cache);
@@ -194,6 +191,13 @@ void cps1_blit8x8_indexed(const uint8_t *tile4bpp, unsigned palette_bank,
  * 16x16 sprite units and cps1_bg_render_layer's SCROLL2/3 sub-tile
  * decomposition (docs/CPS1_MAME_ALIGNMENT.md sections 5/6) -- one place
  * implements "flip a composed multi-sub-tile block" instead of two. */
+/* Fetches the (qx,qy) 8x8 quadrant of a sub x sub block whose tile code is
+ * `code`, decoding through the layer's real geometry. Cache key composes all
+ * four so blocks of different sizes cannot collide. */
+const uint8_t *cps1_tile_cache_fetch_block(cps1_tile_cache_t *cache, const cps1_rom_t *rom,
+                                            unsigned sub, uint32_t code,
+                                            unsigned qx, unsigned qy);
+
 void cps1_blit_block_indexed(uint32_t base_subtile, unsigned sub, unsigned palette_bank,
                               const cps1_palette_t *pal, int dst_x, int dst_y,
                               int flip_x, int flip_y, cps1_tile_cache_t *cache,

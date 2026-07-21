@@ -267,9 +267,9 @@ int main(int argc, char **argv)
         printf("[frame] rom attach failed\n"); return 1;
     }
     cps1_tile_cache_reset(&s_cache);
-    /* Real GFX ROM: decode through MAME's own bitplane layout, not the flat
-     * synthetic reader. See cps1_tile_cache_t::layout. */
-    s_cache.layout = &CPS1_GFX_LAYOUT_8X8_LEFT;
+    /* Real GFX ROM: decode each layer with its own geometry (8x8 / 16x16 /
+     * 32x32), not as flat 8x8 tiles. See cps1_tile_cache_t::real_gfx. */
+    s_cache.real_gfx = 1;
 
     /* palette: raw hardware words -> RGB565 via the shipping converter */
     uint32_t pal_base = resolve_base(CPSA_REG(REG_PALETTE));
