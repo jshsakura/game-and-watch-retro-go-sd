@@ -28,6 +28,7 @@
 #include "cps1_rom.h"
 #include "cps1_ppu.h"
 #include "cps1_bg.h"
+#include "cps1_eeprom.h"
 
 #define GFXRAM_BYTES 0x30000u
 #define GFXRAM_BASE  0x900000u
@@ -45,7 +46,7 @@ enum { REG_OBJ = 0, REG_SCROLL1, REG_SCROLL2, REG_SCROLL3, REG_OTHER, REG_PALETT
 #define WATCH_ADDR 0xFF5600u
 static unsigned s_watch_writes;
 static uint32_t s_qread[0x10000/2];   /* QSound shared-RAM read histogram */
-static uint16_t s_eeprom_din = 0xFFFF;
+static cps1_eeprom_t s_eeprom;
 /* per-region gfxram write counters, sampled over the LAST boot frames only */
 static unsigned s_wr_obj, s_wr_s1, s_wr_s2, s_wr_s3, s_wr_pal, s_wr_other, s_count_on;
 static struct { uint32_t pc; uint16_t val; } s_watch[24];
@@ -72,7 +73,7 @@ static uint16_t bus_read16(uint32_t a)
      * "settings invalid, use defaults" path from it instead of blocking.
      */
     if ((a & ~1u) == 0xF1C006u)
-        return s_eeprom_din;
+        return cps1_eeprom_read_port(&s_eeprom);
     if (a >= 0xF10000u && a < 0xF20000u) {
         uint32_t o = a - 0xF10000u;
         s_qread[o >> 1]++;
@@ -106,6 +107,7 @@ static void bus_write16(uint32_t a, uint16_t v)
         }
         return;
     }
+    if ((a & ~1u) == 0xF1C006u) { cps1_eeprom_write_port(&s_eeprom, v); return; }
     if (a >= 0xF10000u && a < 0xF20000u) {
         uint32_t o = a - 0xF10000u;
         s_qram[o] = (uint8_t)(v >> 8); s_qram[o + 1] = (uint8_t)v;
@@ -156,6 +158,7 @@ int main(int argc, char **argv)
     if (memcmp(h.m, "CPS1", 4)) { printf("[frame] bad magic\n"); return 1; }
 
     /* --- boot the real game --- */
+    cps1_eeprom_reset(&s_eeprom);
     s_qram[0x9FFE + 1] = 0x77;                    /* QSound Z80 "alive" stub */
     const cps1_m68k_io_t io = { bus_read16, bus_write16 };
     cps1_m68k_init(blob + h.po, h.ps, NULL, &io); /* NULL => WRAM via io, hookable */
@@ -248,6 +251,24 @@ int main(int argc, char **argv)
             if (cell->code) cells_nonzero[L]++;
         }
     }
+    /*
+     * Scroll position. The vblank handler pushes these out every frame
+     * (0x5A8: 0x80010C/0x800110/0x800114 are the three X registers, 0x80010E
+     * is SCROLL1 Y), so rendering from tilemap origin -- which this harness
+     * did until now -- looks at whatever corner of a 1024x1024 map happens
+     * to sit at (0,0) rather than at the part the game is drawing.
+     */
+    s_bg.layers[CPS1_BG_SCROLL1].scroll_x = (int16_t)CPSA_REG(6);
+    s_bg.layers[CPS1_BG_SCROLL1].scroll_y = (int16_t)CPSA_REG(7);
+    s_bg.layers[CPS1_BG_SCROLL2].scroll_x = (int16_t)CPSA_REG(8);
+    s_bg.layers[CPS1_BG_SCROLL2].scroll_y = (int16_t)CPSA_REG(9);
+    s_bg.layers[CPS1_BG_SCROLL3].scroll_x = (int16_t)CPSA_REG(10);
+    s_bg.layers[CPS1_BG_SCROLL3].scroll_y = (int16_t)CPSA_REG(11);
+    printf("[frame] scroll: S1=(%d,%d) S2=(%d,%d) S3=(%d,%d)\n",
+           s_bg.layers[0].scroll_x, s_bg.layers[0].scroll_y,
+           s_bg.layers[1].scroll_x, s_bg.layers[1].scroll_y,
+           s_bg.layers[2].scroll_x, s_bg.layers[2].scroll_y);
+
     printf("[frame] palette words non-zero: %u/%u   tilemap cells non-zero: "
            "SCROLL1=%u SCROLL2=%u SCROLL3=%u (of %u each)\n",
            pal_nonzero, CPS1_PALETTE_BANKS * CPS1_PALETTE_COLORS,
