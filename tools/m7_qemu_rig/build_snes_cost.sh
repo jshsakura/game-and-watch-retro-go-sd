@@ -188,12 +188,21 @@ one(
     "    if (math_enabled_cur == 0 || fixed_color == 0 && !ppu->halfColor && !rendered_subscreen) {",
     "    if (math_enabled_cur == 0 || fixed_color == 0 && !ppu->halfColor && !rendered_subscreen) {\n"
     "      uint32_t _prof_fast_t=rig_timer_now();")
+# Closes the fast-path region opened above. The anchor carries the NEXT line
+# too, and has to: `#endif` + `    } else {` stopped being unique when the
+# scanline reuse cache (d837a5d) wrapped PpuDrawWholeLine in its own
+# #ifdef SNES_LINE_CACHE ... #endif that ends the same way. Two matches make
+# `one()` assert, which is how this was found — but an anchor that merely
+# *moves* rather than duplicating would have patched the wrong site silently,
+# so prefer anchors that include something only the real target has. Here that
+# is the direct-math #if that opens the else branch.
 one(
-    "#endif\n    } else {\n",
+    "#endif\n    } else {\n#if defined(PPU_RGB565) && defined(SNES_PPU_DIRECT_MATH)\n",
     "#endif\n"
     "      g_ppu_fast_ticks += (uint32_t)(rig_timer_now()-_prof_fast_t);\n"
     "      g_ppu_fast_pixels += right - left;\n"
-    "    } else {\n")
+    "    } else {\n"
+    "#if defined(PPU_RGB565) && defined(SNES_PPU_DIRECT_MATH)\n")
 # The flatten commit (dee4e03) inserted a #if defined(PPU_RGB565) &&
 # defined(SNES_PPU_DIRECT_MATH) fast path (no-subscreen direct lookup,
 # ending in `continue`) between the `} else {` above and half_color_map.
