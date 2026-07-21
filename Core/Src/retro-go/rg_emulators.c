@@ -39,6 +39,7 @@
 #include "main_zxs.h"
 #include "main_c64.h"
 #include "main_gamecom.h"
+#include "main_cps1.h"
 #include "main_celeste.h"
 #include "main_music.h"
 #include "main_video.h"
@@ -257,7 +258,7 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 32 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance), 29->30 (SNES, SD only), 30->31 (Sega 32X, SD only), 31->32 (Sega CD, SD only). Upstream (8caa3e45) moved this to ahb_calloc at init instead of a static DTCM array -- kept our count, adopted their allocation scheme. Bump ONLY when the add_emulator call is actually added. */
+#define MAX_EMULATORS 33 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance), 29->30 (SNES, SD only), 30->31 (Sega 32X, SD only), 31->32 (Sega CD, SD only), 32->33 (CPS-1 arcade, SD only). Upstream (8caa3e45) moved this to ahb_calloc at init instead of a static DTCM array -- kept our count, adopted their allocation scheme. Bump ONLY when the add_emulator call is actually added. */
 static retro_emulator_t *emulators;
 static rom_system_t *systems;
 static int emulators_count = 0;
@@ -1692,6 +1693,12 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_GAMECOM_SIZE);
         app_main_gamecom(load_state, start_paused, save_slot);
       }
+    } else if(strcmp(system_name, "CPS-1") == 0)  {
+      if (load_core_bin_with_header("/cores/cps1.bin", (uint8_t *)&__RAM_EMU_START__)) {
+        memset(&_OVERLAY_CPS1_BSS_START, 0x0, (size_t)&_OVERLAY_CPS1_BSS_SIZE);
+        SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_CPS1_SIZE);
+        app_main_cps1(load_state, start_paused, save_slot);
+      }
     } else if(strcmp(system_name, "Homebrew") == 0)  {
       if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
         if (strcmp(newfile->name,"celeste") == 0) {
@@ -1854,6 +1861,12 @@ void emulators_init()
     /* Atari Lynx (Handy core): ROM (.lnx/.lyx) loads from flash; no BIOS needed (HLE). */
     add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
     add_emulator("Colecovision", "col", "col lzma", RG_LOGO_PAD_COL, RG_LOGO_HEADER_COL, NO_GAME_DATA);
+    /* CPS-1: a game is a MAME romset extracted into its own folder under
+     * /roms/cps1/, so the browser matches the FOLDER, not a single file --
+     * same shape as Sega CD and PC Engine CD. SD builds only. */
+#if SD_CARD == 1
+    add_emulator("CPS-1", "cps1", "zip", RG_LOGO_PAD_CPS1, RG_LOGO_HEADER_CPS1, NO_GAME_DATA);
+#endif
     add_emulator("Commodore 64", "c64", "d64 prg", RG_LOGO_PAD_C64, RG_LOGO_HEADER_C64, NO_GAME_DATA);
     add_emulator("Game & Watch", "gw", "gw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
     add_emulator("Homebrew", "homebrew", "bin", RG_LOGO_PAD_HOMEBREW, RG_LOGO_HEADER_HOMEBREW, NO_GAME_DATA);

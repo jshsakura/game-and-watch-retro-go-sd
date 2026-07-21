@@ -43,9 +43,14 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "appid.h"
 #include "odroid_system.h"
 #include "common.h"
 #include "gw_lcd.h"
+#include "gw_linker.h"
+#include "gw_malloc.h"
+#include <stdio.h>
+#include <stdbool.h>
 
 #include "cps1_m68k.h"
 #include "cps1_rom.h"
@@ -71,7 +76,9 @@ static uint8_t  s_qram[CPS1_QRAM_BYTES];
 static uint16_t s_regs[0xC0];              /* 0x800000-0x80017F, word indexed */
 
 static cps1_rom_t        s_rom;
-static cps1_gfx_chips_t  s_gfx_chips;
+/* Filled by the folder ROM loader (TODO in app_main_cps1); read in place by
+ * cps1_gfx_chip_byte() so the 8 GFX chips cost no RAM. */
+static cps1_gfx_chips_t  s_gfx_chips __attribute__((unused));
 static cps1_eeprom_t     s_eeprom;
 static cps1_tile_cache_t s_cache;
 static cps1_palette_t    s_pal;
@@ -203,6 +210,66 @@ static void cps1_render_into(uint16_t *fb, uint8_t *meta)
     cps1_ppu_render(&s_oam, &s_rom, &s_cache, &s_pal, fb);
 }
 
+/* ------------------------------------------------------- XIP relocation --- */
+/*
+ * Musashi's text and its ~328 KB of constant tables are linked at a SENTINEL
+ * address (CPS1_CODE, 0xDED00000) and shipped as /cores/cps1.xip, not loaded
+ * into RAM_EMU -- they do not fit alongside CPS-1's own 422 KB of BSS, which is
+ * gfxram + work RAM + tilemaps and therefore not negotiable. At startup the
+ * blob is cached into external flash, and every pointer that still names the
+ * sentinel is patched to the real flash address.
+ *
+ * This is the .xip_segacd recipe verbatim (Sega CD XIPs the same m68kcpu.c for
+ * the same reason), including the detail that main_cps1.o must stay RAM
+ * resident: it holds CPS1_CODE_BASE and runs the patch pass, so it has to be
+ * executable before the blob exists.
+ */
+#define CPS1_CODE_BASE 0xDEF00000u
+#define CPS1_XIP_PATH  "/cores/cps1.xip"
+
+extern uint8_t *odroid_overlay_cache_file_in_flash_relocate(
+    const char *file_path, uint32_t *file_size_p, bool byte_swap,
+    void (*relocate_cb)(uint8_t *, uint32_t, uint32_t, uint8_t *, uint32_t));
+
+static uint8_t *g_xip_addr;
+static uint32_t g_xip_size;
+
+static void cps1_patch_sentinels(uint32_t *start, uint32_t *end, int32_t offset, uint32_t size)
+{
+    for (uint32_t *p = start; p < end; p++) {
+        uint32_t v = *p;
+        /* &~1 so Thumb function pointers (LSB set) match too. */
+        if ((v & ~1u) >= CPS1_CODE_BASE && (v & ~1u) < CPS1_CODE_BASE + size)
+            *p = (uint32_t)(v + offset);
+    }
+}
+
+static void cps1_relocate_xip(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,
+                              uint8_t *file_address, uint32_t file_size)
+{
+    (void)offset_in_file;
+    int32_t offset = (int32_t)((uint32_t)file_address - CPS1_CODE_BASE);
+    cps1_patch_sentinels((uint32_t *)buffer, (uint32_t *)(buffer + (length & ~3u)),
+                          offset, file_size);
+}
+
+static bool cps1_cache_xip_to_flash(void)
+{
+    g_xip_size = 0;
+    g_xip_addr = odroid_overlay_cache_file_in_flash_relocate(CPS1_XIP_PATH, &g_xip_size,
+                                                              false, &cps1_relocate_xip);
+    if (g_xip_addr == NULL || g_xip_size == 0) {
+        printf("cps1: %s missing\n", CPS1_XIP_PATH);
+        return false;
+    }
+    int32_t off = (int32_t)((uint32_t)g_xip_addr - CPS1_CODE_BASE);
+    printf("cps1: xip blob at %p, %lu bytes, offset 0x%08lX\n",
+           g_xip_addr, (unsigned long)g_xip_size, (unsigned long)off);
+    cps1_patch_sentinels((uint32_t *)__RAM_EMU_START__, (uint32_t *)__RAM_EMU_END__,
+                          off, g_xip_size);
+    return true;
+}
+
 /* --------------------------------------------------------------- init --- */
 
 /* Sound CPU stand-ins. The Z80 stamps 0x77 at 0xF19FFE to say it is alive
@@ -257,7 +324,16 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_gamepad_state_t joystick;
 
     odroid_system_init(APPID_CPS1, CPS1_SAMPLE_RATE);
-    odroid_system_emu_init(NULL, NULL, NULL, NULL, NULL, NULL);
+    odroid_system_emu_init(NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+    /* Musashi lives in XIP flash; nothing below can call it until this runs. */
+    if (!cps1_cache_xip_to_flash())
+        return;
+
+    /* Anything this core ram_malloc()s must start past its own overlay+bss --
+     * the main_gwenesis.c pattern; getting it wrong allocates over the core's
+     * own code. */
+    ram_start = (uint32_t)&_OVERLAY_CPS1_BSS_END;
 
     /* TODO(cps1): enumerate the game folder, cache each chip in external
      * flash via odroid_overlay_cache_file_in_flash(), and identify the slots
@@ -289,6 +365,9 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             lcd_swap();
         }
 
-        common_emu_sound_loop(NULL);
+        /* No sound yet -- the QSound side is stubbed (see cps1_sound_stub_init).
+         * Still call the sync so the frame pacing the mixer drives stays
+         * correct rather than free-running. */
+        common_emu_sound_sync(false);
     }
 }
