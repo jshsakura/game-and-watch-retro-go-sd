@@ -46,6 +46,8 @@ enum { REG_OBJ = 0, REG_SCROLL1, REG_SCROLL2, REG_SCROLL3, REG_OTHER, REG_PALETT
 static unsigned s_watch_writes;
 static uint32_t s_qread[0x10000/2];   /* QSound shared-RAM read histogram */
 static uint16_t s_eeprom_din = 0xFFFF;
+/* per-region gfxram write counters, sampled over the LAST boot frames only */
+static unsigned s_wr_obj, s_wr_s1, s_wr_s2, s_wr_s3, s_wr_pal, s_wr_other, s_count_on;
 static struct { uint32_t pc; uint16_t val; } s_watch[24];
 static unsigned s_watch_n;
 
@@ -94,6 +96,14 @@ static void bus_write16(uint32_t a, uint16_t v)
     if (a >= GFXRAM_BASE && a < GFXRAM_BASE + GFXRAM_BYTES) {
         uint32_t o = a - GFXRAM_BASE;
         s_gfxram[o] = (uint8_t)(v >> 8); s_gfxram[o + 1] = (uint8_t)v;
+        if (s_count_on) {
+            if      (o >= 0x14000u) s_wr_pal++;
+            else if (o >= 0x10000u) s_wr_s3++;
+            else if (o >= 0x0C000u) s_wr_s2++;
+            else if (o >= 0x08000u) s_wr_s1++;
+            else if (o >= 0x04000u) s_wr_other++;
+            else                    s_wr_obj++;
+        }
         return;
     }
     if (a >= 0xF10000u && a < 0xF20000u) {
@@ -161,6 +171,7 @@ int main(int argc, char **argv)
      */
     unsigned handler_hits = 0;
     for (unsigned i = 0; i < boot_frames; i++) {
+        if (i == boot_frames - 10) s_count_on = 1;   /* last 10 frames only */
         cps1_m68k_set_irq(2);
         for (unsigned k = 0; k < 8; k++) {
             cps1_m68k_run(FRAME / 16u);
@@ -175,6 +186,9 @@ int main(int argc, char **argv)
     for (unsigned i = 0; i < s_watch_n; i++)
         printf("         PC~0x%06x wrote 0x%04x\n", s_watch[i].pc, s_watch[i].val);
     printf("[frame] 0xFF5600 now = 0x%02x\n", s_wram[0x5600]);
+    printf("[frame] gfxram writes in LAST 10 frames: OBJ=%u SCROLL1=%u SCROLL2=%u "
+           "SCROLL3=%u OTHER=%u PALETTE=%u\n",
+           s_wr_obj, s_wr_s1, s_wr_s2, s_wr_s3, s_wr_other, s_wr_pal);
     {   /* which QSound shared-RAM words does the game hammer? */
         unsigned top[6] = {0};
         for (unsigned i = 0; i < 0x10000/2; i++) {
