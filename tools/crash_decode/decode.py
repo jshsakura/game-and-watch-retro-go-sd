@@ -93,7 +93,8 @@ def extract(text):
         "pc":  hexof(r"PC\s*=\s*(0x[0-9A-Fa-f]+)"),
         "lr":  hexof(r"LR\s*=\s*(0x[0-9A-Fa-f]+)"),
         "xip": hexof(r"xip blob at\s*(0x[0-9A-Fa-f]+)"),
-        "cfsr": hexof(r"CFSR\s*=\s*(0x[0-9A-Fa-f]+)"),
+        "cfsr": hexof(r"CFSR\s*=\s*((?:0x)?[0-9A-Fa-f]{4,8})"),
+        "abfsr": hexof(r"ABFSR\s*=\s*((?:0x)?[0-9A-Fa-f]{4,8})"),
         "core": None,
     }
     low = text.lower()
@@ -188,6 +189,7 @@ def main():
     ap.add_argument("--xip-base", type=lambda x: int(x, 0))
     ap.add_argument("--core")
     ap.add_argument("--cfsr", type=lambda x: int(x, 0))
+    ap.add_argument("--abfsr", type=lambda x: int(x, 0))
     ap.add_argument("--map")
     args = ap.parse_args()
 
@@ -198,6 +200,7 @@ def main():
     xip = args.xip_base if args.xip_base is not None else g["xip"]
     core = args.core or g["core"]
     cfsr = args.cfsr if args.cfsr is not None else g["cfsr"]
+    abfsr = args.abfsr if args.abfsr is not None else g["abfsr"]
     mapfile = args.map or (args.elf[:-4] + ".map" if args.elf.endswith(".elf") else None)
 
     nm  = tool("nm")
@@ -212,6 +215,8 @@ def main():
 
     if cfsr is not None:
         decode_cfsr(cfsr)
+    if abfsr:
+        decode_abfsr(abfsr)
 
     info = (a2l, args.elf, reg, xip, core, mapfile, ram)
     for label, addr in (("PC", pc), ("LR", lr)):
@@ -244,6 +249,26 @@ CFSR_BITS = [
                       "non-word-aligned address traps here"),
     (25, "DIVBYZERO", "UsageFault: divide by zero"),
 ]
+
+
+ABFSR_BITS = [
+    (0, "ITCM",  "instruction/data TCM"),
+    (1, "DTCM",  "data TCM"),
+    (2, "AHBP",  "AHBP — peripheral space 0x40000000-0x5FFFFFFF (a wild MMIO access)"),
+    (3, "AXIM",  "AXIM — all RAM/flash (AXI SRAM, external flash, QSPI)"),
+    (4, "EPPB",  "external private peripheral bus"),
+]
+
+
+def decode_abfsr(abfsr):
+    print(f"\nABFSR = {hex(abfsr)}  (which bus the imprecise fault used)")
+    hit = [(n, h) for (b, n, h) in ABFSR_BITS if abfsr & (1 << b)]
+    if not hit:
+        print("  (no bus bit set — fault may not have been an imprecise bus error)")
+    for n, h in hit:
+        print(f"  ► {n}: {h}")
+    if abfsr & 0xE0:
+        print(f"    (TYPE field = {(abfsr >> 5) & 7})")
 
 
 def decode_cfsr(cfsr):

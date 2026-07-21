@@ -48,17 +48,33 @@ The ELF **must be the exact build that crashed** (addresses shift between
 builds). Use the `gw_retro_go.elf` from the same release as the firmware on the
 SD card.
 
-## Phase 2 (device side, not done)
+## Phase 2 (device side) — DONE
 
-To close the loop so the device itself emits everything this tool needs:
+The device now emits everything this tool needs:
 
-1. `SCB->SHCSR |= USGFAULTENA|BUSFAULTENA|MEMFAULTENA` in `main()` → the title
-   becomes Usagefault/Busfault/Memfault instead of a bare Hardfault (the
-   per-fault handlers already exist in `stm32h7xx_it.c`).
-2. Print `CFSR`, `HFSR`, `BFAR`, `MMFAR`, `ABFSR` in the BSOD.
-3. Optionally have the fault handler un-relocate XIP addresses itself, from a
-   small per-core `{code_base, xip_runtime_base}` registry, so the printed
-   address maps straight to the ELF.
+1. `main()` enables `SCB->SHCSR` USG/BUS/MEMFAULTENA, so the BSOD title NAMES
+   the fault (Usagefault/Busfault/Memfault) instead of a bare Hardfault. (We do
+   NOT set `CCR.UNALIGN_TRP` — the cores do unaligned 16/32-bit access on
+   purpose; only the architectural 64-bit STRD/LDRD trap is wanted.)
+2. `CFSR` is folded into the existing `PC=.. LR=..` BSOD line (no extra
+   string/line — intflash has only ~88 B free). CFSR is THE register: INVSTATE
+   = null branch, UNALIGNED = 64-bit mis-aligned store, IMPRECISERR = buffered
+   store. This tool auto-parses it (with or without a `0x` prefix).
 
-Watch the intflash budget (~44 B free on the canonical docker build) — keep the
-added format strings compact, or free space first.
+So a fault that used to read only "Hardfault  PC=0" now reads, on-screen,
+"Usagefault … CFSR=00020000" — and this tool turns that into
+"INVSTATE: branch through a NULL pointer" + the `LR` symbol.
+
+`HFSR`/`BFAR`/`ABFSR` are NOT printed on-device (byte budget). The tool still
+decodes `ABFSR` if you supply it (`--abfsr 0x..`, e.g. read over the debugger);
+it only matters for the rarer imprecise bus faults (CFSR IMPRECISERR).
+
+### Still optional (not done)
+
+- Having the fault handler un-relocate XIP addresses on-device (from a per-core
+  `{code_base, xip_runtime_base}` registry) so even the printed *address* maps
+  straight to the ELF with no host step. Low priority now that the host tool
+  does it from the `xip blob at 0x..` line.
+
+Intflash budget: the CFSR line cost ~150 B of the ~1 KB free on the canonical
+docker build; measured, still links clean. Keep future additions compact.

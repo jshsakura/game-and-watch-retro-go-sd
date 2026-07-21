@@ -175,7 +175,13 @@ __attribute__((optimize("-O0"))) void BSOD(BSOD_t fault, uint32_t pc, uint32_t l
   __disable_irq();
 
   snprintf(msg, sizeof(msg), "FATAL EXCEPTION: %s %s", fault_list[fault], GIT_TAG);
-  snprintf(regs, sizeof(regs), "PC=0x%08lx LR=0x%08lx", pc, lr);
+  /* Fold the fault-cause register into the existing PC/LR line — no extra
+   * string/line, so it costs a handful of bytes of near-full intflash. CFSR is
+   * THE register: UsageFault[31:16] (INVSTATE=NULL/garbage branch,
+   * UNALIGNED=64-bit mis-aligned store), BusFault[15:8] (IMPRECISERR),
+   * MemManage[7:0]. Decode with tools/crash_decode/decode.py. */
+  snprintf(regs, sizeof(regs), "PC=0x%08lx LR=0x%08lx CFSR=%08lx",
+           pc, lr, (unsigned long)SCB->CFSR);
 
   lcd_sync();
   lcd_reset_active_buffer();
@@ -429,6 +435,17 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+
+  /* Give bus/mem/usage faults their own handlers instead of escalating every
+   * one to a bare HardFault. Then the BSOD title NAMES the fault and the
+   * handler can read CFSR: a NULL/garbage-pointer branch shows as
+   * Usagefault(INVSTATE), a 64-bit STRD/LDRD to a mis-aligned address as
+   * Usagefault(UNALIGNED), a wild peripheral store as Busfault. We deliberately
+   * do NOT set CCR.UNALIGN_TRP — the cores do unaligned 16/32-bit access on
+   * purpose; only the architectural 64-bit trap is what we want. Decode the
+   * printed CFSR with tools/crash_decode/decode.py. */
+  SCB->SHCSR |= SCB_SHCSR_USGFAULTENA_Msk | SCB_SHCSR_BUSFAULTENA_Msk |
+                SCB_SHCSR_MEMFAULTENA_Msk;
 
   // Latch the wake cause for the all-state alarm BEFORE the wakeup pin is
   // reconfigured below: RTC Alarm A flag (deep-sleep alarm wake) and the
