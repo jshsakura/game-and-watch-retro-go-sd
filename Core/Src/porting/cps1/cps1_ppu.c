@@ -10,12 +10,15 @@ uint32_t cps1_oam_prescan(const cps1_oam_t *oam, uint16_t *out_visible_tile_ids,
         const cps1_oam_entry_t *s = &oam->sprites[i];
         if (!s->enabled)
             continue;
-        /* Spatial pre-filter (technique 5): an 8x8 tile fully to the left/
-         * above/right/below the viewport can never contribute a pixel, so
-         * it never needs a cache slot at all. */
-        if (s->x + 8 <= 0 || s->x >= CPS1_FB_WIDTH)
+        /* Spatial pre-filter (technique 5): a sprite's REAL footprint is
+         * (xblock+1)*(yblock+1) 16x16 units (docs/CPS1_MAME_ALIGNMENT.md
+         * section 5), not a fixed 8x8 -- using the old fixed size here
+         * would cull sprites the real renderer still draws. */
+        unsigned nx = ((s->attr >> CPS1_OAM_ATTR_XBLOCK_SHIFT) & CPS1_OAM_ATTR_BLOCK_MASK) + 1u;
+        unsigned ny = ((s->attr >> CPS1_OAM_ATTR_YBLOCK_SHIFT) & CPS1_OAM_ATTR_BLOCK_MASK) + 1u;
+        if (s->x + (int)(nx * 16u) <= 0 || s->x >= CPS1_FB_WIDTH)
             continue;
-        if (s->y + 8 <= 0 || s->y >= CPS1_FB_HEIGHT)
+        if (s->y + (int)(ny * 16u) <= 0 || s->y >= CPS1_FB_HEIGHT)
             continue;
         out_visible_tile_ids[n++] = s->tile_index;
     }
@@ -88,26 +91,69 @@ uint16_t cps1_palette_build(uint16_t raw)
 }
 
 void cps1_blit8x8_indexed(const uint8_t *tile4bpp, unsigned palette_bank,
-                           const cps1_palette_t *pal, int dst_x, int dst_y, uint16_t *fb)
+                           const cps1_palette_t *pal, int dst_x, int dst_y,
+                           int flip_x, int flip_y, uint16_t *fb,
+                           uint8_t *out_meta, uint8_t priority_group)
 {
     unsigned bank = palette_bank & (CPS1_PALETTE_BANKS - 1);
+    uint8_t meta_prefix = (uint8_t)(CPS1_PIXEL_META_VALID |
+                                     ((priority_group & CPS1_PIXEL_META_GROUP_MASK)
+                                      << CPS1_PIXEL_META_GROUP_SHIFT));
     for (int row = 0; row < 8; row++) {
         int py = dst_y + row;
         if (py < 0 || py >= CPS1_FB_HEIGHT)
             continue;
+        int src_row = flip_y ? (7 - row) : row;
         for (int col = 0; col < 8; col++) {
             int px = dst_x + col;
             if (px < 0 || px >= CPS1_FB_WIDTH)
                 continue;
-            uint8_t byte = tile4bpp[row * 4 + col / 2];
-            uint8_t idx = (col & 1) ? (uint8_t)(byte & 0x0Fu) : (uint8_t)(byte >> 4);
+            int src_col = flip_x ? (7 - col) : col;
+            uint8_t byte = tile4bpp[src_row * 4 + src_col / 2];
+            uint8_t idx = (src_col & 1) ? (uint8_t)(byte & 0x0Fu) : (uint8_t)(byte >> 4);
             if (idx == 0)
                 continue; /* transparent */
-            fb[py * CPS1_FB_WIDTH + px] = pal->colors[bank][idx];
+            int dst_off = py * CPS1_FB_WIDTH + px;
+            fb[dst_off] = pal->colors[bank][idx];
+            if (out_meta)
+                out_meta[dst_off] = (uint8_t)(meta_prefix | (idx & CPS1_PIXEL_META_PEN_MASK));
         }
     }
 }
 
+void cps1_blit_block_indexed(uint32_t base_subtile, unsigned sub, unsigned palette_bank,
+                              const cps1_palette_t *pal, int dst_x, int dst_y,
+                              int flip_x, int flip_y, cps1_tile_cache_t *cache,
+                              const cps1_rom_t *rom, uint16_t *fb,
+                              uint8_t *out_meta, uint8_t priority_group)
+{
+    for (unsigned qy = 0; qy < sub; qy++) {
+        unsigned src_qy = flip_y ? (sub - 1u - qy) : qy;
+        for (unsigned qx = 0; qx < sub; qx++) {
+            unsigned src_qx = flip_x ? (sub - 1u - qx) : qx;
+            uint32_t subtile = base_subtile + src_qy * sub + src_qx;
+            const uint8_t *tile = cps1_tile_cache_fetch(cache, rom, subtile);
+            if (!tile)
+                continue;
+            cps1_blit8x8_indexed(tile, palette_bank, pal,
+                                  dst_x + (int)(qx * 8u), dst_y + (int)(qy * 8u),
+                                  flip_x, flip_y, fb, out_meta, priority_group);
+        }
+    }
+}
+
+/*
+ * Sprite footprint: (xblock+1)*(yblock+1) 16x16 units, each a 2x2 grid of
+ * 8x8 sub-tiles at consecutive indices (base_unit*4 .. +3) -- same
+ * decomposition cps1_bg.c uses for SCROLL2/3, not yet the real
+ * CPS1_GFX_LAYOUT_16X16 raw decode (Phase 11). Block iteration and the x/y
+ * coordinate wrap (& 0x1ff -- CPS-1's sprites live in a 512x512 internal
+ * coordinate space, confirmed cps1_v.cpp:2761-2851) mirror MAME's
+ * cps1_render_sprites DRAWSPRITE loop: screen position always progresses
+ * left-to-right/top-to-bottom by block index, only the SOURCE unit
+ * selection mirrors under flip (so the whole block's arrangement flips,
+ * not just each unit's own pixels).
+ */
 void cps1_ppu_render(const cps1_oam_t *oam, const cps1_rom_t *rom, cps1_tile_cache_t *cache,
                       const cps1_palette_t *pal, uint16_t *fb)
 {
@@ -115,15 +161,32 @@ void cps1_ppu_render(const cps1_oam_t *oam, const cps1_rom_t *rom, cps1_tile_cac
         const cps1_oam_entry_t *s = &oam->sprites[i];
         if (!s->enabled)
             continue;
-        if (s->x + 8 <= 0 || s->x >= CPS1_FB_WIDTH)
+
+        unsigned nx = ((s->attr >> CPS1_OAM_ATTR_XBLOCK_SHIFT) & CPS1_OAM_ATTR_BLOCK_MASK) + 1u;
+        unsigned ny = ((s->attr >> CPS1_OAM_ATTR_YBLOCK_SHIFT) & CPS1_OAM_ATTR_BLOCK_MASK) + 1u;
+        int footprint_w = (int)(nx * 16u);
+        int footprint_h = (int)(ny * 16u);
+        if (s->x + footprint_w <= 0 || s->x >= CPS1_FB_WIDTH)
             continue;
-        if (s->y + 8 <= 0 || s->y >= CPS1_FB_HEIGHT)
+        if (s->y + footprint_h <= 0 || s->y >= CPS1_FB_HEIGHT)
             continue;
 
-        const uint8_t *tile = cps1_tile_cache_fetch(cache, rom, s->tile_index);
-        if (!tile)
-            continue;
+        unsigned color = s->attr & CPS1_OAM_ATTR_COLOR_MASK;
+        int flip_x = (s->attr & CPS1_OAM_ATTR_FLIP_X) != 0;
+        int flip_y = (s->attr & CPS1_OAM_ATTR_FLIP_Y) != 0;
+        uint32_t ux = (uint32_t)(int32_t)s->x;
+        uint32_t uy = (uint32_t)(int32_t)s->y;
 
-        cps1_blit8x8_indexed(tile, s->attr, pal, s->x, s->y, fb);
+        for (unsigned nys = 0; nys < ny; nys++) {
+            unsigned src_ny = flip_y ? (ny - 1u - nys) : nys;
+            int sy = (int)((uy + nys * 16u) & 0x1FFu);
+            for (unsigned nxs = 0; nxs < nx; nxs++) {
+                unsigned src_nx = flip_x ? (nx - 1u - nxs) : nxs;
+                int sx = (int)((ux + nxs * 16u) & 0x1FFu);
+                uint32_t unit_base = (uint32_t)s->tile_index + (src_ny * nx + src_nx) * 4u;
+                cps1_blit_block_indexed(unit_base, 2u, color, pal, sx, sy,
+                                         flip_x, flip_y, cache, rom, fb, NULL, 0);
+            }
+        }
     }
 }

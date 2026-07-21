@@ -17,7 +17,7 @@ int main(void)
 
     int16_t x = 0, y = 0;
     uint16_t tile = 0;
-    uint8_t attr = 0;
+    uint16_t attr = 0;
     cps1_core_oam_peek(0, &x, &y, &tile, &attr);
 
     printf("[cps1-vdp-bus-selftest] wram[0]=%u sprite0.y=%d "

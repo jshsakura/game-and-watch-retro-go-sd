@@ -112,10 +112,12 @@ static void cps1_ppu_init_synthetic(void)
     for (int r = 0; r < CPS1_SYN_OAM_ROWS; r++) {
         for (int c = 0; c < CPS1_SYN_OAM_COLS; c++) {
             cps1_oam_entry_t *s = &s_synthetic_oam.sprites[r * CPS1_SYN_OAM_COLS + c];
-            s->x = (int16_t)(c * 8);
-            s->y = (int16_t)(r * 8);
+            /* Phase 10: sprite base unit is 16x16, not 8x8 -- space by 16
+             * (not the old 8) so adjacent demo sprites don't overlap. */
+            s->x = (int16_t)(c * 16);
+            s->y = (int16_t)(r * 16);
             s->tile_index = (uint16_t)((r + c) % CPS1_SYN_TILE_COUNT);
-            s->attr = 0;
+            s->attr = 0; /* color 0, no flip, single 16x16 unit (no block) */
             s->enabled = 1;
         }
     }
@@ -145,13 +147,18 @@ static void cps1_bg_init_synthetic(void)
 
     static const uint16_t bg_colors[CPS1_BG_LAYER_COUNT] = { 0xAD55, 0xFD20, 0x87F0 };
     for (unsigned l = 0; l < CPS1_BG_LAYER_COUNT; l++) {
-        s_synthetic_palette.colors[3 + l][1] = bg_colors[l];
+        /* color field = 1 for every layer -- cps1_bg_layer_palette_offset
+         * (+0x20/+0x40/+0x60) already separates the three layers into
+         * distinct real palette banks, so no per-layer color OFFSET needs
+         * to be baked into the cell data itself any more (the old skeleton
+         * used raw banks 3/4/5 directly, before layer offsets existed). */
+        unsigned bank = cps1_bg_layer_palette_offset(l) + 1u;
+        s_synthetic_palette.colors[bank][1] = bg_colors[l];
         for (int cy = 0; cy < CPS1_BG_MAP_H; cy++) {
             for (int cx = 0; cx < CPS1_BG_MAP_W; cx++) {
                 cps1_bg_cell_t *cell = &s_bg.layers[l].cells[cy * CPS1_BG_MAP_W + cx];
-                cell->tile_index = (uint16_t)((cx + cy) % CPS1_SYN_TILE_COUNT);
-                cell->palette = (uint8_t)(3 + l);
-                cell->enabled = 1;
+                cell->code = (uint16_t)((cx + cy) % CPS1_SYN_TILE_COUNT);
+                cell->attr = 1; /* color=1, no flip, priority group 0 */
             }
         }
     }
@@ -306,6 +313,27 @@ static uint32_t cps1_scroll_base_addr(unsigned layer)
            cps1_resolve_base(s_cps_a_regs[CPS1_REG_SCROLL1_BASE + layer]);
 }
 
+/*
+ * CPS-B registers -- per-game-config, base 0x800140 for wof/wofj
+ * (CPS_B_21_QS1, docs/CPS1_MAME_ALIGNMENT.md section 4). Only the 4
+ * priority-bitmask registers this phase wires up are named; layer_control/
+ * palette_control/etc. are stored but unread (same "inert until consumed"
+ * status as CPS-A's unlisted offsets above).
+ */
+#define CPS1_CPSB_BASE  0x800140u
+#define CPS1_CPSB_SIZE  0x40u
+#define CPS1_CPSB_COUNT (CPS1_CPSB_SIZE / 2u)
+
+enum {
+    CPS1_CPSB_REG_PRIORITY0 = 0x24 / 2,
+    CPS1_CPSB_REG_PRIORITY1 = 0x26 / 2,
+    CPS1_CPSB_REG_PRIORITY2 = 0x28 / 2,
+    CPS1_CPSB_REG_PRIORITY3 = 0x2A / 2,
+};
+
+static uint16_t s_cps_b_regs[CPS1_CPSB_COUNT];
+static cps1_priority_masks_t s_priority_masks;
+
 static uint32_t cps1_palette_base_addr(void)
 {
     return CPS1_GFXRAM_BASE + cps1_resolve_base(s_cps_a_regs[CPS1_REG_PALETTE_BASE]);
@@ -350,6 +378,20 @@ static void cps1_bus_write16(uint32_t addr, uint16_t val)
         return;
     }
 
+    if (addr >= CPS1_CPSB_BASE && addr < CPS1_CPSB_BASE + CPS1_CPSB_SIZE) {
+        uint32_t word_idx = (addr - CPS1_CPSB_BASE) / 2u;
+        if (word_idx < CPS1_CPSB_COUNT)
+            s_cps_b_regs[word_idx] = val;
+        switch (word_idx) {
+        case CPS1_CPSB_REG_PRIORITY0: s_priority_masks.masks[0] = val; break;
+        case CPS1_CPSB_REG_PRIORITY1: s_priority_masks.masks[1] = val; break;
+        case CPS1_CPSB_REG_PRIORITY2: s_priority_masks.masks[2] = val; break;
+        case CPS1_CPSB_REG_PRIORITY3: s_priority_masks.masks[3] = val; break;
+        default: break;
+        }
+        return;
+    }
+
     if (addr == CPS1_SOUND_CMD_BASE) {
         cps1_sound_hle_trigger(&s_sound, (uint8_t)(val & 0xFFu));
         return;
@@ -370,11 +412,14 @@ static void cps1_bus_write16(uint32_t addr, uint16_t val)
             uint32_t entry = word_idx / 4u;
             uint32_t field = word_idx % 4u;
             cps1_oam_entry_t *s = &s_synthetic_oam.sprites[entry];
+            /* X,Y,tile,attr word order -- CONFIRMED,
+             * docs/CPS1_MAME_ALIGNMENT.md section 5 (the Phase 5-9 skeleton
+             * had this as Y,tile,attr,X). */
             switch (field) {
-            case 0: s->y = (int16_t)val; break;
-            case 1: s->tile_index = val; break;
-            case 2: s->attr = (uint8_t)val; break;
-            default: s->x = (int16_t)val; break;
+            case 0: s->x = (int16_t)val; break;
+            case 1: s->y = (int16_t)val; break;
+            case 2: s->tile_index = val; break;
+            default: s->attr = val; break;
             }
             return;
         }
@@ -392,16 +437,22 @@ static void cps1_bus_write16(uint32_t addr, uint16_t val)
         for (unsigned layer = 0; layer < CPS1_BG_LAYER_COUNT; layer++) {
             uint32_t base = cps1_scroll_base_addr(layer);
             if (addr >= base && addr < base + CPS1_BG_CELLS_BYTES) {
+                /* Bit-swizzled cell addressing -- CONFIRMED,
+                 * docs/CPS1_MAME_ALIGNMENT.md section 6: the raw word
+                 * offset a real 68000 program computes for logical
+                 * (col,row) is NOT row*64+col; invert it back to (col,row)
+                 * so cells[] itself stays simple logical row-major
+                 * storage for the renderer. */
                 uint32_t word_idx = (addr - base) / 2u;
-                uint32_t cell = word_idx / 2u;
+                uint32_t swizzled_cell = word_idx / 2u;
                 uint32_t field = word_idx % 2u;
-                cps1_bg_layer_t *L = &s_bg.layers[layer];
-                if (field == 0) {
-                    L->cells[cell].tile_index = val;
-                } else {
-                    L->cells[cell].palette = (uint8_t)(val & 0xFFu);
-                    L->cells[cell].enabled = (uint8_t)((val >> 8) != 0);
-                }
+                unsigned col, row;
+                cps1_bg_swizzle_offset_to_col_row(layer, swizzled_cell, &col, &row);
+                cps1_bg_cell_t *L_cell = &s_bg.layers[layer].cells[row * CPS1_BG_MAP_W + col];
+                if (field == 0)
+                    L_cell->code = val;
+                else
+                    L_cell->attr = val;
                 return;
             }
         }
@@ -422,12 +473,22 @@ typedef struct {
 
 static cps1_engine_state_t s_engine[CPS1_ENGINE_COUNT];
 
-/* Host-only scratch buffers for the full (SCROLL1+SCROLL2+SCROLL3+sprites+
- * compositor) render path -- see cps1_core_run_frame(). Not per-engine:
- * reused sequentially, single-threaded, cleared fresh every call. */
-static uint16_t s_bottom_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
-static uint16_t s_middle_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
-static uint16_t s_top_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+/* Host-only scratch buffers, shared by cps1_core_run_frame() (uses all
+ * three BG layers) and cps1_core_run_frame_device_cost() (uses only
+ * bg_top/bg_top_meta, for SCROLL3 -- the only BG layer real cheat-8
+ * hardware ever CPU-renders). Not per-engine: reused sequentially, single-
+ * threaded, cleared fresh every call. Each _meta buffer is
+ * cps1_compositor_blend_priority's per-pixel (priority_group, pen) record
+ * for that layer (docs/CPS1_MAME_ALIGNMENT.md section 6/9 Phase 10) --
+ * sprites render into their own s_sprite_fb (no meta: sprites are always
+ * the single "top" input, never a punch-through SOURCE). */
+static uint16_t s_bg_bottom_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+static uint8_t  s_bg_bottom_meta[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+static uint16_t s_bg_middle_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+static uint8_t  s_bg_middle_meta[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+static uint16_t s_bg_top_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+static uint8_t  s_bg_top_meta[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+static uint16_t s_sprite_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
 
 #define CPS1_SOUND_SAMPLES_PER_FRAME (CPS1_SOUND_SAMPLE_RATE / 60u) /* ~368 @ 60fps */
 
@@ -487,18 +548,23 @@ void cps1_core_run_frame(cps1_engine_kind_t engine)
     cps1_core_step_cpu(e, engine);
 
     for (int i = 0; i < CPS1_FB_WIDTH * CPS1_FB_HEIGHT; i++) {
-        s_bottom_fb[i] = 0;
-        s_middle_fb[i] = 0;
-        s_top_fb[i] = 0;
+        s_bg_bottom_fb[i] = 0;   s_bg_bottom_meta[i] = 0;
+        s_bg_middle_fb[i] = 0;   s_bg_middle_meta[i] = 0;
+        s_bg_top_fb[i] = 0;      s_bg_top_meta[i] = 0;
+        s_sprite_fb[i] = 0;
     }
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_synthetic_rom,
-                          &s_tile_cache, &s_synthetic_palette, s_bottom_fb);
+                          &s_tile_cache, &s_synthetic_palette, s_bg_bottom_fb, s_bg_bottom_meta);
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_synthetic_rom,
-                          &s_tile_cache, &s_synthetic_palette, s_middle_fb);
+                          &s_tile_cache, &s_synthetic_palette, s_bg_middle_fb, s_bg_middle_meta);
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL3], CPS1_BG_SCROLL3, &s_synthetic_rom,
-                          &s_tile_cache, &s_synthetic_palette, s_top_fb);
-    cps1_ppu_render(&s_buffered_obj, &s_synthetic_rom, &s_tile_cache, &s_synthetic_palette, s_top_fb);
-    cps1_compositor_blend(s_bottom_fb, s_middle_fb, s_top_fb, e->fb);
+                          &s_tile_cache, &s_synthetic_palette, s_bg_top_fb, s_bg_top_meta);
+    cps1_ppu_render(&s_buffered_obj, &s_synthetic_rom, &s_tile_cache, &s_synthetic_palette, s_sprite_fb);
+
+    const uint16_t *colors[CPS1_BG_LAYER_COUNT] = { s_bg_bottom_fb, s_bg_middle_fb, s_bg_top_fb };
+    const uint8_t *metas[CPS1_BG_LAYER_COUNT] = { s_bg_bottom_meta, s_bg_middle_meta, s_bg_top_meta };
+    cps1_compositor_blend_priority(colors, metas, CPS1_BG_LAYER_COUNT, s_sprite_fb,
+                                    &s_priority_masks, e->fb);
 
     cps1_core_mix_sound_frame();
     cps1_core_latch_obj();
@@ -520,11 +586,27 @@ void cps1_core_run_frame_device_cost(cps1_engine_kind_t engine)
 
     cps1_core_step_cpu(e, engine);
 
-    for (int i = 0; i < CPS1_FB_WIDTH * CPS1_FB_HEIGHT; i++)
-        e->fb[i] = 0;
+    for (int i = 0; i < CPS1_FB_WIDTH * CPS1_FB_HEIGHT; i++) {
+        s_bg_top_fb[i] = 0;   s_bg_top_meta[i] = 0;
+        s_sprite_fb[i] = 0;
+    }
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL3], CPS1_BG_SCROLL3, &s_synthetic_rom,
-                          &s_tile_cache, &s_synthetic_palette, e->fb);
-    cps1_ppu_render(&s_buffered_obj, &s_synthetic_rom, &s_tile_cache, &s_synthetic_palette, e->fb);
+                          &s_tile_cache, &s_synthetic_palette, s_bg_top_fb, s_bg_top_meta);
+    cps1_ppu_render(&s_buffered_obj, &s_synthetic_rom, &s_tile_cache, &s_synthetic_palette, s_sprite_fb);
+
+    /* Only SCROLL3-vs-sprite priority is reproducible under cheat 8:
+     * SCROLL1/SCROLL2 are LTDC hardware layers on real hardware, which
+     * blend final RGB565 pixels with no pen-index/priority-group
+     * knowledge -- they cannot punch over a sprite the way real CPS-1
+     * silicon's SCROLL1/2 tiles could (docs/CPS1_MAME_ALIGNMENT.md section
+     * 9 Phase 10 plan; cps1_bg.h's file header). A game whose priority
+     * masks depend on SCROLL1/2 punch-through would look wrong under this
+     * cheat regardless of what this function does -- that's a real,
+     * accepted limitation of the architecture, not something to paper
+     * over here. */
+    const uint16_t *colors[1] = { s_bg_top_fb };
+    const uint8_t *metas[1] = { s_bg_top_meta };
+    cps1_compositor_blend_priority(colors, metas, 1, s_sprite_fb, &s_priority_masks, e->fb);
 
     cps1_core_mix_sound_frame();
     cps1_core_latch_obj();
@@ -564,7 +646,7 @@ uint16_t cps1_core_wram_peek16(uint32_t offset)
 }
 
 int cps1_core_oam_peek(uint32_t index, int16_t *out_x, int16_t *out_y,
-                        uint16_t *out_tile, uint8_t *out_attr)
+                        uint16_t *out_tile, uint16_t *out_attr)
 {
     if (index >= s_synthetic_oam.count)
         return 0;
@@ -577,7 +659,7 @@ int cps1_core_oam_peek(uint32_t index, int16_t *out_x, int16_t *out_y,
 }
 
 int cps1_core_buffered_oam_peek(uint32_t index, int16_t *out_x, int16_t *out_y,
-                                 uint16_t *out_tile, uint8_t *out_attr)
+                                 uint16_t *out_tile, uint16_t *out_attr)
 {
     if (index >= s_buffered_obj.count)
         return 0;
@@ -601,10 +683,13 @@ uint16_t cps1_core_palette_peek(unsigned bank, unsigned color)
  * word)/palette-RAM(bank 1, color 2), writes a distinct MOVEQ-range value
  * through each, and reads WRAM back into D1 to prove the round trip.
  *   MOVEA.L #CPS1_WRAM_BASE,A0 ; MOVEQ #7,D0  ; MOVE.W D0,(A0) ; MOVE.W (A0),D1
- *   MOVEA.L #<default OBJ addr>,A1  ; MOVEQ #99,D2 ; MOVE.W D2,(A1)
+ *   MOVEA.L #<default OBJ addr + 2>,A1  ; MOVEQ #99,D2 ; MOVE.W D2,(A1)
  *   MOVEA.L #<default PALETTE addr + 36>,A2 ; MOVEQ #21,D3 ; MOVE.W D3,(A2)
  *   RTS
- * (palette bank 1 color 2 -> word index 1*16+2=18 -> byte offset 36; Phase 9
+ * (Phase 10: OBJ word order is X,Y,tile,attr -- word 0 (+0) is X, word 1
+ * (+2) is Y, so this writes sprite 0's Y specifically, not word 0/X as a
+ * literal "+0" offset would under the old Y,tile,attr,X skeleton order.
+ * palette bank 1 color 2 -> word index 1*16+2=18 -> byte offset 36; Phase 9
  * addresses: OBJ default offset 0 -> 0x900000, PALETTE default offset
  * 0x14000 -> 0x914000+36=0x914024 -- see CPS1_DEFAULT_*_OFFSET above.)
  */
@@ -613,7 +698,7 @@ static const uint8_t s_vdp_bus_test_program[] = {
     0x70, 0x07,                         /* MOVEQ   #7,D0        */
     0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
     0x32, 0x10,                         /* MOVE.W  (A0),D1      */
-    0x22, 0x7C, 0x00, 0x90, 0x00, 0x00, /* MOVEA.L #0x900000,A1 */
+    0x22, 0x7C, 0x00, 0x90, 0x00, 0x02, /* MOVEA.L #0x900002,A1 */
     0x74, 0x63,                         /* MOVEQ   #99,D2       */
     0x32, 0x82,                         /* MOVE.W  D2,(A1)      */
     0x24, 0x7C, 0x00, 0x91, 0x40, 0x24, /* MOVEA.L #0x914024,A2 */
@@ -695,26 +780,31 @@ int cps1_core_selftest_sound_bus(void)
     return 1;
 }
 
-int cps1_core_bg_cell_peek(unsigned layer, uint32_t index, uint16_t *out_tile,
-                            uint8_t *out_palette, uint8_t *out_enabled)
+int cps1_core_bg_cell_peek(unsigned layer, uint32_t index, uint16_t *out_code,
+                            uint16_t *out_attr)
 {
     if (layer >= CPS1_BG_LAYER_COUNT || index >= (uint32_t)CPS1_BG_MAP_W * CPS1_BG_MAP_H)
         return 0;
     const cps1_bg_cell_t *cell = &s_bg.layers[layer].cells[index];
-    if (out_tile)    *out_tile = cell->tile_index;
-    if (out_palette) *out_palette = cell->palette;
-    if (out_enabled) *out_enabled = cell->enabled;
+    if (out_code) *out_code = cell->code;
+    if (out_attr) *out_attr = cell->attr;
     return 1;
 }
 
 /*
- * Hand-assembled: sets SCROLL1 (layer 0) cell 0's tile_index to 7 and its
- * palette/enabled word to 0x0105 (palette=5, enabled=1 -- needs the 16-bit
- * MOVE.W #imm,Dn immediate since 0x0105 is out of MOVEQ's -128..127 range).
+ * Hand-assembled: sets SCROLL1 (layer 0) cell (0,0)'s code to 7 and its
+ * attr word to 0x01E5 -- needs the 16-bit MOVE.W #imm,Dn immediate since
+ * 0x01E5 is out of MOVEQ's -128..127 range. 0x01E5 = 0b1_1110_0101:
+ * bits0-4=5 (color), bit5=1 (flip_x), bit6=1 (flip_y), bits7-8=3 (priority
+ * group) -- exercises every attr field the Phase 10 cell format decodes,
+ * not the old skeleton's coincidentally-similar-looking 0x0105.
  * Phase 9: SCROLL1's default gfxram offset is 0x4000 -> absolute 0x904000
- * (CPS1_DEFAULT_SCROLL1_OFFSET above), not the old fixed 0x930000.
+ * (CPS1_DEFAULT_SCROLL1_OFFSET above). Cell (0,0)'s swizzled offset is 0
+ * for every layer (docs/CPS1_MAME_ALIGNMENT.md section 6 -- the swizzle
+ * formula maps (col=0,row=0) to offset 0 regardless of layer), so this
+ * program's addresses need no change from the pre-swizzle version.
  *   MOVEA.L #0x904000,A0 ; MOVEQ #7,D0       ; MOVE.W D0,(A0)
- *   MOVEA.L #0x904002,A1 ; MOVE.W #0x0105,D1 ; MOVE.W D1,(A1)
+ *   MOVEA.L #0x904002,A1 ; MOVE.W #0x01E5,D1 ; MOVE.W D1,(A1)
  *   RTS
  */
 static const uint8_t s_bg_bus_test_program[] = {
@@ -722,7 +812,7 @@ static const uint8_t s_bg_bus_test_program[] = {
     0x70, 0x07,                         /* MOVEQ   #7,D0        */
     0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
     0x22, 0x7C, 0x00, 0x90, 0x40, 0x02, /* MOVEA.L #0x904002,A1 */
-    0x32, 0x3C, 0x01, 0x05,             /* MOVE.W  #0x0105,D1   */
+    0x32, 0x3C, 0x01, 0xE5,             /* MOVE.W  #0x01E5,D1   */
     0x32, 0x81,                         /* MOVE.W  D1,(A1)      */
     0x4E, 0x75,                         /* RTS                  */
 };
@@ -739,25 +829,28 @@ int cps1_core_selftest_bg_bus(void)
 
     if (!cpu.halted || cpu.illegal_count != 0)
         return 0;
-    uint16_t tile = 0;
-    uint8_t palette = 0, enabled = 0;
-    if (!cps1_core_bg_cell_peek(CPS1_BG_SCROLL1, 0, &tile, &palette, &enabled))
+    uint16_t code = 0, attr = 0;
+    if (!cps1_core_bg_cell_peek(CPS1_BG_SCROLL1, 0, &code, &attr))
         return 0;
-    if (tile != 7 || palette != 5 || enabled != 1)
+    if (code != 7 || attr != 0x01E5u)
+        return 0;
+    if (cps1_bg_attr_color(attr) != 5 || !cps1_bg_attr_flip_x(attr) ||
+        !cps1_bg_attr_flip_y(attr) || cps1_bg_attr_priority(attr) != 3)
         return 0;
     return 1;
 }
 
 /*
- * Hand-assembled template: MOVEA.L #0x900000,A0 (default OBJ base + sprite
- * 0's Y word) ; MOVE.W #<Y>,D0 (patched per call) ; MOVE.W D0,(A0) ; RTS.
- * A local (non-static) copy so the immediate at bytes [8:9] can be patched
- * with a different Y value each call.
+ * Hand-assembled template: MOVEA.L #0x900002,A0 (default OBJ base + sprite
+ * 0's Y word -- word 1 under the X,Y,tile,attr order, see
+ * s_vdp_bus_test_program's comment) ; MOVE.W #<Y>,D0 (patched per call) ;
+ * MOVE.W D0,(A0) ; RTS. A local (non-static) copy so the immediate at
+ * bytes [8:9] can be patched with a different Y value each call.
  */
 static int cps1_run_obj_write_y(int16_t y_value)
 {
     uint8_t prog[] = {
-        0x20, 0x7C, 0x00, 0x90, 0x00, 0x00, /* MOVEA.L #0x900000,A0 */
+        0x20, 0x7C, 0x00, 0x90, 0x00, 0x02, /* MOVEA.L #0x900002,A0 */
         0x30, 0x3C, 0x00, 0x00,             /* MOVE.W  #<Y>,D0      */
         0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
         0x4E, 0x75,                         /* RTS                  */
@@ -815,22 +908,23 @@ int cps1_core_selftest_obj_delay(void)
 /*
  * Hand-assembled: moves OBJ_BASE (CPS-A register at 0x800100) to gfxram
  * offset 0x18000 (reg value 0x180 -- 0x18000/256), writes sprite 0's Y
- * field at the NEWLY-resolved absolute address (0x900000+0x18000=
- * 0x918000), then writes a different value at the OLD default OBJ address
- * (0x900000) to prove that address no longer aliases sprite 0.
+ * field (word 1, +2 -- X,Y,tile,attr order) at the NEWLY-resolved absolute
+ * address (0x900000+0x18000+2=0x918002), then writes a different value at
+ * the OLD default OBJ address's same Y word (0x900002) to prove that
+ * address no longer aliases sprite 0.
  *   MOVEA.L #0x800100,A0 ; MOVE.W #0x0180,D0 ; MOVE.W D0,(A0)
- *   MOVEA.L #0x918000,A1 ; MOVEQ #55,D1      ; MOVE.W D1,(A1)
- *   MOVEA.L #0x900000,A2 ; MOVEQ #99,D2      ; MOVE.W D2,(A2)
+ *   MOVEA.L #0x918002,A1 ; MOVEQ #55,D1      ; MOVE.W D1,(A1)
+ *   MOVEA.L #0x900002,A2 ; MOVEQ #99,D2      ; MOVE.W D2,(A2)
  *   RTS
  */
 static const uint8_t s_obj_relocation_test_program[] = {
     0x20, 0x7C, 0x00, 0x80, 0x01, 0x00, /* MOVEA.L #0x800100,A0 */
     0x30, 0x3C, 0x01, 0x80,             /* MOVE.W  #0x0180,D0   */
     0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
-    0x22, 0x7C, 0x00, 0x91, 0x80, 0x00, /* MOVEA.L #0x918000,A1 */
+    0x22, 0x7C, 0x00, 0x91, 0x80, 0x02, /* MOVEA.L #0x918002,A1 */
     0x72, 0x37,                         /* MOVEQ   #55,D1       */
     0x32, 0x81,                         /* MOVE.W  D1,(A1)      */
-    0x24, 0x7C, 0x00, 0x90, 0x00, 0x00, /* MOVEA.L #0x900000,A2 */
+    0x24, 0x7C, 0x00, 0x90, 0x00, 0x02, /* MOVEA.L #0x900002,A2 */
     0x74, 0x63,                         /* MOVEQ   #99,D2       */
     0x34, 0x82,                         /* MOVE.W  D2,(A2)      */
     0x4E, 0x75,                         /* RTS                  */
@@ -900,5 +994,45 @@ int cps1_core_selftest_palette_relocation(void)
         return 0; /* the register write itself landed */
     if (s_synthetic_palette.colors[0][1] != cps1_palette_build(0x0F0F))
         return 0; /* write at the NEW resolved address landed, converted */
+    return 1;
+}
+
+uint16_t cps1_core_priority_mask_peek(unsigned group)
+{
+    if (group >= 4u)
+        return 0;
+    return s_priority_masks.masks[group];
+}
+
+/*
+ * Hand-assembled: writes 0x8004 to CPS-B priority-mask register 0
+ * (base 0x800140 + offset 0x24 = 0x800164, docs/CPS1_MAME_ALIGNMENT.md
+ * section 4's wof/wofj CPS_B_21_QS1 config) and checks it landed in
+ * s_priority_masks.masks[0] -- proving the 68000 can reach the priority
+ * masks cps1_compositor_blend_priority reads, through the real dispatcher,
+ * not just that the masks work when poked directly in a host test (see
+ * cps1-bg-selftest's punch-through proof for the masks' actual EFFECT).
+ *   MOVEA.L #0x800164,A0 ; MOVE.W #0x8004,D0 ; MOVE.W D0,(A0) ; RTS
+ */
+static const uint8_t s_priority_bus_test_program[] = {
+    0x20, 0x7C, 0x00, 0x80, 0x01, 0x64, /* MOVEA.L #0x800164,A0 */
+    0x30, 0x3C, 0x80, 0x04,             /* MOVE.W  #0x8004,D0   */
+    0x30, 0x80,                         /* MOVE.W  D0,(A0)      */
+    0x4E, 0x75,                         /* RTS                  */
+};
+
+int cps1_core_selftest_priority_bus(void)
+{
+    cps1_cpu68k_t cpu;
+    cps1_cpu68k_reset(&cpu, s_priority_bus_test_program, sizeof(s_priority_bus_test_program));
+    cps1_cpu68k_attach_bus(&cpu, &s_bus);
+    cps1_cpu68k_run(&cpu, 32);
+
+    if (!cpu.halted || cpu.illegal_count != 0)
+        return 0;
+    if (s_cps_b_regs[CPS1_CPSB_REG_PRIORITY0] != 0x8004u)
+        return 0; /* the raw CPS-B register write itself landed */
+    if (s_priority_masks.masks[0] != 0x8004u)
+        return 0; /* AND it was mirrored into the mask the compositor reads */
     return 1;
 }

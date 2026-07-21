@@ -17,10 +17,28 @@
 
 #define CPS1_OAM_MAX_SPRITES 256
 
+/*
+ * Attribute word bit layout -- CONFIRMED (docs/CPS1_MAME_ALIGNMENT.md
+ * section 5, cps1_v.cpp:2649-2668): color occupies 5 bits (0-31, not 0-15
+ * as the Phase 5 skeleton's uint8_t attr field implied), and bits 8-15
+ * hold multi-tile block-size nibbles that a uint8_t can't even represent
+ * -- attr must be uint16_t.
+ */
+#define CPS1_OAM_ATTR_COLOR_MASK    0x1Fu
+#define CPS1_OAM_ATTR_FLIP_X        0x0020u
+#define CPS1_OAM_ATTR_FLIP_Y        0x0040u
+#define CPS1_OAM_ATTR_XY_TOGGLE     0x0080u /* Marvel vs. Capcom only -- unused */
+#define CPS1_OAM_ATTR_XBLOCK_SHIFT  8
+#define CPS1_OAM_ATTR_YBLOCK_SHIFT  12
+#define CPS1_OAM_ATTR_BLOCK_MASK    0x0Fu
+
 typedef struct {
     int16_t x, y;
-    uint16_t tile_index;
-    uint8_t attr;
+    uint16_t tile_index; /* base 16x16-unit index -- see cps1_ppu.c file
+                             header for the 8x8-sub-tile decomposition
+                             convention this skeleton uses instead of the
+                             real CPS1_GFX_LAYOUT_16X16 raw decode. */
+    uint16_t attr;
     uint8_t enabled;
 } cps1_oam_entry_t;
 
@@ -68,13 +86,15 @@ void cps1_tile_cache_reset(cps1_tile_cache_t *cache);
 const uint8_t *cps1_tile_cache_fetch(cps1_tile_cache_t *cache, const cps1_rom_t *rom,
                                       uint32_t tile_index);
 
-/* Palette RAM: 32 banks x 16 colors (matches the real "32 sub-palettes x 16
- * colors per page" shape confirmed in docs/CPS1_MAME_ALIGNMENT.md section
- * 2), index 0/bank is transparent by convention (never written to the
- * framebuffer). Storage here is already-converted RGB565, built from the
- * real raw hardware word via cps1_palette_build() below -- see that
- * function's doc comment for the raw format. */
-#define CPS1_PALETTE_BANKS  32
+/* Palette RAM: 128 banks x 16 colors (docs/CPS1_MAME_ALIGNMENT.md section 6:
+ * sprites use banks 0x00-0x1F directly; SCROLL1/2/3 cells add a per-layer
+ * offset of +0x20/+0x40/+0x60 to their own 0-31 color field, reaching up to
+ * bank 0x7F -- GFXDECODE's shared "0x80 total color groups" is what fixes
+ * this at 128, not 32). Index 0/bank is transparent by convention (never
+ * written to the framebuffer). Storage here is already-converted RGB565,
+ * built from the real raw hardware word via cps1_palette_build() below --
+ * see that function's doc comment for the raw format. */
+#define CPS1_PALETTE_BANKS  128
 #define CPS1_PALETTE_COLORS 16
 
 typedef struct {
@@ -112,17 +132,54 @@ uint16_t cps1_palette_build(uint16_t raw);
 
 /* Renders every visible OAM sprite into `fb` (CPS1_FB_WIDTH x
  * CPS1_FB_HEIGHT, RGB565, NOT cleared by this function -- caller clears
- * first). Fetches each sprite's tile through the cache (a "Flash dump" on
- * miss), unpacks its 4bpp nibbles (high nibble = left pixel of each byte's
- * pixel pair), and looks up color via pal->colors[attr & 0x1F][index].
- * Index 0 is transparent and left unwritten. This is a straight 8x8
- * unscaled blit -- no scroll layers, no priority/Z-order, no scaling; see
- * docs/CPS1_ULTIMATE_PORTING_PLAN.md techniques 4/8 for what replaces it. */
+ * first). Sprite base unit is 16x16 (CONFIRMED, docs/CPS1_MAME_ALIGNMENT.md
+ * section 5 -- gfx(2)'s real layout, NOT 8x8), decomposed as a 2x2 grid of
+ * 8x8 sub-tiles (cps1_blit_block_indexed below) at consecutive tile
+ * indices, same convention cps1_bg.c already uses for SCROLL2/3 -- real
+ * CPS1_GFX_LAYOUT_16X16 raw decode is deferred to Phase 11 (real ROM
+ * loading). Multi-tile block sprites (attr bits 8-15) iterate
+ * (xblock+1)*(yblock+1) such units; X/Y flip mirrors both the block
+ * arrangement and each unit's own pixels, matching MAME's
+ * cps1_render_sprites DRAWSPRITE loop. Sprites never carry priority-group
+ * metadata themselves (only BG cells do) -- they are always the single
+ * "top" input to cps1_compositor_blend_priority. */
 void cps1_ppu_render(const cps1_oam_t *oam, const cps1_rom_t *rom, cps1_tile_cache_t *cache,
                       const cps1_palette_t *pal, uint16_t *fb);
 
+/* Packed per-pixel metadata cps1_blit8x8_indexed/cps1_blit_block_indexed
+ * stamp alongside a BG pixel's color, so cps1_compositor_blend_priority can
+ * later test "does this exact pixel's (priority_group, pen) have priority
+ * over sprites" without re-decoding the tile. Bit 7 = valid (a pixel was
+ * actually drawn here, vs. untouched backdrop); bits 4-5 = priority_group
+ * (0-3); bits 0-3 = raw pen/color-index (0-15) BEFORE the palette lookup.
+ * Sprites don't produce this (they pass out_meta = NULL). */
+#define CPS1_PIXEL_META_VALID       0x80u
+#define CPS1_PIXEL_META_GROUP_SHIFT 4
+#define CPS1_PIXEL_META_GROUP_MASK  0x3u
+#define CPS1_PIXEL_META_PEN_MASK    0xFu
+
 /* Shared by cps1_ppu_render (sprites) and cps1_bg.c (scroll layers): unpacks
- * one cached 4bpp tile's nibbles and writes non-transparent (index != 0)
- * pixels into fb at (dst_x,dst_y), clipped to CPS1_FB_WIDTH/HEIGHT. */
+ * one cached 4bpp tile's nibbles (mirrored per flip_x/flip_y) and writes
+ * non-transparent (index != 0) pixels into fb at (dst_x,dst_y), clipped to
+ * CPS1_FB_WIDTH/HEIGHT. If out_meta is non-NULL (BG callers only -- see
+ * CPS1_PIXEL_META_* above), stamps the same clipped positions in out_meta
+ * (same dimensions as fb) with priority_group + the raw pen index, so the
+ * priority compositor can test punch-through without re-fetching the tile. */
 void cps1_blit8x8_indexed(const uint8_t *tile4bpp, unsigned palette_bank,
-                           const cps1_palette_t *pal, int dst_x, int dst_y, uint16_t *fb);
+                           const cps1_palette_t *pal, int dst_x, int dst_y,
+                           int flip_x, int flip_y, uint16_t *fb,
+                           uint8_t *out_meta, uint8_t priority_group);
+
+/* Draws a sub x sub grid of 8x8 sub-tiles (sub=1/2/4 -> 8x8/16x16/32x32) as
+ * one flip_x/flip_y-mirrored square block at (dst_x,dst_y): fetches
+ * base_subtile + row*sub + col (row/col already flip-adjusted so the WHOLE
+ * block mirrors, not just each sub-tile's own pixels) through `cache`,
+ * blitting each via cps1_blit8x8_indexed above. Shared by cps1_ppu_render's
+ * 16x16 sprite units and cps1_bg_render_layer's SCROLL2/3 sub-tile
+ * decomposition (docs/CPS1_MAME_ALIGNMENT.md sections 5/6) -- one place
+ * implements "flip a composed multi-sub-tile block" instead of two. */
+void cps1_blit_block_indexed(uint32_t base_subtile, unsigned sub, unsigned palette_bank,
+                              const cps1_palette_t *pal, int dst_x, int dst_y,
+                              int flip_x, int flip_y, cps1_tile_cache_t *cache,
+                              const cps1_rom_t *rom, uint16_t *fb,
+                              uint8_t *out_meta, uint8_t priority_group);

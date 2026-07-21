@@ -52,8 +52,11 @@ uint32_t cps1_core_cpu_illegal_count(cps1_engine_kind_t engine);
  * than exposing cps1_oam_entry_t) so this header stays independent of
  * cps1_ppu.h. */
 uint16_t cps1_core_wram_peek16(uint32_t offset);
+/* out_attr is uint16_t, not uint8_t -- Phase 10 corrected the OAM attr
+ * word to its real width (color 0-31 + block-size nibbles need more than
+ * 8 bits, docs/CPS1_MAME_ALIGNMENT.md section 5). */
 int cps1_core_oam_peek(uint32_t index, int16_t *out_x, int16_t *out_y,
-                        uint16_t *out_tile, uint8_t *out_attr);
+                        uint16_t *out_tile, uint16_t *out_attr);
 uint16_t cps1_core_palette_peek(unsigned bank, unsigned color);
 
 /* Runs a small built-in program (its own standalone cps1_cpu68k_t, not an
@@ -83,14 +86,16 @@ int cps1_core_selftest_sound_bus(void);
 /* Read-only inspection of a BG layer's tilemap cell -- same
  * primitive-out-params pattern as cps1_core_oam_peek, for the same reason
  * (keeps this header independent of cps1_bg.h). layer: 0=SCROLL1,
- * 1=SCROLL2, 2=SCROLL3. */
-int cps1_core_bg_cell_peek(unsigned layer, uint32_t index, uint16_t *out_tile,
-                            uint8_t *out_palette, uint8_t *out_enabled);
+ * 1=SCROLL2, 2=SCROLL3. Returns the raw code+attr words (Phase 10 -- no
+ * more separate tile/palette/enabled fields; decode attr's color/flip/
+ * priority bits via cps1_bg_attr_* in cps1_bg.h if needed). */
+int cps1_core_bg_cell_peek(unsigned layer, uint32_t index, uint16_t *out_code,
+                            uint16_t *out_attr);
 
-/* Hand-assembled program writes a tilemap cell (tile_index + palette/
- * enabled word) through MOVEA/MOVE.W to the real bus dispatcher, then
- * checks SCROLL1's cell 0 actually changed -- proving the 68000 can reach
- * the BG tilemap, not just that cps1_bg.c compiles. */
+/* Hand-assembled program writes a tilemap cell (code + attr word) through
+ * MOVEA/MOVE.W to the real bus dispatcher, then checks SCROLL1's cell
+ * (0,0) actually changed -- proving the 68000 can reach the BG tilemap,
+ * not just that cps1_bg.c compiles. */
 int cps1_core_selftest_bg_bus(void);
 
 /*
@@ -113,7 +118,7 @@ int cps1_core_selftest_bg_bus(void);
  * primitive-out-params shape as cps1_core_oam_peek, reading the latched
  * copy instead of the live one. */
 int cps1_core_buffered_oam_peek(uint32_t index, int16_t *out_x, int16_t *out_y,
-                                 uint16_t *out_tile, uint8_t *out_attr);
+                                 uint16_t *out_tile, uint16_t *out_attr);
 
 /* Hand-assembled program writes sprite 0's Y field through the bus,
  * confirms it landed in the live table (cps1_core_oam_peek) but NOT yet
@@ -138,3 +143,27 @@ int cps1_core_selftest_obj_relocation(void);
  * different raw word at the OLD default palette address and checks it did
  * NOT change the color that was just set at the new location. */
 int cps1_core_selftest_palette_relocation(void);
+
+/*
+ * Phase 10 (docs/CPS1_MAME_ALIGNMENT.md sections 4/5/6/9): sprite/BG
+ * field-layout + priority. cps1_oam_entry_t is now X,Y,tile,attr with the
+ * real attr bit layout (multi-tile block sprites); cps1_bg_cell_t is now
+ * literal code+attr (see cps1_bg.h for the decode accessors and the new
+ * cps1_compositor_blend_priority that replaces the old unconditional
+ * bottom<middle<top blend). The pure rendering-logic proofs (multi-tile
+ * block+flip sprites, BG flip, per-layer palette offset, bit-swizzle
+ * tilemap addressing, priority punch-through) live in linux/cps1/
+ * ppu_selftest.c and bg_selftest.c against cps1_ppu.c/cps1_bg.c directly --
+ * only the NEW bus-reachability proof needs a cps1_core.c entry point.
+ */
+
+/* Read-only inspection of a CPS-B priority-bitmask register (0-3) --
+ * see cps1_priority_masks_t in cps1_bg.h. */
+uint16_t cps1_core_priority_mask_peek(unsigned group);
+
+/* Hand-assembled program writes a raw value to CPS-B priority-mask
+ * register 0 through MOVEA/MOVE.W to the real bus dispatcher, then checks
+ * it landed in s_priority_masks.masks[0] -- proving the 68000 can reach
+ * the priority masks cps1_compositor_blend_priority reads, not just that
+ * the masks work when poked directly in a host test. */
+int cps1_core_selftest_priority_bus(void);

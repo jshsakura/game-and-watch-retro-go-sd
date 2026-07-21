@@ -152,6 +152,12 @@ static void test_rom_decode_planar(void)
           "32x32 layout should decode without crashing");
 }
 
+/* Phase 10: sprite base footprint is 16x16, not 8x8 (docs/CPS1_MAME_
+ * ALIGNMENT.md section 5) -- every off-screen/straddle coordinate below is
+ * chosen relative to a 16px footprint, and sprite 6 specifically uses a
+ * position (-8) that the OLD 8px-footprint cull would have DROPPED
+ * (-8+8<=0) but the correct 16px footprint must keep VISIBLE (-8+16>0),
+ * so this regresses if the footprint size is ever wrongly shrunk back. */
 static void test_oam_prescan(void)
 {
     cps1_oam_t oam;
@@ -159,18 +165,19 @@ static void test_oam_prescan(void)
 
     /* 0: fully on-screen */
     oam.sprites[0] = (cps1_oam_entry_t){.x = 100, .y = 100, .tile_index = 10, .enabled = 1};
-    /* 1: off-screen left (x+8 <= 0) */
-    oam.sprites[1] = (cps1_oam_entry_t){.x = -8, .y = 50, .tile_index = 11, .enabled = 1};
+    /* 1: off-screen left (x+16 <= 0) */
+    oam.sprites[1] = (cps1_oam_entry_t){.x = -16, .y = 50, .tile_index = 11, .enabled = 1};
     /* 2: off-screen right (x >= CPS1_FB_WIDTH) */
     oam.sprites[2] = (cps1_oam_entry_t){.x = CPS1_FB_WIDTH, .y = 50, .tile_index = 12, .enabled = 1};
-    /* 3: off-screen above */
-    oam.sprites[3] = (cps1_oam_entry_t){.x = 50, .y = -8, .tile_index = 13, .enabled = 1};
+    /* 3: off-screen above (y+16 <= 0) */
+    oam.sprites[3] = (cps1_oam_entry_t){.x = 50, .y = -16, .tile_index = 13, .enabled = 1};
     /* 4: off-screen below */
     oam.sprites[4] = (cps1_oam_entry_t){.x = 50, .y = CPS1_FB_HEIGHT, .tile_index = 14, .enabled = 1};
     /* 5: on-screen but disabled */
     oam.sprites[5] = (cps1_oam_entry_t){.x = 20, .y = 20, .tile_index = 15, .enabled = 0};
-    /* 6: straddling the left edge -- must still count as visible */
-    oam.sprites[6] = (cps1_oam_entry_t){.x = -4, .y = 20, .tile_index = 16, .enabled = 1};
+    /* 6: straddling the left edge with the WIDER 16px footprint -- must
+     * still count as visible (would have been wrongly culled at 8px). */
+    oam.sprites[6] = (cps1_oam_entry_t){.x = -8, .y = 20, .tile_index = 16, .enabled = 1};
     oam.count = 7;
 
     uint16_t visible[CPS1_OAM_MAX_SPRITES];
@@ -186,6 +193,64 @@ static void test_oam_prescan(void)
     oam.sprites[5] = (cps1_oam_entry_t){.x = 5, .y = 5, .tile_index = 99, .enabled = 1};
     n = cps1_oam_prescan(&oam, visible, 1);
     CHECK(n == 1, "max_out=1 should clamp to 1, got %u", n);
+}
+
+/*
+ * Multi-tile block sprite + flip -- docs/CPS1_MAME_ALIGNMENT.md section 5.
+ * A 2x1-block (nx=2,ny=1) sprite with flip_x=1 must draw its SOURCE units
+ * mirrored (unit 1's content on the LEFT screen slot, unit 0's on the
+ * RIGHT), proving cps1_ppu_render's block iteration -- not just that a
+ * single 16x16 unit renders. Per-pixel mirroring WITHIN one 8x8 sub-tile
+ * is exercised separately by cps1-bg-selftest's asymmetric FLIP_TILE case
+ * (same shared cps1_blit8x8_indexed/cps1_blit_block_indexed code path),
+ * so this test uses solid-color units where inner-pixel flip wouldn't be
+ * observable anyway.
+ */
+static void test_sprite_block_flip(void)
+{
+    /* unit 0 = tile_index+0..+3 (all pen 1, "0x11"); unit 1 = +4..+7 (all
+     * pen 2, "0x22") -- each unit is 4 consecutive 8x8 sub-tiles (2x2). */
+    enum { BASE = 40, TILE_N = BASE + 8 };
+    uint8_t *gfx = malloc((uint32_t)TILE_N * CPS1_TILE_SIZE_BYTES);
+    memset(gfx, 0, (uint32_t)TILE_N * CPS1_TILE_SIZE_BYTES);
+    for (int t = 0; t < 4; t++)
+        memset(gfx + (BASE + t) * CPS1_TILE_SIZE_BYTES, 0x11, CPS1_TILE_SIZE_BYTES);
+    for (int t = 4; t < 8; t++)
+        memset(gfx + (BASE + t) * CPS1_TILE_SIZE_BYTES, 0x22, CPS1_TILE_SIZE_BYTES);
+
+    cps1_rom_t rom;
+    uint8_t prg_dummy[1] = {0};
+    cps1_rom_region_t prg = {prg_dummy, sizeof(prg_dummy)};
+    cps1_rom_region_t gfx_region = {gfx, (uint32_t)TILE_N * CPS1_TILE_SIZE_BYTES};
+    cps1_rom_region_t empty = {0};
+    CHECK(cps1_rom_attach(&rom, prg, gfx_region, empty, empty) == 0, "block-flip rom attach should succeed");
+
+    cps1_palette_t pal;
+    memset(&pal, 0, sizeof(pal));
+    pal.colors[0][1] = 0xF800; /* red   -- unit 0's pen */
+    pal.colors[0][2] = 0x07E0; /* green -- unit 1's pen */
+
+    cps1_oam_t oam;
+    memset(&oam, 0, sizeof(oam));
+    oam.count = 1;
+    oam.sprites[0] = (cps1_oam_entry_t){
+        .x = 0, .y = 0, .tile_index = BASE,
+        .attr = (1u << CPS1_OAM_ATTR_XBLOCK_SHIFT) /* nx-1=1 -> nx=2 */ | CPS1_OAM_ATTR_FLIP_X,
+        .enabled = 1,
+    };
+
+    cps1_tile_cache_t cache;
+    cps1_tile_cache_reset(&cache);
+    static uint16_t fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+    memset(fb, 0, sizeof(fb));
+    cps1_ppu_render(&oam, &rom, &cache, &pal, fb);
+
+    CHECK(fb[4 * CPS1_FB_WIDTH + 4] == 0x07E0,
+          "flip_x block: left 16px slot should show unit 1's green, got %04x", fb[4 * CPS1_FB_WIDTH + 4]);
+    CHECK(fb[4 * CPS1_FB_WIDTH + 20] == 0xF800,
+          "flip_x block: right 16px slot should show unit 0's red, got %04x", fb[4 * CPS1_FB_WIDTH + 20]);
+
+    free(gfx);
 }
 
 static void test_tile_cache(const cps1_rom_t *rom)
@@ -240,6 +305,7 @@ int main(void)
     test_rom_decode_planar();
     test_oam_prescan();
     test_tile_cache(&rom);
+    test_sprite_block_flip();
 
     free(gfx);
 
