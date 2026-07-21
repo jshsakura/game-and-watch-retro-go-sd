@@ -182,8 +182,24 @@ void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val) {
     /* ALttP-style mailboxes write 00 when idle; SM's engine reads a 0 that
      * differs from the current song as "stop".  Idle-zero is not a command
      * — drop it (games stop via 0xf0 pause / 0xf1 fade instead). */
-    if (val != 0)
+    if (val != 0) {
       g_wire_p->input_ports[0] = val;
+      /* FIRST SONG AFTER A SILENT SWAP.  wire_swap()'s bootstrap only pumps
+       * Music_HandleCmdFromSnes when a song was ALREADY playing at swap time
+       * (`cur > 0 && cur < 0xf0`). A game that is still silent then -- Zelda 3
+       * swaps at frame 180 and does not command music until frame 355 -- never
+       * gets that pump, and a zero-copy-adopted player has tempo == 0, so
+       * Spc_Loop_Part2's gate (`ticks * HIBYTE(tempo)`) can never wrap and
+       * nothing ever consumes this write. The command sits in input_ports[0]
+       * for the rest of the run: permanent silence, on the device only.
+       * The host harness does not show it because tools/nspc_audio_wire/wire.c
+       * builds its player with SpcPlayer_Create + SpcPlayer_Initialize, which
+       * leaves a non-zero tempo -- the two copies diverge exactly here.
+       * Same three-call pump as the swap bootstrap, for the same reason. */
+      if (g_wire_p->port_to_snes[0] == 0 && val < 0xf0)
+        for (int i = 0; i < 3; i++)
+          Music_HandleCmdFromSnes(g_wire_p);
+    }
   } else {
     g_ack[port - 1] = val;
     g_wire_p->input_ports[port] = 0;
