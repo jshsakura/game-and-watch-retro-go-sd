@@ -58,7 +58,8 @@ SpcPlayer *g_wire_p = NULL;
 const char *g_wire_variant = "-";
 static int g_frac = 0;             /* APU-cycle remainder (32 = one sample) */
 static uint8_t g_ack[3];           /* instant-ack values for ports 1-3 */
-static uint8_t g_last_p0 = 0;      /* last port-0 command seen during LLE */
+static uint8_t g_last_p0 = 0;
+static uint8_t g_last_any = 0;   /* EXPERIMENT */      /* last port-0 command seen during LLE */
 static int g_ok_streak = 0;
 
 /* ---- one 32 kHz sample step: exactly SpcPlayer_GenerateSamples' semantics -- */
@@ -103,6 +104,10 @@ void wire_apu_write(Snes *snes, uint32_t adr, uint8_t val) {
      * a write while the SPC700 executes the uploaded driver is a command. */
     if (port == 0 && val > 0 && val < 0xf0 && snes->apu->spc->pc < 0xffc0)
       g_last_p0 = val;
+    /* EXPERIMENT (0722): Zelda's only pre-swap command in 400 frames is
+     * port 3 = 0x0a at frame 81. The port-0-only capture above misses it. */
+    if (val > 0 && val < 0xf0 && snes->apu->spc->pc < 0xffc0)
+      g_last_any = val;
     return;
   }
   if (getenv("WIRE_TRACE")) {
@@ -286,6 +291,7 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
    * same engine we are swapping in. Fallback: last sniffed command write. */
   uint8_t cur = snes->apu->outPorts[0];
   if (!(cur > 0 && cur < 0xf0)) cur = g_last_p0;
+  if (!(cur > 0 && cur < 0xf0) && getenv("WIRE_ANYPORT")) cur = g_last_any;
   p->port_to_snes[0] = 0;
   p->input_ports[0] = (cur > 0 && cur < 0xf0) ? cur : 255;
   p->input_ports[1] = p->input_ports[2] = p->input_ports[3] = 0;
@@ -299,7 +305,15 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
 }
 
 /* Called by the harness once per frame during LLE. Returns 1 on swap. */
+/* DEBUG ONLY. nspc_variant.c's skipped-vcmd log prints it, and that file is
+ * shared with the DEVICE wire (nspc_wire.c), which defines its own copy. The
+ * host harness linked nspc_variant.c without ever defining this, so
+ * tools/nspc_audio_wire/build.sh did not link at all -- meaning no Zelda
+ * result quoted from this harness can be more recent than that breakage. */
+int g_real_frame = 0;
+
 int wire_try_swap(Snes *snes, int frame) {
+  g_real_frame = frame;
   if (g_wire_on || !g_wire_enable || !snes->apu) return 0;
   if (frame < 120 || (frame % 60) != 0) return 0;
   /* driver must actually be running (upload done, PC out of the IPL ROM) */

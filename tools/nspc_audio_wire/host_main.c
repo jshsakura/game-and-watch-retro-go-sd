@@ -41,8 +41,52 @@ void Die(const char *s) { printf("Die: %s\n", s); exit(1); }
 void Warning(const char *s) { (void)s; }
 
 static Snes *g_the_snes;
+/* ---- $2140-$2143 port trace --------------------------------------------
+ * PORT_TRACE=<file> logs the 65816<->APU mailbox with a frame/scanline
+ * timestamp, in BOTH modes, so an LLE run and a wire run can be diffed to the
+ * first divergence.
+ *
+ * Why this and not a static diff of the four decompiled players: none of their
+ * *Upload() functions reproduces the real mailbox at all -- they memcpy an
+ * asset block into ARAM and tidy the native state. The actual
+ * 0xff -> aa/bb -> cc -> counter wire lives outside them, so the handshake a
+ * game really performs is only observable by running it.
+ *
+ * Writes are hooked here (RtlApuWrite is ours, so no submodule is touched).
+ * Reads are NOT hooked -- snes_readBBus lives in the submodule -- so the
+ * driver's replies are captured by polling apu->outPorts for changes, which
+ * sees every value the 65816 could have read as long as the poll is finer
+ * than the driver's update rate. wire.c mirrors the native player's
+ * port_to_snes into outPorts, so the same poll works with the wire on. */
+static FILE *g_pt;
+static int   g_pt_frame;
+static uint32_t g_pt_last_out = 0xffffffffu;
+
+static void pt_open(void) {
+  const char *path = getenv("PORT_TRACE");
+  if (path && *path) g_pt = fopen(path, "w");
+}
+
+static void pt_poll(Snes *snes) {
+  if (!g_pt || !snes->apu) return;
+  const uint8_t *o = snes->apu->outPorts;
+  uint32_t cur = (uint32_t)o[0] | (o[1] << 8) | (o[2] << 16) | ((uint32_t)o[3] << 24);
+  if (cur == g_pt_last_out) return;
+  g_pt_last_out = cur;
+  fprintf(g_pt, "%5d %4d %4d OUT %02x %02x %02x %02x\n",
+          g_pt_frame, snes->vPos, snes->hPos, o[0], o[1], o[2], o[3]);
+}
+
 void RtlApuWrite(uint32_t adr, uint8_t val) {
+  if (g_pt && (adr & 0x7c) == 0x40) {
+    const uint8_t *o = g_the_snes->apu ? g_the_snes->apu->outPorts : NULL;
+    fprintf(g_pt, "%5d %4d %4d W%d  %02x            pc=%04x out=%02x%02x%02x%02x\n",
+            g_pt_frame, g_the_snes->vPos, g_the_snes->hPos, (int)(adr & 3), val,
+            g_the_snes->apu ? g_the_snes->apu->spc->pc : 0,
+            o ? o[0] : 0, o ? o[1] : 0, o ? o[2] : 0, o ? o[3] : 0);
+  }
   wire_apu_write(g_the_snes, adr, val);   /* LLE passthrough inside */
+  if (g_pt) pt_poll(g_the_snes);
 }
 
 static uint8_t  g_wram[0x20000];
@@ -100,9 +144,11 @@ static void run_frame_events(Snes *snes) {
       snes->cpuCyclesLeft -= 2;
     }
     if (snes->hPos == 0 && snes->vPos == 0) break;
+    pt_poll(snes);
     run_dots(snes, dots_to_next_event(snes));
   }
   snes_catchupApu(snes);
+  pt_poll(snes);
 }
 
 static uint64_t fnv1a(const void *data, size_t len) {
@@ -135,6 +181,7 @@ int main(int argc, char **argv) {
   long hdr = (n % 1024 == 512) ? 512 : 0; fseek(f, hdr, SEEK_SET); n -= hdr;
   uint8_t *rom = malloc(n); if (fread(rom, 1, n, f) != (size_t)n) return 1; fclose(f);
 
+  pt_open();
   Snes *snes = snes_init(g_wram); g_the_snes = snes;
   if (!snes_loadRom(snes, rom, (int)n)) { printf("LOAD_FAIL\n"); return 1; }
 
@@ -145,6 +192,7 @@ int main(int argc, char **argv) {
   clock_gettime(CLOCK_MONOTONIC, &t0);
 
   for (int i = 0; i < frames; i++) {
+    g_pt_frame = i;
     snes->input1->currentState = (i >= 40 && (i % 24) < 6) ? 0x0008 : 0;
     PpuBeginDrawing(snes->ppu, (uint8_t *)(g_fb + 32), 320 * 2, 0);
     g_opcodes = 0;
