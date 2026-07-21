@@ -1,0 +1,85 @@
+total rows: 2281
+  OK: 2100
+  crash: 181
+classifiable (OK, all 4 groups measured): 2100
+
+-- WAI histogram (of 2100 classifiable) --
+  0%      :  1991  ( 94.8%)
+  0-10%   :    21  (  1.0%)
+  10-20%  :     1  (  0.0%)
+  20-40%  :    18  (  0.9%)
+  40%+    :    69  (  3.3%)
+  >=20%: 87 (4.1%)   >=40%: 69 (3.3%)
+
+-- HV/NMI poll histogram (of 2100 classifiable) --
+  0%      :  1604  ( 76.4%)
+  0-10%   :   272  ( 13.0%)
+  10-20%  :    23  (  1.1%)
+  20-40%  :    30  (  1.4%)
+  40%+    :   171  (  8.1%)
+  >=20%: 201 (9.6%)   >=40%: 171 (8.1%)
+
+-- APU poll histogram (of 2100 classifiable) --
+  0%      :   573  ( 27.3%)
+  0-10%   :  1159  ( 55.2%)
+  10-20%  :   239  ( 11.4%)
+  20-40%  :    84  (  4.0%)
+  40%+    :    45  (  2.1%)
+  >=20%: 129 (6.1%)   >=40%: 45 (2.1%)
+
+-- other tight loop histogram (of 2100 classifiable) --
+  0%      :    49  (  2.3%)
+  0-10%   :   291  ( 13.9%)
+  10-20%  :   115  (  5.5%)
+  20-40%  :   127  (  6.0%)
+  40%+    :  1518  ( 72.3%)
+  >=20%: 1645 (78.3%)   >=40%: 1518 (72.3%)
+
+Top 10 WAI-heavy:
+   99.2%  스크루볼 판타지 3 1st 베타.smc  (WAI=99.2 HV=0.0 APU=0.0 OTHER=0.0)
+   98.6%  수제전기 (Jutei Senki).smc  (WAI=98.6 HV=0.0 APU=0.0 OTHER=0.0)
+   96.8%  유치원 전기 마두라 (Youchien Senki Madara).smc  (WAI=96.8 HV=0.0 APU=0.0 OTHER=0.2)
+   96.5%  미키의 얼티밋 챌린지 (Mickey's Ultimate Challenge).smc  (WAI=96.5 HV=0.2 APU=0.0 OTHER=0.5)
+   95.8%  씨퀘스트 DSV (seaQuest DSV).smc  (WAI=95.8 HV=0.0 APU=0.0 OTHER=1.3)
+   91.4%  미스터리 서클 (Mystery Circle).smc  (WAI=91.4 HV=0.0 APU=0.5 OTHER=4.9)
+   90.5%  크레용 신짱 - 폭풍을 부르는 그 아이 (Crayon Shin-chan - Arashi o Yobu Enji).smc  (WAI=90.5 HV=0.0 APU=2.0 OTHER=0.0)
+   89.5%  스펙터 (Spectre).smc  (WAI=89.5 HV=0.0 APU=2.3 OTHER=2.3)
+   89.2%  근육맨 - 더티 챌린저 (Kinnikuman - Dirty Challenger).smc  (WAI=89.2 HV=0.0 APU=0.9 OTHER=2.2)
+   85.2%  슈퍼 하키 94 (Super Hockey '94).smc  (WAI=85.2 HV=0.0 APU=0.0 OTHER=5.3)
+
+Top 10 HV/NMI poll-heavy:
+   97.0%  드래곤볼 Z 초무투전 3 (Dragon Ball Z - Super Butouden 3).smc  (WAI=0.0 HV=97.0 APU=0.0 OTHER=0.0)
+   97.0%  드래곤볼Z - 초무투전3 (Dragon Ball Z - Chomutujeon).smc  (WAI=0.0 HV=97.0 APU=0.0 OTHER=0.0)
+   97.0%  드래곤볼 Z 얼티메이트 메나스 (Dragon Ball Z - Ultime Menace).smc  (WAI=0.0 HV=97.0 APU=0.0 OTHER=0.0)
+   96.5%  전설의 오우거 배틀 - 검은 여왕의 행진.smc  (WAI=0.0 HV=96.5 APU=0.0 OTHER=0.0)
+   96.5%  슈퍼 프로야구 2 (Super Professional Baseball II).smc  (WAI=0.0 HV=96.5 APU=0.0 OTHER=0.0)
+   96.3%  BS-X 바이오스.smc  (WAI=0.0 HV=96.3 APU=0.0 OTHER=0.0)
+   96.3%  에릭 캔토나 풋볼 챌린지 (Eric Cantona Football Challenge).smc  (WAI=0.0 HV=96.3 APU=0.0 OTHER=0.0)
+   96.3%  스트라이커 (Striker).smc  (WAI=0.0 HV=96.3 APU=0.0 OTHER=0.0)
+   96.3%  송 마스터 (Song Master).smc  (WAI=0.0 HV=96.3 APU=0.0 OTHER=0.0)
+   92.3%  윌리엄스 아케이드 베스트 히츠 (Williams Arcade's Greatest Hits).smc  (WAI=0.0 HV=92.3 APU=0.0 OTHER=1.0)
+
+Top 10 APU poll-heavy:
+   97.5%  슈퍼 럭비 (Super Rugby).smc  (WAI=0.0 HV=0.0 APU=97.5 OTHER=0.0)
+   96.8%  귀신동자 젠키 - 천지 명도 (Kishin Douji Zenki - Tenchi Meidou).smc  (WAI=0.0 HV=0.0 APU=96.8 OTHER=0.0)
+   96.8%  슈퍼 봄버맨 4 (Super Bomberman 4).smc  (WAI=0.0 HV=0.0 APU=96.8 OTHER=0.0)
+   96.6%  휴먼 그랑프리 3 - F1 트리플 배틀 (Human Grand Prix III - F1 Triple Battle).smc  (WAI=0.0 HV=0.0 APU=96.6 OTHER=0.0)
+   96.6%  마장기신 - 더 로드 오브 엘레멘탈 (Super Robot Taisen Gaiden - Masoukishin - The Lord of Elemental).smc  (WAI=0.0 HV=0.0 APU=96.6 OTHER=0.0)
+   96.6%  슈퍼 마리오 요시 아일랜드 (Super Mario - Yoshi Island).smc  (WAI=0.0 HV=0.0 APU=96.6 OTHER=0.0)
+   96.6%  슈퍼마리오월드2 - 요시 아일랜드.smc  (WAI=0.0 HV=0.0 APU=96.6 OTHER=0.0)
+   96.6%  렌더링 레인저스 (Rendering Ranger R2).smc  (WAI=0.0 HV=0.0 APU=96.6 OTHER=0.0)
+   96.6%  배트맨 - 조커의 복수 (Batman - Revenge of the Joker).smc  (WAI=0.0 HV=0.0 APU=96.6 OTHER=0.0)
+   96.4%  파치오군 스페셜 2 (Pachio-kun Special 2).smc  (WAI=0.0 HV=0.0 APU=96.4 OTHER=0.0)
+
+Top 10 other tight loop-heavy:
+   99.2%  둠 (Doom).smc  (WAI=0.0 HV=0.0 APU=0.0 OTHER=99.2)
+   99.2%  스트리트 파이터 제로2 (Street Fighter Zero 2).smc  (WAI=0.0 HV=0.0 APU=0.0 OTHER=99.2)
+   97.5%  꼬마 괴물들의 모험 - 와일드 앤 와키 스포츠 (Tiny Toon Adventures - Wild & Wacky Sports).smc  (WAI=0.0 HV=0.0 APU=0.0 OTHER=97.5)
+   97.1%  캐슬바니아 - 뱀파이어 키스 (Castlevania - Vampire's Kiss).smc  (WAI=0.0 HV=0.0 APU=0.0 OTHER=97.1)
+   96.9%  아이르통 세나 레이싱.smc  (WAI=0.0 HV=0.0 APU=0.0 OTHER=96.9)
+   96.9%  90분 유러피안 프라임 골 (90 Minutes - European Prime Goal).smc  (WAI=0.0 HV=0.0 APU=0.0 OTHER=96.9)
+   96.9%  SM 조교사 히토미 Vol 3.10.smc  (WAI=0.0 HV=0.0 APU=0.0 OTHER=96.9)
+   96.8%  신쇼기 클럽 (Shin Shougi Club).smc  (WAI=0.0 HV=0.0 APU=0.0 OTHER=96.8)
+   96.8%  팝엔 트윈비 - 레인보우 벨 어드벤처 (Pop'n TwinBee - Rainbow Bell Adventures).smc  (WAI=0.0 HV=0.0 APU=0.0 OTHER=96.8)
+   96.8%  꽃의 케이지 - 구름의 저편에 (Hana no Keiji - Kumo no Kanata ni).smc  (WAI=0.0 HV=0.0 APU=0.0 OTHER=96.8)
+
