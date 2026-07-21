@@ -108,3 +108,74 @@ extern const cps1_gfx_layout_t CPS1_GFX_LAYOUT_32X32;
  * range for rom->gfx. */
 int cps1_rom_decode_tile_planar(const cps1_rom_t *rom, const cps1_gfx_layout_t *layout,
                                  uint32_t tile_index, uint8_t *out);
+
+/*
+ * GFX ROM bank mapping -- CONFIRMED for `wof`/`wofj` specifically
+ * (docs/CPS1_MAME_ALIGNMENT.md section 7, cps1_v.cpp:2385-2420 +
+ * mapper_TK263B_table, cps1_v.cpp:1373-1384). Real CPS-1 hardware shares
+ * ONE 64KB "tile-code" address space across all four gfx types, but each
+ * type's OWN native code granularity differs (SCROLL1 is the finest, 8x8;
+ * SPRITES/SCROLL2 are 16x16; SCROLL3 is 32x32) -- gfxrom_bank_mapper's
+ * type-dependent left-shift normalizes a type's native code into that
+ * shared address space before a per-game bank table decides which
+ * physical ROM bank (after byte-interleaving, see cps1_rom_load_
+ * interleaved) it actually lives in.
+ */
+typedef enum {
+    CPS1_GFXTYPE_SPRITES = 0,
+    CPS1_GFXTYPE_SCROLL1 = 1,
+    CPS1_GFXTYPE_SCROLL2 = 2,
+    CPS1_GFXTYPE_SCROLL3 = 3,
+} cps1_gfx_type_t;
+
+/*
+ * wof/wofj's own bank mapper (`CPS_B_21_QS1`/`mapper_TK263B`): converts a
+ * raw per-type tile/sprite code into the tile_index cps1_rom_decode_tile_
+ * planar expects when paired with that type's OWN cps1_gfx_layout_t
+ * (CPS1_GFX_LAYOUT_16X16 for SPRITES/SCROLL2, _32X32 for SCROLL3,
+ * _8X8_LEFT for SCROLL1), against ONE flat, byte-interleaved GFX ROM blob.
+ *
+ * General mechanism (matches MAME's gfxrom_bank_mapper exactly): shift the
+ * code by the type's shift, find which of the game's gfx_range bank
+ * entries contains the shifted value, mask it into that bank's position
+ * (bank_base + (shifted - range.start), bank_base = sum of every earlier
+ * bank's size), then shift back down by the SAME amount. wof's own table
+ * (mapper_TK263B) happens to define exactly 2 CONTIGUOUS 32KB banks
+ * spanning the shifted value's entire 0-0xFFFF range with no gaps -- so
+ * for this specific game the bank lookup/recompose step is mathematically
+ * an identity (CONFIRMED: docs/CPS1_MAME_ALIGNMENT.md section 7's own
+ * "good news" callout -- "the bank split is fully transparent"). This
+ * function still implements the general shift+bank-lookup steps (not a
+ * hardcoded `code << shift` shortcut) so it generalizes to a future
+ * non-contiguous-bank title's table without a rewrite -- only wof's own
+ * bank table is wired in here. Returns 0 (a harmless but wrong index --
+ * caller must range-check the result against rom->gfx.size before using
+ * it) if `type` is invalid or the shifted code falls outside every bank.
+ *
+ * NOTE: this function does not yet feed the live renderer -- cps1_ppu.c/
+ * cps1_bg.c still decompose 16x16/32x32 tiles into 4/16 consecutive 8x8
+ * sub-tile fetches (a documented Phase 7-10 simplification, NOT the real
+ * ROM's actual ONE-contiguous-block-per-tile layout the big gfx_layout
+ * structs describe) -- rewiring the renderer to call this mapper + the
+ * big layouts directly is real ROM art content it can't decode. Wiring
+ * that up is future work once real ROM data exists to render, not part
+ * of this phase's ask (implement the mapper + prove it against MAME's
+ * confirmed formula, not migrate the renderer).
+ */
+uint32_t cps1_gfxrom_bank_mapper_wof(cps1_gfx_type_t type, uint32_t code);
+
+/*
+ * 68000 reset vector sanity check (docs/CPS1_MAME_ALIGNMENT.md section 9,
+ * Phase 11 plan item 3): CPS-1 program ROM is memory-mapped starting at
+ * 0x000000 (standard 68000 convention -- bytes 0-3 = initial SSP, bytes
+ * 4-7 = initial PC, both big-endian). A validly-loaded PRG ROM's own PC
+ * must therefore point somewhere WITHIN the loaded ROM's own byte range --
+ * the cheapest possible correctness gate before trying to run any 68000
+ * code from a real ROM dump, and one that reliably catches a wrong byte-
+ * interleave direction, a truncated/corrupt dump, or simply the wrong
+ * file (all typically produce a wildly out-of-range PC) long before any
+ * instruction actually runs. Returns 0 and fills out_ssp/out_pc (either
+ * may be NULL) if the vector's PC is in-range, -1 otherwise (including
+ * prg->size < 8, too small to even hold a reset vector).
+ */
+int cps1_rom_check_reset_vector(const cps1_rom_region_t *prg, uint32_t *out_ssp, uint32_t *out_pc);

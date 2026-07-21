@@ -74,6 +74,67 @@ const cps1_gfx_layout_t CPS1_GFX_LAYOUT_32X32 = {
     4096,
 };
 
+/*
+ * wof/wofj's bank table (mapper_TK263B, docs/CPS1_MAME_ALIGNMENT.md
+ * section 7): 2 banks of 0x8000 (32KB) each, contiguous across the shared
+ * 64KB shifted-code address space -- see cps1_gfxrom_bank_mapper_wof's
+ * doc comment in cps1_rom.h for why this makes the bank lookup an
+ * identity for this specific game.
+ */
+typedef struct {
+    uint32_t start, end;
+    unsigned bank;
+} cps1_gfx_range_t;
+
+static const uint32_t s_wof_bank_sizes[2] = { 0x8000u, 0x8000u };
+static const cps1_gfx_range_t s_wof_bank_table[] = {
+    { 0x00000u, 0x07fffu, 0u },
+    { 0x08000u, 0x0ffffu, 1u },
+};
+
+/* SPRITES/SCROLL1/SCROLL2/SCROLL3 -- cps1_v.cpp:2385-2420's
+ * `shift = (type==SPRITES) ? 1 : (type==SCROLL1) ? 0 : (type==SCROLL2) ? 1 : 3`. */
+static const unsigned char s_wof_shift_by_type[4] = { 1u, 0u, 1u, 3u };
+
+uint32_t cps1_gfxrom_bank_mapper_wof(cps1_gfx_type_t type, uint32_t code)
+{
+    if ((unsigned)type > (unsigned)CPS1_GFXTYPE_SCROLL3)
+        return 0;
+
+    unsigned shift = s_wof_shift_by_type[type];
+    uint32_t shifted = code << shift;
+
+    for (unsigned i = 0; i < sizeof(s_wof_bank_table) / sizeof(s_wof_bank_table[0]); i++) {
+        const cps1_gfx_range_t *r = &s_wof_bank_table[i];
+        if (shifted >= r->start && shifted <= r->end) {
+            uint32_t bank_base = 0;
+            for (unsigned b = 0; b < r->bank; b++)
+                bank_base += s_wof_bank_sizes[b];
+            uint32_t mapped = bank_base + (shifted - r->start);
+            return mapped >> shift;
+        }
+    }
+    return 0; /* shifted code falls outside every bank -- caller must range-check */
+}
+
+int cps1_rom_check_reset_vector(const cps1_rom_region_t *prg, uint32_t *out_ssp, uint32_t *out_pc)
+{
+    if (!prg->data || prg->size < 8)
+        return -1;
+
+    uint32_t ssp = ((uint32_t)prg->data[0] << 24) | ((uint32_t)prg->data[1] << 16) |
+                   ((uint32_t)prg->data[2] << 8) | (uint32_t)prg->data[3];
+    uint32_t pc = ((uint32_t)prg->data[4] << 24) | ((uint32_t)prg->data[5] << 16) |
+                  ((uint32_t)prg->data[6] << 8) | (uint32_t)prg->data[7];
+
+    if (out_ssp) *out_ssp = ssp;
+    if (out_pc)  *out_pc = pc;
+
+    if (pc >= prg->size)
+        return -1; /* PC doesn't point anywhere inside the loaded ROM */
+    return 0;
+}
+
 int cps1_rom_decode_tile_planar(const cps1_rom_t *rom, const cps1_gfx_layout_t *layout,
                                  uint32_t tile_index, uint8_t *out)
 {
