@@ -193,6 +193,12 @@ int main(int argc, char **argv)
 {
     if (argc < 3) { fprintf(stderr,"usage: boot_test <bios.bin> <game.cue> [frames]\n"); return 2; }
     int FRAMES = argc > 3 ? atoi(argv[3]) : 600;
+    int press_start_frame = getenv("SCD_PRESS_START_FRAME") ?
+        atoi(getenv("SCD_PRESS_START_FRAME")) : -1;
+    int press_start_period = getenv("SCD_PRESS_START_PERIOD") ?
+        atoi(getenv("SCD_PRESS_START_PERIOD")) : 0;
+    int hist_start_frame = getenv("SCD_HIST_START_FRAME") ?
+        atoi(getenv("SCD_HIST_START_FRAME")) : 120;
 
     /* budget-table probes — env-driven so a single binary runs every variant */
     g_skip_audio      = getenv("SCD_SKIP_AUDIO")      ? atoi(getenv("SCD_SKIP_AUDIO"))      : 0;
@@ -232,17 +238,33 @@ int main(int argc, char **argv)
     for(long i=0;i+1<bn;i+=2){ unsigned char t=bios[i]; bios[i]=bios[i+1]; bios[i+1]=t; }  /* 68K endian */
     printf("[boot] BIOS %ld bytes\n", bn);
 
-    /* gwenesis base boots main 68K from ROM_DATA -> point it at the BIOS. */
+    /* gwenesis base boots main 68K from ROM_DATA -> point it at the BIOS.
+     * NOTE: the device (main_segacd.c) runs reset_emulation() LAST, after the
+     * BIOS is mapped, because on device ROM_DATA is the CD image, not the BIOS.
+     * Mirror that order here so the harness stays the same program as the
+     * firmware — resetting before segacd_map_bios() hid a device-only boot
+     * Hardfault (MAIN 68K launched from a null PC). */
     ROM_DATA = bios; ROM_DATA_LENGTH = (unsigned)bn;
-    load_cartridge(); power_on(); reset_emulation();
+    load_cartridge(); power_on();
     skip_first_vint=1; hint_counter=0xff;
     gwenesis_vdp_set_buffer(&s_fb[0]);
 
     /* --- Sega CD hardware --- */
     segacd_init();
+    /* Exercise the same cold-start BRAM path as main_segacd.c.  Runtime ZERO
+     * gives a same-binary A/B against the old unformatted behavior. */
+    segacd_bram_load("/tmp/scd/__host_probe_missing__.brm");
+    if (getenv("SCD_BRAM_ZERO") && atoi(getenv("SCD_BRAM_ZERO")))
+        memset(SCD.bram, 0, sizeof(SCD.bram));
+    printf("[bram] variant=%s footer=%02x%02x%02x%02x ascii=%.11s/%.16s\n",
+           (getenv("SCD_BRAM_ZERO") && atoi(getenv("SCD_BRAM_ZERO"))) ? "zero" : "formatted",
+           SCD.bram[sizeof(SCD.bram)-64], SCD.bram[sizeof(SCD.bram)-63],
+           SCD.bram[sizeof(SCD.bram)-62], SCD.bram[sizeof(SCD.bram)-61],
+           &SCD.bram[sizeof(SCD.bram)-32], &SCD.bram[sizeof(SCD.bram)-16]);
     segacd_bios = bios;
     segacd_map_bios(segacd_bios);       /* main $000000 = BIOS (redundant w/ ROM_DATA but explicit) */
     segacd_main_map_cd_space();
+    reset_emulation();                  /* reset LAST -> MAIN 68K reads BIOS reset vectors (matches device) */
     if (segacd_cd_open(argv[2]) != 0) { fprintf(stderr,"cue open failed: %s\n",argv[2]); return 1; }
     printf("[boot] disc opened, sub_running=%d\n", SCD.sub_running);
 
@@ -267,6 +289,12 @@ int main(int argc, char **argv)
         if (vblank_ie_first_frame < 0 && REG1_VBLANK_INTERRUPT) vblank_ie_first_frame = frame;
 #endif
         button_state[0]=0xFF;
+        if (press_start_frame >= 0 && frame >= press_start_frame) {
+            int since = frame - press_start_frame;
+            if (since < 8 || (press_start_period > 0 &&
+                              (since % press_start_period) < 8))
+                button_state[0] = (unsigned char)~(1u << PAD_S);
+        }
 #ifdef HOOK_CPU
         { extern int g_scd_frame; g_scd_frame = frame; }
         /* 32X-style histogram: discard the cold-boot warmup, sample from
@@ -274,10 +302,10 @@ int main(int argc, char **argv)
          * mode-8 spin loop has settled in). Schedule a lazy clear: the
          * histogram fires the actual memset on the next cpu_hook tick, so
          * we don't half-clear between main and sub work. */
-        if (frame == 120) {
+        if (frame == hist_start_frame) {
             extern void scd_hist_clear(void);
             scd_hist_clear();
-            printf("[hist] clear scheduled at frame 120\n");
+            printf("[hist] clear scheduled at frame %d\n", hist_start_frame);
         }
 #endif
         md_scanline_frame();                 /* main 68K + VDP (BIOS runs here) */
@@ -398,6 +426,16 @@ int main(int argc, char **argv)
             printf("[main] f%-4d PC=%06x $C100(cnt)=%04x $FFFDDC=%02x $FE3A=%02x $FE51=%02x $FE52=%02x\n",
                    frame, (unsigned)m68k.pc, c100, M68K_RAM[0xfddc^1], M68K_RAM[0xfe3a^1],
                    M68K_RAM[0xfe51^1], M68K_RAM[0xfe52^1]); }
+        { static uint32_t prev_97e8_state = UINT32_MAX;
+          uint64_t cur_97e8 = 0;
+          for (unsigned i = 0; i < 8; i++)
+              cur_97e8 = (cur_97e8 << 8) | SCD.prg_ram[(0x97e8 + i) ^ 1];
+          uint32_t cur_97e8_state = (uint32_t)(cur_97e8 >> 32);
+          if (cur_97e8_state != prev_97e8_state) {
+              printf("[97e8] f%-4d subPC=%06x bytes=%016llx\n", frame,
+                     (unsigned)SCD.sub_ctx.pc, (unsigned long long)cur_97e8);
+              prev_97e8_state = cur_97e8_state;
+          } }
         if (!prev_running && SCD.sub_running) {  /* sub just released — pristine image */
             prev_running = 1;
             #define PRGW(o) ((SCD.prg_ram[((o)+1)&(SEGACD_PRG_RAM_SIZE-1)]<<8) | SCD.prg_ram[(o)&(SEGACD_PRG_RAM_SIZE-1)])
@@ -492,10 +530,19 @@ int main(int argc, char **argv)
 #ifdef HOOK_CPU
         extern uint32_t scd_sub_max_addr, scd_sub_max_addr_frame;
         extern uint32_t scd_sub_max_prg_addr, scd_sub_max_prg_frame;
+        extern uint64_t g_sub_bram_reads, g_sub_bram_writes;
         printf("[prg_banks] written=0x%x accessed=0x%x word_mode=0x%x sub_max_addr=0x%06x@f%u sub_max_prg=0x%06x@f%u\n",
                scd_prg_bank_written, scd_prg_bank_accessed, scd_word_mode_seen,
                scd_sub_max_addr, scd_sub_max_addr_frame,
                scd_sub_max_prg_addr, scd_sub_max_prg_frame);
+        printf("[bram-access] sub reads=%llu writes=%llu mapFE_base=%p r8=%p r16=%p w8=%p w16=%p\n",
+               (unsigned long long)g_sub_bram_reads,
+               (unsigned long long)g_sub_bram_writes,
+               (void *)SCD.sub_ctx.memory_map[0xfe].base,
+               (void *)SCD.sub_ctx.memory_map[0xfe].read8,
+               (void *)SCD.sub_ctx.memory_map[0xfe].read16,
+               (void *)SCD.sub_ctx.memory_map[0xfe].write8,
+               (void *)SCD.sub_ctx.memory_map[0xfe].write16);
 #else
         printf("[prg_banks] written=0x%x accessed=0x%x word_mode=0x%x (sub_max needs HOOK_CPU)\n",
                scd_prg_bank_written, scd_prg_bank_accessed, scd_word_mode_seen);
@@ -658,6 +705,16 @@ int main(int argc, char **argv)
     for (int r = 0; r < SEGACD_GA_REGS; r++)
         if (scd_sga_rd[r] || scd_sga_wr[r])
             printf("  $FF80%02x  rd=%-8u wr=%-8u\n", r, scd_sga_rd[r], scd_sga_wr[r]);
+    { extern uint32_t scd_dbg_reg3_main[], scd_dbg_reg3_sub[];
+      printf("[boot] Word-RAM reg3 transitions (side old->new: count):\n");
+      for (int old = 0; old < 32; old++) for (int newv = 0; newv < 32; newv++) {
+          unsigned idx = (unsigned)old * 32 + (unsigned)newv;
+          if (scd_dbg_reg3_main[idx])
+              printf("  MAIN %02x->%02x: %u\n", old, newv, scd_dbg_reg3_main[idx]);
+          if (scd_dbg_reg3_sub[idx])
+              printf("  SUB  %02x->%02x: %u\n", old, newv, scd_dbg_reg3_sub[idx]);
+      }
+    }
     extern uint32_t scd_dbg_cdd_cmd_hist[];
     printf("[boot] CDD command histogram (nibble: count):\n");
     for (int i = 0; i < 16; i++)
@@ -669,6 +726,12 @@ int main(int argc, char **argv)
     for (int i = 0; i < scd_dbg_800f_n; i++)
         printf("[pc=%06x val=%02x] ", scd_dbg_800f_pc[i], scd_dbg_800f_val[i]);
     printf("\n");
+    { extern uint32_t scd_dbg_800f_last_pc, scd_dbg_800f_last_frame;
+      extern uint8_t scd_dbg_800f_last_val;
+      extern unsigned char *M68K_RAM;
+      printf("[boot] last SUB comm write: f%u pc=%06x val=%02x; MAIN $FDDD=%02x final $A1200F=%02x\n",
+             scd_dbg_800f_last_frame, scd_dbg_800f_last_pc, scd_dbg_800f_last_val,
+             M68K_RAM[0xfddd ^ 1], SCD.s68k_regs[0x0f]); }
     extern uint32_t scd_dbg_a1200e_pc[]; extern uint8_t scd_dbg_a1200e_val[]; extern int scd_dbg_a1200e_n;
     printf("[boot] main writes to $A1200E/F comm-flag (%d logged): ", scd_dbg_a1200e_n);
     for (int i = 0; i < scd_dbg_a1200e_n; i++)

@@ -25,6 +25,7 @@
 
 #include "m68k.h"
 #include "cpuhook.h"
+#include "segacd.h"
 
 #define HIST_PC_BITS 21
 #define HIST_PC_SIZE (1u << HIST_PC_BITS)
@@ -48,6 +49,28 @@ int g_scd_frame = 0;
 
 /* Total sub-68K instruction count (all frames, for A/B comparison) */
 uint64_t g_sub_insn_count = 0;
+uint64_t g_sub_bram_reads = 0, g_sub_bram_writes = 0;
+
+/* Diagnose post-handshake self-waits without logging every bus access.  A
+ * tight polling loop produces consecutive reads of one address; retain the
+ * longest such run plus two known handshake candidates. */
+static uint32_t s_sub_read_last_addr;
+static uint32_t s_sub_read_run;
+static uint32_t s_sub_read_max_run;
+static uint32_t s_sub_read_max_addr;
+static uint32_t s_sub_read_max_pc;
+static uint64_t s_sub_read_97eb;
+static uint64_t s_sub_read_ff800f;
+
+#define WRAM_EVENT_MAX 128
+struct wram_event {
+    uint32_t frame, pc, addr, val;
+    uint32_t raw;
+    int32_t baseoff;
+    uint8_t type, size, sub, r3, shadow;
+};
+static struct wram_event s_wram_events[WRAM_EVENT_MAX];
+static uint32_t s_wram_event_n;
 
 /* $7c80 rotation-calc input trace — capture stamp descriptor struct at A5
  * to check if coefficients change frame-to-frame (caching viability). */
@@ -145,10 +168,52 @@ uint32_t scd_sub_max_prg_frame = 0;  /* frame at which PRG max was seen */
 
 static void scd_hist_hook(int type, int size, unsigned int addr, unsigned int val)
 {
-    (void)size; (void)val;
+    if (s_armed && (type == HOOK_M68K_R || type == HOOK_M68K_W)) {
+        uint32_t a = addr & 0x00ffffffu;
+        int hit = 0;
+        if (!g_scd_hist_issub &&
+            ((a >= 0x200400 && a <= 0x200405) ||
+             (a >= 0xffd01c && a <= 0xffd021)))
+            hit = 1;
+        if (g_scd_hist_issub &&
+            ((a >= 0x080400 && a <= 0x080405) ||
+             (a >= 0x0c0400 && a <= 0x0c0405)))
+            hit = 1;
+        if (hit && s_wram_event_n < WRAM_EVENT_MAX) {
+            struct wram_event *e = &s_wram_events[s_wram_event_n++];
+            e->frame = (uint32_t)g_scd_frame;
+            e->pc = m68k.pc & 0x00ffffffu;
+            e->addr = a;
+            e->val = val;
+            e->type = (uint8_t)type;
+            e->size = (uint8_t)size;
+            e->sub = (uint8_t)g_scd_hist_issub;
+            e->r3 = SCD.s68k_regs[0x03];
+            e->shadow = SCD.dmna_ret_2m;
+            if (m68k.memory_map[(a >> 16) & 0xff].base != NULL)
+                e->baseoff = (int32_t)(m68k.memory_map[(a >> 16) & 0xff].base -
+                                       SCD.word_ram);
+            else
+                e->baseoff = -1;
+            if (e->baseoff >= 0 && e->baseoff < SEGACD_WORD_RAM_SIZE) {
+                unsigned int o = (unsigned)e->baseoff + (a & 0xffffu);
+                e->raw = (o + 3 < SEGACD_WORD_RAM_SIZE) ?
+                    ((uint32_t)SCD.word_ram[o] << 24) |
+                    ((uint32_t)SCD.word_ram[o + 1] << 16) |
+                    ((uint32_t)SCD.word_ram[o + 2] << 8) |
+                    SCD.word_ram[o + 3] : 0;
+            } else {
+                e->raw = 0;
+            }
+        }
+    }
 
     /* Track sub-68K data access range (for PRG-RAM sizing decision) */
     if ((type == HOOK_M68K_R || type == HOOK_M68K_W) && g_scd_hist_issub) {
+        if ((addr & 0xff0000u) == 0xfe0000u) {
+            if (type == HOOK_M68K_R) g_sub_bram_reads++;
+            else g_sub_bram_writes++;
+        }
         if (addr > scd_sub_max_addr) {
             scd_sub_max_addr = addr;
             scd_sub_max_addr_frame = (uint32_t)g_scd_frame;
@@ -159,6 +224,22 @@ static void scd_hist_hook(int type, int size, unsigned int addr, unsigned int va
         if (addr < 0x080000 && addr > scd_sub_max_prg_addr) {
             scd_sub_max_prg_addr = addr;
             scd_sub_max_prg_frame = (uint32_t)g_scd_frame;
+        }
+        if (s_armed && type == HOOK_M68K_R) {
+            uint32_t a = addr & 0x00ffffffu;
+            if (a == 0x0097ebu) s_sub_read_97eb++;
+            if (a == 0xff800fu) s_sub_read_ff800f++;
+            if (s_sub_read_run != 0 && a == s_sub_read_last_addr) {
+                s_sub_read_run++;
+            } else {
+                s_sub_read_last_addr = a;
+                s_sub_read_run = 1;
+            }
+            if (s_sub_read_run > s_sub_read_max_run) {
+                s_sub_read_max_run = s_sub_read_run;
+                s_sub_read_max_addr = a;
+                s_sub_read_max_pc = m68k.pc & 0x00ffffffu;
+            }
         }
         return;
     }
@@ -268,6 +349,14 @@ static void scd_hist_hook(int type, int size, unsigned int addr, unsigned int va
         memset(g_op_hist_sub,  0, sizeof(g_op_hist_sub));
         memset(g_pc_hist_main, 0, sizeof(g_pc_hist_main));
         memset(g_pc_hist_sub,  0, sizeof(g_pc_hist_sub));
+        s_sub_read_last_addr = 0;
+        s_sub_read_run = 0;
+        s_sub_read_max_run = 0;
+        s_sub_read_max_addr = 0;
+        s_sub_read_max_pc = 0;
+        s_sub_read_97eb = 0;
+        s_sub_read_ff800f = 0;
+        s_wram_event_n = 0;
         s_clear_pending = 0;
         s_armed = 1;
         fprintf(stderr, "[hist] armed (cleared at hook tick)\n");
@@ -385,6 +474,26 @@ void scd_hist_dump(void)
     cpu_hook = NULL;
     dump_one("MAIN", g_op_hist_main, g_pc_hist_main);
     dump_one("SUB ", g_op_hist_sub,  g_pc_hist_sub);
+    printf("[sub read-run] max=%u addr=%06x pc=%06x; "
+           "$0097eb=%llu $ff800f=%llu\n",
+           s_sub_read_max_run, s_sub_read_max_addr, s_sub_read_max_pc,
+           (unsigned long long)s_sub_read_97eb,
+           (unsigned long long)s_sub_read_ff800f);
+    printf("[sub comm PCs] init-clear@0002a6=%u boot-clear7@0004da=%u "
+           "game-set80@0060bc=%u\n",
+           g_pc_hist_sub[0x02a6], g_pc_hist_sub[0x04da],
+           g_pc_hist_sub[0x60bc]);
+    printf("[WordRAM link PCs] main $4bd0=%u $4be6=%u; events=%u\n",
+           g_pc_hist_main[0x4bd0], g_pc_hist_main[0x4be6], s_wram_event_n);
+    for (uint32_t i = 0; i < s_wram_event_n; i++) {
+        const struct wram_event *e = &s_wram_events[i];
+        printf("  [wrlink] f%u %s pc=%06x %c%d %06x=%08x "
+               "r3=%02x sh=%02x base=%06x raw=%08x\n",
+               e->frame, e->sub ? "SUB " : "MAIN", e->pc,
+               e->type == HOOK_M68K_R ? 'R' : 'W', e->size,
+               e->addr, e->val, e->r3, e->shadow,
+               (unsigned)e->baseoff & 0x00ffffffu, e->raw);
+    }
 
     /* $7c80 trace dump — show stamp descriptor inputs per call */
     if (s_rot_trace_n > 0) {

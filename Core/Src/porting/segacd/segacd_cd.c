@@ -269,10 +269,31 @@ int segacd_load_bios(const char *bios_path, uint8_t *dst, int max)
 
 /* ---- backup RAM (BRAM) persistence — PCE pce_sram_load/save pattern ---- */
 
+/* Empty formatted internal backup RAM, byte-for-byte from PicoDrive's
+ * pico/cd/misc.c formatted_bram.  Mega CD software checks this 64-byte footer;
+ * an all-zero battery RAM is not an empty filesystem, it is unformatted media. */
+static const uint8_t formatted_bram[64] = {
+    0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x5f, 0x5f,
+    0x5f, 0x5f, 0x5f, 0x00, 0x00, 0x00, 0x00, 0x40,
+    0x00, 0x7d, 0x00, 0x7d, 0x00, 0x7d, 0x00, 0x7d,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x53, 0x45, 0x47, 0x41, 0x5f, 0x43, 0x44, 0x5f,
+    0x52, 0x4f, 0x4d, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x52, 0x41, 0x4d, 0x5f, 0x43, 0x41, 0x52, 0x54,
+    0x52, 0x49, 0x44, 0x47, 0x45, 0x5f, 0x5f, 0x5f,
+};
+
+static void segacd_bram_format(void)
+{
+    memset(SCD.bram, 0, sizeof(SCD.bram));
+    memcpy(SCD.bram + sizeof(SCD.bram) - sizeof(formatted_bram),
+           formatted_bram, sizeof(formatted_bram));
+}
+
 int segacd_bram_load(const char *path)
 {
     FILE *f = fopen(path, "rb");
-    if (!f) { memset(SCD.bram, 0, sizeof(SCD.bram)); return -1; }
+    if (!f) { segacd_bram_format(); return -1; }
     size_t n = fread(SCD.bram, 1, sizeof(SCD.bram), f);
     fclose(f);
     if (n < sizeof(SCD.bram)) memset(SCD.bram + n, 0, sizeof(SCD.bram) - n);

@@ -67,6 +67,7 @@ int scd_dbg_a12000_n;
 /* $FF800E/F comm-flag writer trace — which sub PC sets which bits, and when
  * (to find where a "TOC complete" flag would need to land). */
 uint32_t scd_dbg_800f_pc[32]; uint8_t scd_dbg_800f_val[32]; int scd_dbg_800f_n;
+uint32_t scd_dbg_800f_last_pc, scd_dbg_800f_last_frame; uint8_t scd_dbg_800f_last_val;
 /* regs[0x0e]/[0x0f] snapshot at the instant each $A12000 doorbell write fires. */
 uint8_t scd_dbg_a12000_regef[8][2]; int scd_dbg_a12000_regef_n;
 /* MAIN's own writes into regs[0x0e] (its half of the comm-flag word). */
@@ -78,6 +79,8 @@ uint32_t scd_dbg_reg1_pc[32]; uint8_t scd_dbg_reg1_val[32]; uint32_t scd_dbg_reg
  * our emulation returns for $A10003 to tell a harness controller-stub artifact
  * (returns 0) from a real gap. */
 uint32_t scd_dbg_a10003_reads; uint8_t scd_dbg_a10003_last;
+/* Word-RAM reg3 transition histograms, indexed by (old&31)*32+(new&31). */
+uint32_t scd_dbg_reg3_main[32 * 32], scd_dbg_reg3_sub[32 * 32];
 #define GA_RD(reg)  (scd_ga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
 #define GA_WR(reg)  (scd_ga_wr[(reg) & (SEGACD_GA_REGS-1)]++)
 #define SGA_RD(reg) (scd_sga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
@@ -196,6 +199,9 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
             uint8_t old_mode = SCD.word_mode;
 #endif
             SCD.s68k_regs[0x03] = d;
+#ifdef SEGACD_GA_TRACE
+            scd_dbg_reg3_sub[(dold & 0x1f) * 32 + (d & 0x1f)]++;
+#endif
             SCD.word_mode = (uint8_t)((d >> 2) & 1);
             segacd_word_ram_remap(1);   /* called from SUB's own write handler */
 #ifdef SEGACD_GA_TRACE
@@ -213,7 +219,10 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
              * pd_cd/memory.c s68k_reg_write8 `case 0x0e: a++`. */
 #ifdef SEGACD_GA_TRACE
             extern uint32_t scd_dbg_800f_pc[]; extern uint8_t scd_dbg_800f_val[]; extern int scd_dbg_800f_n;
-            if (scd_dbg_800f_n < 32) { scd_dbg_800f_pc[scd_dbg_800f_n] = m68k.pc; scd_dbg_800f_val[scd_dbg_800f_n] = (uint8_t)data; scd_dbg_800f_n++; }
+            if (scd_dbg_frame >= 905 && scd_dbg_800f_n < 32) { scd_dbg_800f_pc[scd_dbg_800f_n] = m68k.pc; scd_dbg_800f_val[scd_dbg_800f_n] = (uint8_t)data; scd_dbg_800f_n++; }
+            scd_dbg_800f_last_pc = m68k.pc;
+            scd_dbg_800f_last_frame = (uint32_t)scd_dbg_frame;
+            scd_dbg_800f_last_val = (uint8_t)data;
 #endif
             SCD.s68k_regs[0x0f] = (uint8_t)data;
             return;
@@ -308,6 +317,29 @@ static void sub_ff_write16(unsigned int address, unsigned int data)
 static unsigned int sub_prg_paged_read16(unsigned int address);
 static void sub_prg_paged_write16(unsigned int address, unsigned int data);
 
+/* $FE0000-$FEFFFF : internal backup RAM, seen by the SUB only. 8 KB is
+ * spread over the 64 KB window on odd bytes, matching PicoDrive. */
+static unsigned int sub_bram_read8(unsigned int address)
+{
+    return SCD.bram[(address >> 1) & (SEGACD_BRAM_SIZE - 1)];
+}
+
+static unsigned int sub_bram_read16(unsigned int address)
+{
+    return SCD.bram[(address >> 1) & (SEGACD_BRAM_SIZE - 1)];
+}
+
+static void sub_bram_write8(unsigned int address, unsigned int data)
+{
+    if (address & 1)
+        SCD.bram[(address >> 1) & (SEGACD_BRAM_SIZE - 1)] = (uint8_t)data;
+}
+
+static void sub_bram_write16(unsigned int address, unsigned int data)
+{
+    SCD.bram[(address >> 1) & (SEGACD_BRAM_SIZE - 1)] = (uint8_t)data;
+}
+
 void segacd_sub_build_memory_map(void)
 {
     cpu_memory_map *map = SCD.sub_ctx.memory_map;
@@ -350,6 +382,13 @@ void segacd_sub_build_memory_map(void)
     map[0xFF].read16 = sub_ff_read16;
     map[0xFF].write8 = sub_ff_write8;
     map[0xFF].write16= sub_ff_write16;
+
+    /* $FE0000 : internal BRAM. */
+    map[0xFE].base   = NULL;
+    map[0xFE].read8  = sub_bram_read8;
+    map[0xFE].read16 = sub_bram_read16;
+    map[0xFE].write8 = sub_bram_write8;
+    map[0xFE].write16= sub_bram_write16;
 }
 
 /* ---- PRG-RAM SD paging handlers (banks 1-3) ---- */
@@ -573,6 +612,9 @@ static void main_ga_write8(unsigned int address, unsigned int data)
         }
 
         SCD.s68k_regs[0x03] = d;
+#ifdef SEGACD_GA_TRACE
+        scd_dbg_reg3_main[(dold & 0x1f) * 32 + (d & 0x1f)]++;
+#endif
         SCD.prg_bank  = (uint8_t)((d >> 6) & 3);
         SCD.word_mode = (uint8_t)((d >> 2) & 1);
         scd_prg_bank_written |= (uint8_t)(1 << SCD.prg_bank);
@@ -607,7 +649,7 @@ static void main_ga_write8(unsigned int address, unsigned int data)
             segacd_poll_wake();
         }
 #ifdef SEGACD_GA_TRACE
-        if (scd_dbg_a1200e_n < 32) {
+        if (scd_dbg_frame >= 905 && scd_dbg_a1200e_n < 32) {
             scd_dbg_a1200e_pc[scd_dbg_a1200e_n] = m68k.pc;
             scd_dbg_a1200e_val[scd_dbg_a1200e_n] = (uint8_t)data;
             scd_dbg_a1200e_n++;
