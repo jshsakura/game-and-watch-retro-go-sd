@@ -1,5 +1,6 @@
 #include <stddef.h>
 
+#include "cps1_core.h"
 #include "cps1_cpu68k.h"
 
 /* ---- fetch ---- */
@@ -135,6 +136,9 @@ void cps1_cpu68k_attach_bus(cps1_cpu68k_t *cpu, const cps1_bus_t *bus)
     cpu->bus = bus;
 }
 
+/* Hottest per-instruction fetch/decode/execute path -- see cps1_core.h's
+ * CPS1_ITCM_TEXT for what this attribute currently does and doesn't do. */
+CPS1_ITCM_TEXT
 uint32_t cps1_cpu68k_step(cps1_cpu68k_t *cpu)
 {
     if (cpu->halted)
@@ -259,6 +263,7 @@ uint32_t cps1_cpu68k_step(cps1_cpu68k_t *cpu)
     return cycles;
 }
 
+CPS1_ITCM_TEXT
 uint32_t cps1_cpu68k_run(cps1_cpu68k_t *cpu, uint32_t max_instructions)
 {
     uint32_t executed = 0;

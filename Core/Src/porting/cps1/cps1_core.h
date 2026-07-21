@@ -13,6 +13,40 @@
  */
 #include <stdint.h>
 
+/*
+ * Optimization phase (post-Phase 12: real LTDC-era cost measured OVER the
+ * 60fps budget, docs/CPS1_MAME_ALIGNMENT.md section 9): section-attribute
+ * hints for placing the hottest code/data in the STM32H7's zero-wait-state
+ * ITCM/DTCM regions, matching how other cores in this repo (e.g. PCE's
+ * `.overlay_pce_itc`) get their hot code into ITCM.
+ *
+ * ================================ HONESTY NOTE ================================
+ * cps1 has no real linked `.overlay_cps1`/ITCM/DTCM section list yet (same
+ * gap Phase 12's cps1_device_display.c already flagged for its own
+ * buffers) -- these attributes currently just rename the ELF section a
+ * function/object lands in; on both the Linux host build and the QEMU M7
+ * rig's linker script (tools/m7_qemu_rig/mps2_an500.ld, which explicitly
+ * has ONE "CODE" region and no ITCM/DTCM distinction, no wait-state model
+ * at all -- see that file's own header comment) they are functionally
+ * INERT: the code executes at the identical instruction count either way.
+ * Real benefit (avoiding flash wait-states / cache misses on every fetch)
+ * requires (a) a real `.itcm_cps1`-style output section in the device
+ * linker script, (b) a boot-time copy from flash into ITCM (ITCM is
+ * volatile RAM, not XIP -- see PCE's `run_internal_emu` memcpy), and (c)
+ * real hardware DWT/cycle profiling to measure it, none of which exist for
+ * cps1 yet. Do not expect (and this project will not claim) any QEMU
+ * insn/frame delta from these attributes alone -- see this phase's commit
+ * message for the before/after numbers that prove that expectation.
+ * ================================================================================
+ */
+#if defined(__GNUC__)
+#define CPS1_ITCM_TEXT __attribute__((section(".itcm_text")))
+#define CPS1_DTCM_BSS  __attribute__((section(".dtcm_bss")))
+#else
+#define CPS1_ITCM_TEXT
+#define CPS1_DTCM_BSS
+#endif
+
 #define CPS1_FB_WIDTH  384
 #define CPS1_FB_HEIGHT 224
 

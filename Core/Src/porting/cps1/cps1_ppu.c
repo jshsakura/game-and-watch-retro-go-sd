@@ -90,6 +90,66 @@ uint16_t cps1_palette_build(uint16_t raw)
     return (uint16_t)((r5 << 11) | (g6 << 5) | b5);
 }
 
+/* One pixel of the unrolled fast path (see cps1_blit8x8_indexed below) --
+ * identical semantics to the slow path's per-pixel body (transparent pens
+ * skipped, meta stamped only when idx != 0), just called with a compile-
+ * time-known destination slot instead of a loop-computed one. */
+static inline void cps1_blit_pixel(uint16_t *dst, uint8_t *meta, uint8_t idx,
+                                    unsigned bank, const cps1_palette_t *pal,
+                                    uint8_t meta_prefix)
+{
+    if (idx) {
+        *dst = pal->colors[bank][idx];
+        if (meta)
+            *meta = (uint8_t)(meta_prefix | (idx & CPS1_PIXEL_META_PEN_MASK));
+    }
+}
+
+/* Fully unrolled 8-pixel row, no bounds checks -- caller (the fast path in
+ * cps1_blit8x8_indexed) has already proven the whole row is on-screen.
+ * tile_row is the 4 packed bytes for this row (8 nibbles); the col->
+ * (byte,nibble) mapping and flip_x direction are traced by hand against
+ * the ORIGINAL per-pixel formula (src_col = flip_x ? 7-col : col; idx =
+ * (src_col&1) ? byte&0xF : byte>>4, byte = tile_row[src_col/2]) in the
+ * Phase-13 optimization commit -- not re-derived from this code, so a
+ * regression here shows up as a real pixel mismatch, not a tautology. */
+CPS1_ITCM_TEXT
+static void cps1_blit8x8_row_fast(const uint8_t *tile_row, unsigned bank,
+                                   const cps1_palette_t *pal, int flip_x,
+                                   uint16_t *dst_row, uint8_t *meta_row,
+                                   uint8_t meta_prefix)
+{
+    uint8_t b0 = tile_row[0], b1 = tile_row[1], b2 = tile_row[2], b3 = tile_row[3];
+
+    /* Each pixel writes its OWN meta slot (&meta_row[N], not a shared
+     * pointer) -- the compositor indexes meta per-column just like the
+     * color buffer, so a shared pointer here would silently discard every
+     * column's meta but column 0's, breaking priority compositing while
+     * leaving raw per-layer colors looking correct (caught by cps1-bg-
+     * selftest's compositor-level checks, not its per-layer sanity ones --
+     * see the Phase-13 commit for that exact regression trace). */
+    if (!flip_x) {
+        cps1_blit_pixel(&dst_row[0], meta_row ? &meta_row[0] : NULL, (uint8_t)(b0 >> 4), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[1], meta_row ? &meta_row[1] : NULL, (uint8_t)(b0 & 0x0Fu), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[2], meta_row ? &meta_row[2] : NULL, (uint8_t)(b1 >> 4), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[3], meta_row ? &meta_row[3] : NULL, (uint8_t)(b1 & 0x0Fu), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[4], meta_row ? &meta_row[4] : NULL, (uint8_t)(b2 >> 4), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[5], meta_row ? &meta_row[5] : NULL, (uint8_t)(b2 & 0x0Fu), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[6], meta_row ? &meta_row[6] : NULL, (uint8_t)(b3 >> 4), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[7], meta_row ? &meta_row[7] : NULL, (uint8_t)(b3 & 0x0Fu), bank, pal, meta_prefix);
+    } else {
+        cps1_blit_pixel(&dst_row[0], meta_row ? &meta_row[0] : NULL, (uint8_t)(b3 & 0x0Fu), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[1], meta_row ? &meta_row[1] : NULL, (uint8_t)(b3 >> 4), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[2], meta_row ? &meta_row[2] : NULL, (uint8_t)(b2 & 0x0Fu), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[3], meta_row ? &meta_row[3] : NULL, (uint8_t)(b2 >> 4), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[4], meta_row ? &meta_row[4] : NULL, (uint8_t)(b1 & 0x0Fu), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[5], meta_row ? &meta_row[5] : NULL, (uint8_t)(b1 >> 4), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[6], meta_row ? &meta_row[6] : NULL, (uint8_t)(b0 & 0x0Fu), bank, pal, meta_prefix);
+        cps1_blit_pixel(&dst_row[7], meta_row ? &meta_row[7] : NULL, (uint8_t)(b0 >> 4), bank, pal, meta_prefix);
+    }
+}
+
+CPS1_ITCM_TEXT
 void cps1_blit8x8_indexed(const uint8_t *tile4bpp, unsigned palette_bank,
                            const cps1_palette_t *pal, int dst_x, int dst_y,
                            int flip_x, int flip_y, uint16_t *fb,
@@ -99,6 +159,27 @@ void cps1_blit8x8_indexed(const uint8_t *tile4bpp, unsigned palette_bank,
     uint8_t meta_prefix = (uint8_t)(CPS1_PIXEL_META_VALID |
                                      ((priority_group & CPS1_PIXEL_META_GROUP_MASK)
                                       << CPS1_PIXEL_META_GROUP_SHIFT));
+
+    /* Fast path: the whole 8x8 tile is on-screen (the overwhelmingly
+     * common case -- only tiles straddling a screen edge ever miss this),
+     * so every row/column bounds check the slow path needs is provably
+     * unnecessary here. Per-row, the inner column loop is fully unrolled
+     * (cps1_blit8x8_row_fast) -- 8 fixed pixel slots instead of a
+     * counted loop, matching the Phase-13 optimization-phase ask. */
+    if (dst_x >= 0 && dst_x + 8 <= CPS1_FB_WIDTH && dst_y >= 0 && dst_y + 8 <= CPS1_FB_HEIGHT) {
+        for (int row = 0; row < 8; row++) {
+            int src_row = flip_y ? (7 - row) : row;
+            int dst_off = (dst_y + row) * CPS1_FB_WIDTH + dst_x;
+            cps1_blit8x8_row_fast(tile4bpp + src_row * 4, bank, pal, flip_x,
+                                   fb + dst_off, out_meta ? out_meta + dst_off : NULL,
+                                   meta_prefix);
+        }
+        return;
+    }
+
+    /* Slow path: tile straddles a screen edge -- keep the original,
+     * simple per-pixel-checked loop (correctness over speed; this is the
+     * rare case a real game's scrolling only hits at the visible border). */
     for (int row = 0; row < 8; row++) {
         int py = dst_y + row;
         if (py < 0 || py >= CPS1_FB_HEIGHT)
@@ -121,6 +202,7 @@ void cps1_blit8x8_indexed(const uint8_t *tile4bpp, unsigned palette_bank,
     }
 }
 
+CPS1_ITCM_TEXT
 void cps1_blit_block_indexed(uint32_t base_subtile, unsigned sub, unsigned palette_bank,
                               const cps1_palette_t *pal, int dst_x, int dst_y,
                               int flip_x, int flip_y, cps1_tile_cache_t *cache,

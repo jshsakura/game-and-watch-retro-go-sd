@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <string.h>
 
 #include "cps1_core.h"
 #include "cps1_cpu68k.h"
@@ -75,7 +76,20 @@ static const uint8_t s_cpu_test_program[] = {
 static uint8_t s_synthetic_gfx[CPS1_SYN_GFX_TILE_COUNT * CPS1_TILE_SIZE_BYTES];
 static cps1_rom_t s_synthetic_rom;
 static cps1_oam_t s_synthetic_oam;
-static cps1_palette_t s_synthetic_palette;
+/* Palette is read on every non-transparent blitted pixel (cps1_blit_pixel,
+ * cps1_ppu.c) yet is only 128*16*2 = 4KB -- small enough to genuinely fit
+ * a real device's DTCM, unlike the buffers/cache below (each 86KB-256KB),
+ * so this is the one instance actually tagged CPS1_DTCM_BSS this phase.
+ * See cps1_core.h's HONESTY NOTE on CPS1_DTCM_BSS for what this attribute
+ * currently does and doesn't do (nothing, until cps1 has a real linked
+ * overlay/section list). */
+static CPS1_DTCM_BSS cps1_palette_t s_synthetic_palette;
+/* NOT tagged CPS1_DTCM_BSS: at 256KB (CPS1_TILE_CACHE_BUDGET_BYTES,
+ * cps1_ppu.h) this is far larger than a real STM32H7's DTCM region --
+ * placing it there wouldn't fit, let alone help. It stays in the same
+ * general RAM pool as the framebuffers until cps1 has a real per-region
+ * RAM budget to fit against (docs/CPS1_MAME_ALIGNMENT.md section 9's
+ * still-open "cps1 has no real linked overlay yet" gap). */
 static cps1_tile_cache_t s_tile_cache;
 static int s_ppu_initialized;
 
@@ -508,8 +522,7 @@ static uint16_t s_ltdc_bottom_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
 
 void cps1_core_render_ltdc_bottom(void)
 {
-    for (int i = 0; i < CPS1_FB_WIDTH * CPS1_FB_HEIGHT; i++)
-        s_ltdc_bottom_fb[i] = 0;
+    memset(s_ltdc_bottom_fb, 0, sizeof(s_ltdc_bottom_fb));
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_synthetic_rom,
                           &s_tile_cache, &s_synthetic_palette, s_ltdc_bottom_fb, NULL);
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_synthetic_rom,
@@ -556,8 +569,7 @@ void cps1_core_reset(cps1_engine_kind_t engine)
 
     cps1_engine_state_t *e = &s_engine[engine];
     e->frame = 0;
-    for (int i = 0; i < CPS1_FB_WIDTH * CPS1_FB_HEIGHT; i++)
-        e->fb[i] = 0;
+    memset(e->fb, 0, sizeof(e->fb));
     cps1_cpu68k_reset(&e->cpu, s_cpu_test_program, sizeof(s_cpu_test_program));
     cps1_cpu68k_attach_bus(&e->cpu, &s_bus);
 
@@ -602,12 +614,13 @@ void cps1_core_run_frame(cps1_engine_kind_t engine)
 
     cps1_core_step_cpu(e, engine);
 
-    for (int i = 0; i < CPS1_FB_WIDTH * CPS1_FB_HEIGHT; i++) {
-        s_bg_bottom_fb[i] = 0;   s_bg_bottom_meta[i] = 0;
-        s_bg_middle_fb[i] = 0;   s_bg_middle_meta[i] = 0;
-        s_bg_top_fb[i] = 0;      s_bg_top_meta[i] = 0;
-        s_sprite_fb[i] = 0;
-    }
+    memset(s_bg_bottom_fb, 0, sizeof(s_bg_bottom_fb));
+    memset(s_bg_bottom_meta, 0, sizeof(s_bg_bottom_meta));
+    memset(s_bg_middle_fb, 0, sizeof(s_bg_middle_fb));
+    memset(s_bg_middle_meta, 0, sizeof(s_bg_middle_meta));
+    memset(s_bg_top_fb, 0, sizeof(s_bg_top_fb));
+    memset(s_bg_top_meta, 0, sizeof(s_bg_top_meta));
+    memset(s_sprite_fb, 0, sizeof(s_sprite_fb));
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_synthetic_rom,
                           &s_tile_cache, &s_synthetic_palette, s_bg_bottom_fb, s_bg_bottom_meta);
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_synthetic_rom,
@@ -641,10 +654,9 @@ void cps1_core_run_frame_device_cost(cps1_engine_kind_t engine)
 
     cps1_core_step_cpu(e, engine);
 
-    for (int i = 0; i < CPS1_FB_WIDTH * CPS1_FB_HEIGHT; i++) {
-        s_bg_top_fb[i] = 0;   s_bg_top_meta[i] = 0;
-        s_sprite_fb[i] = 0;
-    }
+    memset(s_bg_top_fb, 0, sizeof(s_bg_top_fb));
+    memset(s_bg_top_meta, 0, sizeof(s_bg_top_meta));
+    memset(s_sprite_fb, 0, sizeof(s_sprite_fb));
     cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL3], CPS1_BG_SCROLL3, &s_synthetic_rom,
                           &s_tile_cache, &s_synthetic_palette, s_bg_top_fb, s_bg_top_meta);
     cps1_ppu_render(&s_buffered_obj, &s_synthetic_rom, &s_tile_cache, &s_synthetic_palette, s_sprite_fb);
