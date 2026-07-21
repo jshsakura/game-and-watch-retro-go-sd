@@ -60,11 +60,23 @@ int main(void)
     cps1_rom_region_t empty = {0};
     CHECK(cps1_rom_attach(&rom, prg, gfx_region, empty, empty) == 0, "rom attach should succeed");
 
+    /* Phase 8: palette entries are now built via cps1_palette_build() from
+     * RAW hardware words (12-bit RGB + 4-bit brightness), not written as
+     * RGB565 literals -- see docs/CPS1_MAME_ALIGNMENT.md section 2. Using
+     * max brightness (0xF) makes the conversion lossless for a
+     * full-scale nibble (bright/0x2d divides out to exactly 1, so
+     * r=R_nibble*0x11 etc. -- plain nibble-to-byte expansion), which is
+     * why these raw words decode to the exact same 0xF800/0xFFE0/0x07FF
+     * this test already asserted before Phase 8; cps1_palette_build's own
+     * arithmetic (including non-max-brightness scaling) is unit-verified
+     * separately, this test is about the render/composite path still
+     * working with palette entries built the real way, not re-deriving
+     * the formula. */
     cps1_palette_t pal;
     memset(&pal, 0, sizeof(pal));
-    pal.colors[0][1] = 0xF800; /* bottom (SCROLL1)  -> red    */
-    pal.colors[1][1] = 0xFFE0; /* middle (SCROLL2)  -> yellow */
-    pal.colors[2][1] = 0x07FF; /* top    (SCROLL3)  -> cyan   */
+    pal.colors[0][1] = cps1_palette_build(0xFF00); /* bottom (SCROLL1) -> red,    0xF800 */
+    pal.colors[1][1] = cps1_palette_build(0xFFF0); /* middle (SCROLL2) -> yellow, 0xFFE0 */
+    pal.colors[2][1] = cps1_palette_build(0xF0FF); /* top    (SCROLL3) -> cyan,   0x07FF */
 
     cps1_bg_state_t bg;
     cps1_bg_reset(&bg);

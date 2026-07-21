@@ -33,7 +33,20 @@ typedef struct {
 int cps1_rom_attach(cps1_rom_t *rom, cps1_rom_region_t prg, cps1_rom_region_t gfx,
                      cps1_rom_region_t z80, cps1_rom_region_t oki);
 
-#define CPS1_TILE_SIZE_BYTES 32 /* 8x8 pixels, 4bpp packed (1 nibble/pixel) */
+/*
+ * Packed 4bpp OUTPUT size for an 8x8 tile: 2 pixels/byte * 64 pixels = 32
+ * bytes. This is the tile CACHE's storage format (cps1_ppu.h) and what the
+ * synthetic pre-packed test data in cps1_core.c and the selftest programs
+ * already is --
+ * it does NOT change with the raw ROM bitplane layout below. Do not
+ * confuse this with a layout's RAW ROM byte consumption per tile (a real
+ * CPS-1 8x8 half-tile consumes 64 raw bytes -- see cps1_gfx_layout_t's own
+ * bits_per_tile field, confirmed in docs/CPS1_MAME_ALIGNMENT.md section 1).
+ * A single global "tile size" constant cannot represent both numbers at
+ * once, and conflating them was an imprecision in that doc's section 8
+ * table -- corrected here during implementation.
+ */
+#define CPS1_TILE_SIZE_BYTES 32
 
 /* Copies one packed 4bpp 8x8 tile (32 bytes) from rom->gfx at `tile_index`
  * into `out`. Returns 0 on success, -1 if tile_index is out of range. Flat
@@ -44,30 +57,54 @@ int cps1_rom_attach(cps1_rom_t *rom, cps1_rom_region_t prg, cps1_rom_region_t gf
 int cps1_rom_decode_tile(const cps1_rom_t *rom, uint32_t tile_index, uint8_t *out);
 
 /*
- * Real CPS-1 GFX ROMs store each tile as separate 1-bit-per-pixel
- * bitplanes, not pre-packed 4bpp nibbles -- this is the generalization
- * that decodes those, parameterized like MAME's gfx_layout (planes +
- * per-plane offset) so a confirmed real layout is a constant swap, not a
- * rewrite. Simplified vs. MAME's raw bit-level gfx_layout: offsets here
- * are BYTE-granular (one plane byte per row, MSB = leftmost pixel), which
- * covers the common byte-aligned-bitplane convention but not arbitrary
- * bit-level interleaves.
+ * Real CPS-1 GFX ROM bitplane layout -- CONFIRMED against MAME source
+ * (docs/CPS1_MAME_ALIGNMENT.md section 1, `src/mame/capcom/cps1.cpp`'s
+ * `GFXDECODE_START(gfx_cps1)` and `src/emu/drawgfx.cpp`'s actual
+ * `gfx_element::decode()`). Mirrors MAME's `gfx_layout` shape directly (bit
+ * offsets, not byte offsets) rather than a simplified byte-granular
+ * approximation, because the real layout genuinely interleaves all 4
+ * planes WITHIN each row (not as contiguous per-plane blocks) and needs
+ * bit-precise addressing to decode correctly.
  *
- * UNCONFIRMED for CPS-1 specifically: CPS1_GFX_LAYOUT_DEFAULT is the
- * "4 contiguous 8-byte bitplanes per 8x8 tile" convention common to many
- * Capcom-era boards -- NOT verified against MAME's cps1.cpp (this session
- * could not retrieve that source; see docs/CPS1_FEASIBILITY.md section 6).
- * Treat its output as unverified until cross-checked against a real ROM
- * dump or MAME's actual gfx_layout for cps1.
+ * IMPORTANT: `planeoffset[0]` contributes the pixel's MSB, `planeoffset
+ * [planes-1]` the LSB -- this matches MAME's `gfx_element::decode()`
+ * (`planebit` starts at `1 << (planes-1)` and shifts right each plane),
+ * which is the OPPOSITE of "plane 0 = LSB" a first guess might assume.
  */
 typedef struct {
-    uint8_t planes;                    /* bits per pixel, e.g. 4 */
-    uint16_t plane_byte_offset[8];     /* byte offset of plane p's row 0, within the tile block */
-    uint16_t bytes_per_row_per_plane;  /* usually 1 (8 pixels/row fits one byte) */
-    uint16_t tile_stride_bytes;        /* total bytes per tile in the gfx region */
+    uint8_t planes;              /* bits per pixel, e.g. 4 */
+    uint8_t width, height;       /* tile dimensions in pixels (height <= 32) */
+    uint16_t planeoffset[8];     /* BIT offset per plane; index 0 = pixel MSB */
+    uint16_t xoffset[32];        /* BIT offset per column */
+    uint16_t yoffset[32];        /* BIT offset per row */
+    uint32_t bits_per_tile;      /* total bits consumed per tile_index (raw ROM stride) */
 } cps1_gfx_layout_t;
 
-extern const cps1_gfx_layout_t CPS1_GFX_LAYOUT_DEFAULT;
+/* cps1_layout8x8 (cps1.cpp:3837): SCROLL1's left 8x8 half of a 16x16
+ * physical block. 64 raw bytes/tile. */
+extern const cps1_gfx_layout_t CPS1_GFX_LAYOUT_8X8_LEFT;
+/* cps1_layout8x8_2 (cps1.cpp:3848): the same block's right half
+ * (xoffset starts at bit 32 = byte 4, not bit 0). Selected by
+ * BIT(tilemap_column_index, 5), not by tile code -- see the doc. */
+extern const cps1_gfx_layout_t CPS1_GFX_LAYOUT_8X8_RIGHT;
+/* cps1_layout16x16 (cps1.cpp:3859): SCROLL2 / OBJ sprites. Whole 16x16
+ * block, both halves. 128 raw bytes/tile. Not yet wired into the sub-tile
+ * cache (cps1_ppu.c/cps1_bg.c always fetch 8x8 sub-tiles) -- provided here
+ * as confirmed reference data for when that changes. */
+extern const cps1_gfx_layout_t CPS1_GFX_LAYOUT_16X16;
+/* cps1_layout32x32 (cps1.cpp:3870): SCROLL3, four vertically-adjacent
+ * 8-wide x 32-tall strips (NOT a 4x4 grid of 8x8 sub-tiles). 512 raw
+ * bytes/tile. Same "not yet wired into the sub-tile cache" note applies. */
+extern const cps1_gfx_layout_t CPS1_GFX_LAYOUT_32X32;
 
+/* SCROLL1's left half-tile is the default single-8x8-tile decode target. */
+#define CPS1_GFX_LAYOUT_DEFAULT CPS1_GFX_LAYOUT_8X8_LEFT
+
+/* Decodes one tile per `layout` from rom->gfx at `tile_index` into `out`,
+ * packed 4bpp (2 pixels/byte, row-major, MSB-first nibble -- same output
+ * convention as cps1_rom_decode_tile). `out` must be
+ * layout->width*layout->height/2 bytes (32 for the 8x8 layouts -- exactly
+ * CPS1_TILE_SIZE_BYTES). Returns 0 on success, -1 if tile_index is out of
+ * range for rom->gfx. */
 int cps1_rom_decode_tile_planar(const cps1_rom_t *rom, const cps1_gfx_layout_t *layout,
                                  uint32_t tile_index, uint8_t *out);

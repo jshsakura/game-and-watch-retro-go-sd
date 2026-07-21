@@ -68,16 +68,47 @@ void cps1_tile_cache_reset(cps1_tile_cache_t *cache);
 const uint8_t *cps1_tile_cache_fetch(cps1_tile_cache_t *cache, const cps1_rom_t *rom,
                                       uint32_t tile_index);
 
-/* Palette RAM skeleton: 32 banks x 16 colors, RGB565, index 0/bank is
- * transparent by convention (never written to the framebuffer). Real
- * CPS-1 palette RAM is bigger/laid out differently on hardware -- this is
- * just enough to make cps1_ppu_render() produce a real, checkable image. */
+/* Palette RAM: 32 banks x 16 colors (matches the real "32 sub-palettes x 16
+ * colors per page" shape confirmed in docs/CPS1_MAME_ALIGNMENT.md section
+ * 2), index 0/bank is transparent by convention (never written to the
+ * framebuffer). Storage here is already-converted RGB565, built from the
+ * real raw hardware word via cps1_palette_build() below -- see that
+ * function's doc comment for the raw format. */
 #define CPS1_PALETTE_BANKS  32
 #define CPS1_PALETTE_COLORS 16
 
 typedef struct {
     uint16_t colors[CPS1_PALETTE_BANKS][CPS1_PALETTE_COLORS];
 } cps1_palette_t;
+
+/*
+ * Converts one raw CPS-1 palette word to RGB565 -- CONFIRMED against MAME
+ * source (docs/CPS1_MAME_ALIGNMENT.md section 2, cps1_v.cpp's
+ * cps1_build_palette): raw word is 12-bit RGB + 4-bit brightness, NOT
+ * direct RGB565.
+ *
+ *   bits 15-12  brightness (0x0 = scales to 1/3, not black -- a deliberate
+ *               hardware quirk used for fades, not a bug)
+ *   bits 11-8   R (4 bits)
+ *   bits 7-4    G (4 bits)
+ *   bits 3-0    B (4 bits)
+ *
+ *   bright = 0x0f + (brightness_nibble << 1)          // 0x0f..0x2d
+ *   r8 = R_nibble * 0x11 * bright / 0x2d               // nibble -> byte, scaled
+ *   g8 = G_nibble * 0x11 * bright / 0x2d
+ *   b8 = B_nibble * 0x11 * bright / 0x2d
+ *   rgb565 = (r8>>3)<<11 | (g8>>2)<<5 | (b8>>3)
+ *
+ * On real hardware this conversion runs once per palette-base-register
+ * write, over a whole page of raw words already staged in gfxram (MAME's
+ * cps1_build_palette) -- NOT once per individual RAM byte-write. The
+ * Phase 1-7 skeleton's bus doesn't yet have that staged/paged gfxram
+ * indirection (docs/CPS1_MAME_ALIGNMENT.md section 9, Phase 9), so for now
+ * this is called inline at each palette-word bus write in cps1_core.c --
+ * the end result (an RGB565 value derived from this formula) is the same;
+ * only the batching/trigger-timing is simplified until Phase 9 lands.
+ */
+uint16_t cps1_palette_build(uint16_t raw);
 
 /* Renders every visible OAM sprite into `fb` (CPS1_FB_WIDTH x
  * CPS1_FB_HEIGHT, RGB565, NOT cleared by this function -- caller clears

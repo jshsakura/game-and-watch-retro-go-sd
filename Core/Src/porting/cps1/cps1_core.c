@@ -242,7 +242,10 @@ static void cps1_bus_write16(uint32_t addr, uint16_t val)
         uint32_t word_idx = (addr - CPS1_PAL_BASE) / 2u;
         unsigned bank = word_idx / CPS1_PALETTE_COLORS;
         unsigned color = word_idx % CPS1_PALETTE_COLORS;
-        s_synthetic_palette.colors[bank][color] = val;
+        /* `val` is a RAW palette word (12-bit RGB + 4-bit brightness, see
+         * cps1_palette_build's doc comment / docs/CPS1_MAME_ALIGNMENT.md
+         * section 2) -- convert at write time, not a direct RGB565 store. */
+        s_synthetic_palette.colors[bank][color] = cps1_palette_build(val);
         return;
     }
     if (addr == CPS1_SOUND_CMD_BASE) {
@@ -472,7 +475,13 @@ int cps1_core_selftest_vdp_bus(void)
         return 0; /* WRAM round-trip, via memory directly */
     if (s_synthetic_oam.sprites[0].y != 99)
         return 0; /* OBJ RAM write actually moved sprite 0 */
-    if (s_synthetic_palette.colors[1][2] != 21)
+    /* The bus stores cps1_palette_build(raw), not the raw word directly
+     * (see cps1_bus_write16's palette branch) -- compute the same
+     * conversion here rather than a raw literal, so this test tracks the
+     * real write path instead of assuming pass-through. cps1_ppu.c's own
+     * cps1_palette_build is hand-verified separately against MAME's
+     * formula (docs/CPS1_MAME_ALIGNMENT.md section 2). */
+    if (s_synthetic_palette.colors[1][2] != cps1_palette_build(21))
         return 0; /* palette RAM write actually recolored bank 1 color 2 */
     return 1;
 }

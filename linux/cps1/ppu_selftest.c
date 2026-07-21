@@ -55,6 +55,103 @@ static void test_rom_decode(const cps1_rom_t *rom)
           "decoding past the end of gfx should fail");
 }
 
+/*
+ * cps1_rom_decode_tile_planar against the REAL, MAME-confirmed bitplane
+ * layout (docs/CPS1_MAME_ALIGNMENT.md section 1) -- separate from
+ * test_rom_decode above, which tests the OLD flat/pre-packed decoder
+ * against already-packed synthetic data (still valid for its own purpose,
+ * unchanged). This is the Phase 8 correctness gate: hand-derive the
+ * expected packed-nibble output from the confirmed spec, independent of
+ * the implementation under test, the same way every other selftest in
+ * this initiative verifies against a hand trace rather than the code's
+ * own formula.
+ *
+ * Real layout: each row is 8 raw bytes -- byte0=plane-index3(pixel LSB),
+ * byte1=plane-index2, byte2=plane-index1, byte3=plane-index0(pixel MSB)
+ * for the LEFT half-tile; bytes 4-7 are the RIGHT half-tile (unused by
+ * CPS1_GFX_LAYOUT_8X8_LEFT). Bit 0 (MSB, 0x80) of each byte = column 0.
+ */
+static void test_rom_decode_planar(void)
+{
+    uint8_t gfx[128]; /* 2 left-half 8x8 tiles' worth (64 bytes each) */
+    memset(gfx, 0, sizeof(gfx));
+
+    /* Tile 0, row 0: set bit0 (col 0) in byte0 (LSB plane), byte1, and
+     * byte3 (MSB plane); leave byte2 clear -- expected pixel(0,0) = 0b1011
+     * = 0xB (bit3=1 MSB-plane, bit2=0, bit1=1, bit0=1 LSB-plane). */
+    gfx[0] = 0x80;
+    gfx[1] = 0x80;
+    gfx[2] = 0x00;
+    gfx[3] = 0x80;
+
+    /* Tile 1 (bytes 64-127), row 3 (bytes 64+24..64+27), col 7 (bit_in_byte
+     * 7 = LSB 0x01, since col directly equals bit_in_byte for this
+     * layout's byte-aligned row/plane bases): set only byte 64+24+1
+     * (planeoffset[2]=8 -> byte offset 1 within the row => plane-index 2,
+     * pixel bit1) -- expected pixel(row3,col7) = 0b0010 = 0x2, everything
+     * else in tile 1 zero. */
+    gfx[64 + 3 * 8 + 1] = 0x01;
+
+    cps1_rom_t rom;
+    uint8_t prg_dummy[1] = {0};
+    cps1_rom_region_t prg_region = {prg_dummy, sizeof(prg_dummy)};
+    cps1_rom_region_t gfx_region = {gfx, sizeof(gfx)};
+    cps1_rom_region_t empty = {0};
+    CHECK(cps1_rom_attach(&rom, prg_region, gfx_region, empty, empty) == 0,
+          "planar rom attach should succeed");
+
+    uint8_t out[CPS1_TILE_SIZE_BYTES];
+
+    memset(out, 0xFF, sizeof(out));
+    CHECK(cps1_rom_decode_tile_planar(&rom, &CPS1_GFX_LAYOUT_8X8_LEFT, 0, out) == 0,
+          "planar tile 0 decode should succeed");
+    CHECK((out[0] >> 4) == 0xB, "planar tile0 pixel(0,0) should be 0xB, got 0x%x", out[0] >> 4);
+    {
+        int rest_zero = 1;
+        for (int i = 0; i < CPS1_TILE_SIZE_BYTES; i++) {
+            uint8_t v = out[i];
+            if (i == 0) v &= 0x0F; /* pixel(0,0) already checked above */
+            if (v != 0) rest_zero = 0;
+        }
+        CHECK(rest_zero, "planar tile0's only nonzero pixel should be (0,0)");
+    }
+
+    memset(out, 0xFF, sizeof(out));
+    CHECK(cps1_rom_decode_tile_planar(&rom, &CPS1_GFX_LAYOUT_8X8_LEFT, 1, out) == 0,
+          "planar tile 1 decode should succeed");
+    /* pixel(row3,col7) is byte(3*4 + 7/2)=byte15, low nibble (col7 odd) */
+    CHECK((out[15] & 0x0F) == 0x2, "planar tile1 pixel(3,7) should be 0x2, got 0x%x", out[15] & 0x0F);
+    {
+        int rest_zero = 1;
+        for (int i = 0; i < CPS1_TILE_SIZE_BYTES; i++) {
+            uint8_t v = out[i];
+            if (i == 15) v &= 0xF0; /* pixel(3,7) already checked above */
+            if (v != 0) rest_zero = 0;
+        }
+        CHECK(rest_zero, "planar tile1's only nonzero pixel should be (3,7)");
+    }
+
+    /* Out-of-range tile must fail cleanly, not read past gfx.size. */
+    CHECK(cps1_rom_decode_tile_planar(&rom, &CPS1_GFX_LAYOUT_8X8_LEFT, 2, out) != 0,
+          "decoding a 3rd tile past the 128-byte gfx region should fail");
+
+    /* 16x16/32x32 layouts: not yet wired into the live sub-tile cache
+     * (docs/CPS1_MAME_ALIGNMENT.md section 8), but the confirmed layout
+     * data itself must decode without crashing/reading out of bounds
+     * against a suitably-sized region. */
+    uint8_t big[4096];
+    memset(big, 0xAA, sizeof(big));
+    cps1_rom_t rom_big;
+    cps1_rom_region_t big_region = {big, sizeof(big)};
+    CHECK(cps1_rom_attach(&rom_big, prg_region, big_region, empty, empty) == 0,
+          "big planar rom attach should succeed");
+    uint8_t out16[128], out32[512];
+    CHECK(cps1_rom_decode_tile_planar(&rom_big, &CPS1_GFX_LAYOUT_16X16, 0, out16) == 0,
+          "16x16 layout should decode without crashing");
+    CHECK(cps1_rom_decode_tile_planar(&rom_big, &CPS1_GFX_LAYOUT_32X32, 0, out32) == 0,
+          "32x32 layout should decode without crashing");
+}
+
 static void test_oam_prescan(void)
 {
     cps1_oam_t oam;
@@ -140,6 +237,7 @@ int main(void)
           "cps1_rom_attach should succeed with prg+gfx present");
 
     test_rom_decode(&rom);
+    test_rom_decode_planar();
     test_oam_prescan();
     test_tile_cache(&rom);
 

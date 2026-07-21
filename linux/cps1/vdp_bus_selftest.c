@@ -20,7 +20,8 @@ int main(void)
     uint8_t attr = 0;
     cps1_core_oam_peek(0, &x, &y, &tile, &attr);
 
-    printf("[cps1-vdp-bus-selftest] wram[0]=%u sprite0.y=%d palette[1][2]=%u\n",
+    printf("[cps1-vdp-bus-selftest] wram[0]=%u sprite0.y=%d "
+           "palette[1][2]=0x%04x (raw 21 converted via cps1_palette_build)\n",
            cps1_core_wram_peek16(0), y, cps1_core_palette_peek(1, 2));
 
     if (!ok) {

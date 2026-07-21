@@ -24,35 +24,87 @@ int cps1_rom_decode_tile(const cps1_rom_t *rom, uint32_t tile_index, uint8_t *ou
     return 0;
 }
 
-const cps1_gfx_layout_t CPS1_GFX_LAYOUT_DEFAULT = {
-    4,                    /* planes */
-    {0, 8, 16, 24, 0, 0, 0, 0}, /* plane_byte_offset */
-    1,                    /* bytes_per_row_per_plane */
-    CPS1_TILE_SIZE_BYTES, /* tile_stride_bytes */
+/*
+ * Layout data below is transcribed verbatim from MAME's gfx_layout structs
+ * (docs/CPS1_MAME_ALIGNMENT.md section 1 / src/mame/capcom/cps1.cpp:3837-
+ * 3886), just with xoffset/yoffset arrays fully expanded (MAME's STEP8/16/32
+ * macros generate these at compile time; this file writes them out since it
+ * has no equivalent macro). Unused array tail entries are 0 and never read
+ * (loops below are bounded by layout->width/height, not array capacity).
+ */
+const cps1_gfx_layout_t CPS1_GFX_LAYOUT_8X8_LEFT = {
+    4, 8, 8,
+    { 24, 16, 8, 0, 0, 0, 0, 0 },
+    { 0, 1, 2, 3, 4, 5, 6, 7 },
+    { 0, 64, 128, 192, 256, 320, 384, 448 },
+    512,
+};
+
+const cps1_gfx_layout_t CPS1_GFX_LAYOUT_8X8_RIGHT = {
+    4, 8, 8,
+    { 24, 16, 8, 0, 0, 0, 0, 0 },
+    { 32, 33, 34, 35, 36, 37, 38, 39 },
+    { 0, 64, 128, 192, 256, 320, 384, 448 },
+    512,
+};
+
+const cps1_gfx_layout_t CPS1_GFX_LAYOUT_16X16 = {
+    4, 16, 16,
+    { 24, 16, 8, 0, 0, 0, 0, 0 },
+    { 0, 1, 2, 3, 4, 5, 6, 7, 32, 33, 34, 35, 36, 37, 38, 39 },
+    { 0, 64, 128, 192, 256, 320, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960 },
+    1024,
+};
+
+const cps1_gfx_layout_t CPS1_GFX_LAYOUT_32X32 = {
+    4, 32, 32,
+    { 24, 16, 8, 0, 0, 0, 0, 0 },
+    {
+        0, 1, 2, 3, 4, 5, 6, 7,
+        32, 33, 34, 35, 36, 37, 38, 39,
+        64, 65, 66, 67, 68, 69, 70, 71,
+        96, 97, 98, 99, 100, 101, 102, 103,
+    },
+    {
+        0, 128, 256, 384, 512, 640, 768, 896,
+        1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920,
+        2048, 2176, 2304, 2432, 2560, 2688, 2816, 2944,
+        3072, 3200, 3328, 3456, 3584, 3712, 3840, 3968,
+    },
+    4096,
 };
 
 int cps1_rom_decode_tile_planar(const cps1_rom_t *rom, const cps1_gfx_layout_t *layout,
                                  uint32_t tile_index, uint8_t *out)
 {
-    uint32_t base = tile_index * layout->tile_stride_bytes;
-    if (base + layout->tile_stride_bytes > rom->gfx.size)
-        return -1;
-    if (layout->planes > 8)
+    if (layout->planes > 8 || layout->width > 32 || layout->height > 32)
         return -1;
 
-    for (int row = 0; row < 8; row++) {
-        uint8_t plane_byte[8];
-        for (unsigned p = 0; p < layout->planes; p++)
-            plane_byte[p] = rom->gfx.data[base + layout->plane_byte_offset[p] +
-                                           (uint32_t)row * layout->bytes_per_row_per_plane];
+    uint32_t base_bit = tile_index * layout->bits_per_tile;
+    uint32_t base_byte = base_bit / 8;
+    uint32_t tile_bytes = (layout->bits_per_tile + 7) / 8;
+    if (base_byte + tile_bytes > rom->gfx.size)
+        return -1;
 
-        for (int col = 0; col < 8; col++) {
-            int bit_pos = 7 - col; /* MSB = leftmost pixel */
+    unsigned row_bytes = layout->width / 2;
+
+    for (unsigned row = 0; row < layout->height; row++) {
+        for (unsigned col = 0; col < layout->width; col++) {
             uint8_t pixel = 0;
-            for (unsigned p = 0; p < layout->planes; p++)
-                pixel = (uint8_t)(pixel | (((plane_byte[p] >> bit_pos) & 1u) << p));
+            /* planebit starts at the MSB (planes-1) and shifts right per
+             * plane, matching MAME's gfx_element::decode() exactly --
+             * plane-array index 0 contributes the pixel's MSB. */
+            for (unsigned p = 0; p < layout->planes; p++) {
+                uint32_t bitno = base_bit + layout->planeoffset[p] + layout->yoffset[row] +
+                                  layout->xoffset[col];
+                uint32_t byte_idx = bitno / 8;
+                unsigned bit_in_byte = bitno % 8;
+                uint8_t bit = (uint8_t)((rom->gfx.data[byte_idx] >> (7 - bit_in_byte)) & 1u);
+                if (bit)
+                    pixel = (uint8_t)(pixel | (1u << (layout->planes - 1 - p)));
+            }
 
-            int byte_idx = row * 4 + col / 2;
+            unsigned byte_idx = row * row_bytes + col / 2;
             if (col & 1)
                 out[byte_idx] = (uint8_t)((out[byte_idx] & 0xF0u) | pixel);
             else

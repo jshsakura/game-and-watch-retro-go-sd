@@ -67,6 +67,26 @@ const uint8_t *cps1_tile_cache_fetch(cps1_tile_cache_t *cache, const cps1_rom_t 
     return slot->pixels;
 }
 
+uint16_t cps1_palette_build(uint16_t raw)
+{
+    unsigned brightness = (raw >> 12) & 0xFu;
+    unsigned r_nibble = (raw >> 8) & 0xFu;
+    unsigned g_nibble = (raw >> 4) & 0xFu;
+    unsigned b_nibble = raw & 0xFu;
+
+    unsigned bright = 0x0Fu + (brightness << 1); /* 0x0f..0x2d */
+
+    unsigned r8 = r_nibble * 0x11u * bright / 0x2Du;
+    unsigned g8 = g_nibble * 0x11u * bright / 0x2Du;
+    unsigned b8 = b_nibble * 0x11u * bright / 0x2Du;
+
+    unsigned r5 = (r8 >> 3) & 0x1Fu;
+    unsigned g6 = (g8 >> 2) & 0x3Fu;
+    unsigned b5 = (b8 >> 3) & 0x1Fu;
+
+    return (uint16_t)((r5 << 11) | (g6 << 5) | b5);
+}
+
 void cps1_blit8x8_indexed(const uint8_t *tile4bpp, unsigned palette_bank,
                            const cps1_palette_t *pal, int dst_x, int dst_y, uint16_t *fb)
 {
