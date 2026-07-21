@@ -477,8 +477,25 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
     nspc_variant_std();
   }
   g_nspc_cfg.instrTable = np->instrTab >= 0 ? np->instrTab : 0x6c00;
-  g_nspc_cfg.songList   = np->songList;
-  g_nspc_cfg.songCur    = np->songList - 2;
+  /* +2, because detection and the player index the song table from different
+   * origins. The driver's own instruction is `MOV A,!base+X` with X = song*2,
+   * so `base` is the entry for song 0 and that absolute address is what
+   * nspc_extract() correctly recovers. Every decompiled N-SPC player instead
+   * writes `table + (song-1)*2`, i.e. the entry for song 1 -- one entry, two
+   * bytes, higher. Two independent decompilations agree:
+   *   Zelda 3        extract 0xcffe   external/zelda3/spc_player.c:737  0xD000
+   *   Super Metroid  extract 0x581e   external/sm/src/spc_player.c:865  0x5820
+   * and nspc_config.h's own SM defaults say the same (songList 0x5820,
+   * songCur 0x581e -- detection was handing over songCur as songList).
+   * Measured on the host wire harness, 800/1800 frames vs LLE:
+   *   Zelda 3       rms 152 -> 1608 (LLE 1586) and the framebuffer hash
+   *                 becomes identical to LLE for the whole run
+   *   Super Metroid rms   0 ->  191 (LLE 1692) -- audible, not yet right
+   *   EarthBound / Mega Man X: silent before and after; NOT fixed by this.
+   * So this is a real defect in the common path, not a general std cure --
+   * SNES_NSPC_HLE stays default-off. */
+  g_nspc_cfg.songList   = np->songList + 2;
+  g_nspc_cfg.songCur    = np->songList;
   g_nspc_cfg.dirPage    = ((np->dir >= 0 ? np->dir : 0x6d00) >> 8) & 0xff;
 
   /* Zero-copy adoption: reuse the live APU ARAM and DSP.  NO memcpy, NO
