@@ -61,17 +61,42 @@ void cps1_bg_render_layer(const cps1_bg_layer_t *layer, unsigned layer_index,
     unsigned sub = tile_px / 8u; /* sub-tiles per side: 1, 2, or 4 */
     unsigned palette_offset = cps1_bg_layer_palette_offset(layer_index);
 
-    for (int cy = 0; cy < CPS1_BG_MAP_H; cy++) {
-        int cell_y0 = cy * (int)tile_px - layer->scroll_y;
-        if (cell_y0 + (int)tile_px <= 0 || cell_y0 >= CPS1_FB_HEIGHT)
-            continue;
+    /*
+     * CPS-1 scroll layers WRAP: each is 64x64 tiles, so 512x512 px for
+     * SCROLL1, 1024x1024 for SCROLL2 and 2048x2048 for SCROLL3, and the
+     * scroll registers index into that torus. Walking cells 0..63 at a raw
+     * `cx * tile_px - scroll_x` (what this did before) leaves the part of
+     * the screen the wrap should have filled simply blank -- visible as an
+     * empty band once real scroll values arrive (the game runs S1 at
+     * (-64,256), S2 at (-64,768), S3 at (-64,1800)).
+     *
+     * Iterating the VISIBLE tiles instead of all 4096 also stops the
+     * renderer paying for the ~95% of each map that is off-screen, which
+     * matters for the frame-cost measurement this feeds.
+     */
+    const int map_w_px = CPS1_BG_MAP_W * (int)tile_px;
+    const int map_h_px = CPS1_BG_MAP_H * (int)tile_px;
+    int sx = layer->scroll_x % map_w_px; if (sx < 0) sx += map_w_px;
+    int sy = layer->scroll_y % map_h_px; if (sy < 0) sy += map_h_px;
 
-        for (int cx = 0; cx < CPS1_BG_MAP_W; cx++) {
-            int cell_x0 = cx * (int)tile_px - layer->scroll_x;
-            if (cell_x0 + (int)tile_px <= 0 || cell_x0 >= CPS1_FB_WIDTH)
-                continue;
+    const int first_col = sx / (int)tile_px, x_off = sx % (int)tile_px;
+    const int first_row = sy / (int)tile_px, y_off = sy % (int)tile_px;
+    const int cols = (CPS1_FB_WIDTH  + x_off + (int)tile_px - 1) / (int)tile_px;
+    const int rows = (CPS1_FB_HEIGHT + y_off + (int)tile_px - 1) / (int)tile_px;
 
-            const cps1_bg_cell_t *cell = &layer->cells[cy * CPS1_BG_MAP_W + cx];
+    for (int ry = 0; ry <= rows; ry++) {
+        int row = (first_row + ry) % CPS1_BG_MAP_H;
+        int cell_y0 = ry * (int)tile_px - y_off;
+        if (cell_y0 >= CPS1_FB_HEIGHT)
+            break;
+
+        for (int rx = 0; rx <= cols; rx++) {
+            int col = (first_col + rx) % CPS1_BG_MAP_W;
+            int cell_x0 = rx * (int)tile_px - x_off;
+            if (cell_x0 >= CPS1_FB_WIDTH)
+                break;
+
+            const cps1_bg_cell_t *cell = &layer->cells[row * CPS1_BG_MAP_W + col];
             unsigned bank = palette_offset + cps1_bg_attr_color(cell->attr);
             int flip_x = (int)cps1_bg_attr_flip_x(cell->attr);
             int flip_y = (int)cps1_bg_attr_flip_y(cell->attr);

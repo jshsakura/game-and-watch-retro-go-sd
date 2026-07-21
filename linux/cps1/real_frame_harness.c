@@ -43,10 +43,14 @@ enum { REG_OBJ = 0, REG_SCROLL1, REG_SCROLL2, REG_SCROLL3, REG_OTHER, REG_PALETT
 #define CPSA_REG(i) s_regs[(0x100u + (i) * 2u) >> 1]
 
 /* Write-hook target: the main loop at 0x730 dispatches on this byte. */
-#define WATCH_ADDR 0xFF5600u
+#define WATCH_ADDR 0xFF6390u
 static unsigned s_watch_writes;
 static uint32_t s_qread[0x10000/2];   /* QSound shared-RAM read histogram */
 static cps1_eeprom_t s_eeprom;
+static uint32_t s_pch[0x40000];      /* PC histogram */
+static uint32_t s_rdh[0x100];        /* read histogram, keyed by addr>>16 page */
+static uint32_t s_rd_lo[0x800];      /* fine histogram for the hottest page */
+static uint32_t s_hot_page = 0xF1;
 /* per-region gfxram write counters, sampled over the LAST boot frames only */
 static unsigned s_wr_obj, s_wr_s1, s_wr_s2, s_wr_s3, s_wr_pal, s_wr_other, s_count_on;
 static struct { uint32_t pc; uint16_t val; } s_watch[24];
@@ -62,6 +66,8 @@ static uint16_t bus_read16(uint32_t a)
         uint32_t o = a - GFXRAM_BASE;
         return (uint16_t)((s_gfxram[o] << 8) | s_gfxram[o + 1]);
     }
+    s_rdh[(a >> 16) & 0xFF]++;
+    if (((a >> 16) & 0xFF) == s_hot_page) s_rd_lo[(a >> 1) & 0x7FF]++;
     if (a < 0x800020u) return 0xFFFFu;              /* inputs are ACTIVE LOW */
     if (a >= 0x800000u && a < 0x800180u) return s_regs[(a - 0x800000u) >> 1];
     /*
@@ -159,7 +165,17 @@ int main(int argc, char **argv)
 
     /* --- boot the real game --- */
     cps1_eeprom_reset(&s_eeprom);
-    s_qram[0x9FFE + 1] = 0x77;                    /* QSound Z80 "alive" stub */
+    s_qram[0x9FFE + 1] = 0x77;   /* Z80 "alive" signature the boot code polls */
+    /*
+     * QSound "ready for a command" flag. The vblank handler's third
+     * subroutine (0x5A08) does `tst.b $1f(a0)` with a0 = 0xF18000 and
+     * `bpl` past the entire sound-command write when bit 7 is clear -- so
+     * with an all-zero shared RAM the game never sends sound at all. On a
+     * real board the Z80 raises it once it has drained the previous batch.
+     * Holding it set is the HLE equivalent of "the sound CPU is always
+     * ready", which is what a port with no Z80 wants.
+     */
+    s_qram[0x801F] = 0x80;                    /* QSound Z80 "alive" stub */
     const cps1_m68k_io_t io = { bus_read16, bus_write16 };
     cps1_m68k_init(blob + h.po, h.ps, NULL, &io); /* NULL => WRAM via io, hookable */
     cps1_m68k_reset();
@@ -182,7 +198,35 @@ int main(int argc, char **argv)
             if (pc >= 0x506u && pc < 0x600u) handler_hits++;
         }
         cps1_m68k_set_irq(0);
-        cps1_m68k_run(FRAME / 2u);
+        for (unsigned k = 0; k < 8; k++) {
+            cps1_m68k_run(FRAME / 16u);
+            uint32_t pc = cps1_m68k_get_pc();
+            if (pc < 0x100000) s_pch[pc >> 2]++;
+        }
+    }
+    {   unsigned top[8] = {0};
+        for (unsigned i = 0; i < 0x40000; i++)
+            for (unsigned k = 0; k < 8; k++)
+                if (s_pch[i] > s_pch[top[k]]) {
+                    for (unsigned j = 7; j > k; j--) top[j] = top[j-1];
+                    top[k] = i; break;
+                }
+        printf("[frame] PC 히스토그램: ");
+        for (unsigned k = 0; k < 8; k++) if (s_pch[top[k]])
+            printf("0x%06x(%u) ", top[k] << 2, s_pch[top[k]]);
+        printf("\n[frame] 읽기 페이지: ");
+        for (unsigned pg = 0; pg < 0x100; pg++) if (s_rdh[pg] > 1000)
+            printf("0x%02x0000:%u ", pg, s_rdh[pg]);
+        printf("\n[frame] 0xF1xxxx 정밀 읽기 상위:\n");
+        unsigned t2[8] = {0};
+        for (unsigned i = 0; i < 0x800; i++)
+            for (unsigned k = 0; k < 8; k++)
+                if (s_rd_lo[i] > s_rd_lo[t2[k]]) {
+                    for (unsigned j = 7; j > k; j--) t2[j] = t2[j-1];
+                    t2[k] = i; break;
+                }
+        for (unsigned k = 0; k < 8; k++) if (s_rd_lo[t2[k]])
+            printf("         0xF1%04x : %u\n", t2[k] * 2, s_rd_lo[t2[k]]);
     }
     printf("[frame] vblank handler PC samples: %u\n", handler_hits);
     printf("[frame] writes to 0x%06x: %u\n", WATCH_ADDR, s_watch_writes);
@@ -264,6 +308,15 @@ int main(int argc, char **argv)
     s_bg.layers[CPS1_BG_SCROLL2].scroll_y = (int16_t)CPSA_REG(9);
     s_bg.layers[CPS1_BG_SCROLL3].scroll_x = (int16_t)CPSA_REG(10);
     s_bg.layers[CPS1_BG_SCROLL3].scroll_y = (int16_t)CPSA_REG(11);
+    {   uint32_t a5 = cps1_m68k_get_areg(5) & 0xFFFFFFu;
+        printf("[frame] RUNTIME A5 = 0x%06x (static assumption was 0xFF8000)\n", a5);
+        printf("[frame]   gate1 -$1c70(a5) -> 0x%06x ; task tbl -$2a00(a5) -> 0x%06x\n",
+               (a5 - 0x1c70u) & 0xFFFFFFu, (a5 - 0x2a00u) & 0xFFFFFFu);
+    }
+    printf("[frame] task table 0xFF5600: ");
+    for (int t = 0; t < 16; t++) printf("%02x ", s_wram[0x5600 + t*0x20]);
+    printf("\n[frame] gates 0xFF6390=0x%02x 0xFF6384=0x%02x  vblank cnt 0xFF6332=0x%04x\n",
+           s_wram[0x6390], s_wram[0x6384], (s_wram[0x6332]<<8)|s_wram[0x6333]);
     printf("[frame] scroll: S1=(%d,%d) S2=(%d,%d) S3=(%d,%d)\n",
            s_bg.layers[0].scroll_x, s_bg.layers[0].scroll_y,
            s_bg.layers[1].scroll_x, s_bg.layers[1].scroll_y,
@@ -293,8 +346,20 @@ int main(int argc, char **argv)
     /* --- render with the shipping renderer --- */
     memset(s_fb, 0, sizeof(s_fb));
     memset(s_meta, 0, sizeof(s_meta));
-    for (unsigned L = 0; L < CPS1_BG_LAYER_COUNT; L++)
+    /*
+     * BACK TO FRONT: SCROLL3 (32x32) is the far background, SCROLL2 the
+     * mid layer, SCROLL1 (8x8) the text/foreground layer. Drawing 1,2,3 --
+     * which this did -- paints the far background OVER everything and is
+     * why the frame came out as three flat bands with the sky on top of
+     * the text.
+     */
+    static const unsigned draw_order[CPS1_BG_LAYER_COUNT] = {
+        CPS1_BG_SCROLL3, CPS1_BG_SCROLL2, CPS1_BG_SCROLL1
+    };
+    for (unsigned i = 0; i < CPS1_BG_LAYER_COUNT; i++) {
+        unsigned L = draw_order[i];
         cps1_bg_render_layer(&s_bg.layers[L], L, &s_rom, &s_cache, &s_pal, s_fb, s_meta);
+    }
     cps1_ppu_render(&s_oam, &s_rom, &s_cache, &s_pal, s_fb);
 
     /* --- is it a picture, or noise/blank? --- */
