@@ -264,6 +264,12 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(4);
     __ram_emu_nes_fceu_start__ = .;
     build/nes_fceu/*.o (.data .data* .text .text* .rodata .rodata*)
+    /* libm members only nes_fceu references (--cref verified: atan <- nsf.o,
+     * log10 <- fceu-emu2413.o). They land in resident flash otherwise, because
+     * the capture rules above only match build/<core>/*.o -- the same
+     * mis-scoping the C64 unwind tables had. */
+    *libm.a:libm_a-s_atan.o  (.text .text* .rodata .rodata*)
+    *libm.a:libm_a-w_log10.o (.text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_NES_FCEU_LOAD_END = .;
   } AT > CORES
