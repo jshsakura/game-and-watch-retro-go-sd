@@ -490,7 +490,62 @@ static uint16_t s_bg_top_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
 static uint8_t  s_bg_top_meta[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
 static uint16_t s_sprite_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
 
-#define CPS1_SOUND_SAMPLES_PER_FRAME (CPS1_SOUND_SAMPLE_RATE / 60u) /* ~368 @ 60fps */
+/*
+ * Phase 12 (docs/CPS1_MAME_ALIGNMENT.md section 9, LTDC dual-layer
+ * binding): STM32H7's LTDC has exactly 2 hardware layers, not 3 -- SCROLL3
+ * + sprites already occupy one (cps1_core_run_frame_device_cost()'s output,
+ * unchanged since Phase 7/10, "already correct in shape" per that section).
+ * SCROLL1 and SCROLL2 therefore share the OTHER hardware layer, combined by
+ * the CPU into one buffer with a plain overwrite blend (no priority-group
+ * logic needed -- BG-vs-BG order is fixed regardless of priority masks,
+ * docs section 6; only BG-vs-SPRITE order can be mask-punched, and that's
+ * entirely within the OTHER layer already). This is what LTDC's own
+ * hardware then alpha-blends against the SCROLL3+sprite layer at scanout,
+ * for zero CPU cost -- the actual thing cheat 8 saves is that blend step,
+ * not the BG tile rendering itself.
+ */
+static uint16_t s_ltdc_bottom_fb[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+
+void cps1_core_render_ltdc_bottom(void)
+{
+    for (int i = 0; i < CPS1_FB_WIDTH * CPS1_FB_HEIGHT; i++)
+        s_ltdc_bottom_fb[i] = 0;
+    cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_synthetic_rom,
+                          &s_tile_cache, &s_synthetic_palette, s_ltdc_bottom_fb, NULL);
+    cps1_bg_render_layer(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_synthetic_rom,
+                          &s_tile_cache, &s_synthetic_palette, s_ltdc_bottom_fb, NULL);
+}
+
+const uint16_t *cps1_core_get_ltdc_bottom_buffer(void)
+{
+    return s_ltdc_bottom_fb;
+}
+
+/*
+ * Phase 12 finding: the Game & Watch's real LCD panel is 320x240
+ * (Core/Inc/gw_lcd.h, GW_LCD_WIDTH/HEIGHT) -- narrower than CPS-1's native
+ * 384x224 arcade resolution. Never addressed by any prior phase (all of
+ * Phases 1-11 operated purely on the synthetic host/QEMU framebuffer size
+ * without connecting it to the device's actual panel dimensions).
+ * CPS1_FB_HEIGHT (224) already fits within GW_LCD_HEIGHT (240) with an
+ * 8px letterbox margin, so only WIDTH needs cropping. Center-crop is the
+ * simplest defensible choice for this phase (drops the leftmost/rightmost
+ * 32px of the 384-wide arcade image) -- NOT a validated design decision,
+ * just the one made here; a real visual call (crop vs. scale vs.
+ * something else) needs a human looking at actual game content on actual
+ * hardware, neither of which exists in this project yet.
+ */
+#define CPS1_PANEL_CROP_X ((CPS1_FB_WIDTH - CPS1_PANEL_WIDTH) / 2)
+
+void cps1_core_crop_to_panel(const uint16_t *src, uint16_t *dst)
+{
+    for (int row = 0; row < CPS1_PANEL_HEIGHT; row++) {
+        const uint16_t *src_row = src + row * CPS1_FB_WIDTH + CPS1_PANEL_CROP_X;
+        uint16_t *dst_row = dst + row * CPS1_PANEL_WIDTH;
+        for (int col = 0; col < CPS1_PANEL_WIDTH; col++)
+            dst_row[col] = src_row[col];
+    }
+}
 
 void cps1_core_reset(cps1_engine_kind_t engine)
 {
@@ -1034,5 +1089,109 @@ int cps1_core_selftest_priority_bus(void)
         return 0; /* the raw CPS-B register write itself landed */
     if (s_priority_masks.masks[0] != 0x8004u)
         return 0; /* AND it was mirrored into the mask the compositor reads */
+    return 1;
+}
+
+/*
+ * Phase 12: proves cps1_core_render_ltdc_bottom() actually combines
+ * SCROLL1+SCROLL2 (plain overwrite, SCROLL2 on top) and NOTHING else --
+ * not SCROLL3, not sprites -- into the buffer that becomes LTDC layer 0.
+ * Uses 3 dedicated, unused-by-the-demo-scene tile slots (20/21/22, solid
+ * pens 1/2/0) so the check is deterministic regardless of the synthetic
+ * scene's own cycling pattern (tile_index 0-3 is what the demo actually
+ * uses; slot 0 specifically is NOT a reliable "transparent" tile -- its
+ * pixels vary by position under the demo's own pattern formula).
+ */
+int cps1_core_selftest_ltdc_bottom(void)
+{
+    /* PPU init must run BEFORE bg init (matches cps1_core_reset's own
+     * order): cps1_ppu_init_synthetic() unconditionally zeroes the WHOLE
+     * shared palette as its first action (it doesn't know about bg's
+     * banks), so calling it after cps1_bg_init_synthetic() would wipe out
+     * the very colors this test is about to read back. */
+    cps1_ppu_init_synthetic();
+    cps1_bg_init_synthetic();
+
+    for (int i = 0; i < CPS1_TILE_SIZE_BYTES; i++) {
+        s_synthetic_gfx[20 * CPS1_TILE_SIZE_BYTES + i] = 0x11u; /* pen 1 everywhere (SCROLL1) */
+        s_synthetic_gfx[22 * CPS1_TILE_SIZE_BYTES + i] = 0x00u; /* pen 0/transparent (SCROLL2 subtile qx=0) */
+        s_synthetic_gfx[23 * CPS1_TILE_SIZE_BYTES + i] = 0x11u; /* pen 1 everywhere (SCROLL2 subtile qx=1) --
+                                                                     pen 1, not 2: cps1_bg_init_synthetic()
+                                                                     stores every layer's demo color at
+                                                                     palette INDEX 1, and this test compares
+                                                                     against that same color. */
+    }
+
+    /* SCROLL1 (8px cells) cell (0,0) AND cell (1,0) both opaque pen1,
+     * covering pixels 0-15 on row 0. SCROLL2 (16px cells) cell (0,0)
+     * covers that SAME 0-15 range as ONE cell decomposed into 2x2 8x8
+     * sub-tiles (docs/CPS1_MAME_ALIGNMENT.md section 6/9) -- code=22 base
+     * fetches subtiles 22,23,24,25 at (qx,qy)=(0,0),(1,0),(0,1),(1,1), so
+     * this ONE cell is transparent over pixels 0-7 (subtile 22) and
+     * opaque pen2 over pixels 8-15 (subtile 23), on row 0 (qy=0). */
+    s_bg.layers[CPS1_BG_SCROLL1].cells[0].code = 20;
+    s_bg.layers[CPS1_BG_SCROLL1].cells[0].attr = 1;
+    s_bg.layers[CPS1_BG_SCROLL1].cells[1].code = 20;
+    s_bg.layers[CPS1_BG_SCROLL1].cells[1].attr = 1;
+    s_bg.layers[CPS1_BG_SCROLL2].cells[0].code = 22;
+    s_bg.layers[CPS1_BG_SCROLL2].cells[0].attr = 1;
+
+    /* A sprite covering the SAME pixels with a THIRD, distinct color --
+     * cps1_core_render_ltdc_bottom must NOT be affected by it at all. */
+    cps1_oam_entry_t *spr = &s_synthetic_oam.sprites[0];
+    spr->x = 0; spr->y = 0; spr->tile_index = 20; spr->attr = 2; spr->enabled = 1;
+    s_synthetic_palette.colors[2][1] = 0x0011; /* sprite's own color, must never appear below */
+
+    cps1_core_render_ltdc_bottom();
+    const uint16_t *out = cps1_core_get_ltdc_bottom_buffer();
+
+    unsigned bank1 = cps1_bg_layer_palette_offset(CPS1_BG_SCROLL1) + 1u;
+    unsigned bank2 = cps1_bg_layer_palette_offset(CPS1_BG_SCROLL2) + 1u;
+    uint16_t scroll1_color = s_synthetic_palette.colors[bank1][1];
+    uint16_t scroll2_color = s_synthetic_palette.colors[bank2][1];
+
+    if (out[0] != scroll1_color)
+        return 0; /* SCROLL1 should show through SCROLL2's transparent pixel */
+    if (out[8] != scroll2_color)
+        return 0; /* SCROLL2 should win where both are opaque */
+    if (out[0] == 0x0011u || out[8] == 0x0011u)
+        return 0; /* the sprite must never appear in the bottom (SCROLL1+2) buffer */
+    return 1;
+}
+
+/*
+ * Proves cps1_core_crop_to_panel() takes exactly the centered
+ * CPS1_PANEL_WIDTH-wide window (columns CPS1_PANEL_CROP_X ..
+ * CPS1_PANEL_CROP_X+CPS1_PANEL_WIDTH-1 of each row), not an off-by-one or
+ * uncentered slice: fills a full CPS1_FB_WIDTH x CPS1_FB_HEIGHT source
+ * where every pixel encodes its own (row,col), crops it, and checks the
+ * cropped buffer's corners/middle decode back to the EXPECTED source
+ * (row, col+CPS1_PANEL_CROP_X) -- not just that some data came through.
+ */
+int cps1_core_selftest_crop_to_panel(void)
+{
+    static uint16_t src[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+    static uint16_t dst[CPS1_PANEL_WIDTH * CPS1_PANEL_HEIGHT];
+
+    for (int row = 0; row < CPS1_FB_HEIGHT; row++)
+        for (int col = 0; col < CPS1_FB_WIDTH; col++)
+            src[row * CPS1_FB_WIDTH + col] = (uint16_t)(((row & 0xFFu) << 8) | (col & 0xFFu));
+
+    cps1_core_crop_to_panel(src, dst);
+
+    /* Check 3 points: left edge, right edge, and one interior column, all
+     * on 2 different rows -- each must equal the SOURCE pixel offset by
+     * exactly CPS1_PANEL_CROP_X columns, proving both the crop origin and
+     * that every row uses its own (not row 0's) source row. */
+    struct { int row, col; } points[] = {
+        { 0, 0 }, { 0, CPS1_PANEL_WIDTH - 1 }, { 0, 100 },
+        { CPS1_FB_HEIGHT - 1, 0 }, { CPS1_FB_HEIGHT - 1, CPS1_PANEL_WIDTH - 1 },
+    };
+    for (unsigned i = 0; i < sizeof(points) / sizeof(points[0]); i++) {
+        int row = points[i].row, col = points[i].col;
+        uint16_t expected = (uint16_t)(((row & 0xFFu) << 8) | ((col + CPS1_PANEL_CROP_X) & 0xFFu));
+        if (dst[row * CPS1_PANEL_WIDTH + col] != expected)
+            return 0;
+    }
     return 1;
 }

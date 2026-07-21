@@ -9,7 +9,7 @@
 #                              cps1-bg-selftest, cps1-bg-bus-selftest,
 #                              cps1-sound-hle-selftest, cps1-sound-bus-selftest,
 #                              cps1-phase9-selftest, cps1-priority-bus-selftest,
-#                              cps1-rom-load-selftest
+#                              cps1-rom-load-selftest, cps1-ltdc-bottom-selftest
 #   ./build/retro-go-cps1 --frames=600 --engine=diff --dump-ppm
 #   ./build/retro-go-cps1 --profile --frames=600
 #   ./build/cps1-ppu-selftest
@@ -21,6 +21,7 @@
 #   ./build/cps1-phase9-selftest
 #   ./build/cps1-priority-bus-selftest
 #   ./build/cps1-rom-load-selftest
+#   ./build/cps1-ltdc-bottom-selftest
 TARGET        = retro-go-cps1
 SELFTEST      = cps1-ppu-selftest
 BUSSELFTEST   = cps1-vdp-bus-selftest
@@ -31,6 +32,7 @@ SNDBUSSELFTEST = cps1-sound-bus-selftest
 PHASE9SELFTEST = cps1-phase9-selftest
 PHASE10SELFTEST = cps1-priority-bus-selftest
 ROMLOADSELFTEST = cps1-rom-load-selftest
+PHASE12SELFTEST = cps1-ltdc-bottom-selftest
 BUILD_DIR     = build
 
 OPT ?= -O2 -g
@@ -92,6 +94,10 @@ cps1/rom_load_selftest.c \
 $(CPS1DIR)/cps1_rom.c \
 cps1/cps1_rom_linux.c
 
+PHASE12SELFTEST_SOURCES = \
+cps1/ltdc_bottom_selftest.c \
+$(CORE_SOURCES)
+
 PREFIX =
 CC = $(PREFIX)gcc
 SZ = $(PREFIX)size
@@ -112,7 +118,7 @@ all: $(BUILD_DIR)/$(TARGET) $(BUILD_DIR)/$(SELFTEST) $(BUILD_DIR)/$(BUSSELFTEST)
      $(BUILD_DIR)/$(BGSELFTEST) $(BUILD_DIR)/$(BGBUSSELFTEST) \
      $(BUILD_DIR)/$(SNDSELFTEST) $(BUILD_DIR)/$(SNDBUSSELFTEST) \
      $(BUILD_DIR)/$(PHASE9SELFTEST) $(BUILD_DIR)/$(PHASE10SELFTEST) \
-     $(BUILD_DIR)/$(ROMLOADSELFTEST)
+     $(BUILD_DIR)/$(ROMLOADSELFTEST) $(BUILD_DIR)/$(PHASE12SELFTEST)
 
 OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/selftest_,$(notdir $(SELFTEST_SOURCES:.c=.o)))
@@ -124,11 +130,12 @@ SNDBUSSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/sndbusselftest_,$(notdir $(SND
 PHASE9SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase9selftest_,$(notdir $(PHASE9SELFTEST_SOURCES:.c=.o)))
 PHASE10SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase10selftest_,$(notdir $(PHASE10SELFTEST_SOURCES:.c=.o)))
 ROMLOADSELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/romloadselftest_,$(notdir $(ROMLOADSELFTEST_SOURCES:.c=.o)))
+PHASE12SELFTEST_OBJECTS = $(addprefix $(BUILD_DIR)/phase12selftest_,$(notdir $(PHASE12SELFTEST_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)) $(dir $(SELFTEST_SOURCES)) $(dir $(BUSSELFTEST_SOURCES)) \
                  $(dir $(BGSELFTEST_SOURCES)) $(dir $(BGBUSSELFTEST_SOURCES)) \
                  $(dir $(SNDSELFTEST_SOURCES)) $(dir $(SNDBUSSELFTEST_SOURCES)) \
                  $(dir $(PHASE9SELFTEST_SOURCES)) $(dir $(PHASE10SELFTEST_SOURCES)) \
-                 $(dir $(ROMLOADSELFTEST_SOURCES)))
+                 $(dir $(ROMLOADSELFTEST_SOURCES)) $(dir $(PHASE12SELFTEST_SOURCES)))
 
 $(BUILD_DIR)/%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
@@ -158,6 +165,9 @@ $(BUILD_DIR)/phase10selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/romloadselftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD_DIR)/phase12selftest_%.o: %.c Makefile.cps1 | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/$(TARGET): $(OBJECTS) Makefile.cps1
@@ -198,6 +208,10 @@ $(BUILD_DIR)/$(PHASE10SELFTEST): $(PHASE10SELFTEST_OBJECTS) Makefile.cps1
 
 $(BUILD_DIR)/$(ROMLOADSELFTEST): $(ROMLOADSELFTEST_OBJECTS) Makefile.cps1
 	$(CC) $(ROMLOADSELFTEST_OBJECTS) $(LDFLAGS) -o $@
+	$(SZ) $@
+
+$(BUILD_DIR)/$(PHASE12SELFTEST): $(PHASE12SELFTEST_OBJECTS) Makefile.cps1
+	$(CC) $(PHASE12SELFTEST_OBJECTS) $(LDFLAGS) -o $@
 	$(SZ) $@
 
 $(BUILD_DIR):

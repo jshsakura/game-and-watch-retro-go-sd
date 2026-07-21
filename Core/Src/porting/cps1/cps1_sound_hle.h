@@ -24,6 +24,11 @@
 
 #define CPS1_SOUND_TONE_CHANNELS 4
 #define CPS1_SOUND_SAMPLE_RATE   22050u
+/* Samples per 60fps video frame at the mixer's own rate -- moved here
+ * (from a cps1_core.c-local macro) so Phase 12's device audio bridge
+ * (Core/Src/porting/cps1/cps1_device_audio.c) can size its
+ * audio_start_playing() call without reaching into cps1_core.c internals. */
+#define CPS1_SOUND_SAMPLES_PER_FRAME (CPS1_SOUND_SAMPLE_RATE / 60u) /* ~368 @ 60fps */
 
 typedef struct {
     uint8_t enabled;

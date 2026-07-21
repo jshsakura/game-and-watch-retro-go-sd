@@ -8,15 +8,21 @@
  * mps2_an500.ld verbatim -- both are core-agnostic (docs/HARNESSES.md:
  * "copy rig_vb.c's shape to put any other core on the same scale").
  *
- * Measures TWO paths, because they answer different questions:
+ * Measures THREE paths, because they answer different questions:
  *   - cps1_core_run_frame(): CPU + all 3 BG layers + sprites + the host
  *     compositor stand-in for LTDC. This is what a host WITHOUT real LTDC
  *     hardware has to pay -- not what the device pays.
- *   - cps1_core_run_frame_device_cost(): CPU + SCROLL3 + sprites only.
- *     SCROLL1/SCROLL2 render and the compositor blend are skipped, because
- *     on real hardware those become LTDC hardware layers/scanout blending
- *     and cost the CPU nothing (cheat 8). THIS is the number to check
- *     against the 60fps budget.
+ *   - cps1_core_run_frame_device_cost(): CPU + SCROLL3 + sprites only,
+ *     alone. Phases 7-10's number -- SCROLL1/SCROLL2 hadn't been given a
+ *     real home yet, so they were left out entirely. Kept here for
+ *     historical comparison, NOT the budget number any more (see next).
+ *   - "ltdc" (run_frame_ltdc_total): device_cost PLUS
+ *     cps1_core_render_ltdc_bottom() (SCROLL1+SCROLL2 combined, Phase 12).
+ *     This is the COMPLETE real per-frame cost under the actual LTDC
+ *     dual-layer architecture -- device_cost's own buffer becomes LTDC
+ *     layer 1, the bottom buffer becomes layer 0, and LTDC's hardware
+ *     blends them for free; both layers' CONTENT is still real CPU work.
+ *     THIS is the number to check against the 60fps budget now.
  *
  * What this rig can and can't tell you: QEMU's -icount models a real
  * ARMv7-M *instruction stream* (real Thumb-2 encoding, real hard-float
@@ -51,6 +57,15 @@ uint32_t rig_timer_now(void);
 uint32_t rig_calibrate(uint32_t n);
 
 typedef void (*frame_fn_t)(cps1_engine_kind_t);
+
+/* Phase 12: the complete real per-frame cost -- device_cost's own buffer
+ * becomes LTDC layer 1 (top), this ALSO renders SCROLL1+SCROLL2 into the
+ * buffer that becomes layer 0 (bottom). See file header. */
+static void run_frame_ltdc_total(cps1_engine_kind_t engine)
+{
+    cps1_core_run_frame_device_cost(engine);
+    cps1_core_render_ltdc_bottom();
+}
 
 static uint64_t measure_path(const char *label, frame_fn_t fn, uint32_t ipt_x1000)
 {
@@ -107,11 +122,13 @@ int main(void)
 
     uint64_t full = measure_path("full", cps1_core_run_frame, ipt_x1000);
     uint64_t device = measure_path("device-cost", cps1_core_run_frame_device_cost, ipt_x1000);
+    uint64_t ltdc = measure_path("ltdc", run_frame_ltdc_total, ipt_x1000);
 
     printf("[cps1-qemu] summary: full(host-compositor)=%lu insn/frame, "
-           "device-cost(cheat-8, real hardware pays this)=%lu insn/frame, saving=%.1f%%\n",
-           (unsigned long)full, (unsigned long)device,
-           full ? 100.0 * (1.0 - (double)device / (double)full) : 0.0);
+           "device-cost(SCROLL3+sprite only, historical)=%lu insn/frame, "
+           "ltdc(REAL total: device-cost + SCROLL1+SCROLL2)=%lu insn/frame, saving vs full=%.1f%%\n",
+           (unsigned long)full, (unsigned long)device, (unsigned long)ltdc,
+           full ? 100.0 * (1.0 - (double)ltdc / (double)full) : 0.0);
     printf("[cps1-qemu] NOTE: instruction count is a necessary, not sufficient, condition for "
            "60fps -- QEMU models neither cache misses nor flash wait states. The device's own "
            "DWT/frame ledger is the final judge.\n");

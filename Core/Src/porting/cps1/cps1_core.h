@@ -30,11 +30,45 @@ void cps1_core_reset(cps1_engine_kind_t engine);
  * variant below for what real hardware actually pays per frame. */
 void cps1_core_run_frame(cps1_engine_kind_t engine);
 
-/* Device-realistic pipeline (cheat 8): CPU + SCROLL3 + sprites only.
- * SCROLL1/SCROLL2 render and the compositor blend are skipped -- on real
- * hardware those become LTDC hardware layers/scanout blending and cost
- * the CPU nothing. Profile THIS against the 60fps budget. */
+/* Device-realistic pipeline (cheat 8): CPU + SCROLL3 + sprites only, into
+ * ONE buffer (cps1_core_get_framebuffer). This is what becomes LTDC
+ * hardware layer 1 (the "top" layer) on real hardware -- see
+ * cps1_core_render_ltdc_bottom below for the OTHER layer. The compositor
+ * BLEND between the two layers is what's actually free on real hardware
+ * (LTDC's own alpha/scanout hardware) -- SCROLL3/sprite RENDERING is
+ * still real CPU work, same as always. Profile THIS (plus the bottom
+ * layer below) against the 60fps budget. */
 void cps1_core_run_frame_device_cost(cps1_engine_kind_t engine);
+
+/*
+ * Phase 12 (docs/CPS1_MAME_ALIGNMENT.md section 9, LTDC dual-layer
+ * binding): renders SCROLL1+SCROLL2 combined (plain overwrite, no
+ * priority-group logic -- BG-vs-BG order is fixed regardless of masks)
+ * into a SEPARATE buffer from cps1_core_run_frame_device_cost()'s output.
+ * STM32H7's LTDC has exactly 2 hardware layers: this buffer becomes layer
+ * 0 (bottom), cps1_core_get_framebuffer(engine)'s becomes layer 1 (top,
+ * with LTDC hardware alpha-blending them at scanout for zero CPU cost --
+ * see Core/Src/porting/cps1/cps1_device_display.c for the real LTDC
+ * register wiring). Not per-engine (BG state is shared, like the rest of
+ * this file) -- call once per frame alongside run_frame_device_cost(),
+ * not instead of it.
+ */
+void cps1_core_render_ltdc_bottom(void);
+const uint16_t *cps1_core_get_ltdc_bottom_buffer(void);
+
+/* Real LCD panel is 320x240 (Core/Inc/gw_lcd.h), narrower than CPS-1's
+ * 384x224 native resolution -- CPS1_PANEL_WIDTH/HEIGHT below is the
+ * center-cropped window LTDC actually scans out; see cps1_core.c's
+ * comment on cps1_core_crop_to_panel for why this specific choice (crop,
+ * not scale) is a placeholder, not a validated design decision. `dst`
+ * must be CPS1_PANEL_WIDTH*CPS1_PANEL_HEIGHT uint16_t. */
+#define CPS1_PANEL_WIDTH  320
+#define CPS1_PANEL_HEIGHT 224
+void cps1_core_crop_to_panel(const uint16_t *src, uint16_t *dst);
+
+/* Proves the crop takes exactly the centered CPS1_PANEL_WIDTH-wide
+ * window of each row, not an off-by-one/uncentered slice. */
+int cps1_core_selftest_crop_to_panel(void);
 
 const uint16_t *cps1_core_get_framebuffer(cps1_engine_kind_t engine);
 uint32_t cps1_core_checksum(cps1_engine_kind_t engine);
@@ -167,3 +201,8 @@ uint16_t cps1_core_priority_mask_peek(unsigned group);
  * the priority masks cps1_compositor_blend_priority reads, not just that
  * the masks work when poked directly in a host test. */
 int cps1_core_selftest_priority_bus(void);
+
+/* Phase 12: proves cps1_core_render_ltdc_bottom() combines SCROLL1+SCROLL2
+ * (plain overwrite, SCROLL2 on top) and is NOT affected by SCROLL3 or
+ * sprites -- see cps1_core.c for the exact pixel checks. */
+int cps1_core_selftest_ltdc_bottom(void);

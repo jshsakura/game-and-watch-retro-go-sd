@@ -135,6 +135,22 @@ static double now_ms(void)
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 
+/* Phase 12: the COMPLETE real per-frame device cost under the LTDC
+ * dual-layer architecture is cps1_core_run_frame_device_cost() (CPU +
+ * SCROLL3 + sprites, becomes LTDC layer 1) PLUS cps1_core_render_ltdc_
+ * bottom() (SCROLL1+SCROLL2 combined, becomes LTDC layer 0) -- NOT
+ * device_cost alone. Phases 7-10 profiled device_cost alone because
+ * SCROLL1/SCROLL2 hadn't been given a real home yet; now that they have
+ * one (this phase), leaving them out of the budget would be measuring a
+ * cost real hardware doesn't actually pay this way. LTDC's own hardware
+ * blend between the two layers is the part that's genuinely free -- both
+ * layers' CONTENT is still real CPU work, measured here together. */
+static void run_frame_ltdc_total(cps1_engine_kind_t engine)
+{
+    cps1_core_run_frame_device_cost(engine);
+    cps1_core_render_ltdc_bottom();
+}
+
 static int run_profile(int frames)
 {
     cps1_core_reset(CPS1_ENGINE_INTERPRETER);
@@ -142,12 +158,12 @@ static int run_profile(int frames)
     /* Warm up the tile cache so the first measured frames aren't paying a
      * one-time cold-cache cost that a real running game wouldn't repeat. */
     for (int f = 0; f < 5; f++)
-        cps1_core_run_frame_device_cost(CPS1_ENGINE_INTERPRETER);
+        run_frame_ltdc_total(CPS1_ENGINE_INTERPRETER);
 
     double total_ms = 0.0, min_ms = 1e9, max_ms = 0.0;
     for (int f = 0; f < frames; f++) {
         double t0 = now_ms();
-        cps1_core_run_frame_device_cost(CPS1_ENGINE_INTERPRETER);
+        run_frame_ltdc_total(CPS1_ENGINE_INTERPRETER);
         double dt = now_ms() - t0;
         total_ms += dt;
         if (dt < min_ms) min_ms = dt;
@@ -155,7 +171,8 @@ static int run_profile(int frames)
     }
 
     double avg_ms = total_ms / frames;
-    printf("[cps1-profile] x86 HOST wall-clock, device_cost path (CPU+SCROLL3+sprites), %d frames\n",
+    printf("[cps1-profile] x86 HOST wall-clock, FULL LTDC-era device cost (device_cost path "
+           "[CPU+SCROLL3+sprites, LTDC layer 1] + SCROLL1+SCROLL2 [LTDC layer 0]), %d frames\n",
            frames);
     printf("[cps1-profile] avg=%.4f ms/frame min=%.4f max=%.4f (16.6ms budget line is NOT a device fps verdict here -- see file header)\n",
            avg_ms, min_ms, max_ms);
