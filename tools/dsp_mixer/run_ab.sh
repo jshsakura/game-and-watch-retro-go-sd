@@ -12,7 +12,7 @@ FRAMES="${2:-1200}"
 REPS="${3:-3}"
 
 O=/tmp/dsp_mixer_build; mkdir -p "$O"; rm -f "$O"/*.o
-CF="-O2 -DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS -w -Iexternal/sm -Itools/sm_harness/shim"
+CF="-O2 -DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS -DDSP_MIXER_DIAG -w -Iexternal/sm -Itools/sm_harness/shim"
 
 for f in external/sm/src/snes/*.c external/sm/src/tracing.c; do
   b="$(basename "${f%.c}")"

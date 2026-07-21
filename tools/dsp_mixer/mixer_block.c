@@ -29,6 +29,85 @@
 
 #define CHUNK 256
 
+#ifdef DSP_MIXER_DIAG
+uint64_t dspb_diag_block_samples;
+uint64_t dspb_diag_ref_samples;
+uint64_t dspb_diag_hazard_chunks;
+uint64_t dspb_diag_pmon_echo_chunks;
+void dspb_diag_reset(void) {
+  dspb_diag_block_samples = 0;
+  dspb_diag_ref_samples = 0;
+  dspb_diag_hazard_chunks = 0;
+  dspb_diag_pmon_echo_chunks = 0;
+}
+#endif
+
+/* Voice-major mixing moves all BRR reads in a chunk ahead of its echo writes.
+ * Usually those touch disjoint ARAM, but games are allowed to overlap the echo
+ * ring with BRR data (Chrono Trigger does). In that case a later reference
+ * sample decodes bytes written by an earlier sample's echo, while a whole-block
+ * voice pass would decode the stale bytes.
+ *
+ * Describe the four-byte echo slots written by this chunk as two ring spans,
+ * then walk every
+ * BRR block the non-PMON voices will decode. PMON's exact decode times depend on
+ * the preceding voice's samples, so scan the maximum reachable BRR chain. A hit
+ * is conservative (it may be a future write), but cannot miss a real hazard.
+ * Directory loop-pointer reads are checked too. No ARAM is modified here. */
+typedef struct BlkEchoSpan {
+  uint16_t start[2];
+  uint16_t length[2];
+} BlkEchoSpan;
+
+static inline bool blk_echo_slot_hit(const BlkEchoSpan *span, uint16_t adr) {
+  uint16_t slot = adr >> 2;
+  for (int i = 0; i < 2; i++) {
+    if (span->length[i] != 0 &&
+        (((unsigned)slot - span->start[i]) & 0x3fff) < span->length[i])
+      return true;
+  }
+  return false;
+}
+
+static bool blk_echo_brr_hazard(const Dsp *dsp, int K, bool *pmonEcho) {
+  *pmonEcho = false;
+  if (!dsp->echoWrites || K <= 0) return false;
+
+  BlkEchoSpan span = {{0, 0}, {0, 0}};
+  uint16_t first = K < dsp->echoRemain ? K : dsp->echoRemain;
+  span.start[0] = ((dsp->echoBufferAdr >> 2) + dsp->echoBufferIndex) & 0x3fff;
+  span.length[0] = first;
+  if (K > first) {
+    span.start[1] = dsp->echoBufferAdr >> 2;
+    /* EDL=0 is represented by a one-sample ring. Other delays are at least
+     * 512 samples, so a <=256-sample chunk cannot wrap it a second time. */
+    span.length[1] = dsp->echoDelay == 1 ? 1 : K - first;
+  }
+
+  for (int ch = 0; ch < 8; ch++) {
+    const DspChannel *c = &dsp->channel[ch];
+    uint32_t maxPitch = c->pitchModulation ? 0x3fff : c->pitch;
+    uint32_t decodes = ((uint32_t)c->pitchCounter + (uint32_t)K * maxPitch) >> 16;
+    if (c->pitchModulation && decodes) *pmonEcho = true;
+    uint16_t offset = c->decodeOffset;
+    uint8_t flags = c->previousFlags;
+    while (decodes-- != 0) {
+      if (flags == 1 || flags == 3) {
+        uint16_t ptr = dsp->dirPage + 4 * c->srcn;
+        uint16_t lo = ptr + 2;
+        uint16_t hi = ptr + 3;
+        if (blk_echo_slot_hit(&span, lo) || blk_echo_slot_hit(&span, hi)) return true;
+        offset = dsp->apu_ram[lo] | (dsp->apu_ram[hi] << 8);
+      }
+      for (int i = 0; i < 9; i++)
+        if (blk_echo_slot_hit(&span, offset + i)) return true;
+      flags = dsp->apu_ram[offset] & 3;
+      offset += 9;
+    }
+  }
+  return false;
+}
+
 /* ---- verbatim from dsp.c: BRR block decode ------------------------------- */
 static void blk_decodeBrr(Dsp* dsp, int ch) {
   dsp->channel[ch].decodeBuffer[0] = dsp->channel[ch].decodeBuffer[16];
@@ -306,6 +385,20 @@ void dspb_run(Dsp *dsp, int n) {
 
   while (n > 0) {
     int K = n > CHUNK ? CHUNK : n;
+    bool pmonEcho = false;
+    if (blk_echo_brr_hazard(dsp, K, &pmonEcho)) {
+#ifdef DSP_MIXER_DIAG
+      dspb_diag_ref_samples += K;
+      dspb_diag_hazard_chunks++;
+      if (pmonEcho) dspb_diag_pmon_echo_chunks++;
+#endif
+      for (int k = 0; k < K; k++) dsp_cycle(dsp);
+      n -= K;
+      continue;
+    }
+#ifdef DSP_MIXER_DIAG
+    dspb_diag_block_samples += K;
+#endif
 
     /* noise values each voice sees at sample k (state advances AFTER the
      * voices each sample in the reference; precomputing commutes because

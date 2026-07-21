@@ -38,6 +38,11 @@
 
 bool snes_loadRom(Snes* snes, const uint8_t* data, int length);
 void dspb_run(Dsp *dsp, int n);   /* mixer_block.c */
+#ifdef DSP_MIXER_DIAG
+extern uint64_t dspb_diag_block_samples, dspb_diag_ref_samples;
+extern uint64_t dspb_diag_hazard_chunks, dspb_diag_pmon_echo_chunks;
+void dspb_diag_reset(void);
+#endif
 
 /* firmware allocator shims */
 void *itc_calloc(size_t n, size_t s) { return calloc(n, s); }
@@ -249,8 +254,75 @@ static void debug_frame(const FrameRec *fr) {
     seg++;
   }
   printf("debug_frame: per-sample lockstep found NO divergence (chunking bug: retry chunked)\n");
-  /* if per-sample agrees, the bug is chunk-size-dependent: replay block with the
-   * real chunking against per-sample ref, comparing only at segment ends */
+  /* If per-sample agrees, locate the first real write-delimited block and the
+   * shortest one-shot prefix which diverges. This preserves the production
+   * chunking that a dspb_run(..., 1) lockstep necessarily destroys. */
+  memcpy(&R, &fr->snap, sizeof(Dsp)); memcpy(rr, fr->ramSnap, 0x10000); R.apu_ram = rr;
+  memcpy(&B, &fr->snap, sizeof(Dsp)); memcpy(rb, fr->ramSnap, 0x10000); B.apu_ram = rb;
+  uint8_t *preRram = malloc(0x10000), *preBram = malloc(0x10000);
+  uint8_t *tryRram = malloc(0x10000), *tryBram = malloc(0x10000);
+  static Dsp preR, preB, tryR, tryB;
+  done = 0; w = fr->wfirst; seg = 0;
+  while (done < fr->ncycles || w < wend) {
+    int32_t next = (w < wend) ? g_writes[w].cyc : fr->ncycles;
+    if (next > fr->ncycles) next = fr->ncycles;
+    int32_t run = next - done;
+    if (run > 0) {
+      memcpy(&preR, &R, sizeof(Dsp)); memcpy(preRram, rr, 0x10000); preR.apu_ram = preRram;
+      memcpy(&preB, &B, sizeof(Dsp)); memcpy(preBram, rb, 0x10000); preB.apu_ram = preBram;
+      for (int32_t k = 0; k < run; k++) dsp_cycle(&R);
+      dspb_run(&B, run);
+      if (memcmp((uint8_t*)&R + cmpOff, (uint8_t*)&B + cmpOff, sizeof(Dsp) - cmpOff) ||
+          memcmp(rr, rb, 0x10000)) {
+        printf("first chunk divergence: segment %d abs cycle %d len %d",
+               seg, (int)done, (int)run);
+        if (w > fr->wfirst)
+          printf(" after write %02x=%02x@%d", g_writes[w-1].adr,
+                 g_writes[w-1].val, (int)g_writes[w-1].cyc);
+        if (w < wend)
+          printf(" before write %02x=%02x@%d", g_writes[w].adr,
+                 g_writes[w].val, (int)g_writes[w].cyc);
+        printf("\n");
+        for (int32_t k = 1; k <= run; k++) {
+          memcpy(&tryR, &preR, sizeof(Dsp)); memcpy(tryRram, preRram, 0x10000); tryR.apu_ram = tryRram;
+          memcpy(&tryB, &preB, sizeof(Dsp)); memcpy(tryBram, preBram, 0x10000); tryB.apu_ram = tryBram;
+          for (int32_t j = 0; j < k; j++) dsp_cycle(&tryR);
+          dspb_run(&tryB, k);
+          if (memcmp((uint8_t*)&tryR + cmpOff, (uint8_t*)&tryB + cmpOff, sizeof(Dsp) - cmpOff) ||
+              memcmp(tryRram, tryBram, 0x10000)) {
+            printf("shortest divergent one-shot prefix: %d samples (abs cycle %d)\n",
+                   (int)k, (int)(done + k - 1));
+            printf("  pre echo: writes=%d base=%04x index=%u remain=%u delay=%u firstAdr=%04x\n",
+                   preB.echoWrites, preB.echoBufferAdr, preB.echoBufferIndex,
+                   preB.echoRemain, preB.echoDelay,
+                   (uint16_t)(preB.echoBufferAdr + preB.echoBufferIndex * 4));
+            printf("  end echo: ref index=%u remain=%u blk index=%u remain=%u\n",
+                   tryR.echoBufferIndex, tryR.echoRemain,
+                   tryB.echoBufferIndex, tryB.echoRemain);
+            const uint8_t *a=(const uint8_t*)&tryR+cmpOff, *b=(const uint8_t*)&tryB+cmpOff;
+            for (size_t o = 0; o < sizeof(Dsp)-cmpOff; o++)
+              if (a[o]!=b[o]) printf("  struct+%zu: ref=%02x blk=%02x\n", o, a[o], b[o]);
+            for (int ch = 0; ch < 8; ch++) {
+              dump_ch("pre", &preB, ch);
+              dump_ch("ref", &tryR, ch);
+              dump_ch("blk", &tryB, ch);
+            }
+            break;
+          }
+        }
+        break;
+      }
+      done = next;
+    }
+    while (w < wend && g_writes[w].cyc <= done) {
+      dsp_write(&R, g_writes[w].adr, g_writes[w].val);
+      dsp_write(&B, g_writes[w].adr, g_writes[w].val);
+      w++;
+    }
+    if (run <= 0 && done >= fr->ncycles && w >= wend) break;
+    seg++;
+  }
+  free(preRram); free(preBram); free(tryRram); free(tryBram);
   free(rr); free(rb);
 }
 
@@ -308,12 +380,38 @@ int main(int argc, char **argv) {
   for (int i = 0; i < g_nframes; i++) { totalCycles += g_frames[i].ncycles; totalWrites += g_frames[i].wcount; }
   printf("captured %d frames, %ld dsp cycles, %ld reg writes (%.1f/frame)\n",
          g_nframes, totalCycles, totalWrites, (double)totalWrites / g_nframes);
+  uint8_t seenPmon = 0, seenNoise = 0, seenEcho = 0, seenKon = 0, seenKof = 0;
+  int maxLiveVoices = 0, echoWriteFrames = 0;
+  for (int i = 0; i < g_nframes; i++) {
+    int liveVoices = 0;
+    for (int ch = 0; ch < 8; ch++) {
+      if (g_frames[i].snap.channel[ch].pitchModulation) seenPmon |= 1 << ch;
+      if (g_frames[i].snap.channel[ch].useNoise) seenNoise |= 1 << ch;
+      if (g_frames[i].snap.channel[ch].echoEnable) seenEcho |= 1 << ch;
+      if (g_frames[i].snap.channel[ch].adsrState != 4 || g_frames[i].snap.channel[ch].gain)
+        liveVoices++;
+    }
+    if (liveVoices > maxLiveVoices) maxLiveVoices = liveVoices;
+    if (g_frames[i].snap.echoWrites) echoWriteFrames++;
+  }
+  for (int i = 0; i < g_nwrites; i++) {
+    if (g_writes[i].adr == 0x2d) seenPmon |= g_writes[i].val;
+    if (g_writes[i].adr == 0x3d) seenNoise |= g_writes[i].val;
+    if (g_writes[i].adr == 0x4d) seenEcho |= g_writes[i].val;
+    if (g_writes[i].adr == 0x4c) seenKon |= g_writes[i].val;
+    if (g_writes[i].adr == 0x5c) seenKof |= g_writes[i].val;
+  }
+  printf("features: PMON=%02x NON=%02x EON=%02x KON=%02x KOF=%02x maxLiveVoices=%d echoWriteFrames=%d\n",
+         seenPmon, seenNoise, seenEcho, seenKon, seenKof, maxLiveVoices, echoWriteFrames);
 
   /* ---- gate: ref vs block on identical inputs ---- */
   static Dsp instR, instB;
   uint8_t *ramR = malloc(0x10000), *ramB = malloc(0x10000);
   int liveDiffFrames = 0;
   const size_t cmpOff = offsetof(Dsp, ram);   /* skip the apu_ram pointer */
+#ifdef DSP_MIXER_DIAG
+  dspb_diag_reset();
+#endif
   for (int i = 0; i < g_nframes; i++) {
     replay(&g_frames[i], &instR, ramR, 0);
     replay(&g_frames[i], &instB, ramB, 1);
@@ -334,6 +432,15 @@ int main(int argc, char **argv) {
       liveDiffFrames++;   /* SPC700 wrote ARAM mid-frame -- info only */
   }
   printf("GATE PASS: %d frames bit-identical (Dsp state + 64K ARAM + 534 samples)\n", g_nframes);
+#ifdef DSP_MIXER_DIAG
+  printf("fallback: %llu/%llu samples (%.3f%%), %llu hazard chunks, %llu PMON+echo chunks\n",
+         (unsigned long long)dspb_diag_ref_samples,
+         (unsigned long long)(dspb_diag_block_samples + dspb_diag_ref_samples),
+         100.0 * dspb_diag_ref_samples /
+           (dspb_diag_block_samples + dspb_diag_ref_samples),
+         (unsigned long long)dspb_diag_hazard_chunks,
+         (unsigned long long)dspb_diag_pmon_echo_chunks);
+#endif
   printf("  (offline-ref vs live-ref differed on %d frames -- mid-frame SPC700 ARAM writes; not gated)\n",
          liveDiffFrames);
 
