@@ -178,8 +178,14 @@ void cps1_m68k_init(const uint8_t *prg, uint32_t prg_size, uint8_t *wram,
     cps1_map_page_io(CPS1_QSOUND_ROM_PAGE);
     cps1_map_page_io(CPS1_QSOUND_RAM_PAGE);
 
+    /* wram == NULL routes work RAM through the io callbacks instead of a
+     * base pointer. Slower, but it makes every WRAM access visible to the
+     * bus -- which is the only way to put a write-hook on a game variable,
+     * since base-mapped pages bypass the callbacks entirely. */
     if (wram != NULL)
         cps1_map_page_base(CPS1_WRAM_PAGE, wram);
+    else
+        cps1_map_page_io(CPS1_WRAM_PAGE);
 }
 
 void cps1_m68k_reset(void)

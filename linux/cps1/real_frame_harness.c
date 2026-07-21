@@ -41,8 +41,18 @@ static uint16_t s_regs[0xC0];      /* 0x800000-0x80017F, word indexed */
 enum { REG_OBJ = 0, REG_SCROLL1, REG_SCROLL2, REG_SCROLL3, REG_OTHER, REG_PALETTE };
 #define CPSA_REG(i) s_regs[(0x100u + (i) * 2u) >> 1]
 
+/* Write-hook target: the main loop at 0x730 dispatches on this byte. */
+#define WATCH_ADDR 0xFF5600u
+static unsigned s_watch_writes;
+static struct { uint32_t pc; uint16_t val; } s_watch[24];
+static unsigned s_watch_n;
+
 static uint16_t bus_read16(uint32_t a)
 {
+    if (a >= 0xFF0000u) {
+        uint32_t o = a - 0xFF0000u;
+        return (uint16_t)((s_wram[o] << 8) | s_wram[o + 1]);
+    }
     if (a >= GFXRAM_BASE && a < GFXRAM_BASE + GFXRAM_BYTES) {
         uint32_t o = a - GFXRAM_BASE;
         return (uint16_t)((s_gfxram[o] << 8) | s_gfxram[o + 1]);
@@ -58,6 +68,16 @@ static uint16_t bus_read16(uint32_t a)
 
 static void bus_write16(uint32_t a, uint16_t v)
 {
+    if (a >= 0xFF0000u) {
+        uint32_t o = a - 0xFF0000u;
+        s_wram[o] = (uint8_t)(v >> 8); s_wram[o + 1] = (uint8_t)v;
+        if ((a & ~1u) == (WATCH_ADDR & ~1u)) {
+            s_watch_writes++;
+            if (s_watch_n < 24) { s_watch[s_watch_n].pc = cps1_m68k_get_pc();
+                                  s_watch[s_watch_n].val = v; s_watch_n++; }
+        }
+        return;
+    }
     if (a >= GFXRAM_BASE && a < GFXRAM_BASE + GFXRAM_BYTES) {
         uint32_t o = a - GFXRAM_BASE;
         s_gfxram[o] = (uint8_t)(v >> 8); s_gfxram[o + 1] = (uint8_t)v;
@@ -115,7 +135,7 @@ int main(int argc, char **argv)
     /* --- boot the real game --- */
     s_qram[0x9FFE + 1] = 0x77;                    /* QSound Z80 "alive" stub */
     const cps1_m68k_io_t io = { bus_read16, bus_write16 };
-    cps1_m68k_init(blob + h.po, h.ps, s_wram, &io);
+    cps1_m68k_init(blob + h.po, h.ps, NULL, &io); /* NULL => WRAM via io, hookable */
     cps1_m68k_reset();
 
     const uint32_t FRAME = 166666u * 7u;
@@ -138,6 +158,10 @@ int main(int argc, char **argv)
         cps1_m68k_run(FRAME / 2u);
     }
     printf("[frame] vblank handler PC samples: %u\n", handler_hits);
+    printf("[frame] writes to 0x%06x: %u\n", WATCH_ADDR, s_watch_writes);
+    for (unsigned i = 0; i < s_watch_n; i++)
+        printf("         PC~0x%06x wrote 0x%04x\n", s_watch[i].pc, s_watch[i].val);
+    printf("[frame] 0xFF5600 now = 0x%02x\n", s_wram[0x5600]);
     printf("[frame] booted %u frames; PC=0x%06x SR=0x%04x\n",
            boot_frames, cps1_m68k_get_pc(), cps1_m68k_get_sr());
     printf("[frame] CPS-A bases: OBJ=%04x SCROLL1=%04x SCROLL2=%04x SCROLL3=%04x "
