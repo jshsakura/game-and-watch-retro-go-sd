@@ -113,15 +113,15 @@ static void test_interleave(void)
     remove(path1);
 }
 
-/* A real PRG ROM's reset vector: SSP=0x00100000 (arbitrary, unchecked),
- * PC=0x00000010 -- INSIDE a 32-byte fabricated ROM, so
- * cps1_rom_check_reset_vector must accept it and report both fields back
- * correctly. */
+/* A real PRG ROM's reset vector: SSP must now be inside CPS-1 work RAM
+ * (0xFF0000-0xFFFFFF -- the board's only RAM, and the test that
+ * distinguishes a correctly-loaded ROM from a byte-swapped one), PC even,
+ * >= 8, and INSIDE the 32-byte fabricated ROM. */
 static void test_reset_vector_valid(void)
 {
     uint8_t prg[32];
     memset(prg, 0, sizeof(prg));
-    prg[0] = 0x00; prg[1] = 0x10; prg[2] = 0x00; prg[3] = 0x00; /* SSP = 0x00100000 */
+    prg[0] = 0x00; prg[1] = 0xFF; prg[2] = 0x10; prg[3] = 0x00; /* SSP = 0x00FF1000 */
     prg[4] = 0x00; prg[5] = 0x00; prg[6] = 0x00; prg[7] = 0x10; /* PC  = 0x00000010 */
 
     cps1_rom_region_t region = { prg, sizeof(prg) };
@@ -129,7 +129,7 @@ static void test_reset_vector_valid(void)
     int rc = cps1_rom_check_reset_vector(&region, &ssp, &pc);
 
     CHECK(rc == 0, "valid in-range reset vector should pass");
-    CHECK(ssp == 0x00100000u, "SSP should be 0x00100000, got 0x%08x", ssp);
+    CHECK(ssp == 0x00FF1000u, "SSP should be 0x00FF1000, got 0x%08x", ssp);
     CHECK(pc == 0x00000010u, "PC should be 0x00000010, got 0x%08x", pc);
 }
 
@@ -152,6 +152,52 @@ static void test_reset_vector_invalid(void)
     CHECK(rc != 0, "a region too small to even hold a reset vector must be rejected");
 }
 
+/* THE CASE THE OLD `pc < size` TEST LET THROUGH. A real reset vector
+ * (SSP=0x00FF1000, PC=0x00000100) with every 16-bit word byte-swapped --
+ * exactly what a reversed load produces. The swapped PC (0x00000001) is
+ * still inside the ROM, so the size test alone accepts it; the swapped SSP
+ * (0xFF001000) is outside work RAM, so the SSP test rejects it. Plus an
+ * odd PC and a PC inside the vector table, both of which a 68000 could
+ * never start from. */
+static void test_reset_vector_byteswapped_is_rejected(void)
+{
+    uint8_t prg[256];
+    memset(prg, 0, sizeof(prg));
+    cps1_rom_region_t region = { prg, sizeof(prg) };
+
+    /* SSP=0x00FF1000 PC=0x00000100, each 16-bit word byte-swapped. */
+    prg[0] = 0xFF; prg[1] = 0x00; prg[2] = 0x00; prg[3] = 0x10; /* SSP -> 0xFF000010 */
+    prg[4] = 0x00; prg[5] = 0x00; prg[6] = 0x00; prg[7] = 0x01; /* PC  -> 0x00000001 */
+    CHECK(cps1_rom_check_reset_vector(&region, NULL, NULL) != 0,
+          "a fully byte-swapped reset vector must be rejected (this is the whole point)");
+
+    /* PC in range and even, but SSP outside work RAM. */
+    memset(prg, 0, sizeof(prg));
+    prg[0] = 0x00; prg[1] = 0x10; prg[2] = 0x00; prg[3] = 0x00; /* SSP = 0x00100000, not RAM */
+    prg[7] = 0x10;                                              /* PC  = 0x00000010 */
+    CHECK(cps1_rom_check_reset_vector(&region, NULL, NULL) != 0,
+          "SSP outside CPS-1 work RAM must be rejected");
+
+    /* SSP fine, PC odd. */
+    memset(prg, 0, sizeof(prg));
+    prg[1] = 0xFF; prg[2] = 0x10;                               /* SSP = 0x00FF1000 */
+    prg[7] = 0x11;                                              /* PC  = 0x00000011, odd */
+    CHECK(cps1_rom_check_reset_vector(&region, NULL, NULL) != 0,
+          "odd PC must be rejected (a real 68000 address-errors on it)");
+
+    /* SSP fine, PC inside the vector table itself. */
+    memset(prg, 0, sizeof(prg));
+    prg[1] = 0xFF; prg[2] = 0x10;                               /* SSP = 0x00FF1000 */
+    prg[7] = 0x04;                                              /* PC  = 0x00000004 */
+    CHECK(cps1_rom_check_reset_vector(&region, NULL, NULL) != 0,
+          "PC pointing into the vector table's own longs must be rejected");
+
+    /* All-zero ROM: what the packer's dummy dry run actually produced. */
+    memset(prg, 0, sizeof(prg));
+    CHECK(cps1_rom_check_reset_vector(&region, NULL, NULL) != 0,
+          "an all-zero ROM must be rejected (PC=0 passed the old size-only test)");
+}
+
 /* Ties Phase 11's two pieces together: byte-interleave TWO PRG chips
  * (odd/even bytes of a real reset vector, exactly the convention a real
  * CPS-1 PRG ROM dump uses) and confirm the RESULT of that load passes the
@@ -162,16 +208,18 @@ static void test_interleaved_load_then_reset_vector(void)
     snprintf(path0, sizeof(path0), "/tmp/cps1_selftest_prg0_%d.bin", (int)getpid());
     snprintf(path1, sizeof(path1), "/tmp/cps1_selftest_prg1_%d.bin", (int)getpid());
 
-    /* Target reset vector after interleave: SSP=0x00100000, PC=0x00000100
-     * (INSIDE the 512-byte combined ROM below -- 0x100 < 0x200). Interleaved
-     * big-endian bytes {SSP,PC} = 00 10 00 00 00 00 01 00 -> even-index
-     * chip (chip0) gets bytes [0,2,4,6] = 00,00,00,01 ; odd-index chip
-     * (chip1) gets [1,3,5,7] = 10,00,00,00. */
+    /* Target reset vector after interleave: SSP=0x00FF1000 (inside CPS-1
+     * work RAM, as cps1_rom_check_reset_vector now requires -- see its
+     * byte-swap rationale), PC=0x00000100 (INSIDE the 512-byte combined ROM
+     * below -- 0x100 < 0x200). Interleaved big-endian bytes {SSP,PC} =
+     * 00 FF 10 00 00 00 01 00 -> even-index chip (chip0) gets bytes
+     * [0,2,4,6] = 00,10,00,01 ; odd-index chip (chip1) gets
+     * [1,3,5,7] = FF,00,00,00. */
     uint8_t chip0[256], chip1[256];
     memset(chip0, 0, sizeof(chip0));
     memset(chip1, 0, sizeof(chip1));
-    chip0[0] = 0x00; chip1[0] = 0x10; /* byte0=SSP hi,  byte1 */
-    chip0[1] = 0x00; chip1[1] = 0x00; /* byte2,         byte3 */
+    chip0[0] = 0x00; chip1[0] = 0xFF; /* byte0=SSP hi,  byte1 */
+    chip0[1] = 0x10; chip1[1] = 0x00; /* byte2,         byte3 */
     chip0[2] = 0x00; chip1[2] = 0x00; /* byte4=PC hi,   byte5 */
     chip0[3] = 0x01; chip1[3] = 0x00; /* byte6,         byte7=PC lo */
 
@@ -188,7 +236,7 @@ static void test_interleaved_load_then_reset_vector(void)
         uint32_t ssp = 0, pc = 0;
         int vec_rc = cps1_rom_check_reset_vector(&prg, &ssp, &pc);
         CHECK(vec_rc == 0, "interleaved PRG's reset vector should pass the range gate");
-        CHECK(ssp == 0x00100000u, "interleaved SSP should be 0x00100000, got 0x%08x", ssp);
+        CHECK(ssp == 0x00FF1000u, "interleaved SSP should be 0x00FF1000, got 0x%08x", ssp);
         CHECK(pc == 0x00000100u, "interleaved PC should be 0x00000100, got 0x%08x", pc);
         free((void *)prg.data);
     }
@@ -204,6 +252,7 @@ int main(void)
     test_interleave();
     test_reset_vector_valid();
     test_reset_vector_invalid();
+    test_reset_vector_byteswapped_is_rejected();
     test_interleaved_load_then_reset_vector();
 
     if (failures) {

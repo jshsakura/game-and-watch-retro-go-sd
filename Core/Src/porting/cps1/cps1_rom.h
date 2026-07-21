@@ -178,4 +178,12 @@ uint32_t cps1_gfxrom_bank_mapper_wof(cps1_gfx_type_t type, uint32_t code);
  * may be NULL) if the vector's PC is in-range, -1 otherwise (including
  * prg->size < 8, too small to even hold a reset vector).
  */
+/* CPS-1 work RAM occupies 0xFF0000-0xFFFFFF and is the board's only RAM, so
+ * a valid initial supervisor stack pointer must live there (top inclusive --
+ * the 68000 stack pre-decrements). cps1_rom_check_reset_vector() uses this to
+ * tell a correctly-loaded ROM (SSP 0x00FF____) from a byte-swapped one
+ * (0xFF00____), which a plain in-range test on PC cannot do. */
+#define CPS1_WRAM_BASE_ADDR 0x00FF0000u
+#define CPS1_WRAM_TOP_ADDR  0x01000000u
+
 int cps1_rom_check_reset_vector(const cps1_rom_region_t *prg, uint32_t *out_ssp, uint32_t *out_pc);

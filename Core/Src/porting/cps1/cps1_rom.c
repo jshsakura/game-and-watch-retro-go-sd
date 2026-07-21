@@ -132,6 +132,35 @@ int cps1_rom_check_reset_vector(const cps1_rom_region_t *prg, uint32_t *out_ssp,
 
     if (pc >= prg->size)
         return -1; /* PC doesn't point anywhere inside the loaded ROM */
+
+    /*
+     * `pc < size` ALONE DOES NOT CATCH A REVERSED BYTE-SWAP, which is the
+     * single failure this check exists to catch. Worked example: a real
+     * reset PC of 0x00000100, word-swapped, reads back as 0x00000001 --
+     * still comfortably inside a 1 MB ROM, so the size test passes and the
+     * ROM boots into garbage. (The packer's dry run with all-zero dummy
+     * chips passing was the same hole: PC=0 < size.) Three cheap tests
+     * close it, in increasing order of strength:
+     */
+    if (pc < 8u)
+        return -1; /* PC pointing into the vector table's own SSP/PC longs */
+    if (pc & 1u)
+        return -1; /* odd PC -- a real 68000 takes an address error here */
+
+    /*
+     * The decisive one, and it is CPS-1-specific: the board's ONLY work RAM
+     * is 0xFF0000-0xFFFFFF, so the initial supervisor stack pointer must
+     * land in it (0x1000000 inclusive, because the stack pre-decrements
+     * from the top). A correct SSP therefore looks like 0x00FF____; the
+     * same value with its bytes swapped looks like 0xFF00____ and is
+     * rejected on sight. This is what actually distinguishes "loaded
+     * correctly" from "loaded backwards".
+     */
+    if (ssp < CPS1_WRAM_BASE_ADDR || ssp > CPS1_WRAM_TOP_ADDR)
+        return -1;
+    if (ssp & 1u)
+        return -1; /* 68000 stack pointer is always word-aligned */
+
     return 0;
 }
 
