@@ -5,6 +5,12 @@
 # stub -- see its header comment). Headless, like Makefile.wswan: there is
 # nothing to render yet.
 #
+# NOTE: the host entry point is cps1/main.c, NOT main_cps1.c -- the device
+# entry point is Core/Src/porting/cps1/main_cps1.c and make's vpath matches on
+# BASENAME, so two files with that name silently compile the wrong one into
+# the host harness (this exact collision broke retro-go-cps1). Same reason
+# linux/vb uses main.c next to Core/Src/porting/vb/main_vb.c.
+#
 #   make -f Makefile.cps1   -> retro-go-cps1, cps1-ppu-selftest, cps1-vdp-bus-selftest,
 #                              cps1-bg-selftest, cps1-bg-bus-selftest,
 #                              cps1-sound-hle-selftest, cps1-sound-bus-selftest,
@@ -57,7 +63,7 @@ $(CPS1DIR)/cps1_bg.c \
 $(CPS1DIR)/cps1_sound_hle.c
 
 C_SOURCES = \
-cps1/main_cps1.c \
+cps1/main.c \
 $(CORE_SOURCES) \
 cps1/cps1_rom_linux.c \
 crc32.c
