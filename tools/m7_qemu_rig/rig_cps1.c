@@ -67,20 +67,41 @@ static void run_frame_ltdc_total(cps1_engine_kind_t engine)
     cps1_core_render_ltdc_bottom();
 }
 
+static uint64_t measure_path_engine(const char *label, frame_fn_t fn, uint32_t ipt_x1000,
+                                     cps1_engine_kind_t engine);
+
 static uint64_t measure_path(const char *label, frame_fn_t fn, uint32_t ipt_x1000)
 {
-    cps1_core_reset(CPS1_ENGINE_INTERPRETER);
+    return measure_path_engine(label, fn, ipt_x1000, CPS1_ENGINE_INTERPRETER);
+}
+
+/* Optimization phase: same workload, CPS1_ENGINE_RECOMPILER instead of
+ * CPS1_ENGINE_INTERPRETER -- isolates dispatch-mechanism cost (fetch/
+ * decode/execute per instruction vs. pre-translated goto-threaded C) for
+ * the IDENTICAL instruction stream (s_cpu_test_program, cps1_core.c),
+ * since both engines already execute that program bit-identically (the
+ * diff harness's whole reason to exist). "Basic-block coverage" isn't
+ * expandable in any way that changes THIS number: the recompiler already
+ * translates 100% of this fixed test program's opcodes (that's WHY
+ * interpreter and recompiler agree bit-for-bit) -- there is no
+ * uncovered opcode here to fall back to the interpreter for. A real
+ * ROM's much larger opcode footprint is a different, larger undertaking
+ * this synthetic harness can't exercise without one. */
+static uint64_t measure_path_engine(const char *label, frame_fn_t fn, uint32_t ipt_x1000,
+                                     cps1_engine_kind_t engine)
+{
+    cps1_core_reset(engine);
 
     uint32_t run_hash = 2166136261u;
     uint64_t win_ticks = 0, tot_ticks = 0;
 
     for (int frame = 0; frame < RIG_FRAMES; frame++) {
         uint32_t t0 = rig_timer_now();
-        fn(CPS1_ENGINE_INTERPRETER);
+        fn(engine);
         uint32_t t1 = rig_timer_now();
         win_ticks += (uint32_t)(t1 - t0);
 
-        uint32_t h = cps1_core_checksum(CPS1_ENGINE_INTERPRETER);
+        uint32_t h = cps1_core_checksum(engine);
         run_hash = (run_hash ^ h) * 16777619u;
 
         if ((frame + 1) % RIG_WINDOW == 0) {
@@ -123,12 +144,20 @@ int main(void)
     uint64_t full = measure_path("full", cps1_core_run_frame, ipt_x1000);
     uint64_t device = measure_path("device-cost", cps1_core_run_frame_device_cost, ipt_x1000);
     uint64_t ltdc = measure_path("ltdc", run_frame_ltdc_total, ipt_x1000);
+    /* Recompiler engine, same "ltdc" (real total) workload -- isolates
+     * dispatch-mechanism cost alone, see measure_path_engine's comment. */
+    uint64_t ltdc_rc = measure_path_engine("ltdc-rc", run_frame_ltdc_total, ipt_x1000,
+                                            CPS1_ENGINE_RECOMPILER);
 
     printf("[cps1-qemu] summary: full(host-compositor)=%lu insn/frame, "
            "device-cost(SCROLL3+sprite only, historical)=%lu insn/frame, "
            "ltdc(REAL total: device-cost + SCROLL1+SCROLL2)=%lu insn/frame, saving vs full=%.1f%%\n",
            (unsigned long)full, (unsigned long)device, (unsigned long)ltdc,
            full ? 100.0 * (1.0 - (double)ltdc / (double)full) : 0.0);
+    printf("[cps1-qemu] recompiler-vs-interpreter (same \"ltdc\" workload): "
+           "interpreter=%lu insn/frame, recompiler=%lu insn/frame, dispatch saving=%.1f%%\n",
+           (unsigned long)ltdc, (unsigned long)ltdc_rc,
+           ltdc ? 100.0 * (1.0 - (double)ltdc_rc / (double)ltdc) : 0.0);
     printf("[cps1-qemu] NOTE: instruction count is a necessary, not sufficient, condition for "
            "60fps -- QEMU models neither cache misses nor flash wait states. The device's own "
            "DWT/frame ledger is the final judge.\n");

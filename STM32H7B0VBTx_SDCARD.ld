@@ -344,6 +344,48 @@ INCLUDE build/fceumm_mappers.ld
   _OVERLAY_PCE_ITC_SIZE = SIZEOF(.overlay_pce_itc);
   _OVERLAY_PCE_ITC_LMA_OFFSET = LOADADDR(.overlay_pce_itc) - LOADADDR(.overlay_pce);
 
+  /* cps1 ITCM placement (optimization phase, docs/CPS1_MAME_ALIGNMENT.md
+   * section 9): a SIBLING convention to PCE's object-file-path-based
+   * .overlay_pce_itc above, not a replacement for it -- this one selects
+   * input sections by ATTRIBUTE NAME (__attribute__((section(".itcm_text")))
+   * via Core/Src/porting/cps1/cps1_core.h's CPS1_ITCM_TEXT macro) instead
+   * of by object-file path, because cps1 has no build/cps1/ directory in
+   * this Makefile's system list yet to select by path (it is still an
+   * isolated harness on explore/cps1-feasibility, not a linked system).
+   * EMPTY in EVERY build right now: nothing compiled into this firmware
+   * uses the ".itcm_text" section name yet (cps1_*.c isn't in C_SOURCES
+   * at all) -- safe by construction, the same way PCE's own ._itcram_hot
+   * above is documented "empty in GPL stub build". Still needs the SAME
+   * runtime copy step PCE's run_internal_emu does (memcpy LMA->VMA before
+   * BSS zero) once cps1 becomes a real linked system -- that integration
+   * doesn't exist yet, so this is section-placement scaffolding, not yet
+   * load-bearing.
+   *
+   * Address: same ORIGIN(ITCMRAM)+0x4 PCE's own .overlay_pce_itc uses,
+   * NOT "wherever PCE's section ends" (__pce_itc_end__) -- verified by a
+   * real full-firmware link attempt (see the optimization-phase commit)
+   * that GNU ld rejects a later section's explicit address as a symbol
+   * defined inside an earlier `AT >`-relocated section ("non constant or
+   * forward reference address expression"), even though the symbol is
+   * textually available by that point. A real address constant is the
+   * only construct ld accepts here. This is harmless overlap in practice:
+   * PCE's own section is confirmed 0 bytes in this build (same comment
+   * above), and so is this one -- two empty sections claiming the same
+   * starting address consume zero real space. If PCE's ITC section is
+   * ever actually populated in a future build, this address needs to
+   * chain onto ITS end via a different mechanism (e.g. a plain symbol
+   * assignment between the two, not an AT-relocated one) -- flagged here,
+   * not silently left for a future overlap bug to discover. */
+  .cps1_itcm_text (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __cps1_itc_start__ = .;
+    *(.itcm_text)
+    . = ALIGN(4);
+    __cps1_itc_end__ = .;
+    ASSERT(ABSOLUTE(__cps1_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: cps1 ITC overflow");
+  } AT > CORES
+  _CPS1_ITC_SIZE = SIZEOF(.cps1_itcm_text);
+
   .overlay_pce_bss _OVERLAY_PCE_LOAD_END : {
     . = ALIGN(4);
     _OVERLAY_PCE_BSS_START = .;
@@ -1054,6 +1096,31 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(4);
     _ebss = .;         /* define a global symbol at bss end */
     __bss_end__ = _ebss;
+  } >DTCMRAM
+
+  /* cps1 DTCM placement (optimization phase, docs/CPS1_MAME_ALIGNMENT.md
+   * section 9): reserves space for __attribute__((section(".dtcm_bss")))
+   * objects (Core/Src/porting/cps1/cps1_core.h's CPS1_DTCM_BSS macro,
+   * currently just cps1's synthetic palette, 4KB). EMPTY in every build
+   * right now for the same reason .cps1_itcm_text above is -- cps1_*.c
+   * isn't in this Makefile's C_SOURCES, so nothing produces a ".dtcm_bss"
+   * section yet. Placed here (between the general .bss and the launcher's
+   * ._user_heap) so the existing ._user_stack section below -- which
+   * sizes itself as "whatever's left of DTCMRAM after everything already
+   * placed" via __dtc_padding_start__, captured fresh at ITS OWN start --
+   * automatically shrinks to make room for whatever this section ends up
+   * holding, with no separate budget arithmetic to keep in sync by hand.
+   * If cps1 code ever grows this past what's actually free, the standard
+   * GNU ld "region `DTCMRAM' overflowed" error is the backstop (same
+   * protection every other section sharing DTCMRAM already relies on) --
+   * not a hand-written ASSERT here, to avoid duplicating (and risking
+   * getting wrong) the padding formula ._user_stack already owns. */
+  .cps1_dtcm_bss (NOLOAD) : {
+    . = ALIGN(4);
+    __cps1_dtcm_start__ = .;
+    *(.dtcm_bss)
+    . = ALIGN(4);
+    __cps1_dtcm_end__ = .;
   } >DTCMRAM
 
   /* PICO-8 RAM removed — engine allocates 64KB from DTCM heap via dtcm_malloc */
