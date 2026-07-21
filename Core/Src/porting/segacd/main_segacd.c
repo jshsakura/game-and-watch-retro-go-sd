@@ -230,9 +230,64 @@ static bool SegaCdCacheXipToFlash(void) {
   return true;
 }
 
+/* ---- Boot breadcrumbs: pin down a silent SegaCD hang -----------------------
+ * Build 1600 (testbed 82c58afe) bounces back to the launcher on boot with no
+ * BSOD and no crash-decoder output. Per gw_boot_rescue.c's own fault model
+ * (SCB->SHCSR is never enabled — see CLAUDE.md), a real fault still produces
+ * a bare "Hardfault" BSOD; *no* BSOD at all means the reset never reached a
+ * fault handler in the first place. That leaves a watchdog reset (WWDG, fed
+ * by wdog_refresh() only inside the frame loop below) or an infinite spin
+ * upstream of it as the only remaining explanations — exactly the class of
+ * bug 15dd53c8 (SMW's pause-menu power-off) turned out to be.
+ *
+ * Nothing on this boot path was wired to survive that. bbd9c06e's existing
+ * printf() breadcrumbs land only in the volatile RAM logbuf (Core/Src/
+ * syscalls.c), which a watchdog reset never dumps anywhere — unlike a real
+ * fault, which the BSOD decoder reads back out. So "no log" so far has meant
+ * "never instrumented to survive a reset", not "nothing happened before it
+ * died" (per this repo's own repeated lesson: the bug is usually in the thing
+ * that never got wired).
+ *
+ * segacd_boot_stage() opens /segacd_boot.txt, writes one line, and — via
+ * fclose(), which FatFS's f_close() always flushes before releasing the
+ * handle — closes it again on every single call. No handle is held between
+ * calls and nothing is buffered across a stage, so a breadcrumb is durable on
+ * the SD card before the next line of C even runs, let alone before a
+ * subsequent watchdog reset. This is an open+write+close per boot stage (about
+ * fifteen calls total, never per-frame past the first ten), negligible next to
+ * SD card latency. It reaches FatFS the same way main_snes.c's one-shot
+ * /snes_diag.txt diagnostic does — fopen()/fprintf()/fclose() from inside the
+ * overlay — so nothing in resident/shared code changes for this.
+ *
+ * To read it back: reproduce the hang, then pull /segacd_boot.txt off the SD
+ * card on a PC. The LAST line present is the last stage that completed;
+ * whichever stage should have come next is where it died. */
+#define SEGACD_BOOT_TRACE 1
+static void segacd_boot_trace_reset(void) {
+#if SEGACD_BOOT_TRACE
+    FILE *f = fopen("/segacd_boot.txt", "w");
+    if (!f) return;
+    fprintf(f, "=== segacd boot trace (scdboot-0721 diag build) ===\n");
+    fclose(f);
+#endif
+}
+static void segacd_boot_stage(const char *label) {
+#if SEGACD_BOOT_TRACE
+    FILE *f = fopen("/segacd_boot.txt", "a");
+    if (!f) return;
+    fprintf(f, "%s\n", label);
+    fclose(f);
+#else
+    (void)label;
+#endif
+}
+
 /* ---- entry point (called by the launcher, like app_main_pce) ---- */
 int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
+    segacd_boot_trace_reset();
+    segacd_boot_stage("STAGE A: app_main_segacd entered (core overlay loaded + jumped into)");
+
     if (start_paused) { common_emu_state.pause_after_frames = 2; odroid_audio_mute(true); }
     else              { common_emu_state.pause_after_frames = 0; }
 
@@ -240,6 +295,7 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     /* 7th arg (cheat_update_cb) added by upstream 8caa3e45; Sega CD has no
      * cheat handler, same as the other cores that pass NULL here. */
     odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &sleep_wake_up, &sram_save_cb, NULL);
+    segacd_boot_stage("STAGE B: odroid_system_init + odroid_system_emu_init done");
 
     /* Every core that calls ram_malloc() for its own buffers must point
      * ram_start past its own static overlay+bss first (see main_gwenesis.c's
@@ -248,6 +304,7 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * started allocating at RAM_EMU's very start, colliding with this core's
      * own overlay code+data+bss instead of the free space after it. 0720. */
     ram_start = (uint32_t)&_OVERLAY_SEGACD_BSS_END;
+    segacd_boot_stage("STAGE C: ram_start set past overlay+bss");
 
     /* Returning from app_main is NOT a way out: emulator_start() has already
      * torn the launcher down (ahb_init/itc_init, ram_start=0, emulators and
@@ -256,11 +313,13 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * alerts and reboots to the launcher instead (cf. main_md32x.c's missing
      * -xip path); Sega CD returned 0 and died there. */
     if (!SegaCdCacheXipToFlash()) {
+        segacd_boot_stage("STAGE D-FAIL: SegaCdCacheXipToFlash failed (/cores/segacd.xip missing)");
         printf("Failed to cache segacd.xip\n");
         odroid_overlay_alert("Missing /cores/segacd.xip - re-run the update");
         odroid_system_switch_app(0);
         return 0;
     }
+    segacd_boot_stage("STAGE D: segacd.xip cached to flash");
 
     uint32_t bios_size = 0;
     segacd_bios = odroid_overlay_cache_file_in_flash("/bios/segacd/bios_CD_U.bin", &bios_size, false);
@@ -271,11 +330,13 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         segacd_bios = odroid_overlay_cache_file_in_flash("/bios/segacd/bios_CD_J.bin", &bios_size, false);
     }
     if (!segacd_bios) {
+        segacd_boot_stage("STAGE E-FAIL: no BIOS found in /bios/segacd/");
         printf("SegaCD BIOS not found in /bios/segacd/!\n");
         odroid_overlay_alert("Sega CD BIOS missing - put bios_CD_U/E/J.bin in /bios/segacd/");
         odroid_system_switch_app(0);
         return 0;
     }
+    segacd_boot_stage("STAGE E: BIOS found + cached to flash");
 
     printf("segacd diag v1: bios=%p size=%lu\n", (void *)segacd_bios,
            (unsigned long)bios_size);
@@ -297,11 +358,17 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * (m68ki_read_8 dispatching through a wild page handler). power_on() already
      * calls m68k_init(), so no separate call is needed. */
     load_cartridge();
+    segacd_boot_stage("STAGE F: load_cartridge done");
     power_on();
+    segacd_boot_stage("STAGE G: power_on done (base MD memory map built)");
     segacd_init();
+    segacd_boot_stage("STAGE H: segacd_init done");
     segacd_map_bios(segacd_bios); /* main boots from BIOS, not a cart (0 RAM: XIP) */
+    segacd_boot_stage("STAGE I: segacd_map_bios done");
     segacd_main_map_cd_space();
+    segacd_boot_stage("STAGE J: segacd_main_map_cd_space done");
     reset_emulation();            /* pulse-reset MAIN 68K -> reads BIOS reset vectors */
+    segacd_boot_stage("STAGE K: reset_emulation done (MAIN 68K pulsed against BIOS vectors)");
     printf("segacd: hw init done\n");
 
     snprintf(s_cue_path, sizeof(s_cue_path), "%s", ACTIVE_FILE->path);
@@ -318,13 +385,16 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
            diag_status, diag_opened);
     printf("segacd: cue=%s\n", s_cue_path);
     if (cd_rc != 0) {
+        segacd_boot_stage("STAGE L-FAIL: segacd_cd_open failed, cue did not parse");
         odroid_overlay_alert("Cannot read the .cue - check the track files next to it");
         odroid_system_switch_app(0);
         return 0;
     }
+    segacd_boot_stage("STAGE L: segacd_cd_open done");
 
     segacd_bram_path();
     segacd_bram_load(s_bram_path);   /* per-game BRAM, load before resume */
+    segacd_boot_stage("STAGE M: bram_load done, entering main loop");
     printf("segacd: entering main loop\n");
 
     if (load_state) odroid_system_emu_load_state(save_slot);
@@ -335,8 +405,12 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     /* sub_cycles_per_frame removed as it's interleaved inside gwenesis_md_frame */
 
+    static uint32_t s_boot_diag_frame_no = 0;   /* one-shot frame breadcrumbs below */
+
     while (true) {
         wdog_refresh();
+        if (s_boot_diag_frame_no == 0)
+            segacd_boot_stage("STAGE N: first frame-loop iteration entered");
         bool drawFrame = common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
@@ -366,6 +440,10 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         common_emu_sound_sync(false);
         segacd_cdda_prefetch();      /* keep the CD-DA stream fed (PCE idiom) */
+
+        s_boot_diag_frame_no++;
+        if (s_boot_diag_frame_no == 10)
+            segacd_boot_stage("STAGE O: frame 10 reached (post-reset boot survived 10 frames)");
     }
     return 0;
 }
