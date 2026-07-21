@@ -77,6 +77,32 @@ endif
 # build_snes_cost.sh but uses DWT_CYCCNT instead of rig_timer_now().
 SNES_LOAD_DIAG ?= 0
 
+# On-device SNES 3-ledger frame profiler. Default OFF: the release build is
+# byte-identical (no Python script runs, no -DSNES_DEVICE_PROFILE, snes.c
+# compiles from external/sm untouched, and the two resident IRQ hooks in
+# stm32h7xx_it.c / gw_audio.c compile away). Enable with
+# SNES_DEVICE_PROFILE=1 to get, dumped once to /snes_dwt.txt after 64 frames:
+#   Ledger A  top-level disjoint DWT foreground buckets (framectl, input,
+#             render arm, run_frame_events, present kick, pcm submit, DMA2D
+#             poll tail, overlay, lcd_swap, pacing) -- IRQ-inclusive
+#   Ledger B  exclusive PPU / APU-LLE split inside run_frame_events, via a
+#             generated copy of external/sm's snes.c (tools/snes_prof/)
+#   Ledger C  sleep-safe TIM2 wall clock + audio-deadline distribution --
+#             DWT CANNOT measure the pacing wait, it is __WFI() and the M7
+#             gates the processor clock in sleep
+# See Core/Src/porting/snes/snes_profile.c for the design and the gate list.
+# Diagnostic only: the final A/B for any optimisation must be profiler-OFF.
+SNES_DEVICE_PROFILE ?= 0
+ifeq ($(SNES_DEVICE_PROFILE),1)
+  # Global, not SNES-only: the IRQ ledger's counters and the two handler hooks
+  # live in resident code (Core/Inc/snes_prof_irq.h explains why they cannot
+  # live in the SNES overlay).
+  C_DEFS += -DSNES_DEVICE_PROFILE
+endif
+ifeq ($(SNES_LOAD_DIAG)$(SNES_DEVICE_PROFILE),11)
+  $(error SNES_LOAD_DIAG=1 and SNES_DEVICE_PROFILE=1 are mutually exclusive: both instrument external/sm sources with DWT probes, and running them together double-charges the APU and inflates the very intrusion budget the profiler reports)
+endif
+
 # On-device 32X frame-cost breakdown. Default OFF: the release build is
 # byte-identical (no -DMD32X_DEVICE_PROFILE; picodrive's pprof probes stay
 # no-ops). Enable with MD32X_DEVICE_PROFILE=1 to arm DWT_CYCCNT and split
@@ -727,6 +753,15 @@ $(CORE_SNES)/src/snes/spin_skip.c \
 $(CORE_SNES)/src/snes/rc_dispatch.c \
 $(CORE_SNES)/src/tracing.c \
 Core/Src/porting/snes/main_snes.c
+
+# Kept in its own TU rather than inlined into main_snes.c: the dump is a qsort
+# plus a percentile calculator plus thirty-odd fprintf calls, and all of it
+# lands in the SNES overlay either way -- but as a separate object it is
+# trivially checkable in the map and trivially removable. Same reasoning (and
+# the same 0720 lesson) as Core/Src/porting/md32x/md32x_profile.c.
+ifeq ($(SNES_DEVICE_PROFILE),1)
+SNES_C_SOURCES += Core/Src/porting/snes/snes_profile.c
+endif
 
 MD_C_SOURCES =
 
