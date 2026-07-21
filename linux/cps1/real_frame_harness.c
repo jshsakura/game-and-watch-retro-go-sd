@@ -44,6 +44,8 @@ enum { REG_OBJ = 0, REG_SCROLL1, REG_SCROLL2, REG_SCROLL3, REG_OTHER, REG_PALETT
 /* Write-hook target: the main loop at 0x730 dispatches on this byte. */
 #define WATCH_ADDR 0xFF5600u
 static unsigned s_watch_writes;
+static uint32_t s_qread[0x10000/2];   /* QSound shared-RAM read histogram */
+static uint16_t s_eeprom_din = 0xFFFF;
 static struct { uint32_t pc; uint16_t val; } s_watch[24];
 static unsigned s_watch_n;
 
@@ -59,8 +61,19 @@ static uint16_t bus_read16(uint32_t a)
     }
     if (a < 0x800020u) return 0xFFFFu;              /* inputs are ACTIVE LOW */
     if (a >= 0x800000u && a < 0x800180u) return s_regs[(a - 0x800000u) >> 1];
+    /*
+     * 0xF1C006 is EEPROMIN (MAME cps1.cpp qsound_main_map): the serial
+     * 93C46's data-out line, bit 0. The game polls it ~200k times and
+     * stalls -- it is waiting for a bit stream we never clock out. Until a
+     * real 93C46 exists, hold DO high: an all-ones read is what an
+     * unprogrammed/absent EEPROM looks like, and CPS-1 games take the
+     * "settings invalid, use defaults" path from it instead of blocking.
+     */
+    if ((a & ~1u) == 0xF1C006u)
+        return s_eeprom_din;
     if (a >= 0xF10000u && a < 0xF20000u) {
         uint32_t o = a - 0xF10000u;
+        s_qread[o >> 1]++;
         return (uint16_t)((s_qram[o] << 8) | s_qram[o + 1]);
     }
     return 0xFFFFu;
@@ -162,6 +175,22 @@ int main(int argc, char **argv)
     for (unsigned i = 0; i < s_watch_n; i++)
         printf("         PC~0x%06x wrote 0x%04x\n", s_watch[i].pc, s_watch[i].val);
     printf("[frame] 0xFF5600 now = 0x%02x\n", s_wram[0x5600]);
+    {   /* which QSound shared-RAM words does the game hammer? */
+        unsigned top[6] = {0};
+        for (unsigned i = 0; i < 0x10000/2; i++) {
+            for (unsigned k = 0; k < 6; k++)
+                if (s_qread[i] > s_qread[top[k]]) {
+                    for (unsigned j = 5; j > k; j--) top[j] = top[j-1];
+                    top[k] = i; break;
+                }
+        }
+        printf("[frame] QSound shared-RAM most-read words:\n");
+        for (unsigned k = 0; k < 6; k++)
+            if (s_qread[top[k]])
+                printf("         0xF1%04x read %u times (val=0x%04x)\n",
+                       top[k]*2, s_qread[top[k]],
+                       (s_qram[top[k]*2]<<8)|s_qram[top[k]*2+1]);
+    }
     printf("[frame] booted %u frames; PC=0x%06x SR=0x%04x\n",
            boot_frames, cps1_m68k_get_pc(), cps1_m68k_get_sr());
     printf("[frame] CPS-A bases: OBJ=%04x SCROLL1=%04x SCROLL2=%04x SCROLL3=%04x "
