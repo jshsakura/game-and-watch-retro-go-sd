@@ -1124,10 +1124,10 @@ $(BUILD_DIR)/md/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC md ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(MD_C_DEFS) $(MD_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/md/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/segacd/%.o: %.c Makefile.common Makefile segacd_redefines $(SDK_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/segacd/%.o: %.c Makefile.common Makefile tools/redefines/segacd_redefines $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC segacd ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(SEGACD_C_DEFS) $(SEGACD_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/segacd/$(notdir $(<:.c=.lst)) $< -o $@
-	$(V)$(CP) --redefine-syms=segacd_redefines $@
+	$(V)$(CP) --redefine-syms=tools/redefines/segacd_redefines $@
 
 $(BUILD_DIR)/a7800/%.o: %.c Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC a7800 ] $(notdir $<)
@@ -1328,11 +1328,11 @@ SM_C_INCLUDES = $(C_INCLUDES) -Iexternal/sm -Iexternal -I./
 sm_is_hot = $(if $(findstring /snes/,$1),1,$(findstring spc_player.c,$1))
 
 define sm_obj_prereq_gen
-$$(BUILD_DIR)/sm/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/sm/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile tools/redefines/sm_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC sm ] $$(notdir $$<)
 	$$(V)$$(CC) -c $(if $(call sm_is_hot,$1),$$(CFLAGS),$$(subst -O2,-Os,$$(CFLAGS))) $$(C_DEFS_SM) $$(SM_C_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers
-	$$(V)$$(CP) --redefine-syms=sm_redefines $$@
+	$$(V)$$(CP) --redefine-syms=tools/redefines/sm_redefines $$@
 
 endef
 # note: the blank line above is intentional
@@ -1426,11 +1426,11 @@ endif
 # and rebuild; main_snes.c's #else path is the plain synchronous memcpy that
 # shipped before, no other code changes needed to revert.
 define snes_obj_prereq_gen
-$$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_diag_pick,$1) Makefile.common Makefile snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) $(if $(filter 1,$(SNES_NSPC_HLE)),$(SNES_NSPC_HLE_DIR)/.stamp) | $$(BUILD_DIR)
+$$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_diag_pick,$1) Makefile.common Makefile tools/redefines/snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) $(if $(filter 1,$(SNES_NSPC_HLE)),$(SNES_NSPC_HLE_DIR)/.stamp) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
-	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
+	$$(V)$$(CP) --redefine-syms=tools/redefines/snes_redefines $$@
 
 endef
 # note: the blank line above is intentional
@@ -1451,19 +1451,19 @@ SNES_HLE_COEXIST_FILES :=
 ifeq ($(SNES_HLE_COEXIST),1)
 SNES_HLE_COEXIST_FILES := tools/nspc_audio_wire/smw_exact_wire.c tools/nspc_audio_wire/nspc_wire.c
 
-$(BUILD_DIR)/snes/smw_exact_wire.o: tools/nspc_audio_wire/smw_exact_wire.c Makefile.common Makefile snes_redefines smwx_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
+$(BUILD_DIR)/snes/smw_exact_wire.o: tools/nspc_audio_wire/smw_exact_wire.c Makefile.common Makefile tools/redefines/snes_redefines tools/redefines/smwx_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC snes ] smw_exact_wire.c \(coexist\)
 	$(V)$(CC) -c $(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) tools/nspc_audio_wire/smw_exact_wire.c -o $@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
-	$(V)$(CP) --redefine-syms=smwx_redefines $@
-	$(V)$(CP) --redefine-syms=snes_redefines $@
+	$(V)$(CP) --redefine-syms=tools/redefines/smwx_redefines $@
+	$(V)$(CP) --redefine-syms=tools/redefines/snes_redefines $@
 
-$(BUILD_DIR)/snes/nspc_wire.o: tools/nspc_audio_wire/nspc_wire.c Makefile.common Makefile snes_redefines nspc_wire_coexist_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
+$(BUILD_DIR)/snes/nspc_wire.o: tools/nspc_audio_wire/nspc_wire.c Makefile.common Makefile tools/redefines/snes_redefines tools/redefines/nspc_wire_coexist_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC snes ] nspc_wire.c \(coexist\)
 	$(V)$(CC) -c $(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_HLE_DEFS) $(SNES_C_INCLUDES) $(SNES_HLE_INCLUDES) tools/nspc_audio_wire/nspc_wire.c -o $@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
-	$(V)$(CP) --redefine-syms=nspc_wire_coexist_redefines $@
-	$(V)$(CP) --redefine-syms=snes_redefines $@
+	$(V)$(CP) --redefine-syms=tools/redefines/nspc_wire_coexist_redefines $@
+	$(V)$(CP) --redefine-syms=tools/redefines/snes_redefines $@
 endif
 
 $(eval $(foreach obj,$(filter-out $(SNES_HLE_COEXIST_FILES),$(SNES_C_SOURCES)),$(call snes_obj_prereq_gen,$(obj))))
@@ -1483,11 +1483,11 @@ $(eval $(foreach obj,$(filter-out $(SNES_HLE_COEXIST_FILES),$(SNES_C_SOURCES)),$
 # (../types.h etc.) resolve via -I$(CORE_SNES)/src/snes.
 ifeq ($(RCSMW),1)
 define rc_smw_obj_prereq_gen
-$$(BUILD_DIR)/rc_smw/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile snes_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/rc_smw/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile tools/redefines/snes_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC rc_smw ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $$(SNES_C_INCLUDES) $$(RCSMW_C_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
-	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
+	$$(V)$$(CP) --redefine-syms=tools/redefines/snes_redefines $$@
 
 endef
 # note: the blank line above is intentional
@@ -1503,11 +1503,11 @@ endif
 # names). main_md32x.o goes through the same rule; app_main_md32x and the
 # plat_* hooks are absent from the redefines list, so they stay unrenamed.
 define md32x_obj_prereq_gen
-$$(BUILD_DIR)/md32x/$(call md32x_obj_name,$1): $1 Makefile.common Makefile md32x_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/md32x/$(call md32x_obj_name,$1): $1 Makefile.common Makefile tools/redefines/md32x_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC md32x ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) -fno-strict-aliasing $$(MD32X_C_DEFS) $$(MD32X_C_INCLUDES) $$< -o $$@ \
-	-w -Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough -Wno-implicit-function-declaration
-	$$(V)$$(CP) --redefine-syms=md32x_redefines $$@
+	-w -Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough -Wno-implicit-function-declaration
+	$$(V)$$(CP) --redefine-syms=tools/redefines/md32x_redefines $$@
 
 endef
 # note: the blank line above is intentional
@@ -1546,10 +1546,10 @@ GBA_WARN_OFF = -Wno-parentheses -Wno-unknown-pragmas -Wno-strict-aliasing -Wno-c
 gba_is_hot = $(findstring gba_memory.c,$1)
 
 define gba_obj_prereq_gen
-$$(BUILD_DIR)/gba/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/gba/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile tools/redefines/gba_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC gba ] $$(notdir $$<)
 	$$(V)$$(CC) -c $(if $(call gba_is_hot,$1),$$(subst -O2,-O3,$$(CFLAGS)),$$(CFLAGS)) $$(C_DEFS_GBA) $$(GBA_C_INCLUDES) $$(GBA_WARN_OFF) $$< -o $$@
-	$$(V)$$(CP) --redefine-syms=gba_redefines $$@
+	$$(V)$$(CP) --redefine-syms=tools/redefines/gba_redefines $$@
 
 endef
 # note: the blank line above is intentional
@@ -1562,19 +1562,19 @@ endef
 gba_is_interp = $(findstring cpu.cc,$1)
 
 define gba_cxx_obj_prereq_gen
-$$(BUILD_DIR)/gba/$(patsubst %.cc,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/gba/$(patsubst %.cc,%.o,$(notdir $1)): $1 Makefile.common Makefile tools/redefines/gba_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CXX gba ] $$(notdir $$<)
-	$$(V)$$(CXX) -c $(if $(call gba_is_interp,$1),$$(subst -O2,-O3,$$(CXXFLAGS)),$$(CXXFLAGS)) $$(C_DEFS_GBA) $$(GBA_C_INCLUDES) $$(GBA_WARN_OFF) -fno-rtti -fno-exceptions $$< -o $$@
-	$$(V)$$(CP) --redefine-syms=gba_redefines $$@
+	$$(V)$$(CXX) -c $(if $(call gba_is_interp,$1),$$(subst -O2,-O3,$$(CXXFLAGS)),$$(CXXFLAGS)) $$(C_DEFS_GBA) $$(GBA_C_INCLUDES) $$(GBA_WARN_OFF) -fno-rtti -fno-exceptions $$< -o $$@ \
+	$$(V)$$(CP) --redefine-syms=tools/redefines/gba_redefines $$@
 
 endef
 # note: the blank line above is intentional
 
 define gba_asm_obj_prereq_gen
-$$(BUILD_DIR)/gba/$(patsubst %.S,%.o,$(notdir $1)): $1 Makefile.common Makefile | $$(BUILD_DIR)
+$$(BUILD_DIR)/gba/$(patsubst %.S,%.o,$(notdir $1)): $1 Makefile.common Makefile tools/redefines/gba_redefines | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ AS gba ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(ASFLAGS) $$< -o $$@
-	$$(V)$$(CP) --redefine-syms=gba_redefines $$@
+	$$(V)$$(CC) -c $$(ASFLAGS) $$< -o $$@ \
+	$$(V)$$(CP) --redefine-syms=tools/redefines/gba_redefines $$@
 
 endef
 # note: the blank line above is intentional
@@ -1593,11 +1593,11 @@ C_DEFS_ZELDA3 =  \
 
 # function used to generate prerequisite rules for zelda3 objects
 define zelda3_obj_prereq_gen
-$$(BUILD_DIR)/zelda3/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/zelda3/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile tools/redefines/zelda3_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC zelda3 ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) $$(C_DEFS_ZELDA3) $$(ZELDA3_C_INCLUDES)-Wa,-a,-ad,-alms=$$(BUILD_DIR)/zelda3/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable
-	$$(V)$$(CP) --redefine-syms=zelda3_redefines $$@
+	$$(V)$$(CP) --redefine-syms=tools/redefines/zelda3_redefines $$@
 
 endef
 # note: the blank line above is intentional
@@ -1625,11 +1625,11 @@ C_DEFS_SMW =  \
 
 # function used to generate prerequisite rules for smw objects
 define smw_obj_prereq_gen
-$$(BUILD_DIR)/smw/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/smw/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile tools/redefines/smw_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC smw ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) $$(C_DEFS_SMW) $$(SMW_C_INCLUDES) -Wa,-a,-ad,-alms=$$(BUILD_DIR)/smw/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-const-variable -Wno-int-in-bool-context -Wno-unused-value -Wno-unused-function -Wno-incompatible-pointer-types -Wno-implicit-function-declaration -Wno-format -Wno-array-bounds -Wno-strict-aliasing -Wno-maybe-uninitialized
-	$$(V)$$(CP) --redefine-syms=smw_redefines $$@
+	$$(V)$$(CP) --redefine-syms=tools/redefines/smw_redefines $$@
 
 endef
 # note: the blank line above is intentional
@@ -1638,11 +1638,11 @@ endef
 $(eval $(foreach obj,$(SMW_C_SOURCES),$(call smw_obj_prereq_gen,$(obj))))
 
 define ngp_obj_prereq_gen
-$$(BUILD_DIR)/ngp/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/ngp/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile tools/redefines/ngp_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC ngp ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) $$(NGP_C_INCLUDES) -Os $(if $(filter %/cz80.c,$1),-fno-jump-tables,) -Wa,-a,-ad,-alms=$$(BUILD_DIR)/ngp/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
 	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-const-variable -Wno-unused-parameter -Wno-sign-compare -Wno-strict-aliasing -Wno-implicit-fallthrough -Wno-parentheses -Wno-unknown-pragmas -Wno-comment -Wno-int-in-bool-context -Wno-maybe-uninitialized
-	$$(V)$$(CP) --redefine-syms=ngp_redefines $$@
+	$$(V)$$(CP) --redefine-syms=tools/redefines/ngp_redefines $$@
 
 endef
 # note: the blank line above is intentional
@@ -1651,11 +1651,11 @@ endef
 $(eval $(foreach obj,$(NGP_C_SOURCES),$(call ngp_obj_prereq_gen,$(obj))))
 
 define wswan_obj_prereq_gen
-$$(BUILD_DIR)/wswan/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile $$(SDK_HEADERS) | $$(BUILD_DIR)
+$$(BUILD_DIR)/wswan/$(patsubst %.c,%.o,$(notdir $1)): $1 Makefile.common Makefile tools/redefines/wswan_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC wswan ] $$(notdir $$<)
 	$$(V)$$(CC) -c $$(CFLAGS) $$(WSWAN_C_INCLUDES) -O3 -Wa,-a,-ad,-alms=$$(BUILD_DIR)/wswan/$$(notdir $$(<:.c=.lst)) $$< -o $$@ \
 	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-const-variable -Wno-unused-parameter -Wno-sign-compare -Wno-strict-aliasing -Wno-implicit-fallthrough -Wno-parentheses -Wno-unknown-pragmas -Wno-comment -Wno-int-in-bool-context -Wno-maybe-uninitialized -Wno-format
-	$$(V)$$(CP) --redefine-syms=wswan_redefines $$@
+	$$(V)$$(CP) --redefine-syms=tools/redefines/wswan_redefines $$@
 
 endef
 # note: the blank line above is intentional
