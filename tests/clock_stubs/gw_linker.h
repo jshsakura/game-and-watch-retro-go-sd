@@ -6,11 +6,6 @@
 #include <stdint.h>
 
 extern void   *__RAM_EMU_START__[];
-extern void   *__RAM_EMU_END__[];
 extern void   *_OVERLAY_MUSIC_BSS_START[];
 extern uint8_t  _OVERLAY_MUSIC_BSS_SIZE;
 extern uint8_t  _OVERLAY_MUSIC_SIZE;
-extern void   *_OVERLAY_CLOCK_BSS_START[];
-extern void   *_OVERLAY_CLOCK_BSS_END[];
-extern uint8_t  _OVERLAY_CLOCK_BSS_SIZE;
-extern uint8_t  _OVERLAY_CLOCK_SIZE;

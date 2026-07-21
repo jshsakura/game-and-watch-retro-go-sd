@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #include "gw_lcd.h"
-#include "rg_clock_state.h"   /* clock_overlay_arena */
+#include "rg_emulators.h"   /* rg_emulators_shared_file_buffer */
 #include "rg_storage.h"     /* rg_storage_scandir, rg_scandir_t, RG_SCANDIR_* */
 #include "rg_utils.h"       /* rg_extension */
 #include "rg_clock_album.h"
@@ -133,11 +133,13 @@ bool clock_album_open(void)
 {
     clock_album_close();
 
-    void *arena = (void *)clock_overlay_arena(&s_arena_bytes);
-    if (!arena) return false;
-    /* Arena layout: [photo 150K][path list ~16K]. Both carved from the space
-     * past .overlay_clock's own footprint (clock_overlay_arena); nothing goes
-     * into resident BSS. */
+    int maxcount = 0;
+    void *arena = (void *)rg_emulators_shared_file_buffer(&maxcount);
+    if (!arena || maxcount <= 0) return false;
+    /* Byte span of shared_files = slots * slot size (rg_emulators owns the type). */
+    s_arena_bytes = rg_emulators_shared_file_bytes();
+    /* Arena layout: [photo 150K][path list ~16K]. Both carved from shared_files;
+     * nothing goes into resident BSS. */
     size_t need = PHOTO_BYTES + (size_t)MAX_PHOTOS * (RG_PATH_MAX + 1);
     if (s_arena_bytes < need) return false;   /* safety: never overrun */
     s_buf   = (uint16_t *)arena;

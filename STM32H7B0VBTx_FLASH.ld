@@ -850,28 +850,6 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_MUSIC_BSS_SIZE = SIZEOF(.overlay_music_bss);
 
-  .overlay_clock __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_clock_start__ = .;
-    build/clock/*.o (.data .data* .text .text* .rodata .rodata*)
-    . = ALIGN(4);
-    _OVERLAY_CLOCK_LOAD_END = .;
-  } AT > CORES
-  _OVERLAY_CLOCK_LOAD_START = LOADADDR(.overlay_clock);
-  _OVERLAY_CLOCK_SIZE = SIZEOF(.overlay_clock);
-
-  .overlay_clock_bss _OVERLAY_CLOCK_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_CLOCK_BSS_START = .;
-    build/clock/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/clock/*.o (COMMON)
-    __ram_emu_clock_end__ = .;
-    _OVERLAY_CLOCK_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_CLOCK_BSS_END) < __RAM_EMU_END__, "Error: CLOCK BSS overflow");
-  }
-  _OVERLAY_CLOCK_BSS_SIZE = SIZEOF(.overlay_clock_bss);
-
   /* PICO-8 stub overlay → RAM, placed at the LOW end of the LCD bonus
      area. Same VMA as the runtime-loaded pico8.bin so engine RAM refs
      resolve. In SD_CARD=0 builds the SD-built pico8.bin/.ro/_itcm.bin
