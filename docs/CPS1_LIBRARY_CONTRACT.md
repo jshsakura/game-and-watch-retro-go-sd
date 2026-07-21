@@ -25,6 +25,33 @@ Status: firmware side implemented (`Core/Src/porting/cps1/main_cps1.c`,
         e349551c.bin
 ```
 
+**Or one subfolder per archive, pooled** — the same game folder, one level
+deeper, which is what unzipping a clone and its parent side by side actually
+produces:
+
+```
+/roms/cps1/
+    Warriors of Fate/       ← still ONE launcher entry
+        wof/                    the parent archive's chips
+        wofj/                   the Japan clone: 2 program + 4 upper GFX chips
+```
+
+The loader gathers both subfolders into one chip pool. Because chips are keyed
+by CRC32 (§3), pooling is safe: each set picks its own chips out and ignores
+the rest. The folder is self-contained, nothing is stored twice under two
+names, and `.shared/` is not involved at all.
+
+One level only — a recursive scan would wander across the card, and every extra
+directory is SD reads and flash cache entries spent before the game starts.
+
+**Pooling can leave more than one set runnable, and then the player is asked.**
+`wof/` + `wofj/` completes *both* wofj and wofr1 (the archive distributed as
+`wof.zip` is in fact wofr1 — §3), so the loader lists them and the player
+picks. It does not choose for them: the unchosen set would otherwise be
+unplayable forever, and "first in the generated table" is not an answer anyone
+could predict or change. One runnable set launches straight into the game, as
+before — the dialog appears only when the ambiguity is real.
+
 **A parent set is not a game folder.** If the user owns both the World and the
 Japanese release as playable entries, each gets its own `<Game Name>/` folder
 and the chips they have in common live once in `.shared/`. If only the clone is
@@ -85,10 +112,14 @@ like any other and rejected if it does not hash to its own name.
 ### 2.2 Load order
 
 1. Scan the game folder; cache and hash every 512 KB file found.
-2. If that already completes a romset, stop. `.shared/` is never opened.
-3. Otherwise take the closest set and open `.shared/<crc>.bin` for each of its
-   missing chips, and only those.
-4. Re-match. Still incomplete → the on-screen error in §4.
+2. If that already completes a romset, stop. Subfolders and `.shared/` are
+   never opened.
+3. Otherwise scan one level of subfolders into the same pool (§1).
+4. Enumerate every romset the pool can complete. Exactly one → run it. More
+   than one → ask the player which.
+5. Still none: take the closest set and open `.shared/<crc>.bin` for each of
+   its missing chips, and only those.
+6. Re-match. Still incomplete → the on-screen error in §4.
 
 ## 3. Chip identification is by CRC32. Never by filename.
 

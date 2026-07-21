@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "cps1_rom.h"
+#include "cps1_romset.h"
 #include "cps1_rom_linux.h"
 
 static int failures = 0;
@@ -305,6 +306,79 @@ static void test_interleaved_load_then_reset_vector(void)
     remove(path1);
 }
 
+/*
+ * POOLING TWO SUBFOLDERS CAN LEAVE MORE THAN ONE SET RUNNABLE, and that is the
+ * whole reason cps1_romset_resolve() exists beside cps1_romset_match().
+ *
+ * A game folder laid out as
+ *
+ *     Warriors of Fate/wof/     (the archive distributed under that name is
+ *                                actually wofr1 -- see cps1_romsets.json)
+ *     Warriors of Fate/wofj/    (the Japan clone: 2 program chips + 4 upper
+ *                                graphics chips, and nothing else)
+ *
+ * gathers into one CRC pool from which BOTH sets are complete. cps1_romset_match()
+ * would silently return whichever comes first in the generated table -- a choice
+ * nobody made and the player cannot change, leaving one of the two sets on their
+ * card permanently unplayable. The loader instead enumerates with resolve() and,
+ * when more than one comes back, asks.
+ *
+ * The pool here is built FROM THE TABLE (data), and what is checked is that the
+ * resolver picks each set's own chips back out of it -- not that some formula
+ * agrees with itself.
+ */
+static void test_pooled_subfolders_yield_multiple_sets(void)
+{
+    if (cps1_romset_count < 2) {
+        CHECK(0, "expected at least two romsets in the table, got %u", cps1_romset_count);
+        return;
+    }
+
+    /* Pool every chip of the first two sets, in an order that is deliberately
+     * not either set's own order -- the resolver must key on CRC, never on
+     * position (the failure mode that corrupted 85%% of the graphics when an
+     * earlier loader filled slots by filename order). */
+    const cps1_romset_t *a = &cps1_romsets[0];
+    const cps1_romset_t *b = &cps1_romsets[1];
+    uint32_t pool[2 * (CPS1_ROMSET_PRG_CHIPS + CPS1_ROMSET_GFX_CHIPS)];
+    unsigned n = 0;
+    for (unsigned i = 0; i < CPS1_ROMSET_GFX_CHIPS; i++) pool[n++] = b->gfx_crc[i];
+    for (unsigned i = 0; i < CPS1_ROMSET_PRG_CHIPS; i++) pool[n++] = a->prg_crc[i];
+    for (unsigned i = 0; i < CPS1_ROMSET_GFX_CHIPS; i++) pool[n++] = a->gfx_crc[i];
+    for (unsigned i = 0; i < CPS1_ROMSET_PRG_CHIPS; i++) pool[n++] = b->prg_crc[i];
+
+    unsigned runnable = 0;
+    int prg[CPS1_ROMSET_PRG_CHIPS], gfx[CPS1_ROMSET_GFX_CHIPS];
+    for (unsigned s = 0; s < cps1_romset_count; s++)
+        if (cps1_romset_resolve(&cps1_romsets[s], pool, n, prg, gfx) == 0)
+            runnable++;
+    CHECK(runnable >= 2, "a pool holding two whole sets must resolve at least two "
+          "runnable sets (got %u) -- otherwise the player is never asked", runnable);
+
+    /* And each set must get ITS OWN chips back, by CRC, from the shuffled pool. */
+    CHECK(cps1_romset_resolve(a, pool, n, prg, gfx) == 0, "set A must resolve from the pool");
+    for (unsigned i = 0; i < CPS1_ROMSET_PRG_CHIPS; i++)
+        CHECK(prg[i] >= 0 && pool[prg[i]] == a->prg_crc[i],
+              "set A prg slot %u resolved to the wrong chip", i);
+    for (unsigned i = 0; i < CPS1_ROMSET_GFX_CHIPS; i++)
+        CHECK(gfx[i] >= 0 && pool[gfx[i]] == a->gfx_crc[i],
+              "set A gfx slot %u resolved to the wrong chip", i);
+
+    CHECK(cps1_romset_resolve(b, pool, n, prg, gfx) == 0, "set B must resolve from the pool");
+    for (unsigned i = 0; i < CPS1_ROMSET_GFX_CHIPS; i++)
+        CHECK(gfx[i] >= 0 && pool[gfx[i]] == b->gfx_crc[i],
+              "set B gfx slot %u resolved to the wrong chip", i);
+
+    /* A clone's own chips ALONE must not resolve: that is the case the
+     * subfolder pooling exists to rescue, and if it passed here the loader
+     * would boot half a romset instead of looking next door. */
+    unsigned solo = 0;
+    for (unsigned i = 0; i < CPS1_ROMSET_PRG_CHIPS; i++) pool[solo++] = b->prg_crc[i];
+    for (unsigned i = 0; i < 4 && i < CPS1_ROMSET_GFX_CHIPS; i++) pool[solo++] = b->gfx_crc[i];
+    CHECK(cps1_romset_resolve(b, pool, solo, prg, gfx) != 0,
+          "a partial set must NOT resolve");
+}
+
 int main(void)
 {
     test_bank_mapper_shift();
@@ -314,6 +388,7 @@ int main(void)
     test_reset_vector_invalid();
     test_reset_vector_byteswapped_is_rejected();
     test_reset_vector_real_wofj_chip();
+    test_pooled_subfolders_yield_multiple_sets();
     test_interleaved_load_then_reset_vector();
 
     if (failures) {

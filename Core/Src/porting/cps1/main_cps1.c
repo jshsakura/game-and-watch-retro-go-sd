@@ -305,10 +305,21 @@ static bool cps1_cache_xip_to_flash(void)
  * bytes. So missing chips are fetched from a shared pool:
  *
  *     /roms/cps1/<game>/            the game's own chips, original MAME names
+ *     /roms/cps1/<game>/<set>/      OR one subfolder per archive, pooled
  *     /roms/cps1/.shared/<crc>.bin  chips common to several sets, stored once
  *
  * The launcher's folder scan skips names beginning with '.', so .shared never
  * appears as a game.
+ *
+ * The middle form is what people actually produce: unzip the clone and the
+ * parent side by side and the game folder is self-contained, with nothing
+ * stored twice under two different names. Chips are keyed by CRC32, so pooling
+ * two subfolders is safe -- each set picks its own chips out of the pool. It
+ * costs nothing when unused (the subfolder scan only runs if the flat layout
+ * did not already produce a set) and one level only, so the scan cannot wander
+ * off across the card. Pooling can leave MORE THAN ONE set runnable, and that
+ * is a choice the player makes, not one the table order makes for them --
+ * cps1_ask_which_set().
  *
  * WHY THE SHARED POOL IS NAMED BY CRC AND NOT BY THE ORIGINAL FILENAME. Two
  * reasons, and both are fatal to the obvious design:
@@ -441,15 +452,137 @@ static void cps1_scan_chip_dir(const char *dir_path)
     f_closedir(&dir);
 }
 
+/*
+ * ONE LEVEL OF SUBFOLDERS, POOLED.
+ *
+ * The layout above -- chips loose in the game folder -- is not the one people
+ * actually end up with. A MAME clone needs its parent's chips, and the natural
+ * way to keep a game self-contained is one subfolder per archive:
+ *
+ *     /roms/cps1/Warriors of Fate/wof/     the parent set, complete
+ *     /roms/cps1/Warriors of Fate/wofj/    the Japan clone, 6 chips
+ *
+ * Chips are identified by CRC32, never by filename or position, so pooling two
+ * subfolders into one chip list is safe: whichever set is asked for picks its
+ * own chips out of the pool and ignores the rest. This is the same thing
+ * /roms/cps1/.shared does, except the pool is local, the folder stays
+ * self-contained, and nothing has to be stored twice under two names.
+ *
+ * ONE LEVEL ONLY, and deliberately: a recursive scan would wander into
+ * whatever else is on the card, and every extra directory is SD reads and
+ * flash cache entries spent before the game starts.
+ *
+ * MORE THAN ONE SET CAN COME OUT OF THE POOL -- wof and wofj both do, from the
+ * two folders above. cps1_load_folder_roms() enumerates them and asks; see
+ * there. This function only gathers.
+ */
+static void cps1_scan_chip_subdirs(const char *dir_path)
+{
+    DIR dir;
+    FILINFO fno;
+
+    if (f_opendir(&dir, dir_path) != FR_OK)
+        return;
+
+    while (s_chip_count < CPS1_MAX_FOLDER_CHIPS) {
+        wdog_refresh();
+        if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == 0)
+            break;
+        if (!(fno.fattrib & AM_DIR) || fno.fname[0] == '.')
+            continue;
+
+        char sub[RG_PATH_MAX + 1];
+        int n = snprintf(sub, sizeof(sub), "%s/%s", dir_path, fno.fname);
+        if (n < 0 || (size_t)n >= sizeof(sub)) {
+            printf("cps1: subfolder path too long, skipping %s\n", fno.fname);
+            continue;
+        }
+        cps1_scan_chip_dir(sub);
+    }
+    f_closedir(&dir);
+}
+
+/*
+ * Every romset the gathered chips can actually run. Usually one. Two when a
+ * game folder holds a clone beside its parent, which is exactly the case
+ * cps1_romset_match() answers wrongly -- it returns whichever comes first in
+ * the generated table, a choice nobody made and the player cannot change.
+ */
+#define CPS1_MAX_RUNNABLE_SETS 6
+
+static unsigned cps1_collect_runnable_sets(const cps1_romset_t *out[CPS1_MAX_RUNNABLE_SETS])
+{
+    unsigned n = 0;
+    int prg[CPS1_ROMSET_PRG_CHIPS], gfx[CPS1_ROMSET_GFX_CHIPS];
+
+    for (unsigned s = 0; s < cps1_romset_count && n < CPS1_MAX_RUNNABLE_SETS; s++) {
+        if (cps1_romset_resolve(&cps1_romsets[s], s_chip_crc, s_chip_count, prg, gfx) == 0)
+            out[n++] = &cps1_romsets[s];
+    }
+    return n;
+}
+
+/*
+ * Which one does the player want? Only asked when the answer is genuinely
+ * ambiguous -- one runnable set launches straight into the game, as it always
+ * did. Two or more (World beside Japan, say) is a real choice and guessing it
+ * would mean one of the two sets on the card could never be played at all.
+ *
+ * Returns the chosen set, or NULL if the dialog was dismissed.
+ */
+static const cps1_romset_t *cps1_ask_which_set(const cps1_romset_t *const *sets, unsigned count)
+{
+    odroid_dialog_choice_t options[CPS1_MAX_RUNNABLE_SETS + 1];
+
+    for (unsigned i = 0; i < count; i++) {
+        options[i].id = (int)i;
+        options[i].label = sets[i]->name;
+        options[i].value = (char *)"";
+        options[i].enabled = 1;
+        options[i].update_cb = NULL;
+    }
+    options[count] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
+
+    int sel = odroid_overlay_dialog("Which version?", options, 0, NULL, 0);
+    if (sel < 0 || (unsigned)sel >= count)
+        return NULL;
+    return sets[sel];
+}
+
 static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
 {
     s_chip_count = 0;
 
     cps1_scan_chip_dir(dir_path);
+    /* Chips loose in the game folder are the simple case and stay the fast
+     * path; only reach for the subfolders when that did not produce a set. */
+    if (cps1_romset_match(s_chip_crc, s_chip_count, (int[CPS1_ROMSET_PRG_CHIPS]){0},
+                           (int[CPS1_ROMSET_GFX_CHIPS]){0}) == NULL)
+        cps1_scan_chip_subdirs(dir_path);
 
     int prg_index[CPS1_ROMSET_PRG_CHIPS], gfx_index[CPS1_ROMSET_GFX_CHIPS];
-    const cps1_romset_t *set = cps1_romset_match(s_chip_crc, s_chip_count,
-                                                  prg_index, gfx_index);
+    const cps1_romset_t *set = NULL;
+    {
+        const cps1_romset_t *runnable[CPS1_MAX_RUNNABLE_SETS];
+        unsigned n = cps1_collect_runnable_sets(runnable);
+        if (n == 1) {
+            set = runnable[0];
+        } else if (n > 1) {
+            /* Pooled subfolders can complete several sets at once. Do not
+             * pick for the player: the unchosen one would be unplayable
+             * forever, and "first in the generated table" is not an answer
+             * anyone could predict or change. */
+            printf("cps1: %u runnable sets in %s, asking\n", n, dir_path);
+            set = cps1_ask_which_set(runnable, n);
+            if (set == NULL) {
+                printf("cps1: version dialog dismissed\n");
+                return NULL;
+            }
+        }
+        if (set != NULL &&
+            cps1_romset_resolve(set, s_chip_crc, s_chip_count, prg_index, gfx_index) != 0)
+            set = NULL;   /* cannot happen: it resolved a moment ago */
+    }
     if (set == NULL) {
         /* Incomplete on its own -- the ordinary case for a clone archive. Work
          * out which set it is closest to and fetch precisely that set's
@@ -486,7 +619,7 @@ static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
             snprintf(line, sizeof(line), "%u chips found, no set matched", s_chip_count);
         printf("cps1: incomplete romset in %s -- %s\n", dir_path, line);
         draw_error_screen("Incomplete CPS-1 romset", line,
-                          "Add the parent set to /roms/cps1/.shared");
+                          "Put the parent set in a subfolder beside it");
         return NULL;
     }
 

@@ -71,6 +71,21 @@ const cps1_romset_t *cps1_romset_match(const uint32_t *crcs, unsigned count,
                                         int gfx_index[CPS1_ROMSET_GFX_CHIPS]);
 
 /*
+ * Same question asked about ONE named set instead of "whichever matches
+ * first". Returns 0 and fills the index slots when every chip of `set` is
+ * present in `crcs`, -1 otherwise, and writes nothing on failure.
+ *
+ * cps1_romset_match() cannot answer this. When a game folder pools several
+ * archives -- a clone beside the parent it borrows from -- MORE THAN ONE set
+ * can be complete out of the same chips, and "first in the table" is not a
+ * choice anybody made. The caller enumerates the runnable sets with this and
+ * then either runs the only one or asks the player which.
+ */
+int cps1_romset_resolve(const cps1_romset_t *set, const uint32_t *crcs, unsigned count,
+                         int prg_index[CPS1_ROMSET_PRG_CHIPS],
+                         int gfx_index[CPS1_ROMSET_GFX_CHIPS]);
+
+/*
  * When nothing matched, say something useful instead of "not found": report
  * the set the folder came CLOSEST to and how many of its chips are absent.
  * With a clone archive extracted on its own that reads "wofj: 4 of 10 chips

@@ -109,6 +109,7 @@ $(CORE_SOURCES)
 ROMLOADSELFTEST_SOURCES = \
 cps1/rom_load_selftest.c \
 $(CPS1DIR)/cps1_rom.c \
+$(CPS1DIR)/cps1_romset.c \
 cps1/cps1_rom_linux.c
 
 PHASE12SELFTEST_SOURCES = \
