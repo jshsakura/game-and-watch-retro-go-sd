@@ -643,7 +643,19 @@ static const char *get_extension(const char *filename) {
 static bool emulator_is_cd_system(const retro_emulator_t *emu)
 {
     return strcmp(emu->dirname, "pcecd") == 0 ||
-           strcmp(emu->dirname, "segacd") == 0;
+           strcmp(emu->dirname, "segacd") == 0 ||
+           /* CPS-1 has the same layout for a different reason: a game is a
+            * MAME romset, i.e. a folder of chip dumps, so the only thing under
+            * /roms/cps1/ is the game FOLDER. It has no .cue-equivalent index
+            * file -- deliberately, since inventing one is what the retired
+            * .cps1 container did -- so it collapses on the folder itself. */
+           strcmp(emu->dirname, "cps1") == 0;
+}
+
+/* True for systems whose game folder IS the entry (no index file inside). */
+static bool emulator_is_folder_rom_system(const retro_emulator_t *emu)
+{
+    return strcmp(emu->dirname, "cps1") == 0;
 }
 
 /* Case-insensitive ".cue" — avoid snprintf/strtolower/strstr on every SD entry. */
@@ -741,6 +753,28 @@ static bool cd_collapse_game_dir(retro_emulator_t *emu, const char *path)
         return false;
 
     bool found = false;
+
+    /* Folder-rom systems (CPS-1): the entry is the directory, not a file
+     * inside it. Accept as soon as the folder holds at least one regular
+     * file, so an empty or half-copied romset still lists as a navigable
+     * folder instead of a launchable game that would fail at load. */
+    if (emulator_is_folder_rom_system(emu))
+    {
+        while (true)
+        {
+            wdog_refresh();
+            if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == 0)
+                break;
+            if (fno.fname[0] == '.' || (fno.fattrib & AM_DIR))
+                continue;
+            const char *leaf = strrchr(path, '/');
+            leaf = leaf ? leaf + 1 : path;
+            found = emulator_add_rom_file(emu, path, leaf, 0);
+            break;
+        }
+        f_closedir(&dir);
+        return found;
+    }
     while (emu->roms.count < emu->roms.maxcount)
     {
         wdog_refresh();
@@ -1865,7 +1899,12 @@ void emulators_init()
      * /roms/cps1/, so the browser matches the FOLDER, not a single file --
      * same shape as Sega CD and PC Engine CD. SD builds only. */
 #if SD_CARD == 1
-    add_emulator("CPS-1", "cps1", "zip", RG_LOGO_PAD_CPS1, RG_LOGO_HEADER_CPS1, NO_GAME_DATA);
+    /* No extension filter: the entry is the game FOLDER (see
+     * emulator_is_folder_rom_system). "zip" was wrong here -- the device has
+     * no inflate, and every MAME romset zip is DEFLATE (verified: 29/29
+     * entries across wof.zip and wofj.zip), so a .zip could be listed but
+     * never read. Extract the romset into its folder instead. */
+    add_emulator("CPS-1", "cps1", "", RG_LOGO_PAD_CPS1, RG_LOGO_HEADER_CPS1, NO_GAME_DATA);
 #endif
     add_emulator("Commodore 64", "c64", "d64 prg", RG_LOGO_PAD_C64, RG_LOGO_HEADER_C64, NO_GAME_DATA);
     add_emulator("Game & Watch", "gw", "gw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
