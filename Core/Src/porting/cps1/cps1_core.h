@@ -21,9 +21,8 @@
  * `.overlay_pce_itc`) get their hot code into ITCM.
  *
  * ================================ HONESTY NOTE ================================
- * cps1 has no real linked `.overlay_cps1`/ITCM/DTCM section list yet (same
- * gap Phase 12's cps1_device_display.c already flagged for its own
- * buffers) -- these attributes currently just rename the ELF section a
+ * cps1 has no real linked `.overlay_cps1`/ITCM/DTCM section list yet
+ * -- these attributes currently just rename the ELF section a
  * function/object lands in; on both the Linux host build and the QEMU M7
  * rig's linker script (tools/m7_qemu_rig/mps2_an500.ld, which explicitly
  * has ONE "CODE" region and no ITCM/DTCM distinction, no wait-state model
@@ -81,9 +80,11 @@ void cps1_core_run_frame_device_cost(cps1_engine_kind_t engine);
  * into a SEPARATE buffer from cps1_core_run_frame_device_cost()'s output.
  * STM32H7's LTDC has exactly 2 hardware layers: this buffer becomes layer
  * 0 (bottom), cps1_core_get_framebuffer(engine)'s becomes layer 1 (top,
- * with LTDC hardware alpha-blending them at scanout for zero CPU cost --
- * see Core/Src/porting/cps1/cps1_device_display.c for the real LTDC
- * register wiring). Not per-engine (BG state is shared, like the rest of
+ * with LTDC hardware alpha-blending them at scanout for zero CPU cost).
+ * NOTE: the device path does not do this. main_cps1.c renders straight
+ * into lcd_get_active_buffer() like every other core; the two-layer LTDC
+ * plan was never wired and its code is gone (see the 0722 cleanup commit
+ * if it is ever wanted back). Not per-engine (BG state is shared, like the rest of
  * this file) -- call once per frame alongside run_frame_device_cost(),
  * not instead of it.
  */

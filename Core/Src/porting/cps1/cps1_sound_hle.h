@@ -24,10 +24,13 @@
 
 #define CPS1_SOUND_TONE_CHANNELS 4
 #define CPS1_SOUND_SAMPLE_RATE   22050u
-/* Samples per 60fps video frame at the mixer's own rate -- moved here
- * (from a cps1_core.c-local macro) so Phase 12's device audio bridge
- * (Core/Src/porting/cps1/cps1_device_audio.c) can size its
- * audio_start_playing() call without reaching into cps1_core.c internals. */
+/* Samples per 60fps video frame at the mixer's own rate -- moved here from a
+ * cps1_core.c-local macro so a device audio bridge could size its
+ * audio_start_playing() call without reaching into cps1_core.c internals.
+ * THERE IS NO SUCH BRIDGE: this whole mixer is host-only (linux/Makefile.cps1),
+ * main_cps1.c never links it, and CPS-1 runs SILENT on the device -- the QSound
+ * side is two stub bytes so the game's boot code stops spinning
+ * (cps1_sound_stub_init). */
 #define CPS1_SOUND_SAMPLES_PER_FRAME (CPS1_SOUND_SAMPLE_RATE / 60u) /* ~368 @ 60fps */
 
 typedef struct {
