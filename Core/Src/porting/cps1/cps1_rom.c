@@ -155,15 +155,44 @@ uint32_t cps1_gfxrom_bank_mapper_wof(cps1_gfx_type_t type, uint32_t code)
     return 0; /* shifted code falls outside every bank -- caller must range-check */
 }
 
+/*
+ * Read one 16-bit program word THE WAY THE MAPPED CPU READS IT, because a
+ * preflight that disagrees with the CPU about the bytes in front of it is
+ * worse than no preflight at all -- it rejects exactly the ROMs that would
+ * have run.
+ *
+ * A program chip is cached VERBATIM and base-mapped, and Musashi reads a
+ * base-mapped page with a native 16-bit load
+ * (external/gwenesis/src/cpus/M68K/m68kcpu.h:534):
+ *
+ *     *(uint16 *)(memory_map[page].base + (address & 0xffff))
+ *
+ * On this little-endian target that returns the two bytes exchanged relative
+ * to a big-endian reading, which is precisely what cancels MAME's ROM_REVERSE
+ * -- so verbatim storage is correct and this is the reading that matches it.
+ *
+ * Composed explicitly rather than as *(const uint16_t *) for two reasons: it
+ * does not depend on the HOST's endianness (a host harness must model the
+ * DEVICE, and the device is little-endian), and it does not require the chip
+ * to be 2-byte aligned.
+ *
+ * The gate below then still catches a genuinely reversed load -- it just
+ * catches it in the other direction: a chip stored big-endian reads back here
+ * with SSP 0xFF00____, outside work RAM, and is rejected.
+ */
+static inline uint32_t cps1_prg_word(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8);
+}
+
 int cps1_rom_check_reset_vector(const cps1_rom_region_t *prg, uint32_t *out_ssp, uint32_t *out_pc)
 {
     if (!prg->data || prg->size < 8)
         return -1;
 
-    uint32_t ssp = ((uint32_t)prg->data[0] << 24) | ((uint32_t)prg->data[1] << 16) |
-                   ((uint32_t)prg->data[2] << 8) | (uint32_t)prg->data[3];
-    uint32_t pc = ((uint32_t)prg->data[4] << 24) | ((uint32_t)prg->data[5] << 16) |
-                  ((uint32_t)prg->data[6] << 8) | (uint32_t)prg->data[7];
+    /* m68k_read_immediate_32(a) == (read16(a) << 16) | read16(a + 2) */
+    uint32_t ssp = (cps1_prg_word(prg->data + 0) << 16) | cps1_prg_word(prg->data + 2);
+    uint32_t pc  = (cps1_prg_word(prg->data + 4) << 16) | cps1_prg_word(prg->data + 6);
 
     if (out_ssp) *out_ssp = ssp;
     if (out_pc)  *out_pc = pc;
@@ -172,13 +201,13 @@ int cps1_rom_check_reset_vector(const cps1_rom_region_t *prg, uint32_t *out_ssp,
         return -1; /* PC doesn't point anywhere inside the loaded ROM */
 
     /*
-     * `pc < size` ALONE DOES NOT CATCH A REVERSED BYTE-SWAP, which is the
-     * single failure this check exists to catch. Worked example: a real
-     * reset PC of 0x00000100, word-swapped, reads back as 0x00000001 --
-     * still comfortably inside a 1 MB ROM, so the size test passes and the
-     * ROM boots into garbage. (The packer's dry run with all-zero dummy
-     * chips passing was the same hole: PC=0 < size.) Three cheap tests
-     * close it, in increasing order of strength:
+     * `pc < size` ALONE DOES NOT CATCH A REVERSED LOAD, which is the single
+     * failure this check exists to catch. Worked example: a real reset PC of
+     * 0x00000100 whose 16-bit words got exchanged reads back as 0x00000001 --
+     * still comfortably inside a 1 MB ROM, so the size test passes and the ROM
+     * boots into garbage. (The packer's dry run with all-zero dummy chips
+     * passing was the same hole: PC=0 < size.) Three cheap tests close it, in
+     * increasing order of strength:
      */
     if (pc < 8u)
         return -1; /* PC pointing into the vector table's own SSP/PC longs */
@@ -189,10 +218,12 @@ int cps1_rom_check_reset_vector(const cps1_rom_region_t *prg, uint32_t *out_ssp,
      * The decisive one, and it is CPS-1-specific: the board's ONLY work RAM
      * is 0xFF0000-0xFFFFFF, so the initial supervisor stack pointer must
      * land in it (0x1000000 inclusive, because the stack pre-decrements
-     * from the top). A correct SSP therefore looks like 0x00FF____; the
-     * same value with its bytes swapped looks like 0xFF00____ and is
-     * rejected on sight. This is what actually distinguishes "loaded
-     * correctly" from "loaded backwards".
+     * from the top). Read through cps1_prg_word() a correct SSP looks like
+     * 0x00FF____; a chip stored in the wrong word order gives 0xFF00____ and
+     * is rejected on sight. This is what actually distinguishes "loaded
+     * correctly" from "loaded backwards" -- and it is the test that was
+     * firing on EVERY real ROM while the reader itself was the thing that
+     * had the byte order wrong.
      */
     if (ssp < CPS1_WRAM_BASE_ADDR || ssp > CPS1_WRAM_TOP_ADDR)
         return -1;

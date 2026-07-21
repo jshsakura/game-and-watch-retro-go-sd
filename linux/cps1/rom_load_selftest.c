@@ -113,16 +113,21 @@ static void test_interleave(void)
     remove(path1);
 }
 
-/* A real PRG ROM's reset vector: SSP must now be inside CPS-1 work RAM
+/* A real PRG ROM's reset vector: SSP must be inside CPS-1 work RAM
  * (0xFF0000-0xFFFFFF -- the board's only RAM, and the test that
- * distinguishes a correctly-loaded ROM from a byte-swapped one), PC even,
- * >= 8, and INSIDE the 32-byte fabricated ROM. */
+ * distinguishes a correctly-loaded ROM from a reversed one), PC even,
+ * >= 8, and INSIDE the 32-byte fabricated ROM.
+ *
+ * BYTES ARE IN CHIP ORDER, i.e. little-endian 16-bit words, because that is
+ * what a MAME chip dump contains and what the mapped CPU reads. Reading them
+ * big-endian byte-by-byte is the bug that rejected every real ROM; see
+ * test_reset_vector_real_wofj_chip below. */
 static void test_reset_vector_valid(void)
 {
     uint8_t prg[32];
     memset(prg, 0, sizeof(prg));
-    prg[0] = 0x00; prg[1] = 0xFF; prg[2] = 0x10; prg[3] = 0x00; /* SSP = 0x00FF1000 */
-    prg[4] = 0x00; prg[5] = 0x00; prg[6] = 0x00; prg[7] = 0x10; /* PC  = 0x00000010 */
+    prg[0] = 0xFF; prg[1] = 0x00; prg[2] = 0x00; prg[3] = 0x10; /* SSP = 0x00FF1000 */
+    prg[4] = 0x00; prg[5] = 0x00; prg[6] = 0x10; prg[7] = 0x00; /* PC  = 0x00000010 */
 
     cps1_rom_region_t region = { prg, sizeof(prg) };
     uint32_t ssp = 0, pc = 0;
@@ -152,43 +157,45 @@ static void test_reset_vector_invalid(void)
     CHECK(rc != 0, "a region too small to even hold a reset vector must be rejected");
 }
 
-/* THE CASE THE OLD `pc < size` TEST LET THROUGH. A real reset vector
- * (SSP=0x00FF1000, PC=0x00000100) with every 16-bit word byte-swapped --
- * exactly what a reversed load produces. The swapped PC (0x00000001) is
- * still inside the ROM, so the size test alone accepts it; the swapped SSP
- * (0xFF001000) is outside work RAM, so the SSP test rejects it. Plus an
- * odd PC and a PC inside the vector table, both of which a 68000 could
- * never start from. */
+/* THE CASE THE OLD `pc < size` TEST LET THROUGH, with the direction the
+ * 0721 fix corrected. A chip stored BIG-ENDIAN -- i.e. loaded backwards
+ * relative to what a MAME dump contains -- must be rejected. Bytes below are
+ * the correct vector (SSP=0x00FF1000, PC=0x00000100) with every 16-bit word
+ * exchanged, which is exactly what a reversed load produces. The reversed PC
+ * (0x00000001) is still inside the ROM, so a size test alone accepts it; the
+ * reversed SSP (0xFF000010) is outside work RAM, so the SSP test rejects it.
+ * Plus an odd PC and a PC inside the vector table, neither of which a 68000
+ * could ever start from. */
 static void test_reset_vector_byteswapped_is_rejected(void)
 {
     uint8_t prg[256];
     memset(prg, 0, sizeof(prg));
     cps1_rom_region_t region = { prg, sizeof(prg) };
 
-    /* SSP=0x00FF1000 PC=0x00000100, each 16-bit word byte-swapped. */
-    prg[0] = 0xFF; prg[1] = 0x00; prg[2] = 0x00; prg[3] = 0x10; /* SSP -> 0xFF000010 */
-    prg[4] = 0x00; prg[5] = 0x00; prg[6] = 0x00; prg[7] = 0x01; /* PC  -> 0x00000001 */
+    /* Chip stored big-endian: SSP reads back 0xFF000010, PC 0x00000001. */
+    prg[0] = 0x00; prg[1] = 0xFF; prg[2] = 0x10; prg[3] = 0x00;
+    prg[4] = 0x00; prg[5] = 0x00; prg[6] = 0x01; prg[7] = 0x00;
     CHECK(cps1_rom_check_reset_vector(&region, NULL, NULL) != 0,
-          "a fully byte-swapped reset vector must be rejected (this is the whole point)");
+          "a chip stored in the wrong word order must be rejected (this is the whole point)");
 
     /* PC in range and even, but SSP outside work RAM. */
     memset(prg, 0, sizeof(prg));
-    prg[0] = 0x00; prg[1] = 0x10; prg[2] = 0x00; prg[3] = 0x00; /* SSP = 0x00100000, not RAM */
-    prg[7] = 0x10;                                              /* PC  = 0x00000010 */
+    prg[0] = 0x10; prg[1] = 0x00; prg[2] = 0x00; prg[3] = 0x00; /* SSP = 0x00100000, not RAM */
+    prg[6] = 0x10;                                              /* PC  = 0x00000010 */
     CHECK(cps1_rom_check_reset_vector(&region, NULL, NULL) != 0,
           "SSP outside CPS-1 work RAM must be rejected");
 
     /* SSP fine, PC odd. */
     memset(prg, 0, sizeof(prg));
-    prg[1] = 0xFF; prg[2] = 0x10;                               /* SSP = 0x00FF1000 */
-    prg[7] = 0x11;                                              /* PC  = 0x00000011, odd */
+    prg[0] = 0xFF; prg[3] = 0x10;                               /* SSP = 0x00FF1000 */
+    prg[6] = 0x11;                                              /* PC  = 0x00000011, odd */
     CHECK(cps1_rom_check_reset_vector(&region, NULL, NULL) != 0,
           "odd PC must be rejected (a real 68000 address-errors on it)");
 
     /* SSP fine, PC inside the vector table itself. */
     memset(prg, 0, sizeof(prg));
-    prg[1] = 0xFF; prg[2] = 0x10;                               /* SSP = 0x00FF1000 */
-    prg[7] = 0x04;                                              /* PC  = 0x00000004 */
+    prg[0] = 0xFF; prg[3] = 0x10;                               /* SSP = 0x00FF1000 */
+    prg[6] = 0x04;                                              /* PC  = 0x00000004 */
     CHECK(cps1_rom_check_reset_vector(&region, NULL, NULL) != 0,
           "PC pointing into the vector table's own longs must be rejected");
 
@@ -196,6 +203,52 @@ static void test_reset_vector_byteswapped_is_rejected(void)
     memset(prg, 0, sizeof(prg));
     CHECK(cps1_rom_check_reset_vector(&region, NULL, NULL) != 0,
           "an all-zero ROM must be rejected (PC=0 passed the old size-only test)");
+}
+
+/* THE REGRESSION THAT REJECTED EVERY REAL ROM.
+ *
+ * These are the actual first eight bytes of wofj's `tk2j23c.bin` (verify with
+ * `xxd -l 8 -p tk2j23c.bin`). The folder loader caches a chip VERBATIM and
+ * base-maps it, and Musashi reads a base-mapped page with a NATIVE 16-bit load
+ * -- external/gwenesis/src/cpus/M68K/m68kcpu.h:534,
+ *
+ *     *(uint16 *)(memory_map[page].base + (address & 0xffff))
+ *
+ * -- so on this little-endian target each 16-bit word comes back with its two
+ * bytes exchanged relative to a big-endian reading. That is not a bug: it is
+ * what cancels MAME's ROM_REVERSE, and it is why storing the file verbatim is
+ * right.
+ *
+ * The preflight gate did NOT read it that way. It composed both longs
+ * byte-by-byte big-endian, so it saw SSP=0xFF00EE62 / PC=0x0000A271 -- an SSP
+ * outside work RAM and an ODD PC -- and rejected the ROM before Musashi ever
+ * ran. The CPU and its own preflight disagreed about the bytes in front of
+ * them, and the preflight won. Every supported set failed to load.
+ *
+ * This test is the RED: run it against the pre-fix cps1_rom_check_reset_vector
+ * and it fails on both values. */
+static void test_reset_vector_real_wofj_chip(void)
+{
+    /* 32 KB, not 8 bytes: the gate requires PC to land inside the region, and
+     * the real PC is 0x71A2. A real chip is 512 KB; 32 KB is the smallest
+     * honest fixture that contains this vector. */
+    static uint8_t prg[0x8000];
+    memset(prg, 0, sizeof(prg));
+    static const uint8_t real_head[8] = { 0xff, 0x00, 0xee, 0x62, 0x00, 0x00, 0xa2, 0x71 };
+    memcpy(prg, real_head, sizeof(real_head));
+
+    cps1_rom_region_t region = { prg, sizeof(prg) };
+    uint32_t ssp = 0, pc = 0;
+    int rc = cps1_rom_check_reset_vector(&region, &ssp, &pc);
+
+    /* The values the mapped CPU actually sees. SSP is inside CPS-1 work RAM
+     * (0xFF0000-0xFFFFFF) and PC is even -- a plausible reset pair, which the
+     * big-endian reading is not. */
+    CHECK(ssp == 0x00FF62EEu, "real wofj SSP should be 0x00FF62EE (what Musashi "
+          "reads through the base map), got 0x%08x", ssp);
+    CHECK(pc == 0x000071A2u, "real wofj PC should be 0x000071A2, got 0x%08x", pc);
+    CHECK(rc == 0, "the real wofj program chip must be ACCEPTED (it is the ROM "
+          "every user has); rc=%d", rc);
 }
 
 /* Ties Phase 11's two pieces together: byte-interleave TWO PRG chips
@@ -209,19 +262,26 @@ static void test_interleaved_load_then_reset_vector(void)
     snprintf(path1, sizeof(path1), "/tmp/cps1_selftest_prg1_%d.bin", (int)getpid());
 
     /* Target reset vector after interleave: SSP=0x00FF1000 (inside CPS-1
-     * work RAM, as cps1_rom_check_reset_vector now requires -- see its
-     * byte-swap rationale), PC=0x00000100 (INSIDE the 512-byte combined ROM
-     * below -- 0x100 < 0x200). Interleaved big-endian bytes {SSP,PC} =
-     * 00 FF 10 00 00 00 01 00 -> even-index chip (chip0) gets bytes
-     * [0,2,4,6] = 00,10,00,01 ; odd-index chip (chip1) gets
-     * [1,3,5,7] = FF,00,00,00. */
+     * work RAM, as cps1_rom_check_reset_vector requires) and PC=0x00000100
+     * (INSIDE the 512-byte combined ROM below -- 0x100 < 0x200).
+     *
+     * The combined stream must be in CHIP ORDER -- little-endian 16-bit words,
+     * what a MAME dump holds and what the mapped CPU reads -- so the target
+     * bytes are FF 00 00 10 00 00 00 01, NOT the big-endian 00 FF 10 00 ...
+     * this test used to build. (That expectation was written to match the
+     * preflight's own byte order rather than the CPU's, and it is why a test
+     * that passed all along did not catch the gate rejecting every real ROM:
+     * both sides of the comparison were wrong in the same direction.)
+     *
+     * Even-index bytes [0,2,4,6] = FF,00,00,00 go to chip0; odd-index bytes
+     * [1,3,5,7] = 00,10,00,01 go to chip1. */
     uint8_t chip0[256], chip1[256];
     memset(chip0, 0, sizeof(chip0));
     memset(chip1, 0, sizeof(chip1));
-    chip0[0] = 0x00; chip1[0] = 0xFF; /* byte0=SSP hi,  byte1 */
-    chip0[1] = 0x10; chip1[1] = 0x00; /* byte2,         byte3 */
-    chip0[2] = 0x00; chip1[2] = 0x00; /* byte4=PC hi,   byte5 */
-    chip0[3] = 0x01; chip1[3] = 0x00; /* byte6,         byte7=PC lo */
+    chip0[0] = 0xFF; chip1[0] = 0x00; /* byte0,         byte1        */
+    chip0[1] = 0x00; chip1[1] = 0x10; /* byte2,         byte3=SSP lo */
+    chip0[2] = 0x00; chip1[2] = 0x00; /* byte4,         byte5        */
+    chip0[3] = 0x00; chip1[3] = 0x01; /* byte6,         byte7=PC lo  */
 
     write_file(path0, chip0, sizeof(chip0));
     write_file(path1, chip1, sizeof(chip1));
@@ -253,6 +313,7 @@ int main(void)
     test_reset_vector_valid();
     test_reset_vector_invalid();
     test_reset_vector_byteswapped_is_rejected();
+    test_reset_vector_real_wofj_chip();
     test_interleaved_load_then_reset_vector();
 
     if (failures) {
