@@ -66,6 +66,19 @@ ifeq ($(RC_PROBE),1)
   C_DEFS += -DRC_PROBE=1
 endif
 
+# On-device INSTRUCTION-FETCH feasibility gate for a PicoDrive SH-2 dynamic
+# recompiler port (explore/32x-drc-feasibility): compares DWT cycles/iteration
+# for identical Thumb-2 machine code executed from ITCM, DTCM, RAM_EMU (AXI
+# SRAM) and internal flash (XIP), the cheap check before anyone writes an
+# ARM32->Thumb-2 DRC backend. Default OFF: the release build is byte-identical
+# to a tree without it. Enable with DRC_PROBE=1 (e.g.
+# `make release DOCKER=1 DRC_PROBE=1 ...`). See Core/Src/drc_probe.c.
+DRC_PROBE ?= 0
+ifeq ($(DRC_PROBE),1)
+  C_SOURCES += Core/Src/drc_probe.c
+  C_DEFS += -DDRC_PROBE=1
+endif
+
 # On-device SNES APU cost breakdown. Default OFF: the release build is
 # byte-identical (no Python script runs, no -DSNES_LOAD_DIAG, apu.c and
 # dsp.c compile from external/sm untouched). Enable with SNES_LOAD_DIAG=1

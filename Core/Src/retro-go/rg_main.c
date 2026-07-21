@@ -24,6 +24,7 @@
 #include "rg_clock.h"
 #include "rg_alarm.h"   /* resident all-state next-alarm cache */
 #include "rc_probe.h"   /* RC_PROBE default + probe prototype */
+#include "drc_probe.h"  /* DRC_PROBE default + probe prototype */
 #include "rg_system_grid.h"
 
 /* Wake-cause flags latched at reset in main.c (before anything clears them). */
@@ -1194,6 +1195,19 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     {
         extern uint32_t boot_buttons;   /* plain global from main.c */
         rc_probe_run_if_requested(boot_buttons);
+    }
+#endif
+
+    /* DRC instruction-fetch feasibility gate (explore/32x-drc-feasibility) --
+     * inert unless B_B+B_PAUSE held at boot. Lives here (not main.c) for the
+     * same reason as RC_PROBE above: itc_init()/ram_start are set up right
+     * before this point, and its /32x_drc_probe.txt write needs sdcard_init()
+     * to have already run. DRC_PROBE-gated so the default build is
+     * byte-identical. See Core/Src/drc_probe.c. */
+#if DRC_PROBE
+    {
+        extern uint32_t boot_buttons;   /* plain global from main.c */
+        drc_probe_run_if_requested(boot_buttons);
     }
 #endif
 
