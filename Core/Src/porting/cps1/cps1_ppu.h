@@ -65,8 +65,14 @@ typedef struct {
  * per-slot metadata (last_used/tile_index/valid) is real RAM cost too, so
  * the array is sized to make its OWN total footprint land at 256KB,
  * instead of quietly costing more than the budgeted number. */
-enum { CPS1_TILE_CACHE_BUDGET_BYTES = 256 * 1024 };
-enum { CPS1_TILE_CACHE_SLOTS = CPS1_TILE_CACHE_BUDGET_BYTES / (int)sizeof(cps1_tile_cache_slot_t) };
+/* Overridable so the device build can trade cache for RAM_EMU headroom. The
+ * 256 KB default is what the host harnesses and every selftest size against;
+ * the device build passes a smaller figure (see main_cps1.c's memory plan) --
+ * this is a CACHE, so shrinking it costs hit rate, not correctness. */
+#ifndef CPS1_TILE_CACHE_BUDGET_BYTES
+#define CPS1_TILE_CACHE_BUDGET_BYTES (256 * 1024)
+#endif
+enum { CPS1_TILE_CACHE_SLOTS = (int)CPS1_TILE_CACHE_BUDGET_BYTES / (int)sizeof(cps1_tile_cache_slot_t) };
 
 typedef struct {
     cps1_tile_cache_slot_t slots[CPS1_TILE_CACHE_SLOTS];
