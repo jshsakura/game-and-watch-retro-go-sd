@@ -202,18 +202,46 @@ static void cps1_rebuild_video_state(void)
     }
 }
 
+/*
+ * Overdraw masks. Graphics is three quarters of a CPS-1 frame and most of it
+ * used to be invisible: on the real title-screen capture SCROLL3 drew 85,105
+ * pixels of which 16 survived, and SCROLL2 lost 74% the same way. These two
+ * bitmaps record where the layers ABOVE have already put an opaque pen, so a
+ * lower layer's 8x8 sub-tile that is fully covered is not blitted at all.
+ *
+ * It is a skip, not a reorder: the surviving pixels are the same ones, and
+ * tools/m7_qemu_rig/run_cps1_frame.sh refuses to report the speedup unless
+ * the framebuffer comes out byte-identical to the unskipped render. It
+ * measures 3,751,106 -> 2,804,070 insn/frame, graphics 66.1% -> 49.4% of the
+ * 60fps budget, for 21,952 bytes of BSS.
+ *
+ * SCROLL1 gets no mask: nothing is above it but sprites, it loses 0% to
+ * overdraw, and a coverage pass for it would be pure cost.
+ */
+static cps1_cover_t s_cov_above_s2;   /* SCROLL1           */
+static cps1_cover_t s_cov_above_s3;   /* SCROLL1 + SCROLL2 */
+
 static void cps1_render_into(uint16_t *fb, uint8_t *meta)
 {
+    /* The coverage passes walk with out_fb = NULL: same cell iteration the
+     * draw uses, no pixels written. Top-down, because a layer can only be
+     * hidden by the ones in front of it. */
+    cps1_cover_reset(&s_cov_above_s2);
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_rom,
+                             &s_cache, &s_pal, NULL, NULL, NULL, &s_cov_above_s2);
+    s_cov_above_s3 = s_cov_above_s2;
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_rom,
+                             &s_cache, &s_pal, NULL, NULL, NULL, &s_cov_above_s3);
+
     /* Back to front: SCROLL3 (32x32) is the far background, SCROLL1 (8x8) the
      * text/foreground layer. Drawing 1,2,3 paints the background over
      * everything -- that bug turned the title screen into three flat bands. */
-    static const unsigned draw_order[CPS1_BG_LAYER_COUNT] = {
-        CPS1_BG_SCROLL3, CPS1_BG_SCROLL2, CPS1_BG_SCROLL1
-    };
-    for (unsigned i = 0; i < CPS1_BG_LAYER_COUNT; i++) {
-        unsigned L = draw_order[i];
-        cps1_bg_render_layer(&s_bg.layers[L], L, &s_rom, &s_cache, &s_pal, fb, meta);
-    }
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL3], CPS1_BG_SCROLL3, &s_rom,
+                             &s_cache, &s_pal, fb, meta, &s_cov_above_s3, NULL);
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_rom,
+                             &s_cache, &s_pal, fb, meta, &s_cov_above_s2, NULL);
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_rom,
+                             &s_cache, &s_pal, fb, meta, NULL, NULL);
     cps1_ppu_render(&s_oam, &s_rom, &s_cache, &s_pal, fb);
 }
 

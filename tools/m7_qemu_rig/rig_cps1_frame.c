@@ -99,6 +99,42 @@ static void render_frame_meta(uint8_t *meta)
 
 static void render_frame(void) { render_frame_meta(s_meta); }
 
+/*
+ * The same frame, with the overdraw skipped.
+ *
+ * Coverage is built top-down over the layers that sit ABOVE the one being
+ * drawn, then the draw runs in the usual back-to-front order and declines to
+ * blit any 8x8 sub-tile whose footprint is already fully covered. Nothing
+ * about the surviving pixels changes -- which is the claim the byte-for-byte
+ * framebuffer compare in main() exists to hold to.
+ *
+ * SCROLL1 is drawn with no skip mask: nothing is above it but sprites, and
+ * the measurement says it loses 0% to overdraw, so a coverage pass for it
+ * would be pure cost. Sprites are likewise left alone.
+ */
+static cps1_cover_t s_cov_above_s2;   /* SCROLL1                */
+static cps1_cover_t s_cov_above_s3;   /* SCROLL1 + SCROLL2      */
+
+static void render_frame_covered(void)
+{
+    memset(s_fb, 0, sizeof(s_fb));
+
+    cps1_cover_reset(&s_cov_above_s2);
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_rom,
+                             &s_cache, &s_pal, NULL, NULL, NULL, &s_cov_above_s2);
+    s_cov_above_s3 = s_cov_above_s2;
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_rom,
+                             &s_cache, &s_pal, NULL, NULL, NULL, &s_cov_above_s3);
+
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL3], CPS1_BG_SCROLL3, &s_rom,
+                             &s_cache, &s_pal, s_fb, NULL, &s_cov_above_s3, NULL);
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_rom,
+                             &s_cache, &s_pal, s_fb, NULL, &s_cov_above_s2, NULL);
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_rom,
+                             &s_cache, &s_pal, s_fb, NULL, NULL, NULL);
+    cps1_ppu_render(&s_oam, &s_rom, &s_cache, &s_pal, s_fb);
+}
+
 int main(void)
 {
     rig_timer_init();
@@ -273,9 +309,70 @@ int main(void)
                 survives++;
         }
         printf("[cps1-frame]   %-8s draws %6u px, %6u survive (%2u%%) -- %6u px of work "
-               "(%2u%%) is overwritten\n", stage_name[i], drawn, survives,
+               "(%2u%) is overwritten\n", stage_name[i], drawn, survives,
                drawn ? survives * 100u / drawn : 0, drawn - survives,
                drawn ? (drawn - survives) * 100u / drawn : 0);
     }
+
+    /* ---- skipping that overdraw: same pixels, fewer of them written ----
+     * The gate first. A faster renderer that draws a different frame is not a
+     * faster renderer, and "looks right" is not a check -- so hash both
+     * framebuffers and refuse to report a speedup unless they are identical. */
+    static uint16_t s_ref[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
+    render_frame_meta(NULL);
+    memcpy(s_ref, s_fb, sizeof(s_ref));
+    render_frame_covered();
+    unsigned diff = 0, first = 0;
+    for (unsigned i = 0; i < CPS1_FB_WIDTH * CPS1_FB_HEIGHT; i++) {
+        if (s_ref[i] != s_fb[i]) {
+            if (!diff) first = i;
+            diff++;
+        }
+    }
+    if (diff) {
+        printf("[cps1-frame] FAIL coverage-skip changed %u pixels (first at %u,%u: "
+               "%04x vs %04x) -- NOT a speedup, a bug\n", diff,
+               first % CPS1_FB_WIDTH, first / CPS1_FB_WIDTH, s_ref[first], s_fb[first]);
+        return 1;
+    }
+    printf("[cps1-frame] coverage-skip output is byte-identical to the reference frame\n");
+
+    t0 = rig_timer_now();
+    for (unsigned f = 0; f < RIG_FRAMES; f++)
+        render_frame_covered();
+    t1 = rig_timer_now();
+    uint64_t cov = (uint64_t)(uint32_t)(t1 - t0) * ipt_x1000 / 1000ull / RIG_FRAMES;
+    printf("[cps1-frame] COVERAGE-SKIP: %lu insn/frame = %.3f ms = %lu.%lu%% of budget "
+           "(was %lu = %lu.%lu%%; graphics -%lu.%lu%%)\n",
+           (unsigned long)cov, (double)cov * 1000.0 / (double)DEVICE_CLOCK_HZ,
+           (unsigned long)(cov * 1000ull / DEVICE_BUDGET_INSN / 10),
+           (unsigned long)(cov * 1000ull / DEVICE_BUDGET_INSN % 10),
+           (unsigned long)dev,
+           (unsigned long)(dev * 1000ull / DEVICE_BUDGET_INSN / 10),
+           (unsigned long)(dev * 1000ull / DEVICE_BUDGET_INSN % 10),
+           (unsigned long)((dev - cov) * 1000ull / dev / 10),
+           (unsigned long)((dev - cov) * 1000ull / dev % 10));
+    /* What the two coverage passes cost on their own. This is the price paid
+     * in a scene with NOTHING to skip -- the honest worst case, and the number
+     * that decides whether the mask is safe to leave on unconditionally. */
+    t0 = rig_timer_now();
+    for (unsigned f = 0; f < RIG_FRAMES; f++) {
+        cps1_cover_reset(&s_cov_above_s2);
+        cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_rom,
+                                 &s_cache, &s_pal, NULL, NULL, NULL, &s_cov_above_s2);
+        s_cov_above_s3 = s_cov_above_s2;
+        cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_rom,
+                                 &s_cache, &s_pal, NULL, NULL, NULL, &s_cov_above_s3);
+    }
+    t1 = rig_timer_now();
+    uint64_t cpass = (uint64_t)(uint32_t)(t1 - t0) * ipt_x1000 / 1000ull / RIG_FRAMES;
+    printf("[cps1-frame] coverage passes alone: %lu insn/frame = %lu.%lu%% of the "
+           "unskipped frame -- the worst case, i.e. what a scene with no overdraw pays\n",
+           (unsigned long)cpass,
+           (unsigned long)(cpass * 1000ull / dev / 10), (unsigned long)(cpass * 1000ull / dev % 10));
+    printf("[cps1-frame] FRAME TOTAL: %lu insn = %.3f ms vs 16.667 ms -> %s\n",
+           (unsigned long)(cov + 1039495ull),
+           (double)(cov + 1039495ull) * 1000.0 / (double)DEVICE_CLOCK_HZ,
+           (cov + 1039495ull <= DEVICE_BUDGET_INSN) ? "UNDER" : "OVER");
     return 0;
 }

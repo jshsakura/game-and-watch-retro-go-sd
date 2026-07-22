@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "cps1_bg.h"
 
 void cps1_bg_reset(cps1_bg_state_t *bg)
@@ -57,6 +59,19 @@ void cps1_bg_render_layer(const cps1_bg_layer_t *layer, unsigned layer_index,
                            const cps1_rom_t *rom, cps1_tile_cache_t *cache,
                            const cps1_palette_t *pal, uint16_t *out_fb, uint8_t *out_meta)
 {
+    cps1_bg_render_layer_ex(layer, layer_index, rom, cache, pal, out_fb, out_meta, NULL, NULL);
+}
+
+/* The same walk, with the coverage hooks -- see cps1_ppu.h's coverage section
+ * for what they buy and why skipping cannot change a pixel. out_fb == NULL
+ * walks without drawing, which is how the coverage pass runs the IDENTICAL
+ * cell iteration the draw uses instead of a second copy of it that could
+ * drift. */
+void cps1_bg_render_layer_ex(const cps1_bg_layer_t *layer, unsigned layer_index,
+                              const cps1_rom_t *rom, cps1_tile_cache_t *cache,
+                              const cps1_palette_t *pal, uint16_t *out_fb, uint8_t *out_meta,
+                              const cps1_cover_t *skip, cps1_cover_t *emit)
+{
     unsigned tile_px = cps1_bg_tile_px(layer_index);
     unsigned sub = tile_px / 8u; /* sub-tiles per side: 1, 2, or 4 */
     unsigned palette_offset = cps1_bg_layer_palette_offset(layer_index);
@@ -102,9 +117,9 @@ void cps1_bg_render_layer(const cps1_bg_layer_t *layer, unsigned layer_index,
             int flip_y = (int)cps1_bg_attr_flip_y(cell->attr);
             uint8_t prio = (uint8_t)cps1_bg_attr_priority(cell->attr);
 
-            cps1_blit_block_indexed((uint32_t)cell->code, sub, bank, pal,
-                                     cell_x0, cell_y0, flip_x, flip_y, cache, rom,
-                                     out_fb, out_meta, prio);
+            cps1_blit_block_indexed_ex((uint32_t)cell->code, sub, bank, pal,
+                                        cell_x0, cell_y0, flip_x, flip_y, cache, rom,
+                                        out_fb, out_meta, prio, skip, emit);
         }
     }
 }

@@ -76,6 +76,11 @@ enum { CPS1_TILE_CACHE_SLOTS = (int)CPS1_TILE_CACHE_BUDGET_BYTES / (int)sizeof(c
 
 typedef struct {
     cps1_tile_cache_slot_t slots[CPS1_TILE_CACHE_SLOTS];
+    /* One bit per slot: "the tile in this slot has no transparent pen".
+     * Deliberately NOT a field inside cps1_tile_cache_slot_t -- the slot count
+     * is derived from sizeof(slot), so growing the slot would silently shrink
+     * the cache and move every hit-rate number ever measured. */
+    uint8_t opaque_bits[(CPS1_TILE_CACHE_SLOTS + 7) / 8];
     uint32_t clock;
     uint32_t hits;
     uint32_t misses;
@@ -209,3 +214,59 @@ void cps1_blit_block_indexed(uint32_t base_subtile, unsigned sub, unsigned palet
                               int flip_x, int flip_y, cps1_tile_cache_t *cache,
                               const cps1_rom_t *rom, uint16_t *fb,
                               uint8_t *out_meta, uint8_t priority_group);
+
+/* ------------------------------------------------------------------ coverage
+ *
+ * The renderer draws SCROLL3, SCROLL2, SCROLL1 and then sprites into one
+ * framebuffer, back to front, so a pixel written by a lower layer and then
+ * written again by a higher one cost a blit nobody can see. On the real
+ * title-screen capture that is most of the work: SCROLL3 draws 85,105 px of
+ * which 16 survive, and SCROLL2 loses 74% the same way (tools/m7_qemu_rig/
+ * rig_cps1_frame.c reports both).
+ *
+ * A coverage bitmap makes that work skippable WITHOUT changing a single
+ * output pixel: 1 bit per screen pixel, set where a higher layer has already
+ * put an opaque pen. A lower layer's 8x8 sub-tile whose whole footprint is
+ * already covered is guaranteed to be overwritten in full, so not drawing it
+ * is not an approximation -- it is the same frame, minus the wasted stores.
+ *
+ * Everything here is conservative in one direction only: a sub-tile that
+ * straddles a screen edge, or a tile with even one transparent pen, is never
+ * marked as covering. Missing a mark costs speed; a wrong mark would cost
+ * pixels, and cannot happen. */
+#define CPS1_COVER_STRIDE  (CPS1_FB_WIDTH / 8 + 1)   /* +1: the 8-bit span test
+                                                      * reads one byte past a
+                                                      * non-byte-aligned x */
+typedef struct {
+    uint8_t bits[CPS1_FB_HEIGHT * CPS1_COVER_STRIDE];
+} cps1_cover_t;
+
+void cps1_cover_reset(cps1_cover_t *cov);
+/* Marks the 8x8 square at (x,y) as opaquely covered. Off-screen or partially
+ * off-screen squares are ignored (see "conservative in one direction"). */
+void cps1_cover_mark8x8(cps1_cover_t *cov, int x, int y);
+/* Non-zero only if all 64 pixels of the 8x8 square at (x,y) are covered. */
+int  cps1_cover_test8x8(const cps1_cover_t *cov, int x, int y);
+
+/* Non-zero if the tile most recently fetched for `tile_index` has no
+ * transparent pen, i.e. blitting it covers its whole 8x8 footprint. Valid
+ * immediately after a successful cps1_tile_cache_fetch() of that index. */
+int cps1_tile_cache_opaque(const cps1_tile_cache_t *cache, uint32_t tile_index);
+
+/* cps1_blit_block_indexed, plus the two coverage hooks:
+ *   skip  != NULL -- sub-tiles whose footprint it already covers are not drawn
+ *   emit  != NULL -- fully-opaque sub-tiles mark their footprint in it
+ *   fb    == NULL -- walk only, draw nothing (the coverage pass; the walk is
+ *                    shared with the draw so the two cannot drift apart) */
+void cps1_blit_block_indexed_ex(uint32_t base_subtile, unsigned sub, unsigned palette_bank,
+                                 const cps1_palette_t *pal, int dst_x, int dst_y,
+                                 int flip_x, int flip_y, cps1_tile_cache_t *cache,
+                                 const cps1_rom_t *rom, uint16_t *fb,
+                                 uint8_t *out_meta, uint8_t priority_group,
+                                 const cps1_cover_t *skip, cps1_cover_t *emit);
+
+/* cps1_ppu_render's walk with the same two hooks. Sprites are drawn last (on
+ * top), so for coverage purposes they are the FIRST thing marked. */
+void cps1_ppu_render_ex(const cps1_oam_t *oam, const cps1_rom_t *rom, cps1_tile_cache_t *cache,
+                         const cps1_palette_t *pal, uint16_t *fb,
+                         const cps1_cover_t *skip, cps1_cover_t *emit);

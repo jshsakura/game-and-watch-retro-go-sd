@@ -130,6 +130,11 @@ void cps1_bg_swizzle_offset_to_col_row(unsigned layer_index, uint32_t offset,
  * buffer or accumulates. Index-0 pixels are left untouched (transparent);
  * there is no per-cell on/off gate any more (see cps1_bg_cell_t's comment
  * above) -- every cell is always attempted, matching real hardware. */
+void cps1_bg_render_layer_ex(const cps1_bg_layer_t *layer, unsigned layer_index,
+                              const cps1_rom_t *rom, cps1_tile_cache_t *cache,
+                              const cps1_palette_t *pal, uint16_t *out_fb, uint8_t *out_meta,
+                              const cps1_cover_t *skip, cps1_cover_t *emit);
+
 void cps1_bg_render_layer(const cps1_bg_layer_t *layer, unsigned layer_index,
                            const cps1_rom_t *rom, cps1_tile_cache_t *cache,
                            const cps1_palette_t *pal, uint16_t *out_fb, uint8_t *out_meta);
