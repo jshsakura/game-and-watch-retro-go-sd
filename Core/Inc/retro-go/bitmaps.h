@@ -129,12 +129,18 @@ enum {
     // sit here, after the last logo.bin-backed header and BEFORE the colour-only
     // pad block, so enum value == 3 + logo.bin index stays exact.
     RG_LOGO_HEADER_32X,
-    // Sega CD name header — same rule again; appended after 32X so the
-    // enum-to-logo.bin index correspondence stays exact.
-    RG_LOGO_HEADER_SEGACD,
-    // CPS-1 name header — same rule again; appended after Sega CD so the
-    // enum-to-logo.bin index correspondence stays exact.
+    // ORDER HERE MUST MATCH THE LINKED ORDER OF THE LOGO_DATA STRUCTS IN
+    // .sdcard_logo, NOT their declaration order in rg_logos.c. Those are not
+    // the same thing: GCC may reorder top-level definitions (-ftoplevel-reorder
+    // is on by default at -O1+), and it did — header_cps1 is declared AFTER
+    // header_segacd yet the linker emits it BEFORE, which put Sega CD's
+    // wordmark on the CPS-1 tab and vice versa on device. The "appended last so
+    // no index shifts" comments elsewhere in this file describe an intent the
+    // compiler never promised. Verify with:
+    //     arm-none-eabi-nm -n build/gw_retro_go.elf | grep ' R header_'
+    // and make this list match that output exactly.
     RG_LOGO_HEADER_CPS1,
+    RG_LOGO_HEADER_SEGACD,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
