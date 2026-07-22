@@ -689,7 +689,23 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
    * A/B attempt produced, and it looked like "the wire does nothing" rather
    * than "the measurement ended before the wire started".
    * Both arms must use the SAME skip so the comparison stays honest. */
-  if (n_warmup < SNES_PROF_SKIP_FRAMES) { n_warmup++; return; }
+  if (n_warmup < SNES_PROF_SKIP_FRAMES) {
+    n_warmup++;
+    /* Returning early is NOT enough: Ledger B's accumulators keep filling during
+     * the warm-up, and the first RECORDED frame would then absorb all of it.
+     * That is not hypothetical -- it happened: a 240-frame warm-up produced
+     * `ppu_calls/frame=1068` where ~225 is correct (224 + 240*225/64 to the
+     * digit), an `apu_lle` skipped-pool sample of 319M cycles, and
+     * `ledgerB_resid negative_core_rem_frames=1 FAIL` in both arms of an A/B.
+     * Ledger A is safe because it works from per-frame cumulative marks, and
+     * Ledger C reads TIM2 deltas -- only these two counters carry state across
+     * the boundary, so only these two need clearing. Do it every warm-up frame
+     * rather than once at the end: the window's first frame must start from the
+     * same zero every other frame does. */
+    snes_prof_b_ppu_cyc = snes_prof_b_ppu_calls = 0;
+    snes_prof_b_apu_cyc = snes_prof_b_apu_calls = 0;
+    return;
+  }
 
   if (n_drawn + n_skip >= SNES_PROF_FRAMES) {
     snes_profile_dump();
