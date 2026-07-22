@@ -1418,6 +1418,13 @@ else
   SNES_SPIN_SKIP_DEF :=
 endif
 
+# SNES_SPIN_FORCE_ON=1 forces the spin-skip learner on regardless of the
+# per-ROM table. Diagnostic third arm only -- never a shipping path.
+SNES_SPIN_FORCE_ON ?= 0
+ifeq ($(SNES_SPIN_FORCE_ON),1)
+  SNES_SPIN_SKIP_DEF += -DSNES_SPIN_FORCE_ON
+endif
+
 SNES_DIAG_DIR := $(BUILD_DIR)/snes_diag
 SNES_DIAG_DEFS :=
 SNES_HLE_DEFS :=
