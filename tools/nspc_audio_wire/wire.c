@@ -60,6 +60,13 @@ static int g_frac = 0;             /* APU-cycle remainder (32 = one sample) */
 static uint8_t g_ack[3];           /* instant-ack values for ports 1-3 */
 static uint8_t g_last_p0 = 0;      /* last port-0 command seen during LLE */
 static int g_ok_streak = 0;
+/* nspc_variant.c's log_skip() wants this for diagnostics; nspc_wire.c (the
+ * device copy) already defines and maintains it -- the host copy dropped it
+ * during the songlist-off-by-one merge, which left the host build unable to
+ * link (nspc_variant.o has an unconditional extern reference). Restored so
+ * `bash tools/nspc_audio_wire/build.sh` works again; keeps parity with the
+ * device copy's semantics (real frame number, not the write-event counter). */
+int g_real_frame = 0;
 
 /* ---- one 32 kHz sample step: exactly SpcPlayer_GenerateSamples' semantics -- */
 static inline void wire_step_sample(SpcPlayer *p) {
@@ -79,9 +86,58 @@ static inline void wire_mirror_ports(Apu *apu, SpcPlayer *p) {
   apu->outPorts[3] = g_ack[2];
 }
 
+/* DIAGNOSTIC (fix/nspc-a0-latch): WIRE_LLEP0TRACE=1 -- log every transition of
+ * the REAL SPC700 driver's outPorts[0] (the real port_to_snes[0] mirror, same
+ * $F4 zero page the game polls) for the whole LLE run, no swap needed. This
+ * is the experiment that separates the two standing hypotheses for why the
+ * a=0 restart path latches the wire silent:
+ *   (1) our tick/tempo pacing races ahead of the real driver and walks off
+ *       the song's real section list into unrelated data that happens to
+ *       read as literal 0x0000 -- something the real driver never does at
+ *       this point in the song;
+ *   (2) the real driver hits this exact a=0 restart constantly too, and
+ *       recovers because a fresh command always arrives within a few ticks --
+ *       in which case our latch is fine and the bug is that we drop/never
+ *       deliver that follow-up command.
+ * If real outPorts[0] never goes to 0 in the whole 1800-frame window, (1) is
+ * supported: the real driver simply never revisits table index -1 here, and
+ * our HLE reaching it in <1s post-swap is our own pacing/lookup divergence. */
+static void wire_lle_p0_trace(Apu *apu) {
+  if (!getenv("WIRE_LLEP0TRACE")) return;
+  if (apu->spc->pc >= 0xffc0) return;   /* still the IPL upload handshake, not the driver */
+  /* Raw byte-for-byte transitions are dominated by upload-mailbox counter
+   * ramps (0xAA 0xCC 0x00 0x01 0x02 ...) that pass through 0x00 for exactly
+   * one sample on their way to 0x01 -- that is not a genuine port_to_snes[0]
+   * latch. What distinguishes an a=0 restart latch is that the value SITS at
+   * 0x00 for many consecutive apu_run samples with nothing incrementing it.
+   * Track a run-length at zero and only report runs long enough that they
+   * cannot be a one-sample counter pass-through. */
+  static uint8_t last = 0xff;
+  static long zero_run = 0;
+  static long zero_run_start_frame = 0;
+  static int reports = 0;
+  uint8_t cur = apu->outPorts[0];
+  if (cur == 0) {
+    if (last != 0) zero_run_start_frame = g_real_frame;
+    zero_run++;
+  } else {
+    if (zero_run > 64 && reports < 200) {   /* > a handful of samples */
+      fprintf(stderr, "[lle-p0-zero] frames %ld..%ld outPorts0 sat at 0x00 for %ld apu_run samples\n",
+              zero_run_start_frame, (long)g_real_frame, zero_run);
+      reports++;
+    }
+    zero_run = 0;
+  }
+  last = cur;
+}
+
 /* Replaces apu.c's apu_run (renamed apu_run_lle in the copied file). */
 void apu_run(Apu *apu, int cyclesToRun) {
-  if (!g_wire_on) { apu_run_lle(apu, cyclesToRun); return; }
+  if (!g_wire_on) {
+    apu_run_lle(apu, cyclesToRun);
+    wire_lle_p0_trace(apu);
+    return;
+  }
   SpcPlayer *p = g_wire_p;
   g_frac += cyclesToRun;
   while (g_frac >= 32) {           /* 1.024 MHz / 32 = 32 kHz sample clock */
@@ -134,6 +190,29 @@ void wire_frame_audio(int16_t *buf, int n) {
               fr, p->port_to_snes[0], p->music_ptr_toplevel, p->master_volume,
               p->tempo, p->fast_forward, p->is_chan_on,
               p->channel[0].pattern_order_ptr_for_chan, p->channel[0].final_volume);
+  }
+  /* DIAGNOSTIC (fix/nspc-a0-latch): WIRE_EARLYTRACE=<N> -- per-frame (not
+   * per-200) dump of the native player's tempo/tick state for the first N
+   * frames after swap, to catch the exact tick where port_to_snes[0] snaps to
+   * 0 and see main_tempo_accum/tempo alongside it -- whether the gate is
+   * wrapping abnormally fast (pacing race) right before the latch. */
+  { const char *et = getenv("WIRE_EARLYTRACE");
+    if (et) {
+      static int efr = 0;
+      int lim = atoi(et);
+      if (efr < lim) {
+        fprintf(stderr, "[early] rf=%d ef=%d p0out=%02x mtl=%04x tempo=%04x mta=%02x sf0c=%u "
+                        "ison=%02x ff=%d ch=%04x,%04x,%04x,%04x,%04x,%04x,%04x,%04x\n",
+                g_real_frame, efr, p->port_to_snes[0], p->music_ptr_toplevel,
+                p->tempo, p->main_tempo_accum, p->counter_sf0c, p->is_chan_on,
+                p->fast_forward,
+                p->channel[0].pattern_order_ptr_for_chan, p->channel[1].pattern_order_ptr_for_chan,
+                p->channel[2].pattern_order_ptr_for_chan, p->channel[3].pattern_order_ptr_for_chan,
+                p->channel[4].pattern_order_ptr_for_chan, p->channel[5].pattern_order_ptr_for_chan,
+                p->channel[6].pattern_order_ptr_for_chan, p->channel[7].pattern_order_ptr_for_chan);
+        efr++;
+      }
+    }
   }
 }
 
@@ -301,8 +380,53 @@ static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
   wire_mirror_ports(snes->apu, p);
 }
 
+/* chOK (nspc_score_songlist) only probes 4 candidate SECTION addresses near
+ * the detected songList base -- it never checks the slot the CURRENTLY
+ * COMMANDED song actually indexes. On at least one ROM (Mega Man X, real
+ * song id 49) the detected base scores chOK>=6 from a handful of plausible-
+ * looking entries near its start, but the table is far shorter than the
+ * real one: everything past roughly the first 8-9 slots reads literal
+ * 0x0000. Song 49's slot lands in that dead zone. wire_swap()'s bootstrap
+ * then does exactly what real N-SPC firmware does with a literal top-level
+ * word of 0 -- treats it as the documented "a=0" restart -- which sets
+ * port_to_snes[0]=0 and returns; nothing ever un-latches it because no
+ * channel is left active to trigger another restart, so the swap goes
+ * permanently and silently stuck (confirmed on both this host rig and the
+ * device (nspc_wire.c) QEMU rig). That is not a pacing bug and not a
+ * missing a==0 special case -- the a==0 handling is exactly what the real
+ * driver does too -- it is the songList base itself being unreliable for
+ * this ROM. Rather than guess a better base (needs real per-ROM disassembly,
+ * out of scope here), refuse to commit to a swap whose own about-to-be-
+ * played song already reads as empty. This has to be stricter than chOK's
+ * own "0 or in-range" test: a run of literal zeros -- exactly the dead-zone
+ * content that causes the freeze -- passes that test too (0 counts as an
+ * "ok" channel-off pointer), so it cannot tell a real silent section from a
+ * wrong table base. Require actual content instead: at least half of the 8
+ * channel words must be real nonzero in-range pointers, not merely "not
+ * garbage". Keep this in step with nspc_wire.c's wire_song_table_entry_sane()
+ * -- same formula, same reason. */
+static bool wire_song_table_entry_sane(const uint8_t *ram, int songListBase, uint8_t cur) {
+  if (!(cur > 0 && cur < 0xf0)) return true;  /* nothing concrete to validate yet */
+  int sec = rd16(ram, songListBase + cur * 2);
+  if (sec < 0x100 || sec >= 0xfff0) return false;
+  int t = sec, nonzero_ok = 0;
+  for (int ch = 0; ch < 8; ch++) {
+    int cp = rd16(ram, t); t += 2;
+    if (cp >= 0x100 && cp < 0xffff) nonzero_ok++;
+  }
+  if (getenv("WIRE_FFTRACE"))
+    fprintf(stderr, "[fftrace] table-sane cur=%d sec=%04x nonzero_ok=%d -> %s\n", cur, sec, nonzero_ok, nonzero_ok >= 4 ? "PASS" : "FAIL");
+  /* "0 or in-range" (chOK's own test) passes on a run of literal zeros too --
+   * exactly the all-channels-off dead zone that produces this bug's freeze
+   * in the first place (confirmed: an all-zero 8-word read scores perfectly
+   * under that test). Require real content: at least half the channels
+   * must be actual nonzero in-range pointers, not just "not garbage". */
+  return nonzero_ok >= 4;
+}
+
 /* Called by the harness once per frame during LLE. Returns 1 on swap. */
 int wire_try_swap(Snes *snes, int frame) {
+  g_real_frame = frame;
   if (g_wire_on || !g_wire_enable || !snes->apu) return 0;
   if (frame < 120 || (frame % 60) != 0) return 0;
   /* driver must actually be running (upload done, PC out of the IPL ROM) */
@@ -317,6 +441,14 @@ int wire_try_swap(Snes *snes, int frame) {
   if (strcmp(np.variant, "std") && strcmp(np.variant, "YI") && !getenv("WIRE_ALL"))
     { g_ok_streak = 0; return 0; }
   if (++g_ok_streak < 2) return 0;   /* stable across two checks 60 frames apart */
+  {
+    uint8_t cur = snes->apu->outPorts[0];
+    if (!(cur > 0 && cur < 0xf0)) cur = g_last_p0;
+    if (!wire_song_table_entry_sane(snes->apu->ram, np.songList, cur)) {
+      g_ok_streak = 0;
+      return 0;
+    }
+  }
   wire_swap(snes, &np, snes->apu->ram);
   fprintf(stderr, "[wire] frame %d: swapped to native N-SPC (variant=%s song=%04x instr=%04x dir=%02x00 chOK=%d lastp0=%02x)\n",
           frame, np.variant, np.songList & 0xffff, g_nspc_cfg.instrTable & 0xffff,
