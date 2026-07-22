@@ -108,6 +108,14 @@
 
 #define SNES_PROF_VERSION      1
 #define SNES_PROF_FRAMES       64u          /* ~1.07 s at 60 fps, then dump   */
+#ifndef SNES_PROF_SKIP_FRAMES
+#define SNES_PROF_SKIP_FRAMES  0u           /* frames discarded before the window
+                                             * opens. Set it past whatever you are
+                                             * waiting for -- e.g. 240 to profile the
+                                             * N-SPC wire, which cannot swap before
+                                             * frame 180. Both A/B arms must use the
+                                             * same value. */
+#endif
 #define SNES_PROF_PATH         "/snes_dwt.txt"
 #define SNES_PROF_DIAG_PATH    "/snes_diag.txt"
 
@@ -166,6 +174,7 @@ int32_t  snes_prof_b_depth;
 uint32_t snes_prof_b_depth_max;
 uint32_t snes_prof_b_err;
 
+static uint32_t n_warmup;      /* frames discarded before the window opens */
 static uint32_t *pool_drawn;   /* [BK_COUNT * SNES_PROF_FRAMES] */
 static uint32_t *pool_skip;
 static uint64_t sum_drawn[BK_COUNT];
@@ -491,6 +500,9 @@ static void snes_profile_dump(void) {
           (unsigned)g_ahb_free_before, (unsigned)g_ahb_free_after);
   fprintf(f, "NOTE: Ledger A is IRQ-INCLUSIVE. 'emu*' and 'pcm*' are OUTERS -- "
              "Ledger B re-partitions them, never add the two together.\n");
+  fprintf(f, "warmup: %u frames discarded before the window opened "
+             "(SNES_PROF_SKIP_FRAMES). A/B arms MUST match on this.\n",
+          (unsigned)SNES_PROF_SKIP_FRAMES);
   wdog_refresh();
 
   /* ---- gates ---- */
@@ -651,6 +663,17 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
                          uint32_t dma_before, uint32_t dma_frame,
                          uint32_t wfi_count) {
   if (!prof_active || prof_dumped) return;
+
+  /* Warm-up skip. The window has to OPEN AFTER whatever it is meant to measure
+   * has started, and for the N-SPC audio HLE that is not frame 0: the wire
+   * cannot swap before frame 180 (`NSPC_SWAP_MIN_FRAME` 120, then `frame % 60`,
+   * then a two-check stability streak), while this window closes at frame 64.
+   * With no skip, a wire-ON build profiles 64 frames of pure LLE and reports
+   * numbers identical to the wire-OFF arm -- which is exactly what the first
+   * A/B attempt produced, and it looked like "the wire does nothing" rather
+   * than "the measurement ended before the wire started".
+   * Both arms must use the SAME skip so the comparison stays honest. */
+  if (n_warmup < SNES_PROF_SKIP_FRAMES) { n_warmup++; return; }
 
   if (n_drawn + n_skip >= SNES_PROF_FRAMES) {
     snes_profile_dump();
