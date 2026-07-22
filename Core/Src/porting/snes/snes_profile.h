@@ -104,6 +104,36 @@ static inline void snes_prof_scope_exit(uint32_t t0, uint32_t *acc, uint32_t *ca
 #define SNES_PROF_APU_SCOPE_EXIT(t0)                                          \
   snes_prof_scope_exit((t0), &snes_prof_b_apu_cyc, &snes_prof_b_apu_calls)
 
+/* ---- core_rem sub-split: the interpreter alone --------------------------
+ * core_rem is "CPU + DMA + event scheduler + spin bookkeeping", and choosing
+ * the next lever means knowing which of those it mostly is. cpu_runOpcode()
+ * cannot use the depth-checked scope above, because it is NOT a sibling of the
+ * APU scope: any $2140-3 access re-enters snes_catchupApu() from inside the
+ * opcode (snes.c:321). So this is the snapshot-subtract form -- bracket the
+ * call, then take back whatever the APU and PPU accumulators moved while we
+ * were inside. Depth is deliberately untouched, so the sibling gate above
+ * still means what it says.
+ *
+ * This one IS per-opcode, which every other probe in this file refuses to be.
+ * That is a deliberate exception with a stated price: the dump prints the
+ * call count and a probe estimate next to the bucket, and the bucket is only
+ * ever used to answer "interpreter, or everything else?" -- a question whose
+ * answer survives being wrong by the probe cost. It is not an A/B number. */
+extern uint32_t snes_prof_b_cpu_cyc;
+extern uint32_t snes_prof_b_cpu_calls;
+
+#define SNES_PROF_CPU_CALL(expr) ({                                           \
+    uint32_t snes_prof_ct0__ = common_emu_get_dwt_cycles();                   \
+    uint32_t snes_prof_ca0__ = snes_prof_b_apu_cyc;                           \
+    uint32_t snes_prof_cp0__ = snes_prof_b_ppu_cyc;                           \
+    __typeof__(expr) snes_prof_cv__ = (expr);                                 \
+    snes_prof_b_cpu_cyc += (common_emu_get_dwt_cycles() - snes_prof_ct0__)    \
+                         - (snes_prof_b_apu_cyc - snes_prof_ca0__)            \
+                         - (snes_prof_b_ppu_cyc - snes_prof_cp0__);           \
+    snes_prof_b_cpu_calls++;                                                  \
+    snes_prof_cv__;                                                           \
+  })
+
 /* ---- Ledger C: sleep-safe wall clock -------------------------------------
  * TIM2 free-running at ~1 MHz. APB1 keeps clocking through plain Sleep, so
  * this counter sees the __WFI() pacing wait that DWT_CYCCNT cannot. NOT
@@ -151,5 +181,6 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
 #define SNES_PROF_MARK(m)            ((void)0)
 #define SNES_PROF_APU_SCOPE_ENTER()  0u
 #define SNES_PROF_APU_SCOPE_EXIT(t0) ((void)(t0))
+#define SNES_PROF_CPU_CALL(expr)     (expr)
 
 #endif /* SNES_DEVICE_PROFILE */
