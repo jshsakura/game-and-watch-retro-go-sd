@@ -72,7 +72,16 @@ note() { echo "check_snes_profile_wired: $*" >&2; }
 want() {
   local obj="$1" sym="$2" kind="$3" desc="$4"
   if [ ! -f "$obj" ]; then
-    note "SKIP: $obj not built"
+    # With a stated intent of 1 the link has happened and every object we name
+    # must exist; a missing one is the probe never reaching the binary, which is
+    # the whole failure this file guards. Only the unknown-intent fallback can
+    # afford to shrug.
+    if [ "$WANT_PROF" = "1" ]; then
+      note "FAIL: $desc -- $obj not built"
+      fail=1
+    else
+      note "SKIP: $obj not built"
+    fi
     return
   fi
   local line
