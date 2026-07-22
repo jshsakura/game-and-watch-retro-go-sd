@@ -146,7 +146,7 @@ static int run_one_opcode(Snes *s) {
     disp = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) && !cpu->stopped;
   }
   s->cpuMemOps = 0;
-  int cycles = cpu_runOpcode(cpu);
+  int cycles = SNES_PROF_CPU_CALL(cpu_runOpcode(cpu));
   s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
   if (learn) spin_note_real(cpu, pc24, (uint8_t)s->cpuCyclesLeft, disp);
   return cycles;

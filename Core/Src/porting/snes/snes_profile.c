@@ -142,6 +142,7 @@ enum {
   BK_PPU_INCL,
   BK_APU_EXCL,
   BK_CORE_REM,        /* emu_outer - ppu - apu_in_emu (CPU+DMA+events+spin) */
+  BK_CPU_EXCL,        /* cpu_runOpcode() only, APU/PPU re-entry subtracted  */
   /* ---- Ledger C: sleep-safe wall, deadlines, side channels ------------- */
   BK_WALL_FRAME,
   BK_WALL_PACING,
@@ -155,7 +156,7 @@ enum {
 static const char *const bk_name[BK_COUNT] = {
   "framectl", "input", "rendarm", "emu*", "preskick", "pcm*",
   "prestail", "overlay", "swap", "pace_act", "ACTIVE",
-  "ppu", "apu_lle", "core_rem",
+  "ppu", "apu_lle", "core_rem", "cpu_only",
   "WALL", "wall_pace", "dma_pre", "dma_tick", "wfi", "irq"
 };
 
@@ -170,6 +171,7 @@ uint32_t snes_prof_mark[SNES_PROF_M_COUNT];
 
 uint32_t snes_prof_b_ppu_cyc, snes_prof_b_ppu_calls;
 uint32_t snes_prof_b_apu_cyc, snes_prof_b_apu_calls;
+uint32_t snes_prof_b_cpu_cyc, snes_prof_b_cpu_calls;
 int32_t  snes_prof_b_depth;
 uint32_t snes_prof_b_depth_max;
 uint32_t snes_prof_b_err;
@@ -179,7 +181,7 @@ static uint32_t *pool_drawn;   /* [BK_COUNT * SNES_PROF_FRAMES] */
 static uint32_t *pool_skip;
 static uint64_t sum_drawn[BK_COUNT];
 static uint64_t sum_skip[BK_COUNT];
-static uint64_t call_ppu_sum, call_apu_sum;
+static uint64_t call_ppu_sum, call_apu_sum, call_cpu_sum;
 static uint32_t n_drawn, n_skip;
 static bool     prof_active;   /* pools allocated                             */
 static bool     prof_dumped;   /* strictly one-shot SD write                  */
@@ -188,6 +190,7 @@ static bool     prof_dumped;   /* strictly one-shot SD write                  */
 static uint32_t g_mark_nonmonotonic;   /* frames where a mark went backwards  */
 static uint32_t g_depth_nonzero;       /* frames that ended mid-scope         */
 static uint32_t g_core_rem_negative;   /* frames where ppu+apu > emu_outer    */
+static uint32_t g_cpu_over_core_rem;   /* frames where cpu_only > core_rem    */
 static uint32_t g_dma_hist[4];         /* dma_before 0 / 1 / 2 / 3+           */
 
 /* wall-clock sanity results, captured once at init */
@@ -391,6 +394,7 @@ void snes_profile_init(uint32_t audio_rate, uint32_t audio_period_samples) {
   memset(snes_prof_mark, 0, sizeof(snes_prof_mark));
   snes_prof_b_ppu_cyc = snes_prof_b_ppu_calls = 0;
   snes_prof_b_apu_cyc = snes_prof_b_apu_calls = 0;
+  snes_prof_b_cpu_cyc = snes_prof_b_cpu_calls = 0;
   snes_prof_b_depth = 0;
   snes_prof_b_depth_max = 0;
   snes_prof_b_err = 0;
@@ -611,12 +615,34 @@ static void snes_profile_dump(void) {
   wdog_refresh();
 
   fprintf(f, "\n--- Ledger B: inside emu*/pcm* (exclusive; %% is of ACTIVE) ---\n");
-  fprintf(f, "  ppu_calls/frame=%u  apu_calls/frame=%u\n",
+  fprintf(f, "  ppu_calls/frame=%u  apu_calls/frame=%u  cpu_calls/frame=%u\n",
           (unsigned)(frames ? call_ppu_sum / frames : 0),
-          (unsigned)(frames ? call_apu_sum / frames : 0));
+          (unsigned)(frames ? call_apu_sum / frames : 0),
+          (unsigned)(frames ? call_cpu_sum / frames : 0));
   fprintf(f, "  core_rem is CPU + DMA + event scheduler + spin bookkeeping -- "
              "it is NOT 'the 65816'.\n");
-  for (uint32_t bk = BK_PPU_INCL; bk <= BK_CORE_REM; bk++) {
+  /* cpu_only breaks that sentence open. It is bracketed per opcode, so unlike
+   * every other bucket here its probe cost is NOT negligible -- roughly two DWT
+   * reads per call, and there are thousands of calls a frame. The estimate
+   * below is printed so the bucket is read with it, never without: subtract it
+   * before quoting cpu_only, and never quote cpu_only as a wall share. This
+   * bucket exists to answer ONE question -- is core_rem mostly the interpreter
+   * or mostly everything else -- and the answer only has to survive being off
+   * by its own probe cost. */
+  {
+    uint32_t cpu_pf   = (uint32_t)(frames ? sum_drawn[BK_CPU_EXCL] / (n_drawn ? n_drawn : 1) : 0);
+    uint32_t calls_pf = (unsigned)(frames ? call_cpu_sum / frames : 0);
+    uint32_t probe_pf = calls_pf * (g_probe_cost_10 / 10u) * 2u;
+    fprintf(f, "  cpu_only = cpu_runOpcode() alone, APU/PPU re-entry subtracted.\n"
+               "    probe estimate %lu cyc/frame (%lu calls x 2 marks x %lu cyc);"
+               " drawn cpu_only avg %lu -> ~%lu corrected\n",
+            (unsigned long)probe_pf, (unsigned long)calls_pf,
+            (unsigned long)(g_probe_cost_10 / 10u), (unsigned long)cpu_pf,
+            (unsigned long)(cpu_pf > probe_pf ? cpu_pf - probe_pf : 0));
+    fprintf(f, "  cpu_over_core_rem frames=%u  %s\n",
+            (unsigned)g_cpu_over_core_rem, g_cpu_over_core_rem ? "FAIL" : "PASS");
+  }
+  for (uint32_t bk = BK_PPU_INCL; bk <= BK_CPU_EXCL; bk++) {
     emit_bucket(f, bk, 'D', pool_drawn, n_drawn, sum_drawn[bk], sum_drawn[BK_ACTIVE_TOTAL]);
     emit_bucket(f, bk, 'S', pool_skip,  n_skip,  sum_skip[bk],  sum_skip[BK_ACTIVE_TOTAL]);
   }
@@ -704,6 +730,7 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
      * same zero every other frame does. */
     snes_prof_b_ppu_cyc = snes_prof_b_ppu_calls = 0;
     snes_prof_b_apu_cyc = snes_prof_b_apu_calls = 0;
+    snes_prof_b_cpu_cyc = snes_prof_b_cpu_calls = 0;
     return;
   }
 
@@ -748,11 +775,21 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
     } else {
       v[BK_CORE_REM] = emu_outer - ppu - apu_emu;
     }
+    /* cpu_only is measured INSIDE core_rem, not beside it: the scope brackets
+     * cpu_runOpcode() and subtracts whatever APU/PPU work re-entered through a
+     * $2140-3 access, so it never double-books those. core_rem - cpu_only is
+     * DMA + the event scheduler + spin bookkeeping. It is clamped rather than
+     * left to wrap, and an overrun is a gate failure like any other. */
+    v[BK_CPU_EXCL] = (snes_prof_b_cpu_cyc > v[BK_CORE_REM])
+                       ? v[BK_CORE_REM] : snes_prof_b_cpu_cyc;
+    if (snes_prof_b_cpu_cyc > v[BK_CORE_REM]) g_cpu_over_core_rem++;
     call_ppu_sum += snes_prof_b_ppu_calls;
     call_apu_sum += snes_prof_b_apu_calls;
+    call_cpu_sum += snes_prof_b_cpu_calls;
     if (snes_prof_b_depth != 0) g_depth_nonzero++;
     snes_prof_b_ppu_cyc = snes_prof_b_ppu_calls = 0;
     snes_prof_b_apu_cyc = snes_prof_b_apu_calls = 0;
+    snes_prof_b_cpu_cyc = snes_prof_b_cpu_calls = 0;
   }
 
   /* Ledger C + side channels. */
