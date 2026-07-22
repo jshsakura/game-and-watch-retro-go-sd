@@ -40,6 +40,9 @@ void pce_scsi_write(uint8_t reg, uint8_t val)
 
 bool pce_cd_parse_cue(const char *cue_path, pce_cd_toc_t *toc) { (void)cue_path; (void)toc; return false; }
 void pce_cd_close(void) { }
+/* upstream 3a77d414 added this to the power-off path; the no-CD build needs
+ * the symbol like every other one in this file. */
+void pce_cd_invalidate_handles(void) { }
 
 void pce_scsi_run(void) { }
 void pce_scsi_reset(void) { }

@@ -15,12 +15,41 @@
 #include "gw_malloc.h"
 #include "bitmaps.h"
 #include "gui.h"
-#include "ff.h" /* f_unlink/f_rename: newlib rename() has no syscall here */
+/* Delete/atomic-rename primitives. newlib rename() has no syscall on either
+ * build, so each storage backend supplies its own: FatFs on SD builds,
+ * LittleFS (the RW partition) on SD_CARD=0 flash builds. Upstream calls FatFs
+ * directly; that does not link in the non-SD variant, which this fork still
+ * ships. */
+#if !defined(SD_CARD) || SD_CARD == 1
+#include "ff.h"
+static bool fav_delete(const char *path)
+{
+    FRESULT res = f_unlink(path);
+    return res == FR_OK || res == FR_NO_FILE;
+}
+static bool fav_commit(const char *tmp, const char *dst)
+{
+    f_unlink(dst); /* may not exist; f_rename needs the name free */
+    return f_rename(tmp, dst) == FR_OK;
+}
+#else
+#include "gw_littlefs.h"
+static bool fav_delete(const char *path)
+{
+    int res = fs_delete(path);
+    return res >= 0 || res == LFS_ERR_NOENT;
+}
+/* no fav_commit here: LittleFS remove() rewrites in RAM (single-handle FS) */
+#endif
 
+#ifndef FAVORITES_FILE   /* overridable so the host tests can use a scratch dir */
 #define FAVORITES_FILE ODROID_BASE_PATH_CONFIG "/favorites.txt"
+#endif
 /* Temp for the rewrite-on-remove; committed with f_rename so a mid-write
  * power cut can never corrupt the live file. */
+#ifndef FAVORITES_TMP
 #define FAVORITES_TMP  ODROID_BASE_PATH_CONFIG "/favorites.new"
+#endif
 
 /* Pseudo-emulator behind the ★ tab (tab->arg must be a retro_emulator_t for
  * the generic launcher code that casts it, e.g. gui_save_current_tab).
@@ -71,6 +100,9 @@ bool rg_favorites_add(const char *path)
 
 bool rg_favorites_remove(const char *path)
 {
+#if !defined(SD_CARD) || SD_CARD == 1
+    /* FatFs: stream through a temp file and commit with f_rename, so a
+     * mid-write power cut can never corrupt the live file. */
     FILE *in = fopen(FAVORITES_FILE, "r");
     if (in == NULL)
         return false;
@@ -92,17 +124,63 @@ bool rg_favorites_remove(const char *path)
     fclose(out);
 
     if (!ok) {
-        f_unlink(FAVORITES_TMP);
+        fav_delete(FAVORITES_TMP);
         return false;
     }
-    f_unlink(FAVORITES_FILE); /* may not exist; f_rename needs the name free */
-    return f_rename(FAVORITES_TMP, FAVORITES_FILE) == FR_OK;
+    return fav_commit(FAVORITES_TMP, FAVORITES_FILE);
+#else
+    /* LittleFS allows only ONE open file (gw_littlefs MAX_OPEN_FILES), so the
+     * in+out temp-file scheme above can never work here. Filter the (tiny)
+     * list in RAM instead: read + close, then rewrite in place. LittleFS
+     * commits copy-on-write, so a power cut mid-rewrite loses at most this
+     * one file's update — acceptable for a favorites list. */
+    FILE *in = fopen(FAVORITES_FILE, "r");
+    if (in == NULL)
+        return false;
+
+    fseek(in, 0, SEEK_END);
+    long size = ftell(in);
+    fseek(in, 0, SEEK_SET);
+    if (size < 0)
+        size = 0;
+
+    char *kept = malloc((size_t)size + 1);
+    if (kept == NULL) {
+        fclose(in);
+        printf("favorites: no RAM for rewrite (%ld bytes)\n", size);
+        return false;
+    }
+
+    size_t kept_len = 0;
+    char line[RG_PATH_MAX + 1];
+    while (read_favorite_line(in, line, sizeof(line))) {
+        if (line[0] == '\0' || strcmp(line, path) == 0)
+            continue; /* drop the removed entry (and blank lines) */
+        size_t len = strlen(line);
+        if (kept_len + len + 1 > (size_t)size)
+            break; /* can't happen: filtered content never outgrows the file */
+        memcpy(kept + kept_len, line, len);
+        kept[kept_len + len] = '\n';
+        kept_len += len + 1;
+    }
+    fclose(in);
+
+    FILE *out = fopen(FAVORITES_FILE, "w");
+    if (out == NULL) {
+        free(kept);
+        printf("favorites: cannot reopen %s for rewrite\n", FAVORITES_FILE);
+        return false;
+    }
+    bool ok = kept_len == 0 || fwrite(kept, 1, kept_len, out) == kept_len;
+    fclose(out);
+    free(kept);
+    return ok;
+#endif
 }
 
 bool rg_favorites_reset(void)
 {
-    FRESULT res = f_unlink(FAVORITES_FILE);
-    return res == FR_OK || res == FR_NO_FILE;
+    return fav_delete(FAVORITES_FILE);
 }
 
 /** Map "/roms/<dirname>/..." to its registered system, or NULL. */

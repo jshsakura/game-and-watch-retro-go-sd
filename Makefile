@@ -1079,7 +1079,13 @@ Core/Src/porting/gamecom/main_gamecom.c
 # chips are read in place, since MAME's interleave is address arithmetic (see
 # cps1_rom.h). cps1_core.c is deliberately NOT here: it is the synthetic-scene
 # host testbed and carries 2.25MB of BSS that cannot exist on the device.
-CPS1_C_SOURCES = \
+# CPS-1 is SD-only: the romsets are folders on the card and the Musashi blob
+# is XIP'd from it. Built unconditionally it also overruns RAM_EMU in the
+# SD_CARD=0 link (by 233,708 bytes), which is how the non-SD build has been
+# broken since CPS-1 landed. Same gate 32X and the PCE CD stack use.
+CPS1_C_SOURCES =
+ifeq ($(SD_CARD),1)
+CPS1_C_SOURCES += \
 Core/Src/porting/cps1/main_cps1.c \
 Core/Src/porting/cps1/cps1_m68k.c \
 Core/Src/porting/cps1/cps1_eeprom.c \
@@ -1088,6 +1094,7 @@ Core/Src/porting/cps1/cps1_romset.c \
 Core/Src/porting/cps1/cps1_ppu.c \
 Core/Src/porting/cps1/cps1_bg.c \
 external/gwenesis/src/cpus/M68K/m68kcpu.c
+endif
 
 TAMA_C_SOURCES =
 

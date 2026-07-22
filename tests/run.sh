@@ -89,7 +89,7 @@ $CC -O2 -Wall -Wextra -std=gnu11 -no-pie -Itests/clock_stubs \
     -Wl,--defsym=_OVERLAY_MUSIC_BSS_SIZE=64 -Wl,--defsym=_OVERLAY_MUSIC_SIZE=64 \
     tests/test_clock_mp3.c                               -o /tmp/mtest/test_clock_mp3
 mkdir -p /tmp/favtest
-$CC -O2 -Wall -Wextra -std=gnu11 -Itests/fav_stubs \
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/fav_stubs -ICore/Inc/retro-go -ICore/Inc -Iretro-go-stm32/components/odroid \
     -DFAVORITES_FILE='"/tmp/favtest/favorites.txt"' \
     -DFAVORITES_TMP='"/tmp/favtest/favorites.new"' \
     tests/test_favorites.c Core/Src/retro-go/rg_favorites.c -o /tmp/mtest/test_favorites
@@ -215,7 +215,11 @@ fi
 echo "=== colour icon bbox invariants ==="
 python3 - <<'PYEOF3' || rc=1
 import re, sys
-src = open('Core/Src/retro-go/rg_logos.c').read()
+# The colour icons live in rg_logos_fork.c since the 0722 split; the name
+# headers stay in rg_logos.c. Read both, or this check silently passes on
+# an empty set.
+src = (open('Core/Src/retro-go/rg_logos.c').read()
+       + open('Core/Src/retro-go/rg_logos_fork.c').read())
 structs = re.findall(
     r'const color_icon_t (cicon_\w+) = \{ (\d+), (\d+), (\d+), (\d+), (\d+), (\d+), \w+, (\w+) \};', src)
 if not structs:
@@ -242,7 +246,8 @@ PYEOF3
 echo "=== merge hygiene: duplicate logo enums / blobs ==="
 dup_enum=$(grep -oE 'RG_LOGO_[A-Z0-9_]+' Core/Inc/retro-go/bitmaps.h | sort | uniq -d)
 dup_blob=$(grep -oE '^const retro_logo_image[[:space:]]+[a-z0-9_]+[[:space:]]+LOGO_DATA' \
-           Core/Src/retro-go/rg_logos.c | awk '{print $3}' | sort | uniq -d)
+           Core/Src/retro-go/rg_logos.c Core/Src/retro-go/rg_logos_fork.c \
+           | awk '{print $3}' | sort | uniq -d)
 if [ -n "$dup_enum" ] || [ -n "$dup_blob" ]; then
     echo "FAIL duplicate logo — enum:[$dup_enum] blob:[$dup_blob]"; rc=1
 else

@@ -73,6 +73,7 @@ tab_t *gui_add_tab(const char *name, int16_t logo_idx, int16_t header_idx, void 
 tab_t *gui_get_current_tab(void) { return NULL; }
 listbox_item_t *gui_get_selected_item(tab_t *tab) { (void)tab; return NULL; }
 void gui_resize_list(tab_t *tab, int new_size) { (void)tab; (void)new_size; }
+bool gui_change_tab(int direction) { (void)direction; return false; }
 uint8_t odroid_settings_SortMode_get(void) { return ODROID_SORT_NAME; }
 
 /* ---- test fixture helpers ----------------------------------------------- */

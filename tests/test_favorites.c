@@ -57,13 +57,14 @@ void emulator_show_file_info(retro_emulator_file_t *file) { (void)file; }
 const char *rg_basename(const char *path)
 { const char *s = strrchr(path, '/'); return s ? s + 1 : path; }
 rg_stat_t rg_storage_stat(const char *path) { (void)path; rg_stat_t st = {0}; return st; }
-static const lang_t stub_lang = { .s_favorite = "Favorites", .s_no_favorite = "No favorites" };
-const lang_t *curr_lang = &stub_lang;
+static lang_t stub_lang = { .s_favorite = "Favorites", .s_no_favorite = "No favorites" };
+lang_t *curr_lang = &stub_lang;   /* type must match Core/Inc/retro-go/rg_i18n.h */
 tab_t *gui_add_tab(const char *name, int16_t logo_idx, int16_t header_idx, void *arg, void *event_handler)
 { (void)name; (void)logo_idx; (void)header_idx; (void)arg; (void)event_handler; return NULL; }
 tab_t *gui_get_current_tab(void) { return NULL; }
 listbox_item_t *gui_get_selected_item(tab_t *tab) { (void)tab; return NULL; }
 void gui_resize_list(tab_t *tab, int new_size) { (void)tab; (void)new_size; }
+bool gui_change_tab(int direction) { (void)direction; return false; }
 uint8_t odroid_settings_SortMode_get(void) { return ODROID_SORT_NAME; }
 
 /* ---- test fixture helpers ----------------------------------------------- */

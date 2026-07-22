@@ -1737,12 +1737,14 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_GAMECOM_SIZE);
         app_main_gamecom(load_state, start_paused, save_slot);
       }
+#if SD_CARD == 1
     } else if(strcmp(system_name, "CPS-1") == 0)  {
       if (load_core_bin_with_header("/cores/cps1.bin", (uint8_t *)&__RAM_EMU_START__)) {
         memset(&_OVERLAY_CPS1_BSS_START, 0x0, (size_t)&_OVERLAY_CPS1_BSS_SIZE);
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_CPS1_SIZE);
         app_main_cps1(load_state, start_paused, save_slot);
       }
+#endif
     } else if(strcmp(system_name, "Homebrew") == 0)  {
       if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
         if (strcmp(newfile->name,"celeste") == 0) {
@@ -1914,7 +1916,9 @@ void emulators_init()
      * no inflate, and every MAME romset zip is DEFLATE (verified: 29/29
      * entries across wof.zip and wofj.zip), so a .zip could be listed but
      * never read. Extract the romset into its folder instead. */
+#if SD_CARD == 1
     add_emulator("CPS-1", "cps1", "", RG_LOGO_PAD_CPS1, RG_LOGO_HEADER_CPS1, NO_GAME_DATA);
+#endif
 #endif
     add_emulator("Commodore 64", "c64", "d64 prg", RG_LOGO_PAD_C64, RG_LOGO_HEADER_C64, NO_GAME_DATA);
     add_emulator("Game & Watch", "gw", "gw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
