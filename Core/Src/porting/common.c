@@ -300,17 +300,29 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
                     return;
                 }
 
-                // Write BMP header
+                // Write BMP header (always RGB565 — convert from LUT8 if needed)
                 fwrite(bmp_header, 1, 66, file);
 
-                // Write RGB565 pixel data directly (bottom-up for BMP)
                 odroid_audio_mute(true);
                 lcd_sleep_while_swap_pending();
                 uint8_t *data = (uint8_t*)lcd_get_inactive_buffer();
 
-                for (int y = 239; y >= 0; y--) {  // BMP is bottom-up
-                    uint8_t *src_line = &data[y * 320 * 2];
-                    fwrite(src_line, 1, 320 * 2, file);
+                /* BMP is bottom-up. In LUT8 the framebuffer is 1 byte/pixel
+                 * (CLUT indices); expand via the live CLUT so the on-disk
+                 * BMP stays RGB565 like RGB565-mode screenshots. Same
+                 * conversion helper as savestate-preview loading. */
+                if (lcd_get_mode() == LCD_MODE_LUT8) {
+                    uint16_t row[GW_LCD_WIDTH];
+                    for (int y = GW_LCD_HEIGHT - 1; y >= 0; y--) {
+                        lcd_convert_lut8_to_rgb565(&data[y * GW_LCD_WIDTH],
+                                                   row, GW_LCD_WIDTH, NULL);
+                        fwrite(row, sizeof(uint16_t), GW_LCD_WIDTH, file);
+                    }
+                } else {
+                    for (int y = GW_LCD_HEIGHT - 1; y >= 0; y--) {
+                        uint8_t *src_line = &data[y * GW_LCD_WIDTH * 2];
+                        fwrite(src_line, 1, GW_LCD_WIDTH * 2, file);
+                    }
                 }
 
                 fclose(file);

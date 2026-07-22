@@ -63,5 +63,9 @@ int pce_cd_read_sectors_audio(const pce_cd_toc_t *toc, uint32_t lba, uint8_t *bu
 /* Close the cached .bin handles (call on mount to start fresh, avoid handle leaks). */
 void pce_cd_close(void);
 
+/* Drop cached handles without fclose — use after sleep/wake remount when the
+ * FatFs volume was torn down and the old FILE* are dangling. */
+void pce_cd_invalidate_handles(void);
+
 /* Index of the track containing absolute LBA, or -1. */
 int pce_cd_track_at_lba(const pce_cd_toc_t *toc, uint32_t lba);

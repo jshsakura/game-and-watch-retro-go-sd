@@ -406,7 +406,12 @@ int main()
     odroid_system_init(APP_ID, AUDIO_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, NULL, NULL, NULL, NULL, NULL);
 
-    init_window(WIDTH, HEIGHT);
+    bool headless = getenv("TAMA5_HEADLESS") != NULL;
+    int headless_frames = headless ? 1200 : 0; /* ~20s at 60Hz */
+    if (!headless)
+        init_window(WIDTH, HEIGHT);
+    else
+        printf("headless mode (%d frames)\n", headless_frames);
 
 //    odroid_gamepad_state_t joystick = {0};
 
@@ -476,17 +481,24 @@ int main()
         uint startTime = get_elapsed_time();
         bool drawFrame = !skipFrames;
 
-        input_read_gamepad();
+        if (!headless)
+            input_read_gamepad();
 
         for (int line = 0;line < 154; line++) {
                 g_gb->run();
         }
+        if (headless) {
+            if (--headless_frames <= 0)
+                break;
+        } else {
 //        blit(video_buf);
+        }
         // Tick before submitting audio/syncing
 //        odroid_system_tick(!drawFrame, fullFrame, get_elapsed_time_since(startTime));
     }
 
-    SDL_Quit();
+    if (!headless)
+        SDL_Quit();
 
     return 0;
 }

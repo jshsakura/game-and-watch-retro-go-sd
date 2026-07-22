@@ -79,6 +79,7 @@ static uint16_t *pCover_Buffer = NULL;
 
 /* One scratch buffer serves both slot shapes; size it for the biggest. */
 #define COVER_SLOT_MAX_BYTES ((uint32_t)(COVER_SQUARE_SIZE * COVER_SQUARE_SIZE * 2))
+#define COVER_SLOT_BYTES ((uint32_t)(COVER_SLOT_WIDTH * COVER_SLOT_HEIGHT * 2))
 
 const uint8_t cover_light[5] = {60, 120, 255, 120, 60};
 const uint8_t cover_light3[3] = {255, 120, 60};
@@ -1127,6 +1128,12 @@ void gui_draw_item_postion_h(int posy, int startx, int endx, int cur, int size)
         curr_colors->sel_c,
         curr_colors->bg_c);
 }
+
+/* Upstream's cover_slot_active()/cover_slot_apply() pair was removed here:
+ * this fork already has a generalised version above (cover_slot_dims +
+ * cover_slot_apply) that also handles the Square cover style, centre-crops
+ * object-fit:cover style instead of letterboxing, and checks the ram_malloc
+ * result before writing through it. */
 
 static bool gui_get_cover_size(retro_emulator_file_t *file, uint32_t *cov_width, uint32_t *cov_height)
 {

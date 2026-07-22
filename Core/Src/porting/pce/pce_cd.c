@@ -143,6 +143,19 @@ void pce_cd_close(void)
     }
 }
 
+/* After sdcard_deinit() + remount on sleep/wake the cached FILE* are
+ * dangling — do NOT fclose them (FatFs volume was torn down). Drop the
+ * pointers so the next sector read fopen()'s fresh. Reactive reopen-on-
+ * failure alone still costs a few bad CD-DA fills → audible dropouts. */
+void pce_cd_invalidate_handles(void)
+{
+    for (int i = 0; i < 2; i++) {
+        s_bin_f[i] = NULL;
+        s_bin_path[i][0] = 0;
+        s_bin_pos[i] = -1;
+    }
+}
+
 /* Seek only when the cached position diverges (non-sequential jump). */
 static bool bin_seek_slot(int slot, FILE *f, long offset)
 {

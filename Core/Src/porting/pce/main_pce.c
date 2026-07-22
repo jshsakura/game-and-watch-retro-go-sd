@@ -247,6 +247,12 @@ static void pce_sram_save_cb(void)
         fclose(f);
     }
     free(path);
+    /* Must fclose CD .bin handles before sdcard_deinit()'s f_unmount.
+     * Leaving them open across unmount/remount leaves FatFs flaky —
+     * intermittent font fopen failures (� glyphs in pause menus) and
+     * /CONFIG writes that silently fail so StartupFile isn't cleared
+     * on quit → hot-boot relaunches the game. */
+    pce_cd_close();
 }
 
 static bool SaveState(const char *savePathName) {
@@ -930,21 +936,39 @@ void pce_pcm_submit() {
     }
 }
 
+static bool is_pce_cd(void)
+{
+    return ACTIVE_FILE && ACTIVE_FILE->ext && strcmp(ACTIVE_FILE->ext, "cue") == 0;
+}
+
 static void apply_cpu_clock(void)
 {
-    /* PCE-CD only: auto-OC level 2 (353MHz, the max the firmware/menu offers —
+    /* PCE-CD only: auto-OC level 2 (340MHz, the max the firmware/menu offers —
      * same level VB uses) for the extra CD load: SCSI engine + CD-DA
-     * fseek/fread/4-tap + ADPCM on top of the core. HuCard runs full speed at
+     * fseek/fread + ADPCM on top of the core. HuCard runs full speed at
      * stock so it stays at the user's clock. Same VB pattern: NOT persisted
      * (exit resets the clock), no-op on OSPI1 SD hardware (guarded inside). The
      * actual clock is proven in /pcecd_diag.txt at disc mount ("clock=... MHz"). */
-     if (ACTIVE_FILE && ACTIVE_FILE->ext && strcmp(ACTIVE_FILE->ext, "cue") == 0)
+    if (is_pce_cd())
         SystemClock_Config(2);
 }
 
 static void sleep_wake_up()
 {
-    apply_cpu_clock();
+    /* Safety net: sram_save already pce_cd_close()'d before unmount, but if
+     * any path skipped that, drop dangling FILE* without fclose. */
+    if (is_pce_cd())
+        pce_cd_invalidate_handles();
+
+    /* gw_sleep restores the *settings* OC and reinits audio at that clock.
+     * PCE-CD gameplay forces auto-OC lvl2 — re-boost and reinit SAI/DMA so
+     * sample pacing matches again (same MSX/Genesis/NES/Amstrad pattern;
+     * SystemClock_Config reprograms the audio PLL). */
+    if (is_pce_cd()) {
+        SystemClock_Config(2);
+        odroid_audio_init(odroid_audio_sample_rate_get());
+        audio_start_playing_full_length(audio_get_buffer_full_length());
+    }
 }
 
 int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {

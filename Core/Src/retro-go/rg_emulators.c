@@ -11,6 +11,7 @@
 #include "odroid_settings.h"
 #include "rg_storage.h"
 #include "rg_i18n.h"
+#include "favorites.h"
 #include "bitmaps.h"
 #include "gui.h"
 #include "rom_manager.h"
@@ -1121,8 +1122,8 @@ void emulator_show_file_info(retro_emulator_file_t *file)
             );
 
             if (delete_confirm_sel == 1) {
-                emulator_delete_rom_storage(file);
                 rg_favorites_remove(file->path); /* drop any stale ★ entry */
+                emulator_delete_rom_storage(file);
                 strcpy(file->path, "");
             } else {
                 continue;
@@ -1146,7 +1147,7 @@ static bool cheat_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_
         is_on = is_on ? false : true;
         odroid_settings_ActiveGameGenieCodes_set(CHOSEN_FILE->path, option->id, is_on);
     }
-    strcpy(option->value, is_on ? curr_lang->s_Cheat_Codes_ON : curr_lang->s_Cheat_Codes_OFF);
+    strcpy(option->value, is_on ? curr_lang->s_Option_ON : curr_lang->s_Option_OFF);
     return event == ODROID_DIALOG_ENTER;
 }
 

@@ -256,6 +256,9 @@ const gw_firmware_abi_t g_firmware_abi = {
      * has plenty of room, so PICO-8 fits with no DTCM pressure and no effect on any
      * other app. Trade-off: p8ram lives in slower AXI SRAM rather than DTCM. */
     .dtcm_malloc               = ram_malloc,
+    /* Upstream now maps this to dtcm_malloc, and its 0722 heap rework may
+     * well make 64 KB fit again. Revisit only with a measured DTCM free
+     * figure on hardware: the failure mode here is every PICO-8 cart. */
 
     .odroid_system_emu_load_state = odroid_system_emu_load_state,
     .odroid_audio_mute            = odroid_audio_mute,

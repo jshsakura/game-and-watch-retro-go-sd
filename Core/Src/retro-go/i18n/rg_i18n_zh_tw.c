@@ -22,7 +22,6 @@ const lang_t lang_zh_tw LANG_DATA = {
     .s_LangUI = "語言",
     .s_LangName = "Traditional Chinese",
     .s_music = "音樂",
-    .s_favorite = "收藏",
     .s_Add_favorite = "加入收藏",
     .s_Del_favorite = "移除收藏",
     .s_Reset_favorites = "清空收藏",
@@ -105,8 +104,6 @@ const lang_t lang_zh_tw LANG_DATA = {
     .s_md_Synchro_Vsync = "影像",
     .s_md_Dithering = "抖動顯示",
     .s_md_Debug_bar = "測試資訊",
-    .s_md_Option_ON = "\x6",
-    .s_md_Option_OFF = "\x5",
     .s_md_AudioFilter = "音訊強化",
     .s_md_VideoUpscaler = "影像強化",
     .s_md_Region = "地區",
@@ -201,6 +198,8 @@ const lang_t lang_zh_tw LANG_DATA = {
     //=====================================================================
 
     // Core\Src\porting\odroid_overlay.c ===================================
+    .s_Option_ON = "\x6",
+    .s_Option_OFF = "\x5",
     .s_Full = "\x7",
     .s_Fill = "\x8",
 
@@ -273,8 +272,6 @@ const lang_t lang_zh_tw LANG_DATA = {
 #if CHEAT_CODES == 1
     .s_Cheat_Codes = "金手指碼",
     .s_Cheat_Codes_Title = "金手指",
-    .s_Cheat_Codes_ON = "\x6",
-    .s_Cheat_Codes_OFF = "\x5",
 #endif
 
     //=====================================================================
@@ -347,6 +344,7 @@ const lang_t lang_zh_tw LANG_DATA = {
     .s_Title_Date_Format = "%02d-%02d 週%s %02d:%02d:%02d",
     .s_Time_Format = "%02d:%02d:%02d",
 
+    .s_favorite = "收藏",
     // Media browser (homebrew document/media viewer)
     .s_media_hint = "A:開啟  B:返回",
     .s_media_empty = "(空)",

@@ -350,6 +350,11 @@ static bool circular_flash_write(const char *file_path,
     /* The erase (and thus the flash we consume) is block-aligned. */
     uint32_t erase_size_total = (*data_size + block_size - 1) & ~(block_size - 1);
 
+    /* NOTE for upstream: this fork replaced the wrap-to-base allocator with a
+ * ring that refuses to erase a region a core is still reading (the "live
+ * set"). Upstream still wraps to base, which is how a core got handed a ROM
+ * and then had it erased underneath it. The live set is self-contained and
+ * portable -- see find_write_slot() and live_add(). */
     /* Wrap if it does not fit, step over whatever a caller is reading right now,
      * and say no if there is nowhere left — rather than erase it. (Was: rewind to
      * base and take what was there, including, once the ring came round, the ROM
@@ -408,6 +413,9 @@ static bool circular_flash_write(const char *file_path,
             }
         }
 
+        /* relocate_cb is a fork addition: SM, CPS-1 and Sega CD relocate their
+         * XIP blobs during the copy, while the data is still in RAM. Upstream
+         * has no such caller, hence no such hook. */
         /* Last look at the data while it is still in RAM. The chunk size is a
          * multiple of 4 except at end-of-file, and the file starts on an erase
          * block, so a 32-bit field never straddles two chunks. */

@@ -24,7 +24,6 @@ const lang_t lang_it_it LANG_DATA = {
     .s_LangUI = "Lingua",
     .s_LangName = "Italian",
     .s_music = "Musica",
-    .s_favorite = "Preferito",
     .s_Add_favorite = "Aggiungi ai preferiti",
     .s_Del_favorite = "Rimuovi dai preferiti",
     .s_Reset_favorites = "Azzera i preferiti",
@@ -142,8 +141,6 @@ const lang_t lang_it_it LANG_DATA = {
     .s_md_Synchro_Vsync = "VSYNC",
     .s_md_Dithering = "Dithering",
     .s_md_Debug_bar = "Debug bar",
-    .s_md_Option_ON = "\x6",
-    .s_md_Option_OFF = "\x5",
     .s_md_AudioFilter = "Audio Filter",
     .s_md_VideoUpscaler = "Video Upscaler",
     .s_md_Region = "Regione",
@@ -204,6 +201,8 @@ const lang_t lang_it_it LANG_DATA = {
     //=====================================================================
 
     // Core\Src\porting\odroid_overlay.c ===================================
+    .s_Option_ON = "\x6",
+    .s_Option_OFF = "\x5",
     .s_Full = "\x7",
     .s_Fill = "\x8",
     .s_No_Cover = "Senza immagine",
@@ -272,8 +271,6 @@ const lang_t lang_it_it LANG_DATA = {
 #if CHEAT_CODES == 1
     .s_Cheat_Codes = "Codici Cheat",
     .s_Cheat_Codes_Title = "Codici Cheat",
-    .s_Cheat_Codes_ON = "\x6",
-    .s_Cheat_Codes_OFF = "\x5",
 #endif
     //=====================================================================
 
@@ -338,6 +335,7 @@ const lang_t lang_it_it LANG_DATA = {
     .s_Title_Date_Format = "%02d-%02d %s %02d:%02d:%02d",
     .s_Date_Format = "%02d.%02d.20%02d %s",
     .s_Time_Format = "%02d:%02d:%02d",
+    .s_favorite = "Preferito",
     // Media browser (homebrew document/media viewer)
     .s_media_hint = "A:Apri  B:Indietro",
     .s_media_empty = "(vuoto)",

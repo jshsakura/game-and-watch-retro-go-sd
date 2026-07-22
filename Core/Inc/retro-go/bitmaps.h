@@ -84,6 +84,16 @@ enum {
     RG_LOGO_ATARI,
     RG_LOGO_AMSTRAD,
     RG_LOGO_TAMA,
+    /* Atari Lynx name header. Sits HERE, ahead of the fork's own headers,
+     * because upstream defines header_lynx at this point in rg_logos.c and
+     * upstream's numbering is the one we follow -- this fork's additions are
+     * appended after it. Verified against the link order, which is the only
+     * authority (GCC reorders top-level definitions):
+     *     arm-none-eabi-nm -n build/gw_retro_go.elf | grep ' R header_'
+     * NOTE: this shifts PICO-8/NGP/WonderSwan down one /bios/logo.bin index,
+     * so an SD card carrying an older logo.bin must be updated with this
+     * build's sd_content. */
+    RG_LOGO_HEADER_LYNX,
     // PICO-8 (appended last to not shift any existing enum values)
     RG_LOGO_HEADER_PICO8,
     // NGP / WonderSwan (appended last to not shift existing enum values)
@@ -93,8 +103,6 @@ enum {
     RG_LOGO_PAD_WSWAN,
     // Homebrew beer-stein tab icon (appended last to not shift existing enum values)
     RG_LOGO_PAD_HOMEBREW,
-    // Atari Lynx name header (appended last; matches header_lynx at end of rg_logos.c)
-    RG_LOGO_HEADER_LYNX,
     // PC Engine CD name header (matches header_pcecd, appended after header_lynx)
     RG_LOGO_HEADER_PCECD,
     // Odyssey2 / ZX Spectrum / C64 name headers (match header_videopac/zx/c64,
@@ -208,6 +216,8 @@ extern const retro_logo_image header_homebrew;
 extern const retro_logo_image header_tama;
 extern const retro_logo_image header_pkmini;
 extern const retro_logo_image header_pico8;
+extern const retro_logo_image header_pcecd;
+extern const retro_logo_image header_favorites;
 
 extern const retro_logo_image pad_sg1000;
 extern const retro_logo_image pad_col;

@@ -28,7 +28,13 @@ typedef struct {
     int is_open;
 } FatFSFile;
 
-#define MAX_OPEN_FILES 3
+/* Upstream uses 3. This fork keeps 10, and deliberately: the SD_CARD=0 variant
+ * is still supported here and carries cores and apps upstream does not have --
+ * the music player streams an MP3 while reading a cover, the media browser
+ * holds a directory and a file, and several cores want a ROM, a save and a log
+ * at once. Running out of slots does not raise an error, it just fails, which
+ * is the worst way for a limit to be wrong. The table costs a few bytes. */
+#define MAX_OPEN_FILES 10
 FatFSFile file_table[MAX_OPEN_FILES];
 
 void init_file_table() {
@@ -527,6 +533,12 @@ void sd_save_log_boot(const char *line) { (void)line; }
  * defined here so shared launcher code links, unused by the FrogFS path. */
 const char *gw_fs_relpath_prefix = NULL;
 
+/* Upstream uses 3. This fork keeps 10, and deliberately: the SD_CARD=0 variant
+ * is still supported here and carries cores and apps upstream does not have --
+ * the music player streams an MP3 while reading a cover, the media browser
+ * holds a directory and a file, and several cores want a ROM, a save and a log
+ * at once. Running out of slots does not raise an error, it just fails, which
+ * is the worst way for a limit to be wrong. The table costs a few bytes. */
 #define MAX_OPEN_FILES 10
 #define FS_FD_OFFSET 3
 

@@ -24,7 +24,6 @@ const lang_t lang_fr_fr LANG_DATA = {
     .s_LangUI = "Langue",
     .s_LangName = "French",
     .s_music = "Musique",
-    .s_favorite = "Favori",
     .s_Add_favorite = "Ajouter aux favoris",
     .s_Del_favorite = "Retirer des favoris",
     .s_Reset_favorites = "Réinitialiser les favoris",
@@ -142,8 +141,6 @@ const lang_t lang_fr_fr LANG_DATA = {
     .s_md_Synchro_Vsync = "VSYNC",
     .s_md_Dithering = "Dithering",
     .s_md_Debug_bar = "Debug bar",
-    .s_md_Option_ON = "\x6",
-    .s_md_Option_OFF = "\x5",
     .s_md_AudioFilter = "Audio Filter",
     .s_md_VideoUpscaler = "Video Upscaler",
     .s_md_Region = "Région",
@@ -204,6 +201,8 @@ const lang_t lang_fr_fr LANG_DATA = {
     //=====================================================================
 
     // Core\Src\porting\odroid_overlay.c ===================================
+    .s_Option_ON = "\x6",
+    .s_Option_OFF = "\x5",
     .s_Full = "\x7",
     .s_Fill = "\x8",
     .s_No_Cover = "Pas d'image",
@@ -272,8 +271,6 @@ const lang_t lang_fr_fr LANG_DATA = {
 #if CHEAT_CODES == 1
     .s_Cheat_Codes = "Codes de triche",
     .s_Cheat_Codes_Title = "Options de triche",
-    .s_Cheat_Codes_ON = "\x6",
-    .s_Cheat_Codes_OFF = "\x5",
 #endif
     //=====================================================================
 
@@ -338,6 +335,7 @@ const lang_t lang_fr_fr LANG_DATA = {
     .s_Title_Date_Format = "%02d-%02d %s %02d:%02d:%02d",
     .s_Date_Format = "%02d.%02d.20%02d %s",
     .s_Time_Format = "%02d:%02d:%02d",
+    .s_favorite = "Favori",
     // Media browser (homebrew document/media viewer)
     .s_media_hint = "A:Ouvrir  B:Retour",
     .s_media_empty = "(vide)",

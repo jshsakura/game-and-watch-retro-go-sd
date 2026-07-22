@@ -23,7 +23,6 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_LangUI = "言語",
     .s_LangName = "Japanese",
     .s_music = "音楽",
-    .s_favorite = "お気に入り",
     .s_Add_favorite = "お気に入り追加",
     .s_Del_favorite = "お気に入り削除",
     .s_Reset_favorites = "お気に入りをリセット",
@@ -140,8 +139,6 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_md_Synchro_Vsync = "VSYNC",
     .s_md_Dithering = "ディザリング",
     .s_md_Debug_bar = "デバッグバー",
-    .s_md_Option_ON = "\x6",
-    .s_md_Option_OFF = "\x5",
     .s_md_AudioFilter = "オーディオフィルター",
     .s_md_VideoUpscaler = "ビデオアップスケール",
     .s_md_Region = "地域",
@@ -202,6 +199,8 @@ const lang_t lang_ja_jp LANG_DATA = {
     //=====================================================================
 
     // Core\Src\porting\odroid_overlay.c ===================================
+    .s_Option_ON = "\x6",
+    .s_Option_OFF = "\x5",
     .s_Full = "\x7",
     .s_Fill = "\x8",
 
@@ -274,8 +273,6 @@ const lang_t lang_ja_jp LANG_DATA = {
 #if CHEAT_CODES == 1
     .s_Cheat_Codes = "チートコード",
     .s_Cheat_Codes_Title = "チートオプション",
-    .s_Cheat_Codes_ON = "\x6",
-    .s_Cheat_Codes_OFF = "\x5",
 #endif
 
     //=====================================================================
@@ -333,6 +330,10 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_Date_setup = "日付設定",
             
 /*
+*/
+    /* These were initialised twice, Japanese first and English second, and in C
+     * the later designated initializer wins -- so the Japanese build has been
+     * printing "Mon".."Sun" on the clock all along. Kept the Japanese. */
     .s_Weekday_Mon = "月",
     .s_Weekday_Tue = "火",
     .s_Weekday_Wed = "水",
@@ -340,14 +341,6 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_Weekday_Fri = "金",
     .s_Weekday_Sat = "土",
     .s_Weekday_Sun = "日",
-*/
-    .s_Weekday_Mon = "Mon",
-    .s_Weekday_Tue = "Tue",
-    .s_Weekday_Wed = "Wed",
-    .s_Weekday_Thu = "Thu",
-    .s_Weekday_Fri = "Fri",
-    .s_Weekday_Sat = "Sat",
-    .s_Weekday_Sun = "Sun",
             
     .s_Turbo_Button = "連射",
     .s_Turbo_None = "無し",
@@ -359,6 +352,7 @@ const lang_t lang_ja_jp LANG_DATA = {
     .s_Date_Format = "%02d.%02d.20%02d %s",
     .s_Time_Format = "%02d:%02d:%02d",
 
+    .s_favorite = "お気に入り",
     // Media browser (homebrew document/media viewer)
     .s_media_hint = "A:開く  B:戻る",
     .s_media_empty = "(空)",

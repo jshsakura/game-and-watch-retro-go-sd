@@ -268,6 +268,17 @@ static void msx_sleep_wake_up()
 #endif /* flash build: FrogFS/LittleFS handles survive sleep, nothing to reopen */
 }
 
+/* Called before sleep/quit unmount: fclose disk/HDD while FatFs is still live. */
+static void msx_sram_save_cb(void)
+{
+#if SD_CARD == 1
+    if (msx_game_type == MSX_GAME_DISK)
+        diskCloseDrive(0);
+    else if (msx_game_type == MSX_GAME_HDIDE)
+        diskCloseDrive(1);
+#endif
+}
+
 /* Core stubs */
 void frameBufferDataDestroy(FrameBufferData* frameData){}
 void frameBufferSetActive(FrameBufferData* frameData){}
@@ -2055,9 +2066,9 @@ void app_main_msx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_system_init(APPID_MSX, AUDIO_MSX_SAMPLE_RATE);
 #if CHEAT_CODES == 1
-    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, &msx_screenshot, NULL, &msx_sleep_wake_up, NULL, &update_cheats_msx);
+    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, &msx_screenshot, NULL, &msx_sleep_wake_up, &msx_sram_save_cb, &update_cheats_msx);
 #else
-    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, &msx_screenshot, NULL, &msx_sleep_wake_up, NULL, NULL);
+    odroid_system_emu_init(&msx_system_LoadState, &msx_system_SaveState, &msx_screenshot, NULL, &msx_sleep_wake_up, &msx_sram_save_cb, NULL);
 #endif
 
     image_buffer_base_width    =  272;

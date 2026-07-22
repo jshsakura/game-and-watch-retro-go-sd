@@ -1504,7 +1504,7 @@ static bool cheat_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_
         is_on = is_on ? false : true;
         odroid_settings_ActiveGameGenieCodes_set(CHOSEN_FILE->path, option->id, is_on);
     }
-    strcpy(option->value, is_on ? curr_lang->s_Cheat_Codes_ON : curr_lang->s_Cheat_Codes_OFF);
+    strcpy(option->value, is_on ? curr_lang->s_Option_ON : curr_lang->s_Option_OFF);
     if (event == ODROID_DIALOG_ENTER) {
         cheat_update_handler_t update = odroid_system_get_app()->handlers.cheat_update;
         if (update)
@@ -1543,39 +1543,14 @@ static bool show_cheat_dialog()
 }
 #endif
 
-/* Darken an RGB565 color by LCD_DARKEN_PERCENT — mirrors clut_store_dark_twin
- * in gw_lcd.c so we can reconstruct the [count..2*count) darkened-twin range
- * from the embedded cart CLUT during LUT8→RGB565 preview conversion. */
-static inline uint16_t darken_rgb565(uint16_t c)
-{
-    const int keep = 100 - LCD_DARKEN_PERCENT;
-    int r = (c >> 11) & 0x1F;
-    int g = (c >>  5) & 0x3F;
-    int b = (c      ) & 0x1F;
-    r = (r * keep) / 100;
-    g = (g * keep) / 100;
-    b = (b * keep) / 100;
-    return (uint16_t)((r << 11) | (g << 5) | b);
-}
-
 static void preview_blit_lut8_to_rgb565(FILE *file, const uint16_t clut[LCD_SCREENSHOT_CLUT_ENTRIES])
 {
     uint8_t row[GW_LCD_WIDTH];
     uint16_t *dst = (uint16_t *)lcd_get_active_buffer();
     for (int y = 0; y < GW_LCD_HEIGHT; y++) {
         if (fread(row, 1, GW_LCD_WIDTH, file) != GW_LCD_WIDTH) return;
-        for (int x = 0; x < GW_LCD_WIDTH; x++) {
-            uint8_t idx = row[x];
-            uint16_t color;
-            if (idx < LCD_SCREENSHOT_CLUT_ENTRIES) {
-                color = clut[idx];
-            } else if (idx < 2 * LCD_SCREENSHOT_CLUT_ENTRIES) {
-                color = darken_rgb565(clut[idx - LCD_SCREENSHOT_CLUT_ENTRIES]);
-            } else {
-                color = 0;
-            }
-            *dst++ = color;
-        }
+        lcd_convert_lut8_to_rgb565(row, dst, GW_LCD_WIDTH, clut);
+        dst += GW_LCD_WIDTH;
     }
 }
 

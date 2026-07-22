@@ -1,6 +1,7 @@
-/* SD-file favorites: the ★ tab (tab 0) + /favorites.txt IO. See favorites.h
- * for the design constraints (file IO on discrete events only, zero resident
- * RAM, list materialized into the shared per-tab ROM buffer). */
+/* SD-file favorites: the ★ tab (tab 0) + favorites.txt under
+ * ODROID_BASE_PATH_CONFIG. See favorites.h for the design constraints
+ * (file IO on discrete events only, zero resident RAM, list materialized
+ * into the shared per-tab ROM buffer). */
 #include <odroid_system.h>
 #include <string.h>
 #include <stdio.h>
@@ -11,49 +12,20 @@
 #include "favorites.h"
 #include "rg_storage.h"
 #include "rg_i18n.h"
+#include "gw_malloc.h"
 #include "bitmaps.h"
 #include "gui.h"
-#include "gw_malloc.h"
-/* Delete/atomic-rename primitives. newlib rename() has no syscall on either
- * build, so each storage backend supplies its own: FatFs on SD builds,
- * LittleFS (the RW partition) on SD_CARD=0 flash builds. */
-#if !defined(SD_CARD) || SD_CARD == 1
-#include "ff.h"
-static bool fav_delete(const char *path)
-{
-    FRESULT res = f_unlink(path);
-    return res == FR_OK || res == FR_NO_FILE;
-}
-static bool fav_commit(const char *tmp, const char *dst)
-{
-    f_unlink(dst); /* may not exist; f_rename needs the name free */
-    return f_rename(tmp, dst) == FR_OK;
-}
-#else
-#include "gw_littlefs.h"
-static bool fav_delete(const char *path)
-{
-    int res = fs_delete(path);
-    return res >= 0 || res == LFS_ERR_NOENT;
-}
-/* no fav_commit here: LittleFS remove() rewrites in RAM (single-handle FS) */
-#endif
+#include "ff.h" /* f_unlink/f_rename: newlib rename() has no syscall here */
 
-#ifndef FAVORITES_FILE
-#define FAVORITES_FILE "/favorites.txt"
-#endif
+#define FAVORITES_FILE ODROID_BASE_PATH_CONFIG "/favorites.txt"
 /* Temp for the rewrite-on-remove; committed with f_rename so a mid-write
  * power cut can never corrupt the live file. */
-#ifndef FAVORITES_TMP
-#define FAVORITES_TMP  "/favorites.new"
-#endif
+#define FAVORITES_TMP  ODROID_BASE_PATH_CONFIG "/favorites.new"
 
 /* Pseudo-emulator behind the ★ tab (tab->arg must be a retro_emulator_t for
  * the generic launcher code that casts it, e.g. gui_save_current_tab).
- * ahb_calloc'd like the tab_t structs — deliberately NOT a static: launcher
- * .bss lives in DTCM, which is emulator-priority and historically tight.
- * Same lifetime as emulators[]/systems[] (allocated from emulators_init, and
- * invalidated by the ahb_init() that precedes every core launch). */
+ * ahb_calloc'd like the tab_t structs
+ */
 static retro_emulator_t *favorites_emu;
 
 /** fgets + strip trailing CR/LF. Returns false at EOF/error. */
@@ -99,9 +71,6 @@ bool rg_favorites_add(const char *path)
 
 bool rg_favorites_remove(const char *path)
 {
-#if !defined(SD_CARD) || SD_CARD == 1
-    /* FatFs: stream through a temp file and commit with f_rename, so a
-     * mid-write power cut can never corrupt the live file. */
     FILE *in = fopen(FAVORITES_FILE, "r");
     if (in == NULL)
         return false;
@@ -123,63 +92,17 @@ bool rg_favorites_remove(const char *path)
     fclose(out);
 
     if (!ok) {
-        fav_delete(FAVORITES_TMP);
+        f_unlink(FAVORITES_TMP);
         return false;
     }
-    return fav_commit(FAVORITES_TMP, FAVORITES_FILE);
-#else
-    /* LittleFS allows only ONE open file (gw_littlefs MAX_OPEN_FILES), so the
-     * in+out temp-file scheme above can never work here. Filter the (tiny)
-     * list in RAM instead: read + close, then rewrite in place. LittleFS
-     * commits copy-on-write, so a power cut mid-rewrite loses at most this
-     * one file's update — acceptable for a favorites list. */
-    FILE *in = fopen(FAVORITES_FILE, "r");
-    if (in == NULL)
-        return false;
-
-    fseek(in, 0, SEEK_END);
-    long size = ftell(in);
-    fseek(in, 0, SEEK_SET);
-    if (size < 0)
-        size = 0;
-
-    char *kept = malloc((size_t)size + 1);
-    if (kept == NULL) {
-        fclose(in);
-        printf("favorites: no RAM for rewrite (%ld bytes)\n", size);
-        return false;
-    }
-
-    size_t kept_len = 0;
-    char line[RG_PATH_MAX + 1];
-    while (read_favorite_line(in, line, sizeof(line))) {
-        if (line[0] == '\0' || strcmp(line, path) == 0)
-            continue; /* drop the removed entry (and blank lines) */
-        size_t len = strlen(line);
-        if (kept_len + len + 1 > (size_t)size)
-            break; /* can't happen: filtered content never outgrows the file */
-        memcpy(kept + kept_len, line, len);
-        kept[kept_len + len] = '\n';
-        kept_len += len + 1;
-    }
-    fclose(in);
-
-    FILE *out = fopen(FAVORITES_FILE, "w");
-    if (out == NULL) {
-        free(kept);
-        printf("favorites: cannot reopen %s for rewrite\n", FAVORITES_FILE);
-        return false;
-    }
-    bool ok = kept_len == 0 || fwrite(kept, 1, kept_len, out) == kept_len;
-    fclose(out);
-    free(kept);
-    return ok;
-#endif
+    f_unlink(FAVORITES_FILE); /* may not exist; f_rename needs the name free */
+    return f_rename(FAVORITES_TMP, FAVORITES_FILE) == FR_OK;
 }
 
 bool rg_favorites_reset(void)
 {
-    return fav_delete(FAVORITES_FILE);
+    FRESULT res = f_unlink(FAVORITES_FILE);
+    return res == FR_OK || res == FR_NO_FILE;
 }
 
 /** Map "/roms/<dirname>/..." to its registered system, or NULL. */
@@ -207,6 +130,7 @@ static void fill_file_slot(retro_emulator_file_t *slot, const char *path,
     slot->system = system;
     slot->region = REGION_NTSC;
     strncpy(slot->path, path, sizeof(slot->path) - 1);
+    slot->path[sizeof(slot->path) - 1] = '\0';
 
     /* name/ext derive from slot->path (NOT the caller's line buffer — these
      * pointers must stay valid for the lifetime of the list entry). */
@@ -266,8 +190,8 @@ static void favorites_refresh_tab(tab_t *tab)
 
     int n = favorites_fill_files(files, maxcount);
 
-    /* Same ordering rule as the emulator tabs: file order == added order. */
-    if (n > 1 && odroid_settings_SortMode_get() != ODROID_SORT_ADDED) {
+    /* Same ordering rule as the emulator tabs: alphabetical by name. */
+    if (n > 1) {
         qsort(files, (size_t)n, sizeof(*files), favorites_name_cmp);
         for (int i = 0; i < n; i++) /* ext points into path, which moved */
             if (files[i].ext != NULL)
@@ -291,13 +215,20 @@ static void favorites_refresh_tab(tab_t *tab)
             tab->listbox.cursor = 0;
         tab->is_empty = false;
     } else {
-        /* Empty ★ tab: same shape as an empty emulator tab, so tab
-         * navigation auto-skips it (and boot moves on to the first system). */
-        snprintf(tab->status, sizeof(tab->status), "%s", curr_lang->s_no_favorite);
-        gui_resize_list(tab, 8);
-        tab->listbox.cursor = 3;
+        /* Mark empty so navigation / boot skip this tab. */
+        gui_resize_list(tab, 0);
         tab->is_empty = true;
     }
+}
+
+/** If the ★ tab just became empty while selected, jump to the next system. */
+static void favorites_leave_if_empty(tab_t *tab)
+{
+    if (!tab->is_empty)
+        return;
+    if (gui_get_current_tab() != tab)
+        return;
+    gui_change_tab(+1);
 }
 
 static void favorites_event_handler(gui_event_t event, tab_t *tab)
@@ -313,11 +244,17 @@ static void favorites_event_handler(gui_event_t event, tab_t *tab)
         return;
 
     if (event == KEY_PRESS_A) {
-        /* The menu can un-favorite, reset, or delete the ROM outright — rebuild
-         * from the file either way. (B is "back to the system grid" now; ROM info
-         * moved into this menu.) */
         emulator_show_file_menu(file);
+        /* The menu can un-favorite (or reset) — rebuild from the file. */
         favorites_refresh_tab(tab);
+        favorites_leave_if_empty(tab);
+    }
+    else if (event == KEY_PRESS_B) {
+        emulator_show_file_info(file);
+        if (file->path[0] == '\0') { /* ROM was deleted from the info dialog */
+            favorites_refresh_tab(tab);
+            favorites_leave_if_empty(tab);
+        }
     }
 }
 
@@ -328,7 +265,8 @@ void rg_favorites_register_tab(void)
     strcpy(favorites_emu->dirname, "favorites");
     /* The shared file buffer does not exist yet (first add_emulator call
      * allocates it); favorites_refresh_tab fetches it lazily at TAB_INIT. */
-    gui_add_tab("favorites", RG_LOGO_PAD_FAVORITES, RG_LOGO_HEADER_FAVORITES,
+    /* Star icon on the right (pad slot); no text header. */
+    gui_add_tab("favorites", RG_LOGO_HEADER_FAVORITES, RG_LOGO_EMPTY,
                 favorites_emu, favorites_event_handler);
 }
 

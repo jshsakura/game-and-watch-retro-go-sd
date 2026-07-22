@@ -401,8 +401,8 @@ static bool gwenesis_submenu_setAudioFilter(odroid_dialog_choice_t *option, odro
     gwenesis_lpfilter = gwenesis_lpfilter == 0 ? 1 : 0;
     }
 
-    if (gwenesis_lpfilter == 0) strcpy(option->value, curr_lang->s_md_Option_OFF);
-    if (gwenesis_lpfilter == 1) strcpy(option->value, curr_lang->s_md_Option_ON);
+    if (gwenesis_lpfilter == 0) strcpy(option->value, curr_lang->s_Option_OFF);
+    if (gwenesis_lpfilter == 1) strcpy(option->value, curr_lang->s_Option_ON);
 
     return event == ODROID_DIALOG_ENTER;
 }
@@ -414,8 +414,8 @@ static bool gwenesis_submenu_debug_bar(odroid_dialog_choice_t *option, odroid_di
   if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
       gwenesis_show_debug_bar = gwenesis_show_debug_bar == 0 ? 1 : 0;
     }
-    if (gwenesis_show_debug_bar == 0) strcpy(option->value, curr_lang->s_md_Option_OFF);
-    if (gwenesis_show_debug_bar == 1) strcpy(option->value, curr_lang->s_md_Option_ON);
+    if (gwenesis_show_debug_bar == 0) strcpy(option->value, curr_lang->s_Option_OFF);
+    if (gwenesis_show_debug_bar == 1) strcpy(option->value, curr_lang->s_Option_ON);
 
     return event == ODROID_DIALOG_ENTER;
 }
@@ -426,8 +426,8 @@ static bool gwenesis_submenu_setVideoUpscaler(odroid_dialog_choice_t *option, od
     gwenesis_H32upscaler = gwenesis_H32upscaler == 0 ? 1 : 0;
   }
 
-    if (gwenesis_H32upscaler == 0) strcpy(option->value, curr_lang->s_md_Option_OFF);
-    if (gwenesis_H32upscaler == 1) strcpy(option->value, curr_lang->s_md_Option_ON);
+    if (gwenesis_H32upscaler == 0) strcpy(option->value, curr_lang->s_Option_OFF);
+    if (gwenesis_H32upscaler == 1) strcpy(option->value, curr_lang->s_Option_ON);
 
     return event == ODROID_DIALOG_ENTER;
 }
@@ -515,20 +515,20 @@ void gwenesis_load_local_data(FILE *file, int ss_version) {
     fread((unsigned char *)&gwenesis_lpfilter, 4, 1, file);
     switch (gwenesis_lpfilter) {
       case 1:
-        strcpy(AudioFilter_str, curr_lang->s_md_Option_ON);
+        strcpy(AudioFilter_str, curr_lang->s_Option_ON);
         break;
       default:
-        strcpy(AudioFilter_str, curr_lang->s_md_Option_OFF);
+        strcpy(AudioFilter_str, curr_lang->s_Option_OFF);
         break;
     }
   } else {
     fread((unsigned char *)&gwenesis_lpfilter, 4, 1, file);
     switch (gwenesis_lpfilter) {
       case 1:
-        strcpy(AudioFilter_str, curr_lang->s_md_Option_ON);
+        strcpy(AudioFilter_str, curr_lang->s_Option_ON);
         break;
       default:
-        strcpy(AudioFilter_str, curr_lang->s_md_Option_OFF);
+        strcpy(AudioFilter_str, curr_lang->s_Option_OFF);
         break;
     }
     if (ss_version >= 2) {

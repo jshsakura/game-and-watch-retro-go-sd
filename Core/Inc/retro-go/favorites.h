@@ -2,7 +2,18 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 #include "rg_emulators.h"
+
+/* --- SD-file favorites (zero resident RAM) ------------------------------
+ * One favorite per line in ODROID_BASE_PATH_CONFIG "/favorites.txt"
+ * (i.e. /data/favorites.txt): the full ROM path ("/roms/<system>/<file>").
+ * The file is read only on discrete UI events (A-menu open, favorites-tab
+ * entry) — NEVER in the list-render hot path. The favorites tab materializes
+ * its list into the same shared ROM buffer every emulator tab already
+ * reuses, so the feature costs no extra RAM.
+ * Implemented in Core/Src/retro-go/rg_favorites.c. */
+
 
 /* Game-list sort mode, kept in the parent repo (not the retro-go-stm32
  * submodule) so the feature builds without bumping the submodule pin. The
@@ -21,14 +32,6 @@ typedef enum
 uint8_t odroid_settings_SortMode_get(void);
 void odroid_settings_SortMode_set(uint8_t mode);
 
-/* --- SD-file favorites (zero resident RAM) ------------------------------
- * One favorite per line in /favorites.txt: the full ROM path
- * ("/roms/<system>/<file>"). The file is read only on discrete UI events
- * (A-menu open, favorites-tab entry) — NEVER in the list-render hot path;
- * per-frame file IO in the render loop is what killed the 2026-06 SD-DB
- * attempt. The favorites tab (tab 0) materializes its list into the same
- * shared 1000-slot buffer every emulator tab already reuses, so the whole
- * feature costs no RAM. Implemented in Core/Src/retro-go/rg_favorites.c. */
 
 /** True if path is favorited (one full read of /favorites.txt). */
 bool rg_favorites_contains(const char *path);
