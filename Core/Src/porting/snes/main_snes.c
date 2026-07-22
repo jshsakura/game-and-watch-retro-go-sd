@@ -825,6 +825,18 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   if (!rc_smw_activate(rom, sz)) {
     spin_whitelist_set(rom, sz);   /* enable spin-skip only for high-spin ROMs */
   }
+#ifdef SNES_SPIN_FORCE_ON
+  /* DIAGNOSTIC ARM. spin_table turns Zelda 3 off by name on the strength of a
+   * 25.0% skip rate against a ~50% break-even -- and BOTH of those numbers are
+   * QEMU rig instruction counts. This tree's own ledger says that rig is blind
+   * to roughly 70% of hardware time, and a replayed opcode skips the cache
+   * misses and flash stalls as well as the interpreter work, so the DEVICE
+   * break-even should sit below the rig's. Nobody has measured it. This forces
+   * the learner on regardless of the table so the third arm of a three-way
+   * device A/B exists at all; it is not a shipping path. */
+  extern bool g_spin_whitelist;
+  g_spin_whitelist = true;
+#endif
   spin_reset();   /* clean slate either way (spin-skip learner / rc dispatch) */
 
   bool ok = (rom != NULL) && !cart_needs_coprocessor(rom, sz) &&
