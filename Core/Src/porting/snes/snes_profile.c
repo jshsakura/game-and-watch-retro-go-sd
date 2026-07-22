@@ -503,6 +503,22 @@ static void snes_profile_dump(void) {
   fprintf(f, "warmup: %u frames discarded before the window opened "
              "(SNES_PROF_SKIP_FRAMES). A/B arms MUST match on this.\n",
           (unsigned)SNES_PROF_SKIP_FRAMES);
+  /* The dump has to say which A/B arm produced it. SNES_LOAD_DIAG is the usual
+   * source of that line and it is mutually exclusive with this profiler
+   * (Makefile:103), so without this the two arms are indistinguishable once the
+   * files are off the card -- which is exactly how two identical binaries got
+   * published as an A/B pair and three runs of the same firmware were read as a
+   * comparison. */
+#ifdef SNES_SMW_HLE_PRODUCT
+  {
+    extern int g_wire_enable, g_wire_on;
+    extern const char *g_wire_variant;
+    fprintf(f, "wire: BUILT-IN  enable=%d on=%d variant=%s\n",
+            g_wire_enable, g_wire_on, g_wire_variant ? g_wire_variant : "-");
+  }
+#else
+  fprintf(f, "wire: NOT COMPILED (pure LLE reference arm)\n");
+#endif
   wdog_refresh();
 
   /* ---- gates ---- */
