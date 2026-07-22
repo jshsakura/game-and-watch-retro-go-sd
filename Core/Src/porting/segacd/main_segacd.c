@@ -19,6 +19,8 @@
 #include "gw_lcd.h"
 #include "rom_manager.h"
 #include "appid.h"
+#include "main.h"            /* hrtc — the crash checkpoint lives in a backup reg */
+#include "error_screens.h"
 
 #include "gwenesis_bus.h"
 #include "gwenesis_vdp.h"
@@ -214,6 +216,96 @@ static void SegaCdRelocateXip(uint8_t *buffer, uint32_t length, uint32_t offset_
   PatchSegaCdSentinels((uint32_t *)buffer, (uint32_t *)(buffer + (length & ~3u)), offset, file_size);
 }
 
+/* ---- crash checkpoint --------------------------------------------------
+ *
+ * The device symptom has been the same sentence since 0721: no screen, no
+ * BSOD, no log, back at the launcher. That one observation covers at least
+ * five different faults — a missing core blob, a missing BIOS, a hang before
+ * the frame loop, a hang inside it, and a watchdog reset — and nothing in this
+ * core distinguishes them, which is why "Sega CD dies on hardware" has stayed
+ * a symptom instead of becoming a diagnosis. printf() goes down a UART nobody
+ * has, and writing to the SD during play is forbidden (FAT corruption), so the
+ * evidence has to survive a chip reset somewhere else: an RTC backup register.
+ *
+ * DR27 is free. DR0 is the OFW boot flag, DR1 the alarm epoch, DR28 the
+ * boot-rescue counter, DR29 the clock snapshot (rg_rtc.c CLOCK_BKP_REG) and
+ * DR30 the charger — an adversarial review proposed DR29 for exactly this and
+ * would have wiped the player's clock once per frame. */
+#define SEGACD_BKP_REG    RTC_BKP_DR27
+#define SEGACD_CP_MAGIC   0x5CD00000u
+#define SEGACD_CP_MASK    0xFFFF0000u
+#define SEGACD_CP_FRAMED  0x8000u          /* low bits are a frame count */
+
+enum {
+    SCD_CP_NONE = 0, SCD_CP_ENTER, SCD_CP_XIP, SCD_CP_BIOS, SCD_CP_INIT,
+    SCD_CP_MAPBIOS, SCD_CP_RESET, SCD_CP_CD, SCD_CP_BRAM, SCD_CP_LOOP,
+    SCD_CP_DONE = 0x7FFF
+};
+
+static const char *scd_checkpoint_name(uint32_t cp) {
+    if (cp & SEGACD_CP_FRAMED) return "inside the frame loop";
+    switch (cp) {
+        case SCD_CP_ENTER:   return "entry, before caching the core";
+        case SCD_CP_XIP:     return "caching segacd.xip into flash";
+        case SCD_CP_BIOS:    return "caching the BIOS into flash";
+        case SCD_CP_INIT:    return "power_on / segacd_init";
+        case SCD_CP_MAPBIOS: return "segacd_map_bios";
+        case SCD_CP_RESET:   return "reset_emulation";
+        case SCD_CP_CD:      return "segacd_cd_open";
+        case SCD_CP_BRAM:    return "loading BRAM";
+        case SCD_CP_LOOP:    return "first frame";
+        default:             return "unknown stage";
+    }
+}
+
+static void scd_checkpoint(uint32_t cp) {
+    HAL_RTCEx_BKUPWrite(&hrtc, SEGACD_BKP_REG, SEGACD_CP_MAGIC | (cp & 0xFFFFu));
+}
+
+/* Whatever the PREVIOUS run of this core reached, or SCD_CP_NONE if there is
+ * nothing worth reporting. Read once, at entry, before we overwrite it.
+ *
+ * Leaving the core through the in-game menu does not unwind this function, so
+ * a normal session also ends on a frame checkpoint. Reporting that would put a
+ * fault screen in front of the player every single launch, which is how a
+ * diagnostic gets switched off. So: any stage BEFORE the frame loop is always
+ * a fault (this core has never once reached the loop on hardware), and a frame
+ * checkpoint is only a fault if it died almost immediately. Nobody plays for
+ * three seconds on purpose; everybody who hits the current bug dies inside
+ * one. */
+#define SEGACD_CP_ALIVE_FRAMES 180u        /* ~3 s at 60 fps */
+
+static uint32_t scd_checkpoint_previous(void) {
+    uint32_t v = HAL_RTCEx_BKUPRead(&hrtc, SEGACD_BKP_REG);
+    if ((v & SEGACD_CP_MASK) != SEGACD_CP_MAGIC) return SCD_CP_NONE;
+    uint32_t cp = v & 0xFFFFu;
+    if (cp == SCD_CP_DONE) return SCD_CP_NONE;
+    if ((cp & SEGACD_CP_FRAMED) &&
+        (cp & ~SEGACD_CP_FRAMED) >= SEGACD_CP_ALIVE_FRAMES)
+        return SCD_CP_NONE;                /* it ran; the player just left */
+    return cp;
+}
+
+/* Say it on the LCD and hold it there — a message the launcher repaints over
+ * before it can be read is the same as no message at all (main_sm.c:139). */
+static void segacd_hold_screen(const char *main_line, const char *l1, const char *l2) {
+    printf("segacd: %s / %s / %s\n", main_line ? main_line : "",
+           l1 ? l1 : "", l2 ? l2 : "");
+    lcd_backlight_set(180);
+    draw_error_screen(main_line, l1, l2);
+    odroid_gamepad_state_t joy;
+    do {                                   /* let go of the launch press first */
+        wdog_refresh(); lcd_sync(); lcd_swap();
+        odroid_input_read_gamepad(&joy);
+        HAL_Delay(20);
+    } while (joy.bitmask != 0);
+    do {
+        wdog_refresh(); lcd_sync(); lcd_swap();
+        odroid_input_read_gamepad(&joy);
+        HAL_Delay(20);
+    } while (joy.bitmask == 0);
+}
+
 static bool SegaCdCacheXipToFlash(void) {
   g_xip_size = 0;
   g_xip_addr = odroid_overlay_cache_file_in_flash_relocate(SEGACD_XIP_PATH, &g_xip_size, false,
@@ -247,12 +339,34 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * own overlay code+data+bss instead of the free space after it. 0720. */
     ram_start = (uint32_t)&_OVERLAY_SEGACD_BSS_END;
 
+    /* Report where the last run stopped BEFORE overwriting the record. A
+     * watchdog reset takes the whole chip down without unwinding, so this is
+     * the only witness that survives it. */
+    {
+        uint32_t prev = scd_checkpoint_previous();
+        if (prev != SCD_CP_NONE) {
+            char line[64];
+            if (prev & SEGACD_CP_FRAMED)
+                snprintf(line, sizeof(line), "after %lu frames",
+                         (unsigned long)(prev & ~SEGACD_CP_FRAMED));
+            else
+                snprintf(line, sizeof(line), "stage %lu", (unsigned long)prev);
+            segacd_hold_screen("Sega CD stopped last run", scd_checkpoint_name(prev), line);
+        }
+    }
+    scd_checkpoint(SCD_CP_ENTER);
+
+    scd_checkpoint(SCD_CP_XIP);
     if (!SegaCdCacheXipToFlash()) {
         printf("Failed to cache segacd.xip\n");
+        segacd_hold_screen("Sega CD core file missing", SEGACD_XIP_PATH,
+                           "Copy the cores folder onto the SD card");
+        scd_checkpoint(SCD_CP_DONE);
         return 0;
     }
 
     uint32_t bios_size = 0;
+    scd_checkpoint(SCD_CP_BIOS);
     segacd_bios = odroid_overlay_cache_file_in_flash("/bios/segacd/bios_CD_U.bin", &bios_size, false);
     if (!segacd_bios) {
         segacd_bios = odroid_overlay_cache_file_in_flash("/bios/segacd/bios_CD_E.bin", &bios_size, false);
@@ -262,6 +376,9 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     }
     if (!segacd_bios) {
         printf("SegaCD BIOS not found in /bios/segacd/!\n");
+        segacd_hold_screen("Sega CD BIOS missing", "/bios/segacd/bios_CD_U|E|J.bin",
+                           "Put one of the three BIOS files there");
+        scd_checkpoint(SCD_CP_DONE);
         return 0;
     }
 
@@ -282,15 +399,20 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * (m68ki_read_8 dispatching through a wild page handler). power_on() already
      * calls m68k_init(), so no separate call is needed. */
     load_cartridge();
+    scd_checkpoint(SCD_CP_INIT);
     power_on();
     segacd_init();
+    scd_checkpoint(SCD_CP_MAPBIOS);
     segacd_map_bios(segacd_bios); /* main boots from BIOS, not a cart (0 RAM: XIP) */
     segacd_main_map_cd_space();
+    scd_checkpoint(SCD_CP_RESET);
     reset_emulation();            /* pulse-reset MAIN 68K -> reads BIOS reset vectors */
 
+    scd_checkpoint(SCD_CP_CD);
     snprintf(s_cue_path, sizeof(s_cue_path), "%s", ACTIVE_FILE->path);
     segacd_cd_open(s_cue_path);
 
+    scd_checkpoint(SCD_CP_BRAM);
     segacd_bram_path();
     segacd_bram_load(s_bram_path);   /* per-game BRAM, load before resume */
 
@@ -302,8 +424,15 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     /* sub_cycles_per_frame removed as it's interleaved inside gwenesis_md_frame */
 
+    scd_checkpoint(SCD_CP_LOOP);
+
+    uint32_t scd_frames = 0;
     while (true) {
         wdog_refresh();
+        /* One backup-register write per frame. If the watchdog takes the chip
+         * down mid-frame, the next run says how far it got: "hung on frame 1"
+         * and "ran 400 frames then hung" are different bugs. */
+        scd_checkpoint(SEGACD_CP_FRAMED | (++scd_frames & 0x7FFFu));
         bool drawFrame = common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
