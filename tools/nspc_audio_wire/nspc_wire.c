@@ -749,13 +749,27 @@ int wire_try_swap(Snes *snes, int frame) {
     return 1;
   }
 
+#ifndef NSPC_SWAP_CHECK_EVERY
+#define NSPC_SWAP_CHECK_EVERY 15
+#endif
 #ifndef NSPC_SWAP_MIN_FRAME
-#define NSPC_SWAP_MIN_FRAME 120  /* test-only override, e.g. -DNSPC_SWAP_MIN_FRAME=300,
+#define NSPC_SWAP_MIN_FRAME 15  /* test-only override, e.g. -DNSPC_SWAP_MIN_FRAME=300,
                                   * to wobble the detection window and confirm the
                                   * stability gate holds at any swap timing, not just
                                   * the one the ROM happens to produce by default. */
 #endif
-  if (frame < NSPC_SWAP_MIN_FRAME || (frame % 60) != 0) return 0;
+  /* Cadence. 120/60 dates from when the only gate was one loose song-list
+   * signature and stability had to come from waiting. It no longer does:
+   * the engine-signature quorum reads real code bytes, the DIR gate proves
+   * the samples are up, and `spc->pc < 0xffc0` already proves the driver is
+   * running -- which is what the frame-120 floor was standing in for. The
+   * cost of waiting is real: at 46 fps the swap landed ~4 s in, so the game
+   * audibly changes character mid-play.
+   * The two-check streak stays -- the DIR gate needs a previous snapshot to
+   * compare against -- but the interval only has to be longer than an upload
+   * burst, and EarthBound's second burst is 3 frames (343-345). 15 frames is
+   * 5x that. Swap now lands around frame 30-45 instead of 180. */
+  if (frame < NSPC_SWAP_MIN_FRAME || (frame % NSPC_SWAP_CHECK_EVERY) != 0) return 0;
   /* Driver must actually be running (upload done, PC out of IPL ROM). */
   if (snes->apu->spc->pc >= 0xffc0) { g_ok_streak = 0; return 0; }
   NspcParams np;
@@ -790,7 +804,7 @@ int wire_try_swap(Snes *snes, int frame) {
     g_ok_streak = 0;   /* DIR changed since last check -- upload still in flight */
   memcpy(g_dir_snapshot, &snes->apu->ram[np.dir & 0xffff], 256);
   g_dir_snapshot_valid = 1;
-  if (++g_ok_streak < 2) return 0;   /* stable across two checks 60 frames apart */
+  if (++g_ok_streak < 2) return 0;   /* stable across two checks NSPC_SWAP_CHECK_EVERY apart */
   if (g_p0_stable < NSPC_SWAP_STABLE_FRAMES) return 0;  /* handshake in flight; defer */
   {
     uint8_t cur = snes->apu->outPorts[0];
