@@ -202,18 +202,46 @@ static void cps1_rebuild_video_state(void)
     }
 }
 
+/*
+ * Overdraw masks. Graphics is three quarters of a CPS-1 frame and most of it
+ * used to be invisible: on the real title-screen capture SCROLL3 drew 85,105
+ * pixels of which 16 survived, and SCROLL2 lost 74% the same way. These two
+ * bitmaps record where the layers ABOVE have already put an opaque pen, so a
+ * lower layer's 8x8 sub-tile that is fully covered is not blitted at all.
+ *
+ * It is a skip, not a reorder: the surviving pixels are the same ones, and
+ * tools/m7_qemu_rig/run_cps1_frame.sh refuses to report the speedup unless
+ * the framebuffer comes out byte-identical to the unskipped render. It
+ * measures 3,751,106 -> 2,804,070 insn/frame, graphics 66.1% -> 49.4% of the
+ * 60fps budget, for 21,952 bytes of BSS.
+ *
+ * SCROLL1 gets no mask: nothing is above it but sprites, it loses 0% to
+ * overdraw, and a coverage pass for it would be pure cost.
+ */
+static cps1_cover_t s_cov_above_s2;   /* SCROLL1           */
+static cps1_cover_t s_cov_above_s3;   /* SCROLL1 + SCROLL2 */
+
 static void cps1_render_into(uint16_t *fb, uint8_t *meta)
 {
+    /* The coverage passes walk with out_fb = NULL: same cell iteration the
+     * draw uses, no pixels written. Top-down, because a layer can only be
+     * hidden by the ones in front of it. */
+    cps1_cover_reset(&s_cov_above_s2);
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_rom,
+                             &s_cache, &s_pal, NULL, NULL, NULL, &s_cov_above_s2);
+    s_cov_above_s3 = s_cov_above_s2;
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_rom,
+                             &s_cache, &s_pal, NULL, NULL, NULL, &s_cov_above_s3);
+
     /* Back to front: SCROLL3 (32x32) is the far background, SCROLL1 (8x8) the
      * text/foreground layer. Drawing 1,2,3 paints the background over
      * everything -- that bug turned the title screen into three flat bands. */
-    static const unsigned draw_order[CPS1_BG_LAYER_COUNT] = {
-        CPS1_BG_SCROLL3, CPS1_BG_SCROLL2, CPS1_BG_SCROLL1
-    };
-    for (unsigned i = 0; i < CPS1_BG_LAYER_COUNT; i++) {
-        unsigned L = draw_order[i];
-        cps1_bg_render_layer(&s_bg.layers[L], L, &s_rom, &s_cache, &s_pal, fb, meta);
-    }
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL3], CPS1_BG_SCROLL3, &s_rom,
+                             &s_cache, &s_pal, fb, meta, &s_cov_above_s3, NULL);
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL2], CPS1_BG_SCROLL2, &s_rom,
+                             &s_cache, &s_pal, fb, meta, &s_cov_above_s2, NULL);
+    cps1_bg_render_layer_ex(&s_bg.layers[CPS1_BG_SCROLL1], CPS1_BG_SCROLL1, &s_rom,
+                             &s_cache, &s_pal, fb, meta, NULL, NULL);
     cps1_ppu_render(&s_oam, &s_rom, &s_cache, &s_pal, fb);
 }
 
@@ -260,6 +288,38 @@ static void cps1_relocate_xip(uint8_t *buffer, uint32_t length, uint32_t offset_
                           offset, file_size);
 }
 
+/* Every failure below used to printf() and return, and printf() on this console
+ * goes down a UART nobody has. The player saw the launcher again, instantly,
+ * with no way to tell "core file missing" from "wrong ROM" from "chip missing"
+ * -- six different faults with one indistinguishable symptom, which is why
+ * "CPS-1 does not run on the device" has stayed one sentence instead of a
+ * diagnosis. Say which one it was, on the LCD, and HOLD it: the existing
+ * incomplete-romset screen drew and returned, so the launcher repainted over it
+ * before it could be read. main_sm.c:139 already learned this. */
+static void cps1_fatal(const char *main_line, const char *line_1, const char *line_2)
+{
+    printf("cps1: FATAL %s / %s / %s\n", main_line ? main_line : "",
+           line_1 ? line_1 : "", line_2 ? line_2 : "");
+    lcd_backlight_set(180);
+    draw_error_screen(main_line, line_1, line_2);
+
+    /* Hold until the player has read it, then let them back to the launcher --
+     * a screen nobody can read is the same as no screen at all. */
+    odroid_gamepad_state_t joy;
+    do {                                  /* wait for release first, so the */
+        wdog_refresh();                   /* press that launched us does not */
+        lcd_sync(); lcd_swap();           /* dismiss the message immediately */
+        odroid_input_read_gamepad(&joy);
+        HAL_Delay(20);
+    } while (joy.bitmask != 0);
+    do {
+        wdog_refresh();
+        lcd_sync(); lcd_swap();
+        odroid_input_read_gamepad(&joy);
+        HAL_Delay(20);
+    } while (joy.bitmask == 0);
+}
+
 static bool cps1_cache_xip_to_flash(void)
 {
     g_xip_size = 0;
@@ -267,6 +327,8 @@ static bool cps1_cache_xip_to_flash(void)
                                                               false, &cps1_relocate_xip);
     if (g_xip_addr == NULL || g_xip_size == 0) {
         printf("cps1: %s missing\n", CPS1_XIP_PATH);
+        cps1_fatal("CPS-1 core file missing", CPS1_XIP_PATH,
+                   "Copy the cores folder onto the SD card");
         return false;
     }
     int32_t off = (int32_t)((uint32_t)g_xip_addr - CPS1_CODE_BASE);
@@ -618,8 +680,8 @@ static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
         else
             snprintf(line, sizeof(line), "%u chips found, no set matched", s_chip_count);
         printf("cps1: incomplete romset in %s -- %s\n", dir_path, line);
-        draw_error_screen("Incomplete CPS-1 romset", line,
-                          "Put the parent set in a subfolder beside it");
+        cps1_fatal("Incomplete CPS-1 romset", line,
+                   "Put the parent set in a subfolder beside it");
         return NULL;
     }
 
@@ -634,6 +696,8 @@ static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
     cps1_rom_region_t prg = { s_prg_lo, CPS1_ROMSET_CHIP_SIZE };
     if (cps1_rom_attach_chips(&s_rom, prg, &s_gfx_chips) != 0) {
         printf("cps1: rom attach failed\n");
+        cps1_fatal("CPS-1 ROM attach failed", set->name,
+                   "A cached chip did not map into flash");
         return NULL;
     }
     /* prg.size describes chip 0 only; the whole program is both chips, and
@@ -643,6 +707,15 @@ static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
     if (cps1_rom_check_reset_vector(&s_rom.prg, &ssp, &pc) != 0) {
         printf("cps1: %s reset vector rejected (SSP=%08lX PC=%08lX)\n",
                set->name, (unsigned long)ssp, (unsigned long)pc);
+        /* Put the two words on the screen: they say WHY it was rejected --
+         * a byte-swapped pair reads as garbage, an all-00/FF pair means the
+         * chip never made it into flash. The gate itself was reading these
+         * wrong until 5da9aeec, so they are worth showing, not just judging. */
+        char line[64];
+        snprintf(line, sizeof(line), "%s  SSP=%08lX PC=%08lX", set->name,
+                 (unsigned long)ssp, (unsigned long)pc);
+        cps1_fatal("CPS-1 reset vector rejected", line,
+                   "Wrong or truncated program chip");
         return NULL;
     }
 
@@ -721,7 +794,14 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * own code. */
     ram_start = (uint32_t)&_OVERLAY_CPS1_BSS_END;
 
-    if (ACTIVE_FILE == NULL || cps1_load_folder_roms(ACTIVE_FILE->path) == NULL)
+    if (ACTIVE_FILE == NULL) {
+        cps1_fatal("No CPS-1 game selected", "The launcher passed no file",
+                   "Pick a game folder and try again");
+        return;
+    }
+    /* Each failure inside the loader puts its own screen up (including the
+     * deliberate silent case: dismissing the version picker is not an error). */
+    if (cps1_load_folder_roms(ACTIVE_FILE->path) == NULL)
         return;
 
     cps1_machine_reset(s_prg_lo, s_prg_hi);

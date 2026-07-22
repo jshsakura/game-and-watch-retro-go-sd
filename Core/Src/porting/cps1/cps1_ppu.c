@@ -36,11 +36,44 @@ void cps1_tile_cache_reset(cps1_tile_cache_t *cache)
      * on the first fetch. Callers wanting real-ROM decoding set ->layout
      * AFTER calling this. */
     cache->real_gfx = 0;
+    for (unsigned i = 0; i < sizeof(cache->opaque_bits); i++)
+        cache->opaque_bits[i] = 0;
     for (int i = 0; i < CPS1_TILE_CACHE_SLOTS; i++) {
         cache->slots[i].valid = 0;
         cache->slots[i].last_used = 0;
         cache->slots[i].tile_index = 0;
     }
+}
+
+/*
+ * "No transparent pen anywhere in these 32 bytes", i.e. blitting this tile
+ * covers its whole 8x8 footprint. Tested four bytes at a time with the
+ * classic has-zero-byte trick narrowed to nibbles: for each of the eight
+ * nibbles of w, (w - 0x11111111) borrows into the nibble's top bit exactly
+ * when that nibble was 0, and & ~w keeps only the borrows that came from a
+ * zero rather than from a large value.
+ *
+ * Runs once per cache MISS (707 of them against 109,501 hits on the real
+ * frame), never on the hit path.
+ */
+static int tile_bytes_opaque(const uint8_t *tile32)
+{
+    for (unsigned i = 0; i < 32u; i += 4u) {
+        uint32_t w = (uint32_t)tile32[i] | ((uint32_t)tile32[i + 1] << 8) |
+                     ((uint32_t)tile32[i + 2] << 16) | ((uint32_t)tile32[i + 3] << 24);
+        if ((w - 0x11111111u) & ~w & 0x88888888u)
+            return 0;
+    }
+    return 1;
+}
+
+static void set_opaque_bit(cps1_tile_cache_t *cache, uint32_t slot_idx, int opaque)
+{
+    uint8_t mask = (uint8_t)(1u << (slot_idx & 7u));
+    if (opaque)
+        cache->opaque_bits[slot_idx >> 3] |= mask;
+    else
+        cache->opaque_bits[slot_idx >> 3] &= (uint8_t)~mask;
 }
 
 static uint32_t slot_for_tile(uint32_t tile_index)
@@ -88,6 +121,7 @@ const uint8_t *cps1_tile_cache_fetch(cps1_tile_cache_t *cache, const cps1_rom_t 
         slot->valid = 0;
         return NULL;
     }
+    set_opaque_bit(cache, idx, tile_bytes_opaque(slot->pixels));
     slot->tile_index = tile_index;
     slot->valid = 1;
     slot->last_used = cache->clock;
@@ -118,6 +152,7 @@ const uint8_t *cps1_tile_cache_fetch_block(cps1_tile_cache_t *cache, const cps1_
         slot->valid = 0;
         return NULL;
     }
+    set_opaque_bit(cache, idx, tile_bytes_opaque(slot->pixels));
     slot->tile_index = key;
     slot->valid = 1;
     slot->last_used = cache->clock;
@@ -257,25 +292,49 @@ void cps1_blit8x8_indexed(const uint8_t *tile4bpp, unsigned palette_bank,
 }
 
 CPS1_ITCM_TEXT
+void cps1_blit_block_indexed_ex(uint32_t base_subtile, unsigned sub, unsigned palette_bank,
+                                 const cps1_palette_t *pal, int dst_x, int dst_y,
+                                 int flip_x, int flip_y, cps1_tile_cache_t *cache,
+                                 const cps1_rom_t *rom, uint16_t *fb,
+                                 uint8_t *out_meta, uint8_t priority_group,
+                                 const cps1_cover_t *skip, cps1_cover_t *emit)
+{
+    for (unsigned qy = 0; qy < sub; qy++) {
+        unsigned src_qy = flip_y ? (sub - 1u - qy) : qy;
+        for (unsigned qx = 0; qx < sub; qx++) {
+            unsigned src_qx = flip_x ? (sub - 1u - qx) : qx;
+            int sx = dst_x + (int)(qx * 8u);
+            int sy = dst_y + (int)(qy * 8u);
+
+            /* Already fully overwritten by something above: the fetch is
+             * skipped too, so a skipped sub-tile costs one bitmap test and
+             * does not even disturb the tile cache's LRU clock. */
+            if (skip && cps1_cover_test8x8(skip, sx, sy))
+                continue;
+
+            uint32_t subtile = base_subtile + src_qy * sub + src_qx;
+            const uint8_t *tile = cps1_tile_cache_fetch(cache, rom, subtile);
+            if (!tile)
+                continue;
+            if (emit && cps1_tile_cache_opaque(cache, subtile))
+                cps1_cover_mark8x8(emit, sx, sy);
+            if (fb)
+                cps1_blit8x8_indexed(tile, palette_bank, pal, sx, sy,
+                                      flip_x, flip_y, fb, out_meta, priority_group);
+        }
+    }
+}
+
+CPS1_ITCM_TEXT
 void cps1_blit_block_indexed(uint32_t base_subtile, unsigned sub, unsigned palette_bank,
                               const cps1_palette_t *pal, int dst_x, int dst_y,
                               int flip_x, int flip_y, cps1_tile_cache_t *cache,
                               const cps1_rom_t *rom, uint16_t *fb,
                               uint8_t *out_meta, uint8_t priority_group)
 {
-    for (unsigned qy = 0; qy < sub; qy++) {
-        unsigned src_qy = flip_y ? (sub - 1u - qy) : qy;
-        for (unsigned qx = 0; qx < sub; qx++) {
-            unsigned src_qx = flip_x ? (sub - 1u - qx) : qx;
-            uint32_t subtile = base_subtile + src_qy * sub + src_qx;
-            const uint8_t *tile = cps1_tile_cache_fetch(cache, rom, subtile);
-            if (!tile)
-                continue;
-            cps1_blit8x8_indexed(tile, palette_bank, pal,
-                                  dst_x + (int)(qx * 8u), dst_y + (int)(qy * 8u),
-                                  flip_x, flip_y, fb, out_meta, priority_group);
-        }
-    }
+    cps1_blit_block_indexed_ex(base_subtile, sub, palette_bank, pal, dst_x, dst_y,
+                                flip_x, flip_y, cache, rom, fb, out_meta,
+                                priority_group, NULL, NULL);
 }
 
 /*
@@ -292,6 +351,13 @@ void cps1_blit_block_indexed(uint32_t base_subtile, unsigned sub, unsigned palet
  */
 void cps1_ppu_render(const cps1_oam_t *oam, const cps1_rom_t *rom, cps1_tile_cache_t *cache,
                       const cps1_palette_t *pal, uint16_t *fb)
+{
+    cps1_ppu_render_ex(oam, rom, cache, pal, fb, NULL, NULL);
+}
+
+void cps1_ppu_render_ex(const cps1_oam_t *oam, const cps1_rom_t *rom, cps1_tile_cache_t *cache,
+                         const cps1_palette_t *pal, uint16_t *fb,
+                         const cps1_cover_t *skip, cps1_cover_t *emit)
 {
     for (uint32_t i = 0; i < oam->count; i++) {
         const cps1_oam_entry_t *s = &oam->sprites[i];
@@ -320,9 +386,80 @@ void cps1_ppu_render(const cps1_oam_t *oam, const cps1_rom_t *rom, cps1_tile_cac
                 unsigned src_nx = flip_x ? (nx - 1u - nxs) : nxs;
                 int sx = (int)((ux + nxs * 16u) & 0x1FFu);
                 uint32_t unit_base = (uint32_t)s->tile_index + (src_ny * nx + src_nx) * 4u;
-                cps1_blit_block_indexed(unit_base, 2u, color, pal, sx, sy,
-                                         flip_x, flip_y, cache, rom, fb, NULL, 0);
+                cps1_blit_block_indexed_ex(unit_base, 2u, color, pal, sx, sy,
+                                            flip_x, flip_y, cache, rom, fb, NULL, 0,
+                                            skip, emit);
             }
         }
     }
+}
+
+/* ---------------------------------------------------------------- coverage --
+ * Bit b of byte (y * CPS1_COVER_STRIDE + x/8) is pixel x = byte*8 + b, LSB
+ * first. The stride carries one spare byte per row so the span helpers can
+ * read/write the byte after a non-aligned x without a bounds branch in the
+ * inner path -- see CPS1_COVER_STRIDE in the header. */
+
+void cps1_cover_reset(cps1_cover_t *cov)
+{
+    for (unsigned i = 0; i < sizeof(cov->bits); i++)
+        cov->bits[i] = 0;
+}
+
+/* Fully on-screen is required for BOTH helpers, and for opposite reasons:
+ * marking a partially off-screen square could claim coverage for pixels the
+ * clipped blit never wrote, and testing one would read past the row. Either
+ * way the answer is "no", which only ever costs speed. */
+static int span_on_screen(int x, int y)
+{
+    return x >= 0 && x + 8 <= CPS1_FB_WIDTH && y >= 0 && y + 8 <= CPS1_FB_HEIGHT;
+}
+
+/* The aligned case is split out rather than branched per row: a BG layer whose
+ * scroll leaves x_off = 0 puts EVERY sub-tile on a byte boundary, so this is
+ * the case that runs, and it collapses to eight stores. */
+CPS1_ITCM_TEXT
+void cps1_cover_mark8x8(cps1_cover_t *cov, int x, int y)
+{
+    if (!span_on_screen(x, y))
+        return;
+    unsigned sh = (unsigned)x & 7u;
+    uint8_t *row = &cov->bits[(unsigned)y * CPS1_COVER_STRIDE + ((unsigned)x >> 3)];
+    if (sh == 0u) {
+        for (unsigned r = 0; r < 8u; r++, row += CPS1_COVER_STRIDE)
+            row[0] = 0xFFu;
+        return;
+    }
+    uint8_t lo = (uint8_t)(0xFFu << sh), hi = (uint8_t)(0xFFu >> (8u - sh));
+    for (unsigned r = 0; r < 8u; r++, row += CPS1_COVER_STRIDE) {
+        row[0] |= lo;
+        row[1] |= hi;
+    }
+}
+
+CPS1_ITCM_TEXT
+int cps1_cover_test8x8(const cps1_cover_t *cov, int x, int y)
+{
+    if (!span_on_screen(x, y))
+        return 0;
+    unsigned sh = (unsigned)x & 7u;
+    const uint8_t *row = &cov->bits[(unsigned)y * CPS1_COVER_STRIDE + ((unsigned)x >> 3)];
+    if (sh == 0u) {
+        /* AND the eight bytes together: one test instead of eight branches,
+         * and it exits with the same answer. */
+        unsigned all = 0xFFu;
+        for (unsigned r = 0; r < 8u; r++, row += CPS1_COVER_STRIDE)
+            all &= row[0];
+        return all == 0xFFu;
+    }
+    unsigned all = 0xFFu;
+    for (unsigned r = 0; r < 8u; r++, row += CPS1_COVER_STRIDE)
+        all &= ((unsigned)row[0] >> sh) | ((unsigned)row[1] << (8u - sh));
+    return (all & 0xFFu) == 0xFFu;
+}
+
+int cps1_tile_cache_opaque(const cps1_tile_cache_t *cache, uint32_t tile_index)
+{
+    uint32_t idx = slot_for_tile(tile_index);
+    return (cache->opaque_bits[idx >> 3] >> (idx & 7u)) & 1u;
 }
