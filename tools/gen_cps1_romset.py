@@ -74,6 +74,38 @@ static int find_crc(const uint32_t *crcs, unsigned count, uint32_t want)
     return -1;
 }
 
+int cps1_romset_resolve(const cps1_romset_t *set, const uint32_t *crcs, unsigned count,
+                         int prg_index[CPS1_ROMSET_PRG_CHIPS],
+                         int gfx_index[CPS1_ROMSET_GFX_CHIPS])
+{
+    if (set == NULL || crcs == NULL || prg_index == NULL || gfx_index == NULL)
+        return -1;
+
+    int prg[CPS1_ROMSET_PRG_CHIPS], gfx[CPS1_ROMSET_GFX_CHIPS];
+    unsigned missing = 0;
+
+    for (unsigned i = 0; i < CPS1_ROMSET_PRG_CHIPS; i++) {
+        prg[i] = find_crc(crcs, count, set->prg_crc[i]);
+        if (prg[i] < 0)
+            missing++;
+    }
+    for (unsigned i = 0; i < CPS1_ROMSET_GFX_CHIPS; i++) {
+        gfx[i] = find_crc(crcs, count, set->gfx_crc[i]);
+        if (gfx[i] < 0)
+            missing++;
+    }
+    if (missing != 0)
+        return -1;
+
+    /* Only write the caller's slots once the whole set is known present, so a
+     * failed resolve never leaves half-filled indices behind. */
+    for (unsigned i = 0; i < CPS1_ROMSET_PRG_CHIPS; i++)
+        prg_index[i] = prg[i];
+    for (unsigned i = 0; i < CPS1_ROMSET_GFX_CHIPS; i++)
+        gfx_index[i] = gfx[i];
+    return 0;
+}
+
 const cps1_romset_t *cps1_romset_match(const uint32_t *crcs, unsigned count,
                                         int prg_index[CPS1_ROMSET_PRG_CHIPS],
                                         int gfx_index[CPS1_ROMSET_GFX_CHIPS])
@@ -83,27 +115,8 @@ const cps1_romset_t *cps1_romset_match(const uint32_t *crcs, unsigned count,
 
     for (unsigned s = 0; s < cps1_romset_count; s++) {
         const cps1_romset_t *set = &cps1_romsets[s];
-        int prg[CPS1_ROMSET_PRG_CHIPS], gfx[CPS1_ROMSET_GFX_CHIPS];
-        unsigned missing = 0;
-
-        for (unsigned i = 0; i < CPS1_ROMSET_PRG_CHIPS; i++) {
-            prg[i] = find_crc(crcs, count, set->prg_crc[i]);
-            if (prg[i] < 0)
-                missing++;
-        }
-        for (unsigned i = 0; i < CPS1_ROMSET_GFX_CHIPS; i++) {
-            gfx[i] = find_crc(crcs, count, set->gfx_crc[i]);
-            if (gfx[i] < 0)
-                missing++;
-        }
-        if (missing != 0)
-            continue;
-
-        for (unsigned i = 0; i < CPS1_ROMSET_PRG_CHIPS; i++)
-            prg_index[i] = prg[i];
-        for (unsigned i = 0; i < CPS1_ROMSET_GFX_CHIPS; i++)
-            gfx_index[i] = gfx[i];
-        return set;
+        if (cps1_romset_resolve(set, crcs, count, prg_index, gfx_index) == 0)
+            return set;
     }
     return NULL;
 }
