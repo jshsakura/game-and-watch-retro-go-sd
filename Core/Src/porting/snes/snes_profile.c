@@ -341,8 +341,25 @@ void snes_profile_init(uint32_t audio_rate, uint32_t audio_period_samples) {
     }
   }
 
-  pool_drawn = ahb_calloc((size_t)BK_COUNT * SNES_PROF_FRAMES, sizeof(uint32_t));
-  pool_skip  = ahb_calloc((size_t)BK_COUNT * SNES_PROF_FRAMES, sizeof(uint32_t));
+  /* ahb_ONLY_malloc, not ahb_calloc. ahb_calloc() tries ram_malloc() FIRST
+   * (gw_malloc.c:98-107) and ram_malloc() asserts on ram_start == 0. The SNES
+   * core never sets ram_start -- main_snes.c has no reference to it at all --
+   * and rg_emulators.c:1879 clears the cursor to the "unowned" sentinel right
+   * before launching a game. So the first ahb_calloc() here killed the device
+   * with `Assertion "ram_start != 0" failed ... ram_malloc` before a single
+   * frame ran. md32x hit exactly this and left the warning at
+   * main_md32x.c:511 ("ahb_calloc() tries ram_malloc FIRST ... first device
+   * boot died"); this file's own comment above already names ahb_only_malloc
+   * as the intended allocator, so this is the call it always meant.
+   * ahb_only_malloc does NOT return NULL on overflow -- it asserts -- which is
+   * why the pre-flight above logs the free size before we get here. */
+  {
+    const size_t n = (size_t)BK_COUNT * SNES_PROF_FRAMES * sizeof(uint32_t);
+    pool_drawn = ahb_only_malloc(n);
+    pool_skip  = ahb_only_malloc(n);
+    if (pool_drawn) memset(pool_drawn, 0, n);
+    if (pool_skip)  memset(pool_skip,  0, n);
+  }
   prof_active = (pool_drawn != NULL && pool_skip != NULL);
   g_ahb_free_after = (uint32_t)ahb_get_free_size();
 
