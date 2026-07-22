@@ -498,6 +498,41 @@ static bool handle_upload_write(Snes *snes, int port, uint8_t val) {
 }
 
 /* ===================== swap: adopt live ARAM (zero-copy) ================== */
+
+/* ---- engine-identity quorum ------------------------------------------------
+ * The variant test above is a SONG-LIST LAYOUT classification, not an engine
+ * identity. `makeInitSectionPtrPattern` alone admits 957 ROMs spanning 67
+ * distinct engine fingerprints in the 2280-ROM census -- including Seiken
+ * Densetsu 3, which is a SUZUKI engine (the tree's own VGMTrans source says so
+ * in SuzukiSnesScanner.cpp) that matched on two weak init patterns and then had
+ * an N-SPC player written over it.
+ *
+ * Require instead that the N-SPC engine's own control-flow and vcmd handlers
+ * are all present. From /tmp/nspc_fingerprint_2280.tsv (col 7 = signature set):
+ *
+ *   makeInitSectionPtrPattern alone      957 ROMs, 67 engines   <- today
+ *   + the five core Nin signatures       429 ROMs, 14 engines
+ *   + ptnRD1VCmd_FA_FE (this rule)       112 ROMs,  4 engines
+ *
+ * ptnRD1VCmd_FA_FE is the discriminator: only 114 of the 721 std-labelled ROMs
+ * carry it, and 103 of those are the exact SM/Zelda fingerprint 46a2acb6...
+ * Verified against the census: Zelda 3 and Super Metroid have all seven;
+ * Seiken Densetsu 3 has two and is rejected.
+ *
+ * This does NOT mean the 112 admitted ROMs work -- a byte-identical engine is
+ * necessary, not sufficient, and only Zelda 3 is verified end-to-end. It means
+ * the wire no longer writes itself over an engine it cannot possibly drive. */
+static const char *const NSPC_QUORUM[] = {
+  "ptnBranchForVcmd", "ptnBranchForVcmdReadahead", "ptnJumpToVcmd",
+  "ptnDispatchNoteYI", "ptnIncSectionPtr", "ptnRD1VCmd_FA_FE",
+  "makeInitSectionPtrPattern",
+};
+static bool nspc_engine_quorum(const uint8_t *ram) {
+  for (unsigned i = 0; i < sizeof(NSPC_QUORUM)/sizeof(NSPC_QUORUM[0]); i++)
+    if (sig_pos_by_name(ram, NSPC_QUORUM[i]) < 0) return false;
+  return true;
+}
+
 static void wire_swap(Snes *snes, const NspcParams *np, const uint8_t *aram) {
   /* Dialect setup — same as host wire.c */
   if (!strcmp(np->variant, "GD3")) {
@@ -731,6 +766,11 @@ int wire_try_swap(Snes *snes, int frame) {
    * have stateful driver responses that instant-acks cannot fake — they
    * stay LLE forever (fail-safe).  std and YI pass. */
   if (strcmp(np.variant, "std") && strcmp(np.variant, "YI")) {
+    g_ok_streak = 0;
+    return 0;
+  }
+  /* Engine identity, not just song-list layout -- see nspc_engine_quorum(). */
+  if (!nspc_engine_quorum(snes->apu->ram)) {
     g_ok_streak = 0;
     return 0;
   }
