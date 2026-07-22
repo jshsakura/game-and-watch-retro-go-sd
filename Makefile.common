@@ -1104,8 +1104,10 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_
 	$(V)NM=$(PREFIX)nm python3 scripts/check_core_symbol_aliases.py $(BUILD_DIR) $@
 	@# A profiler that compiles but whose probes never made it into the objects
 	@# produces a plausible-looking dump of nothing. The 32X profile shipped
-	@# exactly that. No-op unless this build actually has a profiler object.
-	$(V)NM=$(PREFIX)nm scripts/check_snes_profile_wired.sh $(BUILD_DIR)
+	@# exactly that. Pass this build's intent: an incremental tree keeps the
+	@# previous build's snes_profile.o, and object-presence alone then fails a
+	@# plain release build over probes it never asked for (observed 0722).
+	$(V)NM=$(PREFIX)nm scripts/check_snes_profile_wired.sh $(BUILD_DIR) $(if $(filter 1,$(SNES_DEVICE_PROFILE)),1,0)
 # Resident firmware (launcher/HAL/UI) is performance-insensitive — emulation runs in the
 # RAM-overlay cores, which keep their own -O2. Build the resident core -Os to claw back
 # internal-FLASH (Bank 1, 256 KB) headroom as the system count grows. patsubst keeps every

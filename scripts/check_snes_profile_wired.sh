@@ -23,17 +23,41 @@
 # that breaks the build teaches people to disable it. Only a genuinely wrong
 # answer fails here.
 #
-# usage: check_snes_profile_wired.sh <build_dir>   (no-op unless the build dir
-#        actually contains a profiler object, so it is safe to run always)
+# usage: check_snes_profile_wired.sh <build_dir> [want_profiler]
+#        want_profiler = this build's SNES_DEVICE_PROFILE (0 or 1). Pass it.
+#
+# "Does a profiler object exist in the build dir" is NOT the same question as
+# "did this build ask for a profiler", and using the first for the second is
+# wrong in both directions on an incremental tree:
+#   - stale object, profiler NOT requested -> a plain release build FAILS on
+#     probes it was never supposed to have (observed 0722). That is the exact
+#     "safety net that breaks the build" this file's own header forbids.
+#   - profiler requested but its object never got built -> the check exits 0
+#     and says nothing, which is the 32X failure it exists to prevent.
+# So when the caller tells us the intent, honour it: 0 = nothing to check,
+# 1 = the object must be there AND wired. With no argument, fall back to the
+# old object-presence heuristic.
 set -u
 
 BUILD_DIR="${1:-build}"
+WANT_PROF="${2:-}"
 NM="${NM:-arm-none-eabi-nm}"
 
 PROF_O="$BUILD_DIR/snes/snes_profile.o"
 
-# Not a profiler build: nothing to check, and that is the normal case.
-[ -f "$PROF_O" ] || exit 0
+case "$WANT_PROF" in
+  0)
+    exit 0 ;;                       # not a profiler build: nothing to check
+  1)
+    if [ ! -f "$PROF_O" ]; then
+      echo "check_snes_profile_wired: FAIL: SNES_DEVICE_PROFILE=1 but $PROF_O" \
+           "was never built -- this binary has no profiler at all" >&2
+      exit 1
+    fi ;;
+  *)
+    # Unknown intent (old caller): keep the previous heuristic.
+    [ -f "$PROF_O" ] || exit 0 ;;
+esac
 
 if ! command -v "$NM" >/dev/null 2>&1; then
   echo "check_snes_profile_wired: SKIP (no $NM on PATH) -- profiler probe" \
