@@ -60,6 +60,12 @@ static int g_frac = 0;             /* APU-cycle remainder (32 = one sample) */
 static uint8_t g_ack[3];           /* instant-ack values for ports 1-3 */
 static uint8_t g_last_p0 = 0;      /* last port-0 command seen during LLE */
 static int g_ok_streak = 0;
+int g_real_frame = 0;              /* DEBUG ONLY: nspc_variant.c's log_skip()
+                                     * extern-references this (added in
+                                     * d459154d for nspc_wire.c's device build,
+                                     * never mirrored here) -- the video-frame
+                                     * number, for correlating a skipped-vcmd
+                                     * trace line against other diagnostics. */
 
 /* DIR-page-populated gate (EarthBound): the driver-signature detection below
  * only proves the N-SPC *code* is uploaded and running -- it says nothing
