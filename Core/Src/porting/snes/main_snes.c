@@ -138,13 +138,17 @@ static void apply_irq_match(Snes *s) {
  * bit-identical state+audio hashes). */
 static int run_one_opcode(Snes *s) {
   Cpu *cpu = s->cpu;
-  uint32_t pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
-  int disp = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) && !cpu->stopped;
+  const bool learn = spin_engaged();   /* sample before the opcode; see header */
+  uint32_t pc24 = 0;
+  int disp = 0;
+  if (learn) {
+    pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
+    disp = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) && !cpu->stopped;
+  }
   s->cpuMemOps = 0;
   int cycles = cpu_runOpcode(cpu);
   s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
-  g_spin.ops_real++;
-  spin_note(cpu, pc24, (uint8_t)s->cpuCyclesLeft, disp);
+  if (learn) spin_note_real(cpu, pc24, (uint8_t)s->cpuCyclesLeft, disp);
   return cycles;
 }
 

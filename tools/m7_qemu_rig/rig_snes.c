@@ -147,14 +147,18 @@ static void apply_irq_match(Snes *snes) {
 #ifdef SNES_SPIN_SKIP
 static int run_one_opcode(Snes *snes) {
   Cpu *cpu = snes->cpu;
-  uint32_t pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
-  int dispatch = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) &&
-                 !cpu->stopped;
+  const bool learn = spin_engaged();   /* device-identical: main_snes.c */
+  uint32_t pc24 = 0;
+  int dispatch = 0;
+  if (learn) {
+    pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
+    dispatch = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) &&
+               !cpu->stopped;
+  }
   snes->cpuMemOps = 0;
   int cycles = PROFILE_CPU(cpu_runOpcode(cpu));
   snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
-  g_spin.ops_real++;
-  spin_note(cpu, pc24, (uint8_t)snes->cpuCyclesLeft, dispatch);
+  if (learn) spin_note_real(cpu, pc24, (uint8_t)snes->cpuCyclesLeft, dispatch);
   return cycles;
 }
 #endif
