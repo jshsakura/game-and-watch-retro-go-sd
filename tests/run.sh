@@ -10,7 +10,24 @@ CC="${CC:-gcc}"
 FLAGS="-O2 -Wall -Wextra -std=c11 -I$INC"
 
 mkdir -p /tmp/mtest
+
+# A failing check must NAME itself. This suite prints ~1900 lines in CI, and an
+# `exit 1` with no summary once hid a real failure for a day: the CPS-1 romset
+# gate said "STALE:", not "FAIL", so every grep anyone tried came back clean and
+# the job looked like an infrastructure flake. A red gate nobody can read is a
+# gate people learn to ignore. So: collect the names, print them at the end.
+#
+# Use `fail` and not a bare `rc=1` -- and use it as `cmd || fail NAME` rather
+# than running `cmd` bare, because `set -e` above would otherwise abort the
+# whole suite at the first failing harness and skip every check after it.
 rc=0
+FAILED=""
+fail() {
+    rc=1
+    FAILED="${FAILED}  - ${1}
+"
+}
+
 echo "=== compile ==="
 # Music-app tests only where the media module exists (feat/music-player)
 if [ -d "$SRC" ]; then
@@ -159,7 +176,8 @@ rm -rf "$FF_COPY" && mkdir -p "$FF_COPY"
 cp "$FF_SRC"/ff.c "$FF_SRC"/ff.h "$FF_SRC"/ffconf.h "$FF_SRC"/ffunicode.c "$FF_SRC"/diskio.h "$FF_COPY"/
 sed -i 's/^#define FF_USE_MKFS\t*0/#define FF_USE_MKFS\t1/' "$FF_COPY/ffconf.h"
 if ! diff -q <(grep -v FF_USE_MKFS "$FF_SRC/ffconf.h") <(grep -v FF_USE_MKFS "$FF_COPY/ffconf.h") >/dev/null; then
-    echo "FAIL test FatFs config drifted from the firmware's beyond FF_USE_MKFS"; rc=1
+    echo "FAIL test FatFs config drifted from the firmware's beyond FF_USE_MKFS"
+    fail "test FatFs config drifted from the firmware's ffconf.h"
 fi
 SAN="-fsanitize=address,undefined -fno-omit-frame-pointer"
 # ChaN's FatFs is vendored third-party: build it warning-free, lint only our code.
@@ -183,37 +201,37 @@ PYEOF2
 
 echo "=== run ==="
 if [ -d "$SRC" ]; then
-    /tmp/mtest/test_lyrics      || rc=1
-    /tmp/mtest/test_id3         || rc=1
-    /tmp/mtest/test_ui_layout   || rc=1
-    /tmp/mtest/test_browser     || rc=1
-    /tmp/mtest/test_color       || rc=1
+    /tmp/mtest/test_lyrics      || fail test_lyrics
+    /tmp/mtest/test_id3         || fail test_id3
+    /tmp/mtest/test_ui_layout   || fail test_ui_layout
+    /tmp/mtest/test_browser     || fail test_browser
+    /tmp/mtest/test_color       || fail test_color
 fi
-[ -x /tmp/mtest/test_avi ]          && { /tmp/mtest/test_avi          || rc=1; }
-[ -x /tmp/mtest/test_video_decode ] && { /tmp/mtest/test_video_decode || rc=1; }
-[ -x /tmp/mtest/test_video_audio ]  && { /tmp/mtest/test_video_audio  || rc=1; }
-[ -x /tmp/mtest/test_video_play ]   && { /tmp/mtest/test_video_play   || rc=1; }
-/tmp/mtest/test_clock_alarm || rc=1
-/tmp/mtest/test_clock_gif   || rc=1
-/tmp/mtest/test_clock_more  || rc=1
-/tmp/mtest/test_clock_sd0   || rc=1
-/tmp/mtest/test_alarm       || rc=1
-/tmp/mtest/test_clock_mp3   || rc=1
-/tmp/mtest/test_favorites   || rc=1
-/tmp/mtest/test_storage_sd1 || rc=1
-/tmp/mtest/test_storage_sd0 || rc=1
-/tmp/mtest/test_album      || rc=1
-/tmp/mtest/test_fw_tar     || rc=1
-/tmp/mtest/test_system_grid || rc=1
-[ -x /tmp/mtest/test_sm_ppu_saveload ] && { /tmp/mtest/test_sm_ppu_saveload || rc=1; }
-[ -x /tmp/mtest/test_rc_dispatch_heap ] && { /tmp/mtest/test_rc_dispatch_heap || rc=1; }
+[ -x /tmp/mtest/test_avi ]          && { /tmp/mtest/test_avi          || fail test_avi; }
+[ -x /tmp/mtest/test_video_decode ] && { /tmp/mtest/test_video_decode || fail test_video_decode; }
+[ -x /tmp/mtest/test_video_audio ]  && { /tmp/mtest/test_video_audio  || fail test_video_audio; }
+[ -x /tmp/mtest/test_video_play ]   && { /tmp/mtest/test_video_play   || fail test_video_play; }
+/tmp/mtest/test_clock_alarm || fail test_clock_alarm
+/tmp/mtest/test_clock_gif   || fail test_clock_gif
+/tmp/mtest/test_clock_more  || fail test_clock_more
+/tmp/mtest/test_clock_sd0   || fail test_clock_sd0
+/tmp/mtest/test_alarm       || fail test_alarm
+/tmp/mtest/test_clock_mp3   || fail test_clock_mp3
+/tmp/mtest/test_favorites   || fail test_favorites
+/tmp/mtest/test_storage_sd1 || fail test_storage_sd1
+/tmp/mtest/test_storage_sd0 || fail test_storage_sd0
+/tmp/mtest/test_album      || fail test_album
+/tmp/mtest/test_fw_tar     || fail test_fw_tar
+/tmp/mtest/test_system_grid || fail test_system_grid
+[ -x /tmp/mtest/test_sm_ppu_saveload ] && { /tmp/mtest/test_sm_ppu_saveload || fail test_sm_ppu_saveload; }
+[ -x /tmp/mtest/test_rc_dispatch_heap ] && { /tmp/mtest/test_rc_dispatch_heap || fail test_rc_dispatch_heap; }
 
 # === colour tab icons: stored bbox must match its array and fit its box ====
 # gui_draw_color_icon() indexes data[] by bw*bh and blits at (ox,oy) inside the
 # width x height footprint. A generator change that desyncs those reads past the
 # end of the array, on a screen nobody looks at twice.
 echo "=== colour icon bbox invariants ==="
-python3 - <<'PYEOF3' || rc=1
+python3 - <<'PYEOF3' || fail "colour icon bbox invariants"
 import re, sys
 # The colour icons live in rg_logos_fork.c since the 0722 split; the name
 # headers stay in rg_logos.c. Read both, or this check silently passes on
@@ -249,7 +267,8 @@ dup_blob=$(grep -oE '^const retro_logo_image[[:space:]]+[a-z0-9_]+[[:space:]]+LO
            Core/Src/retro-go/rg_logos.c Core/Src/retro-go/rg_logos_fork.c \
            | awk '{print $3}' | sort | uniq -d)
 if [ -n "$dup_enum" ] || [ -n "$dup_blob" ]; then
-    echo "FAIL duplicate logo — enum:[$dup_enum] blob:[$dup_blob]"; rc=1
+    echo "FAIL duplicate logo — enum:[$dup_enum] blob:[$dup_blob]"
+    fail "duplicate logo enum/blob (merge hygiene)"
 else
     echo "OK no duplicate logo enums/blobs"
 fi
@@ -264,7 +283,7 @@ echo "=== common.c: frame integrator clamp / skip_frames thresholds / speedup ta
 # hardware/menu seams this logic never touches.
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/common_stubs \
     tests/test_common.c                                  -o /tmp/mtest/test_common
-/tmp/mtest/test_common || rc=1
+/tmp/mtest/test_common || fail test_common
 
 echo "=== md32x_border_clear.c: border-row clear survives frame-skip (32X overlay-close flicker) ==="
 # common.c's generic clear_frames mechanism decrements once per LOOP
@@ -277,7 +296,7 @@ echo "=== md32x_border_clear.c: border-row clear survives frame-skip (32X overla
 # declarations with a 2-buffer fake.
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/common_stubs \
     tests/test_md32x_border_clear.c                      -o /tmp/mtest/test_md32x_border_clear
-/tmp/mtest/test_md32x_border_clear || rc=1
+/tmp/mtest/test_md32x_border_clear || fail test_md32x_border_clear
 
 echo "=== gw_malloc.c: itc/ahb/ram bump allocators (alignment, ITC bounds, over-large fails) ==="
 # The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators behind "RAM
@@ -296,17 +315,17 @@ $CC -O2 -Wall -Wextra -std=gnu11 -no-pie \
     -Wl,--defsym=__ITCMRAM_LENGTH__=0x40 \
     -Wl,--defsym=__NULLPTR_LENGTH__=0x8 \
     tests/test_gw_malloc.c Core/Src/gw_malloc.c           -o /tmp/mtest/test_gw_malloc
-/tmp/mtest/test_gw_malloc || rc=1
+/tmp/mtest/test_gw_malloc || fail test_gw_malloc
 
 echo "=== crc32.c: known-vector pins ==="
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/crc32_stubs -ICore/Inc/porting \
     tests/test_crc32.c Core/Src/porting/crc32.c            -o /tmp/mtest/test_crc32
-/tmp/mtest/test_crc32 || rc=1
+/tmp/mtest/test_crc32 || fail test_crc32
 
 echo "=== lz4_depack.c: round-trip + boundary cases ==="
 $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Src/porting/lib \
     tests/test_lz4_depack.c Core/Src/porting/lib/lz4_depack.c -o /tmp/mtest/test_lz4_depack
-/tmp/mtest/test_lz4_depack || rc=1
+/tmp/mtest/test_lz4_depack || fail test_lz4_depack
 
 echo "=== cps1: the romset table is generated, and matches its source ==="
 # Two programs need the same CPS-1 chip table -- this firmware and the library
@@ -315,7 +334,8 @@ echo "=== cps1: the romset table is generated, and matches its source ==="
 # identification exists to prevent, so the agreement is a gate rather than a
 # discipline. Catches an edit to the generated .c AND a JSON change nobody
 # regenerated.
-python3 tools/gen_cps1_romset.py --check || rc=1
+python3 tools/gen_cps1_romset.py --check \
+    || fail "cps1 romset table is stale — regenerate: python3 tools/gen_cps1_romset.py"
 
 # === safety nets must not be the thing that breaks the build =========
 # Two CI jobs went red once not from a real defect but from the safety nets
@@ -323,10 +343,10 @@ python3 tools/gen_cps1_romset.py --check || rc=1
 # and this file's sm block dying when external/sm wasn't checked out. Both
 # pinned below so that regresses instead of silently recurring.
 echo "=== check_core_symbol_aliases: nm-missing / alias / clean-tree pins ==="
-bash tests/test_check_core_symbol_aliases.sh || rc=1
+bash tests/test_check_core_symbol_aliases.sh || fail tests/test_check_core_symbol_aliases.sh
 
 echo "=== tests/run.sh: sm parity SKIPS (not fails) without external/sm ==="
-bash tests/test_sm_skip_guard.sh || rc=1
+bash tests/test_sm_skip_guard.sh || fail tests/test_sm_skip_guard.sh
 
 # GBA: the flash-XIP split is a contract the compiler cannot check. cpu.o runs
 # from ITCM, which the sentinel pass does not scan, so nothing cpu.o references
@@ -335,7 +355,7 @@ bash tests/test_sm_skip_guard.sh || rc=1
 # sentinels in the linked image. Skips (loudly) without an ELF or a toolchain,
 # which is the host-tests CI job's situation.
 echo "=== gba: nothing cpu.o references may live in the XIP blob ==="
-bash tests/test_gba_xip_contract.sh || rc=1
+bash tests/test_gba_xip_contract.sh || fail tests/test_gba_xip_contract.sh
 
 # GBA: the M4A mixer HLE is wired — cpu.o checks the hook, main.o scans for the
 # mixer, the six transliterations sit in the blob and their signatures in RAM.
@@ -343,7 +363,7 @@ bash tests/test_gba_xip_contract.sh || rc=1
 # this is the only thing in the tree that would say so. Same SKIP rules as the
 # XIP contract above. RED-verified: a relink without the define fails it.
 echo "=== gba: the M4A mixer HLE is wired, and each piece is on its side ==="
-bash tests/test_gba_m4a_wired.sh || rc=1
+bash tests/test_gba_m4a_wired.sh || fail tests/test_gba_m4a_wired.sh
 
 # GBA: the output low-pass — passband, stopband, bypass and stability, against
 # tones, compiling the real gba_audio_filter.c. RED-verified: flipping a
@@ -352,7 +372,7 @@ echo "=== gba: the output low-pass does what its header promises ==="
 $CC -O2 -Wall -Wextra -std=gnu11 \
     tests/test_gba_audio_filter.c Core/Src/porting/gba/gba_audio_filter.c \
     -lm -o /tmp/mtest/test_gba_audio_filter
-/tmp/mtest/test_gba_audio_filter || rc=1
+/tmp/mtest/test_gba_audio_filter || fail test_gba_audio_filter
 
 # GBA: load_gamepak() on a memory-mapped cart. Runs gpSP's real load path on the
 # host BECAUSE the host traps what QEMU does not: an XIP build has no
@@ -361,7 +381,7 @@ $CC -O2 -Wall -Wextra -std=gnu11 \
 # device the first 64 KB is ITCM and the next byte is a bus fault, which is how
 # Pokemon Ruby died. Page zero is unmapped here, so it is a SIGSEGV instead.
 echo "=== gba: load_gamepak reads an XIP cart through the cart, not through NULL ==="
-bash tools/gba_harness/run.sh || rc=1
+bash tools/gba_harness/run.sh || fail tools/gba_harness/run.sh
 
 echo "=== sm: savestate header refuses a foreign or truncated file ==="
 # sm_system_SaveState/LoadState (main_sm.c) stamp every file with a magic/
@@ -381,7 +401,7 @@ echo "=== sm: savestate header refuses a foreign or truncated file ==="
 mkdir -p /tmp/mtest
 ${CC:-gcc} -O2 -Wall -Wextra -std=c11 -ICore/Inc/porting/sm \
     tests/test_sm_state_header.c -o /tmp/mtest/test_sm_state_header
-/tmp/mtest/test_sm_state_header || rc=1
+/tmp/mtest/test_sm_state_header || fail test_sm_state_header
 
 echo "=== sm: a load must invalidate the PPU's derived caches, not just restore state ==="
 # ppu_saveload() (external/sm/src/snes/ppu.c) does not serialise palette565 or
@@ -404,10 +424,10 @@ echo "=== sm: a load must invalidate the PPU's derived caches, not just restore 
 # neither (no submodules, and this ROM is not something we can ship/commit).
 SM_ROM="${SM_ROM:-/home/ubuntu/app/jupyterLab/notebooks/game-and-what/backend/data/library/public/_data/Super Metroid (Japan, USA) (En,Ja).sfc}"
 if [ -f external/sm/src/sm_rtl.c ] && [ -f "$SM_ROM" ]; then
-    SM_SAVELOAD=1 bash tools/sm_harness/device_run.sh "$SM_ROM" 300
-    rc=$(( rc || $? ))
-    SM_SAVELOAD=1 SM_COLD_LOAD=1 bash tools/sm_harness/device_run.sh "$SM_ROM" 300
-    rc=$(( rc || $? ))
+    SM_SAVELOAD=1 bash tools/sm_harness/device_run.sh "$SM_ROM" 300 \
+        || fail "sm: ppu cache invalidation on load (device_run.sh SM_SAVELOAD)"
+    SM_SAVELOAD=1 SM_COLD_LOAD=1 bash tools/sm_harness/device_run.sh "$SM_ROM" 300 \
+        || fail "sm: ppu cache invalidation on cold load (device_run.sh SM_COLD_LOAD)"
 else
     echo "SKIP  needs external/sm checked out AND a ROM at \$SM_ROM (CI's host-tests job has neither)"
 fi
@@ -418,12 +438,10 @@ echo "=== jpeg: hw_jpeg_decoder.c lock/callback/floor-to-4 regressions ==="
 # misread as an error, and HAL flooring InDataLength to a multiple of 4 (dropping
 # the JPEG's trailing EOI). All three were pure state/arithmetic — no peripheral
 # needed to reproduce them on a host. See tools/jpeg_harness/run.sh.
-bash tools/jpeg_harness/run.sh
-rc=$(( rc || $? ))
+bash tools/jpeg_harness/run.sh || fail tools/jpeg_harness/run.sh
 
 echo "=== idle power off: one setting, one rule, and every idle loop asks it ==="
-bash tests/test_idle_timeout_wired.sh
-rc=$(( rc || $? ))
+bash tests/test_idle_timeout_wired.sh || fail tests/test_idle_timeout_wired.sh
 
 echo "=== boot rescue: a bricked boot must end somewhere a person can act ==="
 # A bad firmware hung the device dark with the power button dead — firmware
@@ -431,15 +449,14 @@ echo "=== boot rescue: a bricked boot must end somewhere a person can act ==="
 # rescue counter/screen/power-off only work if every hook is CALLED (wiring),
 # and the counter logic itself runs here against a fake backup register
 # (compiling the real gw_boot_rescue.c, per the flash-cache lesson).
-bash tests/test_boot_rescue_wired.sh
-rc=$(( rc || $? ))
+bash tests/test_boot_rescue_wired.sh || fail tests/test_boot_rescue_wired.sh
 BR_DIR=/tmp/mtest/boot_rescue
 rm -rf "$BR_DIR"; mkdir -p "$BR_DIR"
 $CC -O1 -g -std=gnu11 -Wall $SAN -DBOOT_RESCUE_HOST_TEST \
     -Itests/boot_rescue_stubs -ICore/Inc \
     tests/test_boot_rescue.c Core/Src/gw_boot_rescue.c \
-    -o "$BR_DIR/test_boot_rescue" || rc=1
-"$BR_DIR/test_boot_rescue" || rc=1
+    -o "$BR_DIR/test_boot_rescue" || fail "compile test_boot_rescue"
+"$BR_DIR/test_boot_rescue" || fail test_boot_rescue
 
 echo "=== update guard: a truncated update file must not reach the flasher ==="
 # The bootloader validates nothing; the firmware is the gate. The validator
@@ -448,8 +465,8 @@ echo "=== update guard: a truncated update file must not reach the flasher ==="
 $CC -O1 -g -std=gnu11 -Wall $SAN -DUPDATE_GUARD_HOST_TEST \
     -ICore/Inc \
     tests/test_update_guard.c Core/Src/gw_update_guard.c \
-    -o "$BR_DIR/test_update_guard" || rc=1
-"$BR_DIR/test_update_guard" || rc=1
+    -o "$BR_DIR/test_update_guard" || fail "compile test_update_guard"
+"$BR_DIR/test_update_guard" || fail test_update_guard
 
 # Everything from here to EOF is re-run standalone by tests/test_sm_skip_guard.sh,
 # which is why nothing that is expensive or self-contained belongs below this line.
@@ -469,17 +486,19 @@ FA_PREFIX_REV=e51ed278          # the allocator as it was, before the live set
 
 $CC -O1 -g -std=gnu11 -Wall $SAN -Itests/flash_alloc_stubs -ICore/Inc \
     tests/test_flash_alloc.c tests/flash_alloc_stubs/flash_stubs.c \
-    Core/Src/gw_flash_alloc.c -o "$FA_DIR/test_flash_alloc" || rc=1
+    Core/Src/gw_flash_alloc.c -o "$FA_DIR/test_flash_alloc" \
+    || fail "compile test_flash_alloc"
 
 if git cat-file -e "$FA_PREFIX_REV:Core/Src/gw_flash_alloc.c" 2>/dev/null; then
     git show "$FA_PREFIX_REV:Core/Src/gw_flash_alloc.c" > "$FA_DIR/prefix.c"
     echo 'void flash_alloc_forget_live_files(void) {}' > "$FA_DIR/shim.c"
     $CC -O1 -g -std=gnu11 -w $SAN -Itests/flash_alloc_stubs -ICore/Inc \
         tests/test_flash_alloc.c tests/flash_alloc_stubs/flash_stubs.c \
-        "$FA_DIR/prefix.c" "$FA_DIR/shim.c" -o "$FA_DIR/test_prefix" || rc=1
+        "$FA_DIR/prefix.c" "$FA_DIR/shim.c" -o "$FA_DIR/test_prefix" \
+        || fail "compile test_flash_alloc against the pre-fix allocator"
     if ( cd "$FA_DIR" && ./test_prefix > /dev/null 2>&1 ); then
         echo "FAIL the pre-fix allocator passed - this test cannot see the bug it is for"
-        rc=1
+        fail "flash cache RED check: the pre-fix allocator passed"
     else
         echo "OK  the pre-fix allocator fails it, as the shipped bug did"
     fi
@@ -489,9 +508,14 @@ else
     echo "SKIP no $FA_PREFIX_REV in this clone (shallow?) - RED check not run"
 fi
 
-( cd "$FA_DIR" && ./test_flash_alloc ) || rc=1
+( cd "$FA_DIR" && ./test_flash_alloc ) || fail test_flash_alloc
 
 echo "=== sm: device source set is symbol-complete ==="
+# tests/test_sm_skip_guard.sh re-runs everything from the marker above to EOF as
+# a standalone script, so the reporting helpers must also exist in that slice.
+# In a full run `fail` is already defined and this is a no-op.
+type fail >/dev/null 2>&1 || { rc=0; FAILED=""; fail() { rc=1; FAILED="${FAILED}  - ${1}
+"; }; }
 # The main sm harness compiles all of external/sm, including sm_cpu_infra.c, which
 # defines and sets g_snes. The device does not compile that file. That gap let
 # three builds ship in which the linker bound sm's SNES bus to Super Mario World's
@@ -501,8 +525,8 @@ echo "=== sm: device source set is symbol-complete ==="
 # CI's host-tests job checks out the repo without submodules, so external/sm is an
 # empty directory there. Skipping is honest; pretending to have checked is not.
 if [ -f external/sm/src/sm_rtl.c ]; then
-    bash tools/sm_harness/device_parity.sh
-    rc=$(( rc || $? ))
+    bash tools/sm_harness/device_parity.sh \
+        || fail tools/sm_harness/device_parity.sh
 else
     echo "SKIP  external/sm is not checked out (no submodules in this job)"
 fi
@@ -517,7 +541,7 @@ fi
 # comment lower down, it ate 50 fields; the build stayed green and the tool
 # printed "0 missing". Nothing but this check would have caught it.
 echo "=== i18n: every lang_t field reaches the generator ==="
-python3 - <<'PYEOF4' || rc=1
+python3 - <<'PYEOF4' || fail "i18n: lang_t fields reaching the generator"
 import importlib.util, re, sys
 from pathlib import Path
 spec = importlib.util.spec_from_file_location('g', 'tools/gen_i18n_bin.py')
@@ -570,7 +594,13 @@ grep -q 'emulator_show_file_info' Core/Src/retro-go/rg_emulators.c || {
 if [ "$grid_bad" = 0 ]; then
     echo "OK  grid is a mode of retro_loop(), reachable, drawn; ROM info still reachable"
 else
-    rc=1
+    fail "system grid wiring"
 fi
 
+if [ "$rc" != 0 ]; then
+    echo
+    echo "=== FAILED CHECKS ==="
+    printf '%s' "$FAILED"
+    echo "=== $(printf '%s' "$FAILED" | grep -c . ) failed; everything else above passed or skipped ==="
+fi
 exit $rc
