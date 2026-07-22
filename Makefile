@@ -1243,6 +1243,16 @@ MD32X_C_DEFS += -DMD32X_DEVICE_PROFILE
 endif
 endif
 
+# GNW_SH2_ROM_FETCH=1 extends the SH-2 opcode-fetch fast path from SDRAM (which
+# is already unconditional, see sh2pico.c) to cartridge ROM. Unmeasured on
+# hardware, so it is a probe knob rather than a default.
+ifdef GNW_SH2_ROM_FETCH
+ifneq ($(GNW_SH2_ROM_FETCH),0)
+MD32X_C_DEFS += -DGNW_SH2_ROM_FETCH
+endif
+endif
+
+
 C_INCLUDES +=  \
 -ICore/Inc \
 -ICore/Src/porting/lib \
