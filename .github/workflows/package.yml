@@ -48,6 +48,13 @@ jobs:
         # tests/test_fw_tar.c compiles the real tar.c against the real FatFs from
         # this submodule. Only this one — pulling them all costs minutes here.
         run: git submodule update --init --depth 1 external/firmware_update
+      - name: Fetch the retro-go-stm32 submodule
+        # tests/test_favorites*.c compile the real rg_favorites.c against the
+        # real Core/Inc headers, and those chain into this submodule's
+        # config.h / odroid_sdcard.h. They used to be stubbed in
+        # tests/fav_stubs, which is how the suite kept building a different
+        # program than the firmware. Small submodule; still not all of them.
+        run: git submodule update --init --depth 1 retro-go-stm32
       - name: Install Pillow (GIF fixture generator)
         run: pip3 install --quiet Pillow
       - name: Run host test suite

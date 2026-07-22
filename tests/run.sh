@@ -89,7 +89,7 @@ $CC -O2 -Wall -Wextra -std=gnu11 -no-pie -Itests/clock_stubs \
     -Wl,--defsym=_OVERLAY_MUSIC_BSS_SIZE=64 -Wl,--defsym=_OVERLAY_MUSIC_SIZE=64 \
     tests/test_clock_mp3.c                               -o /tmp/mtest/test_clock_mp3
 mkdir -p /tmp/favtest
-$CC -O2 -Wall -Wextra -std=gnu11 -Itests/fav_stubs -ICore/Inc/retro-go -ICore/Inc -Iretro-go-stm32/components/odroid \
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/fav_stubs -ICore/Inc/retro-go -ICore/Inc -ICore/Inc/porting -Iretro-go-stm32/components/odroid \
     -DFAVORITES_FILE='"/tmp/favtest/favorites.txt"' \
     -DFAVORITES_TMP='"/tmp/favtest/favorites.new"' \
     tests/test_favorites.c Core/Src/retro-go/rg_favorites.c -o /tmp/mtest/test_favorites

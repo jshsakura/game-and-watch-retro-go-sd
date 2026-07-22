@@ -89,7 +89,7 @@ build_and_run clock_mp3 test_clock_mp3 \
 
 # --- rg_favorites.c ---
 build_and_run favorites test_favorites \
-    -- -Itests/fav_stubs -ICore/Inc/retro-go -ICore/Inc -Iretro-go-stm32/components/odroid \
+    -- -Itests/fav_stubs -ICore/Inc/retro-go -ICore/Inc -ICore/Inc/porting -Iretro-go-stm32/components/odroid \
        -DFAVORITES_FILE='"/tmp/favtest/favorites.txt"' \
        -DFAVORITES_TMP='"/tmp/favtest/favorites.new"' \
        tests/test_favorites.c Core/Src/retro-go/rg_favorites.c
