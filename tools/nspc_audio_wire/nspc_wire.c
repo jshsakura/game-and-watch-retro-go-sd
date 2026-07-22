@@ -617,6 +617,49 @@ void wire_debug_dump(int frame) {
          p->sfx3.cur_sound, p->sfx3.priority);
 }
 
+/* ===================== commanded-song table-entry sanity gate ============
+ * chOK (nspc_score_songlist) only probes 4 candidate SECTION addresses near
+ * the detected songList base -- it never checks the slot the CURRENTLY
+ * COMMANDED song actually indexes. On at least one ROM (Mega Man X, real
+ * song id 49) the detected base scores chOK>=6 from a handful of plausible-
+ * looking entries near its start, but the table is far shorter than the
+ * real one: everything past roughly the first 8-9 slots reads literal
+ * 0x0000. Song 49's slot lands in that dead zone. wire_swap()'s bootstrap
+ * then does exactly what real N-SPC firmware does with a literal top-level
+ * word of 0 -- treats it as the documented "a=0" restart -- which sets
+ * port_to_snes[0]=0 and returns; nothing ever un-latches it because no
+ * channel is left active to trigger another restart, so the swap goes
+ * permanently and silently stuck (confirmed on the device rig: STATEHASH/
+ * AUDIOHASH freeze within ~2 detection cycles of the swap). That is not a
+ * pacing bug and not a missing a==0 special case -- the a==0 handling is
+ * exactly what the real driver does too -- it is the songList base itself
+ * being unreliable for this ROM. Rather than guess a better base (needs
+ * real per-ROM disassembly, out of scope here), refuse to commit to a swap
+ * whose own about-to-be-played song already reads as empty. This has to be
+ * stricter than chOK's own "0 or in-range" test: a run of literal zeros --
+ * exactly the dead-zone content that causes the freeze -- passes that test
+ * too (0 counts as an "ok" channel-off pointer), so it cannot tell a real
+ * silent section from a wrong table base. Require actual content instead:
+ * at least half of the 8 channel words must be real nonzero in-range
+ * pointers, not merely "not garbage". */
+static bool wire_song_table_entry_sane(const uint8_t *ram, int songListBase, uint8_t cur) {
+  if (!(cur > 0 && cur < 0xf0)) return true;  /* nothing concrete to validate yet */
+  int sec = rd16(ram, songListBase + cur * 2);
+  if (sec < 0x100 || sec >= 0xfff0) return false;
+  int t = sec, nonzero_ok = 0;
+  for (int ch = 0; ch < 8; ch++) {
+    int cp = rd16(ram, t); t += 2;
+    if (cp >= 0x100 && cp < 0xffff) nonzero_ok++;
+  }
+  /* "0 or in-range" (chOK's own test) passes on a run of literal zeros too --
+   * exactly the all-channels-off dead zone that produces this bug's freeze
+   * in the first place (confirmed on the device rig: an all-zero 8-word
+   * read scores perfectly under that test). Require real content: at least
+   * half the channels must be actual nonzero in-range pointers, not just
+   * "not garbage". Keep in step with wire.c's copy. */
+  return nonzero_ok >= 4;
+}
+
 /* ===================== per-frame detection gate ========================== */
 int g_real_frame = 0;  /* DEBUG ONLY: unlike g_frame (a write-event counter
                          * despite its name), this is the actual video-frame
@@ -656,6 +699,15 @@ int wire_try_swap(Snes *snes, int frame) {
       g_load_pending_resume = 0;
       g_ok_streak = 0;
       return 0;
+    }
+    {
+      uint8_t cur = snes->apu->outPorts[0];
+      if (!(cur > 0 && cur < 0xf0)) cur = g_last_p0;
+      if (!wire_song_table_entry_sane(snes->apu->ram, np.songList, cur)) {
+        g_load_pending_resume = 0;
+        g_ok_streak = 0;
+        return 0;
+      }
     }
     g_load_pending_resume = 0;
     wire_swap(snes, &np, snes->apu->ram);
@@ -700,6 +752,19 @@ int wire_try_swap(Snes *snes, int frame) {
   g_dir_snapshot_valid = 1;
   if (++g_ok_streak < 2) return 0;   /* stable across two checks 60 frames apart */
   if (g_p0_stable < NSPC_SWAP_STABLE_FRAMES) return 0;  /* handshake in flight; defer */
+  {
+    uint8_t cur = snes->apu->outPorts[0];
+    if (!(cur > 0 && cur < 0xf0)) cur = g_last_p0;
+    if (!wire_song_table_entry_sane(snes->apu->ram, np.songList, cur)) {
+      /* The detected songList base does not survive the one check that
+       * matters -- the actual commanded song's own slot. Treat exactly like
+       * a chOK failure: reset the streak and keep re-trying LLE-only: if the
+       * ROM's real table is elsewhere this stays permanently unswapped
+       * (fail-safe, same outcome as detection never succeeding at all). */
+      g_ok_streak = 0;
+      return 0;
+    }
+  }
   wire_swap(snes, &np, snes->apu->ram);
   return 1;
 }
