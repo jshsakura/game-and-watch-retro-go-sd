@@ -23,6 +23,14 @@
 
 #include "main.h"
 #include "stm32h7xx_it.h"
+#include "snes_prof_irq.h"
+
+#ifdef SNES_DEVICE_PROFILE
+/* Resident storage for the SNES profiler's IRQ ledger — see snes_prof_irq.h
+ * for why it cannot live in the SNES overlay. */
+volatile uint32_t snes_prof_irq_cycles;
+volatile uint32_t snes_prof_irq_count;
+#endif
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "bq24072.h"
@@ -199,11 +207,16 @@ void PendSV_Handler(void)
 void SysTick_Handler(void)
 {
   /* USER CODE BEGIN SysTick_IRQn 0 */
-
+#ifdef SNES_DEVICE_PROFILE
+  uint32_t snes_prof_t0 = SNES_PROF_DWT_CYCCNT;
+#endif
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
-
+#ifdef SNES_DEVICE_PROFILE
+  snes_prof_irq_cycles += SNES_PROF_DWT_CYCCNT - snes_prof_t0;
+  snes_prof_irq_count++;
+#endif
   /* USER CODE END SysTick_IRQn 1 */
 }
 

@@ -43,6 +43,7 @@
 #include "snes/spin_skip.h"
 #include "snes/rc_dispatch.h"
 #include "crc32.h"
+#include "snes_profile.h"
 
 bool snes_loadRom(Snes *snes, const uint8_t *data, int length);   /* snes_other.c */
 
@@ -443,9 +444,15 @@ static void snes_pcm_submit(void) {
     } else
 #endif
     {
+    /* Ledger B, APU-exclusive scope: this whole block is what an exact wire
+     * replaces -- the SPC700/DSP top-up AND the sample extraction. Bracketing
+     * only the apu_cycle loop would undercount the recoverable cost. One scope
+     * per frame, so the probe is noise. */
+    uint32_t apu_t0 = SNES_PROF_APU_SCOPE_ENTER();
     while (snes->apu->dsp->sampleOffset < 534)
       apu_cycle(snes->apu);
     dsp_getSamples(snes->apu->dsp, audio_buf, SNES_AUDIO_SAMPLES, 1);
+    SNES_PROF_APU_SCOPE_EXIT(apu_t0);
     }
   } else {
     memset(audio_buf, 0, sizeof(audio_buf));
@@ -992,36 +999,84 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   }
   memset(snes_frame, 0, sizeof(snes_frame));   /* borders start black and stay black */
 
+#ifdef SNES_DEVICE_PROFILE
+  /* Arm AFTER snes_init()/load_state so the AHB pre-flight sees the Apu's
+   * 66 KB already taken, and after the last boot-time SD write. */
+  snes_profile_init(SNES_AUDIO_RATE, SNES_AUDIO_SAMPLES);
+  uint32_t prof_wall_prev = snes_prof_wall_now();
+  uint32_t prof_dma_prev  = dma_counter;
+#endif
+
   while (1) {
+#ifdef SNES_DEVICE_PROFILE
+    /* ONE DWT base per iteration. Every SNES_PROF_MARK below is a CUMULATIVE
+     * read from it and nothing in the loop may re-clear CYCCNT — a nested
+     * clear would silently reset the frame's zero point, so
+     * snes_profile_record() checks the marks are monotonic and fails the whole
+     * run if they are not. */
+    uint32_t prof_base       = common_emu_get_dwt_cycles();
+    uint32_t prof_apu_in_emu = 0;
+    uint32_t prof_wall_pace  = 0;
+    uint32_t prof_dma_before = 0;
+    uint32_t prof_wfi        = 0;
+#endif
     wdog_refresh();
 
     bool drawFrame = common_emu_frame_loop();
+    SNES_PROF_MARK(SNES_PROF_M_FRAMECTL);
 
     odroid_input_read_gamepad(&joystick);
     common_emu_input_loop(&joystick, options, &blit);
     common_emu_input_loop_handle_turbo(&joystick);
 
     snes->input1->currentState = read_snes_pad(&joystick);
+    SNES_PROF_MARK(SNES_PROF_M_INPUT);
 
     g_ppu_skip_render = !drawFrame;
     render_frame_into_active_buffer();   /* arm the line callback every frame */
+    SNES_PROF_MARK(SNES_PROF_M_RENDER_ARM);
+
     run_frame_events(snes);
+    SNES_PROF_MARK(SNES_PROF_M_EMU);
+#ifdef SNES_DEVICE_PROFILE
+    /* Split the Ledger B APU accumulator at the emu/pcm boundary: core_rem is
+     * emu_outer minus the APU work that happened INSIDE emu_outer, and the pcm
+     * top-up further down must not be subtracted from it as well. */
+    prof_apu_in_emu = snes_prof_b_apu_cyc;
+#endif
 
     if (drawFrame) {
       present_frame();   /* OFF scaling: kicks an async DMA2D copy, doesn't wait */
     }
+    SNES_PROF_MARK(SNES_PROF_M_PRESENT_KICK);
 
     /* Audio runs while the DMA2D copy above is still in flight in the AXI SRAM
      * background — genuine overlap, not just moving the same blocking wait
      * around. present_frame_wait() below is what actually drains it, right
      * before anything else touches the destination buffer. */
     snes_pcm_submit();
+    SNES_PROF_MARK(SNES_PROF_M_PCM);
 
     if (drawFrame) {
       present_frame_wait();
+      SNES_PROF_MARK(SNES_PROF_M_PRESENT_TAIL);
       common_ingame_overlay();
+      SNES_PROF_MARK(SNES_PROF_M_OVERLAY);
       lcd_swap();
+      SNES_PROF_MARK(SNES_PROF_M_SWAP);
     }
+#ifdef SNES_DEVICE_PROFILE
+    else {
+      /* Skipped frame: none of the three drawn-only phases ran. Collapse their
+       * marks onto the pcm mark so each delta is exactly 0 -- leaving them at
+       * last frame's values would make the deltas garbage AND break the
+       * monotonicity gate. */
+      snes_prof_mark[SNES_PROF_M_PRESENT_TAIL] =
+      snes_prof_mark[SNES_PROF_M_OVERLAY]      =
+      snes_prof_mark[SNES_PROF_M_SWAP]         = snes_prof_mark[SNES_PROF_M_PCM];
+    }
+    uint32_t prof_pace_w0 = snes_prof_wall_now();
+#endif
 
     /* Pace the loop by the audio DMA UNCONDITIONALLY (WS pattern,
      * main_wswan.c:348-366). common_emu_sound_sync skips this wait when
@@ -1043,6 +1098,14 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     if (odroid_system_get_app()->speedupEnabled == SPEEDUP_1x) {
         static uint32_t snes_last_dma = 0;
         if (snes_last_dma == 0) snes_last_dma = dma_counter;
+#ifdef SNES_DEVICE_PROFILE
+        /* How many audio periods had ALREADY elapsed when we got here. 0 means
+         * we arrived before the deadline and are about to wait; >=1 means the
+         * deadline had already passed, the wait below falls straight through,
+         * and LLE never recovers that period. Reading a near-zero wait as
+         * "we overran" without this number is the mistake the review flagged. */
+        prof_dma_before = dma_counter - snes_last_dma;
+#endif
         /* Feed the watchdog and give up eventually. This wait blocks until the
          * audio DMA advances, and it had neither guard: if dma_counter stops
          * moving the loop spins forever, WWDG fires, and a watchdog reset
@@ -1067,6 +1130,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
                 cpumon_sleep();
                 spin_guard++;
             }
+#ifdef SNES_DEVICE_PROFILE
+            prof_wfi = spin_guard;   /* __WFI() round trips actually executed */
+#endif
         }
         uint32_t elapsed = dma_counter - snes_last_dma;
         snes_last_dma = dma_counter;
@@ -1108,5 +1174,25 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         }
 #endif
     }
+#ifdef SNES_DEVICE_PROFILE
+    prof_wall_pace = snes_prof_wall_now() - prof_pace_w0;
+    SNES_PROF_MARK(SNES_PROF_M_PACING);
+    {
+      /* wall_frame is measured end-of-iteration to end-of-iteration, so it
+       * covers the WHOLE period including the previous snes_profile_record()
+       * call. Measuring it from the top of this iteration instead would leave
+       * the recorder's own cost outside every frame, and the sum would then
+       * disagree with the audio-DMA reference for a reason that has nothing to
+       * do with the emulator -- i.e. it would break the wall_vs_dma gate that
+       * exists to catch real problems. */
+      uint32_t wall_now = snes_prof_wall_now();
+      uint32_t dma_now  = dma_counter;
+      snes_profile_record(drawFrame, prof_base, prof_apu_in_emu,
+                          wall_now - prof_wall_prev, prof_wall_pace,
+                          prof_dma_before, dma_now - prof_dma_prev, prof_wfi);
+      prof_wall_prev = wall_now;
+      prof_dma_prev  = dma_now;
+    }
+#endif
   }
 }

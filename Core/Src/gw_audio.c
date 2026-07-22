@@ -1,4 +1,5 @@
 #include "gw_audio.h"
+#include "snes_prof_irq.h"
 #include <string.h>
 
 uint32_t audio_mute;
@@ -54,15 +55,29 @@ static void music_fill(void)
 }
 
 void HAL_SAI_TxHalfCpltCallback(SAI_HandleTypeDef *hsai) {
+#ifdef SNES_DEVICE_PROFILE
+    uint32_t snes_prof_t0 = SNES_PROF_DWT_CYCCNT;
+#endif
     dma_counter++;
     dma_state = DMA_TRANSFER_STATE_HF;
     music_fill();
+#ifdef SNES_DEVICE_PROFILE
+    snes_prof_irq_cycles += SNES_PROF_DWT_CYCCNT - snes_prof_t0;
+    snes_prof_irq_count++;
+#endif
 }
 
 void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef *hsai) {
+#ifdef SNES_DEVICE_PROFILE
+    uint32_t snes_prof_t0 = SNES_PROF_DWT_CYCCNT;
+#endif
     dma_counter++;
     dma_state = DMA_TRANSFER_STATE_TC;
     music_fill();
+#ifdef SNES_DEVICE_PROFILE
+    snes_prof_irq_cycles += SNES_PROF_DWT_CYCCNT - snes_prof_t0;
+    snes_prof_irq_count++;
+#endif
 }
 
 uint16_t audio_get_buffer_full_length() {

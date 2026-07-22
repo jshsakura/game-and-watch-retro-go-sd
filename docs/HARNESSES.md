@@ -130,6 +130,20 @@ gets faster is a wait, not a cost). Not on `testbed`; cherry-pick it onto a
 work branch when a core needs to answer "what is it actually doing" on the
 hardware itself.
 
+## On-device instrumentation — `SNES_DEVICE_PROFILE=1`
+
+The SNES answer to the same question, and it lives on `testbed` rather than a
+side branch: a 3-ledger frame profiler that dumps to `/snes_dwt.txt` after 64
+frames. **DWT active cycles** (top-level disjoint, IRQ-inclusive) + **exclusive
+PPU/APU inside `run_frame_events`** (via a generated copy of `external/sm`'s
+`snes.c`) + a **sleep-safe TIM2 wall clock and audio-deadline histogram** —
+because the pacing wait is `__WFI()` and `DWT_CYCCNT` stops in sleep, so the
+one bucket that decides "compute-bound or deadline-bound" cannot be measured
+with DWT at all. Every gate (nesting, monotonicity, residual, probe cost, IRQ
+share, wall-vs-hardware) prints in the dump, and
+`scripts/check_snes_profile_wired.sh` proves on every link that the probes are
+in the binary. Full guide: [SNES_DEVICE_DWT.md](SNES_DEVICE_DWT.md).
+
 ## Choosing
 
 | question | harness |
@@ -139,7 +153,8 @@ hardware itself.
 | does the firmware link the same program I tested | `device_parity.sh`, `scripts/check_core_symbol_aliases.py` |
 | is my HLE/optimization bit-exact, including time | `tools/gba_m4a/prove.sh` (the model to copy) |
 | is the thing actually *wired* | a `tests/test_*_wired.sh` — write one |
-| what is the device really spending a frame on | `feat/gba-probe` |
+| what is the device really spending a frame on | `feat/gba-probe`; for SNES, `SNES_DEVICE_PROFILE=1` |
+| is fps compute-bound or sitting on the audio deadline | `SNES_DEVICE_PROFILE=1` Ledger C — DWT alone cannot answer this, it goes blind in `__WFI()` |
 
 ## `tools/gnw_hw_harness/` — the device memory-budget contract (the missing gate)
 
