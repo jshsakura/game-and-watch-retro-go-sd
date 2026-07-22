@@ -147,8 +147,8 @@ enum {
     // compiler never promised. Verify with:
     //     arm-none-eabi-nm -n build/gw_retro_go.elf | grep ' R header_'
     // and make this list match that output exactly.
-    RG_LOGO_HEADER_CPS1,
     RG_LOGO_HEADER_SEGACD,
+    RG_LOGO_HEADER_CPS1,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
