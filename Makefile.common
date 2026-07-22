@@ -1404,6 +1404,20 @@ $(eval $(foreach obj,$(SM_C_SOURCES),$(call sm_obj_prereq_gen,$(obj))))
 # without this hook: SNES_DIAG_DEFS is empty, snes_diag_pick returns the
 # original source path, and the Python script never runs.
 SNES_LOAD_DIAG ?= 0
+# SNES_SPIN_SKIP=0 compiles the spin-skip learner OUT entirely, rather than
+# leaving it gate-off at runtime. Those are not the same thing: with it
+# compiled in, every real opcode still pays ops_real++ and a spin_note() call
+# that returns immediately, and every read/write helper in cpu.c still carries
+# an `if (g_spin.phase)` branch -- a tax paid in full by any cart the table
+# turns OFF, which currently includes Zelda 3 (skip% 25.0). Default 1 = the
+# shipping behaviour; 0 exists so the tax can be measured by device A/B.
+SNES_SPIN_SKIP ?= 1
+ifeq ($(SNES_SPIN_SKIP),1)
+  SNES_SPIN_SKIP_DEF := -DSNES_SPIN_SKIP
+else
+  SNES_SPIN_SKIP_DEF :=
+endif
+
 SNES_DIAG_DIR := $(BUILD_DIR)/snes_diag
 SNES_DIAG_DEFS :=
 SNES_HLE_DEFS :=
@@ -1509,7 +1523,7 @@ endif
 define snes_obj_prereq_gen
 $$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_prof_pick,$(call snes_diag_pick,$1)) Makefile.common Makefile $(FLAGS_STAMP) snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_DEVICE_PROFILE)),$(SNES_PROF_DIR)/.stamp Core/Src/porting/snes/snes_profile.h Core/Inc/snes_prof_irq.h) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) $(if $(filter 1,$(SNES_NSPC_HLE)),$(SNES_NSPC_HLE_DIR)/.stamp) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $(SNES_SPIN_SKIP_DEF) -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
 
@@ -1534,14 +1548,14 @@ SNES_HLE_COEXIST_FILES := tools/nspc_audio_wire/smw_exact_wire.c tools/nspc_audi
 
 $(BUILD_DIR)/snes/smw_exact_wire.o: tools/nspc_audio_wire/smw_exact_wire.c Makefile.common Makefile $(FLAGS_STAMP) snes_redefines smwx_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC snes ] smw_exact_wire.c \(coexist\)
-	$(V)$(CC) -c $(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) tools/nspc_audio_wire/smw_exact_wire.c -o $@ \
+	$(V)$(CC) -c $(CFLAGS) -DGNW_SNES_CORE $(SNES_SPIN_SKIP_DEF) -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) tools/nspc_audio_wire/smw_exact_wire.c -o $@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$(V)$(CP) --redefine-syms=smwx_redefines $@
 	$(V)$(CP) --redefine-syms=snes_redefines $@
 
 $(BUILD_DIR)/snes/nspc_wire.o: tools/nspc_audio_wire/nspc_wire.c Makefile.common Makefile $(FLAGS_STAMP) snes_redefines nspc_wire_coexist_redefines $(SDK_HEADERS) $(SNES_SMW_HLE_DIR)/.stamp $(SNES_NSPC_HLE_DIR)/.stamp | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC snes ] nspc_wire.c \(coexist\)
-	$(V)$(CC) -c $(CFLAGS) -DGNW_SNES_CORE -DSNES_SPIN_SKIP -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) tools/nspc_audio_wire/nspc_wire.c -o $@ \
+	$(V)$(CC) -c $(CFLAGS) -DGNW_SNES_CORE $(SNES_SPIN_SKIP_DEF) -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) tools/nspc_audio_wire/nspc_wire.c -o $@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$(V)$(CP) --redefine-syms=nspc_wire_coexist_redefines $@
 	$(V)$(CP) --redefine-syms=snes_redefines $@
