@@ -303,7 +303,12 @@ static bool browse_subpath_is_safe(const char *s);
  * this entry as a launchable ROM, not a folder to browse". */
 static bool system_is_folder_rom(const rom_system_t *sys)
 {
-    return sys && strcmp(sys->dirname, "cps1") == 0;
+    /* Identify these by the structural property the comment above names -- an
+     * empty registered extension -- not by a hardcoded "cps1" string. CPS-1 is
+     * add_emulator()'d with ext "", the only system so declared; any future
+     * folder-rom system registers the same way and inherits launch-not-browse
+     * for free (and rom_system_t has no dirname field to compare anyway). */
+    return sys && sys->extension && sys->extension[0] == '\0';
 }
 
 static void build_rom_parent_label(const retro_emulator_t *emu)
@@ -630,7 +635,6 @@ static void add_emulator(const char *system, const char *dirname, const char* ex
     s->roms = p->roms.files;
     s->roms_count = p->roms.count;
     s->system_name = (char *)system;
-    strcpy(s->dirname, dirname);   /* was never set; folder-rom launch needs it */
     s->game_data_type = game_data_type;
 
     gui_add_tab(dirname, logo_idx, header_idx, p, event_handler);
