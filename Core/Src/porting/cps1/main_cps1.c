@@ -163,8 +163,17 @@ static uint16_t cps1_gfx_word(uint32_t off)
     return (uint16_t)((s_gfxram[off] << 8) | s_gfxram[off + 1]);
 }
 
+/* First-frame breadcrumbs: the CPS-1 core has never rendered on real hardware,
+ * and a device-only fault leaves only a bare "Busfault/Usagefault" with a PC
+ * that (for imprecise faults) is drain-time noise. Printing each render step on
+ * frame 0 means the LAST line on the BSOD names where it died -- a log-only
+ * substitute for GDB. Costs nothing after the first frame. */
+static int s_cps1_dbg_first = 1;
+#define CPS1_DBG(...) do { if (s_cps1_dbg_first) printf(__VA_ARGS__); } while (0)
+
 static void cps1_rebuild_video_state(void)
 {
+    CPS1_DBG("cps1 dbg: rvs start\n");
     uint32_t pal_base = cps1_resolve_base(CPSA_REG(REG_PALETTE));
     for (unsigned b = 0; b < CPS1_PALETTE_BANKS; b++)
         for (unsigned c = 0; c < CPS1_PALETTE_COLORS; c++)
@@ -182,6 +191,7 @@ static void cps1_rebuild_video_state(void)
         }
     }
 
+    CPS1_DBG("cps1 dbg: rvs pal+bgcells ok\n");
     s_bg.layers[CPS1_BG_SCROLL1].scroll_x = (int16_t)CPSA_REG(6);
     s_bg.layers[CPS1_BG_SCROLL1].scroll_y = (int16_t)CPSA_REG(7);
     s_bg.layers[CPS1_BG_SCROLL2].scroll_x = (int16_t)CPSA_REG(8);
@@ -189,6 +199,7 @@ static void cps1_rebuild_video_state(void)
     s_bg.layers[CPS1_BG_SCROLL3].scroll_x = (int16_t)CPSA_REG(10);
     s_bg.layers[CPS1_BG_SCROLL3].scroll_y = (int16_t)CPSA_REG(11);
 
+    CPS1_DBG("cps1 dbg: rvs scroll ok\n");
     uint32_t obj_base = cps1_resolve_base(CPSA_REG(REG_OBJ));
     s_oam.count = 0;
     for (unsigned i = 0; i < CPS1_OAM_MAX_SPRITES; i++) {
@@ -211,11 +222,15 @@ static void cps1_render_into(uint16_t *fb, uint8_t *meta)
     static const unsigned draw_order[CPS1_BG_LAYER_COUNT] = {
         CPS1_BG_SCROLL3, CPS1_BG_SCROLL2, CPS1_BG_SCROLL1
     };
+    CPS1_DBG("cps1 dbg: rvs oam ok (%u sprites), rendering\n", s_oam.count);
     for (unsigned i = 0; i < CPS1_BG_LAYER_COUNT; i++) {
         unsigned L = draw_order[i];
+        CPS1_DBG("cps1 dbg: bg layer %u\n", L);
         cps1_bg_render_layer(&s_bg.layers[L], L, &s_rom, &s_cache, &s_pal, fb, meta);
     }
+    CPS1_DBG("cps1 dbg: ppu (sprites)\n");
     cps1_ppu_render(&s_oam, &s_rom, &s_cache, &s_pal, fb);
+    CPS1_DBG("cps1 dbg: render done\n");
 }
 
 /* ------------------------------------------------------- XIP relocation --- */
@@ -779,7 +794,9 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     if (set == NULL)
         return;
 
+    CPS1_DBG("cps1 dbg: machine_reset\n");
     cps1_machine_reset(s_prg_lo, s_prg_hi);
+    CPS1_DBG("cps1 dbg: entering frame loop\n");
 
     while (true) {
         wdog_refresh();
@@ -789,6 +806,7 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         odroid_input_read_gamepad(&joystick);
         common_emu_input_loop(&joystick, NULL, NULL);
 
+        CPS1_DBG("cps1 dbg: run_one_frame (68000)\n");
         cps1_run_one_frame();
 
         if (drawFrame) {
@@ -797,6 +815,8 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             cps1_render_into(fb, NULL);
             common_ingame_overlay();
             lcd_swap();
+            CPS1_DBG("cps1 dbg: frame 0 complete, silencing breadcrumbs\n");
+            s_cps1_dbg_first = 0;   /* only the first frame is instrumented */
         }
 
         /* No sound yet -- the QSound side is stubbed (see cps1_sound_stub_init).
