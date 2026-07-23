@@ -42,6 +42,7 @@
  */
 #include <stdint.h>
 #include <string.h>
+#include <stdarg.h>
 #include <sys/stat.h>
 
 #include "appid.h"
@@ -163,13 +164,38 @@ static uint16_t cps1_gfx_word(uint32_t off)
     return (uint16_t)((s_gfxram[off] << 8) | s_gfxram[off + 1]);
 }
 
-/* First-frame breadcrumbs: the CPS-1 core has never rendered on real hardware,
- * and a device-only fault leaves only a bare "Busfault/Usagefault" with a PC
- * that (for imprecise faults) is drain-time noise. Printing each render step on
- * frame 0 means the LAST line on the BSOD names where it died -- a log-only
- * substitute for GDB. Costs nothing after the first frame. */
-static int s_cps1_dbg_first = 1;
-#define CPS1_DBG(...) do { if (s_cps1_dbg_first) printf(__VA_ARGS__); } while (0)
+/* First-frame breadcrumbs to /cps1_diag.txt -- the md32x/snes /<sys>_diag.txt
+ * pattern. The CPS-1 core has never rendered on real hardware, and a device-only
+ * fault leaves only a bare "Busfault" whose PC (when imprecise) is drain-time
+ * noise. Each step appends a line and REWRITES the file (open/write/close), so a
+ * crash leaves the last completed stage on the SD -- read it on a PC instead of
+ * photographing a BSOD. Also printf'd so it shows on the BSOD too. Sealed after
+ * frame 0: no SD writes during steady play (that corrupts the card). */
+#define CPS1_DIAG_PATH "/cps1_diag.txt"
+static char     s_cps1_diag[2048];
+static uint16_t s_cps1_diag_len;
+static bool     s_cps1_diag_sealed;
+static int      s_cps1_dbg_first = 1;
+
+static void cps1_diag(const char *fmt, ...)
+{
+    char line[160];
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    printf("%s", line);
+    if (s_cps1_diag_sealed)
+        return;
+    size_t ll = 0; while (line[ll]) ll++;
+    if (s_cps1_diag_len + ll < sizeof(s_cps1_diag)) {
+        memcpy(s_cps1_diag + s_cps1_diag_len, line, ll);
+        s_cps1_diag_len = (uint16_t)(s_cps1_diag_len + ll);
+    }
+    wdog_refresh();
+    FILE *f = fopen(CPS1_DIAG_PATH, "wb");
+    if (f) { fwrite(s_cps1_diag, 1, s_cps1_diag_len, f); fclose(f); }
+}
+#define CPS1_DBG(...) do { if (s_cps1_dbg_first) cps1_diag(__VA_ARGS__); } while (0)
 
 static void cps1_rebuild_video_state(void)
 {
@@ -774,10 +800,15 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_system_init(APPID_CPS1, CPS1_SAMPLE_RATE);
     odroid_system_emu_init(NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    s_cps1_diag_len = 0; s_cps1_diag_sealed = false; s_cps1_dbg_first = 1;
+    CPS1_DBG("cps1 diag v1 -- %s\n", ACTIVE_FILE ? ACTIVE_FILE->path : "(no file)");
 
     /* Musashi lives in XIP flash; nothing below can call it until this runs. */
-    if (!cps1_cache_xip_to_flash())
+    if (!cps1_cache_xip_to_flash()) {
+        CPS1_DBG("cps1 dbg: xip cache FAILED\n");
         return;
+    }
+    CPS1_DBG("cps1 dbg: xip cached, loading chips...\n");
 
     /* Anything this core ram_malloc()s must start past its own overlay+bss --
      * the main_gwenesis.c pattern; getting it wrong allocates over the core's
@@ -791,6 +822,7 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     const cps1_romset_t *set = cps1_path_is_container(ACTIVE_FILE->path)
                                    ? cps1_load_container_file(ACTIVE_FILE->path)
                                    : cps1_load_folder_roms(ACTIVE_FILE->path);
+    CPS1_DBG("cps1 dbg: load done -> set=%s\n", set ? set->name : "(null)");
     if (set == NULL)
         return;
 
@@ -815,8 +847,9 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             cps1_render_into(fb, NULL);
             common_ingame_overlay();
             lcd_swap();
-            CPS1_DBG("cps1 dbg: frame 0 complete, silencing breadcrumbs\n");
-            s_cps1_dbg_first = 0;   /* only the first frame is instrumented */
+            CPS1_DBG("cps1 dbg: frame 0 complete -- sealing diag\n");
+            s_cps1_dbg_first = 0;       /* only the first frame is instrumented */
+            s_cps1_diag_sealed = true;  /* no SD writes during steady play */
         }
 
         /* No sound yet -- the QSound side is stubbed (see cps1_sound_stub_init).

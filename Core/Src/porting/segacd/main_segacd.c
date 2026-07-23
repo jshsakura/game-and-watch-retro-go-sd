@@ -13,6 +13,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdarg.h>
 
 #include "odroid_system.h"
 #include "common.h"
@@ -231,8 +232,41 @@ static bool SegaCdCacheXipToFlash(void) {
 }
 
 /* ---- entry point (called by the launcher, like app_main_pce) ---- */
+/* Breadcrumbs to /segacd_diag.txt -- the md32x/snes /<sys>_diag.txt pattern.
+ * Sega CD has never shown a frame on real hardware (it dies at/around frame 1
+ * for no visible reason). Each stage appends a line and REWRITES the file, so a
+ * crash leaves the last completed stage on the SD -- read it on a PC instead of
+ * a BSOD photo. Also printf'd for the on-screen log. Sealed after frame 0: no SD
+ * writes during steady play (that corrupts the card). */
+#define SEGACD_DIAG_PATH "/segacd_diag.txt"
+static char     s_scd_diag[2048];
+static uint16_t s_scd_diag_len;
+static bool     s_scd_diag_sealed;
+static int      s_scd_dbg_first = 1;
+
+static void segacd_diag(const char *fmt, ...)
+{
+    char line[160];
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    printf("%s", line);
+    if (s_scd_diag_sealed)
+        return;
+    size_t ll = 0; while (line[ll]) ll++;
+    if (s_scd_diag_len + ll < sizeof(s_scd_diag)) {
+        memcpy(s_scd_diag + s_scd_diag_len, line, ll);
+        s_scd_diag_len = (uint16_t)(s_scd_diag_len + ll);
+    }
+    wdog_refresh();
+    FILE *f = fopen(SEGACD_DIAG_PATH, "wb");
+    if (f) { fwrite(s_scd_diag, 1, s_scd_diag_len, f); fclose(f); }
+}
+#define SCD_DBG(...) do { if (s_scd_dbg_first) segacd_diag(__VA_ARGS__); } while (0)
+
 int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
+    s_scd_diag_len = 0; s_scd_diag_sealed = false; s_scd_dbg_first = 1;
     if (start_paused) { common_emu_state.pause_after_frames = 2; odroid_audio_mute(true); }
     else              { common_emu_state.pause_after_frames = 0; }
 
@@ -296,13 +330,16 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * MAIN 68K running from a garbage PC — a device-only boot Hardfault
      * (m68ki_read_8 dispatching through a wild page handler). power_on() already
      * calls m68k_init(), so no separate call is needed. */
+    SCD_DBG("segacd diag v1 -- xip+bios ok (sz=%lu); hw init...\n",
+            (unsigned long)bios_size);
     load_cartridge();
     power_on();
     segacd_init();
     segacd_map_bios(segacd_bios); /* main boots from BIOS, not a cart (0 RAM: XIP) */
     segacd_main_map_cd_space();
     reset_emulation();            /* pulse-reset MAIN 68K -> reads BIOS reset vectors */
-    printf("segacd: hw init done\n");
+    SCD_DBG("segacd dbg: hw init done (bios=%p sz=%lu)\n",
+            (void *)segacd_bios, (unsigned long)bios_size);
 
     snprintf(s_cue_path, sizeof(s_cue_path), "%s", ACTIVE_FILE->path);
     /* The return value used to be discarded. A cue that fails to parse left
@@ -325,7 +362,8 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     segacd_bram_path();
     segacd_bram_load(s_bram_path);   /* per-game BRAM, load before resume */
-    printf("segacd: entering main loop\n");
+    SCD_DBG("segacd dbg: cd_open ok (tracks=%d lba=%lu); loop next\n",
+            diag_num_tracks, (unsigned long)diag_total_lba);
 
     if (load_state) odroid_system_emu_load_state(save_slot);
     else            lcd_clear_buffers();
@@ -335,6 +373,7 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     /* sub_cycles_per_frame removed as it's interleaved inside gwenesis_md_frame */
 
+    SCD_DBG("segacd dbg: entering frame loop\n");
     while (true) {
         wdog_refresh();
         bool drawFrame = common_emu_frame_loop();
@@ -343,7 +382,9 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         common_emu_input_loop(&joystick, options, &blit);
 
         /* --- one frame of the machine --- */
+        SCD_DBG("segacd dbg: md_frame(draw=%d)...\n", (int)drawFrame);
         gwenesis_md_frame(drawFrame);           /* main 68K + Z80 + VDP + YM/SN + Sub 68K interleaved */
+        SCD_DBG("segacd dbg: md_frame done; cdd ticks...\n");
         /* True 75Hz CDD pacing (see comment above s_cdd_tick_accum) — average
          * 1.25 ticks/frame at NTSC 60fps, 1.5 ticks/frame at PAL 50fps. */
         s_cdd_tick_accum += 75;
@@ -355,7 +396,13 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             s_cdd_tick_accum -= video_fps;
         }
 
+        SCD_DBG("segacd dbg: cdd done; blit(draw=%d)...\n", (int)drawFrame);
         if (drawFrame) blit();
+        if (drawFrame) {
+            SCD_DBG("segacd dbg: frame 0 complete -- sealing diag\n");
+            s_scd_dbg_first = 0;
+            s_scd_diag_sealed = true;   /* no SD writes during steady play */
+        }
 
         /* --- audio: gwenesis YM+SN mixed with CD-DA + RF5C164 PCM --- */
         int16_t *sbuf = audio_get_active_buffer();
