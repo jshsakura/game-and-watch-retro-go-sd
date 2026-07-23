@@ -188,13 +188,15 @@ static void randomize_cpu(Cpu* c) {
 }
 
 /* ---- opcode sets ---- *
- * The 27 no-operand, bus-side-effect-free opcodes snes_thumb2_try claims. */
-static const uint8_t supported_opcodes[27] = {
+ * Every no-operand, bus-side-effect-free opcode snes_thumb2_try claims. */
+static const uint8_t supported_opcodes[] = {
     0x18,0x38,0x58,0x78,0xb8,0xd8,0xf8,0xea, /* CLC SEC CLI SEI CLV CLD SED NOP */
     0x9a,0x1b,0x5b,0x7b,0x3b,                 /* TXS TCS TCD TDC TSC             */
     0x8a,0x98,0xaa,0xa8,0xba,0x9b,0xbb,       /* TXA TYA TAX TAY TSX TXY TYX     */
-    0x1a,0x3a,0xe8,0xca,0xc8,0x88,0xeb        /* INA DEA INX DEX INY DEY XBA     */
+    0x1a,0x3a,0xe8,0xca,0xc8,0x88,0xeb,       /* INA DEA INX DEX INY DEY XBA     */
+    0x0a,0x4a,0x2a,0x6a                       /* ASL A LSR A ROL A ROR A         */
 };
+#define SUPPORTED_COUNT (int)(sizeof(supported_opcodes)/sizeof(supported_opcodes[0]))
 
 /* A small curated set of opcodes snes_thumb2_try does NOT handle, to verify
  * the dispatcher's fall-through path (snes_thumb2_try returns 0 -> cpu_doOpcode)
@@ -425,8 +427,53 @@ static int run_case_irqnmi(bool nmi, bool mf, bool xf, bool e) {
     return 0;
 }
 
+/* ---- accumulator-shift M=0/1 boundary differential (Stage 3A) ---- *
+ * 0A ASL A / 4A LSR A / 2A ROL A / 6A ROR A are implied-form shifts: no operand,
+ * no data bus (only the single opcode fetch). They are pure register/flag ops
+ * gated on the M flag, so the interesting edges are the carry bit shifted out
+ * (bit0/bit7/bit15), the ZN result, and the carry shifted IN (ROL/ROR read C).
+ * This forces a specific A and a specific carry-in, over both widths, so a
+ * divergence at any bit boundary is caught deterministically rather than left
+ * to the random sweep's luck. cpu_eq covers a/c/z/n; bus_eq the opcode fetch. */
+static int run_case_shift(uint8_t oc, uint16_t a_val, uint8_t c_in,
+                          bool mf, bool xf, bool e) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.a = a_val;
+    base.c = c_in ? 1 : 0;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    uint32_t forced_addr = ((uint32_t)base.k << 16) | base.pc;
+    uint32_t seed = prng();
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    cpu_runOpcode_c(&cpuA);
+    cpu_runOpcode(&cpuB);
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB)) {
+        printf("\nMISMATCH [shift] opcode=%02x a=%04x c=%d mf=%d xf=%d e=%d\n",
+               oc, a_val, c_in, mf, xf, e);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  busA len=%d ovf=%d  busB len=%d ovf=%d\n",
+               g_busA.trace_len, g_busA.overflow,
+               g_busB.trace_len, g_busB.overflow);
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
-    printf("=== SNES Thumb-2 Stage 2 differential harness ===\n");
+    printf("=== SNES Thumb-2 differential harness ===\n");
 
     struct { bool mf, xf, e; } combos[] = {
         {0,0,0}, {1,1,0}, {0,1,0}, {1,0,0}, {1,1,1},
@@ -435,10 +482,10 @@ int main(void) {
 
     int total = 0, failures = 0;
 
-    /* ---- main sweep: 27 supported opcodes x 5 combos x 1000 trials ---- */
+    /* ---- main sweep: every supported opcode x 5 combos x 1000 trials ---- */
     const int MAIN_TRIALS = 1000;
     for (int t = 0; t < MAIN_TRIALS; t++) {
-        for (int oi = 0; oi < 27; oi++) {
+        for (int oi = 0; oi < SUPPORTED_COUNT; oi++) {
             uint8_t oc = supported_opcodes[oi];
             for (int ci = 0; ci < ncombos; ci++) {
                 total++;
@@ -509,6 +556,34 @@ int main(void) {
             failures += run_case((uint8_t)oc, 0, 0, 0, 0, "full-sweep");
         }
         printf("(full sweep: %d opcodes run, %d skipped)\n", 256 - skipped, skipped);
+    }
+
+    /* ---- accumulator-shift M=0/1 boundary sweep (Stage 3A native) ---- *
+     * 0A/4A/2A/6A are now dispatched natively. Walk the carry/ZN bit edges
+     * (bit0/bit7/bit15 set & clear, all-zeros/all-ones) across both widths and
+     * both carry-in states. xf mirrors mf (xf is irrelevant to A shifts but the
+     * combo is kept realistic); e=0 native. */
+    {
+        static const uint16_t boundary_a[] = {
+            0x0000, 0x0001, 0x0002, 0x007f, 0x0080, 0x0081, 0x00fe, 0x00ff,
+            0x0100, 0x7fff, 0x8000, 0x8001, 0xff7f, 0xff80, 0xfffe, 0xffff,
+        };
+        static const uint8_t shift_ops[4] = { 0x0a, 0x4a, 0x2a, 0x6a };
+        int nba = (int)(sizeof(boundary_a)/sizeof(boundary_a[0]));
+        int run = 0;
+        for (int oi = 0; oi < 4; oi++) {
+            for (int ai = 0; ai < nba; ai++) {
+                for (int mf = 0; mf <= 1; mf++) {
+                    for (int cin = 0; cin <= 1; cin++) {
+                        total++;
+                        failures += run_case_shift(shift_ops[oi], boundary_a[ai],
+                                                   (uint8_t)cin, (bool)mf, (bool)mf, 0);
+                        run++;
+                    }
+                }
+            }
+        }
+        printf("(shift boundary: %d cases)\n", run);
     }
 
     printf("\n=== Results: %d/%d passed, %d failed ===\n",
