@@ -20,24 +20,28 @@ rc=0
 # wrap it in a standalone harness. Extracts the REAL bytes, so a regression in
 # the function shows here rather than in a copy that drifted.
 build_one() {
-    local src_text="$1" out="$2"
+    local src_text="$1" out="$2" call_macro="$3"
     {
         echo '#include <string.h>'
         echo '#include <stdio.h>'
         echo '#include <stdlib.h>'
         printf '%s\n' "$src_text"
+        # The call macro adapts to each version's signature: the fixed function
+        # takes the destination size (clamp), the pre-fix one did not. Written
+        # this way, the SAME main() drives both without an arg-count mismatch.
+        printf '%s\n' "$call_macro"
         cat <<'EOF'
 int main(void) {
     char buf[256];
     /* A CPS-1 folder rom: a directory name, no extension, no dot. */
     memset(buf, 0x7f, sizeof(buf));
-    remove_extension("Warriors of Fate", buf);
+    RMEXT("Warriors of Fate", buf);
     if (strcmp(buf, "Warriors of Fate") != 0) {
         printf("FAIL dotless name mangled: [%s]\n", buf);
         return 1;
     }
     /* A normal rom with an extension still loses exactly the extension. */
-    remove_extension("Chrono Trigger.sfc", buf);
+    RMEXT("Chrono Trigger.sfc", buf);
     if (strcmp(buf, "Chrono Trigger") != 0) {
         printf("FAIL extension not stripped: [%s]\n", buf);
         return 1;
@@ -47,6 +51,16 @@ int main(void) {
 }
 EOF
     } > "$out"
+}
+
+# Which call form each version needs. The fixed remove_extension takes a cap;
+# detect it by its signature in the extracted text.
+call_macro_for() {   # $1 = extracted function text
+    if printf '%s' "$1" | grep -q 'remove_extension([^)]*,[^)]*,'; then
+        echo '#define RMEXT(p,b) remove_extension((p),(b),sizeof(b))'
+    else
+        echo '#define RMEXT(p,b) remove_extension((p),(b))'
+    fi
 }
 
 extract() {   # print the remove_extension function from stdin's file
@@ -60,7 +74,7 @@ fn_now=$(extract < "$SRC")
 if [ -z "$fn_now" ]; then
     echo "FAIL could not find remove_extension() in $SRC"; exit 1
 fi
-build_one "$fn_now" "$T/now.c"
+build_one "$fn_now" "$T/now.c" "$(call_macro_for "$fn_now")"
 if $CC $SAN "$T/now.c" -o "$T/now" 2>"$T/now.log" && "$T/now"; then
     :
 else
@@ -76,7 +90,7 @@ fi
 PREFIX_REV=07abf423        # testbed tip before this fix; the buggy version
 if git cat-file -e "$PREFIX_REV:$SRC" 2>/dev/null; then
     fn_old=$(git show "$PREFIX_REV:$SRC" | extract)
-    build_one "$fn_old" "$T/old.c"
+    build_one "$fn_old" "$T/old.c" "$(call_macro_for "$fn_old")"
     $CC $SAN "$T/old.c" -o "$T/old" 2>/dev/null
     if ( "$T/old" >/dev/null 2>&1 ); then
         echo "FAIL the pre-fix remove_extension() passed - this test cannot see the bug"

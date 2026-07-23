@@ -640,8 +640,8 @@ static void add_emulator(const char *system, const char *dirname, const char* ex
     gui_add_tab(dirname, logo_idx, header_idx, p, event_handler);
 }
 
-static void remove_extension(const char *path, char *new_path) {
-    if (!new_path) return;
+static void remove_extension(const char *path, char *new_path, size_t cap) {
+    if (!new_path || cap == 0) return;
 
     const char *last_dot = strrchr(path, '.');
 
@@ -654,6 +654,14 @@ static void remove_extension(const char *path, char *new_path) {
      * error CFSR=0x820 rather than a plain data abort. Fall back to the whole
      * name when there is no dot. tests/test_remove_extension.sh pins this. */
     size_t new_len = last_dot ? (size_t)(last_dot - path) : strlen(path);
+
+    /* And clamp to the destination buffer regardless: the dotless fallback is
+     * strlen(path), which is only as trustworthy as its NUL. A basename longer
+     * than new_path (or one that is not terminated) would otherwise overrun the
+     * fixed slot->name[] and corrupt the stack -- the same CFSR=0x820 failure by
+     * a different door. cap-1 leaves room for the terminator. */
+    if (new_len > cap - 1)
+        new_len = cap - 1;
 
     memcpy(new_path, path, new_len);
     new_path[new_len] = '\0';
@@ -721,7 +729,7 @@ static bool emulator_add_rom_file(retro_emulator_t *emu, const char *path,
     slot->region = REGION_NTSC;
     strncpy(slot->path, path, sizeof(slot->path) - 1);
     slot->path[sizeof(slot->path) - 1] = '\0';
-    remove_extension(basename, slot->name);
+    remove_extension(basename, slot->name, sizeof(slot->name));
     slot->ext = (char *)get_extension(slot->path);
 #if COVERFLOW != 0
     slot->img_state = IMG_STATE_UNKNOWN;
