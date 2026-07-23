@@ -624,12 +624,19 @@ static void add_emulator(const char *system, const char *dirname, const char* ex
 }
 
 static void remove_extension(const char *path, char *new_path) {
-    // we can assume an extension is always present
+    if (!new_path) return;
+
     const char *last_dot = strrchr(path, '.');
 
-    size_t new_len = last_dot - path;
-
-    if (!new_path) return;
+    /* "We can assume an extension is always present" held only until CPS-1: its
+     * games are FOLDERS (a MAME romset), so their basename has no dot. With no
+     * dot strrchr() returns NULL and `NULL - path` underflows to a ~4 GB
+     * size_t, so this memcpy ran the length of RAM into peripheral space and
+     * took a bus fault while merely LISTING the system -- and on the way it
+     * overwrote the stack, which is why the fault surfaced as the stacking
+     * error CFSR=0x820 rather than a plain data abort. Fall back to the whole
+     * name when there is no dot. */
+    size_t new_len = last_dot ? (size_t)(last_dot - path) : strlen(path);
 
     memcpy(new_path, path, new_len);
     new_path[new_len] = '\0';
