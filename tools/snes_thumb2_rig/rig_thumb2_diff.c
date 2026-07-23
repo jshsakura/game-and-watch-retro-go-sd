@@ -25,6 +25,7 @@
 
 typedef struct Snes Snes;
 #include "cpu.h"
+#include "spin_skip.h"
 
 /* ---- deterministic PRNG (xorshift32) ---- */
 static uint32_t prng_state = 0xDEADBEEF;
@@ -190,15 +191,16 @@ static void randomize_cpu(Cpu* c) {
 /* ---- opcode sets ---- *
  * Opcodes snes_thumb2_try claims. Stage 2 covered the no-operand,
  * bus-side-effect-free set; Stage 3A added the 4 accumulator shifts (no bus
- * access); Stage 3B added the 9 relative branches (one raw operand fetch, no
- * data-bus write). The main randomized sweep iterates this whole set. */
+ * access); Stage 3B added the 9 relative branches; Stage 3C adds 6 immediate
+ * ALU/loads plus REP/SEP. The main randomized sweep iterates this whole set. */
 static const uint8_t supported_opcodes[] = {
     0x18,0x38,0x58,0x78,0xb8,0xd8,0xf8,0xea, /* CLC SEC CLI SEI CLV CLD SED NOP */
     0x9a,0x1b,0x5b,0x7b,0x3b,                 /* TXS TCS TCD TDC TSC             */
     0x8a,0x98,0xaa,0xa8,0xba,0x9b,0xbb,       /* TXA TYA TAX TAY TSX TXY TYX     */
     0x1a,0x3a,0xe8,0xca,0xc8,0x88,0xeb,       /* INA DEA INX DEX INY DEY XBA     */
     0x0a,0x4a,0x2a,0x6a,                      /* ASL A LSR A ROL A ROR A         */
-    0x10,0x30,0x50,0x70,0x80,0x90,0xb0,0xd0,0xf0 /* BPL BMI BVC BVS BRA BCC BCS BNE BEQ */
+    0x10,0x30,0x50,0x70,0x80,0x90,0xb0,0xd0,0xf0, /* relative branches             */
+    0x09,0x29,0x49,0xa0,0xa2,0xa9,0xc2,0xe2 /* immediate ALU/load + REP/SEP   */
 };
 #define SUPPORTED_COUNT (int)(sizeof(supported_opcodes)/sizeof(supported_opcodes[0]))
 
@@ -208,7 +210,7 @@ static const uint8_t supported_opcodes[] = {
  * 0x80:0x8573 and call Die(), which is a noreturn hang that would freeze the
  * rig. None of the opcodes below can reach Die. */
 static const uint8_t fallback_opcodes[] = {
-    0xa9, /* LDA #imm   — operand read(s), no bus side effect */
+    0x69, /* ADC #imm   — operand read(s), no bus side effect */
     0x85, /* STA zp     — operand read + 1 write              */
     0xe6, /* INC zp     — operand read + read/modify/write    */
     0x48, /* PHA        — stack push (write)                  */
@@ -275,9 +277,9 @@ static int run_case(uint8_t oc, bool mf, bool xf, bool e,
  * Forces the opcode fetch at (k<<16)|0xffff so operand reads at pc+1, pc+2, ...
  * wrap into 0x0000, 0x0001 ... within the bank (cpu_readOpcode increments the
  * 16-bit pc). 0xea (NOP) is the supported representative (no operand read, so a
- * divergence here would mean the dispatcher touched pc wrongly); 0xa9 (LDA #imm)
+ * divergence here would mean the dispatcher touched pc wrongly); 0x69 (ADC #imm)
  * is the unsupported representative — its operand read(s) actually wrap, which
- * exercises the bus trace ordering across the wrap on both paths. Identical
+ * exercises the unsupported bus trace ordering across the wrap on both paths. Identical
  * deterministic seed on both buses, so any oracle-vs-dispatcher split is real. */
 static int run_case_wrap(uint8_t oc, bool mf, bool xf, bool e) {
     Cpu base;
@@ -563,6 +565,155 @@ static int run_case_branch(uint8_t oc, uint8_t z, uint8_t n, uint8_t v,
     return 0;
 }
 
+/* ---- Stage 3C immediate/status differential ---------------------------- */
+static void set_status_byte(Cpu *c, uint8_t p) {
+    c->c  = (p >> 0) & 1;
+    c->z  = (p >> 1) & 1;
+    c->i  = (p >> 2) & 1;
+    c->d  = (p >> 3) & 1;
+    c->xf = (p >> 4) & 1;
+    c->mf = (p >> 5) & 1;
+    c->v  = (p >> 6) & 1;
+    c->n  = (p >> 7) & 1;
+}
+
+static int stage3c_trace_ok(const RigBus *b, uint8_t oc, uint16_t pc_in,
+                            uint8_t k, uint16_t operand, int operand_bytes) {
+    int expected = 1 + operand_bytes;
+    if (b->overflow || b->trace_len != expected) return 0;
+    uint32_t addr0 = ((uint32_t)k << 16) | pc_in;
+    if (b->trace[0].is_write || b->trace[0].addr != addr0 ||
+        b->trace[0].val != oc) return 0;
+    for (int i = 0; i < operand_bytes; i++) {
+        uint32_t addr = ((uint32_t)k << 16) | (uint16_t)(pc_in + 1 + i);
+        uint8_t val = (uint8_t)(operand >> (8 * i));
+        if (b->trace[i + 1].is_write || b->trace[i + 1].addr != addr ||
+            b->trace[i + 1].val != val) return 0;
+    }
+    return 1;
+}
+
+static int run_case_imm(uint8_t oc, uint16_t operand, uint16_t pc_in,
+                        bool mf, bool xf, bool e, uint16_t reg_seed) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.a = reg_seed;
+    base.x = reg_seed;
+    base.y = reg_seed;
+    base.pc = pc_in;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    bool x_width = (oc == 0xa0 || oc == 0xa2);
+    int operand_bytes = (x_width ? xf : mf) ? 1 : 2;
+    uint32_t forced_addr = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t low_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
+    uint32_t high_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 2);
+    uint32_t seed = prng();
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
+    g_busA.wmap[0].addr = low_addr; g_busA.wmap[0].val = (uint8_t)operand;
+    g_busB.wmap[0].addr = low_addr; g_busB.wmap[0].val = (uint8_t)operand;
+    g_busA.wmap_len = g_busB.wmap_len = 1;
+    if (operand_bytes == 2) {
+        g_busA.wmap[1].addr = high_addr; g_busA.wmap[1].val = (uint8_t)(operand >> 8);
+        g_busB.wmap[1].addr = high_addr; g_busB.wmap[1].val = (uint8_t)(operand >> 8);
+        g_busA.wmap_len = g_busB.wmap_len = 2;
+    }
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    int traces = stage3c_trace_ok(&g_busA, oc, pc_in, base.k, operand, operand_bytes) &&
+                 stage3c_trace_ok(&g_busB, oc, pc_in, base.k, operand, operand_bytes);
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0 ||
+        spinA.io_seq != spin_seed.io_seq ||
+        spinA.write_seq != spin_seed.write_seq || !traces) {
+        printf("\nMISMATCH [imm op=%02x] val=%04x pc=%04x mf=%d xf=%d e=%d"
+               " reg=%04x traceA=%d traceB=%d ioA=%u ioB=%u wrA=%u wrB=%u\n",
+               oc, operand, pc_in, mf, xf, e, reg_seed,
+               g_busA.trace_len, g_busB.trace_len,
+               (unsigned)spinA.io_seq, (unsigned)spinB.io_seq,
+               (unsigned)spinA.write_seq, (unsigned)spinB.write_seq);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        return 1;
+    }
+    return 0;
+}
+
+static int run_case_status(uint8_t oc, uint8_t p, uint8_t mask, bool e,
+                           uint16_t pc_in) {
+    Cpu base;
+    randomize_cpu(&base);
+    set_status_byte(&base, p);
+    base.e = e;
+    base.x = 0xabcd;
+    base.y = 0x80ff;
+    base.sp = 0x55aa;
+    base.pc = pc_in;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0;
+
+    uint32_t forced_addr = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t operand_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
+    uint32_t seed = prng();
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
+    g_busA.wmap[0].addr = operand_addr; g_busA.wmap[0].val = mask; g_busA.wmap_len = 1;
+    g_busB.wmap[0].addr = operand_addr; g_busB.wmap[0].val = mask; g_busB.wmap_len = 1;
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    int traces = stage3c_trace_ok(&g_busA, oc, pc_in, base.k, mask, 1) &&
+                 stage3c_trace_ok(&g_busB, oc, pc_in, base.k, mask, 1);
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0 ||
+        spinA.io_seq != spin_seed.io_seq ||
+        spinA.write_seq != spin_seed.write_seq || !traces) {
+        printf("\nMISMATCH [status op=%02x] p=%02x mask=%02x e=%d pc=%04x"
+               " traceA=%d traceB=%d ioA=%u ioB=%u\n",
+               oc, p, mask, e, pc_in, g_busA.trace_len, g_busB.trace_len,
+               (unsigned)spinA.io_seq, (unsigned)spinB.io_seq);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     printf("=== SNES Thumb-2 differential harness ===\n");
 
@@ -599,9 +750,9 @@ int main(void) {
         }
     }
 
-    /* ---- PC=0xffff wrap: 1 supported (NOP) + 1 unsupported (LDA #imm) ---- */
+    /* ---- PC=0xffff wrap: 1 supported (NOP) + 1 unsupported (ADC #imm) ---- */
     {
-        uint8_t wrap_ops[2] = { 0xea, 0xa9 };
+        uint8_t wrap_ops[2] = { 0xea, 0x69 };
         for (int oi = 0; oi < 2; oi++) {
             for (int ci = 0; ci < ncombos; ci++) {
                 total++;
@@ -718,6 +869,53 @@ int main(void) {
             }
         }
         printf("(branch boundary: %d cases)\n", run);
+    }
+
+    /* Stage 3C: exact immediate width/value/PC-wrap/high-byte/ZN coverage,
+     * including deliberately inconsistent E=1,M/X=0 states. */
+    {
+        static const uint8_t imm_ops[6] = { 0x09,0x29,0x49,0xa0,0xa2,0xa9 };
+        static const uint16_t values[4] = { 0x0000,0x00ff,0x8000,0xffff };
+        static const uint16_t pcs[4] = { 0xfffd,0xfffe,0xffff,0x0100 };
+        static const uint16_t regs[4] = { 0x0000,0x00ff,0xff00,0xffff };
+        int run = 0;
+        for (int oi = 0; oi < 6; oi++) {
+            bool x_width = (imm_ops[oi] == 0xa0 || imm_ops[oi] == 0xa2);
+            for (int byte = 0; byte < 2; byte++) {
+                bool mf = x_width ? !byte : byte;
+                bool xf = x_width ? byte : !byte;
+                for (int vi = 0; vi < 4; vi++)
+                    for (int pi = 0; pi < 4; pi++)
+                        for (int ri = 0; ri < 4; ri++)
+                            for (int e = 0; e < 2; e++) {
+                                total++;
+                                failures += run_case_imm(imm_ops[oi], values[vi],
+                                                         pcs[pi], mf, xf, e,
+                                                         regs[ri]);
+                                run++;
+                            }
+            }
+        }
+        printf("(immediate boundary + real spin-hook: %d cases)\n", run);
+    }
+
+    /* REP/SEP: every mask against every initial P byte in native and
+     * emulation mode.  This exhausts the selective bit order and all
+     * cpu_setFlags side effects (E pins M/X+SP; final X truncates X/Y). */
+    {
+        static const uint8_t status_ops[2] = { 0xc2, 0xe2 };
+        int run = 0;
+        for (int oi = 0; oi < 2; oi++)
+            for (int e = 0; e < 2; e++)
+                for (int p = 0; p < 256; p++)
+                    for (int mask = 0; mask < 256; mask++) {
+                        total++;
+                        failures += run_case_status(status_ops[oi], (uint8_t)p,
+                                                    (uint8_t)mask, (bool)e,
+                                                    0xffff);
+                        run++;
+                    }
+        printf("(REP/SEP exhaustive P x mask + real spin-hook: %d cases)\n", run);
     }
 
     printf("\n=== Results: %d/%d passed, %d failed ===\n",

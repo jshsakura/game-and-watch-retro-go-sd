@@ -14,22 +14,26 @@ mkdir -p "$OUT"
 CC=arm-none-eabi-gcc
 ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=soft"
 OPT="-O2 -g -ffunction-sections -fdata-sections"
-DEF="-DNDEBUG -DSNES_THUMB2_CPU -DTARGET_GNW"
+DEF="-DNDEBUG -DSNES_THUMB2_CPU -DSNES_SPIN_SKIP -DTARGET_GNW"
 INC="-I$SM/src/snes -I$SM/src -I$SM/src/snes/thumb2"
 
-echo "[1/4] Assemble snes_thumb2.S ..."
+echo "[1/5] Assemble snes_thumb2.S ..."
 $CC -c $ARCH $OPT $DEF $INC "$SM/src/snes/thumb2/snes_thumb2.S" -o "$OUT/snes_thumb2.o"
 
-echo "[2/4] Compile cpu.c (oracle + dispatcher) ..."
+echo "[2/5] Compile cpu.c (oracle + dispatcher, production spin hooks) ..."
 $CC -c $ARCH $OPT $DEF $INC -w "$SM/src/snes/cpu.c" -o "$OUT/cpu.o"
 
-echo "[3/4] Compile rig ..."
+echo "[3/5] Compile real spin_skip.c ..."
+$CC -c $ARCH $OPT $DEF $INC -w "$SM/src/snes/spin_skip.c" -o "$OUT/spin_skip.o"
+
+echo "[4/5] Compile rig ..."
 $CC -c $ARCH $OPT $DEF $INC "$RIG/rig_runtime.c" -o "$OUT/rig_runtime.o"
 $CC -c $ARCH $OPT $DEF $INC "$RIG/rig_thumb2_diff.c" -o "$OUT/rig_thumb2_diff.o"
 
-echo "[4/4] Link ..."
+echo "[5/5] Link ..."
 $CC $ARCH -T "$RIG/mps2_an500.ld" -nostartfiles -Wl,--gc-sections \
-    $OUT/rig_runtime.o $OUT/rig_thumb2_diff.o $OUT/cpu.o $OUT/snes_thumb2.o \
+    $OUT/rig_runtime.o $OUT/rig_thumb2_diff.o $OUT/cpu.o $OUT/spin_skip.o \
+    $OUT/snes_thumb2.o \
     -lm -o "$OUT/rig_thumb2.elf"
 
 arm-none-eabi-size "$OUT/rig_thumb2.elf"
