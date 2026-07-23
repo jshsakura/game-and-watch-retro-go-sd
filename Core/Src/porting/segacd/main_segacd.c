@@ -239,6 +239,13 @@ static void SegaCdRelocateXip(uint8_t *buffer, uint32_t length, uint32_t offset_
 enum {
     SCD_CP_NONE = 0, SCD_CP_ENTER, SCD_CP_XIP, SCD_CP_BIOS, SCD_CP_INIT,
     SCD_CP_MAPBIOS, SCD_CP_RESET, SCD_CP_CD, SCD_CP_BRAM, SCD_CP_LOOP,
+    /* Sub-frame stages. The witness said "inside the frame loop after 1 frames"
+     * -- init all passes and it dies in the FIRST frame, so split that frame:
+     * these are stamped through each iteration and the last one written names
+     * the part of the frame that died. Kept above the FRAMED bit's count range
+     * and non-framed, so scd_checkpoint_previous() reports them as a fault
+     * (never "it ran and the player left"). */
+    SCD_CP_F_MD = 0x0100, SCD_CP_F_CDD, SCD_CP_F_BLIT, SCD_CP_F_AUDIO,
     SCD_CP_DONE = 0x7FFF
 };
 
@@ -254,6 +261,10 @@ static const char *scd_checkpoint_name(uint32_t cp) {
         case SCD_CP_CD:      return "segacd_cd_open";
         case SCD_CP_BRAM:    return "loading BRAM";
         case SCD_CP_LOOP:    return "first frame";
+        case SCD_CP_F_MD:    return "frame: gwenesis_md_frame (68K/Z80/VDP/Sub)";
+        case SCD_CP_F_CDD:   return "frame: CDD/CDC tick";
+        case SCD_CP_F_BLIT:  return "frame: blit to LCD";
+        case SCD_CP_F_AUDIO: return "frame: audio mix/submit";
         default:             return "unknown stage";
     }
 }
@@ -463,19 +474,17 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     uint32_t scd_frames = 0;
     while (true) {
         wdog_refresh();
-        /* One backup-register write per frame. If the watchdog takes the chip
-         * down mid-frame, the next run says how far it got: "hung on frame 1"
-         * and "ran 400 frames then hung" are different bugs. */
-        scd_checkpoint(SEGACD_CP_FRAMED | (++scd_frames & 0x7FFFu));
         bool drawFrame = common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
         common_emu_input_loop(&joystick, options, &blit);
 
-        /* --- one frame of the machine --- */
+        /* --- one frame of the machine, sub-stage breadcrumbs --- */
+        scd_checkpoint(SCD_CP_F_MD);
         gwenesis_md_frame(drawFrame);           /* main 68K + Z80 + VDP + YM/SN + Sub 68K interleaved */
         /* True 75Hz CDD pacing (see comment above s_cdd_tick_accum) — average
          * 1.25 ticks/frame at NTSC 60fps, 1.5 ticks/frame at PAL 50fps. */
+        scd_checkpoint(SCD_CP_F_CDD);
         s_cdd_tick_accum += 75;
         int video_fps = mode_pal ? 50 : 60;
         while (s_cdd_tick_accum >= video_fps) {
@@ -485,9 +494,11 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             s_cdd_tick_accum -= video_fps;
         }
 
+        scd_checkpoint(SCD_CP_F_BLIT);
         if (drawFrame) blit();
 
         /* --- audio: gwenesis YM+SN mixed with CD-DA + RF5C164 PCM --- */
+        scd_checkpoint(SCD_CP_F_AUDIO);
         int16_t *sbuf = audio_get_active_buffer();
         uint16_t slen = audio_get_buffer_length();
         int vol = common_emu_sound_get_volume();
@@ -496,6 +507,11 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         common_emu_sound_sync(false);
         segacd_cdda_prefetch();      /* keep the CD-DA stream fed (PCE idiom) */
+
+        /* Frame fully completed: stamp the framed count LAST, so a normal long
+         * run leaves a high count (played-and-left, not a fault) while a death
+         * mid-frame leaves the sub-stage above. */
+        scd_checkpoint(SEGACD_CP_FRAMED | (++scd_frames & 0x7FFFu));
     }
     return 0;
 }
