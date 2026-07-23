@@ -1433,6 +1433,26 @@ ifeq ($(SNES_SPIN_FORCE_ON),1)
   SNES_SPIN_SKIP_DEF += -DSNES_SPIN_FORCE_ON
 endif
 
+# SNES_SPIN_SKIP_DEFAULT=0 flips external/sm's spin_skip.c compile-time default
+# (g_spin_whitelist / spin_whitelist_set()'s unregistered-ROM value) from true
+# back to false -- i.e. it un-does the 0721 whitelist-gap fix (commit 5b61757,
+# jshsakura/sm snes-perf) that widened the auto-gate from 2 named ROMs to
+# every unregistered title (~941 of 1792 measured, see
+# snes-spin-skip-whitelist-gap-0721 memory) at compile time rather than by
+# editing the submodule per arm. NOT the same axis as SNES_SPIN_SKIP above:
+# that one removes the hook mechanism itself (a fixed per-opcode branch tax
+# on every cart, measured separately at 3.61% of wall). This one is whether an
+# unregistered ROM ever gets a chance to use it. Per-ROM spin_table entries
+# (SMW forced ON, Zelda forced OFF) are unaffected either way -- only the
+# fallback for ROMs NOT in that table changes. Default 1 = current shipping
+# behaviour, byte-identical to a tree without this flag (spin_skip.c's own
+# #ifndef default is `true`). 0 exists so the default itself can be
+# device-A/B'd before the widened auto-gate has ever been hardware-validated.
+SNES_SPIN_SKIP_DEFAULT ?= 1
+ifeq ($(SNES_SPIN_SKIP_DEFAULT),0)
+  SNES_SPIN_SKIP_DEF += -DSNES_SPIN_SKIP_DEFAULT=false
+endif
+
 SNES_DIAG_DIR := $(BUILD_DIR)/snes_diag
 SNES_DIAG_DEFS :=
 SNES_HLE_DEFS :=
