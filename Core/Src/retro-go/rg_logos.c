@@ -72,6 +72,8 @@ void rg_reset_logo_buffers() {
     logo_image_count = 0;
 }
 
+extern const retro_logo_image header_cps1_int;
+
 retro_logo_image *rg_get_logo(int16_t logo_index) {
     uint8_t header[4];
     uint16_t width, height;
@@ -88,6 +90,10 @@ retro_logo_image *rg_get_logo(int16_t logo_index) {
             return (retro_logo_image *)&logo_rgw;
         case RG_LOGO_GNW:
             return (retro_logo_image *)&logo_gnw;
+        /* CPS-1's wordmark lives in internal flash (see header_cps1_int), so it
+         * tracks the firmware and does not need the SD logo.bin refreshed. */
+        case RG_LOGO_HEADER_CPS1:
+            return (retro_logo_image *)&header_cps1_int;
     }
 
     static_assert(INT_LOGO_COUNT == 3);
@@ -347,6 +353,37 @@ const retro_logo_image logo_gnw INT_LOGO_DATA = {
         0xa1, 0x21, 0x23, 0xc8, 0xa0, //  #_#____#__#____#__#___####__#___#_#
         0x80, 0x00, 0x00, 0x00, 0x20, //  #_________________________________#
         0x7f, 0xff, 0xff, 0xff, 0xc0, //  _#################################_
+    },
+};
+
+/* CPS-1 wordmark, kept in INTERNAL FLASH (not /bios/logo.bin) so that flashing
+ * the firmware alone updates it -- CPS-1 is a fork-only system and its header
+ * should not depend on the SD card's logo.bin being refreshed separately. The
+ * .sdcard_logo copy below stays (harmless, keeps logo.bin indices and the
+ * logo-order gate unchanged); rg_get_logo() special-cases RG_LOGO_HEADER_CPS1
+ * to this one before it ever looks at logo.bin. */
+const retro_logo_image header_cps1_int INT_LOGO_DATA = {
+    56,
+    18,
+    {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //  ________________________________________________________
+        0x03, 0xc7, 0xe0, 0x3f, 0x00, 0x0f, 0x80,  //  ______####___######_______######____________#####_______
+        0x0f, 0xff, 0xf8, 0x7f, 0x80, 0x1f, 0x80,  //  ____#################____########__________######_______
+        0x3f, 0xff, 0xfc, 0xff, 0x80, 0x3f, 0x80,  //  __####################__#########_________#######_______
+        0x3f, 0xff, 0xff, 0xff, 0x80, 0x7f, 0x80,  //  __###############################________########_______
+        0x7f, 0xdf, 0x7f, 0xfb, 0x00, 0x3f, 0x80,  //  _#########_#####_############_##__________#######_______
+        0x7e, 0x1f, 0x3f, 0xf0, 0x00, 0x3f, 0x80,  //  _######____#####__##########______________#######_______
+        0xfc, 0x1f, 0x3f, 0xff, 0x1f, 0x8f, 0x80,  //  ######_____#####__##############___######___#####_______
+        0xf8, 0x1f, 0xfc, 0xff, 0x9f, 0x8f, 0x80,  //  #####______###########__#########__######___#####_______
+        0xf8, 0x1f, 0xf8, 0xff, 0x9f, 0x8f, 0x80,  //  #####______##########___#########__######___#####_______
+        0xfc, 0x1f, 0xf0, 0x0f, 0xdf, 0x8f, 0x80,  //  ######_____#########________######_######___#####_______
+        0xff, 0xff, 0x01, 0xcf, 0xc0, 0x0f, 0x80,  //  ################_______###__######__________#####_______
+        0x7f, 0xff, 0x01, 0xff, 0x80, 0x0f, 0x80,  //  _###############_______##########___________#####_______
+        0x7f, 0xdf, 0x01, 0xff, 0x80, 0x0f, 0x80,  //  _#########_#####_______##########___________#####_______
+        0x3f, 0xdf, 0x01, 0xff, 0x00, 0x0f, 0x80,  //  __########_#####_______#########____________#####_______
+        0x0f, 0x9f, 0x00, 0xfe, 0x00, 0x0f, 0x80,  //  ____#####__#####________#######_____________#####_______
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //  ________________________________________________________
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //  ________________________________________________________
     },
 };
 
