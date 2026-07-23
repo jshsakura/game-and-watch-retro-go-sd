@@ -114,6 +114,8 @@ want "$BUILD_DIR/snes/snes.o" "gsnes__snes_prof_b_apu_cyc" referenced \
      "Ledger B APU scope reached the compiled snes.c (generated copy in use)"
 want "$BUILD_DIR/snes/snes.o" "gsnes__snes_prof_b_ppu_cyc" referenced \
      "Ledger B PPU scope reached the compiled snes.c (generated copy in use)"
+want "$BUILD_DIR/snes/snes.o" "gsnes__snes_prof_b_dma_cyc" referenced \
+     "the DMA drain scope reached the compiled snes.c (\$420B bracket in use)"
 # Resident objects build into $(BUILD_DIR)/core/ (they compile -Os, unlike the
 # overlay cores) -- that is the whole point of this check: the counters must NOT
 # be in build/snes/.
