@@ -337,6 +337,14 @@ echo "=== cps1: the romset table is generated, and matches its source ==="
 python3 tools/gen_cps1_romset.py --check \
     || fail "cps1 romset table is stale — regenerate: python3 tools/gen_cps1_romset.py"
 
+# === launcher: a dotless name (CPS-1 folder rom) must not 4GB-memcpy =========
+# remove_extension() assumed every rom name had an extension; a CPS-1 game is a
+# folder with no dot, so strrchr()==NULL made the copy length ~4 GB and the
+# device bus-faulted while merely listing the system. Compiles the REAL function
+# under ASan; RED-verified against the pre-fix version in git history.
+echo "=== launcher: remove_extension on a dotless name ==="
+bash tests/test_remove_extension.sh || fail tests/test_remove_extension.sh
+
 # === safety nets must not be the thing that breaks the build =========
 # Two CI jobs went red once not from a real defect but from the safety nets
 # themselves: check_core_symbol_aliases.py crashing when nm wasn't on PATH,
