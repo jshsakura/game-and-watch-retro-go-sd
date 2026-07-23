@@ -735,23 +735,40 @@ const char *i18n_lang_display_name(int idx)
 static int utf8_decode(const char *str, uint32_t *codepoint) {
     if (!str || !codepoint) return 0;
 
-    unsigned char c = str[0];
-    if (c < 0x80) {
+    const unsigned char *s = (const unsigned char *)str;
+    unsigned char c = s[0];
+    if (c == 0) return 0;                 // end of string
+    if (c < 0x80) {                       // single-byte ASCII
         *codepoint = c;
-        return 1; // Single-byte ASCII
-    } else if ((c & 0xE0) == 0xC0) {
-        *codepoint = ((c & 0x1F) << 6) | (str[1] & 0x3F);
-        return 2; // Two-byte sequence
+        return 1;
+    }
+    /* Multibyte: every continuation byte must be 0x80..0xBF AND present. A NUL
+     * or any other byte there means the sequence is truncated or malformed.
+     * Checking before dereferencing str[2]/str[3] also stops the read from
+     * running past a truncated name's terminator. */
+    if ((c & 0xE0) == 0xC0) {
+        if ((s[1] & 0xC0) == 0x80) {
+            *codepoint = ((c & 0x1Fu) << 6) | (s[1] & 0x3Fu);
+            return 2;
+        }
     } else if ((c & 0xF0) == 0xE0) {
-        *codepoint = ((c & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
-        return 3; // Three-byte sequence
+        if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
+            *codepoint = ((c & 0x0Fu) << 12) | ((s[1] & 0x3Fu) << 6) | (s[2] & 0x3Fu);
+            return 3;
+        }
     } else if ((c & 0xF8) == 0xF0) {
-        *codepoint = ((c & 0x07) << 18) | ((str[1] & 0x3F) << 12) | ((str[2] & 0x3F) << 6) | (str[3] & 0x3F);
-        return 4; // Four-byte sequence
+        if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80 && (s[3] & 0xC0) == 0x80) {
+            *codepoint = ((c & 0x07u) << 18) | ((s[1] & 0x3Fu) << 12)
+                       | ((s[2] & 0x3Fu) << 6) | (s[3] & 0x3Fu);
+            return 4;
+        }
     }
 
-    printf("Invalid UTF-8 byte sequence\n");
-    return 0;
+    /* Invalid or truncated: consume ONE byte and render a placeholder rather
+     * than returning 0 (which made callers stop mid-string) or spamming the
+     * log once per frame. A corrupted SD filename now shows '?' and moves on. */
+    *codepoint = (uint32_t)'?';
+    return 1;
 }
 
 int i18n_get_char_width(uint32_t codepoint) {

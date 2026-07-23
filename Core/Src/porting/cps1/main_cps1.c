@@ -523,33 +523,6 @@ static unsigned cps1_collect_runnable_sets(const cps1_romset_t *out[CPS1_MAX_RUN
     return n;
 }
 
-/*
- * Which one does the player want? Only asked when the answer is genuinely
- * ambiguous -- one runnable set launches straight into the game, as it always
- * did. Two or more (World beside Japan, say) is a real choice and guessing it
- * would mean one of the two sets on the card could never be played at all.
- *
- * Returns the chosen set, or NULL if the dialog was dismissed.
- */
-static const cps1_romset_t *cps1_ask_which_set(const cps1_romset_t *const *sets, unsigned count)
-{
-    odroid_dialog_choice_t options[CPS1_MAX_RUNNABLE_SETS + 1];
-
-    for (unsigned i = 0; i < count; i++) {
-        options[i].id = (int)i;
-        options[i].label = sets[i]->name;
-        options[i].value = (char *)"";
-        options[i].enabled = 1;
-        options[i].update_cb = NULL;
-    }
-    options[count] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
-
-    int sel = odroid_overlay_dialog("Which version?", options, 0, NULL, 0);
-    if (sel < 0 || (unsigned)sel >= count)
-        return NULL;
-    return sets[sel];
-}
-
 /* The chips are cached and hashed into s_chip_addr/s_chip_crc by now, however
  * they arrived (loose folder, pooled subfolders, or a .cps1 container). From
  * here the two paths are identical: pick the runnable set, ask if ambiguous,
@@ -565,16 +538,14 @@ static const cps1_romset_t *cps1_resolve_and_attach(const char *label, const cha
         if (n == 1) {
             set = runnable[0];
         } else if (n > 1) {
-            /* Pooled subfolders can complete several sets at once. Do not
-             * pick for the player: the unchosen one would be unplayable
-             * forever, and "first in the generated table" is not an answer
-             * anyone could predict or change. */
-            printf("cps1: %u runnable sets in %s, asking\n", n, label);
-            set = cps1_ask_which_set(runnable, n);
-            if (set == NULL) {
-                printf("cps1: version dialog dismissed\n");
-                return NULL;
-            }
+            /* Several sets complete from one chip pool (a clone beside its
+             * parent). Auto-launch the first rather than pop a chooser: the
+             * player asked for one game, not a menu. runnable[] is in romset-
+             * table order, so the base/Japan set the folder is named for comes
+             * first. */
+            printf("cps1: %u runnable sets in %s, auto-launching %s\n",
+                   n, label, runnable[0]->name);
+            set = runnable[0];
         }
         if (set != NULL &&
             cps1_romset_resolve(set, s_chip_crc, s_chip_count, prg_index, gfx_index) != 0)
