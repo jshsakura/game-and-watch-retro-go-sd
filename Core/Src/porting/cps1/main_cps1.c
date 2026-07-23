@@ -638,15 +638,14 @@ static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
  * ships (game-and-what pre-builds it at upload) and what the player drops on the
  * card -- one file, like a .nes, instead of a folder of chip dumps.
  *
- * It is cached in ONE pass: the whole file goes to flash as a single contiguous
- * blob, with ONE "Caching game" progress bar rather than one per chip. Because
- * the blob is contiguous, chip b simply lives at blob + b*512 KB -- no second
- * copy, no per-chip cache entry, no per-chip fopen. Each 512 KB slice is hashed
- * so it binds to a romset slot by CRC, exactly as a loose chip would; order
- * inside the container is therefore irrelevant and no index is needed. One fopen
- * for the whole game, so the 10-slot descriptor table is never a constraint the
- * way a 20-file folder made it (that folder exhausted it and 2 chips failed to
- * cache with "size 0").
+ * Each 512 KB chip is cached as its own flash region (store_file_region_in_flash,
+ * keyed on path+offset). The chips are cached SEPARATELY rather than the whole
+ * 10 MB file at once because the flash cache ring is fragmented by the XIP blob
+ * and reserved regions: 20 x 512 KB slot into the gaps, but one 10 MB contiguous
+ * run does not fit (it cached only ~5 MB). Progress is still ONE bar: each region
+ * cache is told its position (b of blocks) so the "Caching game" bar sweeps 0..100
+ * across the whole container, not once per chip. One chip is hashed and bound to a
+ * romset slot by CRC, so order inside the container is irrelevant, no index needed.
  */
 static const cps1_romset_t *cps1_load_container_file(const char *file_path)
 {
@@ -662,21 +661,19 @@ static const cps1_romset_t *cps1_load_container_file(const char *file_path)
         return NULL;
     }
 
-    /* One cache, one progress bar. */
-    uint32_t size = 0;
-    const uint8_t *blob = odroid_overlay_cache_file_in_flash(file_path, &size, false);
-    if (blob == NULL || size != (uint32_t)st.st_size) {
-        printf("cps1: %s did not cache (%lu of %ld)\n",
-               file_path, (unsigned long)size, (long)st.st_size);
-        draw_error_screen("CPS-1 cache failed", "Could not cache the .cps1 file",
-                          "Re-download / free flash");
-        return NULL;
-    }
-
     unsigned blocks = (unsigned)(st.st_size / CPS1_ROMSET_CHIP_SIZE);
     for (unsigned b = 0; b < blocks && s_chip_count < CPS1_MAX_FOLDER_CHIPS; b++) {
         wdog_refresh();
-        const uint8_t *addr = blob + (uint32_t)b * CPS1_ROMSET_CHIP_SIZE;
+        uint32_t size = 0;
+        const uint8_t *addr = odroid_overlay_cache_file_region_in_flash(
+            file_path, b * CPS1_ROMSET_CHIP_SIZE, CPS1_ROMSET_CHIP_SIZE, &size, b, blocks);
+        if (addr == NULL || size != CPS1_ROMSET_CHIP_SIZE) {
+            printf("cps1: %s chip %u did not cache (%lu)\n",
+                   file_path, b, (unsigned long)size);
+            draw_error_screen("CPS-1 cache failed", "A chip did not cache",
+                              "Free flash / re-download");
+            return NULL;
+        }
         uint32_t crc = cps1_crc32(addr, CPS1_ROMSET_CHIP_SIZE);
 
         bool dup = false;

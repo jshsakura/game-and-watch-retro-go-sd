@@ -44,9 +44,13 @@ uint8_t *store_file_region_in_flash(const char *file_path, uint32_t file_offset,
                                     uint32_t *file_size_p, bool byte_swap, file_progress_cb_t progress_cb);
 
 /* store_file_region_in_flash() with the "Caching game" progress bar, mirroring
- * odroid_overlay_cache_file_in_flash(). Defined in Core/Src/porting/odroid_overlay.c. */
+ * odroid_overlay_cache_file_in_flash(). batch_index/batch_count let a caller that
+ * caches many regions in a row (a .cps1 container's chips) show ONE bar that
+ * sweeps 0..100 across the whole batch instead of resetting per region. Pass
+ * (0, 1) for a standalone region. Defined in Core/Src/porting/odroid_overlay.c. */
 uint8_t *odroid_overlay_cache_file_region_in_flash(const char *file_path, uint32_t file_offset,
-                                                   uint32_t region_len, uint32_t *file_size_p);
+                                                   uint32_t region_len, uint32_t *file_size_p,
+                                                   unsigned batch_index, unsigned batch_count);
 
 /* As store_file_in_flash(), but relocate_cb (if non-NULL) gets a crack at the
  * data before it is programmed. On a cache hit nothing is written and the

@@ -1934,19 +1934,23 @@ uint8_t *odroid_overlay_cache_file_in_flash_relocate(const char *file_path, uint
 }
 
 uint8_t *odroid_overlay_cache_file_region_in_flash(const char *file_path, uint32_t file_offset,
-                                                   uint32_t region_len, uint32_t *file_size_p)
+                                                   uint32_t region_len, uint32_t *file_size_p,
+                                                   unsigned batch_index, unsigned batch_count)
 {
 #if SD_CARD == 0
-    (void)file_offset; (void)region_len;
+    (void)file_offset; (void)region_len; (void)batch_index; (void)batch_count;
     if (file_size_p)
         *file_size_p = 0;
     return NULL;   /* FrogFS build has no CPS-1 container path. */
 #else
+    unsigned bn = batch_count ? batch_count : 1;
     void progress_cb(uint32_t total_size, uint32_t total_processed, uint8_t progress)
     {
         if (lcd_is_swap_pending())
             return;
-        odroid_overlay_draw_progress_bar(curr_lang->s_Caching_Game, progress);
+        /* One bar across the whole batch: this region is [batch_index, +1) of bn. */
+        uint8_t overall = (uint8_t)(((uint32_t)batch_index * 100u + progress) / bn);
+        odroid_overlay_draw_progress_bar(curr_lang->s_Caching_Game, overall);
         lcd_swap();
     }
 
