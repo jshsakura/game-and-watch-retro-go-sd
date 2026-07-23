@@ -94,14 +94,22 @@ static uint32_t align_to_next_block(uint32_t pointer)
  * of through them. Everything else in the ring is a game nobody is playing, and
  * is overwritten as freely as before. Nothing to release: leaving a game reboots.
  */
-/* Was 8, chosen when PCE CD's three files were the busiest core in the tree.
- * A MAME romset is a different shape: CPS-1 caches two program chips plus
- * eight graphics chips plus its own XIP code blob, eleven addresses all held
- * at once, and the ninth of them would have gone unprotected -- the exact
- * shape of the Super Metroid bug this list exists to prevent, just with the
- * hole landing in a bitplane instead of an intro. Sixteen entries cost 64
- * bytes of .bss and are a capacity, not a per-core special case. */
-#define MAX_LIVE_FILES 16
+/* Was 8, chosen when PCE CD's three files were the busiest core in the tree,
+ * then 16 for "a MAME romset... eleven addresses all held at once" (one set's
+ * two program chips + eight graphics chips + the core's own XIP code blob).
+ * That arithmetic stopped covering CPS-1 the moment subfolder pooling shipped
+ * (afa5b8c6): a game folder holding a parent set beside its clone in separate
+ * subfolders -- exactly wof/ + wofj/, this project's own test pair, and the
+ * scenario pooling exists to support -- pools BOTH sets' chips into one boot.
+ * tools/cps1_romsets.json says the union is 16 distinct chips (4 shared, not
+ * duplicated on disk); +1 for the XIP blob is 17 live files in a single boot,
+ * one past the old cap of 16. tests/test_flash_alloc_cps1_pool.c reproduces
+ * the resulting silent corruption (RED against MAX_LIVE_FILES=16) and pins the
+ * fix. CPS1_MAX_FOLDER_CHIPS (cps1's own scanner cap) is 24, so the worst case
+ * the scanner can present is 25; this is sized for that plus a bit of the same
+ * margin the 8->16 jump gave PCE CD. Cost is 8 bytes of .bss per entry -- a
+ * capacity, not a per-core special case, same as before. */
+#define MAX_LIVE_FILES 28
 
 static uint32_t get_extflash_base(void);
 

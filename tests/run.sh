@@ -510,6 +510,36 @@ fi
 
 ( cd "$FA_DIR" && ./test_flash_alloc ) || fail test_flash_alloc
 
+# CPS-1's OWN real shape (wof + wofj pooled, tools/cps1_romsets.json says 16
+# distinct chips + the XIP blob = 17) exceeded MAX_LIVE_FILES=16 the moment
+# subfolder pooling shipped -- one boot, no reboot in between, same disease as
+# the ROM/blob test above but sized to CPS-1's actual numbers instead of two.
+echo "=== flash cache: CPS-1's real wof+wofj pool (17 live files) must fit MAX_LIVE_FILES ==="
+FAC_DIR=/tmp/mtest/flash_alloc_cps1
+rm -rf "$FAC_DIR"; mkdir -p "$FAC_DIR/saves"
+FAC_PREFIX_REV=4ddbe382        # MAX_LIVE_FILES=16, before the cps1-shaped bump
+
+$CC -O1 -g -std=gnu11 -w $SAN -Itests/flash_alloc_stubs -ICore/Inc \
+    tests/test_flash_alloc_cps1_pool.c tests/flash_alloc_stubs/flash_stubs.c \
+    Core/Src/gw_flash_alloc.c -o "$FAC_DIR/test_flash_alloc_cps1_pool" || rc=1
+
+if git cat-file -e "$FAC_PREFIX_REV:Core/Src/gw_flash_alloc.c" 2>/dev/null; then
+    git show "$FAC_PREFIX_REV:Core/Src/gw_flash_alloc.c" > "$FAC_DIR/prefix.c"
+    $CC -O1 -g -std=gnu11 -w $SAN -Itests/flash_alloc_stubs -ICore/Inc \
+        tests/test_flash_alloc_cps1_pool.c tests/flash_alloc_stubs/flash_stubs.c \
+        "$FAC_DIR/prefix.c" -o "$FAC_DIR/test_prefix" || rc=1
+    if ( cd "$FAC_DIR" && ./test_prefix > /dev/null 2>&1 ); then
+        echo "FAIL MAX_LIVE_FILES=16 passed this - it cannot see the bug it is for"
+        rc=1
+    else
+        echo "OK  MAX_LIVE_FILES=16 fails it: the 17th (unprotected) file gets corrupted"
+    fi
+else
+    echo "SKIP no $FAC_PREFIX_REV in this clone (shallow?) - RED check not run"
+fi
+
+( cd "$FAC_DIR" && ./test_flash_alloc_cps1_pool ) || rc=1
+
 echo "=== sm: device source set is symbol-complete ==="
 # tests/test_sm_skip_guard.sh re-runs everything from the marker above to EOF as
 # a standalone script, so the reporting helpers must also exist in that slice.
