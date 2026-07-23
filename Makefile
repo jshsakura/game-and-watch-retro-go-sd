@@ -146,6 +146,25 @@ endif
 ifeq ($(SNES_NSPC_HLE)$(RCSMW),11)
   $(error SNES_NSPC_HLE=1 requires RCSMW=0: untested combination, rc replaces the interpreter the generic wire's fallback depends on)
 endif
+
+# Experimental Cortex-M7 Thumb-2 65816 execution engine. Default OFF: the
+# release build is byte/behavior identical to a tree without it -- no .S is
+# compiled, no -DSNES_THUMB2_CPU reaches any source, and cpu_runOpcode is the
+# sole C interpreter entry point. Enable with SNES_THUMB2_CPU=1 to compile the
+# Thumb-2 engine objects (snes_thumb2.S is currently a build-path probe that is
+# unreferenced and therefore GC'd -- it proves the .S rule + offset header, not
+# active dispatch), compile the offset-check TU, and expose the C interpreter
+# as cpu_runOpcode_c (cpu.c) with cpu_runOpcode() becoming a Stage-0 C
+# passthrough dispatcher (behavior-identical to the flag-off build). Stage 1
+# replaces that dispatcher with per-opcode dispatch into live assembly.
+# See docs/SNES_THUMB2_PORT_HANDOFF.md (Stage 0 guardrails).
+SNES_THUMB2_CPU ?= 0
+SNES_ASM_SOURCES =
+ifeq ($(SNES_THUMB2_CPU),1)
+  C_DEFS += -DSNES_THUMB2_CPU
+  SNES_ASM_SOURCES += $(CORE_SNES)/src/snes/thumb2/snes_thumb2.S
+endif
+
 ifeq ($(RCSMW),1)
   RCSMW_C_SOURCES = Core/Src/porting/snes/rc_smw_sites.c
   RCSMW_C_INCLUDES = -Igenerated/rc_smw -I$(CORE_SNES)/src/snes
@@ -761,6 +780,13 @@ Core/Src/porting/snes/main_snes.c
 # the same 0720 lesson) as Core/Src/porting/md32x/md32x_profile.c.
 ifeq ($(SNES_DEVICE_PROFILE),1)
 SNES_C_SOURCES += Core/Src/porting/snes/snes_profile.c
+endif
+
+# Append the Thumb-2 offset-check TU AFTER the SNES_C_SOURCES = / += body
+# above: an earlier placement would be clobbered by the main `=` reset. The .S
+# lives in SNES_ASM_SOURCES (set near the flag) which has no reset.
+ifeq ($(SNES_THUMB2_CPU),1)
+SNES_C_SOURCES += $(CORE_SNES)/src/snes/thumb2/cpu_thumb2_offsets_check.c
 endif
 
 MD_C_SOURCES =

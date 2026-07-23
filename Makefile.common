@@ -898,7 +898,8 @@ SMW_OBJECTS = $(addprefix $(BUILD_DIR)/smw/,$(notdir $(SMW_C_SOURCES:.c=.o)))
 # Generic SNES core: SD-card only for the same reasons as SM/GBA (the cart is
 # flash-cached from SD at runtime; a FrogFS build has no path to feed it).
 ifeq ($(SD_CARD),1)
-SNES_OBJECTS = $(addprefix $(BUILD_DIR)/snes/,$(notdir $(SNES_C_SOURCES:.c=.o)))
+SNES_OBJECTS = $(addprefix $(BUILD_DIR)/snes/,$(notdir $(SNES_C_SOURCES:.c=.o))) \
+               $(addprefix $(BUILD_DIR)/snes/,$(notdir $(SNES_ASM_SOURCES:.S=.o)))
 else
 SNES_OBJECTS =
 endif
@@ -1571,6 +1572,25 @@ $(BUILD_DIR)/snes/nspc_wire.o: tools/nspc_audio_wire/nspc_wire.c Makefile.common
 endif
 
 $(eval $(foreach obj,$(filter-out $(SNES_HLE_COEXIST_FILES),$(SNES_C_SOURCES)),$(call snes_obj_prereq_gen,$(obj))))
+
+# ------------------------------------------------------------- SNES Thumb-2 .S
+# Thumb-2 65816 engine assembly objects. Mirrors gba_asm_obj_prereq_gen but
+# routes through snes/ and applies snes_redefines so engine symbols namespace
+# to gsnes__* alongside the rest of the overlay. Capital .S runs the C
+# preprocessor, so #include "cpu_thumb2_offsets.h" (and later cpu.h) resolve
+# via SNES_C_INCLUDES and the source-local quoted search path. SNES_ASM_SOURCES
+# is empty when SNES_THUMB2_CPU=0, so this loop emits no rules for a flag-off
+# (byte-identical) build.
+define snes_asm_obj_prereq_gen
+$$(BUILD_DIR)/snes/$(patsubst %.S,%.o,$(notdir $1)): $1 Makefile.common Makefile $(FLAGS_STAMP) snes_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
+	$$(V)$$(ECHO) [ AS snes ] $$(notdir $$<)
+	$$(V)$$(CC) -c $$(ASFLAGS) $$(SNES_C_INCLUDES) $$< -o $$@
+	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
+
+endef
+# note: the blank line above is intentional
+
+$(eval $(foreach obj,$(SNES_ASM_SOURCES),$(call snes_asm_obj_prereq_gen,$(obj))))
 
 # ------------------------------------------------------------- rc SMW ITCM sites
 # SMW per-ROM static recompilation: the 270 hottest native site functions,
