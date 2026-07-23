@@ -44,6 +44,7 @@
 #include <string.h>
 
 #include "appid.h"
+#include "main.h"              /* hrtc — the crash breadcrumb lives in a backup reg */
 #include "odroid_system.h"
 #include "common.h"
 #include "gw_lcd.h"
@@ -286,6 +287,65 @@ static void cps1_relocate_xip(uint8_t *buffer, uint32_t length, uint32_t offset_
     int32_t offset = (int32_t)((uint32_t)file_address - CPS1_CODE_BASE);
     cps1_patch_sentinels((uint32_t *)buffer, (uint32_t *)(buffer + (length & ~3u)),
                           offset, file_size);
+}
+
+/* ------------------------------------------------------ crash breadcrumb ---
+ *
+ * CPS-1 dies on hardware before it can draw a fault screen: a hardfault does
+ * not unwind to cps1_fatal(), and printf() goes down a UART nobody has, so
+ * "CPS-1 dies immediately" has stayed a symptom instead of a diagnosis. Same
+ * disease Sega CD had, same cure (main_segacd.c): stamp the last stage reached
+ * into an RTC backup register, which a chip reset cannot erase, and report it
+ * on the NEXT launch.
+ *
+ * DR26 is free and distinct from every register already in use: DR0 OFW-boot,
+ * DR1 alarm epoch, DR27 the Sega CD breadcrumb, DR28 boot-rescue, DR29 the
+ * clock snapshot (rg_rtc.c), DR30 the charger. Only one core runs at a time so
+ * DR26/DR27 never clash, but keeping them separate means a Sega CD run cannot
+ * masquerade as a CPS-1 one. */
+#define CPS1_BKP_REG      RTC_BKP_DR26
+#define CPS1_CP_MAGIC     0xC9500000u
+#define CPS1_CP_MASK      0xFFFF0000u
+#define CPS1_CP_FRAMED    0x8000u          /* low bits are a frame count */
+#define CPS1_CP_ALIVE_FRAMES 180u          /* ~3 s at 60 fps: it ran, player left */
+
+enum {
+    CPS1_CP_NONE = 0, CPS1_CP_ENTER, CPS1_CP_XIP, CPS1_CP_ROMS, CPS1_CP_RESET,
+    CPS1_CP_DONE = 0x7FFF
+};
+
+static const char *cps1_cp_name(uint32_t cp)
+{
+    if (cp & CPS1_CP_FRAMED) return "inside the frame loop (render/run)";
+    switch (cp) {
+        case CPS1_CP_ENTER: return "entry, before caching the core";
+        case CPS1_CP_XIP:   return "caching cps1.xip into flash";
+        case CPS1_CP_ROMS:  return "loading the ROM folder";
+        case CPS1_CP_RESET: return "cps1_machine_reset";
+        default:            return "unknown stage";
+    }
+}
+
+static void cps1_cp(uint32_t cp)
+{
+    HAL_RTCEx_BKUPWrite(&hrtc, CPS1_BKP_REG, CPS1_CP_MAGIC | (cp & 0xFFFFu));
+}
+
+/* Whatever the PREVIOUS run reached, or CPS1_CP_NONE if there's nothing to
+ * report. A stage before the loop is always a fault (CPS-1 has never reached
+ * the loop on hardware); a frame checkpoint is a fault only if it died almost
+ * at once — nobody plays for three seconds by accident, and a clean exit
+ * through the menu leaves a high frame count that this treats as "it ran". */
+static uint32_t cps1_cp_previous(void)
+{
+    uint32_t v = HAL_RTCEx_BKUPRead(&hrtc, CPS1_BKP_REG);
+    if ((v & CPS1_CP_MASK) != CPS1_CP_MAGIC) return CPS1_CP_NONE;
+    uint32_t cp = v & 0xFFFFu;
+    if (cp == CPS1_CP_DONE) return CPS1_CP_NONE;
+    if ((cp & CPS1_CP_FRAMED) &&
+        (cp & ~CPS1_CP_FRAMED) >= CPS1_CP_ALIVE_FRAMES)
+        return CPS1_CP_NONE;
+    return cp;
 }
 
 /* Every failure below used to printf() and return, and printf() on this console
@@ -785,7 +845,25 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_init(APPID_CPS1, CPS1_SAMPLE_RATE);
     odroid_system_emu_init(NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
+    /* Report where the LAST run stopped before overwriting the record. A
+     * hardfault or watchdog reset takes the chip down without unwinding, so
+     * this breadcrumb is the only witness that survives it. */
+    {
+        uint32_t prev = cps1_cp_previous();
+        if (prev != CPS1_CP_NONE) {
+            char detail[48];
+            if (prev & CPS1_CP_FRAMED)
+                snprintf(detail, sizeof(detail), "died after %lu frames",
+                         (unsigned long)(prev & ~CPS1_CP_FRAMED));
+            else
+                snprintf(detail, sizeof(detail), "never past this stage");
+            cps1_fatal("CPS-1 stopped last run", cps1_cp_name(prev), detail);
+        }
+    }
+    cps1_cp(CPS1_CP_ENTER);
+
     /* Musashi lives in XIP flash; nothing below can call it until this runs. */
+    cps1_cp(CPS1_CP_XIP);
     if (!cps1_cache_xip_to_flash())
         return;
 
@@ -801,12 +879,20 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     }
     /* Each failure inside the loader puts its own screen up (including the
      * deliberate silent case: dismissing the version picker is not an error). */
+    cps1_cp(CPS1_CP_ROMS);
     if (cps1_load_folder_roms(ACTIVE_FILE->path) == NULL)
         return;
 
+    cps1_cp(CPS1_CP_RESET);
     cps1_machine_reset(s_prg_lo, s_prg_hi);
 
+    uint32_t frame = 0;
     while (true) {
+        /* Stamp the frame count so a death in the loop is distinguishable from
+         * one before it, and an early crash (frame 0-1, the first render) from
+         * a core that actually ran. Cheap: one backup-register write. */
+        cps1_cp(CPS1_CP_FRAMED | (frame & 0x7FFFu));
+        if (frame != 0x7FFFu) frame++;
         wdog_refresh();
 
         bool drawFrame = common_emu_frame_loop();
