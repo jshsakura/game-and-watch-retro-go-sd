@@ -188,13 +188,17 @@ static void randomize_cpu(Cpu* c) {
 }
 
 /* ---- opcode sets ---- *
- * Every no-operand, bus-side-effect-free opcode snes_thumb2_try claims. */
+ * Opcodes snes_thumb2_try claims. Stage 2 covered the no-operand,
+ * bus-side-effect-free set; Stage 3A added the 4 accumulator shifts (no bus
+ * access); Stage 3B added the 9 relative branches (one raw operand fetch, no
+ * data-bus write). The main randomized sweep iterates this whole set. */
 static const uint8_t supported_opcodes[] = {
     0x18,0x38,0x58,0x78,0xb8,0xd8,0xf8,0xea, /* CLC SEC CLI SEI CLV CLD SED NOP */
     0x9a,0x1b,0x5b,0x7b,0x3b,                 /* TXS TCS TCD TDC TSC             */
     0x8a,0x98,0xaa,0xa8,0xba,0x9b,0xbb,       /* TXA TYA TAX TAY TSX TXY TYX     */
     0x1a,0x3a,0xe8,0xca,0xc8,0x88,0xeb,       /* INA DEA INX DEX INY DEY XBA     */
-    0x0a,0x4a,0x2a,0x6a                       /* ASL A LSR A ROL A ROR A         */
+    0x0a,0x4a,0x2a,0x6a,                      /* ASL A LSR A ROL A ROR A         */
+    0x10,0x30,0x50,0x70,0x80,0x90,0xb0,0xd0,0xf0 /* BPL BMI BVC BVS BRA BCC BCS BNE BEQ */
 };
 #define SUPPORTED_COUNT (int)(sizeof(supported_opcodes)/sizeof(supported_opcodes[0]))
 
@@ -472,6 +476,93 @@ static int run_case_shift(uint8_t oc, uint16_t a_val, uint8_t c_in,
     return 0;
 }
 
+/* ---- relative-branch differential (Stage 3B) ---- *
+ * BPL/BMI/BVC/BVS/BRA/BCC/BCS/BNE/BEQ read one operand byte at pc (uint16 wrap
+ * into the next page), sign-extend it, and on a taken branch add it to pc and
+ * charge a taken-cycle (BRA is always taken but charges NO extra cycle). The
+ * opcode is forced at (k<<16)|pc_in; the operand is seeded in the bus wmap at
+ * the FULL 24-bit address ((k<<16)|(uint16)(pc_in+1)) so a random k still
+ * overrides (only low-16 matching would miss when k!=0). All four flags are set
+ * explicitly so every opcode's condition is deterministic. pc_in spans the wrap
+ * edges: 0xffff (opcode at K:FFFF, operand at K:0000), 0xfffe, 0x0000, 0x0100.
+ * cpu_eq checks pc/cyclesUsed/flags; bus_eq the opcode+operand reads. */
+static int run_case_branch(uint8_t oc, uint8_t z, uint8_t n, uint8_t v,
+                           uint8_t c, int8_t offset, uint16_t pc_in,
+                           bool mf, bool xf, bool e) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.z = z ? 1 : 0; base.n = n ? 1 : 0; base.v = v ? 1 : 0; base.c = c ? 1 : 0;
+    base.pc = pc_in;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    uint32_t forced_addr = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t operand_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
+    uint32_t seed = prng();
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
+    g_busA.wmap[0].addr = operand_addr; g_busA.wmap[0].val = (uint8_t)offset;
+    g_busA.wmap_len = 1;
+    g_busB.wmap[0].addr = operand_addr; g_busB.wmap[0].val = (uint8_t)offset;
+    g_busB.wmap_len = 1;
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    cpu_runOpcode_c(&cpuA);
+    cpu_runOpcode(&cpuB);
+
+    /* Independent trace-shape assertion (stronger than bus_eq): both sides
+     * must show EXACTLY two READS (no writes), at forced_addr (value=opcode)
+     * then operand_addr (value=offset byte). Catches any handler that does an
+     * extra/missing fetch or any write. Reported separately from cpu/bus eq. */
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        const char *tag = side ? "thumb2" : "oracle";
+        if (b->trace_len != 2 || b->overflow ||
+            b->trace[0].is_write || b->trace[1].is_write ||
+            b->trace[0].addr != forced_addr || b->trace[0].val != oc ||
+            b->trace[1].addr != operand_addr || b->trace[1].val != (uint8_t)offset) {
+            printf("\nTRACE-SHAPE VIOLATION [branch op=%02x %s] z=%d n=%d v=%d c=%d"
+                   " off=%d pc=%04x mf=%d xf=%d e=%d  len=%d ovf=%d\n",
+                   oc, tag, z, n, v, c, offset, pc_in, mf, xf, e,
+                   b->trace_len, b->overflow);
+            for (int i = 0; i < b->trace_len && i < 8; i++)
+                printf("  [%d] %06x %02x %s\n", i, b->trace[i].addr,
+                       b->trace[i].val, b->trace[i].is_write ? "W" : "R");
+            return 1;
+        }
+    }
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB)) {
+        printf("\nMISMATCH [branch op=%02x] z=%d n=%d v=%d c=%d off=%d pc=%04x"
+               " mf=%d xf=%d e=%d\n",
+               oc, z, n, v, c, offset, pc_in, mf, xf, e);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  busA len=%d ovf=%d  busB len=%d ovf=%d\n",
+               g_busA.trace_len, g_busA.overflow,
+               g_busB.trace_len, g_busB.overflow);
+        int nn = g_busA.trace_len < g_busB.trace_len
+               ? g_busA.trace_len : g_busB.trace_len;
+        for (int i = 0; i < nn; i++) {
+            if (g_busA.trace[i].addr != g_busB.trace[i].addr ||
+                g_busA.trace[i].val  != g_busB.trace[i].val  ||
+                g_busA.trace[i].is_write != g_busB.trace[i].is_write) {
+                printf("  trace[%d]: A(%06x,%02x,%d) B(%06x,%02x,%d)\n", i,
+                       g_busA.trace[i].addr, g_busA.trace[i].val, g_busA.trace[i].is_write,
+                       g_busB.trace[i].addr, g_busB.trace[i].val, g_busB.trace[i].is_write);
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     printf("=== SNES Thumb-2 differential harness ===\n");
 
@@ -584,6 +675,49 @@ int main(void) {
             }
         }
         printf("(shift boundary: %d cases)\n", run);
+    }
+
+    /* ---- relative-branch sweep (Stage 3B native) ---- *
+     * For each CONDITIONAL opcode (8 of 9) enumerate ALL 16 distinct z/n/v/c
+     * flag patterns so every condition bit is exercised independently (the
+     * earlier matrix only flipped all 4 flags together via a redundant s loop,
+     * collapsing to 2 patterns). BRA (0x80) is unconditional -> one pattern.
+     * Each flag pattern x 7 boundary offsets {0,+/-1,+/-2,+127,-128} x 4
+     * pc-wrap edges {0xffff (opcode K:FFFF, operand K:0000),0xfffe,0x0000,
+     * 0x0100} x 2 width combos. Branches are width-independent; (0,0,0) is the
+     * correctness case, (1,1,1) a width-independence sentinel.
+     * Unique count: 8x16x7x4x2 + 1x1x7x4x2 = 7168 + 56 = 7224. */
+    {
+        static const uint8_t branch_ops[9] = {
+            0x10, 0x30, 0x50, 0x70, 0x80, 0x90, 0xb0, 0xd0, 0xf0
+        };
+        static const int8_t offsets[7] = { 0, 1, -1, 2, -2, 127, -128 };
+        static const uint16_t pc_ins[4] = { 0xffff, 0xfffe, 0x0000, 0x0100 };
+        int run = 0;
+        for (int oi = 0; oi < 9; oi++) {
+            uint8_t op = branch_ops[oi];
+            int npat = (op == 0x80) ? 1 : 16;   /* BRA unconditional */
+            for (int p = 0; p < npat; p++) {
+                uint8_t z = (uint8_t)(p & 1);
+                uint8_t n = (uint8_t)((p >> 1) & 1);
+                uint8_t v = (uint8_t)((p >> 2) & 1);
+                uint8_t c = (uint8_t)((p >> 3) & 1);
+                for (int oi2 = 0; oi2 < 7; oi2++) {
+                    for (int pi = 0; pi < 4; pi++) {
+                        total++;
+                        failures += run_case_branch(op, z, n, v, c,
+                                                    offsets[oi2], pc_ins[pi],
+                                                    0, 0, 0);
+                        total++;
+                        failures += run_case_branch(op, z, n, v, c,
+                                                    offsets[oi2], pc_ins[pi],
+                                                    1, 1, 1);
+                        run += 2;
+                    }
+                }
+            }
+        }
+        printf("(branch boundary: %d cases)\n", run);
     }
 
     printf("\n=== Results: %d/%d passed, %d failed ===\n",
