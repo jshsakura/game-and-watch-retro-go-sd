@@ -771,10 +771,17 @@ static bool cd_collapse_game_dir(retro_emulator_t *emu, const char *path)
 
     bool found = false;
 
-    /* Folder-rom systems (CPS-1): the entry is the directory, not a file
-     * inside it. Accept as soon as the folder holds at least one regular
-     * file, so an empty or half-copied romset still lists as a navigable
-     * folder instead of a launchable game that would fail at load. */
+    /* Folder-rom systems (CPS-1): the game FOLDER is the launchable entry, not
+     * a file inside it. Two layouts load, and the loader handles both
+     * (cps1_load_folder_roms): chips loose in the folder, OR one subfolder per
+     * romset -- "Warriors of Fate/wof" and "/wofj" -- which it pools and asks
+     * between (cps1_ask_which_set). So accept as soon as the folder holds ANY
+     * non-hidden entry, a regular file OR a subdirectory. Skipping
+     * subdirectories here (the old `|| AM_DIR`) made the subfolder-per-set
+     * layout -- the one people actually unzip -- list as a folder to descend
+     * into and showed "<game>/<set>" instead of the game as one launchable
+     * entry. An empty folder still holds nothing and falls through to a
+     * navigable folder row. */
     if (emulator_is_folder_rom_system(emu))
     {
         while (true)
@@ -782,7 +789,7 @@ static bool cd_collapse_game_dir(retro_emulator_t *emu, const char *path)
             wdog_refresh();
             if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == 0)
                 break;
-            if (fno.fname[0] == '.' || (fno.fattrib & AM_DIR))
+            if (fno.fname[0] == '.')
                 continue;
             const char *leaf = strrchr(path, '/');
             leaf = leaf ? leaf + 1 : path;
