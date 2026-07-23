@@ -1933,6 +1933,27 @@ uint8_t *odroid_overlay_cache_file_in_flash_relocate(const char *file_path, uint
 #endif
 }
 
+uint8_t *odroid_overlay_cache_file_region_in_flash(const char *file_path, uint32_t file_offset,
+                                                   uint32_t region_len, uint32_t *file_size_p)
+{
+#if SD_CARD == 0
+    (void)file_offset; (void)region_len;
+    if (file_size_p)
+        *file_size_p = 0;
+    return NULL;   /* FrogFS build has no CPS-1 container path. */
+#else
+    void progress_cb(uint32_t total_size, uint32_t total_processed, uint8_t progress)
+    {
+        if (lcd_is_swap_pending())
+            return;
+        odroid_overlay_draw_progress_bar(curr_lang->s_Caching_Game, progress);
+        lcd_swap();
+    }
+
+    return store_file_region_in_flash(file_path, file_offset, region_len, file_size_p, false, progress_cb);
+#endif
+}
+
 size_t odroid_overlay_cache_file_in_ram(const char *file_path, uint8_t *dest_address)
 {
     return odroid_overlay_cache_file_in_ram_with_offset(file_path, dest_address, 0);

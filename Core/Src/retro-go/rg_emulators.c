@@ -685,19 +685,19 @@ static const char *get_extension(const char *filename) {
 static bool emulator_is_cd_system(const retro_emulator_t *emu)
 {
     return strcmp(emu->dirname, "pcecd") == 0 ||
-           strcmp(emu->dirname, "segacd") == 0 ||
-           /* CPS-1 has the same layout for a different reason: a game is a
-            * MAME romset, i.e. a folder of chip dumps, so the only thing under
-            * /roms/cps1/ is the game FOLDER. It has no .cue-equivalent index
-            * file -- deliberately, since inventing one is what the retired
-            * .cps1 container did -- so it collapses on the folder itself. */
-           strcmp(emu->dirname, "cps1") == 0;
+           strcmp(emu->dirname, "segacd") == 0;
+    /* CPS-1 used to be here (its game was a folder of chip dumps) but now ships
+     * as a single .cps1 container file, so it lists and launches through the
+     * flat scandir like any other file-ROM system -- no CD-style folder scan. */
 }
 
-/* True for systems whose game folder IS the entry (no index file inside). */
+/* True for systems whose game folder IS the entry (no index file inside).
+ * None at present: CPS-1, the last such system, moved to a .cps1 file. Kept as
+ * the seam a future folder-rom system would register through. */
 static bool emulator_is_folder_rom_system(const retro_emulator_t *emu)
 {
-    return strcmp(emu->dirname, "cps1") == 0;
+    (void)emu;
+    return false;
 }
 
 /* Case-insensitive ".cue" — avoid snprintf/strtolower/strstr on every SD entry. */
@@ -1946,18 +1946,13 @@ void emulators_init()
     /* Atari Lynx (Handy core): ROM (.lnx/.lyx) loads from flash; no BIOS needed (HLE). */
     add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
     add_emulator("Colecovision", "col", "col lzma", RG_LOGO_PAD_COL, RG_LOGO_HEADER_COL, NO_GAME_DATA);
-    /* CPS-1: a game is a MAME romset extracted into its own folder under
-     * /roms/cps1/, so the browser matches the FOLDER, not a single file --
-     * same shape as Sega CD and PC Engine CD. SD builds only. */
+    /* CPS-1: a game is one uncompressed .cps1 container -- the raw concat of the
+     * romset's distinct 512 KB chips, pre-built by the library (game-and-what).
+     * One file, listed and launched like any ROM (main_cps1 splits it into chips
+     * by CRC). This replaced the folder-of-chips layout: a .zip can't be read
+     * (no inflate on device) and a folder cost one fopen per chip. SD only. */
 #if SD_CARD == 1
-    /* No extension filter: the entry is the game FOLDER (see
-     * emulator_is_folder_rom_system). "zip" was wrong here -- the device has
-     * no inflate, and every MAME romset zip is DEFLATE (verified: 29/29
-     * entries across wof.zip and wofj.zip), so a .zip could be listed but
-     * never read. Extract the romset into its folder instead. */
-#if SD_CARD == 1
-    add_emulator("CPS-1", "cps1", "", RG_LOGO_PAD_CPS1, RG_LOGO_HEADER_CPS1, NO_GAME_DATA);
-#endif
+    add_emulator("CPS-1", "cps1", "cps1", RG_LOGO_PAD_CPS1, RG_LOGO_HEADER_CPS1, NO_GAME_DATA);
 #endif
     add_emulator("Commodore 64", "c64", "d64 prg", RG_LOGO_PAD_C64, RG_LOGO_HEADER_C64, NO_GAME_DATA);
     add_emulator("Game & Watch", "gw", "gw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);

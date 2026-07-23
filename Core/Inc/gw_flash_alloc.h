@@ -35,6 +35,19 @@ void flash_alloc_reset();
 void flash_alloc_forget_live_files(void);
 uint8_t *store_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap, file_progress_cb_t progress_cb);
 
+/* Cache exactly region_len bytes starting at file_offset within file_path, as a
+ * cache entry distinct from other regions of the same file. This is how a single
+ * uncompressed container (a .cps1 pack of 512 KB CPS-1 chips) is loaded a chip at
+ * a time: one fopen per game, no folder of loose files, no per-chip descriptor
+ * churn. *file_size_p returns the cached length (== region_len). */
+uint8_t *store_file_region_in_flash(const char *file_path, uint32_t file_offset, uint32_t region_len,
+                                    uint32_t *file_size_p, bool byte_swap, file_progress_cb_t progress_cb);
+
+/* store_file_region_in_flash() with the "Caching game" progress bar, mirroring
+ * odroid_overlay_cache_file_in_flash(). Defined in Core/Src/porting/odroid_overlay.c. */
+uint8_t *odroid_overlay_cache_file_region_in_flash(const char *file_path, uint32_t file_offset,
+                                                   uint32_t region_len, uint32_t *file_size_p);
+
 /* As store_file_in_flash(), but relocate_cb (if non-NULL) gets a crack at the
  * data before it is programmed. On a cache hit nothing is written and the
  * callback does not run — the copy in flash was already relocated, to the same

@@ -68,6 +68,17 @@ static uint32_t compute_file_crc32(const char *file_path)
     return 0;
 }
 
+/* As compute_file_crc32(), but folds a byte offset into the key so that two
+ * regions of the SAME file -- a .cps1 container's successive 512 KB chips --
+ * get distinct cache identities instead of colliding on one path+mtime. */
+static uint32_t compute_file_crc32_off(const char *file_path, uint32_t file_offset)
+{
+    uint32_t crc = compute_file_crc32(file_path);
+    if (file_offset != 0)
+        crc = crc32_le(crc, (const uint8_t *)&file_offset, sizeof(file_offset));
+    return crc;
+}
+
 static uint32_t align_to_next_block(uint32_t pointer)
 {
     uint32_t block_size = OSPI_GetSmallestEraseSize(); // Typically 4KB
@@ -329,6 +340,7 @@ static void invalidate_overwritten_files(uint32_t flash_address, uint32_t data_s
 }
 
 static bool circular_flash_write(const char *file_path,
+                                 uint32_t file_offset,
                                  uint32_t *data_size,
                                  uint32_t *flash_address_out,
                                  bool byte_swap,
@@ -343,10 +355,17 @@ static bool circular_flash_write(const char *file_path,
     if (!file)
         return false;
 
+    /* file_offset lets one container file (e.g. a .cps1 pack of 512 KB chips)
+     * be cached a region at a time. *data_size==0 means "to end of file from
+     * the offset"; a nonzero value is an exact region length. */
     if (*data_size == 0) {
         fseek(file, 0, SEEK_END);
-        *data_size = ftell(file);
-        fseek(file, 0, SEEK_SET);
+        long fend = ftell(file);
+        *data_size = (fend > (long)file_offset) ? (uint32_t)(fend - (long)file_offset) : 0;
+    }
+    if (*data_size == 0 || fseek(file, (long)file_offset, SEEK_SET) != 0) {
+        fclose(file);
+        return false;
     }
 
     if (progress_cb) {
@@ -480,14 +499,15 @@ uint8_t *store_file_in_flash(const char *file_path, uint32_t *file_size_p, bool 
     return store_file_in_flash_relocate(file_path, file_size_p, byte_swap, progress_cb, NULL);
 }
 
-uint8_t *store_file_in_flash_relocate(const char *file_path, uint32_t *file_size_p, bool byte_swap,
-                                      file_progress_cb_t progress_cb, flash_relocate_cb_t relocate_cb)
+static uint8_t *store_region(const char *file_path, uint32_t file_offset, uint32_t *file_size_p,
+                             bool byte_swap, file_progress_cb_t progress_cb,
+                             flash_relocate_cb_t relocate_cb)
 {
     initialize_metadata();
     initialize_flash_pointer();
     // TODO : append file modification time to filepath for crc32
     // to handle case where rom file in sd card has been modified
-    uint32_t file_crc32 = compute_file_crc32(file_path);
+    uint32_t file_crc32 = compute_file_crc32_off(file_path, file_offset);
     uint32_t flash_address;
 
     if (is_file_in_flash(file_crc32, &flash_address, file_size_p))
@@ -500,7 +520,7 @@ uint8_t *store_file_in_flash_relocate(const char *file_path, uint32_t *file_size
         return (uint8_t *)flash_address;
     }
 
-    if (!circular_flash_write(file_path, file_size_p, &flash_address, byte_swap, progress_cb, relocate_cb))
+    if (!circular_flash_write(file_path, file_offset, file_size_p, &flash_address, byte_swap, progress_cb, relocate_cb))
     {
         free(metadata);
         metadata = NULL;
@@ -539,4 +559,19 @@ uint8_t *store_file_in_flash_relocate(const char *file_path, uint32_t *file_size
     free(metadata);
     metadata = NULL;
     return (uint8_t *)flash_address;
+}
+
+uint8_t *store_file_in_flash_relocate(const char *file_path, uint32_t *file_size_p, bool byte_swap,
+                                      file_progress_cb_t progress_cb, flash_relocate_cb_t relocate_cb)
+{
+    return store_region(file_path, 0, file_size_p, byte_swap, progress_cb, relocate_cb);
+}
+
+uint8_t *store_file_region_in_flash(const char *file_path, uint32_t file_offset, uint32_t region_len,
+                                    uint32_t *file_size_p, bool byte_swap, file_progress_cb_t progress_cb)
+{
+    /* Exact region length: circular_flash_write reads precisely region_len bytes
+     * from file_offset (0 would mean "to end of file"). */
+    *file_size_p = region_len;
+    return store_region(file_path, file_offset, file_size_p, byte_swap, progress_cb, NULL);
 }

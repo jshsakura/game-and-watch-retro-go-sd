@@ -42,6 +42,7 @@
  */
 #include <stdint.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "appid.h"
 #include "odroid_system.h"
@@ -549,17 +550,13 @@ static const cps1_romset_t *cps1_ask_which_set(const cps1_romset_t *const *sets,
     return sets[sel];
 }
 
-static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
+/* The chips are cached and hashed into s_chip_addr/s_chip_crc by now, however
+ * they arrived (loose folder, pooled subfolders, or a .cps1 container). From
+ * here the two paths are identical: pick the runnable set, ask if ambiguous,
+ * fetch anything missing from the shared pool, and bind chips to slots. `label`
+ * names the source in logs/errors; `hint` is the third error-screen line. */
+static const cps1_romset_t *cps1_resolve_and_attach(const char *label, const char *hint)
 {
-    s_chip_count = 0;
-
-    cps1_scan_chip_dir(dir_path);
-    /* Chips loose in the game folder are the simple case and stay the fast
-     * path; only reach for the subfolders when that did not produce a set. */
-    if (cps1_romset_match(s_chip_crc, s_chip_count, (int[CPS1_ROMSET_PRG_CHIPS]){0},
-                           (int[CPS1_ROMSET_GFX_CHIPS]){0}) == NULL)
-        cps1_scan_chip_subdirs(dir_path);
-
     int prg_index[CPS1_ROMSET_PRG_CHIPS], gfx_index[CPS1_ROMSET_GFX_CHIPS];
     const cps1_romset_t *set = NULL;
     {
@@ -572,7 +569,7 @@ static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
              * pick for the player: the unchosen one would be unplayable
              * forever, and "first in the generated table" is not an answer
              * anyone could predict or change. */
-            printf("cps1: %u runnable sets in %s, asking\n", n, dir_path);
+            printf("cps1: %u runnable sets in %s, asking\n", n, label);
             set = cps1_ask_which_set(runnable, n);
             if (set == NULL) {
                 printf("cps1: version dialog dismissed\n");
@@ -617,9 +614,8 @@ static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
                      CPS1_ROMSET_PRG_CHIPS + CPS1_ROMSET_GFX_CHIPS);
         else
             snprintf(line, sizeof(line), "%u chips found, no set matched", s_chip_count);
-        printf("cps1: incomplete romset in %s -- %s\n", dir_path, line);
-        draw_error_screen("Incomplete CPS-1 romset", line,
-                          "Put the parent set in a subfolder beside it");
+        printf("cps1: incomplete romset in %s -- %s\n", label, line);
+        draw_error_screen("Incomplete CPS-1 romset", line, hint);
         return NULL;
     }
 
@@ -649,6 +645,91 @@ static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
     printf("cps1: %s loaded, %u chips, SSP=%08lX PC=%08lX\n",
            set->name, s_chip_count, (unsigned long)ssp, (unsigned long)pc);
     return set;
+}
+
+static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
+{
+    s_chip_count = 0;
+
+    cps1_scan_chip_dir(dir_path);
+    /* Chips loose in the game folder are the simple case and stay the fast
+     * path; only reach for the subfolders when that did not produce a set. */
+    if (cps1_romset_match(s_chip_crc, s_chip_count, (int[CPS1_ROMSET_PRG_CHIPS]){0},
+                           (int[CPS1_ROMSET_GFX_CHIPS]){0}) == NULL)
+        cps1_scan_chip_subdirs(dir_path);
+
+    return cps1_resolve_and_attach(dir_path, "Put the parent set in a subfolder beside it");
+}
+
+/*
+ * A .cps1 container is the raw concatenation of a game's distinct 512 KB chips,
+ * uncompressed, no header: the whole game in one file. It is what the library
+ * ships (game-and-what pre-builds it at upload) and what the player drops on the
+ * card -- one file, like a .nes, instead of a folder of chip dumps.
+ *
+ * Loading it is the folder scan minus the directory walk: each 512 KB block is
+ * cached into flash as its own region (store_file_region_in_flash keys the cache
+ * on path+offset, so blocks do not collide), hashed, and recorded exactly as a
+ * loose chip would be. Chips bind to romset slots by CRC, never by position, so
+ * the order inside the container is irrelevant and no index is needed. One fopen
+ * for the whole game -- not one per chip -- so the 10-slot descriptor table is
+ * never a constraint the way a 20-file folder made it.
+ */
+static bool cps1_cache_one_block(const char *path, uint32_t offset)
+{
+    if (s_chip_count >= CPS1_MAX_FOLDER_CHIPS)
+        return false;
+
+    uint32_t size = 0;
+    const uint8_t *addr = odroid_overlay_cache_file_region_in_flash(path, offset,
+                                                                    CPS1_ROMSET_CHIP_SIZE, &size);
+    if (addr == NULL || size != CPS1_ROMSET_CHIP_SIZE) {
+        printf("cps1: block @%lu did not cache (size %lu)\n",
+               (unsigned long)offset, (unsigned long)size);
+        return false;
+    }
+
+    uint32_t crc = cps1_crc32(addr, size);
+    for (unsigned i = 0; i < s_chip_count; i++)
+        if (s_chip_crc[i] == crc)
+            return true;   /* a container should hold no duplicates, but be safe */
+
+    s_chip_addr[s_chip_count] = addr;
+    s_chip_crc[s_chip_count] = crc;
+    s_chip_count++;
+    return true;
+}
+
+static const cps1_romset_t *cps1_load_container_file(const char *file_path)
+{
+    s_chip_count = 0;
+
+    struct stat st;
+    if (stat(file_path, &st) != 0 || st.st_size < (long)CPS1_ROMSET_CHIP_SIZE ||
+        (st.st_size % CPS1_ROMSET_CHIP_SIZE) != 0) {
+        printf("cps1: %s is not a valid container (size %ld)\n",
+               file_path, (long)st.st_size);
+        draw_error_screen("Bad CPS-1 file", "Not a valid .cps1 container",
+                          "Re-download this game");
+        return NULL;
+    }
+
+    unsigned blocks = (unsigned)(st.st_size / CPS1_ROMSET_CHIP_SIZE);
+    for (unsigned b = 0; b < blocks && s_chip_count < CPS1_MAX_FOLDER_CHIPS; b++) {
+        wdog_refresh();
+        cps1_cache_one_block(file_path, b * CPS1_ROMSET_CHIP_SIZE);
+    }
+
+    return cps1_resolve_and_attach(file_path, "Re-download this game");
+}
+
+/* True when the launched entry is a single .cps1 container file rather than a
+ * game folder. The launcher lists both during the transition. */
+static bool cps1_path_is_container(const char *path)
+{
+    const char *dot = strrchr(path, '.');
+    return dot && ((dot[1] | 0x20) == 'c') && ((dot[2] | 0x20) == 'p')
+               && ((dot[3] | 0x20) == 's') && (dot[4] == '1') && (dot[5] == '\0');
 }
 
 /* --------------------------------------------------------------- init --- */
@@ -721,7 +802,14 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * own code. */
     ram_start = (uint32_t)&_OVERLAY_CPS1_BSS_END;
 
-    if (ACTIVE_FILE == NULL || cps1_load_folder_roms(ACTIVE_FILE->path) == NULL)
+    if (ACTIVE_FILE == NULL)
+        return;
+    /* A .cps1 file is the whole game in one container; a folder is the older
+     * loose-chip / subfolder layout. Both still load. */
+    const cps1_romset_t *set = cps1_path_is_container(ACTIVE_FILE->path)
+                                   ? cps1_load_container_file(ACTIVE_FILE->path)
+                                   : cps1_load_folder_roms(ACTIVE_FILE->path);
+    if (set == NULL)
         return;
 
     cps1_machine_reset(s_prg_lo, s_prg_hi);
