@@ -1504,6 +1504,11 @@ INCLUDE build/fceumm_mappers.ld
     __ram_emu_cps1_end__ = .;
     . = ALIGN(4);
     _OVERLAY_CPS1_BSS_END = .;
+    /* Every other overlay in this file asserts this; cps1 shipped without it
+     * (never caught because it has never overflowed) -- the exact class of
+     * silent-encroachment-on-the-next-region bug CLAUDE.md warns every other
+     * core's ASSERT guards against. */
+    ASSERT(ABSOLUTE(_OVERLAY_CPS1_BSS_END) < __RAM_EMU_END__, "Error: CPS1 BSS overflow");
   } >RAM_EMU
   _OVERLAY_CPS1_BSS_SIZE = SIZEOF(.overlay_cps1_bss);
 
