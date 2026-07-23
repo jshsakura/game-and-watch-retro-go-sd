@@ -27,6 +27,7 @@ void RtlApuLock(void) {}
 void RtlApuUnlock(void) {}
 void Die(const char *e) { fprintf(stderr, "DIE: %s\n", e); exit(1); }
 void Warning(const char *e) { fprintf(stderr, "WARN: %s\n", e); }
+void apu_run(Apu *apu, int c) { (void)apu; (void)c; }  /* device: apu==NULL, never called */
 void RtlDrawPpuFrame(uint8 *pb, size_t pitch, uint32 f) { (void)pb; (void)pitch; (void)f; }
 void Call(uint32 a) { (void)a; }
 void DebugGameOverMenu(void) {}
