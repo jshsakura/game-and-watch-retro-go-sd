@@ -294,6 +294,21 @@ static char rg_rom_list_parent_label[48];
 static const char *rom_entry_path_segment(const retro_emulator_file_t *f);
 static bool browse_subpath_is_safe(const char *s);
 
+/* A folder-rom system (CPS-1) has no extension on its entries -- the game is a
+ * FOLDER -- so the launcher's usual "ext == NULL means a folder to browse into"
+ * rule would make the game un-launchable (press A just navigates in, and
+ * emulator_start refuses ext==NULL). For these systems the folder IS the ROM:
+ * pressing A must LAUNCH it, and the loader (cps1_load_folder_roms) descends
+ * into whatever subfolders it has (wof/wofj) and runs a set. This says "treat
+ * this entry as a launchable ROM, not a folder to browse". */
+static bool system_is_folder_rom(const rom_system_t *sys)
+{
+    /* rom_system_t carries system_name ("CPS-1"), not dirname -- that field
+     * lives on retro_emulator_t. This is the launch-time struct, so key off
+     * the name it actually has. */
+    return sys && sys->system_name && strcmp(sys->system_name, "CPS-1") == 0;
+}
+
 static void build_rom_parent_label(const retro_emulator_t *emu)
 {
     char tmp[sizeof(emu->browse_subpath)];
@@ -535,7 +550,7 @@ static void event_handler(gui_event_t event, tab_t *tab)
             return;
         }
         retro_emulator_file_t *file = (retro_emulator_file_t *)sel_arg;
-        if (file->ext == NULL)
+        if (file->ext == NULL && !system_is_folder_rom(file->system))
         {
             if (emulator_browse_append(emu, rom_entry_path_segment(file)))
             {
@@ -1354,7 +1369,7 @@ void emulator_update_cheats_info(retro_emulator_file_t *file) {
 
 bool emulator_show_file_menu(retro_emulator_file_t *file)
 {
-    if (file->ext == NULL)
+    if (file->ext == NULL && !system_is_folder_rom(file->system))
         return false;
 
     int slot = -1;
@@ -1595,7 +1610,7 @@ static const emu_dispatch_t emu_pkmini  = { "/cores/pkmini.bin",  &_OVERLAY_PKMI
 
 void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_paused, int8_t save_slot)
 {
-    if (file->ext == NULL)
+    if (file->ext == NULL && !system_is_folder_rom(file->system))
         return;
 
     printf("Retro-Go: Starting game: %s\n", file->name);
