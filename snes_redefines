@@ -32,6 +32,7 @@ cpu_getFlags gsnes__cpu_getFlags
 cpu_init gsnes__cpu_init
 cpu_reset gsnes__cpu_reset
 cpu_runOpcode gsnes__cpu_runOpcode
+cpu_runOpcode_c gsnes__cpu_runOpcode_c
 cpu_saveload gsnes__cpu_saveload
 cpu_setFlags gsnes__cpu_setFlags
 dma_cycle gsnes__dma_cycle
@@ -90,6 +91,7 @@ ppu_write gsnes__ppu_write
 snes_catchupApu gsnes__snes_catchupApu
 snes_cpuRead gsnes__snes_cpuRead
 snes_cpuWrite gsnes__snes_cpuWrite
+snes_cycles_per_opcode gsnes__snes_cycles_per_opcode
 snes_frame_counter gsnes__snes_frame_counter
 snes_free gsnes__snes_free
 snes_handle_pos_stuff gsnes__snes_handle_pos_stuff
@@ -114,6 +116,9 @@ snes_reset gsnes__snes_reset
 snes_run_line gsnes__snes_run_line
 snes_saveload gsnes__snes_saveload
 snes_setSamples gsnes__snes_setSamples
+snes_thumb2_step gsnes__snes_thumb2_step
+snes_thumb2_try gsnes__snes_thumb2_try
+snes_thumb2_probe gsnes__snes_thumb2_probe
 snes_write gsnes__snes_write
 snes_writeBBus gsnes__snes_writeBBus
 spc_free gsnes__spc_free

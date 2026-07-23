@@ -151,12 +151,10 @@ endif
 # release build is byte/behavior identical to a tree without it -- no .S is
 # compiled, no -DSNES_THUMB2_CPU reaches any source, and cpu_runOpcode is the
 # sole C interpreter entry point. Enable with SNES_THUMB2_CPU=1 to compile the
-# Thumb-2 engine objects (snes_thumb2.S is currently a build-path probe that is
-# unreferenced and therefore GC'd -- it proves the .S rule + offset header, not
-# active dispatch), compile the offset-check TU, and expose the C interpreter
-# as cpu_runOpcode_c (cpu.c) with cpu_runOpcode() becoming a Stage-0 C
-# passthrough dispatcher (behavior-identical to the flag-off build). Stage 1
-# replaces that dispatcher with per-opcode dispatch into live assembly.
+# Thumb-2 engine object, compile the offset-check TU, and expose the C
+# interpreter as cpu_runOpcode_c. The public cpu_runOpcode() keeps the original
+# stop/WAI/interrupt/RC pre-work, then enters the assembly single-opcode
+# fetch/dispatch path; unsupported opcodes fall back on the already-fetched byte.
 # See docs/SNES_THUMB2_PORT_HANDOFF.md (Stage 0 guardrails).
 SNES_THUMB2_CPU ?= 0
 SNES_ASM_SOURCES =

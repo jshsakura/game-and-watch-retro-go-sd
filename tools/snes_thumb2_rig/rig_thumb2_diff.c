@@ -265,8 +265,168 @@ static int run_case(uint8_t oc, bool mf, bool xf, bool e,
     return 0;
 }
 
+/* ---- PC=0xffff wrap corner case ---- *
+ * Forces the opcode fetch at (k<<16)|0xffff so operand reads at pc+1, pc+2, ...
+ * wrap into 0x0000, 0x0001 ... within the bank (cpu_readOpcode increments the
+ * 16-bit pc). 0xea (NOP) is the supported representative (no operand read, so a
+ * divergence here would mean the dispatcher touched pc wrongly); 0xa9 (LDA #imm)
+ * is the unsupported representative — its operand read(s) actually wrap, which
+ * exercises the bus trace ordering across the wrap on both paths. Identical
+ * deterministic seed on both buses, so any oracle-vs-dispatcher split is real. */
+static int run_case_wrap(uint8_t oc, bool mf, bool xf, bool e) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.pc = 0xffff;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    uint32_t forced_addr = ((uint32_t)base.k << 16) | base.pc;
+    uint32_t seed = prng();
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    cpu_runOpcode_c(&cpuA);
+    cpu_runOpcode(&cpuB);
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB)) {
+        printf("\nMISMATCH [wrap] opcode=%02x mf=%d xf=%d e=%d\n", oc, mf, xf, e);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  busA len=%d ovf=%d  busB len=%d ovf=%d\n",
+               g_busA.trace_len, g_busA.overflow,
+               g_busB.trace_len, g_busB.overflow);
+        return 1;
+    }
+    return 0;
+}
+
+/* ---- WAI power-state corner cases ---- *
+ * no-wake: waiting=1 with no pending irq/nmi -> both runOpcode paths return
+ *   immediately at the WAI check (no opcode fetch, no cycle charge). Verifies
+ *   the dispatcher mirrors the oracle's early-return and leaves the Cpu frozen.
+ * wake-by-pending-IRQ (no vector entry): waiting=1, irqWanted=1, i=1. The
+ *   pending IRQ clears waiting, but the I flag masks it so the (!i && irqWanted)
+ *   interrupt block is skipped — no vector read, no stack push. Execution then
+ *   proceeds to the forced safe opcode (NOP) at the current pc. This isolates
+ *   the WAI-clear half of the pre-work from actual IRQ entry (excluded this turn). */
+static int run_case_wai(bool wake, bool mf, bool xf, bool e) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.waiting = 1; base.stopped = 0;
+    if (wake) {
+        base.irqWanted = 1; base.nmiWanted = 0; base.i = 1;
+    } else {
+        base.irqWanted = 0; base.nmiWanted = 0; base.i = 1;
+    }
+
+    /* For no-wake the opcode is never fetched (forced_addr is irrelevant but
+     * kept consistent). For wake, NOP runs on both paths. */
+    uint8_t oc = 0xea;
+    uint32_t forced_addr = ((uint32_t)base.k << 16) | base.pc;
+    uint32_t seed = prng();
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    cpu_runOpcode_c(&cpuA);
+    cpu_runOpcode(&cpuB);
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB)) {
+        printf("\nMISMATCH [wai-%s] mf=%d xf=%d e=%d\n",
+               wake ? "wake" : "nowake", mf, xf, e);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  busA len=%d ovf=%d  busB len=%d ovf=%d\n",
+               g_busA.trace_len, g_busA.overflow,
+               g_busB.trace_len, g_busB.overflow);
+        return 1;
+    }
+    return 0;
+}
+
+/* ---- actual IRQ/NMI vector-entry corner cases ---- *
+ * Pre-seeds the interrupt vector in the fake bus so the handler lands on a
+ * known safe PC, then forces a NOP there. Native e=0, i=0 (so IRQ is accepted;
+ * NMI is accepted regardless of i). Both runOpcode paths run the identical
+ * pre-work block: charge 7 cycles, push k/pc/flags, set i=1 d=0 k=0, read the
+ * vector, then fetch+run the handler's NOP. The bus trace therefore records
+ * the four stack writes (push k =1, pushWord pc =2, push flags =1), the two
+ * vector reads and the handler opcode fetch in order — 7 entries total —
+ * compared entry-for-entry by bus_eq. cpu_eq checks pc, flags, k and
+ * cycles end up identical. */
+static int run_case_irqnmi(bool nmi, bool mf, bool xf, bool e) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.waiting = 0; base.stopped = 0;
+    base.i = 0;                       /* IRQ acceptance requires i=0; harmless for NMI */
+    if (nmi) { base.nmiWanted = 1; base.irqWanted = 0; }
+    else     { base.irqWanted = 1; base.nmiWanted = 0; }
+
+    /* cpu_doInterrupt reads IRQ vector at 0xffee/0xffef, NMI at 0xffea/0xffeb,
+     * then sets k=0. Target handler PC = 0x0000 -> both vector bytes 0x00.
+     * forced_addr = (k=0)<<16 | 0x0000 holds the NOP the handler runs. */
+    uint32_t vec_lo = nmi ? 0xffea : 0xffee;
+    uint32_t vec_hi = nmi ? 0xffeb : 0xffef;
+    uint32_t forced_addr = 0x000000;
+    uint8_t  oc = 0xea;
+    uint32_t seed = prng();
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
+    g_busA.wmap[0].addr = vec_lo; g_busA.wmap[0].val = 0x00;
+    g_busA.wmap[1].addr = vec_hi; g_busA.wmap[1].val = 0x00;
+    g_busA.wmap_len = 2;
+    g_busB.wmap[0].addr = vec_lo; g_busB.wmap[0].val = 0x00;
+    g_busB.wmap[1].addr = vec_hi; g_busB.wmap[1].val = 0x00;
+    g_busB.wmap_len = 2;
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    cpu_runOpcode_c(&cpuA);
+    cpu_runOpcode(&cpuB);
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB)) {
+        printf("\nMISMATCH [%s] mf=%d xf=%d e=%d\n", nmi ? "nmi" : "irq", mf, xf, e);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  busA len=%d ovf=%d  busB len=%d ovf=%d\n",
+               g_busA.trace_len, g_busA.overflow,
+               g_busB.trace_len, g_busB.overflow);
+        int n = g_busA.trace_len < g_busB.trace_len
+              ? g_busA.trace_len : g_busB.trace_len;
+        for (int i = 0; i < n; i++) {
+            if (g_busA.trace[i].addr != g_busB.trace[i].addr ||
+                g_busA.trace[i].val  != g_busB.trace[i].val  ||
+                g_busA.trace[i].is_write != g_busB.trace[i].is_write) {
+                printf("  trace[%d]: A(%06x,%02x,%d) B(%06x,%02x,%d)\n", i,
+                       g_busA.trace[i].addr, g_busA.trace[i].val, g_busA.trace[i].is_write,
+                       g_busB.trace[i].addr, g_busB.trace[i].val, g_busB.trace[i].is_write);
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
-    printf("=== SNES Thumb-2 Stage 1 differential harness ===\n");
+    printf("=== SNES Thumb-2 Stage 2 differential harness ===\n");
 
     struct { bool mf, xf, e; } combos[] = {
         {0,0,0}, {1,1,0}, {0,1,0}, {1,0,0}, {1,1,1},
@@ -299,6 +459,56 @@ int main(void) {
                                      t, "fallback");
             }
         }
+    }
+
+    /* ---- PC=0xffff wrap: 1 supported (NOP) + 1 unsupported (LDA #imm) ---- */
+    {
+        uint8_t wrap_ops[2] = { 0xea, 0xa9 };
+        for (int oi = 0; oi < 2; oi++) {
+            for (int ci = 0; ci < ncombos; ci++) {
+                total++;
+                failures += run_case_wrap(wrap_ops[oi],
+                                          combos[ci].mf, combos[ci].xf, combos[ci].e);
+            }
+        }
+    }
+
+    /* ---- WAI: 1 no-wake + 1 wake-by-pending-IRQ (no vector entry) ---- *
+     * Native mode (mf=0,xf=0,e=0); one deterministic case each. */
+    {
+        total++;
+        failures += run_case_wai(false /*nowake*/, 0, 0, 0);
+        total++;
+        failures += run_case_wai(true  /*wake*/,   0, 0, 0);
+    }
+
+    /* ---- actual IRQ/NMI vector entry: 1 IRQ + 1 NMI, native mode ---- *
+     * Real interrupt acceptance: pushes k/pc/flags, reads the vector, jumps to
+     * the handler. Vector pre-seeded to 0x0000 with a forced NOP handler. */
+    {
+        total++;
+        failures += run_case_irqnmi(false /*irq*/, 0, 0, 0);
+        total++;
+        failures += run_case_irqnmi(true  /*nmi*/, 0, 0, 0);
+    }
+
+    /* ---- full opcode sweep: every opcode 0x00..0xff, 1 native case each ---- *
+     * Dispatcher completeness: verifies the fall-through path covers the whole
+     * opcode space and matches the oracle. 0x5c (JML) is the ONLY exclusion:
+     * its 3 operand bytes (pc+1..3) are not controllable through run_case's
+     * single forced byte, and a JML targeting 0x80:0x8573 calls Die() (a
+     * noreturn hang). Every other opcode is provably safe in a single
+     * cpu_runOpcode: 0x44 MVP / 0x54 MVN transfer exactly ONE byte per call
+     * (their repeat is driven by pc rewind across runOpcode calls, not an
+     * internal loop), and Die() is reached from no case but 0x5c (cpu.c:1478). */
+    {
+        int skipped = 0;
+        for (int oc = 0; oc < 256; oc++) {
+            if (oc == 0x5c) { skipped++; continue; }
+            total++;
+            failures += run_case((uint8_t)oc, 0, 0, 0, 0, "full-sweep");
+        }
+        printf("(full sweep: %d opcodes run, %d skipped)\n", 256 - skipped, skipped);
     }
 
     printf("\n=== Results: %d/%d passed, %d failed ===\n",

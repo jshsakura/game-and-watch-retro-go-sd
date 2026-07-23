@@ -540,9 +540,9 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_snes __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_snes_start__ = .;
-    /* cpu.o (65816 opcode dispatcher, cpu_runOpcode) and ppu.o (PPU line
-     * renderer, ppu_runLine) are excluded here and placed whole into
-     * .itcm_snes_hot below instead — see that section's comment. */
+    /* cpu.o (65816 opcode dispatcher) and ppu.o (PPU line renderer) are
+     * excluded here and placed whole into .itcm_snes_interp below.  The
+     * optional Thumb-2 engine uses its own named input section instead. */
     EXCLUDE_FILE(*cpu.o *ppu.o) build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_SNES_LOAD_END = .;
@@ -573,8 +573,8 @@ INCLUDE build/fceumm_mappers.ld
      recompiled hot-SITE subset, RCSMW-gated, a different feature entirely —
      see rc_smw_sites.c / verify_snes_rc_hot.py, do not conflate the two).
      This section instead moves the EXISTING interpreter's hottest files
-     WHOLE, unmodified, uncompiled-differently — cpu.o (65816 opcode
-     dispatcher, cpu_runOpcode) and ppu.o (PPU line renderer, ppu_runLine).
+     WHOLE — cpu.o (65816 opcode dispatcher), ppu.o (PPU line renderer), and,
+     when SNES_THUMB2_CPU=1, snes_thumb2.o (Thumb-2 opcode engine/table).
      Same rationale as .overlay_md32x_itc's SH-2 dispatcher: a partial
      function-level split risks leaving half a call graph split between ITCM
      and RAM_EMU (the same class of bug as cross-overlay symbol aliasing —
@@ -593,6 +593,7 @@ INCLUDE build/fceumm_mappers.ld
     __snes_interp_itc_start__ = .;
     build/snes/cpu.o (.text .text* .rodata .rodata*)
     build/snes/ppu.o (.text .text* .rodata .rodata*)
+    *(.itcm_snes_interp.thumb2 .itcm_snes_interp.thumb2.*)
     . = ALIGN(4);
     __snes_interp_itc_end__ = .;
     ASSERT(ABSOLUTE(__snes_interp_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: SNES interpreter ITC overflow");
