@@ -46,6 +46,7 @@ NAMES = {
     "header_favorites": "FAVORITES",
     "header_snes":     "SNES (SUPER FAMICOM)",
     "header_32x":      "SEGA 32X",
+    "header_cps1":     "CPS-1",
 }
 
 TARGET_H = 18      # matches existing header height
