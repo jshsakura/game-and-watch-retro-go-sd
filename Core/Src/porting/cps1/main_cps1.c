@@ -693,13 +693,31 @@ static const cps1_romset_t *cps1_load_container_file(const char *file_path)
     s_chip_count = 0;
 
     struct stat st;
-    if (stat(file_path, &st) != 0 || st.st_size < (long)CPS1_ROMSET_CHIP_SIZE ||
+    int strc = stat(file_path, &st);
+    CPS1_DBG("cps1 dbg: stat rc=%d size=%ld\n", strc, (long)st.st_size);
+    if (strc != 0 || st.st_size < (long)CPS1_ROMSET_CHIP_SIZE ||
         (st.st_size % CPS1_ROMSET_CHIP_SIZE) != 0) {
-        printf("cps1: %s is not a valid container (size %ld)\n",
-               file_path, (long)st.st_size);
+        CPS1_DBG("cps1 dbg: BAD container (stat rc=%d size=%ld)\n", strc, (long)st.st_size);
         draw_error_screen("Bad CPS-1 file", "Not a valid .cps1 container",
                           "Re-download this game");
         return NULL;
+    }
+
+    /* Prove the path opens and reads before anything else -- the file may carry
+     * a non-ASCII (Korean) name, so this confirms FatFs resolves and reads it. */
+    {
+        FILE *pf = fopen(file_path, "rb");
+        if (!pf) {
+            CPS1_DBG("cps1 dbg: fopen FAILED for the .cps1 path (name/encoding?)\n");
+            draw_error_screen("CPS-1 open failed", "Could not open the .cps1",
+                              "Rename the file to ASCII");
+            return NULL;
+        }
+        unsigned char hb[8] = {0};
+        size_t got = fread(hb, 1, sizeof(hb), pf);
+        fclose(pf);
+        CPS1_DBG("cps1 dbg: fopen OK, read %u B: %02x %02x %02x %02x %02x %02x\n",
+                 (unsigned)got, hb[0], hb[1], hb[2], hb[3], hb[4], hb[5]);
     }
 
     unsigned blocks = (unsigned)(st.st_size / CPS1_ROMSET_CHIP_SIZE);
@@ -709,12 +727,13 @@ static const cps1_romset_t *cps1_load_container_file(const char *file_path)
         const uint8_t *addr = odroid_overlay_cache_file_region_in_flash(
             file_path, b * CPS1_ROMSET_CHIP_SIZE, CPS1_ROMSET_CHIP_SIZE, &size, b, blocks);
         if (addr == NULL || size != CPS1_ROMSET_CHIP_SIZE) {
-            printf("cps1: %s chip %u did not cache (%lu)\n",
-                   file_path, b, (unsigned long)size);
+            CPS1_DBG("cps1 dbg: chip %u did not cache (got %lu)\n",
+                     b, (unsigned long)size);
             draw_error_screen("CPS-1 cache failed", "A chip did not cache",
                               "Free flash / re-download");
             return NULL;
         }
+        CPS1_DBG("cps1 dbg: chip %u cached @%p\n", b, (const void *)addr);
         uint32_t crc = cps1_crc32(addr, CPS1_ROMSET_CHIP_SIZE);
 
         bool dup = false;
