@@ -201,11 +201,25 @@ void cps1_diag(const char *fmt, ...)
     }
     memcpy(s_cps1_diag + s_cps1_diag_len, line, ll);
     s_cps1_diag_len = (uint16_t)(s_cps1_diag_len + ll);
+    /* NOTE: no SD write here. Writing /cps1_diag.txt (FatFs, a big stack frame)
+     * from DEEP in the render call chain, once per blit cell, is what tipped the
+     * stack over -- the crash landed on the first cell that also runs a tile
+     * DECODE (extra depth) while every cache-hit cell before it stayed shallow.
+     * Accumulate to RAM here; a SHALLOW caller flushes with cps1_diag_flush(). */
+}
+
+/* Write the accumulated ring to the SD. Call only from a shallow stack (the
+ * frame loop / between layers), never per blit cell. */
+void cps1_diag_flush(void)
+{
+    if (s_cps1_diag_sealed)
+        return;
     wdog_refresh();
     FILE *f = fopen(CPS1_DIAG_PATH, "wb");
     if (f) { fwrite(s_cps1_diag, 1, s_cps1_diag_len, f); fclose(f); }
 }
-#define CPS1_DBG(...) do { if (s_cps1_dbg_first) cps1_diag(__VA_ARGS__); } while (0)
+/* Shallow milestones: accumulate AND flush (caller stack is shallow here). */
+#define CPS1_DBG(...) do { if (s_cps1_dbg_first) { cps1_diag(__VA_ARGS__); cps1_diag_flush(); } } while (0)
 
 static void cps1_rebuild_video_state(void)
 {
