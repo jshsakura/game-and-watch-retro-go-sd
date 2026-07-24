@@ -685,20 +685,18 @@ static const char *get_extension(const char *filename) {
 static bool emulator_is_cd_system(const retro_emulator_t *emu)
 {
     return strcmp(emu->dirname, "pcecd") == 0 ||
-           strcmp(emu->dirname, "segacd") == 0 ||
-           /* CPS-1: the game is a FOLDER (Korean display name) holding one
-            * ASCII-named container, <set>.cps1 -- the ASCII file always opens
-            * regardless of the folder's encoding. Same folder-collapse shape as
-            * the CD systems, so it needs the recursive scan too. */
-           strcmp(emu->dirname, "cps1") == 0;
+           strcmp(emu->dirname, "segacd") == 0;
+    /* CPS-1 is a single flat .cps1 FILE (like a .nes), not a folder: the device
+     * diag proved a Korean-named .cps1 opens/reads/caches fine, so there is no
+     * reason to hide it in a folder. It lists and launches through the flat
+     * scandir like any file-ROM system. */
 }
 
-/* True for systems whose game folder IS the entry (the launchable thing is the
- * folder, and the loader opens the one file inside). CPS-1: the folder is the
- * Korean-named game, and cps1_load_folder_roms() finds the <set>.cps1 in it. */
+/* True for systems whose game folder IS the entry (none now). */
 static bool emulator_is_folder_rom_system(const retro_emulator_t *emu)
 {
-    return strcmp(emu->dirname, "cps1") == 0;
+    (void)emu;
+    return false;
 }
 
 /* Case-insensitive ".cue" — avoid snprintf/strtolower/strstr on every SD entry. */
@@ -1947,14 +1945,12 @@ void emulators_init()
     /* Atari Lynx (Handy core): ROM (.lnx/.lyx) loads from flash; no BIOS needed (HLE). */
     add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
     add_emulator("Colecovision", "col", "col lzma", RG_LOGO_PAD_COL, RG_LOGO_HEADER_COL, NO_GAME_DATA);
-    /* CPS-1: a game is a FOLDER (its Korean display name) holding ONE ASCII-named
-     * uncompressed container, <set>.cps1 -- the raw concat of the romset's distinct
-     * 512 KB chips, pre-built by the library. The folder is the launchable entry
-     * (empty ext = folder-rom, like the CD systems); the loader opens the .cps1
-     * inside and splits it into chips by CRC. Keeping the FILE ASCII means it
-     * always opens no matter how the folder name is encoded. SD only. */
+    /* CPS-1: a game is ONE flat uncompressed container, <game>.cps1 (the raw
+     * concat of the romset's distinct 512 KB chips, pre-built by the library),
+     * listed and launched like any file ROM. The device proved a Korean-named
+     * .cps1 opens and caches fine, so no folder is needed. SD only. */
 #if SD_CARD == 1
-    add_emulator("CPS-1", "cps1", "", RG_LOGO_PAD_CPS1, RG_LOGO_HEADER_CPS1, NO_GAME_DATA);
+    add_emulator("CPS-1", "cps1", "cps1", RG_LOGO_PAD_CPS1, RG_LOGO_HEADER_CPS1, NO_GAME_DATA);
 #endif
     add_emulator("Commodore 64", "c64", "d64 prg", RG_LOGO_PAD_C64, RG_LOGO_HEADER_C64, NO_GAME_DATA);
     add_emulator("Game & Watch", "gw", "gw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
