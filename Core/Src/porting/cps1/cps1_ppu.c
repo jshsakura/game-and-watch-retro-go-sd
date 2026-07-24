@@ -263,11 +263,10 @@ void cps1_blit_block_indexed(uint32_t base_subtile, unsigned sub, unsigned palet
                               const cps1_rom_t *rom, uint16_t *fb,
                               uint8_t *out_meta, uint8_t priority_group)
 {
-    /* ONE compact line per block, into the diag RING. The crash leaves its exact
-     * cell (position + tile code) as the file's last line -- far more useful than
-     * the earlier per-subtile spam that filled the buffer in six cells. */
-    cps1_diag("blk dx=%d dy=%d code=%lu sub=%u\n",
-              dst_x, dst_y, (unsigned long)base_subtile, sub);
+    /* (Per-block diag log removed: the render crash it was hunting turned out to
+     * be the sound_sync hang, now fixed. It flooded the 2 KB ring so milestones
+     * scrolled out -- put it back behind a flag only if a real blit crash
+     * returns.) */
     for (unsigned qy = 0; qy < sub; qy++) {
         unsigned src_qy = flip_y ? (sub - 1u - qy) : qy;
         for (unsigned qx = 0; qx < sub; qx++) {

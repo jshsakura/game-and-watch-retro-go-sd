@@ -183,7 +183,11 @@ static uint16_t cps1_gfx_word(uint32_t off)
  * past where a frame-0 seal can see. segacd does the same (its per-frame RTC
  * checkpoint runs until it settles). Bounded, so the per-milestone SD flush
  * can't thrash the card forever. */
-#define CPS1_DIAG_FRAMES 5
+/* Crashes are fixed, so the diag no longer needs a wide window -- seal after
+ * ONE drawn frame. That keeps load + frame-0 breadcrumbs but stops every SD
+ * write once steady play begins (the "no SD writes during play" rule). Widen
+ * again only if a frame-1+ crash returns. */
+#define CPS1_DIAG_FRAMES 1
 static char     s_cps1_diag[2048];
 static uint16_t s_cps1_diag_len;
 static bool     s_cps1_diag_sealed;

@@ -108,19 +108,6 @@ void cps1_bg_render_layer(const cps1_bg_layer_t *layer, unsigned layer_index,
             int flip_y = (int)cps1_bg_attr_flip_y(cell->attr);
             uint8_t prio = (uint8_t)cps1_bg_attr_priority(cell->attr);
 
-            /* SCROLL3 (L=2) is the first layer drawn and where the device dies
-             * on Warriors of Fate -- the render path is bounds-clean on paper,
-             * so name the exact cell. Log+flush HERE (shallow: render_into ->
-             * bg_render_layer, 3 frames), NOT inside the blit -- a deep FatFs
-             * write is the frame-0 stack fault. The crashing cell is then the
-             * file's last line. */
-            if (layer_index == CPS1_BG_SCROLL3) {
-                cps1_diag("S3 row=%d col=%d code=%u attr=%04x x=%d y=%d bank=%u\n",
-                          row, col, (unsigned)cell->code, (unsigned)cell->attr,
-                          cell_x0, cell_y0, bank);
-                cps1_diag_flush();
-            }
-
             cps1_blit_block_indexed((uint32_t)cell->code, sub, bank, pal,
                                      cell_x0, cell_y0, flip_x, flip_y, cache, rom,
                                      out_fb, out_meta, prio);
