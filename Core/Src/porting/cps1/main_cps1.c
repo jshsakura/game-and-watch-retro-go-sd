@@ -183,11 +183,11 @@ static uint16_t cps1_gfx_word(uint32_t off)
  * past where a frame-0 seal can see. segacd does the same (its per-frame RTC
  * checkpoint runs until it settles). Bounded, so the per-milestone SD flush
  * can't thrash the card forever. */
-/* Crashes are fixed, so the diag no longer needs a wide window -- seal after
- * ONE drawn frame. That keeps load + frame-0 breadcrumbs but stops every SD
- * write once steady play begins (the "no SD writes during play" rule). Widen
- * again only if a frame-1+ crash returns. */
-#define CPS1_DIAG_FRAMES 1
+/* Device Hardfaults AFTER frame 0 (frame 0 renders clean, then blue BSOD).
+ * Frame-0 seal hid it. Open the window to 10 drawn frames with per-milestone
+ * flush so the file's last line names the exact frame + stage the device dies
+ * at. The crash is early (frame 1-2) so the SD thrash is only a frame or two. */
+#define CPS1_DIAG_FRAMES 10
 static char     s_cps1_diag[2048];
 static uint16_t s_cps1_diag_len;
 static bool     s_cps1_diag_sealed;
@@ -285,7 +285,9 @@ static void cps1_rebuild_video_state(void)
      * each layer (all-identical => uniform/boot or bad base; varied => real
      * content), the scroll offsets, and the first palette words (all-zero =>
      * palette not built => black). Fits the 2 KB ring alongside the milestones. */
-    if (s_cps1_dbg_first) {
+    static int s_dumped_once = 0;
+    if (s_cps1_dbg_first && !s_dumped_once) {
+        s_dumped_once = 1;
         for (unsigned L = 0; L < CPS1_BG_LAYER_COUNT; L++) {
             uint16_t rreg = CPSA_REG(REG_SCROLL1 + L);
             uint32_t b = cps1_resolve_base(rreg);
