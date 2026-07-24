@@ -28,6 +28,13 @@
 
 #define CPS1_ROMSET_GFX_CHIPS 8
 #define CPS1_ROMSET_PRG_CHIPS 2
+/* QSound sample chips. These ARE 512 KB like the graphics chips, so they fit
+ * the container's chip model unchanged. */
+#define CPS1_ROMSET_QSOUND_CHIPS 4
+/* The Z80 sound-CPU dump is 128 KB -- NOT the 512 KB every other chip is -- so
+ * the loader cannot identify it by size the way it skips the 279-byte PAL
+ * dumps. It has to be matched by CRC against audio_crc explicitly. */
+#define CPS1_ROMSET_AUDIO_CHIP_SIZE 0x20000u
 
 /* Every CPS-1 chip in the sets below is 512 KB. A file of any other size
  * cannot be one, which is what lets the loader skip the PAL dumps (279 B
@@ -43,6 +50,12 @@ typedef struct {
     /* GFX chips in cps1_gfx_chip_byte() slot order -- slots 0-3 are the
      * 0x000000 half, slots 4-7 the 0x200000 half. */
     uint32_t gfx_crc[CPS1_ROMSET_GFX_CHIPS];
+    /* Sound, OPTIONAL: 0 when this romset has no sound chips listed. Containers
+     * packed before sound support carry none, and those games must keep
+     * loading (silently) rather than stop resolving -- so these are never part
+     * of the required set in cps1_romset_resolve(). */
+    uint32_t audio_crc;                             /* Z80 sound CPU, 128 KB */
+    uint32_t qsound_crc[CPS1_ROMSET_QSOUND_CHIPS];  /* QSound samples, 512 KB each */
 } cps1_romset_t;
 
 extern const cps1_romset_t cps1_romsets[];
@@ -84,6 +97,24 @@ const cps1_romset_t *cps1_romset_match(const uint32_t *crcs, unsigned count,
 int cps1_romset_resolve(const cps1_romset_t *set, const uint32_t *crcs, unsigned count,
                          int prg_index[CPS1_ROMSET_PRG_CHIPS],
                          int gfx_index[CPS1_ROMSET_GFX_CHIPS]);
+
+/*
+ * Sound chips, resolved SEPARATELY and never required.
+ *
+ * Every container packed before sound support carries prg+gfx only. Folding
+ * the sound chips into cps1_romset_resolve() would make all of those stop
+ * resolving at once -- every existing library would break on upgrade for a
+ * feature the user had not asked for. So sound is asked for on its own, and a
+ * game whose sound chips are absent simply keeps playing silently.
+ *
+ * Returns 1 when the audio CPU and all four QSound chips were found (indices
+ * written), 0 when this romset lists no sound chips or the container has none
+ * (indices set to -1). A PARTIAL bank returns 0 too: half a sample set would
+ * resolve and then play garbage.
+ */
+int cps1_romset_resolve_sound(const cps1_romset_t *set, const uint32_t *crcs, unsigned count,
+                               int *audio_index,
+                               int qsound_index[CPS1_ROMSET_QSOUND_CHIPS]);
 
 /*
  * When nothing matched, say something useful instead of "not found": report

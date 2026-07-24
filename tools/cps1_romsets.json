@@ -50,6 +50,15 @@
         { "crc32": "58066ba8", "filename": "tk2_06.8a" },
         { "crc32": "d706568e", "filename": "tk2_07.9a" },
         { "crc32": "d4a19a02", "filename": "tk2_08.10a" }
+      ],
+      "audiocpu": [
+        { "crc32": "c9183a0d", "filename": "tk2_qa.5k", "size": 131072, "shared_with_parent": true }
+      ],
+      "qsound": [
+        { "crc32": "611268cf", "filename": "tk2-q1.1k", "shared_with_parent": true },
+        { "crc32": "20f55ca9", "filename": "tk2-q2.2k", "shared_with_parent": true },
+        { "crc32": "bfcf6f52", "filename": "tk2-q3.3k", "shared_with_parent": true },
+        { "crc32": "36642e88", "filename": "tk2-q4.4k", "shared_with_parent": true }
       ]
     },
     {
@@ -70,6 +79,15 @@
         { "crc32": "3edeb949", "filename": "tk2-7m.9a" },
         { "crc32": "1abd14d6", "filename": "tk2-6m.8a" },
         { "crc32": "b27948e3", "filename": "tk2-8m.10a" }
+      ],
+      "audiocpu": [
+        { "crc32": "c9183a0d", "filename": "tk2_qa.5k", "size": 131072, "shared_with_parent": true }
+      ],
+      "qsound": [
+        { "crc32": "611268cf", "filename": "tk2-q1.1k", "shared_with_parent": true },
+        { "crc32": "20f55ca9", "filename": "tk2-q2.2k", "shared_with_parent": true },
+        { "crc32": "bfcf6f52", "filename": "tk2-q3.3k", "shared_with_parent": true },
+        { "crc32": "36642e88", "filename": "tk2-q4.4k", "shared_with_parent": true }
       ]
     },
     {
@@ -90,6 +108,15 @@
         { "crc32": "3edeb949", "filename": "tk2-7m.9a" },
         { "crc32": "1abd14d6", "filename": "tk2-6m.8a" },
         { "crc32": "b27948e3", "filename": "tk2-8m.10a" }
+      ],
+      "audiocpu": [
+        { "crc32": "c9183a0d", "filename": "tk2_qa.5k", "size": 131072 }
+      ],
+      "qsound": [
+        { "crc32": "611268cf", "filename": "tk2-q1.1k" },
+        { "crc32": "20f55ca9", "filename": "tk2-q2.2k" },
+        { "crc32": "bfcf6f52", "filename": "tk2-q3.3k" },
+        { "crc32": "36642e88", "filename": "tk2-q4.4k" }
       ]
     }
   ]

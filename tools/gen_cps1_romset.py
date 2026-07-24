@@ -106,6 +106,38 @@ int cps1_romset_resolve(const cps1_romset_t *set, const uint32_t *crcs, unsigned
     return 0;
 }
 
+int cps1_romset_resolve_sound(const cps1_romset_t *set, const uint32_t *crcs, unsigned count,
+                               int *audio_index,
+                               int qsound_index[CPS1_ROMSET_QSOUND_CHIPS])
+{
+    if (audio_index != NULL)
+        *audio_index = -1;
+    if (qsound_index != NULL)
+        for (unsigned i = 0; i < CPS1_ROMSET_QSOUND_CHIPS; i++)
+            qsound_index[i] = -1;
+
+    if (set == NULL || crcs == NULL || audio_index == NULL || qsound_index == NULL)
+        return 0;
+    if (set->audio_crc == 0u)   /* this romset lists no sound chips */
+        return 0;
+
+    int aud = find_crc(crcs, count, set->audio_crc);
+    if (aud < 0)
+        return 0;               /* container predates sound -- play silently */
+
+    int qs[CPS1_ROMSET_QSOUND_CHIPS];
+    for (unsigned i = 0; i < CPS1_ROMSET_QSOUND_CHIPS; i++) {
+        qs[i] = find_crc(crcs, count, set->qsound_crc[i]);
+        if (qs[i] < 0)
+            return 0;           /* all-or-nothing: half a bank plays garbage */
+    }
+
+    *audio_index = aud;
+    for (unsigned i = 0; i < CPS1_ROMSET_QSOUND_CHIPS; i++)
+        qsound_index[i] = qs[i];
+    return 1;
+}
+
 const cps1_romset_t *cps1_romset_match(const uint32_t *crcs, unsigned count,
                                         int prg_index[CPS1_ROMSET_PRG_CHIPS],
                                         int gfx_index[CPS1_ROMSET_GFX_CHIPS])
@@ -164,6 +196,18 @@ def render(data):
         if len(gfx) != 8:
             sys.exit(f"{rs['name']}: expected 8 graphics chips, got {len(gfx)}")
 
+        # Sound is OPTIONAL, per romset: a set may legitimately have no sound
+        # chips listed yet. All-or-nothing within a set, though -- a partial
+        # QSound bank would resolve and then play garbage.
+        aud = rs.get("audiocpu", [])
+        qs = rs.get("qsound", [])
+        if len(aud) not in (0, 1):
+            sys.exit(f"{rs['name']}: expected 0 or 1 audio CPU chip, got {len(aud)}")
+        if len(qs) not in (0, 4):
+            sys.exit(f"{rs['name']}: expected 0 or 4 QSound chips, got {len(qs)}")
+        if bool(aud) != bool(qs):
+            sys.exit(f"{rs['name']}: audiocpu and qsound must both be present or both absent")
+
         note = rs.get("_note")
         out.append(f"    /* {rs['title']}")
         if rs.get("parent"):
@@ -185,6 +229,11 @@ def render(data):
                    ", ".join(f'0x{c["crc32"]}u' for c in gfx[:4]) + ",")
         out.append("                     " +
                    ", ".join(f'0x{c["crc32"]}u' for c in gfx[4:]) + " },")
+        out.append("        .audio_crc = " +
+                   (f'0x{aud[0]["crc32"]}u,' if aud else "0u,"))
+        out.append("        .qsound_crc = { " +
+                   (", ".join(f'0x{c["crc32"]}u' for c in qs) if qs
+                    else "0u, 0u, 0u, 0u") + " },")
         out.append("    },")
     out.append(FOOTER)
     text = "\n".join(out)
