@@ -38,6 +38,7 @@ import zlib
 from pathlib import Path
 
 CHIP_SIZE = 0x80000  # 512 KB — every CPS-1 chip; anything else is not a chip.
+AUDIO_SIZE = 0x20000  # 128 KB — the Z80 sound ROM, the one exception (padded up).
 TABLE = Path(__file__).resolve().parent / "cps1_romsets.json"
 
 
@@ -53,8 +54,16 @@ def load_romsets() -> list[dict]:
 
 
 def required_crcs(rs: dict) -> list[str]:
-    """Every chip CRC a set needs, program chips first (device slot order)."""
-    return [c["crc32"] for c in rs["prg"]] + [c["crc32"] for c in rs["gfx"]]
+    """Every chip CRC a set needs, program chips first (device slot order).
+
+    The audio CPU contributes its PADDED crc, not its MAME one: it ships
+    zero-padded to a full chip so the container stays a uniform run of 512 KB
+    blocks, and the padded block is what the device CRCs.
+    """
+    crcs = [c["crc32"] for c in rs["prg"]] + [c["crc32"] for c in rs["gfx"]]
+    crcs += [c["padded_crc32"] for c in rs.get("audiocpu", [])]
+    crcs += [c["crc32"] for c in rs.get("qsound", [])]
+    return crcs
 
 
 def collect_chips(inputs: list[Path]) -> "dict[str, bytes]":
@@ -63,13 +72,21 @@ def collect_chips(inputs: list[Path]) -> "dict[str, bytes]":
     Inputs may be .zip archives, directories (scanned one level for zips and
     loose chip files), or loose chip files. First occurrence of a CRC wins; a
     second copy of identical bytes is the same chip, not a conflict. Members
-    that are not exactly one chip long (PAL dumps, readmes) are ignored.
+    that are not exactly one chip long (PAL dumps, readmes) are ignored --
+    EXCEPT the 128 KB Z80 sound ROM, which is zero-padded up to a chip so the
+    container stays a uniform run of 512 KB blocks. It is then keyed by the
+    PADDED crc, which is what the table's padded_crc32 records.
     """
     pool: dict[str, bytes] = {}
 
     def add_bytes(data: bytes) -> None:
+        if len(data) == AUDIO_SIZE:
+            data = data + b"\x00" * (CHIP_SIZE - AUDIO_SIZE)
         if len(data) == CHIP_SIZE:
             pool.setdefault(crc32(data), data)
+
+    def accepted(size: int) -> bool:
+        return size in (CHIP_SIZE, AUDIO_SIZE)
 
     def add_path(p: Path) -> None:
         if p.is_dir():
@@ -79,9 +96,9 @@ def collect_chips(inputs: list[Path]) -> "dict[str, bytes]":
         elif zipfile.is_zipfile(p):
             with zipfile.ZipFile(p) as zf:
                 for info in zf.infolist():
-                    if not info.is_dir() and info.file_size == CHIP_SIZE:
+                    if not info.is_dir() and accepted(info.file_size):
                         add_bytes(zf.read(info))
-        elif p.is_file() and p.stat().st_size == CHIP_SIZE:
+        elif p.is_file() and accepted(p.stat().st_size):
             add_bytes(p.read_bytes())
 
     for inp in inputs:

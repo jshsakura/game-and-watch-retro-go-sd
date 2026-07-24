@@ -86,7 +86,7 @@ Order in the file, and the game's display name, carry no meaning.
 
 ```
 tools/cps1_romsets.json          ← THE source of truth, in BOTH repos, byte-identical
-  │                                sha256 b0dfa1747b95a1cab6538e998f85c8ec5bf31aaaca192f387633222b866705bd
+  │                                sha256 412a1eeed1673710eb9d23fc964bb92445d4cfbe77ba1affb9c1ad4439ffd3b8
   ├─ retro-go-sd:   tools/gen_cps1_romset.py → Core/Src/porting/cps1/cps1_romset.c
   └─ game-and-what: backend/app/assets/cps1_romsets.json (read for build + validation)
 ```

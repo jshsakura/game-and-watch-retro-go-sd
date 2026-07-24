@@ -42,7 +42,7 @@ const cps1_romset_t cps1_romsets[] = {
         .prg_crc = { 0x9b215a68u, 0xb74b09acu },
         .gfx_crc = { 0x0d9cb9bfu, 0x45227027u, 0xc5ca2460u, 0xe349551cu,
                      0xe4a44d53u, 0x58066ba8u, 0xd706568eu, 0xd4a19a02u },
-        .audio_crc = 0xc9183a0du,
+        .audio_crc = 0x39e1138eu,
         .qsound_crc = { 0x611268cfu, 0x20f55ca9u, 0xbfcf6f52u, 0x36642e88u },
     },
     /* Warriors of Fate (World 921002)
@@ -56,7 +56,7 @@ const cps1_romset_t cps1_romsets[] = {
         .prg_crc = { 0x11fb2ed1u, 0x479b3f24u },
         .gfx_crc = { 0x0d9cb9bfu, 0x45227027u, 0xc5ca2460u, 0xe349551cu,
                      0x291f0f0bu, 0x3edeb949u, 0x1abd14d6u, 0xb27948e3u },
-        .audio_crc = 0xc9183a0du,
+        .audio_crc = 0x39e1138eu,
         .qsound_crc = { 0x611268cfu, 0x20f55ca9u, 0xbfcf6f52u, 0x36642e88u },
     },
     /* Warriors of Fate (World 921031)
@@ -69,7 +69,7 @@ const cps1_romset_t cps1_romsets[] = {
         .prg_crc = { 0x0d708505u, 0x608c17e3u },
         .gfx_crc = { 0x0d9cb9bfu, 0x45227027u, 0xc5ca2460u, 0xe349551cu,
                      0x291f0f0bu, 0x3edeb949u, 0x1abd14d6u, 0xb27948e3u },
-        .audio_crc = 0xc9183a0du,
+        .audio_crc = 0x39e1138eu,
         .qsound_crc = { 0x611268cfu, 0x20f55ca9u, 0xbfcf6f52u, 0x36642e88u },
     },
 };

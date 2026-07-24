@@ -207,6 +207,14 @@ def render(data):
             sys.exit(f"{rs['name']}: expected 0 or 4 QSound chips, got {len(qs)}")
         if bool(aud) != bool(qs):
             sys.exit(f"{rs['name']}: audiocpu and qsound must both be present or both absent")
+        # The Z80 dump is 128 KB but the container stores uniform 512 KB chips,
+        # so it ships ZERO-PADDED and the device CRCs the padded block. The
+        # table therefore carries both: crc32 is the MAME hash (what a dump
+        # actually is, for cross-referencing) and padded_crc32 is what the
+        # loader will see. Emitting the MAME hash here would never match.
+        if aud and "padded_crc32" not in aud[0]:
+            sys.exit(f"{rs['name']}: audiocpu needs padded_crc32 "
+                     f"(zero-pad the {aud[0].get('size')}-byte dump to 512 KB and CRC32 it)")
 
         note = rs.get("_note")
         out.append(f"    /* {rs['title']}")
@@ -230,7 +238,7 @@ def render(data):
         out.append("                     " +
                    ", ".join(f'0x{c["crc32"]}u' for c in gfx[4:]) + " },")
         out.append("        .audio_crc = " +
-                   (f'0x{aud[0]["crc32"]}u,' if aud else "0u,"))
+                   (f'0x{aud[0]["padded_crc32"]}u,' if aud else "0u,"))
         out.append("        .qsound_crc = { " +
                    (", ".join(f'0x{c["crc32"]}u' for c in qs) if qs
                     else "0u, 0u, 0u, 0u") + " },")
