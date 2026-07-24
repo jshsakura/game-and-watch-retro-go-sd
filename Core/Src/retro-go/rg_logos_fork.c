@@ -186,14 +186,11 @@ const color_icon_t *color_icon_for_logo(int16_t logo_idx)
         case RG_LOGO_PAD_GBA: return &cicon_gba;
         case RG_LOGO_PAD_SNES: return &cicon_snes;
         case RG_LOGO_PAD_32X: return &cicon_32x;
-        /* Upstream's rg_favorites.c registers the tab with
-         * RG_LOGO_HEADER_FAVORITES in gui_add_tab()'s logo_idx slot, so that is
-         * the index this override has to answer -- otherwise the draw falls
-         * through to rg_get_logo() and the player gets upstream's monochrome
-         * star instead of this fork's colour one. Upstream's asset stays
-         * defined and keeps its index; we just override what gets drawn.
-         * RG_LOGO_PAD_FAVORITES is kept for any caller still using it. */
-        case RG_LOGO_HEADER_FAVORITES:
+        /* The gold star is the tab ICON (right side), registered via
+         * RG_LOGO_PAD_FAVORITES as gui_add_tab()'s logo_idx. HEADER_FAVORITES is
+         * deliberately NOT answered here anymore: it is the wordmark now, drawn
+         * on the LEFT from flash via rg_get_logo() (like every other system's
+         * header), so it must fall through rather than be overridden by the star. */
         case RG_LOGO_PAD_FAVORITES: return &cicon_favorites;
         default: return (const color_icon_t *)0;
     }
