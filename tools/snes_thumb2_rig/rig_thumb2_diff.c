@@ -22,6 +22,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stddef.h>
 
 typedef struct Snes Snes;
 #include "cpu.h"
@@ -53,8 +54,16 @@ static uint8_t det_byte(uint32_t addr, uint32_t seed) {
 #define WMAP_MAX 16
 typedef struct { uint32_t addr; uint8_t val; uint8_t is_write; } BusEntry;
 typedef struct {
-    /* The single opcode byte the harness places at (k<<16)|pc. A read of
-     * forced_addr returns forced_opcode regardless of seed/wmap. */
+    /* Snes-compatible prefix: the Thumb-2 ROM_FETCH_FAST macro reads
+     * romPageBase/romPageTag at device-verified offsets (108/112). We place
+     * them at matching offsets with a sentinel tag (0xFFFFFFFF) so the inline
+     * page check always MISSES in the rig and falls through to our
+     * snes_cpuRead below. The _snes_prefix bytes cover the unused Snes fields
+     * (cpu, apu, ppu, ..., cpuCyclesLeft@60, cpuMemOps@61, ...). */
+    uint8_t _snes_prefix[108];
+    const uint8_t* romPageBase;
+    uint32_t romPageTag;
+    /* RigBus-specific fields */
     uint32_t forced_addr;
     uint8_t  forced_opcode;
     /* Seed for det_byte on every other address. */
@@ -68,8 +77,19 @@ typedef struct {
     struct { uint32_t addr; uint8_t val; } wmap[WMAP_MAX];
     int wmap_len;
 } RigBus;
+_Static_assert(offsetof(RigBus, romPageBase) == 108, "romPageBase must match Snes offset");
+_Static_assert(offsetof(RigBus, romPageTag) == 112, "romPageTag must match Snes offset");
 
-static RigBus g_busA, g_busB;
+/* Reset the bus between cases. romPageBase is left NULL by the zero-fill so
+ * the Thumb-2 ROM_FETCH_FAST macro always takes the MISS path (falls through
+ * to our snes_cpuRead below). The romPageTag sentinel is also set defensively. */
+static void rigbus_reset(RigBus* b) {
+    memset(b, 0, sizeof(*b));
+    b->romPageTag = 0xFFFFFFFF;
+}
+
+static RigBus g_busA;
+static RigBus g_busB;
 
 uint8_t snes_cpuRead(Snes* snes, uint32_t adr) {
     RigBus* b = (RigBus*)snes;
@@ -240,8 +260,8 @@ static int run_case(uint8_t oc, bool mf, bool xf, bool e,
 
     Cpu cpuA = base, cpuB = base;
 
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     cpuA.mem = &g_busA;
@@ -296,8 +316,8 @@ static int run_case_wrap(uint8_t oc, bool mf, bool xf, bool e) {
     uint32_t seed = prng();
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     cpuA.mem = &g_busA;
@@ -345,8 +365,8 @@ static int run_case_wai(bool wake, bool mf, bool xf, bool e) {
     uint32_t seed = prng();
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     cpuA.mem = &g_busA;
@@ -397,8 +417,8 @@ static int run_case_irqnmi(bool nmi, bool mf, bool xf, bool e) {
     uint32_t seed = prng();
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     g_busA.wmap[0].addr = vec_lo; g_busA.wmap[0].val = 0x00;
@@ -458,8 +478,8 @@ static int run_case_shift(uint8_t oc, uint16_t a_val, uint8_t c_in,
     uint32_t seed = prng();
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     cpuA.mem = &g_busA;
@@ -507,8 +527,8 @@ static int run_case_branch(uint8_t oc, uint8_t z, uint8_t n, uint8_t v,
     uint32_t seed = prng();
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     g_busA.wmap[0].addr = operand_addr; g_busA.wmap[0].val = (uint8_t)offset;
@@ -619,8 +639,8 @@ static int run_case_imm(uint8_t oc, uint16_t operand, uint16_t pc_in,
     uint32_t seed = prng();
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     g_busA.wmap[0].addr = low_addr; g_busA.wmap[0].val = (uint8_t)operand;
@@ -716,8 +736,8 @@ static int run_case_stack(uint8_t oc, uint16_t sp_in, bool mf, bool xf,
     }
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
 
@@ -952,8 +972,8 @@ static int run_case_status(uint8_t oc, uint8_t p, uint8_t mask, bool e,
     uint32_t operand_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
     uint32_t seed = prng();
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     g_busA.wmap[0].addr = operand_addr; g_busA.wmap[0].val = mask; g_busA.wmap_len = 1;
@@ -1016,8 +1036,8 @@ static int run_case_stopped(bool with_nmi, bool mf, bool xf, bool e) {
     uint32_t seed = prng();
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     cpuA.mem = &g_busA;
@@ -1065,8 +1085,8 @@ static int run_case_jml_safe(bool mf, bool xf, bool e) {
     uint32_t seed = prng();
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     g_busA.wmap[0].addr = op1; g_busA.wmap[0].val = 0x00;
@@ -1171,8 +1191,8 @@ static int run_case_dp(uint8_t oc, uint16_t dp, uint8_t offset,
     else                          { exp_lo = base.y & 0xff; exp_hi = base.y >> 8; } /* STY */
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
@@ -1345,8 +1365,8 @@ static int run_case_dpx(uint8_t oc, uint16_t dp, uint8_t offset, uint16_t x_idx,
     else                          { exp_lo = base.y & 0xff; exp_hi = base.y >> 8; } /* STY */
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
@@ -1492,8 +1512,8 @@ static int run_case_abs(uint8_t oc, uint8_t db, uint16_t adr,
     else                          { exp_lo = base.y & 0xff; exp_hi = base.y >> 8; } /* STY */
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
@@ -1661,8 +1681,8 @@ static int run_case_abxy(uint8_t oc, uint8_t db, uint16_t adr, uint16_t idx,
     else                     { exp_lo = base.a & 0xff; exp_hi = base.a >> 8; } /* STA / unused for reads */
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
@@ -1838,8 +1858,8 @@ static int run_case_ind(uint8_t oc, uint8_t db, uint16_t dp, uint8_t offset,
     uint8_t exp_hi = base.a >> 8;
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
@@ -2003,8 +2023,8 @@ static int run_case_ind_long(uint8_t oc, uint8_t db, uint16_t dp, uint8_t offset
     uint8_t exp_hi = base.a >> 8;
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
@@ -2152,8 +2172,8 @@ static int run_case_sr(uint8_t oc, uint16_t sp, uint8_t offset,
     uint8_t exp_hi = base.a >> 8;
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
@@ -2296,8 +2316,8 @@ static int run_case_isy(uint8_t oc, uint8_t db, uint16_t sp, uint8_t offset,
     uint8_t exp_hi = base.a >> 8;
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
@@ -2446,8 +2466,8 @@ static int run_case_abl(uint8_t oc, uint8_t bank, uint16_t adr,
     uint8_t exp_hi = base.a >> 8;
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
@@ -2588,8 +2608,8 @@ static int run_case_dpy(uint8_t oc, uint16_t dp, uint8_t offset, uint16_t y_idx,
     uint8_t exp_hi = base.x >> 8;
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
@@ -2705,8 +2725,8 @@ static int run_case_3n_implied(uint8_t oc, uint8_t c_in, uint8_t e_in,
     uint32_t seed = prng();
 
     Cpu cpuA = base, cpuB = base;
-    memset(&g_busA, 0, sizeof(g_busA));
-    memset(&g_busB, 0, sizeof(g_busB));
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
     g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
     g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
     cpuA.mem = &g_busA;
@@ -3512,11 +3532,12 @@ int main(void) {
      * the LDY-dpx XF gate is exercised apart from the MF data width.  ADC/SBC
      * also sweep D=1 to exercise the bail-to-C path. */
     {
-        static const uint8_t dpx_ops[17] = {
+        static const uint8_t dpx_ops[18] = {
             0x15, 0x35, 0x55, 0xd5, 0xb5, 0xb4,           /* ORA AND EOR CMP LDA LDY */
             0x75, 0xf5,                                   /* ADC SBC (binary; D=1 bails) */
             0x95, 0x94, 0x74,                             /* STA STY STZ */
-            0x16, 0x36, 0x56, 0x76, 0xd6, 0xf6            /* ASL ROL LSR ROR DEC INC (RMW) */
+            0x16, 0x36, 0x56, 0x76, 0xd6, 0xf6,           /* ASL ROL LSR ROR DEC INC (RMW) */
+            0x34                                           /* BIT (read-only, N/V from memory) */
         };
         /* (dp, offset, X) triples: cycle-gate edges + 16-bit wrap of dp+off+X */
         static const uint16_t dps[7]    = { 0x0000, 0x0080, 0xff80, 0xffff, 0x0100, 0x0000, 0x0000 };
@@ -3525,7 +3546,7 @@ int main(void) {
         static const uint16_t dvals[4]  = { 0x0000, 0x00ff, 0x8000, 0xffff };
         static const uint16_t regs[2]   = { 0x0000, 0xffff };
         int run = 0;
-        for (int oi = 0; oi < 17; oi++) {
+        for (int oi = 0; oi < 18; oi++) {
             uint8_t op = dpx_ops[oi];
             bool is_alu_xs = (op == 0xb4);   /* LDY dpx: XF width */
             for (int di = 0; di < 7; di++) {
