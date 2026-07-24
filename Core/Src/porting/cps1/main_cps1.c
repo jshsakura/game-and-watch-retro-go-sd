@@ -659,13 +659,50 @@ static const cps1_romset_t *cps1_resolve_and_attach(const char *label, const cha
     return set;
 }
 
+static const cps1_romset_t *cps1_load_container_file(const char *file_path);
+
+/* The game folder's ONE <set>.cps1 container, if present. The file is ASCII-named
+ * (the folder carries the Korean display name), so it opens regardless of how the
+ * folder is encoded. Fills out_path and returns true on the first .cps1 found. */
+static bool cps1_find_container(const char *dir_path, char *out_path, size_t out_sz)
+{
+    DIR dir;
+    FILINFO fno;
+    if (f_opendir(&dir, dir_path) != FR_OK)
+        return false;
+
+    bool found = false;
+    while (!found) {
+        if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == 0)
+            break;
+        if (fno.fname[0] == '.' || (fno.fattrib & AM_DIR))
+            continue;
+        const char *dot = strrchr(fno.fname, '.');
+        if (dot && (dot[1] | 0x20) == 'c' && (dot[2] | 0x20) == 'p'
+                && (dot[3] | 0x20) == 's' && dot[4] == '1' && dot[5] == '\0') {
+            int n = snprintf(out_path, out_sz, "%s/%s", dir_path, fno.fname);
+            if (n > 0 && (size_t)n < out_sz)
+                found = true;
+        }
+    }
+    f_closedir(&dir);
+    return found;
+}
+
 static const cps1_romset_t *cps1_load_folder_roms(const char *dir_path)
 {
     s_chip_count = 0;
 
+    /* Preferred layout: one ASCII-named <set>.cps1 container in the game folder. */
+    char cpath[RG_PATH_MAX + 1];
+    if (cps1_find_container(dir_path, cpath, sizeof(cpath))) {
+        CPS1_DBG("cps1 dbg: container in folder: %s\n", cpath);
+        return cps1_load_container_file(cpath);
+    }
+
+    /* Legacy: chips loose in the folder (or pooled subfolders). */
+    CPS1_DBG("cps1 dbg: no .cps1 in folder, scanning loose chips\n");
     cps1_scan_chip_dir(dir_path);
-    /* Chips loose in the game folder are the simple case and stay the fast
-     * path; only reach for the subfolders when that did not produce a set. */
     if (cps1_romset_match(s_chip_crc, s_chip_count, (int[CPS1_ROMSET_PRG_CHIPS]){0},
                            (int[CPS1_ROMSET_GFX_CHIPS]){0}) == NULL)
         cps1_scan_chip_subdirs(dir_path);

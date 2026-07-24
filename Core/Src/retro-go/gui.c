@@ -870,7 +870,7 @@ static uint8_t *get_coverfile(char *rom_path)
 
     char *coverpath = odroid_system_get_path(ODROID_PATH_COVER_FILE, rom_path);
     FILE *file = fopen(coverpath, "rb");
-    if (!file && (strstr(rom_path, "/pcecd/") || strstr(rom_path, "/segacd/")))
+    if (!file && (strstr(rom_path, "/pcecd/") || strstr(rom_path, "/segacd/") || strstr(rom_path, "/cps1/")))
     {
         /* CD systems = one folder per game (the .cue plus its track .bin files);
          * also accept a single cover named after the game FOLDER so /romart need
