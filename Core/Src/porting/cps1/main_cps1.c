@@ -278,6 +278,37 @@ static void cps1_rebuild_video_state(void)
         s->attr = cps1_gfx_word(obj_base + i * 8u + 6u);
         s->enabled = 1;
     }
+
+    /* ONE-SHOT video-state dump (frame 0 only, then the diag seals). The screen
+     * can't be read from here, so let the diag answer "is the tilemap real
+     * content or a wrong base?": the raw scroll bases, the first 8 tile codes of
+     * each layer (all-identical => uniform/boot or bad base; varied => real
+     * content), the scroll offsets, and the first palette words (all-zero =>
+     * palette not built => black). Fits the 2 KB ring alongside the milestones. */
+    if (s_cps1_dbg_first) {
+        for (unsigned L = 0; L < CPS1_BG_LAYER_COUNT; L++) {
+            uint16_t rreg = CPSA_REG(REG_SCROLL1 + L);
+            uint32_t b = cps1_resolve_base(rreg);
+            cps1_diag("DUMP S%u reg=%04x base=%06lx codes %04x %04x %04x %04x %04x %04x %04x %04x\n",
+                      L + 1u, rreg, (unsigned long)b,
+                      cps1_gfx_word(b + 0), cps1_gfx_word(b + 4), cps1_gfx_word(b + 8),
+                      cps1_gfx_word(b + 12), cps1_gfx_word(b + 16), cps1_gfx_word(b + 20),
+                      cps1_gfx_word(b + 24), cps1_gfx_word(b + 28));
+        }
+        cps1_diag("DUMP scroll S1(%d,%d) S2(%d,%d) S3(%d,%d)\n",
+                  (int16_t)CPSA_REG(6), (int16_t)CPSA_REG(7),
+                  (int16_t)CPSA_REG(8), (int16_t)CPSA_REG(9),
+                  (int16_t)CPSA_REG(10), (int16_t)CPSA_REG(11));
+        uint32_t pb = cps1_resolve_base(CPSA_REG(REG_PALETTE));
+        cps1_diag("DUMP pal base=%06lx raw %04x %04x %04x %04x %04x %04x %04x %04x\n",
+                  (unsigned long)pb,
+                  cps1_gfx_word(pb + 0), cps1_gfx_word(pb + 2), cps1_gfx_word(pb + 4),
+                  cps1_gfx_word(pb + 6), cps1_gfx_word(pb + 8), cps1_gfx_word(pb + 10),
+                  cps1_gfx_word(pb + 12), cps1_gfx_word(pb + 14));
+        cps1_diag("DUMP obj base=%06lx sprites=%u\n",
+                  (unsigned long)cps1_resolve_base(CPSA_REG(REG_OBJ)), s_oam.count);
+        cps1_diag_flush();
+    }
 }
 
 static void cps1_render_into(uint16_t *fb, uint8_t *meta)
