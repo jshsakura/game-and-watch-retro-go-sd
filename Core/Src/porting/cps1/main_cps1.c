@@ -491,6 +491,13 @@ static unsigned       s_chip_count;
 /* The two program chips, in 68000 address order. */
 static const uint8_t *s_prg_lo;
 static const uint8_t *s_prg_hi;
+/* Sound ROMs, in cached flash like every other chip. Present only when the
+ * container was packed with sound; s_sound_present says whether the pointers
+ * above are usable. The Z80 dump occupies the first 128 KB of its (zero-padded)
+ * chip -- see CPS1_ROMSET_AUDIO_CHIP_SIZE. Consumed by the QSound engine. */
+static const uint8_t *s_audio_rom;
+static const uint8_t *s_qsound_rom[CPS1_ROMSET_QSOUND_CHIPS];
+static int            s_sound_present;
 
 /* Caches one chip and records its hash. `expect_crc` non-zero means the caller
  * already knows what this file must hash to (the shared pool, where the name
@@ -740,6 +747,27 @@ static const cps1_romset_t *cps1_resolve_and_attach(const char *label, const cha
 
     s_prg_lo = s_chip_addr[prg_index[0]];
     s_prg_hi = s_chip_addr[prg_index[1]];
+
+    /* Sound chips, if this container carries them. NEVER fatal: a container
+     * packed before sound support has none, and that game must still run --
+     * silently, exactly as it does today. */
+    {
+        int aud = -1, qs[CPS1_ROMSET_QSOUND_CHIPS];
+        if (cps1_romset_resolve_sound(set, s_chip_crc, s_chip_count, &aud, qs)) {
+            s_audio_rom = s_chip_addr[aud];
+            for (unsigned i = 0; i < CPS1_ROMSET_QSOUND_CHIPS; i++)
+                s_qsound_rom[i] = s_chip_addr[qs[i]];
+            s_sound_present = 1;
+            printf("cps1: sound chips found (Z80 + %u QSound banks)\n",
+                   CPS1_ROMSET_QSOUND_CHIPS);
+        } else {
+            s_audio_rom = NULL;
+            for (unsigned i = 0; i < CPS1_ROMSET_QSOUND_CHIPS; i++)
+                s_qsound_rom[i] = NULL;
+            s_sound_present = 0;
+            printf("cps1: no sound chips in this container -- silent\n");
+        }
+    }
 
     cps1_rom_region_t prg = { s_prg_lo, CPS1_ROMSET_CHIP_SIZE };
     if (cps1_rom_attach_chips(&s_rom, prg, &s_gfx_chips) != 0) {
