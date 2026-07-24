@@ -49,6 +49,7 @@
 #include "odroid_system.h"
 #include "common.h"
 #include "gw_lcd.h"
+#include "gw_audio.h"   /* audio_start_playing -- starts the SAI DMA (pacing) */
 #include "gw_linker.h"
 #include "gw_malloc.h"
 #include <stdio.h>
@@ -68,6 +69,11 @@
 #include "cps1_eeprom.h"
 
 #define CPS1_SAMPLE_RATE     32000
+/* Samples per DMA half-buffer = one 60 Hz frame. audio_start_playing() must run
+ * or dma_counter never ticks and the first common_emu_sound_sync() spins
+ * forever -> watchdog (the exact Sega CD bug). CPS-1 sound is stubbed, so the
+ * buffer just plays silence; the DMA only has to RUN for the frame pacing. */
+#define CPS1_AUDIO_BUFFER_LENGTH (CPS1_SAMPLE_RATE / 60)
 #define CPS1_GFXRAM_BYTES    0x30000u
 #define CPS1_GFXRAM_ADDR     0x900000u
 #define CPS1_WRAM_BYTES      0x10000u
@@ -940,6 +946,14 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     CPS1_DBG("cps1 dbg: machine_reset\n");
     cps1_machine_reset(s_prg_lo, s_prg_hi);
+
+    /* START THE SAI AUDIO DMA. Without this dma_counter never advances and the
+     * first common_emu_sound_sync() below spins forever -> watchdog -> the
+     * "renders frame 0 then dies" we saw (blue flash, then black). Same fix as
+     * Sega CD's audio_start_playing(); CPS-1 never wired it either. */
+    CPS1_DBG("cps1 dbg: audio_start_playing(len=%d)\n", (int)CPS1_AUDIO_BUFFER_LENGTH);
+    audio_start_playing(CPS1_AUDIO_BUFFER_LENGTH);
+
     CPS1_DBG("cps1 dbg: entering frame loop\n");
 
     while (true) {
@@ -973,7 +987,11 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         /* No sound yet -- the QSound side is stubbed (see cps1_sound_stub_init).
          * Still call the sync so the frame pacing the mixer drives stays
-         * correct rather than free-running. */
+         * correct rather than free-running. Breadcrumb it: this is where the
+         * pre-fix build hung (dma_counter frozen). A "sync ok" line proves the
+         * audio_start_playing() fix took. */
+        CPS1_DBG("cps1 dbg: f%lu sound_sync...\n", (unsigned long)cps1_diag_frame);
         common_emu_sound_sync(false);
+        CPS1_DBG("cps1 dbg: f%lu sound_sync ok\n", (unsigned long)cps1_diag_frame);
     }
 }
