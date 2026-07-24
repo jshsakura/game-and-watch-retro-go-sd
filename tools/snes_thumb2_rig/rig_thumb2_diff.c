@@ -714,6 +714,269 @@ static int run_case_status(uint8_t oc, uint8_t p, uint8_t mask, bool e,
     return 0;
 }
 
+/* ---- STP (stopped) power-state corner cases ---- *
+ * stopped=1 short-circuits runOpcode at the very first check (cpu.c:162 in the
+ * oracle, :206 in the dispatcher): no opcode fetch, no WAI clear, no interrupt
+ * entry, cyclesUsed stays 0. In this core STP never self-wakes within a single
+ * runOpcode (only a reset clears `stopped`, see cpu_reset at cpu.c:138-139), so
+ * the faithful representative is the FROZEN state. Two cases are swept:
+ *   (a) stopped with no pending interrupt;
+ *   (b) stopped WITH a pending NMI -- asserts the dispatcher, like the oracle,
+ *       returns at the stopped check and does NOT let the NMI through (stopped
+ *       has priority over every other pre-work branch, including NMI).
+ * The random sweep and run_case both force stopped=0, so this pre-work path is
+ * otherwise unreachable; it is the one power-state branch WAI does not cover. */
+static int run_case_stopped(bool with_nmi, bool mf, bool xf, bool e) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.stopped = 1; base.waiting = 0; base.i = 1;
+    if (with_nmi) { base.nmiWanted = 1; base.irqWanted = 0; }
+    else          { base.nmiWanted = 0; base.irqWanted = 0; }
+
+    /* NOP is forced but, while stopped, is never fetched on either path. */
+    uint8_t oc = 0xea;
+    uint32_t forced_addr = ((uint32_t)base.k << 16) | base.pc;
+    uint32_t seed = prng();
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    cpu_runOpcode_c(&cpuA);
+    cpu_runOpcode(&cpuB);
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB)) {
+        printf("\nMISMATCH [stopped-%s] mf=%d xf=%d e=%d\n",
+               with_nmi ? "nmi" : "plain", mf, xf, e);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  busA len=%d ovf=%d  busB len=%d ovf=%d\n",
+               g_busA.trace_len, g_busA.overflow,
+               g_busB.trace_len, g_busB.overflow);
+        return 1;
+    }
+    return 0;
+}
+
+/* ---- JML abl (0x5c) safe single case -- swept, not excluded ---- *
+ * 0x5c is the only opcode whose handler can reach Die() (cpu.c:1478): it does
+ * so iff its 24-bit operand target is exactly 0x80:0x8573, the crash sentinel.
+ * run_case forces only ONE bus byte (the opcode), so 0x5c's three operand
+ * bytes (pc+1..3) would otherwise be uncontrolled deterministic bytes and could
+ * by chance hit the sentinel -> Die() is a noreturn hang that freezes the rig.
+ * Rather than exclude a normal opcode from the 256-byte sweep, this pins pc/k
+ * and pre-seeds the three operand bytes to a non-magic target (0x00:0x0000) so
+ * JML runs its ordinary branch on both paths. Bus trace = opcode fetch + three
+ * operand reads (4 reads, no writes); cpu_eq checks k/pc land on 0x00:0x0000. */
+static int run_case_jml_safe(bool mf, bool xf, bool e) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.k = 0x00; base.pc = 0x0000;     /* deterministic operand addresses */
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    uint8_t  oc = 0x5c;
+    uint32_t forced_addr = 0x000000;     /* opcode at k=0:pc=0x0000 */
+    /* value = readOpcodeWord at pc+1,pc+2; new_k = readOpcode at pc+3.
+     * Target 0x00:0x0000 (bytes 00 00 00) -- not the 0x80:0x8573 sentinel. */
+    uint32_t op1 = 0x000001, op2 = 0x000002, op3 = 0x000003;
+    uint32_t seed = prng();
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
+    g_busA.wmap[0].addr = op1; g_busA.wmap[0].val = 0x00;
+    g_busA.wmap[1].addr = op2; g_busA.wmap[1].val = 0x00;
+    g_busA.wmap[2].addr = op3; g_busA.wmap[2].val = 0x00;
+    g_busA.wmap_len = 3;
+    g_busB.wmap[0].addr = op1; g_busB.wmap[0].val = 0x00;
+    g_busB.wmap[1].addr = op2; g_busB.wmap[1].val = 0x00;
+    g_busB.wmap[2].addr = op3; g_busB.wmap[2].val = 0x00;
+    g_busB.wmap_len = 3;
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    cpu_runOpcode_c(&cpuA);
+    cpu_runOpcode(&cpuB);
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB)) {
+        printf("\nMISMATCH [jml-safe 0x5c] mf=%d xf=%d e=%d\n", mf, xf, e);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  busA len=%d ovf=%d  busB len=%d ovf=%d\n",
+               g_busA.trace_len, g_busA.overflow,
+               g_busB.trace_len, g_busB.overflow);
+        return 1;
+    }
+    return 0;
+}
+
+/* ---- Stage 3D direct-page differential --------------------------------- *
+ * The 13 DP opcodes (LDA/LDX/LDY/AND/ORA/EOR/CMP/ADC/SBC dp; STA/STX/STY/STZ
+ * dp) are now dispatched natively.  The native path's four hard gates are each
+ * pinned by an ABSOLUTE bus-shape assertion (not just oracle-vs-dispatcher
+ * parity, which would pass if both sides made the same mistake):
+ *   gate 1 (writes take the hooked bridge): every store shows as a WRITE entry
+ *          and the spin write_seq advances by exactly the access count;
+ *   gate 2 (reads take the hooked bridge):  every load shows as a READ entry
+ *          and spin parity (oracle io_seq == thumb2 io_seq) holds; the sweep
+ *          includes an IO-region address (bank 0, off >= 0x2000) where
+ *          spin_hook_read actually bumps io_seq, so a handler that skipped the
+ *          bridge would desync the two sides;
+ *   gate 3 (DP is bank 0x00, 16-bit wrap, ignores db): data addresses are
+ *          checked to be 0x00xxxx with (dp+off)&0xffff wrapping -- db is forced
+ *          nonzero so a handler that accidentally used db reads a different
+ *          address and the wmap misses -> divergence;
+ *   dp-cycle: (dp & 0xff) != 0 charges +1 (verified via cyclesUsed parity, the
+ *          sweep includes dp=0x0100 whose low byte is 0 -> no charge).
+ * ADC/SBC additionally sweep the D flag: d=1 makes the native handler BAIL to
+ * .L_noteb before any operand fetch, so C's cpu_doOpcode runs the whole opcode
+ * on both paths -- the bail must leave pc/spin untouched for the fallback to be
+ * transparent.  pc_in spans the 0xffff operand-fetch wrap. */
+static int run_case_dp(uint8_t oc, uint16_t dp, uint8_t offset,
+                       uint16_t data_val, uint8_t c_in, uint8_t d_in,
+                       bool mf, bool xf, bool e, uint16_t reg_seed,
+                       uint16_t pc_in) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.a = reg_seed; base.x = reg_seed; base.y = reg_seed;
+    base.dp = dp;
+    base.db = 0x42;                 /* nonzero: DP MUST ignore it (gate 3) */
+    base.k = 0x01;                  /* nonzero bank: opcode/operand fetches at
+                                     * 0x01xxxx can never collide with bank-0
+                                     * DP data addresses 0x00xxxx (which would
+                                     * make the bus return forced_opcode) */
+    base.c = c_in ? 1 : 0;
+    base.d = d_in ? 1 : 0;
+    base.pc = pc_in;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    bool x_width = (oc == 0xa6 || oc == 0xa4 || oc == 0x86 || oc == 0x84);
+    bool is_write = (oc == 0x85 || oc == 0x86 || oc == 0x84 || oc == 0x64);
+    bool wflag = x_width ? xf : mf;
+    int n_data = wflag ? 1 : 2;
+
+    uint16_t addr_low  = (uint16_t)(dp + offset);
+    uint16_t addr_high = (uint16_t)(addr_low + 1);
+    uint32_t daddr_low  = addr_low;    /* bank 0x00 */
+    uint32_t daddr_high = addr_high;   /* bank 0x00 */
+
+    uint32_t forced_addr  = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t operand_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
+    uint32_t seed = prng();
+
+    /* expected store bytes (for the absolute write-value check) */
+    uint8_t exp_lo, exp_hi;
+    if (oc == 0x64)               { exp_lo = 0;            exp_hi = 0; }            /* STZ */
+    else if (oc == 0x85)          { exp_lo = base.a & 0xff; exp_hi = base.a >> 8; } /* STA */
+    else if (oc == 0x86)          { exp_lo = base.x & 0xff; exp_hi = base.x >> 8; } /* STX */
+    else                          { exp_lo = base.y & 0xff; exp_hi = base.y >> 8; } /* STY */
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
+        b->wmap[0].addr = operand_addr; b->wmap[0].val = offset;
+        b->wmap_len = 1;
+        if (!is_write) {
+            b->wmap[1].addr = daddr_low;  b->wmap[1].val = (uint8_t)data_val;
+            b->wmap_len = 2;
+            if (n_data == 2) {
+                b->wmap[2].addr = daddr_high; b->wmap[2].val = (uint8_t)(data_val >> 8);
+                b->wmap_len = 3;
+            }
+        }
+    }
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    /* absolute trace-shape check on BOTH sides: opcode read, operand read, then
+     * n_data data accesses at bank-0 wrapped addresses with the right R/W kind. */
+    int expected_len = 2 + n_data;
+    /* spin_hook_write is unconditional (no address classification), so the
+     * absolute write_seq advance is a strong check.  spin_hook_read, however,
+     * classifies addresses and returns early for WRAM/ROM/PC-near -- so an
+     * absolute io_seq expectation would be wrong for most DP addresses (bank 0,
+     * low offset == WRAM).  We rely on oracle-vs-thumb2 PARITY instead, made
+     * meaningful by an IO-region (dp,offset) pair in the sweep. */
+    uint32_t exp_wr  = spin_seed.write_seq + (is_write ? n_data : 0);
+    int shape_fail = 0;
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        const char *tag = side ? "thumb2" : "oracle";
+        if (b->overflow || b->trace_len != expected_len) { shape_fail = 1; }
+        else {
+            /* [0] opcode fetch (read), [1] operand fetch (read) */
+            if (b->trace[0].is_write || b->trace[0].addr != forced_addr ||
+                b->trace[0].val != oc) shape_fail = 1;
+            if (b->trace[1].is_write || b->trace[1].addr != operand_addr ||
+                b->trace[1].val != offset) shape_fail = 1;
+            /* [2..] data accesses: bank 0x00, wrapped addresses */
+            uint32_t addrs[2] = { daddr_low, daddr_high };
+            for (int i = 0; i < n_data; i++) {
+                BusEntry *t = &b->trace[2 + i];
+                if (t->is_write != (is_write ? 1 : 0)) shape_fail = 1;
+                if (t->addr != addrs[i]) shape_fail = 1;     /* gate 3: bank 0 + wrap */
+                if (is_write) {
+                    uint8_t ev = (i == 0) ? exp_lo : exp_hi;
+                    if (t->val != ev) shape_fail = 1;
+                } else {
+                    uint8_t ev = (i == 0) ? (uint8_t)data_val : (uint8_t)(data_val >> 8);
+                    if (t->val != ev) shape_fail = 1;
+                }
+            }
+        }
+        if (shape_fail) {
+            printf("\nTRACE-SHAPE VIOLATION [dp op=%02x %s] dp=%04x off=%02x"
+                   " mf=%d xf=%d e=%d d=%d len=%d ovf=%d\n",
+                   oc, tag, dp, offset, mf, xf, e, d_in, b->trace_len, b->overflow);
+            for (int i = 0; i < b->trace_len && i < 8; i++)
+                printf("  [%d] %06x %02x %s\n", i, b->trace[i].addr,
+                       b->trace[i].val, b->trace[i].is_write ? "W" : "R");
+            return 1;
+        }
+    }
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0 ||
+        spinA.write_seq != exp_wr) {
+        printf("\nMISMATCH [dp op=%02x] dp=%04x off=%02x data=%04x c=%d d=%d"
+               " mf=%d xf=%d e=%d reg=%04x pc=%04x\n",
+               oc, dp, offset, data_val, c_in, d_in, mf, xf, e, reg_seed, pc_in);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  spin io A=%u B=%u  wr A=%u B=%u (exp %u)\n",
+               (unsigned)spinA.io_seq, (unsigned)spinB.io_seq,
+               (unsigned)spinA.write_seq, (unsigned)spinB.write_seq, (unsigned)exp_wr);
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     printf("=== SNES Thumb-2 differential harness ===\n");
 
@@ -771,6 +1034,17 @@ int main(void) {
         failures += run_case_wai(true  /*wake*/,   0, 0, 0);
     }
 
+    /* ---- STP (stopped): frozen state, incl. stopped-with-pending-NMI ---- *
+     * Native mode; two deterministic cases. Completes the power-state pre-work
+     * parity alongside WAI: asserts the dispatcher honours the stopped short-
+     * circuit and its priority over a pending NMI (no wake, no vector read). */
+    {
+        total++;
+        failures += run_case_stopped(false /*plain*/,    0, 0, 0);
+        total++;
+        failures += run_case_stopped(true  /*with nmi*/, 0, 0, 0);
+    }
+
     /* ---- actual IRQ/NMI vector entry: 1 IRQ + 1 NMI, native mode ---- *
      * Real interrupt acceptance: pushes k/pc/flags, reads the vector, jumps to
      * the handler. Vector pre-seeded to 0x0000 with a forced NOP handler. */
@@ -782,22 +1056,30 @@ int main(void) {
     }
 
     /* ---- full opcode sweep: every opcode 0x00..0xff, 1 native case each ---- *
-     * Dispatcher completeness: verifies the fall-through path covers the whole
-     * opcode space and matches the oracle. 0x5c (JML) is the ONLY exclusion:
-     * its 3 operand bytes (pc+1..3) are not controllable through run_case's
-     * single forced byte, and a JML targeting 0x80:0x8573 calls Die() (a
-     * noreturn hang). Every other opcode is provably safe in a single
-     * cpu_runOpcode: 0x44 MVP / 0x54 MVN transfer exactly ONE byte per call
-     * (their repeat is driven by pc rewind across runOpcode calls, not an
-     * internal loop), and Die() is reached from no case but 0x5c (cpu.c:1478). */
+     * Dispatcher completeness: verifies the fall-through path covers the WHOLE
+     * opcode space and matches the oracle -- no normal safe opcode excluded.
+     * 0x5c (JML) is the only opcode whose handler can reach Die() (cpu.c:1478):
+     * it does so iff its operand target is the crash sentinel 0x80:0x8573. Its
+     * three operand bytes (pc+1..3) are not controllable through run_case's
+     * single forced byte, so instead of skipping it we route 0x5c through
+     * run_case_jml_safe, which pins those bytes to a non-magic target and runs
+     * a normal JML. Every opcode is provably safe in a single cpu_runOpcode:
+     * 0x44 MVP / 0x54 MVN transfer exactly ONE byte per call (their repeat is
+     * driven by pc rewind across runOpcode calls, not an internal loop), and
+     * Die() is reached from no case but 0x5c-at-the-sentinel. */
     {
-        int skipped = 0;
+        int run = 0;
         for (int oc = 0; oc < 256; oc++) {
-            if (oc == 0x5c) { skipped++; continue; }
-            total++;
-            failures += run_case((uint8_t)oc, 0, 0, 0, 0, "full-sweep");
+            if (oc == 0x5c) {
+                total++;
+                failures += run_case_jml_safe(0, 0, 0);
+            } else {
+                total++;
+                failures += run_case((uint8_t)oc, 0, 0, 0, 0, "full-sweep");
+            }
+            run++;
         }
-        printf("(full sweep: %d opcodes run, %d skipped)\n", 256 - skipped, skipped);
+        printf("(full sweep: %d opcodes run, 0 skipped)\n", run);
     }
 
     /* ---- accumulator-shift M=0/1 boundary sweep (Stage 3A native) ---- *
@@ -916,6 +1198,52 @@ int main(void) {
                         run++;
                     }
         printf("(REP/SEP exhaustive P x mask + real spin-hook: %d cases)\n", run);
+    }
+
+    /* ---- Stage 3D direct-page sweep (13 opcodes native) ---- *
+     * Pins the four DP gates via the absolute trace-shape check inside
+     * run_case_dp: bank-0 addressing (db forced nonzero), 16-bit wrap, dp&0xff
+     * cycle charge (incl. dp=0x0100 whose low byte is 0 -> no charge), and
+     * spin-hook parity (reads bump io_seq, writes bump write_seq, by exactly the
+     * access count). ADC/SBC also sweep D=1 to exercise the bail-to-C path. */
+    {
+        static const uint8_t dp_ops[13] = {
+            0xa5, 0xa6, 0xa4, 0x25, 0x05, 0x45, 0xc5,   /* LDA LDX LDY AND ORA EOR CMP */
+            0x65, 0xe5,                                   /* ADC SBC (binary; D=1 bails) */
+            0x85, 0x86, 0x84, 0x64                        /* STA STX STY STZ */
+        };
+        /* (dp, offset) pairs: cycle-gate edges + 0xffff wrap + dp-low-byte-0
+         * + an IO-region pair (bank 0, off >= 0x2000) where spin_hook_read
+         * actually bumps io_seq, making read-bridge parity meaningful. */
+        static const uint16_t dps[7]    = { 0x0000, 0x0000, 0x0080, 0xff80, 0xffff, 0x0100, 0x2101 };
+        static const uint8_t  offs[7]   = { 0x00,   0xff,   0x80,   0x80,   0x02,   0x00,   0x00   };
+        static const uint16_t dvals[4]  = { 0x0000, 0x00ff, 0x8000, 0xffff };
+        static const uint16_t regs[2]   = { 0x0000, 0xffff };
+        int run = 0;
+        for (int oi = 0; oi < 13; oi++) {
+            uint8_t op = dp_ops[oi];
+            bool is_alu_xs = (op == 0xa6 || op == 0xa4 || op == 0x86 || op == 0x84);
+            for (int di = 0; di < 7; di++) {
+                for (int byte = 0; byte < 2; byte++) {
+                    /* gate the width flag the opcode actually uses */
+                    bool mf = is_alu_xs ? !byte : byte;
+                    bool xf = is_alu_xs ? byte : !byte;
+                    for (int vi = 0; vi < 4; vi++)
+                        for (int ri = 0; ri < 2; ri++)
+                            for (int e = 0; e < 2; e++)
+                                for (int cin = 0; cin < 2; cin++)
+                                    for (int din = 0; din < 2; din++) {
+                                        total++;
+                                        failures += run_case_dp(op, dps[di], offs[di],
+                                                                dvals[vi], (uint8_t)cin,
+                                                                (uint8_t)din, mf, xf, e,
+                                                                regs[ri], 0x0100);
+                                        run++;
+                                    }
+                }
+            }
+        }
+        printf("(direct-page bank-0/wrap/cycle + spin-hook: %d cases)\n", run);
     }
 
     printf("\n=== Results: %d/%d passed, %d failed ===\n",
