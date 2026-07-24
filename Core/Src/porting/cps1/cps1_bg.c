@@ -82,8 +82,19 @@ void cps1_bg_render_layer(const cps1_bg_layer_t *layer, unsigned layer_index,
      */
     const int map_w_px = CPS1_BG_MAP_W * (int)tile_px;
     const int map_h_px = CPS1_BG_MAP_H * (int)tile_px;
-    int sx = layer->scroll_x % map_w_px; if (sx < 0) sx += map_w_px;
-    int sy = layer->scroll_y % map_h_px; if (sy < 0) sy += map_h_px;
+    /*
+     * The visible area is NOT at scroll origin. CPS-1 scans a 512-wide virtual
+     * screen and shows x=64..447, y=16..239 of it -- MAME cps1.h:
+     *   CPS_HBEND 64, CPS_HBSTART 448   -> 384 wide
+     *   CPS_VBEND 16, CPS_VBSTART 240   -> 224 tall
+     * So screen pixel 0 sits at virtual (scroll + 64, scroll + 16), not at
+     * `scroll`. Drawing from `scroll` puts the picture 64 px off and, because
+     * these layers WRAP (the torus below), the right 1/6 reappears down the
+     * left edge. wof writes scroll_x = -64 precisely to cancel this origin,
+     * which is what gave it away.
+     */
+    int sx = (layer->scroll_x + CPS1_SCREEN_ORIGIN_X) % map_w_px; if (sx < 0) sx += map_w_px;
+    int sy = (layer->scroll_y + CPS1_SCREEN_ORIGIN_Y) % map_h_px; if (sy < 0) sy += map_h_px;
 
     const int first_col = sx / (int)tile_px, x_off = sx % (int)tile_px;
     const int first_row = sy / (int)tile_px, y_off = sy % (int)tile_px;
