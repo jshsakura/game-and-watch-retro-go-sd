@@ -1101,6 +1101,7 @@ Core/Src/porting/cps1/cps1_rom.c \
 Core/Src/porting/cps1/cps1_romset.c \
 Core/Src/porting/cps1/cps1_ppu.c \
 Core/Src/porting/cps1/cps1_bg.c \
+Core/Src/porting/cps1/cps1_qsound.c \
 external/gwenesis/src/cpus/M68K/m68kcpu.c
 endif
 
