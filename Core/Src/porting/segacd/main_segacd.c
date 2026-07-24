@@ -538,4 +538,11 @@ void blit(void) {
         gwenesis_vdp_render_line(l);
     }
     common_ingame_overlay();
+    /* PRESENT THE FRAME. blit() rendered into the ACTIVE (back) buffer; without
+     * this swap the display keeps showing the other (black) buffer forever --
+     * that was the black screen, and the overlay-toggle "afterimage" (the
+     * overlay drawn into a back buffer that never became front). The base
+     * gwenesis core swaps after its overlay (main_gwenesis.c); Sega CD never
+     * did. */
+    lcd_swap();
 }
