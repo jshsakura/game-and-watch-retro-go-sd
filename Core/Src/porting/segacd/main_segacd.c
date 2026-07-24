@@ -399,9 +399,17 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         SCD_DBG("segacd dbg: cdd done; blit(draw=%d)...\n", (int)drawFrame);
         if (drawFrame) blit();
         if (drawFrame) {
-            SCD_DBG("segacd dbg: frame 0 complete -- sealing diag\n");
-            s_scd_dbg_first = 0;
-            s_scd_diag_sealed = true;   /* no SD writes during steady play */
+            /* Frame 0 rendered but the machine dies a few frames later (boot
+             * rescue = 2 unfinished boots). Log the first several frames, then
+             * seal -- the last line names the frame it died on. */
+            static int scd_frame = 0;
+            scd_frame++;
+            SCD_DBG("segacd dbg: frame %d complete\n", scd_frame);
+            if (scd_frame >= 5) {
+                SCD_DBG("segacd dbg: 5 frames ok -- sealing diag\n");
+                s_scd_dbg_first = 0;
+                s_scd_diag_sealed = true;   /* no SD writes during steady play */
+            }
         }
 
         /* --- audio: gwenesis YM+SN mixed with CD-DA + RF5C164 PCM --- */
