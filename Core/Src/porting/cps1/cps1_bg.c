@@ -60,6 +60,12 @@ void cps1_bg_render_layer(const cps1_bg_layer_t *layer, unsigned layer_index,
     unsigned tile_px = cps1_bg_tile_px(layer_index);
     unsigned sub = tile_px / 8u; /* sub-tiles per side: 1, 2, or 4 */
     unsigned palette_offset = cps1_bg_layer_palette_offset(layer_index);
+    static int bgtrc = 0;
+    if (bgtrc < 3) { bgtrc++;
+        cps1_diag("bgL: enter L=%u tpx=%u sub=%u fb=%p meta=%p rom=%p cache=%p\n",
+                  layer_index, tile_px, sub, (void *)out_fb, (void *)out_meta,
+                  (const void *)rom, (const void *)cache);
+    }
 
     /*
      * CPS-1 scroll layers WRAP: each is 64x64 tiles, so 512x512 px for

@@ -177,7 +177,7 @@ static uint16_t s_cps1_diag_len;
 static bool     s_cps1_diag_sealed;
 static int      s_cps1_dbg_first = 1;
 
-static void cps1_diag(const char *fmt, ...)
+void cps1_diag(const char *fmt, ...)
 {
     char line[160];
     va_list ap; va_start(ap, fmt);

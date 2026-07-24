@@ -56,6 +56,11 @@
 #define CPS1_FB_WIDTH  384
 #define CPS1_FB_HEIGHT 224
 
+/* First-frame breadcrumb log to /cps1_diag.txt (defined in main_cps1.c). Callable
+ * from the render TUs so a crash inside a layer/blit leaves the exact step on the
+ * SD. Sealed after frame 0, so it is free during steady play. */
+void cps1_diag(const char *fmt, ...);
+
 typedef enum {
     CPS1_ENGINE_INTERPRETER = 0,
     CPS1_ENGINE_RECOMPILER  = 1,

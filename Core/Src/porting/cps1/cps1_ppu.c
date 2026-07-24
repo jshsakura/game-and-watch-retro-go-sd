@@ -263,17 +263,31 @@ void cps1_blit_block_indexed(uint32_t base_subtile, unsigned sub, unsigned palet
                               const cps1_rom_t *rom, uint16_t *fb,
                               uint8_t *out_meta, uint8_t priority_group)
 {
+    static int trc = 0;   /* first-frame-only breadcrumb budget */
+    if (trc < 6) { trc++;
+        cps1_diag("blit: base=%lu sub=%u dx=%d dy=%d cache=%p rom=%p\n",
+                  (unsigned long)base_subtile, sub, dst_x, dst_y,
+                  (const void *)cache, (const void *)rom);
+    }
     for (unsigned qy = 0; qy < sub; qy++) {
         unsigned src_qy = flip_y ? (sub - 1u - qy) : qy;
         for (unsigned qx = 0; qx < sub; qx++) {
             unsigned src_qx = flip_x ? (sub - 1u - qx) : qx;
             uint32_t subtile = base_subtile + src_qy * sub + src_qx;
+            if (trc <= 6 && qy == 0 && qx == 0)
+                cps1_diag("blit: fetch subtile=%lu...\n", (unsigned long)subtile);
             const uint8_t *tile = cps1_tile_cache_fetch(cache, rom, subtile);
+            if (trc <= 6 && qy == 0 && qx == 0)
+                cps1_diag("blit: fetched tile=%p\n", (const void *)tile);
             if (!tile)
                 continue;
+            if (trc <= 6 && qy == 0 && qx == 0)
+                cps1_diag("blit: 8x8 ->\n");
             cps1_blit8x8_indexed(tile, palette_bank, pal,
                                   dst_x + (int)(qx * 8u), dst_y + (int)(qy * 8u),
                                   flip_x, flip_y, fb, out_meta, priority_group);
+            if (trc <= 6 && qy == 0 && qx == 0)
+                cps1_diag("blit: 8x8 ok\n");
         }
     }
 }
