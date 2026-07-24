@@ -82,6 +82,13 @@
 
 static uint8_t  s_gfxram[CPS1_GFXRAM_BYTES];
 static uint8_t  s_wram[CPS1_WRAM_BYTES];
+/* CPS-1 renders at its native 384x224. The G&W LCD buffer is only 320x240, so
+ * rendering straight into lcd_get_active_buffer() overran it by ~16 KB into the
+ * overlay code just above it (0x2404b000) -- corrupting a libc veneer and
+ * Hardfaulting on the next call (PC=0). Render into this 384-wide offscreen
+ * buffer instead, then downscale to the LCD. 168 KB, fits the ~296 KB free in
+ * this core's RAM_EMU (linker ASSERTs _OVERLAY_CPS1_BSS_END < __RAM_EMU_END__). */
+static uint16_t s_cps1_render_buf[CPS1_FB_WIDTH * CPS1_FB_HEIGHT];
 /* QSound shared RAM. MAME maps only 0xF18000-0xF19FFF and 0xF1E000-0xF1FFFF
  * as live, so 32 KB from 0xF18000 covers both without carrying the whole
  * 64 KB page. */
@@ -330,6 +337,28 @@ static void cps1_render_into(uint16_t *fb, uint8_t *meta)
     CPS1_DBG("cps1 dbg: ppu (sprites)\n");
     cps1_ppu_render(&s_oam, &s_rom, &s_cache, &s_pal, fb);
     CPS1_DBG("cps1 dbg: render done\n");
+}
+
+/* Present the 384x224 CPS-1 frame on the 320x240 LCD: horizontal downscale
+ * 384->320 (Bresenham, no per-pixel divide) and vertical letterbox (224 rows
+ * centered, black top/bottom borders). This is what keeps the render off the
+ * overlay -- src is the 384-wide offscreen buffer, dst is the real LCD buffer. */
+static void cps1_present_to_lcd(const uint16_t *src, uint16_t *lcd)
+{
+    const int vb = (GW_LCD_HEIGHT - CPS1_FB_HEIGHT) / 2;   /* 8 */
+    memset(lcd, 0, (size_t)vb * GW_LCD_WIDTH * sizeof(uint16_t));
+    memset(lcd + (vb + CPS1_FB_HEIGHT) * GW_LCD_WIDTH, 0,
+           (size_t)(GW_LCD_HEIGHT - vb - CPS1_FB_HEIGHT) * GW_LCD_WIDTH * sizeof(uint16_t));
+    for (int y = 0; y < CPS1_FB_HEIGHT; y++) {
+        const uint16_t *srow = src + (size_t)y * CPS1_FB_WIDTH;
+        uint16_t       *drow = lcd + (size_t)(y + vb) * GW_LCD_WIDTH;
+        int sx = 0, acc = 0;
+        for (int x = 0; x < GW_LCD_WIDTH; x++) {
+            drow[x] = srow[sx];
+            acc += CPS1_FB_WIDTH;                                  /* 384 */
+            while (acc >= GW_LCD_WIDTH) { acc -= GW_LCD_WIDTH; sx++; }  /* 320 */
+        }
+    }
 }
 
 /* ------------------------------------------------------- XIP relocation --- */
@@ -1007,8 +1036,12 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         if (drawFrame) {
             cps1_rebuild_video_state();
+            /* Render 384x224 into the OFFSCREEN buffer (never straight into the
+             * 320-wide LCD buffer -- that overran into the overlay), then
+             * downscale to the LCD. */
+            cps1_render_into(s_cps1_render_buf, NULL);
             uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
-            cps1_render_into(fb, NULL);
+            cps1_present_to_lcd(s_cps1_render_buf, fb);
             common_ingame_overlay();
             lcd_swap();
             CPS1_DBG("cps1 dbg: frame %lu complete\n",

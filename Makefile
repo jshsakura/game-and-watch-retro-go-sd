@@ -831,7 +831,15 @@ endif
 # bug: ._ram_space_check_md and ._ram_space_check_segacd stacked in the same
 # region, summing two overlays that never load together. Both are independent
 # ASSERTs now. SEGACD=0 still excludes the core.
-SEGACD ?= 1
+#
+# PARKED (issue #31): an ACCURATE Sega CD needs PRG-RAM 512K + Word-RAM 256K =
+# 768K of contiguous RW RAM, but RAM_EMU is 724K and no other region is >=256K,
+# and XIP can't hold RW RAM. This core only "fits" by shrinking PRG-RAM to 128K,
+# which truncates the sub-68K and breaks the CD boot handshake. Not viable on
+# stock hardware -> default OFF so it ships out of the release. APPID_SEGACD=27
+# is kept in appid.h (retired slot) so persistent_config_t does NOT shift and
+# user settings are NOT reset. Set SEGACD=1 to build it (e.g. with a PSRAM mod).
+SEGACD ?= 0
 SEGACD_C_SOURCES =
 ifeq ($(SEGACD),1)
 SEGACD_C_SOURCES += \

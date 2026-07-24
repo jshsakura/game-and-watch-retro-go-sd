@@ -2098,8 +2098,10 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md,$(CORES_DIR)/md.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_md32x --only-section=.overlay_md32x_itc,$(CORES_DIR)/32x.bin)
 	@$(CP) -O binary --only-section=.xip_md32x --only-section=.rodata_md32x $(BUILD_DIR)/$(TARGET).elf $(CORES_DIR)/32x.xip   # cold code + rodata (YM/68K const tables): contiguous in MD32X_CODE, ONE cache entry (see main_md32x.c)
+ifeq ($(SEGACD),1)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_segacd,$(CORES_DIR)/segacd.bin)
 	@$(CP) -O binary --only-section=.xip_segacd --only-section=.rodata_segacd $(BUILD_DIR)/$(TARGET).elf "$(CORES_DIR)/segacd.xip"   # cold code + rodata (gwenesis 68K/Z80/VDP/YM engine): contiguous in SEGACD_CODE, ONE cache entry on purpose (see main_segacd.c)
+endif
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_a2600,$(CORES_DIR)/a2600.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_lynx,$(CORES_DIR)/lynx.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_a7800,$(CORES_DIR)/a7800.bin)
@@ -2214,8 +2216,7 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(CORES_DIR)/md.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/32x.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/32x.xip --dest-path "/cores/" \
-		-- sdpush --file $(CORES_DIR)/segacd.bin --dest-path "/cores/" \
-		-- sdpush --file $(CORES_DIR)/segacd.xip --dest-path "/cores/" \
+		$(if $(filter 1,$(SEGACD)),-- sdpush --file $(CORES_DIR)/segacd.bin --dest-path "/cores/" -- sdpush --file $(CORES_DIR)/segacd.xip --dest-path "/cores/") \
 		-- sdpush --file $(CORES_DIR)/cps1.xip --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/a2600.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/a2600_defprops.bin --dest-path "/cores/" \
