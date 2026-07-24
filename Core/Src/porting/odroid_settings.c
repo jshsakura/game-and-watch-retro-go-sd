@@ -118,7 +118,12 @@ _Static_assert(offsetof(persistent_config_t, welcome_prompt) ==
 
 static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
-    .version = 15,  /* 13->14: APPID_32X grows app[APPID_COUNT] (one-time settings reset on upgrade)
+    .version = 16,  /* 15->16: APPID_SEGACD REMOVED — app[APPID_COUNT] SHRINKS 28->27
+                     * (Sega CD parked, issue #31). Same rule in the other
+                     * direction: the struct changes size, so every saved /CONFIG
+                     * is thrown away and users lose language/coverflow/backlight/
+                     * volume ONCE. Bumped deliberately.
+                     * 13->14: APPID_32X grows app[APPID_COUNT] (one-time settings reset on upgrade)
                      * 14->15: APPID_CPS1 does it again. The struct would have been thrown
                      * away by the length check regardless -- bumping the version is what
                      * makes that a decision instead of an accident (CLAUDE.md). Every

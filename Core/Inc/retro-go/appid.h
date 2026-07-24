@@ -32,7 +32,12 @@ typedef enum {
     APPID_GBA      = 24,   /* Game Boy Advance (gpsp) */
     APPID_SNES     = 25,   /* generic SNES core (LakeSnes, SD builds only) */
     APPID_32X      = 26,   /* Sega 32X (picodrive, SD builds only) */
-    APPID_SEGACD   = 27,   /* Sega/Mega CD (SD builds only) */
+    /* APPID_SEGACD = 27 REMOVED 0724 — Sega CD is parked (issue #31): an
+     * accurate core needs PRG-RAM 512K + Word-RAM 256K of contiguous RW RAM and
+     * RAM_EMU is only 724K, so it cannot ship. Dropping the slot shrinks
+     * app[APPID_COUNT] 28->27, which invalidates every saved /CONFIG — the
+     * version bump in odroid_settings.c is what makes that a decision rather
+     * than an accident. Reviving Sega CD needs a NEW appid appended here. */
 
     APPID_COUNT,
 } appid_t;
