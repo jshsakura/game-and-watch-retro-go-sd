@@ -38,13 +38,20 @@
  * message for the before/after numbers that prove that expectation.
  * ================================================================================
  */
-#if defined(__GNUC__)
-#define CPS1_ITCM_TEXT __attribute__((section(".itcm_text")))
-#define CPS1_DTCM_BSS  __attribute__((section(".dtcm_bss")))
-#else
+/* ITCM/DTCM placement is DISABLED. The linker section `.cps1_itcm_text`
+ * (STM32H7B0VBTx_SDCARD.ld) puts these functions at an ITCM VMA with a flash
+ * LMA, but the runtime memcpy(LMA->VMA) that PCE's overlay does was never
+ * wired for cps1 -- it was section-placement scaffolding from when cps1 was an
+ * isolated harness. Now that cps1 is a linked, running system, the attribute
+ * placed the blitter (cps1_blit8x8_indexed etc.) at an ITCM address that is
+ * NEVER populated, so the first blit call on device jumped into uninitialised
+ * ITCM = a wild PC BusFault, right where /cps1_diag.txt stopped ("bg layer 2",
+ * the first blit). The attribute is documented to give no measurable speedup on
+ * its own, so drop it: the code then lives in .overlay_cps1 (RAM_EMU), which IS
+ * copied in when the core loads, and runs from a valid address. Re-enable only
+ * together with a real LMA->VMA copy at cps1 load. */
 #define CPS1_ITCM_TEXT
 #define CPS1_DTCM_BSS
-#endif
 
 #define CPS1_FB_WIDTH  384
 #define CPS1_FB_HEIGHT 224
