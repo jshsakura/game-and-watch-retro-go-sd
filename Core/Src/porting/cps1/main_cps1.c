@@ -848,6 +848,22 @@ static void cps1_run_one_frame(void)
     cps1_m68k_run(CPS1_FRAME_MASTER - CPS1_FRAME_MASTER / 2u);
 }
 
+/* A load failure must NOT `return` from app_main: emulator_start() has already
+ * torn the launcher down (ram_start=0, emulators/systems NULLed), so unwinding
+ * out of here runs into state that no longer exists and takes a BusFault on the
+ * exception-return unstack (CFSR UNSTKERR) -- exactly the crash the device
+ * showed on "did not cache". Hold the error on screen instead (the gba/SM
+ * pattern); the player reads it and power-cycles. */
+static void __attribute__((noreturn)) cps1_hold_forever(void)
+{
+    while (true) {
+        wdog_refresh();
+        lcd_sync();
+        lcd_swap();
+        HAL_Delay(20);
+    }
+}
+
 void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)load_state; (void)start_paused; (void)save_slot;
@@ -862,7 +878,9 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     /* Musashi lives in XIP flash; nothing below can call it until this runs. */
     if (!cps1_cache_xip_to_flash()) {
         CPS1_DBG("cps1 dbg: xip cache FAILED\n");
-        return;
+        draw_error_screen("CPS-1", "Musashi XIP failed to cache",
+                          "Re-copy /cores to the card");
+        cps1_hold_forever();
     }
     CPS1_DBG("cps1 dbg: xip cached, loading chips...\n");
 
@@ -871,8 +889,10 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * own code. */
     ram_start = (uint32_t)&_OVERLAY_CPS1_BSS_END;
 
-    if (ACTIVE_FILE == NULL)
-        return;
+    if (ACTIVE_FILE == NULL) {
+        draw_error_screen("CPS-1", "No game selected", "");
+        cps1_hold_forever();
+    }
     /* A .cps1 file is the whole game in one container; a folder is the older
      * loose-chip / subfolder layout. Both still load. */
     const cps1_romset_t *set = cps1_path_is_container(ACTIVE_FILE->path)
@@ -880,7 +900,7 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
                                    : cps1_load_folder_roms(ACTIVE_FILE->path);
     CPS1_DBG("cps1 dbg: load done -> set=%s\n", set ? set->name : "(null)");
     if (set == NULL)
-        return;
+        cps1_hold_forever();   /* the loader already drew a specific error */
 
     CPS1_DBG("cps1 dbg: machine_reset\n");
     cps1_machine_reset(s_prg_lo, s_prg_hi);
