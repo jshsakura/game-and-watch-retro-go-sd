@@ -412,15 +412,25 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             }
         }
 
-        /* --- audio: gwenesis YM+SN mixed with CD-DA + RF5C164 PCM --- */
+        /* --- audio: gwenesis YM+SN mixed with CD-DA + RF5C164 PCM ---
+         * The device dies right after "frame 1 complete" -- i.e. the FIRST time
+         * this audio tail runs. Breadcrumb every call so the last line on the
+         * SD names which one (mix / submit / sound_sync-hang / prefetch). */
         int16_t *sbuf = audio_get_active_buffer();
         uint16_t slen = audio_get_buffer_length();
         int vol = common_emu_sound_get_volume();
+        SCD_DBG("segacd dbg: audio mix(sbuf=%p ym=%p sn=%p len=%u)...\n",
+                sbuf, (void *)gwenesis_ym2612_buffer,
+                (void *)gwenesis_sn76489_buffer, (unsigned)slen);
         segacd_audio_mix(sbuf, gwenesis_ym2612_buffer, gwenesis_sn76489_buffer, slen, vol);
+        SCD_DBG("segacd dbg: audio mix done; submit...\n");
         odroid_audio_submit(sbuf, slen);
 
+        SCD_DBG("segacd dbg: submit done; sound_sync...\n");
         common_emu_sound_sync(false);
+        SCD_DBG("segacd dbg: sound_sync done; cdda_prefetch...\n");
         segacd_cdda_prefetch();      /* keep the CD-DA stream fed (PCE idiom) */
+        SCD_DBG("segacd dbg: prefetch done; loop top\n");
     }
     return 0;
 }
