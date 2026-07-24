@@ -200,7 +200,10 @@ static const uint8_t supported_opcodes[] = {
     0x1a,0x3a,0xe8,0xca,0xc8,0x88,0xeb,       /* INA DEA INX DEX INY DEY XBA     */
     0x0a,0x4a,0x2a,0x6a,                      /* ASL A LSR A ROL A ROR A         */
     0x10,0x30,0x50,0x70,0x80,0x90,0xb0,0xd0,0xf0, /* relative branches             */
-    0x09,0x29,0x49,0xa0,0xa2,0xa9,0xc2,0xe2 /* immediate ALU/load + REP/SEP   */
+    0x09,0x29,0x49,0xa0,0xa2,0xa9,0xc2,0xe2, /* immediate ALU/load + REP/SEP   */
+    0x4c,0x82,0x20,0x22,                     /* JMP abs BRL JSR abs JSL abl     */
+    0x6c,0xdc,0x7c,0xfc,                     /* JMP ind JML ial JMP iax JSR iax */
+    0x60,0x6b,0x40                           /* RTS RTL RTI                     */
 };
 #define SUPPORTED_COUNT (int)(sizeof(supported_opcodes)/sizeof(supported_opcodes[0]))
 
@@ -764,6 +767,166 @@ static int run_case_stack(uint8_t oc, uint16_t sp_in, bool mf, bool xf,
                 g_busA.trace[i].is_write != g_busB.trace[i].is_write) {
                 printf("  trace[%d] A: addr=%06x val=%02x wr=%d  B: addr=%06x val=%02x wr=%d\n",
                        i, g_busA.trace[i].addr, g_busA.trace[i].val, g_busA.trace[i].is_write,
+                       g_busB.trace[i].addr, g_busB.trace[i].val, g_busB.trace[i].is_write);
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
+/* ---- Stage 3L jump/return/subroutine differential (12 opcodes native) ---- *
+ * Family B: control-flow opcodes.  Operand bytes are RAW (snes_cpuRead, no
+ * spin hook -- matches cpu_readOpcode); indirect pointer bytes and all stack
+ * accesses are HOOKED (cpu_thumb2_read/write -- matches cpu_read/cpu_write).
+ *
+ * Bus pre-seeding per opcode class:
+ *   direct (JMP/JSR/BRL/JML/JSL): operand word [+bank] at pc+1..[+3]
+ *   indirect (JMP ind/JML ial):    operand word -> adr; pointer bytes at
+ *                                  bank-0 16-bit-wrapped adr/[+1]/[+2]
+ *   iax (JMP/JSR iax):             operand word -> adr; pointer bytes at
+ *                                  bank-K (k<<16)|(adr+X)&0xffff /[+1]
+ *   return (RTS/RTL/RTI):          stack bytes pre-seeded at pull addresses
+ *                                  (bank 0, e-clamped SP sequence)
+ *
+ * RTS/RTL gate on spBreakpoint: sp_bp=0 exercises the native pull path;
+ * sp_bp=sp_in forces the HookedFunctionRts gate (both sides return early,
+ * trace = opcode fetch only); sp_bp>sp_in bails to C which does a normal
+ * pull (C-fallback transparency).  RTI has no spBreakpoint gate.
+ *
+ * op_target: value encoded in operand bytes (jump target for direct ops;
+ *            pointer address adr for indirect ops).
+ * op_k:      bank byte in operand (JML 0x5c / JSL 0x22).
+ * ptr_target: value encoded in indirect pointer bytes (actual jump target).
+ * ptr_k:     bank byte in indirect pointer (JML ial 0xdc).
+ * ret_pc/ret_k/ret_flags: stack values for return opcodes.
+ * sp_bp:     spBreakpoint (RTS/RTL gate). */
+static int run_case_jump(uint8_t oc,
+                         uint16_t pc_in, uint16_t sp_in, uint16_t x_val,
+                         uint16_t op_target, uint8_t op_k,
+                         uint16_t ptr_target, uint8_t ptr_k,
+                         uint16_t ret_pc, uint8_t ret_k, uint8_t ret_flags,
+                         uint16_t sp_bp,
+                         bool mf, bool xf, bool e) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.k = 0x00;              /* bank 0: simplifies address computation */
+    base.pc = pc_in;
+    base.sp = sp_in;
+    base.x = x_val;
+    base.spBreakpoint = sp_bp;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+    base.c = 0; base.z = 0; base.v = 0; base.n = 0; base.d = 0;
+
+    uint32_t forced_addr = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t op1_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
+    uint32_t op2_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 2);
+    uint32_t op3_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 3);
+    uint32_t seed = prng();
+
+    /* indirect pointer addresses */
+    uint16_t adr = op_target;
+    uint16_t iax_base = (uint16_t)(adr + x_val);
+    uint32_t ind_lo, ind_hi, ind_bank;
+    bool is_bank0_ind = (oc == 0x6c || oc == 0xdc);
+    bool is_iax       = (oc == 0x7c || oc == 0xfc);
+    if (is_bank0_ind) {
+        ind_lo   = (uint32_t)(uint16_t)(adr);
+        ind_hi   = (uint32_t)(uint16_t)(adr + 1);
+        ind_bank = (uint32_t)(uint16_t)(adr + 2);
+    } else {
+        ind_lo   = ((uint32_t)base.k << 16) | iax_base;
+        ind_hi   = ((uint32_t)base.k << 16) | (uint16_t)(iax_base + 1);
+        ind_bank = 0;
+    }
+
+    /* stack pull addresses (bank 0, e-clamped sequential SP) */
+    uint16_t s[4];
+    uint16_t sp = sp_in;
+    for (int i = 0; i < 4; i++) {
+        sp = sp + 1;
+        if (e) sp = (sp & 0xff) | 0x100;
+        s[i] = sp;
+    }
+
+    Cpu cpuA = base, cpuB = base;
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        memset(b, 0, sizeof(*b));
+        b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
+        int w = 0;
+
+        /* operand bytes (RAW fetch -- seeded in wmap for deterministic value) */
+        if (oc != 0x60 && oc != 0x6b && oc != 0x40) {
+            b->wmap[w].addr = op1_addr; b->wmap[w].val = (uint8_t)(op_target & 0xff); w++;
+            b->wmap[w].addr = op2_addr; b->wmap[w].val = (uint8_t)(op_target >> 8);  w++;
+            if (oc == 0x5c || oc == 0x22) {
+                b->wmap[w].addr = op3_addr; b->wmap[w].val = op_k; w++;
+            }
+        }
+
+        /* indirect pointer bytes (HOOKED) */
+        if (is_bank0_ind || is_iax) {
+            b->wmap[w].addr = ind_lo; b->wmap[w].val = (uint8_t)(ptr_target & 0xff); w++;
+            b->wmap[w].addr = ind_hi; b->wmap[w].val = (uint8_t)(ptr_target >> 8);  w++;
+            if (oc == 0xdc) {
+                b->wmap[w].addr = ind_bank; b->wmap[w].val = ptr_k; w++;
+            }
+        }
+
+        /* stack pull bytes (HOOKED) */
+        if (oc == 0x60) {       /* RTS: pullWord -> pc (+1) */
+            b->wmap[w].addr = s[0]; b->wmap[w].val = (uint8_t)(ret_pc & 0xff); w++;
+            b->wmap[w].addr = s[1]; b->wmap[w].val = (uint8_t)(ret_pc >> 8);  w++;
+        } else if (oc == 0x6b) { /* RTL: pullWord -> pc (+1), pullByte -> k */
+            b->wmap[w].addr = s[0]; b->wmap[w].val = (uint8_t)(ret_pc & 0xff); w++;
+            b->wmap[w].addr = s[1]; b->wmap[w].val = (uint8_t)(ret_pc >> 8);  w++;
+            b->wmap[w].addr = s[2]; b->wmap[w].val = ret_k; w++;
+        } else if (oc == 0x40) { /* RTI: pullByte->flags, pullWord->pc, pullByte->k */
+            b->wmap[w].addr = s[0]; b->wmap[w].val = ret_flags; w++;
+            b->wmap[w].addr = s[1]; b->wmap[w].val = (uint8_t)(ret_pc & 0xff); w++;
+            b->wmap[w].addr = s[2]; b->wmap[w].val = (uint8_t)(ret_pc >> 8);  w++;
+            b->wmap[w].addr = s[3]; b->wmap[w].val = ret_k; w++;
+        }
+        b->wmap_len = w;
+    }
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0) {
+        printf("\nMISMATCH [jump op=%02x] pc=%04x sp=%04x x=%04x"
+               " tgt=%04x opk=%02x ptrt=%04x ptrk=%02x"
+               " rpc=%04x rk=%02x rf=%02x sbp=%04x mf=%d xf=%d e=%d\n",
+               oc, pc_in, sp_in, x_val, op_target, op_k, ptr_target, ptr_k,
+               ret_pc, ret_k, ret_flags, sp_bp, mf, xf, e);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  busA len=%d ovf=%d  busB len=%d ovf=%d\n",
+               g_busA.trace_len, g_busA.overflow,
+               g_busB.trace_len, g_busB.overflow);
+        int n = g_busA.trace_len < g_busB.trace_len
+              ? g_busA.trace_len : g_busB.trace_len;
+        for (int i = 0; i < n; i++) {
+            if (g_busA.trace[i].addr != g_busB.trace[i].addr ||
+                g_busA.trace[i].val  != g_busB.trace[i].val  ||
+                g_busA.trace[i].is_write != g_busB.trace[i].is_write) {
+                printf("  trace[%d] A: %06x %02x %d  B: %06x %02x %d\n", i,
+                       g_busA.trace[i].addr, g_busA.trace[i].val, g_busA.trace[i].is_write,
                        g_busB.trace[i].addr, g_busB.trace[i].val, g_busB.trace[i].is_write);
             }
         }
@@ -2963,6 +3126,114 @@ int main(void) {
             }
         }
         printf("(stack push/pull implied/e-clamp/mf-xf + spin-hook: %d cases)\n", run);
+    }
+
+    /* ---- Stage 3L jump/return/subroutine sweep (12 opcodes native) ---- *
+     * Pins the Family-B gates via bus_eq trace parity (oracle and dispatcher
+     * must access the same addresses in the same order with the same values):
+     *   gate 1 (operand bytes RAW): opcode + operand reads at (k<<16)|pc[+1..]
+     *          with NO spin-hook advance (raw fetch);
+     *   gate 2 (indirect pointers HOOKED): bank-0 (0x6c/0xdc) or bank-K
+     *          (0x7c/0xfc) pointer reads via cpu_thumb2_read (spin-hook path);
+     *   gate 3 (stack HOOKED): push/pull via cpu_thumb2_write/read;
+     *   gate 4 (JSR/JSL push pc-1; RTS/RTL +1; RTI NO +1): verified via
+     *          cpu_eq pc parity.
+     * RTS/RTL sweep spBreakpoint: 0 (native pull), sp_in (gate fires, early
+     * return), sp_in+0x100 (nonzero bail-to-C normal pull).  RTI has no gate.
+     * Two flag combos: native (0,0,0) and emulation (1,1,1).  RTI sweeps a
+     * few flags bytes to exercise the setFlags renormalization (e-check
+     * SP clamp, xf-check X/Y truncation).  PC wrap edges (0xfffe/0xffff) and
+     * indirect pointer wrap (adr near 0xffff) are included. */
+    {
+        /* opcode classes */
+        static const uint8_t direct_ops[5] = { 0x4c, 0x82, 0x5c, 0x20, 0x22 };
+        static const uint8_t ind_ops[4]    = { 0x6c, 0xdc, 0x7c, 0xfc };
+        static const uint8_t ret_ops[3]    = { 0x60, 0x6b, 0x40 };
+
+        /* targets: normal, boundary, wrap */
+        static const uint16_t targets[4] = { 0x0000, 0x7fff, 0x8000, 0xfffe };
+        /* PC wrap edges */
+        static const uint16_t pc_ins[3] = { 0x0100, 0xfffe, 0xffff };
+        /* SP values: native, e-clamp edge */
+        static const uint16_t sps[3] = { 0x01ff, 0x0100, 0x0200 };
+        /* indirect pointer address: normal + 0xffff wrap */
+        static const uint16_t ptr_adrs[2] = { 0x8000, 0xffff };
+        /* RTI flags bytes: exercise renormalization edges */
+        static const uint8_t rti_flags[4] = { 0x00, 0x30, 0xff, 0x10 };
+        /* X values for iax */
+        static const uint16_t x_vals[2] = { 0x0000, 0x0010 };
+
+        int run = 0;
+
+        /* direct jump ops: JMP abs, BRL, JML, JSR abs, JSL */
+        for (int oi = 0; oi < 5; oi++) {
+            uint8_t op = direct_ops[oi];
+            for (int ti = 0; ti < 4; ti++)
+                for (int pi = 0; pi < 3; pi++)
+                    for (int e = 0; e < 2; e++) {
+                        total++;
+                        /* JML 0x5c: avoid Die sentinel 0x80:0x8573 */
+                        uint8_t ok = (op == 0x5c) ? 0x42 : 0x00;
+                        failures += run_case_jump(op, pc_ins[pi], 0x01ff, 0,
+                                                  targets[ti], ok,
+                                                  0, 0, 0, 0, 0, 0,
+                                                  0, 0, e);
+                        run++;
+                    }
+        }
+
+        /* indirect ops: JMP ind, JML ial, JMP iax, JSR iax */
+        for (int oi = 0; oi < 4; oi++) {
+            uint8_t op = ind_ops[oi];
+            for (int ai = 0; ai < 2; ai++)
+                for (int xi = 0; xi < 2; xi++)
+                    for (int ti = 0; ti < 4; ti++)
+                        for (int e = 0; e < 2; e++) {
+                            total++;
+                            failures += run_case_jump(op, 0x0100, 0x01ff,
+                                                      x_vals[xi],
+                                                      ptr_adrs[ai], 0,
+                                                      targets[ti], 0x42,
+                                                      0, 0, 0, 0,
+                                                      0, 0, e);
+                            run++;
+                        }
+        }
+
+        /* return ops: RTS, RTL, RTI */
+        for (int oi = 0; oi < 3; oi++) {
+            uint8_t op = ret_ops[oi];
+            int n_bp = (op == 0x40) ? 1 : 3; /* RTI: no sp_bp sweep */
+            for (int si = 0; si < 3; si++)
+                for (int bi = 0; bi < n_bp; bi++)
+                    for (int e = 0; e < 2; e++) {
+                        uint16_t sp = sps[si];
+                        uint16_t bp;
+                        if (op == 0x40) bp = 0;
+                        else if (bi == 0) bp = 0;
+                        else if (bi == 1) bp = sp;         /* gate fires */
+                        else             bp = sp + 0x100;  /* bail-to-C pull */
+                        if (op == 0x40) {
+                            for (int fi = 0; fi < 4; fi++) {
+                                total++;
+                                failures += run_case_jump(op, 0x0100, sp, 0,
+                                                          0, 0, 0, 0,
+                                                          0x1234, 0x42,
+                                                          rti_flags[fi], bp,
+                                                          0, 0, e);
+                                run++;
+                            }
+                        } else {
+                            total++;
+                            failures += run_case_jump(op, 0x0100, sp, 0,
+                                                      0, 0, 0, 0,
+                                                      0x1234, 0x42, 0, bp,
+                                                      0, 0, e);
+                            run++;
+                        }
+                    }
+        }
+        printf("(jump/return/subroutine operand+indirect+stack + spBp gate: %d cases)\n", run);
     }
 
     printf("\n=== Results: %d/%d passed, %d failed ===\n",
