@@ -977,6 +977,186 @@ static int run_case_dp(uint8_t oc, uint16_t dp, uint8_t offset,
     return 0;
 }
 
+/* Expected RMW write-back value, mirroring cpu.c's cpu_asl..cpu_trb (lines
+ * 739-855) byte-for-byte.  \value is the operand read (already width-masked
+ * to 0..0xff for byte / 0..0xffff for word), \a is the accumulator, \c is the
+ * carry-in.  Returns the value written back, width-masked.  The carry/flag
+ * side-effects are verified via cpu_eq (both sides recompute them identically);
+ * this helper only pins the write-back bytes that appear in the bus trace. */
+static uint16_t rmw_expected(uint8_t op, uint16_t value, uint16_t a, bool c, bool byte) {
+    uint16_t am = byte ? (a & 0xff) : a;
+    uint16_t r;
+    switch (op) {
+        case 0x0e: r = (uint16_t)(value << 1);                 break;  /* ASL */
+        case 0x4e: r = (uint16_t)(value >> 1);                 break;  /* LSR */
+        case 0x2e: r = (uint16_t)((value << 1) | (c ? 1 : 0)); break;  /* ROL */
+        case 0x6e: r = (uint16_t)((value >> 1) | (c ? (byte ? 0x80 : 0x8000) : 0)); break; /* ROR */
+        case 0xee: r = (uint16_t)(value + 1);                  break;  /* INC */
+        case 0xce: r = (uint16_t)(value - 1);                  break;  /* DEC */
+        case 0x0c: r = (uint16_t)(value | am);                 break;  /* TSB */
+        case 0x1c: r = (uint16_t)(value & ~am);                break;  /* TRB */
+        default:   r = value;                                  break;
+    }
+    return byte ? (r & 0xff) : (r & 0xffff);
+}
+
+/* Stage 3E absolute differential case.  Mirrors run_case_dp but for the abs
+ * addressing mode: TWO operand bytes (addr_lo, addr_hi), effective address is
+ * db-qualified 24-bit ((db<<16)|adr) with 24-bit high-wrap, and NO address-
+ * computation cycle (cpu_adrAbs charges none, unlike cpu_adrDp's dp&0xff +1).
+ * db is swept (incl. nonzero, 0xff, 0x00) so the trace-shape check pins gate
+ * "abs uses db, not bank 0" and the 24-bit wrap edge. */
+static int run_case_abs(uint8_t oc, uint8_t db, uint16_t adr,
+                        uint16_t data_val, uint8_t c_in, uint8_t d_in,
+                        bool mf, bool xf, bool e, uint16_t reg_seed,
+                        uint16_t pc_in) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.a = reg_seed; base.x = reg_seed; base.y = reg_seed;
+    base.db = db;                    /* gate: abs MUST use db (not bank 0) */
+    base.k = 0x01;                   /* opcode/operand fetch bank: 0x01xxxx never
+                                      * collides with data addresses (which use db,
+                                      * swept per pair) */
+    base.c = c_in ? 1 : 0;
+    base.d = d_in ? 1 : 0;
+    base.pc = pc_in;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    bool x_width = (oc == 0xae || oc == 0xac || oc == 0x8e || oc == 0x8c ||
+                    oc == 0xec || oc == 0xcc);   /* LDX LDY STX STY CPX CPY: XF width */
+    bool is_store = (oc == 0x8d || oc == 0x8e || oc == 0x8c || oc == 0x9c); /* STA STX STY STZ */
+    bool is_rmw   = (oc == 0x0e || oc == 0x4e || oc == 0x2e || oc == 0x6e ||
+                     oc == 0xee || oc == 0xce || oc == 0x0c || oc == 0x1c); /* ASL LSR ROL ROR INC DEC TSB TRB */
+    bool wflag = x_width ? xf : mf;
+    int n_data = wflag ? 1 : 2;
+    /* RMW does n_data READS then n_data WRITES (reversed high-first in word
+     * mode, matching cpu_writeWord(...,true)); stores do only writes; plain
+     * reads (LDA/AND/CMP/BIT/CPX/CPY) do only reads. */
+    int n_reads  = is_store ? 0 : n_data;
+    int n_writes = (is_store || is_rmw) ? n_data : 0;
+    bool reversed_write = is_rmw;              /* RMW word: HIGH@addr_high first */
+
+    uint32_t addr_low  = ((uint32_t)db << 16) | adr;
+    uint32_t addr_high = (addr_low + 1) & 0xffffff;   /* 24-bit bank wrap */
+
+    uint32_t forced_addr    = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t operand_addr_lo = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
+    uint32_t operand_addr_hi = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 2);
+    uint32_t seed = prng();
+
+    uint8_t exp_lo, exp_hi;
+    if (is_rmw) {
+        /* RMW write-back: compute the result mirroring cpu.c, then split. */
+        uint16_t v = wflag ? (data_val & 0xff) : data_val;
+        uint16_t r = rmw_expected(oc, v, base.a, base.c, wflag);
+        exp_lo = r & 0xff;
+        exp_hi = (r >> 8) & 0xff;
+    } else if (oc == 0x9c)         { exp_lo = 0;            exp_hi = 0; }            /* STZ */
+    else if (oc == 0x8d)          { exp_lo = base.a & 0xff; exp_hi = base.a >> 8; } /* STA */
+    else if (oc == 0x8e)          { exp_lo = base.x & 0xff; exp_hi = base.x >> 8; } /* STX */
+    else                          { exp_lo = base.y & 0xff; exp_hi = base.y >> 8; } /* STY */
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
+        b->wmap[0].addr = operand_addr_lo; b->wmap[0].val = (uint8_t)adr;
+        b->wmap[1].addr = operand_addr_hi; b->wmap[1].val = (uint8_t)(adr >> 8);
+        b->wmap_len = 2;
+        if (n_reads > 0) {
+            b->wmap[2].addr = addr_low;  b->wmap[2].val = (uint8_t)data_val;
+            b->wmap_len = 3;
+            if (n_reads == 2) {
+                b->wmap[3].addr = addr_high; b->wmap[3].val = (uint8_t)(data_val >> 8);
+                b->wmap_len = 4;
+            }
+        }
+    }
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    /* absolute trace-shape check on BOTH sides: opcode read, TWO operand reads,
+     * then n_reads data READS (low@addr_low, high@addr_high) followed by
+     * n_writes data WRITES.  RMW word writes are REVERSED (HIGH@addr_high
+     * first, then LOW@addr_low) -- cpu_writeWord(...,true); pure stores write
+     * low-then-high.  Every data address is db-qualified 24-bit (wrapped). */
+    int expected_len = 3 + n_reads + n_writes;
+    uint32_t exp_wr  = spin_seed.write_seq + n_writes;
+    int shape_fail = 0;
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        const char *tag = side ? "thumb2" : "oracle";
+        if (b->overflow || b->trace_len != expected_len) { shape_fail = 1; }
+        else {
+            if (b->trace[0].is_write || b->trace[0].addr != forced_addr ||
+                b->trace[0].val != oc) shape_fail = 1;
+            if (b->trace[1].is_write || b->trace[1].addr != operand_addr_lo ||
+                b->trace[1].val != (uint8_t)adr) shape_fail = 1;
+            if (b->trace[2].is_write || b->trace[2].addr != operand_addr_hi ||
+                b->trace[2].val != (uint8_t)(adr >> 8)) shape_fail = 1;
+            uint32_t addrs[2] = { addr_low, addr_high };
+            int idx = 3;
+            /* reads: low@addr_low then high@addr_high */
+            for (int i = 0; i < n_reads; i++) {
+                BusEntry *t = &b->trace[idx++];
+                if (t->is_write != 0) shape_fail = 1;
+                if (t->addr != addrs[i]) shape_fail = 1;     /* gate: db bank + 24-bit wrap */
+                uint8_t ev = (i == 0) ? (uint8_t)data_val : (uint8_t)(data_val >> 8);
+                if (t->val != ev) shape_fail = 1;
+            }
+            /* writes: RMW reversed (high first) vs stores low-first */
+            for (int i = 0; i < n_writes; i++) {
+                BusEntry *t = &b->trace[idx++];
+                if (t->is_write != 1) shape_fail = 1;
+                int ai = reversed_write ? (n_writes - 1 - i) : i;
+                if (t->addr != addrs[ai]) shape_fail = 1;    /* gate: reversed order + wrap */
+                uint8_t ev = (ai == 0) ? exp_lo : exp_hi;
+                if (t->val != ev) shape_fail = 1;
+            }
+        }
+        if (shape_fail) {
+            printf("\nTRACE-SHAPE VIOLATION [abs op=%02x %s] db=%02x adr=%04x"
+                   " mf=%d xf=%d e=%d d=%d len=%d ovf=%d\n",
+                   oc, tag, db, adr, mf, xf, e, d_in, b->trace_len, b->overflow);
+            for (int i = 0; i < b->trace_len && i < 8; i++)
+                printf("  [%d] %06x %02x %s\n", i, b->trace[i].addr,
+                       b->trace[i].val, b->trace[i].is_write ? "W" : "R");
+            return 1;
+        }
+    }
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0 ||
+        spinA.write_seq != exp_wr) {
+        printf("\nMISMATCH [abs op=%02x] db=%02x adr=%04x data=%04x c=%d d=%d"
+               " mf=%d xf=%d e=%d reg=%04x pc=%04x\n",
+               oc, db, adr, data_val, c_in, d_in, mf, xf, e, reg_seed, pc_in);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  spin io A=%u B=%u  wr A=%u B=%u (exp %u)\n",
+               (unsigned)spinA.io_seq, (unsigned)spinB.io_seq,
+               (unsigned)spinA.write_seq, (unsigned)spinB.write_seq, (unsigned)exp_wr);
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     printf("=== SNES Thumb-2 differential harness ===\n");
 
@@ -1244,6 +1424,59 @@ int main(void) {
             }
         }
         printf("(direct-page bank-0/wrap/cycle + spin-hook: %d cases)\n", run);
+    }
+
+    /* ---- Stage 3E absolute sweep (24 opcodes native) ---- *
+     * Pins the abs gates via the absolute trace-shape check inside run_case_abs:
+     * db-qualified 24-bit addressing (db swept nonzero/0xff/0x00 so bank-0 is
+     * NOT assumed), 24-bit high-wrap (db=0x00/0xff x adr=0xffff crosses banks),
+     * and NO address-computation cycle (abs has no dp&0xff charge).  Includes an
+     * IO-region pair (db=0x00 adr=0x2101) where spin_hook_read bumps io_seq so
+     * read-bridge parity is meaningful.  ADC/SBC also sweep D=1 to exercise the
+     * bail-to-C path.  Pass 2 adds the RMW family (ASL LSR ROL ROR INC DEC TSB
+     * TRB -- word-mode reversed write-back + cyclesUsed+=2), BIT (N/V from
+     * memory), and CPX/CPY (XF width). */
+    {
+        static const uint8_t abs_ops[24] = {
+            0xad, 0xae, 0xac, 0x2d, 0x0d, 0x4d, 0xcd,   /* LDA LDX LDY AND ORA EOR CMP */
+            0x6d, 0xed,                                   /* ADC SBC (binary; D=1 bails) */
+            0x8d, 0x8e, 0x8c, 0x9c,                       /* STA STX STY STZ */
+            0x0e, 0x4e, 0x2e, 0x6e, 0xee, 0xce,           /* ASL LSR ROL ROR INC DEC (RMW) */
+            0x0c, 0x1c,                                    /* TSB TRB (RMW) */
+            0x2c,                                          /* BIT (read-only) */
+            0xec, 0xcc                                     /* CPX CPY (XF width) */
+        };
+        /* (db, adr) pairs: normal nonzero db, cross-bank wrap (db=0/ff x 0xffff),
+         * bank-0 base, IO region for spin parity, high bank byte. */
+        static const uint8_t  dbs[7]   = { 0x42, 0x00, 0xff, 0x00, 0x00, 0x80, 0x01 };
+        static const uint16_t adrs[7]  = { 0x1234, 0xffff, 0xffff, 0x0000, 0x2101, 0x0100, 0xfffe };
+        static const uint16_t dvals[4] = { 0x0000, 0x00ff, 0x8000, 0xffff };
+        static const uint16_t regs[2]  = { 0x0000, 0xffff };
+        int run = 0;
+        for (int oi = 0; oi < 24; oi++) {
+            uint8_t op = abs_ops[oi];
+            bool is_alu_xs = (op == 0xae || op == 0xac || op == 0x8e || op == 0x8c ||
+                              op == 0xec || op == 0xcc);
+            for (int di = 0; di < 7; di++) {
+                for (int byte = 0; byte < 2; byte++) {
+                    bool mf = is_alu_xs ? !byte : byte;
+                    bool xf = is_alu_xs ? byte : !byte;
+                    for (int vi = 0; vi < 4; vi++)
+                        for (int ri = 0; ri < 2; ri++)
+                            for (int e = 0; e < 2; e++)
+                                for (int cin = 0; cin < 2; cin++)
+                                    for (int din = 0; din < 2; din++) {
+                                        total++;
+                                        failures += run_case_abs(op, dbs[di], adrs[di],
+                                                                 dvals[vi], (uint8_t)cin,
+                                                                 (uint8_t)din, mf, xf, e,
+                                                                 regs[ri], 0x0100);
+                                        run++;
+                                    }
+                }
+            }
+        }
+        printf("(absolute db-bank/24bit-wrap + spin-hook: %d cases)\n", run);
     }
 
     printf("\n=== Results: %d/%d passed, %d failed ===\n",
