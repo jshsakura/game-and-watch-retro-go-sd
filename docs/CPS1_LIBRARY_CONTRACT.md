@@ -1,130 +1,67 @@
-# CPS-1 library layout — the contract between the library app and the device
+# CPS-1 library layout — the contract between the library and the device
 
-Two programs have to agree on this: **game-and-what** (the library/upload side,
-which prepares the SD card) and **retro-go-sd** (the firmware, which reads it).
-This file is the agreement. Neither side may change the layout without the
-other.
+Three producers must agree on this and stay in step:
 
-Status: firmware side implemented (`Core/Src/porting/cps1/main_cps1.c`,
-`cps1_romset.c`), verified by `linux/build/cps1-gfx-chips-selftest`.
+- **game-and-what** — the web library/upload side that prepares the card,
+- a future **standalone Python packager** (a CLI that builds the same card
+  layout without the web app), and
+- **retro-go-sd** — the firmware that reads it.
+
+This file is the agreement. No producer may change the layout without the
+others. It was verified end-to-end on real hardware: the firmware opens a
+Korean-named container, caches all 20 chips, resolves the romset and renders
+(the on-device `/cps1_diag.txt` log proves each step).
 
 ---
 
-## 1. Layout
+## 1. Layout — ONE flat file per game
 
 ```
 /roms/cps1/
-    <Game Name>/            ← ONE FOLDER PER GAME. This is the launcher entry.
-        tk2j23c.bin             raw MAME chip dumps, ORIGINAL filenames
-        tk2j22c.bin
-        tk205.bin … tk208.bin
-    .shared/                ← chips common to several sets, stored ONCE,
-        0d9cb9bf.bin            named by their CRC32 (see §2.1)
-        45227027.bin
-        c5ca2460.bin
-        e349551c.bin
+    <Game Name>.cps1            ← ONE FILE PER GAME. This IS the launcher entry.
+/covers/cps1/
+    <Game Name>.img             ← its cover (optional), same base name.
 ```
 
-**Or one subfolder per archive, pooled** — the same game folder, one level
-deeper, which is what unzipping a clone and its parent side by side actually
-produces:
+- `<Game Name>` is the human display name and is shown verbatim in the launcher
+  (it may be non-ASCII, e.g. Korean — the firmware opens and displays it fine;
+  the file leaf is the only thing that has to match between the `.cps1` and its
+  `.img`).
+- **No folders, no subfolders, no `.shared/`, no MAME-named chip files, no
+  archives.** A game is exactly one `.cps1` file. Anything else that was on the
+  card before (loose chips, `wof.zip`) is ignored by the launcher (it lists only
+  `*.cps1`).
+
+### 1.1 The `.cps1` container format
 
 ```
-/roms/cps1/
-    Warriors of Fate/       ← still ONE launcher entry
-        wof/                    the parent archive's chips
-        wofj/                   the Japan clone: 2 program + 4 upper GFX chips
+<Game Name>.cps1 = chip[0] ++ chip[1] ++ ... ++ chip[N-1]
 ```
 
-The loader gathers both subfolders into one chip pool. Because chips are keyed
-by CRC32 (§3), pooling is safe: each set picks its own chips out and ignores
-the rest. The folder is self-contained, nothing is stored twice under two
-names, and `.shared/` is not involved at all.
+- Each `chip[i]` is exactly **512 KB (0x80000)** of raw MAME chip bytes, verbatim
+  (no byte-swap, no padding — see §3).
+- The chips are the romset's **DISTINCT** chips, de-duplicated by content CRC32
+  (the same bytes appearing in two source archives are one chip). Ship the whole
+  distinct pool the folder completes, not one guessed set's slice: the device
+  binds by CRC and takes what its chosen set needs, so extra chips are free and
+  no chip a runnable set might need is ever dropped.
+- **Uncompressed, no header, no index, no order requirement.** The device
+  identifies each 512 KB block by content hash (§3), so block order is
+  irrelevant. The file size is always a whole multiple of 512 KB.
+- Build it only when the folder completes **at least one** runnable romset;
+  otherwise produce nothing (a half-a-game file that reaches the launcher and
+  dies is worse than one visibly absent).
 
-One level only — a recursive scan would wander across the card, and every extra
-directory is SD reads and flash cache entries spent before the game starts.
+Why uncompressed and flat: the device has no inflate in the emulator path and
+nowhere to put 4 MB of decompressed graphics (RAM_EMU is 724 KB). It caches each
+512 KB block into external flash and reads it in place (XIP), which only works on
+raw chip bytes. One file (not a folder of 20) also means one `fopen` per game —
+a folder of 20 loose chips exhausted the 10-slot descriptor table on device.
 
-**Pooling can leave more than one set runnable, and then the player is asked.**
-`wof/` + `wofj/` completes *both* wofj and wofr1 (the archive distributed as
-`wof.zip` is in fact wofr1 — §3), so the loader lists them and the player
-picks. It does not choose for them: the unchosen set would otherwise be
-unplayable forever, and "first in the generated table" is not an answer anyone
-could predict or change. One runnable set launches straight into the game, as
-before — the dialog appears only when the ambiguity is real.
+## 2. Chip identification is by CRC32. Never by filename or position.
 
-**A parent set is not a game folder.** If the user owns both the World and the
-Japanese release as playable entries, each gets its own `<Game Name>/` folder
-and the chips they have in common live once in `.shared/`. If only the clone is
-owned, there is no parent folder at all — just the clone's folder plus the
-shared chips it needs.
-
-- **No archives.** The device has no inflate in the emulator path, and more to
-  the point it has nowhere to put 4 MB of decompressed graphics: RAM_EMU is
-  724 KB. Chips are cached into external flash and read in place (XIP), which
-  only works on a file that is already the raw chip bytes.
-- **No container, no sidecar, no index file.** The `.cps1` container this
-  project once invented is retired (`0bd923c1`); MAME's chip interleave is pure
-  address arithmetic, so nothing needs assembling.
-- **Files are byte-for-byte the MAME dumps.** No byte-swapping, no renaming,
-  no padding. MAME applies `ROM_REVERSE` when it builds its big-endian program
-  region, and a little-endian `*(uint16*)` read of the raw chip undoes exactly
-  that, so the two cancel: verbatim is correct. (Proof: `tk2j23c.bin` begins
-  `ff 00 ee 62 00 00 a2 71`, which reads back as SSP=`0x00FF62EE`,
-  PC=`0x000071A2` — a stack pointer inside work RAM and an even PC.)
-- **`.shared/` is invisible to the launcher.** Its folder scan skips any name
-  beginning with `.` (`rg_emulators.c`), so it never lists as a game.
-
-## 2. `.shared/` — why the parent set is not duplicated
-
-A MAME clone archive contains only what is unique to it. `wofj.zip` holds its
-two program chips and the four *upper* graphics chips; the four *lower* ones
-are byte-identical to the parent's and are simply absent.
-
-Making every game folder self-contained would store those shared chips once per
-clone — twice on the card, and **twice in the flash cache**, which keys on path
-rather than content and therefore cannot tell that two paths hold identical
-bytes. `.shared/` stores them once and every set that needs them finds them
-there.
-
-### 2.1 Shared chips are named by CRC32, and only there
-
-Inside a game folder, filenames are the original MAME ones and are ignored.
-Inside `.shared/`, the filename **is** the CRC32, lowercase hex, `.bin`:
-`0d9cb9bf.bin`. Two independent reasons, either one fatal to the obvious
-"just keep the original names" design:
-
-1. **Original MAME names collide across sets.** They are unique only within a
-   game family. Every Street Fighter II revision ships chips called
-   `s92_*.rom` whose *contents differ*. A flat pool of original names
-   overwrites one game's chip with another's, and the result is a game that
-   loads and renders wrongly. A CRC32 cannot collide with different bytes —
-   it is already the identity this whole system keys on, so using it as the
-   filename just says so out loud.
-2. **A pool that must be scanned is a pool every launch pays for.** With ten
-   games' parents in it, launching one game would hash and flash-cache ~40 MB
-   belonging to nine others. Naming by CRC turns the lookup into a direct open
-   of exactly the chips this romset lacks — no scan, nothing cached that the
-   game does not use.
-
-The name is **checked, not trusted**: a chip fetched as `<crc>.bin` is hashed
-like any other and rejected if it does not hash to its own name.
-
-### 2.2 Load order
-
-1. Scan the game folder; cache and hash every 512 KB file found.
-2. If that already completes a romset, stop. Subfolders and `.shared/` are
-   never opened.
-3. Otherwise scan one level of subfolders into the same pool (§1).
-4. Enumerate every romset the pool can complete. Exactly one → run it. More
-   than one → ask the player which.
-5. Still none: take the closest set and open `.shared/<crc>.bin` for each of
-   its missing chips, and only those.
-6. Re-match. Still incomplete → the on-screen error in §4.
-
-## 3. Chip identification is by CRC32. Never by filename.
-
-This is the part that fails silently if it is got wrong, so it is the part
-both sides must implement identically.
+This is the part that fails **silently** if it is got wrong, so both sides must
+implement it identically.
 
 A romset's `ROM_LOAD` order is **not** its filename order:
 
@@ -135,79 +72,92 @@ A romset's `ROM_LOAD` order is **not** its filename order:
 | `tk2_gfx2.rom` | `c5ca2460` | **2** |
 | `tk2_gfx4.rom` | `e349551c` | 3 |
 
-and in the Japanese set the upper four chips are named `tk205…tk208`, which
-sort *ahead* of `tk2_gfx1…4` entirely. Assign slots in filename order and every
-file loads, every size checks out, and the graphics are wrong with nothing
-reporting an error.
+and in the Japanese set the upper four chips are named `tk205…tk208`, which sort
+*ahead* of `tk2_gfx1…4` entirely. Assign slots in filename order and every file
+loads, every size checks out, and the graphics are wrong with nothing reporting
+an error. Measured: the mutation that assigns slots by filename makes
+**3,584,744 / 4,194,304 bytes (85 %)** differ from the reference image.
 
-Measured, not asserted: the mutation test that assigns slots by filename makes
-**3,584,744 of 4,194,304 bytes (85 %)** differ from the reference image.
+So the device splits the `.cps1` into 512 KB blocks, CRC32s each block, and
+matches those CRCs against the romset table to assign program and GFX slots.
+Order in the file, and the game's display name, carry no meaning.
 
-### 3.1 One table, generated — not two kept in step by hand
+### 2.1 One romset table, generated — not two kept in step by hand
 
 ```
 tools/cps1_romsets.json          ← THE source of truth, in BOTH repos, byte-identical
   │                                sha256 c3d444ba457abaa5a103d38282a4cd782e3751ed78601f67b50611e79fb9e75c
   ├─ retro-go-sd:   tools/gen_cps1_romset.py → Core/Src/porting/cps1/cps1_romset.c
-  └─ game-and-what: read directly for upload validation
+  └─ game-and-what: backend/app/assets/cps1_romsets.json (read for build + validation)
 ```
 
-`cps1_romset.c` says GENERATED FILE at the top and is not hand-edited.
-`tests/run.sh` runs `gen_cps1_romset.py --check`, which fails on **both**
-drift directions — an edit to the `.c`, and a JSON change nobody regenerated.
-Verified by breaking each on purpose.
+`cps1_romset.c` says GENERATED FILE at the top and is not hand-edited;
+`tests/run.sh` fails on either drift direction. A standalone Python packager MUST
+read this same JSON — do not hard-code a second copy of the table. Record the
+sha256 above when the JSON changes so a stale copy is detectable from one side.
 
-Record the sha256 above when the JSON changes, so a repo holding a stale copy
-is detectable from its own side without consulting the other.
+Note `wof.zip` as distributed actually contains the **wofr1** romset (program
+CRCs `11fb2ed1`/`479b3f24`, not `wof`'s). A zip's name does not describe its
+contents — one more reason to key on hashes.
 
-The library's older `tools/cps1_rom_pack.py` `ROMSETS` dict holds the same
-data, but that script is **retired** (it built the abandoned `.cps1`
-container). Read the JSON, not the dict.
+### 2.2 Bytes are the verbatim MAME dumps
 
-Note also that `wof.zip` as distributed actually contains the **wofr1** romset
-— its program CRCs are `11fb2ed1`/`479b3f24`, not `wof`'s. A zip's name does
-not describe its contents. One more reason to key on hashes.
+No byte-swapping, no renaming, no padding. MAME applies `ROM_REVERSE` when it
+builds its big-endian program region, and a little-endian `*(uint16*)` read of
+the raw chip undoes exactly that, so the two cancel: verbatim is correct. Proof:
+the first program chip begins `ff 00 ee 62 00 00 a2 71`, which reads back as
+SSP=`0x00FF62EE`, PC=`0x000071A2` — a stack pointer in work RAM and an even PC.
+(This exact header was confirmed on device in `/cps1_diag.txt`: `fopen OK, read
+8 B: ff 00 ee 62 00 00`.)
 
-## 4. What each side owns
+## 3. What each side owns
 
-### game-and-what (library / upload)
+### game-and-what (library) and the standalone Python packager
 
-1. Accept a MAME `.zip` upload **or** a folder.
-2. Extract it. Never store the zip as the playable artifact.
-3. Identify every member by CRC32 against the romset table.
-4. Write the game's own chips to `/roms/cps1/<Game Name>/` under their original
-   names, and any chip that more than one set uses to
-   `/roms/cps1/.shared/<crc32>.bin` — lowercase hex, no original name in it.
-   A chip may be written to `.shared/` unconditionally rather than only when a
-   second set appears; the device deduplicates by hash either way.
-5. **Validate completeness at upload time and say so then.** If the upload is a
-   clone archive alone, the correct message is *"wofj: 4 of 10 chips missing —
-   needs the parent set (wof / wofr1)"*, before the file is ever copied to a
-   card. If the parent's chips are already in `.shared/`, complete it silently.
-6. Discard the PAL dumps (279 B files) — the device ignores them.
+1. Accept MAME `.zip`(s) (a clone, optionally with its parent) or a folder.
+2. Identify every 512 KB member by CRC32 against the romset table (§2.1).
+3. If the inputs complete **no** runnable set, refuse and say which set is
+   closest and how many chips are missing (e.g. *"wofj: 4 of 10 chips missing —
+   needs the parent set wof/wofr1"*) — at upload/build time, before writing a
+   card. Discard PAL dumps (279 B) and any non-512 KB member.
+4. Otherwise write **one** `/roms/cps1/<Game Name>.cps1` = the distinct 512 KB
+   chips concatenated (§1.1). Optionally write `/covers/cps1/<Game Name>.img`.
+5. That is the entire card contribution — no chips, no zips, no `.shared/`.
+
+The web library keeps the source `.zip`s server-side (the browser emulator wants
+them); only what is *written to the card* is defined here.
 
 ### retro-go-sd (firmware)
 
-1. `ACTIVE_FILE->path` is the game folder.
-2. Scan it; consider only files of exactly 512 KB. Fetch missing chips from
-   `.shared/<crc>.bin` by hash, never by scanning that folder (§2.2).
-3. Cache each with `odroid_overlay_cache_file_in_flash()` → XIP pointer, no RAM.
-4. CRC32 the **flash copy**, not the SD file — hashing 5 MB off the card would
-   cost seconds on every launch, and a cached launch reads nothing from SD.
-5. Match the pool against the romset table; assign program and GFX slots.
-6. On failure, name the closest set and the number of missing chips **on
-   screen** — `draw_error_screen()`, not just the log.
+1. The launcher lists `/roms/cps1/*.cps1`; each file is one game, shown by name.
+2. On launch, `ACTIVE_FILE->path` is the `.cps1` file. Split it into 512 KB
+   blocks; cache each with `odroid_overlay_cache_file_region_in_flash()` → an XIP
+   pointer (no RAM), CRC32 the **flash copy**, and record it.
+3. Match the block CRCs against the romset table; assign program and GFX slots.
+   If several sets complete, auto-launch the first (romset-table order).
+4. On any failure, draw the reason on screen and HOLD it (never `return` out of
+   `app_main` — that unwinds into the torn-down launcher and BusFaults).
 
-## 5. Cost, so nobody re-litigates it
+## 4. Cost
 
 | | |
 |---|---|
-| RAM for ROM | **0** — everything is XIP out of external flash |
-| External flash per game | ~5 MB (1 MB program + 4 MB graphics) |
-| Files cached at once | 11 (2 prg + 8 gfx + the core's XIP blob) |
+| RAM for ROM | **0** — every chip is XIP out of external flash |
+| External flash per game | ~5 MB (1 MB program + 4 MB graphics) per runnable set; the container ships the whole distinct pool |
+| `fopen`s per launch | 1 (the single `.cps1`) — not one per chip |
 | SD reads on a warm launch | 0 — the flash cache hits |
 
-`MAX_LIVE_FILES` in `gw_flash_alloc.c` was raised 8 → 16 for this: eleven
-addresses are held at once and the ninth would have gone unprotected against
-the cache ring, which is the Super Metroid bug's shape with the hole landing in
-a bitplane.
+## 5. History (do not re-litigate)
+
+- A `.cps1` **container** was invented, then retired (`0bd923c1`) when the layout
+  was a folder of raw chips + `.shared/`. It is now **back and is the contract**:
+  the folder-of-chips layout cost one `fopen` per chip and exhausted the device's
+  10-slot descriptor table (2 chips failed to cache with "size 0"). One flat
+  uncompressed file fixed that.
+- The container was briefly nested inside a per-game folder with an ASCII
+  `<set>.cps1` name, to guard against a non-UTF-8 unzip mangling a Korean file
+  name. The device proved a Korean-named `.cps1` opens and caches fine, so the
+  folder was dropped for the simpler flat file above.
+- The first on-device render crash was **not** any of the above: the blitter was
+  tagged for ITCM but the runtime copy into ITCM was never wired, so the first
+  blit jumped into uninitialised ITCM. Fixed by dropping the ITCM placement.
