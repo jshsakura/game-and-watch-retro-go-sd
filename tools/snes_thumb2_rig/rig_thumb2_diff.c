@@ -1157,6 +1157,173 @@ static int run_case_abs(uint8_t oc, uint8_t db, uint16_t adr,
     return 0;
 }
 
+/* ---- Stage 3F absolute,X / absolute,Y differential ---------------------- *
+ * Mirrors run_case_abs but adds the index register (X for abx, Y for aby) to
+ * the effective address and the write-only page-cross penalty (cpu.c:464/472).
+ * The penalty is charged by cpu_adrAbx/Aby in the oracle AND by ABXY_ADDR in
+ * the thumb2 path, so cpu_eq's cyclesUsed comparison verifies it automatically.
+ * The absolute trace-shape check pins: db-qualified 24-bit addressing with
+ * +idx, 24-bit high-wrap, the correct R/W kind per access, and (for writes)
+ * the store byte values.  mf and xf are swept INDEPENDENTLY (4 combos) because
+ * the penalty gate keys on xf while the data width keys on mf (or xf for
+ * LDY-abx/LDX-aby) -- tying them would miss the xf=0/mf=1 write case where the
+ * penalty fires on a 16-bit index regardless of page cross. */
+static int run_case_abxy(uint8_t oc, uint8_t db, uint16_t adr, uint16_t idx,
+                         uint16_t data_val, uint8_t c_in, uint8_t d_in,
+                         bool mf, bool xf, bool e, uint16_t reg_seed,
+                         uint16_t pc_in) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.a = reg_seed;
+    base.db = db;                    /* gate: abx/aby MUST use db (not bank 0) */
+    base.k = 0x01;                   /* opcode/operand fetch bank: 0x01xxxx never
+                                      * collides with data addresses (which use db,
+                                      * swept per pair) */
+    base.c = c_in ? 1 : 0;
+    base.d = d_in ? 1 : 0;
+    base.pc = pc_in;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    bool is_aby = (oc == 0x19 || oc == 0x39 || oc == 0x59 || oc == 0x79 ||
+                   oc == 0xb9 || oc == 0xbe || oc == 0xd9 || oc == 0xf9 ||
+                   oc == 0x99);
+    if (is_aby) { base.y = idx; base.x = reg_seed; }
+    else        { base.x = idx; base.y = reg_seed; }
+
+    bool x_width = (oc == 0xbc || oc == 0xbe);   /* LDY abx, LDX aby: XF width */
+    bool is_write = (oc == 0x9d || oc == 0x9e || oc == 0x99); /* STA/STZ */
+    bool is_rmw = (oc == 0x1e || oc == 0x5e || oc == 0x3e || oc == 0x7e ||
+                   oc == 0xde || oc == 0xfe); /* ASL LSR ROL ROR DEC INC abx */
+    bool wflag = x_width ? xf : mf;
+    int n_data = wflag ? 1 : 2;
+    /* RMW does n_data READS then n_data WRITES (reversed high-first in word
+     * mode, matching cpu_writeWord(...,true) and the abs RMW handlers); pure
+     * stores do only writes; plain reads (LDA/AND/CMP/BIT) do only reads. */
+    int n_reads, n_writes;
+    if (is_rmw)        { n_reads = n_data; n_writes = n_data; }
+    else if (is_write) { n_reads = 0;       n_writes = n_data; }
+    else               { n_reads = n_data; n_writes = 0; }
+    bool reversed_write = is_rmw;   /* RMW word: HIGH@addr_high first */
+
+    uint32_t addr_low  = (((uint32_t)db << 16) + adr + idx) & 0xffffff;
+    uint32_t addr_high = (addr_low + 1) & 0xffffff;   /* 24-bit bank wrap */
+
+    uint32_t forced_addr     = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t operand_addr_lo = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
+    uint32_t operand_addr_hi = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 2);
+    uint32_t seed = prng();
+
+    uint8_t exp_lo, exp_hi;
+    if (is_rmw) {
+        /* RMW write-back mirrors cpu.c; abx RMW opcodes are their abs ancestors
+         * with bit4 set (0x1e ASL abx = 0x0e ASL abs | 0x10), so map back and
+         * reuse the abs rmw_expected table. */
+        uint16_t v = wflag ? (data_val & 0xff) : data_val;
+        uint16_t r = rmw_expected((uint8_t)(oc & 0xef), v, base.a, base.c, wflag);
+        exp_lo = r & 0xff;
+        exp_hi = (r >> 8) & 0xff;
+    } else if (oc == 0x9e)   { exp_lo = 0;             exp_hi = 0; }            /* STZ */
+    else                     { exp_lo = base.a & 0xff; exp_hi = base.a >> 8; } /* STA / unused for reads */
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
+        b->wmap[0].addr = operand_addr_lo; b->wmap[0].val = (uint8_t)adr;
+        b->wmap[1].addr = operand_addr_hi; b->wmap[1].val = (uint8_t)(adr >> 8);
+        b->wmap_len = 2;
+        if (n_reads > 0) {
+            b->wmap[2].addr = addr_low;  b->wmap[2].val = (uint8_t)data_val;
+            b->wmap_len = 3;
+            if (n_reads == 2) {
+                b->wmap[3].addr = addr_high; b->wmap[3].val = (uint8_t)(data_val >> 8);
+                b->wmap_len = 4;
+            }
+        }
+    }
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    /* absolute trace-shape check on BOTH sides: opcode read, TWO operand reads,
+     * then n_reads data READS (low@addr_low, high@addr_high) followed by
+     * n_writes data WRITES.  RMW writes are REVERSED (HIGH@addr_high first,
+     * then LOW@addr_low -- cpu_writeWord(...,true)); pure stores write
+     * low-first.  Every data address is db-qualified 24-bit with +idx and wrap. */
+    int expected_len = 3 + n_reads + n_writes;
+    uint32_t exp_wr  = spin_seed.write_seq + n_writes;
+    int shape_fail = 0;
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        const char *tag = side ? "thumb2" : "oracle";
+        if (b->overflow || b->trace_len != expected_len) { shape_fail = 1; }
+        else {
+            if (b->trace[0].is_write || b->trace[0].addr != forced_addr ||
+                b->trace[0].val != oc) shape_fail = 1;
+            if (b->trace[1].is_write || b->trace[1].addr != operand_addr_lo ||
+                b->trace[1].val != (uint8_t)adr) shape_fail = 1;
+            if (b->trace[2].is_write || b->trace[2].addr != operand_addr_hi ||
+                b->trace[2].val != (uint8_t)(adr >> 8)) shape_fail = 1;
+            uint32_t addrs[2] = { addr_low, addr_high };
+            int tidx = 3;
+            for (int i = 0; i < n_reads; i++) {
+                BusEntry *t = &b->trace[tidx++];
+                if (t->is_write != 0) shape_fail = 1;
+                if (t->addr != addrs[i]) shape_fail = 1;     /* gate: db bank + idx + 24-bit wrap */
+                uint8_t ev = (i == 0) ? (uint8_t)data_val : (uint8_t)(data_val >> 8);
+                if (t->val != ev) shape_fail = 1;
+            }
+            for (int i = 0; i < n_writes; i++) {
+                BusEntry *t = &b->trace[tidx++];
+                if (t->is_write != 1) shape_fail = 1;
+                int ai = reversed_write ? (n_writes - 1 - i) : i;
+                if (t->addr != addrs[ai]) shape_fail = 1;   /* RMW reversed: high first */
+                uint8_t ev = (ai == 0) ? exp_lo : exp_hi;
+                if (t->val != ev) shape_fail = 1;
+            }
+        }
+        if (shape_fail) {
+            printf("\nTRACE-SHAPE VIOLATION [abxy op=%02x %s] db=%02x adr=%04x"
+                   " idx=%04x mf=%d xf=%d e=%d d=%d len=%d ovf=%d\n",
+                   oc, tag, db, adr, idx, mf, xf, e, d_in, b->trace_len, b->overflow);
+            for (int i = 0; i < b->trace_len && i < 8; i++)
+                printf("  [%d] %06x %02x %s\n", i, b->trace[i].addr,
+                       b->trace[i].val, b->trace[i].is_write ? "W" : "R");
+            return 1;
+        }
+    }
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0 ||
+        spinA.write_seq != exp_wr) {
+        printf("\nMISMATCH [abxy op=%02x] db=%02x adr=%04x idx=%04x data=%04x"
+               " c=%d d=%d mf=%d xf=%d e=%d reg=%04x pc=%04x\n",
+               oc, db, adr, idx, data_val, c_in, d_in, mf, xf, e, reg_seed, pc_in);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  spin io A=%u B=%u  wr A=%u B=%u (exp %u)\n",
+               (unsigned)spinA.io_seq, (unsigned)spinB.io_seq,
+               (unsigned)spinA.write_seq, (unsigned)spinB.write_seq, (unsigned)exp_wr);
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     printf("=== SNES Thumb-2 differential harness ===\n");
 
@@ -1477,6 +1644,61 @@ int main(void) {
             }
         }
         printf("(absolute db-bank/24bit-wrap + spin-hook: %d cases)\n", run);
+    }
+
+    /* ---- Stage 3F absolute,X / absolute,Y sweep (19 opcodes native) ---- *
+     * Pins the abx/aby gates via the absolute trace-shape check inside
+     * run_case_abxy: db-qualified 24-bit addressing with +idx (db swept
+     * nonzero/0xff/0x00), 24-bit high-wrap, and the write-only page-cross
+     * penalty.  mf and xf are swept INDEPENDENTLY (4 combos) so the penalty
+     * gate (keys on xf) is exercised apart from the data width (keys on mf or
+     * xf for LDY-abx/LDX-aby): xf=0 forces the penalty on every write
+     * regardless of page cross; xf=1 charges only on a real page cross.  The
+     * (db,adr,idx) triples cover: normal (no cross), page-cross-write
+     * (adr=0x00ff idx=0x10), cross-bank-wrap (db=0 adr=0xffff idx=2),
+     * full-24bit-wrap (db=0xff adr=0xffff idx=0xffff), IO region (db=0
+     * adr=0x20f0 idx=0x20 -> 0x2110, where spin_hook_read bumps io_seq), bank-0
+     * base, no-cross-high-page, and a second page-cross boundary.  ADC/SBC also
+     * sweep D=1 to exercise the bail-to-C path. */
+    {
+        static const uint8_t abx_ops[17] = {
+            0xbd, 0xbc, 0x3d, 0x1d, 0x5d, 0xdd, 0x7d, 0xfd, 0x9d, 0x9e,
+            0x1e, 0x5e, 0x3e, 0x7e, 0xde, 0xfe, 0x3c    /* ASL LSR ROL ROR DEC INC abx (RMW) + BIT abx */
+        };
+        static const uint8_t aby_ops[9] = {
+            0xb9, 0xbe, 0x39, 0x19, 0x59, 0xd9, 0x79, 0xf9, 0x99
+        };
+        static const uint8_t  dbs[8]   = { 0x42, 0x42, 0x00, 0xff, 0x00, 0x00, 0x42, 0x42 };
+        static const uint16_t adrs[8]  = { 0x1234, 0x00ff, 0xffff, 0xffff, 0x20f0, 0x0000, 0x8000, 0x00f0 };
+        static const uint16_t idxs[8]  = { 0x0010, 0x0010, 0x0002, 0xffff, 0x0020, 0x0000, 0x00ff, 0x0010 };
+        static const uint16_t dvals[4] = { 0x0000, 0x00ff, 0x8000, 0xffff };
+        static const uint16_t regs[2]  = { 0x0000, 0xffff };
+        int run = 0;
+        for (int group = 0; group < 2; group++) {
+            int nops = group ? 9 : 17;
+            const uint8_t *ops = group ? aby_ops : abx_ops;
+            for (int oi = 0; oi < nops; oi++) {
+                uint8_t op = ops[oi];
+                for (int di = 0; di < 8; di++) {
+                    for (int mfi = 0; mfi < 2; mfi++)
+                        for (int xfi = 0; xfi < 2; xfi++)
+                            for (int vi = 0; vi < 4; vi++)
+                                for (int ri = 0; ri < 2; ri++)
+                                    for (int e = 0; e < 2; e++)
+                                        for (int cin = 0; cin < 2; cin++)
+                                            for (int din = 0; din < 2; din++) {
+                                                total++;
+                                                failures += run_case_abxy(op, dbs[di], adrs[di],
+                                                                          idxs[di], dvals[vi],
+                                                                          (uint8_t)cin, (uint8_t)din,
+                                                                          (bool)mfi, (bool)xfi, (bool)e,
+                                                                          regs[ri], 0x0100);
+                                                run++;
+                                            }
+                }
+            }
+        }
+        printf("(absolute,X/Y idx+page-cross + spin-hook: %d cases)\n", run);
     }
 
     printf("\n=== Results: %d/%d passed, %d failed ===\n",
