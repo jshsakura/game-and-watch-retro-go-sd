@@ -639,8 +639,10 @@ static const uint8_t *snes_rom;
 static uint32_t snes_rom_len;
 
 /* $ffd6 (ROM type): 0=ROM 1=ROM+RAM 2=ROM+RAM+battery; 3+ = coprocessor
- * (DSP-x/SA-1/SuperFX/...) which this core cannot run yet. Find the header the
- * same way the loader scores it: the offset whose checksum ^ complement is
+ * (DSP-x/SA-1/SuperFX/...). The DSP-1 family (high nibble 0, low nibble 3-5)
+ * has HLE support in dsp1_hle.c — those are allowed through. Every other
+ * coprocessor (SuperFX/SA-1/Cx4/S-DD1/...) is still rejected. Find the header
+ * the same way the loader scores it: the offset whose checksum ^ complement is
  * 0xFFFF wins; if neither validates, let snes_loadRom decide. */
 static bool cart_needs_coprocessor(const uint8_t *rom, uint32_t len) {
   static const uint32_t offs[2] = { 0x7fb0, 0xffb0 };   /* LoROM, HiROM */
@@ -649,8 +651,13 @@ static bool cart_needs_coprocessor(const uint8_t *rom, uint32_t len) {
     const uint8_t *h = rom + offs[i];
     uint16_t cks  = h[0x2e] | (h[0x2f] << 8);
     uint16_t icks = h[0x2c] | (h[0x2d] << 8);
-    if ((cks ^ icks) == 0xffff)
-      return h[0x26] >= 0x03;    /* $ffd6 = header+0x26 */
+    if ((cks ^ icks) == 0xffff) {
+      uint8_t romType = h[0x26];   /* $ffd6 = header+0x26 */
+      /* high nibble 0 = DSP family (HLE in dsp1_hle.c); anything else with
+       * romType >= 3 is a coprocessor we don't support yet */
+      if (romType >= 0x03 && (romType >> 4) != 0)
+        return true;
+    }
   }
   return false;
 }
