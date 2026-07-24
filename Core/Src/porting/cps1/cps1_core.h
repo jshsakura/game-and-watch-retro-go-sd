@@ -60,6 +60,10 @@
  * from the render TUs so a crash inside a layer/blit leaves the exact step on the
  * SD. Sealed after frame 0, so it is free during steady play. */
 void cps1_diag(const char *fmt, ...);
+/* Flush the diag RING to the SD. Call ONLY from a shallow stack (frame loop /
+ * layer boundary), NEVER from deep inside a blit/decode -- a FatFs write there
+ * overflows the 24 KB stack (that was the frame-0 stack fault). */
+void cps1_diag_flush(void);
 
 typedef enum {
     CPS1_ENGINE_INTERPRETER = 0,

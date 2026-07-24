@@ -373,6 +373,20 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     /* sub_cycles_per_frame removed as it's interleaved inside gwenesis_md_frame */
 
+    /* START THE SAI AUDIO DMA. Without this dma_counter never ticks, so the
+     * very first common_emu_sound_sync() (which spins `while (dma_counter ==
+     * last_dma_counter)`) never returns -> watchdog -> the 2-boot rescue we
+     * saw. The base Mega Drive core does this in gwenesis_sound_start(); Sega CD
+     * built its whole audio path but never wired the start. mode_pal is valid
+     * here (set during reset_emulation above; used by the frame loop below).
+     * Length computed locally from the gwenesis_bus.h macros -- NOT read from
+     * gwenesis_audio_buffer_lenght, which lives in a different overlay. */
+    uint16_t scd_audio_len = mode_pal ? GWENESIS_AUDIO_BUFFER_LENGTH_PAL
+                                      : GWENESIS_AUDIO_BUFFER_LENGTH_NTSC;
+    SCD_DBG("segacd dbg: audio_start_playing(len=%u pal=%d)\n",
+            (unsigned)scd_audio_len, (int)mode_pal);
+    audio_start_playing(scd_audio_len);
+
     SCD_DBG("segacd dbg: entering frame loop\n");
     while (true) {
         wdog_refresh();
