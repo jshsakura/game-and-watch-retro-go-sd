@@ -764,13 +764,17 @@ static const cps1_romset_t *cps1_load_container_file(const char *file_path)
         const uint8_t *addr = odroid_overlay_cache_file_region_in_flash(
             file_path, b * CPS1_ROMSET_CHIP_SIZE, CPS1_ROMSET_CHIP_SIZE, &size, b, blocks);
         if (addr == NULL || size != CPS1_ROMSET_CHIP_SIZE) {
-            CPS1_DBG("cps1 dbg: chip %u did not cache (got %lu)\n",
-                     b, (unsigned long)size);
+            cps1_diag("cps1 dbg: chip %u did not cache (got %lu)\n",
+                      b, (unsigned long)size);
             draw_error_screen("CPS-1 cache failed", "A chip did not cache",
                               "Free flash / re-download");
             return NULL;
         }
-        CPS1_DBG("cps1 dbg: chip %u cached @%p\n", b, (const void *)addr);
+        /* printf, NOT the SD-file diag: rewriting /cps1_diag.txt once per chip
+         * is an O(n^2) growing-buffer write that thrashes the card right through
+         * the caching phase. The per-chip trace still shows on the BSOD; the
+         * file gets one summary line after the loop. */
+        printf("cps1: chip %u cached @%p\n", b, (const void *)addr);
         uint32_t crc = cps1_crc32(addr, CPS1_ROMSET_CHIP_SIZE);
 
         bool dup = false;
@@ -784,6 +788,7 @@ static const cps1_romset_t *cps1_load_container_file(const char *file_path)
         s_chip_count++;
     }
 
+    cps1_diag("cps1 dbg: %u blocks cached, %u distinct chips\n", blocks, s_chip_count);
     return cps1_resolve_and_attach(file_path, "Re-download this game");
 }
 
