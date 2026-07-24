@@ -172,6 +172,12 @@ static uint16_t cps1_gfx_word(uint32_t off)
  * photographing a BSOD. Also printf'd so it shows on the BSOD too. Sealed after
  * frame 0: no SD writes during steady play (that corrupts the card). */
 #define CPS1_DIAG_PATH "/cps1_diag.txt"
+/* Keep the diag window open for the first few DRAWN frames, not just frame 0:
+ * frame 0 renders clean but the device still dies on frame 1+, so the crash is
+ * past where a frame-0 seal can see. segacd does the same (its per-frame RTC
+ * checkpoint runs until it settles). Bounded, so the per-milestone SD flush
+ * can't thrash the card forever. */
+#define CPS1_DIAG_FRAMES 5
 static char     s_cps1_diag[2048];
 static uint16_t s_cps1_diag_len;
 static bool     s_cps1_diag_sealed;
@@ -902,6 +908,7 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_init(APPID_CPS1, CPS1_SAMPLE_RATE);
     odroid_system_emu_init(NULL, NULL, NULL, NULL, NULL, NULL, NULL);
     s_cps1_diag_len = 0; s_cps1_diag_sealed = false; s_cps1_dbg_first = 1;
+    uint32_t cps1_diag_frame = 0;   /* count of drawn frames while the diag is open */
     CPS1_DBG("cps1 diag v1 -- %s\n", ACTIVE_FILE ? ACTIVE_FILE->path : "(no file)");
 
     /* Musashi lives in XIP flash; nothing below can call it until this runs. */
@@ -943,7 +950,8 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         odroid_input_read_gamepad(&joystick);
         common_emu_input_loop(&joystick, NULL, NULL);
 
-        CPS1_DBG("cps1 dbg: run_one_frame (68000)\n");
+        CPS1_DBG("cps1 dbg: f%lu run_one_frame (68000)\n",
+                 (unsigned long)cps1_diag_frame);
         cps1_run_one_frame();
 
         if (drawFrame) {
@@ -952,9 +960,15 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
             cps1_render_into(fb, NULL);
             common_ingame_overlay();
             lcd_swap();
-            CPS1_DBG("cps1 dbg: frame 0 complete -- sealing diag\n");
-            s_cps1_dbg_first = 0;       /* only the first frame is instrumented */
-            s_cps1_diag_sealed = true;  /* no SD writes during steady play */
+            CPS1_DBG("cps1 dbg: frame %lu complete\n",
+                     (unsigned long)cps1_diag_frame);
+            /* Seal only after CPS1_DIAG_FRAMES drawn frames, so a frame-1+
+             * crash leaves its last breadcrumbs on the SD instead of dying
+             * past a frame-0 seal. */
+            if (++cps1_diag_frame >= CPS1_DIAG_FRAMES) {
+                s_cps1_dbg_first = 0;       /* stop instrumenting the render */
+                s_cps1_diag_sealed = true;  /* no SD writes during steady play */
+            }
         }
 
         /* No sound yet -- the QSound side is stubbed (see cps1_sound_stub_init).
