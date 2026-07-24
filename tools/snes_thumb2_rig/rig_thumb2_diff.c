@@ -594,7 +594,8 @@ static int stage3c_trace_ok(const RigBus *b, uint8_t oc, uint16_t pc_in,
 }
 
 static int run_case_imm(uint8_t oc, uint16_t operand, uint16_t pc_in,
-                        bool mf, bool xf, bool e, uint16_t reg_seed) {
+                        bool mf, bool xf, bool e, uint16_t reg_seed,
+                        uint8_t c_in, uint8_t d_in) {
     Cpu base;
     randomize_cpu(&base);
     base.a = reg_seed;
@@ -602,10 +603,12 @@ static int run_case_imm(uint8_t oc, uint16_t operand, uint16_t pc_in,
     base.y = reg_seed;
     base.pc = pc_in;
     base.mf = mf; base.xf = xf; base.e = e;
+    base.c = c_in ? 1 : 0;
+    base.d = d_in ? 1 : 0;
     base.irqWanted = 0; base.nmiWanted = 0;
     base.waiting = 0; base.stopped = 0; base.i = 1;
 
-    bool x_width = (oc == 0xa0 || oc == 0xa2);
+    bool x_width = (oc == 0xa0 || oc == 0xa2 || oc == 0xe0 || oc == 0xc0);
     int operand_bytes = (x_width ? xf : mf) ? 1 : 2;
     uint32_t forced_addr = ((uint32_t)base.k << 16) | pc_in;
     uint32_t low_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
@@ -2026,12 +2029,49 @@ int main(void) {
                                 total++;
                                 failures += run_case_imm(imm_ops[oi], values[vi],
                                                          pcs[pi], mf, xf, e,
-                                                         regs[ri]);
+                                                         regs[ri], 0, 0);
                                 run++;
                             }
             }
         }
         printf("(immediate boundary + real spin-hook: %d cases)\n", run);
+    }
+
+    /* Stage 3I: immediate ALU family (ADC/SBC/CMP/CPX/CPY/BIT #imm).  ADC/SBC
+     * sweep D=1 to exercise the decimal bail-to-C path (native handler checks
+     * D before operand fetch and returns not-handled; C fallback runs the full
+     * decimal opcode, producing the same trace shape as the binary native
+     * path).  All 6 sweep C as well -- CMP/CPX/CPY/BIT ignore it, but sweeping
+     * confirms that independence.  CPX/CPY use XF width; the rest use MF. */
+    {
+        static const uint8_t imm_alu_ops[6] = { 0x69,0xe9,0xc9,0xe0,0xc0,0x89 };
+        static const uint16_t values[4] = { 0x0000,0x00ff,0x8000,0xffff };
+        static const uint16_t pcs[4] = { 0xfffd,0xfffe,0xffff,0x0100 };
+        static const uint16_t regs[4] = { 0x0000,0x00ff,0xff00,0xffff };
+        int run = 0;
+        for (int oi = 0; oi < 6; oi++) {
+            uint8_t op = imm_alu_ops[oi];
+            bool x_width = (op == 0xe0 || op == 0xc0);
+            for (int byte = 0; byte < 2; byte++) {
+                bool mf = x_width ? !byte : byte;
+                bool xf = x_width ? byte : !byte;
+                for (int vi = 0; vi < 4; vi++)
+                    for (int pi = 0; pi < 4; pi++)
+                        for (int ri = 0; ri < 4; ri++)
+                            for (int e = 0; e < 2; e++)
+                                for (int cin = 0; cin < 2; cin++)
+                                    for (int din = 0; din < 2; din++) {
+                                        total++;
+                                        failures += run_case_imm(op, values[vi],
+                                                                 pcs[pi], mf, xf,
+                                                                 e, regs[ri],
+                                                                 (uint8_t)cin,
+                                                                 (uint8_t)din);
+                                        run++;
+                                    }
+            }
+        }
+        printf("(immediate ALU ADC/SBC/CMP/CPX/CPY/BIT + C/D sweep: %d cases)\n", run);
     }
 
     /* REP/SEP: every mask against every initial P byte in native and
