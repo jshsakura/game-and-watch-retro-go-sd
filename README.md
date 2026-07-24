@@ -503,6 +503,30 @@ Super Metroid is SD-card only. A flash-only (`SD_CARD=0`) build cannot cache and
 `sm.xip`, nor hold the 3 MB ROM the port reads at runtime, so the core is left out of that
 image rather than shipped as a dead menu entry.
 
+## Preparing a CPS-1 game
+
+A CPS-1 game is a multi-chip MAME romset, and the device cannot read a `.zip` (no inflate,
+and nowhere to put 4 MB of decompressed graphics). So a game is packed into one flat
+`<Game Name>.cps1` file — the romset's raw 512 KB chips concatenated — which the launcher
+lists and runs like any ROM. If you use the web library it builds this for you; if you do
+not, use the bundled packer:
+
+```
+python3 tools/cps1_pack.py wofj.zip wof.zip -n "Warriors of Fate"
+# -> ./sd/roms/cps1/Warriors of Fate.cps1
+```
+
+Then copy the resulting `roms/` onto the SD card root (an optional cover goes in
+`/covers/cps1/<Game Name>.img`). Standard library only — no dependencies.
+
+A clone archive (e.g. `wofj.zip`) usually holds only the chips unique to it, so pass its
+**parent** alongside (`wof.zip`); if the inputs do not complete a known set the packer
+refuses and tells you which parent to add and which chips are missing. It identifies chips
+by CRC32 against `tools/cps1_romsets.json` — the same table the firmware uses — so what it
+writes is exactly what the device reads. The name is only the launcher label (non-ASCII,
+e.g. Korean, is fine). The full agreement between the packer, the web library and the
+firmware is [docs/CPS1_LIBRARY_CONTRACT.md](docs/CPS1_LIBRARY_CONTRACT.md).
+
 ## License
 
 This project uses Fusion Pixel Font (SIL Open Font License 1.1).
