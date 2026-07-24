@@ -841,6 +841,7 @@ static int run_case_jml_safe(bool mf, bool xf, bool e) {
  * .L_noteb before any operand fetch, so C's cpu_doOpcode runs the whole opcode
  * on both paths -- the bail must leave pc/spin untouched for the fallback to be
  * transparent.  pc_in spans the 0xffff operand-fetch wrap. */
+static uint16_t rmw_expected(uint8_t op, uint16_t value, uint16_t a, bool c, bool byte);
 static int run_case_dp(uint8_t oc, uint16_t dp, uint8_t offset,
                        uint16_t data_val, uint8_t c_in, uint8_t d_in,
                        bool mf, bool xf, bool e, uint16_t reg_seed,
@@ -851,9 +852,9 @@ static int run_case_dp(uint8_t oc, uint16_t dp, uint8_t offset,
     base.dp = dp;
     base.db = 0x42;                 /* nonzero: DP MUST ignore it (gate 3) */
     base.k = 0x01;                  /* nonzero bank: opcode/operand fetches at
-                                     * 0x01xxxx can never collide with bank-0
-                                     * DP data addresses 0x00xxxx (which would
-                                     * make the bus return forced_opcode) */
+                                      * 0x01xxxx can never collide with bank-0
+                                      * DP data addresses 0x00xxxx (which would
+                                      * make the bus return forced_opcode) */
     base.c = c_in ? 1 : 0;
     base.d = d_in ? 1 : 0;
     base.pc = pc_in;
@@ -861,10 +862,16 @@ static int run_case_dp(uint8_t oc, uint16_t dp, uint8_t offset,
     base.irqWanted = 0; base.nmiWanted = 0;
     base.waiting = 0; base.stopped = 0; base.i = 1;
 
-    bool x_width = (oc == 0xa6 || oc == 0xa4 || oc == 0x86 || oc == 0x84);
-    bool is_write = (oc == 0x85 || oc == 0x86 || oc == 0x84 || oc == 0x64);
+    bool x_width = (oc == 0xa6 || oc == 0xa4 || oc == 0x86 || oc == 0x84 ||
+                    oc == 0xe4 || oc == 0xc4);   /* LDX LDY STX STY CPX CPY: XF */
+    bool is_store = (oc == 0x85 || oc == 0x86 || oc == 0x84 || oc == 0x64); /* STA STX STY STZ */
+    bool is_rmw   = (oc == 0x06 || oc == 0x26 || oc == 0x46 || oc == 0x66 ||
+                     oc == 0xe6 || oc == 0xc6 || oc == 0x04 || oc == 0x14); /* ASL ROL LSR ROR INC DEC TSB TRB */
     bool wflag = x_width ? xf : mf;
     int n_data = wflag ? 1 : 2;
+    int n_reads  = is_store ? 0 : n_data;
+    int n_writes = (is_store || is_rmw) ? n_data : 0;
+    bool reversed_write = is_rmw;              /* RMW word: HIGH@addr_high first */
 
     uint16_t addr_low  = (uint16_t)(dp + offset);
     uint16_t addr_high = (uint16_t)(addr_low + 1);
@@ -875,9 +882,14 @@ static int run_case_dp(uint8_t oc, uint16_t dp, uint8_t offset,
     uint32_t operand_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
     uint32_t seed = prng();
 
-    /* expected store bytes (for the absolute write-value check) */
+    /* expected write bytes (for the absolute write-value check) */
     uint8_t exp_lo, exp_hi;
-    if (oc == 0x64)               { exp_lo = 0;            exp_hi = 0; }            /* STZ */
+    if (is_rmw) {
+        uint16_t v = wflag ? (data_val & 0xff) : data_val;
+        uint16_t r = rmw_expected(oc, v, base.a, base.c, wflag);
+        exp_lo = r & 0xff;
+        exp_hi = (r >> 8) & 0xff;
+    } else if (oc == 0x64)          { exp_lo = 0;            exp_hi = 0; }            /* STZ */
     else if (oc == 0x85)          { exp_lo = base.a & 0xff; exp_hi = base.a >> 8; } /* STA */
     else if (oc == 0x86)          { exp_lo = base.x & 0xff; exp_hi = base.x >> 8; } /* STX */
     else                          { exp_lo = base.y & 0xff; exp_hi = base.y >> 8; } /* STY */
@@ -890,10 +902,10 @@ static int run_case_dp(uint8_t oc, uint16_t dp, uint8_t offset,
         b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
         b->wmap[0].addr = operand_addr; b->wmap[0].val = offset;
         b->wmap_len = 1;
-        if (!is_write) {
+        if (n_reads > 0) {
             b->wmap[1].addr = daddr_low;  b->wmap[1].val = (uint8_t)data_val;
             b->wmap_len = 2;
-            if (n_data == 2) {
+            if (n_reads == 2) {
                 b->wmap[2].addr = daddr_high; b->wmap[2].val = (uint8_t)(data_val >> 8);
                 b->wmap_len = 3;
             }
@@ -915,15 +927,12 @@ static int run_case_dp(uint8_t oc, uint16_t dp, uint8_t offset,
     SpinSkip spinB = g_spin;
 
     /* absolute trace-shape check on BOTH sides: opcode read, operand read, then
-     * n_data data accesses at bank-0 wrapped addresses with the right R/W kind. */
-    int expected_len = 2 + n_data;
-    /* spin_hook_write is unconditional (no address classification), so the
-     * absolute write_seq advance is a strong check.  spin_hook_read, however,
-     * classifies addresses and returns early for WRAM/ROM/PC-near -- so an
-     * absolute io_seq expectation would be wrong for most DP addresses (bank 0,
-     * low offset == WRAM).  We rely on oracle-vs-thumb2 PARITY instead, made
-     * meaningful by an IO-region (dp,offset) pair in the sweep. */
-    uint32_t exp_wr  = spin_seed.write_seq + (is_write ? n_data : 0);
+     * n_reads data READS (low@addr_low, high@addr_high) followed by n_writes
+     * data WRITES.  RMW word writes are REVERSED (HIGH@addr_high first, then
+     * LOW@addr_low) -- cpu_writeWord(...,true); pure stores write low-then-high.
+     * Every data address is bank 0x00 with 16-bit wrap. */
+    int expected_len = 2 + n_reads + n_writes;
+    uint32_t exp_wr  = spin_seed.write_seq + n_writes;
     int shape_fail = 0;
     for (int side = 0; side < 2; side++) {
         RigBus *b = side ? &g_busB : &g_busA;
@@ -935,19 +944,23 @@ static int run_case_dp(uint8_t oc, uint16_t dp, uint8_t offset,
                 b->trace[0].val != oc) shape_fail = 1;
             if (b->trace[1].is_write || b->trace[1].addr != operand_addr ||
                 b->trace[1].val != offset) shape_fail = 1;
-            /* [2..] data accesses: bank 0x00, wrapped addresses */
+            /* [2..] data accesses: bank 0x00, 16-bit-wrapped addresses */
             uint32_t addrs[2] = { daddr_low, daddr_high };
-            for (int i = 0; i < n_data; i++) {
-                BusEntry *t = &b->trace[2 + i];
-                if (t->is_write != (is_write ? 1 : 0)) shape_fail = 1;
+            int idx = 2;
+            for (int i = 0; i < n_reads; i++) {
+                BusEntry *t = &b->trace[idx++];
+                if (t->is_write != 0) shape_fail = 1;
                 if (t->addr != addrs[i]) shape_fail = 1;     /* gate 3: bank 0 + wrap */
-                if (is_write) {
-                    uint8_t ev = (i == 0) ? exp_lo : exp_hi;
-                    if (t->val != ev) shape_fail = 1;
-                } else {
-                    uint8_t ev = (i == 0) ? (uint8_t)data_val : (uint8_t)(data_val >> 8);
-                    if (t->val != ev) shape_fail = 1;
-                }
+                uint8_t ev = (i == 0) ? (uint8_t)data_val : (uint8_t)(data_val >> 8);
+                if (t->val != ev) shape_fail = 1;
+            }
+            for (int i = 0; i < n_writes; i++) {
+                BusEntry *t = &b->trace[idx++];
+                if (t->is_write != 1) shape_fail = 1;
+                int ai = reversed_write ? (n_writes - 1 - i) : i;
+                if (t->addr != addrs[ai]) shape_fail = 1;    /* gate: reversed order + wrap */
+                uint8_t ev = (ai == 0) ? exp_lo : exp_hi;
+                if (t->val != ev) shape_fail = 1;
             }
         }
         if (shape_fail) {
@@ -987,17 +1000,161 @@ static uint16_t rmw_expected(uint8_t op, uint16_t value, uint16_t a, bool c, boo
     uint16_t am = byte ? (a & 0xff) : a;
     uint16_t r;
     switch (op) {
-        case 0x0e: r = (uint16_t)(value << 1);                 break;  /* ASL */
-        case 0x4e: r = (uint16_t)(value >> 1);                 break;  /* LSR */
-        case 0x2e: r = (uint16_t)((value << 1) | (c ? 1 : 0)); break;  /* ROL */
-        case 0x6e: r = (uint16_t)((value >> 1) | (c ? (byte ? 0x80 : 0x8000) : 0)); break; /* ROR */
-        case 0xee: r = (uint16_t)(value + 1);                  break;  /* INC */
-        case 0xce: r = (uint16_t)(value - 1);                  break;  /* DEC */
-        case 0x0c: r = (uint16_t)(value | am);                 break;  /* TSB */
-        case 0x1c: r = (uint16_t)(value & ~am);                break;  /* TRB */
+        case 0x0e: case 0x06: case 0x16: r = (uint16_t)(value << 1);                 break;  /* ASL abs/dp/dpx */
+        case 0x4e: case 0x46: case 0x56: r = (uint16_t)(value >> 1);                 break;  /* LSR abs/dp/dpx */
+        case 0x2e: case 0x26: case 0x36: r = (uint16_t)((value << 1) | (c ? 1 : 0)); break;  /* ROL abs/dp/dpx */
+        case 0x6e: case 0x66: case 0x76: r = (uint16_t)((value >> 1) | (c ? (byte ? 0x80 : 0x8000) : 0)); break; /* ROR */
+        case 0xee: case 0xe6: case 0xf6: r = (uint16_t)(value + 1);                  break;  /* INC abs/dp/dpx */
+        case 0xce: case 0xc6: case 0xd6: r = (uint16_t)(value - 1);                  break;  /* DEC abs/dp/dpx */
+        case 0x0c: case 0x04:           r = (uint16_t)(value | am);                 break;  /* TSB abs/dp */
+        case 0x1c: case 0x14:           r = (uint16_t)(value & ~am);                break;  /* TRB abs/dp */
         default:   r = value;                                  break;
     }
     return byte ? (r & 0xff) : (r & 0xffff);
+}
+
+/* Stage 3H direct-page,X differential case.  Mirrors run_case_dp but adds the
+ * X index register to the effective address: addr_low = (dp+off+X)&0xffff with
+ * 16-bit wrap (bank 0), matching cpu_adrDpx (cpu.c:385-389).  X is swept
+ * independently so the 16-bit-wrap edge (dp+off+X near 0xffff) is exercised.
+ * The 17 dpx opcodes span reads/ALU (MF width), LDY (XF width), writes, and RMW
+ * (reversed word write-back + cyclesUsed+=2).  ADC/SBC also sweep D=1 to
+ * exercise the bail-to-C path. */
+static int run_case_dpx(uint8_t oc, uint16_t dp, uint8_t offset, uint16_t x_idx,
+                        uint16_t data_val, uint8_t c_in, uint8_t d_in,
+                        bool mf, bool xf, bool e, uint16_t reg_seed,
+                        uint16_t pc_in) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.a = reg_seed; base.y = reg_seed;
+    base.x = x_idx;                /* X drives the effective address (cpu_adrDpx) */
+    base.dp = dp;
+    base.db = 0x42;                 /* nonzero: DP MUST ignore it (gate 3) */
+    base.k = 0x01;                  /* opcode/operand fetches at 0x01xxxx never
+                                      * collide with bank-0 DP data addresses */
+    base.c = c_in ? 1 : 0;
+    base.d = d_in ? 1 : 0;
+    base.pc = pc_in;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    bool x_width = (oc == 0xb4 || oc == 0x94);      /* LDY/STY dpx: XF width */
+    bool is_store = (oc == 0x95 || oc == 0x94 || oc == 0x74); /* STA STY STZ dpx */
+    bool is_rmw   = (oc == 0x16 || oc == 0x36 || oc == 0x56 || oc == 0x76 ||
+                     oc == 0xd6 || oc == 0xf6);   /* ASL ROL LSR ROR DEC INC dpx */
+    bool wflag = x_width ? xf : mf;
+    int n_data = wflag ? 1 : 2;
+    int n_reads  = is_store ? 0 : n_data;
+    int n_writes = (is_store || is_rmw) ? n_data : 0;
+    bool reversed_write = is_rmw;
+
+    uint16_t addr_low  = (uint16_t)(dp + offset + x_idx);
+    uint16_t addr_high = (uint16_t)(addr_low + 1);
+    uint32_t daddr_low  = addr_low;    /* bank 0x00 */
+    uint32_t daddr_high = addr_high;   /* bank 0x00 */
+
+    uint32_t forced_addr  = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t operand_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
+    uint32_t seed = prng();
+
+    uint8_t exp_lo, exp_hi;
+    if (is_rmw) {
+        uint16_t v = wflag ? (data_val & 0xff) : data_val;
+        uint16_t r = rmw_expected(oc, v, base.a, base.c, wflag);
+        exp_lo = r & 0xff;
+        exp_hi = (r >> 8) & 0xff;
+    } else if (oc == 0x74)          { exp_lo = 0;            exp_hi = 0; }            /* STZ */
+    else if (oc == 0x95)          { exp_lo = base.a & 0xff; exp_hi = base.a >> 8; } /* STA */
+    else                          { exp_lo = base.y & 0xff; exp_hi = base.y >> 8; } /* STY */
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
+        b->wmap[0].addr = operand_addr; b->wmap[0].val = offset;
+        b->wmap_len = 1;
+        if (n_reads > 0) {
+            b->wmap[1].addr = daddr_low;  b->wmap[1].val = (uint8_t)data_val;
+            b->wmap_len = 2;
+            if (n_reads == 2) {
+                b->wmap[2].addr = daddr_high; b->wmap[2].val = (uint8_t)(data_val >> 8);
+                b->wmap_len = 3;
+            }
+        }
+    }
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    int expected_len = 2 + n_reads + n_writes;
+    uint32_t exp_wr  = spin_seed.write_seq + n_writes;
+    int shape_fail = 0;
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        const char *tag = side ? "thumb2" : "oracle";
+        if (b->overflow || b->trace_len != expected_len) { shape_fail = 1; }
+        else {
+            if (b->trace[0].is_write || b->trace[0].addr != forced_addr ||
+                b->trace[0].val != oc) shape_fail = 1;
+            if (b->trace[1].is_write || b->trace[1].addr != operand_addr ||
+                b->trace[1].val != offset) shape_fail = 1;
+            uint32_t addrs[2] = { daddr_low, daddr_high };
+            int idx = 2;
+            for (int i = 0; i < n_reads; i++) {
+                BusEntry *t = &b->trace[idx++];
+                if (t->is_write != 0) shape_fail = 1;
+                if (t->addr != addrs[i]) shape_fail = 1;     /* gate: bank 0 + 16-bit wrap of dp+off+X */
+                uint8_t ev = (i == 0) ? (uint8_t)data_val : (uint8_t)(data_val >> 8);
+                if (t->val != ev) shape_fail = 1;
+            }
+            for (int i = 0; i < n_writes; i++) {
+                BusEntry *t = &b->trace[idx++];
+                if (t->is_write != 1) shape_fail = 1;
+                int ai = reversed_write ? (n_writes - 1 - i) : i;
+                if (t->addr != addrs[ai]) shape_fail = 1;
+                uint8_t ev = (ai == 0) ? exp_lo : exp_hi;
+                if (t->val != ev) shape_fail = 1;
+            }
+        }
+        if (shape_fail) {
+            printf("\nTRACE-SHAPE VIOLATION [dpx op=%02x %s] dp=%04x off=%02x x=%04x"
+                   " mf=%d xf=%d e=%d d=%d len=%d ovf=%d\n",
+                   oc, tag, dp, offset, x_idx, mf, xf, e, d_in, b->trace_len, b->overflow);
+            for (int i = 0; i < b->trace_len && i < 8; i++)
+                printf("  [%d] %06x %02x %s\n", i, b->trace[i].addr,
+                       b->trace[i].val, b->trace[i].is_write ? "W" : "R");
+            return 1;
+        }
+    }
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0 ||
+        spinA.write_seq != exp_wr) {
+        printf("\nMISMATCH [dpx op=%02x] dp=%04x off=%02x x=%04x data=%04x c=%d d=%d"
+               " mf=%d xf=%d e=%d reg=%04x pc=%04x\n",
+               oc, dp, offset, x_idx, data_val, c_in, d_in, mf, xf, e, reg_seed, pc_in);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  spin io A=%u B=%u  wr A=%u B=%u (exp %u)\n",
+               (unsigned)spinA.io_seq, (unsigned)spinB.io_seq,
+               (unsigned)spinA.write_seq, (unsigned)spinB.write_seq, (unsigned)exp_wr);
+        return 1;
+    }
+    return 0;
 }
 
 /* Stage 3E absolute differential case.  Mirrors run_case_dp but for the abs
@@ -1896,17 +2053,24 @@ int main(void) {
         printf("(REP/SEP exhaustive P x mask + real spin-hook: %d cases)\n", run);
     }
 
-    /* ---- Stage 3D direct-page sweep (13 opcodes native) ---- *
+    /* ---- Stage 3D/3H-Pass1 direct-page sweep (24 opcodes native) ---- *
      * Pins the four DP gates via the absolute trace-shape check inside
      * run_case_dp: bank-0 addressing (db forced nonzero), 16-bit wrap, dp&0xff
      * cycle charge (incl. dp=0x0100 whose low byte is 0 -> no charge), and
      * spin-hook parity (reads bump io_seq, writes bump write_seq, by exactly the
-     * access count). ADC/SBC also sweep D=1 to exercise the bail-to-C path. */
+     * access count). ADC/SBC also sweep D=1 to exercise the bail-to-C path.
+     * Stage 3H Pass 1 adds the 11 dp RMW/TSB/TRB/BIT/CPX/CPY opcodes (RMW
+     * reversed word write-back + cyclesUsed+=2; BIT N/V from memory; CPX/CPY
+     * XF width). */
     {
-        static const uint8_t dp_ops[13] = {
+        static const uint8_t dp_ops[24] = {
             0xa5, 0xa6, 0xa4, 0x25, 0x05, 0x45, 0xc5,   /* LDA LDX LDY AND ORA EOR CMP */
             0x65, 0xe5,                                   /* ADC SBC (binary; D=1 bails) */
-            0x85, 0x86, 0x84, 0x64                        /* STA STX STY STZ */
+            0x85, 0x86, 0x84, 0x64,                       /* STA STX STY STZ */
+            0x06, 0x26, 0x46, 0x66, 0xe6, 0xc6,           /* ASL ROL LSR ROR INC DEC (RMW) */
+            0x04, 0x14,                                    /* TSB TRB (RMW) */
+            0x24,                                          /* BIT (read-only) */
+            0xe4, 0xc4                                     /* CPX CPY (XF width) */
         };
         /* (dp, offset) pairs: cycle-gate edges + 0xffff wrap + dp-low-byte-0
          * + an IO-region pair (bank 0, off >= 0x2000) where spin_hook_read
@@ -1916,9 +2080,10 @@ int main(void) {
         static const uint16_t dvals[4]  = { 0x0000, 0x00ff, 0x8000, 0xffff };
         static const uint16_t regs[2]   = { 0x0000, 0xffff };
         int run = 0;
-        for (int oi = 0; oi < 13; oi++) {
+        for (int oi = 0; oi < 24; oi++) {
             uint8_t op = dp_ops[oi];
-            bool is_alu_xs = (op == 0xa6 || op == 0xa4 || op == 0x86 || op == 0x84);
+            bool is_alu_xs = (op == 0xa6 || op == 0xa4 || op == 0x86 || op == 0x84 ||
+                              op == 0xe4 || op == 0xc4);
             for (int di = 0; di < 7; di++) {
                 for (int byte = 0; byte < 2; byte++) {
                     /* gate the width flag the opcode actually uses */
@@ -1940,6 +2105,56 @@ int main(void) {
             }
         }
         printf("(direct-page bank-0/wrap/cycle + spin-hook: %d cases)\n", run);
+    }
+
+    /* ---- Stage 3H-Pass2 direct-page,X sweep (17 opcodes native) ---- *
+     * Pins the dpx gates via the absolute trace-shape check inside run_case_dpx:
+     * bank-0 addressing with the +X index and 16-bit wrap of (dp+off+X), dp&0xff
+     * cycle charge, and spin-hook parity.  The (dp,off,X) triples cover: cycle-
+     * gate edges (dp=0x0000 -> no charge), 16-bit wrap of dp+off+X near 0xffff
+     * (dp=0xff80 off=0x80 X=0x0080 -> 0x0000; dp=0xffff off=0x02 X=0xffff ->
+     * 0x0000), normal no-wrap, IO region (dp+off+X >= 0x2000), and dp-low-byte-0
+     * (dp=0x0100 -> no charge).  mf and xf are swept INDEPENDENTLY (4 combos) so
+     * the LDY-dpx XF gate is exercised apart from the MF data width.  ADC/SBC
+     * also sweep D=1 to exercise the bail-to-C path. */
+    {
+        static const uint8_t dpx_ops[17] = {
+            0x15, 0x35, 0x55, 0xd5, 0xb5, 0xb4,           /* ORA AND EOR CMP LDA LDY */
+            0x75, 0xf5,                                   /* ADC SBC (binary; D=1 bails) */
+            0x95, 0x94, 0x74,                             /* STA STY STZ */
+            0x16, 0x36, 0x56, 0x76, 0xd6, 0xf6            /* ASL ROL LSR ROR DEC INC (RMW) */
+        };
+        /* (dp, offset, X) triples: cycle-gate edges + 16-bit wrap of dp+off+X */
+        static const uint16_t dps[7]    = { 0x0000, 0x0080, 0xff80, 0xffff, 0x0100, 0x0000, 0x0000 };
+        static const uint8_t  offs[7]   = { 0x00,   0x80,   0x80,   0x02,   0x00,   0x10,   0x01   };
+        static const uint16_t xs[7]     = { 0x0010, 0x0010, 0x0080, 0xffff, 0x0010, 0x2000, 0xfffe };
+        static const uint16_t dvals[4]  = { 0x0000, 0x00ff, 0x8000, 0xffff };
+        static const uint16_t regs[2]   = { 0x0000, 0xffff };
+        int run = 0;
+        for (int oi = 0; oi < 17; oi++) {
+            uint8_t op = dpx_ops[oi];
+            bool is_alu_xs = (op == 0xb4);   /* LDY dpx: XF width */
+            for (int di = 0; di < 7; di++) {
+                for (int mfi = 0; mfi < 2; mfi++)
+                    for (int xfi = 0; xfi < 2; xfi++) {
+                        bool mf = is_alu_xs ? !mfi : mfi;
+                        bool xf = is_alu_xs ? xfi : !mfi;
+                        for (int vi = 0; vi < 4; vi++)
+                            for (int ri = 0; ri < 2; ri++)
+                                for (int e = 0; e < 2; e++)
+                                    for (int cin = 0; cin < 2; cin++)
+                                        for (int din = 0; din < 2; din++) {
+                                            total++;
+                                            failures += run_case_dpx(op, dps[di], offs[di],
+                                                                     xs[di], dvals[vi],
+                                                                     (uint8_t)cin, (uint8_t)din,
+                                                                     mf, xf, e, regs[ri], 0x0100);
+                                            run++;
+                                        }
+                    }
+            }
+        }
+        printf("(direct-page,X idx+16bit-wrap/cycle + spin-hook: %d cases)\n", run);
     }
 
     /* ---- Stage 3E absolute sweep (24 opcodes native) ---- *
