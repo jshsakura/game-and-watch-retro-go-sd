@@ -662,6 +662,116 @@ static int run_case_imm(uint8_t oc, uint16_t operand, uint16_t pc_in,
     return 0;
 }
 
+/* Stage 3K: stack push/pull differential test.
+ * All 13 opcodes are implied (no operand).  Push writes to [SP] via the
+ * HOOKED bridge; pull reads from [SP+1] (after SP++) via the HOOKED bridge.
+ * e-mode clamps SP to (sp&0xff)|0x100 after every byte-level inc/dec.
+ * Pull values are pre-seeded in wmap at the expected stack addresses. */
+static int run_case_stack(uint8_t oc, uint16_t sp_in, bool mf, bool xf,
+                          bool e, uint16_t reg_seed, uint16_t pc_in) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.a = reg_seed;
+    base.x = reg_seed;
+    base.y = reg_seed;
+    base.sp = sp_in;
+    base.pc = pc_in;
+    base.dp = reg_seed;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.i = 1; base.d = 0; base.c = 0; base.z = 0;
+    base.n = 0; base.v = 0;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0;
+
+    /* Determine if this opcode pushes or pulls, and how many bytes. */
+    bool is_push = (oc == 0x08 || oc == 0x0b || oc == 0x48 || oc == 0x4b ||
+                    oc == 0x5a || oc == 0x8b || oc == 0xda);
+    bool is_word;
+    if (oc == 0x0b || oc == 0x2b) {
+        is_word = true;       /* PHD/PLD always 16-bit */
+    } else if (oc == 0x08 || oc == 0x28 || oc == 0x4b || oc == 0x8b || oc == 0xab) {
+        is_word = false;      /* PHP/PLP/PHK/PHB/PLB always 8-bit */
+    } else if (oc == 0x48 || oc == 0x68) {
+        is_word = !mf;        /* PHA/PLA: MF width */
+    } else {
+        is_word = !xf;        /* PHY/PLY/PHX/PLX: XF width */
+    }
+
+    uint32_t forced_addr = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t seed = prng();
+
+    /* Compute expected stack addresses for pre-seeding pulls. */
+    /* Pull: SP++ first (with e-clamp), then read at new SP. */
+    uint16_t pull_sp1 = sp_in + 1;
+    if (e) pull_sp1 = (pull_sp1 & 0xff) | 0x100;
+    uint32_t pull_addr1 = (uint32_t)pull_sp1;     /* bank 0 */
+    uint32_t pull_addr2 = 0;
+    if (is_word) {
+        uint16_t pull_sp2 = pull_sp1 + 1;
+        if (e) pull_sp2 = (pull_sp2 & 0xff) | 0x100;
+        pull_addr2 = (uint32_t)pull_sp2;
+    }
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = oc; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = oc; g_busB.seed = seed;
+
+    /* Pre-seed pull values in wmap (identical on both sides). */
+    g_busA.wmap_len = g_busB.wmap_len = 0;
+    if (!is_push) {
+        uint8_t pv1 = (uint8_t)(reg_seed >> 8);   /* high byte pulled first in pushWord order */
+        uint8_t pv2 = (uint8_t)reg_seed;           /* low byte */
+        /* pullWord: low=pullByte() first (at SP+1), high=pullByte() second (at SP+2).
+         * But the VALUE we seed determines the result.  For differential testing
+         * the actual value doesn't matter much — both sides read the same bus.
+         * Seed deterministic values at the pull addresses. */
+        g_busA.wmap[0].addr = pull_addr1; g_busA.wmap[0].val = (uint8_t)(reg_seed & 0xff);
+        g_busB.wmap[0].addr = pull_addr1; g_busB.wmap[0].val = (uint8_t)(reg_seed & 0xff);
+        g_busA.wmap_len = g_busB.wmap_len = 1;
+        if (is_word) {
+            g_busA.wmap[1].addr = pull_addr2; g_busA.wmap[1].val = (uint8_t)(reg_seed >> 8);
+            g_busB.wmap[1].addr = pull_addr2; g_busB.wmap[1].val = (uint8_t)(reg_seed >> 8);
+            g_busA.wmap_len = g_busB.wmap_len = 2;
+        }
+    }
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0) {
+        printf("\nMISMATCH [stack op=%02x] sp=%04x mf=%d xf=%d e=%d reg=%04x\n",
+               oc, sp_in, mf, xf, e, reg_seed);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        int n = g_busA.trace_len < g_busB.trace_len ? g_busA.trace_len : g_busB.trace_len;
+        for (int i = 0; i < n; i++) {
+            if (g_busA.trace[i].addr != g_busB.trace[i].addr ||
+                g_busA.trace[i].val != g_busB.trace[i].val ||
+                g_busA.trace[i].is_write != g_busB.trace[i].is_write) {
+                printf("  trace[%d] A: addr=%06x val=%02x wr=%d  B: addr=%06x val=%02x wr=%d\n",
+                       i, g_busA.trace[i].addr, g_busA.trace[i].val, g_busA.trace[i].is_write,
+                       g_busB.trace[i].addr, g_busB.trace[i].val, g_busB.trace[i].is_write);
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
 static int run_case_status(uint8_t oc, uint8_t p, uint8_t mask, bool e,
                            uint16_t pc_in) {
     Cpu base;
@@ -2820,6 +2930,39 @@ int main(void) {
             }
         }
         printf("(dp,Y idx+16bit-wrap/cycle + spin-hook: %d cases)\n", run);
+    }
+
+    /* Stage 3K: stack push/pull (13 implied opcodes).  No operand bytes;
+     * all stack R/W via HOOKED bridges at bank-0 SP addresses.  e-mode SP
+     * clamp tested via sp sweep (0x01ff e-wrap edge, 0x0100 e-base, 0x0200
+     * native, 0xfffe near-wrap).  Pull values pre-seeded in wmap. */
+    {
+        static const uint8_t stack_ops[13] = {
+            0x08, 0x0b, 0x28, 0x2b, 0x48, 0x4b, 0x5a,
+            0x68, 0x7a, 0x8b, 0xab, 0xda, 0xfa
+        };
+        static const uint16_t sps[4] = { 0x01ff, 0x0100, 0x0200, 0xfffe };
+        static const uint16_t regs[4] = { 0x0000, 0x00ff, 0x8000, 0xffff };
+        int run = 0;
+        for (int oi = 0; oi < 13; oi++) {
+            uint8_t op = stack_ops[oi];
+            for (int si = 0; si < 4; si++) {
+                for (int mf = 0; mf < 2; mf++) {
+                    for (int xf = 0; xf < 2; xf++) {
+                        for (int e = 0; e < 2; e++) {
+                            for (int ri = 0; ri < 4; ri++) {
+                                total++;
+                                failures += run_case_stack(op, sps[si],
+                                    (bool)mf, (bool)xf, (bool)e,
+                                    regs[ri], 0x0100);
+                                run++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        printf("(stack push/pull implied/e-clamp/mf-xf + spin-hook: %d cases)\n", run);
     }
 
     printf("\n=== Results: %d/%d passed, %d failed ===\n",
