@@ -343,8 +343,9 @@ void rg_favorites_register_tab(void)
     strcpy(favorites_emu->dirname, "favorites");
     /* The shared file buffer does not exist yet (first add_emulator call
      * allocates it); favorites_refresh_tab fetches it lazily at TAB_INIT. */
-    /* Star icon on the right (pad slot); no text header. */
-    gui_add_tab("favorites", RG_LOGO_HEADER_FAVORITES, RG_LOGO_EMPTY,
+    /* Like every other system tab: the "FAVORITES" wordmark on the LEFT
+     * (header slot) and the gold star ICON on the right (pad/logo slot). */
+    gui_add_tab("favorites", RG_LOGO_PAD_FAVORITES, RG_LOGO_HEADER_FAVORITES,
                 favorites_emu, favorites_event_handler);
 }
 
