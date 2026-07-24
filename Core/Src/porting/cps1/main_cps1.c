@@ -971,14 +971,83 @@ static void __attribute__((noreturn)) cps1_hold_forever(void)
     }
 }
 
+/* ---------------------------------------------------------- savestate ---
+ * The whole machine is s_gfxram + s_wram + s_qram + s_regs + the EEPROM and
+ * the 68000 context. The video structs (s_bg / s_oam / s_pal) and the tile
+ * cache are DERIVED -- cps1_rebuild_video_state() regenerates them from
+ * gfxram every drawn frame -- so they are deliberately NOT saved; they are
+ * INVALIDATED on load instead (a load restores state, not the caches derived
+ * from it, CLAUDE.md). Stamped with magic+version so a state this build did
+ * not write is refused rather than silently restored as nonsense. */
+#define CPS1_STATE_MAGIC   0x43503153u   /* 'CP1S' */
+#define CPS1_STATE_VERSION 1u
+
+extern void gwenesis_m68k_save_state(FILE *file);
+extern void gwenesis_m68k_load_state(FILE *file, int ss_version);
+
+static bool cps1_SaveState(const char *pathName)
+{
+    FILE *f = fopen(pathName, "wb");
+    if (!f)
+        return false;
+
+    const uint32_t magic = CPS1_STATE_MAGIC, ver = CPS1_STATE_VERSION;
+    bool ok = fwrite(&magic, 4, 1, f) == 1
+           && fwrite(&ver,   4, 1, f) == 1
+           && fwrite(s_gfxram, sizeof(s_gfxram), 1, f) == 1
+           && fwrite(s_wram,   sizeof(s_wram),   1, f) == 1
+           && fwrite(s_qram,   sizeof(s_qram),   1, f) == 1
+           && fwrite(s_regs,   sizeof(s_regs),   1, f) == 1
+           && fwrite(&s_eeprom, sizeof(s_eeprom), 1, f) == 1;
+    if (ok)
+        gwenesis_m68k_save_state(f);   /* 68000 registers/context */
+
+    fclose(f);
+    return ok;
+}
+
+static bool cps1_LoadState(const char *pathName)
+{
+    FILE *f = fopen(pathName, "rb");
+    if (!f)
+        return false;
+
+    uint32_t magic = 0, ver = 0;
+    if (fread(&magic, 4, 1, f) != 1 || fread(&ver, 4, 1, f) != 1 ||
+        magic != CPS1_STATE_MAGIC || ver != CPS1_STATE_VERSION) {
+        fclose(f);                     /* not ours -> refuse, don't guess */
+        return false;
+    }
+
+    bool ok = fread(s_gfxram, sizeof(s_gfxram), 1, f) == 1
+           && fread(s_wram,   sizeof(s_wram),   1, f) == 1
+           && fread(s_qram,   sizeof(s_qram),   1, f) == 1
+           && fread(s_regs,   sizeof(s_regs),   1, f) == 1
+           && fread(&s_eeprom, sizeof(s_eeprom), 1, f) == 1;
+    if (ok)
+        gwenesis_m68k_load_state(f, (int)ver);
+    fclose(f);
+    if (!ok)
+        return false;
+
+    /* Derived caches must be dropped by hand or the next frame draws the new
+     * scene through the old tiles. */
+    cps1_tile_cache_reset(&s_cache);
+    s_cache.real_gfx = 1;
+    return true;
+}
+
 void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
-    (void)load_state; (void)start_paused; (void)save_slot;
+    (void)start_paused;
 
     odroid_gamepad_state_t joystick;
 
     odroid_system_init(APPID_CPS1, CPS1_SAMPLE_RATE);
-    odroid_system_emu_init(NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    /* Save/load were NULL, so the launcher's save+resume did nothing at all
+     * (the Super Metroid trap in CLAUDE.md: the functions were fine, nobody
+     * had wired them). */
+    odroid_system_emu_init(&cps1_LoadState, &cps1_SaveState, NULL, NULL, NULL, NULL, NULL);
     s_cps1_diag_len = 0; s_cps1_diag_sealed = false; s_cps1_dbg_first = 1;
     uint32_t cps1_diag_frame = 0;   /* count of drawn frames while the diag is open */
     CPS1_DBG("cps1 diag v1 -- %s\n", ACTIVE_FILE ? ACTIVE_FILE->path : "(no file)");
@@ -1019,6 +1088,11 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * Sega CD's audio_start_playing(); CPS-1 never wired it either. */
     CPS1_DBG("cps1 dbg: audio_start_playing(len=%d)\n", (int)CPS1_AUDIO_BUFFER_LENGTH);
     audio_start_playing(CPS1_AUDIO_BUFFER_LENGTH);
+
+    /* Resume: the launcher passes load_state when re-entering a game. Must run
+     * AFTER machine_reset, or the reset wipes the state we just restored. */
+    if (load_state)
+        odroid_system_emu_load_state(save_slot);
 
     CPS1_DBG("cps1 dbg: entering frame loop\n");
 
