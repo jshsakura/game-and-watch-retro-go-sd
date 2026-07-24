@@ -2106,6 +2106,294 @@ static int run_case_ind_long(uint8_t oc, uint8_t db, uint16_t dp, uint8_t offset
     return 0;
 }
 
+/* Stage 3M stack-relative differential case (sr,S).  Mirrors run_case_dp but:
+ *   - base register is CPU_SP (NOT CPU_DP);
+ *   - NO dp&0xff cycle charge (cpu_adrSr adds none);
+ *   - effective addr = (sp+offset)&0xffff, bank 0, 16-bit wrap.
+ * All 8 sr opcodes are MF width (no XF-width or RMW ops in this family).
+ * Pins: 1 raw operand byte, n_data data accesses at bank-0 16-bit-wrapped
+ * addresses, NO addr cycle.  db and dp forced nonzero so the trace-shape check
+ * pins gate "sr uses SP, ignores db/dp".  ADC/SBC also sweep D=1 to exercise
+ * the bail-to-C path. */
+static int run_case_sr(uint8_t oc, uint16_t sp, uint8_t offset,
+                       uint16_t data_val, uint8_t c_in, uint8_t d_in,
+                       bool mf, bool xf, bool e, uint16_t reg_seed,
+                       uint16_t pc_in) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.a = reg_seed; base.x = reg_seed; base.y = reg_seed;
+    base.sp = sp;
+    base.dp = 0x0080;                 /* nonzero: sr MUST ignore it (uses sp) */
+    base.db = 0x42;                   /* nonzero: sr MUST ignore it (bank 0) */
+    base.k = 0x01;                    /* opcode/operand bank: 0x01xxxx never
+                                       * collides with bank-0 sr data 0x00xxxx */
+    base.c = c_in ? 1 : 0;
+    base.d = d_in ? 1 : 0;
+    base.pc = pc_in;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    bool is_store = (oc == 0x83);     /* STA sr */
+    int n_data = mf ? 1 : 2;
+    int n_reads  = is_store ? 0 : n_data;
+    int n_writes = is_store ? n_data : 0;
+
+    uint16_t addr_low  = (uint16_t)(sp + offset);
+    uint16_t addr_high = (uint16_t)(addr_low + 1);
+    uint32_t daddr_low  = addr_low;    /* bank 0x00 */
+    uint32_t daddr_high = addr_high;   /* bank 0x00 */
+
+    uint32_t forced_addr  = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t operand_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
+    uint32_t seed = prng();
+
+    uint8_t exp_lo = base.a & 0xff;
+    uint8_t exp_hi = base.a >> 8;
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
+        b->wmap[0].addr = operand_addr; b->wmap[0].val = offset;
+        b->wmap_len = 1;
+        if (n_reads > 0) {
+            b->wmap[1].addr = daddr_low;  b->wmap[1].val = (uint8_t)data_val;
+            b->wmap_len = 2;
+            if (n_reads == 2) {
+                b->wmap[2].addr = daddr_high; b->wmap[2].val = (uint8_t)(data_val >> 8);
+                b->wmap_len = 3;
+            }
+        }
+    }
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    /* absolute trace-shape check on BOTH sides: opcode read, operand read,
+     * then n_reads data READS (low@addr_low, high@addr_high) followed by
+     * n_writes data WRITES (low-then-high for STA).  Every data address is
+     * bank 0x00 with 16-bit wrap.  NO dp&0xff cycle (unlike DP). */
+    int expected_len = 2 + n_reads + n_writes;
+    uint32_t exp_wr  = spin_seed.write_seq + n_writes;
+    int shape_fail = 0;
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        const char *tag = side ? "thumb2" : "oracle";
+        if (b->overflow || b->trace_len != expected_len) { shape_fail = 1; }
+        else {
+            if (b->trace[0].is_write || b->trace[0].addr != forced_addr ||
+                b->trace[0].val != oc) shape_fail = 1;
+            if (b->trace[1].is_write || b->trace[1].addr != operand_addr ||
+                b->trace[1].val != offset) shape_fail = 1;
+            uint32_t addrs[2] = { daddr_low, daddr_high };
+            int idx = 2;
+            for (int i = 0; i < n_reads; i++) {
+                BusEntry *t = &b->trace[idx++];
+                if (t->is_write != 0) shape_fail = 1;
+                if (t->addr != addrs[i]) shape_fail = 1;     /* gate: bank 0 + wrap */
+                uint8_t ev = (i == 0) ? (uint8_t)data_val : (uint8_t)(data_val >> 8);
+                if (t->val != ev) shape_fail = 1;
+            }
+            for (int i = 0; i < n_writes; i++) {
+                BusEntry *t = &b->trace[idx++];
+                if (t->is_write != 1) shape_fail = 1;
+                if (t->addr != addrs[i]) shape_fail = 1;
+                uint8_t ev = (i == 0) ? exp_lo : exp_hi;
+                if (t->val != ev) shape_fail = 1;
+            }
+        }
+        if (shape_fail) {
+            printf("\nTRACE-SHAPE VIOLATION [sr op=%02x %s] sp=%04x off=%02x"
+                   " mf=%d xf=%d e=%d d=%d len=%d ovf=%d\n",
+                   oc, tag, sp, offset, mf, xf, e, d_in, b->trace_len, b->overflow);
+            for (int i = 0; i < b->trace_len && i < 8; i++)
+                printf("  [%d] %06x %02x %s\n", i, b->trace[i].addr,
+                       b->trace[i].val, b->trace[i].is_write ? "W" : "R");
+            return 1;
+        }
+    }
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0 ||
+        spinA.write_seq != exp_wr) {
+        printf("\nMISMATCH [sr op=%02x] sp=%04x off=%02x data=%04x c=%d d=%d"
+               " mf=%d xf=%d e=%d reg=%04x pc=%04x\n",
+               oc, sp, offset, data_val, c_in, d_in, mf, xf, e, reg_seed, pc_in);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  spin io A=%u B=%u  wr A=%u B=%u (exp %u)\n",
+               (unsigned)spinA.io_seq, (unsigned)spinB.io_seq,
+               (unsigned)spinA.write_seq, (unsigned)spinB.write_seq, (unsigned)exp_wr);
+        return 1;
+    }
+    return 0;
+}
+
+/* Stage 3M stack-relative indirect differential case ((sr,S),Y).  Mirrors
+ * run_case_ind (IDY path) but:
+ *   - pointer base uses CPU_SP (NOT CPU_DP);
+ *   - NO dp&0xff cycle charge (cpu_adrIsy adds none);
+ *   - NO write penalty (even STA isy 0x93 pays nothing -- cpu_adrIsy has no
+ *     write param, unlike cpu_adrIdy's).
+ * Effective addr = ((db<<16)+ptr+Y)&0xffffff (single 24-bit add, Y carries
+ * into bank, like IDY).  All 8 isy opcodes are MF width.  Pins: 1 raw operand
+ * byte, 2 HOOKED pointer bytes at bank-0 16-bit-wrapped (sp+off)/+1 addresses,
+ * n_data data accesses at db-banked effective addr, NO addr cycle, NO write
+ * penalty.  dp forced nonzero so the trace-shape check pins gate "isy uses SP,
+ * ignores dp".  ADC/SBC also sweep D=1 to exercise the bail-to-C path. */
+static int run_case_isy(uint8_t oc, uint8_t db, uint16_t sp, uint8_t offset,
+                        uint16_t ptr_val, uint16_t y_idx,
+                        uint16_t data_val, uint8_t c_in, uint8_t d_in,
+                        bool mf, bool xf, bool e, uint16_t reg_seed,
+                        uint16_t pc_in) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.a = reg_seed;
+    base.sp = sp;                 /* pointer base register */
+    base.dp = 0x0080;             /* nonzero: isy MUST ignore it (uses sp) */
+    base.db = db;                 /* gate: effective addr MUST use db */
+    base.y = y_idx;
+    base.k = 0x01;                /* opcode/operand bank: 0x01xxxx never collides
+                                   * with bank-0 pointer fetches 0x00xxxx */
+    base.c = c_in ? 1 : 0;
+    base.d = d_in ? 1 : 0;
+    base.pc = pc_in;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0; base.i = 1;
+
+    bool is_sta = (oc == 0x93);
+    int n_data = mf ? 1 : 2;
+
+    /* pointer fetch addresses: bank 0x00, 16-bit wrap (uxth, NOT 24-bit) */
+    uint16_t ptr_base = (uint16_t)(sp + offset);
+    uint32_t ptr_lo_addr = ptr_base;                   /* bank 0x00 */
+    uint32_t ptr_hi_addr = (uint16_t)(ptr_base + 1);   /* bank 0x00, wraps */
+
+    /* effective address: ((db<<16)+pointer+Y)&0xffffff (single 24-bit add) */
+    uint32_t addr_low  = (((uint32_t)db << 16) + ptr_val + y_idx) & 0xffffff;
+    uint32_t addr_high = (addr_low + 1) & 0xffffff;
+
+    uint32_t forced_addr  = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t operand_addr = ((uint32_t)base.k << 16) | (uint16_t)(pc_in + 1);
+    uint32_t seed = prng();
+
+    uint8_t exp_lo = base.a & 0xff;
+    uint8_t exp_hi = base.a >> 8;
+
+    Cpu cpuA = base, cpuB = base;
+    memset(&g_busA, 0, sizeof(g_busA));
+    memset(&g_busB, 0, sizeof(g_busB));
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        b->forced_addr = forced_addr; b->forced_opcode = oc; b->seed = seed;
+        b->wmap[0].addr = operand_addr; b->wmap[0].val = offset;
+        b->wmap[1].addr = ptr_lo_addr;  b->wmap[1].val = (uint8_t)ptr_val;
+        b->wmap[2].addr = ptr_hi_addr;  b->wmap[2].val = (uint8_t)(ptr_val >> 8);
+        b->wmap_len = 3;
+        if (!is_sta) {
+            b->wmap[3].addr = addr_low;  b->wmap[3].val = (uint8_t)data_val;
+            b->wmap_len = 4;
+            if (n_data == 2) {
+                b->wmap[4].addr = addr_high; b->wmap[4].val = (uint8_t)(data_val >> 8);
+                b->wmap_len = 5;
+            }
+        }
+    }
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    /* absolute trace-shape check on BOTH sides: opcode read, operand read,
+     * ptr_lo HOOKED read, ptr_hi HOOKED read, then n_data data accesses
+     * (reads for ALU/loads, writes for STA) at db-banked effective addr. */
+    int expected_len = 4 + n_data;
+    uint32_t exp_wr  = spin_seed.write_seq + (is_sta ? n_data : 0);
+    int shape_fail = 0;
+    for (int side = 0; side < 2; side++) {
+        RigBus *b = side ? &g_busB : &g_busA;
+        const char *tag = side ? "thumb2" : "oracle";
+        if (b->overflow || b->trace_len != expected_len) { shape_fail = 1; }
+        else {
+            if (b->trace[0].is_write || b->trace[0].addr != forced_addr ||
+                b->trace[0].val != oc) shape_fail = 1;
+            if (b->trace[1].is_write || b->trace[1].addr != operand_addr ||
+                b->trace[1].val != offset) shape_fail = 1;
+            /* gate 2: pointer fetch at bank-0 16-bit-wrapped addresses */
+            if (b->trace[2].is_write || b->trace[2].addr != ptr_lo_addr ||
+                b->trace[2].val != (uint8_t)ptr_val) shape_fail = 1;
+            if (b->trace[3].is_write || b->trace[3].addr != ptr_hi_addr ||
+                b->trace[3].val != (uint8_t)(ptr_val >> 8)) shape_fail = 1;
+            /* gate 3: data at db-banked effective addr */
+            uint32_t addrs[2] = { addr_low, addr_high };
+            for (int i = 0; i < n_data; i++) {
+                BusEntry *t = &b->trace[4 + i];
+                if (t->is_write != (is_sta ? 1 : 0)) shape_fail = 1;
+                if (t->addr != addrs[i]) shape_fail = 1;
+                if (is_sta) {
+                    uint8_t ev = (i == 0) ? exp_lo : exp_hi;
+                    if (t->val != ev) shape_fail = 1;
+                } else {
+                    uint8_t ev = (i == 0) ? (uint8_t)data_val : (uint8_t)(data_val >> 8);
+                    if (t->val != ev) shape_fail = 1;
+                }
+            }
+        }
+        if (shape_fail) {
+            printf("\nTRACE-SHAPE VIOLATION [isy op=%02x %s] db=%02x sp=%04x"
+                   " off=%02x ptr=%04x y=%04x mf=%d xf=%d e=%d d=%d"
+                   " len=%d ovf=%d\n",
+                   oc, tag, db, sp, offset, ptr_val, y_idx, mf, xf, e, d_in,
+                   b->trace_len, b->overflow);
+            for (int i = 0; i < b->trace_len && i < 10; i++)
+                printf("  [%d] %06x %02x %s\n", i, b->trace[i].addr,
+                       b->trace[i].val, b->trace[i].is_write ? "W" : "R");
+            return 1;
+        }
+    }
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0 ||
+        spinA.write_seq != exp_wr) {
+        printf("\nMISMATCH [isy op=%02x] db=%02x sp=%04x off=%02x ptr=%04x"
+               " y=%04x data=%04x c=%d d=%d mf=%d xf=%d e=%d reg=%04x pc=%04x\n",
+               oc, db, sp, offset, ptr_val, y_idx, data_val, c_in, d_in,
+               mf, xf, e, reg_seed, pc_in);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        printf("  spin io A=%u B=%u  wr A=%u B=%u (exp %u)\n",
+               (unsigned)spinA.io_seq, (unsigned)spinB.io_seq,
+               (unsigned)spinA.write_seq, (unsigned)spinB.write_seq, (unsigned)exp_wr);
+        return 1;
+    }
+    return 0;
+}
+
 /* Stage 3J absolute-long (abl/alx) differential case.  Mirrors run_case_abs
  * but for the absolute-long addressing mode: THREE operand bytes (lo, hi,
  * bank), effective address is bank-FROM-OPERAND 24-bit ((bank<<16)|adr) with
@@ -3093,6 +3381,108 @@ int main(void) {
             }
         }
         printf("(dp,Y idx+16bit-wrap/cycle + spin-hook: %d cases)\n", run);
+    }
+
+    /* ---- Stage 3M sr,S sweep (8 opcodes native) ---- *
+     * Pins the sr gates via the absolute trace-shape check inside run_case_sr:
+     * bank-0 addressing (db AND dp forced nonzero -> sr MUST ignore both, using
+     * SP), 16-bit wrap of (sp+offset), and NO dp&0xff cycle charge (unlike DP).
+     * The (sp,offset) pairs cover: 16-bit wrap (sp=0xffff off=0x02 -> 0x0001;
+     * sp=0xfffe off=0x02 -> 0x0000), normal low, IO region (sp=0x2000 off=0x01
+     * -> 0x2001 where spin_hook_read bumps io_seq), and a mid-range value.
+     * ADC/SBC also sweep D=1 to exercise the bail-to-C path. */
+    {
+        static const uint8_t sr_ops[8] = {
+            0xa3, 0x23, 0x03, 0x43, 0xc3,   /* LDA AND ORA EOR CMP */
+            0x63, 0xe3,                      /* ADC SBC (binary; D=1 bails) */
+            0x83                            /* STA */
+        };
+        /* (sp, offset) pairs: 16-bit wrap edges + IO region + normal. */
+        static const uint16_t sps[7]    = { 0x0000, 0x0080, 0xffff, 0xfffe, 0x2000, 0x0100, 0x0040 };
+        static const uint8_t  offs[7]   = { 0x10,   0x80,   0x02,   0x02,   0x01,   0x00,   0x10   };
+        static const uint16_t dvals[4]  = { 0x0000, 0x00ff, 0x8000, 0xffff };
+        static const uint16_t regs[2]   = { 0x0000, 0xffff };
+        int run = 0;
+        for (int oi = 0; oi < 8; oi++) {
+            uint8_t op = sr_ops[oi];
+            for (int di = 0; di < 7; di++) {
+                for (int byte = 0; byte < 2; byte++) {
+                    bool mf = byte;
+                    bool xf = !byte;      /* XF irrelevant for MF-width ops, but sweep for parity */
+                    for (int vi = 0; vi < 4; vi++)
+                        for (int ri = 0; ri < 2; ri++)
+                            for (int e = 0; e < 2; e++)
+                                for (int cin = 0; cin < 2; cin++)
+                                    for (int din = 0; din < 2; din++) {
+                                        total++;
+                                        failures += run_case_sr(op, sps[di], offs[di],
+                                                                 dvals[vi], (uint8_t)cin,
+                                                                 (uint8_t)din, mf, xf, e,
+                                                                 regs[ri], 0x0100);
+                                        run++;
+                                    }
+                }
+            }
+        }
+        printf("(stack-relative sr,S sp-base/16bit-wrap/no-cycle + spin-hook: %d cases)\n", run);
+    }
+
+    /* ---- Stage 3M (sr,S),Y sweep (8 opcodes native) ---- *
+     * Pins the isy gates via the absolute trace-shape check inside run_case_isy:
+     * 1 raw operand byte, 2 HOOKED pointer bytes at bank-0 16-bit-wrapped
+     * (sp+off)/+1 addresses (dp forced nonzero -> isy MUST ignore it, using SP),
+     * n_data data accesses at db-banked effective addr, NO dp&0xff cycle, and
+     * NO write penalty (even STA isy 0x93 pays nothing -- unlike STA idy 0x91).
+     * mf and xf are swept INDEPENDENTLY (4 combos).  The (sp,off,ptr,y) tuples
+     * cover: pointer-fetch 16-bit wrap (sp=0xffff off=0x00 -> ptr_lo@0x00ffff
+     * ptr_hi@0x000000), Y-carries-into-bank (ptr=0xffff y=0xffff db=0xff ->
+     * 0xff1ffe), IO region (db=0 ptr+Y>=0x2000 where spin_hook_read bumps
+     * io_seq), and normal no-wrap.  db swept nonzero/0x00/0xff.  ADC/SBC also
+     * sweep D=1 to exercise the bail-to-C path. */
+    {
+        static const uint8_t isy_ops[8] = {
+            0xb3, 0x33, 0x13, 0x53, 0xd3,   /* LDA AND ORA EOR CMP */
+            0x73, 0xf3,                      /* ADC SBC (binary; D=1 bails) */
+            0x93                            /* STA (NO write penalty) */
+        };
+        /* (sp, offset, ptr, y) tuples: pointer-fetch wrap, Y-carries-into-bank,
+         * IO region, normal.  Carefully chosen so ptr_val never collides with
+         * ptr_base when db=0x00 (both in bank 0). */
+        static const uint16_t sps[7]   = { 0x0000, 0x0080, 0xffff, 0x0000, 0x0000, 0x0040, 0x0000 };
+        static const uint8_t  offs[7]  = { 0x10,   0x10,   0x00,   0x20,   0x30,   0x00,   0x50   };
+        static const uint16_t ptrs[7]  = { 0x1234, 0x5678, 0x8000, 0x00ff, 0x0100, 0x2000, 0xffff };
+        static const uint16_t ys[7]    = { 0x0010, 0x0010, 0x0000, 0x0010, 0x0010, 0x0020, 0xffff };
+        static const uint8_t  dbs[3]   = { 0x42, 0x00, 0xff };
+        static const uint16_t dvals[4] = { 0x0000, 0x00ff, 0x8000, 0xffff };
+        static const uint16_t regs[2]  = { 0x0000, 0xffff };
+        int run = 0;
+        for (int oi = 0; oi < 8; oi++) {
+            uint8_t op = isy_ops[oi];
+            for (int di = 0; di < 7; di++) {
+                for (int dbi = 0; dbi < 3; dbi++) {
+                    for (int mfi = 0; mfi < 2; mfi++)
+                        for (int xfi = 0; xfi < 2; xfi++)
+                            for (int vi = 0; vi < 4; vi++)
+                                for (int ri = 0; ri < 2; ri++)
+                                    for (int e = 0; e < 2; e++)
+                                        for (int cin = 0; cin < 2; cin++)
+                                            for (int din = 0; din < 2; din++) {
+                                                total++;
+                                                failures += run_case_isy(op, dbs[dbi],
+                                                                          sps[di], offs[di],
+                                                                          ptrs[di], ys[di],
+                                                                          dvals[vi],
+                                                                          (uint8_t)cin,
+                                                                          (uint8_t)din,
+                                                                          (bool)mfi, (bool)xfi,
+                                                                          (bool)e, regs[ri],
+                                                                          0x0100);
+                                                run++;
+                                            }
+                }
+            }
+        }
+        printf("(stack-relative-indirect (sr,S),Y sp-ptr/24bit-wrap/no-penalty + spin-hook: %d cases)\n", run);
     }
 
     /* Stage 3K: stack push/pull (13 implied opcodes).  No operand bytes;
