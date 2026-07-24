@@ -187,10 +187,20 @@ void cps1_diag(const char *fmt, ...)
     if (s_cps1_diag_sealed)
         return;
     size_t ll = 0; while (line[ll]) ll++;
-    if (s_cps1_diag_len + ll < sizeof(s_cps1_diag)) {
-        memcpy(s_cps1_diag + s_cps1_diag_len, line, ll);
-        s_cps1_diag_len = (uint16_t)(s_cps1_diag_len + ll);
+    if (ll >= sizeof(s_cps1_diag))
+        ll = sizeof(s_cps1_diag) - 1;
+    /* RING: when the buffer would overflow, drop the OLDEST bytes and keep the
+     * most recent, so the file always shows the last breadcrumbs before a crash
+     * (the render logs one line per cell -- far more than 2 KB). */
+    if (s_cps1_diag_len + ll >= sizeof(s_cps1_diag)) {
+        size_t keep = sizeof(s_cps1_diag) - ll - 1;
+        if (keep > s_cps1_diag_len) keep = s_cps1_diag_len;
+        size_t drop = s_cps1_diag_len - keep;
+        memmove(s_cps1_diag, s_cps1_diag + drop, keep);
+        s_cps1_diag_len = (uint16_t)keep;
     }
+    memcpy(s_cps1_diag + s_cps1_diag_len, line, ll);
+    s_cps1_diag_len = (uint16_t)(s_cps1_diag_len + ll);
     wdog_refresh();
     FILE *f = fopen(CPS1_DIAG_PATH, "wb");
     if (f) { fwrite(s_cps1_diag, 1, s_cps1_diag_len, f); fclose(f); }
