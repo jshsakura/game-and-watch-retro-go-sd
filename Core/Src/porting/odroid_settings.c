@@ -118,12 +118,11 @@ _Static_assert(offsetof(persistent_config_t, welcome_prompt) ==
 
 static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
-    .version = 15,  /* 13->14: APPID_32X grows app[APPID_COUNT] (one-time settings reset on upgrade)
-                     * 14->15: APPID_CPS1 does it again. The struct would have been thrown
-                     * away by the length check regardless -- bumping the version is what
-                     * makes that a decision instead of an accident (CLAUDE.md). Every
-                     * user loses language, coverflow, backlight and volume ONCE on this
-                     * upgrade. */
+    .version = 16,  /* 13->14: APPID_32X grows app[APPID_COUNT] (one-time settings reset on upgrade)
+                     * 14->15: APPID_CPS1 was added sharing APPID_SM's slot 23.
+                     * 15->16: APPID_CPS1 moved to its own slot 28, growing the struct.
+                     * Every user loses language, coverflow, backlight and volume ONCE
+                     * on this upgrade (CLAUDE.md). */
 
     .backlight = ODROID_BACKLIGHT_LEVEL6,
     .start_action = ODROID_START_ACTION_RESUME,

@@ -24,15 +24,16 @@ typedef enum {
     APPID_NGP      = 20,
     APPID_LYNX     = 21,
     APPID_VB       = 22,
-    /* Appending here grows persistent_config_t, so /CONFIG stops matching and
-     * every user's settings reset to defaults (CLAUDE.md). Accepted
-     * deliberately for this release, not slipped in. */
-    APPID_CPS1     = 23,
     APPID_SM       = 23,   /* Super Metroid (SD builds only) */
     APPID_GBA      = 24,   /* Game Boy Advance (gpsp) */
     APPID_SNES     = 25,   /* generic SNES core (LakeSnes, SD builds only) */
     APPID_32X      = 26,   /* Sega 32X (picodrive, SD builds only) */
     APPID_SEGACD   = 27,   /* Sega/Mega CD (SD builds only) */
+    /* Appending here grows persistent_config_t, so /CONFIG stops matching and
+     * every user's settings reset to defaults (CLAUDE.md). Accepted
+     * deliberately for this release — CPS-1 gets its own slot, separate
+     * from APPID_SM which previously shared value 23. */
+    APPID_CPS1     = 28,   /* Capcom Play System 1 (SD builds only) */
 
     APPID_COUNT,
 } appid_t;
