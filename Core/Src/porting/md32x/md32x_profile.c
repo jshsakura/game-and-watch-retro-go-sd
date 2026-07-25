@@ -195,6 +195,12 @@ void md32x_profile_init(void) {
   prof_delta_skip  = ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
                                 sizeof(uint32_t));
   prof_active = (prof_delta_drawn != NULL && prof_delta_skip != NULL);
+  if (prof_active) {
+    /* Sampled guest-PC wall attribution (sh2pico.c). Armed here, frozen by
+     * the dump; static storage in the picodrive overlay BSS, ~640 B. */
+    extern void gnw_sh2_pcwall_arm(void);
+    gnw_sh2_pcwall_arm();
+  }
   {
     FILE *df = fopen("/32x_diag.txt", "ab");
     if (df) {
@@ -363,6 +369,59 @@ static void md32x_profile_dump(void) {
             (unsigned)ssh2_cyc, (unsigned)ssh2_insn,
             ssh2_insn ? (unsigned)(ssh2_cyc / ssh2_insn) : 0u,
             ssh2_insn ? (unsigned)((ssh2_cyc * 10 / ssh2_insn) % 10) : 0u);
+  }
+
+  /* Sampled guest-PC wall attribution (sh2pico.c probe). Freezes the probe
+   * first so no tick mutates the tables mid-read (single-threaded anyway;
+   * the freeze is what stops post-dump sampling cost). Shares are of the
+   * core's OWN attributed total — the pct_of_pico lines above scale them
+   * to the frame. rom<64K rows are 1 KB pages, top-12 by cycles. */
+  {
+    enum { PCW_NBUCK = 64, PCW_ROM_HI = 0, PCW_SDRAM = 1, PCW_OTHER = 2,
+           PCW_NREGION = 3 };
+    extern int gnw_pcwall_armed;
+    extern unsigned int gnw_pcwall_hist[2][PCW_NBUCK];
+    extern unsigned int gnw_pcwall_region[2][PCW_NREGION];
+    extern unsigned int gnw_pcwall_samples[2];
+    extern const unsigned int gnw_pcwall_win_base;
+    static const char *const core_names[2] = { "msh2", "ssh2" };
+
+    gnw_pcwall_armed = 0;
+    fprintf(f, "sh2 guest-PC wall attribution (sampled every 32 insns, DWT cycles):\n");
+    for (int core = 0; core < 2; core++) {
+      uint64_t win = 0, total;
+      for (int i = 0; i < PCW_NBUCK; i++) win += gnw_pcwall_hist[core][i];
+      total = win + gnw_pcwall_region[core][PCW_ROM_HI]
+                  + gnw_pcwall_region[core][PCW_SDRAM]
+                  + gnw_pcwall_region[core][PCW_OTHER];
+      fprintf(f, "  %s: samples=%u attributed=%u cycles\n", core_names[core],
+              gnw_pcwall_samples[core], (unsigned)total);
+      if (total == 0) continue;
+      fprintf(f, "    rom<64K=%u.%u%% rom_hi=%u.%u%% sdram=%u.%u%% other=%u.%u%%\n",
+              (unsigned)(win * 1000 / total) / 10, (unsigned)(win * 1000 / total) % 10,
+              (unsigned)((uint64_t)gnw_pcwall_region[core][PCW_ROM_HI] * 1000 / total) / 10,
+              (unsigned)((uint64_t)gnw_pcwall_region[core][PCW_ROM_HI] * 1000 / total) % 10,
+              (unsigned)((uint64_t)gnw_pcwall_region[core][PCW_SDRAM] * 1000 / total) / 10,
+              (unsigned)((uint64_t)gnw_pcwall_region[core][PCW_SDRAM] * 1000 / total) % 10,
+              (unsigned)((uint64_t)gnw_pcwall_region[core][PCW_OTHER] * 1000 / total) / 10,
+              (unsigned)((uint64_t)gnw_pcwall_region[core][PCW_OTHER] * 1000 / total) % 10);
+      /* top-12 1 KB pages by selection (64 entries; no qsort scratch) */
+      uint8_t used[PCW_NBUCK] = { 0 };
+      for (int rank = 0; rank < 12; rank++) {
+        int best = -1;
+        for (int i = 0; i < PCW_NBUCK; i++)
+          if (!used[i] && gnw_pcwall_hist[core][i] &&
+              (best < 0 || gnw_pcwall_hist[core][i] > gnw_pcwall_hist[core][best]))
+            best = i;
+        if (best < 0) break;
+        used[best] = 1;
+        unsigned pct_x10 = (unsigned)((uint64_t)gnw_pcwall_hist[core][best] * 1000 / total);
+        fprintf(f, "    rom page 0x%08x: cyc=%u (%u.%u%%)\n",
+                0x02000000u + gnw_pcwall_win_base + (unsigned)best * 1024u,
+                gnw_pcwall_hist[core][best], pct_x10 / 10, pct_x10 % 10);
+      }
+      wdog_refresh();
+    }
   }
 
   wdog_refresh();
