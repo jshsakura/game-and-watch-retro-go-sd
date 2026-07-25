@@ -395,10 +395,14 @@ static void md32x_profile_dump(void) {
     extern unsigned int *gnw_pcwall_region_p[2];
     extern unsigned int gnw_pcwall_samples[2];
     extern const unsigned int gnw_pcwall_win_base;
+    extern const unsigned int gnw_pcwall_page_shift;
     static const char *const core_names[2] = { "msh2", "ssh2" };
+    unsigned int page_kb = (1u << gnw_pcwall_page_shift) >> 10;
 
     gnw_pcwall_armed = 0;
     fprintf(f, "sh2 guest-PC wall attribution (sampled every 32 insns, DWT cycles):\n");
+    fprintf(f, "  window: rom+0x%x, 64 pages x %u KB\n",
+            gnw_pcwall_win_base, page_kb);
     for (int core = 0; gnw_pcwall_hist_p[0] != NULL && core < 2; core++) {
       const unsigned int *hist = gnw_pcwall_hist_p[core];
       const unsigned int *region = gnw_pcwall_region_p[core];
@@ -408,7 +412,7 @@ static void md32x_profile_dump(void) {
       fprintf(f, "  %s: samples=%u attributed=%u cycles\n", core_names[core],
               gnw_pcwall_samples[core], (unsigned)total);
       if (total == 0) continue;
-      fprintf(f, "    rom<64K=%u.%u%% rom_hi=%u.%u%% sdram=%u.%u%% other=%u.%u%%\n",
+      fprintf(f, "    rom_win=%u.%u%% rom_hi=%u.%u%% sdram=%u.%u%% other=%u.%u%%\n",
               (unsigned)(win * 1000 / total) / 10, (unsigned)(win * 1000 / total) % 10,
               (unsigned)((uint64_t)region[PCW_ROM_HI] * 1000 / total) / 10,
               (unsigned)((uint64_t)region[PCW_ROM_HI] * 1000 / total) % 10,
@@ -416,7 +420,7 @@ static void md32x_profile_dump(void) {
               (unsigned)((uint64_t)region[PCW_SDRAM] * 1000 / total) % 10,
               (unsigned)((uint64_t)region[PCW_OTHER] * 1000 / total) / 10,
               (unsigned)((uint64_t)region[PCW_OTHER] * 1000 / total) % 10);
-      /* top-12 1 KB pages by selection (64 entries; no qsort scratch) */
+      /* top-12 window pages by selection (64 entries; no qsort scratch) */
       uint8_t used[PCW_NBUCK] = { 0 };
       for (int rank = 0; rank < 12; rank++) {
         int best = -1;
@@ -428,7 +432,8 @@ static void md32x_profile_dump(void) {
         used[best] = 1;
         unsigned pct_x10 = (unsigned)((uint64_t)hist[best] * 1000 / total);
         fprintf(f, "    rom page 0x%08x: cyc=%u (%u.%u%%)\n",
-                0x02000000u + gnw_pcwall_win_base + (unsigned)best * 1024u,
+                0x02000000u + gnw_pcwall_win_base
+                    + ((unsigned)best << gnw_pcwall_page_shift),
                 hist[best], pct_x10 / 10, pct_x10 % 10);
       }
       wdog_refresh();
