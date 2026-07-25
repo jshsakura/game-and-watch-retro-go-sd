@@ -125,6 +125,14 @@
  * _Static_assert below turns any future regression of either side back
  * into a build failure instead of a device Hardfault. */
 #define MD32X_PROFILE_FRAMES  64u   /* ~1.07 s @60 fps / ~1.28 s @50 fps; then dump */
+/* Skipped before the window opens. Three device passes measured the SAME
+ * 131,537 samples — a boot-anchored window is deterministic and lands on
+ * the title sequence, so the numbers profile the logo, not the game.
+ * ~20 s in, Doom is in its attract demo (real 3D render) or, if someone
+ * is playing, in their gameplay. The phase counters, guest-insn counters
+ * and the pcwall probe all start at warmup expiry so every denominator in
+ * the dump covers the same window. */
+#define MD32X_PROFILE_WARMUP_FRAMES 1200u
 #define MD32X_PROF_PATH       "/32x_dwt.txt"
 
 enum {
@@ -164,6 +172,12 @@ static uint32_t prof_drawn_count;
 static uint32_t prof_skip_count;
 static bool prof_dumped;    /* strictly one-shot SD write  */
 static bool prof_active;    /* false if AHB alloc failed   */
+static uint32_t prof_warmup = MD32X_PROFILE_WARMUP_FRAMES;
+static unsigned int *pcwall_block;  /* AHB; armed at warmup expiry */
+
+/* sh2pico.c probe contract (also read by the dump below) */
+extern void gnw_sh2_pcwall_arm(unsigned int *block);
+extern const unsigned int gnw_pcwall_block_words;
 
 /* flat index into the AHB pools: bucket-major so each bucket's frames are
  * contiguous (qsort in the dump operates on a bucket's slice in place). */
@@ -203,15 +217,13 @@ void md32x_profile_init(void) {
                                 sizeof(uint32_t));
   prof_active = (prof_delta_drawn != NULL && prof_delta_skip != NULL);
   if (prof_active) {
-    /* Sampled guest-PC wall attribution (sh2pico.c). Armed here, frozen by
-     * the dump; bucket tables live in this AHB block (see the
-     * _Static_assert above -- the overlay BSS has no room for them). */
-    extern void gnw_sh2_pcwall_arm(unsigned int *block);
-    extern const unsigned int gnw_pcwall_block_words;
-    unsigned int *pcwall_block = NULL;
+    /* Sampled guest-PC wall attribution (sh2pico.c). The block is allocated
+     * here but the probe is ARMED at warmup expiry (md32x_profile_record),
+     * so its tables cover the same window as everything else; bucket tables
+     * live in this AHB block (see the _Static_assert above -- the overlay
+     * BSS has no room for them). */
     if (gnw_pcwall_block_words == MD32X_PCWALL_BLOCK_WORDS)
       pcwall_block = ahb_calloc(MD32X_PCWALL_BLOCK_WORDS, sizeof(uint32_t));
-    gnw_sh2_pcwall_arm(pcwall_block);   /* NULL leaves the probe disarmed */
   }
   {
     FILE *df = fopen("/32x_diag.txt", "ab");
@@ -291,6 +303,10 @@ static void md32x_profile_dump(void) {
 
   fprintf(f, "=== 32X DWT device profile ===\n");
   fprintf(f, "build: MD32X_DEVICE_PROFILE=1 (opt switch ON)\n");
+  fprintf(f, "window: opened after %u warmup frames (~%u s) -- all counters "
+          "zeroed at open\n",
+          (unsigned)MD32X_PROFILE_WARMUP_FRAMES,
+          (unsigned)(MD32X_PROFILE_WARMUP_FRAMES / 60u));
   /* No firmware-commit symbol is exported by this build (no _build_version /
    * git-rev global); the file path + opt-switch line identify the run. */
   fprintf(f, "clk=%u Hz  region=%s  oc_user=%u (common_emu_auto_oc floor=1)\n",
@@ -449,6 +465,19 @@ static void md32x_profile_dump(void) {
 void md32x_profile_record(bool drawFrame, uint32_t t_pace, uint32_t t_proc,
                            uint32_t t_pico, uint32_t t_blit, uint32_t t_audio) {
   if (!prof_active || prof_dumped) return;
+
+  /* Warmup: discard the boot/title frames, then open the window with every
+   * counter zeroed at the same instant. record() runs between frames, so
+   * no pprof pair is open (refcounts all zero) and the resets are clean. */
+  if (prof_warmup) {
+    if (--prof_warmup == 0) {
+      extern unsigned long long gnw_sh2_insn_count[2];
+      memset(&s_pp_counters, 0, sizeof(s_pp_counters));
+      gnw_sh2_insn_count[0] = gnw_sh2_insn_count[1] = 0;
+      gnw_sh2_pcwall_arm(pcwall_block);   /* NULL leaves the probe disarmed */
+    }
+    return;
+  }
 
   uint32_t total = prof_drawn_count + prof_skip_count;
   if (total >= MD32X_PROFILE_FRAMES) {
