@@ -178,6 +178,9 @@ static unsigned int *pcwall_block;  /* AHB; armed at warmup expiry */
 /* sh2pico.c probe contract (also read by the dump below) */
 extern void gnw_sh2_pcwall_arm(unsigned int *block);
 extern const unsigned int gnw_pcwall_block_words;
+/* pico/32x/memory.c dispatch-cost ledger (window-gated on the pcwall flag) */
+extern unsigned int gnw_memh_cyc[2][4];
+extern unsigned int gnw_memh_cnt[2][4];
 
 /* flat index into the AHB pools: bucket-major so each bucket's frames are
  * contiguous (qsort in the dump operates on a bucket's slice in place). */
@@ -456,6 +459,31 @@ static void md32x_profile_dump(void) {
     }
   }
 
+  /* Memory-dispatch cost ledger (pico/32x/memory.c): how much of each
+   * core's window cycles is spent inside read-handler / write-tab calls.
+   * Self-cost is ~10 cycles per counted call — subtract cnt*10 from cyc to
+   * de-bias. cyc/call names the lever: ~15-25 = call overhead dominates
+   * (inline/fast-path the table), 40+ = the handler bodies themselves. */
+  {
+    static const char *const memh_names[4] = { "read_h", "write8", "write16", "write32" };
+    uint64_t sh2_win[2];
+    sh2_win[0] = (uint64_t)s_pp_counters.counter[pp_msh2];
+    sh2_win[1] = (uint64_t)s_pp_counters.counter[pp_ssh2];
+    fprintf(f, "sh2 memory-dispatch ledger (DWT cycles inside handler calls):\n");
+    for (int core = 0; core < 2; core++) {
+      fprintf(f, "  %s:", core ? "ssh2" : "msh2");
+      for (int k = 0; k < 4; k++) {
+        unsigned pct_x10 = sh2_win[core]
+          ? (unsigned)((uint64_t)gnw_memh_cyc[core][k] * 1000 / sh2_win[core]) : 0;
+        fprintf(f, " %s cyc=%u cnt=%u (%u.%u%%)", memh_names[k],
+                gnw_memh_cyc[core][k], gnw_memh_cnt[core][k],
+                pct_x10 / 10, pct_x10 % 10);
+      }
+      fprintf(f, "\n");
+      wdog_refresh();
+    }
+  }
+
   wdog_refresh();
   fclose(f);
   wdog_refresh();
@@ -474,6 +502,8 @@ void md32x_profile_record(bool drawFrame, uint32_t t_pace, uint32_t t_proc,
       extern unsigned long long gnw_sh2_insn_count[2];
       memset(&s_pp_counters, 0, sizeof(s_pp_counters));
       gnw_sh2_insn_count[0] = gnw_sh2_insn_count[1] = 0;
+      memset(gnw_memh_cyc, 0, sizeof(gnw_memh_cyc));
+      memset(gnw_memh_cnt, 0, sizeof(gnw_memh_cnt));
       gnw_sh2_pcwall_arm(pcwall_block);   /* NULL leaves the probe disarmed */
     }
     return;
