@@ -795,6 +795,71 @@ static int run_case_stack(uint8_t oc, uint16_t sp_in, bool mf, bool xf,
     return 0;
 }
 
+/* Stage 3O: COP (0x02) differential test. Real software interrupt (unlike
+ * 0x00 BRK, a CpuOpcodeHook runtime redirect deliberately left in C -- see
+ * snes_thumb2.S's comment by .Lop02). Trace shape: 1 RAW read (signature
+ * byte), 3 HOOKED writes (push k, push pc-high, push pc-low), 2 HOOKED reads
+ * (vector low @0xffe4, vector high @0xffe5). Vector value is pre-seeded in
+ * wmap; sp_in sweeps the e-clamp edge the same way run_case_stack does. */
+static int run_case_cop(uint16_t sp_in, bool mf, bool xf, bool e,
+                        uint16_t vec_val, uint16_t pc_in) {
+    Cpu base;
+    randomize_cpu(&base);
+    base.sp = sp_in;
+    base.pc = pc_in;
+    base.mf = mf; base.xf = xf; base.e = e;
+    base.irqWanted = 0; base.nmiWanted = 0;
+    base.waiting = 0; base.stopped = 0;
+
+    uint32_t forced_addr = ((uint32_t)base.k << 16) | pc_in;
+    uint32_t seed = prng();
+
+    Cpu cpuA = base, cpuB = base;
+    rigbus_reset(&g_busA);
+    rigbus_reset(&g_busB);
+    g_busA.forced_addr = forced_addr; g_busA.forced_opcode = 0x02; g_busA.seed = seed;
+    g_busB.forced_addr = forced_addr; g_busB.forced_opcode = 0x02; g_busB.seed = seed;
+    g_busA.wmap[0].addr = 0xffe4; g_busA.wmap[0].val = (uint8_t)(vec_val & 0xff);
+    g_busA.wmap[1].addr = 0xffe5; g_busA.wmap[1].val = (uint8_t)(vec_val >> 8);
+    g_busB.wmap[0].addr = 0xffe4; g_busB.wmap[0].val = (uint8_t)(vec_val & 0xff);
+    g_busB.wmap[1].addr = 0xffe5; g_busB.wmap[1].val = (uint8_t)(vec_val >> 8);
+    g_busA.wmap_len = g_busB.wmap_len = 2;
+    cpuA.mem = &g_busA;
+    cpuB.mem = &g_busB;
+
+    SpinSkip spin_seed;
+    memset(&spin_seed, 0, sizeof(spin_seed));
+    spin_seed.phase = 1;
+    spin_seed.io_seq = 0x1234;
+    spin_seed.write_seq = 0x5678;
+    g_spin = spin_seed;
+    cpu_runOpcode_c(&cpuA);
+    SpinSkip spinA = g_spin;
+    g_spin = spin_seed;
+    cpu_runOpcode(&cpuB);
+    SpinSkip spinB = g_spin;
+
+    if (!cpu_eq(&cpuA, &cpuB) || !bus_eq(&g_busA, &g_busB) ||
+        memcmp(&spinA, &spinB, sizeof(spinA)) != 0) {
+        printf("\nMISMATCH [cop] sp=%04x mf=%d xf=%d e=%d vec=%04x pc=%04x\n",
+               sp_in, mf, xf, e, vec_val, pc_in);
+        dump_cpu("oracle", &cpuA);
+        dump_cpu("thumb2", &cpuB);
+        int n = g_busA.trace_len < g_busB.trace_len ? g_busA.trace_len : g_busB.trace_len;
+        for (int i = 0; i < n; i++) {
+            if (g_busA.trace[i].addr != g_busB.trace[i].addr ||
+                g_busA.trace[i].val != g_busB.trace[i].val ||
+                g_busA.trace[i].is_write != g_busB.trace[i].is_write) {
+                printf("  trace[%d] A: addr=%06x val=%02x wr=%d  B: addr=%06x val=%02x wr=%d\n",
+                       i, g_busA.trace[i].addr, g_busA.trace[i].val, g_busA.trace[i].is_write,
+                       g_busB.trace[i].addr, g_busB.trace[i].val, g_busB.trace[i].is_write);
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
 /* ---- Stage 3L jump/return/subroutine differential (12 opcodes native) ---- *
  * Family B: control-flow opcodes.  Operand bytes are RAW (snes_cpuRead, no
  * spin hook -- matches cpu_readOpcode); indirect pointer bytes and all stack
@@ -4157,6 +4222,29 @@ int main(void) {
                     }
         }
         printf("(jump/return/subroutine operand+indirect+stack + spBp gate: %d cases)\n", run);
+    }
+
+    /* ---- Stage 3O: COP (0x02) sweep. sp_in covers the e-clamp edge (0x00ff
+     * crosses the byte-0 boundary under e=1); mf/xf/e/pc_in/vec_val swept
+     * independently since COP's push/flags/vector-fetch path doesn't depend
+     * on any single one of them alone. ---- */
+    {
+        static const uint16_t sps[4]  = { 0x01fd, 0x00ff, 0x1000, 0xffff };
+        static const uint16_t pcs[3]  = { 0x0100, 0xfffe, 0xffff };
+        static const uint16_t vecs[3] = { 0x0000, 0x8000, 0xabcd };
+        int run = 0;
+        for (int si = 0; si < 4; si++)
+            for (int mfi = 0; mfi < 2; mfi++)
+                for (int xfi = 0; xfi < 2; xfi++)
+                    for (int e = 0; e < 2; e++)
+                        for (int pi = 0; pi < 3; pi++)
+                            for (int vi = 0; vi < 3; vi++) {
+                                total++;
+                                failures += run_case_cop(sps[si], (bool)mfi, (bool)xfi,
+                                                         (bool)e, vecs[vi], pcs[pi]);
+                                run++;
+                            }
+        printf("(COP push+vector-fetch + spBp-adjacent stack e-clamp: %d cases)\n", run);
     }
 
     /* ---- Stage 3N: 9 remaining native opcodes (WDM WAI STP XCE MVP MVN PER
