@@ -451,7 +451,12 @@ static bool Md32xCacheXipToFlash(void) {
  * headless warm-up below runs BEFORE audio starts, so its writes are
  * boot-time too. */
 #define MD32X_DIAG_PATH "/32x_diag.txt"
-static char md32x_diag[1536];
+/* 1536 -> 1024 (0725): the merged testbed tree left MD32X overlay BSS ~300 B
+ * past __RAM_EMU_END__ the first time MD32X_DEVICE_PROFILE=1 met it — this
+ * buffer is the only slack left. A full good boot writes ~700 B of
+ * breadcrumbs (15 lines, longest is rom=<path>); truncation loses only tail
+ * lines of an already-good boot. */
+static char md32x_diag[1024];
 static uint16_t md32x_diag_len;
 static bool md32x_diag_sealed;   /* true once the main loop starts: no more writes */
 
