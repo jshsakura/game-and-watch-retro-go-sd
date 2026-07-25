@@ -819,13 +819,10 @@ int _gettimeofday(struct timeval *tv, void *tzvp)
 {
     if (tv)
     {
-        // get epoch UNIX time from RTC
-        time_t unixTime = GW_GetUnixTime();
-        tv->tv_sec = unixTime;
-
-        // get millisecondes from rtc and convert them to microsecondes
+        /* Single RTC read + mktime (was GetUnixTime + GetCurrentMillis = 2x). */
         uint64_t millis = GW_GetCurrentMillis();
-        tv->tv_usec = (millis % 1000) * 1000;
+        tv->tv_sec = (time_t)(millis / 1000);
+        tv->tv_usec = (long)((millis % 1000) * 1000);
         return 0;
     }
 
