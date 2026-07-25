@@ -451,7 +451,7 @@ static bool Md32xCacheXipToFlash(void) {
  * headless warm-up below runs BEFORE audio starts, so its writes are
  * boot-time too. */
 #define MD32X_DIAG_PATH "/32x_diag.txt"
-static char md32x_diag[2048];
+static char md32x_diag[1536];
 static uint16_t md32x_diag_len;
 static bool md32x_diag_sealed;   /* true once the main loop starts: no more writes */
 

@@ -548,6 +548,24 @@ fi
 
 ( cd "$FAC_DIR" && ./test_flash_alloc_cps1_pool ) || rc=1
 
+# external/sm's dma_doDma drains a whole A->B channel per call instead of one
+# byte per dma_cycle() — a host-CPU win for VRAM/CGRAM/OAM uploads that must not
+# change what a DMA transfers. Link the REAL dma.c and compare its transfer
+# sequence against an independent per-byte reference over a spread of configs.
+echo "=== sm dma: bulk A->B transfer matches per-byte reference ==="
+DMA_DIR=/tmp/mtest/dma_bulk
+rm -rf "$DMA_DIR"; mkdir -p "$DMA_DIR"
+if [ -f external/sm/src/snes/dma.c ]; then
+    $CC -O1 -g -std=gnu11 -Wall $SAN -Iexternal/sm/src/snes -Iexternal/sm \
+        tests/test_dma_bulk_equiv.c external/sm/src/snes/dma.c \
+        -o "$DMA_DIR/test_dma_bulk" || rc=1
+    ( cd "$DMA_DIR" && ./test_dma_bulk ) || rc=1
+else
+    # A submodule that was not checked out (e.g. a partial clone) cannot be
+    # tested. Skip and say so rather than fail the build over a missing source.
+    echo "SKIP external/sm not checked out — dma transfer test not run"
+fi
+
 echo "=== sm: device source set is symbol-complete ==="
 # tests/test_sm_skip_guard.sh re-runs everything from the marker above to EOF as
 # a standalone script, so the reporting helpers must also exist in that slice.

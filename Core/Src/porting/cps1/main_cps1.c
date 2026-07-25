@@ -31,13 +31,16 @@
  * (see docs/CPS1_ROM_PIPELINE.md's retraction).
  *
  * ================================ STATUS =================================
- * NOT REACHABLE YET, deliberately. There is no APPID_CPS1, no entry in
- * rg_emulators.c, no .overlay_cps1 in the linker script and no create_sd_data
- * line. Adding an APPID grows persistent_config_t and RESETS EVERY USER'S
- * SETTINGS (CLAUDE.md), and intflash headroom is currently measured in
- * hundreds of bytes -- so that step is a deliberate decision, not something to
- * slip in with a feature. This file is written so that when the decision is
- * made the remaining work is registration, not implementation.
+ * REACHABLE. APPID_CPS1=28, registered in rg_emulators.c (add_emulator),
+ * .overlay_cps1 + .xip_cps1 + .rodata_cps1 in the linker script, and SD
+ * extraction (create_sd_data: /cores/cps1.bin + /cores/cps1.xip) are all
+ * wired. Docker release build links and fits internal flash.
+ *
+ * Open items: (1) sound is stubbed (QSound HLE not yet implemented —
+ * cps1_sound_hle.c targets Z80/YM2151/OKI6295, wrong for wof); (2) real-
+ * hardware verification never run (QEMU measures 11.6% over budget but has
+ * no cache/wait-state model); (3) only the Warriors of Fate romset family
+ * (wofj/wofr1/wof) is currently supported.
  * =========================================================================
  */
 #include <stdint.h>

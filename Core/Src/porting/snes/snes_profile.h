@@ -67,6 +67,8 @@ extern uint32_t snes_prof_b_ppu_cyc;    /* PPU inclusive cycles, per frame    */
 extern uint32_t snes_prof_b_ppu_calls;
 extern uint32_t snes_prof_b_apu_cyc;    /* APU LLE exclusive cycles, per frame*/
 extern uint32_t snes_prof_b_apu_calls;
+extern uint32_t snes_prof_b_dma_cyc;    /* general-DMA cycles, APU-exclusive  */
+extern uint32_t snes_prof_b_dma_calls;
 extern int32_t  snes_prof_b_depth;      /* live scope depth; 0 at frame end   */
 extern uint32_t snes_prof_b_depth_max;  /* worst depth seen in the window     */
 extern uint32_t snes_prof_b_err;        /* nesting/underflow violations       */
@@ -103,6 +105,57 @@ static inline void snes_prof_scope_exit(uint32_t t0, uint32_t *acc, uint32_t *ca
 #define SNES_PROF_APU_SCOPE_ENTER()  snes_prof_scope_enter()
 #define SNES_PROF_APU_SCOPE_EXIT(t0)                                          \
   snes_prof_scope_exit((t0), &snes_prof_b_apu_cyc, &snes_prof_b_apu_calls)
+
+/* DMA drain scope: brackets $420B's synchronous general-DMA loop, which runs
+ * INSIDE cpu_runOpcode. Like the CPU scope below (and unlike the PPU/APU sibling
+ * scopes) it is snapshot-subtract and does NOT touch depth: the DMA can write
+ * $2140-3 and re-enter snes_catchupApu()'s APU scope, which must stay depth
+ * 0->1->0, not 1->2. It also takes back the APU delta so APU-driven-by-DMA is
+ * not double-booked -- the result is DMA time exclusive of its APU work.
+ * SNES_PROF_CPU_CALL subtracts it so cpu_only becomes the interpreter alone.
+ * Used by the generated snes.c (instrument.py), so the statement (the whole
+ * while loop) is the macro argument. */
+#define SNES_PROF_DMA_CALL(stmt)                                              \
+  do {                                                                        \
+    uint32_t snes_prof_dt0__ = common_emu_get_dwt_cycles();                   \
+    uint32_t snes_prof_da0__ = snes_prof_b_apu_cyc;                           \
+    stmt;                                                                     \
+    snes_prof_b_dma_cyc += (common_emu_get_dwt_cycles() - snes_prof_dt0__)    \
+                         - (snes_prof_b_apu_cyc - snes_prof_da0__);           \
+    snes_prof_b_dma_calls++;                                                  \
+  } while (0)
+
+/* ---- core_rem sub-split: the interpreter alone --------------------------
+ * core_rem is "CPU + DMA + event scheduler + spin bookkeeping", and choosing
+ * the next lever means knowing which of those it mostly is. cpu_runOpcode()
+ * cannot use the depth-checked scope above, because it is NOT a sibling of the
+ * APU scope: any $2140-3 access re-enters snes_catchupApu() from inside the
+ * opcode (snes.c:321). So this is the snapshot-subtract form -- bracket the
+ * call, then take back whatever the APU and PPU accumulators moved while we
+ * were inside. Depth is deliberately untouched, so the sibling gate above
+ * still means what it says.
+ *
+ * This one IS per-opcode, which every other probe in this file refuses to be.
+ * That is a deliberate exception with a stated price: the dump prints the
+ * call count and a probe estimate next to the bucket, and the bucket is only
+ * ever used to answer "interpreter, or everything else?" -- a question whose
+ * answer survives being wrong by the probe cost. It is not an A/B number. */
+extern uint32_t snes_prof_b_cpu_cyc;
+extern uint32_t snes_prof_b_cpu_calls;
+
+#define SNES_PROF_CPU_CALL(expr) ({                                           \
+    uint32_t snes_prof_ct0__ = common_emu_get_dwt_cycles();                   \
+    uint32_t snes_prof_ca0__ = snes_prof_b_apu_cyc;                           \
+    uint32_t snes_prof_cp0__ = snes_prof_b_ppu_cyc;                           \
+    uint32_t snes_prof_cd0__ = snes_prof_b_dma_cyc;                           \
+    __typeof__(expr) snes_prof_cv__ = (expr);                                 \
+    snes_prof_b_cpu_cyc += (common_emu_get_dwt_cycles() - snes_prof_ct0__)    \
+                         - (snes_prof_b_apu_cyc - snes_prof_ca0__)            \
+                         - (snes_prof_b_ppu_cyc - snes_prof_cp0__)            \
+                         - (snes_prof_b_dma_cyc - snes_prof_cd0__);           \
+    snes_prof_b_cpu_calls++;                                                  \
+    snes_prof_cv__;                                                           \
+  })
 
 /* ---- Ledger C: sleep-safe wall clock -------------------------------------
  * TIM2 free-running at ~1 MHz. APB1 keeps clocking through plain Sleep, so
@@ -151,5 +204,7 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
 #define SNES_PROF_MARK(m)            ((void)0)
 #define SNES_PROF_APU_SCOPE_ENTER()  0u
 #define SNES_PROF_APU_SCOPE_EXIT(t0) ((void)(t0))
+#define SNES_PROF_CPU_CALL(expr)     (expr)
+#define SNES_PROF_DMA_CALL(stmt)     do { stmt; } while (0)
 
 #endif /* SNES_DEVICE_PROFILE */

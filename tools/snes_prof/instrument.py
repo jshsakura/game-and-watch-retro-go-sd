@@ -62,6 +62,14 @@ static void snes_prof_catchupApu_real(Snes* snes) {"""
 PPU_ANCHOR = "ppu_runLine(snes->ppu, snes->vPos);"
 PPU_REPLACEMENT = "SNES_PROF_PPU_CALL(ppu_runLine(snes->ppu, snes->vPos));"
 
+# $420B's synchronous general-DMA drain -- the only place general DMA runs, and
+# it runs inside cpu_runOpcode(). Bracket it so its cycles come back out of
+# cpu_only (which otherwise counts DMA as "interpreter"). The whole while loop is
+# the macro argument; SNES_PROF_DMA_CALL takes back the APU work a DMA to $2140-3
+# triggers, so the bucket is DMA exclusive of APU.
+DMA_ANCHOR = "while (dma_cycle(snes->dma)) {}"
+DMA_REPLACEMENT = "SNES_PROF_DMA_CALL(while (dma_cycle(snes->dma)) {});"
+
 INCLUDE_LINE = '#include "snes_profile.h"   /* SNES_DEVICE_PROFILE: ledger B probes */\n'
 
 
@@ -80,6 +88,13 @@ def main(argv):
     # the thing that never got wired").
     n_apu = src.count(APU_ANCHOR)
     n_ppu = src.count(PPU_ANCHOR)
+    n_dma = src.count(DMA_ANCHOR)
+    if n_dma != 1:
+        sys.stderr.write(
+            "snes_prof: expected exactly 1 occurrence of the DMA anchor in %s, "
+            "found %d. external/sm moved underneath this script -- fix the "
+            "anchor, do not weaken the check.\n" % (src_path, n_dma))
+        return 1
     if n_apu != 1:
         sys.stderr.write(
             "snes_prof: expected exactly 1 occurrence of the APU anchor in %s, "
@@ -93,6 +108,7 @@ def main(argv):
         return 1
 
     out = src.replace(APU_ANCHOR, APU_REPLACEMENT, 1)
+    out = out.replace(DMA_ANCHOR, DMA_REPLACEMENT, 1)
     # Every occurrence: the file carries two call sites behind different
     # #ifdefs and only one compiles, so instrumenting both is how the probe
     # survives a configuration change instead of quietly disappearing.
@@ -104,8 +120,8 @@ def main(argv):
     with open(dst, "w", encoding="utf-8") as fh:
         fh.write(out)
 
-    sys.stderr.write("snes_prof: instrumented %s -> %s (apu=%d ppu=%d)\n"
-                     % (src_path, dst, n_apu, n_ppu))
+    sys.stderr.write("snes_prof: instrumented %s -> %s (apu=%d ppu=%d dma=%d)\n"
+                     % (src_path, dst, n_apu, n_ppu, n_dma))
     return 0
 
 
