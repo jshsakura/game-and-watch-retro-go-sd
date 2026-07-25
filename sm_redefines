@@ -79,6 +79,8 @@ cpu_reset sm__cpu_reset
 cpu_runOpcode sm__cpu_runOpcode
 cpu_saveload sm__cpu_saveload
 cpu_setFlags sm__cpu_setFlags
+cpu_thumb2_read sm__cpu_thumb2_read
+cpu_thumb2_write sm__cpu_thumb2_write
 dma_cycle sm__dma_cycle
 dma_doDma sm__dma_doDma
 dma_doHdma sm__dma_doHdma
