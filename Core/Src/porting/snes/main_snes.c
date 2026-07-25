@@ -908,10 +908,16 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #else
       const int g_wire_enable = 0, g_wire_on = 0;
 #endif
+      /* dsp1/ram: whether the coprocessor HLE actually attached and how much
+       * SRAM the mapper decoded -- the two facts the Mario Kart BSOD hunt had
+       * to reconstruct by hand because this line didn't carry them. Boot-time
+       * write only, like everything in this file (SD writes during play
+       * corrupt the card). */
       fprintf(df, "SNES load: type=%d size=%lu title=[%s] sum64k=%08lX rc=%d "
-                  "wire_armed=%d g_wire_enable=%d g_wire_on=%d\n",
+                  "dsp1=%d ram=%d wire_armed=%d g_wire_enable=%d g_wire_on=%d\n",
               snes->cart->type, (unsigned long)rs, title, (unsigned long)sum,
-              (int)g_rc_active, (int)wire_armed, g_wire_enable, g_wire_on);
+              (int)g_rc_active, snes->cart->dsp1 != NULL, snes->cart->ramSize,
+              (int)wire_armed, g_wire_enable, g_wire_on);
       fclose(df);
     }
   }
