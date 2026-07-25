@@ -70,6 +70,16 @@ PPU_REPLACEMENT = "SNES_PROF_PPU_CALL(ppu_runLine(snes->ppu, snes->vPos));"
 DMA_ANCHOR = "while (dma_cycle(snes->dma)) {}"
 DMA_REPLACEMENT = "SNES_PROF_DMA_CALL(while (dma_cycle(snes->dma)) {});"
 
+# HDMA runs per line from snes_handle_pos_stuff -- invisible to dma_only,
+# which brackets only the $420B drain. The 0726 SMK/SMW profiles put the
+# core_rem residual at 35-42% of ACTIVE; hdma is one of its two named
+# suspects (with the spin learner, bracketed in main_snes.c). Two call
+# sites each behind the dot/event-loop split, same both-copies rule as PPU.
+HDMA_DO_ANCHOR = "dma_doHdma(snes->dma);"
+HDMA_DO_REPLACEMENT = "SNES_PROF_HDMA_CALL(dma_doHdma(snes->dma));"
+HDMA_INIT_ANCHOR = "dma_initHdma(snes->dma);"
+HDMA_INIT_REPLACEMENT = "SNES_PROF_HDMA_CALL(dma_initHdma(snes->dma));"
+
 INCLUDE_LINE = '#include "snes_profile.h"   /* SNES_DEVICE_PROFILE: ledger B probes */\n'
 
 
@@ -89,6 +99,13 @@ def main(argv):
     n_apu = src.count(APU_ANCHOR)
     n_ppu = src.count(PPU_ANCHOR)
     n_dma = src.count(DMA_ANCHOR)
+    n_hdo = src.count(HDMA_DO_ANCHOR)
+    n_hin = src.count(HDMA_INIT_ANCHOR)
+    if n_hdo < 1 or n_hin < 1:
+        sys.stderr.write(
+            "snes_prof: HDMA anchors not found in %s (do=%d init=%d). "
+            "external/sm moved underneath this script.\n" % (src_path, n_hdo, n_hin))
+        return 1
     if n_dma != 1:
         sys.stderr.write(
             "snes_prof: expected exactly 1 occurrence of the DMA anchor in %s, "
@@ -113,6 +130,8 @@ def main(argv):
     # #ifdefs and only one compiles, so instrumenting both is how the probe
     # survives a configuration change instead of quietly disappearing.
     out = out.replace(PPU_ANCHOR, PPU_REPLACEMENT)
+    out = out.replace(HDMA_DO_ANCHOR, HDMA_DO_REPLACEMENT)
+    out = out.replace(HDMA_INIT_ANCHOR, HDMA_INIT_REPLACEMENT)
     out = INCLUDE_LINE + out
 
     os.makedirs(out_dir, exist_ok=True)
@@ -120,8 +139,8 @@ def main(argv):
     with open(dst, "w", encoding="utf-8") as fh:
         fh.write(out)
 
-    sys.stderr.write("snes_prof: instrumented %s -> %s (apu=%d ppu=%d dma=%d)\n"
-                     % (src_path, dst, n_apu, n_ppu, n_dma))
+    sys.stderr.write("snes_prof: instrumented %s -> %s (apu=%d ppu=%d dma=%d hdma=%d+%d)\n"
+                     % (src_path, dst, n_apu, n_ppu, n_dma, n_hdo, n_hin))
     return 0
 
 

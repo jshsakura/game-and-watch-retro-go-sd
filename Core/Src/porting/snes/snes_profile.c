@@ -144,6 +144,8 @@ enum {
   BK_CORE_REM,        /* emu_outer - ppu - apu_in_emu (CPU+DMA+events+spin) */
   BK_CPU_EXCL,        /* cpu_runOpcode() only; APU/PPU/DMA re-entry removed  */
   BK_DMA_EXCL,        /* $420B general-DMA drain, APU-exclusive             */
+  BK_SPIN_EXCL,       /* spin learner: spin_note() per real opcode          */
+  BK_HDMA_EXCL,       /* dma_initHdma/dma_doHdma per line, APU-exclusive    */
   /* ---- Ledger C: sleep-safe wall, deadlines, side channels ------------- */
   BK_WALL_FRAME,
   BK_WALL_PACING,
@@ -157,7 +159,7 @@ enum {
 static const char *const bk_name[BK_COUNT] = {
   "framectl", "input", "rendarm", "emu*", "preskick", "pcm*",
   "prestail", "overlay", "swap", "pace_act", "ACTIVE",
-  "ppu", "apu_lle", "core_rem", "cpu_only", "dma_only",
+  "ppu", "apu_lle", "core_rem", "cpu_only", "dma_only", "spin", "hdma",
   "WALL", "wall_pace", "dma_pre", "dma_tick", "wfi", "irq"
 };
 
@@ -174,6 +176,8 @@ uint32_t snes_prof_b_ppu_cyc, snes_prof_b_ppu_calls;
 uint32_t snes_prof_b_apu_cyc, snes_prof_b_apu_calls;
 uint32_t snes_prof_b_cpu_cyc, snes_prof_b_cpu_calls;
 uint32_t snes_prof_b_dma_cyc, snes_prof_b_dma_calls;
+uint32_t snes_prof_b_spin_cyc, snes_prof_b_spin_calls;
+uint32_t snes_prof_b_hdma_cyc, snes_prof_b_hdma_calls;
 int32_t  snes_prof_b_depth;
 uint32_t snes_prof_b_depth_max;
 uint32_t snes_prof_b_err;
@@ -184,6 +188,7 @@ static uint32_t *pool_skip;
 static uint64_t sum_drawn[BK_COUNT];
 static uint64_t sum_skip[BK_COUNT];
 static uint64_t call_ppu_sum, call_apu_sum, call_cpu_sum, call_dma_sum;
+static uint64_t call_spin_sum, call_hdma_sum;
 static uint32_t n_drawn, n_skip;
 static bool     prof_active;   /* pools allocated                             */
 static bool     prof_dumped;   /* strictly one-shot SD write                  */
@@ -399,6 +404,8 @@ void snes_profile_init(uint32_t audio_rate, uint32_t audio_period_samples) {
   snes_prof_b_apu_cyc = snes_prof_b_apu_calls = 0;
   snes_prof_b_cpu_cyc = snes_prof_b_cpu_calls = 0;
   snes_prof_b_dma_cyc = snes_prof_b_dma_calls = 0;
+  snes_prof_b_spin_cyc = snes_prof_b_spin_calls = 0;
+  snes_prof_b_hdma_cyc = snes_prof_b_hdma_calls = 0;
   snes_prof_b_depth = 0;
   snes_prof_b_depth_max = 0;
   snes_prof_b_err = 0;
@@ -646,13 +653,20 @@ static void snes_profile_dump(void) {
     fprintf(f, "  cpu_over_core_rem frames=%u  %s\n",
             (unsigned)g_cpu_over_core_rem, g_cpu_over_core_rem ? "FAIL" : "PASS");
     fprintf(f, "  dma_only = $420B general-DMA drain, APU-exclusive; "
-               "dma_calls/frame=%u.  core_rem - cpu_only - dma_only = "
-               "event scheduler + spin.\n"
-               "  dma_over_core_rem frames=%u  %s\n",
+               "dma_calls/frame=%u.\n"
+               "  spin = spin_note() per real opcode, spin_calls/frame=%u"
+               " (probe ~%lu cyc/frame -- subtract before quoting).\n"
+               "  hdma = dma_initHdma/doHdma per line, APU-exclusive; "
+               "hdma_calls/frame=%u.\n"
+               "  core_rem - cpu_only - dma_only - spin - hdma = event scheduler.\n"
+               "  subsplit_over_core_rem frames=%u  %s\n",
             (unsigned)(frames ? call_dma_sum / frames : 0),
+            (unsigned)(frames ? call_spin_sum / frames : 0),
+            (unsigned long)((frames ? call_spin_sum / frames : 0) * (g_probe_cost_10 / 10u) * 2u),
+            (unsigned)(frames ? call_hdma_sum / frames : 0),
             (unsigned)g_dma_over_core_rem, g_dma_over_core_rem ? "FAIL" : "PASS");
   }
-  for (uint32_t bk = BK_PPU_INCL; bk <= BK_DMA_EXCL; bk++) {
+  for (uint32_t bk = BK_PPU_INCL; bk <= BK_HDMA_EXCL; bk++) {
     emit_bucket(f, bk, 'D', pool_drawn, n_drawn, sum_drawn[bk], sum_drawn[BK_ACTIVE_TOTAL]);
     emit_bucket(f, bk, 'S', pool_skip,  n_skip,  sum_skip[bk],  sum_skip[BK_ACTIVE_TOTAL]);
   }
@@ -741,6 +755,9 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
     snes_prof_b_ppu_cyc = snes_prof_b_ppu_calls = 0;
     snes_prof_b_apu_cyc = snes_prof_b_apu_calls = 0;
     snes_prof_b_cpu_cyc = snes_prof_b_cpu_calls = 0;
+    snes_prof_b_dma_cyc = snes_prof_b_dma_calls = 0;
+    snes_prof_b_spin_cyc = snes_prof_b_spin_calls = 0;
+    snes_prof_b_hdma_cyc = snes_prof_b_hdma_calls = 0;
     return;
   }
 
@@ -802,7 +819,19 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
       v[BK_DMA_EXCL] = (snes_prof_b_dma_cyc > rem_after_cpu)
                          ? rem_after_cpu : snes_prof_b_dma_cyc;
       if (snes_prof_b_dma_cyc > rem_after_cpu) g_dma_over_core_rem++;
+      /* spin and hdma sit inside core_rem beside cpu/dma; clamp sequentially
+       * so the four sub-buckets can never sum past core_rem. Overrun is a
+       * gate failure like the others (shared counter: any overrun there
+       * already fails the run). */
+      uint32_t rem2 = rem_after_cpu - v[BK_DMA_EXCL];
+      v[BK_SPIN_EXCL] = (snes_prof_b_spin_cyc > rem2) ? rem2 : snes_prof_b_spin_cyc;
+      if (snes_prof_b_spin_cyc > rem2) g_dma_over_core_rem++;
+      uint32_t rem3 = rem2 - v[BK_SPIN_EXCL];
+      v[BK_HDMA_EXCL] = (snes_prof_b_hdma_cyc > rem3) ? rem3 : snes_prof_b_hdma_cyc;
+      if (snes_prof_b_hdma_cyc > rem3) g_dma_over_core_rem++;
     }
+    call_spin_sum += snes_prof_b_spin_calls;
+    call_hdma_sum += snes_prof_b_hdma_calls;
     call_ppu_sum += snes_prof_b_ppu_calls;
     call_apu_sum += snes_prof_b_apu_calls;
     call_cpu_sum += snes_prof_b_cpu_calls;
@@ -812,6 +841,8 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
     snes_prof_b_apu_cyc = snes_prof_b_apu_calls = 0;
     snes_prof_b_cpu_cyc = snes_prof_b_cpu_calls = 0;
     snes_prof_b_dma_cyc = snes_prof_b_dma_calls = 0;
+    snes_prof_b_spin_cyc = snes_prof_b_spin_calls = 0;
+    snes_prof_b_hdma_cyc = snes_prof_b_hdma_calls = 0;
   }
 
   /* Ledger C + side channels. */

@@ -143,6 +143,44 @@ static inline void snes_prof_scope_exit(uint32_t t0, uint32_t *acc, uint32_t *ca
 extern uint32_t snes_prof_b_cpu_cyc;
 extern uint32_t snes_prof_b_cpu_calls;
 
+/* ---- core_rem sub-split #2: spin bookkeeping ------------------------------
+ * The 0726 SMK/SMW runs put core_rem - cpu_only - dma_only at 35-42% of
+ * ACTIVE -- the single largest bucket -- and the residual's named suspects
+ * are the spin learner (per REAL opcode: ring store + revisit scan in
+ * spin_note) and HDMA (per line, invisible to dma_only which brackets only
+ * the $420B drain). These two buckets name them. spin is per-opcode like
+ * cpu_only, with the same stated price: the dump prints its probe estimate
+ * and the bucket answers "learner, or scheduler?", nothing finer. spin_note
+ * reaches no APU/PPU/DMA scope, so a plain bracket is exact. */
+extern uint32_t snes_prof_b_spin_cyc;
+extern uint32_t snes_prof_b_spin_calls;
+
+#define SNES_PROF_SPIN_CALL(stmt)                                             \
+  do {                                                                        \
+    uint32_t snes_prof_st0__ = common_emu_get_dwt_cycles();                   \
+    stmt;                                                                     \
+    snes_prof_b_spin_cyc += common_emu_get_dwt_cycles() - snes_prof_st0__;    \
+    snes_prof_b_spin_calls++;                                                 \
+  } while (0)
+
+/* HDMA scope: brackets dma_initHdma/dma_doHdma (per line, from
+ * snes_handle_pos_stuff). Snapshot-subtract of the APU delta like
+ * SNES_PROF_DMA_CALL: an HDMA channel targeting $2140-3 would re-enter
+ * snes_catchupApu, and that work must stay booked as APU. Runs outside
+ * cpu_runOpcode, so cpu_only needs no new subtraction. */
+extern uint32_t snes_prof_b_hdma_cyc;
+extern uint32_t snes_prof_b_hdma_calls;
+
+#define SNES_PROF_HDMA_CALL(stmt)                                             \
+  do {                                                                        \
+    uint32_t snes_prof_ht0__ = common_emu_get_dwt_cycles();                   \
+    uint32_t snes_prof_ha0__ = snes_prof_b_apu_cyc;                           \
+    stmt;                                                                     \
+    snes_prof_b_hdma_cyc += (common_emu_get_dwt_cycles() - snes_prof_ht0__)   \
+                          - (snes_prof_b_apu_cyc - snes_prof_ha0__);          \
+    snes_prof_b_hdma_calls++;                                                 \
+  } while (0)
+
 #define SNES_PROF_CPU_CALL(expr) ({                                           \
     uint32_t snes_prof_ct0__ = common_emu_get_dwt_cycles();                   \
     uint32_t snes_prof_ca0__ = snes_prof_b_apu_cyc;                           \
@@ -206,5 +244,7 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
 #define SNES_PROF_APU_SCOPE_EXIT(t0) ((void)(t0))
 #define SNES_PROF_CPU_CALL(expr)     (expr)
 #define SNES_PROF_DMA_CALL(stmt)     do { stmt; } while (0)
+#define SNES_PROF_SPIN_CALL(stmt)    do { stmt; } while (0)
+#define SNES_PROF_HDMA_CALL(stmt)    do { stmt; } while (0)
 
 #endif /* SNES_DEVICE_PROFILE */
