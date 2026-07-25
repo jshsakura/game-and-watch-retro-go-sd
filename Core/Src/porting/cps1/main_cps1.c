@@ -328,6 +328,13 @@ static void cps1_render_into(uint16_t *fb, uint8_t *meta)
     static const unsigned draw_order[CPS1_BG_LAYER_COUNT] = {
         CPS1_BG_SCROLL3, CPS1_BG_SCROLL2, CPS1_BG_SCROLL1
     };
+    /* CLEAR first. The layers write only their non-transparent pens (pen 0 is
+     * see-through), so anywhere all three layers and the sprites are
+     * transparent keeps LAST frame's pixels -- torn/ghosted tiles on device.
+     * The host harness zeroes its framebuffer every frame (real_frame_harness.c
+     * memset s_fb); the device path reused s_cps1_render_buf without it, which
+     * is exactly why the device glitched where the host was clean. */
+    memset(fb, 0, (size_t)CPS1_FB_WIDTH * CPS1_FB_HEIGHT * sizeof(uint16_t));
     CPS1_DBG("cps1 dbg: rvs oam ok (%u sprites), rendering\n", s_oam.count);
     for (unsigned i = 0; i < CPS1_BG_LAYER_COUNT; i++) {
         unsigned L = draw_order[i];
@@ -1079,11 +1086,23 @@ static bool cps1_LoadState(const char *pathName)
     return true;
 }
 
+/* Repaint the game behind the in-game/pause overlay. common's repaint_overlay()
+ * calls this with NO null check, so passing NULL (as this core used to) makes
+ * PAUSE jump to 0 -> the blue screen on a button press. Re-present the last
+ * rendered frame -- do NOT re-run the 68000, the menu just needs the picture
+ * back under it. */
+static void cps1_repaint(void)
+{
+    cps1_present_to_lcd(s_cps1_render_buf, (uint16_t *)lcd_get_active_buffer());
+    common_ingame_overlay();
+}
+
 void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
     (void)start_paused;
 
     odroid_gamepad_state_t joystick;
+    odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
 
     odroid_system_init(APPID_CPS1, CPS1_SAMPLE_RATE);
     /* Save/load were NULL, so the launcher's save+resume did nothing at all
@@ -1144,7 +1163,7 @@ void app_main_cps1(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         bool drawFrame = common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
-        common_emu_input_loop(&joystick, NULL, NULL);
+        common_emu_input_loop(&joystick, options, &cps1_repaint);
 
         CPS1_DBG("cps1 dbg: f%lu run_one_frame (68000)\n",
                  (unsigned long)cps1_diag_frame);
