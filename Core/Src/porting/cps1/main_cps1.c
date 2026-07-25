@@ -919,6 +919,20 @@ static const cps1_romset_t *cps1_load_container_file(const char *file_path)
     }
 
     cps1_diag("cps1 dbg: %u blocks cached, %u distinct chips\n", blocks, s_chip_count);
+    /* Dump every cached chip's CRC. When resolve fails with "1 of 10 missing"
+     * the container is fine (it ran before) but one block's CACHED FLASH bytes
+     * are wrong -- a flash-cache ring aliasing bug, not the romset table. Which
+     * block is wrong tells intermittent (different each boot) from deterministic
+     * (same block). 5 per line keeps it inside the 2 KB diag ring. */
+    for (unsigned i = 0; i < s_chip_count; i += 5) {
+        cps1_diag("cps1 crc[%02u]: %08lx %08lx %08lx %08lx %08lx\n", i,
+                  (unsigned long)s_chip_crc[i],
+                  (unsigned long)(i + 1 < s_chip_count ? s_chip_crc[i + 1] : 0),
+                  (unsigned long)(i + 2 < s_chip_count ? s_chip_crc[i + 2] : 0),
+                  (unsigned long)(i + 3 < s_chip_count ? s_chip_crc[i + 3] : 0),
+                  (unsigned long)(i + 4 < s_chip_count ? s_chip_crc[i + 4] : 0));
+    }
+    cps1_diag_flush();   /* land the CRCs on the SD before a resolve failure */
     return cps1_resolve_and_attach(file_path, "Re-download this game");
 }
 
