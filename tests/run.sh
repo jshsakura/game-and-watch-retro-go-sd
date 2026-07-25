@@ -327,15 +327,10 @@ $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Src/porting/lib \
     tests/test_lz4_depack.c Core/Src/porting/lib/lz4_depack.c -o /tmp/mtest/test_lz4_depack
 /tmp/mtest/test_lz4_depack || fail test_lz4_depack
 
-echo "=== cps1: the romset table is generated, and matches its source ==="
-# Two programs need the same CPS-1 chip table -- this firmware and the library
-# app that validates a romset at upload time. When they drift the failure is a
-# game that loads cleanly and renders wrong, which is the exact failure CRC
-# identification exists to prevent, so the agreement is a gate rather than a
-# discipline. Catches an edit to the generated .c AND a JSON change nobody
-# regenerated.
-python3 tools/gen_cps1_romset.py --check \
-    || fail "cps1 romset table is stale — regenerate: python3 tools/gen_cps1_romset.py"
+# (The CPS-1 romset-table gate lived here until the CPS-1 core was removed
+# from this branch (6a6c9729): the generated cps1_romset.c it checked no
+# longer exists, so the gate could only fail. Generator + JSON live on in
+# feat/cps1-container with the rest of the core.)
 
 # === launcher: a dotless name (CPS-1 folder rom) must not 4GB-memcpy =========
 # remove_extension() assumed every rom name had an extension; a CPS-1 game is a
