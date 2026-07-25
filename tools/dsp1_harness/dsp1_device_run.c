@@ -2,8 +2,8 @@
  *
  * Drives dsp1_hle.c's PUBLIC byte-level protocol (dsp1_writeDR/readDR) --
  * the same interface cart.c uses -- across every command index the chip's
- * dispatch table recognizes (0x00-0x3f, i.e. every value execute() can see
- * once it masks the raw command byte with & 0x3f), with several
+ * dispatch table recognizes (0x00-0x3f; mirrors fold per-group in
+ * cmd_canon(), everything else incl. $80 is a protocol NOP), with several
  * representative/edge parameter sets per command, plus a dedicated
  * multi-line Raster streaming run (state 3: dsp1_readDR auto-advances the
  * scanline and recomputes on every 4-word boundary, matching what a real
@@ -48,39 +48,42 @@
 extern Dsp1* dsp1_alloc(void);
 extern uint32_t dsp1_size(void);
 
-/* io_shape mirror -- dsp1_hle.c's io_shape() is static, so the harness
- * drives the real byte protocol and needs its own copy of the same table to
- * know how many parameter words to feed each command before it fires. Kept
- * in exact sync with dsp1_hle.c's io_shape(); if that ever changes and this
- * doesn't, the harness starts feeding wrong byte counts and desyncs (the
- * state machine treats a stray byte as a new command) -- itself a useful
- * canary. */
+/* cmd_canon shape mirror -- dsp1_hle.c's cmd_canon() is static, so the
+ * harness drives the real byte protocol and needs its own copy of the same
+ * shape table to know how many parameter words to feed each command before
+ * it fires. Kept in exact sync with dsp1_hle.c's cmd_canon(); if that ever
+ * changes and this doesn't, the harness starts feeding wrong byte counts
+ * and desyncs (the state machine treats a stray byte as a new command) --
+ * itself a useful canary. Commands not in the table (incl. 0x80) are NOPs:
+ * the chip consumes the byte and stays idle. */
 static void io_shape_mirror(uint8_t cmd, uint8_t *inW, uint8_t *outW) {
-  uint8_t c = cmd & 0x3f;
-  int hi = (c >> 4) & 0xf;
-  switch (c & 0x0f) {
-    case 0x1: if (hi <= 2) { *inW = 4; *outW = 0; return; } break;
-    case 0x3: if (hi <= 2) { *inW = 3; *outW = 3; return; } break;
-    case 0xb: if (hi <= 2) { *inW = 3; *outW = 1; return; } break;
-    case 0xd: if (hi <= 2) { *inW = 3; *outW = 3; return; } break;
-    default: break;
-  }
-  switch (c) {
-    case 0x00: *inW = 2; *outW = 1; return;
-    case 0x02: *inW = 7; *outW = 4; return;
-    case 0x04: *inW = 2; *outW = 2; return;
-    case 0x06: *inW = 3; *outW = 3; return;
-    case 0x08: *inW = 3; *outW = 2; return;
-    case 0x0a: *inW = 1; *outW = 4; return;
-    case 0x0c: *inW = 3; *outW = 2; return;
-    case 0x0e: *inW = 2; *outW = 2; return;
-    case 0x10: *inW = 2; *outW = 2; return;
-    case 0x14: *inW = 6; *outW = 3; return;
-    case 0x18: *inW = 4; *outW = 1; return;
-    case 0x1c: *inW = 6; *outW = 3; return;
-    case 0x28: *inW = 3; *outW = 1; return;
-    case 0x0f: case 0x1f: case 0x2f: case 0x3f: *inW = 1; *outW = 1; return;
-    default:   *inW = 1; *outW = 1; return;
+  switch (cmd) {
+    case 0x00:                                  *inW = 2; *outW = 1; return;
+    case 0x20:                                  *inW = 2; *outW = 1; return;
+    case 0x10: case 0x30:                       *inW = 2; *outW = 2; return;
+    case 0x04: case 0x24:                       *inW = 2; *outW = 2; return;
+    case 0x08:                                  *inW = 3; *outW = 2; return;
+    case 0x18: case 0x38:                       *inW = 4; *outW = 1; return;
+    case 0x28:                                  *inW = 3; *outW = 1; return;
+    case 0x0c: case 0x2c:                       *inW = 3; *outW = 2; return;
+    case 0x1c: case 0x3c:                       *inW = 6; *outW = 3; return;
+    case 0x02: case 0x12: case 0x22: case 0x32: *inW = 7; *outW = 4; return;
+    case 0x0a: case 0x1a: case 0x2a: case 0x3a: *inW = 1; *outW = 4; return;
+    case 0x06: case 0x16: case 0x26: case 0x36: *inW = 3; *outW = 3; return;
+    case 0x0e: case 0x1e: case 0x2e: case 0x3e: *inW = 2; *outW = 2; return;
+    case 0x01: case 0x05: case 0x31: case 0x35:
+    case 0x11: case 0x15:
+    case 0x21: case 0x25:                       *inW = 4; *outW = 0; return;
+    case 0x0d: case 0x09: case 0x39: case 0x3d:
+    case 0x1d: case 0x19:
+    case 0x2d: case 0x29:                       *inW = 3; *outW = 3; return;
+    case 0x03: case 0x33: case 0x13: case 0x23: *inW = 3; *outW = 3; return;
+    case 0x0b: case 0x3b: case 0x1b: case 0x2b: *inW = 3; *outW = 1; return;
+    case 0x14: case 0x34:                       *inW = 6; *outW = 3; return;
+    case 0x0f: case 0x07:                       *inW = 1; *outW = 1; return;
+    case 0x2f: case 0x27:                       *inW = 1; *outW = 1; return;
+    case 0x1f: case 0x17: case 0x37: case 0x3f: *inW = 1; *outW = 1; return;
+    default:                                    *inW = 0; *outW = 0; return;
   }
 }
 
@@ -161,13 +164,46 @@ int main(void) {
   }
   printf("[dsp1-harness] full command x edge-set sweep done (0x00-0x3f x 4 sets, Parameter-primed)\n");
 
-  /* Multiply (0x80 -> c=0x00), explicitly, matching what Mario Kart issues
-   * at boot per the file's own comment in execute(). */
-  for (int s = 0; s < 4; s++) {
+  /* --- pinned regression: the Mario Kart race-init $80 flush. The game
+   * writes $80 to DR 128 times before its race-start Parameter -- on the
+   * chip that is a protocol NOP that leaves the FSM idle from ANY phase.
+   * Pre-fix, $80 parsed as Multiply (the old low-six-bits dispatch), the
+   * phantom command ate the real Parameter's command byte, every Raster
+   * then ran on reset-default projection state, and the game's per-line
+   * tables filled with 32767 -- the flat single-colour road. Reproduce the
+   * exact boot shape: leave the FSM mid-command, flush, send the real
+   * race-init Parameter, stream a raster line, and require it unsaturated. */
+  {
     dsp1_reset(d);
-    drive_command(d, 0x80, sets[s], 2);
+    /* leave the FSM mid-command: a bare Parameter command byte, no params.
+     * The residue matters -- with 14 param bytes outstanding, 128 flush
+     * bytes land MISALIGNED on the old 5-byte phantom-Multiply cycle
+     * (114 % 5 = 4), which is the phase the device actually died in; a
+     * residue of 0 mod 5 happens to re-align and would hide the bug. */
+    dsp1_writeDR(d, 0x02);
+    for (int i = 0; i < 128; i++) dsp1_writeDR(d, 0x80);
+    static const uint16_t smk[7] = { 2176, 10144, 0, 64, 256, 0, 0x3400 };
+    dsp1_writeDR(d, 0x02);
+    for (int w = 0; w < 7; w++) {
+      dsp1_writeDR(d, (uint8_t)(smk[w] & 0xff));
+      dsp1_writeDR(d, (uint8_t)(smk[w] >> 8));
+    }
+    (void)dsp1_readDR(d); (void)dsp1_readDR(d);        /* Vof */
+    int16_t vva = (int16_t)(dsp1_readDR(d) | (dsp1_readDR(d) << 8));
+    (void)dsp1_readDR(d); (void)dsp1_readDR(d);        /* Cx */
+    (void)dsp1_readDR(d); (void)dsp1_readDR(d);        /* Cy */
+    dsp1_writeDR(d, 0x0a);                             /* Raster from the horizon line */
+    dsp1_writeDR(d, (uint8_t)((vva + 1) & 0xff));
+    dsp1_writeDR(d, (uint8_t)(((vva + 1) >> 8) & 0xff));
+    int16_t A = (int16_t)(dsp1_readDR(d) | (dsp1_readDR(d) << 8));
+    for (int b = 2; b < 8; b++) (void)dsp1_readDR(d);
+    if (vva < -32 && vva > -128 && A != 32767 && A != -32768 && A != 0) {
+      printf("[dsp1-harness] $80-flush + race-init Parameter regression: OK (Vva=%d A=%d)\n", vva, A);
+    } else {
+      printf("FAIL: $80 flush desynced the FSM (Vva=%d A=%d; pre-fix: Parameter eaten, A=32767)\n", vva, A);
+      failures++;
+    }
   }
-  printf("[dsp1-harness] Multiply (0x80) x edge sets done\n");
 
   /* Raster streaming: Parameter once, then Raster command, then keep
    * READING past the first 4-word line -- dsp1_readDR's state==3 branch
@@ -186,7 +222,9 @@ int main(void) {
     for (int line = 0; line < 240; line++) {
       for (int b = 0; b < 8; b++) (void)dsp1_readDR(d);
     }
-    dsp1_writeDR(d, 0xff);                /* terminate the stream (new command byte) */
+    /* terminate the stream the way the chip does: writes drain the pending
+     * line's 8 bytes, then the FSM is idle (the reset below covers the rest) */
+    dsp1_writeDR(d, 0xff);
   }
   printf("[dsp1-harness] Raster streaming (240 lines x 4 edge sets) done\n");
 
