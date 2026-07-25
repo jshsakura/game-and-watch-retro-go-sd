@@ -812,14 +812,6 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_GAMECOM_BSS_SIZE = SIZEOF(.overlay_gamecom_bss);
 
-  /* CPS-1 is SD-only: its romsets are folders on the card and Musashi is
-   * XIP'd from /cores/cps1.xip. It was wired into BOTH linker scripts when
-   * it landed (e68a0a72); in this one the named build/cps1/*.o inputs do not
-   * exist, and ld treats a named-but-missing input as an error -- which is
-   * what broke the SD_CARD=0 build. The sections live in
-   * STM32H7B0VBTx_SDCARD.ld only. */
-
-
   .overlay_celeste __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_celeste_start__ = .;

@@ -137,18 +137,6 @@ enum {
     // sit here, after the last logo.bin-backed header and BEFORE the colour-only
     // pad block, so enum value == 3 + logo.bin index stays exact.
     RG_LOGO_HEADER_32X,
-    // ORDER HERE MUST MATCH THE LINKED ORDER OF THE LOGO_DATA STRUCTS IN
-    // .sdcard_logo, NOT their declaration order in rg_logos.c. Those are not
-    // the same thing: GCC may reorder top-level definitions (-ftoplevel-reorder
-    // is on by default at -O1+), and it did — header_cps1 is declared AFTER
-    // header_segacd yet the linker emits it BEFORE, which put Sega CD's
-    // wordmark on the CPS-1 tab and vice versa on device. The "appended last so
-    // no index shifts" comments elsewhere in this file describe an intent the
-    // compiler never promised. Verify with:
-    //     arm-none-eabi-nm -n build/gw_retro_go.elf | grep ' R header_'
-    // and make this list match that output exactly.
-    RG_LOGO_HEADER_SEGACD,
-    RG_LOGO_HEADER_CPS1,
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
@@ -174,10 +162,6 @@ enum {
     // Sega 32X colour tab icon (cicon_32x; color_icon_for_logo only, no
     // logo.bin entry -> rg_get_logo() returns NULL, bounds-checked)
     RG_LOGO_PAD_32X,
-    // Sega CD colour tab icon (cicon_segacd; same colour-only rule as 32X)
-    RG_LOGO_PAD_SEGACD,
-    // CPS-1 colour tab icon (cicon_cps1; same colour-only rule as 32X/Sega CD)
-    RG_LOGO_PAD_CPS1,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);

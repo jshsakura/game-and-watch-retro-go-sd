@@ -94,7 +94,4 @@ tools/sfc_recomp/rc_core_*.c
 /patch_plan.txt
 /test_plan.txt
 /tools/sfc_recomp/smw_hot_sites.csv
-# SegaCD lives in the gnw-segacd worktree until firmware integration lands
-/Core/Src/porting/segacd/
-/tools/segacd_harness/
 /.build-flags

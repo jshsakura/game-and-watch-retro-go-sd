@@ -147,11 +147,6 @@ extern uint8_t _OVERLAY_SMW_SIZE;
 extern void * _OVERLAY_SMW_BSS_START[];
 extern void * _OVERLAY_SMW_BSS_END[];
 extern uint8_t _OVERLAY_SMW_BSS_SIZE;
-extern void * _OVERLAY_SEGACD_LOAD_START[];
-extern uint8_t _OVERLAY_SEGACD_SIZE;
-extern void * _OVERLAY_SEGACD_BSS_START[];
-extern void * _OVERLAY_SEGACD_BSS_END[];
-extern uint8_t _OVERLAY_SEGACD_BSS_SIZE;
 extern void * _OVERLAY_VIDEOPAC_LOAD_START[];
 extern uint8_t _OVERLAY_VIDEOPAC_SIZE;
 extern void * _OVERLAY_VIDEOPAC_BSS_START[];
@@ -211,14 +206,6 @@ extern uint8_t _ITCM_WSWAN_SIZE;
 extern void * _OVERLAY_WSWAN_BSS_START[];
 extern void * _OVERLAY_WSWAN_BSS_END[];
 extern uint8_t _OVERLAY_WSWAN_BSS_SIZE;
-
-/* CPS-1 (Capcom arcade) overlay. Same four symbols every core overlay
- * defines; see .overlay_cps1 in the linker scripts. */
-extern void * _OVERLAY_CPS1_LOAD_START[];
-extern uint8_t _OVERLAY_CPS1_SIZE;
-extern void * _OVERLAY_CPS1_BSS_START[];
-extern uint8_t _OVERLAY_CPS1_BSS_SIZE;
-extern void * _OVERLAY_CPS1_BSS_END[];
 
 extern void * _MSX_ROM_UNPACK_BUFFER[];
 extern uint8_t _MSX_ROM_UNPACK_BUFFER_SIZE;

@@ -28,12 +28,10 @@ typedef enum {
     APPID_GBA      = 24,   /* Game Boy Advance (gpsp) */
     APPID_SNES     = 25,   /* generic SNES core (LakeSnes, SD builds only) */
     APPID_32X      = 26,   /* Sega 32X (picodrive, SD builds only) */
-    APPID_SEGACD   = 27,   /* Sega/Mega CD (SD builds only) */
-    /* Appending here grows persistent_config_t, so /CONFIG stops matching and
-     * every user's settings reset to defaults (CLAUDE.md). Accepted
-     * deliberately for this release — CPS-1 gets its own slot, separate
-     * from APPID_SM which previously shared value 23. */
-    APPID_CPS1     = 28,   /* Capcom Play System 1 (SD builds only) */
+    /* CPS-1 and Sega CD were removed here; both grew persistent_config_t and
+     * their removal shrinks it, so /CONFIG stops matching and every user's
+     * settings reset to defaults (CLAUDE.md). Accepted deliberately for this
+     * release. Do not re-add a slot without bumping the config version. */
 
     APPID_COUNT,
 } appid_t;

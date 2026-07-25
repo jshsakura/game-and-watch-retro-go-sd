@@ -40,7 +40,6 @@
 #include "main_zxs.h"
 #include "main_c64.h"
 #include "main_gamecom.h"
-#include "main_cps1.h"
 #include "main_celeste.h"
 #include "main_music.h"
 #include "main_video.h"
@@ -680,24 +679,10 @@ static const char *get_extension(const char *filename) {
 /* CD-based systems ship a game as a folder: one .cue plus its track .bin files.
  * They need the recursive scan below rather than the flat scandir, or the only
  * thing the launcher sees under /roms/<sys>/ is the game FOLDER — which lists
- * with the folder's name and cannot be launched. Sega CD has exactly the PCE CD
- * layout and was missing from this gate, so it fell to the flat scan. */
+ * with the folder's name and cannot be launched. */
 static bool emulator_is_cd_system(const retro_emulator_t *emu)
 {
-    return strcmp(emu->dirname, "pcecd") == 0 ||
-           strcmp(emu->dirname, "segacd") == 0 ||
-           /* CPS-1 has the same layout for a different reason: a game is a
-            * MAME romset, i.e. a folder of chip dumps, so the only thing under
-            * /roms/cps1/ is the game FOLDER. It has no .cue-equivalent index
-            * file -- deliberately, since inventing one is what the retired
-            * .cps1 container did -- so it collapses on the folder itself. */
-           strcmp(emu->dirname, "cps1") == 0;
-}
-
-/* True for systems whose game folder IS the entry (no index file inside). */
-static bool emulator_is_folder_rom_system(const retro_emulator_t *emu)
-{
-    return strcmp(emu->dirname, "cps1") == 0;
+    return strcmp(emu->dirname, "pcecd") == 0;
 }
 
 /* Case-insensitive ".cue" — avoid snprintf/strtolower/strstr on every SD entry. */
@@ -796,34 +781,6 @@ static bool cd_collapse_game_dir(retro_emulator_t *emu, const char *path)
 
     bool found = false;
 
-    /* Folder-rom systems (CPS-1): the game FOLDER is the launchable entry, not
-     * a file inside it. Two layouts load, and the loader handles both
-     * (cps1_load_folder_roms): chips loose in the folder, OR one subfolder per
-     * romset -- "Warriors of Fate/wof" and "/wofj" -- which it pools and asks
-     * between (cps1_ask_which_set). So accept as soon as the folder holds ANY
-     * non-hidden entry, a regular file OR a subdirectory. Skipping
-     * subdirectories here (the old `|| AM_DIR`) made the subfolder-per-set
-     * layout -- the one people actually unzip -- list as a folder to descend
-     * into and showed "<game>/<set>" instead of the game as one launchable
-     * entry. An empty folder still holds nothing and falls through to a
-     * navigable folder row. */
-    if (emulator_is_folder_rom_system(emu))
-    {
-        while (true)
-        {
-            wdog_refresh();
-            if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == 0)
-                break;
-            if (fno.fname[0] == '.')
-                continue;
-            const char *leaf = strrchr(path, '/');
-            leaf = leaf ? leaf + 1 : path;
-            found = emulator_add_rom_file(emu, path, leaf, 0);
-            break;
-        }
-        f_closedir(&dir);
-        return found;
-    }
     while (emu->roms.count < emu->roms.maxcount)
     {
         wdog_refresh();
@@ -1089,7 +1046,7 @@ static void emulator_delete_cd_flat(const char *cue_path)
  * often in a per-game folder); a plain unlink of the .cue would leave orphans. */
 static void emulator_delete_rom_storage(retro_emulator_file_t *file)
 {
-    static const char *const cd_dirs[] = { "pcecd", "segacd" };
+    static const char *const cd_dirs[] = { "pcecd" };
     char parent[RG_PATH_MAX];
     char prefix[64];
 
@@ -1592,12 +1549,6 @@ extern uint8_t _OVERLAY_MD32X_ITC_LMA_OFFSET;
 extern uint8_t _OVERLAY_MD32X_ITC_SIZE;
 static const emu_dispatch_t emu_md32x   = { "/cores/32x.bin",    &_OVERLAY_MD32X_BSS_START,   (uint32_t)&_OVERLAY_MD32X_BSS_SIZE,   (uint32_t)&_OVERLAY_MD32X_SIZE,   0, EMU_ENTRY(app_main_md32x),
                                             __md32x_itc_start__, (uint32_t)&_OVERLAY_MD32X_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_MD32X_ITC_SIZE };
-/* SEGACD overlay symbols now come from gw_linker.h (8e47e219) — the local
- * externs here had different types and hid the missing declarations. */
-extern int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot);
-#if SEGACD_ENABLED
-static const emu_dispatch_t emu_segacd = { "/cores/segacd.bin", &_OVERLAY_SEGACD_BSS_START, (uint32_t)&_OVERLAY_SEGACD_BSS_SIZE, (uint32_t)&_OVERLAY_SEGACD_SIZE, 0, EMU_ENTRY(app_main_segacd) };
-#endif
 #endif
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
 static const emu_dispatch_t emu_lynx    = { "/cores/lynx.bin",    &_OVERLAY_LYNX_BSS_START,    (uint32_t)&_OVERLAY_LYNX_BSS_SIZE,    (uint32_t)&_OVERLAY_LYNX_SIZE,    (uint32_t)&_OVERLAY_LYNX_BSS_END, EMU_ENTRY(app_main_lynx) };
@@ -1733,12 +1684,6 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 #endif
     } else if(strcmp(system_name, "Sega Genesis") == 0)  {
         run_internal_emu(&emu_md, load_state, start_paused, save_slot);
-#if SD_CARD == 1
-    } else if(strcmp(system_name, "Sega CD") == 0)  {
-#if SEGACD_ENABLED
-        run_internal_emu(&emu_segacd, load_state, start_paused, save_slot);
-#endif
-#endif
     } else if(strcmp(system_name, "Atari 2600") == 0) {
         run_internal_emu(&emu_a2600, load_state, start_paused, save_slot);
     } else if(strcmp(system_name, "Atari Lynx") == 0) {
@@ -1776,14 +1721,6 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_GAMECOM_SIZE);
         app_main_gamecom(load_state, start_paused, save_slot);
       }
-#if SD_CARD == 1
-    } else if(strcmp(system_name, "CPS-1") == 0)  {
-      if (load_core_bin_with_header("/cores/cps1.bin", (uint8_t *)&__RAM_EMU_START__)) {
-        memset(&_OVERLAY_CPS1_BSS_START, 0x0, (size_t)&_OVERLAY_CPS1_BSS_SIZE);
-        SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_CPS1_SIZE);
-        app_main_cps1(load_state, start_paused, save_slot);
-      }
-#endif
     } else if(strcmp(system_name, "Homebrew") == 0)  {
       if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
         if (strcmp(newfile->name,"celeste") == 0) {
@@ -1946,19 +1883,6 @@ void emulators_init()
     /* Atari Lynx (Handy core): ROM (.lnx/.lyx) loads from flash; no BIOS needed (HLE). */
     add_emulator("Atari Lynx", "lynx", "lnx lyx lzma", RG_LOGO_PAD_LYNX, RG_LOGO_HEADER_LYNX, NO_GAME_DATA);
     add_emulator("Colecovision", "col", "col lzma", RG_LOGO_PAD_COL, RG_LOGO_HEADER_COL, NO_GAME_DATA);
-    /* CPS-1: a game is a MAME romset extracted into its own folder under
-     * /roms/cps1/, so the browser matches the FOLDER, not a single file --
-     * same shape as Sega CD and PC Engine CD. SD builds only. */
-#if SD_CARD == 1
-    /* No extension filter: the entry is the game FOLDER (see
-     * emulator_is_folder_rom_system). "zip" was wrong here -- the device has
-     * no inflate, and every MAME romset zip is DEFLATE (verified: 29/29
-     * entries across wof.zip and wofj.zip), so a .zip could be listed but
-     * never read. Extract the romset into its folder instead. */
-#if SD_CARD == 1
-    add_emulator("CPS-1", "cps1", "", RG_LOGO_PAD_CPS1, RG_LOGO_HEADER_CPS1, NO_GAME_DATA);
-#endif
-#endif
     add_emulator("Commodore 64", "c64", "d64 prg", RG_LOGO_PAD_C64, RG_LOGO_HEADER_C64, NO_GAME_DATA);
     add_emulator("Game & Watch", "gw", "gw", RG_LOGO_PAD_GW, RG_LOGO_HEADER_GW, NO_GAME_DATA);
     add_emulator("Homebrew", "homebrew", "bin", RG_LOGO_PAD_HOMEBREW, RG_LOGO_HEADER_HOMEBREW, NO_GAME_DATA);
@@ -1995,15 +1919,12 @@ void emulators_init()
     /* Generic SNES (LakeSnes interpreter) — EXPERIMENTAL, SD builds only, same
      * delivery as SM/GBA (cart flash-cached from SD; no lzma). LoROM/HiROM only;
      * enhancement-chip carts are rejected at load. No header logo yet (0). */
-    /* Sega 32X (picodrive) and Sega CD — EXPERIMENTAL, SD builds only.
-     * /roms/32x (.32x) and /roms/segacd (.cue). NO_GAME_DATA: both cores do
-     * their own byteswapped flash-cache (the zero-copy cart path needs the ROM
-     * 16-bit-word-swapped), like SM/SNES self-cache. */
+    /* Sega 32X (picodrive) — EXPERIMENTAL, SD builds only. /roms/32x (.32x).
+     * NO_GAME_DATA: the core does its own byteswapped flash-cache (the
+     * zero-copy cart path needs the ROM 16-bit-word-swapped), like SM/SNES
+     * self-cache. */
 #if SD_CARD == 1
     add_emulator("Sega 32X", "32x", "32x", RG_LOGO_PAD_32X, RG_LOGO_HEADER_32X, NO_GAME_DATA);
-#if SEGACD_ENABLED
-    add_emulator("Sega CD", "segacd", "cue", RG_LOGO_PAD_SEGACD, RG_LOGO_HEADER_SEGACD, NO_GAME_DATA);
-#endif
 #endif
     add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
     add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);

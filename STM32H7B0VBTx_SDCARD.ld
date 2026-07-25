@@ -137,29 +137,6 @@ MEMORY
    * XIP at runtime by odroid_overlay_cache_file_in_flash_relocate — same trick
    * as SM_CODE/GBA_CODE). RC_PROBE-gated; absent in release builds. */
   RCPROBE_CODE (x) : ORIGIN = 0xD0D00000,   LENGTH = 64K
-  /* Sega/Mega CD: cold code + rodata for the shared gwenesis M68K/Z80/VDP/YM
-   * engine, XIP'd out of external flash via store_file_in_flash_relocate().
-   * Same sentinel trick as SM_CODE/GBA_CODE — see .xip_segacd below. The hot
-   * interpreter objects that need to be in RAM are claimed by .overlay_segacd
-   * BEFORE the cold sweep runs (32X .xip_md32x pattern). m68kcpu.c's switch
-   * dispatch is cache-friendlier than SNES rc's hash dispatch, so the cold
-   * sweep is safe here in a way it was NOT for sm.xip — see
-   * docs/snes-hotpath-rc-itcm.md for the cautionary tale. */
-  SEGACD_CODE (x) : ORIGIN = 0xDEC80000,  LENGTH = 2M
-
-  /* CPS-1: Musashi's text plus its ~328 KB of constant dispatch/cycle tables.
-   * Same sentinel trick as SEGACD_CODE, and for the same reason -- CPS-1's own
-   * BSS is 422 KB (192 KB gfxram + 64 KB work RAM + tilemaps + cache, all
-   * hardware-mandated), so the 484 KB of Musashi text+rodata cannot also live
-   * in RAM_EMU: together they overflow the 724 KB pool by 161 KB, measured.
-   * m68kcpu.c's switch dispatch is cache-friendly enough to run from XIP --
-   * Sega CD and 32X both ship it that way.
-   *
-   * 0xDEF00000 because the sentinel regions must not overlap EACH OTHER even
-   * though only one core is ever resident: the linker places every region's
-   * LMA in the same ELF and rejects overlaps. SEGACD_CODE runs 0xDEC80000 +2M
-   * to 0xDEE80000, so the first free megabyte-aligned slot above it is this. */
-  CPS1_CODE  (x) : ORIGIN = 0xDEF00000,  LENGTH = 1M
 
   /* External flash (QSPI XIP) — for ITCM hot code LMA */
   EXTFLASH   (xr) : ORIGIN = __EXTFLASH_START__, LENGTH = 32M
@@ -392,48 +369,6 @@ INCLUDE build/fceumm_mappers.ld
   } AT > CORES
   _OVERLAY_PCE_ITC_SIZE = SIZEOF(.overlay_pce_itc);
   _OVERLAY_PCE_ITC_LMA_OFFSET = LOADADDR(.overlay_pce_itc) - LOADADDR(.overlay_pce);
-
-  /* cps1 ITCM placement (optimization phase, docs/CPS1_MAME_ALIGNMENT.md
-   * section 9): a SIBLING convention to PCE's object-file-path-based
-   * .overlay_pce_itc above, not a replacement for it -- this one selects
-   * input sections by ATTRIBUTE NAME (__attribute__((section(".itcm_text")))
-   * via Core/Src/porting/cps1/cps1_core.h's CPS1_ITCM_TEXT macro) instead
-   * of by object-file path, because cps1 has no build/cps1/ directory in
-   * this Makefile's system list yet to select by path (it is still an
-   * isolated harness on explore/cps1-feasibility, not a linked system).
-   * EMPTY in EVERY build right now: nothing compiled into this firmware
-   * uses the ".itcm_text" section name yet (cps1_*.c isn't in C_SOURCES
-   * at all) -- safe by construction, the same way PCE's own ._itcram_hot
-   * above is documented "empty in GPL stub build". Still needs the SAME
-   * runtime copy step PCE's run_internal_emu does (memcpy LMA->VMA before
-   * BSS zero) once cps1 becomes a real linked system -- that integration
-   * doesn't exist yet, so this is section-placement scaffolding, not yet
-   * load-bearing.
-   *
-   * Address: same ORIGIN(ITCMRAM)+0x4 PCE's own .overlay_pce_itc uses,
-   * NOT "wherever PCE's section ends" (__pce_itc_end__) -- verified by a
-   * real full-firmware link attempt (see the optimization-phase commit)
-   * that GNU ld rejects a later section's explicit address as a symbol
-   * defined inside an earlier `AT >`-relocated section ("non constant or
-   * forward reference address expression"), even though the symbol is
-   * textually available by that point. A real address constant is the
-   * only construct ld accepts here. This is harmless overlap in practice:
-   * PCE's own section is confirmed 0 bytes in this build (same comment
-   * above), and so is this one -- two empty sections claiming the same
-   * starting address consume zero real space. If PCE's ITC section is
-   * ever actually populated in a future build, this address needs to
-   * chain onto ITS end via a different mechanism (e.g. a plain symbol
-   * assignment between the two, not an AT-relocated one) -- flagged here,
-   * not silently left for a future overlap bug to discover. */
-  .cps1_itcm_text (ORIGIN(ITCMRAM) + 0x4) : {
-    . = ALIGN(4);
-    __cps1_itc_start__ = .;
-    *(.itcm_text)
-    . = ALIGN(4);
-    __cps1_itc_end__ = .;
-    ASSERT(ABSOLUTE(__cps1_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: cps1 ITC overflow");
-  } AT > CORES
-  _CPS1_ITC_SIZE = SIZEOF(.cps1_itcm_text);
 
   .overlay_pce_bss _OVERLAY_PCE_LOAD_END : {
     . = ALIGN(4);
@@ -794,95 +729,6 @@ INCLUDE build/fceumm_mappers.ld
     __rodata_md32x_end__ = .;
     __xip_md32x_end__ = .;
   } > MD32X_CODE
-  /* Sega/Mega CD — shares the gwenesis M68K/Z80/VDP/YM core with MD but has its
-   * own build/segacd/*.o set plus the sub-68K + CDD/CDC porting layer. The
-   * BIOS is XIP'd from flash (0 RAM). CD data streams from SD. The heavy
-   * RAM cost is PRG-RAM (256K) + Word-RAM (256K) + PCM (64K) + BRAM (8K)
-   * = ~584K BSS, which must fit under RAM_EMU's 724K.
-   *
-   * The 12 gwenesis engine objects (m68kcpu, Z80, ym2612, gwenesis_* — the
-   * same .c files MD compiles) total ~602K of text+rodata and cannot share
-   * RAM_EMU with that BSS. They are swept to SEGACD_CODE (sentinel XIP) by
-   * .xip_segacd/.rodata_segacd below, mirroring the 32X .xip_md32x recipe
-   * (see gnw-32x/STM32H7B0VBTx_SDCARD.ld). Only the 7 porting files
-   * (main_segacd + 6 segacd_*) stay in RAM. -ffunction-sections is on for
-   * SEGACD_C_DEFS so Anti#1 can later refine the hot list function-by-
-   * function once a boot_test PC histogram identifies the hot interpreter
-   * subset; the default contract keeps ALL gwenesis .text in XIP, matching
-   * what 32X shipped (it runs fine with m68kcpu.o entirely in XIP). */
-
-  /* Cold code, claimed BEFORE .overlay_segacd so it does NOT land in the RAM
-   * pool. The 12 gwenesis shared objects, named explicitly — keeps the
-   * contract self-documenting and lets Anti#1 promote a function-level hot
-   * subset of any of them into .overlay_segacd later without touching this
-   * list (the overlay's hot claim always wins when declared after .xip). */
-  .xip_segacd : {
-    . = ALIGN(8);
-    __xip_segacd_start__ = .;
-    build/segacd/m68kcpu.o           (.text .text*)
-    build/segacd/Z80.o               (.text .text*)
-    build/segacd/z80inst.o           (.text .text*)
-    build/segacd/ym2612.o            (.text .text*)
-    build/segacd/gwenesis_sn76489.o  (.text .text*)
-    build/segacd/gwenesis_bus.o      (.text .text*)
-    build/segacd/gwenesis_sram.o     (.text .text*)
-    build/segacd/gwenesis_eeprom.o   (.text .text*)
-    build/segacd/gwenesis_io.o       (.text .text*)
-    build/segacd/gwenesis_vdp_mem.o  (.text .text*)
-    build/segacd/gwenesis_vdp_gfx.o  (.text .text*)
-    build/segacd/gwenesis_savestate.o (.text .text*)
-  } > SEGACD_CODE
-
-  .overlay_segacd __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_segacd_start__ = .;
-    /* Porting glue whole — main_segacd.o holds the SEGACD_CODE_BASE literal
-     * and runs the sentinel relocation pass, so it must be readable before
-     * the XIP blob has been cached (same reason main_sm.o stays in RAM). */
-    build/segacd/main_segacd.o     (.data .data* .text .text* .rodata .rodata*)
-    build/segacd/segacd_engine.o   (.data .data* .text .text* .rodata .rodata*)
-    build/segacd/segacd_bus.o      (.data .data* .text .text* .rodata .rodata*)
-    build/segacd/segacd_cd.o       (.data .data* .text .text* .rodata .rodata*)
-    build/segacd/segacd_audio.o    (.data .data* .text .text* .rodata .rodata*)
-    build/segacd/segacd_gfx.o      (.data .data* .text .text* .rodata .rodata*)
-    build/segacd/segacd_cache.o    (.data .data* .text .text* .rodata .rodata*)
-    /* All .data from every build/segacd/*.o — small and RAM-resident, even
-     * for the gwenesis objects whose .text/.rodata are in SEGACD_CODE. */
-    build/segacd/*.o (.data .data*)
-    . = ALIGN(4);
-    _OVERLAY_SEGACD_LOAD_END = .;
-  } AT > CORES
-  _OVERLAY_SEGACD_LOAD_START = LOADADDR(.overlay_segacd);
-  _OVERLAY_SEGACD_SIZE = SIZEOF(.overlay_segacd);
-
-  .overlay_segacd_bss _OVERLAY_SEGACD_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_SEGACD_BSS_START = .;
-    build/segacd/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/segacd/*.o (COMMON)
-    __ram_emu_segacd_end__ = .;
-    _OVERLAY_SEGACD_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_SEGACD_BSS_END) < __RAM_EMU_END__, "Error: SEGACD BSS overflow (RAM_EMU is 724K, need PRG256K+WordRAM+PCM+BRAM)");
-  }
-  _OVERLAY_SEGACD_BSS_SIZE = SIZEOF(.overlay_segacd_bss);
-
-  /* Cold rodata, immediately after the cold code in the SAME region, so the
-   * two ship as one file (segacd.xip) and land in flash as ONE cache entry.
-   * Sharing the region is the same point made under .rodata_sm: cold code
-   * holds ~hundreds of pointers into rodata, and baking one cache entry's
-   * address into another means the pair goes stale the moment the circular
-   * cache evicts only one of them. Declared AFTER .overlay_segacd so the
-   * porting glue's own literals stay in RAM (readable before the blob is
-   * cached and relocated) and only the gwenesis .o rodata falls through. */
-  .rodata_segacd : {
-    . = ALIGN(8);
-    __rodata_segacd_start__ = .;
-    build/segacd/*.o (.rodata .rodata*)
-    . = ALIGN(4);
-    __rodata_segacd_end__ = .;
-    __xip_segacd_end__ = .;
-  } > SEGACD_CODE
 
   .overlay_a2600 __RAM_EMU_START__ : {
     . = ALIGN(4);
@@ -1459,73 +1305,6 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_GAMECOM_BSS_SIZE = SIZEOF(.overlay_gamecom_bss);
 
-  /* Musashi's code, claimed BEFORE .overlay_cps1 so it does NOT land in the
-   * RAM pool -- the .xip_segacd recipe. Only the cps1 porting files stay in
-   * RAM. main_cps1.o must stay resident: it holds the CPS1_CODE_BASE literal
-   * and runs the sentinel relocation pass, so it has to be readable before the
-   * XIP blob is cached (same reason main_segacd.o does). */
-  .xip_cps1 : {
-    . = ALIGN(8);
-    __xip_cps1_start__ = .;
-    build/cps1/m68kcpu.o (.text .text*)
-  } > CPS1_CODE
-
-  /* EVERY cps1 porting object must be listed here BY NAME. The list is
-   * explicit rather than a wildcard so that m68kcpu.o keeps the XIP placement
-   * .xip_cps1 gave it above -- but that means a new source file added to
-   * CPS1_C_SOURCES and NOT added here does not fail to link: its text and
-   * rodata quietly land in resident internal flash, where there are a few
-   * hundred bytes to spare for the whole firmware. cps1_romset.o did exactly
-   * that. The 512 B headroom floor is what catches it, and the error it
-   * produces says nothing about this list -- so check here first. */
-  .overlay_cps1 __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_cps1_start__ = .;
-    build/cps1/main_cps1.o   (.data .data* .text .text* .rodata .rodata*)
-    build/cps1/cps1_m68k.o   (.data .data* .text .text* .rodata .rodata*)
-    build/cps1/cps1_eeprom.o (.data .data* .text .text* .rodata .rodata*)
-    build/cps1/cps1_rom.o    (.data .data* .text .text* .rodata .rodata*)
-    build/cps1/cps1_romset.o (.data .data* .text .text* .rodata .rodata*)
-    build/cps1/cps1_ppu.o    (.data .data* .text .text* .rodata .rodata*)
-    build/cps1/cps1_bg.o     (.data .data* .text .text* .rodata .rodata*)
-    /* .data from every cps1 object, including Musashi's, stays RAM-resident. */
-    build/cps1/*.o (.data .data*)
-    . = ALIGN(4);
-    _OVERLAY_CPS1_LOAD_END = .;
-  } AT > CORES
-  _OVERLAY_CPS1_LOAD_START = LOADADDR(.overlay_cps1);
-  _OVERLAY_CPS1_SIZE = SIZEOF(.overlay_cps1);
-
-  .overlay_cps1_bss _OVERLAY_CPS1_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_CPS1_BSS_START = .;
-    build/cps1/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/cps1/*.o (COMMON)
-    __ram_emu_cps1_end__ = .;
-    . = ALIGN(4);
-    _OVERLAY_CPS1_BSS_END = .;
-    /* Every other overlay in this file asserts this; cps1 shipped without it
-     * (never caught because it has never overflowed) -- the exact class of
-     * silent-encroachment-on-the-next-region bug CLAUDE.md warns every other
-     * core's ASSERT guards against. */
-    ASSERT(ABSOLUTE(_OVERLAY_CPS1_BSS_END) < __RAM_EMU_END__, "Error: CPS1 BSS overflow");
-  } >RAM_EMU
-  _OVERLAY_CPS1_BSS_SIZE = SIZEOF(.overlay_cps1_bss);
-
-  /* Musashi's constant tables -- the jump table (256 KB) and cycle table
-   * (64 KB) are the bulk of what could not fit RAM_EMU. Contiguous with
-   * .xip_cps1 in CPS1_CODE on purpose: the two ship as ONE file
-   * (/cores/cps1.xip) and land in flash as one cache entry. */
-  .rodata_cps1 : {
-    . = ALIGN(8);
-    __rodata_cps1_start__ = .;
-    build/cps1/m68kcpu.o (.rodata .rodata*)
-    . = ALIGN(4);
-    __rodata_cps1_end__ = .;
-    __xip_cps1_end__ = .;
-  } > CPS1_CODE
-
 
   .overlay_celeste __RAM_EMU_START__ : {
     . = ALIGN(4);
@@ -1684,8 +1463,6 @@ INCLUDE build/fceumm_mappers.ld
      ASSERT; these two now do the same. */
   ASSERT(SIZEOF(.overlay_md) + SIZEOF(.overlay_md_bss) <= __RAM_EMU_LENGTH__,
          "Error: MD overlay+BSS exceeds RAM_EMU")
-  ASSERT(SIZEOF(.overlay_segacd) + SIZEOF(.overlay_segacd_bss) <= __RAM_EMU_LENGTH__,
-         "Error: SEGACD overlay+BSS exceeds RAM_EMU")
 
   /* only use ahb_malloc/ahb_calloc to use ahb memory ! */
   /* only audio buffer is statically allocated */
@@ -1842,31 +1619,6 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(4);
     _ebss = .;         /* define a global symbol at bss end */
     __bss_end__ = _ebss;
-  } >DTCMRAM
-
-  /* cps1 DTCM placement (optimization phase, docs/CPS1_MAME_ALIGNMENT.md
-   * section 9): reserves space for __attribute__((section(".dtcm_bss")))
-   * objects (Core/Src/porting/cps1/cps1_core.h's CPS1_DTCM_BSS macro,
-   * currently just cps1's synthetic palette, 4KB). EMPTY in every build
-   * right now for the same reason .cps1_itcm_text above is -- cps1_*.c
-   * isn't in this Makefile's C_SOURCES, so nothing produces a ".dtcm_bss"
-   * section yet. Placed here (between the general .bss and the launcher's
-   * ._user_heap) so the existing ._user_stack section below -- which
-   * sizes itself as "whatever's left of DTCMRAM after everything already
-   * placed" via __dtc_padding_start__, captured fresh at ITS OWN start --
-   * automatically shrinks to make room for whatever this section ends up
-   * holding, with no separate budget arithmetic to keep in sync by hand.
-   * If cps1 code ever grows this past what's actually free, the standard
-   * GNU ld "region `DTCMRAM' overflowed" error is the backstop (same
-   * protection every other section sharing DTCMRAM already relies on) --
-   * not a hand-written ASSERT here, to avoid duplicating (and risking
-   * getting wrong) the padding formula ._user_stack already owns. */
-  .cps1_dtcm_bss (NOLOAD) : {
-    . = ALIGN(4);
-    __cps1_dtcm_start__ = .;
-    *(.dtcm_bss)
-    . = ALIGN(4);
-    __cps1_dtcm_end__ = .;
   } >DTCMRAM
 
   /* PICO-8 RAM removed — engine allocates 64KB from DTCM heap via dtcm_malloc */
