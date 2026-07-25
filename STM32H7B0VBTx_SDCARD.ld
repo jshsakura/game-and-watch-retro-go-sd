@@ -475,10 +475,10 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_snes __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_snes_start__ = .;
-    /* cpu.o (65816 opcode dispatcher) and ppu.o (PPU line renderer) are
-     * excluded here and placed whole into .itcm_snes_interp below.  The
-     * optional Thumb-2 engine uses its own named input section instead. */
-    EXCLUDE_FILE(*cpu.o *ppu.o) build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
+    /* The Thumb-2 engine (57.7KB) takes ITCM alone (.itcm_snes_interp below),
+     * so cpu.o (65816 C oracle/fallback) and ppu.o (PPU line renderer) stay
+     * here in RAM_EMU rather than ITCM — they no longer fit alongside it. */
+    build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_SNES_LOAD_END = .;
   } AT > CORES
@@ -526,8 +526,6 @@ INCLUDE build/fceumm_mappers.ld
   .itcm_snes_interp (ADDR(.itcm_rc_hot) + SIZEOF(.itcm_rc_hot)) : {
     . = ALIGN(4);
     __snes_interp_itc_start__ = .;
-    build/snes/cpu.o (.text .text* .rodata .rodata*)
-    build/snes/ppu.o (.text .text* .rodata .rodata*)
     *(.itcm_snes_interp.thumb2 .itcm_snes_interp.thumb2.*)
     . = ALIGN(4);
     __snes_interp_itc_end__ = .;

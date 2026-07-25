@@ -147,16 +147,15 @@ ifeq ($(SNES_NSPC_HLE)$(RCSMW),11)
   $(error SNES_NSPC_HLE=1 requires RCSMW=0: untested combination, rc replaces the interpreter the generic wire's fallback depends on)
 endif
 
-# Experimental Cortex-M7 Thumb-2 65816 execution engine. Default OFF: the
-# release build is byte/behavior identical to a tree without it -- no .S is
-# compiled, no -DSNES_THUMB2_CPU reaches any source, and cpu_runOpcode is the
-# sole C interpreter entry point. Enable with SNES_THUMB2_CPU=1 to compile the
-# Thumb-2 engine object, compile the offset-check TU, and expose the C
-# interpreter as cpu_runOpcode_c. The public cpu_runOpcode() keeps the original
-# stop/WAI/interrupt/RC pre-work, then enters the assembly single-opcode
-# fetch/dispatch path; unsupported opcodes fall back on the already-fetched byte.
-# See docs/SNES_THUMB2_PORT_HANDOFF.md (Stage 0 guardrails).
-SNES_THUMB2_CPU ?= 0
+# Cortex-M7 Thumb-2 65816 execution engine. Default ON for the device (this is
+# the SNES core the Game & Watch ships): the .S engine is compiled, -DSNES_THUMB2_CPU
+# reaches the sources, and cpu_runOpcode() enters the assembly single-opcode
+# fetch/dispatch path, with the C interpreter (cpu_runOpcode_c) as the oracle and
+# the fall-back for the handful of opcodes the engine does not yet cover. Host
+# harnesses that cannot assemble ARM Thumb-2 pass SNES_THUMB2_CPU=0 explicitly.
+# The engine is 57.7KB and takes ITCM alone; cpu.o/ppu.o move to RAM_EMU (see the
+# linker script .itcm_snes_interp / .overlay_snes). See docs/SNES_THUMB2_PORT_HANDOFF.md.
+SNES_THUMB2_CPU ?= 1
 SNES_ASM_SOURCES =
 ifeq ($(SNES_THUMB2_CPU),1)
   C_DEFS += -DSNES_THUMB2_CPU
