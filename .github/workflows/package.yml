@@ -33,7 +33,7 @@ jobs:
       - name: Build test
         run: |
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
-            bash -l -c "printf 'tries = 5\nwaitretry = 15\nretry_on_http_error = 429,500,502,503\n' > /tmp/wgetrc && export WGETRC=/tmp/wgetrc && make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 MD32X_DEVICE_PROFILE=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
+            bash -l -c "printf 'tries = 5\nwaitretry = 15\nretry_on_http_error = 429,500,502,503\n' > /tmp/wgetrc && export WGETRC=/tmp/wgetrc && make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
   host-tests:
     # Host unit tests (tests/run.sh): clock alarm/cfg/editor state machines,
@@ -111,7 +111,7 @@ jobs:
       - name: Generate firmware_update.bin and gw_update.tar
         run: |
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
-            bash -l -c "printf 'tries = 5\nwaitretry = 15\nretry_on_http_error = 429,500,502,503\n' > /tmp/wgetrc && export WGETRC=/tmp/wgetrc && make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 MD32X_DEVICE_PROFILE=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
+            bash -l -c "printf 'tries = 5\nwaitretry = 15\nretry_on_http_error = 429,500,502,503\n' > /tmp/wgetrc && export WGETRC=/tmp/wgetrc && make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
       # 3. Compose release notes: what CHANGED in this build (commits since the
       #    previous tag). The full feature overview lives in the README, linked —
