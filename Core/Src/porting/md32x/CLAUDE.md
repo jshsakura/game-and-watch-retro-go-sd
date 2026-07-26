@@ -136,5 +136,13 @@ empty: there was nothing left to place.
   inner make line. Use `make release DOCKER=1 <VARS>`, which forwards
   `MAKEOVERRIDES`. A margin figure measured the wrong way is worse than none.
 
-Full measurement history: `docs/32X_PERFORMANCE_RESULTS.md`,
-`docs/32X_PERFORMANCE_HISTOGRAM_GUIDE.md`, `docs/32X_RIG_ANALYSIS.md`.
+## Where the detail lives
+
+- **`docs/32X_DEVICE_MEASUREMENT_LOG.md`** — every experiment of the device
+  campaign in order, failures included, each with hypothesis, instrument,
+  numbers and verdict. Its first section answers the question this core will
+  keep attracting: **why there was no GBA-style trick here.** Read that before
+  proposing an HLE.
+- `docs/32X_PERFORMANCE_RESULTS.md` — the earlier rig-driven optimisation.
+- `docs/32X_PERFORMANCE_HISTOGRAM_GUIDE.md`, `docs/32X_RIG_ANALYSIS.md` — how
+  the QEMU rig works and how to read its histograms.
