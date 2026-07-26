@@ -479,6 +479,14 @@ INCLUDE build/fceumm_mappers.ld
      * so cpu.o (65816 C oracle/fallback) and ppu.o (PPU line renderer) stay
      * here in RAM_EMU rather than ITCM — they no longer fit alongside it. */
     build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
+    /* SPC700 Thumb-2 engine (spc_thumb2.S, ~14KB). Same section name as the
+     * 65816 Thumb-2 engine but placed in RAM_EMU rather than ITCM — the 65816
+     * engine (57.7KB) already takes all remaining ITCM, so the SPC engine
+     * rides alongside the C dispatcher in RAM_EMU. Still wins on instruction
+     * count vs the C oracle (see spc_runOpcode fallback), just not on memory
+     * stall removal. Keep the placement deterministic by ordering it after
+     * build/snes/*.o. */
+    *(.itcm_snes_interp.thumb2_spc .itcm_snes_interp.thumb2_spc.*)
     . = ALIGN(4);
     _OVERLAY_SNES_LOAD_END = .;
   } AT > CORES
