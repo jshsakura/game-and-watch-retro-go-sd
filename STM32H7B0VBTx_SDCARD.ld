@@ -1643,6 +1643,36 @@ INCLUDE build/fceumm_mappers.ld
 
   /* PICO-8 RAM removed — engine allocates 64KB from DTCM heap via dtcm_malloc */
 
+  /* MD32X SH-2 contexts (sh2s[2], ~12 KB) in DTCM. They are the interpreter's
+     register file: every dispatched guest instruction touches r[], pc, sr,
+     icount and delay, and the device cost model (0726) attributes only 25% of
+     the master's wall to memory accesses, leaving decode/execute and exactly
+     this bookkeeping -- with the interpreter itself already in ITCM. DTCM is
+     zero-wait and, just as usefully, takes the hottest 12 KB in the program
+     out of the 16 KB D-cache that Doom's texture streaming thrashes.
+
+     NOLOAD deliberately: pico/32x/32x.c gives sh2s its own section name so the
+     MD32X overlay's `.bss .bss*` glob (matched earlier) cannot claim it back,
+     and a named section on uninitialised data is PROGBITS -- without NOLOAD
+     that is 12 KB of zeros in internal flash, the scarcest resource here.
+     Because it is neither .bss nor overlay BSS, NOTHING zeroes it: main_md32x.c
+     memsets it on core entry, the same contract .overlay_md32x_itc_bss already
+     has ("itc zeroed" in the boot diag).
+
+     This is resident -- it costs every core ~12 KB of DTCM heap (90,256 ->
+     ~78,400 B). The largest single consumer is PICO-8's 64 KB dtcm_malloc, so
+     the margin after this is ~12 KB; the ASSERT below still catches the static
+     side, and PICO-8 failing to allocate would assert at runtime. If DTCM ever
+     gets tight, this is the first thing to give back. */
+  .md32x_dtcm (NOLOAD) :
+  {
+    . = ALIGN(32);          /* SH2.r[] is ALIGNED(32) */
+    __md32x_dtcm_start__ = .;
+    build/md32x/pico__32x__32x.o (.dtcm_sh2s)
+    . = ALIGN(4);
+    __md32x_dtcm_end__ = .;
+  } >DTCMRAM
+
   /* Heap fills all DTCM left after .data/.bss up to the fixed stack at the
    * top (redzone + _Min_Stack_Size + optional remote-input reserve). */
   ._user_heap (NOLOAD) :
