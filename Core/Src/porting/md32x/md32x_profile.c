@@ -184,6 +184,8 @@ extern unsigned int gnw_fetch_cyc[2];
 extern unsigned int gnw_fetch_n[2];
 extern unsigned int gnw_fetch_ovh_x8;
 extern unsigned int gnw_sh2_slices[2];
+extern unsigned int gnw_da_cyc[2], gnw_da_n[2];    /* guest data reads  */
+extern unsigned int gnw_daw_cyc[2], gnw_daw_n[2];  /* guest data writes */
 
 /* flat index into the AHB pools: bucket-major so each bucket's frames are
  * contiguous (qsort in the dump operates on a bucket's slice in place). */
@@ -497,6 +499,39 @@ static void md32x_profile_dump(void) {
               est_pct_x10 / 10, est_pct_x10 % 10,
               gnw_sh2_slices[core],
               gnw_sh2_slices[core] ? (unsigned)(insn / gnw_sh2_slices[core]) : 0u);
+      wdog_refresh();
+    }
+
+    /* Guest DATA accesses, same bracketing. share is net*count extrapolated
+     * over ALL accesses (the probe samples 1 in 29), so fetch_share +
+     * read_share + write_share is the memory fraction of the core's wall and
+     * whatever is left is the interpreter's own decode/execute. per_insn says
+     * how many loads/stores a dispatched instruction actually performs. */
+    fprintf(f, "sh2 data-access cost (1 in 29 bracketed; the probe's own call "
+               "is outside the bracket):\n");
+    for (int core = 0; core < 2; core++) {
+      uint32_t ovh_x10 = (gnw_fetch_ovh_x8 * 10u) / 8u;
+      uint64_t insn = gnw_sh2_insn_count[core];
+      struct { const char *name; uint32_t n, cyc; } cls[2] = {
+        { "read",  gnw_da_n[core],  gnw_da_cyc[core]  },
+        { "write", gnw_daw_n[core], gnw_daw_cyc[core] },
+      };
+      fprintf(f, "  %s:", core ? "ssh2" : "msh2");
+      for (int k = 0; k < 2; k++) {
+        uint32_t n = cls[k].n;
+        uint32_t avg_x10 = n ? (uint32_t)(((uint64_t)cls[k].cyc * 10) / n) : 0;
+        uint32_t net_x10 = avg_x10 > ovh_x10 ? avg_x10 - ovh_x10 : 0;
+        /* total accesses ~= n * period; share = total * net / window */
+        uint64_t total = (uint64_t)n * 29u;
+        uint32_t share_x10 = sh2_win[core]
+          ? (uint32_t)((total * net_x10 * 100) / sh2_win[core]) : 0;
+        uint32_t per_insn_x100 = insn ? (uint32_t)((total * 100) / insn) : 0;
+        fprintf(f, " %s n=%u net=%u.%u share=%u.%u%% per_insn=%u.%02u",
+                cls[k].name, n, net_x10 / 10, net_x10 % 10,
+                share_x10 / 10, share_x10 % 10,
+                per_insn_x100 / 100, per_insn_x100 % 100);
+      }
+      fprintf(f, "\n");
       wdog_refresh();
     }
   }

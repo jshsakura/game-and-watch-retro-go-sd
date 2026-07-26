@@ -18,7 +18,11 @@ MEMORY
 SECTIONS
 {
   .isr_vector : { KEEP(*(.isr_vector)) } > CODE
-  .text : { *(.text*) *(.glue_7) *(.glue_7t) } > CODE
+  /* .itcm_sh2bus: the six SH-2 guest-bus entry points carry their own section
+     name under GNW_32X_CORE so the device script can place them in ITCM next
+     to the interpreter (see pico/32x/memory.c). The rig has no TCM to model,
+     but it must still claim the section or those functions become an orphan. */
+  .text : { *(.text*) *(.itcm_sh2bus) *(.glue_7) *(.glue_7t) } > CODE
   .rodata : { *(.rodata*) . = ALIGN(4); } > CODE
   .ARM.exidx : { __exidx_start = .; *(.ARM.exidx*) __exidx_end = .; } > CODE
 

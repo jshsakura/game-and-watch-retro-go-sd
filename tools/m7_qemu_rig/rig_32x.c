@@ -59,7 +59,17 @@
 #define RIG_WARMUP 20
 #ifndef RIG_MIX_FROM
 /* frame at which RIG_MEM_MIX zeroes its census -- the pad script's gameplay
- * entry (see pad_script); override on the command line if that moves */
+ * entry (see pad_script); override on the command line if that moves.
+ *
+ * WARNING, measured 0726: a census run that has to REACH gameplay is not
+ * practical. Getting to frame 400 costs ~13 minutes; each gameplay frame after
+ * it costs 4+ minutes under icount with the counters in, so three of them
+ * outran run_32x.sh's own RIG_TIMEOUT twice and the report -- which only
+ * prints after the loop -- never printed at all. If you revive this, print the
+ * census EVERY frame from RIG_MIX_FROM so a killed run still yields data.
+ * The better instrument now lives on the device (md32x_profile.c's
+ * data-access probe): QEMU models no cache, so it can count accesses but can
+ * never price them, which was the actual question. */
 #define RIG_MIX_FROM 400
 #endif
 

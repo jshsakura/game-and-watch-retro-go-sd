@@ -678,6 +678,28 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(4);
     __md32x_itc_start__ = .;
     build/md32x/cpu__sh2__mame__sh2pico.o (.text .text* .rodata)
+    /* The six guest-memory entry points the interpreter calls on every load
+       and store (276 B). They are compiled into memory.c, which stays in
+       RAM_EMU, while their one hot caller is the interpreter right above --
+       603 MB away, far outside BL's +-16 MB. The linker was therefore
+       emitting a long-branch veneer for each (__md32x__p32x_sh2_read16_veneer
+       and friends, at 0x2390-0x23c0 in the map), so every guest memory access
+       paid an indirect trampoline plus a call out into AXI SRAM.
+
+       This moves the WHOLE hot edge -- interpreter and its memory entry
+       points together -- rather than half a call graph. What becomes far
+       instead is the RARE path: a MAP_FUNC handler (8,746 calls per 64 frames
+       against millions of accesses) and sh2soc.c's on-chip DMA. The SNES
+       session measured the opposite arrangement on 0726 (an object moved into
+       ITCM while its hot callers stayed behind: -3.4% on the moved edge but
+       +36.9% on the caller that was left, net loss, reverted) -- that is the
+       trap this avoids, not one it repeats. Verify in the map that the
+       veneers are gone, never by "it built" -- naming their .text.* sections
+       here did NOT work: .overlay_md32x above is matched first and its
+       `pico__32x__memory.o (.text .text*)` line had already claimed them, so
+       the link succeeded and nothing moved. They now carry a section name that
+       glob cannot claim (GNW_SH2BUS in pico/32x/memory.c). */
+    build/md32x/pico__32x__memory.o (.itcm_sh2bus)
     . = ALIGN(4);
     __md32x_itc_end__ = .;
     ASSERT(ABSOLUTE(__md32x_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: MD32X ITC overflow");
