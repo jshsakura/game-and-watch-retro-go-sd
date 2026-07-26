@@ -691,17 +691,35 @@ static bool emulator_add_folder_row(retro_emulator_t *emu, const char *path,
 }
 
 #if SD_CARD == 1
-/* Open a child dir and stop at the first .cue found.
- * Must not run while another DIR is open (FatFs LFN uses a shared static buffer). */
+/* Prefer "<dirname>/<dirname>.cue" (Redump / Fullset layout) via f_stat — one
+ * lookup instead of readdir through dozens of Track*.bin LFNs per game.
+ * Fall back to a directory scan when the cue name differs from the folder. */
 static bool pcecd_collapse_game_dir(retro_emulator_t *emu, const char *path)
 {
     DIR dir;
     FILINFO fno;
     size_t path_len = strlen(path);
     char fullpath[RG_PATH_MAX];
+    const char *base;
+    char cue_name[256];
+    size_t base_len;
 
     if (path_len + 6 >= RG_PATH_MAX)
         return false;
+
+    base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    base_len = strlen(base);
+    if (base_len > 0 && base_len + 4 < sizeof(cue_name)
+        && path_len + 1 + base_len + 4 < sizeof(fullpath))
+    {
+        memcpy(cue_name, base, base_len);
+        memcpy(cue_name + base_len, ".cue", 5);
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, cue_name);
+        if (f_stat(fullpath, &fno) == FR_OK && !(fno.fattrib & AM_DIR))
+            return emulator_add_rom_file(emu, fullpath, cue_name, (uint32_t)fno.fsize);
+    }
+
     if (f_opendir(&dir, path) != FR_OK)
         return false;
 
