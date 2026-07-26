@@ -186,6 +186,15 @@ extern unsigned int gnw_fetch_ovh_x8;
 extern unsigned int gnw_sh2_slices[2];
 extern unsigned int gnw_da_cyc[2], gnw_da_n[2];    /* guest data reads  */
 extern unsigned int gnw_daw_cyc[2], gnw_daw_n[2];  /* guest data writes */
+/* 68K probe (cpu/gwenesis68k/m68kcpu.c): the 12.9% of the frame nobody has
+ * looked at. Its own AHB block, armed at the same instant as the SH-2 probes. */
+extern void gnw_m68k_prof_arm(unsigned int *block);
+extern const unsigned int gnw_m68k_block_words, gnw_m68k_nbuck, gnw_m68k_page_shift;
+extern unsigned int *gnw_m68k_hist_p;
+extern unsigned long long gnw_m68k_insns;
+extern unsigned int gnw_m68k_run_cyc, gnw_m68k_stop_cyc, gnw_m68k_stop_hits, gnw_m68k_samples;
+extern int gnw_m68k_armed;
+static unsigned int *m68k_block;
 
 /* flat index into the AHB pools: bucket-major so each bucket's frames are
  * contiguous (qsort in the dump operates on a bucket's slice in place). */
@@ -232,6 +241,9 @@ void md32x_profile_init(void) {
      * BSS has no room for them). */
     if (gnw_pcwall_block_words == MD32X_PCWALL_BLOCK_WORDS)
       pcwall_block = ahb_calloc(MD32X_PCWALL_BLOCK_WORDS, sizeof(uint32_t));
+    /* 33 words. ahb_only_malloc asserts rather than returning NULL on
+     * overflow, so this is the last thing allocated and the smallest. */
+    m68k_block = ahb_calloc(gnw_m68k_block_words, sizeof(uint32_t));
   }
   {
     FILE *df = fopen("/32x_diag.txt", "ab");
@@ -536,6 +548,65 @@ static void md32x_profile_dump(void) {
     }
   }
 
+  /* 68K: the 12.9%-of-frame slice nobody had looked at until now.
+   *
+   * run vs skip is the whole question. On a 32X game the 68K should be nearly
+   * idle -- the SH-2s run everything -- and picodrive already skips it when it
+   * catches the CPU polling a 32X register (m68k_poll_detect -> SekSetStop).
+   * skip% near 100 means that works and the residue is real 68K work: axis
+   * closed. skip% near 0 means Doom's wait is not a 32X-register poll, the
+   * detector never fires, and the fold that took 18.8% off the frame this
+   * morning has somewhere else to go.
+   *
+   * cyc/insn is against DISPATCHED instructions, dev/gcyc against emulated 68K
+   * clock cycles -- the second is what compares to the SH-2s (msh2 ~42). */
+  {
+    uint64_t m68k_win = (uint64_t)s_pp_counters.counter[pp_m68k];
+    uint64_t total_gcyc = (uint64_t)gnw_m68k_run_cyc + gnw_m68k_stop_cyc;
+    gnw_m68k_armed = 0;
+    fprintf(f, "m68k profile (window sums; skip = poll-detect idle):\n");
+    fprintf(f, "  gcyc run=%u skip=%u skip_pct=%u.%u%% stop_calls=%u\n",
+            gnw_m68k_run_cyc, gnw_m68k_stop_cyc,
+            total_gcyc ? (unsigned)((uint64_t)gnw_m68k_stop_cyc * 1000 / total_gcyc) / 10 : 0,
+            total_gcyc ? (unsigned)((uint64_t)gnw_m68k_stop_cyc * 1000 / total_gcyc) % 10 : 0,
+            gnw_m68k_stop_hits);
+    fprintf(f, "  insn=%u cyc/insn=%u.%u  dev_per_gcyc=%u.%u  samples=%u\n",
+            (unsigned)gnw_m68k_insns,
+            gnw_m68k_insns ? (unsigned)(m68k_win / gnw_m68k_insns) : 0,
+            gnw_m68k_insns ? (unsigned)((m68k_win * 10 / gnw_m68k_insns) % 10) : 0,
+            gnw_m68k_run_cyc ? (unsigned)(m68k_win / gnw_m68k_run_cyc) : 0,
+            gnw_m68k_run_cyc ? (unsigned)((m68k_win * 10 / gnw_m68k_run_cyc) % 10) : 0,
+            gnw_m68k_samples);
+    if (gnw_m68k_hist_p != NULL) {
+      uint64_t tot = 0;
+      for (unsigned i = 0; i <= gnw_m68k_nbuck; i++) tot += gnw_m68k_hist_p[i];
+      fprintf(f, "  pc pages (%u KB each, window 0..%u KB), attributed=%u:\n",
+              (1u << gnw_m68k_page_shift) >> 10,
+              (gnw_m68k_nbuck << gnw_m68k_page_shift) >> 10, (unsigned)tot);
+      if (tot) {
+        uint8_t used[33] = { 0 };
+        for (int rank = 0; rank < 6; rank++) {
+          int best = -1;
+          for (unsigned i = 0; i <= gnw_m68k_nbuck; i++)
+            if (!used[i] && gnw_m68k_hist_p[i] &&
+                (best < 0 || gnw_m68k_hist_p[i] > gnw_m68k_hist_p[best]))
+              best = (int)i;
+          if (best < 0) break;
+          used[best] = 1;
+          unsigned pct_x10 = (unsigned)((uint64_t)gnw_m68k_hist_p[best] * 1000 / tot);
+          if ((unsigned)best == gnw_m68k_nbuck)
+            fprintf(f, "    outside window : cyc=%u (%u.%u%%)\n",
+                    gnw_m68k_hist_p[best], pct_x10 / 10, pct_x10 % 10);
+          else
+            fprintf(f, "    pc 0x%06x     : cyc=%u (%u.%u%%)\n",
+                    (unsigned)best << gnw_m68k_page_shift,
+                    gnw_m68k_hist_p[best], pct_x10 / 10, pct_x10 % 10);
+        }
+      }
+    }
+    wdog_refresh();
+  }
+
   wdog_refresh();
   fclose(f);
   wdog_refresh();
@@ -556,6 +627,7 @@ void md32x_profile_record(bool drawFrame, uint32_t t_pace, uint32_t t_proc,
       gnw_sh2_insn_count[0] = gnw_sh2_insn_count[1] = 0;
       /* arms AND zeroes the fetch probe + slice counters (sh2pico.c) */
       gnw_sh2_pcwall_arm(pcwall_block);   /* NULL leaves the probe disarmed */
+      gnw_m68k_prof_arm(m68k_block);      /* same, for the 68K */
     }
     return;
   }
