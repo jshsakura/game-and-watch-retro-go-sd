@@ -27,7 +27,6 @@
 #include "main_ngp.h"
 #include "main_wswan.h"
 #include "main_snes.h"
-#include "main_md32x.h"
 #include "main_gwenesis.h"
 #include "main_a7800.h"
 #include "main_vb.h"
@@ -258,7 +257,7 @@ static retro_emulator_file_t *shared_files = NULL;
 #define COVERFLOW 0
 #endif /* COVERFLOW */
 // Increase when adding new emulators
-#define MAX_EMULATORS 33 /* exact core count; bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance), 29->30 (SNES, SD only), 30->31 (Sega 32X, SD only), 31->32 (Sega CD, SD only), 32->33 (CPS-1 arcade, SD only). Upstream (8caa3e45) moved this to ahb_calloc at init instead of a static DTCM array -- kept our count, adopted their allocation scheme. Bump ONLY when the add_emulator call is actually added. */
+#define MAX_EMULATORS 32 /* exact core count; 33->32 (Sega 32X removed 0727, docs/32X_CLOSED.md); bumped 19->21 (NGP+WonderSwan), 21->22 (Atari Lynx), 22->23 (PC Engine CD), 23->24 (Magnavox Odyssey2), 24->25 (ZX Spectrum), 25->26 (Commodore 64), 26->27 (Tiger Game.com), 27->28 (Nintendo Virtual Boy), 28->29 (Game Boy Advance), 29->30 (SNES, SD only), 30->31 (Sega 32X, SD only), 31->32 (Sega CD, SD only), 32->33 (CPS-1 arcade, SD only). Upstream (8caa3e45) moved this to ahb_calloc at init instead of a static DTCM array -- kept our count, adopted their allocation scheme. Bump ONLY when the add_emulator call is actually added. */
 static retro_emulator_t *emulators;
 static rom_system_t *systems;
 /* Both halves of the tab budget, tied together. MAX_EMULATORS and gui.h's
@@ -1544,11 +1543,6 @@ static const emu_dispatch_t emu_snes    = { "/cores/snes.bin",    &_OVERLAY_SNES
 #endif
 static const emu_dispatch_t emu_md      ={ "/cores/md.bin",      &_OVERLAY_MD_BSS_START,      (uint32_t)&_OVERLAY_MD_BSS_SIZE,      (uint32_t)&_OVERLAY_MD_SIZE,      0, EMU_ENTRY(app_main_gwenesis) };
 #if SD_CARD == 1
-extern uint8_t __md32x_itc_start__[];
-extern uint8_t _OVERLAY_MD32X_ITC_LMA_OFFSET;
-extern uint8_t _OVERLAY_MD32X_ITC_SIZE;
-static const emu_dispatch_t emu_md32x   = { "/cores/32x.bin",    &_OVERLAY_MD32X_BSS_START,   (uint32_t)&_OVERLAY_MD32X_BSS_SIZE,   (uint32_t)&_OVERLAY_MD32X_SIZE,   0, EMU_ENTRY(app_main_md32x),
-                                            __md32x_itc_start__, (uint32_t)&_OVERLAY_MD32X_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_MD32X_ITC_SIZE };
 #endif
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
 static const emu_dispatch_t emu_lynx    = { "/cores/lynx.bin",    &_OVERLAY_LYNX_BSS_START,    (uint32_t)&_OVERLAY_LYNX_BSS_SIZE,    (uint32_t)&_OVERLAY_LYNX_SIZE,    (uint32_t)&_OVERLAY_LYNX_BSS_END, EMU_ENTRY(app_main_lynx) };
@@ -1679,8 +1673,6 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         run_internal_emu(&emu_snes, load_state, start_paused, save_slot);
 #endif
 #if SD_CARD == 1
-    } else if(strcmp(system_name, "Sega 32X") == 0) {
-        run_internal_emu(&emu_md32x, load_state, start_paused, save_slot);
 #endif
     } else if(strcmp(system_name, "Sega Genesis") == 0)  {
         run_internal_emu(&emu_md, load_state, start_paused, save_slot);
@@ -1919,13 +1911,6 @@ void emulators_init()
     /* Generic SNES (LakeSnes interpreter) — EXPERIMENTAL, SD builds only, same
      * delivery as SM/GBA (cart flash-cached from SD; no lzma). LoROM/HiROM only;
      * enhancement-chip carts are rejected at load. No header logo yet (0). */
-    /* Sega 32X (picodrive) — EXPERIMENTAL, SD builds only. /roms/32x (.32x).
-     * NO_GAME_DATA: the core does its own byteswapped flash-cache (the
-     * zero-copy cart path needs the ROM 16-bit-word-swapped), like SM/SNES
-     * self-cache. */
-#if SD_CARD == 1
-    add_emulator("Sega 32X", "32x", "32x", RG_LOGO_PAD_32X, RG_LOGO_HEADER_32X, NO_GAME_DATA);
-#endif
     add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
     add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);
     add_emulator("Sega Master System", "sms", "sms lzma", RG_LOGO_PAD_SMS, RG_LOGO_HEADER_SMS, NO_GAME_DATA);

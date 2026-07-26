@@ -126,13 +126,6 @@ MEMORY
    * enough to matter and linear enough not to mind the flash. */
   GBA_CODE   (x) : ORIGIN = 0xDEC00000,   LENGTH = 512K
 
-  /* Sega 32X (picodrive): cold code + ALL swept rodata — including the ~351 KB
-   * precomputed YM2612 const tables and (once EMU_G68K lands) the ~300 KB 68K
-   * const dispatch tables. Same sentinel trick as SM_CODE/GBA_CODE; code and
-   * rodata share one region and ship as one /cores/32x.xip on purpose. 2M: the
-   * const tables alone approach 1M and the space is free (it's a sentinel). */
-  MD32X_CODE (x) : ORIGIN = 0xDEB00000,   LENGTH = 2M
-
   /* rc on-device probe: XIP site functions (sentinel address, cached to QSPI
    * XIP at runtime by odroid_overlay_cache_file_in_flash_relocate — same trick
    * as SM_CODE/GBA_CODE). RC_PROBE-gated; absent in release builds. */
@@ -518,7 +511,7 @@ INCLUDE build/fceumm_mappers.ld
      This section instead moves the EXISTING interpreter's hottest files
      WHOLE — cpu.o (65816 opcode dispatcher), ppu.o (PPU line renderer), and,
      when SNES_THUMB2_CPU=1, snes_thumb2.o (Thumb-2 opcode engine/table).
-     Same rationale as .overlay_md32x_itc's SH-2 dispatcher: a partial
+     Same rationale the 32X used for its SH-2 dispatcher: a partial
      function-level split risks leaving half a call graph split between ITCM
      and RAM_EMU (the same class of bug as cross-overlay symbol aliasing —
      see CLAUDE.md), and at 33,692B combined there is no budget pressure
@@ -600,163 +593,6 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_MD_BSS_SIZE = SIZEOF(.overlay_md_bss);
 
-  /* ------------------------------------------------------------ Sega 32X ----
-   * picodrive, RAM-starved by design: the static 32X machine RAM (gnw_32xmem,
-   * 584K: SDRAM 256K + framebuffers 256K) plus PicoMem (136K) nearly fill
-   * RAM_EMU on their own. So the overlay keeps ONLY the hot interpreters/bus
-   * handlers in RAM; .xip_md32x (declared after — first claim wins, cf. the
-   * GBA note) sweeps every other object's text to flash, and .rodata_md32x
-   * sweeps ALL wildcard rodata (incl. the precomputed YM const tables).
-   * Sound/YM writable state rides AHB (.md32x_ahb below) to buy back pool. */
-  .overlay_md32x __RAM_EMU_START__ : {
-    . = ALIGN(4);
-    __ram_emu_md32x_start__ = .;
-    /* Porting glue stays whole (code+rodata) in RAM: it holds the
-     * MD32X_CODE_BASE literal and runs the sentinel patch — the patch skips
-     * this window (cf. main_sm.c). */
-    _MD32X_MAIN_CODE_START = .;
-    build/md32x/main_md32x.o (.data .data* .text .text* .rodata .rodata*)
-    . = ALIGN(4);
-    _MD32X_MAIN_CODE_END = .;
-    /* Hot text, first cut: SH-2 wrapper (init/irq/pack, not the dispatcher —
-     * that lives in ITCM below) + SH-2/68K bus handlers + the 32X compositor
-     * + PWM. Everything else — the 68K interpreter (161K, its const dispatch
-     * tables ride .rodata_md32x), Z80, VDP, cart, sound gen — starts in XIP
-     * flash: iterate with the device, not by faith. */
-    build/md32x/cpu__sh2__sh2.o          (.text .text*)
-    build/md32x/cpu__gwenesis68k__g68k_bus.o (.text .text*)
-     build/md32x/pico__32x__memory.o      (.text .text*)
-     build/md32x/pico__32x__pwm.o         (.text .text*)
-     build/md32x/pico__memory.o           (.text .text*)
-     /* 32X compositor hot path: FinalizeLine (224x/frame) + layer blits.
-      * Rest of draw.o stays in XIP (cold setup, unused pixel-format variants). */
-     build/md32x/pico__32x__draw.o        (.text.FinalizeLine32xRGB555 .text.PicoDraw32xLayer .text.PicoDraw32xLayerMdOnly)
-     build/md32x/*.o (.data .data*)
-    . = ALIGN(4);
-    _OVERLAY_MD32X_LOAD_END = .;
-  } AT > CORES
-  _OVERLAY_MD32X_LOAD_START = LOADADDR(.overlay_md32x);
-  _OVERLAY_MD32X_SIZE = SIZEOF(.overlay_md32x);
-
-  /* SH-2 interpreter -> ITCM (zero-wait-state, no I-cache miss). Computed-goto
-   * dispatch (GNW_SH2_FASTLOOPS) requires every gnw_op* label in the SAME
-   * function as the goto — that rules out a hot/cold split, so the whole
-   * dispatcher (sh2_execute_interpreter + its op0000/MAC_W/MAC_L/ILLEGAL
-   * helpers, ~7.9K incl. the 64B jump table) moves as one unit. Budget was
-   * short by ~1.7K against the ~4.8K then free; PsndBuffer (8664B, the
-   * biggest ITCM bss occupant) shrank instead — sound.c's generic 54kHz
-   * worst-case buffer sizing never applies to GNW's fixed-rate 44.1kHz core
-   * (see PSND_BUFFER_SAMPLES in pico/sound/sound.c) — and the shrunk
-   * sound.o bss moved to RAM_EMU below (freed there by this same section:
-   * moving 7.9K of .text out of RAM_EMU into ITCM more than pays for 7K of
-   * bss moving the other way). AHB was considered and rejected: 32X
-   * unconditionally ahb_calloc's an 83,976B Draw2FB in PicoDraw2Init (called
-   * from PicoInit, not lazy), which alone leaves only ~3.9K of the 87,904B
-   * AHB dynamic pool — nowhere near enough (this ~5.8K estimate was itself
-   * off by ~2K; the exact 3,928B margin is what the 0720 device Hardfault
-   * — MD32X_PROFILE_FRAMES requesting 28.8K into it — pinned down for real,
-   * see main_md32x.h / md32x_profile.c). See 32X_SH2_ITCM_ANALYSIS.md. Same
-   * LMA-in-CORES / memcpy-before-BSS-zero mechanism as .overlay_pce_itc /
-   * .overlay_gba_itc (run_internal_emu in rg_emulators.c). Base offset 0x4
-   * keeps address 0 free. */
-  .overlay_md32x_itc (ORIGIN(ITCMRAM) + 0x4) : {
-    . = ALIGN(4);
-    __md32x_itc_start__ = .;
-    build/md32x/cpu__sh2__mame__sh2pico.o (.text .text* .rodata)
-    /* The six guest-memory entry points the interpreter calls on every load
-       and store (276 B). They are compiled into memory.c, which stays in
-       RAM_EMU, while their one hot caller is the interpreter right above --
-       603 MB away, far outside BL's +-16 MB. The linker was therefore
-       emitting a long-branch veneer for each (__md32x__p32x_sh2_read16_veneer
-       and friends, at 0x2390-0x23c0 in the map), so every guest memory access
-       paid an indirect trampoline plus a call out into AXI SRAM.
-
-       This moves the WHOLE hot edge -- interpreter and its memory entry
-       points together -- rather than half a call graph. What becomes far
-       instead is the RARE path: a MAP_FUNC handler (8,746 calls per 64 frames
-       against millions of accesses) and sh2soc.c's on-chip DMA. The SNES
-       session measured the opposite arrangement on 0726 (an object moved into
-       ITCM while its hot callers stayed behind: -3.4% on the moved edge but
-       +36.9% on the caller that was left, net loss, reverted) -- that is the
-       trap this avoids, not one it repeats. Verify in the map that the
-       veneers are gone, never by "it built" -- naming their .text.* sections
-       here did NOT work: .overlay_md32x above is matched first and its
-       `pico__32x__memory.o (.text .text*)` line had already claimed them, so
-       the link succeeded and nothing moved. They now carry a section name that
-       glob cannot claim (GNW_SH2BUS in pico/32x/memory.c). */
-    build/md32x/pico__32x__memory.o (.itcm_sh2bus)
-    . = ALIGN(4);
-    __md32x_itc_end__ = .;
-    ASSERT(ABSOLUTE(__md32x_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: MD32X ITC overflow");
-  } AT > CORES
-  _OVERLAY_MD32X_ITC_SIZE = SIZEOF(.overlay_md32x_itc);
-  _OVERLAY_MD32X_ITC_LMA_OFFSET = LOADADDR(.overlay_md32x_itc) - LOADADDR(.overlay_md32x);
-
-  .overlay_md32x_bss _OVERLAY_MD32X_LOAD_END : {
-    . = ALIGN(4);
-    _OVERLAY_MD32X_BSS_START = .;
-    /* Hot writable state (bus maps, YM/Z80/draw contexts) rides ITCM below;
-     * pico__sound__sound.o (PsndBuffer, shrunk — see .overlay_md32x_itc
-     * above) rides here instead: mixing touches it sequentially once per
-     * frame, not per CPU cycle, so it doesn't need zero-wait ITCM. */
-    EXCLUDE_FILE(*pico__sound__ym2612.o *pico__draw.o *pico__32x__memory.o
-                 *pico__memory.o *cpu__cz80__cz80.o
-                 *pico__z80if.o) build/md32x/*.o (.bss .bss*)
-    . = ALIGN(4);
-    build/md32x/*.o (COMMON)
-    __ram_emu_md32x_end__ = .;
-    _OVERLAY_MD32X_BSS_END = .;
-    ASSERT(ABSOLUTE(_OVERLAY_MD32X_BSS_END) < __RAM_EMU_END__, "Error: MD32X BSS overflow");
-  }
-  _OVERLAY_MD32X_BSS_SIZE = SIZEOF(.overlay_md32x_bss);
-
-  /* Hottest writable state -> ITCM (zero-wait): the SH-2/68K bus MAP TABLES
-   * (read on every guest memory access), YM/Z80 contexts, line-render caches.
-   * Chained right after .overlay_md32x_itc (the SH-2 interpreter code) rather
-   * than fixed at ITCM+0x4 — the two share the 64K bank. NOLOAD, a per-core
-   * overlay, NOT a resident static, so nobody's itc_malloc shrinks. Zeroed by
-   * main_md32x.c at load (the launcher's memset covers only the RAM_EMU
-   * bss); the ASSERT guards the rest. */
-  .overlay_md32x_itc_bss __md32x_itc_end__ (NOLOAD) : {
-    . = ALIGN(8);
-    __md32x_itc_bss_start__ = .;
-    build/md32x/pico__sound__ym2612.o (.bss .bss*)
-    build/md32x/pico__draw.o          (.bss .bss*)
-    build/md32x/pico__32x__memory.o   (.bss .bss*)
-    build/md32x/pico__memory.o        (.bss .bss*)
-    build/md32x/cpu__cz80__cz80.o     (.bss .bss*)
-    build/md32x/pico__z80if.o         (.bss .bss*)
-    . = ALIGN(8);
-    __md32x_itc_bss_end__ = .;
-    ASSERT(ABSOLUTE(__md32x_itc_bss_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM),
-           "Error: MD32X ITC BSS overflow");
-  }
-  /* NOTE deliberately NO static .md32x_ahb section: __ahbram_heap_start__ sits
-   * after all static AHBRAM sections, so 32X statics there would permanently
-   * shrink EVERY core's ahb_malloc pool (gwenesis needs 64K, GBA's framebuffer
-   * 75K, SNES's Apu 66K — all would break). If the overlay BSS gets tight, move
-   * buffers to runtime ahb_malloc via fork-side pointers (the GBA fb pattern),
-   * which costs only the running core. */
-
-  /* Cold code sweep: every build/md32x .text not claimed by the overlay above.
-   * Linked at the MD32X_CODE sentinel, shipped as /cores/32x.xip, cached to
-   * QSPI and pointer-patched at load (see main_md32x.c). */
-  .xip_md32x : {
-    . = ALIGN(8);
-    __xip_md32x_start__ = .;
-    build/md32x/*.o (.text .text*)
-  } > MD32X_CODE
-
-  /* All wildcard rodata (the overlay claimed only main_md32x.o's), contiguous
-   * behind the cold code: one blob, one cache entry, one relocation base. */
-  .rodata_md32x : {
-    . = ALIGN(8);
-    __rodata_md32x_start__ = .;
-    build/md32x/*.o (.rodata .rodata*)
-    . = ALIGN(4);
-    __rodata_md32x_end__ = .;
-    __xip_md32x_end__ = .;
-  } > MD32X_CODE
 
   .overlay_a2600 __RAM_EMU_START__ : {
     . = ALIGN(4);
@@ -1041,14 +877,10 @@ INCLUDE build/fceumm_mappers.ld
      * Docker could not catch it because neither models the AHB heap).
      *
      * Each core is an exclusive overlay, so we check each max independently,
-     * not their sum. Any new static AHB section (e.g. a future .md32x_m68k_ahb)
-     * pushes __gba_ahb_end__ upward and trips the largest consumer first.
-     * 32X Draw2FB (83976 B) is the tightest; GBA fb (76800 B) is already
-     * covered by the ASSERT above, and SNES Apu (~66 KB) / gwenesis (~64 KB)
-     * are smaller still, so Draw2FB is the gate. */
-    ASSERT(ABSOLUTE(__gba_ahb_end__) + 328 * (8 + 240 + 8) + 8 <=
-             ORIGIN(AHBRAM) + LENGTH(AHBRAM) - __AHBRAM_AUDIO_RESERVE__,
-           "Error: AHB pool too small for 32X Draw2FB (md32x_draw2fb, 83976 B)");
+     * not their sum. The 32X's Draw2FB (83,976 B) used to be the tightest and
+     * had its own ASSERT here; the core was removed on 0727
+     * (docs/32X_CLOSED.md), so the GBA framebuffer (76,800 B, checked above)
+     * is now the gate. Re-add a check here if a core ever asks for more. */
   } > AHBRAM
 
   /* Declared BEFORE .xip_gba, and that ordering is the whole point: input sections

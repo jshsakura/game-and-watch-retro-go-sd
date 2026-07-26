@@ -27,7 +27,13 @@ typedef enum {
     APPID_SM       = 23,   /* Super Metroid (SD builds only) */
     APPID_GBA      = 24,   /* Game Boy Advance (gpsp) */
     APPID_SNES     = 25,   /* generic SNES core (LakeSnes, SD builds only) */
-    APPID_32X      = 26,   /* Sega 32X (picodrive, SD builds only) */
+    APPID_32X      = 26,   /* RETIRED 0727 -- Sega 32X core removed from the
+                            * firmware (docs/32X_CLOSED.md). The SLOT STAYS:
+                            * this enum sizes persistent_config_t's app[]
+                            * array, so deleting an entry shrinks /CONFIG,
+                            * fails its magic check and silently resets every
+                            * user's language, coverflow, backlight and
+                            * volume. Reuse it for a future core instead. */
     /* CPS-1 and Sega CD were removed here; both grew persistent_config_t and
      * their removal shrinks it, so /CONFIG stops matching and every user's
      * settings reset to defaults (CLAUDE.md). Accepted deliberately for this
