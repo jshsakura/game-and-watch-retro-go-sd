@@ -178,9 +178,12 @@ static unsigned int *pcwall_block;  /* AHB; armed at warmup expiry */
 /* sh2pico.c probe contract (also read by the dump below) */
 extern void gnw_sh2_pcwall_arm(unsigned int *block);
 extern const unsigned int gnw_pcwall_block_words;
-/* pico/32x/memory.c dispatch-cost ledger (window-gated on the pcwall flag) */
-extern unsigned int gnw_memh_cyc[2][4];
-extern unsigned int gnw_memh_cnt[2][4];
+/* sh2pico.c opcode-fetch cost probe + interpreter slice counter (both are
+ * armed and zeroed by gnw_sh2_pcwall_arm, so they share the same window) */
+extern unsigned int gnw_fetch_cyc[2];
+extern unsigned int gnw_fetch_n[2];
+extern unsigned int gnw_fetch_ovh_x8;
+extern unsigned int gnw_sh2_slices[2];
 
 /* flat index into the AHB pools: bucket-major so each bucket's frames are
  * contiguous (qsort in the dump operates on a bucket's slice in place). */
@@ -459,27 +462,41 @@ static void md32x_profile_dump(void) {
     }
   }
 
-  /* Memory-dispatch cost ledger (pico/32x/memory.c): how much of each
-   * core's window cycles is spent inside read-handler / write-tab calls.
-   * Self-cost is ~10 cycles per counted call — subtract cnt*10 from cyc to
-   * de-bias. cyc/call names the lever: ~15-25 = call overhead dominates
-   * (inline/fast-path the table), 40+ = the handler bodies themselves. */
+  /* Opcode-fetch cost (sh2pico.c probe) and interpreter slice granularity.
+   *
+   * avg is the raw bracketed delta; net subtracts the measured CYCCNT-pair
+   * self-cost, so net is what one fetch really costs.  est_pct extrapolates
+   * net over ALL fetches (one per dispatched instruction) as a share of the
+   * core's window cycles: that is the fraction of the 100-135 cycles/insn
+   * that is memory, and it decides the next lever — single digits means the
+   * fetch is cached and dispatch is the cost; tens of percent means flash
+   * latency and the ROM wants caching in RAM.
+   *
+   * insn/slice is the control: ~1300 is the designed STEP_N granularity, a
+   * small number would mean poll-forced early syncs and per-slice overhead. */
   {
-    static const char *const memh_names[4] = { "read_h", "write8", "write16", "write32" };
+    extern unsigned long long gnw_sh2_insn_count[2];
     uint64_t sh2_win[2];
     sh2_win[0] = (uint64_t)s_pp_counters.counter[pp_msh2];
     sh2_win[1] = (uint64_t)s_pp_counters.counter[pp_ssh2];
-    fprintf(f, "sh2 memory-dispatch ledger (DWT cycles inside handler calls):\n");
+    fprintf(f, "sh2 opcode-fetch cost (1 in 31 direct fetches bracketed; "
+               "CYCCNT-pair self-cost %u.%u cyc):\n",
+            gnw_fetch_ovh_x8 / 8u, ((gnw_fetch_ovh_x8 * 10u) / 8u) % 10u);
     for (int core = 0; core < 2; core++) {
-      fprintf(f, "  %s:", core ? "ssh2" : "msh2");
-      for (int k = 0; k < 4; k++) {
-        unsigned pct_x10 = sh2_win[core]
-          ? (unsigned)((uint64_t)gnw_memh_cyc[core][k] * 1000 / sh2_win[core]) : 0;
-        fprintf(f, " %s cyc=%u cnt=%u (%u.%u%%)", memh_names[k],
-                gnw_memh_cyc[core][k], gnw_memh_cnt[core][k],
-                pct_x10 / 10, pct_x10 % 10);
-      }
-      fprintf(f, "\n");
+      uint32_t n = gnw_fetch_n[core];
+      uint32_t avg_x10 = n ? (uint32_t)(((uint64_t)gnw_fetch_cyc[core] * 10) / n) : 0;
+      uint32_t ovh_x10 = (gnw_fetch_ovh_x8 * 10u) / 8u;
+      uint32_t net_x10 = avg_x10 > ovh_x10 ? avg_x10 - ovh_x10 : 0;
+      uint64_t insn = gnw_sh2_insn_count[core];
+      uint32_t est_pct_x10 = sh2_win[core]
+        ? (uint32_t)((insn * net_x10 * 100) / sh2_win[core]) : 0;
+      fprintf(f, "  %s: n=%u avg=%u.%u net=%u.%u est_fetch_share=%u.%u%%"
+                 " slices=%u insn/slice=%u\n",
+              core ? "ssh2" : "msh2", n,
+              avg_x10 / 10, avg_x10 % 10, net_x10 / 10, net_x10 % 10,
+              est_pct_x10 / 10, est_pct_x10 % 10,
+              gnw_sh2_slices[core],
+              gnw_sh2_slices[core] ? (unsigned)(insn / gnw_sh2_slices[core]) : 0u);
       wdog_refresh();
     }
   }
@@ -502,8 +519,7 @@ void md32x_profile_record(bool drawFrame, uint32_t t_pace, uint32_t t_proc,
       extern unsigned long long gnw_sh2_insn_count[2];
       memset(&s_pp_counters, 0, sizeof(s_pp_counters));
       gnw_sh2_insn_count[0] = gnw_sh2_insn_count[1] = 0;
-      memset(gnw_memh_cyc, 0, sizeof(gnw_memh_cyc));
-      memset(gnw_memh_cnt, 0, sizeof(gnw_memh_cnt));
+      /* arms AND zeroes the fetch probe + slice counters (sh2pico.c) */
       gnw_sh2_pcwall_arm(pcwall_block);   /* NULL leaves the probe disarmed */
     }
     return;

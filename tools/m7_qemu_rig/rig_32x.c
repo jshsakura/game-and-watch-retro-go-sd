@@ -706,6 +706,34 @@ int main(void) {
         if (f == CK_LAST) cksend = fb_checksum(&nbend);
     }
 
+#ifdef RIG_MEM_MIX
+    /* SH-2 data-access census by class and region (pico/32x/memory.c). Opcode
+     * fetches are NOT counted -- they take the inline fast path and their
+     * count is the dispatched-instruction count anyway. Use this to size a
+     * read/write fast path before writing one: a class that is a small share
+     * of accesses cannot pay for the compare it adds to every access. */
+    {
+        extern unsigned long long gnw_mix[6][5];
+        static const char *const opn[6] = { "r8", "r16", "r32", "w8", "w16", "w32" };
+        static const char *const rgn[5] = { "sdram", "rom", "dram", "cs0", "other" };
+        unsigned long long grand = 0;
+        for (int i = 0; i < 6; i++)
+            for (int j = 0; j < 5; j++) grand += gnw_mix[i][j];
+        printf("[32x-mix] SH-2 data accesses, total=%llu\n", grand);
+        for (int i = 0; i < 6; i++) {
+            unsigned long long row = 0;
+            for (int j = 0; j < 5; j++) row += gnw_mix[i][j];
+            if (!row) continue;
+            printf("[32x-mix]  %-4s tot=%-12llu", opn[i], row);
+            for (int j = 0; j < 5; j++)
+                printf(" %s=%llu(%lu%%)", rgn[j], gnw_mix[i][j],
+                       (unsigned long)(row ? gnw_mix[i][j] * 100 / row : 0));
+            printf("  [%lu%% of all]\n",
+                   (unsigned long)(grand ? row * 100 / grand : 0));
+        }
+    }
+#endif
+
     int n = RIG_FRAMES - RIG_WARMUP;
     printf("[32x-qemu] done %d frames  avg host=%lu  min=%lu  max=%lu insn/frame  avg sh2=%llu\n",
            RIG_FRAMES, (unsigned long)(n > 0 ? tot / n : 0), (unsigned long)mn,
