@@ -98,6 +98,15 @@ ifeq ($(SNES_DEVICE_PROFILE),1)
   # live in resident code (Core/Inc/snes_prof_irq.h explains why they cannot
   # live in the SNES overlay).
   C_DEFS += -DSNES_DEVICE_PROFILE
+  # Which 64 frames get measured. The window opens after this many frames, so
+  # it decides WHAT SCENE the whole dump describes -- and the first three
+  # device dumps answered a gameplay question with title-screen numbers
+  # because it was 0. snes_profile.c documents the measured gap; override
+  # here (SNES_PROF_SKIP_FRAMES=0 profiles the load path). Both arms of an
+  # A/B must use the same value; the dump prints it.
+  ifneq ($(SNES_PROF_SKIP_FRAMES),)
+    C_DEFS += -DSNES_PROF_SKIP_FRAMES=$(SNES_PROF_SKIP_FRAMES)u
+  endif
 endif
 ifeq ($(SNES_LOAD_DIAG)$(SNES_DEVICE_PROFILE),11)
   $(error SNES_LOAD_DIAG=1 and SNES_DEVICE_PROFILE=1 are mutually exclusive: both instrument external/sm sources with DWT probes, and running them together double-charges the APU and inflates the very intrusion budget the profiler reports)

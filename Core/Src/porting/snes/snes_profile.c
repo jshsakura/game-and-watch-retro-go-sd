@@ -110,12 +110,22 @@
 #define SNES_PROF_VERSION      1
 #define SNES_PROF_FRAMES       64u          /* ~1.07 s at 60 fps, then dump   */
 #ifndef SNES_PROF_SKIP_FRAMES
-#define SNES_PROF_SKIP_FRAMES  0u           /* frames discarded before the window
-                                             * opens. Set it past whatever you are
-                                             * waiting for -- e.g. 240 to profile the
-                                             * N-SPC wire, which cannot swap before
-                                             * frame 180. Both A/B arms must use the
-                                             * same value. */
+/* Frames discarded before the window opens. Set it past whatever you are
+ * waiting for -- e.g. 240 to profile the N-SPC wire, which cannot swap before
+ * frame 180. Both A/B arms must use the same value; the dump prints it.
+ *
+ * Default 600, NOT 0. The first three device dumps (SMW x2, SMK x1) all ran
+ * with 0 and therefore measured frames 0-63 -- the title screen -- while the
+ * question being asked was about gameplay. They are not the same workload:
+ * on the QEMU M7 rig SMW's boot window is 4.2M insn/frame against 7.2M in
+ * actual play (~70% heavier), and the bucket mix moves with it. The spin
+ * learner is the worst case of that gap: 0.00% replay in the boot window
+ * (pure cost, which is what the device priced at 16.1% of ACTIVE) versus
+ * 53.3% replay and a net win once the game is running.
+ * 600 frames is ~20 s of device wall time at the ~30 fps this core emulates,
+ * which is enough for a human to get into a level. Set it back to 0 to
+ * profile the load path itself. */
+#define SNES_PROF_SKIP_FRAMES  600u
 #endif
 #define SNES_PROF_PATH         "/snes_dwt.txt"
 #define SNES_PROF_DIAG_PATH    "/snes_diag.txt"
