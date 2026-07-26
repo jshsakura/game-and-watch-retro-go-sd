@@ -477,22 +477,8 @@ INCLUDE build/fceumm_mappers.ld
     __ram_emu_snes_start__ = .;
     /* The Thumb-2 engine (57.7KB) takes ITCM alone (.itcm_snes_interp below),
      * so cpu.o (65816 C oracle/fallback) and ppu.o (PPU line renderer) stay
-     * here in RAM_EMU rather than ITCM — they no longer fit alongside it.
-     *
-     * 0726: what DOES still fit in the 7,816 B the engine leaves is
-     * main_snes.o's code and snes.o, excluded here and placed into
-     * .itcm_snes_interp below. This section is matched FIRST, so without the
-     * exclusion it swallows them, the ITCM section silently keeps only the
-     * engine, and the move links and boots while doing nothing. Verify a
-     * placement change in the .map, never by "it built".
-     * main_snes.o gives up .text ONLY: DMA engines cannot address TCM and its
-     * .rodata reaches FatFS/DMA2D paths. .data always stays here — ITCM takes
-     * code and constants, never writable state. */
-    EXCLUDE_FILE(build/snes/snes.o build/snes/main_snes.o)
-      build/snes/*.o (.text .text*)
-    EXCLUDE_FILE(build/snes/snes.o)
-      build/snes/*.o (.rodata .rodata*)
-    build/snes/*.o (.data .data*)
+     * here in RAM_EMU rather than ITCM — they no longer fit alongside it. */
+    build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_SNES_LOAD_END = .;
   } AT > CORES
@@ -540,16 +526,7 @@ INCLUDE build/fceumm_mappers.ld
   .itcm_snes_interp (ADDR(.itcm_rc_hot) + SIZEOF(.itcm_rc_hot)) : {
     . = ALIGN(4);
     __snes_interp_itc_start__ = .;
-    /* The engine first — it is the one that MUST be here. What follows fills
-       the remainder, in the order the device profiler ranked it (SMK, frames
-       600-663, i.e. real gameplay): of the code still outside ITCM, the event
-       scheduler in main_snes.o is 26.8% of ACTIVE and snes.o holds the bus
-       (snes_cpuRead) that the engine calls on every guest memory access.
-       7,465 B into 7,816 B — the ASSERT below is what keeps that honest, and
-       it WILL fire on the next byte, which is the intended behaviour. */
     *(.itcm_snes_interp.thumb2 .itcm_snes_interp.thumb2.*)
-    build/snes/snes.o (.text .text* .rodata .rodata*)
-    build/snes/main_snes.o (.text .text*)
     . = ALIGN(4);
     __snes_interp_itc_end__ = .;
     ASSERT(ABSOLUTE(__snes_interp_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: SNES interpreter ITC overflow");
