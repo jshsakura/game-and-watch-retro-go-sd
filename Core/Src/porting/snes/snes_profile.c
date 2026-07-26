@@ -723,7 +723,13 @@ static void snes_profile_dump(void) {
             (unsigned long)spin_net_pf);
     fprintf(f, "  benefit = %lu cyc/frame (%lu virtual ops x %lu cyc/op interpreted)\n",
             (unsigned long)benefit_pf, (unsigned long)virt_pf, (unsigned long)per_op);
-    if (benefit_pf >= spin_net_pf)
+    if (real_pf == 0 && virt_pf == 0)
+      fprintf(f, "  learner PARKED by the auto-gate for this window -- it cost\n"
+                 "      nothing and bought nothing here. That is the mechanism\n"
+                 "      working: it observes, finds too little to replay, and\n"
+                 "      stops charging per opcode. Note it still pays full price\n"
+                 "      for the first SPIN_WIN_FRAMES (600) before parking.\n");
+    else if (benefit_pf >= spin_net_pf)
       fprintf(f, "  NET +%lu cyc/frame => the learner PAYS for itself on this ROM/scene.\n",
               (unsigned long)(benefit_pf - spin_net_pf));
     else
