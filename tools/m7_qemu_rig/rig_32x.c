@@ -57,6 +57,11 @@
 #define RIG_FRAMES 600
 #endif
 #define RIG_WARMUP 20
+#ifndef RIG_MIX_FROM
+/* frame at which RIG_MEM_MIX zeroes its census -- the pad script's gameplay
+ * entry (see pad_script); override on the command line if that moves */
+#define RIG_MIX_FROM 400
+#endif
 
 /* rig_runtime.c */
 void rig_timer_init(void);
@@ -658,6 +663,16 @@ int main(void) {
 
     for (int f = 0; f < RIG_FRAMES; f++) {
         if (f == RIG_WARMUP) phase_snapshot();
+#ifdef RIG_MEM_MIX
+        /* Zero the access census at gameplay entry. Without this the ~400
+         * title/menu frames the pad script walks through outnumber the
+         * gameplay frames 80:1 and the census describes the menu. */
+        if (f == RIG_MIX_FROM) {
+            extern unsigned long long gnw_mix[6][5];
+            memset(gnw_mix, 0, sizeof(gnw_mix));
+            printf("[32x-mix] census reset at frame %d (gameplay entry)\n", f);
+        }
+#endif
         int skipf = skip_this_frame(f);
         PicoIn.skipFrame = (unsigned short)skipf;
         PicoIn.pad[0] = pad_script(f);
