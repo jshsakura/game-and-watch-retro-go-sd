@@ -106,6 +106,7 @@
 #include "gw_malloc.h"
 #include "odroid_display.h"
 #include "snes/spin_skip.h" /* g_spin: the spin learner's own op counters */
+#include "snes_audio_stretch.h"   /* audio stretcher state, reported below */
 
 #define SNES_PROF_VERSION      1
 #define SNES_PROF_FRAMES       64u          /* ~1.07 s at 60 fps, then dump   */
@@ -714,7 +715,30 @@ static void snes_profile_dump(void) {
     uint64_t per_op      = cpu_calls_pf ? cpu_net_pf / cpu_calls_pf : 0;
     uint64_t benefit_pf  = virt_pf * per_op;
 
-    fprintf(f, "\n--- spin-skip breakeven (cost bucket vs replay benefit) ---\n");
+    /* ---- audio stretcher ----------------------------------------------------
+   * The fps buckets above say how FAST the frame was; this says whether the
+   * audio survived it. The core makes 266 samples per emulated frame and the
+   * DMA eats a buffer every 16.625 ms of real time, so below 60.2 emulated
+   * fps the stretcher is what stands between a slow frame and a gap. Reading
+   * it by ear is not a measurement -- these three numbers are.
+   *   rate       playback rate; should track fps/60.2 (1.0 at full speed)
+   *   backlog    ring level in samples; should sit near its target, not at 0
+   *   underruns  pulls that found the ring dry. In steady state this must be
+   *              0. Anything else IS the gap, and the fix is not more fps. */
+  {
+    uint32_t rate = snes_stretch_step_q16();
+    fprintf(f, "\n--- audio stretcher ---\n");
+    fprintf(f, "  rate=%lu.%03lux  backlog=%u samples  underruns=%lu\n",
+            (unsigned long)(rate >> 16),
+            (unsigned long)(((rate & 0xffffu) * 1000u) >> 16),
+            (unsigned)snes_stretch_fill(),
+            (unsigned long)snes_stretch_underruns());
+    fprintf(f, "  (underruns counts from ROM load, so a handful from the\n"
+               "   startup prime is expected; a number that keeps climbing is not.)\n");
+  }
+  wdog_refresh();
+
+  fprintf(f, "\n--- spin-skip breakeven (cost bucket vs replay benefit) ---\n");
     fprintf(f, "  gate_on=%d pattern_on=%d   ops/frame: real=%lu virtual=%lu (replayed %lu%% of all ops)\n",
             spin_gate_on_at_dump, spin_on_at_dump,
             (unsigned long)real_pf, (unsigned long)virt_pf,
