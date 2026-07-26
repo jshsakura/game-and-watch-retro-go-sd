@@ -778,7 +778,8 @@ $(CORE_SNES)/src/snes/spc.c \
 $(CORE_SNES)/src/snes/spin_skip.c \
 $(CORE_SNES)/src/snes/rc_dispatch.c \
 $(CORE_SNES)/src/tracing.c \
-Core/Src/porting/snes/main_snes.c
+Core/Src/porting/snes/main_snes.c \
+Core/Src/porting/snes/snes_audio_stretch.c
 
 # Kept in its own TU rather than inlined into main_snes.c: the dump is a qsort
 # plus a percentile calculator plus thirty-odd fprintf calls, and all of it

@@ -461,6 +461,17 @@ $CC -O1 -g -std=gnu11 -Wall $SAN -DBOOT_RESCUE_HOST_TEST \
     -o "$BR_DIR/test_boot_rescue" || fail "compile test_boot_rescue"
 "$BR_DIR/test_boot_rescue" || fail test_boot_rescue
 
+echo "=== SNES audio stretcher: a slow frame must not become a silent gap ==="
+# The core makes 266 samples per EMULATED frame; the DMA eats a buffer every
+# 16.625 ms of REAL time. They only balance at 60 fps, and below it the old
+# path zero-filled -- an audible click on every slow frame. This links the
+# real module (not a copy of it) and checks the rate it settles at, that it
+# never runs dry, and that it stays transparent at full speed.
+$CC -O1 -g -std=gnu11 -Wall $SAN \
+    tests/test_snes_audio_stretch.c Core/Src/porting/snes/snes_audio_stretch.c \
+    -lm -o "$BR_DIR/test_snes_audio_stretch" || fail "compile test_snes_audio_stretch"
+"$BR_DIR/test_snes_audio_stretch" || fail test_snes_audio_stretch
+
 echo "=== update guard: a truncated update file must not reach the flasher ==="
 # The bootloader validates nothing; the firmware is the gate. The validator
 # runs here against synthetic images in the release script's real layout,

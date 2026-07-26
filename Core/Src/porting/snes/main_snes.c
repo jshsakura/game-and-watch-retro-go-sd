@@ -41,6 +41,7 @@
 #include "snes/input.h"
 #include "snes/saveload.h"
 #include "snes/spin_skip.h"
+#include "snes_audio_stretch.h"
 #include "snes/rc_dispatch.h"
 #include "crc32.h"
 #include "snes_profile.h"
@@ -440,6 +441,8 @@ static void blit(void) {
 /* ---- audio ----------------------------------------------------------------
  * Top the DSP up to one frame of samples (534 stereo pairs internally) and
  * downmix to 16 kHz mono, exactly like the harness/rig. */
+static void snes_pcm_emit(void);
+
 static void snes_pcm_submit(void) {
   if (snes->apu) {
 #ifdef SNES_SMW_HLE_PRODUCT
@@ -462,16 +465,29 @@ static void snes_pcm_submit(void) {
     memset(audio_buf, 0, sizeof(audio_buf));
   }
 
-  int16_t *dst = audio_get_active_buffer();
-  uint16_t dst_len = audio_get_buffer_length();
+  /* Hand the frame's emulated samples to the stretcher instead of straight to
+   * the DMA. Below 60 emulated fps the DMA eats more buffers than the core
+   * fills, and the old code's answer was to write 266 samples and zero the
+   * rest of the buffer -- an audible gap every slow frame. See
+   * snes_audio_stretch.h; the emulated machine is not touched, only the rate
+   * the already-produced samples are played back at. */
+  snes_stretch_push(audio_buf, SNES_AUDIO_SAMPLES);
+  snes_pcm_emit();
+}
+
+/* Fill ONE audio-DMA buffer from the stretcher. Called once per DMA period,
+ * not once per emulated frame -- that distinction is the fix: the pacing
+ * block below calls it again for every period a slow frame ran past, so no
+ * period is left playing whatever the previous one left behind. */
+static void snes_pcm_emit(void) {
   if (common_emu_sound_loop_is_muted())
     return;
+  int16_t *dst = audio_get_active_buffer();
+  uint16_t dst_len = audio_get_buffer_length();
+  snes_stretch_pull(dst, dst_len);
   int32_t factor = common_emu_sound_get_volume();
-  uint16_t n = dst_len < SNES_AUDIO_SAMPLES ? dst_len : SNES_AUDIO_SAMPLES;
-  for (uint16_t i = 0; i < n; i++)
-    dst[i] = (int16_t)(((int32_t)audio_buf[i] * factor) >> 8);
-  for (uint16_t i = n; i < dst_len; i++)
-    dst[i] = 0;
+  for (uint16_t i = 0; i < dst_len; i++)
+    dst[i] = (int16_t)(((int32_t)dst[i] * factor) >> 8);
 }
 
 /* ---- savestate -------------------------------------------------------------
@@ -849,6 +865,7 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   g_spin_whitelist = true;
 #endif
   spin_reset();   /* clean slate either way (spin-skip learner / rc dispatch) */
+  snes_stretch_reset();   /* and the audio stretcher: a new ROM starts empty */
 
   bool ok = (rom != NULL) && !cart_needs_coprocessor(rom, sz) &&
             snes_loadRom(snes, rom, (int)sz);
@@ -1165,6 +1182,29 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         }
         uint32_t elapsed = dma_counter - snes_last_dma;
         snes_last_dma = dma_counter;
+        /* LLE catch-up. A frame slower than one 16.625 ms audio period leaves
+         * the periods it ran past playing stale buffer contents -- the comment
+         * below used to call that an accepted underrun, and the device profile
+         * showed it on every single frame (deadline advance 1 on 34, 2 on 30,
+         * 0 on none). Fill those periods too. This does NOT call apu_cycle, so
+         * the SPC700 timer never moves relative to the 65816 and the tempo
+         * objection below does not apply: the samples come from the stretcher,
+         * which is resampling audio the core already produced.
+         * Backlog past a few periods is a pause/load, not a slow frame -- drop
+         * it and resync rather than grind, same rule (and the same watchdog-fed,
+         * bounded wait) the wire path settled on after the SMW-menu death. */
+        if (elapsed > 4) elapsed = 1;
+        while (elapsed > 1) {
+            snes_pcm_emit();
+            uint32_t guard = 0;
+            while (dma_counter == snes_last_dma && guard < 20000u) {
+                wdog_refresh();
+                cpumon_sleep();
+                guard++;
+            }
+            snes_last_dma = dma_counter;
+            elapsed--;
+        }
         /* Catch-up only for HLE: wire_frame_audio produces samples without
          * advancing the SPC700, so extra batches are free and tempo stays
          * exact. For LLE, extra apu_cycle calls would drift the SPC700's
