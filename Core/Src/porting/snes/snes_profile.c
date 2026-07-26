@@ -105,6 +105,7 @@
 #include "gw_audio.h"      /* dma_counter */
 #include "gw_malloc.h"
 #include "odroid_display.h"
+#include "snes/spin_skip.h" /* g_spin: the spin learner's own op counters */
 
 #define SNES_PROF_VERSION      1
 #define SNES_PROF_FRAMES       64u          /* ~1.07 s at 60 fps, then dump   */
@@ -189,6 +190,12 @@ static uint64_t sum_drawn[BK_COUNT];
 static uint64_t sum_skip[BK_COUNT];
 static uint64_t call_ppu_sum, call_apu_sum, call_cpu_sum, call_dma_sum;
 static uint64_t call_spin_sum, call_hdma_sum;
+/* Spin learner benefit side. The `spin` bucket prices what the learner COSTS;
+ * these price what it BUYS -- ops it replayed instead of interpreting. Deltas
+ * of g_spin's own counters, so they cost one subtraction a frame. */
+static uint64_t spin_real_sum, spin_virt_sum;
+static uint64_t spin_real_last, spin_virt_last;
+static bool     spin_gate_on_at_dump, spin_on_at_dump;
 static uint32_t n_drawn, n_skip;
 static bool     prof_active;   /* pools allocated                             */
 static bool     prof_dumped;   /* strictly one-shot SD write                  */
@@ -672,6 +679,54 @@ static void snes_profile_dump(void) {
   }
   wdog_refresh();
 
+  /* ---- spin-skip breakeven, from THIS run --------------------------------
+   * The `spin` bucket above is only the COST side. The learner earns its keep
+   * by replaying loop iterations instead of interpreting them, so the verdict
+   * needs both, and both are now measured: cost is the bucket, benefit is
+   * ops_virtual x what an interpreted opcode actually costs here. Averages are
+   * over ALL recorded frames so the op counters and the cycle buckets share a
+   * denominator. Probe cycles are removed from both sides before dividing --
+   * spin and cpu_only are the two per-opcode-bracketed buckets, so quoting
+   * either raw would flatter the one with more calls. */
+  {
+    uint64_t fr = frames ? frames : 1;
+    uint64_t probe1 = g_probe_cost_10 / 10u;
+    uint64_t real_pf = spin_real_sum / fr;
+    uint64_t virt_pf = spin_virt_sum / fr;
+    uint64_t cpu_calls_pf = call_cpu_sum / fr;
+
+    uint64_t spin_raw_pf = (sum_drawn[BK_SPIN_EXCL] + sum_skip[BK_SPIN_EXCL]) / fr;
+    uint64_t cpu_raw_pf  = (sum_drawn[BK_CPU_EXCL]  + sum_skip[BK_CPU_EXCL])  / fr;
+    uint64_t spin_probe  = real_pf * 2u * probe1;
+    uint64_t cpu_probe   = cpu_calls_pf * 2u * probe1;
+    uint64_t spin_net_pf = spin_raw_pf > spin_probe ? spin_raw_pf - spin_probe : 0;
+    uint64_t cpu_net_pf  = cpu_raw_pf  > cpu_probe  ? cpu_raw_pf  - cpu_probe  : 0;
+    uint64_t per_op      = cpu_calls_pf ? cpu_net_pf / cpu_calls_pf : 0;
+    uint64_t benefit_pf  = virt_pf * per_op;
+
+    fprintf(f, "\n--- spin-skip breakeven (cost bucket vs replay benefit) ---\n");
+    fprintf(f, "  gate_on=%d pattern_on=%d   ops/frame: real=%lu virtual=%lu (replayed %lu%% of all ops)\n",
+            spin_gate_on_at_dump, spin_on_at_dump,
+            (unsigned long)real_pf, (unsigned long)virt_pf,
+            (unsigned long)((real_pf + virt_pf) ? (100u * virt_pf) / (real_pf + virt_pf) : 0));
+    fprintf(f, "  cost    = %lu cyc/frame (spin bucket, probe-corrected)\n",
+            (unsigned long)spin_net_pf);
+    fprintf(f, "  benefit = %lu cyc/frame (%lu virtual ops x %lu cyc/op interpreted)\n",
+            (unsigned long)benefit_pf, (unsigned long)virt_pf, (unsigned long)per_op);
+    if (benefit_pf >= spin_net_pf)
+      fprintf(f, "  NET +%lu cyc/frame => the learner PAYS for itself on this ROM/scene.\n",
+              (unsigned long)(benefit_pf - spin_net_pf));
+    else
+      fprintf(f, "  NET -%lu cyc/frame => the learner COSTS more than it saves here;\n"
+                 "      an OFF arm (SNES_SPIN_SKIP_DEFAULT=false, or a spin_table entry)\n"
+                 "      is the A/B to run. Zelda already went that way at 25%% skip.\n",
+              (unsigned long)(spin_net_pf - benefit_pf));
+    fprintf(f, "  Not counted on the cost side: the replay branch itself in run_dots\n"
+               "  (it lives in the scheduler residue), so NET is an UPPER bound on the\n"
+               "  learner's value. A profiler-OFF device A/B remains the final word.\n");
+  }
+  wdog_refresh();
+
   fprintf(f, "\n--- Ledger C detail: WALL/wall_pace are TIM2 ticks (~1 us), "
              "dma_*/wfi are counts, irq is DWT cycles ---\n");
   for (uint32_t bk = BK_WALL_FRAME; bk < BK_COUNT; bk++) {
@@ -758,6 +813,8 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
     snes_prof_b_dma_cyc = snes_prof_b_dma_calls = 0;
     snes_prof_b_spin_cyc = snes_prof_b_spin_calls = 0;
     snes_prof_b_hdma_cyc = snes_prof_b_hdma_calls = 0;
+    spin_real_last = g_spin.ops_real;
+    spin_virt_last = g_spin.ops_virtual;
     return;
   }
 
@@ -830,6 +887,12 @@ void snes_profile_record(bool drawFrame, uint32_t active_base,
       v[BK_HDMA_EXCL] = (snes_prof_b_hdma_cyc > rem3) ? rem3 : snes_prof_b_hdma_cyc;
       if (snes_prof_b_hdma_cyc > rem3) g_dma_over_core_rem++;
     }
+    spin_real_sum += g_spin.ops_real - spin_real_last;
+    spin_virt_sum += g_spin.ops_virtual - spin_virt_last;
+    spin_real_last = g_spin.ops_real;
+    spin_virt_last = g_spin.ops_virtual;
+    spin_gate_on_at_dump = g_spin.gate_on;
+    spin_on_at_dump = g_spin.on;
     call_spin_sum += snes_prof_b_spin_calls;
     call_hdma_sum += snes_prof_b_hdma_calls;
     call_ppu_sum += snes_prof_b_ppu_calls;

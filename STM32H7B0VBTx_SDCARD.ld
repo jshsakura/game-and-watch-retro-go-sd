@@ -540,10 +540,31 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_snes __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_snes_start__ = .;
-    /* cpu.o (65816 opcode dispatcher) and ppu.o (PPU line renderer) are
-     * excluded here and placed whole into .itcm_snes_interp below.  The
-     * optional Thumb-2 engine uses its own named input section instead. */
-    EXCLUDE_FILE(*cpu.o *ppu.o) build/snes/*.o (.data .data* .text .text* .rodata .rodata*)
+    /* cpu.o (65816 opcode dispatcher), ppu.o (PPU line renderer) and — 0726 —
+     * the rest of the measured hot path are placed whole into
+     * .itcm_snes_interp below, so they must be excluded HERE. This section is
+     * matched FIRST: without the exclusion it swallows the objects, the ITCM
+     * section silently stays empty, and the whole move is a no-op that still
+     * links and still boots. (Verify a placement change in the .map, never by
+     * "it built" — CLAUDE.md, "the bug is usually in the thing that never got
+     * wired".) The optional Thumb-2 engine uses its own named input section.
+     *
+     * main_snes.o is excluded for .text ONLY: DMA engines cannot address TCM,
+     * and that file's .rodata feeds FatFS/DMA2D paths, so its read-only data
+     * stays in RAM_EMU. .data always stays here for every object (ITCM takes
+     * code and constants, never writable state — spin_skip.o's g_spin_whitelist
+     * is exactly that case). */
+    EXCLUDE_FILE(*cpu.o *ppu.o
+                 build/snes/snes.o build/snes/main_snes.o build/snes/spin_skip.o
+                 build/snes/dma.o build/snes/spc.o build/snes/dsp.o
+                 build/snes/apu.o)
+      build/snes/*.o (.text .text*)
+    EXCLUDE_FILE(*cpu.o *ppu.o
+                 build/snes/snes.o build/snes/spin_skip.o
+                 build/snes/dma.o build/snes/spc.o build/snes/dsp.o
+                 build/snes/apu.o)
+      build/snes/*.o (.rodata .rodata*)
+    build/snes/*.o (.data .data*)
     . = ALIGN(4);
     _OVERLAY_SNES_LOAD_END = .;
   } AT > CORES
@@ -578,13 +599,39 @@ INCLUDE build/fceumm_mappers.ld
      Same rationale as .overlay_md32x_itc's SH-2 dispatcher: a partial
      function-level split risks leaving half a call graph split between ITCM
      and RAM_EMU (the same class of bug as cross-overlay symbol aliasing —
-     see CLAUDE.md), and at 33,692B combined there is no budget pressure
-     forcing a surgical per-function cut.
+     see CLAUDE.md), so each file goes in whole.
      Device-measured precedent: 32X moved its whole SH-2 interpreter (7,921B)
      into ITCM for a device-measured +30% fps at an UNCHANGED instruction
      count — pure memory-stall removal, a win QEMU (no wait states modeled)
      cannot see. Only STATEHASH/AUDIOHASH bit-identity is a rig-checkable
      gate for this change; fps needs the real device.
+
+     0726 — the REST of the measured hot path joins them. cpu.o and ppu.o
+     alone left ~28 KB of equally hot code competing for the M7's 16 KB
+     I-cache, and the device profiler (/snes_dwt.txt, SMW, 312 MHz) priced
+     that contention: of ACTIVE, core_rem's own scheduler residue is 23.9%
+     and spin_note() is 16.1%, against ppu 3.4% — i.e. the two buckets that
+     are NOT in ITCM cost more than the one that is. The scheduler residue
+     works out at ~161 cyc per run_dots iteration for ~30 instructions of
+     work (host callgrind), i.e. ~5.4 CPI where ITCM-resident code runs
+     near 1.1 — an I-cache-miss signature, not an instruction-count problem,
+     so the fix is placement and not a rewrite. Added, hottest first:
+       snes.o       snes_cpuRead is the #1 host-instruction function (9.0%)
+                    and every interpreter memory op leaves ITCM to reach it
+       main_snes.o  run_dots/run_frame_events/cpu_tick — the 23.9% residue
+       spin_skip.o  spin_note(), 14,178 calls/frame — the 16.1% bucket
+       dma.o        dma_cycle(), ~3.3k calls/frame from the scheduler
+       spc/dsp/apu  the APU LLE chain — 17-19% of ACTIVE
+     main_snes.o contributes .text ONLY: DMA engines cannot address TCM, and
+     that file's .rodata is UI strings and tables that reach FatFS/DMA2D
+     paths. The emulator objects' .rodata is opcode/lookup tables the CPU
+     alone reads, so it comes along (as cpu.o/ppu.o's already does).
+     Budget after this: ~60.7 KB of 64 KB. The SNES overlay never calls
+     itc_malloc() — its PPU keeps VRAM in overlay BSS precisely to leave
+     ITCM free (see ppu.c's GNW_SNES_CORE branch) — so the remainder is not
+     someone else's heap. SNES_THUMB2_CPU=1 does not fit alongside this and
+     is already broken for an unrelated pre-existing reason; the ASSERT
+     below is what says so, at link time, in both cases.
      Chained after .itcm_rc_hot (not at ORIGIN(ITCMRAM)+0x4 like it) so the
      two coexist safely if a future RCSMW build ever links both — the ASSERT
      below still catches it if the combined total ever exceeds budget. */
@@ -593,6 +640,13 @@ INCLUDE build/fceumm_mappers.ld
     __snes_interp_itc_start__ = .;
     build/snes/cpu.o (.text .text* .rodata .rodata*)
     build/snes/ppu.o (.text .text* .rodata .rodata*)
+    build/snes/snes.o (.text .text* .rodata .rodata*)
+    build/snes/main_snes.o (.text .text*)
+    build/snes/spin_skip.o (.text .text* .rodata .rodata*)
+    build/snes/dma.o (.text .text* .rodata .rodata*)
+    build/snes/spc.o (.text .text* .rodata .rodata*)
+    build/snes/dsp.o (.text .text* .rodata .rodata*)
+    build/snes/apu.o (.text .text* .rodata .rodata*)
     *(.itcm_snes_interp.thumb2 .itcm_snes_interp.thumb2.*)
     . = ALIGN(4);
     __snes_interp_itc_end__ = .;
