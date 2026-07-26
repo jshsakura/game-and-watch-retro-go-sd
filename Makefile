@@ -171,6 +171,16 @@ ifeq ($(SNES_THUMB2_CPU),1)
   SNES_ASM_SOURCES += $(CORE_SNES)/src/snes/thumb2/snes_thumb2.S
 endif
 
+# Cortex-M7 Thumb-2 SPC700 execution engine. Default ON for the device.
+# Mirrors SNES_THUMB2_CPU: a .S engine single-opcode path with spc_doOpcode as
+# the C oracle/fallback for unhandled opcodes. Host harnesses that cannot
+# assemble ARM Thumb-2 pass SNES_THUMB2_SPC=0 explicitly.
+SNES_THUMB2_SPC ?= 1
+ifeq ($(SNES_THUMB2_SPC),1)
+  C_DEFS += -DSPC_THUMB2_SPC
+  SNES_ASM_SOURCES += $(CORE_SNES)/src/snes/thumb2/spc_thumb2.S
+endif
+
 ifeq ($(RCSMW),1)
   RCSMW_C_SOURCES = Core/Src/porting/snes/rc_smw_sites.c
   RCSMW_C_INCLUDES = -Igenerated/rc_smw -I$(CORE_SNES)/src/snes
@@ -795,6 +805,10 @@ endif
 # lives in SNES_ASM_SOURCES (set near the flag) which has no reset.
 ifeq ($(SNES_THUMB2_CPU),1)
 SNES_C_SOURCES += $(CORE_SNES)/src/snes/thumb2/cpu_thumb2_offsets_check.c
+endif
+
+ifeq ($(SNES_THUMB2_SPC),1)
+SNES_C_SOURCES += $(CORE_SNES)/src/snes/thumb2/spc_thumb2_offsets_check.c
 endif
 
 MD_C_SOURCES =
