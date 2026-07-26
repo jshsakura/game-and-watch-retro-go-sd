@@ -398,7 +398,6 @@ static void md32x_repaint(void) {
 
 extern uint32_t _MD32X_MAIN_CODE_START[], _MD32X_MAIN_CODE_END[];
 extern uint8_t __md32x_itc_bss_start__[], __md32x_itc_bss_end__[];
-extern uint8_t __md32x_dtcm_start__[], __md32x_dtcm_end__[];
 
 static uint8_t *g_xip_addr;
 static uint32_t g_xip_size;
@@ -569,16 +568,6 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
          (size_t)(__md32x_itc_bss_end__ - __md32x_itc_bss_start__));
   diag_log("itc zeroed: %u B\n",
            (unsigned)(__md32x_itc_bss_end__ - __md32x_itc_bss_start__));
-
-  /* Same contract, same reason: sh2s[2] (the SH-2 register file) lives in DTCM
-   * (.md32x_dtcm, NOLOAD) so the interpreter's hottest state is zero-wait and
-   * out of the D-cache Doom's textures thrash. DTCM .bss is zeroed once at
-   * boot; a NOLOAD section is zeroed by nobody at all, so a second launch of
-   * this core would start on the previous session's SH-2 state. */
-  memset(__md32x_dtcm_start__, 0,
-         (size_t)(__md32x_dtcm_end__ - __md32x_dtcm_start__));
-  diag_log("sh2 dtcm zeroed: %u B\n",
-           (unsigned)(__md32x_dtcm_end__ - __md32x_dtcm_start__));
 
   /* --- picodrive init, libretro (upstream frontend) order — QEMU-rig-proven.
    * 32X startup is LAZY: the game's own MD-mode boot code writes ADEN at

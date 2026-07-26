@@ -27,17 +27,7 @@ SECTIONS
   .ARM.exidx : { __exidx_start = .; *(.ARM.exidx*) __exidx_end = .; } > CODE
 
   _sidata = LOADADDR(.data);
-  /* .dtcm_sh2s: sh2s[2] carries its own section name under GNW_32X_CORE so the
-     device script can put it in DTCM (see pico/32x/32x.c). The rig has no TCM
-     to model and only has to avoid orphaning it -- but it must go INSIDE .data,
-     not in a section of its own: startup copies _sdata.._edata, so a separate
-     output section would be loaded nowhere and sh2s would start as garbage. */
-  .data : {
-    . = ALIGN(4); _sdata = .;
-    *(.data*)
-    . = ALIGN(32); *(.dtcm_sh2s)
-    . = ALIGN(4); _edata = .;
-  } > RAM AT> CODE
+  .data : { . = ALIGN(4); _sdata = .; *(.data*) . = ALIGN(4); _edata = .; } > RAM AT> CODE
   .bss : { . = ALIGN(4); _sbss = .; *(.bss*) *(COMMON) . = ALIGN(4); _ebss = .; } > RAM
 
   /* ROM blob (objcopy binary, renamed .data -> .rom): loaded, read-only, XIP. */
