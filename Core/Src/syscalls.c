@@ -43,42 +43,12 @@ void init_file_table() {
     }
 }
 
-/* ---- Homebrew boot trace -----------------------------------------------
- * Tee everything written to stdout/stderr into /doom_trace.txt with an f_sync
- * after each line, so the last progress line survives even a silent hard fault
- * (DOOM's printf otherwise only lands in the volatile RAM logbuf). State lives
- * in the firmware — NOT in a RAM overlay — so it stays valid across app loads.
- * main_doom.c calls doom_trace_begin() at launch. */
-static FIL doom_trace_fil;
-static int doom_trace_on = 0;
-/* Generic: tee stdout to an arbitrary SD path. Only one app runs at a time, so a
- * single FIL is reused; each homebrew picks its own file (DOOM -> /doom_trace.txt,
- * Lynx -> /lynx_trace.txt) so both logs are preserved across runs. */
-void sd_trace_begin(const char *path) {
-    if (doom_trace_on) { f_close(&doom_trace_fil); doom_trace_on = 0; }
-    if (f_open(&doom_trace_fil, path, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK)
-        doom_trace_on = 1;
-}
-void doom_trace_begin(void) {
-    sd_trace_begin("/doom_trace.txt");
-}
-void doom_trace_end(void) {
-    if (!doom_trace_on) return;
-    doom_trace_on = 0;
-    f_close(&doom_trace_fil);
-}
-/* Write a raw NUL-terminated string straight to the trace + sync. Safe to call
- * from the fault path (BSOD) to record the verdict before the screen/reset:
- * a "FAULT" line means a real exception (with PC to map to a function); its
- * absence means a watchdog hang/infinite loop. */
-void doom_trace_raw(const char *s) {
-    if (!doom_trace_on || s == NULL) return;
-    UINT bw;
-    size_t n = 0;
-    while (s[n]) n++;
-    f_write(&doom_trace_fil, s, n, &bw);
-    f_sync(&doom_trace_fil);
-}
+/* The homebrew boot trace (/doom_trace.txt, /lynx_trace.txt) lived here: a
+ * tee of stdout into a held FIL with an f_sync per line. DOOM was dropped,
+ * Lynx's comment below says in as many words that it deliberately does not
+ * use it, and the BSOD's one call could only ever write nothing -- while
+ * running FatFs on the way into a fault handler. Nothing opened it any more,
+ * so the whole facility is gone: git log -S doom_trace_begin has it. */
 
 /* GROUND-TRUTH pointer read. The overlay handlers, when they read `lynx` right
  * after a RAM->flash firmware (veneer) call, get a corrupted 0. This runs in
@@ -259,12 +229,6 @@ int _write(int file, char *ptr, int len)
         logbuf[idx] = '\0';
 
         log_idx = idx;
-
-        if (doom_trace_on) {
-            UINT bw;
-            f_write(&doom_trace_fil, ptr, len, &bw);
-            f_sync(&doom_trace_fil);
-        }
 
         return len;
     }
@@ -522,10 +486,6 @@ extern char logbuf[1024 * 4];
 /* SD-card diagnostic hooks (see the SD_CARD==1 branch above): callers in the
  * launcher/cores are not all SD-gated, so keep the symbols as no-ops here —
  * there is no removable card to drop a trace file onto. */
-void sd_trace_begin(const char *path) { (void)path; }
-void doom_trace_begin(void) {}
-void doom_trace_end(void) {}
-void doom_trace_raw(const char *s) { (void)s; }
 void sd_save_log(const char *line) { (void)line; }
 void sd_save_log_boot(const char *line) { (void)line; }
 

@@ -838,10 +838,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   }
   snes_rom = rom; snes_rom_len = sz;
 
-  bool wire_armed = false;   /* used by the load-time diag log below either way */
 #ifdef SNES_SMW_HLE_PRODUCT
   smw_hle_frame = 0;
-  wire_armed = wire_configure_rom(rom, sz);
+  bool wire_armed = wire_configure_rom(rom, sz);
   printf("SNES SMW audio HLE: %s\n", wire_armed ? "armed (exact ROM)" : "LLE fallback");
 #endif
 
@@ -881,63 +880,12 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * here: it is read-only flash, not heap, and the header-skip may have offset
    * it past a copier header (snes_rom + 0x200). */
 
-  /* Cheap one-shot boot log — always on (instant, SD idle). The expensive
-   * 500-frame DWT profile further below is gated behind SNES_LOAD_DIAG so it
-   * never stalls the loading screen.
-   * SAFE one-shot probe at LOAD time — before the frame loop,
-   * SD idle, never mid-play. Writes straight from the overlay (extflash has room;
-   * the resident sd_save_log path would overflow intflash) to /snes_diag.txt.
-   * Reports whether the flash-cached ROM reads back sane (internal title +
-   * checksum), the #1 suspect for a device-only black screen. Read off the SD. */
-  {
-    FILE *df = fopen("/snes_diag.txt", "w");
-    if (df) {
-      const uint8_t *r = snes->cart->rom;
-      uint32_t rs = (uint32_t)snes->cart->romSize;
-      uint32_t off = (snes->cart->type == 2) ? 0xFFC0u : 0x7FC0u;   /* HiROM : LoROM */
-      char title[22];
-      for (int i = 0; i < 21; i++) {
-        uint8_t c = (r && (off + i) < rs) ? r[off + i] : 0;
-        title[i] = (c >= 0x20 && c < 0x7f) ? (char)c : '.';
-      }
-      title[21] = 0;
-      uint32_t sum = 0;
-      for (uint32_t i = 0; r && i < rs && i < 0x10000; i++) sum += r[i];
-      extern bool g_rc_active;
-      /* wire_armed = wire_configure_rom()'s title-hint return (informational
-       * only, per smw_exact_wire.c -- detection itself is unconditional).
-       * g_wire_enable should therefore always read 1 here; logging it anyway
-       * confirms that landed on THIS device/build, not just in the rig.
-       * g_wire_on is necessarily 0 at this instant -- wire_try_swap() needs
-       * ~180+ real frames of APU/ARAM state that doesn't exist yet at load
-       * time, and this file must never be reopened from inside the frame
-       * loop to update it later (that class of write is what corrupted a
-       * user's SD before). This line only proves the gate got a chance, not
-       * that HLE ended up running; a later separate one-shot (e.g. logged
-       * once from the pause/quit path, never per-frame) would be needed to
-       * prove the swap itself succeeded on device. */
-      /* This diag block is always compiled, but the wire globals only exist
-       * when smw_exact_wire.c is (SNES_SMW_HLE=1) -- an unguarded extern here
-       * left gsnes__g_wire_on/g_wire_enable undefined in every SNES_SMW_HLE=0
-       * link. Report zeros in that build so the line keeps one shape. */
-#ifdef SNES_SMW_HLE_PRODUCT
-      extern int g_wire_enable, g_wire_on;
-#else
-      const int g_wire_enable = 0, g_wire_on = 0;
-#endif
-      /* dsp1/ram: whether the coprocessor HLE actually attached and how much
-       * SRAM the mapper decoded -- the two facts the Mario Kart BSOD hunt had
-       * to reconstruct by hand because this line didn't carry them. Boot-time
-       * write only, like everything in this file (SD writes during play
-       * corrupt the card). */
-      fprintf(df, "SNES load: type=%d size=%lu title=[%s] sum64k=%08lX rc=%d "
-                  "dsp1=%d ram=%d wire_armed=%d g_wire_enable=%d g_wire_on=%d\n",
-              snes->cart->type, (unsigned long)rs, title, (unsigned long)sum,
-              (int)g_rc_active, snes->cart->dsp1 != NULL, snes->cart->ramSize,
-              (int)wire_armed, g_wire_enable, g_wire_on);
-      fclose(df);
-    }
-  }
+  /* The load-time /snes_diag.txt probe lived here: ROM title, 64K checksum,
+   * dsp1/ramSize and the HLE wire flags, written on every ROM load. It was
+   * bring-up instrumentation for the device-only black screen and the Mario
+   * Kart BSOD, both of which are closed, and it wrote a file to the card on
+   * every single launch to say so. Removed; git history has it if a device-
+   * only load fault ever needs it again (git log -S snes_diag.txt). */
 
   /* (Baseline profile, on device, pre-levers: 312 MHz, budget 5.2M cyc/frame;
    * interpreter+APU 7.12M, PPU +2.82M, audio 0.71M → ~29 fps raw. Rig insn ≈

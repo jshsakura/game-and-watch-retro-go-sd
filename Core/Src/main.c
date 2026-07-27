@@ -149,7 +149,6 @@ const char *fault_list[] = {
   [BSOD_OTHER] = "Other",
 };
 
-extern void doom_trace_raw(const char *s);  /* syscalls.c — SD trace tee */
 
 __attribute__((optimize("-O0"))) void BSOD(BSOD_t fault, uint32_t pc, uint32_t lr)
 {
@@ -161,16 +160,11 @@ __attribute__((optimize("-O0"))) void BSOD(BSOD_t fault, uint32_t pc, uint32_t l
   char *line;
   int y = 0;
 
-  /* DIAGNOSTIC: record the fault to /doom_trace.txt BEFORE disabling IRQs (the
-   * SD/FatFs path needs HAL_GetTick timeouts). If the DOOM hang is a real
-   * exception this captures the type + faulting PC (map via the .elf); if the
-   * trace ends with no FAULT line, it was a watchdog hang/infinite loop. */
-  {
-    char fline[96];
-    snprintf(fline, sizeof(fline), "\n[doom] FAULT %s pc=0x%08lx lr=0x%08lx\n",
-             fault_list[fault], pc, lr);
-    doom_trace_raw(fline);
-  }
+  /* A "[doom] FAULT ..." line used to be appended to /doom_trace.txt here,
+   * before the IRQ disable, for the DOOM hang hunt. DOOM was dropped and
+   * nothing opens that trace any more, so the call could only ever write
+   * nothing -- while still running FatFs code on the way into a fault
+   * handler, which is the last place to be doing that. Removed. */
 
   __disable_irq();
 
