@@ -13,8 +13,15 @@ extern "C" {
 /* Returns the advance in pixels so the caller can keep its cursor. Width is
  * asked for rather than assumed: a Hangul syllable is not a fixed multiple of
  * the Latin cell. */
+int tamapoke_unicode_width(const char *s) { return i18n_get_text_width(s); }
+
+/* Hangul draws taller than the 8px Latin cell. Bottom-anchored text has to ask
+ * for this rather than assume 8, or it runs off the panel in Korean while
+ * looking fine in English -- which is what the card's back hint did. */
+int tamapoke_unicode_height(void) { return GFX_GLYPH_H * 2; }
+
 int tamapoke_draw_unicode(int16_t x, int16_t y, const char *s, uint16_t color) {
-  int w = i18n_get_text_width(s);
+  int w = tamapoke_unicode_width(s);
   if (x >= GFX_WIDTH || y >= GFX_HEIGHT) return w;
 
   /* transparent = 1: the UI draws text over a scene it has already rendered,

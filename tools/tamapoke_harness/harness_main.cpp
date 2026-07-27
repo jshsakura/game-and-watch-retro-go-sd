@@ -105,6 +105,19 @@ int main(int argc, char **argv) {
     int guard = harness_fb_guard_violations();
     write_ppm(out_dir, name, harness_fb());
 
+    /* Also dump a focused frame. Proving that focus changes pixels is not the
+     * same as showing what the cursor looks like, and a highlight can pass the
+     * diff while being invisible to a person -- which is exactly how the action
+     * buttons read as unselectable for a whole round of review. */
+    const focus_set_t *fs0 = tamapoke_current_focus_set();
+    if (fs0 && fs0->count > 1) {
+      char focus_name[80];
+      snprintf(focus_name, sizeof(focus_name), "%s_focus", name);
+      render_at(s, 1);
+      guard += harness_fb_guard_violations();
+      write_ppm(out_dir, focus_name, harness_fb());
+    }
+
     bool focus_ok = focus_is_visible(s);
 
     if (guard) {

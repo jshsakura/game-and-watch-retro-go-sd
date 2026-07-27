@@ -21,11 +21,16 @@ typedef struct {
  * keys drifts from the draw code the first time a cell size changes.
  *
  * `cols` is 0 for a list (left/right advances it) and non-zero for a grid
- * (the D-pad walks both axes; running off the side is a page turn). */
+ * (the D-pad walks both axes; running off the side is a page turn).
+ *
+ * `kind` tags the lattice family so grid_cell() can pick the right formula
+ * without comparing set pointers across translation units: 0 = a plain list
+ * (use `boxes`), 1 = the gallery lattice, 2 = the keyboard lattice. */
 typedef struct {
   const hitbox_t *boxes;
   uint8_t count;
   uint8_t cols;
+  uint8_t kind;   /* 0=list, 1=gallery, 2=keyboard */
 } focus_set_t;
 
 #ifdef __cplusplus

@@ -125,8 +125,46 @@ static uint16_t lerp565(uint16_t a, uint16_t b, uint8_t i, uint8_t n) {
   return (r << 11) | (g << 5) | bl;
 }
 
+/* Width of a string when rendered through gfx->print().
+ *
+ * The firmware's print() switches wholesale: a string with ANY non-ASCII
+ * byte is handed to tamapoke_draw_unicode and counts every UTF-8 lead byte
+ * (Latin included) as one double-wide cell; only fully-ASCII strings take
+ * the per-glyph Latin path that scales with textSize. So we have to mirror
+ * that switch to land centring math in the same place the renderer does.
+ * See tamapoke_gfx.cpp:print() and host_stubs.cpp:tamapoke_draw_unicode. */
+static int textWidth(const char *s, uint8_t ts) {
+  if (!s) return 0;
+  bool has_wide = false;
+  int cells = 0;
+  for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+    if ((*p & 0xC0) != 0x80) cells++;
+    if (*p & 0x80) has_wide = true;
+  }
+  /* Non-Latin is measured by the renderer that draws it, not guessed here --
+   * the two disagreeing is how a centred label ends up off its button. */
+  if (has_wide) return tamapoke_unicode_width(s);
+  return cells * GFX_GLYPH_W * ts;
+}
+
+/* Height of a string as it will actually be drawn. Latin scales with the text
+ * size; Hangul does not and is taller, so anything anchored to the bottom of
+ * the panel must measure rather than assume. */
+static int textHeight(const char *s, uint8_t ts) {
+  for (const unsigned char *p = (const unsigned char *)s; p && *p; p++)
+    if (*p & 0x80) return tamapoke_unicode_height();
+  return GFX_GLYPH_H * ts;
+}
+
+static void centerText(const char *s, int16_t cx, int16_t y, uint8_t size);
+
+/* Draw centred with the text sitting `margin` above the bottom edge. */
+static void centerTextBottom(const char *s, int16_t cx, int16_t margin, uint8_t size) {
+  centerText(s, cx, (int16_t)(GFX_HEIGHT - margin - textHeight(s, size)), size);
+}
+
 static void centerText(const char *s, int16_t cx, int16_t y, uint8_t size) {
-  int16_t w = (int16_t)strlen(s) * GFX_GLYPH_W * size;
+  int16_t w = (int16_t)textWidth(s, size);
   gfx->setCursor(cx - w / 2, y);
   gfx->setTextSize(size);
   gfx->print(s);
@@ -529,7 +567,7 @@ static void drawCelebration() {
     txt = buf;
   }
   if (!txt) return;
-  int16_t bw = (int16_t)strlen(txt) * GFX_GLYPH_W * 2 + 16;
+  int16_t bw = (int16_t)textWidth(txt, 2) + 16;
   int16_t bx = TP_CX - bw / 2;
   int16_t by = 30;
   gfx->fillRoundRect(bx, by, bw, 20, 6, UI_BAR_WARN);
@@ -965,7 +1003,7 @@ static void renderCard() {
   gfx->printf("WGT %u  BOND %u", pet.weight, pet.bond);
   gfx->setCursor(4, 120);
   gfx->printf(T(S_MEDALS_FMT), pet.totalMedals, MED_COUNT);
-  centerText(T(S_BACK), TP_CX, GFX_HEIGHT - 16, 1);
+  centerTextBottom(T(S_BACK), TP_CX, 8, 1);
 }
 
 static void drawThumb(int16_t dex, int16_t x, int16_t y, uint8_t s, bool sil) {
@@ -1079,8 +1117,7 @@ static void renderKeyboard() {
   gfx->drawRoundRect(KB_NAME_X, KB_NAME_Y, KB_NAME_W, KB_NAME_H, KB_NAME_R, ink);
   gfx->setTextSize(2);
   gfx->setTextColor(ink);
-  uint8_t sl = strlen(nameBuf);
-  int16_t text_w = sl * GFX_GLYPH_W * 2;
+  int16_t text_w = textWidth(nameBuf, 2);
   gfx->setCursor(TP_CX - text_w / 2,
                  KB_NAME_Y + (KB_NAME_H - 2 * GFX_GLYPH_H) / 2);
   gfx->print(nameBuf);
@@ -1103,8 +1140,7 @@ static void renderKeyboard() {
     if (i == KB_SPECIAL0) label = "<";
     else if (i == KB_SPECIAL1) label = "OK";
     else { buf[0] = KB_KEYS[i]; buf[1] = 0; label = buf; }
-    uint8_t ll = strlen(label);
-    int16_t lw = ll * GFX_GLYPH_W * KB_TEXT_SIZE;
+    int16_t lw = textWidth(label, KB_TEXT_SIZE);
     gfx->setTextSize(KB_TEXT_SIZE);
     gfx->setTextColor(fg);
     gfx->setCursor(x + KB_W / 2 - lw / 2,
@@ -1119,8 +1155,7 @@ static void drawClockBtn(int16_t x, int16_t y, const char *label, bool focused) 
   uint16_t fg = focused ? UI_WHITE : ink;
   gfx->fillRoundRect(x, y, CLOCK_BTN_W, CLOCK_BTN_H, 4, fill);
   gfx->drawRoundRect(x, y, CLOCK_BTN_W, CLOCK_BTN_H, 4, ink);
-  uint8_t ll = strlen(label);
-  int16_t lw = ll * GFX_GLYPH_W * 2;
+  int16_t lw = textWidth(label, 2);
   gfx->setTextSize(2);
   gfx->setTextColor(fg);
   gfx->setCursor(x + CLOCK_BTN_W / 2 - lw / 2,
@@ -1164,10 +1199,9 @@ static void renderClock() {
                      4, ink);
   {
     const char *s = ae ? T(S_SND_ON) : T(S_SND_OFF);
-    uint8_t ll = strlen(s);
     gfx->setTextSize(1);
     gfx->setTextColor(focus == 4 ? UI_WHITE : ink);
-    gfx->setCursor(CLOCK_SOUND_X + CLOCK_SOUND_W / 2 - ll * GFX_GLYPH_W / 2,
+    gfx->setCursor(CLOCK_SOUND_X + CLOCK_SOUND_W / 2 - textWidth(s, 1) / 2,
                    CLOCK_PILL_Y + (CLOCK_PILL_H - GFX_GLYPH_H) / 2);
     gfx->print(s);
   }
@@ -1186,10 +1220,9 @@ static void renderClock() {
     static_assert(sizeof(lng_name) / sizeof(lng_name[0]) == LANG_COUNT,
                   "language label table must cover every Lang");
     const char *s = lng_name[(int)gLang];
-    uint8_t ll = strlen(s);
     gfx->setTextSize(1);
     gfx->setTextColor(focus == 5 ? UI_WHITE : ink);
-    gfx->setCursor(CLOCK_LANG_X + CLOCK_LANG_W / 2 - ll * GFX_GLYPH_W / 2,
+    gfx->setCursor(CLOCK_LANG_X + CLOCK_LANG_W / 2 - textWidth(s, 1) / 2,
                    CLOCK_PILL_Y + (CLOCK_PILL_H - GFX_GLYPH_H) / 2);
     gfx->print(s);
   }
@@ -1201,8 +1234,7 @@ static void renderClock() {
   gfx->drawRoundRect(CLOCK_OK_X, CLOCK_OK_Y, CLOCK_OK_W, CLOCK_OK_H, 4, ink);
   {
     const char *s = T(S_YES);
-    uint8_t ll = strlen(s);
-    int16_t lw = ll * GFX_GLYPH_W * CLOCK_OK_SIZE;
+    int16_t lw = textWidth(s, CLOCK_OK_SIZE);
     gfx->setTextSize(CLOCK_OK_SIZE);
     gfx->setTextColor(ok_focused ? UI_WHITE : ink);
     gfx->setCursor(CLOCK_OK_X + CLOCK_OK_W / 2 - lw / 2,

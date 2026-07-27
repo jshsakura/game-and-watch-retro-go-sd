@@ -129,12 +129,17 @@ bool Preferences::clear() { return true; }
  * overflowing string look like it fits. */
 #include "tamapoke_gfx.h"
 
-int tamapoke_draw_unicode(int16_t x, int16_t y, const char *s, uint16_t color) {
+int tamapoke_unicode_width(const char *s) {
   int cells = 0;
   for (const unsigned char *p = (const unsigned char *)s; *p; p++)
     if ((*p & 0xC0) != 0x80) cells++;  /* count UTF-8 lead bytes */
+  return cells * GFX_GLYPH_W * 2;      /* CJK is roughly double-width */
+}
 
-  int w = cells * GFX_GLYPH_W * 2;     /* CJK is roughly double-width */
-  gfx->fillRect(x, y, w, GFX_GLYPH_H * 2, color);
+int tamapoke_unicode_height(void) { return GFX_GLYPH_H * 2; }
+
+int tamapoke_draw_unicode(int16_t x, int16_t y, const char *s, uint16_t color) {
+  int w = tamapoke_unicode_width(s);
+  gfx->fillRect(x, y, w, tamapoke_unicode_height(), color);
   return w;
 }

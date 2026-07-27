@@ -73,3 +73,9 @@ extern Gfx *gfx;
  * its width. Defined in tamapoke_unicode.cpp, which the host harness swaps out
  * because rg_i18n is firmware-only. */
 int tamapoke_draw_unicode(int16_t x, int16_t y, const char *s, uint16_t color);
+
+/* Width of a non-Latin string, from the same renderer that draws it. Layout
+ * code must ask rather than estimate: a guess that happens to match on the
+ * host is still a guess on the device, and centring built on it drifts. */
+int tamapoke_unicode_width(const char *s);
+int tamapoke_unicode_height(void);

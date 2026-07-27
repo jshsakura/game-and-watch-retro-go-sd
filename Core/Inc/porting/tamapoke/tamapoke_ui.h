@@ -182,8 +182,11 @@ extern "C" {
 #define GAL_GAP         2       /* inner border between cells */
 
 /* Gallery detail view (one big sprite + name) */
-#define GAL_DETAIL_CY   90
-#define GAL_DETAIL_NAME_Y 150
+#define GAL_DETAIL_CY       90
+#define GAL_DETAIL_NAME_Y   150
+#define GAL_DET_SPRITE_CY   GAL_DETAIL_CY
+#define GAL_DET_HEAD_Y      GAL_DETAIL_NAME_Y
+#define GAL_DET_BACK_Y      212
 
 /* ------------------------------------------------------------------ */
 /* On-screen keyboard -- 6 cols x 5 rows = 30 keys                    */
@@ -194,28 +197,53 @@ extern "C" {
 #define KB_W            44
 #define KB_H            34
 #define KB_X            ((TP_CX) - (KB_COLS * KB_W) / 2)  /* 28 */
-#define KB_Y            28
+#define KB_Y            70
 #define KB_R            4
 #define KB_TEXT_SIZE    2       /* 16x16 glyph in a 44x34 cell */
 #define KB_KEYS         "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-"  /* 28 letters + . - = 30 */
+#define KB_SPECIAL0     28      /* DEL key index */
+#define KB_SPECIAL1     29      /* OK key index */
 
-/* Name preview above the keyboard */
-#define KB_NAME_X       ((TP_CX) - 6 * GFX_GLYPH_W)  /* centred on 12 chars */
-#define KB_NAME_Y       4
-#define KB_NAME_SIZE    2
+/* Title above the keyboard */
+#define KB_TITLE_Y      6
+
+/* Name preview box above the keyboard */
+#define KB_NAME_W       240
+#define KB_NAME_H       32
+#define KB_NAME_X       ((TP_CX) - (KB_NAME_W) / 2)
+#define KB_NAME_Y       28
+#define KB_NAME_R       6
 
 /* ------------------------------------------------------------------ */
 /* Clock screen                                                       */
 /* ------------------------------------------------------------------ */
 
-#define CLOCK_TIME_Y        60
-#define CLOCK_TIME_SIZE     4       /* 32x32 digits: "HH:MM" = 5 chars * 32 = 160px */
-#define CLOCK_BTN_W         60
-#define CLOCK_BTN_H         26
-#define CLOCK_BTN_GAP       16
-#define CLOCK_BTN_Y         170
-#define CLOCK_H_X           ((TP_CX) - CLOCK_BTN_W - CLOCK_BTN_GAP / 2)
-#define CLOCK_M_X           ((TP_CX) + CLOCK_BTN_GAP / 2)
+#define CLOCK_TITLE_Y       6
+#define CLOCK_TITLE_SIZE    2
+#define CLOCK_TIME_Y        28
+#define CLOCK_TIME_SIZE     3
+#define CLOCK_BTN_W         50
+#define CLOCK_BTN_H         24
+#define CLOCK_BTN_GAP       8
+#define CLOCK_BTN_Y         88
+#define CLOCK_BTN_ROW_X     ((TP_CX) - (2 * CLOCK_BTN_W + CLOCK_BTN_GAP + 4) / 2)
+#define CLOCK_HMINUS_X      CLOCK_BTN_ROW_X
+#define CLOCK_HPLUS_X       (CLOCK_HMINUS_X + CLOCK_BTN_W + 4)
+#define CLOCK_MMINUS_X      (CLOCK_HPLUS_X + CLOCK_BTN_W + CLOCK_BTN_GAP - 4)
+#define CLOCK_MPLUS_X       (CLOCK_MMINUS_X + CLOCK_BTN_W + 4)
+#define CLOCK_PAIR_LBL_Y    (CLOCK_BTN_Y + CLOCK_BTN_H + 2)
+#define CLOCK_PILL_Y        130
+#define CLOCK_PILL_H        20
+#define CLOCK_SOUND_W       90
+#define CLOCK_SOUND_X       16
+#define CLOCK_LANG_W        90
+#define CLOCK_LANG_X        ((GFX_WIDTH) - 16 - CLOCK_LANG_W)
+#define CLOCK_OK_W          80
+#define CLOCK_OK_H          26
+#define CLOCK_OK_X          ((TP_CX) - (CLOCK_OK_W) / 2)
+#define CLOCK_OK_Y          170
+#define CLOCK_OK_SIZE       2
+#define CLOCK_HINT_Y        212
 
 /* ------------------------------------------------------------------ */
 /* Minigames                                                          */
@@ -225,15 +253,39 @@ extern "C" {
 #define GAME_PADDLE_W       40
 #define GAME_PADDLE_H       4
 #define GAME_PADDLE_Y       224
+#define GAME_PADDLE_X_MIN   0
+#define GAME_PADDLE_X_MAX   (GFX_WIDTH - GAME_PADDLE_W)
 #define GAME_BALL_R         4
 #define GAME_TOP            16      /* playfield top (below header) */
 #define GAME_BOTTOM         (GAME_PADDLE_Y - 1)
+#define GAME_SCORE_Y        2
+#define GAME_SCORE_SIZE     2
+#define GAME_RECORD_Y       18
+#define GAME_LIVES_Y        4
+#define GAME_LIVES_X0       (GFX_WIDTH - 40)
+#define GAME_LIVES_DX       8
+#define GAME_LIVES_R        3
+#define GAME_OVER_LABEL_Y   80
+#define GAME_OVER_LABEL_SZ  3
 
-/* Sack (strength training): tap meter. */
+/* Sack (strength training): sandbag with rope/body/seam + hit meter. */
+#define SACK_ROPE_TOP_Y     16
+#define SACK_BODY_TOP_Y     48
+#define SACK_BODY_W         70
+#define SACK_BODY_H         90
+#define SACK_BODY_X         ((TP_CX) - (SACK_BODY_W) / 2)
+#define SACK_TAPER_H        16
+#define SACK_SEAM_Y         (SACK_BODY_TOP_Y + (SACK_BODY_H / 2))
+#define SACK_HIT_COUNTER_Y  152
+#define SACK_HIT_COUNTER_SZ 3
+#define SACK_HINT_Y         182
+#define SACK_HINT_SIZE      1
 #define SACK_BAR_W          200
-#define SACK_BAR_H          16
-#define SACK_BAR_X          ((TP_CX) - SACK_BAR_W / 2)
-#define SACK_BAR_Y          110
+#define SACK_BAR_H          12
+#define SACK_BAR_X          ((TP_CX) - (SACK_BAR_W) / 2)
+#define SACK_BAR_Y          200
+#define SACK_RESULT_Y       80
+#define SACK_RESULT_SIZE    3
 #define SACK_PET_CY         60
 
 /* ------------------------------------------------------------------ */
@@ -249,6 +301,18 @@ void tamapoke_ui_init(void);
 /* The full-screen render dispatcher (upstream render()). Public so a debug
  * hook can force a redraw. */
 void tamapoke_render(void);
+void tamapoke_ui_render(void);
+
+/* True if input has happened since the last frame -- lets the porting main
+ * loop tell a "framestep" from real activity. */
+bool tamapoke_ui_had_activity(void);
+
+/* ---- host harness API ----
+ * These let the host harness put the UI into a known screen and render it,
+ * without having to drive the full input/state machine. No-op on device. */
+#define TAMAPOKE_SCREEN_COUNT 11
+void tamapoke_ui_goto_screen(int id);
+const char *tamapoke_ui_screen_name(int id);
 
 /* Hit-testing -- bodies are upstream's, unchanged. Synthesised coordinates
  * come from tamapoke_input.cpp. */
