@@ -128,6 +128,18 @@ static const focus_set_t FOCUS_STARTER = {STARTER_BOXES, ARRAY_LEN(STARTER_BOXES
  * and the swipes keep working because they never consult the set. */
 static const focus_set_t FOCUS_NONE = {nullptr, 0, 0, 0};
 
+/* The five feed cells. Without a set of its own the D-pad walked the main
+ * screen's buttons underneath the open menu, so the menu could be opened and not
+ * used -- the same shape as the starter screen and the settings screen. */
+static const hitbox_t FEED_BOXES[] = {
+  {FEED_ICON0_X + 0 * FEED_ICON_GAP, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ},
+  {FEED_ICON0_X + 1 * FEED_ICON_GAP, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ},
+  {FEED_ICON0_X + 2 * FEED_ICON_GAP, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ},
+  {FEED_ICON0_X + 3 * FEED_ICON_GAP, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ},
+  {FEED_ICON0_X + 4 * FEED_ICON_GAP, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ},
+};
+static const focus_set_t FOCUS_FEED = {FEED_BOXES, ARRAY_LEN(FEED_BOXES), 0, 0};
+
 /* The clock/settings screen: hour -/+, minute -/+, the sound pill, the language
  * pill, and OK. It had no focus set at all -- it answered FOCUS_NONE -- so none
  * of it could be pressed with buttons. That is why the language could not be
@@ -215,15 +227,18 @@ static void centerText(const char *s, int16_t cx, int16_t y, uint8_t size) {
   gfx->print(s);
 }
 
+/* `tint`, when non-zero, paints every opaque pixel that colour instead of the
+ * one the map names. It exists so one berry drawing can serve the red, blue and
+ * green berries rather than the tree carrying three near-identical maps. */
 static void drawMap(const char *const *map, uint8_t n,
-                    int16_t x, int16_t y, int16_t s, bool sil) {
+                    int16_t x, int16_t y, int16_t s, bool sil, uint16_t tint = 0) {
   for (uint8_t r = 0; r < n; r++) {
     const char *row = map[r];
     if (!row) break;
     for (uint8_t c = 0; c < n && row[c]; c++) {
       char ch = row[c];
       if (ch == '.') continue;
-      uint16_t col = sil ? INK_K : spriteColor(ch);
+      uint16_t col = sil ? INK_K : (tint ? tint : spriteColor(ch));
       if (col == 0 && !sil) continue;
       gfx->fillRect(x + c * s, y + r * s, s, s, col);
     }
@@ -766,19 +781,45 @@ static void drawBath(uint32_t now) {
 /* ---- feed menu ---- */
 
 static void drawFeedMenu(uint32_t now) {
+  (void)now;
   uint16_t ink = inkColor();
   gfx->fillRoundRect(FEED_MENU_X, FEED_MENU_Y, FEED_MENU_W, FEED_MENU_H,
                      FEED_MENU_R, gNight ? UI_BG_NIGHT : UI_BG_DAY);
   gfx->drawRoundRect(FEED_MENU_X, FEED_MENU_Y, FEED_MENU_W, FEED_MENU_H,
                      FEED_MENU_R, ink);
-  static const char *const *ICONS[5] = {
-    SPR_ICON_FOOD, nullptr, nullptr, nullptr, nullptr
+
+  /* This used to fill each cell with UI_BAR_OK / UI_BAR_WARN alternately and
+   * never draw anything else -- it even built an ICONS[] table and did not read
+   * it. On hardware that is a row of plain green and orange squares with no way
+   * to tell what any of them feeds, which is what was reported. The order has to
+   * match onTap's: 0 = a meal, 1..3 = the red / blue / green berry, 4 = candy. */
+  struct Item { const char *const *map; uint16_t tint; };
+  const Item items[5] = {
+    {SPR_ICON_FOOD,    0},              /* the apple keeps its own colours */
+    {SPR_ICON_BERRY_G, UI_BAR_BAD},     /* red   */
+    {SPR_ICON_BERRY_B, 0},              /* blue  */
+    {SPR_ICON_BERRY_G, 0},              /* green */
+    {SPR_ICON_CANDY,   0},
   };
+
+  uint8_t f = (tamapoke_current_focus_set() == &FOCUS_FEED)
+              ? tamapoke_input_focus() : 0xFF;
+
   for (uint8_t i = 0; i < 5; i++) {
     int16_t ix = FEED_ICON0_X + i * FEED_ICON_GAP;
-    gfx->fillRect(ix, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ,
-                  i % 2 ? UI_BAR_WARN : UI_BAR_OK);
-    gfx->drawRoundRect(ix, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ, 2, ink);
+    bool sel = (f == i);
+
+    gfx->fillRoundRect(ix, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ, 2,
+                       sel ? UI_WHITE : UI_TRACK);
+    gfx->drawRoundRect(ix, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ, 2,
+                       sel ? UI_BAR_WARN : ink);
+    if (sel)
+      gfx->drawRoundRect(ix - 1, FEED_ICON_Y - 1, FEED_ICON_SZ + 2,
+                         FEED_ICON_SZ + 2, 2, UI_BAR_WARN);
+
+    /* The maps are 16x16 inside a 24px cell. */
+    drawMap(items[i].map, 16, ix + (FEED_ICON_SZ - 16) / 2,
+            FEED_ICON_Y + (FEED_ICON_SZ - 16) / 2, 1, false, items[i].tint);
   }
 }
 
@@ -1042,6 +1083,7 @@ const focus_set_t *tamapoke_current_focus_set(void) {
       /* The main screen hosts the confirm dialog as an overlay, so it owns the
        * focus while it is up. */
       if (millis() < confirmUntil) return &FOCUS_CONFIRM;
+      if (millis() < feedMenuUntil) return &FOCUS_FEED;
       /* An egg is not a menu. Upstream cracks it by tapping it, and the button
        * equivalent should be "press A", not "walk the cursor onto the right
        * rectangle first" -- so it offers exactly one target, the pet zone, and
