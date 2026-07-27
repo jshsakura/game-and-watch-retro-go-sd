@@ -834,6 +834,34 @@ INCLUDE build/fceumm_mappers.ld
   }
   _OVERLAY_CELESTE_BSS_SIZE = SIZEOF(.overlay_celeste_bss);
 
+  /* An overlay needs its section in BOTH link scripts. Added here 0727 because
+   * the TamaPoke port only edited the SD_CARD=1 script, so on SD_CARD=0 its
+   * objects had no section to land in, fell into the default output, and
+   * overflowed DTCM -- "cannot move location counter backwards" from a file
+   * that has nothing to do with TamaPoke. The same omission broke game.com
+   * once; a missing section does not report itself, it reports somewhere else. */
+  .overlay_tamapoke __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_tamapoke_start__ = .;
+    build/tamapoke/*.o (.data .data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_TAMAPOKE_LOAD_END = .;
+  } AT > CORES
+  _OVERLAY_TAMAPOKE_LOAD_START = LOADADDR(.overlay_tamapoke);
+  _OVERLAY_TAMAPOKE_SIZE = SIZEOF(.overlay_tamapoke);
+
+  .overlay_tamapoke_bss _OVERLAY_TAMAPOKE_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_TAMAPOKE_BSS_START = .;
+    build/tamapoke/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/tamapoke/*.o (COMMON)
+    __ram_emu_tamapoke_end__ = .;
+    _OVERLAY_TAMAPOKE_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_TAMAPOKE_BSS_END) < __RAM_EMU_END__, "Error: TAMAPOKE BSS overflow");
+  }
+  _OVERLAY_TAMAPOKE_BSS_SIZE = SIZEOF(.overlay_tamapoke_bss);
+
   .overlay_music __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_music_start__ = .;
