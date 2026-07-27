@@ -10,6 +10,7 @@
  *   - the focus highlight is invisible on a screen, which on a device with no
  *     touch means that screen simply cannot be used
  */
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,11 @@ extern int harness_fb_guard_violations(void);
 extern const uint16_t *harness_fb(void);
 extern void harness_pad_clear(void);
 extern void harness_pad_set(int key, bool down);
+/* uint64_t, not unsigned long long: on LP64 they are distinct types and C++
+ * mangles the declaration into a symbol the stubs never defined. */
+extern void harness_clock_set_ms(uint64_t ms);
+extern void harness_clock_advance_ms(uint64_t ms);
+extern uint64_t harness_clock_ms(void);
 
 #define FB_W 320
 #define FB_H 240
@@ -221,6 +227,62 @@ int main(int argc, char **argv) {
    *
    * The test is the same picture twice: render B on a clean canvas, then render B
    * again on top of A. Anything that differs is a pixel B does not own. */
+  /* A timed overlay must survive being navigated to.
+   *
+   * Upstream's feed menu closes 3 s after it opens, which is generous for a tap
+   * on the item and not enough for a cursor that has to walk there first: on
+   * hardware the menu shut under the player and the food could not be chosen at
+   * all. Nothing here noticed, because every earlier check either rendered a
+   * frozen frame or pressed a button and only asked that it did not crash.
+   *
+   * So: open it, spend time walking as a person would, then press A and require
+   * that something was actually eaten. The clock is advanced explicitly, which is
+   * the only way a host test can be honest about a timeout. */
+  int timeout_failures = 0;
+  {
+    harness_clock_set_ms(100000);
+    tamapoke_ui_goto_screen(0);          /* main screen, pet already hatched */
+    harness_pad_clear();
+    tamapoke_input_reset(0);
+
+    /* FOCUS_MAIN is {pet zone, BTN0..BTN3} and BTN0 is the meal, so one step
+     * right from the default lands on it. */
+    harness_pad_set(ODROID_INPUT_RIGHT, true);
+    tamapoke_input_poll((uint32_t)harness_clock_ms());
+    harness_pad_set(ODROID_INPUT_RIGHT, false);
+    tamapoke_input_poll((uint32_t)harness_clock_ms());
+    harness_pad_set(ODROID_INPUT_A, true);
+    tamapoke_input_poll((uint32_t)harness_clock_ms());
+    harness_pad_set(ODROID_INPUT_A, false);
+    tamapoke_input_poll((uint32_t)harness_clock_ms());
+
+    bool opened = (tamapoke_current_focus_set() == tamapoke_focus_set_feed());
+    if (!opened) {
+      printf("FAIL the feed menu did not open from the button row\n");
+      timeout_failures++;
+    } else {
+      /* Walk for LONGER than the overlay's own duration (FEED_MENU_MS), one
+       * press per second. Anything shorter would pass on the duration alone and
+       * would still pass with the renew deleted -- which is exactly what the
+       * first version of this check did, so it pinned nothing. */
+      for (int i = 0; i < 9; i++) {
+        harness_clock_advance_ms(1000);
+        harness_pad_set(ODROID_INPUT_RIGHT, true);
+        tamapoke_input_poll((uint32_t)harness_clock_ms());
+        harness_pad_set(ODROID_INPUT_RIGHT, false);
+        tamapoke_input_poll((uint32_t)harness_clock_ms());
+      }
+      if (tamapoke_current_focus_set() != tamapoke_focus_set_feed()) {
+        printf("FAIL the feed menu expired while the cursor was still walking to "
+               "an item -- this is the 'cannot select food' report\n");
+        timeout_failures++;
+      } else {
+        printf("ok   a timed overlay survives being navigated\n");
+      }
+    }
+  }
+  failures += timeout_failures;
+
   /* No screen may leave a region unpainted after a screen change.
    *
    * Done with a sentinel rather than by diffing two renders: rendering is not

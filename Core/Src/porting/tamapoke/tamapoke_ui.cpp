@@ -74,6 +74,13 @@ static float hitX, hitY, sackShake;
 static uint32_t lastInteract, holdStart;
 /* True if any input handler ran since the previous tick. Cleared at the top
  * of tamapoke_ui_tick; exposed via tamapoke_ui_had_activity(). */
+/* How long a timed overlay stays up with no input. Named because each was
+ * written twice as a literal, and because tamapoke_ui_note_input() has to renew
+ * them with the same value it was opened with. */
+#define FEED_MENU_MS 6000
+#define CONFIRM_MS  10000
+#define CHOICE_MS   15000
+
 static bool g_had_activity = false;
 
 static void note_activity(uint32_t now) {
@@ -1000,7 +1007,7 @@ void onTap(int16_t x, int16_t y) {
     int16_t bx = BTN_XS[i];
     if (x >= bx && x < bx + BTN_W && y >= BTN_ROW_Y && y < BTN_ROW_Y + BTN_H) {
       switch (i) {
-        case 0: feedMenuUntil = now + 3000; break;
+        case 0: feedMenuUntil = now + FEED_MENU_MS; break;
         case 1: pet.play(); break;
         case 2: pet.toggleLight(); break;
         case 3: startBath(now); sfxPlay(SFX_TAP); break;
@@ -1053,6 +1060,30 @@ static int current_screen_id();
 static bool g_force_full_repaint = false;
 
 void tamapoke_ui_force_full_repaint(void) { g_force_full_repaint = true; }
+
+/* Push back whichever timed overlay is currently up.
+ *
+ * Upstream's timeouts are tuned for a finger: tap the feed button, tap the food.
+ * Three seconds is plenty for that and not enough for a cursor, which has to be
+ * WALKED to the item first -- so the feed menu closed under the player and the
+ * food could not be chosen at all. The confirm and choice dialogs have the same
+ * shape with more slack.
+ *
+ * Rather than pick bigger numbers and hope, any button press while one of these
+ * is open restores its full duration: the menu closes when you stop interacting,
+ * which is what a menu should do, and the touch path is unchanged because a tap
+ * that hits an item dismisses it anyway. */
+/* Identity of the feed focus set, for the harness: asserting "the feed menu is
+ * still open" by pointer is exact, where re-deriving the condition in the test
+ * would just restate the code under test. */
+const focus_set_t *tamapoke_focus_set_feed(void) { return &FOCUS_FEED; }
+
+void tamapoke_ui_note_input(void) {
+  uint32_t now = millis();
+  if (now < feedMenuUntil) feedMenuUntil = now + FEED_MENU_MS;
+  if (now < confirmUntil)  confirmUntil  = now + CONFIRM_MS;
+  if (now < choiceUntil)   choiceUntil   = now + CHOICE_MS;
+}
 
 /* Derived from current_screen_id(), the same function the renderer switches on,
  * because the two answering independently is a bug generator: whatever is drawn
@@ -1109,7 +1140,7 @@ void tamapoke_wake(void) {
 void tamapoke_hold_release(void) {
   uint32_t now = millis();
   if (!pet.isEgg() && pet.ceremony == CER_NONE && now >= confirmUntil) {
-    confirmUntil = now + 10000;
+    confirmUntil = now + CONFIRM_MS;
     tamapoke_input_reset(0);
   }
 }
@@ -1554,11 +1585,11 @@ static void render_main_screen(uint32_t now) {
 
   if (!pet.evolving() && pet.wantEvolveButton()) {
     choiceKind = 1;
-    choiceUntil = now + 15000;
+    choiceUntil = now + CHOICE_MS;
   }
   if (!pet.evolving() && pet.wantFarewellButton()) {
     choiceKind = 2;
-    choiceUntil = now + 15000;
+    choiceUntil = now + CHOICE_MS;
   }
   if (pet.canRunawayNow()) drawRunawayButton(now);
 
@@ -1711,7 +1742,7 @@ void tamapoke_ui_goto_screen(int id) {
         pet.speciesId = CLASSIC_DEX[0];
       }
       ensureMon();
-      feedMenuUntil = now + 3000;
+      feedMenuUntil = now + FEED_MENU_MS;
       break;
     case 10: /* release-confirm overlay */
       harness_screen = 0;
@@ -1720,7 +1751,7 @@ void tamapoke_ui_goto_screen(int id) {
         pet.speciesId = CLASSIC_DEX[0];
       }
       ensureMon();
-      confirmUntil = now + 10000;
+      confirmUntil = now + CONFIRM_MS;
       break;
     default:
       break;

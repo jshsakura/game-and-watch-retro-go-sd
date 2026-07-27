@@ -103,6 +103,7 @@ extern "C" uint32_t tamapoke_epoch(void)       { return (uint32_t)(g_now_ms / 10
 extern "C" bool    tamapoke_clock_is_set(void) { return true; }
 
 void harness_clock_set_ms(uint64_t ms) { g_now_ms = ms; }
+uint64_t harness_clock_ms(void) { return g_now_ms; }
 void harness_clock_advance_ms(uint64_t ms) { g_now_ms += ms; }
 
 /* ---------------------------------------------------------------- */

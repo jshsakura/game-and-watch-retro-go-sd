@@ -313,6 +313,13 @@ void tamapoke_ui_render(void);
  * canvas -- the launcher's pause menu is the case that matters. */
 void tamapoke_ui_force_full_repaint(void);
 
+/* Called by the input layer on any button edge: renews whichever timed overlay is
+ * open, so one tuned for a tap does not expire while a cursor walks to it. */
+void tamapoke_ui_note_input(void);
+
+/* The feed menu's focus set, by identity -- used by the host harness. */
+const focus_set_t *tamapoke_focus_set_feed(void);
+
 /* True if input has happened since the last frame -- lets the porting main
  * loop tell a "framestep" from real activity. */
 bool tamapoke_ui_had_activity(void);

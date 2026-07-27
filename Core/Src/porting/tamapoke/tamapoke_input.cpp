@@ -168,6 +168,10 @@ void tamapoke_input_poll(uint32_t now_ms) {
     return;
   }
 
+  /* Any press keeps an open timed overlay alive. Upstream's durations assume a
+   * tap lands on the item immediately; a cursor has to travel. */
+  if (any_key_down(&js)) tamapoke_ui_note_input();
+
   int overflow = 0;
   if (edge(&js, ODROID_INPUT_LEFT)) overflow = focus_step(fs, -1, 0);
   if (edge(&js, ODROID_INPUT_RIGHT)) overflow = focus_step(fs, +1, 0);
