@@ -1082,6 +1082,27 @@ $(CORE_CCLESTE)/celeste.c \
 $(CORE_CCLESTE)/celeste_audio.c \
 Core/Src/porting/celeste/main_celeste.c
 
+# TamaPoke: private personal build, off unless TAMAPOKE=1 is passed explicitly.
+# The upstream game logic is vendored rather than kept as a submodule because
+# every file needs the Arduino shims anyway.
+TAMAPOKE_CXX_SOURCES =
+
+ifeq ($(TAMAPOKE),1)
+TAMAPOKE_CXX_SOURCES += \
+Core/Src/porting/tamapoke/main_tamapoke.cpp \
+Core/Src/porting/tamapoke/tamapoke_gfx.cpp \
+Core/Src/porting/tamapoke/tamapoke_unicode.cpp \
+Core/Src/porting/tamapoke/tamapoke_input.cpp \
+Core/Src/porting/tamapoke/tamapoke_ui.cpp \
+Core/Src/porting/tamapoke/tamapoke_sprites.cpp \
+Core/Src/porting/tamapoke/tamapoke_assets.cpp \
+Core/Src/porting/tamapoke/tamapoke_dex.cpp \
+Core/Src/porting/tamapoke/tamapoke_audio.cpp \
+Core/Src/porting/tamapoke/tamapoke_shim.cpp \
+Core/Src/porting/tamapoke/pet.cpp \
+Core/Src/porting/tamapoke/i18n.cpp
+endif
+
 MUSIC_C_SOURCES = \
 Core/Src/porting/music/main_music.c \
 Core/Src/porting/music/music_id3.c \
@@ -1517,6 +1538,14 @@ SMW_C_INCLUDES +=  \
 -Iretro-go-stm32/components/odroid \
 -I$(CORE_SMW)/ \
 -Iexternal \
+-I./
+
+TAMAPOKE_CXX_INCLUDES += \
+-ICore/Inc \
+-ICore/Inc/porting/tamapoke \
+-ICore/Inc/retro-go \
+-ICore/Src/porting/lib \
+-Iretro-go-stm32/components/odroid \
 -I./
 
 CELESTE_C_INCLUDES +=  \

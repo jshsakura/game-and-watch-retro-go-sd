@@ -95,3 +95,10 @@ tools/sfc_recomp/rc_core_*.c
 /test_plan.txt
 /tools/sfc_recomp/smw_hot_sites.csv
 /.build-flags
+
+# TamaPoke private build: the sprite packs are CC BY-NC and depict Nintendo
+# characters. Generated locally, never committed, never uploaded.
+/upload/
+/tamapoke_sd_payload*.zip
+Core/Src/porting/tamapoke/mons/
+*.tpk2

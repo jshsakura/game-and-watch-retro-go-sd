@@ -390,6 +390,13 @@ MSX_USE_BANK_2 ?= 0
 #######################################
 # cover flow
 #######################################
+#######################################
+# TamaPoke (private homebrew, local builds only)
+#######################################
+# Deliberately not in .github/workflows/package.yml: the sprites are CC BY-NC
+# and depict Nintendo characters, so a published release would be distribution.
+TAMAPOKE ?= 0
+
 COVERFLOW ?= 0
 
 ifdef COVERFLOW
@@ -675,6 +682,7 @@ C_DEFS +=  \
 -DSINGLE_FONT=$(SINGLE_FONT) \
 -DLANG=$(LANG) \
 -DCOVERFLOW=$(COVERFLOW) \
+-DTAMAPOKE=$(TAMAPOKE) \
 -DEXTFLASH_FORCE_SPI=$(EXTFLASH_FORCE_SPI) \
 -DUSE_HAL_DRIVER \
 -DSTM32H7B0xx \
@@ -898,6 +906,8 @@ C64_OBJECTS = $(addprefix $(BUILD_DIR)/c64/,$(notdir $(C64_C_SOURCES:.c=.o)))
 GAMECOM_OBJECTS = $(addprefix $(BUILD_DIR)/gamecom/,$(notdir $(GAMECOM_C_SOURCES:.c=.o)))
 C64_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/c64/,$(notdir $(C64_CXX_SOURCES:.cpp=.o)))
 CELESTE_OBJECTS = $(addprefix $(BUILD_DIR)/celeste/,$(notdir $(CELESTE_C_SOURCES:.c=.o)))
+# Empty unless TAMAPOKE=1, so a default build links exactly as before.
+TAMAPOKE_OBJECTS = $(addprefix $(BUILD_DIR)/tamapoke/,$(notdir $(TAMAPOKE_CXX_SOURCES:.cpp=.o)))
 MUSIC_OBJECTS = $(addprefix $(BUILD_DIR)/music/,$(notdir $(MUSIC_C_SOURCES:.c=.o)))
 PICO8_ALL_SOURCES = $(PICO8_C_SOURCES) $(PICO8_CXX_SOURCES) $(PICO8_CXX_STUBS)
 PICO8_OBJECTS = $(addprefix $(BUILD_DIR)/pico8/,$(notdir $(patsubst %.cpp,%.o,$(patsubst %.c,%.o,$(PICO8_ALL_SOURCES)))))
@@ -932,7 +942,7 @@ TGBDUAL_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/tgbdual/,$(notdir $(TGBDUAL_CXX_S
 A2600_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/a2600/,$(notdir $(A2600_CXX_SOURCES:.cxx=.o)))
 LYNX_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/lynx/,$(notdir $(LYNX_CXX_SOURCES:.cpp=.o)))
 
-vpath %.cpp $(sort $(dir $(CXX_SOURCES) $(TGBDUAL_CXX_SOURCES) $(LYNX_CXX_SOURCES) $(C64_CXX_SOURCES) $(VB_CXX_SOURCES) ))
+vpath %.cpp $(sort $(dir $(TAMAPOKE_CXX_SOURCES) $(CXX_SOURCES) $(TGBDUAL_CXX_SOURCES) $(LYNX_CXX_SOURCES) $(C64_CXX_SOURCES) $(VB_CXX_SOURCES) ))
 vpath %.cxx $(sort $(dir $(A2600_CXX_SOURCES) ))
 
 # list of ASM program objects
@@ -1064,9 +1074,9 @@ $(BUILD_DIR)/memcpy-armv7m.o: Core/Src/memcpy-armv7m.s Makefile.common Makefile 
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) Makefile.common Makefile $(FLAGS_STAMP) $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(TAMAPOKE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) Makefile.common Makefile $(FLAGS_STAMP) $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
-	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) $(LDFLAGS) -o $@
+	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(TAMAPOKE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) $(LDFLAGS) -o $@
 	@# Every core is an overlay at the same RAM address, so a core that names a
 	@# global only another core defines gets silently bound to it — and reads that
 	@# core's address, which by then holds its own data. That is how Super Metroid
@@ -1216,6 +1226,10 @@ $(BUILD_DIR)/c64/%.o: %.cpp Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADER
 $(BUILD_DIR)/celeste/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC celeste ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(CELESTE_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/celeste/$(notdir $(<:.c=.lst)) $< -o $@
+
+$(BUILD_DIR)/tamapoke/%.o: %.cpp Makefile.common Makefile $(SDK_HEADERS) | $(BUILD_DIR)
+	$(V)$(ECHO) [ CXX tamapoke ] $(notdir $<)
+	$(V)$(CXX) -c $(CXXFLAGS) $(TAMAPOKE_CXX_INCLUDES) -fno-exceptions -fno-rtti -fno-unwind-tables -fno-asynchronous-unwind-tables -Wa,-a,-ad,-alms=$(BUILD_DIR)/tamapoke/$(notdir $(<:.cpp=.lst)) $< -o $@
 
 $(BUILD_DIR)/music/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC music ] $(notdir $<)
@@ -1768,6 +1782,7 @@ $(BUILD_DIR):
 	$(V)mkdir $@/c64
 	$(V)mkdir $@/gamecom
 	$(V)mkdir $@/celeste
+	$(V)mkdir $@/tamapoke
 	$(V)mkdir $@/music
 	$(V)mkdir $@/pico8
 	$(V)mkdir $@/tama
@@ -2065,6 +2080,9 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_pkmini,$(CORES_DIR)/pkmini.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_pico8,$(CORES_DIR)/pico8_stub.bin)
 	@$(CP) -O binary --only-section=.overlay_celeste $(BUILD_DIR)/$(TARGET).elf $(HOMEBREWS_FOLDER)/celeste.bin
+ifeq ($(TAMAPOKE),1)
+	@$(CP) -O binary --only-section=.overlay_tamapoke $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/TamaPoke.bin"
+endif
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Music.bin"
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Video.bin"
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(CORES_DIR)/clockmp3.bin"   # Clock MP3-alarm decoder (headerless .overlay_music, staged into RAM_EMU by rg_clock_alarm_mp3.c)
