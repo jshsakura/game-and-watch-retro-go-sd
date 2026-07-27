@@ -351,6 +351,10 @@ exceeds the frame budget).
 Put `.gba` files in `/roms/gba/`; saves land in `/saves/gba/`. Both folders are created
 on first boot. No BIOS file is needed — a clean-room replacement ships with the core.
 
+*Porting it elsewhere?* The file manifest, the wiring points, the invariants that break
+silently and the state of the gpSP fork are in
+**[docs/GBA_UPSTREAM_HANDOFF.md](docs/GBA_UPSTREAM_HANDOFF.md)**.
+
 ### The ROM never enters RAM
 
 A GBA cart is up to 32 MB. There is no RAM to put it in, so it is not put in RAM: the
@@ -431,9 +435,9 @@ yourself, yours stands.
   (`Emu+ppu`, `= PPU`, `Scale`, `LCD wait`) if you want to see it.
 - **Audio is verified by ear on six carts** after the mixer work (plus a resample
   low-pass tied to the cart's mixing rate, and a PSG pitch fix — notes used to come out
-  5 semitones flat at 48 kHz). One intermittent tick remains under investigation; the
-  core keeps a small audio diary it flushes to `/gba_audio_diag.txt` on exit to pin it
-  down.
+  5 semitones flat at 48 kHz). One intermittent tick remains under investigation: 90 s of
+  the Ruby opening put through the exact device math on the host contains zero clicks, so
+  whatever it is, it is born on the device.
 - **No L / R buttons on a Mario unit.** The hardware has no shoulder buttons and no
   physical X/Y either. Games that need L/R are not fully playable there yet.
 - **No link cable, no rumble.** Neither exists on this hardware, and both are switched
