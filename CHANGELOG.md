@@ -2,22 +2,34 @@
 
 ## What's New
 
-### Version 1.3.2
+### Version 1.4.0
 
-- Better CJK fonts by using Fusion font
-- Genesis emulator various improvements :
-  - Add support for 50Hz Megadrive (with region autodetection or manual selection) : fix non US region locked games
-  - Various fixes for bad gfx in Top Gear 3, True Lies, Populous, Viewpoint, Bonanza Bros, ...
-  - Fixes crash for Shadow of the Beast 1 & 2, Red Zone, Twinkle Tale, Formula One, European Club Soccer, ...
-  - Fix Monster World 4 music/sounds
-  - Games using EEPROM instead of SRAM aren't supported because there is not enough available space to add EEPROM support logic. Most of these games are still playable by using a SRAM patch to the roms.
-  - Compatibility sheet is available here : https://docs.google.com/spreadsheets/d/1v_ysHuK0QrVxto2aKH_08LzrP1QkL8WBJvO4ootC8P0/edit?usp=sharing it gives some information about games patches to use for games using EEPROM
-- NES Fceumm emulator : fix for some games not working
-- GB emulator : fix for screen transitions showing white instead of correct palette color
-- MSX : Add support for YJK graphics (Screen 10-12 MSX2+ modes), due to memory constraints, 256KB YJK table has be reduced to 64KB table which is introducing a small loss of quality compared to original system.
-- Add Norvegian translation (Thanks to Idar Lund)
-- Various updates needed to improve Pico-8 support, be sure to use https://github.com/Macs75/pico8_gnw_distro/releases/download/v.0.1.6/pico8_cores-2026-06-07.zip or later package
-- Preliminar support for flash only systems : compile this project with SD_CARD=0 to be able to install the code from this repository in your G&W without SD Card mod. Documentation will be added soon.
+- Improved SD Card performances
+- Add Favorites feature
+- Faster ROM flash cache ("Caching game"): erase with the chip's largest sector size instead of 4KB chunks
+- Add Atari Lynx support (experimental)
+- Add experimental Game Boy Advance support via gpSP (SD card only), sound is choppy, performances will depends on games, requires bios file /bios/gba/gba_bios.bin (open source bios is included but it's not recommended as it could cause some bugs in some games)
+- PC Engine :
+  - Add PC Engine CD support (beta) (SD Card only not for flash only mod) / requires /bios/pce/syscard3.pce bios file with MD5 = 38179df8f4ac870017db21ebcbf53114
+  - Fix Toy Shop Boys not booting (but has small gfx issues)
+- MSX :
+  - Add support for HDD disk images (R/W) using nextor rom
+  - Add NEO16 mapper support
+  - Add ASCII-X mapper support (without AmdFlash due to RAM limitation)
+- Genesis :
+  - Fix gfx issue with International Superstar Soccer Deluxe
+  - Add EEPROM support
+- Gameboy :
+  - Fix various emulation issues (Street Fighter 2, Mr. Do, Prehistorik Man, ...)
+  - Add MBC1M mapper
+  - Add support for Super Gameboy palette and borders for compatible games (select SGB system in options when game is running, border can be disabled to keep palette feature only)
+- Reduced maximum overclocking from 353 to 340MHz to fix some instabilities in Genesis emulator
+- Fix issue which could cause battery to drain too quickly while on sleep.
+- Fix OC profile not restored after sleep/wake up for MSX/Amstrad/NES/Genesis cores (it was causing slowdowns after power off/power on button press)
+- Fix Pico-8 Screenshots (LUT8 mode)
+- Reworked language management to limit amount of used RAM
+- Reworked NES mappers bin files, it's not included in a single file -> Less space needed in FS, faster firmware update process.
+- Added dtcm_calloc/dtcm_malloc to dynamically allocate some info only needed in retro-go frontend so it is available for emulators as it's not needed anymore (allowed to fix pico-8 crash when not using English language)
 
 ## Prerequisites
 To install this version, make sure you have:
