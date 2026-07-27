@@ -20,6 +20,8 @@
 
 extern "C" {
 #include "appid.h"
+#include "cpp_init_array.h"
+#include "gw_linker.h"
 #include "common.h"
 #include "gw_audio.h"
 #include "gw_lcd.h"
@@ -46,6 +48,14 @@ static void commit_save(void) { tamapoke_prefs_commit(); }
 extern "C" void app_main_tamapoke(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   (void)load_state;
   (void)save_slot;
+
+  /* Run this overlay's C++ constructors, now that the overlay is actually in
+   * RAM. __libc_init_array() cannot do it: it runs at boot, from resident code,
+   * when RAM_EMU holds nothing -- so the linker script keeps our .init_array
+   * inside the overlay and we call it here, the way every other C++ core does
+   * (lynx, a2600, c64, tgbdual). Skipping this step is not a missing feature,
+   * it is a black screen on boot: see the comment in STM32H7B0VBTx_SDCARD.ld. */
+  cpp_init_array(__init_array_tamapoke_start__, __init_array_tamapoke_end__);
 
   common_emu_state.frame_time_10us = (uint16_t)(100000 / TAMAPOKE_FPS);
   common_emu_state.pause_after_frames = start_paused ? 2 : 0;

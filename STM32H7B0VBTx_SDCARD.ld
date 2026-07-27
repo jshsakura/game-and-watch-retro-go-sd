@@ -1191,6 +1191,18 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_tamapoke __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_tamapoke_start__ = .;
+    /* A C++ overlay MUST capture its own .init_array here. Left uncaptured, the
+     * generic *(.init_array*) rule sweeps it into the RESIDENT array in internal
+     * flash -- and the pointer it puts there aims at this overlay's VMA, which at
+     * boot holds nothing at all. __libc_init_array() then calls into RAM_EMU
+     * before the LCD is even up: black screen, no BSOD, no boot-rescue, and the
+     * OFW still boots fine, so it does not look like a firmware fault.
+     * That is exactly what shipped in the 1501 and 1610 releases (one ctor,
+     * _GLOBAL__sub_I_onTap from tamapoke_ui.cpp), and what C64/Frodo did before
+     * it. main_tamapoke.cpp runs these at app start via cpp_init_array(). */
+    __init_array_tamapoke_start__ = .;
+    KEEP(build/tamapoke/*.o(.init_array*))
+    __init_array_tamapoke_end__ = .;
     build/tamapoke/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_TAMAPOKE_LOAD_END = .;

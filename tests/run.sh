@@ -354,6 +354,13 @@ bash tests/test_check_logo_index_alignment.sh || fail tests/test_check_logo_inde
 echo "=== check_sd_content_fresh: stale build output must block packaging ==="
 bash tests/test_check_sd_content_fresh.sh || fail tests/test_check_sd_content_fresh.sh
 
+# A C++ overlay whose .init_array leaks into the resident array makes
+# __libc_init_array() call into RAM_EMU before main() -- before the LCD exists.
+# Black screen, no BSOD, no rescue, OFW still boots, so it looks like anything
+# but firmware. Shipped in 1501 and 1610 (TamaPoke) and in C64/Frodo before it.
+echo "=== check_resident_init_array: no boot ctor may point into overlay RAM ==="
+bash tests/test_check_resident_init_array.sh || fail tests/test_check_resident_init_array.sh
+
 # GBA: the flash-XIP split is a contract the compiler cannot check. cpu.o runs
 # from ITCM, which the sentinel pass does not scan, so nothing cpu.o references
 # may live in the blob — move one file across that line in the linker script and

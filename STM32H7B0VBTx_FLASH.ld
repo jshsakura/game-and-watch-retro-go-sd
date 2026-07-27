@@ -843,6 +843,12 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_tamapoke __RAM_EMU_START__ : {
     . = ALIGN(4);
     __ram_emu_tamapoke_start__ = .;
+    /* Capture the overlay's own C++ constructors -- see the SDCARD.ld copy for
+     * what happens when they leak into the resident .init_array (they aim at
+     * RAM_EMU, and boot jumps there before the LCD exists). */
+    __init_array_tamapoke_start__ = .;
+    KEEP(build/tamapoke/*.o(.init_array*))
+    __init_array_tamapoke_end__ = .;
     build/tamapoke/*.o (.data .data* .text .text* .rodata .rodata*)
     . = ALIGN(4);
     _OVERLAY_TAMAPOKE_LOAD_END = .;

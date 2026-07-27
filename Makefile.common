@@ -1084,6 +1084,12 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_
 	@# (0722, 0727); the second time an 18px header slot served a 40px pad and
 	@# the unclipped blit corrupted RAM past the framebuffer. Diff on every link.
 	$(V)python3 scripts/check_logo_index_alignment.py $(PREFIX)nm $@ Core/Inc/retro-go/bitmaps.h
+	@# A C++ overlay whose .init_array leaks into the RESIDENT array makes
+	@# __libc_init_array() call into RAM_EMU before main() -- before the LCD even
+	@# exists. Black screen, no BSOD, no rescue screen, OFW still fine, so it
+	@# looks like anything but firmware. Shipped in 1501 and 1610 (TamaPoke), and
+	@# in C64/Frodo before that. Nothing in the language warns.
+	$(V)python3 scripts/check_resident_init_array.py $(PREFIX)objdump $@
 	@# A profiler that compiles but whose probes never made it into the objects
 	@# produces a plausible-looking dump of nothing. The 32X profile shipped
 	@# exactly that. Pass this build's intent: an incremental tree keeps the

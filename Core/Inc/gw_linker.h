@@ -227,3 +227,5 @@ extern void (* __init_array_lynx_start__[])(void);
 extern void (* __init_array_lynx_end__[])(void);
 extern void (* __init_array_c64_start__[])(void);
 extern void (* __init_array_c64_end__[])(void);
+extern void (* __init_array_tamapoke_start__[])(void);
+extern void (* __init_array_tamapoke_end__[])(void);
