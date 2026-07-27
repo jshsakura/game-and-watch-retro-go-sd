@@ -18,6 +18,13 @@
 #define UI_BAR_OK 0x5DCD  // #58b868
 #define UI_BAR_WARN 0xED07  // #e8a23c
 #define UI_BAR_BAD 0xEA87  // #e8503a
+/* The red berry, drawn from the green berry's shape with this tint. A deeper
+ * crimson than UI_BAR_BAD (#e8503a), which is the same orange-red as the apple's
+ * own sprite -- at 16px the two were telling apart only by the apple's leaf. Still
+ * red, because the game calls this one the red berry (S_BERRY_RED); a purple would
+ * read more distinctly and then contradict its own label. */
+#define UI_BERRY_RED 0xB987  // #b8323a
+
 #define UI_WHITE 0xFFFF  // #ffffff
 
 enum ElementType : uint8_t { TYPE_FUEGO, TYPE_PLANTA, TYPE_AGUA };

@@ -858,7 +858,7 @@ static void drawFeedMenu(uint32_t now) {
   struct Item { const char *const *map; uint16_t tint; };
   const Item items[5] = {
     {SPR_ICON_FOOD,    0},              /* the apple keeps its own colours */
-    {SPR_ICON_BERRY_G, UI_BAR_BAD},     /* red   */
+    {SPR_ICON_BERRY_G, UI_BERRY_RED},   /* red   */
     {SPR_ICON_BERRY_B, 0},              /* blue  */
     {SPR_ICON_BERRY_G, 0},              /* green */
     {SPR_ICON_CANDY,   0},
