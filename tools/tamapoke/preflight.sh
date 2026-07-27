@@ -65,7 +65,7 @@ echo "== 3. the branch carries only this port =="
 
 # The first attempt at this branch dragged four unrelated commits (an
 # external/sm bump among them) toward a release. Only wiring may differ.
-ALLOWED='Core/Inc/gw_linker.h|Core/Src/retro-go/rg_emulators.c|Makefile|Makefile.common|STM32H7B0VBTx_SDCARD.ld|.gitignore|docs/TAMAPOKE'
+ALLOWED='scripts/update_gittag.sh|Core/Inc/gw_linker.h|Core/Src/retro-go/rg_emulators.c|Makefile|Makefile.common|STM32H7B0VBTx_SDCARD.ld|.gitignore|docs/TAMAPOKE'
 stray=$(git diff --name-only "$BASE" 2>/dev/null | grep -v tamapoke | grep -vE "^($ALLOWED)" || true)
 if [ -z "$stray" ]; then
     ok "diff vs $BASE is TamaPoke + wiring only"
@@ -119,7 +119,23 @@ if [ -s "$ELF" ] && [ -x scripts/check_core_symbol_aliases.py ]; then
 fi
 
 echo
-echo "== 6. the card payload =="
+echo "== 6. nothing shareable-breaking in the release =="
+
+# .gitignore does not protect the release: the tar is built from sd_content/,
+# not from what git tracks. Assets staged there for testing rode into a
+# published release once, which is how this check exists.
+if [ -d sd_content/mons ] || [ -f sd_content/roms/homebrew/tamapoke_assets.dat ]; then
+    bad "generated assets are in sd_content/ -- they would ship in the release tar"
+else
+    ok "no generated assets under sd_content/"
+fi
+if [ -s release/gw_update.tar ]; then
+    n=$(tar tf release/gw_update.tar 2>/dev/null | grep -cE '^mons/|tamapoke_assets\.dat' || true)
+    [ "$n" -eq 0 ] && ok "release tar carries no assets" || bad "release tar carries $n asset file(s)"
+fi
+
+echo
+echo "== 7. the card payload =="
 for f in sd_content/roms/homebrew/TamaPoke.bin; do
     [ -s "$f" ] && ok "$(basename "$f") $(stat -c %s "$f") B" || note "$f not built yet"
 done
