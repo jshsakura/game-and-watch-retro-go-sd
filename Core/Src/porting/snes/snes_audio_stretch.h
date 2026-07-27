@@ -19,12 +19,23 @@
  * already produced and resamples them across the real time that actually
  * elapsed. The emulated machine is untouched; only the playback rate moves.
  *
- * What it costs
- * -------------
- * The output is pitched down by exactly the speed deficit — at 44 fps the
- * music plays at 0.74x. That is not a distortion being introduced: the game
- * is ALREADY running at 0.74x, and the video with it. This makes the audio
- * agree with the video instead of stuttering at the wrong rate.
+ * What it may and may not do
+ * --------------------------
+ * It first shipped following the deficit all the way down — at 44 fps the
+ * music played at 0.74x — on the argument that the game is ALREADY running at
+ * 0.74x and the audio should agree with the video. The device disagreed. On
+ * Zelda, Super Mario World and Mario Kart the same verdict came back in the
+ * same word: flat. A transposition down a fifth is not the video's slowness
+ * made audible, it is a second fault on top of it, and unlike a gap it never
+ * stops.
+ *
+ * So the playback rate is now clamped to ±1% (~17 cents, under the ~20-25
+ * cents at which a detune registers). Inside that band the module still does
+ * the job it was written for: it absorbs the jitter of a pull landing part of
+ * a frame early or late, which is what turns into a gap. Outside it the ring
+ * runs dry, the pull holds its last sample — no zero, no click — and the old
+ * cadence returns. A core at 68% speed has an fps problem; spending pitch on
+ * it buys nothing and costs the music.
  *
  * At full speed the loop converges to step == 1.0 and the pull is a straight
  * copy, so a 60 fps scene is unaffected.

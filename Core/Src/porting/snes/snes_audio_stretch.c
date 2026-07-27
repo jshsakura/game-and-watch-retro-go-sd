@@ -13,12 +13,39 @@ _Static_assert((RING & RING_MASK) == 0u, "ring must be a power of two");
  * frames lets a momentary dip reach the floor and start holding samples. */
 #define TARGET     640u
 
-/* Step limits, Q16 (1.0 == 65536). The clamp keeps a pathological scene (a
- * load, a pause) from driving the rate somewhere unrecognisable; it degrades
- * to a bounded stretch plus held samples rather than anything unbounded. */
+/* How much recent history a dry pull loops back over. ~4 ms at 16 kHz: long
+ * enough to carry pitch rather than buzz, short enough that the repeat reads
+ * as flutter rather than as an echo. Must be <= TARGET, since priming is what
+ * guarantees this much history exists. */
+#define REPEAT     64u
+_Static_assert(REPEAT <= TARGET, "a dry pull may only rewind into primed history");
+
+/* Sanity bound on the MEASURED ratio. Not a playback rate: it exists only to
+ * keep one pathological pull (a load, a pause) from poisoning the average. */
+#define MEASURE_MAX 262144u  /* 4.0x */
+
+/* The playback-rate band, Q16 (1.0 == 65536). THIS is the number you hear.
+ *
+ * The measured production/consumption ratio is genuinely below 1.0 whenever
+ * the core is under 60.2 emulated fps -- 0.739 at 44, 0.68 at 41 -- and this
+ * module used to follow it all the way down. Arithmetically that is right and
+ * musically it is wrong: reading the ring at 0.68 is the entire soundtrack
+ * transposed down a fifth and slowed by a third, for as long as the scene is
+ * slow. On the device it was reported the same way on three different games
+ * (Zelda, Super Mario World, Mario Kart) and by the same word each time --
+ * flat. A listener cannot un-hear it, and unlike a gap it never stops.
+ *
+ * So the matcher may correct only what nobody can hear. +/-1% is ~17 cents,
+ * under the ~20-25 cents where a detune starts to register on sustained
+ * notes, and it is still far more than the jitter this module exists to
+ * absorb: a pull that lands a fraction of a frame early or late. Past the
+ * band the ring runs dry and the pull holds its last sample -- no zero, no
+ * click, but the old cadence back. That is the honest outcome: a core at 68%
+ * speed has an fps problem, and paying for it in pitch does not fix the
+ * audio, it breaks the audio too. */
 #define STEP_ONE   65536u
-#define STEP_MIN   16384u   /* 0.25x */
-#define STEP_MAX   262144u  /* 4.0x  */
+#define STEP_MIN   64881u   /* 0.99x */
+#define STEP_MAX   66191u   /* 1.01x */
 
 static int16_t  ring[RING];
 static uint16_t rd, wr, fill;
@@ -85,14 +112,14 @@ static void retune(uint16_t n) {
    * the writer. The final step is clamped instead, where a clamp cannot skew
    * an average. */
   uint32_t inst = (uint32_t)(((uint64_t)pushed << 16) / n);
-  if (inst > STEP_MAX) inst = STEP_MAX;
+  if (inst > MEASURE_MAX) inst = MEASURE_MAX;
 
   if (settled < 128u) {
     warm_in  += pushed;
     warm_out += n;
     settled++;
     base = (uint32_t)(((uint64_t)warm_in << 16) / (warm_out ? warm_out : 1u));
-    if (base > STEP_MAX) base = STEP_MAX;
+    if (base > MEASURE_MAX) base = MEASURE_MAX;
   } else {
     base = base - (base >> 5) + (inst >> 5);       /* EMA, 1/32 */
   }
@@ -116,14 +143,26 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
   retune(n);
 
   for (uint16_t i = 0; i < n; i++) {
-    /* Not primed yet (fresh ROM) or the producer genuinely stalled: hold the
-     * last value. At startup that is silence, which is correct; mid-run it is
-     * a held sample, inaudible where a zero would be a click -- and a zero is
-     * exactly what the old path wrote. */
-    if (!primed || fill < 2u) {
-      if (primed) underruns++;
+    /* Not primed yet (fresh ROM): hold. At startup that is silence, which is
+     * what a fresh ROM sounds like. */
+    if (!primed) {
       dst[i] = last;
       continue;
+    }
+
+    /* Dry: the core did not produce enough for this period, and the rate band
+     * deliberately will not close the gap by slowing the music down. Holding
+     * one sample would -- a DC step, buzzy for the ~25% of samples a 32%
+     * deficit costs. So loop the last few milliseconds instead: reads only
+     * advance rd, they never clear the ring, so the samples behind it are
+     * still there and still recent. Priming guarantees at least TARGET of
+     * them exist before this can run. The result is a flutter on a slow
+     * scene, at the right pitch, which is what the pre-stretcher path
+     * sounded like and what the device was reported to prefer. */
+    if (fill < 2u) {
+      underruns++;
+      rd = (uint16_t)((rd - REPEAT) & RING_MASK);
+      fill = (uint16_t)(fill + REPEAT);
     }
 
     int32_t s0 = ring[rd];

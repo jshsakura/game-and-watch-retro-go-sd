@@ -103,10 +103,18 @@ int main(void) {
     printf("    step=%.4f fill=%u underruns=%u (steady %u) pulls=%u\n",
            step, snes_stretch_fill(), snes_stretch_underruns(), steady_underruns, pulls);
     check(!saw, "44 fps: no silent gap (the bug this module exists for)");
-    check(steady_underruns == 0, "44 fps: never runs dry in steady state");
-    /* The stretch must match the speed deficit, or the backlog would grow
-     * without bound and latency with it. 44.4/60.15 = 0.738. */
-    check(fabs(step - 44.4 / 60.15) < 0.06, "44 fps: rate tracks the speed deficit");
+    /* It used to assert the opposite of this line: that the rate tracked the
+     * deficit down to 0.738. It does not any more, and must not -- that is the
+     * whole soundtrack a fifth flat for as long as the scene is slow, which is
+     * how it was reported from the device on three separate games. The matcher
+     * is allowed ±1% and no more; a deficit this large is an fps problem and
+     * has to look like one. */
+    check(fabs(step - 1.0) <= 0.011, "44 fps: rate stays inside the inaudible band");
+    /* And the ring is therefore expected to run dry here. That is not a
+     * regression to the old zero-fill: the pull holds its last sample, so the
+     * output still contains no zeros (checked above) -- it just stops
+     * pretending the core is keeping up. */
+    check(snes_stretch_underruns() > 0, "44 fps: the deficit is reported, not hidden in the pitch");
   }
 
   /* 3. A very slow scene (a load, a heavy transition) must degrade, not
@@ -129,8 +137,15 @@ int main(void) {
     run(16000.0 / 266.0 / 90.0, 400, &saw, &mx, &pulls);
     double step = snes_stretch_step_q16() / 65536.0;
     printf("    step=%.4f fill=%u\n", step, snes_stretch_fill());
-    check(step > 1.05, "90 fps: rate rises to drain the backlog");
-    check(snes_stretch_fill() < SNES_STRETCH_RING, "90 fps: ring does not pin full");
+    /* Overproduction is bounded the same way, and for the same reason: racing
+     * the read rate up to drain the ring is a pitch RISE, just as audible as
+     * the fall. The rate goes to the top of the band and stays there; the ring
+     * saturates and push() drops its oldest sample, which is bounded and only
+     * reachable in fast-forward, where a skip is what fast-forward sounds
+     * like. */
+    check(step <= 1.011, "90 fps: rate does not race up out of the band");
+    check(step > 1.0, "90 fps: rate does lean against the backlog");
+    check(snes_stretch_fill() <= SNES_STRETCH_RING, "90 fps: ring stays bounded");
   }
 
   printf("%s (%d failure%s)\n", failures ? "FAILED" : "OK",
