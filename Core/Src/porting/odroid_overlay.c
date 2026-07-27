@@ -1397,7 +1397,33 @@ int odroid_overlay_settings_menu(odroid_dialog_choice_t *extra_options, void_cal
     {
         int options_count = get_dialog_items_count(options);
         int extra_options_count = get_dialog_items_count(extra_options);
-        memcpy(&options[options_count], extra_options, (extra_options_count + 1) * sizeof(odroid_dialog_choice_t));
+
+        /* options[] is a fixed MAX_OPTIONS_COUNT array in THIS stack frame and
+         * this copy had no bound. A core offering more entries than fit wrote
+         * straight past the end of the frame -- and a smashed frame does not
+         * fault here, it faults later, somewhere else, holding a pointer nobody
+         * can trace back to this line. The largest core list today (music, 11)
+         * still fits, so this is a guard rather than a repair; the point is that
+         * the next core to add an option cannot silently become a stack
+         * overflow. Truncating loses menu entries, which is something a person
+         * can see and report. Leave room for the terminator. */
+        int room = MAX_OPTIONS_COUNT - options_count - 1;
+        if (room < 0)
+            room = 0;
+        if (extra_options_count > room) {
+            printf("settings_menu: %d extra options, room for %d -- TRUNCATED\n",
+                   extra_options_count, room);
+            extra_options_count = room;
+        }
+
+        /* Copy the entries, then write the terminator ourselves: the source is
+         * not required to carry one where we can find it (get_dialog_items_count
+         * returns 0 for a list whose end it cannot see, and MSX/Amstrad build
+         * theirs by hand). */
+        memcpy(&options[options_count], extra_options,
+               extra_options_count * sizeof(odroid_dialog_choice_t));
+        options[options_count + extra_options_count] =
+            (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
     }
 
     int ret = odroid_overlay_dialog(curr_lang->s_OptionsTit, options, 0, repaint, flags);
@@ -1470,7 +1496,33 @@ odroid_overlay_game_settings_menu(odroid_dialog_choice_t *extra_options, void_ca
     {
         int options_count = get_dialog_items_count(options);
         int extra_options_count = get_dialog_items_count(extra_options);
-        memcpy(&options[options_count], extra_options, (extra_options_count + 1) * sizeof(odroid_dialog_choice_t));
+
+        /* options[] is a fixed MAX_OPTIONS_COUNT array in THIS stack frame and
+         * this copy had no bound. A core offering more entries than fit wrote
+         * straight past the end of the frame -- and a smashed frame does not
+         * fault here, it faults later, somewhere else, holding a pointer nobody
+         * can trace back to this line. The largest core list today (music, 11)
+         * still fits, so this is a guard rather than a repair; the point is that
+         * the next core to add an option cannot silently become a stack
+         * overflow. Truncating loses menu entries, which is something a person
+         * can see and report. Leave room for the terminator. */
+        int room = MAX_OPTIONS_COUNT - options_count - 1;
+        if (room < 0)
+            room = 0;
+        if (extra_options_count > room) {
+            printf("settings_menu: %d extra options, room for %d -- TRUNCATED\n",
+                   extra_options_count, room);
+            extra_options_count = room;
+        }
+
+        /* Copy the entries, then write the terminator ourselves: the source is
+         * not required to carry one where we can find it (get_dialog_items_count
+         * returns 0 for a list whose end it cannot see, and MSX/Amstrad build
+         * theirs by hand). */
+        memcpy(&options[options_count], extra_options,
+               extra_options_count * sizeof(odroid_dialog_choice_t));
+        options[options_count + extra_options_count] =
+            (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
     }
 
     odroid_audio_mute(true);

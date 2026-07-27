@@ -180,8 +180,22 @@ __attribute__((optimize("-O0"))) void BSOD(BSOD_t fault, uint32_t pc, uint32_t l
    * THE register: UsageFault[31:16] (INVSTATE=NULL/garbage branch,
    * UNALIGNED=64-bit mis-aligned store), BusFault[15:8] (IMPRECISERR),
    * MemManage[7:0]. Decode with tools/crash_decode/decode.py. */
-  snprintf(regs, sizeof(regs), "PC=0x%08lx LR=0x%08lx CFSR=%08lx",
-           pc, lr, (unsigned long)SCB->CFSR);
+  unsigned long cfsr = (unsigned long)SCB->CFSR;
+  int rn = snprintf(regs, sizeof(regs), "PC=0x%08lx LR=0x%08lx CFSR=%08lx",
+                    pc, lr, cfsr);
+  /* And the address it faulted ON, when the hardware captured one. Without it a
+   * precise BusFault names the instruction but never the pointer -- which is the
+   * whole difference between "a bad pointer" and "THIS bad pointer", and the
+   * difference between reading the value back and guessing at it. Cost is one
+   * conditional and ~16 characters on a line that already wraps.
+   * BFARVALID = CFSR bit 15, MMARVALID = bit 7; both say the register is stale
+   * garbage when clear, so print nothing rather than a lie. */
+  if (rn > 0 && rn < (int)sizeof(regs)) {
+    if (cfsr & (1u << 15))
+      snprintf(regs + rn, sizeof(regs) - rn, " BFAR=0x%08lx", (unsigned long)SCB->BFAR);
+    else if (cfsr & (1u << 7))
+      snprintf(regs + rn, sizeof(regs) - rn, " MMFAR=0x%08lx", (unsigned long)SCB->MMFAR);
+  }
 
   lcd_sync();
   lcd_reset_active_buffer();
