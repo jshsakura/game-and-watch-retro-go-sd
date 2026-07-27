@@ -339,6 +339,21 @@ bash tests/test_check_core_symbol_aliases.sh || fail tests/test_check_core_symbo
 echo "=== tests/run.sh: sm parity SKIPS (not fails) without external/sm ==="
 bash tests/test_sm_skip_guard.sh || fail tests/test_sm_skip_guard.sh
 
+# /bios/logo.bin is indexed positionally by the RG_LOGO_* enum, and only the
+# LINK ORDER of the LOGO_DATA structs backs that up -- a thing no compiler
+# checks and which two upstream merges have quietly broken. The 0727 break was
+# not cosmetic: an 18px header slot was served a 40px pad and the (then
+# unclipped) blit wrote past the framebuffer, killing the launcher on the grid
+# home. Runs the real gate against the real 0727 link order and the real
+# shipped-broken header, so case (b) is RED against the actual bug.
+echo "=== check_logo_index_alignment: enum vs link order, RED against the 0727 header ==="
+bash tests/test_check_logo_index_alignment.sh || fail tests/test_check_logo_index_alignment.sh
+
+# The release tar is rolled from sd_content/ wholesale, so a previous build's
+# leftovers ship: 305 sprite files once, a deleted core's 1 MB payload later.
+echo "=== check_sd_content_fresh: stale build output must block packaging ==="
+bash tests/test_check_sd_content_fresh.sh || fail tests/test_check_sd_content_fresh.sh
+
 # GBA: the flash-XIP split is a contract the compiler cannot check. cpu.o runs
 # from ITCM, which the sentinel pass does not scan, so nothing cpu.o references
 # may live in the blob — move one file across that line in the linker script and

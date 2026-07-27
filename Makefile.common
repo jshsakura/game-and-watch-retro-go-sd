@@ -1079,6 +1079,11 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_
 	@# shipped a build that drove the SNES bus through Super Mario World's g_snes.
 	@# It links clean; only this catches it.
 	$(V)NM=$(PREFIX)nm python3 scripts/check_core_symbol_aliases.py $(BUILD_DIR) $@
+	@# /bios/logo.bin is indexed by the RG_LOGO_* enum, and only the LINK ORDER
+	@# of the LOGO_DATA structs backs that up. It has drifted silently twice
+	@# (0722, 0727); the second time an 18px header slot served a 40px pad and
+	@# the unclipped blit corrupted RAM past the framebuffer. Diff on every link.
+	$(V)python3 scripts/check_logo_index_alignment.py $(PREFIX)nm $@ Core/Inc/retro-go/bitmaps.h
 	@# A profiler that compiles but whose probes never made it into the objects
 	@# produces a plausible-looking dump of nothing. The 32X profile shipped
 	@# exactly that. Pass this build's intent: an incremental tree keeps the
@@ -2221,6 +2226,14 @@ release: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cre
 ifeq ($(SD_CARD),0)
 	$(error release target requires SD_CARD=1; SD_CARD=0 builds require proprietary blobs and cannot produce a distributable release)
 endif
+	@# The tar is rolled from sd_content/ wholesale, so anything a PREVIOUS build
+	@# left there ships too -- .gitignore cannot help and no git-based audit can
+	@# see it. That is how 305 sprite files went out on 0727, and how a removed
+	@# core's payload (32x.bin + 32x.xip, ~1 MB) turned up in a later tar. Both
+	@# are the same fault: a gate must look at the artefact, not at a proxy.
+	@# create_sd_data rewrites every file it owns, so a build output older than
+	@# the ELF is by definition something this firmware no longer produces.
+	$(V)./scripts/check_sd_content_fresh.sh $(BUILD_DIR)/$(TARGET).elf
 	@tar --format=ustar -cf $(RELEASE_FOLDER)/gw_update.tar -C sd_content $$(find sd_content -mindepth 1 -maxdepth 1 -exec basename {} \;)
 	@./scripts/gen_release_package.sh
 endif
