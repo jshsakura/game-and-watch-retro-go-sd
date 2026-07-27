@@ -385,8 +385,8 @@ void snes_profile_init(uint32_t audio_rate, uint32_t audio_period_samples) {
    * and rg_emulators.c:1879 clears the cursor to the "unowned" sentinel right
    * before launching a game. So the first ahb_calloc() here killed the device
    * with `Assertion "ram_start != 0" failed ... ram_malloc` before a single
-   * frame ran. md32x hit exactly this and left the warning at
-   * main_md32x.c:511 ("ahb_calloc() tries ram_malloc FIRST ... first device
+   * frame ran. The 32X core hit exactly this and left the warning behind
+   * before it was removed ("ahb_calloc() tries ram_malloc FIRST ... first device
    * boot died"); this file's own comment above already names ahb_only_malloc
    * as the intended allocator, so this is the call it always meant.
    * ahb_only_malloc does NOT return NULL on overflow -- it asserts -- which is

@@ -26,7 +26,8 @@ static int logo_image_count = 0; /* # entries loaded from logo.bin (for bounds c
  * the pointers, so every spilled logo stayed resident for the whole lifetime
  * of the running core, on a heap that is only ~82 KB to begin with.
  *
- * That is what killed 32X Doom: picodrive asks for a 16 KB cart-SRAM buffer
+ * That is what killed 32X Doom (a core since removed, docs/32X_CLOSED.md,
+ * but the failure mode is general): picodrive asked for a 16 KB cart-SRAM buffer
  * during PicoLoadMedia (cart.c, the bad-header 0x200000-0x203FFF default) and
  * the heap was 748 B short, so _sbrk asserted. The size of the leak scales
  * with how many systems have logos AND with how full ITCM already is, which
@@ -59,7 +60,7 @@ void rg_reset_logo_buffers() {
     /* free() returns blocks to newlib's free list; it does NOT move the sbrk
      * break, so heap-used will not drop here. What decides whether a core's
      * later allocation fits is whether these blocks coalesce into a run big
-     * enough for it (32X wants 16 KB of cart SRAM). They were allocated back
+     * enough for it (the 32X wanted 16 KB of cart SRAM). They were allocated back
      * to back while parsing logo.bin, so they should -- but print the total
      * so a device log can be checked against the request that failed rather
      * than assumed. */
@@ -2903,7 +2904,9 @@ const retro_logo_image header_snes LOGO_DATA = {
     },
 };
 
-/* Sega 32X name header (Luckiest Guy) — the NEW last LOGO_DATA struct, so it
+/* Sega 32X name header (Luckiest Guy). RETIRED 0727 with the core, but the
+   struct and its enum slot stay: /bios/logo.bin is index-addressed and cards
+   in the field are laid out to this order. — the NEW last LOGO_DATA struct, so it
    is the last /bios/logo.bin entry; matches RG_LOGO_HEADER_32X (no existing index
    shifts). Bitmap filled in by tools/gen_name_logos.py --apply. */
 const retro_logo_image header_32x LOGO_DATA = {

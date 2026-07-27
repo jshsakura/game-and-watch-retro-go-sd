@@ -1,5 +1,8 @@
 # 32X QEMU M7 Rig — 구조 분석 및 측정 설계
 
+> ⛔ **0727: 여기 설명된 리그는 삭제됐습니다**(32X 코어와 함께 — `docs/32X_CLOSED.md`).
+> 구조 설명은 다음 코어의 리그를 세울 때 참고 자료로 남깁니다.
+
 측정 주도 32X 성능 개선 작업의 분석 문서. 실행 가이드는
 `docs/32X_PERFORMANCE_HISTOGRAM_GUIDE.md`를, 결과는 `docs/32X_PERFORMANCE_RESULTS.md`를 본다.
 

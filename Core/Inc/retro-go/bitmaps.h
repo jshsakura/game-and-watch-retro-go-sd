@@ -136,7 +136,10 @@ enum {
     // LOGO_DATA struct in rg_logos.c). Same rule as VB/GBA/SNES above: it MUST
     // sit here, after the last logo.bin-backed header and BEFORE the colour-only
     // pad block, so enum value == 3 + logo.bin index stays exact.
-    RG_LOGO_HEADER_32X,
+    RG_LOGO_HEADER_32X,   /* RETIRED 0727 (core removed) -- SLOT STAYS: this
+                           * enum is the index into /bios/logo.bin, so removing
+                           * an entry shifts every logo after it on cards that
+                           * are already out there. */
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
@@ -161,7 +164,7 @@ enum {
     RG_LOGO_PAD_GBA,
     // Sega 32X colour tab icon (cicon_32x; color_icon_for_logo only, no
     // logo.bin entry -> rg_get_logo() returns NULL, bounds-checked)
-    RG_LOGO_PAD_32X,
+    RG_LOGO_PAD_32X,      /* RETIRED 0727 -- slot kept, see above */
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);

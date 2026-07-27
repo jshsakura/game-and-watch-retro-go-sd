@@ -39,7 +39,8 @@ _sbrk (int incr)
         /* POSIX contract: sbrk reports failure with (void *)-1, which makes
          * malloc() return NULL so the caller's own out-of-memory path runs.
          * This used to assert(0) instead, which turned every soft-handled
-         * allocation failure into a fatal exception — picodrive, for one,
+         * allocation failure into a fatal exception — picodrive (the 32X
+         * core, since removed) was one such caller,
          * already degrades cleanly (cart.c: "if (Pico.sv.data == NULL)
          * Pico.sv.flags &= ~SRF_ENABLED"), but never got the chance.
          * The log line above stays, so an OOM is still loud and traceable;

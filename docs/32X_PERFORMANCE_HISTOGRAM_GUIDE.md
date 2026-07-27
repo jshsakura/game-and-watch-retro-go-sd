@@ -1,5 +1,16 @@
 # Sega 32X performance histogram guide
 
+> ## ⛔ 이 문서의 도구는 더 이상 트리에 없습니다 (0727)
+>
+> 32X 코어와 그 리그(`tools/m7_qemu_rig/rig_32x.c`, `run_32x.sh`, 링커 스크립트)는
+> **삭제됐습니다** — 판정과 이유는 `docs/32X_CLOSED.md`, 실험 이력 전부는
+> `docs/32X_DEVICE_MEASUREMENT_LOG.md`에 있습니다.
+>
+> 아래의 명령줄은 **그대로는 실행되지 않습니다.** 그럼에도 남기는 이유는 여기 적힌 것이
+> 32X 전용 지식이 아니라 **측정 방법론**이기 때문입니다 — 히스토그램으로 핫 루프를 좁히고,
+> 게스트 PC에 wall을 귀속시키고, 기기 DWT로 QEMU 명령 수를 반증하는 절차는 다음 코어에서
+> 그대로 재사용됩니다. 되살리려면 `git log -- tools/m7_qemu_rig/rig_32x.c`에서 꺼내십시오.
+
 This is the execution guide for the next GLM/Codex session. The goal is not to
 guess at optimizations. The goal is to measure a representative 32X workload,
 identify the remaining hot paths, prove an optimization is safe, and then

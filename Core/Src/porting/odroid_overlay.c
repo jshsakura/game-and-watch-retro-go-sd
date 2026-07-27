@@ -970,13 +970,14 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *options, i
         if (repaint != NULL)
         {
             /* Cores whose repaint() fully overwrites the active buffer
-             * (e.g. md32x copies a frozen game frame, gwenesis re-renders
-             * from VDP state) set NO_BG_DARKEN and don't need a pre-clear.
-             * Skipping lcd_clear here is essential for md32x: the frozen
-             * game-frame pointer aliases one of the two double-buffer FBs,
-             * and after lcd_swap() toggles them the frozen FB becomes the
-             * active one — lcd_clear would wipe it, producing a black
-             * background on every repaint after the first. */
+             * (e.g. gwenesis re-renders it from VDP state) set NO_BG_DARKEN
+             * and do not need a pre-clear.
+             *
+             * A core that instead COPIES a frozen game frame must not be
+             * cleared first: its frozen-frame pointer aliases one of the two
+             * double-buffer FBs, and once lcd_swap() toggles them the frozen
+             * FB becomes the active one — lcd_clear would wipe it, producing
+             * a black background on every repaint after the first. */
             if ((flags & ODROID_MENU_FLAG_NO_BG_DARKEN) == 0)
                 lcd_clear_active_buffer();
             repaint();
