@@ -69,7 +69,6 @@ configuration — it's not part of the firmware you flash.)
 | **game.com** | Tiger | 🧪 Lab | plays the library; 4-action pad mapped onto G&W buttons |
 | **Odyssey² / Videopac** | O2EM | 🧪 Lab (enabled) | raw-ROM path fixed; save/load/resume; multi-game cart select |
 | **Super Metroid** | snesrev/sm port | 🧪 Lab | native C reimplementation, 60 fps, savestates. [Details](#super-metroid) |
-| **Sega 32X** | PicoDrive | 🧪 Lab | ⚠️ **experimental / in progress** — SD builds only, `/roms/32x` |
 | Tamagotchi | TamaLib | Upstream (P2 🧪) | P1 upstream; P2 experimental in this fork |
 | NES, Game Boy / Color, Master System, Game Gear, Genesis, SG-1000 | fceumm / gnuboy / smsplusgx / gwenesis | Upstream | see upstream docs |
 | MSX 1/2/2+, Amstrad CPC6128 | blueMSX / caprice32 | Upstream | preview-quality; see upstream docs |
@@ -506,7 +505,7 @@ image rather than shipped as a dead menu entry.
 
 ## TamaPoke (homebrew)
 
-A port of the [TamaPoke](https://github.com/kaogeek/TamaPoke) ESP32 homebrew (MIT): a
+A port of the [TamaPoke](https://github.com/socquique/TamaPoke) ESP32 homebrew (MIT): a
 virtual pet you feed, clean, play with and evolve. Upstream targets a 466×466 round
 touch panel; here it is 320×240 and buttons, with a focus cursor standing in for taps.
 
@@ -534,7 +533,7 @@ species names are trademarks, so neither the source tree nor a published release
 any of it. Building the file locally is a two-step job against your own upstream checkout:
 
 ```
-git clone https://github.com/kaogeek/TamaPoke ~/TamaPoke
+git clone https://github.com/socquique/TamaPoke ~/TamaPoke
 TAMAPOKE_UPSTREAM=~/TamaPoke ./tools/tamapoke/stage_sd.sh ~/TamaPoke/tools/sdcard/mons /mnt/sd
 ```
 
