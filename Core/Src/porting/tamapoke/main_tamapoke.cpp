@@ -10,6 +10,7 @@
 #include <Preferences.h>
 
 #include "dex.h"
+#include "i18n.h"
 #include "species.h"
 #include "tamapoke_assets.h"
 #include "tamapoke_audio.h"
@@ -65,6 +66,10 @@ extern "C" void app_main_tamapoke(uint8_t load_state, uint8_t start_paused, int8
   tamapoke_shim_init();
   audioBegin();
   sdReady = tamapoke_assets_open();
+  /* Restore the saved UI language BEFORE the names load, since which name table
+   * is read depends on it. Nothing called this, so every launch came up in the
+   * default (English) however the pill had been left. */
+  loadLang();
   /* Species names live on the card, not in the binary -- see dex.h. Missing
    * names are not fatal: everything reads as "#NNN" and the game still plays. */
   tamapoke_dex_load_names();

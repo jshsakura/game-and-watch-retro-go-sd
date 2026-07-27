@@ -831,7 +831,12 @@ void onTap(int16_t x, int16_t y) {
       if (x >= CLOCK_SOUND_X && x < CLOCK_SOUND_X + CLOCK_SOUND_W)
         { audioSetEnabled(!audioEnabled()); return; }
       if (x >= CLOCK_LANG_X && x < CLOCK_LANG_X + CLOCK_LANG_W)
-        { gLang = (Lang)((gLang + 1) % LANG_COUNT); return; }
+        /* setLang(), not `gLang = ...`: assigning the variable switched the UI
+         * but skipped both of setLang()'s other jobs -- persisting the choice
+         * (so it reset to English on every launch) and repointing DEX_TBL at
+         * the new language's names on the card (so species kept the previous
+         * language's names). Upstream's own setter does all three. */
+        { setLang((Lang)((gLang + 1) % LANG_COUNT)); return; }
     }
     if (y >= CLOCK_OK_Y && y < CLOCK_OK_Y + CLOCK_OK_H &&
         x >= CLOCK_OK_X && x < CLOCK_OK_X + CLOCK_OK_W) {

@@ -103,6 +103,7 @@ Atari Lynx, WonderSwan, Neo Geo Pocket, Virtual Boy and Game Boy Advance need no
 | **Music player (MP3)** | minimp3 streaming, album art (HW JPEG + PNG, correct colours), ID3 tags, seek; keeps playing across sleep and while browsing |
 | **Video player (MJPEG-AVI)** | faster SD reads, sleep recovery, jitter-buffer read-ahead; companion encoder VBV-caps heavy scenes |
 | **Clock** | full clock suite — see [below](#clock-time-menu--clock) |
+| **TamaPoke** | virtual-pet game; 7 UI languages, Korean added by this fork — see [below](#tamapoke-homebrew) |
 
 ### Clock (TIME menu → Clock)
 
@@ -502,6 +503,48 @@ the game as directions; `LEFT`/`RIGHT` still are, so you can still aim diagonall
 Super Metroid is SD-card only. A flash-only (`SD_CARD=0`) build cannot cache and relocate
 `sm.xip`, nor hold the 3 MB ROM the port reads at runtime, so the core is left out of that
 image rather than shipped as a dead menu entry.
+
+## TamaPoke (homebrew)
+
+A port of the [TamaPoke](https://github.com/kaogeek/TamaPoke) ESP32 homebrew (MIT): a
+virtual pet you feed, clean, play with and evolve. Upstream targets a 466×466 round
+touch panel; here it is 320×240 and buttons, with a focus cursor standing in for taps.
+
+Seven UI languages, switchable in the game's own settings screen: **English (the
+default)**, Spanish, French, German, Italian, Portuguese — those six are upstream's — plus
+**Korean**, which this fork adds. Korean does not go through upstream's bitmap font, which
+has no Hangul; it is drawn by the launcher's resident i18n renderer, which already loads
+`fonts/unicode_hangul.bin` from the card, so it costs the core no RAM.
+
+It is **built into every firmware** — there is no flag and nothing to enable. Launch it
+from the **Homebrew** tab, same as Celeste or the Music player.
+
+What it needs from the card is one file, and it is the one thing not shipped:
+
+| File | What it is | Where it comes from |
+| ---- | ---------- | ------------------- |
+| `TamaPoke.bin` | the core overlay — this is the entry you launch | the update, automatically |
+| `tamapoke_assets.dat` | creature sprites and species names | **you build it** (see below) |
+
+Without the assets file the game still runs and is fully playable — species read as their
+dex number (`#025`) and the starter sprites come up blank. Nothing crashes.
+
+The assets are absent on purpose, not by oversight: the sprites are CC BY-NC and the
+species names are trademarks, so neither the source tree nor a published release carries
+any of it. Building the file locally is a two-step job against your own upstream checkout:
+
+```
+git clone https://github.com/kaogeek/TamaPoke ~/TamaPoke
+TAMAPOKE_UPSTREAM=~/TamaPoke ./tools/tamapoke/stage_sd.sh ~/TamaPoke/tools/sdcard/mons /mnt/sd
+```
+
+That writes `tamapoke_assets.dat` straight into `/roms/homebrew/` on the card (the
+sprites are rescaled to half size on the way in — upstream cuts them for a 466 px panel,
+where the worst pack alone is ~484 KB against the 724 KB this device gives a whole core).
+Keep the generated `.dat` on your card only: **do not commit it and do not redistribute
+it.** Two build gates refuse to package a release that contains one.
+
+Korean species names come from PokeAPI at staging time; English ones come from upstream.
 
 ## License
 
