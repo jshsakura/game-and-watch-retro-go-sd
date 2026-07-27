@@ -1790,6 +1790,22 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             memset(&_OVERLAY_MUSIC_BSS_START, 0x0, (size_t)&_OVERLAY_MUSIC_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_MUSIC_SIZE);
             app_main_video(load_state, start_paused, save_slot);
+        } else {
+            /* Homebrew is dispatched by name, so a .bin this firmware does not
+             * know about matches nothing -- but by the time we find that out we
+             * have already streamed it over RAM_EMU. Falling through returns to
+             * a launcher whose overlay region is now somebody else's code, and
+             * it dies with an imprecise BusFault that names no cause.
+             *
+             * The usual way to arrive here is a card built by one firmware and
+             * flashed with another, which is easy to do because the two travel
+             * separately. Say so, and go back to the browser. */
+            printf("Homebrew '%s' is not in this firmware -- card and firmware must match\n",
+                   newfile->name);
+            /* Deliberately not a lang_t string: that struct is indexed by
+             * position in the SD language files, so adding one shifts every
+             * translation after it. This path is a mismatch report, not UI. */
+            odroid_overlay_alert("Homebrew not in this firmware");
         }
       }
     } else if(strcmp(system_name, "Tamagotchi") == 0) {

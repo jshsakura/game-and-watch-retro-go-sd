@@ -1097,6 +1097,7 @@ Core/Src/porting/tamapoke/tamapoke_ui.cpp \
 Core/Src/porting/tamapoke/tamapoke_sprites.cpp \
 Core/Src/porting/tamapoke/tamapoke_assets.cpp \
 Core/Src/porting/tamapoke/tamapoke_dex.cpp \
+Core/Src/porting/tamapoke/tamapoke_fallback.cpp \
 Core/Src/porting/tamapoke/tamapoke_audio.cpp \
 Core/Src/porting/tamapoke/tamapoke_shim.cpp \
 Core/Src/porting/tamapoke/pet.cpp \

@@ -10,6 +10,7 @@
 #include <Preferences.h>
 
 #include "dex.h"
+#include "species.h"
 #include "tamapoke_assets.h"
 #include "tamapoke_audio.h"
 #include "tamapoke_input.h"
@@ -57,6 +58,7 @@ extern "C" void app_main_tamapoke(uint8_t load_state, uint8_t start_paused, int8
   /* Species names live on the card, not in the binary -- see dex.h. Missing
    * names are not fatal: everything reads as "#NNN" and the game still plays. */
   tamapoke_dex_load_names();
+  tamapoke_load_fallback_sprites();
   thumbs.load();
 
   lcd_clear_buffers();

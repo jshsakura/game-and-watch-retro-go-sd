@@ -24,6 +24,12 @@ echo "== 1. nothing shareable-breaking in the tree =="
 n=$(git grep -lE '"(BULBASAUR|CHARMANDER|SQUIRTLE|PIKACHU|MEWTWO)"' -- Core/ tools/ 2>/dev/null | wc -l)
 [ "$n" -eq 0 ] && ok "no trademarked display strings" || bad "trademarked strings in $n file(s)"
 
+# Art, not just names. The first version of this check only grepped for name
+# strings and passed a tree that still held nine 32x32 maps of the starter
+# lines -- a branch was pushed that way.
+n=$(grep -rlE 'SPR_(CHARMANDER|CHARMELEON|CHARIZARD|BULBASAUR|IVYSAUR|VENUSAUR|SQUIRTLE|WARTORTLE|BLASTOISE)\[' Core/ 2>/dev/null | wc -l)
+[ "$n" -eq 0 ] && ok "no trademarked sprite art" || bad "sprite art in $n file(s)"
+
 # Sprite packs, the assets container, thumbnails: CC BY-NC, never committed.
 n=$(git ls-files | grep -cE '\.(bin|dat|pak|img|ppm|tpk2)$' || true)
 [ "$n" -eq 0 ] && ok "no asset binaries tracked" || bad "$n asset binary/binaries tracked"

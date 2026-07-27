@@ -64,6 +64,12 @@ TAMAPOKE_UPSTREAM="${TAMAPOKE_UPSTREAM:-}" python3 "$HERE/make_dex_names.py" "$S
 python3 "$HERE/make_dex_names.py" "$STAGED_MONS" ko
 
 echo
+echo "== packing the flash-fallback sprites =="
+# The nine starter-line maps the starter picker draws. They used to be baked
+# into the firmware; they are trademarked art, so they travel with the assets.
+python3 "$HERE/make_fallback_sprites.py" "$STAGED_MONS"
+
+echo
 echo "== packing the assets sidecar =="
 # One .dat rather than three hundred loose files: it is the shape Game & What
 # already carries for homebrew (a .bin payload plus its assets .dat, as with
