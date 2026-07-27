@@ -57,10 +57,9 @@ void ReadRTC() {
     TM.tm_sec = GW_currentTime.Seconds;
     subSecond = 0xFF - (GW_currentTime.SubSeconds & 0xFF); // GW_currentTime.SubSeconds counts down from 0xFF towards 0
 
-    // We make a lenient conversion of the RTC datetime as it can't really be trusted on the G&W if the original set datetime was invalid.
-    // This also has the side effect of setting the correct "day of week".
-    time_t clock = mktime(&TM);
-    localtime_r(&clock, &TM);
+    /* STM32 RTC weekday: 1=Monday .. 7=Sunday → tm_wday 0=Sunday .. 6=Saturday. */
+    TM.tm_wday = GW_currentDate.WeekDay % 7;
+    TM.tm_isdst = 0;
 }
 
 void UpdateRTC() {

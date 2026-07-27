@@ -83,6 +83,17 @@ common_emu_state_t common_emu_state = {
 static int32_t frame_integrator = 0;
 static uint8_t skip_streak = 0;
 
+/* Shared with PCE's prefetch sound-sync so pause/resume can't desync the two. */
+uint32_t common_emu_sound_dma_marker = 0;
+
+void common_emu_sound_sync_reset(void)
+{
+    /* Pin to the current DMA half so the next sync waits for a fresh edge.
+     * After a long pause the old marker is many IRQs behind, the wait becomes
+     * a no-op, and the emu races a frame at 100% CPU (audible audio glitch). */
+    common_emu_sound_dma_marker = dma_counter;
+}
+
 void common_emu_frame_loop_reset(void){
     common_emu_state.last_sync_time = 0;
     common_emu_state.skipped_frames =0;
@@ -93,6 +104,11 @@ void common_emu_frame_loop_reset(void){
     common_emu_state.clear_frames=0;
     frame_integrator = 0;
     skip_streak = 0;
+    /* upstream e394740a: pin the DMA marker to the current half, or the first
+     * sync after a reset is a no-op and the emulator races a frame at 100% CPU
+     * (audible glitch leaving the pause menu). Ours and theirs are both needed:
+     * one resets the frameskip streak, the other the audio sync edge. */
+    common_emu_sound_sync_reset();
 }
 
 bool common_emu_frame_loop(void){
@@ -218,7 +234,12 @@ static void open_pause_menu(odroid_dialog_choice_t *game_options, void_callback_
         common_emu_state.pause_after_frames = 0;
         common_emu_state.startup_frames = 0;
         common_emu_state.clear_frames = 2;
+        common_emu_state.skip_frames = 0;
+        common_emu_state.pause_frames = 0;
+        frame_integrator = 0;
+        common_emu_state.last_sync_time = get_elapsed_time();
         cpumon_stats.last_busy = 0;
+        common_emu_sound_sync_reset();
     }
 }
 
@@ -512,19 +533,18 @@ void common_emu_input_loop_handle_turbo(odroid_gamepad_state_t *joystick) {
 
 void common_emu_sound_sync(bool use_nops) {
     if (!common_emu_state.skip_frames) {
-        static uint32_t last_dma_counter = 0;
-        if (last_dma_counter == 0) {
-            last_dma_counter = dma_counter;
+        if (common_emu_sound_dma_marker == 0) {
+            common_emu_sound_dma_marker = dma_counter;
         }
         for (uint8_t p = 0; p < common_emu_state.pause_frames + 1; p++) {
-            while (dma_counter == last_dma_counter) {
+            while (dma_counter == common_emu_sound_dma_marker) {
                 if (use_nops) {
                     __NOP();
                 } else {
                     cpumon_sleep();
                 }
             }
-            last_dma_counter = dma_counter;
+            common_emu_sound_dma_marker = dma_counter;
         }
     }
 }
