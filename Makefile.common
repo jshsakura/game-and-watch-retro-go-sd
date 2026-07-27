@@ -619,6 +619,7 @@ CP   = $(GCC_PATH)/$(PREFIX)objcopy
 SZ   = $(GCC_PATH)/$(PREFIX)size
 GDB  = $(GCC_PATH)/$(PREFIX)gdb
 DUMP = $(GCC_PATH)/$(PREFIX)objdump
+NM   = $(GCC_PATH)/$(PREFIX)nm
 else
 CC   = $(PREFIX)gcc
 CXX  = $(PREFIX)g++
@@ -627,7 +628,17 @@ CP   = $(PREFIX)objcopy
 SZ   = $(PREFIX)size
 GDB  = $(PREFIX)gdb
 DUMP = $(PREFIX)objdump
+NM   = $(PREFIX)nm
 endif
+
+# The link-time checks below shell out to nm/objdump, and they must use these
+# variables rather than $(PREFIX)nm. In the build container the toolchain is NOT
+# on PATH -- CC/CP/SZ only work because they go through GCC_PATH -- so a bare
+# "arm-none-eabi-nm" is not runnable there. Every one of those checks was
+# reporting SKIPPED in every CI release build, which nobody read: the
+# cross-overlay alias check, the one CLAUDE.md calls the only thing that catches
+# an overlay binding another core's symbol, has been decorative in CI since it
+# was written. The gates ran locally, which is exactly how that goes unnoticed.
 
 HEX   = $(CP) -O ihex
 BIN   = $(CP) -O binary -S
@@ -1078,29 +1089,29 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_
 	@# core's address, which by then holds its own data. That is how Super Metroid
 	@# shipped a build that drove the SNES bus through Super Mario World's g_snes.
 	@# It links clean; only this catches it.
-	$(V)NM=$(PREFIX)nm python3 scripts/check_core_symbol_aliases.py $(BUILD_DIR) $@
+	$(V)NM=$(NM) python3 scripts/check_core_symbol_aliases.py $(BUILD_DIR) $@
 	@# /bios/logo.bin is indexed by the RG_LOGO_* enum, and only the LINK ORDER
 	@# of the LOGO_DATA structs backs that up. It has drifted silently twice
 	@# (0722, 0727); the second time an 18px header slot served a 40px pad and
 	@# the unclipped blit corrupted RAM past the framebuffer. Diff on every link.
-	$(V)python3 scripts/check_logo_index_alignment.py $(PREFIX)nm $@ Core/Inc/retro-go/bitmaps.h
+	$(V)python3 scripts/check_logo_index_alignment.py $(NM) $@ Core/Inc/retro-go/bitmaps.h
 	@# A C++ overlay whose .init_array leaks into the RESIDENT array makes
 	@# __libc_init_array() call into RAM_EMU before main() -- before the LCD even
 	@# exists. Black screen, no BSOD, no rescue screen, OFW still fine, so it
 	@# looks like anything but firmware. Shipped in 1501 and 1610 (TamaPoke), and
 	@# in C64/Frodo before that. Nothing in the language warns.
-	$(V)python3 scripts/check_resident_init_array.py $(PREFIX)objdump $@
+	$(V)python3 scripts/check_resident_init_array.py $(DUMP) $@
 	@# .sdcard_logo is staging, not memory: its addresses are extflash LOAD
 	@# addresses that objcopy hands to /bios/logo.bin. Taking one at runtime
 	@# faults -- the favorites tab did, at 0x004c1d5e, and CPS-1's wordmark
 	@# before it. Catch the pointer where it is unambiguous: baked into flash.
-	$(V)python3 scripts/check_no_resident_logo_refs.py $(PREFIX)objdump $(PREFIX)nm $@
+	$(V)python3 scripts/check_no_resident_logo_refs.py $(DUMP) $(NM) $@
 	@# A profiler that compiles but whose probes never made it into the objects
 	@# produces a plausible-looking dump of nothing. The 32X profile shipped
 	@# exactly that. Pass this build's intent: an incremental tree keeps the
 	@# previous build's snes_profile.o, and object-presence alone then fails a
 	@# plain release build over probes it never asked for (observed 0722).
-	$(V)NM=$(PREFIX)nm scripts/check_snes_profile_wired.sh $(BUILD_DIR) $(if $(filter 1,$(SNES_DEVICE_PROFILE)),1,0)
+	$(V)NM=$(NM) scripts/check_snes_profile_wired.sh $(BUILD_DIR) $(if $(filter 1,$(SNES_DEVICE_PROFILE)),1,0)
 # Resident firmware (launcher/HAL/UI) is performance-insensitive — emulation runs in the
 # RAM-overlay cores, which keep their own -O2. Build the resident core -Os to claw back
 # internal-FLASH (Bank 1, 256 KB) headroom as the system count grows. patsubst keeps every
