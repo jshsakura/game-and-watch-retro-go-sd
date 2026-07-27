@@ -26,8 +26,13 @@ CONTAINER_NAME ?= retro-go-sd
 DOCKER_REPOSITORY ?= sylverb/retro-go-sd-builder
 DOCKER_IMAGE ?= $(DOCKER_REPOSITORY):$(RELEASE_VERSION)
 DOCKER_TTY_FLAG := $(shell if [ -t 0 ]; then echo -it; else echo ""; fi)
+# Resolved on the host, because git inside the container cannot see a
+# worktree's real .git directory (see scripts/update_gittag.sh).
+GIT_TAG_OVERRIDE ?= $(shell git describe --tags --dirty=+ 2>/dev/null)
+
 DOCKER_RUN := docker run --rm --init $(DOCKER_TTY_FLAG) \
     --network host \
+    -e GIT_TAG_OVERRIDE="$(GIT_TAG_OVERRIDE)" \
     --name $(CONTAINER_NAME) \
     --hostname $(CONTAINER_NAME) \
     --add-host $(CONTAINER_NAME):127.0.0.1 \
