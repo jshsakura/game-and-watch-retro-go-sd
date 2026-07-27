@@ -108,10 +108,10 @@ static const hitbox_t CONFIRM_BOXES[] = {
   {CONFIRM_YES_X, CONFIRM_BTN_Y, CONFIRM_BTN_W, CONFIRM_BTN_H},
   {CONFIRM_NO_X, CONFIRM_BTN_Y, CONFIRM_BTN_W, CONFIRM_BTN_H},
 };
-static const focus_set_t FOCUS_CONFIRM = {CONFIRM_BOXES, ARRAY_LEN(CONFIRM_BOXES), 0, 0};
+static const focus_set_t FOCUS_CONFIRM = {CONFIRM_BOXES, ARRAY_LEN(CONFIRM_BOXES), 0, FOCUS_KIND_MODAL};
 
-static const focus_set_t FOCUS_GALLERY = {nullptr, 16, GAL_COLS, 1};
-static const focus_set_t FOCUS_KEYBOARD = {nullptr, 30, KB_COLS, 2};
+static const focus_set_t FOCUS_GALLERY = {nullptr, 16, GAL_COLS, FOCUS_KIND_GALLERY};
+static const focus_set_t FOCUS_KEYBOARD = {nullptr, 30, KB_COLS, FOCUS_KIND_KEYBOARD};
 
 /* The three starter rows. This screen is the first thing a new save shows and
  * it had no focus set at all: tamapoke_current_focus_set() answered nullptr, so
@@ -123,7 +123,7 @@ static const hitbox_t STARTER_BOXES[] = {
   {STARTER_ROW_X, STARTER_ROW_Y0 + (STARTER_ROW_H + STARTER_ROW_GAP), STARTER_ROW_W, STARTER_ROW_H},
   {STARTER_ROW_X, STARTER_ROW_Y0 + 2 * (STARTER_ROW_H + STARTER_ROW_GAP), STARTER_ROW_W, STARTER_ROW_H},
 };
-static const focus_set_t FOCUS_STARTER = {STARTER_BOXES, ARRAY_LEN(STARTER_BOXES), 0, 0};
+static const focus_set_t FOCUS_STARTER = {STARTER_BOXES, ARRAY_LEN(STARTER_BOXES), 0, FOCUS_KIND_MODAL};
 
 /* A screen that takes no directional focus still has to answer the question,
  * because the input layer walks whatever it is handed. Answering nullptr made
@@ -145,7 +145,7 @@ static const hitbox_t FEED_BOXES[] = {
   {FEED_ICON0_X + 3 * FEED_ICON_GAP, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ},
   {FEED_ICON0_X + 4 * FEED_ICON_GAP, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ},
 };
-static const focus_set_t FOCUS_FEED = {FEED_BOXES, ARRAY_LEN(FEED_BOXES), 0, 0};
+static const focus_set_t FOCUS_FEED = {FEED_BOXES, ARRAY_LEN(FEED_BOXES), 0, FOCUS_KIND_MODAL};
 
 /* The clock/settings screen: hour -/+, minute -/+, the sound pill, the language
  * pill, and OK. It had no focus set at all -- it answered FOCUS_NONE -- so none
@@ -162,13 +162,21 @@ static const hitbox_t CLOCK_BOXES[] = {
   {CLOCK_LANG_X,   CLOCK_PILL_Y, CLOCK_LANG_W,  CLOCK_PILL_H},
   {CLOCK_OK_X,     CLOCK_OK_Y,   CLOCK_OK_W,    CLOCK_OK_H},
 };
-static const focus_set_t FOCUS_CLOCK = {CLOCK_BOXES, ARRAY_LEN(CLOCK_BOXES), 0, 0};
+/* Card: rename (the name strip), TRAIN, and back. */
+static const hitbox_t CARD_BOXES[] = {
+  {0,            0,            GFX_WIDTH,    CARD_NAME_H},
+  {CARD_TRAIN_X, CARD_TRAIN_Y, CARD_TRAIN_W, CARD_TRAIN_H},
+  {TP_CX - 30,   GFX_HEIGHT - 18, 60,        16},
+};
+static const focus_set_t FOCUS_CARD = {CARD_BOXES, ARRAY_LEN(CARD_BOXES), 0, FOCUS_KIND_MODAL};
+
+static const focus_set_t FOCUS_CLOCK = {CLOCK_BOXES, ARRAY_LEN(CLOCK_BOXES), 0, FOCUS_KIND_MODAL};
 
 /* The egg: one target, the pet zone, so mashing A cracks it. */
 static const hitbox_t EGG_BOXES[] = {
   {PET_ZONE_X, PET_ZONE_Y, PET_ZONE_W, PET_ZONE_H},
 };
-static const focus_set_t FOCUS_EGG = {EGG_BOXES, ARRAY_LEN(EGG_BOXES), 0, 0};
+static const focus_set_t FOCUS_EGG = {EGG_BOXES, ARRAY_LEN(EGG_BOXES), 0, FOCUS_KIND_MODAL};
 
 /* ---- helpers ---- */
 
@@ -751,6 +759,53 @@ static void drawCeremony() {
 
 /* ---- bath ---- */
 
+/* Screen openers, ported from upstream's TamaPoke.ino. The port had the renderers
+ * for all six sub-screens and no way to reach any of them: the only code that set
+ * cardOpen / galleryOpen / kbOpen / clockOpen / gameOpen / sackOpen was
+ * tamapoke_ui_goto_screen(), which exists for the host harness. So the harness drew
+ * them all and the device could not open one -- the settings screen included, which
+ * is why its language pill was unreachable. */
+static void openClock(void) {
+  uint32_t e = pet.lastSeenEpoch ? pet.lastSeenEpoch : tamapoke_epoch();
+  clockH = (uint8_t)((e / 3600) % 24);
+  clockM = (uint8_t)((e / 60) % 60);
+  clockOpen = true;
+  tamapoke_input_reset(0);
+}
+
+static void openKeyboard(void) {
+  kbOpen = true;
+  strncpy(nameBuf, pet.nick, sizeof(nameBuf) - 1);
+  nameBuf[sizeof(nameBuf) - 1] = '\0';
+  nameLen = (uint8_t)strlen(nameBuf);
+  tamapoke_input_reset(0);
+}
+
+static void startGame(void) {
+  if (pet.isEgg() || pet.sleeping || pet.ceremony != CER_NONE) return;
+  gameOpen = true;
+  gameOverUntil = 0;
+  gameScore = 0;
+  gameMisses = 0;
+  ballX = GFX_WIDTH / 2;
+  ballY = GAME_TOP + 30;
+  ballVX = 1.5f;
+  ballVY = 1.0f;
+  paddleX = (GFX_WIDTH - GAME_PADDLE_W) / 2;
+  tamapoke_input_reset(0);
+}
+
+static void startSack(void) {
+  if (pet.isEgg() || pet.sleeping || pet.ceremony != CER_NONE) return;
+  sackOpen = true;
+  sackUntil = millis() + 10000;
+  sackOverUntil = 0;
+  sackHits = 0;
+  sackGain = 0;
+  sackShake = 0;
+  tamapoke_input_reset(0);
+}
+
 static void startBath(uint32_t now) {
   bathUntil = now + 3000;
   bathPending = true;
@@ -947,7 +1002,19 @@ void onTap(int16_t x, int16_t y) {
       clockOpen = false; return;
     }
   }
-  if (cardOpen) { cardOpen = false; return; }
+  if (cardOpen) {
+    /* Upstream renames from a tap on the name and starts the training sack from a
+     * button on the card's second page. Our card is one page, so both live here. */
+    if (y < CARD_NAME_H) { cardOpen = false; openKeyboard(); return; }
+    if (y >= CARD_TRAIN_Y && y < CARD_TRAIN_Y + CARD_TRAIN_H &&
+        x >= CARD_TRAIN_X && x < CARD_TRAIN_X + CARD_TRAIN_W) {
+      cardOpen = false;
+      startSack();
+      return;
+    }
+    cardOpen = false;
+    return;
+  }
   if (gameOpen) { gameOpen = false; return; }
   if (sackOpen) { sackOpen = false; return; }
   if (pet.awaitingStarter()) {
@@ -1008,7 +1075,7 @@ void onTap(int16_t x, int16_t y) {
     if (x >= bx && x < bx + BTN_W && y >= BTN_ROW_Y && y < BTN_ROW_Y + BTN_H) {
       switch (i) {
         case 0: feedMenuUntil = now + FEED_MENU_MS; break;
-        case 1: pet.play(); break;
+        case 1: startGame(); break;   /* upstream: the ball minigame */
         case 2: pet.toggleLight(); break;
         case 3: startBath(now); sfxPlay(SFX_TAP); break;
       }
@@ -1021,16 +1088,50 @@ void onTap(int16_t x, int16_t y) {
 }
 
 void onSwipe(int dir) {
-  if (galleryOpen && galleryPage > 0) galleryPage--;
+  /* Horizontal: upstream opens the gallery from the main screen and pages it once
+   * open. Our card is a single page, so a horizontal gesture there just closes it
+   * rather than turning to a page that does not exist. */
+  if (pet.awaitingStarter()) return;
+  if (gameOpen || kbOpen || clockOpen || sackOpen) return;
   note_activity(millis());
   dimStage = 0;
+  if (cardOpen) { cardOpen = false; return; }
+  if (!galleryOpen) {
+    if (pet.ceremony == CER_NONE && millis() >= confirmUntil) {
+      galleryOpen = true;
+      galleryPage = 0;
+      galleryDetail = 0;
+      tamapoke_input_reset(0);
+    }
+    return;
+  }
+  if (dir > 0) { if (galleryPage > 0) galleryPage--; }
+  else if (galleryPage < (DEX_COUNT - 1) / 16) galleryPage++;
 }
 
 void onSwipeV(int dir) {
-  if (!galleryOpen) return;
-  if (galleryPage < (DEX_COUNT - 1) / 16) galleryPage++;
+  /* Vertical: down opens the clock/settings, up opens the status card. Both close
+   * on the opposite gesture. Ported from upstream; our version had been reduced to
+   * paging the gallery, which left every screen below unreachable. */
+  if (pet.awaitingStarter()) return;
+  if (gameOpen || kbOpen || sackOpen || pet.ceremony != CER_NONE) return;
   note_activity(millis());
   dimStage = 0;
+  if (galleryOpen) {
+    if (galleryPage < (DEX_COUNT - 1) / 16) galleryPage++;
+    return;
+  }
+  if (clockOpen) { clockOpen = false; return; }
+  if (cardOpen)  { if (dir < 0) cardOpen = false; return; }
+  uint32_t now = millis();
+  if (now < confirmUntil || now < feedMenuUntil) return;
+  if (dir > 0) {
+    openClock();
+  } else if (!pet.isEgg()) {
+    cardOpen = true;
+    cardPage = 0;
+    tamapoke_input_reset(0);
+  }
 }
 
 void onBack(void) {
@@ -1078,6 +1179,13 @@ void tamapoke_ui_force_full_repaint(void) { g_force_full_repaint = true; }
  * would just restate the code under test. */
 const focus_set_t *tamapoke_focus_set_feed(void) { return &FOCUS_FEED; }
 
+/* Harness support. goto_screen() pins harness_screen so a screen can be captured
+ * regardless of state; releasing it hands the decision back to the runtime, which
+ * is the only way a test can ask "can the buttons get here from the main screen?".
+ * Without that, every navigation check would be measuring the pin. */
+void tamapoke_ui_release_harness_screen(void) { harness_screen = -1; }
+int tamapoke_ui_current_screen(void) { return current_screen_id(); }
+
 void tamapoke_ui_note_input(void) {
   uint32_t now = millis();
   if (now < feedMenuUntil) feedMenuUntil = now + FEED_MENU_MS;
@@ -1109,7 +1217,8 @@ const focus_set_t *tamapoke_current_focus_set(void) {
     /* Card, minigame and sack are dismissed with B or a swipe and take no
      * directional focus. They still hand back a set -- never nullptr -- because
      * the input layer walks whatever it is given. */
-    case 1: case 6: case 7: return &FOCUS_NONE;
+    case 1: return &FOCUS_CARD;
+    case 6: case 7: return &FOCUS_NONE;
     default:
       /* The main screen hosts the confirm dialog as an overlay, so it owns the
        * focus while it is up. */
@@ -1208,6 +1317,27 @@ static void renderCard() {
   gfx->printf("WGT %u  BOND %u", pet.weight, pet.bond);
   gfx->setCursor(4, 120);
   gfx->printf(T(S_MEDALS_FMT), pet.totalMedals, MED_COUNT);
+
+  /* The two things this screen can do, and which one is selected. Without them the
+   * card was a dead end: upstream renames from the name and trains from a button,
+   * and neither was drawn or reachable here. */
+  uint8_t f = (tamapoke_current_focus_set() == &FOCUS_CARD)
+              ? tamapoke_input_focus() : 0xFF;
+
+  if (f == 0) {
+    gfx->drawRoundRect(0, 0, GFX_WIDTH, CARD_NAME_H, 2, UI_BAR_WARN);
+    gfx->drawRoundRect(1, 1, GFX_WIDTH - 2, CARD_NAME_H - 2, 2, UI_BAR_WARN);
+  }
+  gfx->fillRoundRect(CARD_TRAIN_X, CARD_TRAIN_Y, CARD_TRAIN_W, CARD_TRAIN_H, 4,
+                     f == 1 ? UI_WHITE : UI_TRACK);
+  gfx->drawRoundRect(CARD_TRAIN_X, CARD_TRAIN_Y, CARD_TRAIN_W, CARD_TRAIN_H, 4,
+                     f == 1 ? UI_BAR_WARN : ink);
+  gfx->setTextColor(ink);
+  centerText(T(S_TRAIN_STR), TP_CX, CARD_TRAIN_Y + (CARD_TRAIN_H - GFX_GLYPH_H) / 2, 1);
+
+  if (f == 2) {
+    gfx->drawRoundRect(TP_CX - 30, GFX_HEIGHT - 18, 60, 16, 2, UI_BAR_WARN);
+  }
   centerTextBottom(T(S_BACK), TP_CX, 8, 1);
 }
 
@@ -1675,6 +1805,12 @@ void tamapoke_ui_goto_screen(int id) {
   galleryOpen = cardOpen = kbOpen = clockOpen = gameOpen = sackOpen = false;
   if (galleryPmd.loaded) galleryPmd.unload();
   bathUntil = feedMenuUntil = confirmUntil = choiceUntil = 0;
+  /* A ceremony is transient state too, and this reset forgot it -- so a capture
+   * taken after one had started rendered the farewell instead of the screen asked
+   * for, and every gesture stayed blocked (onSwipe/onSwipeV refuse to run during a
+   * ceremony, correctly). That is what made the navigation checks below look like a
+   * wiring failure when the wiring was fine. */
+  pet.ceremony = CER_NONE;
 
   /* Seed inputs that the screen needs to render anything meaningful. */
   switch (id) {

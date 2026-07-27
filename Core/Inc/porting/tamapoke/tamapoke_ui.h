@@ -129,6 +129,15 @@ extern "C" {
 /* Feed menu -- 4 icons in a strip (food + 3 berries + candy row)     */
 /* ------------------------------------------------------------------ */
 
+/* Card screen: the name strip at the top renames, and a TRAIN button starts the
+ * training sack. Upstream puts the latter on the card's second page; this port's
+ * card is one page, so both targets are here. */
+#define CARD_NAME_H     16
+#define CARD_TRAIN_W    120
+#define CARD_TRAIN_H    22
+#define CARD_TRAIN_X    ((TP_CX) - (CARD_TRAIN_W) / 2)
+#define CARD_TRAIN_Y    140
+
 #define FEED_MENU_W     200
 #define FEED_MENU_H     36
 #define FEED_MENU_X     ((TP_CX) - (FEED_MENU_W) / 2)  /* 110 */
@@ -319,6 +328,10 @@ void tamapoke_ui_note_input(void);
 
 /* The feed menu's focus set, by identity -- used by the host harness. */
 const focus_set_t *tamapoke_focus_set_feed(void);
+
+/* Harness only: stop pinning a screen, and read which one the state selects. */
+void tamapoke_ui_release_harness_screen(void);
+int tamapoke_ui_current_screen(void);
 
 /* True if input has happened since the last frame -- lets the porting main
  * loop tell a "framestep" from real activity. */

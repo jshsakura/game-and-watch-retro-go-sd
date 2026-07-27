@@ -280,8 +280,74 @@ int main(int argc, char **argv) {
         printf("ok   a timed overlay survives being navigated\n");
       }
     }
+    /* And overshooting the last item must not eject the player. focus_step()
+     * reports the overrun; on the main screen that is upstream's vertical swipe,
+     * and every set used to be that kind -- so one press past the last food
+     * opened the card screen in the middle of choosing. */
+    if (!timeout_failures) {
+      for (int i = 0; i < 8; i++) {   /* well past the five items */
+        harness_pad_set(ODROID_INPUT_RIGHT, true);
+        tamapoke_input_poll((uint32_t)harness_clock_ms());
+        harness_pad_set(ODROID_INPUT_RIGHT, false);
+        tamapoke_input_poll((uint32_t)harness_clock_ms());
+      }
+      if (tamapoke_current_focus_set() != tamapoke_focus_set_feed()) {
+        printf("FAIL walking past the last feed item left the menu -- an overrun "
+               "in a modal list must clamp, not swipe\n");
+        timeout_failures++;
+      } else {
+        printf("ok   a modal menu clamps at its ends instead of ejecting\n");
+      }
+    }
   }
   failures += timeout_failures;
+
+  /* Every sub-screen must be reachable with the buttons.
+   *
+   * This is the check whose absence hid the biggest gap in the port: the only code
+   * that set cardOpen / galleryOpen / clockOpen / gameOpen was
+   * tamapoke_ui_goto_screen(), which exists for THIS HARNESS. So all six rendered
+   * perfectly here and not one of them could be opened on the device -- including
+   * the settings screen, which is why its language pill could not be used. The
+   * renderers were fine. Nothing led to them.
+   *
+   * Driving the buttons from the main screen is the only way to see that.
+   */
+  int nav_failures = 0;
+  {
+    struct Nav { const char *what; int key; int presses; int want_screen; };
+    /* From the main screen: DOWN opens the clock, UP opens the card, and running
+     * off the end of the button row opens the gallery (upstream's three gestures). */
+    const Nav navs[] = {
+      {"clock/settings", ODROID_INPUT_DOWN,  1, 4},
+      {"status card",    ODROID_INPUT_UP,    1, 1},
+      {"gallery",        ODROID_INPUT_RIGHT, 6, 2},
+    };
+    for (size_t i = 0; i < sizeof(navs) / sizeof(navs[0]); i++) {
+      harness_clock_set_ms(200000 + i * 10000);
+      tamapoke_ui_goto_screen(0);          /* start on main, pet hatched */
+      tamapoke_ui_release_harness_screen();/* stop forcing, so state decides */
+      harness_pad_clear();
+      tamapoke_input_reset(0);
+
+      for (int p2 = 0; p2 < navs[i].presses; p2++) {
+        harness_pad_set(navs[i].key, true);
+        tamapoke_input_poll((uint32_t)harness_clock_ms());
+        harness_pad_set(navs[i].key, false);
+        tamapoke_input_poll((uint32_t)harness_clock_ms());
+      }
+
+      int got = tamapoke_ui_current_screen();
+      if (got != navs[i].want_screen) {
+        printf("FAIL %s is not reachable with the buttons (screen %d, wanted %d)\n",
+               navs[i].what, got, navs[i].want_screen);
+        nav_failures++;
+      } else {
+        printf("ok   %s opens from the main screen\n", navs[i].what);
+      }
+    }
+  }
+  failures += nav_failures;
 
   /* No screen may leave a region unpainted after a screen change.
    *

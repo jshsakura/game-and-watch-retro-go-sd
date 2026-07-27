@@ -109,7 +109,14 @@ static int focus_step(const focus_set_t *fs, int dx, int dy) {
   if (g_in.focus >= (uint8_t)n) g_in.focus = 0;
 
   if (fs->cols == 0) {
-    int next = (int)g_in.focus + dx + dy;  /* a list: any axis advances it */
+    /* On the MAIN screen the two axes mean different things: left/right walk the
+     * row, and up/down are upstream's vertical swipes (card / clock) -- which is
+     * the only way to reach those screens with buttons. Reported as ±2 so the
+     * caller can tell which gesture to fire. A modal list has nowhere to swipe
+     * to, so there any axis just advances it. */
+    if (fs->kind == FOCUS_KIND_LIST && dy != 0) return dy > 0 ? +2 : -2;
+
+    int next = (int)g_in.focus + dx + dy;
     if (next < 0 || next >= n) return next < 0 ? -1 : +1;
     g_in.focus = (uint8_t)next;
     return 0;
@@ -178,14 +185,23 @@ void tamapoke_input_poll(uint32_t now_ms) {
   if (edge(&js, ODROID_INPUT_UP)) overflow = focus_step(fs, 0, -1);
   if (edge(&js, ODROID_INPUT_DOWN)) overflow = focus_step(fs, 0, +1);
 
-  /* Walking off the side of a paged screen is upstream's horizontal swipe;
-   * on the main screen up/down are the vertical swipes (card / clock). */
+  /* Walking off the side of a paged screen is upstream's horizontal swipe; on the
+   * MAIN screen an overrun is the vertical swipe (card / clock).
+   *
+   * A modal list clamps instead. Every set used to be FOCUS_KIND_LIST, so one
+   * extra press of RIGHT in the feed menu fired the vertical swipe and dropped the
+   * player onto another screen mid-choice -- and the egg, with a single item, did
+   * it on the first press in either direction. focus_step() already leaves the
+   * index where it was; ignoring the overrun here is what makes that a clamp. */
   if (overflow) {
     if (fs->cols) {
       onSwipe(overflow > 0 ? -1 : +1);
       g_in.focus = 0;
-    } else if (fs->kind == 0) {  /* main screen list: up/down = vertical swipe */
-      onSwipeV(overflow > 0 ? +1 : -1);
+    } else if (fs->kind == FOCUS_KIND_LIST) {
+      /* ±2 came from the vertical axis (card / clock); ±1 is running off the end
+       * of the row, which upstream treats as the horizontal swipe: the gallery. */
+      if (overflow == +2 || overflow == -2) onSwipeV(overflow > 0 ? +1 : -1);
+      else onSwipe(overflow > 0 ? +1 : -1);
     }
   }
 

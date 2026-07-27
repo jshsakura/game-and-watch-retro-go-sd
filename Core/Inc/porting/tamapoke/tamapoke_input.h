@@ -23,9 +23,21 @@ typedef struct {
  * `cols` is 0 for a list (left/right advances it) and non-zero for a grid
  * (the D-pad walks both axes; running off the side is a page turn).
  *
+ * `kind` also decides what happens at the ends. Only the main screen turns an
+ * overrun into upstream's swipe; a modal list has to CLAMP, or walking one step
+ * past the last item throws the player out of the menu they were using. Every set
+ * was kind 0 at first, so the feed menu jumped to the card screen on one extra
+ * press of RIGHT -- and the egg, with a single item, did it on any press at all.
+ *
  * `kind` tags the lattice family so grid_cell() can pick the right formula
  * without comparing set pointers across translation units: 0 = a plain list
  * (use `boxes`), 1 = the gallery lattice, 2 = the keyboard lattice. */
+/* Values for focus_set_t::kind. */
+#define FOCUS_KIND_LIST     0  /* the main screen: an overrun is a swipe */
+#define FOCUS_KIND_GALLERY  1
+#define FOCUS_KIND_KEYBOARD 2
+#define FOCUS_KIND_MODAL    3  /* a dialog or menu: clamp at both ends */
+
 typedef struct {
   const hitbox_t *boxes;
   uint8_t count;
