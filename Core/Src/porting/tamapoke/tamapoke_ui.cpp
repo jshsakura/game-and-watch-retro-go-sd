@@ -1576,10 +1576,15 @@ static void renderClock() {
 }
 
 static void renderGame() {
+  /* This screen has its own dark background, day or night, so it cannot borrow
+   * inkColor() -- which is dark for the light theme. The score was being drawn in
+   * it: dark text on dark navy, legible only if you knew it was there. (inkColor()
+   * was computed here and then never used, which is the same mistake spelled out
+   * in the code.) */
   gfx->fillScreen(C565(0x10, 0x18, 0x28));
-  uint16_t ink = inkColor();
   char buf[16];
   snprintf(buf, sizeof(buf), T(S_SCORE_FMT), gameScore);
+  gfx->setTextColor(UI_WHITE);
   centerText(buf, TP_CX, 4, 1);
   gfx->fillRect(0, GAME_TOP, GFX_WIDTH, 1, UI_TRACK);
   gfx->fillCircle((int16_t)ballX, (int16_t)ballY, GAME_BALL_R, UI_BAR_BAD);
