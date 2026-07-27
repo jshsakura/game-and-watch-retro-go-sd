@@ -106,6 +106,28 @@ static const focus_set_t FOCUS_CONFIRM = {CONFIRM_BOXES, ARRAY_LEN(CONFIRM_BOXES
 static const focus_set_t FOCUS_GALLERY = {nullptr, 16, GAL_COLS, 1};
 static const focus_set_t FOCUS_KEYBOARD = {nullptr, 30, KB_COLS, 2};
 
+/* The three starter rows. This screen is the first thing a new save shows and
+ * it had no focus set at all: tamapoke_current_focus_set() answered nullptr, so
+ * nothing highlighted, A had no rectangle to tap, and the choice could not be
+ * made -- the game could not be started at all with buttons. Same geometry the
+ * onTap hit-test uses, so the two cannot disagree about where a row is. */
+static const hitbox_t STARTER_BOXES[] = {
+  {STARTER_ROW_X, STARTER_ROW_Y0, STARTER_ROW_W, STARTER_ROW_H},
+  {STARTER_ROW_X, STARTER_ROW_Y0 + (STARTER_ROW_H + STARTER_ROW_GAP), STARTER_ROW_W, STARTER_ROW_H},
+  {STARTER_ROW_X, STARTER_ROW_Y0 + 2 * (STARTER_ROW_H + STARTER_ROW_GAP), STARTER_ROW_W, STARTER_ROW_H},
+};
+static const focus_set_t FOCUS_STARTER = {STARTER_BOXES, ARRAY_LEN(STARTER_BOXES), 0, 0};
+
+/* A screen that takes no directional focus still has to answer the question,
+ * because the input layer walks whatever it is handed. Answering nullptr made
+ * every button press on the starter/card/clock/game/sack screens dereference it:
+ * focus_step() read fs->count through address 0, and the value it found in ITCM
+ * was odd, so the following halfword load raised a UsageFault with
+ * CFSR=0x01000000 (UNALIGNED) -- reported on device as a crash on any keypress.
+ * An empty set is the honest answer: nothing to walk, nothing to tap, and B/back
+ * and the swipes keep working because they never consult the set. */
+static const focus_set_t FOCUS_NONE = {nullptr, 0, 0, 0};
+
 /* ---- helpers ---- */
 
 static uint16_t inkColor() { return gNight ? UI_INK_NIGHT : UI_INK; }
@@ -950,8 +972,15 @@ const focus_set_t *tamapoke_current_focus_set(void) {
   if (kbOpen) return &FOCUS_KEYBOARD;
   if (galleryOpen) return &FOCUS_GALLERY;
   if (millis() < confirmUntil) return &FOCUS_CONFIRM;
-  if (pet.awaitingStarter()) return nullptr;
-  if (kbOpen || clockOpen || cardOpen || gameOpen || sackOpen) return nullptr;
+  /* An explicitly opened screen outranks the pet's awaiting-starter flag. The
+   * other order let a screen that is plainly on top be driven by the starter
+   * rows underneath it: the minigame and the sack answered FOCUS_STARTER while
+   * the pet still had no species, so the D-pad walked rows nobody could see.
+   * Never nullptr either -- see FOCUS_NONE. These screens are dismissed with B
+   * or a swipe, so they take no directional focus, but they must still hand back
+   * a set the caller can read. */
+  if (kbOpen || clockOpen || cardOpen || gameOpen || sackOpen) return &FOCUS_NONE;
+  if (pet.awaitingStarter()) return &FOCUS_STARTER;
   return &FOCUS_MAIN;
 }
 
@@ -975,16 +1004,41 @@ void tamapoke_hold_release(void) {
 static void renderStarterSelect() {
   gfx->fillScreen(gNight ? UI_BG_NIGHT : UI_BG_DAY);
   centerText(T(S_CHOOSE_STARTER), TP_CX, 4, 1);
+  /* The focused row has to be obvious. This screen is the first thing a new save
+   * shows and it drew three identical outlines with nothing marking the
+   * selection: on a device with no touch panel that is not a cosmetic gap, it
+   * means the player cannot tell what A will pick -- reported from hardware as
+   * "the starter screen does nothing". Same treatment the confirm buttons get:
+   * the selected row inverts and takes a thicker ring, so a still frame reads
+   * correctly too. */
+  uint8_t f = (tamapoke_current_focus_set() == &FOCUS_STARTER)
+              ? tamapoke_input_focus() : 0xFF;
+  uint16_t ink = inkColor();
   for (uint8_t i = 0; i < 3; i++) {
     int16_t ry = STARTER_ROW_Y0 + i * (STARTER_ROW_H + STARTER_ROW_GAP);
     int8_t fi = flashIdxForDex(CLASSIC_DEX[i]);
-    gfx->drawRoundRect(STARTER_ROW_X, ry, STARTER_ROW_W, STARTER_ROW_H, 6, inkColor());
-    if (fi >= 0) drawMap(SPECIES[fi].sprite, SPRITE_H, STARTER_ROW_X + 4, ry + 4, 1, false);
+    bool sel = (f == i);
+
+    if (sel) {
+      gfx->fillRoundRect(STARTER_ROW_X, ry, STARTER_ROW_W, STARTER_ROW_H, 6, ink);
+      for (uint8_t t = 0; t < 3; t++)
+        gfx->drawRoundRect(STARTER_ROW_X - t, ry - t, STARTER_ROW_W + 2 * t,
+                           STARTER_ROW_H + 2 * t, 6, UI_BAR_WARN);
+    } else {
+      gfx->drawRoundRect(STARTER_ROW_X, ry, STARTER_ROW_W, STARTER_ROW_H, 6, ink);
+    }
+
+    /* The sprite keeps its own colours on the selected row: the alternative flag
+     * drawMap() takes is a black silhouette, which is what disappears against a
+     * dark inverted fill. Colour reads on either background. */
+    if (fi >= 0)
+      drawMap(SPECIES[fi].sprite, SPRITE_H, STARTER_ROW_X + 4, ry + 4, 1, false);
     gfx->setTextSize(1);
-    gfx->setTextColor(inkColor());
+    gfx->setTextColor(sel ? (gNight ? UI_BG_NIGHT : UI_BG_DAY) : ink);
     gfx->setCursor(STARTER_ROW_X + 50, ry + STARTER_ROW_H/2 - 4);
     gfx->print(DEX_TBL[CLASSIC_DEX[i]].name);
   }
+  gfx->setTextColor(ink);
 }
 
 static void renderCard() {

@@ -46,6 +46,32 @@ static int16_t audio_buffer[AUDIO_BUFFER_LENGTH];
  * user is not mid-interaction. */
 static void commit_save(void) { tamapoke_prefs_commit(); }
 
+/* The pause menu repaints the screen behind itself through this. The UI draws
+ * incrementally, so a full re-render is the only correct answer -- anything less
+ * leaves the menu's own pixels behind when it closes. */
+static void repaint_ui(void) { tamapoke_ui_render(); }
+
+/* The pause menu's Save rows go through these. A virtual pet has no snapshot to
+ * take: its whole state is the preferences blob it already writes at safe points,
+ * and the card is the save. So "save" means commit that now, and "load" is a
+ * no-op that must still report success -- returning false would make the menu
+ * announce a failure for something that is not broken.
+ *
+ * They are wired rather than left out because the menu offers the rows either
+ * way: Super Metroid shipped this exact gap, with Save and Load doing nothing at
+ * all because odroid_system_emu_init() was never called. A row that lies is
+ * worse than a row that is absent. */
+static bool tamapoke_save_state(const char *path) {
+  (void)path;
+  tamapoke_prefs_commit();
+  return true;
+}
+
+static bool tamapoke_load_state(const char *path) {
+  (void)path;
+  return true;  /* prefs are loaded at startup; there is nothing else to restore */
+}
+
 extern "C" void app_main_tamapoke(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   (void)load_state;
   (void)save_slot;
@@ -62,6 +88,9 @@ extern "C" void app_main_tamapoke(uint8_t load_state, uint8_t start_paused, int8
   common_emu_state.pause_after_frames = start_paused ? 2 : 0;
 
   odroid_system_init(APPID_HOMEBREW, TAMAPOKE_SAMPLE_RATE);
+  /* Register the state hooks before the menu can be opened, or its Save rows
+   * are decoration. */
+  odroid_system_emu_init(&tamapoke_load_state, &tamapoke_save_state, NULL, NULL, NULL, NULL, NULL);
 
   tamapoke_shim_init();
   audioBegin();
@@ -84,11 +113,28 @@ extern "C" void app_main_tamapoke(uint8_t load_state, uint8_t start_paused, int8
   uint32_t idle_start = uptime_get();
   uint32_t last_activity_focus = 0;
 
+  /* No app-specific rows; the shared menu (volume, brightness, save/exit) is the
+   * whole point of wiring this up. */
+  odroid_dialog_choice_t options[] = {
+      ODROID_DIALOG_CHOICE_LAST,
+  };
+
   while (true) {
     wdog_refresh();
 
     bool draw_frame = common_emu_frame_loop();
     uint32_t now = tamapoke_millis();
+
+    /* The PAUSE menu lives in common_emu_input_loop(), and nothing here called
+     * it -- so PAUSE did nothing at all: no menu, no volume, no brightness, no
+     * exit. common_emu_frame_loop() above only paces the frame; it is a separate
+     * contract and having one is not having the other. This is the same omission
+     * Super Metroid shipped with, and the reason CLAUDE.md says to check the
+     * caller rather than the callee. */
+    odroid_gamepad_state_t joystick;
+    odroid_input_read_gamepad(&joystick);
+    common_emu_input_loop(&joystick, options, &repaint_ui);
+    common_emu_input_loop_handle_turbo(&joystick);
 
     tamapoke_input_poll(now);
     tamapoke_ui_tick(now);

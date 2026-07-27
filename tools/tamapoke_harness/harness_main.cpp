@@ -21,10 +21,17 @@
 #include "tamapoke_sprites.h"
 #include "tamapoke_ui.h"
 
+/* Same unwrapped-include dance tamapoke_input.cpp documents: odroid_input.h has
+ * no extern "C" guard of its own and the firmware compiles it as C. */
+extern "C" {
+#include "odroid_input.h"
+}
+
 extern void harness_fb_reset(uint16_t fill);
 extern int harness_fb_guard_violations(void);
 extern const uint16_t *harness_fb(void);
 extern void harness_pad_clear(void);
+extern void harness_pad_set(int key, bool down);
 
 #define FB_W 320
 #define FB_H 240
@@ -131,6 +138,73 @@ int main(int argc, char **argv) {
     }
   }
   }
+
+  /* Press every button on every screen.
+   *
+   * This file compiled tamapoke_input.cpp from day one and never called into it,
+   * so the whole button front-end -- the only way anyone controls this port --
+   * was unexercised. What shipped as a result: tamapoke_current_focus_set()
+   * answered nullptr for the starter, card, clock, game and sack screens, and
+   * tamapoke_input_poll() dereferenced it. On the device that read address 0,
+   * found ITCM code there, and the halfword load off that odd value raised a
+   * UsageFault (CFSR=0x01000000, UNALIGNED): the game died on any keypress, and
+   * the starter screen -- the first thing a new save shows -- could not be used
+   * at all because nothing was focusable.
+   *
+   * Every one of those is a plain NULL dereference that this build's ASan and
+   * -fsanitize=alignment catch on the first call. The bug was never subtle; it
+   * was simply never run. Rendering a screen is not using it.
+   *
+   * Buttons are pressed as edges (down then up) because the port acts on edges,
+   * and the poll is called twice per press so the release is seen too. */
+  static const struct { int key; const char *name; } KEYS[] = {
+      {ODROID_INPUT_LEFT, "LEFT"},   {ODROID_INPUT_RIGHT, "RIGHT"},
+      {ODROID_INPUT_UP, "UP"},       {ODROID_INPUT_DOWN, "DOWN"},
+      {ODROID_INPUT_A, "A"},         {ODROID_INPUT_B, "B"},
+  };
+  int input_failures = 0;
+  gLang = LANG_EN;
+  for (int s = 0; s < TAMAPOKE_SCREEN_COUNT; s++) {
+    for (size_t k = 0; k < sizeof(KEYS) / sizeof(KEYS[0]); k++) {
+      tamapoke_ui_goto_screen(s);
+      harness_pad_clear();
+      tamapoke_input_reset(0);
+
+      /* A focus set is mandatory, not optional: the input layer walks whatever
+       * it is handed, so nullptr is a crash rather than "no focus here". */
+      const focus_set_t *fs = tamapoke_current_focus_set();
+      if (fs == NULL) {
+        printf("FAIL %-14s has no focus set -- tamapoke_input_poll() would "
+               "dereference NULL on any keypress\n",
+               tamapoke_ui_screen_name(s));
+        input_failures++;
+        break;
+      }
+
+      /* An index past the end must not be read either: a screen transition can
+       * leave a focus index the new screen does not have. */
+      tamapoke_input_reset((uint8_t)(fs->count + 3));
+      harness_pad_set(KEYS[k].key, true);
+      tamapoke_input_poll(1000);
+      harness_pad_set(KEYS[k].key, false);
+      tamapoke_input_poll(1016);
+
+      tamapoke_input_reset(0);
+      harness_pad_set(KEYS[k].key, true);
+      tamapoke_input_poll(2000);
+      harness_pad_set(KEYS[k].key, false);
+      tamapoke_input_poll(2016);
+
+      if (harness_fb_guard_violations()) {
+        printf("FAIL %-14s %s drew outside the panel\n",
+               tamapoke_ui_screen_name(s), KEYS[k].name);
+        input_failures++;
+      }
+    }
+  }
+  if (!input_failures)
+    printf("\nok   every screen survives every button, incl. a stale focus index\n");
+  failures += input_failures;
 
   int total = TAMAPOKE_SCREEN_COUNT * (int)(sizeof(LANGS) / sizeof(LANGS[0]));
   printf("\n%d/%d screens clean, PPMs in %s\n", total - failures, total, out_dir);

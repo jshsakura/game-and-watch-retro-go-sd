@@ -65,7 +65,20 @@ static hitbox_t grid_cell(const focus_set_t *fs, uint8_t i) {
   return b;
 }
 
+/* Bounds-checked and NULL-checked, because neither was true and both bit.
+ *
+ * The screen a set belongs to can change under a focus index that was valid on
+ * the previous one, and a screen may legitimately have nothing focusable. This
+ * function was reading fs->boxes[i] on faith: with fs == nullptr it dereferenced
+ * address 0, found ITCM code there, and the halfword load off that odd value
+ * raised a UsageFault (CFSR=0x01000000, UNALIGNED) on the device -- a crash on
+ * any keypress. With i >= count it would have read past the table instead,
+ * quietly, and synthesised a tap at a coordinate nobody drew.
+ *
+ * An empty box is the safe answer: focus_activate() below refuses to tap it. */
 static hitbox_t focus_box(const focus_set_t *fs, uint8_t i) {
+  const hitbox_t empty = {0, 0, 0, 0};
+  if (fs == NULL || fs->count == 0 || i >= fs->count) return empty;
   return fs->boxes ? fs->boxes[i] : grid_cell(fs, i);
 }
 
@@ -87,8 +100,13 @@ static bool any_key_down(const odroid_gamepad_state_t *js) {
 /* Linear sets walk with left/right; grids walk in both axes and clamp,
  * so the caller can turn an overrun into a page turn. */
 static int focus_step(const focus_set_t *fs, int dx, int dy) {
+  if (fs == NULL) return 0;
   int n = fs->count;
   if (n <= 0) return 0;
+
+  /* A set can be narrower than the one the index was chosen in. Clamp before
+   * walking, so a stale index cannot walk further out of range. */
+  if (g_in.focus >= (uint8_t)n) g_in.focus = 0;
 
   if (fs->cols == 0) {
     int next = (int)g_in.focus + dx + dy;  /* a list: any axis advances it */
@@ -113,6 +131,11 @@ static int focus_step(const focus_set_t *fs, int dx, int dy) {
 /* The whole point: build a coordinate and let upstream resolve it. */
 static void focus_activate(const focus_set_t *fs) {
   hitbox_t b = focus_box(fs, g_in.focus);
+  /* An empty box means there was nothing to press -- either the screen has no
+   * focusable widget or the index was stale. Tapping (0,0) would hand upstream a
+   * coordinate in the corner of a screen it never drew a control on, which is a
+   * phantom press rather than a no-op. */
+  if (b.w == 0 || b.h == 0) return;
   onTap(b.x + b.w / 2, b.y + b.h / 2);
 }
 
@@ -128,7 +151,14 @@ void tamapoke_input_poll(uint32_t now_ms) {
   odroid_gamepad_state_t js;
   odroid_input_read_gamepad(&js);
 
+  /* Treat a screen that declines to name a focus set as an empty one, right
+   * here, rather than testing for NULL at each of the four or five places below
+   * -- one of which (fs->cols, in the overflow branch) is exactly the kind that
+   * gets missed. tamapoke_current_focus_set() no longer returns NULL, and this
+   * is the belt for the day someone adds a screen that does. */
+  static const focus_set_t EMPTY_SET = {NULL, 0, 0, 0};
   const focus_set_t *fs = tamapoke_current_focus_set();
+  if (fs == NULL) fs = &EMPTY_SET;
 
   /* Upstream swallows the first touch after the screen dims and only wakes
    * up. Keep that: any key while dimmed is a wake, not an action. */
