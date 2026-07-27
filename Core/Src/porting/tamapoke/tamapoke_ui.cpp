@@ -128,6 +128,29 @@ static const focus_set_t FOCUS_STARTER = {STARTER_BOXES, ARRAY_LEN(STARTER_BOXES
  * and the swipes keep working because they never consult the set. */
 static const focus_set_t FOCUS_NONE = {nullptr, 0, 0, 0};
 
+/* The clock/settings screen: hour -/+, minute -/+, the sound pill, the language
+ * pill, and OK. It had no focus set at all -- it answered FOCUS_NONE -- so none
+ * of it could be pressed with buttons. That is why the language could not be
+ * changed to Korean on hardware: the pill was drawn, cycles all seven languages
+ * when tapped, and there was no way to tap it. Same geometry as the onTap
+ * hit-test above. */
+static const hitbox_t CLOCK_BOXES[] = {
+  {CLOCK_HMINUS_X, CLOCK_BTN_Y,  CLOCK_BTN_W,   CLOCK_BTN_H},
+  {CLOCK_HPLUS_X,  CLOCK_BTN_Y,  CLOCK_BTN_W,   CLOCK_BTN_H},
+  {CLOCK_MMINUS_X, CLOCK_BTN_Y,  CLOCK_BTN_W,   CLOCK_BTN_H},
+  {CLOCK_MPLUS_X,  CLOCK_BTN_Y,  CLOCK_BTN_W,   CLOCK_BTN_H},
+  {CLOCK_SOUND_X,  CLOCK_PILL_Y, CLOCK_SOUND_W, CLOCK_PILL_H},
+  {CLOCK_LANG_X,   CLOCK_PILL_Y, CLOCK_LANG_W,  CLOCK_PILL_H},
+  {CLOCK_OK_X,     CLOCK_OK_Y,   CLOCK_OK_W,    CLOCK_OK_H},
+};
+static const focus_set_t FOCUS_CLOCK = {CLOCK_BOXES, ARRAY_LEN(CLOCK_BOXES), 0, 0};
+
+/* The egg: one target, the pet zone, so mashing A cracks it. */
+static const hitbox_t EGG_BOXES[] = {
+  {PET_ZONE_X, PET_ZONE_Y, PET_ZONE_W, PET_ZONE_H},
+};
+static const focus_set_t FOCUS_EGG = {EGG_BOXES, ARRAY_LEN(EGG_BOXES), 0, 0};
+
 /* ---- helpers ---- */
 
 static uint16_t inkColor() { return gNight ? UI_INK_NIGHT : UI_INK; }
@@ -968,20 +991,58 @@ void onBack(void) {
 
 /* ---- focus / dim / hold ---- */
 
+/* Defined further down, next to the render dispatch it feeds. Declared here so
+ * the focus set can be derived from it rather than re-deriving the screen -- the
+ * two answering separately is what let the renderer draw one screen while the
+ * buttons drove another. */
+static int current_screen_id();
+
+/* Set when the canvas has been overwritten by something that is not a screen --
+ * the launcher's pause menu, which paints wherever it likes. The next render
+ * then repaints in full instead of drawing incrementally onto someone else's
+ * pixels, which is what left the band under the egg black on return. */
+static bool g_force_full_repaint = false;
+
+void tamapoke_ui_force_full_repaint(void) { g_force_full_repaint = true; }
+
+/* Derived from current_screen_id(), the same function the renderer switches on,
+ * because the two answering independently is a bug generator: whatever is drawn
+ * is what the buttons must drive, and any divergence shows up as a screen you
+ * can see and cannot use.
+ *
+ * It had diverged twice in opposite directions. First the input side answered
+ * nullptr for five screens while the renderer happily drew them (a crash on any
+ * keypress). Then a reordering here -- meant to stop the minigame being driven by
+ * the starter rows underneath it -- put awaitingStarter() BELOW the open-screen
+ * flags, while the renderer still checks it first: the starter screen was drawn
+ * with FOCUS_NONE behind it, so it appeared and did nothing. Both are impossible
+ * now, since there is only one dispatch. */
 const focus_set_t *tamapoke_current_focus_set(void) {
-  if (kbOpen) return &FOCUS_KEYBOARD;
-  if (galleryOpen) return &FOCUS_GALLERY;
-  if (millis() < confirmUntil) return &FOCUS_CONFIRM;
-  /* An explicitly opened screen outranks the pet's awaiting-starter flag. The
-   * other order let a screen that is plainly on top be driven by the starter
-   * rows underneath it: the minigame and the sack answered FOCUS_STARTER while
-   * the pet still had no species, so the D-pad walked rows nobody could see.
-   * Never nullptr either -- see FOCUS_NONE. These screens are dismissed with B
-   * or a swipe, so they take no directional focus, but they must still hand back
-   * a set the caller can read. */
-  if (kbOpen || clockOpen || cardOpen || gameOpen || sackOpen) return &FOCUS_NONE;
-  if (pet.awaitingStarter()) return &FOCUS_STARTER;
-  return &FOCUS_MAIN;
+  /* An egg is not a menu. Upstream cracks it by tapping it, and the button
+   * equivalent should be "press A", not "walk the cursor to the right rectangle
+   * and then press A" -- so the egg screen offers exactly one target, the pet
+   * zone, and every A press lands on it whatever the focus index says. */
+  if (pet.isEgg() && !pet.awaitingStarter() && millis() >= confirmUntil)
+    return &FOCUS_EGG;
+
+  switch (current_screen_id()) {
+    case 5: return &FOCUS_STARTER;
+    case 2: return &FOCUS_GALLERY;
+    case 3: return &FOCUS_KEYBOARD;
+    /* Card, clock, minigame and sack are dismissed with B or a swipe and take no
+     * directional focus. They still hand back a set -- never nullptr -- because
+     * the input layer walks whatever it is given. */
+    case 4: return &FOCUS_CLOCK;
+    /* Card, minigame and sack are dismissed with B or a swipe and take no
+     * directional focus. They still hand back a set -- never nullptr -- because
+     * the input layer walks whatever it is given. */
+    case 1: case 6: case 7: return &FOCUS_NONE;
+    default:
+      /* The main screen hosts the confirm dialog as an overlay, so it owns the
+       * focus while it is up. */
+      if (millis() < confirmUntil) return &FOCUS_CONFIRM;
+      return &FOCUS_MAIN;
+  }
 }
 
 bool tamapoke_is_dimmed(void) { return dimStage > 0; }
@@ -1406,6 +1467,15 @@ static void render_main_screen(uint32_t now) {
   if (pet.isEgg()) {
     drawHeader(T(S_EGG_HDR), UI_WHITE, T(eggMsg()));
     drawEgg();
+    /* Paint the bottom band the egg screen has no widgets for. Returning without
+     * it left y=152..240 holding whatever the previous screen had drawn there --
+     * on hardware the third starter row (SQUIRTLE, with its outline) sat under
+     * the egg, and coming back from the pause menu left that band black. The
+     * canvas persists between frames on purpose (lcd_clone, for incremental
+     * drawing), so a path that skips a region is not "leaving it blank", it is
+     * showing the last screen that did draw there. */
+    uint16_t panel = gNight ? PANEL_NIGHT : PANEL_DAY;
+    gfx->fillRect(0, 152, GFX_WIDTH, GFX_HEIGHT - 152, panel);
     return;
   }
 
@@ -1457,7 +1527,46 @@ void tamapoke_ui_render(void) {
   updateNight();
   uint32_t now = millis();
 
-  switch (current_screen_id()) {
+  /* A screen change wipes the canvas first. The canvas survives between frames
+   * by design (lcd_clone), which is what makes the incremental drawing cheap --
+   * and also what makes a region no screen paints show the previous screen's
+   * pixels. Every full-screen renderer starts with fillScreen, so this is
+   * belt-and-braces for the one that forgets, and for the main screen whose
+   * egg/pet/ceremony branches each cover a different area.
+   *
+   * Also resets the focus index: an index that was valid on the screen being
+   * left is either invisible on the new one or, worse, points at a different
+   * action than the one it highlights. */
+  /* The signature is the screen id AND everything that changes which regions get
+   * painted: the timed overlays, and the main screen's three mutually exclusive
+   * branches (egg / ceremony / pet), each of which covers a different area. When
+   * it changes, wipe the canvas first.
+   *
+   * Screen id alone was not enough. An overlay that expires leaves the same
+   * screen id behind, so nothing repainted where it had been -- the bath bubbles
+   * and the feed menu stayed on screen after their timers ran out. */
+  int screen = current_screen_id();
+  uint32_t sig = (uint32_t)(screen + 1);
+  sig = sig * 31 + (now < bathUntil        ? 1u : 0u);
+  sig = sig * 31 + (now < feedMenuUntil    ? 1u : 0u);
+  sig = sig * 31 + (now < confirmUntil     ? 1u : 0u);
+  sig = sig * 31 + (now < choiceUntil      ? 1u : 0u);
+  sig = sig * 31 + (pet.isEgg()            ? 1u : 0u);
+  sig = sig * 31 + (pet.ceremony != CER_NONE ? 1u : 0u);
+
+  static uint32_t last_sig = 0;
+  if (sig != last_sig || g_force_full_repaint) {
+    bool screen_changed = (sig != last_sig);
+    last_sig = sig;
+    g_force_full_repaint = false;
+    gfx->fillScreen(gNight ? UI_BG_NIGHT : UI_BG_DAY);
+    /* Focus follows the screen: an index that was valid on the one being left is
+     * either invisible here or points at a different action than it highlights.
+     * Not reset on a bare force-repaint, which is the same screen redrawn. */
+    if (screen_changed) tamapoke_input_reset(0);
+  }
+
+  switch (screen) {
     case 5:  renderStarterSelect();  break;
     case 2:  renderGallery();        break;
     case 6:  renderGame();           break;

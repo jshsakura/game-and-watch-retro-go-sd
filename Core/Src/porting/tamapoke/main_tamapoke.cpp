@@ -49,7 +49,12 @@ static void commit_save(void) { tamapoke_prefs_commit(); }
 /* The pause menu repaints the screen behind itself through this. The UI draws
  * incrementally, so a full re-render is the only correct answer -- anything less
  * leaves the menu's own pixels behind when it closes. */
-static void repaint_ui(void) { tamapoke_ui_render(); }
+static void repaint_ui(void) {
+  /* The menu painted over the canvas, so an incremental redraw would leave its
+   * pixels wherever this frame does not draw. Repaint in full. */
+  tamapoke_ui_force_full_repaint();
+  tamapoke_ui_render();
+}
 
 /* The pause menu's Save rows go through these. A virtual pet has no snapshot to
  * take: its whole state is the preferences blob it already writes at safe points,

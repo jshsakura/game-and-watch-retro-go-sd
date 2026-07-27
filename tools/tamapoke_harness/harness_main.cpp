@@ -206,6 +206,66 @@ int main(int argc, char **argv) {
     printf("\nok   every screen survives every button, incl. a stale focus index\n");
   failures += input_failures;
 
+  /* No screen may inherit the previous screen's pixels.
+   *
+   * The device keeps the canvas between frames (lcd_clone) so the UI can draw
+   * incrementally, which means a region a screen never paints still shows
+   * whatever drew there last. render_at() above resets the framebuffer before
+   * every render, so this harness could not see that: it was measuring each
+   * screen in a cleanroom the device never provides.
+   *
+   * What it hid: the main screen's egg branch returned before filling y=152..240,
+   * so the third starter row -- outline, sprite and the word SQUIRTLE -- sat
+   * underneath the egg on hardware, and coming back from the pause menu left that
+   * band black.
+   *
+   * The test is the same picture twice: render B on a clean canvas, then render B
+   * again on top of A. Anything that differs is a pixel B does not own. */
+  /* No screen may leave a region unpainted after a screen change.
+   *
+   * Done with a sentinel rather than by diffing two renders: rendering is not
+   * idempotent (pets wander, cursors blink, the ball moves), so comparing render
+   * #1 with render #2 flags animated screens and a gate that cannot tell its own
+   * setup from a finding gets switched off. Fill the canvas with a colour no
+   * screen draws, switch screens, render once -- every surviving sentinel pixel
+   * is a pixel this screen occupies and did not write, which on the device shows
+   * whatever was there before.
+   *
+   * That is exactly what shipped: the main screen's egg branch returned before
+   * filling y=152..240, so the third starter row -- outline, sprite and the word
+   * SQUIRTLE -- sat under the egg, and the band came back black from the pause
+   * menu. render_at() cleared the framebuffer before every render, so this
+   * harness measured each screen in a cleanroom the device never provides. */
+  const uint16_t SENTINEL = 0xF81F; /* magenta; nothing in the palette uses it */
+  int bleed_failures = 0;
+  for (int b = 0; b < TAMAPOKE_SCREEN_COUNT; b++) {
+    for (int a = 0; a < TAMAPOKE_SCREEN_COUNT; a++) {
+      if (a == b) continue;
+
+      render_at(a, 0);                  /* be on some other screen first */
+      harness_fb_reset(SENTINEL);       /* every pixel is now "nobody drew here" */
+      tamapoke_ui_goto_screen(b);
+      tamapoke_input_reset(0);
+      tamapoke_ui_render();
+
+      const uint16_t *fb = harness_fb();
+      int left = 0;
+      for (int i = 0; i < FB_PIXELS; i++)
+        if (fb[i] == SENTINEL) left++;
+
+      if (left) {
+        printf("FAIL %-14s leaves %d px unpainted arriving from %s -- they show "
+               "the previous screen on hardware\n",
+               tamapoke_ui_screen_name(b), left, tamapoke_ui_screen_name(a));
+        bleed_failures++;
+        break;                          /* one report per screen is enough */
+      }
+    }
+  }
+  if (!bleed_failures)
+    printf("ok   no screen inherits pixels from the screen before it\n");
+  failures += bleed_failures;
+
   int total = TAMAPOKE_SCREEN_COUNT * (int)(sizeof(LANGS) / sizeof(LANGS[0]));
   printf("\n%d/%d screens clean, PPMs in %s\n", total - failures, total, out_dir);
   return failures ? 1 : 0;

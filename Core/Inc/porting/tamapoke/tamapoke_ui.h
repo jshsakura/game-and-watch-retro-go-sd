@@ -303,6 +303,11 @@ void tamapoke_ui_init(void);
 void tamapoke_render(void);
 void tamapoke_ui_render(void);
 
+/* Force the next render to repaint the whole screen instead of drawing
+ * incrementally. Call it after something outside the UI has painted over the
+ * canvas -- the launcher's pause menu is the case that matters. */
+void tamapoke_ui_force_full_repaint(void);
+
 /* True if input has happened since the last frame -- lets the porting main
  * loop tell a "framestep" from real activity. */
 bool tamapoke_ui_had_activity(void);
