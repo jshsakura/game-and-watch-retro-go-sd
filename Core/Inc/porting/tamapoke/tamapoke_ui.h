@@ -134,7 +134,12 @@ extern "C" {
 #define FEED_MENU_X     ((TP_CX) - (FEED_MENU_W) / 2)  /* 110 */
 #define FEED_MENU_Y     150
 #define FEED_MENU_R     8
-#define FEED_ICON_GAP   48      /* centre-to-centre */
+/* Five 24px cells inside a 200px plate with an 8px margin either side: the
+ * remaining 184 - 5*24 = 64 px is split into four 16px gaps, so the pitch is 40.
+ * At the old 48 the fifth item (candy) started at X+200 -- exactly the plate's
+ * right edge -- and was drawn 24px outside the menu it belongs to. The onTap
+ * hit-test derives from the same constant, so it followed the icons out. */
+#define FEED_ICON_GAP   40      /* centre-to-centre; see the arithmetic above */
 #define FEED_ICON0_X    (FEED_MENU_X + 8)
 #define FEED_ICON_Y     (FEED_MENU_Y + 6)
 #define FEED_ICON_SZ    24
