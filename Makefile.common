@@ -390,13 +390,6 @@ MSX_USE_BANK_2 ?= 0
 #######################################
 # cover flow
 #######################################
-#######################################
-# TamaPoke (private homebrew, local builds only)
-#######################################
-# Deliberately not in .github/workflows/package.yml: the sprites are CC BY-NC
-# and depict Nintendo characters, so a published release would be distribution.
-TAMAPOKE ?= 0
-
 COVERFLOW ?= 0
 
 ifdef COVERFLOW
@@ -682,7 +675,6 @@ C_DEFS +=  \
 -DSINGLE_FONT=$(SINGLE_FONT) \
 -DLANG=$(LANG) \
 -DCOVERFLOW=$(COVERFLOW) \
--DTAMAPOKE=$(TAMAPOKE) \
 -DEXTFLASH_FORCE_SPI=$(EXTFLASH_FORCE_SPI) \
 -DUSE_HAL_DRIVER \
 -DSTM32H7B0xx \
@@ -906,7 +898,6 @@ C64_OBJECTS = $(addprefix $(BUILD_DIR)/c64/,$(notdir $(C64_C_SOURCES:.c=.o)))
 GAMECOM_OBJECTS = $(addprefix $(BUILD_DIR)/gamecom/,$(notdir $(GAMECOM_C_SOURCES:.c=.o)))
 C64_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/c64/,$(notdir $(C64_CXX_SOURCES:.cpp=.o)))
 CELESTE_OBJECTS = $(addprefix $(BUILD_DIR)/celeste/,$(notdir $(CELESTE_C_SOURCES:.c=.o)))
-# Empty unless TAMAPOKE=1, so a default build links exactly as before.
 TAMAPOKE_OBJECTS = $(addprefix $(BUILD_DIR)/tamapoke/,$(notdir $(TAMAPOKE_CXX_SOURCES:.cpp=.o)))
 MUSIC_OBJECTS = $(addprefix $(BUILD_DIR)/music/,$(notdir $(MUSIC_C_SOURCES:.c=.o)))
 PICO8_ALL_SOURCES = $(PICO8_C_SOURCES) $(PICO8_CXX_SOURCES) $(PICO8_CXX_STUBS)
@@ -2080,9 +2071,7 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_pkmini,$(CORES_DIR)/pkmini.bin)
 	$(call EXTRACT_INTERNAL_CORE_BIN_WITH_HEADER,.overlay_pico8,$(CORES_DIR)/pico8_stub.bin)
 	@$(CP) -O binary --only-section=.overlay_celeste $(BUILD_DIR)/$(TARGET).elf $(HOMEBREWS_FOLDER)/celeste.bin
-ifeq ($(TAMAPOKE),1)
 	@$(CP) -O binary --only-section=.overlay_tamapoke $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/TamaPoke.bin"
-endif
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Music.bin"
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Video.bin"
 	@$(CP) -O binary --only-section=.overlay_music $(BUILD_DIR)/$(TARGET).elf "$(CORES_DIR)/clockmp3.bin"   # Clock MP3-alarm decoder (headerless .overlay_music, staged into RAM_EMU by rg_clock_alarm_mp3.c)

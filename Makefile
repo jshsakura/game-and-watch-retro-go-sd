@@ -1082,13 +1082,12 @@ $(CORE_CCLESTE)/celeste.c \
 $(CORE_CCLESTE)/celeste_audio.c \
 Core/Src/porting/celeste/main_celeste.c
 
-# TamaPoke: private personal build, off unless TAMAPOKE=1 is passed explicitly.
+# TamaPoke. Built into every firmware, like Zelda 3 and Super Mario World --
+# and for the same reason: the code is ours and upstream's, and the assets it
+# needs are the user's, generated onto the card by tools/tamapoke/stage_sd.sh.
 # The upstream game logic is vendored rather than kept as a submodule because
 # every file needs the Arduino shims anyway.
-TAMAPOKE_CXX_SOURCES =
-
-ifeq ($(TAMAPOKE),1)
-TAMAPOKE_CXX_SOURCES += \
+TAMAPOKE_CXX_SOURCES = \
 Core/Src/porting/tamapoke/main_tamapoke.cpp \
 Core/Src/porting/tamapoke/tamapoke_gfx.cpp \
 Core/Src/porting/tamapoke/tamapoke_unicode.cpp \
@@ -1102,7 +1101,6 @@ Core/Src/porting/tamapoke/tamapoke_audio.cpp \
 Core/Src/porting/tamapoke/tamapoke_shim.cpp \
 Core/Src/porting/tamapoke/pet.cpp \
 Core/Src/porting/tamapoke/i18n.cpp
-endif
 
 MUSIC_C_SOURCES = \
 Core/Src/porting/music/main_music.c \

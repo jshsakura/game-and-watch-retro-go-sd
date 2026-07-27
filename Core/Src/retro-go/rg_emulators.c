@@ -44,9 +44,7 @@
  * include path. It holds an audio.h -- upstream's name, kept so the vendored
  * game logic stays unmodified -- which would shadow the o2em-go audio.h that
  * videopac resolves to. */
-#if TAMAPOKE == 1
 #include "porting/tamapoke/main_tamapoke.h"
-#endif
 #include "main_music.h"
 #include "main_video.h"
 #include "main_pico8.h"
@@ -1753,16 +1751,13 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             memset(&_OVERLAY_ZELDA3_BSS_START, 0x0, (size_t)&_OVERLAY_ZELDA3_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_ZELDA3_SIZE);
             app_main_zelda3(load_state, start_paused, save_slot);
-        /* TamaPoke is a private personal build. Homebrew is dispatched by name
-         * from resident code, so the core cannot be dropped onto a stock
-         * firmware -- launcher and overlay must come from the same build.
-         * Compiled out entirely unless TAMAPOKE=1. */
-#if TAMAPOKE == 1
+        /* TamaPoke needs the assets on the card, the way Zelda 3 and Super
+         * Mario World need their ROMs. Without them it still runs -- species
+         * read as their dex number and the starter sprites are blank. */
         } else if (strcmp(newfile->name,"TamaPoke") == 0) {
             memset(&_OVERLAY_TAMAPOKE_BSS_START, 0x0, (size_t)&_OVERLAY_TAMAPOKE_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_TAMAPOKE_SIZE);
             app_main_tamapoke(load_state, start_paused, save_slot);
-#endif
         /* Super Metroid is SD-card only, and is compiled out entirely otherwise.
          * It needs two files cached into external flash from the card: the original
          * 3 MB ROM it reads at runtime, and sm.xip, whose sentinel addresses are

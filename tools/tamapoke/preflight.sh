@@ -39,22 +39,25 @@ n=$(git ls-files | grep -c 'pokeapi_cache' || true)
 [ "$n" -eq 0 ] && ok "no PokeAPI cache tracked" || bad "PokeAPI cache tracked ($n files)"
 
 echo
-echo "== 2. a default build is untouched =="
+echo "== 2. the firmware carries no assets =="
 
-# TAMAPOKE defaults off and is absent from CI, so a release build must not see
-# a single reference. This is the whole safety story.
-if ! make help CHECK_DIRTY_SUBMODULE=0 >/dev/null 2>&1; then
-    bad "make does not parse"
+# TamaPoke builds into every firmware now, like Zelda 3 and Super Mario World.
+# That is only safe because the binary holds none of the material: names and
+# starter sprites are read from the card at startup. If either ever gets baked
+# back in, the release stops being publishable and nothing else would say so.
+if [ -s build/gw_retro_go_intflash.bin ]; then
+    if strings build/gw_retro_go_intflash.bin 2>/dev/null | grep -qiE '^(BULBASAUR|CHARMANDER|SQUIRTLE|PIKACHU|MEWTWO)$'; then
+        bad "species names found in the firmware binary"
+    else
+        ok "no species names in the firmware binary"
+    fi
+    used=$(stat -c %s build/gw_retro_go_intflash.bin)
+    # 256K bank. It has been at 99% since before this port; worth seeing.
+    printf '       intflash %d/262144 B (%d%%), %d B free\n' \
+        "$used" $(( used * 100 / 262144 )) $(( 262144 - used ))
+    [ "$used" -le 262144 ] && ok "intflash fits" || bad "intflash overflow"
 else
-    ok "make parses"
-    n=$(make CHECK_DIRTY_SUBMODULE=0 -n --no-print-directory 2>/dev/null | grep -c tamapoke || true)
-    [ "$n" -eq 0 ] && ok "TAMAPOKE=0 pulls in nothing" || bad "TAMAPOKE=0 still references tamapoke ($n)"
-fi
-
-if grep -rq 'TAMAPOKE' .github/workflows/ 2>/dev/null; then
-    bad "TAMAPOKE appears in a CI workflow -- it would ship in a release"
-else
-    ok "TAMAPOKE absent from CI workflows"
+    note "no intflash image yet -- build first"
 fi
 
 echo
