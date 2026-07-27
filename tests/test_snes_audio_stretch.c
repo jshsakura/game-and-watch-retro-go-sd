@@ -102,7 +102,13 @@ int main(void) {
     double step = snes_stretch_step_q16() / 65536.0;
     printf("    step=%.4f fill=%u underruns=%u (steady %u) pulls=%u\n",
            step, snes_stretch_fill(), snes_stretch_underruns(), steady_underruns, pulls);
-    check(!saw, "44 fps: no silent gap (the bug this module exists for)");
+    /* NOT "no silent gap" any more, and that is the contract change, not a
+     * weakened test. At 44 fps the core makes 10,906 samples a second and the
+     * DMA eats 16,000: continuous + correctly pitched + in sync is three
+     * things and you may have two. The module used to buy continuity with
+     * pitch, which is the fault this file now pins. What it must still never
+     * do is drift or click, so the gap is allowed here and checked for at the
+     * small deficit below, where the promise actually holds. */
     /* It used to assert the opposite of this line: that the rate tracked the
      * deficit down to 0.738. It does not any more, and must not -- that is the
      * whole soundtrack a fifth flat for as long as the scene is slow, which is

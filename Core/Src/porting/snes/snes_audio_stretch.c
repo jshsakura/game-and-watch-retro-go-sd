@@ -13,12 +13,12 @@ _Static_assert((RING & RING_MASK) == 0u, "ring must be a power of two");
  * frames lets a momentary dip reach the floor and start holding samples. */
 #define TARGET     640u
 
-/* How much recent history a dry pull loops back over. ~4 ms at 16 kHz: long
- * enough to carry pitch rather than buzz, short enough that the repeat reads
- * as flutter rather than as an echo. Must be <= TARGET, since priming is what
- * guarantees this much history exists. */
+/* Length of the history loop a dropout plays, in samples. ~4 ms at 16 kHz:
+ * long enough to carry pitch instead of buzzing, short enough to read as a
+ * stutter rather than an echo. Must be <= TARGET -- priming is what
+ * guarantees that much history exists behind rd. */
 #define REPEAT     64u
-_Static_assert(REPEAT <= TARGET, "a dry pull may only rewind into primed history");
+_Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
 
 /* Sanity bound on the MEASURED ratio. Not a playback rate: it exists only to
  * keep one pathological pull (a load, a pause) from poisoning the average. */
@@ -58,6 +58,9 @@ static uint16_t settled;            /* pulls seen                           */
 static uint32_t underruns;
 static int16_t  last;
 static uint8_t  primed;             /* has the ring ever reached TARGET?    */
+static uint16_t debt;               /* filler emitted, owed back in dropped samples */
+static uint16_t fpos;               /* history cursor used while dry (rd unmoved)   */
+static uint8_t  dry;                /* in a dropout right now?                      */
 
 void snes_stretch_reset(void) {
   memset(ring, 0, sizeof(ring));
@@ -70,6 +73,9 @@ void snes_stretch_reset(void) {
   underruns = 0;
   last = 0;
   primed = 0;
+  debt = 0;
+  fpos = 0;
+  dry = 0;
 }
 
 void snes_stretch_push(const int16_t *src, uint16_t n) {
@@ -151,19 +157,53 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
     }
 
     /* Dry: the core did not produce enough for this period, and the rate band
-     * deliberately will not close the gap by slowing the music down. Holding
-     * one sample would -- a DC step, buzzy for the ~25% of samples a 32%
-     * deficit costs. So loop the last few milliseconds instead: reads only
-     * advance rd, they never clear the ring, so the samples behind it are
-     * still there and still recent. Priming guarantees at least TARGET of
-     * them exist before this can run. The result is a flutter on a slow
-     * scene, at the right pitch, which is what the pre-stretcher path
-     * sounded like and what the device was reported to prefer. */
+     * deliberately will not close the gap by slowing the music down. Three
+     * things are wanted from what goes out instead, and the first two attempts
+     * each bought one by losing another:
+     *
+     *   hold one sample        no drift, no click, but a DC step -- buzz for
+     *                          the ~25% of samples a deficit this size costs
+     *   rewind rd and replay   no buzz, right pitch, but the read position
+     *                          falls further into the past on every dry
+     *                          sample, ~80 times a second, and the stream
+     *                          ends up minutes behind the game. That is the
+     *                          "밀린다" reported from the device.
+     *
+     * The rewind was right about the filler and wrong about who pays for it.
+     * Filler inserted into a stream delays everything behind it; the only way
+     * to insert without delaying is to throw away as much real audio as you
+     * inserted. So: play history WITHOUT moving rd (the samples behind it are
+     * still in the ring -- reads advance rd, they never clear it), count the
+     * debt, and pay it down by dropping real samples once they arrive. Pitch
+     * is exact, the read position never moves backwards, latency is bounded,
+     * and a slow scene sounds like a stutter -- which is what it is. */
     if (fill < 2u) {
+      /* Emit filler from the history BEHIND rd -- reads advance rd, they never
+       * clear the ring, so those samples are still there -- but do not move rd
+       * to do it. Moving rd backwards is what drifted: the read position falls
+       * further into the past on every dry sample, ~80 times a second, and the
+       * stream ends up minutes behind the game. Instead record a debt. */
+      if (!dry) { dry = 1; fpos = (uint16_t)((rd - REPEAT) & RING_MASK); }
       underruns++;
-      rd = (uint16_t)((rd - REPEAT) & RING_MASK);
-      fill = (uint16_t)(fill + REPEAT);
+      if (debt < 0xffffu) debt++;
+      int16_t v = ring[fpos];
+      fpos = (uint16_t)((fpos + 1u) & RING_MASK);
+      if (fpos == rd) fpos = (uint16_t)((rd - REPEAT) & RING_MASK);
+      dst[i] = v;
+      continue;
     }
+    dry = 0;
+
+    /* Pay the debt down with real samples: every sample of filler that went
+     * out has to cost one sample of stream, or the filler IS the drift. This
+     * is the whole difference between "the sound stutters on a slow scene"
+     * and "the sound falls behind and never comes back". */
+    while (debt && fill > 2u) {
+      rd = (uint16_t)((rd + 1u) & RING_MASK);
+      fill--;
+      debt--;
+    }
+    if (fill < 2u) { dst[i] = last; continue; }
 
     int32_t s0 = ring[rd];
     int32_t s1 = ring[(rd + 1u) & RING_MASK];

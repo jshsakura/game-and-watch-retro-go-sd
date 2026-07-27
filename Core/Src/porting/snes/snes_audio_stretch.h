@@ -33,8 +33,10 @@
  * cents at which a detune registers). Inside that band the module still does
  * the job it was written for: it absorbs the jitter of a pull landing part of
  * a frame early or late, which is what turns into a gap. Outside it the ring
- * runs dry, the pull holds its last sample — no zero, no click — and the old
- * cadence returns. A core at 68% speed has an fps problem; spending pitch on
+ * runs dry and the pull plays a few ms of history in place — no zero, no
+ * click, no drift, with the debt paid back by dropping real samples once they
+ * arrive, so the stream never falls behind the game — and the old cadence
+ * returns. A core at 68% speed has an fps problem; spending pitch on
  * it buys nothing and costs the music.
  *
  * At full speed the loop converges to step == 1.0 and the pull is a straight
