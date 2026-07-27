@@ -361,6 +361,12 @@ bash tests/test_check_sd_content_fresh.sh || fail tests/test_check_sd_content_fr
 echo "=== check_resident_init_array: no boot ctor may point into overlay RAM ==="
 bash tests/test_check_resident_init_array.sh || fail tests/test_check_resident_init_array.sh
 
+# .sdcard_logo is staging, not memory: its symbol addresses are extflash LOAD
+# addresses objcopy'd out to /bios/logo.bin. rg_get_logo() returned one of them
+# for the favorites wordmark and entering that tab faulted at 0x004c1d5e.
+echo "=== check_no_resident_logo_refs: no unreadable logo address in flash ==="
+bash tests/test_check_no_resident_logo_refs.sh || fail tests/test_check_no_resident_logo_refs.sh
+
 # GBA: the flash-XIP split is a contract the compiler cannot check. cpu.o runs
 # from ITCM, which the sentinel pass does not scan, so nothing cpu.o references
 # may live in the blob — move one file across that line in the linker script and

@@ -1090,6 +1090,11 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_
 	@# looks like anything but firmware. Shipped in 1501 and 1610 (TamaPoke), and
 	@# in C64/Frodo before that. Nothing in the language warns.
 	$(V)python3 scripts/check_resident_init_array.py $(PREFIX)objdump $@
+	@# .sdcard_logo is staging, not memory: its addresses are extflash LOAD
+	@# addresses that objcopy hands to /bios/logo.bin. Taking one at runtime
+	@# faults -- the favorites tab did, at 0x004c1d5e, and CPS-1's wordmark
+	@# before it. Catch the pointer where it is unambiguous: baked into flash.
+	$(V)python3 scripts/check_no_resident_logo_refs.py $(PREFIX)objdump $(PREFIX)nm $@
 	@# A profiler that compiles but whose probes never made it into the objects
 	@# produces a plausible-looking dump of nothing. The 32X profile shipped
 	@# exactly that. Pass this build's intent: an incremental tree keeps the

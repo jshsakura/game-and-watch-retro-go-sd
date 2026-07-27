@@ -89,10 +89,15 @@ retro_logo_image *rg_get_logo(int16_t logo_index) {
             return (retro_logo_image *)&logo_rgw;
         case RG_LOGO_GNW:
             return (retro_logo_image *)&logo_gnw;
-        /* The FAVORITES wordmark is served from flash so reviving it does not
-         * require the user to rebuild /bios/logo.bin. */
-        case RG_LOGO_HEADER_FAVORITES:
-            return (retro_logo_image *)&header_favorites;
+        /* Nothing else may be added here unless it is INT_LOGO_DATA. There used
+         * to be a fourth case returning &header_favorites, with a comment saying
+         * it was "served from flash so reviving it does not require the user to
+         * rebuild /bios/logo.bin" -- but header_favorites is LOGO_DATA, i.e.
+         * .sdcard_logo, whose addresses are extflash LOAD addresses that get
+         * objcopy'd out to logo.bin and are NOT readable at runtime. Entering the
+         * favorites tab therefore read 0x004c1d5e and took a BusFault (device
+         * report, 0727). The wordmark is in logo.bin at its own index like every
+         * other header, so the correct answer is to let it fall through. */
     }
 
     static_assert(INT_LOGO_COUNT == 3);
