@@ -102,3 +102,7 @@ tools/sfc_recomp/rc_core_*.c
 /tamapoke_sd_payload*.zip
 Core/Src/porting/tamapoke/mons/
 *.tpk2
+
+# PokeAPI responses cached by tools/tamapoke/make_dex_names.py. They carry the
+# localised species names verbatim -- the very thing kept out of this tree.
+.pokeapi_cache/
