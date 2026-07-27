@@ -1090,11 +1090,6 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_
 	@# previous build's snes_profile.o, and object-presence alone then fails a
 	@# plain release build over probes it never asked for (observed 0722).
 	$(V)NM=$(PREFIX)nm scripts/check_snes_profile_wired.sh $(BUILD_DIR) $(if $(filter 1,$(SNES_DEVICE_PROFILE)),1,0)
-	@# The RG_LOGO_HEADER_* enum is an index into /bios/logo.bin, and the index
-	@# is the LINK order -- which GCC is free to reorder and does. Declaration
-	@# order proves nothing. Twice now a tab has worn another system's wordmark
-	@# from a build that compiled, linked and logged perfectly (cfa39466, 0722).
-	$(V)NM=$(PREFIX)nm python3 scripts/check_logo_order.py $@ Core/Inc/retro-go/bitmaps.h
 # Resident firmware (launcher/HAL/UI) is performance-insensitive — emulation runs in the
 # RAM-overlay cores, which keep their own -O2. Build the resident core -Os to claw back
 # internal-FLASH (Bank 1, 256 KB) headroom as the system count grows. patsubst keeps every

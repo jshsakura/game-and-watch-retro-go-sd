@@ -134,6 +134,40 @@ else
     rc=1
 fi
 
+echo "=== check_logo_index_alignment: headers in relative order but at the wrong index must FAIL ==="
+# The blind spot that let 0727 through the previous gate (check_logo_order.py,
+# now removed): it collected only header_* symbols and compared them pairwise,
+# so it proved the headers were in order RELATIVE TO EACH OTHER and reported
+# "OK (32 headers, enum == link order)" on the header that was crashing devices.
+# What had moved was their ABSOLUTE index, because a PAD was inserted ahead of
+# them. Below, header_gb/header_nes are in the right relative order and both at
+# the wrong index; a relative-order check passes this and must not.
+cat > "$T/relative.nm" <<'EOF'
+004bea74 R pad_inserted
+004beb2c R header_gb
+004bec62 R header_nes
+EOF
+cat > "$T/relative.h" <<'EOF'
+enum {
+    RG_LOGO_EMPTY = -1,
+    RG_LOGO_RGO = 0,
+    RG_LOGO_RGW,
+    RG_LOGO_GNW,
+    RG_LOGO_HEADER_GB,
+    RG_LOGO_HEADER_NES,
+    RG_LOGO_PAD_INSERTED,
+};
+EOF
+"$PY" "$CHECKER" "$FAKE_NM" "$T/relative.nm" "$T/relative.h" >"$T/f.out" 2>&1
+f_rc=$?
+if [ "$f_rc" -ne 0 ] && grep -q "RG_LOGO_HEADER_GB" "$T/f.out"; then
+    echo "OK  absolute index is checked, not just relative order"
+else
+    echo "FAIL relative-order case: expected non-zero exit naming HEADER_GB, got exit=$f_rc:"
+    cat "$T/f.out"
+    rc=1
+fi
+
 echo "=== check_logo_index_alignment: a blob logo with no enum entry must FAIL ==="
 # Art added to rg_logos.c without an enum entry is a silent +1 to every index
 # behind it — the same failure, arriving from the other direction.

@@ -15,7 +15,17 @@ That equality has now silently broken twice:
     32-40px pads into the 18px header bar and the unclipped draw corrupted the
     RAM after the framebuffer (grid view / favorites / settings crashes).
 
-This script is that manual `nm -n` diff, run on every link. Rules checked:
+It replaces scripts/check_logo_order.py (0722), which was written for the same
+purpose and passed the 0727 break without a murmur -- "OK (32 headers, enum ==
+link order)" against the header that was crashing devices. Worth knowing why,
+because the blind spot is easy to rebuild: that script collected only `header_*`
+symbols and compared the two lists pairwise, so it proved the headers were in
+order RELATIVE TO EACH OTHER. What shifted in 0727 was their ABSOLUTE index,
+because upstream inserted a PAD (pad_lynx) ahead of them -- and pads were not in
+either list. A gate on relative order cannot see an insertion outside the set it
+looks at. This one checks absolute position for every LOGO_DATA symbol there is.
+
+Rules checked:
   1. Every enum entry that has a LOGO_DATA struct must sit at the blob index
      its enum value implies (value - INT_LOGO_COUNT == position in link order).
   2. Colour-only entries (no struct) may exist ONLY after the last backed one:
