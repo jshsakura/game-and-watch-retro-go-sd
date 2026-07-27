@@ -56,16 +56,6 @@ enum {
     RG_LOGO_HEADER_HOMEBREW,
     RG_LOGO_HEADER_TAMA,
     RG_LOGO_HEADER_PKMINI,
-    /* Atari Lynx name header. Sits HERE because upstream defines header_lynx
-     * right after header_pkmini in rg_logos.c and the LINK ORDER of the
-     * LOGO_DATA structs is /bios/logo.bin's index space. This entry used to
-     * sit after the vendor logos below, "verified against the link order" --
-     * and then the link order moved (GCC is free to reorder top-level
-     * definitions) and every pad/logo slot between here and there served its
-     * neighbour's art. Do not trust a comment for this again:
-     * scripts/check_logo_index_alignment.py now diffs this enum against
-     * `nm -n` on every link and fails the build on any drift. */
-    RG_LOGO_HEADER_LYNX,
     // Pads
     RG_LOGO_PAD_SG1000,
     RG_LOGO_PAD_COL,
@@ -84,15 +74,6 @@ enum {
     RG_LOGO_PAD_SNES,
     RG_LOGO_PAD_TAMA,
     RG_LOGO_PAD_PKMINI,
-    /* Atari Lynx footer pad -- upstream art, added by the 0727 sylverb merge,
-     * which links right after pad_pkmini. It arrived while this enum still
-     * listed PAD_LYNX in the colour-only block at the tail, so every blob
-     * entry from here on served its predecessor: HEADER_WSWAN and
-     * HEADER_PCECD handed 32-40px pads to an 18px header slot, and the
-     * unclipped draw wrote past the framebuffer (the 0727 grid-view /
-     * favorites / settings crashes). Guarded by check_logo_index_alignment.py
-     * at link time now. */
-    RG_LOGO_PAD_LYNX,
     // Logos
     RG_LOGO_COLECO,
     RG_LOGO_NINTENDO,
@@ -103,10 +84,16 @@ enum {
     RG_LOGO_ATARI,
     RG_LOGO_AMSTRAD,
     RG_LOGO_TAMA,
-    /* HEADER_LYNX used to sit here "verified against the link order" -- the
-     * link order then moved and took a day of device crashes to find. It now
-     * lives up with the other headers, where header_lynx actually links.
-     * The alignment gate, not a comment, is what holds this file to the ELF. */
+    /* Atari Lynx name header. Sits HERE, ahead of the fork's own headers,
+     * because upstream defines header_lynx at this point in rg_logos.c and
+     * upstream's numbering is the one we follow -- this fork's additions are
+     * appended after it. Verified against the link order, which is the only
+     * authority (GCC reorders top-level definitions):
+     *     arm-none-eabi-nm -n build/gw_retro_go.elf | grep ' R header_'
+     * NOTE: this shifts PICO-8/NGP/WonderSwan down one /bios/logo.bin index,
+     * so an SD card carrying an older logo.bin must be updated with this
+     * build's sd_content. */
+    RG_LOGO_HEADER_LYNX,
     // PICO-8 (appended last to not shift any existing enum values)
     RG_LOGO_HEADER_PICO8,
     // NGP / WonderSwan (appended last to not shift existing enum values)
@@ -158,10 +145,7 @@ enum {
     // header-right colour icon, never the 1-bit navbar logo.
     RG_LOGO_PAD_PICO8,
     RG_LOGO_PAD_GBC,
-    /* PAD_LYNX left this block 0727: upstream shipped real pad_lynx art, so
-     * it is blob-backed now and lives up with the other pads. A backed entry
-     * must never sit after a colour-only one -- that shifts every index
-     * behind it (check_logo_index_alignment.py enforces this). */
+    RG_LOGO_PAD_LYNX,
     RG_LOGO_PAD_PCECD,
     // Odyssey2 / ZX Spectrum / C64 colour tab icons (color_icon_for_logo only,
     // no logo.bin entry -> rg_get_logo() returns NULL, bounds-checked)

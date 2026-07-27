@@ -97,16 +97,29 @@ void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, 
     for (int i = 0; i < w; i++)
         for (int y = 0; y < logo->height; y++)
         {
+            /* Clip to the 320x240 framebuffer. Callers position a logo by the
+             * size they EXPECT at that index -- and when /bios/logo.bin and the
+             * RG_LOGO enum disagreed (0727), an 18px header slot served a 40px
+             * pad and this loop wrote thousands of pixels past the framebuffer
+             * into whatever the allocator had placed after it. The index gate
+             * (check_logo_index_alignment.py) prevents the mismatch; this makes
+             * the blit itself unable to corrupt memory regardless. */
+            int row = y + y_pos;
+            int col = i * 8 + x_pos;
+            if (row < 0 || row >= 240 || col >= 320)
+                continue;
             const char glyph = logo->logo[y * w + i];
-            int base = (y + y_pos) * 320 + i * 8 + x_pos;
-            if (glyph & 0x80) lcd_pen_set(&pen, base + 0);
-            if (glyph & 0x40) lcd_pen_set(&pen, base + 1);
-            if (glyph & 0x20) lcd_pen_set(&pen, base + 2);
-            if (glyph & 0x10) lcd_pen_set(&pen, base + 3);
-            if (glyph & 0x08) lcd_pen_set(&pen, base + 4);
-            if (glyph & 0x04) lcd_pen_set(&pen, base + 5);
-            if (glyph & 0x02) lcd_pen_set(&pen, base + 6);
-            if (glyph & 0x01) lcd_pen_set(&pen, base + 7);
+            int base = row * 320 + col;
+            int room = 320 - col; /* pixels left on this scanline */
+            if (room > 8) room = 8;
+            if (room > 0 && (glyph & 0x80)) lcd_pen_set(&pen, base + 0);
+            if (room > 1 && (glyph & 0x40)) lcd_pen_set(&pen, base + 1);
+            if (room > 2 && (glyph & 0x20)) lcd_pen_set(&pen, base + 2);
+            if (room > 3 && (glyph & 0x10)) lcd_pen_set(&pen, base + 3);
+            if (room > 4 && (glyph & 0x08)) lcd_pen_set(&pen, base + 4);
+            if (room > 5 && (glyph & 0x04)) lcd_pen_set(&pen, base + 5);
+            if (room > 6 && (glyph & 0x02)) lcd_pen_set(&pen, base + 6);
+            if (room > 7 && (glyph & 0x01)) lcd_pen_set(&pen, base + 7);
         }
 };
 
