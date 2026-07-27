@@ -364,6 +364,9 @@ bash tests/test_check_resident_init_array.sh || fail tests/test_check_resident_i
 # .sdcard_logo is staging, not memory: its symbol addresses are extflash LOAD
 # addresses objcopy'd out to /bios/logo.bin. rg_get_logo() returned one of them
 # for the favorites wordmark and entering that tab faulted at 0x004c1d5e.
+echo "=== tamapoke: packer and blit agree on the transparent palette index ==="
+bash tests/test_tamapoke_sprite_transparency.sh || fail tests/test_tamapoke_sprite_transparency.sh
+
 echo "=== check_no_resident_logo_refs: no unreadable logo address in flash ==="
 bash tests/test_check_no_resident_logo_refs.sh || fail tests/test_check_no_resident_logo_refs.sh
 

@@ -325,7 +325,15 @@ static void drawPmdActM(const PmdMon &m, uint8_t actId, int16_t cx,
   for (uint8_t r = 0; r < a.h; r++) {
     for (uint8_t c = 0; c < a.w; c++) {
       uint8_t idx = px[r * a.w + c];
-      if (idx == 0) continue;
+      /* tools/tamapoke/repack_tpk2.py writes TRANSPARENT = 0xFF, and index 0 is
+       * an ordinary palette colour that nearest_index() hands out like any other.
+       * This skipped 0 and drew 0xFF, so every transparent pixel came out as
+       * pal[255] -- uninitialised, since packs carry far fewer than 256 entries --
+       * which is the black rectangle around the pet on hardware, and every pixel
+       * that legitimately used colour 0 was punched out of the sprite instead.
+       * An index past the palette is treated as transparent rather than drawn
+       * from uninitialised memory. */
+      if (idx == PMD_TRANSPARENT_INDEX || idx >= m.palCount) continue;
       uint16_t col = sil ? INK_K : m.pal[idx];
       gfx->fillRect(x0 + c * s, y0 + r * s, s, s, col);
     }
@@ -1018,13 +1026,6 @@ void tamapoke_ui_force_full_repaint(void) { g_force_full_repaint = true; }
  * with FOCUS_NONE behind it, so it appeared and did nothing. Both are impossible
  * now, since there is only one dispatch. */
 const focus_set_t *tamapoke_current_focus_set(void) {
-  /* An egg is not a menu. Upstream cracks it by tapping it, and the button
-   * equivalent should be "press A", not "walk the cursor to the right rectangle
-   * and then press A" -- so the egg screen offers exactly one target, the pet
-   * zone, and every A press lands on it whatever the focus index says. */
-  if (pet.isEgg() && !pet.awaitingStarter() && millis() >= confirmUntil)
-    return &FOCUS_EGG;
-
   switch (current_screen_id()) {
     case 5: return &FOCUS_STARTER;
     case 2: return &FOCUS_GALLERY;
@@ -1041,6 +1042,17 @@ const focus_set_t *tamapoke_current_focus_set(void) {
       /* The main screen hosts the confirm dialog as an overlay, so it owns the
        * focus while it is up. */
       if (millis() < confirmUntil) return &FOCUS_CONFIRM;
+      /* An egg is not a menu. Upstream cracks it by tapping it, and the button
+       * equivalent should be "press A", not "walk the cursor onto the right
+       * rectangle first" -- so it offers exactly one target, the pet zone, and
+       * every A press lands on it whatever the focus index says.
+       *
+       * Inside this case on purpose. Checked before the switch, it applied to
+       * every screen, so opening the settings screen while the pet was still an
+       * egg handed back the pet zone instead of the settings widgets -- which is
+       * why the language could not be changed there. Same divergence as before:
+       * a condition that is about one screen has to be asked about that screen. */
+      if (pet.isEgg()) return &FOCUS_EGG;
       return &FOCUS_MAIN;
   }
 }
@@ -1336,10 +1348,7 @@ static void renderClock() {
      * table is indexed by gLang, so adding a language without extending it
      * reads past the end and hands print() a wild pointer -- which is exactly
      * what adding Korean did. */
-    const char *lng_name[] = {"ES", "EN", "FR", "DE", "IT", "PT", "KO"};
-    static_assert(sizeof(lng_name) / sizeof(lng_name[0]) == LANG_COUNT,
-                  "language label table must cover every Lang");
-    const char *s = lng_name[(int)gLang];
+    const char *s = langName(gLang);
     gfx->setTextSize(1);
     gfx->setTextColor(focus == 5 ? UI_WHITE : ink);
     gfx->setCursor(CLOCK_LANG_X + CLOCK_LANG_W / 2 - textWidth(s, 1) / 2,

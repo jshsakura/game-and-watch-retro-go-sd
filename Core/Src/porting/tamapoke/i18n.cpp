@@ -234,6 +234,13 @@ static const char *const MED_DSC[LANG_COUNT][MED_COUNT] = {
     "SEQ 7 DIAS", "LACO MAX", "FORMA FINAL", "EM FORMA" },
 };
 
+/* One table for every place that has to name a language: the settings pill and
+ * the launcher's pause-menu row. Two copies of it is how a language gets added in
+ * one and missed in the other. */
+static const char *const LANG_NAMES[LANG_COUNT] = {"ES", "EN", "FR", "DE", "IT", "PT", "KO"};
+
+const char *langName(Lang l) { return (l < LANG_COUNT) ? LANG_NAMES[l] : LANG_NAMES[LANG_DEFAULT]; }
+
 const char *T(StrId id) { return STRINGS[gLang][id]; }
 const char *medalName(int i)  { return MED_NAME[gLang][i]; }
 const char *medalLabel(int i) { return MED_LBL[gLang][i]; }

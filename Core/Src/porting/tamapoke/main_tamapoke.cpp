@@ -6,6 +6,7 @@
  * frame instead of pushed by a task.
  */
 #include <stdint.h>
+#include <string.h>
 
 #include <Preferences.h>
 
@@ -28,6 +29,10 @@ extern "C" {
 #include "gw_lcd.h"
 #include "main.h"
 #include "odroid_system.h"
+/* The launcher's own i18n, for the pause-menu row label (curr_lang->s_LangUI).
+ * Distinct from this port's i18n.h above: that one holds TamaPoke's strings, this
+ * one holds the launcher's. */
+#include "rg_i18n.h"
 }
 
 /* Upstream dims the panel and then blanks it on its own timer. The launcher
@@ -54,6 +59,35 @@ static void repaint_ui(void) {
    * pixels wherever this frame does not draw. Repaint in full. */
   tamapoke_ui_force_full_repaint();
   tamapoke_ui_render();
+}
+
+/* Language, chosen from the launcher's pause menu the way Zelda 3 offers its own:
+ * LEFT/RIGHT walk the list and the change lands immediately -- setLang() applies
+ * it, persists it, and repoints the species-name table at the new language's
+ * names on the card, so the screen behind the menu is already in the new language
+ * when it closes.
+ *
+ * This is where a player looks for it. TamaPoke's own settings screen has
+ * upstream's language pill and that still works, but it is two swipes away and
+ * nobody found it. No new screen was needed -- just a row in the menu that is
+ * already there. */
+static char lang_value[8];
+
+static bool lang_update_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event,
+                           uint32_t repeat) {
+  (void)repeat;
+  int last = LANG_COUNT - 1;
+  int idx = (int)gLang;
+
+  if (event == ODROID_DIALOG_PREV) idx = (idx > 0) ? idx - 1 : last;
+  if (event == ODROID_DIALOG_NEXT) idx = (idx < last) ? idx + 1 : 0;
+
+  if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT)
+    setLang((Lang)idx);
+
+  strncpy(option->value, langName(gLang), sizeof(lang_value) - 1);
+  option->value[sizeof(lang_value) - 1] = '\0';
+  return event == ODROID_DIALOG_ENTER;
 }
 
 /* The pause menu's Save rows go through these. A virtual pet has no snapshot to
@@ -118,9 +152,9 @@ extern "C" void app_main_tamapoke(uint8_t load_state, uint8_t start_paused, int8
   uint32_t idle_start = uptime_get();
   uint32_t last_activity_focus = 0;
 
-  /* No app-specific rows; the shared menu (volume, brightness, save/exit) is the
-   * whole point of wiring this up. */
+  strncpy(lang_value, langName(gLang), sizeof(lang_value) - 1);
   odroid_dialog_choice_t options[] = {
+      {300, curr_lang->s_LangUI, lang_value, 1, &lang_update_cb},
       ODROID_DIALOG_CHOICE_LAST,
   };
 

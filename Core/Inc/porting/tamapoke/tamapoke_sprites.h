@@ -39,6 +39,11 @@ struct PmdAct {
   const uint8_t *data = nullptr;
 };
 
+/* Matches TRANSPARENT in tools/tamapoke/repack_tpk2.py. The packer and the blit
+ * have to agree on this number; they did not, and the mismatch drew a black box
+ * around every pack sprite. */
+#define PMD_TRANSPARENT_INDEX 0xFF
+
 struct PmdMon {
   bool loaded = false;
   uint16_t palCount = 0;

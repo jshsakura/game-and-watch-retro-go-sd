@@ -67,3 +67,4 @@ const char *medalDesc(int i);  // descripcion larga de medalla
 
 void loadLang();             // lee el idioma de NVS (llamar en setup)
 void setLang(Lang l);        // cambia y persiste el idioma
+const char *langName(Lang l); // short label ("KO"), shared by the pill and the pause menu
