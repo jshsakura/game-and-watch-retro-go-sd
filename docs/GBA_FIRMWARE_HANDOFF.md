@@ -1,4 +1,6 @@
-# GBA (gpSP) — porting handoff
+# GBA (gpSP) — firmware handoff
+
+*(`gba_idle_loop.c` and `gba_idle_loop.h` point here.)*
 
 Everything a maintainer needs to carry the Game Boy Advance core into another tree: what
 the port is made of, what has to be wired for it to work, the invariants that break
@@ -205,3 +207,16 @@ The playbook mentions these; they are development-side and live in `jshsakura`'s
   database. `gba_idle_loop.c` is generated there and copied here whole-file; do not
   hand-edit it. The hand-curated raster-poll entries are the exception and live in
   `main_gba.c` (`vcount_polls[]`).
+
+---
+
+## 6. The generated table
+
+`Core/Src/porting/gba/gba_idle_loop.c` is **generated** — by `scripts/gen_gba_over.py` in
+the `game-and-what` repo, from addresses measured by running the ROMs. Copy it whole-file;
+do not hand-edit it, or the firmware quietly disagrees with the measurements it claims to
+carry. Its own header says so.
+
+The one hand-maintained exception is `vcount_polls[]` in `main_gba.c`: the conditional
+raster-poll skips, which exist only for carts with no generated entry, because in gpSP the
+two kinds of wait share one target slot.

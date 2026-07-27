@@ -223,6 +223,6 @@ Detailed debugging guides live next to each porting layer (not in this file — 
 |--------|-------|
 | PCE / PCE CD | [Core/Src/porting/pce/CLAUDE.md](Core/Src/porting/pce/CLAUDE.md) — harness `linux/Makefile.pce` |
 | 32X | [Core/Src/porting/md32x/CLAUDE.md](Core/Src/porting/md32x/CLAUDE.md) — ⛔ performance axis CLOSED (measured); read before proposing anything |
-| GBA | [Core/Src/porting/gba/CLAUDE.md](Core/Src/porting/gba/CLAUDE.md) — rig `tools/gba_m4a/` (M4A HLE proof + idle A/B + audio taps), idle-skip semantics, sound path, XIP contract. Taking the core to another tree: [docs/GBA_UPSTREAM_HANDOFF.md](docs/GBA_UPSTREAM_HANDOFF.md) |
+| GBA | [Core/Src/porting/gba/CLAUDE.md](Core/Src/porting/gba/CLAUDE.md) — rig `tools/gba_m4a/` (M4A HLE proof + idle A/B + audio taps), idle-skip semantics, sound path, XIP contract. Taking the core to another tree: [docs/GBA_FIRMWARE_HANDOFF.md](docs/GBA_FIRMWARE_HANDOFF.md) |
 
 Add a `CLAUDE.md` under `Core/Src/porting/<system>/` (and optionally `.cursor/rules/<system>.mdc`) when an emulator accumulates non-obvious debug knowledge.

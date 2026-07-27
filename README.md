@@ -353,7 +353,51 @@ on first boot. No BIOS file is needed — a clean-room replacement ships with th
 
 *Porting it elsewhere?* The file manifest, the wiring points, the invariants that break
 silently and the state of the gpSP fork are in
-**[docs/GBA_UPSTREAM_HANDOFF.md](docs/GBA_UPSTREAM_HANDOFF.md)**.
+**[docs/GBA_FIRMWARE_HANDOFF.md](docs/GBA_FIRMWARE_HANDOFF.md)**.
+
+### The core
+
+gpSP — Exophase's GBA emulator, in the libretro line (a fork of notaz's gpSP, maintained by
+davidgfnet). It is a submodule, `external/gpsp`, pinned to branch `gnw-port` of
+[jshsakura/gpsp](https://github.com/jshsakura/gpsp) at `9cab230`: that is libretro/gpsp
+`69e86eb` plus **13 commits**, with no patch files anywhere — `git log 69e86eb..gnw-port`
+is the entire delta and each commit stands alone. GPLv2, like gpSP itself. The BIOS is the
+open replacement gpSP already ships (Normmatt and the VBA-M team, GPLv2,
+`external/gpsp/bios/`), so no Nintendo BIOS is needed, wanted, or accepted.
+
+Those 13 commits do three kinds of work:
+
+**Making it fit.** gpSP's tables and buffers are sized for a desktop. One commit brings the
+working set inside the 724 KB pool; one runs the cart straight out of memory-mapped flash
+instead of a RAM buffer; one rewrites the savestate path, which used to need 416 KB of
+scratch to write a state.
+
+**Making it survive this hardware.** An XIP cart has no `gamepak_buffers`, and the code
+that read the cart *through* them scanned a megabyte from address 0 — on this device that
+is ITCM and then a bus fault, which is how Pokémon Ruby died. The save-type scan read that
+same megabyte five times and never let the watchdog breathe. Korean fan translations change
+the region byte in the cart header (`BPEK`, `AXVK`, …), so every per-cart override — idle
+skip, 128 K save size, RTC — silently missed.
+
+**Handing the controls to the front-end.** The pad, the mixer rate and the cart's RTC state
+become things the front-end sets or asks about instead of gpSP's own globals; the core
+reports the rate the game is clocking its DirectSound FIFOs at, which is what the output
+filter follows; the PSG channels are re-tuned to the rate we actually run at (they were
+pitched for 65536 Hz, and at 48 kHz every note-on came out 5.39 semitones flat); and
+`cpu.cc` gains exactly two hooks — one that lets the front-end execute M4A's mixer
+natively, one that parks a raster poll only while it would keep spinning.
+
+Everything Game & Watch-specific is on this side of the line; the submodule knows nothing
+about the device:
+
+| file | what it is |
+| ---- | ---------- |
+| `Core/Src/porting/gba/main_gba.c` | the porting layer — frame loop, XIP cart setup and the load-time relocation pass, input, savestates, options, the hand-curated raster polls |
+| `Core/Src/porting/gba/gba_frontend.c` | the libretro-common surface gpSP expects: filestream on FatFs, the link-cable stubs, and the watchdog kick the cart scan calls |
+| `Core/Src/porting/gba/gba_idle_loop.c` | the 131 measured idle-loop addresses, applied *over* gpSP's own table rather than patching it — generated, whole-file copy only |
+| `Core/Src/porting/gba/gba_audio_filter.c` | the rate-following output low-pass |
+| `Core/Src/porting/gba/gba_bios.S` | the open BIOS, moved out of `.data` so the linker can put 16 KB of read-only data somewhere other than the overlay pool |
+| `tools/gba_m4a/` | the M4A mixer transcription, and the rig that proves it bit-exact |
 
 ### The ROM never enters RAM
 
