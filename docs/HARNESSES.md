@@ -57,6 +57,25 @@ games gate reproducibly.
   a symbol the firmware would silently resolve into another core's overlay is
   an error here.
 
+### GBA has FOUR rigs — which one answers which question
+
+They are not interchangeable and each exists because the one before it could not
+see something. Read this before reaching for one.
+
+| question | rig |
+|---|---|
+| does the core still boot and play at all | `linux/Makefile.gba` (upstream's, SDL) |
+| does the CART LOAD path survive a real address space | `tools/gba_harness/run.sh` |
+| is my HLE/idle-skip bit-exact, including the clock | `tools/gba_m4a/prove.sh` |
+| how many instructions does a frame actually cost | `tools/m7_qemu_rig` |
+| what is the DEVICE spending a frame on | branch `feat/gba-probe` |
+
+`linux/Makefile.gba` and `linux/gba/` came in with upstream v1.4.0 (sylverb). It
+carries its own host BIOS implementation (`gba_bios_linux.c`, ~1.4k lines) so the
+desktop build does not need the cart BIOS, and `update_gba_rom.sh` refreshes the
+test ROM. It is the everyday loop; it is also the one that knows least about the
+device — same caveat as the rest of `linux/`.
+
 ### `tools/gba_harness` — gpSP's load path on an honest address space
 - `run.sh` — the cart-load path with `ROM_BUFFER_SIZE=0` (XIP: the cart is
   never buffered). QEMU maps address 0 and shrugs; a hosted OS SIGSEGVs, which
@@ -113,6 +132,61 @@ on itself at boot — 40.000 insn/tick — and prints it).
 - `rig_runtime.c`/`mps2_an500.ld` are core-agnostic: copy `rig_vb.c`'s shape
   to put any other core on the same scale.
 
+### `tools/tamapoke_harness` — every screen, in both themes, actually used
+
+`run.sh [out_dir]` compiles the port from **the Makefile's own source list** (never
+a copy of it) and renders all 12 screens × 2 languages × 2 themes to PPMs — 48 of
+them. Rendering is the cheap part; what it gates is behaviour:
+
+- **every screen survives every button**, including a stale focus index. This is
+  what a NULL focus set looks like before it reaches a device (it was a UsageFault
+  on any keypress, and the file had been *compiled* by this harness for weeks
+  without ever being *called*).
+- **no widget or well is a flat rectangle**, in either theme and in both the
+  selected and unselected state. A widget that has swallowed its label is uniform;
+  one that shows it has a luma spread. This is the check for the whole class of
+  "the ink follows the theme, the surface does not".
+- **the minigames are playable**: the paddle answers keys and stays in bounds, a
+  round can be rallied, ends on three misses and trains the pet, A hits the sack and
+  the timer banks it.
+- **navigation**: TIME/GAME/↑/↓ each reach their screen, and overshooting the button
+  row does not leave the main screen.
+- **no screen inherits the previous screen's pixels** (sentinel fill, not a diff of
+  two renders — rendering is not idempotent here).
+- **a timed overlay survives being walked to**, with the clock advanced explicitly.
+
+Caveat, and it is the usual one: the harness does not load the sprite packs, so the
+gallery it renders is the flash-sprite fallback. That is why every Pokédex thumbnail
+could be decoded wrong for months with this green — see the verifier below.
+
+### `tools/tamapoke/verify_assets_dat.py` — the container, read the firmware's way
+
+Parses a built `tamapoke_assets.dat` with parsers written from the **firmware's**
+side (`PmdMon::load()`, `parse_actions()`, `SdThumbs::get()`, `tamapoke_assets.cpp`)
+and fails on anything those would reject. `stage_sd.sh` runs it and refuses to stage
+a card that does not pass.
+
+It exists because the converter and the firmware disagreed about the thumbnail
+record for every release and neither side could see it: each was self-consistent and
+only wrong about the other, and the layout was written down nowhere. Catches a
+record whose length disagrees with the next offset, a truncated record, a pack over
+the 124 KB slot, a pack with no `PMD_IDLE`, an action id past `PMD_NACTS`, and an
+index that does not account for the payload. It also prints the **action census**,
+which is the answer to "why does this species not play an eating animation".
+
+`tests/test_tamapoke_verify_assets.py` builds a container broken in one specific way
+per case and requires a finding for each — a verifier that has never rejected
+anything is the same comfort the other two had.
+
+### `tests/test_tamapoke_audio.c` — the sound path renders real samples
+
+Links the real `tamapoke_audio.cpp`, because the frame loop calls `fill()`
+unconditionally and plays back whatever comes out — nothing downstream can tell
+silence from a stuck effect. Pins: idle renders *written* silence (a fill that
+returned without touching the buffer would replay the last effect for ever), all
+`SFX_COUNT` effects render, an effect ends on its own, and the settings pill mutes
+and un-mutes the renderer.
+
 ### `tools/jpeg_harness` — the HW JPEG driver against a fake HAL
 - `run.sh` — compiles `hw_jpeg_decoder.c` itself (its three previous tests
   reimplemented the HAL and covered 0% of it) against `hal_fake/`, including
@@ -155,7 +229,10 @@ in the binary. Full guide: [SNES_DEVICE_DWT.md](SNES_DEVICE_DWT.md).
 | will it survive the device's CPU and memory map | `tools/sm_harness/device_run.sh` (copy its pattern for a new core) |
 | does the firmware link the same program I tested | `device_parity.sh`, `scripts/check_core_symbol_aliases.py` |
 | is my HLE/optimization bit-exact, including time | `tools/gba_m4a/prove.sh` (the model to copy) |
-| is the thing actually *wired* | a `tests/test_*_wired.sh` — write one |
+| is the thing actually *wired* | a `tests/test_*_wired.sh`. Four exist to copy: `test_ingame_overlay_wired.sh`, `test_tamapoke_save_wired.sh`, `test_idle_timeout_wired.sh`, `test_boot_rescue_wired.sh` |
+| is a screen readable / does a widget swallow its label | `tools/tamapoke_harness/run.sh` (both themes, both focus states) |
+| is the asset container what the firmware expects | `tools/tamapoke/verify_assets_dat.py` |
+| does sound actually come out | `tests/test_tamapoke_audio.c` (the model: link the real audio file) |
 | what is the device really spending a frame on | `feat/gba-probe`; for SNES, `SNES_DEVICE_PROFILE=1` |
 | is fps compute-bound or sitting on the audio deadline | `SNES_DEVICE_PROFILE=1` Ledger C — DWT alone cannot answer this, it goes blind in `__WFI()` |
 
