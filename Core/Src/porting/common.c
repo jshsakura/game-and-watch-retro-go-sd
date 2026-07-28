@@ -18,7 +18,10 @@ static void set_ingame_overlay(ingame_overlay_t type);
 
 /* Per-system automatic CPU boost. A core that needs more headroom than stock
  * 280MHz calls this once at app start (e.g. VB: the V810 interpreter). Level is
- * the launcher's own OC scale (0/1/2). NOT persisted: leaving an emulator resets
+ * the launcher's own OC scale. 0/1/2 match the launcher menu (2 = 340 MHz, the
+ * ceiling after 353 proved unstable for Genesis); level 3 is core-private
+ * (~353 MHz) and must not be offered in settings -- upstream's wording, and the
+ * level GBA asks for. NOT persisted: leaving an emulator resets
  * the system, restoring the user's configured clock. Same OSPI1-hardware guard
  * as the launcher menu (that SD design crashes when overclocked).
  *

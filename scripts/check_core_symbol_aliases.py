@@ -74,10 +74,22 @@ def symbols(obj):
 def main():
     build_dir, elf = sys.argv[1], sys.argv[2]
 
-    cores = sorted(
+    # A core directory is one that actually holds objects. Without the .o test any
+    # directory anyone drops under build/ is counted as a core: the tamapoke layout
+    # harness writes build/tamapoke_harness, and this gate then reported "33 cores"
+    # for a 32-core build -- a miscount today, and a source of nonsense alias
+    # reports the day such a directory happens to contain objects.
+    def has_objects(d):
+        p = os.path.join(build_dir, d)
+        return any(f.endswith(".o") for f in os.listdir(p))
+
+    candidates = sorted(
         d for d in os.listdir(build_dir)
         if os.path.isdir(os.path.join(build_dir, d)) and d not in NON_CORE_DIRS
     )
+    cores = [d for d in candidates if has_objects(d)]
+    skipped_names = [d for d in candidates if not has_objects(d)]
+    skipped_empty = len(skipped_names)
     if not cores:
         print("no core directories found — nothing to check")
         return 0
@@ -162,7 +174,15 @@ def main():
         print("  <core>__<symbol> and cannot alias), and define it in that core.")
         return 1
 
-    print(f"OK  {len(cores)} cores, no cross-overlay symbol aliases")
+    # Say how many directories were skipped as empty, or a count that drops
+    # (33 -> 30 here) reads as "cores went missing" rather than "the harness
+    # directory and two unbuilt ones stopped being counted". An empty directory
+    # contributes no symbols, so coverage is identical either way.
+    if skipped_empty:
+        print(f"OK  {len(cores)} cores, no cross-overlay symbol aliases "
+              f"({skipped_empty} empty dir(s) skipped: {', '.join(skipped_names)})")
+    else:
+        print(f"OK  {len(cores)} cores, no cross-overlay symbol aliases")
     return 0
 
 

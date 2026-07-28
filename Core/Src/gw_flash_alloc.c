@@ -353,7 +353,6 @@ static bool circular_flash_write(const char *file_path,
         progress_cb(*data_size, 0, 0);
     }
 
-    uint32_t flash_write_base = get_extflash_base();
     uint32_t block_size = OSPI_GetSmallestEraseSize();
     /* The erase (and thus the flash we consume) is block-aligned. */
     uint32_t erase_size_total = (*data_size + block_size - 1) & ~(block_size - 1);
@@ -367,7 +366,10 @@ static bool circular_flash_write(const char *file_path,
      * and say no if there is nowhere left — rather than erase it. (Was: rewind to
      * base and take what was there, including, once the ring came round, the ROM
      * the core had just been handed. See the live set above.) */
-    (void)flash_write_base;
+    /* (A `(void)flash_write_base;` sat here to silence the unused variable the
+     * old wrap-to-base path left behind. Upstream deleted the variable in its
+     * own copy and the merge kept this line, which then referenced nothing --
+     * the only compile break the whole merge produced.) */
     uint32_t slot;
     if (!find_write_slot(flash_write_pointer, erase_size_total, &slot))
     {

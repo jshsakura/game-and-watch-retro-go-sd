@@ -2097,11 +2097,16 @@ $(SD_CONTENT_STAMP): $(BUILD_DIR)/$(TARGET).elf \
 	@$(CP) -O binary --only-section=.rodata_zelda3 $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/zelda3.ro"
 	@$(CP) -O binary --only-section=.overlay_sm $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Metroid.bin"
 	@$(CP) -O binary --only-section=.xip_sm --only-section=.rodata_sm $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/sm.xip"   # cold banks + rodata: contiguous in SM_CODE, ONE cache entry on purpose (see main_sm.c)
-	@$(CP) -O binary --only-section=.xip_gba --only-section=.rodata_gba $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/gba.xip"   # renderer + its rodata + BIOS: contiguous in GBA_CODE, ONE cache entry on purpose (see main_gba.c)
 ifeq ($(RC_PROBE),1)
 	@$(CP) -O binary --only-section=.xip_rcprobe $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/rcprobe.xip"   # rc on-device probe XIP sites (RC_PROBE-gated; sentinel-linked, cached to QSPI at runtime)
 endif
 	@$(CP) -O binary --only-section=.overlay_smw $(BUILD_DIR)/$(TARGET).elf "$(HOMEBREWS_FOLDER)/Super Mario World.bin"
+	@# /cores, not /roms/homebrew: upstream moved it there (it is a core, not a
+	@# rom) and main_gba.c reads /cores/gba.xip. A card updated from an older
+	@# build keeps a stale /roms/homebrew/gba.xip -- dead weight, not a fault.
+	@# The renderer, its rodata and the BIOS stay contiguous in GBA_CODE so the
+	@# whole thing is ONE flash-cache entry (see main_gba.c).
+	@$(CP) -O binary --only-section=.xip_gba --only-section=.rodata_gba $(BUILD_DIR)/$(TARGET).elf "$(CORES_DIR)/gba.xip"
 	@$(CP) -O binary --only-section=.coleco_bios_data $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/coleco/coleco.bin
 	@$(CP) -O binary --only-section=.overlay_graphics $(BUILD_DIR)/$(TARGET).elf $(SD_FOLDER)/bios/logo.bin
 	@rm -f $(FONTS_DIR)/cp1251_*.bin $(FONTS_DIR)/cp1252_*.bin $(FONTS_DIR)/unicode_*.bin
@@ -2180,6 +2185,7 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file $(CORES_DIR)/tgb.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/sms.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/pce.bin --dest-path "/cores/" \
+		-- sdpush --file $(CORES_DIR)/gba.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/msx.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/wsv.bin --dest-path "/cores/" \
 		-- sdpush --file $(CORES_DIR)/ngp.bin --dest-path "/cores/" \
@@ -2203,11 +2209,11 @@ flash_sd: CheckTools CheckDirtySubmodules $(BUILD_DIR)/$(TARGET)_intflash.bin cr
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Music.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Video.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Super Mario World.bin" --dest-path "/roms/homebrew/" \
+		-- sdpush --file "$(CORES_DIR)/gba.xip" --dest-path "/cores/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Zelda 3.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/zelda3.ro" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/Super Metroid.bin" --dest-path "/roms/homebrew/" \
 		-- sdpush --file "$(HOMEBREWS_FOLDER)/sm.xip" --dest-path "/roms/homebrew/" \
-		-- sdpush --file "$(HOMEBREWS_FOLDER)/gba.xip" --dest-path "/roms/homebrew/" \
 		-- sdpush --file $(MAPPERS_PACK) --dest-path "/cores/mappers/" \
 		-- sdpush --file $(MAPPERS_DIR)/ines_correct.bin --dest-path "/cores/mappers/" \
 		-- sdpush --file $(SD_FOLDER)/bios/nes/palettes.bin --dest-path "/bios/nes/" \

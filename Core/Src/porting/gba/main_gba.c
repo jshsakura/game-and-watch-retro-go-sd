@@ -224,7 +224,7 @@ static void __attribute__((noreturn)) gba_fatal(const char *line_1, const char *
 /* -------------------------------------------------------------------- XIP ---
  * gpSP is 853 KB of core against a 724 KB pool. The scanline renderer (video.o)
  * and the 16 KB BIOS image are linked at a sentinel address instead, shipped as
- * one file — /roms/homebrew/gba.xip — cached into QSPI flash, and executed and
+ * one file — /cores/gba.xip — cached into QSPI flash, and executed and
  * read straight out of it. Same trick as Super Metroid's sm.xip; the linker
  * script says which object goes where and why.
  *
@@ -242,7 +242,8 @@ static void __attribute__((noreturn)) gba_fatal(const char *line_1, const char *
  * copy in flash was relocated to that same address when it was first stored.
  */
 #define GBA_CODE_BASE  0xDEC00000u
-#define GBA_XIP_PATH   "/roms/homebrew/gba.xip"
+#define GBA_XIP_PATH   "/cores/gba.xip"
+#define GBA_BIOS_PATH  "/bios/gba/gba_bios.bin"
 
 static uint8_t *g_xip_addr;
 static uint32_t g_xip_size;
@@ -308,6 +309,28 @@ static bool gba_cache_xip_to_flash(void)
                                 g_xip_offset, g_xip_size);
     printf("gba: patched %d sentinel refs in the overlay\n", n);
     return true;
+}
+
+/* Prefer the official BIOS from SD when present, otherwise fall back to the
+ * bundled open BIOS in gba.xip. A partial read is treated as invalid and we
+ * keep the open BIOS to avoid booting with garbage content. */
+static void gba_load_bios(void)
+{
+    FILE *f = fopen(GBA_BIOS_PATH, "rb");
+    if (f != NULL) {
+        size_t n = fread(bios_rom, 1, sizeof(bios_rom), f);
+        int extra = fgetc(f);
+        fclose(f);
+        if (n == sizeof(bios_rom) && extra == EOF) {
+            printf("gba: using official BIOS from %s\n", GBA_BIOS_PATH);
+            return;
+        }
+        printf("gba: ignoring %s (expected exactly %u bytes)\n",
+               GBA_BIOS_PATH, (unsigned)sizeof(bios_rom));
+    }
+
+    memcpy(bios_rom, gba_xip_ptr(open_gba_bios_rom), sizeof(bios_rom));
+    printf("gba: using bundled open BIOS\n");
 }
 
 /* ------------------------------------------------------------------- SRAM --- */
@@ -713,16 +736,20 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     common_emu_state.frame_time_10us = (uint16_t)(100000.0f * GBA_FRAME_CYCLES / GBA_CPU_HZ + 0.5f);
     lcd_set_refresh_rate(60);
 
-    /* Level 2 (353MHz), the top of the launcher's own scale — the same one Virtual
-     * Boy and PC Engine CD take, and for the same reason: the interpreter IS the
-     * CPU here, and there is nothing else to trade.
+    /* Level 3 (~353 MHz): the interpreter IS the CPU here and there is nothing
+     * else to trade, so GBA takes the core-private step above the menu ceiling.
      *
-     * It started at level 1 (312MHz, WonderSwan's mild boost). Pokemon Ruby ran the
-     * emulator at 40 fps there. Level 2 is only +13% over that and cannot by itself
-     * buy the 1.5x that 40 -> 60 needs, so this is not the fix; it is the part of
-     * the fix that is free. Scoped and not persisted, and a user who has chosen
-     * more keeps it — common_emu_auto_oc() is a floor, not a setting. */
-    common_emu_auto_oc(2);
+     * Both sides of the merge were half right. Upstream calls
+     * SystemClock_Config(3) directly; this tree calls common_emu_auto_oc(), which
+     * upstream does not have and which is the only thing that (a) skips the boost
+     * entirely on SDCARD_HW_OSPI1 hardware -- that SD design crashes overclocked --
+     * and (b) lets a user who picked a higher level keep it. And our own argument
+     * was stale: level 2 was 353 MHz when this was written and is now the 340 MHz
+     * menu ceiling (main.c), 353 having moved to the core-private level 3 after it
+     * proved unstable for Genesis. So GBA had quietly lost 13 MHz.
+     *
+     * Upstream's clock, through the door that has the guard on it. */
+    common_emu_auto_oc(3);
 
     /* The BIOS image, the cheat table and the sound ring live in AHB SRAM (see the
      * linker script), which puts them outside .overlay_gba_bss — so the memset in
@@ -760,7 +787,7 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     init_memory();
     init_sound();
 
-    memcpy(bios_rom, gba_xip_ptr(open_gba_bios_rom), sizeof(bios_rom));
+    gba_load_bios();
     memset(gamepak_backup, 0xFF, sizeof(gamepak_backup));
 
     /* The ROM is up to 32MB and stays in external flash, memory-mapped. Nothing

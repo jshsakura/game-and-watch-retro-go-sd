@@ -89,7 +89,9 @@ configuration — it's not part of the firmware you flash.)
 | Odyssey² / Videopac | `/bios/videopac/` | `o2rom.bin` |
 | game.com | `/bios/gamecom/` | `internal.bin`, `external.bin` |
 
-Atari Lynx, WonderSwan, Neo Geo Pocket, Virtual Boy and Game Boy Advance need no BIOS files.
+Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files. Game Boy
+Advance ships a clean-room BIOS and only *optionally* takes the official one
+(`/bios/gba/gba_bios.bin`, exactly 16 KiB).
 
 ---
 
@@ -215,7 +217,7 @@ run — regardless of your CPU Overclock setting.** It's a *floor*, not an overr
 
 | System | Automatic level while running | = |
 | --- | --- | --- |
-| **Game Boy Advance** | Maximum | 340 MHz |
+| **Game Boy Advance** | Core-private (above the menu) | 353 MHz |
 | **Virtual Boy** | Maximum | 340 MHz |
 | **WonderSwan / Color** | Intermediate | 312 MHz |
 
@@ -231,6 +233,33 @@ change your steady-state clock.
 
 *The percentages above are rough, ballpark estimates from the clock ratios — not bench
 measurements. Real drain depends on backlight, core and workload.*
+
+## Notes for specific systems
+
+### PC Engine CD / TurboGrafx-CD
+
+PC Engine CD support is currently **beta** and available on **SD-card builds only** (not on flash-only builds).
+
+- Put disc images under: `/roms/pcecd/`
+  - Flat layout: `.cue` (+ referenced tracks) directly in `/roms/pcecd/`
+  - Or one folder per game: `/roms/pcecd/<game>/…`
+- HuCard games stay in `/roms/pce/` as usual
+
+A Super System Card 3.0 dump is **required**:
+
+- Path: `/bios/pce/syscard3.pce` (or `/bios/pce/syscard3.bin`)
+- Expected MD5: `38179df8f4ac870017db21ebcbf53114`
+
+Without this BIOS file, CD games will not boot.
+
+### Atari Lynx
+
+Lynx support is currently **experimental**.
+
+- Put ROMs in: `/roms/lynx/` (extensions: `.lnx`, `.lyx`)
+- No external BIOS file is required (the port uses an internal HLE BIOS)
+
+## Controls
 
 ---
 
@@ -350,6 +379,11 @@ exceeds the frame budget).
 
 Put `.gba` files in `/roms/gba/`; saves land in `/saves/gba/`. Both folders are created
 on first boot. No BIOS file is needed — a clean-room replacement ships with the core.
+
+If you do have the official BIOS, drop it at **`/bios/gba/gba_bios.bin`** and it is used
+automatically. It must be **exactly 16 KiB (16384 bytes)**; anything else is ignored and
+the bundled open BIOS is used instead, rather than booting on a partial read. The open
+BIOS covers most titles, but a few are more faithful with the original.
 
 ### The ROM never enters RAM
 
