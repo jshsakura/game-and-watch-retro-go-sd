@@ -736,20 +736,23 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     common_emu_state.frame_time_10us = (uint16_t)(100000.0f * GBA_FRAME_CYCLES / GBA_CPU_HZ + 0.5f);
     lcd_set_refresh_rate(60);
 
-    /* Level 3 (~353 MHz): the interpreter IS the CPU here and there is nothing
-     * else to trade, so GBA takes the core-private step above the menu ceiling.
+    /* Level 3 (~353 MHz): upstream's line, verbatim, by decision -- follow sylverb
+     * on this conflict. The interpreter IS the CPU here and there is nothing else
+     * to trade, so GBA takes the core-private step above the 340 MHz menu ceiling
+     * (main.c; 353 moved out of the menu after it proved unstable for Genesis).
      *
-     * Both sides of the merge were half right. Upstream calls
-     * SystemClock_Config(3) directly; this tree calls common_emu_auto_oc(), which
-     * upstream does not have and which is the only thing that (a) skips the boost
-     * entirely on SDCARD_HW_OSPI1 hardware -- that SD design crashes overclocked --
-     * and (b) lets a user who picked a higher level keep it. And our own argument
-     * was stale: level 2 was 353 MHz when this was written and is now the 340 MHz
-     * menu ceiling (main.c), 353 having moved to the core-private level 3 after it
-     * proved unstable for Genesis. So GBA had quietly lost 13 MHz.
-     *
-     * Upstream's clock, through the door that has the guard on it. */
-    common_emu_auto_oc(3);
+     * What this deliberately does NOT go through is common_emu_auto_oc(), which
+     * upstream does not have. Two consequences, recorded so they are a choice and
+     * not a surprise:
+     *   - the SDCARD_HW_OSPI1 guard is bypassed. That SD design crashes when
+     *     overclocked, and auto_oc() is the only thing that skips the boost on it.
+     *     Upstream ships exactly this, so its OSPI1 users are in the same boat.
+     *   - a user who set a HIGHER OC level in the menu is no longer honoured; the
+     *     level is forced rather than treated as a floor. (Level 3 is already above
+     *     the menu's maximum, so in practice this only matters if the menu ever
+     *     grows a level 4.)
+     * Not persisted either way: leaving the emulator resets the clock. */
+    SystemClock_Config(3);
 
     /* The BIOS image, the cheat table and the sound ring live in AHB SRAM (see the
      * linker script), which puts them outside .overlay_gba_bss — so the memset in

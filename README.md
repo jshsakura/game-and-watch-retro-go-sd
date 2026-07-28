@@ -217,7 +217,7 @@ run — regardless of your CPU Overclock setting.** It's a *floor*, not an overr
 
 | System | Automatic level while running | = |
 | --- | --- | --- |
-| **Game Boy Advance** | Core-private (above the menu) | 353 MHz |
+| **Game Boy Advance** | Forced, core-private (above the menu) | 353 MHz |
 | **Virtual Boy** | Maximum | 340 MHz |
 | **WonderSwan / Color** | Intermediate | 312 MHz |
 
