@@ -7,6 +7,7 @@
 // + elapsed/total time auto-hides. Truly undecodable input returns VID_UNPLAYABLE.
 
 #include "video_play.h"
+#include "video_resume.h"
 #include "avi.h"
 #include "video_decode.h"
 #include "video_audio.h"
@@ -441,6 +442,12 @@ vid_result_t video_play(const char *path)
     int scrub_step = a.total_frames > 0 ? a.total_frames / 120 : 12;
     if (scrub_step < 1) scrub_step = 1;
 
+    /* Pick up where this clip was left off. After video_decode_init() and the
+     * frame-timing setup, because seek_to() flushes the audio and needs both --
+     * and before the first frame, so the resume is invisible rather than a jump. */
+    const int resume_at = video_resume_get(path);
+    if (resume_at > 0 && resume_at < a.total_frames) avi_seek_frame(&a, resume_at);
+
     odroid_gamepad_state_t joy, prev;
     odroid_input_read_gamepad(&prev);   // seed with the CURRENT state so the A press
                                         // that launched playback isn't seen as a new edge
@@ -615,6 +622,11 @@ vid_result_t video_play(const char *path)
     music_audio_enable(0);
     audio_stop_playing();        // halt the SAI DMA so it can't loop the stale buffer (exit buzz)
     video_decode_deinit();
+    /* Where we got to -- written HERE and nowhere else. The player must not touch
+     * the SD while it is decoding, and by this point the audio is stopped and the
+     * codec is down; the demuxer is still open, which is what still knows the
+     * position. Reaching the end erases the entry rather than storing it. */
+    video_resume_put(path, a.cur_frame, a.total_frames);
     avi_close(&a);
     if (!decoded_any) {
         if (!s_diag[0]) build_diag(&a, nv_seen, na_seen);   // (early-bail already filled it)

@@ -68,8 +68,10 @@ if [ -f "Core/Src/porting/video/avi.c" ]; then
     # avi.c/video_decode.c/video_audio.c it actually drives, not a reimplementation.
     $CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc/porting/video \
         -ICore/Src/porting/lib -ICore/Inc/porting/music \
+        -DRESUME_HOST_STDIO -DRESUME_PATH='"/tmp/mtest/video_resume_play.txt"' \
         tests/test_video_play.c Core/Src/porting/video/avi.c \
         Core/Src/porting/video/video_decode.c Core/Src/porting/video/video_audio.c \
+        Core/Src/porting/video/video_resume.c \
         Core/Src/porting/music/music_minimp3.c \
         -o /tmp/mtest/test_video_play
 
@@ -112,6 +114,13 @@ $CC -O2 -Wall -Wextra -std=gnu11 -no-pie -Itests/clock_stubs \
 $CC -O2 -Wall -std=gnu11 -x c++ -ICore/Inc/porting/tamapoke \
     tests/test_tamapoke_audio.c Core/Src/porting/tamapoke/tamapoke_audio.cpp \
     -lstdc++ -o /tmp/mtest/test_tamapoke_audio
+
+# Video resume positions: pure FILE* logic, so the real video_resume.c links here.
+# The store path is overridden to /tmp; on the device it is /data/video_resume.txt.
+$CC -O2 -Wall -Wextra -std=gnu11 -ICore/Inc/porting/video \
+    -DRESUME_HOST_STDIO -DRESUME_PATH='"/tmp/mtest/video_resume.txt"' \
+    tests/test_video_resume.c Core/Src/porting/video/video_resume.c \
+    -o /tmp/mtest/test_video_resume
 
 mkdir -p /tmp/favtest
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/fav_stubs -ICore/Inc/retro-go -ICore/Inc -ICore/Inc/porting -Iretro-go-stm32/components/odroid \
@@ -404,6 +413,7 @@ python3 tests/test_tamapoke_verify_assets.py || fail tests/test_tamapoke_verify_
 bash tests/test_ingame_overlay_wired.sh || fail tests/test_ingame_overlay_wired.sh
 
 /tmp/mtest/test_tamapoke_audio || fail tests/test_tamapoke_audio.c
+/tmp/mtest/test_video_resume  || fail tests/test_video_resume.c
 
 echo "=== check_no_resident_logo_refs: no unreadable logo address in flash ==="
 bash tests/test_check_no_resident_logo_refs.sh || fail tests/test_check_no_resident_logo_refs.sh
