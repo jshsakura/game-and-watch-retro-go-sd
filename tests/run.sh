@@ -370,6 +370,12 @@ python3 tests/test_tamapoke_repack.py || fail tests/test_tamapoke_repack.py
 echo "=== tamapoke: packer and blit agree on the transparent palette index ==="
 bash tests/test_tamapoke_sprite_transparency.sh || fail tests/test_tamapoke_sprite_transparency.sh
 
+# The save was in the ROOT of the card (every other homebrew asks the launcher for
+# the path), and two of the launcher's five exit hooks were NULL, so quitting to
+# the menu or holding POWER lost the pet. Both are call-site faults: the save code
+# itself was fine, which is why only a wiring test can see them.
+bash tests/test_tamapoke_save_wired.sh || fail tests/test_tamapoke_save_wired.sh
+
 echo "=== check_no_resident_logo_refs: no unreadable logo address in flash ==="
 bash tests/test_check_no_resident_logo_refs.sh || fail tests/test_check_no_resident_logo_refs.sh
 

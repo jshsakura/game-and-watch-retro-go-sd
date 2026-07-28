@@ -2,6 +2,7 @@
 #include "tamapoke_shim.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -11,7 +12,10 @@
 
 extern "C" {
 #include "bq24072.h"
+#include "odroid_sdcard.h"   /* mkdir / unlink */
+#include "odroid_system.h"   /* odroid_system_get_path, ODROID_PATH_SAVE_SRAM */
 #include "rg_rtc.h"
+#include "rom_manager.h"     /* ACTIVE_FILE */
 }
 
 /* An unset STM32 RTC reads back somewhere in the year 2000, and the pet ages by
@@ -20,7 +24,68 @@ extern "C" {
  * pet the whole two-week offline catch-up at once. */
 #define CLOCK_SANE_FLOOR_EPOCH 1609459200u /* 2021-01-01 UTC */
 
-#define SAVE_PATH "/tamapoke.sav"
+/* Where the pet lives.
+ *
+ * There is a rule for this and it is not "pick a filename": every other homebrew
+ * in the tree -- Zelda 3, Super Mario World, Super Metroid -- asks the launcher,
+ *
+ *     odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path)
+ *
+ * which yields ODROID_BASE_PATH_SAVES + the ROM path relative to /roms + ".sram",
+ * i.e. /data/homebrew/TamaPoke.bin.sram. That is the right answer twice over: the
+ * pet IS cartridge-backed memory rather than a snapshot (which is why the hook
+ * that persists it is sram_save), and going through the launcher means the
+ * launcher's own save management sees the file.
+ *
+ * This was "/tamapoke.sav" -- the ROOT of the card, next to the user's own
+ * folders, which is exactly where they found it. Nothing was wrong with the file;
+ * it was in a directory that belongs to the person holding the card.
+ *
+ * The old path is still READ, once, and then removed -- see prefs_load(). A pet
+ * that has been raised for days is in that file, and "moved the save" must not
+ * mean "started a new pet". */
+#define SAVE_PATH_LEGACY "/tamapoke.sav"
+
+/* Resolved once per boot: odroid_system_get_path() strdup's, and this is asked for
+ * on every commit. ACTIVE_FILE is the launcher's current entry, so the stem is
+ * /homebrew/TamaPoke.bin exactly as the launcher would write it. */
+static char g_save_path[RG_PATH_MAX];
+
+static const char *save_path(void) {
+  if (g_save_path[0]) return g_save_path;
+  /* The strdup'ing API, because that is the one the vendored header exposes and
+   * the one every other core calls. Copied into a static and freed immediately --
+   * this is asked for on every commit and the DTCM heap is shared with the
+   * launcher. */
+  char *p = odroid_system_get_path(ODROID_PATH_SAVE_SRAM,
+                                   ACTIVE_FILE ? ACTIVE_FILE->path : NULL);
+  if (p) {
+    strncpy(g_save_path, p, sizeof(g_save_path) - 1);
+    g_save_path[sizeof(g_save_path) - 1] = '\0';
+    free(p);
+  } else {
+    /* Never leave the path empty: an fopen("") fails silently and the pet would
+     * stop persisting with nothing on screen to say so. */
+    strncpy(g_save_path, ODROID_BASE_PATH_SAVES "/homebrew/TamaPoke.bin.sram",
+            sizeof(g_save_path) - 1);
+  }
+  return g_save_path;
+}
+
+/* The directory the launcher would have made for a savestate. fopen will not
+ * create it, and a card that has never held one does not have it. */
+static void save_dir_ready(void) {
+  static bool done = false;
+  if (done) return;
+  done = true;
+  char dir[RG_PATH_MAX];
+  strncpy(dir, save_path(), sizeof(dir) - 1);
+  dir[sizeof(dir) - 1] = '\0';
+  char *slash = strrchr(dir, '/');
+  if (!slash || slash == dir) return;
+  *slash = '\0';
+  odroid_sdcard_mkdir(dir);
+}
 
 SerialShim Serial;
 
@@ -59,27 +124,11 @@ void delay(uint32_t ms) {
   }
 }
 
-/* ---------------------------------------------------------------- */
-/* Save blob. One file, written only when the caller says it is safe. */
-/* ---------------------------------------------------------------- */
-
-bool tamapoke_save_write(const void *data, size_t len) {
-  if (!data || len == 0) return false;
-  FILE *f = fopen(SAVE_PATH, "wb");
-  if (!f) return false;
-  bool ok = fwrite(data, 1, len, f) == len;
-  fclose(f);
-  return ok;
-}
-
-bool tamapoke_save_read(void *data, size_t len) {
-  if (!data || len == 0) return false;
-  FILE *f = fopen(SAVE_PATH, "rb");
-  if (!f) return false;
-  bool ok = fread(data, 1, len, f) == len;
-  fclose(f);
-  return ok;
-}
+/* tamapoke_save_write()/tamapoke_save_read() used to live here: a second save API,
+ * never called by anything, writing a raw blob to THE SAME PATH as the
+ * preferences store below. Nothing was broken by them because nothing used them,
+ * and the first caller would have overwritten the pet with whatever it was
+ * saving. Deleted rather than pointed somewhere else -- there is one save here. */
 
 /* ---------------------------------------------------------------- */
 /* Preferences: one namespace, held in RAM, flushed on demand.       */
@@ -100,25 +149,45 @@ static uint16_t g_count;
 static bool g_loaded;
 static bool g_dirty;
 
+static bool prefs_read_from(const char *path) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return false;
+
+  prefs_header_t h = {0, 0};
+  bool ok = false;
+  if (fread(&h, sizeof(h), 1, f) == 1 && h.magic == PREFS_MAGIC &&
+      h.count <= PREFS_MAX_ENTRIES) {
+    g_count = (uint16_t)fread(g_entries, sizeof(g_entries[0]), h.count, f);
+    ok = (g_count == h.count);
+  }
+  fclose(f);
+  if (!ok) g_count = 0;
+  return ok;
+}
+
 static void prefs_load(void) {
   if (g_loaded) return;
   g_loaded = true;
 
-  FILE *f = fopen(SAVE_PATH, "rb");
-  if (!f) return;
+  if (prefs_read_from(save_path())) return;
 
-  prefs_header_t h = {0, 0};
-  if (fread(&h, sizeof(h), 1, f) == 1 && h.magic == PREFS_MAGIC &&
-      h.count <= PREFS_MAX_ENTRIES) {
-    g_count = (uint16_t)fread(g_entries, sizeof(g_entries[0]), h.count, f);
+  /* One-shot migration off the card root. Runs during init -- before the play
+   * loop, so the write is at a safe point -- and only when the new path has
+   * nothing to offer. The legacy file is removed only after the new one is
+   * actually on the card, so a failed write leaves the player's pet where it is
+   * rather than deleting it and starting over. */
+  if (prefs_read_from(SAVE_PATH_LEGACY)) {
+    g_dirty = true;
+    if (tamapoke_prefs_commit()) odroid_sdcard_unlink(SAVE_PATH_LEGACY);
   }
-  fclose(f);
 }
 
 bool tamapoke_prefs_commit(void) {
   if (!g_dirty) return true;
 
-  FILE *f = fopen(SAVE_PATH, "wb");
+  save_dir_ready();
+
+  FILE *f = fopen(save_path(), "wb");
   if (!f) return false;
 
   prefs_header_t h = {PREFS_MAGIC, g_count};

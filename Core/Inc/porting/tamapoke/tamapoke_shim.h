@@ -57,11 +57,14 @@ struct SerialShim {
 };
 extern SerialShim Serial;
 
-/* Persistence. Upstream keeps the save in NVS through Preferences; we keep it
- * in one blob on the SD card. The play loop must not write -- a mid-play FAT
- * write is how the card gets corrupted -- so commits are gated to menu and
- * exit points by the caller, not by this layer. */
-bool tamapoke_save_write(const void *data, size_t len);
-bool tamapoke_save_read(void *data, size_t len);
+/* Persistence. Upstream keeps the save in NVS through Preferences; we keep it in
+ * one blob at /data/tamapoke.sav. The play loop must not write -- a mid-play FAT
+ * write is how the card gets corrupted -- so commits are gated to the launcher's
+ * safe points by the caller (tamapoke_prefs_commit(), declared in Preferences.h),
+ * not by this layer.
+ *
+ * There used to be a tamapoke_save_write()/tamapoke_save_read() pair here as
+ * well: a second save API, called by nothing, aimed at the same file as the
+ * preferences store. The first caller would have overwritten the pet. */
 
 #endif /* __cplusplus */
