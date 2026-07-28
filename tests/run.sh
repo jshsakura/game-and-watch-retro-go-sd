@@ -376,6 +376,12 @@ bash tests/test_tamapoke_sprite_transparency.sh || fail tests/test_tamapoke_spri
 # itself was fine, which is why only a wiring test can see them.
 bash tests/test_tamapoke_save_wired.sh || fail tests/test_tamapoke_save_wired.sh
 
+# ACT_* (behaviour states) and PMD_* (the ids a sprite pack is indexed by) are two
+# enums, and the animation call takes the second. The code passed the first, so a
+# sleeping pet walked sideways and feeding played walk-right. Both enums start at 0,
+# so ACT_IDLE was right and it read as odd animation choices, not as a bug.
+bash tests/test_tamapoke_pmd_actions.sh || fail tests/test_tamapoke_pmd_actions.sh
+
 echo "=== check_no_resident_logo_refs: no unreadable logo address in flash ==="
 bash tests/test_check_no_resident_logo_refs.sh || fail tests/test_check_no_resident_logo_refs.sh
 

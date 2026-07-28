@@ -537,14 +537,30 @@ static void drawPetFlash(int8_t fi, bool silhouette) {
  * right, hurt played sleep, a pose played eat. Only ACT_IDLE was right, because
  * both enums happen to start at 0 -- which is why this looked like odd animation
  * choices rather than a bug. */
+/* An action the pack actually carries, or something that reads like it.
+ *
+ * Not every pack has every action. Counted over the 302 shipped packs:
+ * IDLE / WALKL / WALKR / SLEEP / HURT / ATTACK / HOP are in all of them, but EAT is
+ * in 54, POSE 58, NOD 52, BREATH 50. So "play PMD_EAT" silently becomes "play the
+ * idle cycle" for 82% of species -- which is what "there is no eating animation"
+ * still was after the enum mix-up above was fixed. A fallback that is present in
+ * every pack (HOP reads as a happy bounce) is the difference between a reaction and
+ * nothing. The three starters all have the full set, which is why this was easy to
+ * miss on the pet you happen to be raising. */
+static uint8_t pickAct(uint8_t primary, uint8_t fallback) {
+  if (pmd.has(primary)) return primary;
+  if (pmd.has(fallback)) return fallback;
+  return PMD_IDLE;
+}
+
 static uint8_t pmdActFor(uint8_t act) {
   switch (act) {
-    case ACT_SLEEP:  return PMD_SLEEP;
-    case ACT_EAT:    return PMD_EAT;
-    case ACT_HURT:   return PMD_HURT;
-    case ACT_POSE:   return PMD_POSE;
-    case ACT_NOD:    return PMD_NOD;
-    case ACT_BREATH: return PMD_BREATH;
+    case ACT_SLEEP:  return pickAct(PMD_SLEEP, PMD_IDLE);
+    case ACT_EAT:    return pickAct(PMD_EAT, PMD_HOP);
+    case ACT_HURT:   return pickAct(PMD_HURT, PMD_IDLE);
+    case ACT_POSE:   return pickAct(PMD_POSE, PMD_HOP);
+    case ACT_NOD:    return pickAct(PMD_NOD, PMD_HOP);
+    case ACT_BREATH: return pickAct(PMD_BREATH, PMD_IDLE);
     default:         return PMD_IDLE;
   }
 }
@@ -553,17 +569,20 @@ static void drawPetPMD(uint32_t now) {
   if (pet.evolving()) return;
   uint8_t act;
   bool loop = true;
-  if (pet.mood() == MOOD_SLEEPING) act = PMD_SLEEP;
-  else if (pet.eating()) { act = PMD_EAT; loop = false; }
-  else if (pet.mood() == MOOD_SAD) act = PMD_HURT;
+  if (pet.mood() == MOOD_SLEEPING) act = pickAct(PMD_SLEEP, PMD_IDLE);
+  else if (pet.eating()) {
+    /* Feeding sets eatUntil for 2.5 s (Pet::feedBerry, which Pet::feed() is), so
+     * this is the window the reaction has to be visible in. */
+    act = pickAct(PMD_EAT, PMD_HOP);
+    loop = false;
+  }
+  else if (pet.mood() == MOOD_SAD) act = pickAct(PMD_HURT, PMD_IDLE);
   else if (beh.mode == 1 && fabsf(beh.targetX - beh.x) > 1.0f)
     /* It IS walking -- beh.mode 1 is the wander, and the pack has a left and a
      * right walk that nothing was using. The pet used to slide across the ground
      * playing its idle animation while the walk cycles went to sleep and eat. */
-    act = (beh.targetX < beh.x) ? PMD_WALKL : PMD_WALKR;
+    act = pickAct((beh.targetX < beh.x) ? PMD_WALKL : PMD_WALKR, PMD_IDLE);
   else act = pmdActFor(beh.act);
-  /* A pack need not carry every action; PMD_IDLE is the one it always has. */
-  if (!pmd.has(act)) act = PMD_IDLE;
   drawPmdAct(act, (int16_t)beh.x, TP_PET_GROUND, now - beh.t0, loop, false, 5);
   if (pet.showHeart()) {
     drawMap(SPR_HEART, 16, (int16_t)beh.x + 8, TP_PET_CY - 16, 1, false);
@@ -578,9 +597,39 @@ static void drawPet() {
   } else {
     drawPetFlash(flashIdxForDex(pet.speciesId), sil);
   }
-  if (tamapoke_current_focus_set() == &FOCUS_MAIN && tamapoke_input_focus() == 0) {
-    uint16_t shadow = gNight ? C565(0x08, 0x08, 0x10) : C565(0x28, 0x28, 0x30);
-    gfx->fillRect(PET_ZONE_X, TP_PET_GROUND - 3, PET_ZONE_W, 6, shadow);
+  /* The pet stands on a soft oval shadow, always -- a sprite with nothing under it
+   * floats. When the cursor is on the pet the oval takes the accent colour, so
+   * "selected" is the same idea here as everywhere else.
+   *
+   * This replaces a 160x6 rectangle of near-black drawn straight across the scene,
+   * which is what "a black line appears on the floor" was. A shadow is an ellipse
+   * and it has edges; three shrinking bands give it one for the price of three
+   * fills, and blending them onto the grass keeps it a shadow rather than a decal. */
+  const bool pet_focused = (tamapoke_current_focus_set() == &FOCUS_MAIN &&
+                            tamapoke_input_focus() == 0);
+  const uint16_t oval = pet_focused ? TP_ACCENT : (gNight ? UI_BG_NIGHT : INK_K);
+  const int16_t px = (int16_t)beh.x;
+  /* Two blended lozenges, radius = half the height, so the ends are semicircles and
+   * the thing is an oval rather than a stack of bars: a wide soft one for the
+   * penumbra and a tighter darker one under the feet. */
+  /* Three nested lozenges, radius = half the height so the ends are semicircles:
+   * small, and soft because the alpha climbs as they shrink. Sized to the sprite
+   * (~36 px wide), not to the pet zone -- a 64 px shadow under a 36 px animal reads
+   * as a puddle.
+   *
+   * Entirely ABOVE the panel, too: it starts at PANEL_Y (152) and the feet are at
+   * 150, so a shadow centred on the feet had its lower third painted over by the
+   * panel blend, which is what gave it a straight bottom edge. */
+  struct Band { int16_t hw, h, dy; uint8_t a_idle, a_focus; };
+  static const Band BANDS[3] = {
+    {22, 7, -6, 38,  95},
+    {15, 5, -5, 62, 145},
+    { 9, 3, -4, 84, 190},
+  };
+  for (uint8_t b = 0; b < 3; b++) {
+    const Band &d = BANDS[b];
+    gfx->blendRoundRect(px - d.hw, TP_PET_GROUND + d.dy, d.hw * 2, d.h, d.h / 2,
+                        oval, pet_focused ? d.a_focus : d.a_idle);
   }
 }
 
@@ -769,7 +818,7 @@ static void tileLabel(const char *s, int16_t x, int16_t y, int16_t w, int16_t h,
  * better. Pass key = 0 for the axis alone. */
 static void drawKeyHintOn(int16_t cx, int16_t y, bool vertical, char key,
                           uint16_t ink, uint16_t bg) {
-  const int16_t arrows_w = 24, key_w = key ? 22 : 0;
+  const int16_t arrows_w = 24, key_w = key ? 24 : 0;   /* 8 px gap + a 16 px disc */
   int16_t x = cx - (arrows_w + key_w) / 2;
 
   for (uint8_t i = 0; i < 2; i++) {
@@ -782,11 +831,19 @@ static void drawKeyHintOn(int16_t cx, int16_t y, bool vertical, char key,
   }
   if (!key) return;
 
-  int16_t kx = x + arrows_w + 8;
-  gfx->fillCircle(kx + 7, y + 5, 7, ink);
+  /* Centred on the glyph's INK, not on its cell.
+   *
+   * font8x8_basic draws a capital inside roughly the top-left 6x7 of its 8x8 cell,
+   * so centring the CELL in the disc leaves the letter visibly up and to the left --
+   * which is what it looked like: an A clinging to the inside of the circle with a
+   * gap on the right. The ink's centre sits at about (2.5, 3) in the cell, so the
+   * cursor goes 3 px up and left of the disc centre, not 4. */
+  const int16_t kr = 8;
+  const int16_t kcx = x + arrows_w + 8 + kr, kcy = y + 5;
+  gfx->fillCircle(kcx, kcy, kr, ink);
   gfx->setTextSize(1);
   gfx->setTextColor(bg);
-  gfx->setCursor(kx + 3, y + 1);
+  gfx->setCursor(kcx - 3, kcy - 3);
   const char s[2] = {key, 0};
   gfx->print(s);
   gfx->setTextColor(inkColor());
@@ -992,8 +1049,8 @@ static void startGame(void) {
   paddleDir = 0;
   ballX = GFX_WIDTH / 2;
   ballY = GAME_TOP + 30;
-  ballVX = 1.5f;
-  ballVY = 1.0f;
+  ballVX = GAME_BALL_VX_START;
+  ballVY = GAME_BALL_VY_START;
   paddleX = (GFX_WIDTH - GAME_PADDLE_W) / 2;
   tamapoke_input_reset(0);
 }
@@ -1874,7 +1931,9 @@ static void renderClock() {
    * tile that only becomes green when you point at it is not telling you that. */
   uint16_t lab = drawTile(CLOCK_OK_X, CLOCK_OK_Y, CLOCK_OK_W, CLOCK_OK_H,
                           TP_R_MD, focus == 6, UI_BAR_OK);
-  tileLabel(T(S_YES), CLOCK_OK_X, CLOCK_OK_Y, CLOCK_OK_W, CLOCK_OK_H,
+  /* S_APPLY, not S_YES. S_YES is the word for answering a question -- in Korean
+   * literally "응" -- and it was sitting under a clock you are setting. */
+  tileLabel(T(S_APPLY), CLOCK_OK_X, CLOCK_OK_Y, CLOCK_OK_W, CLOCK_OK_H,
             CLOCK_OK_SIZE, lab);
 
   /* What the two labelled keys do, in the same pictogram style as everywhere
@@ -2207,7 +2266,7 @@ void tamapoke_ui_goto_screen(int id) {
       gameOpen = true;
       ballX = GFX_WIDTH / 2;
       ballY = GAME_TOP + 30;
-      ballVX = 1.5f; ballVY = 1.0f;
+      ballVX = GAME_BALL_VX_START; ballVY = GAME_BALL_VY_START;
       paddleX = (GFX_WIDTH - GAME_PADDLE_W) / 2;
       paddleDir = 0;
       gameScore = 3; gameMisses = 1;
@@ -2335,10 +2394,25 @@ void tamapoke_ui_tick(uint32_t now_ms) {
 
     ballX += ballVX;
     ballY += ballVY;
-    if (ballX < 4 || ballX > GFX_WIDTH - 4) ballVX = -ballVX;
-    if (ballY < GAME_TOP) ballVY = -ballVY;
-    if (ballY >= GAME_PADDLE_Y) {
+    /* Bounce off the walls and the ceiling on the ball's EDGE, not its centre --
+     * the ball is a circle of GAME_BALL_R and it was tested as a point, so it sank
+     * a radius deep into everything before turning round. */
+    if (ballX < GAME_BALL_R) { ballX = GAME_BALL_R; ballVX = fabsf(ballVX); }
+    else if (ballX > GFX_WIDTH - GAME_BALL_R) {
+      ballX = GFX_WIDTH - GAME_BALL_R;
+      ballVX = -fabsf(ballVX);
+    }
+    if (ballY < GAME_TOP + GAME_BALL_R) {
+      ballY = GAME_TOP + GAME_BALL_R;
+      ballVY = fabsf(ballVY);
+    }
+    /* And the paddle catches the ball's underside. Testing the centre against
+     * GAME_PADDLE_Y let the ball bury itself half-way into the paddle before it
+     * bounced, which is exactly what was reported; snapping it to the contact point
+     * also stops a fast ball tunnelling further in on the frame it lands. */
+    if (ballY + GAME_BALL_R >= GAME_PADDLE_Y) {
       if (ballX >= paddleX && ballX <= paddleX + GAME_PADDLE_W) {
+        ballY = GAME_PADDLE_Y - GAME_BALL_R;
         ballVY = -fabsf(ballVY);
         ballVX += (ballX - paddleX - GAME_PADDLE_W / 2) * 0.1f;
         /* Clamped both ways: enough sideways motion that the ball cannot fall in
@@ -2357,8 +2431,8 @@ void tamapoke_ui_tick(uint32_t now_ms) {
           endGame();
         } else {
           ballY = GAME_TOP + 20;
-          ballVX = (random(0, 2) ? 1 : -1) * (1.0f + random(0, 20) / 10.0f);
-          ballVY = 2.0f + random(0, 20) / 10.0f;
+          ballVX = (random(0, 2) ? 1 : -1) * (GAME_BALL_VX_START + random(0, 15) / 10.0f);
+          ballVY = GAME_BALL_VY_START + random(0, 10) / 10.0f;
         }
       }
     }

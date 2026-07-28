@@ -57,6 +57,12 @@ enum StrId : uint8_t {
   S_EVO_Q, S_EVO_KEEP, S_FAR_Q, S_FAR_GO, S_FAR_STAY,
   S_CHOOSE_STARTER,  // titulo de la eleccion del inicial (primera vez)
   S_NO_SPRITES, S_LOAD_SPRITES,  // aviso cuando falta el sprite en la SD
+  /* Confirm/apply, for the settings screen's own button. It used to borrow
+   * S_YES, which is the word for answering a question -- in Korean literally
+   * "응" ("yeah"), sitting under a clock you are setting. Appended at the END:
+   * STRINGS[] is indexed by this enum, so anything inserted mid-list shifts
+   * every string after it in all seven languages. */
+  S_APPLY,
   STR_COUNT
 };
 

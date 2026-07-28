@@ -36,6 +36,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "Evolucionar?", "Mantener forma", "Despedirse?", "Despedirse", "Quedaros juntos",
     "Elige tu inicial",
     "Sin sprites", "Cargalos en la SD",
+    "ACEPTAR",   /* S_APPLY */
   },
   // ---------------- EN ----------------
   {
@@ -65,6 +66,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "Evolve?", "Keep form", "Say goodbye?", "Goodbye", "Stay together",
     "Choose your starter",
     "No sprites", "Load them onto the SD",
+    "OK",        /* S_APPLY */
   },
   // ---------------- FR ----------------
   {
@@ -94,6 +96,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "Evoluer?", "Garder forme", "Dire adieu?", "Adieu", "Rester ensemble",
     "Choisis ton starter",
     "Pas de sprites", "Charge-les sur la SD",
+    "OK",        /* S_APPLY */
   },
   // ---------------- DE ----------------
   {
@@ -123,6 +126,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "Entwickeln?", "Form behalten", "Abschied?", "Lebwohl", "Zusammen bleiben",
     "Waehle dein Starter",
     "Keine Sprites", "Auf die SD laden",
+    "OK",        /* S_APPLY */
   },
   // ---------------- IT ----------------
   {
@@ -152,6 +156,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "Evolvere?", "Mantieni forma", "Salutare?", "Addio", "Restare insieme",
     "Scegli l'iniziale",
     "Senza sprite", "Caricali sulla SD",
+    "OK",        /* S_APPLY */
   },
   // ---------------- PT ----------------
   {
@@ -181,6 +186,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "Evoluir?", "Manter forma", "Despedir?", "Adeus", "Ficar juntos",
     "Escolhe o inicial",
     "Sem sprites", "Carrega-os no SD",
+    "OK",        /* S_APPLY */
   },
   // ---------------- KO ----------------
   // Added by this port. Ordered by StrId like every other row; the format
@@ -199,6 +205,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
     "마지막 모습", "진화할 준비가 됐어!", "모든 수치가 40 이상이어야 해", "%u레벨 뒤에 진화", "실수 %u번", "소리 켬",
     "소리 끔", "진화!", "%s이(가) 무언가 말하고 싶어해...", "%s이(가) 외로워하고 있어...", "진화시킬까?", "지금 모습 그대로",
     "작별할까?", "작별하기", "계속 함께", "처음 만날 친구를 골라줘", "스프라이트가 없어", "SD 카드에 넣어줘",
+    "확인",      /* S_APPLY */
   },
 };
 

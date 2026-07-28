@@ -358,14 +358,22 @@ extern "C" {
 #define GAME_LIVES_R        3
 #define GAME_OVER_LABEL_Y   80
 #define GAME_OVER_LABEL_SZ  3
-/* Pixels the paddle travels per UI tick (33 ms) while a direction is held:
- * 6 px / 33 ms is ~180 px/s, about four times the ball's horizontal speed, so
- * the ball can always be reached. */
-#define GAME_PADDLE_STEP    6
+/* One UI tick is 33 ms (TAMAPOKE_FPS 30) and both the ball and the paddle move
+ * once per tick -- so every number here is px per 1/30 s, and reading them that way
+ * is the only way to see how fast this actually plays.
+ *
+ * It played in slow motion. The ball started at 1.0 px/frame vertically = 30 px/s,
+ * against a 208 px playfield: SEVEN SECONDS for one descent. The paddle's 6 px/frame
+ * took 1.5 s to cross the screen, which is what "unresponsive" was. Same physics,
+ * numbers a hand can play against: a descent is ~2 s, the paddle crosses in under
+ * a second, and it still moves ~3x faster than the ball falls. */
+#define GAME_PADDLE_STEP    10      /* 300 px/s -- crosses the screen in ~0.9 s */
+#define GAME_BALL_VY_START  3.4f    /* ~100 px/s: a 208 px descent in ~2 s */
+#define GAME_BALL_VX_START  2.2f
 #define GAME_LIVES          3       /* misses before the round ends */
 #define GAME_OVER_MS        2600    /* how long the result stays up */
-#define GAME_BALL_VX_MIN    0.7f    /* below this the ball drops in a column */
-#define GAME_BALL_VX_MAX    3.2f
+#define GAME_BALL_VX_MIN    1.0f    /* below this the ball drops in a column */
+#define GAME_BALL_VX_MAX    4.5f
 /* Two arrows and an A, shown for the first couple of seconds of a round. The
  * paddle is the only thing on this screen that reacts to a key and nothing said
  * so. */
