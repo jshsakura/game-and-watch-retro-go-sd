@@ -65,8 +65,28 @@ And stage the card:
 TAMAPOKE_UPSTREAM=~/TamaPoke ./tools/tamapoke/stage_sd.sh ~/TamaPoke/tools/sdcard/mons /mnt/sd
 ```
 
-That rescales the sprite packs, regenerates the gallery thumbnails, packs the names, and copies
-everything into place. Then flash the firmware from the same build.
+That rescales the sprite packs, regenerates the gallery thumbnails, packs the names, verifies the
+finished container **the way the firmware reads it**, and copies everything into place. Then flash the
+firmware from the same build.
+
+### Verifying a built container
+
+```sh
+python3 tools/tamapoke/verify_assets_dat.py /mnt/sd/roms/homebrew/tamapoke_assets.dat
+```
+
+`stage_sd.sh` runs this and refuses to stage a card that fails it. The parsers in it are written from
+the *firmware's* side — `PmdMon::load()`, `SdThumbs::get()`, `tamapoke_assets.cpp` — not from the
+packers', because a converter that only reads its own output the way it wrote it cannot catch the two
+disagreeing. They did: the firmware read every Pokédex thumbnail as a fixed 24×24 block of raw bytes
+when the record is `u8 w, u8 h, u8 palCount, u16 pal[], u8 px[w*h]`, so all 151 were drawn out of the
+wrong offsets through the wrong palette, for every release. Both sides were self-consistent.
+
+It also prints the action census, which is the answer to "why does this species not play an eating
+animation": measured over the 302 packs, `IDLE / WALKL / WALKR / SLEEP / HURT / ATTACK / HOP` are in
+all of them, while `POSE` is in 58, `EAT` 54, `NOD` 52, `SIT` 52 and `BREATH` 50 — SpriteCollab simply
+has no Eat sprite for 82% of species. The repacker never drops an action; `pickAct()` in
+`tamapoke_ui.cpp` falls back to one every pack carries.
 
 ### Why the rescale is not optional
 

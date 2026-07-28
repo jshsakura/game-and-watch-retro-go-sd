@@ -382,6 +382,13 @@ bash tests/test_tamapoke_save_wired.sh || fail tests/test_tamapoke_save_wired.sh
 # so ACT_IDLE was right and it read as odd animation choices, not as a bug.
 bash tests/test_tamapoke_pmd_actions.sh || fail tests/test_tamapoke_pmd_actions.sh
 
+# The converter and the firmware disagreed about the thumbnail record for every
+# release and neither side could see it: both were self-consistent. verify_assets_dat.py
+# reads a built container from the FIRMWARE's side; this proves it actually rejects
+# things (a truncated record, an overlapping one, a pack over the 124 KB slot, a pack
+# with no PMD_IDLE, an out-of-range action id, an index that misses payload).
+python3 tests/test_tamapoke_verify_assets.py || fail tests/test_tamapoke_verify_assets.py
+
 echo "=== check_no_resident_logo_refs: no unreadable logo address in flash ==="
 bash tests/test_check_no_resident_logo_refs.sh || fail tests/test_check_no_resident_logo_refs.sh
 

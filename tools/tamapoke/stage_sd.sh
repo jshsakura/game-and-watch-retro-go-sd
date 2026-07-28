@@ -79,6 +79,18 @@ mkdir -p "$SD_ROOT/roms/homebrew"
 python3 "$HERE/pack_assets_dat.py" "$STAGED_MONS" "$SD_ROOT/roms/homebrew/tamapoke_assets.dat"
 
 echo
+echo "== verifying the container the way the FIRMWARE reads it =="
+# A converter that never reads its own output the way its consumer does cannot
+# catch the two of them disagreeing -- and they did, for every release: the
+# firmware read each Pokedex thumbnail as a fixed 24x24 block of raw bytes when the
+# record is `u8 w, u8 h, u8 palCount, u16 pal[], u8 px[w*h]`, so all 151 were drawn
+# out of the wrong offsets through the wrong palette. Both sides were
+# self-consistent and wrong about each other, which is exactly the gap a build-time
+# check closes. Fails the staging run rather than shipping a card that cannot be
+# read.
+python3 "$HERE/verify_assets_dat.py" "$SD_ROOT/roms/homebrew/tamapoke_assets.dat" || exit 1
+
+echo
 echo "== copying to $SD_ROOT =="
 cp "$CORE_BIN" "$SD_ROOT/roms/homebrew/TamaPoke.bin"
 

@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 """Regenerate thumbs.bin for the 320x240 gallery.
 
+The layout this produces, written down because nothing on either side had written
+it down and the firmware guessed wrong for every release -- it read each record as
+a fixed 24x24 block of raw bytes, so all 151 thumbnails were drawn out of the wrong
+offsets through the ASCII sprite palette:
+
+    'TPTH', u16 count, u32 offset[count]      -- offset[dex-1], from file start
+    per entry: u8 w, u8 h, u8 palCount,
+               u16 pal[palCount]              -- RGB565, little endian
+               u8  px[w * h]                  -- palette index, 0xFF = transparent
+
+Sizes vary per species (14x24 .. 17x24 measured over the 151), which is why a
+reader has to parse the header rather than assume a cell. tools/tamapoke/
+verify_assets_dat.py checks a built container against exactly this, from the
+firmware's side; run it after changing anything here.
+
 Upstream cuts 40x40 thumbnails for a 466x466 panel and the firmware loads the
 whole file into RAM (169 KB). Our gallery grid is 4x4 inside 320x240, so the
 cells are roughly half as wide and the extra detail is paid for and never seen.

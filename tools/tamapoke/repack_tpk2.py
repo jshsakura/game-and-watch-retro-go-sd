@@ -66,6 +66,18 @@ def resize_frame(idx, w, h, nw, nh):
 
 # tamapoke_sprites.h: PMD_BLOB_MAX. A pack larger than this is refused by the
 # loader at runtime, so it is the only size that matters here.
+# This repacker RESCALES and never DROPS: every action in the source pack comes out
+# in the output, with the same action id. Worth stating, because the firmware's
+# animation fallbacks look like they are covering for something this tool did.
+# They are not -- measured over the 302 packs the container ships:
+#
+#     IDLE / WALKL / WALKR / SLEEP / HURT / ATTACK / HOP   302 of 302
+#     POSE 58,  EAT 54,  NOD 52,  SIT 52,  BREATH 50
+#
+# So 82% of species have no Eat sprite AT SOURCE (SpriteCollab simply has none for
+# them), which is why pickAct() in tamapoke_ui.cpp falls back to an action every
+# pack carries. If a missing animation is ever reported, get the census from
+# verify_assets_dat.py before looking in here.
 SLOT_BYTES = 124 * 1024
 
 # Tried in order; the first that fits is used. 1.0 first so a pack is only ever
