@@ -697,10 +697,10 @@ static void gba_input_read(odroid_gamepad_state_t *joystick)
     if (joystick->values[ODROID_INPUT_B])      keys |= GBA_KEY_B;
     if (joystick->values[ODROID_INPUT_START])  keys |= GBA_KEY_START;
     if (joystick->values[ODROID_INPUT_SELECT]) keys |= GBA_KEY_SELECT;
-    /* The unit has no shoulder buttons. X/Y stand in for L/R — every GBA game
+    /* The unit has no shoulder buttons. Y/X stand in for L/R — every GBA game
      * that uses them uses them, and there is nowhere else to put them. */
-    if (joystick->values[ODROID_INPUT_X])      keys |= GBA_KEY_L;
-    if (joystick->values[ODROID_INPUT_Y])      keys |= GBA_KEY_R;
+    if (joystick->values[ODROID_INPUT_X])      keys |= GBA_KEY_R;
+    if (joystick->values[ODROID_INPUT_Y])      keys |= GBA_KEY_L;
 
     gba_set_keys(keys);
 }
