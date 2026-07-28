@@ -203,6 +203,15 @@ extern "C" void app_main_tamapoke(uint8_t load_state, uint8_t start_paused, int8
 
     if (draw_frame) {
       tamapoke_ui_render();
+      /* The volume / brightness / speedup bar the PAUSE shortcuts arm.
+       *
+       * common_emu_input_loop() above ACTS on the shortcuts -- the volume and the
+       * backlight really do change -- and then arms an overlay for someone to draw.
+       * Every other core draws it here, between its own render and the swap; this
+       * one never called it, so the shortcuts worked silently and read as broken.
+       * Same shape as the pause menu that was missing for the same reason: the
+       * function was fine, nothing called it. */
+      common_ingame_overlay();
       /* Present, then bring the presented frame back into the new active
        * buffer. The UI redraws incrementally and expects the canvas to keep
        * what it drew last frame; without the clone each swap would expose the

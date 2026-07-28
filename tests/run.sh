@@ -389,6 +389,12 @@ bash tests/test_tamapoke_pmd_actions.sh || fail tests/test_tamapoke_pmd_actions.
 # with no PMD_IDLE, an out-of-range action id, an index that misses payload).
 python3 tests/test_tamapoke_verify_assets.py || fail tests/test_tamapoke_verify_assets.py
 
+# common_emu_input_loop() ACTS on the PAUSE shortcuts and arms an overlay; drawing it
+# is a separate call every core makes between its render and lcd_swap(). TamaPoke
+# called the first and not the second, so volume and brightness changed with nothing
+# on screen -- reported as "the shortcut overlay is broken".
+bash tests/test_ingame_overlay_wired.sh || fail tests/test_ingame_overlay_wired.sh
+
 echo "=== check_no_resident_logo_refs: no unreadable logo address in flash ==="
 bash tests/test_check_no_resident_logo_refs.sh || fail tests/test_check_no_resident_logo_refs.sh
 
