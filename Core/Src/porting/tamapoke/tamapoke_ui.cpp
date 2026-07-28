@@ -528,13 +528,42 @@ static void drawPetFlash(int8_t fi, bool silhouette) {
   drawMap(sp.sprite, SPRITE_H, TP_CX - sz / 2, TP_PET_CY - sz / 2, s, silhouette);
 }
 
+/* ACT_* -> PMD_*. Two different enums, and drawPmdAct() indexes the pack by the
+ * SECOND one.
+ *
+ * The code passed the first. ACT_SLEEP is 1, and 1 is PMD_WALKL -- so a sleeping
+ * pet walked sideways underneath its own "Zz", which is exactly how it was
+ * reported from hardware. Every other state was wrong too: eating played walk-
+ * right, hurt played sleep, a pose played eat. Only ACT_IDLE was right, because
+ * both enums happen to start at 0 -- which is why this looked like odd animation
+ * choices rather than a bug. */
+static uint8_t pmdActFor(uint8_t act) {
+  switch (act) {
+    case ACT_SLEEP:  return PMD_SLEEP;
+    case ACT_EAT:    return PMD_EAT;
+    case ACT_HURT:   return PMD_HURT;
+    case ACT_POSE:   return PMD_POSE;
+    case ACT_NOD:    return PMD_NOD;
+    case ACT_BREATH: return PMD_BREATH;
+    default:         return PMD_IDLE;
+  }
+}
+
 static void drawPetPMD(uint32_t now) {
   if (pet.evolving()) return;
-  uint8_t act = beh.act;
+  uint8_t act;
   bool loop = true;
-  if (pet.mood() == MOOD_SLEEPING) { act = ACT_SLEEP; loop = true; }
-  else if (pet.eating()) { act = ACT_EAT; loop = false; }
-  else if (pet.mood() == MOOD_SAD) { act = ACT_HURT; loop = true; }
+  if (pet.mood() == MOOD_SLEEPING) act = PMD_SLEEP;
+  else if (pet.eating()) { act = PMD_EAT; loop = false; }
+  else if (pet.mood() == MOOD_SAD) act = PMD_HURT;
+  else if (beh.mode == 1 && fabsf(beh.targetX - beh.x) > 1.0f)
+    /* It IS walking -- beh.mode 1 is the wander, and the pack has a left and a
+     * right walk that nothing was using. The pet used to slide across the ground
+     * playing its idle animation while the walk cycles went to sleep and eat. */
+    act = (beh.targetX < beh.x) ? PMD_WALKL : PMD_WALKR;
+  else act = pmdActFor(beh.act);
+  /* A pack need not carry every action; PMD_IDLE is the one it always has. */
+  if (!pmd.has(act)) act = PMD_IDLE;
   drawPmdAct(act, (int16_t)beh.x, TP_PET_GROUND, now - beh.t0, loop, false, 5);
   if (pet.showHeart()) {
     drawMap(SPR_HEART, 16, (int16_t)beh.x + 8, TP_PET_CY - 16, 1, false);
@@ -660,6 +689,35 @@ static bool isSemanticFill(uint16_t f) {
   return f == UI_BAR_OK || f == UI_BAR_WARN || f == UI_BAR_BAD;
 }
 
+/* Ink that can be READ on `surface` -- derived from the surface, never from the
+ * theme.
+ *
+ * This is the fix for a whole class of unreadable screens, not one of them. A
+ * widget's surface is a fixed colour (a white tile, a beige well); the label was
+ * drawn in inkColor(), which follows the theme. So in the day theme -- dark ink --
+ * everything read correctly, and at NIGHT the ink turned light and every label on
+ * a light surface disappeared. On hardware the status card's whole stat block was a
+ * blank white bar with three invisible lines in it, and the BACK tile below it was
+ * a blank white pill.
+ *
+ * Luma, not a lookup table: it answers for any surface anyone adds later,
+ * including one blended at runtime. */
+static uint16_t inkOn(uint16_t surface) {
+  const uint32_t r = ((surface >> 11) & 0x1F) << 3;
+  const uint32_t g = ((surface >> 5) & 0x3F) << 2;
+  const uint32_t b = (surface & 0x1F) << 3;
+  const uint32_t luma = (r * 30 + g * 59 + b * 11) / 100;   /* 0..255 */
+  return luma > 140 ? UI_INK : UI_INK_NIGHT;
+}
+
+/* A well's own surface. Recessed means DARKER than the page, which in the night
+ * theme cannot be the day theme's beige -- that is brighter than the background it
+ * is supposed to sit inside, and it is what turned the card's stat block into a
+ * white slab. */
+static uint16_t wellFill() {
+  return gNight ? C565(0x0a, 0x0d, 0x1a) : UI_TRACK;
+}
+
 /* One pressable tile, and the port's only way to say "selected".
  *
  * Focus is always the same three things: an accent plate behind the tile, an
@@ -677,15 +735,19 @@ static uint16_t drawTile(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r,
   const uint16_t surface = (focused && !isSemanticFill(fill)) ? TP_ACCENT : fill;
   gfx->fillRoundRect(x, y, w, h, r, surface);
   gfx->drawRoundRect(x, y, w, h, r, ink);
-  return isSemanticFill(surface) ? UI_WHITE : ink;
+  /* From the SURFACE, not the theme -- see inkOn(). Returning inkColor() here is
+   * what made every light tile unreadable in the night theme. */
+  return isSemanticFill(surface) ? UI_WHITE : inkOn(surface);
 }
 
 /* A recessed well: the readouts and tracks that are not pressable (the name
  * preview, a progress track). Distinct from a tile on purpose -- if everything
  * looks pressable, nothing does. */
-static void drawWell(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r) {
-  gfx->fillRoundRect(x, y, w, h, r, UI_TRACK);
+static uint16_t drawWell(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r) {
+  const uint16_t fill = wellFill();
+  gfx->fillRoundRect(x, y, w, h, r, fill);
   gfx->drawRoundRect(x, y, w, h, r, inkColor());
+  return inkOn(fill);   /* the caller MUST use this for anything it writes inside */
 }
 
 /* Centre a label inside a tile, in the ink the tile asked for. */
@@ -860,7 +922,7 @@ static void drawEvolveFX(uint32_t now) {
   gfx->fillCircle(cx, cy, r / 2, halo);
   bool sil = ((int)(t * 10) % 2) == 0;
   if (pmd.loaded)
-    drawPmdAct(beh.act, (int16_t)beh.x, TP_PET_GROUND, now - beh.t0, true, sil, 5);
+    drawPmdAct(pmdActFor(beh.act), (int16_t)beh.x, TP_PET_GROUND, now - beh.t0, true, sil, 5);
   if (t > 0.9f) {
     gfx->fillRect(0, 0, GFX_WIDTH, GFX_HEIGHT, UI_WHITE);
   }
@@ -890,7 +952,7 @@ static void drawCeremony() {
     }
     int16_t walkX = TP_CX - (int16_t)(t * 200);
     if (pmd.loaded)
-      drawPmdAct(ACT_IDLE, walkX, TP_PET_GROUND, now, true, true, 5);
+      drawPmdAct(PMD_WALKL, walkX, TP_PET_GROUND, now, true, true, 5);  /* it is walking away */
   }
   if (t > 0.95f) pet.newEgg();
 }
@@ -1556,9 +1618,10 @@ static void renderCard() {
 
   /* The three stat lines read as one block, so they get one well rather than
    * floating on the background at three different baselines. */
-  drawWell(CARD_STATS_X, CARD_STATS_Y, CARD_STATS_W, CARD_STATS_H, TP_R_SM);
+  uint16_t well_ink = drawWell(CARD_STATS_X, CARD_STATS_Y, CARD_STATS_W,
+                              CARD_STATS_H, TP_R_SM);
   gfx->setTextSize(1);
-  gfx->setTextColor(ink);
+  gfx->setTextColor(well_ink);
   gfx->setCursor(CARD_STATS_X + 6, CARD_STATS_Y + 6);
   gfx->printf("ATK %u  DEF %u  SPE %u", pet.atkStat(), pet.defStat(), pet.speStat());
   gfx->setCursor(CARD_STATS_X + 6, CARD_STATS_Y + 20);
@@ -1630,6 +1693,9 @@ static void drawThumbAt(int16_t dex, int16_t cx, int16_t cy, uint8_t s, bool sil
     int16_t sz = SPRITE_W * s;
     drawMap(SPECIES[fi].sprite, SPRITE_H, cx - sz / 2, cy - sz / 2, s, sil);
   } else {
+    /* No sprite for this species at all. Drawn in the CALLER's current text
+     * colour on purpose -- this lands inside a tile or on a disc, and only the
+     * caller knows which surface that is. */
     centerText("?", cx, cy - GFX_GLYPH_H, 2);
   }
 }
@@ -1645,7 +1711,7 @@ static void renderGallery() {
     bool reg = pet.isRegistered(dex);
     bool shiny = pet.isShinyRegistered(dex);
 
-    gfx->fillCircle(TP_CX, GAL_DET_SPRITE_CY, 50, UI_TRACK);
+    gfx->fillCircle(TP_CX, GAL_DET_SPRITE_CY, 50, wellFill());
     if (galleryPmd.loaded) {
       drawPmdActM(galleryPmd, PMD_IDLE, TP_CX, GAL_DET_SPRITE_CY + 30,
                   reg ? millis() : 0, reg, !reg, 4);
@@ -1683,8 +1749,9 @@ static void renderGallery() {
     /* The cell is inset by the ring thickness so a focused cell's plate cannot
      * paint over its neighbour -- a 44px pitch with a 42px cell has 2px to give
      * and the ring wants 3. */
-    drawTile(x + 1, y + 1, GAL_CELL - GAL_GAP - 2, GAL_CELL - GAL_GAP - 2,
-             TP_R_SM, focus == i, reg ? UI_WHITE : UI_TRACK);
+    uint16_t cell_ink = drawTile(x + 1, y + 1, GAL_CELL - GAL_GAP - 2,
+                                GAL_CELL - GAL_GAP - 2, TP_R_SM, focus == i,
+                                reg ? UI_WHITE : wellFill());
     int16_t ccx = x + (GAL_CELL - GAL_GAP) / 2, ccy = y + (GAL_CELL - GAL_GAP) / 2;
     if (reg) {
       drawThumbAt(dex, ccx, ccy, 1, false);
@@ -1698,7 +1765,9 @@ static void renderGallery() {
     } else {
       char nb[4];
       snprintf(nb, sizeof(nb), "%u", dex);
+      gfx->setTextColor(cell_ink);   /* inside the tile, so the tile decides */
       centerText(nb, ccx, ccy - GFX_GLYPH_H / 2, 1);
+      gfx->setTextColor(ink);
     }
   }
 
@@ -1721,9 +1790,10 @@ static void renderKeyboard() {
   centerText(T(S_NAME), TP_CX, KB_TITLE_Y, 2);
 
   /* Name preview: a well, not a tile -- it is a readout, not a target. */
-  drawWell(KB_NAME_X, KB_NAME_Y, KB_NAME_W, KB_NAME_H, KB_NAME_R);
+  uint16_t name_ink = drawWell(KB_NAME_X, KB_NAME_Y, KB_NAME_W, KB_NAME_H,
+                              KB_NAME_R);
   gfx->setTextSize(2);
-  gfx->setTextColor(ink);
+  gfx->setTextColor(name_ink);
   int16_t text_w = textWidth(nameBuf, 2);
   gfx->setCursor(TP_CX - text_w / 2,
                  KB_NAME_Y + (KB_NAME_H - 2 * GFX_GLYPH_H) / 2);

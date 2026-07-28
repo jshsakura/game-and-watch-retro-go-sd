@@ -105,13 +105,24 @@ int main(int argc, char **argv) {
       {LANG_EN, "en"}, {LANG_KO, "ko"},
   };
 
+  /* And in each theme. No capture ever showed the NIGHT theme, which is how a
+   * white slab with three invisible lines of stats on it reached hardware: the
+   * surfaces are fixed colours, the ink followed the theme, and only one of the two
+   * was ever looked at. The clock picks the theme (sceneHour), so this is 13:00 and
+   * 01:00. */
+  static const struct { const char *tag; unsigned long long at_ms; } THEMES[] = {
+      {"", 13ull * 3600 * 1000}, {"_night", 1ull * 3600 * 1000},
+  };
+
   int failures = 0;
   for (size_t li = 0; li < sizeof(LANGS) / sizeof(LANGS[0]); li++) {
   gLang = LANGS[li].lang;
+  for (size_t ti = 0; ti < sizeof(THEMES) / sizeof(THEMES[0]); ti++) {
+  harness_clock_set_ms(THEMES[ti].at_ms);
   for (int s = 0; s < TAMAPOKE_SCREEN_COUNT; s++) {
     char name_buf[64];
-    snprintf(name_buf, sizeof(name_buf), "%s_%s", LANGS[li].tag,
-             tamapoke_ui_screen_name(s));
+    snprintf(name_buf, sizeof(name_buf), "%s_%s%s", LANGS[li].tag,
+             tamapoke_ui_screen_name(s), THEMES[ti].tag);
     const char *name = name_buf;
 
     render_at(s, 0);
@@ -142,6 +153,7 @@ int main(int argc, char **argv) {
     } else {
       printf("ok   %-18s\n", name);
     }
+  }
   }
   }
 
@@ -616,6 +628,104 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* No widget may be a flat rectangle -- in EITHER theme.
+   *
+   * A tile's surface is a fixed colour (a white pill, a beige well) and its label
+   * used to be drawn in inkColor(), which follows the theme. Day theme: dark ink on
+   * a light tile, fine. NIGHT theme: light ink on a light tile, and the label is
+   * gone. On hardware the status card showed a blank white slab where three lines of
+   * stats should be, and a blank white pill where BACK should be. Every screen in
+   * the port had the same exposure and only the night theme showed it.
+   *
+   * Measured as flatness, which is what the eye sees: a widget that contains a label
+   * has a luma spread inside its own rectangle. One that has swallowed its label is
+   * uniform. That is mechanical -- no threshold on "is this pretty" -- and it fails
+   * on exactly the thing that was broken.
+   *
+   * The focus sets give the pressable rectangles for free. The two wells are not
+   * focusable, so they are named: they are the two biggest offenders. */
+  {
+    struct Rect { const char *what; int x, y, w, h; };
+    struct Theme { const char *name; unsigned long long at_ms; };
+    const Theme themes[] = {{"day", 13ull * 3600 * 1000}, {"night", 1ull * 3600 * 1000}};
+    /* Wells, by name: the card's stat block and the keyboard's name preview. */
+    const struct { int screen; Rect r; } WELLS[] = {
+      {1, {"the card's stat block", CARD_STATS_X, CARD_STATS_Y, CARD_STATS_W, CARD_STATS_H}},
+      {3, {"the keyboard's name box", KB_NAME_X, KB_NAME_Y, KB_NAME_W, KB_NAME_H}},
+    };
+
+    int flat_failures = 0;
+    for (size_t t = 0; t < sizeof(themes) / sizeof(themes[0]); t++) {
+      harness_clock_set_ms(themes[t].at_ms);
+
+      /* Every focusable rectangle on every screen, at its own focus index so the
+       * check sees the selected treatment too. */
+      for (int sc = 0; sc < TAMAPOKE_SCREEN_COUNT; sc++) {
+        tamapoke_ui_goto_screen(sc);
+        const focus_set_t *fs = tamapoke_current_focus_set();
+        if (!fs || fs->count == 0 || fs->boxes == NULL) continue;   /* lattices derive */
+        for (uint8_t i = 0; i < fs->count; i++) {
+          hitbox_t b = fs->boxes[i];
+          if (b.w <= 4 || b.h <= 4) continue;
+          /* BOTH states. Pointing the cursor at each widget in turn tests only its
+           * SELECTED look, and the selected look is an accent surface that always
+           * contrasts -- so the first version of this check passed the very tile
+           * the photo showed as blank. The unfocused state is the one that broke. */
+          for (int sel = 0; sel < 2; sel++) {
+            uint8_t focus_at = sel ? i : (uint8_t)((i + 1) % fs->count);
+            harness_fb_reset(0x0000);
+            tamapoke_ui_goto_screen(sc);
+            tamapoke_input_reset(focus_at);
+            tamapoke_ui_render();
+            int lo = 255, hi = 0;
+            const uint16_t *fb = harness_fb();
+            for (int y = b.y + 2; y < b.y + b.h - 2 && y < FB_H; y++)
+              for (int x = b.x + 2; x < b.x + b.w - 2 && x < FB_W; x++) {
+                uint16_t c = fb[y * FB_W + x];
+                int r = ((c >> 11) & 0x1F) << 3, g = ((c >> 5) & 0x3F) << 2, bl = (c & 0x1F) << 3;
+                int l = (r * 30 + g * 59 + bl * 11) / 100;
+                if (l < lo) lo = l;
+                if (l > hi) hi = l;
+              }
+            if (hi - lo < 40) {
+              printf("FAIL %s widget %u on %s is flat %s (luma spread %d) -- its "
+                     "label is invisible on its own surface\n",
+                     themes[t].name, i, tamapoke_ui_screen_name(sc),
+                     sel ? "when selected" : "when not selected", hi - lo);
+              flat_failures++;
+            }
+          }
+        }
+      }
+
+      for (size_t k = 0; k < sizeof(WELLS) / sizeof(WELLS[0]); k++) {
+        harness_fb_reset(0x0000);
+        tamapoke_ui_goto_screen(WELLS[k].screen);
+        tamapoke_input_reset(0);
+        tamapoke_ui_render();
+        const Rect &r0 = WELLS[k].r;
+        int lo = 255, hi = 0;
+        const uint16_t *fb = harness_fb();
+        for (int y = r0.y + 2; y < r0.y + r0.h - 2 && y < FB_H; y++)
+          for (int x = r0.x + 2; x < r0.x + r0.w - 2 && x < FB_W; x++) {
+            uint16_t c = fb[y * FB_W + x];
+            int r = ((c >> 11) & 0x1F) << 3, g = ((c >> 5) & 0x3F) << 2, bl = (c & 0x1F) << 3;
+            int l = (r * 30 + g * 59 + bl * 11) / 100;
+            if (l < lo) lo = l;
+            if (l > hi) hi = l;
+          }
+        if (hi - lo < 40) {
+          printf("FAIL %s: %s is flat (luma spread %d) -- what it contains cannot be "
+                 "read on it\n", themes[t].name, r0.what, hi - lo);
+          flat_failures++;
+        }
+      }
+    }
+    if (!flat_failures)
+      printf("ok   no widget or well swallows its own label, in either theme\n");
+    failures += flat_failures;
+  }
+
   /* Pokedex thumbnails must be decoded the way the file is written.
    *
    * thumbs.bin entries are `u8 w, u8 h, u8 palCount, u16 pal[palCount],
@@ -725,7 +835,8 @@ int main(int argc, char **argv) {
     printf("ok   no screen inherits pixels from the screen before it\n");
   failures += bleed_failures;
 
-  int total = TAMAPOKE_SCREEN_COUNT * (int)(sizeof(LANGS) / sizeof(LANGS[0]));
+  int total = TAMAPOKE_SCREEN_COUNT * (int)(sizeof(LANGS) / sizeof(LANGS[0]))
+              * (int)(sizeof(THEMES) / sizeof(THEMES[0]));
   printf("\n%d/%d screens clean, PPMs in %s\n", total - failures, total, out_dir);
   return failures ? 1 : 0;
 }
