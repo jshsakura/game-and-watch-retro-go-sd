@@ -24,11 +24,20 @@
  *
  * Deliberately NOT wrapped in #ifndef: a macro from elsewhere would still be
  * in force and would still break the same headers. If some other header defines
- * min as a macro first, that is a conflict to fix there, not to inherit here. */
+ * min as a macro first, that is a conflict to fix there, not to inherit here.
+ *
+ * The return type is decltype(a + b) and not decltype(a < b ? a : b), which is
+ * what this said first and which is a dangling reference: a and b are by-value
+ * parameters, so the conditional expression is an LVALUE, and decltype of an
+ * lvalue is T& -- a reference to a parameter that dies at return. gcc 15.2 says
+ * so ("dangling pointer to 'a' may be used") for pet.h's lowestStat() and for
+ * the sprite scale in drawPetFlash(). Reading it happens to work at -O0 and is
+ * undefined; arithmetic yields a prvalue of the promoted common type, which is
+ * what these should have returned all along. */
 template <typename T, typename U>
-static inline auto min(T a, U b) -> decltype(a < b ? a : b) { return a < b ? a : b; }
+static inline auto min(T a, U b) -> decltype(a + b) { return a < b ? a : b; }
 template <typename T, typename U>
-static inline auto max(T a, U b) -> decltype(a > b ? a : b) { return a > b ? a : b; }
+static inline auto max(T a, U b) -> decltype(a + b) { return a > b ? a : b; }
 template <typename T, typename L, typename H>
 static inline T constrain(T x, L lo, H hi) {
   return x < (T)lo ? (T)lo : (x > (T)hi ? (T)hi : x);
