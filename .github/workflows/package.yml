@@ -125,6 +125,21 @@ jobs:
             echo ""
             echo "Full feature overview & BIOS table: [README — How this fork differs from upstream](https://github.com/${{ github.repository }}#how-this-fork-differs-from-upstream)"
             echo ""
+            # State the stance in every release, not just the ones that merged
+            # something: this fork FOLLOWS sylverb/game-and-watch-retro-go-sd.
+            # Upstream is the reference and its releases are merged as they come.
+            # Where a merge conflicts, upstream's version is taken -- the
+            # exceptions are the few places where taking it would break the
+            # device (a shrinking APPID_COUNT resets every user's settings, a
+            # shifted logo index breaks cards already in the field), and each of
+            # those is documented at the line in the source.
+            echo "> **This fork follows [upstream](https://github.com/sylverb/game-and-watch-retro-go-sd).**"
+            echo "> Upstream is the reference: its releases are merged here as they land, and where a"
+            echo "> merge conflicts, upstream's version is the one taken. The only exceptions are"
+            echo "> changes that would break an existing device or card — a shrinking \`APPID_COUNT\`"
+            echo "> resets every user's settings, a shifted logo index breaks cards already in the"
+            echo "> field — and each of those is documented at the line in the source."
+            echo ""
             PREV=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || true)
             if [ -n "$PREV" ]; then
               echo "## Changes since ${PREV}"
