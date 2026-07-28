@@ -855,7 +855,8 @@ Core/Src/porting/gba/gba_idle_loop.c \
 Core/Src/porting/gba/gba_audio_filter.c \
 Core/Src/porting/gba/main_gba.c \
 tools/gba_m4a/m4a_hle.c \
-tools/gba_m4a/m4a_gpsp.c
+tools/gba_m4a/m4a_gpsp.c \
+Core/Src/porting/gba/gba_bios_hle.c
 
 GBA_CXX_SOURCES = \
 $(CORE_GBA)/cpu.cc \

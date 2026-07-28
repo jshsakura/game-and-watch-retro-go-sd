@@ -1203,7 +1203,8 @@ C_DEFS_GBA = \
 -DOBJ_PER_LINE_MAX=32 \
 -DBUFFER_SIZE=4096 \
 -DGBA_SOUND_FREQUENCY=48000 \
--DGBA_M4A_HLE
+-DGBA_M4A_HLE \
+-DGBA_BIOS_HLE
 
 GBA_C_INCLUDES = $(C_INCLUDES) -Iexternal/gpsp -Iexternal/gpsp/libretro/libretro-common/include -Itools/gba_m4a -I./
 
