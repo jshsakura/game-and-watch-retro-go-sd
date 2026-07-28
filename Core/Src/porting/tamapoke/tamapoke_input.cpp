@@ -166,6 +166,24 @@ void tamapoke_input_poll(uint32_t now_ms) {
   odroid_gamepad_state_t js;
   odroid_input_read_gamepad(&js);
 
+  /* PAUSE is the LAUNCHER's modifier, and while it is down the game must not see
+   * anything.
+   *
+   * common_emu_input_loop() enforces that by memset()ing the gamepad struct it was
+   * handed once a PAUSE+key macro fires -- every other core then maps its emulated
+   * pad from that same struct, so the keys are swallowed. This port reads the pad
+   * AGAIN here, which walks straight past it: PAUSE+TIME toggled speedup and opened
+   * the settings screen, PAUSE+LEFT turned the volume down and walked the cursor,
+   * PAUSE+A saved a state and tapped whatever was focused.
+   *
+   * Asking the same question rather than re-deriving it: if PAUSE is held, the
+   * launcher owns this frame's input. (ODROID_INPUT_VOLUME is the PAUSE button --
+   * see Core/Src/porting/odroid_input.c.) */
+  if (js.values[ODROID_INPUT_VOLUME]) {
+    g_in.prev = js;
+    return;
+  }
+
   /* Treat a screen that declines to name a focus set as an empty one, right
    * here, rather than testing for NULL at each of the four or five places below
    * -- one of which (fs->cols, in the overflow branch) is exactly the kind that

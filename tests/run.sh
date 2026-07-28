@@ -105,6 +105,14 @@ $CC -O2 -Wall -Wextra -std=gnu11 -DRG_ALARM_HOST -ICore/Inc/retro-go \
 $CC -O2 -Wall -Wextra -std=gnu11 -no-pie -Itests/clock_stubs \
     -Wl,--defsym=_OVERLAY_MUSIC_BSS_SIZE=64 -Wl,--defsym=_OVERLAY_MUSIC_SIZE=64 \
     tests/test_clock_mp3.c                               -o /tmp/mtest/test_clock_mp3
+# TamaPoke sound: links the REAL tamapoke_audio.cpp (the file the firmware
+# compiles), because the frame loop calls fill() unconditionally and plays back
+# whatever it returns -- nothing downstream can tell silence from a stuck effect.
+# -x c++ because the source is C++ (enum Sfx : uint8_t).
+$CC -O2 -Wall -std=gnu11 -x c++ -ICore/Inc/porting/tamapoke \
+    tests/test_tamapoke_audio.c Core/Src/porting/tamapoke/tamapoke_audio.cpp \
+    -lstdc++ -o /tmp/mtest/test_tamapoke_audio
+
 mkdir -p /tmp/favtest
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/fav_stubs -ICore/Inc/retro-go -ICore/Inc -ICore/Inc/porting -Iretro-go-stm32/components/odroid \
     -DFAVORITES_FILE='"/tmp/favtest/favorites.txt"' \
@@ -394,6 +402,8 @@ python3 tests/test_tamapoke_verify_assets.py || fail tests/test_tamapoke_verify_
 # called the first and not the second, so volume and brightness changed with nothing
 # on screen -- reported as "the shortcut overlay is broken".
 bash tests/test_ingame_overlay_wired.sh || fail tests/test_ingame_overlay_wired.sh
+
+/tmp/mtest/test_tamapoke_audio || fail tests/test_tamapoke_audio.c
 
 echo "=== check_no_resident_logo_refs: no unreadable logo address in flash ==="
 bash tests/test_check_no_resident_logo_refs.sh || fail tests/test_check_no_resident_logo_refs.sh
