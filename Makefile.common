@@ -1060,6 +1060,13 @@ endif
 # parse time) would satisfy the `| $(BUILD_DIR)` order-only prerequisite, and
 # the $(BUILD_DIR) rule -- which is what mkdir's every per-core subdirectory --
 # would never run, breaking any build that starts from a wiped build/.
+#
+# That rule now uses `mkdir -p` for every directory, so anything else creating
+# build/ first is no longer a broken build. It was: `./tools/tamapoke_harness/run.sh`
+# mkdir -p's build/tamapoke_harness, which makes build/ as a side effect, and the
+# very next `make release` died on "can't create build/gba/gba_bios.o: No such file
+# or directory" -- the order-only prerequisite was satisfied and not one per-core
+# subdirectory existed. Any tool that writes under build/ had the same effect.
 FLAGS_STAMP := .build-flags
 $(shell printf '%s\n' \
           'C_DEFS=$(C_DEFS)' \
@@ -1768,44 +1775,28 @@ external/smw/smw_assets.dat: roms/smw/smw.sfc | $(BUILD_DIR)
 	cp $< external/smw/assets/smw.sfc
 	$(MAKE) -C external/smw smw_assets.dat
 
+# Every per-core object directory.
+#
+# Named, and created at PARSE TIME, because an order-only prerequisite is
+# satisfied by mere existence: with build/ already there the $(BUILD_DIR) rule
+# below never runs, and then not one of these exists. That is not hypothetical --
+# `./tools/tamapoke_harness/run.sh` mkdir -p's build/tamapoke_harness, which
+# makes build/ as a side effect, and the very next `make release` died on
+# "can't create build/gba/gba_bios.o: No such file or directory". Any tool that
+# writes anything under build/ had the same effect, and the failure names a file
+# in a core nobody touched, so it reads as a broken tree rather than as this.
+BUILD_SUBDIRS := core cores fatfs tamp nes nes_fceu tgbdual smsplusgx pce msx \
+                 gw wsv ngp wswan md a2600 lynx a7800 vb amstrad zelda3 smw sm \
+                 snes gba videopac zxs c64 gamecom celeste tamapoke music pico8 \
+                 tama pkmini rc_smw
+
+$(shell mkdir -p $(BUILD_DIR) $(addprefix $(BUILD_DIR)/,$(BUILD_SUBDIRS)))
+
+# Kept so the order-only prerequisites still name a target, and so a build that
+# starts from a wiped tree works even if the parse-time mkdir above is ever
+# removed. Idempotent on purpose.
 $(BUILD_DIR):
-	$(V)mkdir $@
-	$(V)mkdir $@/core
-	$(V)mkdir $@/cores
-	$(V)mkdir $@/fatfs
-	$(V)mkdir $@/tamp
-	$(V)mkdir $@/nes
-	$(V)mkdir $@/nes_fceu
-	$(V)mkdir $@/tgbdual
-	$(V)mkdir $@/smsplusgx
-	$(V)mkdir $@/pce
-	$(V)mkdir $@/msx
-	$(V)mkdir $@/gw
-	$(V)mkdir $@/wsv
-	$(V)mkdir $@/ngp
-	$(V)mkdir $@/wswan
-	$(V)mkdir $@/md
-	$(V)mkdir $@/a2600
-	$(V)mkdir $@/lynx
-	$(V)mkdir $@/a7800
-	$(V)mkdir $@/vb
-	$(V)mkdir $@/amstrad
-	$(V)mkdir $@/zelda3
-	$(V)mkdir $@/smw
-	$(V)mkdir $@/sm
-	$(V)mkdir $@/snes
-	$(V)mkdir $@/gba
-	$(V)mkdir $@/videopac
-	$(V)mkdir $@/zxs
-	$(V)mkdir $@/c64
-	$(V)mkdir $@/gamecom
-	$(V)mkdir $@/celeste
-	$(V)mkdir $@/tamapoke
-	$(V)mkdir $@/music
-	$(V)mkdir $@/pico8
-	$(V)mkdir $@/tama
-	$(V)mkdir $@/pkmini
-	$(V)mkdir $@/rc_smw
+	$(V)mkdir -p $@ $(addprefix $@/,$(BUILD_SUBDIRS))
 
 #######################################
 # Flashing
