@@ -68,6 +68,55 @@ extern "C" {
 #define HDR_STREAK_Y    2
 
 /* ------------------------------------------------------------------ */
+/* Design tokens -- the whole port draws with these, not with numbers */
+/* ------------------------------------------------------------------ */
+
+/* Every screen in this port had invented its own look. Nine screens carried
+ * five different ideas of what "selected" means -- the starter rows inverted and
+ * took a ring, the action buttons inverted and took a pulsing ring, the feed
+ * cells went white with a ring, the card's name strip drew two hairlines, and the
+ * gallery, keyboard and clock filled with orange -- and radii ran 2, 4, 6, 8 and
+ * 10 with no rule behind them. Each was defensible alone; together they read as
+ * five half-finished screens rather than one game.
+ *
+ * So: one radius scale, one accent, one focus treatment (TP_ACCENT ring + accent
+ * surface + white label, drawn by drawTile()), one frosted surface for anything
+ * floating over the scene. A new screen picks from these; it does not invent. */
+#define TP_R_XS             2     /* hairline chips: page dots, tiny badges */
+#define TP_R_SM             4     /* keys, small buttons, bars */
+#define TP_R_MD             8     /* action buttons, rows, pills */
+#define TP_R_LG            12     /* floating cards and dialogs */
+
+#define TP_ACCENT           UI_BAR_WARN   /* the one "you are here" colour */
+#define TP_FOCUS_RING       3             /* thickness of the accent plate */
+
+/* Frosted card over the scene: a soft shadow, a translucent fill, a bright rim.
+ * The same three layers as the bottom panel, so a dialog and the panel look like
+ * parts of one surface language. */
+#define TP_CARD_ALPHA       224
+#define TP_CARD_SHADOW_A     56
+#define TP_CARD_SHADOW_OFF    3
+
+/* ------------------------------------------------------------------ */
+/* Bottom panel -- the frosted plate the bars and buttons sit on      */
+/* ------------------------------------------------------------------ */
+
+/* Upstream's panel is a translucent white plate over the scene, not a slab of
+ * paint: the grass and water show faintly through it. This port filled the band
+ * with an opaque dark slate instead, which cost more than fidelity -- the labels
+ * are drawn in inkColor(), which is DARK in the day theme, so "FOOD/JOY/ENE/HYG"
+ * were dark grey on dark navy and reported from hardware as unreadable.
+ *
+ * Blended, not filled (Gfx::blendRect). The scene has to be painted all the way
+ * down for that to work; drawScene() now fills to GFX_HEIGHT for exactly this
+ * reason (and it closes the 2px seam the old 150..152 gap left). */
+#define PANEL_Y             152
+#define PANEL_H             ((GFX_HEIGHT) - (PANEL_Y))
+#define PANEL_ALPHA_DAY     184   /* ~72% white: bright enough for dark ink */
+#define PANEL_ALPHA_NIGHT   208   /* night ink is light, so the plate stays dark */
+#define PANEL_RIM_H         2     /* highlight along the top edge of the glass */
+
+/* ------------------------------------------------------------------ */
 /* Stat bars -- 2x2 grid, sits between scene and buttons              */
 /* ------------------------------------------------------------------ */
 
@@ -137,12 +186,26 @@ extern "C" {
 #define CARD_TRAIN_H    22
 #define CARD_TRAIN_X    ((TP_CX) - (CARD_TRAIN_W) / 2)
 #define CARD_TRAIN_Y    140
+/* The stat lines, as one block rather than three floating baselines. */
+#define CARD_STATS_X    8
+#define CARD_STATS_Y    84
+#define CARD_STATS_W    ((GFX_WIDTH) - 2 * (CARD_STATS_X))
+#define CARD_STATS_H    48
+/* BACK, as a tile like every other pressable thing. The focus set below derives
+ * from these, so the hitbox and the drawing cannot disagree. */
+#define CARD_BACK_W     72
+#define CARD_BACK_H     20
+#define CARD_BACK_Y     ((GFX_HEIGHT) - (CARD_BACK_H) - 6)
 
 #define FEED_MENU_W     200
 #define FEED_MENU_H     36
 #define FEED_MENU_X     ((TP_CX) - (FEED_MENU_W) / 2)  /* 110 */
-#define FEED_MENU_Y     150
-#define FEED_MENU_R     8
+/* Above the panel, not on top of it. At 150 the tray straddled PANEL_Y and sat
+ * over the stat bars, so the icons read as part of the panel rather than as a menu
+ * floating above it -- and once the panel became translucent the two surfaces were
+ * visibly the same material at the same height. */
+#define FEED_MENU_Y     ((PANEL_Y) - (FEED_MENU_H) - 6)
+#define FEED_MENU_R     TP_R_LG
 /* Five 24px cells inside a 200px plate with an 8px margin either side: the
  * remaining 184 - 5*24 = 64 px is split into four 16px gaps, so the pitch is 40.
  * At the old 48 the fifth item (candy) started at X+200 -- exactly the plate's
@@ -177,6 +240,15 @@ extern "C" {
 #define STARTER_ROW_Y0      40
 #define STARTER_ROW_H       50
 #define STARTER_ROW_GAP     8
+/* Thickness of the ring around the focused row. Drawn as a filled plate behind
+ * the row, not as N concentric drawRoundRect()s: those share one radius while
+ * growing, so each ring cuts a different corner arc and the result is a notched
+ * outline -- visible on hardware and reported as "the border looks wrong". */
+#define STARTER_SEL_RING    3
+/* The three rows end at 206, and the band below them was empty. It now carries
+ * the key hint, which is what the screen was missing: a first-run player has no
+ * way to know the D-pad walks the rows and A picks one. */
+#define STARTER_HINT_Y      216
 
 #define LANG_PILL_W         80
 #define LANG_PILL_H         22
@@ -263,6 +335,11 @@ extern "C" {
 /* Minigames                                                          */
 /* ------------------------------------------------------------------ */
 
+/* The playfield's own background: this screen is dark in both themes, so
+ * anything drawn on it has to be told the ink rather than ask inkColor() -- which
+ * is how the score came to be drawn dark-on-dark. */
+#define GAME_BG             0x10C5   /* #101828, matches UI_BG_NIGHT's family */
+
 /* Ball keepy-up, redesigned as paddle (see stepGame/renderGame). */
 #define GAME_PADDLE_W       40
 #define GAME_PADDLE_H       4
@@ -281,6 +358,19 @@ extern "C" {
 #define GAME_LIVES_R        3
 #define GAME_OVER_LABEL_Y   80
 #define GAME_OVER_LABEL_SZ  3
+/* Pixels the paddle travels per UI tick (33 ms) while a direction is held:
+ * 6 px / 33 ms is ~180 px/s, about four times the ball's horizontal speed, so
+ * the ball can always be reached. */
+#define GAME_PADDLE_STEP    6
+#define GAME_LIVES          3       /* misses before the round ends */
+#define GAME_OVER_MS        2600    /* how long the result stays up */
+#define GAME_BALL_VX_MIN    0.7f    /* below this the ball drops in a column */
+#define GAME_BALL_VX_MAX    3.2f
+/* Two arrows and an A, shown for the first couple of seconds of a round. The
+ * paddle is the only thing on this screen that reacts to a key and nothing said
+ * so. */
+#define GAME_HINT_MS        2500
+#define GAME_HINT_Y         200
 
 /* Sack (strength training): sandbag with rope/body/seam + hit meter. */
 #define SACK_ROPE_TOP_Y     16
@@ -290,17 +380,25 @@ extern "C" {
 #define SACK_BODY_X         ((TP_CX) - (SACK_BODY_W) / 2)
 #define SACK_TAPER_H        16
 #define SACK_SEAM_Y         (SACK_BODY_TOP_Y + (SACK_BODY_H / 2))
-#define SACK_HIT_COUNTER_Y  152
+/* The lower half is four stacked rows -- counter, "hit fast", the key legend, the
+ * time bar -- and adding the legend meant re-spacing all four rather than
+ * squeezing it into the 4px between the hint and the bar. */
+#define SACK_HIT_COUNTER_Y  150
 #define SACK_HIT_COUNTER_SZ 3
-#define SACK_HINT_Y         182
+#define SACK_HINT_Y         176
 #define SACK_HINT_SIZE      1
+#define SACK_KEY_HINT_Y     188
 #define SACK_BAR_W          200
 #define SACK_BAR_H          12
 #define SACK_BAR_X          ((TP_CX) - (SACK_BAR_W) / 2)
-#define SACK_BAR_Y          200
+#define SACK_BAR_Y          208
 #define SACK_RESULT_Y       80
 #define SACK_RESULT_SIZE    3
 #define SACK_PET_CY         60
+#define SACK_ROUND_MS       10000   /* one training round */
+#define SACK_RESULT_MS      3000    /* how long the result stays up */
+#define SACK_SHAKE_PX       7.0f    /* recoil amplitude of one hit */
+#define SACK_SHAKE_MS       200
 
 /* ------------------------------------------------------------------ */
 /* UI entry points -- called by the porting main loop and input layer */
@@ -340,7 +438,7 @@ bool tamapoke_ui_had_activity(void);
 /* ---- host harness API ----
  * These let the host harness put the UI into a known screen and render it,
  * without having to drive the full input/state machine. No-op on device. */
-#define TAMAPOKE_SCREEN_COUNT 11
+#define TAMAPOKE_SCREEN_COUNT 12
 void tamapoke_ui_goto_screen(int id);
 const char *tamapoke_ui_screen_name(int id);
 
@@ -350,6 +448,69 @@ void onTap(int16_t x, int16_t y);
 void onSwipe(int dir);
 void onSwipeV(int dir);
 void onBack(void);
+
+/* ---- what the keys mean on the current screen ----
+ *
+ * A focus cursor is the right stand-in for a finger on a menu and the wrong one
+ * for a game. The ball minigame needs LEFT/RIGHT to be an axis, held, and the
+ * training sack needs A to be a hit rather than a tap on a widget -- both of
+ * which are the opposite of "walk the focus set". The input layer asks. */
+typedef enum {
+  TP_INPUT_UI = 0,   /* focus cursor stands in for the finger */
+  TP_INPUT_PADDLE,   /* ball minigame: LEFT/RIGHT are held, not stepped */
+  TP_INPUT_MASH,     /* training sack: A is a hit */
+} tp_input_mode_t;
+
+tp_input_mode_t tamapoke_ui_input_mode(void);
+
+/* TP_INPUT_PADDLE: -1/0/+1, the direction currently HELD. Applied per tick so
+ * the paddle's speed comes from the clock and not from how fast the main loop
+ * happens to poll. */
+void tamapoke_paddle_hold(int dir);
+
+/* TP_INPUT_MASH: one hit on the sack. */
+void tamapoke_sack_hit(void);
+
+/* The two labelled keys on the console.
+ *
+ * The port used to reach every screen by walking the focus cursor off an edge:
+ * the settings screen was "press DOWN on the main screen", the Pokedex was
+ * "press RIGHT six times until you fall off the end of the button row". Both
+ * work and neither is discoverable, and the second one fires by accident every
+ * time someone overshoots the last button. TIME and GAME are printed on the
+ * shell right next to the screen, so they get the two screens they name. */
+void tamapoke_time_key(void);   /* TIME: the clock / settings screen */
+void tamapoke_game_key(void);   /* GAME: the ball minigame */
+
+/* UP / DOWN on the main screen. Their own entry points rather than a synthesised
+ * vertical swipe: with TIME owning the settings screen, DOWN is free to open the
+ * Pokedex -- which is what stops LEFT/RIGHT from having to eject the player off
+ * the end of the row to get there. */
+void tamapoke_open_card(void);
+void tamapoke_open_gallery(void);
+
+/* ---- harness probe ----
+ * Game state a host test can assert on. Both minigames shipped as animations
+ * with no way to play them and no reward when they ended, which no amount of
+ * rendering could show; a test has to be able to read the score. */
+typedef struct {
+  int   screen;
+  int   paddle_x;
+  int   ball_x;         /* so a test can steer the paddle AWAY and force a miss */
+  int   ball_y;
+  uint8_t game_score;
+  uint8_t game_misses;
+  uint16_t sack_hits;
+  uint8_t sack_gain;
+  uint8_t pet_tr_atk;   /* trainStrength() writes this -- proof of the reward */
+  uint8_t pet_tr_spe;   /* playResult() writes this */
+} tamapoke_probe_t;
+
+void tamapoke_ui_probe(tamapoke_probe_t *out);
+
+/* Harness only: draw one Pokedex thumbnail, so a test can assert that the pack is
+ * decoded the way the packer writes it. */
+void tamapoke_ui_draw_thumb(int16_t dex, int16_t cx, int16_t cy, uint8_t s);
 
 /* Focus/dim control -- supplied for tamapoke_input.cpp. */
 const focus_set_t *tamapoke_current_focus_set(void);

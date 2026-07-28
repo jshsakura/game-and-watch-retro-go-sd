@@ -316,12 +316,20 @@ int main(int argc, char **argv) {
   int nav_failures = 0;
   {
     struct Nav { const char *what; int key; int presses; int want_screen; };
-    /* From the main screen: DOWN opens the clock, UP opens the card, and running
-     * off the end of the button row opens the gallery (upstream's three gestures). */
+    /* One key per screen, from the main screen.
+     *
+     * TIME and GAME are printed on the console next to the display and were both
+     * dead; they now open the two screens they name. UP is the status card and DOWN
+     * is the Pokedex. What this replaces: DOWN opened the settings screen and the
+     * Pokedex was "press RIGHT six times until you fall off the end of the button
+     * row" -- which also fired every time a player overshot the last button, so
+     * overshooting ejected you onto another screen. LEFT/RIGHT now clamp; the check
+     * below pins that. */
     const Nav navs[] = {
-      {"clock/settings", ODROID_INPUT_DOWN,  1, 4},
-      {"status card",    ODROID_INPUT_UP,    1, 1},
-      {"gallery",        ODROID_INPUT_RIGHT, 6, 2},
+      {"clock/settings (TIME)", ODROID_INPUT_SELECT, 1, 4},
+      {"the minigame (GAME)",   ODROID_INPUT_START,  1, 6},
+      {"status card (UP)",      ODROID_INPUT_UP,     1, 1},
+      {"the Pokedex (DOWN)",    ODROID_INPUT_DOWN,   1, 2},
     };
     for (size_t i = 0; i < sizeof(navs) / sizeof(navs[0]); i++) {
       harness_clock_set_ms(200000 + i * 10000);
@@ -348,6 +356,329 @@ int main(int argc, char **argv) {
     }
   }
   failures += nav_failures;
+
+  /* Walking off the end of the button row must stay on the button row.
+   *
+   * It used to be upstream's horizontal swipe, which opened the Pokedex. A swipe is
+   * a deliberate gesture on a panel; with a cursor it is what happens whenever
+   * someone presses RIGHT once too often, so the game changed screens as a
+   * punishment for overshooting. */
+  {
+    harness_clock_set_ms(300000);
+    tamapoke_ui_goto_screen(0);
+    tamapoke_ui_release_harness_screen();
+    harness_pad_clear();
+    tamapoke_input_reset(0);
+    for (int i = 0; i < 10; i++) {   /* five widgets, ten presses */
+      harness_pad_set(ODROID_INPUT_RIGHT, true);
+      tamapoke_input_poll((uint32_t)harness_clock_ms());
+      harness_pad_set(ODROID_INPUT_RIGHT, false);
+      tamapoke_input_poll((uint32_t)harness_clock_ms());
+    }
+    if (tamapoke_ui_current_screen() != 0) {
+      printf("FAIL overshooting the last action button left the main screen "
+             "(screen %d) -- an overrun must clamp\n", tamapoke_ui_current_screen());
+      failures++;
+    } else {
+      printf("ok   overshooting the button row stays on the main screen\n");
+    }
+  }
+
+  /* The ball minigame must be playable.
+   *
+   * paddleX was written exactly once, in startGame(), and never again -- no key,
+   * no touch, nothing moved it. The game shipped three times as a ball bouncing off
+   * a decoration. */
+  int game_failures = 0;
+  {
+    harness_clock_set_ms(400000);
+    tamapoke_ui_goto_screen(0);
+    tamapoke_ui_release_harness_screen();
+    harness_pad_clear();
+    tamapoke_input_reset(0);
+    harness_pad_set(ODROID_INPUT_START, true);
+    tamapoke_input_poll((uint32_t)harness_clock_ms());
+    harness_pad_set(ODROID_INPUT_START, false);
+    tamapoke_input_poll((uint32_t)harness_clock_ms());
+
+    tamapoke_probe_t p0, p1;
+    tamapoke_ui_probe(&p0);
+    if (p0.screen != 6) {
+      printf("FAIL GAME did not open the minigame (screen %d)\n", p0.screen);
+      game_failures++;
+    } else {
+      /* Hold RIGHT for a while. The paddle is stepped by the tick, not the poll,
+       * so both have to run -- which is also the contract that keeps its speed
+       * independent of how fast the main loop happens to spin. */
+      harness_pad_set(ODROID_INPUT_RIGHT, true);
+      for (int i = 0; i < 6; i++) {
+        harness_clock_advance_ms(34);
+        tamapoke_input_poll((uint32_t)harness_clock_ms());
+        tamapoke_ui_tick((uint32_t)harness_clock_ms());
+      }
+      harness_pad_set(ODROID_INPUT_RIGHT, false);
+      tamapoke_input_poll((uint32_t)harness_clock_ms());
+      tamapoke_ui_probe(&p1);
+
+      if (p1.paddle_x <= p0.paddle_x) {
+        printf("FAIL holding RIGHT did not move the paddle (%d -> %d) -- the "
+               "minigame cannot be played\n", p0.paddle_x, p1.paddle_x);
+        game_failures++;
+      } else if (p1.paddle_x > GAME_PADDLE_X_MAX) {
+        printf("FAIL the paddle left the playfield (%d > %d)\n",
+               p1.paddle_x, GAME_PADDLE_X_MAX);
+        game_failures++;
+      } else {
+        /* And the other way, back past where it started. */
+        harness_pad_set(ODROID_INPUT_LEFT, true);
+        for (int i = 0; i < 12; i++) {
+          harness_clock_advance_ms(34);
+          tamapoke_input_poll((uint32_t)harness_clock_ms());
+          tamapoke_ui_tick((uint32_t)harness_clock_ms());
+        }
+        harness_pad_set(ODROID_INPUT_LEFT, false);
+        tamapoke_probe_t p2;
+        tamapoke_ui_probe(&p2);
+        if (p2.paddle_x >= p1.paddle_x || p2.paddle_x < GAME_PADDLE_X_MIN) {
+          printf("FAIL holding LEFT did not move the paddle back (%d -> %d)\n",
+                 p1.paddle_x, p2.paddle_x);
+          game_failures++;
+        } else {
+          printf("ok   the minigame's paddle answers LEFT/RIGHT and stays in bounds\n");
+        }
+      }
+    }
+  }
+  failures += game_failures;
+
+  /* A round must end, and ending it must train the pet.
+   *
+   * pet.playResult() and pet.trainStrength() -- the two functions that turn a round
+   * into training -- were dead code in the tree: nothing called either. So a round
+   * had no ending (only B), no reward, and no record. */
+  int reward_failures = 0;
+  if (!game_failures) {
+    tamapoke_probe_t before, after;
+    tamapoke_ui_probe(&before);
+
+    /* Phase 1: track the ball and rally it. Five returns is enough to be worth a
+     * training point (playResult gives score/5), and it is also the only way to
+     * prove the paddle can actually be used to play rather than merely to move. */
+    for (int i = 0; i < 2000 && tamapoke_ui_current_screen() == 6; i++) {
+      tamapoke_probe_t p;
+      tamapoke_ui_probe(&p);
+      if (p.game_score >= 5) break;
+      bool go_right = p.ball_x > p.paddle_x + GAME_PADDLE_W / 2;
+      harness_pad_set(ODROID_INPUT_RIGHT, go_right);
+      harness_pad_set(ODROID_INPUT_LEFT, !go_right);
+      harness_clock_advance_ms(34);
+      tamapoke_input_poll((uint32_t)harness_clock_ms());
+      tamapoke_ui_tick((uint32_t)harness_clock_ms());
+    }
+    tamapoke_probe_t rallied;
+    tamapoke_ui_probe(&rallied);
+    if (rallied.game_score < 5) {
+      printf("FAIL tracking the ball with the paddle scored %u in 2000 frames -- "
+             "the ball cannot be returned\n", rallied.game_score);
+      reward_failures++;
+    }
+
+    /* Phase 2: run away from it, so every descent is a miss and the third ends the
+     * round. Parking the paddle and hoping would leave the test at the mercy of
+     * where a bouncing ball happens to land, and the ball's horizontal speed changes
+     * on every hit -- "it will miss eventually" is not something this can assume. */
+    for (int i = 0; i < 2000 && tamapoke_ui_current_screen() == 6; i++) {
+      tamapoke_probe_t p;
+      tamapoke_ui_probe(&p);
+      bool ball_right = p.ball_x > FB_W / 2;
+      harness_pad_set(ODROID_INPUT_LEFT, ball_right);
+      harness_pad_set(ODROID_INPUT_RIGHT, !ball_right);
+      harness_clock_advance_ms(34);
+      tamapoke_input_poll((uint32_t)harness_clock_ms());
+      tamapoke_ui_tick((uint32_t)harness_clock_ms());
+    }
+    harness_pad_clear();
+    tamapoke_ui_probe(&after);
+    if (tamapoke_ui_current_screen() == 6) {
+      printf("FAIL the ball round never ended -- three misses must finish it\n");
+      reward_failures++;
+    } else if (after.pet_tr_spe <= before.pet_tr_spe) {
+      printf("FAIL a %u-point round trained nothing (SPE %u -> %u) -- "
+             "pet.playResult() is still unreachable\n",
+             rallied.game_score, before.pet_tr_spe, after.pet_tr_spe);
+      reward_failures++;
+    } else if (!reward_failures) {
+      printf("ok   a ball round can be rallied, ends on three misses, and trains "
+             "the pet (SPE %u -> %u)\n", before.pet_tr_spe, after.pet_tr_spe);
+    }
+  }
+  failures += reward_failures;
+
+  /* The training sack must count hits and bank them.
+   *
+   * sackHits was never incremented by anything: A did nothing, the ten-second timer
+   * ran out, and the screen sat there for ever because sackOverUntil was never set
+   * either. */
+  int sack_failures = 0;
+  {
+    harness_clock_set_ms(500000);
+    tamapoke_ui_goto_screen(7);
+    tamapoke_ui_release_harness_screen();
+    harness_pad_clear();
+    tamapoke_input_reset(0);
+
+    tamapoke_probe_t p0;
+    tamapoke_ui_probe(&p0);
+    const uint16_t hits0 = p0.sack_hits;
+    for (int i = 0; i < 12; i++) {
+      harness_clock_advance_ms(40);
+      harness_pad_set(ODROID_INPUT_A, true);
+      tamapoke_input_poll((uint32_t)harness_clock_ms());
+      harness_pad_set(ODROID_INPUT_A, false);
+      tamapoke_input_poll((uint32_t)harness_clock_ms());
+      tamapoke_ui_tick((uint32_t)harness_clock_ms());
+    }
+    tamapoke_probe_t p1;
+    tamapoke_ui_probe(&p1);
+    if (p1.sack_hits != hits0 + 12) {
+      printf("FAIL pressing A did not hit the sack (%u -> %u, wanted %u)\n",
+             hits0, p1.sack_hits, (unsigned)(hits0 + 12));
+      sack_failures++;
+    } else {
+      /* Run the round out. The timer expiring is what banks the hits. */
+      for (int i = 0; i < 500 && tamapoke_ui_current_screen() == 7; i++) {
+        harness_clock_advance_ms(34);
+        tamapoke_input_poll((uint32_t)harness_clock_ms());
+        tamapoke_ui_tick((uint32_t)harness_clock_ms());
+      }
+      tamapoke_probe_t p2;
+      tamapoke_ui_probe(&p2);
+      if (tamapoke_ui_current_screen() == 7) {
+        printf("FAIL the training round never ended -- the timer must close it\n");
+        sack_failures++;
+      } else if (p2.sack_gain == 0 || p2.pet_tr_atk <= p1.pet_tr_atk) {
+        printf("FAIL the training round banked nothing (gain %u, ATK %u -> %u) -- "
+               "pet.trainStrength() is still unreachable\n",
+               p2.sack_gain, p1.pet_tr_atk, p2.pet_tr_atk);
+        sack_failures++;
+      } else {
+        printf("ok   the sack counts A as a hit and the round trains strength\n");
+      }
+    }
+  }
+  failures += sack_failures;
+
+  /* The bottom panel must be light enough for the ink drawn on it.
+   *
+   * The labels under it are drawn in inkColor(), which is DARK in the day theme,
+   * and the panel was filled with an opaque #383844. Dark grey on dark navy: the
+   * stat labels were reported unreadable from hardware, and no gate here could see
+   * it because none of them looked at a colour. This measures the two and requires
+   * them to be far apart -- which is the property that was violated, rather than
+   * "the panel is white", which would just re-state today's choice. */
+  {
+    /* Both themes, because each has its own ink and the panel has to stay clear of
+     * whichever one is in use. The clock is what selects the theme (sceneHour), so
+     * these are 13:00 and 01:00 -- and a test that set "600000 ms" was quietly
+     * measuring the night theme against the day theme's ink. */
+    struct Theme { const char *name; uint64_t at_ms; int ink_luma; };
+    const Theme themes[] = {
+      {"day",   13ull * 3600 * 1000, 41},   /* UI_INK       #2a2a36 */
+      {"night",  1ull * 3600 * 1000, 221},  /* UI_INK_NIGHT #d8dcf0 */
+    };
+    for (size_t t = 0; t < sizeof(themes) / sizeof(themes[0]); t++) {
+      harness_clock_set_ms(themes[t].at_ms);
+      tamapoke_ui_goto_screen(0);
+      tamapoke_input_reset(0);
+      tamapoke_ui_render();
+      const uint16_t *fb = harness_fb();
+      /* The label column, left of the first bar's track. */
+      long sum = 0; int n = 0;
+      for (int y = PANEL_Y + 4; y < GFX_HEIGHT - 40; y++)
+        for (int x = 0; x < BAR_LABEL_GAP; x++) {
+          uint16_t c = fb[y * FB_W + x];
+          int r = ((c >> 11) & 0x1F) << 3, g = ((c >> 5) & 0x3F) << 2, b = (c & 0x1F) << 3;
+          sum += (r * 30 + g * 59 + b * 11) / 100;   /* luma 0..255 */
+          n++;
+        }
+      int panel_luma = n ? (int)(sum / n) : 0;
+      int contrast = panel_luma > themes[t].ink_luma ? panel_luma - themes[t].ink_luma
+                                                    : themes[t].ink_luma - panel_luma;
+      if (contrast < 60) {
+        printf("FAIL the %s stat panel (luma %d) is too close to the ink drawn on it "
+               "(luma %d) -- the labels are unreadable\n",
+               themes[t].name, panel_luma, themes[t].ink_luma);
+        failures++;
+      } else {
+        printf("ok   the %s stat panel contrasts with its own labels (luma %d vs %d)\n",
+               themes[t].name, panel_luma, themes[t].ink_luma);
+      }
+    }
+  }
+
+  /* Pokedex thumbnails must be decoded the way the file is written.
+   *
+   * thumbs.bin entries are `u8 w, u8 h, u8 palCount, u16 pal[palCount],
+   * u8 px[w*h]` with 0xFF transparent -- read back out of the shipped
+   * tamapoke_assets.dat. drawThumb() instead read a fixed 24x24 block of raw bytes
+   * and coloured each through spriteColor(), the ASCII-sprite palette: it drew the
+   * header as pixels, ran ~240 bytes past the end of every record into the next
+   * species, and looked the result up in the wrong table. Every one of the 151 was
+   * corrupt, and no gate here noticed because the harness never loads the pack --
+   * so the gallery it rendered was always the flash-sprite fallback.
+   *
+   * A synthetic pack, so this runs with no assets on the machine. */
+  {
+    static uint8_t pack[6 + 4 + 3 + 2 * 2 + 4 * 4];
+    const uint16_t RED = 0xF800, GREEN = 0x07E0;
+    memcpy(pack, "TPTH", 4);
+    pack[4] = 1; pack[5] = 0;                      /* count = 1 */
+    uint32_t off = 10;
+    memcpy(pack + 6, &off, 4);                     /* entry 0 offset */
+    pack[off + 0] = 4;                             /* w */
+    pack[off + 1] = 4;                             /* h */
+    pack[off + 2] = 2;                             /* palCount */
+    pack[off + 3] = (uint8_t)(RED & 0xFF);
+    pack[off + 4] = (uint8_t)(RED >> 8);
+    pack[off + 5] = (uint8_t)(GREEN & 0xFF);
+    pack[off + 6] = (uint8_t)(GREEN >> 8);
+    for (int i = 0; i < 16; i++) pack[off + 7 + i] = 0xFF;  /* all transparent */
+    pack[off + 7 + 0] = 0;                         /* top-left     = RED   */
+    pack[off + 7 + 3] = 1;                         /* top-right    = GREEN */
+
+    thumbs.data = pack;
+    thumbs.size = sizeof(pack);
+    thumbs.count = 1;
+    thumbs.loaded = true;
+
+    SdThumb t;
+    bool ok = thumbs.get(1, &t);
+    if (!ok || t.w != 4 || t.h != 4 || t.palCount != 2) {
+      printf("FAIL a thumbnail entry does not parse (%d, %ux%u, pal %u)\n",
+             (int)ok, t.w, t.h, t.palCount);
+      failures++;
+    } else {
+      harness_fb_reset(0x0000);
+      /* Centred on (100, 100) at scale 1: a 4x4 sprite puts its top-left at 98,98. */
+      tamapoke_ui_draw_thumb(1, 100, 100, 1);
+      const uint16_t *fb = harness_fb();
+      uint16_t tl = fb[98 * FB_W + 98], tr = fb[98 * FB_W + 101];
+      uint16_t mid = fb[99 * FB_W + 99];
+      if (tl != RED || tr != GREEN || mid != 0x0000) {
+        printf("FAIL a thumbnail draws the wrong pixels (tl %04x want %04x, "
+               "tr %04x want %04x, transparent %04x want 0000)\n",
+               tl, RED, tr, GREEN, mid);
+        failures++;
+      } else {
+        printf("ok   Pokedex thumbnails decode w/h/palette and honour 0xFF\n");
+      }
+    }
+    /* Leave the pack out of the way of the render checks below. */
+    thumbs.loaded = false;
+    thumbs.data = nullptr;
+    thumbs.size = 0;
+    thumbs.count = 0;
+  }
 
   /* No screen may leave a region unpainted after a screen change.
    *

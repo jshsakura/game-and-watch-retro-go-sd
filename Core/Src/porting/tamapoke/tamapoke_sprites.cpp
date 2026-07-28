@@ -141,18 +141,38 @@ bool PmdMon::load(uint8_t dexNum, bool shiny) {
 bool SdThumbs::load() {
   if (!sdReady) return false;
 
-  uint32_t size = read_entry("thumbs.bin", g_thumbs_mem, THUMBS_MAX);
-  if (size < 6 || memcmp(g_thumbs_mem, "TPTH", 4) != 0) return false;
+  uint32_t n = read_entry("thumbs.bin", g_thumbs_mem, THUMBS_MAX);
+  if (n < 6 || memcmp(g_thumbs_mem, "TPTH", 4) != 0) return false;
 
   data = g_thumbs_mem;
+  size = n;
   memcpy(&count, data + 4, 2);
+  /* The offset table has to be inside the file before anything reads it. */
+  if ((uint32_t)6 + 4u * count > size) {
+    loaded = false;
+    return false;
+  }
   loaded = true;
   return true;
 }
 
-const uint8_t *SdThumbs::get(int16_t dex) const {
-  if (!loaded || dex < 1 || dex > (int16_t)count) return nullptr;
+bool SdThumbs::get(int16_t dex, SdThumb *out) const {
+  if (!out || !loaded || dex < 1 || dex > (int16_t)count) return false;
   uint32_t off;
   memcpy(&off, data + 6 + 4 * (dex - 1), 4);
-  return off < THUMBS_MAX ? data + off : nullptr;
+  if (off + 3 > size) return false;
+
+  SdThumb t;
+  t.w = data[off];
+  t.h = data[off + 1];
+  t.palCount = data[off + 2];
+  if (!t.w || !t.h || !t.palCount) return false;
+
+  const uint32_t need = 3u + 2u * t.palCount + (uint32_t)t.w * t.h;
+  if (off + need > size) return false;
+
+  t.pal = data + off + 3;
+  t.px = t.pal + 2u * t.palCount;
+  *out = t;
+  return true;
 }

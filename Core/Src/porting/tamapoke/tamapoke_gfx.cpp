@@ -131,20 +131,26 @@ static int16_t clamp_radius(int16_t w, int16_t h, int16_t r) {
   return r < 0 ? 0 : r;
 }
 
-void Gfx::fillRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint16_t color) {
+/* Every horizontal span of a rounded rectangle, handed to `fn`.
+ *
+ * One walk, two brushes. The alternative -- a second copy of the midpoint loop
+ * for the blended version -- is how the two shapes drift apart, and they did: the
+ * frosted dialogs were blended as hard rectangles underneath rounded outlines, so
+ * every one of them had square corners poking out past its own border. */
+static void round_rect_spans(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r,
+                             void (*fn)(void *, int, int, int), void *ctx) {
   if (w <= 0 || h <= 0) return;
   r = clamp_radius(w, h, r);
-  fillRect(x, y + r, w, h - 2 * r, color);
+  for (int row = y + r; row < y + h - r; row++) fn(ctx, row, x, x + w - 1);
 
-  lcd_pen_t p = lcd_pen(color);
   int cxl = x + r, cxr = x + w - r - 1;
   int cyt = y + r, cyb = y + h - r - 1;
   int cx = r, cy = 0, err = 1 - r;
   while (cx >= cy) {
-    span(&p, cyt - cy, cxl - cx, cxr + cx);
-    span(&p, cyt - cx, cxl - cy, cxr + cy);
-    span(&p, cyb + cy, cxl - cx, cxr + cx);
-    span(&p, cyb + cx, cxl - cy, cxr + cy);
+    fn(ctx, cyt - cy, cxl - cx, cxr + cx);
+    fn(ctx, cyt - cx, cxl - cy, cxr + cy);
+    fn(ctx, cyb + cy, cxl - cx, cxr + cx);
+    fn(ctx, cyb + cx, cxl - cy, cxr + cy);
     cy++;
     if (err < 0) {
       err += 2 * cy + 1;
@@ -153,6 +159,62 @@ void Gfx::fillRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, u
       err += 2 * (cy - cx) + 1;
     }
   }
+}
+
+static void solid_span_cb(void *ctx, int y, int x0, int x1) {
+  span((const lcd_pen_t *)ctx, y, x0, x1);
+}
+
+void Gfx::fillRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint16_t color) {
+  lcd_pen_t p = lcd_pen(color);
+  round_rect_spans(x, y, w, h, r, solid_span_cb, &p);
+}
+
+/* Read-modify-write blend. See the header for why this is not an Arduino_GFX
+ * method: upstream's canvas blends in 32-bit and the one colour this port cannot
+ * ask for is "let the scene through". */
+struct blend_ctx {
+  uint16_t color;
+  uint8_t alpha;
+};
+
+static void blend_span_cb(void *vctx, int y, int x0, int x1) {
+  const blend_ctx *c = (const blend_ctx *)vctx;
+  if (y < 0 || y >= GFX_HEIGHT) return;
+  if (x0 < 0) x0 = 0;
+  if (x1 > GFX_WIDTH - 1) x1 = GFX_WIDTH - 1;
+  if (x0 > x1) return;
+
+  uint16_t *p = (uint16_t *)lcd_get_active_buffer() + y * GFX_WIDTH + x0;
+  const uint32_t a = c->alpha, ia = 255u - c->alpha;
+  const uint32_t cr = (c->color >> 11) & 0x1F, cg = (c->color >> 5) & 0x3F,
+                 cb = c->color & 0x1F;
+  for (int i = 0; i <= x1 - x0; i++) {
+    const uint16_t s = p[i];
+    const uint32_t r = (((s >> 11) & 0x1F) * ia + cr * a) / 255u;
+    const uint32_t g = (((s >> 5) & 0x3F) * ia + cg * a) / 255u;
+    const uint32_t b = ((s & 0x1F) * ia + cb * a) / 255u;
+    p[i] = (uint16_t)((r << 11) | (g << 5) | b);
+  }
+}
+
+void Gfx::blendRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color,
+                    uint8_t alpha) {
+  blendRoundRect(x, y, w, h, 0, color, alpha);
+}
+
+void Gfx::blendRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r,
+                         uint16_t color, uint8_t alpha) {
+  if (w <= 0 || h <= 0 || alpha == 0) return;
+  /* LUT8 has no colour to read back -- the framebuffer byte is a palette index,
+   * and averaging two indices is not averaging two colours. Opaque is the honest
+   * degradation. (TamaPoke runs RGB565: it never calls lcd_setup_framebuffers.) */
+  if (alpha == 255 || lcd_get_mode() == LCD_MODE_LUT8) {
+    fillRoundRect(x, y, w, h, r, color);
+    return;
+  }
+  blend_ctx ctx = {color, alpha};
+  round_rect_spans(x, y, w, h, r, blend_span_cb, &ctx);
 }
 
 void Gfx::drawRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint16_t color) {

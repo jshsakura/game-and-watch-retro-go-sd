@@ -24,8 +24,6 @@
   ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
 #define INK_K 0x18C4
-#define PANEL_DAY   C565(0x38, 0x38, 0x44)
-#define PANEL_NIGHT C565(0x10, 0x10, 0x18)
 
 enum {
   ACT_IDLE = 0, ACT_SLEEP, ACT_EAT, ACT_HURT,
@@ -69,8 +67,10 @@ static uint32_t gameOverUntil, sackUntil, sackOverUntil, hitTime;
 static bool bathPending, gameNewHi, sackNewHi, holdFired;
 static uint8_t choiceKind, gameScore, gameMisses, sackGain;
 static uint16_t sackHits;
+static uint32_t gameStartedAt;
+static int8_t paddleDir;   /* -1/0/+1, the direction currently held */
 static float ballX, ballY, ballVX, ballVY, gamePetX, paddleX;
-static float hitX, hitY, sackShake;
+static float sackShake;
 static uint32_t lastInteract, holdStart;
 /* True if any input handler ran since the previous tick. Cleared at the top
  * of tamapoke_ui_tick; exposed via tamapoke_ui_had_activity(). */
@@ -109,6 +109,20 @@ static const hitbox_t CONFIRM_BOXES[] = {
   {CONFIRM_NO_X, CONFIRM_BTN_Y, CONFIRM_BTN_W, CONFIRM_BTN_H},
 };
 static const focus_set_t FOCUS_CONFIRM = {CONFIRM_BOXES, ARRAY_LEN(CONFIRM_BOXES), 0, FOCUS_KIND_MODAL};
+
+/* The evolve/farewell dialog's two rows.
+ *
+ * It had no focus set, so while it was up the D-pad walked the action buttons
+ * underneath it and A -- which onTap() only accepts inside these two rectangles
+ * while choiceUntil is running -- did nothing at all. The one decision in the game
+ * that cannot be undone could not be taken with the buttons. Same shape as the
+ * feed menu and the starter screen; third time. */
+static const hitbox_t CHOICE_BOXES[] = {
+  {EVO_BTN_X, EVO_BTN_Y, EVO_BTN_W, EVO_BTN_H},
+  {FAR_BTN_X, FAR_BTN_Y, FAR_BTN_W, FAR_BTN_H},
+};
+static const focus_set_t FOCUS_CHOICE = {CHOICE_BOXES, ARRAY_LEN(CHOICE_BOXES), 0,
+                                         FOCUS_KIND_MODAL};
 
 static const focus_set_t FOCUS_GALLERY = {nullptr, 16, GAL_COLS, FOCUS_KIND_GALLERY};
 static const focus_set_t FOCUS_KEYBOARD = {nullptr, 30, KB_COLS, FOCUS_KIND_KEYBOARD};
@@ -166,19 +180,31 @@ static const hitbox_t CLOCK_BOXES[] = {
 static const hitbox_t CARD_BOXES[] = {
   {0,            0,            GFX_WIDTH,    CARD_NAME_H},
   {CARD_TRAIN_X, CARD_TRAIN_Y, CARD_TRAIN_W, CARD_TRAIN_H},
-  {TP_CX - 30,   GFX_HEIGHT - 18, 60,        16},
+  {TP_CX - CARD_BACK_W / 2, CARD_BACK_Y, CARD_BACK_W, CARD_BACK_H},
 };
 static const focus_set_t FOCUS_CARD = {CARD_BOXES, ARRAY_LEN(CARD_BOXES), 0, FOCUS_KIND_MODAL};
 
 static const focus_set_t FOCUS_CLOCK = {CLOCK_BOXES, ARRAY_LEN(CLOCK_BOXES), 0, FOCUS_KIND_MODAL};
 
-/* The egg: one target, the pet zone, so mashing A cracks it. */
+/* The egg: one target, the pet zone, so mashing A cracks it.
+ *
+ * FOCUS_KIND_LIST, like the main screen it is a state of -- so DOWN still opens the
+ * Pokedex while the pet is unhatched. It was MODAL because an overrun used to fire
+ * a swipe, and with one item every press was an overrun; overruns clamp now, so the
+ * kind can say what this screen actually is. */
 static const hitbox_t EGG_BOXES[] = {
   {PET_ZONE_X, PET_ZONE_Y, PET_ZONE_W, PET_ZONE_H},
 };
-static const focus_set_t FOCUS_EGG = {EGG_BOXES, ARRAY_LEN(EGG_BOXES), 0, FOCUS_KIND_MODAL};
+static const focus_set_t FOCUS_EGG = {EGG_BOXES, ARRAY_LEN(EGG_BOXES), 0, FOCUS_KIND_LIST};
 
 /* ---- helpers ---- */
+
+/* Which screen the runtime state maps to. Defined next to the render dispatch it
+ * feeds, and declared here because half the file needs the answer: the focus set,
+ * the input mode and the key shortcuts all have to agree with what is on screen,
+ * and each of them working it out separately is what let the renderer draw one
+ * screen while the buttons drove another. */
+static int current_screen_id();
 
 static uint16_t inkColor() { return gNight ? UI_INK_NIGHT : UI_INK; }
 
@@ -477,7 +503,12 @@ static void drawScene(uint8_t biome, uint32_t now, bool night) {
     drawClouds(now, UI_WHITE);
   }
 
-  gfx->fillRect(0, TP_HORIZON, GFX_WIDTH, TP_PET_GROUND - TP_HORIZON, soil);
+  /* Down to the bottom of the screen, not to the pet's feet. The bottom panel is
+   * translucent (see PANEL_ALPHA_DAY), so whatever is behind it has to be
+   * repainted every frame or the blend accumulates towards solid white. It also
+   * closes the 2px seam that used to sit between the old fill's end (150) and the
+   * panel's start (152), which showed the fillScreen colour as a pale line. */
+  gfx->fillRect(0, TP_HORIZON, GFX_WIDTH, GFX_HEIGHT - TP_HORIZON, soil);
   uint16_t hillCol = lerp565(soil, UI_WHITE, 3, 8);
   gfx->fillRoundRect(-20, TP_HORIZON - 14, 200, 30, 10, hillCol);
   if (biome == 2)
@@ -579,6 +610,132 @@ static void drawHeader(const char *name, uint16_t nameColor, const char *msg) {
 
 /* ---- bars / buttons / poops ---- */
 
+/* The frosted plate the bars and buttons sit on.
+ *
+ * Blended over the scene rather than filled: upstream's panel is translucent
+ * white and this port had it as opaque #383844, which is not only a different
+ * look but an unreadable one -- the labels below are drawn in inkColor(), dark in
+ * the day theme, so they came out dark-on-dark. See PANEL_Y in tamapoke_ui.h.
+ *
+ * A rim along the top edge gives the plate an edge to be seen against; without it
+ * a translucent panel over grass has no boundary at all. */
+static void drawPanel() {
+  const uint16_t glass = gNight ? UI_BG_NIGHT : UI_WHITE;
+  const uint8_t alpha = gNight ? PANEL_ALPHA_NIGHT : PANEL_ALPHA_DAY;
+  gfx->blendRect(0, PANEL_Y, GFX_WIDTH, PANEL_H, glass, alpha);
+  gfx->blendRect(0, PANEL_Y, GFX_WIDTH, PANEL_RIM_H,
+                 gNight ? UI_INK_NIGHT : UI_WHITE, 220);
+}
+
+/* A focus ring with square-cut corners.
+ *
+ * Drawn as a filled plate behind the widget, then the widget over it. The
+ * obvious alternative -- N concentric drawRoundRect() calls at growing sizes --
+ * keeps one radius for every ring, so each ring's corner arc lands somewhere
+ * different and the outline comes out notched. That is what the starter rows and
+ * the action buttons were doing, and what "the border looks odd" was about. */
+static void drawFocusRing(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r,
+                          int16_t t, uint16_t color) {
+  if (t <= 0) return;
+  gfx->fillRoundRect(x - t, y - t, w + 2 * t, h + 2 * t, r + t, color);
+}
+
+/* A frosted card: drop shadow, translucent fill, bright rim.
+ *
+ * Everything that floats over the scene uses this -- the feed menu, the release
+ * confirm, the evolve/farewell choice. They used to be flat opaque plates in
+ * UI_BG_DAY with a hairline, which is a different material from the bottom panel
+ * and from each other. One surface, three call sites. */
+static void drawSurface(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r) {
+  gfx->blendRoundRect(x + TP_CARD_SHADOW_OFF, y + TP_CARD_SHADOW_OFF, w, h, r,
+                      INK_K, TP_CARD_SHADOW_A);
+  gfx->blendRoundRect(x, y, w, h, r, gNight ? UI_BG_NIGHT : UI_WHITE,
+                      TP_CARD_ALPHA);
+  gfx->drawRoundRect(x, y, w, h, r, inkColor());
+}
+
+/* True for the saturated colours that carry meaning (yes/no, evolve/keep). Those
+ * keep their fill and their white label; the neutral surfaces take ink. */
+static bool isSemanticFill(uint16_t f) {
+  return f == UI_BAR_OK || f == UI_BAR_WARN || f == UI_BAR_BAD;
+}
+
+/* One pressable tile, and the port's only way to say "selected".
+ *
+ * Focus is always the same three things: an accent plate behind the tile, an
+ * accent surface, and a label that keeps its contrast. A tile whose colour means
+ * something keeps that colour and takes the same plate, so focus stays one idea
+ * without overwriting semantics.
+ *
+ * Returns the colour the caller must draw the label in -- the part every screen
+ * previously worked out for itself, and the part the minigame got wrong (dark ink
+ * on a dark playfield). */
+static uint16_t drawTile(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r,
+                         bool focused, uint16_t fill) {
+  const uint16_t ink = inkColor();
+  if (focused) drawFocusRing(x, y, w, h, r, TP_FOCUS_RING, TP_ACCENT);
+  const uint16_t surface = (focused && !isSemanticFill(fill)) ? TP_ACCENT : fill;
+  gfx->fillRoundRect(x, y, w, h, r, surface);
+  gfx->drawRoundRect(x, y, w, h, r, ink);
+  return isSemanticFill(surface) ? UI_WHITE : ink;
+}
+
+/* A recessed well: the readouts and tracks that are not pressable (the name
+ * preview, a progress track). Distinct from a tile on purpose -- if everything
+ * looks pressable, nothing does. */
+static void drawWell(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r) {
+  gfx->fillRoundRect(x, y, w, h, r, UI_TRACK);
+  gfx->drawRoundRect(x, y, w, h, r, inkColor());
+}
+
+/* Centre a label inside a tile, in the ink the tile asked for. */
+static void tileLabel(const char *s, int16_t x, int16_t y, int16_t w, int16_t h,
+                      uint8_t size, uint16_t ink) {
+  gfx->setTextSize(size);
+  gfx->setTextColor(ink);
+  int16_t lw = (int16_t)textWidth(s, size);
+  int16_t lh = (int16_t)textHeight(s, size);
+  gfx->setCursor(x + w / 2 - lw / 2, y + (h - lh) / 2);
+  gfx->print(s);
+  gfx->setTextColor(inkColor());
+}
+
+/* A language-neutral key legend: the D-pad axis that does something on this
+ * screen, and the button that acts. Pictograms rather than a string, because a
+ * hint that has to be translated is seven new table rows (and StrId is indexed by
+ * position, so it is also a permanent commitment) for something an arrow says
+ * better. Pass key = 0 for the axis alone. */
+static void drawKeyHintOn(int16_t cx, int16_t y, bool vertical, char key,
+                          uint16_t ink, uint16_t bg) {
+  const int16_t arrows_w = 24, key_w = key ? 22 : 0;
+  int16_t x = cx - (arrows_w + key_w) / 2;
+
+  for (uint8_t i = 0; i < 2; i++) {
+    int16_t ax = x + i * 12 + 5, ay = y + 5;
+    int16_t d = (i == 0) ? -5 : 5;
+    if (vertical)
+      gfx->fillTriangle(ax, ay + d, ax - 4, ay - d / 2, ax + 4, ay - d / 2, ink);
+    else
+      gfx->fillTriangle(ax + d, ay, ax - d / 2, ay - 4, ax - d / 2, ay + 4, ink);
+  }
+  if (!key) return;
+
+  int16_t kx = x + arrows_w + 8;
+  gfx->fillCircle(kx + 7, y + 5, 7, ink);
+  gfx->setTextSize(1);
+  gfx->setTextColor(bg);
+  gfx->setCursor(kx + 3, y + 1);
+  const char s[2] = {key, 0};
+  gfx->print(s);
+  gfx->setTextColor(inkColor());
+}
+
+/* The usual case: the current theme's ink on the current theme's background. */
+static void drawKeyHint(int16_t cx, int16_t y, bool vertical, char key) {
+  drawKeyHintOn(cx, y, vertical, key, inkColor(),
+                gNight ? UI_BG_NIGHT : UI_BG_DAY);
+}
+
 static void drawBar(int16_t x, int16_t y, const char *label, uint8_t val) {
   uint16_t ink = inkColor();
   gfx->setTextSize(1);
@@ -604,30 +761,18 @@ static void drawButtons() {
   static const char *const *ICONS[4] = {
     SPR_ICON_FOOD, SPR_ICON_PLAY, SPR_ICON_LIGHT, SPR_ICON_CLEAN
   };
-  uint16_t ink = inkColor();
-  uint32_t now = millis();
   uint8_t f = tamapoke_input_focus();
   bool focused = (tamapoke_current_focus_set() == &FOCUS_MAIN && f >= 1 && f <= 4);
-  /* touch is gone -- the cursor IS the input. Make it impossible to miss:
-   * focused button inverts fill, gets a 3px warning-coloured ring drawn
-   * around it, and pulses so a still frame also reads as "selected". */
-  uint8_t pulse = focused ? (uint8_t)(sinf(now * 0.012f) * 1.5f + 1.5f) : 0;
+  /* Touch is gone -- the cursor IS the input, so the highlight has to be
+   * unmissable. It used to pulse as well, which made this the only focus in the
+   * port that moved; one accent plate on every screen reads better than four
+   * different treatments, one of which breathes. */
   for (uint8_t i = 0; i < 4; i++) {
     int16_t bx = BTN_XS[i];
     bool sel = focused && (f - 1 == i);
-    uint16_t fill = sel ? ink : (pet.sleeping ? UI_TRACK : UI_WHITE);
-    gfx->fillRoundRect(bx, BTN_ROW_Y, BTN_W, BTN_H, BTN_R, fill);
-    gfx->drawRoundRect(bx, BTN_ROW_Y, BTN_W, BTN_H, BTN_R, ink);
+    drawTile(bx, BTN_ROW_Y, BTN_W, BTN_H, TP_R_MD, sel,
+             pet.sleeping ? UI_TRACK : UI_WHITE);
     drawMap(ICONS[i], 16, bx + BTN_HALF - 8, BTN_ROW_Y + BTN_HALF - 8, 1, false);
-    if (sel) {
-      /* 3px-thick ring just outside the button, expanded by the pulse. */
-      for (uint8_t r = 0; r < 3; r++) {
-        int16_t off = r + pulse;
-        gfx->drawRoundRect(bx - off, BTN_ROW_Y - off,
-                           BTN_W + 2*off, BTN_H + 2*off,
-                           BTN_R + off, UI_BAR_WARN);
-      }
-    }
   }
 }
 
@@ -653,57 +798,50 @@ static void drawCelebration() {
   int16_t bw = (int16_t)textWidth(txt, 2) + 16;
   int16_t bx = TP_CX - bw / 2;
   int16_t by = 30;
-  gfx->fillRoundRect(bx, by, bw, 20, 6, UI_BAR_WARN);
-  gfx->drawRoundRect(bx, by, bw, 20, 6, UI_WHITE);
-  centerText(txt, TP_CX, by + 2, 2);
+  uint16_t lab = drawTile(bx, by, bw, 22, TP_R_MD, false, TP_ACCENT);
+  tileLabel(txt, bx, by, bw, 22, 2, lab);
 }
 
 /* ---- CTA buttons ---- */
 
-static void drawEvolveButton(uint32_t now) {
-  uint8_t p = (uint8_t)(sinf(now * 0.006f) * 2 + 2);
-  gfx->fillRoundRect(EVO_BTN_X - p, EVO_BTN_Y - p,
-                     EVO_BTN_W + 2*p, EVO_BTN_H + 2*p, 8, UI_BAR_BAD);
-  gfx->drawRoundRect(EVO_BTN_X, EVO_BTN_Y, EVO_BTN_W, EVO_BTN_H, 8, UI_WHITE);
-  centerText(T(S_EVO_TAP), TP_CX, EVO_BTN_Y + EVO_BTN_H/2 - GFX_GLYPH_H, 2);
-}
-
-static void drawFarewellButton(uint32_t now) {
-  uint8_t p = (uint8_t)(sinf(now * 0.005f) * 2 + 2);
-  gfx->fillRoundRect(FAR_BTN_X - p, FAR_BTN_Y - p,
-                     FAR_BTN_W + 2*p, FAR_BTN_H + 2*p, 8, UI_BAR_WARN);
-  gfx->drawRoundRect(FAR_BTN_X, FAR_BTN_Y, FAR_BTN_W, FAR_BTN_H, 8, UI_WHITE);
-  char buf[32];
-  snprintf(buf, sizeof(buf), T(S_FAREWELL_BTN), pet.nick[0] ? pet.nick : "?");
-  centerText(buf, TP_CX, FAR_BTN_Y + FAR_BTN_H/2 - GFX_GLYPH_H, 1);
-}
-
+/* One CTA left. drawEvolveButton()/drawFarewellButton() lived here too, each with
+ * its own pulse, radius and border colour -- both dead since the choice dialog
+ * took over the same two decisions. Two ways to draw one button is how a screen
+ * ends up looking like two screens. */
 static void drawRunawayButton(uint32_t now) {
-  uint16_t dark = C565(0x3a, 0x44, 0x5a);
-  gfx->fillRoundRect(RUN_BTN_X, RUN_BTN_Y, RUN_BTN_W, RUN_BTN_H, 8, dark);
-  gfx->drawRoundRect(RUN_BTN_X, RUN_BTN_Y, RUN_BTN_W, RUN_BTN_H, 8, UI_WHITE);
-  centerText(T(S_RUNAWAY_BTN), TP_CX, RUN_BTN_Y + RUN_BTN_H/2 - GFX_GLYPH_H, 1);
+  (void)now;
+  uint16_t lab = drawTile(RUN_BTN_X, RUN_BTN_Y, RUN_BTN_W, RUN_BTN_H, TP_R_MD,
+                          false, C565(0x3a, 0x44, 0x5a));
+  tileLabel(T(S_RUNAWAY_BTN), RUN_BTN_X, RUN_BTN_Y, RUN_BTN_W, RUN_BTN_H, 1,
+            UI_WHITE);
+  (void)lab;
 }
 
 /* ---- choice dialog ---- */
 
 static void drawChoiceDialog(uint32_t now) {
-  uint16_t ink = inkColor();
-  gfx->fillRoundRect(CHOICE_DIALOG_X, CHOICE_DIALOG_Y,
-                     CHOICE_DIALOG_W, CHOICE_DIALOG_H, 10,
-                     gNight ? UI_BG_NIGHT : UI_BG_DAY);
-  gfx->drawRoundRect(CHOICE_DIALOG_X, CHOICE_DIALOG_Y,
-                     CHOICE_DIALOG_W, CHOICE_DIALOG_H, 10, ink);
+  (void)now;
+  drawSurface(CHOICE_DIALOG_X, CHOICE_DIALOG_Y, CHOICE_DIALOG_W, CHOICE_DIALOG_H,
+              TP_R_LG);
   const char *q = (choiceKind == 1) ? T(S_EVO_Q) : T(S_FAR_Q);
-  centerText(q, TP_CX, CHOICE_DIALOG_Y + 8, 1);
+  centerText(q, TP_CX, CHOICE_DIALOG_Y + 10, 1);
+
+  /* Both rows are focusable, and the dialog never showed which one A would take.
+   * FOCUS_CONFIRM's geometry is the confirm dialog's, so this uses its own. */
+  uint8_t f = (tamapoke_current_focus_set() == &FOCUS_CHOICE)
+              ? tamapoke_input_focus() : 0xFF;
+
   uint16_t actCol = (choiceKind == 1) ? UI_BAR_BAD : UI_BAR_WARN;
-  gfx->fillRoundRect(EVO_BTN_X, EVO_BTN_Y, EVO_BTN_W, EVO_BTN_H, 6, actCol);
-  centerText((choiceKind == 1) ? T(S_EVO_TAP) : T(S_FAR_GO),
-             TP_CX, EVO_BTN_Y + EVO_BTN_H/2 - GFX_GLYPH_H, 1);
-  uint16_t keepCol = (choiceKind == 1) ? UI_TRACK : UI_BAR_OK;
-  gfx->fillRoundRect(FAR_BTN_X, FAR_BTN_Y, FAR_BTN_W, FAR_BTN_H, 6, keepCol);
-  centerText((choiceKind == 1) ? T(S_EVO_KEEP) : T(S_FAR_STAY),
-             TP_CX, FAR_BTN_Y + FAR_BTN_H/2 - GFX_GLYPH_H, 1);
+  uint16_t lab = drawTile(EVO_BTN_X, EVO_BTN_Y, EVO_BTN_W, EVO_BTN_H, TP_R_MD,
+                          f == 0, actCol);
+  tileLabel((choiceKind == 1) ? T(S_EVO_TAP) : T(S_FAR_GO),
+            EVO_BTN_X, EVO_BTN_Y, EVO_BTN_W, EVO_BTN_H, 1, lab);
+
+  uint16_t keepCol = (choiceKind == 1) ? UI_WHITE : UI_BAR_OK;
+  lab = drawTile(FAR_BTN_X, FAR_BTN_Y, FAR_BTN_W, FAR_BTN_H, TP_R_MD,
+                 f == 1, keepCol);
+  tileLabel((choiceKind == 1) ? T(S_EVO_KEEP) : T(S_FAR_STAY),
+            FAR_BTN_X, FAR_BTN_Y, FAR_BTN_W, FAR_BTN_H, 1, lab);
 }
 
 /* ---- evolve FX ---- */
@@ -787,6 +925,9 @@ static void startGame(void) {
   gameOverUntil = 0;
   gameScore = 0;
   gameMisses = 0;
+  gameNewHi = false;
+  gameStartedAt = millis();
+  paddleDir = 0;
   ballX = GFX_WIDTH / 2;
   ballY = GAME_TOP + 30;
   ballVX = 1.5f;
@@ -798,12 +939,63 @@ static void startGame(void) {
 static void startSack(void) {
   if (pet.isEgg() || pet.sleeping || pet.ceremony != CER_NONE) return;
   sackOpen = true;
-  sackUntil = millis() + 10000;
+  sackUntil = millis() + SACK_ROUND_MS;
   sackOverUntil = 0;
   sackHits = 0;
   sackGain = 0;
+  sackNewHi = false;
   sackShake = 0;
   tamapoke_input_reset(0);
+}
+
+/* ---- minigame input, and the endings neither game had ----
+ *
+ * Both minigames shipped as animations. The ball bounced off a paddle nothing
+ * could move (paddleX was written once, in startGame, and never again), the sack
+ * hung there while a timer ran down, and sackHits was never incremented by
+ * anything -- so pet.playResult() and pet.trainStrength(), the two functions that
+ * turn a round into training, were dead code in the tree. Neither game could be
+ * played and neither could be won. */
+
+tp_input_mode_t tamapoke_ui_input_mode(void) {
+  switch (current_screen_id()) {
+    case 6: return TP_INPUT_PADDLE;
+    case 7: return TP_INPUT_MASH;
+    default: return TP_INPUT_UI;
+  }
+}
+
+void tamapoke_paddle_hold(int dir) {
+  paddleDir = (int8_t)(dir < 0 ? -1 : (dir > 0 ? 1 : 0));
+  if (dir) note_activity(millis());
+}
+
+void tamapoke_sack_hit(void) {
+  if (!sackOpen) return;
+  uint32_t now = millis();
+  if (now >= sackUntil) return;          /* the round is over; the result is up */
+  note_activity(now);
+  dimStage = 0;
+  if (sackHits < 0xFFFF) sackHits++;
+  sackShake = SACK_SHAKE_PX;
+  hitTime = now;
+  sfxPlay(SFX_TAP);
+}
+
+/* Close out a ball round: reward it, remember the record, show the result. */
+static void endGame(void) {
+  gameNewHi = (gameScore > pet.gameHi);
+  pet.playResult(gameScore);             /* trains SPE, burns weight, adds joy */
+  gameOverUntil = millis() + GAME_OVER_MS;
+  sfxPlay(gameNewHi ? SFX_MEDAL : SFX_PLAY);
+}
+
+/* Same for a training round. */
+static void endSack(void) {
+  sackNewHi = (sackHits > pet.strHi);
+  sackGain = pet.trainStrength(sackHits); /* trains ATK; returns the gain */
+  sackOverUntil = sackUntil + SACK_RESULT_MS;
+  sfxPlay(sackNewHi ? SFX_MEDAL : SFX_LEVEL);
 }
 
 static void startBath(uint32_t now) {
@@ -844,11 +1036,7 @@ static void drawBath(uint32_t now) {
 
 static void drawFeedMenu(uint32_t now) {
   (void)now;
-  uint16_t ink = inkColor();
-  gfx->fillRoundRect(FEED_MENU_X, FEED_MENU_Y, FEED_MENU_W, FEED_MENU_H,
-                     FEED_MENU_R, gNight ? UI_BG_NIGHT : UI_BG_DAY);
-  gfx->drawRoundRect(FEED_MENU_X, FEED_MENU_Y, FEED_MENU_W, FEED_MENU_H,
-                     FEED_MENU_R, ink);
+  drawSurface(FEED_MENU_X, FEED_MENU_Y, FEED_MENU_W, FEED_MENU_H, FEED_MENU_R);
 
   /* This used to fill each cell with UI_BAR_OK / UI_BAR_WARN alternately and
    * never draw anything else -- it even built an ICONS[] table and did not read
@@ -871,13 +1059,7 @@ static void drawFeedMenu(uint32_t now) {
     int16_t ix = FEED_ICON0_X + i * FEED_ICON_GAP;
     bool sel = (f == i);
 
-    gfx->fillRoundRect(ix, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ, 2,
-                       sel ? UI_WHITE : UI_TRACK);
-    gfx->drawRoundRect(ix, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ, 2,
-                       sel ? UI_BAR_WARN : ink);
-    if (sel)
-      gfx->drawRoundRect(ix - 1, FEED_ICON_Y - 1, FEED_ICON_SZ + 2,
-                         FEED_ICON_SZ + 2, 2, UI_BAR_WARN);
+    drawTile(ix, FEED_ICON_Y, FEED_ICON_SZ, FEED_ICON_SZ, TP_R_SM, sel, UI_WHITE);
 
     /* The maps are 16x16 inside a 24px cell. */
     drawMap(items[i].map, 16, ix + (FEED_ICON_SZ - 16) / 2,
@@ -888,37 +1070,26 @@ static void drawFeedMenu(uint32_t now) {
 /* ---- release confirm ---- */
 
 static void drawConfirmDialog() {
-  uint16_t ink = inkColor();
-  gfx->fillRoundRect(CONFIRM_X, CONFIRM_Y, CONFIRM_W, CONFIRM_H, CONFIRM_R,
-                     gNight ? UI_BG_NIGHT : UI_BG_DAY);
-  gfx->drawRoundRect(CONFIRM_X, CONFIRM_Y, CONFIRM_W, CONFIRM_H, CONFIRM_R, ink);
+  drawSurface(CONFIRM_X, CONFIRM_Y, CONFIRM_W, CONFIRM_H, TP_R_LG);
   char buf[48];
   snprintf(buf, sizeof(buf), T(S_RELEASE_FMT),
            pet.nick[0] ? pet.nick : dexName(pet.speciesId));
   centerText(buf, TP_CX, CONFIRM_Y + 12, 1);
+
   uint8_t f = (tamapoke_current_focus_set() == &FOCUS_CONFIRM)
               ? tamapoke_input_focus() : 0xFF;
-  uint16_t yesFill = (f == 0) ? UI_WHITE   : UI_BAR_BAD;
-  uint16_t yesTxt  = (f == 0) ? UI_BAR_BAD : UI_WHITE;
-  uint16_t noFill  = (f == 1) ? UI_WHITE   : UI_BAR_OK;
-  uint16_t noTxt   = (f == 1) ? UI_BAR_OK  : UI_WHITE;
-  gfx->fillRoundRect(CONFIRM_YES_X, CONFIRM_BTN_Y, CONFIRM_BTN_W, CONFIRM_BTN_H,
-                     4, yesFill);
-  gfx->drawRoundRect(CONFIRM_YES_X, CONFIRM_BTN_Y, CONFIRM_BTN_W, CONFIRM_BTN_H,
-                     4, ink);
-  centerText(T(S_YES), CONFIRM_YES_X + CONFIRM_BTN_W/2,
-             CONFIRM_BTN_Y + CONFIRM_BTN_H/2 - GFX_GLYPH_H, 1);
-  gfx->setTextColor(yesTxt);
-  centerText(T(S_YES), CONFIRM_YES_X + CONFIRM_BTN_W/2,
-             CONFIRM_BTN_Y + CONFIRM_BTN_H/2 - GFX_GLYPH_H, 1);
-  gfx->fillRoundRect(CONFIRM_NO_X, CONFIRM_BTN_Y, CONFIRM_BTN_W, CONFIRM_BTN_H,
-                     4, noFill);
-  gfx->drawRoundRect(CONFIRM_NO_X, CONFIRM_BTN_Y, CONFIRM_BTN_W, CONFIRM_BTN_H,
-                     4, ink);
-  gfx->setTextColor(noTxt);
-  centerText(T(S_NO), CONFIRM_NO_X + CONFIRM_BTN_W/2,
-             CONFIRM_BTN_Y + CONFIRM_BTN_H/2 - GFX_GLYPH_H, 1);
-  gfx->setTextColor(ink);
+  /* Red stays red and green stays green whether focused or not -- the accent
+   * plate says which one A takes, so focus does not have to repaint the meaning.
+   * (The old version swapped fill and text colours on focus, and drew the YES
+   * label twice, the first time in the wrong colour.) */
+  uint16_t lab = drawTile(CONFIRM_YES_X, CONFIRM_BTN_Y, CONFIRM_BTN_W,
+                          CONFIRM_BTN_H, TP_R_SM, f == 0, UI_BAR_BAD);
+  tileLabel(T(S_YES), CONFIRM_YES_X, CONFIRM_BTN_Y, CONFIRM_BTN_W, CONFIRM_BTN_H,
+            1, lab);
+  lab = drawTile(CONFIRM_NO_X, CONFIRM_BTN_Y, CONFIRM_BTN_W, CONFIRM_BTN_H,
+                 TP_R_SM, f == 1, UI_BAR_OK);
+  tileLabel(T(S_NO), CONFIRM_NO_X, CONFIRM_BTN_Y, CONFIRM_BTN_W, CONFIRM_BTN_H,
+            1, lab);
 }
 
 /* ---- input handlers ---- */
@@ -1139,11 +1310,88 @@ void onBack(void) {
   note_activity(now);
   dimStage = 0;
   if (kbOpen) { kbOpen = false; pet.rename(nameBuf); return; }
+  if (galleryOpen && galleryDetail > 0) {
+    /* Out of the detail view, not out of the Pokedex: B used to close the whole
+     * screen from inside a species page, so backing out cost you your place. */
+    galleryDetail = 0;
+    galleryPmd.unload();
+    return;
+  }
   if (cardOpen) { cardOpen = false; return; }
   if (galleryOpen) { galleryOpen = false; return; }
   if (clockOpen) { clockOpen = false; return; }
-  if (gameOpen) { gameOpen = false; return; }
-  if (sackOpen) { sackOpen = false; return; }
+  if (gameOpen) { gameOpen = false; gameOverUntil = 0; return; }
+  if (sackOpen) { sackOpen = false; sackOverUntil = 0; return; }
+  /* Nothing open: B on the main screen dismisses whatever overlay is up, which is
+   * the same "cancel" the dialogs get. */
+  if (now < feedMenuUntil) { feedMenuUntil = 0; return; }
+  if (now < confirmUntil) { confirmUntil = 0; return; }
+}
+
+/* ---- the two labelled keys, and the two vertical shortcuts ----
+ *
+ * Reaching a screen by walking the cursor off the edge of a row worked and was
+ * not discoverable: the Pokedex was six presses of RIGHT until you fell off the
+ * end of the button row, and it also fired every time someone overshot the last
+ * button. TIME and GAME are printed on the console next to the screen, so they
+ * take the two screens they name, and UP/DOWN take the other two. Nothing has to
+ * be walked off any more. */
+
+/* True when the main screen is showing and no overlay owns the input. */
+static bool mainScreenIdle(void) {
+  if (current_screen_id() != 0) return false;
+  if (pet.ceremony != CER_NONE || pet.evolving()) return false;
+  uint32_t now = millis();
+  return now >= confirmUntil && now >= choiceUntil && now >= feedMenuUntil;
+}
+
+void tamapoke_time_key(void) {
+  note_activity(millis());
+  dimStage = 0;
+  if (clockOpen) { clockOpen = false; return; }   /* toggles */
+  if (!mainScreenIdle()) return;
+  openClock();
+}
+
+void tamapoke_game_key(void) {
+  note_activity(millis());
+  dimStage = 0;
+  if (gameOpen) { gameOpen = false; gameOverUntil = 0; return; }
+  if (!mainScreenIdle()) return;
+  startGame();
+}
+
+void tamapoke_open_card(void) {
+  if (!mainScreenIdle() || pet.isEgg()) return;
+  note_activity(millis());
+  dimStage = 0;
+  cardOpen = true;
+  cardPage = 0;
+  tamapoke_input_reset(0);
+}
+
+void tamapoke_open_gallery(void) {
+  if (!mainScreenIdle()) return;
+  note_activity(millis());
+  dimStage = 0;
+  galleryOpen = true;
+  galleryPage = 0;
+  galleryDetail = 0;
+  tamapoke_input_reset(0);
+}
+
+void tamapoke_ui_probe(tamapoke_probe_t *out) {
+  if (!out) return;
+  out->screen = current_screen_id();
+  out->paddle_x = (int)paddleX;
+  out->ball_x = (int)ballX;
+  out->ball_y = (int)ballY;
+  out->game_score = gameScore;
+  out->game_misses = gameMisses;
+  out->sack_hits = sackHits;
+  out->sack_gain = sackGain;
+  out->pet_tr_atk = pet.trAtk;
+  out->pet_tr_spe = pet.trSpe;
 }
 
 /* ---- focus / dim / hold ---- */
@@ -1184,6 +1432,7 @@ const focus_set_t *tamapoke_focus_set_feed(void) { return &FOCUS_FEED; }
  * is the only way a test can ask "can the buttons get here from the main screen?".
  * Without that, every navigation check would be measuring the pin. */
 void tamapoke_ui_release_harness_screen(void) { harness_screen = -1; }
+
 int tamapoke_ui_current_screen(void) { return current_screen_id(); }
 
 void tamapoke_ui_note_input(void) {
@@ -1223,6 +1472,9 @@ const focus_set_t *tamapoke_current_focus_set(void) {
       /* The main screen hosts the confirm dialog as an overlay, so it owns the
        * focus while it is up. */
       if (millis() < confirmUntil) return &FOCUS_CONFIRM;
+      /* Before the feed menu: the two never coexist in practice, and this one is
+       * the irreversible decision, so it wins any tie. */
+      if (millis() < choiceUntil) return &FOCUS_CHOICE;
       if (millis() < feedMenuUntil) return &FOCUS_FEED;
       /* An egg is not a menu. Upstream cracks it by tapping it, and the button
        * equivalent should be "press A", not "walk the cursor onto the right
@@ -1268,54 +1520,50 @@ static void renderStarterSelect() {
    * correctly too. */
   uint8_t f = (tamapoke_current_focus_set() == &FOCUS_STARTER)
               ? tamapoke_input_focus() : 0xFF;
-  uint16_t ink = inkColor();
   for (uint8_t i = 0; i < 3; i++) {
     int16_t ry = STARTER_ROW_Y0 + i * (STARTER_ROW_H + STARTER_ROW_GAP);
     int8_t fi = flashIdxForDex(CLASSIC_DEX[i]);
     bool sel = (f == i);
 
-    if (sel) {
-      gfx->fillRoundRect(STARTER_ROW_X, ry, STARTER_ROW_W, STARTER_ROW_H, 6, ink);
-      for (uint8_t t = 0; t < 3; t++)
-        gfx->drawRoundRect(STARTER_ROW_X - t, ry - t, STARTER_ROW_W + 2 * t,
-                           STARTER_ROW_H + 2 * t, 6, UI_BAR_WARN);
-    } else {
-      gfx->drawRoundRect(STARTER_ROW_X, ry, STARTER_ROW_W, STARTER_ROW_H, 6, ink);
-    }
-
+    uint16_t lab = drawTile(STARTER_ROW_X, ry, STARTER_ROW_W, STARTER_ROW_H,
+                            TP_R_MD, sel, UI_WHITE);
     /* The sprite keeps its own colours on the selected row: the alternative flag
      * drawMap() takes is a black silhouette, which is what disappears against a
-     * dark inverted fill. Colour reads on either background. */
+     * saturated fill. Colour reads on either background. */
     if (fi >= 0)
       drawMap(SPECIES[fi].sprite, SPRITE_H, STARTER_ROW_X + 4, ry + 4, 1, false);
     gfx->setTextSize(1);
-    gfx->setTextColor(sel ? (gNight ? UI_BG_NIGHT : UI_BG_DAY) : ink);
-    gfx->setCursor(STARTER_ROW_X + 50, ry + STARTER_ROW_H/2 - 4);
+    gfx->setTextColor(lab);
+    gfx->setCursor(STARTER_ROW_X + 50, ry + STARTER_ROW_H / 2 - 4);
     gfx->print(DEX_TBL[CLASSIC_DEX[i]].name);
   }
-  gfx->setTextColor(ink);
+  gfx->setTextColor(inkColor());
+  /* The band below the last row was empty, and this screen is the first thing a
+   * new save shows: nothing on it said the D-pad walks the rows or that A picks
+   * one, which is how "the starter screen does nothing" gets reported twice. */
+  drawKeyHint(TP_CX, STARTER_HINT_Y, true, 'A');
 }
 
 static void renderCard() {
   gfx->fillScreen(gNight ? UI_BG_NIGHT : UI_BG_DAY);
   uint16_t ink = inkColor();
   const char *name = pet.nick[0] ? pet.nick : dexName(pet.speciesId);
-  gfx->setTextSize(1);
-  gfx->setTextColor(ink);
-  gfx->setCursor(4, 2);
-  gfx->print(name);
   char buf[32];
   snprintf(buf, sizeof(buf), "Nv.%u", pet.level());
-  gfx->setCursor(GFX_WIDTH - 40, 2);
-  gfx->print(buf);
   int8_t fi = flashIdxForDex(pet.speciesId);
   if (fi >= 0)
     drawMap(SPECIES[fi].sprite, SPRITE_H, TP_CX - 32, 16, 2, false);
-  gfx->setCursor(4, 90);
+
+  /* The three stat lines read as one block, so they get one well rather than
+   * floating on the background at three different baselines. */
+  drawWell(CARD_STATS_X, CARD_STATS_Y, CARD_STATS_W, CARD_STATS_H, TP_R_SM);
+  gfx->setTextSize(1);
+  gfx->setTextColor(ink);
+  gfx->setCursor(CARD_STATS_X + 6, CARD_STATS_Y + 6);
   gfx->printf("ATK %u  DEF %u  SPE %u", pet.atkStat(), pet.defStat(), pet.speStat());
-  gfx->setCursor(4, 104);
+  gfx->setCursor(CARD_STATS_X + 6, CARD_STATS_Y + 20);
   gfx->printf("WGT %u  BOND %u", pet.weight, pet.bond);
-  gfx->setCursor(4, 120);
+  gfx->setCursor(CARD_STATS_X + 6, CARD_STATS_Y + 34);
   gfx->printf(T(S_MEDALS_FMT), pet.totalMedals, MED_COUNT);
 
   /* The two things this screen can do, and which one is selected. Without them the
@@ -1324,44 +1572,65 @@ static void renderCard() {
   uint8_t f = (tamapoke_current_focus_set() == &FOCUS_CARD)
               ? tamapoke_input_focus() : 0xFF;
 
-  if (f == 0) {
-    gfx->drawRoundRect(0, 0, GFX_WIDTH, CARD_NAME_H, 2, UI_BAR_WARN);
-    gfx->drawRoundRect(1, 1, GFX_WIDTH - 2, CARD_NAME_H - 2, 2, UI_BAR_WARN);
-  }
-  gfx->fillRoundRect(CARD_TRAIN_X, CARD_TRAIN_Y, CARD_TRAIN_W, CARD_TRAIN_H, 4,
-                     f == 1 ? UI_WHITE : UI_TRACK);
-  gfx->drawRoundRect(CARD_TRAIN_X, CARD_TRAIN_Y, CARD_TRAIN_W, CARD_TRAIN_H, 4,
-                     f == 1 ? UI_BAR_WARN : ink);
+  /* Three tiles in the one focus language, where this screen used to have three
+   * different ones: two stacked hairlines for the name, a fill-plus-border for
+   * TRAIN, and a bare outline for BACK. */
+  uint16_t lab = drawTile(0, 0, GFX_WIDTH, CARD_NAME_H, TP_R_XS, f == 0,
+                          gNight ? UI_BG_NIGHT : UI_BG_DAY);
+  gfx->setTextSize(1);
+  gfx->setTextColor(f == 0 ? lab : ink);
+  gfx->setCursor(4, 2);
+  gfx->print(name);
+  gfx->setCursor(GFX_WIDTH - 40, 2);
+  gfx->print(buf);
   gfx->setTextColor(ink);
-  centerText(T(S_TRAIN_STR), TP_CX, CARD_TRAIN_Y + (CARD_TRAIN_H - GFX_GLYPH_H) / 2, 1);
 
-  if (f == 2) {
-    gfx->drawRoundRect(TP_CX - 30, GFX_HEIGHT - 18, 60, 16, 2, UI_BAR_WARN);
-  }
-  centerTextBottom(T(S_BACK), TP_CX, 8, 1);
+  lab = drawTile(CARD_TRAIN_X, CARD_TRAIN_Y, CARD_TRAIN_W, CARD_TRAIN_H, TP_R_SM,
+                 f == 1, UI_WHITE);
+  tileLabel(T(S_TRAIN_STR), CARD_TRAIN_X, CARD_TRAIN_Y, CARD_TRAIN_W,
+            CARD_TRAIN_H, 1, lab);
+
+  lab = drawTile(TP_CX - CARD_BACK_W / 2, CARD_BACK_Y, CARD_BACK_W, CARD_BACK_H,
+                 TP_R_SM, f == 2, UI_WHITE);
+  tileLabel(T(S_BACK), TP_CX - CARD_BACK_W / 2, CARD_BACK_Y, CARD_BACK_W,
+            CARD_BACK_H, 1, lab);
 }
 
-static void drawThumb(int16_t dex, int16_t x, int16_t y, uint8_t s, bool sil) {
-  /* Prefer the SD thumbnail pack; fall back to the flash sprite if absent. */
-  const uint8_t *thumb = thumbs.get(dex);
-  if (thumb) {
-    /* 24x24 raw bitmap, scaled by s. Each byte is a palette index into the
-     * sprite palette; for thumbnails we just plot a solid cell. */
-    for (uint8_t r = 0; r < 24; r++)
-      for (uint8_t c = 0; c < 24; c++) {
-        uint8_t px = thumb[r * 24 + c];
-        if (px == 0) continue;
-        uint16_t col = sil ? INK_K : spriteColor((char)px);
+/* One gallery thumbnail, centred on (cx, cy).
+ *
+ * The entry carries its own size and palette (see SdThumb); this used to read a
+ * fixed 24x24 block of raw bytes and look each one up with spriteColor(), the
+ * ASCII-sprite palette. So it drew the w/h/palette header as if those bytes were
+ * pixels, ran ~240 bytes past the end of every record into the next species, and
+ * coloured what it found through the wrong table -- which is the "the Pokedex
+ * images are corrupted" report, and it was corrupt for every single entry.
+ *
+ * Centred rather than top-left because the entries are not one size: 14x24 up to
+ * 17x24 across the 151, so a fixed corner puts each species somewhere different
+ * inside its cell. */
+static void drawThumbAt(int16_t dex, int16_t cx, int16_t cy, uint8_t s, bool sil) {
+  SdThumb t;
+  if (thumbs.get(dex, &t)) {
+    int16_t x = cx - (int16_t)(t.w * s) / 2;
+    int16_t y = cy - (int16_t)(t.h * s) / 2;
+    for (uint8_t r = 0; r < t.h; r++)
+      for (uint8_t c = 0; c < t.w; c++) {
+        uint8_t v = t.px[(uint32_t)r * t.w + c];
+        /* 0xFF is the transparent index, and so is anything outside the palette:
+         * a record that names a colour it did not ship is not a colour. */
+        if (v >= t.palCount) continue;
+        uint16_t col = sil ? INK_K
+                           : (uint16_t)(t.pal[2 * v] | (t.pal[2 * v + 1] << 8));
         gfx->fillRect(x + c * s, y + r * s, s, s, col);
       }
     return;
   }
   int8_t fi = flashIdxForDex(dex);
   if (fi >= 0 && fi < NUM_SPECIES) {
-    drawMap(SPECIES[fi].sprite, SPRITE_H, x, y, s, sil);
+    int16_t sz = SPRITE_W * s;
+    drawMap(SPECIES[fi].sprite, SPRITE_H, cx - sz / 2, cy - sz / 2, s, sil);
   } else {
-    gfx->fillRect(x, y, 24, 24, UI_TRACK);
-    centerText("?", x + 12, y + 4, 2);
+    centerText("?", cx, cy - GFX_GLYPH_H, 2);
   }
 }
 
@@ -1381,7 +1650,9 @@ static void renderGallery() {
       drawPmdActM(galleryPmd, PMD_IDLE, TP_CX, GAL_DET_SPRITE_CY + 30,
                   reg ? millis() : 0, reg, !reg, 4);
     } else {
-      drawThumb(dex, TP_CX - 12, GAL_DET_SPRITE_CY - 12, 1, !reg);
+      /* The detail view is a whole screen for one species; at scale 1 the
+       * thumbnail was a 16px stamp in the middle of a 100px disc. */
+      drawThumbAt(dex, TP_CX, GAL_DET_SPRITE_CY, 3, !reg);
     }
     char buf[32];
     snprintf(buf, sizeof(buf), "%u.%s %s", dex,
@@ -1409,23 +1680,25 @@ static void renderGallery() {
     if (dex > DEX_COUNT) continue;
     bool reg = pet.isRegistered(dex);
     bool shiny = pet.isShinyRegistered(dex);
-    uint16_t fill = (focus == i) ? UI_BAR_WARN
-                                 : (reg ? UI_WHITE : UI_TRACK);
-    gfx->fillRoundRect(x, y, GAL_CELL - GAL_GAP, GAL_CELL - GAL_GAP, 4, fill);
-    gfx->drawRoundRect(x, y, GAL_CELL - GAL_GAP, GAL_CELL - GAL_GAP, 4, ink);
+    /* The cell is inset by the ring thickness so a focused cell's plate cannot
+     * paint over its neighbour -- a 44px pitch with a 42px cell has 2px to give
+     * and the ring wants 3. */
+    drawTile(x + 1, y + 1, GAL_CELL - GAL_GAP - 2, GAL_CELL - GAL_GAP - 2,
+             TP_R_SM, focus == i, reg ? UI_WHITE : UI_TRACK);
+    int16_t ccx = x + (GAL_CELL - GAL_GAP) / 2, ccy = y + (GAL_CELL - GAL_GAP) / 2;
     if (reg) {
-      drawThumb(dex, x + 6, y + 6, 1, false);
+      drawThumbAt(dex, ccx, ccy, 1, false);
       if (shiny) {
         gfx->setTextSize(1);
-        gfx->setTextColor(UI_BAR_WARN);
+        gfx->setTextColor(TP_ACCENT);
         gfx->setCursor(x + GAL_CELL - 14, y + 2);
         gfx->print("*");
+        gfx->setTextColor(ink);
       }
     } else {
       char nb[4];
       snprintf(nb, sizeof(nb), "%u", dex);
-      centerText(nb, x + (GAL_CELL - GAL_GAP) / 2,
-                 y + (GAL_CELL - GAL_GAP) / 2 - GFX_GLYPH_H, 1);
+      centerText(nb, ccx, ccy - GFX_GLYPH_H / 2, 1);
     }
   }
 
@@ -1447,9 +1720,8 @@ static void renderKeyboard() {
   /* Title */
   centerText(T(S_NAME), TP_CX, KB_TITLE_Y, 2);
 
-  /* Name preview box */
-  gfx->fillRoundRect(KB_NAME_X, KB_NAME_Y, KB_NAME_W, KB_NAME_H, KB_NAME_R, UI_TRACK);
-  gfx->drawRoundRect(KB_NAME_X, KB_NAME_Y, KB_NAME_W, KB_NAME_H, KB_NAME_R, ink);
+  /* Name preview: a well, not a tile -- it is a readout, not a target. */
+  drawWell(KB_NAME_X, KB_NAME_Y, KB_NAME_W, KB_NAME_H, KB_NAME_R);
   gfx->setTextSize(2);
   gfx->setTextColor(ink);
   int16_t text_w = textWidth(nameBuf, 2);
@@ -1464,38 +1736,32 @@ static void renderKeyboard() {
     int16_t x = KB_X + c * KB_W, y = KB_Y + r * KB_H;
     bool focused = (focus == i);
     bool special = (i >= KB_SPECIAL0);
-    uint16_t fill = focused ? UI_BAR_WARN
-                            : (special ? UI_TRACK : UI_WHITE);
-    uint16_t fg   = focused ? UI_WHITE
-                            : (special ? UI_BAR_WARN : ink);
-    gfx->fillRoundRect(x + 2, y + 2, KB_W - 4, KB_H - 4, KB_R, fill);
-    gfx->drawRoundRect(x + 2, y + 2, KB_W - 4, KB_H - 4, KB_R, ink);
+    /* OK is the primary action and keeps its green; DEL is a utility key and takes
+     * the quiet surface. Everything else is a plain tile. */
+    uint16_t fill = (i == KB_SPECIAL1) ? UI_BAR_OK
+                                       : (special ? UI_TRACK : UI_WHITE);
+    uint16_t lab = drawTile(x + 2, y + 2, KB_W - 4, KB_H - 4, TP_R_SM, focused,
+                            fill);
     const char *label;
     char buf[2];
     if (i == KB_SPECIAL0) label = "<";
     else if (i == KB_SPECIAL1) label = "OK";
     else { buf[0] = KB_KEYS[i]; buf[1] = 0; label = buf; }
-    int16_t lw = textWidth(label, KB_TEXT_SIZE);
-    gfx->setTextSize(KB_TEXT_SIZE);
-    gfx->setTextColor(fg);
-    gfx->setCursor(x + KB_W / 2 - lw / 2,
-                   y + KB_H / 2 - GFX_GLYPH_H * KB_TEXT_SIZE / 2);
-    gfx->print(label);
+    tileLabel(label, x + 2, y + 2, KB_W - 4, KB_H - 4, KB_TEXT_SIZE, lab);
   }
 }
 
 static void drawClockBtn(int16_t x, int16_t y, const char *label, bool focused) {
-  uint16_t ink = inkColor();
-  uint16_t fill = focused ? UI_BAR_WARN : UI_TRACK;
-  uint16_t fg = focused ? UI_WHITE : ink;
-  gfx->fillRoundRect(x, y, CLOCK_BTN_W, CLOCK_BTN_H, 4, fill);
-  gfx->drawRoundRect(x, y, CLOCK_BTN_W, CLOCK_BTN_H, 4, ink);
-  int16_t lw = textWidth(label, 2);
-  gfx->setTextSize(2);
-  gfx->setTextColor(fg);
-  gfx->setCursor(x + CLOCK_BTN_W / 2 - lw / 2,
-                 y + (CLOCK_BTN_H - 2 * GFX_GLYPH_H) / 2);
-  gfx->print(label);
+  uint16_t lab = drawTile(x, y, CLOCK_BTN_W, CLOCK_BTN_H, TP_R_SM, focused,
+                          UI_WHITE);
+  tileLabel(label, x, y, CLOCK_BTN_W, CLOCK_BTN_H, 2, lab);
+}
+
+/* A settings pill: label on the left of its own row, value inside the tile. */
+static void drawClockPill(int16_t x, int16_t w, const char *value, bool focused) {
+  uint16_t lab = drawTile(x, CLOCK_PILL_Y, w, CLOCK_PILL_H, TP_R_MD, focused,
+                          UI_WHITE);
+  tileLabel(value, x, CLOCK_PILL_Y, w, CLOCK_PILL_H, 1, lab);
 }
 
 static void renderClock() {
@@ -1526,69 +1792,70 @@ static void renderClock() {
                  CLOCK_PAIR_LBL_Y);
   gfx->print(T(S_MIN));
 
-  /* Sound pill */
-  bool ae = audioEnabled();
-  gfx->fillRoundRect(CLOCK_SOUND_X, CLOCK_PILL_Y, CLOCK_SOUND_W, CLOCK_PILL_H,
-                     4, focus == 4 ? UI_BAR_WARN : UI_TRACK);
-  gfx->drawRoundRect(CLOCK_SOUND_X, CLOCK_PILL_Y, CLOCK_SOUND_W, CLOCK_PILL_H,
-                     4, ink);
-  {
-    const char *s = ae ? T(S_SND_ON) : T(S_SND_OFF);
-    gfx->setTextSize(1);
-    gfx->setTextColor(focus == 4 ? UI_WHITE : ink);
-    gfx->setCursor(CLOCK_SOUND_X + CLOCK_SOUND_W / 2 - textWidth(s, 1) / 2,
-                   CLOCK_PILL_Y + (CLOCK_PILL_H - GFX_GLYPH_H) / 2);
-    gfx->print(s);
-  }
+  /* Sound and language: two pills on one row, same tile as everything else. The
+   * name table is indexed by gLang -- langName() owns the static_assert that adding
+   * a language without extending it is a compile error, which is what adding
+   * Korean would otherwise have been: a read past the end into print(). */
+  drawClockPill(CLOCK_SOUND_X, CLOCK_SOUND_W,
+                audioEnabled() ? T(S_SND_ON) : T(S_SND_OFF), focus == 4);
+  drawClockPill(CLOCK_LANG_X, CLOCK_LANG_W, langName(gLang), focus == 5);
 
-  /* Language pill */
-  gfx->fillRoundRect(CLOCK_LANG_X, CLOCK_PILL_Y, CLOCK_LANG_W, CLOCK_PILL_H,
-                     4, focus == 5 ? UI_BAR_WARN : UI_TRACK);
-  gfx->drawRoundRect(CLOCK_LANG_X, CLOCK_PILL_Y, CLOCK_LANG_W, CLOCK_PILL_H,
-                     4, ink);
-  {
-    /* One label per Lang, in enum order. The static_assert is the point: this
-     * table is indexed by gLang, so adding a language without extending it
-     * reads past the end and hands print() a wild pointer -- which is exactly
-     * what adding Korean did. */
-    const char *s = langName(gLang);
-    gfx->setTextSize(1);
-    gfx->setTextColor(focus == 5 ? UI_WHITE : ink);
-    gfx->setCursor(CLOCK_LANG_X + CLOCK_LANG_W / 2 - textWidth(s, 1) / 2,
-                   CLOCK_PILL_Y + (CLOCK_PILL_H - GFX_GLYPH_H) / 2);
-    gfx->print(s);
-  }
+  /* OK keeps its green whether focused or not -- it is the primary action, and a
+   * tile that only becomes green when you point at it is not telling you that. */
+  uint16_t lab = drawTile(CLOCK_OK_X, CLOCK_OK_Y, CLOCK_OK_W, CLOCK_OK_H,
+                          TP_R_MD, focus == 6, UI_BAR_OK);
+  tileLabel(T(S_YES), CLOCK_OK_X, CLOCK_OK_Y, CLOCK_OK_W, CLOCK_OK_H,
+            CLOCK_OK_SIZE, lab);
 
-  /* OK button */
-  bool ok_focused = (focus == 6);
-  gfx->fillRoundRect(CLOCK_OK_X, CLOCK_OK_Y, CLOCK_OK_W, CLOCK_OK_H, 4,
-                     ok_focused ? UI_BAR_OK : UI_TRACK);
-  gfx->drawRoundRect(CLOCK_OK_X, CLOCK_OK_Y, CLOCK_OK_W, CLOCK_OK_H, 4, ink);
-  {
-    const char *s = T(S_YES);
-    int16_t lw = textWidth(s, CLOCK_OK_SIZE);
-    gfx->setTextSize(CLOCK_OK_SIZE);
-    gfx->setTextColor(ok_focused ? UI_WHITE : ink);
-    gfx->setCursor(CLOCK_OK_X + CLOCK_OK_W / 2 - lw / 2,
-                   CLOCK_OK_Y + (CLOCK_OK_H - CLOCK_OK_SIZE * GFX_GLYPH_H) / 2);
-    gfx->print(s);
-  }
+  /* What the two labelled keys do, in the same pictogram style as everywhere
+   * else: the D-pad walks the row, A presses. */
+  drawKeyHint(TP_CX, CLOCK_HINT_Y, false, 'A');
 }
 
 static void renderGame() {
   /* This screen has its own dark background, day or night, so it cannot borrow
    * inkColor() -- which is dark for the light theme. The score was being drawn in
-   * it: dark text on dark navy, legible only if you knew it was there. (inkColor()
-   * was computed here and then never used, which is the same mistake spelled out
-   * in the code.) */
-  gfx->fillScreen(C565(0x10, 0x18, 0x28));
-  char buf[16];
+   * it: dark text on dark navy, legible only if you knew it was there. */
+  gfx->fillScreen(GAME_BG);
+  uint32_t now = millis();
+
+  char buf[24];
   snprintf(buf, sizeof(buf), T(S_SCORE_FMT), gameScore);
   gfx->setTextColor(UI_WHITE);
-  centerText(buf, TP_CX, 4, 1);
+  centerText(buf, TP_CX, GAME_SCORE_Y, GAME_SCORE_SIZE);
+  /* The record, so a score means something, and one dot per life left. Both
+   * constants existed in the header and nothing drew them. */
+  snprintf(buf, sizeof(buf), T(S_REC_FMT), pet.gameHi);
+  gfx->setTextColor(UI_TRACK);
+  centerText(buf, TP_CX, GAME_RECORD_Y, 1);
+  for (uint8_t i = 0; i < GAME_LIVES; i++) {
+    int16_t lx = GAME_LIVES_X0 + i * GAME_LIVES_DX;
+    if (i < GAME_LIVES - gameMisses)
+      gfx->fillCircle(lx, GAME_LIVES_Y + GAME_LIVES_R, GAME_LIVES_R, UI_BAR_BAD);
+    else
+      gfx->drawCircle(lx, GAME_LIVES_Y + GAME_LIVES_R, GAME_LIVES_R, UI_TRACK);
+  }
+
   gfx->fillRect(0, GAME_TOP, GFX_WIDTH, 1, UI_TRACK);
   gfx->fillCircle((int16_t)ballX, (int16_t)ballY, GAME_BALL_R, UI_BAR_BAD);
-  gfx->fillRect((int16_t)paddleX, GAME_PADDLE_Y, GAME_PADDLE_W, GAME_PADDLE_H, UI_WHITE);
+  gfx->fillRoundRect((int16_t)paddleX, GAME_PADDLE_Y, GAME_PADDLE_W,
+                     GAME_PADDLE_H, TP_R_XS, UI_WHITE);
+
+  /* Which keys move it. The paddle was the only thing here that answered a key
+   * and nothing on screen said so -- and for three releases nothing did. */
+  if (!gameOverUntil && now - gameStartedAt < GAME_HINT_MS) {
+    drawKeyHintOn(TP_CX, GAME_HINT_Y, false, 0, UI_TRACK, GAME_BG);
+  }
+
+  if (gameOverUntil) {
+    gfx->setTextColor(UI_WHITE);
+    centerText(T(gameNewHi ? S_NEW_RECORD : S_GREAT_JOY), TP_CX,
+               GAME_OVER_LABEL_Y, 2);
+    snprintf(buf, sizeof(buf), T(S_PLUS_JOY));
+    gfx->setTextColor(UI_BAR_OK);
+    centerText(buf, TP_CX, GAME_OVER_LABEL_Y + 28, 1);
+  }
+  gfx->setTextColor(UI_WHITE);
 }
 
 static void renderSack() {
@@ -1599,11 +1866,16 @@ static void renderSack() {
   /* Result screen: timed reveal of str gain / record. */
   if (now >= sackUntil && now < sackOverUntil) {
     char buf[24];
+    gfx->setTextColor(ink);
     snprintf(buf, sizeof(buf), T(S_HITS_FMT), sackHits);
     centerText(buf, TP_CX, SACK_RESULT_Y, SACK_RESULT_SIZE);
     snprintf(buf, sizeof(buf), T(S_STR_GAIN_FMT), sackGain);
     gfx->setTextColor(UI_BAR_BAD);
     centerText(buf, TP_CX, SACK_RESULT_Y + 28, 2);
+    if (sackNewHi) {
+      gfx->setTextColor(TP_ACCENT);
+      centerText(T(S_NEW_RECORD), TP_CX, SACK_RESULT_Y + 52, 1);
+    }
     gfx->setTextColor(ink);
     return;
   }
@@ -1634,19 +1906,29 @@ static void renderSack() {
   /* horizontal seam across the middle */
   gfx->fillRect(sx + 4, SACK_SEAM_Y, SACK_BODY_W - 8, 3, seam);
 
-  /* HUD */
+  /* HUD. The ink is set explicitly: this screen never did, so the counter and the
+   * hint came out in whatever colour the previous screen had left in the text
+   * state -- white on cream, i.e. invisible, which is how a 24-point round read as
+   * an empty screen. */
   char buf[24];
+  gfx->setTextSize(1);
+  gfx->setTextColor(ink);
   snprintf(buf, sizeof(buf), T(S_HITS_FMT), sackHits);
   centerText(buf, TP_CX, SACK_HIT_COUNTER_Y, SACK_HIT_COUNTER_SZ);
   centerText(T(S_HIT_FAST), TP_CX, SACK_HINT_Y, SACK_HINT_SIZE);
+  /* WHICH key to hit fast. "HIT FAST!" was the entire instruction, on a screen
+   * where no key did anything at all. */
+  drawKeyHintOn(TP_CX, SACK_KEY_HINT_Y, false, 'A', ink,
+                gNight ? UI_BG_NIGHT : UI_BG_DAY);
 
   /* time bar: full width at start, shrinks to zero as the timer runs out. */
-  uint32_t total = 10000;
   uint32_t remain = (sackUntil > now) ? (sackUntil - now) : 0;
-  uint16_t fillW = (uint16_t)((uint64_t)remain * SACK_BAR_W / total);
-  gfx->fillRoundRect(SACK_BAR_X, SACK_BAR_Y, SACK_BAR_W, SACK_BAR_H, 4, UI_TRACK);
-  gfx->fillRoundRect(SACK_BAR_X, SACK_BAR_Y, fillW, SACK_BAR_H, 4, UI_BAR_OK);
-  gfx->drawRoundRect(SACK_BAR_X, SACK_BAR_Y, SACK_BAR_W, SACK_BAR_H, 4, ink);
+  uint16_t fillW = (uint16_t)((uint64_t)remain * SACK_BAR_W / SACK_ROUND_MS);
+  drawWell(SACK_BAR_X, SACK_BAR_Y, SACK_BAR_W, SACK_BAR_H, TP_R_SM);
+  if (fillW > 0)
+    gfx->fillRoundRect(SACK_BAR_X, SACK_BAR_Y, fillW, SACK_BAR_H, TP_R_SM,
+                       UI_BAR_OK);
+  gfx->drawRoundRect(SACK_BAR_X, SACK_BAR_Y, SACK_BAR_W, SACK_BAR_H, TP_R_SM, ink);
 }
 
 /* ---- render dispatcher ---- */
@@ -1691,8 +1973,7 @@ static void render_main_screen(uint32_t now) {
      * canvas persists between frames on purpose (lcd_clone, for incremental
      * drawing), so a path that skips a region is not "leaving it blank", it is
      * showing the last screen that did draw there. */
-    uint16_t panel = gNight ? PANEL_NIGHT : PANEL_DAY;
-    gfx->fillRect(0, 152, GFX_WIDTH, GFX_HEIGHT - 152, panel);
+    drawPanel();
     return;
   }
 
@@ -1711,8 +1992,7 @@ static void render_main_screen(uint32_t now) {
   drawBath(now);
   drawPoops();
 
-  uint16_t panel = gNight ? PANEL_NIGHT : PANEL_DAY;
-  gfx->fillRect(0, 152, GFX_WIDTH, GFX_HEIGHT - 152, panel);
+  drawPanel();
 
   drawBars();
   drawButtons();
@@ -1800,6 +2080,12 @@ void tamapoke_ui_render(void) {
 
 bool tamapoke_ui_had_activity(void) { return g_had_activity; }
 
+/* Defined here rather than next to the other harness hooks because it needs
+ * drawThumbAt(), which is further down the file with the gallery it serves. */
+void tamapoke_ui_draw_thumb(int16_t dex, int16_t cx, int16_t cy, uint8_t s) {
+  drawThumbAt(dex, cx, cy, s, false);
+}
+
 void tamapoke_ui_goto_screen(int id) {
   harness_screen = (int8_t)id;
   uint32_t now = millis();
@@ -1853,12 +2139,16 @@ void tamapoke_ui_goto_screen(int id) {
       ballY = GAME_TOP + 30;
       ballVX = 1.5f; ballVY = 1.0f;
       paddleX = (GFX_WIDTH - GAME_PADDLE_W) / 2;
+      paddleDir = 0;
       gameScore = 3; gameMisses = 1;
+      gameOverUntil = 0; gameNewHi = false;
+      gameStartedAt = now;
       break;
     case 7: /* sack */
       sackOpen = true;
-      sackUntil = now + 10000;
-      sackHits = 24; sackGain = 2; sackShake = 0;
+      sackUntil = now + SACK_ROUND_MS;
+      sackOverUntil = 0;
+      sackHits = 24; sackGain = 2; sackShake = 0; sackNewHi = false;
       break;
     case 8: /* bath overlay -- force main path + bath timer */
       harness_screen = 0;
@@ -1894,6 +2184,20 @@ void tamapoke_ui_goto_screen(int id) {
       ensureMon();
       confirmUntil = now + CONFIRM_MS;
       break;
+    case 11: /* evolve/farewell choice overlay.
+              * Added when it turned out to have no focus set: it was drawn by the
+              * main path, so no capture covered it and the focus-visibility gate
+              * never looked at it -- and it had no focus set at all, which made the
+              * one irreversible decision in the game unreachable with buttons. */
+      harness_screen = 0;
+      if (pet.isEgg() || pet.speciesId < 1) {
+        pet.chooseStarter(CLASSIC_DEX[0]);
+        pet.speciesId = CLASSIC_DEX[0];
+      }
+      ensureMon();
+      choiceKind = 1;
+      choiceUntil = now + CHOICE_MS;
+      break;
     default:
       break;
   }
@@ -1912,6 +2216,7 @@ const char *tamapoke_ui_screen_name(int id) {
     case 8:  return "bath";
     case 9:  return "feed";
     case 10: return "confirm";
+    case 11: return "choice";
     default: return "unknown";
   }
 }
@@ -1950,7 +2255,14 @@ void tamapoke_ui_tick(uint32_t now_ms) {
 
   stepBeh();
 
-  if (gameOpen && !pet.evolving()) {
+  /* Ball round. The paddle is stepped here rather than in the input poll so its
+   * speed comes from the 33 ms tick and not from however fast the main loop
+   * happens to be spinning. */
+  if (gameOpen && !pet.evolving() && !gameOverUntil) {
+    paddleX += paddleDir * GAME_PADDLE_STEP;
+    if (paddleX < GAME_PADDLE_X_MIN) paddleX = GAME_PADDLE_X_MIN;
+    if (paddleX > GAME_PADDLE_X_MAX) paddleX = GAME_PADDLE_X_MAX;
+
     ballX += ballVX;
     ballY += ballVY;
     if (ballX < 4 || ballX > GFX_WIDTH - 4) ballVX = -ballVX;
@@ -1958,14 +2270,43 @@ void tamapoke_ui_tick(uint32_t now_ms) {
     if (ballY >= GAME_PADDLE_Y) {
       if (ballX >= paddleX && ballX <= paddleX + GAME_PADDLE_W) {
         ballVY = -fabsf(ballVY);
-        ballVX += (ballX - paddleX - GAME_PADDLE_W/2) * 0.1f;
-        gameScore++;
+        ballVX += (ballX - paddleX - GAME_PADDLE_W / 2) * 0.1f;
+        /* Clamped both ways: enough sideways motion that the ball cannot fall in
+         * a vertical column the paddle never has to move for, and not so much
+         * that it crosses the screen faster than the paddle can. random(-3,4)
+         * used to be able to return 0 for exactly the first case. */
+        if (ballVX > GAME_BALL_VX_MAX) ballVX = GAME_BALL_VX_MAX;
+        if (ballVX < -GAME_BALL_VX_MAX) ballVX = -GAME_BALL_VX_MAX;
+        if (ballVX >= 0 && ballVX < GAME_BALL_VX_MIN) ballVX = GAME_BALL_VX_MIN;
+        if (ballVX < 0 && ballVX > -GAME_BALL_VX_MIN) ballVX = -GAME_BALL_VX_MIN;
+        if (gameScore < 255) gameScore++;
+        sfxPlay(SFX_TAP);
       } else {
         gameMisses++;
-        ballY = GAME_TOP + 20;
-        ballVX = random(-3, 4);
-        ballVY = random(2, 5);
+        if (gameMisses >= GAME_LIVES) {
+          endGame();
+        } else {
+          ballY = GAME_TOP + 20;
+          ballVX = (random(0, 2) ? 1 : -1) * (1.0f + random(0, 20) / 10.0f);
+          ballVY = 2.0f + random(0, 20) / 10.0f;
+        }
       }
+    }
+  }
+  /* The result screen, and the only way either game ends: they used to have no
+   * exit at all except pressing B. */
+  if (gameOpen && gameOverUntil && now_ms >= gameOverUntil) {
+    gameOpen = false;
+    gameOverUntil = 0;
+  }
+
+  /* Training round: the timer expiring is what banks the hits. */
+  if (sackOpen) {
+    if (sackShake > 0 && now_ms - hitTime > SACK_SHAKE_MS) sackShake = 0;
+    if (now_ms >= sackUntil && !sackOverUntil) endSack();
+    if (sackOverUntil && now_ms >= sackOverUntil) {
+      sackOpen = false;
+      sackOverUntil = 0;
     }
   }
 

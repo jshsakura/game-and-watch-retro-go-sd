@@ -24,8 +24,11 @@ So:
 | ✅ Share the **source and tools** | Everything here. Each person generates their own assets and builds their own firmware — which is also what upstream's own `CREDITS.md` asks people to do. |
 | ⛔ Do **not** share a built firmware, a `TamaPoke.bin`, a `/mons` folder, or a `names.bin` | Uploading any of those anywhere — a release, a Drive link, a forum post — is distribution. It puts CC BY-NC material and Nintendo's IP under your name, and a GPLv2 binary obliges you to ship corresponding source you do not have the rights to. |
 
-`TAMAPOKE` defaults to `0` and is deliberately absent from `.github/workflows/package.yml`, so a
-normal release build cannot pick this up by accident.
+There is **no `TAMAPOKE` flag any more** — the core is compiled into every build (`Makefile`'s
+`TAMAPOKE_CXX_SOURCES` is unconditional), so a release does carry `TamaPoke.bin`. That is fine and it
+is the line that matters: the *binary* is our own GPLv2 code, and what must never be published is the
+`/mons` assets and `names.bin`, which no build produces and no release contains. Two packaging gates
+refuse a release that has one.
 
 ## The core cannot be dropped onto a stock firmware
 
@@ -48,10 +51,10 @@ cd ~/TamaPoke && python3 -m pip install -r requirements.txt   # Pillow
 python3 tools/pack_pmd.py                                     # downloads and packs the sprites
 ```
 
-Then build the firmware with the core enabled, using the usual CI flag set plus `TAMAPOKE=1`:
+Then build the firmware with the usual CI flag set (the core needs no flag):
 
 ```sh
-make release DOCKER=1 TAMAPOKE=1 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 \
+make release DOCKER=1 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 \
              DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 \
              CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1
 ```
@@ -88,19 +91,64 @@ them, and are handed synthesised coordinates
 
 | | |
 |---|---|
-| D-pad | move the focus; walking off the edge of a paged screen is upstream's swipe |
+| ←/→ | move the focus along the row. **Clamps at both ends** |
+| ↑ | the status card |
+| ↓ | the Pokédex |
+| **TIME** | the clock / settings screen (toggles) |
+| **GAME** | the ball minigame (toggles) |
 | A | act on the focused widget |
 | B | back / cancel — the one gesture with no touch equivalent, since there is no "outside the dialog" to tap |
 | B held 3 s | the release dialog, as upstream's 3-second press on the pet |
+| PAUSE | the launcher's own menu (volume, brightness, language, exit) |
 
-Ten of the eleven screens work identically. The ball minigame is the exception: upstream has you
-tap the falling ball's own coordinate, which a cursor cannot chase in time, so it is a paddle moved
-left and right — reusing upstream's `ballVX`/`ballVY` physics and deriving the impulse from
-`ballX - paddleX`.
+The two labelled keys carry the two screens they name, and that is not decoration. Before, every
+sub-screen was reached by walking the cursor off an edge: ↓ was the settings screen and the Pokédex
+was *press → six times until you fall off the end of the button row*. That is upstream's horizontal
+swipe, faithfully ported — and a swipe is a deliberate gesture on a panel, where an overrun is just
+what happens when someone presses → once too often. So overshooting a button threw the player onto
+another screen. TIME and GAME were dead keys the whole time.
+
+Two screens are not menus and do not use the cursor at all
+(`tamapoke_ui_input_mode()`): in the ball minigame ←/→ are a **held axis** driving the paddle, and on
+the training sack **A is a hit**. Upstream has you tap the falling ball's own coordinate, which a
+cursor cannot chase, so it is a paddle — reusing upstream's `ballVX`/`ballVY` physics and deriving
+the impulse from `ballX - paddleX`. The paddle is stepped by the UI tick rather than by the input
+poll, so its speed comes from the clock and not from how fast the main loop happens to spin.
+
+## Saving
+
+The pet is a clock, not a game with a save file: it has to persist by itself. It writes constantly
+and the card must not be touched mid-play (that is how the FAT gets corrupted), so the store lives in
+RAM and is flushed at safe points only — `tamapoke_prefs_commit()`.
+
+The safe points are the launcher's own, and they are hooks the core has to *ask for*
+(`odroid_system_emu_init`): `sram_save` fires on every sleep or standby entry and inside
+`odroid_system_switch_app()` before the card is unmounted, and `shutdown` fires on power-off. With
+both left NULL — as they were — the only commits were the pause menu's Save row and the idle
+timeout, so quitting to the launcher, holding POWER, or the low-battery auto-off each lost
+everything since the last one.
+
+## Design
+
+One radius scale, one accent, one focus treatment, one frosted surface — the tokens are at the top
+of `tamapoke_ui.h` and `drawTile()` / `drawSurface()` in `tamapoke_ui.cpp` are the only two things
+that draw a widget's chrome.
+
+This is worth naming because the port did not start that way. Nine screens carried five different
+ideas of "selected": the starter rows inverted and took a ring, the action buttons inverted and took
+a *pulsing* ring, the feed cells went white with a ring, the card's name strip drew two hairlines,
+and the gallery, keyboard and clock filled with orange. Radii ran 2, 4, 6, 8 and 10 with no rule.
+Each was defensible on its own screen and together they read as five half-finished screens.
+
+Two of those inconsistencies were not cosmetic. The bottom panel was an opaque slab of `#383844`
+where upstream has translucent white, and the labels on it are drawn in `inkColor()` — dark in the
+day theme, so the stat labels were dark-grey-on-dark-navy and unreadable on hardware. And a ring
+drawn as N concentric `drawRoundRect()`s keeps one radius while growing, so each pass cuts a
+different corner arc: every focus ring in the port had notched corners.
 
 ## Iterating on the layout
 
-Do not flash to look at a screen. `./tools/tamapoke_harness/run.sh` renders all eleven on the host
+Do not flash to look at a screen. `./tools/tamapoke_harness/run.sh` renders all twelve on the host
 as PPMs, compiling the firmware's own sources (read out of the Makefile, not copied) against the
 real `gw_lcd.h`, so the pixel path is the same code the device runs.
 

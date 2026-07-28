@@ -110,14 +110,22 @@ static int focus_step(const focus_set_t *fs, int dx, int dy) {
 
   if (fs->cols == 0) {
     /* On the MAIN screen the two axes mean different things: left/right walk the
-     * row, and up/down are upstream's vertical swipes (card / clock) -- which is
-     * the only way to reach those screens with buttons. Reported as ±2 so the
-     * caller can tell which gesture to fire. A modal list has nowhere to swipe
-     * to, so there any axis just advances it. */
+     * row, and up/down are the two vertical shortcuts (card / Pokedex). Reported
+     * as ±2 so the caller can tell the axes apart. A modal list has nowhere to go,
+     * so there any axis just advances it. */
     if (fs->kind == FOCUS_KIND_LIST && dy != 0) return dy > 0 ? +2 : -2;
 
     int next = (int)g_in.focus + dx + dy;
-    if (next < 0 || next >= n) return next < 0 ? -1 : +1;
+    /* Clamp instead of reporting the overrun.
+     *
+     * Walking off the end of the main screen's button row used to open the
+     * Pokedex -- upstream's horizontal swipe. On a touch panel a swipe is a
+     * deliberate gesture; with a cursor it is what happens every time someone
+     * presses RIGHT once too often, so the game threw you onto another screen for
+     * overshooting a button. The Pokedex has its own key now (DOWN), so the row
+     * can just stop at its ends like every other list in the port. */
+    if (next < 0) next = 0;
+    if (next >= n) next = n - 1;
     g_in.focus = (uint8_t)next;
     return 0;
   }
@@ -179,29 +187,60 @@ void tamapoke_input_poll(uint32_t now_ms) {
    * tap lands on the item immediately; a cursor has to travel. */
   if (any_key_down(&js)) tamapoke_ui_note_input();
 
+  /* The two labelled keys on the shell, whatever screen is up. TIME opens the
+   * clock/settings screen and GAME opens the minigame -- the console's own legend,
+   * used for what it says, instead of leaving both keys dead and reaching those
+   * screens by walking the cursor off an edge. (GAME is ODROID_INPUT_START and TIME
+   * is ODROID_INPUT_SELECT; see Core/Src/porting/odroid_input.c.) */
+  if (edge(&js, ODROID_INPUT_SELECT)) tamapoke_time_key();
+  if (edge(&js, ODROID_INPUT_START)) tamapoke_game_key();
+
+  /* A game is not a menu: the ball needs a held axis and the sack needs A to be a
+   * hit, neither of which is "walk the focus set". Both screens had no controls at
+   * all -- the paddle was drawn and could not be moved, and nothing anywhere
+   * incremented the sack's hit counter. */
+  switch (tamapoke_ui_input_mode()) {
+    case TP_INPUT_PADDLE: {
+      int dir = 0;
+      if (js.values[ODROID_INPUT_LEFT]) dir -= 1;
+      if (js.values[ODROID_INPUT_RIGHT]) dir += 1;
+      tamapoke_paddle_hold(dir);   /* level, not edge: it is an axis */
+      if (edge(&js, ODROID_INPUT_B)) onBack();
+      g_in.prev = js;
+      return;
+    }
+    case TP_INPUT_MASH:
+      if (edge(&js, ODROID_INPUT_A)) tamapoke_sack_hit();
+      if (edge(&js, ODROID_INPUT_B)) onBack();
+      g_in.prev = js;
+      return;
+    default:
+      break;
+  }
+  /* Leaving a game must not leave the paddle drifting on the next round. */
+  tamapoke_paddle_hold(0);
+
   int overflow = 0;
   if (edge(&js, ODROID_INPUT_LEFT)) overflow = focus_step(fs, -1, 0);
   if (edge(&js, ODROID_INPUT_RIGHT)) overflow = focus_step(fs, +1, 0);
   if (edge(&js, ODROID_INPUT_UP)) overflow = focus_step(fs, 0, -1);
   if (edge(&js, ODROID_INPUT_DOWN)) overflow = focus_step(fs, 0, +1);
 
-  /* Walking off the side of a paged screen is upstream's horizontal swipe; on the
-   * MAIN screen an overrun is the vertical swipe (card / clock).
+  /* Walking off the side of a paged grid turns the page (the Pokedex). Everything
+   * else clamps: focus_step() now keeps the index where it was, and on the main
+   * screen the vertical axis is a shortcut rather than an overrun.
    *
-   * A modal list clamps instead. Every set used to be FOCUS_KIND_LIST, so one
-   * extra press of RIGHT in the feed menu fired the vertical swipe and dropped the
-   * player onto another screen mid-choice -- and the egg, with a single item, did
-   * it on the first press in either direction. focus_step() already leaves the
-   * index where it was; ignoring the overrun here is what makes that a clamp. */
+   * ±2 is the main screen's vertical axis: UP is the status card, DOWN is the
+   * Pokedex. Both used to be reachable only as a synthesised swipe -- DOWN was the
+   * settings screen and the Pokedex was "run off the end of the row" -- which is
+   * the arrangement that made overshooting a button eject the player. */
   if (overflow) {
     if (fs->cols) {
       onSwipe(overflow > 0 ? -1 : +1);
       g_in.focus = 0;
     } else if (fs->kind == FOCUS_KIND_LIST) {
-      /* ±2 came from the vertical axis (card / clock); ±1 is running off the end
-       * of the row, which upstream treats as the horizontal swipe: the gallery. */
-      if (overflow == +2 || overflow == -2) onSwipeV(overflow > 0 ? +1 : -1);
-      else onSwipe(overflow > 0 ? +1 : -1);
+      if (overflow == -2) tamapoke_open_card();
+      else if (overflow == +2) tamapoke_open_gallery();
     }
   }
 

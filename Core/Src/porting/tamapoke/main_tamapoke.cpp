@@ -111,6 +111,28 @@ static bool tamapoke_load_state(const char *path) {
   return true;  /* prefs are loaded at startup; there is nothing else to restore */
 }
 
+/* Autosave, and the reason it was not one.
+ *
+ * The pet is not a game with a save file the player manages -- it is a clock that
+ * keeps running, so it has to persist by itself. It writes constantly and the card
+ * must not be touched mid-play (that is how the FAT gets corrupted), so the port
+ * keeps the blob in RAM and commits at safe points. It committed at exactly two:
+ * the pause menu's Save row, and the idle timeout on the way to sleep.
+ *
+ * Every other way out of the app lost everything since the last commit --
+ * quitting to the launcher from the menu, holding POWER, the low-battery
+ * auto-off. The launcher already asks each core at all three:
+ *
+ *   odroid_system_switch_app()   -> sram_save   (before it unmounts the card)
+ *   any sleep or standby entry   -> sram_save
+ *   power-off / standby          -> shutdown
+ *
+ * and TamaPoke passed NULL for both hooks, so nobody was asked. The functions were
+ * fine; nothing called them. Committing twice is free -- the store keeps a dirty
+ * flag and a clean commit is a no-op. */
+static void tamapoke_sram_save(void) { tamapoke_prefs_commit(); }
+static void tamapoke_shutdown(void) { tamapoke_prefs_commit(); }
+
 extern "C" void app_main_tamapoke(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
   (void)load_state;
   (void)save_slot;
@@ -129,7 +151,8 @@ extern "C" void app_main_tamapoke(uint8_t load_state, uint8_t start_paused, int8
   odroid_system_init(APPID_HOMEBREW, TAMAPOKE_SAMPLE_RATE);
   /* Register the state hooks before the menu can be opened, or its Save rows
    * are decoration. */
-  odroid_system_emu_init(&tamapoke_load_state, &tamapoke_save_state, NULL, NULL, NULL, NULL, NULL);
+  odroid_system_emu_init(&tamapoke_load_state, &tamapoke_save_state, NULL,
+                         &tamapoke_shutdown, NULL, &tamapoke_sram_save, NULL);
 
   tamapoke_shim_init();
   audioBegin();

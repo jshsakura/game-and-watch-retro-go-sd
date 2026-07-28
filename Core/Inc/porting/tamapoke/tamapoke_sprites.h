@@ -65,13 +65,31 @@ struct PmdMon {
  * panel, which takes it from 169 KB to 54 KB. */
 #define THUMBS_MAX (56 * 1024)
 
+/* One entry inside thumbs.bin, decoded. The layout is upstream's and was read
+ * back out of the shipped file rather than assumed:
+ *
+ *   u8 w, u8 h, u8 palCount, u16 pal[palCount] (RGB565, little endian),
+ *   u8 px[w*h]                                 (palette index, 0xFF = clear)
+ *
+ * Sizes vary per species (14x24 .. 17x24 measured), which is why the reader has
+ * to parse the header instead of assuming a fixed cell -- the code that did
+ * assume one drew the header as pixels and ran off the end of every record. */
+struct SdThumb {
+  uint8_t w = 0, h = 0, palCount = 0;
+  const uint8_t *pal = nullptr;   /* palCount entries, 2 bytes each, unaligned */
+  const uint8_t *px = nullptr;    /* w*h indices */
+};
+
 struct SdThumbs {
   bool loaded = false;
   uint8_t *data = nullptr;
+  uint32_t size = 0;
   uint16_t count = 0;
 
   bool load();
-  const uint8_t *get(int16_t dex) const;
+  /* Decodes and bounds-checks one entry. False means "do not draw this" --
+   * a truncated or corrupt file must not hand the renderer a short record. */
+  bool get(int16_t dex, SdThumb *out) const;
 };
 
 extern SdThumbs thumbs;

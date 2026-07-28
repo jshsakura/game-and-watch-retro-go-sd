@@ -37,6 +37,27 @@ class Gfx {
 
   void fillScreen(uint16_t color);
   void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
+
+  /* Alpha-blend a filled rect over whatever is already on the canvas.
+   *
+   * Not an Arduino_GFX method: upstream gets its frosted panels from
+   * Arduino_Canvas' 32-bit blending, and the one thing the port cannot do is
+   * ask for a colour that "lets the scene through". So the blend is done here,
+   * over the pixels the scene just wrote. alpha is 0 (invisible) to 255
+   * (opaque).
+   *
+   * The caller must repaint what is underneath every frame. Blending is
+   * read-modify-write, so a band that keeps last frame's pixels converges to
+   * `color` over a few seconds instead of staying translucent. */
+  void blendRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color, uint8_t alpha);
+
+  /* Same, with rounded corners -- the shape a floating card actually is. The
+   * square version blended under a rounded outline leaves the corners sticking
+   * out past the border, which is what every frosted dialog looked like the first
+   * time round. Shares one span walk with fillRoundRect so the two cannot end up
+   * different shapes. */
+  void blendRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r,
+                      uint16_t color, uint8_t alpha);
   void fillRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint16_t color);
   void drawRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint16_t color);
   void fillCircle(int16_t x, int16_t y, int16_t r, uint16_t color);
