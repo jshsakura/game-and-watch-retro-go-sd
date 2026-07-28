@@ -87,3 +87,18 @@ security:
   label: security
   permalink: /security
   description: Adversarial review, buffer-hardening, and exploit-surface work
+
+homebrew:
+  label: homebrew
+  permalink: /homebrew
+  description: Homebrew ports (TamaPoke, Celeste, Zelda 3, SMW)
+
+testing:
+  label: testing
+  permalink: /testing
+  description: Harnesses, gates, and the tests that had to be fixed themselves
+
+upstream:
+  label: upstream
+  permalink: /upstream
+  description: Merging with sylverb's upstream, and what could not be taken
