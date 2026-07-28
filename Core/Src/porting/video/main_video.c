@@ -238,6 +238,25 @@ void app_main_video(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     (void)load_state; (void)start_paused; (void)save_slot;
     odroid_system_init(APPID_HOMEBREW, 48000);
 
+    /* Level 2 (340 MHz, the top of the launcher's own scale).
+     *
+     * This app never asked for the clock, which is odd once you list what it does
+     * per frame: a blocking SD read through the SPI driver's byte loop, an MJPEG
+     * decode, an MP3 decode, a resample, and a full-screen blit -- all inside
+     * 1/fps. GBA, SNES, Virtual Boy and WonderSwan all boost; the one app that is
+     * purely read-and-decode bound ran at the stock 280 MHz.
+     *
+     * It is worth more here than the raw +21% suggests, because the SD read is a
+     * CPU-driven SPI loop: the clock speeds up the bytes, not just the maths.
+     *
+     * Level 2 and not the core-private 3 (353 MHz): a clip is sustained load for
+     * ten minutes, and 353 is exactly what proved unstable under sustained load
+     * elsewhere (main.c). common_emu_auto_oc() is a floor, not a setting -- it
+     * skips the boost entirely on SDCARD_HW_OSPI1 hardware, which crashes when
+     * overclocked, and a user who chose more keeps it. Not persisted: leaving the
+     * app restores the configured clock. */
+    common_emu_auto_oc(2);
+
     strcpy(cur_path, VIDEO_ROOT);
     scan();
 

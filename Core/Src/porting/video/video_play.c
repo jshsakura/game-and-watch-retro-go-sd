@@ -73,6 +73,12 @@ static void feed_audio(avi_t *a, long sz)
 #define PF_STEP           (4 * 1024)  // bytes per wait-loop tick
 #define PF_AUDIO_HEADROOM 2400        // ring samples that must stay free to demux on
 
+/* Frames the clip contains that do not fit a slot -- silently undrawable, and
+ * indistinguishable from SD or decode judder on screen. `big=` counts them and
+ * `max=` is the largest frame seen, so a clip running close to the ceiling shows
+ * up BEFORE it starts crossing it. Reset per clip. */
+static long g_vid_toobig = 0, g_vid_szmax = 0;
+
 typedef struct { long sz; int slot; } pf_ent_t;   // slot < 0: unreadable/oversized frame
 
 static pf_ent_t pf_q[PF_DEPTH];
@@ -151,7 +157,20 @@ static bool pf_step(avi_t *a, int spd, bool paused, int *na_seen, bool force)
     }
     // video frame: unreadable sizes pass through as failure markers (the
     // demuxer skips the unread payload by itself on the next avi_next)
-    if (sz < 2 || sz > VIDEO_FRAME_MAX) { pf_enqueue(sz, -1); return true; }
+    /* A frame larger than a slot cannot be read at all, so it is enqueued as a
+     * failure marker and never drawn. That is the right behaviour and it was
+     * completely silent: at a high encoder quality a busy scene can cross the
+     * slot size, and every one of those frames is a dropped frame that looks
+     * exactly like judder from SD or decode. Count them, and remember the
+     * biggest frame the clip actually contains, so the HUD can say which of the
+     * three it is -- and so the slot size is chosen from a measurement instead
+     * of from the number that happened to be there. */
+    if (sz > g_vid_szmax) g_vid_szmax = sz;
+    if (sz < 2 || sz > VIDEO_FRAME_MAX) {
+        if (sz > VIDEO_FRAME_MAX) g_vid_toobig++;
+        pf_enqueue(sz, -1);
+        return true;
+    }
 
     int slot = pf_slot_alloc();
     if (slot < 0) return false;                  // shouldn't happen with pf_n < depth
@@ -385,8 +404,9 @@ static void draw_hud(int dec_ok, int seen, int na)
     // (~1200) for the whole clip. Climbing to 4095 is the drift that used to
     // close the prefetch gate and turn playback to stutter; falling to 0 is an
     // underrun. Either end means the trim is not holding.
-    snprintf(l2, sizeof l2, "sz=%ld dmx=%d sd=%s %dx%d ring=%d",
-             g_vdec_sz, g_vid_dmax, sd, g_vdec_w, g_vdec_h, video_audio_ring_count());
+    snprintf(l2, sizeof l2, "sz=%ld/%ldk big=%ld dmx=%d sd=%s ring=%d",
+             g_vdec_sz, g_vid_szmax / 1024, g_vid_toobig, g_vid_dmax, sd,
+             video_audio_ring_count());
     uint16_t *fb = lcd_get_active_buffer();
     uint16_t accent = curr_colors->sel_c;
     for (int y = 0; y < 26; y++) {                       // translucent panel (video shows through)
@@ -411,6 +431,7 @@ vid_result_t video_play(const char *path)
         return VID_UNPLAYABLE;
     }
     int nv_seen = 0, na_seen = 0;
+    g_vid_toobig = 0; g_vid_szmax = 0;   /* per clip, not per session */
     s_diag[0] = '\0';                   // fresh diag for this clip
 
     video_decode_init();                // power up the hardware JPEG codec
