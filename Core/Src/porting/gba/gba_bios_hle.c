@@ -17,6 +17,9 @@
 extern unsigned char *memory_map_read[8 * 1024];
 extern unsigned char  ws_cyc_nseq[16][2];
 extern unsigned char  ws_cyc_seq[16][2];
+extern unsigned int   gamepak_size;
+extern unsigned int   backup_type;
+extern unsigned char *load_gamepak_page(unsigned int physical_index);
 extern unsigned int   read_memory8(unsigned int address);
 extern unsigned int   read_memory16(unsigned int address);
 extern unsigned int   read_memory32(unsigned int address);
@@ -41,6 +44,15 @@ static int src_ok(uint32_t source, uint32_t bytes)
     return 1;
 }
 
+/* The guard every length-carrying SWI applies, and the mask is the point: the
+ * BIOS checks the source against the byte count masked to 21 bits, not against
+ * the 24-bit length its header carries. (No-op for BitUnpack, whose length is a
+ * halfword, but it is the same check and it reads as one.) */
+static int src_ok_len(uint32_t source, uint32_t bytes)
+{
+    return src_ok(source, bytes & 0x1FFFFFu);
+}
+
 static int iabs32(int32_t x) { return x < 0 ? -x : x; }
 
 static int cost_rw32(uint32_t addr, int seq)
@@ -55,52 +67,111 @@ static int cost_rw16(uint32_t addr, int seq)
     return seq ? ws_cyc_seq[r][0] : ws_cyc_nseq[r][0];
 }
 
-/* Host pointer into EWRAM/IWRAM only — anywhere else has side effects and must
- * go through write_memory*. `nbytes` must fit the current 32 KB gpSP page. */
-static uint8_t *map_ram(uint32_t addr, uint32_t nbytes)
+/* gba_memory.h's BACKUP_EEPROM, spelled out for the same reason as everything
+ * else here: including that header pulls in the CMSIS collision. */
+#define GBA_BACKUP_EEPROM 2
+
+/* Host pointer for a span that a plain load/store can serve, or NULL.
+ *
+ * EWRAM, IWRAM and VRAM qualify. There is no dynarec in this build, so a RAM
+ * write has no SMC tag to update, and write_vram16/32 are plain stores whose
+ * 0x18000 mirror fold is already baked into memory_map_read. Palette RAM keeps
+ * a second, colour-converted copy and OAM sets reg[OAM_UPDATED], so those two
+ * have to keep going through write_memory*.
+ *
+ * ROM qualifies for reads, through the same page the core itself would have
+ * used — including the page-0 shadow an RTC cart writes its GPIO registers
+ * into. Two ROM spans do not: one that runs past the end of the cart reads open
+ * bus, which is not memory at all, and 0x0D is the EEPROM's serial port on a
+ * cart that has one, where a read clocks the protocol.
+ *
+ * `nbytes` must fit the 32 KB gpSP page `addr` lands in; callers clamp to it.
+ */
+static uint8_t *map_direct(uint32_t addr, uint32_t nbytes, int for_write)
 {
     unsigned r = addr >> 24;
     unsigned char *page;
-    uint32_t off;
 
-    if (r != 2u && r != 3u)
+    if (r >= 8u && r <= 0xDu) {
+        if (for_write)
+            return 0;
+        if (r == 0xDu && backup_type == GBA_BACKUP_EEPROM)
+            return 0;
+        if ((addr & 0x1FFFFFFu) + nbytes > gamepak_size)
+            return 0;
+        page = memory_map_read[addr >> 15];
+        if (!page)
+            page = load_gamepak_page((addr >> 15) & 0x3FFu);
+    } else if (r == 2u || r == 3u || r == 6u) {
+        page = memory_map_read[addr >> 15];
+    } else {
         return 0;
-    page = memory_map_read[addr >> 15];
+    }
+
     if (!page)
         return 0;
-    off = addr & 0x7FFFu;
-    if (off + nbytes > 0x8000u)
+    if ((addr & 0x7FFFu) + nbytes > 0x8000u)
         return 0;
-    return page + off;
+    return page + (addr & 0x7FFFu);
 }
 
-/* Bulk copy/fill in EWRAM/IWRAM via memcpy. Returns 0 if any byte falls outside
- * plain RAM (caller falls back to the word-at-a-time path). */
-static int ram_copy32(uint32_t src, uint32_t dst, int words, int fill, uint32_t fillv)
+/* Bulk 32-bit copy/fill straight into host memory. Returns 0 if any part of the
+ * transfer still needs write_memory*, and the caller then runs its word-at-a-time
+ * loop over the whole thing from the start.
+ *
+ * Bailing after some chunks are already done is wasted work, never a wrong
+ * result: both this and the loop it falls back to move strictly forward and
+ * write the same bytes, so a word the loop re-reads out of an already-copied
+ * range holds exactly what the BIOS would have found there at that point. */
+static int copy32_direct(uint32_t src, uint32_t dst, int words, int fill, uint32_t fillv)
 {
     while (words > 0) {
-        uint32_t span_s = 0x8000u - (src & 0x7FFFu);
-        uint32_t span_d = 0x8000u - (dst & 0x7FFFu);
-        uint32_t span = span_s < span_d ? span_s : span_d;
-        int nwords = (int)(span / 4u);
+        uint32_t span = 0x8000u - (dst & 0x7FFFu);
+        int nwords;
         uint8_t *d;
+
+        /* A fill never reads past the one word it was given, so only a copy
+         * has to stop at the source's page edge too. */
+        if (!fill) {
+            uint32_t span_s = 0x8000u - (src & 0x7FFFu);
+            if (span_s < span)
+                span = span_s;
+        }
+        nwords = (int)(span >> 2);
         if (nwords > words)
             nwords = words;
         if (nwords <= 0)
             return 0;
-        d = map_ram(dst, (uint32_t)nwords * 4u);
+
+        d = map_direct(dst, (uint32_t)nwords * 4u, 1);
         if (!d)
             return 0;
+
         if (fill) {
-            uint32_t *p = (uint32_t *)(void *)d;
-            int i;
-            for (i = 0; i < nwords; i++)
-                p[i] = fillv;
+            uint8_t b = (uint8_t)fillv;
+            if (fillv == (uint32_t)b * 0x01010101u) {
+                memset(d, b, (size_t)nwords * 4u);
+            } else {
+                uint32_t *p = (uint32_t *)(void *)d;
+                int i;
+                for (i = 0; i < nwords; i++)
+                    p[i] = fillv;
+            }
         } else {
-            uint8_t *s = map_ram(src, (uint32_t)nwords * 4u);
+            uint8_t *s = map_direct(src, (uint32_t)nwords * 4u, 0);
+            size_t n = (size_t)nwords * 4u;
             if (!s)
                 return 0;
-            memcpy(d, s, (size_t)nwords * 4u);
+            /* The BIOS copies forward, one word at a time. If the two ends are
+             * the same host bytes — an IWRAM mirror copied onto itself — that
+             * writes every word with its own value and changes nothing. If they
+             * merely overlap, the forward copy propagates and memcpy does not:
+             * that case belongs to the caller's loop. */
+            if (s != d) {
+                if (d < s + n && s < d + n)
+                    return 0;
+                memcpy(d, s, n);
+            }
             src += (uint32_t)nwords * 4u;
         }
         dst += (uint32_t)nwords * 4u;
@@ -109,9 +180,126 @@ static int ram_copy32(uint32_t src, uint32_t dst, int words, int fill, uint32_t 
     return 1;
 }
 
+/* A one-page window onto guest memory, for the decompressors.
+ *
+ * They touch memory a byte at a time, and every one of those bytes was a call
+ * into read_memory8/write_memory8 and a switch on the region. This holds the
+ * host pointer for the 32 KB page of the last access instead, so the common case
+ * is a compare and a load. It is a POINTER, never a copy: a read still observes
+ * whatever is in memory right now, which is what keeps a destination that
+ * overlaps its own source behaving the way the BIOS does.
+ *
+ * The window is page-ALIGNED, not access-aligned, because Huffman alternates
+ * between its tree and its bitstream — two addresses in the same page that would
+ * otherwise evict each other on every symbol.
+ *
+ * Anything the pointer cannot serve (palette, OAM, I/O, past the cart) falls
+ * through to the accessor that can. */
+typedef struct {
+    uint32_t base;      /* guest address of the page held, or 0 with len == 0 */
+    uint32_t len;       /* bytes valid from base */
+    uint8_t *host;
+    int      w8_ok;     /* an 8-bit store may go straight in (plain RAM only —
+                         * VRAM turns one into a duplicated halfword) */
+} gmap_t;
+
+static void gmap_init(gmap_t *m)
+{
+    m->base = 0; m->len = 0; m->host = 0; m->w8_ok = 0;
+}
+
+static uint8_t *gmap_span(gmap_t *m, uint32_t addr, uint32_t n, int for_write)
+{
+    uint32_t off = addr - m->base;
+    uint32_t page, want;
+    unsigned r;
+    uint8_t *p;
+
+    if (off < m->len && (m->len - off) >= n)
+        return m->host + off;
+
+    m->len = 0;
+    page = addr & ~0x7FFFu;
+    want = 0x8000u;
+    r = addr >> 24;
+    if (r >= 8u && r <= 0xDu) {
+        uint32_t o = page & 0x1FFFFFFu;
+        uint32_t left = o < gamepak_size ? gamepak_size - o : 0;
+        if (left < want)
+            want = left;
+    }
+    off = addr - page;
+    if (want < off + n)
+        return 0;
+    p = map_direct(page, want, for_write);
+    if (!p)
+        return 0;
+    m->base = page;
+    m->len = want;
+    m->host = p;
+    m->w8_ok = (r == 2u || r == 3u);
+    return p + off;
+}
+
+/* The 16- and 32-bit forms decline an unaligned address rather than reproduce
+ * what gpSP does with one, and memcpy rather than a cast keeps them honest about
+ * the alignment of the host pointer. */
+static uint32_t gm_r8(gmap_t *m, uint32_t a)
+{
+    uint8_t *p = gmap_span(m, a, 1, 0);
+    return p ? *p : R8(a);
+}
+
+static uint32_t gm_r16(gmap_t *m, uint32_t a)
+{
+    uint8_t *p = (a & 1u) ? 0 : gmap_span(m, a, 2, 0);
+    uint16_t v;
+    if (!p)
+        return R16(a);
+    memcpy(&v, p, 2);
+    return v;
+}
+
+static uint32_t gm_r32(gmap_t *m, uint32_t a)
+{
+    uint8_t *p = (a & 3u) ? 0 : gmap_span(m, a, 4, 0);
+    uint32_t v;
+    if (!p)
+        return R32(a);
+    memcpy(&v, p, 4);
+    return v;
+}
+
+static void gm_w8(gmap_t *m, uint32_t a, uint8_t v)
+{
+    uint8_t *p = gmap_span(m, a, 1, 1);
+    if (p && m->w8_ok)
+        *p = v;
+    else
+        W8(a, v);
+}
+
+static void gm_w16(gmap_t *m, uint32_t a, uint16_t v)
+{
+    uint8_t *p = (a & 1u) ? 0 : gmap_span(m, a, 2, 1);
+    if (p)
+        memcpy(p, &v, 2);
+    else
+        W16(a, v);
+}
+
+static void gm_w32(gmap_t *m, uint32_t a, uint32_t v)
+{
+    uint8_t *p = (a & 3u) ? 0 : gmap_span(m, a, 4, 1);
+    if (p)
+        memcpy(p, &v, 4);
+    else
+        W32(a, v);
+}
+
 /* ---------------------------------------------------------------- math ---- */
 
-static void hle_div(unsigned *regs, int arm_order, int *cycles)
+static int hle_div(unsigned *regs, int arm_order, int *cycles)
 {
     int32_t num, den;
     if (arm_order) {
@@ -122,7 +310,12 @@ static void hle_div(unsigned *regs, int arm_order, int *cycles)
         den = (int32_t)regs[1];
     }
     if (den == 0)
-        return; /* decline — real BIOS hangs */
+        return 0; /* decline — real BIOS hangs */
+    /* INT32_MIN / -1 has no 32-bit answer: on the host it is undefined, and
+     * whatever it produced would not be what the BIOS's software divide does.
+     * Decline and let the BIOS answer for itself. */
+    if (den == -1 && num == INT32_MIN)
+        return 0;
 
     int32_t quot = num / den;
     int32_t rem  = num % den;
@@ -130,6 +323,7 @@ static void hle_div(unsigned *regs, int arm_order, int *cycles)
     regs[1] = (unsigned)rem;
     regs[3] = (unsigned)(quot < 0 ? -quot : quot);
     *cycles = arm_order ? 103 : 100;
+    return 1;
 }
 
 static void hle_sqrt(unsigned *regs, int *cycles)
@@ -264,11 +458,13 @@ static int hle_cpu_set(unsigned *regs, int *cycles)
     if (word32) {
         source &= ~3u;
         dest &= ~3u;
-        /* Fast path: both ends in EWRAM/IWRAM — one memcpy, same cycle bill. */
+        /* Fast path: block move where both ends are plain memory (see
+         * map_direct), word loop where they are not. Same cycle bill either
+         * way — the guest is charged for the transfer, not for how we ran it. */
         if (fill) {
             uint32_t value = source > 0x0EFFFFFFu ? 0x1CAD1CADu : R32(source);
             cost += cost_rw32(source, 0) + count * (1 + cost_rw32(dest, 1));
-            if (ram_copy32(source, dest, count, 1, value)) {
+            if (copy32_direct(source, dest, count, 1, value)) {
                 *cycles = cost;
                 return 1;
             }
@@ -278,7 +474,7 @@ static int hle_cpu_set(unsigned *regs, int *cycles)
             }
         } else {
             cost += count * (cost_rw32(source, 1) + cost_rw32(dest, 1));
-            if (ram_copy32(source, dest, count, 0, 0)) {
+            if (copy32_direct(source, dest, count, 0, 0)) {
                 *cycles = cost;
                 return 1;
             }
@@ -290,19 +486,21 @@ static int hle_cpu_set(unsigned *regs, int *cycles)
             }
         }
     } else {
+        /* The per-element cost is hoisted out of these loops: the region bits it
+         * reads cannot change under a transfer this size, and the bill is
+         * approximate by design (see the note at the top of this file). */
         if (fill) {
             uint16_t value = source > 0x0EFFFFFFu ? 0x1CADu : R16(source);
-            cost += cost_rw16(source, 0);
+            cost += cost_rw16(source, 0) + count * (1 + cost_rw16(dest, 1));
             while (count--) {
                 W16(dest, value);
-                cost += 1 + cost_rw16(dest, 1);
                 dest += 2;
             }
         } else {
+            cost += count * (cost_rw16(source, 1) + cost_rw16(dest, 1));
             while (count--) {
                 uint16_t v = source > 0x0EFFFFFFu ? 0x1CADu : R16(source);
                 W16(dest, v);
-                cost += cost_rw16(source, 1) + cost_rw16(dest, 1);
                 source += 2;
                 dest += 2;
             }
@@ -325,10 +523,17 @@ static int hle_cpu_fast_set(unsigned *regs, int *cycles)
     if (!src_ok(regs[0], (uint32_t)(((cnt << 11) >> 9) & 0x1fffffu)))
         return 0;
 
+    /* CpuFastSet moves 32 bytes at a time and nothing smaller: a count that is
+     * not a multiple of 8 words is rounded UP, and the last block is written in
+     * full. The word loop below already does that by construction (it steps 8
+     * and tests > 0), so rounding here is what keeps the block copy below
+     * transferring the same amount as the loop it stands in for. */
+    count = (count + 7) & ~7;
+
     if (fill) {
         uint32_t value = source > 0x0EFFFFFFu ? 0xBAFFFFFBu : R32(source);
         cost += cost_rw32(source, 0) + count * (1 + cost_rw32(dest, 1));
-        if (ram_copy32(source, dest, count, 1, value)) {
+        if (copy32_direct(source, dest, count, 1, value)) {
             *cycles = cost;
             return 1;
         }
@@ -341,7 +546,7 @@ static int hle_cpu_fast_set(unsigned *regs, int *cycles)
         }
     } else {
         cost += count * (cost_rw32(source, 1) + cost_rw32(dest, 1));
-        if (ram_copy32(source, dest, count, 0, 0)) {
+        if (copy32_direct(source, dest, count, 0, 0)) {
             *cycles = cost;
             return 1;
         }
@@ -426,30 +631,35 @@ static int hle_lz77_wram(unsigned *regs, int *cycles)
     uint32_t header = R32(source);
     int len = (int)(header >> 8);
     int cost = 32;
+    gmap_t ms, md, mw;
 
     source += 4;
-    if (!src_ok(source, (uint32_t)len))
+    if (!src_ok_len(source, (uint32_t)len))
         return 0;
 
+    gmap_init(&ms); gmap_init(&md); gmap_init(&mw);
+
     while (len > 0) {
-        uint8_t d = R8(source++);
+        uint8_t d = (uint8_t)gm_r8(&ms, source++);
         cost += 2;
         for (int i = 0; i < 8; i++) {
             if (d & 0x80) {
-                uint16_t data = (uint16_t)(R8(source) << 8);
+                uint16_t data = (uint16_t)(gm_r8(&ms, source) << 8);
                 source++;
-                data |= R8(source);
+                data |= gm_r8(&ms, source);
                 source++;
                 int length = (data >> 12) + 3;
                 int offset = data & 0x0FFF;
                 uint32_t window = dest - offset - 1;
                 for (int j = 0; j < length; j++) {
-                    W8(dest++, R8(window++));
+                    uint8_t v = (uint8_t)gm_r8(&mw, window++);
+                    gm_w8(&md, dest++, v);
                     cost += 3;
                     if (--len == 0) { *cycles = cost; return 1; }
                 }
             } else {
-                W8(dest++, R8(source++));
+                uint8_t v = (uint8_t)gm_r8(&ms, source++);
+                gm_w8(&md, dest++, v);
                 cost += 2;
                 if (--len == 0) { *cycles = cost; return 1; }
             }
@@ -468,29 +678,35 @@ static int hle_lz77_vram(unsigned *regs, int *cycles)
     int byteCount = 0, byteShift = 0;
     uint32_t writeValue = 0;
     int cost = 32;
+    gmap_t ms, md, mw;
 
     source += 4;
-    if (!src_ok(source, (uint32_t)len))
+    if (!src_ok_len(source, (uint32_t)len))
         return 0;
 
+    gmap_init(&ms); gmap_init(&md); gmap_init(&mw);
+
     while (len > 0) {
-        uint8_t d = R8(source++);
+        uint8_t d = (uint8_t)gm_r8(&ms, source++);
         cost += 2;
         for (int i = 0; i < 8; i++) {
             if (d & 0x80) {
-                uint16_t data = (uint16_t)(R8(source) << 8);
+                uint16_t data = (uint16_t)(gm_r8(&ms, source) << 8);
                 source++;
-                data |= R8(source);
+                data |= gm_r8(&ms, source);
                 source++;
                 int length = (data >> 12) + 3;
                 int offset = data & 0x0FFF;
                 uint32_t window = dest + byteCount - offset - 1;
                 for (int j = 0; j < length; j++) {
-                    writeValue |= (R8(window++) << byteShift);
+                    /* The window reads MEMORY, so the byte still sitting in
+                     * writeValue is not visible to it. That is the BIOS's
+                     * behaviour and games depend on it. */
+                    writeValue |= (gm_r8(&mw, window++) << byteShift);
                     byteShift += 8;
                     byteCount++;
                     if (byteCount == 2) {
-                        W16(dest, (uint16_t)writeValue);
+                        gm_w16(&md, dest, (uint16_t)writeValue);
                         dest += 2;
                         byteCount = byteShift = 0;
                         writeValue = 0;
@@ -499,11 +715,11 @@ static int hle_lz77_vram(unsigned *regs, int *cycles)
                     if (--len == 0) { *cycles = cost; return 1; }
                 }
             } else {
-                writeValue |= (R8(source++) << byteShift);
+                writeValue |= (gm_r8(&ms, source++) << byteShift);
                 byteShift += 8;
                 byteCount++;
                 if (byteCount == 2) {
-                    W16(dest, (uint16_t)writeValue);
+                    gm_w16(&md, dest, (uint16_t)writeValue);
                     dest += 2;
                     byteCount = byteShift = 0;
                     writeValue = 0;
@@ -524,26 +740,30 @@ static int hle_rl_wram(unsigned *regs, int *cycles)
     uint32_t header = R32(source);
     int len = (int)(header >> 8);
     int cost = 24;
+    gmap_t ms, md;
 
     source += 4;
-    if (!src_ok(source, (uint32_t)len))
+    if (!src_ok_len(source, (uint32_t)len))
         return 0;
 
+    gmap_init(&ms); gmap_init(&md);
+
     while (len > 0) {
-        uint8_t d = R8(source++);
+        uint8_t d = (uint8_t)gm_r8(&ms, source++);
         int l = d & 0x7F;
         if (d & 0x80) {
-            uint8_t data = R8(source++);
+            uint8_t data = (uint8_t)gm_r8(&ms, source++);
             l += 3;
             for (int i = 0; i < l; i++) {
-                W8(dest++, data);
+                gm_w8(&md, dest++, data);
                 cost += 2;
                 if (--len == 0) { *cycles = cost; return 1; }
             }
         } else {
             l++;
             for (int i = 0; i < l; i++) {
-                W8(dest++, R8(source++));
+                uint8_t v = (uint8_t)gm_r8(&ms, source++);
+                gm_w8(&md, dest++, v);
                 cost += 2;
                 if (--len == 0) { *cycles = cost; return 1; }
             }
@@ -555,29 +775,35 @@ static int hle_rl_wram(unsigned *regs, int *cycles)
 
 static int hle_rl_vram(unsigned *regs, int *cycles)
 {
-    uint32_t source = regs[0] & ~3u, dest = regs[1];
-    uint32_t header = R32(source);
+    uint32_t source = regs[0], dest = regs[1];
+    /* Alone among these, RLUnCompVram aligns the address it reads the HEADER
+     * from and then steps four bytes on from the address it was GIVEN. With an
+     * unaligned source the two disagree, and the stream starts elsewhere. */
+    uint32_t header = R32(source & ~3u);
     int len = (int)(header >> 8);
     int byteCount = 0, byteShift = 0;
     uint32_t writeValue = 0;
     int cost = 24;
+    gmap_t ms, md;
 
     source += 4;
-    if (!src_ok(source, (uint32_t)len))
+    if (!src_ok_len(source, (uint32_t)len))
         return 0;
 
+    gmap_init(&ms); gmap_init(&md);
+
     while (len > 0) {
-        uint8_t d = R8(source++);
+        uint8_t d = (uint8_t)gm_r8(&ms, source++);
         int l = d & 0x7F;
         if (d & 0x80) {
-            uint8_t data = R8(source++);
+            uint8_t data = (uint8_t)gm_r8(&ms, source++);
             l += 3;
             for (int i = 0; i < l; i++) {
                 writeValue |= (data << byteShift);
                 byteShift += 8;
                 byteCount++;
                 if (byteCount == 2) {
-                    W16(dest, (uint16_t)writeValue);
+                    gm_w16(&md, dest, (uint16_t)writeValue);
                     dest += 2;
                     byteCount = byteShift = 0;
                     writeValue = 0;
@@ -588,11 +814,11 @@ static int hle_rl_vram(unsigned *regs, int *cycles)
         } else {
             l++;
             for (int i = 0; i < l; i++) {
-                writeValue |= (R8(source++) << byteShift);
+                writeValue |= (gm_r8(&ms, source++) << byteShift);
                 byteShift += 8;
                 byteCount++;
                 if (byteCount == 2) {
-                    W16(dest, (uint16_t)writeValue);
+                    gm_w16(&md, dest, (uint16_t)writeValue);
                     dest += 2;
                     byteCount = byteShift = 0;
                     writeValue = 0;
@@ -620,20 +846,31 @@ static int hle_huff(unsigned *regs, int *cycles)
     int writeData;
     int byteShift, byteCount;
     uint32_t writeValue;
+    /* A tree whose nodes never flag a leaf makes the decoder walk without ever
+     * consuming `len`. The BIOS spins forever on that, which a game can survive
+     * — the frame loop keeps running around it — but spinning HERE takes the
+     * firmware down with it, so give up instead. A legal tree is at most 32 deep
+     * and every symbol costs at least one step, so this cannot fire on data the
+     * BIOS would have decoded. */
+    uint32_t steps = 0, step_cap;
+    gmap_t ms, md;
 
     source += 4;
-    if (!src_ok(source, (uint32_t)len))
+    if (!src_ok_len(source, (uint32_t)len))
         return 0;
 
-    treeSize = R8(source++);
+    gmap_init(&ms); gmap_init(&md);
+
+    step_cap = (uint32_t)(len & 0xFFFFFF) * 64u + 4096u;
+    treeSize = (uint8_t)gm_r8(&ms, source++);
     treeStart = source;
     source += ((treeSize + 1u) << 1) - 1u;
 
     mask = 0x80000000u;
-    data = R32(source);
+    data = gm_r32(&ms, source);
     source += 4;
     pos = 0;
-    rootNode = R8(treeStart);
+    rootNode = (uint8_t)gm_r8(&ms, treeStart);
     currentNode = rootNode;
     writeData = 0;
     byteShift = byteCount = 0;
@@ -641,15 +878,16 @@ static int hle_huff(unsigned *regs, int *cycles)
 
     if ((header & 0x0F) == 8) {
         while (len > 0) {
+            if (++steps > step_cap) break;
             if (pos == 0) pos++;
             else pos += (((currentNode & 0x3F) + 1) << 1);
 
             if (data & mask) {
                 if (currentNode & 0x40) writeData = 1;
-                currentNode = R8(treeStart + pos + 1);
+                currentNode = (uint8_t)gm_r8(&ms, treeStart + pos + 1);
             } else {
                 if (currentNode & 0x80) writeData = 1;
-                currentNode = R8(treeStart + pos);
+                currentNode = (uint8_t)gm_r8(&ms, treeStart + pos);
             }
             if (writeData) {
                 writeValue |= ((uint32_t)currentNode << byteShift);
@@ -659,7 +897,7 @@ static int hle_huff(unsigned *regs, int *cycles)
                 currentNode = rootNode;
                 writeData = 0;
                 if (byteCount == 4) {
-                    W32(dest, writeValue);
+                    gm_w32(&md, dest, writeValue);
                     dest += 4;
                     len -= 4;
                     writeValue = 0;
@@ -670,43 +908,57 @@ static int hle_huff(unsigned *regs, int *cycles)
             mask >>= 1;
             if (mask == 0) {
                 mask = 0x80000000u;
-                data = R32(source);
+                data = gm_r32(&ms, source);
                 source += 4;
                 cost += 2;
             }
         }
     } else {
+        /* 4-bit data: a leaf is a NIBBLE, not a byte. Two of them make a byte,
+         * four bytes make the word that goes out — the output is still written
+         * 32 bits at a time and `len` still counts down in fours. */
+        int halfLen = 0, value = 0;
         while (len > 0) {
+            if (++steps > step_cap) break;
             if (pos == 0) pos++;
             else pos += (((currentNode & 0x3F) + 1) << 1);
 
             if (data & mask) {
                 if (currentNode & 0x40) writeData = 1;
-                currentNode = R8(treeStart + pos + 1);
+                currentNode = (uint8_t)gm_r8(&ms, treeStart + pos + 1);
             } else {
                 if (currentNode & 0x80) writeData = 1;
-                currentNode = R8(treeStart + pos);
+                currentNode = (uint8_t)gm_r8(&ms, treeStart + pos);
             }
             if (writeData) {
-                writeValue |= ((uint32_t)currentNode << byteShift);
-                byteCount++;
-                byteShift += 8;
+                if (halfLen == 0)
+                    value |= currentNode;
+                else
+                    value |= (currentNode << 4);
+                halfLen += 4;
+                if (halfLen == 8) {
+                    writeValue |= ((uint32_t)value << byteShift);
+                    byteCount++;
+                    byteShift += 8;
+                    halfLen = 0;
+                    value = 0;
+                    if (byteCount == 4) {
+                        byteCount = byteShift = 0;
+                        gm_w32(&md, dest, writeValue);
+                        dest += 4;
+                        writeValue = 0;
+                        len -= 4;
+                        cost += 4;
+                    }
+                }
                 pos = 0;
                 currentNode = rootNode;
                 writeData = 0;
-                if (byteCount == 2) {
-                    W16(dest, (uint16_t)writeValue);
-                    dest += 2;
-                    len -= 2;
-                    writeValue = 0;
-                    byteCount = byteShift = 0;
-                    cost += 3;
-                }
             }
             mask >>= 1;
             if (mask == 0) {
                 mask = 0x80000000u;
-                data = R32(source);
+                data = gm_r32(&ms, source);
                 source += 4;
                 cost += 2;
             }
@@ -723,18 +975,21 @@ static int hle_diff8_wram(unsigned *regs, int *cycles)
     int len = (int)(header >> 8);
     uint8_t data;
     int cost = 24;
+    gmap_t ms, md;
 
     source += 4;
-    if (!src_ok(source, (uint32_t)len))
+    if (!src_ok_len(source, (uint32_t)len))
         return 0;
 
-    data = R8(source++);
-    W8(dest++, data);
+    gmap_init(&ms); gmap_init(&md);
+
+    data = (uint8_t)gm_r8(&ms, source++);
+    gm_w8(&md, dest++, data);
     len--;
     cost += 2;
     while (len > 0) {
-        data += R8(source++);
-        W8(dest++, data);
+        data += (uint8_t)gm_r8(&ms, source++);
+        gm_w8(&md, dest++, data);
         len--;
         cost += 2;
     }
@@ -751,20 +1006,23 @@ static int hle_diff8_vram(unsigned *regs, int *cycles)
     uint16_t writeData;
     int shift = 8, bytes = 1;
     int cost = 24;
+    gmap_t ms, md;
 
     source += 4;
-    if (!src_ok(source, (uint32_t)len))
+    if (!src_ok_len(source, (uint32_t)len))
         return 0;
 
-    data = R8(source++);
+    gmap_init(&ms); gmap_init(&md);
+
+    data = (uint8_t)gm_r8(&ms, source++);
     writeData = data;
     while (len >= 2) {
-        data += R8(source++);
+        data += (uint8_t)gm_r8(&ms, source++);
         writeData |= (uint16_t)(data << shift);
         bytes++;
         shift += 8;
         if (bytes == 2) {
-            W16(dest, writeData);
+            gm_w16(&md, dest, writeData);
             dest += 2;
             len -= 2;
             bytes = 0;
@@ -784,21 +1042,24 @@ static int hle_diff16(unsigned *regs, int *cycles)
     int len = (int)(header >> 8);
     uint16_t data;
     int cost = 24;
+    gmap_t ms, md;
 
     source += 4;
-    if (!src_ok(source, (uint32_t)len))
+    if (!src_ok_len(source, (uint32_t)len))
         return 0;
 
-    data = R16(source);
+    gmap_init(&ms); gmap_init(&md);
+
+    data = (uint16_t)gm_r16(&ms, source);
     source += 2;
-    W16(dest, data);
+    gm_w16(&md, dest, data);
     dest += 2;
     len -= 2;
     cost += 3;
     while (len >= 2) {
-        data += R16(source);
+        data += (uint16_t)gm_r16(&ms, source);
         source += 2;
-        W16(dest, data);
+        gm_w16(&md, dest, data);
         dest += 2;
         len -= 2;
         cost += 3;
@@ -816,11 +1077,20 @@ static int hle_bit_unpack(unsigned *regs, int *cycles)
     int addBase;
     int data = 0, bitwritecount = 0;
     int cost = 32;
+    gmap_t ms, md;
 
-    if (!src_ok(source, (uint32_t)len))
+    if (!src_ok_len(source, (uint32_t)len))
         return 0;
 
+    gmap_init(&ms); gmap_init(&md);
+
     bits = R8(header + 2);
+    /* A source width outside 1..8 has no meaning: 0 never advances the inner
+     * loop's bit counter and 9+ shifts `mask` by a negative amount. The BIOS
+     * would spin on the first and read garbage on the second, and it can do so
+     * where the frame loop is still able to interrupt it. */
+    if (bits == 0 || bits > 8)
+        return 0;
     revbits = 8 - bits;
     base = R32(header + 4);
     addBase = (base & 0x80000000u) != 0;
@@ -832,7 +1102,7 @@ static int hle_bit_unpack(unsigned *regs, int *cycles)
             break;
         {
             int mask = 0xff >> revbits;
-            uint8_t b = R8(source++);
+            uint8_t b = (uint8_t)gm_r8(&ms, source++);
             int bitcount = 0;
             cost += 2;
             while (bitcount < 8) {
@@ -843,7 +1113,7 @@ static int hle_bit_unpack(unsigned *regs, int *cycles)
                 data |= (int)(temp << bitwritecount);
                 bitwritecount += dataSize;
                 if (bitwritecount >= 32) {
-                    W32(dest, (uint32_t)data);
+                    gm_w32(&md, dest, (uint32_t)data);
                     dest += 4;
                     data = 0;
                     bitwritecount = 0;
@@ -864,15 +1134,9 @@ int gba_bios_hle(unsigned number, unsigned *regs, int *cycles)
 
     switch (number & 0xFFu) {
     case 0x06: /* Div */
-        if (regs[1] == 0)
-            return 0;
-        hle_div(regs, 0, cycles);
-        return 1;
+        return hle_div(regs, 0, cycles);
     case 0x07: /* DivArm */
-        if (regs[0] == 0)
-            return 0;
-        hle_div(regs, 1, cycles);
-        return 1;
+        return hle_div(regs, 1, cycles);
     case 0x08:
         hle_sqrt(regs, cycles);
         return 1;
