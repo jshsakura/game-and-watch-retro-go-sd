@@ -233,6 +233,7 @@ in the binary. Full guide: [SNES_DEVICE_DWT.md](SNES_DEVICE_DWT.md).
 | is a screen readable / does a widget swallow its label | `tools/tamapoke_harness/run.sh` (both themes, both focus states) |
 | is the asset container what the firmware expects | `tools/tamapoke/verify_assets_dat.py` |
 | does sound actually come out | `tests/test_tamapoke_audio.c` (the model: link the real audio file) |
+| does a small on-card store survive its edges | `tests/test_video_resume.c` (pure FILE* logic, real source linked, store path overridden to /tmp) |
 | what is the device really spending a frame on | `feat/gba-probe`; for SNES, `SNES_DEVICE_PROFILE=1` |
 | is fps compute-bound or sitting on the audio deadline | `SNES_DEVICE_PROFILE=1` Ledger C — DWT alone cannot answer this, it goes blind in `__WFI()` |
 

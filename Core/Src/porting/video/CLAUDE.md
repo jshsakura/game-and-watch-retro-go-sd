@@ -82,10 +82,54 @@ a tiny periodic audio drop instead of the progressive-stutter cliff. `g_video_au
   `video_audio_stop()`, which a seek goes through — or the empty ring reads as "starving" and the
   trim slams.
 
+## The clock, and the frame-size cliff
+
+Two things this app had that nothing pointed at until 0728.
+
+**It never asked for the clock.** GBA, SNES, Virtual Boy and WonderSwan all call
+`common_emu_auto_oc()`; the player that does a blocking SD read, an MJPEG decode, an
+MP3 decode, a resample and a full-screen blit inside every 1/fps ran at the stock
+280 MHz. It takes level 2 (340 MHz) now. That is worth more here than +21% suggests,
+because the SD read is a CPU-driven SPI loop -- the clock speeds up the bytes, not
+just the arithmetic. **Level 2 and not the core-private level 3**: a clip is
+sustained load for ten minutes, and 353 MHz is exactly what proved unstable under
+sustained load elsewhere.
+
+**A frame bigger than a slot is silently undrawable.** `VIDEO_FRAME_MAX` is 64 KB
+and the scratch is divided into exactly three of them; a larger frame is enqueued as
+a failure marker (`slot = -1`) and never drawn. That is correct -- there is nowhere
+to put it -- and on screen it is indistinguishable from SD or decode judder. The HUD
+now reads `sz=<last>/<max>k big=<count>`: the largest frame the clip contains and how
+many did not fit, both reset per clip. **Read `max=` before arguing about the slot
+size.** The encoder keeps peaks under the ceiling with VBV rate control, so `big=`
+should be 0; if it is not, the clip was made by something else.
+
+## Resume positions
+
+`video_resume.c` -- one line per clip in `/data/video_resume.txt`, read after
+`avi_open()` and written **only once playback has stopped**. The player must not
+touch the SD while it is decoding; by the time `video_resume_put()` runs the audio is
+stopped and the codec is down, and the demuxer is still open because it is what still
+knows the position.
+
+Three edges, each a test case in `tests/test_video_resume.c` rather than an opinion:
+
+- a position in the first ~10 s is ignored (resuming four seconds in is worse than
+  starting over)
+- a position within ~5 s of the end **erases** the entry -- otherwise "continue" drops
+  you in the credits, which looks exactly like the clip refusing to play
+- a rewrite must not lose the other clips
+
+It **streams through a temp file and commits with `f_rename`**. Collecting the
+surviving lines in a `static char[32][266]` first is 8.5 KB of BSS this overlay does
+not have -- the linker says `Error: MUSIC BSS overflow` and refuses. Same shape
+`rg_favorites.c` uses, for the same reason, and crash-safe as a bonus.
+
 ## Verifying on device
 
-`g_show_debug` HUD, second line: `rd=` (blocking read ms), `pf=` (read hidden in the pacing
-wait), `jpg=` (HW decode ms), `ring=` (servo error).
+`g_show_debug` HUD: `rd=` (blocking read ms), `pf=` (read hidden in the pacing wait), `jpg=`
+(HW decode ms), `ring=` (servo error), and on the second line `sz=<last>/<max>k big=<count>`
+(frame sizes, and how many did not fit a slot).
 
 **`ring=` is the regression test for the drift bug.** Play a clip for 5+ minutes: it must sit
 near 1200 the whole time. Climbing toward 4095 means the trim is not holding and the stutter is
