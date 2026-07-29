@@ -42,9 +42,13 @@ void ReadRTC() {
     TM.tm_sec = GW_currentTime.Seconds;
     subSecond = 0xFF - (GW_currentTime.SubSeconds & 0xFF); // GW_currentTime.SubSeconds counts down from 0xFF towards 0
 
-    /* STM32 RTC weekday: 1=Monday .. 7=Sunday → tm_wday 0=Sunday .. 6=Saturday. */
-    TM.tm_wday = GW_currentDate.WeekDay % 7;
+    /* Derive weekday from the calendar date. The STM32 WeekDay register is an
+     * independent field and is often stale (changing day/month/year does not
+     * update it). Prefer mktime() over the hardware value; do not round-trip
+     * through localtime_r() — that timezone conversion was returning the wrong
+     * weekday for Saturday on this newlib build. */
     TM.tm_isdst = 0;
+    mktime(&TM);
 }
 
 void UpdateRTC() {
@@ -55,10 +59,16 @@ void UpdateRTC() {
     HAL_RTC_GetTime(&hrtc, &GW_currentTime, RTC_FORMAT_BIN);
     HAL_RTC_GetDate(&hrtc, &GW_currentDate, RTC_FORMAT_BIN);
 
+    /* Recompute tm_wday from the date being written — AddToCurrentDay/Month/Year
+     * only touch tm_mday/tm_mon/tm_year and leave a stale weekday behind. */
+    TM.tm_isdst = 0;
+    mktime(&TM);
+
     GW_currentDate.Year = TM.tm_year - MIN_TM_YEAR;
     GW_currentDate.Month = TM.tm_mon + MIN_RTC_MONTH;
     GW_currentDate.Date = TM.tm_mday;
-    GW_currentDate.WeekDay = TM.tm_wday;
+    /* tm_wday 0=Sunday .. 6=Saturday → STM32 RTC 1=Monday .. 7=Sunday. */
+    GW_currentDate.WeekDay = ((TM.tm_wday + MAX_TM_WEEKDAY) % MAX_RTC_WEEKDAY) + MIN_RTC_WEEKDAY;
 
     GW_currentTime.Hours = TM.tm_hour;
     GW_currentTime.Minutes = TM.tm_min;
