@@ -152,24 +152,34 @@ static int m4a_refill(void *ctx, m4a_state *s)
 
     ret = update_gba(s->cycles);
 
-    /* The frame ended inside the mixer. gpSP's loop returns from execute_arm()
-     * here, and so must we — with the PC on the next instruction, so the next call
-     * picks the block up where it left off. */
-    if (ret & M4A_FRAME_BIT)
-        return M4A_FRAME_DONE;
-
     /* An interrupt was taken, or the CPU was halted / stalled by a DMA. Either way
      * the PC is no longer ours and the interpreter has to drive. It will finish
      * the rest of this block itself — slowly, and correctly, which is the right
      * trade for something that (measured over eleven thousand blocks) does not
-     * actually happen. */
+     * actually happen.
+     *
+     * This has to be asked BEFORE the end of the frame, and answered even when the
+     * frame ended too: update_gba() reports both in one word, and it really does
+     * report both — a game with H-blank interrupts enabled raises one on the last
+     * scanline of every frame. Taking the frame's exit first left the caller
+     * writing this block's registers back over an interrupt entry that had already
+     * happened: r13 and r14 are BANKED, so the System-mode sp and lr landed in the
+     * IRQ bank, destroying the handler's return address and pointing its stack at
+     * the middle of the interrupted routine's frame. The mixer then resumed with
+     * the CPU in IRQ mode and interrupts masked. */
     if ((ret & M4A_CHANGED_PC) || reg[CPU_HALT_STATE] != CPU_ACTIVE) {
         for (i = 0; i < 15; i++)
             s->r[i] = reg[i];
         s->pc     = reg[REG_PC];
         s->cycles = (int)(ret & M4A_CYCLE_MASK);
-        return M4A_YIELD;
+        return (ret & M4A_FRAME_BIT) ? M4A_FRAME_DONE : M4A_YIELD;
     }
+
+    /* The frame ended inside the mixer. gpSP's loop returns from execute_arm()
+     * here, and so must we — with the PC on the next instruction, so the next call
+     * picks the block up where it left off. */
+    if (ret & M4A_FRAME_BIT)
+        return M4A_FRAME_DONE;
 
     s->cycles = (int)(ret & M4A_CYCLE_MASK);
     return M4A_OK_CONTINUE;
@@ -313,8 +323,20 @@ static int m4a_hle_execute_offline(unsigned int *regs, long *cost,
 /* The interpreter and the native block are run from the same state, over the
  * same memory, and everything either of them touched is compared. Registers and
  * cycles are easy. Memory is done by snapshotting the three windows the block
- * can write — the channel struct, the mix buffer, and the guest stack below sp —
+ * can write — the channel struct, the mix buffer, and the caller's stack frame —
  * running one, saving the result, restoring, running the other, and diffing.
+ *
+ * The stack window starts AT sp, not below it. The only thing the block puts
+ * below sp is its own `push {r4, ip}`, which it pops back before it returns: dead
+ * scratch, and already checked where it matters, because the popped r4 and ip are
+ * two of the registers compared above. Those same dead words are where the BIOS
+ * runs the game's interrupt handler — in System mode, on this very stack, just
+ * under the mixer's frame — so an interrupt landing inside the interpreted run
+ * leaves its handler's frame there, and the offline re-run, which has no
+ * interrupts in it, cannot and should not reproduce it. Comparing them reported
+ * that difference as the block's, several times a second, in a game doing nothing
+ * wrong. Above sp is the caller's frame, which no handler may touch and which the
+ * block really does read and write — so that is what is compared.
  *
  * The mix buffer window is bounded by r8: the block emits r8 samples, four to a
  * word, so it advances the mix pointer by r8 bytes, plus the one extra word the
@@ -368,7 +390,7 @@ static int snap_take(m4a_snap *s, const unsigned int *regs)
     if (!s->mix)
         return 0;
     if (!snap_read(r4, s->ch, SNAP_CH) ||
-        !snap_read(sp - 8u, s->stk, SNAP_STK) ||
+        !snap_read(sp, s->stk, SNAP_STK) ||
         !snap_read(s->mix_addr, s->mix, s->mix_len)) {
         free(s->mix);
         s->mix = 0;
@@ -380,7 +402,7 @@ static int snap_take(m4a_snap *s, const unsigned int *regs)
 static void snap_restore(const m4a_snap *s, const unsigned int *regs)
 {
     snap_write(regs[4], s->ch, SNAP_CH);
-    snap_write(regs[13] - 8u, s->stk, SNAP_STK);
+    snap_write(regs[13], s->stk, SNAP_STK);
     snap_write(s->mix_addr, s->mix, s->mix_len);
 }
 
@@ -508,7 +530,22 @@ void m4a_hle_verify_post(const unsigned int *regs_after, int cycles_after,
                 bad = 1;
             }
             if (memcmp(after_hle.stk, after_interp.stk, SNAP_STK) != 0) {
-                fprintf(stderr, "M4A VERIFY: guest stack differs\n");
+                uint32_t k;
+                fprintf(stderr, "M4A VERIFY: caller's stack frame differs (sp=%08x)\n",
+                        v_regs_in[13]);
+                for (k = 0; k < SNAP_STK; k += 4) {
+                    if (memcmp(after_hle.stk + k, after_interp.stk + k, 4) == 0)
+                        continue;
+                    fprintf(stderr, "    sp+%u (%08x): in=%02x%02x%02x%02x "
+                                    "interp=%02x%02x%02x%02x hle=%02x%02x%02x%02x\n",
+                            k, v_regs_in[13] + k,
+                            v_snap_in.stk[k+3], v_snap_in.stk[k+2],
+                            v_snap_in.stk[k+1], v_snap_in.stk[k+0],
+                            after_interp.stk[k+3], after_interp.stk[k+2],
+                            after_interp.stk[k+1], after_interp.stk[k+0],
+                            after_hle.stk[k+3], after_hle.stk[k+2],
+                            after_hle.stk[k+1], after_hle.stk[k+0]);
+                }
                 bad = 1;
             }
             if (after_hle.mix_len == after_interp.mix_len &&

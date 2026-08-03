@@ -697,12 +697,23 @@ static void gba_input_read(odroid_gamepad_state_t *joystick)
     if (joystick->values[ODROID_INPUT_B])      keys |= GBA_KEY_B;
     if (joystick->values[ODROID_INPUT_START])  keys |= GBA_KEY_START;
     if (joystick->values[ODROID_INPUT_SELECT]) keys |= GBA_KEY_SELECT;
-    /* The unit has no shoulder buttons. X/Y stand in for L/R — every GBA game
+    /* The unit has no shoulder buttons. Y/X stand in for L/R — every GBA game
      * that uses them uses them, and there is nowhere else to put them. */
-    if (joystick->values[ODROID_INPUT_X])      keys |= GBA_KEY_L;
-    if (joystick->values[ODROID_INPUT_Y])      keys |= GBA_KEY_R;
+    if (joystick->values[ODROID_INPUT_X])      keys |= GBA_KEY_R;
+    if (joystick->values[ODROID_INPUT_Y])      keys |= GBA_KEY_L;
 
     gba_set_keys(keys);
+}
+
+/* gw_sleep() restores the *settings* OC level on wake, but GBA always forces
+ * level 3 (~353 MHz) during gameplay. Without this the core keeps running at
+ * the (slower) settings clock after a sleep/wake cycle. Re-apply the boost
+ * and reinit audio (SystemClock_Config also reprograms the audio PLL). */
+static void gba_sleep_wake_up(void)
+{
+    SystemClock_Config(3);
+    odroid_audio_init(odroid_audio_sample_rate_get());
+    audio_start_playing(GBA_AUDIO_FRAMES);
 }
 
 /* ------------------------------------------------------------------- main --- */
@@ -770,7 +781,7 @@ void app_main_gba(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_system_init(APPID_GBA, GBA_SAMPLE_RATE);
     odroid_system_emu_init(&gba_LoadState, &gba_SaveState, &gba_Screenshot,
-                           NULL, NULL, &gba_SramSave, NULL);
+                           NULL, &gba_sleep_wake_up, &gba_SramSave, NULL);
 
     /* Native 240x160 is a small island on a 320x240 panel; FIT is the sane
      * first-run default. Any choice the user makes afterwards is theirs. */

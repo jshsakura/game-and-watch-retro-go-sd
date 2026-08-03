@@ -18,6 +18,7 @@ loaded_gba_rom.c \
 ../Core/Src/porting/gba/gba_idle_loop.c \
 ../tools/gba_m4a/m4a_hle.c \
 ../tools/gba_m4a/m4a_gpsp.c \
+../Core/Src/porting/gba/gba_bios_hle.c \
 $(CORE_GBA)/gba_memory.c \
 $(CORE_GBA)/sound.c \
 $(CORE_GBA)/savestate.c \
@@ -57,6 +58,7 @@ C_DEFS = \
 -DBUFFER_SIZE=8192 \
 -DGBA_SOUND_FREQUENCY=48000 \
 -DGBA_M4A_HLE \
+-DGBA_BIOS_HLE \
 -DCHEAT_CODES=1
 
 C_INCLUDES = \

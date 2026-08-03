@@ -2,34 +2,13 @@
 
 ## What's New
 
-### Version 1.4.0
+### Version 1.4.1
 
-- Improved SD Card performances
-- Add Favorites feature
-- Faster ROM flash cache ("Caching game"): erase with the chip's largest sector size instead of 4KB chunks
-- Add Atari Lynx support (experimental)
-- Add experimental Game Boy Advance support via gpSP (SD card only), sound is choppy, performances will depends on games, requires bios file /bios/gba/gba_bios.bin (open source bios is included but it's not recommended as it could cause some bugs in some games)
-- PC Engine :
-  - Add PC Engine CD support (beta) (SD Card only not for flash only mod) / requires /bios/pce/syscard3.pce bios file with MD5 = 38179df8f4ac870017db21ebcbf53114
-  - Fix Toy Shop Boys not booting (but has small gfx issues)
-- MSX :
-  - Add support for HDD disk images (R/W) using nextor rom
-  - Add NEO16 mapper support
-  - Add ASCII-X mapper support (without AmdFlash due to RAM limitation)
-- Genesis :
-  - Fix gfx issue with International Superstar Soccer Deluxe
-  - Add EEPROM support
-- Gameboy :
-  - Fix various emulation issues (Street Fighter 2, Mr. Do, Prehistorik Man, ...)
-  - Add MBC1M mapper
-  - Add support for Super Gameboy palette and borders for compatible games (select SGB system in options when game is running, border can be disabled to keep palette feature only)
-- Reduced maximum overclocking from 353 to 340MHz to fix some instabilities in Genesis emulator
-- Fix issue which could cause battery to drain too quickly while on sleep.
-- Fix OC profile not restored after sleep/wake up for MSX/Amstrad/NES/Genesis cores (it was causing slowdowns after power off/power on button press)
-- Fix Pico-8 Screenshots (LUT8 mode)
-- Reworked language management to limit amount of used RAM
-- Reworked NES mappers bin files, it's not included in a single file -> Less space needed in FS, faster firmware update process.
-- Added dtcm_calloc/dtcm_malloc to dynamically allocate some info only needed in retro-go frontend so it is available for emulators as it's not needed anymore (allowed to fix pico-8 crash when not using English language)
+- GBA :
+  - Corrected inverted L/R keys
+  - Correct overclocking is applied after a sleep/wake up
+  - Improved performances for some games by using bios HLE
+  - Fixed Shantae Advance - Risky Revolution rebooting issue (and maybe some other games)
 
 ## Prerequisites
 To install this version, make sure you have:

@@ -6,6 +6,8 @@
 
 #include "gw_linker.h"
 #include "gw_malloc.h"
+#include "gw_firmware_abi.h"
+#include "gwhb.h"
 #include "rg_emulators.h"
 #include "favorites.h"
 #include "odroid_settings.h"
@@ -1542,6 +1544,85 @@ static void run_internal_emu(const emu_dispatch_t *e,
     }
 }
 
+/* --- Universal Homebrew Header (GWHB) loader ---------------------------
+ *
+ * Lets an out-of-tree homebrew binary run without any firmware-side
+ * dispatch-table entry, linker overlay symbols, or appid.h enum: drop a
+ * .bin under /roms/homebrew/ and it runs, as long as it starts with a
+ * gwhb_header_t (see gwhb.h). The entry point is always at offset
+ * sizeof(gwhb_header_t), past the header.
+ *
+ * Unlike the compile-time dispatch table (run_internal_emu above), a GWHB
+ * binary is responsible for zeroing its own BSS and configuring its own
+ * LCD mode (RGB565 vs LUT8) via the firmware ABI, since the loader has no
+ * compile-time knowledge of its layout or needs, only its total size.
+ *
+ * Trust model: the file is loaded, unauthenticated, from an SD card, so
+ * every firmware-side check below is defensive: refuse rather than jump
+ * into a corrupt or incompatible binary. */
+
+static void show_incompatible_homebrew_screen(void)
+{
+  odroid_dialog_choice_t choices[] = {
+    {0, curr_lang->s_Corrupted_Install_1, "", -1, NULL},
+    ODROID_DIALOG_CHOICE_SEPARATOR,
+    {1, curr_lang->s_OK, "", 1, NULL},
+    ODROID_DIALOG_CHOICE_LAST,
+  };
+
+  (void)odroid_overlay_dialog(curr_lang->s_Corrupted_Title, choices, 2, NULL, 0);
+}
+
+/* `copied` is the byte count already placed at __RAM_EMU_START__ by the
+ * Homebrew branch's bounded copy (see emulator_start); this function does
+ * not touch storage itself, only validates and dispatches.
+ *
+ * Returns true when the file was claimed -- either dispatched, or refused
+ * with a screen the user can read. False means "not a GWHB file at all",
+ * and only then does the caller report the name-dispatch mismatch: a
+ * silent return here would leave RAM_EMU overwritten with an unknown
+ * binary and no explanation of what went wrong. */
+__attribute__((noinline))
+static bool run_gwhb_homebrew(size_t copied, uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+{
+    if (copied < sizeof(gwhb_header_t)) {
+        show_incompatible_homebrew_screen();
+        return true;
+    }
+
+    const gwhb_header_t *hdr = (const gwhb_header_t *)&__RAM_EMU_START__;
+
+    if (hdr->magic != GWHB_MAGIC)
+        return false; /* not a GWHB file; nothing to dispatch */
+
+    /* Defense in depth, both against the same fields the app is expected
+     * to self-check (see gnw_abi_ok()-style checks in ABI consumers), so a
+     * binary built for a newer/bigger ABI than this firmware provides is
+     * refused before it ever gets a chance to call through a function
+     * pointer past the end of g_firmware_abi.
+     *
+     * required_abi alone is not enough: append-only ABI growth does not
+     * bump GW_FIRMWARE_ABI_VERSION (see the comment above that define), so
+     * two firmware builds can report the same version with different
+     * actual struct sizes. required_abi_min_size is the field that
+     * actually detects "this firmware predates a field I need". Anything
+     * built for an older/smaller ABI is fine, hence <=, not ==. */
+    if (hdr->required_abi > GW_FIRMWARE_ABI_VERSION ||
+        hdr->required_abi_min_size > g_firmware_abi.size) {
+        show_incompatible_homebrew_screen();
+        return true;
+    }
+
+    SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, copied);
+    SCB_InvalidateICache();
+
+    /* | 1 keeps the CPU in Thumb mode. The binary zeroes its own BSS on
+     * entry. */
+    ((void (*)(uint8_t, uint8_t, int8_t))(((uintptr_t)&__RAM_EMU_START__ + sizeof(gwhb_header_t)) | 1))
+        (load_state, start_paused, save_slot);
+    return true;
+}
+
 /* Entry-pointer casts: app_main_* signatures vary in return type
  * (void/int) and save_slot type (int8_t/uint8_t). All are ARM
  * calling-convention compatible (same register layout, return value
@@ -1742,7 +1823,14 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
         app_main_gamecom(load_state, start_paused, save_slot);
       }
     } else if(strcmp(system_name, "Homebrew") == 0)  {
-      if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
+      /* Bounded: refuses (returns 0) rather than overrunning RAM_EMU if the
+       * file is bigger than the region. This used to be an unchecked
+       * odroid_overlay_cache_file_in_ram() call; every branch below
+       * (including the legacy named engines) shares that fix now. */
+      const uint32_t ram_emu_len = ((uint32_t)&__RAM_EMU_END__) - (uint32_t)&__RAM_EMU_START__;
+      size_t homebrew_bytes = rg_storage_copy_file_to_ram_bounded(
+          ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__, 0, ram_emu_len, NULL);
+      if (homebrew_bytes) {
         if (strcmp(newfile->name,"celeste") == 0) {
             memset(&_OVERLAY_CELESTE_BSS_START, 0x0, (size_t)&_OVERLAY_CELESTE_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_CELESTE_SIZE);
@@ -1785,12 +1873,14 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
             memset(&_OVERLAY_MUSIC_BSS_START, 0x0, (size_t)&_OVERLAY_MUSIC_BSS_SIZE);
             SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_MUSIC_SIZE);
             app_main_video(load_state, start_paused, save_slot);
-        } else {
-            /* Homebrew is dispatched by name, so a .bin this firmware does not
-             * know about matches nothing -- but by the time we find that out we
-             * have already streamed it over RAM_EMU. Falling through returns to
-             * a launcher whose overlay region is now somebody else's code, and
-             * it dies with an imprecise BusFault that names no cause.
+        } else if (!run_gwhb_homebrew(homebrew_bytes, load_state, start_paused, save_slot)) {
+            /* Not one of the legacy named engines above and not a GWHB file
+             * either. Homebrew is dispatched by name, so a .bin this firmware
+             * does not know about matches nothing -- but by the time we find
+             * that out we have already streamed it over RAM_EMU. Falling
+             * through returns to a launcher whose overlay region is now
+             * somebody else's code, and it dies with an imprecise BusFault
+             * that names no cause.
              *
              * The usual way to arrive here is a card built by one firmware and
              * flashed with another, which is easy to do because the two travel
@@ -1802,6 +1892,8 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
              * translation after it. This path is a mismatch report, not UI. */
             odroid_overlay_alert("Homebrew not in this firmware");
         }
+      } else {
+        show_incompatible_homebrew_screen();
       }
     } else if(strcmp(system_name, "Tamagotchi") == 0) {
         run_internal_emu(&emu_tama, load_state, start_paused, save_slot);
