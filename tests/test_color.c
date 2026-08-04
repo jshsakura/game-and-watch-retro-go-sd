@@ -1,4 +1,4 @@
-// Host unit tests for color math used in media_ui.c.
+// Host unit tests for color math used in music_ui.c.
 // Validates RGB565 packing, ui_dim (dimming toward black), ui_mix (blend),
 // and the darken_all formula (two successive halvings → 1/4 brightness).
 // Build+run: see tests/run.sh

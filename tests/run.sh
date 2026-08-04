@@ -4,11 +4,15 @@
 # round-trip, tone DMA sync — stubs in tests/clock_stubs/).
 set -e
 cd "$(dirname "$0")/.."
-INC="Core/Inc/porting/media"
-SRC="Core/Src/porting/media"
+INC="Core/Inc/porting/music"
+SRC="Core/Src/porting/music"
 CC="${CC:-gcc}"
 FLAGS="-O2 -Wall -Wextra -std=c11 -I$INC"
 
+# Nothing stale: every binary the run phase executes must come from THIS run's
+# compile phase. /tmp/mtest survives between runs, so without this a test whose
+# compile broke would silently re-run yesterday's binary and pass.
+rm -rf /tmp/mtest
 mkdir -p /tmp/mtest
 
 # A failing check must NAME itself. This suite prints ~1900 lines in CI, and an
@@ -22,22 +26,61 @@ mkdir -p /tmp/mtest
 # whole suite at the first failing harness and skip every check after it.
 rc=0
 FAILED=""
+REACHED_END=0
 fail() {
     rc=1
     FAILED="${FAILED}  - ${1}
 "
 }
 
+# The summary must print however the suite ends. `cmd || fail NAME` keeps a
+# failing CHECK from aborting the run, but a failing COMPILE is not wrapped
+# (there are 40 of them, and wrapping each one invites a stale binary from a
+# previous run being executed as if it were fresh). `set -e` therefore still
+# kills the suite mid-file on a compile error -- and when it did, the summary
+# below never ran, so the output ended on a raw cc1 error and named nothing.
+# An EXIT trap prints it either way, and says plainly when the run stopped
+# early instead of letting a truncated log look like a clean one.
+summary() {
+    if [ "$rc" != 0 ] || [ "$REACHED_END" = 0 ]; then
+        echo
+        echo "=== FAILED CHECKS ==="
+        printf '%s' "$FAILED"
+        [ "$REACHED_END" = 0 ] && echo "  - the suite STOPPED EARLY (a compile or a harness aborted it); the last error above is the cause, and every check after it never ran"
+        echo "=== $(printf '%s' "$FAILED" | grep -c . ) named; everything else above passed or skipped ==="
+    fi
+}
+trap summary EXIT
+
+# Music-app tests run only where the music module exists (it arrived on
+# feat/music-player and is on testbed/main now). Decided ONCE, here, because
+# the compile block and the run block below both need the answer and a second
+# copy of the condition is a second thing to forget.
+#
+# The three states are deliberate. This guard used to be a bare `-d` on
+# Core/Src/porting/media, and when the module was renamed media_* -> music_*
+# the directory stopped existing, so all five tests silently stopped running
+# and the suite still said PASSED. Missing-because-absent and
+# missing-because-moved look identical to `-d` and are not the same thing:
+# only the first is a legitimate skip.
+MUSIC_TESTS=0
+if [ -f "$SRC/music_lyrics.c" ] && [ -f "$SRC/music_id3.c" ]; then
+    MUSIC_TESTS=1
+elif [ -d "$SRC" ] || [ -d "Core/Src/porting/media" ]; then
+    # The module is here, but not under the names this file compiles. That is
+    # rot, not absence -- say so and go red rather than skipping five tests.
+    fail "music-app tests: module present but sources are not $SRC/music_{lyrics,id3}.c"
+else
+    echo "music module not on this branch — skipping music-app tests"
+fi
+
 echo "=== compile ==="
-# Music-app tests only where the media module exists (feat/music-player)
-if [ -d "$SRC" ]; then
-    $CC $FLAGS tests/test_lyrics.c   "$SRC/media_lyrics.c" -o /tmp/mtest/test_lyrics
-    $CC $FLAGS tests/test_id3.c      "$SRC/media_id3.c"    -o /tmp/mtest/test_id3
+if [ "$MUSIC_TESTS" = 1 ]; then
+    $CC $FLAGS tests/test_lyrics.c   "$SRC/music_lyrics.c" -o /tmp/mtest/test_lyrics
+    $CC $FLAGS tests/test_id3.c      "$SRC/music_id3.c"    -o /tmp/mtest/test_id3
     $CC $FLAGS tests/test_ui_layout.c                        -o /tmp/mtest/test_ui_layout
     $CC $FLAGS tests/test_browser.c                          -o /tmp/mtest/test_browser
     $CC $FLAGS tests/test_color.c                            -o /tmp/mtest/test_color
-else
-    echo "media module not on this branch — skipping music-app tests"
 fi
 # Video-app AVI demuxer (pure FILE* logic — the read path the prefetch rd=/pf=
 # HUD accounting sits on). Compiled only where the video source is present.
@@ -49,7 +92,7 @@ if [ -f "Core/Src/porting/video/avi.c" ]; then
     # public video_decode_slot(), it's static) + the g_scratch slot-layout
     # pin. Only hardware seam stubbed is the HW JPEG peripheral itself.
     $CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc/porting/video \
-        -ICore/Src/porting/lib -ICore/Inc/porting/music \
+        -ICore/Src/porting/lib -I$INC \
         tests/test_video_decode.c Core/Src/porting/video/video_decode.c \
         -o /tmp/mtest/test_video_decode
 
@@ -58,8 +101,8 @@ if [ -f "Core/Src/porting/video/avi.c" ]; then
     # for 4 minutes, then permanent stutter" bug). #includes video_audio.c
     # directly for its static servo state, same pattern rg_clock.c's tests use.
     $CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc/porting/video \
-        -ICore/Inc/porting/music \
-        tests/test_video_audio.c Core/Src/porting/music/music_minimp3.c \
+        -I$INC \
+        tests/test_video_audio.c $SRC/music_minimp3.c \
         -o /tmp/mtest/test_video_audio
 
     # video_play.c: the pf_step()/pf_fetch()/pf_reset() prefetch state machine
@@ -67,12 +110,12 @@ if [ -f "Core/Src/porting/video/avi.c" ]; then
     # bug). #includes video_play.c directly for its statics; links the REAL
     # avi.c/video_decode.c/video_audio.c it actually drives, not a reimplementation.
     $CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc/porting/video \
-        -ICore/Src/porting/lib -ICore/Inc/porting/music \
+        -ICore/Src/porting/lib -I$INC \
         -DRESUME_HOST_STDIO -DRESUME_PATH='"/tmp/mtest/video_resume_play.txt"' \
         tests/test_video_play.c Core/Src/porting/video/avi.c \
         Core/Src/porting/video/video_decode.c Core/Src/porting/video/video_audio.c \
         Core/Src/porting/video/video_resume.c \
-        Core/Src/porting/music/music_minimp3.c \
+        $SRC/music_minimp3.c \
         -o /tmp/mtest/test_video_play
 
     # Real MP3 fixture the trim_step()/audio-ring-gate tests above decode
@@ -217,7 +260,7 @@ frames[0].save('/tmp/mtest/bg.gif', save_all=True, append_images=frames[1:], dur
 PYEOF2
 
 echo "=== run ==="
-if [ -d "$SRC" ]; then
+if [ "$MUSIC_TESTS" = 1 ]; then
     /tmp/mtest/test_lyrics      || fail test_lyrics
     /tmp/mtest/test_id3         || fail test_id3
     /tmp/mtest/test_ui_layout   || fail test_ui_layout
@@ -726,10 +769,5 @@ else
     fail "system grid wiring"
 fi
 
-if [ "$rc" != 0 ]; then
-    echo
-    echo "=== FAILED CHECKS ==="
-    printf '%s' "$FAILED"
-    echo "=== $(printf '%s' "$FAILED" | grep -c . ) failed; everything else above passed or skipped ==="
-fi
+REACHED_END=1
 exit $rc

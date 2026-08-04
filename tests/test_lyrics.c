@@ -1,6 +1,6 @@
-// Host unit tests for media_lyrics (pure LRC/USLT parser).
+// Host unit tests for music_lyrics (pure LRC/USLT parser).
 // Build+run: see tests/run.sh
-#include "media_lyrics.h"
+#include "music_lyrics.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -69,6 +69,6 @@ int main(void)
     test_multi_tag_line();
     test_plain_unsynced();
     test_empty();
-    printf("media_lyrics: %d checks, %d failures\n", checks, fails);
+    printf("music_lyrics: %d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
 }

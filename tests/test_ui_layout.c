@@ -1,7 +1,7 @@
-// Host unit tests for media_ui layout invariants.
+// Host unit tests for music_ui layout invariants.
 // Validates that all screen coordinates, sizes and buffer allocations are
 // consistent, nothing overflows the 240×240 framebuffer, and Y ordering is
-// correct. Duplicates the #defines from media_ui.c / media_ui.h so a
+// correct. Duplicates the #defines from music_ui.c / music_ui.h so a
 // mismatch is caught as a test failure.
 // Build+run: see tests/run.sh
 #include <stdio.h>
