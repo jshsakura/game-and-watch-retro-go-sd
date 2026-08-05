@@ -6,6 +6,7 @@ Makefile
 Core/Inc/rom_info.h
 Core/Inc/gittag.h
 roms
+gwemusd
 sd_content
 
 release

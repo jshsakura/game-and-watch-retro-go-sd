@@ -242,17 +242,74 @@ void frameBufferSetDoubleWidth(FrameBuffer* frameBuffer, int y, int val)
 }
 
 static int loop = 1;
-char saveBuffer[1024*1024];
+static char saveBuffer[1024 * 1024];
+static char state_path[1024];
+static int msx_savestate_req;
+static int msx_loadstate_req;
+
+static void msx_set_state_path(void)
+{
+    snprintf(state_path, sizeof(state_path), "%s", ROM_NAME ? ROM_NAME : "msx");
+    char *dot = strrchr(state_path, '.');
+    char *slash = strrchr(state_path, '/');
+    if (dot && (!slash || dot > slash))
+        *dot = '\0';
+    size_t n = strlen(state_path);
+    snprintf(state_path + n, sizeof(state_path) - n, ".msxsav");
+}
+
+static bool msx_linux_save_state(void)
+{
+    UInt32 size = saveMsxState((UInt8 *)saveBuffer, sizeof(saveBuffer));
+    if (size == 0 || size > sizeof(saveBuffer)) {
+        fprintf(stderr, "MSX: save failed (bad size %u)\n", size);
+        return false;
+    }
+
+    FILE *fp = fopen(state_path, "wb");
+    if (!fp) {
+        fprintf(stderr, "MSX: save failed (fopen %s)\n", state_path);
+        return false;
+    }
+    bool ok = fwrite(saveBuffer, 1, size, fp) == size;
+    fclose(fp);
+    fprintf(stderr, ok ? "MSX: saved %s (%u bytes)\n" : "MSX: save write failed %s\n",
+            state_path, size);
+    return ok;
+}
+
+static bool msx_linux_load_state(void)
+{
+    FILE *fp = fopen(state_path, "rb");
+    if (!fp) {
+        fprintf(stderr, "MSX: load failed (no file %s)\n", state_path);
+        return false;
+    }
+    size_t n = fread(saveBuffer, 1, sizeof(saveBuffer), fp);
+    fclose(fp);
+    if (n == 0) {
+        fprintf(stderr, "MSX: load failed (empty %s)\n", state_path);
+        return false;
+    }
+    loadMsxState((UInt8 *)saveBuffer, (UInt32)n);
+    fprintf(stderr, "MSX: loaded %s (%zu bytes)\n", state_path, n);
+    return true;
+}
 
 void keyboardUpdate() 
 {
     SDL_Event event;
-    static SDL_Event last_down_event;
 
     if (SDL_PollEvent(&event)) {
         if (event.type == SDL_KEYDOWN) {
 //            printf("Press %d\n", event.key.keysym.sym);
             switch (event.key.keysym.sym) {
+            case SDLK_F2:
+                msx_savestate_req = 1;
+                break;
+            case SDLK_F4:
+                msx_loadstate_req = 1;
+                break;
             case SDLK_SPACE:
                 eventMap[EC_SPACE]  = 1;
                 break;
@@ -411,8 +468,6 @@ void keyboardUpdate()
             default:
                 break;
             }
-
-            last_down_event = event;
         } else if (event.type == SDL_KEYUP) {
 //            printf("Release %d\n", event.key.keysym.sym);
             switch (event.key.keysym.sym) {
@@ -574,25 +629,6 @@ void keyboardUpdate()
                 break;
             case SDLK_BACKSPACE:
                 eventMap[EC_BKSPACE]  = 0;
-                break;
-            case SDLK_F1:
-                if (last_down_event.key.keysym.sym == SDLK_F1) {
-                    FILE* pFile = fopen("saveMsx.bin","wb");
-                    int size = 0;
-                    printf("save\n");
-                    size = saveMsxState((Uint8 *)saveBuffer,1024*1024);
-                    fwrite(saveBuffer, size, 1, pFile);
-                    fclose(pFile);
-                }
-                break;
-            case SDLK_F4:
-                if (last_down_event.key.keysym.sym == SDLK_F4) {
-                    FILE* pFile = fopen("saveMsx.bin","rb");
-                    if (pFile) {
-                        fread(saveBuffer, 1024*1024, 1, pFile);
-                        loadMsxState((Uint8 *)saveBuffer,1024*1024);
-                    }
-                }
                 break;
             default:
                 break;
@@ -1204,6 +1240,20 @@ int main(int argc, char *argv[])
 
     setupEmulatorRessources(2); // 0 = MSX1 1 = MSX2 2 = MSX2+
 
+    msx_set_state_path();
+    fprintf(stderr, "MSX: F2 save / F4 load → %s  (GWAUTOLOAD=1 to load at boot)\n", state_path);
+
+    /* MSX_LOAD_AT=N / MSX_SAVE_AT=N for harness automation. */
+    static int load_at, save_at;
+    const char *la = getenv("MSX_LOAD_AT");
+    const char *sa = getenv("MSX_SAVE_AT");
+    if (la) load_at = atoi(la);
+    if (sa) save_at = atoi(sa);
+    /* GWAUTOLOAD deferred to frame 3 — immediate boot load races timers/YM2413. */
+    if (getenv("GWAUTOLOAD") && !load_at) {
+        load_at = 3;
+    }
+
     const char* tracePc = getenv("MSX_TRACE_PC");
     static uint16_t lastPc;
     static int samePc;
@@ -1211,6 +1261,18 @@ int main(int argc, char *argv[])
 
     while (1) {
         keyboardUpdate();
+
+        if (save_at && frame + 1 == save_at) msx_savestate_req = 1;
+        if (load_at && frame + 1 == load_at) msx_loadstate_req = 1;
+        if (msx_savestate_req) {
+            msx_savestate_req = 0;
+            msx_linux_save_state();
+        }
+        if (msx_loadstate_req) {
+            msx_loadstate_req = 0;
+            msx_linux_load_state();
+        }
+        frame++;
 
         // Render 1 frame
         ((R800*)boardInfo.cpuRef)->terminate = 0;
@@ -1234,7 +1296,6 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "CPU stuck at PC=%04X\n", pc);
                 samePc = 0;
             }
-            frame++;
         }
 
         // If current MSX screen mode is 10 or 12, data has been directly written into

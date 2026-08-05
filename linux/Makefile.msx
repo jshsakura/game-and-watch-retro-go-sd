@@ -175,16 +175,10 @@ CXXFLAGS += $(fpic) $(DEFINES)
 LIBS = -lstdc++ -lm `sdl2-config --libs`
 LDFLAGS = $(LIBS)
 
-all: outDir $(BUILD_DIR)/$(TARGET).elf
+all: $(BUILD_DIR)/$(TARGET).elf
 
 OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)))
-
-outDir:
-	mkdir -p build
-	if ! [ -f ./build/config.h ]; then \
-		touch build/config.h; \
-	fi
 
 # CXX
 CXX_OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(CXX_SOURCES:.cpp=.o) ))
