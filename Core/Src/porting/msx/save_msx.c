@@ -118,6 +118,7 @@ UInt32 loadMsxState(char *savePath) {
     if (memcmp(headerString, header, 8) == 0) {
         // Copy sections header in structure
         fread(msxSaveState.sections, 1, sizeof(msxSaveState.sections[0])*MAX_SECTIONS, msxSaveFile);
+        boardTimerCleanup();
         boardInfo.loadState();
         load_gnw_msx_data();
         size = ftell(msxSaveFile);
