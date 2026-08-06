@@ -198,6 +198,24 @@ The SNES-emulation feasibility rig (verdict: ⛔ the PPU alone is 14 ms of a
 16.6 ms frame; do not reopen). Kept because it is the working example of the
 event-scheduler experiment and boots zelda3/SMW against the shared core.
 
+### `tools/snes_harness/run_spc_probe.sh` — what the SPC700 does with its time
+Same build, plus a `--wrap` over `spc_runOpcode` (nothing in `external/sm` is
+touched). `SPC_SKIP=0` prints a per-PC opcode/cycle histogram and the ARAM bytes
+around the hottest site; that is how the N-SPC driver's main wait —
+`EC FD 00  MOV A,$00FD` / `F0 FB  BEQ -5`, poll timer 0 and loop while it reads
+zero — was found to be **40% of every SPC opcode** ALTTP and SMW run (25% over a
+2500-frame window). `SPC_SKIP=1` charges those idle iterations in one step and
+reproduces `state=`/`audio=` bit for bit. **Ask it "is this loop worth skipping"
+before hand-writing any idle-skip machinery.**
+
+Its two RED arms are the point: `SPC_SKIP=3` (overshoot a whole timer tick)
+changes `audio=`, which is what proves the gate can fail; `SPC_SKIP=2`
+(overshoot 8 cycles) does *not*, so a passing hash is not evidence of
+cycle-exactness finer than about a timer tick. Both arms were GREEN on the first
+run for a stupider reason — `skip_on = getenv(x) && atoi(getenv(x))` folds every
+arm to 1 — which is the third time in this repo a test proved nothing because it
+was not running the code it named.
+
 ## On-device instrumentation — branch `feat/gba-probe`
 
 The probe that measured what QEMU could not: guest-PC histogram, DWT cycle
