@@ -72,13 +72,15 @@ static void spc_probe_report(void)
             bestpc[i], best[i], 100.0 * (double)best[i] / (double)total_ops,
             pc_cycles[bestpc[i]], 100.0 * (double)pc_cycles[bestpc[i]] / (double)total_cycles);
 
-  if (seen_spc && seen_spc->apu && best[0]) {
-    uint32_t base = bestpc[0] > 8 ? bestpc[0] - 8 : 0;
-    fprintf(stderr, "[spc] aram $%04x:", base);
-    for (int i = 0; i < 40; i++)
-      fprintf(stderr, "%s%02x", i == 8 ? " >" : " ", seen_spc->apu->ram[(base + i) & 0xffff]);
-    fprintf(stderr, "\n");
-  }
+  /* Bytes at every hot site, not just the hottest: after one loop is handled the
+   * next one is the question, and its opcodes are the answer. */
+  if (seen_spc && seen_spc->apu)
+    for (int i = 0; i < TOP_N && best[i]; i++) {
+      fprintf(stderr, "[spc] bytes $%04x:", bestpc[i]);
+      for (int k = 0; k < 10; k++)
+        fprintf(stderr, " %02x", seen_spc->apu->ram[(bestpc[i] + k) & 0xffff]);
+      fprintf(stderr, "\n");
+    }
 }
 
 /* --- the prototype lever -------------------------------------------------
