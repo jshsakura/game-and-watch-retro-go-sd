@@ -1435,6 +1435,14 @@ else
   SNES_SPIN_SKIP_DEF :=
 endif
 
+# SNES_SPC_IDLE_SKIP=0 compiles out the APU's idle-wait skip: the N-SPC sound
+# driver's timer-0 poll (MOV A,$00FD / BEQ -5), which is 25-40% of every SPC
+# opcode ALTTP and SMW execute, is charged in one step instead of dispatched.
+# It changes no emulated state -- the harness's state and audio hashes are
+# bit-identical either way -- so 0 exists only to measure what it is worth.
+SNES_SPC_IDLE_SKIP ?= 1
+SNES_SPC_IDLE_DEF := -DSNES_SPC_IDLE_SKIP=$(SNES_SPC_IDLE_SKIP)
+
 # SNES_SPIN_FORCE_ON=1 forces the spin-skip learner on regardless of the
 # per-ROM table. Diagnostic third arm only -- never a shipping path.
 SNES_SPIN_FORCE_ON ?= 0
@@ -1547,7 +1555,7 @@ endif
 define snes_obj_prereq_gen
 $$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_prof_pick,$(call snes_diag_pick,$1)) Makefile.common Makefile $(FLAGS_STAMP) snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_DEVICE_PROFILE)),$(SNES_PROF_DIR)/.stamp Core/Src/porting/snes/snes_profile.h Core/Inc/snes_prof_irq.h) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) $(if $(filter 1,$(SNES_NSPC_HLE)),$(SNES_NSPC_HLE_DIR)/.stamp) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $(SNES_SPIN_SKIP_DEF) -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $(SNES_SPIN_SKIP_DEF) $(SNES_SPC_IDLE_DEF) -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
 

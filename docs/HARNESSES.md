@@ -198,6 +198,20 @@ The SNES-emulation feasibility rig (verdict: ⛔ the PPU alone is 14 ms of a
 16.6 ms frame; do not reopen). Kept because it is the working example of the
 event-scheduler experiment and boots zelda3/SMW against the shared core.
 
+### `tools/m7_qemu_rig/run_snes_t2.sh` — the SNES core with the engines the device runs
+`run_snes_hf.sh` compiles `cpu.c` and `spc.c` as C. **The device has not run
+either as C since 0725** — it runs the Thumb-2 65816 and the Thumb-2 SPC700
+assembled from `external/sm/src/snes/thumb2/*.S`. This script assembles both
+(`-DSNES_THUMB2_CPU -DSPC_THUMB2_SPC`) so an opcode costs on the rig what it
+costs on hardware. Verify with
+`arm-none-eabi-objdump -d … --disassemble=spc_runOpcode` — you want to see
+`bl spc_thumb2_step`, not a C dispatch.
+
+Use it for anything whose payoff is *opcodes not dispatched*; the C-interpreter
+rig overstates those. `RIG_EXTRA_DEF=-D…` builds the arms, `RIG_OUT=` gives each
+arm its own build dir so the two can run at once. The July CPI of 1.76 and the
+"spin +38.8%" both came off the C rig and were void for this reason.
+
 ### `tools/snes_harness/run_spc_probe.sh` — what the SPC700 does with its time
 Same build, plus a `--wrap` over `spc_runOpcode` (nothing in `external/sm` is
 touched). `SPC_SKIP=0` prints a per-PC opcode/cycle histogram and the ARAM bytes

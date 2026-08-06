@@ -18,7 +18,11 @@ MEMORY
 SECTIONS
 {
   .isr_vector : { KEEP(*(.isr_vector)) } > CODE
-  .text : { *(.text*) *(.glue_7) *(.glue_7t) } > CODE
+  /* .itcm_snes_interp*: the Thumb-2 65816 and SPC700 engines, which the device
+   * links into ITCM. The rig has no ITCM; keeping them in .text stops them
+   * landing wherever ld puts an orphan section. Matches nothing without
+   * run_snes_t2.sh. */
+  .text : { *(.text*) *(.itcm_snes_interp*) *(.glue_7) *(.glue_7t) } > CODE
   .rodata : { *(.rodata*) . = ALIGN(4); } > CODE
   .ARM.exidx : { *(.ARM.exidx*) } > CODE
 
