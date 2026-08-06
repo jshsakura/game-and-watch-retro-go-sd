@@ -149,6 +149,7 @@ void saveStateClose(SaveState* state)
 void loadMsxState(UInt8 *srcBuffer, UInt32 save_size) {
     msxSaveState.buffer = (UInt8 *)srcBuffer;
     memcpy(msxSaveState.sections,msxSaveState.buffer,sizeof(msxSaveState.sections));
+    boardTimerCleanup();
     boardInfo.loadState();
 }
 
