@@ -1443,6 +1443,24 @@ endif
 SNES_SPC_IDLE_SKIP ?= 1
 SNES_SPC_IDLE_DEF := -DSNES_SPC_IDLE_SKIP=$(SNES_SPC_IDLE_SKIP)
 
+# SNES_LINE_CACHE=1 lets the PPU reuse the previous frame's rendered line when
+# every register, VRAM, CGRAM and OAM page that line depends on is unchanged.
+# The host harness reports identical framebuffer/WRAM/SRAM and audio hashes with
+# it on, and 4.6% MORE host time (ALTTP 700f): a host has no memory stalls, so
+# there the dependency check is pure overhead and the reuse buys nothing. Whether
+# it wins is a question only the device answers, which is what this flag is for.
+# SNES_LINE_REUSE_PROBE=1 is the measurement arm: it reports how often a line
+# COULD have been reused, without reusing any.
+SNES_LINE_CACHE ?= 0
+SNES_LINE_REUSE_PROBE ?= 0
+SNES_LINE_DEFS :=
+ifeq ($(SNES_LINE_CACHE),1)
+  SNES_LINE_DEFS += -DSNES_LINE_CACHE
+endif
+ifeq ($(SNES_LINE_REUSE_PROBE),1)
+  SNES_LINE_DEFS += -DSNES_LINE_REUSE_PROBE
+endif
+
 # SNES_SPIN_FORCE_ON=1 forces the spin-skip learner on regardless of the
 # per-ROM table. Diagnostic third arm only -- never a shipping path.
 SNES_SPIN_FORCE_ON ?= 0
@@ -1555,7 +1573,7 @@ endif
 define snes_obj_prereq_gen
 $$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_prof_pick,$(call snes_diag_pick,$1)) Makefile.common Makefile $(FLAGS_STAMP) snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_DEVICE_PROFILE)),$(SNES_PROF_DIR)/.stamp Core/Src/porting/snes/snes_profile.h Core/Inc/snes_prof_irq.h) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) $(if $(filter 1,$(SNES_NSPC_HLE)),$(SNES_NSPC_HLE_DIR)/.stamp) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $(SNES_SPIN_SKIP_DEF) $(SNES_SPC_IDLE_DEF) -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $(SNES_SPIN_SKIP_DEF) $(SNES_SPC_IDLE_DEF) $(SNES_LINE_DEFS) -DSNES_DSP_MONO -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
 

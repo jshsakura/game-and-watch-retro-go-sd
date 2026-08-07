@@ -306,9 +306,24 @@ int main(void) {
 
   for (int frame = 0; frame < RIG_FRAMES; frame++) {
 #ifdef RIG_INPUT_TAP
-    /* Tap Start (bit 3) periodically to walk title/menus into gameplay; only for
-     * measurement runs (changes state, so not for the input=0 host cross-check). */
-    snes->input1->currentState = (frame >= 40 && (frame % 24) < 6) ? 0x0008 : 0;
+    if (frame < 900) {
+      snes->input1->currentState = (frame >= 40 && (frame % 24) < 6) ? 0x0008 : 0;
+    } else {
+      uint16_t pad = 0;
+      int gp = frame - 900;
+      int phase = (gp / 90) % 4;
+      int step = gp % 90;
+      if (step < 60) {
+        switch (phase) {
+          case 0: pad = 0x0080; break;
+          case 1: pad = 0x0040; break;
+          case 2: pad = 0x0020; break;
+          case 3: pad = 0x0010; break;
+        }
+      }
+      if (gp % 37 < 4) pad |= 0x0100;
+      snes->input1->currentState = pad;
+    }
 #else
     snes->input1->currentState = 0;
 #endif
@@ -465,6 +480,13 @@ int main(void) {
          (unsigned long)(uint32_t)audio_hash,
          (unsigned long)(tot_emu * ipt_x1000 / 1000 / frames),
          (unsigned long)(tot_apu * ipt_x1000 / 1000 / frames));
+#endif
+#ifdef SNES_LINE_REUSE_PROBE
+  ppu_lineReuseProbeReport();
+  ppu_lineProbeFieldReport();
+#endif
+#ifdef SNES_LINE_CACHE
+  ppu_lineCacheReport();
 #endif
   return 0;
 }
