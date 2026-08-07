@@ -33,6 +33,44 @@
 #define RIG_WINDOW 200
 #endif
 
+#ifdef RIG_FRAME_DIST
+/* Per-frame EMU instruction distribution.  Records raw timer deltas per frame,
+ * then sorts at end to report percentiles.  Lets us find the heavy-frame tail
+ * (p99) that window averages hide. */
+static uint32_t g_frame_emu_ticks[RIG_FRAMES];
+static uint32_t g_frame_apu_ticks[RIG_FRAMES];
+static int cmp_u32(const void *a, const void *b) {
+  uint32_t va = *(const uint32_t *)a, vb = *(const uint32_t *)b;
+  return (va > vb) - (va < vb);
+}
+static void rig_print_percentiles(const char *label, uint32_t *arr, int n, uint32_t ipt_x1000) {
+  /* Sort a copy so the original temporal order survives if needed later. */
+  static uint32_t sorted[RIG_FRAMES];
+  int copy_n = n < RIG_FRAMES ? n : RIG_FRAMES;
+  for (int i = 0; i < copy_n; i++) sorted[i] = arr[i];
+  qsort(sorted, copy_n, sizeof(uint32_t), cmp_u32);
+  uint32_t p_idx[] = {0, 1, 5, 10, 25, 50, 75, 90, 95, 99};
+  const char *p_name[] = {"min","p1","p5","p10","p25","p50","p75","p90","p95","p99"};
+  printf("[dist] %s (n=%d):", label, copy_n);
+  for (int i = 0; i < 10; i++) {
+    int idx = (int)((uint32_t)p_idx[i] * copy_n / 100);
+    if (idx >= copy_n) idx = copy_n - 1;
+    uint64_t insn = (uint64_t)sorted[idx] * ipt_x1000 / 1000;
+    printf(" %s=%lu", p_name[i], (unsigned long)insn);
+  }
+  uint64_t max_insn = (uint64_t)sorted[copy_n - 1] * ipt_x1000 / 1000;
+  printf(" max=%lu", (unsigned long)max_insn);
+  uint64_t p50_i = (uint64_t)sorted[copy_n/2] * ipt_x1000 / 1000;
+  uint64_t p90_i = (uint64_t)sorted[(int)(90*copy_n/100)] * ipt_x1000 / 1000;
+  uint64_t p99_i = (uint64_t)sorted[(int)(99*copy_n/100)] * ipt_x1000 / 1000;
+  printf(" | fps@312M: p50=%.1f p90=%.1f p99=%.1f max=%.1f\n",
+         p50_i ? 312000000.0/p50_i : 0,
+         p90_i ? 312000000.0/p90_i : 0,
+         p99_i ? 312000000.0/p99_i : 0,
+         max_insn ? 312000000.0/max_insn : 0);
+}
+#endif
+
 bool snes_loadRom(Snes* snes, const uint8_t* data, int length);
 
 /* rig_runtime.c */
@@ -306,6 +344,36 @@ int main(void) {
 
   for (int frame = 0; frame < RIG_FRAMES; frame++) {
 #ifdef RIG_INPUT_TAP
+#ifdef RIG_INPUT_SMK
+    uint16_t pad = 0;
+    if (frame < 200) pad = 0;
+    else if (frame < 210) pad = 0x0008;         /* Start at title */
+    else if (frame < 350) pad = 0;
+    else if (frame < 360) pad = 0x0100;         /* A: mode select */
+    else if (frame < 450) pad = 0;
+    else if (frame < 460) pad = 0x0100;         /* A: player count */
+    else if (frame < 550) pad = 0;
+    else if (frame < 560) pad = 0x0100;         /* A: character */
+    else if (frame < 650) pad = 0;
+    else if (frame < 660) pad = 0x0100;         /* A: cup */
+    else if (frame < 750) pad = 0;
+    else if (frame < 760) pad = 0x0100;         /* A: start race */
+    else if (frame >= 900) {
+      int gp = frame - 900;
+      int phase = (gp / 90) % 4;
+      int step = gp % 90;
+      if (step < 60) {
+        switch (phase) {
+          case 0: pad = 0x0080; break;
+          case 1: pad = 0x0040; break;
+          case 2: pad = 0x0020; break;
+          case 3: pad = 0x0010; break;
+        }
+      }
+      if (gp % 37 < 4) pad |= 0x0100;
+    }
+    snes->input1->currentState = pad;
+#else
     if (frame < 900) {
       snes->input1->currentState = (frame >= 40 && (frame % 24) < 6) ? 0x0008 : 0;
     } else {
@@ -324,6 +392,7 @@ int main(void) {
       if (gp % 37 < 4) pad |= 0x0100;
       snes->input1->currentState = pad;
     }
+#endif
 #else
     snes->input1->currentState = 0;
 #endif
@@ -364,6 +433,10 @@ int main(void) {
     uint32_t t2 = rig_timer_now();
     win_emu += (uint32_t)(t1 - t0);
     win_apu += (uint32_t)(t2 - ta);
+#ifdef RIG_FRAME_DIST
+    g_frame_emu_ticks[frame] = (uint32_t)(t1 - t0);
+    g_frame_apu_ticks[frame] = (uint32_t)(t2 - ta);
+#endif
 
 #ifdef RIG_DEVICE_VIDEO
     /* The extra eight rows only make direct overscan writes memory-safe; they
@@ -487,6 +560,26 @@ int main(void) {
 #endif
 #ifdef SNES_LINE_CACHE
   ppu_lineCacheReport();
+#endif
+#ifdef RIG_DSP_KEYON_PROBE
+  extern void dsp_keyonProbeReport(void);
+  dsp_keyonProbeReport();
+#endif
+#ifdef RIG_FRAME_DIST
+  /* Split the distribution by phase: boot (0-299), transition (300-599),
+   * early gameplay (600-899), gameplay (900-end).  Window averages hide the
+   * heavy-frame tail; percentiles expose it. */
+  printf("\n[dist] === per-frame distribution (insn/frame at ~%lu.%03lu insn/tick) ===\n",
+         (unsigned long)(ipt_x1000/1000), (unsigned long)(ipt_x1000%1000));
+  rig_print_percentiles("EMU all", g_frame_emu_ticks, RIG_FRAMES, ipt_x1000);
+  rig_print_percentiles("EMU 0-299", g_frame_emu_ticks, 300, ipt_x1000);
+  rig_print_percentiles("EMU 300-599", g_frame_emu_ticks + 300, 300, ipt_x1000);
+  rig_print_percentiles("EMU 600-899", g_frame_emu_ticks + 600, 300, ipt_x1000);
+  if (RIG_FRAMES > 900)
+    rig_print_percentiles("EMU 900+", g_frame_emu_ticks + 900, RIG_FRAMES - 900, ipt_x1000);
+  rig_print_percentiles("APU all", g_frame_apu_ticks, RIG_FRAMES, ipt_x1000);
+  if (RIG_FRAMES > 900)
+    rig_print_percentiles("APU 900+", g_frame_apu_ticks + 900, RIG_FRAMES - 900, ipt_x1000);
 #endif
   return 0;
 }

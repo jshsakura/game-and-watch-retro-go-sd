@@ -61,6 +61,7 @@ static uint8_t  primed;             /* has the ring ever reached TARGET?    */
 static uint16_t debt;               /* filler emitted, owed back in dropped samples */
 static uint16_t fpos;               /* history cursor used while dry (rd unmoved)   */
 static uint8_t  dry;                /* in a dropout right now?                      */
+static int32_t  fill_lp;            /* low-passed fill level for corr (see retune)  */
 
 void snes_stretch_reset(void) {
   memset(ring, 0, sizeof(ring));
@@ -76,6 +77,9 @@ void snes_stretch_reset(void) {
   debt = 0;
   fpos = 0;
   dry = 0;
+  /* Seed at the steady-state level, not 0: an EMA starting from zero reads as
+   * "the ring is empty" and leans the rate down for its first ~8 pulls. */
+  fill_lp = (int32_t)TARGET;
 }
 
 void snes_stretch_push(const int16_t *src, uint16_t n) {
@@ -132,8 +136,17 @@ static void retune(uint16_t n) {
   pushed = 0;
 
   /* Level term: nudge the backlog back toward TARGET, bounded to a few
-   * percent so it can never become the thing you hear. */
-  int32_t err  = (int32_t)fill - (int32_t)TARGET;
+   * percent so it can never become the thing you hear.
+   *
+   * The instantaneous fill swings by a whole frame (±~266) between the pull
+   * that follows a push and the one that doesn't, on a ~3.8-pull period.
+   * Feeding that swing straight into corr drove step between STEP_MIN and
+   * STEP_MAX on successive pulls — a ±1% pitch alternation at pull rate
+   * (60 Hz), reported as an audible buzz ("웅웅거린다"). Low-pass the fill
+   * level at 1/8: the per-pull jitter shrinks to ±33 samples (corr ±0.08%,
+   * inaudible), while real drift still converges in ~8 pulls (~130 ms). */
+  fill_lp += ((int32_t)fill - fill_lp) >> 3;
+  int32_t err  = fill_lp - (int32_t)TARGET;
   int32_t corr = err * (int32_t)(base >> 6) / (int32_t)TARGET;
   int32_t lim  = (int32_t)(base / 16u);
   if (corr >  lim) corr =  lim;
