@@ -56,6 +56,15 @@ filter math, which is unobservable while the voice stays silent *if* key-on
 resets the filter state (`old`/`older`, `decodeBuffer`) — that is the fact to
 establish first, in the `MY_CHANGES` key-on path, before writing any of it.
 
+**Sizing the whole DSP bucket needs instrumentation, not ablation.** The obvious
+experiment — make `dsp_cycle` return immediately and read the difference — does
+not terminate: the guest's own driver depends on the DSP advancing, so the run
+never reaches its frame count and QEMU is killed by the timeout. The July split
+(spc700 43.7% / dsp 56.3% of the APU bucket) came from an instrumented build,
+and `RIG_COST_PROF` on the t2 rig currently reports `spc700=0 dsp=0` because
+those tick hooks are not in the tree. Repair those hooks before quoting a DSP
+share.
+
 Reproduce: `DSP_ABLATE_IDLE` / `DSP_ABLATE_ALL` were temporary edits to
 `external/sm/src/snes/dsp.c` and were reverted; re-add them the same way (early
 return in `dsp_cycleChannel`, early return in `dsp_cycle`) and run
