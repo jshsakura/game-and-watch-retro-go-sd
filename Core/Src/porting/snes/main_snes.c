@@ -1141,9 +1141,27 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
          * Backlog past a few periods is a pause/load, not a slow frame -- drop
          * it and resync rather than grind, same rule (and the same watchdog-fed,
          * bounded wait) the wire path settled on after the SMW-menu death. */
+        /* ...but do NOT wait for each of those periods to arrive. Waiting here
+         * quantises the frame to whole 16.625 ms audio periods: a frame whose
+         * work takes 1.67 periods sleeps out the remaining third and costs two,
+         * so a game that could run at 36 fps is pinned near 30. Mario Kart
+         * measured 28.3 fps at 78.7% CPU busy on the device -- a fifth of the
+         * time asleep while missing every deadline, which is that stall. The
+         * periods this loop is "catching up" have already been played; nothing
+         * can be put back into them. All the emit does is drain the stretcher
+         * ring at the rate the DMA actually consumed it, which keeps the
+         * stretcher's rate estimate honest, and that costs microseconds.
+         *
+         * Set SNES_PACE_CATCHUP_WAIT=1 to get the stall back. The wait is still
+         * watchdog-fed and bounded there: it was unbounded once and killed SMW
+         * after the pause menu (a reset with no BSOD and no log). */
+#ifndef SNES_PACE_CATCHUP_WAIT
+#define SNES_PACE_CATCHUP_WAIT 0
+#endif
         if (elapsed > 4) elapsed = 1;
         while (elapsed > 1) {
             snes_pcm_emit();
+#if SNES_PACE_CATCHUP_WAIT
             uint32_t guard = 0;
             while (dma_counter == snes_last_dma && guard < 20000u) {
                 wdog_refresh();
@@ -1151,6 +1169,7 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
                 guard++;
             }
             snes_last_dma = dma_counter;
+#endif
             elapsed--;
         }
         /* Catch-up only for HLE: wire_frame_audio produces samples without
