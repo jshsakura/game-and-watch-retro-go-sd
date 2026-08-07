@@ -5,7 +5,7 @@
 # (the if-speedupEnabled brace-delimited section), compiles it against the
 # real stretcher and a mock DMA/audio layer, and drives it at a range of fps.
 #
-#   RED:   extract from HEAD (git show HEAD:...) — the buggy catch-up emit loop
+#   RED:   extract from BUGGY_REV (pinned), the commit that had the catch-up emit loop
 #   GREEN: extract from the working tree — the (void)elapsed; fix
 #
 # RED MUST fail (invariants violated), GREEN MUST pass. A test that has never
@@ -17,6 +17,19 @@
 # than silently extracting the wrong code.
 set -e
 cd "$(dirname "$0")/.."
+
+# The RED arm must name the commit that HAD the bug. Reading it from HEAD works
+# exactly once -- the moment the fix is committed, HEAD is the fixed code, RED
+# stops failing, and this test fails the build for everyone with a green tree.
+# That is the third time a safety net in this repo has been the thing that broke
+# CI, so: pin the revision, and if the clone cannot see it (shallow), SKIP and
+# say so rather than fail.
+BUGGY_REV=${BUGGY_REV:-daae17d0}
+if ! git cat-file -e "$BUGGY_REV:Core/Src/porting/snes/main_snes.c" 2>/dev/null; then
+  echo "SKIP no $BUGGY_REV in this clone (shallow?) - RED check not run"
+  echo "     GREEN invariants still checked below."
+  SKIP_RED=1
+fi
 
 CC="${CC:-gcc}"
 CFLAGS="-O2 -Wall -Wextra -std=c11 -g"
@@ -50,7 +63,7 @@ run_variant() {
     if [ "$src_cmd" = "WORKTREE" ]; then
         extract_pacing < "$MAIN" > "$inc"
     else
-        git show "HEAD:$MAIN" | extract_pacing > "$inc"
+        git show "$BUGGY_REV:$MAIN" | extract_pacing > "$inc"
     fi
 
     if [ ! -s "$inc" ]; then
@@ -101,17 +114,14 @@ echo "  Bug: catch-up loop emits 2-3x per DMA period at fps < ~32"
 echo "  Fix: (void)elapsed; — no catch-up emit"
 echo
 
-# Verify HEAD and worktree differ (if they don't, both tests run the same code)
-if git diff --quiet -- "$MAIN"; then
-    echo "WARNING: working tree matches HEAD — RED and GREEN use the same block."
-    echo "         (this is expected only if the fix is already committed)"
-    echo
-fi
-
 rc=0
 
-echo "--- RED: HEAD (buggy catch-up emit loop) ---"
-run_variant "RED" "HEAD" "yes" || rc=1
+if [ -n "${SKIP_RED:-}" ]; then
+    echo "--- RED: skipped (pinned revision not in this clone) ---"
+else
+    echo "--- RED: $BUGGY_REV (buggy catch-up emit loop) ---"
+    run_variant "RED" "BUGGY" "yes" || rc=1
+fi
 echo
 
 echo "--- GREEN: working tree (fixed) ---"
@@ -119,7 +129,11 @@ run_variant "GREEN" "WORKTREE" "no" || rc=1
 echo
 
 if [ $rc -eq 0 ]; then
-    echo "=== RESULT: PASS (RED failed as expected, GREEN passed) ==="
+    if [ -n "${SKIP_RED:-}" ]; then
+        echo "=== RESULT: PASS (GREEN passed; RED skipped, see above) ==="
+    else
+        echo "=== RESULT: PASS (RED failed as expected, GREEN passed) ==="
+    fi
 else
     echo "=== RESULT: FAIL ==="
 fi
