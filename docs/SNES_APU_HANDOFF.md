@@ -24,6 +24,29 @@ observable happens in them.
   the SPC Thumb-2 A/B was judged: profiler build, confirm `cpu_calls/frame` match
   across arms (same scene), then compare bucket absolutes.
 
+## The device answered, and it changed what to optimize
+
+`testbed-full-20260807-1406` (SPC idle skip + `SNES_LINE_CACHE=1`) on hardware:
+
+| | fps | CPU busy |
+|---|---|---|
+| A Link to the Past | **51** (used to dip to 40 in heavy scenes) | 92% |
+| Super Mario World | **49.5** | 89% |
+
+CPU busy was **99.5%** in every July profile. It is not any more, and the 8-11%
+is not headroom lying around: the only place this loop sleeps is
+`common_emu_sound_sync()` (`Core/Src/porting/common.c:542-548`), waiting on the
+**audio DMA counter**. One DMA period is 266 samples at 16 kHz = 16.625 ms =
+exactly one 60 Hz frame. So the idle is frames that finished their work early and
+were held at 60 fps — correct behaviour, not waste.
+
+**Therefore the deficit lives in the heavy frames, not the average one.** Average
+frame is ~20.2 ms of wall time of which ~18 ms is busy; the light frames are
+already at the cap. Optimising a bucket average is now the wrong target — cut the
+peak. That is exactly why the line cache won on the device while the host harness
+said it cost 4.6%: it removes render work from the worst frames only, and a host
+has no memory stalls for a reused line to save.
+
 ## What the measurements closed
 
 - **The Thumb-2 65816 engine handles 255 of 256 opcodes** (only BRK falls back to
@@ -89,3 +112,22 @@ Cost the port against the buckets above rather than assuming it wins.
   "opcodes not dispatched" must be measured on the t2 rig.
 
 Both are described in [HARNESSES.md](HARNESSES.md).
+
+## The open question, for whoever takes this next
+
+**What else can be tightened, ranked by what it does to the HEAVY frames?**
+
+The instrument to build first is a frame-time *distribution*, not an average:
+`tools/m7_qemu_rig/run_snes_t2.sh` now walks the guest past the title into
+gameplay with a scripted pad, so per-frame instruction counts over a real scene
+are available — histogram them, find the tail, and attribute the tail to buckets.
+A change that halves the p99 frame is worth more than one that shaves 3% off the
+mean, and the two are no longer the same trade.
+
+Constraints that are already settled, so nobody spends a day rediscovering them:
+the Thumb-2 65816 covers 255 of 256 opcodes (no fallback tax); the SPC timer wait
+is already skipped and what remains there is the driver writing DSP ports; the
+scheduler is evenly spread with a 1-2% single-optimisation ceiling (July,
+disassembly-verified); moving objects into ITCM is a measured net loss; N-SPC HLE
+is sealed at 38% breakage; overclock is forbidden by the SD hardware. The one
+open lever with a measured ceiling is idle DSP voices, above.

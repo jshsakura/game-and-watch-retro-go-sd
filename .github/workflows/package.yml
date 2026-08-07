@@ -109,11 +109,13 @@ jobs:
 
       # 2. Generate the update files using Docker
       #
-      # SNES_LINE_CACHE=1 is an EXPERIMENT, on so it can be measured on hardware.
-      # It is hash-identical (same framebuffer, WRAM, SRAM and audio) but costs
-      # 4.6% more time on the host, where there are no memory stalls to save.
-      # Remove this flag once the device has answered -- the last time an
-      # experiment was left on in this line it cost every release 8%.
+      # SNES_LINE_CACHE=1 stays on: the device answered. A Link to the Past used
+      # to dip to 40 fps in the heavy scenes and now holds 51, SMW reads 49.5,
+      # and CPU busy fell from 99.5% to 89-92% -- the heavy frames stopped
+      # saturating, which is what a line-reuse cache is for. It cuts the peak,
+      # not the average, so do not judge it by an average fps number, and do not
+      # remove it on the strength of the host harness reporting 4.6% MORE time:
+      # a host has no memory stalls for a reused line to save.
       - name: Generate firmware_update.bin and gw_update.tar
         run: |
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
