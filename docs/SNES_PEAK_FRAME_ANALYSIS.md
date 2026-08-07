@@ -156,6 +156,146 @@ above is the real-surface evidence; the rig can only confirm the bypass
 produces no `[line-cache]` activity and bit-identical hashes on the static
 title state.
 
+## Cache-machinery overhead — word-wise RegsMatch (-5.2%)
+
+User directive: use the rig to find 5% more workload savings. The cache ships
+~499K insn/frame of overhead (10.8% of the median cached frame) — pure
+dependency-check cost on top of the 4.14M CPU/DMA/IRQ floor.
+
+**Measurement (m0311).** A/B: LINE_CACHE vs LINE_CACHE+`RIG_FRAMESKIP`
+(CPU+APU only, PPU entirely off). FRAMESKIP p50=4,131K, LINE_CACHE
+p50=4,630K. Delta = 499K = 10.8% of median frame. Split across 224 lines,
+that is ~2,228 insn/line for the cache check.
+
+**Lever A — word-wise `PpuLineCacheRegsMatch` (shipped, -5.2%).** The
+original implementation compared the cache state byte-by-byte (120 iterations
+× two range checks per byte, for `oamAdr` and `m7matrix` exclusion). Replaced
+with a `uint32_t` stride loop: 30 iterations, one range check per word, with
+the m7matrix word range and oamAdr byte mask computed once via `offsetof`.
+`_Static_assert` guarantees the struct size is word-aligned.
+
+Result (m0324): STATEHASH=`1d0d959d` AUDIOHASH=`c70e2bdf` **identical**, hit
+rate 96.61% unchanged, emu w1200 = 4,483,906 (was 4,730,741 = **-5.2%**).
+
+**Lever B — skip `ppu_evaluateSprites` on no-candidate lines (shipped,
+negligible).** `ppu_evaluateSprites` runs at line 968 BEFORE the cache check
+at 976. On cache-hit lines (96.6%), the `objBuffer` it produces is never
+read — `PpuDrawWholeLine` is skipped. The fast path now checks
+`objLineCand[y][0..3] == 0` (already maintained per-frame by
+`ppu_rebuildSpriteLineCache`) and sets `lineHasSprites=false` directly,
+deferring the full sprite eval to cache-miss lines.
+
+Safe because `PpuDrawWholeLine` gates ALL sprite compositing on
+`if (ppu->lineHasSprites)` — `objBuffer` is never read when false, and the
+dep check guarantees no OAM change on hit lines.
+
+Result (m0330, combined A+B): STATEHASH=`1d0d959d` **identical**. EMU
+gameplay p50=4,369K (71.4fps), p90=4,989K (62.5fps). Delta from A alone is
+negligible — `objLineCand` is rarely all-zero during ALttP gameplay (Link is
+always on screen). The mechanism is correct and bit-identical; its yield is
+ROM-dependent.
+
+**Lever C — defer VRAM-tracking memset to miss-only (reverted — broke
+bit-identical).** Moving `memset(g_line_cache_cur_vram, 0, ...)` from before
+the cache check to inside the `!reused` branch produced
+STATEHASH=`2feccd92` (was `1d0d959d`). Root cause: `g_line_cache_cur_vram`
+is populated by `PpuLineCacheVram` calls during CPU/DMA VRAM writes between
+lines; the timing of the memset relative to the CPU execution phase matters
+for dep tracking. Reverted.
+
+| Combined A+B (ALttP 1200f) | insn/frame | fps @312M |
+|----------------------------|-----------:|----------:|
+| EMU 900+ min               | 4,228,000  | 73.8      |
+| EMU 900+ p50               | 4,369,000  | 71.4      |
+| EMU 900+ p90               | 4,979,000  | 62.7      |
+| EMU 900+ p95               | 5,161,000  | 60.5      |
+| EMU 900+ p99               | 7,734,000  | 40.3      |
+| EMU 900+ max               | 8,236,000  | 37.9      |
+
+APU constant ~544K insn/frame, not a bottleneck. CPU+DMA+IRQ floor = 3,587K.
+
+## Dispatch-floor profiling — the CPU is the wall
+
+User directive (m0363): find 1-2 more levers in the floor. The floor (CPU + DMA +
+IRQ + dispatch) was profiled end-to-end via `RIG_CALL_PROFILE`, which instruments
+every dispatch entry point with per-window counters.
+
+### Call profile (ALttP 1200f, gameplay w1200)
+
+| subsystem                 | calls/frame | cost (insn/frame) | notes |
+|---------------------------|------------:|------------------:|-------|
+| 65816 opcodes             |    13,119   |      ~3,010,000  | 70% of frame. ~231 QEMU insn/opcode. Irreducible. |
+| `snes_cpuRead`            |     7,915   |         ~93,000  | 91% WRAM fast path, 7.4% ROM page cache, 1.2% slow path |
+| `snes_cpuWrite`           |         —   |          (small) | not printed separately; dwarfs under opcode cost |
+| `dma_cycle`               |     1,051   |          ~4,200  | **2 return true per frame**. DMA work is negligible. |
+| `dma_doDma` (VBlank bulk) |         2   |          ~4,000  | one per VBlank, drains synchronously |
+| `dma_doHdma`              |       225   |         ~18,000  | once per scanline. 225 = ~active scanlines. |
+| `apply_irq_match`         |    13,042   |         ~52,000  | 99.6% early-return (12,994 skip), 0.37% match (48). |
+
+DMA is not a meaningful cost — 1,051 calls, only 2 of them do work. IRQ dispatch
+is 99.6% early-return and costs ~52K (1.2% of frame). The 3,587K floor is
+dominated by the CPU interpreter at ~3,010K (84%).
+
+### DMA-check hoist in `run_dots` (shipped, -1.5%)
+
+`run_dots` (main_snes.c:162-209 / rig_snes.c:226-281) checks
+`snes->dma->dmaBusy || snes->dma->hdmaTimer > 0` at the top of every iteration —
+once per opcode, ~13K times/frame. The check is 2 DTCM loads + OR + branch = ~4
+cycles on M7. DMA is active only during HDMA countdown (hPos 1024→1362), so the
+check misses 99.99% of the time.
+
+Hoisted `dma_active` into a local register, refreshed only after opcodes that
+*started* a DMA (writes to DMAEN at $420b, which drain synchronously inside
+`snes_writeReg`). In the common no-DMA case the hot loop now does a single
+predicted-not-taken branch on a register.
+
+Safety proof: `dma_active` can go true only via (1) an opcode writing DMAEN
+$420b, which `snes_writeReg` drains synchronously so the flag is observable
+immediately after; (2) `hdmaTimer` increase, which happens only in
+`dma_doHdma`/`dma_initHdma` called from `snes_handle_pos_stuff` — *outside*
+`run_dots`.
+
+| ALttP 1200f, RIG_FRAME_DIST | before | after | delta |
+|------------------------------|-------:|------:|------:|
+| EMU 900+ p50                 | 4,369K | 4,304K | -65K (-1.5%) |
+| EMU 900+ p90                 | 4,979K | 4,924K | -55K (-1.1%) |
+| EMU 900+ p99                 | 7,734K | 7,705K | -29K (-0.4%) |
+
+STATEHASH=`1d0d959d` AUDIOHASH=`c70e2bdf` **identical**. The device saving is
+likely *larger* than 1.5% — QEMU does not model the two eliminated DTCM loads,
+which on M7 cost 2-6 cycles each.
+
+Applied to both `rig_snes.c` (for measurement) and `main_snes.c` (device
+`run_dots` — this is the emulation engine, *not* the user's pacing block at
+lines 1092-1193).
+
+### IRQ-enabled hoist — neutral, reverted
+
+Same pattern attempted on `apply_irq_match`: hoist
+`bool irq_armed = hIrqEnabled || vIrqEnabled` out of the per-opcode check and
+refresh it after each opcode. The check is the same shape (2 struct loads + OR
++ branch), so the refresh costs the same as the early-return it removes.
+
+Result: STATEHASH identical but p50 = 4,387K (+1.9% WORSE). The extra local
+variable bookkeeping and the refresh outweigh the saved early-return on QEMU.
+**Reverted** on both rig and device. `apply_irq_match` is already optimal — its
+99.6% early-return is two loads and a branch, which is the cheapest possible
+gate.
+
+### Floor decomposition after all work
+
+The 4,304K median cached frame is now:
+
+| component                            | insn/frame | share |
+|--------------------------------------|-----------:|------:|
+| 65816 interpreter (`cpu_runOpcode`)  | 3,010,000  | 69.9% |
+| cache machinery (check + capture)    |   434,000  | 10.1% |
+| APU (SPC700 + DSP, end of frame)     |   544,000  | 12.6% |
+| dispatch (DMA hoist, IRQ, etc.)      |   316,000  |  7.4% |
+
+Of these, only the cache machinery is reducible (already at word-wise compare).
+CPU, APU, and dispatch are at their floors. **Levers exhausted.**
+
 ## What the cache does NOT do
 
 - **HDMA-heavy games.** Per-line state capture handles HDMA correctly — it just
@@ -218,8 +358,8 @@ device runs them against memory:
   is exactly where the cache works.
 
 To move the device number past 51 fps, the rig's per-frame distribution says the
-work is in two places: (1) the 10% cache-miss tail (p99=8.0M, 38.9 fps projected
-— these are the frames that dip below 60 on device), and (2) the untouched 4.14M
+work is in two places: (1) the 10% cache-miss tail (p99=7.7M, 40.3 fps projected
+— these are the frames that dip below 60 on device), and (2) the untouched 3.59M
 insn/frame of CPU/DMA/IRQ, which is the floor no PPU optimisation can reach.
 
 ## Closed axes — do not re-open
@@ -244,8 +384,12 @@ These were closed by device measurement, not by argument. See
 |-------|-------|----------|
 | LINE_CACHE | **shipped** | `testbed-full-20260807-1406`. Device: Zelda 40→51fps. Rig p50=66.5, p90=60fps. Bit-identical (STATEHASH/AUDIOHASH). |
 | Mode 7 guard + bypass | **verified + fixed** | User host run: bit-identical on real Mode 7 (SMK lit=56643, 1200f). Bypass fix (`ppu->mode != 7 &&` at call site) eliminates the +18.5% overhead. Rig: ALttP cache preserved, SMK bypassed. |
+| Cache-machinery (word-wise RegsMatch + sprite-eval skip) | **shipped** | Rig -5.2% (4,730K→4,484K Lever A alone). Combined A+B: emu p50=4,369K (71.4fps), p90=4,979K (62.7fps). Bit-identical. |
 | DSP idle-voice BRR skip | **closed** | Safe version implemented + measured: -0.22% insn, AUDIOHASH identical. The -2.74% ablation ceiling was unreachable without also dropping BRR state advance. |
-| Cache-miss tail | **open, low ceiling** | p99=8.0M (38.9fps projected). 7.3% slower than baseline max due to dependency-check overhead on forced full re-render. Narrowing it is a few percent of 10% of frames. |
+| Dispatch DMA-check hoist | **shipped** | `run_dots` hoists `dma_active` out of the per-opcode check, refreshed only on actual DMA start. p50=4,304K (-1.5% from 4,369K). Bit-identical. Device gain likely larger (2 eliminated DTCM loads per opcode). |
+| Stretcher fill_lp | **shipped** | `snes_audio_stretch.c` retune() now uses EMA(1/8) low-passed fill for corr. Step range 28¢→18¢ (-36%), sharp jumps eliminated. Host-verified; device listening test pending user flash. |
+| Floor profiling | **complete** | CPU interpreter = 70% of frame, irreducible. APU 12.6%. Cache 10.1% (already word-wise). Dispatch 7.4% (DMA hoist applied, IRQ hoist neutral → reverted). Levers exhausted. |
+| Cache-miss tail | **open, low ceiling** | p99=7.7M (40.3fps projected). The tail is now the only sub-60 band, but narrowing it is a few percent of 10% of frames. |
 
 ## What remains
 
@@ -254,7 +398,28 @@ These were closed by device measurement, not by argument. See
    bypass fix eliminates the +18.5% overhead. Device flash would confirm the
    bypass produces identical timing to pre-cache SMK, but correctness is
    settled.
-2. **Cache-miss tail investigation** (optional). If the 10% tail's
-   dependency-check overhead on forced full re-render can be made cheaper (e.g.
-   skip the check when VRAM page serial shows >N pages dirtied), the tail
-   narrows. Low ceiling — a few percent of already-10% of frames.
+2. **Cache-miss tail** — the only sub-60 band. p99=7.7M (40.3fps projected)
+   on the ~3.4% of lines that miss the cache each frame. The PPU render on
+   those lines is irreducible (all known PPU levers are closed). The
+   dependency-check overhead on a forced miss is ~1.6K insn/miss-line × ~8
+   miss-lines/frame = ~13K insn/frame — not the lever.
+3. **Stretcher device listening test** (user-only). `fill_lp` EMA in
+   `retune()` cuts step range 28¢→18¢ on the host pattern. Confirms on
+   device only by ear — the stretcher is a resampler by design and its
+   output is not a bit-identical surface.
+4. **SMK 28.3fps gap.** SMK is Mode 7 → cache is bypassed → cache-machinery
+   optimisation does not help it. The 5% workload gap for SMK lives in the
+   CPU/DMA/IRQ floor (3,587K insn/frame) plus DSP-1 HLE, neither of which
+   the PPU cache touches. Separate axis. Floor profiling showed the floor
+   is 84% CPU interpreter — irreducible without a different engine (sm/
+   zelda3/smw use native C reimplementations, not interpretation).
+
+### Levers tried this session, dead-ended
+
+| Lever | Result | Why |
+|-------|--------|-----|
+| IRQ-enabled hoist in `run_dots` | +1.9% (worse) | Refresh cost = saved early-return cost. Net zero. |
+| Cache-miss memset deferral | STATEHASH changed | Dep-tracking memset timing matters for CPU-phase writes. |
+| `PpuLineCacheMatchPpu` (skip Capture on hits) | +0.3% (noise) | 40-branch chain offsets Capture savings in insn count. |
+| DSP BRR idle-voice skip | -0.22% | Safe version still advances BRR state; decode loop is cheap. |
+| DMA ablation | DMA = 2 calls/frame | Confirmed DMA is negligible — not a lever. |

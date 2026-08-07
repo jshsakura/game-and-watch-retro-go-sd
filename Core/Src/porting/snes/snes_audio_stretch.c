@@ -3,6 +3,26 @@
 
 #include <string.h>
 
+/* When the pull runs in the DMA ISR (emu_audio_enable path), push and pull
+ * share fill / rd / pushed / primed. The push runs in main-loop context and
+ * guards the shared fields with a brief IRQ disable. On the host (tests) there
+ * is no ISR, so the macros are no-ops. */
+#ifdef TARGET_GNW
+/* main.h for the CMSIS intrinsics. Without it these are implicit declarations
+ * that the host build never sees, because there they are macros -- the device
+ * build is the one that fails, and that is the lie CLAUDE.md warns about.
+ *
+ * And SAVE/RESTORE means what it says: __enable_irq() unconditionally would
+ * turn interrupts back ON at the end of a section that some caller had already
+ * disabled them around. Save PRIMASK, restore PRIMASK. */
+#include "main.h"
+#define STRETCH_IRQ_SAVE()    const uint32_t irq_state_ = __get_PRIMASK(); __disable_irq()
+#define STRETCH_IRQ_RESTORE() __set_PRIMASK(irq_state_)
+#else
+#define STRETCH_IRQ_SAVE()    ((void)0)
+#define STRETCH_IRQ_RESTORE() ((void)0)
+#endif
+
 #define RING      SNES_STRETCH_RING
 #define RING_MASK (RING - 1u)
 _Static_assert((RING & RING_MASK) == 0u, "ring must be a power of two");
@@ -18,6 +38,14 @@ _Static_assert((RING & RING_MASK) == 0u, "ring must be a power of two");
  * stutter rather than an echo. Must be <= TARGET -- priming is what
  * guarantees that much history exists behind rd. */
 #define REPEAT     64u
+/* Splice crossfade, samples. The seam of a repeated segment is a click, and a
+ * click every loop_len samples is a tone -- 250 Hz with the old fixed 64. */
+#define XFADE      16u
+/* Loop-length search range for a dropout: 50 Hz (320 samples) down to 250 Hz
+ * (64) at 16 kHz. A loop that is a whole number of waveform periods splices
+ * without a seam; one that is not cannot be crossfaded into sounding right. */
+#define LOOP_MIN   64u
+#define LOOP_MAX   320u
 _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
 
 /* Sanity bound on the MEASURED ratio. Not a playback rate: it exists only to
@@ -48,20 +76,21 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
 #define STEP_MAX   66191u   /* 1.01x */
 
 static int16_t  ring[RING];
-static uint16_t rd, wr, fill;
+static volatile uint16_t rd, wr, fill;
 static uint32_t phase;              /* fractional read position, Q16 < 1.0 */
 static uint32_t step = STEP_ONE;    /* rate actually used by the pull       */
 static uint32_t base = STEP_ONE;    /* measured production/consumption      */
-static uint32_t pushed;             /* samples pushed since the last pull   */
+static volatile uint32_t pushed;    /* samples pushed since the last pull   */
 static uint32_t warm_in, warm_out;  /* exact running mean while warming up  */
 static uint16_t settled;            /* pulls seen                           */
 static uint32_t underruns;
 static int16_t  last;
-static uint8_t  primed;             /* has the ring ever reached TARGET?    */
-static uint16_t debt;               /* filler emitted, owed back in dropped samples */
-static uint16_t fpos;               /* history cursor used while dry (rd unmoved)   */
-static uint8_t  dry;                /* in a dropout right now?                      */
+static volatile uint8_t  primed;    /* has the ring ever reached TARGET?    */
 static int32_t  fill_lp;            /* low-passed fill level for corr (see retune)  */
+static int32_t  time_error;         /* push/pull deficit: +ve = behind (insert)     */
+static uint16_t pitch_est = REPEAT; /* current pitch period for insertion           */
+static int16_t  ins_buf[LOOP_MAX];  /* one period ready to emit without consuming   */
+static uint16_t ins_pos, ins_len;   /* insertion buffer cursor / length             */
 
 void snes_stretch_reset(void) {
   memset(ring, 0, sizeof(ring));
@@ -74,15 +103,14 @@ void snes_stretch_reset(void) {
   underruns = 0;
   last = 0;
   primed = 0;
-  debt = 0;
-  fpos = 0;
-  dry = 0;
-  /* Seed at the steady-state level, not 0: an EMA starting from zero reads as
-   * "the ring is empty" and leans the rate down for its first ~8 pulls. */
   fill_lp = (int32_t)TARGET;
+  time_error = 0;
+  pitch_est = REPEAT;
+  ins_pos = ins_len = 0;
 }
 
 void snes_stretch_push(const int16_t *src, uint16_t n) {
+  STRETCH_IRQ_SAVE();
   for (uint16_t i = 0; i < n; i++) {
     if (fill >= RING) {            /* core outrunning the DMA: drop oldest */
       rd = (uint16_t)((rd + 1u) & RING_MASK);
@@ -93,11 +121,13 @@ void snes_stretch_push(const int16_t *src, uint16_t n) {
     fill++;
   }
   pushed += n;
+  uint8_t should_prime = (!primed && fill >= TARGET) ? 1 : 0;
+  STRETCH_IRQ_RESTORE();
   /* Start playing only once a whole TARGET backlog exists. Priming earlier
    * let the reader start while the rate estimate was still 1.0 and drained
    * the ring before it converged; one extra frame of startup silence -- which
    * is what a fresh ROM sounds like anyway -- buys all of that back. */
-  if (!primed && fill >= TARGET) primed = 1;
+  if (should_prime) primed = 1;
 }
 
 /* Set the read rate from what was MEASURED, not from an integrator hunting
@@ -158,65 +188,71 @@ static void retune(uint16_t n) {
   step = (uint32_t)next;
 }
 
+/* Pick the repeat length for a dropout: the lag in [LOOP_MIN, LOOP_MAX] whose
+ * history best matches the most recent samples. That makes the loop a whole
+ * number of waveform periods, so the seam falls where the waveform repeats
+ * anyway and the crossfade has something to hide. Searched decimated by 2 in
+ * both lag and sample -- this runs once per dropout, not per sample. */
+static uint16_t stretch_pick_period(void) {
+  const uint16_t win = 128u;                 /* samples compared per lag */
+  int64_t best_score = INT64_MIN;
+  uint16_t best_lag = REPEAT;
+
+  for (uint16_t lag = LOOP_MIN; lag <= LOOP_MAX; lag += 2u) {
+    int64_t acc = 0;
+    for (uint16_t k = 0; k < win; k += 2u) {
+      int32_t a = ring[(uint16_t)((rd - 1u - k) & RING_MASK)];
+      int32_t b = ring[(uint16_t)((rd - 1u - k - lag) & RING_MASK)];
+      acc += (int64_t)a * b;
+    }
+    /* Normalise by lag so a long lag does not win merely by summing more
+     * energy -- it does not here (window is fixed), but keep the shorter loop
+     * when scores tie: shorter means the dropout reads as a stutter, longer
+     * as an echo. */
+    if (acc > best_score) { best_score = acc; best_lag = lag; }
+  }
+  return best_lag;
+}
+
 void snes_stretch_pull(int16_t *dst, uint16_t n) {
+  uint32_t was_pushed = pushed;
   retune(n);
+  time_error += (int32_t)n - (int32_t)was_pushed;
 
   for (uint16_t i = 0; i < n; i++) {
-    /* Not primed yet (fresh ROM): hold. At startup that is silence, which is
-     * what a fresh ROM sounds like. */
     if (!primed) {
       dst[i] = last;
       continue;
     }
 
-    /* Dry: the core did not produce enough for this period, and the rate band
-     * deliberately will not close the gap by slowing the music down. Three
-     * things are wanted from what goes out instead, and the first two attempts
-     * each bought one by losing another:
-     *
-     *   hold one sample        no drift, no click, but a DC step -- buzz for
-     *                          the ~25% of samples a deficit this size costs
-     *   rewind rd and replay   no buzz, right pitch, but the read position
-     *                          falls further into the past on every dry
-     *                          sample, ~80 times a second, and the stream
-     *                          ends up minutes behind the game. That is the
-     *                          "밀린다" reported from the device.
-     *
-     * The rewind was right about the filler and wrong about who pays for it.
-     * Filler inserted into a stream delays everything behind it; the only way
-     * to insert without delaying is to throw away as much real audio as you
-     * inserted. So: play history WITHOUT moving rd (the samples behind it are
-     * still in the ring -- reads advance rd, they never clear it), count the
-     * debt, and pay it down by dropping real samples once they arrive. Pitch
-     * is exact, the read position never moves backwards, latency is bounded,
-     * and a slow scene sounds like a stutter -- which is what it is. */
-    if (fill < 2u) {
-      /* Emit filler from the history BEHIND rd -- reads advance rd, they never
-       * clear the ring, so those samples are still there -- but do not move rd
-       * to do it. Moving rd backwards is what drifted: the read position falls
-       * further into the past on every dry sample, ~80 times a second, and the
-       * stream ends up minutes behind the game. Instead record a debt. */
-      if (!dry) { dry = 1; fpos = (uint16_t)((rd - REPEAT) & RING_MASK); }
-      underruns++;
-      if (debt < 0xffffu) debt++;
-      int16_t v = ring[fpos];
-      fpos = (uint16_t)((fpos + 1u) & RING_MASK);
-      if (fpos == rd) fpos = (uint16_t)((rd - REPEAT) & RING_MASK);
-      dst[i] = v;
+    if (ins_pos < ins_len) {
+      dst[i] = ins_buf[ins_pos++];
       continue;
     }
-    dry = 0;
 
-    /* Pay the debt down with real samples: every sample of filler that went
-     * out has to cost one sample of stream, or the filler IS the drift. This
-     * is the whole difference between "the sound stutters on a slow scene"
-     * and "the sound falls behind and never comes back". */
-    while (debt && fill > 2u) {
-      rd = (uint16_t)((rd + 1u) & RING_MASK);
-      fill--;
-      debt--;
+    if (time_error >= (int32_t)pitch_est && fill > pitch_est + 2u) {
+      pitch_est = stretch_pick_period();
+      if (pitch_est < LOOP_MIN) pitch_est = LOOP_MIN;
+      for (uint16_t k = 0; k < pitch_est; k++)
+        ins_buf[k] = ring[(uint16_t)((rd - pitch_est + k) & RING_MASK)];
+      uint16_t xf = pitch_est < XFADE ? pitch_est : XFADE;
+      for (uint16_t k = 0; k < xf; k++) {
+        int32_t nrml = ring[(uint16_t)((rd + k) & RING_MASK)];
+        ins_buf[k] = (int16_t)(((int32_t)ins_buf[k] * (int32_t)(xf - k) +
+                                nrml * (int32_t)(k + 1u)) / (int32_t)(xf + 1u));
+      }
+      time_error -= (int32_t)pitch_est;
+      ins_pos = 0;
+      ins_len = pitch_est;
+      dst[i] = ins_buf[ins_pos++];
+      continue;
     }
-    if (fill < 2u) { dst[i] = last; continue; }
+
+    if (fill < 2u) {
+      underruns++;
+      dst[i] = last;
+      continue;
+    }
 
     int32_t s0 = ring[rd];
     int32_t s1 = ring[(rd + 1u) & RING_MASK];

@@ -29,18 +29,51 @@
  * made audible, it is a second fault on top of it, and unlike a gap it never
  * stops.
  *
- * So the playback rate is now clamped to ±1% (~17 cents, under the ~20-25
+ * So the playback rate is clamped to ±1% (~17 cents, under the ~20-25
  * cents at which a detune registers). Inside that band the module still does
  * the job it was written for: it absorbs the jitter of a pull landing part of
  * a frame early or late, which is what turns into a gap. Outside it the ring
- * runs dry and the pull plays a few ms of history in place — no zero, no
- * click, no drift, with the debt paid back by dropping real samples once they
- * arrive, so the stream never falls behind the game — and the old cadence
- * returns. A core at 68% speed has an fps problem; spending pitch on
- * it buys nothing and costs the music.
+ * would run dry — and that is what PICOLA insertion prevents.
+ *
+ * PICOLA pitch-preserving insertion
+ * ---------------------------------
+ * When the push/pull deficit accumulates to at least one waveform period
+ * (time_error >= pitch_est), the pull emits a crossfaded copy of the most
+ * recent period from ring history WITHOUT advancing rd. This produces extra
+ * output samples at the correct pitch — the waveform repeats exactly, so the
+ * splice is seamless for periodic content and crossfaded for the rest.
+ *
+ * At 44 fps the deficit is ~97 samples/frame and the pitch period is ~64, so
+ * ~1.5 insertions per frame keep the ring balanced. The listener hears the
+ * game's own audio at the correct pitch, with a slight stutter on sustained
+ * notes — which is what a slow scene sounds like, not a transposed one.
+ *
+ * A core at 68% speed has an fps problem; PICOLA makes the audio continuous
+ * and in-tune instead of gap-ridden or flat.
  *
  * At full speed the loop converges to step == 1.0 and the pull is a straight
  * copy, so a 60 fps scene is unaffected.
+ *
+ * ISR-pull architecture
+ * ---------------------
+ * The pull runs in the DMA ISR (gw_audio.c emu_fill, called from
+ * HAL_SAI_TxHalfCpltCallback / HAL_SAI_TxCpltCallback), not from the main
+ * loop. The overlay registers snes_stretch_pull via emu_audio_register() after
+ * audio_start_playing_full_length(). This is the same pattern music_fill uses
+ * for the Music app: the ISR calls only core code, which calls the overlay's
+ * pull through a registered function pointer.
+ *
+ * The ISR-pull architecture fixes the half-buffer resonance bug: at fps where
+ * frame_time is an integer multiple of the DMA period (30 fps = 2 periods),
+ * the main-loop emit always wrote to the same half-buffer (dma_state landed on
+ * the same selector every frame), and the other half played stale content
+ * forever. Moving the pull into the ISR means every period gets exactly one
+ * pull — both halves always get fresh stretcher output.
+ *
+ * Concurrency: push (main loop) and pull (ISR) share fill, rd, pushed, primed.
+ * The push wraps these in a brief IRQ disable (STRETCH_IRQ_SAVE/RESTORE in
+ * snes_audio_stretch.c). The ISR pull reads/writes them without further
+ * protection because it cannot be preempted by the push.
  */
 #pragma once
 

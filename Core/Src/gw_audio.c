@@ -34,6 +34,21 @@ void     music_audio_set(int vol, int play)  { music_vol = (int16_t)vol; music_s
 void     music_audio_setpos(uint32_t p)      { music_played = p; }
 uint32_t music_audio_pos(void)               { return music_played; }
 
+// --- Emulator ISR-fed playback (SNES stretcher) ----------------------------
+static emu_pull_fn_t g_emu_pull_fn = NULL;
+static volatile uint8_t emu_owns;
+
+void emu_audio_register(emu_pull_fn_t fn) { g_emu_pull_fn = fn; }
+void emu_audio_enable(int on)             { emu_owns = on ? 1 : 0; }
+
+static void emu_fill(void)
+{
+    if (!emu_owns || !g_emu_pull_fn) return;
+    int16_t *buf = audio_get_active_buffer();
+    uint16_t len = audio_get_buffer_length();
+    g_emu_pull_fn(buf, len);
+}
+
 // Fill the just-freed DMA half from the overlay ring — runs in the SAI ISR.
 // No-op for emulators/launcher (music_owns == 0); clean silence when paused,
 // stopped, or before the ring is attached.
@@ -61,6 +76,7 @@ void HAL_SAI_TxHalfCpltCallback(SAI_HandleTypeDef *hsai) {
     dma_counter++;
     dma_state = DMA_TRANSFER_STATE_HF;
     music_fill();
+    emu_fill();
 #ifdef SNES_DEVICE_PROFILE
     snes_prof_irq_cycles += SNES_PROF_DWT_CYCCNT - snes_prof_t0;
     snes_prof_irq_count++;
@@ -74,6 +90,7 @@ void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef *hsai) {
     dma_counter++;
     dma_state = DMA_TRANSFER_STATE_TC;
     music_fill();
+    emu_fill();
 #ifdef SNES_DEVICE_PROFILE
     snes_prof_irq_cycles += SNES_PROF_DWT_CYCCNT - snes_prof_t0;
     snes_prof_irq_count++;
@@ -132,6 +149,7 @@ void audio_start_playing(uint16_t length) {
 }
 
 void audio_start_playing_full_length(uint16_t full_length) {
+    emu_owns = 0;
     audio_clear_buffers();
     audio_set_buffer_full_length(full_length);
     HAL_SAI_Transmit_DMA(&hsai_BlockA1, (uint8_t *) audiobuffer_dma, full_length);

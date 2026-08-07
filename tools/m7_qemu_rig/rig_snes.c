@@ -89,14 +89,25 @@ static uint64_t g_active_voice_sum, g_echo_voice_sum, g_echo_write_frames;
 uint64_t g_dsp_channel_ticks, g_dsp_mix_ticks, g_dsp_echo_ticks;
 uint64_t g_dsp_noise_ticks, g_dsp_store_ticks;
 static uint64_t g_present_ticks;
+static uint64_t g_win_cpu_ticks;
 #define PROFILE_CPU(expr) ({ \
   uint32_t _ct = rig_timer_now(); \
   int _cycles = (expr); \
-  g_cpu_ticks += (uint32_t)(rig_timer_now() - _ct); \
+  uint32_t _dt = (uint32_t)(rig_timer_now() - _ct); \
+  g_cpu_ticks += _dt; g_win_cpu_ticks += _dt; \
   _cycles; \
 })
 #else
 #define PROFILE_CPU(expr) (expr)
+#endif
+#ifdef RIG_CALL_PROFILE
+uint64_t g_cpuRead_calls, g_cpuRead_slow, g_cpuRead_romhit, g_cpuRead_wram;
+uint64_t g_cpuWrite_calls, g_cpuWrite_slow;
+uint64_t g_dma_cycle_calls, g_dma_cycle_true;
+uint64_t g_dma_doDma_calls, g_dma_doHdma_calls;
+uint64_t g_win_cpuRead_calls, g_win_dma_cycle_calls;
+uint64_t g_irq_calls, g_irq_skip, g_irq_match;
+uint64_t g_opcode_calls;
 #endif
 
 #ifdef RIG_PPU_DEEP
@@ -175,9 +186,30 @@ static int dots_to_next_event(Snes *snes) {
   return next - h;
 }
 static void apply_irq_match(Snes *snes) {
-  if (!(snes->hIrqEnabled || snes->vIrqEnabled)) return;
-  if (snes->vIrqEnabled && snes->vPos != snes->vTimer) return;
-  if (snes->hIrqEnabled && snes->hPos != snes->hTimer * 4) return;
+#ifdef RIG_CALL_PROFILE
+  g_irq_calls++;
+#endif
+  if (!(snes->hIrqEnabled || snes->vIrqEnabled)) {
+#ifdef RIG_CALL_PROFILE
+    g_irq_skip++;
+#endif
+    return;
+  }
+  if (snes->vIrqEnabled && snes->vPos != snes->vTimer) {
+#ifdef RIG_CALL_PROFILE
+    g_irq_skip++;
+#endif
+    return;
+  }
+  if (snes->hIrqEnabled && snes->hPos != snes->hTimer * 4) {
+#ifdef RIG_CALL_PROFILE
+    g_irq_skip++;
+#endif
+    return;
+  }
+#ifdef RIG_CALL_PROFILE
+  g_irq_match++;
+#endif
   snes->inIrq = true;
   snes->cpu->irqWanted = true;
 }
@@ -194,6 +226,9 @@ static int run_one_opcode(Snes *snes) {
                !cpu->stopped;
   }
   snes->cpuMemOps = 0;
+#ifdef RIG_CALL_PROFILE
+  g_opcode_calls++;
+#endif
   int cycles = PROFILE_CPU(cpu_runOpcode(cpu));
   snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
   if (learn) spin_note_real(cpu, pc24, (uint8_t)snes->cpuCyclesLeft, dispatch);
@@ -208,6 +243,9 @@ static void cpu_tick(Snes *snes) {
     run_one_opcode(snes);
 #else
     snes->cpuMemOps = 0;
+#ifdef RIG_CALL_PROFILE
+    g_opcode_calls++;
+#endif
     int cycles = PROFILE_CPU(cpu_runOpcode(snes->cpu));
     snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
 #endif
@@ -215,11 +253,22 @@ static void cpu_tick(Snes *snes) {
   snes->cpuCyclesLeft -= 2;
 }
 static void run_dots(Snes *snes, int dots) {
+  /* Hoist DMA-active check into a local. DMA is only active during HDMA
+   * countdown (hPos 1024->1362) and VBlank bulk transfer. Between those
+   * windows (2/3 of scanline segments), dma_active is false for the entire
+   * call, so the per-opcode path avoids 2 memory loads + OR + branch.
+   * Safety: dma_active can only go true via an opcode writing DMAEN ($420b),
+   * which drains synchronously in snes_writeReg - so started_dma catches it.
+   * hdmaTimer can only increase via dma_doHdma/dma_initHdma, called from
+   * snes_handle_pos_stuff, OUTSIDE run_dots. */
+   bool dma_active = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
   while (dots > 0) {
-    if (snes->dma->dmaBusy || snes->dma->hdmaTimer > 0) {
+    if (dma_active) {
       dma_cycle(snes->dma);
       snes->apuCatchupCycles += apuCyclesPerMaster * 2.0;
-      snes->hPos += 2; dots -= 2; continue;
+      snes->hPos += 2; dots -= 2;
+      dma_active = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
+      continue;
     }
     bool started_dma = false;
     if (snes->cpuCyclesLeft == 0) {
@@ -243,6 +292,9 @@ static void run_dots(Snes *snes, int dots) {
 #else
       apply_irq_match(snes);
       snes->cpuMemOps = 0;
+#ifdef RIG_CALL_PROFILE
+      g_opcode_calls++;
+#endif
       int cycles = PROFILE_CPU(cpu_runOpcode(snes->cpu));
       snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
       started_dma = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
@@ -260,6 +312,7 @@ static void run_dots(Snes *snes, int dots) {
     }
     snes->apuCatchupCycles += apuCyclesPerMaster * step;
     snes->hPos += step; dots -= step;
+    dma_active = started_dma;
   }
 }
 static void run_frame_events(Snes *snes) {
@@ -480,6 +533,31 @@ int main(void) {
       printf("w%05d emu=%lu apu=%lu insn/frame fb=%08lx audio=%08lx lit=%d\n",
              frame + 1, (unsigned long)emu_i, (unsigned long)apu_i,
              (unsigned long)(uint32_t)h, (unsigned long)(uint32_t)ah, lit);
+#ifdef RIG_COST_PROF
+      printf("        cpu=%lu", (unsigned long)(g_win_cpu_ticks * ipt_x1000 / 1000 / RIG_WINDOW));
+      g_win_cpu_ticks = 0;
+#endif
+#ifdef RIG_CALL_PROFILE
+      printf(" rdcalls=%lu rdslow=%lu rdrom=%lu rdwram=%lu dmcyc=%lu dmactrue=%lu dodma=%lu dohdma=%lu irq=%lu skip=%lu match=%lu opc=%lu",
+             (unsigned long)(g_win_cpuRead_calls / RIG_WINDOW),
+             (unsigned long)(g_cpuRead_slow / RIG_WINDOW),  /* window-wide delta since last print */
+             (unsigned long)(g_cpuRead_romhit / RIG_WINDOW),
+             (unsigned long)(g_cpuRead_wram / RIG_WINDOW),
+             (unsigned long)(g_win_dma_cycle_calls / RIG_WINDOW),
+             (unsigned long)(g_dma_cycle_true / RIG_WINDOW),
+             (unsigned long)(g_dma_doDma_calls / RIG_WINDOW),
+             (unsigned long)(g_dma_doHdma_calls / RIG_WINDOW),
+             (unsigned long)(g_irq_calls / RIG_WINDOW),
+             (unsigned long)(g_irq_skip / RIG_WINDOW),
+             (unsigned long)(g_irq_match / RIG_WINDOW),
+             (unsigned long)(g_opcode_calls / RIG_WINDOW));
+      g_cpuRead_slow = g_cpuRead_romhit = g_cpuRead_wram = 0;
+      g_dma_cycle_true = g_dma_doDma_calls = g_dma_doHdma_calls = 0;
+      g_win_cpuRead_calls = g_win_dma_cycle_calls = 0;
+      g_irq_calls = g_irq_skip = g_irq_match = 0;
+      g_opcode_calls = 0;
+#endif
+      printf("\n");
       tot_emu += win_emu; tot_apu += win_apu;
       win_emu = win_apu = 0;
     }

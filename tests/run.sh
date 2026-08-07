@@ -582,6 +582,27 @@ $CC -O1 -g -std=gnu11 -Wall $SAN \
     -lm -o "$BR_DIR/test_snes_audio_stretch" || fail "compile test_snes_audio_stretch"
 "$BR_DIR/test_snes_audio_stretch" || fail test_snes_audio_stretch
 
+# Pacing-block integration test: compiles the ACTUAL pacing block from
+# main_snes.c against the real stretcher, drives it at 20-60 fps, and checks
+# that at most one emit lands per DMA period. RED (HEAD, buggy catch-up emit)
+# must fail; GREEN (working tree, fix) must pass. A regression that
+# reintroduces the extra emits will fail here on the host, not on the device.
+# The harness script handles its own extraction, compilation, and RED/GREEN
+# logic — it exits non-zero on any mismatch.
+bash tests/test_snes_audio_pacing.sh || fail test_snes_audio_pacing
+
+# ISR-pull architecture test: compares main-loop emit (current) vs ISR pull
+# (new architecture) at 20-60 fps. The current architecture has a half-buffer
+# resonance bug at integer-ratio fps (30/28/25): one DMA half is never written
+# and plays stale content forever. The ISR-pull architecture fills every period
+# regardless of main-loop timing. MODE_ISR_PULL must pass; MODE_MAIN_LOOP must
+# show the resonance/stale bug. This is the RED/GREEN proof that the ISR-pull
+# architecture overcomes the pacing fix's limitation.
+$CC -O1 -g -std=gnu11 -Wall $SAN \
+    tests/test_snes_audio_isr_pull.c Core/Src/porting/snes/snes_audio_stretch.c \
+    -o "$BR_DIR/test_snes_audio_isr_pull" || fail "compile test_snes_audio_isr_pull"
+"$BR_DIR/test_snes_audio_isr_pull" || fail test_snes_audio_isr_pull
+
 echo "=== update guard: a truncated update file must not reach the flasher ==="
 # The bootloader validates nothing; the firmware is the gate. The validator
 # runs here against synthetic images in the release script's real layout,

@@ -161,11 +161,14 @@ static void cpu_tick(Snes *s) {
 
 static void run_dots(Snes *s, int dots) {
   Cpu *cpu = s->cpu;
+  bool dma_active = s->dma->dmaBusy || s->dma->hdmaTimer > 0;
   while (dots > 0) {
-    if (s->dma->dmaBusy || s->dma->hdmaTimer > 0) {
+    if (dma_active) {
       dma_cycle(s->dma);
       s->apuCatchupCycles += apuCyclesPerMaster * 2.0;
-      s->hPos += 2; dots -= 2; continue;
+      s->hPos += 2; dots -= 2;
+      dma_active = s->dma->dmaBusy || s->dma->hdmaTimer > 0;
+      continue;
     }
     bool started_dma = false;
     if (s->cpuCyclesLeft == 0) {
@@ -201,6 +204,7 @@ static void run_dots(Snes *s, int dots) {
     }
     s->apuCatchupCycles += apuCyclesPerMaster * step;
     s->hPos += step; dots -= step;
+    dma_active = started_dma;
   }
 }
 
@@ -441,7 +445,6 @@ static void blit(void) {
 /* ---- audio ----------------------------------------------------------------
  * Top the DSP up to one frame of samples (534 stereo pairs internally) and
  * downmix to 16 kHz mono, exactly like the harness/rig. */
-static void snes_pcm_emit(void);
 
 static void snes_pcm_submit(void) {
   if (snes->apu) {
@@ -472,23 +475,29 @@ static void snes_pcm_submit(void) {
    * snes_audio_stretch.h; the emulated machine is not touched, only the rate
    * the already-produced samples are played back at. */
   snes_stretch_push(audio_buf, SNES_AUDIO_SAMPLES);
-  snes_pcm_emit();
+  /* No emit here. The SAI ISR pulls one half-buffer per DMA period through
+   * snes_audio_isr_pull(), so "exactly one fill per period" is a property of
+   * the hardware's own callback rather than a rule the frame loop has to
+   * remember -- and forgetting it is precisely what broke the sound: dropping
+   * the pacing wait left the catch-up loop emitting two or three times inside
+   * one period, draining the stretcher ring that many times faster than the
+   * DMA consumed it, so what played was filler instead of the game. */
 }
 
-/* Fill ONE audio-DMA buffer from the stretcher. Called once per DMA period,
- * not once per emulated frame -- that distinction is the fix: the pacing
- * block below calls it again for every period a slow frame ran past, so no
- * period is left playing whatever the previous one left behind. */
-static void snes_pcm_emit(void) {
-  if (common_emu_sound_loop_is_muted())
+/* Called from the SAI ISR, once per DMA half-buffer. Keep it to what the old
+ * emit did -- pull, mute, volume -- and nothing that can block: this runs at
+ * interrupt priority. */
+static void snes_audio_isr_pull(int16_t *dst, uint16_t n) {
+  if (common_emu_sound_loop_is_muted()) {
+    memset(dst, 0, (size_t)n * sizeof(int16_t));
     return;
-  int16_t *dst = audio_get_active_buffer();
-  uint16_t dst_len = audio_get_buffer_length();
-  snes_stretch_pull(dst, dst_len);
+  }
+  snes_stretch_pull(dst, n);
   int32_t factor = common_emu_sound_get_volume();
-  for (uint16_t i = 0; i < dst_len; i++)
+  for (uint16_t i = 0; i < n; i++)
     dst[i] = (int16_t)(((int32_t)dst[i] * factor) >> 8);
 }
+
 
 /* ---- savestate -------------------------------------------------------------
  * snes_saveload() streams every subsystem (cpu/apu+dsp/dma/ppu/cart-sram/wram)
@@ -827,6 +836,11 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #endif
 
   audio_start_playing(SNES_AUDIO_SAMPLES);
+  /* After, not before: audio_start_playing clears emu_owns for exactly this
+   * reason -- every overlay links at the same address, so a pointer left
+   * registered by the previous core would point into this one's data. */
+  emu_audio_register(snes_audio_isr_pull);
+  emu_audio_enable(1);
 
   memset(snes_wram, 0, sizeof(snes_wram));
 
@@ -1158,20 +1172,21 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #ifndef SNES_PACE_CATCHUP_WAIT
 #define SNES_PACE_CATCHUP_WAIT 0
 #endif
-        if (elapsed > 4) elapsed = 1;
-        while (elapsed > 1) {
-            snes_pcm_emit();
-#if SNES_PACE_CATCHUP_WAIT
-            uint32_t guard = 0;
-            while (dma_counter == snes_last_dma && guard < 20000u) {
-                wdog_refresh();
-                cpumon_sleep();
-                guard++;
-            }
-            snes_last_dma = dma_counter;
-#endif
-            elapsed--;
-        }
+        /* And do NOT emit for them either. snes_pcm_emit() fills ONE audio-DMA
+         * buffer, and there is exactly one of those per period: calling it
+         * twice inside the same period writes the same buffer twice -- only
+         * the last is ever heard -- while pulling a full buffer out of the
+         * stretcher ring each time. That drains the ring two or three times
+         * faster than the DMA consumes it, so it is permanently dry and what
+         * plays is filler rather than the game. It is why the sound came back
+         * "완전히 다른 소리" and not merely broken.
+         *
+         * Dropping the wait without dropping the emit was my error, not the
+         * original design's: the wait was what kept one emit inside one period.
+         * With neither, a frame that spans several periods simply leaves the
+         * periods it missed playing the previous buffer, and the deficit shows
+         * up where it belongs -- in the stretcher's measured rate. */
+        (void)elapsed;
         /* Catch-up only for HLE: wire_frame_audio produces samples without
          * advancing the SPC700, so extra batches are free and tempo stays
          * exact. For LLE, extra apu_cycle calls would drift the SPC700's

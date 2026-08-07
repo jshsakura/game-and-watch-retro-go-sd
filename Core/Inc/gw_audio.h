@@ -38,6 +38,18 @@ void     music_audio_set(int vol, int play);  // play=0 -> ISR outputs silence
 void     music_audio_setpos(uint32_t samples);
 uint32_t music_audio_pos(void);
 
+// Emulator ISR-fed playback. Same pattern as music_fill: the ISR calls ONLY
+// core code (emu_fill below), which calls a pull function REGISTERED by the
+// overlay. The overlay sets emu_owns=1 after registering and the core resets
+// it to 0 in audio_start_playing so a stale pointer from a previous overlay
+// can never fire. While emu_owns==1 the ISR pulls one DMA half-buffer per
+// period from the overlay's ring — every period gets fresh audio regardless
+// of main-loop timing, which eliminates the half-buffer resonance (only one
+// half written at integer-ratio fps) and the double-emit pacing bug.
+typedef void (*emu_pull_fn_t)(int16_t *dst, uint16_t n);
+void     emu_audio_register(emu_pull_fn_t fn);
+void     emu_audio_enable(int on);            // 1 = overlay pull owns the DMA buffer
+
 uint16_t audio_get_buffer_full_length(void);
 uint16_t audio_get_buffer_length(void);
 uint16_t audio_get_buffer_size(void);
