@@ -1424,6 +1424,11 @@ SNES_LOAD_DIAG ?= 0
 # SNES_SPIN_SKIP=0 compiles the spin-skip learner OUT entirely, rather than
 # leaving it gate-off at runtime. Those are not the same thing: with it
 # compiled in, every real opcode still pays ops_real++ and a spin_note() call
+# (and until 0808 the flag did NOT reach the device at all: it guarded only the
+# hooks in external/sm's cpu.c, which the device does not run -- the Thumb-2
+# engine's wrapper is run_one_opcode() in main_snes.c, and that call site had no
+# guard. An on-device profile put spin_note at 12.7% of Mario Kart with the flag
+# already set to 0.)
 # that returns immediately, and every read/write helper in cpu.c still carries
 # an `if (g_spin.phase)` branch -- a tax paid in full by any cart the table
 # turns OFF, which currently includes Zelda 3 (skip% 25.0). Default 1 = the
@@ -1463,6 +1468,17 @@ ifeq ($(SNES_DSP_MONO),1)
   SNES_DSP_MONO_DEF := -DSNES_DSP_MONO
 else
   SNES_DSP_MONO_DEF :=
+endif
+
+# SNES_DSP_BRR_IDLE_SKIP=1: skip the BRR sample math for voices that are
+# released and silent, keeping ENDx and the pitch counter. Measured -0.22% on
+# the QEMU rig and shelved as noise -- but the rig cannot see cache or ISR cost,
+# and the device profile puts dsp_cycle at 8.6% of Zelda. Re-measure there.
+SNES_DSP_BRR_IDLE_SKIP ?= 0
+ifeq ($(SNES_DSP_BRR_IDLE_SKIP),1)
+  SNES_LINE_DEFS_EXTRA := -DSNES_DSP_BRR_IDLE_SKIP
+else
+  SNES_LINE_DEFS_EXTRA :=
 endif
 
 SNES_LINE_CACHE ?= 0
@@ -1587,7 +1603,7 @@ endif
 define snes_obj_prereq_gen
 $$(BUILD_DIR)/snes/$(patsubst %.c,%.o,$(notdir $1)): $(call snes_prof_pick,$(call snes_diag_pick,$1)) Makefile.common Makefile $(FLAGS_STAMP) snes_redefines $$(SDK_HEADERS) $(if $(filter 1,$(SNES_LOAD_DIAG)),$(SNES_DIAG_DIR)/.stamp) $(if $(filter 1,$(SNES_DEVICE_PROFILE)),$(SNES_PROF_DIR)/.stamp Core/Src/porting/snes/snes_profile.h Core/Inc/snes_prof_irq.h) $(if $(filter 1,$(SNES_SMW_HLE)),$(SNES_SMW_HLE_DIR)/.stamp) $(if $(filter 1,$(SNES_NSPC_HLE)),$(SNES_NSPC_HLE_DIR)/.stamp) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC snes ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $(SNES_SPIN_SKIP_DEF) $(SNES_SPC_IDLE_DEF) $(SNES_LINE_DEFS) $(SNES_DSP_MONO_DEF) -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(CFLAGS) -DGNW_SNES_CORE $(SNES_SPIN_SKIP_DEF) $(SNES_SPC_IDLE_DEF) $(SNES_LINE_DEFS) $(SNES_LINE_DEFS_EXTRA) $(SNES_DSP_MONO_DEF) -DSNES_PPU_DIRECT_MATH -DSNES_DIRECT_VIDEO -DSNES_PRESENT_DMA2D $(SNES_DIAG_DEFS) $(SNES_PROF_DEFS) $(SNES_HLE_DEFS) $$(SNES_C_INCLUDES) $(SNES_PROF_INCLUDES) $(SNES_HLE_INCLUDES) $$< -o $$@ \
 	-Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough
 	$$(V)$$(CP) --redefine-syms=snes_redefines $$@
 

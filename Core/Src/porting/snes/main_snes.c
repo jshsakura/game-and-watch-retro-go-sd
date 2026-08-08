@@ -139,6 +139,7 @@ static void apply_irq_match(Snes *s) {
  * bit-identical state+audio hashes). */
 static int run_one_opcode(Snes *s) {
   Cpu *cpu = s->cpu;
+#ifdef SNES_SPIN_SKIP
   const bool learn = spin_engaged();   /* sample before the opcode; see header */
   uint32_t pc24 = 0;
   int disp = 0;
@@ -146,10 +147,13 @@ static int run_one_opcode(Snes *s) {
     pc24 = ((uint32_t)cpu->k << 16) | cpu->pc;
     disp = (cpu->nmiWanted || (cpu->irqWanted && !cpu->i) || cpu->waiting) && !cpu->stopped;
   }
+#endif
   s->cpuMemOps = 0;
   int cycles = SNES_PROF_CPU_CALL(cpu_runOpcode(cpu));
   s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
+#ifdef SNES_SPIN_SKIP
   if (learn) SNES_PROF_SPIN_CALL(spin_note_real(cpu, pc24, (uint8_t)s->cpuCyclesLeft, disp));
+#endif
   return cycles;
 }
 
