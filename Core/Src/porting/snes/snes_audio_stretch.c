@@ -88,7 +88,9 @@ static uint16_t settled;            /* pulls seen                           */
 static uint32_t underruns;
 static int16_t  last;
 static volatile uint8_t  primed;    /* has the ring ever reached TARGET?    */
-static uint16_t picks_since = PICK_EVERY;  /* insertions since the last search */
+static uint16_t picks_since = PICK_EVERY;  /* frames since the last search */
+static volatile uint16_t pitch_meas;       /* measured by push, read by the ISR */
+static uint16_t stretch_pick_period(void); /* defined below; push calls it first */
 static int32_t  fill_lp;            /* low-passed fill level for corr (see retune)  */
 static int32_t  time_error;         /* push/pull deficit: +ve = behind (insert)     */
 static uint16_t pitch_est = REPEAT; /* current pitch period for insertion           */
@@ -96,7 +98,8 @@ static int16_t  ins_buf[LOOP_MAX];  /* one period ready to emit without consumin
 static uint16_t ins_pos, ins_len;   /* insertion buffer cursor / length             */
 
 void snes_stretch_reset(void) {
-  picks_since = PICK_EVERY;   /* first insertion after a load searches */
+  picks_since = PICK_EVERY;   /* first push after a load searches */
+  pitch_meas = 0;
   memset(ring, 0, sizeof(ring));
   rd = wr = fill = 0;
   phase = 0;
@@ -114,6 +117,13 @@ void snes_stretch_reset(void) {
 }
 
 void snes_stretch_push(const int16_t *src, uint16_t n) {
+  /* Main-loop context: this is where the expensive measurement belongs. Once
+   * every PICK_EVERY frames is plenty -- a melody's period does not move
+   * between one frame and the next eight. */
+  if (primed && ++picks_since >= PICK_EVERY) {
+    picks_since = 0;
+    pitch_meas = stretch_pick_period();
+  }
   STRETCH_IRQ_SAVE();
   for (uint16_t i = 0; i < n; i++) {
     if (fill >= RING) {            /* core outrunning the DMA: drop oldest */
@@ -241,10 +251,12 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
        * the whole search in the ISR 60 times a second. A melody's period does
        * not change between one insertion and the next 8; reuse it, and pay for
        * the search once per PICK_EVERY insertions. */
-      if (++picks_since >= PICK_EVERY) {
-        picks_since = 0;
-        pitch_est = stretch_pick_period();
-      }
+      /* No search here. The autocorrelation is 129 lags of 64-sample MACs and
+       * this runs in the SAI interrupt; an on-device PC profile put 45.9% of
+       * the whole machine inside this one loop, more than the emulator itself.
+       * push() measures the period in main-loop context instead and leaves it
+       * in pitch_meas; the interrupt only reads it. */
+      if (pitch_meas) pitch_est = pitch_meas;
       if (pitch_est < LOOP_MIN) pitch_est = LOOP_MIN;
       for (uint16_t k = 0; k < pitch_est; k++)
         ins_buf[k] = ring[(uint16_t)((rd - pitch_est + k) & RING_MASK)];
