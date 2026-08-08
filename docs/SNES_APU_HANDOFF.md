@@ -131,3 +131,71 @@ scheduler is evenly spread with a 1-2% single-optimisation ceiling (July,
 disassembly-verified); moving objects into ITCM is a measured net loss; N-SPC HLE
 is sealed at 38% breakage; overclock is forbidden by the SD hardware. The one
 open lever with a measured ceiling is idle DSP voices, above.
+
+---
+
+# 0808-0809: the device answered, and SMW reached 60
+
+A debug probe (ST-Link on a Tailscale-reachable Raspberry Pi 5) turned every
+question in this document from an argument into a measurement. `tools/gnw_probe/`
+halts the running console over SWD, reads PC, resumes, and resolves the
+addresses through the SNES overlay's own symbols. It also reads `ACTIVE_FILE`
+and `g_line_cache_frame`, so a measurement names its own ROM and frame rate.
+
+## What it found in the first screenful
+
+| | Mario Kart | SMW |
+|---|---|---|
+| `snes_stretch_pull` | **45.9%** | **22.6%** |
+
+More of the machine than the emulator. The hot loop disassembles to `smlalbb`
+against `cmp r2,#128`: the WSOLA insertion's autocorrelation, 129 lags of
+64-sample MACs, **running inside the SAI interrupt** every time the stream
+needed a segment. A melody's period does not change between one frame and the
+next eight; `push()` measures it in main-loop context now and the interrupt only
+reads it.
+
+**No rig could have found this.** The QEMU rig compiles the core, not the
+firmware — the stretcher, `present_frame` and the ISRs are absent from it. That
+is precisely why it kept reporting SMW at p50 62.9 fps while the device sat at
+59, and why "optimise the peak, not the average" was the wrong conclusion drawn
+from the right data.
+
+## Measured on hardware, same save, same place
+
+| | morning | now |
+|---|---|---|
+| Super Mario World | 49.5 | **60.20** (the audio-DMA pacing cap is 60.15) |
+| Zelda 3 | 51 (dips to 40) | **59.40** |
+| Mario Kart | 28.3 | **46.38** |
+
+## The knob that was a lie
+
+`SNES_SPIN_SKIP=0` guarded only `external/sm/src/snes/cpu.c`. The device does not
+run that interpreter — the Thumb-2 engine's wrapper is `run_one_opcode()` in
+`main_snes.c`, and that call site had no guard, so every opcode paid
+`spin_engaged()` and `spin_note_real()` regardless. With the flag already at 0,
+`spin_note` measured **12.7% of Mario Kart and 8.7% of Zelda**. It is guarded
+now. Note what this means for the record: the July "spin tax removed = +3.5 fps"
+work could not have touched this call site.
+
+## Open, with numbers
+
+Zelda 3 profile with the learner's C-side hooks off:
+
+```
+21.0%  snes_thumb2_step   (the 65816 engine, ITCM)
+16.1%  app_main_snes      (inlined scheduler + dispatch loop)
+11.0%  cpu_runOpcode
+ 8.6%  dsp_cycle
+ 7.3%  run_one_opcode
+```
+
+`app_main_snes` splits into two hot spots: `vcvt.f64.s32`/`vmul.f64` — the APU
+catch-up accumulator, which is the "scheduler" bucket of July, and Q24 was
+already measured a net loss on hard float — and the dispatch loop right after
+`bl run_one_opcode`.
+
+**Shipping the spin fix needs its runtime form.** SMW skips 53% of gameplay
+opcodes with the learner and wants it; Zelda 3 is off in the per-ROM table and
+only pays. Per-game, at runtime, measured on the device.
