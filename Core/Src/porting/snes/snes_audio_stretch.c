@@ -46,6 +46,8 @@ _Static_assert((RING & RING_MASK) == 0u, "ring must be a power of two");
  * without a seam; one that is not cannot be crossfaded into sounding right. */
 #define LOOP_MIN   64u
 #define LOOP_MAX   320u
+/* Insertions between autocorrelation searches. See the call site. */
+#define PICK_EVERY 8u
 _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
 
 /* Sanity bound on the MEASURED ratio. Not a playback rate: it exists only to
@@ -86,6 +88,7 @@ static uint16_t settled;            /* pulls seen                           */
 static uint32_t underruns;
 static int16_t  last;
 static volatile uint8_t  primed;    /* has the ring ever reached TARGET?    */
+static uint16_t picks_since = PICK_EVERY;  /* insertions since the last search */
 static int32_t  fill_lp;            /* low-passed fill level for corr (see retune)  */
 static int32_t  time_error;         /* push/pull deficit: +ve = behind (insert)     */
 static uint16_t pitch_est = REPEAT; /* current pitch period for insertion           */
@@ -93,6 +96,7 @@ static int16_t  ins_buf[LOOP_MAX];  /* one period ready to emit without consumin
 static uint16_t ins_pos, ins_len;   /* insertion buffer cursor / length             */
 
 void snes_stretch_reset(void) {
+  picks_since = PICK_EVERY;   /* first insertion after a load searches */
   memset(ring, 0, sizeof(ring));
   rd = wr = fill = 0;
   phase = 0;
@@ -231,7 +235,16 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
     }
 
     if (time_error >= (int32_t)pitch_est && fill > pitch_est + 2u) {
-      pitch_est = stretch_pick_period();
+      /* The search is an autocorrelation over 129 lags and it runs in the SAI
+       * interrupt. A game with a large deficit inserts on nearly every pull --
+       * Mario Kart is 43% short at 34 fps -- so recomputing it every time puts
+       * the whole search in the ISR 60 times a second. A melody's period does
+       * not change between one insertion and the next 8; reuse it, and pay for
+       * the search once per PICK_EVERY insertions. */
+      if (++picks_since >= PICK_EVERY) {
+        picks_since = 0;
+        pitch_est = stretch_pick_period();
+      }
       if (pitch_est < LOOP_MIN) pitch_est = LOOP_MIN;
       for (uint16_t k = 0; k < pitch_est; k++)
         ins_buf[k] = ring[(uint16_t)((rd - pitch_est + k) & RING_MASK)];
