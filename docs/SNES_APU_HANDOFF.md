@@ -199,3 +199,67 @@ already measured a net loss on hard float — and the dispatch loop right after
 **Shipping the spin fix needs its runtime form.** SMW skips 53% of gameplay
 opcodes with the learner and wants it; Zelda 3 is off in the per-ROM table and
 only pays. Per-game, at runtime, measured on the device.
+
+---
+
+# 0809 afternoon: 51.6 -> 57.3 fps, and none of it was arithmetic
+
+Every gain came from **where code sits**. ITCM is at `0x00000000`, the SNES
+overlay at `0x24000000`, and BL reaches +-16 MB — so every call across that line
+takes a linker veneer, once per opcode on the hot path. The device profile named
+it: `__gsnes__snes_cpuRead_veneer`, 2.7% of the frame.
+
+| | fps |
+|---|---|
+| morning (gameplay) | 51.6 |
+| inline ROM page cache OFF | 54.5 |
+| `snes_cpuRead`/`Write` -> ITCM | 55.7 |
+| `cpu_runOpcode` -> ITCM | 56.1 |
+| `app_main_snes` -> ITCM | 57.1 |
+| `cpu_thumb2_read`/`write` -> ITCM | **57.3** |
+
+Deterministic 1800-frame window from reset, three runs each, ±0.05 repeatability.
+
+## The rule, and its counter-example
+
+`apu_run`, `apu_cycle` and `dsp_cycle` went into ITCM too and the console got
+**slower** (57.1 -> 56.5): their own callees (`dsp_cycleChannel`,
+`spc_runOpcode` -> `spc_thumb2_step`) stay in the overlay, so the move created
+more crossings than it removed. **A chain pays only when all of it fits on one
+side.** July's "ITCM axis is dead" verdict moved whole *objects*, which cuts a
+call graph in half; this moves callees to join their callers.
+
+That also closes the axis: the APU chain ends in `spc_thumb2_step`, 14 KB,
+against 4.6 KB of ITCM left.
+
+## Two traps worth the scar tissue
+
+- **`__attribute__((section))` must be on the declaration too.** On the
+  definition alone gcc ignores it silently and the function stays where
+  `-ffunction-sections` put it. It happened twice before anyone noticed.
+- **The inline ROM page cache was a net loss, and repairing it proved it.** Its
+  offset constants had gone stale — a `double` added to `Snes` moved
+  `romPageBase` from 108 to 112 — so it missed every time. Fixing that cut
+  `snes_cpuRead` calls by 73% and the console got *slower* (53.80 vs 54.52).
+  Fourteen instructions in the hottest ITCM path cost more than the calls they
+  save. The QEMU rig says the opposite (4.01M vs 4.09M instructions/frame)
+  because it counts instructions where the device spends cycles. The constants
+  are now correct *and* `_Static_assert`ed, and the path they feed is off.
+
+## The tooling, which is half the result
+
+- `GNW_AUTOBOOT=<n>` boots straight into the Nth SNES ROM — by index, because
+  the launcher's paths come from FatFs and a literal did not match them (a
+  debugger-driven `emulator_get_file()` returned NULL for exactly that reason).
+  No one has to be at the console.
+- `tools/gnw_probe/bench.sh` times a **fixed frame count from reset**. With no
+  input the emulation is deterministic, so frame 1800 is the same frame in every
+  build — the only way two arms look at the same thing. Wall-clock readings of
+  the same game ranged 51.4 to 60.1 today purely by where the console happened
+  to be, which is how "60 fps achieved" got claimed and then withdrawn.
+
+## Open
+
+`dsp_cycle` 9.4%, PPU 9.8%, the APU chain 11% — all in the overlay, none of them
+movable within 4.6 KB. 2.9 fps short of the 60.15 pacing cap. The next lever is
+not placement.
