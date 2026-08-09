@@ -109,6 +109,30 @@ static Snes *snes;
 static uint8_t snes_wram[0x20000];
 static int16_t audio_buf[SNES_AUDIO_SAMPLES];  /* mono frame mix from the DSP  */
 
+#if SNES_FRAME_HIST
+/* Read out over SWD, so the names must survive -- deliberately NOT static, and
+ * in the overlay's own namespace via snes_redefines. One bucket per 2^SHIFT
+ * core cycles; at 340 MHz an audio period (16.625 ms) is 5.65 M cycles, which
+ * is bucket 21 at SHIFT=18. The bucket the period line falls in is what the
+ * tool prints a marker on. */
+#define SNES_FH_SHIFT   18
+#define SNES_FH_BUCKETS 48
+uint32_t snes_fh_bucket[SNES_FH_BUCKETS];
+uint32_t snes_fh_last, snes_fh_max, snes_fh_n;
+uint64_t snes_fh_sum;
+/* A slow frame is only actionable once you know which half of it is slow, so
+ * the frame is split at the one boundary that matters: emulation (the event
+ * loop) versus everything the firmware does around it (present, audio, swap).
+ * Summed separately for frames that crossed the period line and frames that did
+ * not -- the difference between those two averages IS the thing to fix. */
+uint32_t snes_fh_mark;            /* DWT at the emu/present boundary */
+uint64_t snes_fh_emu_over, snes_fh_rest_over;
+uint64_t snes_fh_emu_under, snes_fh_rest_under;
+uint32_t snes_fh_n_over, snes_fh_n_under;
+uint32_t snes_fh_skipped_over;    /* of those, how many were frameskipped */
+static inline uint32_t snes_frame_hist_now(void) { return common_emu_get_dwt_cycles(); }
+#endif
+
 /* ---- event loop (verbatim from tools/snes_harness/snes_main.c) ------------ */
 static int dots_to_next_event(Snes *s) {
   int h = s->hPos;
@@ -147,7 +171,7 @@ static int run_one_opcode(Snes *s) {
   }
 #endif
   s->cpuMemOps = 0;
-  int cycles = SNES_PROF_CPU_CALL(cpu_runOpcode(cpu));
+  int cycles = SNES_PROF_CPU_CALL(CPU_RUN_OPCODE(cpu));
   s->cpuCyclesLeft += (cycles - s->cpuMemOps) * 6;
 #ifdef SNES_SPIN_SKIP
   if (learn) SNES_PROF_SPIN_CALL(spin_note_real(cpu, pc24, (uint8_t)s->cpuCyclesLeft, disp));
@@ -1023,6 +1047,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   uint32_t prof_wall_prev = snes_prof_wall_now();
   uint32_t prof_dma_prev  = dma_counter;
 #endif
+#if SNES_FRAME_HIST
+  common_emu_enable_dwt_cycles();   /* free-running; nothing in this loop clears it */
+#endif
 
   while (1) {
 #ifdef SNES_DEVICE_PROFILE
@@ -1055,6 +1082,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     run_frame_events(snes);
     SNES_PROF_MARK(SNES_PROF_M_EMU);
+#if SNES_FRAME_HIST
+    snes_fh_mark = snes_frame_hist_now();
+#endif
 #ifdef SNES_DEVICE_PROFILE
     /* Split the Ledger B APU accumulator at the emu/pcm boundary: core_rem is
      * emu_outer minus the APU work that happened INSIDE emu_outer, and the pcm
@@ -1112,7 +1142,73 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * apu_cycle calls advance SPC700 beyond the CPU frame; SPC700 reads
      * stale $2140-43 ports — inaudible for music (N-SPC polls ports
      * periodically, not per-sample). */
-    if (odroid_system_get_app()->speedupEnabled == SPEEDUP_1x) {
+    /* SNES_PACE_OFF=1: diagnostic arm only. The pacing wait below caps the loop
+     * at the audio-DMA period, so measured fps is a count of periods, not a
+     * measure of how fast the emulator is: a frame that finishes early sleeps
+     * out the remainder and a frame that overruns costs two. That makes an
+     * optimisation worth 5% of the frame worth almost nothing on the counter,
+     * which is exactly what the first device A/B of the merged opcode entry
+     * showed. This flag removes the cap so the raw emulation rate is visible
+     * and the distance to 60.15 can be read as work rather than as luck.
+     * Never ship it: without the wait the emulator free-runs and the audio
+     * plays at whatever speed the silicon manages. */
+#ifndef SNES_PACE_OFF
+#define SNES_PACE_OFF 0
+#endif
+/* SNES_PACE_RING: SHELVED, NEVER RUN ON HARDWARE IN THIS FORM. The first
+ * version of this idea waited on the backlog INSTEAD of the tick, took the
+ * device down with a Hardfault (CFSR=0x01000400: imprecise bus fault, so the
+ * reported PC was drain-time noise and named nothing), and the repeated
+ * benchmark resets that followed pushed the anti-brick counter to its limit.
+ * The cause was never identified. What is below is the conservative rewrite --
+ * the tick condition stays, the backlog can only cut a wait short -- but it is
+ * a rewrite of code whose failure is not understood, which is not the same as a
+ * fix. Do not enable it before the BSOD can name a fault: ABFSR at 0xE000EFA8
+ * (which bus the wild access used) and SCB->SHCSR fault enables (so the title
+ * says Busfault instead of Hardfault). See docs/SNES_LAST_MILE.md. */
+#ifndef SNES_PACE_RING
+#define SNES_PACE_RING 0
+#endif
+/* The backlog below which the loop stops waiting for its tick and gets on with
+ * the next frame. The stretcher holds the ring near TARGET (640) and starts
+ * playing filler when it runs dry, so the line sits one frame (266 samples)
+ * under target: far enough down to mean "a slow frame really did eat into the
+ * cushion", far enough above empty that catching up still has room to work. */
+#ifndef SNES_PACE_RING_LOW
+#define SNES_PACE_RING_LOW 374u
+#endif
+#if SNES_FRAME_HIST
+    /* Frame-work histogram. The paced frame counter cannot see this: it counts
+     * audio periods, so a frame at 0.9 periods and one at 0.1 read the same and
+     * one at 1.1 costs two. What decides the paced rate is therefore not the
+     * average frame -- it is how many frames land past the period line, and
+     * nothing in the build could say which those were.
+     *
+     * One DWT read per frame, bucketed into RAM. Nothing is written to the SD
+     * card (forbidden during play) and nothing is printed: the arrays are read
+     * out over SWD by tools/gnw_probe/frame_hist.py while the game runs. */
+    {
+      uint32_t now = snes_frame_hist_now();
+      if (snes_fh_last) {
+        uint32_t work = now - snes_fh_last;
+        uint32_t emu  = snes_fh_mark - snes_fh_last;
+        uint32_t rest = now - snes_fh_mark;
+        uint32_t b = work >> SNES_FH_SHIFT;
+        snes_fh_bucket[b < SNES_FH_BUCKETS ? b : SNES_FH_BUCKETS - 1]++;
+        snes_fh_sum += work;
+        if (work > snes_fh_max) snes_fh_max = work;
+        snes_fh_n++;
+        /* The period line in cycles, from the clock the loop actually runs at. */
+        if (work > (uint32_t)(SystemCoreClock / 6015u) * 100u) {
+          snes_fh_emu_over += emu; snes_fh_rest_over += rest; snes_fh_n_over++;
+          if (!drawFrame) snes_fh_skipped_over++;
+        } else {
+          snes_fh_emu_under += emu; snes_fh_rest_under += rest; snes_fh_n_under++;
+        }
+      }
+    }
+#endif
+    if (!SNES_PACE_OFF && odroid_system_get_app()->speedupEnabled == SPEEDUP_1x) {
         static uint32_t snes_last_dma = 0;
         if (snes_last_dma == 0) snes_last_dma = dma_counter;
 #ifdef SNES_DEVICE_PROFILE
@@ -1142,16 +1238,66 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
          * legitimately waits is far under it, so pacing is unchanged. */
         {
             uint32_t spin_guard = 0;
+#if SNES_PACE_RING
+            /* Wait on the audio BACKLOG, not on the tick.
+             *
+             * Waiting for a tick gives every frame its own period and lets it
+             * keep none of what it does not use, so the loop runs at
+             * 1/E[max(work, T)] rather than 1/E[work]. Measured on hardware
+             * with the per-frame histogram those are 57.4 and 60.7 fps: the
+             * median frame is 14.8 ms against a 16.625 ms period, but 23% of
+             * frames run past the line and each of those costs its full length
+             * while every fast frame is still rounded up to a whole period.
+             * Borrowing across the boundary does not happen by itself -- a slow
+             * frame leaves the next one only 12.3 ms to the following tick, and
+             * a median frame does not fit in that either.
+             *
+             * The stretcher ring is the buffer that can absorb it: 2048 samples
+             * deep, held near TARGET (640 = 2.4 frames) by the ISR pulling one
+             * half-buffer per period. Pacing on it says the only true rule --
+             * do not produce audio faster than it is consumed -- and says
+             * nothing about WHEN inside that budget a frame runs. A slow frame
+             * spends backlog; the fast frames after it earn it back.
+             *
+             * The tick condition STAYS, and is what makes this safe. Waiting on
+             * the backlog alone can wait for a drain that is not coming: before
+             * the stretcher primes, the ISR pulls nothing, so the ring only
+             * fills and the loop sits in the guard for a hundred thousand WFIs
+             * per frame. That is not a hypothesis -- it is what the first
+             * backlog-only build did, and the device never reached the
+             * benchmark's first frame. So the rule is: wait for the tick as
+             * before, but stop waiting early when the backlog says we are
+             * behind. It can only ever remove waiting, never add it. */
+            while (dma_counter == snes_last_dma
+                   && snes_stretch_fill() > SNES_PACE_RING_LOW
+                   && spin_guard < 100000u) {
+                wdog_refresh();
+                cpumon_sleep();
+                spin_guard++;
+            }
+#else
             while (dma_counter == snes_last_dma && spin_guard < 100000u) {
                 wdog_refresh();
                 cpumon_sleep();
                 spin_guard++;
             }
+#endif
 #ifdef SNES_DEVICE_PROFILE
             prof_wfi = spin_guard;   /* __WFI() round trips actually executed */
 #endif
         }
         uint32_t elapsed = dma_counter - snes_last_dma;
+        /* Advancing the reference by one period instead of to `dma_counter`
+         * looked like free frame rate -- keep what a fast frame did not use --
+         * and measured 57.10 against 57.40 on hardware, three runs each. The
+         * reason it cannot help is arithmetic: this counter has one tick per
+         * 16.625 ms, and the slow frames are 21-24 ms, so they advance it by
+         * exactly ONE tick just like a fast frame. The two rules only differ
+         * for a frame past 33 ms, which the histogram says does not happen.
+         * Slack is real but it is sub-tick, and no integer counter can hold it.
+         * That is why SNES_PACE_RING waits on the audio backlog instead: the
+         * backlog is measured in samples, and a sample is 1/16th of a
+         * millisecond. */
         snes_last_dma = dma_counter;
         /* LLE catch-up. A frame slower than one 16.625 ms audio period leaves
          * the periods it ran past playing stale buffer contents -- the comment
@@ -1234,6 +1380,11 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         }
 #endif
     }
+#if SNES_FRAME_HIST
+    /* Restart the clock AFTER the wait, so a bucket is emulation work and never
+     * the sleep that follows it. */
+    snes_fh_last = snes_frame_hist_now();
+#endif
 #ifdef SNES_DEVICE_PROFILE
     prof_wall_pace = snes_prof_wall_now() - prof_pace_w0;
     SNES_PROF_MARK(SNES_PROF_M_PACING);

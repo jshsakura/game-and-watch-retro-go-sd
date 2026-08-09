@@ -35,6 +35,7 @@ cpu_runOpcode gsnes__cpu_runOpcode
 cpu_runOpcode_c gsnes__cpu_runOpcode_c
 cpu_saveload gsnes__cpu_saveload
 cpu_setFlags gsnes__cpu_setFlags
+cpu_thumb2_fallback gsnes__cpu_thumb2_fallback
 cpu_thumb2_read gsnes__cpu_thumb2_read
 cpu_thumb2_write gsnes__cpu_thumb2_write
 dma_cycle gsnes__dma_cycle
@@ -118,6 +119,7 @@ snes_reset gsnes__snes_reset
 snes_run_line gsnes__snes_run_line
 snes_saveload gsnes__snes_saveload
 snes_setSamples gsnes__snes_setSamples
+snes_thumb2_run gsnes__snes_thumb2_run
 snes_thumb2_step gsnes__snes_thumb2_step
 snes_thumb2_try gsnes__snes_thumb2_try
 snes_thumb2_probe gsnes__snes_thumb2_probe
@@ -162,3 +164,16 @@ CalcFinalVolume gsnes__CalcFinalVolume
 SfxChan_GetByte gsnes__SfxChan_GetByte
 Sfx_Chan_Reset gsnes__Sfx_Chan_Reset
 Sfx_RunChan gsnes__Sfx_RunChan
+snes_fh_bucket gsnes__snes_fh_bucket
+snes_fh_last gsnes__snes_fh_last
+snes_fh_max gsnes__snes_fh_max
+snes_fh_n gsnes__snes_fh_n
+snes_fh_sum gsnes__snes_fh_sum
+snes_fh_mark gsnes__snes_fh_mark
+snes_fh_emu_over gsnes__snes_fh_emu_over
+snes_fh_rest_over gsnes__snes_fh_rest_over
+snes_fh_emu_under gsnes__snes_fh_emu_under
+snes_fh_rest_under gsnes__snes_fh_rest_under
+snes_fh_n_over gsnes__snes_fh_n_over
+snes_fh_n_under gsnes__snes_fh_n_under
+snes_fh_skipped_over gsnes__snes_fh_skipped_over

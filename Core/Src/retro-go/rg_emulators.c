@@ -2124,6 +2124,9 @@ bool emulator_is_file_valid(retro_emulator_file_t *file)
 }
 
 #ifdef GNW_AUTOBOOT_INDEX
+#ifndef GNW_AUTOBOOT_SLOT
+#define GNW_AUTOBOOT_SLOT (-1)   /* -1 = the power-off state; 0.. = manual slots */
+#endif
 /* Device-measurement only: boot straight into a ROM so a profile can be taken
  * without anyone at the console. Chosen by INDEX, not by path -- the launcher's
  * paths come from FatFs and a literal in this file may not match them byte for
@@ -2140,8 +2143,16 @@ void gnw_autoboot(void)
 #ifdef GNW_AUTOBOOT_STATE
             /* Load the savestate: the title screen is not what anyone is trying
              * to make faster, and an attract demo drifts, so two arms measured
-             * "the same" scene are not. A state puts every arm in one place. */
-            emulator_start(&emulators[i].roms.files[GNW_AUTOBOOT_INDEX], true, false, -1);
+             * "the same" scene are not. A state puts every arm in one place.
+             *
+             * The slot matters and the default is not the obvious one: -1 is the
+             * power-off state, NOT a manual slot. A profile taken in the attract
+             * screen said the frame's biggest cost was the PPU; the same build
+             * in real play spends as much again in the APU and is 6 fps slower.
+             * Measure where the game is played -- GNW_AUTOBOOT_SLOT=0 is the
+             * first manual slot. */
+            emulator_start(&emulators[i].roms.files[GNW_AUTOBOOT_INDEX], true, false,
+                           GNW_AUTOBOOT_SLOT);
 #else
             emulator_start(&emulators[i].roms.files[GNW_AUTOBOOT_INDEX], false, false, -1);
 #endif

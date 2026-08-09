@@ -423,3 +423,83 @@ These were closed by device measurement, not by argument. See
 | `PpuLineCacheMatchPpu` (skip Capture on hits) | +0.3% (noise) | 40-branch chain offsets Capture savings in insn count. |
 | DSP BRR idle-voice skip | -0.22% | Safe version still advances BRR state; decode loop is cheap. |
 | DMA ablation | DMA = 2 calls/frame | Confirmed DMA is negligible — not a lever. |
+| Scroll-tolerant LINE_CACHE (shift-on-reuse) | NOT feasible | See section below. |
+
+## Scroll-tolerant LINE_CACHE: shift-on-reuse (2026-08-09, CLOSED)
+
+### Device profile (authority, NOT the rig)
+
+The QEMU rig cannot compile the stretcher, present_frame, or DMA ISR. Its
+SMW projection (p50=62.9fps) was 4fps above the real device (59fps), and the
+entire gap lived in firmware-only code. **The device SWD PC-sampling profiler
+(`tools/gnw_probe/`) is now the authority for performance judgment.**
+
+Heavy-scene SMW gameplay, 800 SWD samples:
+
+| Function | % |
+|----------|---|
+| snes_thumb2_step | 17.0 |
+| app_main_snes | 13.0 |
+| ppu_runLine | 11.8 |
+| snes_cpuRead | 10.5 |
+| cpu_runOpcode | 10.0 |
+| dsp_cycle | 7.3 |
+| PpuDrawBackground_4bpp | 4.0 |
+
+Render cost = 15.8% (ppu_runLine 11.8% + PpuDrawBackground_4bpp 4.0%). During
+scroll, EVERY line misses the LINE_CACHE (hScroll/vScroll in the cache key
+change every frame → RegsMatch fails → full PpuDrawWholeLine).
+
+### Why shift-on-reuse is NOT feasible
+
+**The question:** during scroll, the same tile content is rendered at a shifted
+position. Can we skip the full render and shift the previous output?
+
+**Answer: NO, for five concrete reasons.**
+
+1. **LINE_CACHE is a skip cache, not a replay cache.** `PpuLineCacheCommit`
+   stores key state + VRAM/CGRAM/OAM dependency arrays. It stores **no pixels**.
+   On hit, `PpuDrawWholeLine` is skipped entirely and the LCD framebuffer retains
+   last frame's output for that line.
+
+2. **Device renderBuffer is ONE LINE** (`ppu.h:46-55`). `renderPitch = 0` —
+   every line renders to the same address. There is no multi-line pixel history
+   inside the PPU module to shift from.
+
+3. **`kPpuExtraLeftRight = 0`** (`ppu.h:36`). The z-buffer (`bgBuffers`) has no
+   padding. The renderBuffer's runtime `extraLeftRight` does add some width, but
+   not enough to absorb edge effects without explicit edge fill.
+
+4. **Vertical scroll changes tile content per scanline.** `y += bglayer->vScroll`
+   (`ppu.c:1206`) selects a different tilemap row. Line Y this frame shows
+   different pixel data than line Y last frame. The screen *image* shifts, but
+   individual scanline content is genuinely different. Cross-line temporal
+   coherence (line Y ≈ last frame's line Y-1) requires a 120 KB per-line history
+   buffer — infeasible at 94-99.8% RAM_EMU usage.
+
+5. **Horizontal scroll edge fill is architecturally blocked.** The LCD
+   framebuffer retains previous-frame pixels (that's how cache-hit lines work),
+   but the LCD framebuffer is outside the PPU module's scope. Edge fill (the
+   newly-visible column at the scroll boundary) requires PPU tile decode +
+   color-math compositing. Only the PPU can produce correct edge pixels, but it
+   renders to a one-line buffer, not the LCD framebuffer. A new callback
+   mechanism + partial render path would be needed — disproportionate complexity
+   for the expected gain.
+
+**Additional constraints (even if edge fill were solved):**
+- Multiple BG layers scroll at different rates (BG1/BG2 gameplay vs BG3 status
+  bar) → composited output doesn't shift uniformly.
+- Sprites have absolute screen positions → don't scroll with background.
+- Must skip shift-on-reuse for sprite-bearing lines.
+
+**Quantitative ceiling (if somehow implemented):** ~50% of gameplay lines
+qualify (sprite-free, uniform hScroll) × ~3K cycles/line saved = ~360K cycles
+≈ 6% of frame during horizontal scroll only. SMW would go from 51.6 → ~55fps.
+Still short of 60fps, at the cost of a major architectural change.
+
+### Conclusion
+
+The 15.8% render cost during scroll is inherent to the device's
+memory-constrained architecture. The one-line renderBuffer design (forced by RAM
+constraints) eliminates the pixel history that shift-on-reuse requires. This is
+a hard architectural limit, not a code optimization gap.

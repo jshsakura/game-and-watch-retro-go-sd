@@ -146,7 +146,6 @@ void RtlApuWrite(uint32_t adr, uint8_t val) {
 static uint8_t  g_wram[0x20000];
 static uint16_t g_fb[320 * 240];
 static int16_t  g_audio[16000 / 60];
-static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
 
 #ifdef RIG_DEVICE_VIDEO
 static uint16_t g_line[256];
@@ -229,7 +228,7 @@ static int run_one_opcode(Snes *snes) {
 #ifdef RIG_CALL_PROFILE
   g_opcode_calls++;
 #endif
-  int cycles = PROFILE_CPU(cpu_runOpcode(cpu));
+  int cycles = PROFILE_CPU(CPU_RUN_OPCODE(cpu));
   snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
   if (learn) spin_note_real(cpu, pc24, (uint8_t)snes->cpuCyclesLeft, dispatch);
   return cycles;
@@ -246,7 +245,7 @@ static void cpu_tick(Snes *snes) {
 #ifdef RIG_CALL_PROFILE
     g_opcode_calls++;
 #endif
-    int cycles = PROFILE_CPU(cpu_runOpcode(snes->cpu));
+    int cycles = PROFILE_CPU(CPU_RUN_OPCODE(snes->cpu));
     snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
 #endif
   }
@@ -265,7 +264,7 @@ static void run_dots(Snes *snes, int dots) {
   while (dots > 0) {
     if (dma_active) {
       dma_cycle(snes->dma);
-      snes->apuCatchupCycles += apuCyclesPerMaster * 2.0;
+      snes->apuDotsAccum += 2;
       snes->hPos += 2; dots -= 2;
       dma_active = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
       continue;
@@ -295,7 +294,7 @@ static void run_dots(Snes *snes, int dots) {
 #ifdef RIG_CALL_PROFILE
       g_opcode_calls++;
 #endif
-      int cycles = PROFILE_CPU(cpu_runOpcode(snes->cpu));
+      int cycles = PROFILE_CPU(CPU_RUN_OPCODE(snes->cpu));
       snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
       started_dma = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
 #endif
@@ -304,20 +303,19 @@ static void run_dots(Snes *snes, int dots) {
     if (snes->cpuCyclesLeft >= 2 && !started_dma) {
       step = snes->cpuCyclesLeft;
       if (step > dots) step = dots;
-      step &= ~1;
       snes->cpuCyclesLeft -= (uint8_t)step;
     } else {
       step = 2;
       snes->cpuCyclesLeft -= 2;
     }
-    snes->apuCatchupCycles += apuCyclesPerMaster * step;
+    snes->apuDotsAccum += step;
     snes->hPos += step; dots -= step;
     dma_active = started_dma;
   }
 }
 static void run_frame_events(Snes *snes) {
   for (;;) {
-    snes->apuCatchupCycles += apuCyclesPerMaster * 2.0;
+    snes->apuDotsAccum += 2;
     snes_handle_pos_stuff(snes);
     cpu_tick(snes);
     if (snes->hPos == 0 && snes->vPos == 0) break;

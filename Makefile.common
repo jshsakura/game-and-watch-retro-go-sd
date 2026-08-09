@@ -1082,15 +1082,10 @@ endif
 # or directory" -- the order-only prerequisite was satisfied and not one per-core
 # subdirectory existed. Any tool that writes under build/ had the same effect.
 FLAGS_STAMP := .build-flags
-$(shell printf '%s\n' \
-          'C_DEFS=$(C_DEFS)' \
-          'MD_C_DEFS=$(MD_C_DEFS)' \
-          'CFLAGS=$(CFLAGS)' \
-          'CXXFLAGS=$(CXXFLAGS)' \
-          > $(FLAGS_STAMP).new; \
-        cmp -s $(FLAGS_STAMP).new $(FLAGS_STAMP) \
-          || mv -f $(FLAGS_STAMP).new $(FLAGS_STAMP); \
-        rm -f $(FLAGS_STAMP).new)
+# The stamp itself is computed at the BOTTOM of this file: $(shell ...) runs
+# where it is parsed, and every SNES define group is assigned hundreds of lines
+# below here, so computing it at this point recorded them as empty -- which is
+# exactly the silent-no-rebuild bug it exists to prevent.
 
 $(FLAGS_STAMP): ;
 
@@ -1504,6 +1499,11 @@ endif
 ifeq ($(GNW_AUTOBOOT_STATE),1)
   C_DEFS += -DGNW_AUTOBOOT_STATE
 endif
+# GNW_AUTOBOOT_SLOT: which savestate GNW_AUTOBOOT_STATE resumes. -1 (the
+# default) is the power-off state, NOT a manual slot; 0 is the first manual one.
+ifneq ($(GNW_AUTOBOOT_SLOT),)
+  C_DEFS += -DGNW_AUTOBOOT_SLOT=$(GNW_AUTOBOOT_SLOT)
+endif
 
 # SNES_WRAM_STUB=0 removes the engine's inline work-RAM read path (the .S is
 # assembled with ASFLAGS, so the define has to go there, not into C_DEFS).
@@ -1528,6 +1528,49 @@ endif
 SNES_ROMCACHE ?= 0
 ifeq ($(SNES_ROMCACHE),0)
   ASFLAGS += -DSNES_T2_NO_ROMCACHE
+endif
+
+# SNES_PACE_OFF=1 removes the per-frame audio-DMA wait in main_snes.c, so the
+# frame counter measures emulation speed instead of counting audio periods.
+# Diagnostic arm only -- audio runs at whatever rate the emulator manages.
+SNES_PACE_OFF ?= 0
+ifeq ($(SNES_PACE_OFF),1)
+  C_DEFS += -DSNES_PACE_OFF=1
+endif
+
+# SNES_FRAME_HIST=1 histograms per-frame emulation work into RAM, read out over
+# SWD by tools/gnw_probe/frame_hist.py. One DWT read per frame; no SD writes.
+# SNES_PACE_RING=1 paces the frame loop on the audio backlog instead of on the
+# audio DMA tick, so a fast frame's unused time is kept for the slow frame after
+# it. SNES_PACE_RING_HIGH sets the backlog it holds (samples at 16 kHz).
+SNES_PACE_RING ?= 0
+ifeq ($(SNES_PACE_RING),1)
+  C_DEFS += -DSNES_PACE_RING=1
+endif
+ifneq ($(SNES_PACE_RING_LOW),)
+  C_DEFS += -DSNES_PACE_RING_LOW=$(SNES_PACE_RING_LOW)u
+endif
+
+SNES_FRAME_HIST ?= 0
+ifeq ($(SNES_FRAME_HIST),1)
+  C_DEFS += -DSNES_FRAME_HIST=1
+endif
+
+# SNES_PPU_SPLIT=1 stops gcc folding PpuDrawWholeLine / PpuDrawBackgrounds /
+# PpuDrawSprites into ppu_runLine, so the device PC sampler can attribute them
+# separately. Diagnostic only -- it forces three calls that would be inlined.
+SNES_PPU_SPLIT ?= 0
+ifeq ($(SNES_PPU_SPLIT),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_PPU_SPLIT=1
+endif
+
+# SNES_PPU_PAIR=1 adds a two-pixel fast path to the colour-math compositing
+# loop. OFF: measured 47.99 fps against 50.39 on hardware (Zelda 3 rain, 900
+# deterministic frames from a savestate, three runs each). Pixel-identical --
+# it is the per-pixel tests that cost, see ppu.c.
+SNES_PPU_PAIR ?= 0
+ifeq ($(SNES_PPU_PAIR),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_PPU_PAIR=1
 endif
 
 SNES_READ_PROFILE ?= 0
@@ -2825,3 +2868,21 @@ distclean: clean
 -include $(wildcard $(BUILD_DIR)/*.d)
 
 # *** EOF ***
+
+# Every -D that any recipe passes has to be in here, not just the global ones.
+# The SNES core's recipe adds eight define groups of its own, and none of them
+# used to be recorded: toggling SNES_PPU_PAIR rebuilt nothing, so the "with" and
+# "without" arms of a device A/B were byte-identical binaries and the comparison
+# measured the same build twice. That is worse than a wrong answer, because it
+# looks like a real one -- the same disease as a harness that compiles a
+# different program. cmp the two arms' snes.bin before believing any A/B.
+$(shell printf '%s\n' \
+          'C_DEFS=$(C_DEFS)' \
+          'MD_C_DEFS=$(MD_C_DEFS)' \
+          'CFLAGS=$(CFLAGS)' \
+          'CXXFLAGS=$(CXXFLAGS)' \
+          'SNES=$(SNES_SPIN_SKIP_DEF)|$(SNES_SPC_IDLE_DEF)|$(SNES_LINE_DEFS)|$(SNES_LINE_DEFS_EXTRA)|$(SNES_DSP_MONO_DEF)|$(SNES_DIAG_DEFS)|$(SNES_PROF_DEFS)|$(SNES_HLE_DEFS)' \
+          > $(FLAGS_STAMP).new; \
+        cmp -s $(FLAGS_STAMP).new $(FLAGS_STAMP) \
+          || mv -f $(FLAGS_STAMP).new $(FLAGS_STAMP); \
+        rm -f $(FLAGS_STAMP).new)
