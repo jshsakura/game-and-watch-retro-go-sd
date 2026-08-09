@@ -1573,6 +1573,13 @@ ifeq ($(SNES_PPU_PAIR),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_PPU_PAIR=1
 endif
 
+# SNES_PRESENT_CLEAN_ALL=1 cleans the whole D-cache before the DMA2D present
+# instead of walking 158,720 bytes by address. Device A/B knob.
+SNES_PRESENT_CLEAN_ALL ?= 0
+ifeq ($(SNES_PRESENT_CLEAN_ALL),1)
+  C_DEFS += -DSNES_PRESENT_CLEAN_ALL=1
+endif
+
 SNES_READ_PROFILE ?= 0
 ifeq ($(SNES_READ_PROFILE),1)
   SNES_LINE_DEFS_EXTRA += -DRIG_CALL_PROFILE

@@ -100,6 +100,10 @@ void Die(const char *s) {
 }
 void Warning(const char *s) { (void)s; }
 
+#ifndef SNES_PRESENT_CLEAN_ALL
+#define SNES_PRESENT_CLEAN_ALL 0
+#endif
+
 extern bool g_ppu_skip_render;   /* ppu.c: skip compositing on dropped frames */
 
 /* ---- state ---------------------------------------------------------------- */
@@ -418,7 +422,21 @@ static void present_frame(void) {
        * stale — clean (not invalidate: the next frame's PPU render is about
        * to overwrite this same buffer through the cache again) before
        * handing the address to hardware. */
+      /* SNES_PRESENT_CLEAN_ALL=1 cleans the whole D-cache instead of walking
+       * the buffer by address. The buffer is 158,720 B = 4,960 cache lines; the
+       * D-cache holds 512. So the by-address form issues ten maintenance ops
+       * for every line that could possibly be dirty, and most of them name an
+       * address the cache has never held. Cleaning by set/way touches 512
+       * entries and is a strict superset. Whether the extra write-back of other
+       * subsystems' dirty lines costs more than the 4,448 wasted DCCMVACs is a
+       * question for the device, and the device answered: 52.17 fps against
+       * 52.36, and with three times the run-to-run spread. The write-back of
+       * everything else costs more than the wasted maintenance ops save. OFF. */
+#if SNES_PRESENT_CLEAN_ALL
+      SCB_CleanDCache();
+#else
       SCB_CleanDCache_by_Addr((uint32_t *)snes_frame, sizeof(snes_frame));
+#endif
       HAL_DMA2D_Start(&snes_dma2d, (uint32_t)snes_frame, (uint32_t)dst,
                        GW_LCD_WIDTH, GW_LCD_HEIGHT);
       snes_dma2d_pending = true;
