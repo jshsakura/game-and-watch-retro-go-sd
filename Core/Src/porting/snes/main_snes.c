@@ -1236,7 +1236,13 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
       }
     }
 #endif
-    if (!SNES_PACE_OFF && odroid_system_get_app()->speedupEnabled == SPEEDUP_1x) {
+    /* The line below is a MARKER: tests/test_snes_audio_pacing.sh extracts this
+     * whole block by matching it verbatim and brace-matching to its close. Do
+     * not fold anything into that condition -- putting `!SNES_PACE_OFF &&`
+     * inside the parentheses made the extractor return nothing and turned the
+     * pacing test red, which is exactly the loud failure it is built to give. */
+    if (SNES_PACE_OFF) { /* diagnostic arm: no pacing at all */ } else
+    if (odroid_system_get_app()->speedupEnabled == SPEEDUP_1x) {
         static uint32_t snes_last_dma = 0;
         if (snes_last_dma == 0) snes_last_dma = dma_counter;
 #ifdef SNES_DEVICE_PROFILE
