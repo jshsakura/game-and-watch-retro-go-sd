@@ -272,3 +272,22 @@ second kind to lose.
 pair path at +1.1% instructions; that was discounted because its scene has little
 colour math. The device then said -4.8%. The rig's scene may be unrepresentative
 of the *magnitude*, but it got the *sign* right.
+
+### Sprite two-pass reverse draw — measured neutral, reverted
+
+The renderer's own TODO asks for it and the hardware does it: scan OAM forward
+to decide which slivers exist (the 32-sprite and 34-sliver limits are
+order-sensitive), then draw those in reverse and store unconditionally, which
+gives the identical buffer and deletes the `(dst[0] & 0xff) == 0` load from the
+innermost sprite loop. That load is a dependency, not merely an instruction.
+
+Implemented, gated on TWO ROMs -- ALttP and a second cart -- with STATEHASH,
+AUDIOHASH and framebuffer hashes identical on both. Device: **51.94 vs 51.92**,
+i.e. nothing. The dependent load removed and the 34-entry sliver list written
+cancel out. Reverted: a zero-gain change to sprite priority, in a file four
+cores compile, is risk carried for no return.
+
+Worth revisiting only with a **sprite-heavy** savestate. The scene measured here
+is Zelda 3 rain -- Link plus rain, few slivers per line -- so the saving had
+almost nothing to remove. A scene at the 32-sprite limit would be the honest
+test, and making one is a savestate away.
