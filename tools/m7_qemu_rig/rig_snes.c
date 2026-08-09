@@ -229,7 +229,7 @@ static int run_one_opcode(Snes *snes) {
   g_opcode_calls++;
 #endif
   int cycles = PROFILE_CPU(CPU_RUN_OPCODE(cpu));
-  snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
+  snes->cpuCyclesLeft += cycles * 6 + snes->cpuMemOps * 2;
   if (learn) spin_note_real(cpu, pc24, (uint8_t)snes->cpuCyclesLeft, dispatch);
   return cycles;
 }
@@ -246,7 +246,7 @@ static void cpu_tick(Snes *snes) {
     g_opcode_calls++;
 #endif
     int cycles = PROFILE_CPU(CPU_RUN_OPCODE(snes->cpu));
-    snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
+    snes->cpuCyclesLeft += cycles * 6 + snes->cpuMemOps * 2;
 #endif
   }
   snes->cpuCyclesLeft -= 2;
@@ -295,7 +295,7 @@ static void run_dots(Snes *snes, int dots) {
       g_opcode_calls++;
 #endif
       int cycles = PROFILE_CPU(CPU_RUN_OPCODE(snes->cpu));
-      snes->cpuCyclesLeft += (cycles - snes->cpuMemOps) * 6;
+      snes->cpuCyclesLeft += cycles * 6 + snes->cpuMemOps * 2;
       started_dma = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
 #endif
     }
