@@ -1488,6 +1488,53 @@ else
   SNES_LINE_DEFS_EXTRA :=
 endif
 
+# SNES_READ_PROFILE=1 defines snes.c's read/write classification counters in the
+# firmware (the rigs define them; the device never did), so the one number the
+# device profile gives -- snes_cpuRead is 10.5% of a scrolling frame -- can be
+# split into ROM-page hits, WRAM and the slow path. Diagnostic only.
+# GNW_AUTOBOOT=<n>: boot straight into the Nth SNES ROM, so a device profile can
+# be taken with nobody at the console. By index, not path -- the launcher's paths
+# come from FatFs and a literal need not match them byte for byte. Diagnostic.
+GNW_AUTOBOOT ?=
+ifneq ($(GNW_AUTOBOOT),)
+  C_DEFS += -DGNW_AUTOBOOT_INDEX=$(GNW_AUTOBOOT)
+endif
+# GNW_AUTOBOOT_STATE=1: resume the savestate rather than starting the ROM cold,
+# so every arm of a measurement lands in the same gameplay scene.
+ifeq ($(GNW_AUTOBOOT_STATE),1)
+  C_DEFS += -DGNW_AUTOBOOT_STATE
+endif
+
+# SNES_WRAM_STUB=0 removes the engine's inline work-RAM read path (the .S is
+# assembled with ASFLAGS, so the define has to go there, not into C_DEFS).
+SNES_WRAM_STUB ?= 1
+# SNES_ROMCACHE=0 makes the engine's inline ROM page cache never hit -- which is
+# what a stale offset constant had been doing silently for who knows how long.
+# Default OFF, by device measurement. Repairing the cache's stale offsets cut
+# snes_cpuRead calls by 73% and made the console SLOWER: 53.80 fps with it,
+# 54.52 without, two runs each over the same deterministic 1800-frame window
+# (+-0.05 repeatability). The inline check is ~14 instructions in the engine's
+# hottest ITCM path and what it costs in code size and branch prediction is more
+# than the calls it saves. The QEMU rig disagrees -- 4.01M vs 4.09M
+# instructions/frame -- because it counts instructions and the device spends
+# cycles. STATEHASH and AUDIOHASH are identical either way.
+# SNES_BUS_IN_ITCM=1 places snes_cpuRead/Write in ITCM beside the engine, so the
+# call stops going through a linker veneer (2.7% of the frame by device profile).
+SNES_BUS_IN_ITCM ?= 1
+ifeq ($(SNES_BUS_IN_ITCM),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_BUS_IN_ITCM
+endif
+
+SNES_ROMCACHE ?= 0
+ifeq ($(SNES_ROMCACHE),0)
+  ASFLAGS += -DSNES_T2_NO_ROMCACHE
+endif
+
+SNES_READ_PROFILE ?= 0
+ifeq ($(SNES_READ_PROFILE),1)
+  SNES_LINE_DEFS_EXTRA += -DRIG_CALL_PROFILE
+endif
+
 SNES_LINE_CACHE ?= 0
 SNES_LINE_REUSE_PROBE ?= 0
 SNES_LINE_DEFS :=

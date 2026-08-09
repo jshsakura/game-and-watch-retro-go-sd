@@ -528,6 +528,11 @@ INCLUDE build/fceumm_mappers.ld
     . = ALIGN(4);
     __snes_interp_itc_start__ = .;
     *(.itcm_snes_interp.thumb2 .itcm_snes_interp.thumb2.*)
+    /* The bus accessors, beside the engine that calls them. ITCM sits at
+     * 0x00000000 and the overlay at 0x24000000, which is past BL's +-16 MB, so
+     * every read from the engine went through a linker veneer -- an extra jump
+     * per access, and the device profile showed the veneer alone at 2.7% of the
+     * frame. Together they are 244 bytes and ITCM has ~7 KB spare. */
     . = ALIGN(4);
     __snes_interp_itc_end__ = .;
     ASSERT(ABSOLUTE(__snes_interp_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: SNES interpreter ITC overflow");

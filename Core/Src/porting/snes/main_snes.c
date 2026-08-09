@@ -109,8 +109,6 @@ static Snes *snes;
 static uint8_t snes_wram[0x20000];
 static int16_t audio_buf[SNES_AUDIO_SAMPLES];  /* mono frame mix from the DSP  */
 
-static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
-
 /* ---- event loop (verbatim from tools/snes_harness/snes_main.c) ------------ */
 static int dots_to_next_event(Snes *s) {
   int h = s->hPos;
@@ -169,7 +167,7 @@ static void run_dots(Snes *s, int dots) {
   while (dots > 0) {
     if (dma_active) {
       dma_cycle(s->dma);
-      s->apuCatchupCycles += apuCyclesPerMaster * 2.0;
+      s->apuDotsAccum += 2;
       s->hPos += 2; dots -= 2;
       dma_active = s->dma->dmaBusy || s->dma->hdmaTimer > 0;
       continue;
@@ -200,13 +198,12 @@ static void run_dots(Snes *s, int dots) {
     if (s->cpuCyclesLeft >= 2 && !started_dma) {
       step = s->cpuCyclesLeft;
       if (step > dots) step = dots;
-      step &= ~1;
       s->cpuCyclesLeft -= (uint8_t)step;
     } else {
       step = 2;
       s->cpuCyclesLeft -= 2;
     }
-    s->apuCatchupCycles += apuCyclesPerMaster * step;
+    s->apuDotsAccum += step;
     s->hPos += step; dots -= step;
     dma_active = started_dma;
   }
@@ -214,7 +211,7 @@ static void run_dots(Snes *s, int dots) {
 
 static void run_frame_events(Snes *s) {
   for (;;) {
-    s->apuCatchupCycles += apuCyclesPerMaster * 2.0;
+    s->apuDotsAccum += 2;
     snes_handle_pos_stuff(s);
     cpu_tick(s);
     if (s->hPos == 0 && s->vPos == 0) break;
@@ -803,6 +800,14 @@ static bool rc_smw_activate(const uint8_t *rom, uint32_t len) {
 #endif
 }
 
+/* In ITCM with the engine it drives. This is the frame loop, and its inner part
+ * calls cpu_runOpcode and snes_cpuRead once per opcode -- both now in ITCM at
+ * 0x00000000 while this sits in the overlay at 0x24000000, past BL's +-16 MB, so
+ * each of those calls went through a linker veneer. Moving the two callees was
+ * worth +1.5 fps on the device; this is the caller side of the same boundary. */
+#ifdef SNES_BUS_IN_ITCM
+__attribute__((section(".itcm_snes_interp.thumb2.bus")))
+#endif
 void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
   /* Level-1 OC (312 MHz) to defend the SNES framerate — never downclock a
@@ -1251,3 +1256,13 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #endif
   }
 }
+
+#ifdef RIG_CALL_PROFILE
+/* snes.c's read/write classification hooks reference these as extern. The rigs
+ * define them; the firmware never did, so on hardware the one number we had --
+ * snes_cpuRead is 10.5% of a scrolling frame -- had no breakdown behind it.
+ * Diagnostic builds only (SNES_READ_PROFILE=1); read them over SWD. */
+uint64_t g_cpuRead_calls, g_win_cpuRead_calls, g_cpuRead_slow, g_cpuRead_romhit, g_cpuRead_wram;
+uint64_t g_cpuWrite_calls, g_cpuWrite_slow;
+uint64_t g_dma_cycle_calls, g_win_dma_cycle_calls, g_dma_cycle_true, g_dma_doDma_calls, g_dma_doHdma_calls;
+#endif

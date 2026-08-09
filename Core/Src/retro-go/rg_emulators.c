@@ -2137,7 +2137,14 @@ void gnw_autoboot(void)
         emulators[i].roms.count = 0;
         emulator_refresh_list(&emulators[i]);
         if (emulators[i].roms.count > GNW_AUTOBOOT_INDEX)
+#ifdef GNW_AUTOBOOT_STATE
+            /* Load the savestate: the title screen is not what anyone is trying
+             * to make faster, and an attract demo drifts, so two arms measured
+             * "the same" scene are not. A state puts every arm in one place. */
+            emulator_start(&emulators[i].roms.files[GNW_AUTOBOOT_INDEX], true, false, -1);
+#else
             emulator_start(&emulators[i].roms.files[GNW_AUTOBOOT_INDEX], false, false, -1);
+#endif
         return;
     }
 }

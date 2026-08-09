@@ -8,7 +8,7 @@
 # machine, so a measurement labels itself -- no one has to remember which build
 # was flashed or which game was up. That mattered: two runs at "59.4 fps" were
 # nearly filed as the same game.
-set -euo pipefail
+set -eu   # NOT pipefail: awk|head closes objdump's pipe and SIGPIPE is not a failure
 cd "$(dirname "$0")/../.."
 
 HOST=${PROBE_HOST:-rpi-genie5}
@@ -17,7 +17,7 @@ SECS=${1:-8}
 SAMPLES=${2:-700}
 OC="sudo openocd -f interface/stlink-dap.cfg -f target/stm32h7x.cfg -c 'adapter speed 4000'"
 
-sym() { arm-none-eabi-objdump -t "$ELF" 2>/dev/null | awk -v n="$1" '$NF==n{print $1; exit}'; }
+sym() { arm-none-eabi-objdump -t "$ELF" 2>/dev/null | awk -v n="$1" '$NF==n{print $1}' | head -1; }
 
 frame=$(sym g_line_cache_frame)
 active=$(sym ACTIVE_FILE)
