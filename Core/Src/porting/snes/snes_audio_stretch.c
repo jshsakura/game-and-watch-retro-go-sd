@@ -134,6 +134,27 @@ void snes_stretch_push(const int16_t *src, uint16_t n) {
     wr = (uint16_t)((wr + 1u) & RING_MASK);
     fill++;
   }
+  /* Overflow drain -- the mirror of the dry filler, and it was missing.
+   *
+   * A WSOLA insertion adds output samples without consuming ring samples, so on
+   * a game that runs below 60 fps the backlog grows every frame and never comes
+   * back: measured on the device at 1817 samples against a target of 640, which
+   * is 114 ms of the sound arriving late, with the playback rate sitting
+   * clamped at its floor and unable to drain it. The old guard only fired when
+   * the ring was completely FULL, so the latency ceiling was the ring size
+   * rather than the target.
+   *
+   * When the core is persistently slow there is no way to keep latency bounded
+   * except to throw audio away -- playing everything it produced at the right
+   * pitch means falling behind real time by exactly the deficit, for ever. Drop
+   * whole pitch periods so the splice lands where the waveform repeats. */
+  if (fill > TARGET * 2u) {
+    uint16_t p = pitch_meas ? pitch_meas : REPEAT;
+    while (fill > TARGET + p) {
+      rd = (uint16_t)((rd + p) & RING_MASK);
+      fill = (uint16_t)(fill - p);
+    }
+  }
   pushed += n;
   uint8_t should_prime = (!primed && fill >= TARGET) ? 1 : 0;
   STRETCH_IRQ_RESTORE();

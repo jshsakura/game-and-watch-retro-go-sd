@@ -2123,6 +2123,26 @@ bool emulator_is_file_valid(retro_emulator_file_t *file)
     return false;
 }
 
+#ifdef GNW_AUTOBOOT_INDEX
+/* Device-measurement only: boot straight into a ROM so a profile can be taken
+ * without anyone at the console. Chosen by INDEX, not by path -- the launcher's
+ * paths come from FatFs and a literal in this file may not match them byte for
+ * byte, which is exactly how the debugger's remote emulator_get_file() call
+ * came back NULL. Never enabled in a shipping build. */
+void gnw_autoboot(void)
+{
+    for (int i = 0; i < emulators_count; i++) {
+        if (strcmp(emulators[i].dirname, "snes") != 0)
+            continue;
+        emulators[i].roms.count = 0;
+        emulator_refresh_list(&emulators[i]);
+        if (emulators[i].roms.count > GNW_AUTOBOOT_INDEX)
+            emulator_start(&emulators[i].roms.files[GNW_AUTOBOOT_INDEX], false, false, -1);
+        return;
+    }
+}
+#endif
+
 retro_emulator_file_t *emulator_get_file(char *file_path)
 {
     for (int i = 0; i < emulators_count; i++) {

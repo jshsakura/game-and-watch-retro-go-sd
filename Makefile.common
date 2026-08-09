@@ -1433,7 +1433,14 @@ SNES_LOAD_DIAG ?= 0
 # an `if (g_spin.phase)` branch -- a tax paid in full by any cart the table
 # turns OFF, which currently includes Zelda 3 (skip% 25.0). Default 1 = the
 # shipping behaviour; 0 exists so the tax can be measured by device A/B.
-SNES_SPIN_SKIP ?= 1
+# 0809, measured on hardware: OFF by default. With the learner fully off Super
+# Mario World reads 60.10 fps and with it on 60.20 -- the same, both sitting on
+# the 60.15 audio-DMA pacing cap -- while Zelda 3 gains +2.1 fps by not paying
+# for it. The learner charges every real opcode and only repays on skipped ones,
+# and an on-device profile put that charge at 8.7% of Zelda and 12.7% of Mario
+# Kart. Caveat kept honest: at the cap we cannot see margin, so a scene heavier
+# than anything measured could still want it -- which is what the knob is for.
+SNES_SPIN_SKIP ?= 0
 ifeq ($(SNES_SPIN_SKIP),1)
   SNES_SPIN_SKIP_DEF := -DSNES_SPIN_SKIP
 else

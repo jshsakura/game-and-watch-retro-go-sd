@@ -1255,6 +1255,9 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     }
 
     emulators_init();
+#ifdef GNW_AUTOBOOT_INDEX
+    { extern void gnw_autoboot(void); gnw_autoboot(); }
+#endif
     rg_emulators_restore_main_menu_browse_path();
 
     /* All-state alarm: if a deep-sleep RTC alarm woke us, ring FIRST (the clock
