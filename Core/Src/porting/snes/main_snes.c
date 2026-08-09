@@ -204,6 +204,12 @@ static void run_dots(Snes *s, int dots) {
        * the recorded cycle pattern and park the pc where the real call would
        * have, WITHOUT the interpreter. Falls through to the shared bulk-consume
        * so hPos steps and the apuCatchupCycles FMA sequence stay bit-identical. */
+#ifdef SNES_SPIN_SKIP
+      /* Compiled out with the learner: spin_note() is its only writer of
+       * g_spin.on and that is SNES_SPIN_SKIP-only, so with the flag off this
+       * was a load and a branch per opcode to test a condition that could not
+       * be true. The learner's other taxes were removed in 559d9970; this one
+       * was left because it looked free. Nothing per-opcode is free here. */
       if (g_spin.on &&
           !cpu->nmiWanted && !cpu->irqWanted && !cpu->waiting && !cpu->stopped &&
           !s->hIrqEnabled &&
@@ -214,7 +220,9 @@ static void run_dots(Snes *s, int dots) {
         cpu->k  = (uint8_t)(g_spin.pc[g_spin.idx] >> 16);
         cpu->pc = (uint16_t)g_spin.pc[g_spin.idx];
         g_spin.ops_virtual++;
-      } else {
+      } else
+#endif
+      {
         apply_irq_match(s);
         run_one_opcode(s);
         started_dma = s->dma->dmaBusy || s->dma->hdmaTimer > 0;
