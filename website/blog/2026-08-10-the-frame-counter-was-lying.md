@@ -3,6 +3,7 @@ slug: the-frame-counter-was-lying
 title: 'The frame counter was lying, and half a day went to the wrong scene'
 authors: [jshsakura]
 tags: [snes, performance, hardware]
+image: /img/probe-rig-running.jpg
 ---
 
 An optimisation removes 5.5% of the instructions the emulator executes. It is
@@ -15,6 +16,41 @@ Two tenths of a frame. For 5.5%.
 
 That number is where this day started, and almost everything useful that came out
 of it came from refusing to accept it.
+
+## First, what the numbers come from
+
+Nothing here is a judgement about how the game feels. Every figure below is a
+value read off hardware or out of a rig, and the two are used for different
+things.
+
+![The Game & Watch under test: SWD wired out to an ST-LINK V2, which hangs off a Raspberry Pi 5](/img/probe-rig-running.jpg)
+
+A change is not allowed near the device until it has passed a **QEMU Cortex-M7
+container running on OCI**. That rig assembles the same Thumb-2 engine the
+firmware links, from the Makefile's own source list, and reports two things: an
+instruction count per frame, and four hashes — machine state, audio, and both
+framebuffer windows. A change that alters any hash is wrong and never leaves the
+container. A change that survives gets a device slot.
+
+![The same unit opened: the SD-card mod, the battery, and the SWD wires clipped to the board](/img/probe-rig-open.jpg)
+
+The device slot is a **Raspberry Pi 5 with an ST-LINK V2 on SWD**. It flashes the
+internal image and pushes the SNES core to the SD card, resets, waits for the ROM
+to come up, and times a fixed 900-frame window read straight out of the emulator's
+own frame counter. It also samples the program counter a few hundred times a
+second for a profile, and reads diagnostic counters out of RAM without stopping
+the game.
+
+Two rules fall out of that arrangement, and both earned their keep today:
+
+- **The container decides correctness. The device decides speed.** The rig cannot
+  see a cache miss or a bus stall, so it is not allowed to judge whether something
+  is faster. It is very good at telling you a change is *wrong*.
+- **A rig instruction count that moves the wrong way is a warning.** Twice today a
+  candidate showed more instructions in the container and was talked into a device
+  slot anyway, on the grounds that the rig's scene was unrepresentative. Both lost
+  on hardware, one by 4.8%. The rig's scene may make the magnitude meaningless.
+  It still got the sign right.
 
 ## The counter counts audio periods, not speed
 
