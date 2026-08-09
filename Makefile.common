@@ -1580,6 +1580,13 @@ ifeq ($(SNES_PRESENT_CLEAN_ALL),1)
   C_DEFS += -DSNES_PRESENT_CLEAN_ALL=1
 endif
 
+# SNES_SPRITE_CENSUS=1 counts slivers/lines/limit hits so "is this scene
+# sprite-heavy" can be answered with a number. Diagnostic only.
+SNES_SPRITE_CENSUS ?= 0
+ifeq ($(SNES_SPRITE_CENSUS),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_SPRITE_CENSUS=1
+endif
+
 SNES_READ_PROFILE ?= 0
 ifeq ($(SNES_READ_PROFILE),1)
   SNES_LINE_DEFS_EXTRA += -DRIG_CALL_PROFILE

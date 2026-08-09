@@ -287,7 +287,14 @@ i.e. nothing. The dependent load removed and the 34-entry sliver list written
 cancel out. Reverted: a zero-gain change to sprite priority, in a file four
 cores compile, is risk carried for no return.
 
-Worth revisiting only with a **sprite-heavy** savestate. The scene measured here
-is Zelda 3 rain -- Link plus rain, few slivers per line -- so the saving had
-almost nothing to remove. A scene at the 32-sprite limit would be the honest
-test, and making one is a savestate away.
+**CLOSED, and not for want of a sprite-heavy scene.** That was the first guess
+and it is wrong. A census (`SNES_SPRITE_CENSUS=1`) over 55,126 evaluated lines
+of the rain scene counted 301,096 slivers -- **5.46 per line against a limit of
+34**, with the 32-sprite and 34-sliver limits never once reached. So the scene
+is indeed light. But the ratio that decides this lever does not depend on that:
+it removes one load per sprite PIXEL, i.e. eight per sliver, and adds about four
+stores per sliver to record it. 8:4 holds at any sliver count. A scene at the
+limit scales both sides equally and lands in the same place.
+
+Structurally neutral, not scene-dependent. Do not spend another savestate on
+it.
