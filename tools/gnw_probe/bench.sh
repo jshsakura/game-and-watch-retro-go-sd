@@ -20,8 +20,19 @@ ELF=${1:?usage: bench.sh <elf> [frames]}
 FRAMES=${2:-1800}
 OC="sudo openocd -f interface/stlink-dap.cfg -f target/stm32h7x.cfg -c 'adapter speed 4000'"
 
-F=$(arm-none-eabi-objdump -t "$ELF" | awk '$NF=="g_line_cache_frame"{print "0x"$1}' | head -1)
-[ -n "$F" ] || { echo "no g_line_cache_frame in $ELF"; exit 1; }
+# Prefer the core's own frame counter: it exists in every configuration, while
+# g_line_cache_frame vanishes with SNES_LINE_CACHE=0 and took the benchmark with
+# it. `snes` is a pointer, so read it first and add offsetof(Snes, frames).
+SNESP=$(arm-none-eabi-objdump -t "$ELF" | awk '$NF=="snes" && $1 ~ /^[0-9a-f]+$/ {print "0x"$1}' | head -1)
+FRAMES_OFF=${FRAMES_OFF:-56}
+if [ -n "$SNESP" ]; then
+  P=$(ssh "$HOST" "$OC -c init -c 'mdw $SNESP' -c shutdown 2>&1" | grep -oE ": [0-9a-f]{8}" | tr -d ': ')
+  [ -n "$P" ] && [ "$P" != "00000000" ] && F=$(printf '0x%x' $((0x$P + FRAMES_OFF)))
+fi
+if [ -z "${F:-}" ]; then
+  F=$(arm-none-eabi-objdump -t "$ELF" | awk '$NF=="g_line_cache_frame"{print "0x"$1}' | head -1)
+fi
+[ -n "$F" ] || { echo "no frame counter found in $ELF"; exit 1; }
 
 # Wait for the counter to go back to zero first. Without this the timer starts
 # with the PREVIOUS run's count already past the target and returns instantly --
