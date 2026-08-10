@@ -2955,12 +2955,19 @@ distclean: clean
 # measured the same build twice. That is worse than a wrong answer, because it
 # looks like a real one -- the same disease as a harness that compiles a
 # different program. cmp the two arms' snes.bin before believing any A/B.
+#
+# ASFLAGS is in here for the same reason and it was missed the first time:
+# SNES_ROMCACHE passes -DSNES_T2_NO_ROMCACHE to the ASSEMBLER, not the compiler,
+# so toggling it rebuilt nothing and `SNES_ROMCACHE=1` produced a binary
+# byte-identical to the baseline. Every variable any recipe puts on a command
+# line belongs here, not just the C ones.
 $(shell printf '%s\n' \
           'C_DEFS=$(C_DEFS)' \
           'MD_C_DEFS=$(MD_C_DEFS)' \
           'CFLAGS=$(CFLAGS)' \
           'CXXFLAGS=$(CXXFLAGS)' \
           'SNES=$(SNES_SPIN_SKIP_DEF)|$(SNES_SPC_IDLE_DEF)|$(SNES_LINE_DEFS)|$(SNES_LINE_DEFS_EXTRA)|$(SNES_DSP_MONO_DEF)|$(SNES_DIAG_DEFS)|$(SNES_PROF_DEFS)|$(SNES_HLE_DEFS)' \
+          'ASFLAGS=$(ASFLAGS)' \
           > $(FLAGS_STAMP).new; \
         cmp -s $(FLAGS_STAMP).new $(FLAGS_STAMP) \
           || mv -f $(FLAGS_STAMP).new $(FLAGS_STAMP); \
