@@ -191,3 +191,5 @@ g_bg_tile_blank gsnes__g_bg_tile_blank
 g_spr_pass gsnes__g_spr_pass
 g_render_lines gsnes__g_render_lines
 g_sub_lines gsnes__g_sub_lines
+g_sub_also_main gsnes__g_sub_also_main
+g_sub_only gsnes__g_sub_only
