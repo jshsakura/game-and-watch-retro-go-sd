@@ -181,3 +181,7 @@ g_sprite_slivers gsnes__g_sprite_slivers
 g_sprite_lines gsnes__g_sprite_lines
 g_sprite_over32 gsnes__g_sprite_over32
 g_sprite_over34 gsnes__g_sprite_over34
+g_win_calc gsnes__g_win_calc
+g_win_calc_sub gsnes__g_win_calc_sub
+g_win_dup gsnes__g_win_dup
+g_win_lines gsnes__g_win_lines
