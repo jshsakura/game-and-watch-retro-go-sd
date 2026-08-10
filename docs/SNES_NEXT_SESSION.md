@@ -12,6 +12,32 @@ says otherwise.
 | Branch | `testbed` @ `33013f9e`, submodule `external/sm` @ `0ab28db` (`perf/spc-idle-skip`), both pushed |
 | Write-up | issue #39 · blog post `the-frame-counter-was-lying` |
 
+## The next target, with its ceiling already priced
+
+**Rewrite the background tile-decode inner loop.** Ablating the background draw
+entirely -- `SNES_ABLATE_BG=1`, wrong output on purpose -- reads **59.54 fps
+against the 52.36 baseline: +7.18, +13.7%.** That is 3.5x everything won on this
+core in a full day of A/Bs, and it is the only number on the board big enough to
+justify a hand-written-assembly project.
+
+A rewrite captures less than the ablation: it deletes the tilemap walk and VRAM
+fetch too, which SIMD does not touch. A third to a half is the honest
+expectation, so **+2.4 to +3.6 fps**.
+
+Two things make it tractable, both measured today:
+- The main screen already skips 46% of its tiles for free (transparent); the
+  subscreen skips none. 68 decoded tiles per line across both screens.
+- There is nothing to share between the passes -- 0 of 42,191 sub passes draw a
+  layer the main screen also draws -- so this is one loop to make faster, not a
+  duplication to collapse.
+
+**And a warning about the instrument.** PC sampling scored
+`PpuDrawBackground_4bpp` at 6.1% of the frame; ablation says 13.7%. A sampler
+credits a stall to whichever instruction is retiring, so memory-bound work reads
+lighter than it is, and this core is stall-bound. **Price a candidate by ablation
+before designing for it.** That is now the first step for any large lever, and it
+costs one build.
+
 ## First command next session
 
 The device sleeps on the launcher's idle timeout, so wake it, then:
