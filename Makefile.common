@@ -1587,6 +1587,15 @@ ifeq ($(SNES_SPRITE_CENSUS),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_SPRITE_CENSUS=1
 endif
 
+# SNES_SPRITE_SKIP_DRAW=1 stops ppu_evaluateSprites decoding and writing sprite
+# pixels on frameskipped frames -- nothing reads objBuffer on those. The scan,
+# its 32/34 limits and the VRAM probe still run in full. Rig-verified
+# (hashes identical) but NOT yet measured on hardware; off until it is.
+SNES_SPRITE_SKIP_DRAW ?= 0
+ifeq ($(SNES_SPRITE_SKIP_DRAW),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_SPRITE_SKIP_DRAW=1
+endif
+
 SNES_READ_PROFILE ?= 0
 ifeq ($(SNES_READ_PROFILE),1)
   SNES_LINE_DEFS_EXTRA += -DRIG_CALL_PROFILE
