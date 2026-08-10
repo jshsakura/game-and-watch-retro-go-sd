@@ -1590,7 +1590,8 @@ endif
 # SNES_SPRITE_SKIP_DRAW=1 stops ppu_evaluateSprites decoding and writing sprite
 # pixels on frameskipped frames -- nothing reads objBuffer on those. The scan,
 # its 32/34 limits and the VRAM probe still run in full. Rig-verified
-# (hashes identical) but NOT yet measured on hardware; off until it is.
+# Measured: 52.29 fps against a 52.36 baseline -- nothing. Sprite pixels are 5.46
+# slivers per line here, too little to matter. Off, with the number.
 SNES_SPRITE_SKIP_DRAW ?= 0
 ifeq ($(SNES_SPRITE_SKIP_DRAW),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_SPRITE_SKIP_DRAW=1
