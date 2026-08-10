@@ -1526,6 +1526,11 @@ endif
 SNES_WRAM_STUB ?= 1
 # SNES_ROMCACHE=0 makes the engine's inline ROM page cache never hit -- which is
 # what a stale offset constant had been doing silently for who knows how long.
+# Re-measured 2026-08-11 in real gameplay (Zelda 3 rain, savestate, 900 frames):
+# 55.10 fps against a 55.47 baseline. The verdict below was taken on the attract
+# screen and it survives -- unlike SNES_LINE_CACHE, this one is not
+# scene-dependent. (And the first attempt to re-measure it produced a binary
+# byte-identical to the baseline, because ASFLAGS was missing from FLAGS_STAMP.)
 # Default OFF, by device measurement. Repairing the cache's stale offsets cut
 # snes_cpuRead calls by 73% and made the console SLOWER: 53.80 fps with it,
 # 54.52 without, two runs each over the same deterministic 1800-frame window
