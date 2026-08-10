@@ -1604,6 +1604,13 @@ ifeq ($(SNES_WINDOW_CENSUS),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_WINDOW_CENSUS=1
 endif
 
+# SNES_RENDER_CENSUS=1 counts layer passes, tiles and blank tiles per line,
+# split main vs sub, so the 17.65 ms render becomes a breakdown. Diagnostic only.
+SNES_RENDER_CENSUS ?= 0
+ifeq ($(SNES_RENDER_CENSUS),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_RENDER_CENSUS=1
+endif
+
 SNES_READ_PROFILE ?= 0
 ifeq ($(SNES_READ_PROFILE),1)
   SNES_LINE_DEFS_EXTRA += -DRIG_CALL_PROFILE

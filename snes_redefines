@@ -185,3 +185,9 @@ g_win_calc gsnes__g_win_calc
 g_win_calc_sub gsnes__g_win_calc_sub
 g_win_dup gsnes__g_win_dup
 g_win_lines gsnes__g_win_lines
+g_bg_pass gsnes__g_bg_pass
+g_bg_tile gsnes__g_bg_tile
+g_bg_tile_blank gsnes__g_bg_tile_blank
+g_spr_pass gsnes__g_spr_pass
+g_render_lines gsnes__g_render_lines
+g_sub_lines gsnes__g_sub_lines
