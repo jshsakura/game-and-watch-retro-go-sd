@@ -631,12 +631,29 @@ int main(void) {
    * here even though its value is not. */
   {
     extern uint32_t g_tile_same, g_tile_diff, g_bg_tile[2], g_render_lines;
+    extern uint32_t g_sub_lines, g_bg_pass[2], g_sprite_slivers, g_sprite_lines;
     unsigned long tot = (unsigned long)g_tile_same + g_tile_diff;
     printf("[snes-qemu] tile memo: same=%lu diff=%lu hit=%lu%%  bg_tile=%lu/%lu lines=%lu\n",
            (unsigned long)g_tile_same, (unsigned long)g_tile_diff,
            tot ? 100UL * g_tile_same / tot : 0UL,
            (unsigned long)g_bg_tile[0], (unsigned long)g_bg_tile[1],
            (unsigned long)g_render_lines);
+    printf("[snes-qemu] coverage: bg_pass=%lu/%lu sub_lines=%lu\n",
+           (unsigned long)g_bg_pass[0], (unsigned long)g_bg_pass[1],
+           (unsigned long)g_sub_lines);
+    printf("[snes-qemu] coverage: sprite_slivers=%lu sprite_lines=%lu\n",
+           (unsigned long)g_sprite_slivers, (unsigned long)g_sprite_lines);
+    /* A hash gate proves nothing about code the run never reaches, and this run
+     * reaches less than it looks like it does: at 400 frames A Link to the Past
+     * decodes ZERO background tiles and renders ZERO subscreen lines, because it
+     * is still on a black screen. Say so out loud rather than letting a green
+     * hash stand in for coverage. */
+    if (g_bg_tile[0] + g_bg_tile[1] == 0)
+      printf("[snes-qemu] COVERAGE WARNING: no background tile was decoded -- "
+             "this run does not gate the tile drawers. Use more frames.\n");
+    if (g_sub_lines == 0)
+      printf("[snes-qemu] COVERAGE WARNING: no subscreen line was rendered -- "
+             "this run does not gate the colour-math path. Use more frames.\n");
   }
 #endif
   printf("[snes-qemu] done %d frames STATEHASH=%08lx AUDIOHASH=%08lx avg emu=%lu apu=%lu insn/frame\n",
