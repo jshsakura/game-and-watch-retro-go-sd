@@ -22,6 +22,13 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 ROM="${1:?usage: run_snes_t2.sh <rom.smc> [frames]}"
+# 1200, not 400. A Link to the Past spends its first ~500 frames on a black
+# screen: the compositing loop runs on every line, but no background layer is
+# enabled, so PpuDrawBackground_4bpp/2bpp are never entered. A 400-frame run
+# therefore gates changes to the tile drawers by NOT EXECUTING THEM -- measured:
+# bg_tile = 0 at 400 frames, 15.9 M at 1500. Anything touching the layer drawers
+# needs a run long enough to reach lit pixels; check the `lit=` column, and if it
+# is under a few thousand the renderer is not being tested.
 FRAMES="${2:-1200}"
 
 SM=external/sm

@@ -624,6 +624,21 @@ int main(void) {
          (unsigned long)g_ppu_math_rebuild_calls);
 #endif
 #else
+#if SNES_RENDER_CENSUS
+  /* The rig cannot price a cache hit -- QEMU has none -- but it can COUNT one.
+   * Whether consecutive tilemap entries name the same tile is a property of the
+   * ROM's content, not of the silicon, so the tile memo's hit rate is knowable
+   * here even though its value is not. */
+  {
+    extern uint32_t g_tile_same, g_tile_diff, g_bg_tile[2], g_render_lines;
+    unsigned long tot = (unsigned long)g_tile_same + g_tile_diff;
+    printf("[snes-qemu] tile memo: same=%lu diff=%lu hit=%lu%%  bg_tile=%lu/%lu lines=%lu\n",
+           (unsigned long)g_tile_same, (unsigned long)g_tile_diff,
+           tot ? 100UL * g_tile_same / tot : 0UL,
+           (unsigned long)g_bg_tile[0], (unsigned long)g_bg_tile[1],
+           (unsigned long)g_render_lines);
+  }
+#endif
   printf("[snes-qemu] done %d frames STATEHASH=%08lx AUDIOHASH=%08lx avg emu=%lu apu=%lu insn/frame\n",
          RIG_FRAMES, (unsigned long)(uint32_t)(run_hash ^ sh),
          (unsigned long)(uint32_t)audio_hash,
