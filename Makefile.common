@@ -1611,6 +1611,15 @@ ifeq ($(SNES_RENDER_CENSUS),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_RENDER_CENSUS=1
 endif
 
+# SNES_ABLATE_BG=1 deletes the background layer draw entirely. WRONG OUTPUT --
+# it exists only to price the ceiling of a tile-decode rewrite before anyone
+# spends days on one. Diagnostic, never shippable.
+# Measured: 59.54 fps against 52.36 -- +13.7%, the largest number on the board.
+SNES_ABLATE_BG ?= 0
+ifeq ($(SNES_ABLATE_BG),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_BG=1
+endif
+
 SNES_READ_PROFILE ?= 0
 ifeq ($(SNES_READ_PROFILE),1)
   SNES_LINE_DEFS_EXTRA += -DRIG_CALL_PROFILE
