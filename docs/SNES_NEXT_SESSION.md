@@ -81,20 +81,65 @@ and dropped in `64bf5216`), compact bank map (`snes_cpuRead` already classifies 
 three compares plus a page cache), layer masking and empty-tile skip (already in
 `ppu.c`), DMA2D line output (already shipping).
 
-## Candidates not yet measured
+## Counted and closed — three more, none of them built
 
-Both need a count before any code, because two levers were built on estimates
-today and both lost.
+Counting cost three diagnostic builds. Implementing them would have cost days.
 
-1. **`PpuWindows_Calc` computed twice per line.** It takes no `sub` argument, so a
-   layer windowed on *both* screens computes the identical result twice
-   (`ppu.c:1207/1323/1436/1522`). Memoising per (layer, line) is a removal.
-   **Count first:** how many layers per line are windowed on both screens in a
-   scene that has a subscreen at all. If the answer is "almost none", it is worth
-   nothing.
-2. **`ClearBackdrop` on `bgBuffers[0]` and `[1]`** — 1 KB per line, 229 KB per
-   drawn frame. Removing it needs a "is the subscreen all backdrop" test, which is
-   the shape that keeps losing. Probably closed; worth a count only.
+1. **`PpuWindows_Calc` computed twice per line** — 28,690 lines, 30,319 Calc calls
+   (1.06 per line), of which the **subscreen pass accounts for zero**. No layer is
+   ever windowed on the sub screen here, so there is no duplicate, and at 1.06
+   calls per line it was not a hotspot either.
+2. **Single-pass main+sub background render** — of 42,191 sub passes, **zero** draw
+   a layer the main screen also draws. hScroll/vScroll belong to the layer, so a
+   shared layer would decode identical tiles in both passes; it never happens. The
+   subscreen is separate work, not duplication.
+3. **Frameskip sprite-draw skip** — built and measured: 52.29 vs 52.36. Nothing.
+   Sprite pixels are 5.46 slivers per line against a limit of 34.
+
+## The render's shape, counted
+
+Zelda 3 rain, 339,259 rendered lines:
+
+```
+                    main      sub
+  layer passes/line  2.29     1.00      sub runs on 100% of lines
+  tiles/line        65.1     33.0
+  blank tiles        46%       0%       main skips nearly half for free
+  decoded/line      35.2     33.0       <- sub is 48% of all tile decode
+```
+
+The subscreen exists only because colour math is on, draws one fully opaque layer
+that shares nothing with the main screen, and skips nothing. What is left in the
+render is not a duplication to remove but an inner loop to make cheaper: **68
+decoded tiles per line across both screens, at roughly 17 cycles per
+layer-pixel.** That is a hand-written-assembly project of the same shape as the
+Thumb-2 65816 engine, not a knob.
+
+## rc (static recompilation) — why it is not the next lever
+
+It looks like the big one on paper: `docs/RESUME_GNW.md` records SMW at 8.20M →
+4.63M instructions/frame, 1.77×, bit-identical. Three things kill it as a *next*
+step, and the third is decisive:
+
+- **That 1.77× was measured against the C interpreter**, before the hand-written
+  Thumb-2 65816 engine existed. The engine has since taken a large part of the
+  same ground. The gain against today's core is unmeasured and certainly smaller.
+- **It is per-ROM.** Only SMW has a blob. The baseline scene is Zelda 3, which
+  would get nothing.
+- **`RCSMW=1` does not link today: "SNES interpreter ITC overflow".** The 270 hot
+  sites are 23,504 B and the Thumb-2 engine already ends at 0x13FB8 — together
+  they overflow the 65,280 B of ITCM by 16,568 B. rc and the engine want the same
+  64 KB, and the engine is 18.9% of the frame with measured evidence that leaving
+  ITCM costs it (a single veneer was 2.7%).
+
+Also note `RCSMW ?= 0` and CI does not pass it, so **no shipped build has ever had
+rc active** — `.itcm_rc_hot` is 0 bytes in the release map. The dispatch machinery
+ships; the payload does not.
+
+Reopening rc means one of: run the sites from XIP (the DOOM-vs-SM scale risk),
+cut to ~40 sites (too few for the gain), or move the engine out of ITCM and pay
+for it (never measured). Only the third is worth an experiment, and it is two
+builds — but it is SMW-only either way.
 
 ## Where the frame goes (52.36 fps build, real gameplay, 900 samples)
 
