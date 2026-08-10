@@ -195,3 +195,5 @@ g_sub_also_main gsnes__g_sub_also_main
 g_sub_only gsnes__g_sub_only
 g_lc_hit gsnes__g_lc_hit
 g_lc_miss gsnes__g_lc_miss
+g_tile_same gsnes__g_tile_same
+g_tile_diff gsnes__g_tile_diff

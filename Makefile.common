@@ -1657,6 +1657,21 @@ ifeq ($(SNES_PPU_PREFETCH),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_PPU_PREFETCH=1
 endif
 
+# SNES_ABLATE_APU=1 deletes the SPC700 and DSP entirely. WRONG OUTPUT -- it
+# prices the APU chain the way SNES_ABLATE_BG prices the render. Never shippable.
+SNES_ABLATE_APU ?= 0
+ifeq ($(SNES_ABLATE_APU),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_APU=1
+endif
+
+# SNES_PPU_TILE_MEMO=1 keeps the last tile fetch and reuses it when the next
+# tilemap entry names the same tile at the same row. Ablation says the VRAM read
+# is the whole cost of this loop, so skipping repeats skips the expensive part.
+SNES_PPU_TILE_MEMO ?= 0
+ifeq ($(SNES_PPU_TILE_MEMO),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_PPU_TILE_MEMO=1
+endif
+
 SNES_READ_PROFILE ?= 0
 ifeq ($(SNES_READ_PROFILE),1)
   SNES_LINE_DEFS_EXTRA += -DRIG_CALL_PROFILE
