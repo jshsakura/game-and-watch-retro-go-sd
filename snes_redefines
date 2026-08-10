@@ -193,3 +193,5 @@ g_render_lines gsnes__g_render_lines
 g_sub_lines gsnes__g_sub_lines
 g_sub_also_main gsnes__g_sub_also_main
 g_sub_only gsnes__g_sub_only
+g_lc_hit gsnes__g_lc_hit
+g_lc_miss gsnes__g_lc_miss

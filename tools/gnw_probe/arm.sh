@@ -31,6 +31,9 @@ BASE_FLAGS=(
   DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1
   ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 SNES_LINE_CACHE=1
   "GNW_AUTOBOOT=${GNW_AUTOBOOT:-0}"
+  # A benchmark has nobody at the console, and the idle timeout powers the
+  # device off mid-session. Measurement arms always keep it awake.
+  GNW_NO_IDLE_OFF=1
 )
 
 in_container() {

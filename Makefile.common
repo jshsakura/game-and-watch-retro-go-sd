@@ -1620,6 +1620,22 @@ ifeq ($(SNES_ABLATE_BG),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_BG=1
 endif
 
+# GNW_NO_IDLE_OFF=1 keeps the console from powering itself off on the launcher's
+# idle timeout. Measurement builds only -- a device benchmark has nobody pressing
+# buttons, and five windows were lost to this in one session.
+GNW_NO_IDLE_OFF ?= 0
+ifeq ($(GNW_NO_IDLE_OFF),1)
+  C_DEFS += -DGNW_NO_IDLE_OFF=1
+endif
+
+# SNES_PPU_PREFETCH=1 issues a PLD for the next tile's bitplanes inside the 4bpp
+# middle loop. Ablation says this loop's cost is the VRAM reads, not the pixel
+# arithmetic, so the lever is hiding latency rather than removing instructions.
+SNES_PPU_PREFETCH ?= 0
+ifeq ($(SNES_PPU_PREFETCH),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_PPU_PREFETCH=1
+endif
+
 SNES_READ_PROFILE ?= 0
 ifeq ($(SNES_READ_PROFILE),1)
   SNES_LINE_DEFS_EXTRA += -DRIG_CALL_PROFILE

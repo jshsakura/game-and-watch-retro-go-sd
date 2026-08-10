@@ -648,8 +648,18 @@ void odroid_system_sleep_ex(system_sleep_flags_t flags, sleep_pre_wakeup_callbac
 
 bool odroid_idle_timeout_expired(uint32_t idle_seconds)
 {
+#if defined(GNW_NO_IDLE_OFF) && GNW_NO_IDLE_OFF
+    /* Measurement builds only. The console powers itself off on the launcher's
+     * idle timeout, and a device benchmark has nobody pressing buttons: five
+     * measurement windows were lost to it in one session, each costing a build
+     * cycle to get back. Never ship this -- it is the setting working correctly
+     * that it defeats. */
+    (void)idle_seconds;
+    return false;
+#else
     uint16_t timeout = odroid_settings_MainMenuTimeoutS_get();
     return timeout != 0 && idle_seconds > timeout;
+#endif
 }
 
 void odroid_system_sleep(void)
