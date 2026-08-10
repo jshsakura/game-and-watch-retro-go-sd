@@ -23,13 +23,15 @@ HOST=${PROBE_HOST:-rpi-genie5}
 ARMS=${ARMS:-/tmp/gnw_arms}
 INTFLASH_ADDR=0x08100000
 
-# The canonical release flag set (.github/workflows/package.yml), plus the two
-# measurement-only knobs: the PPU line cache the device already voted for, and
-# an autoboot so a benchmark needs nobody at the console.
+# The canonical release flag set (.github/workflows/package.yml), plus the
+# measurement-only knobs: an autoboot so a benchmark needs nobody at the console,
+# and the idle timeout compiled out so the console does not power itself off
+# mid-session. The PPU line cache used to be forced on here; it is off now, by
+# measurement in the scene the game is played in.
 BASE_FLAGS=(
   CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1
   DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1
-  ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 SNES_LINE_CACHE=1
+  ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1
   "GNW_AUTOBOOT=${GNW_AUTOBOOT:-0}"
   # A benchmark has nobody at the console, and the idle timeout powers the
   # device off mid-session. Measurement arms always keep it awake.

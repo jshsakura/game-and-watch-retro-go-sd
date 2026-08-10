@@ -1450,6 +1450,22 @@ endif
 SNES_SPC_IDLE_SKIP ?= 1
 SNES_SPC_IDLE_DEF := -DSNES_SPC_IDLE_SKIP=$(SNES_SPC_IDLE_SKIP)
 
+# SNES_LINE_CACHE: OFF, by device measurement in the scene the game is played in.
+#
+# The tracking is charged on EVERY VRAM access in the tile loops -- a global
+# load, a branch, two shifts and a read-modify-write on a bitmap, about 200 times
+# a line -- whether or not any line is ever reused. Measured in Zelda 3's rain,
+# 900 deterministic frames from a savestate, three runs each:
+#
+#     line cache ON    52.21 fps        hits 1,713   misses 27,407  (5.9%)
+#     line cache OFF   55.45 fps        +3.24, +6.2%
+#
+# 94% of lines miss, and the cost is paid on all of them. The earlier verdict
+# that ON was better -- 57.22 against 56.56 in commit 64bf5216 -- was taken on
+# the title/attract screen, which is a still image: the one place lines repeat
+# and the cache does its best work. Nobody plays the attract screen. The
+# asymmetry is not close (+0.66 there against -3.24 here), so it ships off.
+#
 # SNES_LINE_CACHE=1 lets the PPU reuse the previous frame's rendered line when
 # every register, VRAM, CGRAM and OAM page that line depends on is unchanged.
 # The host harness reports identical framebuffer/WRAM/SRAM and audio hashes with
@@ -1641,7 +1657,7 @@ ifeq ($(SNES_READ_PROFILE),1)
   SNES_LINE_DEFS_EXTRA += -DRIG_CALL_PROFILE
 endif
 
-SNES_LINE_CACHE ?= 0
+SNES_LINE_CACHE ?= 0   # see the block above: measured, and it stays off
 SNES_LINE_REUSE_PROBE ?= 0
 SNES_LINE_DEFS :=
 ifeq ($(SNES_LINE_CACHE),1)

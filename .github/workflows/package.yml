@@ -33,7 +33,7 @@ jobs:
       - name: Build test
         run: |
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
-            bash -l -c "printf 'tries = 5\nwaitretry = 15\nretry_on_http_error = 429,500,502,503\n' > /tmp/wgetrc && export WGETRC=/tmp/wgetrc && make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 SNES_LINE_CACHE=1 release"
+            bash -l -c "printf 'tries = 5\nwaitretry = 15\nretry_on_http_error = 429,500,502,503\n' > /tmp/wgetrc && export WGETRC=/tmp/wgetrc && make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
   host-tests:
     # Host unit tests (tests/run.sh): clock alarm/cfg/editor state machines,
@@ -109,6 +109,13 @@ jobs:
 
       # 2. Generate the update files using Docker
       #
+      # SNES_LINE_CACHE is OFF now: the device answered again, in the scene the
+      # game is actually played in. Zelda 3 rain, 900 deterministic frames from a
+      # savestate: ON 52.21 fps, OFF 55.45 (+3.24, +6.2%), with the cache hitting
+      # on 1,713 lines and missing on 27,407 -- 5.9%. The tracking is charged on
+      # every VRAM access regardless. The old verdict below was measured on the
+      # attract screen, a still image, which is where a line cache looks best.
+      # Kept for the record:
       # SNES_LINE_CACHE=1 stays on: the device answered. A Link to the Past used
       # to dip to 40 fps in the heavy scenes and now holds 51, SMW reads 49.5,
       # and CPU busy fell from 99.5% to 89-92% -- the heavy frames stopped
@@ -119,7 +126,7 @@ jobs:
       - name: Generate firmware_update.bin and gw_update.tar
         run: |
           docker run --rm --user $(id -u):$(id -g) -v ${{ github.workspace }}:/opt/workdir sylverb/retro-go-sd-builder:v1.5 \
-            bash -l -c "printf 'tries = 5\nwaitretry = 15\nretry_on_http_error = 429,500,502,503\n' > /tmp/wgetrc && export WGETRC=/tmp/wgetrc && make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 SNES_LINE_CACHE=1 release"
+            bash -l -c "printf 'tries = 5\nwaitretry = 15\nretry_on_http_error = 429,500,502,503\n' > /tmp/wgetrc && export WGETRC=/tmp/wgetrc && make -j\$$(nproc) CHECK_DIRTY_SUBMODULE=0 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1 release"
 
       # 3. Compose release notes: what CHANGED in this build (commits since the
       #    previous tag). The full feature overview lives in the README, linked —
