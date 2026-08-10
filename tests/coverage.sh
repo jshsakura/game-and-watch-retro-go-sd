@@ -124,10 +124,18 @@ if [ -f Core/Src/porting/video/avi.c ]; then
         -- -Itests/video_stubs -ICore/Inc/porting/video -ICore/Inc/porting/music \
            tests/test_video_audio.c Core/Src/porting/music/music_minimp3.c
 
+    # video_resume.c and the two RESUME_* defines are NOT optional here, and
+    # leaving them out is how this unit silently stopped being measured: the link
+    # failed on video_resume_get/video_resume_put, build_and_run reported SKIP,
+    # and video_play.c showed up under "MEASURED in scope but NO coverage data".
+    # A coverage script that claims to mirror tests/run.sh has to actually mirror
+    # it -- compare against run.sh's block before editing either.
     build_and_run video_play test_video_play \
         -- -Itests/video_stubs -ICore/Inc/porting/video -ICore/Src/porting/lib -ICore/Inc/porting/music \
+           -DRESUME_HOST_STDIO -DRESUME_PATH='"/tmp/mtest/video_resume_play_cov.txt"' \
            tests/test_video_play.c Core/Src/porting/video/avi.c \
            Core/Src/porting/video/video_decode.c Core/Src/porting/video/video_audio.c \
+           Core/Src/porting/video/video_resume.c \
            Core/Src/porting/music/music_minimp3.c
 
     # video_audio/video_play's servo tests need the same real MP3 fixture
