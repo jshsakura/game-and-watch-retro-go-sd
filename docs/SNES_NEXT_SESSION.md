@@ -60,6 +60,19 @@ a closed-form pitch fold) are bit-identical and measure **zero**: 56.75 and
 So there is no single lever left anywhere. Everything measured is 0.3–0.6 fps or
 zero.
 
+And the one avenue that was still open on paper — static recompilation — is
+closed too, by work already in the tree. `docs/RC_DISPATCH_ANALYSIS.md` and
+`docs/RC_PRIOR_ART.md` evaluate and reject it for this device twice over: it is
+**per-ROM** (8,371 site functions for SMW alone, so it does nothing for a
+generic core), the dispatch lookup costs 11–12 comparisons with heavy branch
+misprediction on Cortex-M7, and the sites themselves are high-frequency indirect
+branches into QSPI flash — bus waits and I-cache thrashing, which is the same
+wall that killed DOOM's XIP.
+
+**So the speed work on this core is finished**, short of hand-scheduling the
+tile loop in Thumb-2 for a fraction of the 3.15 fps. What is left to decide is
+an audio trade, below.
+
 ## The audible defect, and the decision it needs
 
 The rain crackles, and it is not a speed problem. At 57 fps the core makes
