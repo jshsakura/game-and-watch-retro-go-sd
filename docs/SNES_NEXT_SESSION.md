@@ -368,3 +368,19 @@ The second says the rest: even with no call, merely *having* the extra branch in
 that loop costs 0.8 fps in register pressure and code size. **In this loop, code
 that never executes is not free.** Check `objdump -d build/snes/ppu.o` for `bl`
 inside the drawer before trusting any edit to it.
+
+### The same trick in the 2bpp drawer: closed, with the number
+
+**56.90 against 56.95 fps**, three runs each — fully inside the spread. Not
+shipped.
+
+The rig had already explained why, and the explanation is worth more than the
+result: with `SNES_RENDER_CENSUS=1` every 2bpp counter reads **zero**. Not "0%
+opaque" — zero tiles decoded. BG3 is not enabled in the window the rig runs, so
+there was no stimulus to price, and the device scene barely drives it either.
+
+In a loop where an unexecuted branch was just measured at −0.8 fps, a path that
+measures nothing is a liability, not a neutral. It was removed rather than left
+behind a default-off knob. `g_t2_full` / `g_t2_mixed` stay under the census flag
+for whoever finds a scene that does drive BG3 — mode 0 games, or a HUD-heavy
+one. Price it there first; do not re-derive this.

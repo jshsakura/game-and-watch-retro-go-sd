@@ -682,6 +682,10 @@ int main(void) {
     {
       extern uint32_t g_tile_full[2], g_tile_mixed[2], g_tile_flat[2], g_tile_opq_z[2];
       extern uint64_t g_tile_opaque_px[2];
+      extern uint32_t g_t2_full[2], g_t2_mixed[2];
+      printf("[snes-qemu] 2bpp tiles: full(main/sub)=%lu/%lu mixed=%lu/%lu\n",
+             (unsigned long)g_t2_full[0], (unsigned long)g_t2_full[1],
+             (unsigned long)g_t2_mixed[0], (unsigned long)g_t2_mixed[1]);
       printf("[snes-qemu] opaque path taken: flat(main/sub)=%lu/%lu  ztest=%lu/%lu\n",
              (unsigned long)g_tile_flat[0], (unsigned long)g_tile_flat[1],
              (unsigned long)g_tile_opq_z[0], (unsigned long)g_tile_opq_z[1]);

@@ -1765,6 +1765,8 @@ endif
 # UNPREDICTABLE branches per tile and a rig does not charge a mispredict. Device
 # A/B was the only valid reading.
 SNES_PPU_OPAQUE_TILE ?= 1
+# The same path in the 2bpp drawer measured 56.90 against 56.95 -- nothing --
+# and was removed rather than shipped off. See the note in ppu.c.
 ifeq ($(SNES_PPU_OPAQUE_TILE),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_PPU_OPAQUE_TILE=1
 endif
