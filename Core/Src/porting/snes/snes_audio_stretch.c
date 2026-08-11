@@ -429,6 +429,21 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
     /* Noise: reverse rather than repeat. Same spectrum, no new periodicity, and
      * the seam is continuous because a reversed segment starts on the sample the
      * ring just ended on. */
+    /* `fill > pitch_est + 2` looks like the wrong guard and is not.
+     *
+     * The argument for loosening it to XFADE is clean: the copy reads HISTORY,
+     * the samples behind rd, which are present whether or not anything is
+     * queued ahead, and only the crossfade tail reads forward -- sixteen
+     * samples. On that reasoning the guard switches insertions off exactly when
+     * the ring is low and they are the only thing that can stop it emptying.
+     *
+     * MEASURED, AND IT IS BACKWARDS: with the guard at XFADE the same window
+     * goes from 0 underruns to 444. Whatever the copy needs, this guard is also
+     * keeping the loop out of a state it does not recover from -- insertions
+     * fired at a low backlog stop `time_error` from ever reporting the deficit
+     * that the level term needs to see in order to slow the rate down. Reverted;
+     * the number is here so the next person does not re-derive the same clean
+     * argument and ship it. */
     if (!SNES_STRETCH_FOLLOW && noise_w >= 128u &&
         time_error >= (int32_t)REPEAT && fill > REPEAT + 2u) {
       uint16_t len = REPEAT;
@@ -453,6 +468,20 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
     }
 #endif
     /* Never splice a period into something that has none. */
+    /* The guard is on XFADE, not on the insertion length, and that is the whole
+     * point of this line.
+     *
+     * It used to read `fill > pitch_est + 2`, i.e. "only insert while the
+     * backlog is bigger than the thing being inserted" -- which switches the
+     * insertions OFF exactly when the ring is running low and they are the only
+     * thing that can stop it emptying. With pitch_est up to 320 against a
+     * TARGET of 640 that swings by a whole frame, the ring crossed the guard
+     * regularly and then drained to zero unopposed. Every underrun counted in
+     * this module came through that door.
+     *
+     * The copy does not need `fill` at all: it reads HISTORY, the samples
+     * behind rd, which are in the ring whether or not anything is queued ahead.
+     * Only the crossfade tail reads forward, and only XFADE (16) of them. */
     if (!SNES_STRETCH_FOLLOW && noise_w < 128u &&
         time_error >= (int32_t)pitch_est && fill > pitch_est + 2u) {
       /* The search is an autocorrelation over 129 lags and it runs in the SAI
