@@ -1,6 +1,7 @@
 # SNES — where this stands, and what to aim at next
 
-Rewritten 2026-08-11. Everything here is measured on hardware unless it says
+Rewritten 2026-08-11, then updated the same day after the layer loop was taken
+apart. Everything here is measured on hardware unless it says
 otherwise: Zelda 3 rain, resumed from a savestate so every arm starts in the same
 scene, 900 deterministic frames, three to six runs per arm.
 
@@ -9,45 +10,55 @@ scene, 900 deterministic frames, three to six runs per arm.
 | | |
 |---|---|
 | Real-gameplay baseline | **55.47 fps** (from 50.39 at the start of the session, **+10.1%**) |
-| Shipped release | `testbed-full-20260810-0136` — built at 52.36, **predates the line-cache reversal**, so a new release is worth cutting |
+| Shipped release | **`testbed-full-20260811-1355`** — the first release carrying the line-cache reversal (CI green) |
 | Branch | `testbed`, submodule `external/sm` on `perf/spc-idle-skip`, both pushed |
 | Device | idle power-off is compiled out of every arm now (`GNW_NO_IDLE_OFF=1` in `arm.sh`) |
 
 ## The next target
 
-**The layer-draw loop skeleton — not its memory, not its arithmetic.**
-
-Two ablations bracket it and a third set of experiments identifies what is left:
+**A hand-scheduled Thumb-2 inner loop, or nothing.** The layer draw was taken
+apart this session and it is a **pointer chase**, not memory and not arithmetic:
 
 ```
-delete decode + z-compare + store          55.46 -> 55.46   nothing
-delete the whole layer draw                55.46 -> 59.80   +4.33
+baseline                                     55.57   (55.38 on the end-of-session recheck)
+return before the span loop                  59.73   +4.16
+bitplane load replaced by ALU arithmetic     58.61   +3.04
+loads kept, address not from the tilemap     57.66   +2.09
+delete decode + z-compare + store            55.46   nothing
+delete the tilemap walk (tp never advances)  55.46   nothing
+software pipeline, depth 1                   55.53   nothing
+software pipeline, depth 2                   55.33   nothing
 ```
 
-The difference is 4.33 fps, and it is **not** the VRAM reads. Four independent
-attacks on read cost all measured zero:
+Read it in three steps.
 
-| | fps |
-|---|---|
-| tile memo, 80% hit rate on consecutive tilemap entries | 55.60 |
-| PLD prefetch of the next tile's bitplanes | −0.37 |
-| framebuffer's 155 KB removed from the D-cache | 55.58 |
-| **all 64 KB of VRAM moved to zero-wait DTCM** | **55.43** |
+1. **The per-call setup is free.** Keeping only the enabled/windowed tests,
+   `PpuWindows_Calc`/`_Clear`, the tilemap base and the two row addresses — and
+   returning before the span loop — gives back 4.16 fps, which is everything
+   deleting the entire draw gives back. The caller is not the target.
+2. **Inside the loop, only the fetch matters.** The pixel work prices at zero and
+   the walk prices at zero; the bitplane fetch prices at 3.04 of the 4.16.
+3. **And the fetch is a chain, not a load.** Keep both loads, at the same rate,
+   scattered over the same 64 KB, but stop deriving their address from the
+   tilemap word, and 2.09 of the 3.04 comes back. The cost is `load a tilemap
+   word → its low bits pick an address → load that address → branch on it`.
 
-The last one is decisive: it removes every cache miss the renderer can suffer
-(verified by reading `ppu->vram` over SWD as `0x20006a70`, so it allocated rather
-than falling back) and returns nothing.
+That is also the retrospective explanation for last session's four zeroes. A
+chase of L1 hits is not a cache problem, so the tile memo (80% of fetches gone),
+the PLD, the framebuffer eviction fix and all 64 KB of VRAM in zero-wait DTCM
+were each attacking a stall that was never there.
 
-So what is left between the two ablations is the loop itself:
+**And C cannot fix it.** Software pipelining is the textbook answer — put a whole
+iteration of other work between each load and its use — and both depths were
+built, verified bit-identical in the rig, and measured at nothing. Depth 2 costs
+5,186 more instructions a frame in the rig: gcc paid for the extra live values in
+spills and re-serialised what the source had spread out. Both are behind
+`SNES_PPU_PIPELINE` and both are off.
 
-- `NEXT_TP()` — tilemap pointer advance with its wrap branch, 68 times a line
-- the window-span loop and its clipping arithmetic, per layer per line
-- the per-layer call into `PpuDrawBackground_4bpp` / `_2bpp`
-
-**That is control flow, and control flow is what has actually paid on this part.**
-All four levers that won today were control flow: deleting a call frame, folding
-a per-access charge into one per opcode, deleting a per-pixel range test, and
-compiling out a dead per-opcode branch.
+So the remaining 4.16 fps in the renderer is reachable only by scheduling the
+loop by hand in Thumb-2, where the load issue order is not the compiler's to
+undo. That is the honest price of that project: **4.16 fps**, not the 7.18 the
+first ablation suggested, and not zero.
 
 ## The rule, in its final form
 
@@ -72,7 +83,10 @@ large (a BRR decode, a Gaussian interpolation) rather than a few instructions.
 | sprite two-pass reverse draw | neutral | 8 loads removed vs 4 stores added per sliver; scene-independent ratio |
 | frameskip sprite-draw skip | 52.29 vs 52.36 | 5.46 slivers/line against a limit of 34 |
 | `PpuWindows_Calc` duplicate | never built | 0 of 42,191 sub passes duplicate a main layer |
-| tile memo / prefetch / framebuffer / VRAM-in-DTCM | see above | the memory theory, closed |
+| tile memo / prefetch / framebuffer / VRAM-in-DTCM | see above | the memory theory, closed — and now explained: a chase of L1 hits |
+| per-call setup (windows, tilemap base, row addresses) | 59.73 | free; keeping only it is as fast as deleting the whole draw |
+| the tilemap walk (`NEXT_TP`) | 55.46 | free |
+| software pipeline, depth 1 and depth 2 | 55.53 / 55.33 | the right idea, undone by the compiler |
 | `SNES_ROMCACHE=1` | 55.10 vs 55.47 | verdict stands, re-measured in real gameplay |
 | `SNES_SPIN_SKIP=1` | 50.79 vs 55.47 | −4.68, twice what the attract screen showed |
 
@@ -125,6 +139,10 @@ It is a still image that runs fewer opcodes. Measure from a savestate.
   means it did not run the code, not that the change is free.
 - **Device decides speed**: `tools/gnw_probe/arm.sh build|flash|bench <name> …`.
   It pushes `cores/snes.bin` too — the core lives on the SD card.
+- **Ablations compose, and the knobs are wired to compose**: `SNES_ABLATE_BG`
+  (1 whole draw, 2 pixel work, 3 ClearBackdrop, 4 return after setup),
+  `SNES_ABLATE_WALK`, `SNES_ABLATE_FETCH`, `SNES_ABLATE_ADDR`. All produce wrong
+  output on purpose; the frame counter is the only valid reading.
 - **Price a big lever by ablation before designing for it.** PC sampling scored
   `PpuDrawBackground_4bpp` at 6.1%; ablation said 13.7%. A sampler credits a stall
   to whichever instruction is retiring, so memory-bound work reads light.

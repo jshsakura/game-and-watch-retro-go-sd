@@ -1632,13 +1632,63 @@ ifeq ($(SNES_RENDER_CENSUS),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_RENDER_CENSUS=1
 endif
 
-# SNES_ABLATE_BG=1 deletes the background layer draw entirely. WRONG OUTPUT --
-# it exists only to price the ceiling of a tile-decode rewrite before anyone
-# spends days on one. Diagnostic, never shippable.
-# Measured: 59.54 fps against 52.36 -- +13.7%, the largest number on the board.
+# SNES_ABLATE_BG deletes part of the background layer draw. WRONG OUTPUT -- it
+# exists only to price a candidate before anyone spends days on one. Diagnostic,
+# never shippable. The whole point is that the pieces bracket each other:
+#
+#   1  delete the layer draw entirely      59.80  (+4.33 over a 55.46 baseline)
+#   2  delete decode + z-compare + store   55.46  (nothing)
+#   3  keep only the window calc + setup, return before the span loop
+#   4  keep everything, delete the tilemap WALK (NEXT_TP never advances `tp`)
+#
+# 1 and 2 were measured last session and say the cost is the walk and the fetch,
+# not the pixel work. Four separate attacks on the fetch then measured zero
+# (tile memo, PLD, framebuffer out of the D-cache, all of VRAM in zero-wait
+# DTCM), so 3 and 4 split what is left: per-call setup versus the walk itself.
 SNES_ABLATE_BG ?= 0
-ifeq ($(SNES_ABLATE_BG),1)
-  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_BG=1
+ifneq ($(SNES_ABLATE_BG),0)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_BG=$(SNES_ABLATE_BG)
+endif
+
+# The pieces of the span loop, as knobs that COMPOSE -- because the numbers only
+# make sense together. Measured this session, Zelda 3 rain, 900 frames:
+#
+#   baseline                                  55.57
+#   SNES_ABLATE_BG=4  (return before the loop) 59.73   +4.16
+#   SNES_ABLATE_BG=2  (no pixel work)          55.46   nothing
+#   SNES_ABLATE_WALK=1 (tp never advances)     55.46   nothing
+#
+# Deleting the loop is worth 4.16 fps and deleting any one part of it is worth
+# nothing, which is the signature of a chain the CPU is already overlapping.
+# SNES_ABLATE_FETCH replaces the second load of the tile pointer-chase with ALU
+# arithmetic on the same inputs, to test whether the chain is what the loop
+# costs. WRONG OUTPUT, all of them. Diagnostic, never shippable.
+SNES_ABLATE_WALK ?= 0
+ifeq ($(SNES_ABLATE_WALK),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_WALK=1
+endif
+SNES_ABLATE_FETCH ?= 0
+ifeq ($(SNES_ABLATE_FETCH),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_FETCH=1
+endif
+SNES_ABLATE_ADDR ?= 0
+ifeq ($(SNES_ABLATE_ADDR),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_ADDR=1
+endif
+
+# SNES_PPU_PIPELINE=1 software-pipelines the 4bpp tile loop: the next tile's
+# tilemap read, address arithmetic and bitplane read are all issued before the
+# current tile's pixel work, so the chase overlaps the decode instead of
+# queueing behind it. Same output -- it reorders, it does not skip.
+#
+# This is the one candidate the ablations point at. SNES_ABLATE_FETCH says the
+# bitplane load is 73% of the loop, while DTCM, PLD and the tile memo all say the
+# memory system is not the reason -- which leaves use-latency, which only other
+# work can pay for. Deleting the pixel work is worth nothing, so that work is
+# where the stall already is.
+SNES_PPU_PIPELINE ?= 0
+ifneq ($(SNES_PPU_PIPELINE),0)
+  SNES_LINE_DEFS_EXTRA += -DSNES_PPU_PIPELINE=$(SNES_PPU_PIPELINE)
 endif
 
 # GNW_NO_IDLE_OFF=1 keeps the console from powering itself off on the launcher's
