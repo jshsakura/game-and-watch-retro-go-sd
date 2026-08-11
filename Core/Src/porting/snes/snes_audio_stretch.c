@@ -140,7 +140,13 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
  *   always PICOLA (before)         198         723   kept
  *   noise-aware band               189         573   kept
  *   SNES_STRETCH_FLOOR 3%          179         416   -3%
- *   follow the rate (default)        0         162   -5%
+ *   follow the rate                  0         162   -5%
+ *
+ * Re-measured after the band was corrected to open downward only, same window,
+ * one session, so these two are directly comparable:
+ *
+ *   noise-aware band (default)     184         684   kept
+ *   follow the rate                  0          68   -5%
  *
  * FOLLOW is not a trade of one artefact for another: it removes every splice
  * AND three quarters of the dropouts.
