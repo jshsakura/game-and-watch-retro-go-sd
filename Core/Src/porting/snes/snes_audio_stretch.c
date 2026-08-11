@@ -122,7 +122,21 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
  * This is what the module originally shipped as and was rejected for, but the
  * rejection was measured at 44 fps, where the same rule transposes a fifth. At
  * 57 it is a different proposition, and it is the only setting with no
- * artefact at all. The ear decides. */
+ * artefact at all.
+ *
+ * MEASURED over 1800 EMULATED frames -- the same deterministic window for every
+ * arm, which matters: on wall-clock windows the same build read 0 and 181
+ * underruns, wider than most of the differences being judged, and one of those
+ * readings was reported as a result before the instrument was fixed.
+ *
+ *                          splices   underruns
+ *   always PICOLA (before)     198         723
+ *   noise-aware band           189         573
+ *   follow the rate              0         162
+ *
+ * So FOLLOW is not a trade of one artefact for another: it removes every splice
+ * AND three quarters of the dropouts. The only cost is the constant
+ * transposition, and that is the one thing a counter cannot judge. */
 #ifndef SNES_STRETCH_FOLLOW
 #define SNES_STRETCH_FOLLOW 0
 #endif
