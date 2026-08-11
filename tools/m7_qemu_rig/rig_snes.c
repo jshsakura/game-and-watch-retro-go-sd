@@ -147,6 +147,33 @@ static uint8_t  g_wram[0x20000];
 static uint16_t g_fb[320 * 240];
 static int16_t  g_audio[16000 / 60];
 
+#ifdef RIG_AUDIO_DUMP
+/* Semihosted binary file write. stdout is SYS_WRITE0, which stops at the first
+ * NUL and so cannot carry PCM; this opens a real file instead. Host side reads
+ * it as raw little-endian int16 mono at 16 kHz, one frame of 266 after another. */
+static uint32_t sh(uint32_t op, void *arg) {
+  register uint32_t r0 __asm__("r0") = op;
+  register void *r1 __asm__("r1") = arg;
+  __asm__ volatile("bkpt 0xAB" : "+r"(r0) : "r"(r1) : "memory");
+  return r0;
+}
+static int g_audio_fd = -1;
+static void rig_audio_dump(const void *p, unsigned n) {
+  if (g_audio_fd < 0) {
+#ifndef RIG_AUDIO_PATH
+#define RIG_AUDIO_PATH "/tmp/rig_audio.pcm"
+#endif
+    static const char path[] = RIG_AUDIO_PATH;
+    uint32_t a[3] = { (uint32_t)(uintptr_t)path, 6 /* "wb" */, sizeof(path) - 1 };
+    g_audio_fd = (int)sh(0x01, a);      /* SYS_OPEN */
+    if (g_audio_fd <= 0) { g_audio_fd = -2; return; }
+  }
+  if (g_audio_fd < 0) return;
+  uint32_t a[3] = { (uint32_t)g_audio_fd, (uint32_t)(uintptr_t)p, n };
+  sh(0x05, a);                          /* SYS_WRITE */
+}
+#endif
+
 #ifdef RIG_DEVICE_VIDEO
 static uint16_t g_line[256];
 /* The normal 224-line image starts at row 8.  Keep eight hidden tail rows so
@@ -481,6 +508,15 @@ int main(void) {
       while (snes->apu->dsp->sampleOffset < 534) apu_cycle(snes->apu);
       dsp_getSamples(snes->apu->dsp, g_audio, 16000 / 60, 1);
     }
+#ifdef RIG_AUDIO_DUMP
+    /* The frame's emulated samples, raw, in emitted order. This rig already
+     * produces exactly what the device's snes_pcm_submit() hands the stretcher
+     * -- it just hashed them and threw them away, which is why the stretcher's
+     * output has only ever been judged by ear on hardware. Written out, the
+     * same samples can be pushed through the real snes_audio_stretch.c on a
+     * host (tools/snes_stretch_sim) and the result counted AND listened to. */
+    rig_audio_dump(g_audio, sizeof(g_audio));
+#endif
     uint32_t t2 = rig_timer_now();
     win_emu += (uint32_t)(t1 - t0);
     win_apu += (uint32_t)(t2 - ta);
@@ -643,6 +679,20 @@ int main(void) {
            (unsigned long)g_sub_lines);
     printf("[snes-qemu] coverage: sprite_slivers=%lu sprite_lines=%lu\n",
            (unsigned long)g_sprite_slivers, (unsigned long)g_sprite_lines);
+    {
+      extern uint32_t g_tile_full[2], g_tile_mixed[2], g_tile_flat[2], g_tile_opq_z[2];
+      extern uint64_t g_tile_opaque_px[2];
+      printf("[snes-qemu] opaque path taken: flat(main/sub)=%lu/%lu  ztest=%lu/%lu\n",
+             (unsigned long)g_tile_flat[0], (unsigned long)g_tile_flat[1],
+             (unsigned long)g_tile_opq_z[0], (unsigned long)g_tile_opq_z[1]);
+      for (int sc = 0; sc < 2; sc++) {
+        unsigned long f = g_tile_full[sc], m = g_tile_mixed[sc], d = f + m;
+        if (!d) continue;
+        printf("[snes-qemu] %s tiles decoded=%lu full-opaque=%lu (%lu%%) mixed=%lu"
+               "  opaque px/tile=%.2f\n", sc ? "sub " : "main",
+               d, f, 100UL * f / d, m, (double)g_tile_opaque_px[sc] / d);
+      }
+    }
     /* A hash gate proves nothing about code the run never reaches, and this run
      * reaches less than it looks like it does: at 400 frames A Link to the Past
      * decodes ZERO background tiles and renders ZERO subscreen lines, because it

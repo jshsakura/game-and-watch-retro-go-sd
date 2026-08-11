@@ -312,3 +312,59 @@ It is a still image that runs fewer opcodes. Measure from a savestate.
 - **Price a big lever by ablation before designing for it.** PC sampling scored
   `PpuDrawBackground_4bpp` at 6.1%; ablation said 13.7%. A sampler credits a stall
   to whichever instruction is retiring, so memory-bound work reads light.
+
+---
+
+## 2026-08-12 — the pixel loop gave up one more tick, and two ways not to take it
+
+**`SNES_PPU_OPAQUE_TILE`, shipped, on by default: 56.68 -> 57.10 fps** (+0.42),
+Zelda 3 from a savestate, 900 deterministic frames, three runs each. Rig hashes
+bit-identical.
+
+A tile whose eight nibbles are all non-zero is **fully opaque**, and on it the
+per-pixel `if (pixel)` is provably true eight times out of eight. Four ALU ops
+decide it: OR the decoded word down by 1, 2 and 3, keep bit 0 of every nibble,
+compare against `0x11111111`.
+
+The census that justified building it (`SNES_RENDER_CENSUS=1`, new counters):
+
+```
+main   161,172 tiles decoded   38% fully opaque   5.88 opaque px/tile
+sub    296,334 tiles decoded   86% fully opaque   7.53 opaque px/tile
+```
+
+The subscreen is 65% of all tile decode and 86% of it is fully opaque. That is
+where the win is.
+
+**The rig cannot see this one.** +288 insn/frame, which is nothing, with
+identical hashes — because what it removes is eight *unpredictable* branches per
+tile and a rig does not charge a mispredict. Every reading here is the device.
+
+### Two negative results, both from code that never executes
+
+The virgin-buffer branch of the same path (`flat`: fully opaque onto a z-buffer
+still holding only backdrop, so no test of any kind is needed) was built and
+**measured zero executions** — `flat(main/sub)=0/0`. Mode 1 draws sprites first
+and `PpuDrawSprites` marks the buffer dirty, so a background pass is never
+virgin on a line that has sprites. The path is kept because it is correct and
+free, but nothing in Zelda 3 reaches it.
+
+Two attempts to make that dead branch faster then cost real frames:
+
+| | fps | |
+|---|---|---|
+| pair the flat stores via `memcpy(d,&v,4)` | **52.38** | **-4.7** |
+| same, via an `aligned(1) may_alias` store | 56.42 | -0.8 |
+| eight plain `strh` (shipped) | **57.21** | |
+
+The first is the sharper lesson: gcc does **not** fold a 4-byte `memcpy` with an
+unknown-alignment destination into a `str`. It emits a call, and seven `bl
+memcpy` landed inside `PpuDrawBackground_4bpp`. **A call in the hottest loop
+makes every caller-saved register clobbered across it**, and the loop that pays
+for that runs tens of thousands of times a frame — while the branch containing
+the call never runs at all.
+
+The second says the rest: even with no call, merely *having* the extra branch in
+that loop costs 0.8 fps in register pressure and code size. **In this loop, code
+that never executes is not free.** Check `objdump -d build/snes/ppu.o` for `bl`
+inside the drawer before trusting any edit to it.

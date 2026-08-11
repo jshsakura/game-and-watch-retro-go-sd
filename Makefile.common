@@ -1748,6 +1748,27 @@ endif
 # the frameskip return. rangeOver/timeOver are the only observable residue and
 # $213E is their only reader in the emulator, so the skip latches off the first
 # time a game asks.
+# SNES_PPU_OPAQUE_TILE=1 (ON): a tile whose eight nibbles are all non-zero takes
+# a test-free store path. Four ALU ops per tile decide it -- OR the decoded word
+# down by 1, 2 and 3 and keep bit 0 of every nibble.
+#
+# Rig census, Zelda 3, 900 frames: 38% of main-screen tiles and **86% of
+# subscreen** ones qualify, and the subscreen is 65% of all tile decode. On those
+# the per-pixel `if (pixel)` is provably true eight times out of eight -- work
+# that is ALWAYS useless, which is the only shape that has ever won on this loop
+# (SNES_PPU_SIMD_PIXELS removed a skip that was paying, -7.5 fps; COARSE_SKIP
+# tried to predict transparency, +0.22 noise; here nothing is predicted).
+#
+# MEASURED ON HARDWARE: **56.68 -> 57.10 fps** (+0.42), Zelda 3 from a savestate,
+# 900 deterministic frames, three runs each. Rig hashes bit-identical, and the
+# rig scores it +288 insn/frame -- nothing -- because what it removes is eight
+# UNPREDICTABLE branches per tile and a rig does not charge a mispredict. Device
+# A/B was the only valid reading.
+SNES_PPU_OPAQUE_TILE ?= 1
+ifeq ($(SNES_PPU_OPAQUE_TILE),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_PPU_OPAQUE_TILE=1
+endif
+
 SNES_SKIP_SPRITE_EVAL_ON_SKIP ?= 1
 ifeq ($(SNES_SKIP_SPRITE_EVAL_ON_SKIP),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1
