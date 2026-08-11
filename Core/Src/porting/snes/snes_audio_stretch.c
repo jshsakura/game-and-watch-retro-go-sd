@@ -388,10 +388,19 @@ static void retune(uint16_t n) {
    * material with no pitch to hear it in -- covers the drift, and the reversed
    * fillers cover the jitter. */
   int32_t lo = (int32_t)STEP_MIN - (int32_t)(((STEP_MIN - STEP_MIN_REV) * w) >> 8);
-  int32_t hi = (int32_t)STEP_MAX + (int32_t)(((STEP_MAX_REV - STEP_MAX) * w) >> 8);
+  int32_t hi = (int32_t)STEP_MAX;   /* downward only; see the note above */
 #else
+  /* The band opens DOWNWARD only.
+   *
+   * The deficit is one-directional -- the core is slower than real time, never
+   * faster -- so the rate never needs to exceed 1.0 by more than the +-1% the
+   * level term uses to lean against a backlog. Opening the high side as well let
+   * the loop run the reader at up to 1.089x whenever the content was noise-like,
+   * and at 60 fps, where there is no deficit to justify it, that empties the
+   * ring: tests/run.sh's "60 fps: no underrun in steady state" went to 130. The
+   * device could not see it -- it is at 57 fps and always in deficit. */
   int32_t lo = (int32_t)STEP_MIN - (int32_t)(((STEP_MIN - STEP_MIN_NOISE) * w) >> 8);
-  int32_t hi = (int32_t)STEP_MAX + (int32_t)(((STEP_MAX_NOISE - STEP_MAX) * w) >> 8);
+  int32_t hi = (int32_t)STEP_MAX;
 #endif
   if (next < lo) next = lo;
   if (next > hi) next = hi;
@@ -527,9 +536,9 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
      * remainder uncovered: 18,559 underruns at a 1% floor. Without FOLLOW the
      * question is the original one: splice tone, do not splice noise. */
 #if SNES_STRETCH_FOLLOW
-    const bool picola_ok = !STRETCH_FLOOR_FOLLOWS_ALL;
+    const int picola_ok = !STRETCH_FLOOR_FOLLOWS_ALL;
 #else
-    const bool picola_ok = (noise_w < 128u);
+    const int picola_ok = (noise_w < 128u);
 #endif
     if (picola_ok &&
         time_error >= (int32_t)pitch_est && fill > pitch_est + 2u) {
