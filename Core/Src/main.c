@@ -515,9 +515,19 @@ int main(void)
   // before the SD card, the config and the game auto-resume — one of those is
   // probably what kept dying. Offers launcher-only boot, normal boot or power
   // off, and powers off by itself if nobody answers.
+#ifdef GNW_NO_BOOT_RESCUE
+  /* Measurement builds only, for the same reason GNW_NO_IDLE_OFF exists: a
+   * benchmark has nobody at the console. A diagnostic arm that hangs -- which is
+   * what an ablation arm is FOR -- counts as a failed boot, so after two of them
+   * every subsequent flash stops at the rescue screen, waits 60 s for a button
+   * nobody is there to press, and powers the unit off. Three measurement rounds
+   * were lost to that loop before this existed. Never in a shipping build. */
+  (void)0;
+#else
   if (boot_rescue_screen_due()) {
     boot_rescue_screen_show();
   }
+#endif
 
   /* USER CODE END 2 */
 

@@ -661,6 +661,13 @@ int main(void) {
          (unsigned long)(uint32_t)audio_hash,
          (unsigned long)(tot_emu * ipt_x1000 / 1000 / frames),
          (unsigned long)(tot_apu * ipt_x1000 / 1000 / frames));
+#if SNES_DSP_CENSUS
+  { extern uint32_t g_dsp_ticks, g_dsp_idle, g_dsp_active, g_dsp_pm, g_dsp_brr;
+    printf("[snes-qemu] DSPCEN ticks=%lu idle=%lu active=%lu pm=%lu brr=%lu\n",
+           (unsigned long)g_dsp_ticks, (unsigned long)g_dsp_idle,
+           (unsigned long)g_dsp_active, (unsigned long)g_dsp_pm,
+           (unsigned long)g_dsp_brr); }
+#endif
 #endif
 #ifdef SNES_LINE_REUSE_PROBE
   ppu_lineReuseProbeReport();

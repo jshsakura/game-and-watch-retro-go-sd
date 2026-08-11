@@ -1829,6 +1829,16 @@ ifeq ($(GNW_NO_IDLE_OFF),1)
   C_DEFS += -DGNW_NO_IDLE_OFF=1
 endif
 
+# GNW_NO_BOOT_RESCUE=1 compiles out the boot-loop rescue screen. Measurement
+# builds only. An ablation arm that hangs is a failed boot, and after two of them
+# the rescue screen stops every following flash, waits 60 s for a button nobody
+# is at the console to press, and powers the unit off -- so a bench script cannot
+# get past it without a human. Never in a shipping build.
+GNW_NO_BOOT_RESCUE ?= 0
+ifeq ($(GNW_NO_BOOT_RESCUE),1)
+  C_DEFS += -DGNW_NO_BOOT_RESCUE=1
+endif
+
 # SNES_PPU_PREFETCH=1 issues a PLD for the next tile's bitplanes inside the 4bpp
 # middle loop. Ablation says this loop's cost is the VRAM reads, not the pixel
 # arithmetic, so the lever is hiding latency rather than removing instructions.
@@ -1839,6 +1849,35 @@ endif
 
 # SNES_ABLATE_APU=1 deletes the SPC700 and DSP entirely. WRONG OUTPUT -- it
 # prices the APU chain the way SNES_ABLATE_BG prices the render. Never shippable.
+# The APU chain split into halves that a RUNNING game can be measured with.
+# SNES_ABLATE_APU=1 is unmeasurable -- without the SPC700 the handshake never
+# completes and the ROM never boots (confirmed: 22.4 fps, no ROM running).
+# SNES_ABLATE_DSP deletes only sample generation; the SPC700 still answers the
+# ports, so the game plays on in silence. SNES_ABLATE_SPC deletes only opcode
+# execution. WRONG OUTPUT, both, diagnostic only.
+# SNES_DSP_IDLE_HOIST=1 moves dsp_cycleChannel's own idle test up into its
+# caller. Same condition, same pitch advance, same result -- but 68% of all
+# voice-ticks (census: 2,031,589 of 2,990,400) no longer build a call frame and
+# compute a `needSample` they will not use. Zero idle voices use pitch
+# modulation in that census, which is what makes the hoisted test exact.
+SNES_DSP_IDLE_HOIST ?= 0
+ifeq ($(SNES_DSP_IDLE_HOIST),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_DSP_IDLE_HOIST=1
+endif
+
+SNES_ABLATE_DSP_VOICES ?= 0
+ifeq ($(SNES_ABLATE_DSP_VOICES),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_DSP_VOICES=1
+endif
+SNES_ABLATE_DSP ?= 0
+ifeq ($(SNES_ABLATE_DSP),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_DSP=1
+endif
+SNES_ABLATE_SPC ?= 0
+ifeq ($(SNES_ABLATE_SPC),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_SPC=1
+endif
+
 SNES_ABLATE_APU ?= 0
 ifeq ($(SNES_ABLATE_APU),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_APU=1

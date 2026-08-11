@@ -36,6 +36,9 @@ BASE_FLAGS=(
   # A benchmark has nobody at the console, and the idle timeout powers the
   # device off mid-session. Measurement arms always keep it awake.
   GNW_NO_IDLE_OFF=1
+  # An ablation arm that hangs is a failed boot; two of those and the rescue
+  # screen stops every later flash for a button nobody is there to press.
+  GNW_NO_BOOT_RESCUE=1
 )
 
 in_container() {
