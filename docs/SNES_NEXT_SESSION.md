@@ -1,94 +1,64 @@
-# SNES — where this stands, and the first command to run
+# SNES — where this stands, and what to aim at next
 
-Written 2026-08-10 with the device asleep. Everything below is measured unless it
-says otherwise.
+Rewritten 2026-08-11. Everything here is measured on hardware unless it says
+otherwise: Zelda 3 rain, resumed from a savestate so every arm starts in the same
+scene, 900 deterministic frames, three to six runs per arm.
 
 ## State
 
 | | |
 |---|---|
-| Shipped release | `testbed-full-20260810-0136` (CI green, `retro-go_update.bin` + `gw_update.tar`) |
-| Real-gameplay baseline | **52.36 fps** — Zelda 3 rain, savestate resume, 900-frame window, ±0.09 |
-| Branch | `testbed` @ `33013f9e`, submodule `external/sm` @ `0ab28db` (`perf/spc-idle-skip`), both pushed |
-| Write-up | issue #39 · blog post `the-frame-counter-was-lying` |
+| Real-gameplay baseline | **55.47 fps** (from 50.39 at the start of the session, **+10.1%**) |
+| Shipped release | `testbed-full-20260810-0136` — built at 52.36, **predates the line-cache reversal**, so a new release is worth cutting |
+| Branch | `testbed`, submodule `external/sm` on `perf/spc-idle-skip`, both pushed |
+| Device | idle power-off is compiled out of every arm now (`GNW_NO_IDLE_OFF=1` in `arm.sh`) |
 
-## The next target, with its ceiling already priced
+## The next target
 
-**Rewrite the background tile-decode inner loop.** Ablating the background draw
-entirely -- `SNES_ABLATE_BG=1`, wrong output on purpose -- reads **59.54 fps
-against the 52.36 baseline: +7.18, +13.7%.** That is 3.5x everything won on this
-core in a full day of A/Bs, and it is the only number on the board big enough to
-justify a hand-written-assembly project.
+**The layer-draw loop skeleton — not its memory, not its arithmetic.**
 
-A rewrite captures less than the ablation: it deletes the tilemap walk and VRAM
-fetch too, which SIMD does not touch. A third to a half is the honest
-expectation, so **+2.4 to +3.6 fps**.
-
-Two things make it tractable, both measured today:
-- The main screen already skips 46% of its tiles for free (transparent); the
-  subscreen skips none. 68 decoded tiles per line across both screens.
-- There is nothing to share between the passes -- 0 of 42,191 sub passes draw a
-  layer the main screen also draws -- so this is one loop to make faster, not a
-  duplication to collapse.
-
-**And a warning about the instrument.** PC sampling scored
-`PpuDrawBackground_4bpp` at 6.1% of the frame; ablation says 13.7%. A sampler
-credits a stall to whichever instruction is retiring, so memory-bound work reads
-lighter than it is, and this core is stall-bound. **Price a candidate by ablation
-before designing for it.** That is now the first step for any large lever, and it
-costs one build.
-
-## First command next session
-
-The device sleeps on the launcher's idle timeout, so wake it, then:
+Two ablations bracket it and a third set of experiments identifies what is left:
 
 ```
-GNW_AUTOBOOT=0 bash tools/gnw_probe/arm.sh build sprskip \
-    GNW_AUTOBOOT_STATE=1 GNW_AUTOBOOT_SLOT=0 SNES_SPRITE_SKIP_DRAW=1
-bash tools/gnw_probe/arm.sh flash sprskip
-for r in 1 2 3; do bash tools/gnw_probe/bench.sh /tmp/gnw_arms/sprskip/gw_retro_go.elf 900; done
+delete decode + z-compare + store          55.46 -> 55.46   nothing
+delete the whole layer draw                55.46 -> 59.80   +4.33
 ```
 
-Compare against **52.36**. That is the one thing left already built and waiting:
-`ppu_evaluateSprites` decodes and writes sprite pixels into `objBuffer` *before*
-`ppu_runLine`'s frameskip return, so three frames in four write a buffer nobody
-reads. Rig says hashes identical and +626 insn/frame (the test being paid with
-nothing to skip, because the rig draws every frame). The device has not spoken.
+The difference is 4.33 fps, and it is **not** the VRAM reads. Four independent
+attacks on read cost all measured zero:
 
-Turn `SNES_SPRITE_SKIP_DRAW` on in `Makefile.common` if it wins; delete the block
-if it does not.
+| | fps |
+|---|---|
+| tile memo, 80% hit rate on consecutive tilemap entries | 55.60 |
+| PLD prefetch of the next tile's bitplanes | −0.37 |
+| framebuffer's 155 KB removed from the D-cache | 55.58 |
+| **all 64 KB of VRAM moved to zero-wait DTCM** | **55.43** |
 
-## How to measure anything here
+The last one is decisive: it removes every cache miss the renderer can suffer
+(verified by reading `ppu->vram` over SWD as `0x20006a70`, so it allocated rather
+than falling back) and returns nothing.
 
-Two layers, and which one is allowed to judge what is not negotiable:
+So what is left between the two ablations is the loop itself:
 
-- **QEMU Cortex-M7 container decides correctness.** `run_snes_t2.sh` — four hashes
-  (state, audio, both framebuffer windows). Any hash change means the work is
-  wrong and stops there. It cannot see a cache miss, so it does not get a vote on
-  speed. **But when its instruction count moves the wrong way, that is a warning
-  that was overruled twice and cost 4.8% once.**
-- **Raspberry Pi 5 + ST-LINK V2 decides speed.** `tools/gnw_probe/arm.sh` builds,
-  flashes (including `cores/snes.bin` — the SNES core lives on the SD card, so
-  flashing the internal image alone benchmarks the *previous* arm), and benches a
-  900-frame deterministic window from a savestate.
+- `NEXT_TP()` — tilemap pointer advance with its wrap branch, 68 times a line
+- the window-span loop and its clipping arithmetic, per layer per line
+- the per-layer call into `PpuDrawBackground_4bpp` / `_2bpp`
 
-**Always `cmp` the two arms' `snes.bin` before believing an A/B.** `FLAGS_STAMP`
-did not record the SNES define groups until today, so toggling a knob rebuilt
-nothing and both arms were the same binary.
+**That is control flow, and control flow is what has actually paid on this part.**
+All four levers that won today were control flow: deleting a call frame, folding
+a per-access charge into one per opcode, deleting a per-pixel range test, and
+compiling out a dead per-opcode branch.
 
-## The rule
+## The rule, in its final form
 
-The core is **stall-bound, not instruction-bound**: −5.5% instructions bought
-+1.9% speed. So a per-iteration test that skips work is paid on every iteration
-that fails it, and in the scenes that are slow, most iterations fail.
+The core is stall-bound in the sense that instruction count does not convert to
+speed one-for-one (−5.5% instructions bought +1.9%). But **memory is not the
+bottleneck** — that was this session's wrong turn, and it cost four experiments.
 
-**Ask: does it remove work, or add a test to skip work?** Expect the second to
-lose. Every lever that won deleted something outright.
-
-Caveat, learned at −0.64 fps: this is not "delete every check". Two DSP idle fast
-paths skip a whole BRR decode and a Gaussian interpolation — real work — and
-deleting those lost at once. The distinction is the *size of what is skipped*
-against the cost of the test, not the shape alone.
+What has won, every time: **deleting work outright**, especially work in a loop
+that runs tens of thousands of times a frame.
+What has lost, every time: **adding a test to skip work**, unless what it skips is
+large (a BRR decode, a Gaussian interpolation) rather than a few instructions.
 
 ## Measured and closed — do not re-propose
 
@@ -96,118 +66,65 @@ against the cost of the test, not the shape alone.
 |---|---|---|
 | colour-math compositing, 2 px/iteration | 47.99 | −4.8% |
 | DSP idle-voice BRR skip | 48.85 | −3.1% |
-| sprite two-pass reverse draw | neutral | 8 loads removed vs 4 stores added per sliver; ratio is scene-independent, so a sprite-heavy scene changes nothing |
-| whole-D-cache clean before present | 52.17 | −0.19, 3× the spread |
-| pacing reference advanced by one period | 57.10 vs 57.40 | a 21 ms frame advances the tick counter by 1, same as a 14 ms frame |
-| DSP idle-skip delete + channel pointer hoist | 51.72 | −0.64 |
-| channel pointer hoist alone | 52.17 | −0.19; gcc had already folded it, rig delta was **+1 instruction** |
+| DSP idle-skip delete + channel pointer hoist | 51.72 | −0.64 (gcc had already folded the hoist) |
+| pacing reference advanced by one period | 57.10 vs 57.40 | a 21 ms frame advances the tick counter by 1, same as a 14 ms one |
+| whole-D-cache clean before present | 52.17 | −0.19 |
+| sprite two-pass reverse draw | neutral | 8 loads removed vs 4 stores added per sliver; scene-independent ratio |
+| frameskip sprite-draw skip | 52.29 vs 52.36 | 5.46 slivers/line against a limit of 34 |
+| `PpuWindows_Calc` duplicate | never built | 0 of 42,191 sub passes duplicate a main layer |
+| tile memo / prefetch / framebuffer / VRAM-in-DTCM | see above | the memory theory, closed |
+| `SNES_ROMCACHE=1` | 55.10 vs 55.47 | verdict stands, re-measured in real gameplay |
+| `SNES_SPIN_SKIP=1` | 50.79 vs 55.47 | −4.68, twice what the attract screen showed |
 
-Also closed by reading the tree, not by measurement: inline WRAM fast path (tried
-and dropped in `64bf5216`), compact bank map (`snes_cpuRead` already classifies in
-three compares plus a page cache), layer masking and empty-tile skip (already in
-`ppu.c`), DMA2D line output (already shipping).
+## Knobs re-measured where the game is actually played
 
-## Counted and closed — three more, none of them built
+The line cache shipped in the wrong position because its verdict came from the
+attract screen. All four were then re-checked:
 
-Counting cost three diagnostic builds. Implementing them would have cost days.
+| | |
+|---|---|
+| `SNES_LINE_CACHE` | **REVERSED** — 52.21 → 55.45 with it OFF. 1,713 hits against 27,407 misses (5.9%), and the tracking is charged on every VRAM access regardless |
+| `SNES_ROMCACHE` | stands |
+| `SNES_SPC_IDLE_SKIP` | stands, and this was its **first device measurement** — it rested on rig instruction counts until now |
+| `SNES_SPIN_SKIP` | stands, but understated by half |
 
-1. **`PpuWindows_Calc` computed twice per line** — 28,690 lines, 30,319 Calc calls
-   (1.06 per line), of which the **subscreen pass accounts for zero**. No layer is
-   ever windowed on the sub screen here, so there is no duplicate, and at 1.06
-   calls per line it was not a hotspot either.
-2. **Single-pass main+sub background render** — of 42,191 sub passes, **zero** draw
-   a layer the main screen also draws. hScroll/vScroll belong to the layer, so a
-   shared layer would decode identical tiles in both passes; it never happens. The
-   subscreen is separate work, not duplication.
-3. **Frameskip sprite-draw skip** — built and measured: 52.29 vs 52.36. Nothing.
-   Sprite pixels are 5.46 slivers per line against a limit of 34.
+**The attract screen understates every per-opcode tax and overstates every cache.**
+It is a still image that runs fewer opcodes. Measure from a savestate.
 
-## The render's shape, counted
+## Three gate defects fixed — all of them let a green run stand in for coverage
 
-Zelda 3 rain, 339,259 rendered lines:
+1. **`FLAGS_STAMP`** recorded `C_DEFS`/`CFLAGS` only. The SNES recipe adds eight
+   C define groups *and* `ASFLAGS`; none were in the stamp, so toggling a knob
+   rebuilt nothing and both arms of an A/B were the same binary. Fixed in two
+   passes (the second because the stamp is a `$(shell)` that ran above the
+   variables it needed). **Always `cmp` the two arms' `snes.bin`.**
+2. **The rig's 400-frame run does not execute the tile drawers.** ALttP spends its
+   first ~500 frames on a black screen: 61,376 compositing lines, **zero**
+   background tiles decoded, **zero** subscreen lines. The second ROM never
+   renders a tile at any length tried. Default is 1200 frames now and the rig
+   prints a COVERAGE WARNING when it decoded no tile or rendered no subscreen.
+3. **`coverage.sh` swallowed a link failure as a SKIP**, so `video_play.c` showed
+   as "no data" rather than 19.8%.
 
-```
-                    main      sub
-  layer passes/line  2.29     1.00      sub runs on 100% of lines
-  tiles/line        65.1     33.0
-  blank tiles        46%       0%       main skips nearly half for free
-  decoded/line      35.2     33.0       <- sub is 48% of all tile decode
-```
+## Facts worth keeping
 
-The subscreen exists only because colour math is on, draws one fully opaque layer
-that shares nothing with the main screen, and skips nothing. What is left in the
-render is not a duplication to remove but an inner loop to make cheaper: **68
-decoded tiles per line across both screens, at roughly 17 cycles per
-layer-pixel.** That is a hand-written-assembly project of the same shape as the
-Thumb-2 65816 engine, not a knob.
+- DTCM heap high-water during SNES play: **11,336 B of 90,336**. 79 KB idle.
+- Render shape: main screen 2.29 layer passes/line, 65 tiles, 46% blank; subscreen
+  1.00 pass, 33 tiles, **0% blank**, on 100% of lines, sharing no layer with main.
+- Sprite load: 5.46 slivers per line against a limit of 34, limits never reached.
+- Frame times are bimodal: 14.6 ms skipped / 32.4 ms drawn, nothing between. The
+  overload guard draws one frame in four.
+- Audio: at 55.47 fps the core makes 14,750 samples/s against 16,000 consumed.
+  Underruns fell 126/s → 71/s with the line-cache reversal. Below 60.15 fps the
+  deficit exists and no audio code can fill it.
 
-## rc (static recompilation) — why it is not the next lever
+## How to measure
 
-It looks like the big one on paper: `docs/RESUME_GNW.md` records SMW at 8.20M →
-4.63M instructions/frame, 1.77×, bit-identical. Three things kill it as a *next*
-step, and the third is decisive:
-
-- **That 1.77× was measured against the C interpreter**, before the hand-written
-  Thumb-2 65816 engine existed. The engine has since taken a large part of the
-  same ground. The gain against today's core is unmeasured and certainly smaller.
-- **It is per-ROM.** Only SMW has a blob. The baseline scene is Zelda 3, which
-  would get nothing.
-- **`RCSMW=1` does not link today: "SNES interpreter ITC overflow".** The 270 hot
-  sites are 23,504 B and the Thumb-2 engine already ends at 0x13FB8 — together
-  they overflow the 65,280 B of ITCM by 16,568 B. rc and the engine want the same
-  64 KB, and the engine is 18.9% of the frame with measured evidence that leaving
-  ITCM costs it (a single veneer was 2.7%).
-
-Also note `RCSMW ?= 0` and CI does not pass it, so **no shipped build has ever had
-rc active** — `.itcm_rc_hot` is 0 bytes in the release map. The dispatch machinery
-ships; the payload does not.
-
-Reopening rc means one of: run the sites from XIP (the DOOM-vs-SM scale risk),
-cut to ~40 sites (too few for the gain), or move the engine out of ITCM and pay
-for it (never measured). Only the third is worth an experiment, and it is two
-builds — but it is SMW-only either way.
-
-## Where the frame goes (52.36 fps build, real gameplay, 900 samples)
-
-```
-Thumb-2 engine     18.9%
-app_main_snes      13.0%   dot scheduler
-ppu_runLine        13.0%   sprite evaluation + compositing
-dsp_cycle          10.8%  ┐
-apu_run/cycle/spc  11.2%  ┘ APU 22.0%
-snes_cpuRead        8.2%
-PpuDrawBackground   7.1%
-```
-
-Three roughly equal thirds, no dominant item. The easy removals in the CPU and
-scheduler lanes are spent. What is left is structural — collapsing loops in the
-APU, or a different 65816 dispatch.
-
-## Honest ceiling
-
-60 fps in this scene needs the render at 7.4 ms instead of 17.65 (2.4×). Nothing
-identified comes close. Lighter scenes already sit at 57–59, and the audio-DMA cap
-is 60.15 regardless.
-
-## Two stale claims in older docs
-
-- `docs/SNES_PEAK_FRAME_ANALYSIS.md` closes shift-on-reuse partly on "the device
-  renderBuffer is ONE LINE (`renderPitch = 0`)" and "the LCD framebuffer is
-  outside the PPU module's scope". **Both are false for the shipping build** —
-  `SNES_DIRECT_VIDEO` points `renderBuffer` at a persistent 158,720-byte
-  full-frame buffer. Its other three reasons still stand, so the lever stays
-  closed, but not for those reasons.
-- `docs/SNES_LAST_MILE.md`'s original roadmap had four of five items already
-  shipping or already measured as losses. Its addendum records which.
-
-## Diagnostics that exist now
-
-`SNES_PACE_OFF=1` (raw rate, no audio wait) · `SNES_FRAME_HIST=1` +
-`tools/gnw_probe/frame_hist.py` (per-frame work histogram over SWD) ·
-`SNES_PPU_SPLIT=1` (stop gcc folding three render functions into `ppu_runLine`) ·
-`SNES_SPRITE_CENSUS=1` (slivers per line) · `SNES_READ_PROFILE=1` ·
-`GNW_AUTOBOOT_STATE=1 GNW_AUTOBOOT_SLOT=n` (resume a savestate, same scene every arm).
-
-`SNES_PACE_RING` is shelved and must not be enabled: an earlier form of it took
-the device down with an imprecise bus fault that was never explained. Read its
-comment in `main_snes.c` first.
+- **Container decides correctness**: `run_snes_t2.sh <rom> 1200` — four hashes.
+  It cannot see a cache hit and does not count `pld`; a delta of exactly zero
+  means it did not run the code, not that the change is free.
+- **Device decides speed**: `tools/gnw_probe/arm.sh build|flash|bench <name> …`.
+  It pushes `cores/snes.bin` too — the core lives on the SD card.
+- **Price a big lever by ablation before designing for it.** PC sampling scored
+  `PpuDrawBackground_4bpp` at 6.1%; ablation said 13.7%. A sampler credits a stall
+  to whichever instruction is retiring, so memory-bound work reads light.
