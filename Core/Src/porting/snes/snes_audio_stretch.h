@@ -97,3 +97,8 @@ void     snes_stretch_pull(int16_t *dst, uint16_t n);
 uint16_t snes_stretch_fill(void);
 uint32_t snes_stretch_step_q16(void);
 uint32_t snes_stretch_underruns(void);
+
+/* 0 = keep pitch (splice the deficit), 1 = gap-free (follow the rate).
+ * Runtime, because only a listener can choose, and switching should not need a
+ * rebuild. See the block comment in the .c for what each costs. */
+extern uint8_t g_snes_audio_gapfree;

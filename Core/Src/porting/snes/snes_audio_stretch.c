@@ -91,7 +91,6 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
  * period estimate is not confident, widen the rate band and let resampling
  * absorb the deficit; PICOLA then never fires on noise. Tonal content keeps
  * the tight +-1% band and the period repeat, unchanged. */
-#if SNES_STRETCH_FOLLOW
 /* How far down the rate may follow. 65536 is 1.0x; the deficit at 57 fps wants
  * about 0.95. Capping it above that trades transposition back for splices --
  * the floor is the dial between "flat but clean" and "in tune but spliced", and
@@ -99,10 +98,7 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
 #ifndef SNES_STRETCH_FLOOR
 #define SNES_STRETCH_FLOOR 55050   /* 0.84x -- follow the deficit all the way */
 #endif
-#define STEP_MIN_NOISE ((uint32_t)SNES_STRETCH_FLOOR)
-#else
-#define STEP_MIN_NOISE 60293u  /* 0.92x */
-#endif
+#define STEP_MIN_NOISE 60293u  /* 0.92x -- the noise band when keeping pitch */
 #define STEP_MIN_REV   63570u  /* 0.97x */
 #define STEP_MAX_REV   67502u  /* 1.03x */
 #define STEP_MAX_NOISE 71362u  /* 1.089x */
@@ -160,6 +156,20 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
 #ifndef SNES_STRETCH_FOLLOW
 #define SNES_STRETCH_FOLLOW 0
 #endif
+/* Runtime, not compile time, because the choice below is one only a listener can
+ * make and it should not need a rebuild to hear both. The compile-time flag is
+ * just this variable's initial value.
+ *
+ *   0  keep pitch      -- the deficit is covered by splicing, which is
+ *                         inaudible on tone and is the rain's crackle on noise
+ *   1  gap-free        -- the rate follows what the core produces, so nothing
+ *                         is ever spliced or repeated, at a constant
+ *                         transposition of however far below 60 fps it runs
+ *
+ * Measured, 1800 emulated frames of Zelda 3 rain, same window:
+ *   keep pitch   184 splices   684 dropouts
+ *   gap-free       0 splices    68 dropouts   -5% */
+uint8_t g_snes_audio_gapfree = SNES_STRETCH_FOLLOW;
 #ifndef SNES_STRETCH_FLOOR
 #define SNES_STRETCH_FLOOR 55050
 #endif
@@ -374,9 +384,8 @@ static void retune(uint16_t n) {
   conf_lp += ((int32_t)pitch_conf - conf_lp) >> 4;   /* reported, not used here */
   uint32_t cs = pitch_conf;
   uint32_t w;
-#if SNES_STRETCH_FOLLOW
-  w = 256;
-#elif SNES_STRETCH_NOISE_AWARE
+  if (g_snes_audio_gapfree) w = 256; else
+#if SNES_STRETCH_NOISE_AWARE
   if (cs >= CONF_TONAL) w = 0;
   else if (cs <= CONF_NOISE) w = 256;
   else w = 256u - ((cs - CONF_NOISE) * 256u) / (CONF_TONAL - CONF_NOISE);
@@ -387,7 +396,7 @@ static void retune(uint16_t n) {
   g_stretch_pulls++;
   if (w >= 128u) g_stretch_noise_pulls++;
   g_stretch_conf_lp = cs;
-#if SNES_STRETCH_NOISE_REVERSE && !SNES_STRETCH_FOLLOW
+#if SNES_STRETCH_NOISE_REVERSE
   /* Reversal and the rate share the work. Reversal alone left the band at +-1%
    * and the ring ran dry 219 times in thirty seconds; the full +-8% band alone
    * oscillated. A third of the way -- +-3% on noise, about 50 cents and only on
@@ -405,7 +414,9 @@ static void retune(uint16_t n) {
    * and at 60 fps, where there is no deficit to justify it, that empties the
    * ring: tests/run.sh's "60 fps: no underrun in steady state" went to 130. The
    * device could not see it -- it is at 57 fps and always in deficit. */
-  int32_t lo = (int32_t)STEP_MIN - (int32_t)(((STEP_MIN - STEP_MIN_NOISE) * w) >> 8);
+  const uint32_t floor_q = g_snes_audio_gapfree ? (uint32_t)SNES_STRETCH_FLOOR
+                                                : STEP_MIN_NOISE;
+  int32_t lo = (int32_t)STEP_MIN - (int32_t)(((STEP_MIN - floor_q) * w) >> 8);
   int32_t hi = (int32_t)STEP_MAX;
 #endif
   if (next < lo) next = lo;
@@ -490,7 +501,7 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
      * that the level term needs to see in order to slow the rate down. Reverted;
      * the number is here so the next person does not re-derive the same clean
      * argument and ship it. */
-    if (!SNES_STRETCH_FOLLOW && noise_w >= 128u &&
+    if (!g_snes_audio_gapfree && noise_w >= 128u &&
         time_error >= (int32_t)REPEAT && fill > REPEAT + 2u) {
       uint16_t len = REPEAT;
       for (uint16_t k = 0; k < len; k++)
@@ -541,11 +552,8 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
      * (which FOLLOW pins at 256) switched PICOLA off entirely and left the
      * remainder uncovered: 18,559 underruns at a 1% floor. Without FOLLOW the
      * question is the original one: splice tone, do not splice noise. */
-#if SNES_STRETCH_FOLLOW
-    const int picola_ok = !STRETCH_FLOOR_FOLLOWS_ALL;
-#else
-    const int picola_ok = (noise_w < 128u);
-#endif
+    const int picola_ok = g_snes_audio_gapfree ? !STRETCH_FLOOR_FOLLOWS_ALL
+                                               : (noise_w < 128u);
     if (picola_ok &&
         time_error >= (int32_t)pitch_est && fill > pitch_est + 2u) {
       /* The search is an autocorrelation over 129 lags and it runs in the SAI

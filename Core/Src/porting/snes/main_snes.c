@@ -881,6 +881,30 @@ static bool rc_smw_activate(const uint8_t *rom, uint32_t len) {
 #endif
 }
 
+/* Which artefact the deficit becomes, chosen by the person listening.
+ *
+ * Below 60 emulated fps the core produces fewer samples than the DAC consumes --
+ * 5% short at 57 -- and that has to go somewhere. Splicing keeps the pitch and
+ * is inaudible on tone, but on noise (Zelda 3's rain) it is the crackle;
+ * following the rate never splices anything but transposes everything by the
+ * same 5%. Measured over 1800 frames of that scene: 184 splices and 684
+ * dropouts against 0 and 68.
+ *
+ * There is no useful middle -- a floor that stops short leaves a remainder and
+ * the remainder is spliced exactly as before -- so this is a switch, and it is
+ * here rather than in the makefile because the answer is a preference. Not
+ * persisted: it costs nothing to set and adding a field to persistent_config_t
+ * would reset every user's settings. */
+static bool snes_submenu_audio_mode(odroid_dialog_choice_t *option,
+                                    odroid_dialog_event_t event, uint32_t repeat)
+{
+  (void)repeat;
+  if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT)
+    g_snes_audio_gapfree = !g_snes_audio_gapfree;
+  strcpy(option->value, g_snes_audio_gapfree ? "Gap-free" : "Pitch");
+  return event == ODROID_DIALOG_ENTER;
+}
+
 /* In ITCM with the engine it drives. This is the frame loop, and its inner part
  * calls cpu_runOpcode and snes_cpuRead once per opcode -- both now in ITCM at
  * 0x00000000 while this sits in the overlay at 0x24000000, past BL's +-16 MB, so
@@ -899,7 +923,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   if (odroid_settings_cpu_oc_level_get() < 1) SystemClock_Config(1);
 
   odroid_gamepad_state_t joystick;
+  static char audio_mode_value[16];
   odroid_dialog_choice_t options[] = {
+      {400, "Audio", audio_mode_value, 1, &snes_submenu_audio_mode},
       ODROID_DIALOG_CHOICE_LAST
   };
 
