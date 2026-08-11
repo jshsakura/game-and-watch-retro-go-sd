@@ -1720,6 +1720,68 @@ endif
 # +0.86 fps, +1.5%. Rig hashes bit-identical at 1200 frames and 18,998 fewer
 # instructions a frame. The first thing all session to remove work rather than
 # move it.
+# SNES_ABLATE_COMPOSITE=1 deletes the compositing pass -- colour window walk,
+# main/sub selection, colour maths, palette lookup -- and writes a flat line.
+# WRONG OUTPUT. It prices the OTHER half of a drawn frame: the layer draw is
+# 4.4 fps, which at one frame drawn in four is ~5.4 ms of the 17.65 ms a drawn
+# frame costs, and the remaining 12 ms has never been ablated.
+# SNES_ABLATE_SKIPSPR=1 returns from ppu_runLine BEFORE the sprite evaluation on
+# frameskipped lines instead of after it. The overload guard draws one frame in
+# four, so three quarters of all OAM scans are for pixels that are discarded.
+# Diagnostic: the rig renders every frame and cannot see this path, and
+# ppu_evaluateSprites sets flags a game can read at $213E.
+# SNES_COMP_CENSUS=1 counts how compositing pixels actually split between the
+# one-lookup bypass and the full blend, in the scene the device is benchmarked
+# in. Correct output; diagnostic counters only.
+# SNES_PPU_BLEND_LUT=1 replaces the compositing blend's component extraction,
+# per-channel clamp and RGB565 packing with one add on a pre-spread palette plus
+# three positioned lookups. Same output.
+#
+# Why here and not somewhere else: SNES_COMP_CENSUS counted 8,547,757 blended
+# pixels against 227,411 bypassed in the benchmark scene -- 97.4% blend, 249.4
+# of every 256 pixels on a colour-math line -- and the whole compositing pass
+# prices at 3.4 fps by ablation (SNES_ABLATE_COMPOSITE).
+# SNES_SKIP_SPRITE_EVAL_ON_SKIP=1 skips sprite evaluation entirely on a
+# frameskipped line, unless the game has ever read $213E. Three frames in four
+# are discarded by the overload guard and all three were evaluating sprites into
+# a buffer only the compositing reads -- and the compositing is already behind
+# the frameskip return. rangeOver/timeOver are the only observable residue and
+# $213E is their only reader in the emulator, so the skip latches off the first
+# time a game asks.
+SNES_SKIP_SPRITE_EVAL_ON_SKIP ?= 1
+ifeq ($(SNES_SKIP_SPRITE_EVAL_ON_SKIP),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1
+endif
+
+SNES_ABLATE_MATHFIXED ?= 0
+ifeq ($(SNES_ABLATE_MATHFIXED),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_MATHFIXED=1
+endif
+SNES_MATHFIXED_CENSUS ?= 0
+ifeq ($(SNES_MATHFIXED_CENSUS),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_MATHFIXED_CENSUS=1
+endif
+
+SNES_PPU_BLEND_LUT ?= 1
+ifeq ($(SNES_PPU_BLEND_LUT),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_PPU_BLEND_LUT=1
+endif
+
+SNES_COMP_CENSUS ?= 0
+ifeq ($(SNES_COMP_CENSUS),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_COMP_CENSUS=1
+endif
+
+SNES_ABLATE_SKIPSPR ?= 0
+ifeq ($(SNES_ABLATE_SKIPSPR),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_SKIPSPR=1
+endif
+
+SNES_ABLATE_COMPOSITE ?= 0
+ifeq ($(SNES_ABLATE_COMPOSITE),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_COMPOSITE=1
+endif
+
 SNES_PPU_VIRGIN_Z ?= 1
 ifeq ($(SNES_PPU_VIRGIN_Z),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_PPU_VIRGIN_Z=1

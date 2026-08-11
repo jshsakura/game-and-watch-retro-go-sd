@@ -105,6 +105,7 @@ void Warning(const char *s) { (void)s; }
 #endif
 
 extern bool g_ppu_skip_render;   /* ppu.c: skip compositing on dropped frames */
+uint32_t g_snes_drawn_frames;    /* frames actually rendered, for draw-rate A/B */
 
 /* ---- state ---------------------------------------------------------------- */
 static Snes *snes;
@@ -1123,6 +1124,12 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     wdog_refresh();
 
     bool drawFrame = common_emu_frame_loop();
+    /* The benchmark counts EMULATED frames, and the overload guard draws only
+     * one in four -- so a change that makes skipped frames cheaper lets the
+     * guard draw more, which raises what the player sees while LOWERING the
+     * number bench.sh prints. Anything aimed at the skipped-frame path has to be
+     * read against this counter, not against fps. */
+    if (drawFrame) g_snes_drawn_frames++;
     SNES_PROF_MARK(SNES_PROF_M_FRAMECTL);
 
     odroid_input_read_gamepad(&joystick);

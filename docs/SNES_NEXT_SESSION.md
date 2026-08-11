@@ -9,10 +9,30 @@ scene, 900 deterministic frames, three to six runs per arm.
 
 | | |
 |---|---|
-| Real-gameplay baseline | **56.41 fps** — `SNES_PPU_VIRGIN_Z` is on by default now (+0.86 over 55.55) |
+| Real-gameplay speed | **56.93 fps** emulated (from 55.51) |
+| **Real-gameplay smoothness** | **16.61 drawn fps** (from 14.34) — **+15.8%**, and this is what the player sees |
+| On by default | `SNES_PPU_VIRGIN_Z`, `SNES_PPU_BLEND_LUT`, `SNES_SKIP_SPRITE_EVAL_ON_SKIP` |
 | Shipped release | `testbed-full-20260811-1355` — carries the line-cache reversal, **predates virgin-z**, so another is worth cutting |
 | Branch | `testbed`, submodule `external/sm` on `perf/spc-idle-skip`, both pushed |
 | Device | idle power-off is compiled out of every arm now (`GNW_NO_IDLE_OFF=1` in `arm.sh`) |
+
+## Read this first: fps is not the metric
+
+The overload guard draws **one frame in four** (`Core/Src/porting/common.c:124`).
+So `bench.sh`'s number counts *emulated* frames and the player sees a quarter of
+them — measured, not inferred: 57.92 emulated against 14.85 drawn, ratio 0.256.
+
+**A change that makes skipped frames cheaper therefore LOWERS the fps number**,
+because the guard converts the slack into drawn frames. `SNES_SPRITE_SKIP_DRAW`
+was implemented, rig-verified and then shelved a session ago as "nothing, 52.29
+vs 52.36" — measured on fps, which could not see it.
+
+`g_snes_drawn_frames` (main_snes.c) and `tools/gnw_probe` reading it over SWD is
+the metric that can. Use it for anything touching the frameskip path; use
+`bench.sh` for anything on the drawn path.
+
+Average frame = `14.6 + 17.65·d` ms where d is the draw fraction. Real time
+(16.625 ms) needs d ≤ 0.11. Cheaper rendering raises **both** d and fps.
 
 ## The next target
 
