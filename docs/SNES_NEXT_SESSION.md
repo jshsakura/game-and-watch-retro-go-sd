@@ -58,7 +58,35 @@ and must not be read as fetch prices. Both change `bits`, which changes how many
 tiles are blank and how many pixels are non-zero — they move the pixel work they
 were meant to hold still.
 
+### First attempt, and what it teaches
+
+`SNES_PPU_SIMD_PIXELS=1` does the eight pixels two at a time on the M7's
+halfword SIMD — `USUB16` sets the GE flags per lane, `SEL` picks by them, and
+the transparent case folds into the same compare by substituting 0 for `z`.
+Rig hashes bit-identical. **Device: 48.06 against 55.57 — it loses 7.5 fps.**
+
+The reason is the thing it deleted. `if (pixel && z > dstz[i])` is a test that
+**skips**, and this scene skips constantly: 46% of tiles are blank outright and
+much of the rest is transparent. Two lanes unconditionally means paying for
+every transparent pixel in the frame.
+
+So the 4.4 fps is **not** eight pixels of arithmetic waiting to be vectorised. A
+large part of it is the skipping machinery itself, and anything that replaces a
+skip with unconditional work loses — this project's own rule, arriving from the
+other side.
+
 ### What to build
+
+**A coarser skip.** One test that drops four pixels at once (`(chunky & 0xffff)
+== 0`) rather than eight tests that drop one each. That keeps the skip — which
+is clearly earning its keep — and cuts the per-pixel overhead of applying it.
+Same shape as the DSP idle fast paths, which won for the same reason: what they
+skip is large.
+
+Only after a coarse skip pays is hand-written Thumb-2 worth it, and then its job
+is the *skip decision*, not the arithmetic.
+
+### Infrastructure, when it comes to that
 
 The pixel loop is `pixel = (chunky >> 4i) & 0xf; if (pixel && z > dstz[i]) dstz[i] = z + pixel;`
 eight times, on `uint16` — which is a Cortex-M7 SIMD shape. `USUB16` sets the GE
@@ -72,7 +100,8 @@ against `offsetof`, an entry in `SNES_ASM_SOURCES` (Makefile:158) and
 `snes_redefines` applied to the object — the same shape as `snes_thumb2.S` and
 `spc_thumb2.S`.
 
-**Ceiling: 4.4 fps.** Half of it would be the largest win left on this core.
+**Ceiling: 4.4 fps**, but read it as "the pixel loop costs 4.4", not "4.4 is
+sitting there". The first attempt to take it gave back −7.5.
 
 ## The rule, in its final form
 

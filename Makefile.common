@@ -1692,6 +1692,18 @@ endif
 # memory system is not the reason -- which leaves use-latency, which only other
 # work can pay for. Deleting the pixel work is worth nothing, so that work is
 # where the stall already is.
+# SNES_PPU_SIMD_PIXELS=1 does the 4bpp tile's eight z-buffer pixels two at a
+# time on the M7's halfword SIMD: USUB16 sets the GE flags per lane and SEL picks
+# by them, so the compare-and-select is branchless and the transparent case folds
+# into the same compare. Same output -- it is the same rule, evaluated in pairs.
+#
+# This is the candidate SNES_ABLATE_BG=6 points at: the pixel work is 4.4 fps and
+# 663,322 of the layer draw's 685,758 instructions a frame.
+SNES_PPU_SIMD_PIXELS ?= 0
+ifeq ($(SNES_PPU_SIMD_PIXELS),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_PPU_SIMD_PIXELS=1
+endif
+
 SNES_PPU_PIPELINE ?= 0
 ifneq ($(SNES_PPU_PIPELINE),0)
   SNES_LINE_DEFS_EXTRA += -DSNES_PPU_PIPELINE=$(SNES_PPU_PIPELINE)
