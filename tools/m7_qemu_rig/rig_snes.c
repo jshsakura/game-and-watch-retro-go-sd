@@ -661,6 +661,20 @@ int main(void) {
          (unsigned long)(uint32_t)audio_hash,
          (unsigned long)(tot_emu * ipt_x1000 / 1000 / frames),
          (unsigned long)(tot_apu * ipt_x1000 / 1000 / frames));
+#if SNES_OP_CENSUS
+  { extern uint32_t g_op_total, g_op_fallback, g_op_fbhist[256];
+    printf("[snes-qemu] OPCEN total=%lu fallback=%lu (%.2f%%)\n",
+           (unsigned long)g_op_total, (unsigned long)g_op_fallback,
+           g_op_total ? 100.0 * g_op_fallback / g_op_total : 0.0);
+    for (int pass = 0; pass < 12; pass++) {
+      int best = -1; uint32_t bv = 0;
+      for (int o = 0; o < 256; o++) if (g_op_fbhist[o] > bv) { bv = g_op_fbhist[o]; best = o; }
+      if (best < 0 || bv == 0) break;
+      printf("[snes-qemu] OPCEN  op %02x  %lu  (%.2f%% of all)\n", best,
+             (unsigned long)bv, 100.0 * bv / (g_op_total ? g_op_total : 1));
+      g_op_fbhist[best] = 0;
+    } }
+#endif
 #if SNES_DSP_CENSUS
   { extern uint32_t g_dsp_ticks, g_dsp_idle, g_dsp_active, g_dsp_pm, g_dsp_brr;
     printf("[snes-qemu] DSPCEN ticks=%lu idle=%lu active=%lu pm=%lu brr=%lu\n",

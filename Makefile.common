@@ -1860,6 +1860,15 @@ endif
 # voice-ticks (census: 2,031,589 of 2,990,400) no longer build a call frame and
 # compute a `needSample` they will not use. Zero idle voices use pitch
 # modulation in that census, which is what makes the hoisted test exact.
+# SNES_DSP_IDLE_SKIP_VOICE=1 drops idle voices out of the DSP loop entirely and
+# reconciles their pitch counter in closed form when they wake. 68% of all
+# voice-ticks are idle by census, and the hoist above only removed their call
+# frame -- this removes the visit.
+SNES_DSP_IDLE_SKIP_VOICE ?= 0
+ifeq ($(SNES_DSP_IDLE_SKIP_VOICE),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_DSP_IDLE_SKIP_VOICE=1
+endif
+
 SNES_DSP_IDLE_HOIST ?= 0
 ifeq ($(SNES_DSP_IDLE_HOIST),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_DSP_IDLE_HOIST=1

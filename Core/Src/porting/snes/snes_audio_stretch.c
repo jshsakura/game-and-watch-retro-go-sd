@@ -77,6 +77,25 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
 #define STEP_MIN   64881u   /* 0.99x */
 #define STEP_MAX   66191u   /* 1.01x */
 
+/* Noise band. PICOLA repeats one waveform period, which is seamless when the
+ * signal HAS a period and a random splice when it does not -- and Zelda 3's
+ * rain is broadband noise. The period picker below scores lags by raw
+ * correlation with no notion of confidence, so on noise it returns whichever
+ * lag happened to score highest and the "seamless" repeat is a correlated
+ * artefact: the crackle heard on the rain, still there at 57 fps because the
+ * deficit that triggers it is 5% at 57 and only closes at 60.
+ *
+ * The cure is to swap the two tools round, because each is inaudible exactly
+ * where the other hurts. A rate change transposes a melody -- unacceptable --
+ * but on noise it is imperceptible, there being no pitch to move. So when the
+ * period estimate is not confident, widen the rate band and let resampling
+ * absorb the deficit; PICOLA then never fires on noise. Tonal content keeps
+ * the tight +-1% band and the period repeat, unchanged. */
+#define STEP_MIN_NOISE 60293u  /* 0.92x */
+#define STEP_MAX_NOISE 71362u  /* 1.089x */
+/* Normalised correlation, Q8. Below this the "period" is not one. */
+#define PITCH_CONF_MIN 160u    /* 0.63 */
+
 static int16_t  ring[RING];
 static volatile uint16_t rd, wr, fill;
 static uint32_t phase;              /* fractional read position, Q16 < 1.0 */
@@ -94,6 +113,7 @@ static uint16_t stretch_pick_period(void); /* defined below; push calls it first
 static int32_t  fill_lp;            /* low-passed fill level for corr (see retune)  */
 static int32_t  time_error;         /* push/pull deficit: +ve = behind (insert)     */
 static uint16_t pitch_est = REPEAT; /* current pitch period for insertion           */
+static uint16_t pitch_conf;         /* Q8 normalised correlation of that estimate   */
 static int16_t  ins_buf[LOOP_MAX];  /* one period ready to emit without consuming   */
 static uint16_t ins_pos, ins_len;   /* insertion buffer cursor / length             */
 
@@ -218,8 +238,13 @@ static void retune(uint16_t n) {
   if (corr < -lim) corr = -lim;
 
   int32_t next = (int32_t)base + corr;
-  if (next < (int32_t)STEP_MIN) next = (int32_t)STEP_MIN;
-  if (next > (int32_t)STEP_MAX) next = (int32_t)STEP_MAX;
+  /* Noise: no pitch to transpose, so let the rate take the deficit and keep
+   * PICOLA away from it. Tonal: the tight band, as before. */
+  const bool noisy = pitch_conf < PITCH_CONF_MIN;
+  int32_t lo = (int32_t)(noisy ? STEP_MIN_NOISE : STEP_MIN);
+  int32_t hi = (int32_t)(noisy ? STEP_MAX_NOISE : STEP_MAX);
+  if (next < lo) next = lo;
+  if (next > hi) next = hi;
   step = (uint32_t)next;
 }
 
@@ -233,6 +258,15 @@ static uint16_t stretch_pick_period(void) {
   int64_t best_score = INT64_MIN;
   uint16_t best_lag = REPEAT;
 
+  /* Energy of the reference window, for the normalisation the score needs to
+   * mean anything. Without it a loud passage always "correlates" more than a
+   * quiet one and noise scores whatever its loudest lag happens to give. */
+  int64_t energy = 0;
+  for (uint16_t k = 0; k < win; k += 2u) {
+    int32_t a = ring[(uint16_t)((rd - 1u - k) & RING_MASK)];
+    energy += (int64_t)a * a;
+  }
+
   for (uint16_t lag = LOOP_MIN; lag <= LOOP_MAX; lag += 2u) {
     int64_t acc = 0;
     for (uint16_t k = 0; k < win; k += 2u) {
@@ -245,6 +279,13 @@ static uint16_t stretch_pick_period(void) {
      * when scores tie: shorter means the dropout reads as a stutter, longer
      * as an echo. */
     if (acc > best_score) { best_score = acc; best_lag = lag; }
+  }
+  /* Confidence = best correlation / energy, Q8, clamped. A periodic waveform
+   * scores near 1.0 at its period; noise scores near 0 at every lag. */
+  pitch_conf = 0;
+  if (energy > 0 && best_score > 0) {
+    int64_t q = (best_score << 8) / energy;
+    pitch_conf = (uint16_t)(q > 255 ? 255 : q);
   }
   return best_lag;
 }
@@ -265,7 +306,9 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
       continue;
     }
 
-    if (time_error >= (int32_t)pitch_est && fill > pitch_est + 2u) {
+    /* Never splice a period into something that has none. */
+    if (pitch_conf >= PITCH_CONF_MIN &&
+        time_error >= (int32_t)pitch_est && fill > pitch_est + 2u) {
       /* The search is an autocorrelation over 129 lags and it runs in the SAI
        * interrupt. A game with a large deficit inserts on nearly every pull --
        * Mario Kart is 43% short at 34 fps -- so recomputing it every time puts
