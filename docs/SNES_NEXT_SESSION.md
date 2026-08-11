@@ -9,8 +9,8 @@ scene, 900 deterministic frames, three to six runs per arm.
 
 | | |
 |---|---|
-| Real-gameplay baseline | **55.47 fps** (from 50.39 at the start of the session, **+10.1%**) |
-| Shipped release | **`testbed-full-20260811-1355`** — the first release carrying the line-cache reversal (CI green) |
+| Real-gameplay baseline | **56.41 fps** — `SNES_PPU_VIRGIN_Z` is on by default now (+0.86 over 55.55) |
+| Shipped release | `testbed-full-20260811-1355` — carries the line-cache reversal, **predates virgin-z**, so another is worth cutting |
 | Branch | `testbed`, submodule `external/sm` on `perf/spc-idle-skip`, both pushed |
 | Device | idle power-off is compiled out of every arm now (`GNW_NO_IDLE_OFF=1` in `arm.sh`) |
 
@@ -58,35 +58,47 @@ and must not be read as fetch prices. Both change `bits`, which changes how many
 tiles are blank and how many pixels are non-zero — they move the pixel work they
 were meant to hold still.
 
-### First attempt, and what it teaches
+### Two attempts that failed, and the one that worked
 
-`SNES_PPU_SIMD_PIXELS=1` does the eight pixels two at a time on the M7's
-halfword SIMD — `USUB16` sets the GE flags per lane, `SEL` picks by them, and
-the transparent case folds into the same compare by substituting 0 for `z`.
-Rig hashes bit-identical. **Device: 48.06 against 55.57 — it loses 7.5 fps.**
+**`SNES_PPU_SIMD_PIXELS=1` — all eight pixels unconditionally, two lanes at a
+time on `USUB16`/`SEL`. 48.06 against 55.57: it loses 7.5 fps.** Rig-identical
+picture, so it is not a bug. The per-pixel test is a **skip**, and this scene
+skips constantly — 46% of tiles are blank and much of the rest transparent — so
+doing two lanes unconditionally pays for every transparent pixel in the frame.
 
-The reason is the thing it deleted. `if (pixel && z > dstz[i])` is a test that
-**skips**, and this scene skips constantly: 46% of tiles are blank outright and
-much of the rest is transparent. Two lanes unconditionally means paying for
-every transparent pixel in the frame.
+**`SNES_PPU_COARSE_SKIP=1` — one test dropping four pixels instead of four
+dropping one each. 55.67 against 55.45: +0.22, inside the noise.** Which is
+itself a finding: transparent pixels here are **scattered**, not clustered in
+half-tiles, so there is rarely a run of four to drop.
 
-So the 4.4 fps is **not** eight pixels of arithmetic waiting to be vectorised. A
-large part of it is the skipping machinery itself, and anything that replaces a
-skip with unconditional work loses — this project's own rule, arriving from the
-other side.
+**`SNES_PPU_VIRGIN_Z=1` — the first layer into a z-buffer skips the z test
+entirely. 56.41 against 55.55: +0.86 fps, +1.5%. Shipped, on by default.**
+`ClearBackdrop` fills both buffers with `0x0500` every drawn line, so until
+something else writes there the compare cannot fail for any layer whose z floor
+is above it. Exactly one pass per screen is the first — 2 of the 3.29 passes a
+line — and it is the base layer, the one with the fewest transparent pixels.
+Rig hashes bit-identical, 18,998 fewer instructions a frame.
 
-### What to build
+Note the shape of the three. Removing the skip lost 7.5. Making the skip coarser
+was noise. Removing the **compare** — work that was provably redundant, not work
+that was merely often unnecessary — won. On this loop, delete what is *always*
+useless; do not try to predict what is *usually* useless.
 
-**A coarser skip.** One test that drops four pixels at once (`(chunky & 0xffff)
-== 0`) rather than eight tests that drop one each. That keeps the skip — which
-is clearly earning its keep — and cuts the per-pixel overhead of applying it.
-Same shape as the DSP idle fast paths, which won for the same reason: what they
-skip is large.
+### What is left
 
-Only after a coarse skip pays is hand-written Thumb-2 worth it, and then its job
-is the *skip decision*, not the arithmetic.
+The pixel work still prices at ~3.5 fps after virgin-z. What remains inside it is
+the per-pixel `if (pixel)` test and the store, on passes 2 and 3 also the load and
+compare. Candidates, none built:
 
-### Infrastructure, when it comes to that
+- **The same trick for the sprite merge.** It runs `if (src[0] > dst[0])` over a
+  whole span; when the buffer is virgin, that is a `memcpy` — and the code
+  already has that path (`clear_backdrop`), just not driven by this flag.
+- **A z floor per line rather than per layer.** If the maximum z already in the
+  buffer is below this layer's floor, the compare is redundant for pass 2 as
+  well. One max tracked per line per screen would extend virgin-z past the first
+  pass, at the cost of a running max.
+
+### Infrastructure, when it comes to that### Infrastructure, when it comes to that
 
 The pixel loop is `pixel = (chunky >> 4i) & 0xf; if (pixel && z > dstz[i]) dstz[i] = z + pixel;`
 eight times, on `uint16` — which is a Cortex-M7 SIMD shape. `USUB16` sets the GE

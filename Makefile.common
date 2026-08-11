@@ -1699,6 +1699,40 @@ endif
 #
 # This is the candidate SNES_ABLATE_BG=6 points at: the pixel work is 4.4 fps and
 # 663,322 of the layer draw's 685,758 instructions a frame.
+# SNES_PPU_COARSE_SKIP=1 tests four pixels at a time for "all transparent"
+# instead of testing each of the eight. Same output -- it is the same per-pixel
+# rule, reached through one AND that can retire four of them at once.
+#
+# The evidence for the shape: SNES_ABLATE_BG=6 prices the pixel work at 4.4 fps,
+# and SNES_PPU_SIMD_PIXELS=1 (all eight pixels unconditionally, branchless, two
+# lanes at a time) LOSES 7.5 -- so most of that 4.4 is the skipping, not the
+# arithmetic. Keep the skip, make it coarser.
+# SNES_PPU_VIRGIN_Z=1 (ON): the first layer written into a z-buffer skips the z test.
+# ClearBackdrop fills both bg buffers with 0x0500 every drawn line, so until
+# something else has written there, `z > dstz[i]` is true for every pixel of any
+# layer whose z floor is above 0x0500 -- the load, the compare and its branch are
+# three instructions a pixel spent proving what is already known. Exactly one
+# pass per screen is the first one (2 of 3.29 passes a line), and it is also the
+# one with the fewest transparent pixels. Same output; the 2bpp drawer already
+# had this store for mode 1's BG3 via top_mask.
+#
+# MEASURED: 56.41 against 55.55, six runs each in two interleaved rounds --
+# +0.86 fps, +1.5%. Rig hashes bit-identical at 1200 frames and 18,998 fewer
+# instructions a frame. The first thing all session to remove work rather than
+# move it.
+SNES_PPU_VIRGIN_Z ?= 1
+ifeq ($(SNES_PPU_VIRGIN_Z),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_PPU_VIRGIN_Z=1
+endif
+
+# MEASURED: 55.67 against 55.45 -- +0.22, inside the noise band, so it stays off.
+# What that says about the scene: transparent pixels are SCATTERED, not clustered
+# in half-tiles, so there is rarely a run of four to drop at once.
+SNES_PPU_COARSE_SKIP ?= 0
+ifeq ($(SNES_PPU_COARSE_SKIP),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_PPU_COARSE_SKIP=1
+endif
+
 SNES_PPU_SIMD_PIXELS ?= 0
 ifeq ($(SNES_PPU_SIMD_PIXELS),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_PPU_SIMD_PIXELS=1
