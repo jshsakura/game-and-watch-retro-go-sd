@@ -1,9 +1,12 @@
 # SNES — where this stands, and what to aim at next
 
-Rewritten 2026-08-11, then updated the same day after the layer loop was taken
-apart. Everything here is measured on hardware unless it says
-otherwise: Zelda 3 rain, resumed from a savestate so every arm starts in the same
-scene, 900 deterministic frames, three to six runs per arm.
+Rewritten 2026-08-11 and updated twice the same day: once after the layer loop
+was taken apart, once after the whole frame was priced and the audio defect
+diagnosed. Everything is measured on hardware unless it says otherwise: Zelda 3
+rain, resumed from a savestate so every arm starts in the same scene, 900
+deterministic frames for speed, 1800 for the audio counters.
+
+**One decision is open and needs a human ear** — see "The audible defect" below.
 
 ## State
 
@@ -12,27 +15,102 @@ scene, 900 deterministic frames, three to six runs per arm.
 | Real-gameplay speed | **56.93 fps** emulated (from 55.51) |
 | **Real-gameplay smoothness** | **16.61 drawn fps** (from 14.34) — **+15.8%**, and this is what the player sees |
 | On by default | `SNES_PPU_VIRGIN_Z`, `SNES_PPU_BLEND_LUT`, `SNES_SKIP_SPRITE_EVAL_ON_SKIP` |
-| Shipped release | `testbed-full-20260811-1355` — carries the line-cache reversal, **predates virgin-z**, so another is worth cutting |
+| Shipped release | `testbed-full-20260811-1944` — carries virgin-z, blend-LUT and the sprite skip; **predates all audio work** |
 | Branch | `testbed`, submodule `external/sm` on `perf/spc-idle-skip`, both pushed |
 | Device | idle power-off is compiled out of every arm now (`GNW_NO_IDLE_OFF=1` in `arm.sh`) |
 
-## Read this first: fps is not the metric
+## Read this first: two instruments, and neither is fps alone
 
-The overload guard draws **one frame in four** (`Core/Src/porting/common.c:124`).
-So `bench.sh`'s number counts *emulated* frames and the player sees a quarter of
-them — measured, not inferred: 57.92 emulated against 14.85 drawn, ratio 0.256.
+**1. The overload guard draws one frame in four.** `bench.sh` counts *emulated*
+frames, so the player sees a quarter of them — measured: 57.92 emulated against
+14.85 drawn, ratio 0.256. **A change that makes skipped frames cheaper LOWERS
+the fps number**, because the guard spends the slack on drawing more.
+`SNES_SPRITE_SKIP_DRAW` was shelved a session ago as "nothing, 52.29 vs 52.36"
+for exactly this reason. `g_snes_drawn_frames` read over SWD is the metric that
+can see it.
 
-**A change that makes skipped frames cheaper therefore LOWERS the fps number**,
-because the guard converts the slack into drawn frames. `SNES_SPRITE_SKIP_DRAW`
-was implemented, rig-verified and then shelved a session ago as "nothing, 52.29
-vs 52.36" — measured on fps, which could not see it.
-
-`g_snes_drawn_frames` (main_snes.c) and `tools/gnw_probe` reading it over SWD is
-the metric that can. Use it for anything touching the frameskip path; use
-`bench.sh` for anything on the drawn path.
+**2. Audio counters need a frame-aligned window.** They accumulate from boot,
+and a wall-clock window is not the same window twice: the same build read 0 and
+then 181 underruns on two thirty-second samples — wider than most differences
+being judged, and one of those readings was reported as a result before the
+instrument existed. `tools/gnw_probe/stretch_ab.sh` takes the delta across a
+fixed number of emulated frames; the scene is deterministic from the savestate,
+so every arm sees the same audio.
 
 Average frame = `14.6 + 17.65·d` ms where d is the draw fraction. Real time
 (16.625 ms) needs d ≤ 0.11. Cheaper rendering raises **both** d and fps.
+
+## The whole frame is now priced
+
+| block | worth | how it was measured |
+|---|---|---|
+| remaining render (all of it) | **3.15 fps** | return before it; today already took 2.1 of it |
+| DSP voices | **2.37 fps** | voices do nothing, `dsp_cycle` still emits |
+| sprite path | 0.33 fps | emission 0, objBuffer wipe 0, merge +0.33, scan visits 0.93/line |
+| 65816 interpreter | **no lever** | 9,080,349 opcodes, **0** C fallbacks |
+| APU as a whole | unmeasurable | `SNES_ABLATE_APU=1` hangs the SPC boot handshake |
+
+Inside the DSP's 2.37: echo 2.65% of all instructions, BRR decode 1.35%,
+Gaussian interpolation 0.41%, ADSR envelope 0.06% — and over half is the
+per-voice skeleton, 68% of whose ticks are idle voices. Both ways of deleting
+those (hoist the idle test out of the call; drop idle voices from the loop with
+a closed-form pitch fold) are bit-identical and measure **zero**: 56.75 and
+57.01 against 57.00. **68% is a count, not a cost.**
+
+So there is no single lever left anywhere. Everything measured is 0.3–0.6 fps or
+zero.
+
+## The audible defect, and the decision it needs
+
+The rain crackles, and it is not a speed problem. At 57 fps the core makes
+15,200 samples/s against 16,000 consumed — a 5% deficit that closes only at
+60.0 fps, which the 3.15 fps of remaining render cannot reach.
+
+The stretcher covered that deficit by repeating one waveform period, which is
+seamless when the signal *has* a period. Rain is broadband noise, and the period
+picker scored lags by raw correlation with **no confidence measure**, so it
+returned whichever lag scored highest and spliced a random segment. That splice
+is the crackle.
+
+Fixed so far, all measured on 1800 aligned frames:
+
+| | splices | underruns | pitch |
+|---|---|---|---|
+| always PICOLA (before) | 198 | 723 | kept |
+| noise-aware band (**current default**) | 189 | 573 | kept |
+| floor at 3% | 179 | 416 | −3% |
+| `SNES_STRETCH_FOLLOW=1` | **0** | **162** | −5% |
+
+Plus two fixes that help every mode: a dry ring now **fades** instead of holding
+`last` (a DC step at both ends of a gap is itself a click), and the level term
+answers a low backlog immediately instead of low-passing it in both directions.
+
+**There is no useful middle.** The 3% floor was built to find one: three
+quarters of the transposition buys ten splices out of 189. The deficit is either
+covered by the rate or it is not.
+
+**The open decision is which artefact to ship**, and it is the one thing no
+counter can judge: a constant 5% transposition, or 189 splices and 573
+dropouts per 1800 frames. `SNES_STRETCH_FOLLOW` is the switch.
+
+## Closed, with numbers, do not re-derive
+
+- **Reversed noise fillers.** Same spectrum, no new periodicity, seam continuous
+  by construction — and it works, cutting periodic splices 213 → 89. But it
+  fires more often and the ring runs dry doing it (219 underruns). Off.
+- **Loosening the insertion guard** from `fill > pitch_est + 2` to `XFADE`. The
+  argument is clean — the copy reads history, not the queue — and it takes the
+  same window from 0 to 444 underruns. The guard is also keeping the level loop
+  out of a state it cannot recover from. Off, with the reasoning written beside
+  the line.
+- **Smoothing noise-ness per passage** instead of per pull: 236 splices and 739
+  underruns. Holding the band wide hands the level term more authority and the
+  loop oscillates. The ±1% band is a stability limit, not only an audibility one.
+- **`GNW_NO_BOOT_RESCUE=1`** is now in `arm.sh` for every measurement arm: an
+  ablation arm that hangs is by definition a failed boot, and after two of them
+  the rescue screen stops every later flash for 60 s waiting on a button nobody
+  is at the console to press, then powers the unit off. Three rounds were lost
+  to that loop.
 
 ## The next target
 
