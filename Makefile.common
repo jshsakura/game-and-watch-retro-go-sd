@@ -1868,6 +1868,10 @@ endif
 # from noise and uses the tool that is inaudible on each -- rate change for
 # noise, PICOLA period repeat for tone. =0 restores the old always-PICOLA
 # behaviour for A/B. SNES_STRETCH_CONF_MIN is the Q8 confidence threshold.
+SNES_STRETCH_NOISE_REVERSE ?= 0
+ifeq ($(SNES_STRETCH_NOISE_REVERSE),1)
+  C_DEFS += -DSNES_STRETCH_NOISE_REVERSE=1
+endif
 SNES_STRETCH_FOLLOW ?= 0
 ifeq ($(SNES_STRETCH_FOLLOW),1)
   C_DEFS += -DSNES_STRETCH_FOLLOW=1

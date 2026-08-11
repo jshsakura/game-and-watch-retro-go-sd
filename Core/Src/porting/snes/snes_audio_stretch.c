@@ -96,6 +96,8 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
 #else
 #define STEP_MIN_NOISE 60293u  /* 0.92x */
 #endif
+#define STEP_MIN_REV   63570u  /* 0.97x */
+#define STEP_MAX_REV   67502u  /* 1.03x */
 #define STEP_MAX_NOISE 71362u  /* 1.089x */
 /* Confidence is a continuum, so the response is one too. A hard threshold left
  * a third of the rain's pulls on the tonal side of a cliff -- measured: 218
@@ -124,6 +126,37 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
 #ifndef SNES_STRETCH_FOLLOW
 #define SNES_STRETCH_FOLLOW 0
 #endif
+/* SNES_STRETCH_NOISE_REVERSE=1: on noise, fill the gap with the last segment
+ * PLAYED BACKWARDS instead of repeated.
+ *
+ * PICOLA's repeat introduces exactly the thing noise does not have -- a period
+ * -- and the ear hears that new correlation as the crackle. Widening the rate
+ * band avoids it but destabilises the level loop (measured: 739 underruns), and
+ * following the rate outright transposes everything by 5%.
+ *
+ * A reversed segment has the identical power spectrum, which is all that
+ * defines noise perceptually, and introduces no periodicity at all. It also
+ * joins seamlessly by construction: reversed, it BEGINS with the sample the
+ * ring just ended on, so there is no step at the splice -- the one place PICOLA
+ * needs a crossfade to hide. Pitch is untouched and the band stays at the +-1%
+ * that keeps the loop stable. */
+/* MEASURED, AND IT DOES NOT DOMINATE. Thirty seconds of rain, same window:
+ *
+ *                            splices            underruns   pitch
+ *   noise-aware band only      213 periodic          0      kept
+ *   reversal, +-1% band        414 (325 reversed)  219      kept
+ *   reversal, +-3% band        410 (307 reversed)  283      kept
+ *   follow the rate              0                  55      -5%
+ *
+ * The reasoning holds -- a reversed segment really does have the same spectrum
+ * and no new periodicity, and it cut the PERIODIC splices from 213 to 89 -- but
+ * it fires more often and the ring runs dry doing it, and a dry ring is an
+ * artefact too. Off by default, kept with its numbers, because the argument is
+ * sound and the next attempt should start from why it drains rather than from
+ * the idea. */
+#ifndef SNES_STRETCH_NOISE_REVERSE
+#define SNES_STRETCH_NOISE_REVERSE 0
+#endif
 #if SNES_STRETCH_NOISE_AWARE
 #ifndef SNES_STRETCH_CONF_MIN
 #define SNES_STRETCH_CONF_MIN 160   /* 0.63 */
@@ -148,6 +181,7 @@ static uint32_t underruns;
  * say whether the mechanism engaged at all: on rain, insertions should fall to
  * ~zero and noise_pulls should be nearly every pull. */
 uint32_t g_stretch_ins, g_stretch_pulls, g_stretch_noise_pulls, g_stretch_conf_lp;
+uint32_t g_stretch_rev;   /* of those insertions, how many were reversed */
 static int16_t  last;
 static volatile uint8_t  primed;    /* has the ring ever reached TARGET?    */
 static uint16_t picks_since = PICK_EVERY;  /* frames since the last search */
@@ -174,7 +208,7 @@ void snes_stretch_reset(void) {
   settled = 0;
   underruns = 0;
   conf_lp = 0; noise_w = 0;
-  g_stretch_ins = g_stretch_pulls = g_stretch_noise_pulls = 0; g_stretch_conf_lp = 0;
+  g_stretch_ins = g_stretch_pulls = g_stretch_noise_pulls = 0; g_stretch_conf_lp = 0; g_stretch_rev = 0;
   last = 0;
   primed = 0;
   fill_lp = (int32_t)TARGET;
@@ -316,8 +350,18 @@ static void retune(uint16_t n) {
   g_stretch_pulls++;
   if (w >= 128u) g_stretch_noise_pulls++;
   g_stretch_conf_lp = cs;
+#if SNES_STRETCH_NOISE_REVERSE && !SNES_STRETCH_FOLLOW
+  /* Reversal and the rate share the work. Reversal alone left the band at +-1%
+   * and the ring ran dry 219 times in thirty seconds; the full +-8% band alone
+   * oscillated. A third of the way -- +-3% on noise, about 50 cents and only on
+   * material with no pitch to hear it in -- covers the drift, and the reversed
+   * fillers cover the jitter. */
+  int32_t lo = (int32_t)STEP_MIN - (int32_t)(((STEP_MIN - STEP_MIN_REV) * w) >> 8);
+  int32_t hi = (int32_t)STEP_MAX + (int32_t)(((STEP_MAX_REV - STEP_MAX) * w) >> 8);
+#else
   int32_t lo = (int32_t)STEP_MIN - (int32_t)(((STEP_MIN - STEP_MIN_NOISE) * w) >> 8);
   int32_t hi = (int32_t)STEP_MAX + (int32_t)(((STEP_MAX_NOISE - STEP_MAX) * w) >> 8);
+#endif
   if (next < lo) next = lo;
   if (next > hi) next = hi;
   step = (uint32_t)next;
@@ -381,6 +425,33 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
       continue;
     }
 
+#if SNES_STRETCH_NOISE_REVERSE
+    /* Noise: reverse rather than repeat. Same spectrum, no new periodicity, and
+     * the seam is continuous because a reversed segment starts on the sample the
+     * ring just ended on. */
+    if (!SNES_STRETCH_FOLLOW && noise_w >= 128u &&
+        time_error >= (int32_t)REPEAT && fill > REPEAT + 2u) {
+      uint16_t len = REPEAT;
+      for (uint16_t k = 0; k < len; k++)
+        ins_buf[k] = ring[(uint16_t)((rd - 1u - k) & RING_MASK)];
+      /* Crossfade only the tail, into the forward samples that follow. */
+      uint16_t xf = len < XFADE ? len : XFADE;
+      for (uint16_t k = 0; k < xf; k++) {
+        int32_t back = ins_buf[len - xf + k];
+        int32_t fwd  = ring[(uint16_t)((rd + k) & RING_MASK)];
+        ins_buf[len - xf + k] =
+            (int16_t)((back * (int32_t)(xf - k) + fwd * (int32_t)(k + 1u)) /
+                      (int32_t)(xf + 1u));
+      }
+      time_error -= (int32_t)len;
+      ins_pos = 0;
+      ins_len = len;
+      g_stretch_ins++;
+      g_stretch_rev++;
+      dst[i] = ins_buf[ins_pos++];
+      continue;
+    }
+#endif
     /* Never splice a period into something that has none. */
     if (!SNES_STRETCH_FOLLOW && noise_w < 128u &&
         time_error >= (int32_t)pitch_est && fill > pitch_est + 2u) {
