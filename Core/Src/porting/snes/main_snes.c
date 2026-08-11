@@ -327,7 +327,35 @@ static void snes_blit_line(unsigned y, const uint16_t *line) {
 }
 #endif
 
+#ifndef SNES_ABLATE_FB
+#define SNES_ABLATE_FB 0
+#endif
+#if SNES_ABLATE_FB
+/* The scratch line the ablation renders every scanline into. It exists outside
+ * the SNES_DIRECT_VIDEO branch that normally owns snes_line, because this build
+ * takes neither path. */
+static uint16_t snes_ablate_line[256 + 2 * 8];
+#endif
 static void render_frame_into_active_buffer(void) {
+#if SNES_ABLATE_FB
+  /* ABLATION, WRONG OUTPUT ON PURPOSE. Point the PPU at the 512-byte scratch
+   * line with pitch 0, so every scanline lands on the same address. All the VRAM
+   * reads, the decode and the compositing still happen -- only the 158,720-byte
+   * framebuffer's footprint disappears.
+   *
+   * The question it answers: the D-cache is 16 KB and this build writes a 155 KB
+   * framebuffer through it every drawn frame. Every one of those writes
+   * allocates a line and evicts something, and the only thing measured as
+   * expensive on this part is reading a COLD line out of the 64 KB of VRAM. If
+   * the framebuffer is what keeps VRAM cold, this ablation shows it and the fix
+   * is an MPU region, not a rewrite. If it shows nothing, VRAM misses are
+   * inherent and that avenue closes.
+   *
+   * Nothing reaches the LCD in this mode; the frame counter is the only reading. */
+  g_ppu_line_cb = NULL;
+  PpuBeginDrawing(snes->ppu, (uint8_t *)snes_ablate_line, 0, 0);
+  return;
+#endif
 #ifdef SNES_DIRECT_VIDEO
   g_ppu_line_cb = NULL;
   PpuBeginDrawing(snes->ppu,

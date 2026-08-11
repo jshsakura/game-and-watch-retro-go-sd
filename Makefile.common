@@ -1672,6 +1672,23 @@ ifeq ($(SNES_PPU_TILE_MEMO),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_PPU_TILE_MEMO=1
 endif
 
+# SNES_ABLATE_FB=1 renders every scanline to the same 512-byte scratch buffer,
+# so the 155 KB framebuffer stops passing through the 16 KB D-cache. WRONG
+# OUTPUT -- it prices the framebuffer's cache pollution against VRAM. Diagnostic.
+SNES_ABLATE_FB ?= 0
+ifeq ($(SNES_ABLATE_FB),1)
+  C_DEFS += -DSNES_ABLATE_FB=1
+endif
+
+# SNES_VRAM_IN_DTCM=1 allocates the PPU's 64 KB of VRAM from the DTCM heap at
+# init instead of leaving it in RAM_EMU. DTCM is zero-wait; VRAM reads are the
+# only thing measured as expensive in the renderer. Falls back to the static if
+# the allocation fails.
+SNES_VRAM_IN_DTCM ?= 0
+ifeq ($(SNES_VRAM_IN_DTCM),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_VRAM_IN_DTCM=1
+endif
+
 SNES_READ_PROFILE ?= 0
 ifeq ($(SNES_READ_PROFILE),1)
   SNES_LINE_DEFS_EXTRA += -DRIG_CALL_PROFILE
