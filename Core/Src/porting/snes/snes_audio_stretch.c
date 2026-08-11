@@ -91,10 +91,49 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
  * period estimate is not confident, widen the rate band and let resampling
  * absorb the deficit; PICOLA then never fires on noise. Tonal content keeps
  * the tight +-1% band and the period repeat, unchanged. */
+#if SNES_STRETCH_FOLLOW
+#define STEP_MIN_NOISE 55050u  /* 0.84x -- follow the deficit all the way */
+#else
 #define STEP_MIN_NOISE 60293u  /* 0.92x */
+#endif
 #define STEP_MAX_NOISE 71362u  /* 1.089x */
+/* Confidence is a continuum, so the response is one too. A hard threshold left
+ * a third of the rain's pulls on the tonal side of a cliff -- measured: 218
+ * insertions still, against 255 with the fix off -- because broadband noise
+ * scores around 0.5 and wanders across any single line you draw. Interpolate
+ * instead: at CONF_TONAL and above the band is the old +-1% and PICOLA is
+ * armed; at CONF_NOISE and below it is the full noise band and PICOLA is off;
+ * between, both move proportionally. Nothing has an edge to fall off. */
+#define CONF_TONAL 200u   /* 0.78 -- a real period scores at least this */
+#define CONF_NOISE 100u   /* 0.39 -- below this there is no period at all */
 /* Normalised correlation, Q8. Below this the "period" is not one. */
-#define PITCH_CONF_MIN 160u    /* 0.63 */
+#ifndef SNES_STRETCH_NOISE_AWARE
+#define SNES_STRETCH_NOISE_AWARE 1
+#endif
+/* SNES_STRETCH_FOLLOW=1: no splicing at all, ever. The playback rate simply
+ * follows the rate the core produces at, so 266 samples a frame at 57 emulated
+ * fps play back as 15,200 a second instead of being stretched into 16,000. The
+ * ring never runs dry and nothing is ever repeated, at the price of a CONSTANT
+ * transposition of however far below 60 fps the core is -- 5% at 57 fps, about
+ * 85 cents, flat and unchanging.
+ *
+ * This is what the module originally shipped as and was rejected for, but the
+ * rejection was measured at 44 fps, where the same rule transposes a fifth. At
+ * 57 it is a different proposition, and it is the only setting with no
+ * artefact at all. The ear decides. */
+#ifndef SNES_STRETCH_FOLLOW
+#define SNES_STRETCH_FOLLOW 0
+#endif
+#if SNES_STRETCH_NOISE_AWARE
+#ifndef SNES_STRETCH_CONF_MIN
+#define SNES_STRETCH_CONF_MIN 160   /* 0.63 */
+#endif
+#define PITCH_CONF_MIN ((uint16_t)SNES_STRETCH_CONF_MIN)
+#else
+/* =0 restores the old behaviour: every pull is "tonal", so the band stays at
+ * +-1% and PICOLA splices whatever the unnormalised picker called a period. */
+#define PITCH_CONF_MIN 0u
+#endif
 
 static int16_t  ring[RING];
 static volatile uint16_t rd, wr, fill;
@@ -105,6 +144,10 @@ static volatile uint32_t pushed;    /* samples pushed since the last pull   */
 static uint32_t warm_in, warm_out;  /* exact running mean while warming up  */
 static uint16_t settled;            /* pulls seen                           */
 static uint32_t underruns;
+/* Verification counters for the noise fix. The ear is the final judge, but these
+ * say whether the mechanism engaged at all: on rain, insertions should fall to
+ * ~zero and noise_pulls should be nearly every pull. */
+uint32_t g_stretch_ins, g_stretch_pulls, g_stretch_noise_pulls, g_stretch_conf_lp;
 static int16_t  last;
 static volatile uint8_t  primed;    /* has the ring ever reached TARGET?    */
 static uint16_t picks_since = PICK_EVERY;  /* frames since the last search */
@@ -114,6 +157,8 @@ static int32_t  fill_lp;            /* low-passed fill level for corr (see retun
 static int32_t  time_error;         /* push/pull deficit: +ve = behind (insert)     */
 static uint16_t pitch_est = REPEAT; /* current pitch period for insertion           */
 static uint16_t pitch_conf;         /* Q8 normalised correlation of that estimate   */
+static uint16_t noise_w;            /* 0..256: how noise-like the passage is        */
+static int32_t  conf_lp;            /* smoothed pitch confidence, Q8                */
 static int16_t  ins_buf[LOOP_MAX];  /* one period ready to emit without consuming   */
 static uint16_t ins_pos, ins_len;   /* insertion buffer cursor / length             */
 
@@ -128,6 +173,8 @@ void snes_stretch_reset(void) {
   warm_in = warm_out = 0;
   settled = 0;
   underruns = 0;
+  conf_lp = 0; noise_w = 0;
+  g_stretch_ins = g_stretch_pulls = g_stretch_noise_pulls = 0; g_stretch_conf_lp = 0;
   last = 0;
   primed = 0;
   fill_lp = (int32_t)TARGET;
@@ -231,6 +278,11 @@ static void retune(uint16_t n) {
    * level at 1/8: the per-pull jitter shrinks to ±33 samples (corr ±0.08%,
    * inaudible), while real drift still converges in ~8 pulls (~130 ms). */
   fill_lp += ((int32_t)fill - fill_lp) >> 3;
+  /* Asymmetric: running dry is an artefact, running long is only latency, so
+   * react to a low backlog several times faster than to a high one. The 1/8
+   * low-pass above is there to keep the +-1% band from alternating audibly;
+   * that argument does not apply when the ring is about to be empty. */
+  if ((int32_t)fill < (int32_t)(TARGET / 2)) fill_lp = (int32_t)fill;
   int32_t err  = fill_lp - (int32_t)TARGET;
   int32_t corr = err * (int32_t)(base >> 6) / (int32_t)TARGET;
   int32_t lim  = (int32_t)(base / 16u);
@@ -240,9 +292,32 @@ static void retune(uint16_t n) {
   int32_t next = (int32_t)base + corr;
   /* Noise: no pitch to transpose, so let the rate take the deficit and keep
    * PICOLA away from it. Tonal: the tight band, as before. */
-  const bool noisy = pitch_conf < PITCH_CONF_MIN;
-  int32_t lo = (int32_t)(noisy ? STEP_MIN_NOISE : STEP_MIN);
-  int32_t hi = (int32_t)(noisy ? STEP_MAX_NOISE : STEP_MAX);
+  /* Classification is per pull, deliberately.
+   *
+   * Smoothing it over the passage was tried and is WORSE: insertions 236 and
+   * underruns 739, against 203 and 382 for the per-pull version and 255/476
+   * with the whole fix off. Holding the band wide for a whole scene hands the
+   * level term that much more authority, and the loop oscillates across it --
+   * the +-1% band was doing double duty as a stability limit, not just as an
+   * audibility limit. Widen it only as far as the current window justifies. */
+  conf_lp += ((int32_t)pitch_conf - conf_lp) >> 4;   /* reported, not used here */
+  uint32_t cs = pitch_conf;
+  uint32_t w;
+#if SNES_STRETCH_FOLLOW
+  w = 256;
+#elif SNES_STRETCH_NOISE_AWARE
+  if (cs >= CONF_TONAL) w = 0;
+  else if (cs <= CONF_NOISE) w = 256;
+  else w = 256u - ((cs - CONF_NOISE) * 256u) / (CONF_TONAL - CONF_NOISE);
+#else
+  w = 0;
+#endif
+  noise_w = (uint16_t)w;
+  g_stretch_pulls++;
+  if (w >= 128u) g_stretch_noise_pulls++;
+  g_stretch_conf_lp = cs;
+  int32_t lo = (int32_t)STEP_MIN - (int32_t)(((STEP_MIN - STEP_MIN_NOISE) * w) >> 8);
+  int32_t hi = (int32_t)STEP_MAX + (int32_t)(((STEP_MAX_NOISE - STEP_MAX) * w) >> 8);
   if (next < lo) next = lo;
   if (next > hi) next = hi;
   step = (uint32_t)next;
@@ -307,7 +382,7 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
     }
 
     /* Never splice a period into something that has none. */
-    if (pitch_conf >= PITCH_CONF_MIN &&
+    if (!SNES_STRETCH_FOLLOW && noise_w < 128u &&
         time_error >= (int32_t)pitch_est && fill > pitch_est + 2u) {
       /* The search is an autocorrelation over 129 lags and it runs in the SAI
        * interrupt. A game with a large deficit inserts on nearly every pull --
@@ -333,12 +408,19 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
       time_error -= (int32_t)pitch_est;
       ins_pos = 0;
       ins_len = pitch_est;
+      g_stretch_ins++;
       dst[i] = ins_buf[ins_pos++];
       continue;
     }
 
     if (fill < 2u) {
+      /* Dry. Holding `last` puts a DC step at both ends of the gap, and a step
+       * is a click -- so a dropout was audible twice over even when it was
+       * short. Decay toward zero instead: a few samples of exponential fade are
+       * inaudible where a held level is not, and the recovery starts from a
+       * value near the signal rather than from wherever it happened to stop. */
       underruns++;
+      last = (int16_t)(last - (last >> 3));
       dst[i] = last;
       continue;
     }

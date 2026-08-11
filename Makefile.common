@@ -1864,6 +1864,22 @@ endif
 # reconciles their pitch counter in closed form when they wake. 68% of all
 # voice-ticks are idle by census, and the hoist above only removed their call
 # frame -- this removes the visit.
+# SNES_STRETCH_NOISE_AWARE=1 (ON): the audio stretcher tells periodic content
+# from noise and uses the tool that is inaudible on each -- rate change for
+# noise, PICOLA period repeat for tone. =0 restores the old always-PICOLA
+# behaviour for A/B. SNES_STRETCH_CONF_MIN is the Q8 confidence threshold.
+SNES_STRETCH_FOLLOW ?= 0
+ifeq ($(SNES_STRETCH_FOLLOW),1)
+  C_DEFS += -DSNES_STRETCH_FOLLOW=1
+endif
+SNES_STRETCH_NOISE_AWARE ?= 1
+ifeq ($(SNES_STRETCH_NOISE_AWARE),0)
+  C_DEFS += -DSNES_STRETCH_NOISE_AWARE=0
+endif
+ifneq ($(SNES_STRETCH_CONF_MIN),)
+  C_DEFS += -DSNES_STRETCH_CONF_MIN=$(SNES_STRETCH_CONF_MIN)
+endif
+
 SNES_DSP_IDLE_SKIP_VOICE ?= 0
 ifeq ($(SNES_DSP_IDLE_SKIP_VOICE),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_DSP_IDLE_SKIP_VOICE=1
