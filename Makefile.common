@@ -1650,19 +1650,25 @@ ifneq ($(SNES_ABLATE_BG),0)
   SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_BG=$(SNES_ABLATE_BG)
 endif
 
-# The pieces of the span loop, as knobs that COMPOSE -- because the numbers only
-# make sense together. Measured this session, Zelda 3 rain, 900 frames:
+# The pieces of the span loop, as knobs that COMPOSE. Measured on hardware,
+# Zelda 3 rain from a savestate, 900 frames, three runs, one build:
 #
-#   baseline                                  55.57
-#   SNES_ABLATE_BG=4  (return before the loop) 59.73   +4.16
-#   SNES_ABLATE_BG=2  (no pixel work)          55.46   nothing
-#   SNES_ABLATE_WALK=1 (tp never advances)     55.46   nothing
+#   baseline                                     55.57  (55.38 on the recheck)
+#   =4  return before the span loop              59.73   +4.16
+#   =6  pixel work deleted, fetch kept ALIVE     59.96   +4.4   <-- the answer
+#   =2  "pixel work deleted"                     59.94   see below
+#   SNES_ABLATE_WALK=1                           55.46   nothing
 #
-# Deleting the loop is worth 4.16 fps and deleting any one part of it is worth
-# nothing, which is the signature of a chain the CPU is already overlapping.
-# SNES_ABLATE_FETCH replaces the second load of the tile pointer-chase with ALU
-# arithmetic on the same inputs, to test whether the chain is what the loop
-# costs. WRONG OUTPUT, all of them. Diagnostic, never shippable.
+# =6 is the honest version of =2. =2 empties the pixel macros, and in the middle
+# loop that leaves `bits` dead, so the compiler deletes READ_BITS and both VRAM
+# loads with it -- =2 silently becomes =1. =6 keeps the fetch alive with one
+# volatile store per tile, and still gives back the whole 4.4 fps. So the cost of
+# the layer draw is the DECODE AND THE EIGHT COMPARE-AND-STORES, and the fetch,
+# the walk and the per-call setup are free.
+#
+# SNES_ABLATE_FETCH and SNES_ABLATE_ADDR are kept but must not be read as fetch
+# prices: both change `bits`, which changes how many tiles are blank and how many
+# pixels are non-zero, so both move the pixel work they are trying to hold still.
 SNES_ABLATE_WALK ?= 0
 ifeq ($(SNES_ABLATE_WALK),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_WALK=1

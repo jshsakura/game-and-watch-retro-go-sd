@@ -16,49 +16,63 @@ scene, 900 deterministic frames, three to six runs per arm.
 
 ## The next target
 
-**A hand-scheduled Thumb-2 inner loop, or nothing.** The layer draw was taken
-apart this session and it is a **pointer chase**, not memory and not arithmetic:
+**A hand-written Thumb-2 tile loop — and this time it is the reachable part.**
+
+The layer draw costs **4.4 fps** and the whole of it is the **pixel work**: one
+`PpuDecode4bpp` plus eight × (nibble extract, z-compare, conditional store).
+Not the fetch, not the walk, not the setup. All measured on hardware in one
+build, Zelda 3 rain from a savestate, 900 frames, three runs per arm:
 
 ```
-baseline                                     55.57   (55.38 on the end-of-session recheck)
-return before the span loop                  59.73   +4.16
-bitplane load replaced by ALU arithmetic     58.61   +3.04
-loads kept, address not from the tilemap     57.66   +2.09
-delete decode + z-compare + store            55.46   nothing
-delete the tilemap walk (tp never advances)  55.46   nothing
-software pipeline, depth 1                   55.53   nothing
-software pipeline, depth 2                   55.33   nothing
+baseline                                     55.57   (55.38 on the recheck)
+SNES_ABLATE_BG=6  pixel work gone,
+                  fetch KEPT ALIVE           59.96   +4.4    <-- the answer
+SNES_ABLATE_BG=4  return before the loop     59.73   +4.16
+SNES_ABLATE_WALK=1                           55.46   nothing
+tile memo / PLD / framebuffer / VRAM-in-DTCM 55.4-55.6  nothing
 ```
 
-Read it in three steps.
+The rig agrees to the instruction: of the layer draw's **685,758** instructions a
+frame, the pixel work is **663,322** — 97% of the instructions and 100% of the
+time. There is no stall mystery here. It is ordinary work in ordinary quantity,
+and that is why every attack on memory measured zero.
 
-1. **The per-call setup is free.** Keeping only the enabled/windowed tests,
-   `PpuWindows_Calc`/`_Clear`, the tilemap base and the two row addresses — and
-   returning before the span loop — gives back 4.16 fps, which is everything
-   deleting the entire draw gives back. The caller is not the target.
-2. **Inside the loop, only the fetch matters.** The pixel work prices at zero and
-   the walk prices at zero; the bitplane fetch prices at 3.04 of the 4.16.
-3. **And the fetch is a chain, not a load.** Keep both loads, at the same rate,
-   scattered over the same 64 KB, but stop deriving their address from the
-   tilemap word, and 2.09 of the 3.04 comes back. The cost is `load a tilemap
-   word → its low bits pick an address → load that address → branch on it`.
+### Three things this retracts
 
-That is also the retrospective explanation for last session's four zeroes. A
-chase of L1 hits is not a cache problem, so the tile memo (80% of fetches gone),
-the PLD, the framebuffer eviction fix and all 64 KB of VRAM in zero-wait DTCM
-were each attacking a stall that was never there.
+**1. `SNES_ABLATE_BG=2` never measured what it claims.** It empties the pixel
+macros, which leaves `bits` dead in the middle loop, so the compiler deletes
+`READ_BITS` and both VRAM loads with it — =2 silently becomes =1. Its binary is
+3,116 bytes smaller than the baseline, not the few hundred a pixel-only deletion
+costs. `=6` is the honest version: it keeps the fetch alive with one volatile
+store per tile. **Check what an ablation compiles to, not what its name says.**
 
-**And C cannot fix it.** Software pipelining is the textbook answer — put a whole
-iteration of other work between each load and its use — and both depths were
-built, verified bit-identical in the rig, and measured at nothing. Depth 2 costs
-5,186 more instructions a frame in the rig: gcc paid for the extra live values in
-spills and re-serialised what the source had spread out. Both are behind
-`SNES_PPU_PIPELINE` and both are off.
+**2. Worse, last session's =2 arm never got the define at all.** `Makefile.common`
+only wired `ifeq ($(SNES_ABLATE_BG),1)`, so `SNES_ABLATE_BG=2` built the
+baseline and reported "nothing". That false zero is the origin of the whole
+memory theory: it said the pixel work was free, so the cost had to be the reads.
+Four experiments and most of two sessions went to that. The knob passes any
+value now.
 
-So the remaining 4.16 fps in the renderer is reachable only by scheduling the
-loop by hand in Thumb-2, where the load issue order is not the compiler's to
-undo. That is the honest price of that project: **4.16 fps**, not the 7.18 the
-first ablation suggested, and not zero.
+**3. `SNES_ABLATE_FETCH` (+3.04) and `SNES_ABLATE_ADDR` (+2.09) are contaminated**
+and must not be read as fetch prices. Both change `bits`, which changes how many
+tiles are blank and how many pixels are non-zero — they move the pixel work they
+were meant to hold still.
+
+### What to build
+
+The pixel loop is `pixel = (chunky >> 4i) & 0xf; if (pixel && z > dstz[i]) dstz[i] = z + pixel;`
+eight times, on `uint16` — which is a Cortex-M7 SIMD shape. `USUB16` sets the GE
+flags per halfword and `SEL` picks by them, so two pixels can be compared and
+merged branchlessly per iteration, and the decode's four `PpuSpreadByteToNibbles`
+are pure shift/mask work that hand-scheduling can overlap with the stores.
+
+The infrastructure exists and should be copied exactly: `.S` under
+`src/snes/thumb2/`, a `_offsets.h`, a `_offsets_check.c` full of `_Static_assert`
+against `offsetof`, an entry in `SNES_ASM_SOURCES` (Makefile:158) and
+`snes_redefines` applied to the object — the same shape as `snes_thumb2.S` and
+`spc_thumb2.S`.
+
+**Ceiling: 4.4 fps.** Half of it would be the largest win left on this core.
 
 ## The rule, in its final form
 
@@ -83,10 +97,10 @@ large (a BRR decode, a Gaussian interpolation) rather than a few instructions.
 | sprite two-pass reverse draw | neutral | 8 loads removed vs 4 stores added per sliver; scene-independent ratio |
 | frameskip sprite-draw skip | 52.29 vs 52.36 | 5.46 slivers/line against a limit of 34 |
 | `PpuWindows_Calc` duplicate | never built | 0 of 42,191 sub passes duplicate a main layer |
-| tile memo / prefetch / framebuffer / VRAM-in-DTCM | see above | the memory theory, closed — and now explained: a chase of L1 hits |
+| tile memo / prefetch / framebuffer / VRAM-in-DTCM | see above | the memory theory, closed — the fetch was never the cost |
+| software pipeline, depth 1 / depth 2 / two-pass batched | 55.53 / 55.33 / 55.46 | all nothing; they reorder a fetch that is free |
 | per-call setup (windows, tilemap base, row addresses) | 59.73 | free; keeping only it is as fast as deleting the whole draw |
 | the tilemap walk (`NEXT_TP`) | 55.46 | free |
-| software pipeline, depth 1 and depth 2 | 55.53 / 55.33 | the right idea, undone by the compiler |
 | `SNES_ROMCACHE=1` | 55.10 vs 55.47 | verdict stands, re-measured in real gameplay |
 | `SNES_SPIN_SKIP=1` | 50.79 vs 55.47 | −4.68, twice what the attract screen showed |
 
