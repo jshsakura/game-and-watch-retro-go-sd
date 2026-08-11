@@ -92,7 +92,14 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
  * absorb the deficit; PICOLA then never fires on noise. Tonal content keeps
  * the tight +-1% band and the period repeat, unchanged. */
 #if SNES_STRETCH_FOLLOW
-#define STEP_MIN_NOISE 55050u  /* 0.84x -- follow the deficit all the way */
+/* How far down the rate may follow. 65536 is 1.0x; the deficit at 57 fps wants
+ * about 0.95. Capping it above that trades transposition back for splices --
+ * the floor is the dial between "flat but clean" and "in tune but spliced", and
+ * it is the only place where the two artefacts can be traded continuously. */
+#ifndef SNES_STRETCH_FLOOR
+#define SNES_STRETCH_FLOOR 55050   /* 0.84x -- follow the deficit all the way */
+#endif
+#define STEP_MIN_NOISE ((uint32_t)SNES_STRETCH_FLOOR)
 #else
 #define STEP_MIN_NOISE 60293u  /* 0.92x */
 #endif
@@ -129,16 +136,26 @@ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
  * underruns, wider than most of the differences being judged, and one of those
  * readings was reported as a result before the instrument was fixed.
  *
- *                          splices   underruns
- *   always PICOLA (before)     198         723
- *   noise-aware band           189         573
- *   follow the rate              0         162
+ *                              splices   underruns   pitch
+ *   always PICOLA (before)         198         723   kept
+ *   noise-aware band               189         573   kept
+ *   SNES_STRETCH_FLOOR 3%          179         416   -3%
+ *   follow the rate (default)        0         162   -5%
  *
- * So FOLLOW is not a trade of one artefact for another: it removes every splice
- * AND three quarters of the dropouts. The only cost is the constant
- * transposition, and that is the one thing a counter cannot judge. */
+ * FOLLOW is not a trade of one artefact for another: it removes every splice
+ * AND three quarters of the dropouts.
+ *
+ * And THERE IS NO USEFUL MIDDLE. The 3% floor was built to find one and does
+ * not: it costs three quarters of the transposition to buy 10 splices out of
+ * 189. The deficit is either covered by the rate or it is not; a floor that
+ * stops short leaves a remainder, and the remainder is spliced exactly as
+ * before. The choice is binary, and the only thing a counter cannot judge is
+ * which side of it the ear prefers. */
 #ifndef SNES_STRETCH_FOLLOW
 #define SNES_STRETCH_FOLLOW 0
+#endif
+#ifndef SNES_STRETCH_FLOOR
+#define SNES_STRETCH_FLOOR 55050
 #endif
 /* SNES_STRETCH_NOISE_REVERSE=1: on noise, fill the gap with the last segment
  * PLAYED BACKWARDS instead of repeated.
@@ -496,7 +513,25 @@ void snes_stretch_pull(int16_t *dst, uint16_t n) {
      * The copy does not need `fill` at all: it reads HISTORY, the samples
      * behind rd, which are in the ring whether or not anything is queued ahead.
      * Only the crossfade tail reads forward, and only XFADE (16) of them. */
-    if (!SNES_STRETCH_FOLLOW && noise_w < 128u &&
+    /* A floor that does not reach the deficit leaves a remainder, and the
+     * remainder has to go somewhere -- so PICOLA stays armed for every floor
+     * except the one that follows all the way down. Getting this comparison
+     * backwards left the intermediate floors with no cover at all: 22,508
+     * underruns at a 1% floor against 162 at full follow. */
+#define STRETCH_FLOOR_FOLLOWS_ALL (SNES_STRETCH_FLOOR <= 58982)   /* 0.90x */
+    /* Two different questions, and folding them into one condition got it wrong
+     * twice. In FOLLOW the rate is already following as far as its floor lets
+     * it, so PICOLA is needed exactly when that floor does NOT reach the
+     * deficit -- noise-ness does not enter into it, and gating on noise_w
+     * (which FOLLOW pins at 256) switched PICOLA off entirely and left the
+     * remainder uncovered: 18,559 underruns at a 1% floor. Without FOLLOW the
+     * question is the original one: splice tone, do not splice noise. */
+#if SNES_STRETCH_FOLLOW
+    const bool picola_ok = !STRETCH_FLOOR_FOLLOWS_ALL;
+#else
+    const bool picola_ok = (noise_w < 128u);
+#endif
+    if (picola_ok &&
         time_error >= (int32_t)pitch_est && fill > pitch_est + 2u) {
       /* The search is an autocorrelation over 129 lags and it runs in the SAI
        * interrupt. A game with a large deficit inserts on nearly every pull --
