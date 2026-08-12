@@ -1977,6 +1977,11 @@ ifneq ($(GNW_FORCED_DRAW_RATIO),)
   C_DEFS += -DGNW_FORCED_DRAW_RATIO=$(GNW_FORCED_DRAW_RATIO)
 endif
 
+# Testing WRAM before the ROM page tag in snes_cpuRead is CLOSED: -1.7 drawn fps
+# on hardware despite -43,163 instructions a frame on the rig. The census that
+# justified it was taken in a configuration the device does not run -- see
+# docs/SNES_NEXT_SESSION.md.
+
 SNES_ABLATE_CPU ?= 0
 ifeq ($(SNES_ABLATE_CPU),1)
   C_DEFS += -DSNES_ABLATE_CPU=1

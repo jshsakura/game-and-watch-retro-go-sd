@@ -660,3 +660,30 @@ sitting on the edge. **Only a change that raises emulated fps moves both axes**,
 because the guard then converts the surplus into drawing on its own. That is
 what the opaque-tile path did (+0.42 emulated, +0.6 drawn, both) and what every
 trade cannot do.
+
+### WRAM before the ROM tag — closed, and the census that justified it was measured on the wrong machine
+
+`snes_cpuRead` tests the ROM page tag first. A rig census said **7,058 of 7,829
+bus reads a frame are WRAM**, which would make that tag test a question whose
+answer is no nine times in ten. Reordering is free by construction — the
+classifications are disjoint, only the ROM branch ever installs a tag — and the
+rig agreed: bit-identical hashes, **−43,163 instructions a frame (−1.12%)**.
+
+On hardware, bracketed A/B/A: **16.33 → 14.50 → 16.17 drawn**, −0.2 emulated,
+and the first audio underrun this scene has produced at the shipping settings.
+
+**The census was taken in a configuration the device does not run.** The rig
+builds `snes_thumb2.S` without `-DSNES_T2_NO_ROMCACHE` (that define is passed
+through `ASFLAGS`, which `run_snes_t2.sh` does not set), so in the rig the
+engine's **inline ROM page cache is ON** and opcode fetches never reach
+`snes_cpuRead` at all. The device ships `SNES_ROMCACHE=0`, so every fetch goes
+through it — and fetches are the majority. Putting WRAM first bought nine tenths
+of a minority and charged every fetch two dead tests.
+
+Two things to carry:
+
+- **`run_snes_t2.sh` does not reproduce the device's ROM-cache setting.** Any
+  census of the bus taken there is measuring a different mix. The engine's
+  `ASFLAGS` defines are not part of what `RIG_EXTRA_DEF` reaches.
+- The instruction count was right and pointed the wrong way, one more time.
+  −1.12% of instructions bought −1.7 drawn fps.
