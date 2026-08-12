@@ -384,3 +384,76 @@ measures nothing is a liability, not a neutral. It was removed rather than left
 behind a default-off knob. `g_t2_full` / `g_t2_mixed` stay under the census flag
 for whoever finds a scene that does drive BG3 — mode 0 games, or a HUD-heavy
 one. Price it there first; do not re-derive this.
+
+---
+
+## 2026-08-12 — the APU cell is no longer blank, and the next 5 fps is in it
+
+The price table carried "APU as a whole — **unmeasurable**, `SNES_ABLATE_APU=1`
+hangs the SPC boot handshake". That diagnosis was wrong, and the cell is now
+filled with a verified number.
+
+**It is not the handshake.** The frame loop drains the DSP with
+`while (dsp->sampleOffset < 534) apu_cycle(apu);`, and `dsp_cycle` is the only
+thing that advances `sampleOffset`. An `apu_cycle` that returns early does not
+stop the game — it stops *that loop*, on frame one, forever. Resuming from a
+savestate also puts the handshake in the past, so neither objection survives.
+
+Two more traps had to be walked through before the numbers were real, and both
+are the same trap the layer-loop session named — **check what the ablation
+compiles to, not what its name says**:
+
+1. `dsp_cycle` has **two callers**. The guard went in `apu_cycle`; the one the
+   frame loop actually drives is `apu_run` (via `snes_catchupApu`). Guarding one
+   door priced the whole APU at **+1.62 fps**. Guarding both: **+2.65**.
+2. Faking `sampleOffset` inside `apu_cycle` to make the drain loop terminate is
+   worse than useless when only the DSP is ablated: the SPC still runs, so the
+   loop then executes **17,088 `apu_cycle` calls a frame** and the DSP measured
+   as **COSTING 1.5 fps to delete** (55.55 against 57.10). The loop is stopped
+   at its own call site now.
+
+Every arm below was checked to be a running game before its number was kept —
+`snes` a valid heap pointer, `g_snes_drawn_frames` advancing. An earlier arm
+read **405 fps** because it was not running and `bench.sh` had fallen back to a
+symbol that was not the frame counter.
+
+### The ladder, Zelda 3 rain from a savestate, 900 deterministic frames
+
+| ablation | emulated fps | drawn fps | Δ drawn |
+|---|---|---|---|
+| baseline | 57.26 | 15.92 | — |
+| SPC700 only | 57.22 | 18.50 | +2.58 |
+| **DSP only** | 59.68 | 21.00 | **+5.08** |
+| whole APU | 59.75 | 27.75 | +11.83 |
+
+**Emulated fps saturates at ~59.7** — both DSP and whole-APU arms land there,
+just under the 60.15 audio-DMA cap. From here the emulated frame counter cannot
+see an improvement at all; **drawn fps is the only remaining signal**, and every
+future lever has to be judged on it.
+
+That the parts do not add to the whole (2.58 + 5.08 < 11.83) is the overload
+guard's feedback: it is a threshold, not a gradient, and each saving moves the
+loop further past it.
+
+**So the next 5 fps is the DSP**, priced at +5.08 drawn.
+
+### What is already closed inside it — re-judged on the right metric
+
+The two idle-voice knobs were shelved on emulated fps, which is exactly the
+metric that cannot see a change to work that runs on *skipped* frames. Re-judged
+on drawn fps against the same-session baseline (15.92):
+
+| | emulated | drawn |
+|---|---|---|
+| `SNES_DSP_IDLE_HOIST=1` | 57.30 | 16.08 (+0.16, noise) |
+| `SNES_DSP_IDLE_SKIP_VOICE=1` | 56.84 | 15.33 (**−0.59**) |
+
+The old verdicts stand. This was worth re-running: the hypothesis that they had
+been judged blind was reasonable and is now disproved with the instrument that
+would have seen it.
+
+Also checked and already done: `dsp_handleEcho` early-outs when echo can affect
+neither the output nor ARAM. And the mono downmix **averages** L and R, so
+folding the per-voice stereo mix into one multiply is not free — the per-channel
+16-bit clamps make it non-equivalent, and any attempt must clear AUDIOHASH on
+the ROM corpus first.

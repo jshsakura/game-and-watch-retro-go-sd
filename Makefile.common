@@ -1924,6 +1924,15 @@ SNES_ABLATE_DSP_VOICES ?= 0
 ifeq ($(SNES_ABLATE_DSP_VOICES),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_DSP_VOICES=1
 endif
+# The ablations also have to reach main_snes.c, whose DSP drain loop is coupled
+# to what they delete (see the comment at that loop). C_DEFS is how a firmware
+# file gets them; SNES_LINE_DEFS_EXTRA only reaches the core.
+ifeq ($(SNES_ABLATE_APU),1)
+  C_DEFS += -DSNES_ABLATE_APU=1
+endif
+ifeq ($(SNES_ABLATE_DSP),1)
+  C_DEFS += -DSNES_ABLATE_DSP=1
+endif
 SNES_ABLATE_DSP ?= 0
 ifeq ($(SNES_ABLATE_DSP),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_DSP=1

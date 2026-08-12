@@ -107,6 +107,13 @@ void Warning(const char *s) { (void)s; }
 extern bool g_ppu_skip_render;   /* ppu.c: skip compositing on dropped frames */
 uint32_t g_snes_drawn_frames;    /* frames actually rendered, for draw-rate A/B */
 
+#ifndef SNES_ABLATE_APU
+#define SNES_ABLATE_APU 0
+#endif
+#ifndef SNES_ABLATE_DSP
+#define SNES_ABLATE_DSP 0
+#endif
+
 /* ---- state ---------------------------------------------------------------- */
 static Snes *snes;
 /* 128 KB WRAM lives in the overlay BSS (like the SM port's g_ram): the AHB
@@ -541,8 +548,18 @@ static void snes_pcm_submit(void) {
      * only the apu_cycle loop would undercount the recoverable cost. One scope
      * per frame, so the probe is noise. */
     uint32_t apu_t0 = SNES_PROF_APU_SCOPE_ENTER();
+#if !(SNES_ABLATE_APU || SNES_ABLATE_DSP)
     while (snes->apu->dsp->sampleOffset < 534)
       apu_cycle(snes->apu);
+#else
+    /* ABLATION ONLY. This loop drains the DSP by running the APU until it has
+     * emitted a frame of samples, so it is coupled to the very thing an
+     * ablation deletes: with the DSP gone nothing advances sampleOffset and the
+     * loop never ends. Faking the counter inside apu_cycle does not fix it
+     * either -- the SPC still runs, so the loop then executes 17,088 apu_cycle
+     * calls a frame and the DSP prices as COSTING 1.5 fps to remove. Stop the
+     * loop where it is written instead. */
+#endif
     dsp_getSamples(snes->apu->dsp, audio_buf, SNES_AUDIO_SAMPLES, 1);
     SNES_PROF_APU_SCOPE_EXIT(apu_t0);
     }
