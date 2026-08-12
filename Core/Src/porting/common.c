@@ -125,7 +125,17 @@ bool common_emu_frame_loop(void){
     /* Overload guard: under sustained slowdown the integrator pins at its cap
      * (below) and skip_frames stays 2 — never blank the screen outright; force
      * one drawn frame in every 4 so the worst case is ~15fps visible, not 0. */
-    if (!draw_frame && ++skip_streak >= 4) { draw_frame = true; skip_streak = 0; }
+    /* GNW_FORCED_DRAW_RATIO: one drawn frame in N while the integrator is
+     * pinned. 4 was never chosen for a workload -- it is a floor so the screen
+     * cannot go blank. On SNES the integrator IS pinned, so this constant is
+     * the draw rate, and it is one end of a trade nobody has been able to see:
+     * drawing more costs emulated fps, and emulated fps is what feeds the
+     * audio. Measured so the point on the curve can be chosen instead of
+     * inherited. */
+#ifndef GNW_FORCED_DRAW_RATIO
+#define GNW_FORCED_DRAW_RATIO 4
+#endif
+    if (!draw_frame && ++skip_streak >= GNW_FORCED_DRAW_RATIO) { draw_frame = true; skip_streak = 0; }
     else if (draw_frame) skip_streak = 0;
 
     if( !cpumon_stats.busy_ms ) cpumon_busy();

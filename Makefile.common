@@ -1971,6 +1971,12 @@ ifneq ($(GNW_BOOT_OC_LEVEL),)
   C_DEFS += -DGNW_BOOT_OC_LEVEL=$(GNW_BOOT_OC_LEVEL)
 endif
 
+# GNW_FORCED_DRAW_RATIO: the overload guard's forced draw, one frame in N.
+GNW_FORCED_DRAW_RATIO ?=
+ifneq ($(GNW_FORCED_DRAW_RATIO),)
+  C_DEFS += -DGNW_FORCED_DRAW_RATIO=$(GNW_FORCED_DRAW_RATIO)
+endif
+
 SNES_ABLATE_CPU ?= 0
 ifeq ($(SNES_ABLATE_CPU),1)
   C_DEFS += -DSNES_ABLATE_CPU=1

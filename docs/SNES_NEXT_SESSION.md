@@ -631,3 +631,32 @@ anyone wants to offer the choice at all.
 This is the second knob this session whose verdict came from a metric that could
 not see it. Anything closed with an emulated-fps number before today should be
 assumed unjudged.
+
+### The smoothness/sound trade is a cliff, and the shipping build sits on its edge
+
+The overload guard's forced draw — `skip_streak >= 4`, one frame in four — was a
+floor so the screen could not go blank, not a number chosen for any workload. On
+SNES the integrator is permanently pinned, so that constant **is** the draw rate.
+Measured (`GNW_FORCED_DRAW_RATIO`), savestate resume verified, underruns read as
+a rate rather than a total:
+
+| forced draw | drawn fps | emulated fps | **audio underruns** |
+|---|---|---|---|
+| **1 in 4 (shipping)** | 16.08 | 57.17 | **0 /s** |
+| 1 in 3 | 18.67 (+16%) | 55.50 | 19 /s |
+| 1 in 2 | 25.42 (+58%) | 50.54 | 478 /s |
+
+**Not a curve — a cliff.** Underruns are exactly zero at 1-in-4, start at
+1-in-3, and collapse at 1-in-2. The constant nobody chose turns out to be the
+last position where the audio still closes.
+
+That settles two things. **The draw ratio stays at 4.** And `SNES_ROMCACHE`
+stays off: it buys the same +2 drawn fps by spending the same emulated fps, and
+there is no audio budget left to spend.
+
+It also says what a real optimisation has to look like from here. Anything that
+buys smoothness with emulated fps is already at its optimum — the guard is
+sitting on the edge. **Only a change that raises emulated fps moves both axes**,
+because the guard then converts the surplus into drawing on its own. That is
+what the opaque-tile path did (+0.42 emulated, +0.6 drawn, both) and what every
+trade cannot do.
