@@ -63,9 +63,17 @@ for s in $SRCS; do
     $CC -c $ARCH $OPT $DEF $INC -w "$s" -o "$o"
     OBJS="$OBJS $o"
 done
+# The device assembles the engine with ASFLAGS, and ships SNES_ROMCACHE=0 --
+# i.e. -DSNES_T2_NO_ROMCACHE, so the inline ROM page cache never serves and
+# every opcode fetch calls snes_cpuRead. Without this the rig runs the engine
+# with that cache ON and fetches never reach the bus at all, which is not the
+# device's program: a bus census taken here read "90% of reads are WRAM",
+# designed a reorder on it, and the reorder cost 1.7 drawn fps on hardware.
+# RIG_ASM_DEF overrides it for anyone who wants the other configuration.
+ASM_DEF="${RIG_ASM_DEF:--DSNES_T2_NO_ROMCACHE}"
 for s in $ASMS; do
     o="$OUT/$(basename "${s%.S}").o"
-    $CC -c $ARCH $OPT $DEF $INC -w "$s" -o "$o"
+    $CC -c $ARCH $OPT $DEF $ASM_DEF $INC -w "$s" -o "$o"
     OBJS="$OBJS $o"
 done
 OBJS="$OBJS $OUT/rom.o"

@@ -687,3 +687,38 @@ Two things to carry:
   `ASFLAGS` defines are not part of what `RIG_EXTRA_DEF` reaches.
 - The instruction count was right and pointed the wrong way, one more time.
   −1.12% of instructions bought −1.7 drawn fps.
+
+### The true bus mix, and the combination that does not work
+
+With the rig finally assembling the engine the way the device does
+(`-DSNES_T2_NO_ROMCACHE`, now the default in `run_snes_t2.sh`), the bus census
+inverts:
+
+```
+reads 34,475 /frame    ROM 27,335 (79%)   WRAM 7,058 (20%)   slow 81
+opcodes 13,220         -> 2.6 reads per opcode
+```
+
+The broken census counted 7,829 because opcode fetches never reached
+`snes_cpuRead` in that build. ROM is the majority, by four to one.
+
+**`SNES_ROMCACHE=1` + a lower draw ratio: closed.** The reasoning was that the
+cache is a real CPU saving which the guard spends on drawing, so drawing less
+should hand it back as emulated fps. It does not:
+
+| | emulated | drawn | underruns |
+|---|---|---|---|
+| baseline (cache off, 1-in-4) | 57.02 | 16.2 | 7–9 /s |
+| cache on, 1-in-5 | 56.05 | 15.50 | 32 /s |
+| cache on, 1-in-6 | 56.84 | 13.33 | 7 /s |
+
+Worse on every axis at 1-in-5, and 1-in-6 only loses drawn frames without
+returning emulated ones. Whatever the cache's +1.96 drawn at ratio 4 is, it is
+not a surplus the guard is redistributing.
+
+**Caveat on the cliff above.** The same baseline build read **0 underruns/s** in
+one window and **7–9/s** in another. The direction of the draw-ratio cliff
+(1-in-3 → 19/s, 1-in-2 → 478/s) is far outside that, but "exactly zero at
+1-in-4" was one window's luck, not a property. Underruns need the frame-aligned
+window (`stretch_ab.sh`) to be compared at this resolution, exactly as the
+audio work established earlier — a wall-clock read is not the same window twice.
