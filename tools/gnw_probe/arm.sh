@@ -72,10 +72,26 @@ cmd_flash() {
   echo "[arm:$name] flashed"
 }
 
+# An arm that did not resume its savestate is looking at a different scene, and
+# a cheaper one. That is not a hypothetical: it read +10.5 drawn fps once and
+# survived three bracketed runs before anyone noticed. Any struct change alters
+# the state's payload length and the loader refuses it, correctly and silently.
 cmd_bench() {
   local name=$1; local frames=${2:-1800}
+  local elf="$ARMS/$name/gw_retro_go.elf"
+  local sym
+  sym=$(arm-none-eabi-nm "$elf" 2>/dev/null | awk '$3 ~ /g_snes_state_resumed$/ {print "0x"$1; exit}')
+  if [ -n "$sym" ]; then
+    local v
+    v=$(ssh "$HOST" "sudo openocd -f interface/stlink-dap.cfg -f target/stm32h7x.cfg         -c 'adapter speed 4000' -c init -c 'mdw $sym' -c shutdown 2>&1"         | grep -oE ': [0-9a-f]{8}' | tr -d ': ')
+    if [ "$v" = "00000000" ]; then
+      echo "[arm:$name] SAVESTATE REFUSED -- this arm booted COLD and is not" >&2
+      echo "            measuring the same scene. Numbers from it mean nothing." >&2
+      return 4
+    fi
+  fi
   for i in 1 2 3; do
-    bash tools/gnw_probe/bench.sh "$ARMS/$name/gw_retro_go.elf" "$frames"
+    bash tools/gnw_probe/bench.sh "$elf" "$frames"
   done
 }
 

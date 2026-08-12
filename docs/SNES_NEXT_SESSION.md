@@ -474,7 +474,8 @@ ablation before designing for it" applies to the *sub*-lever too; the echo being
 worth 3.08 says nothing about which part of the echo is dead.
 
 **2. The device said +2.44 emulated and +10.5 drawn fps, and that was a
-savestate corruption.** The mask was first stored as a new `Dsp` field, placed
+different SCENE.** (Corrected below — the first diagnosis, "corrupt state does
+less work", was wrong in its mechanism.) The mask was first stored as a new `Dsp` field, placed
 after `firValues`. `dsp_saveload` writes `sizeof(Dsp) - offsetof(Dsp, ram)`
 bytes as a **raw struct dump**, so a field added anywhere in that span shifts
 every field after it — and the measurement arms resume a savestate written by a
@@ -527,3 +528,32 @@ What is left with a number and no implementation: the four-tap Gaussian
 interpolation, +1.2 drawn, which is an `SMLAD` shape on this core. Anything
 built there has to clear AUDIOHASH on the ROM corpus — the SNES DSP's clamping
 is defined per step and a wider accumulator does not reproduce it for free.
+
+
+#### Correction: the savestate stamp worked. The autoboot was the silent part.
+
+The paragraph above blamed a raw struct dump restoring nonsense. That is not
+what happened, and the difference matters because it exonerates a mechanism that
+is doing its job.
+
+`snes_state_header_t` carries **magic, version AND payload length**, and the
+loader refuses on all three *before touching the machine*. Adding a field to
+`Dsp` changes `sizeof(Dsp)`, so the payload length changed, so the state was
+**correctly refused**.
+
+What was silent is the caller. `app_main_snes` did:
+
+```c
+if (load_state) odroid_system_emu_load_state(save_slot);
+```
+
+— the result dropped. A refused state starts the ROM **cold**, so the arm was
+benchmarking Zelda's title screen while every other arm benchmarked the rain.
+The title screen is much cheaper. That is the whole +10.5 drawn fps.
+
+So the rule to carry is not "beware raw struct dumps" (this one is stamped and
+refuses). It is: **an arm that resumes a savestate must prove it resumed.**
+`g_snes_state_resumed` is published for that, `arm.sh` reads it over SWD before
+it will report a number, and the firmware prints `savestate refused ... running
+COLD`. Any struct change anywhere in the state trips this, so it will fire more
+often than it seems it should.

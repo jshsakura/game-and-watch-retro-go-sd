@@ -1962,6 +1962,13 @@ endif
 ifeq ($(SNES_ABLATE_APU),1)
   C_DEFS += -DSNES_ABLATE_APU=1
 endif
+# SNES_ABLATE_CPU=1 freezes the 65816: the scheduler charges a plausible opcode
+# and never runs one. The largest block in the profile (22.3%) and the only one
+# that has never had an ablation number.
+SNES_ABLATE_CPU ?= 0
+ifeq ($(SNES_ABLATE_CPU),1)
+  C_DEFS += -DSNES_ABLATE_CPU=1
+endif
 ifeq ($(SNES_ABLATE_DSP),1)
   C_DEFS += -DSNES_ABLATE_DSP=1
 endif

@@ -106,9 +106,13 @@ void Warning(const char *s) { (void)s; }
 
 extern bool g_ppu_skip_render;   /* ppu.c: skip compositing on dropped frames */
 uint32_t g_snes_drawn_frames;    /* frames actually rendered, for draw-rate A/B */
+uint32_t g_snes_state_resumed;   /* 1 = the autoboot savestate really loaded */
 
 #ifndef SNES_ABLATE_APU
 #define SNES_ABLATE_APU 0
+#endif
+#ifndef SNES_ABLATE_CPU
+#define SNES_ABLATE_CPU 0
 #endif
 #ifndef SNES_ABLATE_DSP
 #define SNES_ABLATE_DSP 0
@@ -183,7 +187,24 @@ static int run_one_opcode(Snes *s) {
   }
 #endif
   s->cpuMemOps = 0;
+#if SNES_ABLATE_CPU
+  /* ABLATION, WRONG OUTPUT ON PURPOSE. The 65816 never executes: the scheduler
+   * is charged a plausible opcode and moves on, so the PPU, the APU, the DMA
+   * and the frame loop all keep running against a machine whose CPU is frozen.
+   * The screen holds whatever the last real frame left; the frame counter is
+   * the only valid reading.
+   *
+   * This is the one block on the board that has never had a number. The issue
+   * names the interpreter as one of the two places the next fps can come from,
+   * and "no lever" was only ever a statement about C fallbacks (there are zero)
+   * -- not an answer to "what is the frame worth if the interpreter were free".
+   * 6 cycles is the common short opcode; the exact charge only sets how many
+   * opcodes a frame contains, and any plausible value answers the question. */
+  (void)cpu;
+  int cycles = 6;
+#else
   int cycles = SNES_PROF_CPU_CALL(CPU_RUN_OPCODE(cpu));
+#endif
   /* 6*cycles + 2*memOps -- identical to the old 8-per-access charge plus
    * (cycles - memOps)*6, but paid once instead of on every bus access. */
   s->cpuCyclesLeft += cycles * 6 + s->cpuMemOps * 2;
@@ -1134,7 +1155,19 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #endif /* SNES_LOAD_DIAG */
 
   if (load_state) {
-    odroid_system_emu_load_state(save_slot);
+    /* The return value used to be dropped. A refused state -- and the loader
+     * refuses correctly, on magic, version AND payload length -- then starts
+     * the ROM cold, silently, and a measurement arm that believed it was
+     * resuming a savestate is quietly looking at the title screen instead.
+     * That scene is far cheaper than gameplay: it read +2.44 emulated and
+     * +10.5 DRAWN fps and was mistaken for an optimisation, three bracketed
+     * runs deep. Any struct change anywhere in the state alters the payload
+     * length, so this fires more often than it looks like it should.
+     * Published as a counter so a bench can refuse to believe an arm that
+     * did not resume. */
+    g_snes_state_resumed = odroid_system_emu_load_state(save_slot) ? 1u : 0u;
+    if (!g_snes_state_resumed)
+      printf("snes: savestate refused (slot %d) -- running COLD\n", (int)save_slot);
   } else {
     lcd_clear_buffers();
   }
