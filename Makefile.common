@@ -1920,6 +1920,16 @@ ifeq ($(SNES_DSP_IDLE_HOIST),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_DSP_IDLE_HOIST=1
 endif
 
+# Skipping zero echo-FIR taps was tried and is CLOSED: the rig census says
+# Zelda 3 runs 8.00 non-zero taps of 8, so there is nothing to skip, and the
+# test costs +52,558 instructions a frame. The device appeared to gain +10.5
+# drawn fps and that was a SAVESTATE CORRUPTION -- see docs/SNES_NEXT_SESSION.md.
+
+# Split the DSP's own price: the echo FIR against the eight voices.
+SNES_ABLATE_DSP_ECHO ?= 0
+ifeq ($(SNES_ABLATE_DSP_ECHO),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_DSP_ECHO=1
+endif
 SNES_ABLATE_DSP_VOICES ?= 0
 ifeq ($(SNES_ABLATE_DSP_VOICES),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_DSP_VOICES=1

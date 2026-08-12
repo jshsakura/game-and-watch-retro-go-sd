@@ -457,3 +457,39 @@ neither the output nor ARAM. And the mono downmix **averages** L and R, so
 folding the per-voice stereo mix into one multiply is not free — the per-channel
 16-bit clamps make it non-equivalent, and any attempt must clear AUDIOHASH on
 the ROM corpus first.
+
+### Sparse echo FIR — CLOSED, and it produced a fake +10.5 fps first
+
+The echo ablation says the FIR is worth **+3.08 drawn fps**, and SNES games
+often leave most of the eight FIR coefficients at zero, so skipping zero taps
+looked like the shape that keeps winning here: work that is *always* useless.
+
+It is not, and two things went wrong in the order they are worth remembering.
+
+**1. The census kills it, and it should have been run first.** With
+`SNES_RENDER_CENSUS=1` the rig reports **8.00 non-zero taps of 8** on Zelda 3 —
+there is nothing to skip. The rig also priced the change honestly: **+52,558
+instructions a frame** for a mask test that never fires. "Price a lever by
+ablation before designing for it" applies to the *sub*-lever too; the echo being
+worth 3.08 says nothing about which part of the echo is dead.
+
+**2. The device said +2.44 emulated and +10.5 drawn fps, and that was a
+savestate corruption.** The mask was first stored as a new `Dsp` field, placed
+after `firValues`. `dsp_saveload` writes `sizeof(Dsp) - offsetof(Dsp, ram)`
+bytes as a **raw struct dump**, so a field added anywhere in that span shifts
+every field after it — and the measurement arms resume a savestate written by a
+build without it. The DSP was restored to nonsense, stopped doing work, and the
+frame counter rose. Bracketed A/B/A reproduced it three times; the rig never saw
+it because the rig cold-boots.
+
+CLAUDE.md already says this in as many words ("a savestate is a raw dump of live
+structs... yesterday's file still opens, still reads to the end, and quietly
+restores nonsense"). What is new is the failure mode: **a savestate mismatch can
+look exactly like a large win**, because corrupt state does less work. Any arm
+that resumes a savestate and shows a big gain must be checked against a struct
+change before it is believed.
+
+Derived state belongs in a file-scope static, next to `g_dsp_idle_mask`, and has
+to be rebuilt after a load. Moving it there and re-measuring gave a build that
+did not run at all — at which point the census had already settled the question,
+and the whole change was reverted.
