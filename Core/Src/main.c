@@ -469,7 +469,15 @@ int main(void)
 
   /* Configure the system clock */
 #if ENABLE_BOOT_OC == 1
-  SystemClock_Config(2);
+  /* GNW_BOOT_OC_LEVEL overrides the boot clock for measurement. Level 3 is
+   * 353.7 MHz -- the former menu maximum, withdrawn because Genesis went
+   * unstable under sustained load, not because the silicon refused it. The
+   * SNES core is 2.95 fps short of its audio-DMA cap and 353.7/340 is +4.0%,
+   * so it is worth a number even if it never ships as a default. */
+#ifndef GNW_BOOT_OC_LEVEL
+#define GNW_BOOT_OC_LEVEL 2
+#endif
+  SystemClock_Config(GNW_BOOT_OC_LEVEL);
 #else
   SystemClock_Config(0);
 #endif

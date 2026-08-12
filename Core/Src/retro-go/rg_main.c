@@ -1282,8 +1282,16 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
         file = emulator_get_file(startup_file);
     }
 
-    // Apply the CPU overclocking level from settings when finished booting
+    // Apply the CPU overclocking level from settings when finished booting.
+    // GNW_BOOT_OC_LEVEL pins it for measurement: this call runs AFTER main()'s
+    // and silently undid a boot-time override, so a 353.7 MHz arm measured
+    // 340 MHz and read the baseline. SystemCoreClock said 340,000,000 -- which
+    // is why an A/B checks that its two arms are two machines, not two names.
+#ifdef GNW_BOOT_OC_LEVEL
+    uint8_t oc = GNW_BOOT_OC_LEVEL;
+#else
     uint8_t oc = odroid_settings_cpu_oc_level_get();
+#endif
     SystemClock_Config(oc);
 
     bool resume_emulator = (file != NULL);

@@ -1965,6 +1965,12 @@ endif
 # SNES_ABLATE_CPU=1 freezes the 65816: the scheduler charges a plausible opcode
 # and never runs one. The largest block in the profile (22.3%) and the only one
 # that has never had an ablation number.
+# GNW_BOOT_OC_LEVEL: 2 = 340 MHz (shipping), 3 = 353.7 MHz (former menu max).
+GNW_BOOT_OC_LEVEL ?=
+ifneq ($(GNW_BOOT_OC_LEVEL),)
+  C_DEFS += -DGNW_BOOT_OC_LEVEL=$(GNW_BOOT_OC_LEVEL)
+endif
+
 SNES_ABLATE_CPU ?= 0
 ifeq ($(SNES_ABLATE_CPU),1)
   C_DEFS += -DSNES_ABLATE_CPU=1

@@ -557,3 +557,47 @@ refuses). It is: **an arm that resumes a savestate must prove it resumed.**
 it will report a number, and the firmware prints `savestate refused ... running
 COLD`. Any struct change anywhere in the state trips this, so it will fire more
 often than it seems it should.
+
+### The ceiling, measured: emulated fps cannot win, drawn fps can
+
+Freeze the emulation and see what the loop does. All verified running, savestate
+confirmed resumed:
+
+| | emulated | drawn |
+|---|---|---|
+| baseline | 57.20 | 16.1 |
+| 65816 frozen | 59.70 | 36.4 |
+| APU frozen | 59.75 | 27.8 |
+| **both frozen** | **60.03** | **60.25** |
+| audio-DMA cap | 60.15 | — |
+
+**The whole emulation — interpreter and APU together — is worth +2.83 fps**, and
+the distance to the cap is +2.95. Reaching 60 on the emulated counter therefore
+requires making the emulator very nearly free. It is not a matter of finding one
+more lever; the sum of every lever that exists is the budget.
+
+Two things fall out of the bottom row.
+
+**The render is not an independent item.** With both frozen, rendering is fully
+on and every frame is drawn (60.25 drawn), and the loop still reaches 60.03. The
+PPU is only expensive because the CPU keeps changing the scene; "remaining
+render, 3.15 fps" is a number that sits on top of the CPU's, not beside it.
+
+**Drawn fps is where the win is.** 16.1 today against 60.25 with the emulation
+gone — the overload guard is holding four fifths of the frames back, and it
+releases as soon as the frame fits. Every lever measured this session moves
+drawn fps several times as far as it moves the emulated counter, and drawn fps
+is what a player sees.
+
+### Boot clock: level 3 is dead code
+
+`SystemClock_Config(3)` claims 353.7 MHz (PLLM=38, PLLN=420). The ELF shows
+`movs r0, #3` reaching the call, and the PLL registers afterwards read
+**PLLM=16, PLLN=170, PLLP=2 — level 2, 340.0 MHz**. So the call silently lands
+on the shipping clock and reports nothing. Not pursued (a 4% clock is not the
+answer and the battery cost is real), but recorded: anyone reading that switch
+would reasonably assume level 3 works, and it does not.
+
+Also confirmed while looking: **the shipping overclock IS working.** The PLL
+reads 340.0 MHz core / 97.1 MHz OSPI, which is level 2, not the 280 MHz stock
+clock. `SystemCoreClock` agrees. `ENABLE_BOOT_OC=1` does what it says.
