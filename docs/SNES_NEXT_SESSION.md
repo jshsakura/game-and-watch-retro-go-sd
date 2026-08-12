@@ -722,3 +722,48 @@ one window and **7–9/s** in another. The direction of the draw-ratio cliff
 1-in-4" was one window's luck, not a property. Underruns need the frame-aligned
 window (`stretch_ab.sh`) to be compared at this resolution, exactly as the
 audio work established earlier — a wall-clock read is not the same window twice.
+
+---
+
+## Start here next session
+
+**Device state:** the shipping default build is flashed (`gapfree` arm), 57.2 fps,
+savestate resume verified. `tools/gnw_probe/arm.sh build|flash|bench <name> …`
+refuses to report a number from an arm that booted cold.
+
+**One command, and the question it settles**
+
+```bash
+bash tools/gnw_probe/arm.sh build spinpat GNW_AUTOBOOT_STATE=1 GNW_AUTOBOOT_SLOT=0 \
+     SNES_SPIN_SKIP=1 SNES_SPIN_REPLAY_ONLY=1     # + the baked pattern
+```
+
+Bake Super Mario World's wait loop (`pc 0x00806b/0x00806d`, signature
+`A5 10 F0 FC`, charges `0/6`), put an `$00:806d` ROM on the card, and A/B it.
+That signature covers 51 ROMs and the model says 1.78–2.06 fps for them. It also
+tests the model itself: **prize ≈ 2.5 fps × pure%**, which is an instruction
+argument, and instruction arguments pointed the wrong way three times today.
+
+**What is already settled, so it is not re-derived**
+
+- **60 fps is unreachable.** Freezing the interpreter and the APU together
+  reaches 60.03 against a 60.15 cap — the whole emulation is worth +2.83 and the
+  gap is +2.95. There is no missing lever; the sum of every lever is the budget.
+- **Emulated fps is a dead instrument.** Everything saturates at 59.7–60.0.
+  Judge on drawn fps (`g_snes_drawn_frames`), and read underruns with
+  `stretch_ab.sh` — a wall-clock window gave 0/s and 9/s for the same build.
+- **Every trade is at its optimum.** Forced draw stays at 1-in-4 (1-in-3 starts
+  underrunning, 1-in-2 collapses); `SNES_ROMCACHE` stays off (+1.96 drawn but
+  −1.22 emulated, and emulated fps is what feeds the audio). Only a change that
+  raises emulated fps moves both axes.
+- **Audio is decided.** Gap-free ships, by ear, and the ceiling makes it
+  permanent rather than a stopgap.
+
+**Shipped this session:** `SNES_PPU_OPAQUE_TILE` (+0.42 fps, hash-identical on
+three ROMs across three rigs) and gap-free audio.
+
+**Closed with numbers:** pair-store via memcpy (−4.7), the same branch without
+the call (−0.8), 2bpp opaque path (0.00), sparse echo FIR (a savestate
+refusal, not a win), WRAM before the ROM tag (−1.7 drawn), DSP idle-voice hoist
+and skip (+0.16 / −0.59 drawn), `SystemClock_Config(3)` (dead code — the PLL
+stays at level 2), spin learner at any setting (−4.78).
