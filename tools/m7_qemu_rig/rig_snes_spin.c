@@ -258,6 +258,36 @@ int main(void) {
     printf("[spin] real=%llu virt=%llu skipped=%.4f%% gate=%d\n",
            (unsigned long long)g_spin.ops_real, (unsigned long long)g_spin.ops_virtual,
            tot > 0 ? 100.0 * g_spin.ops_virtual / tot : 0.0, (int)g_spin.gate_on); }
+  /* The learned pattern, in the form a table would carry.
+   *
+   * The learner is what costs 4.78 fps on the device -- measured, and it is the
+   * whole cost: strip the learning and leave only the replay branch and the
+   * emulated rate is unchanged (57.22 against 57.23). So the design is to learn
+   * HERE, where an instruction costs nothing, and ship only the answer: one
+   * lookup at load, a pattern copied in, and nothing watched afterwards.
+   *
+   * SPINPAT is machine-readable on purpose -- a corpus survey pipes hundreds of
+   * these into a generator. hash is the same 21-byte header FNV the runtime
+   * table already uses; it does NOT survive revisions or regions, and replacing
+   * it with a minimal engine fingerprint (the GBA M4A shape) is the next step,
+   * not this one. */
+  {
+    uint32_t h = 0;
+    static const uint32_t offs[2] = { 0x7fc0, 0xffc0 };
+    for (int i = 0; i < 2 && !h; i++) {
+      if (offs[i] + 21 > rom_len) continue;
+      uint32_t f = 2166136261u;
+      for (int j = 0; j < 21; j++) { f ^= rom[offs[i] + j]; f *= 16777619u; }
+      h = f;
+    }
+    double tot2 = (double)(g_spin.ops_real + g_spin.ops_virtual);
+    printf("SPINPAT hash=%08lx skip=%.4f len=%d on=%d",
+           (unsigned long)h, tot2 > 0 ? 100.0 * g_spin.ops_virtual / tot2 : 0.0,
+           g_spin.len, (int)g_spin.on);
+    for (int i = 0; i < g_spin.len && i < SPIN_PMAX; i++)
+      printf(" %06lx:%u", (unsigned long)g_spin.pc[i], (unsigned)g_spin.charge[i]);
+    printf("\n");
+  }
 #ifdef RC_STATS
   { extern uint64_t g_rc_native, g_rc_interp;
     double tot = (double)(g_rc_native + g_rc_interp);

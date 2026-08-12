@@ -111,6 +111,16 @@ uint32_t g_snes_state_resumed;   /* 1 = the autoboot savestate really loaded */
 #ifndef SNES_ABLATE_APU
 #define SNES_ABLATE_APU 0
 #endif
+/* SNES_SPIN_REPLAY_ONLY=1: keep the run_dots replay branch, delete every trace
+ * of LEARNING -- the per-opcode note, the pc24/disp it needs, and the bus
+ * hooks. The question it answers is the one that decides whether a per-ROM
+ * table is worth building at all: if a pattern were known before the ROM
+ * starts, discovery is unnecessary, and what remains has to cost less than it
+ * saves. Diagnostic: with no learner nothing fills g_spin, so nothing is
+ * actually skipped -- this measures the FLOOR the design would pay. */
+#ifndef SNES_SPIN_REPLAY_ONLY
+#define SNES_SPIN_REPLAY_ONLY 0
+#endif
 #ifndef SNES_ABLATE_CPU
 #define SNES_ABLATE_CPU 0
 #endif
@@ -177,7 +187,7 @@ static void apply_irq_match(Snes *s) {
  * bit-identical state+audio hashes). */
 static int run_one_opcode(Snes *s) {
   Cpu *cpu = s->cpu;
-#ifdef SNES_SPIN_SKIP
+#if defined(SNES_SPIN_SKIP) && !SNES_SPIN_REPLAY_ONLY
   const bool learn = spin_engaged();   /* sample before the opcode; see header */
   uint32_t pc24 = 0;
   int disp = 0;
@@ -208,7 +218,7 @@ static int run_one_opcode(Snes *s) {
   /* 6*cycles + 2*memOps -- identical to the old 8-per-access charge plus
    * (cycles - memOps)*6, but paid once instead of on every bus access. */
   s->cpuCyclesLeft += cycles * 6 + s->cpuMemOps * 2;
-#ifdef SNES_SPIN_SKIP
+#if defined(SNES_SPIN_SKIP) && !SNES_SPIN_REPLAY_ONLY
   if (learn) SNES_PROF_SPIN_CALL(spin_note_real(cpu, pc24, (uint8_t)s->cpuCyclesLeft, disp));
 #endif
   return cycles;

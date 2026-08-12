@@ -58,6 +58,12 @@ run_one() {
   else
     lit=$(grep -o "lit=[0-9]*" "$raw" | head -1 | cut -d= -f2)
     pure=$(grep "^\[spin\]" "$raw" | grep -o "PURE-spin=[0-9.]*" | cut -d= -f2)
+    # ops/frame: the probe already computes it and only the TSV was missing it.
+    # pure% alone cannot rank candidates -- it is the share of opcodes that are
+    # replayable, and the prize is that share of the interpreter's total cost
+    # (+2.5 fps by ablation). Whether the prize is REALISABLE needs to know if
+    # the ROM is below the audio cap at all, and ops/frame is the proxy for it.
+    ops=$(grep "^\[spin\]" "$raw" | grep -o "ops/frame=[0-9.]*" | cut -d= -f2)
     io=$(grep "^\[spin\]" "$raw" | grep -o "IO-spin=[0-9.]*" | cut -d= -f2)
     wai=$(grep "^\[spin\]" "$raw" | grep -o "WAIticks/frame=[0-9.]*" | cut -d= -f2)
     local sl; sl=$(grep "^\[site\]" "$raw" | head -1)
@@ -67,8 +73,8 @@ run_one() {
     fi
     [ "${lit:-0}" = "0" ] && status="UNRENDERED"
   fi
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-    "$base" "$status" "$lit" "$pure" "$io" "$wai" "$site" "$polls" > "$raw.tsv"
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    "$base" "$status" "$lit" "$pure" "$io" "$wai" "$site" "$polls" "$ops" > "$raw.tsv"
 }
 export -f run_one; export O
 

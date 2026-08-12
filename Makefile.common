@@ -1994,6 +1994,19 @@ endif
 # justified it was taken in a configuration the device does not run -- see
 # docs/SNES_NEXT_SESSION.md.
 
+# SNES_SPIN_NO_BUS_HOOKS=1 removes the spin learner's per-bus-access hooks,
+# leaving the rest of it. Diagnostic: it prices the discovery machinery against
+# a design that knows the pattern before the ROM starts.
+SNES_SPIN_REPLAY_ONLY ?= 0
+ifeq ($(SNES_SPIN_REPLAY_ONLY),1)
+  C_DEFS += -DSNES_SPIN_REPLAY_ONLY=1
+  SNES_LINE_DEFS_EXTRA += -DSNES_SPIN_REPLAY_ONLY=1 -DSNES_SPIN_NO_BUS_HOOKS=1
+endif
+SNES_SPIN_NO_BUS_HOOKS ?= 0
+ifeq ($(SNES_SPIN_NO_BUS_HOOKS),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_SPIN_NO_BUS_HOOKS=1
+endif
+
 SNES_ABLATE_CPU ?= 0
 ifeq ($(SNES_ABLATE_CPU),1)
   C_DEFS += -DSNES_ABLATE_CPU=1
