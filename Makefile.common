@@ -1895,7 +1895,19 @@ SNES_STRETCH_NOISE_REVERSE ?= 0
 ifeq ($(SNES_STRETCH_NOISE_REVERSE),1)
   C_DEFS += -DSNES_STRETCH_NOISE_REVERSE=1
 endif
-SNES_STRETCH_FOLLOW ?= 0
+# SNES_STRETCH_FOLLOW=1 (ON, by ear). Below 60 emulated fps the core makes fewer
+# samples than the DAC consumes -- 5.4% short at 57 -- and that deficit becomes
+# an artefact either way: splices that keep pitch, or a constant transposition
+# that does not splice. 1800 frame-aligned frames: 189 splices / 573 underruns
+# with pitch, 0 / 162 with follow, -5% flat.
+#
+# No counter can choose between those, and the listener has: gap-free is clean,
+# the pitch path audibly crackles on rain, and the transposition it is trading
+# for is not something the ear picks up anyway. The ceiling work settles the
+# other half of the argument -- 60 fps is unreachable (the whole emulation is
+# worth +2.83 fps against a +2.95 gap), so the deficit is permanent and this is
+# not a stopgap. Runtime-toggleable in the in-game menu either way.
+SNES_STRETCH_FOLLOW ?= 1
 ifneq ($(SNES_STRETCH_FLOOR),)
   C_DEFS += -DSNES_STRETCH_FLOOR=$(SNES_STRETCH_FLOOR)
 endif
