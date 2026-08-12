@@ -601,3 +601,33 @@ would reasonably assume level 3 works, and it does not.
 Also confirmed while looking: **the shipping overclock IS working.** The PLL
 reads 340.0 MHz core / 97.1 MHz OSPI, which is level 2, not the 280 MHz stock
 clock. `SystemCoreClock` agrees. `ENABLE_BOOT_OC=1` does what it says.
+
+### Re-judging the shelved knobs on drawn fps — one flips
+
+Three knobs were closed on emulated fps, which the ceiling above shows cannot
+report an improvement. Re-run on drawn fps, savestate resume verified:
+
+| | emulated | drawn | old verdict |
+|---|---|---|---|
+| `SNES_SPRITE_SKIP_DRAW=1` | 56.53 (−0.7) | 16.42 (+0.2) | stands — still nothing |
+| **`SNES_ROMCACHE=1`** | 55.71 (**−1.22**) | **18.25 (+1.96)** | **reversed** |
+| `SNES_LINE_CACHE=1` | 53.38 (−3.9) | 14.17 (−1.9) | stands, and worse than recorded |
+
+`SNES_ROMCACHE` was closed as "55.10 against 55.47, verdict stands, re-measured
+in real gameplay". That measurement was on the blind counter. Bracketed A/B/A on
+drawn fps: **16.33 → 18.25 → 16.25**, +12%.
+
+**It is a trade, not a win, and the trade is not ours to make.** The knob makes
+CPU work cheaper; the overload guard converts every bit of that into drawing
+more frames, automatically, and the emulated rate falls by 1.22 as a result.
+Emulated fps is what feeds the audio: the sample deficit goes from **5.4% to
+7.4%**, so the rain crackles harder. Smoother picture, worse sound, and no way
+to ask for the other split — the guard decides.
+
+**Not shipped on.** It belongs next to `SNES_STRETCH_FOLLOW` as something a
+listener chooses, or behind a "prefer smoothness / prefer sound" setting, if
+anyone wants to offer the choice at all.
+
+This is the second knob this session whose verdict came from a metric that could
+not see it. Anything closed with an emulated-fps number before today should be
+assumed unjudged.
