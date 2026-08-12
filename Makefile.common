@@ -1925,6 +1925,28 @@ endif
 # test costs +52,558 instructions a frame. The device appeared to gain +10.5
 # drawn fps and that was a SAVESTATE CORRUPTION -- see docs/SNES_NEXT_SESSION.md.
 
+# Inside the voice: BRR decode, the four-tap Gaussian interpolation, and the
+# envelope/gain. All three existed in dsp.c with NO makefile wiring, so they
+# could not be turned on -- the same defect SNES_ABLATE_BG=2 had, where an arm
+# silently built the baseline and reported "nothing". WRONG OUTPUT, diagnostic.
+SNES_ABLATE_DSP_BRR ?= 0
+ifeq ($(SNES_ABLATE_DSP_BRR),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_DSP_BRR=1
+endif
+SNES_ABLATE_DSP_INTERP ?= 0
+ifeq ($(SNES_ABLATE_DSP_INTERP),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_DSP_INTERP=1
+endif
+SNES_ABLATE_DSP_GAIN ?= 0
+ifeq ($(SNES_ABLATE_DSP_GAIN),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ABLATE_DSP_GAIN=1
+endif
+# Voice census: idle vs active ticks, BRR decodes, pitch-modulated voices.
+SNES_DSP_CENSUS ?= 0
+ifeq ($(SNES_DSP_CENSUS),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_DSP_CENSUS=1
+endif
+
 # Split the DSP's own price: the echo FIR against the eight voices.
 SNES_ABLATE_DSP_ECHO ?= 0
 ifeq ($(SNES_ABLATE_DSP_ECHO),1)

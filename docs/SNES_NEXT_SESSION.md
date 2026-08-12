@@ -493,3 +493,37 @@ Derived state belongs in a file-scope static, next to `g_dsp_idle_mask`, and has
 to be rebuilt after a load. Moving it there and re-measuring gave a build that
 did not run at all — at which point the census had already settled the question,
 and the whole change was reverted.
+
+### Inside the voice — first numbers, because three knobs were never wired
+
+`SNES_ABLATE_DSP_BRR`, `_INTERP` and `_GAIN` existed in `dsp.c` with **no
+makefile wiring**, so they could not be turned on. Anything ever "measured" with
+them measured the baseline — the same defect `SNES_ABLATE_BG=2` had, which the
+issue records as the origin of a wasted session. Wired now.
+
+Census first this time (`SNES_DSP_CENSUS=1`, ALttP 900 frames): 3,844,800
+voice-ticks, **59.5% idle**, 1,555,666 active, **76,836 BRR decodes** (85 a
+frame), and **zero** pitch-modulated voices.
+
+Device, against 57.2 emulated / 16.1 drawn:
+
+| deleted | emulated | drawn | Δ drawn |
+|---|---|---|---|
+| BRR decode | 55.80 (**−1.4**) | 18.33 | **+2.2** |
+| Gaussian interpolation | 55.70 (**−1.5**) | 17.33 | **+1.2** |
+| envelope / gain | 57.49 | 16.08 | **0.0** |
+
+The first two show the signature this issue named: **emulated fps falls while
+drawn fps rises**, because cheaper skipped frames let the overload guard draw
+more. Judged on fps alone both would read as losses.
+
+**Read the first two as contaminated upper bounds.** Deleting the BRR decode
+leaves the decode buffer stale and the interpolation reads it, so voices go
+quiet and downstream work disappears with them — the ablation changes the
+emulated state, not just the code. Only the envelope's **0.0** is a clean
+verdict, and it is a real one: the ADSR/gain path is free.
+
+What is left with a number and no implementation: the four-tap Gaussian
+interpolation, +1.2 drawn, which is an `SMLAD` shape on this core. Anything
+built there has to clear AUDIOHASH on the ROM corpus — the SNES DSP's clamping
+is defined per step and a wider accumulator does not reproduce it for free.
