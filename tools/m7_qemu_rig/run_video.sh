@@ -23,7 +23,12 @@ mkdir -p "$OUT"
 CC=arm-none-eabi-gcc
 ARCH="-mcpu=cortex-m7 -mthumb -mfloat-abi=soft"
 OPT="-O2 -g -fno-strict-aliasing -ffunction-sections -fdata-sections"
-DEF="-DSD_CARD=0 -DAUDIO_PPM=$PPM -DRIG_FRAMES=$FRAMES $EXTRA"
+# RESUME_HOST_STDIO: video_resume.c picks its delete/rename primitives by
+# storage backend, and with SD_CARD=0 that is LittleFS, whose header this rig
+# has no business carrying. The file already provides the host-stdio arm -- the
+# same one tests/run.sh uses -- and only the primitives differ; which resume
+# lines survive and when the store is dropped is the same code either way.
+DEF="-DSD_CARD=0 -DRESUME_HOST_STDIO -DAUDIO_PPM=$PPM -DRIG_FRAMES=$FRAMES $EXTRA"
 INC="-Itests/video_stubs -ICore/Inc/porting/video -ICore/Src/porting/lib -ICore/Inc/porting/music"
 
 # Embedded MP3: one short CBR 48 kHz mono clip. Its frames (all 384 bytes,
@@ -40,6 +45,7 @@ SRCS_C="Core/Src/porting/video/video_play.c \
         Core/Src/porting/video/avi.c \
         Core/Src/porting/video/video_decode.c \
         Core/Src/porting/video/video_audio.c \
+        Core/Src/porting/video/video_resume.c \
         Core/Src/porting/music/music_minimp3.c \
         $RIG/rig_runtime.c $RIG/rig_video.c"
 

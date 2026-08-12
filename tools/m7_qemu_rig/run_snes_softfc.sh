@@ -34,7 +34,7 @@ cp "$ROM" "$OUT/rom.smc"
 SRCS="$SM/src/snes/apu.c $SM/src/snes/cart.c $SM/src/snes/cpu.c \
       $SM/src/snes/dma.c $SM/src/snes/dsp.c $SM/src/snes/input.c \
       $SM/src/snes/ppu.c $SM/src/snes/snes.c $SM/src/snes/snes_other.c \
-      $SM/src/snes/spc.c $SM/src/tracing.c \
+      $SM/src/snes/spc.c $SM/src/snes/rc_dispatch.c $SM/src/tracing.c \
       $RIG/rig_runtime.c $RIG/rig_snes.c"
 
 OBJS=""

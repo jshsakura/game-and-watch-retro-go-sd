@@ -101,6 +101,12 @@ int _isatty(int fd) { (void)fd; return 1; }
 int _lseek(int fd, int off, int wh) { (void)fd; (void)off; (void)wh; return 0; }
 int _read(int fd, char *buf, int len) { (void)fd; (void)buf; (void)len; return 0; }
 void _exit(int code) { (void)code; sh_call(0x18, (void *)0x20026); for (;;) ; }
+/* remove()/rename() reach newlib as _unlink/_link. The video rig links
+ * video_resume.c's host-stdio arm, which calls both; there is no filesystem
+ * here, and the resume store having no persistence across a rig run is the
+ * correct behaviour rather than a limitation -- each run starts from nothing. */
+int _unlink(const char *path) { (void)path; return -1; }
+int _link(const char *old_, const char *new_) { (void)old_; (void)new_; return -1; }
 int _kill(int pid, int sig) { (void)pid; (void)sig; return -1; }
 int _getpid(void) { return 1; }
 

@@ -314,3 +314,40 @@ faults on the host — proof the class is now caught before a flash.
 | question | harness |
 |---|---|
 | will my new allocation fit the device's real (resident-subtracted) memory | `tools/gnw_hw_harness/run.sh --proposal <region>:<bytes>:<label>` |
+
+## Sweep, 2026-08-12 — every harness in this file, run
+
+`tests/run.sh` **green** (93 sections). Exactly one legitimate SKIP: the sm
+savestate/cache test needs a Super Metroid ROM at `$SM_ROM`, which this machine
+does not have. The music-app tests are NOT skipped any more (23 + 16 checks
+ran) — an older note saying five of them were silently skipping is stale.
+
+`tests/coverage.sh` **51.8% lines / 25.4% branches** over the measured modules,
+20 in-scope files still unmeasured (the work order is `coverage_scope.txt`).
+
+Per-core host harnesses, built from a clean `build/` each:
+
+| result | |
+|---|---|
+| build OK (11) | amstrad, c64, c64frodo, gamecom, lynx, pce, vb, wswan, zx, celeste, o2em |
+| no test ROM (6) | a2600, gb-tgbdual, gwenesis, msx, nes-fceumm, pkmini — all stop at `loaded_*_rom.o`; run `linux/update_<core>_rom.sh` first |
+| **broken (1)** | **`Makefile.nes`** — see below |
+
+**Two traps this sweep walked into, both worth keeping.**
+
+1. **`linux/` Makefiles share one `build/` directory.** Building them back to
+   back without `rm -rf build` links the previous core's objects into the next
+   one: celeste and o2em "failed" with undefined references to *Amstrad*
+   symbols (`capmain`, `caprice_retro_loop`, `kbd_buf_feed`). Both build clean
+   in isolation. A sweep script that does not clean between cores reports
+   failures that are its own.
+
+2. **`Makefile.nes` builds a core the firmware no longer has.** `FORCE_NOFRENDO`
+   exists in no makefile, `NES_C_SOURCES` is empty, and no nofrendo `.c` is in
+   any source list — NES is fceumm only. The harness does not compile, because
+   `nofrendo.h` declares `nofrendo_start` and `nes_insertcart` with the
+   game-genie parameters while `nofrendo.c` defines them without. Nothing in
+   the firmware can catch that: the firmware does not build the file. This is a
+   harness for dead code, and by this document's own rule — a harness must be
+   the same program as the firmware — it should be deleted or the core
+   restored. Left standing, with the diagnosis, for whoever owns that call.
