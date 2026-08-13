@@ -119,6 +119,19 @@ a delta across a fixed number of emulated frames. A wall-clock window is not
 the same window twice: one unchanged build read 20.73, 25.27, 21.70, 28.04,
 24.40, 26.22 and 25.12 drawn fps across seven of them.
 
+## Default
+
+`SNES_SPIN_BAKE=1` is the shipping default. `=0` exists to measure what it is
+worth, the way `SNES_SPC_IDLE_SKIP=0` does — it is not the state anything ships
+in. A feature behind a default-off flag is a feature nobody receives, and this
+repository has already shipped three releases with every flag at 0 for exactly
+that reason.
+
+Verified the way that failure would have been caught: a build with **no flags at
+all** was flashed, and it resumes the savestate, installs the loop
+(`00:8034/8036`, 5,031,141 laps) and draws 52.65 fps where the same scene without
+it draws 25.90.
+
 ## Reproducing
 
 ```sh

@@ -1997,14 +1997,29 @@ endif
 # SNES_SPIN_NO_BUS_HOOKS=1 removes the spin learner's per-bus-access hooks,
 # leaving the rest of it. Diagnostic: it prices the discovery machinery against
 # a design that knows the pattern before the ROM starts.
-# SNES_SPIN_BAKE=1: recognise the wait loop in the cartridge image at load and
-# execute it natively, instead of learning it at runtime. The learner costs
-# 4.78 fps on hardware and the replay branch alone costs nothing (57.22 against
-# 57.23), so everything the mechanism is worth is on the other side of not
-# learning. Address-agnostic by construction -- it matches four bytes of 65816,
-# not a ROM hash -- which is what a table keyed on the dump in the user's hand
-# could never be. See external/sm/src/snes/spin_bake.h.
-SNES_SPIN_BAKE ?= 0
+# SNES_SPIN_BAKE: ON by default, because it is measured and it costs nothing to
+# the cartridges it cannot help.
+#
+# It recognises the NMI wait loop in the cartridge image at load -- four bytes of
+# 65816, not a ROM hash, so ROM hacks and re-dumps are covered by construction --
+# and executes those two opcodes instead of dispatching the interpreter twice per
+# iteration. On hardware, drawn frames, savestate scenes, both arms on the same
+# scene: A Link to the Past +97.0%, David Crane's Amazing Tennis +72.9% (it stops
+# dropping frames entirely), Super Mario World +44.7%, Dragon's Magic +35.1%,
+# Super Mario Kart +9.4%. A cartridge with no headroom (SD Gundam, already at
+# full rate) and one with no match in it at all (Super Metroid) both move by
+# 0.1%, which is the measurement's own noise.
+#
+# Verified across the library, not across four favourites: 2,075 cartridges
+# scanned with the firmware's own loader, 413 get a loop installed, and all 413
+# produce bit-identical state AND audio hashes in the M7 rig with the feature off
+# and on. See docs/SNES_WAIT_LOOP_BAKE.md.
+#
+# 0 exists to measure what it is worth, the way SNES_SPC_IDLE_SKIP=0 does. It is
+# NOT the shipping default: a feature behind a default-off flag is a feature
+# nobody receives, and this repository has already shipped three releases with
+# every flag at 0 for exactly that reason.
+SNES_SPIN_BAKE ?= 1
 ifeq ($(SNES_SPIN_BAKE),1)
   SNES_SPIN_BAKE_DEF := -DSNES_SPIN_BAKE
 else

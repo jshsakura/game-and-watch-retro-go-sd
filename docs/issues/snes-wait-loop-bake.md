@@ -97,7 +97,8 @@ same ROM measures 730 laps/frame in a boot window and 3,976 in its play scene.
 
 ## Flag and default
 
-`SNES_SPIN_BAKE=0` by default; nothing changes unless it is turned on.
+`SNES_SPIN_BAKE=1` is the default. `=0` exists to measure what it is worth, the
+way `SNES_SPC_IDLE_SKIP=0` does — not as the shipping state.
 
 Full write-up, including the measurement tooling and how to reproduce any of the
 numbers: `docs/SNES_WAIT_LOOP_BAKE.md`.
