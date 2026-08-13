@@ -982,3 +982,48 @@ the call (−0.8), 2bpp opaque path (0.00), sparse echo FIR (a savestate
 refusal, not a win), WRAM before the ROM tag (−1.7 drawn), DSP idle-voice hoist
 and skip (+0.16 / −0.59 drawn), `SystemClock_Config(3)` (dead code — the PLL
 stays at level 2), spin learner at any setting (−4.78).
+
+---
+
+## Next session: what is actually unexplored (and what is not)
+
+The wait-loop bake shipped and is verified (413/413 hash-identical, seven
+cartridges on hardware, nothing regressing). Beyond it, two questions were
+opened and neither was answered:
+
+**Mario Kart and Super Metroid do not share a bottleneck with each other.**
+Device profiles, play scenes, gates all PASS:
+
+| | Kart | Metroid (interpreted) |
+|---|---:|---:|
+| 65816 interpreter | 28.0% | 42.3% |
+| PPU | 25.0% | 23.3% |
+| APU (SPC+DSP) | 19.1% | 12.9% |
+| scheduler + DMA/HDMA | ~28% | ~21% |
+
+**Do NOT re-open the PPU on the strength of that 25%.** The renderer ceiling is
+already measured at +3.15 fps -- deleting the whole remaining render is worth
+that and no more -- and the pixel loop, the SIMD pair, the coarse skip and the
+sprite path have all been tried and lost. The share is large; the headroom is
+not.
+
+What is genuinely unmeasured:
+
+- **HDMA, 226 calls a frame on Kart** (one per scanline; Mode 7 rewrites its
+  perspective table every line). Nothing in this tree has ever priced it. An
+  ablation knob was written and reverted, because it must run on the DEVICE
+  play scene: the rig's cold-boot window sits on Kart's title screen, where
+  there is no perspective table and the ablation changes nothing (the state
+  hash was identical, which is how that was caught).
+- **The native ports' own frames.** Super Metroid's port measures 56.2 fps on
+  hardware WITH NO INTERPRETER AT ALL, and nobody has profiled it. Its frame is
+  game C plus the PPU/APU emulation it shares byte-for-byte with this core, so
+  whatever is left there is shared with every ported game. Note the interpreted
+  Metroid numbers above are for a path no player uses -- Metroid, Mario World
+  and Zelda 3 all have native ports, which is why they are the wrong ROMs to
+  benchmark the SNES core with. Use Kart, Dragon's Magic, Amazing Tennis.
+- `g_common_drawn_frames` / `g_common_emu_frames` (Core/Src/porting/common.c)
+  make any core measurable with `drawn_ab.sh`, ports included -- verified live
+  on the SNES core. Booting a native port unattended still does not work:
+  `/snes_bench_index.txt` accepts a ROM NAME now, but the homebrew lookup does
+  not launch Super Metroid and was not diagnosed.

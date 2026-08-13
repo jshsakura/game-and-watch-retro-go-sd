@@ -2157,8 +2157,57 @@ static int gnw_autoboot_index(void)
     return idx;
 }
 
+/* The bench file may name a ROM instead of indexing the SNES list.
+ *
+ * Super Metroid, Super Mario World and Zelda 3 do not run on the SNES core at
+ * all -- they are native ports, dispatched by NAME out of the homebrew list --
+ * so an index into emulators["snes"] can never reach them, and the port a
+ * player actually uses could not be benchmarked. Returns NULL when the file
+ * holds a number (the SNES-index path below). */
+static retro_emulator_file_t *gnw_autoboot_named(void)
+{
+#if SD_CARD == 1
+    static char want[64];
+    FILE *f = fopen("/snes_bench_index.txt", "rb");
+    if (!f) return NULL;
+    size_t n = fread(want, 1, sizeof(want) - 1, f);
+    fclose(f);
+    if (n == 0) return NULL;
+    want[n] = 0;
+    while (n && (want[n - 1] == '\n' || want[n - 1] == '\r' || want[n - 1] == ' '))
+        want[--n] = 0;
+    if (n == 0 || (want[0] >= '0' && want[0] <= '9')) return NULL;
+
+    /* Only the homebrew list. Refreshing every emulator at boot -- which the
+     * first version did -- allocates a ROM list for all ~30 of them and the
+     * search never came back; the numeric path in the same build worked, which
+     * is what isolated it. The native ports all live here. */
+    for (int i = 0; i < emulators_count; i++) {
+        if (strcmp(emulators[i].dirname, "homebrew") != 0) continue;
+        emulators[i].roms.count = 0;
+        emulator_refresh_list(&emulators[i]);
+        for (int r = 0; r < emulators[i].roms.count; r++) {
+            if (strcmp(emulators[i].roms.files[r].name, want) == 0)
+                return &emulators[i].roms.files[r];
+        }
+        break;
+    }
+#endif
+    return NULL;
+}
+
 void gnw_autoboot(void)
 {
+    retro_emulator_file_t *named = gnw_autoboot_named();
+    if (named) {
+#ifdef GNW_AUTOBOOT_STATE
+        emulator_start(named, true, false, GNW_AUTOBOOT_SLOT);
+#else
+        emulator_start(named, false, false, -1);
+#endif
+        return;
+    }
+
     const int autoboot_index = gnw_autoboot_index();
     for (int i = 0; i < emulators_count; i++) {
         if (strcmp(emulators[i].dirname, "snes") != 0)
