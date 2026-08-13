@@ -860,16 +860,22 @@ Final, on hardware, on the console's own savestate scenes, bracketed:
 
 | ROM | off | on | |
 |---|---|---|---|
-| Super Mario World | 23.46 | **33.41** | **+42.4%** |
-| A Link to the Past | 16.44 | **19.27** | **+17.2%** |
-| Super Mario Kart | 16.95 | 17.03 | +0.5% |
-| Super Metroid | 11.41 | 11.28 | −1.2% |
+| Super Mario World | 23.46 | **33.33** | **+42.1%** |
+| A Link to the Past | 16.44 | **19.15** | **+16.5%** |
+| Super Mario Kart | 16.95 | 17.25 | +1.8% |
+| Super Metroid | 11.41 | 11.42 | **0.0%** |
 
-Mario Kart's −10.5% became +0.5%. Super Metroid's −1.2% is the floor of the
-design and it is honest: that cartridge contains **no match at all** (`on=0,
-sites=0`), so what it pays is the mechanism existing — one compare per span and
-a per-frame tick. Every arm is bit-identical to its baseline on the rig's state
-AND audio hashes.
+**Nothing regresses.** Mario Kart's −10.5% became +1.8%, and Super Metroid —
+which contains **no match at all** (`on=0, sites=0`) — pays nothing measurable.
+Getting that last cartridge to zero took one more step, and it is the same
+lesson a third time: the span replay used to hand the span back when DMA went
+busy, so run_dots had to ask on every DMA cycle whether the pc was back in the
+loop. That question cost **1.1% of Super Metroid's frame** — for a loop that
+cartridge can never run. Behind a loop-invariant local it was still 0.6%. The
+answer was not a cheaper test but **no test**: the span replay runs the DMA
+burst itself, copied from run_dots line for line, and the re-entry disappears.
+
+Every arm is bit-identical to its baseline on the rig's state AND audio hashes.
 
 ### What it looked like before the test moved (kept: every number here was paid for)
 
