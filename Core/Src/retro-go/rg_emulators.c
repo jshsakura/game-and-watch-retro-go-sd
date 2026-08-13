@@ -2132,14 +2132,40 @@ bool emulator_is_file_valid(retro_emulator_file_t *file)
  * paths come from FatFs and a literal in this file may not match them byte for
  * byte, which is exactly how the debugger's remote emulator_get_file() call
  * came back NULL. Never enabled in a shipping build. */
+/* The index may come from the card instead of the binary.
+ *
+ * It was compile-time, which meant one firmware build per cartridge measured --
+ * 826 container builds to sweep a 413-cartridge shortlist, about 55 hours, and
+ * that is the reason a device sweep looked impossible. A one-line file on the
+ * SD card makes it two builds and a reset per cartridge. Measurement-only; the
+ * file is read, never written. */
+static int gnw_autoboot_index(void)
+{
+    int idx = GNW_AUTOBOOT_INDEX;
+#if SD_CARD == 1
+    FILE *f = fopen("/snes_bench_index.txt", "rb");
+    if (f) {
+        char buf[16] = {0};
+        size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+        if (n > 0) {
+            int v = atoi(buf);
+            if (v >= 0) idx = v;
+        }
+    }
+#endif
+    return idx;
+}
+
 void gnw_autoboot(void)
 {
+    const int autoboot_index = gnw_autoboot_index();
     for (int i = 0; i < emulators_count; i++) {
         if (strcmp(emulators[i].dirname, "snes") != 0)
             continue;
         emulators[i].roms.count = 0;
         emulator_refresh_list(&emulators[i]);
-        if (emulators[i].roms.count > GNW_AUTOBOOT_INDEX)
+        if (emulators[i].roms.count > autoboot_index)
 #ifdef GNW_AUTOBOOT_STATE
             /* Load the savestate: the title screen is not what anyone is trying
              * to make faster, and an attract demo drifts, so two arms measured
@@ -2151,10 +2177,10 @@ void gnw_autoboot(void)
              * in real play spends as much again in the APU and is 6 fps slower.
              * Measure where the game is played -- GNW_AUTOBOOT_SLOT=0 is the
              * first manual slot. */
-            emulator_start(&emulators[i].roms.files[GNW_AUTOBOOT_INDEX], true, false,
+            emulator_start(&emulators[i].roms.files[autoboot_index], true, false,
                            GNW_AUTOBOOT_SLOT);
 #else
-            emulator_start(&emulators[i].roms.files[GNW_AUTOBOOT_INDEX], false, false, -1);
+            emulator_start(&emulators[i].roms.files[autoboot_index], false, false, -1);
 #endif
         return;
     }
