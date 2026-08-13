@@ -303,16 +303,6 @@ static void run_dots(Snes *snes, int dots) {
       snes->apuDotsAccum += 2;
       snes->hPos += 2; dots -= 2;
       dma_active = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
-#ifdef SNES_SPIN_BAKE
-      /* A burst just ended: if the CPU is sitting in the wait loop, resume
-       * replaying it now rather than at the next span. A Link to the Past's
-       * rain runs HDMA on every scanline, so without this the span replay is
-       * cut short constantly and the win falls from 15.8% to 9.4% drawn.
-       * `dma_active` is already in a register; the pc test only runs on the
-       * edge, once per burst, not per DMA cycle. */
-      if (!dma_active && (uint16_t)(snes->cpu->pc - g_bake.pc_load) <= 2u)
-        dots = spin_bake_run_span(snes, snes->cpu, dots);
-#endif
       continue;
     }
     bool started_dma = false;

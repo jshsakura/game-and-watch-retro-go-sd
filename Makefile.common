@@ -2021,6 +2021,13 @@ ifneq ($(GNW_AUTOSAVE_FRAME),)
   C_DEFS += -DGNW_AUTOSAVE_FRAME=$(GNW_AUTOSAVE_FRAME)
 endif
 
+# Diagnostic: drop the re-entry after a DMA burst, leaving only the per-span
+# entry. Splits the cost a non-spinning cart pays into its two halves.
+SNES_BAKE_NO_DMA_REENTRY ?= 0
+ifeq ($(SNES_BAKE_NO_DMA_REENTRY),1)
+  SNES_SPIN_BAKE_DEF += -DSNES_BAKE_NO_DMA_REENTRY=1
+endif
+
 SNES_BAKE_NO_INSTALL ?= 0
 ifeq ($(SNES_BAKE_NO_INSTALL),1)
   SNES_SPIN_BAKE_DEF += -DSNES_BAKE_NO_INSTALL=1
