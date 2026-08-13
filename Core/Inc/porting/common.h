@@ -26,6 +26,11 @@ extern const uint8_t volume_tbl[ODROID_AUDIO_VOLUME_MAX + 1];
 
 void common_emu_frame_loop_reset(void);
 bool common_emu_frame_loop(void);
+/* Frames the overload guard emulated and actually drew, for every core. Read
+ * over SWD by tools/gnw_probe/drawn_ab.sh; see common.c for why emulated fps
+ * alone is the wrong instrument whenever the guard is engaged. */
+extern uint32_t g_common_drawn_frames;
+extern uint32_t g_common_emu_frames;
 void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choice_t *game_options, void_callback_t repaint);
 void common_emu_input_loop_handle_turbo(odroid_gamepad_state_t *joystick);
 void common_emu_sound_sync(bool use_nops);

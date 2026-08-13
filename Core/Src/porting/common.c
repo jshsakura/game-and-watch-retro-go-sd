@@ -114,6 +114,22 @@ void common_emu_frame_loop_reset(void){
     common_emu_sound_sync_reset();
 }
 
+/* Drawn and emulated frames, for EVERY core, counted in the one place that
+ * decides the question.
+ *
+ * The SNES port grew `g_snes_drawn_frames` because emulated fps turned out to
+ * be the wrong instrument there: the overload guard below draws one frame in
+ * four, so a change can raise what the player sees while LOWERING the fps
+ * number, and twice this year an optimisation was shelved for exactly that
+ * reason. That is not a SNES property -- this guard is shared by every
+ * emulator in the tree, and no other core can see it at all. One counter here
+ * makes `tools/gnw_probe/drawn_ab.sh` work on all of them, and answers the
+ * question that has to come first for any core: is the guard even engaged? A
+ * core running at full speed draws every frame it emulates and has nothing to
+ * gain from making frames cheaper. */
+uint32_t g_common_drawn_frames;
+uint32_t g_common_emu_frames;
+
 bool common_emu_frame_loop(void){
     rg_app_desc_t *app = odroid_system_get_app();
     int16_t frame_time_10us = common_emu_state.frame_time_10us;
@@ -149,6 +165,7 @@ bool common_emu_frame_loop(void){
 
     if(common_emu_state.startup_frames < 3) {
         common_emu_state.startup_frames++;
+        g_common_emu_frames++; g_common_drawn_frames++;
         return true;
     }
 
@@ -194,6 +211,8 @@ bool common_emu_frame_loop(void){
     else if(frame_integrator < -frame_time_10us) common_emu_state.pause_frames = 1;
     common_emu_state.skipped_frames += common_emu_state.skip_frames;
 
+    g_common_emu_frames++;
+    if (draw_frame) g_common_drawn_frames++;
     return draw_frame;
 }
 

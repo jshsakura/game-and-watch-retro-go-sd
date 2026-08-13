@@ -723,6 +723,215 @@ one window and **7–9/s** in another. The direction of the draw-ratio cliff
 window (`stretch_ab.sh`) to be compared at this resolution, exactly as the
 audio work established earlier — a wall-clock read is not the same window twice.
 
+
+### The baked wait loop: the prize is real, the model was missing the tax, and the replay design was unsound
+
+`SNES_SPIN_BAKE` recognises the wait loop in the cartridge image at load and
+**executes** it, instead of learning a pattern at runtime and replaying it. Four
+bytes are the whole signature:
+
+```
+806b: a5 10     LDA $10        ; direct page, low WRAM
+806d: f0 fc     BEQ $806b      ; back to itself
+```
+
+Three things this settles, each of which contradicts the plan it came from.
+
+**The handoff's charges were the wrong rig's.** `charge 0/6` came from
+`rig_snes_spin.c`, which is the C interpreter and computes
+`(cycles - memOps) * 6`. The device engine computes `cycles*6 + memOps*2` and
+the same loop is **24/22**. `rig_snes.c` now prints SPINPAT so the number comes
+from the engine the device runs. (Its `[spin]` counters had been nested inside
+`#ifdef RIG_COST_PROF`, so a `-DSNES_SPIN_SKIP` run printed no spin line at all;
+both prints now sit outside every other guard.)
+
+**"Bake the pattern and replay it" cannot work, and it fails fast.** The
+learner's `spin_note()` on every real opcode IS the honesty mechanism -- it
+drops the pattern the moment real execution diverges, and that is what the
+4.78 fps buys. Strip the learner and keep the replay and the loop can no longer
+see the byte the NMI handler wrote. Measured, `SNES_BAKE_BLIND_REPLAY=1`:
+`STATEHASH=74d314ee` against the correct `eb1a2262`, and **faster** -- the shape
+of a win that is a different machine. The shipping path instead reads the polled
+byte out of WRAM, sets A/Z/N exactly as the interpreter would, and takes the
+branch on that Z, so there is no purity proof to maintain and nothing to watch.
+Bit-identical state AND audio hashes on three ROMs.
+
+**Net = benefit - a fixed tax, and the tax does not care about spin share.**
+Priced by a third arm that compiles the mechanism in and installs nothing:
+
+| ROM | laps/frame | tax | net (rig insn/frame) |
+|---|---|---|---|
+| Super Mario World | 3,643 | | **-7.67%** |
+| A Link to the Past | 730 | +118,518 (+2.39%) | +0.30% |
+| Super Mario Kart | **0** | +2.8% | **+2.8%, all tax** |
+
+Benefit is 142 insn per replayed lap, so break-even is ~835 laps/frame. Mario
+Kart matches the signature at `$c0:805c` and **never executes it** -- it pays
+the tax for nothing. `prize = 2.5 fps x pure%` was missing this term entirely.
+
+The tax is not the compare. Written inline in `run_dots` the body cost ~12
+instructions per opcode by perturbing that loop's register allocation (the DMA
+path picked up a reload per cycle); split behind a call it is 118,518/frame, and
+forced out of line into a dispatch helper it is **249,892**. Placement was worth
+more than the algorithm.
+
+**Device, Zelda savestate scene, bracketed A/B/A:** emulated 57.26/57.29/57.12
+-> 56.91/56.90/57.21 -> 56.97/57.51/57.35, i.e. **-0.24 fps** -- and drawn
+frames, which is the instrument that matters, went the other way:
+
+| arm | draw ratio | drawn fps |
+|---|---|---|
+| off | 0.2800 / 0.2838 / 0.2804 / 0.2822 (bracket) | 16.38-16.52 |
+| **on** | 0.3252 / 0.3273 / 0.3261 | **18.87-19.04** |
+
+**+15.8% drawn (16.44 -> 18.95, +2.5 fps)**, the same emulated-down/drawn-up
+trade `SNES_ROMCACHE` showed. Measured with `tools/gnw_probe/drawn_ab.sh`
+(reset- and frame-aligned; it repeats to 0.9% where a wall-clock window spread
+7.3 fps).
+
+**The rig called this ROM a wash, and the rig was wrong, for a reason that
+invalidates the other rig verdicts too.** The play scene replays **3,976
+laps/frame**; the rig's cold-boot window replays 730. A 5.4x understatement of
+the only quantity the whole model depends on. So "Zelda is below break-even"
+was an artifact of the scene, and **Mario Kart's laps=0 -- also a cold-boot
+window -- cannot be read as "this ROM never spins" either.** Anything judged on
+a rig boot window has to be re-judged on a savestate scene before it counts.
+
+**Device, SMW: not measurable today.** Both arms sit pinned at the ~60.0 fps
+audio cap, so the prize can only appear as drawn frames -- and SMW's slot-0
+savestate is refused, leaving only the free-running attract scene, where the
+SAME build reads 20.73, 25.27, 21.70, 28.04, 24.40, 26.22 and 25.12 drawn fps.
+`tools/gnw_probe/drawn_ab.sh` (frame-aligned, reset-aligned, and it names the
+scene on every line) still reads 0.3875 and 0.4168 on one build. The scene moves
+faster than the alignment can pin it; the measurement needs a savestate.
+
+**Mario Kart, on the device, also replays nothing.** `g_bake` reads
+`pc=c0:805c/805e dp_off=44 sites=1 laps=0` in the scene autoboot can reach --
+the signature is in the ROM and the loop is not executed. So the "pays the tax
+for nothing" case is real on hardware, not just in the rig.
+
+**Both stale savestates are stale by exactly four bytes.** `g_snes_state_refuse`
+reads stage 5 (payload length) for SMW (269,355 vs 269,359 expected) and for
+Mario Kart (269,479 vs 269,483). Those four bytes are the `cpuMemOps` slot that
+`d0e0ffb perf(snes): charge the bus once per opcode` added inside the
+`hPos..openBus` block -- the MIDDLE of the stream, so the files cannot be
+rescued by padding. Zelda's state postdates it and loads. The consequence for
+measurement: the only ROM whose play scene is reachable today is Zelda.
+
+### Super Mario World, on hardware, on a scene the console made for itself
+
+SMW's slot-0 state was four bytes short, nobody can sit at a console with a
+debug probe soldered to it, and a free-running attract demo spread the SAME
+build over 7.3 drawn fps. So the console writes its own scene:
+`GNW_AUTOSAVE_FRAME=<n>` boots the ROM, runs n deterministic frames and saves
+slot 0 once, through the same call the menu uses. Every later arm resumes
+exactly there. The file it wrote is 269,359 bytes of payload -- the length this
+build streams, against the stale file's 269,355.
+
+Bracketed A/B/A on that scene, 1800 emulated frames per sample:
+
+| arm | drawn fps | draw ratio |
+|---|---|---|
+| off | 24.86 / 23.33 / 23.14, then **23.19 / 23.10 / 23.18** returning | 0.379-0.408 |
+| **on** | **28.28 / 27.99 / 27.97** | 0.458-0.463 |
+
+**+21.2% drawn frames (23.16 -> 28.08, +4.9 fps).** The armed arm's worst
+sample beats the disarmed arm's best. Emulated fps is 60.08 against 60.00 --
+both pinned on the audio cap, which is exactly why emulated fps could never
+have shown this and drawn fps had to.
+
+### Where it ended: the test moved out of the loop, and the regressions went with it
+
+The per-opcode guard was the whole problem, and the fix was not to make it
+cheaper but to stop asking per opcode. A wait loop is entered once and spun
+thousands of times, so `run_dots` asks once per SPAN whether the pc is in the
+loop, and if it is, `spin_bake_run_span()` replays laps until the loop breaks —
+a copy of run_dots' own body with the interpreter dispatch replaced. Two details
+carried most of the numbers:
+
+- **Entering mid-opcode is the common case.** The first version returned when
+  `cpuCyclesLeft != 0`, which is how spans usually start; it replayed 33 laps a
+  frame where the per-opcode version replayed 3,643.
+- **A burst of HDMA must not end the replay.** A Link to the Past's rain runs
+  HDMA every scanline, and without re-entering when `dma_active` falls the win
+  was 9.4% instead of 17.2% drawn. The test on that edge is once per burst.
+
+Final, on hardware, on the console's own savestate scenes, bracketed:
+
+| ROM | off | on | |
+|---|---|---|---|
+| Super Mario World | 23.46 | **33.41** | **+42.4%** |
+| A Link to the Past | 16.44 | **19.27** | **+17.2%** |
+| Super Mario Kart | 16.95 | 17.03 | +0.5% |
+| Super Metroid | 11.41 | 11.28 | −1.2% |
+
+Mario Kart's −10.5% became +0.5%. Super Metroid's −1.2% is the floor of the
+design and it is honest: that cartridge contains **no match at all** (`on=0,
+sites=0`), so what it pays is the mechanism existing — one compare per span and
+a per-frame tick. Every arm is bit-identical to its baseline on the rig's state
+AND audio hashes.
+
+### What it looked like before the test moved (kept: every number here was paid for)
+
+### All four cartridges on the card, on scenes the console made for itself — and half of them lose
+
+`GNW_AUTOSAVE_FRAME` made a fresh, resumable scene for every ROM, so this is
+four play scenes, not one play scene and three title screens. Drawn frames,
+1800 emulated frames a sample, bracketed:
+
+| ROM | off | on | |
+|---|---|---|---|
+| Super Mario World | 23.16 | **28.08** | **+21.2%** |
+| A Link to the Past | 16.44 | **18.95** | **+15.8%** |
+| Super Metroid | 11.41 | 11.09 | −2.7% |
+| Super Mario Kart | 16.81 | 15.05 | **−10.5%** |
+
+**This cannot ship as it stands.** Two carts gain a sixth to a fifth of their
+drawn frames and two lose, one of them badly. And the mechanism is high-gain in
+BOTH directions for the same reason: Mario Kart's emulated fps falls 1.5% and
+its drawn frames fall 10.5%, the mirror image of Zelda turning −0.24 emulated
+into +15.8% drawn. Near the overload guard's pinning point a small change in
+emulation time is a large change in what the player sees.
+
+The cause is one sentence: **the guard runs on every opcode and only a spinning
+cart is ever repaid.** Super Metroid pays ~2.7% for a loop it does not run.
+
+The fix has a place to go. The Thumb-2 engine dispatches through a dense table
+with a dedicated `.Lopa5` handler for `LDA dp` — the first of the loop's two
+opcodes. A test there runs only on LDA-dp opcodes instead of all of them, which
+is where a test belongs: next to the information it needs. That is assembly work
+on `snes_thumb2.S` and it is the next session's, not this one's.
+
+### The gate that had to be rebuilt, because the obvious one was worse than the disease
+
+The first gate specialised `run_dots`/`run_frame_events` into `baked` and
+`plain` clones and chose per span, so a disarmed cart would fold the guard away
+entirely and pay nothing. It does not work, and the failure is not subtle: a
+build that INSTALLS NOTHING drew **14.16 fps against the baseline's 16.44 on
+Zelda -- 13.9% lost to code that never runs**. Instantiating both clones is
+enough to change what gcc does with the frame loop; the disarmed clone came out
+64 bytes smaller than the baseline's and 2.2% slower. Three placements were
+measured (per-span branch, per-frame branch, armed clone isolated behind
+`noinline`) and all three cost about the same. The one build that matched the
+baseline -- 3,764,334 insn/frame against 3,764,322, a difference of twelve --
+was the degenerate one that instantiates a single clone.
+
+**What ships is one code path that disarms by moving the pc out of reach**:
+`pc_load = 0xffff`, which the compare can never see. The guard's cost stays;
+only the replay stops. A cart that does not spin pays the compare (~2.4% of a
+frame) rather than a different program (13.9% of its drawn frames), and the
+window/park cycle retries rather than deciding once -- because spin rate is a
+property of the scene, not the cartridge, as Zelda's 730-vs-3,976 proves.
+
+**Two traps caught on the way.** Regenerating `snes_redefines` **deleted 89
+symbols**, because the generator compiles the core without `-DSNES_THUMB2_CPU`
+and friends, so those symbols do not exist in its objects -- and the next link
+failed on `multiple definition of snes_cycles_per_opcode` against the SM
+overlay, the exact collision that file prevents. It merges now, never replaces.
+And the savestate loader refused a file while saying only "refused": the file
+turned out to be well-formed, current-version and self-consistent, after two
+wrong guesses. `g_snes_state_refuse[4]` now carries stage/file/expected/size.
+
 ---
 
 ## Start here next session

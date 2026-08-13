@@ -25,6 +25,9 @@
 #ifdef SNES_SPIN_SKIP
 #include "src/snes/spin_skip.h"
 #endif
+#ifdef SNES_SPIN_BAKE
+#include "src/snes/spin_bake.h"
+#endif
 
 #ifndef RIG_FRAMES
 #define RIG_FRAMES 1200
@@ -279,6 +282,12 @@ static void cpu_tick(Snes *snes) {
   snes->cpuCyclesLeft -= 2;
 }
 static void run_dots(Snes *snes, int dots) {
+#ifdef SNES_SPIN_BAKE
+  /* One test per SPAN, outside the loop below, which is therefore compiled
+   * exactly as it was before this feature existed. See spin_bake.h. */
+  if ((uint16_t)(snes->cpu->pc - g_bake.pc_load) <= 2u)
+    dots = spin_bake_run_span(snes, snes->cpu, dots);
+#endif
   /* Hoist DMA-active check into a local. DMA is only active during HDMA
    * countdown (hPos 1024->1362) and VBlank bulk transfer. Between those
    * windows (2/3 of scanline segments), dma_active is false for the entire
@@ -294,6 +303,16 @@ static void run_dots(Snes *snes, int dots) {
       snes->apuDotsAccum += 2;
       snes->hPos += 2; dots -= 2;
       dma_active = snes->dma->dmaBusy || snes->dma->hdmaTimer > 0;
+#ifdef SNES_SPIN_BAKE
+      /* A burst just ended: if the CPU is sitting in the wait loop, resume
+       * replaying it now rather than at the next span. A Link to the Past's
+       * rain runs HDMA on every scanline, so without this the span replay is
+       * cut short constantly and the win falls from 15.8% to 9.4% drawn.
+       * `dma_active` is already in a register; the pc test only runs on the
+       * edge, once per burst, not per DMA cycle. */
+      if (!dma_active && (uint16_t)(snes->cpu->pc - g_bake.pc_load) <= 2u)
+        dots = spin_bake_run_span(snes, snes->cpu, dots);
+#endif
       continue;
     }
     bool started_dma = false;
@@ -340,6 +359,12 @@ static void run_dots(Snes *snes, int dots) {
     dma_active = started_dma;
   }
 }
+
+
+/* The armed test lives HERE, not in run_dots. Putting it one level down made
+ * run_dots a real call -- it had been inlined into the caller -- and that alone
+ * cost 2.13% of a frame on Super Mario Kart with the guard itself folded away
+ * and nothing installed. One branch per frame is free; one per span is not. */
 static void run_frame_events(Snes *snes) {
   for (;;) {
     snes->apuDotsAccum += 2;
@@ -351,6 +376,9 @@ static void run_frame_events(Snes *snes) {
   snes_catchupApu(snes);
 #ifdef SNES_SPIN_SKIP
   spin_frame_tick();
+#endif
+#ifdef SNES_SPIN_BAKE
+  spin_bake_frame_tick();
 #endif
 }
 
@@ -403,6 +431,11 @@ int main(void) {
   spin_reset();
 #endif
   if (!snes_loadRom(snes, rom, (int)rom_len)) { printf("unsupported ROM\n"); return 1; }
+#ifdef SNES_SPIN_BAKE
+  /* After the load, not before: the scan maps a ROM offset to a pc through
+   * cart->type, which snes_loadRom is what decides. */
+  spin_bake_scan(snes);
+#endif
   /* snes_loadRom malloc'd a second copy of the ROM. The ELF already carries the
    * blob in PSRAM — point cart->rom back at it and free the copy, so a 6 MB cart
    * costs 6 MB, not 12. The core only reads cart->rom; SRAM writes go to cart->ram.
@@ -683,6 +716,9 @@ int main(void) {
       extern uint32_t g_tile_full[2], g_tile_mixed[2], g_tile_flat[2], g_tile_opq_z[2];
       extern uint64_t g_tile_opaque_px[2];
       extern uint32_t g_t2_full[2], g_t2_mixed[2];
+      { extern uint32_t g_fir_ticks, g_fir_taps;
+        if (g_fir_ticks) printf("[snes-qemu] echo FIR: %lu ticks, %.2f non-zero taps of 8 avg\n",
+               (unsigned long)g_fir_ticks, (double)g_fir_taps / g_fir_ticks); }
       printf("[snes-qemu] 2bpp tiles: full(main/sub)=%lu/%lu mixed=%lu/%lu\n",
              (unsigned long)g_t2_full[0], (unsigned long)g_t2_full[1],
              (unsigned long)g_t2_mixed[0], (unsigned long)g_t2_mixed[1]);
@@ -763,6 +799,37 @@ int main(void) {
   rig_print_percentiles("APU all", g_frame_apu_ticks, RIG_FRAMES, ipt_x1000);
   if (RIG_FRAMES > 900)
     rig_print_percentiles("APU 900+", g_frame_apu_ticks + 900, RIG_FRAMES - 900, ipt_x1000);
+#endif
+
+  /* Outside every other #ifdef on purpose. The [spin] counters used to live
+   * inside the RIG_COST_PROF block, so a run built with -DSNES_SPIN_SKIP and
+   * nothing else printed no spin line at all -- the same shape as a gate that
+   * skips and says nothing. */
+#ifdef SNES_SPIN_SKIP
+  { double n = (double)(g_spin.ops_real + g_spin.ops_virtual);
+    printf("[spin] real=%llu virt=%llu skipped=%.4f%% gate=%d\n",
+           (unsigned long long)g_spin.ops_real,
+           (unsigned long long)g_spin.ops_virtual,
+           n ? 100.0 * g_spin.ops_virtual / n : 0.0, (int)g_spin.gate_on);
+    /* The adopted pattern in the form a baked table carries it. rig_snes_spin.c
+     * prints the same line from the C interpreter -- and the charge there is
+     * `(cycles - memOps) * 6`, not the `cycles*6 + memOps*2` this engine and the
+     * device use. A charge copied from that rig is not the device's charge. */
+    printf("SPINPAT len=%d on=%d", g_spin.len, (int)g_spin.on);
+    for (int i = 0; i < g_spin.len && i < SPIN_PMAX; i++)
+      printf(" %06lx:%u", (unsigned long)g_spin.pc[i], (unsigned)g_spin.charge[i]);
+    printf("\n"); }
+#endif
+#ifdef SNES_SPIN_BAKE
+  printf("[bake] on=%d sites=%lu pc=%02x:%04x/%04x dp_off=%02x charge=%u/%u laps=%lu\n",
+         (int)g_bake.on, (unsigned long)g_bake.sites, g_bake.bank,
+         g_bake.pc_load, g_bake.pc_branch, g_bake.dp_off,
+         g_bake.charge_load, g_bake.charge_branch, (unsigned long)g_bake.laps);
+  printf("[bake] gate: armed=%d win_frames=%lu park=%lu\n", (int)g_bake.armed,
+         (unsigned long)g_bake.win_frames, (unsigned long)g_bake.park_frames);
+  if (g_bake.on && g_bake.laps == 0)
+    printf("[bake] WARNING: the installed loop never executed -- this run does "
+           "not gate it.\n");
 #endif
   return 0;
 }

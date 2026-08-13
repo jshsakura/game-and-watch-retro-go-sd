@@ -197,3 +197,7 @@ g_lc_hit gsnes__g_lc_hit
 g_lc_miss gsnes__g_lc_miss
 g_tile_same gsnes__g_tile_same
 g_tile_diff gsnes__g_tile_diff
+spin_bake_scan gsnes__spin_bake_scan
+spin_bake_reset gsnes__spin_bake_reset
+spin_bake_exec gsnes__spin_bake_exec
+g_bake gsnes__g_bake

@@ -41,6 +41,9 @@
 #include "snes/input.h"
 #include "snes/saveload.h"
 #include "snes/spin_skip.h"
+#ifdef SNES_SPIN_BAKE
+#include "snes/spin_bake.h"
+#endif
 #include "snes_audio_stretch.h"
 #include "snes/rc_dispatch.h"
 #include "crc32.h"
@@ -232,6 +235,12 @@ static void cpu_tick(Snes *s) {
 
 static void run_dots(Snes *s, int dots) {
   Cpu *cpu = s->cpu;
+#ifdef SNES_SPIN_BAKE
+  /* One test per SPAN, outside the loop below, which is therefore compiled
+   * exactly as it was before this feature existed. See spin_bake.h. */
+  if ((uint16_t)(s->cpu->pc - g_bake.pc_load) <= 2u)
+    dots = spin_bake_run_span(s, s->cpu, dots);
+#endif
   bool dma_active = s->dma->dmaBusy || s->dma->hdmaTimer > 0;
   while (dots > 0) {
     if (dma_active) {
@@ -239,6 +248,16 @@ static void run_dots(Snes *s, int dots) {
       s->apuDotsAccum += 2;
       s->hPos += 2; dots -= 2;
       dma_active = s->dma->dmaBusy || s->dma->hdmaTimer > 0;
+#ifdef SNES_SPIN_BAKE
+      /* A burst just ended: if the CPU is sitting in the wait loop, resume
+       * replaying it now rather than at the next span. A Link to the Past's
+       * rain runs HDMA on every scanline, so without this the span replay is
+       * cut short constantly and the win falls from 15.8% to 9.4% drawn.
+       * `dma_active` is already in a register; the pc test only runs on the
+       * edge, once per burst, not per DMA cycle. */
+      if (!dma_active && (uint16_t)(s->cpu->pc - g_bake.pc_load) <= 2u)
+        dots = spin_bake_run_span(s, s->cpu, dots);
+#endif
       continue;
     }
     bool started_dma = false;
@@ -286,6 +305,10 @@ static void run_dots(Snes *s, int dots) {
   }
 }
 
+/* The armed test lives HERE, not in run_dots. One level down it made run_dots a
+ * real call -- it had been inlined into its caller -- and that alone cost 2.13%
+ * of a frame on Super Mario Kart with the guard folded away and nothing
+ * installed. One branch per frame is free; one per span is not. */
 static void run_frame_events(Snes *s) {
   for (;;) {
     s->apuDotsAccum += 2;
@@ -296,10 +319,17 @@ static void run_frame_events(Snes *s) {
   }
   snes_catchupApu(s);
   spin_frame_tick();   /* auto-gate: park the learner on non-spinning carts */
+#ifdef SNES_SPIN_BAKE
+  spin_bake_frame_tick();   /* the bake's own gate -- once a frame, never per opcode */
+#endif
 #ifdef SNES_SMW_HLE_PRODUCT
   wire_try_swap(s, smw_hle_frame++);
 #endif
 }
+
+#ifdef SNES_SPIN_BAKE
+
+#endif
 
 /* ---- input ----------------------------------------------------------------
  * LakeSnes input1->currentState bit layout (auto-joypad order):
@@ -700,13 +730,36 @@ static bool snes_SaveState(const char *pathName) {
   return state_bytes == payload;
 }
 
+/* Why the last state was refused, readable over SWD.
+ *
+ * The refusal itself is right, but it said only "refused" -- and this tree's own
+ * rule is that a red gate must name what failed. Diagnosing one SMW state by
+ * hand today cost two wrong guesses (wrong build; wrong SRAM size) before the
+ * file turned out to be well-formed, current-version and self-consistent. The
+ * numbers that decide it are three words long; publish them.
+ *
+ *   [0] stage: 0 = ok, 1 = fopen, 2 = short header, 3 = magic, 4 = version,
+ *              5 = payload length, 6 = file size, 7 = short read
+ *   [1] what the file said   [2] what this build expected   [3] file size
+ */
+uint32_t g_snes_state_refuse[4];
+
 static bool snes_LoadState(const char *pathName) {
+  g_snes_state_refuse[0] = 0;
   FILE *f = fopen(pathName, "rb");
-  if (!f) return false;
+  if (!f) { g_snes_state_refuse[0] = 1; return false; }
   snes_state_header_t h;
-  if (fread(&h, 1, sizeof(h), f) != sizeof(h) ||
-      h.magic != SNES_STATE_MAGIC || h.version != SNES_STATE_VERSION) {
+  if (fread(&h, 1, sizeof(h), f) != sizeof(h)) {
+    g_snes_state_refuse[0] = 2;
+    fclose(f);
+    return false;
+  }
+  if (h.magic != SNES_STATE_MAGIC || h.version != SNES_STATE_VERSION) {
     /* Not ours / other build: refuse rather than restore nonsense. */
+    g_snes_state_refuse[0] = (h.magic != SNES_STATE_MAGIC) ? 3u : 4u;
+    g_snes_state_refuse[1] = (h.magic != SNES_STATE_MAGIC) ? h.magic : h.version;
+    g_snes_state_refuse[2] = (h.magic != SNES_STATE_MAGIC) ? SNES_STATE_MAGIC
+                                                           : SNES_STATE_VERSION;
     fclose(f);
     return false;
   }
@@ -725,6 +778,13 @@ static bool snes_LoadState(const char *pathName) {
   long fsize = ftell(f);
   if (h.length != expected ||
       fsize != (long)(sizeof(h) + expected)) {
+    g_snes_state_refuse[0] = (h.length != expected) ? 5u : 6u;
+    g_snes_state_refuse[1] = h.length;
+    g_snes_state_refuse[2] = expected;
+    g_snes_state_refuse[3] = (uint32_t)fsize;
+    printf("snes: state refused, payload %lu but this build streams %lu "
+           "(file %lu bytes)\n", (unsigned long)h.length,
+           (unsigned long)expected, (unsigned long)fsize);
     fclose(f);
     return false;
   }
@@ -733,6 +793,11 @@ static bool snes_LoadState(const char *pathName) {
   state_stream(&state_read);
   fclose(f);
   state_file = NULL;
+  if (state_bytes != h.length) {
+    g_snes_state_refuse[0] = 7u;
+    g_snes_state_refuse[1] = h.length;
+    g_snes_state_refuse[2] = state_bytes;
+  }
   lcd_clear_active_buffer();
   /* A load replaces the whole machine: a learned spin pattern (and its purity
    * sequence history) now describes a machine that no longer exists. Relearn. */
@@ -1053,6 +1118,13 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_system_switch_app(0);   /* back to launcher */
     return;
   }
+#ifdef SNES_SPIN_BAKE
+  /* After the load: the scan maps a ROM offset to a pc through cart->type,
+   * which is what snes_loadRom decides. */
+  spin_bake_scan(snes);
+  printf("SNES bake: on=%d sites=%lu pc=%02x:%04x dp=$%02x\n", (int)g_bake.on,
+         (unsigned long)g_bake.sites, g_bake.bank, g_bake.pc_load, g_bake.dp_off);
+#endif
   /* The loader (GNW_SNES_CORE build) already points cart->rom straight at the
    * flash-cached image — no malloc'd copy exists to free. Do NOT free cart->rom
    * here: it is read-only flash, not heap, and the header-skip may have offset
@@ -1208,6 +1280,32 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     uint32_t prof_wfi        = 0;
 #endif
     wdog_refresh();
+
+#ifdef GNW_AUTOSAVE_FRAME
+    /* Measurement-only: write slot 0 once, N frames in, then carry on.
+     *
+     * A/B on hardware needs a scene both arms see identically, and the only
+     * thing that gives that is a savestate. Two of the three SNES states on the
+     * card are four bytes too short for this build (see g_snes_state_refuse) and
+     * making a new one by hand means playing the console with a debug probe
+     * soldered to it. So the console makes it: boot, run N deterministic frames,
+     * save, and every later arm resumes exactly there.
+     *
+     * The SD write is a one-shot at a known frame, through the same call the
+     * menu uses -- not a write inside the play loop, which this project forbids
+     * for good reason (FAT corruption). Never enabled in a shipping build. */
+    {
+      static bool autosaved = false;
+      if (!autosaved && snes->frames >= (uint32_t)GNW_AUTOSAVE_FRAME) {
+        autosaved = true;
+        odroid_audio_mute(true);
+        printf("snes: autosave slot 0 at frame %lu -> %d\n",
+               (unsigned long)snes->frames, (int)odroid_system_emu_save_state(0));
+        odroid_audio_mute(false);
+        common_emu_state.startup_frames = 0;
+      }
+    }
+#endif
 
     bool drawFrame = common_emu_frame_loop();
     /* The benchmark counts EMULATED frames, and the overload guard draws only
