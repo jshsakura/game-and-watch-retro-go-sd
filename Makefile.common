@@ -2038,6 +2038,13 @@ endif
 
 # Diagnostic: drop the re-entry after a DMA burst, leaving only the per-span
 # entry. Splits the cost a non-spinning cart pays into its two halves.
+# SNES_AUDIO_RATE: the SAI rate for the SNES core. 16000 ships; 32000 is what
+# the DSP already produces, and the price of keeping it is being measured.
+SNES_AUDIO_RATE ?=
+ifneq ($(SNES_AUDIO_RATE),)
+  C_DEFS += -DSNES_AUDIO_RATE=$(SNES_AUDIO_RATE)
+endif
+
 SNES_BAKE_NO_DMA_REENTRY ?= 0
 ifeq ($(SNES_BAKE_NO_DMA_REENTRY),1)
   SNES_SPIN_BAKE_DEF += -DSNES_BAKE_NO_DMA_REENTRY=1

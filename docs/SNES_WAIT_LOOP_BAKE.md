@@ -210,3 +210,29 @@ loop is live, not as the size of the prize.
 | 카토 1-2-3 9단 쇼기 클럽 (Katou Hifumi Kudan - Shougi Club) | 1,623,118 | `c0:093a/093c` |
 | 데이비드 크레인의 어메이징 테니스 (David Crane's Amazing Tennis).sm | 1,614,515 | `0e:f381/f383` |
 | ABC 먼데이 나이트 풋볼 (ABC Monday Night Football).smc | 1,546,633 | `00:8332/8334` |
+
+## Closed: 32 kHz audio
+
+The DSP already synthesizes all 534 samples of a frame -- 32 kHz -- and
+`dsp_getSamples()` box-filters them down to 266 for a 16 kHz SAI, so everything
+above 8 kHz is produced and then discarded. Raising the rate therefore costs no
+synthesis, which made it look cheap.
+
+It is not. On hardware, same savestate scene, drawn frames:
+
+| | emulated | drawn |
+|---|---:|---:|
+| 16 kHz (ships) | 61.00 | **52.65** |
+| 32 kHz | 61.00 | 21.2 |
+| 32 kHz, stretcher constants scaled with the rate | 61.01 | 19.9 |
+
+Emulated fps does not move -- samples per frame scale with the rate, so the
+audio-DMA pacing is preserved -- and the drawn frames collapse by 62%. Twice the
+SAI interrupts, and a stretcher doing per-sample autocorrelation over twice the
+samples, cost far more than the wait-loop bake won. Scaling the stretcher's
+constants (they are all written at 16 kHz) does not recover it, so the cost is
+the rate itself and not a misconfiguration.
+
+The stretcher constants now scale with `SNES_AUDIO_RATE` anyway, since measuring
+a rate change against constants written for another rate is measuring the wrong
+thing. At 16 kHz they are unchanged.

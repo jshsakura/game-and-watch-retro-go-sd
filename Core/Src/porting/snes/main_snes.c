@@ -54,7 +54,15 @@ bool snes_loadRom(Snes *snes, const uint8_t *data, int length);   /* snes_other.
 #define SNES_FPS            60
 #define SNES_WIDTH          256
 #define SNES_HEIGHT         224
+/* 16000 by default. The DSP already synthesizes all 534 samples of a frame at
+ * 32 kHz and dsp_getSamples box-filters them down to 266, so everything above
+ * 8 kHz is produced and then thrown away -- the cost of raising this is the
+ * resample/SAI/stretcher work, NOT the synthesis. Overridable so that cost can
+ * be measured; note the stretcher's constants below are expressed at 16 kHz and
+ * would need scaling before this ships at another rate. */
+#ifndef SNES_AUDIO_RATE
 #define SNES_AUDIO_RATE     16000
+#endif
 #define SNES_AUDIO_SAMPLES  (SNES_AUDIO_RATE / SNES_FPS)   /* 266/frame */
 
 /* Savestate stamp: a raw struct dump must refuse files this build didn't

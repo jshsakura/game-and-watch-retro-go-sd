@@ -23,6 +23,10 @@
 #define STRETCH_IRQ_RESTORE() ((void)0)
 #endif
 
+#ifndef SNES_AUDIO_RATE
+#define SNES_AUDIO_RATE 16000
+#endif
+
 #define RING      SNES_STRETCH_RING
 #define RING_MASK (RING - 1u)
 _Static_assert((RING & RING_MASK) == 0u, "ring must be a power of two");
@@ -31,21 +35,26 @@ _Static_assert((RING & RING_MASK) == 0u, "ring must be a power of two");
  * with 1.35 DMA pulls per emulated frame the level swings by a whole frame
  * between a push and the second pull that follows it, so a cushion under two
  * frames lets a momentary dip reach the floor and start holding samples. */
-#define TARGET     640u
+/* Every constant below is a TIME or a FREQUENCY, and was written at 16 kHz.
+ * Scale them with the rate or a build at another rate is measuring a
+ * misconfigured stretcher rather than the rate change. */
+#define RATE_NUM   (SNES_AUDIO_RATE)
+#define RATE_SCALE(x) (((x) * (uint32_t)RATE_NUM) / 16000u)
+#define TARGET     RATE_SCALE(640u)
 
 /* Length of the history loop a dropout plays, in samples. ~4 ms at 16 kHz:
  * long enough to carry pitch instead of buzzing, short enough to read as a
  * stutter rather than an echo. Must be <= TARGET -- priming is what
  * guarantees that much history exists behind rd. */
-#define REPEAT     64u
+#define REPEAT     RATE_SCALE(64u)
 /* Splice crossfade, samples. The seam of a repeated segment is a click, and a
  * click every loop_len samples is a tone -- 250 Hz with the old fixed 64. */
-#define XFADE      16u
+#define XFADE      RATE_SCALE(16u)
 /* Loop-length search range for a dropout: 50 Hz (320 samples) down to 250 Hz
  * (64) at 16 kHz. A loop that is a whole number of waveform periods splices
  * without a seam; one that is not cannot be crossfaded into sounding right. */
-#define LOOP_MIN   64u
-#define LOOP_MAX   320u
+#define LOOP_MIN   RATE_SCALE(64u)
+#define LOOP_MAX   RATE_SCALE(320u)
 /* Insertions between autocorrelation searches. See the call site. */
 #define PICK_EVERY 8u
 _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
