@@ -72,26 +72,124 @@ These are the rules that stopped bad numbers from becoming shipped decisions.
 
 ## SNES
 
-**Open / current.** Colour math is the largest remaining lever: the colour-math
-loop is 89% of PPU time, which is ~36% of the whole frame, and roughly a third of
-that is a bypass with no visual effect — i.e. case (a) above, not a micro-optimisation.
-Work happens in the `external/sm` submodule, so it must go through a managed patch,
-never a direct edit.
+Deepest-worked core in the tree, and the one most likely to be re-proposed to.
+Detail lives in [SNES_NEXT_SESSION.md](SNES_NEXT_SESSION.md) (state and open
+threads), [SNES_WAIT_LOOP_BAKE.md](SNES_WAIT_LOOP_BAKE.md) and
+[SNES_ROM_SURVEY.md](SNES_ROM_SURVEY.md) (the last shipped lever and how it was
+verified across a library).
 
-**Closed.**
+**Before proposing anything here, read these two instruments.** Most rejected
+SNES proposals were not wrong ideas; they were right ideas judged with the wrong
+number.
 
-- **Static recompilation (rc) via XIP** — 46 fps to 3.5 on device. Instruction
-  count fell 42%; the I-cache stalls ate all of it and more. Dead road.
-- **rc in general** — rc-ITCM measured 44 fps against spin-skip's 46. ⚠️ That
-  comparison is **confounded**: rc *replaces* spin-skip, so it compares rc-alone
-  with spin-skip-alone, and the combination was never measured. The honest claim is
-  that rc's instruction reduction failed to beat spin-skip, for reasons still
-  unestablished. Do **not** cite this as proof that the device is memory-bound —
-  the direct evidence for that is the Virtual Boy blit, above.
-- **4bpp tile decode cache** — no-go.
-- **Fold LUT** — rejected, no gain.
+1. **fps is not what the player sees.** The overload guard draws roughly one
+   frame in four, so a change that makes *skipped* frames cheaper LOWERS the fps
+   counter — the guard spends the slack on drawing. `SNES_SPRITE_SKIP_DRAW` was
+   shelved as "nothing, 52.29 vs 52.36" for exactly this reason. Measure
+   `g_snes_drawn_frames` (`tools/gnw_probe/drawn_ab.sh`) for anything on the
+   frameskip path.
+2. **The attract screen is a different machine from real play.** It is a still
+   image running fewer opcodes: it understates every per-opcode tax and
+   overstates every cache. `SNES_LINE_CACHE` shipped in the wrong position
+   because of this (−3.24 fps once measured in gameplay). Resume a savestate;
+   `GNW_AUTOSAVE_FRAME=n` makes the console write its own scene.
+
+**Shipped.** N-SPC timer-wait charging (`SNES_SPC_IDLE_SKIP`), the PPU
+virgin-z test, the blend LUT, sprite-eval skip on skipped frames, the opaque
+tile path, bulk general-DMA transfer, gap-free audio, and the **baked wait
+loop** (`SNES_SPIN_BAKE`, +35–97% drawn frames, 413/413 cartridges
+hash-identical).
+
+**Closed — the whole-core approaches.**
+
+- **Static recompilation (rc), every variant.** XIP: 46 fps → 3.5 on device
+  (instruction count fell 42%; I-cache stalls ate all of it). ITCM: 44 fps
+  against spin-skip's 46 — ⚠️ confounded, rc *replaces* spin-skip and the
+  combination was never measured. Re-evaluated from scratch in 2026-08
+  ([RC_DISPATCH_ANALYSIS.md](RC_DISPATCH_ANALYSIS.md),
+  [RC_PRIOR_ART.md](RC_PRIOR_ART.md),
+  [RC_FEASIBILITY_2026.md](RC_FEASIBILITY_2026.md)) and closed again on three
+  independent grounds: it is **per-ROM** (8,371 site functions for SMW alone, so
+  it does nothing for a generic core), the dispatch lookup costs 11–12
+  comparisons with heavy branch misprediction on Cortex-M7, and the sites are
+  high-frequency indirect branches into QSPI flash — the same wall that killed
+  DOOM's XIP.
+- **The spin-skip learner, at any setting.** −4.78 fps on hardware. The tax is
+  the discovery machinery (bus hooks, purity proof), not the decision: the
+  per-ROM whitelist already answered "no" for the ROM being measured and the
+  4.78 was still charged. What replaced it executes the two opcodes instead of
+  proving anything — see the bake doc.
+- **Extending ITCM** — device A/B 41.3 → 40.9 fps, a net loss. The I-cache was
+  already doing that job.
+- **N-SPC HLE** (`SNES_NSPC_HLE`) — breaks 38% of the games that use the driver.
+  Must stay default OFF.
+- **The APU as a whole** — 22–26% of the frame, and both engines *together*
+  (65816 + APU frozen) are worth **+2.83 fps** against a +2.95 distance to the
+  audio-DMA cap. **The sum of every lever that exists is short of 60 emulated
+  fps.** That is the arithmetic that closes the "find one more lever" framing.
+
+**Closed — the renderer.** The ceiling is measured: deleting the *entire*
+remaining render is worth **+3.15 fps** and no more. The share is large; the
+headroom is not.
+
+- pixel loop as SIMD pairs (−7.5), coarse 4-pixel transparent skip (+0.22,
+  noise), sprite two-pass reverse draw (neutral), software pipelining at depth
+  1/2/batched (all nothing), `PpuWindows_Calc` duplicate elimination (0 of
+  42,191 sub passes duplicate), colour-math 2 px/iteration (−4.8%).
+- **Every memory theory, four in a row at zero:** tile memo (80% hit rate),
+  prefetch, framebuffer cache-pollution removal, and putting the whole of VRAM
+  in DTCM. The rig then explained why: of the layer draw's 685,758 instructions
+  a frame, **663,322 are the pixel work** — 97% of the instructions and 100% of
+  the time. There is no stall mystery. The fetch, the tilemap walk and the
+  per-call setup are all free.
+
+**Closed — the DSP and audio output.**
+
+- DSP idle-voice BRR skip (−3.1%), idle-skip delete + channel pointer hoist
+  (−0.64; gcc had already folded the hoist), and both closed-form ways of
+  dropping idle voices from the loop (0.00 and −0.59). 68% of voice ticks are
+  idle voices — **68% is a count, not a cost.**
+- **32 kHz output** — looked free (the DSP already synthesizes 534 samples a
+  frame and the box filter throws half away). On hardware it costs **62% of the
+  drawn frames** (52.65 → 21.2), and scaling the stretcher constants with the
+  rate does not recover it. Closed.
+- Audio stretcher: reversed noise fillers (219 underruns), loosening the
+  insertion guard (0 → 444 underruns), per-passage noise smoothing (739). The
+  ±1% band is a stability limit, not only an audibility one.
+
+**Closed — the frame loop and pacing.**
+
+- **Do not add a test to `run_dots`' inner loop.** A build that installed
+  *nothing at all* still lost 6.6% of ALttP's drawn frames and 10.5% of Mario
+  Kart's. Specialising the frame loop into two clones so the disarmed one folds
+  the test away is worse: instantiating both changed gcc's register allocation
+  and the never-installing build lost **13.9%**. Ask once per span, not once per
+  opcode.
+- Advancing the pacing reference by one period (−0.30): a 21 ms frame advances
+  the DMA tick counter by 1, exactly like a 14 ms one. **You cannot bank slack
+  in that counter.**
+- Whole-D-cache clean before present (−0.19). `SystemClock_Config(3)` — dead
+  code, the PLL stays at level 2, so there is no clock headroom either.
+- 4bpp tile decode cache — no-go. Fold LUT — no gain.
 - **Adding SNES as a system was previously closed at 24 fps** with the PPU as the
   wall; the current generic core is a separate effort and is not that proposal.
+
+**Research notes kept for the record**, so a rejected road can be re-read instead
+of re-driven: [SNES_APU_RESEARCH.md](SNES_APU_RESEARCH.md) (where the APU's
+23.6% actually sits, per function),
+[SNES_STATIC_RECOMPILATION.md](SNES_STATIC_RECOMPILATION.md) (public precedents
+for PC→native dispatch under a 100 KB budget),
+[RC_ACTIVATION_VERIFY.md](RC_ACTIVATION_VERIFY.md) (the host gate that has to
+pass before flashing an rc build) and [RESUME_GNW.md](RESUME_GNW.md) (the
+original rc resume point — note its §3 framing is superseded by
+`RC_FEASIBILITY_2026.md`).
+
+**Still unmeasured** (i.e. not closed, and the only two things that are not):
+HDMA — 226 calls a frame on Mario Kart, never priced, and it must be measured on
+a *device play scene* because the rig's cold-boot window sits on a title screen
+with no perspective table; and the native ports' own frames (Super Metroid runs
+56.2 fps on hardware with no interpreter at all, and nobody has profiled what
+that frame is).
 
 **Trap.** The audio-HLE gate compared 21 header bytes against `"SUPER MARIO WORLD  "`.
 The real internal title has no space (`SUPER MARIOWORLD`), and a 19-character literal
@@ -106,10 +204,21 @@ the engine — driver signature, code-region hash, opcode pattern.
 
 ## Sega 32X
 
-**Open / current.** Border flicker after opening the in-game overlay: picodrive
-renders only rows 8..231, so the remaining 16 rows keep whatever the overlay left,
-and the two LCD buffers alternate between different contents. After that, the draw
-path (26.7% of the frame).
+**Removed from the firmware, 2026-07-27** — core and picodrive submodule both.
+Doom reached 13–16 fps and After Burner 8 after a full day of optimisation; 60 fps
+needs a frame to fit in 5.2 M device cycles and it costs ~24 M, a factor of 4.6.
+The whole ledger is [32X_CLOSED.md](32X_CLOSED.md) and
+[32X_DEVICE_MEASUREMENT_LOG.md](32X_DEVICE_MEASUREMENT_LOG.md). `APPID_32X = 26`
+is kept as a RETIRED slot: removing an APPID shifts the struct and resets every
+user's settings.
+
+The entries below are kept because they are *hardware* facts that outlive the
+core — the next person to reach for DMA2D or ITCM on this part needs them. The
+last open bug at removal time, the overlay border flicker, is diagnosed in
+[MD32X_MENU_FLICKER_ANALYSIS.md](MD32X_MENU_FLICKER_ANALYSIS.md): picodrive
+renders only rows 8..231 and there is no RAM for a third buffer, so the two LCD
+buffers alternate between different contents. It is a two-buffer problem, and it
+will recur in any core that repaints under `odroid_overlay_dialog`.
 
 **Closed.**
 
@@ -131,15 +240,31 @@ catches this; the device would have caught it later and more expensively.
 
 ## Sega CD
 
-**Open / current.** Word-RAM 1M/2M bank ownership is unimplemented, and that — not
-the coroutine state index stalling at 8 — is the boot blocker. The stall is a symptom.
+**Folded, 2026-07-24, on a memory fact and not on a bug.** An accurate core needs
+PRG 512 K + Word 256 K = 768 K of *writable* RAM against `RAM_EMU`'s 724 K, and
+XIP does not help RW data. gwenesis only fits by cutting PRG to 128 K, which is
+what breaks the Sub-CPU handshake — so the boot failures were a symptom of the
+budget, not a separate defect to chase. External PSRAM is the only route.
 
-**Closed.** Full emulation remains structurally out of reach: an 840 KB resident RAM
-floor and two 68000s with no dynamic recompiler.
+**And the screen has never come up on the device, not once.** Earlier notes read
+as a regression; they were host-harness results mistaken for device results. The
+CDC/DECI chain analysis that was in flight is kept in
+[SEGACD_INVESTIGATION.md](SEGACD_INVESTIGATION.md) so the next attempt does not
+re-derive it.
 
 **Trap.** A "permanently parked semaphore" was diagnosed from a 60-frame snapshot.
 Live register reads showed the semaphore cycling normally every frame. Sparse
 observation makes repetition look like a stop.
+
+## CPS-1
+
+**Abandoned by the owner, 2026-07-25.** Kept here because most of it was proven
+and someone will propose it again. The renderer is bit-exact on the host — GFX
+interleave, scaler and logic all verified — and the sound data path (tables,
+packer, loader) is complete; the Z80 + QSound engine was never wired. On the
+device it draws a solid colour and never reaches a title screen (flash-cache
+ring / 68000 divergence). Preserved on branch `feat/cps1-container`; write-up in
+[CPS1_HANDOFF.md](CPS1_HANDOFF.md).
 
 ## GBA
 

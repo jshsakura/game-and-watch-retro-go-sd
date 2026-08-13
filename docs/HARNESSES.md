@@ -230,6 +230,19 @@ run for a stupider reason — `skip_on = getenv(x) && atoi(getenv(x))` folds eve
 arm to 1 — which is the third time in this repo a test proved nothing because it
 was not running the code it named.
 
+### `tools/snes_bake_survey` — a whole ROM library, with the firmware's own recognizer
+Three programs that answer three different questions about a feature which
+recognises bytes in a cartridge: `run.sh` (what would install, 2,075 ROMs in
+24 s — links the real `snes_loadRom()` and `spin_bake_scan()`, so the mapper
+score and the `cart_read()` validation are the device's), `hash_gate.py` (both
+arms of the M7 rig over every cartridge that installs, state + audio hashes,
+resumable), `report.py` (both inputs → one markdown table).
+
+The answers, the raw TSV/CSV and the traps are written up in
+**[SNES_ROM_SURVEY.md](SNES_ROM_SURVEY.md)** — 413/413 hash-identical.
+**Copy this shape for any ROM-pattern feature**: a recognizer verified on the
+author's two cartridges is a claim about a library that nobody checked.
+
 ## On-device instrumentation — branch `feat/gba-probe`
 
 The probe that measured what QEMU could not: guest-PC histogram, DWT cycle
@@ -267,6 +280,7 @@ in the binary. Full guide: [SNES_DEVICE_DWT.md](SNES_DEVICE_DWT.md).
 | does sound actually come out | `tests/test_tamapoke_audio.c` (the model: link the real audio file) |
 | does a small on-card store survive its edges | `tests/test_video_resume.c` (pure FILE* logic, real source linked, store path overridden to /tmp) |
 | what is the device really spending a frame on | `feat/gba-probe`; for SNES, `SNES_DEVICE_PROFILE=1` |
+| does my ROM-pattern feature hold across a whole library | `tools/snes_bake_survey/` — survey, then hash-gate every hit ([SNES_ROM_SURVEY.md](SNES_ROM_SURVEY.md)) |
 | is fps compute-bound or sitting on the audio deadline | `SNES_DEVICE_PROFILE=1` Ledger C — DWT alone cannot answer this, it goes blind in `__WFI()` |
 
 ## `tools/gnw_hw_harness/` — the device memory-budget contract (the missing gate)
