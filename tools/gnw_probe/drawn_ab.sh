@@ -51,11 +51,6 @@ esac
 # Say out loud whether this is the savestate scene or a cold boot. Super Mario
 # World's slot-0 state is refused by this build, and a cold-boot window is a
 # different machine -- a fact this tree has now paid for three times.
-if [ -n "$RESUMED" ]; then
-  [ "$(rd "$RESUMED")" = "00000001" ] && SCENE=savestate || SCENE="COLD BOOT (not the play scene)"
-else
-  SCENE=unknown
-fi
 
 # Reset first. Aligning the frame COUNT is not enough: without a reset the
 # window still starts wherever the attract demo happens to be, and the same
@@ -74,6 +69,15 @@ done
 # Let the ROM get past its first frames, then start: the counter must be moving.
 a=$(rd "$F"); sleep 2; b=$(rd "$F")
 [ "$a" = "$b" ] && { echo "$ARM: frame counter not moving after reset" >&2; exit 2; }
+
+# AFTER the reset, not before. Read first, this reported the PREVIOUS run's
+# scene -- in a sweep, the previous cartridge's -- and produced an A/B where one
+# arm said savestate and the other COLD for the same ROM.
+if [ -n "$RESUMED" ]; then
+  [ "$(rd "$RESUMED")" = "00000001" ] && SCENE=savestate || SCENE="COLD BOOT (not the play scene)"
+else
+  SCENE=unknown
+fi
 
 read -r f0 d0 <<EOF
 $(rd "$F" "$DRAWN" | tr '\n' ' ')
