@@ -85,9 +85,40 @@ Core/Src/porting/videopac/main_videopac.c     swap=1 stale=0 always-draws # comp
 Core/Src/porting/zelda3/main_zelda3.c         swap=1 stale=0 always-draws # native port, DrawPpuFrame() every frame
 Core/Src/porting/zxs/main_zxs.c               swap=1 stale=0 always-draws # zx_exec(); zx_blit(); lcd_swap();
 
-Core/Src/porting/gwenesis/main_gwenesis.c     swap=2 stale=1 split        # audio-sync (the DEFAULT) flips on skips; render gated separately. Other swap is the vsync branch, already guarded
+Core/Src/porting/gwenesis/main_gwenesis.c     swap=2 stale=1 split        # see the note below -- in the DEFAULT mode this core cannot skip at all
 Core/Src/porting/msx/main_msx.c               swap=1 stale=1 split        # drawFrame || msx_vdp_writes_lcd_directly() -- modes 10/11/12 are written by the VDP
 Core/Src/porting/celeste/main_celeste.c       swap=1 stale=1 split        # blit() is gated; the flip is not
 
 Core/Src/porting/c64/main_c64.c               swap=2 stale=0 dead         # Makefile: the old chips core is no longer built (live entry is main_c64_dev.cpp)
 Core/Src/porting/nes/main_nes.c               swap=1 stale=0 dead         # NES_C_SOURCES is empty; NES is fceumm only
+
+# ---------------------------------------------------------------------------
+# gwenesis, in detail, because it is the one that looks like the others and is
+# not. main_gwenesis.c:777 reads
+#
+#     // bool drawFrame =
+#     common_emu_frame_loop();
+#
+# The assignment is COMMENTED OUT. The guard's answer is discarded. drawFrame is
+# a file-scope global (:308, initialised to 1) and the only code that ever
+# writes it lives inside `if (gwenesis_vsync_mode)` (:891, :895). Audio-sync is
+# the default (:63), and in that mode nothing assigns drawFrame for the life of
+# the process -- so the render at :851 always runs, the flip at :907 always
+# takes lcd_swap(), and MD genuinely draws every frame it emulates. drawn == emu
+# is the TRUTH here, and lcd_swap_stale() is unreachable in the default mode.
+#
+# It is still not dead code, which is why the call stays. Toggle vsync on, hit
+# an overflow (drawFrame = 0 at :891), toggle back to audio-sync with the option
+# at :438, and drawFrame is stuck at 0: the render stops, the flips continue,
+# and the panel freezes. That is a pre-existing bug, not one this counter
+# introduced -- but under the old code that frozen screen also reported
+# drawn == emu, and now it reports the truth.
+#
+# Consequence for anyone measuring: MD CANNOT judge this counter. Both a fixed
+# and an unfixed build read ratio 1.0000, at any speedup, because the guard
+# cannot make this core skip. Worse, common_emu_state.skipped_frames keeps
+# counting -- the `+=` at common.c:215 happens inside common_emu_frame_loop(),
+# before gwenesis zeroes skip_frames -- so it reports what the integrator WANTED
+# while nothing was ever skipped. Use celeste (:677 assigns, :696 gates, no mode
+# nuance) or msx (:2143, :2172, avoiding screen modes 10/11/12).
+# ---------------------------------------------------------------------------

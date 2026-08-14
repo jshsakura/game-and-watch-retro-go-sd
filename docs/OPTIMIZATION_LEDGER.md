@@ -356,7 +356,8 @@ something the core then ignores. **VB draws all 35.9 of its frames and the
 
 The lesson is the counter's, not VB's: **`g_common_drawn_frames` meant "frames
 the guard asked for", which equals "frames presented" only for cores that obey
-the guard.** 32X obeys it, so the 32X numbers below stand.
+the guard.** (An earlier revision added "32X obeys it, so the 32X numbers below
+stand." That was asserted, not checked — see the correction further down.)
 
 **The fix, and the second lie it had to avoid.** A caveat that reads "check what
 that core's loop does with `drawFrame` before believing this column" is a caveat
@@ -373,25 +374,64 @@ on a front buffer that goes stale while emulation keeps writing the back one:
 
 | core | site | behaviour |
 |---|---|---|
-| Genesis / 32X | `main_gwenesis.c:903` | audio-sync mode — the default (`gwenesis_vsync_mode = 0`) — swaps unconditionally; the render is gated at `:851`, and only the vsync branch guards the swap |
-| MSX | `main_msx.c:2171` | swaps unconditionally, and the comment says it copies Gwenesis deliberately |
-| Celeste | `main_celeste.c:697` | `if (drawFrame) blit();` then an unguarded swap |
+| MSX | `main_msx.c:2171` | `:2143` assigns the guard's answer, `:2172` gates the blit, the swap is unguarded |
+| Celeste | `main_celeste.c:697` | `:677` assigns, `:696` gates the blit, the swap is unguarded |
+| Genesis | `main_gwenesis.c:903` | unguarded swap over a gated render — **but see the correction below: this core cannot skip at all** |
 
-Left alone, those three would have read **drawn == emulated, a flat 100%** —
-including the 32X Doom rows below. They now call **`lcd_swap_stale()`**, which
-performs the identical flip and does not count it. MSX is the one that is not a
-straight `drawFrame` test: in screen modes 10/11/12 `_blit_frame()` is a no-op
-because the VDP writes RGB565 into the LCD back buffer itself, so in those modes
-every flip really does carry a new frame.
+Left alone, those would have read **drawn == emulated, a flat 100%**. They now
+call **`lcd_swap_stale()`**, which performs the identical flip and does not
+count it. MSX is the one that is not a straight `drawFrame` test: in screen
+modes 10/11/12 `_blit_frame()` is a no-op because the VDP writes RGB565 into the
+LCD back buffer itself, so in those modes every flip really does carry a new
+frame.
 
 The rest of the sweep found no fourth case. The cores that flip unconditionally
 *and* render unconditionally — Videopac, C64, Lynx, ZX Spectrum, A2600,
 zelda3/SMW, VB, TamaPoke — are honest under this counter; that is the whole
 point of it. PCE and SMS+GX flip inside a function that is itself called only
-`if (drawFrame)`.
+`if (drawFrame)`. SNES flips inside its own guard (`main_snes.c:1399-1404`) and
+bumps `g_snes_drawn_frames` on the same condition, so the shared pair and the
+SNES pair count the same event.
 
-32X obeys the guard, so the 32X rows below stand unchanged. SNES is unaffected
-either way — `drawn_ab.sh` prefers that core's own `g_snes_drawn_frames`.
+### Correction: Genesis is not a split core, and the 32X rows are now in doubt
+
+`main_gwenesis.c:777` reads
+
+```c
+    // bool drawFrame =
+    common_emu_frame_loop();
+```
+
+The assignment is commented out — **the guard's answer is discarded.**
+`drawFrame` is a file-scope global (`:308`, initialised to 1) and its only
+writers sit inside `if (gwenesis_vsync_mode)` (`:891`, `:895`). Audio-sync is
+the default (`:63`), and in that mode nothing assigns `drawFrame` for the life
+of the process. So the render at `:851` always runs, the flip always counts, and
+**MD genuinely draws every frame it emulates — `drawn == emu` is the truth for
+it, not a lie.** The `lcd_swap_stale()` call stays because it is not dead: toggle
+vsync on, hit an overflow (`drawFrame = 0`), toggle back with the option at
+`:438`, and `drawFrame` is stuck at 0 — the render stops, the flips continue,
+the panel freezes. That is a pre-existing bug; what changed is that the frozen
+screen now reports the truth instead of `drawn == emu`.
+
+Two consequences.
+
+**MD cannot judge this counter.** Fixed and unfixed builds both read ratio
+1.0000, at any speedup, because no guard decision reaches the core.
+`common_emu_state.skipped_frames` does not rescue it either: the `+=` at
+`common.c:215` runs inside `common_emu_frame_loop()`, before gwenesis zeroes
+`skip_frames`, so it counts what the integrator *wanted* while nothing was ever
+skipped. Judge on **celeste** (assigns `:677`, gates `:696`, no mode nuance) or
+**msx** (`:2143`, `:2172`, avoiding screen modes 10/11/12).
+
+**The 32X drawn column below is unverified.** "32X obeys the guard" was written
+twice in this document and checked neither time, and its sibling core
+demonstrably does not obey it. The 4.98 drawn fps figure was taken with the OLD
+counter — the one recording the guard's *decision* — so if that porting layer
+also discards `drawFrame`, the number carries exactly the defect retracted above
+for Virtual Boy. The 32X core lives on `exp/32x-d32xr` (picodrive) and is not in
+this tree. **Look for a `drawFrame` assignment in that branch before quoting the
+32X drawn column again.**
 
 **Not yet measured on hardware.** The build is green with the canonical release
 flags and every gate passes, but no device A/B has been run against this
