@@ -18,6 +18,17 @@ axis without reading the ledger below.**
 
 Nothing about the speed of emulation. Everything about what reaches the LCD.
 
+> **Pending re-measurement (2026-08-14, later the same day).** Every drawn-fps
+> number in this section was read from `g_common_drawn_frames` while that counter
+> incremented on the overload guard's *decision*. It is being moved to
+> `lcd_swap()` — the single point that tells the LTDC to flip — so it counts
+> frames actually presented. 32X obeys the guard (`if (drawFrame)
+> set_out_buffer()`), so these values are expected to hold, but "expected" was
+> wrong three times today and the numbers below are not re-confirmed yet. The
+> conclusion does not rest on them alone: the per-core ratio is also justified by
+> the emulated-fps cost of drawing everything (5–15%) and by draw being 1.9% of a
+> 32X frame, neither of which involves this counter.
+
 **The honest baseline.** No `MD32X_DEVICE_PROFILE` (it costs ~16 of every 94
 cycles an instruction takes — §14), cold boot into the attract demo rather than
 a title screen, two samples per arm, and both counters:
