@@ -64,6 +64,12 @@ OC="sudo openocd -f interface/stlink-dap.cfg -f target/stm32h7x.cfg -c 'adapter 
 INTFLASH_ADDR=${INTFLASH_ADDR:-0x08100000}   # INTFLASH_BANK=1 arms: pass 0x08000000
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+# BLIND SPOT, on purpose: this checks the RESIDENT image only. A knob that
+# touches just one core's overlay (MD32X_FORCED_DRAW_RATIO, SNES_LINE_HIRQ, any
+# core-local define) leaves the two arms' intflash byte-identical and differs
+# only in cores/<name>.bin -- and then this returns GREEN for either one. Use
+# `PUSH_CORE=<name> arm.sh flash <arm>` so the card matches by construction; the
+# card's core file has been the wrong program three times in one day.
 verify_flashed() {
   local bin="/tmp/gnw_arms/$ARM/gw_retro_go_intflash.bin"
   [ -f "$bin" ] || { echo "$ARM: no intflash.bin to verify against -- SKIPPED" >&2; return 0; }
