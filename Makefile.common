@@ -1545,6 +1545,33 @@ SNES_BUS_IN_ITCM ?= 1
 ifeq ($(SNES_BUS_IN_ITCM),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_BUS_IN_ITCM
 endif
+# SNES_DSP_FASTPATH=0 restores the old handling of a LoROM DSP-1 board: clear
+# cart->romMask so snes_cpuRead's ROM fast path and fetch-page cache are off for
+# the WHOLE cartridge, because sixteen banks of it are the DSP window. =1 (the
+# default) excludes just those banks, and only where a page tag is installed.
+# Only an A/B arm wants 0. See external/sm/src/snes/snes.h.
+SNES_DSP_FASTPATH ?= 1
+ifneq ($(SNES_DSP_FASTPATH),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_DSP_FASTPATH=$(SNES_DSP_FASTPATH)
+endif
+
+# SNES_ROMPAGE_FOLD=0 restores the old fetch-page cache, which only served a
+# cartridge whose size is a power of two -- so a 3 MB cart (Super Metroid, Final
+# Fantasy VI, most 24 Mbit games) had no cache at all and every opcode fetch
+# walked snes_read -> cart_read -> cart_read{Lo,Hi}rom. Only an A/B arm wants 0.
+SNES_ROMPAGE_FOLD ?= 1
+ifneq ($(SNES_ROMPAGE_FOLD),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ROMPAGE_FOLD=$(SNES_ROMPAGE_FOLD)
+endif
+
+# SNES_WRAP_ITCM=0 leaves run_one_opcode's outlined clone where gcc puts it, in
+# .text and therefore in the RAM_EMU overlay, which is where a device PC sample
+# found it at 12.1% of the frame. Only an A/B arm wants that; see the comment on
+# run_one_opcode in main_snes.c.
+SNES_WRAP_ITCM ?= 1
+ifneq ($(SNES_WRAP_ITCM),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_WRAP_ITCM_OFF
+endif
 
 SNES_ROMCACHE ?= 0
 ifeq ($(SNES_ROMCACHE),0)

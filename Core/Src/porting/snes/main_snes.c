@@ -195,7 +195,26 @@ static void apply_irq_match(Snes *s) {
 
 /* One real interpreter call, with the spin learner watching (harness-identical:
  * tools/snes_spin compiles the same spin_skip.c and gates skip-off vs skip-on to
- * bit-identical state+audio hashes). */
+ * bit-identical state+audio hashes).
+ *
+ * In ITCM, for the same reason app_main_snes and the bus accessors are.
+ *
+ * app_main_snes carries the section attribute and the frame loop is inlined
+ * into it, so the caller side was supposed to already be in ITCM beside the
+ * engine. It was not: gcc outlines this wrapper as `run_one_opcode.isra.0`,
+ * the clone is emitted into plain `.text`, and the linker script sweeps
+ * `build/snes/*.o (.text*)` into `.overlay_snes` at 0x24000000. An on-device PC
+ * sample of Suzuka 8 Hours found it there at 0x2405f29c and charged it **12.1%
+ * of the frame**, with `__run_one_opcode.isra.0_veneer` (1.0%) on the way in
+ * and `__gsnes__snes_thumb2_run_veneer` (1.0%) on the way back out -- so every
+ * one of ~12,800 opcodes a frame left ITCM for wait-stated AXI SRAM, twice,
+ * to run about ten instructions.
+ *
+ * The attribute has to be on the function whose CLONE ends up in the link, so
+ * name the section here rather than trusting the caller's placement. */
+#if defined(SNES_BUS_IN_ITCM) && !defined(SNES_WRAP_ITCM_OFF)
+__attribute__((section(".itcm_snes_interp.thumb2.bus")))
+#endif
 static int run_one_opcode(Snes *s) {
   Cpu *cpu = s->cpu;
 #if defined(SNES_SPIN_SKIP) && !SNES_SPIN_REPLAY_ONLY
