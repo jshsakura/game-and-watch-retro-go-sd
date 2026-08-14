@@ -112,6 +112,16 @@ ifeq ($(SNES_LOAD_DIAG)$(SNES_DEVICE_PROFILE),11)
   $(error SNES_LOAD_DIAG=1 and SNES_DEVICE_PROFILE=1 are mutually exclusive: both instrument external/sm sources with DWT probes, and running them together double-charges the APU and inflates the very intrusion budget the profiler reports)
 endif
 
+# On-device 32X frame-cost breakdown. Default OFF: the release build is
+# byte-identical (no -DMD32X_DEVICE_PROFILE; picodrive's pprof probes stay
+# no-ops). Enable with MD32X_DEVICE_PROFILE=1 to arm DWT_CYCCNT and split
+# PicoFrame() into master/slave SH-2, 68K, MD VDP draw, 32X compositor draw,
+# FM/PWM sound — riding picodrive's existing pprof_start/pprof_end probes
+# (see external/picodrive/platform/linux/pprof.h) instead of duplicating
+# instrumentation. The coarse pace/proc/pico/blit/audio/total buckets in
+# Core/Src/porting/md32x/main_md32x.c dump to /32x_dwt.txt at the same time.
+MD32X_DEVICE_PROFILE ?= 0
+
 # Exact native SMW SPC/SFX engine (tools/nspc_audio_wire/smw_exact_wire.c).
 # Detection is ARAM-driver-signature based (ptnJumpToVcmdSMW), not a full-ROM
 # hash -- the internal title field is only a boot-log hint now, see
@@ -786,7 +796,7 @@ Core/Src/porting/snes/snes_audio_stretch.c
 # plus a percentile calculator plus thirty-odd fprintf calls, and all of it
 # lands in the SNES overlay either way -- but as a separate object it is
 # trivially checkable in the map and trivially removable. Same reasoning (and
-# the same 0720 lesson).
+# the same 0720 lesson) as Core/Src/porting/md32x/md32x_profile.c.
 ifeq ($(SNES_DEVICE_PROFILE),1)
 SNES_C_SOURCES += Core/Src/porting/snes/snes_profile.c
 endif
@@ -820,6 +830,48 @@ $(CORE_GWENESIS)/src/vdp/gwenesis_vdp_gfx.c \
 $(CORE_GWENESIS)/src/savestate/gwenesis_savestate.c \
 Core/Src/porting/gwenesis/main_gwenesis.c
 
+# Sega 32X (picodrive) — SD-card builds only (the overlay is streamed from SD;
+# the trimmed interpreter subset, no DRC/SMS/ym2413/SVP/CD/draw2/state).
+MD32X_C_SOURCES =
+CORE_PICODRIVE = external/picodrive
+ifeq ($(SD_CARD),1)
+MD32X_C_SOURCES += \
+$(CORE_PICODRIVE)/cpu/sh2/sh2.c \
+$(CORE_PICODRIVE)/cpu/sh2/mame/sh2pico.c \
+$(CORE_PICODRIVE)/cpu/gwenesis68k/m68kcpu.c \
+$(CORE_PICODRIVE)/cpu/gwenesis68k/g68k_bus.c \
+$(CORE_PICODRIVE)/cpu/cz80/cz80.c \
+$(CORE_PICODRIVE)/pico/32x/32x.c \
+$(CORE_PICODRIVE)/pico/32x/draw.c \
+$(CORE_PICODRIVE)/pico/32x/memory.c \
+$(CORE_PICODRIVE)/pico/32x/pwm.c \
+$(CORE_PICODRIVE)/pico/32x/sh2soc.c \
+$(CORE_PICODRIVE)/pico/cart.c \
+$(CORE_PICODRIVE)/pico/memory.c \
+$(CORE_PICODRIVE)/pico/draw.c \
+$(CORE_PICODRIVE)/pico/sek.c \
+$(CORE_PICODRIVE)/pico/videoport.c \
+$(CORE_PICODRIVE)/pico/media.c \
+$(CORE_PICODRIVE)/pico/pico.c \
+$(CORE_PICODRIVE)/pico/misc.c \
+$(CORE_PICODRIVE)/pico/patch.c \
+$(CORE_PICODRIVE)/pico/z80if.c \
+$(CORE_PICODRIVE)/pico/eeprom.c \
+$(CORE_PICODRIVE)/pico/state.c \
+$(CORE_PICODRIVE)/pico/sound/sound.c \
+$(CORE_PICODRIVE)/pico/sound/mix.c \
+$(CORE_PICODRIVE)/pico/sound/sn76496.c \
+$(CORE_PICODRIVE)/pico/sound/ym2612.c \
+$(CORE_PICODRIVE)/pico/sound/resampler.c \
+Core/Src/porting/md32x/main_md32x.c \
+Core/Src/porting/md32x/md32x_border_clear.c
+# Profiler recording/dump lives in its own TU: inlined into main_md32x.c it
+# lands in the RAM_EMU overlay (qsort + percentiles + a dozen fprintf calls,
+# ~2 KB) and overflows MD32X BSS by 2088 B. The AHB pool frees data, not code.
+ifneq ($(MD32X_DEVICE_PROFILE),0)
+MD32X_C_SOURCES += Core/Src/porting/md32x/md32x_profile.c
+endif
+endif
 A2600_C_SOURCES =
 A2600_CXX_SOURCES =
 
@@ -1374,6 +1426,28 @@ MD_C_INCLUDES +=  \
 
 MD_C_DEFS = -DLSB_FIRST -DTABLES_FULL
 
+MD32X_C_INCLUDES = \
+-ICore/Inc \
+-ICore/Inc/porting \
+-ICore/Inc/porting/md32x \
+-ICore/Inc/retro-go \
+-ICore/Src/porting/lib \
+-Iretro-go-stm32/components/odroid \
+-I$(CORE_PICODRIVE) \
+-I$(CORE_PICODRIVE)/pico \
+-I$(CORE_PICODRIVE)/cpu \
+-I$(CORE_PICODRIVE)/cpu/fame \
+-I$(CORE_PICODRIVE)/zlib \
+-I./
+
+# Interpreter-only 32X (no DRC), GNW static/zero-copy guards on. LSB_FIRST: M7.
+# EMU_G68K: gwenesis's const-table 68K (RAM 5.5KB vs FAME's 262KB JumpTable);
+# TABLES_FULL is REQUIRED — the compact jump table truncates at 0xEFC0 and
+# line-F opcodes would index out of bounds.
+MD32X_C_DEFS = -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DGNW_32X_CORE -DLSB_FIRST
+ifeq ($(MD32X_DEVICE_PROFILE),1)
+MD32X_C_DEFS += -DMD32X_DEVICE_PROFILE
+endif
 C_INCLUDES +=  \
 -ICore/Inc \
 -ICore/Src/porting/lib \
@@ -1611,7 +1685,7 @@ $(BUILD_DIR)/$(TARGET)_extflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 # a missing space (".overlay_a2600-j .overlay_lynx", i.e. one bogus section name
 # and no lynx). Merged into a single line: our full core set plus upstream's two
 # GBA sections.
-	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_gba -j .overlay_gba_itc -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_snes -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
+	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_md32x -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_gba -j .overlay_gba_itc -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_snes -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
 
 $(BUILD_DIR)/$(TARGET)_intflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)

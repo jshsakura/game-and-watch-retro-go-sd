@@ -90,7 +90,7 @@ typedef struct {
  * rg_emulators.c's MAX_EMULATORS; a _Static_assert there ties the two together
  * so they cannot drift apart again silently, which is how this happened.
  */
-#define MAX_EMULATOR_TABS      32   /* == MAX_EMULATORS; 33->32 removes Sega 32X (docs/32X_CLOSED.md) */
+#define MAX_EMULATOR_TABS      33   /* == MAX_EMULATORS; 32->33 restores Sega 32X (docs/32X_CLOSED.md) */
 #define GUI_NON_EMULATOR_TABS  1     /* Favorites */
 #define MAX_TABS               (MAX_EMULATOR_TABS + GUI_NON_EMULATOR_TABS)
 
