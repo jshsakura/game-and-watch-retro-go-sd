@@ -1564,6 +1564,28 @@ ifneq ($(SNES_ROMPAGE_FOLD),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_ROMPAGE_FOLD=$(SNES_ROMPAGE_FOLD)
 endif
 
+# SNES_ROMPAGE_LOW=1 also serves ROM below $8000 (half of every HiROM bank) out
+# of the bank table. OFF by default, by device measurement: Chrono Trigger gains
+# 21% drawn frames and Final Fantasy VI loses 5.5%, while the rig's instruction
+# count says both should gain. See external/sm/src/snes/snes.h for the full
+# table -- it needs a two-entry page cache before it can ship.
+SNES_ROMPAGE_LOW ?= 0
+ifneq ($(SNES_ROMPAGE_LOW),0)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ROMPAGE_LOW=$(SNES_ROMPAGE_LOW)
+endif
+
+# SNES_ROMPAGE_VERIFY=1 checks the fetch-page cache against the bus it is
+# short-circuiting, on every page install AND every page hit, and prints any
+# disagreement with the address and bank. Diagnostic: it calls snes_read() on
+# every cached read, so it is slow -- but it turns "the state hash changed
+# somewhere in 1200 frames" into one line naming the bank. It found the
+# cart_load ordering bug that made Super Metroid serve its save RAM out of the
+# ROM cache and lock up at frame 400.
+SNES_ROMPAGE_VERIFY ?= 0
+ifeq ($(SNES_ROMPAGE_VERIFY),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ROMPAGE_VERIFY=1
+endif
+
 # SNES_WRAP_ITCM=0 leaves run_one_opcode's outlined clone where gcc puts it, in
 # .text and therefore in the RAM_EMU overlay, which is where a device PC sample
 # found it at 12.1% of the frame. Only an A/B arm wants that; see the comment on
