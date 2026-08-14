@@ -1007,26 +1007,69 @@ that and no more -- and the pixel loop, the SIMD pair, the coarse skip and the
 sprite path have all been tried and lost. The share is large; the headroom is
 not.
 
-What is genuinely unmeasured:
+Both items that section listed are now answered.
 
-- **HDMA, 226 calls a frame on Kart** (one per scanline; Mode 7 rewrites its
-  perspective table every line). Nothing in this tree has ever priced it. An
-  ablation knob was written and reverted, because it must run on the DEVICE
-  play scene: the rig's cold-boot window sits on Kart's title screen, where
-  there is no perspective table and the ablation changes nothing (the state
-  hash was identical, which is how that was caught).
-- **The native ports' own frames.** Super Metroid's port measures 56.2 fps on
-  hardware WITH NO INTERPRETER AT ALL, and nobody has profiled it. Its frame is
-  game C plus the PPU/APU emulation it shares byte-for-byte with this core, so
-  whatever is left there is shared with every ported game. Note the interpreted
-  Metroid numbers above are for a path no player uses -- Metroid, Mario World
-  and Zelda 3 all have native ports, which is why they are the wrong ROMs to
-  benchmark the SNES core with. Use Kart, Dragon's Magic, Amazing Tennis.
-- `g_common_drawn_frames` / `g_common_emu_frames` make any core measurable with
-  `drawn_ab.sh`, ports included -- verified live on the SNES core. They are
-  counted in two places: emulated in `Core/Src/porting/common.c`, drawn in
-  `lcd_swap()` (`Core/Src/gw_lcd.c`) so a core that ignores the guard cannot
-  report a draw rate it never had. Booting a native port unattended still does
-  not work:
-  `/snes_bench_index.txt` accepts a ROM NAME now, but the homebrew lookup does
-  not launch Super Metroid and was not diagnosed.
+**HDMA — closed, 0.3%.** Mario Kart's play scene charges `hdma` 33,410 cycles of
+an 8,631,610-cycle drawn frame. The rig says why: Kart activates **no HDMA
+channel at all** over 6000 frames (`dmactrue=0`); the 226 calls are an
+eight-channel scan that finds nothing, and its Mode 7 table is written per line
+from an H-timer IRQ. Folding the stall where HDMA does run (Suzuka, 1,374
+two-dot steps a frame) is bit-identical and costs instructions. Reverted.
+
+**The native ports — profiled, and the boot failure was the SD card.** Booting
+one unattended works; the lookup was never the problem. `/roms/homebrew/Super
+Metroid.bin` on the card was built by a *different firmware*, and a homebrew
+package carries veneer literals holding that firmware's resident addresses — the
+port branched through `__puts_veneer` into `0x200025f8`, the `FatFs` object, and
+took a UsageFault at `app_main_sm+0x2a`. Push the package the matching build
+produced and it boots first try. `arm.sh` keeps and pushes them per arm now, and
+`PUSH_CORE=<name>` does the same for any core's `cores/*.bin`.
+
+Its first profile, 900 samples, 60.70 emulated / 40.80 drawn:
+
+| | share |
+|---|---|
+| `snes_handle_pos_stuff` | **27.8%** |
+| `snes_run_line` | **26.6%** |
+| `ppu_runLine` | 19.1% |
+| `dsp_cycle` | 10.0% |
+| tile drawers | 8.7% |
+
+**The event scheduler is 54.4% of a port with no interpreter in it.**
+
+---
+
+## Start here next session
+
+**1. The scheduler share above is the biggest un-taken block in this tree.**
+`snes_run_line()` no longer hands an armed H-timer back to the dot loop (a port's
+dot loop has no timer IRQ code — that block is `#ifdef GNW_SNES_CORE`), gated by
+`SNES_LINE_HIRQ_FORCE=<hTimer>` arming the timer in both arms at dots 0/160/512/
+800/1024/1200, 400 frames each, one state hash across all twelve runs. **The win
+is still unmeasured**: both scenes reachable unattended sit at 63–64 fps drawing
+every frame, so there is no headroom for it to show. Find the heavy scene.
+
+**2. `SNES_ROMPAGE_LOW` stays 0.** HiROM gains ~1% on hardware; a cartridge that
+cannot be page-cached loses 6.2% (JoJo, Jim Power — both on the card now, and
+useful as "every read takes the slow path" references). The rig preferred it by
+3.4% and the device disagreed by 6.2%, once more in the wrong direction.
+
+**3. Upstream `external_cores`, 43 commits, not on main.** `a6adcad3` moves the
+malloc heap from DTCM to AHB SRAM — `Cart`'s bank tables live on that heap and
+are read on every page install. Pin them to DTCM when merging or the merge will
+build fine and quietly give some of this back.
+
+**4. Instruments repaired today — do not trust a number taken before them.**
+The rig did not compile `dsp1_hle.c` (every DSP cartridge ran there with no
+coprocessor: earlier rig numbers for those are void). `SNES_DEVICE_PROFILE=1`
+outlines `run_one_opcode` into the overlay and charged it 12.1% + 2% of veneers,
+about 14% of a program the shipping build does not contain. `FLAGS_STAMP` did
+not watch `C_DEFS_SM`/`C_DEFS_SMW`. `device_run.sh` had no `SM_EXTRA_DEF`.
+`drawn_ab.sh` did not check that the flashed image was the arm being measured.
+
+**5. `drawn_ab.sh` repeatability is a property of the SCENE.** Two samples are
+enough only where the guard is pinned at the 1-in-4 floor (0.2498–0.2504, spread
+under 0.7%). Elsewhere take five to seven per arm in one session: Super Mario
+World's ratio wanders 0.50–0.63 and one binary swung 23%, which is how a 9.2%
+"regression" was recorded that did not exist. The ratio value does not predict
+it — Super Metroid at 0.37 repeats to 1%, Chrono Trigger at 0.36 spreads 11%.
