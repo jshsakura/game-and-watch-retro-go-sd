@@ -273,6 +273,13 @@ if drawn > emu:
     # is not running at all, so the emulated side stalls while the drawn side
     # keeps climbing. The ratio is then meaningless in the flattering direction.
     #
+    # And know what it does NOT catch: it only sees flips that push drawn PAST
+    # emu. On an arm running below 1.0 the same stray flips are absorbed --
+    # a 0.900 window with a battery banner in it reads 0.905, silently. So this
+    # is a tripwire for the gross case (a menu left open, an alarm ringing),
+    # not a guarantee that a sub-1.0 ratio is free of UI flips. The defence for
+    # those is still procedural: do not touch the console during a window.
+    #
     # Expect this to fire most often on the arms where it looks least plausible.
     # A core that draws every frame sits at ratio exactly 1.0000 with NO
     # headroom -- 32X's per-core arm, and any core that ignores the guard (VB,

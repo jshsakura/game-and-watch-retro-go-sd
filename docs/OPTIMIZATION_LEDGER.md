@@ -378,7 +378,7 @@ on a front buffer that goes stale while emulation keeps writing the back one:
 |---|---|---|
 | MSX | `main_msx.c:2171` | `:2143` assigns the guard's answer, `:2172` gates the blit, the swap is unguarded |
 | Celeste | `main_celeste.c:697` | `:677` assigns, `:696` gates the blit, the swap is unguarded |
-| Genesis | `main_gwenesis.c:903` | unguarded swap over a gated render — **but see the correction below: this core cannot skip at all** |
+| Genesis | `main_gwenesis.c:908` (the `else` of `gwenesis_vsync_mode`) | unguarded swap over a gated render — **but see the correction below: this core cannot skip at all** |
 
 Left alone, those would have read **drawn == emulated, a flat 100%**. They now
 call **`lcd_swap_stale()`**, which performs the identical flip and does not

@@ -261,7 +261,8 @@ void lcd_swap_stale(void)
    * buffering, holding the flip leaves the panel on a front buffer that goes
    * stale while emulation keeps writing the back one:
    *
-   *   main_gwenesis.c:903  audio-sync mode, which is the DEFAULT
+   *   main_gwenesis.c:908  audio-sync mode (the `else` of gwenesis_vsync_mode),
+   *                        which is the DEFAULT
    *                        (gwenesis_vsync_mode = 0); the render is gated at
    *                        :851, so MD/32X would have read a flat 100%
    *   main_celeste.c:697   `if (drawFrame) blit();` then an unguarded swap
