@@ -11,7 +11,7 @@
 # presenting 36. Both mistakes look exactly like a measurement.
 #
 # So a new core, or a changed count in an old one, has to be READ before this
-# file is edited. That is the whole mechanism: the check is `grep -c`, and the
+# file is edited. That is the whole mechanism: the check is arithmetic, and the
 # thinking is here.
 #
 # HOW TO UPDATE. Do NOT classify from the lines around the lcd_swap(). Find the
@@ -55,7 +55,21 @@
 #   split        the core flips on every frame but only sometimes with new
 #                content -- the three that need lcd_swap_stale().
 #   dead         not built by any configuration in this tree.
-#   defines      gw_lcd.c, where both functions are defined rather than called.
+#   defines      where the functions are defined or declared, not called.
+#   prose        mentions the name in a comment or a string and calls nothing.
+#                Listed anyway, with swap=0 stale=0, so the census fails CLOSED:
+#                a parser bug that zeroes a real file's counts then mismatches
+#                its audit instead of dropping the file from the scan. One did.
+#
+# WHAT A COUNT CENSUS CANNOT SEE. Counts are preserved by an EXCHANGE. This
+# regression passes:
+#
+#   - if (drawFrame) { blit(); lcd_swap(); } else { lcd_swap_stale(); }
+#   + if (!drawFrame) { lcd_swap(); }       else { blit(); lcd_swap_stale(); }
+#
+# swap=1 stale=1 before and after, and every skipped frame is now reported as
+# drawn -- the exact defect this file exists to prevent. Nothing here will say
+# so. Reviewing a diff that touches both calls in one file is the only guard.
 #
 # NOT COVERED, on purpose: Core/Src/retro-go/gw_firmware_abi.c exports lcd_swap
 # as a function pointer (gw_firmware_abi.h:183) and there is no lcd_swap_stale
@@ -65,6 +79,16 @@
 # line in this file.
 
 Core/Src/gw_lcd.c                             swap=1 stale=1 defines      # the definitions themselves, not calls
+Core/Inc/gw_lcd.h                             swap=1 stale=1 defines      # the declarations, not calls
+
+# Prose only: the name appears, nothing is called. Listed so the census fails
+# CLOSED -- see the `prose` note above.
+Core/Inc/porting/common.h                     swap=0 stale=0 prose        # the counters' contract comment
+Core/Inc/retro-go/gw_firmware_abi.h           swap=0 stale=0 prose        # `void (*lcd_swap)(void)` -- an ABI slot, not a call
+Core/Src/main.c                               swap=0 stale=0 prose        # comment about the flip
+Core/Src/porting/common.c                     swap=0 stale=0 prose        # the comment explaining where the counter moved to
+Core/Src/porting/snes/snes_profile.h          swap=0 stale=0 prose        # SNES_PROF_M_SWAP's label
+Core/Src/retro-go/gw_firmware_abi.c           swap=0 stale=0 prose        # `.lcd_swap = lcd_swap` -- taking the address, not calling
 Core/Src/gw_littlefs.c                        swap=1 stale=0 ui           # filesystem-format progress screen
 Core/Src/gw_sdcard.c                          swap=1 stale=0 ui           # "No SD CARD found" screen
 Core/Src/gw_sleep.c                           swap=1 stale=0 ui           # paints once on the way into sleep
@@ -124,9 +148,16 @@ Core/Src/porting/nes/main_nes.c               swap=1 stale=0 dead         # NES_
 # a file-scope global (:308, initialised to 1) and the only code that ever
 # writes it lives inside `if (gwenesis_vsync_mode)` (:891, :895). Audio-sync is
 # the default (:63), and in that mode nothing assigns drawFrame for the life of
-# the process -- so the render at :851 always runs, the flip at :907 always
-# takes lcd_swap(), and MD genuinely draws every frame it emulates. drawn == emu
-# is the TRUTH here, and lcd_swap_stale() is unreachable in the default mode.
+# the process -- so the render at :851 always runs, the flip at :908 (the `else`
+# of gwenesis_vsync_mode) always takes lcd_swap(), and MD genuinely draws every
+# frame it emulates. drawn == emu is the TRUTH here, and lcd_swap_stale() (:910)
+# is unreachable in the default mode.
+#
+# The three flips in that file are :894 (vsync branch, counted), :908 (audio-sync,
+# counted) and :910 (audio-sync, stale). Branch names are given alongside the
+# numbers on purpose: the commit that first wrote these references quoted :903,
+# and was already wrong when it landed, because the same commit inserted the
+# stale branch that pushed the line down.
 #
 # It is still not dead code, which is why the call stays. Toggle vsync on, hit
 # an overflow (drawFrame = 0 at :891), toggle back to audio-sync with the option

@@ -42,13 +42,45 @@
 
 APPID_H="${APPID_H:-Core/Inc/retro-go/appid.h}"
 
+# Strip /* */ and // comments, and "string"/'char' literals, carrying state
+# across lines. CH is the single quote, passed in as a variable because it
+# cannot appear inside this single-quoted program.
+APPID_STRIP='
+{
+  line = $0; out = ""; i = 1; n = length(line)
+  while (i <= n) {
+    two = substr(line, i, 2); one = substr(line, i, 1)
+    if (inblock)          { if (two == "*/") { inblock = 0; i += 2 } else i++ }
+    else if (instr)       { if (one == "\\") i += 2
+                            else { if (one == "\"") instr = 0; i++ } }
+    else if (inchr)       { if (one == "\\") i += 2
+                            else { if (one == CH) inchr = 0; i++ } }
+    else if (two == "/*") { inblock = 1; i += 2 }
+    else if (two == "//") { break }
+    else if (one == "\"") { instr = 1; i++ }
+    else if (one == CH)   { inchr = 1; i++ }
+    else                  { out = out one; i++ }
+  }
+  print out
+}'
+
 appid_value() {
     [ -n "${1:-}" ] || return 0
     [ -f "$APPID_H" ] || return 0
 
-    # Drop comments before matching. Same idiom as tests/test_lcd_swap_audited.sh:
-    # a line whose first non-space character is * or / is prose. appid.h's retired
-    # 32X slot has a six-line block comment; without this its text is in scope.
+    # Comments are stripped PROPERLY, not by "does the line start with * or /".
+    # That shortcut returned confidently wrong numbers on four ordinary header
+    # shapes -- an old value in a line-tail comment, a block comment whose body
+    # lines happen not to start with *, a // comment, and a #if 0 block all made
+    # it answer 99 or 7 where the compiler says 25. The one defence it seemed to
+    # have (appid.h's retired 32X slot) worked only because that comment happens
+    # to begin every line with a *; one reflow and it lied. Leaving an old number
+    # in a comment beside a retired slot is exactly what that header invites.
+    #
+    # AMBIGUITY IS NOT AN ANSWER. Every match is collected and the value is
+    # returned only if they all agree. Two different values for one name -- a
+    # #if 0 alternative, a duplicate -- means this cannot know which the compiler
+    # picked, so it says nothing and the caller labels the window "unknown".
     #
     # The `|| true` and the trailing `return 0` are not decoration. A name that is
     # absent makes grep exit 1, and under a caller running `set -e -o pipefail` --
@@ -57,12 +89,13 @@ appid_value() {
     # be able to abort a device measurement that was about to produce data. Caught
     # by tests/test_appid_value.sh, which is why that test exists.
     local v
-    v="$(grep -v '^[[:space:]]*[*/]' "$APPID_H" \
-         | grep -oE "\bAPPID_$1[[:space:]]*=[[:space:]]*[0-9]+" \
+    v="$(awk -v CH="'" "$APPID_STRIP" "$APPID_H" \
+         | grep -oE "(^|[^A-Za-z0-9_])APPID_$1[[:space:]]*=[[:space:]]*[0-9]+" \
          | grep -oE '[0-9]+$' \
-         | head -1)" || v=""
+         | sort -u)" || v=""
 
-    [ -n "$v" ] && printf '%s\n' "$v"
+    # More than one distinct value, or none: unknown.
+    [ "$(printf '%s\n' "$v" | grep -c .)" = 1 ] && printf '%s\n' "$v"
     return 0
 }
 

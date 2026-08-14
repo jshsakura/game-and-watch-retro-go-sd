@@ -70,6 +70,36 @@ APPID_H="$MISSING_H"
 # agree by arithmetic.
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+# Property (3): comments must be stripped properly, not by "does the line start
+# with * or /". That shortcut answered 99 or 7 where the compiler says 25 on all
+# four of these -- ordinary header shapes, every one of them. It is worse than
+# returning nothing: the caller has no way to tell a confident wrong number from
+# a right one, and the value labels a measurement window.
+hdr() { printf '%s\n' "$@" > "$TMP/appid.h"; APPID_H="$TMP/appid.h"; }
+saved_h="$APPID_H"
+
+hdr "typedef enum {" "    APPID_FOO = 1, /* took over the old APPID_SNES = 99 slot */" \
+    "    APPID_SNES = 25," "} appid_t;"
+check "old value in a line-tail comment" "$(appid_value SNES)" "25"
+
+hdr "typedef enum {" "    /* retired:" "       APPID_SNES = 99" "    */" \
+    "    APPID_SNES = 25," "} appid_t;"
+check "block comment whose lines lack a leading *" "$(appid_value SNES)" "25"
+
+hdr "    APPID_GBA = 24,  // used to be APPID_SNES = 7" "    APPID_SNES = 25,"
+check "old value in a // comment" "$(appid_value SNES)" "25"
+
+# Ambiguity is not an answer. A #if 0 alternative leaves two live values and no
+# way to know which the compiler took, so the honest reply is silence -- the
+# caller then labels the window "unknown" instead of labelling it wrongly.
+hdr "#if 0" "    APPID_SNES = 99," "#endif" "    APPID_SNES = 25,"
+check "two different values -> unknown, not a guess" "$(appid_value SNES)" ""
+
+hdr "    APPID_SNES = 25," "    APPID_SNES = 25,"
+check "the same value twice is still an answer" "$(appid_value SNES)" "25"
+
+APPID_H="$saved_h"
 sed 's/    APPID_SNES     = 25,/    APPID_SNES,/' "$APPID_H" > "$TMP/appid.h"
 if ! grep -q '^[[:space:]]*APPID_SNES,' "$TMP/appid.h"; then
     echo "  FAIL the fixture did not apply -- appid.h's APPID_SNES line changed shape"

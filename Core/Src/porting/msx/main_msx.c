@@ -219,7 +219,14 @@ void load_gnw_msx_data() {
 
 /* Screen modes 10/11/12 are RGB565 written straight into the LCD back buffer by
  * the VDP (frameBufferGetLine16) — there is no palette blit to run, and the
- * frame lands whether or not the overload guard asked for it. */
+ * frame lands whether or not the overload guard asked for it.
+ *
+ * `mode == 11` is dead and kept deliberately. blueMSX never assigns 11:
+ * VDP_MSX.c sets 10 for YAE and 12 for YJK and nothing else, so hardware
+ * SCREEN 11 arrives here as 10 because vdpIsModeYAE matches first. The test
+ * came over from the three places that spelled it out before this helper
+ * existed; it is listed so the next reader does not go looking for the missing
+ * SCREEN 11 support. 10 || 12 already covers every case. */
 static bool msx_vdp_writes_lcd_directly(void)
 {
     const int mode = vdpGetScreenMode();

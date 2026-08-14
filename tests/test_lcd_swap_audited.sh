@@ -63,7 +63,7 @@ REPO="$(cd "$HERE/.." && pwd)"
 cd "$REPO"
 
 LIST="tests/lcd_swap_audited.txt"
-ROOTS="Core/Src retro-go-stm32"
+ROOTS="Core/Src Core/Inc retro-go-stm32"
 
 echo "=== every lcd_swap() call site has been audited for the drawn counter ==="
 
@@ -87,9 +87,12 @@ STRIP='
     if (inblock)          { if (two == "*/") { inblock = 0; i += 2 } else i++ }
     else if (instr)       { if (one == "\\") i += 2
                             else { if (one == "\"") instr = 0; i++ } }
+    else if (inchr)       { if (one == "\\") i += 2
+                            else { if (one == CH) inchr = 0; i++ } }
     else if (two == "/*") { inblock = 1; i += 2 }
     else if (two == "//") { break }
     else if (one == "\"") { instr = 1; i++ }
+    else if (one == CH)   { inchr = 1; i++ }
     else                  { out = out one; i++ }
   }
   print out
@@ -97,7 +100,13 @@ STRIP='
 
 counts() {  # file -> "swap=N stale=N"
     local stripped s t
-    stripped="$(awk "$STRIP" "$1")"
+    # CH is the single quote, passed in as a variable: a ' cannot appear inside
+    # the single-quoted STRIP program above. It tracks CHARACTER literals, and
+    # it is not a nicety -- without it a plain `char q = '"'` turned on the
+    # string state and swallowed the rest of the file, which under the old
+    # discovery made the file vanish from the census entirely. Six files in
+    # scope contain exactly that literal.
+    stripped="$(awk -v CH="'" "$STRIP" "$1")"
     s="$(printf '%s' "$stripped" | grep -o 'lcd_swap('       | wc -l | tr -d ' ')"
     t="$(printf '%s' "$stripped" | grep -o 'lcd_swap_stale(' | wc -l | tr -d ' ')"
     echo "swap=$s stale=$t"
@@ -108,6 +117,7 @@ counts() {  # file -> "swap=N stale=N"
 # suite was green, the census was complete, and the gate saw two of six calls.
 FIX="$(mktemp)"; trap 'rm -f "$FIX"' EXIT
 cat > "$FIX" <<'FIXTURE'
+    static char csv_quote = '"';
     printf("Calling lcd_swap() now\n");
     if (scale * 2) lcd_swap();
     if (*flag) lcd_swap();
@@ -128,15 +138,38 @@ if [ "$got" != "swap=4 stale=1" ]; then
 fi
 
 # --- the tree, as it is now -------------------------------------------------
-# Discovery matches the bare name, deliberately loose, so nothing can hide from
-# it; counts() then decides whether the file really calls anything.
+# FAIL CLOSED. Every file whose raw text merely MENTIONS lcd_swap is reported,
+# including the ones that only talk about it -- those are listed as `prose` with
+# swap=0 stale=0. The earlier version dropped anything counting zero, which
+# meant a stripper bug that zeroed a file's counts erased it from the census
+# instead of failing it: a char literal was enough, and the run stayed green.
+# Now zero is a value like any other and has to match the audit.
+#
+# -Z / read -d '' rather than $(...) word splitting: a path with a space made
+# the previous loop pass fragments to awk, which failed, which counted zero,
+# which dropped the file -- fail-open again, from a space.
 actual="$(
-    for f in $(grep -rl 'lcd_swap' $ROOTS \
-                    --include='*.c' --include='*.cpp' --include='*.cxx' 2>/dev/null | sort); do
-        c="$(counts "$f")"
-        [ "$c" = "swap=0 stale=0" ] || echo "$f $c"
-    done
+    grep -rlZ 'lcd_swap' $ROOTS \
+         --include='*.c' --include='*.cpp' --include='*.cxx' --include='*.cc' \
+         --include='*.h' --include='*.hpp' 2>/dev/null \
+    | sort -z \
+    | while IFS= read -r -d '' f; do echo "$f $(counts "$f")"; done
 )"
+
+# The audited list is whitespace-separated, so it cannot express a path with a
+# space in it -- and the comparison below would silently read such a path as its
+# first word. Say that plainly instead of half-handling it.
+spaced="$(grep -rlZ 'lcd_swap' $ROOTS \
+              --include='*.c' --include='*.cpp' --include='*.cxx' --include='*.cc' \
+              --include='*.h' --include='*.hpp' 2>/dev/null \
+          | tr '\0' '\n' | grep ' ' || true)"
+if [ -n "$spaced" ]; then
+    echo "  FAIL these paths contain a space, which $LIST cannot represent:"
+    printf '       %s\n' $spaced
+    echo "       Rename the directory or file. The census compares whitespace-"
+    echo "       separated fields and would otherwise match on the first word."
+    rc=1
+fi
 
 # --- the list, as it was audited --------------------------------------------
 expected="$(sed -e 's/#.*//' -e 's/[[:space:]]\+$//' "$LIST" \
@@ -149,7 +182,14 @@ while read -r path swap stale; do
     [ -n "${path:-}" ] || continue
     checked=$((checked + 1))
     want="$(printf '%s\n' "$expected" | awk -v p="$path" '$1==p {print $2, $3; exit}')"
-    if [ -z "$want" ]; then
+    if [ -z "$want" ] && [ "$swap $stale" = "swap=0 stale=0" ]; then
+        echo "  FAIL $path mentions lcd_swap and is not in $LIST"
+        echo "       It calls neither function -- the name appears only in a comment"
+        echo "       or a string. Add it as \`swap=0 stale=0 prose\`. Listing these is"
+        echo "       what makes the census fail CLOSED: if a parser bug ever zeroes a"
+        echo "       real file's counts, it mismatches instead of disappearing."
+        rc=1
+    elif [ -z "$want" ]; then
         echo "  FAIL $path calls lcd_swap() and is not in $LIST"
         echo "       Read its loop: when it SKIPS a frame, does new content still"
         echo "       reach the back buffer? Always -> lcd_swap() is right and"
