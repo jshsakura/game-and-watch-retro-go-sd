@@ -96,9 +96,17 @@ number.
 
 **Shipped.** N-SPC timer-wait charging (`SNES_SPC_IDLE_SKIP`), the PPU
 virgin-z test, the blend LUT, sprite-eval skip on skipped frames, the opaque
-tile path, bulk general-DMA transfer, gap-free audio, and the **baked wait
-loop** (`SNES_SPIN_BAKE`, +35–97% drawn frames, 413/413 cartridges
-hash-identical).
+tile path, bulk general-DMA transfer, gap-free audio, the **baked wait loop**
+(`SNES_SPIN_BAKE`, +35–97% drawn frames, 413/413 cartridges hash-identical), and
+the **fetch-page cache for the carts that never had one** — `snes_cpuRead`'s
+page cache was gated on `cart->romMask`, which is only set for a power-of-two
+ROM, so every 3 MB cart took the full `snes_read → cart_read → cart_readLorom`
+path on each opcode fetch (Super Metroid: 30,463 of 34,314 bus reads a frame),
+and `cart_attachDsp1()` separately cleared `romMask` across the whole bus for
+LoROM DSP boards. A per-bank base table built once at load fixes both: **Super
+Metroid 47.5 → 60.9 emulated (+28%), 11.9 → 22.4 drawn (+88%); Pilotwings 44.9 →
+59.1 (+32%)**, 14 cartridges bit-identical on the rig (`05fea2df`, arms
+`SNES_ROMPAGE_FOLD=0` / `SNES_DSP_FASTPATH=0`).
 
 **Closed — the whole-core approaches.**
 
@@ -184,12 +192,32 @@ pass before flashing an rc build) and [RESUME_GNW.md](RESUME_GNW.md) (the
 original rc resume point — note its §3 framing is superseded by
 `RC_FEASIBILITY_2026.md`).
 
-**Still unmeasured** (i.e. not closed, and the only two things that are not):
-HDMA — 226 calls a frame on Mario Kart, never priced, and it must be measured on
-a *device play scene* because the rig's cold-boot window sits on a title screen
-with no perspective table; and the native ports' own frames (Super Metroid runs
-56.2 fps on hardware with no interpreter at all, and nobody has profiled what
-that frame is).
+**Closed — HDMA, 2026-08-14, and it is a lesson about counting calls.** Device,
+Super Mario Kart's savestate play scene, `SNES_DEVICE_PROFILE=1` Ledger B:
+`hdma` = 33,410 cycles = **0.3%** of an 8,631,610-cycle drawn frame. The rig
+says why: over 6,000 frames Mario Kart activates **no HDMA channel at all** —
+`dma_doHdma()` is called every scanline (`dohdma=225/frame`) and its eight-channel
+loop finds nothing enabled, so `hdmaTimer` stays 0 and the CPU never stalls.
+Kart's Mode 7 perspective table is written per line from an H-timer IRQ, not by
+an HDMA channel. **The 226 calls a frame were real and the work behind them was
+not.** Where HDMA does run (Suzuka 8 Hours: 1,374 two-dot stall steps a frame =
+0.77% of the dot clock) folding the stall is bit-identical and costs instructions
+— 4,536,365 → 4,546,225 per frame — and was reverted.
+
+**Still unmeasured** — one thing: the native ports' own frames. Super Metroid
+runs 56.2 fps on hardware with **no interpreter at all**, and nobody has profiled
+what that frame is. It is game C plus the PPU/APU emulation every ported game
+shares, so whatever is in there is shared.
+
+**Two instrument defects found 2026-08-14 — check these before trusting an old
+number.** `run_snes_t2.sh` did not compile `dsp1_hle.c`, so `dsp1_alloc()` hit a
+weak stub and **every DSP cartridge ran on the rig with no coprocessor attached**;
+past rig numbers for those carts are void. And a `SNES_DEVICE_PROFILE=1` build
+cannot inline `run_one_opcode` (the DWT marks block it), so gcc emits an `.isra.0`
+clone into `.text` which the linker sweeps into `.overlay_snes` — PC samples
+charged ~14% of the frame to **a program the device does not run**, and Ledger B's
+"event scheduler" residue was inflated by the same amount. Take PC profiles on a
+shipping build.
 
 **Trap.** The audio-HLE gate compared 21 header bytes against `"SUPER MARIO WORLD  "`.
 The real internal title has no space (`SUPER MARIOWORLD`), and a 19-character literal
