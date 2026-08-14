@@ -342,6 +342,22 @@ Shipped. The M4A mixer HLE is the lever that matters (27–60% of guest time).
 Shipped and playable. The bottleneck differs per game — Wario is blit-bound, 3D
 Tetris is interpreter-bound (the floating-point hypothesis was tested and rejected).
 
+**"Playable at 65–70% speed" was measured on the wrong counter.** On hardware,
+3-D Tetris: **35.90 emulated fps against 9.00 drawn**, draw ratio 0.2506 over
+three samples. The overload guard is pinned, so what the player sees is the
+forced-draw floor — nine frames a second — and the 65–70% figure describes a
+rate nobody was watching. This is the same finding as the 32X one below; VB is
+simply the second core it was checked on.
+
+**⚠️ But VB does not boot if every frame is drawn.** An arm with
+`GNW_FORCED_DRAW_RATIO=1` (the guard's discretion removed for every core) leaves
+VB's frame counter flat — three attempts, no frames at all — while 32X Doom
+boots on that same firmware at 19.13 drawn fps. Something in VB's start path
+depends on frames being skipped, and it is not diagnosed. **Do not raise VB's
+draw ratio, or change the shared default, without fixing that first**; the
+per-core setter exists partly because of this. Anyone who touches the draw ratio
+for an unrelated reason will meet it too.
+
 **Closed.** Lazy flags plus threaded dispatch was estimated at 20–25% but touches
 every game's core path for an uncertain return. A dynamic recompiler is ARM32 only.
 The accepted position is that the 3D titles run at their limit.
