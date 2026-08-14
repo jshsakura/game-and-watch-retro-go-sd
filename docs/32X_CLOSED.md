@@ -61,15 +61,21 @@ fixed). The QEMU rig agrees: Chaotix costs 21.3 M host instructions a frame
 against Doom's 7.9 M in a comparable window. Chaotix drives the SH-2s hard
 despite being a 2D game. **Do not reopen the core on the hope that 2D is light.**
 
-**It is not a 32X property, and it is not safe to apply globally.** Virtual Boy
-sits on the same floor — 35.90 emulated fps against **9.00 drawn**, ratio 0.2506,
-three samples — so a core this project calls "playable at 65-70% speed" is
-showing the player nine frames a second. But an arm that forces 1-in-1 for
-*every* core **fails to boot Virtual Boy at all** (frame counter flat, three
-attempts; 32X Doom boots on the same firmware at 19.13). Something in VB's start
-path depends on frames being skipped. That is why the ratio is a per-core opt-in
-with the default left at 4, and why VB's 4x is not claimed here: it needs that
-boot failure understood first.
+**Is it a 32X property? Not established, and the first attempt to answer it was
+wrong.** Virtual Boy was measured at 35.90 emulated fps against 9.00 drawn
+(ratio 0.2506) and written up here as a second core pinned on the floor. That
+was retracted the same day: `main_vb.c` **discards the guard's answer and
+presents every frame**, so the 9.00 counted the guard's decision, not anything
+on VB's screen. VB draws all 35.9. `g_common_drawn_frames` means "frames the
+guard asked for", which is the same thing as "frames presented" only for a core
+that obeys the guard — 32X does, which is why the numbers above hold, and any
+other core has to be read against its own loop first.
+
+**What is real and still unexplained:** an arm forcing 1-in-1 for *every* core
+fails to boot VB at all — flat *emulated* frame counter, three attempts, while
+32X Doom boots on the same firmware at 19.13. Since VB ignores the guard's
+answer, the cause is not the presentation but the guard's side effects. That is
+one more reason the ratio is a per-core opt-in with the default left at 4.
 
 **What this does not change.** The console still runs at roughly a third of
 speed, so games play in slow motion with slow audio; smooth is not the same as
