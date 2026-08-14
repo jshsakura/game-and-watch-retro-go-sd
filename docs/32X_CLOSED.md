@@ -71,11 +71,18 @@ guard asked for", which is the same thing as "frames presented" only for a core
 that obeys the guard — 32X does, which is why the numbers above hold, and any
 other core has to be read against its own loop first.
 
-**What is real and still unexplained:** an arm forcing 1-in-1 for *every* core
-fails to boot VB at all — flat *emulated* frame counter, three attempts, while
-32X Doom boots on the same firmware at 19.13. Since VB ignores the guard's
-answer, the cause is not the presentation but the guard's side effects. That is
-one more reason the ratio is a per-core opt-in with the default left at 4.
+**And the "1-in-1 does not boot VB" claim that stood here is withdrawn too.** It
+boots: 36.80 / 36.20 emulated fps at ratio 4 against 36.80 / 36.50 at ratio 1,
+once each arm carries its own `cores/vb.bin`. The failure was a **stale core
+file** — one arm's `vb.bin` under another arm's internal flash — which is the
+same class of mistake as measuring through the wrong ELF, and it happened twice
+in one afternoon. The 32X numbers above are not exposed to it because
+`arm32x.sh` pushes `32x.bin` and `32x.xip` on every flash; `arm.sh` now takes
+`PUSH_CORE=<core>` for the same reason.
+
+So the per-core opt-in is justified by measurement discipline rather than by a
+crash: nothing is known to break at ratio 1, and nothing is known to gain from
+it either except a core that actually obeys the guard.
 
 **What this does not change.** The console still runs at roughly a third of
 speed, so games play in slow motion with slow audio; smooth is not the same as
