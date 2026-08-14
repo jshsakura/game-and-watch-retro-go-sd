@@ -26,6 +26,39 @@ HOST=${PROBE_HOST:-rpi-genie5}
 E=/tmp/gnw_arms/$ARM/gw_retro_go.elf
 OC="sudo openocd -f interface/stlink-dap.cfg -f target/stm32h7x.cfg -c 'adapter speed 4000'"
 
+# Is the arm we are about to resolve symbols against the one actually FLASHED?
+#
+# Nothing checked this until now, and with two sessions sharing one console it
+# went wrong for real: a whole VB debugging round was spent reading THIS repo's
+# SNES binary through another arm's ELF, and the PC that looked like a VB BSS
+# address was inside .overlay_snes. Every symbol lookup below is a lie when the
+# device holds a different image, and the failure has no other symptom.
+#
+# 4 KB off the front of internal flash is enough to separate two builds -- the
+# vector table and the first of the resident code -- and costs about a second.
+# Skips (loudly) if the dump cannot be taken, per the rule that a safety net
+# must not be the thing that breaks the run.
+verify_flashed() {
+  local bin="/tmp/gnw_arms/$ARM/gw_retro_go_intflash.bin"
+  [ -f "$bin" ] || { echo "$ARM: no intflash.bin to verify against -- SKIPPED" >&2; return 0; }
+  local n=4096
+  if ! ssh -n "$HOST" "python3 -m gnwmanager dump 0x08100000 --dst /tmp/gnw_flashed.bin --size $n" \
+       >/dev/null 2>&1; then
+    echo "$ARM: could not read flash to verify the image -- SKIPPED" >&2
+    return 0
+  fi
+  scp -q "$HOST:/tmp/gnw_flashed.bin" /tmp/gnw_flashed.bin 2>/dev/null || {
+    echo "$ARM: could not fetch the flash dump -- SKIPPED" >&2; return 0; }
+  head -c $n "$bin" > /tmp/gnw_armhead.bin
+  if ! cmp -s /tmp/gnw_flashed.bin /tmp/gnw_armhead.bin; then
+    echo "$ARM: THE DEVICE IS NOT RUNNING THIS ARM. The first $n bytes of" >&2
+    echo "      internal flash differ from $bin." >&2
+    echo "      Every symbol below would be resolved against the wrong program." >&2
+    return 5
+  fi
+}
+verify_flashed || exit $?
+
 sym() { arm-none-eabi-nm "$E" | awk -v s="$1" '$3==s{print "0x"$1; exit}'; }
 SNESP=$(sym snes)
 DRAWN=$(sym g_snes_drawn_frames); [ -n "$DRAWN" ] || DRAWN=$(sym gsnes__g_snes_drawn_frames)
