@@ -599,6 +599,17 @@ $CC -O1 -g -std=gnu11 -Wall $SAN -DBOOT_RESCUE_HOST_TEST \
     -o "$BR_DIR/test_boot_rescue" || fail "compile test_boot_rescue"
 "$BR_DIR/test_boot_rescue" || fail test_boot_rescue
 
+# A DSP-2/3/4 cartridge must be refused, not handed the DSP-1 HLE. Those four
+# chips share one romType, so the header cannot tell them apart and the wrong
+# HLE fails SILENTLY -- unknown commands are NOPs. The predicate lives in a
+# header so this links the same text the firmware compiles.
+DSPV_DIR=/tmp/mtest/snes_dsp_variant
+rm -rf "$DSPV_DIR"; mkdir -p "$DSPV_DIR"
+$CC -O1 -g -std=gnu11 -Wall $SAN -ICore/Src/porting/snes \
+    tests/test_snes_dsp_variant.c \
+    -o "$DSPV_DIR/test_snes_dsp_variant" || fail "compile test_snes_dsp_variant"
+"$DSPV_DIR/test_snes_dsp_variant" || fail test_snes_dsp_variant
+
 echo "=== SNES audio stretcher: a slow frame must not become a silent gap ==="
 # The core makes 266 samples per EMULATED frame; the DMA eats a buffer every
 # 16.625 ms of REAL time. They only balance at 60 fps, and below it the old

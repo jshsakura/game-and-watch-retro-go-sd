@@ -19,6 +19,8 @@
 
 #include <assert.h>
 #include <string.h>
+
+#include "snes_dsp_variant.h"
 #include "gw_lcd.h"
 #include "gw_linker.h"
 #include "gw_buttons.h"
@@ -919,6 +921,20 @@ static bool cart_needs_coprocessor(const uint8_t *rom, uint32_t len) {
        * romType >= 3 is a coprocessor we don't support yet */
       if (romType >= 0x03 && (romType >> 4) != 0)
         return true;
+
+      /* The DSP family is four different chips behind one encoding, and only
+       * DSP-1 is implemented here. See snes_dsp_variant.h for why the title is
+       * the fingerprint and why refusing beats attaching the wrong HLE. */
+      if (romType >= 0x03) {
+        char name[22];
+        for (int c = 0; c < 21; c++) {
+          uint8_t ch = h[c];
+          name[c] = (ch >= 0x20 && ch < 0x7f) ? (char)ch : '.';
+        }
+        name[21] = 0;
+        if (snes_title_needs_unsupported_dsp(name))
+          return true;
+      }
     }
   }
   return false;
