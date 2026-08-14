@@ -72,6 +72,25 @@ cmd_build() {
   echo "[32x:$name] intflash $(stat -c%s "$ARMS/$name/gw_retro_go_intflash.bin") B," \
        "32x.bin $(stat -c%s "$ARMS/$name/32x.bin") B," \
        "32x.xip $(stat -c%s "$ARMS/$name/32x.xip") B"
+
+  # Is this arm a different program from the ones already built?
+  #
+  # A knob reaches a core only through the define group that core's recipe uses,
+  # and 32X has its own (MD32X_C_DEFS) exactly as SNES does. Put a new knob in
+  # the wrong group and make is perfectly happy, both arms compile, and the A/B
+  # measures one program twice -- which reads as "no effect" and gets written
+  # down as a closed path. The SNES session lost an arm to this today; the SNES
+  # FLAGS_STAMP bug earlier this month was the same disease.
+  for other in "$ARMS"/*/32x.bin; do
+    [ -e "$other" ] || continue
+    o=$(dirname "$other"); [ "$(basename "$o")" = "$name" ] && continue
+    if cmp -s "$o/32x.bin" "$ARMS/$name/32x.bin" &&
+       cmp -s "$o/gw_retro_go_intflash.bin" "$ARMS/$name/gw_retro_go_intflash.bin"; then
+      echo "[32x:$name] WARNING: byte-identical to arm '$(basename "$o")'." >&2
+      echo "            If these were meant to differ, the knob did not reach the" >&2
+      echo "            compiler -- check it is in MD32X_C_DEFS, not just C_DEFS." >&2
+    fi
+  done
 }
 
 cmd_rom() {
