@@ -78,7 +78,9 @@
 # firmware uses it that way yet; when one does, that is an ABI decision, not a
 # line in this file.
 
-Core/Src/gw_lcd.c                             swap=1 stale=1 defines      # the definitions themselves, not calls
+Core/Src/gw_lcd.c                             swap=2 stale=1 defines      # the two definitions, plus the lcd_swap() inside lcd_swap_stale()'s
+#                                                                          # GNW_DRAWN_COUNTER_NAIVE RED arm (ca48bfa0). The matcher does not
+#                                                                          # preprocess, by design, so an #ifdef'd call still counts.
 Core/Inc/gw_lcd.h                             swap=1 stale=1 defines      # the declarations, not calls
 
 # Prose only: the name appears, nothing is called. Listed so the census fails
