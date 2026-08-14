@@ -354,10 +354,48 @@ something the core then ignores. **VB draws all 35.9 of its frames and the
 65–70% figure was right.** Same defect applies to WonderSwan
 (`main_wswan.c:328` forces a draw every 6th skip).
 
-The lesson is the counter's, not VB's: **`g_common_drawn_frames` means "frames
+The lesson is the counter's, not VB's: **`g_common_drawn_frames` meant "frames
 the guard asked for", which equals "frames presented" only for cores that obey
-the guard.** 32X obeys it, so the 32X numbers below stand. Read that column for
-any other core only after checking what its loop does with `drawFrame`.
+the guard.** 32X obeys it, so the 32X numbers below stand.
+
+**The fix, and the second lie it had to avoid.** A caveat that reads "check what
+that core's loop does with `drawFrame` before believing this column" is a caveat
+nobody applies — the number looks like a measurement either way, which is
+exactly how the VB row got written down. So the increment moved to
+**`lcd_swap()`** (`Core/Src/gw_lcd.c`), the one call that tells the LTDC to
+flip: ~68 call sites across every porting layer funnel through it, and a new
+core gets an honest counter without knowing the counter exists.
+
+On its own that is wrong in the opposite direction. **`lcd_swap()` is not where
+a frame becomes new content.** Three cores flip the panel every emulated frame
+while skipping the render, on purpose — holding the flip would leave the panel
+on a front buffer that goes stale while emulation keeps writing the back one:
+
+| core | site | behaviour |
+|---|---|---|
+| Genesis / 32X | `main_gwenesis.c:903` | audio-sync mode — the default (`gwenesis_vsync_mode = 0`) — swaps unconditionally; the render is gated at `:851`, and only the vsync branch guards the swap |
+| MSX | `main_msx.c:2171` | swaps unconditionally, and the comment says it copies Gwenesis deliberately |
+| Celeste | `main_celeste.c:697` | `if (drawFrame) blit();` then an unguarded swap |
+
+Left alone, those three would have read **drawn == emulated, a flat 100%** —
+including the 32X Doom rows below. They now call **`lcd_swap_stale()`**, which
+performs the identical flip and does not count it. MSX is the one that is not a
+straight `drawFrame` test: in screen modes 10/11/12 `_blit_frame()` is a no-op
+because the VDP writes RGB565 into the LCD back buffer itself, so in those modes
+every flip really does carry a new frame.
+
+The rest of the sweep found no fourth case. The cores that flip unconditionally
+*and* render unconditionally — Videopac, C64, Lynx, ZX Spectrum, A2600,
+zelda3/SMW, VB, TamaPoke — are honest under this counter; that is the whole
+point of it. PCE and SMS+GX flip inside a function that is itself called only
+`if (drawFrame)`.
+
+32X obeys the guard, so the 32X rows below stand unchanged. SNES is unaffected
+either way — `drawn_ab.sh` prefers that core's own `g_snes_drawn_frames`.
+
+**Not yet measured on hardware.** The build is green with the canonical release
+flags and every gate passes, but no device A/B has been run against this
+counter's new definition.
 
 **Also retracted, same day: "VB does not boot under an arm that forces 1-in-1".**
 It boots. Measured with each arm carrying its OWN `cores/vb.bin`: **36.80 /

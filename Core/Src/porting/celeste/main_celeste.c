@@ -691,10 +691,14 @@ void app_main_celeste(uint8_t load_state, uint8_t start_paused, int8_t save_slot
         Celeste_P8_draw();
         update_sound_celeste();
 
+        /* Flip either way (the panel would otherwise sit on a stale front
+         * buffer), but only a blitted frame carries new content. */
         if (drawFrame) {
             blit();
+            lcd_swap();
+        } else {
+            lcd_swap_stale();
         }
-        lcd_swap();
 
         common_emu_sound_sync(false);
     }
