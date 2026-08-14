@@ -342,21 +342,31 @@ Shipped. The M4A mixer HLE is the lever that matters (27–60% of guest time).
 Shipped and playable. The bottleneck differs per game — Wario is blit-bound, 3D
 Tetris is interpreter-bound (the floating-point hypothesis was tested and rejected).
 
-**"Playable at 65–70% speed" was measured on the wrong counter.** On hardware,
-3-D Tetris: **35.90 emulated fps against 9.00 drawn**, draw ratio 0.2506 over
-three samples. The overload guard is pinned, so what the player sees is the
-forced-draw floor — nine frames a second — and the 65–70% figure describes a
-rate nobody was watching. This is the same finding as the 32X one below; VB is
-simply the second core it was checked on.
+**RETRACTED, same day: "VB is pinned on the draw floor and the player sees 9
+fps".** It was written here on a hardware reading of 35.90 emulated against 9.00
+drawn, ratio 0.2506, three samples. The emulated number is real. The drawn one
+is not a count of anything VB puts on the screen: **`main_vb.c` discards the
+guard's answer and presents every frame** (`(void)drawFrame; drawFrame = true;`,
+because the VIP flips its own framebuffer every emulated frame and skipping
+leaves the LCD alternating fresh and stale content). `common.c` increments
+`g_common_drawn_frames` from the guard's *decision*, so for VB it counts
+something the core then ignores. **VB draws all 35.9 of its frames and the
+65–70% figure was right.** Same defect applies to WonderSwan
+(`main_wswan.c:328` forces a draw every 6th skip).
 
-**⚠️ But VB does not boot if every frame is drawn.** An arm with
-`GNW_FORCED_DRAW_RATIO=1` (the guard's discretion removed for every core) leaves
-VB's frame counter flat — three attempts, no frames at all — while 32X Doom
-boots on that same firmware at 19.13 drawn fps. Something in VB's start path
-depends on frames being skipped, and it is not diagnosed. **Do not raise VB's
-draw ratio, or change the shared default, without fixing that first**; the
-per-core setter exists partly because of this. Anyone who touches the draw ratio
-for an unrelated reason will meet it too.
+The lesson is the counter's, not VB's: **`g_common_drawn_frames` means "frames
+the guard asked for", which equals "frames presented" only for cores that obey
+the guard.** 32X obeys it, so the 32X numbers below stand. Read that column for
+any other core only after checking what its loop does with `drawFrame`.
+
+**⚠️ VB does not boot under an arm that forces 1-in-1 for every core.**
+`GNW_FORCED_DRAW_RATIO=1` leaves VB's *emulated* frame counter flat — three
+attempts, no frames at all — while 32X Doom boots on that same firmware. The
+mechanism is not the presentation, since VB ignores the guard's answer anyway;
+what is left is the guard's side effects (`odroid_system_tick(!draw_frame, …)`,
+the skip bookkeeping, the `startup_frames < 3` early return). Undiagnosed. **Do
+not change the shared default without resolving it** — anyone who touches the
+draw ratio for an unrelated reason will meet it.
 
 **Closed.** Lazy flags plus threaded dispatch was estimated at 20–25% but touches
 every game's core path for an uncertain return. A dynamic recompiler is ARM32 only.
