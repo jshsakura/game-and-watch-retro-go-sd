@@ -283,6 +283,36 @@ in the binary. Full guide: [SNES_DEVICE_DWT.md](SNES_DEVICE_DWT.md).
 | what is the device really spending a frame on | `feat/gba-probe`; for SNES, `SNES_DEVICE_PROFILE=1` |
 | does my ROM-pattern feature hold across a whole library | `tools/snes_bake_survey/` — survey, then hash-gate every hit ([SNES_ROM_SURVEY.md](SNES_ROM_SURVEY.md)) |
 | is fps compute-bound or sitting on the audio deadline | `SNES_DEVICE_PROFILE=1` Ledger C — DWT alone cannot answer this, it goes blind in `__WFI()` |
+| **is the game actually ON THE SCREEN** | `tools/gnw_probe/screenshot.sh --live` — no counter can answer this; see below |
+
+## `tools/gnw_probe/screenshot.sh` — the device's screen, as a PNG
+
+Every other row in this table produces a *number*, and no number distinguishes
+"the game is rendering" from "the core is swapping two empty buffers". That gap
+was closed by a human holding the console up and looking at it — which needs
+someone in the room and cannot go in a log. It cost a whole 32X session: the
+counters read 41.4 drawn fps for D32XR and nothing but eyes could say whether
+Doom was on the panel.
+
+    PROBE_HOST=rpi-genie5 tools/gnw_probe/screenshot.sh --live shot.png
+
+It asks **LTDC**, not the ELF. `L1CFBAR` (`0x500010AC`) is the address the
+display controller is DMAing to the panel right now — true in every LCD mode,
+for every core and every arm, with no build artifact involved. Resolving
+`framebuffer1` out of `gw_retro_go.elf` instead is wrong three ways: those are
+pointers `lcd_setup_framebuffers()` moves at runtime, the ELF on disk is often
+not the image on the device, and a `0x24xxxxxx` address resolves to whichever
+overlay the linker saw first.
+
+It does not halt the CPU — the core draws into the *inactive* buffer while LTDC
+scans the active one, so a running dump is a clean read of a finished frame.
+
+**One frame proves nothing about liveness.** A crashed core leaves a perfectly
+good last frame on the panel for ever. `--live` takes two and reports how many
+bytes changed; identical frames print `STILL:` and exit 6.
+
+Limits: RGB565 only. LUT8 (`L1PFCR == 5`) exits 4, because that palette lives in
+LTDC's write-only CLUT and has to come from the core.
 
 ## `tools/gnw_hw_harness/` — the device memory-budget contract (the missing gate)
 

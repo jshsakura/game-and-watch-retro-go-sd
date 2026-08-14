@@ -27,8 +27,14 @@ def convert_rgb565_to_png(input_file, width=320, height=240):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python binary_rgb565_to_png.py <binary file name>")
+        print("Usage: python binary_rgb565_to_png.py <binary file name> [width] [height]")
         sys.exit(1)
 
+    # Dimensions default to the panel's 320x240, which is every savestate
+    # screenshot. screenshot.sh passes them explicitly because it reads the
+    # real geometry out of LTDC and must not silently reshape a frame that
+    # is not that size.
     input_file = sys.argv[1]
-    convert_rgb565_to_png(input_file)
+    width = int(sys.argv[2]) if len(sys.argv) > 2 else 320
+    height = int(sys.argv[3]) if len(sys.argv) > 3 else 240
+    convert_rgb565_to_png(input_file, width, height)
