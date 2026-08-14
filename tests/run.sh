@@ -455,6 +455,14 @@ python3 tests/test_tamapoke_verify_assets.py || fail tests/test_tamapoke_verify_
 # on screen -- reported as "the shortcut overlay is broken".
 bash tests/test_ingame_overlay_wired.sh || fail tests/test_ingame_overlay_wired.sh
 
+# The same flip, from the other side: g_common_drawn_frames counts lcd_swap(),
+# so a core that skips its render and flips anyway reports every frame as drawn.
+# Three do flip anyway on purpose and call lcd_swap_stale() instead. Neither that
+# mistake nor the one it replaced (counting the guard's DECISION, which put VB in
+# the ledger at 9 drawn fps while it presented 36) produces a compile error or a
+# visible glitch -- only a number that looks like a measurement. So: a census.
+bash tests/test_lcd_swap_audited.sh || fail tests/test_lcd_swap_audited.sh
+
 /tmp/mtest/test_tamapoke_audio || fail tests/test_tamapoke_audio.c
 /tmp/mtest/test_video_resume  || fail tests/test_video_resume.c
 

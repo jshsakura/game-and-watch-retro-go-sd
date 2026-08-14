@@ -1,0 +1,93 @@
+# Every file that CALLS lcd_swap() or lcd_swap_stale(), with the counts and the
+# verdict from reading its loop. tests/test_lcd_swap_audited.sh fails when this
+# list and the tree disagree.
+#
+# WHY THIS EXISTS. g_common_drawn_frames is incremented in lcd_swap(), so a core
+# that skips its render and flips anyway reports every frame as drawn. Three did
+# (gwenesis, msx, celeste) and would have read a flat 100%; they call
+# lcd_swap_stale() now -- the identical flip, not counted. The previous counter
+# had the mirror-image defect, counting the guard's DECISION for cores that
+# discard it, and Virtual Boy went into the ledger at 9 drawn fps while it was
+# presenting 36. Both mistakes look exactly like a measurement.
+#
+# So a new core, or a changed count in an old one, has to be READ before this
+# file is edited. That is the whole mechanism: the check is `grep -c`, and the
+# thinking is here.
+#
+# HOW TO UPDATE. Run the loop and answer one question -- when this core skips a
+# frame, does new content still reach the back buffer?
+#   yes, always  -> it ignores the guard and draws everything: lcd_swap(), and
+#                   drawn == emu is the CORRECT reading (vb, videopac, zelda3)
+#   no           -> lcd_swap_stale() on the skip path (gwenesis, celeste)
+#   sometimes    -> the condition is the core's, not the guard's (msx: in screen
+#                   modes 10/11/12 the VDP writes the LCD buffer itself)
+# Then add the line here with which of those it is.
+#
+# FIELDS: <path> swap=<n> stale=<n> <verdict> # reason
+#   ui           not an emulation loop; these flips are launcher/menu/player
+#                paint. They are why the counter is only read as a DELTA with a
+#                game running.
+#   gated        the swap sits inside the core's own `if (drawFrame)`, so a
+#                skipped frame never flips. Nothing to do.
+#   always-draws the core renders unconditionally and flips unconditionally.
+#                drawn == emu is the truth for it, not a bug.
+#   split        the core flips on every frame but only sometimes with new
+#                content -- the three that need lcd_swap_stale().
+#   dead         not built by any configuration in this tree.
+#   defines      gw_lcd.c, where both functions are defined rather than called.
+#
+# NOT COVERED, on purpose: Core/Src/retro-go/gw_firmware_abi.c exports lcd_swap
+# as a function pointer (gw_firmware_abi.h:183) and there is no lcd_swap_stale
+# in the ABI. An external core reached through that pointer cannot be seen by a
+# grep of this tree and cannot opt out of being counted. Nothing in this repo's
+# firmware uses it that way yet; when one does, that is an ABI decision, not a
+# line in this file.
+
+Core/Src/gw_lcd.c                             swap=1 stale=1 defines      # the definitions themselves, not calls
+Core/Src/gw_littlefs.c                        swap=1 stale=0 ui           # filesystem-format progress screen
+Core/Src/gw_sdcard.c                          swap=1 stale=0 ui           # "No SD CARD found" screen
+Core/Src/gw_sleep.c                           swap=1 stale=0 ui           # paints once on the way into sleep
+Core/Src/porting/odroid_overlay.c             swap=4 stale=0 ui           # banner, dialog, cache-progress, loading
+Core/Src/porting/pico8/main_pico8_stub.c      swap=1 stale=0 ui           # install-instructions stub, no emulation
+Core/Src/porting/video/main_video.c           swap=2 stale=0 ui           # loading splash + empty-folder hint
+Core/Src/porting/video/video_play.c           swap=2 stale=0 ui           # video player, its own pacing
+Core/Src/porting/video/video_ui.c             swap=1 stale=0 ui           # file list
+Core/Src/porting/music/main_music.c           swap=6 stale=0 ui           # player deck, info, lyrics, list
+Core/Src/retro-go/gui.c                       swap=1 stale=0 ui           # launcher redraw
+Core/Src/retro-go/rg_main.c                   swap=4 stale=0 ui           # launcher main loop
+Core/Src/retro-go/rg_clock.c                  swap=4 stale=0 ui           # clock app
+Core/Src/retro-go/rg_alarm.c                  swap=1 stale=0 ui           # alarm screen
+
+Core/Src/porting/a7800/main_a7800.c           swap=1 stale=0 gated        # if (drawFrame) { blit(); lcd_swap(); }
+Core/Src/porting/amstrad/main_amstrad.c       swap=1 stale=0 gated        # if (drawFrame) { _blit(); lcd_swap(); }
+Core/Src/porting/gamecom/main_gamecom.c       swap=1 stale=0 gated        # if (draw) { gc_blit(); ...; lcd_swap(); }
+Core/Src/porting/gb_tgbdual/gw_renderer.cpp   swap=1 stale=0 gated        # if (tgb_drawFrame) { gb_blit(); lcd_swap(); }
+Core/Src/porting/gba/main_gba.c               swap=2 stale=0 gated        # if (drawFrame) { blit(); lcd_swap(); }; the other is the fatal screen
+Core/Src/porting/gw/main_gw.c                 swap=1 stale=0 gated        # if (!lcd_is_swap_pending() && drawFrame)
+Core/Src/porting/nes_fceu/main_nes_fceu.c     swap=1 stale=0 gated        # if (drawFrame) { _blit(); lcd_swap(); }
+Core/Src/porting/ngp/main_ngp.c               swap=1 stale=0 gated        # if (drawFrame) { blit(); lcd_swap(); }
+Core/Src/porting/pce/main_pce.c               swap=1 stale=0 gated        # inside pce_osd_gfx_blit(), called only if (drawFrame)
+Core/Src/porting/pkmini/main_pkmini.c         swap=1 stale=0 gated        # if (drawFrame) { VideoBlit(); lcd_swap(); }
+Core/Src/porting/sm/main_sm.c                 swap=2 stale=0 gated        # if (draw_frame) { ...; lcd_swap(); }; the other is the fatal screen
+Core/Src/porting/smsplusgx/main_smsplusgx.c   swap=1 stale=0 gated        # inside sms_draw_frame(), called only if (drawFrame)
+Core/Src/porting/snes/main_snes.c             swap=1 stale=0 gated        # if (drawFrame) { present; overlay; lcd_swap(); }
+Core/Src/porting/tama/main_tama.c             swap=1 stale=0 gated        # if (drawFrame || fast_forward) { blit(); lcd_swap(); }
+Core/Src/porting/wsv/main_wsv.c               swap=1 stale=0 gated        # if (drawFrame) { blit(); lcd_swap(); }
+Core/Src/porting/wswan/main_wswan.c           swap=1 stale=0 gated        # if (drawFrame) { blit(); lcd_swap(); } -- forces every 6th skip, which IS a drawn frame
+
+Core/Src/porting/a2600/main_a2600.cxx         swap=1 stale=0 always-draws # tia.update(); blit(); lcd_swap(); -- no frameskip
+Core/Src/porting/c64/main_c64_dev.cpp         swap=1 stale=0 always-draws # calls common_emu_frame_loop() and ignores the return
+Core/Src/porting/lynx/main_lynx.cpp           swap=1 stale=0 always-draws # UpdateFrame(); blit(); lcd_swap();
+Core/Src/porting/smw/main_smw.c               swap=1 stale=0 always-draws # native port, DrawPpuFrame() every frame
+Core/Src/porting/tamapoke/main_tamapoke.cpp   swap=1 stale=0 always-draws # UI-style core, repaints every frame
+Core/Src/porting/vb/main_vb.c                 swap=1 stale=0 always-draws # (void)drawFrame; drawFrame = true -- skipping flickers the VIP
+Core/Src/porting/videopac/main_videopac.c     swap=1 stale=0 always-draws # computes drawFrame and never reads it
+Core/Src/porting/zelda3/main_zelda3.c         swap=1 stale=0 always-draws # native port, DrawPpuFrame() every frame
+Core/Src/porting/zxs/main_zxs.c               swap=1 stale=0 always-draws # zx_exec(); zx_blit(); lcd_swap();
+
+Core/Src/porting/gwenesis/main_gwenesis.c     swap=2 stale=1 split        # audio-sync (the DEFAULT) flips on skips; render gated separately. Other swap is the vsync branch, already guarded
+Core/Src/porting/msx/main_msx.c               swap=1 stale=1 split        # drawFrame || msx_vdp_writes_lcd_directly() -- modes 10/11/12 are written by the VDP
+Core/Src/porting/celeste/main_celeste.c       swap=1 stale=1 split        # blit() is gated; the flip is not
+
+Core/Src/porting/c64/main_c64.c               swap=2 stale=0 dead         # Makefile: the old chips core is no longer built (live entry is main_c64_dev.cpp)
+Core/Src/porting/nes/main_nes.c               swap=1 stale=0 dead         # NES_C_SOURCES is empty; NES is fceumm only
