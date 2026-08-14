@@ -464,9 +464,39 @@ The general lesson survives the good news: *sibling* is not a property of a
 system, it is a property of a file. MD and 32X share a console lineage and share
 nothing in the loop that this counter measures.
 
-**Not yet measured on hardware.** The build is green with the canonical release
-flags and every gate passes, but no device A/B has been run against this
-counter's new definition.
+**Measured on hardware, RED and GREEN.** Celeste, autobooted from the homebrew
+list, speedup 3x so the guard actually withholds, 1200 emulated frames a window,
+each arm carrying its own `celeste.bin` (the package differs per arm — checked):
+
+| arm | ratio | guard charged |
+|---|---:|---:|
+| **RED** — `GNW_DRAWN_COUNTER_NAIVE=1`, the pre-fix behaviour | **1.0000**, **1.0000** | 1387, 1185 |
+| **GREEN** — as shipped | **0.9566**, **0.8341** | 932, 1095 |
+
+RED reports every frame as drawn while the guard is withholding hundreds of
+them. GREEN does not. The arms were confirmed to be two programs by
+disassembly, not by trusting the flag: `lcd_swap_stale` is `b.w lcd_present` in
+GREEN and `b.w lcd_swap` in RED.
+
+Three earlier attempts at this measurement were wrong, and each was caught by an
+instrument rather than by luck — worth recording, because all three look like
+results:
+
+1. **Virtual Boy, not the core under test.** The card's
+   `/snes_bench_index.txt` said `vb:0`, so every reset autobooted VB. Caught by
+   reading `currentApp.id`.
+2. **SNES, not MSX.** `msx:1942.rom` does not match — the launcher compares the
+   name without its extension — so the lookup failed and fell through to SNES
+   ROM index 0. It measured a plausible 0.6684 / 0.6808, and the two arms agreed
+   because the SNES core never calls `lcd_swap_stale()` at all. Caught by
+   `currentApp.id` again (25 = SNES, not 6 = MSX). **`drawn_ab.sh` verifies the
+   core file on the card but not which core is RUNNING** — that gap is real.
+3. **A window with no pressure.** Celeste holds 30 fps easily, so nothing was
+   withheld and both arms read 1.0007. The probe refused it in as many words:
+   *GUARD NEVER UNDER PRESSURE: this window cannot judge the counter.* Speedup
+   2x was still not enough (charged 692, ratio 1.0007) — a direct hardware
+   confirmation that **charged > 0 is not withheld**, because `common.c:213`
+   charges 1 for a frame that is still drawn. 3x separated them.
 
 **Also retracted, same day: "VB does not boot under an arm that forces 1-in-1".**
 It boots. Measured with each arm carrying its OWN `cores/vb.bin`: **36.80 /
