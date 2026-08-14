@@ -1,8 +1,114 @@
 # Sega 32X (picodrive) — closed for performance work
 
+> **2026-08-14: the verdict below stands on speed and is wrong about the
+> screen.** Everything in this file is *emulated* fps measured with the
+> profiler on, in a boot-anchored scene. Re-measured with the instruments the
+> SNES campaign produced — shipping build, real scene, and a counter for the
+> frames the player actually sees — the core was drawing **one frame in four**,
+> because it inherited a shared constant sized for a core where drawing is
+> expensive. Doom went from **4.98 to 18.33 drawn fps** with no emulation change
+> at all, and the arithmetic below did not move by one cycle. Read
+> [§0](#0-what-2026-08-14-changed) before quoting any number in this file.
+
 **Verdict, 2026-07-27: this core does not reach a playable frame rate, and no
 remaining emulator-side change gets it there. Do not reopen the performance
 axis without reading the ledger below.**
+
+## 0. What 2026-08-14 changed
+
+Nothing about the speed of emulation. Everything about what reaches the LCD.
+
+> **Re-measured 2026-08-14 on the new counter — the result holds.**
+> `g_common_drawn_frames` has since moved from the overload guard's decision to
+> `lcd_swap()`, the one place that flips the panel. Both arms re-run back to
+> back, each with its own `cores/32x.bin` on the card (verified by md5 against
+> the arm), Doom, two samples each:
+>
+> | arm | emulated fps | drawn fps | ratio |
+> |---|---:|---:|---:|
+> | `MD32X_FORCED_DRAW_RATIO=4` (the old shared default) | 30.77 / 32.02 | 7.69 / 8.02 | 0.2500 |
+> | per-core 1 (what ships) | 28.77 / 28.79 | **28.77 / 28.79** | 1.0000 |
+>
+> **×3.67 the visible frames for 8.3% of emulated fps** — the same trade the
+> first measurement found (×3.7 for 8%).
+>
+> ⚠️ **The absolute numbers are higher than the first pass and I did not
+> establish why.** Both arms moved together (4.98 → 7.85 at ratio 4), so the
+> ratio and the relative cost are unaffected, but the baseline is not the same
+> machine it was that morning. Candidates not separated: what the testbed merge
+> brought in (the resident image shrank 261,228 → 255,324 B), and host load
+> during the earlier runs. **Treat the absolute fps in the tables below as
+> indicative and the ratio/relative cost as the result.**
+
+**The honest baseline.** No `MD32X_DEVICE_PROFILE` (it costs ~16 of every 94
+cycles an instruction takes — §14), cold boot into the attract demo rather than
+a title screen, two samples per arm, and both counters:
+
+| cartridge | emulated fps | **drawn fps** | ratio |
+|---|---:|---:|---:|
+| Doom | 20.13 / 19.73 | **5.02 / 4.93** | 0.249 |
+| Knuckles' Chaotix | 15.42 | **3.87** | 0.251 |
+| Kolibri | 9.89 | **2.48** | 0.250 |
+
+Two things fall out. Emulated fps is **higher** than this file reports (20 vs
+"10 → 13-16"), because the tax is gone. And the ratio is 0.25 on every
+cartridge — pinned exactly on the overload guard's forced-draw floor.
+
+**The floor was the draw rate, and it was another core's constant.** Sweeping it
+on Doom:
+
+| | emulated | drawn |
+|---|---:|---:|
+| 1-in-4 (what shipped) | 19.9 | 4.98 |
+| 1-in-2 | 19.0 | 9.52 |
+| **1-in-1** | 18.3 | **18.33** |
+
+Drawing every frame costs **8% of emulated fps** and returns **3.7x the visible
+frames** — and §"Why 2x is arithmetically out of reach" already says why it is
+nearly free here: **draw is 1.9% of a 32X frame**. Skipping it saves 1.9% of the
+work and throws away 75% of the player's frames. There is no real-time deadline
+to protect either, since the core runs at about a third of console speed
+whatever it does. On SNES the same constant is right (a drawn frame is 17.65 ms
+against 14.6 ms of emulation; 1-in-3 underruns the audio), which is where 4 came
+from. It is now a per-core choice — `common_emu_set_forced_draw_ratio()`, with
+md32x asking for 1.
+
+Gains across the library, drawn fps: Doom ×3.7, Chaotix ×3.4, Kolibri ×3.8.
+
+**And §13's last open question is answered, in the other direction.** "2D titles
+were never measured; that decides whether the core is unusable or only 3D is."
+They are measured now, and **the 2D titles are slower than Doom** — Chaotix 3.87
+and Kolibri 2.48 against Doom 4.98 drawn (13.12 / 9.40 / 18.33 with the ratio
+fixed). The QEMU rig agrees: Chaotix costs 21.3 M host instructions a frame
+against Doom's 7.9 M in a comparable window. Chaotix drives the SH-2s hard
+despite being a 2D game. **Do not reopen the core on the hope that 2D is light.**
+
+**Is it a 32X property? Not established, and the first attempt to answer it was
+wrong.** Virtual Boy was measured at 35.90 emulated fps against 9.00 drawn
+(ratio 0.2506) and written up here as a second core pinned on the floor. That
+was retracted the same day: `main_vb.c` **discards the guard's answer and
+presents every frame**, so the 9.00 counted the guard's decision, not anything
+on VB's screen. VB draws all 35.9. `g_common_drawn_frames` means "frames the
+guard asked for", which is the same thing as "frames presented" only for a core
+that obeys the guard — 32X does, which is why the numbers above hold, and any
+other core has to be read against its own loop first.
+
+**And the "1-in-1 does not boot VB" claim that stood here is withdrawn too.** It
+boots: 36.80 / 36.20 emulated fps at ratio 4 against 36.80 / 36.50 at ratio 1,
+once each arm carries its own `cores/vb.bin`. The failure was a **stale core
+file** — one arm's `vb.bin` under another arm's internal flash — which is the
+same class of mistake as measuring through the wrong ELF, and it happened twice
+in one afternoon. The 32X numbers above are not exposed to it because
+`arm32x.sh` pushes `32x.bin` and `32x.xip` on every flash; `arm.sh` now takes
+`PUSH_CORE=<core>` for the same reason.
+
+So the per-core opt-in is justified by measurement discipline rather than by a
+crash: nothing is known to break at ratio 1, and nothing is known to gain from
+it either except a core that actually obeys the guard.
+
+**What this does not change.** The console still runs at roughly a third of
+speed, so games play in slow motion with slow audio; smooth is not the same as
+correct. Every cycle-count and closed axis below is untouched.
 
 Measured on hardware (STM32H7B0 @ 312 MHz, `MD32X_DEVICE_PROFILE=1`):
 

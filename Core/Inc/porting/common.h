@@ -99,6 +99,22 @@ typedef struct {
 
 extern common_emu_state_t common_emu_state;
 
+/* The overload guard's forced draw: one frame in N while the pacing integrator
+ * is pinned. It is a per-core trade and it was a shared constant, which is how
+ * the Sega 32X came to throw away three quarters of its visible frames.
+ *
+ * The constant (4) was chosen so a struggling core could not blank the screen,
+ * and it is right where drawing is expensive: on SNES a drawn frame is 17.65 ms
+ * against 14.6 ms of emulation, so drawing more costs emulated fps, which feeds
+ * the audio -- 1-in-3 starts underrunning there and 1-in-2 collapses.
+ *
+ * On 32X a drawn frame is 1.9% of the frame (docs/32X_CLOSED.md) and the core
+ * cannot reach real time anyway, so skipping buys nothing and costs everything
+ * the player can see. Measured on hardware, Doom: 4.98 -> 18.33 drawn fps for
+ * 8% of emulated fps. A core that cannot hit real time should draw what it
+ * emulates. Call this from a core's init, before its frame loop. */
+void common_emu_set_forced_draw_ratio(uint8_t n);
+
 // DWT start
 void common_emu_enable_dwt_cycles(void);
 unsigned int common_emu_get_dwt_cycles(void);

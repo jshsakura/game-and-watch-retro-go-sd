@@ -84,3 +84,7 @@
 	path = external/gpsp
 	url = https://github.com/jshsakura/gpsp.git
 	branch = gnw-port
+[submodule "external/picodrive"]
+	path = external/picodrive
+	url = https://github.com/jshsakura/picodrive.git
+	branch = gnw-port
