@@ -67,6 +67,19 @@ These are the rules that stopped bad numbers from becoming shipped decisions.
 - **Do not judge architecture from the armchair.** On 32X the first estimate
   ("arithmetically impossible") and the second ("paging makes it comfortable")
   were both wrong; the truth was in between, at zero margin.
+- **Two samples that do not overlap are not a result** until you have shown that
+  the *scene* repeats. Super Mario World read 30.62–38.85 drawn fps from ONE
+  unchanged binary — a 23% spread — and the first two samples of each arm landed
+  so that a −9.2% regression looked real. Seven samples per arm, in one session,
+  killed it. Nothing had regressed.
+- **Repeatability is a property of the scene, not of the tool.** `drawn_ab.sh`
+  repeats to ~1% where the overload guard is **pinned** — draw ratio sitting
+  exactly on the floor (0.2500) or the ceiling (1.0000), where the forced-draw
+  constant decides every frame. Where the pacing integrator is deciding
+  frame-by-frame the ratio wanders (SMW 0.50–0.63) and so does the number. Read
+  the ratio column first: **an exact ratio means the arithmetic is deterministic
+  and two samples suffice; a wandering one means take seven.** Every 32X number
+  in this file's 32X section is from a pinned scene (0.2500 or 1.0000).
 
 ---
 
