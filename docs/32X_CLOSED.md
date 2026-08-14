@@ -114,7 +114,12 @@ across BOTH SH-2s, game logic at 15 fps against input at 30, resolutions down to
 than the speed of the interpreter, which is why it was worth a day.
 
 **On hardware it boots, renders, and beats the retail cartridge.** Same firmware
-(r1new), same console, ROM pushed to the card as `/roms/32x/d32xr.32x`:
+(r1new), same console. **The ROM measured is the 4 MiB single-level build**
+(`d32xr_bench.32x`, md5 `110d2229…`), pulled back off the card and hashed to be
+sure — it sits there under the name `d32xr.32x`, which is easy to misread as the
+official release. The 5 MiB release is a **separate, untested case**, and there
+is a specific reason to expect it to fail on the device: see the >4 MiB note
+below.
 
 | device, `drawn` counter | fps |
 |---|---|
@@ -186,6 +191,31 @@ which cost three Super Metroid releases.
 
 The rig can supply the real BIOS (`RIG_32X_BIOS=<dir>`) and bank a >4 MiB cart
 (`RIG_32X_SSF=1`); both exist only for this investigation.
+
+### A cart over 4 MiB gets no mapper on this device — untested, and separate
+
+Found while checking which ROM the 41.4 fps was measured on. In the fork's
+`pico/cart.c`, the fallback that gives any large cart the standard mapper is
+compiled out of the Game & Watch build:
+
+```c
+  // assume the standard mapper for large roms
+#ifndef GNW_32X_CORE
+  if (!carthw_detected && Pico.romsize > 0x400000)
+    carthw_ssf2_startup();
+#endif
+```
+
+The `carthw.cfg` mapper table is compiled out alongside it (`ssf2_mapper`,
+`x_in_1_mapper`, `realtec_mapper`, and the rest), so **nothing** can hand a
+>4 MiB cart its banking. The official 5 MiB D32XR release is exactly such a
+cart, and so is every large Mega Drive multicart.
+
+This is not a claim that the 5 MiB ROM fails — **nobody has run it on the
+device**, and that is the point: the 4 MiB result above must not be read as
+covering it. Before enabling the mapper, price it: `carthw.c` has to enter the
+`.overlay_md32x` budget, and that overlay has been down to three-figure headroom
+before. Measure the requirement first.
 
 **What this does not change.** The console still runs at roughly a third of
 speed, so games play in slow motion with slow audio; smooth is not the same as
