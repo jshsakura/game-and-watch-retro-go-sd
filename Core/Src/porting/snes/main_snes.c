@@ -132,6 +132,31 @@ uint32_t g_snes_state_resumed;   /* 1 = the autoboot savestate really loaded */
 #ifndef SNES_SPIN_REPLAY_ONLY
 #define SNES_SPIN_REPLAY_ONLY 0
 #endif
+
+/* SNES_LAYOUT_PAD=<n>: n bytes of nothing in .overlay_snes, there purely to
+ * move where everything after it lands.
+ *
+ * A diagnostic, not a feature. The bank-table work grew snes.bin by 167 bytes,
+ * which moved _OVERLAY_SNES_LOAD_END, which moved every object in
+ * .overlay_snes_bss -- the 150 KB framebuffer, the z-buffers, WRAM -- by the
+ * same 167 bytes and so into different D-cache sets. Super Mario World lost
+ * 9.2% of its DRAWN frames with its emulated rate unchanged and the hot tile
+ * drawers at byte-identical addresses, which is exactly what that looks like.
+ *
+ * Padding by (4096 - 167) = 3929 puts the BSS back on the cache-set alignment
+ * it had before (16 KB D-cache, 4-way, so 4 KB per way). If the drawn rate
+ * comes back, the cost was position and not code. */
+#ifndef SNES_LAYOUT_PAD
+#define SNES_LAYOUT_PAD 0
+#endif
+#if SNES_LAYOUT_PAD > 0
+/* Non-static and read once below, because `used` stops the COMPILER discarding
+ * it and the link runs --gc-sections: the first version vanished entirely and
+ * the arm came out 33 bytes larger instead of 3929. */
+__attribute__((used, aligned(4)))
+const volatile uint8_t snes_layout_pad[SNES_LAYOUT_PAD] = { 1 };
+#endif
+
 #ifndef SNES_ABLATE_CPU
 #define SNES_ABLATE_CPU 0
 #endif
@@ -1045,6 +1070,9 @@ __attribute__((section(".itcm_snes_interp.thumb2.bus")))
 #endif
 void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
+#if SNES_LAYOUT_PAD > 0
+  (void)snes_layout_pad[0];   /* keeps --gc-sections from dropping the padding */
+#endif
   /* Level-1 OC (312 MHz) to defend the SNES framerate — never downclock a
    * user who chose higher (level 2 = 340). SNES is heavy; stock 280 loses
    * frames the audio HLE just bought back. */

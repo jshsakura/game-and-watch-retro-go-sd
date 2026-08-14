@@ -1590,6 +1590,16 @@ endif
 # .text and therefore in the RAM_EMU overlay, which is where a device PC sample
 # found it at 12.1% of the frame. Only an A/B arm wants that; see the comment on
 # run_one_opcode in main_snes.c.
+# SNES_LAYOUT_PAD=<n>: n bytes of dead weight in .overlay_snes, to move where
+# everything after it lands. Diagnostic only -- see main_snes.c. It exists to
+# separate "this change costs cycles" from "this change moved the framebuffer
+# into different D-cache sets", which is a distinction Super Mario World's drawn
+# frame rate can tell and the rig cannot.
+SNES_LAYOUT_PAD ?= 0
+ifneq ($(SNES_LAYOUT_PAD),0)
+  SNES_LINE_DEFS_EXTRA += -DSNES_LAYOUT_PAD=$(SNES_LAYOUT_PAD)
+endif
+
 SNES_WRAP_ITCM ?= 1
 ifneq ($(SNES_WRAP_ITCM),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_WRAP_ITCM_OFF
