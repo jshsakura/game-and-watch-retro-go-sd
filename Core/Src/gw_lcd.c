@@ -273,7 +273,14 @@ void lcd_swap_stale(void)
    *
    * Panel behaviour is identical to lcd_swap(); only the bookkeeping differs.
    * If a new core copies the unconditional-swap pattern, it belongs here too. */
+#ifdef GNW_DRAWN_COUNTER_NAIVE
+  /* A/B arm (Makefile.common, never shipped): count it, reproducing the
+   * behaviour before this function existed. The three callers above then
+   * report every skipped frame as drawn, which is the defect being measured. */
+  lcd_swap();
+#else
   lcd_present();
+#endif
 }
 
 void lcd_sync(void)

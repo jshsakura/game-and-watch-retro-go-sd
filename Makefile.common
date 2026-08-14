@@ -2062,6 +2062,16 @@ ifneq ($(GNW_FORCED_DRAW_RATIO),)
   C_DEFS += -DGNW_FORCED_DRAW_RATIO=$(GNW_FORCED_DRAW_RATIO)
 endif
 
+# GNW_DRAWN_COUNTER_NAIVE=1: A/B ARM ONLY, never ship it. Makes lcd_swap_stale()
+# count the flip, which is exactly the behaviour before the drawn counter was
+# split -- a core that flips the panel while skipping its render reports the
+# skipped frame as drawn. It exists so the fix can be shown failing: without a
+# RED arm, a GREEN reading proves only that the number is plausible.
+GNW_DRAWN_COUNTER_NAIVE ?= 0
+ifeq ($(GNW_DRAWN_COUNTER_NAIVE),1)
+  C_DEFS += -DGNW_DRAWN_COUNTER_NAIVE=1
+endif
+
 # Testing WRAM before the ROM page tag in snes_cpuRead is CLOSED: -1.7 drawn fps
 # on hardware despite -43,163 instructions a frame on the rig. The census that
 # justified it was taken in a configuration the device does not run -- see
