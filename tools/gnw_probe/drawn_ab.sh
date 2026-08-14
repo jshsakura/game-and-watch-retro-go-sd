@@ -224,6 +224,39 @@ until [ $t -ge 30 ]; do
 done
 [ "$a" != "$b" ] || { echo "$ARM: frame counter not moving after reset" >&2; exit 2; }
 
+# IS THE DEVICE RUNNING THE CORE YOU NAMED?
+#
+# Everything above checks that the right PROGRAM is on the device: the resident
+# image, and (with CORE=) the core file on the card. None of it checks which
+# core the device actually LAUNCHED, and the counters are shared, so a run
+# aimed at one core will happily report another one's frames.
+#
+# Measured, not theorised: a bench file reading `msx:1942.rom` does not match --
+# the launcher compares the name without its extension -- so the lookup failed,
+# autoboot fell through to SNES ROM index 0, and this tool printed 0.6684 and
+# 0.6808 for two arms of an MSX A/B. The numbers were plausible, repeatable, and
+# about a core that never reaches the code under test. The arms agreed because
+# the SNES core does not call lcd_swap_stale() at all.
+#
+# currentApp.id is resident and `id` is its first member. The APPID comes from
+# the header at run time (never hardcoded -- APPIDs shift when one is added).
+# If the name cannot be resolved this says UNVERIFIED and continues; if it CAN
+# be resolved and disagrees, that is not a caveat, it is the wrong measurement.
+if [ -n "${CORE:-}" ] && [ -n "$APPP" ]; then
+  want_id=$(appid_value "$(printf '%s' "$CORE" | tr '[:lower:]' '[:upper:]')" 2>/dev/null || true)
+  if [ -z "${want_id:-}" ]; then
+    echo "$ARM: running core UNVERIFIED (no APPID for '$CORE' in the header)" >&2
+  else
+    got_id=$((0x$(rd "$APPP")))
+    if [ "$got_id" != "$want_id" ]; then
+      echo "$ARM: THE DEVICE IS NOT RUNNING '$CORE'. currentApp.id=$got_id," >&2
+      echo "      expected $want_id. The counters are shared, so this would have" >&2
+      echo "      reported another core's frames as '$CORE'." >&2
+      exit 7
+    fi
+  fi
+fi
+
 # AFTER the reset, not before. Read first, this reported the PREVIOUS run's
 # scene -- in a sweep, the previous cartridge's -- and produced an A/B where one
 # arm said savestate and the other COLD for the same ROM.
