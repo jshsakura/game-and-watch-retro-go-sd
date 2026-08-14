@@ -28,9 +28,32 @@
 # CI release because nm and objdump were not on the container's PATH, including
 # the cross-overlay alias check that CLAUDE.md calls the only thing standing
 # between a core and another core's symbols. Nobody noticed, because locally
-# they passed. This runs on grep and sed.
+# they passed. This runs on grep, sed and awk.
 #
-# What it cannot see: gw_firmware_abi.c hands lcd_swap out as a function
+# WHY THE COMMENT STRIPPER AND NOT A REGEX. The first version matched
+# `^[^*/]*lcd_swap\(` -- this tree's idiom for "a call, not the name in prose",
+# borrowed from test_ingame_overlay_wired.sh. It is wrong, and wrong in the
+# direction that makes a gate worthless: it drops any line with a * or a / ahead
+# of the call.
+#
+#     if (*flag) lcd_swap();          <-- missed. Ordinary C.
+#     if (a / b) lcd_swap();          <-- missed.
+#     if (scale * 2) lcd_swap();      <-- missed.
+#     printf("...lcd_swap()...");     <-- counted. A string literal.
+#
+# Four out of six wrong on a probe file. The under-count is the serious half:
+# file DISCOVERY used the same pattern, so a new core whose only flip sat on
+# such a line was never scanned at all -- not listed, not missed, invisible.
+# The `checked < 30` floor could not catch it either, because the other 44 files
+# keep the count up. A gate that passes while seeing nothing is the 0727 failure
+# again, in a new costume.
+#
+# So: strip comments and string literals properly (awk, character by character,
+# tracking block-comment and string state across lines), then count. The
+# self-check below runs that stripper against a fixture built from the exact
+# lines the old pattern got wrong, and fails if any of them is miscounted.
+#
+# What it still cannot see: gw_firmware_abi.c hands lcd_swap out as a function
 # pointer, and an external core calling through it is not in this tree. That
 # gap is written down at the bottom of the audited list.
 set -uo pipefail
@@ -51,23 +74,67 @@ if [ ! -f "$LIST" ]; then
     exit 1
 fi
 
-# A CALL, not the name in prose. `^[^*/]*` is this tree's idiom for it (see
-# test_ingame_overlay_wired.sh): a line whose first * or / precedes the match is
-# a comment. Without it the paragraph above would count itself, and gw_lcd.c's
-# own explanatory comment did exactly that in the first draft.
-CALL_RE='^[^*/]*lcd_swap\('
-STALE_RE='^[^*/]*lcd_swap_stale\('
-
-count() { grep -coE "$2" "$1" 2>/dev/null || true; }
-
 rc=0
-checked=0
+
+# Emit the file with /* */ comments, // comments and "string literals" removed.
+# State carries across lines, which is the whole point: a block comment's
+# continuation lines are only recognisable from the /* that opened it.
+STRIP='
+{
+  line = $0; out = ""; i = 1; n = length(line)
+  while (i <= n) {
+    two = substr(line, i, 2); one = substr(line, i, 1)
+    if (inblock)          { if (two == "*/") { inblock = 0; i += 2 } else i++ }
+    else if (instr)       { if (one == "\\") i += 2
+                            else { if (one == "\"") instr = 0; i++ } }
+    else if (two == "/*") { inblock = 1; i += 2 }
+    else if (two == "//") { break }
+    else if (one == "\"") { instr = 1; i++ }
+    else                  { out = out one; i++ }
+  }
+  print out
+}'
+
+counts() {  # file -> "swap=N stale=N"
+    local stripped s t
+    stripped="$(awk "$STRIP" "$1")"
+    s="$(printf '%s' "$stripped" | grep -o 'lcd_swap('       | wc -l | tr -d ' ')"
+    t="$(printf '%s' "$stripped" | grep -o 'lcd_swap_stale(' | wc -l | tr -d ' ')"
+    echo "swap=$s stale=$t"
+}
+
+# --- self-check: the stripper must survive the lines the old pattern lost ----
+# This is not ceremony. The defect it pins was invisible in every other way: the
+# suite was green, the census was complete, and the gate saw two of six calls.
+FIX="$(mktemp)"; trap 'rm -f "$FIX"' EXIT
+cat > "$FIX" <<'FIXTURE'
+    printf("Calling lcd_swap() now\n");
+    if (scale * 2) lcd_swap();
+    if (*flag) lcd_swap();
+    if (a / b) lcd_swap();
+    if (drawFrame) { blit(); lcd_swap(); }
+    /* Panel behaviour is identical to lcd_swap();
+     * only the bookkeeping differs -- must NOT count. */
+    p = a/b; lcd_swap_stale();
+    x = 1; // trailing lcd_swap() in a line comment
+FIXTURE
+got="$(counts "$FIX")"
+if [ "$got" != "swap=4 stale=1" ]; then
+    echo "  FAIL the matcher itself is broken: fixture counted [$got], expected [swap=4 stale=1]"
+    echo "       4 real calls (two behind a *, one behind a /, one plain), 1 stale call,"
+    echo "       and it must NOT count the string literal, the block comment or the"
+    echo "       line comment. Every census result below is meaningless until this passes."
+    rc=1
+fi
 
 # --- the tree, as it is now -------------------------------------------------
+# Discovery matches the bare name, deliberately loose, so nothing can hide from
+# it; counts() then decides whether the file really calls anything.
 actual="$(
-    for f in $(grep -rlE "$CALL_RE|$STALE_RE" $ROOTS \
+    for f in $(grep -rl 'lcd_swap' $ROOTS \
                     --include='*.c' --include='*.cpp' --include='*.cxx' 2>/dev/null | sort); do
-        echo "$f swap=$(count "$f" "$CALL_RE") stale=$(count "$f" "$STALE_RE")"
+        c="$(counts "$f")"
+        [ "$c" = "swap=0 stale=0" ] || echo "$f $c"
     done
 )"
 
@@ -77,6 +144,7 @@ expected="$(sed -e 's/#.*//' -e 's/[[:space:]]\+$//' "$LIST" \
             | awk '{print $1, $2, $3}' | sort)"
 
 # --- compare ----------------------------------------------------------------
+checked=0
 while read -r path swap stale; do
     [ -n "${path:-}" ] || continue
     checked=$((checked + 1))
