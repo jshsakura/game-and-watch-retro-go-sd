@@ -1,8 +1,69 @@
 # Sega 32X (picodrive) — closed for performance work
 
+> **2026-08-14: the verdict below stands on speed and is wrong about the
+> screen.** Everything in this file is *emulated* fps measured with the
+> profiler on, in a boot-anchored scene. Re-measured with the instruments the
+> SNES campaign produced — shipping build, real scene, and a counter for the
+> frames the player actually sees — the core was drawing **one frame in four**,
+> because it inherited a shared constant sized for a core where drawing is
+> expensive. Doom went from **4.98 to 18.33 drawn fps** with no emulation change
+> at all, and the arithmetic below did not move by one cycle. Read
+> [§0](#0-what-2026-08-14-changed) before quoting any number in this file.
+
 **Verdict, 2026-07-27: this core does not reach a playable frame rate, and no
 remaining emulator-side change gets it there. Do not reopen the performance
 axis without reading the ledger below.**
+
+## 0. What 2026-08-14 changed
+
+Nothing about the speed of emulation. Everything about what reaches the LCD.
+
+**The honest baseline.** No `MD32X_DEVICE_PROFILE` (it costs ~16 of every 94
+cycles an instruction takes — §14), cold boot into the attract demo rather than
+a title screen, two samples per arm, and both counters:
+
+| cartridge | emulated fps | **drawn fps** | ratio |
+|---|---:|---:|---:|
+| Doom | 20.13 / 19.73 | **5.02 / 4.93** | 0.249 |
+| Knuckles' Chaotix | 15.42 | **3.87** | 0.251 |
+| Kolibri | 9.89 | **2.48** | 0.250 |
+
+Two things fall out. Emulated fps is **higher** than this file reports (20 vs
+"10 → 13-16"), because the tax is gone. And the ratio is 0.25 on every
+cartridge — pinned exactly on the overload guard's forced-draw floor.
+
+**The floor was the draw rate, and it was another core's constant.** Sweeping it
+on Doom:
+
+| | emulated | drawn |
+|---|---:|---:|
+| 1-in-4 (what shipped) | 19.9 | 4.98 |
+| 1-in-2 | 19.0 | 9.52 |
+| **1-in-1** | 18.3 | **18.33** |
+
+Drawing every frame costs **8% of emulated fps** and returns **3.7x the visible
+frames** — and §"Why 2x is arithmetically out of reach" already says why it is
+nearly free here: **draw is 1.9% of a 32X frame**. Skipping it saves 1.9% of the
+work and throws away 75% of the player's frames. There is no real-time deadline
+to protect either, since the core runs at about a third of console speed
+whatever it does. On SNES the same constant is right (a drawn frame is 17.65 ms
+against 14.6 ms of emulation; 1-in-3 underruns the audio), which is where 4 came
+from. It is now a per-core choice — `common_emu_set_forced_draw_ratio()`, with
+md32x asking for 1.
+
+Gains across the library, drawn fps: Doom ×3.7, Chaotix ×3.4, Kolibri ×3.8.
+
+**And §13's last open question is answered, in the other direction.** "2D titles
+were never measured; that decides whether the core is unusable or only 3D is."
+They are measured now, and **the 2D titles are slower than Doom** — Chaotix 3.87
+and Kolibri 2.48 against Doom 4.98 drawn (13.12 / 9.40 / 18.33 with the ratio
+fixed). The QEMU rig agrees: Chaotix costs 21.3 M host instructions a frame
+against Doom's 7.9 M in a comparable window. Chaotix drives the SH-2s hard
+despite being a 2D game. **Do not reopen the core on the hope that 2D is light.**
+
+**What this does not change.** The console still runs at roughly a third of
+speed, so games play in slow motion with slow audio; smooth is not the same as
+correct. Every cycle-count and closed axis below is untouched.
 
 Measured on hardware (STM32H7B0 @ 312 MHz, `MD32X_DEVICE_PROFILE=1`):
 
