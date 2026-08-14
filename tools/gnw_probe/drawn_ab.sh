@@ -80,17 +80,29 @@ DRAWN=$(sym g_common_drawn_frames)
 F=$(sym g_common_emu_frames)
 [ -n "$DRAWN" ] && [ -n "$F" ] || { echo "$ARM: no shared counters in $E" >&2; exit 1; }
 
-# WAS THE GUARD EVEN SKIPPING? Without this the headline number is ambiguous in
-# the one direction that matters: a core running at full speed draws every frame
-# it emulates, so ratio 1.0000 means EITHER "the drawn counter is over-reporting"
-# OR "there was nothing to skip", and those demand opposite conclusions.
-# common_emu_state.skipped_frames counts the guard's skips directly and is
-# independent of whatever lcd_swap() does, so it settles it in-band.
+# DID THE GUARD ASK FOR SKIPS? Without this the headline is ambiguous in the one
+# direction that matters: a core running at full speed draws every frame it
+# emulates, so ratio 1.0000 means EITHER "the drawn counter is over-reporting" OR
+# "there was nothing to skip", and those demand opposite conclusions.
 #
-# One word covers both halves of the question: skipped_frames is a uint16 at
-# offset 8 and frame_time_10us an int16 at offset 10, so a single mdw reads
-# skipped in the low half and the frame budget in the high half — and the budget
-# is what a speedup setting halves to force the guard to engage at all.
+# Read what this is, exactly. common_emu_state.skipped_frames accumulates
+# `skip_frames` at the END of common_emu_frame_loop() (common.c:215), where it
+# has just been recomputed from the integrator — so it counts what the guard
+# DEMANDED, not what any core did about it. skipped > 0 therefore does NOT mean
+# a frame was skipped. Genesis is the proof: main_gwenesis.c:777 discards the
+# return value entirely (`// bool drawFrame =`) and :913 zeroes skip_frames every
+# iteration, so MD renders every frame while this counter keeps climbing.
+#
+# So it answers one question only, and it is the question that makes a window
+# worth measuring: skipped == 0 means the guard never asked, and nothing about
+# the drawn counter can be concluded from that window. To conclude a DEFECT you
+# need this AND a core that reads drawFrame — which is a source property, not a
+# runtime one, and is what tests/lcd_swap_audited.txt records.
+#
+# One word covers it: skipped_frames is a uint16 at offset 8 and frame_time_10us
+# an int16 at offset 10, so a single mdw reads the demand in the low half and the
+# frame budget in the high half — and the budget is what a speedup setting halves
+# to make the guard ask at all.
 STATE=$(sym common_emu_state)
 GUARD=${STATE:+$(printf '0x%x' $((STATE + 8)))}
 
@@ -164,12 +176,12 @@ if g0 and g1:
     # low half = skipped_frames (uint16, wraps), high half = frame_time_10us
     skipped = (int(g1, 16) & 0xffff) - (int(g0, 16) & 0xffff) & 0xffff
     budget = int(g1, 16) >> 16
-    line += f'  [guard: skipped={skipped}, frame_budget={budget/100:.2f}ms]'
+    line += f'  [guard demanded {skipped} skips, frame_budget={budget/100:.2f}ms]'
     if skipped == 0:
-        # Not a footnote: with nothing skipped, ratio 1.0 says only that the core
-        # kept up. It cannot distinguish an honest counter from one that reports
-        # every flip as a drawn frame, which is the whole question this tool is
-        # pointed at. Force the guard to engage (a speedup setting halves the
-        # frame budget) and measure again.
-        line += '  <-- GUARD NEVER SKIPPED: this window cannot judge the counter'
+        # Not a footnote: with nothing demanded, ratio 1.0 says only that the
+        # core kept up. It cannot distinguish an honest counter from one that
+        # reports every flip as a drawn frame, which is the whole question this
+        # tool is pointed at. Halve the frame budget (a speedup setting) and
+        # measure again.
+        line += '  <-- GUARD NEVER ASKED: this window cannot judge the counter'
 print(line)"
