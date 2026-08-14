@@ -23,6 +23,7 @@ OPT="-O2 -g -fno-strict-aliasing -ffunction-sections -fdata-sections -fcommon"
 DEF="-DGNW_32X_CORE -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DRIG_SH2_COUNT -DRIG_FRAMES=$FRAMES ${EXTRA_DEF:-}"
 # PHASE_PROF=1: per-phase cost table (picodrive pprof probes, icount clock)
 if [ "${PHASE_PROF:-0}" = "1" ]; then DEF="$DEF -DRIG_PHASE_PROF"; fi
+if [ -n "${RIG_32X_SSF:-}" ]; then DEF="$DEF -DRIG_32X_SSF"; fi
 # FRAME_HIST=1: per-frame host-instruction distribution (p50/p90/p95/p99 + 20 bins)
 if [ "${FRAME_HIST:-0}" = "1" ]; then DEF="$DEF -DRIG_FRAME_HIST"; fi
 # SH2_PC_HIST=1: SH-2 guest-PC histogram (top-50 hot PCs per core, direct/delay split)
@@ -46,6 +47,26 @@ EOF
 (cd "$OUT" && arm-none-eabi-objcopy -I binary -O elf32-littlearm -B arm \
     --rename-section .data=.rom,alloc,load,readonly,data,contents rom.32x rom.o)
 
+# Real 32X BIOS, optional: RIG_32X_BIOS=<dir with the three No-Intro blobs>.
+# picodrive fakes the BIOS's effects when these are absent, which is enough for
+# the retail carts and demonstrably not enough for D32XR.
+BIOSOBJS=""
+if [ -n "${RIG_32X_BIOS:-}" ]; then
+  bm="$RIG_32X_BIOS/[BIOS] 32X M68000 (USA).bin"
+  bM="$RIG_32X_BIOS/[BIOS] 32X SH-2 Master (USA).bin"
+  bS="$RIG_32X_BIOS/[BIOS] 32X SH-2 Slave (USA).bin"
+  for f in "$bm" "$bM" "$bS"; do
+    [ -f "$f" ] || { echo "missing BIOS blob: $f" >&2; exit 2; }
+  done
+  cp "$bm" "$OUT/bios_m68k"; cp "$bM" "$OUT/bios_msh2"; cp "$bS" "$OUT/bios_ssh2"
+  for n in bios_m68k bios_msh2 bios_ssh2; do
+    (cd "$OUT" && arm-none-eabi-objcopy -I binary -O elf32-littlearm -B arm \
+        --rename-section .data=.rom,alloc,load,readonly,data,contents "$n" "$n.o")
+    BIOSOBJS="$BIOSOBJS $OUT/$n.o"
+  done
+  DEF="$DEF -DRIG_32X_BIOS"
+fi
+
 # The device overlay's trimmed picodrive set (Makefile MD32X_C_SOURCES /
 # gen_md32x_redefines.sh) + zlib/crc32.c standing in for the firmware crc32_le.
 SRCS="
@@ -55,12 +76,13 @@ pico/32x/32x.c pico/32x/draw.c pico/32x/memory.c pico/32x/pwm.c pico/32x/sh2soc.
 pico/cart.c pico/memory.c pico/draw.c pico/sek.c pico/videoport.c
 pico/media.c pico/pico.c pico/misc.c pico/patch.c pico/z80if.c
 pico/eeprom.c pico/state.c
+${RIG_32X_SSF:+pico/carthw/carthw.c}
 pico/sound/sound.c pico/sound/mix.c pico/sound/sn76496.c pico/sound/ym2612.c
 pico/sound/resampler.c
 zlib/crc32.c
 "
 
-objs="$OUT/rom.o"
+objs="$OUT/rom.o$BIOSOBJS"
 for s in $SRCS; do
     o="$OUT/$(echo "$s" | tr '/' '_' | sed 's/\.c$/.o/')"
     $CC -c $ARCH $OPT $DEF $INC "$PD/$s" -o "$o"

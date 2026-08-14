@@ -79,12 +79,28 @@ uint32_t rig_timer_now(void);
 uint32_t rig_calibrate(uint32_t n);
 
 /* SH-2 executed-instruction counter (fork: cpu/sh2/mame/sh2pico.c under
- * -DRIG_SH2_COUNT). Proves the SH-2s actually run — 0 here was the old hang's
+ * -DRIG_SH2_COUNT. Proves the SH-2s actually run — 0 here was the old hang's
  * signature (68000 spinning on a dead SH-2). */
 extern unsigned long long g_sh2_insns;
 
+/* GLM debug: frame counter shared with the instrumented picodrive copy (pd_dbg) */
+int rig_frame_no;
+
 /* ROM blob (objcopy .rom section) — already 16-bit byteswapped */
 extern const unsigned char _binary_rom_32x_start[];
+#ifdef RIG_32X_BIOS
+/* Real 32X BIOS, three blobs, linked in the same way as the ROM.
+ *
+ * Without them picodrive synthesises the BIOS's effects (memory.c's
+ * msh2_code[]): a delay loop, an M_OK write and a jump to the cartridge's
+ * master entry. That is enough for the retail games; it was NOT enough for
+ * D32XR, whose SH-2s finish their own init and then sit in poll loops
+ * (0x02013ca2 master, 0x0600090a slave) waiting for something the stub never
+ * does. This arm exists to tell those two cases apart. */
+extern const unsigned char _binary_bios_m68k_start[], _binary_bios_m68k_end[];
+extern const unsigned char _binary_bios_msh2_start[], _binary_bios_msh2_end[];
+extern const unsigned char _binary_bios_ssh2_start[], _binary_bios_ssh2_end[];
+#endif
 extern const unsigned char _binary_rom_32x_end[];
 
 /* ==== device-shim set: mirrors main_md32x.c one for one ==================== */
@@ -633,6 +649,16 @@ int main(void) {
      * PicoReset is not called either — PicoLoadMedia -> PicoCartInsert ->
      * PicoPower already reset the machine. */
     PicoInit();
+#ifdef RIG_32X_BIOS
+    /* Set before PicoLoadMedia: get_bios() runs inside the load path. */
+    p32x_bios_g = (void *)_binary_bios_m68k_start;
+    p32x_bios_m = (void *)_binary_bios_msh2_start;
+    p32x_bios_s = (void *)_binary_bios_ssh2_start;
+    printf("[32x-qemu] real BIOS: g=%u m=%u s=%u bytes\n",
+           (unsigned)(_binary_bios_m68k_end - _binary_bios_m68k_start),
+           (unsigned)(_binary_bios_msh2_end - _binary_bios_msh2_start),
+           (unsigned)(_binary_bios_ssh2_end - _binary_bios_ssh2_start));
+#endif
     PicoIn.opt = POPT_EN_FM | POPT_EN_PSG | POPT_EN_Z80
                | POPT_EN_32X | POPT_EN_PWM
                | POPT_ACC_SPRITES | POPT_DIS_32C_BORDER;   /* mono: no EN_STEREO */
@@ -642,6 +668,20 @@ int main(void) {
     enum media_type_e mt = PicoLoadMedia("game.32x", _binary_rom_32x_start, rom_len,
                                          NULL, NULL, NULL, NULL);
     printf("[32x-qemu] PicoLoadMedia -> media_type=%d AHW=%x\n", (int)mt, (unsigned)PicoIn.AHW);
+#ifdef RIG_32X_SSF
+    /* The SSF (bank-switch) mapper, which the firmware compiles out for this
+     * core (pico/cart.c's `#ifndef GNW_32X_CORE`, because the zero-copy flash
+     * path cannot bank). A >4 MiB cart needs it: the 32X ROM window IS 4 MiB.
+     * Rig-only, so an UNMODIFIED 5 MiB D32XR release can be tried without the
+     * two things I did to it -- the wad surgery and the self-build. */
+    if (rom_len > 0x400000) {
+        extern void carthw_ssf2_startup(void);
+        extern void (*PicoCartMemSetup)(void);
+        carthw_ssf2_startup();
+        if (PicoCartMemSetup != NULL) PicoCartMemSetup();
+        printf("[32x-qemu] SSF mapper armed for %u byte cart\n", (unsigned)rom_len);
+    }
+#endif
     if (mt == PM_ERROR) { printf("[32x-qemu] LOAD FAILED\n"); return 3; }
 
 #ifdef RIG_IDLE_SKIP
@@ -672,7 +712,18 @@ int main(void) {
     int nb100 = 0, nb300 = 0, nbend = 0;
 
     for (int f = 0; f < RIG_FRAMES; f++) {
+        rig_frame_no = f;
         if (f == RIG_WARMUP) phase_snapshot();
+#ifdef RIG_HIST_FROM
+        /* GLM debug: zero the SH-2 PC histogram tables here so the final
+         * report covers only frames >= RIG_HIST_FROM (e.g. the post-death
+         * window of the D32XR stop) instead of the whole run. */
+        if (f == RIG_HIST_FROM) {
+            extern struct rig_pc_slot rig_pchist[2][RIG_PC_HIST_SLOTS];
+            memset(rig_pchist, 0, sizeof(rig_pchist));
+            printf("[glm-hist] histogram zeroed at frame %d\n", f);
+        }
+#endif
 #ifdef RIG_MEM_MIX
         /* Zero the access census at gameplay entry. Without this the ~400
          * title/menu frames the pad script walks through outnumber the
@@ -694,7 +745,7 @@ int main(void) {
         unsigned long long sh2_now = g_sh2_insns, sh2_d = sh2_now - sh2_prev;
         sh2_prev = sh2_now;
 
-        if ((f % 20) == 0)
+        if ((f % 20) == 0 || (f >= 140 && f < 260))
             printf("  f%04d host=%lu sh2=%llu snd=%u/%u\n", f,
                    (unsigned long)insn, sh2_d, s_snd_calls, s_snd_samples);
         if (f >= RIG_WARMUP) {
