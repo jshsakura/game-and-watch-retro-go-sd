@@ -106,6 +106,42 @@ So the per-core opt-in is justified by measurement discipline rather than by a
 crash: nothing is known to break at ratio 1, and nothing is known to gain from
 it either except a core that actually obeys the guard.
 
+## 0b. D32XR — reachable, and the fault is ours
+
+Doom 32X Resurrection replaces the retail engine entirely: rendering spread
+across BOTH SH-2s, game logic at 15 fps against input at 30, resolutions down to
+80x90. It is the only remaining lever that changes the *amount of work* rather
+than the speed of the interpreter, which is why it was worth a day.
+
+**It does not run on this core, and it is not picodrive's fault.** Upstream
+vanilla picodrive (26ecb2b6, libretro headless) runs the same ROM: 432 of 600
+frames live, first render at frame 168. Our fork wedges — the SH-2s run for a
+while at 167,287 instructions a frame and then stop dead, and the framebuffer
+stays black throughout.
+
+**Closed by experiment, in order** — do not re-derive any of these:
+
+| suspect | verdict |
+|---|---|
+| the SSF (>4 MiB bank) mapper we compile out | innocent — a 4 MiB build wedges identically |
+| the wad trimmed to one level to reach 4 MiB | innocent — the unmodified 5 MiB release wedges identically |
+| unmapped ROM-mirror probe reads at f181 | innocent — three arms (absent / mirrored / mirrored-with-a-pattern) fail identically, so the values are discarded: wild reads, and the cause is earlier |
+| `0xA15106` semantics, low-ROM write-drop | identical to upstream |
+| the SH-2 fastloop lever | innocent — off changes nothing |
+| **the 68K core** (our fork swaps picodrive's FAME for gwenesis' g68k) | innocent — FAME swapped back, identical wedge, and SH-2 per-frame counts are byte-identical across both |
+| **the real 32X BIOS** | innocent as a *requirement*: upstream runs the ROM with picodrive's synthesised stub. In OUR fork the stub wedges at frame ~60 and the real BIOS pushes it to ~180, so the BIOS masks the defect rather than supplying anything the game needs. **A first reading of that as "D32XR requires the BIOS" was wrong.** |
+
+**Where it points now:** the SH-2 side, and specifically the things this fork put
+there — the inlined instruction fetch (`GNW_FETCH_SD`, `sh2pico.c`, whose own
+comment records that Doom's master SH-2 fetches 100% from cart ROM), the
+opcode-pattern idle folds, `p_rom` pointing at a byteswapped zero-copy image
+where upstream has a RAM copy, and the 32X memory map's GNW guards. A fetch that
+returns one wrong halfword explains the symptom exactly: runs correctly for
+thousands of frames, then executes something that is not the program.
+
+The rig can supply the real BIOS (`RIG_32X_BIOS=<dir>`) and bank a >4 MiB cart
+(`RIG_32X_SSF=1`); both exist only for this investigation.
+
 **What this does not change.** The console still runs at roughly a third of
 speed, so games play in slow motion with slow audio; smooth is not the same as
 correct. Every cycle-count and closed axis below is untouched.
