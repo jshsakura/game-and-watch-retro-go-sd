@@ -106,20 +106,50 @@ So the per-core opt-in is justified by measurement discipline rather than by a
 crash: nothing is known to break at ratio 1, and nothing is known to gain from
 it either except a core that actually obeys the guard.
 
-## 0b. D32XR — reachable, and the fault is ours
+## 0b. D32XR runs on the console. The thing that could not run it was the rig.
 
 Doom 32X Resurrection replaces the retail engine entirely: rendering spread
 across BOTH SH-2s, game logic at 15 fps against input at 30, resolutions down to
 80x90. It is the only remaining lever that changes the *amount of work* rather
 than the speed of the interpreter, which is why it was worth a day.
 
-**It does not run on this core, and it is not picodrive's fault.** Upstream
-vanilla picodrive (26ecb2b6, libretro headless) runs the same ROM: 432 of 600
-frames live, first render at frame 168. Our fork wedges — the SH-2s run for a
-while at 167,287 instructions a frame and then stop dead, and the framebuffer
-stays black throughout.
+**On hardware it boots, renders, and beats the retail cartridge.** Same firmware
+(r1new), same console, ROM pushed to the card as `/roms/32x/d32xr.32x`:
 
-**Closed by experiment, in order** — do not re-derive any of these:
+| device, `drawn` counter | fps |
+|---|---|
+| **D32XR**, three samples | **41.52 / 41.47 / 41.40** |
+| retail Doom | 30.59 |
+| retail Doom, that morning's shipped build (forced-draw 1/4) | 7.85 |
+
+**+35% over retail, ratio 1.0000, three samples inside ±0.1** — and 5.3x the
+number this file's own §0 was written around. The dual-SH-2 renderer runs here.
+
+The screen was verified too, not assumed. A drawn counter counts `lcd_swap()`
+calls, so a core swapping two empty buffers reads as a healthy frame rate; the
+panel was photographed instead, by dumping LTDC's scanout address over SWD
+(`tools/gnw_probe/screenshot.sh`). The Doom title menu renders correctly with
+the attract demo playing behind it — 55,928 of 153,600 bytes changed between two
+consecutive frames, which is what separates a live game from a crashed core's
+last good frame.
+
+**Read the rest of this section as a record of a wrong target.** For eight hours
+the question was "which of our fork's deltas broke D32XR", and eight suspects
+were investigated and cleared. Every one of those results is real and worth
+keeping. **They were all measured in `tools/m7_qemu_rig`, and the rig is the
+only place the wedge happens.** Nothing was broken. This is the eighth variation
+this year on *what was measured was not what was built*, and this time the cause
+was treating the rig as the judge — one morning after this repo wrote down that
+the device is the final judge and that a rig which cannot reproduce a fault has
+shown a limit of the rig, not the absence of the fault.
+
+**In the rig only**, upstream vanilla picodrive (26ecb2b6, libretro headless)
+runs the ROM — 432 of 600 frames live, first render at frame 168 — while our
+fork's rig build wedges: the SH-2s run a while at 167,287 instructions a frame
+and then stop dead with the framebuffer black.
+
+**Closed by experiment, in order** — do not re-derive any of these. They are
+answers about the *rig*, and they remain true there:
 
 | suspect | verdict |
 |---|---|
@@ -131,13 +161,28 @@ stays black throughout.
 | **the 68K core** (our fork swaps picodrive's FAME for gwenesis' g68k) | innocent — FAME swapped back, identical wedge, and SH-2 per-frame counts are byte-identical across both |
 | **the real 32X BIOS** | innocent as a *requirement*: upstream runs the ROM with picodrive's synthesised stub. In OUR fork the stub wedges at frame ~60 and the real BIOS pushes it to ~180, so the BIOS masks the defect rather than supplying anything the game needs. **A first reading of that as "D32XR requires the BIOS" was wrong.** |
 
-**Where it points now:** the SH-2 side, and specifically the things this fork put
-there — the inlined instruction fetch (`GNW_FETCH_SD`, `sh2pico.c`, whose own
-comment records that Doom's master SH-2 fetches 100% from cart ROM), the
-opcode-pattern idle folds, `p_rom` pointing at a byteswapped zero-copy image
-where upstream has a RAM copy, and the 32X memory map's GNW guards. A fetch that
-returns one wrong halfword explains the symptom exactly: runs correctly for
-thousands of frames, then executes something that is not the program.
+The suspect list this pointed at next — the inlined instruction fetch
+(`GNW_FETCH_SD`, `sh2pico.c`), the opcode-pattern idle folds, `p_rom` as a
+byteswapped zero-copy image, the 32X map's GNW guards — is **withdrawn as a
+defect theory**. All of that is in the firmware and the firmware runs the game.
+A wrong halfword from the fetch path was a good explanation of the symptom and
+there is no symptom.
+
+**What is actually left open is rig fidelity**, and it is worth exactly as much
+as the rig is: an instruction-counting convenience, never a verdict. The known
+divergences are the loop, not the init — pacing, `set_out_buffer` period, and
+`skipFrame` — all guest-invisible candidates, so the cause is not yet named. A
+bisect cannot help: no commit in the fork's history is good (everything before
+`9ebe47a5` fails to link for want of `g_sh2_insns`), though the shape does vary
+— early commits restart the SH-2 at 133k/frame after the wedge, HEAD livelocks
+at 402.
+
+⛔ **Do not "build the upstream tree inside the rig" to settle it.** That was
+tried: upstream's `videoport.c` pulls in Mega-CD symbols, stubbing those exposes
+`s68k_read16_map`, `PicoCpuFS68k`, `PicoDoHighPal555SMS`, and the chase does not
+end. Whatever links at the end is neither the firmware nor upstream but a third
+program, so it cannot settle anything — the same disease as `tools/sm_harness`,
+which cost three Super Metroid releases.
 
 The rig can supply the real BIOS (`RIG_32X_BIOS=<dir>`) and bank a >4 MiB cart
 (`RIG_32X_SSF=1`); both exist only for this investigation.
@@ -157,7 +202,16 @@ Measured on hardware (STM32H7B0 @ 312 MHz, `MD32X_DEVICE_PROFILE=1`):
 That is **4.6x**, and the arithmetic below says where the 4.6x cannot come from.
 
 The core stays in the launcher — it runs, it is accurate, and some titles may
-be usable — but it is not a performance target any more.
+be usable.
+
+**That last clause used to read "but it is not a performance target any more."
+It is withdrawn.** Two things reopened this core in two days, and neither came
+from making the interpreter faster, which is the only axis the arithmetic below
+actually closes: a per-core forced-draw ratio (§0) took retail Doom from 7.85 to
+30.59 drawn fps, and D32XR reaches 41.40 — 69% of a 60 Hz frame budget, against
+retail Doom's 51%. The cycle arithmetic in the rest of this file is untouched
+and still says a 2x interpreter is unreachable. What it never said, and what was
+read into it, is that nothing else could move.
 
 ## Why 2x is arithmetically out of reach
 
