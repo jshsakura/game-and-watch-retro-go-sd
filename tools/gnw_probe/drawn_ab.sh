@@ -139,19 +139,33 @@ F=$(sym g_common_emu_frames)
 # emulates, so ratio 1.0000 means EITHER "the drawn counter is over-reporting" OR
 # "there was nothing to skip", and those demand opposite conclusions.
 #
-# Read what this is, exactly. common_emu_state.skipped_frames accumulates
-# `skip_frames` at the END of common_emu_frame_loop() (common.c:215), where it
-# has just been recomputed from the integrator — so it counts what the guard
-# DEMANDED, not what any core did about it. skipped > 0 therefore does NOT mean
-# a frame was skipped. Genesis is the proof: main_gwenesis.c:777 discards the
-# return value entirely (`// bool drawFrame =`) and :913 zeroes skip_frames every
-# iteration, so MD renders every frame while this counter keeps climbing.
+# Read what this is, exactly — it is weaker than it looks, in TWO ways.
 #
-# So it answers one question only, and it is the question that makes a window
-# worth measuring: skipped == 0 means the guard never asked, and nothing about
-# the drawn counter can be concluded from that window. To conclude a DEFECT you
-# need this AND a core that reads drawFrame — which is a source property, not a
-# runtime one, and is what tests/lcd_swap_audited.txt records.
+# First, common_emu_state.skipped_frames accumulates `skip_frames` at the END of
+# common_emu_frame_loop() (common.c:215), where it has just been recomputed from
+# the integrator — so it counts what the guard DEMANDED, not what any core did
+# about it. Genesis is the proof: main_gwenesis.c:777 discards the return value
+# entirely (`// bool drawFrame =`) and :913 zeroes skip_frames every iteration,
+# so MD renders every frame while this counter keeps climbing.
+#
+# Second — and this killed a verdict rule that shipped in this file — the guard
+# withholds a frame only at skip_frames == 2 (`draw_frame = skip_frames < 2`,
+# common.c:142), but common.c:213 also assigns **1**, one budget of lateness,
+# and :215 accumulates 1 and 2 alike. A frame charged 1 is still DRAWN. So a
+# window where the integrator crossed one budget but never two reads
+# `demanded > 0` with every frame drawn — on a correct build. Over 1800 frames
+# that is close to certain. "ratio == 1.0000 AND demanded > 0 proves the counter
+# over-reports" was written here and is FALSE for exactly that reason.
+#
+# What survives is only the negative: **demanded == 0 means the guard never came
+# under pressure at all**, so that window cannot judge the drawn counter and
+# there is nothing to read. The positive direction needs the ratio itself: on a
+# core that obeys the guard, `drawn < emu` IS the guard withholding, and that is
+# the signal. Hence the order for an A/B — raise the speedup on the GOOD arm
+# until ratio < 1 (proving frames are actually being withheld at that setting),
+# then run the suspect arm at the same setting and see whether it reports
+# 1.0000. And a defect still needs a core that reads drawFrame, which is a
+# source property recorded in tests/lcd_swap_audited.txt, not a runtime one.
 #
 # One word covers it: skipped_frames is a uint16 at offset 8 and frame_time_10us
 # an int16 at offset 10, so a single mdw reads the demand in the low half and the
@@ -217,9 +231,21 @@ fi
 # read would set target=$FRAMES, exit the wait loop on its first poll, and hand
 # python `emu = 0x1234 - 0x` -- a SyntaxError naming nothing. Check the reads.
 hex8() { case "$1" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) return 0 ;; *) return 1 ;; esac; }
+# Count as well as shape. rd() emits one word per address, so a PARTIAL failure
+# -- one mdw of the three dropping out -- shifts every value one slot left and
+# the drawn counter is read as the frame counter. Each surviving word is still
+# eight hex digits, so hex8 alone would wave it through.
+NVALS=2; [ -n "${GUARD:-}" ] && NVALS=3
+readvals() {                      # $1: label for the diagnostic
+  local v n
+  v=$(rd "$F" "$DRAWN" ${GUARD:+"$GUARD"} | tr '\n' ' ')
+  n=$(printf '%s' "$v" | wc -w)
+  [ "$n" -eq "$NVALS" ] || { echo "$ARM: SWD read $1 returned $n of $NVALS values ('$v')" >&2; exit 3; }
+  printf '%s' "$v"
+}
 
 read -r f0 d0 g0 <<EOF
-$(rd "$F" "$DRAWN" ${GUARD:+"$GUARD"} | tr '\n' ' ')
+$(readvals first)
 EOF
 hex8 "${f0:-}" && hex8 "${d0:-}" || { echo "$ARM: SWD read failed (f0='${f0:-}' d0='${d0:-}')" >&2; exit 3; }
 # Both timestamps AFTER their read. Taking `end` before the closing read charged
@@ -231,7 +257,7 @@ t=0
 until [ $(( 0x$(rd "$F") )) -ge $target ] || [ $t -ge 120 ]; do sleep 3; t=$((t+3)); done
 truncated=$([ $t -ge 120 ] && echo 1 || echo 0)
 read -r f1 d1 g1 <<EOF
-$(rd "$F" "$DRAWN" ${GUARD:+"$GUARD"} | tr '\n' ' ')
+$(readvals second)
 EOF
 end=$(date +%s.%N)
 hex8 "${f1:-}" && hex8 "${d1:-}" || { echo "$ARM: SWD read failed (f1='${f1:-}' d1='${d1:-}')" >&2; exit 3; }
@@ -255,14 +281,23 @@ if g0 and g1:
     # low half = skipped_frames (uint16, wraps), high half = frame_time_10us
     skipped = (int(g1, 16) & 0xffff) - (int(g0, 16) & 0xffff) & 0xffff
     budget = int(g1, 16) >> 16
-    line += f'  [guard demanded {skipped} skips, frame_budget={budget/100:.2f}ms]'
+    # "charged" not "skipped": common.c:213 charges 1 for one budget of
+    # lateness and that frame is still drawn; only 2 withholds one. The sum
+    # cannot tell them apart, so this number is pressure, not skips.
+    line += f'  [guard charged {skipped}, frame_budget={budget/100:.2f}ms]'
     if skipped == 0:
-        # Not a footnote: with nothing demanded, ratio 1.0 says only that the
+        # Not a footnote: with no pressure at all, ratio 1.0 says only that the
         # core kept up. It cannot distinguish an honest counter from one that
         # reports every flip as a drawn frame, which is the whole question this
         # tool is pointed at. Halve the frame budget (a speedup setting) and
         # measure again.
-        line += '  <-- GUARD NEVER ASKED: this window cannot judge the counter'
+        line += '  <-- GUARD NEVER UNDER PRESSURE: this window cannot judge the counter'
+    elif drawn == emu:
+        # Pressure but nothing withheld. Do NOT read this as the counter lying:
+        # every charge may have been a 1, which draws. It means the setting was
+        # not hard enough to make the guard withhold, so the window still cannot
+        # judge. Raise the speedup until this arm itself reports ratio < 1.
+        line += '  <-- PRESSURE BUT NOTHING WITHHELD: not a verdict, raise the speedup'
 if drawn > emu:
     # lcd_swap() is also the launcher's, the clock's, the video and music
     # players' and the pause overlay's. The stated defence is that this is only
