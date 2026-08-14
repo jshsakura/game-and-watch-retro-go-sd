@@ -1372,7 +1372,21 @@ ZELDA3_FEATURES := $(shell echo "$$(( $(ZELDA3_FEATURES) | $(ZELDA3_FEATURE_GAME
 ZELDA3_FEATURES := $(shell echo "$$(( $(ZELDA3_FEATURES) | $(ZELDA3_FEATURE_SWITCH_LR_LIMIT) << 15 ))")
 
 # C defines for Super Metroid
+# SNES_LINE_HIRQ=0 puts snes_run_line()'s H-timer fallback back: with an armed
+# H-timer the whole line goes through the dot loop, 682 calls of
+# snes_handle_pos_stuff() for the three events the fast path already performs.
+# Only the native ports call snes_run_line, and their dot loop carries no timer
+# IRQ code at all (that block is #ifdef GNW_SNES_CORE). A/B arm only.
+#
+# It goes in C_DEFS_SM and NOT in SNES_LINE_DEFS_EXTRA: the SM port's objects are
+# built by sm_obj_prereq_gen, which passes C_DEFS_SM. Putting it in the SNES
+# group would have left both arms of the A/B compiling the same program.
+SNES_LINE_HIRQ ?= 1
+
 C_DEFS_SM = -DHEADLESS
+ifneq ($(SNES_LINE_HIRQ),1)
+  C_DEFS_SM += -DSNES_LINE_HIRQ=$(SNES_LINE_HIRQ)
+endif
 
 SM_C_INCLUDES = $(C_INCLUDES) -Iexternal/sm -Iexternal -I./
 
@@ -3474,6 +3488,12 @@ distclean: clean
 # looks like a real one -- the same disease as a harness that compiles a
 # different program. cmp the two arms' snes.bin before believing any A/B.
 #
+# C_DEFS_SM/C_DEFS_SMW were missed the same way, and cost the same hour: the
+# native ports are built by sm_obj_prereq_gen / smw_obj_prereq_gen, which pass
+# their own define group. SNES_LINE_HIRQ=0 went onto the make command line, the
+# stamp did not move, nothing rebuilt, and the two arms of the A/B came out
+# byte-identical -- caught only because arm.sh's caller cmp'd them.
+#
 # ASFLAGS is in here for the same reason and it was missed the first time:
 # SNES_ROMCACHE passes -DSNES_T2_NO_ROMCACHE to the ASSEMBLER, not the compiler,
 # so toggling it rebuilt nothing and `SNES_ROMCACHE=1` produced a binary
@@ -3482,6 +3502,8 @@ distclean: clean
 $(shell printf '%s\n' \
           'C_DEFS=$(C_DEFS)' \
           'MD_C_DEFS=$(MD_C_DEFS)' \
+          'C_DEFS_SM=$(C_DEFS_SM)' \
+          'C_DEFS_SMW=$(C_DEFS_SMW)' \
           'CFLAGS=$(CFLAGS)' \
           'CXXFLAGS=$(CXXFLAGS)' \
           'SNES=$(SNES_SPIN_SKIP_DEF)|$(SNES_SPIN_BAKE_DEF)|$(SNES_SPC_IDLE_DEF)|$(SNES_LINE_DEFS)|$(SNES_LINE_DEFS_EXTRA)|$(SNES_DSP_MONO_DEF)|$(SNES_DIAG_DEFS)|$(SNES_PROF_DEFS)|$(SNES_HLE_DEFS)' \

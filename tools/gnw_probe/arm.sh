@@ -58,6 +58,15 @@ cmd_build() {
     || { tail -25 "$ARMS/$name.build.log"; exit 1; }
   mkdir -p "$ARMS/$name"
   cp build/gw_retro_go.elf build/gw_retro_go_intflash.bin sd_content/cores/snes.bin "$ARMS/$name/"
+  # The native ports ship as homebrew PACKAGES, and a package carries veneer
+  # literals holding the resident addresses of the firmware that built it. Put
+  # a package from one build on a console running another and it branches into
+  # whatever is at the old address -- Super Metroid took a UsageFault jumping to
+  # 0x200025f8, which is the FatFs object. Keep them per arm so flashing an arm
+  # can push a matching set.
+  for f in "sd_content/roms/homebrew/Super Metroid.bin" sd_content/roms/homebrew/sm.xip; do
+    [ -f "$f" ] && cp "$f" "$ARMS/$name/"
+  done
   echo "[arm:$name] intflash $(stat -c%s "$ARMS/$name/gw_retro_go_intflash.bin") B, snes.bin $(stat -c%s "$ARMS/$name/snes.bin") B"
 }
 
@@ -66,6 +75,14 @@ cmd_flash() {
   local d="$ARMS/$name"
   [ -f "$d/gw_retro_go_intflash.bin" ] || { echo "no such arm: $name"; exit 1; }
   scp -q "$d/gw_retro_go_intflash.bin" "$d/snes.bin" "$HOST:/tmp/"
+  # Push this arm's homebrew packages too when it has them, for the reason in
+  # cmd_build. PUSH_HB=0 skips it (it costs a few seconds).
+  if [ "${PUSH_HB:-1}" = 1 ] && [ -f "$d/Super Metroid.bin" ]; then
+    scp -q "$d/Super Metroid.bin" "$HOST:/tmp/sm_port.bin"
+    [ -f "$d/sm.xip" ] && scp -q "$d/sm.xip" "$HOST:/tmp/sm.xip"
+    ssh -n "$HOST" "python3 -m gnwmanager sdpush --file /tmp/sm_port.bin --dest-path '/roms/homebrew/Super Metroid.bin' \
+        -- sdpush --file /tmp/sm.xip --dest-path '/roms/homebrew/'" >/dev/null 2>&1 || true
+  fi
   ssh "$HOST" "python3 -m gnwmanager flash $INTFLASH_ADDR /tmp/gw_retro_go_intflash.bin \
       -- sdpush --file /tmp/snes.bin --dest-path '/cores/' \
       -- start $INTFLASH_ADDR" 2>&1 | tail -3
