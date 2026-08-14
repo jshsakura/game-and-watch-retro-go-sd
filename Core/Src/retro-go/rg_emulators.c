@@ -2176,7 +2176,41 @@ static retro_emulator_file_t *gnw_autoboot_named(void)
     want[n] = 0;
     while (n && (want[n - 1] == '\n' || want[n - 1] == '\r' || want[n - 1] == ' '))
         want[--n] = 0;
-    if (n == 0 || (want[0] >= '0' && want[0] <= '9')) return NULL;
+    if (n == 0) return NULL;
+
+    /* "<dirname>:<index|name>" picks the system too, e.g. "32x:0" or
+     * "32x:Doom (32X).32x".
+     *
+     * Without it this file can only reach the SNES list and the homebrew list,
+     * because those were the only two systems anyone had measured -- so the
+     * 32X core could not be benchmarked unattended at all, which is a poor
+     * reason to leave a core unmeasured. The name form matters as much as the
+     * index: a directory listing's order is FatFs's, not the card's, so an
+     * index means a different cartridge after any file is added. */
+    char *colon = strchr(want, ':');
+    if (colon) {
+        *colon = 0;
+        const char *sel = colon + 1;
+        bool by_index = (sel[0] >= '0' && sel[0] <= '9');
+        int idx = by_index ? atoi(sel) : -1;
+        for (int i = 0; i < emulators_count; i++) {
+            if (strcmp(emulators[i].dirname, want) != 0) continue;
+            emulators[i].roms.count = 0;
+            emulator_refresh_list(&emulators[i]);
+            if (by_index)
+                return (emulators[i].roms.count > idx)
+                           ? &emulators[i].roms.files[idx] : NULL;
+            for (int r = 0; r < emulators[i].roms.count; r++) {
+                if (strcmp(emulators[i].roms.files[r].name, sel) == 0)
+                    return &emulators[i].roms.files[r];
+            }
+            return NULL;   /* the system was named and the ROM is not there:
+                              say nothing rather than boot a different one */
+        }
+        return NULL;
+    }
+
+    if (want[0] >= '0' && want[0] <= '9') return NULL;
 
     /* Only the homebrew list. Refreshing every emulator at boot -- which the
      * first version did -- allocates a ROM list for all ~30 of them and the
