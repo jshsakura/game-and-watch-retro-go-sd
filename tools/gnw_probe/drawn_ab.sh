@@ -193,5 +193,12 @@ if drawn > emu:
     # core: the window caught UI flips, and while a menu is up the emulator loop
     # is not running at all, so the emulated side stalls while the drawn side
     # keeps climbing. The ratio is then meaningless in the flattering direction.
+    #
+    # Expect this to fire most often on the arms where it looks least plausible.
+    # A core that draws every frame sits at ratio exactly 1.0000 with NO
+    # headroom -- 32X's per-core arm, and any core that ignores the guard (VB,
+    # WonderSwan, Videopac) -- so one stray flip trips it immediately, while a
+    # core running at 0.25 can absorb hundreds. Frequency here is a property of
+    # the arm's headroom, not evidence that the check is oversensitive.
     line += '  <-- UI FLIPS IN THE WINDOW (drawn > emu): not a core measurement'
 print(line)"
