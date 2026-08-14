@@ -43,8 +43,13 @@ any title outside the existing Zelda/SMW/TMNT rig work already covered by
 
 `BOOT_CRASH` is **not** a uniform bucket. It is dominated by carts LakeSnes'
 current mapper support can't run at all — enhancement-chip titles (SA-1,
-SuperFX, DSP-1, Cx4, S-DD1) that the survey's `LOAD_FAIL`/crash paths both
-land in as `BOOT_CRASH` in this table. Confirmed examples from this sweep:
+SuperFX, Cx4, S-DD1) that the survey's `LOAD_FAIL`/crash paths both
+land in as `BOOT_CRASH` in this table. **DSP-1 was in that list when this
+survey ran and no longer is** — `dsp1_hle.c` implements it, and Mario Kart,
+Pilotwings, Suzuka 8 Hours and Battle Racers all boot and run. Its siblings
+DSP-2/3/4 share DSP-1's romType and are now refused by title rather than
+attached to the wrong HLE (see "What each chip would actually take" below).
+Confirmed examples from this sweep:
 *Star Fox* and *Super Star Fox Weekend* (SuperFX), *Mega Man X2* and
 *Mega Man X3* (Cx4, built for exactly those two carts). Not every
 `BOOT_CRASH` title is confirmed against a specific chip — some are
@@ -160,6 +165,38 @@ label; full 2,497-row breakdown lives in the gitignored
   *Front Mission: Gun Hazard*
 - **Tier D**: *Star Fox*, *Super Star Fox Weekend* (SuperFX), *Mega Man X2*,
   *Mega Man X3* (Cx4)
+
+## What each chip would actually take — and which reason closes it
+
+Worth writing down because the reason on record was **wrong**. These were
+carried as "unrealistic in the RAM_EMU budget", and that is not what stops
+them. The SNES core is an *overlay*: `STM32H7B0VBTx_SDCARD.ld:481` captures
+`build/snes/*.o` into `.overlay_snes` (`dsp1_hle.o` included) and it is
+streamed off the card into RAM_EMU, so **coprocessor code never touches the
+256 KB internal flash image**. Measured on the shipped ELF: `.overlay_snes`
+94,800 + `.overlay_snes_bss` 412,760 = 507,560 of 741,376, leaving
+**233,816 bytes free**. Both the chip's code and the cart RAM it needs come
+out of that one number.
+
+| chip | RAM_EMU (code + cart RAM) | CPU per frame | what actually closes it |
+|---|---|---|---|
+| **SA-1** | ✗ BW-RAM is 256 KB by itself | ✗ a second 65816 | both |
+| **SuperFX** | ✓ ~114 KB | ✗ a RISC CPU interpreted per frame | **CPU, not RAM** |
+| **Cx4** (HLE) | ✓ ~33 KB | ✓ intercepted commands, ~free | **nothing — it is open** |
+| **DSP-2/3/4** (HLE) | ✓ ~16 KB | ✓ same shape as DSP-1 | nothing; not written yet |
+| S-DD1 / SPC7110 | ✓ ~30 KB | ⚠ decompression inside DMA windows | unmeasured, borderline |
+| OBC1 / S-RTC | ✓ ~10 KB / ~1 KB | ✓ register intercepts | nothing; very few titles |
+
+So the honest list of *closed* chips is **SA-1 and SuperFX**, and SuperFX is
+closed on CPU alone. **Cx4 was closed for a reason that was never true** — an
+HLE port exists in snes9x 1.43/1.50 (`cx4fn.c`) and it would cover Mega Man X2
+and X3, the two Tier D titles above that are not Star Fox.
+
+⚠️ The CPU column is **estimated, not measured**. The one measured data point
+is our own: DSP-1's HLE costs essentially nothing, which is what makes the
+DSP-2/3/4 and Cx4-HLE rows credible and says nothing about S-DD1 or SuperFX.
+Before starting any of these, price it the way this project prices everything
+else — by ablation on hardware, not by the table above.
 - **Tier E**: *Secret of Mana*, *Doom*, *Super Street Fighter II: The New
   Challengers*, *ActRaiser*, *Live A Live*, *Tales of Phantasia*
 
