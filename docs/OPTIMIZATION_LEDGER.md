@@ -410,21 +410,35 @@ writers sit inside `if (gwenesis_vsync_mode)` (`:891`, `:895`). Audio-sync is
 the default (`:63`), and in that mode nothing assigns `drawFrame` for the life
 of the process. So the render at `:851` always runs, the flip always counts, and
 **MD genuinely draws every frame it emulates — `drawn == emu` is the truth for
-it, not a lie.** The `lcd_swap_stale()` call stays because it is not dead: toggle
-vsync on, hit an overflow (`drawFrame = 0`), toggle back with the option at
-`:438`, and `drawFrame` is stuck at 0 — the render stops, the flips continue,
-the panel freezes. That is a pre-existing bug; what changed is that the frozen
-screen now reports the truth instead of `drawn == emu`.
+it, not a lie.**
 
-Two consequences.
+A second, independent mechanism says the same thing. `:913`, in that same
+audio-sync branch, does `common_emu_state.skip_frames = 0` on every iteration,
+and `common.c:141` computes `draw_frame = skip_frames < 2` from that value on
+the next call. **Even if the return value were read, it would always have been
+true.** Two unrelated reasons, one conclusion — which is worth more than one
+reason, because it means restoring the commented-out assignment at `:777` would
+not by itself give MD a working frameskip.
+
+The `lcd_swap_stale()` call stays because it is not dead. Toggle vsync on, hit
+an overflow (`drawFrame = 0` at `:891`), then toggle back with the option at
+`:438`: only `:895` ever restores `drawFrame`, and `:895` is in the vsync
+branch, so in audio-sync it is stuck at 0 for good. The render stops, the flips
+continue, the panel freezes permanently. **That is a pre-existing bug, unrelated
+to this counter and not introduced by it** — recorded here because nothing else
+in the tree records it. What did change is that the frozen screen now reports
+the truth instead of `drawn == emu`.
 
 **MD cannot judge this counter.** Fixed and unfixed builds both read ratio
 1.0000, at any speedup, because no guard decision reaches the core.
-`common_emu_state.skipped_frames` does not rescue it either: the `+=` at
-`common.c:215` runs inside `common_emu_frame_loop()`, before gwenesis zeroes
-`skip_frames`, so it counts what the integrator *wanted* while nothing was ever
-skipped. Judge on **celeste** (assigns `:677`, gates `:696`, no mode nuance) or
-**msx** (`:2143`, `:2172`, avoiding screen modes 10/11/12).
+`common_emu_state.skipped_frames` does not rescue it either. The `+=` at
+`common.c:215` runs inside `common_emu_frame_loop()`, immediately after the
+integrator recomputes `skip_frames`, so what it records is the guard's
+**demand** — the same category of thing as the guard's *decision*, which is the
+defect this entire section is about. On MD it reads greater than zero in both
+arms while nothing is ever skipped. Judge on **celeste** (assigns `:677`, gates
+`:696`, no mode nuance) or **msx** (`:2143`, `:2172`, avoiding screen modes
+10/11/12).
 
 **The 32X rows below stand — now checked rather than assumed.** "32X obeys the
 guard" was written twice in this document and checked neither time, which was
