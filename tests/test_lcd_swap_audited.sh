@@ -76,40 +76,15 @@ fi
 
 rc=0
 
-# Emit the file with /* */ comments, // comments and "string literals" removed.
-# State carries across lines, which is the whole point: a block comment's
-# continuation lines are only recognisable from the /* that opened it.
-STRIP='
-{
-  line = $0; out = ""; i = 1; n = length(line)
-  while (i <= n) {
-    two = substr(line, i, 2); one = substr(line, i, 1)
-    if (inblock)          { if (two == "*/") { inblock = 0; i += 2 } else i++ }
-    else if (instr)       { if (one == "\\") i += 2
-                            else { if (one == "\"") instr = 0; i++ } }
-    else if (inchr)       { if (one == "\\") i += 2
-                            else { if (one == CH) inchr = 0; i++ } }
-    else if (two == "/*") { inblock = 1; i += 2 }
-    else if (two == "//") { break }
-    else if (one == "\"") { instr = 1; i++ }
-    else if (one == CH)   { inchr = 1; i++ }
-    else                  { out = out one; i++ }
-  }
-  print out
-}'
+# The stripper lives in tests/c_strip.sh: test_ingame_overlay_wired.sh needs the
+# same thing for the same reason, and one copy means one place to be right and
+# one fixture (below) guarding it. Read that file for why the old
+# `^[^*/]*name\(` idiom had to go.
+. "$(dirname "$0")/c_strip.sh"
 
 counts() {  # file -> "swap=N stale=N"
-    local stripped s t
-    # CH is the single quote, passed in as a variable: a ' cannot appear inside
-    # the single-quoted STRIP program above. It tracks CHARACTER literals, and
-    # it is not a nicety -- without it a plain `char q = '"'` turned on the
-    # string state and swallowed the rest of the file, which under the old
-    # discovery made the file vanish from the census entirely. Six files in
-    # scope contain exactly that literal.
-    stripped="$(awk -v CH="'" "$STRIP" "$1")"
-    s="$(printf '%s' "$stripped" | grep -o 'lcd_swap('       | wc -l | tr -d ' ')"
-    t="$(printf '%s' "$stripped" | grep -o 'lcd_swap_stale(' | wc -l | tr -d ' ')"
-    echo "swap=$s stale=$t"
+    # `lcd_swap(` does not match `lcd_swap_stale(` -- the paren separates them.
+    echo "swap=$(c_calls "$1" lcd_swap) stale=$(c_calls "$1" lcd_swap_stale)"
 }
 
 # --- self-check: the stripper must survive the lines the old pattern lost ----
