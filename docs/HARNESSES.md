@@ -275,6 +275,7 @@ in the binary. Full guide: [SNES_DEVICE_DWT.md](SNES_DEVICE_DWT.md).
 | does the firmware link the same program I tested | `device_parity.sh`, `scripts/check_core_symbol_aliases.py` |
 | is my HLE/optimization bit-exact, including time | `tools/gba_m4a/prove.sh` (the model to copy) |
 | is the thing actually *wired* | a `tests/test_*_wired.sh`. Four exist to copy: `test_ingame_overlay_wired.sh`, `test_tamapoke_save_wired.sh`, `test_idle_timeout_wired.sh`, `test_boot_rescue_wired.sh` |
+| did someone move a call whose meaning nothing can check | a census: `tests/test_lcd_swap_audited.sh` + `tests/lcd_swap_audited.txt`. Every `lcd_swap()`/`lcd_swap_stale()` call site with its counts and the verdict from reading that loop. Copy it when a call's CORRECTNESS depends on surrounding logic no grep can parse — the heuristic version flagged seven correct cores |
 | is a screen readable / does a widget swallow its label | `tools/tamapoke_harness/run.sh` (both themes, both focus states) |
 | is the asset container what the firmware expects | `tools/tamapoke/verify_assets_dat.py` |
 | does sound actually come out | `tests/test_tamapoke_audio.c` (the model: link the real audio file) |

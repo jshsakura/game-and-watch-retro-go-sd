@@ -67,6 +67,32 @@ These are the rules that stopped bad numbers from becoming shipped decisions.
 - **Do not judge architecture from the armchair.** On 32X the first estimate
   ("arithmetically impossible") and the second ("paging makes it comfortable")
   were both wrong; the truth was in between, at zero margin.
+- **Two samples that do not overlap are not a result** until you have shown that
+  the *scene* repeats. Super Mario World read 30.62–38.85 drawn fps from ONE
+  unchanged binary — a 23% spread — and the first two samples of each arm landed
+  so that a −9.2% regression looked real. Seven samples per arm, in one session,
+  killed it. Nothing had regressed.
+- **Repeatability is a property of the scene, not of the tool**, and you cannot
+  read it off the draw ratio. Three cases, and only the first two let you stop
+  at two samples:
+
+  1. **An arm that removed the guard's discretion** (`GNW_FORCED_DRAW_RATIO=n`)
+     has an arithmetically determined ratio — 0.2500, 0.5000, 1.0000 — and
+     repeats. This is a property of how the arm was built, not of the cartridge.
+     Every 32X number in this file comes from such an arm.
+  2. **A scene pinned on the 1-in-4 floor** (ratio 0.2498–0.2504) repeats to
+     0.0–0.7%, measured across jimpower, jojo, ff6, airdiver and pilotwings.
+  3. **Anything else — take five to seven samples per arm, in one session**,
+     whatever the ratio says. The ratio does not predict the spread: Super
+     Metroid at 0.361–0.373 repeats to 1–2%, while Chrono Trigger in the *same
+     band* (0.342–0.381) spreads 11%. Dragon's Magic at 0.76 spreads 4.6%. Nor
+     does a tight emulated-fps reading rescue you — both of those are tight on
+     emulated fps.
+
+  A guess that "an exact-looking ratio means deterministic" was written into
+  this file and refuted the same day by the 13-cartridge set above. What decides
+  the sample count is whether the guard had discretion, not what number the
+  ratio prints.
 
 ---
 
@@ -96,9 +122,17 @@ number.
 
 **Shipped.** N-SPC timer-wait charging (`SNES_SPC_IDLE_SKIP`), the PPU
 virgin-z test, the blend LUT, sprite-eval skip on skipped frames, the opaque
-tile path, bulk general-DMA transfer, gap-free audio, and the **baked wait
-loop** (`SNES_SPIN_BAKE`, +35–97% drawn frames, 413/413 cartridges
-hash-identical).
+tile path, bulk general-DMA transfer, gap-free audio, the **baked wait loop**
+(`SNES_SPIN_BAKE`, +35–97% drawn frames, 413/413 cartridges hash-identical), and
+the **fetch-page cache for the carts that never had one** — `snes_cpuRead`'s
+page cache was gated on `cart->romMask`, which is only set for a power-of-two
+ROM, so every 3 MB cart took the full `snes_read → cart_read → cart_readLorom`
+path on each opcode fetch (Super Metroid: 30,463 of 34,314 bus reads a frame),
+and `cart_attachDsp1()` separately cleared `romMask` across the whole bus for
+LoROM DSP boards. A per-bank base table built once at load fixes both: **Super
+Metroid 47.5 → 60.9 emulated (+28%), 11.9 → 22.4 drawn (+88%); Pilotwings 44.9 →
+59.1 (+32%)**, 14 cartridges bit-identical on the rig (`05fea2df`, arms
+`SNES_ROMPAGE_FOLD=0` / `SNES_DSP_FASTPATH=0`).
 
 **Closed — the whole-core approaches.**
 
@@ -184,12 +218,32 @@ pass before flashing an rc build) and [RESUME_GNW.md](RESUME_GNW.md) (the
 original rc resume point — note its §3 framing is superseded by
 `RC_FEASIBILITY_2026.md`).
 
-**Still unmeasured** (i.e. not closed, and the only two things that are not):
-HDMA — 226 calls a frame on Mario Kart, never priced, and it must be measured on
-a *device play scene* because the rig's cold-boot window sits on a title screen
-with no perspective table; and the native ports' own frames (Super Metroid runs
-56.2 fps on hardware with no interpreter at all, and nobody has profiled what
-that frame is).
+**Closed — HDMA, 2026-08-14, and it is a lesson about counting calls.** Device,
+Super Mario Kart's savestate play scene, `SNES_DEVICE_PROFILE=1` Ledger B:
+`hdma` = 33,410 cycles = **0.3%** of an 8,631,610-cycle drawn frame. The rig
+says why: over 6,000 frames Mario Kart activates **no HDMA channel at all** —
+`dma_doHdma()` is called every scanline (`dohdma=225/frame`) and its eight-channel
+loop finds nothing enabled, so `hdmaTimer` stays 0 and the CPU never stalls.
+Kart's Mode 7 perspective table is written per line from an H-timer IRQ, not by
+an HDMA channel. **The 226 calls a frame were real and the work behind them was
+not.** Where HDMA does run (Suzuka 8 Hours: 1,374 two-dot stall steps a frame =
+0.77% of the dot clock) folding the stall is bit-identical and costs instructions
+— 4,536,365 → 4,546,225 per frame — and was reverted.
+
+**Still unmeasured** — one thing: the native ports' own frames. Super Metroid
+runs 56.2 fps on hardware with **no interpreter at all**, and nobody has profiled
+what that frame is. It is game C plus the PPU/APU emulation every ported game
+shares, so whatever is in there is shared.
+
+**Two instrument defects found 2026-08-14 — check these before trusting an old
+number.** `run_snes_t2.sh` did not compile `dsp1_hle.c`, so `dsp1_alloc()` hit a
+weak stub and **every DSP cartridge ran on the rig with no coprocessor attached**;
+past rig numbers for those carts are void. And a `SNES_DEVICE_PROFILE=1` build
+cannot inline `run_one_opcode` (the DWT marks block it), so gcc emits an `.isra.0`
+clone into `.text` which the linker sweeps into `.overlay_snes` — PC samples
+charged ~14% of the frame to **a program the device does not run**, and Ledger B's
+"event scheduler" residue was inflated by the same amount. Take PC profiles on a
+shipping build.
 
 **Trap.** The audio-HLE gate compared 21 header bytes against `"SUPER MARIO WORLD  "`.
 The real internal title has no space (`SUPER MARIOWORLD`), and a 19-character literal
@@ -287,6 +341,145 @@ Shipped. The M4A mixer HLE is the lever that matters (27–60% of guest time).
 
 Shipped and playable. The bottleneck differs per game — Wario is blit-bound, 3D
 Tetris is interpreter-bound (the floating-point hypothesis was tested and rejected).
+
+**RETRACTED, same day: "VB is pinned on the draw floor and the player sees 9
+fps".** It was written here on a hardware reading of 35.90 emulated against 9.00
+drawn, ratio 0.2506, three samples. The emulated number is real. The drawn one
+is not a count of anything VB puts on the screen: **`main_vb.c` discards the
+guard's answer and presents every frame** (`(void)drawFrame; drawFrame = true;`,
+because the VIP flips its own framebuffer every emulated frame and skipping
+leaves the LCD alternating fresh and stale content). `common.c` increments
+`g_common_drawn_frames` from the guard's *decision*, so for VB it counts
+something the core then ignores. **VB draws all 35.9 of its frames and the
+65–70% figure was right.** Same defect applies to WonderSwan
+(`main_wswan.c:328` forces a draw every 6th skip).
+
+The lesson is the counter's, not VB's: **`g_common_drawn_frames` meant "frames
+the guard asked for", which equals "frames presented" only for cores that obey
+the guard.** (An earlier revision added "32X obeys it, so the 32X numbers below
+stand." That was asserted twice without being checked. It has since been
+checked, and it holds — for a reason nobody had looked up; see the correction
+further down.)
+
+**The fix, and the second lie it had to avoid.** A caveat that reads "check what
+that core's loop does with `drawFrame` before believing this column" is a caveat
+nobody applies — the number looks like a measurement either way, which is
+exactly how the VB row got written down. So the increment moved to
+**`lcd_swap()`** (`Core/Src/gw_lcd.c`), the one call that tells the LTDC to
+flip: ~68 call sites across every porting layer funnel through it, and a new
+core gets an honest counter without knowing the counter exists.
+
+On its own that is wrong in the opposite direction. **`lcd_swap()` is not where
+a frame becomes new content.** Three cores flip the panel every emulated frame
+while skipping the render, on purpose — holding the flip would leave the panel
+on a front buffer that goes stale while emulation keeps writing the back one:
+
+| core | site | behaviour |
+|---|---|---|
+| MSX | `main_msx.c:2171` | `:2143` assigns the guard's answer, `:2172` gates the blit, the swap is unguarded |
+| Celeste | `main_celeste.c:697` | `:677` assigns, `:696` gates the blit, the swap is unguarded |
+| Genesis | `main_gwenesis.c:908` (the `else` of `gwenesis_vsync_mode`) | unguarded swap over a gated render — **but see the correction below: this core cannot skip at all** |
+
+Left alone, those would have read **drawn == emulated, a flat 100%**. They now
+call **`lcd_swap_stale()`**, which performs the identical flip and does not
+count it. MSX is the one that is not a straight `drawFrame` test: in screen
+modes 10/11/12 `_blit_frame()` is a no-op because the VDP writes RGB565 into the
+LCD back buffer itself, so in those modes every flip really does carry a new
+frame.
+
+The rest of the sweep found no fourth case. The cores that flip unconditionally
+*and* render unconditionally — Videopac, C64, Lynx, ZX Spectrum, A2600,
+zelda3/SMW, VB, TamaPoke — are honest under this counter; that is the whole
+point of it. PCE and SMS+GX flip inside a function that is itself called only
+`if (drawFrame)`. SNES flips inside its own guard (`main_snes.c:1399-1404`) and
+bumps `g_snes_drawn_frames` on the same condition, so the shared pair and the
+SNES pair count the same event.
+
+### Correction: Genesis is not a split core (and 32X was never this file)
+
+`main_gwenesis.c:777` reads
+
+```c
+    // bool drawFrame =
+    common_emu_frame_loop();
+```
+
+The assignment is commented out — **the guard's answer is discarded.**
+`drawFrame` is a file-scope global (`:308`, initialised to 1) and its only
+writers sit inside `if (gwenesis_vsync_mode)` (`:891`, `:895`). Audio-sync is
+the default (`:63`), and in that mode nothing assigns `drawFrame` for the life
+of the process. So the render at `:851` always runs, the flip always counts, and
+**MD genuinely draws every frame it emulates — `drawn == emu` is the truth for
+it, not a lie.**
+
+A second, independent mechanism says the same thing. `:913`, in that same
+audio-sync branch, does `common_emu_state.skip_frames = 0` on every iteration,
+and `common.c:141` computes `draw_frame = skip_frames < 2` from that value on
+the next call. **Even if the return value were read, it would always have been
+true.** Two unrelated reasons, one conclusion — which is worth more than one
+reason, because it means restoring the commented-out assignment at `:777` would
+not by itself give MD a working frameskip.
+
+The `lcd_swap_stale()` call stays because it is not dead. Toggle vsync on, hit
+an overflow (`drawFrame = 0` at `:891`), then toggle back with the option at
+`:438`: only `:895` ever restores `drawFrame`, and `:895` is in the vsync
+branch, so in audio-sync it is stuck at 0 for good. The render stops, the flips
+continue, the panel freezes permanently. **That is a pre-existing bug, unrelated
+to this counter and not introduced by it** — recorded here because nothing else
+in the tree records it. What did change is that the frozen screen now reports
+the truth instead of `drawn == emu`.
+
+**MD cannot judge this counter.** Fixed and unfixed builds both read ratio
+1.0000, at any speedup, because no guard decision reaches the core.
+`common_emu_state.skipped_frames` does not rescue it either. The `+=` at
+`common.c:215` runs inside `common_emu_frame_loop()`, immediately after the
+integrator recomputes `skip_frames`, so what it records is the guard's
+**demand** — the same category of thing as the guard's *decision*, which is the
+defect this entire section is about. On MD it reads greater than zero in both
+arms while nothing is ever skipped. Judge on **celeste** (assigns `:677`, gates
+`:696`, no mode nuance) or **msx** (`:2143`, `:2172`, avoiding screen modes
+10/11/12).
+
+**The 32X rows below stand — now checked rather than assumed.** "32X obeys the
+guard" was written twice in this document and checked neither time, which was
+worth doubting: its supposed sibling demonstrably does not obey it. The doubt
+does not survive the check, and the reason is that the two are not siblings at
+all. **32X is not gwenesis.** It has its own porting layer,
+`Core/Src/porting/md32x/main_md32x.c` (picodrive-based), on `exp/32x-d32xr`:
+
+```
+:721  bool drawFrame = common_emu_frame_loop();      /* assigned, not discarded */
+:738  if (drawFrame) set_out_buffer();
+:740  PicoIn.skipFrame = drawFrame ? 0 : 1;
+:752  if (drawFrame) { ...; lcd_swap(); }            /* flip inside the gate */
+```
+
+The guard's answer is read, the render is gated on it, and the flip is inside
+that gate — so 32X is honest under both the old counter and the new one, and the
+4.98 drawn fps figure carries no defect. It is also why the table above names
+**Genesis alone**, where a first draft of it said "Genesis / 32X": that row is
+about `main_gwenesis.c`, a file 32X does not use.
+
+The general lesson survives the good news: *sibling* is not a property of a
+system, it is a property of a file. MD and 32X share a console lineage and share
+nothing in the loop that this counter measures.
+
+**Not yet measured on hardware.** The build is green with the canonical release
+flags and every gate passes, but no device A/B has been run against this
+counter's new definition.
+
+**Also retracted, same day: "VB does not boot under an arm that forces 1-in-1".**
+It boots. Measured with each arm carrying its OWN `cores/vb.bin`: **36.80 /
+36.20** emulated at ratio 4 against **36.80 / 36.50** at ratio 1 — the emulated
+rate does not move, because VB presents every frame either way. The "boot
+failure" was a **stale core file**: one arm's `vb.bin` sitting under a different
+arm's internal flash. Nothing checked that pairing, exactly as nothing checked
+the ELF-to-device pairing earlier the same day; `arm.sh` now takes
+`PUSH_CORE=<core>` to push the matching core with the flash.
+
+Those two rows are the clearest statement of the counter defect there is:
+identical emulation, and a "drawn" number that moves 4x with a constant the core
+ignores.
 
 **Closed.** Lazy flags plus threaded dispatch was estimated at 20–25% but touches
 every game's core path for an uncertain return. A dynamic recompiler is ARM32 only.

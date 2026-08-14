@@ -59,6 +59,10 @@ void lcd_backlight_set(uint8_t brightness);
 void lcd_backlight_on();
 void lcd_backlight_off();
 void lcd_swap(void);
+/* Same flip, but declares that the buffer holds no NEW emulated content, so it
+ * is not counted in g_common_drawn_frames. For the handful of cores that skip
+ * the render and flip anyway (see gw_lcd.c). */
+void lcd_swap_stale(void);
 void lcd_sync(void); // DEPRECATED
 void lcd_clone(void);
 void* lcd_get_active_buffer(void);

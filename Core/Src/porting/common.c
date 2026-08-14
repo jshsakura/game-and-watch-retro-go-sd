@@ -143,6 +143,9 @@ void common_emu_frame_loop_reset(void){
  * question that has to come first for any core: is the guard even engaged? A
  * core running at full speed draws every frame it emulates and has nothing to
  * gain from making frames cheaper. */
+/* Defined here, incremented in two different places on purpose:
+ * g_common_emu_frames below (one per emulated frame) and g_common_drawn_frames
+ * in lcd_swap() (one per frame that actually reaches the panel). */
 uint32_t g_common_drawn_frames;
 uint32_t g_common_emu_frames;
 
@@ -180,7 +183,7 @@ bool common_emu_frame_loop(void){
 
     if(common_emu_state.startup_frames < 3) {
         common_emu_state.startup_frames++;
-        g_common_emu_frames++; g_common_drawn_frames++;
+        g_common_emu_frames++;
         return true;
     }
 
@@ -227,7 +230,12 @@ bool common_emu_frame_loop(void){
     common_emu_state.skipped_frames += common_emu_state.skip_frames;
 
     g_common_emu_frames++;
-    if (draw_frame) g_common_drawn_frames++;
+    /* g_common_drawn_frames is NOT incremented here. It used to be, from
+     * draw_frame -- the guard's decision -- and several cores discard that
+     * decision (main_vb.c always presents, main_wswan.c forces every sixth
+     * skip, main_videopac.c never reads it), so for them the number described
+     * something that never happened. It is counted in lcd_swap() now, where the
+     * frame actually reaches the panel; see the comment there. */
     return draw_frame;
 }
 

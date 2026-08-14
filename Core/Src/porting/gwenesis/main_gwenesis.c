@@ -900,7 +900,14 @@ int app_main_gwenesis(uint8_t load_state, uint8_t start_paused, int8_t save_slot
         /* default as Audio/Video are synchronized */
       } else {
 
-        lcd_swap();
+        /* Flip unconditionally: holding it would leave the panel on a front
+         * buffer that goes stale while emulation keeps writing the back one.
+         * On a skip frame the render was gated out above, so the buffer holds
+         * no new content and this is not a drawn frame — see lcd_swap_stale(). */
+        if (drawFrame)
+          lcd_swap();
+        else
+          lcd_swap_stale();
 
         common_emu_state.pause_frames = 0;
         common_emu_state.skip_frames = 0;

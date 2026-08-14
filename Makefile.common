@@ -1380,7 +1380,21 @@ ZELDA3_FEATURES := $(shell echo "$$(( $(ZELDA3_FEATURES) | $(ZELDA3_FEATURE_GAME
 ZELDA3_FEATURES := $(shell echo "$$(( $(ZELDA3_FEATURES) | $(ZELDA3_FEATURE_SWITCH_LR_LIMIT) << 15 ))")
 
 # C defines for Super Metroid
+# SNES_LINE_HIRQ=0 puts snes_run_line()'s H-timer fallback back: with an armed
+# H-timer the whole line goes through the dot loop, 682 calls of
+# snes_handle_pos_stuff() for the three events the fast path already performs.
+# Only the native ports call snes_run_line, and their dot loop carries no timer
+# IRQ code at all (that block is #ifdef GNW_SNES_CORE). A/B arm only.
+#
+# It goes in C_DEFS_SM and NOT in SNES_LINE_DEFS_EXTRA: the SM port's objects are
+# built by sm_obj_prereq_gen, which passes C_DEFS_SM. Putting it in the SNES
+# group would have left both arms of the A/B compiling the same program.
+SNES_LINE_HIRQ ?= 1
+
 C_DEFS_SM = -DHEADLESS
+ifneq ($(SNES_LINE_HIRQ),1)
+  C_DEFS_SM += -DSNES_LINE_HIRQ=$(SNES_LINE_HIRQ)
+endif
 
 SM_C_INCLUDES = $(C_INCLUDES) -Iexternal/sm -Iexternal -I./
 
@@ -1572,10 +1586,42 @@ ifneq ($(SNES_ROMPAGE_FOLD),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_ROMPAGE_FOLD=$(SNES_ROMPAGE_FOLD)
 endif
 
+# SNES_ROMPAGE_LOW=1 also serves ROM below $8000 (half of every HiROM bank) out
+# of the bank table. OFF by default, by device measurement: Chrono Trigger gains
+# 21% drawn frames and Final Fantasy VI loses 5.5%, while the rig's instruction
+# count says both should gain. See external/sm/src/snes/snes.h for the full
+# table -- it needs a two-entry page cache before it can ship.
+SNES_ROMPAGE_LOW ?= 0
+ifneq ($(SNES_ROMPAGE_LOW),0)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ROMPAGE_LOW=$(SNES_ROMPAGE_LOW)
+endif
+
+# SNES_ROMPAGE_VERIFY=1 checks the fetch-page cache against the bus it is
+# short-circuiting, on every page install AND every page hit, and prints any
+# disagreement with the address and bank. Diagnostic: it calls snes_read() on
+# every cached read, so it is slow -- but it turns "the state hash changed
+# somewhere in 1200 frames" into one line naming the bank. It found the
+# cart_load ordering bug that made Super Metroid serve its save RAM out of the
+# ROM cache and lock up at frame 400.
+SNES_ROMPAGE_VERIFY ?= 0
+ifeq ($(SNES_ROMPAGE_VERIFY),1)
+  SNES_LINE_DEFS_EXTRA += -DSNES_ROMPAGE_VERIFY=1
+endif
+
 # SNES_WRAP_ITCM=0 leaves run_one_opcode's outlined clone where gcc puts it, in
 # .text and therefore in the RAM_EMU overlay, which is where a device PC sample
 # found it at 12.1% of the frame. Only an A/B arm wants that; see the comment on
 # run_one_opcode in main_snes.c.
+# SNES_LAYOUT_PAD=<n>: n bytes of dead weight in .overlay_snes, to move where
+# everything after it lands. Diagnostic only -- see main_snes.c. It exists to
+# separate "this change costs cycles" from "this change moved the framebuffer
+# into different D-cache sets", which is a distinction Super Mario World's drawn
+# frame rate can tell and the rig cannot.
+SNES_LAYOUT_PAD ?= 0
+ifneq ($(SNES_LAYOUT_PAD),0)
+  SNES_LINE_DEFS_EXTRA += -DSNES_LAYOUT_PAD=$(SNES_LAYOUT_PAD)
+endif
+
 SNES_WRAP_ITCM ?= 1
 ifneq ($(SNES_WRAP_ITCM),1)
   SNES_LINE_DEFS_EXTRA += -DSNES_WRAP_ITCM_OFF
@@ -3470,6 +3516,12 @@ distclean: clean
 # looks like a real one -- the same disease as a harness that compiles a
 # different program. cmp the two arms' snes.bin before believing any A/B.
 #
+# C_DEFS_SM/C_DEFS_SMW were missed the same way, and cost the same hour: the
+# native ports are built by sm_obj_prereq_gen / smw_obj_prereq_gen, which pass
+# their own define group. SNES_LINE_HIRQ=0 went onto the make command line, the
+# stamp did not move, nothing rebuilt, and the two arms of the A/B came out
+# byte-identical -- caught only because arm.sh's caller cmp'd them.
+#
 # ASFLAGS is in here for the same reason and it was missed the first time:
 # SNES_ROMCACHE passes -DSNES_T2_NO_ROMCACHE to the ASSEMBLER, not the compiler,
 # so toggling it rebuilt nothing and `SNES_ROMCACHE=1` produced a binary
@@ -3479,6 +3531,8 @@ $(shell printf '%s\n' \
           'C_DEFS=$(C_DEFS)' \
           'MD_C_DEFS=$(MD_C_DEFS)' \
           'MD32X_C_DEFS=$(MD32X_C_DEFS)' \
+          'C_DEFS_SM=$(C_DEFS_SM)' \
+          'C_DEFS_SMW=$(C_DEFS_SMW)' \
           'CFLAGS=$(CFLAGS)' \
           'CXXFLAGS=$(CXXFLAGS)' \
           'SNES=$(SNES_SPIN_SKIP_DEF)|$(SNES_SPIN_BAKE_DEF)|$(SNES_SPC_IDLE_DEF)|$(SNES_LINE_DEFS)|$(SNES_LINE_DEFS_EXTRA)|$(SNES_DSP_MONO_DEF)|$(SNES_DIAG_DEFS)|$(SNES_PROF_DEFS)|$(SNES_HLE_DEFS)' \

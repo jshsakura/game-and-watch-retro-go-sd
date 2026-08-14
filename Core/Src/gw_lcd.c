@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "gw_lcd.h"
+#include "porting/common.h"   /* g_common_drawn_frames -- counted in lcd_swap() */
 #include "stm32h7xx_hal.h"
 #include "main.h"
 
@@ -212,7 +213,7 @@ uint32_t lcd_get_pixel_position()
   return (uint32_t)(hltdc.Instance->CPSR);
 }
 
-void lcd_swap(void)
+static void lcd_present(void)
 {
   /* The framebuffers are Normal non-cacheable (write-buffered) since the MPU
    * change in mpu_set_lcd_pool_uncached_range — drain the CPU write buffer
@@ -220,6 +221,59 @@ void lcd_swap(void)
   __DSB();
   HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
   active_framebuffer = active_framebuffer ? 0 : 1;
+}
+
+void lcd_swap(void)
+{
+  /* Count the frame HERE, where it actually reaches the panel.
+   *
+   * g_common_drawn_frames used to be incremented in common_emu_frame_loop()
+   * from the overload guard's `draw_frame` — i.e. it recorded the guard's
+   * DECISION, not what any core did with it. Several cores throw that decision
+   * away: main_vb.c presents unconditionally (skipping leaves the VIP's
+   * framebuffer stale and the panel flickers), main_wswan.c forces a draw every
+   * sixth skip, main_videopac.c computes `drawFrame` and never reads it. For
+   * those the counter was reporting something that never happened, and it read
+   * as a real result: Virtual Boy was written down as "pinned at the 1-in-4
+   * floor, 9 drawn fps" while it was presenting all ~36 of its frames. One
+   * measurement shows the whole defect --
+   *
+   *   GNW_FORCED_DRAW_RATIO=4   36.80 emulated fps,  9.20 "drawn"
+   *   GNW_FORCED_DRAW_RATIO=1   36.80 emulated fps, 36.80 "drawn"
+   *
+   * -- identical emulation, a 4x swing in a number the core does not consult.
+   *
+   * Here the default cannot lie: ~68 call sites across every porting layer, and
+   * this is the one that tells the LTDC to flip. A new core gets an honest
+   * counter without knowing the counter exists. The launcher, the clock and the
+   * pause overlay swap too, which is why this is only ever read as a delta with
+   * a game running -- exactly how tools/gnw_probe/drawn_ab.sh uses it. */
+  g_common_drawn_frames++;
+  lcd_present();
+}
+
+void lcd_swap_stale(void)
+{
+  /* A flip that carries NO new emulated content, and so is not a drawn frame.
+   *
+   * Counting the flip would be a lie in the other direction for three cores
+   * that skip the render and flip anyway — deliberately, because with double
+   * buffering, holding the flip leaves the panel on a front buffer that goes
+   * stale while emulation keeps writing the back one:
+   *
+   *   main_gwenesis.c:908  audio-sync mode (the `else` of gwenesis_vsync_mode),
+   *                        which is the DEFAULT
+   *                        (gwenesis_vsync_mode = 0); the render is gated at
+   *                        :851, so MD/32X would have read a flat 100%
+   *   main_celeste.c:697   `if (drawFrame) blit();` then an unguarded swap
+   *   main_msx.c:2171      _blit_frame() is gated -- except in screen modes
+   *                        10/11/12, where it is a no-op because the VDP writes
+   *                        RGB565 straight into the LCD back buffer, so those
+   *                        modes really do present new content every frame
+   *
+   * Panel behaviour is identical to lcd_swap(); only the bookkeeping differs.
+   * If a new core copies the unconditional-swap pattern, it belongs here too. */
+  lcd_present();
 }
 
 void lcd_sync(void)

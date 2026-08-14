@@ -15,7 +15,7 @@
 #
 # Two things this deliberately does NOT do:
 #
-#   - It does not match the NAME, it matches a CALL (`^[^*/]*name(`). The name
+#   - It does not match the NAME, it matches a CALL (tests/c_strip.sh). The name
 #     appears in prose, and matching prose made an earlier version accuse
 #     tamapoke_input.cpp, whose only mention of it is a comment about what the real
 #     caller does.
@@ -44,14 +44,32 @@ is_dead() {
 
 echo "=== every core that takes the PAUSE shortcuts draws their overlay ==="
 
+# The scanning used to be `grep -rlE '^[^*/]*common_emu_input_loop\('`, both to
+# find the files and to test them. That pattern cannot match a line whose first
+# * or / precedes the call, so `if (*p) common_emu_input_loop();` was invisible
+# -- and because the same pattern did the DISCOVERY, such a file would not have
+# been reported as unchecked; it would simply never have entered the loop. The
+# gate would pass having looked at nothing. That is not theory: the same idiom
+# in the lcd_swap census matched two of its six calls.
+#
+# Nothing in the tree trips it today (checked: the only file the old pattern
+# excluded is tamapoke_input.cpp, correctly, for a comment). It is replaced
+# anyway, because the failure is silent and the next core to be written is the
+# one that pays.
+. "$(dirname "$0")/c_strip.sh"
+
 rc=0
 checked=0
 dead=""
 
-for f in $(grep -rlE '^[^*/]*common_emu_input_loop\(' Core/Src/porting 2>/dev/null | sort); do
+# Discovery is loose (any mention), and c_calls decides. Fail-closed: a file
+# that mentions the name and turns out to have no call is simply not counted,
+# but it can never vanish before being looked at.
+for f in $(grep -rl 'common_emu_input_loop' Core/Src/porting 2>/dev/null | sort); do
     case "$f" in
         *porting/common.c) continue ;;   # it IS the input loop
     esac
+    [ "$(c_calls "$f" common_emu_input_loop)" -gt 0 ] || continue
 
     if is_dead "$f"; then
         dead="$dead $(basename "$f")"
@@ -59,7 +77,7 @@ for f in $(grep -rlE '^[^*/]*common_emu_input_loop\(' Core/Src/porting 2>/dev/nu
     fi
 
     checked=$((checked + 1))
-    if ! grep -qE '^[^*/]*common_ingame_overlay\(' "$f"; then
+    if [ "$(c_calls "$f" common_ingame_overlay)" -eq 0 ]; then
         echo "  FAIL $f takes the shortcuts and never draws the overlay --"
         echo "       volume and brightness change with nothing on screen to say so"
         rc=1

@@ -1022,8 +1022,11 @@ What is genuinely unmeasured:
   Metroid numbers above are for a path no player uses -- Metroid, Mario World
   and Zelda 3 all have native ports, which is why they are the wrong ROMs to
   benchmark the SNES core with. Use Kart, Dragon's Magic, Amazing Tennis.
-- `g_common_drawn_frames` / `g_common_emu_frames` (Core/Src/porting/common.c)
-  make any core measurable with `drawn_ab.sh`, ports included -- verified live
-  on the SNES core. Booting a native port unattended still does not work:
+- `g_common_drawn_frames` / `g_common_emu_frames` make any core measurable with
+  `drawn_ab.sh`, ports included -- verified live on the SNES core. They are
+  counted in two places: emulated in `Core/Src/porting/common.c`, drawn in
+  `lcd_swap()` (`Core/Src/gw_lcd.c`) so a core that ignores the guard cannot
+  report a draw rate it never had. Booting a native port unattended still does
+  not work:
   `/snes_bench_index.txt` accepts a ROM NAME now, but the homebrew lookup does
   not launch Super Metroid and was not diagnosed.

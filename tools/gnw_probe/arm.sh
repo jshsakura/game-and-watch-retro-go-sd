@@ -58,6 +58,22 @@ cmd_build() {
     || { tail -25 "$ARMS/$name.build.log"; exit 1; }
   mkdir -p "$ARMS/$name"
   cp build/gw_retro_go.elf build/gw_retro_go_intflash.bin sd_content/cores/snes.bin "$ARMS/$name/"
+  # The native ports ship as homebrew PACKAGES, and a package carries veneer
+  # literals holding the resident addresses of the firmware that built it. Put
+  # a package from one build on a console running another and it branches into
+  # whatever is at the old address -- Super Metroid took a UsageFault jumping to
+  # 0x200025f8, which is the FatFs object. Keep them per arm so flashing an arm
+  # can push a matching set.
+  for f in "sd_content/roms/homebrew/Super Metroid.bin" sd_content/roms/homebrew/sm.xip; do
+    [ -f "$f" ] && cp "$f" "$ARMS/$name/"
+  done
+  # Every core's overlay, not just the SNES one. A core .bin built by one
+  # firmware and loaded by another is a different program: the SM port jumped
+  # into the FatFs object and UsageFaulted, and Virtual Boy sat in a message box
+  # with its frame counter at zero -- which looked exactly like "this build
+  # breaks VB" and was measured as such twice today, by two sessions.
+  mkdir -p "$ARMS/$name/cores"
+  cp sd_content/cores/*.bin "$ARMS/$name/cores/" 2>/dev/null || true
   echo "[arm:$name] intflash $(stat -c%s "$ARMS/$name/gw_retro_go_intflash.bin") B, snes.bin $(stat -c%s "$ARMS/$name/snes.bin") B"
 }
 
@@ -66,6 +82,25 @@ cmd_flash() {
   local d="$ARMS/$name"
   [ -f "$d/gw_retro_go_intflash.bin" ] || { echo "no such arm: $name"; exit 1; }
   scp -q "$d/gw_retro_go_intflash.bin" "$d/snes.bin" "$HOST:/tmp/"
+  # Push this arm's homebrew packages too when it has them, for the reason in
+  # cmd_build. PUSH_HB=0 skips it (it costs a few seconds).
+  # PUSH_CORE=<name[,name...]> pushes those cores' overlays from THIS arm, e.g.
+  # PUSH_CORE=vb. Pushing all of them every flash costs minutes; pushing none is
+  # how the mismatch above keeps happening. Name the one you are measuring.
+  if [ -n "${PUSH_CORE:-}" ]; then
+    for c in ${PUSH_CORE//,/ }; do
+      [ -f "$d/cores/$c.bin" ] || { echo "[arm:$name] no cores/$c.bin in this arm" >&2; continue; }
+      scp -q "$d/cores/$c.bin" "$HOST:/tmp/core_$c.bin"
+      ssh -n "$HOST" "python3 -m gnwmanager sdpush --file /tmp/core_$c.bin --dest-path '/cores/$c.bin'" \
+        >/dev/null 2>&1 && echo "[arm:$name] pushed cores/$c.bin"
+    done
+  fi
+  if [ "${PUSH_HB:-1}" = 1 ] && [ -f "$d/Super Metroid.bin" ]; then
+    scp -q "$d/Super Metroid.bin" "$HOST:/tmp/sm_port.bin"
+    [ -f "$d/sm.xip" ] && scp -q "$d/sm.xip" "$HOST:/tmp/sm.xip"
+    ssh -n "$HOST" "python3 -m gnwmanager sdpush --file /tmp/sm_port.bin --dest-path '/roms/homebrew/Super Metroid.bin' \
+        -- sdpush --file /tmp/sm.xip --dest-path '/roms/homebrew/'" >/dev/null 2>&1 || true
+  fi
   ssh "$HOST" "python3 -m gnwmanager flash $INTFLASH_ADDR /tmp/gw_retro_go_intflash.bin \
       -- sdpush --file /tmp/snes.bin --dest-path '/cores/' \
       -- start $INTFLASH_ADDR" 2>&1 | tail -3

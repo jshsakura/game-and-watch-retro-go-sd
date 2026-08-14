@@ -34,15 +34,21 @@ mkdir -p "$OUT" && rm -f "$OUT"/*.o
 
 DEVICE_RULES="-fsanitize=alignment -Werror=implicit-function-declaration"
 
+# Extra -D flags, the same way the QEMU rigs take RIG_EXTRA_DEF. Without this an
+# A/B arm silently compiles the default and both arms are one program -- which is
+# how a knob gets "measured" at zero. Echoed so a run says what it built.
+SM_EXTRA_DEF=${SM_EXTRA_DEF:-}
+[ -n "$SM_EXTRA_DEF" ] && echo "  extra defines: $SM_EXTRA_DEF"
+
 SRCS=$(make -pn 2>/dev/null | grep '^SM_C_SOURCES = ' | head -1 |
        sed 's/^SM_C_SOURCES = //; s|$(CORE_SM)|external/sm|g' | tr ' ' '\n' |
        grep '\.c$' | grep -v 'main_sm\.c$')
 
 for f in $SRCS; do
-  gcc -c -O1 -g -DNDEBUG -DTARGET_GNW -DHEADLESS -w $DEVICE_RULES \
+  gcc -c -O1 -g -DNDEBUG -DTARGET_GNW -DHEADLESS -w $DEVICE_RULES $SM_EXTRA_DEF \
       -Iexternal/sm -Itools/sm_harness/shim "$f" -o "$OUT/$(basename "${f%.c}").o"
 done
-gcc -c -O1 -g -DTARGET_GNW -w $DEVICE_RULES -Iexternal/sm -Itools/sm_harness/shim \
+gcc -c -O1 -g -DTARGET_GNW -w $DEVICE_RULES $SM_EXTRA_DEF -Iexternal/sm -Itools/sm_harness/shim \
     tools/sm_harness/device_main.c -o "$OUT/main.o"
 gcc -fsanitize=alignment -o "$OUT/sm_device" "$OUT"/*.o -lm
 echo "  built: $OUT/sm_device   (device compile-time reality)"

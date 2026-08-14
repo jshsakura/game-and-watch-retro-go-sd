@@ -217,10 +217,26 @@ void load_gnw_msx_data() {
     saveStateClose(state);
 }
 
+/* Screen modes 10/11/12 are RGB565 written straight into the LCD back buffer by
+ * the VDP (frameBufferGetLine16) — there is no palette blit to run, and the
+ * frame lands whether or not the overload guard asked for it.
+ *
+ * `mode == 11` is dead and kept deliberately. blueMSX never assigns 11:
+ * VDP_MSX.c sets 10 for YAE and 12 for YJK and nothing else, so hardware
+ * SCREEN 11 arrives here as 10 because vdpIsModeYAE matches first. The test
+ * came over from the three places that spelled it out before this helper
+ * existed; it is listed so the next reader does not go looking for the missing
+ * SCREEN 11 support. 10 || 12 already covers every case. */
+static bool msx_vdp_writes_lcd_directly(void)
+{
+    const int mode = vdpGetScreenMode();
+    return (mode == 10) || (mode == 11) || (mode == 12);
+}
+
 static void *msx_screenshot()
 {
 
-    if ((vdpGetScreenMode() != 10) && (vdpGetScreenMode() != 11) && (vdpGetScreenMode() != 12)) {
+    if (!msx_vdp_writes_lcd_directly()) {
         lcd_wait_for_vblank();
         lcd_clear_active_buffer();
         blit(msx_framebuffer, lcd_get_active_buffer());
@@ -2135,8 +2151,7 @@ void app_main_msx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
         void _blit_frame(void)
         {
-            // Modes 10/11/12: RGB565 written directly by the VDP (no palette blit)
-            if ((vdpGetScreenMode() != 10) && (vdpGetScreenMode() != 11) && (vdpGetScreenMode() != 12)) {
+            if (!msx_vdp_writes_lcd_directly()) {
                 blit(msx_framebuffer, lcd_get_active_buffer());
             }
         }
@@ -2168,7 +2183,12 @@ void app_main_msx(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         if (common_emu_state.overlay != INGAME_OVERLAY_NONE)
             common_ingame_overlay();
         draw_disk_icon();
-        lcd_swap();
+        /* Flip either way — see the comment above. New content reached the back
+         * buffer if the blit ran, or if the VDP wrote the buffer itself. */
+        if (drawFrame || msx_vdp_writes_lcd_directly())
+            lcd_swap();
+        else
+            lcd_swap_stale();
 
         // Render audio
         mixerSyncGNW(mixer,(AUDIO_MSX_SAMPLE_RATE/msx_fps));

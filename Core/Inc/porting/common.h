@@ -26,9 +26,18 @@ extern const uint8_t volume_tbl[ODROID_AUDIO_VOLUME_MAX + 1];
 
 void common_emu_frame_loop_reset(void);
 bool common_emu_frame_loop(void);
-/* Frames the overload guard emulated and actually drew, for every core. Read
- * over SWD by tools/gnw_probe/drawn_ab.sh; see common.c for why emulated fps
- * alone is the wrong instrument whenever the guard is engaged. */
+/* Frames emulated, and frames that actually reached the panel, for every core.
+ * Read over SWD by tools/gnw_probe/drawn_ab.sh; see common.c for why emulated
+ * fps alone is the wrong instrument whenever the overload guard is engaged.
+ *
+ * They are counted in two different places on purpose: _emu_ in
+ * common_emu_frame_loop(), _drawn_ in lcd_swap(). Counting _drawn_ from the
+ * guard's `draw_frame` recorded a DECISION several cores discard (main_vb.c
+ * always presents, main_wswan.c forces every sixth skip, main_videopac.c never
+ * reads it) and produced a VB reading of 9 fps for a core presenting 36. The
+ * three cores that flip WITHOUT new content call lcd_swap_stale() instead --
+ * see the two comments in gw_lcd.c. Because lcd_swap() is also the launcher's
+ * and the clock's, _drawn_ is only meaningful as a delta with a game running. */
 extern uint32_t g_common_drawn_frames;
 extern uint32_t g_common_emu_frames;
 void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choice_t *game_options, void_callback_t repaint);

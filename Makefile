@@ -25,8 +25,6 @@ ROMS_VIDEOPAC :=
 ######################################
 # C sources
 C_SOURCES =  \
-Core/Src/porting/lib/lzma/LzmaDec.c \
-Core/Src/porting/lib/lzma/lzma.c \
 Core/Src/bilinear.c \
 Core/Src/cpp_init_array.c \
 Core/Src/gw_boot_rescue.c \
@@ -666,9 +664,35 @@ GW_C_SOURCES =
 
 CORE_GW = external/LCD-Game-Emulator
 # lz4 moved here: gw_romloader.c is its only caller anywhere in the tree, so it
-# belongs in this overlay, not the resident image. lzma stays resident
-# (Core/Src/porting/lib/lzma/LzmaDec.c) because nes/nes_fceu/a7800/smsplusgx/msx/
-# videopac/wsv/pce/gnuboy all share the same compiled copy.
+# belongs in this overlay, not the resident image.
+#
+# LZMA follows it, but ONLY on SD_CARD=1. The note that used to sit here said
+# lzma had to stay resident because "nes/nes_fceu/a7800/smsplusgx/msx/videopac/
+# wsv/pce/gnuboy all share the same compiled copy". That is true of the SOURCE
+# and false of this BUILD: the SD_CARD=1 branch of Makefile.common defines
+# -DGNW_DISABLE_COMPRESSION, and every one of those call sites is inside an
+# `#ifndef GNW_DISABLE_COMPRESSION` (main_nes.c:470, main_pce.c, main_msx.c, …).
+# They compile out. Scanning all 939 objects of a canonical release build for an
+# undefined reference to lzma finds exactly one: build/gw/gw_romloader.o, whose
+# call is external code and not behind our macro.
+#
+# So on SD_CARD=1 those 19,994 bytes of lzma.o + LzmaDec.o were resident for the
+# benefit of one overlay core -- the same mis-scoping as the C64 unwind tables
+# (docs/INTFLASH_BUDGET_ANALYSIS.md Fix #1) and as lz4 above. Internal flash had
+# 1,144 bytes left before this moved; game.com's overlay had 202,180.
+#
+# SD_CARD=0 is deliberately left exactly as it was: that build compresses ROMs,
+# those `#ifndef`s open, and the cores really do share one resident copy.
+ifeq ($(SD_CARD),1)
+GW_C_SOURCES += \
+Core/Src/porting/lib/lzma/LzmaDec.c \
+Core/Src/porting/lib/lzma/lzma.c
+else
+C_SOURCES += \
+Core/Src/porting/lib/lzma/LzmaDec.c \
+Core/Src/porting/lib/lzma/lzma.c
+endif
+
 GW_C_SOURCES += \
 Core/Src/porting/lib/lz4_depack.c \
 $(CORE_GW)/src/cpus/sm500op.c \

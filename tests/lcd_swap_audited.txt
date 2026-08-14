@@ -1,0 +1,181 @@
+# Every file that CALLS lcd_swap() or lcd_swap_stale(), with the counts and the
+# verdict from reading its loop. tests/test_lcd_swap_audited.sh fails when this
+# list and the tree disagree.
+#
+# WHY THIS EXISTS. g_common_drawn_frames is incremented in lcd_swap(), so a core
+# that skips its render and flips anyway reports every frame as drawn. Three did
+# (gwenesis, msx, celeste) and would have read a flat 100%; they call
+# lcd_swap_stale() now -- the identical flip, not counted. The previous counter
+# had the mirror-image defect, counting the guard's DECISION for cores that
+# discard it, and Virtual Boy went into the ledger at 9 drawn fps while it was
+# presenting 36. Both mistakes look exactly like a measurement.
+#
+# So a new core, or a changed count in an old one, has to be READ before this
+# file is edited. That is the whole mechanism: the check is arithmetic, and the
+# thinking is here.
+#
+# HOW TO UPDATE. Do NOT classify from the lines around the lcd_swap(). Find the
+# `= common_emu_frame_loop()` assignment first, then find every use of what it
+# was assigned to. Three cores were filed wrong here because the verdict was
+# read off an 8-line window around the swap and their `if (drawFrame) {` opened
+# fourteen lines further up: zelda3, smw and tamapoke were all called
+# "always-draws" when all three obey the guard. The counts were right, so the
+# gate stayed green and the wrong verdicts sat in the column that decides
+# whether a reading is a defect.
+#
+# Then answer one question -- when this core skips a frame, does new content
+# still reach the back buffer?
+#   yes, always  -> it ignores the guard and draws everything: lcd_swap(), and
+#                   drawn == emu is the CORRECT reading (vb, videopac; c64_dev,
+#                   lynx, a2600 and zxs discard the return value entirely)
+#   no           -> lcd_swap_stale() on the skip path (celeste)
+#   sometimes    -> the condition is the core's, not the guard's (msx: in screen
+#                   modes 10/11/12 the VDP writes the LCD buffer itself)
+# Then add the line here with which of those it is.
+#
+# ONE PIECE OF VOCABULARY, because two independent reviewers got it backwards on
+# the same day: **lcd_get_active_buffer() returns the buffer the CPU DRAWS INTO,
+# not the one on screen.** gw_lcd.c:298 hands back `active_framebuffer ? fb2 :
+# fb1`, while HAL_LTDC_ReloadEventCallback (gw_lcd.c:180) points the LTDC at the
+# other one. Both reviewers concluded gwenesis:894 presents a stale buffer; it
+# does not -- it presents the frame rendered before the overflow, which had
+# never been shown.
+#
+# FIELDS: <path> swap=<n> stale=<n> <verdict> # reason
+#   ui           not an emulation loop; launcher/menu/player paint. NOT a
+#                promise that it cannot fire during a game -- two of them do
+#                (see rg_alarm.c and odroid_overlay.c below), and the reason the
+#                counter survives that is that drawn_ab.sh flags `drawn > emu`,
+#                which is exactly the shape a UI flip makes when emulation has
+#                stopped.
+#   gated        the swap sits inside the core's own `if (drawFrame)`, so a
+#                skipped frame never flips. Nothing to do.
+#   always-draws the core renders unconditionally and flips unconditionally.
+#                drawn == emu is the truth for it, not a bug.
+#   split        the core flips on every frame but only sometimes with new
+#                content -- the three that need lcd_swap_stale().
+#   dead         not built by any configuration in this tree.
+#   defines      where the functions are defined or declared, not called.
+#   prose        mentions the name in a comment or a string and calls nothing.
+#                Listed anyway, with swap=0 stale=0, so the census fails CLOSED:
+#                a parser bug that zeroes a real file's counts then mismatches
+#                its audit instead of dropping the file from the scan. One did.
+#
+# WHAT A COUNT CENSUS CANNOT SEE. Counts are preserved by an EXCHANGE. This
+# regression passes:
+#
+#   - if (drawFrame) { blit(); lcd_swap(); } else { lcd_swap_stale(); }
+#   + if (!drawFrame) { lcd_swap(); }       else { blit(); lcd_swap_stale(); }
+#
+# swap=1 stale=1 before and after, and every skipped frame is now reported as
+# drawn -- the exact defect this file exists to prevent. Nothing here will say
+# so. Reviewing a diff that touches both calls in one file is the only guard.
+#
+# NOT COVERED, on purpose: Core/Src/retro-go/gw_firmware_abi.c exports lcd_swap
+# as a function pointer (gw_firmware_abi.h:183) and there is no lcd_swap_stale
+# in the ABI. An external core reached through that pointer cannot be seen by a
+# grep of this tree and cannot opt out of being counted. Nothing in this repo's
+# firmware uses it that way yet; when one does, that is an ABI decision, not a
+# line in this file.
+
+Core/Src/gw_lcd.c                             swap=1 stale=1 defines      # the definitions themselves, not calls
+Core/Inc/gw_lcd.h                             swap=1 stale=1 defines      # the declarations, not calls
+
+# Prose only: the name appears, nothing is called. Listed so the census fails
+# CLOSED -- see the `prose` note above.
+Core/Inc/porting/common.h                     swap=0 stale=0 prose        # the counters' contract comment
+Core/Inc/retro-go/gw_firmware_abi.h           swap=0 stale=0 prose        # `void (*lcd_swap)(void)` -- an ABI slot, not a call
+Core/Src/main.c                               swap=0 stale=0 prose        # comment about the flip
+Core/Src/porting/common.c                     swap=0 stale=0 prose        # the comment explaining where the counter moved to
+Core/Src/porting/snes/snes_profile.h          swap=0 stale=0 prose        # SNES_PROF_M_SWAP's label
+Core/Src/retro-go/gw_firmware_abi.c           swap=0 stale=0 prose        # `.lcd_swap = lcd_swap` -- taking the address, not calling
+Core/Src/gw_littlefs.c                        swap=1 stale=0 ui           # filesystem-format progress screen
+Core/Src/gw_sdcard.c                          swap=1 stale=0 ui           # "No SD CARD found" screen
+Core/Src/gw_sleep.c                           swap=1 stale=0 ui           # paints once on the way into sleep
+Core/Src/porting/odroid_overlay.c             swap=4 stale=0 ui           # banner, dialog, cache-progress, loading. FIRES DURING A GAME: the pause menu is entered from one, and :1018 repaints+flips every iteration with no pacing
+Core/Src/porting/pico8/main_pico8_stub.c      swap=1 stale=0 ui           # install-instructions stub, no emulation
+Core/Src/porting/video/main_video.c           swap=2 stale=0 ui           # loading splash + empty-folder hint
+Core/Src/porting/video/video_play.c           swap=2 stale=0 ui           # video player, its own pacing
+Core/Src/porting/video/video_ui.c             swap=1 stale=0 ui           # file list
+Core/Src/porting/music/main_music.c           swap=6 stale=0 ui           # player deck, info, lyrics, list
+Core/Src/retro-go/gui.c                       swap=1 stale=0 ui           # launcher redraw
+Core/Src/retro-go/rg_main.c                   swap=4 stale=0 ui           # launcher main loop
+Core/Src/retro-go/rg_clock.c                  swap=4 stale=0 ui           # clock app
+Core/Src/retro-go/rg_alarm.c                  swap=1 stale=0 ui           # alarm screen. FIRES DURING A GAME: rg_alarm_poll() runs from common_emu_input_loop() (common.c:560) for every core every frame, and a due alarm flips here until dismissed while emulation is stopped
+
+Core/Src/porting/a7800/main_a7800.c           swap=1 stale=0 gated        # if (drawFrame) { blit(); lcd_swap(); }
+Core/Src/porting/amstrad/main_amstrad.c       swap=1 stale=0 gated        # if (drawFrame) { _blit(); lcd_swap(); }
+Core/Src/porting/gamecom/main_gamecom.c       swap=1 stale=0 gated        # if (draw) { gc_blit(); ...; lcd_swap(); }
+Core/Src/porting/gb_tgbdual/gw_renderer.cpp   swap=1 stale=0 gated        # if (tgb_drawFrame) { gb_blit(); lcd_swap(); }
+Core/Src/porting/gba/main_gba.c               swap=2 stale=0 gated        # if (drawFrame) { blit(); lcd_swap(); }; the other is the fatal screen
+Core/Src/porting/gw/main_gw.c                 swap=1 stale=0 gated        # if (!lcd_is_swap_pending() && drawFrame)
+Core/Src/porting/nes_fceu/main_nes_fceu.c     swap=1 stale=0 gated        # if (drawFrame) { _blit(); lcd_swap(); }
+Core/Src/porting/ngp/main_ngp.c               swap=1 stale=0 gated        # if (drawFrame) { blit(); lcd_swap(); }
+Core/Src/porting/pce/main_pce.c               swap=1 stale=0 gated        # inside pce_osd_gfx_blit(), called only if (drawFrame)
+Core/Src/porting/pkmini/main_pkmini.c         swap=1 stale=0 gated        # :512 if (drawFrame) { :513 VideoBlit(->pkmini_data); :514 lcd_swap(); :517 blit(); } -- note blit() is AFTER the swap, so each flip presents the previous frame (1-frame latency, pre-existing, unrelated to this counter). 1:1 with drawn frames either way
+Core/Src/porting/sm/main_sm.c                 swap=2 stale=0 gated        # if (draw_frame) { ...; lcd_swap(); }; the other is the fatal screen
+Core/Src/porting/smsplusgx/main_smsplusgx.c   swap=1 stale=0 gated        # inside sms_draw_frame(), called only if (drawFrame)
+Core/Src/porting/md32x/md32x_border_clear.c   swap=0 stale=0 prose        # comments only
+Core/Src/porting/md32x/md32x_border_clear.h   swap=0 stale=0 prose        # comments only
+Core/Src/porting/md32x/md32x_profile.c        swap=0 stale=0 prose        # comments only
+Core/Src/porting/md32x/md32x_profile.h        swap=0 stale=0 prose        # comments only
+Core/Src/porting/md32x/main_md32x.c           swap=1 stale=0 gated        # if (drawFrame) { overlay; lcd_swap(); } -- audited by the 32X session
+Core/Src/porting/snes/main_snes.c             swap=1 stale=0 gated        # if (drawFrame) { present; overlay; lcd_swap(); }
+Core/Src/porting/smw/main_smw.c               swap=1 stale=0 gated        # :482 assigns, :499 if (drawFrame) { DrawPpuFrame(); overlay; :510 lcd_swap(); }. RtlRunFrame() is unconditional; the PPU draw is not
+Core/Src/porting/tamapoke/main_tamapoke.cpp   swap=1 stale=0 gated        # :187 assigns, :204 if (draw_frame) { ui_render(); overlay; :219 lcd_swap(); lcd_clone(); }
+Core/Src/porting/zelda3/main_zelda3.c         swap=1 stale=0 gated        # :540 assigns, :557 if (drawFrame) { DrawPpuFrame(); overlay; :570 lcd_swap(); }. ZeldaRunFrame() is unconditional; the PPU draw is not
+Core/Src/porting/tama/main_tama.c             swap=1 stale=0 gated        # if (drawFrame || fast_forward) { blit(); lcd_swap(); }
+Core/Src/porting/wsv/main_wsv.c               swap=1 stale=0 gated        # if (drawFrame) { blit(); lcd_swap(); }
+Core/Src/porting/wswan/main_wswan.c           swap=1 stale=0 gated        # if (drawFrame) { blit(); lcd_swap(); } -- forces every 6th skip, which IS a drawn frame
+
+Core/Src/porting/a2600/main_a2600.cxx         swap=1 stale=0 always-draws # tia.update(); blit(); lcd_swap(); -- no frameskip
+Core/Src/porting/c64/main_c64_dev.cpp         swap=1 stale=0 always-draws # calls common_emu_frame_loop() and ignores the return
+Core/Src/porting/lynx/main_lynx.cpp           swap=1 stale=0 always-draws # UpdateFrame(); blit(); lcd_swap();
+Core/Src/porting/vb/main_vb.c                 swap=1 stale=0 always-draws # (void)drawFrame; drawFrame = true -- skipping flickers the VIP
+Core/Src/porting/videopac/main_videopac.c     swap=1 stale=0 always-draws # computes drawFrame and never reads it
+Core/Src/porting/zxs/main_zxs.c               swap=1 stale=0 always-draws # zx_exec(); zx_blit(); lcd_swap();
+
+Core/Src/porting/gwenesis/main_gwenesis.c     swap=2 stale=1 split        # see the note below -- in the DEFAULT mode this core cannot skip at all
+Core/Src/porting/msx/main_msx.c               swap=1 stale=1 split        # drawFrame || msx_vdp_writes_lcd_directly() -- modes 10/11/12 are written by the VDP
+Core/Src/porting/celeste/main_celeste.c       swap=1 stale=1 split        # blit() is gated; the flip is not
+
+Core/Src/porting/c64/main_c64.c               swap=2 stale=0 dead         # Makefile: the old chips core is no longer built (live entry is main_c64_dev.cpp)
+Core/Src/porting/nes/main_nes.c               swap=1 stale=0 dead         # NES_C_SOURCES is empty; NES is fceumm only
+
+# ---------------------------------------------------------------------------
+# gwenesis, in detail, because it is the one that looks like the others and is
+# not. main_gwenesis.c:777 reads
+#
+#     // bool drawFrame =
+#     common_emu_frame_loop();
+#
+# The assignment is COMMENTED OUT. The guard's answer is discarded. drawFrame is
+# a file-scope global (:308, initialised to 1) and the only code that ever
+# writes it lives inside `if (gwenesis_vsync_mode)` (:891, :895). Audio-sync is
+# the default (:63), and in that mode nothing assigns drawFrame for the life of
+# the process -- so the render at :851 always runs, the flip at :908 (the `else`
+# of gwenesis_vsync_mode) always takes lcd_swap(), and MD genuinely draws every
+# frame it emulates. drawn == emu is the TRUTH here, and lcd_swap_stale() (:910)
+# is unreachable in the default mode.
+#
+# The three flips in that file are :894 (vsync branch, counted), :908 (audio-sync,
+# counted) and :910 (audio-sync, stale). Branch names are given alongside the
+# numbers on purpose: the commit that first wrote these references quoted :903,
+# and was already wrong when it landed, because the same commit inserted the
+# stale branch that pushed the line down.
+#
+# It is still not dead code, which is why the call stays. Toggle vsync on, hit
+# an overflow (drawFrame = 0 at :891), toggle back to audio-sync with the option
+# at :438, and drawFrame is stuck at 0: the render stops, the flips continue,
+# and the panel freezes. That is a pre-existing bug, not one this counter
+# introduced -- but under the old code that frozen screen also reported
+# drawn == emu, and now it reports the truth.
+#
+# Consequence for anyone measuring: MD CANNOT judge this counter. Both a fixed
+# and an unfixed build read ratio 1.0000, at any speedup, because the guard
+# cannot make this core skip. Worse, common_emu_state.skipped_frames keeps
+# counting -- the `+=` at common.c:215 happens inside common_emu_frame_loop(),
+# before gwenesis zeroes skip_frames -- so it reports what the integrator WANTED
+# while nothing was ever skipped. Use celeste (:677 assigns, :696 gates, no mode
+# nuance) or msx (:2143, :2172, avoiding screen modes 10/11/12).
+# ---------------------------------------------------------------------------
