@@ -86,6 +86,22 @@ common_emu_state_t common_emu_state = {
 static int32_t frame_integrator = 0;
 static uint8_t skip_streak = 0;
 
+/* One frame in N is forced drawn while the pacing integrator is pinned; see
+ * common_emu_set_forced_draw_ratio(). GNW_FORCED_DRAW_RATIO still sets the
+ * default so an A/B arm can sweep the curve from the make command line. */
+#ifndef GNW_FORCED_DRAW_RATIO
+#define GNW_FORCED_DRAW_RATIO 4
+#endif
+static uint8_t forced_draw_ratio = GNW_FORCED_DRAW_RATIO;
+
+void common_emu_set_forced_draw_ratio(uint8_t n)
+{
+    /* 0 would force a draw on the first skipped frame via >= and then wrap the
+     * streak forever; 1 is "draw everything", which is the strongest setting a
+     * core can ask for. */
+    forced_draw_ratio = n ? n : 1;
+}
+
 /* Shared with PCE's prefetch sound-sync so pause/resume can't desync the two. */
 uint32_t common_emu_sound_dma_marker = 0;
 
@@ -140,18 +156,17 @@ bool common_emu_frame_loop(void){
 
     /* Overload guard: under sustained slowdown the integrator pins at its cap
      * (below) and skip_frames stays 2 — never blank the screen outright; force
-     * one drawn frame in every 4 so the worst case is ~15fps visible, not 0. */
-    /* GNW_FORCED_DRAW_RATIO: one drawn frame in N while the integrator is
-     * pinned. 4 was never chosen for a workload -- it is a floor so the screen
-     * cannot go blank. On SNES the integrator IS pinned, so this constant is
-     * the draw rate, and it is one end of a trade nobody has been able to see:
-     * drawing more costs emulated fps, and emulated fps is what feeds the
-     * audio. Measured so the point on the curve can be chosen instead of
-     * inherited. */
-#ifndef GNW_FORCED_DRAW_RATIO
-#define GNW_FORCED_DRAW_RATIO 4
-#endif
-    if (!draw_frame && ++skip_streak >= GNW_FORCED_DRAW_RATIO) { draw_frame = true; skip_streak = 0; }
+     * one drawn frame in every N so the screen cannot go dark.
+     *
+     * N was 4 everywhere, and 4 was never chosen for a workload -- it is a
+     * floor. On a core where the integrator IS pinned, N *is* the draw rate,
+     * and it is one end of a trade: drawing more costs emulated fps, and
+     * emulated fps is what feeds the audio. Where that trade sits is a property
+     * of the core, not of this file -- SNES pays 17.65 ms to draw and 1-in-3
+     * already underruns; 32X pays 1.9% of its frame and 1-in-1 costs it 8% of
+     * emulated fps while nearly quadrupling what the player sees. So the core
+     * chooses, via common_emu_set_forced_draw_ratio(). */
+    if (!draw_frame && ++skip_streak >= forced_draw_ratio) { draw_frame = true; skip_streak = 0; }
     else if (draw_frame) skip_streak = 0;
 
     if( !cpumon_stats.busy_ms ) cpumon_busy();

@@ -515,6 +515,25 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   /* Dual-SH-2 interpreter is CPU-bound; take the scoped, non-persisted boost. */
   common_emu_auto_oc(1);
 
+  /* Draw every frame this core emulates.
+   *
+   * The shared overload guard drew one in four, and on this core that was three
+   * quarters of the player's frames thrown away for nothing. Frameskip buys
+   * back the cost of drawing, and here drawing is 1.9% of the frame -- the
+   * other 98% is two SH-2s and a 68000 that no amount of skipping makes
+   * cheaper. Nor is there a real-time deadline to protect: the core runs at
+   * roughly a third of console speed whatever it does.
+   *
+   * Measured on hardware, cold-boot demo scene, two samples per arm, drawn fps
+   * against emulated fps:
+   *
+   *   Doom          1-in-4  19.9 emu /  4.98 drawn      1-in-1  18.3 / 18.33
+   *   Chaotix       1-in-4  15.4 emu /  3.87 drawn      1-in-1  13.1 / 13.12
+   *   Kolibri       1-in-4   9.9 emu /  2.48 drawn      1-in-1   9.4 /  9.40
+   *
+   * i.e. 3.4x to 3.8x the visible frames for 5-15% of emulated fps. */
+  common_emu_set_forced_draw_ratio(1);
+
   /* Spare-RAM allocator base (gwenesis pattern). ahb_calloc() tries ram_malloc
    * FIRST and ram_malloc asserts on ram_start==0 — first device boot died
    * exactly there when gnw_m68k_bank_alloc() ran. The overlay margin (~9K) is
@@ -663,6 +682,33 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
   while (1) {
     wdog_refresh();
+
+#ifdef GNW_AUTOSAVE_FRAME
+    /* Measurement-only: write slot 0 once, N frames in, then carry on. Copied
+     * from the SNES core, for the same reason it exists there -- an A/B needs a
+     * scene both arms see identically, and nobody can play a console with a
+     * debug probe soldered to it, so the console makes its own scene.
+     *
+     * On this core the scene that matters is the attract demo: Doom's title
+     * screen is a still image and every 32X number in docs/32X_CLOSED.md that
+     * came from a boot anchor was measured on one. Pick N past the title.
+     *
+     * One-shot SD write at a known frame, through the same call the menu uses.
+     * Never enabled in a shipping build. */
+    {
+      static bool autosaved = false;
+      static uint32_t autosave_frames = 0;
+      if (!autosaved && ++autosave_frames >= (uint32_t)GNW_AUTOSAVE_FRAME) {
+        autosaved = true;
+        odroid_audio_mute(true);
+        printf("md32x: autosave slot 0 at frame %lu -> %d\n",
+               (unsigned long)autosave_frames,
+               (int)odroid_system_emu_save_state(0));
+        odroid_audio_mute(false);
+        common_emu_state.startup_frames = 0;
+      }
+    }
+#endif
 
 #ifdef MD32X_DEVICE_PROFILE
     /* Single DWT clear for the whole iteration. Cumulative reads at each phase

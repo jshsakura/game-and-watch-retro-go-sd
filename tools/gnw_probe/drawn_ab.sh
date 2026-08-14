@@ -45,7 +45,12 @@ P=${SNESP:+$(rd "$SNESP")}
 case "${P:-}" in
   20*|24*|30*) F=$(printf '0x%x' $((0x$P + 56))) ;;
   *) [ -n "$COMMON_EMU" ] || { echo "$ARM: no frame counter (snes=0x${P:-none})" >&2; exit 1; }
-     F=$COMMON_EMU ;;   # any non-SNES core
+     # BOTH counters or neither. The SNES symbols exist in every build -- the
+     # core is linked whether or not it is the one running -- so preferring
+     # g_snes_drawn_frames while taking frames from the shared counter reads a
+     # counter no other core touches: 32X Doom measured emu=360 drawn=0, which
+     # is not a frameskip verdict, it is two different programs' counters.
+     F=$COMMON_EMU; DRAWN=$COMMON_DRAWN; RESUMED= ;;   # any non-SNES core
 esac
 
 # Say out loud whether this is the savestate scene or a cold boot. Super Mario
