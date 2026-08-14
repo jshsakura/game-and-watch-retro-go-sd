@@ -532,7 +532,13 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    *   Kolibri       1-in-4   9.9 emu /  2.48 drawn      1-in-1   9.4 /  9.40
    *
    * i.e. 3.4x to 3.8x the visible frames for 5-15% of emulated fps. */
-  common_emu_set_forced_draw_ratio(1);
+  /* MD32X_FORCED_DRAW_RATIO=4 restores the shared default for this core, which
+   * is the A/B arm the numbers above came from. It is not a setting anyone
+   * should ship at 4 -- it is how the 4x was measured. */
+#ifndef MD32X_FORCED_DRAW_RATIO
+#define MD32X_FORCED_DRAW_RATIO 1
+#endif
+  common_emu_set_forced_draw_ratio(MD32X_FORCED_DRAW_RATIO);
 
   /* Spare-RAM allocator base (gwenesis pattern). ahb_calloc() tries ram_malloc
    * FIRST and ram_malloc asserts on ram_start==0 — first device boot died

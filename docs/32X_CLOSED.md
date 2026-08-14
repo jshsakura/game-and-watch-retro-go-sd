@@ -18,16 +18,27 @@ axis without reading the ledger below.**
 
 Nothing about the speed of emulation. Everything about what reaches the LCD.
 
-> **Pending re-measurement (2026-08-14, later the same day).** Every drawn-fps
-> number in this section was read from `g_common_drawn_frames` while that counter
-> incremented on the overload guard's *decision*. It is being moved to
-> `lcd_swap()` — the single point that tells the LTDC to flip — so it counts
-> frames actually presented. 32X obeys the guard (`if (drawFrame)
-> set_out_buffer()`), so these values are expected to hold, but "expected" was
-> wrong three times today and the numbers below are not re-confirmed yet. The
-> conclusion does not rest on them alone: the per-core ratio is also justified by
-> the emulated-fps cost of drawing everything (5–15%) and by draw being 1.9% of a
-> 32X frame, neither of which involves this counter.
+> **Re-measured 2026-08-14 on the new counter — the result holds.**
+> `g_common_drawn_frames` has since moved from the overload guard's decision to
+> `lcd_swap()`, the one place that flips the panel. Both arms re-run back to
+> back, each with its own `cores/32x.bin` on the card (verified by md5 against
+> the arm), Doom, two samples each:
+>
+> | arm | emulated fps | drawn fps | ratio |
+> |---|---:|---:|---:|
+> | `MD32X_FORCED_DRAW_RATIO=4` (the old shared default) | 30.77 / 32.02 | 7.69 / 8.02 | 0.2500 |
+> | per-core 1 (what ships) | 28.77 / 28.79 | **28.77 / 28.79** | 1.0000 |
+>
+> **×3.67 the visible frames for 8.3% of emulated fps** — the same trade the
+> first measurement found (×3.7 for 8%).
+>
+> ⚠️ **The absolute numbers are higher than the first pass and I did not
+> establish why.** Both arms moved together (4.98 → 7.85 at ratio 4), so the
+> ratio and the relative cost are unaffected, but the baseline is not the same
+> machine it was that morning. Candidates not separated: what the testbed merge
+> brought in (the resident image shrank 261,228 → 255,324 B), and host load
+> during the earlier runs. **Treat the absolute fps in the tables below as
+> indicative and the ratio/relative cost as the result.**
 
 **The honest baseline.** No `MD32X_DEVICE_PROFILE` (it costs ~16 of every 94
 cycles an instruction takes — §14), cold boot into the attract demo rather than

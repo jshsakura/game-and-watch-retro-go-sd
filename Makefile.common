@@ -2407,6 +2407,14 @@ endif
 
 # -------------------------------------------------------------- Sega 32X (pico)
 # picodrive's trimmed 32X interpreter subset, compiled into build/md32x/ with
+# MD32X_FORCED_DRAW_RATIO: the overload guard's forced draw for this core only,
+# one frame in N. The core asks for 1 (draw everything) because a drawn 32X
+# frame is 1.9% of its frame; =4 is the arm that measures what that is worth.
+MD32X_FORCED_DRAW_RATIO ?=
+ifneq ($(MD32X_FORCED_DRAW_RATIO),)
+  MD32X_C_DEFS += -DMD32X_FORCED_DRAW_RATIO=$(MD32X_FORCED_DRAW_RATIO)
+endif
+
 # -DGNW_32X_CORE (static Pico32xMem, ROM zero-copy, ym2413/CD/DRC out, cz80
 # computed flags) and every picodrive global renamed via md32x_redefines so it
 # can never alias gwenesis's un-namespaced Genesis core (z80/m68k/VDP/ym share
