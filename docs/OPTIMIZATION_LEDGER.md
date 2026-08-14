@@ -72,14 +72,27 @@ These are the rules that stopped bad numbers from becoming shipped decisions.
   unchanged binary — a 23% spread — and the first two samples of each arm landed
   so that a −9.2% regression looked real. Seven samples per arm, in one session,
   killed it. Nothing had regressed.
-- **Repeatability is a property of the scene, not of the tool.** `drawn_ab.sh`
-  repeats to ~1% where the overload guard is **pinned** — draw ratio sitting
-  exactly on the floor (0.2500) or the ceiling (1.0000), where the forced-draw
-  constant decides every frame. Where the pacing integrator is deciding
-  frame-by-frame the ratio wanders (SMW 0.50–0.63) and so does the number. Read
-  the ratio column first: **an exact ratio means the arithmetic is deterministic
-  and two samples suffice; a wandering one means take seven.** Every 32X number
-  in this file's 32X section is from a pinned scene (0.2500 or 1.0000).
+- **Repeatability is a property of the scene, not of the tool**, and you cannot
+  read it off the draw ratio. Three cases, and only the first two let you stop
+  at two samples:
+
+  1. **An arm that removed the guard's discretion** (`GNW_FORCED_DRAW_RATIO=n`)
+     has an arithmetically determined ratio — 0.2500, 0.5000, 1.0000 — and
+     repeats. This is a property of how the arm was built, not of the cartridge.
+     Every 32X number in this file comes from such an arm.
+  2. **A scene pinned on the 1-in-4 floor** (ratio 0.2498–0.2504) repeats to
+     0.0–0.7%, measured across jimpower, jojo, ff6, airdiver and pilotwings.
+  3. **Anything else — take five to seven samples per arm, in one session**,
+     whatever the ratio says. The ratio does not predict the spread: Super
+     Metroid at 0.361–0.373 repeats to 1–2%, while Chrono Trigger in the *same
+     band* (0.342–0.381) spreads 11%. Dragon's Magic at 0.76 spreads 4.6%. Nor
+     does a tight emulated-fps reading rescue you — both of those are tight on
+     emulated fps.
+
+  A guess that "an exact-looking ratio means deterministic" was written into
+  this file and refuted the same day by the 13-cartridge set above. What decides
+  the sample count is whether the guard had discretion, not what number the
+  ratio prints.
 
 ---
 
