@@ -359,14 +359,18 @@ the guard asked for", which equals "frames presented" only for cores that obey
 the guard.** 32X obeys it, so the 32X numbers below stand. Read that column for
 any other core only after checking what its loop does with `drawFrame`.
 
-**⚠️ VB does not boot under an arm that forces 1-in-1 for every core.**
-`GNW_FORCED_DRAW_RATIO=1` leaves VB's *emulated* frame counter flat — three
-attempts, no frames at all — while 32X Doom boots on that same firmware. The
-mechanism is not the presentation, since VB ignores the guard's answer anyway;
-what is left is the guard's side effects (`odroid_system_tick(!draw_frame, …)`,
-the skip bookkeeping, the `startup_frames < 3` early return). Undiagnosed. **Do
-not change the shared default without resolving it** — anyone who touches the
-draw ratio for an unrelated reason will meet it.
+**Also retracted, same day: "VB does not boot under an arm that forces 1-in-1".**
+It boots. Measured with each arm carrying its OWN `cores/vb.bin`: **36.80 /
+36.20** emulated at ratio 4 against **36.80 / 36.50** at ratio 1 — the emulated
+rate does not move, because VB presents every frame either way. The "boot
+failure" was a **stale core file**: one arm's `vb.bin` sitting under a different
+arm's internal flash. Nothing checked that pairing, exactly as nothing checked
+the ELF-to-device pairing earlier the same day; `arm.sh` now takes
+`PUSH_CORE=<core>` to push the matching core with the flash.
+
+Those two rows are the clearest statement of the counter defect there is:
+identical emulation, and a "drawn" number that moves 4x with a constant the core
+ignores.
 
 **Closed.** Lazy flags plus threaded dispatch was estimated at 20–25% but touches
 every game's core path for an uncertain return. A dynamic recompiler is ARM32 only.
