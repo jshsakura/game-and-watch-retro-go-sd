@@ -184,4 +184,14 @@ if g0 and g1:
         # tool is pointed at. Halve the frame budget (a speedup setting) and
         # measure again.
         line += '  <-- GUARD NEVER ASKED: this window cannot judge the counter'
+if drawn > emu:
+    # lcd_swap() is also the launcher's, the clock's, the video and music
+    # players' and the pause overlay's. The stated defence is that this is only
+    # ever read as a delta with a game running -- which was asserted in a
+    # comment and enforced nowhere, so here it is enforced. A core presents at
+    # most one frame per frame it emulates, so drawn > emu cannot come from the
+    # core: the window caught UI flips, and while a menu is up the emulator loop
+    # is not running at all, so the emulated side stalls while the drawn side
+    # keeps climbing. The ratio is then meaningless in the flattering direction.
+    line += '  <-- UI FLIPS IN THE WINDOW (drawn > emu): not a core measurement'
 print(line)"
