@@ -357,7 +357,9 @@ something the core then ignores. **VB draws all 35.9 of its frames and the
 The lesson is the counter's, not VB's: **`g_common_drawn_frames` meant "frames
 the guard asked for", which equals "frames presented" only for cores that obey
 the guard.** (An earlier revision added "32X obeys it, so the 32X numbers below
-stand." That was asserted, not checked — see the correction further down.)
+stand." That was asserted twice without being checked. It has since been
+checked, and it holds — for a reason nobody had looked up; see the correction
+further down.)
 
 **The fix, and the second lie it had to avoid.** A caveat that reads "check what
 that core's loop does with `drawFrame` before believing this column" is a caveat
@@ -393,7 +395,7 @@ point of it. PCE and SMS+GX flip inside a function that is itself called only
 bumps `g_snes_drawn_frames` on the same condition, so the shared pair and the
 SNES pair count the same event.
 
-### Correction: Genesis is not a split core, and the 32X rows are now in doubt
+### Correction: Genesis is not a split core (and 32X was never this file)
 
 `main_gwenesis.c:777` reads
 
@@ -424,14 +426,29 @@ Two consequences.
 skipped. Judge on **celeste** (assigns `:677`, gates `:696`, no mode nuance) or
 **msx** (`:2143`, `:2172`, avoiding screen modes 10/11/12).
 
-**The 32X drawn column below is unverified.** "32X obeys the guard" was written
-twice in this document and checked neither time, and its sibling core
-demonstrably does not obey it. The 4.98 drawn fps figure was taken with the OLD
-counter — the one recording the guard's *decision* — so if that porting layer
-also discards `drawFrame`, the number carries exactly the defect retracted above
-for Virtual Boy. The 32X core lives on `exp/32x-d32xr` (picodrive) and is not in
-this tree. **Look for a `drawFrame` assignment in that branch before quoting the
-32X drawn column again.**
+**The 32X rows below stand — now checked rather than assumed.** "32X obeys the
+guard" was written twice in this document and checked neither time, which was
+worth doubting: its supposed sibling demonstrably does not obey it. The doubt
+does not survive the check, and the reason is that the two are not siblings at
+all. **32X is not gwenesis.** It has its own porting layer,
+`Core/Src/porting/md32x/main_md32x.c` (picodrive-based), on `exp/32x-d32xr`:
+
+```
+:721  bool drawFrame = common_emu_frame_loop();      /* assigned, not discarded */
+:738  if (drawFrame) set_out_buffer();
+:740  PicoIn.skipFrame = drawFrame ? 0 : 1;
+:752  if (drawFrame) { ...; lcd_swap(); }            /* flip inside the gate */
+```
+
+The guard's answer is read, the render is gated on it, and the flip is inside
+that gate — so 32X is honest under both the old counter and the new one, and the
+4.98 drawn fps figure carries no defect. It is also why the table above names
+**Genesis alone**, where a first draft of it said "Genesis / 32X": that row is
+about `main_gwenesis.c`, a file 32X does not use.
+
+The general lesson survives the good news: *sibling* is not a property of a
+system, it is a property of a file. MD and 32X share a console lineage and share
+nothing in the loop that this counter measures.
 
 **Not yet measured on hardware.** The build is green with the canonical release
 flags and every gate passes, but no device A/B has been run against this
