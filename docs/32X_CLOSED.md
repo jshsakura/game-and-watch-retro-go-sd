@@ -192,6 +192,47 @@ which cost three Super Metroid releases.
 The rig can supply the real BIOS (`RIG_32X_BIOS=<dir>`) and bank a >4 MiB cart
 (`RIG_32X_SSF=1`); both exist only for this investigation.
 
+### ⛔ The clock floor is not a lever — 340 MHz buys nothing here
+
+`main_md32x.c` asked for `common_emu_auto_oc(1)` (312 MHz), the lowest boost any
+core in the tree requests, from the most CPU-bound core in it — GBA asks for 3.
+That looked like free performance sitting unclaimed. It is not.
+
+Measured on hardware, retail Doom, 1800-emulated-frame windows, five samples per
+arm, card-side core hash verified on every run:
+
+| arm | drawn fps |
+|---|---|
+| `MD32X_OC_LEVEL=1` — 312 MHz core, OSPI 104 MHz | 21.77 21.78 21.79 21.90 21.93 |
+| `MD32X_OC_LEVEL=2` — 340 MHz core, OSPI **97** MHz | 21.52 21.92 21.93 22.04 (+1 truncated) |
+
+**+9% of core clock produced +0.6%, inside a 0.7% noise band.** The reason is in
+the second column: the boost levels trade the two clocks against each other, and
+this core's SH-2 fetches its cart out of external flash, so the bus that feeds
+the interpreter got 7% slower at the same time the interpreter got 9% faster.
+The knob stays (`MD32X_OC_LEVEL`, default 1) because a gameplay-anchored load
+may weigh the two differently, but do not expect it to.
+
+One oc2 sample out of five degraded ~6x and was flagged `WINDOW TRUNCATED at
+120s: 440 of 1800 frames`. oc1 did that zero times in five. That is one
+observation, not a verdict — but `SystemClock_Config`'s own comment says the
+menu ceiling dropped to 340 because 353 "proved unstable under sustained load on
+some cores (Genesis)", and this is the same family. Another reason not to raise
+the default on a hunch.
+
+**How to measure this core at all** — both of these cost real time today:
+
+- **Use an 1800-frame window, not 900.** At 900 frames the same arm read 26.84,
+  26.89 and 29.18 — a 2.3 fps spread, the same size as the effect being tested.
+  At 1800 it reads 21.77–21.93, a spread of 0.16. A short window lands on the
+  light part of the attract demo and reads optimistically.
+- **Hash the card's `/cores/32x.bin`.** Every `MD32X_C_DEFS` knob leaves the two
+  arms' intflash byte-identical, so `drawn_ab.sh`'s flash-side check passes for
+  either arm and proves nothing. Its card-side check was silently skipping
+  (`arm32x.sh` wrote the core to the arm root, `drawn_ab.sh` looked under
+  `cores/`) — fixed, but verify it is not printing `SKIPPED` before believing an
+  A/B.
+
 ### A cart over 4 MiB gets no mapper on this device — untested, and separate
 
 Found while checking which ROM the 41.4 fps was measured on. In the fork's

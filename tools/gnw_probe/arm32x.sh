@@ -69,6 +69,20 @@ cmd_build() {
   # runs half of each arm.
   cp build/gw_retro_go.elf build/gw_retro_go_intflash.bin \
      sd_content/cores/32x.bin sd_content/cores/32x.xip "$ARMS/$name/"
+  # …and again under cores/, which is where drawn_ab.sh looks.
+  #
+  # It looked there and did not find it, so `CORE=32x` printed "no cores/32x.bin
+  # in this arm -- SKIPPED" and every 32X measurement ran with its card-side
+  # check disabled. That check is not decoration here: a core-local knob
+  # (MD32X_OC_LEVEL, MD32X_FORCED_DRAW_RATIO, any MD32X_C_DEFS entry) leaves the
+  # two arms' intflash BYTE-IDENTICAL, so the flash-side check passes for either
+  # arm and the card's 32x.bin is the only thing that says which program ran.
+  # Skipping it left the A/B with no way at all to detect measuring the wrong
+  # arm -- the failure this whole directory keeps paying for, three times in one
+  # day. It skipped loudly, which is the rule, and the loud line still went by
+  # unread for a full bench.
+  mkdir -p "$ARMS/$name/cores"
+  cp sd_content/cores/32x.bin sd_content/cores/32x.xip "$ARMS/$name/cores/"
   echo "[32x:$name] intflash $(stat -c%s "$ARMS/$name/gw_retro_go_intflash.bin") B," \
        "32x.bin $(stat -c%s "$ARMS/$name/32x.bin") B," \
        "32x.xip $(stat -c%s "$ARMS/$name/32x.xip") B"
