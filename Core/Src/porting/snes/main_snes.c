@@ -917,10 +917,16 @@ static bool cart_needs_coprocessor(const uint8_t *rom, uint32_t len) {
     uint16_t icks = h[0x2c] | (h[0x2d] << 8);
     if ((cks ^ icks) == 0xffff) {
       uint8_t romType = h[0x26];   /* $ffd6 = header+0x26 */
-      /* high nibble 0 = DSP family (HLE in dsp1_hle.c); anything else with
-       * romType >= 3 is a coprocessor we don't support yet */
-      if (romType >= 0x03 && (romType >> 4) != 0)
-        return true;
+      /* high nibble 0 = DSP family (HLE in dsp1_hle.c).
+       * romType 0xF0-0xFF with exCoprocessor 0x10 = Cx4 (HLE in cx4_hle.c).
+       * anything else with romType >= 3 is a coprocessor we don't support yet */
+      if (romType >= 0x03 && (romType >> 4) != 0) {
+        if ((romType >> 4) == 0x0F && h[0x0f] == 0x10) {
+          /* Cx4 is supported */
+        } else {
+          return true;
+        }
+      }
 
       /* The DSP family is four different chips behind one encoding, and only
        * DSP-1 is implemented here. See snes_dsp_variant.h for why the title is

@@ -804,6 +804,7 @@ $(CORE_SNES)/src/snes/cpu.c \
 $(CORE_SNES)/src/snes/dma.c \
 $(CORE_SNES)/src/snes/dsp.c \
 $(CORE_SNES)/src/snes/dsp1_hle.c \
+$(CORE_SNES)/src/snes/cx4_hle.c \
 $(CORE_SNES)/src/snes/input.c \
 $(CORE_SNES)/src/snes/ppu.c \
 $(CORE_SNES)/src/snes/snes.c \

@@ -79,7 +79,7 @@
 [submodule "external/sm"]
 	path = external/sm
 	url = https://github.com/jshsakura/sm.git
-	branch = gnw-port
+	branch = perf/spc-idle-skip
 [submodule "external/gpsp"]
 	path = external/gpsp
 	url = https://github.com/jshsakura/gpsp.git
