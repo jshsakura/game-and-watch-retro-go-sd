@@ -20,7 +20,7 @@ ROM=${2:?usage: start_rom.sh <elf> <rom-path>}
 SCRATCH=${SCRATCH:-0x24070000}
 OC="sudo openocd -f interface/stlink-dap.cfg -f target/stm32h7x.cfg -c 'adapter speed 4000'"
 
-sym() { arm-none-eabi-objdump -t "$ELF" | awk -v n="$1" '$NF==n && $1 ~ /^[0-9a-f]+$/ {print "0x"$1; exit}'; }
+sym() { arm-none-eabi-objdump -t "$ELF" | awk -v n="$1" '$NF==n && $1 ~ /^[0-9a-f]+$/ && !f {print "0x"$1; f=1}'; }
 GET=$(sym emulator_get_file)
 START=$(sym emulator_start)
 TRAP=$(sym Reset_Handler)
