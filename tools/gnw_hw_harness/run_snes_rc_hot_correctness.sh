@@ -21,7 +21,8 @@ cf=(-O2 -DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS -w
     -ffp-contract=off -Iexternal/sm -Itools/sm_harness/shim)
 core_sources=(
   external/sm/src/snes/apu.c external/sm/src/snes/cart.c
-  external/sm/src/snes/dma.c external/sm/src/snes/dsp.c
+  external/sm/src/snes/cx4_hle.c external/sm/src/snes/dma.c
+  external/sm/src/snes/dsp.c
   external/sm/src/snes/input.c external/sm/src/snes/ppu.c
   external/sm/src/snes/snes.c external/sm/src/snes/snes_other.c
   external/sm/src/snes/spc.c external/sm/src/tracing.c

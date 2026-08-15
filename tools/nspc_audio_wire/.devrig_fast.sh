@@ -65,7 +65,8 @@ NSPCINC="-I$NGEN -I$HLE -Itools/snes_survey -I$HERE"
 cp "$ROM" "$OUT/rom.smc"
 (cd "$OUT" && arm-none-eabi-objcopy -I binary -O elf32-littlearm -B arm --rename-section .data=.rom_blob,alloc,load,readonly,data,contents rom.smc rom.o)
 
-SRCS="$SM/src/snes/cart.c $SM/src/snes/cpu.c $SM/src/snes/dma.c $SM/src/snes/dsp.c \
+SRCS="$SM/src/snes/cart.c $SM/src/snes/cpu.c $SM/src/snes/cx4_hle.c \
+      $SM/src/snes/dma.c $SM/src/snes/dsp.c \
       $SM/src/snes/input.c $SM/src/snes/ppu.c $SM/src/snes/snes.c \
       $SM/src/snes/snes_other.c $SM/src/snes/spc.c $SM/src/snes/rc_dispatch.c \
       $SM/src/tracing.c $RIG/rig_runtime_hf.c"

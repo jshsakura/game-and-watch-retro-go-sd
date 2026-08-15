@@ -74,7 +74,8 @@ cp "$ROM" "$OUT/rom.smc"
 (cd "$OUT" && arm-none-eabi-objcopy -I binary -O elf32-littlearm -B arm \
   --rename-section .data=.rom_blob,alloc,load,readonly,data,contents rom.smc rom.o)
 
-SRCS="external/sm/src/snes/cart.c external/sm/src/snes/cpu.c external/sm/src/snes/dma.c \
+SRCS="external/sm/src/snes/cart.c external/sm/src/snes/cpu.c external/sm/src/snes/cx4_hle.c \
+external/sm/src/snes/dma.c \
 external/sm/src/snes/dsp.c external/sm/src/snes/dsp1_hle.c external/sm/src/snes/input.c \
 external/sm/src/snes/ppu.c external/sm/src/snes/rc_dispatch.c external/sm/src/snes/snes.c \
 external/sm/src/snes/snes_other.c external/sm/src/snes/spc.c external/sm/src/snes/spin_skip.c \
