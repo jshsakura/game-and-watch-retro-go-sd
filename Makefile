@@ -1472,6 +1472,13 @@ MD32X_C_DEFS = -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DGNW_32X_CORE -DLS
 ifeq ($(MD32X_DEVICE_PROFILE),1)
 MD32X_C_DEFS += -DMD32X_DEVICE_PROFILE
 endif
+# Which clock floor the core asks for (common_emu_auto_oc). 1 = 312 MHz is what
+# it shipped with; 2 = 340 MHz is the launcher menu's own ceiling. It is not a
+# free 9%: level 1 runs OSPI at 104 MHz and level 2 at 97, and this core's SH-2
+# fetches its cart out of external flash, so the two pull opposite ways. A/B it
+# on hardware before changing the default.
+MD32X_OC_LEVEL ?= 1
+MD32X_C_DEFS += -DMD32X_OC_LEVEL=$(MD32X_OC_LEVEL)
 C_INCLUDES +=  \
 -ICore/Inc \
 -ICore/Src/porting/lib \

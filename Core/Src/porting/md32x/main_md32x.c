@@ -512,8 +512,16 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   common_emu_state.frame_time_10us = (uint16_t)(100000 / MD32X_FPS + 0.5f);
   lcd_set_refresh_rate(MD32X_FPS);
 
-  /* Dual-SH-2 interpreter is CPU-bound; take the scoped, non-persisted boost. */
-  common_emu_auto_oc(1);
+  /* Dual-SH-2 interpreter is CPU-bound; take the scoped, non-persisted boost.
+   *
+   * MD32X_OC_LEVEL selects which floor. This core asks for the LOWEST boost in
+   * the tree while being the most CPU-bound thing in it — GBA asks for 3 — and
+   * that is worth an experiment rather than an assumption, because the levels
+   * trade the two clocks against each other: level 1 is 312 MHz core / 104 MHz
+   * OSPI, level 2 is 340 / 97. The SH-2 fetches this cart from external flash,
+   * so +9% of core comes with -7% of the bus that feeds it. Measure, don't
+   * reason. */
+  common_emu_auto_oc(MD32X_OC_LEVEL);
 
   /* Draw every frame this core emulates.
    *
