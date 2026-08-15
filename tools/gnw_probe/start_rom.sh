@@ -9,15 +9,24 @@
 # the file record, then jump into emulator_start() with the record in r0. It
 # never returns; it becomes the game.
 #
-# Spare RAM is RAM_EMU, which is exactly what is NOT in use while the launcher
-# is up -- no overlay is loaded, that is the whole point of the region.
+# Spare RAM: RAM_EMU is free of the OVERLAY while the launcher is up, but not
+# of the launcher itself -- emulators[] and the 1000-slot shared_files ROM
+# list are allocated from its start. A scratch inside the scanned region gets
+# its bytes overwritten by emulator_get_file()'s list refresh before the
+# strcmp loop reaches the path, and the call returns NULL for a ROM that
+# f_stat says is right there. The final 4 KB of the region sits past every
+# allocation the launcher makes (list, cores) until a list grows past ~815
+# entries; the first call of a session also needs the window after
+# emulators_init() and before any core start (emulators goes NULL once a core
+# runs). When calling emulator_start() directly, set pc with bit0 (Thumb):
+# an even pc resumed with EPSR.T clear enters as INVALID STATE UsageFault.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 HOST=${PROBE_HOST:-rpi-genie5}
 ELF=${1:?usage: start_rom.sh <elf> <rom-path>}
 ROM=${2:?usage: start_rom.sh <elf> <rom-path>}
-SCRATCH=${SCRATCH:-0x24070000}
+SCRATCH=${SCRATCH:-0x240ff000}
 OC="sudo openocd -f interface/stlink-dap.cfg -f target/stm32h7x.cfg -c 'adapter speed 4000'"
 
 sym() { arm-none-eabi-objdump -t "$ELF" | awk -v n="$1" '$NF==n && $1 ~ /^[0-9a-f]+$/ && !f {print "0x"$1; f=1}'; }
