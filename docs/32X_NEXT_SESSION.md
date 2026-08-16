@@ -12,10 +12,11 @@ Everything below is measured on hardware unless it says otherwise.
 |---|---|
 | Retail Doom, attract anchor | **21.79 drawn fps** (1800-frame window, 5 samples, spread 0.16) |
 | Retail Doom, before today | 7.85 — the forced-draw ratio fix is worth **×2.8 on the same anchor** |
-| D32XR (4 MiB bench build) | **41.4 drawn fps** on the title/attract anchor, +35% over retail Doom there |
-| Real gameplay speed | **not measured yet.** Every number above is the attract demo. See "The anchor" |
-| Emulated speed | ~36% of a 60 Hz machine. The console still plays in slow motion |
-| Branch | `testbed`, pushed through `5d337946`. Submodules `external/sm` @ `2f81f9cb`, `external/picodrive` @ `883010c5`, both on remotes |
+| Retail Doom, **gameplay anchor** (savestate resume) | **16.10/16.09 drawn fps** (measured 2026-08-16, screenshot-verified first-person scene) |
+| D32XR (4 MiB bench build) | old "41.4 drawn fps" claim is **from a tree state no longer reproducible** — on 2026-08-15's tree D32XR deterministically HardFaulted at frame 59. Two bugs fixed 2026-08-16 (below); now boots and renders, but dies to `Z_Malloc: failed on 496` (open) |
+| Real gameplay speed | retail Doom measured (16.1); D32XR pending its Z_Malloc fix |
+| Emulated speed | ~36% of a 60 Hz machine (retail Doom attract). The console still plays in slow motion |
+| Branch | `testbed`, pushed through `be6dc79b`. Submodules `external/sm` @ `5bc1605`, `external/picodrive` @ `c06b334e` (gnw-port), both on remotes |
 | Arms built | `/tmp/gnw_arms/oc1`, `/tmp/gnw_arms/oc2` (cold-boot autoboot, **not** savestate-resume) |
 | Worktree | `exp/32x-oc` — a scratch worktree used to build away from a checkout whose `external/sm` was mid-surgery |
 
@@ -25,6 +26,26 @@ Everything below is measured on hardware unless it says otherwise.
 it" and the answer is none: it wedges only in `tools/m7_qemu_rig`. The screen was
 verified, not inferred — see `tools/gnw_probe/screenshot.sh`. Details and the
 withdrawn suspect list are in `32X_CLOSED.md` §0b.
+
+> **2026-08-16 correction: the "wedges only in the rig" conclusion above was
+> wrong.** On the then-current tree D32XR froze on the *device* too, 3/3 boots,
+> at frame 59 — the same fault the rig showed. Two fork bugs were found and
+> fixed (picodrive gnw-port `c06b334e`):
+>
+> 1. **STRD HardFault at first render.** `do_line_pp`'s solid-run blast wrote
+>    two adjacent `u32` stores of the same register; gcc fused them into `STRD`,
+>    and `DrawLineDest` can be 2 mod 4 — a faulting 64-bit access on Cortex-M7
+>    (and QEMU's M33). Same class as Super Metroid's `ClearBackdrop`. Fix:
+>    align the destination pixel first, then u32-blast.
+> 2. **PWM poll-detect freeze.** A fork-added `p32x_sh2_poll_detect` on PWM
+>    register reads, but PWM writes never fire `p32x_sh2_poll_event` — so the
+>    slave SH-2, polling PWM CH3 during init, was CPOLL-frozen with no possible
+>    wake (its `sh2irq_mask` is CMD-only). Fix: restore the upstream plain read.
+>
+> Device-verified after both fixes: D32XR boots and renders (69k/76.8k nonzero
+> px, both SH-2s alive and advancing); retail Doom regression check on the same
+> arm: 17/17 emu/drawn fps (baseline 16.1). The QEMU rig runs D32XR 200 frames
+> GATE3 PASS — same rig, same ROM, now clean.
 
 **The clock floor is not a lever.** `common_emu_auto_oc(1)` → `(2)` is +9% of
 core clock and −7% of OSPI, and this core's SH-2 fetches its cart from external
@@ -52,6 +73,23 @@ against it: a heavier load weighs core clock against OSPI differently, and that
 is the one thing that could overturn the result above.
 
 ## The queue
+
+0. **D32XR `Z_Malloc: failed on 496` (open, next session's first item).** After
+   both fixes the game boots, renders its init screen, then dies to this
+   id-tech allocator error (white text on dark green). Everything about it is
+   SH-2-side: the 68K never reads the error string (page-0x8a reroute caught 0
+   hits), no ZONEID 0x1d42/0x1d4a11 in SDRAM or 68K DRAM at any frame f10-f140,
+   and the string has no instruction-form references in ROM (code is
+   RAM-relocated). Failure lands f45+, after the MEGASD flashcart detect
+   (f14-f45 — writes 0xcd54→$3f7fa, polls $3f800 for 'MEGASD', benign).
+   Repro is deterministic offline: the QEMU rig hits the identical screen in
+   200 frames (`build/rig_{fbz2,zd*,sref2,errcatch}` + logs in
+   `/tmp/opencode/rig_*.log`; ROM = 4 MiB bench build md5 110d2229). Next
+   leads: scan the SH-2 data arrays (`sh2s+0x580` per core) for the zone;
+   hook the SH-2 ROM fetch or the VDP text-blit to name the failing caller;
+   the allocator is custom (no ZONEID tags), so find `Z_Init`'s zone-size
+   computation and check what free-memory answer the fork gives differently
+   from upstream (fork stub BIOS / SDRAM fastpath are candidates).
 
 1. **Gameplay-anchored numbers for everything.** Retail Doom, D32XR, and the OC
    A/B. Until this exists, no 32X figure in any document describes play.
