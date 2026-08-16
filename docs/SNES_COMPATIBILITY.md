@@ -46,7 +46,12 @@ current mapper support can't run at all — enhancement-chip titles (SA-1,
 SuperFX, Cx4, S-DD1) that the survey's `LOAD_FAIL`/crash paths both
 land in as `BOOT_CRASH` in this table. **DSP-1 was in that list when this
 survey ran and no longer is** — `dsp1_hle.c` implements it, and Mario Kart,
-Pilotwings, Suzuka 8 Hours and Battle Racers all boot and run. Its siblings
+Pilotwings, Suzuka 8 Hours and Battle Racers all boot and run. **Cx4 left the
+list next** — a clean-room HLE shipped in `4063dade` (2026-08-15), and both of
+its carts have since booted and played on a device (2026-08-17: *Mega Man X2*
+title → gameplay at 52 fps on the launcher counter; *Mega Man X3* intro
+live-rendering, 48,277 of 153,600 framebuffer bytes changing per probe
+capture). Its siblings
 DSP-2/3/4 share DSP-1's romType and are now refused by title rather than
 attached to the wrong HLE (see "What each chip would actually take" below).
 Confirmed examples from this sweep:
@@ -182,15 +187,19 @@ out of that one number.
 |---|---|---|---|
 | **SA-1** | ✗ BW-RAM is 256 KB by itself | ✗ a second 65816 | both |
 | **SuperFX** | ✓ ~114 KB | ✗ a RISC CPU interpreted per frame | **CPU, not RAM** |
-| **Cx4** (HLE) | ✓ ~33 KB | ✓ intercepted commands, ~free | **nothing — it is open** |
+| **Cx4** (HLE) | ✓ ~33 KB, shipped in `.overlay_snes` | ✓ intercepted commands, ~free | **done — `4063dade`, device-verified** |
 | **DSP-2/3/4** (HLE) | ✓ ~16 KB | ✓ same shape as DSP-1 | nothing; not written yet |
 | S-DD1 / SPC7110 | ✓ ~30 KB | ⚠ decompression inside DMA windows | unmeasured, borderline |
 | OBC1 / S-RTC | ✓ ~10 KB / ~1 KB | ✓ register intercepts | nothing; very few titles |
 
 So the honest list of *closed* chips is **SA-1 and SuperFX**, and SuperFX is
-closed on CPU alone. **Cx4 was closed for a reason that was never true** — an
-HLE port exists in snes9x 1.43/1.50 (`cx4fn.c`) and it would cover Mega Man X2
-and X3, the two Tier D titles above that are not Star Fox.
+closed on CPU alone. **Cx4 was closed for a reason that was never true, and it
+is done now** — shipped as a clean-room, docs-based HLE (external/sm 5bc1605,
+no snes9x lineage; bit-identical to a behavioral reference on both carts at
+900/1800/3600 frames) in `4063dade`, and **device-verified 2026-08-17**:
+*Mega Man X2* boots to its title and plays (52 fps on the launcher counter),
+*Mega Man X3* renders its intro live. The two Tier D Cx4 titles above are no
+longer a floor. That leaves S-DD1/SPC7110 as the only unmeasured rows.
 
 ⚠️ The CPU column is **estimated, not measured**. The one measured data point
 is our own: DSP-1's HLE costs essentially nothing, which is what makes the
@@ -232,10 +241,11 @@ on top rather than replacing it. **Net: PPU-opt's 49.2fps → full-stack's
   handful of representative titles only; the full 2,497-row classification
   is written to `tools/snes_db/rom_tiers.csv`, which `tools/snes_db/.gitignore`
   excludes.
-- **Enhancement chips**: DSP-1 support is in progress; Cx4, S-DD1, and SA-1
-  are unimplemented; SuperFX is infeasible on this MCU (established by the
-  earlier `tools/snes_harness` initiative closed in `docs/HARNESSES.md`).
-  Tier D is a hard floor until/unless a chip gets implemented.
+- **Enhancement chips**: DSP-1 (four carts, 2026-08-14) and Cx4 (both titles,
+  2026-08-17) are implemented and device-verified; DSP-2/3/4 are refused by
+  title; S-DD1 and SA-1 are unimplemented; SuperFX is infeasible on this MCU
+  (established by the earlier `tools/snes_harness` initiative closed in
+  `docs/HARNESSES.md`). Tier D is down to the SuperFX titles.
 - **The spin hint-gate is a prerequisite for shipping the skip lever, not an
   optional polish pass.** The rig also measured the failure mode:
   *TMNT: Tournament Fighters* (`TMNT-IV`) has no skippable spins, and running
