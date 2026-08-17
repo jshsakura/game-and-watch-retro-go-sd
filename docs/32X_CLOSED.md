@@ -189,8 +189,12 @@ end. Whatever links at the end is neither the firmware nor upstream but a third
 program, so it cannot settle anything — the same disease as `tools/sm_harness`,
 which cost three Super Metroid releases.
 
-The rig can supply the real BIOS (`RIG_32X_BIOS=<dir>`) and bank a >4 MiB cart
-(`RIG_32X_SSF=1`); both exist only for this investigation.
+The rig can supply the real BIOS (`RIG_32X_BIOS=<dir>`); that exists only for
+this investigation. `RIG_32X_SSF=1` used to be the other half of this sentence —
+it added `carthw.c` so the rig could bank a >4 MiB cart the firmware could not.
+That asymmetry is gone as of 2026-08-18: the firmware compiles the mapper now
+(queue item 3), so the rig compiles it unconditionally, for the usual reason —
+a rig whose source list differs from the firmware's is a different program.
 
 ### ⚠️ The clock floor is not a lever on the attract demo — but it is one in gameplay (+12%)
 

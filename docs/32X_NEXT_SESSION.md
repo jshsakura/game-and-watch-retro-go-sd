@@ -175,11 +175,47 @@ is the one thing that could overturn the result above.
    mono-FIFO poll. Follow-up built and rejected the same day: parking the SDRAM
    poll (see the ledger in `32X_CLOSED.md`) — detect cost on the read fastpath
    outweighs the spin it saves.
-3. **A 5 MiB cart cannot be banked on this device.** `pico/cart.c` compiles the
-   `romsize > 0x400000` mapper fallback out under `GNW_32X_CORE`, along with the
-   whole `carthw.cfg` table. The official D32XR release is exactly such a cart
-   and has never been run. Price `carthw.c` against the `.overlay_md32x` budget
-   before enabling anything.
+3. **A cart over 4 MiB now banks — DONE 2026-08-18, at a measured cost.** The
+   only thing that had been compiled out under `GNW_32X_CORE` was
+   `carthw_ssf2_startup()`, the standard large-ROM bank mapper. Everything else
+   was already there: `pico/32x/memory.c` has had bank-aware SH-2 read paths and
+   the `$a130xx` write handlers all along, running against two stub symbols that
+   nothing ever set. So the official 5 MiB D32XR release was unrunnable for the
+   want of one call.
+
+   *Priced, as this entry used to ask.* `carthw.c` is ~7.6 KB of text+rodata,
+   which sounded fatal against 1,236 B of `.overlay_md32x` headroom (the overlay
+   was at 99.83%: 31,932 + 708,208 of 741,376). It is not, because the linker
+   script claims only `.data` from `build/md32x/*.o` and sweeps every other
+   object's text and rodata into `.xip_md32x` — external flash. **Measured cost:
+   +24 B overlay, +16 B BSS, 40 bytes total.** Bank writes are I/O-rate, so XIP
+   is the right home for them.
+
+   *Measured behaviour (QEMU rig, 600 frames, D32XR 4 MiB card image vs the same
+   image zero-padded to 5 MiB so the fallback fires):*
+
+   | | 4 MiB | 5 MiB |
+   |---|---|---|
+   | gate | GATE3 PASS | GATE3 PASS |
+   | fb hash f299 / f599 | `2064b511` | `2064b511` — identical |
+   | avg host insn/frame | 6,960,598 | **8,789,308 (+26.3%)** |
+
+   Bit-identical frames: turning the mapper on does not perturb a game that does
+   not bank. The +26% is not the mapper's own work — it is
+   `gnw_sh2_rom_fetch_mask = carthw_ssf2_active ? 0 : gnw_rom_map_mask`
+   (`pico/32x/memory.c`). The cart-ROM opcode-fetch fast path is a plain
+   `MAP_MEMORY(Pico.rom)` mirror, which stops being true the moment a bank can
+   move, so it switches itself off and every fetch pays the cross-TU
+   `p32x_sh2_read16` call instead. Doom's msh2 executes 100% out of cart ROM,
+   ~173k fetches a frame.
+
+   **Open, and the obvious next lever:** make the fetch fast path bank-aware
+   rather than off — `Pico.rom + (carthw_ssf2_banks[(a >> 19) & 7] << 19) +
+   (a & 0x7ffff)`, which is the same arithmetic `memory.c:1615` already does on
+   the slow path. That is a hot-path edit and it was NOT attempted here, because
+   the real 5 MiB D32XR release is not in this tree and a synthetic pad never
+   exercises a bank switch. Get the real ROM first; it is also the only way to
+   learn whether >4 MiB was ever the thing keeping it from running.
 4. **Rig fidelity — mostly answered 2026-08-18, remainder low priority.** The
    old "the rig wedges" observation was the boot-latency artifact described in
    item 0: 200-frame windows sit inside the quiet middle of a ~300+-frame boot

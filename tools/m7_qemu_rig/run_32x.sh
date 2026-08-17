@@ -76,7 +76,7 @@ pico/32x/32x.c pico/32x/draw.c pico/32x/memory.c pico/32x/pwm.c pico/32x/sh2soc.
 pico/cart.c pico/memory.c pico/draw.c pico/sek.c pico/videoport.c
 pico/media.c pico/pico.c pico/misc.c pico/patch.c pico/z80if.c
 pico/eeprom.c pico/state.c
-${RIG_32X_SSF:+pico/carthw/carthw.c}
+pico/carthw/carthw.c pico/carthw/eeprom_spi.c
 pico/sound/sound.c pico/sound/mix.c pico/sound/sn76496.c pico/sound/ym2612.c
 pico/sound/resampler.c
 zlib/crc32.c

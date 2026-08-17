@@ -857,6 +857,14 @@ Core/Src/porting/gwenesis/main_gwenesis.c
 
 # Sega 32X (picodrive) — SD-card builds only (the overlay is streamed from SD;
 # the trimmed interpreter subset, no DRC/SMS/ym2413/SVP/CD/draw2/state).
+#
+# carthw/carthw.c + eeprom_spi.c are in the list for ONE mapper: SSF2, which is
+# what a cartridge larger than 4 MiB needs. Without it every such cart was
+# unrunnable here, the official 5 MiB D32XR release included — only a cut-down
+# 4 MiB bench build had ever booted. It costs the overlay almost nothing,
+# because the linker script claims only .data from build/md32x/*.o and sweeps
+# every other object's text and rodata into .xip_md32x, i.e. external flash.
+# Bank writes are I/O-rate, not per-pixel, so XIP is the right home for them.
 MD32X_C_SOURCES =
 CORE_PICODRIVE = external/picodrive
 ifeq ($(SD_CARD),1)
@@ -872,6 +880,8 @@ $(CORE_PICODRIVE)/pico/32x/memory.c \
 $(CORE_PICODRIVE)/pico/32x/pwm.c \
 $(CORE_PICODRIVE)/pico/32x/sh2soc.c \
 $(CORE_PICODRIVE)/pico/cart.c \
+$(CORE_PICODRIVE)/pico/carthw/carthw.c \
+$(CORE_PICODRIVE)/pico/carthw/eeprom_spi.c \
 $(CORE_PICODRIVE)/pico/memory.c \
 $(CORE_PICODRIVE)/pico/draw.c \
 $(CORE_PICODRIVE)/pico/sek.c \
