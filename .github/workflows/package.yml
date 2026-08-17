@@ -55,6 +55,13 @@ jobs:
         # tests/fav_stubs, which is how the suite kept building a different
         # program than the firmware. Small submodule; still not all of them.
         run: git submodule update --init --depth 1 retro-go-stm32
+      - name: Fetch the sm submodule
+        # tools/cx4_harness compiles external/sm/src/snes/cx4_hle.c itself, under
+        # ASan, to prove the chip's cartridge-controlled lengths stay inside its
+        # 8 KB RAM. Without this the harness has no file and skips -- which is
+        # how a gate becomes decoration. Same reasoning as the two above: named
+        # explicitly, --depth 1, not "all submodules".
+        run: git submodule update --init --depth 1 external/sm
       - name: Install Pillow (GIF fixture generator)
         run: pip3 install --quiet Pillow
       - name: Run host test suite

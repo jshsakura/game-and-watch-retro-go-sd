@@ -50,6 +50,15 @@ skip() { printf 'CX4 SKIPPED: %s\n' "$*"; }
 
 command -v "$CC" >/dev/null 2>&1 || { skip "no $CC on PATH -- nothing built"; exit 0; }
 
+# The file under test lives in a submodule. A job that has not checked it out
+# must not fail the build over it -- but it must say so, loudly, every run: this
+# tree has already shipped releases whose gates were all quietly SKIPPED.
+# The fix for a skip you did not want is in the workflow, not here.
+[ -f "$SM/cx4_hle.c" ] || {
+  skip "$SM/cx4_hle.c absent (external/sm not checked out) -- the Cx4 gate did NOT run"
+  exit 0
+}
+
 # ---- build ----------------------------------------------------------------
 # $1 = path to the cx4_hle.c to test, $2 = output binary
 build() {
