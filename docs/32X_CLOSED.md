@@ -319,6 +319,7 @@ Two of these were built, measured and reverted. None was rejected on a hunch.
 | Code placement (ITCM) | Already spent — the whole interpreter TU has been in ITCM since the +30% move | `STM32H7B0VBTx_SDCARD.ld`, `.overlay_md32x_itc` |
 | State placement (DTCM) | SH-2 register file moved to DTCM: **94.0 → 92.1** cycles/insn, inside scene noise; per-event costs flat. Reverted — it also charged 12 KB of the shared DTCM heap | picodrive `1c78adf8` → `d4317e53` |
 | QEMU access census | QEMU models no cache, so it can count accesses but never price them — which was the question | `RIG_MEM_MIX` in `rig_32x.c`, left in place, documented as impractical |
+| SDRAM poll parking (idle-skip for Doom's "flow" handshake) | Parking works on device — RPOLL set at 23% of samples, IRQ wake observed, a frame-start safety net heals the one lockup the raw version hit. But the detect call on the SDRAM read fastpath costs more than the spin it saves: **15.61 vs 15.89 gameplay fps, −1.8%** (1800-frame ×3 both arms, card hash-checked). Built, measured, reverted | patch kept at `/tmp/gnw_arms/idleskip_gp3_full.patch`; arms `gp2` (no net) / `gp3` (with net) |
 
 ### The cost model that closes it
 

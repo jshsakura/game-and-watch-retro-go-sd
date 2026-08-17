@@ -13,6 +13,7 @@ Everything below is measured on hardware unless it says otherwise.
 | Retail Doom, attract anchor | **21.79 drawn fps** (1800-frame window, 5 samples, spread 0.16) |
 | Retail Doom, before today | 7.85 — the forced-draw ratio fix is worth **×2.8 on the same anchor** |
 | Retail Doom, **gameplay anchor** (savestate resume) | **16.10/16.09 drawn fps** (measured 2026-08-16, screenshot-verified first-person scene) |
+| Retail Doom, gameplay anchor, 08-17 tree | **15.89/15.91/15.89** (1800-frame ×3, savestate-resume arm `gpf` = 08-16 tree + the PWM-read sync restore; spread 0.02). Same anchor as above; the ~0.2 delta is the tree change |
 | D32XR (4 MiB bench build) | old "41.4 drawn fps" claim is **from a tree state no longer reproducible** — on 2026-08-15's tree D32XR deterministically HardFaulted at frame 59. Two bugs fixed 2026-08-16 (below); now boots and renders, but dies to `Z_Malloc: failed on 496` (open) |
 | Real gameplay speed | retail Doom measured (16.1); D32XR pending its Z_Malloc fix |
 | Emulated speed | ~36% of a 60 Hz machine (retail Doom attract). The console still plays in slow motion |
@@ -91,18 +92,21 @@ is the one thing that could overturn the result above.
    computation and check what free-memory answer the fork gives differently
    from upstream (fork stub BIOS / SDRAM fastpath are candidates).
 
-1. **Gameplay-anchored numbers for everything.** Retail Doom, D32XR, and the OC
-   A/B. Until this exists, no 32X figure in any document describes play.
-2. **Device PC profile — this is the one that matters.**
-   `tools/gnw_probe/gnw_probe.sh sample <arm>/gw_retro_go.elf 2000`, on the
-   gameplay anchor. It has never been run against the current build. July's cost
-   model says a frame is 24.4 M cycles, msh2 is 68% of it, and 75% of an msh2
-   instruction's 94 cycles is interpreter decode/execute already running from
-   ITCM — so roughly **half the frame is SH-2 dispatch**. The open question is
-   which functions, and whether gameplay keeps that ratio.
-   Resolve overlay addresses (`0x24xxxxxx`) through that arm's
-   `build/gw_retro_go.map` filtered to `build/md32x/*.o`; every core's overlay
-   shares the VMA and gdb will happily name another core's symbol.
+1. **Gameplay-anchored numbers for everything.** Retail Doom **done** —
+   16.10/16.09 (2026-08-16) and 15.89/15.91/15.89 on the 08-17 tree. Remaining:
+   D32XR (blocked on item 0) and the OC A/B re-run against the gameplay anchor —
+   the one measurement that could still overturn "clock floor is not a lever".
+2. **Device PC profile — DONE 2026-08-17** (gameplay anchor, savestate-resume
+   arm, 2000 host-PC + 2000 guest-PC samples). Host: `sh2_execute_interpreter`
+   dispatch **49.4%** of samples, SH-2 family ~60.8% total — July's "half the
+   frame is SH-2 dispatch" holds in gameplay. Guest: msh2 sits 66% in three
+   loops — 36.5% `R_DrawColumn` (texture column render, real work), 23.4% an
+   SDRAM flag poll at `0x06001170` (Doom's 68K↔SH-2 "flow" handshake; woken by
+   VINT IRQ, verified by watchpoint: nobody else writes the flag at runtime),
+   6.2% software 32-bit division; ssh2 97% in a `bra-self` park plus a 5.5% PWM
+   mono-FIFO poll. Follow-up built and rejected the same day: parking the SDRAM
+   poll (see the ledger in `32X_CLOSED.md`) — detect cost on the read fastpath
+   outweighs the spin it saves.
 3. **A 5 MiB cart cannot be banked on this device.** `pico/cart.c` compiles the
    `romsize > 0x400000` mapper fallback out under `GNW_32X_CORE`, along with the
    whole `carthw.cfg` table. The official D32XR release is exactly such a cart
