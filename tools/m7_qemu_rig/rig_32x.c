@@ -49,8 +49,70 @@
 #ifdef RIG_STATE_TEST
 #include "pico/state.h"
 #endif
-#ifdef RIG_TRACE_PC
+#if defined(RIG_TRACE_PC) || defined(RIG_SH2_WATCH)
 #include <cpu/gwenesis68k/g68k.h>   /* the g68k global context (m68k.pc) */
+
+/* SRAM replay (compile-time, no semihosting file I/O — SYS_OPEN returns -1 in
+ * this runtime while SYS_WRITE0/printf work; proven by two failed probe runs):
+ * host generates the header via `cp <file> rig_preload.bin; xxd -i` and passes
+ * -DRIG_SRAM_PRELOAD_HEADER="\"/abs/path.h\"". */
+#ifdef RIG_SRAM_PRELOAD_HEADER
+#include RIG_SRAM_PRELOAD_HEADER
+#endif
+#endif
+#ifdef RIG_SDRAM_SCAN
+#include <cpu/gwenesis68k/g68k.h>
+struct Pico32xMem;                  /* opaque: sdram sits at offset 0 */
+extern struct Pico32xMem *Pico32xMem;
+static int s_zscan_done;
+#endif
+#ifdef RIG_STRPAGE
+/* GLM: reroute 68K page 0x8a (ROM offsets 0x20000-0x2ffff — the window
+ * holding "Z_Malloc: failed on" at 0x8adbdc) through handlers that exactly
+ * replicate the direct pre-byteswapped ROM mapping, logging any read of the
+ * string window. The reader's m68k.pc is the error printer; its caller is
+ * the Z_Malloc failure path. Installed at f==8, AFTER the game's ADEN write
+ * ran Pico32xStartup — PicoMemSetup32x would overwrite an earlier install.
+ * Both r8+r16 are hooked so byte-wise printers are caught; g68k_bus.c keeps
+ * the page's fetch base and routes fetches through the dispatchers, which
+ * land on these handlers — values stay exact. */
+#include <cpu/gwenesis68k/g68k.h>   /* m68k.pc */
+extern uptr m68k_read8_map[];
+extern uptr m68k_read16_map[];
+void cpu68k_map_set(uptr *map, u32 start_addr, u32 end_addr,
+    const void *func_or_mh, int is_func);
+static int s_strp_hits;
+static unsigned char *s_rom_base;
+extern int rig_frame_no;  /* declared later in this file (L137) */
+extern const unsigned char _binary_rom_32x_start[];  /* linker symbol, also later (L140) */
+static u32 rig_strp_r8(u32 a)
+{
+  if (a >= 0x8adb00 && a < 0x8adc00 && s_strp_hits < 32) {
+    s_strp_hits++;
+    lprintf("[zrd] f=%d r8 pc=%08x a=%08x\n", rig_frame_no,
+            (unsigned)(m68k.pc & 0xffffff), (unsigned)a);
+  }
+  return s_rom_base[(a - 0x880000) ^ 1];  /* pre-byteswapped rom */
+}
+static u32 rig_strp_r16(u32 a)
+{
+  if (a >= 0x8adb00 && a < 0x8adc00 && s_strp_hits < 32) {
+    s_strp_hits++;
+    lprintf("[zrd] f=%d r16 pc=%08x a=%08x\n", rig_frame_no,
+            (unsigned)(m68k.pc & 0xffffff), (unsigned)a);
+  }
+  return *(u16 *)(s_rom_base + (a - 0x880000));
+}
+static int s_strp_installed;
+static void rig_strp_install(void)
+{
+  /* zero-copy GNW path: cart.c binds Pico.rom to the blob we passed to
+   * PicoLoadMedia (see header comment at top of file) — same bytes. */
+  s_rom_base = (unsigned char *)_binary_rom_32x_start;
+  cpu68k_map_set(m68k_read8_map, 0x8a0000, 0x8affff, rig_strp_r8, 1);
+  cpu68k_map_set(m68k_read16_map, 0x8a0000, 0x8affff, rig_strp_r16, 1);
+  printf("[zrd] string page 0x8a rerouted at f=%d\n", rig_frame_no);
+}
 #endif
 
 #ifndef RIG_FRAMES
@@ -684,6 +746,45 @@ int main(void) {
 #endif
     if (mt == PM_ERROR) { printf("[32x-qemu] LOAD FAILED\n"); return 3; }
 
+#ifdef RIG_SRAM_FILL
+    static int s_sv_dump_hex;
+    /* Second-boot replay knobs are COMPILE-TIME (EXTRA_DEF): the guest runs
+     * under QEMU semihosting where getenv() cannot see host env vars (the
+     * env-var version silently never fired — proven by the missing
+     * "[sram] filled" line), but fopen/open are semihosted and do work.
+     *   -DRIG_SRAM_PRELOAD_FILE="\"/abs/path\""  fill cart SRAM before frame 0
+     *       (firmware equivalent: md32x_SramLoad reading the .sram card file)
+     *   -DRIG_SRAM_FILL_BYTE=0xff|0x100          pre-fill (0x100 = random s1234)
+     *   -DRIG_SRAM_DUMP_FILE="\"/abs/path\""     write SRAM back at exit so the
+     *       next run can be fed exactly what this run's game wrote. */
+    {
+        extern void *rig_sram_ptr(u32 *size);
+        u32 sv_size = 0;
+        unsigned char *sv = rig_sram_ptr(&sv_size);
+        printf("[sram] size=%u ptr=%p\n", sv_size, (void *)sv);
+#ifdef RIG_SRAM_PRELOAD_HEADER
+        if (sv) {
+            u32 n = rig_preload_bin_len < sv_size ? rig_preload_bin_len : sv_size;
+            memcpy(sv, rig_preload_bin, n);
+            printf("[sram] preloaded %u bytes from linked header\n", n);
+        }
+#endif
+#ifdef RIG_SRAM_FILL_BYTE
+        if (sv) {
+            unsigned v = RIG_SRAM_FILL_BYTE;
+            srandom(1234);
+            for (u32 i = 0; i < sv_size; i++)
+                sv[i] = (v == 0x100) ? (random() & 0xff) : (unsigned char)v;
+            printf("[sram] filled 0x%x bytes with %s\n", sv_size,
+                   v == 0x100 ? "random(seed 1234)" : "constant");
+        }
+#endif
+#ifdef RIG_SRAM_DUMP_HEX
+        s_sv_dump_hex = 1;
+#endif
+    }
+#endif
+
 #ifdef RIG_IDLE_SKIP
     {
         extern int gnw_sh2_idle_skip;
@@ -713,6 +814,9 @@ int main(void) {
 
     for (int f = 0; f < RIG_FRAMES; f++) {
         rig_frame_no = f;
+#ifdef RIG_STRPAGE
+        if (f == 8 && !s_strp_installed) { s_strp_installed = 1; rig_strp_install(); }
+#endif
         if (f == RIG_WARMUP) phase_snapshot();
 #ifdef RIG_HIST_FROM
         /* GLM debug: zero the SH-2 PC histogram tables here so the final
@@ -744,6 +848,78 @@ int main(void) {
 
         unsigned long long sh2_now = g_sh2_insns, sh2_d = sh2_now - sh2_prev;
         sh2_prev = sh2_now;
+
+#ifdef RIG_SH2_WATCH
+        /* D32XR hunt: bracket the frame where the guest SH-2s leave game
+         * code for the BIOS re-entry. First watch showed both CPUs already
+         * inside the BIOS checksum loop at f=160, so the exit happened
+         * earlier: this edge detector logs the SDRAM->BIOS transition frame
+         * itself. pc@0x40 ppc@0x44, sizeof(SH2)=6016. */
+        if (f >= 4 && f < 160) {
+            extern unsigned char sh2s[];
+            static unsigned prev_m, prev_s;
+            unsigned char *m = sh2s, *s = sh2s + 6016;
+            unsigned cm = *(unsigned *)(m + 0x40), cs = *(unsigned *)(s + 0x40);
+            if ((prev_m >= 0x02000000 && cm < 0x001000) ||
+                (prev_m >= 0x06000000 && cm < 0x001000))
+                printf("[sh2w] f=%d M->BIOS pc=%08x prev=%08x ppc=%08x\n",
+                       f, cm, prev_m, *(unsigned *)(m + 0x44));
+            if ((prev_s >= 0x02000000 && cs < 0x001000) ||
+                (prev_s >= 0x06000000 && cs < 0x001000))
+                printf("[sh2w] f=%d S->BIOS pc=%08x prev=%08x ppc=%08x\n",
+                       f, cs, prev_s, *(unsigned *)(s + 0x44));
+            prev_m = cm; prev_s = cs;
+        }
+        /* companion: the SH-2s parked at f=176 waiting for the 68K to answer
+         * on comm0 (0x560 loop), so the real question is where the 68K is.
+         * Every 10th frame early, every frame around the death. */
+        if (f % 10 == 0 || f >= 165)
+            printf("[m68w] f=%d pc=%08x\n", f,
+                   (unsigned)(m68k.pc & 0xffffff));
+#endif
+
+#ifdef RIG_SDRAM_SCAN
+        /* GLM: D32XR Z_Malloc hunt. Once the SH-2s die (sh2_d==0 after the
+         * game ran), find every "Z_Malloc" copy in SDRAM — in plain and in
+         * pair-swapped byte order, the buffer may hold either — and dump
+         * context around it, so the ROM-window reader hook can be re-aimed
+         * at the relocated string. One shot. */
+        if (f >= 150 && sh2_d == 0 && !s_zscan_done) {
+            extern struct Pico32xMem *Pico32xMem;
+            static const unsigned char pat[2][8] = {
+                { 'Z','_','M','a','l','l','o','c' },          /* plain     */
+                { '_','Z','a','M','l','l','c','o' },          /* pair-swapped */
+            };
+            s_zscan_done = 1;
+            printf("[zscan] at f=%d m68k.pc=%08x\n", f,
+                   (unsigned)(m68k.pc & 0xffffff));
+            /* the rebooted program died at SDRAM 0x554..0x562 (first watch);
+             * dump that window so it can be disassembled */
+            if (Pico32xMem) {
+                const unsigned char *sd = (const unsigned char *)Pico32xMem;
+                printf("[zscan] sdram+0x540:");
+                for (unsigned i = 0x540; i < 0x5e0; i += 2) {
+                    unsigned gw = sd[i] | (sd[i + 1] << 8);
+                    printf(" %04x", gw);
+                    if ((i & 0x1e) == 0x1e) printf("\n[zscan] sdram+%03x:", i + 2);
+                }
+                printf("\n");
+            }
+            if (Pico32xMem) {
+                const unsigned char *sd = (const unsigned char *)Pico32xMem;
+                for (int p = 0; p < 2; p++)
+                    for (unsigned i = 0; i < 0x40000 - 8; i++)
+                        if (sd[i] == pat[p][0] && !memcmp(sd + i, pat[p], 8)) {
+                            printf("[zscan] %s copy at sdram+%05x "
+                                   "(guest %08x):", p ? "swapped" : "plain",
+                                   i, 0x06000000 + i);
+                            for (int j = -8; j < 56; j++)
+                                printf(" %02x", sd[i + j]);
+                            printf("\n");
+                        }
+            }
+        }
+#endif
 
         if ((f % 20) == 0 || (f >= 140 && f < 260))
             printf("  f%04d host=%lu sh2=%llu snd=%u/%u\n", f,
@@ -845,5 +1021,29 @@ int main(void) {
                sh2_tot > 0;
     printf("[32x-qemu] %s\n", pass ? "GATE3 PASS: frames advance, fb alive, SH-2s executing"
                                    : "GATE3 FAIL: blank/frozen fb or dead SH-2");
+#ifdef RIG_SRAM_FILL
+    {
+        extern void *rig_sram_ptr(u32 *size);
+        u32 sv_size = 0;
+        unsigned char *sv = rig_sram_ptr(&sv_size);
+        if (sv && sv_size) {
+            u32 nz = 0, first_nz = 0;
+            int seen = 0;
+            for (u32 i = 0; i < sv_size; i++)
+                if (sv[i]) { nz++; if (!seen) { first_nz = i; seen = 1; } }
+            printf("[sram] end state: %u/%u non-zero, first at 0x%x\n",
+                   nz, sv_size, first_nz);
+            if (s_sv_dump_hex) {
+                for (u32 off = 0; off < sv_size; off += 32) {
+                    printf("[svhex %04x]", off);
+                    for (u32 j = 0; j < 32 && off + j < sv_size; j++)
+                        printf("%02x", sv[off + j]);
+                    printf("\n");
+                }
+                printf("[sram] dumped %u bytes as [svhex] lines\n", sv_size);
+            }
+        }
+    }
+#endif
     return pass ? 0 : 4;
 }
