@@ -581,6 +581,15 @@ echo "=== jpeg: hw_jpeg_decoder.c lock/callback/floor-to-4 regressions ==="
 # needed to reproduce them on a host. See tools/jpeg_harness/run.sh.
 bash tools/jpeg_harness/run.sh || fail tools/jpeg_harness/run.sh
 
+echo "=== cx4: the chip's RAM writes stay inside the chip's RAM ==="
+# Six lengths and counts in cx4_hle.c come out of the register file, which is to
+# say out of the cartridge: the $7f47 DMA length is a full 16 bits, two image
+# commands size their work from a width and a height byte, and two list walks
+# take 16-bit counts. The buffer is 8 KB, out of the heap the launcher shares.
+# ASan finds all of them; the pre-clamp file is still in git history, so
+# run.sh --red can show every one of them failing.
+bash tools/cx4_harness/run.sh || fail tools/cx4_harness/run.sh
+
 echo "=== idle power off: one setting, one rule, and every idle loop asks it ==="
 bash tests/test_idle_timeout_wired.sh || fail tests/test_idle_timeout_wired.sh
 

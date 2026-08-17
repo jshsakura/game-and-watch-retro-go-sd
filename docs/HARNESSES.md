@@ -193,6 +193,29 @@ and un-mutes the renderer.
   the lock-poisoning and input-end-callback cases that killed two releases.
   RED comes from `git show <fix>^:` — the actual pre-fix file must fail.
 
+### `tools/cx4_harness` — the Cx4 HLE against its own register file
+- `run.sh` — compiles `external/sm/src/snes/cx4_hle.c` itself (never a copy)
+  under ASan/UBSan and drives it through every `$7f4f` command in all eight
+  `$7f4d` sub-modes. What it proves: the chip's writes stay inside the chip's
+  8 KB RAM, and the wireframe chain-walk terminates.
+- Why it exists: six lengths and counts in that file come out of the register
+  file, i.e. out of the cartridge — the `$7f47` DMA length is a full 16 bits,
+  two image commands size their work from a width and a height byte, and two
+  list walks take 16-bit counts. The buffer is `calloc(1, 8192)` in the heap the
+  launcher shares, so an unclamped value is not a wrong pixel, it is a launcher
+  fault somewhere else later. The reference implementation has the same shapes;
+  faithful is not the same as safe when the reference had slack and we do not.
+- `run.sh --red` — rebuilds the pre-clamp file out of git history (found by
+  `git log -S clamp_to_ram`, so a rebase cannot quietly turn the gate into a
+  no-op) and requires every gate to reproduce its fault. Skips loudly, and
+  passes, when the history is not there (shallow clone).
+- `run.sh --bless` — rewrites `golden_sweep.txt`, the 120-step regression
+  hash. That file is a *regression* net, not a correctness proof.
+- **What this harness does NOT prove**: that the arithmetic matches real
+  hardware. That was established against a behavioral reference which cannot be
+  committed here (non-commercial licence vs this tree's GPLv2). Set
+  `CX4_ORACLE` and diff the command stream by hand to redo it.
+
 ### `tools/snes_harness` — closed initiative, kept for the record
 The SNES-emulation feasibility rig (verdict: ⛔ the PPU alone is 14 ms of a
 16.6 ms frame; do not reopen). Kept because it is the working example of the
