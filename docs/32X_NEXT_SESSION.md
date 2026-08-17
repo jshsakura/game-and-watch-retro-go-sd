@@ -92,8 +92,49 @@ is the one thing that could overturn the result above.
 
 ## The queue
 
-0. **D32XR `Z_Malloc: failed on 496` — device-only; NOT reproducible in the rig
-   (rewritten 2026-08-18 after a full offline campaign).** The line above this
+0. **D32XR `Z_Malloc` — REPRODUCED IN THE RIG, every run, both builds. The gate
+   was lying (2026-08-18, second rewrite; the entry below it is kept because its
+   forensics stand, but its verdict does not).**
+
+   The rig had been reproducing the device failure since the beginning. GATE3
+   said PASS because it tested
+   `(cks100 != cks300 || cks300 != cksend)` — and going from a **blank** screen
+   to a **still** one satisfies the first half. That is exactly the shape of a
+   fatal error. Both SH-2s were busy (61k insn/frame) in the interrupt handler,
+   the framebuffer was non-blank, and the checksum could not read what it said.
+
+   What it says, dumped and rendered (`-DRIG_FB_DUMP=<frame>` +
+   `tools/m7_qemu_rig/fbdump_to_png.py`):
+
+   | ROM | screen | gate, before / after |
+   |---|---|---|
+   | 4 MiB bench cut | `Z_Malloc: failed on 496` | PASS / **FAIL** |
+   | official 5 MiB release | `Z_Malloc: failed on 797752` | — (could not load at all) / **FAIL** |
+   | retail Doom (control) | gameplay, three distinct hashes | PASS / PASS |
+
+   `failed on 496` is the device report, character for character. Nothing about
+   this needed hardware.
+
+   **The gate is fixed**: the two *late* samples must differ, and the failure
+   message names the frozen framebuffer and tells the operator how to read it.
+   Retail Doom still passes, so this is not a tightening that fails everything.
+
+   *The remaining engineering question is now a number.* `BASE_ZONE_SIZE` is
+   `0x33000` — 208,896 bytes. The official release asks for **797,752** in one
+   allocation, which that zone can never satisfy under any fragmentation. So
+   this is not "the allocator ran out"; it is the zone-size or free-memory
+   computation disagreeing with what the build expects. Start at `Z_Init`, and
+   compare what the fork answers against upstream — the stub BIOS and the SDRAM
+   fastpath are still the candidates the previous campaign named.
+
+   *Instrument lesson, worth more than the bug:* a checksum cannot read. The
+   previous campaign ran real BIOS, stub BIOS, and three SRAM fills, 4000 frames
+   each, all "GATE3 PASS", and concluded device-only. Every one of those runs was
+   sitting on the error screen. When a gate's only eye is a hash, add one that
+   can see.
+
+0b. *(superseded verdict, forensics retained)* **`Z_Malloc: failed on 496` —
+   device-only; NOT reproducible in the rig.** The line above this
    entry used to say "Repro is deterministic offline: the QEMU rig hits the
    identical screen in 200 frames." **That claim no longer holds and it is the
    most important artifact of the investigation.** What was actually measured,

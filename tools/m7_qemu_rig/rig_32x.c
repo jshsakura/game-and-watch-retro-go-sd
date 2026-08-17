@@ -523,6 +523,30 @@ static uint32_t fb_checksum(int *nonblank) {
     return sum;
 }
 
+#ifdef RIG_FB_DUMP
+/* Print the framebuffer, run-length encoded, at one frame. A frozen screen is
+ * usually a message -- an allocator failure, an assertion, a "press start" --
+ * and a 32-bit checksum cannot tell those apart. This exists because guessing
+ * which one it was from PC histograms alone burned real time. Reconstruct with
+ * tools/m7_qemu_rig/fbdump_to_png.py.
+ *
+ * RLE because there is no file I/O here: SYS_OPEN returns -1 under this
+ * runtime, printf is all we have, and an error screen is nearly all one
+ * colour, so the whole 320x240 costs a few hundred lines. */
+static void fb_dump_rle(int frame) {
+    printf("[fbd] frame=%d w=320 h=240\n", frame);
+    int i = 0;
+    while (i < 320 * 240) {
+        unsigned short v = s_fb[i];
+        int n = 1;
+        while (i + n < 320 * 240 && s_fb[i + n] == v && n < 65535) n++;
+        printf("[fbd] %d %04x\n", n, v);
+        i += n;
+    }
+    printf("[fbd] end\n");
+}
+#endif
+
 /* ==== audio ================================================================ */
 /* mono like the device (no POPT_EN_STEREO); nonzero sndRate is REQUIRED (it
  * sets pwm.cycles — with 0 the PWM scheduler spins the frame forever) */
@@ -963,6 +987,9 @@ int main(void) {
             if (f < RIG_WARMUP + 500)   tot_w1 += insn;
             if (f >= RIG_FRAMES - 500)  tot_w2 += insn;
         }
+#ifdef RIG_FB_DUMP
+        if (f == RIG_FB_DUMP) fb_dump_rle(f);
+#endif
 #ifdef RIG_TRACE_CKS
         { int nbt; uint32_t ck = fb_checksum(&nbt);
           printf("cks f%04d=%08lx nb=%d\n", f, (unsigned long)ck, nbt); }
@@ -1038,11 +1065,28 @@ int main(void) {
            CK_A, (unsigned long)cks100, nb100, CK_B, (unsigned long)cks300, nb300,
            CK_LAST, (unsigned long)cksend, nbend);
 
-    int pass = (nb100 || nb300 || nbend) &&
-               (cks100 != cks300 || cks300 != cksend) &&
-               sh2_tot > 0;
-    printf("[32x-qemu] %s\n", pass ? "GATE3 PASS: frames advance, fb alive, SH-2s executing"
-                                   : "GATE3 FAIL: blank/frozen fb or dead SH-2");
+    /* The two LATE samples must differ. The old test accepted
+     * (cks100 != cks300 || cks300 != cksend), and the first half of that is
+     * satisfied by going from a blank screen to a still one -- which is exactly
+     * what a fatal error looks like. D32XR sat on "Z_Malloc: failed on 496",
+     * both SH-2s busy in the interrupt handler, and this gate called it PASS
+     * for as long as it existed; the run was reported upward as "the rig cannot
+     * reproduce the device failure". It had been reproducing it all along. A
+     * checksum cannot read, so do not ask it whether the screen is good --
+     * only whether it is still moving. */
+    int moving = (cks300 != cksend);
+    int pass = nbend && moving && sh2_tot > 0;
+    if (pass) {
+        printf("[32x-qemu] GATE3 PASS: frames advance, fb alive and moving, SH-2s executing\n");
+    } else {
+        printf("[32x-qemu] GATE3 FAIL: %s\n",
+               !nbend  ? "framebuffer blank at the end" :
+               !moving ? "framebuffer FROZEN between the last two samples -- if a game "
+                         "is running this is a death screen; dump it with "
+                         "EXTRA_DEF=\"-DRIG_FB_DUMP=<frame>\" and "
+                         "tools/m7_qemu_rig/fbdump_to_png.py, and READ it"
+                       : "SH-2s never executed");
+    }
 #ifdef RIG_SRAM_FILL
     {
         extern void *rig_sram_ptr(u32 *size);

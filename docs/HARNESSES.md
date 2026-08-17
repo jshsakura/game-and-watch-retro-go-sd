@@ -151,6 +151,16 @@ on itself at boot — 40.000 insn/tick — and prints it).
   - `RIG_SH2_WATCH` — per-frame 68K PC track (from f165 or every 10th frame)
     plus SH-2 SDRAM→BIOS edge detection; this is what separated "booting" from
     "dead" and produced the 68K boot-trajectory timeline.
+  - `RIG_FB_DUMP=<frame>` — prints the framebuffer run-length encoded at that
+    frame; `fbdump_to_png.py <log> <png>` rebuilds it. A frozen screen is almost
+    always a message, and the gate's checksum cannot read one: D32XR sat on
+    "Z_Malloc: failed on 496" through four thousand frames of GATE3 PASS, and
+    that run was reported upward as "the rig cannot reproduce the device
+    failure". Reach for this the moment a run freezes.
+  - `RIG_STRPAGE_ADDR=<68k addr>` — the window `RIG_STRPAGE` watches. The
+    default is the 4 MiB bench cut's `Z_Malloc` string; it moved in the official
+    release, and a trap pinned to the wrong address reports zero hits while
+    watching nothing.
   - `RIG_STRPAGE` — reroutes the 68K 64KB page containing a string of interest
     to logging handlers (installed at f8, after `PicoMemSetup32x`); catches
     *who reads the error string*, i.e. the failing caller's PC.
