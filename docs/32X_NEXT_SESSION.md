@@ -209,6 +209,44 @@ is the one thing that could overturn the result above.
    `p32x_sh2_read16` call instead. Doom's msh2 executes 100% out of cart ROM,
    ~173k fetches a frame.
 
+   *And then the real ROM turned up.* It was on this machine all along, under
+   `/tmp/opencode/wt32xp/*/rom.32x` (5,242,880 B, md5 `2a23fcf6…`), left by an
+   earlier session. **The official 5 MiB D32XR release now loads and starts**,
+   which it had never done here:
+
+   ```
+   00000:000: SSF2 mapper startup
+   [32x-qemu] romlen=5242880 ssf2_active=1
+   00002:091: 32X startup
+   ```
+
+   Two traps on the way, both worth keeping:
+
+   - **That copy is byte-swapped and the 4 MiB card image is not.** Its header
+     reads `ESAGS FS` where the card image reads `SEGA 32X`. The rig wants the
+     plain form; fed the swapped one it runs the 68K at 926k insn/frame with
+     `sh2=0` and a blank screen — indistinguishable from a wedge. Check the
+     header before believing any 32X result: `dd bs=1 skip=256 count=48 | strings`
+     should say `SEGA`, not `ESAGS`.
+   - **The system field of the real cart is `SEGA SSF`, not `SEGA 32X`** — the
+     SSF2 signature sits where the 32X one does on the bench build. 32X still
+     enables (it comes from the game's ADEN write, not the header), but anything
+     that keys off that field will disagree between the two ROMs.
+
+   **Where it stands now — a device-only failure became an offline one.** With
+   the real cart the mapper installs, 32X starts, the framebuffer is non-blank
+   (`c8b3777c`) — and it never changes again, from f99 through f1999, while the
+   SH-2s run ~1.4–2.6k insn/frame against the bench build's 61k. They are alive
+   and parked. The `Z_Malloc` string trap fires zero times
+   (`RIG_STRPAGE_ADDR=0x8a4c9c` — the string moved from `0x8adbdc` in the bench
+   cut, and a trap pinned to the old address reports "0 hits" while watching
+   nothing, so it is a knob now).
+
+   That is a different failure from the one item 0 chased, it is deterministic,
+   and it needs no device. **Next session starts here, not on hardware.** First
+   questions: does the SH-2 see the banked window correctly (`memory.c:1536+`
+   claims to handle it), and what is it polling when it parks?
+
    **Open, and the obvious next lever:** make the fetch fast path bank-aware
    rather than off — `Pico.rom + (carthw_ssf2_banks[(a >> 19) & 7] << 19) +
    (a & 0x7ffff)`, which is the same arithmetic `memory.c:1615` already does on

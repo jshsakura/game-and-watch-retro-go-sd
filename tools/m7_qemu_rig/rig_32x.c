@@ -68,7 +68,7 @@ static int s_zscan_done;
 #endif
 #ifdef RIG_STRPAGE
 /* GLM: reroute 68K page 0x8a (ROM offsets 0x20000-0x2ffff — the window
- * holding "Z_Malloc: failed on" at 0x8adbdc) through handlers that exactly
+ * holding "Z_Malloc: failed on") through handlers that exactly
  * replicate the direct pre-byteswapped ROM mapping, logging any read of the
  * string window. The reader's m68k.pc is the error printer; its caller is
  * the Z_Malloc failure path. Installed at f==8, AFTER the game's ADEN write
@@ -81,13 +81,26 @@ extern uptr m68k_read8_map[];
 extern uptr m68k_read16_map[];
 void cpu68k_map_set(uptr *map, u32 start_addr, u32 end_addr,
     const void *func_or_mh, int is_func);
+/* The string's ROM offset moves between D32XR builds -- 0xdbdc in the 4 MiB
+ * bench cut, 0x4c9c in the official 5 MiB release -- and a window pinned to one
+ * of them watches nothing in the other while still reporting "0 hits", which
+ * reads exactly like "the 68K never touched it". Override per ROM:
+ *   EXTRA_DEF="-DRIG_STRPAGE -DRIG_STRPAGE_ADDR=0x8a4c9c"
+ * Find it with: python3 -c "print(hex(open(ROM,'rb').read().find(b'Z_Malloc')))"
+ * and add 0x8a0000 - 0x20000. */
+#ifndef RIG_STRPAGE_ADDR
+#define RIG_STRPAGE_ADDR 0x8adbdc
+#endif
+#define RIG_STRP_LO ((RIG_STRPAGE_ADDR) & ~0xffu)
+#define RIG_STRP_HI (RIG_STRP_LO + 0x100u)
+
 static int s_strp_hits;
 static unsigned char *s_rom_base;
 extern int rig_frame_no;  /* declared later in this file (L137) */
 extern const unsigned char _binary_rom_32x_start[];  /* linker symbol, also later (L140) */
 static u32 rig_strp_r8(u32 a)
 {
-  if (a >= 0x8adb00 && a < 0x8adc00 && s_strp_hits < 32) {
+  if (a >= RIG_STRP_LO && a < RIG_STRP_HI && s_strp_hits < 32) {
     s_strp_hits++;
     lprintf("[zrd] f=%d r8 pc=%08x a=%08x\n", rig_frame_no,
             (unsigned)(m68k.pc & 0xffffff), (unsigned)a);
@@ -96,7 +109,7 @@ static u32 rig_strp_r8(u32 a)
 }
 static u32 rig_strp_r16(u32 a)
 {
-  if (a >= 0x8adb00 && a < 0x8adc00 && s_strp_hits < 32) {
+  if (a >= RIG_STRP_LO && a < RIG_STRP_HI && s_strp_hits < 32) {
     s_strp_hits++;
     lprintf("[zrd] f=%d r16 pc=%08x a=%08x\n", rig_frame_no,
             (unsigned)(m68k.pc & 0xffffff), (unsigned)a);
@@ -730,6 +743,15 @@ int main(void) {
     enum media_type_e mt = PicoLoadMedia("game.32x", _binary_rom_32x_start, rom_len,
                                          NULL, NULL, NULL, NULL);
     printf("[32x-qemu] PicoLoadMedia -> media_type=%d AHW=%x\n", (int)mt, (unsigned)PicoIn.AHW);
+    {
+      /* A cart over 4 MiB is only playable if the SSF2 mapper actually
+       * installed. Say so out loud: a silent no-mapper run looks exactly like
+       * a wedge, and that ambiguity is what made ">4 MiB" a closed row for
+       * months. */
+      extern int carthw_ssf2_active;
+      printf("[32x-qemu] romlen=%u ssf2_active=%d\n",
+             (unsigned)rom_len, carthw_ssf2_active);
+    }
 #ifdef RIG_32X_SSF
     /* The SSF (bank-switch) mapper, which the firmware compiles out for this
      * core (pico/cart.c's `#ifndef GNW_32X_CORE`, because the zero-copy flash
