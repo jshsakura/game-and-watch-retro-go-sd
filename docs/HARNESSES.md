@@ -108,8 +108,9 @@ mps2-an500 (Cortex-M7) with `-icount shift=0` makes virtual time tick exactly
 so a timer delta IS an instruction count (the rig calibrates the exact scale
 on itself at boot — 40.000 insn/tick — and prints it).
 - The 32X core was removed on 0727 (`docs/32X_CLOSED.md`), and its rigs with
-  it. The measurement workflow those rigs implemented -- histogram, hot loop,
-  on-device DWT -- is still worth reading as a method:
+  it. (It later returned with the MD32X port; `run_32x.sh` below is that
+  core's current rig.) The measurement workflow those rigs implemented --
+  histogram, hot loop, on-device DWT -- is still worth reading as a method:
   `docs/32X_PERFORMANCE_HISTOGRAM_GUIDE.md` and
   `docs/32X_DEVICE_MEASUREMENT_LOG.md`.
 - `run_vb.sh <rom.vb> [frames]` — the linux/vb harness driver, bare-metal:
@@ -131,6 +132,40 @@ on itself at boot — 40.000 insn/tick — and prints it).
   rewrite cut it ~32% at identical RUNHASH.
 - `rig_runtime.c`/`mps2_an500.ld` are core-agnostic: copy `rig_vb.c`'s shape
   to put any other core on the same scale.
+- `run_32x.sh <rom.32x> [frames]` — the 32X (picodrive MD32X) variant, built
+  from the same trimmed source set and defines as the device overlay
+  (`-DGNW_32X_CORE`). Use it for **boot/death forensics**: who is executing
+  what, in which phase, when a cart misbehaves — not for fps. Two traps earned
+  their keep during the D32XR `Z_Malloc` campaign: (1) a 32X boot is *long* —
+  BIOS copy/checksum into the hundreds of frames, then a MEGASD-detect delay
+  loop, then init — so short windows read `sh2 == 0` and look dead when the
+  game is simply still booting (that artifact masqueraded as a deterministic
+  repro for a week); run 500–4000 frames. (2) QEMU semihosting passes **no
+  environment variables** to the guest (env knobs silently no-op) and
+  `SYS_OPEN` returns −1 for everything — only `SYS_WRITE0` printf works — so
+  rig knobs are compile-time macros via `EXTRA_DEF`, and data gets in/out via
+  `xxd -i` headers and hex-dump prints.
+  Probe macros (all `#ifdef`-guarded, inert unless requested, verified
+  build-neutral: probe-full and plain runs give identical framebuffer
+  checksums):
+  - `RIG_SH2_WATCH` — per-frame 68K PC track (from f165 or every 10th frame)
+    plus SH-2 SDRAM→BIOS edge detection; this is what separated "booting" from
+    "dead" and produced the 68K boot-trajectory timeline.
+  - `RIG_STRPAGE` — reroutes the 68K 64KB page containing a string of interest
+    to logging handlers (installed at f8, after `PicoMemSetup32x`); catches
+    *who reads the error string*, i.e. the failing caller's PC.
+  - `RIG_SDRAM_SCAN` — one-shot SDRAM scan + code-window dump when SH-2 goes
+    permanently quiet (for post-death forensics; remember a BIOS reboot wipes
+    SDRAM, so pre-death state needs an earlier probe).
+  - `RIG_SRAM_FILL` — preload (`RIG_SRAM_PRELOAD_HEADER` = path to an
+    `xxd -i` header of a real `.sram`), fill (`RIG_SRAM_FILL_BYTE=0xff` or
+    `0x100` = random seed 1234), and dump (`RIG_SRAM_DUMP_HEX`) of save RAM;
+    accesses `Pico.sv` through the `rig_sram_ptr()` helper in
+    `external/picodrive/pico/cart.c` (guarded by the same macro, so the
+    firmware build is untouched).
+  - For register/command-traffic traces the throwaway recipe is: printf in
+    `p32x_reg_write8/16`, `p32x_sh2reg_write16`, `sh2_reset` (that was
+    `RIG_LM_TRACE`, not kept).
 
 ### `tools/tamapoke_harness` — every screen, in both themes, actually used
 
@@ -304,6 +339,7 @@ in the binary. Full guide: [SNES_DEVICE_DWT.md](SNES_DEVICE_DWT.md).
 | does sound actually come out | `tests/test_tamapoke_audio.c` (the model: link the real audio file) |
 | does a small on-card store survive its edges | `tests/test_video_resume.c` (pure FILE* logic, real source linked, store path overridden to /tmp) |
 | what is the device really spending a frame on | `feat/gba-probe`; for SNES, `SNES_DEVICE_PROFILE=1` |
+| who is executing what when a 32X cart misbehaves | `tools/m7_qemu_rig/run_32x.sh` + probe macros (boot/death forensics; run 500+ frames — short windows are still booting) |
 | does my ROM-pattern feature hold across a whole library | `tools/snes_bake_survey/` — survey, then hash-gate every hit ([SNES_ROM_SURVEY.md](SNES_ROM_SURVEY.md)) |
 | is fps compute-bound or sitting on the audio deadline | `SNES_DEVICE_PROFILE=1` Ledger C — DWT alone cannot answer this, it goes blind in `__WFI()` |
 | **is the game actually ON THE SCREEN** | `tools/gnw_probe/screenshot.sh --live` — no counter can answer this; see below |

@@ -92,22 +92,71 @@ is the one thing that could overturn the result above.
 
 ## The queue
 
-0. **D32XR `Z_Malloc: failed on 496` (open, next session's first item).** After
-   both fixes the game boots, renders its init screen, then dies to this
-   id-tech allocator error (white text on dark green). Everything about it is
-   SH-2-side: the 68K never reads the error string (page-0x8a reroute caught 0
-   hits), no ZONEID 0x1d42/0x1d4a11 in SDRAM or 68K DRAM at any frame f10-f140,
-   and the string has no instruction-form references in ROM (code is
-   RAM-relocated). Failure lands f45+, after the MEGASD flashcart detect
-   (f14-f45 — writes 0xcd54→$3f7fa, polls $3f800 for 'MEGASD', benign).
-   Repro is deterministic offline: the QEMU rig hits the identical screen in
-   200 frames (`build/rig_{fbz2,zd*,sref2,errcatch}` + logs in
-   `/tmp/opencode/rig_*.log`; ROM = 4 MiB bench build md5 110d2229). Next
-   leads: scan the SH-2 data arrays (`sh2s+0x580` per core) for the zone;
-   hook the SH-2 ROM fetch or the VDP text-blit to name the failing caller;
-   the allocator is custom (no ZONEID tags), so find `Z_Init`'s zone-size
-   computation and check what free-memory answer the fork gives differently
-   from upstream (fork stub BIOS / SDRAM fastpath are candidates).
+0. **D32XR `Z_Malloc: failed on 496` — device-only; NOT reproducible in the rig
+   (rewritten 2026-08-18 after a full offline campaign).** The line above this
+   entry used to say "Repro is deterministic offline: the QEMU rig hits the
+   identical screen in 200 frames." **That claim no longer holds and it is the
+   most important artifact of the investigation.** What was actually measured,
+   separated from what is guessed:
+
+   *Measured (current tree + picodrive 190f6329, ROM md5 110d2229 — byte-equal
+   to the card copy pulled 08-15):*
+   - The rig does not die. Real BIOS: 4000 frames, GATE3 PASS, framebuffer
+     rendering, comm handshakes alive at f3999. Stub BIOS — which is what the
+     device actually runs; the firmware tree has zero `p32x_bios` references,
+     so `p32x_bios_m/s == NULL` takes the stub path — 4000 frames GATE3 PASS.
+   - SRAM variants all PASS too: zeroed baseline, 0xff-filled, random-filled
+     (2000 frames each). The game writes nothing to SRAM during boot+title,
+     ignores 0xff, but *does* modify 123 bytes of random-filled SRAM — a
+     non-zero SRAM is parsed and rewritten by some init path.
+   - The `sh2 == 0` seen in old 200-frame runs is a boot-latency artifact, not
+     death: SH-2 BIOS copy/checksum occupies f4–f169 (~167k insn/frame) while
+     the 68K waits on comm4 (checksum report); handshake completes at f170;
+     the MEGASD detect delay loop (~1.5M 68K cycles) runs f181+; game init
+     follows. Short windows catch the quiet middle of a long boot and look
+     wedged. (This also answers most of old item 4.)
+   - What the error *is* (from the ported source, `z_zone.c`): 496 = ~488-byte
+     request + 8-byte header, 4-aligned, failing inside the main zone. The zone
+     is a compile-time fixed static array in the SH-2 program BSS
+     (`BASE_ZONE_SIZE 0x33000` = 208,896 B) — identical on device and rig, so a
+     device failure is an allocation-*pattern* divergence during init, not a
+     smaller zone.
+   - The death screen's own mechanism (from rig forensics of the boot
+     sequence): the SH-2 boot program parks polling comm0=="M_OK" (CPOLL). If
+     the game's 68K error path resets the SH-2, the BIOS reboot re-copies SDRAM
+     and wipes the evidence — the 08-16 device SDRAM dump is post-mortem (no
+     zone, no error state; the old ZONEID scan was checking for tags a custom
+     allocator never writes).
+
+   *Not known / guessed, deliberately labelled:* why the device diverges. The
+   old deterministic repro came from the `exp/32x-d32xr` worktree (3677a674)
+   plus throwaway probe builds, not this tree; what changed in between includes
+   the D32XR STRD/PWM fixes (c06b334e, 190f6329). **Not bisected** — the old
+   worktree is gone, so a bisect would have to recreate it. Remaining suspects:
+   real saved-game SRAM on the card, timing, device-only codegen.
+
+   *Leads cancelled, with reasons:* SDRAM-fastpath A/B (the rig never dies, so
+   there is nothing to A/B); zone-size dump (the zone is a fixed BSS array, not
+   runtime-probed — same answer on both sides).
+
+   *Device-owner verification, in this order (needs hardware):*
+   a. Check the card for a D32XR `.sram` (the ROM header declares SRAM at
+      0x200001–0x207fff). Delete it, cold-boot. The timeline fits: 08-15 20:48
+      the title screen was reached (first boot, SRAM empty) — every later boot
+      failed. A real saved SRAM is the one input the rig never saw.
+   b. Re-verify on current HEAD — the failing observations predate 190f6329.
+   c. If it still reproduces: dump SDRAM *at* the failure moment, before the
+      SH-2 reboot wipes it (SWD halt + mdw, not a post-reboot dump).
+
+   *Probe persistence:* the rig probes are now in-tree —
+   `tools/m7_qemu_rig/run_32x.sh` + `RIG_SH2_WATCH` (68K PC track + SH-2
+   SDRAM→BIOS edge), `RIG_STRPAGE` (68K page-0x8a string-reader trap),
+   `RIG_SDRAM_SCAN` (post-death SDRAM scan), `RIG_SRAM_FILL`
+   (preload/fill/dump; note QEMU semihosting passes no env vars and SYS_OPEN
+   returns -1 — the knobs are compile-time macros, see HARNESSES.md). The
+   `RIG_LM_TRACE` reg-write/reset hooks were throwaway in /tmp and are gone;
+   recipe to rebuild: printf in `p32x_reg_write8/16`, `p32x_sh2reg_write16`,
+   `sh2_reset`.
 
 1. **Gameplay-anchored numbers for everything.** Retail Doom **done** —
    16.10/16.09 (2026-08-16), 15.89/15.91/15.89 on the 08-17 tree, and the OC
@@ -131,12 +180,16 @@ is the one thing that could overturn the result above.
    whole `carthw.cfg` table. The official D32XR release is exactly such a cart
    and has never been run. Price `carthw.c` against the `.overlay_md32x` budget
    before enabling anything.
-4. **Rig fidelity, low priority.** Why the rig wedges is unknown; init matches
-   the device, the loop differs only in pacing, `set_out_buffer` period and
-   `skipFrame`, all guest-invisible candidates. The rig counts instructions; it
-   does not decide anything. ⛔ Do not try to settle it by linking the upstream
-   tree inside the rig — the stub chase does not terminate and the result is a
-   third program.
+4. **Rig fidelity — mostly answered 2026-08-18, remainder low priority.** The
+   old "the rig wedges" observation was the boot-latency artifact described in
+   item 0: 200-frame windows sit inside the quiet middle of a ~300+-frame boot
+   (BIOS copy → MEGASD detect delay → init) and read as `sh2 == 0`. Run 4000
+   frames and the same rig boots, renders and handshakes to the end. What is
+   still unknown about fidelity is only the pacing mapping (rig icount vs
+   device wall-clock), which nobody currently needs. The rig counts
+   instructions; it does not decide anything. ⛔ Do not try to settle pacing by
+   linking the upstream tree inside the rig — the stub chase does not terminate
+   and the result is a third program.
 
 ## How to measure this core without wasting a day
 
