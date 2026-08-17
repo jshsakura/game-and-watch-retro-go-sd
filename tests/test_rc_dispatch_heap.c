@@ -84,10 +84,29 @@ static void (*test_fns[N_SITES])(Cpu *) = {
   site_fn_00, site_fn_00, site_fn_00, site_fn_00,
 };
 
-/* Caller-provided buffers (overlay BSS on device, stack/static here). */
-static rc_entry_t test_table[N_SITES];
+/* Caller-provided buffers (overlay BSS on device, static here).
+ *
+ * The storage is NOT nsites entries. rc_dispatch_init gives each non-empty bank
+ * an open-addressing region of next_pow2(count * 2) slots, so the total is the
+ * sum of those — for the 8+8 sites below, 16 + 16 = 32, twice what a naive
+ * sizing gives. The firmware sizes this correctly: rc_smw_sites.c declares
+ * rc_hash_storage[RC_HASH_CAP], and translate.py computes RC_HASH_CAP as exactly
+ * that sum, with a _Static_assert against the overlay BSS budget.
+ *
+ * This test did not. It declared N_SITES entries and rc_dispatch_init wrote 32,
+ * running 16 entries past the array into whatever BSS followed. On aarch64 what
+ * followed was these two tables in an order that left every assertion true, so
+ * the test PASSED and had done for as long as it existed. On x86_64 the same
+ * write segfaulted. It only ran there at all once CI started checking out
+ * external/sm for the Cx4 gate.
+ *
+ * next_pow2(2c) < 4c for any c >= 1, so 4 * N_SITES is a safe bound for any
+ * distribution of these sites across banks — no arithmetic to keep in sync with
+ * the test data. */
+#define TEST_HASH_CAP (4 * N_SITES)
+static rc_entry_t test_table[TEST_HASH_CAP];
 static uint32_t   test_bank_off[256];
-static uint32_t   test_bank_cnt[256];
+static uint32_t   test_bank_mask[256];
 
 int failures = 0;
 
@@ -101,7 +120,7 @@ int main(void) {
 
   /* 1. Init with caller-provided buffers — NO heap allocation allowed. */
   g_alloc_count = 0;
-  rc_dispatch_init(test_table, test_bank_off, test_bank_cnt,
+  rc_dispatch_init(test_table, test_bank_off, test_bank_mask,
                    test_addrs, N_SITES, test_fns);
   check(g_alloc_count == 0, "zero heap allocations during rc_dispatch_init");
   if (g_alloc_count > 0)
