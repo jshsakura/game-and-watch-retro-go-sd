@@ -14,11 +14,12 @@ Everything below is measured on hardware unless it says otherwise.
 | Retail Doom, before today | 7.85 — the forced-draw ratio fix is worth **×2.8 on the same anchor** |
 | Retail Doom, **gameplay anchor** (savestate resume) | **16.10/16.09 drawn fps** (measured 2026-08-16, screenshot-verified first-person scene) |
 | Retail Doom, gameplay anchor, 08-17 tree | **15.89/15.91/15.89** (1800-frame ×3, savestate-resume arm `gpf` = 08-16 tree + the PWM-read sync restore; spread 0.02). Same anchor as above; the ~0.2 delta is the tree change |
+| Retail Doom, gameplay anchor, OC A/B (08-17) | `MD32X_OC_LEVEL=1` **15.19×3** vs `=2` **17.02×3** (arms `oc1g`/`oc2g`, same committed tree, intflash byte-identical, only `32x.bin` differs) — **+12.0%, spread 0.00**. Reverses the attract-demo verdict (+0.6%); see `32X_CLOSED.md` clock-floor section |
 | D32XR (4 MiB bench build) | old "41.4 drawn fps" claim is **from a tree state no longer reproducible** — on 2026-08-15's tree D32XR deterministically HardFaulted at frame 59. Two bugs fixed 2026-08-16 (below); now boots and renders, but dies to `Z_Malloc: failed on 496` (open) |
 | Real gameplay speed | retail Doom measured (16.1); D32XR pending its Z_Malloc fix |
 | Emulated speed | ~36% of a 60 Hz machine (retail Doom attract). The console still plays in slow motion |
 | Branch | `testbed`, pushed through `be6dc79b`. Submodules `external/sm` @ `5bc1605`, `external/picodrive` @ `c06b334e` (gnw-port), both on remotes |
-| Arms built | `/tmp/gnw_arms/oc1`, `/tmp/gnw_arms/oc2` (cold-boot autoboot, **not** savestate-resume) |
+| Arms built | `/tmp/gnw_arms/oc1`, `/tmp/gnw_arms/oc2` (cold-boot autoboot, **not** savestate-resume); `/tmp/gnw_arms/{gp,gpr,gpf,gp2,gp3,oc1g,oc2g}` (savestate-resume, 08-15→08-17 campaigns) |
 | Worktree | `exp/32x-oc` — a scratch worktree used to build away from a checkout whose `external/sm` was mid-surgery |
 
 ## What changed today
@@ -93,9 +94,11 @@ is the one thing that could overturn the result above.
    from upstream (fork stub BIOS / SDRAM fastpath are candidates).
 
 1. **Gameplay-anchored numbers for everything.** Retail Doom **done** —
-   16.10/16.09 (2026-08-16) and 15.89/15.91/15.89 on the 08-17 tree. Remaining:
-   D32XR (blocked on item 0) and the OC A/B re-run against the gameplay anchor —
-   the one measurement that could still overturn "clock floor is not a lever".
+   16.10/16.09 (2026-08-16), 15.89/15.91/15.89 on the 08-17 tree, and the OC
+   A/B **done 2026-08-17**: L1 15.19×3 vs L2 17.02×3 = **+12.0%** — the clock
+   floor *is* a lever in gameplay (see `32X_CLOSED.md`); whether to raise the
+   default is a stability/battery call, not a measurement one. Remaining:
+   D32XR (blocked on item 0).
 2. **Device PC profile — DONE 2026-08-17** (gameplay anchor, savestate-resume
    arm, 2000 host-PC + 2000 guest-PC samples). Host: `sh2_execute_interpreter`
    dispatch **49.4%** of samples, SH-2 family ~60.8% total — July's "half the

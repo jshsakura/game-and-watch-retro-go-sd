@@ -192,33 +192,51 @@ which cost three Super Metroid releases.
 The rig can supply the real BIOS (`RIG_32X_BIOS=<dir>`) and bank a >4 MiB cart
 (`RIG_32X_SSF=1`); both exist only for this investigation.
 
-### ⛔ The clock floor is not a lever — 340 MHz buys nothing here
+### ⚠️ The clock floor is not a lever on the attract demo — but it is one in gameplay (+12%)
 
 `main_md32x.c` asked for `common_emu_auto_oc(1)` (312 MHz), the lowest boost any
 core in the tree requests, from the most CPU-bound core in it — GBA asks for 3.
-That looked like free performance sitting unclaimed. It is not.
+That looked like free performance sitting unclaimed. On the attract demo it
+measured as none; on the gameplay anchor it very much is.
 
-Measured on hardware, retail Doom, 1800-emulated-frame windows, five samples per
-arm, card-side core hash verified on every run:
+**Attract demo** (08-15 arms, 1800-emulated-frame windows, five samples per arm,
+card-side core hash verified on every run):
 
 | arm | drawn fps |
 |---|---|
 | `MD32X_OC_LEVEL=1` — 312 MHz core, OSPI 104 MHz | 21.77 21.78 21.79 21.90 21.93 |
 | `MD32X_OC_LEVEL=2` — 340 MHz core, OSPI **97** MHz | 21.52 21.92 21.93 22.04 (+1 truncated) |
 
-**+9% of core clock produced +0.6%, inside a 0.7% noise band.** The reason is in
-the second column: the boost levels trade the two clocks against each other, and
-this core's SH-2 fetches its cart out of external flash, so the bus that feeds
-the interpreter got 7% slower at the same time the interpreter got 9% faster.
-The knob stays (`MD32X_OC_LEVEL`, default 1) because a gameplay-anchored load
-may weigh the two differently, but do not expect it to.
++9% of core clock produced +0.6%, inside a 0.7% noise band — the boost levels
+trade the two clocks against each other, and this core's SH-2 fetches its cart
+out of external flash, so the bus that feeds the interpreter got 7% slower at
+the same time the interpreter got 9% faster.
 
-One oc2 sample out of five degraded ~6x and was flagged `WINDOW TRUNCATED at
-120s: 440 of 1800 frames`. oc1 did that zero times in five. That is one
-observation, not a verdict — but `SystemClock_Config`'s own comment says the
-menu ceiling dropped to 340 because 353 "proved unstable under sustained load on
-some cores (Genesis)", and this is the same family. Another reason not to raise
-the default on a hunch.
+**Gameplay anchor** (08-17, retail Doom savestate-resume, same protocol, arms
+`oc1g`/`oc2g` built from the same committed tree — intflash byte-identical,
+only `32x.bin` differs, md5-verified; card-side core hash checked via
+`CORE=32x`, window photo judged GAMEPLAY_3D, ratio 1.0000 in every run):
+
+| arm | drawn fps |
+|---|---|
+| `MD32X_OC_LEVEL=1` — 312 MHz core, OSPI 104 MHz | 15.19 15.19 15.19 |
+| `MD32X_OC_LEVEL=2` — 340 MHz core, OSPI **97** MHz | 17.02 17.02 17.02 |
+
+**+12.0%, with a per-arm spread of 0.00.** The attract verdict does not
+transfer. The gameplay device PC profile (this file, "Why 2x out of reach")
+puts 52% of host time in ITCM and 7% in RAM — pure core-clock domains — and 41%
+in XIP out of external flash; a net +12% means the XIP share is evidently not
+OSPI-starved at 97 MHz (caching absorbs it), so the core clock scales nearly
+the whole gameplay workload. The attract demo must weigh the buses differently
+(it was never PC-profiled; do not reuse its verdict for anything but itself).
+
+Stability: today's 340 MHz arm ran 3 × ~106 s of sustained full load with zero
+truncation. The earlier one-in-five `WINDOW TRUNCATED at 120s: 440 of 1800`
+(08-15 arm, attract) remains one observation, not a verdict — but
+`SystemClock_Config`'s own comment says the menu ceiling dropped to 340 because
+353 "proved unstable under sustained load on some cores (Genesis)", and this is
+the same family. The default stays 1 until someone plays a battery-draining
+session on a 340 MHz arm and decides otherwise.
 
 **How to measure this core at all** — both of these cost real time today:
 
@@ -320,6 +338,7 @@ Two of these were built, measured and reverted. None was rejected on a hunch.
 | State placement (DTCM) | SH-2 register file moved to DTCM: **94.0 → 92.1** cycles/insn, inside scene noise; per-event costs flat. Reverted — it also charged 12 KB of the shared DTCM heap | picodrive `1c78adf8` → `d4317e53` |
 | QEMU access census | QEMU models no cache, so it can count accesses but never price them — which was the question | `RIG_MEM_MIX` in `rig_32x.c`, left in place, documented as impractical |
 | SDRAM poll parking (idle-skip for Doom's "flow" handshake) | Parking works on device — RPOLL set at 23% of samples, IRQ wake observed, a frame-start safety net heals the one lockup the raw version hit. But the detect call on the SDRAM read fastpath costs more than the spin it saves: **15.61 vs 15.89 gameplay fps, −1.8%** (1800-frame ×3 both arms, card hash-checked). Built, measured, reverted | patch kept at `/tmp/gnw_arms/idleskip_gp3_full.patch`; arms `gp2` (no net) / `gp3` (with net) |
+| Core clock 312→340 MHz (`MD32X_OC_LEVEL` 1→2) | Attract demo: +0.6% (noise) — but the gameplay anchor says **+12.0%** (15.19×3 vs 17.02×3, spread 0.00). Not an attract question; the two loads weigh the buses differently. Default stays 1 pending a stability/battery call | arms `oc1g`/`oc2g`, section above |
 
 ### The cost model that closes it
 
