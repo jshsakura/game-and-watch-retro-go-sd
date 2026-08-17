@@ -231,12 +231,13 @@ the whole gameplay workload. The attract demo must weigh the buses differently
 (it was never PC-profiled; do not reuse its verdict for anything but itself).
 
 Stability: today's 340 MHz arm ran 3 × ~106 s of sustained full load with zero
-truncation. The earlier one-in-five `WINDOW TRUNCATED at 120s: 440 of 1800`
-(08-15 arm, attract) remains one observation, not a verdict — but
-`SystemClock_Config`'s own comment says the menu ceiling dropped to 340 because
-353 "proved unstable under sustained load on some cores (Genesis)", and this is
-the same family. The default stays 1 until someone plays a battery-draining
-session on a 340 MHz arm and decides otherwise.
+truncation, and a ~30 min unattended soak at each clock (312 and 340) reached
+the same deterministic parked state — the game's own 68K clean-shutdown park
+block (PC pinned on a `bra-self`, SR=$2700), not an instability and not
+clock-specific. The earlier one-in-five `WINDOW TRUNCATED at 120s: 440 of 1800`
+(08-15 arm, attract) remains one unexplained observation, never reproduced
+since. **Default raised to 2 in 8653e579** — the no-flags build re-verified the
+gain (16.94/16.95/16.95, arm `ocdef`). Battery call deferred to real play.
 
 **How to measure this core at all** — both of these cost real time today:
 
@@ -338,7 +339,7 @@ Two of these were built, measured and reverted. None was rejected on a hunch.
 | State placement (DTCM) | SH-2 register file moved to DTCM: **94.0 → 92.1** cycles/insn, inside scene noise; per-event costs flat. Reverted — it also charged 12 KB of the shared DTCM heap | picodrive `1c78adf8` → `d4317e53` |
 | QEMU access census | QEMU models no cache, so it can count accesses but never price them — which was the question | `RIG_MEM_MIX` in `rig_32x.c`, left in place, documented as impractical |
 | SDRAM poll parking (idle-skip for Doom's "flow" handshake) | Parking works on device — RPOLL set at 23% of samples, IRQ wake observed, a frame-start safety net heals the one lockup the raw version hit. But the detect call on the SDRAM read fastpath costs more than the spin it saves: **15.61 vs 15.89 gameplay fps, −1.8%** (1800-frame ×3 both arms, card hash-checked). Built, measured, reverted | patch kept at `/tmp/gnw_arms/idleskip_gp3_full.patch`; arms `gp2` (no net) / `gp3` (with net) |
-| Core clock 312→340 MHz (`MD32X_OC_LEVEL` 1→2) | Attract demo: +0.6% (noise) — but the gameplay anchor says **+12.0%** (15.19×3 vs 17.02×3, spread 0.00). Not an attract question; the two loads weigh the buses differently. Default stays 1 pending a stability/battery call | arms `oc1g`/`oc2g`, section above |
+| Core clock 312→340 MHz (`MD32X_OC_LEVEL` 1→2) | Attract demo: +0.6% (noise) — but the gameplay anchor says **+12.0%** (15.19×3 vs 17.02×3, spread 0.00). Not an attract question; the two loads weigh the buses differently. **Default raised to 2 in 8653e579** (no-flags build re-verified 16.94/16.95/16.95) | arms `oc1g`/`oc2g`/`ocdef`, section above |
 
 ### The cost model that closes it
 

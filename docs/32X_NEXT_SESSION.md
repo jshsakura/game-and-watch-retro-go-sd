@@ -14,7 +14,7 @@ Everything below is measured on hardware unless it says otherwise.
 | Retail Doom, before today | 7.85 — the forced-draw ratio fix is worth **×2.8 on the same anchor** |
 | Retail Doom, **gameplay anchor** (savestate resume) | **16.10/16.09 drawn fps** (measured 2026-08-16, screenshot-verified first-person scene) |
 | Retail Doom, gameplay anchor, 08-17 tree | **15.89/15.91/15.89** (1800-frame ×3, savestate-resume arm `gpf` = 08-16 tree + the PWM-read sync restore; spread 0.02). Same anchor as above; the ~0.2 delta is the tree change |
-| Retail Doom, gameplay anchor, OC A/B (08-17) | `MD32X_OC_LEVEL=1` **15.19×3** vs `=2` **17.02×3** (arms `oc1g`/`oc2g`, same committed tree, intflash byte-identical, only `32x.bin` differs) — **+12.0%, spread 0.00**. Reverses the attract-demo verdict (+0.6%); see `32X_CLOSED.md` clock-floor section |
+| Retail Doom, gameplay anchor, OC A/B (08-17) | `MD32X_OC_LEVEL=1` **15.19×3** vs `=2` **17.02×3** (arms `oc1g`/`oc2g`, same committed tree, intflash byte-identical, only `32x.bin` differs) — **+12.0%, spread 0.00**. Reverses the attract-demo verdict (+0.6%); see `32X_CLOSED.md` clock-floor section. **Default raised to 2** (8653e579); default-flag build re-verified **16.94/16.95/16.95** (arm `ocdef`) |
 | D32XR (4 MiB bench build) | old "41.4 drawn fps" claim is **from a tree state no longer reproducible** — on 2026-08-15's tree D32XR deterministically HardFaulted at frame 59. Two bugs fixed 2026-08-16 (below); now boots and renders, but dies to `Z_Malloc: failed on 496` (open) |
 | Real gameplay speed | retail Doom measured (16.1); D32XR pending its Z_Malloc fix |
 | Emulated speed | ~36% of a 60 Hz machine (retail Doom attract). The console still plays in slow motion |
@@ -49,10 +49,26 @@ withdrawn suspect list are in `32X_CLOSED.md` §0b.
 > arm: 17/17 emu/drawn fps (baseline 16.1). The QEMU rig runs D32XR 200 frames
 > GATE3 PASS — same rig, same ROM, now clean.
 
-**The clock floor is not a lever.** `common_emu_auto_oc(1)` → `(2)` is +9% of
-core clock and −7% of OSPI, and this core's SH-2 fetches its cart from external
-flash. Net +0.6%, inside a 0.7% noise band. Closed with numbers in
-`32X_CLOSED.md`. The knob (`MD32X_OC_LEVEL`) stays, default 1.
+**The clock floor is not a lever — on the attract demo.** The paragraph below
+was written from attract numbers; the 08-17 gameplay A/B reversed it: **+12.0%**
+(15.19×3 → 17.02×3). Closed with numbers in `32X_CLOSED.md` §"clock floor".
+The default is now **2** (8653e579, 340 MHz) — re-verified through a
+no-flags build at 16.94/16.95/16.95.
+
+**The 10–25 min unattended wedge is the game parking its own 68K.** Long
+unattended soaks after a clean bench end in a state that *looks* like a
+deadlock: 3D scene frozen, counters still pumping ~60 fps, msh2 pinned in the
+SDRAM "flow" poll, ssh2 in its `bra-self`. It is not a lost wakeup — sampled
+30×2 s in that state, the emulated **m68k PC is pinned at `0x8808a8`, a
+`bra-self` in the ROM's own park block** (`move #$2700,sr`, interrupts off;
+ROM dump + capstone, mirror at `0x880000`). The 68K vector table routes every
+exception to a *different* park block (`0x8808aa` → parks at `0x8808c0`), so
+the observed address is a **called** clean-shutdown, not a crash handler.
+Downstream symptoms (SH-2 waits, cheap 60 fps frames) are consequences, not
+causes. Not a picodrive bug, not clock-related (identical state at 312 and
+340 MHz), not the PWM sync restore. Discriminator for future soaks:
+**60 fps + static 3D + m68k PC pinned on a `bra-self` = the guest parked
+itself — reset before measuring.**
 
 ## The anchor — the most important open item
 
@@ -139,6 +155,10 @@ Four things cost real time on 2026-08-15. All four are cheap to avoid.
 - **Photograph the measurement window.** `screenshot.sh --live` takes ten
   seconds and settles "which scene was that" permanently. Half a day of numbers
   was untrustworthy for want of one image.
+- **Reset before measuring after any idle period.** An unattended device that
+  has been sitting in Doom for 10–25 minutes may have parked its own 68K (see
+  the wedge note above) — the counter then reports a meaningless ~60 fps. One
+  `reset run` (or any bench script's built-in reset) restores the real anchor.
 - **Build in a worktree.** `build/` is shared across every session in a
   checkout, and `external/` can be mid-edit by someone else. Two builds died
   that way today — one on a truncated object left by a killed build, one on
