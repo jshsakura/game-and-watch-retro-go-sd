@@ -1473,12 +1473,16 @@ MD32X_C_DEFS = -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DGNW_32X_CORE -DLS
 ifeq ($(MD32X_DEVICE_PROFILE),1)
 MD32X_C_DEFS += -DMD32X_DEVICE_PROFILE
 endif
-# Which clock floor the core asks for (common_emu_auto_oc). 1 = 312 MHz is what
-# it shipped with; 2 = 340 MHz is the launcher menu's own ceiling. It is not a
-# free 9%: level 1 runs OSPI at 104 MHz and level 2 at 97, and this core's SH-2
-# fetches its cart out of external flash, so the two pull opposite ways. A/B it
-# on hardware before changing the default.
-MD32X_OC_LEVEL ?= 1
+# Which clock floor the core asks for (common_emu_auto_oc). 2 = 340 MHz is the
+# launcher menu's own ceiling. It is not a free 9%: level 1 runs OSPI at 104 MHz
+# and level 2 at 97, and this core's SH-2 fetches its cart out of external flash,
+# so the two pull opposite ways. A/B on hardware (2026-08-17, Doom gameplay
+# savestate-resume anchor, 1800-frame x3 each): level 1 = 15.19/15.19/15.19,
+# level 2 = 17.02/17.02/17.02 -- +12.0%, spread 0.00. The gameplay PC profile
+# says why: 52% ITCM + 7% RAM_EMU is pure core-clock domain and only 41% XIP
+# rides OSPI, so the core clock wins. Sustained-load soak (30+ min, both levels)
+# shows no 340 MHz-specific instability.
+MD32X_OC_LEVEL ?= 2
 MD32X_C_DEFS += -DMD32X_OC_LEVEL=$(MD32X_OC_LEVEL)
 C_INCLUDES +=  \
 -ICore/Inc \
