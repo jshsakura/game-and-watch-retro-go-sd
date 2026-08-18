@@ -120,3 +120,4 @@ gwemu.app/
 # covered by build/, but --log-file can point anywhere. No .log files are tracked.
 *.log
 .gwemu_release_cache
+tools/pico_host/build/
