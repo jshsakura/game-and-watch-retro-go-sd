@@ -116,6 +116,7 @@ static u32 rig_strp_r16(u32 a)
   }
   return *(u16 *)(s_rom_base + (a - 0x880000));
 }
+
 static int s_strp_installed;
 static void rig_strp_install(void)
 {
@@ -126,6 +127,20 @@ static void rig_strp_install(void)
   cpu68k_map_set(m68k_read16_map, 0x8a0000, 0x8affff, rig_strp_r16, 1);
   printf("[zrd] string page 0x8a rerouted at f=%d\n", rig_frame_no);
 }
+#endif
+
+#ifdef RIG_DEATH_STACK
+/* GLM: Z_Malloc caller hunt. At frame RIG_DEATH_STACK dump both SH-2s'
+ * raw register windows (r[16] @0x00, pc @0x40, ppc @0x44, pr @0x48, sr @0x4c
+ * -- offsets verified with gdb ptype /o SH2 on the device ELF) and the
+ * master's stack above r15, then for every SDRAM-range (0x0600xxxx) value
+ * found in that stack dump 48 halfwords of code around it, so one run
+ * yields the whole frozen call chain (the guest parks inside I_Error, the
+ * stack keeps the failing path). ROM-range (0x0202xxxx) return addrs are
+ * resolved offline from the ROM file (offset = guest & 0x3fffff). */
+struct Pico32xMem;                  /* opaque: sdram sits at offset 0 */
+extern struct Pico32xMem *Pico32xMem;
+static int s_ds_done;
 #endif
 
 #ifndef RIG_FRAMES
@@ -962,7 +977,150 @@ int main(void) {
                             for (int j = -8; j < 56; j++)
                                 printf(" %02x", sd[i + j]);
                             printf("\n");
-                        }
+             }
+         }
+#endif
+
+#ifdef RIG_DEATH_STACK
+        /* companion to the header block: fire once at the chosen frame and
+         * walk the frozen SH-2 state (see header comment for offsets). */
+        /* pre-death per-frame tracking: the T_START lookup returned 0x6161
+         * while the death-time count/table say 2079/0x0202d00c, which the
+         * walk cannot produce -- so one of those variables held something
+         * else when the lookup ran. Watch all three every frame leading
+         * into the death frame (guest u32 = halfword-swapped host u32). */
+        if (f >= RIG_DEATH_STACK - 100 && f <= RIG_DEATH_STACK) {
+            extern unsigned char sh2s[];
+            extern unsigned char carthw_ssf2_banks[8];
+            extern const unsigned char _binary_rom_32x_start[];
+            const unsigned char *sd = (const unsigned char *)Pico32xMem;
+            unsigned raw_c = *(const unsigned *)(sd + 0x3ad9c);
+            unsigned raw_t = *(const unsigned *)(sd + 0x8164);
+            unsigned raw_s = *(const unsigned *)(sd + 0x8222);
+            /* T_START match candidate the walk's 0x6161 index implies:
+             * r0 = table + 0x6161*16 = 0x0208e61c, name u32s at +8/+12.
+             * Resolve them through the live SSF2 bank mapping the way
+             * sh2_read32_rom does, so a banked T_START copy is visible. */
+            unsigned bank = carthw_ssf2_banks[4] << 19;
+            const unsigned *rom32 = (const unsigned *)_binary_rom_32x_start;
+            unsigned n0 = __builtin_bswap32(
+                rom32[(bank + (0x0208e624 & 0x7fffc)) / 4]);
+            unsigned n1 = __builtin_bswap32(
+                rom32[(bank + (0x0208e628 & 0x7fffc)) / 4]);
+            printf("[trk] f=%d count=%08x tbl=%08x slot=%08x bk=%02x%02x%02x%02x%02x%02x%02x%02x cand=%08x %08x\n", f,
+                   ((raw_c & 0xffff) << 16) | (raw_c >> 16),
+                   ((raw_t & 0xffff) << 16) | (raw_t >> 16),
+                   ((raw_s & 0xffff) << 16) | (raw_s >> 16),
+                   carthw_ssf2_banks[0], carthw_ssf2_banks[1],
+                   carthw_ssf2_banks[2], carthw_ssf2_banks[3],
+                   carthw_ssf2_banks[4], carthw_ssf2_banks[5],
+                   carthw_ssf2_banks[6], carthw_ssf2_banks[7],
+                   n0, n1);
+        }
+        if (f == RIG_DEATH_STACK && !s_ds_done) {
+            extern unsigned char sh2s[];
+            const unsigned char *sd = (const unsigned char *)Pico32xMem;
+            s_ds_done = 1;
+            for (int c = 0; c < 2; c++) {
+                const unsigned char *cpu = sh2s + c * 6016;
+                printf("[ds] f=%d cpu=%c\n", f, c ? 's' : 'm');
+                for (unsigned o = 0; o <= 0x58; o += 4)
+                    printf("[ds]  +%02x %08x\n", o,
+                           *(const unsigned *)(cpu + o));
+            }
+            /* WAD bookkeeping window: D32XR keeps its wad/lumpinfo state in
+             * SDRAM around 0x0603ad70-0x0603ada0 (literal pool of WAD-init,
+             * 5MiB ROM 0x201a60c-0x201a634). Dump it plus whatever the
+             * lumpinfo table pointer at +0x2c leads to, so a garbage parse
+             * is visible without guessing which field is which. */
+            if (sd) {
+                for (int i = 0; i < 0x90; i += 4)
+                    printf("[ds] wad %08x %08x\n", 0x0603ad70 + i,
+                           *(const unsigned *)(sd + 0x3ad70 + i));
+                unsigned lit = *(const unsigned *)(sd + 0x3ad9c);
+                if ((lit >> 24) == 0x06 && !(lit & 1)) {
+                    unsigned lo = lit & 0x3fffc;
+                    for (int i = 0; i < 0x100; i += 4)
+                        printf("[ds] lit %08x %08x\n", 0x06000000 + lo + i,
+                               *(const unsigned *)(sd + lo + i));
+                }
+                /* lumpinfo table pointer variable (ROM lit 0x201686c ->
+                 * 0x06008164 in the 5MiB build); walk it like
+                 * W_CheckNumForName does and show the head of the table plus
+                 * the ROM directory's T_START slot (index 242). */
+                /* count slot the T_START lookup stores into (0x06008222)
+                 * plus its neighbourhood, to see the u16 the walk returned. */
+                for (int i = 0; i < 0x40; i += 4)
+                    printf("[ds] cnt %08x %08x\n", 0x06008220 + i,
+                           *(const unsigned *)(sd + 0x8220 + i));
+                /* lump-data cache functions live in SDRAM game code
+                 * (0x06005140 = cache(idx)->ptr per the death stack; its
+                 * neighbours 0x06005110 print, 0x06006bd0/0x06006c00 are
+                 * called by WAD-init). Disassembly source for the pointer
+                 * arithmetic that produced 0x2233BA68. */
+                for (int i = 0; i < 0x400; i += 4)
+                    printf("[ds] cache %08x %08x\n", 0x06005100 + i,
+                           *(const unsigned *)(sd + 0x5100 + i));
+                /* cache2 window widened to 0x06006a00-0x06006e00: the
+                 * opcode-0x01 proxy-read requesters observed writing
+                 * comm1=0x070N at ppc=0x06006b4c/0x06006b4e live just below
+                 * the 0x06006bd0 bank callback (lm5.log). Need their disasm
+                 * to learn what the 0x0708 index encodes. */
+                for (int i = 0; i < 0x400; i += 4)
+                    printf("[ds] cache2 %08x %08x\n", 0x06006a00 + i,
+                           *(const unsigned *)(sd + 0x6a00 + i));
+                unsigned tbl = *(const unsigned *)(sd + 0x8164);
+                printf("[ds] lumpinfo_ptr=%08x\n", tbl);
+                if ((tbl >> 24) == 0x06 && !(tbl & 1)) {
+                    unsigned to = tbl & 0x3fffc;
+                    for (int i = 0; i < 0x100; i += 4)
+                        printf("[ds] tbl %08x %08x\n", tbl + i,
+                               *(const unsigned *)(sd + to + i));
+                    unsigned ti = to + 242 * 16;
+                    if (ti + 16 <= 0x40000)
+                        for (int i = 0; i < 0x40; i += 4)
+                            printf("[ds] t242 %08x %08x\n", tbl + 242*16 + i,
+                                   *(const unsigned *)(sd + ti - 0x20 + i));
+                }
+            }
+            unsigned r15 = *(const unsigned *)(sh2s + 0x3c);
+            printf("[ds] msh2 r15=%08x\n", r15);
+            if (sd && (r15 >> 24) == 0x06) {
+                unsigned base = r15 & 0x3fffc;
+                for (int i = 0; i < 320; i++) {
+                    unsigned a = base + i * 4;
+                    if (a + 4 > 0x40000) break;
+                    unsigned v = *(const unsigned *)(sd + a);
+                    printf("[ds]  stk %08x %08x\n", 0x06000000 + a, v);
+                }
+                for (int i = 0; i < 320; i++) {          /* SDRAM code windows */
+                    unsigned a = base + i * 4;
+                    if (a + 4 > 0x40000) break;
+                    unsigned v = *(const unsigned *)(sd + a);
+                    if ((v >> 24) != 0x06 || (v & 1)) continue;
+                    unsigned lo = (v & 0x3fffc) - 0x20;
+                    if (lo > 0x40000 - 0x60) continue;
+                    printf("[ds]  win %08x:", v);
+                    for (unsigned j = 0; j < 48; j++)
+                        printf(" %04x", *(const unsigned short *)(sd + lo + j * 2));
+                     printf("\n");
+                 }
+             }
+            {
+                /* live 68K RAM: the boot block copies game code from ROM
+                 * (file 0x5a30+) into 0xff0000 here, and the RIG_LM_TRACE
+                 * comm-write pcs match this copy, not the ROM bytes. */
+                extern void *rig_pico_ram(int *len);
+                int mlen = 0;
+                const unsigned char *mram = rig_pico_ram(&mlen);
+                if (mram != NULL && mlen > 0) {
+                    for (int i = 0; i + 16 <= mlen; i += 16)
+                        printf("[mram %04x] %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
+                               i, mram[i],mram[i+1],mram[i+2],mram[i+3],
+                               mram[i+4],mram[i+5],mram[i+6],mram[i+7],
+                               mram[i+8],mram[i+9],mram[i+10],mram[i+11],
+                               mram[i+12],mram[i+13],mram[i+14],mram[i+15]);
+                }
             }
         }
 #endif
