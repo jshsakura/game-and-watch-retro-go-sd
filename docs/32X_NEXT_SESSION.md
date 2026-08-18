@@ -194,6 +194,32 @@ is the one thing that could overturn the result above.
    there is nothing to A/B); zone-size dump (the zone is a fixed BSS array, not
    runtime-probed — same answer on both sides).
 
+   **What D32XR actually puts on screen in the rig (measured 2026-08-18, 4 MiB
+   bench cut, current tree, 450 frames, `-DRIG_TRACE_CKS`): three static images
+   and nothing else.**
+
+   | frames | checksum | what it is |
+   |---|---|---|
+   | 169 | `00000000` | blank |
+   | 75 | `596e0000` | still essentially black (2 colours, dumped) |
+   | 206 | `2064b511` | `Z_Malloc: failed on 496` |
+
+   It never draws a game frame. Not a title, not a menu, not a demo — the
+   framebuffer takes three values in 450 frames and the last one is the
+   allocator error.
+
+   ⚠️ **This does not settle what the 41.4 fps measured, and the two sides
+   disagree.** The device log for the run after the STRD/PWM fixes records
+   *"boots and renders, 69k/76.8k nonzero px"* — 90% of the screen carrying
+   content, which is not a line of white text on black. So on hardware D32XR was
+   showing something substantial while the rig shows an allocator failure. One of
+   these is not the state the other is in.
+
+   The reason nobody can say which is that **no screenshot was taken at the
+   time**. `tools/gnw_probe/screenshot.sh` exists now and did not then. Until a
+   device capture of D32XR exists, treat 41.40 drawn fps as a number of unknown
+   subject: `drawn` counts LCD flips, and a static screen flips too.
+
    ⛔ *Do not try to bisect this against `exp/32x-d32xr` @ `3677a674`.* That
    branch still exists and its submodule pin (`external/picodrive 883010c5`) is
    fetchable, so it looks like the known-good end of a regression — the tree that
