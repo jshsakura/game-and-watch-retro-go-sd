@@ -306,6 +306,41 @@ is the one thing that could overturn the result above.
    linking the upstream tree inside the rig — the stub chase does not terminate
    and the result is a third program.
 
+## Where a frame actually goes (rig, 2026-08-18)
+
+First host-side phase breakdown. Retail Doom, **attract** anchor (no savestate —
+so this is the light window; treat the shares, not the absolutes, as the
+guidance), 600 frames, `EXTRA_DEF=-DRIG_PHASE_PROF`:
+
+| phase | insn/frame | share |
+|---|---|---|
+| msh2 (interp+bus) | 3,898,834 | **49.5%** |
+| ssh2 (interp+bus) | 1,352,060 | 17.1% |
+| 32x compositor | 841,787 | 10.6% |
+| draw (MD VDP line) | 724,669 | 9.2% |
+| m68k | 543,001 | 6.8% |
+| fm / snd / z80 / pwm | 386,682 | 4.8% |
+| other (sched/ev/mem) | 129,173 | 1.6% |
+| **PicoFrame total** | **7,876,239** | 100% |
+
+**The number to aim at is not in that table: `sh2 host/guest = 75.14`.** Every
+guest SH-2 instruction costs seventy-five host instructions. Two thirds of the
+frame is SH-2, so that ratio *is* the core's speed. For scale: getting 75 down
+to 45 would take the frame from 7.88M to ~5.8M, about −27%, without touching a
+single guest cycle. That is the largest lever anyone has priced here, and the
+tree already has the precedent for it — the SNES core runs a hand-written
+Thumb-2 65816 and SPC700 for exactly this reason.
+
+⛔ **Do not re-derive the idle-skip lever from this table.** ssh2's 17.1% is
+almost entirely a `bra-self` park, and switching on the existing
+`gnw_sh2_idle_skip` removes it: measured here 7,876,239 → 6,511,024 insn/frame,
+**−17.3%, with all three framebuffer hashes identical**. It is still closed, for
+reasons recorded in `main_md32x.c` and `32X_PERFORMANCE_RESULTS.md` 측정10: on
+the **device** it measured **0 fps effect** (rig instruction savings did not
+translate to device cycles), its CRC32 whitelist matched one dump, and it broke
+Doom's gunshot PWM SFX — which no framebuffer hash can see. A clean rig A/B with
+identical frames is exactly what this lever looked like the last time too.
+
 ## How to measure this core without wasting a day
 
 Four things cost real time on 2026-08-15. All four are cheap to avoid.
