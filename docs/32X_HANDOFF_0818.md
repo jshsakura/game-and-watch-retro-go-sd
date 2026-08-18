@@ -316,7 +316,28 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > | + fastloop nibble gate (`f9e2bfb8`) | 14,582,403 | −1.38% |
 > | + opcode fetch window (`ae185661`) | 13,630,378 | **−6.53%** |
 > | + inline data-read fast paths (`56794fe1`) | 13,410,684 | −1.61% |
-> | **compounded** | | **−11.16%, x1.126** |
+> | − restore the `!delay` IRQ guard (`494e5998`) | 13,560,320 | +1.12% |
+> | **compounded** | | **−10.16%, x1.113** |
+>
+> **That last row is a correctness payment, and it was worth it.** The
+> `&& !sh2->delay` on `sh2_execute_interpreter`'s IRQ check had been dropped
+> for "never happens in 900 attract frames", and it rode into `af24e213` as an
+> unrelated working-tree change — a hazard of several sessions sharing one
+> worktree, and a reason to read `git diff --cached` before committing rather
+> than staging a whole file.
+>
+> The guard is load-bearing and the mechanism is exact, not statistical:
+> `sh2_do_irq` pushes `sh2->pc` and overwrites it with the vector, and neither
+> reads nor clears `sh2->delay`. Service an IRQ right after a delayed branch —
+> `delay` = slot address, `pc` = branch target — and the next iteration still
+> sees `delay` set, runs the delay-slot instruction, then applies its `pc -= 2`
+> to what is now the **interrupt handler's entry**. The handler starts two
+> bytes short. Rare, silent, state-corrupting.
+>
+> The tell was in the file itself: `sh2_execute_interpreter_trace` never lost
+> the guard, so the two interpreters disagreed. And "attract did not reproduce
+> it" is not evidence of safety on a core where attract and gameplay are
+> 188 unique guest PCs against 8,586.
 >
 > **And they made the interpreter smaller, which on this device is a second
 > win.** Interpreter `.text` on a device-shaped build: 10,897 bytes this

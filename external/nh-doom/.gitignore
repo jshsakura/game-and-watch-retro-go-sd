@@ -1,0 +1,72 @@
+# Prerequisites
+*.d
+
+# Intermediate stuff
+NRF52840Doom/Output/Debug/Obj
+
+# Ignore wads
+MCUDoomWadUtil/bin/**/*.wad
+
+#segger stuff
+*.emSession
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.out
+*.app
+*.i*86
+*.x86_64
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+*.emSession
+NRF52840Doom/NRF52840_DOOM.emSession
+
+# G&W port: keep only what the Game & Watch HAL compiles
+# (NRF52840Doom/Doom/{source,include}) + the WAD converter source + reference
+# HAL/licence. Exclude the nRF-specific SDK copies, build output and the
+# separate wireless-keyboard firmware (none are compiled by this repo).
+Hardware/
+NRF52840DoomKeyboardOnNRF51822/
+NRF52840Doom/Output/
+NRF52840Doom/cmsis/
+NRF52840Doom/mdk/
+MCUDoomWadUtil/bin/
