@@ -194,6 +194,20 @@ is the one thing that could overturn the result above.
    there is nothing to A/B); zone-size dump (the zone is a fixed BSS array, not
    runtime-probed — same answer on both sides).
 
+   ⛔ *Do not try to bisect this against `exp/32x-d32xr` @ `3677a674`.* That
+   branch still exists and its submodule pin (`external/picodrive 883010c5`) is
+   fetchable, so it looks like the known-good end of a regression — the tree that
+   measured 41.52/41.47/41.40 drawn fps. It is not. Checked out into a detached
+   worktree and run 2026-08-18: the 4 MiB bench build gives a **blank**
+   framebuffer, `avg sh2=401`, GATE3 FAIL, and the official 5 MiB release the
+   same. It renders nothing at all, because `883010c5` predates the STRD and PWM
+   fixes (`c06b334e`) that are what made D32XR boot in the first place.
+
+   The current tree gets strictly further: it renders, then stops on the
+   allocator message. **There is no known-good rig state to bisect against**, and
+   the 41.4 figure was a device measurement whose on-screen content was never
+   captured — worth re-reading in that light before treating it as a target.
+
    *Device-owner verification, in this order (needs hardware):*
    a. Check the card for a D32XR `.sram` (the ROM header declares SRAM at
       0x200001–0x207fff). Delete it, cold-boot. The timeline fits: 08-15 20:48
@@ -410,6 +424,72 @@ precedent is the SNES core's hand-written Thumb-2 65816 and SPC700. That is a
 project, not an afternoon, and it should be entered with an ablation estimate of
 what a faster dispatch is actually worth on the *device* — the idle-skip lesson
 is that rig instruction savings do not automatically become device fps.
+
+### Dispatch-prologue ablation — the estimate the paragraph above asked for (2026-08-18)
+
+The interpreter's dispatch was taken apart two ways: statically, from the A0
+ELF's `sh2_execute_interpreter` disassembly, and dynamically, by building
+single-knob ablation arms in a throwaway lane and running the gameplay anchor
+(retail Doom, savestate resume, 900 frames, workload identity verified by
+identical `avg sh2 = 94,406` dispatched/frame on every valid arm; every arm
+md5'd against baseline first). **The measurement builds were never committed —
+that is the standing rule for ablation arms.**
+
+*Static, per dispatched guest instruction (direct path), host instructions
+around the handler body:*
+
+| stage | insn |
+|---|---|
+| delay-slot check | 3 |
+| pc load + ppc store | 2 |
+| fetch fast path (two masks, direct load) | 11 |
+| fastloop pre-filter, interleaved with state updates | 11 |
+| dispatch jump (sp table: add/lsl/ldr/orr/bx) | 5 |
+| handler stub (`mov r0,r4; bl opNNNN; b back`) | ~3 |
+| loop tail (icount--, irq check, both loop conditions) | 11 |
+| **total around the handler** | **≈52** |
+
+Plus ~15 host instructions once per *slice* (the 16-word stack dispatch-table
+copy) — dozens of times a frame, negligible. Against the measured
+`host/guest = 75.14`, the handler bodies themselves are only ~23 of ~75 host
+insns: **the scaffolding around each guest instruction is ~2/3 of interpreter
+cost.**
+
+*Ablation, avg host insn/frame (lower is cheaper):*
+
+| arm | change | avg host | delta |
+|---|---|---|---|
+| A0 baseline (a39ce414 clean) | — | 9,802,331 | — |
+| A2 dispatch table → rodata | slice copy removed, PC-relative load | 9,712,214 | **−0.92%** |
+| A3 switch dispatch (replaces computed goto + stubs) | compiler jump table | 9,590,466 | **−2.16%** |
+| A4 no fastloop pre-filter | filter + fastloop removed | 28,214,186 | **+187.8% (2.88×)** — dispatched inflates 94k→442k; the filter is buying exactly the loops the game lives in. Confirms `8023c183` (3.5× on attract). Keep it. |
+| A5 no IRQ delivery | tail `if(0)` | 31.9M | **invalid measurement** — IRQ never delivered, workload diverges; priced nothing |
+| A5b tail drops `!delay` half of irq check | `if(test_irq)` | 9,704,547 | **−1.0%**, semantics unproven (irq taken during a pending delay slot) — measured, not proposed |
+
+**What this answers, question by question.**
+
+1. *Where the dispatch prologue goes:* the table above — fetch fast path and
+   the interleaved filter+state-update block are the two 11-insn items; the
+   dispatch jump itself is only 5.
+2. *What can actually be shaved today:* semantics-identical ceiling measured at
+   **A3+A5b ≈ −3.2% host cost**, of which A3 alone (switch beats the
+   hand-rolled stack-table computed goto — GCC's rodata jump table is cheaper
+   than `add/lsl/ldr/orr/bx` off sp) is −2.16% and trivially shippable. A2's
+   −0.92% is subsumed by A3.
+3. *Device translation:* SH-2 family is 66.6% of the device frame; a ~3%
+   whole-frame rig saving is ~+0.5 fps at 16.95. Real, cheap, not a game
+   changer. The structural target is different: if the ~52-insn scaffolding is
+   ~60% of interpreter time ≈ **~40% of the whole frame**, then a Thumb-2
+   dispatch core that *halves* the scaffolding is worth ~20% of the frame —
+   16.95 → ~21 fps. That last number is an **estimate** (static counts over
+   the measured 75.14 host/guest), not an ablation; the ablated part is only
+   the −3.2% ceiling of re-arranging the existing C.
+
+Lane/protocol detail for whoever re-runs: lane `pd2` = clone of picodrive
+`a39ce414`, only `cpu/sh2/mame/sh2pico.c` edited per arm, restored with
+`git checkout` after; arms md5'd (`8e5daf6d` baseline, `57e00101` A2, …);
+`avg sh2` equality is the workload-identity gate — A5 shows why (its game
+broke, and its 3.26× "cost" was the breakage, not the tail check).
 
 ⚠️ And do not instrument `FinalizeLine32xRGB555` looking for the compositor. Its
 own comment says "almost never used (Wiz and menu bg gen only)"; Doom composites
