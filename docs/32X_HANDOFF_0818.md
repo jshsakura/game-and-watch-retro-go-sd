@@ -315,7 +315,29 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > | + cart-ROM data fast path (`202e4a29`) | 14,786,244 | −2.04% |
 > | + fastloop nibble gate (`f9e2bfb8`) | 14,582,403 | −1.38% |
 > | + opcode fetch window (`ae185661`) | 13,630,378 | **−6.53%** |
-> | **compounded** | | **−9.70%, x1.107** |
+> | + inline data-read fast paths (`56794fe1`) | 13,410,684 | −1.61% |
+> | **compounded** | | **−11.16%, x1.126** |
+>
+> **And they made the interpreter smaller, which on this device is a second
+> win.** Interpreter `.text` on a device-shaped build: 10,897 bytes this
+> morning, 8,241 with the nibble gate and fetch window, 10,825 with the read
+> inlining on top — still below where it started. That matters more than a
+> size table usually does: the linker script records a **device-measured +30%
+> fps from moving this interpreter into ITCM at an unchanged instruction
+> count**, pure memory-stall removal that QEMU cannot see. Instruction counts
+> systematically under-tell the story here, in the direction of these levers.
+>
+> **Three axes closed by the compiled output, all in one hour, all sound
+> reasoning:**
+>
+> | tried | result |
+> |---|---|
+> | region test ROM-first | 12 → 15 instructions; gcc hands r6 to the SDRAM mask |
+> | inline `RL` only | 13,989,652 — **worse than no inlining at all**, +2.6% |
+> | (kept) inline all three read macros | −1.61% |
+>
+> A partial inline disturbs register allocation across the op handlers without
+> the compensating wins. There is no "inline the biggest one first" here.
 >
 > Framebuffer checksums (`1dca767c`/`e46856ae`), audio hash (`af8c118b`) and
 > guest instruction count (165,262) identical across all three; arms md5-verified
