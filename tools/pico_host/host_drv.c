@@ -39,6 +39,18 @@ static unsigned short pad_for(int f, const char *pat)
         return 0;
     }
     if (!strcmp(pat, "slow_a"))  return (f % 40) < 8 ? PAD_A : 0;
+    if (!strcmp(pat, "play")) {
+        /* A-mash into the level (it starts at f620), then actually move:
+         * standing still with only fire pressed cycles a handful of frames and
+         * reads as a frozen screen. */
+        if (f < 660) return (f % 12) < 6 ? PAD_A : 0;
+        switch ((f / 30) % 4) {
+        case 0: return PAD_UP;
+        case 1: return PAD_UP | PAD_RIGHT;
+        case 2: return PAD_UP | PAD_LEFT;
+        default: return PAD_UP | PAD_C;
+        }
+    }
     {
         const char *out = getenv("FB_OUT");
         if (out) { FILE *g = fopen(out, "wb"); if (g) { fwrite(fb, 2, 320 * 240, g); fclose(g); } }
