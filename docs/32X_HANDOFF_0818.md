@@ -70,6 +70,14 @@ What was tried and does not work, so nobody repeats it:
   frame counts to seven digits, from different binaries.
 - A-mash reaches the menu and holds it.
 
+> **CORRECTED, later the same day.** The rig *can* reach gameplay — the runs
+> were simply too short. `tools/pico_host` (native, ~250x the rig) found it in
+> seconds: with the A-mash pad script **Doom's first level starts at frame 620**,
+> and every rig run above stopped at 450-560. Run the rig past f700 with
+> `-DRIG_PAD_SCRIPT` and it is profiling gameplay. The savestate loader below is
+> still the better long-term answer (it reproduces the *device's* exact scene),
+> but it is no longer the blocker.
+
 **The clean fix is a savestate loader in the rig, not more input timing.**
 `rig_32x.c` already has `RIG_STATE_CAP` / `RIG_STATE_TEST` / `RIG_STATE_WARMUP`
 and the build already compiles `pico/state.c`. The device card has
@@ -109,3 +117,47 @@ single step unblocks the R_DrawColumn question and every gameplay A/B after it.
   the same function.
 - **grep before implementing.** A hand-written BF/S countdown collapse turned out
   to sit twenty lines above where it was being added.
+
+
+---
+
+# Device deployment — what happened 2026-08-18 evening
+
+The console was stuck and "controls did not work". None of it was the firmware.
+
+**Flashing works, and it is done from `rpi-genie5`, not from here.** This VM is
+QEMU: `lsusb` shows only virtual devices, there is no USB passthrough, and no
+probe can ever be attached. The RPi5 has an **ST-Link/V2** and `gnwmanager` at
+`/home/pi/.local/bin` (⚠️ not on the non-interactive SSH PATH — `export
+PATH=$HOME/.local/bin:$PATH` first). `tools/gnw_probe/screenshot.sh` already
+defaults to `PROBE_HOST=rpi-genie5`, so it runs from here unchanged and is the
+fastest way to see what the console is actually doing.
+
+Three faults, in the order they were peeled off:
+
+1. **A stale `/retro-go_update.bin` on the SD root hijacked every boot.** The
+   updater ran, failed with `ERROR HASH MISMATCH`, and parked there. That screen
+   is why "controls did not work" and why "32X was missing" — it is not the
+   launcher, it has no system list, and it does not respond like one.
+   Fix: `gnwmanager sdrm --path /retro-go_update.bin`.
+   ⚠️ The image was **not** corrupt: pulled back with `sdpull`, its md5 matched
+   the release asset byte for byte. The SD-updater path itself rejects this
+   image. Do not debug the transfer; use SWD.
+2. **SWD flash is the working path**:
+   `gnwmanager flash 0x08100000 build/gw_retro_go_intflash.bin -- start 0x08100000`
+   (INTFLASH_BANK=2). The launcher came up immediately.
+3. **Then "손상된 설치가 감지됨" (corrupted installation).** New intflash, old
+   cores. `rg_emulators.c:156` shows the launcher parsing each core's header and
+   rejecting anything below `EXTERNAL_CORE_HEADER_MIN_VERSION`. `make flash`
+   writes intflash **only** — the cores live on the card, and this repo has a
+   rule about exactly that. Fix: push all of `sd_content/cores/` with
+   `sdpush --dest-path /cores/` (31 files: 29 + `mappers/` contents, which fails
+   as a directory and has to be pushed separately).
+
+**State now:** firmware from `testbed-full-20260818-2257` flashed, all cores
+pushed, launcher boots, and **Sega 32X is present in the grid** with `/roms/32x`
+carrying six ROMs including `둠 (Doom).32x` and `d32xr.32x`.
+
+**Not yet done on the device:** nobody has launched 32X and confirmed input
+works in-game, and no screenshot of D32XR running has ever been taken — which is
+still what the 41.4 fps figure needs before it can be treated as a target.
