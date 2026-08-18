@@ -352,6 +352,42 @@ translate to device cycles), its CRC32 whitelist matched one dump, and it broke
 Doom's gunshot PWM SFX — which no framebuffer hash can see. A clean rig A/B with
 identical frames is exactly what this lever looked like the last time too.
 
+### What is already optimised — priced by ablation 2026-08-18, do not re-derive
+
+Four levers were re-examined in one sitting and **all four turned out to be
+already done or already closed**. Each was priced by building both arms and
+checking the two binaries actually differ, because two of them first showed a
+delta of exactly zero:
+
+| lever | status | measured |
+|---|---|---|
+| SH-2 fastloop filter | **already on** (`sh2pico.c` defines it unconditionally) | removing it: 7.88M → 27.49M insn/frame, 3.5× worse |
+| BF/S countdown collapse (`TST Rn,Rn` / `ADD #-1,Rn`) | **already implemented** | verified firing at Doom's hottest loop, `r4=0x31`, 48 of 49 iterations collapsed |
+| SH-2 idle skip | ⛔ closed on the device | rig −17.3%, device 0 fps, broke Doom's PWM SFX |
+| packed-pixel solid-run detector | **already on and paying** | removing it: compositor 773k → 945k insn/frame, +22% |
+
+The two zero-deltas were the instructive part. `-DGNW_SH2_FASTLOOPS` changed
+nothing because the feature was already unconditionally enabled, and a
+hand-written BF/S countdown collapse changed nothing because an identical
+handler already sat earlier in the same function. Both would have been reported
+as "no gain" if the arms had not been md5'd first.
+
+Ablation switches were left behind so the next person re-prices in one build
+instead of deleting code to find out: `GNW_SH2_NO_FASTLOOPS`, `GNW_PP_NO_RUNDET`.
+
+**Where that leaves the frame.** Retail Doom, attract, 400 frames: the
+compositor is 10.0% at ~10.8 host instructions per pixel, MD VDP draw is 9.2%,
+and two thirds is SH-2 executing the game. The interpreter-level levers are
+spent. What has *not* been examined is the MD VDP line renderer (9.2%) and
+whether the compositor's per-pixel path can be widened for textured scenes —
+neither is guest code, so both are ours to change.
+
+⚠️ And do not instrument `FinalizeLine32xRGB555` looking for the compositor. Its
+own comment says "almost never used (Wiz and menu bg gen only)"; Doom composites
+through `PicoDraw32xLayer`, in packed-pixel mode (`Mx=1`, H40, 224 lines,
+`Pico32xDrawMode=1`, no scan hooks) — confirmed by instrumenting it, after a
+probe in the other function printed nothing at all.
+
 ## How to measure this core without wasting a day
 
 Four things cost real time on 2026-08-15. All four are cheap to avoid.
