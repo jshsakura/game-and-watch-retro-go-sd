@@ -567,7 +567,30 @@ static void fb_dump_rle(int frame) {
  * sets pwm.cycles — with 0 the PWM scheduler spins the frame forever) */
 static short s_snd[4096];
 static unsigned s_snd_calls, s_snd_samples;
-static void rig_write_sound(int len) { s_snd_calls++; s_snd_samples += (unsigned)len; }
+
+/* Running hash of every sample the core produces.
+ *
+ * The framebuffer hash cannot hear. The last time an SH-2 spin-skip was tried
+ * on this core it was reverted because it broke Doom's gunshot PWM effect --
+ * found by ear, on the device, after the rig had already called the change
+ * clean. Any lever that changes WHEN the SH-2s run can change what the sound
+ * chips are fed, so a spin-skip A/B is only meaningful if both arms hash the
+ * same audio as well as the same pixels. */
+static uint32_t s_snd_hash = 2166136261u;      /* FNV-1a 32 */
+static void rig_write_sound(int len)
+{
+    const unsigned char *p = (const unsigned char *)s_snd;
+    int nbytes = len * (int)sizeof(s_snd[0]);
+    int i;
+
+    s_snd_calls++;
+    s_snd_samples += (unsigned)len;
+    if (nbytes > (int)sizeof(s_snd)) nbytes = (int)sizeof(s_snd);
+    for (i = 0; i < nbytes; i++) {
+        s_snd_hash ^= p[i];
+        s_snd_hash *= 16777619u;
+    }
+}
 
 /* ==== optional-mode helpers =============================================== */
 
@@ -1219,6 +1242,8 @@ int main(void) {
     rig_spd_report();
 #endif
     phase_report(n, ipt_x1000, n > 0 ? sh2_tot / n : 0);
+    printf("[32x-qemu] snd hash=%08lx calls=%u samples=%u\n",
+           (unsigned long)s_snd_hash, s_snd_calls, s_snd_samples);
     printf("[32x-qemu] fb f%d=%08lx(nb=%d) f%d=%08lx(nb=%d) f%d=%08lx(nb=%d)\n",
            CK_A, (unsigned long)cks100, nb100, CK_B, (unsigned long)cks300, nb300,
            CK_LAST, (unsigned long)cksend, nbend);
