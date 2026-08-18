@@ -174,7 +174,9 @@ static int s_ds_done;
  * The better instrument now lives on the device (md32x_profile.c's
  * data-access probe): QEMU models no cache, so it can count accesses but can
  * never price them, which was the actual question. */
+#ifndef RIG_MIX_FROM
 #define RIG_MIX_FROM 400
+#endif
 #endif
 
 /* rig_runtime.c */
@@ -1108,8 +1110,16 @@ int main(void) {
          * title/menu frames the pad script walks through outnumber the
          * gameplay frames 80:1 and the census describes the menu. */
         if (f == RIG_MIX_FROM) {
-            extern unsigned long long gnw_mix[6][5];
-            memset(gnw_mix, 0, sizeof(gnw_mix));
+            extern unsigned long long gnw_census[6][5];
+            extern unsigned long long gnw_census_pagehit[];
+            extern unsigned int gnw_census_page[];
+            extern unsigned long long gnw_census_page_missed;
+            extern int gnw_census_npages;
+            memset(gnw_census, 0, sizeof(gnw_census));
+            memset(gnw_census_pagehit, 0, sizeof(unsigned long long) * 512);
+            memset(gnw_census_page, 0, sizeof(unsigned int) * 512);
+            gnw_census_page_missed = 0;
+            gnw_census_npages = 0;
             printf("[32x-mix] census reset at frame %d (gameplay entry)\n", f);
         }
 #endif
@@ -1398,24 +1408,61 @@ int main(void) {
      * read/write fast path before writing one: a class that is a small share
      * of accesses cannot pay for the compare it adds to every access. */
     {
-        extern unsigned long long gnw_mix[6][5];
+        extern unsigned long long gnw_census[6][5];
         static const char *const opn[6] = { "r8", "r16", "r32", "w8", "w16", "w32" };
         static const char *const rgn[5] = { "sdram", "rom", "dram", "cs0", "other" };
         unsigned long long grand = 0;
         for (int i = 0; i < 6; i++)
-            for (int j = 0; j < 5; j++) grand += gnw_mix[i][j];
+            for (int j = 0; j < 5; j++) grand += gnw_census[i][j];
         printf("[32x-mix] SH-2 data accesses, total=%llu\n", grand);
         for (int i = 0; i < 6; i++) {
             unsigned long long row = 0;
-            for (int j = 0; j < 5; j++) row += gnw_mix[i][j];
+            for (int j = 0; j < 5; j++) row += gnw_census[i][j];
             if (!row) continue;
             printf("[32x-mix]  %-4s tot=%-12llu", opn[i], row);
             for (int j = 0; j < 5; j++)
-                printf(" %s=%llu(%lu%%)", rgn[j], gnw_mix[i][j],
-                       (unsigned long)(row ? gnw_mix[i][j] * 100 / row : 0));
+                printf(" %s=%llu(%lu%%)", rgn[j], gnw_census[i][j],
+                       (unsigned long)(row ? gnw_census[i][j] * 100 / row : 0));
             printf("  [%lu%% of all]\n",
                    (unsigned long)(grand ? row * 100 / grand : 0));
         }
+    }
+    {
+        /* Cart-ROM READS by 512-byte page, hottest first. This is the whole
+         * question behind a RAM cache for XIP flash data: if the top few pages
+         * carry most of the reads, a cache measured in kilobytes catches them.
+         * Doom's colormap is 256 entries x 16 bit = exactly one page here. */
+        extern unsigned long long gnw_census_pagehit[];
+        extern unsigned int gnw_census_page[];
+        extern unsigned long long gnw_census_page_missed;
+        extern int gnw_census_npages;
+        int n = gnw_census_npages;
+        unsigned long long tot = gnw_census_page_missed;
+        for (int i = 0; i < n; i++) tot += gnw_census_pagehit[i];
+        printf("[32x-page] %d distinct 512B cart-ROM pages read, %llu reads, "
+               "%llu past the table\n", n, tot, gnw_census_page_missed);
+        /* selection sort of the top 16 -- n is at most 512 and this runs once */
+        for (int k = 0; k < 16 && k < n; k++) {
+            int best = k;
+            for (int i = k + 1; i < n; i++)
+                if (gnw_census_pagehit[i] > gnw_census_pagehit[best]) best = i;
+            unsigned long long h = gnw_census_pagehit[best];
+            unsigned int pg = gnw_census_page[best];
+            gnw_census_pagehit[best] = gnw_census_pagehit[k];
+            gnw_census_page[best]    = gnw_census_page[k];
+            gnw_census_pagehit[k] = h; gnw_census_page[k] = pg;
+        }
+        unsigned long long cum = 0;
+        for (int k = 0; k < 16 && k < n; k++) {
+            cum += gnw_census_pagehit[k];
+            printf("[32x-page]  #%-2d addr=%08x reads=%-10llu %5.2f%%  cum %5.2f%%\n",
+                   k + 1, gnw_census_page[k] << 9, gnw_census_pagehit[k],
+                   tot ? 100.0 * gnw_census_pagehit[k] / tot : 0.0,
+                   tot ? 100.0 * cum / tot : 0.0);
+        }
+        printf("[32x-page] top16 = %llu of %llu reads (%.1f%%) = %d KB of cache\n",
+               cum, tot, tot ? 100.0 * cum / tot : 0.0,
+               (16 < n ? 16 : n) * 512 / 1024);
     }
 #endif
 
