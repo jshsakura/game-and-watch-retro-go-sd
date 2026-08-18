@@ -375,12 +375,25 @@ as "no gain" if the arms had not been md5'd first.
 Ablation switches were left behind so the next person re-prices in one build
 instead of deleting code to find out: `GNW_SH2_NO_FASTLOOPS`, `GNW_PP_NO_RUNDET`.
 
+**The MD VDP renderer was the last unexamined bucket, and its ceiling is low.**
+`GNW_MD_ABLATE` (picodrive `6b403f94`) kills every MD layer so the bucket
+collapses to what is irreducible: draw 724,669 → 345,920 insn/frame, whole frame
+7,700,620 → 7,279,779, **−5.5% for deleting the layer entirely**. Two thirds of
+its cost is per-line overhead that survives having nothing to draw. And it is not
+deletable: the framebuffer hashes change (f99 and f299 go blank), so Doom's MD
+layer carries visible content, not merely the background mask the compositor
+tests. Any real optimisation there is a fraction of 5.5%.
+
 **Where that leaves the frame.** Retail Doom, attract, 400 frames: the
 compositor is 10.0% at ~10.8 host instructions per pixel, MD VDP draw is 9.2%,
 and two thirds is SH-2 executing the game. The interpreter-level levers are
-spent. What has *not* been examined is the MD VDP line renderer (9.2%) and
-whether the compositor's per-pixel path can be widened for textured scenes —
-neither is guest code, so both are ours to change.
+spent. The MD VDP renderer has now been priced too (above), and it is
+not the lever it looked like. **Everything cheap is spent.** What remains is
+structural: the SH-2 interpreter itself, ~66% of the frame, where the tree's own
+precedent is the SNES core's hand-written Thumb-2 65816 and SPC700. That is a
+project, not an afternoon, and it should be entered with an ablation estimate of
+what a faster dispatch is actually worth on the *device* — the idle-skip lesson
+is that rig instruction savings do not automatically become device fps.
 
 ⚠️ And do not instrument `FinalizeLine32xRGB555` looking for the compositor. Its
 own comment says "almost never used (Wiz and menu bg gen only)"; Doom composites
