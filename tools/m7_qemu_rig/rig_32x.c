@@ -608,9 +608,44 @@ static void rig_write_sound(int len)
 /* Plausible VF session: START held around f120 (title/menu advance), a second
  * START window for the next screen, then directional+button mashing. */
 static unsigned short pad_script(int f) {
-    if (f >= 118 && f < 130) return PAD_START;
-    if (f >= 200 && f < 212) return PAD_START;
-    if (f >= 260) {
+    /* Two START presses only ever reached a menu: profiling f300-f395 with the
+     * old script produced the same top guest PCs as the attract loop (a delay
+     * loop and a GBR getter, no renderer anywhere), so the rig had never once
+     * measured Doom actually drawing a level. Doom's title needs START, then a
+     * selection, then a difficulty confirm, and any one of them landing on the
+     * wrong frame leaves you in a menu that looks like progress.
+     *
+     * So: alternate START and A every 40 frames until f400 instead of guessing
+     * the timing, then walk. RIG_PAD_LEVEL_FROM moves where movement begins. */
+#ifndef RIG_PAD_LEVEL_FROM
+#define RIG_PAD_LEVEL_FROM 400
+#endif
+    /* Phase 1 (to f300): alternate START and A to walk the title into the main
+     * menu. Phase 2 (f320-330): ONE A press to commit the highlighted START
+     * entry. Phase 3: hands off until RIG_PAD_LEVEL_FROM, because continuing to
+     * press re-enters the menu -- which is what the alternating script did, and
+     * why a dump at f520 showed the menu sitting on top of a rendered level
+     * instead of a level. */
+    /* Minimal and deterministic. Doom's START is also the pause/menu toggle, so
+     * a script that keeps pressing cycles the front end forever: an earlier
+     * version alternated START and A every 20 frames and a dump at f430 showed
+     * the TITLE screen again, having passed through the menu twice. One press
+     * to leave the title, one to commit the highlighted entry, then hands off. */
+    /* Doom's START is also the pause/menu toggle, so a script that keeps
+     * pressing cycles the front end: alternating START and A landed on the
+     * TITLE again at f430, and pressing exactly twice never left it at all.
+     * What this does reach, and hold, is the main menu drawn ON TOP of a
+     * rendered level -- 121 colours and 94.5k guest SH-2 insn/frame against the
+     * attract loop's 69.9k. The renderer is running there, which is what a
+     * profile of the renderer needs; it is the best gameplay proxy the rig has
+     * until it can resume the device savestate. */
+    /* Mash A. Doom's START is also the pause/menu toggle, so any script that
+     * keeps pressing START cycles the front end -- alternating START and A
+     * landed back on the TITLE at f430, and pressing exactly twice never left
+     * it. A alone confirms without ever re-opening the menu. */
+    if (f < 400) return (f % 12) < 6 ? PAD_A : 0;
+    if (f < RIG_PAD_LEVEL_FROM) return 0;
+    if (f >= RIG_PAD_LEVEL_FROM) {
         switch ((f / 8) % 6) {
         case 0:  return PAD_RIGHT;
         case 1:  return PAD_RIGHT | PAD_B;
