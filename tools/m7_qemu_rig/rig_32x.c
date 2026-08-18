@@ -30,6 +30,14 @@
  *   -DRIG_STATE_TEST save after 120 warm-up frames, run 30 frames, restore,
  *                    replay those frames, and require identical framebuffer
  *                    checksums. Exercises the device's PicoStateFP path.
+ *   -DRIG_STATE_LOAD resume THE DEVICE'S OWN savestate (RIG_32X_STATE=<file>
+ *                    to run_32x.sh links the .sav in as a blob). Every 32X
+ *                    profile taken here before this was the front-end wait
+ *                    loop -- 188 unique guest PCs in every reachable state,
+ *                    attract and pad-script alike -- so nothing offline had
+ *                    ever profiled Doom rendering. This resumes the exact
+ *                    scene the device measures, forever, offline. See
+ *                    docs/32X_HANDOFF_0818.md.
  *   -DRIG_PHASE_PROF per-phase cost table (PHASE_PROF=1 to run_32x.sh): rides
  *                    picodrive's pprof probes with the icount timer as clock,
  *                    so every bucket is an executed-instruction count. Buckets
@@ -46,7 +54,7 @@
 
 #include "pico/pico_types.h"
 #include "pico/pico.h"
-#ifdef RIG_STATE_TEST
+#if defined(RIG_STATE_TEST) || defined(RIG_STATE_LOAD)
 #include "pico/state.h"
 #endif
 #if defined(RIG_TRACE_PC) || defined(RIG_SH2_WATCH)
@@ -595,6 +603,12 @@ static void rig_write_sound(int len)
 /* ==== optional-mode helpers =============================================== */
 
 /* PicoIn.pad format: MXYZ SACB RLDU (pico.h) */
+/* Frame at which RIG_STATE_LOAD resumes the device savestate. Declared here
+ * because pad_script below dates its movement from it. */
+#ifndef RIG_STATE_LOAD_AT
+#define RIG_STATE_LOAD_AT 60
+#endif
+
 #define PAD_UP    (1u << 0)
 #define PAD_DOWN  (1u << 1)
 #define PAD_LEFT  (1u << 2)
@@ -608,6 +622,21 @@ static void rig_write_sound(int len)
 /* Plausible VF session: START held around f120 (title/menu advance), a second
  * START window for the next screen, then directional+button mashing. */
 static unsigned short pad_script(int f) {
+#ifdef RIG_STATE_LOAD
+    /* A resumed savestate is already IN the level -- there is no title to walk,
+     * and the walker below would press A on a live player. Move instead, from
+     * the load frame on: standing still with only fire held renders a handful
+     * of frames and then repeats, which reads as a frozen screen and profiles
+     * as one. Deterministic, so two arms stay comparable. */
+    int g = f - RIG_STATE_LOAD_AT;
+    if (g < 0) return 0;              /* pre-load frames: hands off */
+    switch ((g / 30) % 4) {
+    case 0:  return PAD_UP;
+    case 1:  return PAD_UP | PAD_RIGHT;
+    case 2:  return PAD_UP | PAD_LEFT;
+    default: return PAD_UP | PAD_C;
+    }
+#else
     /* Two START presses only ever reached a menu: profiling f300-f395 with the
      * old script produced the same top guest PCs as the attract loop (a delay
      * loop and a GBR getter, no renderer anywhere), so the rig had never once
@@ -656,14 +685,17 @@ static unsigned short pad_script(int f) {
         }
     }
     return 0;
+#endif /* RIG_STATE_LOAD */
 }
 #else
 static unsigned short pad_script(int f) { (void)f; return 0; }
 #endif
 
-#ifdef RIG_STATE_TEST
-#define RIG_STATE_CAP (1024u * 1024u)
-
+#if defined(RIG_STATE_TEST) || defined(RIG_STATE_LOAD)
+/* A seekable byte stream over memory, in picodrive's area-I/O shape. There is
+ * no file I/O in this runtime: semihosting SYS_OPEN returns -1 here (proven by
+ * two failed probe runs; SYS_WRITE0/printf work), so both the round-trip test
+ * and the device-state loader below run the state through RAM. */
 struct rig_state_stream {
     unsigned char *data;
     size_t capacity;
@@ -708,6 +740,11 @@ static int rig_state_seek(void *opaque, long offset, int whence) {
     stream->position = (size_t)position;
     return 0;
 }
+
+#endif /* RIG_STATE_TEST || RIG_STATE_LOAD */
+
+#ifdef RIG_STATE_TEST
+#define RIG_STATE_CAP (1024u * 1024u)
 
 /* State round-trip test: warm up to a stable non-blank state, save, run N
  * frames forward, capture fb; load (restore), re-run the same N frames,
@@ -771,7 +808,92 @@ static int state_roundtrip_test(void) {
     free(stream.data);
     return pass ? 0 : -1;
 }
-#endif
+#endif /* RIG_STATE_TEST */
+
+#ifdef RIG_STATE_LOAD
+/* ---- resume the device's own savestate ------------------------------------
+ * The .sav is linked in as a blob (run_32x.sh: RIG_32X_STATE=<file>), because
+ * this runtime has no file I/O -- same route the cart takes.
+ *
+ * The firmware wraps picodrive's stream in an 8-byte header (MD32X_STATE_MAGIC
+ * "X2XM" + a version word); see md32x_SaveState in
+ * Core/Src/porting/md32x/main_md32x.c. Skip it and hand the rest to
+ * PicoStateFP, exactly as md32x_LoadState does.
+ *
+ * WHY THIS LIVES IN THE RIG AND NOT IN tools/pico_host: the stream is a raw
+ * dump of live structs, so it carries the DEVICE'S POINTER WIDTHS. A 64-bit
+ * host build stops dead at
+ *     unexpected len 4, wanted 8 (sizeof(Pico32xMem->m68k_rom))
+ * because m68k_rom is a pointer. This rig is 32-bit ARM and is the device's
+ * word size exactly, so the same eight-byte skip just works here.
+ *
+ * It must run AFTER the adapter has started. Pico32xStartup is LAZY -- the
+ * game's own 68K writes ADEN at 0xA15101 -- and the 32X chunks read straight
+ * into Pico32xMem, so loading at frame 0 would write through a null pointer.
+ * Hence RIG_STATE_LOAD_AT, and the two guards below that refuse rather than
+ * fault if the adapter is not up yet. */
+extern const unsigned char _binary_state_bin_start[];
+extern const unsigned char _binary_state_bin_end[];
+
+#define MD32X_STATE_MAGIC   0x4D583258u   /* "X2XM" on the wire */
+#define MD32X_STATE_VERSION 2
+#define MD32X_STATE_HDR     8u
+
+struct Pico32xMem;                        /* opaque: only the null test matters */
+extern struct Pico32xMem *Pico32xMem;
+
+static int rig_load_device_state(void) {
+    const unsigned char *blob = _binary_state_bin_start;
+    size_t blob_len = (size_t)(_binary_state_bin_end - _binary_state_bin_start);
+    uint32_t magic = 0, version = 0;
+
+    if (blob_len <= MD32X_STATE_HDR) {
+        printf("[32x-state] FAIL: state blob is %lu bytes\n", (unsigned long)blob_len);
+        return -1;
+    }
+    memcpy(&magic, blob, 4);
+    memcpy(&version, blob + 4, 4);
+    printf("[32x-state] blob=%lu bytes magic=%08lx ver=%lu\n",
+           (unsigned long)blob_len, (unsigned long)magic, (unsigned long)version);
+    if (magic != MD32X_STATE_MAGIC) {
+        printf("[32x-state] FAIL: bad magic (want %08lx)\n",
+               (unsigned long)MD32X_STATE_MAGIC);
+        return -1;
+    }
+    if (version != MD32X_STATE_VERSION) {
+        printf("[32x-state] FAIL: version %lu, this build writes %u\n",
+               (unsigned long)version, MD32X_STATE_VERSION);
+        return -1;
+    }
+    if (!(PicoIn.AHW & PAHW_32X) || Pico32xMem == NULL) {
+        printf("[32x-state] FAIL: 32X not started yet (AHW=%x mem=%p) -- "
+               "raise RIG_STATE_LOAD_AT past the game's ADEN write\n",
+               (unsigned)PicoIn.AHW, (void *)Pico32xMem);
+        return -1;
+    }
+
+    struct rig_state_stream stream = {
+        .data     = (unsigned char *)blob + MD32X_STATE_HDR,
+        .capacity = blob_len - MD32X_STATE_HDR,
+        .length   = blob_len - MD32X_STATE_HDR,
+        .position = 0,
+    };
+    int rc = PicoStateFP(&stream, 0, rig_state_read, rig_state_write,
+                         rig_state_eof, rig_state_seek);
+    /* A load restores state, not the things derived from it: the device does
+     * this same re-point in md32x_LoadState, because PicoDrawSetOutBuf's 32X
+     * routing is re-established per load. */
+    set_out_buffer();
+
+    int nonblank = 0;
+    uint32_t cks = fb_checksum(&nonblank);
+    printf("[32x-state] %s: PicoStateFP=%d consumed=%lu/%lu fb=%08lx nonblank=%d\n",
+           rc == 0 ? "LOADED" : "FAIL", rc,
+           (unsigned long)stream.position, (unsigned long)stream.length,
+           (unsigned long)cks, nonblank);
+    return rc;
+}
+#endif /* RIG_STATE_LOAD */
 
 #ifdef RIG_TRACE_PC
 /* peek 68K memory the way the g68k core does (I/O handler or direct base) —
@@ -933,6 +1055,16 @@ int main(void) {
 
     for (int f = 0; f < RIG_FRAMES; f++) {
         rig_frame_no = f;
+#ifdef RIG_STATE_LOAD
+        /* Resume the device's scene. Everything before this frame is the cold
+         * boot needed to bring the adapter up, so keep RIG_STATE_LOAD_AT at or
+         * below RIG_WARMUP -- otherwise the measurement window averages boot
+         * frames in with gameplay ones and reports neither. */
+        if (f == RIG_STATE_LOAD_AT && rig_load_device_state() != 0) {
+            printf("[32x-qemu] ABORT: device savestate did not load\n");
+            return 6;
+        }
+#endif
 #ifdef RIG_STRPAGE
         if (f == 8 && !s_strp_installed) { s_strp_installed = 1; rig_strp_install(); }
 #endif

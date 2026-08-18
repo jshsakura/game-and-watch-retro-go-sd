@@ -151,6 +151,20 @@ on itself at boot — 40.000 insn/tick — and prints it).
   - `RIG_SH2_WATCH` — per-frame 68K PC track (from f165 or every 10th frame)
     plus SH-2 SDRAM→BIOS edge detection; this is what separated "booting" from
     "dead" and produced the 68K boot-trajectory timeline.
+  - `RIG_32X_STATE=<file.sav>` (env, to `run_32x.sh`; `RIG_32X_STATE_AT=<frame>`
+    moves the load, default 60) — **resume the console's own savestate**. The
+    `.sav` links in as a blob, the firmware's eight-byte `X2XM` header is
+    skipped, and `PicoStateFP` takes the rest. This is why the loader lives here
+    and not in `tools/pico_host`: the stream is a raw dump of live structs and
+    carries the *device's pointer widths*, so a 64-bit host build stops dead at
+    `unexpected len 4, wanted 8`. The rig is 32-bit ARM and is the device's word
+    size exactly. Pass the ROM the state was taken against — picodrive will load
+    a state over the wrong cart and render nonsense.
+    **What it bought:** every 32X guest profile before it was the front-end wait
+    loop — 188 unique PCs in attract, in the old pad script, and in the menu
+    drawn over a rendered level alike. The resumed frame costs 39.6M host insns
+    and 197,674 guest SH-2 insns against the attract loop's 10.2M/69,866. Those
+    are different programs, and only one of them is the thing being optimised.
   - `RIG_FB_DUMP=<frame>` — prints the framebuffer run-length encoded at that
     frame; `fbdump_to_png.py <log> <png>` rebuilds it. A frozen screen is almost
     always a message, and the gate's checksum cannot read one: D32XR sat on

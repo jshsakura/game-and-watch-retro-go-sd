@@ -135,14 +135,32 @@ fastest way to see what the console is actually doing.
 
 Three faults, in the order they were peeled off:
 
-1. **A stale `/retro-go_update.bin` on the SD root hijacked every boot.** The
-   updater ran, failed with `ERROR HASH MISMATCH`, and parked there. That screen
-   is why "controls did not work" and why "32X was missing" — it is not the
-   launcher, it has no system list, and it does not respond like one.
-   Fix: `gnwmanager sdrm --path /retro-go_update.bin`.
-   ⚠️ The image was **not** corrupt: pulled back with `sdpull`, its md5 matched
-   the release asset byte for byte. The SD-updater path itself rejects this
-   image. Do not debug the transfer; use SWD.
+1. **The console was sitting in gnwmanager's on-device stub, not failing to
+   boot.** The screen showing `IDLE PROG ERASE` / `ERROR HASH MISMATCH` /
+   `FLASH RAM SD` over the OFW clock is **gnwmanager's own UI** — IDLE/PROG/
+   ERASE is the operation state, FLASH/RAM/SD the target, the bars a progress
+   meter. That screen is not the launcher, has no system list, and does not
+   respond like one, which is the whole of "controls did not work" and "32X was
+   missing". **Every gnwmanager command leaves the device parked there.** One
+   command brings it back: `gnwmanager start bank2`.
+
+   > **This entry originally blamed a stale `/retro-go_update.bin` on the SD
+   > root, and that was wrong.** Falsified 2026-08-19: `gnwmanager sdls /`
+   > shows no such file on the card, the same screen was on the panel anyway,
+   > and it survived a *successful* `sdls` unchanged while its clock kept
+   > ticking (00:06 → 00:09) — a live program, not a parked boot. Then
+   > `gnwmanager start bank2` brought the launcher straight back
+   > (`/tmp/claude-1001/after_start_bank2.png`). The `ERROR HASH MISMATCH` line
+   > is **leftover text from some earlier operation**; it is not cleared by a
+   > later success, so it says nothing about the command you just ran. No
+   > `HASH MISMATCH` string exists anywhere in this repo's own code (grep), and
+   > gnwmanager's `firmware.bin` renders text as glyphs, which is why the
+   > string does not show up in it either.
+   >
+   > **Practical rule: finish every device session with `gnwmanager start
+   > bank2`, and before reporting a screenshot, say whether it is the launcher
+   > or the stub.** Photographing the stub and calling it a dead console is
+   > what cost a day here twice.
 2. **SWD flash is the working path**:
    `gnwmanager flash 0x08100000 build/gw_retro_go_intflash.bin -- start 0x08100000`
    (INTFLASH_BANK=2). The launcher came up immediately.
@@ -176,6 +194,69 @@ Format: the firmware wraps picodrive's stream in an **8-byte header** — magic
 `X2XM` then a version word (`md32x_SaveState`, `main_md32x.c`). Skip 8 bytes and
 hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 `md32x_LoadState` does.
+
+> **DONE, 2026-08-19.** The loader is in the rig:
+> `RIG_32X_STATE=<file.sav> [RIG_32X_STATE_AT=<frame>] bash
+> tools/m7_qemu_rig/run_32x.sh "<the rom the state was taken against>" <frames>`.
+> The `.sav` links in as a blob (this runtime has no file I/O), the eight-byte
+> header is skipped, and `PicoStateFP` takes the rest. Verified:
+> `PicoStateFP=0 consumed=678909/678909 fb=cfbbcd37 nonblank=1`.
+>
+> **Pair it with the ROM the state was taken against.** Retail Doom was not on
+> this machine; it came off `rpi-genie5`
+> (`/media/pi/EXTERNAL/miyoo-library/public/roms/thirtytwox/둠 (Doom).32x`,
+> md5 `79339867d9d4f58b169753d9a29ea1a5`) and is now at
+> `/home/ubuntu/32x_roms/doom_retail.32x`.
+>
+> **It cost one real bug to get there, and that bug is on the device too.**
+> Under `GNW_32X_CORE`, `Pico32xMem->m68k_rom` is a POINTER (the 64K bank image
+> lives outside the struct in AHB SRAM), and the savestate wrote it with
+> `CHECKED_WRITE_BUFF` — so **four bytes of ADDRESS went into every save file**,
+> and the load installed the saving machine's pointer on the loading one. The
+> console never noticed because `ahb_malloc` is deterministic and hands back the
+> same address; the rig, in a different address space entirely, went silent on
+> the very next frame — no fault, no message, just a frame counter that stopped.
+> Fixed load-side only (picodrive `c3e4acba`), so the file format and every
+> savestate already on a card stay byte-identical.
+>
+> **The first gameplay profile this rig has ever taken:**
+>
+> | | host insn/frame | guest SH-2 insn/frame |
+> |---|---|---|
+> | attract loop (f20, f40) | 10.2M | 69,866 |
+> | resumed gameplay (f60) | **39.6M** | **197,674** |
+>
+> 2.8x the guest work, 3.9x the host work. The attract demo and gameplay are
+> not the same program, and now the rig can profile the one that matters.
+>
+> **The acceptance test, which is the one this file spent pages on: `188 unique
+> PCs` is dead.** A 120-frame run with the histogram zeroed at the load frame
+> reports **8,329 unique guest PCs over 9,507,376 guest SH-2 insns**, and
+> `docs/img_32x_rig_gameplay_f119.png` — rebuilt from `RIG_FB_DUMP` — is a
+> first-person Doom frame with the HUD reading AMMO 49 / HEALTH 100% / ARMOR 0%.
+> The rig is finally running the program we are trying to make faster.
+>
+> **And the profile lands where the plan needed it to.** Two inner loops carry
+> ~36% of all guest SH-2 instructions:
+>
+> | loop | share | shape |
+> |---|---|---|
+> | `0x02049084`–`0x02049094`, 9 insns | **22.95%** | `MOV.B @R3,R8` / `SHLL R8` / `MOV.W @(R0,R8),R8` / `MOV.W R8,@R9` / `DT R12` / `BFS` — fetch texel, shift, colormap lookup, store pixel, decrement, loop |
+> | `0x02049284`–`0x0204929c`, 13 insns | **13.12%** | same shape with `SWAP.W`/`AND`/`OR` packing |
+>
+> That is the texture-mapped column/span inner loop. **The "R_DrawColumn is
+> 36.5% of msh2" figure that the HLE plan rests on came from a single device
+> profile and had never been reproduced offline — it is reproduced now**, from
+> the device's own scene, repeatably, on this machine.
+>
+> ⚠️ **Do not quote an fps from this run.** Per-frame host cost over the
+> gameplay window is wildly dispersed — `avg 1.06G, min 8.0M, max 3.74G
+> insn/frame` — so the mean is not a speed. The guest-instruction histogram is
+> unaffected (it counts guest insns, not host time), which is why the profile
+> above stands while the frame-cost number does not. Explaining that spread is
+> the next job: the cheap frames and the 3.7G ones differ by 460x, and at f100
+> the guest did only 59,391 insns while the host burned 85M — host work with no
+> guest progress, i.e. the scheduler, not the renderer.
 
 **Load it in the RIG, not in tools/pico_host.** The host driver is a 64-bit
 build and the state stream carries the device's pointer widths; it stops at

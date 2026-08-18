@@ -47,6 +47,27 @@ EOF
 (cd "$OUT" && arm-none-eabi-objcopy -I binary -O elf32-littlearm -B arm \
     --rename-section .data=.rom,alloc,load,readonly,data,contents rom.32x rom.o)
 
+# The DEVICE'S OWN savestate, optional: RIG_32X_STATE=<file.sav>.
+# There is no file I/O in the rig runtime (semihosting SYS_OPEN returns -1), so
+# the state rides in beside the cart as a linked blob. It carries the device's
+# pointer widths, which is why it can only be replayed by a 32-bit build -- a
+# 64-bit host driver stops at "unexpected len 4, wanted 8" on Pico32xMem's
+# m68k_rom. Pair it with the ROM the state was taken against; picodrive will
+# happily load a state over the wrong cart and render nonsense.
+#   RIG_32X_STATE=/path/doom32x_slot0.sav RIG_32X_STATE_AT=60 \
+#     bash tools/m7_qemu_rig/run_32x.sh "/path/doom.32x" 1800
+STATEOBJ=""
+if [ -n "${RIG_32X_STATE:-}" ]; then
+  [ -f "$RIG_32X_STATE" ] || { echo "missing state file: $RIG_32X_STATE" >&2; exit 2; }
+  cp "$RIG_32X_STATE" "$OUT/state.bin"
+  (cd "$OUT" && arm-none-eabi-objcopy -I binary -O elf32-littlearm -B arm \
+      --rename-section .data=.rom,alloc,load,readonly,data,contents state.bin state.o)
+  STATEOBJ="$OUT/state.o"
+  DEF="$DEF -DRIG_STATE_LOAD -DRIG_STATE_LOAD_AT=${RIG_32X_STATE_AT:-60}"
+  echo "[run_32x] savestate: $RIG_32X_STATE ($(stat -c%s "$RIG_32X_STATE") bytes)" \
+       "load at frame ${RIG_32X_STATE_AT:-60}"
+fi
+
 # Real 32X BIOS, optional: RIG_32X_BIOS=<dir with the three No-Intro blobs>.
 # picodrive fakes the BIOS's effects when these are absent, which is enough for
 # the retail carts and demonstrably not enough for D32XR.
@@ -82,7 +103,7 @@ pico/sound/resampler.c
 zlib/crc32.c
 "
 
-objs="$OUT/rom.o$BIOSOBJS"
+objs="$OUT/rom.o $STATEOBJ$BIOSOBJS"
 for s in $SRCS; do
     o="$OUT/$(echo "$s" | tr '/' '_' | sed 's/\.c$/.o/')"
     $CC -c $ARCH $OPT $DEF $INC "$PD/$s" -o "$o"
