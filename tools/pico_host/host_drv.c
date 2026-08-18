@@ -69,11 +69,43 @@ void emu_32x_startup(void)
     PicoDrawSetOutBuf(fb, 320 * 2);
 }
 
+/* The firmware wraps picodrive's state stream in an 8-byte header
+ * (MD32X_STATE_MAGIC "X2XM", then a version word) -- see md32x_SaveState in
+ * Core/Src/porting/md32x/main_md32x.c. Skip it and hand the rest to picodrive,
+ * exactly as md32x_LoadState does. This is what lets the host replay the
+ * device's own scene instead of guessing at one with a pad script. */
+extern int PicoStateFP(void *afile, int is_save,
+                       size_t (*read)(void *, size_t, size_t, void *),
+                       size_t (*write)(void *, size_t, size_t, void *),
+                       size_t (*eof)(void *),
+                       int (*seek)(void *, long, int));
+
+static size_t st_read(void *p, size_t sz, size_t n, void *f) { return fread(p, sz, n, (FILE *)f); }
+static size_t st_write(void *p, size_t sz, size_t n, void *f) { return fwrite(p, sz, n, (FILE *)f); }
+static size_t st_eof(void *f) { return (size_t)feof((FILE *)f); }
+static int    st_seek(void *f, long o, int w) { return fseek((FILE *)f, o, w); }
+
+static int load_device_state(const char *path)
+{
+    unsigned int hdr[2];
+    FILE *f = fopen(path, "rb");
+    int rc;
+
+    if (!f) { perror("state"); return -1; }
+    if (fread(hdr, sizeof(hdr), 1, f) != 1) { fclose(f); return -1; }
+    printf("[host] state magic=%08x ver=%u\n", hdr[0], hdr[1]);
+    rc = PicoStateFP(f, 0, st_read, st_write, st_eof, st_seek);
+    fclose(f);
+    printf("[host] PicoStateFP -> %d\n", rc);
+    return rc;
+}
+
 int main(int argc, char **argv)
 {
     const char *rom = argc > 1 ? argv[1] : NULL;
     int frames = argc > 2 ? atoi(argv[2]) : 600;
     const char *pat = argc > 3 ? argv[3] : "none";
+    const char *state = getenv("STATE_IN");
     unsigned char *data; long sz; FILE *f; int i;
 
     if (!rom) { fprintf(stderr, "usage: host_drv <rom.32x> [frames]\n"); return 2; }
@@ -104,6 +136,11 @@ int main(int argc, char **argv)
     PsndRerate(0);
     PicoDrawSetOutFormat(PDF_RGB555, 0);
     PicoDrawSetOutBuf(fb, 320 * 2);
+
+    if (state && load_device_state(state) == 0) {
+        PicoDrawSetOutFormat(PDF_RGB555, 0);   /* md32x_LoadState re-applies too */
+        PicoDrawSetOutBuf(fb, 320 * 2);
+    }
 
     /* pad pattern: argv[3] = "none" | "amash" | "amash+start" ... */
     for (i = 0; i < frames; i++) {

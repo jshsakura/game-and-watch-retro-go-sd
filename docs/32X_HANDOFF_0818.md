@@ -161,3 +161,40 @@ carrying six ROMs including `둠 (Doom).32x` and `d32xr.32x`.
 **Not yet done on the device:** nobody has launched 32X and confirmed input
 works in-game, and no screenshot of D32XR running has ever been taken — which is
 still what the 41.4 fps figure needs before it can be treated as a target.
+
+
+---
+
+# The device savestate is now on this machine (2026-08-18, late)
+
+`/home/ubuntu/32x_roms/doom32x_slot0.sav` — 678,917 bytes, md5
+`886c10441452f9bae1622b9984016ba8`, pulled off the card with
+`gnwmanager sdpull --src-path "/data/32x/둠 (Doom).32x-0.sav"`. It is retail
+**Doom**, slot 0. Slot 1 exists too.
+
+Format: the firmware wraps picodrive's stream in an **8-byte header** — magic
+`X2XM` then a version word (`md32x_SaveState`, `main_md32x.c`). Skip 8 bytes and
+hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
+`md32x_LoadState` does.
+
+**Load it in the RIG, not in tools/pico_host.** The host driver is a 64-bit
+build and the state stream carries the device's pointer widths; it stops at
+
+    unexpected len 4, wanted 8 (sizeof(Pico32xMem->m68k_rom))
+
+because `m68k_rom` is a pointer — 4 bytes on the device, 8 on the host. The QEMU
+rig is 32-bit ARM and matches the device exactly, so the same eight-byte skip
+plus `PicoStateFP` should load there without any of this. That is the last piece
+between us and profiling the *device's own scene* offline, forever, instead of
+inheriting one figure from one device run.
+
+# Device measurement, same evening: ~23 fps
+
+The user reports Doom at **~23 fps** after this deployment, against the 17.02
+gameplay anchor. Not yet confirmed by our own instrument, and worth confirming,
+because the most likely explanation is uncomfortable: **the card's cores were
+stale**. `make flash` writes intflash only, so a device flashed that way keeps
+running whatever core `.bin` the card already had — and every core-side change
+since that card was last written (the OC-level-2 default among them) would have
+been sitting unused. If that is what happened, some earlier device numbers were
+taken against a core nobody meant to measure.
