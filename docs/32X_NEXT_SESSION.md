@@ -92,46 +92,60 @@ is the one thing that could overturn the result above.
 
 ## The queue
 
-0. **D32XR `Z_Malloc` — REPRODUCED IN THE RIG, every run, both builds. The gate
-   was lying (2026-08-18, second rewrite; the entry below it is kept because its
-   forensics stand, but its verdict does not).**
+0. **D32XR `Z_Malloc` — ROOT CAUSE FOUND AND FIXED (2026-08-18, third rewrite;
+   picodrive `7e04cb69`).** The official 5 MiB release now boots to the DOOM
+   title screen in the rig. The 4 MiB bench cut still dies on 496 by a separate
+   mechanism, see the tail of this entry.
 
-   The rig had been reproducing the device failure since the beginning. GATE3
-   said PASS because it tested
-   `(cks100 != cks300 || cks300 != cksend)` — and going from a **blank** screen
-   to a **still** one satisfies the first half. That is exactly the shape of a
-   fatal error. Both SH-2s were busy (61k insn/frame) in the interrupt handler,
-   the framebuffer was non-blank, and the checksum could not read what it said.
+   **The 5 MiB chain, every link observed on the rig** (`-DRIG_LM_TRACE` +
+   `-DRIG_WALK_TRACE`, f49, logs `/tmp/opencode/lm5.log`, `bnkw1.log`):
 
-   What it says, dumped and rendered (`-DRIG_FB_DUMP=<frame>` +
-   `tools/m7_qemu_rig/fbdump_to_png.py`):
+   1. The SH-2 lump cache is a sliding-window mapper. On a miss its callback
+      (`0x06006bd0`) asks the 68K over comm0 to program the cart bank window:
+      `comm0 = 0x1600 | bank<<3 | slot` — observed `0x163E` (slot 6, bank 7).
+   2. The 68K command handler (blob `$ff103c`, disassembled from ROM file
+      0x4580+) does `move.b #bank, $a130f0 + 2*slot + 1` → `$a130fd = 7`.
+      The write was *observed reaching the emulator* — `[bnkw] a=00a130fd d=07` —
+      and `carthw_ssf2_banks` stayed `00..07` identity anyway.
+   3. Because the bank register write was dropped, every windowed pointer read
+      one 512 KiB bank low: the cache returned `0x2233ba68` (window 6) for
+      TEXTURE1, the LZ decoder at `0x02018b68` read garbage (`"aa"` +
+      backreference underflow past the destination), so the expanded header's
+      first u32 was `0x6161` = 24929 "textures".
+   4. `24929 * sizeof(texture_t=32) + 24 = 797752` → `Z_Malloc: failed on
+      797752`, character for character with the device report.
 
-   | ROM | screen | gate, before / after |
-   |---|---|---|
-   | 4 MiB bench cut | `Z_Malloc: failed on 496` | PASS / **FAIL** |
-   | official 5 MiB release | `Z_Malloc: failed on 797752` | — (could not load at all) / **FAIL** |
-   | retail Doom (control) | gameplay, three distinct hashes | PASS / PASS |
+   **The bug was in the emulator, not the ROM.** `PicoMemSetup32x` installs
+   io write handlers under `#ifndef GNW_32X_CORE`, so GNW builds always got
+   the *plain* handler, which drops every `$a130xx` write except f1. The fix
+   (`7e04cb69`): compile `PicoWrite8/16_32x_on_io_ssf2` in GNW builds too
+   (`carthw_ssf2_write8/16` live in `carthw.c`, compiled unconditionally) and
+   route to them when `carthw_ssf2_active`. Verified: GATE3 PASS at 320/500/
+   4000 frames, avg sh2 332230 insn/frame (was 0 after death), f3999
+   framebuffer rendered to PNG = DOOM title screen with menu.
 
-   `failed on 496` is the device report, character for character. Nothing about
-   this needed hardware.
+   Note the game never touches the SSF2 bank registers *directly* — an early
+   hypothesis ("game programs banks, GNW drops them") was rejected on exactly
+   that observation, then restored in the correct form: the game programs them
+   *through the 68K comm proxy*, which the plain handler also starves. A
+   second proxy path (opcode 0x01, `$a130f1` strobe 3/2 + a byte read at
+   `$200000+2*comm1`) answers 0 — that window is still unmapped for 68K reads,
+   but boot proceeds past it; it is not the killer.
 
-   **The gate is fixed**: the two *late* samples must differ, and the failure
-   message names the frozen framebuffer and tells the operator how to read it.
-   Retail Doom still passes, so this is not a tightening that fails everything.
+   **The 4 MiB bench cut (`failed on 496`) is a different death.** Death-stack
+   (`RIG_DEATH_STACK=450`, `/tmp/opencode/ds4.log`): the failing allocation is
+   a 472-byte lump cache request (`496 = 472 + 24`) from
+   `W_CacheLumpNum` (`0x0201edd0`) — plain zone exhaustion, not a count×32
+   path. This build is on the ≤4 MiB route (wadbase 0x02036000, every lump
+   pointer under the direct-return threshold), so banking is not involved and
+   the fix above does not change it. **What filled the zone is not traced —
+   uninvestigated, not excluded.**
 
-   *The remaining engineering question is now a number.* `BASE_ZONE_SIZE` is
-   `0x33000` — 208,896 bytes. The official release asks for **797,752** in one
-   allocation, which that zone can never satisfy under any fragmentation. So
-   this is not "the allocator ran out"; it is the zone-size or free-memory
-   computation disagreeing with what the build expects. Start at `Z_Init`, and
-   compare what the fork answers against upstream — the stub BIOS and the SDRAM
-   fastpath are still the candidates the previous campaign named.
-
-   *Instrument lesson, worth more than the bug:* a checksum cannot read. The
-   previous campaign ran real BIOS, stub BIOS, and three SRAM fills, 4000 frames
-   each, all "GATE3 PASS", and concluded device-only. Every one of those runs was
-   sitting on the error screen. When a gate's only eye is a hash, add one that
-   can see.
+   *Corrections this cost, kept honest:* the SRAM A/B of the superseded entry
+   below "passed" on lying gates; read correctly it says death was identical
+   under zero/FF/random SRAM — SRAM is not an input, which the root cause now
+   explains (the failure was a mapper wiring gap). The instrument lesson
+   stands: a checksum cannot read.
 
 0b. *(superseded verdict, forensics retained)* **`Z_Malloc: failed on 496` —
    device-only; NOT reproducible in the rig.** The line above this
@@ -194,10 +208,12 @@ is the one thing that could overturn the result above.
    SDRAM→BIOS edge), `RIG_STRPAGE` (68K page-0x8a string-reader trap),
    `RIG_SDRAM_SCAN` (post-death SDRAM scan), `RIG_SRAM_FILL`
    (preload/fill/dump; note QEMU semihosting passes no env vars and SYS_OPEN
-   returns -1 — the knobs are compile-time macros, see HARNESSES.md). The
-   `RIG_LM_TRACE` reg-write/reset hooks were throwaway in /tmp and are gone;
-   recipe to rebuild: printf in `p32x_reg_write8/16`, `p32x_sh2reg_write16`,
-   `sh2_reset`.
+   returns -1 — the knobs are compile-time macros, see HARNESSES.md),
+   `RIG_DEATH_STACK` (sh2 regs/stack + SDRAM windows + 64 KiB 68K RAM dump,
+   via `cart.c rig_pico_ram()`), `RIG_LM_TRACE` (comm-protocol writes from
+   both sides) and `RIG_WALK_TRACE` (directory walk / cache-pointer /
+   decoder-read / bank-register taps) — the last two and the death stack are
+   what ran this entry's forensics (picodrive `a39ce414`, super `1ec73241`).
 
 1. **Gameplay-anchored numbers for everything.** Retail Doom **done** —
    16.10/16.09 (2026-08-16), 15.89/15.91/15.89 on the 08-17 tree, and the OC
