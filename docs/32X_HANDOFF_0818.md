@@ -314,17 +314,33 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > | baseline | 15,094,391 | — |
 > | + cart-ROM data fast path (`202e4a29`) | 14,786,244 | −2.04% |
 > | + fastloop nibble gate (`f9e2bfb8`) | 14,582,403 | −1.38% |
-> | **compounded** | | **−3.39%, x1.035** |
+> | + opcode fetch window (`ae185661`) | 13,630,378 | **−6.53%** |
+> | **compounded** | | **−9.70%, x1.107** |
 >
 > Framebuffer checksums (`1dca767c`/`e46856ae`), audio hash (`af8c118b`) and
 > guest instruction count (165,262) identical across all three; arms md5-verified
 > different every time. `GNW_NO_ROM_DATA_FASTPATH` and
 > `GNW_NO_FASTLOOP_NIBBLE_GATE` turn them off.
 >
-> Still unopened in the anatomy: the ~11-instruction fetch block (it reloads the
-> global `gnw_sh2_rom_fetch_mask` on every fetch, and tests SDRAM before ROM
-> when the pcwall probe says Doom fetches are 100% ROM) and the ~8-instruction
-> cycle-decrement/IRQ-check epilogue.
+> The fetch block is done: 17 instructions to 13 on a device-shaped build, by
+> folding the region tag, mask and base into one object so the "is the fast path
+> legal" test disappears into the tag compare. **Still unopened: the
+> ~8-instruction cycle-decrement/IRQ-check epilogue** — `sh2->icount` is
+> decremented and stored back to memory on every single instruction, and
+> `sh2->test_irq` is loaded on every single instruction.
+>
+> **Two method rules came out of this, both earned the hard way in one hour:**
+>
+> - **Count the compiled output on a DEVICE-shaped build before running any
+>   A/B.** `RIG_SH2_COUNT` does not merely add four instructions; it holds a
+>   register, and gcc generates materially different code with it gone. The
+>   nibble gate is eight instructions in the rig and three on the device,
+>   because the device build has a register free to hoist its constant into.
+>   Every rig A/B here therefore *under*-prices the lever it measures.
+> - **An ablation is verified by what the compiler emitted, not by what it was
+>   called.** Reordering the region tests to put ROM first is correct reasoning
+>   and a regression: gcc hands r6 to the SDRAM mask and reloads the ROM mask's
+>   address on the ROM path, 12 instructions to 15. Closed; do not retry.
 >
 > ⚠️ **Do not quote an fps from this run.** Per-frame host cost over the
 > gameplay window is wildly dispersed — `avg 1.06G, min 8.0M, max 3.74G
