@@ -154,7 +154,13 @@ static int s_ds_done;
 #ifndef RIG_FRAMES
 #define RIG_FRAMES 600
 #endif
+/* Frames before the measurement window opens (and where phase_snapshot fires).
+ * Overridable because RIG_STATE_LOAD moves where "warm" begins: with a resumed
+ * savestate the boot frames before the load are a different program, and
+ * averaging them in reports neither. Use -DRIG_WARMUP=<load frame + 1>. */
+#ifndef RIG_WARMUP
 #define RIG_WARMUP 20
+#endif
 #ifndef RIG_MIX_FROM
 /* frame at which RIG_MEM_MIX zeroes its census -- the pad script's gameplay
  * entry (see pad_script); override on the command line if that moves.
@@ -380,7 +386,12 @@ static void fh_report(const char *tag, const uint32_t *arr, uint32_t n) {
  * Run fastloop-OFF first to see the loops fastloop kills, then ON to see the
  * residual hot set. */
 #include "cpu/sh2/mame/sh2dasm.h"
+/* Must match sh2pico.c's -- both take it from the same -D on the command line.
+ * The default was sized for the attract loop's 188 PCs; gameplay has 8,329 and
+ * saturates it. See the note beside the table in sh2pico.c. */
+#ifndef RIG_PC_HIST_SLOTS
 #define RIG_PC_HIST_SLOTS 8192
+#endif
 struct rig_pc_slot {
     uint32_t pc;
     uint32_t occupied;
@@ -421,6 +432,19 @@ static void rig_pchist_report(void) {
     unsigned shown = n < 50 ? n : 50;
     printf("[32x-pchist] %u unique PCs, %llu total guest SH-2 insns; top %u:\n",
            n, grand, shown);
+    {
+        /* Occupancy and drops, always -- a share computed off a saturated
+         * table is an under-count wearing a percentage sign, and the table
+         * saturating is also what makes the instrument cost more than the
+         * emulator it is measuring. */
+        extern unsigned long long rig_pchist_dropped[2];
+        unsigned long long dropped = rig_pchist_dropped[0] + rig_pchist_dropped[1];
+        unsigned pct = (unsigned)((unsigned long long)n * 100 /
+                                  (2u * RIG_PC_HIST_SLOTS));
+        printf("[32x-pchist] table %u/%u slots (%u%%), dropped %llu insns%s\n",
+               n, 2u * RIG_PC_HIST_SLOTS, pct, dropped,
+               dropped ? "  <-- RAISE RIG_PC_HIST_SLOTS AND RE-RUN" : "");
+    }
     unsigned long long acc = 0;
     for (unsigned i = 0; i < shown; i++) {
         acc += top[i].total;
@@ -1100,6 +1124,18 @@ int main(void) {
         unsigned long long sh2_now = g_sh2_insns, sh2_d = sh2_now - sh2_prev;
         sh2_prev = sh2_now;
 
+#ifdef RIG_TRACE_COST
+        /* Every frame, not every twentieth. The gameplay window's host cost
+         * ran 8.0M to 3.74G insn/frame -- a 460x spread whose mean is not a
+         * speed -- and a 20-frame stride cannot tell a periodic spike from a
+         * one-off catch-up. Prints guest insns beside host insns because the
+         * interesting frames are the ones where host work climbs while guest
+         * work does not: that is the scheduler, not the renderer. */
+        if (f >= RIG_TRACE_COST)
+            printf("[cost] f=%d host=%llu sh2=%llu\n", f,
+                   (unsigned long long)insn, sh2_d);
+#endif
+
 #ifdef RIG_SH2_WATCH
         /* D32XR hunt: bracket the frame where the guest SH-2s leave game
          * code for the BIOS re-entry. First watch showed both CPUs already
@@ -1398,6 +1434,17 @@ int main(void) {
 #ifdef RIG_FRAME_HIST
     fh_report("drawn", s_fh_drawn, s_fh_n_drawn);
     fh_report("skipped", s_fh_skip, s_fh_n_skip);
+#endif
+#ifdef RIG_ABLATE_LOOPS
+    {
+        extern unsigned long long rig_abl_hits[2], rig_abl_iters_skipped[2];
+        printf("[32x-abl] loop1 entries=%llu iters_skipped=%llu | "
+               "loop2 entries=%llu iters_skipped=%llu\n",
+               rig_abl_hits[0], rig_abl_iters_skipped[0],
+               rig_abl_hits[1], rig_abl_iters_skipped[1]);
+        printf("[32x-abl] the screen is wrong on purpose; compare avg host "
+               "insn/frame against the same build without -DRIG_ABLATE_LOOPS\n");
+    }
 #endif
 #ifdef RIG_SH2_PC_HIST
     rig_pchist_report();

@@ -249,6 +249,36 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > profile and had never been reproduced offline — it is reproduced now**, from
 > the device's own scene, repeatably, on this machine.
 >
+> **Then the lever was priced by ablation, and the profile was wrong — in the
+> direction nobody expects.** `-DRIG_ABLATE_LOOPS` clamps each loop's DT
+> counter to 1 at entry, collapsing it to a single iteration: the loop still
+> exits through its own BFS, downstream control flow is unchanged, only the
+> pixels are missing. Two arms, same tree, verified different binaries
+> (`f7204fc9…` vs `3aa1faf0…`):
+>
+> | | base | ablated | delta |
+> |---|---|---|---|
+> | guest SH-2 insn/frame | 165,262 | 105,983 | **−35.9%** |
+> | host insn/frame | 15,094,391 | 12,763,684 | **−15.4%** |
+>
+> Deleting **35.9% of guest instructions removed 15.4% of frame cost.** These
+> loops are *cheaper per instruction* than the average guest instruction —
+> tight, branchless, straight into SDRAM, with none of the memory-map dispatch
+> the average instruction pays, and `gnw_sh2_fastloop` already eating part of
+> them. **The ablation ceiling on an R_DrawColumn HLE is x1.18**, not the x1.32
+> the instruction share implied nor the x1.22 the table above estimated.
+>
+> This is the repo's own rule (`rule-price-a-lever-by-ablation-not-by-profile`)
+> firing in the *opposite* direction from usual: the standard failure is a
+> profile that under-counts a lever because memory stalls are invisible in an
+> instruction count. Here an instruction count **over**-counted it.
+>
+> ⚠️ And the mirror of that caveat applies to this very number: **the rig counts
+> host instructions, not device cycles.** QEMU has no caches and no wait states,
+> so a memory-bound loop is exactly the shape the rig under-prices. The device's
+> share could be higher than 15.4%. A device A/B is the arbiter; x1.18 is the
+> rig's floor on the ceiling, not the answer.
+>
 > ⚠️ **Do not quote an fps from this run.** Per-frame host cost over the
 > gameplay window is wildly dispersed — `avg 1.06G, min 8.0M, max 3.74G
 > insn/frame` — so the mean is not a speed. The guest-instruction histogram is
