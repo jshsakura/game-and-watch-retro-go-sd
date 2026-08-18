@@ -35,6 +35,27 @@ the attract demo.** That includes the "R_DrawColumn is 36.5% of msh2" figure the
 HLE plan rests on — that came from a *device* profile of a savestate-resumed
 scene, and nothing offline has ever reproduced it.
 
+**The proof that none of the reachable states is gameplay: `188 unique PCs`, in
+every one of them.**
+
+| state | unique guest PCs | guest insns in window |
+|---|---|---|
+| pure attract (no pad script) | **188** | 20,963,667 |
+| old pad script | **188** | 6,638,320 |
+| A-mash, menu over a rendered level | **188** | 8,385,479 |
+
+A Doom frame that renders a 320x224 view through R_DrawColumn touches *thousands*
+of distinct master-SH-2 PCs. 188 is a small fixed loop set — and it is the same
+188 in all three, with the top entries carrying identical shares to two decimals.
+The 3D image behind the menu is a still the game drew once; the compositor runs
+every frame (`lines=224`), so the screen looks alive while the SH-2 is producing
+no new pixels.
+
+So the distinction is not attract-versus-gameplay. **All three states are the same
+front-end wait loop, and the rig has never once profiled Doom rendering.** Any
+guest-side optimisation argued from these profiles — including the hot leaf
+functions below — is argued from the wrong program.
+
 Today's pad-script work got as far as the main menu drawn on top of a rendered
 level (121 colours, 97,198 guest SH-2 insn/frame against attract's 69,879, peak
 frame 23.9M host insn — which matches the ledger's "heavy frame = 24.4M device
