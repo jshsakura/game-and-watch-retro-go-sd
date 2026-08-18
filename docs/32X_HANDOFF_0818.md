@@ -279,6 +279,53 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > share could be higher than 15.4%. A device A/B is the arbiter; x1.18 is the
 > rig's floor on the ceiling, not the answer.
 >
+> **The 68% nobody had opened.** `msh2 (interp+bus)` is one bucket in the phase
+> table and it is two thirds of the frame; this is what is inside it. Counted
+> from the disassembly of `sh2_execute_interpreter` in the rig build, per
+> dispatched guest instruction, before the operation's own body runs:
+>
+> | prologue/epilogue | host insn | what |
+> |---|---|---|
+> | `0x28`–`0x50` | ~11 | fetch: pc load, SDRAM region test, ROM region test, mask load+test, `p_rom` load, `ldrh` |
+> | `0x52`–`0x84` | ~8 | fastloop opcode pre-filter (`(op & 0xf980) == 0x8980`, `op == 0xaffe`) |
+> | `0x58`/`0x76` | ~4 | `ldrd`/`strd` 64-bit counter — **`RIG_SH2_COUNT`, rig-only, not in the device build** |
+> | `0x5e`–`0x72` | ~4 | `pc += 2`, `ppc = pc`, `delay = 0` |
+> | `0x88`–`0x90` | ~3 | `tbh` dispatch |
+> | `0xbc`–`0xfe` | ~8 | cycle decrement, IRQ-pending check, loop back |
+>
+> **~38 host instructions of fixed overhead against 70.5 total, so the average
+> operation body is only ~30.** The interpreter spends more on bookkeeping than
+> on the instruction. That is the shape of the dominant cost, and no amount of
+> making the *operations* faster touches it.
+>
+> Two things fall straight out. First, the fastloop pre-filter runs on every
+> dispatched instruction to catch opcodes that all live in two nibbles (`0x8xxx`
+> and `0xaxxx`), and gcc rebuilds both `movw` constants every iteration instead
+> of hoisting them. Second — a methodological one — **`RIG_SH2_COUNT` puts a
+> 64-bit load-add-store on every guest instruction in the rig.** A/B deltas are
+> unaffected (both arms carry it), but 70.5 host-insn/guest-insn is the *rig's*
+> ratio, not the device's, and must not be quoted as the device's.
+>
+> **Two landed off that anatomy, both hash-gated, both in the path every 32X
+> game runs through:**
+>
+> | change | host insn/frame | delta |
+> |---|---|---|
+> | baseline | 15,094,391 | — |
+> | + cart-ROM data fast path (`202e4a29`) | 14,786,244 | −2.04% |
+> | + fastloop nibble gate (`f9e2bfb8`) | 14,582,403 | −1.38% |
+> | **compounded** | | **−3.39%, x1.035** |
+>
+> Framebuffer checksums (`1dca767c`/`e46856ae`), audio hash (`af8c118b`) and
+> guest instruction count (165,262) identical across all three; arms md5-verified
+> different every time. `GNW_NO_ROM_DATA_FASTPATH` and
+> `GNW_NO_FASTLOOP_NIBBLE_GATE` turn them off.
+>
+> Still unopened in the anatomy: the ~11-instruction fetch block (it reloads the
+> global `gnw_sh2_rom_fetch_mask` on every fetch, and tests SDRAM before ROM
+> when the pcwall probe says Doom fetches are 100% ROM) and the ~8-instruction
+> cycle-decrement/IRQ-check epilogue.
+>
 > ⚠️ **Do not quote an fps from this run.** Per-frame host cost over the
 > gameplay window is wildly dispersed — `avg 1.06G, min 8.0M, max 3.74G
 > insn/frame` — so the mean is not a speed. The guest-instruction histogram is
