@@ -331,6 +331,17 @@ single guest cycle. That is the largest lever anyone has priced here, and the
 tree already has the precedent for it — the SNES core runs a hand-written
 Thumb-2 65816 and SPC700 for exactly this reason.
 
+⛔ **And do not "simplify" the fastloop pre-filter out of the dispatch.** It
+costs ~7 host instructions on every guest instruction and looks exactly like the
+add-a-test-to-skip-work shape this tree normally loses on. Priced by ablation
+(`-DGNW_SH2_NO_FASTLOOPS`, picodrive `8023c183`): removing it takes the frame
+from 7,876,239 to **27,488,194** insn — 3.5x worse — because the guest
+instructions actually interpreted go from 69,878 to 434,967. The filter is
+buying the loops the game lives in. Note the trap in the ratio: host/guest
+*improves* from 75.1 to 57.2 when you remove it, which is a good reminder that
+host-per-guest is not a figure of merit by itself — it gets better when you make
+the guest do more work.
+
 ⛔ **Do not re-derive the idle-skip lever from this table.** ssh2's 17.1% is
 almost entirely a `bra-self` park, and switching on the existing
 `gnw_sh2_idle_skip` removes it: measured here 7,876,239 → 6,511,024 insn/frame,
