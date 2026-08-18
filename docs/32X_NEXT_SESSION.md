@@ -398,6 +398,41 @@ buying the loops the game lives in. Note the trap in the ratio: host/guest
 host-per-guest is not a figure of merit by itself — it gets better when you make
 the guest do more work.
 
+### Why idle-skip breaks the sound — mechanism, measured 2026-08-18
+
+The old verdict was "it broke Doom's gunshot PWM SFX", found by ear on hardware.
+The rig can hear now (audio hash, `dfa8678d`) and the mechanism is this:
+
+| arm | insn/frame | framebuffer | audio hash |
+|---|---|---|---|
+| baseline | 7,694,031 | 9cd2510f/22ee77a6/ced1080b | `f4c01e1e` |
+| idle-skip | 6,329,078 (−17.7%) | identical | **`3ac9f381`** |
+| idle-skip + wake on PWM FIFO movement | 7,662,594 (−0.4%) | identical | **`f4c01e1e`** ✓ |
+
+A parked SH-2 is only woken by an internal IRQ (`sh2_internal_irq`); `pwm.c`
+contains no wake at all, and the VBlank `p32x_sh2_poll_event` excludes
+`SH2_STATE_SLEEP` explicitly. Doom's **slave SH-2 does not wait on the PWM
+interrupt — it busy-polls the mono FIFO count**, so once parked it never sees
+the FIFO drain and never refills it. Waking it on FIFO movement restores the
+baseline audio hash exactly, which confirms the mechanism.
+
+And then the gain is gone: −17.7% becomes −0.4%, whether the wake fires on every
+consumed sample or only when the FIFO empties. **ssh2's 17.1% of the frame is not
+idle spin — it is the sound service loop**, running at audio rate. The spin *is*
+the waiting, and skipping the waiting skips the sound.
+
+So the old verdict stands, but for a better reason than "it broke SFX", and the
+next attempt has a gate that catches it offline in one run instead of a device
+round trip and an ear.
+
+**What this does leave open:** neither existing collapse handles a poll on a
+*PWM register*. The SDRAM-poll detector deliberately restricts itself to
+`0x06000000` targets (an `RW()` on a sysreg/comm address would fire poll_detect
+and corrupt the guest's poll state), and the bra-self path is a different shape.
+A detector that understands the PWM FIFO could compute when the count will next
+change and skip to exactly there — cycle-exact, so the audio hash would have to
+stay `f4c01e1e`. That is the one untried shape on this axis.
+
 ⛔ **Do not re-derive the idle-skip lever from this table.** ssh2's 17.1% is
 almost entirely a `bra-self` park, and switching on the existing
 `gnw_sh2_idle_skip` removes it: measured here 7,876,239 → 6,511,024 insn/frame,
