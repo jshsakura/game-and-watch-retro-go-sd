@@ -280,15 +280,50 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > see — QEMU has no wait states, so every rig A/B here under-prices
 > memory-touching work.
 >
-> What it is worth needs one more split. 29.2 is the average over *all*
-> regions, while the lever is only on the cart-ROM subset: per frame the guest
-> makes 28,926 cart-ROM reads (XIP flash) against 41,506 SDRAM reads (internal
-> RAM, fast). Solving for the ROM-only cost under plausible SDRAM figures puts
-> it at **~51–61 cycles**, which makes an 8 KB colormap/texture cache worth
-> **4.5–5.4%** rather than the 2.9% the aggregate implies. That is an
-> inference, not a measurement — bucketing `gnw_probe_rd` by
-> `(a & 0xdf000000)` turns it into one, and is blocked only on restoring the
-> anchor above.
+> **The per-region split is measured now, and it CLOSES the axis.** Bucketing
+> `gnw_probe_rd` by `(a & 0xdf000000)`, same anchor:
+>
+> | region | cycles/read | n (msh2) |
+> |---|---|---|
+> | cart ROM (XIP flash) | **43.3** | 31,658 |
+> | SDRAM (internal RAM) | **22.0** | 40,181 |
+> | 32X DRAM | 32.5 | 2,094 |
+> | other (peripheral/regs) | **106.5** | 125 |
+>
+> ssh2 pays more: rom 51.0, sdram 23.8.
+>
+> My inference of 51-61 for ROM was wrong because I assumed SDRAM cost 8-15.
+> It costs **22.0** -- the code's own warning about "a 256 KB SDRAM working set
+> against a 16 KB D-cache" priced, at last.
+>
+> And that is what kills the lever. A RAM cache lives in RAM_EMU, so a cache
+> **hit also costs 22.0**. The saving is 43.3 - 22.0 = **21.3, less than half**
+> the flash cost, not the full 43.3:
+>
+> | | |
+> |---|---|
+> | 19,785 cached reads/frame x 21.3 | 421 K cycles = **2.1%** |
+> | minus a hit test on all 28,926 ROM reads (3-5 cyc) | -0.4 to -0.7% |
+> | **net** | **~1.5%** |
+>
+> Eight kilobytes of RAM_EMU and a test on every guest read, for 1.5% -- and
+> `rule-a-test-that-skips-work-loses-on-this-chip` is about exactly that test.
+> **Closed.** The measurement did not open this axis; it closed it, which is
+> what it was for.
+>
+> Two things worth carrying from those numbers: peripheral/register reads cost
+> **106.5** cycles, so a game that polls registers hard has *that* as its wall
+> rather than anything here; and the aggregate 29.2 against the bucket-weighted
+> 31.5 differ by 8% (different windows, different `MD32X_PROFILE_FRAMES`), so
+> say which one you are quoting.
+>
+> The AHB assert that blocked this was diagnosed too, and it was neither the
+> save nor the interpreter work: the profile build's own delta pools at
+> `MD32X_PROFILE_FRAMES=64` exhausted the AHB pool during the savestate load
+> (`get_bios`'s 64 KB bank image allocates from it too). `FRAMES=64 -> 32`
+> gives 1.5 KB back and it boots. The `_Static_assert` guarding that pool
+> checks the **static** sum only; the load path allocates at runtime, so the
+> assert passes and the device still dies.
 >
 > ⚠️ And the mirror of that caveat applies to this very number: **the rig counts
 > host instructions, not device cycles.** QEMU has no caches and no wait states,
