@@ -458,7 +458,16 @@ static bool Md32xCacheXipToFlash(void) {
  * writes ~700 B of breadcrumbs (15 lines, longest is rom=<path>); a very
  * long rom path can now truncate the last line or two of an already-good
  * boot — the failure lines diag exists for come long before the tail. */
+#ifdef MD32X_DEVICE_PROFILE
+/* 768 -> 696 -> 632 (0819): the v26/v27 data-access probes pointer-ized every
+ * profile BSS object and then the region buckets (64 B) needed another shave;
+ * the diag tail is the only slack left (same lever as 0725/0726 below). The
+ * linker ASSERT is strict (<), so the shave must land END strictly below
+ * __RAM_EMU_END__. Release keeps 768. */
+static char md32x_diag[632];
+#else
 static char md32x_diag[768];
+#endif
 static uint16_t md32x_diag_len;
 static bool md32x_diag_sealed;   /* true once the main loop starts: no more writes */
 

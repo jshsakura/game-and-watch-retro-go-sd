@@ -124,7 +124,9 @@
  * all). 64 frames = 3,072 B, leaving 856 B of real margin; the
  * _Static_assert below turns any future regression of either side back
  * into a build failure instead of a device Hardfault. */
-#define MD32X_PROFILE_FRAMES  64u   /* ~1.07 s @60 fps / ~1.28 s @50 fps; then dump */
+#define MD32X_PROFILE_FRAMES  32u   /* AHB-exhaustion bisect (0819): 64 -> 32
+ * halves the delta pools; if the savestate-load assert disappears at 32 the
+ * profile arms' AHB total is the cause (see 1.1 0819 analysis). */
 /* Skipped before the window opens. Three device passes measured the SAME
  * 131,537 samples — a boot-anchored window is deterministic and lands on
  * the title sequence, so the numbers profile the logo, not the game.
@@ -151,9 +153,26 @@ enum {
  * __RAM_EMU_END__ and 536 B of static tables broke the link. */
 #define MD32X_PCWALL_BLOCK_WORDS (2u * 64u + 2u * 3u)
 
+/* defined before the _Static_assert below so sizeof() sees a complete type */
+static struct prof_state {
+    uint32_t drawn, skip;
+    bool dumped, active;
+} *ps;
+
+/* NOTE: this assert only sums STATIC pool sizes. It cannot see RUNTIME
+ * co-tenants of the AHB pool -- the savestate-load path alone takes a
+ * 64 KB get_bios bank (0819: FRAMES=64 passed this assert yet exhausted
+ * the pool at runtime; 32 restores the headroom). */
 _Static_assert(2u * PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES * sizeof(uint32_t)
                + MD32X_PCWALL_BLOCK_WORDS * sizeof(uint32_t)
-               + MD32X_D2FB_BYTES <= MD32X_AHB_DYNAMIC_POOL_BYTES,
+               + MD32X_D2FB_BYTES
+               /* moved out of overlay BSS into the AHB pool below: the MD32X
+                * overlay BSS is 296 B over __RAM_EMU_END__ with them static */
+               + 2u * PROF_BUCK_COUNT * sizeof(uint64_t)
+               + sizeof(struct pp_counters)
+               + (size_t)pp_total_points * sizeof(int)
+               + sizeof(struct prof_state)
+               <= MD32X_AHB_DYNAMIC_POOL_BYTES,
                "32X profiler pools + pcwall block + Draw2FB overflow the AHB "
                "dynamic pool (shrink MD32X_PROFILE_FRAMES) -- see the 0720 "
                "device Hardfault this guards against");
@@ -166,12 +185,16 @@ static uint32_t *prof_delta_drawn;  /* [PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES] 
 static uint32_t *prof_delta_skip;   /* [PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES] */
 /* uint64 accumulators: 600 hot pico frames can sum past 2^32, so accumulate
  * the per-frame 32-bit deltas in 64 bits even though each sample is 32-bit. */
-static uint64_t prof_sum_drawn[PROF_BUCK_COUNT];
-static uint64_t prof_sum_skip[PROF_BUCK_COUNT];
-static uint32_t prof_drawn_count;
-static uint32_t prof_skip_count;
-static bool prof_dumped;    /* strictly one-shot SD write  */
-static bool prof_active;    /* false if AHB alloc failed   */
+static uint64_t *prof_sum_drawn;  /* [PROF_BUCK_COUNT], AHB (overlay BSS is full) */
+static uint64_t *prof_sum_skip;   /* [PROF_BUCK_COUNT], AHB (overlay BSS is full) */
+/* Overlay BSS sits 8 bytes over RAM_EMU with these as statics, so the four
+ * hot scalars share one AHB block behind macros -- 20+ usage sites keep
+ * their names. Fetch probe measured loads at ~29 device cycles, so this
+ * file's own state must never push the overlay over again. */
+#define prof_drawn_count (ps->drawn)
+#define prof_skip_count  (ps->skip)
+#define prof_dumped      (ps->dumped)
+#define prof_active      (ps->active)
 static uint32_t prof_warmup = MD32X_PROFILE_WARMUP_FRAMES;
 static unsigned int *pcwall_block;  /* AHB; armed at warmup expiry */
 
@@ -200,10 +223,13 @@ static unsigned int *m68k_block;
  * contiguous (qsort in the dump operates on a bucket's slice in place). */
 #define PROF_AT(pool, bucket, i)  ((pool)[(bucket) * MD32X_PROFILE_FRAMES + (i)])
 
-static struct pp_counters s_pp_counters;
-struct pp_counters *pp_counters = &s_pp_counters;
-static int s_pp_refcounts[pp_total_points];
-int *refcounts = s_pp_refcounts;
+/* AHB-allocated (overlay BSS is 296 B over __RAM_EMU_END__ with these
+ * static): picodrive's pprof_start/pprof_end reach these through the
+ * exported pointer names, so the pointers themselves must keep existing. */
+static struct pp_counters *s_pp_counters;
+struct pp_counters *pp_counters;
+static int *s_pp_refcounts;
+int *refcounts;
 
 unsigned int md32x_dwt_now(void) { return common_emu_get_dwt_cycles(); }
 
@@ -228,11 +254,21 @@ void md32x_profile_init(void) {
       fclose(df);
     }
   }
+  ps = ahb_calloc(1, sizeof *ps);  /* first: prof_active depends on it */
   prof_delta_drawn = ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
                                 sizeof(uint32_t));
   prof_delta_skip  = ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
                                 sizeof(uint32_t));
-  prof_active = (prof_delta_drawn != NULL && prof_delta_skip != NULL);
+  prof_sum_drawn = ahb_calloc(PROF_BUCK_COUNT, sizeof(uint64_t));
+  prof_sum_skip  = ahb_calloc(PROF_BUCK_COUNT, sizeof(uint64_t));
+  s_pp_counters  = ahb_calloc(1, sizeof(struct pp_counters));
+  s_pp_refcounts = ahb_calloc((size_t)pp_total_points, sizeof(int));
+  pp_counters  = s_pp_counters;
+  refcounts    = s_pp_refcounts;
+  prof_active = (ps != NULL
+                 && prof_delta_drawn != NULL && prof_delta_skip != NULL
+                 && prof_sum_drawn != NULL && prof_sum_skip != NULL
+                 && pp_counters != NULL && refcounts != NULL);
   if (prof_active) {
     /* Sampled guest-PC wall attribution (sh2pico.c). The block is allocated
      * here but the probe is ARMED at warmup expiry (md32x_profile_record),
@@ -387,9 +423,9 @@ static void md32x_profile_dump(void) {
             leaked);
     fprintf(f, "  pico_total(outside)=%u  frame_total(pprof)=%u\n",
             (unsigned)pico_total,
-            (unsigned)s_pp_counters.counter[pp_frame]);
+            (unsigned)s_pp_counters->counter[pp_frame]);
     for (uint32_t i = 0; i < ARRAY_SIZE(phases); i++) {
-      uint64_t sum = (uint64_t)s_pp_counters.counter[phases[i].point];
+      uint64_t sum = (uint64_t)s_pp_counters->counter[phases[i].point];
       uint64_t avg = total_frames ? sum / total_frames : 0;
       unsigned pct_x10 = pico_total ? (unsigned)((sum * 1000) / pico_total) : 0;
       fprintf(f, "  %-8s: sum=%u avg/frame=%u pct_of_pico=%u.%u%%\n",
@@ -404,8 +440,8 @@ static void md32x_profile_dump(void) {
      * against host INSTRUCTIONS (no cache model); this is the same ratio
      * against real DWT CYCLES, the number the rig cannot produce. */
     extern unsigned long long gnw_sh2_insn_count[2];
-    uint64_t msh2_cyc = (uint64_t)s_pp_counters.counter[pp_msh2];
-    uint64_t ssh2_cyc = (uint64_t)s_pp_counters.counter[pp_ssh2];
+    uint64_t msh2_cyc = (uint64_t)s_pp_counters->counter[pp_msh2];
+    uint64_t ssh2_cyc = (uint64_t)s_pp_counters->counter[pp_ssh2];
     uint64_t msh2_insn = gnw_sh2_insn_count[0];
     uint64_t ssh2_insn = gnw_sh2_insn_count[1];
     fprintf(f, "sh2 cycles/guest-insn (device, DWT cycles / dispatched guest insns):\n");
@@ -491,8 +527,8 @@ static void md32x_profile_dump(void) {
   {
     extern unsigned long long gnw_sh2_insn_count[2];
     uint64_t sh2_win[2];
-    sh2_win[0] = (uint64_t)s_pp_counters.counter[pp_msh2];
-    sh2_win[1] = (uint64_t)s_pp_counters.counter[pp_ssh2];
+    sh2_win[0] = (uint64_t)s_pp_counters->counter[pp_msh2];
+    sh2_win[1] = (uint64_t)s_pp_counters->counter[pp_ssh2];
     fprintf(f, "sh2 opcode-fetch cost (1 in 31 direct fetches bracketed; "
                "CYCCNT-pair self-cost %u.%u cyc):\n",
             gnw_fetch_ovh_x8 / 8u, ((gnw_fetch_ovh_x8 * 10u) / 8u) % 10u);
@@ -546,6 +582,23 @@ static void md32x_profile_dump(void) {
       fprintf(f, "\n");
       wdog_refresh();
     }
+    /* Region-resolved reads (bucket order matches gnw_da_region in
+     * sh2pico.c): sdram=on-MCU, rom=cart XIP flash -- the two a cache-the-ROM
+     * lever must be priced against separately, a flat average underprices it. */
+    {
+      extern unsigned int gnw_da_cyc_b[4][2], gnw_da_n_b[4][2];
+      static const char *bn[4] = { "sdram", "rom", "dram", "other" };
+      for (int core = 0; core < 2; core++) {
+        fprintf(f, "  %s read-by-region:", core ? "ssh2" : "msh2");
+        for (int b = 0; b < 4; b++) {
+          uint32_t n = gnw_da_n_b[b][core];
+          uint32_t avg_x10 = n ? (uint32_t)(((uint64_t)gnw_da_cyc_b[b][core] * 10) / n) : 0;
+          fprintf(f, " %s n=%u avg=%u.%u", bn[b], n, avg_x10 / 10, avg_x10 % 10);
+        }
+        fprintf(f, "\n");
+        wdog_refresh();
+      }
+    }
   }
 
   /* 68K: the 12.9%-of-frame slice nobody had looked at until now.
@@ -561,7 +614,7 @@ static void md32x_profile_dump(void) {
    * cyc/insn is against DISPATCHED instructions, dev/gcyc against emulated 68K
    * clock cycles -- the second is what compares to the SH-2s (msh2 ~42). */
   {
-    uint64_t m68k_win = (uint64_t)s_pp_counters.counter[pp_m68k];
+    uint64_t m68k_win = (uint64_t)s_pp_counters->counter[pp_m68k];
     uint64_t total_gcyc = (uint64_t)gnw_m68k_run_cyc + gnw_m68k_stop_cyc;
     gnw_m68k_armed = 0;
     fprintf(f, "m68k profile (window sums; skip = poll-detect idle):\n");
