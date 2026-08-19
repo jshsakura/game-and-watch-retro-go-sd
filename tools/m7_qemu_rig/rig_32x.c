@@ -611,6 +611,19 @@ static unsigned s_snd_calls, s_snd_samples;
  * chips are fed, so a spin-skip A/B is only meaningful if both arms hash the
  * same audio as well as the same pixels. */
 static uint32_t s_snd_hash = 2166136261u;      /* FNV-1a 32 */
+
+/* Energy alongside the hash, because the hash answers only "identical or
+ * not" and some levers move sound WITHOUT changing it in any way a listener
+ * could hear. The 68K idle fold is the case that forced this: it takes the
+ * VInt handler up to one scanline later, which shifts every sample boundary
+ * downstream, so the hash moves on audio that is otherwise the same content.
+ * Sum|s| and sum s^2 survive a small time shift and do not survive a real
+ * change of what is being played, so the pair separates "rescheduled" from
+ * "broken". Neither number replaces the hash: an unmoved hash is still the
+ * only proof of bit-identity. */
+static unsigned long long s_snd_abs, s_snd_sq;
+static int s_snd_peak;
+
 static void rig_write_sound(int len)
 {
     const unsigned char *p = (const unsigned char *)s_snd;
@@ -623,6 +636,15 @@ static void rig_write_sound(int len)
     for (i = 0; i < nbytes; i++) {
         s_snd_hash ^= p[i];
         s_snd_hash *= 16777619u;
+    }
+    if (len > (int)(sizeof(s_snd) / sizeof(s_snd[0])))
+        len = (int)(sizeof(s_snd) / sizeof(s_snd[0]));
+    for (i = 0; i < len; i++) {
+        int v = s_snd[i];
+        int a = v < 0 ? -v : v;
+        s_snd_abs += (unsigned)a;
+        s_snd_sq  += (unsigned long long)((long long)v * v);
+        if (a > s_snd_peak) s_snd_peak = a;
     }
 }
 
@@ -982,6 +1004,22 @@ int main(void) {
     PicoIn.opt = POPT_EN_FM | POPT_EN_PSG | POPT_EN_Z80
                | POPT_EN_32X | POPT_EN_PWM
                | POPT_ACC_SPRITES | POPT_DIS_32C_BORDER;   /* mono: no EN_STEREO */
+    /* Sound-subsystem ablation. The phase table charges Doom's frame for
+     * ym2612 (3.2%), z80 (2.0%) and psg/dac/mix (1.0%) whether or not the game
+     * uses any of them -- a 32X title can drive its audio entirely from the
+     * SH-2 PWM path and leave the MD sound hardware idle. These knobs price
+     * each one, and the `snd hash` says whether the game noticed: an unchanged
+     * hash with the chip switched off means it was producing silence at cost.
+     *   RIG_NO_FM / RIG_NO_Z80 / RIG_NO_PSG */
+#ifdef RIG_NO_FM
+    PicoIn.opt &= ~POPT_EN_FM;
+#endif
+#ifdef RIG_NO_Z80
+    PicoIn.opt &= ~POPT_EN_Z80;
+#endif
+#ifdef RIG_NO_PSG
+    PicoIn.opt &= ~POPT_EN_PSG;
+#endif
     PicoIn.sndRate = 44100;
     PicoIn.autoRgnOrder = 0x184;   /* US, EU, JP */
 
@@ -1493,6 +1531,80 @@ int main(void) {
                "insn/frame against the same build without -DRIG_ABLATE_LOOPS\n");
     }
 #endif
+#ifdef RIG_OPHIST
+    /* Opcode-group census: what the frame is actually made of, per core.
+     * Answers dispatch-shape questions with a distribution instead of a
+     * guess (see the RIG_OPHIST comment in sh2pico.c). */
+    {
+        extern unsigned int rig_ophist[2][256];
+        for (int c = 0; c < 2; c++) {
+            unsigned long long tot = 0;
+            unsigned idx[256];
+            for (int i = 0; i < 256; i++) { tot += rig_ophist[c][i]; idx[i] = i; }
+            if (!tot) continue;
+            /* simple selection of the top 16 */
+            printf("[32x-ophist] %s: %llu insns, top 16 opcode groups (op>>8):\n",
+                   c ? "ssh2" : "msh2", tot);
+            for (int k = 0; k < 16; k++) {
+                int best = -1;
+                for (int i = 0; i < 256; i++) {
+                    if (!rig_ophist[c][i]) continue;
+                    if (best < 0 || rig_ophist[c][i] > rig_ophist[c][best]) best = i;
+                }
+                if (best < 0) break;
+                printf("[32x-ophist]   0x%02x__  %10u  %5.2f%%\n",
+                       best, rig_ophist[c][best],
+                       100.0 * rig_ophist[c][best] / (double)tot);
+                rig_ophist[c][best] = 0;
+            }
+            (void)idx;
+        }
+        {
+            extern unsigned int rig_ophist_lo0[2][256];
+            for (int c = 0; c < 2; c++) {
+                unsigned long long tot = 0;
+                for (int i = 0; i < 256; i++) tot += rig_ophist_lo0[c][i];
+                if (!tot) continue;
+                printf("[32x-ophist] %s 0x00xx breakdown (%llu insns), top 8:\n",
+                       c ? "ssh2" : "msh2", tot);
+                for (int k = 0; k < 8; k++) {
+                    int best = -1;
+                    for (int i = 0; i < 256; i++) {
+                        if (!rig_ophist_lo0[c][i]) continue;
+                        if (best < 0 || rig_ophist_lo0[c][i] > rig_ophist_lo0[c][best]) best = i;
+                    }
+                    if (best < 0) break;
+                    printf("[32x-ophist]   op=0x00%02x  %10u  %5.2f%%\n",
+                           best, rig_ophist_lo0[c][best],
+                           100.0 * rig_ophist_lo0[c][best] / (double)tot);
+                    rig_ophist_lo0[c][best] = 0;
+                }
+            }
+        }
+    }
+#endif
+#ifdef RIG_M68K_HIST
+    {
+        struct rig_m68k_slot { unsigned int at, hits; };
+        extern struct rig_m68k_slot rig_m68k_tab[1024];
+        extern unsigned long long rig_m68k_insns, rig_m68k_evict;
+        printf("[32x-m68k] %llu guest insns (%llu/frame), %llu evicted; top 16 PCs:\n",
+               rig_m68k_insns, rig_m68k_insns / (unsigned)(RIG_FRAMES),
+               rig_m68k_evict);
+        for (int k = 0; k < 16; k++) {
+            int best = -1;
+            for (int i = 0; i < 1024; i++) {
+                if (!rig_m68k_tab[i].hits) continue;
+                if (best < 0 || rig_m68k_tab[i].hits > rig_m68k_tab[best].hits) best = i;
+            }
+            if (best < 0) break;
+            printf("[32x-m68k]   0x%06x  %10u  %5.2f%%\n",
+                   rig_m68k_tab[best].at, rig_m68k_tab[best].hits,
+                   100.0 * rig_m68k_tab[best].hits / (double)rig_m68k_insns);
+            rig_m68k_tab[best].hits = 0;
+        }
+    }
+#endif
 #ifdef RIG_SH2_PC_HIST
     rig_pchist_report();
 #endif
@@ -1505,6 +1617,8 @@ int main(void) {
     phase_report(n, ipt_x1000, n > 0 ? sh2_tot / n : 0);
     printf("[32x-qemu] snd hash=%08lx calls=%u samples=%u\n",
            (unsigned long)s_snd_hash, s_snd_calls, s_snd_samples);
+    printf("[32x-qemu] snd energy sum|s|=%llu sum s^2=%llu peak=%d\n",
+           s_snd_abs, s_snd_sq, s_snd_peak);
     printf("[32x-qemu] fb f%d=%08lx(nb=%d) f%d=%08lx(nb=%d) f%d=%08lx(nb=%d)\n",
            CK_A, (unsigned long)cks100, nb100, CK_B, (unsigned long)cks300, nb300,
            CK_LAST, (unsigned long)cksend, nbend);
