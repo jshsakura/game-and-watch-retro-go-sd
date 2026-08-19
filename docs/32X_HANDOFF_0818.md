@@ -583,3 +583,54 @@ running whatever core `.bin` the card already had — and every core-side change
 since that card was last written (the OC-level-2 default among them) would have
 been sitting unused. If that is what happened, some earlier device numbers were
 taken against a core nobody meant to measure.
+
+
+---
+
+# Native DOOM: the veneer wall has a one-flag answer, and it was never tried
+
+The nhdoom port was shelved 2026-06-28 on one fault. The engine reached
+`R_InitTextures` — boot, WAD, flash-cache relocate, `R_Init`, `R_InitData` all
+passed — and died in `FindLumpByName` at its `bl __memcpy_veneer`:
+
+    __memcpy_veneer:  ldr.w pc, [pc] ; .word 0x08100611
+
+Executing that **from OSPI XIP flash**, the self-referential load-into-PC reads
+0 on the D-side. The literal was proven correct — printed identical before and
+after a full `SCB_CleanInvalidateDCache` — and plain `ldr rX,[pc]` data literals
+from XIP work fine, which the engine demonstrated by running on them. Only the
+`ldr pc` branch hazards.
+
+The veneer exists because `.doom_xip` sits at the `0xD00D0000` sentinel and the
+firmware at `0x08100000`: 3.35 GB apart, so every cross-boundary `bl` is out of
+±16 MB range and the linker synthesises one. `memcpy` lives in firmware libc,
+so a struct copy in engine code reaches it through a veneer.
+
+**`-mlong-calls` removes the veneer rather than fixing it.** Verified by
+codegen, `arm-none-eabi-gcc -mcpu=cortex-m7`:
+
+| flags | emitted call |
+|---|---|
+| none | `bl <memcpy>` → linker veneer → `ldr.w pc,[pc]` |
+| `-mlong-calls` | `ldr r3,[pc,#4]` then `blx r3` |
+
+A data literal load — the form that works from XIP — followed by a register
+branch. No PC-relative load into PC anywhere, and **no linker veneer is
+generated at all**, so there is nothing left to hazard. This is exactly the
+`ldr r12,[pc]; bx r12` shape the June note listed as untried, applied by the
+compiler to every call instead of by hand to one veneer.
+
+It also fits the relocation machinery already in place. The literal holds the
+callee's absolute address: XIP→firmware literals are real `0x08xxxxxx` addresses
+needing no patch, and XIP→XIP literals are `0xD00D…` sentinels, which is
+precisely what `PatchDoomRegion` scans for and patches. Every cross-reference
+becomes a plain data word — more uniform than the mix of veneers and literals
+it replaces.
+
+Cost is one instruction and four bytes of literal per call. The engine was
+written for a 64 MHz nRF52840; this device is a 340 MHz M7.
+
+**Status: untested on hardware.** What is established is that the flag produces
+the instruction form the June evidence says survives XIP, and that it removes
+the construct that failed. Apply it to the `build/nhdoom/*.o` and `build/doom/*.o`
+recipes, count `__*_veneer` in the link map (the target is zero), then flash.
