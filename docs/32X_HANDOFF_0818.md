@@ -369,7 +369,33 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > | + opcode fetch window (`ae185661`) | 13,630,378 | **−6.53%** |
 > | + inline data-read fast paths (`56794fe1`) | 13,410,684 | −1.61% |
 > | − restore the `!delay` IRQ guard (`494e5998`) | 13,560,320 | +1.12% |
-> | **compounded** | | **−10.16%, x1.113** |
+> | **+ texture-column HLE (`9528be13`)** | 12,560,257 | **−7.37%** |
+> | **compounded** | | **−16.79%, x1.202** |
+>
+> **The R_DrawColumn HLE is built.** Not the ablation — the real thing: the
+> seven-instruction inner loop runs natively as a new `gnw_sh2_fastloop`
+> pattern, matched structurally (eight opcode forms plus register agreement,
+> register numbers read out of the matched opcodes, never an address), so it
+> fits any build of this renderer rather than one cart.
+>
+> −7.37% against the −15.4% ablation ceiling: the HLE still does the real
+> memory work, and that is the half it cannot remove. **On the device that half
+> costs more than it does here** — 43.3 cycles a cart-ROM read, 32.5 a DRAM
+> write, against a rig with no wait states — so the device split will differ.
+> Measure it; do not infer it from the rig number.
+>
+> Two things that had to be got right rather than assumed:
+> - `BFS` assigns `sh2->delay` **unconditionally**, so the delay slot runs
+>   whether or not the branch is taken. A folded iteration is therefore
+>   *[previous delay slot] + [one body]*, which leaves exactly the state the
+>   fastloop was entered with.
+> - The body **calls the interpreter's own op functions** (`sh2.c` is included
+>   above that point, so `ADD`/`MOVBL`/`ADDC`/`SHLL`/`MOVWL0`/`DT`/`MOVWS` are
+>   in scope). The first draft reimplemented them and got `ADDC`'s carry wrong
+>   for `b=0xFFFFFFFF` with carry-in 1 — and reimplementing would also have had
+>   to reproduce `SHLL` writing T, `DT` setting `no_polling`, and every op's
+>   `sh2->ea`. Calling them is the difference between *should be* identical and
+>   *is*.
 >
 > **That last row is a correctness payment, and it was worth it.** The
 > `&& !sh2->delay` on `sh2_execute_interpreter`'s IRQ check had been dropped
