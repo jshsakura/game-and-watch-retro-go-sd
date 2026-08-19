@@ -688,3 +688,58 @@ fingerprint-matching path that can misfire, which is the same trade that keeps
 **And ssh2's 11.3% of the frame comes off the lever list.** It is not cost that
 can be moved; it is peripheral latency plus, very likely, slave slack absorbed
 into its own PWM poll while the master finishes.
+
+
+---
+
+# Where the frame stands, and the one lever left with a number on it
+
+Rig, savestate-resumed Doom gameplay, all of the day's levers in:
+
+    15,094,391 -> 10,588,962 host insn/frame   -29.85%   x1.425
+    device, measured mid-day: 17.95 -> 24.02 fps
+
+**The guest-fold axis is closed.** This morning the PC histogram's top two
+entries were 20.3% and 17.9% — the two renderer loops. With those folded and the
+SHAR ladder gone, the top entry is **0.82%**, the top twelve sum to 6.23%, and
+ten of those twelve are on the slave, whose work is peripheral latency and
+measured **0.2%** on the device. There is no next loop to fold. That is measured
+twice with the same instrument, not inferred.
+
+**Read rig totals with the slave subtracted.** ssh2 is ~12% of rig host
+instructions and close to zero of device wall-clock — the sound HLE removed 9.64%
+of rig instructions for 0.2% of device fps. A rig −2% on the master is worth
+more than a rig −2% spread across both cores.
+
+## The lever that is left, priced
+
+Splitting the MD ablation (`GNW_MD_ABLATE_SPR` / `GNW_MD_ABLATE_PLANES`,
+picodrive `f92f6e98`):
+
+| killed | draw bucket | share of block |
+|---|---|---|
+| baseline | 968,679 | — |
+| sprites | 936,564 | **3%** |
+| planes | 380,054 | **61%** |
+
+The MD sprite pipeline is nearly free for Doom. The planes are 5.6% of the
+frame, and what they draw is the status bar — the bottom fifth. The other ~180
+lines walk 40 nametable entries per plane per priority pass and find every tile
+blank. 588,600 / 224 = **2,628 instructions per line**, and since `DrawLayer`
+already skips blank tiles, those instructions are the *walk*, not pixel work.
+Eight consecutive lines share one nametable row and re-walk it eight times.
+
+**Caching "this nametable row is entirely blank" across those eight lines is
+worth roughly 4.5% of the frame.**
+
+It is deliberately not done yet. VRAM reaches memory through `VideoWrite`,
+`VideoWriteVRAM128` and three DMA paths; an invalidation that misses one renders
+wrongly in a way the framebuffer hash catches **only in the scene it was tested
+on**. Do it gated to `GNW_32X_CORE` so Mega Drive games are untouched, hook every
+write path, and gate on the hashes.
+
+## And the other direction
+
+`-mlong-calls` removes the native-DOOM veneer wall (codegen verified, hardware
+untested). That path deletes SH-2 emulation entirely rather than shaving it, and
+SH-2 is still 58% of the frame.
