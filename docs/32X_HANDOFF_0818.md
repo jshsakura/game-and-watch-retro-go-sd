@@ -385,6 +385,30 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 >   and a regression: gcc hands r6 to the SDRAM mask and reloads the ROM mask's
 >   address on the ROM path, 12 instructions to 15. Closed; do not retry.
 >
+> **Closed, and not the way it looked: the packed-pixel run detector survives.**
+> Its `+22% without it` came from a profile taken before the gameplay anchor
+> existed, so it was a candidate for the same "measured on attract, shipped for
+> gameplay" fault that has cost this project three times. Re-run on the
+> gameplay anchor with `GNW_PP_NO_RUNDET`, hashes identical both arms:
+>
+> | | host insn/frame |
+> |---|---|
+> | detector on | 13,560,320 |
+> | detector off | 13,467,551 (−0.68%) |
+>
+> So on textured gameplay it *is* a net loss — the predicted sign. The
+> magnitudes are what decide it: it costs **0.68% when it cannot help** and
+> saves **22% when it can**. Keep it. Trading Doom's 0.68% against 22% on the
+> flat-content 32X games (Virtua Racing, Star Wars Arcade) is a bad bet, and a
+> per-game switch is the class of hack this repo forbids. Do not re-run this
+> A/B; the answer is recorded.
+>
+> The write path is closed too, on arithmetic rather than an A/B: the census's
+> totals are 49-frame cumulative, so writes are **14,314 per frame, of which
+> 6,742 are SDRAM** — inlining them the way the reads were inlined is worth at
+> most 0.4%, which does not pay for the ITCM. Read the census per frame, not
+> per run.
+>
 > ⚠️ **Do not quote an fps from this run.** Per-frame host cost over the
 > gameplay window is wildly dispersed — `avg 1.06G, min 8.0M, max 3.74G
 > insn/frame` — so the mean is not a speed. The guest-instruction histogram is
