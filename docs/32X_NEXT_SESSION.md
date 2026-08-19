@@ -207,10 +207,30 @@ would very much like:
   decision, not a per-frame one.
 
 Nothing about this is speculative plumbing -- the mode, the CLUT upload and
-the bonus pool all exist and are already used by another core. What is
-unmeasured is (a) how many CRAM indices Doom really uses and (b) what the
-line-offset-resolving byte copy costs against the current composite. Both are
-rig questions, and cheap.
+the bonus pool all exist and are already used by another core.
+
+**Measured, and it closes the axis for Doom.** `RIG_PP_CENSUS` (picodrive
+`ee3b3417`) counts both facts over a whole run, because a CLUT and a layer
+rectangle have to serve every frame of a scene, not one:
+
+    distinct 32X packed-pixel indices used: 256/256
+    MD non-background: lines 80..223, x 0..319, 10.86% of pixels
+
+Both answers are the unwanted one.
+
+- **All 256 CLUT entries are spoken for**, so mitigation (a) is dead outright
+  and (b) -- mapping MD colours onto nearest 32X entries -- would recolour the
+  HUD rather than reproduce it.
+- **The MD layer is not a status bar.** It covers the bottom 144 of 224 lines
+  at full width. A second LTDC layer over that rectangle is 92 KB in RGB565,
+  which is most of the 146 KB the mode was going to save; and colour keying
+  can express "MD background lets the 32X through" but cannot express the
+  other direction, a 32X pixel with `PXPRIO` winning over non-background MD.
+
+So it was closed before anything was built, which is what the instrument was
+for. **The instrument stays** -- another 32X title with a quieter MD layer and
+a smaller palette could answer differently, and for such a title the prize is
+unchanged: the compositor's inner loop plus 146 KB.
 
 ## D32XR: the official 5 MiB build boots, and the 41 fps claim does not survive
 
