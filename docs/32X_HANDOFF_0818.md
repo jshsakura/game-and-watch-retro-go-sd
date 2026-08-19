@@ -743,3 +743,63 @@ write path, and gate on the hashes.
 `-mlong-calls` removes the native-DOOM veneer wall (codegen verified, hardware
 untested). That path deletes SH-2 emulation entirely rather than shaving it, and
 SH-2 is still 58% of the frame.
+
+
+---
+
+# NEXT SESSION: the blank-nametable-row cache, fully specified
+
+Worth **~4.5% of the frame**, measured (see the MD ablation split above). This
+is everything needed to build it; nothing here has to be rediscovered.
+
+## What it does
+
+`DrawLayer` walks 40 nametable entries per plane, per priority pass, per line,
+and over Doom's 3D view every one of those tiles is blank. Eight consecutive
+lines share one nametable row and re-walk it eight times. Cache "this row is
+entirely blank" and skip the walk for the other seven.
+
+## The whole failure mode is invalidation. The write paths are exactly four
+
+Enumerated in `external/picodrive/pico/videoport.c`:
+
+| # | site | reached from |
+|---|---|---|
+| 1 | `VideoWriteVRAM(a, d)` | `VideoWrite` (`:478`) and `DmaSlow` (`:616`) |
+| 2 | `VideoWriteVRAM128(a, d)` (`:455`) | `VideoWrite`, type `0x81` |
+| 3 | `vr[(u16)a] = vr[(u16)(source++)]` (`:695`) | `DmaCopy` |
+| 4 | `vr[(u16)a] = high` (`:737`) | `DmaFill` |
+
+Miss any one and the renderer draws a stale blank row. **The framebuffer hash
+catches that only in the scene it was tested on** — which is why this was not
+bolted on at the end of a session.
+
+## Build it like this
+
+- A `u32` generation counter, bumped in all four sites above. Bumping
+  unconditionally is fine; these are not hot compared to what the cache saves.
+- Cache entry per (plane, nametable row address): the generation it was computed
+  at, and the blank verdict. Invalid when the generation differs.
+- Vertical scroll changes which row a line maps to, but the key is the row
+  address itself, so scroll is handled for free.
+- **Gate the whole thing on `GNW_32X_CORE`** so Mega Drive builds are untouched.
+  A rendering cache is not something to hand every MD game on the strength of
+  one Doom scene.
+- Gate on `snd hash=af8c118b` and `fb f99=1dca767c` / `f109=e46856ae`, the
+  anchors every lever today held.
+
+## Verify with the instruments that already exist
+
+- `GNW_MD_ABLATE_PLANES` (picodrive `f92f6e98`) gives the ceiling: draw
+  968,679 → 380,054. A correct cache should land partway there without moving a
+  hash.
+- `PHASE_PROF=1` on `run_32x.sh` reports the `draw` bucket directly.
+- The anchor is `/home/ubuntu/32x_roms/doom32x_slot0.sav`, md5
+  `886c10441452f9bae1622b9984016ba8`, ROM
+  `/home/ubuntu/32x_roms/doom_retail.32x`.
+
+    RIG_32X_STATE=/home/ubuntu/32x_roms/doom32x_slot0.sav RIG_32X_STATE_AT=60 \
+    EXTRA_DEF="-DRIG_PAD_SCRIPT -DRIG_WARMUP=61" \
+    bash tools/m7_qemu_rig/run_32x.sh /home/ubuntu/32x_roms/doom_retail.32x 110
+
+Current tree measures **10,588,962** host insn/frame on that command.
