@@ -66,15 +66,26 @@ just instructions and the detector's failed probes are pure tax, so removing
 it "wins". On the device the blasts are the point. (`nrd1` = 24.71/24.71/24.69,
 spread 0.02, card md5 `729639b1` against `disp1`'s `70f8112c`.)
 
-## The RAM_EMU headroom is **12 bytes**, and that is now a design constraint
+## The RAM_EMU headroom is tens of bytes, and it moves with the code
 
-Read out of the ELF, because the build log never prints it:
+Read it out of the ELF for the exact tree you are building -- the build log
+never prints it, and the number is not a constant:
 
-    _OVERLAY_MD32X_BSS_END  0x240ffff4
-    __RAM_EMU_END__         0x24100000      ->  12 bytes free
+    arm-none-eabi-nm <elf> | grep _OVERLAY_MD32X_BSS_END
+    __RAM_EMU_END__ = 0x24100000
 
-on `baseline24` and `disp1` alike. The 44 bytes quoted in `32X_CLOSED.md`'s
-blank-row entry is out of date; **12 is the number to plan against.**
+| arm | BSS end | free |
+|---|---|---|
+| `baseline24` (`48d3f5b6`) | 0x240ffff4 | 12 B |
+| `disp1` (`00a11484`) | 0x240ffff4 | 12 B |
+| `base2` (today's tree, both new levers off) | 0x240fffd4 | 44 B |
+| `nrd1` (solid-run detector removed) | 0x240ff5d4 | 2,604 B |
+
+**Plan against tens of bytes, and measure the tree you are about to link.**
+Quoting one figure is what went wrong twice today: the 44 in `32X_CLOSED.md`'s
+blank-row row was a different tree's, and sizing a cache to it failed the
+link; sizing the next one to `disp1`'s 12 was right for that tree and
+pessimistic for this one.
 
 That turned two of today's levers into budget questions rather than
 performance ones:
