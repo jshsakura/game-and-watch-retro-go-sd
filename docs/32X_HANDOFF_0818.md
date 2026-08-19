@@ -634,3 +634,57 @@ written for a 64 MHz nRF52840; this device is a 340 MHz M7.
 the instruction form the June evidence says survives XIP, and that it removes
 the construct that failed. Apply it to the `build/nhdoom/*.o` and `build/doom/*.o`
 recipes, count `__*_veneer` in the link map (the target is zero), then flash.
+
+
+---
+
+# The ssh2 sound HLE is correct, measured, and worth nothing on the device
+
+GLM's native port of Doom's slave PWM-irq sound service (picodrive `fe874b89`)
+is well built: gated on an engine fingerprint rather than cart identity, the
+struct/PWM/channel addresses read out of the ROM literal pool so a different
+build of the same engine still attaches, and a mismatch falls back to the guest
+path quietly. Reproduced independently:
+
+| | host insn/frame | guest SH-2 | audio hash |
+|---|---|---|---|
+| off | 11,075,709 | 94,571 | `af8c118b` |
+| on | **10,007,701 (−9.64%)** | 76,652 | **`af8c118b`** |
+
+Bit-identical audio and framebuffer with 18,000 guest instructions per frame
+removed. The gate did its job during development too — a sign-extension slip on
+the index byte showed up as 2,134 wrong samples out of 144,711.
+
+**And on the device it is +0.2%: 23.97 → 24.02 fps.**
+
+The reason is the region costs measured the same day. The sound service's work
+is reading PWM registers and channel structs, and **peripheral reads cost 106.5
+cycles** — the most expensive class on the device, against 43.3 for cart ROM and
+22.0 for SDRAM. An HLE removes the interpreter overhead around those reads and
+**keeps every one of the reads**. The rig prices them at zero because QEMU has no
+wait states, so it sees −9.6%; the device pays 106.5 cycles either way and sees
+nothing.
+
+Same mechanism as the renderer HLEs, amplified to near-total:
+
+| folded | guest insns | rig | device | access density |
+|---|---|---|---|---|
+| R_DrawColumn + R_DrawSpan | 38% | −16.5% | **+19.2%** | 3 accesses per 9 insns |
+| SHAR ladder | 10.8% | −2.15% | — | none (so the rig was small too) |
+| ssh2 sound service | 18.9% | −9.64% | **+0.2%** | register-dominated |
+
+**So the rule, third and sharpest form: an HLE is worth, on the device, the
+interpreter overhead it removes — not the guest instructions it removes.**
+Weight candidates by `instructions − memory/peripheral accesses`. Picking by
+instruction count over-predicts, and the over-prediction scales with how
+expensive the region is.
+
+`GNW_SSH2_SND_HLE` is therefore **left unwired** — it appears in no makefile, so
+it is inert in every build. The code stays for the record and in case a future
+device change alters the arithmetic. Turning it on buys 0.2% and adds a
+fingerprint-matching path that can misfire, which is the same trade that keeps
+`SNES_NSPC_HLE` off by default.
+
+**And ssh2's 11.3% of the frame comes off the lever list.** It is not cost that
+can be moved; it is peripheral latency plus, very likely, slave slack absorbed
+into its own PWM poll while the master finishes.
