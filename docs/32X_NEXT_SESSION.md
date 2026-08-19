@@ -63,7 +63,40 @@ store against the per-pixel work it replaces:
 `nrd1` is the sharper of the two, because the run detector's whole job is to
 replace per-pixel `u16` stores with `u32` blasts. On the rig those blasts are
 just instructions and the detector's failed probes are pure tax, so removing
-it "wins". On the device the blasts are the point.
+it "wins". On the device the blasts are the point. (`nrd1` = 24.71/24.71/24.69,
+spread 0.02, card md5 `729639b1` against `disp1`'s `70f8112c`.)
+
+## The RAM_EMU headroom is **12 bytes**, and that is now a design constraint
+
+Read out of the ELF, because the build log never prints it:
+
+    _OVERLAY_MD32X_BSS_END  0x240ffff4
+    __RAM_EMU_END__         0x24100000      ->  12 bytes free
+
+on `baseline24` and `disp1` alike. The 44 bytes quoted in `32X_CLOSED.md`'s
+blank-row entry is out of date; **12 is the number to plan against.**
+
+That turned two of today's levers into budget questions rather than
+performance ones:
+
+- The 68K idle fold needed a verdict cache. A struct-per-slot version cost
+  260 B and failed the link; four one-word slots cost 16 B and failed it by
+  four; **two slots, eight bytes, fits**. The fold's *code* costs nothing
+  here -- `gnw_m68k_idle_probe` links at `0xdeb086d0` and the whole gwenesis
+  core at `0xdeb29910`, i.e. XIP.
+- **The octa composite path does not fit and is shelved.** Not on merit: its
+  ~150 B body is instantiated once per `make_do_loop` variant inside
+  `PicoDraw32xLayer`, which the linker script pins in RAM_EMU, and the total
+  came to **592 B** against twelve.
+
+And it gave the compositor a price tag in the other currency: removing the
+solid-run detector frees **2,604 bytes** of RAM_EMU (`nrd1` links with
+`_OVERLAY_MD32X_BSS_END = 0x240ff5d4`). So the detector is a standing trade of
+2.6 KB of the scarcest resource this core has for +2.95% device fps -- worth
+keeping, and the obvious place to look for bytes if something else needs them.
+Its three blast blocks (prio / bg+identical / mixed) are near-identical;
+folding them into one helper would fund the octa path several times over, and
+would need its own device A/B because it changes the same store traffic.
 
 **The rule that follows:** a 32X lever that removes instructions from the
 SH-2 interpreter may be proposed on rig evidence. A lever that changes how
