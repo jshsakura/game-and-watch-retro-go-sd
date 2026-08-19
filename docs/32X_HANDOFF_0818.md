@@ -526,7 +526,34 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > document was taken against. Push it to the card before measuring, and use
 > **slot 1** so the user's own save in slot 0 is never touched.
 >
-> ⚠️ **Do not quote an fps from this run.** Per-frame host cost over the
+> ## The device settles it: 17.95 → 21.39 fps, +19.2%
+>
+> Paired A/B on hardware, one tree (HEAD), one define apart, 1800 frames ×3 per
+> arm on the savestate gameplay anchor in **slot 1** (the user's slot 0 never
+> touched):
+>
+> | arm | drawn fps | samples |
+> |---|---|---|
+> | levers off | **17.95** | 17.95 / 17.96 / 17.95 (spread 0.01) |
+> | levers on | **21.39** | 21.39 / 21.38 / 21.38 (spread 0.01) |
+>
+> `32x.bin` md5 `6bba1b4f` (41,009 B) against `bdf42451` (45,129 B) — two
+> programs, verified, and the cores were pushed with the intflash rather than
+> without, which is the mistake that made yesterday's numbers meaningless.
+>
+> **The rig over-predicted: x1.334 against the device's x1.192.** That is the
+> expected direction and the reason is now measured rather than argued — an
+> HLE removes interpreter work and *keeps* the memory work, the rig prices
+> memory at zero (no wait states), and the device charges 43.3 cycles for a
+> cart-ROM read. Both renderer loops read ROM twice per pixel.
+>
+> **So the rig's bias has a sign that depends on the lever.** It *under*-prices
+> anything that shrinks code or improves ITCM residency (the linker script
+> records +30% fps from an ITCM move at unchanged instruction count), and it
+> *over*-prices an HLE that leaves the memory traffic in place. Both directions
+> were confirmed in one day. Quote rig numbers as rig numbers.
+>
+> ⚠️ **Do not quote an fps from a rig run.** Per-frame host cost over the
 > gameplay window is wildly dispersed — `avg 1.06G, min 8.0M, max 3.74G
 > insn/frame` — so the mean is not a speed. The guest-instruction histogram is
 > unaffected (it counts guest insns, not host time), which is why the profile
