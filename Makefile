@@ -1530,6 +1530,20 @@ endif
 # shows no 340 MHz-specific instability.
 MD32X_OC_LEVEL ?= 2
 MD32X_C_DEFS += -DMD32X_OC_LEVEL=$(MD32X_OC_LEVEL)
+# Native HLE of Doom's slave PWM sound service (pico/32x/32x.c). Correct and
+# bit-exact -- the rig audio hash is identical with it on -- and worth 9.64% of
+# rig host instructions. On the DEVICE it is worth 0.2%: 23.97 -> 24.02 fps.
+# The service's work is reading PWM registers and channel structs, peripheral
+# reads cost 106.5 cycles there, and an HLE removes the interpreter overhead
+# around those reads while keeping every read. So it stays OFF by default, like
+# SNES_NSPC_HLE and for the same kind of reason -- it buys almost nothing and
+# adds an engine-fingerprint path that can misfire.
+# It was previously reachable by NO define at all, which is worse than off: the
+# code read as live and was not. This knob exists so the state is stated.
+MD32X_SSH2_SND_HLE ?= 0
+ifeq ($(MD32X_SSH2_SND_HLE),1)
+MD32X_C_DEFS += -DGNW_SSH2_SND_HLE
+endif
 C_INCLUDES +=  \
 -ICore/Inc \
 -ICore/Src/porting/lib \
