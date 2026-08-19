@@ -147,6 +147,71 @@ the second read is the point.
   hash**, so Doom 32X genuinely drives the YM2612 and the Z80. There is no
   silent chip to switch off.
 
+## The compositor has been undervalued all along, and there is a much bigger version of that idea sitting in the firmware already
+
+Re-pricing the quad composite path on the gameplay anchor with today's tree:
+
+    -DGNW_PP_NO_QUAD    9,919,359 vs 9,630,064   +3.00%
+
+**3.00%, not the 0.003% on record** -- that number came from a different
+anchor. And since the rig under-prices wide stores, the device figure should
+be at least that. So the compositor's blast paths are worth more than anyone
+here has assumed, and going wider is worth doing rather than arguing about:
+
+    octa (8 px/round)   9,630,064 -> 9,532,189   -1.02%   picodrive 2bc61933
+
+Hash-gated bit-identical. `-DGNW_PP_NO_OCTA` prices it.
+
+### The big one: the LCD can do the palette lookup in hardware
+
+`do_line_pp`'s inner work, for every pixel where the MD layer is background,
+is *one palette lookup and one 16-bit store*. That is a CLUT expansion done
+in software into an RGB565 framebuffer -- and **the LTDC can do exactly that
+in hardware, and this firmware already has the code**:
+
+    Core/Src/gw_lcd.c:338  lcd_setup_framebuffers(LCD_MODE_LUT8)
+                           -> LTDC_PIXEL_FORMAT_L8 + HAL_LTDC_ConfigCLUT
+    Core/Src/gw_lcd.c:405  lcd_get_bonus_pool()
+
+It was built for PICO-8, it is exposed through the SD-core ABI
+(`Core/Src/retro-go/gw_firmware_abi.c`), and it does two things a 32X core
+would very much like:
+
+1. **The per-pixel palette lookup and the 16-bit store both disappear.** The
+   compositor becomes a byte copy for the 32X's packed-pixel mode, resolving
+   the DRAM line-offset table per line. The `32x` phase bucket is 7.2% of the
+   rig frame and, being pure memory traffic, more than that on the device.
+2. **It halves the framebuffer footprint: 300 KB -> 154 KB, freeing 146 KB.**
+   For a core whose overlay BSS has had **44 bytes** of headroom, that is a
+   larger prize than the frame rate.
+
+**What blocks it, honestly:**
+
+- **The CLUT is 256 entries and the 32X wants all of them.** Doom's status bar
+  is drawn by the MD planes, in MD colours, and 256 + 64 does not fit. Three
+  ways out, in order of how much measuring they need: (a) count the distinct
+  32X CRAM indices Doom actually uses in a frame -- if it is under ~224 there
+  is room to reserve the rest for MD; (b) map each MD colour to its nearest
+  32X palette entry through a 64-entry table rebuilt when either CRAM changes;
+  (c) second LTDC layer in RGB565 covering only the HUD rectangle, with colour
+  keying for the background pixels -- the H7 LTDC has two layers.
+- **Per-pixel 32X-vs-MD priority disappears** in any hardware-scanout scheme.
+  It only matters where the MD layer is non-background, which for Doom's 3D
+  view is nowhere -- the same fact the blank-row work established.
+- **Only packed-pixel mode qualifies.** 32X direct-colour (RGB555) and
+  run-length modes still need the software path, so this is a mode-selected
+  fast path, not a replacement. It is chosen off the 32X VDP mode register,
+  so it stays game-agnostic.
+- **`lcd_setup_framebuffers` is not free to call**: it memsets both buffers,
+  reconfigures the MPU and waits for a vertical-blanking reload. A per-scene
+  decision, not a per-frame one.
+
+Nothing about this is speculative plumbing -- the mode, the CLUT upload and
+the bonus pool all exist and are already used by another core. What is
+unmeasured is (a) how many CRAM indices Doom really uses and (b) what the
+line-offset-resolving byte copy costs against the current composite. Both are
+rig questions, and cheap.
+
 ## D32XR: the official 5 MiB build boots, and the 41 fps claim does not survive
 
 picodrive `7e04cb69` (SSF2 bank writes wired into GNW builds) is in `HEAD`,
