@@ -6,6 +6,168 @@ first; this file is the working state and the queue, not the ledger.
 
 Everything below is measured on hardware unless it says otherwise.
 
+---
+
+# 2026-08-20 — the SH-2 dispatch overhead, and what the rig can and cannot predict
+
+**Device: 24.01 -> 25.46 drawn fps (+6.04%), 3 samples, spread 0.02.**
+Baseline arm `baseline24` (picodrive `48d3f5b6`), new arm `disp1`
+(picodrive `00a11484`), same session, card `cores/32x.bin` md5s verified
+different (`70f8112c` vs the baseline's).
+
+## What shipped
+
+Four cuts to the SH-2 interpreter's per-dispatch bookkeeping. Direct-path
+bookkeeping went from **22 host instructions per dispatched guest
+instruction to 15**; none of them changes what the interpreter computes.
+
+| # | change | rig | commit |
+|---|---|---|---|
+| 1 | `BUSY_LOOP_HACKS` compiled out for `GNW_32X_CORE` | -1.79% | picodrive `6889be8e` |
+| 2 | fastloop nibble gate moved into the switch cases it duplicated | -3.38% | same |
+| 3 | pc round trip and the redundant `delay = 0` store removed | -0.45% | same |
+| 4 | opcode fetch window hoisted out of the per-instruction path | -1.20% | picodrive `00a11484` |
+| | **compounded** | **-6.67%** | device **+6.04%** |
+
+(1) is the one worth remembering. Both `BUSY_LOOP_HACKS` blocks in
+`mame/sh2.c` compare the opcode at `sh2->ppc` against the one they expect to
+*follow* them -- but `ppc` in this dispatch loop is the executing
+instruction's own address, so neither comparison can ever be true.
+sh2pico.c's own fastloop comment already said "inert here". Inert, and still
+issuing a guest 16-bit read on every dispatched `DT` and every `BRA`.
+
+(4)'s safety argument is a property of the code, not an assumption:
+`gnw_fw_rom` is written only by `bank_switch_rom_sh2()`, whose callers are
+`PicoMemSetup32x()` and `p32x_update_banks()`, and everything it derives from
+is fixed at cart load. Neither can run inside `sh2_execute_interpreter`. A
+future runtime writer breaks it silently -- the comment says so, and
+`-DGNW_FW_NO_HOIST` is the escape.
+
+## ★ The rig predicts one kind of lever and gets the sign wrong on the other
+
+This is the most useful thing today produced, and it now has three data
+points on each side.
+
+**Instruction-removal levers in the SH-2 interpreter map correctly.**
+`disp1`: rig -6.67% -> device +6.04%.
+
+**Pixel/memory-path levers do not just miss the magnitude, they miss the
+sign.** QEMU has no cache and no wait states, so it cannot price a wide
+store against the per-pixel work it replaces:
+
+| lever | rig said | device said |
+|---|---|---|
+| blank nametable row cache | -1.82% (a gain) | **-1.46% fps** (2026-08-19) |
+| removing the compositor's solid-run detector | -0.48% (a gain) | **-2.95% fps** (arm `nrd1`, 24.71 vs 25.46) |
+
+`nrd1` is the sharper of the two, because the run detector's whole job is to
+replace per-pixel `u16` stores with `u32` blasts. On the rig those blasts are
+just instructions and the detector's failed probes are pure tax, so removing
+it "wins". On the device the blasts are the point.
+
+**The rule that follows:** a 32X lever that removes instructions from the
+SH-2 interpreter may be proposed on rig evidence. A lever that changes how
+many bytes move, or in what width, may not -- it must be benched on the
+device, and the rig's sign is not even a hint. Both directions are now in
+`32X_CLOSED.md`'s ledger.
+
+A corollary nobody has cashed in yet: **the rig has therefore been
+under-pricing the compositor's wide-store paths all along.** The quad
+composite path was measured at 0.003% on the rig and dismissed; on the
+device it may be worth several percent. Re-pricing `-DGNW_PP_NO_QUAD` on
+hardware is a one-flag arm and is the first thing to do if the compositor is
+revisited.
+
+## The 68K was spending three quarters of itself in one spin
+
+New instrument, `RIG_M68K_HIST` (picodrive `2a28aed8`, exact-PC census for
+the 68K). On Doom's gameplay anchor, **75.2% of every 68K instruction
+executed** is in one two-instruction loop:
+
+    0x8832a2  tst.b  $ff1134.l      ; a flag in the 68K's own work RAM
+    0x8832a8  beq.b  $8832a2        ; wait for the VInt handler to set it
+
+That is `SekIsIdleCode`'s 6-byte `tst.b ($xxxxxxxx)` case, verbatim.
+picodrive has carried upstream's idle-loop whitelist all along -- and wired
+it to Cyclone and FAME only, by patching the branch opcode. **gwenesis
+(`EMU_G68K`), which is what this build runs, was never wired to any of it**,
+and the 32X-register poll detect that does call `SekSetStop` cannot see this
+loop because the address polled is RAM, not a 32X register.
+
+`GNW_M68K_IDLE_FOLD` (picodrive `2a28aed8`) detects at the branch instead of
+patching: a taken short backward `Bcc`/`BRA` whose body passes
+`SekIsIdleCode`, verdict cached per branch target so the check runs once per
+site and never inside the loop. It sets the stop flag directly rather than
+going through `SekSetStop`, whose `SekEndRun` rebases `Pico.t.m68c_cnt` --
+rewinding the master clock is not what a spinning guest does. It never
+sleeps with interrupts masked at or above VInt's level.
+
+    rig  9,901,391 -> 9,630,064 host insn/frame   -2.74%
+    68K guest insns 8,845/frame -> 2,195/frame    -75.2%
+
+Framebuffer hashes bit-identical, guest SH-2 instruction count identical.
+**Device verdict pending** (arm `idl1`).
+
+**The audio hash moves, and that needed a new instrument to interpret.**
+`af8c118b -> 8c20ba95`, on a pixel-identical frame. The VInt handler starts
+up to one scanline later, so every sample boundary downstream shifts. The
+rig now also reports audio *energy*, which survives a time shift and does not
+survive a change of content:
+
+    sum|s|    37,682,184 vs 37,690,020    -0.021%
+    sum s^2   231,270,959,840 vs 231,289,673,356   -0.008%
+    peak      32767 vs 32767              identical
+
+Energy does not replace the hash -- an unmoved hash is still the only proof
+of bit-identity -- but the pair separates "rescheduled" from "broken".
+
+After the fold the 68K's hottest code is a *called helper*, not a spin:
+
+    0x882d6a  move.w (a2), d3
+    0x882d6c  cmp.w  (a2), d3
+    0x882d6e  bne.b  $882d6a        ; read a volatile word twice until it agrees
+
+79 calls a frame, exits on the first compare almost always. Do not fold it:
+the second read is the point.
+
+## Closed today, by measurement
+
+- **NOP short-circuit.** The opcode census (`RIG_OPHIST`, picodrive
+  `e9fcda4b`) says msh2 spends 12.08% of its dispatched instructions in the
+  `0x00xx` group, 64.7% of which is NOP -- 7.8% of everything -- and 28.0%
+  RTS. Short-circuiting NOP ahead of `op0000`'s 64-way second-level switch
+  measured **0.10%**. gcc's jump table for that switch is already cheap; what
+  a NOP pays for is the loop iteration, not the sub-dispatch, and removing
+  the iteration costs more in the delay-slot path than it saves.
+- **Carrying `delay`/`test_irq`/`ppc` in locals** (arm A5): **+3.14%, a
+  regression.** The dispatch loop is at its register ceiling; one more live
+  value and gcc spills. Do not "optimise" this loop by adding locals.
+- **The MD sound subsystems are not free work.** `-DRIG_NO_FM` is worth
+  -3.54% and `-DRIG_NO_Z80` -4.30% on the rig, and **both move the audio
+  hash**, so Doom 32X genuinely drives the YM2612 and the Z80. There is no
+  silent chip to switch off.
+
+## D32XR: the official 5 MiB build boots, and the 41 fps claim does not survive
+
+picodrive `7e04cb69` (SSF2 bank writes wired into GNW builds) is in `HEAD`,
+and the official release now runs in the rig: **GATE3 PASS over 500 frames,
+framebuffer alive and moving** (`/home/ubuntu/32x_roms/d32xr_official_5m_plain.32x`).
+
+But it is not a shortcut. Per frame the rig measures
+
+    D32XR        31.78 M host insn,  319,009 guest SH-2 insn
+    retail Doom   9.88 M host insn,   94,571 guest SH-2 insn
+
+**3.2x the host work and 3.4x the guest work.** The 41.4 drawn fps recorded
+for D32XR on 2026-08-15 -- against retail Doom's 30.6 in the same session --
+is arithmetically impossible against those numbers, and the handoff already
+carries the discriminator for what it probably was: *60 fps with a static 3D
+scene means the guest parked itself*. If D32XR is benched on the device
+again, take two screenshots seconds apart and prove the picture changes
+before quoting a frame rate.
+
+---
+
 ## State
 
 | | |
