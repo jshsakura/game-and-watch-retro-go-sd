@@ -938,12 +938,13 @@ C64_CXX_OBJECTS = $(addprefix $(BUILD_DIR)/c64/,$(notdir $(C64_CXX_SOURCES:.cpp=
 CELESTE_OBJECTS = $(addprefix $(BUILD_DIR)/celeste/,$(notdir $(CELESTE_C_SOURCES:.c=.o)))
 TAMAPOKE_OBJECTS = $(addprefix $(BUILD_DIR)/tamapoke/,$(notdir $(TAMAPOKE_CXX_SOURCES:.cpp=.o)))
 MUSIC_OBJECTS = $(addprefix $(BUILD_DIR)/music/,$(notdir $(MUSIC_C_SOURCES:.c=.o)))
+NHDOOM_OBJECTS = $(addprefix $(BUILD_DIR)/nhdoom/,$(notdir $(NHDOOM_C_SOURCES:.c=.o)))
 PICO8_ALL_SOURCES = $(PICO8_C_SOURCES) $(PICO8_CXX_SOURCES) $(PICO8_CXX_STUBS)
 PICO8_OBJECTS = $(addprefix $(BUILD_DIR)/pico8/,$(notdir $(patsubst %.cpp,%.o,$(patsubst %.c,%.o,$(PICO8_ALL_SOURCES)))))
 TAMA_OBJECTS = $(addprefix $(BUILD_DIR)/tama/,$(notdir $(TAMA_C_SOURCES:.c=.o)))
 PKMINI_OBJECTS = $(addprefix $(BUILD_DIR)/pkmini/,$(notdir $(PKMINI_C_SOURCES:.c=.o)))
 
-vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(TAMP_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SM_C_SOURCES) $(SNES_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(ZX_C_SOURCES) $(C64_C_SOURCES) $(VB_C_SOURCES) $(GAMECOM_C_SOURCES) $(CELESTE_C_SOURCES) $(MUSIC_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
+vpath %.c $(sort $(dir $(C_SOURCES) $(FATFS_C_SOURCES) $(TAMP_C_SOURCES) $(NES_C_SOURCES) $(NES_FCEU_C_SOURCES) $(TGBDUAL_C_SOURCES) $(TGBDUAL_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(MSX_C_SOURCES) $(GW_C_SOURCES) $(WSV_C_SOURCES) $(MD_C_SOURCES) $(A2600_C_SOURCES) $(A7800_C_SOURCES) $(AMSTRAD_C_SOURCES) $(ZELDA3_C_SOURCES) $(SM_C_SOURCES) $(SNES_C_SOURCES) $(SMW_C_SOURCES) $(VIDEOPAC_C_SOURCES) $(ZX_C_SOURCES) $(C64_C_SOURCES) $(VB_C_SOURCES) $(GAMECOM_C_SOURCES) $(CELESTE_C_SOURCES) $(MUSIC_C_SOURCES) $(NHDOOM_C_SOURCES) $(TAMA_C_SOURCES) $(PKMINI_C_SOURCES) $(PICO8_C_SOURCES) $(SDK_C_SOURCES)))
 # NGP (RACE) is intentionally excluded from vpath: its generic filenames
 # (state.c, sound.c, main.c, flash.c, graphics.c) would shadow other cores'
 # same-named files. NGP objects are built via ngp_obj_prereq_gen (explicit
@@ -1105,9 +1106,9 @@ $(BUILD_DIR)/memcpy-armv7m.o: Core/Src/memcpy-armv7m.s Makefile.common Makefile 
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(TAMAPOKE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) Makefile.common Makefile $(FLAGS_STAMP) $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
+$(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(TAMAPOKE_OBJECTS) $(MUSIC_OBJECTS) $(NHDOOM_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) Makefile.common Makefile $(FLAGS_STAMP) $(BUILD_DIR)/fceumm_mappers.ld $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
-	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(TAMAPOKE_OBJECTS) $(MUSIC_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) $(LDFLAGS) -o $@
+	$(V)$(CC) $(OBJECTS) $(FATFS_OBJECTS) $(TAMP_OBJECTS) $(A7800_OBJECTS) $(VB_OBJECTS) $(VB_CXX_OBJECTS) $(NES_OBJECTS) $(NES_FCEU_OBJECTS) $(TGBDUAL_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(MSX_OBJECTS) $(GW_OBJECTS) $(WSV_OBJECTS) $(NGP_OBJECTS) $(WSWAN_OBJECTS) $(MD_OBJECTS) $(MD32X_OBJECTS) $(AMSTRAD_OBJECTS) $(VIDEOPAC_OBJECTS) $(ZX_OBJECTS) $(C64_OBJECTS) $(C64_CXX_OBJECTS) $(GAMECOM_OBJECTS) $(CELESTE_OBJECTS) $(TAMAPOKE_OBJECTS) $(MUSIC_OBJECTS) $(NHDOOM_OBJECTS) $(CXX_OBJECTS) $(TGBDUAL_CXX_OBJECTS) $(A2600_OBJECTS) $(A2600_CXX_OBJECTS) $(LYNX_CXX_OBJECTS) $(ZELDA3_OBJECTS) $(SM_OBJECTS) $(SNES_OBJECTS) $(SMW_OBJECTS) $(GBA_OBJECTS) $(TAMA_OBJECTS) $(PKMINI_OBJECTS) $(PICO8_OBJECTS) $(RCSMW_OBJECTS) $(LDFLAGS) -o $@
 	@# Every core is an overlay at the same RAM address, so a core that names a
 	@# global only another core defines gets silently bound to it — and reads that
 	@# core's address, which by then holds its own data. That is how Super Metroid
@@ -1276,6 +1277,26 @@ $(BUILD_DIR)/tamapoke/%.o: %.cpp Makefile.common Makefile $(SDK_HEADERS) | $(BUI
 $(BUILD_DIR)/music/%.o: %.c Makefile.common Makefile $(FLAGS_STAMP) $(SDK_HEADERS) | $(BUILD_DIR)
 	$(V)$(ECHO) [ CC music ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) $(MUSIC_C_INCLUDES) -Wa,-a,-ad,-alms=$(BUILD_DIR)/music/$(notdir $(<:.c=.lst)) $< -o $@
+
+# NHDOOM: shadow headers in Core/Src/porting/nhdoom/include must WIN over the
+# engine's own headers, and nh_prelude.h must be force-included so i_memory.h
+# is claimed first (the runtime pointer-packing base) — same order the host
+# harness (linux/Makefile.nhdoom) uses. The -O restriction on the host was a
+# host-gcc-13 codegen bug; arm-none-eabi at the global OPT was fine.
+NHDOOM_C_INCLUDES += \
+-include Core/Src/porting/nhdoom/include/nh_prelude.h \
+-ICore/Src/porting/nhdoom/include \
+-Iexternal/nh-doom/NRF52840Doom/Doom/include \
+-ICore/Inc -ICore/Inc/retro-go -ICore/Inc/porting \
+-Iretro-go-stm32/components/odroid \
+-Wno-implicit-function-declaration -Wno-int-conversion \
+-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function \
+-I./
+
+$(BUILD_DIR)/nhdoom/%.o: %.c Makefile.common Makefile nhdoom_redefines $(SDK_HEADERS) | $(BUILD_DIR)
+	$(V)$(ECHO) [ CC nhdoom ] $(notdir $<)
+	$(V)$(CC) -c $(NHDOOM_C_INCLUDES) $(CFLAGS) -std=gnu11 -Wno-incompatible-pointer-types -Wno-implicit-function-declaration -Wno-int-conversion -Wno-builtin-declaration-mismatch -Wno-parentheses -Wno-unknown-pragmas -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-const-variable -Wno-int-in-bool-context -Wno-unused-value -Wno-unused-function -Wno-format -Wno-array-bounds -Wno-strict-aliasing -Wno-maybe-uninitialized -Wa,-a,-ad,-alms=$(BUILD_DIR)/nhdoom/$(notdir $(<:.c=.lst)) $< -o $@
+	$(V)$(CP) --redefine-syms=nhdoom_redefines $@
 
 # PICO-8: ALL sources compiled as C++ (z8lua .c files require C++ for fix32.h)
 # Extra flags: -fno-exceptions since we don't use them.
@@ -2609,7 +2630,7 @@ external/smw/smw_assets.dat: roms/smw/smw.sfc | $(BUILD_DIR)
 BUILD_SUBDIRS := core cores fatfs tamp nes nes_fceu tgbdual smsplusgx pce msx \
                  gw wsv ngp wswan md md32x a2600 lynx a7800 vb amstrad zelda3 smw sm \
                  snes gba videopac zxs c64 gamecom celeste tamapoke music pico8 \
-                 tama pkmini rc_smw
+                 tama pkmini rc_smw nhdoom
 
 $(shell mkdir -p $(BUILD_DIR) $(addprefix $(BUILD_DIR)/,$(BUILD_SUBDIRS)))
 

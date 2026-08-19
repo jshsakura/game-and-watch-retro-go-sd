@@ -68,7 +68,9 @@ int app_main_nhdoom(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     ram_start = (uint32_t)&_OVERLAY_NHDOOM_BSS_END;
 
     odroid_system_init(APPID_HOMEBREW, 11025);
-    odroid_system_emu_init(NULL, NULL, NULL, NULL, NULL, NULL);
+    /* 7th arg (cheat_update_cb) postdates the shelved engine; nhdoom has no
+     * cheat layer, so it stays NULL. */
+    odroid_system_emu_init(NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
     if (start_paused)
         odroid_audio_mute(true);

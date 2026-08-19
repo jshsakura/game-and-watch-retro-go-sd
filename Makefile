@@ -1210,6 +1210,41 @@ Core/Src/porting/video/video_ui.c \
 Core/Src/porting/video/main_video.c \
 retro-go-stm32/components/lupng/miniz.c
 
+USE_NHDOOM ?= 1
+ifeq ($(USE_NHDOOM),1)
+C_DEFS += -DUSE_NHDOOM
+# next-hack DOOM engine (external/nh-doom, in-tree). 55-file set proven on
+# the host harness (linux/Makefile.nhdoom ENGINE_C). i_main.c / i_audio.c /
+# doom_iwad.c are EXCLUDED and replaced by the device HAL below.
+NHDOOM_NH   = external/nh-doom/NRF52840Doom
+NHDOOM_ESRC = $(NHDOOM_NH)/Doom/source
+NHDOOM_HAL  = Core/Src/porting/nhdoom/src
+NHDOOM_C_SOURCES = \
+$(NHDOOM_ESRC)/am_map.c $(NHDOOM_ESRC)/d_client.c $(NHDOOM_ESRC)/d_items.c \
+$(NHDOOM_ESRC)/d_main.c $(NHDOOM_ESRC)/f_finale.c $(NHDOOM_ESRC)/f_wipe.c \
+$(NHDOOM_ESRC)/g_game.c $(NHDOOM_ESRC)/global_data.c $(NHDOOM_ESRC)/hu_lib.c \
+$(NHDOOM_ESRC)/hu_stuff.c $(NHDOOM_ESRC)/i_spi_support.c $(NHDOOM_ESRC)/i_video.c \
+$(NHDOOM_ESRC)/info.c $(NHDOOM_ESRC)/m_bbox.c $(NHDOOM_ESRC)/m_cheat.c \
+$(NHDOOM_ESRC)/m_menu.c $(NHDOOM_ESRC)/m_random.c $(NHDOOM_ESRC)/p_ceilng.c \
+$(NHDOOM_ESRC)/p_doors.c $(NHDOOM_ESRC)/p_enemy.c $(NHDOOM_ESRC)/p_floor.c \
+$(NHDOOM_ESRC)/p_genlin.c $(NHDOOM_ESRC)/p_inter.c $(NHDOOM_ESRC)/p_lights.c \
+$(NHDOOM_ESRC)/p_map.c $(NHDOOM_ESRC)/p_maputl.c $(NHDOOM_ESRC)/p_mobj.c \
+$(NHDOOM_ESRC)/p_plats.c $(NHDOOM_ESRC)/p_pspr.c $(NHDOOM_ESRC)/p_setup.c \
+$(NHDOOM_ESRC)/p_sight.c $(NHDOOM_ESRC)/p_spec.c $(NHDOOM_ESRC)/p_switch.c \
+$(NHDOOM_ESRC)/p_telept.c $(NHDOOM_ESRC)/p_tick.c $(NHDOOM_ESRC)/p_user.c \
+$(NHDOOM_ESRC)/r_data.c $(NHDOOM_ESRC)/r_draw.c $(NHDOOM_ESRC)/r_fast_stuff.c \
+$(NHDOOM_ESRC)/r_main.c $(NHDOOM_ESRC)/r_patch.c $(NHDOOM_ESRC)/r_plane.c \
+$(NHDOOM_ESRC)/r_things.c $(NHDOOM_ESRC)/s_sound.c $(NHDOOM_ESRC)/sounds.c \
+$(NHDOOM_ESRC)/st_gfx.c $(NHDOOM_ESRC)/st_lib.c $(NHDOOM_ESRC)/st_stuff.c \
+$(NHDOOM_ESRC)/tables.c $(NHDOOM_ESRC)/v_video.c $(NHDOOM_ESRC)/version.c \
+$(NHDOOM_ESRC)/w_wad.c $(NHDOOM_ESRC)/wi_stuff.c $(NHDOOM_ESRC)/z_bmalloc.c \
+$(NHDOOM_ESRC)/z_zone.c \
+$(NHDOOM_HAL)/device_main.c $(NHDOOM_HAL)/device_nrf.c $(NHDOOM_HAL)/device_video.c \
+$(NHDOOM_HAL)/device_input.c $(NHDOOM_HAL)/device_audio.c $(NHDOOM_HAL)/device_sys.c
+else
+NHDOOM_C_SOURCES :=
+endif
+
 # PICO-8 stub only — the engine is distributed separately as binary files
 # (pico8.bin, pico8.ro, pico8_itcm.bin) placed on the SD card under /cores/.
 # The stub is built as pico8_stub.bin; rg_emulators.c loads pico8.bin first
@@ -1480,6 +1515,7 @@ MD32X_C_INCLUDES = \
 # TABLES_FULL is REQUIRED — the compact jump table truncates at 0xEFC0 and
 # line-F opcodes would index out of bounds.
 MD32X_C_DEFS = -DEMU_G68K -DTABLES_FULL -D_USE_CZ80 -DNDEBUG -DGNW_32X_CORE -DLSB_FIRST
+MD32X_C_DEFS += $(MD32X_EXTRA_DEFS)
 ifeq ($(MD32X_DEVICE_PROFILE),1)
 MD32X_C_DEFS += -DMD32X_DEVICE_PROFILE
 endif
