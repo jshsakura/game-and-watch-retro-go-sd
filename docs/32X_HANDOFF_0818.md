@@ -370,7 +370,33 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > | + inline data-read fast paths (`56794fe1`) | 13,410,684 | −1.61% |
 > | − restore the `!delay` IRQ guard (`494e5998`) | 13,560,320 | +1.12% |
 > | **+ texture-column HLE (`9528be13`)** | 12,560,257 | **−7.37%** |
-> | **compounded** | | **−16.79%, x1.202** |
+> | **+ span HLE (`b5c9a6a6`)** | 11,318,516 | **−9.88%** |
+> | **compounded** | | **−25.02%, x1.334** |
+>
+> **Both of Doom's renderer inner loops now run natively**, and the second one
+> is the larger win. Framebuffer and audio hashes unmoved throughout.
+>
+> **Bespoke beat general, and that was measured, not preferred.** A general
+> folder was built first — a whitelist of foldable ops, exactly one `DT`,
+> nothing writing T after it. It identified both loops correctly and still came
+> out **slower than the column loop alone** (12,797,823 against 12,560,257),
+> because a per-op dispatch inside the fold costs more than the
+> per-instruction machinery it removes. Zero dispatch is the whole point.
+>
+> The general version also moved the audio hash (`af8c118b` → `637abf77`) with
+> the framebuffer identical — and **the cause was not the folding.** It wrote
+> the reject slot and returned on any shape it did not match, starving the
+> SDRAM-poll and countdown fast paths below it of loops they would have
+> handled, and those consume icount in bulk. The tell was that the guest
+> instruction count was *identical* across both arms: no extra loop was being
+> folded at all. A bespoke matcher cannot make that mistake — a shape it does
+> not recognise simply falls through.
+>
+> ⚠️ The two HLEs together (−16.53%) slightly exceed the −15.4% ablation
+> ceiling measured earlier. That is not an HLE beating "remove the work
+> entirely": the ablation arm carried its own per-instruction probe hook, which
+> inflated it. **An ablation ceiling measured with an always-on hook is a lower
+> bound, not a ceiling.**
 >
 > **The R_DrawColumn HLE is built.** Not the ablation — the real thing: the
 > seven-instruction inner loop runs natively as a new `gnw_sh2_fastloop`
