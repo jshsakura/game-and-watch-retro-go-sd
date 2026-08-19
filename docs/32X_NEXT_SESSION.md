@@ -130,6 +130,35 @@ After the fold the 68K's hottest code is a *called helper*, not a spin:
 79 calls a frame, exits on the first compare almost always. Do not fold it:
 the second read is the point.
 
+## Where the frame stands after all of it
+
+Rig, same anchor, `PHASE_PROF=1`, everything in (dispatch set + 68K idle fold
++ octa composite):
+
+| phase | host insn/frame | share | was (morning) |
+|---|---|---|---|
+| msh2 (interp+bus) | 5,621,702 | 58.7% | 6,202,186 |
+| ssh2 (interp+bus) | 1,101,021 | 11.5% | 1,227,275 |
+| draw (MD VDP line) | 968,680 | 10.1% | 968,677 |
+| 32x (compositor) | 668,892 | 6.9% | 766,770 |
+| fm (ym2612) | 350,434 | 3.6% | 350,433 |
+| **m68k (interp+bus)** | **340,250** | **3.5%** | **610,911** |
+| z80 | 218,968 | 2.2% | 218,994 |
+| other (sched/ev/mem) | 173,580 | 1.8% | 154,464 |
+| snd (psg+dac+mix) | 113,391 | 1.1% | 113,400 |
+| **TOTAL** | **9,565,182** | | **10,621,382** |
+
+SH-2 host-per-guest instruction: **78.559 -> 71.086**.
+
+Read this with **ssh2 subtracted** -- it is 11.5% of the rig and measured
+**0.2%** of the device. And read `draw` with suspicion in the other direction:
+it is 10.1% here and the July device profile put the whole draw axis near 2%,
+which is consistent with the blank-row cache doing nothing good on hardware.
+
+The two buckets that remain worth attacking on the *device* are msh2 (58.7%
+here, ~70% there) and the compositor (6.9% here, and the `nrd1` result says
+the device charges more than that for its store traffic).
+
 ## Closed today, by measurement
 
 - **NOP short-circuit.** The opcode census (`RIG_OPHIST`, picodrive
