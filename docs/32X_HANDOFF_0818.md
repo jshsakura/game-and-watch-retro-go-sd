@@ -273,6 +273,23 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > profile that under-counts a lever because memory stalls are invisible in an
 > instruction count. Here an instruction count **over**-counted it.
 >
+> **The device has now answered it: a guest data read costs 29.2 cycles**
+> (msh2, DWT-bracketed, 1-in-29 sampling, n=141,684, on the savestate-resumed
+> gameplay anchor; ssh2 41.7; a July measurement of 29.3 corroborates). That is
+> **2.8x an opcode fetch's 10.3**, and it is exactly the axis the rig cannot
+> see — QEMU has no wait states, so every rig A/B here under-prices
+> memory-touching work.
+>
+> What it is worth needs one more split. 29.2 is the average over *all*
+> regions, while the lever is only on the cart-ROM subset: per frame the guest
+> makes 28,926 cart-ROM reads (XIP flash) against 41,506 SDRAM reads (internal
+> RAM, fast). Solving for the ROM-only cost under plausible SDRAM figures puts
+> it at **~51–61 cycles**, which makes an 8 KB colormap/texture cache worth
+> **4.5–5.4%** rather than the 2.9% the aggregate implies. That is an
+> inference, not a measurement — bucketing `gnw_probe_rd` by
+> `(a & 0xdf000000)` turns it into one, and is blocked only on restoring the
+> anchor above.
+>
 > ⚠️ And the mirror of that caveat applies to this very number: **the rig counts
 > host instructions, not device cycles.** QEMU has no caches and no wait states,
 > so a memory-bound loop is exactly the shape the rig under-prices. The device's
@@ -408,6 +425,19 @@ hand the rest to `PicoStateFP(f, 0, read, write, eof, seek)`, exactly as
 > 6,742 are SDRAM** — inlining them the way the reads were inlined is worth at
 > most 0.4%, which does not pay for the ITCM. Read the census per frame, not
 > per run.
+>
+> **An anchor the user can overwrite by playing is not an anchor.**
+> The device measurement of a guest data read (below) was taken against the
+> savestate sitting on the card. The user played that evening, the save was
+> overwritten, and the *same v26 binary reflashed the next day* died 63 frames
+> into boot on an AHB-pool assert. Nothing about the firmware changed; the
+> anchor did. Yesterday's number stopped being reproducible.
+>
+> The fix is to treat the anchor as an artifact: the pinned copy is
+> `/home/ubuntu/32x_roms/doom32x_slot0.sav`, 678,917 bytes, md5
+> `886c10441452f9bae1622b9984016ba8` — the file every rig measurement in this
+> document was taken against. Push it to the card before measuring, and use
+> **slot 1** so the user's own save in slot 0 is never touched.
 >
 > ⚠️ **Do not quote an fps from this run.** Per-frame host cost over the
 > gameplay window is wildly dispersed — `avg 1.06G, min 8.0M, max 3.74G
