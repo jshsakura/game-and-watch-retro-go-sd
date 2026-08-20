@@ -8,6 +8,59 @@ Everything below is measured on hardware unless it says otherwise.
 
 ---
 
+# 2026-08-20 — +10.5% on hardware, and a measurement floor nobody had measured
+
+**Device, Doom gameplay anchor, 1800-frame runs:**
+
+| time | arm | drawn fps | what it is |
+|---|---|---|---|
+| 07:54 | `baseline24` | 24.01 | picodrive `48d3f5b6` |
+| 08:09 | `disp1` | 25.46 / 25.46 / 25.44 | + SH-2 dispatch cuts |
+| 08:25 | `nrd1` | 24.71 / 24.71 / 24.69 | + solid-run detector REMOVED -> rejected |
+| 09:03 | `base2` | 25.12 / 25.11 / 25.09 | today's tip, both new levers **off** |
+| ~09:15 | **`idl2`** | **26.53 / 26.54 / 26.54** | base2 + **68K idle fold** |
+| ~09:30 | `disp1` again | 24.95 / 24.95 / 24.95 | **control** |
+
+Two results, and the second one is the one to carry forward.
+
+## ★ This device drifts ~2% an hour, so an A/B is only worth its control
+
+`disp1` measured **25.46 / 25.46 / 25.44** at 08:12 and **24.95 / 24.95 /
+24.95** at 09:30 -- the same binary, the same card (md5 `70f8112c` re-verified
+off the device both times), the same anchor. **-2.0% of session drift**, with
+a spread of 0.00 at the second reading, so the drift is not noise.
+
+That is larger than most of the levers this project argues about, and it
+explains the gap that nearly cost a wrong conclusion today: `base2` came in
+1.3% under `disp1` and looked like evidence that 32 bytes of dead-code layout
+move the frame rate. They do not. `base2` and the re-benched `disp1` agree
+inside the drift, so **today's tree change is neutral** -- which is what the
+control was run to establish.
+
+**Rules that follow, and they are not optional:**
+
+- Two arms compared across an hour of session are not compared at all. Bench
+  them adjacent.
+- **Re-bench the reference arm at the end.** If the control has moved, every
+  delta in that session has to be read against the movement, not against the
+  morning's number.
+- A tight spread (0.02) says the *binary* is reproducible. It says nothing
+  about whether the *device* is where it was an hour ago.
+
+## The 68K idle fold: rig -2.74%, device **+5.6%**
+
+`idl2` 26.537 avg against `base2` 25.107 avg -- **+5.68%** -- twelve minutes
+apart, one build flag between them (`GNW_M68K_NO_IDLE_FOLD`), card md5s
+`a5826711` and `6d5f3166` verified off the device. The rig called this lever a 2.74%
+*instruction* reduction and it is worth more than twice that on hardware --
+predicted, for once, rather than discovered: the 68K is **3.5% of the rig
+frame and 12.9% of the device's**, so the rig underweights that bucket by
+about 3.7x.
+
+Baseline to best, today: **24.01 -> 26.54, +10.5%** -- and the drift says the
+true figure is a little larger than that, since the 26.53 was measured into a
+device already 2% down on where it started.
+
 # 2026-08-20 — the SH-2 dispatch overhead, and what the rig can and cannot predict
 
 **Device: 24.01 -> 25.46 drawn fps (+6.04%), 3 samples, spread 0.02.**
