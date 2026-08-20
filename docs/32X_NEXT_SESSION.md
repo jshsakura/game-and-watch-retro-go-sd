@@ -16,27 +16,41 @@ as `testbed-full-20260820-1854`. The arm on the card (`wb1`) is still a
 measurement build (autoboot + savestate resume), not the canonical flag set --
 so a device bench continues against `wb1`, not against the release.
 
-## 1. DONE: the release is cut
+## 1. DONE: the release is out, from a green tree
 
-`testbed-full-20260820-1854`, tag on `f1e2b729`, published with
-`retro-go_update.bin` + `gw_update.tar`. The +13.1% is in the field.
+**`testbed-full-20260820-2101`** (tag on `89efdef8`) — `retro-go_update.bin` +
+`gw_update.tar`. The +13.1% is in the field. Provenance checked rather than
+assumed: the tag records picodrive `dee15af6`, and all five lever commits
+(`00a11484 da121a68 011f8c5c 6a997eb4 ab232912`) are ancestors of it; the
+shipped `cores/32x.bin` is 44,507 bytes, i.e. post-compositor-fold (pre-fold was
+45,833).
 
-**But the run is a red X, and the release job inside it is green.** Two other
-jobs have been failing since `ef03bfc9` (nhdoom), and `release-package` has no
-`needs:`, so it published anyway -- which is why nobody noticed CI had been red
-for two days. Both are fixed in `461ce0be`:
+An earlier tag, `testbed-full-20260820-1854`, carries the same firmware but was
+published from a tree that failed two gates. It is kept (releases accumulate),
+and `-2101`'s notes say which one to flash.
+
+**Why a red tree could publish at all:** `release-package` had no `needs:`. A tag
+published a release no matter what the tests said, so when `ef03bfc9` (nhdoom)
+broke two jobs on 0818, releases kept going out and the red X became the repo's
+normal state — for two days, unread. Both failures are fixed in `461ce0be`:
 
 - `build-sd0-test`: nhdoom's overlay sections exist only in
   `STM32H7B0VBTx_SDCARD.ld`, so the SD_CARD=0 link buried DTCM and reported it
-  as `FLASH.ld:1142 cannot move location counter backwards`. `USE_NHDOOM` now
-  follows `SD_CARD`, and the launch branch moved into `launch_nhdoom()` behind
-  the same guard.
+  as `FLASH.ld:1142 cannot move location counter backwards` — coordinates in a
+  linker script, naming neither the core nor the commit. `USE_NHDOOM` follows
+  `SD_CARD` now, and the launcher's Doom branch moved into `launch_nhdoom()`
+  behind the same guard (it was reading `app_main_nhdoom` and three
+  `_OVERLAY_DOOM_*` symbols from outside the `#ifdef`).
 - `host-tests`: `nhdoom/src/device_video.c` was not in the lcd_swap audit list.
-  Audited as always-draws.
+  Audited as always-draws — `startDisplayRefresh()` is the engine's
+  `I_FinishUpdateBlock` hook, so it only runs after a frame was rendered.
 
-**A red CI that still ships is worse than one that stops.** If nothing else
-changes here, give `release-package` a `needs:` on the two test jobs, or accept
-that the X means nothing and stop reading it.
+And the gate is closed: `89efdef8` gives `release-package`
+`needs: [host-tests, lynx-core-test, build-sd0-test]`. Verified end to end — the
+`-2101` run waited for all three and then published.
+
+**Judge a release by its job, not by the run.** Even now, read
+`gh run view <id>` per job: a green run is not the claim you care about.
 
 ## 2. Blocked: the device profiler dies at frame 2
 
