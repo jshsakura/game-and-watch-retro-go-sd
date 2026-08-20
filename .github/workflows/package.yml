@@ -99,6 +99,23 @@ jobs:
         run: cd linux && ./run_lynx_host_test.sh
 
   release-package:
+    # This job had no `needs:` for its whole life, so a tag published a release
+    # no matter what the tests said. On 2026-08-20 that came due: every run since
+    # 0818 had been failing on two nhdoom gates, releases kept going out anyway,
+    # and the red X became the normal state of the repo that nobody read. A gate
+    # that never stops anything is not a gate.
+    #
+    # So the release is gated now. All three are cheap and they test what ships:
+    # host-tests is plain gcc, lynx-core-test compiles the Lynx core that ships
+    # in gw_update.tar, and build-sd0-test is the variant a linker-script change
+    # breaks first. Each already SKIPs (loudly) rather than fails when a tool or
+    # git history is missing, which is the reason this can be a hard dependency
+    # without becoming the thing that breaks the build.
+    #
+    # If a release is genuinely urgent and a gate is genuinely wrong: fix or skip
+    # the gate in a commit, then tag that commit. Do not remove this `needs:` --
+    # the whole point is that the field build comes from a green tree.
+    needs: [host-tests, lynx-core-test, build-sd0-test]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

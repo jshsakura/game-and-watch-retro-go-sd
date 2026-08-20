@@ -121,3 +121,7 @@ gwemu.app/
 *.log
 .gwemu_release_cache
 tools/pico_host/build/
+
+# Host build artefact of the WAD packer (external/nh-doom/MCUDoomWadUtil).
+# Compiled per-machine; an aarch64 ELF has no business in a firmware tree.
+external/nh-doom/MCUDoomWadUtil/mcuwad
