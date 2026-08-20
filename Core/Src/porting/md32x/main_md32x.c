@@ -750,7 +750,16 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * read correctly. Subtracting a baseline gives the same disjoint numbers
      * and leaves the counter alone; the 12.6 s wrap at 340 MHz is handled by
      * unsigned arithmetic as long as no single interval exceeds it. */
-    uint32_t t_base = common_emu_get_dwt_cycles();
+    /* static, not a local: prof2/prof3 both died at frame 2 -- right after the
+     * savestate load, the deepest call path this program has -- and the ONLY
+     * thing this change adds at that point is a stack slot (record() returns
+     * immediately during the 1200-frame warmup, so none of the profiler's
+     * arithmetic runs yet). This core is the one with 3,928 B of AHB pool and
+     * a full RAM_EMU; it does not have a spare word of stack under a FatFS +
+     * state-parse path. The loop is single-threaded, so a static costs
+     * nothing and reads identically. */
+    static uint32_t t_base;
+    t_base = common_emu_get_dwt_cycles();
 #endif
 
     bool drawFrame = common_emu_frame_loop();

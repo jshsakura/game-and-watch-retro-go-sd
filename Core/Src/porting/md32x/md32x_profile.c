@@ -124,9 +124,11 @@
  * all). 64 frames = 3,072 B, leaving 856 B of real margin; the
  * _Static_assert below turns any future regression of either side back
  * into a build failure instead of a device Hardfault. */
+#ifndef MD32X_PROFILE_FRAMES
 #define MD32X_PROFILE_FRAMES  32u   /* AHB-exhaustion bisect (0819): 64 -> 32
  * halves the delta pools; if the savestate-load assert disappears at 32 the
  * profile arms' AHB total is the cause (see 1.1 0819 analysis). */
+#endif
 /* Skipped before the window opens. Three device passes measured the SAME
  * 131,537 samples — a boot-anchored window is deterministic and lands on
  * the title sequence, so the numbers profile the logo, not the game.
@@ -644,7 +646,7 @@ static void md32x_profile_dump(void) {
     if (gnw_m68k_hist_p != NULL) {
       uint64_t tot = 0;
       for (unsigned i = 0; i <= gnw_m68k_nbuck; i++) tot += gnw_m68k_hist_p[i];
-      extern const unsigned int gnw_m68k_win_base;
+      extern unsigned int gnw_m68k_win_base;
       fprintf(f, "  pc pages (%u KB each, window 0x%06x..0x%06x), attributed=%u:\n",
               (1u << gnw_m68k_page_shift) >> 10, gnw_m68k_win_base,
               gnw_m68k_win_base + (gnw_m68k_nbuck << gnw_m68k_page_shift),
