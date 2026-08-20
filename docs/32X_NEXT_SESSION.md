@@ -18,8 +18,10 @@ Everything below is measured on hardware unless it says otherwise.
 | 08:09 | `disp1` | 25.46 / 25.46 / 25.44 | + SH-2 dispatch cuts |
 | 08:25 | `nrd1` | 24.71 / 24.71 / 24.69 | + solid-run detector REMOVED -> rejected |
 | 09:03 | `base2` | 25.12 / 25.11 / 25.09 | today's tip, both new levers **off** |
-| ~09:15 | **`idl2`** | **26.53 / 26.54 / 26.54** | base2 + **68K idle fold** |
+| ~09:15 | `idl2` | 26.53 / 26.54 / 26.54 | base2 + **68K idle fold** |
 | ~09:30 | `disp1` again | 24.95 / 24.95 / 24.95 | **control** |
+| ~10:2x | **`ppo1`** | **26.35 / 26.34 / 26.34** | idl2 + **compositor folded to one copy + octa** |
+| ~10:3x | `idl2` again | 26.17 / 26.16 / 26.16 | **control** (was 26.54 at 09:15, -1.4%) |
 
 Two results, and the second one is the one to carry forward.
 
@@ -60,6 +62,55 @@ about 3.7x.
 Baseline to best, today: **24.01 -> 26.54, +10.5%** -- and the drift says the
 true figure is a little larger than that, since the 26.53 was measured into a
 device already 2% down on where it started.
+
+## The compositor: eight copies folded into one, +0.69% and 1,472 bytes back
+
+`do_line_pp` was a macro, expanded eight times (six `make_do_loop` variants
+plus two in `FinalizeLine32xRGB555`), and every copy landed in RAM_EMU because
+the linker script pins `PicoDraw32xLayer` / `PicoDraw32xLayerMdOnly` /
+`FinalizeLine32xRGB555` there and the `do_loop_*` statics inline into them.
+**That is where this core's headroom went**, and it is why the "2,604 bytes"
+of solid-run detector and "592 bytes" of octa path were never really 2,604 and
+592 -- they were about a hundred bytes each, times eight.
+
+The variants differ in one thing: what to write where the MD layer is not
+background, and that has three forms. It is an `md_mode` parameter now
+(picodrive `011f8c5c`), and `.text.gnw_line_pp` is named in
+`STM32H7B0VBTx_SDCARD.ld` so the compositor does not fall into `MD32X_CODE`.
+
+    _OVERLAY_MD32X_BSS_END  0x240ffff4 -> 0x240ffa14
+    free                    44 B       -> 1,516 B
+    32x.bin                 45,833     -> 44,361     (with octa back ON)
+
+The octa path costs **160 bytes** now instead of 592, because there is one copy
+of it. Device: **`ppo1` 26.343 avg against a same-session `idl2` control of
+26.163, +0.69%**, hashes bit-identical.
+
+Independent check worth copying: the gap between `FinalizeLine32xRGB555` and
+`PicoDraw32xLayer` in the ELF went from `0xFF4` (~4.1 KB) to `0x2E4` (~740 B).
+That is the copies collapsing, read straight off the symbol table rather than
+inferred from a size total.
+
+## ★ Sharper: the rig under-prices wide stores. That one sentence covers all four.
+
+Four rig/device pairs today, and the earlier phrasing ("pixel-path levers get
+the wrong sign") was too broad -- `ppo1` is a pixel-path lever and the rig got
+it right, in magnitude as well as sign.
+
+| lever | rig (instructions) | device (fps) | |
+|---|---|---|---|
+| `disp1` SH-2 dispatch cuts | -6.67% | **+6.04%** | agree |
+| `idl2` 68K idle fold | -2.74% | **+5.68%** | agree, rig 2x low |
+| `ppo1` fold + octa | -0.71% | **+0.69%** | agree, near-exact |
+| `nrd1` remove the run detector | -0.48% | **-2.95%** | **reversed** |
+
+QEMU has no cache and no write buffer, so a wide store costs it the same as a
+narrow one. Therefore it **overvalues removing** wide stores (`nrd1`) and
+**undervalues adding** them (the octa half of `ppo1`). Everything else it
+prices honestly, and where it is wrong about a bucket's weight rather than an
+instruction's cost -- the 68K is 3.5% of the rig frame and 12.9% of the
+device's -- it is wrong by a factor you can compute in advance from the phase
+table, which is exactly what happened with `idl2`.
 
 # 2026-08-20 — the SH-2 dispatch overhead, and what the rig can and cannot predict
 
