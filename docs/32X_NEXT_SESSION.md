@@ -105,9 +105,35 @@ solid-run detector frees **2,604 bytes** of RAM_EMU (`nrd1` links with
 `_OVERLAY_MD32X_BSS_END = 0x240ff5d4`). So the detector is a standing trade of
 2.6 KB of the scarcest resource this core has for +2.95% device fps -- worth
 keeping, and the obvious place to look for bytes if something else needs them.
-Its three blast blocks (prio / bg+identical / mixed) are near-identical;
-folding them into one helper would fund the octa path several times over, and
-would need its own device A/B because it changes the same store traffic.
+### Where the bytes are: `do_line_pp` is compiled six times
+
+`make_do_loop` is instantiated **six times** (`draw.c:519-524`: bare, `_md`,
+`_h32`, `_scan`, `_scan_h32`, `_scan_md`), and each instantiation expands
+`do_line_pp` -- solid-run detector, quad path, pair path, the lot -- in full.
+That is where 2,604 bytes of run detector and 592 bytes of octa come from:
+about 100 and 434 bytes of actual code, times six.
+
+The variants differ in exactly two things: a `pre_code`/`post_code` pair
+(`PicoScan32xBegin/End`) and a `md_code` that has three forms (empty,
+`MD_LAYER_CODE`, `MD_LAYER_CODE_H32`). **Turning `do_line_pp` into one real
+function taking a three-valued `md_mode` would collapse six copies into one**
+and hand back on the order of 2-3 KB of RAM_EMU -- which is not "some
+headroom", it is the first real headroom this core has had, enough for the
+octa path several times over.
+
+What it costs, and why it needs a device A/B rather than a rig one:
+
+- one branch on `md_mode` per *non-background* pixel. For Doom's 3D view that
+  is the cold half of the loop (the MD layer is background there), but the HUD
+  region -- lines 80..223 by today's census -- pays it.
+- the loop stops being specialised per variant, so gcc loses some constant
+  folding.
+- it is store-traffic-adjacent code, and this tree now has two measurements
+  saying the rig gets the sign wrong on exactly that.
+
+Do it, link it, read `_OVERLAY_MD32X_BSS_END` out of the ELF, then bench
+against `disp1`. If it is neutral on fps it is still a large win, because what
+it buys is spendable.
 
 **The rule that follows:** a 32X lever that removes instructions from the
 SH-2 interpreter may be proposed on rig evidence. A lever that changes how
