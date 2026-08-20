@@ -1531,6 +1531,30 @@ int main(void) {
                "insn/frame against the same build without -DRIG_ABLATE_LOOPS\n");
     }
 #endif
+#ifdef RIG_OPCOST
+    {
+        extern unsigned long long rig_opcost[2][16], rig_opcnt[2][16];
+        static const char *nm[16] = {
+          "0x0 misc/NOP/RTS","0x1 MOV.L @(d,Rn)","0x2 MOV.x Rm,@Rn","0x3 ALU",
+          "0x4 shift/DT/JSR","0x5 MOV.L @(d,Rm)","0x6 MOV.x @Rm,Rn","0x7 ADD #imm",
+          "0x8 BT/BF/CMP","0x9 MOV.W @(d,PC)","0xA BRA","0xB BSR",
+          "0xC misc/imm","0xD MOV.L @(d,PC)","0xE MOV #imm","0xF (illegal)" };
+        for (int c = 0; c < 2; c++) {
+            unsigned long long tot = 0;
+            for (int i = 0; i < 16; i++) tot += rig_opcost[c][i];
+            if (!tot) continue;
+            printf("[32x-opcost] %s: ticks by opcode group (ratios only)\n",
+                   c ? "ssh2" : "msh2");
+            for (int i = 0; i < 16; i++) {
+                if (!rig_opcnt[c][i]) continue;
+                printf("[32x-opcost]   %-20s %5.2f%%  n=%llu  avg=%.1f\n",
+                       nm[i], 100.0 * rig_opcost[c][i] / (double)tot,
+                       rig_opcnt[c][i],
+                       (double)rig_opcost[c][i] / (double)rig_opcnt[c][i]);
+            }
+        }
+    }
+#endif
 #ifdef RIG_OPHIST
     /* Opcode-group census: what the frame is actually made of, per core.
      * Answers dispatch-shape questions with a distribution instead of a
@@ -1545,6 +1569,25 @@ int main(void) {
             /* simple selection of the top 16 */
             printf("[32x-ophist] %s: %llu insns, top 16 opcode groups (op>>8):\n",
                    c ? "ssh2" : "msh2", tot);
+            /* Group 0xC in full: the opcode-cost census left it as the only
+             * msh2 outlier (avg 3.3 ticks against 0.6-1.1 elsewhere) and
+             * op1100 switches on exactly this nibble, so the row names the
+             * op. */
+            {
+                static const char *c_nm[16] = {
+                  "MOV.B R0,@(d,GBR)","MOV.W R0,@(d,GBR)","MOV.L R0,@(d,GBR)","TRAPA #imm",
+                  "MOV.B @(d,GBR),R0","MOV.W @(d,GBR),R0","MOV.L @(d,GBR),R0","MOVA @(d,PC),R0",
+                  "TST #imm,R0","AND #imm,R0","XOR #imm,R0","OR #imm,R0",
+                  "TST.B #imm,@(R0,GBR)","AND.B #imm,@(R0,GBR)","XOR.B #imm,@(R0,GBR)","OR.B #imm,@(R0,GBR)" };
+                unsigned long long ctot = 0;
+                for (int i = 0xC0; i <= 0xCF; i++) ctot += rig_ophist[c][i];
+                if (ctot)
+                    for (int i = 0xC0; i <= 0xCF; i++)
+                        if (rig_ophist[c][i])
+                            printf("[32x-ophist]   0x%02x__ %-22s %9u  %5.2f%% of 0xC\n",
+                                   i, c_nm[i & 0xf], rig_ophist[c][i],
+                                   100.0 * rig_ophist[c][i] / (double)ctot);
+            }
             for (int k = 0; k < 16; k++) {
                 int best = -1;
                 for (int i = 0; i < 256; i++) {
@@ -1581,6 +1624,21 @@ int main(void) {
                 }
             }
         }
+    }
+#endif
+#ifdef RIG_PP_CENSUS
+    {
+        extern unsigned char rig_pp_idx_seen[256];
+        extern int rig_pp_md_l0, rig_pp_md_l1, rig_pp_md_x0, rig_pp_md_x1;
+        extern unsigned long long rig_pp_md_px, rig_pp_px;
+        int i, n = 0;
+        for (i = 0; i < 256; i++) n += rig_pp_idx_seen[i];
+        printf("[32x-pp] distinct 32X packed-pixel indices used: %d/256\n", n);
+        printf("[32x-pp] MD non-background: lines %d..%d, x %d..%d, "
+               "%llu of %llu px (%.2f%%)\n",
+               rig_pp_md_l0, rig_pp_md_l1, rig_pp_md_x0, rig_pp_md_x1,
+               rig_pp_md_px, rig_pp_px,
+               rig_pp_px ? 100.0 * rig_pp_md_px / (double)rig_pp_px : 0.0);
     }
 #endif
 #ifdef RIG_M68K_HIST

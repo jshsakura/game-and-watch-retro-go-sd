@@ -20,8 +20,27 @@ Everything below is measured on hardware unless it says otherwise.
 | 09:03 | `base2` | 25.12 / 25.11 / 25.09 | today's tip, both new levers **off** |
 | ~09:15 | `idl2` | 26.53 / 26.54 / 26.54 | base2 + **68K idle fold** |
 | ~09:30 | `disp1` again | 24.95 / 24.95 / 24.95 | **control** |
-| ~10:2x | **`ppo1`** | **26.35 / 26.34 / 26.34** | idl2 + **compositor folded to one copy + octa** |
+| ~10:2x | `ppo1` | 26.35 / 26.34 / 26.34 | idl2 + **compositor folded to one copy + octa** |
 | ~10:3x | `idl2` again | 26.17 / 26.16 / 26.16 | **control** (was 26.54 at 09:15, -1.4%) |
+| ~11:1x | `ppo1` | 26.65 / 26.63 / 26.62 | sandwich, before |
+| ~11:2x | **`wb1`** | **26.69 / 26.68 / 26.67** | + **eight-pixel solid-run blast** |
+| ~11:3x | `ppo1` | 26.65 / 26.64 / 26.64 | sandwich, after |
+
+**Add the controlled deltas, do not subtract the endpoints.** 24.01 at 07:54
+against 26.68 at 11:2x is +11.1%, but those endpoints are four hours apart on a
+device that wanders. Each lever measured against an arm benched beside it:
+
+    disp1 / baseline24   +6.04%
+    idl2  / base2        +5.68%     (base2 == disp1, established by control)
+    ppo1  / idl2         +0.69%
+    wb1   / ppo1         +0.16%
+                         -------
+    compounded           +13.1%
+
+and the raw endpoints read lower than that because the device happened to be
+2% down when `idl2` was measured and back up by `wb1`. **The drift is not a
+trend you can subtract; it is a wander you have to control for.** This session
+it was +0.01 -- essentially none -- against -2.0% in the morning.
 
 Two results, and the second one is the one to carry forward.
 
@@ -332,6 +351,56 @@ which is consistent with the blank-row cache doing nothing good on hardware.
 The two buckets that remain worth attacking on the *device* are msh2 (58.7%
 here, ~70% there) and the compositor (6.9% here, and the `nrd1` result says
 the device charges more than that for its store traffic).
+
+## The one lever the rig could not judge at all, and the device could
+
+The solid-run blast wrote four pixels a round; it writes eight now. The rig put
+it at **exactly zero** (9,689,700 against 9,690,235) -- not imprecision but
+structural inability, since QEMU has no write buffer and prices a wide store
+like a narrow one. Sandwiched on the device it is **+0.16%**, with every `wb1`
+sample above all six `ppo1` samples (complete separation, not an optimistic
+read of overlapping ranges). 160 bytes, hashes bit-identical. picodrive
+`ab232912`.
+
+Worth keeping as the clean example: when the rig reports 0.00% on a
+store-shaped change, that is the rig declining to answer, and the arm is still
+worth building.
+
+## The interpreter's op bodies are flat -- there is no expensive opcode to find
+
+`RIG_OPCOST` (new instrument) brackets the dispatch switch with the rig's
+instruction clock and books the delta to the top nibble, so a *count* share can
+be checked against a *cost* share. msh2, Doom gameplay anchor, ratios only (the
+probe inflates the total by ~37%):
+
+| group | share of op-body time | avg | n |
+|---|---|---|---|
+| 0x8 BT/BF | 35.65% | **4.2** | 748,268 |
+| 0x4 shift/DT/JSR | 14.02% | 1.1 | 1,109,353 |
+| 0x6 loads | 9.40% | 0.7 | 1,250,266 |
+| 0x0 NOP/RTS | 8.37% | 0.6 | 1,180,276 |
+| 0x3 ALU | 7.82% | 0.8 | 836,127 |
+| 0x2 stores | 7.03% | 0.9 | 692,594 |
+| 0xD MOV.L @(d,PC) | 5.25% | 0.8 | 564,433 |
+| 0xC misc/imm | 5.24% | **3.3** | 142,473 |
+
+**Read it as a negative result, which is what it is.** Loads cost 0.7 and stores
+0.9 -- the inline fast paths are doing their job, and there is no opcode whose
+body is worth hand-tuning. Group 0x8's 4.2 is not a target either: it is where
+`gnw_sh2_fastloop` is called from, so a fold that collapses hundreds of guest
+iterations is booked to the one dispatch that triggered it. That is the shadow
+of a lever already won.
+
+**The one outlier, chased and closed.** Group 0xC at avg 3.3 is
+**70.3% `MOV.W @(disp,GBR),R0`** plus 10.5% `MOV.L @(disp,GBR),R0` -- guest
+loads through GBR, which is the SH-2 idiom for a hardware-register base. They
+miss both inline fast paths (`RW` covers cart ROM and SDRAM; `0x20004000 &
+0xdf000000` is neither) and call `p32x_sh2_read16`. So they are peripheral
+reads, the most expensive thing measured on this device at **106.5 cycles**.
+
+The arithmetic that closes it: **911 of them per frame on msh2**, times 106.5,
+against a frame that is 12.8 M cycles at 340 MHz and 26.5 fps -- **0.76%**.
+Real, and not worth building for.
 
 ## Closed today, by measurement
 
