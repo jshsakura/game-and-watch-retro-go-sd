@@ -52,29 +52,93 @@ And the gate is closed: `89efdef8` gives `release-package`
 **Judge a release by its job, not by the run.** Even now, read
 `gh run view <id>` per job: a green run is not the claim you care about.
 
-## 2. Blocked: the device profiler dies at frame 2
+## 2. The profiler's boot death is fixed. A second fault remains.
 
-Every `MD32X_DEVICE_PROFILE=1` build now dies immediately after the savestate
-load. **It is not a code defect.** The control that settles it: `prof1` -- the
-arm that dumped successfully the same morning, byte for byte, no rebuild --
-dies the same way. And four runs produced four *different* fault classes
-(IMPRECISERR; IBUSERR; PRECISERR with BFAR = `__rodata_md32x_start__`, an
-unrelocated XIP sentinel; UNDEFINSTR), which is memory corruption, not a bug
-with a line number. The shipping arm is unaffected.
+2026-08-21, on hardware, after the power cycle this file was waiting for.
 
-Four hypotheses were built and refuted in order -- stack overflow, the DWT
-clear removal, XIP `const` data, AHB exhaustion. **Running the unchanged
-control first would have replaced four builds with one flash.** Do that first
-next time.
+### What it was: `ahb_calloc` is not an AHB allocator
 
-What is left untested is a **real power cycle**: an SWD `reset halt/run` does
-not touch the QSPI flash or SD controller state, and nobody was at the device.
-When someone is: power-cycle, flash `prof1`, run 90 s, read the counters. Five
-minutes decides it.
+`gw_malloc.c`'s `ahb_calloc()` calls `ram_malloc()` FIRST and only falls back
+to AHB. RAM_EMU is 99.8% md32x's own overlay, so `ram_malloc` hands out memory
+**inside the running core**. This file's own diag line had been saying so since
+the day it broke -- nobody had read it on a *failing* boot:
 
-Two knobs were made overridable so the next bisect needs builds, not edits:
-`MD32X_PROFILE_FRAMES`, `GNW_PCWALL_PAGE_SHIFT` / `GNW_PCWALL_WIN_BASE`,
-`GNW_M68K_WIN_BASE`.
+    profiler init: drawn=0x240ffc84 skip=0x3001d0a8 active=1
+
+Two pools, two memories. `skip` is AHB SRAM; `drawn` is RAM_EMU, a few hundred
+bytes under `_OVERLAY_MD32X_BSS_END` (`0x240ffff4`). The profiler spent every
+run writing per-frame deltas over the core's own BSS. **That is why four runs
+gave four fault classes**: a wild write does not have a failure mode, it has
+whatever the corrupted byte does next.
+
+It also disarmed the guard the file was written against. The comment above
+`MD32X_PROFILE_FRAMES` said `ahb_calloc` "asserts inside `ahb_only_malloc`" on
+overflow -- so the AHB-exhaustion hypothesis was tested and correctly refuted,
+while the real overflow was going to RAM the whole time. It never reaches that
+assert: `ram_malloc` succeeds first. **An allocator that cannot fail is not a
+bound.**
+
+Fixed in `fdc85fc4` (`prof_ahb_calloc`, AHB only). After:
+
+    profiler init: drawn=0x3001d0b4 skip=0x3001d3b4 active=1 ahb_free_after=1436
+
+### The detector to keep: a warm start, not a power cycle
+
+**An SWD `start` with no power cycle was a reliable killer, and that is worth
+more than the power cycle was.** `prof1` died four times running, byte for
+byte, at three different fault classes, while the shipping arm `wb1` booted
+from the same card and the same savestate every time. So the failure had a
+two-minute reproduction that needed nobody in the room, and the fix proved
+itself against it: the same warm start now boots, resumes and runs.
+
+Why a power cycle papered over it was not chased. It changes what RAM_EMU
+holds at boot; the write was out of bounds either way.
+
+### What is still broken
+
+The profiler now **boots**. It still dies **later**, once the window opens
+(1200 warmup frames -- ~20 s at the title screen, ~60 s in gameplay), and only
+in the gameplay scene:
+
+| arm | scene | outcome |
+|---|---|---|
+| prof7 (alloc fix) | title, msh2 idle | ran, dumped 3,200 B |
+| prof7 (alloc fix) | gameplay | **Usagefault UNDEFINSTR, PC=0x0000001a** |
+| prof8 (alloc + printf fix) | gameplay | **Busfault PRECISERR, PC=0x08127db6 in `_vfiprintf_r`, BFAR=0xdeb44a00**, byte-identical across two runs |
+
+Note what the PCs say: `0x1a`, `0x28`, `0x48` are *vector table* addresses.
+Something is still writing to very low memory, or corrupting a return address.
+
+Already exonerated, do not re-test:
+
+- **the pcwall probe** (`sh2pico.c:gnw_pcwall_sample`) -- indices are guarded
+  by `off < GNW_PCWALL_WIN_SIZE`, unsigned wrap included, and
+  `gnw_sh2_pcwall_arm` sets `armed` only after a non-NULL block.
+- **the m68k probe** (`m68kcpu.c:gnw_m68k_sample`) -- same shape, same guards.
+- **the `%llu` printf** -- prof7 does not have that fix and dies too.
+- **the savestate and the card** -- `wb1` resumes the same `.sav` fine.
+
+Where to look next: prof8's fault is **deterministic and precise** (same PC,
+LR, CFSR and BFAR twice), which is a far better starting point than the four
+random classes this began with. Disassemble `0x08127db6` (0x76 into
+`_vfiprintf_r`) and see which argument register holds `0xdeb44a00`; and note
+that FatFs does not commit a truncation until `f_close`, so a dump that
+crashes mid-write leaves the PREVIOUS run's file intact on the card -- that
+cost an hour here, reading prof7's dump believing it was prof8's.
+
+### The sub-phase section has never printed a correct number
+
+`%llu` does not work here: nano.specs' printf does not parse the `l`/`ll`
+length modifier, so it emits the literal characters `lu` and consumes **no
+argument** -- every later value on the line shifts one left. On device that
+reads as `pico_total(outside)=lu` and `pct_of_pico=316688233.4%`. The counters
+were never wrong; the line was. `%llu` had been introduced the day before to
+fix a real 32-bit truncation (an 8.5 G sum printed as 4.2 G, plausibly), so
+both spellings were wrong. `prof_u64()` renders the digits by hand and hands
+printf a `%s`.
+
+**Every sub-phase number ever quoted from this profiler is suspect.** The
+top-level buckets (pace/proc/pico/blit/audio) use `%u` and are sound.
 
 ## 3. The A/B loop still works, but you are aiming blind without the profile
 
