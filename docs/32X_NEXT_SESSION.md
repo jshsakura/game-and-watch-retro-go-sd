@@ -10,18 +10,33 @@ Everything below is measured on hardware unless it says otherwise.
 
 # NEXT SESSION — start here
 
-**The result is landed and unreleased.** Device +13.1% (compounded from
-adjacent-arm deltas), branch `testbed`, four levers all hash-identical. Nothing
-has been cut as a release yet, and the arm on the card (`wb1`) is a
-measurement build (autoboot + savestate resume), not the canonical flag set.
+**The result is landed and released.** Device +13.1% (compounded from
+adjacent-arm deltas), branch `testbed`, four levers all hash-identical, shipped
+as `testbed-full-20260820-1854`. The arm on the card (`wb1`) is still a
+measurement build (autoboot + savestate resume), not the canonical flag set --
+so a device bench continues against `wb1`, not against the release.
 
-## 1. Do this first: cut the release
+## 1. DONE: the release is cut
 
-No device needed. The canonical set is the only correct one:
+`testbed-full-20260820-1854`, tag on `f1e2b729`, published with
+`retro-go_update.bin` + `gw_update.tar`. The +13.1% is in the field.
 
-    make release DOCKER=1 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 \
-                 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 \
-                 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1
+**But the run is a red X, and the release job inside it is green.** Two other
+jobs have been failing since `ef03bfc9` (nhdoom), and `release-package` has no
+`needs:`, so it published anyway -- which is why nobody noticed CI had been red
+for two days. Both are fixed in `461ce0be`:
+
+- `build-sd0-test`: nhdoom's overlay sections exist only in
+  `STM32H7B0VBTx_SDCARD.ld`, so the SD_CARD=0 link buried DTCM and reported it
+  as `FLASH.ld:1142 cannot move location counter backwards`. `USE_NHDOOM` now
+  follows `SD_CARD`, and the launch branch moved into `launch_nhdoom()` behind
+  the same guard.
+- `host-tests`: `nhdoom/src/device_video.c` was not in the lcd_swap audit list.
+  Audited as always-draws.
+
+**A red CI that still ships is worse than one that stops.** If nothing else
+changes here, give `release-package` a `needs:` on the two test jobs, or accept
+that the X means nothing and stop reading it.
 
 ## 2. Blocked: the device profiler dies at frame 2
 
