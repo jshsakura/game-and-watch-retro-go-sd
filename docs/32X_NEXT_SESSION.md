@@ -8,6 +8,63 @@ Everything below is measured on hardware unless it says otherwise.
 
 ---
 
+# NEXT SESSION — start here
+
+**The result is landed and unreleased.** Device +13.1% (compounded from
+adjacent-arm deltas), branch `testbed`, four levers all hash-identical. Nothing
+has been cut as a release yet, and the arm on the card (`wb1`) is a
+measurement build (autoboot + savestate resume), not the canonical flag set.
+
+## 1. Do this first: cut the release
+
+No device needed. The canonical set is the only correct one:
+
+    make release DOCKER=1 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 \
+                 DISABLE_SPLASH_SCREEN=1 ENABLE_BOOT_OC=1 INTFLASH_BANK=2 \
+                 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1
+
+## 2. Blocked: the device profiler dies at frame 2
+
+Every `MD32X_DEVICE_PROFILE=1` build now dies immediately after the savestate
+load. **It is not a code defect.** The control that settles it: `prof1` -- the
+arm that dumped successfully the same morning, byte for byte, no rebuild --
+dies the same way. And four runs produced four *different* fault classes
+(IMPRECISERR; IBUSERR; PRECISERR with BFAR = `__rodata_md32x_start__`, an
+unrelocated XIP sentinel; UNDEFINSTR), which is memory corruption, not a bug
+with a line number. The shipping arm is unaffected.
+
+Four hypotheses were built and refuted in order -- stack overflow, the DWT
+clear removal, XIP `const` data, AHB exhaustion. **Running the unchanged
+control first would have replaced four builds with one flash.** Do that first
+next time.
+
+What is left untested is a **real power cycle**: an SWD `reset halt/run` does
+not touch the QSPI flash or SD controller state, and nobody was at the device.
+When someone is: power-cycle, flash `prof1`, run 90 s, read the counters. Five
+minutes decides it.
+
+Two knobs were made overridable so the next bisect needs builds, not edits:
+`MD32X_PROFILE_FRAMES`, `GNW_PCWALL_PAGE_SHIFT` / `GNW_PCWALL_WIN_BASE`,
+`GNW_M68K_WIN_BASE`.
+
+## 3. The A/B loop still works, but you are aiming blind without the profile
+
+`wb1` benches normally -- **26.58/26.60/26.58 = 26.587 at the device's new
+physical location** (it was moved; the old 26.68 is not comparable). So any
+lever can still be judged on hardware. But msh2 is closed all the way down to
+per-opcode body cost, and the remaining rig buckets are small, so choosing the
+next target without a fresh device profile is the mistake this file keeps
+warning about.
+
+## 4. Device work: one owner
+
+The second agent session was shut down. It overwrote a flash mid-experiment,
+which then produced a wrong reading (`wb1` measured and reported as `prof4`).
+One owner of the device removes that whole class of error; bring a second
+session back only for adversarial verification at verdict time.
+
+---
+
 # 2026-08-20 — +10.5% on hardware, and a measurement floor nobody had measured
 
 **Device, Doom gameplay anchor, 1800-frame runs:**
