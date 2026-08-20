@@ -398,6 +398,7 @@ static void md32x_repaint(void) {
 
 extern uint32_t _MD32X_MAIN_CODE_START[], _MD32X_MAIN_CODE_END[];
 extern uint8_t __md32x_itc_bss_start__[], __md32x_itc_bss_end__[];
+extern uint8_t __md32x_itc_start__[], __md32x_itc_end__[];
 
 static uint8_t *g_xip_addr;
 static uint32_t g_xip_size;
@@ -600,7 +601,31 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
                                  g_xip_offset, g_xip_size);
     int n2 = PatchMd32xSentinels(_MD32X_MAIN_CODE_END, (uint32_t *)&_OVERLAY_MD32X_BSS_START,
                                  g_xip_offset, g_xip_size);
-    diag_log("sentinels patched: %d+%d\n", n1, n2);
+    /* ...and ITCM, which neither window above reaches.
+     *
+     * .overlay_md32x_itc is a SEPARATE section, copied to ITCM by
+     * run_internal_emu() before this function is entered, so the two scans
+     * above -- both bounded inside .overlay_md32x -- never see it. Every XIP
+     * pointer in the SH-2 dispatcher's literal pool therefore stayed at its
+     * sentinel value for the life of this core.
+     *
+     * It only bites on a cold path, which is why it survived: the dispatcher
+     * does not read XIP rodata while it is dispatching. It reads it when it
+     * gives up. `SH2: Illegal opcode at %08x` is the first object in
+     * .rodata_md32x, i.e. exactly MD32X_CODE_BASE + 0x44a00, and the one
+     * unpatched literal in the whole ELF was that address, at
+     * .overlay_md32x_itc+0x490. So an illegal guest opcode handed printf a
+     * format string in unmapped space and the console took a precise
+     * BusFault -- PC inside _vfiprintf_r's format scan, BFAR=0xdeb44a00,
+     * byte-identical across runs (device, 2026-08-21).
+     *
+     * That is a latent fault in the SHIPPING core too, not just profiled
+     * builds: any game that executes one illegal SH-2 opcode gets a BSOD
+     * where it should get a log line. */
+    int n3 = PatchMd32xSentinels((uint32_t *)__md32x_itc_start__,
+                                 (uint32_t *)__md32x_itc_end__,
+                                 g_xip_offset, g_xip_size);
+    diag_log("sentinels patched: %d+%d+%d(itc)\n", n1, n2, n3);
   }
 
   /* Hot writable state (bus map tables, YM/Z80/draw contexts) lives in ITCM
