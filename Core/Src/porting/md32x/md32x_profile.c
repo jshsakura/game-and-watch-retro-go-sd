@@ -114,10 +114,17 @@
 /* 0720 device Hardfault: this was 600 (~10 s @60 fps). 600 frames x 6
  * buckets x 2 pools x 4 bytes = 28,800 B of AHB, requested AFTER Draw2FB
  * (83,976 B, main_md32x.c) already ate nearly the whole 87,904 B dynamic
- * pool -- 3,928 B of real headroom, nowhere near 28,800 B. ahb_calloc does
- * not fail soft (see ahb_get_free_size()'s doc comment in gw_malloc.h): it
- * asserts inside ahb_only_malloc, so the prof_active NULL-fallback below
- * was unreachable dead code. Fixed the actual crash by shrinking the
+ * pool -- 3,928 B of real headroom, nowhere near 28,800 B.
+ *
+ * ! The sentence that used to stand here -- "ahb_calloc asserts inside
+ * ahb_only_malloc, so the prof_active NULL-fallback below is unreachable" --
+ * was wrong, and it cost 2026-08-20. ahb_calloc tries ram_malloc FIRST and
+ * only falls back to AHB, so on overflow it does not assert and does not
+ * return NULL: it quietly hands back memory inside RAM_EMU, which for this
+ * core is the running overlay. See prof_ahb_calloc() below, which is what
+ * every pool in this file allocates through now.
+ *
+ * The 0720 crash itself was fixed by shrinking the
  * window, not by touching Draw2FB (that would change what's being
  * measured) and not by making ahb_calloc fail soft (shared allocator, used
  * by every core -- a separate, carefully-tested change if it happens at
@@ -235,6 +242,40 @@ int *refcounts;
 
 unsigned int md32x_dwt_now(void) { return common_emu_get_dwt_cycles(); }
 
+/* AHB and nothing else.
+ *
+ * ahb_calloc() is not an AHB allocator. gw_malloc.c tries ram_malloc() FIRST
+ * and only falls back to AHB, and for this core that is fatal: RAM_EMU is
+ * 99.8% md32x's own overlay, so ram_malloc hands out memory inside the
+ * running core. Measured on the device 2026-08-21, from this file's own diag
+ * line, on a boot that then died:
+ *
+ *   profiler init: drawn=0x240ffc84 skip=0x3001d0a8 active=1
+ *
+ * Two pools, two different memories. `skip` is AHB SRAM; `drawn` is RAM_EMU,
+ * a few hundred bytes under _OVERLAY_MD32X_BSS_END (0x240ffff4) -- i.e. the
+ * profiler spent the run writing its per-frame deltas over the core's BSS.
+ * That is what produced four different fault classes in four runs
+ * (IMPRECISERR, IBUSERR, PRECISERR, UNDEFINSTR) and why the corruption
+ * survived a reflash but not a power cycle.
+ *
+ * It also silently disarmed the safety this file was written against: the
+ * comment above says ahb_calloc "asserts inside ahb_only_malloc" on overflow.
+ * It never reaches that assert, because ram_malloc succeeds first. An
+ * allocator that cannot fail is not a bound.
+ *
+ * The _Static_assert above already sizes every pool below to fit the AHB
+ * dynamic pool, so this takes AHB directly. ahb_only_malloc() still asserts
+ * on real overflow -- a named stop instead of a wild write. */
+static void *prof_ahb_calloc(size_t count, size_t size)
+{
+  size_t bytes = count * size;
+  void *pointer = ahb_only_malloc(bytes);
+  if (pointer)
+    memset(pointer, 0, bytes);
+  return pointer;
+}
+
 void md32x_profile_init(void) {
   /* 0720 device Hardfault triage: ahb_only_malloc does NOT return NULL on
    * pool overflow like ram_malloc does -- it advances the bump pointer past
@@ -256,15 +297,15 @@ void md32x_profile_init(void) {
       fclose(df);
     }
   }
-  ps = ahb_calloc(1, sizeof *ps);  /* first: prof_active depends on it */
-  prof_delta_drawn = ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
+  ps = prof_ahb_calloc(1, sizeof *ps);  /* first: prof_active depends on it */
+  prof_delta_drawn = prof_ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
                                 sizeof(uint32_t));
-  prof_delta_skip  = ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
+  prof_delta_skip  = prof_ahb_calloc((size_t)PROF_BUCK_COUNT * MD32X_PROFILE_FRAMES,
                                 sizeof(uint32_t));
-  prof_sum_drawn = ahb_calloc(PROF_BUCK_COUNT, sizeof(uint64_t));
-  prof_sum_skip  = ahb_calloc(PROF_BUCK_COUNT, sizeof(uint64_t));
-  s_pp_counters  = ahb_calloc(1, sizeof(struct pp_counters));
-  s_pp_refcounts = ahb_calloc((size_t)pp_total_points, sizeof(int));
+  prof_sum_drawn = prof_ahb_calloc(PROF_BUCK_COUNT, sizeof(uint64_t));
+  prof_sum_skip  = prof_ahb_calloc(PROF_BUCK_COUNT, sizeof(uint64_t));
+  s_pp_counters  = prof_ahb_calloc(1, sizeof(struct pp_counters));
+  s_pp_refcounts = prof_ahb_calloc((size_t)pp_total_points, sizeof(int));
   pp_counters  = s_pp_counters;
   refcounts    = s_pp_refcounts;
   prof_active = (ps != NULL
@@ -278,10 +319,10 @@ void md32x_profile_init(void) {
      * live in this AHB block (see the _Static_assert above -- the overlay
      * BSS has no room for them). */
     if (gnw_pcwall_block_words == MD32X_PCWALL_BLOCK_WORDS)
-      pcwall_block = ahb_calloc(MD32X_PCWALL_BLOCK_WORDS, sizeof(uint32_t));
+      pcwall_block = prof_ahb_calloc(MD32X_PCWALL_BLOCK_WORDS, sizeof(uint32_t));
     /* 33 words. ahb_only_malloc asserts rather than returning NULL on
      * overflow, so this is the last thing allocated and the smallest. */
-    m68k_block = ahb_calloc(gnw_m68k_block_words, sizeof(uint32_t));
+    m68k_block = prof_ahb_calloc(gnw_m68k_block_words, sizeof(uint32_t));
   }
   {
     FILE *df = fopen("/32x_diag.txt", "ab");
@@ -292,6 +333,29 @@ void md32x_profile_init(void) {
       fclose(df);
     }
   }
+}
+
+/* Print a 64-bit value without %llu.
+ *
+ * nano.specs' printf does not parse the 'l'/'ll' length modifier: %llu emits
+ * the literal characters "lu" and consumes NO argument, so every later value
+ * on that line shifts one to the left. That is exactly what the sub-phase
+ * section did -- 2026-08-21 on device it printed `pico_total(outside)=lu`,
+ * and the day before, with one more argument on the line, it printed
+ * impossible numbers instead (avg/frame larger than sum,
+ * pct_of_pico=316688233.4%). The counters were never wrong; the line was.
+ *
+ * %llu had been introduced on 2026-08-20 to fix a real 32-bit truncation (an
+ * 8.5 G sum printed as 4.2 G and read as plausible). Both are avoidable:
+ * render the digits by hand and hand printf a %s. Writes backwards into the
+ * END of buf and returns a pointer to the first digit. */
+static const char *prof_u64(uint64_t v, char *buf, size_t n)
+{
+  size_t i = n - 1u;
+  buf[i] = '\0';
+  if (v == 0u) { buf[--i] = '0'; return buf + i; }
+  while (v != 0u && i != 0u) { buf[--i] = (char)('0' + (unsigned)(v % 10u)); v /= 10u; }
+  return buf + i;
 }
 
 static int prof_u32_cmp(const void *a, const void *b) {
@@ -423,19 +487,23 @@ static void md32x_profile_dump(void) {
 
     fprintf(f, "picoframe sub-phases (sum over whole window, refcount_leaks=%d):\n",
             leaked);
-    fprintf(f, "  pico_total(outside)=%llu  frame_total(pprof)=%llu\n",
-            (unsigned long long)pico_total,
-            (unsigned long long)s_pp_counters->counter[pp_frame]);
+    {
+      char b1[24], b2[24];
+      fprintf(f, "  pico_total(outside)=%s  frame_total(pprof)=%s\n",
+              prof_u64(pico_total, b1, sizeof b1),
+              prof_u64((uint64_t)s_pp_counters->counter[pp_frame], b2, sizeof b2));
+    }
     for (uint32_t i = 0; i < ARRAY_SIZE(phases); i++) {
       uint64_t sum = (uint64_t)s_pp_counters->counter[phases[i].point];
       uint64_t avg = total_frames ? sum / total_frames : 0;
       unsigned pct_x10 = pico_total ? (unsigned)((sum * 1000) / pico_total) : 0;
-      /* %llu, not %u: the 2026-08-20 run silently truncated an 8.5 G sum to
-       * 4.2 G and read like a plausible number. If it overflows again the
-       * digits say so. */
-      fprintf(f, "  %-8s: sum=%llu avg/frame=%llu pct_of_pico=%u.%u%%\n",
-              phases[i].label, (unsigned long long)sum,
-              (unsigned long long)avg, pct_x10 / 10, pct_x10 % 10);
+      /* Full 64 bits, via prof_u64: %u truncated an 8.5 G sum to 4.2 G on the
+       * 2026-08-20 run and read like a plausible number, and %llu does not
+       * print at all here. If it overflows again the digits say so. */
+      char b1[24], b2[24];
+      fprintf(f, "  %-8s: sum=%s avg/frame=%s pct_of_pico=%u.%u%%\n",
+              phases[i].label, prof_u64(sum, b1, sizeof b1),
+              prof_u64(avg, b2, sizeof b2), pct_x10 / 10, pct_x10 % 10);
     }
 
     /* cycles-per-guest-instruction: is msh2/ssh2 cost dispatch overhead
@@ -450,14 +518,20 @@ static void md32x_profile_dump(void) {
     uint64_t msh2_insn = gnw_sh2_insn_count[0];
     uint64_t ssh2_insn = gnw_sh2_insn_count[1];
     fprintf(f, "sh2 cycles/guest-insn (device, DWT cycles / dispatched guest insns):\n");
-    fprintf(f, "  msh2: cyc=%u insn=%u ratio=%u.%u\n",
-            (unsigned)msh2_cyc, (unsigned)msh2_insn,
-            msh2_insn ? (unsigned)(msh2_cyc / msh2_insn) : 0u,
-            msh2_insn ? (unsigned)((msh2_cyc * 10 / msh2_insn) % 10) : 0u);
-    fprintf(f, "  ssh2: cyc=%u insn=%u ratio=%u.%u\n",
-            (unsigned)ssh2_cyc, (unsigned)ssh2_insn,
-            ssh2_insn ? (unsigned)(ssh2_cyc / ssh2_insn) : 0u,
-            ssh2_insn ? (unsigned)((ssh2_cyc * 10 / ssh2_insn) % 10) : 0u);
+    /* cyc and insn are 64-bit and both have exceeded 2^32 here; the (unsigned)
+     * casts that used to print them truncated silently. Ratio stays integer
+     * math on the full values. */
+    {
+      char b1[24], b2[24];
+      fprintf(f, "  msh2: cyc=%s insn=%s ratio=%u.%u\n",
+              prof_u64(msh2_cyc, b1, sizeof b1), prof_u64(msh2_insn, b2, sizeof b2),
+              msh2_insn ? (unsigned)(msh2_cyc / msh2_insn) : 0u,
+              msh2_insn ? (unsigned)((msh2_cyc * 10 / msh2_insn) % 10) : 0u);
+      fprintf(f, "  ssh2: cyc=%s insn=%s ratio=%u.%u\n",
+              prof_u64(ssh2_cyc, b1, sizeof b1), prof_u64(ssh2_insn, b2, sizeof b2),
+              ssh2_insn ? (unsigned)(ssh2_cyc / ssh2_insn) : 0u,
+              ssh2_insn ? (unsigned)((ssh2_cyc * 10 / ssh2_insn) % 10) : 0u);
+    }
   }
 
   /* Sampled guest-PC wall attribution (sh2pico.c probe). Freezes the probe
