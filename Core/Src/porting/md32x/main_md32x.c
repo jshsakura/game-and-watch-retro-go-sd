@@ -734,17 +734,29 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #endif
 
 #ifdef MD32X_DEVICE_PROFILE
-    /* Single DWT clear for the whole iteration. Cumulative reads at each phase
-     * boundary below give EXACTLY disjoint deltas (tama pattern): the five
-     * phase buckets never overlap, and the final read is loop_total. No nested
-     * intervals, no double-counting. */
-    common_emu_clear_dwt_cycles();
+    /* Single baseline read for the whole iteration. Cumulative reads at each
+     * phase boundary below give EXACTLY disjoint deltas (tama pattern): the
+     * five phase buckets never overlap, and the final read is loop_total. No
+     * nested intervals, no double-counting.
+     *
+     * This used to CLEAR DWT_CYCCNT here, and that silently destroyed the
+     * picoframe sub-phase table it shares the window with. picodrive's pprof
+     * brackets (pprof_start/pprof_end, routed to md32x_dwt_now()) assume a
+     * FREE-RUNNING counter: they compute `now - start` across points that are
+     * not aligned to this loop. Any bracket open across the clear got
+     * `small - large`, i.e. a wrapped ~2^32 delta, and a couple of those a
+     * window put msh2's sum at 8.5 G against a 429 M truth -- while the
+     * separate PC-wall accumulator, which never subtracts across the clear,
+     * read correctly. Subtracting a baseline gives the same disjoint numbers
+     * and leaves the counter alone; the 12.6 s wrap at 340 MHz is handled by
+     * unsigned arithmetic as long as no single interval exceeds it. */
+    uint32_t t_base = common_emu_get_dwt_cycles();
 #endif
 
     bool drawFrame = common_emu_frame_loop();
 
 #ifdef MD32X_DEVICE_PROFILE
-    uint32_t t_pace = common_emu_get_dwt_cycles();   /* after pace, before proc */
+    uint32_t t_pace = common_emu_get_dwt_cycles() - t_base;   /* after pace, before proc */
 #endif
 
     odroid_input_read_gamepad(&joystick);
@@ -763,13 +775,13 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     PicoIn.skipFrame = drawFrame ? 0 : 1;
 
 #ifdef MD32X_DEVICE_PROFILE
-    uint32_t t_proc = common_emu_get_dwt_cycles();   /* after proc, before pico */
+    uint32_t t_proc = common_emu_get_dwt_cycles() - t_base;   /* after proc, before pico */
 #endif
 
     PicoFrame();
 
 #ifdef MD32X_DEVICE_PROFILE
-    uint32_t t_pico = common_emu_get_dwt_cycles();   /* after pico, before blit */
+    uint32_t t_pico = common_emu_get_dwt_cycles() - t_base;   /* after pico, before blit */
 #endif
 
     if (drawFrame) {
@@ -781,13 +793,13 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     }
 
 #ifdef MD32X_DEVICE_PROFILE
-    uint32_t t_blit = common_emu_get_dwt_cycles();   /* after blit, before audio */
+    uint32_t t_blit = common_emu_get_dwt_cycles() - t_base;   /* after blit, before audio */
 #endif
 
     common_emu_sound_sync(false);
 
 #ifdef MD32X_DEVICE_PROFILE
-    uint32_t t_audio = common_emu_get_dwt_cycles();  /* after audio == loop_total */
+    uint32_t t_audio = common_emu_get_dwt_cycles() - t_base;  /* after audio == loop_total */
     md32x_profile_record(drawFrame, t_pace, t_proc, t_pico, t_blit, t_audio);
 #endif
   }

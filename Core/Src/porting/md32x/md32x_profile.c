@@ -421,16 +421,19 @@ static void md32x_profile_dump(void) {
 
     fprintf(f, "picoframe sub-phases (sum over whole window, refcount_leaks=%d):\n",
             leaked);
-    fprintf(f, "  pico_total(outside)=%u  frame_total(pprof)=%u\n",
-            (unsigned)pico_total,
-            (unsigned)s_pp_counters->counter[pp_frame]);
+    fprintf(f, "  pico_total(outside)=%llu  frame_total(pprof)=%llu\n",
+            (unsigned long long)pico_total,
+            (unsigned long long)s_pp_counters->counter[pp_frame]);
     for (uint32_t i = 0; i < ARRAY_SIZE(phases); i++) {
       uint64_t sum = (uint64_t)s_pp_counters->counter[phases[i].point];
       uint64_t avg = total_frames ? sum / total_frames : 0;
       unsigned pct_x10 = pico_total ? (unsigned)((sum * 1000) / pico_total) : 0;
-      fprintf(f, "  %-8s: sum=%u avg/frame=%u pct_of_pico=%u.%u%%\n",
-              phases[i].label, (unsigned)sum,
-              (unsigned)avg, pct_x10 / 10, pct_x10 % 10);
+      /* %llu, not %u: the 2026-08-20 run silently truncated an 8.5 G sum to
+       * 4.2 G and read like a plausible number. If it overflows again the
+       * digits say so. */
+      fprintf(f, "  %-8s: sum=%llu avg/frame=%llu pct_of_pico=%u.%u%%\n",
+              phases[i].label, (unsigned long long)sum,
+              (unsigned long long)avg, pct_x10 / 10, pct_x10 % 10);
     }
 
     /* cycles-per-guest-instruction: is msh2/ssh2 cost dispatch overhead
@@ -623,6 +626,14 @@ static void md32x_profile_dump(void) {
             total_gcyc ? (unsigned)((uint64_t)gnw_m68k_stop_cyc * 1000 / total_gcyc) / 10 : 0,
             total_gcyc ? (unsigned)((uint64_t)gnw_m68k_stop_cyc * 1000 / total_gcyc) % 10 : 0,
             gnw_m68k_stop_hits);
+    {
+      /* stop_calls above counts picodrive's own SekSetStop (the 32X-register
+       * poll detect). The gwenesis idle fold sets CPU_STOPPED directly, so it
+       * is invisible there -- which is what made the 2026-08-20 profile
+       * ambiguous. This is the fold's own counter. */
+      extern unsigned int gnw_m68k_idle_stops;
+      fprintf(f, "  idle_fold_stops=%u\n", gnw_m68k_idle_stops);
+    }
     fprintf(f, "  insn=%u cyc/insn=%u.%u  dev_per_gcyc=%u.%u  samples=%u\n",
             (unsigned)gnw_m68k_insns,
             gnw_m68k_insns ? (unsigned)(m68k_win / gnw_m68k_insns) : 0,
@@ -633,9 +644,11 @@ static void md32x_profile_dump(void) {
     if (gnw_m68k_hist_p != NULL) {
       uint64_t tot = 0;
       for (unsigned i = 0; i <= gnw_m68k_nbuck; i++) tot += gnw_m68k_hist_p[i];
-      fprintf(f, "  pc pages (%u KB each, window 0..%u KB), attributed=%u:\n",
-              (1u << gnw_m68k_page_shift) >> 10,
-              (gnw_m68k_nbuck << gnw_m68k_page_shift) >> 10, (unsigned)tot);
+      extern const unsigned int gnw_m68k_win_base;
+      fprintf(f, "  pc pages (%u KB each, window 0x%06x..0x%06x), attributed=%u:\n",
+              (1u << gnw_m68k_page_shift) >> 10, gnw_m68k_win_base,
+              gnw_m68k_win_base + (gnw_m68k_nbuck << gnw_m68k_page_shift),
+              (unsigned)tot);
       if (tot) {
         uint8_t used[33] = { 0 };
         for (int rank = 0; rank < 6; rank++) {
