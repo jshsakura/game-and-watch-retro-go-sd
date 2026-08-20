@@ -640,7 +640,13 @@ INCLUDE build/fceumm_mappers.ld
      build/md32x/pico__memory.o           (.text .text*)
      /* 32X compositor hot path: FinalizeLine (224x/frame) + layer blits.
       * Rest of draw.o stays in XIP (cold setup, unused pixel-format variants). */
-     build/md32x/pico__32x__draw.o        (.text.FinalizeLine32xRGB555 .text.PicoDraw32xLayer .text.PicoDraw32xLayerMdOnly)
+     /* .text.gnw_line_pp is the packed-pixel compositor, which used to be a
+        macro expanded eight times (six make_do_loop variants plus two in
+        FinalizeLine32xRGB555) and therefore copied eight times into this
+        region -- that is where the overlay's headroom went. It is one
+        function now, and it has to be named here: without this it lands in
+        MD32X_CODE and the compositor runs out of external flash. */
+     build/md32x/pico__32x__draw.o        (.text.FinalizeLine32xRGB555 .text.PicoDraw32xLayer .text.PicoDraw32xLayerMdOnly .text.gnw_line_pp)
      build/md32x/*.o (.data .data*)
     . = ALIGN(4);
     _OVERLAY_MD32X_LOAD_END = .;
