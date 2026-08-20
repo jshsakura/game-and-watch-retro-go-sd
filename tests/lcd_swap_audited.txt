@@ -133,6 +133,7 @@ Core/Src/porting/wswan/main_wswan.c           swap=1 stale=0 gated        # if (
 Core/Src/porting/a2600/main_a2600.cxx         swap=1 stale=0 always-draws # tia.update(); blit(); lcd_swap(); -- no frameskip
 Core/Src/porting/c64/main_c64_dev.cpp         swap=1 stale=0 always-draws # calls common_emu_frame_loop() and ignores the return
 Core/Src/porting/lynx/main_lynx.cpp           swap=1 stale=0 always-draws # UpdateFrame(); blit(); lcd_swap();
+Core/Src/porting/nhdoom/src/device_video.c    swap=1 stale=0 always-draws # startDisplayRefresh() IS the engine's I_FinishUpdateBlock hook: it runs only after a frame was rendered, and the row copy into the back buffer is unconditional right above the flip
 Core/Src/porting/vb/main_vb.c                 swap=1 stale=0 always-draws # (void)drawFrame; drawFrame = true -- skipping flickers the VIP
 Core/Src/porting/videopac/main_videopac.c     swap=1 stale=0 always-draws # computes drawFrame and never reads it
 Core/Src/porting/zxs/main_zxs.c               swap=1 stale=0 always-draws # zx_exec(); zx_blit(); lcd_swap();

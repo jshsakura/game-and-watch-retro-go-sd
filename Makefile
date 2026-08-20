@@ -1210,7 +1210,18 @@ Core/Src/porting/video/video_ui.c \
 Core/Src/porting/video/main_video.c \
 retro-go-stm32/components/lupng/miniz.c
 
+# The nhdoom overlay sections (.overlay_doom / .doom_xip / .overlay_doom_bss)
+# exist only in STM32H7B0VBTx_SDCARD.ld. In the SD_CARD=0 build there is no home
+# for them, so all 55 engine objects fall into the default DTCM sections and the
+# link dies with "cannot move location counter backwards" (~46 KB over) -- an
+# error that names a linker-script line, not the core that caused it. The core is
+# SD-fed regardless: it streams doom.ro off the card into the QSPI XIP cache. So
+# it is off in the non-SD variant until FLASH.ld grows the same three sections.
+ifeq ($(SD_CARD),0)
+USE_NHDOOM ?= 0
+else
 USE_NHDOOM ?= 1
+endif
 ifeq ($(USE_NHDOOM),1)
 C_DEFS += -DUSE_NHDOOM
 # next-hack DOOM engine (external/nh-doom, in-tree). 55-file set proven on

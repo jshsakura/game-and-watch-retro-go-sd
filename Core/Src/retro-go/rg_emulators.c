@@ -415,6 +415,44 @@ uint8_t *NhdoomLoadFlashCache(uint32_t dev_wad_base)
 #endif
   return cache;
 }
+
+/* The Homebrew "Doom" launch, lifted out of emulator_start() so the non-SD
+ * variant has something to link against. Order matters and is load-bearing:
+ * DoomCacheCodeToFlash() uses ALL of RAM_EMU as scratch while it patches and
+ * reprograms doom.ro, so it must run BEFORE anything streams an overlay in;
+ * then Doom.bin lands in RAM; then the overlay's sentinel refs are patched to
+ * the real XIP address. (Restored from c12ad58e^; the original's
+ * doom_trace_begin SD-trace facility was removed from the tree.) */
+static void launch_nhdoom(bool load_state, bool start_paused, int8_t save_slot)
+{
+  printf("[doom] launch: enter Doom branch, begin XIP cache\n");
+  uint32_t doom_xip_size = 0;
+  uint8_t *doom_xip_addr = DoomCacheCodeToFlash(&doom_xip_size);
+  printf("[doom] launch: DoomCacheCodeToFlash returned %p size=%lu\n",
+         (void *)doom_xip_addr, (unsigned long)doom_xip_size);
+  if (!odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__))
+    return;
+  if (doom_xip_addr) {
+    int32_t off = (int32_t)((uint32_t)doom_xip_addr - DOOM_CODE_BASE);
+    PatchDoomRegion((uint32_t *)&__RAM_EMU_START__,
+                    (uint32_t *)&_OVERLAY_DOOM_BSS_START, off, doom_xip_size);
+  }
+  memset(&_OVERLAY_DOOM_BSS_START, 0x0, (size_t)&_OVERLAY_DOOM_BSS_SIZE);
+  SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_DOOM_SIZE);
+  SCB_InvalidateICache();
+  app_main_nhdoom(load_state, start_paused, save_slot);
+}
+#else /* !USE_NHDOOM */
+/* SD_CARD=0 has no .overlay_doom / .doom_xip / .overlay_doom_bss in
+ * STM32H7B0VBTx_FLASH.ld, so the engine is not built there and neither are the
+ * linker symbols the launch reads. Say so on screen rather than link-erroring
+ * on four symbols that name a section instead of a core. */
+static void launch_nhdoom(bool load_state, bool start_paused, int8_t save_slot)
+{
+  (void)load_state; (void)start_paused; (void)save_slot;
+  printf("[doom] not built in this variant (USE_NHDOOM=0)\n");
+  odroid_overlay_alert("Doom is not in this build");
+}
 #endif /* USE_NHDOOM */
 
 
@@ -2003,29 +2041,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
        * odroid_overlay_cache_file_in_ram() call; every branch below
        * (including the legacy named engines) shares that fix now. */
       if (strcmp(newfile->name,"Doom") == 0) {
-        /* This branch must run BEFORE the bounded copy below: DoomCacheCodeToFlash
-         * uses all of RAM_EMU as scratch while patching+reprogramming doom.ro,
-         * so nothing else may have streamed an overlay into it yet. Order is:
-         * cache+patch+reprogram doom.ro FIRST, THEN load Doom.bin into RAM,
-         * THEN patch the overlay's sentinel refs to the real XIP address.
-         * (Restored from c12ad58e^; the original's doom_trace_begin SD-trace
-         * facility was removed from the tree and is not restored.) */
-        printf("[doom] launch: enter Doom branch, begin XIP cache\n");
-        uint32_t doom_xip_size = 0;
-        uint8_t *doom_xip_addr = DoomCacheCodeToFlash(&doom_xip_size);
-        printf("[doom] launch: DoomCacheCodeToFlash returned %p size=%lu\n",
-               (void *)doom_xip_addr, (unsigned long)doom_xip_size);
-        if (odroid_overlay_cache_file_in_ram(ACTIVE_FILE->path, (uint8_t *)&__RAM_EMU_START__)) {
-            if (doom_xip_addr) {
-                int32_t off = (int32_t)((uint32_t)doom_xip_addr - DOOM_CODE_BASE);
-                PatchDoomRegion((uint32_t *)&__RAM_EMU_START__,
-                                (uint32_t *)&_OVERLAY_DOOM_BSS_START, off, doom_xip_size);
-            }
-            memset(&_OVERLAY_DOOM_BSS_START, 0x0, (size_t)&_OVERLAY_DOOM_BSS_SIZE);
-            SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_DOOM_SIZE);
-            SCB_InvalidateICache();
-            app_main_nhdoom(load_state, start_paused, save_slot);
-        }
+        launch_nhdoom(load_state, start_paused, save_slot);
       } else {
       const uint32_t ram_emu_len = ((uint32_t)&__RAM_EMU_END__) - (uint32_t)&__RAM_EMU_START__;
       size_t homebrew_bytes = rg_storage_copy_file_to_ram_bounded(
