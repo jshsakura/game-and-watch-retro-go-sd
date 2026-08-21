@@ -726,6 +726,25 @@ INCLUDE build/fceumm_mappers.ld
        YM2612UpdateOne_ stays in XIP, which costs one veneer per sample block,
        not per sample. */
     build/md32x/pico__sound__ym2612.o (.text.chan_render)
+    /* The rest of the census's XIP list that is safe to move: every one of
+       these is reached either through a function pointer or a few times per
+       line, so pulling it across the 603 MB gap from its caller costs veneers
+       at line rate, not at pixel or opcode rate. That rules out the two
+       biggest remaining items -- DrawLayer (4,680 B, 2.3%) and the TileNorm /
+       TileFlip family (4,796 B, 1.5%) -- which call each other per TILE and
+       would have to move together, and together they do not fit.
+
+         m68k_run          564 B   2.0%   dispatches through a jump table
+         PicoLine        2,176 B   1.0%   per line; its DrawLayer calls veneer
+         FinalizeLine555 1,924 B   1.2%   called through the FinalizeLine ptr
+         SN76496Update     624 B   0.8%   per sample block
+
+       Small functions may already be I-cache resident, in which case this buys
+       nothing -- that is what the bench is for, and a null result closes the
+       axis rather than leaving it open. */
+    build/md32x/cpu__gwenesis68k__m68kcpu.o (.text.m68k_run)
+    build/md32x/pico__draw.o (.text.PicoLine .text.FinalizeLine555)
+    build/md32x/pico__sound__sn76496.o (.text.SN76496Update)
     . = ALIGN(4);
     __md32x_itc_end__ = .;
     ASSERT(ABSOLUTE(__md32x_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: MD32X ITC overflow");
