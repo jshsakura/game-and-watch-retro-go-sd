@@ -10,6 +10,75 @@ Everything below is measured on hardware unless it says otherwise.
 
 # NEXT SESSION — start here
 
+**Read [issue #45](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/45)
+first.** It is the public write-up of where Doom-on-32X stands, every axis closed by
+measurement, and why the two big ones are blocked. This file is the working detail
+behind it.
+
+## Build on ubuntu-lab, not on the session VM
+
+A 32X arm takes **~12 minutes** on the 4-core VM the sessions run on and **91
+seconds** on `ubuntu-lab` (20 cores, 123 GB). Serial builds on the VM were the real
+bottleneck for most of 2026-08-21.
+
+    ssh ubuntu-lab '~/gnw_build.sh <name> <make vars...>'      # ~/gnw, artefacts in ~/gnw_arms/<name>
+    scp -r ubuntu-lab:gnw_arms/<name> /tmp/gnw_arms/           # then flash from here
+    bash tools/gnw_probe/arm32x.sh flash <name>
+
+`~/gnw` is checked out at the tip; `git fetch && git checkout <sha> && git submodule
+update --init --recursive -j8` before a run. For parallel arms give each its own
+checkout (`DIR=~/gnw2`) — `build/` is shared, and `--name` collisions are docker
+error 125.
+
+**The console stays with one owner.** Builds fan out; flashing and benching do not.
+
+## The three things to do first
+
+1. **Soak the clock levers.** `GNW_OC2_PLLQ=6` (340 MHz core / 113 MHz OSPI) is
+   **+4.0%** and changes nothing else; level 3 + `GNW_OC3_PLLQ=6` (353/118) is
+   **+8.4%**. Neither is a default. Level 3 was pulled from the launcher menu for
+   Genesis instability under sustained load, and this core is that Genesis; 118 MHz
+   is past anything this flash has been asked for, and 136 MHz hangs the console.
+   30+ minutes of sustained load each, then decide.
+2. **Listen to 22.05 kHz.** `MD32X_AUDIO_RATE_OVERRIDE=22050` is +1.9% stacked and
+   nobody has heard it.
+3. **Find 18 KB of fast memory.** It is the only lead left that reopens anything.
+   Both remaining big axes — the Z80's 20% and the 30% of frame spent fetching from
+   OSPI — are blocked on exactly this, and the audit is in issue #45: RAM_EMU has
+   1,516 B free, ITCM 1,684 B, internal flash 5 KB, and the RAM overlay's entire
+   text+rodata is 31.5 KB against `Cz80_Exec`'s 17.9 KB.
+
+## Do not re-try (all measured on hardware, in the gameplay anchor)
+
+| idea | result |
+|---|---|
+| `-Os` on `cz80.c` | **-3.9%** |
+| `-Os` on `ym2612.c` | **-2.4%** |
+| `-O3` on the SH-2 interpreter (`sh2pico.c`) | **-1.1%** |
+| Z80 idle fold at every backward jump | **-6.9%**, and -6.1% of that is the hooks alone |
+| Z80 idle fold per slice | never triggers — 0 folds in 116,694 slices |
+| Z80 sync every 8th line | **0%** |
+| OSPI 136 MHz (`PLLQ=5`) | console hangs |
+| audio 44.1 → 22.05 kHz alone | +1.3% |
+
+The `-Os`/`-O3` trio is the one to remember: **this interpreter loses when it gets
+smaller and loses when it gets bigger.** Do not spend another arm on compiler flags.
+
+## Measure it the way it was measured
+
+- **The anchor is `GNW_AUTOBOOT_STATE=1 GNW_AUTOBOOT_SLOT=0`.** Without them an arm
+  cold-boots to Doom's title screen and reads ~32 fps instead of ~26, and a lever
+  priced there is priced in a scene where the SH-2 is idle. `arm32x.sh` does not
+  pass them; add them to every arm.
+- **Bench each arm next to its own control.** The console drifted 26.25 → 25.74 →
+  25.74 → 26.25 → 28.42 → 28.80 across one session. Two arms an hour apart are not
+  compared at all.
+- **Read counters over SWD without halting.** `openocd ... -c "init" -c "echo [mrw
+  <addr>]"` and no `halt`: halting sends the console to sleep and freezes exactly
+  what you were sampling. The on-device profiler's SD dump is what crashes; the
+  counters themselves are fine.
+
+
 ## The 2026-08-21 map: where the 32X frame actually goes
 
 First device PC census of this core (600 samples, halt/read-pc/resume on the
