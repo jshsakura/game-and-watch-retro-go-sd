@@ -51,7 +51,16 @@ static void diag_log(const char *fmt, ...);   /* boot diag, defined below */
 #define MD32X_WIDTH          320          /* 32X is H40 (320) most of the time  */
 #define MD32X_HEIGHT         224
 #define MD32X_TOP_MARGIN     ((240 - MD32X_HEIGHT) / 2)   /* 8 lines            */
+/* Every sound chip in this core renders per output sample, so this rate is a
+ * direct multiplier on the FM, PSG and PWM buckets. A device PC census
+ * (2026-08-21, Doom) puts chan_render at 6.3% of host time and SN76496Update
+ * at 0.8%, all of it XIP-resident. MD32X_AUDIO_RATE_OVERRIDE prices the axis
+ * without touching anything else. */
+#ifdef MD32X_AUDIO_RATE_OVERRIDE
+#define MD32X_AUDIO_RATE     MD32X_AUDIO_RATE_OVERRIDE
+#else
 #define MD32X_AUDIO_RATE     44100
+#endif
 #define MD32X_AUDIO_MAX      (MD32X_AUDIO_RATE / 50 + 16) /* worst-case/frame   */
 
 /* Savestate stamp: refuse a file this build did not write (project rule). The
@@ -645,9 +654,27 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * called either: PicoLoadMedia -> PicoCartInsert -> PicoPower already
    * reset the machine. */
   PicoInit();
+#if defined(MD32X_ABL_NO_MD_SOUND) || defined(MD32X_ABL_NO_FM) || defined(MD32X_ABL_NO_Z80)
+  /* ABLATION ONLY -- not a shipping option. Drops the Mega Drive sound side
+   * (YM2612 + PSG + Z80) and keeps the 32X's own PWM, to price what MD sound
+   * costs a 32X title that may not use it. Doom drives its audio from the
+   * SH-2s through PWM. Measured, not assumed: the device profiler's phase
+   * counters read z80 10.6% + fm 10.4% of the frame on the title screen, and
+   * a share is not a saving until a bench says so. Audio output is wrong with
+   * this on -- that is the point of an ablation. */
+  PicoIn.opt = POPT_EN_32X | POPT_EN_PWM
+             | POPT_ACC_SPRITES | POPT_DIS_32C_BORDER;
+#if !defined(MD32X_ABL_NO_MD_SOUND) && !defined(MD32X_ABL_NO_FM)
+  PicoIn.opt |= POPT_EN_FM | POPT_EN_PSG;
+#endif
+#if !defined(MD32X_ABL_NO_MD_SOUND) && !defined(MD32X_ABL_NO_Z80)
+  PicoIn.opt |= POPT_EN_Z80;
+#endif
+#else
   PicoIn.opt = POPT_EN_FM | POPT_EN_PSG | POPT_EN_Z80
              | POPT_EN_32X | POPT_EN_PWM
              | POPT_ACC_SPRITES | POPT_DIS_32C_BORDER;   /* mono: no EN_STEREO */
+#endif
   PicoIn.sndRate = MD32X_AUDIO_RATE;
   PicoIn.autoRgnOrder = 0x184;   /* US, EU, JP */
 

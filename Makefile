@@ -1222,6 +1222,14 @@ USE_NHDOOM ?= 0
 else
 USE_NHDOOM ?= 1
 endif
+
+# OSPI clock divider for OC level 2 (see SystemClock_Config). 7 = 97 MHz, the
+# shipping value; 6 = 113 MHz. Measurement knob -- the 32X core executes 30% of
+# its host cycles out of OSPI-mapped flash.
+GNW_OC2_PLLQ ?=
+ifneq ($(GNW_OC2_PLLQ),)
+C_DEFS += -DGNW_OC2_PLLQ=$(GNW_OC2_PLLQ)
+endif
 ifeq ($(USE_NHDOOM),1)
 C_DEFS += -DUSE_NHDOOM
 # next-hack DOOM engine (external/nh-doom, in-tree). 55-file set proven on

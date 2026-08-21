@@ -644,10 +644,23 @@ void SystemClock_Config(uint8_t oc_level)
       // under sustained load on some cores (Genesis).
       // PLLM=16 keeps the PLL input at 4 MHz (same as case 1).
       // core = 64/16 * 170/2 = 340 MHz ; OSPI = 64/16 * 170/7 = 97 MHz
+      //
+      // GNW_OC2_PLLQ prices the OTHER half of this level, which nobody has
+      // measured: the core clock and the OSPI clock come off the same VCO and
+      // every level so far moved them together. PLLQ=6 keeps the core at 340
+      // and takes OSPI to 113 MHz. It is not obviously out of spec -- level 1
+      // already runs the same flash at 104 -- and it matters because a device
+      // PC census (2026-08-21, Doom) puts 30% of host time executing straight
+      // out of OSPI-mapped external flash: Cz80_Exec, chan_render, DrawLayer,
+      // m68k_run and the VDP line renderers all live in the 32X core's XIP
+      // half. Default stays 7; an arm sets it to price the axis.
       RCC_OscInitStruct.PLL.PLLM = 16;
       RCC_OscInitStruct.PLL.PLLN = 170;
       RCC_OscInitStruct.PLL.PLLP = 2;
-      RCC_OscInitStruct.PLL.PLLQ = 7;
+#ifndef GNW_OC2_PLLQ
+#define GNW_OC2_PLLQ 7
+#endif
+      RCC_OscInitStruct.PLL.PLLQ = GNW_OC2_PLLQ;
       RCC_OscInitStruct.PLL.PLLR = 2;
       break;
     case 3: // Aggressive overclocking

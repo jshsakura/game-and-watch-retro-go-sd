@@ -143,7 +143,17 @@
  * is playing, in their gameplay. The phase counters, guest-insn counters
  * and the pcwall probe all start at warmup expiry so every denominator in
  * the dump covers the same window. */
+/* Overridable so a session can push the window past the end of the run.
+ * The pprof brackets (pp_counters) accumulate from boot regardless of this;
+ * only the per-frame bucket window, the pcwall probe and the one-shot dump
+ * wait for it. Set it beyond any real run and you get a profiler that never
+ * dumps and never arms the samplers -- then take two snapshots of
+ * pp_counters over SWD and subtract. That measures whatever scene the console
+ * was in BETWEEN the reads, which is the only way this core has ever been
+ * measured in the gameplay anchor rather than in boot+attract. */
+#ifndef MD32X_PROFILE_WARMUP_FRAMES
 #define MD32X_PROFILE_WARMUP_FRAMES 1200u
+#endif
 #define MD32X_PROF_PATH       "/32x_dwt.txt"
 
 enum {
