@@ -160,9 +160,18 @@ else's card.
 | Z80 sync every 8th line | **0%** |
 | OSPI 136 MHz (`PLLQ=5`) | console hangs |
 | audio 44.1 → 22.05 kHz alone | +1.3% |
+| `HighLnSpr` (7,680 B) from ITCM to the DTCM heap | **-1.21%** even with chan_render's 6.3% moved into the space it freed |
 
 The `-Os`/`-O3` trio is the one to remember: **this interpreter loses when it gets
 smaller and loses when it gets bigger.** Do not spend another arm on compiler flags.
+
+The `HighLnSpr` line is the other one. DTCM and ITCM are both zero-wait, so
+moving *data* between them looks free on paper and it is not: bracketed by
+controls at 27.027 before and 27.263 after, the arm read 26.817. Whatever the
+mechanism -- pointer indirection in the sprite loops, or DTCM traffic
+contending with the stack where the ITCM port had been idle -- **this is the
+third memory lever on this core to come back with the opposite sign to the
+arithmetic.** Price them on the device or do not ship them.
 
 ## Measure it the way it was measured
 
