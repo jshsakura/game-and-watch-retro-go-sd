@@ -98,11 +98,27 @@ symbols would have done). **ITCM headroom 88 B -> 2,136 B.**
 
 Commits: picodrive `8ba2a962` + `f1d5d493` behind `74118703`.
 
-### Where it stands
+### Measured on hardware
 
-Arms built (all with the anchor defines): `ctl1` control, `fnq32` fn_table only,
-`czitcm` + Cz80 in ITCM, `s68kfree` + the sub-68k reclaim. **Hardware numbers
-are pending — nothing here is a claimed speedup yet.**
+Doom, gameplay anchor, 1800 frames x 3 per arm, each against an adjacent
+control. The control's own spread across three runs was 0.01-0.02 fps, so these
+deltas are not noise.
+
+| arm | runs | mean | vs adjacent control |
+|---|---|---|---|
+| `ctl1` control | 26.21 / 26.20 / 26.19 | 26.200 | — |
+| `czitcm` fn_table + Cz80_Exec in ITCM | 27.13 / 27.12 / 27.12 | 27.123 | **+3.52%** |
+| `ctl1b` control, second round | 26.14 / 26.16 / 26.16 | 26.153 | — |
+| `fnq32` fn_table only | 26.24 / 26.23 / 26.22 | 26.230 | +0.29% |
+| `s68kfree` + the sub-68k reclaim | 26.90 / 26.89 / 26.89 | 26.893 | +2.83% |
+
+**Cz80_Exec running from ITCM is worth +2.8% to +3.5% on the device.** `fnq32`
+lands where it should: freeing space is not a speedup, and the multiply is not
+slower than the ITCM load it replaced.
+
+Keep the ceiling honest: disabling the Z80 outright is +19.8%, and this
+captures a fifth of that. The ablation removed the Z80's *work* as well as its
+instruction fetch; only the fetch was ever available.
 
 Next tenant for ITCM is priced but does not fit: `chan_render` is 3,260 B and
 **6.3% of the frame**, the largest single XIP consumer in the census, against
