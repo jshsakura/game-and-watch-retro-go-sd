@@ -665,10 +665,15 @@ void SystemClock_Config(uint8_t oc_level)
       break;
     case 3: // Aggressive overclocking
       // Former menu max: 64/38 * 420/2 ≈ 353.7 MHz core, OSPI ≈ 101 MHz.
+      // GNW_OC3_PLLQ, like GNW_OC2_PLLQ, separates the flash clock from the
+      // core clock: 6 takes OSPI to 118 MHz at the same 353.7 MHz core.
       RCC_OscInitStruct.PLL.PLLM = 38;
       RCC_OscInitStruct.PLL.PLLN = 420;
       RCC_OscInitStruct.PLL.PLLP = 2;
-      RCC_OscInitStruct.PLL.PLLQ = 7;
+#ifndef GNW_OC3_PLLQ
+#define GNW_OC3_PLLQ 7
+#endif
+      RCC_OscInitStruct.PLL.PLLQ = GNW_OC3_PLLQ;
       RCC_OscInitStruct.PLL.PLLR = 2;
       break;
     default: // No overclocking

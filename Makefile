@@ -1230,6 +1230,10 @@ GNW_OC2_PLLQ ?=
 ifneq ($(GNW_OC2_PLLQ),)
 C_DEFS += -DGNW_OC2_PLLQ=$(GNW_OC2_PLLQ)
 endif
+GNW_OC3_PLLQ ?=
+ifneq ($(GNW_OC3_PLLQ),)
+C_DEFS += -DGNW_OC3_PLLQ=$(GNW_OC3_PLLQ)
+endif
 ifeq ($(USE_NHDOOM),1)
 C_DEFS += -DUSE_NHDOOM
 # next-hack DOOM engine (external/nh-doom, in-tree). 55-file set proven on

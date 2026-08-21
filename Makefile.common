@@ -2451,10 +2451,21 @@ endif
 # can never alias gwenesis's un-namespaced Genesis core (z80/m68k/VDP/ym share
 # names). main_md32x.o goes through the same rule; app_main_md32x and the
 # plat_* hooks are absent from the redefines list, so they stay unrenamed.
+# Per-file optimisation level. The 32X core's cold half runs XIP out of OSPI
+# flash through a 16 KB I-cache, and its hot XIP working set is already larger
+# than the cache: Cz80_Exec alone is 17.9 KB, YM2612UpdateOne_ 6.4 KB,
+# DrawLayer 4.7 KB, chan_render 3.2 KB. For code in that half, SMALLER can be
+# FASTER -- a miss costs an OSPI burst, an extra instruction costs one cycle.
+# MD32X_OS_FILES names the sources to build -Os instead of the global -O2;
+# everything else, including the ITCM-resident SH-2 dispatcher where size buys
+# nothing, is untouched.
+MD32X_OS_FILES ?=
+md32x_opt = $(if $(filter $(notdir $(1)),$(MD32X_OS_FILES)),$(patsubst -O2,-Os,$(CFLAGS)),$(CFLAGS))
+
 define md32x_obj_prereq_gen
 $$(BUILD_DIR)/md32x/$(call md32x_obj_name,$1): $1 Makefile.common Makefile $(FLAGS_STAMP) md32x_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
 	$$(V)$$(ECHO) [ CC md32x ] $$(notdir $$<)
-	$$(V)$$(CC) -c $$(CFLAGS) -fno-strict-aliasing $$(MD32X_C_DEFS) $$(MD32X_C_INCLUDES) $$< -o $$@ \
+	$$(V)$$(CC) -c $$(call md32x_opt,$1) -fno-strict-aliasing $$(MD32X_C_DEFS) $$(MD32X_C_INCLUDES) $$< -o $$@ \
 	-w -Wno-parentheses -Wno-unknown-pragmas -Wno-incompatible-pointer-types -Wno-unused-const-variable -Wno-strict-aliasing -Wno-comment -Wno-unused-function -Wno-stack-usage -Wno-int-in-bool-context -Wno-unused-variable -Wno-unused-but-set-variable -Wno-discarded-qualifiers -Wno-sign-compare -Wno-implicit-fallthrough -Wno-implicit-function-declaration
 	$$(V)$$(CP) --redefine-syms=md32x_redefines $$@
 
