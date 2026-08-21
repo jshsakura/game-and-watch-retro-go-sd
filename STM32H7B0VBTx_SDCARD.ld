@@ -678,7 +678,23 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_md32x_itc (ORIGIN(ITCMRAM) + 0x4) : {
     . = ALIGN(4);
     __md32x_itc_start__ = .;
-    build/md32x/cpu__sh2__mame__sh2pico.o (.text .text* .rodata)
+    /* Named one by one rather than globbed, so that ILLEGAL -- the
+       illegal-opcode handler, 136 B plus a 29 B string, which by construction
+       never executes in a working game -- falls through to .xip_md32x instead
+       of spending 165 B of the scarcest memory on the board. Those 165 B are
+       what chan_render needs to fit below. Anything added to sh2pico.c later
+       lands in XIP unless it is named here; that is a slower build, never a
+       wrong one, and gw_retro_go.map is where you check. */
+    build/md32x/cpu__sh2__mame__sh2pico.o (.text.sh2_execute_interpreter)
+    build/md32x/cpu__sh2__mame__sh2pico.o (.text.op0000 .text.op0011 .text.op0100)
+    build/md32x/cpu__sh2__mame__sh2pico.o (.text.MAC_W .text.MAC_L)
+    build/md32x/cpu__sh2__mame__sh2pico.o (.text.MOVBL .text.MOVBL0 .text.MOVWL0 .text.MOVLL0)
+    /* chan_render: 6.3% of the frame in 3,260 B, the largest single XIP
+       consumer in the device census and twice the return per byte of anything
+       else. HighLnSpr stays in ITCM on purpose -- moving it to the DTCM heap
+       to make room measured -0.78% on hardware (arm dtcmchan against
+       s68kfree), so the room comes from ILLEGAL instead. */
+    build/md32x/pico__sound__ym2612.o (.text.chan_render)
     /* The six guest-memory entry points the interpreter calls on every load
        and store (276 B). They are compiled into memory.c, which stays in
        RAM_EMU, while their one hot caller is the interpreter right above --
@@ -719,32 +735,6 @@ INCLUDE build/fceumm_mappers.ld
        data, so they ride the D-cache, and the hot opcode set is small enough
        to stay in it. It is the instruction fetch that misses. */
     build/md32x/cpu__cz80__cz80.o (.text.Cz80_Exec)
-    /* chan_render is the single largest XIP consumer in the device PC census:
-       6.3% of the whole frame in 3,260 bytes, twice the return per byte of
-       anything else out there (Cz80_Exec is 5.5% in 17,892). It fits because
-       HighLnSpr's 7,680 B moved to the DTCM heap -- see pico_int.h. Its caller
-       YM2612UpdateOne_ stays in XIP, which costs one veneer per sample block,
-       not per sample. */
-    build/md32x/pico__sound__ym2612.o (.text.chan_render)
-    /* The rest of the census's XIP list that is safe to move: every one of
-       these is reached either through a function pointer or a few times per
-       line, so pulling it across the 603 MB gap from its caller costs veneers
-       at line rate, not at pixel or opcode rate. That rules out the two
-       biggest remaining items -- DrawLayer (4,680 B, 2.3%) and the TileNorm /
-       TileFlip family (4,796 B, 1.5%) -- which call each other per TILE and
-       would have to move together, and together they do not fit.
-
-         m68k_run          564 B   2.0%   dispatches through a jump table
-         PicoLine        2,176 B   1.0%   per line; its DrawLayer calls veneer
-         FinalizeLine555 1,924 B   1.2%   called through the FinalizeLine ptr
-         SN76496Update     624 B   0.8%   per sample block
-
-       Small functions may already be I-cache resident, in which case this buys
-       nothing -- that is what the bench is for, and a null result closes the
-       axis rather than leaving it open. */
-    build/md32x/cpu__gwenesis68k__m68kcpu.o (.text.m68k_run)
-    build/md32x/pico__draw.o (.text.PicoLine .text.FinalizeLine555)
-    build/md32x/pico__sound__sn76496.o (.text.SN76496Update)
     . = ALIGN(4);
     __md32x_itc_end__ = .;
     ASSERT(ABSOLUTE(__md32x_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: MD32X ITC overflow");
