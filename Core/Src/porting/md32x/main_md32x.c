@@ -653,6 +653,19 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * handshake (VF's 68K parks in an idle loop forever). PicoReset is not
    * called either: PicoLoadMedia -> PicoCartInsert -> PicoPower already
    * reset the machine. */
+  /* HighLnSpr moved out of ITCM and into the DTCM heap -- see pico_int.h. It
+   * has to exist before PicoInit, which clears it. Measured, not hoped:
+   * gw_firmware_abi.c records ~23 KB of the 90,256 B DTCM heap in use while a
+   * core runs (that is why PICO-8's 64 KB request moved to ram_malloc and no
+   * longer competes here), so a 7,680 B block has room to spare. The core
+   * cannot run without it, so say so rather than fault on a null deref. */
+  HighLnSpr = dtcm_malloc(HIGHLNSPR_BYTES);
+  if (HighLnSpr == NULL) {
+    printf("md32x: DTCM heap has no room for HighLnSpr (%d B)\n",
+           (int)HIGHLNSPR_BYTES);
+    assert(0);
+  }
+
   PicoInit();
 #if defined(MD32X_ABL_NO_MD_SOUND) || defined(MD32X_ABL_NO_FM) || defined(MD32X_ABL_NO_Z80)
   /* ABLATION ONLY -- not a shipping option. Drops the Mega Drive sound side

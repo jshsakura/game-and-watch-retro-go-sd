@@ -990,6 +990,23 @@ int main(void) {
      * handshake: VF's 68K parks in a nop/bra idle loop at 0x88088e forever.
      * PicoReset is not called either — PicoLoadMedia -> PicoCartInsert ->
      * PicoPower already reset the machine. */
+    /* HighLnSpr -- device: dtcm_malloc(HIGHLNSPR_BYTES) in main_md32x.c, so
+       that ITCM does not hold 7,680 B of per-line sprite list. Rig: static,
+       like every other device allocation in this file. Without it the pointer
+       is NULL and the rig hangs at "32X startup" -- which is exactly why this
+       file has to mirror main_md32x.c one for one.
+
+       Declared here rather than by including pico/pico_int.h: that header
+       redeclares things this file shims (PicoDrawSetOutputSMS and friends) and
+       will not compile alongside them. Kept in step with pico_int.h by the
+       assert below, which is why the sizes are spelled out. */
+    enum { RIG_HIGHLNSPR_ROW = 4 + 27 + 1, RIG_HIGHLNSPR_ROWS = 240 };
+    extern unsigned char (*HighLnSpr)[RIG_HIGHLNSPR_ROW];
+    static unsigned char rig_highlnspr[RIG_HIGHLNSPR_ROWS * RIG_HIGHLNSPR_ROW]
+        __attribute__((aligned(4)));
+    _Static_assert(RIG_HIGHLNSPR_ROW == 32, "MAX_LINE_SPRITES changed in pico_int.h");
+    HighLnSpr = (unsigned char (*)[RIG_HIGHLNSPR_ROW])rig_highlnspr;
+
     PicoInit();
 #ifdef RIG_32X_BIOS
     /* Set before PicoLoadMedia: get_bios() runs inside the load path. */

@@ -719,6 +719,13 @@ INCLUDE build/fceumm_mappers.ld
        data, so they ride the D-cache, and the hot opcode set is small enough
        to stay in it. It is the instruction fetch that misses. */
     build/md32x/cpu__cz80__cz80.o (.text.Cz80_Exec)
+    /* chan_render is the single largest XIP consumer in the device PC census:
+       6.3% of the whole frame in 3,260 bytes, twice the return per byte of
+       anything else out there (Cz80_Exec is 5.5% in 17,892). It fits because
+       HighLnSpr's 7,680 B moved to the DTCM heap -- see pico_int.h. Its caller
+       YM2612UpdateOne_ stays in XIP, which costs one veneer per sample block,
+       not per sample. */
+    build/md32x/pico__sound__ym2612.o (.text.chan_render)
     . = ALIGN(4);
     __md32x_itc_end__ = .;
     ASSERT(ABSOLUTE(__md32x_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: MD32X ITC overflow");
