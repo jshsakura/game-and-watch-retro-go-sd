@@ -32,6 +32,90 @@ error 125.
 
 **The console stays with one owner.** Builds fan out; flashing and benching do not.
 
+## 2026-08-21b: the "no fast memory" answer was wrong, and the Z80 moved
+
+The audit that closed both big axes said RAM_EMU had 1,516 B free, ITCM 1,684 B
+and internal flash 5 KB, so Cz80_Exec's 17,892 B had nowhere to go. Every total
+in it was right. Nobody had looked at what the 52,016 B of ITCM **data** was.
+
+    .overlay_md32x_itc      13,188 B   code (sh2pico + sh2bus)
+    .overlay_md32x_itc_bss  52,016 B   all data      -> 328 B free of 65,536
+
+    fn_table              16,384 B   <- one static array in ym2612.c
+    HighLnSpr              7,680 B
+    SH-2 bus maps (x12)    9,216 B
+    68K bus maps (x8)      8,192 B    <- half of them for a CPU not in this build
+    ym2612                 3,216 B
+    HighPreSpr             2,048 B
+    DefOutBuff             1,280 B
+    cz80_bad_address       1,024 B
+    VdpSATCache            1,024 B
+
+### fn_table was never a table
+
+Every entry is `(UINT32)((double)i * C)` for one double `C` fixed in
+`OPNSetPres`. A table of `i*C` is a multiply, and it is one now: `ym_fn_mul`
+holds C in Q32 and `YM_FN(i)` is MUL+UMULL+ADD with no memory access.
+
+`tools/ym_fn_table_proof.c` walks all 4096 entries for every (clock, rate) this
+port can reach — NTSC and PAL, 22050/32000/44100/48000 and both native rates —
+and finds **zero mismatches at Q32**. Q32 is also the only shift that works: Q20
+and below fit a 32-bit multiplier but are wrong for some rates, Q34 overflows
+the 64-bit product around i=3400. `OPNSetPres` re-runs the same comparison
+against the double formula at every init, at the same cost as the fill loop it
+replaced, so an unanticipated clock cannot pass silently.
+
+End-to-end on the rig (`run_32x.sh`, Doom, 600 frames), pre-patch tree against
+post-patch: **snd hash 97becd29 both, framebuffer checksums identical at f99 /
+f299 / f599, identical SH-2 counts**, host insn/frame 6,226,060 vs 6,226,062.
+
+**ITCM BSS 0xcb30 -> 0x8b38: 16,376 B freed.**
+
+### Cz80_Exec now runs from ITCM
+
+17,892 B needed, 16,704 B free. The last 1,188 came from `DefOutBuff` — the
+1,280 B fallback line buffer, written sequentially per line, which does not need
+zero-wait RAM. **No submodule edit was required**: input sections go to the
+first output section that matches, and `.overlay_md32x_bss` is listed before
+`.overlay_md32x_itc_bss`, so one line claims it.
+
+Verified on the link, not by "it built": `md32x__Cz80_Exec` = `0x00003378`,
+`DefOutBuff` = `0x24052a18`, and the only long-branch veneer left is for the
+per-slice call into Cz80_Exec, not for anything per-instruction.
+
+The five 1 KB jump tables stay in `.rodata_md32x` on purpose. They are read as
+**data**, so they ride the D-cache, and the sound driver's opcode set is small
+enough to stay resident in it. It is the instruction fetch that misses.
+
+### And 4 KB more, for a Sega CD that is not in this build
+
+`pico/memory.c` defined four 1 KB sub-68k maps under `GNW_32X_CORE` purely so
+the dead `is_sub` branches would link — its own comment called them "4x1KB of
+dead BSS, reclaimable later if RAM gets tight". They were in ITCM. The branches
+are compiled out now, and a caller that passes `is_sub=1` is refused and logged
+rather than silently steering the main 68K's map (which is what aliasing the two
+symbols would have done). **ITCM headroom 88 B -> 2,136 B.**
+
+Commits: picodrive `8ba2a962` + `f1d5d493` behind `74118703`.
+
+### Where it stands
+
+Arms built (all with the anchor defines): `ctl1` control, `fnq32` fn_table only,
+`czitcm` + Cz80 in ITCM, `s68kfree` + the sub-68k reclaim. **Hardware numbers
+are pending — nothing here is a claimed speedup yet.**
+
+Next tenant for ITCM is priced but does not fit: `chan_render` is 3,260 B and
+**6.3% of the frame**, the largest single XIP consumer in the census, against
+2,136 B free. ITCM and RAM_EMU are both full again (2,136 B / 172 B). The only
+untapped fast memory is the DTCM heap — `_heap_start 0x20003e70` to
+`_heap_limit 0x20019f00`, 90,256 B — whose 32X-time high-water nobody has
+measured. Measure it at the **worst case** (a large ROM list browsed, a non-Latin
+language loaded, cheats parsed), not at a fresh boot: the launcher's own
+`malloc` users are the i18n font cache (~9 KB), the language string buffer, and
+the ROM/cheat lists, all of which scale with the card. Anything moved there
+needs a fallback, because a `dtcm_malloc` at core load can fail on someone
+else's card.
+
 ## The three things to do first
 
 1. **Soak the clock levers.** `GNW_OC2_PLLQ=6` (340 MHz core / 113 MHz OSPI) is
