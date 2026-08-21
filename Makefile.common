@@ -3587,6 +3587,7 @@ $(shell printf '%s\n' \
           'CXXFLAGS=$(CXXFLAGS)' \
           'SNES=$(SNES_SPIN_SKIP_DEF)|$(SNES_SPIN_BAKE_DEF)|$(SNES_SPC_IDLE_DEF)|$(SNES_LINE_DEFS)|$(SNES_LINE_DEFS_EXTRA)|$(SNES_DSP_MONO_DEF)|$(SNES_DIAG_DEFS)|$(SNES_PROF_DEFS)|$(SNES_HLE_DEFS)' \
           'ASFLAGS=$(ASFLAGS)' \
+          'MD32X_OS_FILES=$(MD32X_OS_FILES)' \
           > $(FLAGS_STAMP).new; \
         cmp -s $(FLAGS_STAMP).new $(FLAGS_STAMP) \
           || mv -f $(FLAGS_STAMP).new $(FLAGS_STAMP); \

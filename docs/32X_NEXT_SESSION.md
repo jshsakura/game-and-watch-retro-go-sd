@@ -10,6 +10,74 @@ Everything below is measured on hardware unless it says otherwise.
 
 # NEXT SESSION — start here
 
+## The 2026-08-21 map: where the 32X frame actually goes
+
+First device PC census of this core (600 samples, halt/read-pc/resume on the
+real chip, Doom):
+
+    46.7%  sh2_execute_interpreter        ITCM
+    30.0%  executing out of OSPI flash    chan_render 6.3, Cz80_Exec 5.5,
+                                          DrawLayer 2.3, m68k_run 2.0,
+                                          TileNorm 1.5, FinalizeLine555 1.2,
+                                          PicoLine 1.0, SN76496Update 0.8
+
+**Nearly a third of the frame is instruction fetch across the QSPI bus**, and
+that is the finding the rest of the day came out of.
+
+### Priced on hardware, in the gameplay anchor, each against an adjacent control
+
+| lever | anchor fps | delta | state |
+|---|---|---|---|
+| control (340 MHz core / 97 MHz OSPI) | 26.25 → 25.74 | — | drifted -1.9% over the session |
+| **340 / 113** (`GNW_OC2_PLLQ=6`) | 27.30 | **+4.0%** | landed, off by default, wants a soak |
+| **353 / 118** (level 3 + `GNW_OC3_PLLQ=6`) | 27.89 | **+8.4%** | landed, off by default, level 3 has an instability history |
+| Z80 disabled (ablation) | 31.44 | +19.8% | **not shippable** — Doom's music is a Z80 driver |
+| FM+PSG disabled (ablation, menu scene) | — | +4.4% | not shippable |
+| `cz80.c` built `-Os` | 25.22 | **-3.9%** | closed |
+| Z80 sync every 8th line, not every odd | 32.10 vs 32.08 | 0% | closed |
+| audio 44100 → 22050 | — | +1.3% | not worth the quality |
+
+PLLQ=5 (136 MHz OSPI) hangs the console outright, so the flash ceiling is real
+and close to 118.
+
+### The Z80 is the prize and it is not a spin loop
+
+Disabling it is worth **+19.8%** in the anchor, which is more than its own
+share of the frame — removing it also stops it evicting everyone else from a
+16 KB I-cache. But it cannot simply be folded:
+
+- Z80 guest-PC census over SWD (400 samples, `CZ80.PC - CZ80.BasePC`): 35
+  distinct PCs, `0x02b7` 27.8%, `0x0049` 21.8%, `0x0906`/`0x090d` 23.3%.
+- Disassembled from Z80 RAM over SWD, that is a **cooperative polling sound
+  driver**, not an idle spin: a main loop at `0x0900` that calls an empty
+  `CALL $02B7` → `C9 RET` hook every pass, calls a flag-check at `0x0041`
+  (`LD HL,$003F; LD A,(HL); OR A; JR Z`) between every stage, and decrements a
+  tempo counter at `$0040`. **It writes memory every iteration**, so the 68K
+  idle-fold's "no side effects" whitelist rejects it, and skipping iterations
+  changes the music tempo.
+
+The arithmetic says why it is so expensive: ~17.5k Z80 instructions per frame
+taking ~20% of a 38 ms frame is **~148 host cycles per Z80 instruction**, and
+one 32-byte I-cache line refilled from OSPI at 97 MHz costs ~224 core cycles.
+`Cz80_Exec` is 17.9 KB of flash-resident interpreter with a jump table: it is
+missing roughly once per instruction.
+
+**So the fix is to stop fetching it over QSPI, and there is nowhere to put
+it.** Checked, not assumed:
+
+- RAM_EMU headroom is 1,516 B; its 708 KB of BSS is `gnw_32xmem` (532 KB: 32X
+  SDRAM + both framebuffers) and `PicoMem` (140 KB: 68K RAM, VRAM, Z80 RAM).
+  All of it is the emulated console's own memory.
+- ITCM is 63,852 of 65,536 used — 11,836 B of text (the SH-2 dispatcher) and
+  52,016 B of BSS (YM, VDP, both bus maps, cz80, z80if state).
+- The RAM overlay's whole `.text`+`.rodata` is 31.5 KB. `Cz80_Exec` alone is
+  17.9 KB, so it cannot be traded in.
+
+That leaves **HLE of the Z80 sound driver** as the only route to the Z80's
+~20%, which is a project, not a session. Everything cheap on this axis has
+been tried and is in the table above.
+
+
 **The result is landed and released.** Device +13.1% (compounded from
 adjacent-arm deltas), branch `testbed`, four levers all hash-identical, shipped
 as `testbed-full-20260820-1854`. The arm on the card (`wb1`) is still a
