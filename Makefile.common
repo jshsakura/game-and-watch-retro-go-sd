@@ -2459,8 +2459,14 @@ endif
 # MD32X_OS_FILES names the sources to build -Os instead of the global -O2;
 # everything else, including the ITCM-resident SH-2 dispatcher where size buys
 # nothing, is untouched.
+# MD32X_O3_FILES is the mirror of it, and the more interesting half: the SH-2
+# interpreter is 46.7% of the device frame and lives in ITCM, where a bigger
+# function costs nothing at all -- there is no cache to miss. Nobody had asked
+# what -O3 does to it.
 MD32X_OS_FILES ?=
-md32x_opt = $(if $(filter $(notdir $(1)),$(MD32X_OS_FILES)),$(patsubst -O2,-Os,$(CFLAGS)),$(CFLAGS))
+MD32X_O3_FILES ?=
+md32x_opt = $(if $(filter $(notdir $(1)),$(MD32X_OS_FILES)),$(patsubst -O2,-Os,$(CFLAGS)),\
+              $(if $(filter $(notdir $(1)),$(MD32X_O3_FILES)),$(patsubst -O2,-O3,$(CFLAGS)),$(CFLAGS)))
 
 define md32x_obj_prereq_gen
 $$(BUILD_DIR)/md32x/$(call md32x_obj_name,$1): $1 Makefile.common Makefile $(FLAGS_STAMP) md32x_redefines $$(SDK_HEADERS) | $$(BUILD_DIR)
@@ -3588,6 +3594,7 @@ $(shell printf '%s\n' \
           'SNES=$(SNES_SPIN_SKIP_DEF)|$(SNES_SPIN_BAKE_DEF)|$(SNES_SPC_IDLE_DEF)|$(SNES_LINE_DEFS)|$(SNES_LINE_DEFS_EXTRA)|$(SNES_DSP_MONO_DEF)|$(SNES_DIAG_DEFS)|$(SNES_PROF_DEFS)|$(SNES_HLE_DEFS)' \
           'ASFLAGS=$(ASFLAGS)' \
           'MD32X_OS_FILES=$(MD32X_OS_FILES)' \
+          'MD32X_O3_FILES=$(MD32X_O3_FILES)' \
           > $(FLAGS_STAMP).new; \
         cmp -s $(FLAGS_STAMP).new $(FLAGS_STAMP) \
           || mv -f $(FLAGS_STAMP).new $(FLAGS_STAMP); \
