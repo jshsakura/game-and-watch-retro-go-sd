@@ -701,6 +701,24 @@ INCLUDE build/fceumm_mappers.ld
        the link succeeded and nothing moved. They now carry a section name that
        glob cannot claim (GNW_SH2BUS in pico/32x/memory.c). */
     build/md32x/pico__32x__memory.o (.itcm_sh2bus)
+    /* The Z80. Disabling it is worth +19.8% in the gameplay anchor -- more than
+       its own ~20% share of the frame, because it also evicts everyone else
+       from a 16 KB I-cache. It is not a spin loop (it is Doom's music driver,
+       and it writes memory every iteration), so it cannot be folded; the whole
+       cost is that Cz80_Exec is 17,892 B of jump-table interpreter executing
+       out of OSPI at ~148 host cycles per Z80 instruction -- one 32-byte line
+       refill (~224 core cycles) per instruction, near enough.
+
+       There was nowhere to put it until fn_table stopped being a table: 16,384
+       B of ITCM held 4096 entries of i*C for one C fixed at init, and it is a
+       multiply now (YM_FN in pico/sound/ym2612.c, bit-exact, proven for every
+       clock/rate this port reaches by tools/ym_fn_table_proof.c). That plus
+       DefOutBuff moving to RAM_EMU below is exactly the 17,892 B this needs.
+       Only Cz80_Exec moves: the rest of cz80.o is init/reset/reg accessors,
+       and the five 1 KB jump tables stay in .rodata_md32x -- they are READ as
+       data, so they ride the D-cache, and the hot opcode set is small enough
+       to stay in it. It is the instruction fetch that misses. */
+    build/md32x/cpu__cz80__cz80.o (.text.Cz80_Exec)
     . = ALIGN(4);
     __md32x_itc_end__ = .;
     ASSERT(ABSOLUTE(__md32x_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: MD32X ITC overflow");
@@ -715,6 +733,13 @@ INCLUDE build/fceumm_mappers.ld
      * pico__sound__sound.o (PsndBuffer, shrunk — see .overlay_md32x_itc
      * above) rides here instead: mixing touches it sequentially once per
      * frame, not per CPU cycle, so it doesn't need zero-wait ITCM. */
+    /* draw.o's bss rides ITCM below, with one exception: DefOutBuff, the
+       320x2 fallback line buffer, is 1,280 B written sequentially per line --
+       it does not need zero-wait RAM, and ITCM needs those bytes for
+       Cz80_Exec. Claimed here rather than excluded there because input
+       sections go to the FIRST output section that matches, and this one is
+       listed before .overlay_md32x_itc_bss. */
+    build/md32x/pico__draw.o (.bss.DefOutBuff)
     EXCLUDE_FILE(*pico__sound__ym2612.o *pico__draw.o *pico__32x__memory.o
                  *pico__memory.o *cpu__cz80__cz80.o
                  *pico__z80if.o) build/md32x/*.o (.bss .bss*)
