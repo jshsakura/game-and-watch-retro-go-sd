@@ -678,23 +678,7 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_md32x_itc (ORIGIN(ITCMRAM) + 0x4) : {
     . = ALIGN(4);
     __md32x_itc_start__ = .;
-    /* Named one by one rather than globbed, so that ILLEGAL -- the
-       illegal-opcode handler, 136 B plus a 29 B string, which by construction
-       never executes in a working game -- falls through to .xip_md32x instead
-       of spending 165 B of the scarcest memory on the board. Those 165 B are
-       what chan_render needs to fit below. Anything added to sh2pico.c later
-       lands in XIP unless it is named here; that is a slower build, never a
-       wrong one, and gw_retro_go.map is where you check. */
-    build/md32x/cpu__sh2__mame__sh2pico.o (.text.sh2_execute_interpreter)
-    build/md32x/cpu__sh2__mame__sh2pico.o (.text.op0000 .text.op0011 .text.op0100)
-    build/md32x/cpu__sh2__mame__sh2pico.o (.text.MAC_W .text.MAC_L)
-    build/md32x/cpu__sh2__mame__sh2pico.o (.text.MOVBL .text.MOVBL0 .text.MOVWL0 .text.MOVLL0)
-    /* chan_render: 6.3% of the frame in 3,260 B, the largest single XIP
-       consumer in the device census and twice the return per byte of anything
-       else. HighLnSpr stays in ITCM on purpose -- moving it to the DTCM heap
-       to make room measured -0.78% on hardware (arm dtcmchan against
-       s68kfree), so the room comes from ILLEGAL instead. */
-    build/md32x/pico__sound__ym2612.o (.text.chan_render)
+    build/md32x/cpu__sh2__mame__sh2pico.o (.text .text* .rodata)
     /* The six guest-memory entry points the interpreter calls on every load
        and store (276 B). They are compiled into memory.c, which stays in
        RAM_EMU, while their one hot caller is the interpreter right above --
@@ -735,6 +719,27 @@ INCLUDE build/fceumm_mappers.ld
        data, so they ride the D-cache, and the hot opcode set is small enough
        to stay in it. It is the instruction fetch that misses. */
     build/md32x/cpu__cz80__cz80.o (.text.Cz80_Exec)
+    /* Nothing else earns a place here, and that was measured rather than
+       assumed. chan_render is 3,260 B and 6.3% of the frame -- the largest
+       single XIP consumer in the device census -- and moving it in read
+       26.903 against brackets of 26.667 and 26.937, i.e. nothing, while the
+       console drifted 1.01% across the same window. m68k_run, PicoLine,
+       FinalizeLine555 and SN76496Update are smaller still.
+
+       The census's PC share does not predict what ITCM buys. SIZE does: a
+       small hot function is already resident in the 16 KB I-cache, so moving
+       it changes nothing, and Cz80_Exec paid (+2.8-3.5%) because 17,892 B of
+       jump-table interpreter was evicting everything else from that cache.
+       Look for the next block that big before spending an arm here.
+
+       One more warning, unexplained and therefore load-bearing: an arm that
+       put chan_render in the MIDDLE of this section and reordered sh2pico's
+       functions read 23.997 against controls of 27.163 and 27.160 -- -11.6%.
+       The same code appended at the end read zero. ILLEGAL was not the cause
+       (it executes 0 times in 600 frames of Doom, counted on the rig) and
+       neither were veneers (the two sets differ by one entry). Until someone
+       explains it: APPEND to this section, never reorder it, and re-bench if
+       you do. */
     . = ALIGN(4);
     __md32x_itc_end__ = .;
     ASSERT(ABSOLUTE(__md32x_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: MD32X ITC overflow");
