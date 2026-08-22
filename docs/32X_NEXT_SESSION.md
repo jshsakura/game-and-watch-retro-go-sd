@@ -160,18 +160,31 @@ else's card.
 | Z80 sync every 8th line | **0%** |
 | OSPI 136 MHz (`PLLQ=5`) | console hangs |
 | audio 44.1 → 22.05 kHz alone | +1.3% |
-| `HighLnSpr` (7,680 B) from ITCM to the DTCM heap | **-1.21%** even with chan_render's 6.3% moved into the space it freed |
+| `chan_render` (3,260 B, 6.3% of the frame) into ITCM | **0%** -- 26.903 against a 26.802 bracket, with 1.01% of drift across the same window |
 
 The `-Os`/`-O3` trio is the one to remember: **this interpreter loses when it gets
 smaller and loses when it gets bigger.** Do not spend another arm on compiler flags.
 
-The `HighLnSpr` line is the other one. DTCM and ITCM are both zero-wait, so
-moving *data* between them looks free on paper and it is not: bracketed by
-controls at 27.027 before and 27.263 after, the arm read 26.817. Whatever the
-mechanism -- pointer indirection in the sprite loops, or DTCM traffic
-contending with the stack where the ITCM port had been idle -- **this is the
-third memory lever on this core to come back with the opposite sign to the
-arithmetic.** Price them on the device or do not ship them.
+The `chan_render` line is the other one, and it corrects a claim this file
+carried for an hour. The first measurement of that axis said the DTCM move was
+-1.21%; it was taken with the card side unverified, and `/cores/32x.bin` is
+part of the program -- every byte of ITCM code ships inside it. Re-measured
+with `CORE=32x` hashing the card, the same arm read **+0.58%**, and
+chan_render on its own read zero. Nothing about moving `HighLnSpr` to DTCM is
+known to be harmful; nothing about chan_render in ITCM is known to help.
+
+**The census's PC share does not predict what ITCM is worth. Size does.** A
+small hot function is already resident in the 16 KB I-cache. Cz80_Exec paid
+because 17,892 B of jump-table interpreter was evicting everything else from
+it. Find the next block that big before spending an arm.
+
+One result on this axis is still unexplained and is therefore a rule: an arm
+that put chan_render in the MIDDLE of `.overlay_md32x_itc` and reordered
+sh2pico's functions read **23.997** against controls of 27.163 and 27.160 --
+-11.6% -- while the identical code appended at the end read zero. ILLEGAL was
+not the cause (0 executions in 600 frames of Doom, counted on the rig) and
+neither were veneers (the sets differ by one entry). **Append to that section;
+do not reorder it; re-bench if you do.**
 
 ## Measure it the way it was measured
 
