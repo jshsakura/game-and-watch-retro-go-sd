@@ -32,6 +32,63 @@ error 125.
 
 **The console stays with one owner.** Builds fan out; flashing and benching do not.
 
+## 2026-08-24: the FM data lever lands -- +21.5% from one table, and the sound side is now fully priced
+
+The 08-22 campaign priced the whole sound path by ablation and every number
+in it survived the device. What it left open was where the FM path's 8.4 ms
+actually went -- the code was exonerated (ITCM'ing the renderer measured
+zero) -- and the YM census answered: 735 samples a frame, 2.10 active
+channels, 6.62 audible operators = 4,867 operator-samples, each ending in
+
+    ret = ym_tl_tab[sin | (env << 7)];
+
+against a 213 KB XIP blob. That is ~460 host cycles per operator-sample
+where resident C costs 30-60.
+
+**tl2** (picodrive `aac66f8f`, launcher `11599617` + `c127bca6`) computes
+the value instead, from two 256-entry half-tables copied to DTCM at
+PicoInit (1 KB total). The identity is proven both ways by
+`tools/ym_tl2_proof.c`: the init_tables fill loops, ported verbatim,
+regenerate the blob byte-for-byte against a dump out of the base ELF's
+.rodata_md32x, and the computed form matches all 106,496 (even env, sin)
+pairs. Device, Doom attract anchor, card-verified sandwich:
+
+    base0 bracket   26.82 26.82 26.81 / 26.80 26.80 26.79    26.81
+    tl2             32.60 32.57 32.56                        +21.5%
+
+Audio bit-identical (rig snd hash unchanged). The linker drops the blob:
+XIP shrinks 205 KB and `ym_tl_tab` leaves the ELF entirely.
+
+Stacked with `GNW_OC2_PLLQ=6` (the soak-passed 340/113): **33.30, +24.2%
+cumulative**. OC itself reads +2.59% on this base, down from +3.73% alone,
+because tl2 already removed the OSPI fetches the clock was speeding up.
+30-minute soak clean -- one boot-phase hang on the first attempt, the same
+flake the stock clock showed once the same day, clean on the re-run.
+
+**The sound side is priced.** gutcz80 (Z80 frozen at Cz80_Exec entry, sync
+alive) reads 37.13; nofm (FM+PSG out) reads 34.49; base 26.76. So: FM render
+~8.4 ms of which tl2 recovered 6.6, Z80 interpretation ~2.1 ms, YM synthesis
+proper ~1.8 ms, PSG ~0.3 ms. The old "Z80 = 10.87%" was the 30 fps audio
+anchor clipping the measurement, not a cost. Dead levers, each for a
+measured reason: `lfo_pm_table` (44 loads/frame worst case = 0.06% --
+access pattern, not size, decides a table lever), the 68K jump table (the
+whole m68k bucket is ~2%), and anything that fits the 16 KB I-cache
+(fmpath rule).
+
+**Queue:**
+
+0. `MD32X_AUDIO_RATE_OVERRIDE=22050` (`ebeae5fd` wired it; the ifdef and
+   its "prices the axis" comment predate it). Everything in the sound
+   bucket is per-sample, so one build halves YM remainder + PSG + PWM +
+   mixer. Bench arm `ar22k` -- then a listening verdict, which no bench
+   can give.
+1. Re-run the YM census on a tl2 base to see what the remaining ~9 ms
+   "rest of frame" bucket is made of now that sound is paid down.
+2. Z80 slice skip stays priced at <= +6% and needs the pass-rate timer
+   rescale (the 0x0921 immediate) the fold experiments did not obviate.
+   SH2 hand-tuning is the only remaining big number, and it is a week,
+   not a session.
+
 ## 2026-08-21b: the "no fast memory" answer was wrong, and the Z80 moved
 
 The audit that closed both big axes said RAM_EMU had 1,516 B free, ITCM 1,684 B
