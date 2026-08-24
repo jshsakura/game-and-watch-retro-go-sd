@@ -462,6 +462,57 @@ static void rig_pchist_report(void) {
 }
 #endif /* RIG_SH2_PC_HIST */
 
+#ifdef RIG_Z80_HIST
+#ifndef RIG_Z80_HIST_FROM
+#define RIG_Z80_HIST_FROM 0
+#endif
+extern unsigned long long g_z80_pc_hist[0x10000];
+extern unsigned long long g_z80_insns;
+static void rig_z80_pchist_report(void) {
+    /* Top guest PCs of the Z80 driver over the counted window. Selection
+     * loop instead of qsort: 48 passes over 64K counters is nothing on a
+     * host and it destroys the table as it goes, which is fine -- this
+     * runs once, last, after every other consumer of the run. */
+    unsigned long long tot = 0;
+    for (unsigned a = 0; a < 0x10000; a++) tot += g_z80_pc_hist[a];
+    printf("[32x-z80pc] window insns=%llu\n", g_z80_insns);
+    /* Full dump BEFORE the destructive top-48 selection below: the engine
+     * runs once per frame, so its addresses sit far under the spin noise
+     * and a top-N view answers "where does the spin live" -- which we
+     * already know -- instead of "where does the work live". */
+    for (unsigned a = 0; a < 0x10000; a++)
+        if (g_z80_pc_hist[a])
+            printf("[32x-z80pc-full] 0x%04x %llu\n", a, g_z80_pc_hist[a]);
+    for (unsigned b = 0; b < 256; b++) {
+        unsigned long long s = 0;
+        for (unsigned i = 0; i < 256; i++) s += g_z80_pc_hist[(b << 8) | i];
+        if (s) printf("[32x-z80pc-bucket] 0x%02x00 %llu %5.2f%%\n",
+                      b, s, tot ? 100.0 * s / tot : 0.0);
+    }
+    if (!tot) { printf("[32x-z80pc] empty table\n"); return; }
+    unsigned long long cum = 0;
+    for (int rank = 1; rank <= 48; rank++) {
+        unsigned best = 0;
+        unsigned long long bc = 0;
+        for (unsigned a = 0; a < 0x10000; a++)
+            if (g_z80_pc_hist[a] > bc) { bc = g_z80_pc_hist[a]; best = a; }
+        if (!bc) break;
+        cum += bc;
+        printf("[32x-z80pc] #%-2u 0x%04x %10llu %5.2f%% cum %5.2f%%\n",
+               rank, best, bc, 100.0 * bc / tot, 100.0 * cum / tot);
+        g_z80_pc_hist[best] = 0;
+    }
+}
+#endif /* RIG_Z80_HIST */
+
+#ifdef RIG_YM_CENSUS
+#ifndef RIG_YM_CENSUS_FROM
+#define RIG_YM_CENSUS_FROM 311
+#endif
+extern void ym_census_frame(void);
+extern void ym_census_report(void);
+#endif
+
 #ifdef RIG_POLL_PEEK
 /* Diagnostic: prints every distinct backward-branch site (BF/BFS/BT/BTS with
  * negative disp8) discovered by sh2pico.c's RIG_POLL_PEEK hook, with the full
@@ -1133,6 +1184,15 @@ int main(void) {
         if (f == 8 && !s_strp_installed) { s_strp_installed = 1; rig_strp_install(); }
 #endif
         if (f == RIG_WARMUP) phase_snapshot();
+#ifdef RIG_Z80_HIST
+        if (f == RIG_Z80_HIST_FROM) {
+            extern unsigned long long g_z80_pc_hist[0x10000];
+            extern unsigned long long g_z80_insns;
+            memset(g_z80_pc_hist, 0, sizeof(g_z80_pc_hist));
+            g_z80_insns = 0;
+            printf("[32x-z80pc] histogram zeroed at frame %d\n", f);
+        }
+#endif
 #ifdef RIG_HIST_FROM
         /* GLM debug: zero the SH-2 PC histogram tables here so the final
          * report covers only frames >= RIG_HIST_FROM (e.g. the post-death
@@ -1167,6 +1227,9 @@ int main(void) {
         uint32_t t0 = rig_timer_now();
         PicoFrame();
         uint32_t t1 = rig_timer_now();
+#ifdef RIG_YM_CENSUS
+        if (f >= RIG_YM_CENSUS_FROM) ym_census_frame();
+#endif
         uint64_t insn = (uint64_t)(uint32_t)(t1 - t0) * ipt_x1000 / 1000;
 
         unsigned long long sh2_now = g_sh2_insns, sh2_d = sh2_now - sh2_prev;
@@ -1666,6 +1729,9 @@ int main(void) {
 #ifdef RIG_SH2_PC_HIST
     rig_pchist_report();
 #endif
+#ifdef RIG_Z80_HIST
+    rig_z80_pchist_report();
+#endif
 #ifdef RIG_POLL_PEEK
     rig_peek_report();
 #endif
@@ -1673,6 +1739,9 @@ int main(void) {
     rig_spd_report();
 #endif
     phase_report(n, ipt_x1000, n > 0 ? sh2_tot / n : 0);
+#ifdef RIG_YM_CENSUS
+    ym_census_report();
+#endif
     printf("[32x-qemu] snd hash=%08lx calls=%u samples=%u\n",
            (unsigned long)s_snd_hash, s_snd_calls, s_snd_samples);
     printf("[32x-qemu] snd energy sum|s|=%llu sum s^2=%llu peak=%d\n",

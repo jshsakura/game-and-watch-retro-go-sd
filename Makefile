@@ -1567,6 +1567,36 @@ MD32X_SSH2_SND_HLE ?= 0
 ifeq ($(MD32X_SSH2_SND_HLE),1)
 MD32X_C_DEFS += -DGNW_SSH2_SND_HLE
 endif
+
+# Z80 ablation -- re-prices the Z80 now that Cz80_Exec rides ITCM. The +19.8%
+# ceiling was measured while Cz80_Exec still executed out of OSPI; what is left
+# now decides whether a Z80 sound-driver HLE is worth building. Audio output is
+# wrong with this on -- it is an ablation, not a shipping option.
+MD32X_ABL_NO_Z80 ?= 0
+ifeq ($(MD32X_ABL_NO_Z80),1)
+MD32X_C_DEFS += -DMD32X_ABL_NO_Z80
+endif
+
+# Z80 ablation #2 -- the triangulation arm. POPT_EN_Z80 stays SET, so slice
+# dispatch, 68K<->Z80 bus interlocks and cycle accounting all stay alive;
+# Cz80_Exec returns the whole slice as consumed without interpreting one
+# guest instruction. fps_gutcz80 vs base0 vs ablz80b decides whether the
+# 10.87%% Z80 cost is owned by interpretation or by the sync machinery.
+# Audio output is silent with this on -- it is an ablation, not a shipping
+# option.
+MD32X_ABL_GUT_CZ80 ?= 0
+ifeq ($(MD32X_ABL_GUT_CZ80),1)
+MD32X_C_DEFS += -DMD32X_ABL_GUT_CZ80
+endif
+
+# Z80 ablation #3 -- the decomposition arm. Z80 stays ENABLED (interpretation
+# runs at full cost) while FM+PSG generation is off, so the YM write-storm
+# resync cost vanishes. nofm vs gutcz80 vs base0 splits the >=28%% Z80-side
+# pool into interpretation vs YM resync. Audio wrong: ablation only.
+MD32X_ABL_NO_FM ?= 0
+ifeq ($(MD32X_ABL_NO_FM),1)
+MD32X_C_DEFS += -DMD32X_ABL_NO_FM
+endif
 C_INCLUDES +=  \
 -ICore/Inc \
 -ICore/Src/porting/lib \
