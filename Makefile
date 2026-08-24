@@ -1597,6 +1597,14 @@ MD32X_ABL_NO_FM ?= 0
 ifeq ($(MD32X_ABL_NO_FM),1)
 MD32X_C_DEFS += -DMD32X_ABL_NO_FM
 endif
+
+# Sound renders per output sample on this core (FM, PSG, PWM, mixer), so the
+# audio rate is a direct multiplier on the whole sound bucket. 22050 prices
+# the axis in one build; the default stays 44100.
+MD32X_AUDIO_RATE_OVERRIDE ?= 0
+ifneq ($(MD32X_AUDIO_RATE_OVERRIDE),0)
+MD32X_C_DEFS += -DMD32X_AUDIO_RATE_OVERRIDE=$(MD32X_AUDIO_RATE_OVERRIDE)
+endif
 C_INCLUDES +=  \
 -ICore/Inc \
 -ICore/Src/porting/lib \
