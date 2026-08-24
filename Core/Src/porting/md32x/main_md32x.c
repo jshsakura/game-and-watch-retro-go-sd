@@ -653,6 +653,20 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
    * handshake (VF's 68K parks in an idle loop forever). PicoReset is not
    * called either: PicoLoadMedia -> PicoCartInsert -> PicoPower already
    * reset the machine. */
+#ifdef GNW_32X_CORE
+  {
+    /* tl2: ym_tl_tab (213 KB XIP, one load per operator-sample) becomes two
+     * 256-entry tables in DTCM -- 1 KB, one-time.  Equivalence proven by
+     * tools/ym_tl2_proof.c; the fallback if this ever fails is a silent
+     * return to per-sample XIP loads, so fail loud instead. */
+    extern void md32x_ym2612_set_tl2_tabs(UINT16 *sin_copy, UINT16 *n_copy);
+    UINT16 *tl2_sin = dtcm_malloc(256 * sizeof(UINT16));
+    UINT16 *tl2_n = dtcm_malloc(256 * sizeof(UINT16));
+    if (!tl2_sin || !tl2_n)
+      assert(!"tl2 DTCM alloc failed");
+    md32x_ym2612_set_tl2_tabs(tl2_sin, tl2_n);
+  }
+#endif
   PicoInit();
 #if defined(MD32X_ABL_NO_MD_SOUND) || defined(MD32X_ABL_NO_FM) || defined(MD32X_ABL_NO_Z80)
   /* ABLATION ONLY -- not a shipping option. Drops the Mega Drive sound side
