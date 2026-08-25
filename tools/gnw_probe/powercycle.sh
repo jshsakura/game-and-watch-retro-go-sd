@@ -77,6 +77,18 @@ PYEOF
   python3 -m gnwmanager sdpush /tmp/pc_clock_new.cfg /clock/clock.cfg >/dev/null 2>&1 \
     || bail "cfg sdpush failed"
 
+restore_clock_cfg() {
+  # The alarm we push is DAILY: leaving it behind re-fires every day and its
+  # in-game banner freezes the emu counter -- the "sporadic defect" signature
+  # found 2026-08-26. Put back what was there before we touched it.
+  if [ -s /tmp/pc_clock.cfg ]; then
+    ocd 'reset halt' >/dev/null 2>&1 || true
+    python3 -m gnwmanager sdpush /tmp/pc_clock.cfg /clock/clock.cfg >/dev/null 2>&1 \
+      || echo "[32x] WARNING: clock.cfg restore failed -- check /clock/clock.cfg for a leftover alarm= line" >&2
+    ocd 'reset run' >/dev/null 2>&1 || true
+  fi
+}
+
   # Boot into the game, then drop to standby from inside it (the function
   # re-arms the RTC alarm from the cfg we just pushed).
   ocd 'reset run' >/dev/null || bail "reset run failed"
@@ -117,14 +129,15 @@ PYEOF
     [ "$probe" -gt 0 ] && { up=1; break; }
     sleep 5
   done
-  [ "$up" -eq 1 ] || bail "no alarm wake (device dark: press POWER once)"
+  [ "$up" -eq 1 ] || { restore_clock_cfg; bail "no alarm wake (device dark: press POWER once)"; }
   emu=0
   for i in $(seq 1 18); do
     sleep 5
     hex=$(ocd "mdw 0x$EMU_A" | grep -aoE "0x$EMU_A: [0-9a-f]+" | grep -aoE '[0-9a-f]+$')
     [ -n "$hex" ] && emu=$((16#$hex)) && [ "$emu" -gt 100 ] && break
   done
-  [ "${emu:-0}" -gt 100 ] || bail "post-cycle boot stalled (emu=$emu)"
+  [ "${emu:-0}" -gt 100 ] || { restore_clock_cfg; bail "post-cycle boot stalled (emu=$emu)"; }
+  restore_clock_cfg
   echo "[32x] power-cycled: STANDBY + alarm wake, cold boot clean (emu=$emu)"
 }
 powercycle_after_flash "$1"
