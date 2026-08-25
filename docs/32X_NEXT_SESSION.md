@@ -32,6 +32,118 @@ error 125.
 
 **The console stays with one owner.** Builds fan out; flashing and benching do not.
 
+## 2026-08-25d: 32X performance lands -- every axis closed, three items open
+
+The skeleton-ceiling chain finished the SH-2 axis, and with it the whole
+performance map for this core:
+
+  v1 (control flow removed) = runaway, 0 frames -- the PC landed in guest ROM
+     XIP (0x93f1480e): fetch "succeeds", no fault, garbage execution.
+  v2 (fastloop gates also removed) = 16.10 fps, -54.6% -- control flow lived,
+     but the BT/BF poll bundle was gone (0x8 is 20.78% of msh2 dispatches;
+     its 76-insn per-opcode cost was the fastloop doing real work).
+  v3 (honest ceiling: control flow verbatim, bookkeeping only removed --
+     unconditional ppc store, illegal check) = 34.770 vs bracket 35.200,
+     -1.22%. --> the +10% bar was missed: the SH-2 C/Thumb-2 lever axis is
+     CLOSED. Static insn counts do not convert into device time here.
+
+  Placement caveat, recorded with the number: v3 changes code layout (dense
+  16-way dispatch), and this core has an unexplained -11.6% from layout alone
+  (2026-08-22). -1.22% is inside the placement-noise band. The conclusion
+  survives anyway: a ceiling measurement that actually removed work and came
+  out negative cannot have +20% hiding behind it.
+
+RULE, learned twice in one day: suspect the measuring tool first.
+  (1) RIG_SH2_COUNT rides every rig build unconditionally -- it inflated the
+      "fixed cost" to 48-51/60.9; the device-static truth is 23 skeleton +
+      ~10 handler ~= 33.
+  (2) The power-cycle hook hardcoded the emu counter at 0x20002404; the
+      crumb wiring moved it to 0x2000242C, so every check read dead BSS and
+      the hook reported INCOMPLETE on every flash while the power cycles were
+      succeeding. The fix resolves the symbol from the flashed ELF
+      (tools/gnw_probe/powercycle.sh). A gate that fails silently gets
+      ignored; a gate that lies gets believed.
+
+Final map (all measured on hardware, DOOM gameplay anchor):
+  LANDED: tl2 ym_tl_tab DTCM half-tables +21.5%; Cz80_Exec ITCM +3.5%;
+  OC2 340/113 +3.73% (30-min soak, NOW THE DEFAULT -- GNW_OC2_PLLQ ?= 6);
+  ar22k 22050 Hz +2.00% (listening verdict pending, stays opt-in).
+  CLOSED, do not retry: lfo_pm_table (0.06%), musashi jump table (2% bucket,
+  SH2-heavy ROM), ITCM for anything under the 16K I-cache (fmpath rule),
+  write-bus fast paths (3 arms, all flat-to-negative), ppc conditional store
+  (+0.023% wash), GBR 0xC5 (100% 32X register I/O -- real work), Z80 HLE
+  (music is a self-running sequencer; ceiling 37.13 needs it gone entirely),
+  icount local cache (pico_int.h observers), skeleton C pass (this section),
+  clock ladder (312 < 340 > 348 > 353), 16 kHz audio (wash vs 22050),
+  DTCM HighLnSpr/chan_render (layout regressions), draw/VDP and LTDC L8
+  scanout (fmpath rule / CLUT full), stretcher defaults OFF (equal fps,
+  simpler path -- listening decision to re-enable).
+  Cumulative: base0 26.81 -> 34-35 fps (+27-31%).
+
+OPEN (3):
+  1. Sporadic crash (ratio 1.5160 run, fault regs 0) -- breadcrumbs are in
+     (gw_crash_crumbs, DR2-11) and the long-run monitor is watching. No
+     hypotheses until a crumb fires.
+  2. Hook SIGPIPE -- the inline hook dies of exit 141 in the tool
+     environment; it is now a standalone verified script instead:
+     tools/gnw_probe/powercycle.sh <elf>. Bench procedure: after
+     arm32x.sh flash, run it manually (alarm -> STANDBY -> wake -> cold
+     boot, end-to-end verified 2026-08-25).
+  3. Audio listening verdict at 22050 (user's ears; MD32X_AUDIO_RATE_OVERRIDE
+     until then).
+
+## 2026-08-25c: the SH-2 icount axis closes, and the skeleton ceiling turns out to be negative
+
+The icount C-pass died on evidence, not effort. `pico_int.h` (non-DRC block) defines
+`sh2_cycles_left(sh2)` and `sh2_burn_cycles(sh2, n)` as direct `->icount` accesses, and
+they are used **mid-slice** by the 32X layer: `pico/32x/32x.c:669/762` read the live
+budget for poll/event timing and `pico/32x/memory.c:1695/1777` burn cycles on DREQ FIFO
+stalls. A loop-local `icnt` leaves `sh2->icount` stale inside the running slice, so poll
+timing drifts (+1% uniform divergence from frame 20, boot onward) and burns vanish --
+provably non-equivalent (rig snd hash mismatch, fb checksum mismatch). The rig gate
+caught it: base+noFL reproduced the baseline hashes exactly, isolating the divergence to
+the sh2.c transformation. The 37-site macro refactor would hit the same wall. Axis closed.
+A secondary asset: the fastloop boundary is provably transparent -- patched+no-fastloop
+and base+no-fastloop are hash-identical, so fastloop publish/reload at the single call
+gate is correct as built.
+
+The skeleton-ceiling ablation (leader-directed, wrong-emulation-allowed, fps only)
+came back **negative**, and the reason matters more than the number:
+
+- skelceil v1 (delay arm, IRQ tail, fastloop gates, ppc all removed): zero frames.
+  Post-mortem: PC=0x93f1480e, LR=0x93f389a9 -- the interpreter ran guest ROM XIP bytes
+  as ARM code. QSPI fetch "succeeds", so no fault fires (DR3=0). Runaway. delay + IRQ
+  delivery are load-bearing for control flow.
+- skelceil2 (delay arm + IRQ tail restored verbatim; ppc store, direct tracking,
+  fastloop gates, illegal check still removed): **16.10 fps vs base0c bracket 35.44 =
+  -54.6%**. Game runs (ratio 1.0000, emu=drawn), so this is not a hang -- it is the
+  cost of removing the fastloop gates. 0x8 BT/BF is 20.78% of msh2 dispatch and the
+  opcost census put ~76 host insn around the 0x8 group: that is the fastloop bundle's
+  real work. Strip the gate and every BT/BF poll loop pays the slow op1000 path.
+- base0c (crumb tree, same vars, ABL flag off) is byte-identical to the crumb arm
+  (md5 582ae1d9/e515c5f4) -- the knob is neutral when off, so the sandwich's only
+  variable was the skeleton block.
+
+Reading: the number is not a skeleton ceiling, it is the price of fastloop removal.
+The honest ceiling for a hand rewrite must keep the fastloop entry checks, which puts
+the C-level pure saving at the floor already -- base0c minus skeleton is NEGATIVE.
+skelceil3 (gates re-inserted, rest ablated) would separate the fastloop contribution
+if that number is ever needed; the default conclusion is that the remaining SH-2
+skeleton is not C-level reducible and the axis closes below the +10% threshold.
+
+## 2026-08-25b: the audio stretcher defaults OFF -- a pure listening decision
+
+Leader ruling after the isolation sandwich (aud3 vs triple, 2026-08-25):
+stretcher fps cost is inside the +-1% session heat drift (34.850 vs 35.253
+open / 34.065 close-valid / ~34.66 interpolated -- not separable), and the
+anomalous crash ratio 1.5160 fired on a stretcher-OFF arm, so "freeze is
+stretcher-specific" is dead. With no performance case either way, the default
+is OFF: equal fps buys the removal of one ISR pull path and the PICOLA/retune
+code, and two of the three anomalies were on stretcher arms (a weak signal,
+not proof). The ported files live in the tree uncommitted and are parked in
+/tmp/audring_backup/ -- turn it ON when a listener chooses pitch-correct audio
+over the 66 ms ring-wrap echo it exists to remove.
+
 ## 2026-08-25: the clock ladder closed at 340, the audio ring is parked with one open freeze
 
 Sandwich numbers today (all card-md5-verified, DOOM gameplay anchor):
