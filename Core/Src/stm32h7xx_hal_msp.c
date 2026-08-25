@@ -21,6 +21,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "gw_crash_crumbs.h"
 /* USER CODE BEGIN Includes */
 
 /* USER CODE END Includes */
@@ -926,7 +927,8 @@ void HAL_WWDG_EarlyWakeupCallback(WWDG_HandleTypeDef *hwwdg)
     /* Uncomment the following line for catching it while debugging: */
     //__asm("bkpt 1");
 
-    boot_magic_set(BOOT_MAGIC_WATCHDOG);
+    gw_crumb_wwdg();
+  boot_magic_set(BOOT_MAGIC_WATCHDOG);
 }
 
 /* USER CODE END 1 */

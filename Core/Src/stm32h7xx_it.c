@@ -33,6 +33,7 @@ volatile uint32_t snes_prof_irq_count;
 #endif
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "gw_crash_crumbs.h"
 #include "bq24072.h"
 /* USER CODE END Includes */
 
@@ -84,6 +85,7 @@ typedef struct __attribute__((packed)) ContextStateFrame {
 __attribute__((optimize("O0")))
 void common_fault_handler_c(sContextStateFrame *frame, int type)
 {
+  gw_crumb_fault(type, (uint32_t)frame->return_address, (uint32_t)frame->lr);
   BSOD(type, frame->return_address, frame->lr);
 }
 

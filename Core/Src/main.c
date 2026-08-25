@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stm32h7xx_hal.h"
+#include "gw_crash_crumbs.h"
 #include "gw_boot_rescue.h"
 #include "gw_buttons.h"
 #include "gw_flash.h"
@@ -509,6 +510,7 @@ int main(void)
   // Count this boot attempt (RTC backup register, survives resets). Cleared
   // only once the firmware has demonstrably been alive for a while, or by a
   // deliberate shutdown — a boot that hangs never clears it.
+  gw_crumb_boot();
   boot_rescue_note_boot_start();
 
   /* Power on LCD and external Flash */

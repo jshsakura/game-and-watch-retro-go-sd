@@ -27,6 +27,7 @@ ROMS_VIDEOPAC :=
 C_SOURCES =  \
 Core/Src/bilinear.c \
 Core/Src/cpp_init_array.c \
+Core/Src/gw_crash_crumbs.c \
 Core/Src/gw_boot_rescue.c \
 Core/Src/gw_buttons.c \
 Core/Src/gw_update_guard.c \

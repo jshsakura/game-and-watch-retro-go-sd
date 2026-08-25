@@ -146,10 +146,12 @@ void common_emu_frame_loop_reset(void){
 /* Defined here, incremented in two different places on purpose:
  * g_common_emu_frames below (one per emulated frame) and g_common_drawn_frames
  * in lcd_swap() (one per frame that actually reaches the panel). */
+#include "gw_crash_crumbs.h"
 uint32_t g_common_drawn_frames;
 uint32_t g_common_emu_frames;
 
 bool common_emu_frame_loop(void){
+    gw_crumb_heartbeat();
     rg_app_desc_t *app = odroid_system_get_app();
     int16_t frame_time_10us = common_emu_state.frame_time_10us;
     /* int32: a >327ms stall overflowed the old int16 (100*ms) into NEGATIVE,
