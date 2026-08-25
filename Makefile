@@ -1224,10 +1224,12 @@ else
 USE_NHDOOM ?= 1
 endif
 
-# OSPI clock divider for OC level 2 (see SystemClock_Config). 7 = 97 MHz, the
-# shipping value; 6 = 113 MHz. Measurement knob -- the 32X core executes 30% of
-# its host cycles out of OSPI-mapped flash.
-GNW_OC2_PLLQ ?=
+# OSPI clock divider for OC level 2 (see SystemClock_Config). 7 = 97 MHz,
+# 6 = 113 MHz. DEFAULTS TO 6 since 2026-08-25: 340/113 measured +3.73% over
+# stock and passed a 30-min soak, while 340/97 was never shipped. A release
+# build must not have to remember a command-line var to get the soak-proven
+# clocks -- that is how coverflow shipped without coverflow.
+GNW_OC2_PLLQ ?= 6
 ifneq ($(GNW_OC2_PLLQ),)
 C_DEFS += -DGNW_OC2_PLLQ=$(GNW_OC2_PLLQ)
 endif
