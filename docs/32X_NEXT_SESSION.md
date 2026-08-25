@@ -32,6 +32,62 @@ error 125.
 
 **The console stays with one owner.** Builds fan out; flashing and benching do not.
 
+## 2026-08-25: the clock ladder closed at 340, the audio ring is parked with one open freeze
+
+Sandwich numbers today (all card-md5-verified, DOOM gameplay anchor):
+
+- base0 26.81 -> tl2 32.58 (+21.5%, ym_tl_tab half-tables to DTCM)
+  -> tl2oc2 33.30 -> triple 34.01 (+26.9% cumulative with OC2+22050).
+- quad16k (16000 Hz audio) = +0.01% wash vs triple. The ar22k +2.00%
+  lived entirely in the 44100->22050 half; below 22050 the sample
+  savings cancel against the stretcher ISR + fixed audio overhead.
+  22050 stands.
+- oc348 (PLLN=174, pure clock A/B, byte-identical core) = -0.66% vs its
+  quad16k bracket. Ladder final: 312 < 340 (peak, soak-passed) > 348
+  (slower) > 353 (soak death). The old Genesis failure was 353/101, ours
+  353/118 -- core 353 both times, so the wall is core-side, not OSPI.
+  Clock axis closed at 340. GNW_OC2_PLLN is wired (default 170, neutral).
+
+Closed without landing, all measured on the rig (insn/frame vs 7,230,349
+baseline, snd hash identical throughout):
+
+- ppgate (conditional ppc store): +0.023% = the store is free on M7
+  (store buffer forwarding); the gate widening cancelled it. REJECTED.
+- Write-bus fast paths: wwfast v1 (SDRAM inline) -0.15% noise; wwfast2
+  (+DRAM quirks) +1.56% (macro bloat de-inlined the MOV* store helpers);
+  wwtop (fast path inside p32x_sh2_writeN, ITCM) +0.38%. The store map
+  path is already ~6 insn; write axis dead.
+- GBR census: every one of the 1,363,400 0xC5 dispatches reads
+  gbr_top=0x20 (32X comm space) -- real I/O work, not a lever.
+
+SH-2 fixed cost (the number that picks the next lever): 49-51 of the
+60.9 host insn/guest insn is the skeleton every opcode pays identically
+(dispatch + fetch + PC update + icount + per-instruction poll check).
+Per-opcode handler work is only 10-12. That size says a hand-written
+dispatch (superinstructions or Thumb-2) is the only lever that can move
+it; nothing C-level is left.
+
+### The audio ring is PARKED -- read before resurrecting it
+
+md32x_audio_stretch.c (SNES stretcher ported: ISR-pull, DTCM ring,
+keep-pitch PICOLA) is in the tree but UNCOMMITTED and NOT for release.
+It exists because sub-realtime emulation + free-running SAI DMA made the
+read pointer lap the writer every ~66 ms: an echo at 44100, crackle at
+22050. Freeze #1 (ITCM spray from a NULL ring during the warmup frame,
+before the first reset) is fixed with a NULL guard. Freeze #2 is NOT
+solved: an intermittent runaway (thread executing out of guest 68K RAM,
+ISR dead first, thread survives seconds longer; happened at frame ~512
+near music start, one boot in several; pointer/emu_owns watchpoints
+clean over 3 min). If it is revived, start from the SAI-vs-push
+preemption window and the PICOLA/retune path, not from a rewrite.
+
+### The gate to shipping is stability, not fps
+
+Three boot hangs on record -- tl2oc2, triple, and once on stock base0:
+all emu=0 drawn=5-7, all fault registers zero, all before the boot-rescue
+watchdog can see them. Not our levers; possibly not even 32X-specific.
+Narrow the reproduction conditions before touching SH-2 for real.
+
 ## 2026-08-24: the FM data lever lands -- +21.5% from one table, and the sound side is now fully priced
 
 The 08-22 campaign priced the whole sound path by ablation and every number
