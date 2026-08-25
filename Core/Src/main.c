@@ -655,7 +655,10 @@ void SystemClock_Config(uint8_t oc_level)
       // m68k_run and the VDP line renderers all live in the 32X core's XIP
       // half. Default stays 7; an arm sets it to price the axis.
       RCC_OscInitStruct.PLL.PLLM = 16;
-      RCC_OscInitStruct.PLL.PLLN = 170;
+#ifndef GNW_OC2_PLLN
+#define GNW_OC2_PLLN 170
+#endif
+      RCC_OscInitStruct.PLL.PLLN = GNW_OC2_PLLN;
       RCC_OscInitStruct.PLL.PLLP = 2;
 #ifndef GNW_OC2_PLLQ
 #define GNW_OC2_PLLQ 7
