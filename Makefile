@@ -1606,9 +1606,12 @@ MD32X_C_DEFS += -DMD32X_ABL_NO_FM
 endif
 
 # Sound renders per output sample on this core (FM, PSG, PWM, mixer), so the
-# audio rate is a direct multiplier on the whole sound bucket. 22050 prices
-# the axis in one build; the default stays 44100.
-MD32X_AUDIO_RATE_OVERRIDE ?= 0
+# audio rate is a direct multiplier on the whole sound bucket. 22050 halves
+# that bucket for +2.00% measured (2026-08-24, ar22k sandwich) and the user
+# accepted the sound at 30+ fps. DEFAULTS TO 22050 since 2026-08-25 -- a
+# release must not have to remember a measurement knob (same shape as the
+# OC2 default). Set 44100 to restore the full-rate build.
+MD32X_AUDIO_RATE_OVERRIDE ?= 22050
 ifneq ($(MD32X_AUDIO_RATE_OVERRIDE),0)
 MD32X_C_DEFS += -DMD32X_AUDIO_RATE_OVERRIDE=$(MD32X_AUDIO_RATE_OVERRIDE)
 endif
