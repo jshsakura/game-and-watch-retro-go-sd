@@ -1607,11 +1607,12 @@ endif
 
 # Sound renders per output sample on this core (FM, PSG, PWM, mixer), so the
 # audio rate is a direct multiplier on the whole sound bucket. 22050 halves
-# that bucket for +2.00% measured (2026-08-24, ar22k sandwich) and the user
-# accepted the sound at 30+ fps. DEFAULTS TO 22050 since 2026-08-25 -- a
-# release must not have to remember a measurement knob (same shape as the
-# OC2 default). Set 44100 to restore the full-rate build.
-MD32X_AUDIO_RATE_OVERRIDE ?= 22050
+# that bucket for +2.00% measured (2026-08-24, ar22k sandwich) -- but it
+# ships 44100 (default 0) on purpose, see 2026-08-26 in 32X_NEXT_SESSION.md:
+# without the stretcher the user heard crackle at 22050, and the stretcher
+# is parked in audring with an unresolved intermittent freeze. When audring
+# lands, raise 22050 AND the stretcher TOGETHER -- never 22050 alone.
+MD32X_AUDIO_RATE_OVERRIDE ?= 0
 ifneq ($(MD32X_AUDIO_RATE_OVERRIDE),0)
 MD32X_C_DEFS += -DMD32X_AUDIO_RATE_OVERRIDE=$(MD32X_AUDIO_RATE_OVERRIDE)
 endif

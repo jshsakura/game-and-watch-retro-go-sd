@@ -32,6 +32,26 @@ error 125.
 
 **The console stays with one owner.** Builds fan out; flashing and benching do not.
 
+## 2026-08-26: the release ships 44100 -- 22050 without the stretcher is the sound the user already complained about
+
+The user verdict came back: 30 fps is monumental, the audio is still awkward
+but acceptable -- heard on aud3, which is 22050 + stretcher. The field
+reports, read together, decide the release:
+
+    triple (22050, no stretcher): "some crackling"  <-- 22050 ALONE
+    aud3   (22050 + stretcher):   "awkward, but I call it the limit"
+
+So 22050 without the stretcher is the sound the user already filed a
+complaint about, and the stretcher is parked in audring behind an
+unresolved intermittent freeze. +2.00% is not worth shipping a reported
+audio regression; the headline barely moves (34.0 -> 33.3 fps, still
++24% over base0 and still over 30).
+
+Decision (revert of 99e4cd02): MD32X_AUDIO_RATE_OVERRIDE stays a knob,
+default 0 = 44100. FOR THE NEXT PERSON: when audring's freeze is solved,
+raise 22050 AND the stretcher TOGETHER in one commit. Never 22050 alone --
+that build is the crackle the user rejected.
+
 ## 2026-08-25d: 32X performance lands -- every axis closed, three items open
 
 The skeleton-ceiling chain finished the SH-2 axis, and with it the whole
