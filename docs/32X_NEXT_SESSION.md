@@ -52,6 +52,35 @@ default 0 = 44100. FOR THE NEXT PERSON: when audring's freeze is solved,
 raise 22050 AND the stretcher TOGETHER in one commit. Never 22050 alone --
 that build is the crackle the user rejected.
 
+
+### The DRC memory question, closed the same day it was asked
+
+Before anyone writes a Thumb-2 dynarec backend, the code cache needs a home:
+executable RAM. Measured live on the device during DOOM (2026-08-26):
+
+| Region | Free (contiguous) | Executable? | Speed (measured) |
+|---|---|---|---|
+| RAM_EMU 0x2404b000 | 108 B | yes (it is the overlay) | load 3.0 cyc (cached, D1 AXI) |
+| AHB SRAM 0x30000000 | 3,928 B | **FAULTS on live exec** (2/2 runs; MPU XN suspected) | data load 1.0 cyc |
+| DTCM heap 0x20003ea0 | **56,268 B** | **yes — executes at ITCM speed** | exec 1.50 cyc/iter == ITCM's 1.50 |
+| ITCM | ~3.1 KB (taken) | yes | exec 1.50 cyc/iter (reference) |
+
+Exec benchmark: 100k-iteration 3-insn loop self-sampling DWT CYCCNT; ITCM
+150,025 vs DTCM 150,027 cycles -- identical. Loads cached: AHB 1.0,
+internal flash 2.0, RAM_EMU 3.0 cyc. (XIP micro-benchmark faulted twice;
+the field number stands: ~10.4 cyc/fetch, 30% of the frame.)
+
+Draw2FB (83,976 B of the AHB pool) is LIVE -- verified by content changing
+between reads during play, and main_md32x.c documents the NULL-stub as a
+wild-read crash. RAM_EMU has no dead structs to reclaim: every large symbol
+(gnw_32xmem 532K, PicoMem 140K) is hardware-fixed guest memory.
+
+Verdict: the largest contiguous executable RAM is DTCM at 55 KB -- under the
+64 KB bar. The SH-2 dynarec axis closes for lack of a code cache, before the
+Thumb-2 backend question even starts. (DRC would also need its drcblk/drclit
+arrays in RAM_EMU, which has 108 B.) DTCM's 55 KB remains the right place for
+data levers, tl2-style.
+
 ## 2026-08-25d: 32X performance lands -- every axis closed, three items open
 
 The skeleton-ceiling chain finished the SH-2 axis, and with it the whole
