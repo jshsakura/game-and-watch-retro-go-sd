@@ -1616,7 +1616,36 @@ int main(void) {
                        (double)rig_opcost[c][i] / (double)rig_opcnt[c][i]);
             }
         }
+        {
+            extern unsigned long long rig_opnow_cost, rig_opnow_n;
+            if (rig_opnow_n)
+                printf("[32x-opcost] timer span overhead: %.3f ticks (%llu calibrations)\n",
+                       (double)rig_opnow_cost / (double)rig_opnow_n,
+                       rig_opnow_n);
+        }
+#ifdef RIG_SH2_SKELETON
+        printf("[32x-opcost] SKELETON arm -- fb/audio wrong on purpose\n");
+#endif
+
     }
+#endif
+#ifdef RIG_GBR_CENSUS
+        {
+            extern unsigned long long rig_gbr_hist[2][256];
+            int c_, b_;
+            unsigned long long tot_ = 0;
+            for (c_ = 0; c_ < 2; c_++)
+                for (b_ = 0; b_ < 256; b_++)
+                    tot_ += rig_gbr_hist[c_][b_];
+            printf("[32x-gbrcensus] total 0xC5 dispatches: %llu\n", tot_);
+            for (c_ = 0; c_ < 2; c_++)
+                for (b_ = 0; b_ < 256; b_++)
+                    if (rig_gbr_hist[c_][b_])
+                        printf("[32x-gbrcensus] %s gbr_top=%02x count=%llu (%.2f%%)\n",
+                               c_ ? "ssh2" : "msh2", (unsigned)b_,
+                               rig_gbr_hist[c_][b_],
+                               100.0 * (double)rig_gbr_hist[c_][b_] / (double)tot_);
+        }
 #endif
 #ifdef RIG_OPHIST
     /* Opcode-group census: what the frame is actually made of, per core.
