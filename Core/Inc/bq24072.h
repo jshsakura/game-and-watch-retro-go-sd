@@ -29,6 +29,9 @@ void bq24072_poll(void);
  * bq24072_poll() itself from an interrupt: it enters HAL enable paths. */
 void bq24072_poll_request(void);
 void bq24072_poll_service(void);
+void bq24072_adc_sleep(void); /* main context only: quiesce the ADC before
+  * STOP2 -- HAL_ADC_Stop_IT's disable loop is safe here because SysTick
+  * still runs; it must never be reached from the EOC callback */
 
 /* Persist a load-free quiescent reference on the way into deep sleep so the
  * next boot can detect charging-while-asleep with a small noise margin. */

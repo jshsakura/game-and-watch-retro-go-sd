@@ -43,6 +43,7 @@ typedef struct {
     uint32_t modal;      /* DR12 code of the last modal entered before death */
     uint32_t modal_input;/* DR13 gamepad bitmask at that entry */
     uint32_t modal_tr;   /* DR14 RTC->TR (BCD) at that entry */
+    uint32_t wdog_armed; /* DR15: bit0 clock, bit1 WDGA, bit2 retried */
 } gw_crumb_t;
 
 /* Modal codes: the code IS the entry path, so 'did a button poll see a
@@ -64,5 +65,11 @@ void gw_crumb_wwdg(void);       /* WWDG early-wakeup callback */
 void gw_crumb_heartbeat(void);  /* common_emu_frame_loop(), throttled inside */
 void gw_crumb_modal(uint32_t code, uint32_t input_bits); /* entry: state+evidence */
 void gw_crumb_modal_exit(void); /* modal loop returned normally */
+void gw_crumb_wdog_armed(int armed); /* wdog_enable(): DR15 = outcome
+  * bit0 RCC APB3ENR WWDGEN, bit1 CR WDGA, bit2 retried -- lets the next
+  * wild unarmed boot be diagnosed from the backup domain alone */
+void gw_crumb_wdog_armed(int armed); /* wdog_enable(): DR15 = outcome
+  * bit0 RCC APB3ENR WWDGEN, bit1 CR WDGA, bit2 retried -- lets the next
+  * wild unarmed boot be diagnosed from the backup domain alone */
 
 #endif /* GW_CRASH_CRUMBS_H */

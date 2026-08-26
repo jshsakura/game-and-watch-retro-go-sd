@@ -30,6 +30,11 @@ static void SleepModeEnterAndResume(sleep_pre_wakeup_callback_t pre_wakeup_callb
   // Prevent charger interrupts from waking up the device
   bq24072_interrupts_disable();
 
+  // The charger poll leaves the ADC enabled (see bq24072.c); STOP2 would
+  // carry that current all night. Main context is the one place the
+  // disable loop can run safely.
+  bq24072_adc_sleep();
+
   HAL_PWREx_ClearWakeupFlag(PWR_FLAG_WKUP1);
   HAL_TIM_Base_Stop_IT(&htim1);
   HAL_PWREx_EnterSTOP2Mode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);

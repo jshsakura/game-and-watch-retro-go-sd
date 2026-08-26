@@ -54,4 +54,15 @@ else
     rc=1
 fi
 
+# The watchdog must be VERIFIED armed: HAL_WWDG_Init has no error path,
+# and one boot (2026-08-26) ran with WDGA clear while wdog_enabled said
+# true. The read-back + retry + crumb is the difference between a safety
+# net and the belief in one.
+if grep -q "WWDG_CR_WDGA" $MAIN && grep -q "gw_crumb_wdog_armed" $MAIN; then
+    echo "  OK   wdog_enable() reads WDGA back, retries, and crumbs the outcome"
+else
+    echo "  FAIL wdog_enable() has no WDGA read-back / DR15 crumb in main.c"
+    rc=1
+fi
+
 exit $rc

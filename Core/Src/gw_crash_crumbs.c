@@ -49,6 +49,7 @@ void gw_crumb_boot(void)
     g_last_crumb.modal      = crumb_rd(RTC_BKP_DR12);
     g_last_crumb.modal_input = crumb_rd(RTC_BKP_DR13);
     g_last_crumb.modal_tr    = crumb_rd(RTC_BKP_DR14);
+    g_last_crumb.wdog_armed = crumb_rd(RTC_BKP_DR15);
 
     /* Re-arm for this boot. Keep the heartbeat counters at zero so a
      * stale count can never masquerade as a fresh crash. */
@@ -66,6 +67,7 @@ void gw_crumb_boot(void)
     crumb_wr(RTC_BKP_DR12, 0);
     crumb_wr(RTC_BKP_DR13, 0);
     crumb_wr(RTC_BKP_DR14, 0);
+    crumb_wr(RTC_BKP_DR15, 0);
 }
 
 /* --- modal state: the 2026-08-26 07:16 "crash" was a modal nobody
@@ -101,6 +103,18 @@ void gw_crumb_wwdg(void)
     crumb_wr(RTC_BKP_DR3, CRUMB_CAUSE_WWDG);
     /* Callback context: no PC/LR of the runaway thread is reachable.
      * The heartbeat counters in DR8/DR9 are the witness. */
+}
+
+/* --- watchdog arming outcome: wdog_enable() reports, boot() re-arms --- */
+void gw_crumb_wdog_armed(int armed)
+{
+    uint32_t v = 0;
+    if (armed) v |= 2u;
+    if ((RCC->APB3ENR & RCC_APB3ENR_WWDGEN) != 0) v |= 1u;
+    /* The retry bit is folded in by the caller's second attempt only;
+     * a plain success writes 3 (clock on + armed), which is the value
+     * every healthy boot leaves behind. */
+    crumb_wr(RTC_BKP_DR15, v);
 }
 
 /* --- heartbeat: cheap enough to call every frame --- */

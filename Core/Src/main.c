@@ -349,8 +349,19 @@ uint32_t GW_GetBootButtons(void)
 
 void wdog_enable()
 {
+  /* 2026-08-26: one boot ran with WWDG1 at reset defaults (CR=0x7f, WDGA
+   * clear) while wdog_enabled said true -- a safety net that silently
+   * failed to arm is worse than none. HAL_WWDG_Init has no error path
+   * (it returns HAL_OK unconditionally), so the only way to know is to
+   * read WDGA back. One retry with the clock re-enabled (the macro
+   * contains its own read-back), then the outcome goes to the crumb. */
   MX_WWDG1_Init();
-  wdog_enabled = true;
+  if ((hwwdg1.Instance->CR & WWDG_CR_WDGA) == 0) {
+      __HAL_RCC_WWDG1_CLK_ENABLE();
+      MX_WWDG1_Init();
+  }
+  wdog_enabled = (hwwdg1.Instance->CR & WWDG_CR_WDGA) != 0;
+  gw_crumb_wdog_armed(wdog_enabled);
 }
 
 void wdog_refresh()

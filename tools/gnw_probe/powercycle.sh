@@ -116,7 +116,10 @@ restore_clock_cfg() {
   for i in 1 2 3 4 5; do
     probe=$(timeout 10 openocd "${ocdb[@]}" -c init -c "mdw 0x$EMU_A" -c shutdown 2>&1 \
       | grep -c "0x$EMU_A") || probe=0
-    [ "$probe" -gt 0 ] && bail "STANDBY did not latch (SystemReset fallback)"
+    if [ "$probe" -gt 0 ]; then
+      restore_clock_cfg
+      bail "STANDBY did not latch (SystemReset fallback)"
+    fi
     sleep 2
   done
 

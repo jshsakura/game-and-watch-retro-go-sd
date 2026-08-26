@@ -760,6 +760,17 @@ void bq24072_poll_request(void)
     bq24072_poll_wanted = true;
 }
 
+void bq24072_adc_sleep(void)
+{
+    /* The 2026-08-26 ISR fix deliberately leaves the ADC enabled while
+     * awake so no interrupt can reach ADC_Enable/Disable wait loops.
+     * STOP2 is the one place that costs current: quiesce from here, in
+     * main context, where HAL_GetTick runs and the disable loop can
+     * time out honestly. The next poll's Start_IT re-enables it through
+     * the same (now safe: main-context) path. */
+    HAL_ADC_Stop_IT(&hadc1);
+}
+
 void bq24072_poll_service(void)
 {
     if (bq24072_poll_wanted) {

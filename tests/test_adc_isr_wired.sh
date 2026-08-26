@@ -41,17 +41,29 @@ grep -q "bq24072_poll_service();" Core/Src/porting/odroid_input.c \
     && ok "odroid_input_read_gamepad() services the poll (every app loop)" \
     || fail "no main-context service point -- flag set at 1 Hz, never consumed"
 
-# 3. The disable-wait is unreachable: no Stop_IT anywhere in the driver.
-#    (Match the call, not the name: the design comment mentions it too.)
-if grep -qE "HAL_ADC_Stop_IT[[:space:]]*\(" Core/Src/bq24072.c; then
-    fail "bq24072.c still calls HAL_ADC_Stop_IT (ADC_Disable wait loop)"
+# 3. The disable-wait is unreachable from any interrupt: the ONE allowed
+#    Stop_IT call lives inside bq24072_adc_sleep (main context, before
+#    STOP2). Anywhere else in the driver is a regression.
+N=$(grep -cE "HAL_ADC_Stop_IT[[:space:]]*\(" Core/Src/bq24072.c)
+IN_SLEEP=$(sed -n "/void bq24072_adc_sleep/,/^}/p" Core/Src/bq24072.c | grep -cE "HAL_ADC_Stop_IT[[:space:]]*\(")
+if [ "$N" -eq "$IN_SLEEP" ]; then
+    ok "HAL_ADC_Stop_IT exists only inside bq24072_adc_sleep (main context)"
 else
-    ok "no HAL_ADC_Stop_IT in bq24072.c -- ADC stays enabled, wait loops unreachable"
+    fail "HAL_ADC_Stop_IT called outside bq24072_adc_sleep ($N total, $IN_SLEEP in sleep)"
 fi
 
 # 4. Declarations present (a caller with no prototype would compile as int).
 grep -q "bq24072_poll_request" Core/Inc/bq24072.h \
     && ok "request/service declared in bq24072.h" \
     || fail "bq24072.h is missing the request/service declarations"
+
+# The ADC may stay enabled while awake, but STOP2 must quiesce it -- the
+# µA budget of a device people sleep for weeks depends on it.
+if grep -q "bq24072_adc_sleep" Core/Src/gw_sleep.c; then
+    echo "  OK   STOP2 entry quiesces the ADC (bq24072_adc_sleep in gw_sleep.c)"
+else
+    echo "  FAIL gw_sleep.c never calls bq24072_adc_sleep -- STOP2 leaks ADC current"
+    rc=1
+fi
 
 exit $rc
