@@ -45,7 +45,7 @@ typedef struct {
     uint32_t modal;      /* DR12 code of the last modal entered before death */
     uint32_t modal_input;/* DR13 gamepad bitmask at that entry */
     uint32_t modal_tr;   /* DR14 RTC->TR (BCD) at that entry */
-    uint32_t wdog_armed; /* DR15: bit0 clock, bit1 WDGA, bit2 retried, bit3 IWDG(PR!=0) */
+    uint32_t wdog_armed; /* DR15: bit0 clock, bit1 WDGA, bit2 retried */
     uint32_t bfar;      /* DR16: 0xFFFFFFFF means BFARVALID was clear */
     uint32_t mmfar;     /* DR17: 0xFFFFFFFF means MMARVALID was clear */
 } gw_crumb_t;

@@ -605,7 +605,6 @@ bash tests/test_boot_rescue_wired.sh || fail tests/test_boot_rescue_wired.sh
 # wait loop inside it spins forever (found by accident 2026-08-26, see the
 # probe-reordering post-mortem in docs/32X_NEXT_SESSION.md).
 bash tests/test_adc_isr_wired.sh || fail tests/test_adc_isr_wired.sh
-bash tests/test_iwdg_wired.sh || fail tests/test_iwdg_wired.sh
 BR_DIR=/tmp/mtest/boot_rescue
 rm -rf "$BR_DIR"; mkdir -p "$BR_DIR"
 $CC -O1 -g -std=gnu11 -Wall $SAN -DBOOT_RESCUE_HOST_TEST \
@@ -846,3 +845,4 @@ fi
 
 REACHED_END=1
 exit $rc
+bash tests/test_ssfix_wired.sh || fail tests/test_ssfix_wired.sh

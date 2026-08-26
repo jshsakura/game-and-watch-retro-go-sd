@@ -92,14 +92,6 @@ SPI_HandleTypeDef hspi2;
 TIM_HandleTypeDef htim1;
 
 WWDG_HandleTypeDef hwwdg1;
-/* The last resort, parallel to the WWDG above. WWDG1 lives on APB3 and one
- * wild runaway store zeroed its CR while the crumb still said armed
- * (2026-08-26); the IWDG is key-register protected, LSI-clocked (survives
- * APB fabric trouble), and once started cannot be stopped except by reset.
- * Generous timeout on purpose: LSI ~32 kHz / 256 / (4095+1) = ~32.7 s, so
- * a busy wait or slow flash op can never trip it -- only a real hang can.
- * STOP2/STANDBY freezing is option-byte guaranteed (OPTSR 0x1006aaf0:
- * FZ_IWDG_STOP=1, FZ_IWDG_STDBY=1), so a sleeping device never self-resets. */
 
 
 /* USER CODE BEGIN PV */
@@ -371,26 +363,11 @@ void wdog_enable()
   }
   wdog_enabled = (hwwdg1.Instance->CR & WWDG_CR_WDGA) != 0;
 
-  /* HAL_OK proves nothing (the WWDG taught us that); the armed proof is
-   * the PR readback in gw_crumb_wdog_armed -- reset default PR==0, this
-   * init writes the 256 prescaler. */
-  /* Direct registers: the vendor tree ships no HAL IWDG driver, and the
-   * peripheral is three registers and a key. Unlock (0x5555), set the
-   * generous window, then the start key -- after 0xCCCC nothing but a
-   * reset stops it, which is exactly the property we are buying. */
-  IWDG1->KR = 0x5555u;
-  IWDG1->PR = 6u;    /* prescaler 256: LSI 32 kHz -> 125 ticks/s */
-  IWDG1->RLR = 4095u; /* ~32.7 s window */
-  IWDG1->KR = 0xCCCCu;
   gw_crumb_wdog_armed(wdog_enabled);
 }
 
 void wdog_refresh()
 {
-  /* The IWDG refresh is outside the gate on purpose: once started it
-   * cannot be stopped, so a boot whose WWDG failed to arm must still
-   * feed the last resort or it would reset a healthy system ~every 32 s. */
-  IWDG1->KR = 0xAAAAu; /* refresh the unstoppable dog */
   if (wdog_enabled) {
     HAL_WWDG_Refresh(&hwwdg1);
   }

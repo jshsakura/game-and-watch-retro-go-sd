@@ -126,10 +126,6 @@ void gw_crumb_wdog_armed(int armed)
     uint32_t v = 0;
     if (armed) v |= 2u;
     if ((RCC->APB3ENR & RCC_APB3ENR_WWDGEN) != 0) v |= 1u;
-    /* bit3: the IWDG last resort actually started. KR is write-only, so
-     * HAL_OK is not proof (the WWDG lesson); PR is: reset default 0, the
-     * prescaler-256 init writes 6. */
-    if (IWDG1->PR != 0u) v |= 8u;
     /* The retry bit is folded in by the caller's second attempt only;
      * a plain success writes 3 (clock on + armed), which is the value
      * every healthy boot leaves behind. */
