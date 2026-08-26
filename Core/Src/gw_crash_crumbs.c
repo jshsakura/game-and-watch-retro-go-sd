@@ -50,6 +50,8 @@ void gw_crumb_boot(void)
     g_last_crumb.modal_input = crumb_rd(RTC_BKP_DR13);
     g_last_crumb.modal_tr    = crumb_rd(RTC_BKP_DR14);
     g_last_crumb.wdog_armed = crumb_rd(RTC_BKP_DR15);
+    g_last_crumb.bfar  = crumb_rd(RTC_BKP_DR16);
+    g_last_crumb.mmfar = crumb_rd(RTC_BKP_DR17);
 
     /* Re-arm for this boot. Keep the heartbeat counters at zero so a
      * stale count can never masquerade as a fresh crash. */
@@ -59,6 +61,8 @@ void gw_crumb_boot(void)
     crumb_wr(RTC_BKP_DR5, 0);
     crumb_wr(RTC_BKP_DR6, 0);
     crumb_wr(RTC_BKP_DR7, 0);
+    crumb_wr(RTC_BKP_DR16, 0);
+    crumb_wr(RTC_BKP_DR17, 0);
     crumb_wr(RTC_BKP_DR8, 0);
     crumb_wr(RTC_BKP_DR9, 0);
     crumb_wr(RTC_BKP_DR10, rsr); /* previous boot's reset cause, stays
@@ -93,6 +97,17 @@ void gw_crumb_fault(uint32_t type, uint32_t pc, uint32_t lr)
     crumb_wr(RTC_BKP_DR5, lr);
     crumb_wr(RTC_BKP_DR6, *(volatile uint32_t *)0xE000ED28); /* CFSR */
     crumb_wr(RTC_BKP_DR7, *(volatile uint32_t *)0xE000ED2C); /* HFSR */
+    uint32_t cfsr = *(volatile uint32_t *)0xE000ED28;
+    /* The hardware hands us the faulting address when CFSR says it is
+     * valid. Dropping it unread (base4, 2026-08-26: CFSR=0x8200,
+     * BFARVALID set, address lost forever) left the 6-boot crash
+     * loop undiagnosable. An invalid latch is NOT address 0 -- encode
+     * it as the unmappable 0xFFFFFFFF so a quiet zero can never
+     * masquerade as evidence. */
+    crumb_wr(RTC_BKP_DR16, (cfsr & (1u << 15))
+             ? *(volatile uint32_t *)0xE000ED38 : 0xFFFFFFFFu); /* BFAR */
+    crumb_wr(RTC_BKP_DR17, (cfsr & (1u << 7))
+             ? *(volatile uint32_t *)0xE000ED34 : 0xFFFFFFFFu); /* MMFAR */
     /* DR8/DR9 already hold the last heartbeat. */
     (void)type;
 }
@@ -111,6 +126,10 @@ void gw_crumb_wdog_armed(int armed)
     uint32_t v = 0;
     if (armed) v |= 2u;
     if ((RCC->APB3ENR & RCC_APB3ENR_WWDGEN) != 0) v |= 1u;
+    /* bit3: the IWDG last resort actually started. KR is write-only, so
+     * HAL_OK is not proof (the WWDG lesson); PR is: reset default 0, the
+     * prescaler-256 init writes 6. */
+    if (IWDG1->PR != 0u) v |= 8u;
     /* The retry bit is folded in by the caller's second attempt only;
      * a plain success writes 3 (clock on + armed), which is the value
      * every healthy boot leaves behind. */
