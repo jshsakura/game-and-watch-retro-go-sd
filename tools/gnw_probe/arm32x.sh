@@ -131,7 +131,34 @@ cmd_flash() {
       -- sdpush --file /tmp/32x.bin --dest-path '/cores/' \
       -- sdpush --file /tmp/32x.xip --dest-path '/cores/' \
       -- start $INTFLASH_ADDR" 2>&1 | tail -3
+  verify_intflash "$d/gw_retro_go_intflash.bin"
   echo "[32x:$name] flashed"
+}
+
+# The card's core bin is only half the program -- the other half is the
+# intflash image, and until 2026-08-26 nothing checked it. That night base4
+# failed to boot on 6/6 runs while its card md5 verified clean, and the only
+# unverified variable was the intflash transfer (suspected corruption; the
+# device wedged before it could be confirmed). So: read the flash back and
+# compare byte-for-byte. A mismatch REFUSES the flash (exit 1), not a warning
+# -- a half-verified bench is worse than no bench.
+verify_intflash() {
+  local expect=$1
+  local sz; sz=$(stat -c%s "$expect")
+  local got_md5 exp_md5
+  exp_md5=$(md5sum "$expect" | awk '{print $1}')
+  timeout 60 openocd -c 'adapter speed 4000' -f interface/stlink-dap.cfg \
+      -f target/stm32h7x.cfg -c init \
+      -c "dump_image /tmp/intflash_read.bin $INTFLASH_ADDR $sz" \
+      -c shutdown >/dev/null 2>&1
+  if [ ! -s /tmp/intflash_read.bin ] || [ "$(stat -c%s /tmp/intflash_read.bin)" != "$sz" ]; then
+    echo "[32x] INTFLASH VERIFY FAILED: read-back did not complete ($sz B expected) -- REFUSING"; exit 1
+  fi
+  got_md5=$(md5sum /tmp/intflash_read.bin | awk '{print $1}')
+  if [ "$got_md5" != "$exp_md5" ]; then
+    echo "[32x] INTFLASH MISMATCH: device $got_md5 != arm $exp_md5 -- REFUSING (flash transfer corrupt)"; exit 1
+  fi
+  echo "[32x] intflash verified $exp_md5 ($sz B)"
 }
 
 # drawn_ab.sh already falls back to Core/Src/porting/common.c's shared counters

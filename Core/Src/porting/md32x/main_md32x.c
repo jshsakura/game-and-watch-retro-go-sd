@@ -714,6 +714,22 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     md32x_ym2612_set_tl2_tabs(tl2_sin, tl2_n);
   }
 #endif
+#ifdef GNW_32X_CORE
+  {
+    /* sh2s: the two SH-2 contexts (2 * sizeof(SH2) = 12,032 B) used to sit in
+     * .bss.sh2s on AXI SRAM, where the guest SDRAM streaming set keeps
+     * evicting the hot register file (~120 B/core) from the 16 KB 4-way
+     * D-cache. DTCM makes every r[n]/pc/sr touch zero-wait and hands ~12 KB
+     * of cache back to the guest stream (leader's finding, 2026-08-26).
+     * Runtime dtcm_malloc, not a static section -- the DTCM heap is shared
+     * by every core (HighLnSpr/tl2 pattern). Fail loud, never silently. */
+    extern SH2 *sh2s;
+    sh2s = dtcm_malloc(2 * sizeof(SH2));
+    if (!sh2s)
+      assert(!"sh2s DTCM alloc failed");
+    memset(sh2s, 0, 2 * sizeof(SH2));
+  }
+#endif
   PicoInit();
 #if defined(MD32X_ABL_NO_MD_SOUND) || defined(MD32X_ABL_NO_FM) || defined(MD32X_ABL_NO_Z80)
   /* ABLATION ONLY -- not a shipping option. Drops the Mega Drive sound side

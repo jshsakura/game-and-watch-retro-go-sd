@@ -54,6 +54,7 @@
 
 #include "pico/pico_types.h"
 #include "pico/pico.h"
+#include "pico/pico_int.h"  /* SH2, sh2s (pointer since the DTCM move) */
 #if defined(RIG_STATE_TEST) || defined(RIG_STATE_LOAD)
 #include "pico/state.h"
 #endif
@@ -1041,7 +1042,14 @@ int main(void) {
      * handshake: VF's 68K parks in a nop/bra idle loop at 0x88088e forever.
      * PicoReset is not called either — PicoLoadMedia -> PicoCartInsert ->
      * PicoPower already reset the machine. */
-    PicoInit();
+    {
+    /* sh2s became a pointer (DTCM on device); the rig does not link
+     * main_md32x.c, so give it static storage here. */
+    static SH2 sh2s_storage[2];
+    sh2s = sh2s_storage;
+    memset(sh2s_storage, 0, sizeof sh2s_storage);
+  }
+  PicoInit();
 #ifdef RIG_32X_BIOS
     /* Set before PicoLoadMedia: get_bios() runs inside the load path. */
     p32x_bios_g = (void *)_binary_bios_m68k_start;
@@ -1254,9 +1262,8 @@ int main(void) {
          * earlier: this edge detector logs the SDRAM->BIOS transition frame
          * itself. pc@0x40 ppc@0x44, sizeof(SH2)=6016. */
         if (f >= 4 && f < 160) {
-            extern unsigned char sh2s[];
             static unsigned prev_m, prev_s;
-            unsigned char *m = sh2s, *s = sh2s + 6016;
+            unsigned char *m = (unsigned char *)sh2s, *s = (unsigned char *)sh2s + 6016;
             unsigned cm = *(unsigned *)(m + 0x40), cs = *(unsigned *)(s + 0x40);
             if ((prev_m >= 0x02000000 && cm < 0x001000) ||
                 (prev_m >= 0x06000000 && cm < 0x001000))
@@ -1327,7 +1334,6 @@ int main(void) {
          * else when the lookup ran. Watch all three every frame leading
          * into the death frame (guest u32 = halfword-swapped host u32). */
         if (f >= RIG_DEATH_STACK - 100 && f <= RIG_DEATH_STACK) {
-            extern unsigned char sh2s[];
             extern unsigned char carthw_ssf2_banks[8];
             extern const unsigned char _binary_rom_32x_start[];
             const unsigned char *sd = (const unsigned char *)Pico32xMem;
@@ -1355,11 +1361,10 @@ int main(void) {
                    n0, n1);
         }
         if (f == RIG_DEATH_STACK && !s_ds_done) {
-            extern unsigned char sh2s[];
             const unsigned char *sd = (const unsigned char *)Pico32xMem;
             s_ds_done = 1;
             for (int c = 0; c < 2; c++) {
-                const unsigned char *cpu = sh2s + c * 6016;
+                const unsigned char *cpu = (unsigned char *)sh2s + c * 6016;
                 printf("[ds] f=%d cpu=%c\n", f, c ? 's' : 'm');
                 for (unsigned o = 0; o <= 0x58; o += 4)
                     printf("[ds]  +%02x %08x\n", o,
@@ -1420,7 +1425,7 @@ int main(void) {
                                    *(const unsigned *)(sd + ti - 0x20 + i));
                 }
             }
-            unsigned r15 = *(const unsigned *)(sh2s + 0x3c);
+            unsigned r15 = *(const unsigned *)((unsigned char *)sh2s + 0x3c);
             printf("[ds] msh2 r15=%08x\n", r15);
             if (sd && (r15 >> 24) == 0x06) {
                 unsigned base = r15 & 0x3fffc;
