@@ -54,7 +54,8 @@
 
 #include "pico/pico_types.h"
 #include "pico/pico.h"
-#include "pico/pico_int.h"  /* SH2, sh2s (pointer since the DTCM move) */
+#include "cpu/sh2/sh2.h"
+extern SH2 *sh2s;  /* pico_int.h:273 equivalent without the PicoDrawSetOutputSMS collision */  /* SH2, sh2s (pointer since the DTCM move); NOT pico_int.h -- it declares PicoDrawSetOutputSMS(pdso_t) which collides with the rig stub at :246 (learned 2026-08-26, rig build broke in 6378f72e) */
 #if defined(RIG_STATE_TEST) || defined(RIG_STATE_LOAD)
 #include "pico/state.h"
 #endif
