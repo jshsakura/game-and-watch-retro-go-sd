@@ -32,6 +32,27 @@ error 125.
 
 **The console stays with one owner.** Builds fan out; flashing and benching do not.
 
+## 2026-08-26g: which probes survive a BSS shift -- and the rule that makes the rest fail loudly
+
+Ninth contamination (iwdg arm read a dead 0x20002440 after the BFAR crumb
+grew g_last_crumb by 8 bytes) closed a question worth answering once: why
+monitor v3 never fell for it. v3 reads DR8/DR9 -- RTC TAMP backup
+registers at fixed hardware addresses 0x58004520/24 -- immune by design,
+not luck. Anything that reads the emu/drawn counters in .bss inherits
+every struct change in the launcher.
+
+Rule, now standing: a script that reads a RAM symbol resolves its
+address from the arm ELF on every invocation (nm g_common_emu_frames),
+and if the symbol is missing it fails loudly -- never reads a stale
+address and reports the zeros it finds there. Two of the ten
+contaminations this campaign self-caught (the powercycle thermometer,
+the dead counter) were exactly this failure wearing different hats.
+
+Same note, CI side: the rig-build-test gate is real, not decorative --
+the log shows arm-none-eabi-gcc compiling picodrive sources with the
+expected incompatible-pointer warnings, 1m50s of honest work. A compile
+gate that compiles nothing is a green light aimed at nobody.
+
 ## 2026-08-26f: the IWDG is withdrawn -- a watchdog that cannot sleep
 
 The independent watchdog was armed at boot (9d98ad04) to cover the one
