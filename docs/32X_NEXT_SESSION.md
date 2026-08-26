@@ -32,6 +32,39 @@ error 125.
 
 **The console stays with one owner.** Builds fan out; flashing and benching do not.
 
+## 2026-08-26f: the IWDG is withdrawn -- a watchdog that cannot sleep
+
+The independent watchdog was armed at boot (9d98ad04) to cover the one
+observed runaway that wipes WWDG1->CR on its way through the peripheral
+space. It never ships. A measured STOP2 run proved the cost: with
+FZ_IWDG_STOP showing set in OPTSR_CUR (0x1006aaf0, bit 17), the game
+sleep was still bitten at the ~33 s mark -- DR10 = IWDGRSTF|CDRSTF|
+PINRSTF is the hardware's own signature. Either the option byte does not
+mean freeze on this part (RM0455's polarity was not re-verified against
+silicon; zero devices were option-programmed, and that stays forbidden),
+or a software-activated IWDG is out of its reach. Reading the bit and
+declaring safety was the tenth-class mistake this campaign keeps
+finding: an option byte is only proven by the reset it does not cause.
+6effe430 reverts the arming; WWDG stays (windowed, verified-to-arm,
+silent in STOP2).
+
+Two contaminated verdicts are retired with it. The b160 "STANDBY soak
+passed" used emu>100 as success -- a criterion that cannot tell an alarm
+wake from an IWDG reset, and the run predated RSR discipline. Rule: a
+sleep verdict always reads RSR; "alive" is not "woke". And the wild-5
+reproduction (live load_state under gdb) is a deterministic runaway
+generator, NOT a shipped trigger -- the audit behind fbfa50e6 walked
+every shipped load path (boot resume before the loop, B-button at a
+frame boundary, pause menu on a stopped machine) and found none that
+load mid-frame. The wild-4 trigger remains unknown; what the guard buys
+is defense in depth, not a cause.
+
+Open, unmeasured, recorded only: whether the alarm path added to
+SleepModeEnterAndResume actually wakes from STOP2 on its own (the
+harness run had the IWDG bite first). EXTI rising is enabled in code
+(rtc.c HAL_RTC_SetAlarm_IT); the live test runs when the device frees
+up, before the gw_sleep.c commit lands.
+
 ## 2026-08-26c: the XN firewall lands -- the silent runaway gets a name
 
 Three runaways (two stretcher-era freezes, one on shipping-behaviour
