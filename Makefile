@@ -1605,6 +1605,15 @@ ifeq ($(MD32X_ABL_NO_FM),1)
 MD32X_C_DEFS += -DMD32X_ABL_NO_FM
 endif
 
+# Bench-only one-shot autosave: at frame N the md32x loop saves slot 0 through
+# the same call the menu uses (md32x autosave block, main_md32x.c). Used to
+# exercise pack/unpack round-trips on instrumented arms without UI. Never set
+# in a shipping build.
+GNW_AUTOSAVE_FRAME ?= 0
+ifneq ($(GNW_AUTOSAVE_FRAME),0)
+MD32X_C_DEFS += -DGNW_AUTOSAVE_FRAME=$(GNW_AUTOSAVE_FRAME)
+endif
+
 # Sound renders per output sample on this core (FM, PSG, PWM, mixer), so the
 # audio rate is a direct multiplier on the whole sound bucket. 22050 halves
 # that bucket for +2.00% measured (2026-08-24, ar22k sandwich) -- but it
