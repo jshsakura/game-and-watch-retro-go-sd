@@ -121,6 +121,48 @@ Thumb-2 backend question even starts. (DRC would also need its drcblk/drclit
 arrays in RAM_EMU, which has 108 B.) DTCM's 55 KB remains the right place for
 data levers, tl2-style.
 
+## 2026-08-26e: no PMU on this silicon, and one guest read costs 13.8 cycles
+
+Two facts for whoever tries to profile this core next.
+
+**Do not expect a PMU just because it is a Cortex-M7.** This chip's DWT
+implements CYCCNT and nothing else: CTRL reads 0x40000001 (NUMCOMP=4,
+NOCYCCNT=0 -- the event counters claim to exist), but CPICNT/EXCCNT/
+SLEEPCNT/LSUCNT stay at zero through five seconds of full-rate DOOM with
+TRCENA set, a disable/re-enable cycle, and direct writes that read back.
+The PMU at 0xE0009000 is absent (all zeros, no implementer field) and the
+vendor CMSIS core_cm7.h ships no PMU definitions. The only hardware cycle
+instrument on this device is CYCCNT -- window it around the region you care
+about, or ablate. (Measured 2026-08-26 trying to answer "what is the SH-2
+interpreter bound by"; the window measurement itself works fine: the SH-2
+slice owns 75.4% of frame cycles, 8.86M of 11.76M at 340 MHz, vs 67.5% by
+host instructions in the rig -- cycles weigh it heavier.)
+
+**One guest memory read costs ~13.8 cycles of frame time.** With no LSU
+counter to ask, the price was measured by duplication: a build that performs
+every ROM/SDRAM fast-path guest read twice (same address, result discarded
+into a volatile sink) must be bit-identical -- and was: rig sound hash and
+framebuffer checksums unchanged, so the workload provably did not move. The
+sandwich: base 34.20 fps, duplicated 30.52, base 34.20 again (zero drift).
+The added 3.53 ms per frame over 87,086 reads/frame is 40.5 ns = 13.8
+cycles per read at 340 MHz -- and that is the *marginal* cost of
+re-executing the region test, the load, and the sink store; the original
+read's own cost is below it. Guest reads therefore own, at most, ~12% of
+the frame (16% of the SH-2 window): real, but not the dominator. The rest
+of the window is the interpretation itself. The A/B knobs never left the
+bench tree (MD32X_DBL_RD in the Makefile of that day's scratch tree); the
+patcher that made them is preserved in the session notes if the
+different-line variant (cache-miss share) is ever wanted -- note the ITC
+budget choked on the inline hook the first time, so a retry needs a
+noinline helper.
+
+Also closed the same day: lfo_pm_table (131 KB of XIP) is *not* the next
+ym_tl_tab. update_lfo_phase runs once per channel per render call (8 call
+sites, all in chan_render's head precalc -- never inside the sample loop),
+measured 27.2 entries/frame on DOOM, 128 B of working set, 0.05% of the
+frame at worst-case miss cost. Access pattern, not table size, decides
+which table is a lever.
+
 ## 2026-08-25d: 32X performance lands -- every axis closed, three items open
 
 The skeleton-ceiling chain finished the SH-2 axis, and with it the whole
