@@ -88,6 +88,13 @@ restore_clock_cfg() {
     ocd 'reset run' >/dev/null 2>&1 || true
   fi
 }
+# Third alarm-residue incident (2026-08-26): a killed run left alarm= behind
+# because restore only ran on explicit paths. Every exit now restores --
+# the original clock.cfg is saved before we touch it, and the trap fires
+# on TERM/INT/EXIT alike, so a watchdog-kill or Ctrl-C cannot strand a
+# daily alarm on the user's card. Placed after the definition so an early
+# set -u exit never references an unset function.
+trap restore_clock_cfg EXIT INT TERM
 
   # Boot into the game, then drop to standby from inside it (the function
   # re-arms the RTC alarm from the cfg we just pushed).
