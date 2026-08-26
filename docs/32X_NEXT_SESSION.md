@@ -66,6 +66,19 @@ silicon; zero devices were option-programmed, and that stays forbidden),
 or a software-activated IWDG is out of its reach. Reading the bit and
 declaring safety was the tenth-class mistake this campaign keeps
 finding: an option byte is only proven by the reset it does not cause.
+
+Polarity follow-up (2026-08-27, documents only, zero devices touched):
+ST's family-wide convention (verified on L4 in the wild: "clear bit 17
+to freeze the IWDG in stop mode"; H7 uses the same USER-bit layout)
+is 0 = frozen, 1 = running. Our OPTSR_CUR read of bit 17 = 1 therefore
+meant "keep running in STOP" all along -- the 33 s bite was the option
+byte doing exactly what it was told, not an option that failed to
+apply. The earlier "option byte is no proof / did not take" phrasing
+one paragraph up is retained as a record of what we believed at the
+time; this note supersedes it. Freezing would require programming the
+byte to 0, which remains forbidden (brick risk). The withdrawal
+conclusion is unchanged: with freeze unreachable, a boot-armed IWDG
+cannot ship alongside game-sleep.
 6effe430 reverts the arming; WWDG stays (windowed, verified-to-arm,
 silent in STOP2).
 
