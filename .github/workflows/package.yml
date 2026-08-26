@@ -85,7 +85,11 @@ jobs:
       - name: Install cross toolchain
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi qemu-system-arm
       - name: Rig compile gate
-        run: RIG_BUILD_ONLY=1 EXTRA_DEF="-Wno-error=incompatible-pointer-types" bash tools/m7_qemu_rig/run_32x.sh /dev/null 1
+        run: |
+          # objcopy rejects an empty input, and the gate only compiles+links --
+          # the ROM bytes are never read. Hand it the smallest legal 32x image.
+          printf "\x00\x01\x02\x03" > /tmp/dummy.32x
+          RIG_BUILD_ONLY=1 EXTRA_DEF="-Wno-error=incompatible-pointer-types" bash tools/m7_qemu_rig/run_32x.sh /tmp/dummy.32x 1
 
   build-sd0-test:
     # Non-SD (flash-only, SD_CARD=0) build must stay green: FrogFS + LittleFS
