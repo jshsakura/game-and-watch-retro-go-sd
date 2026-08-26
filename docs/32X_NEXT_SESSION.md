@@ -54,6 +54,16 @@ The gate that proved it: injected jump to 0x240e9110 mid-game ->
 was the first boot after an SWD flash and region 7 was already gone --
 clean boot reproduces perfectly; recorded as a flash-adjacent artifact.
 
+Observation, not a hypothesis -- three cases now (2026-08-26): the first
+boot after an SWD flash has behaved differently from a normal boot in
+three different subsystems -- the three boot hangs (all first boots
+after flashing), the one wild watchdog-not-armed event (suspected same
+family), and region 7 missing above. Cause unknown; no build will be
+burned chasing it. The rule that follows the evidence: treat anything
+observed on the first boot after an SWD flash as non-evidence --
+power-cycle first (tools/gnw_probe/powercycle.sh), then bench or
+diagnose.
+
 Honest limits, so nobody misreads a future silence:
   - 185KB of bss (0x24052a08-0x24080000: m68k state + the head of the
     32X SDRAM mirror) is NOT covered. A runaway into that range still
