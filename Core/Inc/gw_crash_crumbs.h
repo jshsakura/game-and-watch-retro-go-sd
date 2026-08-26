@@ -22,6 +22,10 @@
  *   DR9  drawn frame counter, heartbeat-refreshed
  *   DR10 RCC_RSR reset-cause snapshot of the *previous* boot, read at boot
  *   DR11 heartbeat sequence number (parity-of-life for the DR8/DR9 pair)
+ *   DR12 LIVE modal state -- nonzero while a modal loop owns the core,
+ *       cleared on modal exit, so SWD can name the state without a reboot
+ *   DR13 gamepad bitmask the entry poll saw (0 = no input involved)
+ *   DR14 RTC->TR (BCD) at modal entry -- cross-check against wall clock
  */
 
 #include <stdint.h>
@@ -36,7 +40,20 @@ typedef struct {
     uint32_t emu;
     uint32_t drawn;
     uint32_t rsr_prev;   /* RCC_RSR of the boot that just ended */
+    uint32_t modal;      /* DR12 code of the last modal entered before death */
+    uint32_t modal_input;/* DR13 gamepad bitmask at that entry */
+    uint32_t modal_tr;   /* DR14 RTC->TR (BCD) at that entry */
 } gw_crumb_t;
+
+/* Modal codes: the code IS the entry path, so 'did a button poll see a
+ * value' is answered by the code itself. 3 can only be reached through a
+ * PAUSE/SET poll that saw the button; 2 needs an app restart (no reboot =
+ * mid-run code 2 is a defect); 1 is poll-driven; 4/5 are the power paths. */
+#define CRUMB_MODAL_ALARM      1u  /* in-game alarm ring; auto-dismisses 60 s */
+#define CRUMB_MODAL_RESUME     2u  /* PAUSE banner via pause_after_frames */
+#define CRUMB_MODAL_MENU       3u  /* settings menu, PAUSE/SET release path */
+#define CRUMB_MODAL_SLEEPMENU  4u  /* PAUSE/SET + POWER combo path */
+#define CRUMB_MODAL_SLEEP      5u  /* POWER-only save-state-and-poweroff path */
 
 /* Populated by gw_crumb_boot() on every boot; read over SWD. */
 extern gw_crumb_t g_last_crumb;
@@ -45,5 +62,7 @@ void gw_crumb_boot(void);       /* main(): snapshot RSR, publish+clear old crumb
 void gw_crumb_fault(uint32_t type, uint32_t pc, uint32_t lr); /* it.c, before BSOD */
 void gw_crumb_wwdg(void);       /* WWDG early-wakeup callback */
 void gw_crumb_heartbeat(void);  /* common_emu_frame_loop(), throttled inside */
+void gw_crumb_modal(uint32_t code, uint32_t input_bits); /* entry: state+evidence */
+void gw_crumb_modal_exit(void); /* modal loop returned normally */
 
 #endif /* GW_CRASH_CRUMBS_H */

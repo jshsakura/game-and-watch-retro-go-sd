@@ -339,8 +339,10 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
             if (joystick->values[ODROID_INPUT_POWER]){
                 // Do NOT save-state and then poweroff
                 last_key = ODROID_INPUT_POWER;
+                gw_crumb_modal(CRUMB_MODAL_SLEEPMENU, joystick->bitmask);
                 audio_stop_playing();
                 sleep_and_open_pause_menu(game_options, _repaint, false, 0);
+                gw_crumb_modal_exit();
             }
             else if(joystick->values[ODROID_INPUT_START]){ // GAME button
 #if SD_CARD == 1
@@ -529,8 +531,12 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
         // PAUSE/SET has been released without performing any macro. Launch menu
         pause_pressed = false;
 
+        gw_crumb_modal(resume_pause_banner ? CRUMB_MODAL_RESUME
+                                           : CRUMB_MODAL_MENU,
+                       joystick->bitmask);
         open_pause_menu(game_options, _repaint, resume_pause_banner, 0);
         resume_pause_banner = false;
+        gw_crumb_modal_exit();
     }
     else if (!joystick->values[ODROID_INPUT_VOLUME]){
         pause_pressed = false;
@@ -552,6 +558,7 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
 
     if (joystick->values[ODROID_INPUT_POWER]) {
         // Save-state and poweroff
+        gw_crumb_modal(CRUMB_MODAL_SLEEP, joystick->bitmask);
         audio_stop_playing();
         odroid_system_sleep_ex(SLEEP_SHOW_ANIMATION, NULL);
 #if OFF_SAVESTATE == 1 || SD_CARD == 1
@@ -560,6 +567,7 @@ void common_emu_input_loop(odroid_gamepad_state_t *joystick, odroid_dialog_choic
         odroid_system_emu_save_state(0);
 #endif
         sleep_and_open_pause_menu(game_options, _repaint, true, ODROID_MENU_FLAG_DRAW_ONLY);
+        gw_crumb_modal_exit();
     }
 
     if (common_emu_state.pause_after_frames > 0) {

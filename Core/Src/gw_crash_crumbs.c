@@ -14,6 +14,7 @@ extern uint32_t g_common_drawn_frames;
 #define CRUMB_MAGIC       0xC4AB0001u
 #define CRUMB_CAUSE_FAULT 1u
 #define CRUMB_CAUSE_WWDG  2u
+#define CRUMB_MODAL_NONE  0u
 
 gw_crumb_t g_last_crumb;
 
@@ -45,6 +46,9 @@ void gw_crumb_boot(void)
     g_last_crumb.emu     = crumb_rd(RTC_BKP_DR8);
     g_last_crumb.drawn   = crumb_rd(RTC_BKP_DR9);
     g_last_crumb.rsr_prev = rsr;
+    g_last_crumb.modal      = crumb_rd(RTC_BKP_DR12);
+    g_last_crumb.modal_input = crumb_rd(RTC_BKP_DR13);
+    g_last_crumb.modal_tr    = crumb_rd(RTC_BKP_DR14);
 
     /* Re-arm for this boot. Keep the heartbeat counters at zero so a
      * stale count can never masquerade as a fresh crash. */
@@ -59,6 +63,24 @@ void gw_crumb_boot(void)
     crumb_wr(RTC_BKP_DR10, rsr); /* previous boot's reset cause, stays
                                      readable over SWD until the next boot */
     crumb_wr(RTC_BKP_DR11, 0);
+    crumb_wr(RTC_BKP_DR12, 0);
+    crumb_wr(RTC_BKP_DR13, 0);
+    crumb_wr(RTC_BKP_DR14, 0);
+}
+
+/* --- modal state: the 2026-08-26 07:16 "crash" was a modal nobody
+ * dismissed (emu frozen, drawn still running at LCD rate for 57 min,
+ * zero fault registers). DR12 is live state; DR13/14 latch evidence. --- */
+void gw_crumb_modal(uint32_t code, uint32_t input_bits)
+{
+    crumb_wr(RTC_BKP_DR12, code);
+    crumb_wr(RTC_BKP_DR13, input_bits);
+    crumb_wr(RTC_BKP_DR14, READ_REG(RTC->TR)); /* BCD HH:MM:SS at entry */
+}
+
+void gw_crumb_modal_exit(void)
+{
+    crumb_wr(RTC_BKP_DR12, CRUMB_MODAL_NONE); /* DR13/14 keep the evidence */
 }
 
 /* --- fault path: called from common_fault_handler_c before BSOD --- */

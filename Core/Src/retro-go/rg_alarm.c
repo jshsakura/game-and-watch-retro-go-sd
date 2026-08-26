@@ -96,6 +96,7 @@ int rg_alarm_tone_step(int preset, uint32_t now_ms, bool *on)
 #include "gw_lcd.h"
 #include "odroid_overlay.h"
 #include "common.h"        /* volume_tbl */
+#include "gw_crash_crumbs.h"
 
 #define RG_ALARM_BKP_REG   RTC_BKP_DR1   /* DR0/29/30 taken; DR1 is free */
 
@@ -240,6 +241,7 @@ void rg_alarm_ring_inplace(void)
     int preset = RG_TONE_BEEP, vol = 6;
     rg_clock_alarm_prefs(&preset, &vol);
 
+    gw_crumb_modal(CRUMB_MODAL_ALARM, 0); /* poll-driven: no input by design */
     audio_stop_playing();                 /* silence the emulator/player audio */
 
     odroid_gamepad_state_t k, prev;
@@ -262,6 +264,7 @@ void rg_alarm_ring_inplace(void)
     }
 
     rg_alarm_tone_feed(0, false, preset, vol);   /* stop the SAI */
+    gw_crumb_modal_exit();                        /* ring returned normally */
     rg_alarm_cache_advance();                     /* roll to the next occurrence */
 
     /* hand a running SAI back to the emulator/player, same as the STOP2 wake path */
