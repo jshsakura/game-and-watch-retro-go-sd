@@ -32,6 +32,36 @@ error 125.
 
 **The console stays with one owner.** Builds fan out; flashing and benching do not.
 
+## 2026-08-26c: the XN firewall lands -- the silent runaway gets a name
+
+Three runaways (two stretcher-era freezes, one on shipping-behaviour
+wd15) all landed the same way: PC inside guest 68K RAM (PicoMem
+0x240db098+, addresses 0x240e90xx-91xx), fault registers zero, watchdog
+silent, counters frozen. Guest code bytes occasionally decode as valid
+Thumb, so the CPU can wander there indefinitely.
+
+Region 7 (the last free MPU region) is now an execute-never firewall at
+0x24080000-0x24100000 (512KB), installed at app_main_md32x entry and
+cleared by the reset that follows every core exit. TEX=001/C=1/B=1
+mirrors the background WB/write-allocate policy exactly -- benched
+against its base bracket: 34.373 vs 34.493 = -0.35%, noise (had the
+first-draft TEX=000 shipped, write-allocate loss on 512KB of
+write-heavy guest RAM would have been measurable).
+
+The gate that proved it: injected jump to 0x240e9110 mid-game ->
+"current mode: Handler MemManage", DR3=1 (fault crumb), DR4=0x240e9110
+(exact PC), CFSR=IACCVIOL. First attempt failed because that session
+was the first boot after an SWD flash and region 7 was already gone --
+clean boot reproduces perfectly; recorded as a flash-adjacent artifact.
+
+Honest limits, so nobody misreads a future silence:
+  - 185KB of bss (0x24052a08-0x24080000: m68k state + the head of the
+    32X SDRAM mirror) is NOT covered. A runaway into that range still
+    dies silently -- crumb silence does NOT mean the firewall failed.
+  - The firewall names the crash; it does not fix it. Whatever corrupts
+    a return address into guest RAM is still open (see #46). But the
+    next occurrence now leaves PC/LR/CFSR instead of nothing.
+
 ## 2026-08-26: the release ships 44100 -- 22050 without the stretcher is the sound the user already complained about
 
 The user verdict came back: 30 fps is monumental, the audio is still awkward
