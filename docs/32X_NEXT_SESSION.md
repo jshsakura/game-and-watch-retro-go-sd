@@ -130,9 +130,21 @@ Final map (all measured on hardware, DOOM gameplay anchor):
   Cumulative: base0 26.81 -> 34-35 fps (+27-31%).
 
 OPEN (3):
-  1. Sporadic crash (ratio 1.5160 run, fault regs 0) -- breadcrumbs are in
-     (gw_crash_crumbs, DR2-11) and the long-run monitor is watching. No
-     hypotheses until a crumb fires.
+  1. The "sporadic crash" (ratio 1.5160 run, fault regs 0) -- CAPTURED and
+     NAMED 2026-08-26: it is the pause banner, not a crash. emu frozen,
+     drawn repainting at vsync (62.7 fps), watchdog refreshed inside the
+     wait loop -- every field of the signature matches. Bounded in code:
+     the banner's while(1) asks odroid_idle_timeout_expired() and leaves
+     via _save_state_and_sleep (odroid_overlay.c:536-540), so the SHIPPED
+     RELEASE IS NOT EXPOSED; the 57-minute 07:16 event was the bench build
+     (GNW_NO_IDLE_OFF=1) with nobody to press the button. Alarm, sleep and
+     low-battery are each ruled out in code (daily alarm rolls to next day
+     at boot; the ring self-clears after 60 s and repaints at ~16.7 fps;
+     no low-battery modal exists). One bit decides what is left: DR13, the
+     gamepad bitmask the entry poll saw. 0 = software defect (raise
+     priority); VOL bit set = pin glitch or finger, hardware/ops, not a
+     release concern. Modal crumbs DR12-14 are deployed (1ca4b59e) and a
+     long-run monitor is watching for the next occurrence.
   2. Hook SIGPIPE -- the inline hook dies of exit 141 in the tool
      environment; it is now a standalone verified script instead:
      tools/gnw_probe/powercycle.sh <elf>. Bench procedure: after
