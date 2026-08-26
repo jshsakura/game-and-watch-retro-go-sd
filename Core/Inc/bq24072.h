@@ -25,6 +25,11 @@ int bq24072_get_percent_filtered(void);
 
 void bq24072_poll(void);
 
+/* ISR-safe 1 Hz kick (TIM1_UP) + main-context consumer. Never call
+ * bq24072_poll() itself from an interrupt: it enters HAL enable paths. */
+void bq24072_poll_request(void);
+void bq24072_poll_service(void);
+
 /* Persist a load-free quiescent reference on the way into deep sleep so the
  * next boot can detect charging-while-asleep with a small noise margin. */
 void bq24072_sleep_snapshot(void);

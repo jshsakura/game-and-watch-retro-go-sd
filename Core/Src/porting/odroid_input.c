@@ -43,6 +43,10 @@ void update_gamepad_state(odroid_gamepad_state_t *state, uint32_t buttons, odroi
  
  void odroid_input_read_gamepad(odroid_gamepad_state_t* out_state)
  {
+    /* The one main-context function every app loop already calls
+     * (launcher, emu frame loop, clock, key-wait loops), so the battery
+     * burst is serviced everywhere without each app knowing. */
+    bq24072_poll_service();
     // Every screen in the firmware — launcher and every core — polls input
     // through here, and a hung boot never does: that makes this poll the
     // "this boot is alive" signal for the boot-loop rescue counter.

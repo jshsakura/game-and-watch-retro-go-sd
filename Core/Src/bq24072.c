@@ -480,7 +480,15 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
         bq24072_filtered_value_dbg = bq24072_data.filtered_value;
 #endif
 
-        HAL_ADC_Stop_IT(hadc);
+        /* No HAL_ADC_Stop_IT here, ever. Stop_IT runs ADC_Disable, whose
+         * "wait for ADEN to clear" loop times out on HAL_GetTick(); this
+         * callback runs in ADC IRQ context, and disabling the ADC here would
+         * also force the next poll's Start_IT through the ADC_Enable ADRDY
+         * wait -- the exact spin that wedged a priority-0 TIM1 poll with
+         * SysTick frozen (2026-08-26). Leaving the ADC enabled makes both
+         * wait loops unreachable from any interrupt: the EOC chain re-arms
+         * through Start_IT's already-enabled fast path (register writes
+         * only), and poll runs in main where ticks advance. */
     }
 }
 
@@ -733,6 +741,31 @@ void bq24072_poll(void)
 {
     bq24072_data.adc_settle_pending = true;
     HAL_ADC_Start_IT(&hadc1);
+}
+
+/* ======================================================================
+ * ISR/main split for the 1 Hz poll
+ *
+ * TIM1_UP runs at priority (0,0) -- above SysTick -- so nothing inside it
+ * may enter a HAL wait loop: HAL_GetTick() is frozen there and a timeout
+ * loop becomes an infinite one. The 1 Hz tick therefore only sets a flag;
+ * the burst itself runs from the cooperative main-context point every app
+ * loop already visits (odroid_input_read_gamepad). The flag, not the
+ * caller, preserves the cadence.
+ * ====================================================================== */
+static volatile bool bq24072_poll_wanted = false;
+
+void bq24072_poll_request(void)
+{
+    bq24072_poll_wanted = true;
+}
+
+void bq24072_poll_service(void)
+{
+    if (bq24072_poll_wanted) {
+        bq24072_poll_wanted = false;
+        bq24072_poll();
+    }
 }
 
 /* ======================================================================

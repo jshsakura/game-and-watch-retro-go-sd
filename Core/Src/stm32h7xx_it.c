@@ -322,7 +322,10 @@ void TIM1_UP_IRQHandler(void)
 
   uptime_inc();
 
-  bq24072_poll();
+  /* Request only. At (0,0) this ISR outranks SysTick, so HAL_GetTick()
+   * cannot advance here and any HAL wait loop (ADC enable/disable) would
+   * spin forever. The burst runs from bq24072_poll_service() in main. */
+  bq24072_poll_request();
 
   /* USER CODE END TIM1_UP_IRQn 0 */
   HAL_TIM_IRQHandler(&htim1);

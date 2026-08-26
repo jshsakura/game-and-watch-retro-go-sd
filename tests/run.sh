@@ -600,6 +600,11 @@ echo "=== boot rescue: a bricked boot must end somewhere a person can act ==="
 # and the counter logic itself runs here against a fake backup register
 # (compiling the real gw_boot_rescue.c, per the flash-cache lesson).
 bash tests/test_boot_rescue_wired.sh || fail tests/test_boot_rescue_wired.sh
+# The charger poll must never block in ISR context: TIM1_UP runs at NVIC
+# priority (0,0), so SysTick cannot preempt it and any HAL_GetTick-based
+# wait loop inside it spins forever (found by accident 2026-08-26, see the
+# probe-reordering post-mortem in docs/32X_NEXT_SESSION.md).
+bash tests/test_adc_isr_wired.sh || fail tests/test_adc_isr_wired.sh
 BR_DIR=/tmp/mtest/boot_rescue
 rm -rf "$BR_DIR"; mkdir -p "$BR_DIR"
 $CC -O1 -g -std=gnu11 -Wall $SAN -DBOOT_RESCUE_HOST_TEST \
