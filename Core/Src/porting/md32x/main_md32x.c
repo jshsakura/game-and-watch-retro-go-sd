@@ -519,6 +519,53 @@ static uint32_t md32x_rom_len;
 
 void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
+  /* The guest-RAM firewall. Every runaway this core has produced (three
+   * so far, all captured) landed in the guest 68K RAM / VRAM inside
+   * .overlay_md32x_bss and executed Thumb garbage until something else
+   * noticed -- no fault, no crumb, counters frozen. MPU region 7 marks
+   * the upper 512 KB of that BSS execute-never; the lower ~185 KB stays
+   * outside the power-of-two window, so a runaway landing there still
+   * dies quietly (docs/32X_NEXT_SESSION.md, 2026-08-26 section).
+   * Attributes mirror the ARMv7-M default SRAM map exactly -- TEX=001,
+   * C=1, B=1: write-back WITH write-allocate; TEX=000 would have quietly
+   * dropped write-allocate on the most write-heavy RAM in the system.
+   * Reads and writes are untouched; only instruction fetch is denied.
+   * Every exit from core context is a system reset (verified
+   * 2026-08-26: single-bank and bank-switch paths both call
+   * NVIC_SystemReset; app_main_md32x itself never returns), so the MPU
+   * is cleared by hardware -- there is deliberately no uninstall path.
+   * MEMFAULTENA scope is exactly this core's lifetime: every exit from
+   * core context is a system reset, and the reset clears SHCSR too --
+   * so other cores keep the old behavior (NULL/stack-guard violations
+   * escalate to a plain "Hardfault" BSOD title) and only while md32x
+   * runs do MPU violations get the "Memfault" name. The handlers are
+   * the same HARDFAULT_HANDLING_ASM macro, so the crumb payload is
+   * identical either way. */
+  {
+    MPU_Region_InitTypeDef xn = {0};
+    xn.Enable           = MPU_REGION_ENABLE;
+    xn.Number           = MPU_REGION_NUMBER7;
+    xn.BaseAddress      = 0x24080000;
+    xn.Size             = MPU_REGION_SIZE_512KB;
+    xn.AccessPermission = MPU_REGION_FULL_ACCESS;
+    xn.TypeExtField     = MPU_TEX_LEVEL1;
+    xn.IsBufferable     = MPU_ACCESS_BUFFERABLE;
+    xn.IsCacheable      = MPU_ACCESS_CACHEABLE;
+    xn.IsShareable      = MPU_ACCESS_NOT_SHAREABLE;
+    xn.SubRegionDisable = 0x00;
+    xn.DisableExec      = MPU_INSTRUCTION_ACCESS_DISABLE;
+    HAL_MPU_ConfigRegion(&xn);
+    /* ST's HAL writes RNR/RBAR/RASR and stops there -- no DSB/ISB. An
+     * MPU reprogram without a barrier guarantees nothing about the next
+     * fetch seeing the new attributes; this usually works by luck until
+     * a compiler reorder breaks it. Make the barrier explicit. */
+    __DSB();
+    __ISB();
+    SCB->SHCSR |= SCB_SHCSR_MEMFAULTENA_Msk;
+    __DSB();
+    __ISB();
+  }
+
   odroid_gamepad_state_t joystick;
   odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
 
