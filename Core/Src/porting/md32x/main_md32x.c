@@ -69,7 +69,21 @@ static void diag_log(const char *fmt, ...);   /* boot diag, defined below */
  *     shifting the extra pack fields (pending_int_irq/vector/m68krcycles_done)
  *     by 8 bytes. V1 savestates would misparse and corrupt CPU state. */
 #define MD32X_STATE_MAGIC    0x4D583258u  /* "MX2X" */
-#define MD32X_STATE_VERSION  2
+/* v3: the header now carries the payload length and a CRC32 of it. v2 files
+ * (magic+version only) are refused -- a v2 state has no way to prove it was
+ * not truncated by a dying card, and loading one half-way is exactly the
+ * "silently restores nonsense" failure the house rule exists for. This is a
+ * robustness repair, not a root-cause fix for anything: user cards really do
+ * come up with damaged save partitions (littlefs LFS_ERR_CORRUPT, 2026-08-26),
+ * which is reason enough to refuse what this build did not write. */
+#define MD32X_STATE_VERSION  3
+
+typedef struct {
+  uint32_t magic;
+  uint32_t version;
+  uint32_t bytes;   /* payload size, excluding this header */
+  uint32_t crc;     /* CRC32 of the payload, excluding this header */
+} md32x_state_header_t;
 
 /* ---- picodrive platform hooks --------------------------------------------
  * On the device there is no large malloc heap. With the GNW_32X_CORE guards
@@ -252,7 +266,35 @@ static size_t md32x_state_read(void *ptr, size_t size, size_t count, void *file)
   return fread(ptr, size, count, (FILE *)file);
 }
 
+static uint32_t md32x_state_bytes;   /* payload size this save streamed */
+/* Mission-4 guard: true only inside PicoFrame(). A savestate load
+ * issued mid-slice overwrites the live guest structs under the
+ * interpreter's feet -- the wild-5 reproducer (2026-08-27) turned
+ * exactly that into the runaway signature. Every shipped caller
+ * loads at a frame boundary, so a true reading here means a new
+ * (buggy) path or a debugger: refuse, do not corrupt. */
+static volatile bool md32x_pico_in_frame;
+static uint32_t md32x_state_crc;     /* running CRC32 of the payload */
+
+/* Incremental CRC32 so the write callback does not need to buffer anything. */
+static uint32_t md32x_crc32_update(uint32_t crc, const void *data, size_t len) {
+  const uint8_t *p = (const uint8_t *)data;
+  crc = ~crc;
+  while (len--) {
+    crc ^= *p++;
+    for (int k = 0; k < 8; k++)
+      crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+  }
+  return ~crc;
+}
+
 static size_t md32x_state_write(void *ptr, size_t size, size_t count, void *file) {
+  /* Payload accounting for the v3 header: every byte the emulator streams out
+   * is counted and folded into the running CRC, then patched into the header
+   * after the stream closes (the sm core does the same for its length). */
+  size_t len = size * count;
+  md32x_state_bytes += (uint32_t)len;
+  md32x_state_crc = md32x_crc32_update(md32x_state_crc, ptr, len);
   return fwrite(ptr, size, count, (FILE *)file);
 }
 
@@ -265,14 +307,24 @@ static int md32x_state_seek(void *file, long offset, int whence) {
 }
 
 static bool md32x_SaveState(const char *pathName) {
-  const uint32_t header[2] = { MD32X_STATE_MAGIC, MD32X_STATE_VERSION };
+  md32x_state_header_t header = { MD32X_STATE_MAGIC, MD32X_STATE_VERSION, 0, 0 };
   FILE *file = fopen(pathName, "wb");
   if (file == NULL)
     return false;
 
-  bool ok = fwrite(header, sizeof(header), 1, file) == 1 &&
+  /* Placeholder header first, payload second; the real length and CRC are
+   * patched in afterwards, once the stream has been counted (sm-core idiom). */
+  md32x_state_bytes = 0;
+  md32x_state_crc = 0;
+  bool ok = fwrite(&header, sizeof(header), 1, file) == 1 &&
             PicoStateFP(file, 1, md32x_state_read, md32x_state_write,
                         md32x_state_eof, md32x_state_seek) == 0;
+  if (ok) {
+    header.bytes = md32x_state_bytes;
+    header.crc = md32x_state_crc;
+    ok = fseek(file, 0, SEEK_SET) == 0 &&
+         fwrite(&header, sizeof(header), 1, file) == 1;
+  }
   if (fclose(file) != 0)
     ok = false;
   if (!ok)
@@ -280,21 +332,89 @@ static bool md32x_SaveState(const char *pathName) {
   return ok;
 }
 
+/* Contract for callers: a FALSE return means the machine was either never
+ * touched (refused up front) or has been put back into a defined state with
+ * PicoReset() -- in both cases it is safe to keep running the current game.
+ * Callers that ignore the return value are therefore not bugs; callers that
+ * assume "false = state intact from before the failed load" are. */
 static bool md32x_LoadState(const char *pathName) {
-  uint32_t header[2];
+    if (md32x_pico_in_frame) {
+        printf("md32x: load refused mid-frame (live interpreter)\n");
+        return false;   /* machine untouched */
+    }
+
+  md32x_state_header_t header;
   FILE *file = fopen(pathName, "rb");
   if (file == NULL)
     return false;
 
-  bool ok = fread(header, sizeof(header), 1, file) == 1 &&
-            header[0] == MD32X_STATE_MAGIC &&
-            header[1] == MD32X_STATE_VERSION &&
-            PicoStateFP(file, 0, md32x_state_read, md32x_state_write,
-                        md32x_state_eof, md32x_state_seek) == 0;
+  /* Everything the verdict needs is knowable BEFORE a single live struct is
+   * touched: PicoStateFP streams straight into PicoMem/sh2s/Pico32x, so a
+   * mid-stream failure would otherwise leave the running game half-restored
+   * (and a corrupted read32_map turns the very next p32x_sh2_read32 into a
+   * precise bus fault). Refuse first, stream second. */
+  bool ok = fread(&header, sizeof(header), 1, file) == 1 &&
+            header.magic == MD32X_STATE_MAGIC &&
+            header.version == MD32X_STATE_VERSION;
+  if (!ok) {
+    printf("md32x: savestate is not this build's (magic=%08lx version=%lu) -- refusing\n",
+           (unsigned long)header.magic, (unsigned long)header.version);
+    fclose(file);
+    return false;
+  }
+
+  long avail = 0;
+  if (fseek(file, 0, SEEK_END) == 0)
+    avail = ftell(file) - (long)sizeof(header);
+  if (header.bytes != (uint32_t)avail) {
+    printf("md32x: savestate says %lu bytes, file holds %ld -- truncated or foreign; "
+           "refusing before it touches the game\n",
+           (unsigned long)header.bytes, avail);
+    fclose(file);
+    return false;
+  }
+
+  /* Pre-flight CRC over the payload. ~16 ms at 340 MHz for a full state --
+   * cheap next to restoring 700 KB of garbage and diagnosing the crash. */
+  uint32_t crc = 0;
+  uint8_t buf[512];
+  if (fseek(file, sizeof(header), SEEK_SET) != 0) {
+    fclose(file);
+    return false;
+  }
+  size_t got;
+  uint32_t total = 0;
+  while ((got = fread(buf, 1, sizeof(buf), file)) > 0) {
+    wdog_refresh();
+    crc = md32x_crc32_update(crc, buf, got);
+    total += (uint32_t)got;
+  }
+  if (total != header.bytes || crc != header.crc) {
+    printf("md32x: savestate CRC %08lx != header %08lx -- damaged; "
+           "refusing before it touches the game\n",
+           (unsigned long)crc, (unsigned long)header.crc);
+    fclose(file);
+    return false;
+  }
+
+  if (fseek(file, sizeof(header), SEEK_SET) != 0) {
+    fclose(file);
+    return false;
+  }
+  ok = PicoStateFP(file, 0, md32x_state_read, md32x_state_write,
+                   md32x_state_eof, md32x_state_seek) == 0;
   fclose(file);
-  if (ok)
-    set_out_buffer();
-  return ok;
+  if (!ok) {
+    /* The pre-flight cleared every failure mode we can detect from the
+     * outside; if the emulator still refuses mid-stream the machine is
+     * half-restored. Put it back into a defined state (cold-ish reset of the
+     * emulated console; the ROM stays loaded) before handing the failure up. */
+    printf("md32x: savestate stream failed mid-load -- PicoReset() to a defined state\n");
+    PicoReset();
+    return false;
+  }
+  set_out_buffer();
+  return true;
 }
 
 static void *md32x_Screenshot(void) {
@@ -862,6 +982,22 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     }
 #endif
 
+#ifdef GNW_AUTOSLEEP_FRAME
+    /* Measurement-only: enter the real POWER-button sleep path once, N frames
+     * in, so STOP2 wake sources can be tested without touching the device.
+     * Same entry a user takes (common.c POWER path). Never in shipping. */
+    {
+      static bool autoslept = false;
+      static uint32_t autosleep_frames = 0;
+      if (!autoslept && ++autosleep_frames >= (uint32_t)GNW_AUTOSLEEP_FRAME) {
+        autoslept = true;
+        printf("md32x: auto-sleep at frame %lu (STOP2 alarm-wake test)\n",
+               (unsigned long)autosleep_frames);
+        odroid_system_sleep_ex(SLEEP_ENTER_SLEEP_WITH_ANIMATION, NULL);
+      }
+    }
+#endif
+
 #ifdef MD32X_DEVICE_PROFILE
     /* Single baseline read for the whole iteration. Cumulative reads at each
      * phase boundary below give EXACTLY disjoint deltas (tama pattern): the
@@ -916,7 +1052,9 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     uint32_t t_proc = common_emu_get_dwt_cycles() - t_base;   /* after proc, before pico */
 #endif
 
+    md32x_pico_in_frame = true;
     PicoFrame();
+    md32x_pico_in_frame = false;
 
 #ifdef MD32X_DEVICE_PROFILE
     uint32_t t_pico = common_emu_get_dwt_cycles() - t_base;   /* after pico, before blit */
