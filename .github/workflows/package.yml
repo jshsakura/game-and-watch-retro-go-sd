@@ -67,6 +67,26 @@ jobs:
       - name: Run host test suite
         run: bash tests/run.sh
 
+  rig-build-test:
+    # The QEMU rig is our primary measuring instrument and no other job
+    # compiles it. 6378f72e broke its build (pico_int.h stub collision at
+    # rig_32x.c) and shipped green because CI never looked -- the break was
+    # found days later, by accident, when the slice census refused to build.
+    # An instrument that silently does not compile invalidates every
+    # measurement made after it. A full run needs a Doom ROM CI cannot
+    # ship, so this gate proves the toolchain path end-to-end: every
+    # picodrive TU + the rig harness compiled and linked (RIG_BUILD_ONLY).
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+      - name: Install cross toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi qemu-system-arm
+      - name: Rig compile gate
+        run: RIG_BUILD_ONLY=1 EXTRA_DEF="-Wno-error=incompatible-pointer-types" bash tools/m7_qemu_rig/run_32x.sh /dev/null 1
+
   build-sd0-test:
     # Non-SD (flash-only, SD_CARD=0) build must stay green: FrogFS + LittleFS
     # images and the FLASH.ld link are exercised by no other job. This is the

@@ -119,5 +119,16 @@ $CC $ARCH -T "$RIG/mps2_an500_32x.ld" -nostartfiles -Wl,--gc-sections \
     $objs -lm -lc -o "$OUT/rig_32x.elf"
 arm-none-eabi-size "$OUT/rig_32x.elf"
 
+# Build-only gate for CI: the rig is the primary measuring instrument and
+# no other job compiles it. 6378f72e broke its build (pico_int.h stub
+# collision) and shipped green because nothing looked -- found later by
+# accident (slice census, 2026-08-26). A full run needs a Doom ROM CI
+# cannot ship, so the gate proves the toolchain path end-to-end: every
+# picodrive TU + rig harness compiled and linked.
+if [ "${RIG_BUILD_ONLY:-0}" = "1" ]; then
+    echo "[rig] build-only gate: compile+link OK"
+    exit 0
+fi
+
 timeout "${RIG_TIMEOUT:-1800}" qemu-system-arm -machine mps2-an500 -nographic -semihosting \
     -icount shift=0,align=off,sleep=off -kernel "$OUT/rig_32x.elf" 2>&1
