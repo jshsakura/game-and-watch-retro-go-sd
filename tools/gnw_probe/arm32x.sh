@@ -189,7 +189,18 @@ verify_intflash() {
 #
 # Escape hatch (emergencies only, prints a loud warning): ANCHOR_CHECK=0
 # ---------------------------------------------------------------------------
+# SCOPE (leader m4346): the gate checks only the anchor the run actually
+# loads. The fps bench boots with an empty off.sav (resume refused => the
+# bench measures boot-attract; slot0 is never read by these runs) -- a gate
+# locking a file the bench does not load is a gate defect, and bypassing a
+# defect with ANCHOR_CHECK=0 as routine would hide the next real drift.
+#   ANCHOR_SET=off.sav (default) -> check off.sav only (fps benches)
+#   ANCHOR_SET=slot0            -> check slot0 only (gameplay-anchored runs;
+#                                  refuses while the expected value is
+#                                  PENDING-CAPTURE, i.e. until the user's
+#                                  real gameplay save is recorded below)
 verify_anchor() {
+  local set="${ANCHOR_SET:-off.sav}"
   [ "${ANCHOR_CHECK:-1}" = "1" ] || { echo "[32x] ANCHOR GATE BYPASSED (ANCHOR_CHECK=0) -- numbers are not anchored, label them accordingly"; return 0; }
   # NB: this file runs `set -euo pipefail`; every best-effort probe below is
   # individually guarded so a flaky pull degrades into a REFUSE, never into a
@@ -203,7 +214,7 @@ verify_anchor() {
   timeout 12 openocd -c 'adapter speed 4000' -f interface/stlink-dap.cfg \
     -f target/stm32h7x.cfg -c init -c 'reset run' -c shutdown >/dev/null 2>&1 || true
   local bad=0 what esz emd5 path got_sz got_md5
-  for what in slot0 off.sav; do
+  for what in $set; do
     case $what in
       slot0)  esz=$ANCHOR_SLOT0_SIZE; emd5=$ANCHOR_SLOT0_MD5; path=/tmp/anch0.bin ;;
       off.sav) esz=$ANCHOR_OFF_SIZE;  emd5=$ANCHOR_OFF_MD5;  path=/tmp/anchoff.bin ;;
