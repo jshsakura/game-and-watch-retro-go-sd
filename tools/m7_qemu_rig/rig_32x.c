@@ -937,8 +937,10 @@ extern const unsigned char _binary_state_bin_start[];
 extern const unsigned char _binary_state_bin_end[];
 
 #define MD32X_STATE_MAGIC   0x4D583258u   /* "X2XM" on the wire */
-#define MD32X_STATE_VERSION 2
-#define MD32X_STATE_HDR     8u
+#define MD32X_STATE_VERSION 3
+#define MD32X_STATE_HDR     16u
+/* v3 (fbfa50e6): {magic, version, bytes, crc32} -- the length word lets us
+ * cross-check the blob before streaming a single guest byte. */
 
 struct Pico32xMem;                        /* opaque: only the null test matters */
 extern struct Pico32xMem *Pico32xMem;
@@ -964,6 +966,13 @@ static int rig_load_device_state(void) {
     if (version != MD32X_STATE_VERSION) {
         printf("[32x-state] FAIL: version %lu, this build writes %u\n",
                (unsigned long)version, MD32X_STATE_VERSION);
+        return -1;
+    }
+    uint32_t pay_bytes = 0;
+    memcpy(&pay_bytes, blob + 8, 4);
+    if ((size_t)MD32X_STATE_HDR + pay_bytes != blob_len) {
+        printf("[32x-state] FAIL: length word %lu + hdr != blob %lu\n",
+               (unsigned long)pay_bytes, (unsigned long)blob_len);
         return -1;
     }
     if (!(PicoIn.AHW & PAHW_32X) || Pico32xMem == NULL) {

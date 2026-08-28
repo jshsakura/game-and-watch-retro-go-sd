@@ -845,4 +845,5 @@ fi
 
 REACHED_END=1
 exit $rc
+bash tests/test_state_version.sh || fail tests/test_state_version.sh
 bash tests/test_ssfix_wired.sh || fail tests/test_ssfix_wired.sh
