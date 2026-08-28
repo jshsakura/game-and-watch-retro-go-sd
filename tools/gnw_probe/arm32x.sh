@@ -95,14 +95,23 @@ cmd_build() {
   # measures one program twice -- which reads as "no effect" and gets written
   # down as a closed path. The SNES session lost an arm to this today; the SNES
   # FLAGS_STAMP bug earlier this month was the same disease.
-  for other in "$ARMS"/*/32x.bin; do
+  for other in "$ARMS"/*/gw_retro_go_intflash.bin; do
     [ -e "$other" ] || continue
     o=$(dirname "$other"); [ "$(basename "$o")" = "$name" ] && continue
     if cmp -s "$o/32x.bin" "$ARMS/$name/32x.bin" &&
        cmp -s "$o/gw_retro_go_intflash.bin" "$ARMS/$name/gw_retro_go_intflash.bin"; then
-      echo "[32x:$name] WARNING: byte-identical to arm '$(basename "$o")'." >&2
-      echo "            If these were meant to differ, the knob did not reach the" >&2
-      echo "            compiler -- check it is in MD32X_C_DEFS, not just C_DEFS." >&2
+      # A warning watched this class for one session and the warning went by
+      # unread twice (rule-every-recipe-define-group-belongs-in-flags-stamp;
+      # GNW_STOP2_PLAIN wired into MD32X_C_DEFS while gw_sleep.c is main
+      # firmware and never sees it -- two arms, one program, "no effect").
+      # An A/B pair that is byte-identical is not a smaller experiment, it is
+      # the same experiment twice. Refuse, exactly like verify_intflash.
+      echo "[32x:$name] REFUSING: byte-identical to arm '$(basename "$o")'." >&2
+      echo "  A knob did not reach the compiler. Check the define group:" >&2
+      echo "  core-local knobs ride MD32X_C_DEFS, main-firmware knobs (gw_sleep.c," >&2
+      echo "  rg_alarm.c) ride C_DEFS. And check the knob's guard is not nested" >&2
+      echo "  inside another knob's ifneq." >&2
+      exit 1
     fi
   done
 }
@@ -161,10 +170,67 @@ verify_intflash() {
   echo "[32x] intflash verified $exp_md5 ($sz B)"
 }
 
+# ---------------------------------------------------------------------------
+# Anchor-state gate (trap 64: "the bench's anchor savestate is part of the
+# program too"). The device bench chain consumes /data/off.sav (empty =>
+# hibernate resume refused => boot-attract workload) and every anchored rig
+# measurement consumes slot0. On 2026-08-28 slot0 had silently become an
+# MD-era save (32X never started, 141187B md5 c824ddbe) and a block-trace run
+# measured a frankenstate for half a day before the cross-check caught it.
+# Both files are hashed before every bench and compared against the registry
+# below. Mismatch = REFUSE (a warning would teach people to ignore it).
+#
+# The slot0 registry below is deliberately the PENDING capture target, not
+# the invalid file currently on the card -- so every bench refuses until the
+# real 32X-active gameplay save is captured (user plays a little, saves
+# in-game; leader m4194) and its size+md5 are recorded here. off.sav's empty
+# state is the genuine expected value (empty => resume refused => the bench
+# measures boot-attract, which is what every fps number so far has measured).
+#
+# Escape hatch (emergencies only, prints a loud warning): ANCHOR_CHECK=0
+# ---------------------------------------------------------------------------
+verify_anchor() {
+  [ "${ANCHOR_CHECK:-1}" = "1" ] || { echo "[32x] ANCHOR GATE BYPASSED (ANCHOR_CHECK=0) -- numbers are not anchored, label them accordingly"; return 0; }
+  # NB: this file runs `set -euo pipefail`; every best-effort probe below is
+  # individually guarded so a flaky pull degrades into a REFUSE, never into a
+  # silent script death.
+  timeout 12 openocd -c 'adapter speed 4000' -f interface/stlink-dap.cfg \
+    -f target/stm32h7x.cfg -c init -c 'reset halt' -c shutdown >/dev/null 2>&1 || true
+  ssh "$HOST" "python3 -m gnwmanager sdpull '/data/32x/둠 (Doom).32x-0.sav' /tmp/anch0.bin" >/dev/null 2>&1 || true
+  ssh "$HOST" "python3 -m gnwmanager sdpull /data/off.sav /tmp/anchoff.bin" >/dev/null 2>&1 || true
+  scp -q "$HOST:/tmp/anch0.bin" /tmp/anch0.bin 2>/dev/null || true
+  scp -q "$HOST:/tmp/anchoff.bin" /tmp/anchoff.bin 2>/dev/null || true
+  timeout 12 openocd -c 'adapter speed 4000' -f interface/stlink-dap.cfg \
+    -f target/stm32h7x.cfg -c init -c 'reset run' -c shutdown >/dev/null 2>&1 || true
+  local bad=0 what esz emd5 path got_sz got_md5
+  for what in slot0 off.sav; do
+    case $what in
+      slot0)  esz=$ANCHOR_SLOT0_SIZE; emd5=$ANCHOR_SLOT0_MD5; path=/tmp/anch0.bin ;;
+      off.sav) esz=$ANCHOR_OFF_SIZE;  emd5=$ANCHOR_OFF_MD5;  path=/tmp/anchoff.bin ;;
+    esac
+    got_sz=$(stat -c%s "$path" 2>/dev/null || echo -1)
+    got_md5=$(md5sum "$path" 2>/dev/null | awk '{print $1}' || echo none)
+    if [ "$got_sz" != "$esz" ] || [ "$got_md5" != "$emd5" ]; then
+      echo "[32x] ANCHOR MISMATCH $what: device $got_sz B/$got_md5 != registry $esz B/$emd5 -- REFUSING" >&2
+      echo "[32x] anchor registry describes: $ANCHOR_DESC" >&2
+      bad=1
+    fi
+  done
+  [ $bad -eq 0 ] && echo "[32x] anchor verified: $ANCHOR_DESC" || exit 1
+}
+
+# Registry (update on anchor capture; description is one line, it travels with the numbers):
+ANCHOR_SLOT0_SIZE=678925                              # PENDING CAPTURE -- 32X-active gameplay save, user in-game save
+ANCHOR_SLOT0_MD5=PENDING-CAPTURE                      # PENDING CAPTURE -- record md5 when the save lands
+ANCHOR_OFF_SIZE=0
+ANCHOR_OFF_MD5=d41d8cd98f00b204e9800998ecf8427e       # empty => hibernate refused => boot-attract
+ANCHOR_DESC="PENDING: 32X-active gameplay save (target ~678925B v3); device currently holds INVALID MD-era 141187B"
+
 # drawn_ab.sh already falls back to Core/Src/porting/common.c's shared counters
 # when the SNES symbols are absent, which is exactly this core's case.
 cmd_bench() {
   local name=$1; local frames=${2:-900}
+  verify_anchor
   for i in 1 2 3; do bash tools/gnw_probe/drawn_ab.sh "$name" "$frames"; done
 }
 
