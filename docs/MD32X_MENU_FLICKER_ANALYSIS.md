@@ -61,3 +61,32 @@ static void md32x_repaint(void) {
 ```
 
 이 수정안을 통해 32X 코어를 편집 중인 세션에서 코드를 반영하면 기기 실기에서의 플리커링 버그가 해결될 것입니다.
+
+---
+
+## 2026-08-27 update: two flicker defects, one file
+
+**The menu ghosting described above is FIXED in-tree.** `md32x_repaint` now
+guards on `frozen != active` before clearing (see the comment at
+`main_md32x.c:546` — "overlay _repaint no longer pre-clears for
+NO_BG_DARKEN callers — the original 92425edd bug"). The first fix attempt
+(92425edd) was wrong; the current guard is the real one. This document's
+analysis of the mechanism stands; its "still broken" framing is stale.
+
+**A different defect shares the family name**: the in-game bottom-third banding
+users saw at 33 fps is a scanout race, not ghosting. Mechanism (measured):
+the panel lags software by one reload (ReloadEventCallback writes the shadow
+CFBAR of the just-finished buffer), so during frame k+1's write window the
+panel scans the same buffer the renderer writes. At 60 Hz the beam (63.5
+us/line) always outruns the writer (~98 us/line) — coherent. At 33 fps the
+render start walks the phase, and when writes begin before the latch the beam
+reads a half-overwritten frame: 1.10 races/frame measured, beam positions
+spread flat across the visible scan. The "black band" content is Doom's own
+dark pixels (status bar region) shown a frame stale — nothing writes black.
+
+Options measured end-to-end: wait-for-latch guard = races 0 (verified) but
+-26.2% fps; triple buffer = impossible, the pool is exactly two frames
+(307,200 B); **slowing the panel to 35 Hz flips the beam slower than the
+writer (119.4 us/line) for zero fps cost** (12-run sandwich identical) —
+pending the user's eye verdict. Race-counter instrumentation is knob-gated
+(`MD32X_SWAP_RACE_COUNT`), not in release builds.

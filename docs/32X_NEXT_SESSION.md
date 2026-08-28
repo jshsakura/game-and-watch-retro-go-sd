@@ -9,6 +9,28 @@ Everything below is measured on hardware unless it says otherwise.
 ---
 
 # NEXT SESSION — start here
+## 2026-08-28: the performance campaign is over — the queue is the release
+
+Every axis is measured shut. The dynarec re-trial (issue-bound addi verdict,
+then block-trace working set) closed on a hardware fact: hot set 872 blocks =
+117-234 KB translated vs ~21 KB executable. Full record in
+[32X_CLOSED.md](32X_CLOSED.md#2026-08-27-the-dynarec-re-trial-closes-on-a-hardware-fact-not-a-policy-argument).
+
+Remaining queue, in order:
+1. **User session (two asks)**: eye verdict on the 35 Hz panel (p35 arm on
+   device) — good ships the panel-rate fix, a drifting band tries p33, an
+   artifact reverts to p60; then a short gameplay session + one in-game save
+   for the gameplay-anchor fps measurement (every fps number published so far
+   is attract-mode).
+2. **Release** once the verdict lands and the soak clock is judged: soak +
+   save-state hardening (v3+CRC) + read-back/anchor/identity gates + BFAR/MMFAR
+   crumbs + RAM_EMU 12 KB recovery + panel-rate fix (if approved).
+3. Parked: alarm-wake investigation (user recall pending; commit A staged but
+   gated on a demonstrated wake), audring (22050+stretcher closed as
+   "not better", audio = dependent variable of speed).
+
+Note: every fps figure in this file written before 2026-08-27 is
+attract-mode. Gameplay historically runs ~70% of attract fps (0817 record).
 
 **Read [issue #45](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/45)
 first.** It is the public write-up of where Doom-on-32X stands, every axis closed by
@@ -31,6 +53,75 @@ checkout (`DIR=~/gnw2`) — `build/` is shared, and `--name` collisions are dock
 error 125.
 
 **The console stays with one owner.** Builds fan out; flashing and benching do not.
+
+### The card gate caught a chimera -- first wild accident prevented (2026-08-27)
+
+The race-counter sandwich died on CARD MISMATCH -> ABORT before its first bench
+run. The expected md5 was a chimera: a paste that took racec's 8-hex prefix onto
+soak7's tail. The gate did exactly what it exists for -- the flash had already
+happened, but the bench refused to run against a core that was not the arm it
+claimed to be. Without the gate, nine runs of numbers would have been labeled
+`racec` while the card held a different binary. This is the md5 verify's first
+field catch (its siblings: the intflash read-back gate, and the A/B
+byte-identity gate that REFUSES when two knob arms link identical). Rule:
+a checksum gate that only warns is a gate people learn to ignore; ABORT is the
+only posture that keeps numbers honest.
+
+## 2026-08-27b: the audio axis closes -- not unsafe, just not better
+
+User listening verdict on 22050+stretcher (aud4, modern tree): "the sound is
+really not good" -- and the user nailed the cause themselves: "the emulator is
+running at half speed". The code agrees (main_md32x.c:754 buffers audio at a
+nominal 60 fps while SAI consumes RATE/s continuously):
+
+    emulator ~33 fps x 735 samples ~= 24,000 samples/s  vs  hardware 44,100/s
+
+The missing ~45% is the hole; the hole is the sizzle. All three options hit the
+same wall: 44100 = hole, 22050+stretcher = stretched noise + 55% tempo, rate
+matched to throughput = pitch drop (underwater). This is a direct function of
+emulation speed, not an audio-code defect.
+
+- 22050+stretcher is closed NOT because of safety (that record was already
+  corrected on 0827) but because it is not better. And it cannot get better
+  for one reason that is not audio: at 55% real time there are no samples to
+  make.
+- audring is formally closed with it: that work's motivation was shipping the
+  stretcher, and the listening verdict rejected it.
+- ONE LINE KEPT OPEN, on purpose: audio is a dependent variable of speed.
+  If speed ever rises, audio improves by itself. When someone says "let's
+  improve the audio," this line saves a day.
+
+Footnote (aud4 field run): the arm crash-looped on device -- boot, ~8 emulator
+frames (audio start), hang, WWDG EWI (crumb DR3=2), WWDG reset, repeat. Halt PC
+landed in the OFW/bootloader chain (not aud4 code). Deterministic on that arm;
+moot with the axis closed. Arm withdrawn; device restored to ship config.
+\n## 2026-08-26h: the STOP2 alarm premise flipped -- field testimony beats our harness
+
+Direct user confirmation: the alarm HAS rung on this device, and the user
+puts it to sleep with the power button -- the STOP2 path. So STOP2 alarm
+wake worked in the field at some point. The earlier framing "an old
+defect, not our regression" is RETRACTED: the verdict is now UNDETERMINED
+with regression as the first hypothesis. The question changed from "why
+does it not work" to "when did it stop working".
+
+Rule, standing: a user's field testimony is a wider sample than our
+harness. When the harness says "it never worked" and the user says "it
+did", the first suspects are our harness and our own recent changes --
+not the user's memory. (Same family as the contamination rules: the
+instrument is the first thing to distrust.)
+
+The committed sleep-path delta between the pre-suspect baseline
+(e5ac3842) and every stop2v* test arm is exactly two commits:
+5f996bac (charger poll leaves interrupt context) and af97774f (STOP2
+entry now calls bq24072_adc_sleep() first, plus the WWDG re-read).
+bq24072_interrupts_disable() is two GPIO DeInits on pins 0-15 -- it
+cannot touch EXTI line 17; 93573879 (sleep timer) is three HAL_TIM
+lines, likewise unrelated. Code reading narrows the suspects to the two
+recent stability commits; the decisive experiment is the baseline arm:
+e5ac3842 + the AUTOSLEEP measurement knob and NOTHING else backported.
+If it wakes in our harness -> regression confirmed, bisect the two. If
+it does not -> our harness differs from field usage and (A)/(B)
+(D3PMR1 / plain DStop) come back into play.
 
 ## 2026-08-26g: which probes survive a BSS shift -- and the rule that makes the rest fail loudly
 
@@ -79,6 +170,14 @@ time; this note supersedes it. Freezing would require programming the
 byte to 0, which remains forbidden (brick risk). The withdrawal
 conclusion is unchanged: with freeze unreachable, a boot-armed IWDG
 cannot ship alongside game-sleep.
+
+Character of the finding (follow-up to the follow-up): this is NOT "the
+silicon ignores the option" (a dead end). It is "programming bit17=0
+would freeze it, and that benefit is not worth the option-byte risk."
+Family rule + HAL symbol agreement are strong circumstantial evidence,
+not a primary source; the RM0455 datasheet line stays open as a
+zero-device task. Option-byte programming remains prohibited either way.
+
 6effe430 reverts the arming; WWDG stays (windowed, verified-to-arm,
 silent in STOP2).
 

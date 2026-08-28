@@ -329,6 +329,48 @@ hand-tuned C interpreter) is msh2 −47% → frame −34% → **fps ×1.5**, and
 the ceiling of that approach. Below 45 you have to stop interpreting, which
 means a dynarec — and there is no room for one (see the ledger).
 
+## 2026-08-27: the dynarec re-trial closes on a hardware fact, not a policy argument
+
+Re-opened honestly and closed harder. The addi experiment (adding one host ALU
+instruction per guest instruction costs 0.84-1.03 cycles — issue-bound, dual
+issue absorbs only partially) said removing ~55 interpreter insns/guest-insn
+could buy 1.4-2.2x **if the translated code fit the machine**. Phase-0 (memory
+audit) and phase-0.5 (block trace of the real workload: 6.96M block runs, 540
+frames, attract-class provisional sample) answered the if:
+
+    hot working set   872 blocks x 17.2 insn = 14,998 guest insns
+    translated        @ 8B/insn = 117 KB    @12B = 176 KB    @16B = 234 KB
+    executable memory the device can offer:
+                      ITCM free 3.2 KB + Cz80_Exec eviction 17.5 KB ~= 21 KB
+    -> shortfall      5.6x to 11.2x. No byte-per-insn estimate changes the verdict.
+
+Even 90% coverage alone (179 blocks) is 36 KB. What fits in 21 KB is ~104
+blocks — between the 50% point (36) and the 90% point (179). And no cache
+policy rescues it: the pressure is **hot-vs-hot, not cold-tail-vs-hot** — the
+remaining 10% of executions (~700k runs) spreads over ~1,500 blocks at ~460
+runs each, so every threshold (K=8/32/128) admits them all (ever_hot
+1242/995/872) and retranslation stays at 167-592/frame across every K and N
+measured. The distribution is smooth, not bimodal; the 90% CDF hid it.
+
+Three times wrong on this axis, kept on purpose: (1) "no memory, impossible"
+(the 2026-07-27 row below — its 256-512KB framing missed ITCM and the Cz80
+eviction lever, both real); (2) "the payoff is a 42fps ceiling" (extrapolating
+a 13%-removal result to 90% removal); (3) "issue-bound, so it works" (correct,
+addi — but nobody asked whether the lever FITS the machine). **Lesson: "how
+much does this lever earn" and "does this lever fit this machine" are separate
+questions; answer both before an axis opens or closes.**
+
+Preserved from the re-trial: the addi verdict stands independent of the
+closure — **on this machine, instruction count genuinely is time.** It is the
+working basis for any future interpreter optimization. Also preserved, trap 65:
+*an execution-weighted CDF underestimates the working set* — ask a cache
+simulation, not a CDF. And the honest VB note: red-viper's V810 dynarec is
+gated off in the same family, but its working set was never measured —
+re-measure the same way, do not copy this conclusion.
+
+Provenance: /tmp/gnw_bench_results.txt [BLOCK TRACE PROVISIONAL R2] and
+[DRC PHASE-0 REDO]; blk_sim.py; compiler.c calloc audit.
+
 ## Ledger of closed axes — all closed by measurement, not by opinion
 
 Two of these were built, measured and reverted. None was rejected on a hunch.
@@ -338,7 +380,7 @@ Two of these were built, measured and reverted. None was rejected on a hunch.
 | Write path (every SH-2 store is an indirect call) | Read handlers + write tabs together are **1.1%** of msh2's wall, 15-20 cyc/call | ledger probe, since deleted; numbers kept in `pico/32x/memory.c` |
 | Inlining guest data loads | Checksums identical, **host instructions +3.6%** — rejected on the rig, never shipped | `tools/m7_qemu_rig/run_32x.sh` |
 | External-flash (XIP) latency | Opcode fetch is **10.3-10.4 cycles**, ~11% of the wall, and *identical across two very different scenes*. The D-cache absorbs it, so caching ROM in RAM was never the answer | fetch probe, `cpu/sh2/mame/sh2pico.c` |
-| **A dynarec** | RAM_EMU is 692.5 KB of which **656 KB is the emulated console's own memory** (32X SDRAM 256 K + DRAM framebuffers 2×128 K + Genesis 68K RAM/VRAM 136 K). A translation cache needs 256-512 KB. **There is nowhere to put it** | enumerated from `build/gw_retro_go.map` |
+| **A dynarec** | RAM_EMU is 692.5 KB of which **656 KB is the emulated console's own memory** (32X SDRAM 256 K + DRAM framebuffers 2×128 K + Genesis 68K RAM/VRAM 136 K). A translation cache needs 256-512 KB. **There is nowhere to put it** — *re-tried 2026-08-27 and re-closed harder: even an 18.4 KB tcache fails, because the hot working set (872 blocks) translates to 117-234 KB against 21 KB of executable memory. See the 2026-08-27 section above* | enumerated from `build/gw_retro_go.map`; re-trial above |
 | Code placement (ITCM) | Already spent — the whole interpreter TU has been in ITCM since the +30% move | `STM32H7B0VBTx_SDCARD.ld`, `.overlay_md32x_itc` |
 | State placement (DTCM) | SH-2 register file moved to DTCM: **94.0 → 92.1** cycles/insn, inside scene noise; per-event costs flat. Reverted — it also charged 12 KB of the shared DTCM heap | picodrive `1c78adf8` → `d4317e53` |
 | QEMU access census | QEMU models no cache, so it can count accesses but never price them — which was the question | `RIG_MEM_MIX` in `rig_32x.c`, left in place, documented as impractical |
@@ -360,6 +402,10 @@ Two of these were built, measured and reverted. None was rejected on a hunch.
 | Compositor copies (`do_line_pp` expanded eight times) | **Where this core's headroom actually went.** Six `make_do_loop` variants plus two expansions in `FinalizeLine32xRGB555`, every copy landing in RAM_EMU because the linker script pins `PicoDraw32xLayer`/`PicoDraw32xLayerMdOnly`/`FinalizeLine32xRGB555` there. So the "2,604 bytes" of solid-run detector and "592" of octa were about a hundred bytes each, times eight. The variants differ in one thing -- what to write where the MD layer is not background, three forms -- so it is an `md_mode` parameter now. **Free 44 B -> 1,516 B, `32x.bin` 45,833 -> 44,361 with the octa path back on** (which costs 160 B instead of 592, there being one copy). Device **+0.69%** (`ppo1` 26.343 avg vs same-session `idl2` control 26.163), hashes bit-identical. `.text.gnw_line_pp` must be named in the linker script or the compositor falls into `MD32X_CODE`. Verify the fold by the ELF symbol gap: `FinalizeLine32xRGB555`->`PicoDraw32xLayer` went `0xFF4` -> `0x2E4` | picodrive `011f8c5c`, `6a997eb4`; arm `ppo1` |
 
 ### The cost model that closes it
+
+(Superseded 2026-08-27 by the issue-bound accounting — addi: ~0.9 cyc per host
+instruction, fetch 10.4 + reads 12.3 + writes 4 + dispatch ~8 of ~92 cyc/insn.
+Kept for the per-event numbers, which remain scene-stable.)
 
 Per dispatched msh2 instruction (94.0 cycles, profiler build):
 
