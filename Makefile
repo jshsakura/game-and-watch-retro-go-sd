@@ -1229,7 +1229,7 @@ endif
 # stock and passed a 30-min soak, while 340/97 was never shipped. A release
 # build must not have to remember a command-line var to get the soak-proven
 # clocks -- that is how coverflow shipped without coverflow.
-GNW_OC2_PLLQ ?= 6
+GNW_OC2_PLLQ ?= 7
 ifneq ($(GNW_OC2_PLLQ),)
 C_DEFS += -DGNW_OC2_PLLQ=$(GNW_OC2_PLLQ)
 endif
@@ -1614,6 +1614,27 @@ ifneq ($(GNW_AUTOSAVE_FRAME),0)
 MD32X_C_DEFS += -DGNW_AUTOSAVE_FRAME=$(GNW_AUTOSAVE_FRAME)
 endif
 
+# Measurement-only: enter STOP2 through the user sleep path at frame N
+# (STOP2 alarm-wake test). Never in a shipping build.
+GNW_AUTOSLEEP_FRAME ?= 0
+ifneq ($(GNW_AUTOSLEEP_FRAME),0)
+MD32X_C_DEFS += -DGNW_AUTOSLEEP_FRAME=$(GNW_AUTOSLEEP_FRAME)
+endif
+
+# Experiment (B): clear RETDS_CD so HAL STOP2 becomes plain DStop. gw_sleep.c
+# is main-firmware, so this must ride C_DEFS (MD32X_C_DEFS never reaches it).
+GNW_STOP2_PLAIN ?= 0
+ifneq ($(GNW_STOP2_PLAIN),0)
+C_DEFS += -DGNW_STOP2_PLAIN
+endif
+
+# One host instruction, priced by addition (leader m3990): 1=addi8, 2=addi16,
+# 3=addd8 (dependency chain). Instrumentation only -- never ship nonzero.
+MD32X_ADDI ?= 0
+ifneq ($(MD32X_ADDI),0)
+MD32X_C_DEFS += -DMD32X_ADDI=$(MD32X_ADDI)
+endif
+
 # Sound renders per output sample on this core (FM, PSG, PWM, mixer), so the
 # audio rate is a direct multiplier on the whole sound bucket. 22050 halves
 # that bucket for +2.00% measured (2026-08-24, ar22k sandwich) -- but it
@@ -1621,6 +1642,28 @@ endif
 # without the stretcher the user heard crackle at 22050, and the stretcher
 # is parked in audring with an unresolved intermittent freeze. When audring
 # lands, raise 22050 AND the stretcher TOGETHER -- never 22050 alone.
+# Flicker ablation: wait for the LTDC latch before rendering into the
+# released front buffer (see main_md32x.c). Ablation-priced, not shipped.
+MD32X_SWAP_GUARD ?= 0
+ifeq ($(MD32X_SWAP_GUARD),1)
+MD32X_C_DEFS += -DMD32X_SWAP_GUARD
+endif
+
+# Observation-only counter for the LCD swap race (m3806). Never ships.
+MD32X_SWAP_RACE_COUNT ?= 0
+
+# Slow-beam experiment: panel refresh override for the 32X core ONLY.
+# 35 = N7/R32, 33 = N5/R24 (see gw_lcd.c). Pacing/audio untouched.
+MD32X_PANEL_HZ ?= 0
+ifeq ($(MD32X_PANEL_HZ),0)
+PANEL_HZ_DEF :=
+else
+PANEL_HZ_DEF := -DMD32X_PANEL_HZ=$(MD32X_PANEL_HZ)
+endif
+ifeq ($(MD32X_SWAP_RACE_COUNT),1)
+MD32X_C_DEFS += -DMD32X_SWAP_RACE_COUNT $(PANEL_HZ_DEF)
+C_DEFS += -DMD32X_SWAP_RACE_COUNT
+endif
 MD32X_AUDIO_RATE_OVERRIDE ?= 0
 ifneq ($(MD32X_AUDIO_RATE_OVERRIDE),0)
 MD32X_C_DEFS += -DMD32X_AUDIO_RATE_OVERRIDE=$(MD32X_AUDIO_RATE_OVERRIDE)
