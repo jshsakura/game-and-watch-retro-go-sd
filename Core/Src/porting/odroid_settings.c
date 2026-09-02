@@ -624,6 +624,19 @@ void odroid_settings_SpriteLimit_set(int32_t value)
     persistent_config_ram.app[odroid_system_get_app()->id].sprite_limit = value;
 }
 
+// The 32X screen-tear guard borrows the per-app slot's sprite_limit field: the 32X
+// core never reads sprite_limit, so on 32X the field is free storage, and old
+// config files already carry 0 there -- exactly the guard's default (off). No
+// struct growth, no version bump, existing /CONFIG loads unchanged.
+int32_t odroid_settings_ScreenTearFix_get()
+{
+    return persistent_config_ram.app[odroid_system_get_app()->id].sprite_limit;
+}
+void odroid_settings_ScreenTearFix_set(int32_t value)
+{
+    persistent_config_ram.app[odroid_system_get_app()->id].sprite_limit = value;
+}
+
 
 ODROID_REGION odroid_settings_Region_get()
 {

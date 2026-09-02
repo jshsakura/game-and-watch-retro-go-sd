@@ -356,6 +356,7 @@ typedef struct
     const char *s_Cover_Style;         // launcher options row: cover rendering style
     const char *s_Cover_Style_Poster;  // cover style value: native aspect (default)
     const char *s_Cover_Style_Square;  // cover style value: square tile, center-crop filled
+    const char *s_ScreenTearFix;  // 32X: wait for the scanout latch before rendering
     //=====================================================================
 
     const int (*fmt_Title_Date_Format)(char *outstr, const char *datefmt, uint16_t day, uint16_t month, const char *weekday, uint16_t hour, uint16_t minutes, uint16_t seconds);

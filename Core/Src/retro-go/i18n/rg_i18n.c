@@ -550,7 +550,7 @@ static const lang_metadata_t lang_metadata[] = {
  * after the fmt pointers this fails the build instead of shipping an
  * English-only firmware. (Update this to the new last field whenever one is
  * appended.) */
-_Static_assert(offsetof(lang_t, s_Cover_Style_Square) < offsetof(lang_t, fmt_Title_Date_Format),
+_Static_assert(offsetof(lang_t, s_ScreenTearFix) < offsetof(lang_t, fmt_Title_Date_Format),
                "lang_t s_XXX fields must precede the fmt_* function pointers");
 
 static lang_t  lang_active;

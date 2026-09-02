@@ -246,6 +246,7 @@ const lang_t lang_en_us LANG_DATA = {
     .s_Cover_Style = "Cover style",
     .s_Cover_Style_Poster = "Poster",
     .s_Cover_Style_Square = "Square",
+    .s_ScreenTearFix = "Screen tearing fix",
     .s_Caching_Game = "Caching game file",
     .s_Loading_Banner = "Loading",
     .s_Pause_Banner = "PAUSE",

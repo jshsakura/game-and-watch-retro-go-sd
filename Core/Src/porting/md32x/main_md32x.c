@@ -34,7 +34,8 @@
 #include "gw_malloc.h"
 #include "rg_storage.h"
 #include "odroid_overlay.h"
-#include "gw_flash_alloc.h"   /* odroid_overlay_cache_file_in_flash_relocate */
+#include "gw_flash_alloc.h"
+#include "rg_i18n.h"   /* curr_lang -- ScreenTearFix option label (guard runtime option) */   /* odroid_overlay_cache_file_in_flash_relocate */
 #include "appid.h"
 #include "main_md32x.h"
 #include "md32x_border_clear.h"
@@ -637,6 +638,28 @@ static void diag_log(const char *fmt, ...) {
 static const uint8_t *md32x_rom;
 static uint32_t md32x_rom_len;
 
+// Runtime screen-tear guard (menu option, leader-approved). The wait call is
+// compiled unconditionally; the setting only chooses whether it engages.
+// Declarations stay here instead of the odroid_settings.h submodule header on
+// purpose: this port keeps its settings glue in main-tree sources only.
+extern int32_t odroid_settings_ScreenTearFix_get();
+extern void odroid_settings_ScreenTearFix_set(int32_t value);
+extern void odroid_settings_commit(void);
+static short md32x_guard_enabled = 0;
+static char md32x_guard_str[2];
+static bool md32x_submenu_screentear(odroid_dialog_choice_t *option,
+    odroid_dialog_event_t event, uint32_t repeat)
+{
+  if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
+    md32x_guard_enabled = md32x_guard_enabled == 0 ? 1 : 0;
+    odroid_settings_ScreenTearFix_set(md32x_guard_enabled);
+    odroid_settings_commit();  // persist across reboots (crc recomputed)
+  }
+  if (md32x_guard_enabled == 0) strcpy(option->value, curr_lang->s_Option_OFF);
+  if (md32x_guard_enabled == 1) strcpy(option->value, curr_lang->s_Option_ON);
+  return event == ODROID_DIALOG_ENTER;
+}
+
 void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
   /* The guest-RAM firewall. Every runaway this core has produced (three
@@ -687,7 +710,12 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   }
 
   odroid_gamepad_state_t joystick;
-  odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
+  odroid_dialog_choice_t options[] = {
+      {300, curr_lang->s_ScreenTearFix, md32x_guard_str, 1, &md32x_submenu_screentear},
+      ODROID_DIALOG_CHOICE_LAST };
+  md32x_guard_enabled = odroid_settings_ScreenTearFix_get() != 0;
+  if (md32x_guard_enabled) strcpy(md32x_guard_str, curr_lang->s_Option_ON);
+  else strcpy(md32x_guard_str, curr_lang->s_Option_OFF);
 
   if (start_paused) {
     common_emu_state.pause_after_frames = 2;
@@ -1044,7 +1072,10 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     PicoIn.pad[0] = read_md_pad(&joystick);
 
-    if (drawFrame) set_out_buffer();
+    if (drawFrame) {
+      if (md32x_guard_enabled) lcd_sleep_while_swap_pending();
+      set_out_buffer();
+    }
     /* skip_frame tells picodrive to run emulation but not rasterize */
     PicoIn.skipFrame = drawFrame ? 0 : 1;
 

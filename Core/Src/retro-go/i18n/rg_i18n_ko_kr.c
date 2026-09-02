@@ -250,6 +250,7 @@ const lang_t lang_ko_kr LANG_DATA = {
     .s_Cover_Style = "커버 스타일",
     .s_Cover_Style_Poster = "포스터",
     .s_Cover_Style_Square = "사각",
+    .s_ScreenTearFix = "화면 티어링 수정",
     .s_Caching_Game = "게임 캐싱 중 (첫 실행만 느림)",
     .s_Loading_Banner = "로딩 중",
     .s_Pause_Banner = "일시정지",
