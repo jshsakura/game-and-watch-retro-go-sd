@@ -69,6 +69,8 @@ configuration — it's not part of the firmware you flash.)
 | **game.com** | Tiger | 🧪 Lab | plays the library; 4-action pad mapped onto G&W buttons |
 | **Odyssey² / Videopac** | O2EM | 🧪 Lab (enabled) | raw-ROM path fixed; save/load/resume; multi-game cart select |
 | **Super Metroid** | snesrev/sm port | 🧪 Lab | native C reimplementation, 60 fps, savestates. [Details](#super-metroid) |
+| **Super Nintendo** | LakeSnes | 🧪 Lab | `.sfc .smc .fig .swc`. Speed varies a lot by title; DSP-1 (Mario Kart) and Cx4 (Mega Man X2/X3) run through clean-room HLE. [Details](#super-nintendo) |
+| **Sega 32X** | picodrive | 🧪 Lab | ⚠️ **experimental and well under full speed.** Doom lands around 24 fps in gameplay. [Details](#sega-32x) |
 | Tamagotchi | TamaLib | Upstream (P2 🧪) | P1 upstream; P2 experimental in this fork |
 | NES, Game Boy / Color, Master System, Game Gear, Genesis, SG-1000 | fceumm / gnuboy / smsplusgx / gwenesis | Upstream | see upstream docs |
 | MSX 1/2/2+, Amstrad CPC6128 | blueMSX / caprice32 | Upstream | preview-quality; see upstream docs |
@@ -140,6 +142,8 @@ so nothing copyrighted ships.
 | **Idle auto-sleep** | an untouched game sleeps the device instead of draining the battery |
 | **Sleep recovery** | SD file handles (music, video, PCE-CD) self-heal after the card is power-cycled by sleep |
 | **Boot-loop rescue** | watchdog armed from the first line of `main()`; two consecutive failed boots stop the third at a **rescue screen** (boot-to-menu / normal boot / power off) *before* SD, config or auto-resume are touched. POWER on the crash screen really powers off. `TIME` at power-on still skips auto-resume |
+| **Savestate validation** | savestate files carry a magic, a version and a length, and a build refuses to load a file it did not write. A savestate is a raw dump of live structs, so an accepted-but-wrong file used to restore nonsense silently: a black screen with the sound still running |
+| **Stability fixes** | a battery poll running inside a priority-0 timer interrupt could stall `HAL_GetTick` and deadlock any core permanently; the watchdog could report success without actually being enabled; sleep left the ADC powered. All three fixed |
 
 ### Korean text in the homebrew games
 
@@ -236,6 +240,49 @@ measurements. Real drain depends on backlight, core and workload.*
 
 ## Notes for specific systems
 
+### Sega 32X
+
+The core is picodrive. It runs, it renders, and it is **not full speed**, so treat it as an
+experiment rather than a system you sit down to play.
+
+Doom is the title this fork measured, and it lands around **24 fps in gameplay** (the
+attract demo reads higher, near 33, which is why the two numbers must never be quoted
+interchangeably). That is after a long optimisation campaign, and the remaining distance is
+arithmetic rather than effort: the master SH-2 alone is **68% of a frame**, so zeroing every
+other chip in the machine still does not buy 2x. Going faster means abandoning interpretation
+for a recompiler, and a translation cache does not fit in the memory this MCU can execute
+from. The reasoning, with the measurements behind it, is in
+[docs/32X_CLOSED.md](docs/32X_CLOSED.md).
+
+What has **not** been measured is the 2D half of the library. Everything benchmarked here
+(Doom, After Burner) is SH-2 software 3D, the heaviest class there is. Titles that use the
+32X mostly for colour and sprites (Knuckles' Chaotix, Mortal Kombat II, NBA Jam TE) were
+never timed, so "the core is too slow" is currently only proven for 3D.
+
+**Screen tearing fix** (`PAUSE → Options`, default off) trades frame rate for a cleaner
+picture on this core. A faint disturbance along the bottom of the screen predates it and is
+not fully removed by it.
+
+### Super Nintendo
+
+A generic SNES core (LakeSnes) alongside the two native homebrew ports. It accepts
+`.sfc .smc .fig .swc` from `/roms/snes`.
+
+Speed is very title-dependent and is governed by audio pacing rather than raw emulation
+speed, so a "fps" number from one game predicts very little about another. Mega Man X2 sits
+around 52 fps; heavier scenes in other titles drop well below that.
+
+Two special chips are implemented as **clean-room HLE**, written from public documentation
+rather than ported from another emulator:
+
+| Chip | Titles | Note |
+| --- | --- | --- |
+| **DSP-1** | Super Mario Kart, Pilotwings | projection maths reimplemented; Pilotwings is not fully verified |
+| **Cx4** | Mega Man X2 / X3 | six guest-controlled writes that escaped their buffers were found and fixed here |
+
+The N-SPC sound HLE is present but **off by default and should stay off**: it breaks audio in
+38% of the titles that use that engine.
+
 ### PC Engine CD / TurboGrafx-CD
 
 PC Engine CD support is currently **beta** and available on **SD-card builds only** (not on flash-only builds).
@@ -300,6 +347,17 @@ one — prepares the assets this firmware uses:
 It's a separate web app, **configured through its own env variables**, and the asset-generation
 scripts here read from it (defaulting to the `../game-and-what` sibling folder). It exists to
 feed this fork; you don't need it to *use* the firmware, only to make new assets.
+
+---
+
+## Known issues
+
+- **An alarm does not wake a sleeping device.** Setting an alarm and letting the device go
+  to sleep will not ring it; the alarm is delivered when the device is next woken by hand.
+  The RTC flag is cleared on arming but the interrupt line's own latch is not, so no edge is
+  produced to wake from STOP2. Alarms behave correctly while the device is awake.
+- **Sega 32X is not full speed.** See [Sega 32X](#sega-32x).
+- **Virtual Boy runs at roughly 65-70% speed** even with the automatic overclock.
 
 ---
 
