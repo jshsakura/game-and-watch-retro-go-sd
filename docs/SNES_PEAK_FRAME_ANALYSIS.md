@@ -434,7 +434,10 @@ SMW projection (p50=62.9fps) was 4fps above the real device (59fps), and the
 entire gap lived in firmware-only code. **The device SWD PC-sampling profiler
 (`tools/gnw_probe/`) is now the authority for performance judgment.**
 
-Heavy-scene SMW gameplay, 800 SWD samples:
+Heavy-scene SMW gameplay, 800 SWD samples. The `%` column is the share of those samples,
+i.e. share of wall-clock time spent in that function, read over the debug port while the
+game ran normally. Sampling is statistical, so with 800 samples a one-point difference is
+inside the noise and only the ordering of the top few entries is solid.
 
 | Function | % |
 |----------|---|

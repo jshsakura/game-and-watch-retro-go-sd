@@ -1025,7 +1025,10 @@ took a UsageFault at `app_main_sm+0x2a`. Push the package the matching build
 produced and it boots first try. `arm.sh` keeps and pushes them per arm now, and
 `PUSH_CORE=<name>` does the same for any core's `cores/*.bin`.
 
-Its first profile, 900 samples, 60.70 emulated / 40.80 drawn:
+Its first profile, 900 samples, 60.70 emulated / 40.80 drawn. `share` is the percentage of
+PC samples that landed in that function, which is its share of **wall-clock time**, not of
+calls: a function that is entered rarely but stays a long time ranks high here, and that is
+the ranking an optimisation should follow.
 
 | | share |
 |---|---|

@@ -43,6 +43,13 @@ replayed belong to that engine.
 
 ### Survey — 2,075 cartridges
 
+**Table: how many cartridges the wait-loop recognizer matches.** A static scan over 2,075
+cartridges; each is classified once. `NO_MATCH` is the desired outcome for a cartridge the
+optimisation does not apply to, and it is free: the recognizer runs at load time only, so a
+non-match costs nothing at run time. `OK` means a loop was installed and that cartridge gets
+the speed-up. The point of the table is the ratio, since a recognizer that fires on 20% of a
+library is worth shipping only if the 80% it ignores pays nothing.
+
 | | ROMs | |
 |---|---:|---|
 | scanned | 2,075 | |

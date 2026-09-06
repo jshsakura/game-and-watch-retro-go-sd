@@ -68,6 +68,13 @@ includes this dead padding.
 
 ### Top resident `.rodata` consumers
 
+**Table: the largest read-only data in internal flash, in bytes, from the linker map.**
+Internal flash is the one budget that cannot be spilled to the card, so every byte here is
+paid by every build regardless of which core runs. The circled marks in `Note` are the
+disposition codes defined below the table. Beware the first row: the linker merges string
+literals into one pool and attributes it to whichever object it saw first, so the object
+name there is an artefact of link order rather than the code responsible.
+
 | Object / symbol | Bytes | Note |
 |---|---:|---|
 | merged string-literal pool (misattributed to `lz4_depack.o` by the linker) | 13,976 | **Not** lz4-specific — this is every deduplicated format/log/path string in the resident image, coalesced by `-fmerge-all-constants`. Real content, hard to shrink without editing individual strings. |

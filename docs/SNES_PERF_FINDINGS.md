@@ -54,6 +54,14 @@ Profile data captured on hardware (profile2, auto-OC to 312 MHz):
 
 ### Per-frame budget decomposition
 
+**Table: where one frame's time goes, in Cortex-M7 cycles.** Measured on the device with the
+core clock at 312 MHz, so the frame total and the fps are two views of the same number:
+312 M cycles per second divided by 37.9 frames per second is ~8.23 M cycles per frame. The
+`Source` column names the profiler bucket each row was read from, so a row can be
+re-measured rather than trusted. The last row is not measured directly but derived as the
+remainder, which is why it carries a `~`: it is everything the profiler does not wrap,
+including the LCD blit and the wait for vsync.
+
 | Component | cyc/frame | Source |
 |-----------|-----------|--------|
 | Emulation (65816 + PPU + DMA) | 6,446,520 | `emu_skip` |
@@ -320,6 +328,13 @@ analysis.
 
 ### Sound driver distribution
 
+**Table: which audio engine each cartridge uses, over the ROMs that boot.** Counts come from
+a static scan of a 2,280-ROM library; `% of OK` is the share of the 2,097 that boot, not of
+the whole library, so the column does not reach 100% because unidentified engines are not
+listed. This table exists to size an HLE decision: an engine is only worth replacing if it
+covers enough cartridges to pay for the risk, and Akao at ~40% is the only one that clearly
+does.
+
 | Driver family | ROM count | % of OK | Notes |
 |---------------|-----------|---------|-------|
 | **Akao** | 835 | 39.8% | Square, many JRPGs — largest family |
@@ -355,6 +370,11 @@ Zelda (OFF); expanding coverage requires per-ROM 1200-frame skip% measurement.
 
 ### `external/sm/` submodule
 
+**Table: what changed, in the emulator core submodule.** These are not proposals; every row
+shipped and the `Commit` column is the hash in `external/sm`, not in the firmware repo, so
+look them up there. Rows marked **NEW** created a file. A row saying "reverted" means the
+change was made, measured, and taken back out, and it is listed anyway so nobody rebuilds it.
+
 | File | Change | Commit |
 |------|--------|--------|
 | `src/snes/spin_skip.c` | Whitelist table + `spin_whitelist_set()` + profitability gate reverted | `23cde9d`, `283d3a7` |
@@ -364,6 +384,11 @@ Zelda (OFF); expanding coverage requires per-ROM 1200-frame skip% measurement.
 | `src/snes/rc_dispatch.h` | **NEW** — dispatch API (`g_rc_active`, `rc_dispatch_*`) | `6718ad7` |
 
 ### Top-level
+
+**Table: what changed, in the firmware repository itself.** Same reading as the table above,
+but these commit hashes are in the firmware repo. The linker-script and Makefile rows are the
+ones that make the feature exist at all: without the section, the extraction rule and the
+sdpush line, the compiled code has nowhere to live on the card.
 
 | File | Change | Commit |
 |------|--------|--------|

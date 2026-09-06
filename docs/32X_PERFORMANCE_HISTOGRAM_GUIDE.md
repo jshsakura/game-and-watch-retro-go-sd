@@ -455,10 +455,24 @@ Create `docs/32X_PERFORMANCE_RESULTS.md`. For each experiment use:
 
 ### Hot paths
 
+**Template, to be filled per run.** One row per hot address found. `share` is that address's
+percentage of dispatched guest instructions, so the column should sum to something near 100%
+once the tail is folded in. `loop classification` is what kind of wait it is, because that
+decides whether it can be folded at all: a poll on a register another chip writes can be
+skipped, a compute loop cannot. `safety notes` records what would break if the fold were
+wrong, and a row with that cell empty is not ready to act on.
+
 | core | PC/opcode | share | loop classification | safety notes |
 |---|---|---:|---|---|
 
 ### Device DWT
+
+**Template, to be filled per run.** Cycles counted by the Cortex-M7 DWT on real hardware, so
+these are device cycles and are not comparable with the rig's host-instruction counts above.
+Percentiles rather than a mean because the thing that hurts is the slow frame, not the
+average one: p50 moving while p99 does not is a different result from the reverse.
+`over-budget frames` is how many exceeded the frame deadline, which is the number a player
+actually feels.
 
 | metric | baseline cycles | candidate cycles | delta |
 |---|---:|---:|---:|

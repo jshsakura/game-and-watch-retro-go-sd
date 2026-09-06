@@ -89,6 +89,12 @@ normal play rather than on a title screen.
 
 ### BIOS files the added systems expect
 
+These files are **not shipped** and never will be; they are copyrighted and you must supply
+your own. The path column is where on the SD card each one goes, and the filename has to
+match exactly, lowercase included, because the loader opens it by name rather than searching.
+A system whose BIOS is missing shows its ROM list normally and fails when you launch a game,
+which is the confusing failure this table exists to prevent.
+
 | System | SD path | Files |
 | --- | --- | --- |
 | PC Engine CD | `/bios/pce/` | `syscard3.pce` (Super CD-ROM² System Card 3.0; `syscard3.bin` also accepted) |

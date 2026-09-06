@@ -26,6 +26,12 @@ count.
 
 ## Measured effect (docker release build, canonical flag set)
 
+**Table: free memory in each pool, in bytes, before and after the merge.** Read from the
+linker map of a Docker release build with the canonical flag set, so both columns are the
+same build recipe with only the merge between them. Positive Δ means more memory available
+to cores. These are budgets, not usage: DTCM heap is what the shared allocator can hand out,
+and it is the pool a core competes with the launcher for.
+
 | Budget | Before | After | Δ |
 |---|---:|---:|---:|
 | DTCM heap | 82,944 | 91,836 | **+8,892** |

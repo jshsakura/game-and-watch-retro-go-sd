@@ -275,6 +275,42 @@ and un-mutes the renderer.
   committed here (non-commercial licence vs this tree's GPLv2). Set
   `CX4_ORACLE` and diff the command stream by hand to redo it.
 
+### `tools/dsp1_harness` — the DSP-1 HLE with the device's own trapping rules
+
+- `dsp1_run.sh` — compiles `external/sm/src/snes/dsp1_hle.c` itself, with
+  `-DTARGET_GNW` so the host build sees the device's compile-time reality, then
+  runs it under `-fsanitize=address,alignment`. The alignment sanitizer is there
+  to make an x86 or aarch64 host fail on the 64-bit misaligned accesses that
+  only ARM's `LDRD`/`STRD` trap on. Same pattern as
+  `tools/sm_harness/device_run.sh`, which caught a real device fault this way.
+- What it proves: the command sweep completes, stays inside its buffers, and
+  makes progress.
+- **Three failure modes, all first-class FAILs**, and the third is the one that
+  matters: a sanitizer report, a nonzero exit, or a **timeout**. The
+  `cmd_inverse` infinite loop was caught only by the timeout, with zero
+  sanitizer output. Silence plus no progress is a bug signature here, never an
+  infrastructure hiccup.
+- **What it does NOT prove**: anything about the device link. Overlay-layout
+  faults (the `atan` / `.overlay_nes_fceu` busfault) exist only there. Before
+  swapping any libm call in `dsp1_hle.c`, grep `STM32H7B0VBTx_SDCARD.ld` for the
+  `libm_a-` capture rules.
+
+### `tools/snes_thumb2_rig` — the hand-written 65816 against the C oracle
+
+- `run.sh` — assembles the real `external/sm/src/snes/thumb2/snes_thumb2.S` and
+  links it against the real `cpu.c`, which serves as the oracle, then runs both
+  under QEMU `mps2-an500` as Cortex-M7. It compiles the production sources, not
+  copies, and builds with the device's defines
+  (`-DSNES_THUMB2_CPU -DSNES_SPIN_SKIP -DTARGET_GNW`).
+- What it proves: the Thumb-2 fast path agrees with the C interpreter
+  byte-for-byte across **all 256 opcodes crossed with every M/X/E flag
+  combination**. That exhaustiveness is the point: hand-written assembly for a
+  CPU with mode-dependent operand widths fails on the combination nobody
+  thought to play, not on the common path.
+- Why a rig and not a host build: the answer has to come from the instruction
+  set the device executes, so both halves are assembled for Cortex-M7 rather
+  than compiled for the host.
+
 ### `tools/snes_harness` — closed initiative, kept for the record
 The SNES-emulation feasibility rig (verdict: ⛔ the PPU alone is 14 ms of a
 16.6 ms frame; do not reopen). Kept because it is the working example of the
@@ -453,7 +489,10 @@ ran) — an older note saying five of them were silently skipping is stale.
 `tests/coverage.sh` **51.8% lines / 25.4% branches** over the measured modules,
 20 in-scope files still unmeasured (the work order is `coverage_scope.txt`).
 
-Per-core host harnesses, built from a clean `build/` each:
+Per-core host harnesses, built from a clean `build/` each. The counts in the left column are
+how many cores fell into that outcome, and the right column names them. "no test ROM" is not
+a failure of the harness: those builds are complete and stop only because no ROM has been
+staged for them yet.
 
 | result | |
 |---|---|
