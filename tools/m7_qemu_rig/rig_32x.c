@@ -434,6 +434,31 @@ static void rig_pchist_report(void) {
     }
     qsort(top, n, sizeof(*top), rig_pchist_cmp);
     unsigned shown = n < 50 ? n : 50;
+    /* CDF: how many distinct guest PCs cover 50/90/95/99/100% of executions.
+       The union of PCs is not what a dynarec code cache must hold; the hot
+       prefix is. Translated size ~= covered_PCs * (host bytes per guest insn).
+       Caveat, learned 2026-08-28: an execution-weighted CDF UNDERSTATES the
+       working set, because it counts a PC once no matter how far apart its
+       executions are. Use it to bound the problem, not to size a cache -- for
+       that, ask a cache simulation. */
+    {
+        unsigned long long tot = 0, run = 0;
+        for (unsigned i = 0; i < n; i++) tot += top[i].total;
+        const double marks[] = {0.50, 0.90, 0.95, 0.99, 0.999};
+        unsigned mi = 0;
+        printf("[32x-pchist] CDF over %u PCs / %llu insns:\n", n, tot);
+        for (unsigned i = 0; i < n && mi < 5; i++) {
+            run += top[i].total;
+            while (mi < 5 && (double)run >= marks[mi] * (double)tot) {
+                printf("[32x-pchist]   %5.1f%% of executions <- %6u PCs"
+                       " (%6u B guest, ~%6.1f KB @12B/insn)\n",
+                       marks[mi]*100.0, i+1, (i+1)*2, (i+1)*12/1024.0);
+                mi++;
+            }
+        }
+        printf("[32x-pchist]   100.0%% of executions <- %6u PCs"
+               " (%6u B guest, ~%6.1f KB @12B/insn)\n", n, n*2, n*12/1024.0);
+    }
     printf("[32x-pchist] %u unique PCs, %llu total guest SH-2 insns; top %u:\n",
            n, grand, shown);
     {
