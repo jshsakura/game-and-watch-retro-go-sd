@@ -451,6 +451,15 @@ empty: there was nothing left to place.
   Kombat II, NBA Jam TE use the 32X mostly for colours and sprites and were
   never measured. If someone reopens this, measure one of those first: it is
   the difference between "the core is unusable" and "3D titles are unusable".
+
+  **An answer to this was published on 2026-09-03 and then withdrawn.** A "game matrix"
+  reported Knuckles' Chaotix and Virtua Fighter alongside Doom. The two supporting
+  screenshots were opened afterwards and **both show Doom** (DOOM logo and HUD). Either the
+  ROM never changed between runs or the files were misnamed; either way the rows had no
+  evidence, they were deleted, and the answer given to the user was corrected to "only Doom
+  was ever measured". The smoke run's own screen check did not catch it, and that is the
+  part to fix before anyone runs the matrix again. **Identify a measurement by what is on
+  the screen, not by the ROM filename.**
 - **Fullscreen.** There is no scaler. The ten cores that offer one render into
   their own framebuffer and blit through a nearest-neighbour scaler; 32X (like
   MD) has picodrive paint straight into the LCD active buffer

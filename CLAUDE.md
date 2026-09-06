@@ -206,6 +206,52 @@ fine. `tests/test_idle_timeout_wired.sh` is the shape of the test that can: it a
 every loop that can idle asks the one rule, and that nobody re-derives it. Write that
 kind of test when you add a contract, and again when you add a screen.
 
+## What runs is three copies, and only two of them are checked
+
+Internal flash, the SD card, and **the payload in external flash** are three separate
+copies of this program, and every gate we have looks at the first two. The third is the
+blind spot, and it cost a full day on 2026-08-29: GBA died with a BSOD on three ROMs
+across two source trees, and the live XIP payload turned out to be neither the current
+tree's nor the previous release's, but a **third, older build** nobody could account for.
+
+The mechanism is a cache key derived from the wrong thing. `gba_cache_xip` keys on
+**path + mtime**, so a payload whose bytes changed but whose path and mtime did not is a
+cache *hit*, and the stale copy keeps running. Re-pushing the identical bytes with only
+the mtime touched brought it back instantly, which is the proof.
+
+- **A cache key must be derived from the thing it protects.** Path and mtime are metadata
+  about a file, not the file.
+- **The core `.bin` on the card is part of the program.** So is the XIP payload. A build
+  that boots proves the internal flash matched; it proves nothing about the other two.
+- Prefer the **release artefact** over any local staging directory. `make release` rolls
+  `sd_content/` into `gw_update.tar` inside `retro-go_update.bin`, and
+  `check_sd_content_fresh.sh` refuses output older than the ELF. A hand-maintained staging
+  folder has no such gate, and on 2026-09-05 an old one put the wrong cores on the card and
+  raised the firmware's own integrity dialog.
+- Normal users self-heal, because a real update changes the mtime. This bites *us*, pushing
+  the same paths over and over.
+
+## A measurement is identified by what is on the screen
+
+Not by the ROM filename, not by which arm the script thought it flashed. On 2026-09-03 a
+"32X game matrix" comparing Knuckles' Chaotix and Virtua Fighter against Doom was withdrawn
+in full: both supporting screenshots were opened and **both showed Doom**, logo and HUD.
+Either the ROM never changed or the files were misnamed, and either way the numbers had
+nothing behind them.
+
+The camera is cheap here (`tools/`-side LTDC dump to PNG, non-halting, see
+[docs/HARNESSES.md](docs/HARNESSES.md)). Use it:
+
+- **Bind every published number to a screenshot** taken in the same run.
+- **Read the letters on the screen.** Pixel statistics blur a BSOD, a modal dialog and a
+  running game into "something is on screen". On 2026-08-29 a core that would not start was
+  nearly filed as a stall; dumping the screen showed a BSOD, and the CPU was alive the
+  whole time.
+- **When a probe fails, dump the screen before forming a theory.** Twice in one day the
+  answer was on the panel while the theory was about the debug port.
+- **"Every core is broken" is a signal to suspect the tooling.** It happened three times in
+  a row on 2026-08-29 and all three were our own harness, not the firmware.
+
 ## Two traps that break everything quietly
 
 - **`lang_t` is indexed by position** in the SD language binaries. Add a string only at
@@ -234,6 +280,6 @@ Detailed debugging guides live next to each porting layer (not in this file — 
 |--------|-------|
 | PCE / PCE CD | [Core/Src/porting/pce/CLAUDE.md](Core/Src/porting/pce/CLAUDE.md) — harness `linux/Makefile.pce` |
 | GBA | [Core/Src/porting/gba/CLAUDE.md](Core/Src/porting/gba/CLAUDE.md) — rig `tools/gba_m4a/` (M4A HLE proof + idle A/B + audio taps), idle-skip semantics, sound path, XIP contract |
-| Sega 32X | [docs/32X_NEXT_SESSION.md](docs/32X_NEXT_SESSION.md) — working state and queue; [docs/32X_CLOSED.md](docs/32X_CLOSED.md) — the ledger of axes closed by measurement. **Every published 32X fps is the attract demo, not gameplay** — read the anchor section before quoting a number |
+| Sega 32X | **The performance campaign is closed**; every axis is measured shut. Start at [docs/32X_CLOSED.md](docs/32X_CLOSED.md), the ledger, not at `32X_NEXT_SESSION.md`, whose title outlived its queue. **Every published 32X fps is the attract demo, not gameplay**: Doom reads ~33 there and ~24 in the hands, and the two must never be swapped. The one axis genuinely still open is a single 2D title, and the matrix that appeared to answer it was withdrawn (all of it was Doom) |
 
 Add a `CLAUDE.md` under `Core/Src/porting/<system>/` (and optionally `.cursor/rules/<system>.mdc`) when an emulator accumulates non-obvious debug knowledge.

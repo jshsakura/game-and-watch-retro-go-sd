@@ -1,5 +1,19 @@
 # Sega 32X — where this stands, and what to aim at next
 
+> **Status, 2026-09-06: the performance campaign is closed and this file's title outlived
+> its queue.** Every axis is measured shut and the ledger is [32X_CLOSED.md](32X_CLOSED.md).
+> Read that first; this file is the working record of how it got there.
+>
+> Two things shipped after the campaign ended, in `testbed-full-20260906-1924`: the flash
+> clock returned from 113 to 97 MHz (`92e37eb6`, 113 was amplifying a pre-existing
+> bottom-of-screen defect, cost -1.97%), and the tearing guard became a user-visible option
+> (`ca44eccf`, "Screen tearing fix", default off).
+>
+> The one axis genuinely still open is a **single 2D title**. The "game matrix" that
+> appeared to answer it on 2026-09-03 was withdrawn in full: both supporting screenshots
+> were Doom.
+
+
 Written 2026-08-15, at the end of a day that produced one large win, one large
 correction, and one axis closed by measurement. Read `32X_CLOSED.md` §0 and §0b
 first; this file is the working state and the queue, not the ledger.

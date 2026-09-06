@@ -5,7 +5,7 @@
 > `GNW_TARGET=mario|zelda`, `SD_CARD=1`, `INTFLASH_BANK=2`.
 >
 > 이 문서는 rc(SNES 65816→C 정적 재컴파일러) 타당성 조사의 **이어하기 지점**. 세부 기록은
-> `MEMORY.md`(rc 프로브 전문)와 `CLAUDE.md`(프로젝트 전반)가 단일 진실 공급원.
+> `SNES_RC_PROBE_MEMORY.md`(rc 프로브 전문)와 `CLAUDE.md`(프로젝트 전반)가 단일 진실 공급원.
 
 ---
 
@@ -105,7 +105,7 @@
 - `Core/Src/main.c` — 훅 제거(rg_main.c로 이동)
 - `Core/Src/retro-go/rg_main.c` — 훅 추가(sdcard_init 후)
 - `Core/Src/rc_probe.c` — Stage 2 전면 재작성 (커밋 6c5d7e75 위에 미커밋)
-- `MEMORY.md` — rc 프로브 전문 + M7 판정 기록
+- `docs/SNES_RC_PROBE_MEMORY.md` — rc 프로브 전문 + M7 판정 기록
 - `tools/m7_qemu_rig/rig_snes_rc.c` — GNW_SNES_CORE 가드 수정 (b4 아크, M7 판정용)
 
 ### 건드리지 말 것 (다른 스레드)
@@ -117,7 +117,7 @@
 
 ## 6. 핵심 지식 소재 위치
 
-- **`MEMORY.md`** — rc 프로브 전 기록(제약 A/B, DOOM/SM, 3단계 설계, 빌드 config, 체인지로그). 가장 상세.
+- **`docs/SNES_RC_PROBE_MEMORY.md`** — rc 프로브 전 기록(제약 A/B, DOOM/SM, 3단계 설계, 빌드 config, 체인지로그). 가장 상세. 루트 `MEMORY.md` 였다가 32X 세션 메모에 덮여 사라졌던 것을 2026-09-07 에 복구했다.
 - **`CLAUDE.md`** — 프로젝트 전반, 빌드/플래시 워크플로우, 하네스 인덱스, 디버깅 가이드.
 - **`tools/sfc_recomp/README.md`** — rc 호스트 PoC 구조 + 하네스 인덱스.
 - **`tools/m7_qemu_rig/`** — QEMU M7 리그 (rig_snes_rc.c=rc, rig_snes.c=인터프리터 baseline).

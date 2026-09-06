@@ -82,6 +82,10 @@ tools/m7_qemu_rig/build_*/
 tools/sfc_recomp/*_gen.c
 tools/sfc_recomp/rc_core_*.c
 
+# RELEASE_NOTES.md is composed by CI at tag time (.github/workflows/package.yml)
+# and clobbered on every release. A tracked copy is always stale.
+/RELEASE_NOTES.md
+
 # --- agent scratch / analysis cruft (keep working tree clean; not source of truth) ---
 /*_ANALYSIS.md
 /RC_ACTIVATION_VERIFY.md
@@ -89,7 +93,6 @@ tools/sfc_recomp/rc_core_*.c
 /RESUME_GNW.md
 /SEGACD_INVESTIGATION.md
 /MD32X_MENU_FLICKER_ANALYSIS.md
-/docs/SNES_PERF_FINDINGS.md
 /parse_hist.py
 /patch.diff
 /patch_plan.txt
