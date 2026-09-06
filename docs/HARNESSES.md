@@ -486,8 +486,35 @@ savestate/cache test needs a Super Metroid ROM at `$SM_ROM`, which this machine
 does not have. The music-app tests are NOT skipped any more (23 + 16 checks
 ran) — an older note saying five of them were silently skipping is stale.
 
+**Re-run 2026-09-07: still green, now 98 sections, exit 0.** Same single legitimate SKIP
+(`$SM_ROM`). Note for anyone reading the raw log rather than the exit code: it contains
+lines that say `FAIL`, and they are supposed to. Four blocks are RED gates that compile a
+pre-fix file out of git history and *require* it to fail — three `hw_jpeg_decoder.c` gates
+and the SNES audio pacing block, whose RED arm reports `FAILED (12 failures)` and is
+immediately followed by `[RED] PASS`. **Grep the log for `FAIL` and you will conclude the
+suite is broken.** The exit code is the verdict; a RED gate that stopped failing would be
+the real defect.
+
 `tests/coverage.sh` **51.8% lines / 25.4% branches** over the measured modules,
 20 in-scope files still unmeasured (the work order is `coverage_scope.txt`).
+
+Re-measured 2026-09-07: **51.7% lines (2,087/4,040) / 25.3% branches (1,505/5,940)**, still
+20 unmeasured, 13 excluded. Unchanged within rounding, which is the expected result: the five
+sections added since August test wiring and contracts rather than adding lines to the
+measured modules.
+
+**What the denominator is, because this is the number most easily misread.** It is not the
+repository. `tests/coverage_scope.txt` names what counts and gives a reason per line;
+coverage of the whole tree would be a lie, since it holds the ST HAL, 29 third-party cores
+and drivers that cannot run on a host. So 51.7% means "of the code we own and can run on a
+host, half the lines are executed by a test", and the 20 unmeasured files are a work order,
+not a rounding error. The branch figure is always the lower of the two and should be: a line
+runs, a branch has to be taken both ways.
+
+A high percentage on one file is also not the same as that file being tested. The lesson
+this suite was built on is the opposite one: `hw_jpeg_decoder.c` had three dedicated tests
+and **0% coverage**, because all three reimplemented the HAL state machine instead of
+linking the driver. It now reads 97.9%. That change is what the number is for.
 
 Per-core host harnesses, built from a clean `build/` each. The counts in the left column are
 how many cores fell into that outcome, and the right column names them. "no test ROM" is not
