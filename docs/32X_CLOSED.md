@@ -309,7 +309,14 @@ read into it, is that nothing else could move.
 
 ## Why 2x is arithmetically out of reach
 
-One heavy-scene frame, 24.4 M device cycles:
+**Table: where one frame's time goes.** Doom, a heavy in-game scene, on real hardware with
+the on-device profiler build. One frame costs **24.4 M device cycles**; the rows below are
+that budget split by which emulated component consumed it, and they sum to the whole frame.
+`cycles/frame` is Cortex-M7 cycles measured by DWT, not guest cycles and not host
+instructions. `share` is the row as a percentage of the 24.4 M.
+
+Read it as the answer to one question: *if I made this component free, how much would I
+save?* That is the only form in which an optimisation idea can be priced before it is built.
 
 | phase | cycles/frame | share |
 |-------|-------------|-------|
@@ -322,6 +329,11 @@ One heavy-scene frame, 24.4 M device cycles:
 
 Zeroing **everything except msh2** removes 7.3 M — less than half of what 2x
 needs (12.2 M). So 2x requires cutting the master SH-2 by 60-70%.
+
+That is why the table is the end of most arguments rather than the start of one. Every lever
+anyone proposes lands in exactly one of these rows, and no row except `msh2` is large enough
+to matter even if it were deleted outright. For scale: 60 fps would need the frame to fit in
+5,197,920 cycles, so it is not a 2x question at all.
 
 msh2 is 210 k dispatched guest instructions per frame at ~92 device cycles
 each. Cutting the per-instruction cost to ~45 (an optimistic floor for a
@@ -407,9 +419,15 @@ Two of these were built, measured and reverted. None was rejected on a hunch.
 instruction, fetch 10.4 + reads 12.3 + writes 4 + dispatch ~8 of ~92 cyc/insn.
 Kept for the per-event numbers, which remain scene-stable.)
 
-Per dispatched msh2 instruction (94.0 cycles, profiler build):
+**Table: what one guest instruction costs, and where.** Averaged over all dispatched msh2
+instructions in a heavy scene, profiler build, so 94.0 is the mean cost of one SH-2
+instruction in Cortex-M7 cycles. Each memory row is `latency x frequency`: the first number
+is what that access costs when it happens, the second is how often it happens per dispatched
+instruction. Opcode fetch is 1.00 because every instruction is fetched; guest loads at 0.37
+means 37 loads per 100 instructions.
 
 ```
+                  latency x per-insn = cycles
 opcode fetch      10.3 x 1.00 = 10.3
 guest loads       29.3 x 0.37 = 10.8
 guest stores      38.5 x 0.06 =  2.3
@@ -418,9 +436,9 @@ memory total                    23.4   (25%)
 decode + execute               ~70     (75%)
 ```
 
-Memory is a quarter. The interpreter's own decode/execute is the rest, and its
-code already runs from zero-wait ITCM. That is why both placement axes came up
-empty: there was nothing left to place.
+The split is the whole verdict. Memory is a quarter, and the three-quarters that is decode
+and execute already runs from zero-wait ITCM. That is why both placement axes came up empty:
+there was nothing left to place.
 
 ## What shipped and stayed
 

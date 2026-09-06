@@ -56,6 +56,12 @@ configuration — it's not part of the firmware you flash.)
 
 🧪 = added or enabled by this Lab fork · everything else is upstream and documented there.
 
+**How to read the Notes column.** Any speed given there is measured on real hardware, not on
+a host emulator, and it is the speed of the scene named. Where no speed is given, none was
+measured; absence of a number is not a claim that a system is fast. "Full speed" means the
+system's own native frame rate (60 fps for most, 50 for PAL-timed titles), sustained in
+normal play rather than on a title screen.
+
 | System | Emulator / port | Origin | Notes |
 | --- | --- | --- | --- |
 | **Game Boy Advance** | gpSP | 🧪 Lab | Pokémon Ruby & Emerald **full speed**; heavier titles vary. ROM stays in flash (never in RAM). [Details](#game-boy-advance) |
@@ -101,6 +107,10 @@ Advance ships a clean-room BIOS and only *optionally* takes the official one
 
 ### Apps (homebrew overlays)
 
+These are not emulators. Each is a program written for this firmware and loaded the same way
+a core is, from the **Homebrew** tab or the **TIME** menu. They share the one emulator RAM
+region, so only one runs at a time.
+
 | App | What it does |
 | --- | --- |
 | **Music player (MP3)** | minimp3 streaming, album art (HW JPEG + PNG, correct colours), ID3 tags, seek; keeps playing across sleep and while browsing |
@@ -124,6 +134,10 @@ so nothing copyrighted ships.
 
 ### Launcher
 
+Changes to the shell you see before a game starts. "0 resident RAM" below means the feature
+reuses a buffer the launcher already owns, so it costs nothing that an emulator could
+otherwise have used, which is the constraint that shapes most of these.
+
 | Change | What |
 | --- | --- |
 | **System-grid home** | all 28 systems on a 6×3 page of rounded tiles (reuses the tab icons — 0 extra resident RAM). Worst case 8 presses to any system instead of 28. Hold `LEFT`/`RIGHT` past the tabs, or `B` from a list; `A` opens. Cold boot → grid, return-from-game → the list you launched from |
@@ -133,6 +147,10 @@ so nothing copyrighted ships.
 | **i18n** | added strings translated across the 12 supported languages; older SD language bins stay compatible |
 
 ### System-wide
+
+Changes below the launcher, in the shared firmware every core runs on top of. They apply
+whatever you are playing, and a defect here shows up as "the console is broken" rather than
+"this emulator is broken", which is why they are listed separately.
 
 | Change | What |
 | --- | --- |
@@ -146,6 +164,10 @@ so nothing copyrighted ships.
 | **Stability fixes** | a battery poll running inside a priority-0 timer interrupt could stall `HAL_GetTick` and deadlock any core permanently; the watchdog could report success without actually being enabled; sleep left the ADC powered. All three fixed |
 
 ### Korean text in the homebrew games
+
+The three native homebrew ports draw their own text rather than using the launcher's font, so
+each needed its own route to Korean. The column below says which route, because each has a
+different requirement on what you put on the SD card.
 
 | Game | How Korean is provided |
 | --- | --- |
@@ -166,6 +188,11 @@ flags. The canonical release set (from `.github/workflows/package.yml`) is:
 make release DOCKER=1 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SCREEN=1 \
              ENABLE_BOOT_OC=1 INTFLASH_BANK=2 CHEAT_CODES=1 ZH_CN=1 ZH_TW=1 KO_KR=1 JA_JP=1
 ```
+
+**Default** is what the flag is worth when you do not pass it on the `make` command line,
+which is not the same as what a release is built with: the canonical set above turns several
+of them on explicitly. A release built without that set is a different firmware, and three
+once shipped that way with no coverflow, no cheat codes and no non-Latin fonts.
 
 | Flag | Default | Toggles |
 | --- | --- | --- |
@@ -193,6 +220,11 @@ regulator is pinned at the H7's top voltage scale (VOS0) at *every* level, becau
 (280 MHz) already needs it — so there is **no V² jump**, and the core's active power rises only
 with frequency.
 
+**Table: what each overclock level actually sets.** The two clock columns are real settings
+read from the firmware, exact. The power column is **not measured**: it is arithmetic from
+the clock ratio at fixed voltage, and it describes the CPU core only, not the console. See
+the two qualifications below the table before drawing any battery-life conclusion from it.
+
 | Level | Core clock | External-flash (OSPI) clock | Core active power vs. None\* |
 | --- | --- | --- | --- |
 | **None** | 280 MHz | 64 MHz | baseline |
@@ -200,6 +232,15 @@ with frequency.
 | **Maximum** | 340 MHz | ~97 MHz | ≈ **+21 %** |
 
 \* Rough estimate from the clock ratio at fixed voltage — approximate, not a measured figure.
+
+**Why the flash clock goes *down* at Maximum.** That is not a typo. Both clocks are derived
+from one PLL, and the flash gets its own divider off it: Intermediate is `PLLN=156, PLLQ=6`
+(312 MHz core, 104 MHz flash) while Maximum is `PLLN=170, PLLQ=7` (340 MHz core, 97 MHz
+flash). The divider has to be a whole number, so raising the core to 340 forces the next
+divider step down for the flash. It is a deliberate choice as well as an arithmetic one: 113
+MHz was tried as the Maximum flash clock and reverted in `92e37eb6` because it amplified a
+screen defect along the bottom of the panel, at a measured cost of 1.97% frame rate. See
+`Core/Src/main.c:641-661`.
 
 Two things make the **whole-device** impact much smaller than those numbers look:
 
@@ -209,15 +250,22 @@ Two things make the **whole-device** impact much smaller than those numbers look
   matters more than the OC level.**
 - Leakage is already paid at VOS0 in every level, so only the switching part grows.
 
-Overclocking also raises the **external-flash (OSPI) clock**, so it costs more on cores that run
-code/data straight from external flash (XIP) — **Game Boy Advance** (ROM + M4A mixer) and
-**Super Metroid** (`sm.xip`) — than on cores that live entirely in internal RAM.
+Overclocking also moves the **external-flash (OSPI) clock**, which matters more on cores that
+run code or data straight from external flash (XIP): **Game Boy Advance** (ROM + M4A mixer),
+**Super Metroid** (`sm.xip`) and **Sega 32X** (`32x.xip`). Note the direction, per the table
+above: Intermediate raises that clock to 104 MHz, and Maximum *lowers* it to 97 MHz while
+raising the core. So on an XIP-heavy core the two levels are not simply ordered, and which is
+faster is a question to answer by measuring rather than by reasoning.
 
 ### These systems overclock even when the setting is "None"
 
 Some cores can't hold full speed at 280 MHz, so they **raise the clock automatically while they
 run — regardless of your CPU Overclock setting.** It's a *floor*, not an override: if you chose a
 *higher* level, yours wins; the automatic level never clocks you back down.
+
+**Table: cores that raise the clock on their own.** The `=` column is the resulting core
+clock in MHz, so you can compare it against the levels in the table above. These are floors
+applied by the core while it runs, not settings you chose and not values that persist.
 
 | System | Automatic level while running | = |
 | --- | --- | --- |
@@ -245,19 +293,31 @@ measurements. Real drain depends on backlight, core and workload.*
 The core is picodrive. It runs, it renders, and it is **not full speed**, so treat it as an
 experiment rather than a system you sit down to play.
 
-Doom is the title this fork measured, and it lands around **24 fps in gameplay** (the
-attract demo reads higher, near 33, which is why the two numbers must never be quoted
-interchangeably). That is after a long optimisation campaign, and the remaining distance is
-arithmetic rather than effort: the master SH-2 alone is **68% of a frame**, so zeroing every
-other chip in the machine still does not buy 2x. Going faster means abandoning interpretation
-for a recompiler, and a translation cache does not fit in the memory this MCU can execute
-from. The reasoning, with the measurements behind it, is in
-[docs/32X_CLOSED.md](docs/32X_CLOSED.md).
+Doom is the title every shipped number comes from. It has two very different frame rates
+depending on what is on screen, and quoting one for the other is the single easiest way to be
+wrong about this core:
 
-What has **not** been measured is the 2D half of the library. Everything benchmarked here
-(Doom, After Burner) is SH-2 software 3D, the heaviest class there is. Titles that use the
-32X mostly for colour and sprites (Knuckles' Chaotix, Mortal Kombat II, NBA Jam TE) were
-never timed, so "the core is too slow" is currently only proven for 3D.
+| Scene | Frames per second | What it is | Why it differs |
+| --- | --- | --- | --- |
+| Attract demo | ~33 | What the console plays by itself at the title screen, and what a benchmark boots into by default | Fewer active enemies and a fixed camera path, so the SH-2 runs less code per frame |
+| Gameplay | ~24 | A controller in your hands | The number to judge the core by |
+
+Both are drawn-frame counts on real hardware at the shipped clocks (340 MHz core, 97 MHz
+external flash), not host-emulator estimates. Against the 60 fps the console runs at, the
+attract figure is about 55% of real time and gameplay about 40%.
+
+That is where a long optimisation campaign ended, and the remaining distance is arithmetic
+rather than effort. 60 fps needs a frame to fit in 5.2 M device cycles; one costs about
+24 M today. The master SH-2 alone is 68% of that, so zeroing every other chip in the machine
+removes 7.3 M against the 12.2 M that merely *doubling* the frame rate would need, and 60 fps
+is not the question. Going faster means abandoning interpretation for a recompiler, and a
+translation cache does not fit in the memory this MCU can execute from. The reasoning, with
+every measurement behind it, is in [docs/32X_CLOSED.md](docs/32X_CLOSED.md).
+
+What has **not** been measured is the 2D half of the library. Both titles ever benchmarked
+(Doom, and After Burner Complete at 8 fps) are SH-2 software 3D, the heaviest class there
+is. Titles that use the 32X mostly for colour and sprites (Knuckles' Chaotix, Mortal
+Kombat II, NBA Jam TE) were never timed, so "the core is too slow" is currently only proven for 3D.
 
 **Screen tearing fix** (`PAUSE → Options`, default off) trades frame rate for a cleaner
 picture on this core. A faint disturbance along the bottom of the screen predates it and is
@@ -272,8 +332,15 @@ Speed is very title-dependent and is governed by audio pacing rather than raw em
 speed, so a "fps" number from one game predicts very little about another. Mega Man X2 sits
 around 52 fps; heavier scenes in other titles drop well below that.
 
-Two special chips are implemented as **clean-room HLE**, written from public documentation
-rather than ported from another emulator:
+Two special chips are implemented as **clean-room HLE**. HLE means the chip is not simulated
+gate by gate; the commands the game sends are recognised and answered with the same results.
+Clean-room means the implementation was written from public documentation rather than copied
+from another emulator, which is a licensing requirement here and not a boast: the first Cx4
+attempt was derived from snes9x and had to be thrown away and rewritten, because that code is
+non-commercial-use-only and this project is GPLv2.
+
+The Note column says what is known to be incomplete, so read it as the limit of the claim
+rather than as trivia.
 
 | Chip | Titles | Note |
 | --- | --- | --- |
