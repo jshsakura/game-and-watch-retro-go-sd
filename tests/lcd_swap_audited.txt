@@ -119,6 +119,7 @@ Core/Src/porting/sm/main_sm.c                 swap=2 stale=0 gated        # if (
 Core/Src/porting/smsplusgx/main_smsplusgx.c   swap=1 stale=0 gated        # inside sms_draw_frame(), called only if (drawFrame)
 Core/Src/porting/md32x/md32x_border_clear.c   swap=0 stale=0 prose        # comments only
 Core/Src/porting/md32x/md32x_border_clear.h   swap=0 stale=0 prose        # comments only
+Core/Src/porting/md32x/md32x_fullscreen.h     swap=0 stale=0 prose        # comments only (says to run before lcd_swap)
 Core/Src/porting/md32x/md32x_profile.c        swap=0 stale=0 prose        # comments only
 Core/Src/porting/md32x/md32x_profile.h        swap=0 stale=0 prose        # comments only
 Core/Src/porting/md32x/main_md32x.c           swap=1 stale=0 gated        # if (drawFrame) { overlay; lcd_swap(); } -- audited by the 32X session

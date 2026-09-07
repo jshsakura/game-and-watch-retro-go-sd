@@ -358,6 +358,33 @@ $CC -O2 -Wall -Wextra -std=gnu11 -Itests/common_stubs \
     tests/test_md32x_border_clear.c                      -o /tmp/mtest/test_md32x_border_clear
 /tmp/mtest/test_md32x_border_clear || fail test_md32x_border_clear
 
+echo "=== md32x_fullscreen.c: the 224 -> 240 in-place expansion (32X 8px bars) ==="
+# 32X has picodrive paint straight into the LCD active buffer, so filling the
+# V28 border rows has to happen inside the buffer that already holds the frame:
+# there is no room for a 150 KB intermediate in this overlay. An in-place
+# expansion has exactly one failure mode, and it is silent -- sweep the rows in
+# one direction and you read source rows something else already overwrote, and
+# the picture is still a picture, just smeared. So the test tags every source
+# row with its own number and checks the nearest-neighbour map row by row.
+# Compiles the real Core/Src/porting/md32x/md32x_fullscreen.c, never a copy.
+$CC -O2 -Wall -Wextra -std=gnu11 -ICore/Src/porting/md32x \
+    tests/test_md32x_fullscreen.c Core/Src/porting/md32x/md32x_fullscreen.c \
+    -o /tmp/mtest/test_md32x_fullscreen
+/tmp/mtest/test_md32x_fullscreen || fail test_md32x_fullscreen
+
+# RED: the same test against a one-direction sweep must fail. A test that has
+# never failed proves nothing, and this is the bug it exists to catch.
+sed 's|for (int y = MD32X_FS_HEIGHT - 1; y >= fixed; y--) {|for (int y = fixed; y < MD32X_FS_HEIGHT; y++) {|' \
+    Core/Src/porting/md32x/md32x_fullscreen.c > /tmp/mtest/md32x_fullscreen_red.c
+$CC -O2 -w -std=gnu11 -ICore/Src/porting/md32x \
+    tests/test_md32x_fullscreen.c /tmp/mtest/md32x_fullscreen_red.c \
+    -o /tmp/mtest/test_md32x_fullscreen_red
+if /tmp/mtest/test_md32x_fullscreen_red >/dev/null 2>&1; then
+  fail "test_md32x_fullscreen RED gate: the one-direction sweep PASSED, so the test cannot see row smearing"
+else
+  echo "OK  RED: the one-direction sweep is caught"
+fi
+
 echo "=== gw_malloc.c: itc/ahb/ram bump allocators (alignment, ITC bounds, over-large fails) ==="
 # The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators behind "RAM
 # priority = emulators first" (root CLAUDE.md). Linker symbols

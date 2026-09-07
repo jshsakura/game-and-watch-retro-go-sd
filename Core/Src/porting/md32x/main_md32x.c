@@ -39,6 +39,7 @@
 #include "appid.h"
 #include "main_md32x.h"
 #include "md32x_border_clear.h"
+#include "md32x_fullscreen.h"
 
 #include "pico/pico_types.h"   /* s8/s16/s32 — MUST precede pico.h */
 #include "pico/pico.h"
@@ -228,6 +229,11 @@ static uint16_t read_md_pad(odroid_gamepad_state_t *j) {
  * build added its own margin on top: top band doubled to 16 rows and the
  * bottom 8 content rows were written PAST the framebuffer (into the other
  * buffer's head). */
+/* picodrive's PicoFrameStart defaults until the first real report: V28 renders
+ * 224 lines at row 8. A game that sets the VDP 30-row bit reports 240 lines and
+ * the expansion then declines, which is correct -- there is no bar to fill. */
+static int md32x_content_top = 8, md32x_content_lines = 224;
+
 static void set_out_buffer(void) {
   PicoDrawSetOutBuf(lcd_get_active_buffer(), 320 * 2);
 }
@@ -248,6 +254,11 @@ void emu_32x_startup(void) {
 void emu_video_mode_change(int start_line, int line_count, int start_col, int col_count) {
   (void)start_col; (void)col_count;   /* 32X: always full 320 wide, see md32x_border_clear.c */
   md32x_border_clear_set_content_rect(start_line, line_count);
+  /* Same rect the border clear uses, kept here too because the fullscreen
+   * expansion needs it every drawn frame and border_clear owns its copy
+   * privately. Both are set from this one report, so they cannot drift. */
+  md32x_content_top = start_line;
+  md32x_content_lines = line_count;
   /* Mode changes are rare; wipe the ACTIVE buffer so stale borders don't
    * linger.  Previously this called lcd_clear_buffers() (both buffers), which
    * has NO lcd_sleep_while_swap_pending() guard — the write-buffered clear
@@ -647,6 +658,16 @@ extern void odroid_settings_ScreenTearFix_set(int32_t value);
 extern void odroid_settings_commit(void);
 static short md32x_guard_enabled = 0;
 static char md32x_guard_str[2];
+
+/* Fullscreen borrows the per-app slot's disp_scaling field. 32X has no entry in
+ * odroid_settings.c's per-app defaults table, so every existing /CONFIG already
+ * carries 0 there -- exactly this option's default (off). Same trick, and same
+ * reasoning, as the tear guard above: no struct growth, no version bump, no
+ * user's settings reset. */
+extern int32_t odroid_settings_DisplayScaling_get();
+extern void odroid_settings_DisplayScaling_set(int32_t value);
+static short md32x_fullscreen_enabled = 0;
+static char md32x_fullscreen_str[2];
 static bool md32x_submenu_screentear(odroid_dialog_choice_t *option,
     odroid_dialog_event_t event, uint32_t repeat)
 {
@@ -657,6 +678,20 @@ static bool md32x_submenu_screentear(odroid_dialog_choice_t *option,
   }
   if (md32x_guard_enabled == 0) strcpy(option->value, curr_lang->s_Option_OFF);
   if (md32x_guard_enabled == 1) strcpy(option->value, curr_lang->s_Option_ON);
+  return event == ODROID_DIALOG_ENTER;
+}
+
+static bool md32x_submenu_fullscreen(odroid_dialog_choice_t *option,
+    odroid_dialog_event_t event, uint32_t repeat)
+{
+  (void)repeat;
+  if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
+    md32x_fullscreen_enabled = md32x_fullscreen_enabled == 0 ? 1 : 0;
+    odroid_settings_DisplayScaling_set(md32x_fullscreen_enabled);
+    odroid_settings_commit();
+  }
+  if (md32x_fullscreen_enabled == 0) strcpy(option->value, curr_lang->s_Option_OFF);
+  if (md32x_fullscreen_enabled == 1) strcpy(option->value, curr_lang->s_Option_ON);
   return event == ODROID_DIALOG_ENTER;
 }
 
@@ -712,10 +747,18 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   odroid_gamepad_state_t joystick;
   odroid_dialog_choice_t options[] = {
       {300, curr_lang->s_ScreenTearFix, md32x_guard_str, 1, &md32x_submenu_screentear},
+      /* s_SCalingFull ("Full" / "전체화면"), an existing lang_t field. lang_t is
+       * indexed by POSITION in the SD language binaries, so a new string here
+       * would shift every translation after it and break cards already in the
+       * field. Reuse beats adding. */
+      {301, curr_lang->s_SCalingFull, md32x_fullscreen_str, 1, &md32x_submenu_fullscreen},
       ODROID_DIALOG_CHOICE_LAST };
   md32x_guard_enabled = odroid_settings_ScreenTearFix_get() != 0;
   if (md32x_guard_enabled) strcpy(md32x_guard_str, curr_lang->s_Option_ON);
   else strcpy(md32x_guard_str, curr_lang->s_Option_OFF);
+  md32x_fullscreen_enabled = odroid_settings_DisplayScaling_get() != 0;
+  if (md32x_fullscreen_enabled) strcpy(md32x_fullscreen_str, curr_lang->s_Option_ON);
+  else strcpy(md32x_fullscreen_str, curr_lang->s_Option_OFF);
 
   if (start_paused) {
     common_emu_state.pause_after_frames = 2;
@@ -1092,6 +1135,12 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #endif
 
     if (drawFrame) {
+      /* Before the overlay, so the menu and the FPS counter are drawn on the
+       * finished picture rather than being stretched with it, and before
+       * lcd_swap so the panel never shows a half-expanded frame. */
+      if (md32x_fullscreen_enabled)
+        md32x_fullscreen_expand(lcd_get_active_buffer(),
+                                md32x_content_top, md32x_content_lines);
       common_ingame_overlay();
       lcd_swap();
       /* A fresh game frame is now on display — next menu open should freeze

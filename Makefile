@@ -900,7 +900,8 @@ $(CORE_PICODRIVE)/pico/sound/sn76496.c \
 $(CORE_PICODRIVE)/pico/sound/ym2612.c \
 $(CORE_PICODRIVE)/pico/sound/resampler.c \
 Core/Src/porting/md32x/main_md32x.c \
-Core/Src/porting/md32x/md32x_border_clear.c
+Core/Src/porting/md32x/md32x_border_clear.c \
+Core/Src/porting/md32x/md32x_fullscreen.c
 # Profiler recording/dump lives in its own TU: inlined into main_md32x.c it
 # lands in the RAM_EMU overlay (qsort + percentiles + a dozen fprintf calls,
 # ~2 KB) and overflows MD32X BSS by 2088 B. The AHB pool frees data, not code.
