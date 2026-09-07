@@ -21,6 +21,28 @@
 set -u
 cd "$(dirname "$0")/.."
 
+# --red: hide one core file from a good build and require this gate to name it.
+if [ "${1:-}" = "--red" ]; then
+  [ -d sd_content/cores ] || { echo "  SKIP RED: no build to break"; exit 0; }
+  victim=$(ls sd_content/cores/*.bin 2>/dev/null | head -1)
+  [ -n "$victim" ] || { echo "  SKIP RED: no core .bin to hide"; exit 0; }
+  red=$(mktemp -d); trap 'rm -rf "$red"' EXIT
+  mkdir -p "$red/tests" "$red/Core"
+  cp -r Core/Src Core/Inc "$red/Core/" 2>/dev/null
+  cp -r sd_content "$red/" 2>/dev/null
+  cp "$0" tests/release_cores_exempt.txt "$red/tests/" 2>/dev/null
+  rm -f "$red/sd_content/cores/$(basename "$victim")"
+  out=$(cd "$red" && bash "tests/$(basename "$0")" 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || { echo "  FAIL RED: a release missing $(basename "$victim") PASSED"; exit 1; }
+  case "$out" in
+    *"$(basename "$victim") is opened by the firmware but this build did not produce it"*) ;;
+    *) echo "  FAIL RED: it failed, but did not name the missing file:"
+       echo "$out" | grep -E "FAIL" | sed 's/^/         /'; exit 1 ;;
+  esac
+  echo "  OK   RED: a release short one core file is caught, by name"
+  exit 0
+fi
+
 CORES_DIR=sd_content/cores
 EXEMPT=tests/release_cores_exempt.txt
 

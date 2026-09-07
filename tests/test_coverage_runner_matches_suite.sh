@@ -20,6 +20,33 @@
 set -u
 cd "$(dirname "$0")/.."
 
+# --red: restore the mislabel that actually happened -- music_id3.c marked
+# UNMEASURED while tests/run.sh compiles it -- and require this gate to name
+# it. That is the direction that invents work, so it is the direction the RED
+# arm exercises. Needs a coverage log: pass one as $2, else this skips.
+if [ "${1:-}" = "--red" ]; then
+  log="${2:-}"
+  [ -n "$log" ] && [ -s "$log" ] || { echo "  SKIP RED: no coverage log given"; exit 0; }
+  red=$(mktemp -d); trap 'rm -rf "$red"' EXIT
+  mkdir -p "$red/tests"
+  cp "$0" "$red/tests/"
+  cp tests/run.sh "$red/tests/" 2>/dev/null
+  sed 's|^MEASURED\t\(Core/Src/porting/music/music_id3.c\)|UNMEASURED\t\1|' \
+      tests/coverage_scope.txt > "$red/tests/coverage_scope.txt"
+  if ! grep -q "^UNMEASURED.*music_id3.c" "$red/tests/coverage_scope.txt"; then
+    echo "  SKIP RED: could not build the mislabelled fixture"; exit 0
+  fi
+  out=$(cd "$red" && bash "tests/$(basename "$0")" "$log" 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || { echo "  FAIL RED: an UNMEASURED file the suite compiles PASSED"; exit 1; }
+  case "$out" in
+    *"music_id3.c is UNMEASURED"*) ;;
+    *) echo "  FAIL RED: it failed, but not on the mislabel:"
+       echo "$out" | grep -E "FAIL" | sed 's/^/         /'; exit 1 ;;
+  esac
+  echo "  OK   RED: a finished item left in the work order is caught, by name"
+  exit 0
+fi
+
 LOG="${1:-}"
 if [ -z "$LOG" ]; then
   command -v gcov >/dev/null 2>&1 || { echo "SKIP gcov not available"; exit 0; }

@@ -14,6 +14,25 @@
 set -u
 cd "$(dirname "$0")/.."
 
+# --red: drop one gate from a copy of the index and require this gate to name it.
+if [ "${1:-}" = "--red" ]; then
+  red=$(mktemp -d); trap 'rm -rf "$red"' EXIT
+  mkdir -p "$red/tests" "$red/docs" "$red/tools"
+  cp tests/*.sh "$red/tests/" 2>/dev/null
+  cp -r tools/* "$red/tools/" 2>/dev/null
+  sed 's|test_remove_extension\.sh|test_gone_from_the_index.sh|' \
+      docs/HARNESSES.md > "$red/docs/HARNESSES.md"
+  out=$(cd "$red" && bash "tests/$(basename "$0")" 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || { echo "  FAIL RED: an index missing an entry PASSED"; exit 1; }
+  case "$out" in
+    *"tests/test_remove_extension.sh is not named in"*) ;;
+    *) echo "  FAIL RED: it failed, but did not name the missing entry:"
+       echo "$out" | grep -E "FAIL" | head -3 | sed 's/^/         /'; exit 1 ;;
+  esac
+  echo "  OK   RED: an index that drops a gate is caught, by name"
+  exit 0
+fi
+
 INDEX=docs/HARNESSES.md
 [ -f "$INDEX" ] || { echo "SKIP $INDEX not found"; exit 0; }
 

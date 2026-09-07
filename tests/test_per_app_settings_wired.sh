@@ -22,6 +22,49 @@
 set -u
 cd "$(dirname "$0")/.."
 
+# --red: build the broken arrangement this gate exists to catch, run ourselves
+# against it, and require a failure. A gate that has never failed proves
+# nothing, and the knowledge of what "broken" looks like belongs next to the
+# gate rather than in a one-off block in run.sh.
+if [ "${1:-}" = "--red" ]; then
+  red=$(mktemp -d)
+  trap 'rm -rf "$red"' EXIT
+  mkdir -p "$red/tests" "$red/Core/Src/porting"
+  cp -r Core/Src/porting/md32x "$red/Core/Src/porting/" 2>/dev/null
+  cp "$0" "$red/tests/$(basename "$0")"
+  # Put the settings reads back above odroid_system_init, which is where they
+  # sat while the 32X tear guard shipped dead.
+  f="$red/Core/Src/porting/md32x/main_md32x.c"
+  python3 - "$f" <<'PYEOF'
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding='utf-8').read()
+reads = [l for l in s.split('\n') if 'odroid_settings_ScreenTearFix_get()' in l
+         or 'odroid_settings_DisplayScaling_get()' in l]
+if reads:
+    for l in reads:
+        s = s.replace(l + '\n', '', 1)
+    anchor = '  odroid_gamepad_state_t joystick;\n'
+    s = s.replace(anchor, anchor + '\n'.join(reads) + '\n', 1)
+io.open(p, 'w', encoding='utf-8').write(s)
+PYEOF
+  out=$(cd "$red" && bash "tests/$(basename "$0")" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "  FAIL RED: the pre-fix arrangement PASSED, so this gate cannot see it"
+    exit 1
+  fi
+  # Failing is not enough: it has to fail for the right reason. A fixture that
+  # merely lost a file also exits non-zero and would let a blind gate through.
+  case "$out" in
+    *"reads a per-app setting before its own odroid_system_init"*) ;;
+    *) echo "  FAIL RED: it failed, but not on the read order:"
+       echo "$out" | sed 's/^/         /'
+       exit 1 ;;
+  esac
+  echo "  OK   RED: a read above odroid_system_init is caught, by name"
+  exit 0
+fi
+
 ACCESSORS='odroid_settings_(Region|Palette|DisplayScaling|DisplayFilter|DisplayOverscan|SpriteLimit|ScreenTearFix)_(get|set)'
 fails=0
 checked=0

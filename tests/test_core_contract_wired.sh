@@ -36,6 +36,28 @@
 set -u
 cd "$(dirname "$0")/.."
 
+# --red: take a healthy core, delete one of the four calls, and require this
+# gate to name it. Kept here rather than in run.sh so it stays true when
+# somebody edits the gate.
+if [ "${1:-}" = "--red" ]; then
+  red=$(mktemp -d); trap 'rm -rf "$red"' EXIT
+  mkdir -p "$red/tests" "$red/Core/Src/porting" "$red/Core/Src"
+  cp -r Core/Src/porting/* "$red/Core/Src/porting/" 2>/dev/null
+  cp Core/Src/gw_audio.c "$red/Core/Src/" 2>/dev/null
+  cp "$0" tests/core_contract_exempt.txt "$red/tests/" 2>/dev/null
+  sed -i 's/odroid_system_emu_init(/odroid_system_emu_init_GONE(/g' \
+      "$red/Core/Src/porting/wswan/main_wswan.c"
+  out=$(cd "$red" && bash "tests/$(basename "$0")" 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || { echo "  FAIL RED: a core missing odroid_system_emu_init PASSED"; exit 1; }
+  case "$out" in
+    *"wswan never calls odroid_system_emu_init"*) ;;
+    *) echo "  FAIL RED: it failed, but did not name the missing call:"
+       echo "$out" | grep -E "FAIL|SKIP" | sed 's/^/         /'; exit 1 ;;
+  esac
+  echo "  OK   RED: a core missing a contract call is caught, by name"
+  exit 0
+fi
+
 EXEMPT=tests/core_contract_exempt.txt
 fails=0
 checked=0

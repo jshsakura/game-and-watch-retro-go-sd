@@ -394,6 +394,7 @@ echo "=== per-app settings are read after odroid_system_init, not before ==="
 # were correct; only the order was wrong, which is why this is a wiring gate
 # and not a unit test.
 bash tests/test_per_app_settings_wired.sh || fail test_per_app_settings_wired
+bash tests/test_per_app_settings_wired.sh --red || fail "test_per_app_settings_wired RED"
 
 echo "=== the coverage work order does not list work that is already done ==="
 # Two ways coverage_scope.txt can lie, and the second one costs somebody a day:
@@ -405,6 +406,8 @@ echo "=== the coverage work order does not list work that is already done ==="
 # gate runs coverage.sh itself, and skips loudly if gcov is not here.
 bash tests/test_coverage_runner_matches_suite.sh "${COVERAGE_LOG:-}" \
   || fail test_coverage_runner_matches_suite
+bash tests/test_coverage_runner_matches_suite.sh --red "${COVERAGE_LOG:-}" \
+  || fail "test_coverage_runner_matches_suite RED"
 
 echo "=== docs/HARNESSES.md names every gate and harness in the tree ==="
 # The index calls itself the catalogue of every harness, and on 2026-09-07 it
@@ -412,6 +415,7 @@ echo "=== docs/HARNESSES.md names every gate and harness in the tree ==="
 # there already a test for this?" with a confident no, and the same test gets
 # written twice. Checked rather than remembered.
 bash tests/test_harness_index_complete.sh || fail test_harness_index_complete
+bash tests/test_harness_index_complete.sh --red || fail "test_harness_index_complete RED"
 
 echo "=== every core wires the four calls the shared machinery needs ==="
 # Launch, savestates, pacing, audio. Forgetting one of these does not crash:
@@ -423,6 +427,7 @@ echo "=== every core wires the four calls the shared machinery needs ==="
 # tests/core_contract_exempt.txt with a reason each, and the audio entry points
 # are derived from Core/Src/gw_audio.c rather than named here.
 bash tests/test_core_contract_wired.sh || fail test_core_contract_wired
+bash tests/test_core_contract_wired.sh --red || fail "test_core_contract_wired RED"
 
 echo "=== the release contains every core file the firmware opens ==="
 # Nothing fails at build time when a core .bin is missing from the card. The
@@ -433,6 +438,7 @@ echo "=== the release contains every core file the firmware opens ==="
 # is checked without anyone remembering to add it here. Skips when there is no
 # build to look at.
 bash tests/test_release_cores_complete.sh || fail test_release_cores_complete
+bash tests/test_release_cores_complete.sh --red || fail "test_release_cores_complete RED"
 
 echo "=== gw_malloc.c: itc/ahb/ram bump allocators (alignment, ITC bounds, over-large fails) ==="
 # The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators behind "RAM
