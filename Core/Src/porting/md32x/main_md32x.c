@@ -753,12 +753,13 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
        * field. Reuse beats adding. */
       {301, curr_lang->s_SCalingFull, md32x_fullscreen_str, 1, &md32x_submenu_fullscreen},
       ODROID_DIALOG_CHOICE_LAST };
-  md32x_guard_enabled = odroid_settings_ScreenTearFix_get() != 0;
-  if (md32x_guard_enabled) strcpy(md32x_guard_str, curr_lang->s_Option_ON);
-  else strcpy(md32x_guard_str, curr_lang->s_Option_OFF);
-  md32x_fullscreen_enabled = odroid_settings_DisplayScaling_get() != 0;
-  if (md32x_fullscreen_enabled) strcpy(md32x_fullscreen_str, curr_lang->s_Option_ON);
-  else strcpy(md32x_fullscreen_str, curr_lang->s_Option_OFF);
+  /* Both options are READ further down, right after odroid_system_init().
+   * odroid_settings_*_get() index persistent_config.app[] by
+   * odroid_system_get_app()->id, and that id is only set by
+   * odroid_system_init (odroid_system.c:44) -- up here it is still the
+   * launcher's 0, so a read here silently returns app[0]'s bytes. The
+   * options[] array only holds POINTERS to the two strings, so filling them
+   * later is fine; the menu cannot open before the frame loop starts. */
 
   if (start_paused) {
     common_emu_state.pause_after_frames = 2;
@@ -815,6 +816,18 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   odroid_system_init(APPID_32X, MD32X_AUDIO_RATE);
   odroid_system_emu_init(&md32x_LoadState, &md32x_SaveState, &md32x_Screenshot,
                          NULL, &md32x_SleepWakeUp, &md32x_SramSave, NULL);
+
+  /* Now, and not a line earlier: currentApp.id is APPID_32X only after
+   * odroid_system_init, and these accessors pick the per-app config slot from
+   * it. Read before that call and both settings come from app[0], the
+   * launcher's slot, which is how the tear guard shipped in ca44eccf never
+   * engaged no matter what the menu said. */
+  md32x_guard_enabled = odroid_settings_ScreenTearFix_get() != 0;
+  if (md32x_guard_enabled) strcpy(md32x_guard_str, curr_lang->s_Option_ON);
+  else strcpy(md32x_guard_str, curr_lang->s_Option_OFF);
+  md32x_fullscreen_enabled = odroid_settings_DisplayScaling_get() != 0;
+  if (md32x_fullscreen_enabled) strcpy(md32x_fullscreen_str, curr_lang->s_Option_ON);
+  else strcpy(md32x_fullscreen_str, curr_lang->s_Option_OFF);
   /* audio_start_playing happens AFTER the warm-up frame below, with the
    * region-correct per-frame sample count (audit bug: PAL carts pace 50fps). */
 

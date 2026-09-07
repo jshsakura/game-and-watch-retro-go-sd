@@ -372,6 +372,16 @@ $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Src/porting/md32x \
     -o /tmp/mtest/test_md32x_fullscreen
 /tmp/mtest/test_md32x_fullscreen || fail test_md32x_fullscreen
 
+echo "=== per-app settings are read after odroid_system_init, not before ==="
+# odroid_settings_*_get() index persistent_config.app[] by currentApp.id, and
+# odroid_system_init is what assigns it. Read one line earlier and you get
+# app[0], the launcher's slot: the menu shows a value, the setting saves to the
+# right place, and the feature never engages. The 32X tear guard shipped that
+# way in ca44eccf and was dead in every build until 2026-09-07. Both functions
+# were correct; only the order was wrong, which is why this is a wiring gate
+# and not a unit test.
+bash tests/test_per_app_settings_wired.sh || fail test_per_app_settings_wired
+
 # RED: the same test against a one-direction sweep must fail. A test that has
 # never failed proves nothing, and this is the bug it exists to catch.
 sed 's|for (int y = MD32X_FS_HEIGHT - 1; y >= fixed; y--) {|for (int y = fixed; y < MD32X_FS_HEIGHT; y++) {|' \
