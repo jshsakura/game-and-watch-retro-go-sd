@@ -201,10 +201,30 @@ called:
   a loop of its own and never asked `odroid_idle_timeout_expired()`. It sat lit for ever
   at any setting.
 
+- The 32X screen-tear option shipped in `ca44eccf` and engaged in no build until
+  2026-09-07. `odroid_settings_*_get()` index `persistent_config.app[]` by
+  `odroid_system_get_app()->id`, and that id is assigned inside `odroid_system_init()`
+  (`odroid_system.c:44`). `main_md32x.c` read its settings at line 756 and called
+  `odroid_system_init` at line 816, so every read landed on `app[0]`, the launcher's
+  slot. The menu showed a value, the toggle saved to the correct slot, and the core
+  read somebody else's bytes. **The order of two correct calls was the entire bug.**
+
 No unit test of those functions could have caught any of it, because the functions were
 fine. `tests/test_idle_timeout_wired.sh` is the shape of the test that can: it asserts
-every loop that can idle asks the one rule, and that nobody re-derives it. Write that
-kind of test when you add a contract, and again when you add a screen.
+every loop that can idle asks the one rule, and that nobody re-derives it.
+`tests/test_per_app_settings_wired.sh` is the same shape for the settings order. Write
+that kind of test when you add a contract, and again when you add a screen.
+
+Two things that pass for wiring tests and are not:
+
+- **Line order is not execution order.** The first version of the settings gate flagged
+  every accessor call that appeared above the `odroid_system_init` line and failed three
+  healthy cores, because a submenu callback defined earlier in the file runs only when
+  the player opens the menu. Scope the check to the function that makes the call.
+- **A feature that builds, links and flashes has proven nothing.** The fullscreen option
+  passed its unit test, its RED gate, a Docker release build and a device flash, and then
+  did nothing at all, because of the bug above. The screen is what closed the question.
+  Bind a feature's acceptance to an observation of the device, not to a green build.
 
 ## What runs is three copies, and only two of them are checked
 

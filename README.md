@@ -347,9 +347,17 @@ What has **not** been measured is the 2D half of the library. Both titles ever b
 is. Titles that use the 32X mostly for colour and sprites (Knuckles' Chaotix, Mortal
 Kombat II, NBA Jam TE) were never timed, so "the core is too slow" is currently only proven for 3D.
 
-**Screen tearing fix** (`PAUSE → Options`, default off) trades frame rate for a cleaner
-picture on this core. A faint disturbance along the bottom of the screen predates it and is
-not fully removed by it.
+Two options live under `PAUSE → Options`, both off by default:
+
+- **Full** fills the 8-pixel black bars at the top and bottom. A 32X frame is 224 lines on a
+  240-line panel, so every game has always been letterboxed. The finished frame is expanded
+  vertically in place, duplicating one row in every 14, which is why it costs no memory: this
+  core has picodrive paint straight into the LCD buffer and there is no room for a second
+  one. It costs row moves instead, and that cost has not yet been measured on hardware.
+- **Screen tearing fix** trades frame rate for a cleaner picture. A faint disturbance along
+  the bottom of the screen predates it and is not fully removed by it. Note that this option
+  did nothing at all in builds before 2026-09-07: it was read from the config one step before
+  the core's own id existed, so it always read the launcher's slot.
 
 ### Super Nintendo
 

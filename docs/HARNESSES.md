@@ -275,6 +275,25 @@ and un-mutes the renderer.
   committed here (non-commercial licence vs this tree's GPLv2). Set
   `CX4_ORACLE` and diff the command stream by hand to redo it.
 
+### `tests/test_per_app_settings_wired.sh` — the order of two correct calls
+
+- Asserts that no core reads a per-app setting (`odroid_settings_Region_get`,
+  `…DisplayScaling…`, `…ScreenTearFix…`, and the rest) above its own
+  `odroid_system_init()` call, inside the same function.
+- Why it exists: those accessors index `persistent_config.app[]` by
+  `odroid_system_get_app()->id`, and `odroid_system_init` is what assigns it.
+  Read one step early and you get `app[0]`, the launcher's slot. The menu still
+  shows a value and the toggle still saves to the right place, so nothing looks
+  wrong. The 32X screen-tear option shipped that way in `ca44eccf` and engaged
+  in no build until 2026-09-07.
+- **The scoping is the difficulty, not the check.** A submenu callback defined
+  earlier in the file is textually above the init call but runs only when the
+  player opens the menu, so a naive line-order comparison fails three healthy
+  cores. The gate looks only inside the function that makes the init call.
+- RED-checked against the pre-fix arrangement, which it catches while passing
+  `nes` and `wsv`. Skips loudly rather than failing when it cannot find an init
+  call: a safety net must not be the thing that breaks a build.
+
 ### `tools/dsp1_harness` — the DSP-1 HLE with the device's own trapping rules
 
 - `dsp1_run.sh` — compiles `external/sm/src/snes/dsp1_hle.c` itself, with

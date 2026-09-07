@@ -478,16 +478,26 @@ there was nothing left to place.
   was ever measured". The smoke run's own screen check did not catch it, and that is the
   part to fix before anyone runs the matrix again. **Identify a measurement by what is on
   the screen, not by the ROM filename.**
-- **Fullscreen.** There is no scaler. The ten cores that offer one render into
-  their own framebuffer and blit through a nearest-neighbour scaler; 32X (like
-  MD) has picodrive paint straight into the LCD active buffer
-  (`PicoDrawSetOutBuf(lcd_get_active_buffer(), 320*2)`), deliberately, because a
-  320×240×2 intermediate is 150 KB and the overlay had 328 B. V28 (320×224) is
-  centred at rows 8..231, hence 8 px bars. Implementable with **no extra RAM**
-  as an in-place vertical expansion of the finished LCD buffer (224→240,
-  duplicate one row in 14; top half top-down, bottom half bottom-up), ~150 KB of
-  row moves per drawn frame — under 1% at current frame times. Must be matched
-  with `md32x_border_clear_set_content_rect`.
+- **Fullscreen — built 2026-09-07, cost still unmeasured.** The design sketched
+  here worked as written: an in-place vertical expansion of the finished LCD
+  buffer, 224→240, one row duplicated in every 14, top half swept downward and
+  bottom half upward. No extra RAM, which was the whole constraint (picodrive
+  paints straight into the LCD active buffer and a 320×240×2 intermediate is
+  150 KB against hundreds of bytes of overlay headroom). `md32x_fullscreen.c`,
+  option "Full" under PAUSE → Options, default off. Verified on hardware: the
+  top eight rows go from 0 non-black pixels to 2,560 and the bottom from 0 to
+  1,883.
+
+  What is **not** answered is the price. The estimate below is pre-registered,
+  written before the bench ran so the number cannot be fitted to the result:
+  153,600 B of row moves per drawn frame, against a ~24.4 M-cycle frame in
+  which draw is only 1.9%. If the framebuffer moved at cache speed that is
+  0.1–0.2% per drawn frame; it is MPU-marked **non-cacheable** for SAI DMA
+  coherence (`main.c:1496`), so the honest range runs to about 1% at worst.
+  Both ends are below this device's own 2%-per-80-minutes drift, so the bench
+  is looking for an unexpected large cost, not measuring the predicted small
+  one. A null result is the expected result and must be written as "not
+  detectable at this precision", never as "no cost".
 
 ## If you measure this core again, read this first
 
