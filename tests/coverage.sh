@@ -238,6 +238,31 @@ build_and_run gw_malloc test_gw_malloc \
 build_and_run crc32 test_crc32 \
     -- -Itests/crc32_stubs -ICore/Inc/porting tests/test_crc32.c Core/Src/porting/crc32.c
 
+# --- Core/Src/porting/music/{music_id3,music_lyrics}.c ---
+# These two had working tests in tests/run.sh (16 and 23 checks) the whole time
+# this script did not build them, so coverage_scope.txt listed them as "no host
+# harness exists yet" and the work order carried two items that were already
+# done. A coverage runner that builds a different set of tests from the suite
+# does not understate the number, it invents work.
+if [ -f Core/Src/porting/music/music_id3.c ] && [ -f Core/Src/porting/music/music_lyrics.c ]; then
+    build_and_run music_id3 test_id3 \
+        -- -ICore/Inc/porting/music tests/test_id3.c Core/Src/porting/music/music_id3.c
+    build_and_run music_lyrics test_lyrics \
+        -- -ICore/Inc/porting/music tests/test_lyrics.c Core/Src/porting/music/music_lyrics.c
+else
+    echo "music module not on this branch -- skipping its coverage"
+fi
+
+# --- Core/Src/porting/md32x/{md32x_border_clear,md32x_fullscreen}.c ---
+# Both are deliberately dependency-free TUs so their tests compile the real
+# file. md32x_border_clear.c is whole-file #included by its test, so the test
+# translation unit IS the source; md32x_fullscreen.c is linked normally.
+build_and_run md32x_border_clear test_md32x_border_clear \
+    -- -Itests/common_stubs tests/test_md32x_border_clear.c
+build_and_run md32x_fullscreen test_md32x_fullscreen \
+    -- -ICore/Src/porting/md32x tests/test_md32x_fullscreen.c \
+       Core/Src/porting/md32x/md32x_fullscreen.c
+
 # --- Core/Src/porting/lib/lz4_depack.c: no stubbing needed. ---
 build_and_run lz4_depack test_lz4_depack \
     -- -ICore/Src/porting/lib tests/test_lz4_depack.c Core/Src/porting/lib/lz4_depack.c

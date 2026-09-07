@@ -56,8 +56,10 @@ UNMEASURED	Core/Src/retro-go/rg_utils.c	175 lines, 0 HAL
 UNMEASURED	Core/Src/retro-go/rg_frogfs.c	181 lines, 0 HAL
 UNMEASURED	Core/Src/retro-go/rg_welcome_prompt.c	88 lines, 0 HAL
 UNMEASURED	Core/Src/retro-go/gw_firmware_abi.c	256 lines, 2 HAL calls — the /CONFIG-adjacent ABI surface (appid.h struct dump); APPID_COUNT growth resets every user's settings per root CLAUDE.md, worth protecting with a real test
-UNMEASURED	Core/Src/porting/music/music_id3.c	ID3 tag parser, 293 lines, 0 HAL. tests/run.sh already has a $SRC="Core/Src/porting/media" branch-conditional block for a differently-named sibling module that does not exist on this branch — the music/ files here are currently wired to nothing
-UNMEASURED	Core/Src/porting/music/music_lyrics.c	LRC/lyrics parser, 57 lines, 0 HAL
+MEASURED	Core/Src/porting/md32x/md32x_border_clear.c	Border-row clear for the 32X overlay-close flicker. Dependency-free on purpose so tests/test_md32x_border_clear.c can whole-file #include it.
+MEASURED	Core/Src/porting/md32x/md32x_fullscreen.c	In-place 224->240 vertical expansion that fills the 32X letterbox bars. Dependency-free TU; tests/test_md32x_fullscreen.c links the real file and a RED gate proves a one-direction sweep is caught.
+MEASURED	Core/Src/porting/music/music_id3.c	ID3 tag parser, 293 lines, 0 HAL. tests/test_id3.c links it (16 checks). The note that used to sit here said the music files were "wired to nothing" — that was true of an older run.sh guard keyed on a renamed directory, and stopped being true when the guard was hardened. coverage.sh simply was not building the test.
+MEASURED	Core/Src/porting/music/music_lyrics.c	LRC/lyrics parser, 57 lines, 0 HAL. tests/test_lyrics.c links it (23 checks).
 UNMEASURED	Core/Src/porting/music/music_cover.c	441 lines, 0 HAL
 UNMEASURED	Core/Src/porting/music/progjpeg.c	progressive JPEG decode, 480 lines, 0 HAL
 UNMEASURED	Core/Src/porting/music/tjpgd.c	baseline JPEG decode, 1143 lines, 0 HAL (vendored algorithm but modified/used directly by this port, not a git submodule)

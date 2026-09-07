@@ -522,6 +522,16 @@ Re-measured 2026-09-07: **51.7% lines (2,087/4,040) / 25.3% branches (1,505/5,94
 sections added since August test wiring and contracts rather than adding lines to the
 measured modules.
 
+**Corrected the same day to 53.5% lines (2,300/4,303) / 26.6% branches (1,658/6,228), 18
+unmeasured.** The earlier figure was understated because `tests/coverage.sh` built 27 test
+binaries while `tests/run.sh` built 41, so four files with working tests were invisible to
+it. Two of them were worse than invisible: `music_id3.c` (74.6% covered) and
+`music_lyrics.c` (91.9%) sat in the work order under "no host harness exists yet", which is
+an item somebody would have picked up and done twice. `md32x_border_clear.c` was not in the
+denominator at all. `tests/test_coverage_runner_matches_suite.sh` now fails the build on
+either lie: a MEASURED file that produces no data, or an UNMEASURED file the suite already
+compiles.
+
 **What the denominator is, because this is the number most easily misread.** It is not the
 repository. `tests/coverage_scope.txt` names what counts and gives a reason per line;
 coverage of the whole tree would be a lie, since it holds the ST HAL, 29 third-party cores

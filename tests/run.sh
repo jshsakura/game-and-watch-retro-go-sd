@@ -382,6 +382,17 @@ echo "=== per-app settings are read after odroid_system_init, not before ==="
 # and not a unit test.
 bash tests/test_per_app_settings_wired.sh || fail test_per_app_settings_wired
 
+echo "=== the coverage work order does not list work that is already done ==="
+# Two ways coverage_scope.txt can lie, and the second one costs somebody a day:
+# a file marked MEASURED that produces no data (the number is overstated), and
+# a file marked UNMEASURED that the suite already compiles (the work order
+# grows an item that is finished). music_id3.c sat in the work order at 74.6%
+# covered because tests/coverage.sh built a different set of tests from this
+# file. Passing a log skips the expensive instrumented rebuild; without one the
+# gate runs coverage.sh itself, and skips loudly if gcov is not here.
+bash tests/test_coverage_runner_matches_suite.sh "${COVERAGE_LOG:-}" \
+  || fail test_coverage_runner_matches_suite
+
 # RED: the same test against a one-direction sweep must fail. A test that has
 # never failed proves nothing, and this is the bug it exists to catch.
 sed 's|for (int y = MD32X_FS_HEIGHT - 1; y >= fixed; y--) {|for (int y = fixed; y < MD32X_FS_HEIGHT; y++) {|' \
