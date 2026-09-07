@@ -424,6 +424,16 @@ echo "=== every core wires the four calls the shared machinery needs ==="
 # are derived from Core/Src/gw_audio.c rather than named here.
 bash tests/test_core_contract_wired.sh || fail test_core_contract_wired
 
+echo "=== the release contains every core file the firmware opens ==="
+# Nothing fails at build time when a core .bin is missing from the card. The
+# launcher lists the system, and picking a game raises the firmware's integrity
+# dialog -- which is exactly what a stale staging directory did on 2026-09-05,
+# and it cost a device round trip to work out. The required list is derived
+# from the "/cores/..." strings in Core/, so a core added to the dispatch table
+# is checked without anyone remembering to add it here. Skips when there is no
+# build to look at.
+bash tests/test_release_cores_complete.sh || fail test_release_cores_complete
+
 echo "=== gw_malloc.c: itc/ahb/ram bump allocators (alignment, ITC bounds, over-large fails) ==="
 # The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators behind "RAM
 # priority = emulators first" (root CLAUDE.md). Linker symbols

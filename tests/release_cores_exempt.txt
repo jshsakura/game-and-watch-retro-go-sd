@@ -1,0 +1,7 @@
+# Core files the firmware opens but deliberately does not ship, one per line.
+# Format: <path> <TAB> <reason>
+#
+# An exemption is a claim. If one stops being true, delete it.
+
+/cores/pico8.bin	Third-party PICO-8 engine. The firmware ships main_pico8_stub.c instead, which renders an install prompt and returns to the launcher, so the absence is the designed behaviour rather than a gap.
+/cores/pico8.ro	Same engine, the relocatable form cached into flash by odroid_overlay_cache_file_in_flash(). Installed by the player, never by us.
