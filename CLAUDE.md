@@ -251,6 +251,45 @@ the mtime touched brought it back instantly, which is the proof.
 - Normal users self-heal, because a real update changes the mtime. This bites *us*, pushing
   the same paths over and over.
 
+## An arm must prove it is the arm it claims to be
+
+Three times on 2026-09-07, in one day, something was measured that was not the
+thing anyone thought was being measured. The causes were all different and the
+symptom was identical: **nobody asked the subject to identify itself.**
+
+- A config was pushed with `gnwmanager sdpush` and the device was then left
+  sitting in gnwmanager's own on-device helper, so the twenty-second sample
+  counted frames in a program that was not the firmware. `sdpush` does not
+  return the device to the firmware; `gnwmanager start bank1` does.
+- A `gnwmanager dump` was called with its arguments in the wrong order
+  (`LOCATION DST SIZE`), so the file that got read was one left over from an
+  earlier session, and the device was nearly reported as running six-week-old
+  firmware.
+- A benchmark's `set -- $pair` clobbered the positional parameters that held
+  the queue of config names, so eight of ten arms pushed nothing at all and
+  re-measured the previous config. Nine of ten arms were A/A. The frame counts
+  agreed to within one frame, which read like a beautifully precise
+  measurement and was in fact the same measurement nine times.
+
+The last one is the sharpest, because a tight spread is exactly what a good
+measurement looks like. **Precision is not identity.** Ten agreeing samples of
+the wrong thing agree perfectly.
+
+So an arm carries its own proof, taken before the measurement, and an arm that
+cannot prove itself is not data:
+
+- **Read back what you wrote.** After pushing `/CONFIG`, `sdpull` it and check
+  that the byte you meant to change actually changed, CRC included. That
+  answers *what is on the card*.
+- **Look at the screen.** For anything with a visual signature, count pixels:
+  the 32X fullscreen option moves the top eight rows from 0 non-black pixels to
+  2,560. That answers *what the device is doing*, which is a different question
+  from the first, so both are needed.
+- **Read the build stamp off the device**, not off a local file, and quote it
+  whole. A trailing `+` means a dirty tree and the binary matches no commit.
+- **Make the failure loud.** An arm whose identity check fails must abort that
+  arm by name. That is the gate working, not the run failing.
+
 ## A measurement is identified by what is on the screen
 
 Not by the ROM filename, not by which arm the script thought it flashed. On 2026-09-03 a
