@@ -87,25 +87,47 @@ normal play rather than on a title screen.
 | Celeste Classic | Pico-8 port | Upstream | see upstream docs |
 | Pico-8 | macs75 engine | Upstream | separate package install; see upstream docs |
 
-### BIOS files the added systems expect
+### BIOS files — the complete list
 
-These files are **not shipped** and never will be; they are copyrighted and you must supply
-your own. The path column is where on the SD card each one goes, and the filename has to
-match exactly, lowercase included, because the loader opens it by name rather than searching.
-A system whose BIOS is missing shows its ROM list normally and fails when you launch a game,
-which is the confusing failure this table exists to prevent.
+Every system in this build that needs a file you must supply is listed here, upstream systems
+included, because a partial list is the same problem as no list. **None of these are shipped
+and none ever will be**; they are copyrighted and you provide your own.
 
-| System | SD path | Files |
-| --- | --- | --- |
-| PC Engine CD | `/bios/pce/` | `syscard3.pce` (Super CD-ROM² System Card 3.0; `syscard3.bin` also accepted) |
-| ZX Spectrum | `/bios/zxs/` | `48.rom` |
-| Commodore 64 | `/bios/c64/` | `kernal.bin`, `basic.bin`, `chargen.bin` |
-| Odyssey² / Videopac | `/bios/videopac/` | `o2rom.bin` |
-| game.com | `/bios/gamecom/` | `internal.bin`, `external.bin` |
+The loader opens each by exact path and exact filename, lowercase included, and does not
+search for alternatives. A system with its file missing shows its ROM list normally and fails
+only when you launch a game, which is the confusing failure this table exists to prevent.
 
-Atari Lynx, WonderSwan, Neo Geo Pocket and Virtual Boy need no BIOS files. Game Boy
-Advance ships a clean-room BIOS and only *optionally* takes the official one
-(`/bios/gba/gba_bios.bin`, exactly 16 KiB).
+**Added or enabled by this fork**
+
+| System | SD path | Files | Required? |
+| --- | --- | --- | --- |
+| PC Engine CD | `/bios/pce/` | `syscard3.pce` (Super CD-ROM² System Card 3.0; `syscard3.bin` also accepted) | Yes |
+| ZX Spectrum | `/bios/zxs/` | `48.rom` | Yes |
+| Commodore 64 | `/bios/c64/` | `kernal.bin`, `basic.bin`, `chargen.bin` | Yes, all three |
+| Odyssey² / Videopac | `/bios/videopac/` | `o2rom.bin` | Yes |
+| game.com | `/bios/gamecom/` | `internal.bin`, `external.bin` | Yes, both |
+| Game Boy Advance | `/bios/gba/` | `gba_bios.bin`, exactly 16 KiB | **Optional.** A clean-room BIOS ships with the firmware; supply the official one only if a game misbehaves |
+
+**Upstream systems that also need files.** These are not this fork's additions, but they are
+in the build and they will not run without these, so they belong in the same list.
+
+| System | SD path | Files | Required? |
+| --- | --- | --- | --- |
+| MSX (MSX2+, the default) | `/bios/msx/` | `MSX2P.rom`, `MSX2PEXT.rom`, `MSX2PMUS.rom` | Yes, for the default machine |
+| MSX (other machines) | `/bios/msx/` | `MSX.rom` (MSX1), `MSX2.rom` + `MSX2EXT.rom` (MSX2) | Only for the machine you pick in Options |
+| MSX (disk games) | `/bios/msx/` | `PANASONICDISK.rom` or `PANASONICDISK_.rom`, `Nextor.rom` | Only for `.dsk` titles |
+| MSX (Japanese text) | `/bios/msx/` | `MSXKANJI.rom` | Optional, kanji glyphs |
+| MSX (cartridge detection) | `/bios/msx/` | `msxromdb.bin` | Optional. Without it the mapper type is guessed instead of looked up, so some cartridges pick the wrong one |
+| ColecoVision | `/bios/coleco/` | `coleco.bin`, 8 KB | Yes |
+| Pokémon Mini | `/bios/mini/` | `bios.min` | Yes |
+| NES | `/bios/nes/` | `palettes.bin` | Optional. Extra selectable palettes; the built-in one is used without it |
+
+**Systems that need nothing:** Atari Lynx, Atari 2600 and 7800, WonderSwan / Color, Neo Geo
+Pocket / Color, Virtual Boy, Watara Supervision, Sega 32X, SNES, Amstrad CPC, Tamagotchi,
+Game & Watch, and every Sega and Nintendo cartridge system not named above.
+
+One more file lives under `/bios/` and is **not** yours to find: `/bios/logo.bin` is a
+firmware asset, pushed with the update.
 
 ---
 
