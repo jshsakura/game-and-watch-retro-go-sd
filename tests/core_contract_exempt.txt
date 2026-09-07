@@ -1,0 +1,13 @@
+# Cores exempt from part of the basic contract checked by
+# tests/test_core_contract_wired.sh, one per line, with the reason.
+#
+# Format: <core-dir> <TAB> <contract names, comma-separated> <TAB> <reason>
+# Contract names: emu_init, frame_loop, audio
+#
+# An exemption is a claim about the code, so each one says what is true instead.
+# If a line here stops being true, delete it -- do not soften the gate.
+
+music	emu_init,frame_loop,audio	An app, not an emulator. It has no savestates to wire and runs its own loop; audio goes through the music player's own path. Not registered by add_emulator().
+video	emu_init,frame_loop,audio	An app, not an emulator. Same reasoning as music; the AVI player paces on its own demuxer.
+pico8	frame_loop,audio	main_pico8_stub.c is an install-prompt screen, not an engine: the firmware ships without PICO-8 and this file renders a message, waits for a button and returns. The real engine is a third-party /cores/pico8.bin with its own loop.
+c64	audio	audio_start_playing() is in main_c64_dev.cpp (PAL 22050/50), not in main_c64.c. The contract is met, in the sibling translation unit.

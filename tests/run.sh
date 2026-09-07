@@ -413,6 +413,17 @@ echo "=== docs/HARNESSES.md names every gate and harness in the tree ==="
 # written twice. Checked rather than remembered.
 bash tests/test_harness_index_complete.sh || fail test_harness_index_complete
 
+echo "=== every core wires the four calls the shared machinery needs ==="
+# Launch, savestates, pacing, audio. Forgetting one of these does not crash:
+# the core runs and a whole feature is simply absent, silently. Super Metroid
+# shipped three releases with neither savestates nor pacing because
+# odroid_system_emu_init() and common_emu_frame_loop() were never called, and
+# the 32X read its options from the launcher's config slot because
+# odroid_system_init() came 59 lines too late. Exemptions live in
+# tests/core_contract_exempt.txt with a reason each, and the audio entry points
+# are derived from Core/Src/gw_audio.c rather than named here.
+bash tests/test_core_contract_wired.sh || fail test_core_contract_wired
+
 echo "=== gw_malloc.c: itc/ahb/ram bump allocators (alignment, ITC bounds, over-large fails) ==="
 # The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators behind "RAM
 # priority = emulators first" (root CLAUDE.md). Linker symbols
