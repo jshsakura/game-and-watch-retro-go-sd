@@ -21,7 +21,10 @@ static int failures = 0;
 
 static void ok(int cond, const char *what)
 {
-    printf("%s  %s\n", cond ? "OK  " : "FAIL", what);
+    /* Same shape as its neighbour tests/test_md32x_border_clear.c: a reader
+     * scanning the suite log should not have to notice which file a line came
+     * from. */
+    printf("%s %s\n", cond ? "OK" : "FAIL", what);
     if (!cond) failures++;
 }
 
@@ -48,7 +51,7 @@ static int check_map(uint16_t *fb, int top, int lines, const char *what)
         if (bad >= 0) break;
     }
     if (bad >= 0)
-        printf("     row %d holds %04x, wanted %04x\n", bad,
+        printf("   row %d holds %04x, wanted %04x\n", bad,
                fb[(size_t)bad * W], (uint16_t)(0x1000 + top + (int)(((long)bad * lines) / H)));
     ok(bad < 0, what);
     return bad < 0;

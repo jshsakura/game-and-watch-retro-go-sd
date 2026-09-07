@@ -29,7 +29,7 @@ checked=0
 for f in Core/Src/porting/*/main_*.c; do
   grep -qE "$ACCESSORS" "$f" || continue
   core=$(basename "$(dirname "$f")")
-  grep -q 'odroid_system_init' "$f" || { echo "SKIP $core uses a per-app accessor but never calls odroid_system_init"; continue; }
+  grep -q 'odroid_system_init' "$f" || { echo "  SKIP $core uses a per-app accessor but never calls odroid_system_init"; continue; }
 
   bad=$(awk -v pat="$ACCESSORS" '
     # Track the last line that opened a function body at column 0.
@@ -59,16 +59,16 @@ for f in Core/Src/porting/*/main_*.c; do
 
   initline=$(echo "$bad" | sed -n 's/^INITLINE //p')
   offenders=$(echo "$bad" | grep '^       line ' || true)
-  [ -n "$initline" ] || { echo "SKIP $core: could not locate the odroid_system_init call"; continue; }
+  [ -n "$initline" ] || { echo "  SKIP $core: could not locate the odroid_system_init call"; continue; }
   checked=$((checked + 1))
 
   if [ -n "$offenders" ]; then
-    echo "FAIL $f reads a per-app setting before its own odroid_system_init (line $initline):"
+    echo "  FAIL $f reads a per-app setting before its own odroid_system_init (line $initline):"
     echo "$offenders"
     echo "       app[] is indexed by currentApp.id, and that call is what sets it."
     fails=$((fails + 1))
   else
-    echo "OK   $core reads its per-app settings after odroid_system_init"
+    echo "  OK   $core reads its per-app settings after odroid_system_init"
   fi
 done
 
@@ -76,6 +76,6 @@ if [ "$checked" -eq 0 ]; then
   echo "SKIP no core uses a per-app settings accessor -- nothing to check"
   exit 0
 fi
-echo "checked $checked core(s)"
+echo "  checked $checked core(s)"
 [ "$fails" -eq 0 ] || exit 1
 exit 0

@@ -275,6 +275,55 @@ and un-mutes the renderer.
   committed here (non-commercial licence vs this tree's GPLv2). Set
   `CX4_ORACLE` and diff the command stream by hand to redo it.
 
+## Gates in `tests/`, and the accident each one pins
+
+`tests/run.sh` runs these; they are listed here because an index that omits
+fifteen of its twenty-four entries is not an index. Almost every one was written
+the day after something shipped broken, so the entry says which accident, not
+just which file.
+
+**Link-time and layout gates.** These catch what the compiler cannot: the
+program is right and the *image* is wrong.
+
+| Gate | What it refuses |
+| --- | --- |
+| `test_check_core_symbol_aliases.sh` | A core reaching a symbol only another core's overlay defines. Same-address overlays alias silently instead of erroring, which is how Super Metroid drove the SNES bus through SMW's `g_snes` for three releases. Fixtures are synthesised `nm`/`objdump` output, so the gate needs no toolchain. |
+| `test_check_logo_index_alignment.sh` | The `RG_LOGO_*` enum drifting from the link order of the `LOGO_DATA` structs. The only thing binding a name to a picture is that those two orders match; when they stopped matching, 46 logos shifted by one. |
+| `test_check_no_resident_logo_refs.sh` | Resident code holding the address of a `.sdcard_logo` symbol. That section is staging, not memory: its addresses are extflash LOAD addresses nothing can read at runtime, and logos are reached by index through `rg_get_logo()`. |
+| `test_check_resident_init_array.sh` | A boot-time C++ constructor pointing into overlay RAM. `__libc_init_array()` runs before `main()`, so such a pointer is a call into a region holding no core yet: black screen, no BSOD, no rescue screen. |
+| `test_check_sd_content_fresh.sh` | A release tar carrying a previous build's output. `release` rolls `sd_content/` wholesale, and it has been wrong twice in one day: 305 CC BY-NC sprites, then ~1 MB of a removed core's payload. |
+| `test_gba_xip_contract.sh` | The GBA flash-XIP split drifting from its contract, asserted against the linked image because the compiler cannot see it. |
+| `test_state_version.sh` | The firmware's savestate version and the rig's loader disagreeing. When the rig read v2 while the firmware wrote v3 the symptom was a silent death at frame 0, not a version complaint, and every anchored measurement was of a different workload. |
+
+**Wiring gates.** The functions are correct; the question is whether anybody
+calls them, and in what order. See "The bug is usually in the thing that never
+got wired" in the root `CLAUDE.md`.
+
+| Gate | What it asserts |
+| --- | --- |
+| `test_per_app_settings_wired.sh` | No core reads a per-app setting above its own `odroid_system_init()` call. Detail below. |
+| `test_adc_isr_wired.sh` | The battery poll does not touch the HAL ADC from `TIM1_UP` (priority 0,0, above SysTick). With ticks frozen, "wait for ADRDY" is not slow, it is infinite, and it starved main for real on 2026-08-26. |
+| `test_ssfix_wired.sh` | The 32X savestate hardening and the mid-frame load refusal are still called. Here the wiring *is* the feature. |
+| `test_sm_skip_guard.sh` | `run.sh` SKIPS the sm device-parity harness rather than dying when `external/sm` is absent, which is exactly CI's host-tests job. A safety net must not be the thing that breaks the build. |
+| `test_coverage_runner_matches_suite.sh` | The coverage work order neither overstates its number nor lists work already done. Detail below. |
+| `test_harness_index_complete.sh` | This file naming every gate and harness in the tree. It found itself missing on its first run, which is the correct first result for a gate that checks a hand-maintained list. |
+
+**Behaviour gates for bugs that reached hardware.**
+
+| Gate | The bug |
+| --- | --- |
+| `test_remove_extension.sh` | `remove_extension()` did `memcpy(dst, path, strrchr(path,'.') - path)`. With no dot, `strrchr` returns NULL and the length underflows to ~4 GB, so merely *listing* a system bus-faulted the device. |
+| `test_snes_audio_pacing.sh` | RED-first: it extracts the actual pacing block out of `main_snes.c` and drives it across a range of fps, rather than reimplementing it. |
+| `test_tamapoke_pmd_actions.sh` | Two enums, `ACT_*` and `PMD_*`, index different things and the code passed the wrong one to a function that indexes sprite packs. |
+| `test_tamapoke_sprite_transparency.sh` | The packer wrote `TRANSPARENT = 0xFF` and the blit skipped index 0, so every transparent pixel drew as `pal[255]` and every legitimate colour-0 pixel was punched out. |
+| `test_appid_value.sh` | `appid.sh` must read an APPID out of the header and return EMPTY rather than guess. Counting positions like the compiler does is how a script comes to disagree with the compiler. |
+
+**A shared helper, not a gate.** `c_strip.sh` is sourced by the two gates that
+have to tell a real call from a mention in a comment. It exists because this
+tree's older idiom, `^[^*/]*name\(`, silently misses `if (*flag) name();` and
+`if (a / b) name();` — a discovery filter that hides real calls makes a gate
+pass while looking at nothing.
+
 ### `tests/test_per_app_settings_wired.sh` — the order of two correct calls
 
 - Asserts that no core reads a per-app setting (`odroid_settings_Region_get`,

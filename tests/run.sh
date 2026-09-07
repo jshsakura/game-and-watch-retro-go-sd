@@ -372,6 +372,19 @@ $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Src/porting/md32x \
     -o /tmp/mtest/test_md32x_fullscreen
 /tmp/mtest/test_md32x_fullscreen || fail test_md32x_fullscreen
 
+# RED: the same test against a one-direction sweep must fail. A test that has
+# never failed proves nothing, and this is the bug it exists to catch.
+sed 's|for (int y = MD32X_FS_HEIGHT - 1; y >= fixed; y--) {|for (int y = fixed; y < MD32X_FS_HEIGHT; y++) {|' \
+    Core/Src/porting/md32x/md32x_fullscreen.c > /tmp/mtest/md32x_fullscreen_red.c
+$CC -O2 -w -std=gnu11 -ICore/Src/porting/md32x \
+    tests/test_md32x_fullscreen.c /tmp/mtest/md32x_fullscreen_red.c \
+    -o /tmp/mtest/test_md32x_fullscreen_red
+if /tmp/mtest/test_md32x_fullscreen_red >/dev/null 2>&1; then
+  fail "test_md32x_fullscreen RED gate: the one-direction sweep PASSED, so the test cannot see row smearing"
+else
+  echo "OK RED: a one-direction sweep smears rows and is caught"
+fi
+
 echo "=== per-app settings are read after odroid_system_init, not before ==="
 # odroid_settings_*_get() index persistent_config.app[] by currentApp.id, and
 # odroid_system_init is what assigns it. Read one line earlier and you get
@@ -393,18 +406,12 @@ echo "=== the coverage work order does not list work that is already done ==="
 bash tests/test_coverage_runner_matches_suite.sh "${COVERAGE_LOG:-}" \
   || fail test_coverage_runner_matches_suite
 
-# RED: the same test against a one-direction sweep must fail. A test that has
-# never failed proves nothing, and this is the bug it exists to catch.
-sed 's|for (int y = MD32X_FS_HEIGHT - 1; y >= fixed; y--) {|for (int y = fixed; y < MD32X_FS_HEIGHT; y++) {|' \
-    Core/Src/porting/md32x/md32x_fullscreen.c > /tmp/mtest/md32x_fullscreen_red.c
-$CC -O2 -w -std=gnu11 -ICore/Src/porting/md32x \
-    tests/test_md32x_fullscreen.c /tmp/mtest/md32x_fullscreen_red.c \
-    -o /tmp/mtest/test_md32x_fullscreen_red
-if /tmp/mtest/test_md32x_fullscreen_red >/dev/null 2>&1; then
-  fail "test_md32x_fullscreen RED gate: the one-direction sweep PASSED, so the test cannot see row smearing"
-else
-  echo "OK  RED: the one-direction sweep is caught"
-fi
+echo "=== docs/HARNESSES.md names every gate and harness in the tree ==="
+# The index calls itself the catalogue of every harness, and on 2026-09-07 it
+# named nine of twenty-four gates. That is worse than no index: it answers "is
+# there already a test for this?" with a confident no, and the same test gets
+# written twice. Checked rather than remembered.
+bash tests/test_harness_index_complete.sh || fail test_harness_index_complete
 
 echo "=== gw_malloc.c: itc/ahb/ram bump allocators (alignment, ITC bounds, over-large fails) ==="
 # The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators behind "RAM

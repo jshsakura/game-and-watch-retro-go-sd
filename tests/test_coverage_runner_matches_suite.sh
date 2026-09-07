@@ -41,7 +41,7 @@ offenders=$(awk '
 ' "$LOG")
 
 if [ -n "$offenders" ]; then
-  echo "FAIL these files are MEASURED in tests/coverage_scope.txt but produced no data:"
+  echo "  FAIL these files are MEASURED in tests/coverage_scope.txt but produced no data:"
   echo "$offenders" | sed 's/^/       /'
   echo "       Either make tests/coverage.sh build them, or mark them UNMEASURED"
   echo "       with a reason. A denominator that lies in either direction is worse"
@@ -50,7 +50,7 @@ if [ -n "$offenders" ]; then
 fi
 
 n=$(grep -cE '^\S+\.c +[0-9]+/[0-9]+' "$LOG" || true)
-echo "OK   every MEASURED file produced coverage data ($n rows in the report)"
+echo "  OK   every MEASURED file produced coverage data ($n rows in the report)"
 
 # The other direction, and the one that actually bit: a file marked UNMEASURED
 # ("no host harness exists yet") that tests/run.sh already links. That does not
@@ -78,5 +78,5 @@ if [ "$phantom" -gt 0 ]; then
   echo "       work order sends the next person to write a test that already exists."
   exit 1
 fi
-echo "OK   no UNMEASURED file is already compiled by the suite"
+echo "  OK   no UNMEASURED file is already compiled by the suite"
 exit 0
