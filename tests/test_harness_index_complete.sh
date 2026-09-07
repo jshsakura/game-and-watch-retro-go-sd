@@ -19,7 +19,14 @@ if [ "${1:-}" = "--red" ]; then
   red=$(mktemp -d); trap 'rm -rf "$red"' EXIT
   mkdir -p "$red/tests" "$red/docs" "$red/tools"
   cp tests/*.sh "$red/tests/" 2>/dev/null
-  cp -r tools/* "$red/tools/" 2>/dev/null
+  # Only the NAMES matter here: the gate checks that each harness directory is
+  # mentioned in the index, never what is inside one. Copying tools/ wholesale
+  # dragged in the rigs and their build output and cost 91 seconds -- nearly
+  # half the suite -- for a fixture that needs empty directories. A gate nobody
+  # will wait for is a gate nobody runs.
+  for d in tools/*harness* tools/*_rig tools/gnw_probe tools/gba_m4a; do
+    [ -d "$d" ] && mkdir -p "$red/$d"
+  done
   sed 's|test_remove_extension\.sh|test_gone_from_the_index.sh|' \
       docs/HARNESSES.md > "$red/docs/HARNESSES.md"
   out=$(cd "$red" && bash "tests/$(basename "$0")" 2>&1); rc=$?
