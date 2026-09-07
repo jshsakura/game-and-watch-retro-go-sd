@@ -440,6 +440,15 @@ echo "=== the release contains every core file the firmware opens ==="
 bash tests/test_release_cores_complete.sh || fail test_release_cores_complete
 bash tests/test_release_cores_complete.sh --red || fail "test_release_cores_complete RED"
 
+echo "=== a setting a core saves must be one it reads back ==="
+# The setting that does not stick. The menu works, the toggle applies at once,
+# the byte lands in the right slot of /CONFIG, and the next launch overwrites
+# it with a hardcoded default -- so it reads like forgetfulness, not a bug.
+# Watara Supervision shipped that: palette_update_cb() saved the palette and
+# init called supervision_set_color_scheme(SV_COLOR_SCHEME_DEFAULT) over it.
+bash tests/test_settings_round_trip.sh || fail test_settings_round_trip
+bash tests/test_settings_round_trip.sh --red || fail "test_settings_round_trip RED"
+
 echo "=== gw_malloc.c: itc/ahb/ram bump allocators (alignment, ITC bounds, over-large fails) ==="
 # The itc_malloc/ahb_malloc/ram_malloc/ram_calloc bump allocators behind "RAM
 # priority = emulators first" (root CLAUDE.md). Linker symbols

@@ -539,7 +539,19 @@ int app_main_wsv(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     // Init Sound
     audio_start_playing(WSV_AUDIO_BUFFER_LENGTH);
 
-    supervision_set_color_scheme(SV_COLOR_SCHEME_DEFAULT);
+    /* Restore the palette the player chose. palette_update_cb() has always
+     * saved it with odroid_settings_Palette_set(), and this line used to
+     * hardcode the default over it, so the setting survived exactly until the
+     * core was next launched. Read here rather than earlier because the
+     * accessor indexes persistent_config.app[] by odroid_system_get_app()->id,
+     * which odroid_system_init() above is what assigns
+     * (tests/test_per_app_settings_wired.sh). Clamped, because the stored byte
+     * comes off the SD card and a card is not a trusted input. */
+    {
+        int32_t saved = odroid_settings_Palette_get();
+        if (saved < 0 || saved >= SV_COLOR_SCHEME_COUNT) saved = SV_COLOR_SCHEME_DEFAULT;
+        supervision_set_color_scheme((int8)saved);
+    }
 
     supervision_init(); //Init the emulator
 
