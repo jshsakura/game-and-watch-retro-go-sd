@@ -334,8 +334,9 @@ void lcd_set_buffers(uint16_t *buf1, uint16_t *buf2)
  * the right region. Initialised to RGB565 to match the static-init layout
  * of framebuffer1/2 + fb1/2 set up at the top of this file. */
 static lcd_mode_t current_lcd_mode = LCD_MODE_RGB565;
+static size_t current_fb_footprint = 2u * GW_LCD_WIDTH * GW_LCD_HEIGHT * 2u;
 
-void lcd_setup_framebuffers(lcd_mode_t mode)
+static void lcd_setup_framebuffers_count(lcd_mode_t mode, unsigned count)
 {
   uint8_t *base = __lcd_pool_start__;
   size_t fb_size_bytes;
@@ -359,10 +360,9 @@ void lcd_setup_framebuffers(lcd_mode_t mode)
    * the union of the two modes' framebuffer footprints (= max stride),
    * never the bonus region — PICO-8's pool may live there. */
   {
-    size_t old_fb = (current_lcd_mode == LCD_MODE_LUT8)
-        ? (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT * 1)
-        : (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
-    size_t footprint = 2 * (fb_size_bytes > old_fb ? fb_size_bytes : old_fb);
+    size_t new_footprint = count * fb_size_bytes;
+    size_t footprint = new_footprint > current_fb_footprint
+        ? new_footprint : current_fb_footprint;
     memset(base, 0, footprint);
   }
 
@@ -370,11 +370,12 @@ void lcd_setup_framebuffers(lcd_mode_t mode)
    * caller works with the framebuffer as uint8_t* via cast. fb1/fb2 are
    * what the LTDC peripheral reads — must match the framebuffer layout. */
   framebuffer1 = (pixel_t *)(base);
-  framebuffer2 = (pixel_t *)(base + fb_size_bytes);
+  framebuffer2 = (pixel_t *)(count == 1 ? base : base + fb_size_bytes);
   fb1 = (uint16_t *)(base);
-  fb2 = (uint16_t *)(base + fb_size_bytes);
+  fb2 = (uint16_t *)(count == 1 ? base : base + fb_size_bytes);
 
   current_lcd_mode = mode;
+  current_fb_footprint = count * fb_size_bytes;
   active_framebuffer = 0;
 
   /* Push to LTDC: change format and source address, then reload at vsync. */
@@ -387,9 +388,7 @@ void lcd_setup_framebuffers(lcd_mode_t mode)
    * cacheable Normal memory, which is essential if cold engine code or
    * the engine's TLSF pool lives there. The framebuffer footprint must
    * stay uncached so LTDC sees CPU writes immediately. */
-  uint32_t fb_footprint = (mode == LCD_MODE_LUT8)
-      ? (uint32_t)(2 * GW_LCD_WIDTH * GW_LCD_HEIGHT)        /* 154 KB */
-      : (uint32_t)(2 * GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);   /* 300 KB */
+  uint32_t fb_footprint = (uint32_t)current_fb_footprint;
   SCB_CleanInvalidateDCache_by_Addr(
       (uint32_t *)base,
       (int32_t)((uintptr_t)__lcd_pool_end__ - (uintptr_t)base));
@@ -402,14 +401,22 @@ void lcd_setup_framebuffers(lcd_mode_t mode)
   lcd_sleep_while_swap_pending();
 }
 
+void lcd_setup_framebuffers(lcd_mode_t mode)
+{
+  lcd_setup_framebuffers_count(mode, 2);
+}
+
+void lcd_setup_single_framebuffer(lcd_mode_t mode)
+{
+  lcd_setup_framebuffers_count(mode, 1);
+}
+
 void lcd_get_bonus_pool(uint8_t **out_ptr, size_t *out_size)
 {
-  if (current_lcd_mode == LCD_MODE_LUT8) {
-    /* 2 LUT8 framebuffers occupy the lower 154K; the rest is bonus. */
-    size_t fb_block = 2 * (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT);
-    if (out_ptr)  *out_ptr  = __lcd_pool_start__ + fb_block;
+  if (current_fb_footprint < (size_t)(__lcd_pool_end__ - __lcd_pool_start__)) {
+    if (out_ptr)  *out_ptr  = __lcd_pool_start__ + current_fb_footprint;
     if (out_size) *out_size = (size_t)((uintptr_t)__lcd_pool_end__ -
-                                       (uintptr_t)__lcd_pool_start__) - fb_block;
+                                       (uintptr_t)__lcd_pool_start__) - current_fb_footprint;
   } else {
     if (out_ptr)  *out_ptr  = NULL;
     if (out_size) *out_size = 0;

@@ -294,17 +294,24 @@ catches this; the device would have caught it later and more expensively.
 
 ## Sega CD
 
-**Folded, 2026-07-24, on a memory fact and not on a bug.** An accurate core needs
-PRG 512 K + Word 256 K = 768 K of *writable* RAM against `RAM_EMU`'s 724 K, and
-XIP does not help RW data. gwenesis only fits by cutting PRG to 128 K, which is
-what breaks the Sub-CPU handshake — so the boot failures were a symptom of the
-budget, not a separate defect to chase. External PSRAM is the only route.
+**Reopened and crossed on device, 2026-09-14.** The old 724 K calculation treated
+the emulator as if every writable page had to live in `RAM_EMU`. The working
+PicoDrive port distributes the 512 K PRG RAM across the LUT8 LCD bonus pool,
+dedicated AHB, AXI and DTCM pages; keeps the 256 K Word RAM in AXI; and splits PCM
+RAM between the real 32 K SRAM4 and AHB. The linker declaration was corrected
+from a fictitious 64 K SRAM4 to the STM32H7B0's actual 32 K.
 
-**And the screen has never come up on the device, not once.** Earlier notes read
-as a regression; they were host-harness results mistaken for device results. The
-CDC/DECI chain analysis that was in flight is kept in
-[SEGACD_INVESTIGATION.md](SEGACD_INVESTIGATION.md) so the next attempt does not
-re-derive it.
+The production path now reaches and runs a legal Sega CD test disc on the real
+console. A 40 s uninterrupted run completed 1,757 emulated frames (43.9 fps),
+then accepted START and continued beyond 5,087 frames with `CFSR=0`; the LCD
+showed the disc's `Hello World!` output. The panel was explicitly driven at
+60 Hz. This proves boot, both 68Ks, CDC/CD image I/O, input and LUT8 video on the
+device. It is a light functional test, not a claim about retail-game frame rate.
+No existing emulator core had to be removed.
+
+The earlier CDC/DECI investigation is retained in
+[SEGACD_INVESTIGATION.md](SEGACD_INVESTIGATION.md) as history, but its proposed
+HLE jump is not part of the working implementation.
 
 **Trap.** A "permanently parked semaphore" was diagnosed from a 60-frame snapshot.
 Live register reads showed the semaphore cycling normally every frame. Sparse

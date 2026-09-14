@@ -255,6 +255,7 @@ int odroid_overlay_draw_text_line(uint16_t x_pos, uint16_t y_pos, uint16_t width
  * Supported sizes (hand-decomposed into exactly 4 MPU regions):
  *   300 KB (RGB565, the full LCD pool)
  *   154 KB (LUT8, leaving 146 KB cacheable bonus)
+ *    75 KB (single LUT8 buffer, leaving 225 KB cacheable bonus)
  *
  * Caller is responsible for HAL_MPU_Disable/Enable bracket — the function
  * only writes the region descriptors. */

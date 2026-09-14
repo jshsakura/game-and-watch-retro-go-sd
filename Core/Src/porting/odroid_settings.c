@@ -107,6 +107,46 @@ typedef struct persistent_config {
     uint32_t crc32;
 } persistent_config_t;
 
+/* v17 is byte-for-byte the current layout except that Sega CD did not have
+ * an app slot.  Keep this reader so restoring the core does not wipe the
+ * user's language, volume, display settings, or resume target. */
+typedef struct persistent_config_v17 {
+    uint32_t magic;
+    uint8_t version;
+
+    uint8_t backlight;
+    uint8_t start_action;
+    uint8_t volume;
+    uint8_t font_size;
+    uint8_t theme;
+    uint8_t colors;
+    uint8_t turbo_buttons;
+    uint8_t font;
+    uint8_t lang;
+    uint8_t startup_app;
+    uint8_t cpu_oc_level;
+    char    startup_file[256];
+
+    uint16_t main_menu_timeout_s;
+    uint16_t main_menu_selected_tab;
+    uint16_t main_menu_cursor;
+    char main_menu_browse_subpath[96];
+
+    bool debug_clock_always_on;
+    uint8_t cover_style;
+    uint32_t welcome_prompt;
+    uint8_t sort_mode;
+    app_config_t app[27];
+    uint32_t crc32;
+} persistent_config_v17_t;
+
+_Static_assert(offsetof(persistent_config_v17_t, app) ==
+                   offsetof(persistent_config_t, app),
+               "v17 common CONFIG prefix changed");
+_Static_assert(sizeof(((persistent_config_v17_t *)0)->app) ==
+                   27 * sizeof(app_config_t),
+               "v17 app slot count changed");
+
 /* cover_style must live entirely inside the padding that already existed
  * before welcome_prompt: welcome_prompt has to sit exactly where a build
  * WITHOUT cover_style put it, or every saved /CONFIG shifts and silently
@@ -118,12 +158,12 @@ _Static_assert(offsetof(persistent_config_t, welcome_prompt) ==
 
 static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
-    .version = 17,  /* 13->14: APPID_32X grows app[APPID_COUNT] (one-time settings reset on upgrade)
+    .version = 18,  /* 13->14: APPID_32X grows app[APPID_COUNT] (one-time settings reset on upgrade)
                      * 14->15: APPID_CPS1 was added sharing APPID_SM's slot 23.
                      * 15->16: APPID_CPS1 moved to its own slot 28, growing the struct.
                      * 16->17: APPID_CPS1 and APPID_SEGACD removed, shrinking the struct.
-                     * Every user loses language, coverflow, backlight and volume ONCE
-                     * on this upgrade (CLAUDE.md). */
+                     * 17->18: APPID_SEGACD restored, growing the struct. v17
+                     * is migrated below so existing user settings survive. */
 
     .backlight = ODROID_BACKLIGHT_LEVEL6,
     .start_action = ODROID_START_ACTION_RESUME,
@@ -198,15 +238,52 @@ static bool file_exists(const char *file_path) {
 
 void odroid_settings_init()
 {
+    bool migrated_v17 = false;
+
     if (fs_mounted && file_exists("/CONFIG")) {
         FILE *file = fopen("/CONFIG", "rb");
         if (file) {
-            size_t bytes_read = fread((unsigned char *)&persistent_config_ram, 1, sizeof(persistent_config_t), file);
+            long file_size = -1;
+            if (fseek(file, 0, SEEK_END) == 0) {
+                file_size = ftell(file);
+                rewind(file);
+            }
+
+            size_t bytes_read = 0;
+            if (file_size == (long)sizeof(persistent_config_t)) {
+                bytes_read = fread((unsigned char *)&persistent_config_ram, 1,
+                                   sizeof(persistent_config_t), file);
+            } else if (file_size == (long)sizeof(persistent_config_v17_t)) {
+                persistent_config_v17_t old;
+                bytes_read = fread((unsigned char *)&old, 1, sizeof(old), file);
+                if (bytes_read == sizeof(old) && old.magic == CONFIG_MAGIC &&
+                    old.version == 17) {
+                    uint32_t loaded_crc32 = old.crc32;
+                    old.crc32 = 0;
+                    uint32_t calculated_crc32 = crc32_le(
+                        0, (unsigned char *)&old, sizeof(old));
+                    if (calculated_crc32 == loaded_crc32) {
+                        memcpy(&persistent_config_ram, &persistent_config_default,
+                               sizeof(persistent_config_ram));
+                        memcpy(&persistent_config_ram, &old,
+                               offsetof(persistent_config_t, app));
+                        memcpy(persistent_config_ram.app, old.app,
+                               sizeof(old.app));
+                        persistent_config_ram.version =
+                            persistent_config_default.version;
+                        migrated_v17 = true;
+                        printf("CONFIG v17 migrated to v18\n");
+                    }
+                }
+            }
             fclose(file);
-            if (bytes_read != sizeof(persistent_config_t))
+            if (!migrated_v17 && bytes_read != sizeof(persistent_config_t))
                 memset(&persistent_config_ram, 0, sizeof(persistent_config_t));
         }
     }
+
+    if (migrated_v17)
+        odroid_settings_commit();
 
     if (persistent_config_ram.magic != CONFIG_MAGIC) {
         printf("CONFIG magic %08x/%08lx\n", CONFIG_MAGIC, persistent_config_ram.magic);
@@ -794,4 +871,3 @@ void odroid_settings_CoverStyle_set(uint8_t style)
     persistent_config_ram.cover_style =
         (style < ODROID_COVER_STYLE_COUNT) ? style : ODROID_COVER_STYLE_POSTER;
 }
-
