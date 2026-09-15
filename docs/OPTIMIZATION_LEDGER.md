@@ -334,6 +334,24 @@ must be **151,412**, not the tag's 156,212 — the 4,800-B CDDA mix buffer moves
 to AHB in the new placement, and double-charging it fails the AXI assert by
 exactly 4,800.
 
+**Phase-0 gate 3 landed, 2026-09-16.** `ahb_set_core_base()` in
+`Core/Src/gw_malloc.c`: a core-exclusive overlay may rebase its session's AHB
+bump pool to a lower base (Sega CD will claim the full 120 KiB from
+`0x30000000`, reusing the GBA-only BIOS/cheats/sound statics at those
+addresses). The ceiling `__ahbram_audio_start__` is invariant and every core
+exit is a full `esp_restart()` back through the launcher's `ahb_init()`, which
+restores the global default. Deliberately **stateless** — the first cut stored
+the base in a DTCM `.bss` static and the probe's DTCM link-assert fired on it:
+the heap contract leaves a 4-B margin, and an 8-B static costs 24 B of heap
+(16 of `ALIGN(16)` at `_heap_start`, plus a linker quirk where the effective
+`_heap_end` tracks the `.bss` end's alignment — −4/−12 observed despite the
+`& ~15` in the formula). Stateless rebasing costs zero RAM. Flag-off builds:
+258,120 B, exactly +72 B over the 258,048 B baseline — the SHF-MERGE'd assert
+string survives `--gc-sections`, and nothing else changes (`.bss`, heap and the
+touched functions are byte-identical to the baseline form). Flag-on probe
+re-passes all four asserts with the gate-2 margins intact (AXI 3,556 /
+AHB 5,440 / ITCM 64 K exact / DTCM heap 90,236 ≥ 90,232).
+
 ## CPS-1
 
 **Abandoned by the owner, 2026-07-25.** Kept here because most of it was proven

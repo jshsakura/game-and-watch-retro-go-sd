@@ -181,7 +181,13 @@ reproduced: AXI 3,556 free, AHB 5,440 free, ITCM 64 K exact, DTCM heap
 the CDDA buffer is charged to AHB here, and leaving it in the static BSS too
 fails the AXI assert by exactly 4,800. Gate 1's device run is on hardware
 (p35 arm; 13.4 fps under the observation-only swap-race counter); the panel
-eye verdict is still pending. Gate 3 (core-specific AHB bounds) is next.
+eye verdict is still pending. Gate 3 landed the same day: `ahb_set_core_base()`
+(stateless AHB bump-pool rebase; ceiling invariant; boot `ahb_init()` restores
+the global default) — the probe's own DTCM assert rejected the first stateful
+version, which is the gate working as designed: an 8-B `.bss` static costs 24 B
+of a heap margin that is 4 B. Flag-off cost is +72 B (assert string only); the
+probe re-passes with the gate-2 margins. Next: gate 4 (runtime DTCM/newlib
+margin assert).
 
 The phase-0 result can still fail if the current 35 Hz path cannot safely expose
 the second framebuffer's memory, current resident usage consumes the margin, or

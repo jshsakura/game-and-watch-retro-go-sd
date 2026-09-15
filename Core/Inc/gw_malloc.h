@@ -10,6 +10,17 @@ extern "C" {
 
 extern uint32_t ram_start;
 
+/* Core-specific AHB pool base (phase-0 gate 3). Cores are exclusive
+ * overlays and every core exit reboots through the launcher's ahb_init(),
+ * which restores the global pool base (__ahbram_heap_start__, above the GBA
+ * statics). A core whose AHB footprint is core-exclusive may rebase its own
+ * session's pool lower -- e.g. Sega CD reusing the GBA BIOS/cheats/sound
+ * statics at 0x30000000 that only exist while GBA is resident -- and must
+ * re-claim after any internal ahb_init() re-run. Statelessly rebases the
+ * bump pointer; the ceiling (__ahbram_audio_start__, the audio DMA reserve)
+ * never moves. */
+void ahb_set_core_base(uint32_t base);
+
 void ahb_init();
 void *ahb_malloc(size_t size);
 void *ahb_only_malloc(size_t size);

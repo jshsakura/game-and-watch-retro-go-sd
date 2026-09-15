@@ -13,6 +13,26 @@ static uint32_t current_ahb_pointer;
 extern uint32_t __ahbram_heap_start__;
 extern uint32_t __ahbram_audio_start__;
 
+/* Core-specific AHB pool base (phase-0 gate 3,
+ * docs/SEGACD_REASSESSMENT_2026-09-14.md). Deliberately STATELESS: the DTCM
+ * heap contract (probe assert: >= 90,232 B) leaves a 4-byte margin, and even
+ * an 8-byte .bss static costs 24 bytes of heap (16 of ALIGN(16) at
+ * _heap_start plus the linker's effective-end-of-heap alignment quirk) -- the
+ * SEGACD_RAM_PROBE assert fired on exactly that during gate 3. No stored
+ * state is needed: the pool ceiling (__ahbram_audio_start__) never moves, so
+ * rebasing the bump pointer is the whole claim. Cores are mutually exclusive
+ * overlays and every core exit is a full esp_restart() back through the
+ * launcher's ahb_init(), which restores the global default
+ * (__ahbram_heap_start__, 0x300088a0, above the GBA statics). The only
+ * caller is a core whose AHB footprint is core-exclusive (Sega CD: the full
+ * 120 KiB from 0x30000000, reusing GBA-only addresses); it re-claims after
+ * any internal ahb_init() re-run, mirroring how MSX re-inits its pools. */
+void ahb_set_core_base(uint32_t base) {
+  assert(base != 0 && (base & 3) == 0 &&
+         base < (uint32_t)&__ahbram_audio_start__);
+  current_ahb_pointer = base;
+}
+
 static uint32_t current_itc_pointer;
 extern uint32_t __itcram_start__;
 extern uint32_t __itcram_end__;
