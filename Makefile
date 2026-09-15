@@ -65,6 +65,18 @@ ifeq ($(RC_PROBE),1)
   C_DEFS += -DRC_PROBE=1
 endif
 
+# Sega CD phase-0 gate 2: link-only all-SRAM placement probe
+# (docs/SEGACD_REASSESSMENT_2026-09-14.md). Default OFF: release build is
+# byte-identical. Enable with SEGACD_RAM_PROBE=1; Core/Src/segacd_ram_probe.c
+# adds placeholder sections sized from the archived tag map and the linker
+# script asserts every bank end (AXI single-FB span / AHB 120K / ITCM / DTCM
+# heap margin). Link success = the placement is proven; nothing runs.
+SEGACD_RAM_PROBE ?= 0
+ifeq ($(SEGACD_RAM_PROBE),1)
+  C_SOURCES += Core/Src/segacd_ram_probe.c
+  C_DEFS += -DSEGACD_RAM_PROBE=1
+endif
+
 # On-device SNES APU cost breakdown. Default OFF: the release build is
 # byte-identical (no Python script runs, no -DSNES_LOAD_DIAG, apu.c and
 # dsp.c compile from external/sm untouched). Enable with SNES_LOAD_DIAG=1

@@ -320,6 +320,20 @@ margin after core-exclusive AHB reuse. This is a phase-0 memory-feasibility
 result, not a boot or performance result; see
 [SEGACD_REASSESSMENT_2026-09-14.md](SEGACD_REASSESSMENT_2026-09-14.md).
 
+**Phase-0 gate 2 passed, 2026-09-16.** `SEGACD_RAM_PROBE=1` (link-only, no
+emulator; section-attribute placeholders in `Core/Src/segacd_ram_probe.c` sized
+from the rebuilt tag) links the full placement on the current tree. Measured:
+AXI overlay @ `0x24025800` ends `0x240ff23c` — 3,524 B under `__RAM_EMU_END__`,
+3,556 B excluding the probe's own 32-B pointer table, matching the
+reassessment's 3,556; AHB block ends `0x3001cac0` — 5,440 B under `0x3001E000`;
+ITCM exactly 64 K; DTCM heap link-assert 90,236 ≥ 90,232. Flag-off builds are
+byte-identical to a clean tree apart from the git-describe version string
+(probe sections all zero-size, `KEEP()` guards the placeholders from
+`--gc-sections`). One correction the probe forced: the overlay-BSS placeholder
+must be **151,412**, not the tag's 156,212 — the 4,800-B CDDA mix buffer moves
+to AHB in the new placement, and double-charging it fails the AXI assert by
+exactly 4,800.
+
 ## CPS-1
 
 **Abandoned by the owner, 2026-07-25.** Kept here because most of it was proven

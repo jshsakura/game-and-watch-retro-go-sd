@@ -1074,6 +1074,70 @@ INCLUDE build/fceumm_mappers.ld
    * memset does not reach them. main_gba.c zeroes this range by hand; the symbols
    * below are what it uses. Forget that and the core starts with a cheat table full
    * of whatever the last game left in AHB. */
+  /* ===== Sega CD phase-0 RAM placement probe (SEGACD_RAM_PROBE=1) =======
+   * docs/SEGACD_REASSESSMENT_2026-09-14.md gate 2. Link-only, no emulator:
+   * placeholder sections sized from the tag testbed-full-20260724-1447 map,
+   * placed per the reassessment's all-SRAM layout. With the flag off,
+   * Core/Src/segacd_ram_probe.c is not compiled, every block below matches
+   * nothing and is inert — but the asserts stay so a future tree that grows
+   * past the margins still fails the probe build, not the port.
+   *
+   * Bank arithmetic being proven (single FB premise: second 153,600-byte
+   * framebuffer returned to RAM_EMU):
+   *   AXI  0x24025800..0x24100000 = 894,976
+   *        LOAD 19,112 + BSS 156,212 + Word 262,144 + 7 PRG pages 458,752
+   *        = 896,220 -> over by 1,244 -> CDDA mix 4,800 moved to AHB
+   *        -> fits with 3,556 spare
+   *   AHB  0x30000000..(0x30000000+128K-8K audio reserve) = 122,880
+   *        PCM 65,536 + YM 47,104 + CDDA 4,800 = 117,440 -> 5,440 spare
+   *   ITCM main 68K RAM 65,536 (overlay VMA, mutually exclusive with
+   *        .overlay_pce_itc / .overlay_md32x_itc)
+   *   DTCM PRG page 7 = 65,536 runtime heap claim + 24,696 margin
+   *        -> ASSERT _heap_end-_heap_start >= 90,232
+   *
+   * Explicit addresses, no MEMORY region: VMA overlap with the framebuffer
+   * region, GBA's AHB window and the other ITCM overlays follows the same
+   * mutually-exclusive-core convention every .overlay_* uses. */
+  .overlay_segacd_probe 0x24025800 : {
+    . = ALIGN(4);
+    __segacd_probe_start__ = .;
+    KEEP(*(.segacd_probe_ovl .segacd_probe_ovl*))
+    . = ALIGN(4);
+    _OVERLAY_SEGACD_PROBE_LOAD_END = .;
+  } AT > CORES
+  .overlay_segacd_probe_bss _OVERLAY_SEGACD_PROBE_LOAD_END (NOLOAD) : {
+    . = ALIGN(4);
+    KEEP(*(.bss.probe_segacd_static .bss.probe_segacd_static*))
+    KEEP(*(.bss.probe_segacd_word .bss.probe_segacd_word*))
+    KEEP(*(.bss.probe_segacd_prg*))
+    . = ALIGN(4);
+    __segacd_probe_axi_end__ = .;
+    ASSERT(ABSOLUTE(__segacd_probe_axi_end__) <= __RAM_EMU_END__,
+           "Error: SEGACD probe AXI placement exceeds single-FB RAM_EMU (894,976B) — reassessment margin gone");
+  }
+  .segacd_probe_ahb 0x30000000 (NOLOAD) : {
+    . = ALIGN(4);
+    KEEP(*(.bss.probe_segacd_pcm .bss.probe_segacd_pcm*))
+    KEEP(*(.bss.probe_segacd_ym .bss.probe_segacd_ym*))
+    KEEP(*(.bss.probe_segacd_cdda .bss.probe_segacd_cdda*))
+    . = ALIGN(4);
+    __segacd_probe_ahb_end__ = .;
+    ASSERT(ABSOLUTE(__segacd_probe_ahb_end__) <= ORIGIN(AHBRAM) + LENGTH(AHBRAM) - __AHBRAM_AUDIO_RESERVE__,
+           "Error: SEGACD probe AHB (PCM+YM+CDDA) exceeds the 120KiB core-specific window below the audio reserve");
+  }
+  /* At ORIGIN, not +0x4: the main 68K RAM is exactly 64 KiB and ITCM is
+   * exactly 64 KiB — the +0x4 null-page convention the PCE/MD32X ITC
+   * overlays use would not fit. A NULL deref aliasing RAM[0] is acceptable
+   * emulator behavior; losing 4 bytes would falsify the premise. */
+  .segacd_probe_itc ORIGIN(ITCMRAM) (NOLOAD) : {
+    . = ALIGN(4);
+    KEEP(*(.bss.probe_segacd_itcm .bss.probe_segacd_itcm*))
+    . = ALIGN(4);
+    __segacd_probe_itc_end__ = .;
+    ASSERT(ABSOLUTE(__segacd_probe_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM),
+           "Error: SEGACD probe main-68K RAM exceeds ITCM");
+  }
+
   .gba_ahbram (NOLOAD) : {
     . = ALIGN(8);
     __gba_ahb_start__ = .;
@@ -1861,6 +1925,12 @@ INCLUDE build/fceumm_mappers.ld
     . = _heap_limit;
     _heap_end = .;
     __dtc_padding_end__ = .;
+    /* Sega CD phase-0 probe (SEGACD_RAM_PROBE): PRG page 7's runtime DTCM
+     * claim (65,536) plus the reassessment's 24,696 newlib margin must fit
+     * the heap. SIZEOF guard keeps this silent in normal builds. */
+    ASSERT(SIZEOF(.overlay_segacd_probe) == 0 ||
+           (_heap_end - _heap_start) >= 90232,
+           "Error: SEGACD probe DTCM heap < 90,232 — PRG page 7 + 24,696B margin no longer fits");
   } >DTCMRAM
 
   ._user_stack (NOLOAD) :

@@ -173,6 +173,16 @@ the current tree:
 6. only after those gates pass, port the archived core forward and restart boot
    debugging with device breadcrumbs from frame zero.
 
+**Status 2026-09-16: gate 2 passed.** `SEGACD_RAM_PROBE=1` (link-only; section
+placeholders sized from the rebuilt tag, `Core/Src/segacd_ram_probe.c`) links
+the full placement above on the current tree with the reassessment margins
+reproduced: AXI 3,556 free, AHB 5,440 free, ITCM 64 K exact, DTCM heap
+90,236 ≥ 90,232. The overlay-BSS placeholder had to be 151,412, not 156,212 —
+the CDDA buffer is charged to AHB here, and leaving it in the static BSS too
+fails the AXI assert by exactly 4,800. Gate 1's device run is on hardware
+(p35 arm; 13.4 fps under the observation-only swap-race counter); the panel
+eye verdict is still pending. Gate 3 (core-specific AHB bounds) is next.
+
 The phase-0 result can still fail if the current 35 Hz path cannot safely expose
 the second framebuffer's memory, current resident usage consumes the margin, or
 the remaining DTCM heap is insufficient. In that case external OSPI PSRAM is the
