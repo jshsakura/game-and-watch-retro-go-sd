@@ -1,5 +1,13 @@
 # SegaCD Investigation Report: CDC DMA Chain & $6132 Stall
 
+> **Superseded status (2026-09-14):** This report captured a host-harness
+> debugging point and its final **GO** recommendation was not validated on the
+> device. The archived core used only 128 KiB of the required 512 KiB PRG RAM;
+> no valid frame was observed on hardware. See
+> [SEGACD_REASSESSMENT_2026-09-14.md](SEGACD_REASSESSMENT_2026-09-14.md) for the
+> reproduced final build, exact memory map and the conditional single-buffer
+> SRAM layout now worth testing.
+
 ## 1. CDC DMA 체인 분석 및 $6132 데드락의 진실
 
 ### 하드웨어 정상 동작 체인 (vs 현재 오해)

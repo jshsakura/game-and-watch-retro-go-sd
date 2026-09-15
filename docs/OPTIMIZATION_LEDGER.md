@@ -310,6 +310,16 @@ re-derive it.
 Live register reads showed the semaphore cycling normally every frame. Sparse
 observation makes repetition look like a stop.
 
+**Reassessment, 2026-09-14.** The 128 K + SD-file paging implementation remains
+closed, but "external PSRAM is the only route" depended on a 300 K double
+framebuffer and on treating PRG RAM as one contiguous host allocation. If the
+35 Hz beam-race path safely frees one 150 KiB framebuffer, gwenesis's existing
+64 KiB page map permits one PRG page in another SRAM bank. Rebuilding the final
+tag and charging its actual allocations yields a narrow 33,692-byte total
+margin after core-exclusive AHB reuse. This is a phase-0 memory-feasibility
+result, not a boot or performance result; see
+[SEGACD_REASSESSMENT_2026-09-14.md](SEGACD_REASSESSMENT_2026-09-14.md).
+
 ## CPS-1
 
 **Abandoned by the owner, 2026-07-25.** Kept here because most of it was proven

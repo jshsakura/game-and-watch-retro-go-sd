@@ -159,7 +159,15 @@ and the state machine never reaches the state it expects. Timing bugs do
 not fault. They wait. And they look exactly like the deadlock you spent a
 week chasing.
 
-The Sega CD boots today. Sonic CD plays. The dual-68K fits in 724 KB of RAM
-because we XIP the code and recruit every bank. And every time I look at the
-sub-CPU's `$6132` spin in an old trace, I remember that the main CPU was
-dead ten milliseconds before the sub noticed.
+> **Post-publication correction (2026-09-14):** The original boot/play claim
+> in this post came from the host harness and was never reproduced on the
+> device. The archived
+> firmware reduced 512 KiB PRG RAM to 128 KiB and used an invalid byte-at-a-time
+> SD paging placeholder. See the
+> [current reassessment](https://github.com/jshsakura/game-and-watch-retro-go-sd/blob/testbed/docs/SEGACD_REASSESSMENT_2026-09-14.md).
+
+The earlier host result appeared to show Sega CD booting and Sonic CD playing.
+The dual-68K experiment fit in 724 KB only after reducing PRG RAM and XIPing the
+code; it did not establish a working device port. Every time I look at the
+sub-CPU's `$6132` spin in an old trace, I remember that the main CPU was dead ten
+milliseconds before the sub noticed.
