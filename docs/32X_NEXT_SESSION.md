@@ -31,14 +31,18 @@ then block-trace working set) closed on a hardware fact: hot set 872 blocks =
 [32X_CLOSED.md](32X_CLOSED.md#2026-08-27-the-dynarec-re-trial-closes-on-a-hardware-fact-not-a-policy-argument).
 
 Remaining queue, in order:
-1. **User session (two asks)**: eye verdict on the 35 Hz panel (p35 arm on
-   device) — good ships the panel-rate fix, a drifting band tries p33, an
-   artifact reverts to p60; then a short gameplay session + one in-game save
-   for the gameplay-anchor fps measurement (every fps number published so far
-   is attract-mode).
-2. **Release** once the verdict lands and the soak clock is judged: soak +
+1. **User session (one ask left)**: panel-rate eye verdict landed 2026-09-16 —
+   p35 showed a drifting band (fail), p33 was visually clean ("game screen,
+   displays fine") but ran the Doom attract at 12 fps with CPU 87% and audible
+   audio lag (OSD readout), so the panel-rate fix is **not approved for
+   shipping**: no rate below 60 Hz is both artifact-free and gameplay-viable on
+   this panel for the 32X core. Device left on p60. The still-open half: a short
+   gameplay session + one in-game save on p60 for the gameplay-anchor fps
+   measurement (every fps number published so far is attract-mode).
+2. **Release** once the soak clock is judged: soak +
    save-state hardening (v3+CRC) + read-back/anchor/identity gates + BFAR/MMFAR
-   crumbs + RAM_EMU 12 KB recovery + panel-rate fix (if approved).
+   crumbs + RAM_EMU 12 KB recovery (panel-rate fix dropped per the verdict
+   above).
 3. Parked: alarm-wake investigation (user recall pending; commit A staged but
    gated on a demonstrated wake), audring (22050+stretcher closed as
    "not better", audio = dependent variable of speed).

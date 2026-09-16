@@ -185,9 +185,14 @@ the current tree:
  every button-held reset although GPIOC-IDR showed both pins low and the rc_probe
  precedent used the same combo in July; the run was triggered instead by halting
  the running launcher over SWD and resuming at the probe entry with r0=0xC0.
- The combo-latch anomaly is unexplained and worth revisiting before any
- button-triggered tooling relies on it. Remaining for phase 0: the 35 Hz eye
- verdict (gate 1's last piece) and gate 6 (port the archived core forward).
+ the combo-latch anomaly is unexplained and worth revisiting before any
+ button-triggered tooling relies on it. Gate 1's eye verdict also landed
+ (same day): **35 Hz bands on this panel; 33 Hz (N5/R24) is visually clean**
+ but costs the 32X core its frame rate (12 fps @ CPU 87%, OSD readout) — so
+ the single-FB design should target 33 Hz, and only for the Sega CD session;
+ the panel-rate arm is not evidence about single-FB performance either way
+ (that is gate 6 bring-up). Remaining for phase 0: gate 6 (port the archived
+ core forward).
 
  Status 2026-09-16: gate 2 linked (margins AXI 3,556 / AHB 5,440 / ITCM 64 KiB
 exact / DTCM 90,236 >= 90,232), gate 3 landed (stateless
