@@ -1199,6 +1199,20 @@ void GLOBAL_DATA app_main(uint8_t boot_mode)
     }
 #endif
 
+    /* Sega CD phase-0 gate 4+5 runtime probe — inert unless GAME+TIME held at
+     * boot (same combo as rc_probe). Gate 4: DTCM heap serves PRG page 7 plus
+     * the 24,696B newlib margin. Gate 5: R/W/checksum every bank of the
+     * all-SRAM placement, including the 8 non-contiguous PRG pages. Halts
+     * forever when it runs; SEGACD_RAM_PROBE-gated so the default build is
+     * untouched (no default define — plain #ifdef, unlike RC_PROBE's 0). */
+#ifdef SEGACD_RAM_PROBE
+    {
+        extern uint32_t boot_buttons;   /* plain global from main.c */
+        extern void segacd_ram_probe_run_if_requested(uint32_t boot_buttons);
+        segacd_ram_probe_run_if_requested(boot_buttons);
+    }
+#endif
+
     /* Full battery drain wipes the RTC: quietly restore the clock from the
      * snapshot written at the last sleep/power-off (off by the downtime,
      * not by decades - the true elapsed time is unknowable offline).

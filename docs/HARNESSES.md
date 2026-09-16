@@ -246,6 +246,19 @@ returned without touching the buffer would replay the last effect for ever), all
 `SFX_COUNT` effects render, an effect ends on its own, and the settings pill mutes
 and un-mutes the renderer.
 
+### `tests/test_segacd_ram_probe.c` — the phase-0 probe's own logic, before it meets hardware
+
+Includes the real `Core/Src/segacd_ram_probe.c` whole (`tests/segacd_stubs/`
+fakes the HAL/LCD stack; the probe's halt loop longjmps back out through the
+`HAL_Delay` stub) and runs the device combo path against host memory: the
+GAME+TIME trigger gate, the gate-4 page-7-plus-margin malloc sequence, the
+14-region pattern sweep with per-region FNV checksums, and the exact report
+the device will draw. RED-verified with `-DSCD_RED_TEST` (a region line is
+flipped to `RW FAIL`; the harness must exit nonzero). What it deliberately
+does not prove — real AXI/AHB/DTCM/ITCM addresses, the newlib-nano heap —
+stays on the device run it de-risks: this project once shipped a "GO" on
+host-harness output alone and the screen never came up.
+
 ### `tools/jpeg_harness` — the HW JPEG driver against a fake HAL
 - `run.sh` — compiles `hw_jpeg_decoder.c` itself (its three previous tests
   reimplemented the HAL and covered 0% of it) against `hal_fake/`, including

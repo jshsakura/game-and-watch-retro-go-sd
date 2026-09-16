@@ -212,6 +212,16 @@ else
     echo "SKIP  external/sm is not checked out — rc_dispatch heap test not built"
 fi
 
+# Sega CD RAM probe host harness (phase-0 gates 4+5 code path): the REAL
+# probe, whole-file included, against tests/segacd_stubs/ fakes. De-risks the
+# single device session (trigger gate, malloc sequence, 14-region sweep,
+# report). RED mode is compiled manually with -DSCD_RED_TEST when touched:
+#   gcc ... -DSEGACD_RAM_PROBE -DSCD_RED_TEST ... && must exit nonzero.
+$CC -O2 -Wall -Wextra -std=c11 -DSEGACD_RAM_PROBE \
+    -Itests/segacd_stubs -ICore/Inc \
+    tests/test_segacd_ram_probe.c tests/segacd_stubs/stubs.c \
+    -o /tmp/mtest/test_segacd_ram_probe || fail "compile test_segacd_ram_probe"
+
 # System-grid layout: the REAL rg_system_grid_layout.c, which is dependency-free
 # precisely so this links it instead of re-deriving its rules.
 $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Inc/retro-go \
@@ -285,6 +295,7 @@ fi
 /tmp/mtest/test_system_grid || fail test_system_grid
 [ -x /tmp/mtest/test_sm_ppu_saveload ] && { /tmp/mtest/test_sm_ppu_saveload || fail test_sm_ppu_saveload; }
 [ -x /tmp/mtest/test_rc_dispatch_heap ] && { /tmp/mtest/test_rc_dispatch_heap || fail test_rc_dispatch_heap; }
+/tmp/mtest/test_segacd_ram_probe || fail test_segacd_ram_probe
 
 # === colour tab icons: stored bbox must match its array and fit its box ====
 # gui_draw_color_icon() indexes data[] by bw*bh and blits at (ox,oy) inside the

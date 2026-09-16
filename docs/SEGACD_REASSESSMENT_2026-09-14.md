@@ -173,6 +173,15 @@ the current tree:
 6. only after those gates pass, port the archived core forward and restart boot
    debugging with device breadcrumbs from frame zero.
 
+Status 2026-09-16: gate 2 linked (margins AXI 3,556 / AHB 5,440 / ITCM 64 KiB
+exact / DTCM 90,236 >= 90,232), gate 3 landed (stateless
+`ahb_set_core_base()`), and the gate 4+5 runtime half is implemented in the
+probe and host-verified by `tests/test_segacd_ram_probe.c` (trigger gate,
+page-7 + margin claim sequence, 14-region sweep, report). The device run —
+power on while holding GAME+TIME, then read the drawn report or the logbuf —
+is the remaining evidence for gates 4 and 5. The 35 Hz eye verdict (gate 1's
+last piece) is also still pending a user looking at the panel.
+
 **Status 2026-09-16: gate 2 passed.** `SEGACD_RAM_PROBE=1` (link-only; section
 placeholders sized from the rebuilt tag, `Core/Src/segacd_ram_probe.c`) links
 the full placement above on the current tree with the reassessment margins
