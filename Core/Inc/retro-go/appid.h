@@ -28,10 +28,12 @@ typedef enum {
     APPID_GBA      = 24,   /* Game Boy Advance (gpsp) */
     APPID_SNES     = 25,   /* generic SNES core (LakeSnes, SD builds only) */
     APPID_32X      = 26,   /* Sega 32X (picodrive, SD builds only) */
-    /* CPS-1 and Sega CD were removed here; both grew persistent_config_t and
-     * their removal shrinks it, so /CONFIG stops matching and every user's
-     * settings reset to defaults (CLAUDE.md). Accepted deliberately for this
-     * release. Do not re-add a slot without bumping the config version. */
+    /* Sega CD returns (2026-09-16, gate-6 forward port). It previously held
+     * 27; that slot is reused so no other core's id shifts. Growing
+     * persistent_config_t back means /CONFIG stops matching — the version
+     * bump in odroid_settings.c makes that reset deliberate, exactly like
+     * the removal did in the other direction. */
+    APPID_SEGACD   = 27,   /* Sega/Mega CD (SD builds only) */
 
     APPID_COUNT,
 } appid_t;

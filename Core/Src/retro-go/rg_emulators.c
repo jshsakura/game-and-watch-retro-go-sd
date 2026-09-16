@@ -891,10 +891,12 @@ static const char *get_extension(const char *filename) {
 /* CD-based systems ship a game as a folder: one .cue plus its track .bin files.
  * They need the recursive scan below rather than the flat scandir, or the only
  * thing the launcher sees under /roms/<sys>/ is the game FOLDER — which lists
- * with the folder's name and cannot be launched. */
+ * with the folder's name and cannot be launched. Sega CD has exactly the PCE CD
+ * layout and was missing from this gate, so it fell to the flat scan. */
 static bool emulator_is_cd_system(const retro_emulator_t *emu)
 {
-    return strcmp(emu->dirname, "pcecd") == 0;
+    return strcmp(emu->dirname, "pcecd") == 0 ||
+           strcmp(emu->dirname, "segacd") == 0;
 }
 
 /* Case-insensitive ".cue" — avoid snprintf/strtolower/strstr on every SD entry. */
@@ -1281,7 +1283,7 @@ static void emulator_delete_cd_flat(const char *cue_path)
  * often in a per-game folder); a plain unlink of the .cue would leave orphans. */
 static void emulator_delete_rom_storage(retro_emulator_file_t *file)
 {
-    static const char *const cd_dirs[] = { "pcecd" };
+    static const char *const cd_dirs[] = { "pcecd", "segacd" };
     char parent[RG_PATH_MAX];
     char prefix[64];
 
@@ -1863,6 +1865,12 @@ extern uint8_t _OVERLAY_MD32X_ITC_LMA_OFFSET;
 extern uint8_t _OVERLAY_MD32X_ITC_SIZE;
 static const emu_dispatch_t emu_md32x   = { "/cores/32x.bin",    &_OVERLAY_MD32X_BSS_START,   (uint32_t)&_OVERLAY_MD32X_BSS_SIZE,   (uint32_t)&_OVERLAY_MD32X_SIZE,   0, EMU_ENTRY(app_main_md32x),
                                             __md32x_itc_start__, (uint32_t)&_OVERLAY_MD32X_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_MD32X_ITC_SIZE };
+/* SEGACD overlay symbols come from gw_linker.h (8e47e219) — local externs
+ * here had different types once and hid the missing declarations. */
+extern int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot);
+#if SEGACD_ENABLED
+static const emu_dispatch_t emu_segacd = { "/cores/segacd.bin", &_OVERLAY_SEGACD_BSS_START, (uint32_t)&_OVERLAY_SEGACD_BSS_SIZE, (uint32_t)&_OVERLAY_SEGACD_SIZE, 0, EMU_ENTRY(app_main_segacd) };
+#endif
 #endif
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
 static const emu_dispatch_t emu_lynx    = { "/cores/lynx.bin",    &_OVERLAY_LYNX_BSS_START,    (uint32_t)&_OVERLAY_LYNX_BSS_SIZE,    (uint32_t)&_OVERLAY_LYNX_SIZE,    (uint32_t)&_OVERLAY_LYNX_BSS_END, EMU_ENTRY(app_main_lynx) };
@@ -1995,6 +2003,12 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 #if SD_CARD == 1
     } else if(strcmp(system_name, "Sega 32X") == 0) {
         run_internal_emu(&emu_md32x, load_state, start_paused, save_slot);
+#endif
+#if SD_CARD == 1
+    } else if(strcmp(system_name, "Sega CD") == 0)  {
+#if SEGACD_ENABLED
+        run_internal_emu(&emu_segacd, load_state, start_paused, save_slot);
+#endif
 #endif
     } else if(strcmp(system_name, "Sega Genesis") == 0)  {
         run_internal_emu(&emu_md, load_state, start_paused, save_slot);
@@ -2271,12 +2285,15 @@ void emulators_init()
     /* Generic SNES (LakeSnes interpreter) — EXPERIMENTAL, SD builds only, same
      * delivery as SM/GBA (cart flash-cached from SD; no lzma). LoROM/HiROM only;
      * enhancement-chip carts are rejected at load. No header logo yet (0). */
-    /* Sega 32X (picodrive) — EXPERIMENTAL, SD builds only. /roms/32x (.32x).
-     * NO_GAME_DATA: the core does its own byteswapped flash-cache (the
-     * zero-copy cart path needs the ROM 16-bit-word-swapped), like SM/SNES
-     * self-cache. */
+    /* Sega 32X (picodrive) and Sega CD — EXPERIMENTAL, SD builds only.
+     * /roms/32x (.32x) and /roms/segacd (.cue). NO_GAME_DATA: both cores do
+     * their own byteswapped flash-cache (the zero-copy cart path needs the ROM
+     * 16-bit-word-swapped), like SM/SNES self-cache. */
 #if SD_CARD == 1
     add_emulator("Sega 32X", "32x", "32x", RG_LOGO_PAD_32X, RG_LOGO_HEADER_32X, NO_GAME_DATA);
+#if SEGACD_ENABLED
+    add_emulator("Sega CD", "segacd", "cue", RG_LOGO_PAD_SEGACD, RG_LOGO_HEADER_SEGACD, NO_GAME_DATA);
+#endif
 #endif
     add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
     add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);

@@ -921,6 +921,34 @@ ifneq ($(MD32X_DEVICE_PROFILE),0)
 MD32X_C_SOURCES += Core/Src/porting/md32x/md32x_profile.c
 endif
 endif
+# Sega CD: the gwenesis MD base plus the CD porting layer, restored forward
+# from tag testbed-full-20260724-1447 (see docs/SEGACD_REASSESSMENT_2026-09-14.md
+# for the phase-0 gates this return had to pass). Off by default until the
+# device bring-up (gate 6) proves a frame.
+SEGACD ?= 0
+SEGACD_C_SOURCES =
+ifeq ($(SEGACD),1)
+SEGACD_C_SOURCES += \
+$(CORE_GWENESIS)/src/cpus/M68K/m68kcpu.c \
+$(CORE_GWENESIS)/src/cpus/Z80/Z80.c \
+$(CORE_GWENESIS)/src/sound/z80inst.c \
+$(CORE_GWENESIS)/src/sound/ym2612.c \
+$(CORE_GWENESIS)/src/sound/gwenesis_sn76489.c \
+$(CORE_GWENESIS)/src/bus/gwenesis_bus.c \
+$(CORE_GWENESIS)/src/bus/gwenesis_sram.c \
+$(CORE_GWENESIS)/src/bus/gwenesis_eeprom.c \
+$(CORE_GWENESIS)/src/io/gwenesis_io.c \
+$(CORE_GWENESIS)/src/vdp/gwenesis_vdp_mem.c \
+$(CORE_GWENESIS)/src/vdp/gwenesis_vdp_gfx.c \
+$(CORE_GWENESIS)/src/savestate/gwenesis_savestate.c \
+Core/Src/porting/segacd/main_segacd.c \
+Core/Src/porting/segacd/segacd_engine.c \
+Core/Src/porting/segacd/segacd_bus.c \
+Core/Src/porting/segacd/segacd_cd.c \
+Core/Src/porting/segacd/segacd_audio.c \
+Core/Src/porting/segacd/segacd_gfx.c \
+Core/Src/porting/segacd/segacd_cache.c
+endif
 A2600_C_SOURCES =
 A2600_CXX_SOURCES =
 
@@ -1588,6 +1616,27 @@ ifeq ($(MD32X_SSH2_SND_HLE),1)
 MD32X_C_DEFS += -DGNW_SSH2_SND_HLE
 endif
 
+# Sega CD compile flavor (mirrors the tag): gwenesis headers, LSB_FIRST and
+# TABLES_FULL for the same reason MD32X needs them (compact 68K jump table
+# truncates at 0xEFC0), function/data-sections so .xip_segacd can sweep cold
+# code while .overlay_segacd keeps the hot remainder.
+SEGACD_C_INCLUDES = \
+-ICore/Inc \
+-ICore/Src/porting/lib \
+-ICore/Src/porting/lib/lzma \
+-ICore/Src/porting/segacd \
+-Iretro-go-stm32/components/odroid \
+-I$(CORE_GWENESIS)/src/cpus/M68K \
+-I$(CORE_GWENESIS)/src/cpus/Z80 \
+-I$(CORE_GWENESIS)/src/sound \
+-I$(CORE_GWENESIS)/src/bus \
+-I$(CORE_GWENESIS)/src/vdp \
+-I$(CORE_GWENESIS)/src/io \
+-I$(CORE_GWENESIS)/src/savestate \
+-I./
+
+SEGACD_C_DEFS = -DLSB_FIRST -DTABLES_FULL -ffunction-sections -fdata-sections
+
 # Z80 ablation -- re-prices the Z80 now that Cz80_Exec rides ITCM. The +19.8%
 # ceiling was measured while Cz80_Exec still executed out of OSPI; what is left
 # now decides whether a Z80 sound-driver HLE is worth building. Audio output is
@@ -1918,7 +1967,7 @@ $(BUILD_DIR)/$(TARGET)_extflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 # a missing space (".overlay_a2600-j .overlay_lynx", i.e. one bogus section name
 # and no lynx). Merged into a single line: our full core set plus upstream's two
 # GBA sections.
-	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_md32x -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_gba -j .overlay_gba_itc -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_snes -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
+	$(V)$(BIN) -j ._itcram_hot -j ._ram_exec -j ._extflash -j .overlay_nes -j .overlay_nes_fceu -j .overlay_gb -j .overlay_tgb -j .overlay_sms -j .overlay_col -j .overlay_pce -j .overlay_pce_itc -j .overlay_msx -j .overlay_gw -j .overlay_wsv -j .overlay_md -j .overlay_md32x -j .overlay_segacd -j .overlay_a2600 -j .overlay_lynx -j .overlay_a7800 -j .overlay_amstrad -j .overlay_zelda3 -j .overlay_smw -j .overlay_gba -j .overlay_gba_itc -j .overlay_videopac -j .overlay_celeste -j .overlay_pico8 -j .overlay_tama -j .overlay_pkmini -j .overlay_ngp -j .overlay_wswan -j .overlay_snes -j .overlay_music $< $(BUILD_DIR)/$(TARGET)_extflash.bin
 
 $(BUILD_DIR)/$(TARGET)_intflash.bin: $(BUILD_DIR)/$(TARGET).elf | $(BUILD_DIR)
 	$(V)$(ECHO) [ BIN ] $(notdir $@)

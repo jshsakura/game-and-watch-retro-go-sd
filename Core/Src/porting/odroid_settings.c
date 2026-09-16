@@ -118,10 +118,12 @@ _Static_assert(offsetof(persistent_config_t, welcome_prompt) ==
 
 static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
-    .version = 17,  /* 13->14: APPID_32X grows app[APPID_COUNT] (one-time settings reset on upgrade)
+    .version = 18,  /* 13->14: APPID_32X grows app[APPID_COUNT] (one-time settings reset on upgrade)
                      * 14->15: APPID_CPS1 was added sharing APPID_SM's slot 23.
                      * 15->16: APPID_CPS1 moved to its own slot 28, growing the struct.
                      * 16->17: APPID_CPS1 and APPID_SEGACD removed, shrinking the struct.
+                     * 17->18: APPID_SEGACD returns in its old slot 27, growing it back
+                     * (gate-6 forward port, docs/SEGACD_REASSESSMENT_2026-09-14.md).
                      * Every user loses language, coverflow, backlight and volume ONCE
                      * on this upgrade (CLAUDE.md). */
 

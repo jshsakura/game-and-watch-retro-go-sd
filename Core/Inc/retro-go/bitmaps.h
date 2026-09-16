@@ -153,6 +153,11 @@ enum {
                            * enum is the index into /bios/logo.bin, so removing
                            * an entry shifts every logo after it on cards that
                            * are already out there. */
+    RG_LOGO_HEADER_SEGACD, /* Restored 2026-09-16 (gate-6 port). Cards flashed
+                           * after the 0725 removal have no segacd entry in
+                           * logo.bin, so rg_get_logo() bounds-checks to NULL
+                           * and the tab falls back to the colour icon until
+                           * the card art is regenerated. */
     // Colour-only console icons (color_icon_for_logo); no logo.bin entry, so
     // rg_get_logo() returns NULL for them (bounds-checked) — used only as the
     // header-right colour icon, never the 1-bit navbar logo.
@@ -181,6 +186,9 @@ enum {
     // Sega 32X colour tab icon (cicon_32x; color_icon_for_logo only, no
     // logo.bin entry -> rg_get_logo() returns NULL, bounds-checked)
     RG_LOGO_PAD_32X,      /* RETIRED 0727 -- slot kept, see above */
+    // Sega CD colour tab icon (cicon_segacd; color_icon_for_logo only, no
+    // logo.bin entry -> rg_get_logo() returns NULL, bounds-checked)
+    RG_LOGO_PAD_SEGACD,
 };
 
 void odroid_overlay_draw_logo(uint16_t x_pos, uint16_t y_pos, int16_t logo_idx, uint16_t color);
