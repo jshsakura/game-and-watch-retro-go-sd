@@ -352,6 +352,26 @@ touched functions are byte-identical to the baseline form). Flag-on probe
 re-passes all four asserts with the gate-2 margins intact (AXI 3,556 /
 AHB 5,440 / ITCM 64 K exact / DTCM heap 90,236 ≥ 90,232).
 
+**Phase-0 gates 4+5 passed on device, 2026-09-16.** The runtime half of
+`Core/Src/segacd_ram_probe.c` (`segacd_ram_probe_run_if_requested`, dispatched
+from rg_main after the SD mount, rc_probe pattern) proves the placement on
+silicon: **G4 PASS** — PRG page 7 malloc'd from the live DTCM heap at
+0x20006858 with the 24,696-B margin claim succeeding alongside it (16 B
+reserved for two chunk headers + alignment, the first charge against the
+reassessment's "alignment/FatFs/newlib use" clause); **G5 14/14** — every
+region (8 non-contiguous PRG pages, main-68K ITCM RAM, Word RAM, static BSS,
+PCM/YM/CDDA on the rebased AHB pool) survived two write/verify rounds with an
+inverted pattern and an FNV-1a checksum. Report captured via the PERSISTENT
+logbuf over SWD. Two integration scars, both paid for: (1) the probe itself
+must add zero DTCM `.bss` — a 2-B cursor static and newlib's 36-B
+`__malloc_current_mallinfo` each tripped the gate-3 margin lesson, so the
+report state lives in locals and the margin proof is a real `malloc`, not
+`mallinfo`; (2) the boot-combo latch read 0 on every button-held reset while
+GPIOC-IDR showed the pins low — trigger delivered by SWD halt + `resume` at
+the probe entry with r0=0xC0 instead. The latch anomaly is unexplained; do
+not build button-triggered tooling on it until understood. Phase-0 remaining:
+35 Hz eye verdict, then gate 6 (port the archived core forward).
+
 ## CPS-1
 
 **Abandoned by the owner, 2026-07-25.** Kept here because most of it was proven

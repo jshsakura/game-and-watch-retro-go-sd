@@ -173,7 +173,23 @@ the current tree:
 6. only after those gates pass, port the archived core forward and restart boot
    debugging with device breadcrumbs from frame zero.
 
-Status 2026-09-16: gate 2 linked (margins AXI 3,556 / AHB 5,440 / ITCM 64 KiB
+ Status 2026-09-16, gates 4+5 PASSED on device. The runtime probe
+ (`segacd_ram_probe_run_if_requested`, dispatched from rg_main after the SD
+ mount) reported through logbuf + LCD: `G4 PASS` (page 7 malloc'd from the DTCM
+ heap at 0x20006858, 24,696-B margin claim alongside it succeeded) and `G5
+ 14/14` — all eight PRG pages (prg0-6 in AXI at 64-K strides, prg7 in DTCM),
+ main-68K RAM (ITCM, full 64 K), Word RAM, static BSS, PCM/YM/CDDA (AHB)
+ passed two-round pattern write/verify plus FNV-1a checksum. Non-contiguity is
+ device-proven: prg6 = 0x2408f23c (AXI) vs prg7 = 0x20006858 (DTCM). One
+ operational note: the boot-combo latch (`boot_buttons`, main.c:521) read 0 on
+ every button-held reset although GPIOC-IDR showed both pins low and the rc_probe
+ precedent used the same combo in July; the run was triggered instead by halting
+ the running launcher over SWD and resuming at the probe entry with r0=0xC0.
+ The combo-latch anomaly is unexplained and worth revisiting before any
+ button-triggered tooling relies on it. Remaining for phase 0: the 35 Hz eye
+ verdict (gate 1's last piece) and gate 6 (port the archived core forward).
+
+ Status 2026-09-16: gate 2 linked (margins AXI 3,556 / AHB 5,440 / ITCM 64 KiB
 exact / DTCM 90,236 >= 90,232), gate 3 landed (stateless
 `ahb_set_core_base()`), and the gate 4+5 runtime half is implemented in the
 probe and host-verified by `tests/test_segacd_ram_probe.c` (trigger gate,
@@ -195,8 +211,8 @@ eye verdict is still pending. Gate 3 landed the same day: `ahb_set_core_base()`
 the global default) — the probe's own DTCM assert rejected the first stateful
 version, which is the gate working as designed: an 8-B `.bss` static costs 24 B
 of a heap margin that is 4 B. Flag-off cost is +72 B (assert string only); the
-probe re-passes with the gate-2 margins. Next: gate 4 (runtime DTCM/newlib
-margin assert).
+probe re-passes with the gate-2 margins. Gates 4+5 passed on device the same
+day (see the status block above).
 
 The phase-0 result can still fail if the current 35 Hz path cannot safely expose
 the second framebuffer's memory, current resident usage consumes the margin, or
