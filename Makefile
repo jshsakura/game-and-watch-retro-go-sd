@@ -1637,6 +1637,16 @@ SEGACD_C_INCLUDES = \
 
 SEGACD_C_DEFS = -DLSB_FIRST -DTABLES_FULL -ffunction-sections -fdata-sections
 
+# Gate-array/cdd instrumentation for the Sega CD bring-up (bring-up only,
+# never ships): arms the trace arrays already implemented in segacd_bus.c
+# (scd_dbg_a12000_* / scd_dbg_800f_* / scd_dbg_reg1_* / scd_dbg_cdd_*).
+# They land in .overlay_segacd_bss (AXI), so a live OpenOCD mdw read can
+# walk them while the core runs.
+SEGACD_GA_TRACE ?= 0
+ifeq ($(SEGACD_GA_TRACE),1)
+SEGACD_C_DEFS += -DSEGACD_GA_TRACE
+endif
+
 # Z80 ablation -- re-prices the Z80 now that Cz80_Exec rides ITCM. The +19.8%
 # ceiling was measured while Cz80_Exec still executed out of OSPI; what is left
 # now decides whether a Z80 sound-driver HLE is worth building. Audio output is

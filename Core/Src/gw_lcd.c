@@ -32,6 +32,27 @@ extern DAC_HandleTypeDef hdac2;
 #endif
 
 uint32_t active_framebuffer;
+
+/* Single-framebuffer lock (gate-6, Sega CD). While locked, framebuffer2/fb2
+ * are clamped to framebuffer1/fb1 at every re-entry point. The second FB's
+ * 150 KiB (0x24025800..0x2404b000) is the .overlay_segacd VMA span on this
+ * build, and ANY write through a second-FB pointer — the error-screen
+ * redraw's full-screen fill, a mode switch's footprint clear, a plain
+ * lcd_clear_buffers() — zeroes the live core overlay and everything it is
+ * executing. The lock re-clamps inside lcd_set_buffers()/
+ * lcd_setup_framebuffers() precisely because a faulting core can corrupt
+ * the pointers themselves: without the re-clamp, the post-fault BSOD redraw
+ * becomes a periodic 150 KiB destroyer that also erases the crash evidence.
+ * Cleared only by reboot (plain RAM). */
+static uint8_t lcd_single_fb_lock = 0;
+
+void lcd_lock_single_fb(void)
+{
+  lcd_single_fb_lock = 1;
+  framebuffer2 = framebuffer1;
+  fb2 = fb1;
+  active_framebuffer = 0;
+}
 uint32_t frame_counter;
 uint32_t last_frequency = 60;
 
@@ -127,7 +148,8 @@ void *lcd_clear_inactive_buffer() {
 void lcd_clear_buffers() {
   size_t fs = lcd_get_frame_size();
   memset(framebuffer1, 0, fs);
-  memset(framebuffer2, 0, fs);
+  if (!lcd_single_fb_lock)
+    memset(framebuffer2, 0, fs);  /* locked: fb2 aliases fb1, second FB is the segacd overlay */
 }
 
 void lcd_init(SPI_HandleTypeDef *spi, LTDC_HandleTypeDef *ltdc, lcd_init_flags_t flags) {
@@ -321,6 +343,8 @@ void lcd_reset_active_buffer(void)
 
 void lcd_set_buffers(uint16_t *buf1, uint16_t *buf2)
 {
+  if (lcd_single_fb_lock)
+    buf2 = buf1;  /* re-clamp: faulting cores can corrupt the caller's copy */
   fb1 = buf1;
   fb2 = buf2;
 }
@@ -363,6 +387,8 @@ void lcd_setup_framebuffers(lcd_mode_t mode)
         ? (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT * 1)
         : (size_t)(GW_LCD_WIDTH * GW_LCD_HEIGHT * 2);
     size_t footprint = 2 * (fb_size_bytes > old_fb ? fb_size_bytes : old_fb);
+    if (lcd_single_fb_lock)
+      footprint = fb_size_bytes;  /* second FB is the live segacd overlay */
     memset(base, 0, footprint);
   }
 
@@ -373,6 +399,10 @@ void lcd_setup_framebuffers(lcd_mode_t mode)
   framebuffer2 = (pixel_t *)(base + fb_size_bytes);
   fb1 = (uint16_t *)(base);
   fb2 = (uint16_t *)(base + fb_size_bytes);
+  if (lcd_single_fb_lock) {
+    framebuffer2 = framebuffer1;
+    fb2 = fb1;
+  }
 
   current_lcd_mode = mode;
   active_framebuffer = 0;

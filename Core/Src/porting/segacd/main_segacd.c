@@ -20,6 +20,7 @@
 #include "gw_lcd.h"
 #include "rom_manager.h"
 #include "appid.h"
+#include "stm32h7xx_hal.h"
 
 #include "gwenesis_bus.h"
 #include "gwenesis_vdp.h"
@@ -222,7 +223,31 @@ static bool SegaCdCacheXipToFlash(void) {
   printf("segacd: xip blob at %p, %lu bytes, offset 0x%08lX\n",
          g_xip_addr, (unsigned long)g_xip_size, (unsigned long)g_xip_offset);
   
-  PatchSegaCdSentinels((uint32_t *)__RAM_EMU_START__, (uint32_t *)__RAM_EMU_END__, g_xip_offset, g_xip_size);
+  /* Gate-6 placement: .overlay_segacd lives at 0x24025800, BELOW
+   * __RAM_EMU_START__ (0x2404b000) -- the tag's patch range started at
+   * RAM_EMU because that IS where the overlay lived. Patching from there
+   * left this core's own veneer literals holding raw SEGACD_CODE sentinel
+   * addresses (0xDEC8xxxx, unmapped at runtime), so the first out-of-line
+   * takes an IACCVIOL MemManage fault. Start at the overlay's own base instead.
+   * NOTE the array-typed extern: __ram_emu_segacd_start__ is declared like
+   * __RAM_EMU_START__ (void *x[]) so the name alone IS the address. An earlier
+   * scalar-extern version made the value a dereference of the first code word;
+   * the compiler emitted `ldr r3,[r3,#0]`, the loop compared 0x47702000 >=
+   * 0x24100000, skipped itself entirely, and the first veneer still held a
+   * raw sentinel. */
+  PatchSegaCdSentinels((uint32_t *)__ram_emu_segacd_start__, (uint32_t *)__RAM_EMU_END__, g_xip_offset, g_xip_size);
+
+  /* Self-modified code needs cache coherence: main.c enables BOTH caches, so
+   * the patched veneer literals above may still sit in dirty D-cache lines
+   * while the I-fetch re-reads the raw sentinel (0xDEC8xxxx) from AXI SRAM ->
+   * MemManage IACCVIOL on the first out-of-line call. The tag never ran this
+   * path on a device (issue #31: no verified frame) so it never paid this
+   * debt. Push the stores out, then drop stale I-lines, before returning. */
+  __DSB();
+  SCB_CleanDCache();
+  __DSB();
+  SCB_InvalidateICache();
+  __ISB();
   return true;
 }
 
@@ -234,7 +259,9 @@ static bool SegaCdCacheXipToFlash(void) {
  * a BSOD photo. Also printf'd for the on-screen log. Sealed after frame 0: no SD
  * writes during steady play (that corrupts the card). */
 #define SEGACD_DIAG_PATH "/segacd_diag.txt"
-static char     s_scd_diag[2048];
+/* gafix 2026-09-19: parked in the AHB tail (.segacd_ahb_static) — see the
+ * sector_buf note in segacd_cd.c. Sealed after 5 frames, so cold storage. */
+static char     s_scd_diag[2048] __attribute__((section(".bss.segacd_ahb_buf")));
 static uint16_t s_scd_diag_len;
 static bool     s_scd_diag_sealed;
 static int      s_scd_dbg_first = 1;
@@ -264,25 +291,24 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     s_scd_diag_len = 0; s_scd_diag_sealed = false; s_scd_dbg_first = 1;
 
     /* Gate-1 single framebuffer, Sega CD session only (the bb4718f2 lesson:
-     * this property belongs to the core, never to the system). Aliasing both
+     * this property belongs to the core, never to the system). Locking both
      * the LTDC-side (fb2) and emulator-side (framebuffer2) pointers onto
      * their #1 counterparts makes lcd_present()'s active_framebuffer toggle
      * a no-op between identical addresses, and lcd_clear_buffers() a
-     * single-buffer clear. The clear part is REQUIRED, not cosmetic: the
-     * second buffer's 150 KiB at 0x24025800 is exactly where .overlay_segacd
-     * now lives (gate-6 placement, docs/SEGACD_REASSESSMENT_2026-09-14.md),
-     * so any residual write through framebuffer2 would corrupt this core's
-     * own statics and PRG pages. The launcher is already torn down when we
-     * get here and every exit is an esp_restart() full reboot, so the alias
-     * cannot leak into another core. Cost accepted for bring-up: rewriting
-     * the scanout buffer mid-frame can tear; 33 Hz panel pacing is the
-     * designated follow-up lever if that shows on device. */
-    {
-        extern pixel_t *framebuffer1, *framebuffer2;   /* gw_lcd.c */
-        extern uint16_t *fb1, *fb2;                    /* gw_lcd.c, LTDC side */
-        framebuffer2 = framebuffer1;
-        fb2 = fb1;
-    }
+     * single-buffer clear. The lock is REQUIRED, not cosmetic: the second
+     * buffer's 150 KiB at 0x24025800 is exactly where .overlay_segacd now
+     * lives (gate-6 placement, docs/SEGACD_REASSESSMENT_2026-09-14.md), and
+     * the lock RE-CLAMPS inside lcd_set_buffers()/lcd_setup_framebuffers()
+     * so a post-fault error-screen redraw cannot become a periodic 150 KiB
+     * memset over the live core — device-observed (2026-09-17): every BSOD
+     * redraw zeroed the overlay, corrupting the m68k memory map into the
+     * 0x03000300 crash signature and erasing the crash evidence itself.
+     * The launcher is already torn down when we get here and every exit is
+     * an esp_restart() full reboot, so the lock cannot leak into another
+     * core. Cost accepted for bring-up: rewriting the scanout buffer
+     * mid-frame can tear; 33 Hz panel pacing is the designated follow-up
+     * lever if that shows on device. */
+    lcd_lock_single_fb();
 
     if (start_paused) { common_emu_state.pause_after_frames = 2; odroid_audio_mute(true); }
     else              { common_emu_state.pause_after_frames = 0; }
@@ -489,7 +515,12 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     return 0;
 }
 
+/* Under SEGACD_GA_TRACE the canonical definition lives in segacd_engine.c's
+ * trace block (main stamps it every frame via extern, bus/engine read it);
+ * without the trace it degenerates to this harness-local counter. */
+#ifndef SEGACD_GA_TRACE
 int scd_dbg_frame = 0;
+#endif
 
 /* --- Gwenesis core internals for frame rendering --- */
 extern unsigned short gwenesis_vdp_status;

@@ -52,7 +52,17 @@ set -euo pipefail
 HOST=${PROBE_HOST:-rpi-genie5}
 IFACE=${IFACE:-interface/stlink-dap.cfg}
 TARGET=${TARGET:-target/stm32h7x.cfg}
-OC="sudo openocd -f $IFACE -f $TARGET -c 'adapter speed 4000'"
+# -work-area-size 0 is NOT optional. stm32h7x.cfg gives cpu0 a working area
+# at 0x20000000 (DTCM) with -work-area-backup 0: dump_image's bulk-read
+# algorithm halts the target, overwrites that memory with a read stub and
+# never restores it. DTCM 0x20000000 holds the PERSISTENT logbuf/log_idx and
+# the libc heap (the segacd core's PRG page 7 lives there too, 2026-09-18:
+# every "frozen after screenshot" was this stub smashing the emulator's
+# malloc arena -- the firmware then wandered into garbage execution and took
+# the debug port down with it). With the work area disabled OpenOCD falls
+# back to slow AP reads, which is harmless and still fast enough for one
+# 150 KB frame.
+OC="sudo openocd -f $IFACE -f $TARGET -c 'adapter speed 4000' -c 'stm32h7x.cpu0 configure -work-area-size 0'"
 HERE=$(cd "$(dirname "$0")" && pwd)
 CONV="$HERE/../binary_rgb565_to_png.py"
 

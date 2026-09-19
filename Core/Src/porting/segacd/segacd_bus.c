@@ -52,8 +52,8 @@ uint8_t scd_word_mode_seen;     /* bit0=2M seen, bit1=1M seen */
 
 /* ---- gate-array access trace (boot debugging; harness-first) ---- */
 #ifdef SEGACD_GA_TRACE
-uint32_t scd_ga_rd[SEGACD_GA_REGS], scd_ga_wr[SEGACD_GA_REGS];       /* main side */
-uint32_t scd_sga_rd[SEGACD_GA_REGS], scd_sga_wr[SEGACD_GA_REGS];     /* sub side  */
+uint32_t scd_ga_rd[SEGACD_GA_TRACE_SZ], scd_ga_wr[SEGACD_GA_TRACE_SZ];       /* main side */
+uint32_t scd_sga_rd[SEGACD_GA_TRACE_SZ], scd_sga_wr[SEGACD_GA_TRACE_SZ];     /* sub side  */
 
 /* Boot-stall investigation (0716): who wrote $A12000 (the IFL2/INT2 doorbell)
  * and when. On real hardware this is MAIN's own VBlank ISR, pulsed every
@@ -64,24 +64,17 @@ uint32_t scd_sga_rd[SEGACD_GA_REGS], scd_sga_wr[SEGACD_GA_REGS];     /* sub side
 extern int scd_dbg_frame;
 uint32_t scd_dbg_a12000_frame[SCD_DBG_A12000_LOG_N], scd_dbg_a12000_pc[SCD_DBG_A12000_LOG_N];
 int scd_dbg_a12000_n;
-/* $FF800E/F comm-flag writer trace — which sub PC sets which bits, and when
- * (to find where a "TOC complete" flag would need to land). */
-uint32_t scd_dbg_800f_pc[32]; uint8_t scd_dbg_800f_val[32]; int scd_dbg_800f_n;
 /* regs[0x0e]/[0x0f] snapshot at the instant each $A12000 doorbell write fires. */
 uint8_t scd_dbg_a12000_regef[8][2]; int scd_dbg_a12000_regef_n;
-/* MAIN's own writes into regs[0x0e] (its half of the comm-flag word). */
-uint32_t scd_dbg_a1200e_pc[32]; uint8_t scd_dbg_a1200e_val[32]; int scd_dbg_a1200e_n;
-/* $A12001 (SRES/SBRQ) writes — which PC, when, what value. */
-uint32_t scd_dbg_reg1_pc[32]; uint8_t scd_dbg_reg1_val[32]; uint32_t scd_dbg_reg1_frame[32]; int scd_dbg_reg1_n;
 /* Boot-mode-4 gate: the VBlank ISR reads controller-1 ($A10003) into $FFFE20;
  * the disc-detect driver spins until $FE20's high nibble is nonzero. Track what
  * our emulation returns for $A10003 to tell a harness controller-stub artifact
  * (returns 0) from a real gap. */
 uint32_t scd_dbg_a10003_reads; uint8_t scd_dbg_a10003_last;
-#define GA_RD(reg)  (scd_ga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
-#define GA_WR(reg)  (scd_ga_wr[(reg) & (SEGACD_GA_REGS-1)]++)
-#define SGA_RD(reg) (scd_sga_rd[(reg) & (SEGACD_GA_REGS-1)]++)
-#define SGA_WR(reg) (scd_sga_wr[(reg) & (SEGACD_GA_REGS-1)]++)
+#define GA_RD(reg)  (scd_ga_rd[(reg) & (SEGACD_GA_TRACE_SZ-1)]++)
+#define GA_WR(reg)  (scd_ga_wr[(reg) & (SEGACD_GA_TRACE_SZ-1)]++)
+#define SGA_RD(reg) (scd_sga_rd[(reg) & (SEGACD_GA_TRACE_SZ-1)]++)
+#define SGA_WR(reg) (scd_sga_wr[(reg) & (SEGACD_GA_TRACE_SZ-1)]++)
 #else
 #define GA_RD(reg) ((void)0)
 #define GA_WR(reg) ((void)0)
@@ -101,8 +94,18 @@ static unsigned int sub_ff_read8(unsigned int address)
      * (memory.c:279-308 s68k_poll_detect): track repeated reads of the same
      * status register within POLL_CYCLES(52) sub cycles. At POLL_LIMIT(16)
      * repeats, mark the sub as idle — segacd_run_sub skips its timeslices
-     * until a write (segacd_poll_wake) or pending IRQ re-arms it. */
-    unsigned int reg = off & (SEGACD_GA_REGS - 1);
+     * until a write (segacd_poll_wake) or pending IRQ re-arms it.
+     *
+     * Window is $FF8000-$FF81FF ONLY (pd_cd/memory.c PicoReadS68k8_pr:
+     * (a & 0xfe00) == 0x8000); $FF8200+ is unmapped (reads 0, writes
+     * ignored). The old `off & (SEGACD_GA_REGS-1)` fold mapped ALL of
+     * $FF8000-$FFFFFF onto the register file — the sub-BIOS installs its
+     * CDD driver tables with a `lea $fb80.w` stub that sign-extends to
+     * $FFFB80, and those table writes were folding into the register file
+     * (comm flag, IEN, CDD window) and shredding the handshake. */
+    if (off >= 0x8200)
+        return 0;
+    unsigned int reg = off - 0x8000;
     SGA_RD(reg);
     if (!SCD.sub_idle) {
         if (reg == SCD.poll_reg) {
@@ -138,7 +141,7 @@ static unsigned int sub_ff_read8(unsigned int address)
 static unsigned int sub_ff_read16(unsigned int address)
 {
     unsigned int off = address & 0xFFFF;
-    if (off >= 0x8000 && (off & (SEGACD_GA_REGS - 1)) == 0x08) {
+    if (off >= 0x8000 && off < 0x8200 && (off - 0x8000) == 0x08) {
         /* $FF8008 host data port: a genuinely 16-bit register — must be
          * read ONCE (segacd_cdc_host_r has side effects: DAC advances,
          * DBC decrements), not composed from two independent 8-bit calls,
@@ -161,7 +164,9 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
         unsigned int a = (unsigned)SCD.pcm.bank * 0x1000 + (off & 0x0FFF);
         SCD.pcm_ram[a & (SEGACD_PCM_RAM_SIZE - 1)] = (uint8_t)data;
     } else if (off >= 0x8000) {            /* $FF8000+: gate array / CDC / CDD */
-        unsigned int reg = off & (SEGACD_GA_REGS - 1);
+        if (off >= 0x8200)                 /* $FF8200+: unmapped, write ignored */
+            return;                        /* (pd_cd/memory.c s68k_unmapped w8) */
+        unsigned int reg = off - 0x8000;   /* window is $FF8000-$FF81FF only */
         SGA_WR(off);
 
         if (reg == 0x02 || reg == 0x03) {
@@ -211,10 +216,6 @@ static void sub_ff_write8(unsigned int address, unsigned int data)
             /* $FF800E/F comm flag: SUB's half always targets regs[0x0f]
              * regardless of which byte of the word was addressed —
              * pd_cd/memory.c s68k_reg_write8 `case 0x0e: a++`. */
-#ifdef SEGACD_GA_TRACE
-            extern uint32_t scd_dbg_800f_pc[]; extern uint8_t scd_dbg_800f_val[]; extern int scd_dbg_800f_n;
-            if (scd_dbg_800f_n < 32) { scd_dbg_800f_pc[scd_dbg_800f_n] = m68k.pc; scd_dbg_800f_val[scd_dbg_800f_n] = (uint8_t)data; scd_dbg_800f_n++; }
-#endif
             SCD.s68k_regs[0x0f] = (uint8_t)data;
             return;
         }
@@ -450,8 +451,6 @@ static unsigned int main_prgwin_read16(unsigned int address)
 }
 #ifdef SEGACD_GA_TRACE
 uint32_t scd_dbg_prgwin_w;              /* count of main-CPU writes into the PRG window */
-uint8_t  scd_dbg_prg_written[0x5800];   /* coverage of the sub-BIOS region by main writes */
-uint32_t scd_dbg_wpc[64]; int scd_dbg_wpc_n;   /* distinct main PCs that store into PRG */
 int scd_dbg_first_store_seen; uint32_t scd_dbg_first_a0, scd_dbg_first_a1, scd_dbg_first_ea;
 extern m68ki_cpu_core m68k;             /* to read the writer's PC (locate the decompressor) */
 #endif
@@ -461,11 +460,11 @@ static void main_prgwin_write8(unsigned int address, unsigned int data)
     scd_prg_bank_accessed |= (uint8_t)(1 << SCD.prg_bank);
 #ifdef SEGACD_GA_TRACE
     scd_dbg_prgwin_w++;
-    { unsigned physoff = (off ^ 1) & (SEGACD_PRG_RAM_SIZE - 1);
-      if (physoff < sizeof(scd_dbg_prg_written)) scd_dbg_prg_written[physoff] = 1; }
-    { unsigned pc = m68k.pc; int seen = 0;
-      for (int i = 0; i < scd_dbg_wpc_n; i++) if (scd_dbg_wpc[i] == pc) { seen = 1; break; }
-      if (!seen && scd_dbg_wpc_n < 64) scd_dbg_wpc[scd_dbg_wpc_n++] = pc; }
+    /* prg-written coverage trace removed 2026-09-19: it found the audio
+     * cross-binding (YM spray) and costs 0x100B the 0x200 register file
+     * reclaim needs more than the histogram diet returns. Same for the
+     * distinct-writer-PC histogram below — the forensics phase it served
+     * (audio spray, SRES sequencing) is closed. */
     /* Capture A0(src)/A1(dst) at the LZSS decompressor's first store only
      * (PC 0x926 = literal copy, 0x988 = back-ref copy), not the PRG-clear loop. */
     if (!scd_dbg_first_store_seen && (m68k.pc == 0x926 || m68k.pc == 0x988)) {
@@ -655,13 +654,6 @@ static void main_ga_write8(unsigned int address, unsigned int data)
             SCD.s68k_regs[0x0e] = (uint8_t)data;
             segacd_poll_wake();
         }
-#ifdef SEGACD_GA_TRACE
-        if (scd_dbg_a1200e_n < 32) {
-            scd_dbg_a1200e_pc[scd_dbg_a1200e_n] = m68k.pc;
-            scd_dbg_a1200e_val[scd_dbg_a1200e_n] = (uint8_t)data;
-            scd_dbg_a1200e_n++;
-        }
-#endif
         return;
     }
 
@@ -678,16 +670,6 @@ static void main_ga_write8(unsigned int address, unsigned int data)
          * Stored in SCD.main_busreq, NOT the shared regs[] array — see
          * segacd.h SCD.main_busreq for why aliasing it onto regs[1] let a
          * SUB write to its own $FF8001 permanently clobber this state. */
-#ifdef SEGACD_GA_TRACE
-        extern uint32_t scd_dbg_reg1_pc[]; extern uint8_t scd_dbg_reg1_val[]; extern uint32_t scd_dbg_reg1_frame[]; extern int scd_dbg_reg1_n;
-        extern int scd_dbg_frame;
-        if (scd_dbg_reg1_n < 32) {
-            scd_dbg_reg1_pc[scd_dbg_reg1_n] = m68k.pc;
-            scd_dbg_reg1_val[scd_dbg_reg1_n] = (uint8_t)data;
-            scd_dbg_reg1_frame[scd_dbg_reg1_n] = (uint32_t)scd_dbg_frame;
-            scd_dbg_reg1_n++;
-        }
-#endif
         SCD.main_busreq = (uint8_t)(data & 0x03);
         segacd_poll_wake();
         if ((data & 0x01) && !(data & 0x02)) {

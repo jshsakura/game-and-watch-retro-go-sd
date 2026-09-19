@@ -68,6 +68,10 @@ void lcd_clone(void);
 void* lcd_get_active_buffer(void);
 void* lcd_get_inactive_buffer(void);
 void lcd_set_buffers(uint16_t *buf1, uint16_t *buf2);
+/* Gate-6 single-FB lock: clamps framebuffer2/fb2 onto framebuffer1/fb1 and
+ * re-clamps at every lcd re-entry point, so no second-FB write can touch
+ * the .overlay_segacd span (see gw_lcd.c). */
+void lcd_lock_single_fb(void);
 void lcd_wait_for_vblank(void);
 uint32_t lcd_is_swap_pending(void);
 bool lcd_sleep_while_swap_pending(void);

@@ -866,6 +866,28 @@ INCLUDE build/fceumm_mappers.ld
    * arithmetic link-time; do not build SEGACD=1 with SEGACD_RAM_PROBE=1, the
    * two claim the same span. Every other core keeps the double framebuffer:
    * this is an overlay address, exclusive with the rest by construction. */
+  /* Real-core AHB tail, 2026-09-19 (gafix5): restoring the GA register file
+   * to its architectural 0x200 bytes (CDD comm window 0x40-0x4B lived OOB at
+   * 0x40 — the sub's command strobes were shredding prg_bank/word_mode) grew
+   * the single-FB AXI span ~3.6K past 894,976B. The runtime AHB pool ends at
+   * 0x3001cac0 (YM 47,104 @0x30000000 + PCM 64K + CDDA 4,800) and the audio
+   * reserve starts at 0x3001E000, so cold segacd buffers live in the 5,440B
+   * between: currently sector_buf (2,048, CD-read-bound) and s_scd_diag
+   * (2,048, sealed after 5 frames). NOLOAD + KEEP so --gc-sections cannot
+   * drop them; the assert guards the audio reserve.
+   * PLACED BEFORE .overlay_segacd on purpose: input sections go to the FIRST
+   * output section that matches, and the overlay's build/segacd/*.o(.bss*)
+   * sweep would otherwise swallow these before this block ever saw them
+   * (that exact ordering bit gafix5 — assert fired with the buffers still
+   * inside the span). */
+  .segacd_ahb_static 0x3001cac0 (NOLOAD) : {
+    . = ALIGN(4);
+    KEEP(build/segacd/*.o(.bss.segacd_ahb*))
+    . = ALIGN(4);
+    __segacd_ahb_static_end__ = .;
+    ASSERT(ABSOLUTE(__segacd_ahb_static_end__) <= ORIGIN(AHBRAM) + LENGTH(AHBRAM) - __AHBRAM_AUDIO_RESERVE__,
+           "Error: SEGACD AHB static tail (sector_buf+diag) overruns the audio DMA reserve");
+  }
   .overlay_segacd 0x24025800 : {
     . = ALIGN(4);
     __ram_emu_segacd_start__ = .;

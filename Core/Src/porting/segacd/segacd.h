@@ -26,8 +26,27 @@
 #define SEGACD_BRAM_SIZE      (8   * 1024)   /* internal battery backup */
 #define SEGACD_BIOS_SIZE      (128 * 1024)   /* region BIOS, XIP/read-only after load */
 
-/* Gate-array register file (main side $A12000.., sub side $FF8000..). */
+/* Gate-array register file (main side $A12000.., sub side $FF8000..).
+ * GA_TRACE diet: the tag sized these counters for a 724K-budget harness;
+ * the gate-6 single-FB layout leaves 3,624B of AXI margin, and 0x200-entry
+ * counters (4 x 2K) plus the 22.5K PRG coverage map overflowed the BSS
+ * ASSERT. The counters fold to 0x40 — but ONLY the counters.
+ *
+ * The register FILE itself must stay 0x200: the CDD command bytes live at
+ * 0x40-0x49 and the command strobe at 0x4B, inside the file. Deployed
+ * GA_TRACE builds compiled a 0x40 s68k_regs (DWARF: prg_bank@8296,
+ * 2026-09-19) so every sub CDD strobe at $FF8042/$FF804B smashed
+ * prg_bank/word_mode/dmna_ret instead of the command window — the
+ * handshake could never complete. */
 #define SEGACD_GA_REGS        0x200
+#ifdef SEGACD_GA_TRACE
+/* 0x20: the +448B register-file restore (64->512) overran the BSS assert
+ * at 0x40 counters. 0x20 overflowed the single-FB assert once the register
+ * file went back to 0x200 (+448B), so the bring-up build diets to 0x10: the
+ * high-frequency entries ($A1200F/$FF800F comm flags, $A12001) are all in the
+ * first 16. Histogram folding only — the FILE above is untouched. */
+#define SEGACD_GA_TRACE_SZ    0x10
+#endif
 
 /* RF5C164 PCM — 8 channels of 8-bit sample playback from pcm_ram. addr is a
  * fixed-point pointer into pcm_ram (PCM_STEP_SHIFT fractional bits). Modeled on

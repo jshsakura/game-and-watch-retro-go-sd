@@ -369,8 +369,48 @@ report state lives in locals and the margin proof is a real `malloc`, not
 `mallinfo`; (2) the boot-combo latch read 0 on every button-held reset while
 GPIOC-IDR showed the pins low — trigger delivered by SWD halt + `resume` at
 the probe entry with r0=0xC0 instead. The latch anomaly is unexplained; do
-not build button-triggered tooling on it until understood. Phase-0 remaining:
-35 Hz eye verdict, then gate 6 (port the archived core forward).
+ not build button-triggered tooling on it until understood. Phase-0 remaining:
+ 35 Hz eye verdict, then gate 6 (port the archived core forward).
+
+**Phase-0 gate 6: the ported core boots from disc on device, 2026-09-19.**
+`a0a85e35` forward-ported tag `testbed-full-20260724-1447` onto the gate-2..5
+placement (overlay VMA 0x24025800, PRG `page[8]`, rebased AHB, session
+single-FB). The bring-up then paid a chain of integration debts the tag never
+executed on hardware (issue #31's close-out is why): (1) `code_dest` staging —
+`run_internal_emu` staged every core at RAM_EMU and jumped to the link VMA;
+the segacd dispatch now carries its own destination. (2) the sentinel patch
+range started at RAM_EMU, one frame-buffer above this core's relocated
+overlay — its own veneer literals stayed raw SEGACD_CODE addresses and the
+first out-of-line call took an IACCVIOL (also: the patch-start extern must be
+an array symbol, matching `__RAM_EMU_START__[]`; a scalar extern silently
+dereferences the first code word and skips the loop). (3) the audio globals
+(`gwenesis_ym2612_buffer` etc., 6 symbols) were missing from
+`segacd_redefines`, so the overlay bound the MD core's buffers — physically
+inside this core's SCD — and `YM2612Update` sprayed samples over
+`sub_ctx`/`s68k_regs`/the 68K memory map (deterministic frame-269 BusFault,
+BFAR 0x03000300). (4) the GA register file was folded to 0x40 in trace builds,
+which put the CDD command/response window (0x40-0x4B) outside `s68k_regs` and
+left the $FF8100 subcode Q buffer empty — the file is now fixed 0x200 with
+$FF8200-and-abave unmapped (oracle semantics: a write there is the sub-BIOS
+table installer at $de2 landing on $FFFB80). (5) cold buffers (sector_buf,
+diag) moved to an AHB static tail at 0x3001cac0 to keep the span inside
+894,976 after the file restore — the block must precede `.overlay_segacd` in
+the linker script (first-match rule). (6) Drive Status answers honour the RS1
+subfield selector (0x00 time / 0x01 track-relative / 0x02 track number — the
+Lunar fix) and the 75 Hz tick re-arms DSR `[0x4B]=0xF0` (pd cdd/mcd model);
+`cd_open` starts at NODISC so the sub-BIOS tray probe sees RS0=0 once before
+our 0x01/0x02 handlers promote it to STOP — starting at STOP skipped the probe
+and parked the driver in a 400+-retry Drive Status poll. (7) an error-screen
+redraw memsets the front buffer every ~180 ms — with fb2 still pointing at
+0x24025800 that erased the whole overlay after any fault; `lcd_lock_single_fb()`
+clamps every re-entry point for this core's session. Tooling: `screenshot.sh`
+pins `-work-area-size 0` (OpenOCD's bulk-read stub lives in DTCM and was
+corrupting logbuf/heap on every capture). Result on hardware (orgun_t1,
+track-1-only image): BIOS license → logo → tray probe → Read TOC (3.6k
+commands) → Play → RS0=READY, main CPU leaves the comm-bit6 spin into the disc
+boot path, and the panel renders the disc boot screen — the first device
+frames of Sega CD on this firmware. Gameplay/audio/perf work is next; the
+measurement campaign follows the 32X playbook.
 
 ## CPS-1
 

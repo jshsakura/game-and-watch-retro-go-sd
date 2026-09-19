@@ -1730,23 +1730,33 @@ typedef struct {
     void       *itc2_dest;
     uint32_t    itc2_lma_off;
     uint32_t    itc2_size;
+    /* Staging VMA for the core bin payload. 0 = __RAM_EMU_START__, the
+     * historical contract every legacy core is linked against (overlay VMA
+     * == staging address). Gate-6 segacd is the first core whose overlay
+     * lives lower (0x24025800, the single-framebuffer placement from
+     * docs/SEGACD_REASSESSMENT_2026-09-14.md), so it names its own staging
+     * base here -- otherwise the bin lands at RAM_EMU while the entry jump
+     * goes to the linked VMA and executes stale framebuffer bytes. */
+    void       *code_dest;
 } emu_dispatch_t;
 
 __attribute__((noinline))
 static void run_internal_emu(const emu_dispatch_t *e,
                              uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
-    if (load_core_bin_with_header(e->path, (uint8_t *)&__RAM_EMU_START__)) {
+    uint8_t *base = e->code_dest ? (uint8_t *)e->code_dest
+                                 : (uint8_t *)&__RAM_EMU_START__;
+    if (load_core_bin_with_header(e->path, base)) {
         if (e->itc_size) {
-            memcpy(e->itc_dest, (uint8_t *)&__RAM_EMU_START__ + e->itc_lma_off, e->itc_size);
+            memcpy(e->itc_dest, base + e->itc_lma_off, e->itc_size);
             __DSB(); __ISB();   /* TCM stores drained before any fetch from ITCM */
         }
         if (e->itc2_size) {
-            memcpy(e->itc2_dest, (uint8_t *)&__RAM_EMU_START__ + e->itc2_lma_off, e->itc2_size);
+            memcpy(e->itc2_dest, base + e->itc2_lma_off, e->itc2_size);
             __DSB(); __ISB();
         }
         memset(e->bss_start, 0, e->bss_size);
-        SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, e->code_size);
+        SCB_CleanDCache_by_Addr((uint32_t *)base, e->code_size);
         if (e->cpp_heap_end) cpp_heap_init(e->cpp_heap_end);
         e->entry(load_state, start_paused, save_slot);
     }
@@ -1869,7 +1879,7 @@ static const emu_dispatch_t emu_md32x   = { "/cores/32x.bin",    &_OVERLAY_MD32X
  * here had different types once and hid the missing declarations. */
 extern int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot);
 #if SEGACD_ENABLED
-static const emu_dispatch_t emu_segacd = { "/cores/segacd.bin", &_OVERLAY_SEGACD_BSS_START, (uint32_t)&_OVERLAY_SEGACD_BSS_SIZE, (uint32_t)&_OVERLAY_SEGACD_SIZE, 0, EMU_ENTRY(app_main_segacd) };
+static const emu_dispatch_t emu_segacd = { "/cores/segacd.bin", &_OVERLAY_SEGACD_BSS_START, (uint32_t)&_OVERLAY_SEGACD_BSS_SIZE, (uint32_t)&_OVERLAY_SEGACD_SIZE, 0, EMU_ENTRY(app_main_segacd), 0, 0, 0, 0, 0, 0, (void *)__ram_emu_segacd_start__ };
 #endif
 #endif
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };

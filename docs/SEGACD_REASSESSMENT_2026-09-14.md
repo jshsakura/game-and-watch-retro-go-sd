@@ -219,6 +219,19 @@ of a heap margin that is 4 B. Flag-off cost is +72 B (assert string only); the
 probe re-passes with the gate-2 margins. Gates 4+5 passed on device the same
 day (see the status block above).
 
+**Status 2026-09-19: gate 6 — the core boots from disc on device.** The
+archived core is forward-ported onto the probe placement (`a0a85e35` plus the
+bring-up fix stack; see the ledger's Sega CD section for the full chain:
+staging destination, sentinel patch range, audio-symbol separation, GA register
+file 0x200 with $FF8200+ unmapped, AHB static tail, RS1 subfield + DSR re-arm
+CDD protocol, NODISC tray probe, single-FB lock). On hardware with a
+track-1-only image the BIOS completes its disc sequence — tray probe, Read TOC,
+Play, RS0=READY — and the main CPU enters the disc boot path with the panel
+rendering. Gameplay, audio and the performance campaign remain open; the
+35 Hz/33 Hz single-FB session work is now a runtime lever of this core rather
+than a phase-0 precondition (the eye verdict rejected the panel-rate fix for
+the 32X core, and this core owns its framebuffer aliasing).
+
 The phase-0 result can still fail if the current 35 Hz path cannot safely expose
 the second framebuffer's memory, current resident usage consumes the margin, or
 the remaining DTCM heap is insufficient. In that case external OSPI PSRAM is the

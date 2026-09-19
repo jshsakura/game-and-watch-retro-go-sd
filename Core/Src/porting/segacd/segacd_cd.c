@@ -245,10 +245,17 @@ int segacd_cd_open(const char *cue_path)
 {
     memset(&CD, 0, sizeof(CD));
     if (parse_cue(cue_path) != 0) return -1;
-    /* NO_DISC until the sub issues its first CDD command (Stop/Read TOC),
-     * exactly like real hardware — pd_cd/cdd.c:461 `cdd.status = NO_DISC;`
-     * after cdd_load(). The 10-byte protocol itself drives the STOP
-     * transition (segacd_cdd_command() case 0x01/0x02). */
+    /* NO_DISC start (2026-09-19 device A/B): an earlier bring-up experiment
+     * started in CDD_STOP to model "tray closed + disc" directly. It got the
+     * boot further (license -> logo) than the then-broken NO_DISC runs, but
+     * that verdict was confounded: those runs predate the DSR re-arm
+     * ($FF804B=0xF0, mcd.c:182-215), the RS1 subfield protocol and the
+     * 0x200 GA file fix. With those landed, the sub-BIOS tray probe needs to
+     * SEE RS0=NO_DISC(0) once (PicoDrive cdd.c case 0x01 'expects 0x0 in
+     * RS0 once') before it issues Stop/Read-TOC -- starting at STOP bypassed
+     * the probe and the driver polled Drive Status forever (413+ strobes,
+     * hist[1]==hist[2]==0). Start NO_DISC like PicoDrive; the 0x01/0x02
+     * handlers promote to STOP. */
     CD.status = CDD_NODISC;
     CD.opened = 1;
     segacd_cdc_reset();
@@ -405,14 +412,31 @@ void segacd_cdd_command(void)
 #endif
 
     switch (cmd) {
-    case 0x00: {  /* Drive Status — current status + absolute head position */
+    case 0x00: {  /* Drive Status — status + RS1-SELECTED subfield. RS1
+                   * (s68k_regs[0x39]) is a selector the sub wrote BEFORE
+                   * strobing, not an echo: 0x00=current absolute time,
+                   * 0x01=current track relative time, 0x02=current track
+                   * number, 0x0f=reserved->treated as 0x00. Answering every
+                   * request with absolute time leaves a sub driver that asked
+                   * for the track number spinning on a mismatched reply
+                   * (pd_cd/cdd.c:852-883 — "fixes Lunar - The Silver Star"). */
+        uint8_t req = s[1] & 0x0f;
         cd_track_t *t = track_at_lba(CD.cur_lba);
-        int lba = (int)CD.cur_lba + 150;
         s[0] = (uint8_t)CD.status;
-        s[1] = 0x00;
-        set_status_pair(0x3a, lba/75/60);
-        set_status_pair(0x3c, (lba/75)%60);
-        set_status_pair(0x3e, lba%75);
+        if (req == 0x02) {          /* current track number in RS2-RS3 */
+            s[1] = 0x02;
+            set_status_pair(0x3a, track_index_at_lba(CD.cur_lba) + 1);
+            s[4] = 0; s[5] = 0; s[6] = 0; s[7] = 0;
+        } else {                    /* 0x00/0x0f absolute, 0x01 track-relative */
+            int lba = (int)CD.cur_lba + 150;
+            if (req == 0x01 && t)
+                lba = (int)(CD.cur_lba - t->start_lba);
+            if (lba < 0) lba = 0;
+            s[1] = (req == 0x0f) ? 0x00 : req;
+            set_status_pair(0x3a, lba/75/60);
+            set_status_pair(0x3c, (lba/75)%60);
+            set_status_pair(0x3e, lba%75);
+        }
         s[8] = (uint8_t)((t && !t->is_audio) ? 0x04 : 0x00);
         break;
     }
@@ -693,6 +717,16 @@ void segacd_cdd_process(void)
      * this continuously; without it the level-4 ISR can never validate
      * disc position and the sub-BIOS never advances past TOC reading. */
     segacd_subcode_q_update();
+
+    /* DSR re-arm: the CDD signals "response ready" by setting the high nibble
+     * of $FF804B. PicoDrive does this on every 75Hz event (pd_cd/mcd.c:182-215
+     * `if(!(regs[0x4b]&0xf0)) regs[0x4b]=0xf0;`). Without it the sub-BIOS
+     * driver never sees its Drive Status answer acknowledged and re-strobes
+     * the same command forever -- observed on device 2026-09-19 as 413
+     * consecutive cmd 0x00 with zero 0x01/0x02, main parked at $132C waiting
+     * for comm bit6. */
+    if (!(SCD.s68k_regs[0x4b] & 0xf0))
+        SCD.s68k_regs[0x4b] = 0xf0;
 
     if (CD.latency > 0) {
         CD.latency--;
@@ -1267,7 +1301,11 @@ void segacd_cd_update(void)
      * never buffered — WRRQ only turns on once the head is 1-4 sectors from the
      * wanted sector). Gating the decode on a successful read_sector() (the old
      * behavior) skipped the pregap entirely and the gate never fired. */
-    static uint8_t sector_buf[CD_SECTOR_DATA];
+    /* gafix 2026-09-19: parked in the AHB tail (see .segacd_ahb_static in the
+     * linker script) — the single-FB AXI span ran ~3.6K over after the GA
+     * register file was restored to its architectural 0x200 bytes. This
+     * buffer is CD-read-bound (SD/FatFs pacing), so AHB latency is free. */
+    static uint8_t sector_buf[CD_SECTOR_DATA] __attribute__((section(".bss.segacd_ahb_buf")));
     cd_track_t *t = (CD.cur_lba >= 0) ? track_at_lba((uint32_t)CD.cur_lba) : NULL;
     int on_data = (CD.cur_lba < 0) || (t && !t->is_audio);
 

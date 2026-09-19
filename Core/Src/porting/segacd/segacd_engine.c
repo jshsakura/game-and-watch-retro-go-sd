@@ -39,6 +39,22 @@ extern void m68k_set_irq(unsigned int int_level);
 
 segacd_state SCD;
 
+/* Gate-6 audio-buffer ownership (2026-09-19 device forensics): the tag's
+ * segacd_redefines list missed these six globals, so this overlay's externs
+ * cross-bound to the MD core's definitions in build/md/*.o -- a RAM_EMU VMA
+ * that physically overlaps this overlay's own BSS (SCD at 0x240f28a8,
+ * buffer at 0x240f46b8 in the fbfix build). YM2612Update then sprayed FM
+ * samples across s68k_regs and sub_ctx (0x03000300 memory-map bases ->
+ * BusFault at frame ~269, deterministic). Defined here and renamed to
+ * __segacd__* by segacd_redefines, this overlay binds its own pair of
+ * buffers and the MD core keeps its set untouched. */
+int16_t gwenesis_ym2612_buffer[GWENESIS_AUDIO_BUFFER_CAPACITY];
+int ym2612_index;   /* ym2612 audio buffer index */
+int ym2612_clock;   /* ym2612 clock in video clock resolution */
+int16_t gwenesis_sn76489_buffer[GWENESIS_AUDIO_BUFFER_CAPACITY];
+int sn76489_index;  /* sn76489 audio buffer index */
+int sn76489_clock;  /* sn76489 clock in video clock resolution */
+
 /* Gate-6 static placement (docs/SEGACD_REASSESSMENT_2026-09-14.md): 7 PRG
  * pages + Word RAM live as overlay BSS inside AXI's single-framebuffer span
  * (894,976 B from 0x24025800); PRG page 7 is claimed from the DTCM libc heap
@@ -167,8 +183,21 @@ static int segacd_sub_int_ack(int int_level)
     return M68K_INT_ACK_AUTOVECTOR;
 }
 
+/* GA_TRACE lifecycle counters — file-scope, OUTSIDE SCD, so they survive
+ * segacd_init()'s memset(&SCD,...) and record the true call history across
+ * the whole boot. The bp-less build can then answer, from one live read,
+ * which of these ran and in what order (the $1288 deadlock forensics kept
+ * conflating states read at different times). */
+#ifdef SEGACD_GA_TRACE
+uint32_t scd_dbg_n_init, scd_dbg_n_reset, scd_dbg_n_release,
+         scd_dbg_n_hold, scd_dbg_n_runsub, scd_dbg_n_runsub_ran;
+#endif
+
 void segacd_init(void)
 {
+#ifdef SEGACD_GA_TRACE
+    scd_dbg_n_init++;
+#endif
     memset(&SCD, 0, sizeof(SCD));
 
     /* Resident CD RAM — gate-6 placement. 7 PRG pages + Word RAM are STATIC
@@ -197,6 +226,9 @@ void segacd_init(void)
 
 void segacd_reset(void)
 {
+#ifdef SEGACD_GA_TRACE
+    scd_dbg_n_reset++;
+#endif
     {
         int p;
         for (p = 0; p < SEGACD_PRG_PAGE_COUNT; p++)
@@ -235,6 +267,9 @@ void segacd_reset(void)
  * bus is granted). */
 void segacd_sub_release(void)
 {
+#ifdef SEGACD_GA_TRACE
+    scd_dbg_n_release++;
+#endif
     memcpy(&s_main_saved, &m68k, sizeof(m68ki_cpu_core));
     memcpy(&m68k, &SCD.sub_ctx, sizeof(m68ki_cpu_core));
     m68k_pulse_reset();
@@ -247,6 +282,9 @@ void segacd_sub_release(void)
 /* Hold the sub-68K in reset / bus-request (main sets SRES or takes the bus). */
 void segacd_sub_hold(void)
 {
+#ifdef SEGACD_GA_TRACE
+    scd_dbg_n_hold++;
+#endif
     SCD.sub_running = 0;
 }
 
@@ -348,6 +386,9 @@ void segacd_dump_int_state(int frame)
  * Returns cycles actually consumed. No-op while the sub is held or idle. */
 int segacd_run_sub(int cycle_target)
 {
+#ifdef SEGACD_GA_TRACE
+    scd_dbg_n_runsub++;
+#endif
     if (!SCD.sub_running)
         return 0;
 #ifdef SEGACD_GA_TRACE
@@ -402,6 +443,9 @@ int segacd_run_sub(int cycle_target)
     /* save main -> load sub */
     memcpy(&s_main_saved, &m68k, sizeof(m68ki_cpu_core));
     memcpy(&m68k, &SCD.sub_ctx, sizeof(m68ki_cpu_core));
+#ifdef SEGACD_GA_TRACE
+    scd_dbg_n_runsub_ran++;   /* slices that actually swapped+ran */
+#endif
 #ifdef HOOK_CPU
     /* histogram attribution: sub-68K context is now in the shared `m68k`
      * global, so per-insn samples taken by the HOOK_CPU path from here on

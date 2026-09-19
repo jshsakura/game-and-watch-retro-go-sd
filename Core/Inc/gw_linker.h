@@ -148,6 +148,7 @@ extern void * _OVERLAY_SMW_BSS_START[];
 extern void * _OVERLAY_SMW_BSS_END[];
 extern uint8_t _OVERLAY_SMW_BSS_SIZE;
 extern void * _OVERLAY_SEGACD_LOAD_START[];
+extern void * __ram_emu_segacd_start__[];
 extern uint8_t _OVERLAY_SEGACD_SIZE;
 extern void * _OVERLAY_SEGACD_BSS_START[];
 extern void * _OVERLAY_SEGACD_BSS_END[];
