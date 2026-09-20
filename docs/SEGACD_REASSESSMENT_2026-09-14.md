@@ -219,6 +219,15 @@ of a heap margin that is 4 B. Flag-off cost is +72 B (assert string only); the
 probe re-passes with the gate-2 margins. Gates 4+5 passed on device the same
 day (see the status block above).
 
+**Status 2026-09-19 (later that day): the game boots to its title screen.**
+The last bring-up fault was architectural: the CDD tick was derived from the
+host frame loop, so when the game program dropped emulation to 8.6 fps the
+disc streamed at 17 sectors/s instead of 75 and the BIOS re-seeked forever.
+The tick is now wall-clock (`HAL_GetTick`, 75 Hz) and the title screen
+renders on the panel with the frame loop back at ~60 fps. Gameplay
+performance, audio (the test image has no CDDA tracks), input and save
+states remain open — see the ledger's Sega CD section for the numbers.
+
 **Status 2026-09-19: gate 6 — the core boots from disc on device.** The
 archived core is forward-ported onto the probe placement (`a0a85e35` plus the
 bring-up fix stack; see the ledger's Sega CD section for the full chain:

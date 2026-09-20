@@ -465,15 +465,26 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         SCD_DBG("segacd dbg: md_frame(draw=%d)...\n", (int)drawFrame);
         gwenesis_md_frame(drawFrame);           /* main 68K + Z80 + VDP + YM/SN + Sub 68K interleaved */
         SCD_DBG("segacd dbg: md_frame done; cdd ticks...\n");
-        /* True 75Hz CDD pacing (see comment above s_cdd_tick_accum) — average
-         * 1.25 ticks/frame at NTSC 60fps, 1.5 ticks/frame at PAL 50fps. */
-        s_cdd_tick_accum += 75;
-        int video_fps = mode_pal ? 50 : 60;
-        while (s_cdd_tick_accum >= video_fps) {
+        /* True 75Hz CDD pacing, WALL-CLOCK based (2026-09-19 gate-6 device
+         * finding): the frame-coupled accumulator (1.25/frame) made the disc
+         * speed collapse with the emulator — once the game program started
+         * running, frames fell to 8.6fps, CDD ticks to ~17/s, and the BIOS
+         * timed out and re-seeked to LBA 8 forever (the boot screen never
+         * advanced). Real hardware spins the disc at wall-clock 75Hz no matter
+         * how slow the guest is; PicoDrive schedules PCD_EVENT_CDC on cycles,
+         * not frames. Feed the tick counter from HAL_GetTick() (1ms) instead.
+         * Capped per loop pass so a debugger halt can't burst-read the disc. */
+        static uint32_t s_cdd_last_ms;
+        uint32_t now_ms = HAL_GetTick();
+        if (s_cdd_last_ms == 0) s_cdd_last_ms = now_ms;   /* first pass: no burst */
+        s_cdd_tick_accum += (now_ms - s_cdd_last_ms) * 75 / 1000;
+        s_cdd_last_ms = now_ms;
+        if (s_cdd_tick_accum > 75) s_cdd_tick_accum = 75; /* <=1s catch-up cap */
+        while (s_cdd_tick_accum >= 1) {
             segacd_cdd_process();
             segacd_cd_update();
             segacd_cdc_dma_update();
-            s_cdd_tick_accum -= video_fps;
+            s_cdd_tick_accum -= 1;
         }
 
         SCD_DBG("segacd dbg: cdd done; blit(draw=%d)...\n", (int)drawFrame);

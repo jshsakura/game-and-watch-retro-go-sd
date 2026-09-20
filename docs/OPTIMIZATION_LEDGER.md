@@ -372,6 +372,26 @@ the probe entry with r0=0xC0 instead. The latch anomaly is unexplained; do
  not build button-triggered tooling on it until understood. Phase-0 remaining:
  35 Hz eye verdict, then gate 6 (port the archived core forward).
 
+**The CDD tick is wall-clock, not frame-derived: the game reaches its title
+screen, 2026-09-19.** After the disc-detect gate passed, the boot program
+loaded 8 sectors and stalled in a re-seek loop (LBA 8 -> read -> timeout ->
+re-seek, forever). Measurement over a fixed 10 s window: the frame loop had
+collapsed to 8.6 fps once the game program started executing, and the CDD
+tick accumulator (`+= 1.25` per frame) collapsed with it — 17.5 ticks/s
+feeding the decoder instead of 75, so the BIOS timed out waiting for sectors
+that arrived 4x too slow. Real hardware spins the disc at 75 Hz regardless of
+the emulator's speed, and PicoDrive schedules CDD from s68k cycles, not from
+the host frame. `main_segacd.c` now accumulates ticks from `HAL_GetTick()`
+(`(now_ms - last_ms) * 75 / 1000`, capped at 75 to prevent a post-debugger
+burst, first pass clamped) so the data stream is decoupled from emulation
+load. Verified on device: decoder 70.1 Hz (target 75), frame loop recovered
+8.6 -> 59.8 fps (the re-seek thrashing was itself dragging the loop), head
+advancing +75 sectors/s monotonic, multi-chunk load cycles completing, and
+the title screen rendering on the panel — confirmed by eye, 2026-09-19.
+Remaining open: gameplay fps measurement and the optimization campaign
+(the Doom playbook), audio (track-1-only test image carries no CDDA), input
+verification, save states.
+
 **Phase-0 gate 6: the ported core boots from disc on device, 2026-09-19.**
 `a0a85e35` forward-ported tag `testbed-full-20260724-1447` onto the gate-2..5
 placement (overlay VMA 0x24025800, PRG `page[8]`, rebased AHB, session
