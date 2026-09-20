@@ -648,6 +648,34 @@ int segacd_run_sub(int cycle_target)
 uint32_t scd_dbg_state8_hits, scd_dbg_stampwr_hits;
 #endif
 
+/* Gate-6 defensive tail-map rebuild. On device the global m68k
+ * memory_map[0xE0-0xFF] entries ($E00000-$FFFFFF 68K RAM mirrors) end up
+ * slot-rotated after gwenesis_bus_init_memory_map -- base holds the read16
+ * handler, etc. -- and a poisoned value (the XIP-cached BIOS pointer
+ * 0x90c5a000) reaches a dispatch slot, so a MAIN fetch through the mirrors
+ * BLXes into the BIOS blob and executes 68K bytes as ARM code (deterministic
+ * frame-~40 UsageFault, 1x arm, 2026-09-20). The builders verify clean in
+ * source AND disassembly, so instead of chasing the rotating writer we
+ * re-install the 32 tail entries with overlay-LOCAL handlers: real RAM
+ * addresses that no sentinel patch pass can move, with identical
+ * FETCH/WRITE RAM semantics (m68k.h TARGET_GNW macros, ITCM at 0). */
+static unsigned int scd_tail_read8(unsigned int a)  { return FETCH8RAM(a); }
+static unsigned int scd_tail_read16(unsigned int a) { return FETCH16RAM(a); }
+static void scd_tail_write8(unsigned int a, unsigned int v) { WRITE8RAM(a, v); }
+static void scd_tail_write16(unsigned int a, unsigned int v) { WRITE16RAM(a, v); }
+
+void segacd_defend_map_tail(void)
+{
+    int p;
+    for (p = 0xE0; p < 0x100; p++) {
+        m68k.memory_map[p].base    = NULL;
+        m68k.memory_map[p].read8   = scd_tail_read8;
+        m68k.memory_map[p].read16  = scd_tail_read16;
+        m68k.memory_map[p].write8  = scd_tail_write8;
+        m68k.memory_map[p].write16 = scd_tail_write16;
+    }
+}
+
 #ifdef SEGACD_GA_TRACE
 uint32_t scd_dbg_mainstamp_hits;
 #endif

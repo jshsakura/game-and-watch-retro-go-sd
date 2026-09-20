@@ -192,6 +192,9 @@ void segacd_word_ram_remap(int called_from_sub);
 /* bus (segacd_bus.c) */
 void segacd_sub_build_memory_map(void); /* fill SCD.sub_ctx.memory_map */
 void segacd_main_map_cd_space(void);    /* patch main map: PRG win / Word / GA */
+void segacd_defend_map_tail(void);      /* gate-6: re-install map[0xE0-0xFF] with
+                                           overlay-local handlers (slot-rotation
+                                           hardening, see segacd_engine.c) */
 void segacd_map_bios(const uint8_t *bios); /* map region BIOS at main $000000 */
 void segacd_poll_wake(void);            /* re-arm the sub after a GA/CDD change */
 

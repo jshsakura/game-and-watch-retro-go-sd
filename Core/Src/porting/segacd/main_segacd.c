@@ -403,6 +403,8 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     segacd_init();
     segacd_map_bios(segacd_bios); /* main boots from BIOS, not a cart (0 RAM: XIP) */
     segacd_main_map_cd_space();
+    segacd_defend_map_tail();     /* gate-6: the gwenesis tail map lands slot-
+                                   * rotated on device; re-install it locally */
     reset_emulation();            /* pulse-reset MAIN 68K -> reads BIOS reset vectors */
     SCD_DBG("segacd dbg: hw init done (bios=%p sz=%lu)\n",
             (void *)segacd_bios, (unsigned long)bios_size);
@@ -485,6 +487,11 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
          * post-START chunk loads slow on device, 2026-09-19; 2x is the
          * campaign's first lever, raised only after load-time A/B. */
 #ifndef SEGACD_CDD_SPEED
+/* A/B arm 2026-09-20: temporarily 1x. The 2x default batches 2+ decoder
+ * updates per frame loop pass with no sub-CPU execution between them
+ * (main_segacd.c:493-497), coalescing HEAD/PT/DECI events -- the prime
+ * suspect for the infinite 8-sector reload loop. If 1x boots the game,
+ * the fix is CDC-tick interleaving, not the ring. */
 #define SEGACD_CDD_SPEED 2
 #endif
         s_cdd_tick_accum += (now_ms - s_cdd_last_ms) * (75 * SEGACD_CDD_SPEED) / 1000;

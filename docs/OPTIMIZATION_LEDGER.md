@@ -392,6 +392,27 @@ Remaining open: gameplay fps measurement and the optimization campaign
 (the Doom playbook), audio (track-1-only test image carries no CDDA), input
 verification, save states.
 
+**The gwenesis tail map needed a defensive reinstall, 2026-09-20.** A rebuild
+with the tick at 1x died deterministically at frame ~40: the sub's $FF8000
+polling BLX'd into the BIOS flash cache (0x90c5a000) and executed 68K bytes
+as ARM — a UsageFault with the crumb pc/lr pinning `m68ki_read_imm_32+0x57`
+calling `map[page].read16`. Forensics: both maps' builder code, the loop
+disassembly and its literals are correct, `M68K_RAM=0` is the normal ITCM
+base, yet the live global `map[0xFF]` ends up slot-rotated (base holds the
+read16 handler) and at fault time carried the BIOS-cache pointer, which the
+context swap then copies into `sub_ctx`'s map. Rather than keep chasing the
+rotation writer, `segacd_defend_map_tail()` now reinstalls `map[0xE0-0xFF]`
+(32 entries, base=NULL + four overlay-local handlers — immune to both the
+sentinel patcher and any rotation) right after `segacd_main_map_cd_space()`
+in the boot sequence. Verified on device: the UsageFault is gone and the
+frame loop survives at 59.8 fps. What remains open after this: the boot
+program never finishes loading (hist[1] Stop stays 0 after 6+ minutes at
+either 1x or 2x). Codex's ladder cleared the payload (the IP.BIN bytes the
+sub consumed match the original image, ^1-swapped, at PRG page0+0x3F76), so
+the data path is clean; the main CPU parks in the BIOS load loop ($a1e)
+while the sub actively cycles a graphics/conversion routine ($7C86-$7D38) —
+the missing piece is the completion signal between them, not the data.
+
 **Phase-0 gate 6: the ported core boots from disc on device, 2026-09-19.**
 
 **CD data rate is a build lever, 2026-09-20.** With the wall-clock tick at the
