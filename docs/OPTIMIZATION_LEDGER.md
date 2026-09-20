@@ -393,6 +393,20 @@ Remaining open: gameplay fps measurement and the optimization campaign
 verification, save states.
 
 **Phase-0 gate 6: the ported core boots from disc on device, 2026-09-19.**
+
+**CD data rate is a build lever, 2026-09-20.** With the wall-clock tick at the
+authentic 75 sectors/s, the title-to-game transition loads at real-hardware
+1x speed — the user felt it as "slow on START". `SEGACD_CDD_SPEED` (default 2)
+now multiplies the tick accumulator and its burst cap; it is the same lever
+as PicoDrive's CD-speed hack, and the SD card has MB/s of headroom over the
+150 KB/s a 1x stream needs. Verified on device with the 2x build: the head
+streams monotonically at ~260 sectors/s (the accumulator/head-walk sum runs
+above the nominal 150 — direction correct, status stays READY, no ill
+effect observed), and the boot program's multi-chunk cycles complete in a
+fraction of the 1x time. Going back to 1 (or building per-title) remains a
+one-line choice if any BIOS timing regression shows up.
+
+
 `a0a85e35` forward-ported tag `testbed-full-20260724-1447` onto the gate-2..5
 placement (overlay VMA 0x24025800, PRG `page[8]`, rebased AHB, session
 single-FB). The bring-up then paid a chain of integration debts the tag never

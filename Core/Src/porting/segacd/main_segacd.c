@@ -477,9 +477,19 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         static uint32_t s_cdd_last_ms;
         uint32_t now_ms = HAL_GetTick();
         if (s_cdd_last_ms == 0) s_cdd_last_ms = now_ms;   /* first pass: no burst */
-        s_cdd_tick_accum += (now_ms - s_cdd_last_ms) * 75 / 1000;
+        /* SEGACD_CDD_SPEED: 1 = authentic 1x drive (75 sectors/s, what the
+         * BIOS timing expects). 2+ = "fast CD" enhancement, the same lever
+         * PicoDrive ships as a CD-speed hack: the SD card has MB/s of slack,
+         * so 2x halves every chunk load without changing guest-visible CDD
+         * semantics beyond seek/latency passing faster. The user judged the
+         * post-START chunk loads slow on device, 2026-09-19; 2x is the
+         * campaign's first lever, raised only after load-time A/B. */
+#ifndef SEGACD_CDD_SPEED
+#define SEGACD_CDD_SPEED 2
+#endif
+        s_cdd_tick_accum += (now_ms - s_cdd_last_ms) * (75 * SEGACD_CDD_SPEED) / 1000;
         s_cdd_last_ms = now_ms;
-        if (s_cdd_tick_accum > 75) s_cdd_tick_accum = 75; /* <=1s catch-up cap */
+        if (s_cdd_tick_accum > 75 * SEGACD_CDD_SPEED) s_cdd_tick_accum = 75 * SEGACD_CDD_SPEED;
         while (s_cdd_tick_accum >= 1) {
             segacd_cdd_process();
             segacd_cd_update();
