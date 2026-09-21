@@ -518,11 +518,24 @@ static const uint8_t keymap_gba_defaults[] = {
 static const char *const keymap_gba_names[] = { "A", "B", "L", "R", "Start", "Select" };
 
 static const keymap_profile_t keymap_profiles[] = {
-    { APPID_NES,  4, keymap_nes_names,  keymap_nes_defaults  },
-    { APPID_SNES, 8, keymap_snes_names, keymap_snes_defaults },
-    { APPID_MD,   8, keymap_md_names,   keymap_md_defaults   },
-    { APPID_GBA,  6, keymap_gba_names,  keymap_gba_defaults  },
+    { APPID_NES,    4, keymap_nes_names,  keymap_nes_defaults  },
+    { APPID_SNES,   8, keymap_snes_names, keymap_snes_defaults },
+    { APPID_MD,     8, keymap_md_names,   keymap_md_defaults   },
+    { APPID_GBA,    6, keymap_gba_names,  keymap_gba_defaults  },
+    /* Sega CD plays with the exact Genesis pad, so it shares the MD action
+     * set -- and the MD's saved file (see keymap_canonical_id): one
+     * /KEYMAP-<MD> serves both cores, so a pad tuned in Sonic 2 carries
+     * into Sonic CD unchanged. */
+    { APPID_SEGACD, 8, keymap_md_names,   keymap_md_defaults   },
 };
+
+/* Cores that are physically the same pad share one saved file.  The header's
+ * app_id is written with this canonical id, so validation accepts the file
+ * from either core. */
+static uint8_t keymap_canonical_id(uint8_t app_id)
+{
+    return app_id == APPID_SEGACD ? APPID_MD : app_id;
+}
 
 static uint8_t keymap_loaded_app = 0xff;
 static uint8_t keymap_count;
@@ -537,12 +550,25 @@ static const keymap_profile_t *keymap_profile(void)
     return NULL;
 }
 
-static bool keymap_physical_valid(uint8_t key)
+static bool keymap_physical_valid(uint8_t key, uint8_t app_id)
 {
-    return key == ODROID_KEYMAP_OFF || key == ODROID_INPUT_A ||
-           key == ODROID_INPUT_B || key == ODROID_INPUT_START ||
-           key == ODROID_INPUT_SELECT || key == ODROID_INPUT_X ||
-           key == ODROID_INPUT_Y || key == ODROID_INPUT_VOLUME;
+    if (key == ODROID_KEYMAP_OFF || key == ODROID_INPUT_A || key == ODROID_INPUT_B)
+        return true;
+    if (!get_ofw_is_mario()) {
+        /* Zelda unit: A/B, the console keys (GAME/TIME) and the labelled
+         * face START/SELECT (X/Y) are all real, game-usable physicals.
+         * PAUSE stays excluded -- it is the only pause/set button. */
+        return key == ODROID_INPUT_START || key == ODROID_INPUT_SELECT ||
+               key == ODROID_INPUT_X || key == ODROID_INPUT_Y;
+    }
+    /* Mario unit has no X/Y physicals at all.  On the plain cores PAUSE
+     * (VOLUME) is the menu-open key in common_emu_input_loop, so it cannot
+     * serve a game action; the MD-family cores swap TIME/PAUSE instead
+     * (gwenesis TIME<->PAUSE swap), making PAUSE the game key and TIME
+     * (SELECT) the menu key. */
+    if (app_id == APPID_MD || app_id == APPID_SEGACD)
+        return key == ODROID_INPUT_START || key == ODROID_INPUT_VOLUME;
+    return key == ODROID_INPUT_START || key == ODROID_INPUT_SELECT;
 }
 
 static void keymap_copy_defaults(const keymap_profile_t *profile, uint8_t *map)
@@ -551,22 +577,19 @@ static void keymap_copy_defaults(const keymap_profile_t *profile, uint8_t *map)
     /* Gwenesis swaps TIME and PAUSE/SET for the Mario hardware.  Preserve its
      * established usable C-button default while the Zelda unit can use its
      * dedicated START key. */
-    if (profile->app_id == APPID_MD)
+    if (profile->app_id == APPID_MD || profile->app_id == APPID_SEGACD)
         map[ODROID_KEYMAP_MD_C] = get_ofw_is_mario() ? ODROID_INPUT_VOLUME
                                                      : ODROID_INPUT_X;
-    /* The legacy cores accepted the console keys (START/SELECT = GAME/TIME)
-     * AND the Zelda unit's labelled START/SELECT (X/Y) for the same action.
-     * A single-mapping keymap has to pick per model: Zelda defaults to its
-     * labelled game keys, Mario to the console keys.  MD keeps START on both
-     * models, matching the old gwenesis behaviour. */
-    if (!get_ofw_is_mario()) {
-        if (profile->app_id == APPID_NES) {
-            map[ODROID_KEYMAP_NES_START] = ODROID_INPUT_X;
-            map[ODROID_KEYMAP_NES_SELECT] = ODROID_INPUT_Y;
-        } else if (profile->app_id == APPID_SNES) {
-            map[ODROID_KEYMAP_SNES_SELECT] = ODROID_INPUT_Y;
-            map[ODROID_KEYMAP_SNES_START] = ODROID_INPUT_X;
-        }
+    /* The legacy NES cores accepted START/SELECT (GAME/TIME) AND the Zelda
+     * unit's labelled START/SELECT (X/Y) for the same action; a single-mapping
+     * keymap picks per model.  NES only: the SNES profile's base defaults
+     * already give Y the labelled SELECT and X the labelled START while
+     * Select/Start keep TIME/GAME -- overriding them per model would
+     * double-book the physicals (2026-09-20 review).  MD keeps START on
+     * both models, matching the old gwenesis behaviour. */
+    if (!get_ofw_is_mario() && profile->app_id == APPID_NES) {
+        map[ODROID_KEYMAP_NES_START] = ODROID_INPUT_X;
+        map[ODROID_KEYMAP_NES_SELECT] = ODROID_INPUT_Y;
     }
 }
 
@@ -591,19 +614,24 @@ static void keymap_ensure_loaded(void)
 
     char path[20];
     keymap_file_t saved;
-    keymap_path(path, sizeof(path), app_id);
+    keymap_path(path, sizeof(path), keymap_canonical_id(app_id));
     FILE *file = fopen(path, "rb");
     if (!file)
         return;
     size_t got = fread(&saved, 1, sizeof(saved), file);
     fclose(file);
     if (got != sizeof(saved) || saved.magic != KEYMAP_MAGIC ||
-        saved.version != KEYMAP_VERSION || saved.app_id != app_id ||
+        saved.version != KEYMAP_VERSION ||
+        saved.app_id != keymap_canonical_id(app_id) ||
         saved.count != profile->count)
         return;
+    /* Safe normalisation, not rejection: a file written on the other unit
+     * model (or a future policy change) may carry physicals this model/core
+     * cannot use -- each such entry falls back to that action's default
+     * instead of discarding the whole file (2026-09-20 review). */
     for (int i = 0; i < saved.count; i++)
-        if (!keymap_physical_valid(saved.map[i]))
-            return;
+        if (!keymap_physical_valid(saved.map[i], app_id))
+            saved.map[i] = keymap_current[i];
     memcpy(keymap_current, saved.map, saved.count);
 }
 
@@ -614,17 +642,21 @@ static void keymap_save(void)
         return;
     keymap_file_t saved = {
         .magic = KEYMAP_MAGIC, .version = KEYMAP_VERSION,
-        .app_id = profile->app_id, .count = profile->count,
+        .app_id = keymap_canonical_id(profile->app_id),
+        .count = profile->count,
     };
     memset(saved.map, ODROID_KEYMAP_OFF, sizeof(saved.map));
     memcpy(saved.map, keymap_current, profile->count);
     char path[20];
-    keymap_path(path, sizeof(path), profile->app_id);
+    keymap_path(path, sizeof(path), keymap_canonical_id(profile->app_id));
     FILE *file = fopen(path, "wb");
-    if (file) {
-        fwrite(&saved, 1, sizeof(saved), file);
-        fclose(file);
+    if (!file || fwrite(&saved, 1, sizeof(saved), file) != sizeof(saved)) {
+        /* A failed save must not look like a success -- leave the breadcrumb
+         * in the persistent log (2026-09-20 review). */
+        printf("keymap: save failed (%s)\n", path);
     }
+    if (file)
+        fclose(file);
 }
 
 bool odroid_keymap_supported(void)
@@ -653,7 +685,8 @@ uint8_t odroid_keymap_get(int action)
 void odroid_keymap_set(int action, uint8_t physical_key)
 {
     keymap_ensure_loaded();
-    if (action < 0 || action >= keymap_count || !keymap_physical_valid(physical_key))
+    if (action < 0 || action >= keymap_count ||
+        !keymap_physical_valid(physical_key, keymap_profile() ? keymap_profile()->app_id : 0xff))
         return;
     keymap_current[action] = physical_key;
     /* No SD write here: the Controls dialog steps this on every event, so the
@@ -710,22 +743,46 @@ const char *odroid_keymap_physical_name(uint8_t key)
 
 uint8_t odroid_keymap_physical_step(uint8_t key, int direction)
 {
-    /* User policy: every physical key except POWER is freely assignable on
-     * every core and every unit -- that freedom is the whole point of the
-     * feature (finger-twisters like GBA L/R).  Defaults stay model-aware
-     * (keymap_copy_defaults); offering GAME/TIME/PAUSE everywhere lets the
-     * user, not us, decide the trade-off with the system keys. */
-    static const uint8_t choices[] = {
+    /* Offer exactly the keys keymap_physical_valid() admits for this unit
+     * model and core -- the lists stay honest to the physical hardware
+     * (no X/Y on Mario, no menu-reserved PAUSE on plain cores) instead of
+     * a global everything-but-POWER list (2026-09-20 review). */
+    const keymap_profile_t *profile = keymap_profile();
+    uint8_t app_id = profile ? profile->app_id : 0xff;
+    static const uint8_t candidates[] = {
         ODROID_KEYMAP_OFF, ODROID_INPUT_A, ODROID_INPUT_B,
         ODROID_INPUT_START, ODROID_INPUT_SELECT, ODROID_INPUT_X,
         ODROID_INPUT_Y, ODROID_INPUT_VOLUME
     };
-    size_t count = sizeof(choices);
+    uint8_t choices[sizeof(candidates)];
+    int count = 0;
+    for (size_t i = 0; i < sizeof(candidates); i++)
+        if (keymap_physical_valid(candidates[i], app_id))
+            choices[count++] = candidates[i];
+    if (count == 0)
+        return ODROID_KEYMAP_OFF;
     int index = 0;
-    for (size_t i = 0; i < count; i++)
-        if (choices[i] == key) { index = (int)i; break; }
-    index = (index + (direction < 0 ? -1 : 1) + (int)count) % (int)count;
+    for (int i = 0; i < count; i++)
+        if (choices[i] == key) { index = i; break; }
+    index = (index + (direction < 0 ? -1 : 1) + count) % count;
     return choices[index];
+}
+
+int odroid_keymap_conflict(int action)
+{
+    /* User policy: duplicate mappings are allowed -- freedom first -- but
+     * they must be visible.  Returns the index of another action that shares
+     * this action's physical key, or -1.  OFF never conflicts. */
+    keymap_ensure_loaded();
+    if (action < 0 || action >= keymap_count)
+        return -1;
+    uint8_t key = keymap_current[action];
+    if (key == ODROID_KEYMAP_OFF)
+        return -1;
+    for (int i = 0; i < keymap_count; i++)
+        if (i != action && keymap_current[i] == key)
+            return i;
+    return -1;
 }
 
 

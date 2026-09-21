@@ -1392,6 +1392,29 @@ static bool turbo_buttons_update_cb(odroid_dialog_choice_t *option, odroid_dialo
     return event == ODROID_DIALOG_ENTER;
 }
 
+/* The Controls dialog keeps its value strings in this file-scope array so
+ * the update callbacks can refresh EVERY row: a duplicate-mapping marker
+ * "(!)" must appear on both rows of a conflict and disappear from both when
+ * it is resolved -- refreshing only the edited row left a stale marker on
+ * the partner row (review finding, 2026-09-20).  Only one Controls dialog
+ * can be open at a time, so there is no reentrancy. */
+static char s_controls_values[ODROID_KEYMAP_MAX_ACTIONS + 1][12];
+
+static void controls_refresh_all(int count)
+{
+    for (int i = 0; i < count; i++) {
+        strcpy(s_controls_values[i],
+               odroid_keymap_physical_name(odroid_keymap_get(i)));
+        /* User policy: duplicates stay mappable (freedom first) but are
+         * shown on every row involved.  OFF never conflicts; the marker is
+         * a warning, not a block. */
+        if (odroid_keymap_conflict(i) >= 0)
+            strcat(s_controls_values[i], "(!)");
+    }
+    strcpy(s_controls_values[count],
+           odroid_keymap_is_default() ? "Default" : "");
+}
+
 static bool controls_action_update_cb(odroid_dialog_choice_t *option,
                                       odroid_dialog_event_t event, uint32_t repeat)
 {
@@ -1402,7 +1425,10 @@ static bool controls_action_update_cb(odroid_dialog_choice_t *option,
         odroid_keymap_set(action, key = odroid_keymap_physical_step(key, -1));
     else if (event == ODROID_DIALOG_NEXT || event == ODROID_DIALOG_ENTER)
         odroid_keymap_set(action, key = odroid_keymap_physical_step(key, 1));
-    strcpy(option->value, odroid_keymap_physical_name(key));
+    /* Repaint every row: the partner of a created/resolved duplicate must
+     * gain/lose its "(!)" marker immediately, not on its own next edit. */
+    controls_refresh_all(odroid_keymap_action_count());
+    (void)key;
     return false; /* A cycles too; B leaves the controls dialog. */
 }
 
@@ -1410,28 +1436,35 @@ static bool controls_reset_update_cb(odroid_dialog_choice_t *option,
                                      odroid_dialog_event_t event, uint32_t repeat)
 {
     (void)repeat;
-    if (event == ODROID_DIALOG_ENTER)
+    if (event == ODROID_DIALOG_ENTER) {
         odroid_keymap_reset();
-    strcpy(option->value, odroid_keymap_is_default() ? "Default" : "");
+        /* Default restore can dissolve duplicates: repaint all rows. */
+        controls_refresh_all(odroid_keymap_action_count());
+    }
+    strcpy(option->value, s_controls_values[option->id == 100
+        ? odroid_keymap_action_count() : option->id]);
     return event == ODROID_DIALOG_ENTER;
 }
 
 static void show_controls_dialog(void)
 {
     odroid_dialog_choice_t choices[ODROID_KEYMAP_MAX_ACTIONS + 2];
-    char values[ODROID_KEYMAP_MAX_ACTIONS + 1][10];
     int count = odroid_keymap_action_count();
     /* The dialog paints every value string before any callback runs, so
-     * pre-fill them -- the stack buffers are otherwise garbage. */
+     * pre-fill them via the shared refresh helper (stack buffers would be
+     * garbage otherwise, and initial duplicates get their markers too).
+     * Menu/system keys are untouched by any of this: they live in the
+     * odroid_input_read event path and only the game cores consume
+     * odroid_keymap_pressed, so remapping a game action onto GAME/TIME can
+     * never stop the menu from responding (user policy, 2026-09-20). */
+    controls_refresh_all(count);
     for (int i = 0; i < count; i++) {
-        strcpy(values[i], odroid_keymap_physical_name(odroid_keymap_get(i)));
         choices[i] = (odroid_dialog_choice_t){
-            i, odroid_keymap_action_name(i), values[i], 1, controls_action_update_cb
+            i, odroid_keymap_action_name(i), s_controls_values[i], 1, controls_action_update_cb
         };
     }
-    strcpy(values[count], odroid_keymap_is_default() ? "Default" : "");
     choices[count] = (odroid_dialog_choice_t){
-        100, "Reset controls", values[count], 1, controls_reset_update_cb
+        100, "Reset controls", s_controls_values[count], 1, controls_reset_update_cb
     };
     choices[count + 1] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
     odroid_overlay_dialog("Controls", choices, 0, NULL, 0);
