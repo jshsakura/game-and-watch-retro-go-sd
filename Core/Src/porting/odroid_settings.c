@@ -508,10 +508,20 @@ static const char *const keymap_md_names[] = {
     "A", "B", "C", "X", "Y", "Z", "Mode", "Start"
 };
 
+/* GBA defaults keep the legacy hard wiring (X->R, Y->L) on both units; the
+ * point of the keymap is that the user can re-point L/R anywhere except
+ * POWER when the default twists fingers on their unit. */
+static const uint8_t keymap_gba_defaults[] = {
+    ODROID_INPUT_A, ODROID_INPUT_B, ODROID_INPUT_Y, ODROID_INPUT_X,
+    ODROID_INPUT_START, ODROID_INPUT_SELECT
+};
+static const char *const keymap_gba_names[] = { "A", "B", "L", "R", "Start", "Select" };
+
 static const keymap_profile_t keymap_profiles[] = {
     { APPID_NES,  4, keymap_nes_names,  keymap_nes_defaults  },
     { APPID_SNES, 8, keymap_snes_names, keymap_snes_defaults },
     { APPID_MD,   8, keymap_md_names,   keymap_md_defaults   },
+    { APPID_GBA,  6, keymap_gba_names,  keymap_gba_defaults  },
 };
 
 static uint8_t keymap_loaded_app = 0xff;
@@ -700,19 +710,17 @@ const char *odroid_keymap_physical_name(uint8_t key)
 
 uint8_t odroid_keymap_physical_step(uint8_t key, int direction)
 {
-    /* Only physical keys that exist on the unit.  Mario: GAME/TIME/PAUSE
-     * (START/SELECT/VOLUME codes).  Zelda: its labelled START/SELECT (X/Y);
-     * GAME/TIME stay system-only there. */
-    static const uint8_t mario_choices[] = {
+    /* User policy: every physical key except POWER is freely assignable on
+     * every core and every unit -- that freedom is the whole point of the
+     * feature (finger-twisters like GBA L/R).  Defaults stay model-aware
+     * (keymap_copy_defaults); offering GAME/TIME/PAUSE everywhere lets the
+     * user, not us, decide the trade-off with the system keys. */
+    static const uint8_t choices[] = {
         ODROID_KEYMAP_OFF, ODROID_INPUT_A, ODROID_INPUT_B,
-        ODROID_INPUT_START, ODROID_INPUT_SELECT, ODROID_INPUT_VOLUME
+        ODROID_INPUT_START, ODROID_INPUT_SELECT, ODROID_INPUT_X,
+        ODROID_INPUT_Y, ODROID_INPUT_VOLUME
     };
-    static const uint8_t zelda_choices[] = {
-        ODROID_KEYMAP_OFF, ODROID_INPUT_A, ODROID_INPUT_B,
-        ODROID_INPUT_X, ODROID_INPUT_Y
-    };
-    const uint8_t *choices = get_ofw_is_mario() ? mario_choices : zelda_choices;
-    size_t count = get_ofw_is_mario() ? sizeof(mario_choices) : sizeof(zelda_choices);
+    size_t count = sizeof(choices);
     int index = 0;
     for (size_t i = 0; i < count; i++)
         if (choices[i] == key) { index = (int)i; break; }

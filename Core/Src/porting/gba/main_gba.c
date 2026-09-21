@@ -1,4 +1,5 @@
 #include <odroid_system.h>
+#include "odroid_settings.h"
 
 #include <string.h>
 #include "gw_lcd.h"
@@ -693,14 +694,16 @@ static void gba_input_read(odroid_gamepad_state_t *joystick)
     if (joystick->values[ODROID_INPUT_DOWN])   keys |= GBA_KEY_DOWN;
     if (joystick->values[ODROID_INPUT_LEFT])   keys |= GBA_KEY_LEFT;
     if (joystick->values[ODROID_INPUT_RIGHT])  keys |= GBA_KEY_RIGHT;
-    if (joystick->values[ODROID_INPUT_A])      keys |= GBA_KEY_A;
-    if (joystick->values[ODROID_INPUT_B])      keys |= GBA_KEY_B;
-    if (joystick->values[ODROID_INPUT_START])  keys |= GBA_KEY_START;
-    if (joystick->values[ODROID_INPUT_SELECT]) keys |= GBA_KEY_SELECT;
-    /* The unit has no shoulder buttons. Y/X stand in for L/R — every GBA game
-     * that uses them uses them, and there is nowhere else to put them. */
-    if (joystick->values[ODROID_INPUT_X])      keys |= GBA_KEY_R;
-    if (joystick->values[ODROID_INPUT_Y])      keys |= GBA_KEY_L;
+    /* Remappable through the Controls dialog. Defaults keep the legacy
+     * wiring (A/B, START/SELECT = GAME/TIME, L = Y, R = X); anything except
+     * POWER can be assigned per action, which is the fix for L/R-heavy
+     * games on units where the default layout twists fingers. */
+    if (odroid_keymap_pressed(joystick, ODROID_KEYMAP_GBA_A))      keys |= GBA_KEY_A;
+    if (odroid_keymap_pressed(joystick, ODROID_KEYMAP_GBA_B))      keys |= GBA_KEY_B;
+    if (odroid_keymap_pressed(joystick, ODROID_KEYMAP_GBA_START))  keys |= GBA_KEY_START;
+    if (odroid_keymap_pressed(joystick, ODROID_KEYMAP_GBA_SELECT)) keys |= GBA_KEY_SELECT;
+    if (odroid_keymap_pressed(joystick, ODROID_KEYMAP_GBA_L))      keys |= GBA_KEY_L;
+    if (odroid_keymap_pressed(joystick, ODROID_KEYMAP_GBA_R))      keys |= GBA_KEY_R;
 
     gba_set_keys(keys);
 }
