@@ -1028,8 +1028,10 @@ ifeq (${CHECK_DIRTY_SUBMODULE},1)
 CheckDirtySubmodules:
 	$(V)git submodule foreach "git diff --quiet" 2> /dev/null || \
 		(echo -e "\n\n\nYou have changes in the submodule. This is not normal.\nPlease clean the submodule by running 'git submodule update --init'\n\n(You may set CHECK_DIRTY_SUBMODULE=0 to suppress this warning)\n\n\n" && exit 1)
-	$(V)git submodule status | grep '^+' 2> /dev/null > /dev/null && \
-		(echo -e "\n\n\nYou are using a submodule that is not updated.\nPlease sync the submodules by running 'git submodule update --init'\n\n(You may set CHECK_DIRTY_SUBMODULE=0 to suppress this warning)\n\n\n" && exit 1) || true
+	$(V)if git submodule status | grep -q '^+' 2> /dev/null; then \
+		echo -e "\n\n\nYou are using a submodule that is not updated.\nPlease sync the submodules by running 'git submodule update --init'\n\n(You may set CHECK_DIRTY_SUBMODULE=0 to suppress this warning)\n\n\n"; \
+		exit 1; \
+	fi
 else
 CheckDirtySubmodules:
 endif
