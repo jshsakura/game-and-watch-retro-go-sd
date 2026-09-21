@@ -15,6 +15,7 @@
 #include "favorites.h"
 #include "rom_manager.h"
 #include "gw_sdcard.h"
+#include "gw_ofw.h"
 
 #define CONFIG_MAGIC 0xcafef00d
 #define ODROID_APPID_COUNT 4
@@ -461,6 +462,264 @@ void odroid_settings_app_int32_set(const char *key, int32_t value)
     odroid_settings_int32_set(app_key, value);
 }
 
+/* ---- Per-emulator direct button mapping ---------------------------------
+ *
+ * Only the currently running core's eight-byte map is resident.  Persisting
+ * one tiny file per APPID avoids adding APPID_COUNT * N bytes to the DTCM
+ * configuration object, whose layout/version is deliberately expensive to
+ * change on this target. */
+#define KEYMAP_MAGIC   0x50414d4bu /* "KMAP" little-endian */
+#define KEYMAP_VERSION 1u
+
+typedef struct {
+    uint32_t magic;
+    uint8_t version;
+    uint8_t app_id;
+    uint8_t count;
+    uint8_t map[ODROID_KEYMAP_MAX_ACTIONS];
+} keymap_file_t;
+
+typedef struct {
+    uint8_t app_id;
+    uint8_t count;
+    const char *const *names;
+    const uint8_t *defaults;
+} keymap_profile_t;
+
+static const uint8_t keymap_nes_defaults[] = {
+    ODROID_INPUT_A, ODROID_INPUT_B, ODROID_INPUT_START, ODROID_INPUT_SELECT
+};
+static const char *const keymap_nes_names[] = { "A", "B", "Start", "Select" };
+
+static const uint8_t keymap_snes_defaults[] = {
+    ODROID_INPUT_B, ODROID_INPUT_Y, ODROID_INPUT_SELECT, ODROID_INPUT_START,
+    ODROID_INPUT_A, ODROID_INPUT_X, ODROID_KEYMAP_OFF, ODROID_KEYMAP_OFF
+};
+static const char *const keymap_snes_names[] = {
+    "B", "Y", "Select", "Start", "A", "X", "L", "R"
+};
+
+static const uint8_t keymap_md_defaults[] = {
+    ODROID_INPUT_A, ODROID_INPUT_B, ODROID_INPUT_SELECT,
+    ODROID_KEYMAP_OFF, ODROID_KEYMAP_OFF, ODROID_KEYMAP_OFF,
+    ODROID_KEYMAP_OFF, ODROID_INPUT_START
+};
+static const char *const keymap_md_names[] = {
+    "A", "B", "C", "X", "Y", "Z", "Mode", "Start"
+};
+
+static const keymap_profile_t keymap_profiles[] = {
+    { APPID_NES,  4, keymap_nes_names,  keymap_nes_defaults  },
+    { APPID_SNES, 8, keymap_snes_names, keymap_snes_defaults },
+    { APPID_MD,   8, keymap_md_names,   keymap_md_defaults   },
+};
+
+static uint8_t keymap_loaded_app = 0xff;
+static uint8_t keymap_count;
+static uint8_t keymap_current[ODROID_KEYMAP_MAX_ACTIONS];
+
+static const keymap_profile_t *keymap_profile(void)
+{
+    uint8_t app_id = (uint8_t)odroid_system_get_app()->id;
+    for (unsigned i = 0; i < sizeof(keymap_profiles) / sizeof(keymap_profiles[0]); i++)
+        if (keymap_profiles[i].app_id == app_id)
+            return &keymap_profiles[i];
+    return NULL;
+}
+
+static bool keymap_physical_valid(uint8_t key)
+{
+    return key == ODROID_KEYMAP_OFF || key == ODROID_INPUT_A ||
+           key == ODROID_INPUT_B || key == ODROID_INPUT_START ||
+           key == ODROID_INPUT_SELECT || key == ODROID_INPUT_X ||
+           key == ODROID_INPUT_Y || key == ODROID_INPUT_VOLUME;
+}
+
+static void keymap_copy_defaults(const keymap_profile_t *profile, uint8_t *map)
+{
+    memcpy(map, profile->defaults, profile->count);
+    /* Gwenesis swaps TIME and PAUSE/SET for the Mario hardware.  Preserve its
+     * established usable C-button default while the Zelda unit can use its
+     * dedicated START key. */
+    if (profile->app_id == APPID_MD)
+        map[ODROID_KEYMAP_MD_C] = get_ofw_is_mario() ? ODROID_INPUT_VOLUME
+                                                     : ODROID_INPUT_X;
+    /* The legacy cores accepted the console keys (START/SELECT = GAME/TIME)
+     * AND the Zelda unit's labelled START/SELECT (X/Y) for the same action.
+     * A single-mapping keymap has to pick per model: Zelda defaults to its
+     * labelled game keys, Mario to the console keys.  MD keeps START on both
+     * models, matching the old gwenesis behaviour. */
+    if (!get_ofw_is_mario()) {
+        if (profile->app_id == APPID_NES) {
+            map[ODROID_KEYMAP_NES_START] = ODROID_INPUT_X;
+            map[ODROID_KEYMAP_NES_SELECT] = ODROID_INPUT_Y;
+        } else if (profile->app_id == APPID_SNES) {
+            map[ODROID_KEYMAP_SNES_SELECT] = ODROID_INPUT_Y;
+            map[ODROID_KEYMAP_SNES_START] = ODROID_INPUT_X;
+        }
+    }
+}
+
+static void keymap_path(char *path, size_t size, uint8_t app_id)
+{
+    snprintf(path, size, "/KEYMAP-%02u", (unsigned)app_id);
+}
+
+static void keymap_ensure_loaded(void)
+{
+    const keymap_profile_t *profile = keymap_profile();
+    uint8_t app_id = profile ? profile->app_id : 0xff;
+    if (keymap_loaded_app == app_id)
+        return;
+
+    keymap_loaded_app = app_id;
+    keymap_count = profile ? profile->count : 0;
+    memset(keymap_current, ODROID_KEYMAP_OFF, sizeof(keymap_current));
+    if (!profile)
+        return;
+    keymap_copy_defaults(profile, keymap_current);
+
+    char path[20];
+    keymap_file_t saved;
+    keymap_path(path, sizeof(path), app_id);
+    FILE *file = fopen(path, "rb");
+    if (!file)
+        return;
+    size_t got = fread(&saved, 1, sizeof(saved), file);
+    fclose(file);
+    if (got != sizeof(saved) || saved.magic != KEYMAP_MAGIC ||
+        saved.version != KEYMAP_VERSION || saved.app_id != app_id ||
+        saved.count != profile->count)
+        return;
+    for (int i = 0; i < saved.count; i++)
+        if (!keymap_physical_valid(saved.map[i]))
+            return;
+    memcpy(keymap_current, saved.map, saved.count);
+}
+
+static void keymap_save(void)
+{
+    const keymap_profile_t *profile = keymap_profile();
+    if (!profile || !fs_mounted)
+        return;
+    keymap_file_t saved = {
+        .magic = KEYMAP_MAGIC, .version = KEYMAP_VERSION,
+        .app_id = profile->app_id, .count = profile->count,
+    };
+    memset(saved.map, ODROID_KEYMAP_OFF, sizeof(saved.map));
+    memcpy(saved.map, keymap_current, profile->count);
+    char path[20];
+    keymap_path(path, sizeof(path), profile->app_id);
+    FILE *file = fopen(path, "wb");
+    if (file) {
+        fwrite(&saved, 1, sizeof(saved), file);
+        fclose(file);
+    }
+}
+
+bool odroid_keymap_supported(void)
+{
+    return keymap_profile() != NULL;
+}
+
+int odroid_keymap_action_count(void)
+{
+    keymap_ensure_loaded();
+    return keymap_count;
+}
+
+const char *odroid_keymap_action_name(int action)
+{
+    const keymap_profile_t *profile = keymap_profile();
+    return (profile && action >= 0 && action < profile->count) ? profile->names[action] : "?";
+}
+
+uint8_t odroid_keymap_get(int action)
+{
+    keymap_ensure_loaded();
+    return (action >= 0 && action < keymap_count) ? keymap_current[action] : ODROID_KEYMAP_OFF;
+}
+
+void odroid_keymap_set(int action, uint8_t physical_key)
+{
+    keymap_ensure_loaded();
+    if (action < 0 || action >= keymap_count || !keymap_physical_valid(physical_key))
+        return;
+    keymap_current[action] = physical_key;
+    /* No SD write here: the Controls dialog steps this on every event, so the
+     * overlay commits once when the dialog closes (odroid_keymap_save). */
+}
+
+void odroid_keymap_save(void)
+{
+    if (keymap_loaded_app == 0xff)
+        return;
+    keymap_save();
+}
+
+void odroid_keymap_reset(void)
+{
+    const keymap_profile_t *profile = keymap_profile();
+    keymap_ensure_loaded();
+    if (!profile)
+        return;
+    keymap_copy_defaults(profile, keymap_current);
+    /* Saved on dialog close, same as odroid_keymap_set. */
+}
+
+bool odroid_keymap_is_default(void)
+{
+    const keymap_profile_t *profile = keymap_profile();
+    uint8_t defaults[ODROID_KEYMAP_MAX_ACTIONS];
+    keymap_ensure_loaded();
+    if (!profile)
+        return false;
+    keymap_copy_defaults(profile, defaults);
+    return memcmp(keymap_current, defaults, profile->count) == 0;
+}
+
+bool odroid_keymap_pressed(const odroid_gamepad_state_t *pad, int action)
+{
+    uint8_t key = odroid_keymap_get(action);
+    return pad && key != ODROID_KEYMAP_OFF && key < ODROID_INPUT_MAX && pad->values[key];
+}
+
+const char *odroid_keymap_physical_name(uint8_t key)
+{
+    switch (key) {
+    case ODROID_INPUT_A:      return "A";
+    case ODROID_INPUT_B:      return "B";
+    case ODROID_INPUT_START:  return "GAME";
+    case ODROID_INPUT_SELECT: return "TIME";
+    case ODROID_INPUT_X:      return "START";
+    case ODROID_INPUT_Y:      return "SELECT";
+    case ODROID_INPUT_VOLUME: return "PAUSE";
+    default:                  return "Off";
+    }
+}
+
+uint8_t odroid_keymap_physical_step(uint8_t key, int direction)
+{
+    /* Only physical keys that exist on the unit.  Mario: GAME/TIME/PAUSE
+     * (START/SELECT/VOLUME codes).  Zelda: its labelled START/SELECT (X/Y);
+     * GAME/TIME stay system-only there. */
+    static const uint8_t mario_choices[] = {
+        ODROID_KEYMAP_OFF, ODROID_INPUT_A, ODROID_INPUT_B,
+        ODROID_INPUT_START, ODROID_INPUT_SELECT, ODROID_INPUT_VOLUME
+    };
+    static const uint8_t zelda_choices[] = {
+        ODROID_KEYMAP_OFF, ODROID_INPUT_A, ODROID_INPUT_B,
+        ODROID_INPUT_X, ODROID_INPUT_Y
+    };
+    const uint8_t *choices = get_ofw_is_mario() ? mario_choices : zelda_choices;
+    size_t count = get_ofw_is_mario() ? sizeof(mario_choices) : sizeof(zelda_choices);
+    int index = 0;
+    for (size_t i = 0; i < count; i++)
+        if (choices[i] == key) { index = (int)i; break; }
+    index = (index + (direction < 0 ? -1 : 1) + (int)count) % (int)count;
+    return choices[index];
+}
+
 
 int32_t odroid_settings_FontSize_get()
 {
@@ -809,4 +1068,3 @@ void odroid_settings_CoverStyle_set(uint8_t style)
     persistent_config_ram.cover_style =
         (style < ODROID_COVER_STYLE_COUNT) ? style : ODROID_COVER_STYLE_POSTER;
 }
-

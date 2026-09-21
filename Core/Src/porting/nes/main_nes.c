@@ -443,14 +443,14 @@ void osd_getinput(bitmap_t *bmp)
     common_emu_input_loop(&joystick, options, &_blit);
     common_emu_input_loop_handle_turbo(&joystick);
 
-    if ((joystick.values[ODROID_INPUT_START]) || (joystick.values[ODROID_INPUT_X])) pad0 |= INP_PAD_START;
-    if ((joystick.values[ODROID_INPUT_SELECT]) || (joystick.values[ODROID_INPUT_Y])) pad0 |= INP_PAD_SELECT;
+    if (odroid_keymap_pressed(&joystick, ODROID_KEYMAP_NES_START)) pad0 |= INP_PAD_START;
+    if (odroid_keymap_pressed(&joystick, ODROID_KEYMAP_NES_SELECT)) pad0 |= INP_PAD_SELECT;
     if (joystick.values[ODROID_INPUT_UP]) pad0 |= INP_PAD_UP;
     if (joystick.values[ODROID_INPUT_DOWN]) pad0 |= INP_PAD_DOWN;
     if (joystick.values[ODROID_INPUT_LEFT]) pad0 |= INP_PAD_LEFT;
     if (joystick.values[ODROID_INPUT_RIGHT]) pad0 |= INP_PAD_RIGHT;
-    if (joystick.values[ODROID_INPUT_A]) pad0 |= INP_PAD_A;
-    if (joystick.values[ODROID_INPUT_B]) pad0 |= INP_PAD_B;
+    if (odroid_keymap_pressed(&joystick, ODROID_KEYMAP_NES_A)) pad0 |= INP_PAD_A;
+    if (odroid_keymap_pressed(&joystick, ODROID_KEYMAP_NES_B)) pad0 |= INP_PAD_B;
 
     // Enable to log button presses
 #if 0

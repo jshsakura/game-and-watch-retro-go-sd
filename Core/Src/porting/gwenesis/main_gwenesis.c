@@ -109,15 +109,12 @@ int ym2612_clock; /* ym2612 clock in video clock resolution */
 /* keys inpus (hw & sw) */
 static odroid_gamepad_state_t joystick;
 
-#define NB_OF_COMBO 6
-
-static char ODROID_INPUT_DEF_C;
+/* Retained in local savestates for binary compatibility with older builds.
+ * Runtime input now comes from the per-emulator keymap. */
 static int ABCkeys_value = 5;
 static int PAD_A_def = ODROID_INPUT_A;
 static int PAD_B_def = ODROID_INPUT_B;
-static int PAD_C_def;
-static const char ABCkeys_combo_str[NB_OF_COMBO][10];
-static char ABCkeys_str[10];
+static int PAD_C_def = ODROID_INPUT_SELECT;
 
 /* callback used by the meluator to capture keys */
 void gwenesis_io_get_buttons()
@@ -144,12 +141,17 @@ void gwenesis_io_get_buttons()
                     host_joystick.values[ODROID_INPUT_DOWN] << PAD_DOWN |
                     host_joystick.values[ODROID_INPUT_LEFT] << PAD_LEFT |
                     host_joystick.values[ODROID_INPUT_RIGHT] << PAD_RIGHT |
-                    host_joystick.values[PAD_A_def] << PAD_A |
-                    host_joystick.values[PAD_B_def] << PAD_B |
-                    host_joystick.values[PAD_C_def] << PAD_C |
-                    host_joystick.values[ODROID_INPUT_START] << PAD_S;
+                    odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_A) << PAD_A |
+                    odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_B) << PAD_B |
+                    odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_C) << PAD_C |
+                    odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_START) << PAD_S;
 
   button_state[0] = ~ button_state[0];
+  button_state_extra[0] = (unsigned char)~(
+      odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_Z) |
+      (odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_Y) << 1) |
+      (odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_X) << 2) |
+      (odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_MODE) << 3));
 
 }
 
@@ -342,58 +344,6 @@ unsigned int drawFrame = 1;
 
 //     return event == ODROID_DIALOG_ENTER;
 // }
-
-static bool gwenesis_submenu_setABC(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
-{
-
-    if (event == ODROID_DIALOG_PREV)
-      ABCkeys_value = ABCkeys_value > 0 ? ABCkeys_value - 1 : NB_OF_COMBO-1;
-
-    if (event == ODROID_DIALOG_NEXT)
-      ABCkeys_value = ABCkeys_value < NB_OF_COMBO-1 ? ABCkeys_value + 1 : 0;
-
-    strcpy(option->value, ABCkeys_combo_str[ABCkeys_value]);
-
-    switch (ABCkeys_value) {
-    case 0:
-      PAD_A_def = ODROID_INPUT_B;
-      PAD_B_def = ODROID_INPUT_A;
-      PAD_C_def = ODROID_INPUT_DEF_C;
-      break;
-    case 1:
-      PAD_A_def = ODROID_INPUT_A;
-      PAD_B_def = ODROID_INPUT_B;
-      PAD_C_def = ODROID_INPUT_DEF_C;
-      break;
-    case 2:
-      PAD_A_def = ODROID_INPUT_B;
-      PAD_B_def = ODROID_INPUT_DEF_C;
-      PAD_C_def = ODROID_INPUT_A;
-      break;
-    case 3:
-      PAD_A_def = ODROID_INPUT_A;
-      PAD_B_def = ODROID_INPUT_DEF_C;
-      PAD_C_def = ODROID_INPUT_B;
-      break;
-    case 4:
-      PAD_A_def = ODROID_INPUT_DEF_C;
-      PAD_B_def = ODROID_INPUT_A;
-      PAD_C_def = ODROID_INPUT_B;
-      break;
-    case 5:
-      PAD_A_def = ODROID_INPUT_DEF_C;
-      PAD_B_def = ODROID_INPUT_B;
-      PAD_C_def = ODROID_INPUT_A;
-      break;
-    default:
-      PAD_A_def = ODROID_INPUT_A;
-      PAD_B_def = ODROID_INPUT_B;
-      PAD_C_def = ODROID_INPUT_DEF_C;
-      break;
-    }
-
-    return event == ODROID_DIALOG_ENTER;
-}
 
 static bool gwenesis_submenu_setAudioFilter(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
@@ -651,20 +601,6 @@ int app_main_gwenesis(uint8_t load_state, uint8_t start_paused, int8_t save_slot
 
     isZelda = !get_ofw_is_mario();
   
-    // Set keys mapping
-    if (isZelda) {
-      ODROID_INPUT_DEF_C = ODROID_INPUT_X;
-      static const char zelda_combos[NB_OF_COMBO][10] = {"B-A-START", "A-B-START","B-START-A","A-START-B","START-A-B","START-B-A"};
-      memcpy(ABCkeys_combo_str, zelda_combos, sizeof(ABCkeys_combo_str));
-      strcpy(ABCkeys_str, "START-B-A");
-    } else {
-      ODROID_INPUT_DEF_C = ODROID_INPUT_VOLUME;
-      static const char mario_combos[NB_OF_COMBO][10] = {"B-A-PAUSE", "A-B-PAUSE","B-PAUSE-A","A-PAUSE-B","PAUSE-A-B","PAUSE-B-A"};
-      memcpy(ABCkeys_combo_str, mario_combos, sizeof(ABCkeys_combo_str));
-      strcpy(ABCkeys_str, "PAUSE-B-A");
-    }
-    PAD_C_def = ODROID_INPUT_DEF_C;
-
     /*** load ROM  */
     load_cartridge();
 
@@ -738,7 +674,6 @@ int app_main_gwenesis(uint8_t load_state, uint8_t start_paused, int8_t save_slot
 
     odroid_dialog_choice_t options[] = {
         {300, curr_lang->s_Reset, NULL, 1, &gwenesis_submenu_reset},
-        {301, curr_lang->s_md_keydefine, ABCkeys_str, 1, &gwenesis_submenu_setABC},
         {302, curr_lang->s_md_AudioFilter, AudioFilter_str, 1, &gwenesis_submenu_setAudioFilter},
         {305, curr_lang->s_md_Region, gwenesis_region_str, 1, &gwenesis_submenu_region},
 #if ENABLE_DEBUG_OPTIONS != 0
@@ -778,6 +713,7 @@ int app_main_gwenesis(uint8_t load_state, uint8_t start_paused, int8_t save_slot
     common_emu_frame_loop();
 
       /* Eumulator loop */
+      gwenesis_io_6button_reset();
       screen = lcd_get_active_buffer();
       gwenesis_vdp_set_buffer(&screen[vert_screen_offset + hori_screen_offset]);
 

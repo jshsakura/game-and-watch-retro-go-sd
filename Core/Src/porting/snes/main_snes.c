@@ -382,16 +382,18 @@ static void run_frame_events(Snes *s) {
  * screens stay reachable; START/SELECT as themselves (Zelda-edition buttons). */
 static uint16_t read_snes_pad(odroid_gamepad_state_t *joy) {
   uint16_t s = 0;
-  if (joy->values[ODROID_INPUT_B])      s |= 1u << 0;
-  if (joy->values[ODROID_INPUT_Y])      s |= 1u << 1;   /* TIME  = SNES Y      */
-  if (joy->values[ODROID_INPUT_SELECT]) s |= 1u << 2;
-  if (joy->values[ODROID_INPUT_START])  s |= 1u << 3;
+  if (odroid_keymap_pressed(joy, ODROID_KEYMAP_SNES_B))      s |= 1u << 0;
+  if (odroid_keymap_pressed(joy, ODROID_KEYMAP_SNES_Y))      s |= 1u << 1;
+  if (odroid_keymap_pressed(joy, ODROID_KEYMAP_SNES_SELECT)) s |= 1u << 2;
+  if (odroid_keymap_pressed(joy, ODROID_KEYMAP_SNES_START))  s |= 1u << 3;
   if (joy->values[ODROID_INPUT_UP])     s |= 1u << 4;
   if (joy->values[ODROID_INPUT_DOWN])   s |= 1u << 5;
   if (joy->values[ODROID_INPUT_LEFT])   s |= 1u << 6;
   if (joy->values[ODROID_INPUT_RIGHT])  s |= 1u << 7;
-  if (joy->values[ODROID_INPUT_A])      s |= 1u << 8;
-  if (joy->values[ODROID_INPUT_X])      s |= 1u << 9;   /* GAME  = SNES X      */
+  if (odroid_keymap_pressed(joy, ODROID_KEYMAP_SNES_A))      s |= 1u << 8;
+  if (odroid_keymap_pressed(joy, ODROID_KEYMAP_SNES_X))      s |= 1u << 9;
+  if (odroid_keymap_pressed(joy, ODROID_KEYMAP_SNES_L))      s |= 1u << 10;
+  if (odroid_keymap_pressed(joy, ODROID_KEYMAP_SNES_R))      s |= 1u << 11;
   return s;
 }
 

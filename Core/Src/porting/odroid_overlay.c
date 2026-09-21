@@ -1392,6 +1392,63 @@ static bool turbo_buttons_update_cb(odroid_dialog_choice_t *option, odroid_dialo
     return event == ODROID_DIALOG_ENTER;
 }
 
+static bool controls_action_update_cb(odroid_dialog_choice_t *option,
+                                      odroid_dialog_event_t event, uint32_t repeat)
+{
+    (void)repeat;
+    int action = option->id;
+    uint8_t key = odroid_keymap_get(action);
+    if (event == ODROID_DIALOG_PREV)
+        odroid_keymap_set(action, key = odroid_keymap_physical_step(key, -1));
+    else if (event == ODROID_DIALOG_NEXT || event == ODROID_DIALOG_ENTER)
+        odroid_keymap_set(action, key = odroid_keymap_physical_step(key, 1));
+    strcpy(option->value, odroid_keymap_physical_name(key));
+    return false; /* A cycles too; B leaves the controls dialog. */
+}
+
+static bool controls_reset_update_cb(odroid_dialog_choice_t *option,
+                                     odroid_dialog_event_t event, uint32_t repeat)
+{
+    (void)repeat;
+    if (event == ODROID_DIALOG_ENTER)
+        odroid_keymap_reset();
+    strcpy(option->value, odroid_keymap_is_default() ? "Default" : "");
+    return event == ODROID_DIALOG_ENTER;
+}
+
+static void show_controls_dialog(void)
+{
+    odroid_dialog_choice_t choices[ODROID_KEYMAP_MAX_ACTIONS + 2];
+    char values[ODROID_KEYMAP_MAX_ACTIONS + 1][10];
+    int count = odroid_keymap_action_count();
+    /* The dialog paints every value string before any callback runs, so
+     * pre-fill them -- the stack buffers are otherwise garbage. */
+    for (int i = 0; i < count; i++) {
+        strcpy(values[i], odroid_keymap_physical_name(odroid_keymap_get(i)));
+        choices[i] = (odroid_dialog_choice_t){
+            i, odroid_keymap_action_name(i), values[i], 1, controls_action_update_cb
+        };
+    }
+    strcpy(values[count], odroid_keymap_is_default() ? "Default" : "");
+    choices[count] = (odroid_dialog_choice_t){
+        100, "Reset controls", values[count], 1, controls_reset_update_cb
+    };
+    choices[count + 1] = (odroid_dialog_choice_t)ODROID_DIALOG_CHOICE_LAST;
+    odroid_overlay_dialog("Controls", choices, 0, NULL, 0);
+    /* Single SD write on close; the step callbacks only touch memory. */
+    odroid_keymap_save();
+}
+
+static bool controls_menu_update_cb(odroid_dialog_choice_t *option,
+                                    odroid_dialog_event_t event, uint32_t repeat)
+{
+    (void)repeat;
+    if (event == ODROID_DIALOG_ENTER)
+        show_controls_dialog();
+    strcpy(option->value, odroid_keymap_is_default() ? "Default" : "Custom");
+    return false;
+}
+
 int odroid_overlay_settings_menu(odroid_dialog_choice_t *extra_options, void_callback_t repaint, odroid_menu_flags_t flags)
 {
     static char bright_value[25];
@@ -1493,6 +1550,7 @@ odroid_overlay_game_settings_menu(odroid_dialog_choice_t *extra_options, void_ca
     char speedup_value[15];
     char scaling_value[15];
     char filtering_value[15];
+    char controls_value[15];
     strcpy(filtering_value, curr_lang->s_FilteringOff);
     strcpy(scaling_value, curr_lang->s_SCalingFull);
 
@@ -1501,9 +1559,13 @@ odroid_overlay_game_settings_menu(odroid_dialog_choice_t *extra_options, void_ca
         {200, curr_lang->s_Scaling, scaling_value, 1, &scaling_update_cb},
         {210, curr_lang->s_Filtering, filtering_value, 1, &filter_update_cb}, // Interpolation
         {220, curr_lang->s_Speed, speedup_value, 1, &speedup_update_cb},
+        {230, "Controls...", controls_value, ODROID_DIALOG_HIDDEN, &controls_menu_update_cb},
 
         ODROID_DIALOG_CHOICE_LAST,
     };
+
+    if (odroid_keymap_supported())
+        options[4].enabled = 1;
 
     if (extra_options)
     {

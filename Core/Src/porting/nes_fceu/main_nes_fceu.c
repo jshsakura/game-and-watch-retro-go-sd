@@ -362,26 +362,16 @@ static void nesInputUpdate(odroid_gamepad_state_t *joystick)
     if (joystick->values[ODROID_INPUT_DOWN]) {
         input_buf |= JOY_DOWN;
     }
-    if (joystick->values[ODROID_INPUT_A]) {
+    if (odroid_keymap_pressed(joystick, ODROID_KEYMAP_NES_A)) {
         input_buf |= JOY_A;
     }
-    if (joystick->values[ODROID_INPUT_B]) {
+    if (odroid_keymap_pressed(joystick, ODROID_KEYMAP_NES_B)) {
         input_buf |= JOY_B;
     }
-    // Game button on G&W
-    if (joystick->values[ODROID_INPUT_START]) {
+    if (odroid_keymap_pressed(joystick, ODROID_KEYMAP_NES_START)) {
         input_buf |= JOY_START;
     }
-    // Time button on G&W
-    if (joystick->values[ODROID_INPUT_SELECT]) {
-        input_buf |= JOY_SELECT;
-    }
-    // Start button on Zelda G&W
-    if (joystick->values[ODROID_INPUT_X]) {
-        input_buf |= JOY_START;
-    }
-    // Select button on Zelda G&W
-    if (joystick->values[ODROID_INPUT_Y]) {
+    if (odroid_keymap_pressed(joystick, ODROID_KEYMAP_NES_SELECT)) {
         input_buf |= JOY_SELECT;
     }
     fceu_joystick = input_buf;
