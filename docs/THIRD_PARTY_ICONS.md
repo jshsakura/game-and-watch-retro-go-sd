@@ -12,7 +12,10 @@ is it.
 | Firmware symbol | Source file | Upstream |
 |---|---|---|
 | `cicon_cps1` (`RG_LOGO_PAD_CPS1`) | `cps1.svg` | RomM `systematic/cps1.svg`, CC BY 4.0 |
-| `cicon_32x` (`RG_LOGO_PAD_32X`) | `32x.svg` | RomM icon set |
+
+`cicon_32x` (`RG_LOGO_PAD_32X`) is generated from the original Sega 32X hardware
+silhouette in the companion `game-and-what` project (`system-icons/32x.svg`), so it
+is not part of the third-party RomM attribution set.
 
 Other icons in `Core/Src/retro-go/rg_logos.c` are either original to this project or
 predate the RomM pipeline; `tools/gen_color_icons.py`'s `MAP` is the authoritative list of

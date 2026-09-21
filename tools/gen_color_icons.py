@@ -48,7 +48,7 @@ MAP = [
     ("RG_LOGO_PAD_GAMECOM", "gamecom"),
     ("RG_LOGO_PAD_VB",      "vb"),
     ("RG_LOGO_PAD_SNES",    "snes"),      # Super Famicom (premultiply before scaling, cf. cicon_gba note)        # Virtual Boy (prepared ahead of the core)
-    ("RG_LOGO_PAD_32X",     "32x"),       # Sega 32X (RomM icon set)
+    ("RG_LOGO_PAD_32X",     "32x"),       # Sega 32X hardware (game-and-what original)
     ("RG_LOGO_PAD_CPS1",    "cps1"),      # CPS-1 (RomM icon set, CC BY 4.0 -- replaces the
                                           # hand-drawn placeholder that had no transparent pixels
                                           # and rendered as a solid 28x20 block)
