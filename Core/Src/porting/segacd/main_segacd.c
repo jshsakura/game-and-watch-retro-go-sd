@@ -18,11 +18,13 @@
 #include "odroid_system.h"
 #include "common.h"
 #include "gw_lcd.h"
+#include "gw_ofw.h"
 #include "rom_manager.h"
 #include "appid.h"
 #include "stm32h7xx_hal.h"
 
 #include "gwenesis_bus.h"
+#include "odroid_settings.h"
 #include "gwenesis_vdp.h"
 #include "gwenesis_savestate.h"
 #include "gwenesis_io.h"
@@ -70,30 +72,50 @@ static void segacd_bram_path(void)
 /* gwenesis_io.c (shared MD/32X/SegaCD engine) calls this on every emulated
  * joypad-port read to refresh button_state[] from the host gamepad — every
  * porting layer that uses the gwenesis engine must define it (see
- * Core/Src/porting/gwenesis/main_gwenesis.c for the MD original this is
- * ported from). segacd/ never had its own copy: the reference was silently
- * missing, the linker resolved it to MD's overlay (both overlays share the
- * same RAM_EMU VMA — see CLAUDE.md "Cores are overlays"), and on real
- * hardware MD's overlay is not loaded when SegaCD runs, so no button press
- * ever reached the emulated console. 0720 night 22 finding. */
+ * Core/Src/porting/segacd/../gwenesis/main_gwenesis.c for the MD original).
+ * segacd/ never had its own copy: the reference was silently missing, the
+ * linker resolved it to MD's overlay (both overlays share the same RAM_EMU
+ * VMA — see CLAUDE.md "Cores are overlays"), and on real hardware MD's
+ * overlay is not loaded when SegaCD runs, so no button press ever reached
+ * the emulated console. 0720 night 22 finding.
+ *
+ * Buttons come from the runtime keymap (Controls dialog in the settings
+ * menu): Sega CD shares APPID_MD's profile and /KEYMAP storage — the Sega CD
+ * pad IS the Genesis 6-button pad (see keymap_profiles in odroid_settings.c).
+ * The 6-button extra bits (Z/Y/X/Mode, active-low) ride the TH handshake
+ * protocol implemented in gwenesis_io.c; gwenesis_io_6button_reset() is
+ * called once per emulated frame from the frame loop below. */
 void gwenesis_io_get_buttons()
 {
     odroid_gamepad_state_t host_joystick;
     odroid_input_read_gamepad(&host_joystick);
 
-    /* No dedicated third face button on the G&W pad; VOLUME is the least-bad
-     * fixed default for Genesis C (MD's main_gwenesis.c instead offers a
-     * runtime remap UI for this — out of scope here, add later if needed). */
+    /* The menu shortcut must not leak into the emulated pad. On Mario units
+     * the frame loop swaps TIME and PAUSE/SET for the common menu handler, so
+     * the raw TIME key is the shortcut; Zelda units use raw PAUSE/SET. */
+    if (get_ofw_is_mario()) {
+        if (host_joystick.values[ODROID_INPUT_SELECT]) return;
+    } else {
+        if (host_joystick.values[ODROID_INPUT_VOLUME]) return;
+    }
+
     button_state[0] = host_joystick.values[ODROID_INPUT_UP]    << PAD_UP    |
                        host_joystick.values[ODROID_INPUT_DOWN]  << PAD_DOWN  |
                        host_joystick.values[ODROID_INPUT_LEFT]  << PAD_LEFT  |
                        host_joystick.values[ODROID_INPUT_RIGHT] << PAD_RIGHT |
-                       host_joystick.values[ODROID_INPUT_A]     << PAD_A    |
-                       host_joystick.values[ODROID_INPUT_B]     << PAD_B    |
-                       host_joystick.values[ODROID_INPUT_VOLUME]<< PAD_C    |
-                       host_joystick.values[ODROID_INPUT_START] << PAD_S;
+                       odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_A)     << PAD_A |
+                       odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_B)     << PAD_B |
+                       odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_C)     << PAD_C |
+                       odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_START) << PAD_S;
 
     button_state[0] = ~button_state[0];
+
+    /* Six-button extras, active-low like button_state itself. */
+    button_state_extra[0] = (unsigned char)~(
+        odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_Z)          |
+        odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_Y) << 1     |
+        odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_X) << 2     |
+        odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_MODE) << 3);
 }
 
 /* ---- savestate: base MD state + magic-stamped CD RAM (PCE pattern) ---- */
@@ -461,9 +483,22 @@ int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
         bool drawFrame = common_emu_frame_loop();
 
         odroid_input_read_gamepad(&joystick);
+
+        /* Match the MD port: on Mario hardware, make raw TIME the menu key
+         * and leave raw PAUSE/SET available to the Genesis/Sega CD keymap. */
+        if (get_ofw_is_mario()) {
+            unsigned int key_state = joystick.values[ODROID_INPUT_VOLUME];
+            joystick.values[ODROID_INPUT_VOLUME] = joystick.values[ODROID_INPUT_SELECT];
+            joystick.values[ODROID_INPUT_SELECT] = key_state;
+        }
+
         common_emu_input_loop(&joystick, options, &blit);
 
         /* --- one frame of the machine --- */
+        /* 6-button pad TH handshake reset, once per frame — same point as the
+         * MD core (main_gwenesis.c). Sega CD shares the MD keymap and the
+         * gwenesis_io 6-button protocol, so the counter reset must match. */
+        gwenesis_io_6button_reset();
         SCD_DBG("segacd dbg: md_frame(draw=%d)...\n", (int)drawFrame);
         gwenesis_md_frame(drawFrame);           /* main 68K + Z80 + VDP + YM/SN + Sub 68K interleaved */
         SCD_DBG("segacd dbg: md_frame done; cdd ticks...\n");
