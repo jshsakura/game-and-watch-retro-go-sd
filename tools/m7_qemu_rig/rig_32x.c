@@ -402,10 +402,17 @@ struct rig_pc_slot {
     uint16_t opcode;
     unsigned long long dir;
     unsigned long long dly;
+    unsigned long long back; /* GNW: mirror of sh2pico.c slot layout */
 };
 extern struct rig_pc_slot rig_pchist[2][RIG_PC_HIST_SLOTS];
+/* GNW: window-gated block census (team-lead directive: all PC/op/block
+ * stats restricted to one fixed combat window; boot-inclusive figures
+ * must never be quoted as combat bottleneck ratios). */
+extern int rig_sh2_census_on;
+extern unsigned long long rig_blklen[2][64];
+extern unsigned long long rig_census_nins[2], rig_census_nback[2];
 
-struct rig_pc_top { uint32_t pc; uint32_t core; uint16_t opcode; unsigned long long dir, dly, total; };
+struct rig_pc_top { uint32_t pc; uint32_t core; uint16_t opcode; unsigned long long dir, dly, back, total; };
 
 static int rig_pchist_cmp(const void *a, const void *b) {
     const struct rig_pc_top *x = a, *y = b;
@@ -427,7 +434,8 @@ static void rig_pchist_report(void) {
             top[n].pc = rig_pchist[c][i].pc;
             top[n].core = (uint32_t)c;
             top[n].opcode = rig_pchist[c][i].opcode;
-            top[n].dir = d; top[n].dly = dl; top[n].total = t;
+            top[n].dir = d; top[n].dly = dl; top[n].back = rig_pchist[c][i].back;
+            top[n].total = t;
             grand += t;
             n++;
         }
@@ -479,11 +487,36 @@ static void rig_pchist_report(void) {
         acc += top[i].total;
         char dasm[80] = "";
         DasmSH2(dasm, top[i].pc, top[i].opcode);
-        printf("[32x-pchist]  #%-2u %-6s 0x%08x  dir=%-10llu dly=%-10llu  %5.2f%%  cum %5.2f%%  %s\n",
+        printf("[32x-pchist]  #%-2u %-6s 0x%08x  dir=%-10llu dly=%-10llu back=%-9llu %5.2f%%  cum %5.2f%%  %s\n",
                i + 1, top[i].core ? "slave" : "master", top[i].pc,
-               top[i].dir, top[i].dly,
+               top[i].dir, top[i].dly, top[i].back,
                grand ? 100.0 * top[i].total / grand : 0.0,
                grand ? 100.0 * acc / grand : 0.0, dasm);
+    }
+    /* GNW: window-gated loop census -- backedge count, mean run length,
+     * and a basic-block-length histogram (index = sequential insns before
+     * a backedge, clamped at 63). Loop-head candidates = slots where
+     * back > 0. */
+    for (int c = 0; c < 2; c++) {
+        unsigned long long ni = rig_census_nins[c], nb = rig_census_nback[c];
+        if (!ni) { printf("[32x-census] core %d: window empty\n", c); continue; }
+        double mean_run = nb ? (double)ni / (double)nb : 0.0;
+        printf("[32x-census] %-6s window insns=%llu backedges=%llu mean-run=%.1f backedge-every=%.1f insns\n",
+               c ? "slave" : "master", ni, nb, mean_run,
+               nb ? (double)ni / (double)nb : 0.0);
+        unsigned long long bsum = 0;
+        for (int k = 0; k < 64; k++) bsum += rig_blklen[c][k];
+        if (bsum) {
+            printf("[32x-census] %-6s blklen hist (insns before backedge):",
+                   c ? "slave" : "master");
+            for (int k = 0; k < 64; k++) {
+                if (!rig_blklen[c][k]) continue;
+                if ((k % 8) == 0) printf("\n[32x-census]   len%02d-%02d:", k, k + 7 < 63 ? k + 7 : 63);
+                printf(" %llu(%.1f%%)", rig_blklen[c][k],
+                       100.0 * (double)rig_blklen[c][k] / (double)bsum);
+            }
+            printf("\n");
+        }
     }
     free(top);
 }
@@ -635,6 +668,53 @@ static void set_out_buffer(void) {
 void emu_32x_startup(void) {
     PicoDrawSetOutFormat(PDF_RGB555, 0);
     set_out_buffer();
+#ifdef GNW_SH2_DRC
+#ifdef GNW_SH2_DRC
+    /* Rig DRC enablement. Historically gated by GNW_DRC_RIG (so the s3
+     * C/D arms could run DRC-free), which had a side effect: a build with
+     * ONLY -DGNW_SH2_DRC (the production flag the device arm uses) never
+     * turned the translator on — lookups=0, +6.8% pure hook-check tax
+     * (measured 2026-09-26, ab_drc_prod.log). Per team lead: report real
+     * coverage for the candidate ELF — so plain GNW_SH2_DRC now enables
+     * too. The rig_tbudget=30000 translate throttle in sh2pico.c stays
+     * GNW_DRC_RIG-only (diagnostic; NOT in production or device builds). */
+    {
+        extern void gnw_sh2_drc_attach(unsigned char *, unsigned);
+        extern unsigned long long gnw_sh2_drc_lookups, gnw_sh2_drc_misses,
+                gnw_sh2_drc_runs, gnw_sh2_drc_trans, gnw_sh2_drc_flushes;
+        extern int gnw_sh2_drc_on;
+        static unsigned char rig_drc_pool[16 * 1024] __attribute__((aligned(8)));
+        /* GNW bug-28 test: kill the accidental-BSS-zero condition. Poison the
+         * pool first, then run the REAL production init path (attach), and
+         * verify idx[] came out fully invalid plus both end canaries cleared.
+         * This mirrors the device fault (stale AHB idx -> UNALIGNED at
+         * run+0x34). rig-only; device uses the same attach() in main_md32x.c */
+        {
+            unsigned i, bad = 0;
+            unsigned short *idx = (unsigned short *)(void *)rig_drc_pool;
+            unsigned *w = (unsigned *)(void *)rig_drc_pool;
+            memset(rig_drc_pool, 0xa5, sizeof(rig_drc_pool));
+            gnw_sh2_drc_attach(rig_drc_pool, sizeof(rig_drc_pool));
+            for (i = 0; i < 1024; i++) if (idx[i]) bad++;
+            printf("[drc] attach prefill check: bad_idx=%u canary_first=%08x canary_last=%08x (want 0/0/0)\n",
+                   bad, w[0], w[sizeof(rig_drc_pool)/4 - 1]);
+        }
+        gnw_sh2_drc_on = 1;
+    }
+#endif
+#endif
+#ifdef GNW_S3_ARM
+    /* team-lead s3b separation: 0=oracle (fold off, probe on),
+     * 1=C (fold on, re-read every iteration), 2=D (fold on, single
+     * read + arithmetic). Reported at exit via gnw_sh2_s3_folds. */
+    {
+        extern int gnw_sh2_s3_off, gnw_sh2_s3_once;
+        gnw_sh2_s3_off  = (GNW_S3_ARM == 0);
+        gnw_sh2_s3_once = (GNW_S3_ARM == 2);
+        printf("[s3] arm=%d off=%d once=%d\n",
+               GNW_S3_ARM, gnw_sh2_s3_off, gnw_sh2_s3_once);
+    }
+#endif
 }
 void emu_video_mode_change(int start_line, int line_count, int start_col, int col_count) {
     (void)start_line; (void)start_col;
@@ -702,6 +782,7 @@ static uint32_t s_snd_hash = 2166136261u;      /* FNV-1a 32 */
 static unsigned long long s_snd_abs, s_snd_sq;
 static int s_snd_peak;
 
+extern int rig_frame_idx; /* defined below (frame loop) */
 static void rig_write_sound(int len)
 {
     const unsigned char *p = (const unsigned char *)s_snd;
@@ -710,6 +791,11 @@ static void rig_write_sound(int len)
 
     s_snd_calls++;
     s_snd_samples += (unsigned)len;
+#ifdef RIG_SND_CKS
+    /* GNW: per-call cumulative snd hash — A/B diff pinpoints the
+     * first diverging audio frame (snd-only divergence isolation). */
+    printf("sck c%04d f%04d=%08x\n", s_snd_calls, rig_frame_idx, s_snd_hash);
+#endif
     if (nbytes > (int)sizeof(s_snd)) nbytes = (int)sizeof(s_snd);
     for (i = 0; i < nbytes; i++) {
         s_snd_hash ^= p[i];
@@ -1057,6 +1143,345 @@ static int skip_this_frame(int f) { (void)f; return 0; }
 #endif
 
 /* ==== main ================================================================= */
+int rig_frame_idx = -1;   /* GNW: current frame, read by sh2pico DRC probes */
+
+#ifdef RIG_S3_HARNESS
+/* GNW: shape3 differential-verification harness (team-lead m4301 item 4).
+ * Replicates identical initial CPU state / memory / slice budget, then runs
+ * the pure interpreter (oracle, s3_off=1) and the fold arms (D = production
+ * single-read arithmetic fold via s3_once=1; C = DIAGNOSTIC volatile re-read
+ * loop via s3_once=0, requires GNW_S3_DIAG so the loop survives codegen) to
+ * the SAME termination boundary (DT exhaustion / immediate byte exit — both
+ * end parked in a BRA-self spin, so the state is stable to compare).
+ * Compares r[16], pc, ppc, pr, sr, t_flag, gbr, vbr, mach, macl, delay,
+ * test_irq and the whole SDRAM window; icount is checked against the exact
+ * overcharge rule (D consumes 7 cycles per folded iteration, the interpreter
+ * 5 -> residual_D == residual_O - 2*sum(k)). `ea` is excluded: it is
+ * non-architectural handler scratch (documented at the DRC design). Budget
+ * -bounded cases (slice/unsigned-large) cannot share an event boundary with
+ * the oracle and are checked against the analytic spec instead — recorded
+ * per case with the ACTUAL accumulated iteration counts (never a threshold
+ * label). No mid-run writer exists on a single core: mid-fold byte flips are
+ * structurally covered by the C-arm volatile re-read and empirically by the
+ * full-boot fb/snd hash equality; that gap is recorded in the verdict. */
+extern int gnw_sh2_s3_off, gnw_sh2_s3_once, gnw_sh2_fastloops;
+extern unsigned long long gnw_sh2_s3_folds;
+extern int sh2_execute_interpreter(SH2 *sh2, int cycles);
+
+static unsigned char h_sd[0x40000];   /* physical ^1-swapped SDRAM image */
+static SH2 h_sh2;
+
+#define H_L   0x06000200u             /* loop head guest address */
+#define H_OFF 0x200u
+#define H_PA  0x06000240u             /* mailbox byte (guest) */
+
+static void h_place_loop(unsigned bop1, unsigned bop4_dt)
+{
+    /* physical words are stored host-LE so the fast path reads logical BE */
+    volatile unsigned short *w = (unsigned short *)(void *)h_sd;
+    w[(H_OFF + 0) >> 1] = bop1;     /* MOV.B @(d,Rm),R0 (case-settable) */
+    w[(H_OFF + 2) >> 1] = 0x2008;   /* TST R0,R0 */
+    w[(H_OFF + 4) >> 1] = 0x8b02;   /* BF +2 -> byte-exit at L+12 */
+    w[(H_OFF + 6) >> 1] = bop4_dt;  /* DT Rn (R2 normal / R1 alias case) */
+    w[(H_OFF + 8) >> 1] = 0x8bfa;   /* BF -6 -> back to L+0 */
+    w[(H_OFF + 10) >> 1] = 0x0009;  /* NOP (DT-exit fallthrough) */
+    w[(H_OFF + 12) >> 1] = 0x0009;  /* NOP (byte-exit lands here) */
+    w[(H_OFF + 14) >> 1] = 0xaffe;  /* BRA self (disp12=-2) spin park */
+    w[(H_OFF + 16) >> 1] = 0x0009;  /* NOP delay slot (required pair) */
+}
+
+static void h_reset(unsigned v, unsigned char byte, unsigned bop1,
+                    unsigned bop4_dt, unsigned r1, unsigned r2)
+{
+    memset(&h_sh2, 0, sizeof h_sh2);
+    memset(h_sd, 0, sizeof h_sd);
+    h_place_loop(bop1, bop4_dt);
+    h_sd[(H_PA & 0x3ffffu) ^ 1u] = byte;
+    h_sh2.p_sdram = h_sd;
+    h_sh2.pc = H_L;
+    h_sh2.ppc = H_L;
+    h_sh2.sr = 0xf0;
+    h_sh2.r[0] = 0xdeadbeefu;
+    h_sh2.r[1] = r1;                /* default loop: ea = r1 + 1 */
+    h_sh2.r[2] = r2;
+    { int i; for (i = 3; i < 16; i++) h_sh2.r[i] = 0xc0000000u + i; }
+    gnw_sh2_s3_folds = 0;
+}
+
+/* SDRAM equality across arms: the loop bodies under test contain no
+ * stores, so the whole guest SDRAM image must be bit-identical between
+ * arms of the same case. Compared over the full 256K h_sd image. */
+static unsigned char h_sd_ref[0x40000];
+static int h_mem_cmp(const char *tag, int first)
+{
+    if (first) { memcpy(h_sd_ref, h_sd, sizeof h_sd_ref); return 0; }
+    if (memcmp(h_sd_ref, h_sd, sizeof h_sd_ref) != 0) {
+        printf("[%s] FAIL SDRAM image differs from oracle arm\n", tag);
+        return 1;
+    }
+    return 0;
+}
+
+static int h_state_cmp(const char *tag, const SH2 *a, const SH2 *b,
+                       int ic_expect_diff, int *ic_diff_out)
+{
+    int i, bad = 0;
+    if (a->pc != b->pc) { printf("[%s] FAIL pc %08x!=%08x\n", tag, a->pc, b->pc); bad = 1; }
+    if (a->ppc != b->ppc) { printf("[%s] FAIL ppc %08x!=%08x\n", tag, a->ppc, b->ppc); bad = 1; }
+    if (a->pr != b->pr) { printf("[%s] FAIL pr\n", tag); bad = 1; }
+    if (a->sr != b->sr) { printf("[%s] FAIL sr %04x!=%04x\n", tag, a->sr&0xffff, b->sr&0xffff); bad = 1; }
+    if (a->t_flag != b->t_flag) { printf("[%s] FAIL t %d!=%d\n", tag, a->t_flag, b->t_flag); bad = 1; }
+    if (a->gbr != b->gbr || a->vbr != b->vbr) { printf("[%s] FAIL gbr/vbr\n", tag); bad = 1; }
+    if (a->mach != b->mach || a->macl != b->macl) { printf("[%s] FAIL mac\n", tag); bad = 1; }
+    if (a->delay != b->delay) { printf("[%s] FAIL delay %x!=%x\n", tag, a->delay, b->delay); bad = 1; }
+    if (a->test_irq != b->test_irq) { printf("[%s] FAIL test_irq\n", tag); bad = 1; }
+    for (i = 0; i < 16; i++)
+        if (a->r[i] != b->r[i]) {
+            printf("[%s] FAIL r[%d] %08x!=%08x\n", tag, i, a->r[i], b->r[i]);
+            bad = 1;
+        }
+    *ic_diff_out = (int)a->icount - (int)b->icount;
+    if (ic_expect_diff != 0x7fffffff && *ic_diff_out != ic_expect_diff) {
+        printf("[%s] FAIL ic residual diff %d != expected %d "
+               "(ic_a=%d ic_b=%d)\n", tag, *ic_diff_out, ic_expect_diff,
+               (int)a->icount, (int)b->icount);
+        bad = 1;
+    }
+    return bad;
+}
+
+/* run one arm; returns final state via h_sh2, folded iters via *fk */
+static void h_run(unsigned off, unsigned once, int budget, unsigned *fk)
+{
+    unsigned save_r[16]; int i;
+    extern void gnw_sh2_dlrej_clear(void);
+    for (i = 0; i < 16; i++) save_r[i] = h_sh2.r[i];
+    { unsigned sv_pc = h_sh2.pc, sv_sr = h_sh2.sr;
+      /* oracle rejection poisons the shared DL_REJ slot for this ppc —
+       * the fold arms must reach the matcher themselves */
+      gnw_sh2_dlrej_clear();
+      gnw_sh2_s3_off = off; gnw_sh2_s3_once = once;
+      h_sh2.icount = 0;
+      sh2_execute_interpreter(&h_sh2, budget);
+      (void)sv_pc; (void)sv_sr; }
+    *fk = (unsigned)(gnw_sh2_s3_folds & 0xffffffffu);
+    (void)save_r;
+}
+
+static void h_snap(SH2 *dst) { *dst = h_sh2; }
+
+static int h_case_event(const char *id, unsigned v, unsigned char byte,
+                        int budget, unsigned bop4_dt, unsigned r1)
+{
+    SH2 o, d, c; unsigned fo, fd, fc; int bad = 0, icd, icc;
+    h_reset(v, byte, 0x8411, bop4_dt, r1, v);
+    h_run(1, 1, budget, &fo); h_snap(&o); bad |= h_mem_cmp(id, 1);
+    h_reset(v, byte, 0x8411, bop4_dt, r1, v);
+    h_run(0, 1, budget, &fd); h_snap(&d); bad |= h_mem_cmp(id, 0);
+    h_reset(v, byte, 0x8411, bop4_dt, r1, v);
+    h_run(0, 0, budget, &fc); h_snap(&c); bad |= h_mem_cmp(id, 0);
+    bad |= h_state_cmp(id, &d, &o, 0x7fffffff, &icd);
+    bad |= h_state_cmp(id, &c, &o, 0x7fffffff, &icc);
+    /* the 0xaffe park drains both arms via the pre-existing BRA-self
+     * fastfold (`icount %= 3`), so exact residuals are not comparable;
+     * require both drained into the same 0..2 window instead. The loop
+     * phase's per-iteration accounting (7 cycles, body 4 + taken BF 3)
+     * is identical in fold and oracle and is verified exactly by the
+     * analytic budget cases below. */
+    if (o.icount != d.icount || o.icount != c.icount
+        || o.icount < -3 || o.icount > 2) {
+        printf("[%s] FAIL spin drain mismatch o=%d d=%d c=%d\n", id,
+               (int)o.icount, (int)d.icount, (int)c.icount);
+        bad = 1;
+    }
+    printf("[case %s] %s v=%u byte=%02x budget=%d | oracle_r2=%08x pc=%08x "
+           "t=%d ic=%d | D folded=%u r2=%08x ic=%d | C folded=%u r2=%08x "
+           "ic=%d | real_iters_oracle=%u\n",
+           id, bad ? "FAIL" : "PASS", v, byte, budget,
+           o.r[2], o.pc, o.t_flag, (int)o.icount,
+           fd, d.r[2], (int)d.icount, fc, c.r[2], (int)c.icount,
+           byte ? 1u : v);
+    return bad;
+}
+
+/* budget-bounded: no shared event boundary with the oracle possible; check
+ * the D arm against the analytic spec (k = min((ic-1)/7, v-1) per matcher
+ * dispatch, arithmetic accumulated) and record actual totals. */
+/* Analytic fold model (production D semantics), matching the matcher's
+ * accounting: a real iteration is MOV/TST/BFnt/DT (4 cycles) + the BF-back
+ * dispatch (1). At each BF-back dispatch the matcher sees v = r2 (already
+ * DT-decremented) and, when the gate passes, folds k = min((ic-1)/7, v-1)
+ * iterations at 7 cycles each, then the real BF-back executes (1 cycle).
+ * DT expiry (r2==0) makes the BF-back dispatch fall through to the two
+ * exit NOPs and the self-branch spin drains whatever budget is left.
+ * Returns final r2 / ic and whether the loop exited via DT. */
+static void h_model(unsigned v, int B, unsigned *r2f, int *icf, int *exited)
+{
+	/* GNW: per-iteration cost is 7 guest cycles = 4 body insns at 1
+	 * + taken BF-back at 3 (measured by the per-insn tracer, s3h_run4:
+	 * ic 61 -> 54 -> 47 ...). The fold charges exactly the same 7/iter
+	 * (k*7) plus the one real BF-back dispatch, so oracle and fold land
+	 * on identical state at equal budgets. */
+	long long ic = B;
+	unsigned r2 = v;
+	while (1) {
+		if (ic < 5) {	/* stopped mid-iteration, pc inside loop */
+			*exited = 0; break; }
+		ic -= 7; r2 -= 1;
+		if (r2 == 0) {
+			/* DT hit zero: BF-back not taken (T=1), two NOPs land, spin */
+			*exited = 1; break;
+		}
+		if (ic <= 0) { *exited = 0; break; } /* ran past the slice */
+	}
+	*r2f = r2; *icf = (int)ic;
+}
+
+static int h_case_budget(const char *id, unsigned v, int budget)
+{
+	SH2 d, c, o; unsigned fd, fc, fo; int bad = 0, icd, icc;
+	unsigned mm_r2; int mm_ic, mm_ex;
+#ifdef GNW_S3_TRACE
+	extern int gnw_sh2_s3_trace;
+	gnw_sh2_s3_trace = (budget <= 100);	/* small budgets only */
+#endif
+	h_model(v, budget, &mm_r2, &mm_ic, &mm_ex);
+	/* All three arms run the SAME guest budget: fold and oracle must
+	 * make identical guest progress (same r2, same exit, same residual
+	 * icount); only host dispatch work differs. Verified by full state
+	 * compare with ic_diff expected 0 — these cases end inside the loop
+	 * (no 0xaffe spin drain), so exact residual equality is meaningful. */
+	h_reset(v, 0, 0x8411, 0x4210, H_PA - 1, v);
+	h_run(1, 1, budget, &fo); h_snap(&o); bad |= h_mem_cmp(id, 1);
+	h_reset(v, 0, 0x8411, 0x4210, H_PA - 1, v);
+	h_run(0, 1, budget, &fd); h_snap(&d); bad |= h_mem_cmp(id, 0);
+	h_reset(v, 0, 0x8411, 0x4210, H_PA - 1, v);
+	h_run(0, 0, budget, &fc); h_snap(&c); bad |= h_mem_cmp(id, 0);
+	bad |= h_state_cmp(id, &d, &o, 0, &icd);
+	bad |= h_state_cmp(id, &c, &o, 0, &icc);
+	if (d.r[2] != mm_r2) {
+		printf("[%s] FAIL r2 %08x != model %08x\n", id, d.r[2], mm_r2);
+		bad = 1;
+	}
+	{
+		int dexited = (d.pc == H_L + 14);
+		if (dexited != mm_ex) {
+			printf("[%s] FAIL exited %d != model %d (pc=%08x)\n",
+				id, dexited, mm_ex, d.pc);
+			bad = 1;
+		}
+	}
+	printf("[case %s] %s v=%08x budget=%d | model r2=%08x ic=%d ex=%d | "
+	       "D r2=%08x ic=%d pc=%08x folded=%u | C folded=%u | "
+	       "O r2=%08x ic=%d pc=%08x folded=%u (O==D==C full state, "
+	       "ic residual diff 0)\n",
+	       id, bad ? "FAIL" : "PASS", v, budget, mm_r2, mm_ic, mm_ex,
+	       d.r[2], (int)d.icount, d.pc, fd, fc,
+	       o.r[2], (int)o.icount, o.pc, fo);
+	return bad;
+}
+
+/* Positive m != disp address-decode case (team-lead directive): the
+ * default 0x8411 has m == disp == 1, so the original s3 operand-swap bug
+ * (r[d] + m instead of r[m] + d) was undetectable there. 0x8421 encodes
+ * m=2 (base R2), d=1 -> correct ea = r[2]+1; the buggy decode sampled
+ * r[1]+2. Arrange the correct ea to read 0 (folds) and the buggy ea to
+ * read 0xff (would refuse to fold): fold>0 in D and C proves the decode
+ * uses r[m]+d. The mirrored variant (0xff at the correct ea, 0 at the
+ * buggy ea) must produce folded==0 (fb!=0 gate). dt=R3 (base!=dt!=0). */
+static int h_case_mdisp(int positive, unsigned v)
+{
+	const unsigned bop1 = 0x8421;	/* MOV.B @(1,R2),R0 */
+	const unsigned bop4 = 0x4310;	/* DT R3 */
+	/* correct ea = r[2]+1 = H_PA ; buggy ea = r[1]+2 = W_PA */
+	const unsigned W_PA = 0x06000222u;
+	unsigned char ok_byte = positive ? 0x00 : 0xff;
+	unsigned char bad_byte = positive ? 0xff : 0x00;
+	SH2 o, d, c; unsigned fo, fd, fc; int bad = 0, icd, icc;
+	char id[32];
+	snprintf(id, sizeof id, "mdisp_%s", positive ? "pos" : "neg");
+	/* r[2]=H_PA-1 (base, m=2), r[1]=W_PA-2 (aliased junk), r[3]=v (dt) */
+	h_reset(v, ok_byte, bop1, bop4, W_PA - 2, H_PA - 1);
+	h_sd[(W_PA & 0x3ffffu) ^ 1u] = bad_byte;
+	h_sh2.r[3] = v;
+	h_run(1, 1, 10000, &fo); h_snap(&o); bad |= h_mem_cmp(id, 1);
+	h_reset(v, ok_byte, bop1, bop4, W_PA - 2, H_PA - 1);
+	h_sd[(W_PA & 0x3ffffu) ^ 1u] = bad_byte;
+	h_sh2.r[3] = v;
+	h_run(0, 1, 10000, &fd); h_snap(&d); bad |= h_mem_cmp(id, 0);
+	h_reset(v, ok_byte, bop1, bop4, W_PA - 2, H_PA - 1);
+	h_sd[(W_PA & 0x3ffffu) ^ 1u] = bad_byte;
+	h_sh2.r[3] = v;
+	h_run(0, 0, 10000, &fc); h_snap(&c); bad |= h_mem_cmp(id, 0);
+	bad |= h_state_cmp(id, &d, &o, 0x7fffffff, &icd);
+	bad |= h_state_cmp(id, &c, &o, 0x7fffffff, &icc);
+	if (positive) {
+		/* fold must actually happen under the correct decode */
+		if (fd == 0 || fc == 0) {
+			printf("[%s] FAIL expected positive folds, D=%u C=%u\n",
+				id, fd, fc);
+			bad = 1;
+		}
+	} else {
+		/* correct ea reads 0xff -> fb!=0 gate refuses in every arm */
+		if (fd != 0 || fc != 0 || fo != 0) {
+			printf("[%s] FAIL expected no folds, D=%u C=%u O=%u\n",
+				id, fd, fc, fo);
+			bad = 1;
+		}
+	}
+	/* no stray writes: both probe bytes keep their programmed values */
+	if (h_sd[(H_PA & 0x3ffffu) ^ 1u] != ok_byte
+	    || h_sd[(W_PA & 0x3ffffu) ^ 1u] != bad_byte) {
+		printf("[%s] FAIL probe bytes disturbed\n", id);
+		bad = 1;
+	}
+	printf("[case %s] %s v=%u | D folded=%u r3=%08x ic=%d | C folded=%u | "
+	       "O r3=%08x ic=%d | ok_ea=%02x@%08x bug_ea=%02x@%08x\n",
+	       id, bad ? "FAIL" : "PASS", v, fd, d.r[3], (int)d.icount, fc,
+	       o.r[3], (int)o.icount, ok_byte, H_PA, bad_byte, W_PA);
+	return bad;
+}
+
+static int rig_s3_harness(void)
+{
+    int bad = 0;
+    /* the harness returns before emu_32x_startup, which is what normally
+     * turns the fastloop machinery on — without this the D/C arms never
+     * reach the matcher and every comparison is vacuous. */
+    gnw_sh2_fastloops = 1;
+    printf("[s3h] shape3 differential harness: oracle vs D(prod) vs C(volatile), fastloops=%d\n", gnw_sh2_fastloops);
+    /* 1 DT exhaustion, small v — shared event boundary, full compare */
+    bad |= h_case_event("dt_v100", 100, 0, 10000, 0x4210, H_PA - 1);
+    /* 2 DT exhaustion at the AB-boot scale */
+    bad |= h_case_event("dt_v65536", 0x10000, 0, 500000, 0x4210, H_PA - 1);
+    /* 3 immediate byte exit: gate must not fold */
+    bad |= h_case_event("byte_exit", 100, 0xaa, 10000, 0x4210, H_PA - 1);
+    /* 4 alias rejection: DT R1 == base R1 -> matcher must refuse */
+    bad |= h_case_event("alias_dt_base", 100, 0, 10000, 0x4110, H_PA - 1);
+    /* 5 v==2: exactly one foldable iteration */
+    bad |= h_case_event("dt_v2", 2, 0, 1000, 0x4210, H_PA - 1);
+    /* 6 v==1: v>=2 gate fails -> identical to oracle, zero folds */
+    bad |= h_case_event("dt_v1_nofold", 1, 0, 1000, 0x4210, H_PA - 1);
+    /* 7 tiny budget: k=0, no fold, arms identical, stop mid-loop */
+    bad |= h_case_event("slice_B6", 100, 0, 6, 0x4210, H_PA - 1);
+    /* 8 budget-bounded analytic: v=10, B=61 — model expects r2=1
+     * (1 real iteration + 8 folded at dispatch 1) */
+    bad |= h_case_budget("slice_B61", 10, 61);
+    /* 9 unsigned-large v: the old (int)(v-1) bug would skip the fold
+     * entirely (k clamped negative -> 0) and the model would then see
+     * pure-interpreter progress — the mismatch exposes the regression. */
+    bad |= h_case_budget("unsigned_v80000001", 0x80000001u, 1400);
+    /* 10/11 m != disp positive address-decode cases (0x8421): the
+     * default 0x8411 (m==disp==1) cannot distinguish r[m]+d from r[d]+m;
+     * these pin the sampled address by byte placement in both polarities */
+    bad |= h_case_mdisp(1, 100);
+    bad |= h_case_mdisp(0, 100);
+    printf("[s3h] %s\n", bad ? "HARNESS FAIL" : "HARNESS PASS");
+    return bad;
+}
+#endif /* RIG_S3_HARNESS */
+
 int main(void) {
     setvbuf(stdout, 0, _IONBF, 0);
     uint32_t rom_len = (uint32_t)(_binary_rom_32x_end - _binary_rom_32x_start);
@@ -1068,6 +1493,9 @@ int main(void) {
            (unsigned long)cal, (unsigned long)(ipt_x1000/1000), (unsigned long)(ipt_x1000%1000));
     printf("[32x-qemu] rom len=%lu (pre-byteswapped) frames=%d\n",
            (unsigned long)rom_len, RIG_FRAMES);
+#ifdef RIG_S3_HARNESS
+    return rig_s3_harness();
+#endif
 
     /* ---- libretro (upstream frontend) init order — NOT the old device order.
      * 32X startup is LAZY: the game's own MD-mode boot code writes ADEN at
@@ -1264,9 +1692,48 @@ int main(void) {
             printf("[32x-mix] census reset at frame %d (gameplay entry)\n", f);
         }
 #endif
+#ifdef RIG_SECOND_BOOT
+        /* pico_int.h is deliberately not included (PicoDrawSetOutputSMS
+         * collision), so reach the two structs through char-base offsets:
+         * struct Pico32x { u16 regs[0x20]; u16 vdp_regs[0x10]; ... }
+         * -> vdp_regs[0] is at byte offset 0x40. */
+        extern char Pico, Pico32x;
+#define RIG_VDP0() (*(unsigned short *)(&Pico32x + 0x40))
+        if (f == RIG_SECOND_BOOT_AT) {
+            /* GNW: reproduce the device reboot re-entry. On the device a
+             * hardware reset restarts the firmware which re-runs
+             * PicoInit -> PicoLoadMedia -> (PicoCartInsert -> PicoPower),
+             * while NOLOAD overlays / DTCM / AHB keep their previous
+             * contents. Here we keep everything allocated (sh2s_storage,
+             * Pico32xMem, ahb heap) and only re-run the software init
+             * chain, then watch whether the 2nd boot reaches
+             * vdp_regs[0] mode!=0 (display on) like the 1st boot did. */
+            printf("[2nd] === reboot re-entry at f=%d (vdp0=%04x) ===\n",
+                   f, RIG_VDP0());
+            /* memset of Pico happens via PicoInit() below (it zeroes the
+             * struct itself); sh2s_storage intentionally NOT cleared. */
+            PicoInit();
+            PicoIn.opt = POPT_EN_FM | POPT_EN_PSG | POPT_EN_Z80
+                       | POPT_EN_32X | POPT_EN_PWM
+                       | POPT_ACC_SPRITES | POPT_DIS_32C_BORDER;
+            PicoIn.sndRate = 44100;
+            PicoIn.autoRgnOrder = 0x184;
+            enum media_type_e mt2 = PicoLoadMedia("game.32x",
+                    _binary_rom_32x_start, rom_len, NULL, NULL, NULL, NULL);
+            printf("[2nd] PicoLoadMedia -> mt=%d AHW=%x vdp0=%04x\n",
+                   (int)mt2, (unsigned)PicoIn.AHW, RIG_VDP0());
+        }
+        if (f >= RIG_SECOND_BOOT_AT && (f % 50) == 0) {
+            int nblk = 0; uint32_t ck = fb_checksum(&nblk);
+            printf("[2nd] f=%d vdp0=%04x fb_ck=%08x nb=%d\n",
+                   f, RIG_VDP0(), ck, nblk);
+        }
+#undef RIG_VDP0
+#endif
         int skipf = skip_this_frame(f);
         PicoIn.skipFrame = (unsigned short)skipf;
         PicoIn.pad[0] = pad_script(f);
+        rig_frame_idx = f;   /* GNW: expose frame index to sh2pico probes */
         uint32_t t0 = rig_timer_now();
         PicoFrame();
         uint32_t t1 = rig_timer_now();
@@ -1502,9 +1969,37 @@ int main(void) {
         }
 #endif
 
-        if ((f % 20) == 0 || (f >= 140 && f < 260))
+        /* GNW: window gate for the SH-2 PC/backedge/block census — every
+         * PC/op/block statistic must come from ONE fixed scene window
+         * (team-lead correction: boot-inclusive figures are not combat
+         * ratios). Defaults keep the legacy full-run behavior. */
+#ifdef RIG_SH2_PC_HIST
+#ifndef RIG_CENSUS_START
+#define RIG_CENSUS_START 0
+#endif
+#ifndef RIG_CENSUS_END
+#define RIG_CENSUS_END 0x7fffffff
+#endif
+        rig_sh2_census_on = (f >= RIG_CENSUS_START && f < RIG_CENSUS_END);
+#endif
+        if ((f % 20) == 0 || (f >= 140 && f < 260)) {
+#ifdef GNW_SH2_DRC
+            { /* GNW: counters live in sh2pico.c under -DGNW_SH2_DRC */
+              extern unsigned long long gnw_sh2_drc_lookups, gnw_sh2_drc_misses,
+                gnw_sh2_drc_runs, gnw_sh2_drc_trans, gnw_sh2_drc_flushes;
+            printf("  f%04d host=%lu sh2=%llu snd=%u/%u look=%llu miss=%llu runs=%llu tr=%llu fl=%llu\n", f,
+                   (unsigned long)insn, sh2_d, s_snd_calls, s_snd_samples,
+                   gnw_sh2_drc_lookups, gnw_sh2_drc_misses, gnw_sh2_drc_runs,
+                   gnw_sh2_drc_trans, gnw_sh2_drc_flushes);
+            }
+#else
+            /* GNW: DRC counters only exist under -DGNW_SH2_DRC; true-clean
+             * builds previously linked a STALE elf because this line broke
+             * them (2026-09-26 speed-bomb hunt). */
             printf("  f%04d host=%lu sh2=%llu snd=%u/%u\n", f,
                    (unsigned long)insn, sh2_d, s_snd_calls, s_snd_samples);
+#endif
+        }
         if (f >= RIG_WARMUP) {
             tot += insn; sh2_tot += sh2_d;
             if (insn < mn) mn = insn;
@@ -1524,6 +2019,12 @@ int main(void) {
         }
 #ifdef RIG_FB_DUMP
         if (f == RIG_FB_DUMP) fb_dump_rle(f);
+#endif
+#ifdef RIG_FB_DUMP2
+        if (f == RIG_FB_DUMP2) fb_dump_rle(f);
+#endif
+#ifdef RIG_FB_DUMP3
+        if (f == RIG_FB_DUMP3) fb_dump_rle(f);
 #endif
 #ifdef RIG_TRACE_CKS
         { int nbt; uint32_t ck = fb_checksum(&nbt);
@@ -1806,6 +2307,53 @@ int main(void) {
 #endif
 #ifdef RIG_SDRAM_POLL_DIAG
     rig_spd_report();
+#endif
+#ifdef GNW_S3_ARM
+    {
+        extern unsigned long long gnw_sh2_s3_folds;
+        printf("[s3] arm=%d folds=%llu\n", GNW_S3_ARM, gnw_sh2_s3_folds);
+    }
+#endif
+#ifdef GNW_S3_DIAG
+    { extern unsigned long long gnw_sh2_s4_folds; /* GNW: shape4 record-walk fold counter (DIAG-only, see sh2pico.c) */
+      extern unsigned long long gnw_sh2_s5_folds; /* GNW: shape5 command-poll fold counter */
+      printf("[s4] record-walk folds=%llu\n", gnw_sh2_s4_folds);
+      printf("[s5] cmd-poll folds=%llu\n", gnw_sh2_s5_folds); }
+#endif
+#ifdef GNW_S3_SETDIAG
+    {
+        extern unsigned long long gnw_sh2_s3_sd[4];
+        extern unsigned int gnw_sh2_s3_sd_old_pc[16];
+        extern int gnw_sh2_s3_sd_old_n;
+        extern unsigned int gnw_sh2_s3_sd_new_pc[16];
+        extern int gnw_sh2_s3_sd_new_n;
+        int i;
+        printf("[s3sd] matcher-dispatch fold-set buckets: both=%llu old-only=%llu new-only=%llu neither=%llu\n",
+            gnw_sh2_s3_sd[0], gnw_sh2_s3_sd[1], gnw_sh2_s3_sd[2], gnw_sh2_s3_sd[3]);
+        printf("[s3sd] old-only PCs (s3-era over-fold risk):");
+        for (i = 0; i < gnw_sh2_s3_sd_old_n; i++)
+            printf(" %08x", gnw_sh2_s3_sd_old_pc[i]);
+        printf("\n[s3sd] new-only PCs:");
+        for (i = 0; i < gnw_sh2_s3_sd_new_n; i++)
+            printf(" %08x", gnw_sh2_s3_sd_new_pc[i]);
+        printf("\n");
+    }
+#endif
+#ifdef GNW_SH2_DRC
+    {
+        /* GNW: per-core counters — the shared gnw_sh2_drc_runs counter only
+         * increments in the STUB diagnostic branch; native execution bumps
+         * runs_m/runs_s instead (team lead 2026-09-26: never read runs=0 as
+         * "not executing"). Coverage = lookups - misses - stub-only runs. */
+        extern unsigned long long gnw_sh2_drc_lookups, gnw_sh2_drc_runs,
+            gnw_sh2_drc_trans, gnw_sh2_drc_flushes, gnw_sh2_drc_misses,
+            gnw_sh2_drc_runs_m, gnw_sh2_drc_runs_s;
+        printf("[32x-qemu] DRC lookups=%llu runs(stub-only)=%llu "
+               "runs_m=%llu runs_s=%llu trans=%llu misses=%llu flushes=%llu\n",
+               gnw_sh2_drc_lookups, gnw_sh2_drc_runs,
+               gnw_sh2_drc_runs_m, gnw_sh2_drc_runs_s,
+               gnw_sh2_drc_trans, gnw_sh2_drc_misses, gnw_sh2_drc_flushes);
+    }
 #endif
     phase_report(n, ipt_x1000, n > 0 ? sh2_tot / n : 0);
 #ifdef RIG_YM_CENSUS

@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include "gw_lcd.h"
 #include "gw_linker.h"
+#include "main.h"
 #include "gw_buttons.h"
 #include "rom_manager.h"
 #include "common.h"
@@ -246,9 +247,52 @@ static void set_out_buffer(void) {
  * once PAHW_32X is set, so they MUST be re-applied here — otherwise the 32X
  * layer renders into picodrive's internal DefOutBuff and the screen stays
  * black (QEMU-rig-proven; libretro's hook does the same re-apply). */
+#ifdef GNW_SH2_DRC
+/* GNW: DRC code publisher — pool is cacheable executable AXI SRAM with
+ * I+D caches ON (default PRIVDEF map; MPU only carves the non-cacheable
+ * audio buffer + nullptr guard). Every emitted block is D-cache-cleaned
+ * to PoU by address, then the whole I-cache is invalidated (Cortex-M7 has
+ * no range I-cache invalidate) with barriers. Installs are rare (hundreds
+ * per boot), so full I-cache drops are acceptable. */
+static void drc_publish_code(void *addr, unsigned size) {
+  SCB_CleanDCache_by_Addr((uint32_t *)addr, (int32_t)size);
+  __DSB();
+  SCB_InvalidateICache();
+  __ISB();
+}
+#endif
+
 void emu_32x_startup(void) {
   PicoDrawSetOutFormat(PDF_RGB555, 0);
   set_out_buffer();
+#ifdef GNW_SH2_DRC
+  /* Register the linker-carved DRC pool (ledger 12.7) once, at 32X start,
+   * plus the device cache-maintenance publisher: the pool is cacheable
+   * executable AXI SRAM (I+D caches ON, default PRIVDEF map) — every
+   * emitted block must be D-cache-cleaned to PoU and I-cache-invalidated
+   * before first execution (Cortex-M7 has no range I-cache invalidate,
+   * so the whole I-cache is dropped per install; installs are rare).
+   * Runtime enable stays explicit via gnw_sh2_drc_on — the device
+   * candidate arm sets it after this registration. */
+  {
+    extern unsigned char __md32x_drc_start__[];
+    extern unsigned char __md32x_drc_end__[];
+    extern void gnw_sh2_drc_attach(unsigned char *, unsigned);
+    extern void (*gnw_sh2_drc_publish)(void *, unsigned);
+    extern int gnw_sh2_drc_on;
+    /* GNW bug-28: the AHB pool is (NOLOAD) — attach() zeroes the whole pool
+     * (idx + meta + code area) and resets the translator statics BEFORE the
+     * first lookup / before on=1. Stale power-on AHB contents otherwise leak
+     * into idx[] and the first lookup dereferences garbage (device fault:
+     * UNALIGNED at run+0x34, r2=pool r3=0xffff -> 0x3001fffe). */
+    gnw_sh2_drc_attach(__md32x_drc_start__, __md32x_drc_end__ - __md32x_drc_start__);
+    gnw_sh2_drc_publish = drc_publish_code;
+    /* Candidate arms only: builds compiled with -DGNW_SH2_DRC turn the
+     * translator on at 32X start. Release builds don't define the flag,
+     * so this line (and all DRC code) is absent there. */
+    gnw_sh2_drc_on = 1;
+  }
+#endif
 }
 
 void emu_video_mode_change(int start_line, int line_count, int start_col, int col_count) {
@@ -1142,6 +1186,17 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     md32x_pico_in_frame = true;
     PicoFrame();
     md32x_pico_in_frame = false;
+
+    /* GNW: watchdog safety net in the frame loop. wdog_refresh() is only
+     * called from the LCD output paths (gw_lcd.c), so one emulation frame
+     * longer than the WWDG window (prescaler 128, counter 127 ~= 277ms on
+     * this clock tree) resets the MCU. Observed on-device with the SH2 DRC
+     * trial arms: transient translate/flush spikes inside PicoFrame() blew
+     * the window at emu 31..159f while the interpreter build survived.
+     * Refreshing once per frame bounds the exposure to the frame time
+     * itself; guest-visible state and rig hashes are unaffected (host
+     * register write only). */
+    wdog_refresh();
 
 #ifdef MD32X_DEVICE_PROFILE
     uint32_t t_pico = common_emu_get_dwt_cycles() - t_base;   /* after pico, before blit */
