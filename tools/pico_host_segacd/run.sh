@@ -43,7 +43,7 @@ mkdir -p "$OUT"
 # segacd overlay: segacd_save_state calls PicoStateFP directly, so open_save_file
 # is an unreferenced section the linker discards. Without the same flags the
 # host link would demand real zlib gz* symbols the device never ships.
-INC="-I$PD -I$PD/pico -I$PD/cpu -I$PD/cpu/fame -I$PD/zlib"
+INC="-I$PD -I$PD/pico -I$PD/cpu -I$PD/cpu/fame -I$PD/zlib -I$PD/pico/cd"
 SRCS="cpu/fame/famec.c cpu/cz80/cz80.c
       pico/pico.c pico/cart.c pico/memory.c pico/state.c pico/sek.c pico/z80if.c
       pico/videoport.c pico/draw.c pico/misc.c pico/eeprom.c pico/patch.c pico/media.c
@@ -55,10 +55,29 @@ SRCS="cpu/fame/famec.c cpu/cz80/cz80.c
       pico/sound/sound.c pico/sound/mix.c pico/sound/sn76496.c
       pico/sound/ym2612.c pico/sound/resampler.c zlib/crc32.c"
 
+# chdman cues carry pregaps two ways: POSTGAP on the data track and INDEX 00/01
+# pairs on audio tracks. Measured (Sonic t2.bin = 465 sectors = CHD FRAMES
+# exactly): the split bins are PURE track data, pregap NOT in file. Upstream
+# cd_parse ignores INDEX 00 and cd_image never adds postgap, so every audio
+# boundary lands ~150 sectors early. ovr/ fixes TOC starts (verified against
+# CHD metadata: Lunar t2@14323, Sonic t2@55249). KNOWN BUG in ovr: for
+# INDEX00-style cues sector_offset must be forced to 0 (INDEX01 time is disc
+# position, not file offset) and no length subtraction -- Sonic t2 currently
+# reads 315 instead of 465 sectors. TOGGLE=0 runs pristine upstream files.
+OVR="${TOGGLE:-1}"
+if [ "$OVR" = "1" ]; then
+  OVRDIR=tools/pico_host_segacd/ovr
+  SRCS="$(echo "$SRCS" | sed "s|pico/cd/cd_image.c|$OVRDIR/pico/cd/cd_image.c|; s|pico/cd/cd_parse.c|$OVRDIR/pico/cd/cd_parse.c|")"
+fi
+
 objs=""
 for s in $SRCS; do
   o="$OUT/$(echo "$s" | tr '/' '_' | sed 's/\.c$/.o/')"
-  gcc -g -O1 -w -fcommon $DEF $INC -c "$PD/$s" -o "$o"
+  case "$s" in
+    tools/*) src="$s" ;;
+    *) src="$PD/$s" ;;
+  esac
+  gcc -g -O1 -w -fcommon $DEF $INC -c "$src" -o "$o"
   objs="$objs $o"
 done
 for s in host_mcd host_mcd_stubs; do
