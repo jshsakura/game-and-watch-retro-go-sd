@@ -191,6 +191,34 @@ on itself at boot — 40.000 insn/tick — and prints it).
     `p32x_reg_write8/16`, `p32x_sh2reg_write16`, `sh2_reset` (that was
     `RIG_LM_TRACE`, not kept).
 
+### `tools/pico_host_segacd` — the Sega CD core, boot-compatibility rig
+
+Compiles the segacd overlay's **exact Makefile source list** with the device's
+defines (`SEGACD_C_DEFS`, incl. `GNW_MCD_SPLIT`/`GNW_MCD_BIOS_XIP`) into a
+headless host binary — same rule as `sm_harness`: the program the device runs,
+not a reimplementation.
+
+- `run.sh <image.cue> [frames] [pad_pattern]` — boots the image against a **real
+  retail BIOS** (`BIOS_DIR`, default `/media/pi/EXTERNAL/BIOS`), then runs the
+  frame loop with the 32X harness's pad vocabulary (`none/amash/smash/cmash/
+  s_then_a/slow_a/play`). Every 20 frames prints `ck` (framebuffer checksum),
+  `nb`/`col` (nonblank pixels / unique colors), `cdd` status + `lba`, and both
+  68K PCs. `FB_OUT`/`PAL_OUT` dump the 8-bit framebuffer and the HighPal
+  palette for off-line rendering; `STATE_IN` resumes a device savestate
+  (skips the 8-byte `SCDP` header — but note the same pointer-width caveat as
+  `RIG_32X_STATE`: a 64-bit host cannot read a 32-bit device dump).
+- What it proved (2026-09-30): the CHD→cue/bin conversion pipeline is sound,
+  and **15/15 library games boot** once their images are repaired by
+  `tools/segacd_fix_security.sh` — repro rips carry a mis-assembled sector 0
+  (security string at 0x310 instead of 0x669, or a non-standard system ID),
+  which the BIOS sub-program rejects identically under picodrive-fork,
+  picodrive-master and Genesis Plus GX. The Sonic CD repro additionally has
+  relocated audio (fixed MSFs in the game point into the data track) and hangs
+  in all three emulators — an image defect, not a core defect.
+- What it does **not** prove: performance (host ≠ Cortex-M7 instruction mix;
+  that's the m7 rig's job) and the device's split-RAM address map (host
+  `plat_mmap` is plain malloc).
+
 ### `tools/tamapoke_harness` — every screen, in both themes, actually used
 
 `run.sh [out_dir]` compiles the port from **the Makefile's own source list** (never
@@ -364,6 +392,7 @@ in the binary. Full guide: [SNES_DEVICE_DWT.md](SNES_DEVICE_DWT.md).
 | does a small on-card store survive its edges | `tests/test_video_resume.c` (pure FILE* logic, real source linked, store path overridden to /tmp) |
 | what is the device really spending a frame on | `feat/gba-probe`; for SNES, `SNES_DEVICE_PROFILE=1` |
 | who is executing what when a 32X cart misbehaves | `tools/m7_qemu_rig/run_32x.sh` + probe macros (boot/death forensics; run 500+ frames — short windows are still booting) |
+| does a Sega CD image boot in the real core, against the real BIOS | `tools/pico_host_segacd/run.sh` (2000 frames; the CD player and the boot screen have different checksum/color signatures) |
 | does my ROM-pattern feature hold across a whole library | `tools/snes_bake_survey/` — survey, then hash-gate every hit ([SNES_ROM_SURVEY.md](SNES_ROM_SURVEY.md)) |
 | is fps compute-bound or sitting on the audio deadline | `SNES_DEVICE_PROFILE=1` Ledger C — DWT alone cannot answer this, it goes blind in `__WFI()` |
 | **is the game actually ON THE SCREEN** | `tools/gnw_probe/screenshot.sh --live` — no counter can answer this; see below |
