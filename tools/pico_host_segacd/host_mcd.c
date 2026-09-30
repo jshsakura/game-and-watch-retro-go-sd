@@ -204,6 +204,19 @@ int main(int argc, char **argv)
            (unsigned)PicoIn.AHW, (unsigned)Pico.romsize,
            (int)Pico.m.pal, cdd.toc.last, cdd.loaded);
 
+    /* Backup RAM persistence, same point as the device (after the media is in,
+     * which powers the MCD and formats BRAM): BRAM_IN replaces the freshly
+     * formatted 8K, BRAM_OUT dumps it after the run. */
+    {
+        const char *bin = getenv("BRAM_IN");
+        FILE *g = bin ? fopen(bin, "rb") : NULL;
+        if (g) {
+            size_t n = fread(Pico_mcd->bram, 1, 0x2000, g);
+            fclose(g);
+            printf("[host] bram in: %zu bytes\n", n);
+        }
+    }
+
     PicoLoopPrepare();
     PicoIn.sndOut = snd;
     PicoIn.writeSound = wr_snd;
@@ -260,6 +273,11 @@ int main(int argc, char **argv)
                    (unsigned)SekPc, (unsigned)SekPcS68k);
             fflush(stdout);
         }
+    }
+    {
+        const char *bout = getenv("BRAM_OUT");
+        FILE *g = bout ? fopen(bout, "wb") : NULL;
+        if (g) { fwrite(Pico_mcd->bram, 1, 0x2000, g); fclose(g); }
     }
     {
         const char *out = getenv("FB_OUT");
