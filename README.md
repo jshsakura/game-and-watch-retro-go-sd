@@ -102,6 +102,7 @@ only when you launch a game, which is the confusing failure this table exists to
 | System | SD path | Files | Required? |
 | --- | --- | --- | --- |
 | PC Engine CD | `/bios/pce/` | `syscard3.pce` (Super CD-ROM² System Card 3.0; `syscard3.bin` also accepted) | Yes |
+| Sega CD / Mega CD | `/bios/segacd/` | `bios_CD_U.bin` (US), `bios_CD_E.bin` (Europe), `bios_CD_J.bin` (Japan), 128 KB each | Yes, **the one matching each disc's region**. The region is read from the disc, not chosen by you, and a Japanese-region disc needs `bios_CD_J.bin` (all twelve Korean releases tested were Japanese-region). Put all three in to be safe |
 | ZX Spectrum | `/bios/zxs/` | `48.rom` | Yes |
 | Commodore 64 | `/bios/c64/` | `kernal.bin`, `basic.bin`, `chargen.bin` | Yes, all three |
 | Odyssey² / Videopac | `/bios/videopac/` | `o2rom.bin` | Yes |

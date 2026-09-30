@@ -921,33 +921,49 @@ ifneq ($(MD32X_DEVICE_PROFILE),0)
 MD32X_C_SOURCES += Core/Src/porting/md32x/md32x_profile.c
 endif
 endif
-# Sega CD: the gwenesis MD base plus the CD porting layer, restored forward
-# from tag testbed-full-20260724-1447 (see docs/SEGACD_REASSESSMENT_2026-09-14.md
-# for the phase-0 gates this return had to pass). Off by default until the
-# device bring-up (gate 6) proves a frame.
-SEGACD ?= 0
+
+# Sega CD (PicoDrive) — SD-card builds only. The disc is streamed from SD and
+# the FAME dispatch table/cold code are delivered as a relocatable XIP blob.
 SEGACD_C_SOURCES =
-ifeq ($(SEGACD),1)
+ifeq ($(SD_CARD),1)
 SEGACD_C_SOURCES += \
-$(CORE_GWENESIS)/src/cpus/M68K/m68kcpu.c \
-$(CORE_GWENESIS)/src/cpus/Z80/Z80.c \
-$(CORE_GWENESIS)/src/sound/z80inst.c \
-$(CORE_GWENESIS)/src/sound/ym2612.c \
-$(CORE_GWENESIS)/src/sound/gwenesis_sn76489.c \
-$(CORE_GWENESIS)/src/bus/gwenesis_bus.c \
-$(CORE_GWENESIS)/src/bus/gwenesis_sram.c \
-$(CORE_GWENESIS)/src/bus/gwenesis_eeprom.c \
-$(CORE_GWENESIS)/src/io/gwenesis_io.c \
-$(CORE_GWENESIS)/src/vdp/gwenesis_vdp_mem.c \
-$(CORE_GWENESIS)/src/vdp/gwenesis_vdp_gfx.c \
-$(CORE_GWENESIS)/src/savestate/gwenesis_savestate.c \
-Core/Src/porting/segacd/main_segacd.c \
-Core/Src/porting/segacd/segacd_engine.c \
-Core/Src/porting/segacd/segacd_bus.c \
-Core/Src/porting/segacd/segacd_cd.c \
-Core/Src/porting/segacd/segacd_audio.c \
-Core/Src/porting/segacd/segacd_gfx.c \
-Core/Src/porting/segacd/segacd_cache.c
+$(CORE_PICODRIVE)/cpu/fame/famec.c \
+$(CORE_PICODRIVE)/cpu/cz80/cz80.c \
+$(CORE_PICODRIVE)/pico/pico.c \
+$(CORE_PICODRIVE)/pico/cart.c \
+$(CORE_PICODRIVE)/pico/memory.c \
+$(CORE_PICODRIVE)/pico/state.c \
+$(CORE_PICODRIVE)/pico/sek.c \
+$(CORE_PICODRIVE)/pico/z80if.c \
+$(CORE_PICODRIVE)/pico/videoport.c \
+$(CORE_PICODRIVE)/pico/draw.c \
+$(CORE_PICODRIVE)/pico/misc.c \
+$(CORE_PICODRIVE)/pico/eeprom.c \
+$(CORE_PICODRIVE)/pico/patch.c \
+$(CORE_PICODRIVE)/pico/media.c \
+$(CORE_PICODRIVE)/pico/pico/pico.c \
+$(CORE_PICODRIVE)/pico/pico/memory.c \
+$(CORE_PICODRIVE)/pico/pico/xpcm.c \
+$(CORE_PICODRIVE)/pico/carthw/carthw.c \
+$(CORE_PICODRIVE)/pico/carthw/eeprom_spi.c \
+$(CORE_PICODRIVE)/pico/cd/mcd.c \
+$(CORE_PICODRIVE)/pico/cd/memory.c \
+$(CORE_PICODRIVE)/pico/cd/sek.c \
+$(CORE_PICODRIVE)/pico/cd/cdc.c \
+$(CORE_PICODRIVE)/pico/cd/cdd.c \
+$(CORE_PICODRIVE)/pico/cd/cd_image.c \
+$(CORE_PICODRIVE)/pico/cd/cd_parse.c \
+$(CORE_PICODRIVE)/pico/cd/gfx.c \
+$(CORE_PICODRIVE)/pico/cd/gfx_dma.c \
+$(CORE_PICODRIVE)/pico/cd/misc.c \
+$(CORE_PICODRIVE)/pico/cd/pcm.c \
+$(CORE_PICODRIVE)/pico/cd/megasd.c \
+$(CORE_PICODRIVE)/pico/sound/sound.c \
+$(CORE_PICODRIVE)/pico/sound/mix.c \
+$(CORE_PICODRIVE)/pico/sound/sn76496.c \
+$(CORE_PICODRIVE)/pico/sound/ym2612.c \
+$(CORE_PICODRIVE)/pico/sound/resampler.c \
+Core/Src/porting/segacd/main_segacd.c
 endif
 A2600_C_SOURCES =
 A2600_CXX_SOURCES =
@@ -1590,6 +1606,24 @@ MD32X_C_DEFS += $(MD32X_EXTRA_DEFS)
 ifeq ($(MD32X_DEVICE_PROFILE),1)
 MD32X_C_DEFS += -DMD32X_DEVICE_PROFILE
 endif
+
+SEGACD_C_INCLUDES = \
+-ICore/Inc \
+-ICore/Inc/porting \
+-ICore/Inc/porting/segacd \
+-ICore/Inc/retro-go \
+-ICore/Src/porting/lib \
+-Iretro-go-stm32/components/odroid \
+-I$(CORE_PICODRIVE) \
+-I$(CORE_PICODRIVE)/pico \
+-I$(CORE_PICODRIVE)/cpu \
+-I$(CORE_PICODRIVE)/cpu/fame \
+-I$(CORE_PICODRIVE)/zlib \
+-I./
+
+SEGACD_C_DEFS = -DEMU_F68K -DFAMEC_CONST_JUMPTABLE -DGNW_CONST_TABLES -DGNW_MCD_SPLIT \
+                 -DGNW_MCD_BIOS_XIP -D_USE_CZ80 -DNDEBUG -DLSB_FIRST \
+                 -DNO_32X -DNO_SMS -ffunction-sections -fdata-sections
 # Which clock floor the core asks for (common_emu_auto_oc). 2 = 340 MHz is the
 # launcher menu's own ceiling. It is not a free 9%: level 1 runs OSPI at 104 MHz
 # and level 2 at 97, and this core's SH-2 fetches its cart out of external flash,
@@ -1614,37 +1648,6 @@ MD32X_C_DEFS += -DMD32X_OC_LEVEL=$(MD32X_OC_LEVEL)
 MD32X_SSH2_SND_HLE ?= 0
 ifeq ($(MD32X_SSH2_SND_HLE),1)
 MD32X_C_DEFS += -DGNW_SSH2_SND_HLE
-endif
-
-# Sega CD compile flavor (mirrors the tag): gwenesis headers, LSB_FIRST and
-# TABLES_FULL for the same reason MD32X needs them (compact 68K jump table
-# truncates at 0xEFC0), function/data-sections so .xip_segacd can sweep cold
-# code while .overlay_segacd keeps the hot remainder.
-SEGACD_C_INCLUDES = \
--ICore/Inc \
--ICore/Src/porting/lib \
--ICore/Src/porting/lib/lzma \
--ICore/Src/porting/segacd \
--Iretro-go-stm32/components/odroid \
--I$(CORE_GWENESIS)/src/cpus/M68K \
--I$(CORE_GWENESIS)/src/cpus/Z80 \
--I$(CORE_GWENESIS)/src/sound \
--I$(CORE_GWENESIS)/src/bus \
--I$(CORE_GWENESIS)/src/vdp \
--I$(CORE_GWENESIS)/src/io \
--I$(CORE_GWENESIS)/src/savestate \
--I./
-
-SEGACD_C_DEFS = -DLSB_FIRST -DTABLES_FULL -ffunction-sections -fdata-sections
-
-# Gate-array/cdd instrumentation for the Sega CD bring-up (bring-up only,
-# never ships): arms the trace arrays already implemented in segacd_bus.c
-# (scd_dbg_a12000_* / scd_dbg_800f_* / scd_dbg_reg1_* / scd_dbg_cdd_*).
-# They land in .overlay_segacd_bss (AXI), so a live OpenOCD mdw read can
-# walk them while the core runs.
-SEGACD_GA_TRACE ?= 0
-ifeq ($(SEGACD_GA_TRACE),1)
-SEGACD_C_DEFS += -DSEGACD_GA_TRACE
 endif
 
 # Z80 ablation -- re-prices the Z80 now that Cz80_Exec rides ITCM. The +19.8%

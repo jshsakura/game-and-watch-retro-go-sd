@@ -113,6 +113,9 @@ static int file_openable(const char *fname)
 
 #define BEGINS(buff,str) (strncmp(buff,str,sizeof(str)-1) == 0)
 
+/* harness experiment: per-track postgap for chdman cues */
+int cd_track_postgap[100];
+
 /* note: tracks[0] is not used */
 cd_data_t *chd_parse(const char *fname)
 {
@@ -212,9 +215,12 @@ cd_data_t *cue_parse(const char *fname)
 	char current_file[256], *current_filep, cue_base[256];
 	char buff[256], buff2[32], ext[4], *p;
 	int ret, count = 0, count_alloc = 2, pending_pregap = 0;
+	int idx00_lba = 0, have_idx00 = 0;
 	size_t current_filep_size, fname_len;
 	cd_data_t *data = NULL, *tmp;
 	FILE *f = NULL;
+
+	memset(cd_track_postgap, 0, sizeof(cd_track_postgap));
 
 	if (fname == NULL || (fname_len = strlen(fname)) == 0)
 		return NULL;
@@ -282,6 +288,8 @@ cd_data_t *cue_parse(const char *fname)
 				data = tmp;
 			}
 			memset(&data->tracks[count], 0, sizeof(data->tracks[0]));
+			idx00_lba = 0;
+			have_idx00 = 0;
 
 			if (count == 1 || strcmp(data->tracks[1].fname, current_file) != 0)
 			{
@@ -368,7 +376,15 @@ file_ok:
 			int m, s, f;
 			// type
 			ret = get_token(buff+6, buff2, sizeof(buff2));
-			if (atoi(buff2) == 0) continue;
+			if (atoi(buff2) == 0) {
+				// pregap start: INDEX 00 time, delta to INDEX 01 is the pregap
+				get_token(buff+6+ret, buff2, sizeof(buff2));
+				if (sscanf(buff2, "%d:%d:%d", &m, &s, &f) == 3) {
+					idx00_lba = m*60*75 + s*75 + f;
+					have_idx00 = 1;
+				}
+				continue;
+			}
 			if (atoi(buff2) != 1) {
 				elprintf(EL_STATUS, "cue: don't know how to handle: \"%s\"", buff);
 				count--; break;
@@ -381,6 +397,16 @@ file_ok:
 				count--; break;
 			}
 			data->tracks[count].sector_offset = m*60*75 + s*75 + f;
+			// pregap from INDEX 00 -> INDEX 01 delta (chdman INDEX00-style cue)
+			// KNOWN BUG: bins are pure track data (verified: Sonic t2.bin = 465
+			// sectors = CHD FRAMES, no pregap inside), so for INDEX00-style cues
+			// sector_offset must be forced to 0 and no length subtracted; as-is
+			// this leaves offset=150 -> skips 150 real audio sectors (Sonic t2
+			// reads 315/465). Lunar is unaffected (PREGAP-directive cue, offset 0).
+			if (have_idx00 && data->tracks[count].sector_offset > idx00_lba
+			    && data->tracks[count].pregap == 0)
+				data->tracks[count].pregap =
+					data->tracks[count].sector_offset - idx00_lba;
 			// some strange .cues may need this
 			if (data->tracks[count].fname != NULL && strcmp(data->tracks[count].fname, current_file) != 0)
 			{
@@ -405,8 +431,11 @@ file_ok:
 			// by looking at some .cues produced by some programs I've decided that..
 			if (BEGINS(buff, "PREGAP "))
 				data->tracks[count].pregap = m*60*75 + s*75 + f;
-			else
+			else {
 				pending_pregap = m*60*75 + s*75 + f;
+				if (count > 0 && count < 100)
+					cd_track_postgap[count] = m*60*75 + s*75 + f;
+			}
 		}
 		else if (BEGINS(buff, "REM LENGTH ")) // custom "extension"
 		{

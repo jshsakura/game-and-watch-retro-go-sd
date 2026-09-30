@@ -222,6 +222,11 @@ $CC -O2 -Wall -Wextra -std=c11 -DSEGACD_RAM_PROBE \
     tests/test_segacd_ram_probe.c tests/segacd_stubs/stubs.c \
     -o /tmp/mtest/test_segacd_ram_probe || fail "compile test_segacd_ram_probe"
 
+# Sega CD boot helper: the REAL segacd_boot_start.h the firmware loop and the
+# host rig both include (START through the JP/EU BIOS menu, then retire).
+$CC -O2 -Wall -Wextra -std=c11 -ICore/Inc tests/test_segacd_boot_start.c \
+    -o /tmp/mtest/test_segacd_boot_start || fail "compile test_segacd_boot_start"
+
 # System-grid layout: the REAL rg_system_grid_layout.c, which is dependency-free
 # precisely so this links it instead of re-deriving its rules.
 $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Inc/retro-go \
@@ -296,6 +301,7 @@ fi
 [ -x /tmp/mtest/test_sm_ppu_saveload ] && { /tmp/mtest/test_sm_ppu_saveload || fail test_sm_ppu_saveload; }
 [ -x /tmp/mtest/test_rc_dispatch_heap ] && { /tmp/mtest/test_rc_dispatch_heap || fail test_rc_dispatch_heap; }
 /tmp/mtest/test_segacd_ram_probe || fail test_segacd_ram_probe
+/tmp/mtest/test_segacd_boot_start || fail test_segacd_boot_start
 
 # === colour tab icons: stored bbox must match its array and fit its box ====
 # gui_draw_color_icon() indexes data[] by bw*bh and blits at (ox,oy) inside the
@@ -694,6 +700,7 @@ bash tools/cx4_harness/run.sh || fail tools/cx4_harness/run.sh
 
 echo "=== idle power off: one setting, one rule, and every idle loop asks it ==="
 bash tests/test_idle_timeout_wired.sh || fail tests/test_idle_timeout_wired.sh
+bash tests/test_segacd_wired.sh || fail tests/test_segacd_wired.sh
 
 echo "=== boot rescue: a bricked boot must end somewhere a person can act ==="
 # A bad firmware hung the device dark with the power button dead — firmware

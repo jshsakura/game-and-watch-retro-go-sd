@@ -123,6 +123,7 @@ Core/Src/porting/md32x/md32x_fullscreen.h     swap=0 stale=0 prose        # comm
 Core/Src/porting/md32x/md32x_profile.c        swap=0 stale=0 prose        # comments only
 Core/Src/porting/md32x/md32x_profile.h        swap=0 stale=0 prose        # comments only
 Core/Src/porting/md32x/main_md32x.c           swap=1 stale=0 gated        # if (drawFrame) { overlay; lcd_swap(); } -- audited by the 32X session
+Core/Src/porting/segacd/main_segacd.c         swap=1 stale=0 gated        # draw = common_emu_frame_loop(); skipFrame = !draw; if (draw) { palette; overlay; lcd_swap(); }
 Core/Src/porting/snes/main_snes.c             swap=1 stale=0 gated        # if (drawFrame) { present; overlay; lcd_swap(); }
 Core/Src/porting/smw/main_smw.c               swap=1 stale=0 gated        # :482 assigns, :499 if (drawFrame) { DrawPpuFrame(); overlay; :510 lcd_swap(); }. RtlRunFrame() is unconditional; the PPU draw is not
 Core/Src/porting/tamapoke/main_tamapoke.cpp   swap=1 stale=0 gated        # :187 assigns, :204 if (draw_frame) { ui_render(); overlay; :219 lcd_swap(); lcd_clone(); }

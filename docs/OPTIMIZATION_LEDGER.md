@@ -294,17 +294,24 @@ catches this; the device would have caught it later and more expensively.
 
 ## Sega CD
 
-**Folded, 2026-07-24, on a memory fact and not on a bug.** An accurate core needs
-PRG 512 K + Word 256 K = 768 K of *writable* RAM against `RAM_EMU`'s 724 K, and
-XIP does not help RW data. gwenesis only fits by cutting PRG to 128 K, which is
-what breaks the Sub-CPU handshake — so the boot failures were a symptom of the
-budget, not a separate defect to chase. External PSRAM is the only route.
+**Reopened and crossed on device, 2026-09-14.** The old 724 K calculation treated
+the emulator as if every writable page had to live in `RAM_EMU`. The working
+PicoDrive port distributes the 512 K PRG RAM across the LUT8 LCD bonus pool,
+dedicated AHB, AXI and DTCM pages; keeps the 256 K Word RAM in AXI; and splits PCM
+RAM between the real 32 K SRAM4 and AHB. The linker declaration was corrected
+from a fictitious 64 K SRAM4 to the STM32H7B0's actual 32 K.
 
-**And the screen has never come up on the device, not once.** Earlier notes read
-as a regression; they were host-harness results mistaken for device results. The
-CDC/DECI chain analysis that was in flight is kept in
-[SEGACD_INVESTIGATION.md](SEGACD_INVESTIGATION.md) so the next attempt does not
-re-derive it.
+The production path now reaches and runs a legal Sega CD test disc on the real
+console. A 40 s uninterrupted run completed 1,757 emulated frames (43.9 fps),
+then accepted START and continued beyond 5,087 frames with `CFSR=0`; the LCD
+showed the disc's `Hello World!` output. The panel was explicitly driven at
+60 Hz. This proves boot, both 68Ks, CDC/CD image I/O, input and LUT8 video on the
+device. It is a light functional test, not a claim about retail-game frame rate.
+No existing emulator core had to be removed.
+
+The earlier CDC/DECI investigation is retained in
+[SEGACD_INVESTIGATION.md](SEGACD_INVESTIGATION.md) as history, but its proposed
+HLE jump is not part of the working implementation.
 
 **Trap.** A "permanently parked semaphore" was diagnosed from a 60-frame snapshot.
 Live register reads showed the semaphore cycling normally every frame. Sparse
@@ -466,6 +473,31 @@ commands) → Play → RS0=READY, main CPU leaves the comm-bit6 spin into the di
 boot path, and the panel renders the disc boot screen — the first device
 frames of Sega CD on this firmware. Gameplay/audio/perf work is next; the
 measurement campaign follows the 32X playbook.
+
+**Library compatibility, closed on host, 2026-09-30.** The user library is 15
+CHD images; the launcher only registers `cue` for segacd, and on-device CHD
+decode is impossible (~30 KB RAM free vs libchdr's ~150–200 KB), so the shipping
+path is `chdman extractcd --splitbin` via `tools/segacd_chd_convert.sh`. The
+converted images initially all landed in the BIOS menu, and that was **the
+BIOS, not the images**: 12 of the 15 discs are Japanese (region `J`, the JP
+security block with its string at 0x30E, which is where the JP BIOS looks), and
+the Japanese Mega-CD BIOS waits at its menu for START even with a disc in. The
+first diagnosis read that as a broken sector 0 and "repaired" it by pasting the
+US security block over 0x200–0x783. That block is exactly where a JP disc's own
+IP code starts (at 0x356; Lunar's writes the `0x49A1` handshake the sub CPU
+waits for), so the repair erased the game's boot code and made region detection
+pick the US BIOS. Nine games then hung at the first frame of the game with the
+main 68K parked at the BIOS exception stub `0x210` (stacked PC `0xFFFFC008`,
+data, illegal instruction); Lunar 2, a 2048-byte-sector image, was patched at
+2352-byte offsets and only survived by luck. **The script and its template are
+gone.** With the original sector 0 and `segacd_boot_start.h` pressing START
+through the BIOS menu, **15/15 games reach game code on the host by frame 640**,
+Sonic CD included (its "relocated audio" was the same patch damage).
+Two host-rig findings worth keeping: BIOS images
+must be byteswapped for this LSB_FIRST core (the device loader does it; a host
+that skips it executes garbage from the reset vector), and retail games need
+600–1500 frames before the BIOS finishes its background disc check — a 600-frame
+window misreads a booting disc as rejected.
 
 ## CPS-1
 

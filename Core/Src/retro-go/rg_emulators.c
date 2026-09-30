@@ -30,6 +30,7 @@
 #include "main_wswan.h"
 #include "main_snes.h"
 #include "main_md32x.h"
+#include "porting/segacd/main_segacd.h"
 #include "main_gwenesis.h"
 #include "main_a7800.h"
 #include "main_vb.h"
@@ -1875,12 +1876,10 @@ extern uint8_t _OVERLAY_MD32X_ITC_LMA_OFFSET;
 extern uint8_t _OVERLAY_MD32X_ITC_SIZE;
 static const emu_dispatch_t emu_md32x   = { "/cores/32x.bin",    &_OVERLAY_MD32X_BSS_START,   (uint32_t)&_OVERLAY_MD32X_BSS_SIZE,   (uint32_t)&_OVERLAY_MD32X_SIZE,   0, EMU_ENTRY(app_main_md32x),
                                             __md32x_itc_start__, (uint32_t)&_OVERLAY_MD32X_ITC_LMA_OFFSET, (uint32_t)&_OVERLAY_MD32X_ITC_SIZE };
-/* SEGACD overlay symbols come from gw_linker.h (8e47e219) — local externs
- * here had different types once and hid the missing declarations. */
-extern int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot);
-#if SEGACD_ENABLED
-static const emu_dispatch_t emu_segacd = { "/cores/segacd.bin", &_OVERLAY_SEGACD_BSS_START, (uint32_t)&_OVERLAY_SEGACD_BSS_SIZE, (uint32_t)&_OVERLAY_SEGACD_SIZE, 0, EMU_ENTRY(app_main_segacd), 0, 0, 0, 0, 0, 0, (void *)__ram_emu_segacd_start__ };
-#endif
+/* SEGACD overlay symbols come from gw_linker.h (8e47e219); the entry point's
+ * prototype from main_segacd.h. The PicoDrive core links at __RAM_EMU_START__
+ * like every other overlay, so it needs no code_dest. */
+static const emu_dispatch_t emu_segacd  = { "/cores/segacd.bin", &_OVERLAY_SEGACD_BSS_START,  (uint32_t)&_OVERLAY_SEGACD_BSS_SIZE,  (uint32_t)&_OVERLAY_SEGACD_SIZE,  0, EMU_ENTRY(app_main_segacd) };
 #endif
 static const emu_dispatch_t emu_a2600   = { "/cores/a2600.bin",   &_OVERLAY_A2600_BSS_START,   (uint32_t)&_OVERLAY_A2600_BSS_SIZE,   (uint32_t)&_OVERLAY_A2600_SIZE,   (uint32_t)&_OVERLAY_A2600_BSS_END, EMU_ENTRY(app_main_a2600) };
 static const emu_dispatch_t emu_lynx    = { "/cores/lynx.bin",    &_OVERLAY_LYNX_BSS_START,    (uint32_t)&_OVERLAY_LYNX_BSS_SIZE,    (uint32_t)&_OVERLAY_LYNX_SIZE,    (uint32_t)&_OVERLAY_LYNX_BSS_END, EMU_ENTRY(app_main_lynx) };
@@ -2016,9 +2015,7 @@ void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_pau
 #endif
 #if SD_CARD == 1
     } else if(strcmp(system_name, "Sega CD") == 0)  {
-#if SEGACD_ENABLED
         run_internal_emu(&emu_segacd, load_state, start_paused, save_slot);
-#endif
 #endif
     } else if(strcmp(system_name, "Sega Genesis") == 0)  {
         run_internal_emu(&emu_md, load_state, start_paused, save_slot);
@@ -2301,9 +2298,7 @@ void emulators_init()
      * 16-bit-word-swapped), like SM/SNES self-cache. */
 #if SD_CARD == 1
     add_emulator("Sega 32X", "32x", "32x", RG_LOGO_PAD_32X, RG_LOGO_HEADER_32X, NO_GAME_DATA);
-#if SEGACD_ENABLED
     add_emulator("Sega CD", "segacd", "cue", RG_LOGO_PAD_SEGACD, RG_LOGO_HEADER_SEGACD, NO_GAME_DATA);
-#endif
 #endif
     add_emulator("Sega Game Gear", "gg", "gg lzma", RG_LOGO_PAD_GG, RG_LOGO_HEADER_GG, NO_GAME_DATA);
     add_emulator("Sega Genesis", "md", "md gen bin lzma", RG_LOGO_PAD_GEN, RG_LOGO_HEADER_GEN, GAME_DATA_BYTESWAP_16);

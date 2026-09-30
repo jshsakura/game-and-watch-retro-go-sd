@@ -1,682 +1,497 @@
-/* Sega/Mega CD — device porting layer, phase 5. Modeled 1:1 on
- * Core/Src/porting/pce/main_pce.c (app_main_pce): odroid_system_init +
- * emu_init(Load/Save/Screenshot/sleep/sram), then the frame loop, with the same
- * CD idioms — cue auto-start, per-frame CD tick, CD-DA prefetch in the sound
- * wait, magic-stamped savestate blocks for the CD RAM.
- *
- * Compiles as part of the full firmware build (needs APPID_SEGACD in appid.h and
- * the Makefile/linker-overlay wiring — the remaining mechanical phase-5 steps).
- * The base Mega Drive frame (main 68K + Z80 + VDP + YM/SN) reuses the gwenesis
- * core; this file adds the second 68K, the CDD tick and the CD audio mix.
- */
-#include <stdio.h>
-#include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <stdarg.h>
 
 #include "odroid_system.h"
+#include "odroid_overlay.h"
 #include "common.h"
 #include "gw_lcd.h"
-#include "gw_ofw.h"
-#include "rom_manager.h"
-#include "appid.h"
-#include "stm32h7xx_hal.h"
-
-#include "gwenesis_bus.h"
-#include "odroid_settings.h"
-#include "gwenesis_vdp.h"
-#include "gwenesis_savestate.h"
-#include "gwenesis_io.h"
 #include "gw_linker.h"
 #include "gw_malloc.h"
-#include "m68k.h"
-#include "segacd.h"
+#include "rom_manager.h"
+#include "rg_storage.h"
+#include "gw_flash_alloc.h"
+#include "appid.h"
+#include "odroid_settings.h"
+#include "gw_ofw.h"
 
-/* base gwenesis frame (defined in the gwenesis porting layer / shared) */
-void gwenesis_md_frame(bool draw_frame);   /* implemented below */
-extern int16_t gwenesis_ym2612_buffer[];
-extern int16_t gwenesis_sn76489_buffer[];
+#include "pico/pico_types.h"
+#include "pico/pico.h"
+#include "pico/pico_int.h"
+#include "pico/state.h"
+#include "porting/segacd/segacd_boot_start.h"
+#include "porting/segacd/segacd_config.h"
 
-#define SEGACD_SAMPLE_RATE 53267   /* NTSC audio rate, matches gwenesis */
+#define SEGACD_AUDIO_RATE   44100
+#define SEGACD_AUDIO_MAX    (SEGACD_AUDIO_RATE / 50 + 16)
+#define SEGACD_STATE_MAGIC  0x53434450u /* SCDP */
+#define SEGACD_STATE_VER    1u
+#define SEGACD_CODE_BASE    0xDF000000u
+#define SEGACD_XIP_PATH     "/cores/segacd.xip"
+#define SEGACD_STATE_TMP_SIZE 18772u
 
-/* CDD ticks at a fixed 75Hz on real hardware (CD sector rate), independent of
- * the 50/60Hz video frame rate — NOT 1:1 with the video frame. Real hardware
- * and PicoDrive (pcd_cdc_event, cycle-scheduled) drive it at true 75Hz;
- * running it once per video frame instead gave 60Hz (NTSC) — 20% slow — which
- * widens the window MAIN has to write a new CDD command before the drive's
- * own next tick would have completed the previous one (PicoDrive's cmd=3/4
- * handlers are a 2-tick state-machine: tick 1 stages RS + arms a pending
- * flag and returns, tick 2 does the real seek — only if MAIN hasn't already
- * overwritten the command register in between). A slow tick rate gives MAIN
- * more real time per tick to intervene, which is exactly the failure mode
- * observed: MAIN rewrites the CDD command back to 0 one video frame (would
- * be <1 real CDD tick at true 75Hz) after issuing seek/play. */
-extern int mode_pal;
-static int s_cdd_tick_accum;
+/* The large memories are intentionally independent objects. PicoCreateMCD
+ * requests them through plat_mmap's tagged addresses, allowing the pages to
+ * live in four physical SRAM domains. */
+static uint8_t segacd_prg_axi[3][0x10000] __attribute__((aligned(4)));
+static uint8_t segacd_word_ram[0x40000] __attribute__((aligned(4)));
+static uint8_t segacd_sram4_pcm[0x8000]
+  __attribute__((section(".segacd_sram4"), aligned(32)));
+static uint8_t segacd_ahb_fixed_prg[0x10000]
+  __attribute__((section(".segacd_ahb"), aligned(32)));
 
-static char s_cue_path[512];
-static char s_bram_path[540];
-static int  s_cd_state_loaded;
+static uint8_t *segacd_lcd_bonus;
+static size_t segacd_lcd_bonus_size;
+static void *segacd_state_mem;
+static void *segacd_ahb_prg;
+static void *segacd_dtcm_prg;
+static void *segacd_pcm_mem;
+static void *segacd_state_tmp;
+static short segacd_snd[SEGACD_AUDIO_MAX];
+static uint32_t segacd_clut[256];
 
-/* Region BIOS as an external read-only pointer: the build wiring XIPs it from
- * flash (store_file_in_flash_relocate) and sets this, so BIOS costs 0 RAM.
- * Weak default NULL until that wiring lands (phase-5 finish). */
-const uint8_t *segacd_bios __attribute__((weak)) = 0;
-
-static void segacd_bram_path(void)
+/* Device-side state chunks use the LCD pool tail. This avoids asking the
+ * remaining DTCM heap for a large transient block after PRG RAM and the CD
+ * image descriptor have already been allocated. The weak PicoDrive default
+ * still uses malloc in host builds. */
+void *gnw_mcd_state_alloc(size_t size)
 {
-    snprintf(s_bram_path, sizeof(s_bram_path), "%s.brm", ACTIVE_FILE->path);
+  if (size <= SEGACD_STATE_TMP_SIZE) {
+    if (segacd_state_tmp == NULL)
+      segacd_state_tmp = ahb_only_malloc(SEGACD_STATE_TMP_SIZE);
+    return segacd_state_tmp;
+  }
+  return NULL;
 }
 
-/* gwenesis_io.c (shared MD/32X/SegaCD engine) calls this on every emulated
- * joypad-port read to refresh button_state[] from the host gamepad — every
- * porting layer that uses the gwenesis engine must define it (see
- * Core/Src/porting/segacd/../gwenesis/main_gwenesis.c for the MD original).
- * segacd/ never had its own copy: the reference was silently missing, the
- * linker resolved it to MD's overlay (both overlays share the same RAM_EMU
- * VMA — see CLAUDE.md "Cores are overlays"), and on real hardware MD's
- * overlay is not loaded when SegaCD runs, so no button press ever reached
- * the emulated console. 0720 night 22 finding.
- *
- * Buttons come from the runtime keymap (Controls dialog in the settings
- * menu): Sega CD shares APPID_MD's profile and /KEYMAP storage — the Sega CD
- * pad IS the Genesis 6-button pad (see keymap_profiles in odroid_settings.c).
- * The 6-button extra bits (Z/Y/X/Mode, active-low) ride the TH handshake
- * protocol implemented in gwenesis_io.c; gwenesis_io_6button_reset() is
- * called once per emulated frame from the frame loop below. */
-void gwenesis_io_get_buttons()
-{
-    odroid_gamepad_state_t host_joystick;
-    odroid_input_read_gamepad(&host_joystick);
+void gnw_mcd_state_free(void *ptr) { (void)ptr; }
 
-    /* The menu shortcut must not leak into the emulated pad. On Mario units
-     * the frame loop swaps TIME and PAUSE/SET for the common menu handler, so
-     * the raw TIME key is the shortcut; Zelda units use raw PAUSE/SET. */
-    if (get_ofw_is_mario()) {
-        if (host_joystick.values[ODROID_INPUT_SELECT]) return;
-    } else {
-        if (host_joystick.values[ODROID_INPUT_VOLUME]) return;
+void *plat_mmap(unsigned long addr, size_t size, int need_exec, int is_fixed)
+{
+  (void)need_exec; (void)is_fixed;
+  if (addr == 0x05000000 && size == sizeof(mcd_state)) {
+    if (segacd_state_mem == NULL) segacd_state_mem = ahb_calloc(1, size);
+    return segacd_state_mem;
+  }
+  if (addr == 0x05100000 && size == 0x10000)
+    return segacd_lcd_bonus_size >= 0x10000 ? segacd_lcd_bonus : NULL;
+  if (addr >= 0x05200000 && addr < 0x05280000 && size == 0x10000) {
+    unsigned page = (unsigned)((addr - 0x05200000) >> 16);
+    if (page == 0) return segacd_lcd_bonus_size >= 0x20000 ? segacd_lcd_bonus + 0x10000 : NULL;
+    if (page == 1) return segacd_lcd_bonus_size >= 0x30000 ? segacd_lcd_bonus + 0x20000 : NULL;
+    if (page == 2) return segacd_ahb_fixed_prg;
+    if (page == 3) {
+      if (segacd_ahb_prg == NULL) segacd_ahb_prg = ahb_calloc(1, 0x10000);
+      return segacd_ahb_prg;
     }
-
-    button_state[0] = host_joystick.values[ODROID_INPUT_UP]    << PAD_UP    |
-                       host_joystick.values[ODROID_INPUT_DOWN]  << PAD_DOWN  |
-                       host_joystick.values[ODROID_INPUT_LEFT]  << PAD_LEFT  |
-                       host_joystick.values[ODROID_INPUT_RIGHT] << PAD_RIGHT |
-                       odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_A)     << PAD_A |
-                       odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_B)     << PAD_B |
-                       odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_C)     << PAD_C |
-                       odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_START) << PAD_S;
-
-    button_state[0] = ~button_state[0];
-
-    /* Six-button extras, active-low like button_state itself. */
-    button_state_extra[0] = (unsigned char)~(
-        odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_Z)          |
-        odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_Y) << 1     |
-        odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_X) << 2     |
-        odroid_keymap_pressed(&host_joystick, ODROID_KEYMAP_MD_MODE) << 3);
+    if (page < 7) return segacd_prg_axi[page - 4];
+    if (segacd_dtcm_prg == NULL) segacd_dtcm_prg = calloc(1, 0x10000);
+    return segacd_dtcm_prg;
+  }
+  if (addr == 0x05300000 && size == sizeof(segacd_word_ram))
+    return segacd_word_ram;
+  if (addr == 0x05400000 && size == 0x8000)
+    return segacd_sram4_pcm;
+  if (addr == 0x05408000 && size == 0x8000) {
+    if (segacd_pcm_mem == NULL) {
+      segacd_pcm_mem = ahb_only_malloc(size);
+      if (segacd_pcm_mem) memset(segacd_pcm_mem, 0, size);
+    }
+    return segacd_pcm_mem;
+  }
+  if (addr == 0x05500000 && size == 0x2000)
+    return calloc(1, size);
+  return malloc(size);
 }
 
-/* ---- savestate: base MD state + magic-stamped CD RAM (PCE pattern) ---- */
-#define MAGIC_SCDR 0x53434452u   /* 'SCDR' : PRG/Word/PCM RAM + regs */
-#define MAGIC_SCDD 0x53434444u   /* 'SCDD' : CDD position + PCM chan state */
+void *plat_mremap(void *ptr, size_t oldsize, size_t newsize)
+{ (void)oldsize; return realloc(ptr, newsize); }
+void plat_munmap(void *ptr, size_t size) { (void)ptr; (void)size; }
+int plat_mem_set_exec(void *ptr, size_t size) { (void)ptr; (void)size; return 0; }
 
-static bool SaveState(const char *pathName)
+void lprintf(const char *fmt, ...)
 {
-    FILE *f = fopen(pathName, "wb");
-    if (!f) return false;
+  va_list ap; va_start(ap, fmt); vprintf(fmt, ap); va_end(ap);
+}
 
-    /* base Mega Drive state first (gwenesis savestate), then CD blocks. */
-    extern void gwenesis_save_state(FILE *file);
-    gwenesis_savestate_write_file_header(f);
-    gwenesis_save_state(f);
+unsigned int crc32_le(unsigned int crc, const unsigned char *buf, unsigned int len);
+unsigned long crc32(unsigned long crc, const unsigned char *buf, unsigned int len)
+{ return crc32_le((unsigned int)crc, buf, len); }
 
-    uint32_t tag = MAGIC_SCDR;
-    fwrite(&tag, 4, 1, f);
-    /* PRG-RAM is page[8]-backed and non-contiguous (7 AXI + 1 DTCM): dump
-     * whole pages in guest order — the file stays a flat 512 KiB image. */
-    for (int p = 0; p < SEGACD_PRG_PAGE_COUNT; p++)
-        fwrite(SCD.prg_page[p], SEGACD_PRG_PAGE_SIZE, 1, f);
-    fwrite(SCD.word_ram, SEGACD_WORD_RAM_SIZE, 1, f);
-    fwrite(SCD.pcm_ram,  SEGACD_PCM_RAM_SIZE,  1, f);
-    fwrite(SCD.s68k_regs, sizeof(SCD.s68k_regs), 1, f);
-    fwrite(SCD.bram,      sizeof(SCD.bram),      1, f);
+void *openzip(const char *path) { (void)path; return NULL; }
+void closezip(void *zip) { (void)zip; }
+int readzip(void *zip) { (void)zip; return -1; }
+int seekcompresszip(void *zip, void *ent) { (void)zip; (void)ent; return -1; }
+int inflateInit2_(void *s, int w, const char *v, int n)
+{ (void)s; (void)w; (void)v; (void)n; return -2; }
+int inflate(void *s, int f) { (void)s; (void)f; return -2; }
+int inflateReset(void *s) { (void)s; return -2; }
+int inflateEnd(void *s) { (void)s; return 0; }
+void PicoDrawSetOutputSMS(pdso_t which) { (void)which; }
+void PicoDoHighPal555SMS(void) {}
+void PicoDraw2SetOutBuf(void *dest, int increment) { (void)dest; (void)increment; }
+void PicoDraw2Init(void) { PicoDraw2SetOutBuf(NULL, 0); }
+void PicoFrameFull(void) {}
+/* PicoFrameStart calls this when the game changes H40/H32 or 224/240 lines,
+ * before any line of the new mode is drawn. The margins the new mode no
+ * longer covers would keep the old mode's pixels, so wipe the whole frame to
+ * the pinned-black index; this frame's lines then draw over it. */
+void emu_video_mode_change(int sl, int lc, int sc, int cc)
+{
+  (void)sl; (void)lc; (void)sc; (void)cc;
+  memset(framebuffer1, SEGACD_BORDER_INDEX, 320u * 240u);
+}
 
-    tag = MAGIC_SCDD;
-    fwrite(&tag, 4, 1, f);
-    fwrite(&SCD.sub_ctx, sizeof(SCD.sub_ctx), 1, f);   /* sub-CPU registers */
-    fwrite(&SCD.pcm,     sizeof(SCD.pcm),     1, f);
-    fwrite(&SCD.prg_bank, 1, 1, f);
-    fwrite(&SCD.word_mode, 1, 1, f);
-    fwrite(&SCD.word_owner, 1, 1, f);
-    fwrite(&SCD.sub_running, sizeof(int), 1, f);
+/* Cartridge-only hardware and compressed CD-audio backends are not part of
+ * the first device bring-up. BIN/WAV CDDA and all data tracks remain usable. */
+void PicoSVPInit(void) {}
+void PicoSVPStartup(void) {}
+int mp3_get_bitrate(void *f, int size) { (void)f; (void)size; return -1; }
+void mp3_start_play(void *f, int pos) { (void)f; (void)pos; }
+void mp3_update(int32_t *buffer, int length, int stereo)
+{ (void)buffer; (void)length; (void)stereo; }
 
+static void segacd_set_out(void)
+{
+  /* PicoDrive can touch the full 240-line output even for a 224-line NTSC
+   * mode. Starting at row 8 would overwrite the LCD bonus pool immediately
+   * following the 76,800-byte LUT8 framebuffer (where the BIOS lives). */
+  PicoDrawSetOutBuf(framebuffer1, 320);
+}
+
+static void segacd_push_palette(void);
+
+/* The shared pause dialog always calls repaint. A NULL callback jumps through
+ * address zero on device. With one framebuffer there is no clean back buffer
+ * to reconstruct; keep the last emulated image and refresh its palette. */
+static void segacd_repaint(void)
+{
+  segacd_set_out();
+  segacd_push_palette();
+}
+
+static void segacd_push_palette(void)
+{
+  PicoDrawUpdateHighPal();
+  for (unsigned i = 0; i < 256; i++) {
+    uint16_t c = Pico.est.HighPal[i];
+    uint32_t r = ((c >> 11) & 0x1f) * 255 / 31;
+    uint32_t g = ((c >> 5) & 0x3f) * 255 / 63;
+    uint32_t b = (c & 0x1f) * 255 / 31;
+    segacd_clut[i] = (r << 16) | (g << 8) | b;
+  }
+  lcd_set_clut_full(segacd_clut, 256);
+}
+
+static void segacd_write_sound(int len)
+{
+  len >>= 1;
+  int16_t *dst = audio_get_active_buffer();
+  uint16_t cap = audio_get_buffer_length();
+  if (common_emu_sound_loop_is_muted()) return;
+  int32_t factor = common_emu_sound_get_volume();
+  uint16_t n = len < cap ? (uint16_t)len : cap;
+  for (uint16_t i = 0; i < n; i++)
+    dst[i] = (int16_t)(((int32_t)segacd_snd[i] * factor) >> 8);
+  for (uint16_t i = n; i < cap; i++) dst[i] = 0;
+}
+
+/* The Sega CD pad is the Genesis 6-button pad and shares APPID_MD's keymap
+ * (odroid_settings.c keymap_profiles), so the in-game Controls dialog remaps
+ * it. PicoIn.pad bit layout is "MXYZ SACB RLDU". Read from the RAW pad, before
+ * the Mario TIME/PAUSE swap, exactly like main_gwenesis.c: while the menu
+ * shortcut key is held nothing reaches the console. */
+static uint16_t segacd_pad(const odroid_gamepad_state_t *j)
+{
+  if (j->values[get_ofw_is_mario() ? ODROID_INPUT_SELECT : ODROID_INPUT_VOLUME])
+    return 0;
+  uint16_t p = 0;
+  if (j->values[ODROID_INPUT_UP])    p |= 1u << 0;
+  if (j->values[ODROID_INPUT_DOWN])  p |= 1u << 1;
+  if (j->values[ODROID_INPUT_LEFT])  p |= 1u << 2;
+  if (j->values[ODROID_INPUT_RIGHT]) p |= 1u << 3;
+  if (odroid_keymap_pressed(j, ODROID_KEYMAP_MD_B))     p |= 1u << 4;
+  if (odroid_keymap_pressed(j, ODROID_KEYMAP_MD_C))     p |= 1u << 5;
+  if (odroid_keymap_pressed(j, ODROID_KEYMAP_MD_A))     p |= 1u << 6;
+  if (odroid_keymap_pressed(j, ODROID_KEYMAP_MD_START)) p |= 1u << 7;
+  if (odroid_keymap_pressed(j, ODROID_KEYMAP_MD_Z))     p |= 1u << 8;
+  if (odroid_keymap_pressed(j, ODROID_KEYMAP_MD_Y))     p |= 1u << 9;
+  if (odroid_keymap_pressed(j, ODROID_KEYMAP_MD_X))     p |= 1u << 10;
+  if (odroid_keymap_pressed(j, ODROID_KEYMAP_MD_MODE))  p |= 1u << 11;
+  return p;
+}
+
+static void segacd_swap_menu_keys(odroid_gamepad_state_t *j)
+{
+  uint8_t key = j->values[ODROID_INPUT_VOLUME];
+  j->values[ODROID_INPUT_VOLUME] = j->values[ODROID_INPUT_SELECT];
+  j->values[ODROID_INPUT_SELECT] = key;
+}
+
+/* ---- backup RAM -----------------------------------------------------------
+ * The console's internal 8K BRAM is where Sega CD games keep their saves, and
+ * PicoDrive formats it blank at every power-on. It lives in <rom>.brm (the
+ * SRAM path every core uses), is loaded once the disc is in, and is written
+ * back whenever its contents change -- checked once a second, so a save made
+ * in-game survives pulling the battery, not only a clean exit -- and from the
+ * shutdown/sleep hook. */
+#define SEGACD_BRAM_SIZE        0x2000u
+#define SEGACD_BRAM_CHECK_EVERY 60u
+static uint32_t segacd_bram_crc;
+
+static uint32_t segacd_bram_hash(void)
+{
+  return crc32_le(0, Pico_mcd->bram, SEGACD_BRAM_SIZE);
+}
+
+extern unsigned char formatted_bram[4 * 0x10];
+
+/* What PicoPowerMCD leaves in BRAM: blank, with the format footer at the end. */
+static void segacd_bram_format(void)
+{
+  memset(Pico_mcd->bram, 0, SEGACD_BRAM_SIZE);
+  memcpy(Pico_mcd->bram + SEGACD_BRAM_SIZE - sizeof(formatted_bram),
+         formatted_bram, sizeof(formatted_bram));
+}
+
+static void segacd_bram_load(void)
+{
+  char *path = odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path);
+  if (path == NULL) return;
+  FILE *f = fopen(path, "rb");
+  if (!f) segacd_bram_format();
+  else {
+    /* Only a whole image replaces the formatted default: a short file would
+     * leave a half-old, half-blank BRAM that the BIOS treats as corrupt. No
+     * staging buffer -- the DTCM heap already holds a PRG page. */
+    if (fseek(f, 0, SEEK_END) == 0 && ftell(f) == (long)SEGACD_BRAM_SIZE &&
+        fseek(f, 0, SEEK_SET) == 0)
+      (void)fread(Pico_mcd->bram, 1, SEGACD_BRAM_SIZE, f);
     fclose(f);
-    return true;
+  }
+  free(path);
+  segacd_bram_crc = segacd_bram_hash();
 }
 
-static bool LoadState(const char *pathName)
+static void segacd_bram_save(void)
 {
-    FILE *f = fopen(pathName, "rb");
-    if (!f) { s_cd_state_loaded = 0; return false; }
-
-    unsigned char hdr[GWENESIS_SAVESTATE_HEADER_SIZE];
-    if (fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr)) { fclose(f); return false; }
-    int ver = gwenesis_savestate_version_from_header(hdr);
-    extern void gwenesis_load_state(FILE *file, int ss_version);
-    gwenesis_load_state(f, ver);
-
-    uint32_t tag = 0;
-    /* CD RAM block — refuse anything not stamped by this build (research rule). */
-    if (fread(&tag, 4, 1, f) == 1 && tag == MAGIC_SCDR) {
-        for (int p = 0; p < SEGACD_PRG_PAGE_COUNT; p++)
-            fread(SCD.prg_page[p], SEGACD_PRG_PAGE_SIZE, 1, f);
-        fread(SCD.word_ram, SEGACD_WORD_RAM_SIZE, 1, f);
-        fread(SCD.pcm_ram,  SEGACD_PCM_RAM_SIZE,  1, f);
-        fread(SCD.s68k_regs, sizeof(SCD.s68k_regs), 1, f);
-        fread(SCD.bram,      sizeof(SCD.bram),      1, f);
-    }
-    if (fread(&tag, 4, 1, f) == 1 && tag == MAGIC_SCDD) {
-        fread(&SCD.sub_ctx, sizeof(SCD.sub_ctx), 1, f);
-        fread(&SCD.pcm,     sizeof(SCD.pcm),     1, f);
-        fread(&SCD.prg_bank, 1, 1, f);
-        fread(&SCD.word_mode, 1, 1, f);
-        fread(&SCD.word_owner, 1, 1, f);
-        fread(&SCD.sub_running, sizeof(int), 1, f);
-    }
-    fclose(f);
-
-    /* CRITICAL: SCD.sub_ctx.memory_map holds POINTERS into prg_page[]/word_ram.
-     * On a cold-boot load those allocations may sit at different addresses, so
-     * the saved map is stale — rebuild it from the live RAM (registers/PC keep
-     * their loaded values). Same rule that bit One Piece: load restores state,
-     * not the pointer caches derived from it. Main map likewise re-applied. */
-    segacd_sub_build_memory_map();
-    segacd_main_map_cd_space();
-
-    s_cd_state_loaded = 1;
-    return true;
+  uint32_t crc = segacd_bram_hash();
+  if (crc == segacd_bram_crc) return;
+  char *path = odroid_system_get_path(ODROID_PATH_SAVE_SRAM, ACTIVE_FILE->path);
+  if (path == NULL) return;
+  FILE *f = fopen(path, "wb");
+  if (f) {
+    bool ok = fwrite(Pico_mcd->bram, 1, SEGACD_BRAM_SIZE, f) == SEGACD_BRAM_SIZE;
+    if (fclose(f) != 0) ok = false;
+    if (ok) segacd_bram_crc = crc;   /* a failed write is retried next check */
+  }
+  free(path);
 }
 
-static void *Screenshot(void) { return NULL; }
-static void sleep_wake_up(void) {}
-static void sram_save_cb(void) { segacd_bram_save(s_bram_path); }
+static size_t state_read(void *p, size_t s, size_t n, void *f) { return fread(p,s,n,(FILE *)f); }
+static size_t state_write(void *p, size_t s, size_t n, void *f) { return fwrite(p,s,n,(FILE *)f); }
+static size_t state_eof(void *f) { return (size_t)feof((FILE *)f); }
+static int state_seek(void *f, long o, int w) { return fseek((FILE *)f,o,w); }
 
-extern void blit(void);   /* provided by the gwenesis blit path */
-extern uint8_t *odroid_overlay_cache_file_in_flash_relocate(const char *file_path, uint32_t *file_size_p, bool byte_swap, void (*relocate_cb)(uint8_t *, uint32_t, uint32_t, uint8_t *, uint32_t));
-extern uint8_t *odroid_overlay_cache_file_in_flash(const char *file_path, uint32_t *file_size_p, bool byte_swap);
+static bool segacd_save(const char *path)
+{
+  uint32_t h[2] = { SEGACD_STATE_MAGIC, SEGACD_STATE_VER };
+  FILE *f = fopen(path, "wb");
+  if (!f) return false;
+  bool ok = fwrite(h, sizeof(h), 1, f) == 1 &&
+    PicoStateFP(f, 1, state_read, state_write, state_eof, state_seek) == 0;
+  if (fclose(f) != 0) ok = false;
+  if (!ok) remove(path);
+  return ok;
+}
 
-#define SEGACD_CODE_BASE  0xDEC80000u
-#define SEGACD_XIP_PATH   "/cores/segacd.xip"
+static bool segacd_load(const char *path)
+{
+  uint32_t h[2];
+  FILE *f = fopen(path, "rb");
+  if (!f) return false;
+  /* A savestate carries BRAM, but BRAM is the game's own save file and must
+   * not be rolled back by loading an older snapshot: flush it first, then put
+   * the file's contents back over whatever the state held. */
+  segacd_bram_save();
+  bool ok = fread(h, sizeof(h), 1, f) == 1 && h[0] == SEGACD_STATE_MAGIC &&
+    h[1] == SEGACD_STATE_VER &&
+    PicoStateFP(f, 0, state_read, state_write, state_eof, state_seek) == 0;
+  fclose(f);
+  segacd_bram_load();
+  if (ok) {
+    memset(framebuffer1, SEGACD_BORDER_INDEX, 320u * 240u);
+    segacd_set_out();
+    segacd_push_palette();
+  }
+  return ok;
+}
 
-static uint8_t *g_xip_addr;
-static uint32_t g_xip_size;
-static int32_t  g_xip_offset;
+static void *segacd_screenshot(void) { lcd_wait_for_vblank(); return framebuffer1; }
+static int segacd_fps = 60;
+static void segacd_sleep_wake(void)
+{
+  common_emu_auto_oc(2);
+  audio_start_playing(SEGACD_AUDIO_RATE / segacd_fps);
+}
 
-static int PatchSegaCdSentinels(uint32_t *start, uint32_t *end, int32_t offset, uint32_t size) {
-  int patched = 0;
-  for (uint32_t *p = start; p < end; p++) {
+static int patch_sentinels(uint32_t *p, uint32_t *end, int32_t off, uint32_t size)
+{
+  int n = 0;
+  while (p < end) {
     uint32_t v = *p;
     if ((v & ~1u) >= SEGACD_CODE_BASE && (v & ~1u) < SEGACD_CODE_BASE + size) {
-      *p = (uint32_t)(v + offset);
-      patched++;
+      *p = v + off; n++;
     }
+    p++;
   }
-  return patched;
+  return n;
 }
 
-static void SegaCdRelocateXip(uint8_t *buffer, uint32_t length, uint32_t offset_in_file,
-                              uint8_t *file_address, uint32_t file_size) {
-  (void)offset_in_file;
-  int32_t offset = (int32_t)((uint32_t)file_address - SEGACD_CODE_BASE);
-  PatchSegaCdSentinels((uint32_t *)buffer, (uint32_t *)(buffer + (length & ~3u)), offset, file_size);
+static void relocate_xip(uint8_t *buf, uint32_t len, uint32_t file_off,
+                         uint8_t *file_addr, uint32_t file_size)
+{
+  (void)file_off;
+  int32_t off = (int32_t)((uintptr_t)file_addr - SEGACD_CODE_BASE);
+  patch_sentinels((uint32_t *)buf, (uint32_t *)(buf + (len & ~3u)), off, file_size);
 }
 
-static bool SegaCdCacheXipToFlash(void) {
-  g_xip_size = 0;
-  g_xip_addr = odroid_overlay_cache_file_in_flash_relocate(SEGACD_XIP_PATH, &g_xip_size, false,
-                                                           &SegaCdRelocateXip);
-  if (g_xip_addr == NULL || g_xip_size == 0) {
-    printf("segacd: %s missing\n", SEGACD_XIP_PATH);
-    return false;
-  }
-  g_xip_offset = (int32_t)((uint32_t)g_xip_addr - SEGACD_CODE_BASE);
-  printf("segacd: xip blob at %p, %lu bytes, offset 0x%08lX\n",
-         g_xip_addr, (unsigned long)g_xip_size, (unsigned long)g_xip_offset);
-  
-  /* Gate-6 placement: .overlay_segacd lives at 0x24025800, BELOW
-   * __RAM_EMU_START__ (0x2404b000) -- the tag's patch range started at
-   * RAM_EMU because that IS where the overlay lived. Patching from there
-   * left this core's own veneer literals holding raw SEGACD_CODE sentinel
-   * addresses (0xDEC8xxxx, unmapped at runtime), so the first out-of-line
-   * takes an IACCVIOL MemManage fault. Start at the overlay's own base instead.
-   * NOTE the array-typed extern: __ram_emu_segacd_start__ is declared like
-   * __RAM_EMU_START__ (void *x[]) so the name alone IS the address. An earlier
-   * scalar-extern version made the value a dereference of the first code word;
-   * the compiler emitted `ldr r3,[r3,#0]`, the loop compared 0x47702000 >=
-   * 0x24100000, skipped itself entirely, and the first veneer still held a
-   * raw sentinel. */
-  PatchSegaCdSentinels((uint32_t *)__ram_emu_segacd_start__, (uint32_t *)__RAM_EMU_END__, g_xip_offset, g_xip_size);
-
-  /* Self-modified code needs cache coherence: main.c enables BOTH caches, so
-   * the patched veneer literals above may still sit in dirty D-cache lines
-   * while the I-fetch re-reads the raw sentinel (0xDEC8xxxx) from AXI SRAM ->
-   * MemManage IACCVIOL on the first out-of-line call. The tag never ran this
-   * path on a device (issue #31: no verified frame) so it never paid this
-   * debt. Push the stores out, then drop stale I-lines, before returning. */
-  __DSB();
-  SCB_CleanDCache();
-  __DSB();
-  SCB_InvalidateICache();
-  __ISB();
+static bool cache_xip(void)
+{
+  uint32_t size = 0;
+  uint8_t *addr = odroid_overlay_cache_file_in_flash_relocate(
+    SEGACD_XIP_PATH, &size, false, relocate_xip);
+  if (!addr || !size) return false;
+  int32_t off = (int32_t)((uintptr_t)addr - SEGACD_CODE_BASE);
+  patch_sentinels((uint32_t *)&__RAM_EMU_START__,
+                  (uint32_t *)&_OVERLAY_SEGACD_BSS_START, off, size);
   return true;
 }
 
-/* ---- entry point (called by the launcher, like app_main_pce) ---- */
-/* Breadcrumbs to /segacd_diag.txt -- the md32x/snes /<sys>_diag.txt pattern.
- * Sega CD has never shown a frame on real hardware (it dies at/around frame 1
- * for no visible reason). Each stage appends a line and REWRITES the file, so a
- * crash leaves the last completed stage on the SD -- read it on a PC instead of
- * a BSOD photo. Also printf'd for the on-screen log. Sealed after frame 0: no SD
- * writes during steady play (that corrupts the card). */
-#define SEGACD_DIAG_PATH "/segacd_diag.txt"
-/* gafix 2026-09-19: parked in the AHB tail (.segacd_ahb_static) — see the
- * sector_buf note in segacd_cd.c. Sealed after 5 frames, so cold storage. */
-static char     s_scd_diag[2048] __attribute__((section(".bss.segacd_ahb_buf")));
-static uint16_t s_scd_diag_len;
-static bool     s_scd_diag_sealed;
-static int      s_scd_dbg_first = 1;
-
-static void segacd_diag(const char *fmt, ...)
+static const char *bios_path_for_region(int region)
 {
-    char line[160];
-    va_list ap; va_start(ap, fmt);
-    vsnprintf(line, sizeof(line), fmt, ap);
-    va_end(ap);
-    printf("%s", line);
-    if (s_scd_diag_sealed)
-        return;
-    size_t ll = 0; while (line[ll]) ll++;
-    if (s_scd_diag_len + ll < sizeof(s_scd_diag)) {
-        memcpy(s_scd_diag + s_scd_diag_len, line, ll);
-        s_scd_diag_len = (uint16_t)(s_scd_diag_len + ll);
-    }
+  if (region == 8) return "/bios/segacd/bios_CD_E.bin";
+  if (region == 1 || region == 2) return "/bios/segacd/bios_CD_J.bin";
+  return "/bios/segacd/bios_CD_U.bin";
+}
+
+void app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+{
+  odroid_gamepad_state_t joystick;
+  segacd_boot_start_t boot_start;
+  odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
+  common_emu_state.pause_after_frames = start_paused ? 2 : 0;
+  if (start_paused) odroid_audio_mute(true);
+  common_emu_state.frame_time_10us = 1667;
+  common_emu_auto_oc(2);
+  /* The 64K SRAM4 bank is clock-gated after reset.  One PRG RAM page lives
+   * there; the first memset otherwise raises an imprecise BusFault. */
+  __HAL_RCC_SRDSRAM_CLK_ENABLE();
+  /* A 64K PRG page occupies AHB 0x30000000..0x3000ffff. Other cores' static
+   * AHB overlays end at __ahbram_heap_start__; skip their overlapping tail
+   * before allocating Sega CD's PCM upper half and state scratch. */
+  extern uint8_t __ahbram_heap_start__[];
+  if ((uintptr_t)__ahbram_heap_start__ < 0x30010000u)
+    (void)ahb_only_malloc(0x30010000u - (uintptr_t)__ahbram_heap_start__);
+
+  extern void *_OVERLAY_SEGACD_BSS_END[];
+  ram_start = (uint32_t)&_OVERLAY_SEGACD_BSS_END;
+  odroid_system_init(APPID_SEGACD, SEGACD_AUDIO_RATE);
+  /* odroid_system_init() initializes LTDC in the default RGB565 layout, so
+   * switch formats only afterwards; doing this before init is overwritten. */
+  lcd_setup_single_framebuffer(LCD_MODE_LUT8);
+  lcd_set_refresh_rate(60);
+  lcd_get_bonus_pool(&segacd_lcd_bonus, &segacd_lcd_bonus_size);
+  if (segacd_lcd_bonus_size < 0x30000) {
+    odroid_overlay_alert("Sega CD LCD memory unavailable");
+    odroid_system_switch_app(0); return;
+  }
+  extern uint8_t __segacd_lcd_aux_start__[], __segacd_lcd_aux_end__[];
+  memset(__segacd_lcd_aux_start__, 0,
+         (size_t)(__segacd_lcd_aux_end__ - __segacd_lcd_aux_start__));
+  odroid_system_emu_init(segacd_load, segacd_save, segacd_screenshot,
+                         NULL, segacd_sleep_wake, segacd_bram_save, NULL);
+
+  if (!cache_xip()) {
+    odroid_overlay_alert("Missing /cores/segacd.xip");
+    odroid_system_switch_app(0); return;
+  }
+
+  PicoInit();
+  PicoIn.opt = SEGACD_PICO_OPT;
+  PicoIn.sndRate = SEGACD_AUDIO_RATE;
+  PicoIn.autoRgnOrder = 0x184;
+
+  int region = 4;
+  (void)PicoCdCheck(ACTIVE_FILE->path, &region);
+  const char *bios_path = bios_path_for_region(region);
+  uint32_t bios_size = 0;
+  gnw_mcd_bios_xip = odroid_overlay_cache_file_in_flash(bios_path, &bios_size, true);
+  gnw_mcd_bios_xip_size = bios_size;
+  if (!gnw_mcd_bios_xip || gnw_mcd_bios_xip_size < 0x20000) {
+    odroid_overlay_alert("Missing Sega CD BIOS in /bios/segacd");
+    odroid_system_switch_app(0); return;
+  }
+
+  enum media_type_e mt = PicoLoadMedia(ACTIVE_FILE->path, NULL, 0,
+                                        NULL, NULL, NULL, NULL);
+  if (mt == PM_ERROR || mt == PM_BAD_CD || mt == PM_BAD_CD_NO_BIOS) {
+    odroid_overlay_alert("Unsupported Sega CD image");
+    odroid_system_switch_app(0); return;
+  }
+
+  /* Loading the media powered the MCD, which formats BRAM; the saved one
+   * goes over it now, before the BIOS or the game reads it. */
+  segacd_bram_load();
+
+  segacd_fps = Pico.m.pal ? 50 : 60;
+  int fps = segacd_fps;
+  common_emu_state.frame_time_10us = (uint16_t)(100000 / fps);
+  PicoLoopPrepare();
+  PicoSetInputDevice(0, PICO_INPUT_PAD_6BTN);
+  PicoIn.sndOut = segacd_snd;
+  PicoIn.writeSound = segacd_write_sound;
+  PsndRerate(0);
+  PicoDrawSetOutFormat(PDF_8BIT, 0);
+  segacd_set_out();
+  segacd_push_palette();
+  audio_start_playing(SEGACD_AUDIO_RATE / fps);
+
+  /* A loaded state is already past the BIOS menu. */
+  segacd_boot_start_init(&boot_start, !load_state);
+  memset(framebuffer1, SEGACD_BORDER_INDEX, 320u * 240u);
+  if (load_state) odroid_system_emu_load_state(save_slot);
+
+  uint32_t bram_tick = 0;
+  while (1) {
     wdog_refresh();
-    FILE *f = fopen(SEGACD_DIAG_PATH, "wb");
-    if (f) { fwrite(s_scd_diag, 1, s_scd_diag_len, f); fclose(f); }
-}
-#define SCD_DBG(...) do { if (s_scd_dbg_first) segacd_diag(__VA_ARGS__); } while (0)
-
-int app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
-{
-    s_scd_diag_len = 0; s_scd_diag_sealed = false; s_scd_dbg_first = 1;
-
-    /* Gate-1 single framebuffer, Sega CD session only (the bb4718f2 lesson:
-     * this property belongs to the core, never to the system). Locking both
-     * the LTDC-side (fb2) and emulator-side (framebuffer2) pointers onto
-     * their #1 counterparts makes lcd_present()'s active_framebuffer toggle
-     * a no-op between identical addresses, and lcd_clear_buffers() a
-     * single-buffer clear. The lock is REQUIRED, not cosmetic: the second
-     * buffer's 150 KiB at 0x24025800 is exactly where .overlay_segacd now
-     * lives (gate-6 placement, docs/SEGACD_REASSESSMENT_2026-09-14.md), and
-     * the lock RE-CLAMPS inside lcd_set_buffers()/lcd_setup_framebuffers()
-     * so a post-fault error-screen redraw cannot become a periodic 150 KiB
-     * memset over the live core — device-observed (2026-09-17): every BSOD
-     * redraw zeroed the overlay, corrupting the m68k memory map into the
-     * 0x03000300 crash signature and erasing the crash evidence itself.
-     * The launcher is already torn down when we get here and every exit is
-     * an esp_restart() full reboot, so the lock cannot leak into another
-     * core. Cost accepted for bring-up: rewriting the scanout buffer
-     * mid-frame can tear; 33 Hz panel pacing is the designated follow-up
-     * lever if that shows on device. */
-    lcd_lock_single_fb();
-
-    if (start_paused) { common_emu_state.pause_after_frames = 2; odroid_audio_mute(true); }
-    else              { common_emu_state.pause_after_frames = 0; }
-
-    odroid_system_init(APPID_SEGACD, SEGACD_SAMPLE_RATE);
-    /* 7th arg (cheat_update_cb) added by upstream 8caa3e45; Sega CD has no
-     * cheat handler, same as the other cores that pass NULL here. */
-    odroid_system_emu_init(&LoadState, &SaveState, &Screenshot, NULL, &sleep_wake_up, &sram_save_cb, NULL);
-
-    /* Every core that calls ram_malloc() for its own buffers must point
-     * ram_start past its own static overlay+bss first (see main_gwenesis.c's
-     * ram_start = &_OVERLAY_MD_BSS_END for the pattern this copies) — this was
-     * missing here, so the core's dynamic claims would have started allocating
-     * at RAM_EMU's very start, colliding with this core's own overlay
-     * code+data+bss instead of the free space after it. 0720. Gate-6 note:
-     * the overlay now spans the single-FB region from 0x24025800, so this
-     * leaves only ~3.5 KiB of AXI above it — by design: PRG 7 pages + Word
-     * RAM are static overlay BSS, and the YM2612 tables must fall through
-     * ram_malloc to AHB below. */
-    ram_start = (uint32_t)&_OVERLAY_SEGACD_BSS_END;
-
-    /* Gate-3 AHB rebase — see the load_cartridge() note below for why this
-     * lands AFTER it, immediately before power_on(). */
-
-    /* Returning from app_main is NOT a way out: emulator_start() has already
-     * torn the launcher down (ahb_init/itc_init, ram_start=0, emulators and
-     * systems NULLed) before handing over, so a plain return unwinds into
-     * state that no longer exists and takes a HardFault. Every other core
-     * alerts and reboots to the launcher instead (cf. main_md32x.c's missing
-     * -xip path); Sega CD returned 0 and died there. */
-    if (!SegaCdCacheXipToFlash()) {
-        printf("Failed to cache segacd.xip\n");
-        odroid_overlay_alert("Missing /cores/segacd.xip - re-run the update");
-        odroid_system_switch_app(0);
-        return 0;
+    bool draw = common_emu_frame_loop();
+    odroid_input_read_gamepad(&joystick);
+    /* Same as the MD port: on Mario units raw TIME is the menu key and raw
+     * PAUSE/SET is left to the keymap. Swap for the shared menu handler, then
+     * swap back so the keymap (and turbo) see the raw keys again. */
+    bool mario = get_ofw_is_mario();
+    if (mario) segacd_swap_menu_keys(&joystick);
+    common_emu_input_loop(&joystick, options, &segacd_repaint);
+    common_emu_input_loop_handle_turbo(&joystick);
+    if (mario) segacd_swap_menu_keys(&joystick);
+    PicoIn.pad[0] = segacd_pad(&joystick) |
+                    segacd_boot_start_pad(&boot_start, SekPc);
+    if (++bram_tick >= SEGACD_BRAM_CHECK_EVERY) {
+      bram_tick = 0;
+      segacd_bram_save();
     }
-
-    uint32_t bios_size = 0;
-    segacd_bios = odroid_overlay_cache_file_in_flash("/bios/segacd/bios_CD_U.bin", &bios_size, false);
-    if (!segacd_bios) {
-        segacd_bios = odroid_overlay_cache_file_in_flash("/bios/segacd/bios_CD_E.bin", &bios_size, false);
+    PicoIn.skipFrame = draw ? 0 : 1;
+    if (draw) segacd_set_out();
+    PicoFrame();
+    if (draw) {
+      segacd_push_palette();
+      common_ingame_overlay();
+      lcd_swap();
     }
-    if (!segacd_bios) {
-        segacd_bios = odroid_overlay_cache_file_in_flash("/bios/segacd/bios_CD_J.bin", &bios_size, false);
-    }
-    if (!segacd_bios) {
-        printf("SegaCD BIOS not found in /bios/segacd/!\n");
-        odroid_overlay_alert("Sega CD BIOS missing - put bios_CD_U/E/J.bin in /bios/segacd/");
-        odroid_system_switch_app(0);
-        return 0;
-    }
-
-    printf("segacd diag v1: bios=%p size=%lu\n", (void *)segacd_bios,
-           (unsigned long)bios_size);
-
-    /* base Mega Drive core + Sega CD hardware.
-     *
-     * ORDER IS LOAD-BEARING. reset_emulation() calls m68k_pulse_reset(), which
-     * immediately fetches the MAIN 68K's initial SP/PC from $000000/$000004
-     * through the memory map. On a Mega CD the main 68K boots from the *BIOS*,
-     * not from ROM_DATA — and on device ROM_DATA is the CD image, not the BIOS
-     * (unlike the host harness, which aliases ROM_DATA = bios and so gets away
-     * with resetting earlier). So the reset MUST run last, after:
-     *   - power_on()               builds the base gwenesis memory map (page 0 = ROM_DATA)
-     *   - segacd_map_bios()        overrides page 0-1 with the BIOS
-     *   - segacd_main_map_cd_space() overlays PRG/GA/Word-RAM
-     * Only then does the vector fetch land in the BIOS. The previous order
-     * (reset before power_on) fetched vectors from an unbuilt map, leaving the
-     * MAIN 68K running from a garbage PC — a device-only boot Hardfault
-     * (m68ki_read_8 dispatching through a wild page handler). power_on() already
-     * calls m68k_init(), so no separate call is needed. */
-    SCD_DBG("segacd diag v1 -- xip+bios ok (sz=%lu); hw init...\n",
-            (unsigned long)bios_size);
-    load_cartridge();
-    /* Gate-3 AHB rebase — Sega CD is core-exclusive with GBA (which owns the
-     * 0x30000000..0x300088a0 static reserve), and every core exit is an
-     * esp_restart() full reboot that restores the default pool via ahb_init().
-     *
-     * This must sit AFTER load_cartridge(): gwenesis unconditionally
-     * ahb_mallocs the 64 KiB Genesis cart SRAM there (gwenesis_bus.c:430,
-     * shared submodule — cannot be gated from this side). Dead weight for a
-     * Mega CD title: saves live in BRAM and the disc-image "header" leaves
-     * gwenesis_sram_enabled=0, so the claim is never touched. It lands in
-     * the still-default pool at 0x300088a0 where nothing of ours lives; the
-     * stateless ahb_set_core_base() re-claim then DISCARDS it, so the
-     * YM2612 tables (ahb_calloc inside power_on) allocate from the rebased
-     * base and segacd_init()'s PCM lands exactly on the gate-2..5
-     * probe-verified addresses: YM@0x30000000+47,104, PCM→0x3001b800,
-     * CDDA→0x3001b800..0x3001cac0, all below the 0x3001E000 audio ceiling. */
-    ahb_set_core_base(0x30000000u);
-    power_on();
-    segacd_init();
-    segacd_map_bios(segacd_bios); /* main boots from BIOS, not a cart (0 RAM: XIP) */
-    segacd_main_map_cd_space();
-    segacd_defend_map_tail();     /* gate-6: the gwenesis tail map lands slot-
-                                   * rotated on device; re-install it locally */
-    reset_emulation();            /* pulse-reset MAIN 68K -> reads BIOS reset vectors */
-    SCD_DBG("segacd dbg: hw init done (bios=%p sz=%lu)\n",
-            (void *)segacd_bios, (unsigned long)bios_size);
-
-    snprintf(s_cue_path, sizeof(s_cue_path), "%s", ACTIVE_FILE->path);
-    /* The return value used to be discarded. A cue that fails to parse left
-     * CD zeroed and opened=0, and the BIOS then booted against no disc at
-     * all -- indistinguishable, from the outside, from an emulation bug.
-     * Report it, and say so on screen rather than sitting on a dead boot. */
-    int cd_rc = segacd_cd_open(s_cue_path);
-    int diag_num_tracks = 0, diag_status = 0, diag_opened = 0;
-    uint32_t diag_total_lba = 0;
-    segacd_cd_diag_state(&diag_num_tracks, &diag_total_lba, &diag_status, &diag_opened);
-    printf("segacd: cd_open rc=%d tracks=%d total_lba=%lu status=%d opened=%d\n",
-           cd_rc, diag_num_tracks, (unsigned long)diag_total_lba,
-           diag_status, diag_opened);
-    printf("segacd: cue=%s\n", s_cue_path);
-    if (cd_rc != 0) {
-        odroid_overlay_alert("Cannot read the .cue - check the track files next to it");
-        odroid_system_switch_app(0);
-        return 0;
-    }
-
-    segacd_bram_path();
-    segacd_bram_load(s_bram_path);   /* per-game BRAM, load before resume */
-    SCD_DBG("segacd dbg: cd_open ok (tracks=%d lba=%lu); loop next\n",
-            diag_num_tracks, (unsigned long)diag_total_lba);
-
-    if (load_state) odroid_system_emu_load_state(save_slot);
-    else            lcd_clear_buffers();
-
-    odroid_gamepad_state_t joystick = {0};
-    odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
-
-    /* sub_cycles_per_frame removed as it's interleaved inside gwenesis_md_frame */
-
-    /* START THE SAI AUDIO DMA. Without this dma_counter never ticks, so the
-     * very first common_emu_sound_sync() (which spins `while (dma_counter ==
-     * last_dma_counter)`) never returns -> watchdog -> the 2-boot rescue we
-     * saw. The base Mega Drive core does this in gwenesis_sound_start(); Sega CD
-     * built its whole audio path but never wired the start. mode_pal is valid
-     * here (set during reset_emulation above; used by the frame loop below).
-     * Length computed locally from the gwenesis_bus.h macros -- NOT read from
-     * gwenesis_audio_buffer_lenght, which lives in a different overlay. */
-    uint16_t scd_audio_len = mode_pal ? GWENESIS_AUDIO_BUFFER_LENGTH_PAL
-                                      : GWENESIS_AUDIO_BUFFER_LENGTH_NTSC;
-    SCD_DBG("segacd dbg: audio_start_playing(len=%u pal=%d)\n",
-            (unsigned)scd_audio_len, (int)mode_pal);
-    audio_start_playing(scd_audio_len);
-
-    SCD_DBG("segacd dbg: entering frame loop\n");
-    while (true) {
-        wdog_refresh();
-        bool drawFrame = common_emu_frame_loop();
-
-        odroid_input_read_gamepad(&joystick);
-
-        /* Match the MD port: on Mario hardware, make raw TIME the menu key
-         * and leave raw PAUSE/SET available to the Genesis/Sega CD keymap. */
-        if (get_ofw_is_mario()) {
-            unsigned int key_state = joystick.values[ODROID_INPUT_VOLUME];
-            joystick.values[ODROID_INPUT_VOLUME] = joystick.values[ODROID_INPUT_SELECT];
-            joystick.values[ODROID_INPUT_SELECT] = key_state;
-        }
-
-        common_emu_input_loop(&joystick, options, &blit);
-
-        /* --- one frame of the machine --- */
-        /* 6-button pad TH handshake reset, once per frame — same point as the
-         * MD core (main_gwenesis.c). Sega CD shares the MD keymap and the
-         * gwenesis_io 6-button protocol, so the counter reset must match. */
-        gwenesis_io_6button_reset();
-        SCD_DBG("segacd dbg: md_frame(draw=%d)...\n", (int)drawFrame);
-        gwenesis_md_frame(drawFrame);           /* main 68K + Z80 + VDP + YM/SN + Sub 68K interleaved */
-        SCD_DBG("segacd dbg: md_frame done; cdd ticks...\n");
-        /* True 75Hz CDD pacing, WALL-CLOCK based (2026-09-19 gate-6 device
-         * finding): the frame-coupled accumulator (1.25/frame) made the disc
-         * speed collapse with the emulator — once the game program started
-         * running, frames fell to 8.6fps, CDD ticks to ~17/s, and the BIOS
-         * timed out and re-seeked to LBA 8 forever (the boot screen never
-         * advanced). Real hardware spins the disc at wall-clock 75Hz no matter
-         * how slow the guest is; PicoDrive schedules PCD_EVENT_CDC on cycles,
-         * not frames. Feed the tick counter from HAL_GetTick() (1ms) instead.
-         * Capped per loop pass so a debugger halt can't burst-read the disc. */
-        static uint32_t s_cdd_last_ms;
-        uint32_t now_ms = HAL_GetTick();
-        if (s_cdd_last_ms == 0) s_cdd_last_ms = now_ms;   /* first pass: no burst */
-        /* SEGACD_CDD_SPEED: 1 = authentic 1x drive (75 sectors/s, what the
-         * BIOS timing expects). 2+ = "fast CD" enhancement, the same lever
-         * PicoDrive ships as a CD-speed hack: the SD card has MB/s of slack,
-         * so 2x halves every chunk load without changing guest-visible CDD
-         * semantics beyond seek/latency passing faster. The user judged the
-         * post-START chunk loads slow on device, 2026-09-19; 2x is the
-         * campaign's first lever, raised only after load-time A/B. */
-#ifndef SEGACD_CDD_SPEED
-/* A/B arm 2026-09-20: temporarily 1x. The 2x default batches 2+ decoder
- * updates per frame loop pass with no sub-CPU execution between them
- * (main_segacd.c:493-497), coalescing HEAD/PT/DECI events -- the prime
- * suspect for the infinite 8-sector reload loop. If 1x boots the game,
- * the fix is CDC-tick interleaving, not the ring. */
-#define SEGACD_CDD_SPEED 2
-#endif
-        s_cdd_tick_accum += (now_ms - s_cdd_last_ms) * (75 * SEGACD_CDD_SPEED) / 1000;
-        s_cdd_last_ms = now_ms;
-        if (s_cdd_tick_accum > 75 * SEGACD_CDD_SPEED) s_cdd_tick_accum = 75 * SEGACD_CDD_SPEED;
-        while (s_cdd_tick_accum >= 1) {
-            segacd_cdd_process();
-            segacd_cd_update();
-            segacd_cdc_dma_update();
-            s_cdd_tick_accum -= 1;
-        }
-
-        SCD_DBG("segacd dbg: cdd done; blit(draw=%d)...\n", (int)drawFrame);
-        if (drawFrame) blit();
-        if (drawFrame) {
-            /* Frame 0 rendered but the machine dies a few frames later (boot
-             * rescue = 2 unfinished boots). Log the first several frames, then
-             * seal -- the last line names the frame it died on. */
-            static int scd_frame = 0;
-            scd_frame++;
-            SCD_DBG("segacd dbg: frame %d complete\n", scd_frame);
-            if (scd_frame >= 5) {
-                SCD_DBG("segacd dbg: 5 frames ok -- sealing diag\n");
-                s_scd_dbg_first = 0;
-                s_scd_diag_sealed = true;   /* no SD writes during steady play */
-            }
-        }
-
-        /* --- audio: gwenesis YM+SN mixed with CD-DA + RF5C164 PCM ---
-         * The device dies right after "frame 1 complete" -- i.e. the FIRST time
-         * this audio tail runs. Breadcrumb every call so the last line on the
-         * SD names which one (mix / submit / sound_sync-hang / prefetch). */
-        int16_t *sbuf = audio_get_active_buffer();
-        uint16_t slen = audio_get_buffer_length();
-        int vol = common_emu_sound_get_volume();
-        SCD_DBG("segacd dbg: audio mix(sbuf=%p ym=%p sn=%p len=%u)...\n",
-                sbuf, (void *)gwenesis_ym2612_buffer,
-                (void *)gwenesis_sn76489_buffer, (unsigned)slen);
-        segacd_audio_mix(sbuf, gwenesis_ym2612_buffer, gwenesis_sn76489_buffer, slen, vol);
-        SCD_DBG("segacd dbg: audio mix done; submit...\n");
-        odroid_audio_submit(sbuf, slen);
-
-        SCD_DBG("segacd dbg: submit done; sound_sync...\n");
-        common_emu_sound_sync(false);
-        SCD_DBG("segacd dbg: sound_sync done; cdda_prefetch...\n");
-        segacd_cdda_prefetch();      /* keep the CD-DA stream fed (PCE idiom) */
-        SCD_DBG("segacd dbg: prefetch done; loop top\n");
-    }
-    return 0;
-}
-
-/* Under SEGACD_GA_TRACE the canonical definition lives in segacd_engine.c's
- * trace block (main stamps it every frame via extern, bus/engine read it);
- * without the trace it degenerates to this harness-local counter. */
-#ifndef SEGACD_GA_TRACE
-int scd_dbg_frame = 0;
-#endif
-
-/* --- Gwenesis core internals for frame rendering --- */
-extern unsigned short gwenesis_vdp_status;
-extern unsigned char gwenesis_vdp_regs[32];
-
-/* REG macros and STATUS macros are defined in gwenesis_vdp.h */
-#define LINES_PER_FRAME_NTSC 262
-#define LINES_PER_FRAME_PAL 313
-#define VDP_CYCLES_PER_LINE 3420
-
-extern unsigned int screen_height, screen_width;
-extern int system_clock, zclk, ym2612_clock, ym2612_index, sn76489_clock, sn76489_index, scan_line;
-extern int hint_pending;
-int hint_counter = 0, skip_first_vint = 0;
-
-extern void m68k_run(unsigned int target);
-extern void z80_run(unsigned int target);
-extern void z80_irq_line(int state);
-extern void gwenesis_SN76489_run(unsigned int target);
-extern void ym2612_run(unsigned int target);
-extern void gwenesis_vdp_render_line(int line);
-extern void gwenesis_vdp_set_buffer(unsigned short *ptr_screen_buffer);
-extern void gwenesis_vdp_render_config(void);
-extern void gwenesis_vdp_latch_line_scroll(int line);
-extern void m68k_set_irq(unsigned int level);
-extern void m68k_update_irq(unsigned int level);
-extern void gw_system_blit(void *buffer);
-
-static inline void run_main(uint32_t target) { m68k_run(target); }
-static inline void run_z80(uint32_t target) { z80_run(target); }
-static inline void run_audio(uint32_t target) { gwenesis_SN76489_run(target); ym2612_run(target); }
-static inline void run_sub(int slice) { segacd_run_sub(slice); }
-static inline void render_line(int line, bool draw) { if (draw) gwenesis_vdp_render_line(line); }
-
-void gwenesis_md_frame(bool draw_frame) {
-    screen_height = REG1_PAL?240:224; screen_width = REG12_MODE_H40?320:256;
-    unsigned int lines_per_frame = mode_pal?LINES_PER_FRAME_PAL:LINES_PER_FRAME_NTSC;
-    int vert_screen_offset = mode_pal?0:320*(240-224)/2;
-    uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
-    gwenesis_vdp_set_buffer(&fb[vert_screen_offset]); gwenesis_vdp_render_config();
-    system_clock=0; zclk=0; ym2612_clock=ym2612_index=0; sn76489_clock=sn76489_index=0; scan_line=0;
-    int line;
-    int sub_slice = (int)((12500000 / 60) / lines_per_frame); /* 12.5 MHz / 60 fps / lines */
-    
-    gwenesis_vdp_status=(unsigned short)((gwenesis_vdp_status&(unsigned short)~0x0112u)|STATUS_VBLANK);
-    gwenesis_vdp_status^=STATUS_ODDFRAME;
-    scan_line=(int)screen_height;
-    if(!skip_first_vint){ gwenesis_vdp_status|=STATUS_VIRQPENDING;
-      if(REG1_VBLANK_INTERRUPT){m68k_set_irq(6);} z80_irq_line(1); }
-    run_main(system_clock+VDP_CYCLES_PER_LINE); run_z80(system_clock+VDP_CYCLES_PER_LINE);
-    system_clock+=VDP_CYCLES_PER_LINE; z80_irq_line(0);
-    
-    for(line=(int)screen_height+1; line<(int)lines_per_frame-1; line++){ 
-      scan_line=line;
-      run_main(system_clock+VDP_CYCLES_PER_LINE); run_z80(system_clock+VDP_CYCLES_PER_LINE); system_clock+=VDP_CYCLES_PER_LINE;
-      run_sub(sub_slice); 
-    }
-    
-    scan_line=(int)lines_per_frame-1; hint_counter=(int)REG10_LINE_COUNTER;
-    gwenesis_vdp_status&=(unsigned short)~STATUS_VBLANK;
-    run_main(system_clock+VDP_CYCLES_PER_LINE); run_z80(system_clock+VDP_CYCLES_PER_LINE); system_clock+=VDP_CYCLES_PER_LINE;
-    
-    for(line=0; line<(int)screen_height; line++){ 
-      scan_line=line; gwenesis_vdp_latch_line_scroll(line);
-      if(hint_counter==0){hint_counter=(int)REG10_LINE_COUNTER; hint_pending=1; if(REG0_LINE_INTERRUPT)m68k_update_irq(4);} else hint_counter--;
-      run_main(system_clock+VDP_CYCLES_PER_LINE); run_z80(system_clock+VDP_CYCLES_PER_LINE);
-      render_line(line, draw_frame); system_clock+=VDP_CYCLES_PER_LINE;
-      run_sub(sub_slice); 
-    }
-    run_audio(system_clock); 
-    /* Adjust m68k.cycles by subtracting system_clock? boot_test does this: m68k.cycles-=system_clock;
-       But we need to access m68k struct. I'll declare it: */
-    extern m68ki_cpu_core m68k;
-    m68k.cycles -= system_clock;
-    skip_first_vint=0;
-}
-
-extern void common_ingame_overlay(void);
-
-void blit(void) {
-    uint16_t *fb = (uint16_t *)lcd_get_active_buffer();
-    int vert_offset = mode_pal ? 0 : 320 * (240 - 224) / 2;
-    gwenesis_vdp_set_buffer(&fb[vert_offset]);
-    int lines = mode_pal ? LINES_PER_FRAME_PAL : LINES_PER_FRAME_NTSC;
-    for (int l = 0; l < lines; l++) {
-        gwenesis_vdp_render_line(l);
-    }
-    common_ingame_overlay();
-    /* PRESENT THE FRAME. blit() rendered into the ACTIVE (back) buffer; without
-     * this swap the display keeps showing the other (black) buffer forever --
-     * that was the black screen, and the overlay-toggle "afterimage" (the
-     * overlay drawn into a back buffer that never became front). The base
-     * gwenesis core swaps after its overlay (main_gwenesis.c); Sega CD never
-     * did. */
-    lcd_swap();
+    common_emu_sound_sync(false);
+  }
 }

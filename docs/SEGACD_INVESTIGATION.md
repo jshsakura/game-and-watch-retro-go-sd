@@ -8,6 +8,14 @@
 > reproduced final build, exact memory map and the conditional single-buffer
 > SRAM layout now worth testing.
 
+> **2026-09-14 status:** this report describes the abandoned gwenesis/HLE path.
+> The shipping candidate now uses a PicoDrive Sega CD core and has crossed the
+> boot boundary on the physical STM32H7B0 console. It ran a legal test disc for
+> 5,087+ frames with `CFSR=0` and rendered its expected output. The working
+> solution uses the LCD LUT8 bonus pool plus AXI, AHB, DTCM and the device's real
+> 32 K SRAM4; it does not use the HLE jump proposed below. See the Sega CD entry
+> in [OPTIMIZATION_LEDGER.md](OPTIMIZATION_LEDGER.md) for the current result.
+
 ## 1. CDC DMA 체인 분석 및 $6132 데드락의 진실
 
 ### 하드웨어 정상 동작 체인 (vs 현재 오해)

@@ -94,6 +94,10 @@ uint32_t lcd_get_last_refresh_rate(void);
  * Safe to call at any time after lcd_init(). Callers should clear the
  * framebuffers afterward (mode change leaves stale pixels reinterpreted). */
 void lcd_setup_framebuffers(lcd_mode_t mode);
+/* Use one scanout buffer and return the rest of the LCD pool as cacheable
+ * scratch RAM. Intended for memory-bound cores that synchronize writes to
+ * the panel; callers can query the enlarged pool with lcd_get_bonus_pool(). */
+void lcd_setup_single_framebuffer(lcd_mode_t mode);
 
 /* Get the current bonus-pool region (memory in the LCD pool not occupied
  * by framebuffers). NULL/0 in RGB565 mode (the pool is fully used). In LUT8
