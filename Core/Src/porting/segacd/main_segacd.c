@@ -359,6 +359,8 @@ static void relocate_xip(uint8_t *buf, uint32_t len, uint32_t file_off,
   patch_sentinels((uint32_t *)buf, (uint32_t *)(buf + (len & ~3u)), off, file_size);
 }
 
+extern uint8_t __segacd_itc_start__[], __segacd_itc_end__[];
+
 static bool cache_xip(void)
 {
   uint32_t size = 0;
@@ -368,6 +370,10 @@ static bool cache_xip(void)
   int32_t off = (int32_t)((uintptr_t)addr - SEGACD_CODE_BASE);
   patch_sentinels((uint32_t *)&__RAM_EMU_START__,
                   (uint32_t *)&_OVERLAY_SEGACD_BSS_START, off, size);
+  /* ITCM code calls into segacd.xip through veneers with sentinel literals. */
+  patch_sentinels((uint32_t *)__segacd_itc_start__,
+                  (uint32_t *)__segacd_itc_end__, off, size);
+  __DSB(); __ISB();
   return true;
 }
 

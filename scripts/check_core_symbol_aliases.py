@@ -131,9 +131,12 @@ def main():
         lives there is just as real as one in the RAM overlay, so it must be
         checked too — 0720: this is exactly why check_core_symbol_aliases missed
         the SegaCD gwenesis_io_get_buttons alias (its call site is in
-        .xip_segacd), and the same blind spot applies to sm/gba."""
+        .xip_segacd), and the same blind spot applies to sm/gba. Hot code that
+        rides ITCM (.overlay_<core>_itc: segacd, md32x, pce, gba) is the same
+        story again: moving a function there must not take it out of the check."""
         if core not in disasm:
-            sections = [f"--section=.overlay_{core}", f"--section=.xip_{core}"]
+            sections = [f"--section=.overlay_{core}", f"--section=.xip_{core}",
+                        f"--section=.overlay_{core}_itc"]
             r = subprocess.run(
                 [objdump, "-d"] + sections + [elf],
                 capture_output=True, text=True)

@@ -214,6 +214,14 @@ not a reimplementation.
   save/load round trip line up frame for frame with an uninterrupted run. An
   earlier "repro rips have a broken sector 0" finding was wrong: the discs are
   Japanese and the JP BIOS was waiting for START. Never patch sector 0.
+- Pattern `idle` is the device with nobody at the buttons: START through the
+  BIOS menu, then no input, so the game's attract/intro runs. That is what a
+  remote device session can show, so check the scene on the host first.
+- It also feeds the ITCM list. Built with `-pg` (sed `-O1` to `-O2 -pg` in a
+  copy of `run.sh`), each game's `gprof -b -p` call counts go into
+  `tools/segacd_itc_gen.py`, which writes `Core/Src/porting/segacd/segacd_itc_ops.ld`
+  (the 68K handlers that ride ITCM). Call counts only rank; the gain is a
+  device number.
 - What it does **not** prove: performance (host ≠ Cortex-M7 instruction mix;
   that's the m7 rig's job) and the device's split-RAM address map (host
   `plat_mmap` is plain malloc).
@@ -347,6 +355,7 @@ got wired" in the root `CLAUDE.md`.
 | `test_settings_round_trip.sh` | Every per-app setting a core writes is one it reads back. A setting saved and never restored is invisible to every other check: the menu works, the value reaches the right slot, and the next launch overwrites it with a hardcoded default, so it reads as forgetfulness rather than a bug. Watara Supervision shipped that for its palette. Only files the build actually compiles are in scope, with comments stripped before deciding that. |
 | `test_adc_isr_wired.sh` | The battery poll does not touch the HAL ADC from `TIM1_UP` (priority 0,0, above SysTick). With ticks frozen, "wait for ADRDY" is not slow, it is infinite, and it starved main for real on 2026-08-26. |
 | `test_segacd_wired.sh` | Sega CD: device and host rig read one PicoDrive option set (the device once lacked the rotation/scaling ASIC the rig had), BRAM is loaded after `PicoLoadMedia` formats it and written back by hook and while playing, a state load flushes and reloads BRAM instead of rolling the game's saves back, all eight Genesis buttons come from the MD keymap, the 6-button pad is plugged in, START-through-the-BIOS-menu runs on both sides, and nothing patches sector 0. The rule behind that last one is `tests/test_segacd_boot_start.c`, which compiles the real header. |
+| `test_xip_sentinels.sh` | Sega CD: `segacd.xip` is relocated at load by rewriting every word that looks like a sentinel address (0xDF000000 window), code included. `scripts/check_xip_sentinels.py` (also run on every link) fails when a word inside a function's Thumb code lands in that window; the test runs it on the built ELF (GREEN) and on a copy with one instruction word overwritten (RED). Mapping and FUNC symbols are taken from the scanned section only, because every overlay shares these addresses; `objdump -t` hides `$t`/`$d`, which is why it reads `readelf -s`. |
 | `test_ssfix_wired.sh` | The 32X savestate hardening and the mid-frame load refusal are still called. Here the wiring *is* the feature. |
 | `test_sm_skip_guard.sh` | `run.sh` SKIPS the sm device-parity harness rather than dying when `external/sm` is absent, which is exactly CI's host-tests job. A safety net must not be the thing that breaks the build. |
 | `test_coverage_runner_matches_suite.sh` | The coverage work order neither overstates its number nor lists work already done. Detail below. |

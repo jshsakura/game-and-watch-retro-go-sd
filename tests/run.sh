@@ -701,6 +701,7 @@ bash tools/cx4_harness/run.sh || fail tools/cx4_harness/run.sh
 echo "=== idle power off: one setting, one rule, and every idle loop asks it ==="
 bash tests/test_idle_timeout_wired.sh || fail tests/test_idle_timeout_wired.sh
 bash tests/test_segacd_wired.sh || fail tests/test_segacd_wired.sh
+bash tests/test_xip_sentinels.sh || fail tests/test_xip_sentinels.sh
 
 echo "=== boot rescue: a bricked boot must end somewhere a person can act ==="
 # A bad firmware hung the device dark with the power button dead — firmware

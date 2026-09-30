@@ -44,11 +44,16 @@ for b in $(printf '%s\0' "$ROM" | od -An -tu1 -v); do
   i=$((i + 1))
 done
 
+# The return address must carry the Thumb bit. With an even lr, emulator_get_file's
+# `bx lr` clears EPSR.T; the breakpoint still halts and r0 still reads back, but T
+# stays clear, and the resume into emulator_start takes an INVSTATE UsageFault on
+# its first instruction (CFSR=0x00020000, PC=emulator_start; 2026-09-30).
+TRAP1=$(printf '0x%x' $((TRAP | 1)))
 echo "[start] $ROM  ($i bytes) -> $SCRATCH"
 echo "[start] emulator_get_file=$GET emulator_start=$START trap=$TRAP"
 
 file=$(ssh "$HOST" "$OC -c init -c halt $writes \
-  -c 'bp $TRAP 2 hw' -c 'reg r0 $SCRATCH' -c 'reg lr $TRAP' -c 'reg pc $GET' \
+  -c 'bp $TRAP 2 hw' -c 'reg r0 $SCRATCH' -c 'reg lr $TRAP1' -c 'reg pc $GET' \
   -c resume -c 'wait_halt 5000' -c 'reg r0' -c 'rbp $TRAP' -c shutdown 2>&1" \
   | grep -oE 'r0 \(/32\): 0x[0-9a-f]+' | tail -1 | grep -oE '0x[0-9a-f]+')
 

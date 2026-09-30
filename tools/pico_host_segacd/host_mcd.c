@@ -71,6 +71,12 @@ static unsigned short pad_for(int f, const char *pat)
         unsigned short p = segacd_boot_start_pad(&boot, SekPc);
         return boot.active ? p : pad_for(f + 200, "play");
     }
+    /* The device with nobody at the buttons: START through the BIOS menu,
+     * then no input, so the game's own attract/demo loop runs. */
+    if (!strcmp(pat, "idle")) {
+        unsigned short p = segacd_boot_start_pad(&boot, SekPc);
+        return boot.active ? p : 0;
+    }
     if (!strcmp(pat, "play")) {
         if (f < 660) return (f % 12) < 6 ? PAD_A : 0;
         switch ((f / 30) % 4) {

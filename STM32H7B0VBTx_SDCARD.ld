@@ -856,6 +856,37 @@ INCLUDE build/fceumm_mappers.ld
   _OVERLAY_SEGACD_LOAD_START = LOADADDR(.overlay_segacd);
   _OVERLAY_SEGACD_SIZE = SIZEOF(.overlay_segacd);
 
+  /* Sega CD hot code -> ITCM. On the device 98% of Final Fight CD's intro ran
+   * XIP out of OSPI, 65% of it in the two 68Ks (fm68k_emulate 27%, opcode
+   * handlers 38%) and 7% in the Z80: a working set far past the 16 KB
+   * I-cache, so every pass through it refetched from flash. The handler list
+   * is generated (tools/segacd_itc_gen.py) from the 15-game library profile.
+   * Veneers from here into segacd.xip carry sentinel literals; cache_xip()
+   * patches this range as well. Same LMA-in-CORES / memcpy-before-BSS-zero
+   * mechanism as .overlay_md32x_itc. APPEND only: md32x measured -11.6% from
+   * a reorder of its ITC section that nobody could explain. */
+  .overlay_segacd_itc (ORIGIN(ITCMRAM) + 0x4) : {
+    . = ALIGN(4);
+    __segacd_itc_start__ = .;
+    build/segacd/cpu__fame__famec.o (.text.fm68k_emulate)
+    INCLUDE Core/Src/porting/segacd/segacd_itc_ops.ld
+    build/segacd/cpu__cz80__cz80.o (.text.Cz80_Exec)
+    build/segacd/pico__cd__mcd.o (.text.pcd_run_cpus .text.SekSyncM68k* .text.pcd_sync_s68k .text.PicoFrameMCD)
+    build/segacd/pico__pico.o (.text.PicoSyncZ80 .text.SekSyncM68k*)
+    build/segacd/pico__cd__memory.o (.text.s68k_read8 .text.s68k_read16 .text.s68k_read32
+                                     .text.s68k_write8 .text.s68k_write16 .text.s68k_write32
+                                     .text.PicoReadS68k8_pr .text.PicoReadS68k16_pr
+                                     .text.PicoWriteS68k8_prgwp .text.PicoWriteS68k16_prgwp)
+    build/segacd/pico__memory.o (.text.m68k_read8 .text.m68k_read16 .text.m68k_read32
+                                 .text.m68k_write8 .text.m68k_write16 .text.m68k_write32)
+    build/segacd/pico__draw.o (.text.TileNorm .text.TileFlip .text.DrawLayer* .text.PicoLine .text.DrawWindow*)
+    . = ALIGN(4);
+    __segacd_itc_end__ = .;
+    ASSERT(ABSOLUTE(__segacd_itc_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM), "Error: SEGACD ITC overflow");
+  } AT > CORES
+  _OVERLAY_SEGACD_ITC_SIZE = SIZEOF(.overlay_segacd_itc);
+  _OVERLAY_SEGACD_ITC_LMA_OFFSET = LOADADDR(.overlay_segacd_itc) - LOADADDR(.overlay_segacd);
+
   .overlay_segacd_bss _OVERLAY_SEGACD_LOAD_END : {
     . = ALIGN(8);
     _OVERLAY_SEGACD_BSS_START = .;

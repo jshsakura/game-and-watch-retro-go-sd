@@ -24,7 +24,14 @@ different SRAM domain.
 | `0x05500000` | BRAM 8K | DTCM heap |
 
 BIOS and cold code/rodata are XIP'd from external flash (`segacd.xip`, sentinel
-`SEGACD_CODE_BASE` 0xDF000000). `lcd_setup_single_framebuffer()` also locks the
+`SEGACD_CODE_BASE` 0xDF000000). The hot CPU and tile code rides ITCM
+(`.overlay_segacd_itc`, 57 KB of 64): without it the intro of Final Fight CD
+drew 14 fps at 100% busy, with it 60 at ~62%. The 68K handler list is
+generated (`tools/segacd_itc_gen.py` -> `segacd_itc_ops.ld`); append to that
+section, do not reorder it, and re-measure on the device if you change it.
+`cache_xip()` patches sentinels in the RAM overlay and in ITCM, and
+`scripts/check_xip_sentinels.py` fails the link if an instruction would be
+mistaken for a sentinel. `lcd_setup_single_framebuffer()` also locks the
 LCD to one buffer until reboot, so a fault redraw cannot zero the PRG pages
 behind it. The DTCM heap is the tight one: do not add a heap allocation on the
 load path (see `segacd_bram_load`, which reads straight into BRAM for that
