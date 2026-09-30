@@ -118,6 +118,38 @@ void lcd_set_clut(const uint32_t *clut, uint16_t count);
  * untouched. Use when the core owns the whole 256-entry palette. */
 void lcd_set_clut_full(const uint32_t *clut, uint16_t count);
 
+/* Full-palette mode. A core that owns all 256 slots (Sega CD) keeps slots
+ * [0..LCD_FULL_GAME_ENTRIES); the menu theme colours and a black for pixel
+ * darken live in the top slots, which PicoDrive leaves to the frontend's OSD
+ * (it pins 0xe0/0xf0 itself). With every game slot live there are no
+ * darkened twins to OR into, so a full-screen dim darkens the palette and the
+ * core's next push undoes it. The implementation lives in that core's
+ * overlay (segacd_lcd_clut.c) and registers these; lcd_set_clut() drops them.
+ * Internal flash has a 512 B floor, which is why it is not resident. */
+#define LCD_FULL_GAME_ENTRIES  0xE0
+#define LCD_FULL_OVERLAY_BASE  0xF8   /* LCD_OVERLAY_CLUT_MAX slots */
+#define LCD_FULL_BLACK_INDEX   0xFD
+typedef struct {
+  uint16_t (*pack)(uint16_t rgb565);   /* lcd_pack_color */
+  uint32_t (*entry)(uint8_t index);    /* what the panel shows at index */
+  void (*darken)(void);                /* dim every game slot */
+  void (*reserved)(void);              /* reprogram the theme/black slots */
+} lcd_clut_full_ops_t;
+void lcd_clut_set_full_ops(const lcd_clut_full_ops_t *ops);
+bool lcd_clut_is_full(void);
+void lcd_clut_darken_full(void);
+/* The menu theme colours as stored by lcd_set_overlay_clut. */
+const uint32_t *lcd_clut_theme(uint16_t *count);
+/* The index a pixel takes when darkened once more: its twin (or 0 when it is
+ * already one) in cart mode, the reserved black slot in full mode. */
+uint8_t lcd_lut8_darken_index(uint8_t index);
+
+/* gw_lcd_clut.c reaches the LTDC only through these (defined in gw_lcd.c,
+ * stubbed by tests/test_lcd_clut.c). load writes entries [0..count) from
+ * slot 0, like HAL_LTDC_ConfigCLUT; set writes one slot. */
+void lcd_clut_hw_load(const uint32_t *clut, uint16_t count);
+void lcd_clut_hw_set(uint8_t index, uint32_t rgb888);
+
 /* Fixed-size snapshot of the active cart CLUT as RGB565, used by the
  * savestate-screenshot loader to convert a LUT8 preview to RGB565 when
  * the menu's framebuffer is in RGB565 mode.
@@ -253,8 +285,7 @@ static inline void lcd_pen_darken(const lcd_pen_t *p, int off)
 {
     if (p->is_lut8) {
         uint8_t *q = &((uint8_t *)p->fb)[off];
-        if (*q & LCD_DARKEN_BIT) *q = 0;
-        else                     *q |= LCD_DARKEN_BIT;
+        *q = lcd_lut8_darken_index(*q);
     } else {
         uint16_t *q = &((uint16_t *)p->fb)[off];
         *q = (uint16_t)(((*q >> 1) & 0x7BEF) + 0x2104);

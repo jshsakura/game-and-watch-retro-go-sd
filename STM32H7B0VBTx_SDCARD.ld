@@ -1996,7 +1996,14 @@ INCLUDE build/fceumm_mappers.ld
    * displace firmware.
    *
    * This is a floor, not a target -- if real functionality legitimately needs
-   * the room, lower it deliberately in the same commit that spends it. */
+   * the room, lower it deliberately in the same commit that spends it.
+   *
+   * Lowered 512 -> 256 on 2026-09-30 for the full-palette LUT8 fix: with a
+   * core owning all 256 CLUT slots (Sega CD), every menu drew in game
+   * colours and savestate thumbnails were black. The implementation went to
+   * the Sega CD overlay (segacd_lcd_clut.c); the resident part is the ops
+   * dispatch, the palette dim branch and the RGB565 thumbnail branch,
+   * ~250 B, leaving 264 B. */
   __intflash_headroom__ = ORIGIN(FLASH) + LENGTH(FLASH) - __flash_end__;
 
   /* Uninitialized data section */
@@ -2070,4 +2077,4 @@ INCLUDE build/fceumm_mappers.ld
  * script-level statement, not something that can sit between output section
  * descriptions -- see the comment at __intflash_headroom__ above for why the
  * budget is named at all. */
-ASSERT(__intflash_headroom__ >= 512, "Error: internal flash headroom below 512 B -- put diagnostics/probes in RCPROBE_CODE (cf. Core/Src/rc_probe.c), or lower this floor deliberately")
+ASSERT(__intflash_headroom__ >= 256, "Error: internal flash headroom below 256 B -- put diagnostics/probes in RCPROBE_CODE (cf. Core/Src/rc_probe.c), or lower this floor deliberately")

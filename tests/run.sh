@@ -227,6 +227,11 @@ $CC -O2 -Wall -Wextra -std=c11 -DSEGACD_RAM_PROBE \
 $CC -O2 -Wall -Wextra -std=c11 -ICore/Inc tests/test_segacd_boot_start.c \
     -o /tmp/mtest/test_segacd_boot_start || fail "compile test_segacd_boot_start"
 
+# LUT8 CLUT bookkeeping: the REAL gw_lcd_clut.c against a model of the LTDC
+# CLUT (full-palette mode: Sega CD's menus, dim and savestate thumbnails).
+$CC -O2 -Wall -Wextra -std=c11 -Itests/lcd_clut_stubs -ICore/Inc tests/test_lcd_clut.c \
+    Core/Src/gw_lcd_clut.c Core/Src/porting/segacd/segacd_lcd_clut.c -o /tmp/mtest/test_lcd_clut || fail "compile test_lcd_clut"
+
 # System-grid layout: the REAL rg_system_grid_layout.c, which is dependency-free
 # precisely so this links it instead of re-deriving its rules.
 $CC -O2 -Wall -Wextra -std=gnu11 -ICore/Inc/retro-go \
@@ -302,6 +307,7 @@ fi
 [ -x /tmp/mtest/test_rc_dispatch_heap ] && { /tmp/mtest/test_rc_dispatch_heap || fail test_rc_dispatch_heap; }
 /tmp/mtest/test_segacd_ram_probe || fail test_segacd_ram_probe
 /tmp/mtest/test_segacd_boot_start || fail test_segacd_boot_start
+/tmp/mtest/test_lcd_clut || fail test_lcd_clut
 
 # === colour tab icons: stored bbox must match its array and fit its box ====
 # gui_draw_color_icon() indexes data[] by bw*bh and blits at (ox,oy) inside the

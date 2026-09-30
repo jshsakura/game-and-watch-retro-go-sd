@@ -72,3 +72,22 @@ own `segacd_config.h` (options, border index) and `segacd_boot_start.h`.
 Pattern `auto` is what the device does. `STATE_OUT`/`SAVE_AT` +
 `STATE_IN`/`FRAME0` give a frame-aligned save/load round trip; `BRAM_IN`/
 `BRAM_OUT` exercise BRAM persistence. It is not a speed instrument.
+
+## Palette and menus (full-palette LUT8)
+
+PicoDrive's 8-bit renderer uses CLUT slots 0x00..0xBF, so the shared LUT8
+scheme (32 cart colours, darkened twins at +0x20, menu colours at 0x40) does
+not fit: menus drew in game colours, the dim OR'ed into game slots, and
+savestate thumbnails were saved with an all-zero 32-entry palette (black).
+`segacd_lcd_clut.c` registers `lcd_clut_full_ops_t`: menu colours at 0xF8..,
+a black at 0xFD, the dim darkens the palette (the next frame's push restores
+it), and thumbnails are written as RGB565. `tests/test_lcd_clut.c` models the
+LTDC CLUT and checks what the panel shows.
+
+## Clock
+
+`common_emu_auto_oc(0)`: no overclock. On device (2026-09-30) Final Fight CD's
+intro held 60 fps at 280 MHz with 76-82% busy (60-64% at 340 MHz); gameplay
+has not been measured remotely. A user who picks a higher level in the
+launcher still gets it (the call is a floor).
+

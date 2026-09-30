@@ -87,4 +87,22 @@ else
     ok "nothing patches a disc's sector 0"
 fi
 
+# A full-palette LUT8 core has no darkened twins and no room in the 32-entry
+# thumbnail footer: the dim and the savestate preview must take their own path.
+if sed -n '/^void odroid_overlay_darken_all/,/^}/p' Core/Src/porting/odroid_overlay.c | grep -q "lcd_clut_darken_full();"; then
+    ok "the menu dim darkens the palette on a full-palette core"
+else
+    bad "odroid_overlay_darken_all ORs twin bits into a full palette's game colours"
+fi
+if sed -n '/^bool odroid_system_emu_screenshot/,/^}/p' Core/Src/porting/odroid_system.c | grep -q "lcd_clut_is_full()"; then
+    ok "savestate thumbnails of a full-palette core are stored as RGB565"
+else
+    bad "savestate thumbnails of a full-palette core go out with an all-zero palette (black)"
+fi
+if echo "$main_body" | grep -q "lcd_set_clut_full(" || grep -q "lcd_set_clut_full(segacd_clut" "$M"; then
+    ok "Sega CD owns the CLUT through lcd_set_clut_full (full-palette mode)"
+else
+    bad "Sega CD no longer enters full-palette mode"
+fi
+
 exit $rc

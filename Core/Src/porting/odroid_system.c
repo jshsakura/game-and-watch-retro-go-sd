@@ -279,13 +279,29 @@ bool odroid_system_emu_screenshot(const char *filename)
         return false;
     }
 
-    size_t written = fwrite(data, 1, size, file);
+    /* A full-palette LUT8 core (Sega CD) does not fit the 32-entry CLUT
+     * footer below, which would come back all zero: a black thumbnail. Store
+     * its frame as RGB565 instead; the list shows that as-is and the in-game
+     * slot picker maps it back onto the palette. */
+    bool lut8 = lcd_get_mode() == LCD_MODE_LUT8;
+    bool as_rgb = lut8 && lcd_clut_is_full();
+    size_t written = 0;
+    if (as_rgb) {
+        uint16_t row[GW_LCD_WIDTH];
+        size = sizeof(row) * GW_LCD_HEIGHT;
+        for (int y = 0; y < GW_LCD_HEIGHT; y++) {
+            lcd_convert_lut8_to_rgb565(&data[y * GW_LCD_WIDTH], row, GW_LCD_WIDTH, NULL);
+            written += fwrite(row, 1, sizeof(row), file);
+        }
+    } else {
+        written = fwrite(data, 1, size, file);
+    }
 
     /* In LUT8 mode, append the active cart CLUT (RGB565) so the savestate
      * preview can be converted to RGB565 when shown from the game list
      * (which runs the LCD in RGB565). Fixed footer size keeps file-size
      * detection unambiguous: LUT8+CLUT = 76800+64, plain RGB565 = 153600. */
-    if (lcd_get_mode() == LCD_MODE_LUT8) {
+    if (lut8 && !as_rgb) {
         uint16_t clut[LCD_SCREENSHOT_CLUT_ENTRIES];
         lcd_get_clut_rgb565(clut);
         size_t cw = fwrite(clut, 1, LCD_SCREENSHOT_CLUT_BYTES, file);

@@ -595,6 +595,12 @@ void odroid_overlay_darken_all()
      * LCD_DARKEN_BIT into each pixel and the LTDC's own CLUT does the dim
      * lookup at scanout — exact RGB darkening, no nearest-match approximation. */
     if (lcd_get_mode() == LCD_MODE_LUT8) {
+        /* A full-palette core (Sega CD) has no free twin slots: every index
+         * is a game colour. Dim the palette itself; its next push undoes it. */
+        if (lcd_clut_is_full()) {
+            lcd_clut_darken_full();
+            return;
+        }
         uint8_t *fb = (uint8_t *)lcd_get_active_buffer();
         size_t n = lcd_get_frame_size();
         for (size_t i = 0; i < n; i++) fb[i] |= LCD_DARKEN_BIT;

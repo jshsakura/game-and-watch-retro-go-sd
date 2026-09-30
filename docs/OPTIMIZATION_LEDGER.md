@@ -532,6 +532,13 @@ Two traps met on the way:
   `bx lr` cleared EPSR.T and the jump into `emulator_start` took an INVSTATE
   UsageFault (CFSR 0x00020000, PC = `emulator_start`) on its first instruction.
 
+**Clock, same day.** A/B/A on the same scenes, PLL read off the device each
+arm (N=140 -> 280 MHz, N=170 -> 340 MHz): Final Fight CD's intro 60 fps drawn
+at both, busy 76-82% at 280 MHz against 60-64% at 340; the second 340 MHz arm
+matched the first to a point, so the gap is the clock, not drift. The core
+now asks for no overclock (`common_emu_auto_oc(0)`); gameplay, heavier than
+any intro, is the unmeasured part.
+
 Left: `memmove` 3.6% is PicoDrive's per-line `blockcpy` into the 8-bit
 output, and the full 256-entry CLUT upload each frame is 1.2%. Neither is
 worth an arm while there is a third of the frame in hand.

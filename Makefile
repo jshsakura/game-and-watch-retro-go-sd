@@ -32,6 +32,7 @@ Core/Src/gw_boot_rescue.c \
 Core/Src/gw_buttons.c \
 Core/Src/gw_update_guard.c \
 Core/Src/gw_lcd.c \
+Core/Src/gw_lcd_clut.c \
 Core/Src/gw_audio.c \
 Core/Src/gw_malloc.c \
 Core/Src/gw_flash.c \
@@ -963,6 +964,7 @@ $(CORE_PICODRIVE)/pico/sound/mix.c \
 $(CORE_PICODRIVE)/pico/sound/sn76496.c \
 $(CORE_PICODRIVE)/pico/sound/ym2612.c \
 $(CORE_PICODRIVE)/pico/sound/resampler.c \
+Core/Src/porting/segacd/segacd_lcd_clut.c \
 Core/Src/porting/segacd/main_segacd.c
 endif
 A2600_C_SOURCES =

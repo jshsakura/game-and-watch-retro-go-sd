@@ -334,7 +334,7 @@ static void *segacd_screenshot(void) { lcd_wait_for_vblank(); return framebuffer
 static int segacd_fps = 60;
 static void segacd_sleep_wake(void)
 {
-  common_emu_auto_oc(2);
+  common_emu_auto_oc(0);
   audio_start_playing(SEGACD_AUDIO_RATE / segacd_fps);
 }
 
@@ -392,7 +392,7 @@ void app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   common_emu_state.pause_after_frames = start_paused ? 2 : 0;
   if (start_paused) odroid_audio_mute(true);
   common_emu_state.frame_time_10us = 1667;
-  common_emu_auto_oc(2);
+  common_emu_auto_oc(0);
   /* The 64K SRAM4 bank is clock-gated after reset.  One PRG RAM page lives
    * there; the first memset otherwise raises an imprecise BusFault. */
   __HAL_RCC_SRDSRAM_CLK_ENABLE();
