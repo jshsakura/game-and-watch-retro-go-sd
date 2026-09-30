@@ -187,6 +187,8 @@ static void wait_beam_past(int row)
   for (uint32_t n = 0; n < 2000000u && beam_row() <= row; n++) { }
 }
 
+static void segacd_push_palette(void);
+
 static int segacd_scan_end(unsigned int num)
 {
   int n = (int)num - area_sl;
@@ -198,6 +200,8 @@ static int segacd_scan_end(unsigned int num)
   wait_beam_past((y1 < 240 ? y1 : 240) - 1);
   for (int y = y0; y < y1 && y < 240; y++)
     memcpy(fb + y * 320, line, (size_t)area_cc);
+  if (n == area_lc - 1)
+    segacd_push_palette();   /* the beam has just left the last row */
   return 0;
 }
 
@@ -243,6 +247,7 @@ static void segacd_push_palette(void);
  * only copy of the game image and showed black behind them. Redraw the
  * current frame from VDP state instead; the emulation does not advance. */
 static bool repaint_fresh = true;   /* the game ran since the last redraw */
+static bool palette_force = true;   /* upload the CLUT even if unchanged */
 
 static void segacd_repaint(void)
 {
@@ -254,19 +259,29 @@ static void segacd_repaint(void)
     segacd_set_out();
     PicoFrameDrawOnly();
   }
+  palette_force = true;
   segacd_push_palette();
+  palette_force = true;   /* the dialog dims it next; undo on the next frame */
 }
 
+/* Uploading the CLUT while the panel scans shows as a flickering line where
+ * the beam is. Game frames upload from segacd_scan_end() right after the last
+ * row, with the beam in the bottom blanking, and only when a colour changed;
+ * menus (which dim the palette in the hardware) force the next upload. */
 static void segacd_push_palette(void)
 {
+  bool changed = palette_force;
   PicoDrawUpdateHighPal();
   for (unsigned i = 0; i < 256; i++) {
     uint16_t c = Pico.est.HighPal[i];
     uint32_t r = ((c >> 11) & 0x1f) * 255 / 31;
     uint32_t g = ((c >> 5) & 0x3f) * 255 / 63;
     uint32_t b = (c & 0x1f) * 255 / 31;
-    segacd_clut[i] = (r << 16) | (g << 8) | b;
+    uint32_t v = (r << 16) | (g << 8) | b;
+    if (segacd_clut[i] != v) { segacd_clut[i] = v; changed = true; }
   }
+  if (!changed) return;
+  palette_force = false;
   lcd_set_clut_full(segacd_clut, 256);
 }
 
@@ -589,7 +604,6 @@ void app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     }
     PicoFrame();
     if (draw) {
-      segacd_push_palette();
       common_ingame_overlay();
       lcd_swap();
     }
