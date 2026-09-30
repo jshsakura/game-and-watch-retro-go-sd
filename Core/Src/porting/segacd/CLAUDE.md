@@ -86,8 +86,23 @@ LTDC CLUT and checks what the panel shows.
 
 ## Clock
 
-`common_emu_auto_oc(0)`: no overclock. On device (2026-09-30) Final Fight CD's
-intro held 60 fps at 280 MHz with 76-82% busy (60-64% at 340 MHz); gameplay
-has not been measured remotely. A user who picks a higher level in the
-launcher still gets it (the call is a floor).
+`common_emu_auto_oc(2)` (340 MHz). Stock 280 MHz held Final Fight CD's intro at
+60 fps, but CD audio streaming reads the SD card over polled SPI (~33% of the
+CPU on Orgun's title) and at 280 MHz that dropped frames (the status bar read
+45-50). The call is a floor: a higher launcher setting still wins.
+
+## One framebuffer: scaling, tearing, menus
+
+The core keeps one LUT8 framebuffer (the LCD pool's other half holds PRG RAM),
+so the panel scans out the buffer being drawn. PicoDrive renders each line
+into its own line buffer (`PicoDrawSetOutBuf(NULL, 0)`) and `segacd_scan_end()`
+places it: stretched by the launcher's Scaling option (FIT: H32 to 320 via
+POPT_EN_SOFTSCALE; FULL/CUSTOM also 224 to 240 lines), and only after the beam
+(LTDC CPSR) has passed that row, so a refresh never shows two frames. Starting
+at vblank instead left a fixed seam mid-screen: the SD reads at frame start let
+the beam overtake the renderer, which caught up halfway down.
+Nothing redraws outside the picture, so `segacd_clear_borders()` clears it each
+drawn frame. Menus: `lcd_clear_active_buffer()` is a no-op under the single-FB
+lock (it wiped the only image), and `segacd_repaint()` redraws the frame with
+`PicoFrameDrawOnly()` once per menu session (every pass flickered the dialog).
 

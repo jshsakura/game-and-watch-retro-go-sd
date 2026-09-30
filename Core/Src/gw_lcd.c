@@ -135,7 +135,12 @@ void *lcd_clear_active_buffer() {
    * already wait out; returns immediately in the normal cadence. */
   lcd_sleep_while_swap_pending();
   void *buffer = lcd_get_active_buffer();
-  memset(buffer, 0, lcd_get_frame_size());
+  /* With one locked framebuffer (Sega CD) the "active" buffer is the one on
+   * the panel, and the menus clear it and repaint every loop: the clear shows
+   * as black bands flickering over the game. That core's repaint redraws the
+   * whole frame, so there is nothing to clear. */
+  if (!lcd_single_fb_lock)
+    memset(buffer, 0, lcd_get_frame_size());
   return buffer;
 }
 

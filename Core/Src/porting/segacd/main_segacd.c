@@ -139,10 +139,82 @@ void PicoFrameFull(void) {}
  * before any line of the new mode is drawn. The margins the new mode no
  * longer covers would keep the old mode's pixels, so wipe the whole frame to
  * the pinned-black index; this frame's lines then draw over it. */
+/* The picture PicoDrive draws this mode (rows sl..sl+lc, columns sc..sc+cc).
+ * Nothing redraws outside it, so menus, the volume bar and the status bar
+ * left their pixels in the borders of an H32 / 224-line game for good. */
+static int area_sl = 0, area_lc = 240, area_sc = 0, area_cc = 320;
+
 void emu_video_mode_change(int sl, int lc, int sc, int cc)
 {
-  (void)sl; (void)lc; (void)sc; (void)cc;
+  area_sl = sl; area_lc = lc; area_sc = sc; area_cc = cc;
   memset(framebuffer1, SEGACD_BORDER_INDEX, 320u * 240u);
+}
+
+/* The launcher's Scaling option (odroid_display): OFF keeps the picture
+ * centered at its own size; FIT stretches an H32 (256-wide) picture to 320,
+ * which is the Mega Drive's own 4:3 (H32 and H40 fill the same TV width);
+ * FULL and CUSTOM also stretch 224 lines to 240. PicoDrive renders each line
+ * into its line buffer (output increment 0) and segacd_scan_end() puts it
+ * on the rows it covers, so the picture still fills top to bottom in step
+ * with the beam. */
+static bool scale_full;
+
+static void segacd_apply_scaling(void)
+{
+  odroid_display_scaling_t mode = odroid_display_get_scaling_mode();
+  if (mode == ODROID_DISPLAY_SCALING_OFF) PicoIn.opt &= ~POPT_EN_SOFTSCALE;
+  else                                    PicoIn.opt |= POPT_EN_SOFTSCALE;
+  bool full = mode == ODROID_DISPLAY_SCALING_FULL || mode == ODROID_DISPLAY_SCALING_CUSTOM;
+  if (full != scale_full) {
+    scale_full = full;
+    memset(framebuffer1, SEGACD_BORDER_INDEX, 320u * 240u);
+  }
+}
+
+/* The panel's current row (LTDC CPSR.CYPOS less the sync and back porch):
+ * negative in the top blanking, >= 240 in the bottom one. */
+static inline int beam_row(void)
+{
+  return (int)(LTDC->CPSR & 0xFFFFu) - (int)(LTDC->BPCR & 0x7FFu) - 1;
+}
+
+/* One framebuffer is scanned out while the core draws into it. Writing each
+ * row only once the beam has passed it keeps every refresh wholly one frame:
+ * the one in progress shows the previous frame, the next one this frame. The
+ * spin is bounded so a stopped LTDC cannot hang the core. */
+static void wait_beam_past(int row)
+{
+  for (uint32_t n = 0; n < 2000000u && beam_row() <= row; n++) { }
+}
+
+static int segacd_scan_end(unsigned int num)
+{
+  int n = (int)num - area_sl;
+  if (n < 0 || n >= area_lc || area_lc <= 0) return 0;
+  const uint8_t *line = Pico.est.HighCol + 8 + area_sc;
+  uint8_t *fb = (uint8_t *)framebuffer1 + area_sc;
+  int y0 = scale_full ? n * 240 / area_lc : area_sl + n;
+  int y1 = scale_full ? (n + 1) * 240 / area_lc : y0 + 1;
+  wait_beam_past((y1 < 240 ? y1 : 240) - 1);
+  for (int y = y0; y < y1 && y < 240; y++)
+    memcpy(fb + y * 320, line, (size_t)area_cc);
+  return 0;
+}
+
+static void segacd_clear_borders(void)
+{
+  uint8_t *fb = (uint8_t *)framebuffer1;
+  int top = scale_full ? 0 : (area_sl < 0 ? 0 : (area_sl > 240 ? 240 : area_sl));
+  int bot = scale_full ? 240 : area_sl + area_lc; bot = bot < top ? top : (bot > 240 ? 240 : bot);
+  int left = area_sc < 0 ? 0 : (area_sc > 320 ? 320 : area_sc);
+  int right = area_sc + area_cc; right = right < left ? left : (right > 320 ? 320 : right);
+  memset(fb, SEGACD_BORDER_INDEX, (size_t)top * 320u);
+  memset(fb + bot * 320, SEGACD_BORDER_INDEX, (size_t)(240 - bot) * 320u);
+  if (left == 0 && right == 320) return;
+  for (int y = top; y < bot; y++) {
+    memset(fb + y * 320, SEGACD_BORDER_INDEX, (size_t)left);
+    memset(fb + y * 320 + right, SEGACD_BORDER_INDEX, (size_t)(320 - right));
+  }
 }
 
 /* Cartridge-only hardware and compressed CD-audio backends are not part of
@@ -156,20 +228,32 @@ void mp3_update(int32_t *buffer, int length, int stereo)
 
 static void segacd_set_out(void)
 {
-  /* PicoDrive can touch the full 240-line output even for a 224-line NTSC
-   * mode. Starting at row 8 would overwrite the LCD bonus pool immediately
-   * following the 76,800-byte LUT8 framebuffer (where the BIOS lives). */
-  PicoDrawSetOutBuf(framebuffer1, 320);
+  /* Lines are rendered into PicoDrive's own line buffer and placed by
+   * segacd_scan_end() (scaling). Nothing PicoDrive writes can then reach past
+   * the 76,800-byte LUT8 framebuffer into the LCD bonus pool behind it,
+   * where the BIOS lives. */
+  PicoDrawSetOutBuf(NULL, 0);
 }
 
 static void segacd_push_palette(void);
 
 /* The shared pause dialog always calls repaint. A NULL callback jumps through
- * address zero on device. With one framebuffer there is no clean back buffer
- * to reconstruct; keep the last emulated image and refresh its palette. */
+ * address zero on device. With one framebuffer, the menus that clear the
+ * screen first (the PAUSE banner after waking, the sub-dialogs) wiped the
+ * only copy of the game image and showed black behind them. Redraw the
+ * current frame from VDP state instead; the emulation does not advance. */
+static bool repaint_fresh = true;   /* the game ran since the last redraw */
+
 static void segacd_repaint(void)
 {
-  segacd_set_out();
+  /* Once per menu session: the dialogs repaint every loop, and redrawing the
+   * whole frame each time over the one framebuffer wiped the status bar and
+   * the dialog for a moment on every pass (visible flicker). */
+  if (repaint_fresh) {
+    repaint_fresh = false;
+    segacd_set_out();
+    PicoFrameDrawOnly();
+  }
   segacd_push_palette();
 }
 
@@ -334,7 +418,7 @@ static void *segacd_screenshot(void) { lcd_wait_for_vblank(); return framebuffer
 static int segacd_fps = 60;
 static void segacd_sleep_wake(void)
 {
-  common_emu_auto_oc(0);
+  common_emu_auto_oc(2);
   audio_start_playing(SEGACD_AUDIO_RATE / segacd_fps);
 }
 
@@ -392,7 +476,7 @@ void app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   common_emu_state.pause_after_frames = start_paused ? 2 : 0;
   if (start_paused) odroid_audio_mute(true);
   common_emu_state.frame_time_10us = 1667;
-  common_emu_auto_oc(0);
+  common_emu_auto_oc(2);
   /* The 64K SRAM4 bank is clock-gated after reset.  One PRG RAM page lives
    * there; the first memset otherwise raises an imprecise BusFault. */
   __HAL_RCC_SRDSRAM_CLK_ENABLE();
@@ -462,6 +546,8 @@ void app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   PicoIn.writeSound = segacd_write_sound;
   PsndRerate(0);
   PicoDrawSetOutFormat(PDF_8BIT, 0);
+  PicoScanEnd = segacd_scan_end;
+  segacd_apply_scaling();
   segacd_set_out();
   segacd_push_palette();
   audio_start_playing(SEGACD_AUDIO_RATE / fps);
@@ -491,7 +577,16 @@ void app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
       segacd_bram_save();
     }
     PicoIn.skipFrame = draw ? 0 : 1;
-    if (draw) segacd_set_out();
+    segacd_apply_scaling();
+    if (draw) {
+      /* Rows are written behind the beam (segacd_scan_end). Starting in the
+       * bottom blanking would count every row as passed and write ahead of
+       * the next refresh instead, so let that refresh begin first. */
+      for (uint32_t n = 0; n < 2000000u && beam_row() >= 240; n++) { }
+      segacd_clear_borders();
+      segacd_set_out();
+      repaint_fresh = true;
+    }
     PicoFrame();
     if (draw) {
       segacd_push_palette();

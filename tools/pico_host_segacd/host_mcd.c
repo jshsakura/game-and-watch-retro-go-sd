@@ -265,6 +265,14 @@ int main(int argc, char **argv)
     for (i = 0; i < frames; i++) {
         PicoIn.pad[0] = pad_for(i + frame0, pat);
         PicoFrame();
+        /* DRAWONLY_AT=N: after frame N, repaint the way a menu does on the
+         * device (segacd_repaint: PicoFrameDrawOnly, 60 times). Emulation
+         * must continue exactly as if it had not happened. */
+        if (getenv("DRAWONLY_AT") && i + 1 == atoi(getenv("DRAWONLY_AT"))) {
+            int k;
+            for (k = 0; k < 60; k++) PicoFrameDrawOnly();
+            printf("[host] 60x PicoFrameDrawOnly after frame %d\n", i + 1);
+        }
         if (state_out && i + 1 == save_at) {
             unsigned int hdr[2] = { 0x53434450u, 1u };
             FILE *g = fopen(state_out, "wb");

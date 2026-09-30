@@ -105,4 +105,12 @@ else
     bad "Sega CD no longer enters full-palette mode"
 fi
 
+# One framebuffer: a menu that clears the screen before repaint must get the
+# game image back from repaint, or it shows black (the PAUSE banner on wake).
+if sed -n '/^static void segacd_repaint(/,/^}/p' "$M" | grep -q "PicoFrameDrawOnly();"; then
+    ok "repaint redraws the game frame behind menus"
+else
+    bad "segacd_repaint does not redraw: menus that clear first show black behind them"
+fi
+
 exit $rc
