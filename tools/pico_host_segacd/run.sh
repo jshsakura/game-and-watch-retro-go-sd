@@ -43,7 +43,7 @@ mkdir -p "$OUT"
 # segacd overlay: segacd_save_state calls PicoStateFP directly, so open_save_file
 # is an unreferenced section the linker discards. Without the same flags the
 # host link would demand real zlib gz* symbols the device never ships.
-INC="-I$PD -I$PD/pico -I$PD/cpu -I$PD/cpu/fame -I$PD/zlib -I$PD/pico/cd"
+INC="-ICore/Inc -I$PD -I$PD/pico -I$PD/cpu -I$PD/cpu/fame -I$PD/zlib -I$PD/pico/cd"
 SRCS="cpu/fame/famec.c cpu/cz80/cz80.c
       pico/pico.c pico/cart.c pico/memory.c pico/state.c pico/sek.c pico/z80if.c
       pico/videoport.c pico/draw.c pico/misc.c pico/eeprom.c pico/patch.c pico/media.c

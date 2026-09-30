@@ -20,6 +20,7 @@
 #include "pico/pico.h"
 #include "pico/pico_int.h"
 #include "pico/state.h"
+#include "porting/segacd/segacd_boot_start.h"
 
 #define SEGACD_AUDIO_RATE   44100
 #define SEGACD_AUDIO_MAX    (SEGACD_AUDIO_RATE / 50 + 16)
@@ -279,6 +280,7 @@ static const char *bios_path_for_region(int region)
 void app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
   odroid_gamepad_state_t joystick;
+  segacd_boot_start_t boot_start;
   odroid_dialog_choice_t options[] = { ODROID_DIALOG_CHOICE_LAST };
   common_emu_state.pause_after_frames = start_paused ? 2 : 0;
   if (start_paused) odroid_audio_mute(true);
@@ -351,6 +353,8 @@ void app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   segacd_push_palette();
   audio_start_playing(SEGACD_AUDIO_RATE / fps);
 
+  /* A loaded state is already past the BIOS menu. */
+  segacd_boot_start_init(&boot_start, !load_state);
   if (load_state) odroid_system_emu_load_state(save_slot);
   else memset(framebuffer1, 0, 320u * 240u);
 
@@ -360,7 +364,8 @@ void app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     odroid_input_read_gamepad(&joystick);
     common_emu_input_loop(&joystick, options, &segacd_repaint);
     common_emu_input_loop_handle_turbo(&joystick);
-    PicoIn.pad[0] = segacd_pad(&joystick);
+    PicoIn.pad[0] = segacd_pad(&joystick) |
+                    segacd_boot_start_pad(&boot_start, SekPc);
     PicoIn.skipFrame = draw ? 0 : 1;
     if (draw) segacd_set_out();
     PicoFrame();

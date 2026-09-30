@@ -20,6 +20,7 @@
 #include "pico/memory.h"
 #include "pico/cd/genplus_macros.h"   /* uint8/u16/u32 -> picodrive's u8/u16/u32 */
 #include "pico/cd/cdd.h"
+#include "porting/segacd/segacd_boot_start.h"
 
 static unsigned char fb[320 * 240];   /* PDF_8BIT: one byte per pixel */
 static short snd[2048];
@@ -36,6 +37,8 @@ static void wr_snd(int len) { (void)len; }
 
 /* Input patterns, same vocabulary as tools/pico_host: find a pad sequence that
  * gets past the BIOS splash / title screen and into gameplay. */
+static segacd_boot_start_t boot;
+
 static unsigned short pad_for(int f, const char *pat)
 {
     if (!pat || !strcmp(pat, "none")) return 0;
@@ -48,6 +51,18 @@ static unsigned short pad_for(int f, const char *pat)
         return 0;
     }
     if (!strcmp(pat, "slow_a"))  return (f % 40) < 8 ? PAD_A : 0;
+    /* JP/EU Mega-CD BIOS parks at its menu until START, even with a disc in;
+     * the US BIOS auto-boots. Press START twice, then behave like "play". */
+    if (!strcmp(pat, "jplay")) {
+        if ((f >= 300 && f < 312) || (f >= 420 && f < 432)) return PAD_START;
+        return pad_for(f + 200, "play");
+    }
+    /* What the device does: segacd_boot_start presses START through the
+     * BIOS menu, then "play" once the game owns the pad. */
+    if (!strcmp(pat, "auto")) {
+        unsigned short p = segacd_boot_start_pad(&boot, SekPc);
+        return boot.active ? p : pad_for(f + 200, "play");
+    }
     if (!strcmp(pat, "play")) {
         if (f < 660) return (f % 12) < 6 ? PAD_A : 0;
         switch ((f / 30) % 4) {
@@ -140,6 +155,13 @@ int main(int argc, char **argv)
     const char *pat = argc > 3 ? argv[3] : "none";
     const char *bios_dir = getenv("BIOS_DIR");
     const char *state = getenv("STATE_IN");
+    /* Save/load round trip: STATE_OUT is written after SAVE_AT frames in the
+     * device's format (magic+version, then PicoStateFP). FRAME0 shifts the
+     * printed frame numbers and the pad pattern so a resumed run lines up
+     * frame for frame with an uninterrupted one. */
+    const char *state_out = getenv("STATE_OUT");
+    int save_at = getenv("SAVE_AT") ? atoi(getenv("SAVE_AT")) : -1;
+    int frame0 = getenv("FRAME0") ? atoi(getenv("FRAME0")) : 0;
     int region = 4, i;
     long bsz = 0;
     unsigned char *bios;
@@ -214,9 +236,19 @@ int main(int argc, char **argv)
     }
 
     memset(fb, 0, sizeof(fb));
+    segacd_boot_start_init(&boot, state == NULL);
     for (i = 0; i < frames; i++) {
-        PicoIn.pad[0] = pad_for(i, pat);
+        PicoIn.pad[0] = pad_for(i + frame0, pat);
         PicoFrame();
+        if (state_out && i + 1 == save_at) {
+            unsigned int hdr[2] = { 0x53434450u, 1u };
+            FILE *g = fopen(state_out, "wb");
+            int rc = -1;
+            if (g && fwrite(hdr, sizeof(hdr), 1, g) == 1)
+                rc = PicoStateFP(g, 1, st_read, st_write, st_eof, st_seek);
+            if (g) fclose(g);
+            printf("[host] saved state after %d frames -> %d\n", save_at, rc);
+        }
         if ((i % 20) == 0 || i == frames - 1) {
             uint32_t ck = 0; int nz = 0, j;
             int cols = 0, seen[64]; int k;
@@ -224,7 +256,7 @@ int main(int argc, char **argv)
             for (k = 0; k < 64; k++) seen[k] = 0;
             for (j = 0; j < 320 * 240; j += 7) { int b = fb[j] & 63; if (!seen[b]) { seen[b] = 1; cols++; } }
             printf("f%04d ck=%08x nb=%d col=%d cdd=%02x lba=%d pc=%06x pc2=%06x\n",
-                   i, ck, nz, cols, (unsigned)cdd.status, cdd.lba,
+                   i + frame0, ck, nz, cols, (unsigned)cdd.status, cdd.lba,
                    (unsigned)SekPc, (unsigned)SekPcS68k);
             fflush(stdout);
         }

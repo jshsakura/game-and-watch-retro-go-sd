@@ -207,14 +207,13 @@ not a reimplementation.
   palette for off-line rendering; `STATE_IN` resumes a device savestate
   (skips the 8-byte `SCDP` header — but note the same pointer-width caveat as
   `RIG_32X_STATE`: a 64-bit host cannot read a 32-bit device dump).
-- What it proved (2026-09-30): the CHD→cue/bin conversion pipeline is sound,
-  and **15/15 library games boot** once their images are repaired by
-  `tools/segacd_fix_security.sh` — repro rips carry a mis-assembled sector 0
-  (security string at 0x310 instead of 0x669, or a non-standard system ID),
-  which the BIOS sub-program rejects identically under picodrive-fork,
-  picodrive-master and Genesis Plus GX. The Sonic CD repro additionally has
-  relocated audio (fixed MSFs in the game point into the data track) and hangs
-  in all three emulators — an image defect, not a core defect.
+- What it proved (2026-09-30): the CHD→cue/bin conversion pipeline is sound
+  and **15/15 library games reach game code** with their sector 0 untouched.
+  Pattern `auto` runs the device's own `segacd_boot_start.h` (START through the
+  JP/EU BIOS menu); `STATE_OUT`+`SAVE_AT` and `STATE_IN`+`FRAME0` make a
+  save/load round trip line up frame for frame with an uninterrupted run. An
+  earlier "repro rips have a broken sector 0" finding was wrong: the discs are
+  Japanese and the JP BIOS was waiting for START. Never patch sector 0.
 - What it does **not** prove: performance (host ≠ Cortex-M7 instruction mix;
   that's the m7 rig's job) and the device's split-RAM address map (host
   `plat_mmap` is plain malloc).

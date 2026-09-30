@@ -321,19 +321,22 @@ observation makes repetition look like a stop.
 CHD images; the launcher only registers `cue` for segacd, and on-device CHD
 decode is impossible (~30 KB RAM free vs libchdr's ~150–200 KB), so the shipping
 path is `chdman extractcd --splitbin` via `tools/segacd_chd_convert.sh`. The
-converted images initially all landed in the BIOS CD player, and the cause was
-in the **images, not the core**: repro rips assemble sector 0 wrong (the
-security string sits at 0x310 instead of 0x669, and Lunar 2 carries a
-non-standard system ID) — the BIOS sub-program's verify table rejects them
-identically under picodrive-fork, picodrive-master and Genesis Plus GX.
-`tools/segacd_fix_security.sh` rewrites the system ID and the 0x200–0x783
-security block from a verified homebrew template (`tools/ipsec_template.bin`);
-after repair **15/15 games boot** in the host rig (`tools/pico_host_segacd/`,
-real BIOS, real core sources). Final Fight CD plays (CDDA streaming, animated
-intro, both CPUs in game code). The Sonic CD repro additionally has relocated
-audio — the game's fixed MSFs point into the padded data track and it hangs at
-the same PCs in all three emulators — an image defect needing a proper original
-dump, not fixable in the core. Two host-rig findings worth keeping: BIOS images
+converted images initially all landed in the BIOS menu, and that was **the
+BIOS, not the images**: 12 of the 15 discs are Japanese (region `J`, the JP
+security block with its string at 0x30E, which is where the JP BIOS looks), and
+the Japanese Mega-CD BIOS waits at its menu for START even with a disc in. The
+first diagnosis read that as a broken sector 0 and "repaired" it by pasting the
+US security block over 0x200–0x783. That block is exactly where a JP disc's own
+IP code starts (at 0x356; Lunar's writes the `0x49A1` handshake the sub CPU
+waits for), so the repair erased the game's boot code and made region detection
+pick the US BIOS. Nine games then hung at the first frame of the game with the
+main 68K parked at the BIOS exception stub `0x210` (stacked PC `0xFFFFC008`,
+data, illegal instruction); Lunar 2, a 2048-byte-sector image, was patched at
+2352-byte offsets and only survived by luck. **The script and its template are
+gone.** With the original sector 0 and `segacd_boot_start.h` pressing START
+through the BIOS menu, **15/15 games reach game code on the host by frame 640**,
+Sonic CD included (its "relocated audio" was the same patch damage).
+Two host-rig findings worth keeping: BIOS images
 must be byteswapped for this LSB_FIRST core (the device loader does it; a host
 that skips it executes garbage from the reset vector), and retail games need
 600–1500 frames before the BIOS finishes its background disc check — a 600-frame
