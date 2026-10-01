@@ -1,0 +1,18 @@
+[snes-qemu] boot
+[snes-qemu] cal: 3.0M insns = 75000 ticks -> 40.000 insn/tick
+[snes-qemu] rom len=1048576 frames=1200
+w00200 emu=3256483 apu=248305 insn/frame fb=63112383 audio=c68fddf3 lit=0
+
+w00400 emu=3256877 apu=417337 insn/frame fb=a12805a9 audio=9ccc7461 lit=1039
+
+w00600 emu=3951421 apu=489317 insn/frame fb=09cf58df audio=ceae5237 lit=2617
+
+w00800 emu=4500184 apu=522637 insn/frame fb=95d4beda audio=980fbadd lit=7581
+
+w01000 emu=5970403 apu=514867 insn/frame fb=f4f8657b audio=666732e5 lit=36144
+
+w01200 emu=6262275 apu=521647 insn/frame fb=f4f8657b audio=fd79f9e0 lit=36144
+
+[snes-qemu] done 1200 frames STATEHASH=1d0d959d AUDIOHASH=c70e2bdf avg emu=4532941 apu=452352 insn/frame
+[bake] on=1 sites=2 pc=00:ffff/8036 dp_off=12 charge=24/22 laps=189582
+[bake] gate: armed=0 win_frames=0 park=900

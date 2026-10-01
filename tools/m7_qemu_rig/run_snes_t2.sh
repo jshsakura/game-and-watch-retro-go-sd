@@ -50,7 +50,7 @@ cp "$ROM" "$OUT/rom.smc"
 SRCS="$SM/src/snes/apu.c $SM/src/snes/cart.c $SM/src/snes/cpu.c \
       $SM/src/snes/dma.c $SM/src/snes/dsp.c $SM/src/snes/input.c \
       $SM/src/snes/ppu.c $SM/src/snes/snes.c $SM/src/snes/snes_other.c \
-      $SM/src/snes/spc.c $SM/src/snes/dsp1_hle.c $SM/src/snes/rc_dispatch.c $SM/src/snes/spin_skip.c \
+      $SM/src/snes/spc.c $SM/src/snes/dsp1_hle.c $SM/src/snes/cx4_hle.c $SM/src/snes/rc_dispatch.c $SM/src/snes/spin_skip.c \
       $SM/src/snes/spin_bake.c $SM/src/tracing.c \
       $SM/src/snes/thumb2/cpu_thumb2_offsets_check.c \
       $SM/src/snes/thumb2/spc_thumb2_offsets_check.c \
@@ -83,6 +83,12 @@ $CC $ARCH -T "$RIG/mps2_an500_snes.ld" -nostartfiles -Wl,--gc-sections \
     $OBJS -lm -o "$OUT/rig_snes.elf"
 
 arm-none-eabi-size "$OUT/rig_snes.elf"
+
+# Build in the firmware toolchain container, run QEMU on the host. Also lets
+# finite ROM batches reuse a fixed ELF without starting a dummy guest.
+if [[ "${RIG_BUILD_ONLY:-0}" == 1 ]]; then
+    exit 0
+fi
 
 timeout 1800 qemu-system-arm -machine mps2-an500 -nographic -semihosting \
     -icount shift=0,align=off,sleep=off -kernel "$OUT/rig_snes.elf"

@@ -678,3 +678,14 @@ staged for them yet.
    harness for dead code, and by this document's own rule — a harness must be
    the same program as the firmware — it should be deleted or the core
    restored. Left standing, with the diagnosis, for whoever owns that call.
+
+### SNES wait-span bulk folding
+
+- `tests/test_snes_bake_bulk.sh` compiles the original scalar span source from
+  commit 5b770152 and the real bulk candidate, then compares CPU state, timing,
+  DMA transitions and IRQ boundaries across 109,886 cases with ASan/UBSan.
+- `tests/test_snes_bulk_evidence.py` checks that ROM, intermediate audio, guest
+  state and incomplete-run mismatches cannot receive a false PASS.
+- `tools/snes_device_bench/test_records.py` checks fixed-window records and
+  rejects workload mismatches and baseline drift.
+- Hardware evidence and its limitations: [SNES device results](SNES_DEVICE_RESULTS_2026-10-02.md).

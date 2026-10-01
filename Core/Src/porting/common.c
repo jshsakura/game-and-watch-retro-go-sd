@@ -163,6 +163,14 @@ void common_emu_frame_loop_reset(void){
 uint32_t g_common_drawn_frames;
 uint32_t g_common_emu_frames;
 
+/* Resident completion markers: overlay addresses change during core loading. */
+__attribute__((noinline)) void common_emu_bench_begin(void) {
+    __asm__ volatile("nop" ::: "memory");
+}
+__attribute__((noinline)) void common_emu_bench_complete(void) {
+    __asm__ volatile("nop" ::: "memory");
+}
+
 bool common_emu_frame_loop(void){
     gw_crumb_heartbeat();
     rg_app_desc_t *app = odroid_system_get_app();

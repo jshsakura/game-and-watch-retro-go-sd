@@ -1559,6 +1559,10 @@ endif
 # be taken with nobody at the console. By index, not path -- the launcher's paths
 # come from FatFs and a literal need not match them byte for byte. Diagnostic.
 GNW_AUTOBOOT ?=
+SNES_DEVICE_BENCH ?= 0
+ifeq ($(SNES_DEVICE_BENCH),1)
+  C_DEFS += -DSNES_DEVICE_BENCH=1
+endif
 ifneq ($(GNW_AUTOBOOT),)
   C_DEFS += -DGNW_AUTOBOOT_INDEX=$(GNW_AUTOBOOT)
 endif
