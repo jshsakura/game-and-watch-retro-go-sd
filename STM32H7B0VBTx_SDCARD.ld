@@ -781,6 +781,9 @@ INCLUDE build/fceumm_mappers.ld
        plus the FIFO sync behind every port write). */
     build/md32x/pico__32x__32x.o (.text.PicoFrame32x)
     build/md32x/pico__videoport.o (.text.PicoVideoWrite .text.PicoVideoFIFOSync)
+    /* The MD line compositor and the layer renderer, 7.2 KB, into the room the
+       draw and YM2612 data left (1.6% and 1.0% of an After Burner frame). */
+    build/md32x/pico__draw.o (.text.FinalizeLine555 .text.DrawLayer.constprop.0)
     /* The 68K main loop and the SH-2 sync / event / IRQ-level path, 2.7 KB.
        Device PC sampling (2026-10-01, After Burner, HLE build) put 8.5% of the
        frame in m68k_run's one 256 B block and ~6% in these 32x.c functions,
@@ -866,13 +869,17 @@ INCLUDE build/fceumm_mappers.ld
      malloc (gw_heap_reserve_top) and zeroes it before anything runs. Nothing
      else may claim this range: the launcher's heap simply ends below it for
      the rest of the boot. */
-  __MD32X_DTCM_RESERVE__ = 14K;
+  __MD32X_DTCM_RESERVE__ = 22K;
   .overlay_md32x_dtcm_bss (((ORIGIN(DTCMRAM) + LENGTH(DTCMRAM) - __REMOTE_INPUT_RESERVE__
                              - _Min_Stack_Size - _Stack_Redzone_Size) & ~15)
                            - __MD32X_DTCM_RESERVE__) (NOLOAD) : {
     __md32x_dtcm_bss_start__ = .;
     build/md32x/pico__32x__memory.o   (.bss .bss*)
     build/md32x/pico__memory.o        (.bss .bss*)
+    /* the MD line renderer's tables and the YM2612 state, 7.4 KB more: the
+       data of the two objects whose hot code now fills the ITCM they left */
+    build/md32x/pico__draw.o          (.bss .bss*)
+    build/md32x/pico__sound__ym2612.o (.bss .bss*)
     . = ALIGN(4);
     __md32x_dtcm_bss_end__ = .;
     ASSERT(__md32x_dtcm_bss_end__ - __md32x_dtcm_bss_start__ <= __MD32X_DTCM_RESERVE__,
@@ -881,8 +888,6 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_md32x_itc_bss __md32x_itc_end__ (NOLOAD) : {
     . = ALIGN(8);
     __md32x_itc_bss_start__ = .;
-    build/md32x/pico__sound__ym2612.o (.bss .bss*)
-    build/md32x/pico__draw.o          (.bss .bss*)
     build/md32x/cpu__cz80__cz80.o     (.bss .bss*)
     build/md32x/pico__z80if.o         (.bss .bss*)
     . = ALIGN(8);
