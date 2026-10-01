@@ -769,6 +769,13 @@ INCLUDE build/fceumm_mappers.ld
        data, so they ride the D-cache, and the hot opcode set is small enough
        to stay in it. It is the instruction fetch that misses. */
     build/md32x/cpu__cz80__cz80.o (.text.Cz80_Exec)
+    /* The FM channel renderer and its envelope / LFO steps, 4.5 KB: the largest
+       single XIP consumer left (6.5% of an After Burner frame by device PC
+       sampling, 2026-10-01). It was tried here once before and moved nothing,
+       but that was against a 1% measurement floor and with ITCM full; with the
+       memory maps gone to DTCM there is room, and the A/B is run on the
+       placement-pinned (64 KB) layout. */
+    build/md32x/pico__sound__ym2612.o (.text.chan_render .text.update_eg_phase .text.update_lfo_phase)
     /* The 68K main loop and the SH-2 sync / event / IRQ-level path, 2.7 KB.
        Device PC sampling (2026-10-01, After Burner, HLE build) put 8.5% of the
        frame in m68k_run's one 256 B block and ~6% in these 32x.c functions,
