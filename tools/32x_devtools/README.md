@@ -15,6 +15,8 @@ the record of the method, not as a ready-to-run suite.
 | `opening_capture.py` | boot an arm and photograph the panel continuously (LTDC scanout, CPU never halted) |
 | `build-wtmain.py`, `build-doom.py` | Docker builds of bench arms (After Burner and Doom workloads) |
 | `selector.doom.txt` | `/snes_bench_index.txt` for Doom |
+| `install_release.py` | install a **release** build on the device: bank2 firmware plus the `cores/`, `lang/` and `roms/homebrew/` files that carry its tag. Internal cores must carry exactly the firmware's `GIT_TAG` or the launcher shows "corrupted installation", so replacing only the firmware (or only the 32X core, as the measurement scripts do) is not an install. Backs up everything it overwrites, reads everything back, restores on failure |
+| `restore_release.py` | undo `install_release.py` from its backup |
 
 Rules these enforce (see `CLAUDE.md`): an arm proves its identity (screen hash, XIP address), the card and
 flash are read back after every restore, and a triplet whose baseline drifts more than 0.5% is invalid.
