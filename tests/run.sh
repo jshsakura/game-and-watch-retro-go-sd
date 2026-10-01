@@ -882,6 +882,34 @@ else
 fi
 ( cd "$FAX_DIR" && ./test_flash_alloc_xip_align ) || fail test_flash_alloc_xip_align
 
+# A cache hit must prove the flash still holds the file: the record lives on the
+# SD card, the flash it describes can change behind it (a lost erase record, an
+# external reflash), and a hit into a hole is a silent wrong answer.
+# RED against the allocator as it was before the CRC verification.
+echo "=== flash cache: a hit must prove the flash still holds the file ==="
+FAV_DIR=/tmp/mtest/flash_alloc_crc_verify
+rm -rf "$FAV_DIR"; mkdir -p "$FAV_DIR/saves"
+FAV_PREFIX_REV=835e5f99         # the allocator as it was, hits trusted on metadata alone
+$CC -O1 -g -std=gnu11 -w $SAN -Itests/flash_alloc_stubs -ICore/Inc \
+    tests/test_flash_alloc_crc_verify.c tests/flash_alloc_stubs/flash_stubs.c \
+    Core/Src/gw_flash_alloc.c -o "$FAV_DIR/test_flash_alloc_crc_verify" \
+    || fail "compile test_flash_alloc_crc_verify"
+if git cat-file -e "$FAV_PREFIX_REV:Core/Src/gw_flash_alloc.c" 2>/dev/null; then
+    git show "$FAV_PREFIX_REV:Core/Src/gw_flash_alloc.c" > "$FAV_DIR/prefix.c"
+    $CC -O1 -g -std=gnu11 -w $SAN -Itests/flash_alloc_stubs -ICore/Inc \
+        tests/test_flash_alloc_crc_verify.c tests/flash_alloc_stubs/flash_stubs.c \
+        "$FAV_DIR/prefix.c" -o "$FAV_DIR/test_prefix" \
+        || fail "compile test_flash_alloc_crc_verify against the pre-fix allocator"
+    if ( cd "$FAV_DIR" && ./test_prefix > /dev/null 2>&1 ); then
+        fail "CRC verify RED check: the allocator that trusts metadata alone passed"
+    else
+        echo "OK  the allocator that trusts metadata alone fails it"
+    fi
+else
+    echo "SKIP no $FAV_PREFIX_REV in this clone (shallow?) - RED check not run"
+fi
+( cd "$FAV_DIR" && ./test_flash_alloc_crc_verify ) || fail test_flash_alloc_crc_verify
+
 # external/sm's dma_doDma drains a whole A->B channel per call instead of one
 # byte per dma_cycle() — a host-CPU win for VRAM/CGRAM/OAM uploads that must not
 # change what a DMA transfers. Link the REAL dma.c and compare its transfer

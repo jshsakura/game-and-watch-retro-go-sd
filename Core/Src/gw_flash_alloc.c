@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <sys/stat.h>
-#include <assert.h>
 #include "stm32h7xx.h"
 #include "main.h"
 #include "crc32.h"
@@ -16,7 +15,7 @@
 #include "gw_ofw.h"
 
 #define METADATA_FILE ODROID_BASE_PATH_SAVES "/flashcachedata.bin"
-#define METADATA_VERSION 1
+#define METADATA_VERSION 2
 #define MAX_FILES 50
 
 typedef struct {
@@ -30,6 +29,12 @@ typedef struct
     uint32_t flash_address;
     uint32_t file_size;
     bool valid;
+    /* CRC of the bytes as they sit in flash (post byte-swap, post-relocation).
+     * Zero on entries written before this field existed: those are verified
+     * by rewriting. A hit whose flash region no longer matches was erased or
+     * partially overwritten out from under the metadata -- serve it as a miss
+     * and cache the file again, rather than hand the caller a hole. */
+    uint32_t content_crc32;
 } FileMetadata;
 
 // Global Metadata
@@ -136,7 +141,7 @@ static void live_add(uint32_t address, uint32_t size)
     if (live_file_count >= MAX_LIVE_FILES) {
         /* More files in play than we can protect. The busiest core in the tree,
          * PCE CD, holds three. Say it rather than let it pass unseen. */
-        printf("flash_alloc: live set full (%d) - a write may overwrite a file in use\n",
+        printf("flash_alloc: live set full (%d), overwrite risk\n",
                MAX_LIVE_FILES);
         return;
     }
@@ -231,7 +236,11 @@ static uint32_t get_extflash_base(void)
 }
 
 static void reset_metadata(uint32_t flash_write_base) {
-    assert(metadata != NULL);
+    /* A failed calloc() in initialize_metadata(). Trap rather than assert(): the
+     * assert dragged the file name, the expression and __func__ into the resident
+     * image (75 B) for the same fatal outcome, and internal flash is full. */
+    if (metadata == NULL)
+        __builtin_trap();
 
     memset(metadata, 0, sizeof(Metadata));
     metadata->version = METADATA_VERSION;
@@ -315,11 +324,22 @@ static bool is_file_in_flash(uint32_t file_crc32, uint32_t *flash_address, uint3
 {
     for (int i = 0; i < MAX_FILES; i++)
     {
-        if (metadata->files[i].valid && metadata->files[i].file_crc32 == file_crc32)
+        const FileMetadata *f = &metadata->files[i];
+        if (f->valid && f->file_crc32 == file_crc32)
         {
-            *flash_address = metadata->files[i].flash_address;
+            /* Trust the entry only as far as the flash itself backs it. The
+             * ring erases 64KB blocks and metadata updates can be lost (SD
+             * glitch, brown-out between erase and save); an external reflash
+             * can also rewrite the region behind the cache's back. A miss is
+             * served as a rewrite and the entry is refreshed; a legacy entry
+             * without a stored content CRC is unverifiable, so also a miss.
+             * Reads run memory-mapped: a plain RAM-speed pass. */
+            if (!f->content_crc32 ||
+                crc32_le(0, (const uint8_t *)f->flash_address, f->file_size) != f->content_crc32)
+                continue;
+            *flash_address = f->flash_address;
             if (*file_size_p == 0)
-                *file_size_p = metadata->files[i].file_size;
+                *file_size_p = f->file_size;
             return true;
         }
     }
@@ -346,11 +366,13 @@ static bool circular_flash_write(const char *file_path,
                                  uint32_t *flash_address_out,
                                  bool byte_swap,
                                  file_progress_cb_t progress_cb,
-                                 flash_relocate_cb_t relocate_cb)
+                                 flash_relocate_cb_t relocate_cb,
+                                 uint32_t *content_crc_out)
 {
     uint8_t buffer[16 * 1024];
     uint32_t total_bytes_processed = 0;
     uint8_t progress = 0;
+    uint32_t content_crc = 0;
 
     FILE *file = fopen(file_path, "rb");
     if (!file)
@@ -387,7 +409,7 @@ static bool circular_flash_write(const char *file_path,
     if (!find_write_slot(flash_write_pointer, erase_size_total,
                          relocate_cb ? XIP_CODE_ALIGN : block_size, &slot))
     {
-        printf("flash_alloc: no room for %s (%lu bytes) clear of the files in use\n",
+        printf("flash_alloc: no room for %s (%lu B)\n",
                file_path, (unsigned long)*data_size);
         fclose(file);
         return false;
@@ -448,6 +470,10 @@ static bool circular_flash_write(const char *file_path,
                         (uint8_t *)*flash_address_out, *data_size);
         }
 
+        /* Hash the exact bytes going to flash (post swap, post relocation)
+         * so a later hit can prove the region still holds this image. */
+        content_crc = crc32_le(content_crc, buffer, bytes_read);
+
         OSPI_Program(address_in_flash, buffer, bytes_read);
 
         address_in_flash += bytes_read;
@@ -477,6 +503,9 @@ static bool circular_flash_write(const char *file_path,
     invalidate_overwritten_files(old_flash_write_pointer, erase_size_total);
     update_flash_pointer(flash_write_pointer);
 
+    if (content_crc_out)
+        *content_crc_out = content_crc;
+
     return true;
 }
 
@@ -505,6 +534,7 @@ uint8_t *store_file_in_flash_relocate(const char *file_path, uint32_t *file_size
     // to handle case where rom file in sd card has been modified
     uint32_t file_crc32 = compute_file_crc32(file_path);
     uint32_t flash_address;
+    uint32_t content_crc = 0;
 
     if (is_file_in_flash(file_crc32, &flash_address, file_size_p))
     {
@@ -516,7 +546,7 @@ uint8_t *store_file_in_flash_relocate(const char *file_path, uint32_t *file_size
         return (uint8_t *)flash_address;
     }
 
-    if (!circular_flash_write(file_path, file_size_p, &flash_address, byte_swap, progress_cb, relocate_cb))
+    if (!circular_flash_write(file_path, file_size_p, &flash_address, byte_swap, progress_cb, relocate_cb, &content_crc))
     {
         free(metadata);
         metadata = NULL;
@@ -525,30 +555,20 @@ uint8_t *store_file_in_flash_relocate(const char *file_path, uint32_t *file_size
 
     live_add(flash_address, *file_size_p);
 
-    bool metadata_updated = false;
-
-    for (int i = 0; i < MAX_FILES; i++)
-    {
+    /* First free slot, else the next one round the ring. */
+    int slot = -1;
+    for (int i = 0; i < MAX_FILES && slot < 0; i++)
         if (!metadata->files[i].valid)
-        {
-            metadata->files[i].file_crc32 = file_crc32;
-            metadata->files[i].flash_address = flash_address;
-            metadata->files[i].file_size = *file_size_p;
-            metadata->files[i].valid = true;
-            metadata->last_written_slot_index = i;
-            metadata_updated = true;
-            break;
-        }
-    }
-
-    if (!metadata_updated)
-    {
-        metadata->last_written_slot_index = (metadata->last_written_slot_index + 1) % MAX_FILES;
-        metadata->files[metadata->last_written_slot_index].file_crc32 = file_crc32;
-        metadata->files[metadata->last_written_slot_index].flash_address = flash_address;
-        metadata->files[metadata->last_written_slot_index].file_size = *file_size_p;
-        metadata->files[metadata->last_written_slot_index].valid = true;
-    }
+            slot = i;
+    if (slot < 0)
+        slot = (metadata->last_written_slot_index + 1) % MAX_FILES;
+    metadata->last_written_slot_index = slot;
+    FileMetadata *e = &metadata->files[slot];
+    e->file_crc32 = file_crc32;
+    e->flash_address = flash_address;
+    e->file_size = *file_size_p;
+    e->content_crc32 = content_crc;
+    e->valid = true;
 
     save_metadata();
     wdog_refresh();

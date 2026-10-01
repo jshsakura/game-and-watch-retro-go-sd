@@ -94,6 +94,13 @@ uint32_t get_ofw_extflash_size(void) { return 0; }
 /* zlib's polynomial, same as the firmware's crc32_le() — only used as a key. */
 uint32_t crc32_le(uint32_t crc, const uint8_t *buf, uint32_t len)
 {
+    /* On the device the external flash is memory-mapped and the allocator reads
+     * a cached file straight through its address (is_file_in_flash verifies a
+     * hit that way). On the host that address is not a pointer, so model the
+     * mapping here: anything inside the fake flash window reads the array. */
+    uintptr_t a = (uintptr_t)buf;
+    if (g_flash && a >= 0x90000000u && a - 0x90000000u < g_flash_size)
+        buf = g_flash + (a - 0x90000000u);
     crc = ~crc;
     for (uint32_t i = 0; i < len; i++) {
         crc ^= buf[i];
