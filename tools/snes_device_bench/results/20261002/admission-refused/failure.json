@@ -1,0 +1,5 @@
+{
+  "status": "failed",
+  "error": "device changed since backup: intflash-bank2.bin; no firmware written",
+  "automatic_reset_or_retry": false
+}

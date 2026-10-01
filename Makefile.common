@@ -1559,6 +1559,10 @@ endif
 # be taken with nobody at the console. By index, not path -- the launcher's paths
 # come from FatFs and a literal need not match them byte for byte. Diagnostic.
 GNW_AUTOBOOT ?=
+SNES_DEVICE_BENCH ?= 0
+ifeq ($(SNES_DEVICE_BENCH),1)
+  C_DEFS += -DSNES_DEVICE_BENCH=1
+endif
 ifneq ($(GNW_AUTOBOOT),)
   C_DEFS += -DGNW_AUTOBOOT_INDEX=$(GNW_AUTOBOOT)
 endif
@@ -2147,8 +2151,10 @@ else
   SNES_SPIN_BAKE_DEF :=
 endif
 
-# Experimental whole-lap folding, separately switchable from the recognizer.
-SNES_BAKE_BULK ?= 0
+# Whole-lap folding: differential gates and matched hardware all-render A/B
+# passed. SMW reached 60.13 drawn FPS in its saved scene at supported 340 MHz.
+# See docs/SNES_DEVICE_RESULTS_2026-10-02.md; 0 remains an A/B revert switch.
+SNES_BAKE_BULK ?= 1
 ifeq ($(SNES_BAKE_BULK),1)
   SNES_SPIN_BAKE_DEF += -DSNES_BAKE_BULK=1
 endif

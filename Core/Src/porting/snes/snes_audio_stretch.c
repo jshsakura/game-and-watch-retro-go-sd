@@ -57,6 +57,9 @@ _Static_assert((RING & RING_MASK) == 0u, "ring must be a power of two");
 #define LOOP_MAX   RATE_SCALE(320u)
 /* Insertions between autocorrelation searches. See the call site. */
 #define PICK_EVERY 8u
+#ifndef SNES_STRETCH_PACKED_PICK
+#define SNES_STRETCH_PACKED_PICK 0
+#endif
 _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
 
 /* Sanity bound on the MEASURED ratio. Not a playback rate: it exists only to
@@ -442,23 +445,56 @@ static uint16_t stretch_pick_period(void) {
   const uint16_t win = 128u;                 /* samples compared per lag */
   int64_t best_score = INT64_MIN;
   uint16_t best_lag = REPEAT;
+#if SNES_STRETCH_PACKED_PICK
+  /* Only push writes ring, so the ISR cannot change these samples during the
+   * copy. Snapshot its read cursor once: all lags then describe the same
+   * window, even if a DMA interrupt advances rd during the search. Keep every
+   * other sample, exactly as the scalar picker does. The extra sample rounds
+   * the allocation up; the largest accessed index is (win-2+LOOP_MAX)/2. */
+  _Alignas(4) int16_t history[(128u + LOOP_MAX) / 2u];
+  const uint16_t cursor = rd;
+  for (uint16_t j = 0; j < (128u + LOOP_MAX) / 2u; j++)
+    history[j] = ring[(cursor - 1u - 2u*j) & RING_MASK];
+#if defined(TARGET_GNW)
+  /* The firmware builds with -mno-unaligned-access. Prepack both parities
+   * into aligned words so every inner-loop load remains a single LDR. */
+  uint32_t pairs[(128u + LOOP_MAX) / 2u - 1u];
+  for (uint16_t j = 0; j < (128u + LOOP_MAX) / 2u - 1u; j++)
+    pairs[j] = (uint16_t)history[j] | ((uint32_t)(uint16_t)history[j+1u] << 16);
+#endif
+#endif
 
   /* Energy of the reference window, for the normalisation the score needs to
    * mean anything. Without it a loud passage always "correlates" more than a
    * quiet one and noise scores whatever its loudest lag happens to give. */
   int64_t energy = 0;
   for (uint16_t k = 0; k < win; k += 2u) {
+#if SNES_STRETCH_PACKED_PICK
+    int32_t a = history[k / 2u];
+#else
     int32_t a = ring[(uint16_t)((rd - 1u - k) & RING_MASK)];
+#endif
     energy += (int64_t)a * a;
   }
 
   for (uint16_t lag = LOOP_MIN; lag <= LOOP_MAX; lag += 2u) {
     int64_t acc = 0;
+#if SNES_STRETCH_PACKED_PICK && defined(TARGET_GNW)
+    for (uint16_t k = 0; k < win / 2u; k += 2u) {
+      acc = (int64_t)__SMLALD(pairs[k], pairs[k + lag / 2u], (uint64_t)acc);
+    }
+#else
     for (uint16_t k = 0; k < win; k += 2u) {
+#if SNES_STRETCH_PACKED_PICK
+      int32_t a = history[k / 2u];
+      int32_t b = history[(k + lag) / 2u];
+#else
       int32_t a = ring[(uint16_t)((rd - 1u - k) & RING_MASK)];
       int32_t b = ring[(uint16_t)((rd - 1u - k - lag) & RING_MASK)];
+#endif
       acc += (int64_t)a * b;
     }
+#endif
     /* Normalise by lag so a long lag does not win merely by summing more
      * energy -- it does not here (window is fixed), but keep the shorter loop
      * when scores tie: shorter means the dropout reads as a stutter, longer

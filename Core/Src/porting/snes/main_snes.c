@@ -1084,6 +1084,10 @@ static bool snes_submenu_audio_mode(odroid_dialog_choice_t *option,
   return event == ODROID_DIALOG_ENTER;
 }
 
+#if SNES_DEVICE_BENCH
+#include "snes_device_bench.h"
+#endif
+
 /* In ITCM with the engine it drives. This is the frame loop, and its inner part
  * calls cpu_runOpcode and snes_cpuRead once per opcode -- both now in ITCM at
  * 0x00000000 while this sits in the overlay at 0x24000000, past BL's +-16 MB, so
@@ -1335,6 +1339,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   common_emu_enable_dwt_cycles();   /* free-running; nothing in this loop clears it */
 #endif
 
+#if SNES_DEVICE_BENCH
+  snes_device_bench_init();
+#endif
   while (1) {
 #ifdef SNES_DEVICE_PROFILE
     /* ONE DWT base per iteration. Every SNES_PROF_MARK below is a CUMULATIVE
@@ -1377,6 +1384,11 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #endif
 
     bool drawFrame = common_emu_frame_loop();
+#if SNES_DEVICE_BENCH
+    /* One matching endpoint for the captured picture; count the real flip. */
+    if (snes_device_bench_result.completed + 1u ==
+        SNES_BENCH_WARMUP + SNES_BENCH_FRAMES) drawFrame = true;
+#endif
     /* The benchmark counts EMULATED frames, and the overload guard draws only
      * one in four -- so a change that makes skipped frames cheaper lets the
      * guard draw more, which raises what the player sees while LOWERING the
@@ -1390,6 +1402,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     common_emu_input_loop_handle_turbo(&joystick);
 
     snes->input1->currentState = read_snes_pad(&joystick);
+#if SNES_DEVICE_BENCH
+    snes_device_bench_result.input_or |= snes->input1->currentState;
+#endif
     SNES_PROF_MARK(SNES_PROF_M_INPUT);
 
     g_ppu_skip_render = !drawFrame;
@@ -1419,6 +1434,11 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
      * before anything else touches the destination buffer. */
     snes_pcm_submit();
     SNES_PROF_MARK(SNES_PROF_M_PCM);
+#if SNES_DEVICE_BENCH
+    snes_device_bench_result.audio_calls++;
+    snes_device_bench_result.audio_samples += SNES_AUDIO_SAMPLES;
+    snes_device_bench_result.muted_calls += audio_mute != 0;
+#endif
 
     if (drawFrame) {
       present_frame_wait();
@@ -1726,6 +1746,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
       prof_wall_prev = wall_now;
       prof_dma_prev  = dma_now;
     }
+#endif
+#if SNES_DEVICE_BENCH
+    snes_device_bench_tick();
 #endif
   }
 }

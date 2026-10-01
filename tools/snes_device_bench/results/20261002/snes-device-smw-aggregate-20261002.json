@@ -1,0 +1,58 @@
+{
+  "status": "invalid_drift",
+  "case_directories": [
+    "snes-device-smw-20261002",
+    "snes-device-smw-r2-20261002",
+    "snes-device-smw-r3-20261002"
+  ],
+  "groups": {
+    "base-before": {
+      "n": 3,
+      "frames": 2700,
+      "drawn": 1813,
+      "elapsed_ms": 45021,
+      "drawn_fps": 40.27009617733946,
+      "sample_drawn_fps": [
+        40.602706847123144,
+        41.25841498366993,
+        38.95066249417405
+      ]
+    },
+    "candidate": {
+      "n": 3,
+      "frames": 2700,
+      "drawn": 2309,
+      "elapsed_ms": 45017,
+      "drawn_fps": 51.29173423373392,
+      "sample_drawn_fps": [
+        51.189762047590484,
+        52.36857885268839,
+        50.31656114628457
+      ]
+    },
+    "base-after": {
+      "n": 3,
+      "frames": 2700,
+      "drawn": 1744,
+      "elapsed_ms": 45013,
+      "drawn_fps": 38.74436273965299,
+      "sample_drawn_fps": [
+        40.24520255863539,
+        39.60264017601173,
+        36.38544582167133
+      ]
+    }
+  },
+  "observed_gain_percent": 29.82872992300749,
+  "base_drift_percent": -3.7887504190889376,
+  "drift_limit_percent": 0.5,
+  "performance_gain_confirmed": false,
+  "endpoint_state_crc_equal": true,
+  "endpoint_screen_equal": true,
+  "endpoint_pcm_equal": true,
+  "limitations": [
+    "All three triplets retained, including the first invalid-drift sample. No rate is certified as an adoption result.",
+    "900-frame windows repeat the same resumed state; this is not one continuous 2700-frame scene.",
+    "Hardware listening and full PCM stream not checked."
+  ]
+}

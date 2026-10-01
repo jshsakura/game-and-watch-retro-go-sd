@@ -1,0 +1,8 @@
+{
+  "snes.bin": true,
+  "CONFIG": true,
+  "selector.txt": true,
+  "intflash-bank2.bin": true,
+  "zelda-slot0.sav": true,
+  "off.sav": true
+}
