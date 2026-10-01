@@ -776,6 +776,11 @@ INCLUDE build/fceumm_mappers.ld
        memory maps gone to DTCM there is room, and the A/B is run on the
        placement-pinned (64 KB) layout. */
     build/md32x/pico__sound__ym2612.o (.text.chan_render .text.update_eg_phase .text.update_lfo_phase)
+    /* The frame driver and the VDP port write path, 4.6 KB: the next two XIP
+       consumers by device PC sampling (1.9% and 1.6% of an After Burner frame,
+       plus the FIFO sync behind every port write). */
+    build/md32x/pico__32x__32x.o (.text.PicoFrame32x)
+    build/md32x/pico__videoport.o (.text.PicoVideoWrite .text.PicoVideoFIFOSync)
     /* The 68K main loop and the SH-2 sync / event / IRQ-level path, 2.7 KB.
        Device PC sampling (2026-10-01, After Burner, HLE build) put 8.5% of the
        frame in m68k_run's one 256 B block and ~6% in these 32x.c functions,
