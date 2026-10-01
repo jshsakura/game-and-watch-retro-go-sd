@@ -1,0 +1,54 @@
+{
+  "correctness": "PASS",
+  "frames": 1200,
+  "statehash": "d8132a15",
+  "audiohash": "677e8092",
+  "base_insn": 6194444,
+  "candidate_insn": 6194444,
+  "reduction_percent": 0.0,
+  "windows": [
+    {
+      "end_frame": 200,
+      "hashes_equal": true,
+      "base_insn": 5371045,
+      "candidate_insn": 5371045,
+      "reduction_percent": 0.0
+    },
+    {
+      "end_frame": 400,
+      "hashes_equal": true,
+      "base_insn": 6072696,
+      "candidate_insn": 6072696,
+      "reduction_percent": 0.0
+    },
+    {
+      "end_frame": 600,
+      "hashes_equal": true,
+      "base_insn": 6191351,
+      "candidate_insn": 6191351,
+      "reduction_percent": 0.0
+    },
+    {
+      "end_frame": 800,
+      "hashes_equal": true,
+      "base_insn": 6340373,
+      "candidate_insn": 6340373,
+      "reduction_percent": 0.0
+    },
+    {
+      "end_frame": 1000,
+      "hashes_equal": true,
+      "base_insn": 6591421,
+      "candidate_insn": 6591421,
+      "reduction_percent": 0.0
+    },
+    {
+      "end_frame": 1200,
+      "hashes_equal": true,
+      "base_insn": 6599783,
+      "candidate_insn": 6599783,
+      "reduction_percent": 0.0
+    }
+  ],
+  "device_fps": "unmeasured"
+}

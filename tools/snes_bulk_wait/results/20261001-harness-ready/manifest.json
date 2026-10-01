@@ -1,0 +1,5230 @@
+{
+  "schema": 1,
+  "date": "2026-10-01",
+  "worktree": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60",
+  "source_parent": "dbc36be1912dcac818c35e7d9f4d261190fe907d",
+  "core_candidate": "e33537c06618e88786f518221787a1e033ba303b",
+  "source_patch": "harness.patch.gz",
+  "core_patch": "core.patch.gz",
+  "compiler": "arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+  "host_compiler": "gcc (Debian 14.2.0-19) 14.2.0\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+  "container_id": "sha256:948725b822603810687c2b0331d0105c30167f4cf8157b210fd452f20db94691",
+  "qemu": "QEMU emulator version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)\nCopyright (c) 2003-2025 Fabrice Bellard and the QEMU Project developers",
+  "arms": {
+    "m7-base": {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--init",
+        "--network",
+        "none",
+        "--user",
+        "1000:1000",
+        "-v",
+        "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60:/opt/workdir",
+        "-e",
+        "RIG_BUILD_ONLY=1",
+        "-e",
+        "RIG_OUT=build/snes-harness-ready/m7-base",
+        "-e",
+        "RIG_EXTRA_DEF=-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\"",
+        "sylverb/retro-go-sd-builder:v1.5",
+        "bash",
+        "tools/m7_qemu_rig/run_snes_t2.sh",
+        "build/snes-harness-ready/m7-base/empty-rom.smc",
+        "1200"
+      ],
+      "extra_defines": "-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\"",
+      "bulk": false,
+      "device_video": false,
+      "frames": 1200,
+      "window": 200,
+      "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+      "elf_bytes": 865956,
+      "parent_commit": "dbc36be1912dcac818c35e7d9f4d261190fe907d",
+      "core_commit": "e33537c06618e88786f518221787a1e033ba303b",
+      "source_sha256": {
+        "tools/m7_qemu_rig/rig_snes.c": "66b6b6bc6274a43ac2e288463e1bd7c7294d173439d7e8e5571082f3b5e0fbdf",
+        "tools/m7_qemu_rig/run_snes_t2.sh": "ad1f7ee0b88b08be8bf907b3279731c3b1421872a163116a8c5929df3fd7f69b",
+        "external/sm/src/snes/spin_bake.c": "b16dba4f52365340dcac623b3899b8072133cb11ed198c260e1c7cc304764c89",
+        "external/sm/src/snes/spin_bake.h": "9dfadb3d4815a470a63134e8bfef2303fcb94f4905ca34c2d248a24fb29a360f"
+      },
+      "rom": "runtime loader; one-byte dummy section; no ROM linked",
+      "performance": "timer captures exclude PCM file I/O, hashes, trace printing and final save serialization"
+    },
+    "m7-bulk": {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--init",
+        "--network",
+        "none",
+        "--user",
+        "1000:1000",
+        "-v",
+        "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60:/opt/workdir",
+        "-e",
+        "RIG_BUILD_ONLY=1",
+        "-e",
+        "RIG_OUT=build/snes-harness-ready/m7-bulk",
+        "-e",
+        "RIG_EXTRA_DEF=-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\" -DSNES_BAKE_BULK=1",
+        "sylverb/retro-go-sd-builder:v1.5",
+        "bash",
+        "tools/m7_qemu_rig/run_snes_t2.sh",
+        "build/snes-harness-ready/m7-bulk/empty-rom.smc",
+        "1200"
+      ],
+      "extra_defines": "-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\" -DSNES_BAKE_BULK=1",
+      "bulk": true,
+      "device_video": false,
+      "frames": 1200,
+      "window": 200,
+      "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+      "elf_bytes": 866468,
+      "parent_commit": "dbc36be1912dcac818c35e7d9f4d261190fe907d",
+      "core_commit": "e33537c06618e88786f518221787a1e033ba303b",
+      "source_sha256": {
+        "tools/m7_qemu_rig/rig_snes.c": "66b6b6bc6274a43ac2e288463e1bd7c7294d173439d7e8e5571082f3b5e0fbdf",
+        "tools/m7_qemu_rig/run_snes_t2.sh": "ad1f7ee0b88b08be8bf907b3279731c3b1421872a163116a8c5929df3fd7f69b",
+        "external/sm/src/snes/spin_bake.c": "b16dba4f52365340dcac623b3899b8072133cb11ed198c260e1c7cc304764c89",
+        "external/sm/src/snes/spin_bake.h": "9dfadb3d4815a470a63134e8bfef2303fcb94f4905ca34c2d248a24fb29a360f"
+      },
+      "rom": "runtime loader; one-byte dummy section; no ROM linked",
+      "performance": "timer captures exclude PCM file I/O, hashes, trace printing and final save serialization"
+    },
+    "m7-short-base": {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--init",
+        "--network",
+        "none",
+        "--user",
+        "1000:1000",
+        "-v",
+        "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60:/opt/workdir",
+        "-e",
+        "RIG_BUILD_ONLY=1",
+        "-e",
+        "RIG_OUT=build/snes-harness-ready/m7-short-base",
+        "-e",
+        "RIG_EXTRA_DEF=-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\"",
+        "sylverb/retro-go-sd-builder:v1.5",
+        "bash",
+        "tools/m7_qemu_rig/run_snes_t2.sh",
+        "build/snes-harness-ready/m7-short-base/empty-rom.smc",
+        "600"
+      ],
+      "extra_defines": "-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\"",
+      "bulk": false,
+      "device_video": false,
+      "frames": 600,
+      "window": 200,
+      "elf_sha256": "6588f121d1eced34c394c5f5e9a8a3b2991f5a7431c9996162b518ed6f48fb6b",
+      "elf_bytes": 865436,
+      "parent_commit": "dbc36be1912dcac818c35e7d9f4d261190fe907d",
+      "core_commit": "e33537c06618e88786f518221787a1e033ba303b",
+      "source_sha256": {
+        "tools/m7_qemu_rig/rig_snes.c": "66b6b6bc6274a43ac2e288463e1bd7c7294d173439d7e8e5571082f3b5e0fbdf",
+        "tools/m7_qemu_rig/run_snes_t2.sh": "ad1f7ee0b88b08be8bf907b3279731c3b1421872a163116a8c5929df3fd7f69b",
+        "external/sm/src/snes/spin_bake.c": "b16dba4f52365340dcac623b3899b8072133cb11ed198c260e1c7cc304764c89",
+        "external/sm/src/snes/spin_bake.h": "9dfadb3d4815a470a63134e8bfef2303fcb94f4905ca34c2d248a24fb29a360f"
+      },
+      "rom": "runtime loader; one-byte dummy section; no ROM linked",
+      "performance": "timer captures exclude PCM file I/O, hashes, trace printing and final save serialization"
+    },
+    "m7-short-bulk": {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--init",
+        "--network",
+        "none",
+        "--user",
+        "1000:1000",
+        "-v",
+        "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60:/opt/workdir",
+        "-e",
+        "RIG_BUILD_ONLY=1",
+        "-e",
+        "RIG_OUT=build/snes-harness-ready/m7-short-bulk",
+        "-e",
+        "RIG_EXTRA_DEF=-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\" -DSNES_BAKE_BULK=1",
+        "sylverb/retro-go-sd-builder:v1.5",
+        "bash",
+        "tools/m7_qemu_rig/run_snes_t2.sh",
+        "build/snes-harness-ready/m7-short-bulk/empty-rom.smc",
+        "600"
+      ],
+      "extra_defines": "-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\" -DSNES_BAKE_BULK=1",
+      "bulk": true,
+      "device_video": false,
+      "frames": 600,
+      "window": 200,
+      "elf_sha256": "7ca976e573b63e07ac4211bac9f093c8687709639bcbf9116cd85cad1df76238",
+      "elf_bytes": 865952,
+      "parent_commit": "dbc36be1912dcac818c35e7d9f4d261190fe907d",
+      "core_commit": "e33537c06618e88786f518221787a1e033ba303b",
+      "source_sha256": {
+        "tools/m7_qemu_rig/rig_snes.c": "66b6b6bc6274a43ac2e288463e1bd7c7294d173439d7e8e5571082f3b5e0fbdf",
+        "tools/m7_qemu_rig/run_snes_t2.sh": "ad1f7ee0b88b08be8bf907b3279731c3b1421872a163116a8c5929df3fd7f69b",
+        "external/sm/src/snes/spin_bake.c": "b16dba4f52365340dcac623b3899b8072133cb11ed198c260e1c7cc304764c89",
+        "external/sm/src/snes/spin_bake.h": "9dfadb3d4815a470a63134e8bfef2303fcb94f4905ca34c2d248a24fb29a360f"
+      },
+      "rom": "runtime loader; one-byte dummy section; no ROM linked",
+      "performance": "timer captures exclude PCM file I/O, hashes, trace printing and final save serialization"
+    },
+    "m7-video-base": {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--init",
+        "--network",
+        "none",
+        "--user",
+        "1000:1000",
+        "-v",
+        "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60:/opt/workdir",
+        "-e",
+        "RIG_BUILD_ONLY=1",
+        "-e",
+        "RIG_OUT=build/snes-harness-ready/m7-video-base",
+        "-e",
+        "RIG_EXTRA_DEF=-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\" -DRIG_DEVICE_VIDEO -DRIG_DIRECT_VIDEO",
+        "sylverb/retro-go-sd-builder:v1.5",
+        "bash",
+        "tools/m7_qemu_rig/run_snes_t2.sh",
+        "build/snes-harness-ready/m7-video-base/empty-rom.smc",
+        "1200"
+      ],
+      "extra_defines": "-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\" -DRIG_DEVICE_VIDEO -DRIG_DIRECT_VIDEO",
+      "bulk": false,
+      "device_video": true,
+      "frames": 1200,
+      "window": 200,
+      "elf_sha256": "6ea5e17ccbce07e21f78a538d6ad70e7a5a9c9a969cc4a1ea410e0d9cac00c1a",
+      "elf_bytes": 866412,
+      "parent_commit": "dbc36be1912dcac818c35e7d9f4d261190fe907d",
+      "core_commit": "e33537c06618e88786f518221787a1e033ba303b",
+      "source_sha256": {
+        "tools/m7_qemu_rig/rig_snes.c": "66b6b6bc6274a43ac2e288463e1bd7c7294d173439d7e8e5571082f3b5e0fbdf",
+        "tools/m7_qemu_rig/run_snes_t2.sh": "ad1f7ee0b88b08be8bf907b3279731c3b1421872a163116a8c5929df3fd7f69b",
+        "external/sm/src/snes/spin_bake.c": "b16dba4f52365340dcac623b3899b8072133cb11ed198c260e1c7cc304764c89",
+        "external/sm/src/snes/spin_bake.h": "9dfadb3d4815a470a63134e8bfef2303fcb94f4905ca34c2d248a24fb29a360f"
+      },
+      "rom": "runtime loader; one-byte dummy section; no ROM linked",
+      "performance": "timer captures exclude PCM file I/O, hashes, trace printing and final save serialization"
+    },
+    "m7-video-bulk": {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--init",
+        "--network",
+        "none",
+        "--user",
+        "1000:1000",
+        "-v",
+        "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60:/opt/workdir",
+        "-e",
+        "RIG_BUILD_ONLY=1",
+        "-e",
+        "RIG_OUT=build/snes-harness-ready/m7-video-bulk",
+        "-e",
+        "RIG_EXTRA_DEF=-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\" -DSNES_BAKE_BULK=1 -DRIG_DEVICE_VIDEO -DRIG_DIRECT_VIDEO",
+        "sylverb/retro-go-sd-builder:v1.5",
+        "bash",
+        "tools/m7_qemu_rig/run_snes_t2.sh",
+        "build/snes-harness-ready/m7-video-bulk/empty-rom.smc",
+        "1200"
+      ],
+      "extra_defines": "-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\" -DSNES_BAKE_BULK=1 -DRIG_DEVICE_VIDEO -DRIG_DIRECT_VIDEO",
+      "bulk": true,
+      "device_video": true,
+      "frames": 1200,
+      "window": 200,
+      "elf_sha256": "5d53c7e3fa98664854581d76cd1fdc53d5955a23427a28f5f9670956dcafada8",
+      "elf_bytes": 866928,
+      "parent_commit": "dbc36be1912dcac818c35e7d9f4d261190fe907d",
+      "core_commit": "e33537c06618e88786f518221787a1e033ba303b",
+      "source_sha256": {
+        "tools/m7_qemu_rig/rig_snes.c": "66b6b6bc6274a43ac2e288463e1bd7c7294d173439d7e8e5571082f3b5e0fbdf",
+        "tools/m7_qemu_rig/run_snes_t2.sh": "ad1f7ee0b88b08be8bf907b3279731c3b1421872a163116a8c5929df3fd7f69b",
+        "external/sm/src/snes/spin_bake.c": "b16dba4f52365340dcac623b3899b8072133cb11ed198c260e1c7cc304764c89",
+        "external/sm/src/snes/spin_bake.h": "9dfadb3d4815a470a63134e8bfef2303fcb94f4905ca34c2d248a24fb29a360f"
+      },
+      "rom": "runtime loader; one-byte dummy section; no ROM linked",
+      "performance": "timer captures exclude PCM file I/O, hashes, trace printing and final save serialization"
+    }
+  },
+  "runs": {
+    "dkc-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/snes_survey_2k/smoke/동키콩 컨트리 (Donkey Kong Country).smc",
+        "rom_sha256": "628147468c3539283197f58f03b94df49758a332831857481ea9cc31645f0527",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dkc-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dkc-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dkc-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 22.168,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "d8132a15",
+        "audiohash": "677e8092",
+        "emu_insn_per_frame": 5636031,
+        "apu_insn_per_frame": 572311,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 269353,
+          "hash": "390285c50d496420"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "c58e65cadba7c0658a437e3b750644a97ae01d67a30f53227e688a516f32ca45"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 220311,
+        "peak": 15036,
+        "rms": 1929.806,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "dkc-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+        "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+        "rom": "/home/pi/snes_survey_2k/smoke/동키콩 컨트리 (Donkey Kong Country).smc",
+        "rom_sha256": "628147468c3539283197f58f03b94df49758a332831857481ea9cc31645f0527",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dkc-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dkc-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dkc-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 22.714,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "d8132a15",
+        "audiohash": "677e8092",
+        "emu_insn_per_frame": 5636031,
+        "apu_insn_per_frame": 572311,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 269353,
+          "hash": "390285c50d496420"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "c58e65cadba7c0658a437e3b750644a97ae01d67a30f53227e688a516f32ca45"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 220311,
+        "peak": 15036,
+        "rms": 1929.806,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "dragonmagic-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/드래곤즈 매직 (Dragon's Magic).smc",
+        "rom_sha256": "f1331e982e86362fe5c5b41279d3d676d54626db0b31f51dcb91a566c8808648",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dragonmagic-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dragonmagic-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dragonmagic-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 13.966,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "a10c141d",
+        "audiohash": "ed6eda0c",
+        "emu_insn_per_frame": 3288708,
+        "apu_insn_per_frame": 627944,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 267305,
+          "hash": "2b2fef6228fb9009"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "5decf70f88838a3ad565deba4287a5e591ffd90801b09b0bf7bff4df618a60ac"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 39892,
+        "peak": 9917,
+        "rms": 621.365,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "dragonmagic-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+        "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/드래곤즈 매직 (Dragon's Magic).smc",
+        "rom_sha256": "f1331e982e86362fe5c5b41279d3d676d54626db0b31f51dcb91a566c8808648",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dragonmagic-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dragonmagic-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dragonmagic-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 13.057,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "a10c141d",
+        "audiohash": "ed6eda0c",
+        "emu_insn_per_frame": 2354902,
+        "apu_insn_per_frame": 627944,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 267305,
+          "hash": "2b2fef6228fb9009"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "5decf70f88838a3ad565deba4287a5e591ffd90801b09b0bf7bff4df618a60ac"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 39892,
+        "peak": 9917,
+        "rms": 621.365,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "ff5-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/파이널 판타지 5 (Final Fantasy V).smc",
+        "rom_sha256": "c6858d5c02894a6cc71f4dd452c7f288b319d1952ca56fdb185b4bf5e26244a2",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 124,
+        "elapsed_seconds": 28.005,
+        "completed": false,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "failure_tail": [
+          "w00600 emu=12804917 apu=755196 insn/frame fb=59365cfd audio=c68fddf3 lit=24022",
+          "",
+          "w00800 emu=12770372 apu=730674 insn/frame fb=2c9e7b69 audio=c68fddf3 lit=24022",
+          "",
+          "w01000 emu=12745383 apu=712526 insn/frame fb=b4e830e9 audio=c68fddf3 lit=24022",
+          ""
+        ],
+        "case_verified": true,
+        "pcm": {
+          "bytes": 585732,
+          "sha256": "9881c7c2a1d759c3f3d8c1bb3c9a80364586757fe58a0bcd13537b9645dbfb43"
+        },
+        "pcm_complete": false
+      },
+      "pcm_activity": {
+        "samples": 292866,
+        "nonzero": 0,
+        "peak": 0,
+        "rms": 0.0,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "ff5-short-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-short-base/rig_snes.elf",
+        "elf_sha256": "6588f121d1eced34c394c5f5e9a8a3b2991f5a7431c9996162b518ed6f48fb6b",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/파이널 판타지 5 (Final Fantasy V).smc",
+        "rom_sha256": "c6858d5c02894a6cc71f4dd452c7f288b319d1952ca56fdb185b4bf5e26244a2",
+        "save": null,
+        "input": "none",
+        "frames": 600,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-short-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-short-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-short-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-short-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 14.143,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 600,
+        "statehash": "cf992e7b",
+        "audiohash": "d7ab84fb",
+        "emu_insn_per_frame": 9776661,
+        "apu_insn_per_frame": 634621,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "d9e8f0bd269c0fb3"
+        },
+        "pcm": {
+          "bytes": 319200,
+          "sha256": "8d0314a30071a26cf7e694b2f90a99e85eddfb1809deb9a545ab2a244d507c24"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 159600,
+        "nonzero": 0,
+        "peak": 0,
+        "rms": 0.0,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "ff5-short-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-short-bulk/rig_snes.elf",
+        "elf_sha256": "7ca976e573b63e07ac4211bac9f093c8687709639bcbf9116cd85cad1df76238",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/파이널 판타지 5 (Final Fantasy V).smc",
+        "rom_sha256": "c6858d5c02894a6cc71f4dd452c7f288b319d1952ca56fdb185b4bf5e26244a2",
+        "save": null,
+        "input": "none",
+        "frames": 600,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-short-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-short-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-short-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-short-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 14.141,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 600,
+        "statehash": "cf992e7b",
+        "audiohash": "d7ab84fb",
+        "emu_insn_per_frame": 9776661,
+        "apu_insn_per_frame": 634621,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "d9e8f0bd269c0fb3"
+        },
+        "pcm": {
+          "bytes": 319200,
+          "sha256": "8d0314a30071a26cf7e694b2f90a99e85eddfb1809deb9a545ab2a244d507c24"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 159600,
+        "nonzero": 0,
+        "peak": 0,
+        "rms": 0.0,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "fzero-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/F-제로 (F-Zero).smc",
+        "rom_sha256": "bf16c3c867c58e2ab061c70de9295b6930d63f29f81cc986f5ecae03e0ad18d2",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/fzero-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/fzero-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/fzero-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 25.634,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "80035229",
+        "audiohash": "5d178d4e",
+        "emu_insn_per_frame": 6312516,
+        "apu_insn_per_frame": 497486,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 269353,
+          "hash": "50b7f45498b2b3e2"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "4d1aef01c07134f9281ed0837b6e55f0b01f1b9db875b8ccd690e8ce5621be20"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 276022,
+        "peak": 10914,
+        "rms": 1803.7599,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "fzero-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+        "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/F-제로 (F-Zero).smc",
+        "rom_sha256": "bf16c3c867c58e2ab061c70de9295b6930d63f29f81cc986f5ecae03e0ad18d2",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/fzero-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/fzero-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/fzero-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 25.671,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "80035229",
+        "audiohash": "5d178d4e",
+        "emu_insn_per_frame": 6314125,
+        "apu_insn_per_frame": 497485,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 269353,
+          "hash": "50b7f45498b2b3e2"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "4d1aef01c07134f9281ed0837b6e55f0b01f1b9db875b8ccd690e8ce5621be20"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 276022,
+        "peak": 10914,
+        "rms": 1803.7599,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "kart-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/슈퍼 마리오 카트 (Super Mario Kart).smc",
+        "rom_sha256": "6765d798fd032f2ea52de6f812b6cdd0b1219b7006774fb22ae50a41e6912101",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/kart-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/kart-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/kart-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 19.552,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "3496ec07",
+        "audiohash": "6254040b",
+        "emu_insn_per_frame": 5420284,
+        "apu_insn_per_frame": 566952,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 269477,
+          "hash": "02401979334eedc5"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "bdc09e9dcc0d2ca8b50cce74bf1f38268a0e6f5ccf91499c14a56056d05f89c2"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 269470,
+        "peak": 14750,
+        "rms": 1457.0304,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "kart-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+        "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/슈퍼 마리오 카트 (Super Mario Kart).smc",
+        "rom_sha256": "6765d798fd032f2ea52de6f812b6cdd0b1219b7006774fb22ae50a41e6912101",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/kart-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/kart-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/kart-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 21.481,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "3496ec07",
+        "audiohash": "6254040b",
+        "emu_insn_per_frame": 5420690,
+        "apu_insn_per_frame": 566952,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 269477,
+          "hash": "02401979334eedc5"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "bdc09e9dcc0d2ca8b50cce74bf1f38268a0e6f5ccf91499c14a56056d05f89c2"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 269470,
+        "peak": 14750,
+        "rms": 1457.0304,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "metroid-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/슈퍼 메트로이드 (Super Metroid).sfc",
+        "rom_sha256": "e6958cc2bc140fb751b9b581cf3b98af2ae549332fe4cbbc2ac24cd9fa402834",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/metroid-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/metroid-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/metroid-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 21.105,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "20f9e35a",
+        "audiohash": "e11c08c2",
+        "emu_insn_per_frame": 4145437,
+        "apu_insn_per_frame": 623425,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "ce1980ec83f4cdb7"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "d1797a680bae7ed863d813e7a5ce6e292a2a0d29b022a8300087849b200defbf"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 216545,
+        "peak": 5267,
+        "rms": 397.9423,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "metroid-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+        "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/슈퍼 메트로이드 (Super Metroid).sfc",
+        "rom_sha256": "e6958cc2bc140fb751b9b581cf3b98af2ae549332fe4cbbc2ac24cd9fa402834",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/metroid-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/metroid-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/metroid-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 21.108,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "20f9e35a",
+        "audiohash": "e11c08c2",
+        "emu_insn_per_frame": 4145437,
+        "apu_insn_per_frame": 623425,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "ce1980ec83f4cdb7"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "d1797a680bae7ed863d813e7a5ce6e292a2a0d29b022a8300087849b200defbf"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 216545,
+        "peak": 5267,
+        "rms": 397.9423,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "pilotwings-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/파일럿윙즈 (Pilotwings).smc",
+        "rom_sha256": "d1845de22c3c7f2606bda20e09c8f7a78f92f5cbbb6bfe01f96a1d1e84b30394",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/pilotwings-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/pilotwings-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/pilotwings-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 21.753,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "ac0f2a9d",
+        "audiohash": "703ad04e",
+        "emu_insn_per_frame": 5816635,
+        "apu_insn_per_frame": 491195,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 268453,
+          "hash": "99764086f28d70df"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "ac27590709fe14660164d1095476d179c0ee5f230a15a8e2784c040c45c6f244"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 273242,
+        "peak": 8294,
+        "rms": 1073.3943,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "pilotwings-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+        "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/파일럿윙즈 (Pilotwings).smc",
+        "rom_sha256": "d1845de22c3c7f2606bda20e09c8f7a78f92f5cbbb6bfe01f96a1d1e84b30394",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/pilotwings-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/pilotwings-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/pilotwings-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 21.359,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "ac0f2a9d",
+        "audiohash": "703ad04e",
+        "emu_insn_per_frame": 5816635,
+        "apu_insn_per_frame": 491195,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 268453,
+          "hash": "99764086f28d70df"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "ac27590709fe14660164d1095476d179c0ee5f230a15a8e2784c040c45c6f244"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 273242,
+        "peak": 8294,
+        "rms": 1073.3943,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "smw-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/슈퍼 마리오 월드 (Super Mario World).smc",
+        "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 17.447,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "5e4cebb3",
+        "audiohash": "f9d150be",
+        "emu_insn_per_frame": 4737606,
+        "apu_insn_per_frame": 420734,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 269353,
+          "hash": "f18aca4661038321"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "c2b8886d333434211261134ff3a1b87b5fa4e697debc8f50a703db9b58013443"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 226178,
+        "peak": 12318,
+        "rms": 1341.7452,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "smw-A-after": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/슈퍼 마리오 월드 (Super Mario World).smc",
+        "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "rerun_reason": "Intentional A-after measurement of the leading hardware candidate after the fixed multi-ROM matrix",
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A-after/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A-after/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A-after/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 17.395,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "5e4cebb3",
+        "audiohash": "f9d150be",
+        "emu_insn_per_frame": 4737606,
+        "apu_insn_per_frame": 420734,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 269353,
+          "hash": "f18aca4661038321"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "c2b8886d333434211261134ff3a1b87b5fa4e697debc8f50a703db9b58013443"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 226178,
+        "peak": 12318,
+        "rms": 1341.7452,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "smw-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+        "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+        "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/슈퍼 마리오 월드 (Super Mario World).smc",
+        "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 16.092,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "5e4cebb3",
+        "audiohash": "f9d150be",
+        "emu_insn_per_frame": 4177483,
+        "apu_insn_per_frame": 420733,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 269353,
+          "hash": "f18aca4661038321"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "c2b8886d333434211261134ff3a1b87b5fa4e697debc8f50a703db9b58013443"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 226178,
+        "peak": 12318,
+        "rms": 1341.7452,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "zelda-active-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/snes_survey_2k/smoke/젤다의 전설 - 신들의 트라이포스 (Legend of Zelda, The - A Link to the Past).smc",
+        "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "forced",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-active-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-active-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-active-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 17.15,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "1d0d959d",
+        "audiohash": "c70e2bdf",
+        "emu_insn_per_frame": 4488840,
+        "apu_insn_per_frame": 452352,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 226494,
+        "peak": 13705,
+        "rms": 1779.5152,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "zelda-active-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+        "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+        "rom": "/home/pi/snes_survey_2k/smoke/젤다의 전설 - 신들의 트라이포스 (Legend of Zelda, The - A Link to the Past).smc",
+        "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "forced",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-active-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-active-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-active-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 17.047,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "1d0d959d",
+        "audiohash": "c70e2bdf",
+        "emu_insn_per_frame": 4383761,
+        "apu_insn_per_frame": 452352,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 226494,
+        "peak": 13705,
+        "rms": 1779.5152,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "zelda-default-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/snes_survey_2k/smoke/젤다의 전설 - 신들의 트라이포스 (Legend of Zelda, The - A Link to the Past).smc",
+        "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 18.169,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "1d0d959d",
+        "audiohash": "c70e2bdf",
+        "emu_insn_per_frame": 4567655,
+        "apu_insn_per_frame": 452352,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 226494,
+        "peak": 13705,
+        "rms": 1779.5152,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "zelda-default-A-after": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/snes_survey_2k/smoke/젤다의 전설 - 신들의 트라이포스 (Legend of Zelda, The - A Link to the Past).smc",
+        "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "rerun_reason": "Intentional A-after measurement after the fixed multi-ROM matrix to check deterministic drift",
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-A-after/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-A-after/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-A-after/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 17.76,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "1d0d959d",
+        "audiohash": "c70e2bdf",
+        "emu_insn_per_frame": 4567655,
+        "apu_insn_per_frame": 452352,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 226494,
+        "peak": 13705,
+        "rms": 1779.5152,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "zelda-default-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+        "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+        "rom": "/home/pi/snes_survey_2k/smoke/젤다의 전설 - 신들의 트라이포스 (Legend of Zelda, The - A Link to the Past).smc",
+        "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 17.878,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "1d0d959d",
+        "audiohash": "c70e2bdf",
+        "emu_insn_per_frame": 4545627,
+        "apu_insn_per_frame": 452352,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 226494,
+        "peak": 13705,
+        "rms": 1779.5152,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "zelda-tap-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+        "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+        "rom": "/home/pi/snes_survey_2k/smoke/젤다의 전설 - 신들의 트라이포스 (Legend of Zelda, The - A Link to the Past).smc",
+        "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+        "save": null,
+        "input": "tap-v1",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-tap-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-tap-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-tap-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 17.393,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "c28df398",
+        "audiohash": "3e654b67",
+        "emu_insn_per_frame": 4240174,
+        "apu_insn_per_frame": 455329,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "71ecc2cbdb871214"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "6f4b1d11b05631162bb1f33987f3c640dae50282ba59ec979041be759145a67b"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 225710,
+        "peak": 13705,
+        "rms": 1641.0274,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "zelda-tap-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+        "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+        "rom": "/home/pi/snes_survey_2k/smoke/젤다의 전설 - 신들의 트라이포스 (Legend of Zelda, The - A Link to the Past).smc",
+        "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+        "save": null,
+        "input": "tap-v1",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-tap-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-tap-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-tap-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 17.399,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "c28df398",
+        "audiohash": "3e654b67",
+        "emu_insn_per_frame": 4218145,
+        "apu_insn_per_frame": 455330,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "71ecc2cbdb871214"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "6f4b1d11b05631162bb1f33987f3c640dae50282ba59ec979041be759145a67b"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 225710,
+        "peak": 13705,
+        "rms": 1641.0274,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "zelda-video-A": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-video-base/rig_snes.elf",
+        "elf_sha256": "6ea5e17ccbce07e21f78a538d6ad70e7a5a9c9a969cc4a1ea410e0d9cac00c1a",
+        "rom": "/home/pi/snes_survey_2k/smoke/젤다의 전설 - 신들의 트라이포스 (Legend of Zelda, The - A Link to the Past).smc",
+        "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-video-base/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-video-A/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-video-A/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-video-A/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 19.076,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "462fe59d",
+        "audiohash": "c70e2bdf",
+        "emu_insn_per_frame": 4579685,
+        "apu_insn_per_frame": 452352,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 226494,
+        "peak": 13705,
+        "rms": 1779.5152,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    },
+    "zelda-video-B": {
+      "request": {
+        "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-video-bulk/rig_snes.elf",
+        "elf_sha256": "5d53c7e3fa98664854581d76cd1fdc53d5955a23427a28f5f9670956dcafada8",
+        "rom": "/home/pi/snes_survey_2k/smoke/젤다의 전설 - 신들의 트라이포스 (Legend of Zelda, The - A Link to the Past).smc",
+        "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+        "save": null,
+        "input": "none",
+        "frames": 1200,
+        "gate": "natural",
+        "workload": "cold boot; no warmup",
+        "case_config": true,
+        "audio_dump": true,
+        "profiling": "QEMU icount; no device cycles or FPS",
+        "timeout": 28.0,
+        "argv": [
+          "qemu-system-arm",
+          "-machine",
+          "mps2-an500",
+          "-nographic",
+          "-semihosting",
+          "-icount",
+          "shift=0,align=off,sleep=off",
+          "-kernel",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-video-bulk/rig_snes.elf",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-video-B/input.sfc,addr=0x60800000,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-video-B/length.bin,addr=0x607ffffc,force-raw=on",
+          "-device",
+          "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-video-B/config.bin,addr=0x607fff00,force-raw=on"
+        ]
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 19.19,
+        "completed": true,
+        "input_unchanged": true,
+        "binary_unchanged": true,
+        "frames": 1200,
+        "statehash": "462fe59d",
+        "audiohash": "c70e2bdf",
+        "emu_insn_per_frame": 4557656,
+        "apu_insn_per_frame": 452352,
+        "case_verified": true,
+        "serialized_state": {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        "pcm": {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        "pcm_complete": true
+      },
+      "pcm_activity": {
+        "samples": 319200,
+        "nonzero": 226494,
+        "peak": 13705,
+        "rms": 1779.5152,
+        "scope": "raw DSP PCM before stretcher; audio bytes kept locally, not in git"
+      }
+    }
+  },
+  "cases": {
+    "ff5-short": {
+      "correctness": "PASS",
+      "frames": 600,
+      "statehash": "cf992e7b",
+      "audiohash": "d7ab84fb",
+      "base_insn": 10411282,
+      "candidate_insn": 10411282,
+      "reduction_percent": 0.0,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 4531092,
+          "candidate_insn": 4531092,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 13130328,
+          "candidate_insn": 13130328,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 13572427,
+          "candidate_insn": 13572427,
+          "reduction_percent": 0.0
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 600,
+          "mean": 10411283.33,
+          "p50": 13500120,
+          "p90": 13669000,
+          "p95": 13684760,
+          "p99": 13726080,
+          "min": 3359800,
+          "max": 13728880
+        },
+        "candidate": {
+          "n": 600,
+          "mean": 10411283.33,
+          "p50": 13500120,
+          "p90": 13669000,
+          "p95": 13684760,
+          "p99": 13726080,
+          "min": 3359800,
+          "max": 13728880
+        }
+      },
+      "total_reduction_percent": 0.0,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 13584103.47,
+          "p50": 13565520,
+          "p90": 13684760,
+          "p95": 13710320,
+          "p99": 13727080,
+          "min": 13457240,
+          "max": 13728880
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 13584103.47,
+          "p50": 13565520,
+          "p90": 13684760,
+          "p95": 13710320,
+          "p99": 13727080,
+          "min": 13457240,
+          "max": 13728880
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 380,
+          "base": 13728880,
+          "candidate": 13728880,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 408,
+          "base": 13728800,
+          "candidate": 13728800,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 381,
+          "base": 13727080,
+          "candidate": 13727080,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 406,
+          "base": 13726680,
+          "candidate": 13726680,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 382,
+          "base": 13726360,
+          "candidate": 13726360,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 407,
+          "base": 13726080,
+          "candidate": 13726080,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 357,
+          "base": 13724160,
+          "candidate": 13724160,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 355,
+          "base": 13720360,
+          "candidate": 13720360,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 356,
+          "base": 13718360,
+          "candidate": 13718360,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 484,
+          "base": 13717720,
+          "candidate": 13717720,
+          "reduction_percent": 0.0
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 275497,
+          "hash": "d9e8f0bd269c0fb3"
+        },
+        {
+          "bytes": 275497,
+          "hash": "d9e8f0bd269c0fb3"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 319200,
+          "sha256": "8d0314a30071a26cf7e694b2f90a99e85eddfb1809deb9a545ab2a244d507c24"
+        },
+        {
+          "bytes": 319200,
+          "sha256": "8d0314a30071a26cf7e694b2f90a99e85eddfb1809deb9a545ab2a244d507c24"
+        }
+      ]
+    },
+    "dragonmagic": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "a10c141d",
+      "audiohash": "ed6eda0c",
+      "base_insn": 3916652,
+      "candidate_insn": 2982846,
+      "reduction_percent": 23.8419,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 3473133,
+          "candidate_insn": 2473417,
+          "reduction_percent": 28.7843
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 3923196,
+          "candidate_insn": 2870153,
+          "reduction_percent": 26.8415
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 3951409,
+          "candidate_insn": 3191496,
+          "reduction_percent": 19.2314
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 4114255,
+          "candidate_insn": 3059450,
+          "reduction_percent": 25.6378
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 3950689,
+          "candidate_insn": 2895948,
+          "reduction_percent": 26.6976
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 4087235,
+          "candidate_insn": 3406612,
+          "reduction_percent": 16.6524
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 3916653.4,
+          "p50": 3948720,
+          "p90": 4459680,
+          "p95": 4477520,
+          "p99": 4491120,
+          "min": 2701360,
+          "max": 6332320
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 2982847,
+          "p50": 2894360,
+          "p90": 3578840,
+          "p95": 3890240,
+          "p99": 4457360,
+          "min": 1644960,
+          "max": 6332360
+        }
+      },
+      "total_reduction_percent": 23.8419,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 4041722.4,
+          "p50": 3951840,
+          "p90": 4477160,
+          "p95": 4486600,
+          "p99": 4491160,
+          "min": 3610000,
+          "max": 5656520
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 3236392.67,
+          "p50": 2898200,
+          "p90": 3982600,
+          "p95": 3987440,
+          "p99": 4004600,
+          "min": 2890960,
+          "max": 5656560
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 7,
+          "base": 6332320,
+          "candidate": 6332360,
+          "reduction_percent": -0.0006
+        },
+        {
+          "frame": 1192,
+          "base": 5656520,
+          "candidate": 5656560,
+          "reduction_percent": -0.0007
+        },
+        {
+          "frame": 548,
+          "base": 5468400,
+          "candidate": 5450960,
+          "reduction_percent": 0.3189
+        },
+        {
+          "frame": 583,
+          "base": 4877640,
+          "candidate": 4877600,
+          "reduction_percent": 0.0008
+        },
+        {
+          "frame": 561,
+          "base": 4781560,
+          "candidate": 4781560,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 573,
+          "base": 4766360,
+          "candidate": 4766360,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 622,
+          "base": 4494760,
+          "candidate": 3441480,
+          "reduction_percent": 23.4335
+        },
+        {
+          "frame": 625,
+          "base": 4492560,
+          "candidate": 3437840,
+          "reduction_percent": 23.477
+        },
+        {
+          "frame": 611,
+          "base": 4491200,
+          "candidate": 3437960,
+          "reduction_percent": 23.4512
+        },
+        {
+          "frame": 1092,
+          "base": 4491160,
+          "candidate": 3436560,
+          "reduction_percent": 23.4817
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 267305,
+          "hash": "2b2fef6228fb9009"
+        },
+        {
+          "bytes": 267305,
+          "hash": "2b2fef6228fb9009"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "5decf70f88838a3ad565deba4287a5e591ffd90801b09b0bf7bff4df618a60ac"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "5decf70f88838a3ad565deba4287a5e591ffd90801b09b0bf7bff4df618a60ac"
+        }
+      ]
+    },
+    "kart": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "3496ec07",
+      "audiohash": "6254040b",
+      "base_insn": 5987236,
+      "candidate_insn": 5987642,
+      "reduction_percent": -0.0068,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 4074670,
+          "candidate_insn": 4074980,
+          "reduction_percent": -0.0076
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 6137467,
+          "candidate_insn": 6137467,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 6379789,
+          "candidate_insn": 6379789,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 6457236,
+          "candidate_insn": 6457236,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 6446994,
+          "candidate_insn": 6446994,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 6427258,
+          "candidate_insn": 6429385,
+          "reduction_percent": -0.0331
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 5987236.73,
+          "p50": 6378880,
+          "p90": 6560240,
+          "p95": 6598640,
+          "p99": 6664920,
+          "min": 3085840,
+          "max": 17901840
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 5987642.4,
+          "p50": 6379760,
+          "p90": 6560240,
+          "p95": 6600600,
+          "p99": 6664920,
+          "min": 3085880,
+          "max": 17901840
+        }
+      },
+      "total_reduction_percent": -0.0068,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 6429167.47,
+          "p50": 6426000,
+          "p90": 6568920,
+          "p95": 6605200,
+          "p99": 6671400,
+          "min": 6185600,
+          "max": 6702520
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 6430585.73,
+          "p50": 6428200,
+          "p90": 6570400,
+          "p95": 6608720,
+          "p99": 6671400,
+          "min": 6185600,
+          "max": 6702520
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 1,
+          "base": 17901840,
+          "candidate": 17901840,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 906,
+          "base": 6702520,
+          "candidate": 6702520,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 774,
+          "base": 6687160,
+          "candidate": 6687120,
+          "reduction_percent": 0.0006
+        },
+        {
+          "frame": 820,
+          "base": 6684080,
+          "candidate": 6684080,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 716,
+          "base": 6678080,
+          "candidate": 6678080,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 926,
+          "base": 6677240,
+          "candidate": 6677280,
+          "reduction_percent": -0.0006
+        },
+        {
+          "frame": 412,
+          "base": 6675200,
+          "candidate": 6675240,
+          "reduction_percent": -0.0006
+        },
+        {
+          "frame": 702,
+          "base": 6671600,
+          "candidate": 6671600,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 912,
+          "base": 6671400,
+          "candidate": 6671400,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 938,
+          "base": 6671120,
+          "candidate": 6671120,
+          "reduction_percent": 0.0
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 269477,
+          "hash": "02401979334eedc5"
+        },
+        {
+          "bytes": 269477,
+          "hash": "02401979334eedc5"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "bdc09e9dcc0d2ca8b50cce74bf1f38268a0e6f5ccf91499c14a56056d05f89c2"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "bdc09e9dcc0d2ca8b50cce74bf1f38268a0e6f5ccf91499c14a56056d05f89c2"
+        }
+      ]
+    },
+    "zelda-tap": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "c28df398",
+      "audiohash": "3e654b67",
+      "base_insn": 4695503,
+      "candidate_insn": 4673475,
+      "reduction_percent": 0.4691,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 3630549,
+          "candidate_insn": 3516607,
+          "reduction_percent": 3.1384
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 3704186,
+          "candidate_insn": 3685957,
+          "reduction_percent": 0.4921
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 4453792,
+          "candidate_insn": 4453792,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 5035909,
+          "candidate_insn": 5035906,
+          "reduction_percent": 0.0001
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 6124394,
+          "candidate_insn": 6124394,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 5224192,
+          "candidate_insn": 5224192,
+          "reduction_percent": 0.0
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 4695504.2,
+          "p50": 4499640,
+          "p90": 6611600,
+          "p95": 6779080,
+          "p99": 6943400,
+          "min": 2378560,
+          "max": 7095760
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 4673475.37,
+          "p50": 4499600,
+          "p90": 6611640,
+          "p95": 6779120,
+          "p99": 6943400,
+          "min": 1546520,
+          "max": 7095760
+        }
+      },
+      "total_reduction_percent": 0.4691,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 5492413.87,
+          "p50": 5625960,
+          "p90": 6840200,
+          "p95": 6890960,
+          "p99": 6941320,
+          "min": 3246880,
+          "max": 7089640
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 5492414.4,
+          "p50": 5625960,
+          "p90": 6840200,
+          "p95": 6891000,
+          "p99": 6941360,
+          "min": 3246880,
+          "max": 7089600
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 870,
+          "base": 7095760,
+          "candidate": 7095760,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1050,
+          "base": 7089640,
+          "candidate": 7089600,
+          "reduction_percent": 0.0006
+        },
+        {
+          "frame": 900,
+          "base": 7080040,
+          "candidate": 7080040,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 875,
+          "base": 7074520,
+          "candidate": 7074480,
+          "reduction_percent": 0.0006
+        },
+        {
+          "frame": 885,
+          "base": 7071840,
+          "candidate": 7071800,
+          "reduction_percent": 0.0006
+        },
+        {
+          "frame": 890,
+          "base": 7001520,
+          "candidate": 7001520,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 860,
+          "base": 6990880,
+          "candidate": 6990880,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 880,
+          "base": 6970960,
+          "candidate": 6970960,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 895,
+          "base": 6956080,
+          "candidate": 6956080,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 945,
+          "base": 6951920,
+          "candidate": 6951880,
+          "reduction_percent": 0.0006
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 275497,
+          "hash": "71ecc2cbdb871214"
+        },
+        {
+          "bytes": 275497,
+          "hash": "71ecc2cbdb871214"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "6f4b1d11b05631162bb1f33987f3c640dae50282ba59ec979041be759145a67b"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "6f4b1d11b05631162bb1f33987f3c640dae50282ba59ec979041be759145a67b"
+        }
+      ]
+    },
+    "zelda-default": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "1d0d959d",
+      "audiohash": "c70e2bdf",
+      "base_insn": 5020007,
+      "candidate_insn": 4997979,
+      "reduction_percent": 0.4388,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 3630549,
+          "candidate_insn": 3516606,
+          "reduction_percent": 3.1385
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 3704186,
+          "candidate_insn": 3685955,
+          "reduction_percent": 0.4922
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 4453793,
+          "candidate_insn": 4453793,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 5035906,
+          "candidate_insn": 5035907,
+          "reduction_percent": -0.0
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 6498704,
+          "candidate_insn": 6498706,
+          "reduction_percent": -0.0
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 6796906,
+          "candidate_insn": 6796907,
+          "reduction_percent": -0.0
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 5020008.07,
+          "p50": 4558560,
+          "p90": 6844520,
+          "p95": 6898560,
+          "p99": 6952040,
+          "min": 2378600,
+          "max": 7095800
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 4997979.9,
+          "p50": 4558560,
+          "p90": 6844520,
+          "p95": 6898560,
+          "p99": 6952040,
+          "min": 1546520,
+          "max": 7095760
+        }
+      },
+      "total_reduction_percent": 0.4388,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 6790431.87,
+          "p50": 6783880,
+          "p90": 6915920,
+          "p95": 6932760,
+          "p99": 6956360,
+          "min": 6558520,
+          "max": 6965000
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 6790433.07,
+          "p50": 6783920,
+          "p90": 6915880,
+          "p95": 6932800,
+          "p99": 6956360,
+          "min": 6558520,
+          "max": 6964960
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 870,
+          "base": 7095800,
+          "candidate": 7095760,
+          "reduction_percent": 0.0006
+        },
+        {
+          "frame": 900,
+          "base": 7080040,
+          "candidate": 7080040,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 875,
+          "base": 7074520,
+          "candidate": 7074520,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 885,
+          "base": 7071800,
+          "candidate": 7071800,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 890,
+          "base": 7001520,
+          "candidate": 7001520,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 860,
+          "base": 6990880,
+          "candidate": 6990880,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 880,
+          "base": 6970920,
+          "candidate": 6970920,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1161,
+          "base": 6965000,
+          "candidate": 6964960,
+          "reduction_percent": 0.0006
+        },
+        {
+          "frame": 1159,
+          "base": 6963000,
+          "candidate": 6963000,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1191,
+          "base": 6956360,
+          "candidate": 6956360,
+          "reduction_percent": 0.0
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        }
+      ]
+    },
+    "pilotwings": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "ac0f2a9d",
+      "audiohash": "703ad04e",
+      "base_insn": 6307830,
+      "candidate_insn": 6307830,
+      "reduction_percent": 0.0,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 4579111,
+          "candidate_insn": 4579111,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 6590814,
+          "candidate_insn": 6590814,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 6639336,
+          "candidate_insn": 6639336,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 6764576,
+          "candidate_insn": 6764576,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 6691484,
+          "candidate_insn": 6691484,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 6581664,
+          "candidate_insn": 6581664,
+          "reduction_percent": 0.0
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 6307831.6,
+          "p50": 6621120,
+          "p90": 6795480,
+          "p95": 6823080,
+          "p99": 6839040,
+          "min": 3372800,
+          "max": 12555840
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 6307831.6,
+          "p50": 6621120,
+          "p90": 6795480,
+          "p95": 6823080,
+          "p99": 6839040,
+          "min": 3372800,
+          "max": 12555840
+        }
+      },
+      "total_reduction_percent": 0.0,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 6622128.27,
+          "p50": 6733960,
+          "p90": 6790000,
+          "p95": 6792840,
+          "p99": 6798520,
+          "min": 6313760,
+          "max": 6802320
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 6622128.27,
+          "p50": 6733960,
+          "p90": 6790000,
+          "p95": 6792840,
+          "p99": 6798520,
+          "min": 6313760,
+          "max": 6802320
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 116,
+          "base": 12555840,
+          "candidate": 12555840,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 784,
+          "base": 6848280,
+          "candidate": 6848280,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 783,
+          "base": 6847240,
+          "candidate": 6847240,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 782,
+          "base": 6846800,
+          "candidate": 6846800,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 785,
+          "base": 6846560,
+          "candidate": 6846560,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 618,
+          "base": 6844000,
+          "candidate": 6844000,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 795,
+          "base": 6843440,
+          "candidate": 6843440,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 717,
+          "base": 6840080,
+          "candidate": 6840080,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 802,
+          "base": 6839560,
+          "candidate": 6839560,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 794,
+          "base": 6839280,
+          "candidate": 6839280,
+          "reduction_percent": 0.0
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 268453,
+          "hash": "99764086f28d70df"
+        },
+        {
+          "bytes": 268453,
+          "hash": "99764086f28d70df"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "ac27590709fe14660164d1095476d179c0ee5f230a15a8e2784c040c45c6f244"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "ac27590709fe14660164d1095476d179c0ee5f230a15a8e2784c040c45c6f244"
+        }
+      ]
+    },
+    "metroid": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "20f9e35a",
+      "audiohash": "e11c08c2",
+      "base_insn": 4768862,
+      "candidate_insn": 4768862,
+      "reduction_percent": 0.0,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 4095329,
+          "candidate_insn": 4095329,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 3643780,
+          "candidate_insn": 3643780,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 5091437,
+          "candidate_insn": 5091437,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 5143917,
+          "candidate_insn": 5143917,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 5078561,
+          "candidate_insn": 5078561,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 5560151,
+          "candidate_insn": 5560151,
+          "reduction_percent": 0.0
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 4768863.3,
+          "p50": 4205560,
+          "p90": 6102040,
+          "p95": 6120720,
+          "p99": 6146120,
+          "min": 2453680,
+          "max": 6189240
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 4768863.3,
+          "p50": 4205560,
+          "p90": 6102040,
+          "p95": 6120720,
+          "p99": 6146120,
+          "min": 2453680,
+          "max": 6189240
+        }
+      },
+      "total_reduction_percent": 0.0,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 5306504.13,
+          "p50": 5503600,
+          "p90": 6123080,
+          "p95": 6127640,
+          "p99": 6145920,
+          "min": 4009640,
+          "max": 6151080
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 5306504.13,
+          "p50": 5503600,
+          "p90": 6123080,
+          "p95": 6127640,
+          "p99": 6145920,
+          "min": 4009640,
+          "max": 6151080
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 671,
+          "base": 6189240,
+          "candidate": 6189240,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 699,
+          "base": 6185080,
+          "candidate": 6185080,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 674,
+          "base": 6181960,
+          "candidate": 6181960,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 685,
+          "base": 6179680,
+          "candidate": 6179680,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 696,
+          "base": 6171960,
+          "candidate": 6171960,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 643,
+          "base": 6163160,
+          "candidate": 6163160,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 668,
+          "base": 6163000,
+          "candidate": 6163000,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 702,
+          "base": 6153480,
+          "candidate": 6153480,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 682,
+          "base": 6153080,
+          "candidate": 6153080,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1089,
+          "base": 6151080,
+          "candidate": 6151080,
+          "reduction_percent": 0.0
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 275497,
+          "hash": "ce1980ec83f4cdb7"
+        },
+        {
+          "bytes": 275497,
+          "hash": "ce1980ec83f4cdb7"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "d1797a680bae7ed863d813e7a5ce6e292a2a0d29b022a8300087849b200defbf"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "d1797a680bae7ed863d813e7a5ce6e292a2a0d29b022a8300087849b200defbf"
+        }
+      ]
+    },
+    "dkc": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "d8132a15",
+      "audiohash": "677e8092",
+      "base_insn": 6208342,
+      "candidate_insn": 6208342,
+      "reduction_percent": 0.0,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 5384994,
+          "candidate_insn": 5384994,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 6087249,
+          "candidate_insn": 6087249,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 6204326,
+          "candidate_insn": 6204326,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 6353849,
+          "candidate_insn": 6353849,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 6605639,
+          "candidate_insn": 6605639,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 6613999,
+          "candidate_insn": 6613999,
+          "reduction_percent": 0.0
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 6208343.43,
+          "p50": 6305000,
+          "p90": 6728320,
+          "p95": 6745920,
+          "p99": 7526080,
+          "min": 3619320,
+          "max": 26705200
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 6208343.43,
+          "p50": 6305000,
+          "p90": 6728320,
+          "p95": 6745920,
+          "p99": 7526080,
+          "min": 3619320,
+          "max": 26705200
+        }
+      },
+      "total_reduction_percent": 0.0,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 6612179.2,
+          "p50": 6584760,
+          "p90": 6741680,
+          "p95": 6747880,
+          "p99": 6767280,
+          "min": 6363160,
+          "max": 6778280
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 6612179.2,
+          "p50": 6584760,
+          "p90": 6741680,
+          "p95": 6747880,
+          "p99": 6767280,
+          "min": 6363160,
+          "max": 6778280
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 1,
+          "base": 26705200,
+          "candidate": 26705200,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 28,
+          "base": 19446240,
+          "candidate": 19446240,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 714,
+          "base": 10614920,
+          "candidate": 10614920,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 682,
+          "base": 7748160,
+          "candidate": 7748160,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 309,
+          "base": 7691680,
+          "candidate": 7691680,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 311,
+          "base": 7690840,
+          "candidate": 7690840,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 310,
+          "base": 7690440,
+          "candidate": 7690440,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 312,
+          "base": 7668080,
+          "candidate": 7668080,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 313,
+          "base": 7646240,
+          "candidate": 7646240,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 314,
+          "base": 7609280,
+          "candidate": 7609280,
+          "reduction_percent": 0.0
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 269353,
+          "hash": "390285c50d496420"
+        },
+        {
+          "bytes": 269353,
+          "hash": "390285c50d496420"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "c58e65cadba7c0658a437e3b750644a97ae01d67a30f53227e688a516f32ca45"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "c58e65cadba7c0658a437e3b750644a97ae01d67a30f53227e688a516f32ca45"
+        }
+      ]
+    },
+    "smw": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "5e4cebb3",
+      "audiohash": "f9d150be",
+      "base_insn": 5158340,
+      "candidate_insn": 4598216,
+      "reduction_percent": 10.8586,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 3706131,
+          "candidate_insn": 3323350,
+          "reduction_percent": 10.3283
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 4133974,
+          "candidate_insn": 3656380,
+          "reduction_percent": 11.5529
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 5663527,
+          "candidate_insn": 5015889,
+          "reduction_percent": 11.4352
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 5692206,
+          "candidate_insn": 5000050,
+          "reduction_percent": 12.1597
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 5844642,
+          "candidate_insn": 5197276,
+          "reduction_percent": 11.0762
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 5909562,
+          "candidate_insn": 5396355,
+          "reduction_percent": 8.6843
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 5158341.27,
+          "p50": 5687440,
+          "p90": 5938600,
+          "p95": 5991000,
+          "p99": 6138560,
+          "min": 2851000,
+          "max": 6180720
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 4598217.33,
+          "p50": 5023760,
+          "p90": 5419200,
+          "p95": 5481760,
+          "p99": 5698200,
+          "min": 2352200,
+          "max": 5809360
+        }
+      },
+      "total_reduction_percent": 10.8586,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 5888952.4,
+          "p50": 5885040,
+          "p90": 6052440,
+          "p95": 6127240,
+          "p99": 6173560,
+          "min": 5592480,
+          "max": 6180720
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 5336557.47,
+          "p50": 5341160,
+          "p90": 5579640,
+          "p95": 5680680,
+          "p99": 5726160,
+          "min": 4905720,
+          "max": 5809360
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 1114,
+          "base": 6180720,
+          "candidate": 5726160,
+          "reduction_percent": 7.3545
+        },
+        {
+          "frame": 1113,
+          "base": 6173640,
+          "candidate": 5718960,
+          "reduction_percent": 7.3649
+        },
+        {
+          "frame": 1115,
+          "base": 6173560,
+          "candidate": 5718840,
+          "reduction_percent": 7.3656
+        },
+        {
+          "frame": 1134,
+          "base": 6162960,
+          "candidate": 5809360,
+          "reduction_percent": 5.7375
+        },
+        {
+          "frame": 993,
+          "base": 6155320,
+          "candidate": 5649440,
+          "reduction_percent": 8.2186
+        },
+        {
+          "frame": 1137,
+          "base": 6153080,
+          "candidate": 5714240,
+          "reduction_percent": 7.132
+        },
+        {
+          "frame": 1116,
+          "base": 6153000,
+          "candidate": 5692880,
+          "reduction_percent": 7.478
+        },
+        {
+          "frame": 1136,
+          "base": 6149560,
+          "candidate": 5705360,
+          "reduction_percent": 7.2233
+        },
+        {
+          "frame": 1118,
+          "base": 6148800,
+          "candidate": 5698200,
+          "reduction_percent": 7.3283
+        },
+        {
+          "frame": 1138,
+          "base": 6147120,
+          "candidate": 5712920,
+          "reduction_percent": 7.0635
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 269353,
+          "hash": "f18aca4661038321"
+        },
+        {
+          "bytes": 269353,
+          "hash": "f18aca4661038321"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "c2b8886d333434211261134ff3a1b87b5fa4e697debc8f50a703db9b58013443"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "c2b8886d333434211261134ff3a1b87b5fa4e697debc8f50a703db9b58013443"
+        }
+      ]
+    },
+    "fzero": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "80035229",
+      "audiohash": "5d178d4e",
+      "base_insn": 6810002,
+      "candidate_insn": 6811610,
+      "reduction_percent": -0.0236,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 4980236,
+          "candidate_insn": 4981824,
+          "reduction_percent": -0.0319
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 7165171,
+          "candidate_insn": 7165172,
+          "reduction_percent": -0.0
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 7176139,
+          "candidate_insn": 7176139,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 7200385,
+          "candidate_insn": 7200383,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 7187717,
+          "candidate_insn": 7187718,
+          "reduction_percent": -0.0
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 7150363,
+          "candidate_insn": 7158419,
+          "reduction_percent": -0.1127
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 6810002.8,
+          "p50": 7155080,
+          "p90": 7267000,
+          "p95": 7287960,
+          "p99": 7302240,
+          "min": 2967280,
+          "max": 7313000
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 6811610.17,
+          "p50": 7155080,
+          "p90": 7267320,
+          "p95": 7287920,
+          "p99": 7302240,
+          "min": 2762320,
+          "max": 7313040
+        }
+      },
+      "total_reduction_percent": -0.0236,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 7158740.67,
+          "p50": 7173960,
+          "p90": 7254960,
+          "p95": 7257440,
+          "p99": 7270080,
+          "min": 6975360,
+          "max": 7271560
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 7164111.73,
+          "p50": 7186120,
+          "p90": 7255120,
+          "p95": 7257400,
+          "p99": 7270040,
+          "min": 6987880,
+          "max": 7271560
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 565,
+          "base": 7313000,
+          "candidate": 7313040,
+          "reduction_percent": -0.0005
+        },
+        {
+          "frame": 567,
+          "base": 7312800,
+          "candidate": 7312840,
+          "reduction_percent": -0.0005
+        },
+        {
+          "frame": 566,
+          "base": 7311720,
+          "candidate": 7311680,
+          "reduction_percent": 0.0005
+        },
+        {
+          "frame": 533,
+          "base": 7309960,
+          "candidate": 7310000,
+          "reduction_percent": -0.0005
+        },
+        {
+          "frame": 577,
+          "base": 7307400,
+          "candidate": 7307360,
+          "reduction_percent": 0.0005
+        },
+        {
+          "frame": 532,
+          "base": 7306720,
+          "candidate": 7306680,
+          "reduction_percent": 0.0005
+        },
+        {
+          "frame": 531,
+          "base": 7304840,
+          "candidate": 7304840,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 590,
+          "base": 7304680,
+          "candidate": 7304640,
+          "reduction_percent": 0.0005
+        },
+        {
+          "frame": 578,
+          "base": 7304640,
+          "candidate": 7304640,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 705,
+          "base": 7303360,
+          "candidate": 7303400,
+          "reduction_percent": -0.0005
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 269353,
+          "hash": "50b7f45498b2b3e2"
+        },
+        {
+          "bytes": 269353,
+          "hash": "50b7f45498b2b3e2"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "4d1aef01c07134f9281ed0837b6e55f0b01f1b9db875b8ccd690e8ce5621be20"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "4d1aef01c07134f9281ed0837b6e55f0b01f1b9db875b8ccd690e8ce5621be20"
+        }
+      ]
+    },
+    "zelda-active": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "1d0d959d",
+      "audiohash": "c70e2bdf",
+      "base_insn": 4941192,
+      "candidate_insn": 4836113,
+      "reduction_percent": 2.1266,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 3630549,
+          "candidate_insn": 3516607,
+          "reduction_percent": 3.1384
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 3700984,
+          "candidate_insn": 3679374,
+          "reduction_percent": 0.5839
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 4406945,
+          "candidate_insn": 4357567,
+          "reduction_percent": 1.1205
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 5011287,
+          "candidate_insn": 4985330,
+          "reduction_percent": 0.518
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 6259812,
+          "candidate_insn": 6008098,
+          "reduction_percent": 4.0211
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 6637579,
+          "candidate_insn": 6469698,
+          "reduction_percent": 2.5293
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 4941193.4,
+          "p50": 4535400,
+          "p90": 6828080,
+          "p95": 6891000,
+          "p99": 6937600,
+          "min": 2378600,
+          "max": 6964960
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 4836113.2,
+          "p50": 4485440,
+          "p90": 6828080,
+          "p95": 6889800,
+          "p99": 6937560,
+          "min": 1546520,
+          "max": 6965000
+        }
+      },
+      "total_reduction_percent": 2.1266,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 6650481.33,
+          "p50": 6737880,
+          "p90": 6915880,
+          "p95": 6932760,
+          "p99": 6956360,
+          "min": 6241200,
+          "max": 6964960
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 6503017.33,
+          "p50": 6732040,
+          "p90": 6915880,
+          "p95": 6932760,
+          "p99": 6956360,
+          "min": 5906840,
+          "max": 6965000
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 1161,
+          "base": 6964960,
+          "candidate": 6965000,
+          "reduction_percent": -0.0006
+        },
+        {
+          "frame": 1159,
+          "base": 6963000,
+          "candidate": 6963000,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1191,
+          "base": 6956360,
+          "candidate": 6956360,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1157,
+          "base": 6952040,
+          "candidate": 6952040,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 945,
+          "base": 6951880,
+          "candidate": 6951920,
+          "reduction_percent": -0.0006
+        },
+        {
+          "frame": 1193,
+          "base": 6946120,
+          "candidate": 6946160,
+          "reduction_percent": -0.0006
+        },
+        {
+          "frame": 1197,
+          "base": 6944400,
+          "candidate": 6944400,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1195,
+          "base": 6943040,
+          "candidate": 6943040,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 941,
+          "base": 6941320,
+          "candidate": 6941320,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1189,
+          "base": 6940680,
+          "candidate": 6940640,
+          "reduction_percent": 0.0006
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        }
+      ]
+    },
+    "zelda-video": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "462fe59d",
+      "audiohash": "c70e2bdf",
+      "base_insn": 5032037,
+      "candidate_insn": 5010008,
+      "reduction_percent": 0.4378,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 3641771,
+          "candidate_insn": 3527829,
+          "reduction_percent": 3.1288
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 3715261,
+          "candidate_insn": 3697028,
+          "reduction_percent": 0.4908
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 4466177,
+          "candidate_insn": 4466179,
+          "reduction_percent": -0.0
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 5048321,
+          "candidate_insn": 5048320,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 6511472,
+          "candidate_insn": 6511470,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 6809224,
+          "candidate_insn": 6809222,
+          "reduction_percent": 0.0
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 5113676.23,
+          "p50": 4653280,
+          "p90": 6938440,
+          "p95": 6992680,
+          "p99": 7046160,
+          "min": 2462680,
+          "max": 7191520
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 5091647.03,
+          "p50": 4653240,
+          "p90": 6938480,
+          "p95": 6992640,
+          "p99": 7046160,
+          "min": 1629600,
+          "max": 7191480
+        }
+      },
+      "total_reduction_percent": 0.4308,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 6884341.6,
+          "p50": 6877880,
+          "p90": 7010000,
+          "p95": 7026920,
+          "p99": 7050480,
+          "min": 6652320,
+          "max": 7059120
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 6884339.2,
+          "p50": 6877920,
+          "p90": 7010040,
+          "p95": 7026920,
+          "p99": 7050480,
+          "min": 6652280,
+          "max": 7059080
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 870,
+          "base": 7191520,
+          "candidate": 7191480,
+          "reduction_percent": 0.0006
+        },
+        {
+          "frame": 900,
+          "base": 7175720,
+          "candidate": 7175760,
+          "reduction_percent": -0.0006
+        },
+        {
+          "frame": 875,
+          "base": 7170200,
+          "candidate": 7170200,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 885,
+          "base": 7167440,
+          "candidate": 7167520,
+          "reduction_percent": -0.0011
+        },
+        {
+          "frame": 890,
+          "base": 7097200,
+          "candidate": 7097200,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 860,
+          "base": 7086600,
+          "candidate": 7086600,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 880,
+          "base": 7066640,
+          "candidate": 7066680,
+          "reduction_percent": -0.0006
+        },
+        {
+          "frame": 1161,
+          "base": 7059120,
+          "candidate": 7059080,
+          "reduction_percent": 0.0006
+        },
+        {
+          "frame": 1159,
+          "base": 7057120,
+          "candidate": 7057080,
+          "reduction_percent": 0.0006
+        },
+        {
+          "frame": 895,
+          "base": 7051800,
+          "candidate": 7051800,
+          "reduction_percent": 0.0
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        }
+      ]
+    }
+  },
+  "drift": {
+    "smw": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "5e4cebb3",
+      "audiohash": "f9d150be",
+      "base_insn": 5158340,
+      "candidate_insn": 5158340,
+      "reduction_percent": 0.0,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 3706131,
+          "candidate_insn": 3706131,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 4133974,
+          "candidate_insn": 4133974,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 5663527,
+          "candidate_insn": 5663527,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 5692206,
+          "candidate_insn": 5692206,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 5844642,
+          "candidate_insn": 5844642,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 5909562,
+          "candidate_insn": 5909562,
+          "reduction_percent": 0.0
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 5158341.27,
+          "p50": 5687440,
+          "p90": 5938600,
+          "p95": 5991000,
+          "p99": 6138560,
+          "min": 2851000,
+          "max": 6180720
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 5158341.27,
+          "p50": 5687440,
+          "p90": 5938600,
+          "p95": 5991000,
+          "p99": 6138560,
+          "min": 2851000,
+          "max": 6180720
+        }
+      },
+      "total_reduction_percent": 0.0,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 5888952.4,
+          "p50": 5885040,
+          "p90": 6052440,
+          "p95": 6127240,
+          "p99": 6173560,
+          "min": 5592480,
+          "max": 6180720
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 5888952.4,
+          "p50": 5885040,
+          "p90": 6052440,
+          "p95": 6127240,
+          "p99": 6173560,
+          "min": 5592480,
+          "max": 6180720
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 1114,
+          "base": 6180720,
+          "candidate": 6180720,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1113,
+          "base": 6173640,
+          "candidate": 6173640,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1115,
+          "base": 6173560,
+          "candidate": 6173560,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1134,
+          "base": 6162960,
+          "candidate": 6162960,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 993,
+          "base": 6155320,
+          "candidate": 6155320,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1137,
+          "base": 6153080,
+          "candidate": 6153080,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1116,
+          "base": 6153000,
+          "candidate": 6153000,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1136,
+          "base": 6149560,
+          "candidate": 6149560,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1118,
+          "base": 6148800,
+          "candidate": 6148800,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1138,
+          "base": 6147120,
+          "candidate": 6147120,
+          "reduction_percent": 0.0
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 269353,
+          "hash": "f18aca4661038321"
+        },
+        {
+          "bytes": 269353,
+          "hash": "f18aca4661038321"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "c2b8886d333434211261134ff3a1b87b5fa4e697debc8f50a703db9b58013443"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "c2b8886d333434211261134ff3a1b87b5fa4e697debc8f50a703db9b58013443"
+        }
+      ]
+    },
+    "zelda-default": {
+      "correctness": "PASS",
+      "frames": 1200,
+      "statehash": "1d0d959d",
+      "audiohash": "c70e2bdf",
+      "base_insn": 5020007,
+      "candidate_insn": 5020007,
+      "reduction_percent": 0.0,
+      "windows": [
+        {
+          "end_frame": 200,
+          "hashes_equal": true,
+          "base_insn": 3630549,
+          "candidate_insn": 3630549,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 400,
+          "hashes_equal": true,
+          "base_insn": 3704186,
+          "candidate_insn": 3704186,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 600,
+          "hashes_equal": true,
+          "base_insn": 4453793,
+          "candidate_insn": 4453793,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 800,
+          "hashes_equal": true,
+          "base_insn": 5035906,
+          "candidate_insn": 5035906,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1000,
+          "hashes_equal": true,
+          "base_insn": 6498704,
+          "candidate_insn": 6498704,
+          "reduction_percent": 0.0
+        },
+        {
+          "end_frame": 1200,
+          "hashes_equal": true,
+          "base_insn": 6796906,
+          "candidate_insn": 6796906,
+          "reduction_percent": 0.0
+        }
+      ],
+      "device_fps": "unmeasured",
+      "per_frame_output_equal": true,
+      "total_distribution": {
+        "base": {
+          "n": 1200,
+          "mean": 5020008.07,
+          "p50": 4558560,
+          "p90": 6844520,
+          "p95": 6898560,
+          "p99": 6952040,
+          "min": 2378600,
+          "max": 7095800
+        },
+        "candidate": {
+          "n": 1200,
+          "mean": 5020008.07,
+          "p50": 4558560,
+          "p90": 6844520,
+          "p95": 6898560,
+          "p99": 6952040,
+          "min": 2378600,
+          "max": 7095800
+        }
+      },
+      "total_reduction_percent": 0.0,
+      "last_300_distribution": {
+        "base": {
+          "n": 300,
+          "mean": 6790431.87,
+          "p50": 6783880,
+          "p90": 6915920,
+          "p95": 6932760,
+          "p99": 6956360,
+          "min": 6558520,
+          "max": 6965000
+        },
+        "candidate": {
+          "n": 300,
+          "mean": 6790431.87,
+          "p50": 6783880,
+          "p90": 6915920,
+          "p95": 6932760,
+          "p99": 6956360,
+          "min": 6558520,
+          "max": 6965000
+        }
+      },
+      "baseline_heaviest_10": [
+        {
+          "frame": 870,
+          "base": 7095800,
+          "candidate": 7095800,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 900,
+          "base": 7080040,
+          "candidate": 7080040,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 875,
+          "base": 7074520,
+          "candidate": 7074520,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 885,
+          "base": 7071800,
+          "candidate": 7071800,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 890,
+          "base": 7001520,
+          "candidate": 7001520,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 860,
+          "base": 6990880,
+          "candidate": 6990880,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 880,
+          "base": 6970920,
+          "candidate": 6970920,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1161,
+          "base": 6965000,
+          "candidate": 6965000,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1159,
+          "base": 6963000,
+          "candidate": 6963000,
+          "reduction_percent": 0.0
+        },
+        {
+          "frame": 1191,
+          "base": 6956360,
+          "candidate": 6956360,
+          "reduction_percent": 0.0
+        }
+      ],
+      "regressed_frames_over_1pct": 0,
+      "serialized_state_equal": true,
+      "serialized_state": [
+        {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        },
+        {
+          "bytes": 275497,
+          "hash": "065b12a255e2e0aa"
+        }
+      ],
+      "execution_records_valid": true,
+      "workload_identity_equal": true,
+      "pcm_equal": true,
+      "pcm": [
+        {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        },
+        {
+          "bytes": 638400,
+          "sha256": "a044a81236948e265001a294485ca079c7f82ea8118e27190b5e5af111de91e2"
+        }
+      ]
+    }
+  },
+  "guest_frames_completed": 30000,
+  "completed_runs": 26,
+  "failed_runs": [
+    "ff5-A"
+  ],
+  "samples": "one A and one B per workload; Zelda and SMW have one intentional A-after each; descriptive deterministic instruction counts",
+  "hardware": {
+    "run": false,
+    "ownership": "assigned to 32X by user; wait for user to finish",
+    "scene_52fps_save": "not acquired",
+    "firmware_link": "not built",
+    "completion_route": "not verified"
+  },
+  "accuracy": "final actual save stream + every frame framebuffer/audio hash + SHA256 of all raw PCM; differential span gate retained in 20261001-span-fold",
+  "limits": [
+    "cold boots and scripted taps; gameplay identity with the 52.65 drawn FPS scene unverified",
+    "no QEMU caches, wait states, interrupts from hardware LCD/audio DMA or physical display transfer",
+    "device-video models direct drawing and framebuffer memcpy only",
+    "FF5 1200-frame timeout retained; 600-frame comparison is separate and its PCM is silent",
+    "PCM/WAV and sample ELF copies are local; compressed ROM-free ELFs retained here",
+    "60 drawn FPS and device firmware link/ITCM headroom remain unmeasured"
+  ],
+  "source_sha256": {
+    "tools/m7_qemu_rig/rig_snes.c": "66b6b6bc6274a43ac2e288463e1bd7c7294d173439d7e8e5571082f3b5e0fbdf",
+    "tools/snes_bulk_wait/build_rig.py": "0f2b0c424d47de9e4f71d12c2818fa377715d66a11f10cd5f5cba772f104e9b0",
+    "tools/snes_bulk_wait/compare.py": "cfe061abd5a75758a2a6d31d781baf93e1a17ad9e98d7f9a3141aa84a7333759",
+    "tools/snes_bulk_wait/pack_evidence.py": "c5b751ef5bffd1af0fadc2002b24e7d5dc31ad3059e00dfbe02a24f244c6ef15",
+    "tools/snes_bulk_wait/run_case.py": "fdcf568b075f37eafa77b70f2295779ee34fd4938718fca4e8a76c32b6f9e4e7",
+    "tests/test_snes_bulk_evidence.py": "616e8928d1ebc8e27767add0361159615db82cbb21339700fb67f1bc9054d47b",
+    "tools/snes_stretch_sim/sim.c": "12fca1491f7d9a71cebfabd051c069e3fe577e4f7075ed5ff1af4d651549379b",
+    "Core/Src/porting/snes/snes_audio_stretch.c": "11ecf106b7d9091680c6d82cb006835793cd29e76fd4b7d1c1f8b9a04e6ce8ce",
+    "Core/Src/porting/snes/snes_audio_stretch.h": "cd61992b82cf46d4fd31ca27f150fd001e4ac02feaa40aa24e8dd1c3873d4fa3",
+    "tests/test_snes_audio_stretch.c": "ddf0c0b45450bfd8ff57e0c602082081a646ec02030aa096fde9e6bda1e7d8e3"
+  },
+  "artifacts": {
+    "runs/dkc-A/request.json": {
+      "sha256": "7aaa6e9373b67155f457dd9553106571ee13f35f4cac7d8aac42f7205aa23367",
+      "bytes": 1449,
+      "raw_sha256": "7aaa6e9373b67155f457dd9553106571ee13f35f4cac7d8aac42f7205aa23367"
+    },
+    "runs/dkc-A/result.json": {
+      "sha256": "929e5930b9b28c997fa49d12fa925154169c57481c8b0d07080920e273e06119",
+      "bytes": 511,
+      "raw_sha256": "929e5930b9b28c997fa49d12fa925154169c57481c8b0d07080920e273e06119"
+    },
+    "runs/dkc-A/output.log.gz": {
+      "sha256": "86eda030cb585ab704cef3c2d34a21715df8d941c45f4040ddd08e71607d8628",
+      "bytes": 21786,
+      "raw_sha256": "beb822bc648e6c3fc476714e5ad5971d095b7ff6d714ac2ef380cfe431dc50b8"
+    },
+    "runs/dkc-B/request.json": {
+      "sha256": "095757aaac14b03973bd5858b1a3dd9018c79458fb41c508f8f0904e004c42b1",
+      "bytes": 1449,
+      "raw_sha256": "095757aaac14b03973bd5858b1a3dd9018c79458fb41c508f8f0904e004c42b1"
+    },
+    "runs/dkc-B/result.json": {
+      "sha256": "6bb2ca2da1ed20cc3138125df128556208d867d01ae07ff5b64873912084e9d5",
+      "bytes": 511,
+      "raw_sha256": "6bb2ca2da1ed20cc3138125df128556208d867d01ae07ff5b64873912084e9d5"
+    },
+    "runs/dkc-B/output.log.gz": {
+      "sha256": "86eda030cb585ab704cef3c2d34a21715df8d941c45f4040ddd08e71607d8628",
+      "bytes": 21786,
+      "raw_sha256": "beb822bc648e6c3fc476714e5ad5971d095b7ff6d714ac2ef380cfe431dc50b8"
+    },
+    "runs/dragonmagic-A/request.json": {
+      "sha256": "e5069f81d34578962df2f25807fa32af3f412065c66e1b5d6a42cba5fe429bc3",
+      "bytes": 1491,
+      "raw_sha256": "e5069f81d34578962df2f25807fa32af3f412065c66e1b5d6a42cba5fe429bc3"
+    },
+    "runs/dragonmagic-A/result.json": {
+      "sha256": "0758bf0b6e39f9de93ebf3512c13e4f8a14bbb381818cebadf185a19f9b887a9",
+      "bytes": 511,
+      "raw_sha256": "0758bf0b6e39f9de93ebf3512c13e4f8a14bbb381818cebadf185a19f9b887a9"
+    },
+    "runs/dragonmagic-A/output.log.gz": {
+      "sha256": "126fd315f0cf9f573bd6e2f388ed2d0a643d4cc89af56f3ef7bac29f39f3d759",
+      "bytes": 15757,
+      "raw_sha256": "803e2e2426f5eaab5bc55ed38866dcad37bb9735cdd35b89cdd6b489af6e61d4"
+    },
+    "runs/dragonmagic-B/request.json": {
+      "sha256": "bb9ffa62e2a88c37eda90a7112ba9df9e3918b716db131c5795232740bb4eea7",
+      "bytes": 1491,
+      "raw_sha256": "bb9ffa62e2a88c37eda90a7112ba9df9e3918b716db131c5795232740bb4eea7"
+    },
+    "runs/dragonmagic-B/result.json": {
+      "sha256": "46450c3bf45220abb192842a41b6a5ea1e2a06e7b33fdc8911606e46a9322943",
+      "bytes": 511,
+      "raw_sha256": "46450c3bf45220abb192842a41b6a5ea1e2a06e7b33fdc8911606e46a9322943"
+    },
+    "runs/dragonmagic-B/output.log.gz": {
+      "sha256": "76bdf859f6cb66ca66c9febafdae6d041b0dc40c7fd1f7e00b61260b005f2b63",
+      "bytes": 15901,
+      "raw_sha256": "f86e3425d4ad2f909c3385facaa0542cd8a1e8a0f7b1bbd10ad30df8bd2671cf"
+    },
+    "runs/ff5-A/request.json": {
+      "sha256": "82203e1c55596df6565acf41018363a9f0dbeacb37e7f11d75bbb0c5e1922e44",
+      "bytes": 1470,
+      "raw_sha256": "82203e1c55596df6565acf41018363a9f0dbeacb37e7f11d75bbb0c5e1922e44"
+    },
+    "runs/ff5-A/result.json": {
+      "sha256": "8cc0390480f7996914091c92a0335a6f95fbb64c72697fc2b534255f02533b9e",
+      "bytes": 603,
+      "raw_sha256": "8cc0390480f7996914091c92a0335a6f95fbb64c72697fc2b534255f02533b9e"
+    },
+    "runs/ff5-A/output.log.gz": {
+      "sha256": "a20ecc82aff5a934e0117dd4ee05253221b28d301602687abdf30104e88971d6",
+      "bytes": 281,
+      "raw_sha256": "e3da0b89d20e159bba7b2f242809e947af1d4ecd32f1d408a8fc649caa97684c"
+    },
+    "runs/ff5-short-A/request.json": {
+      "sha256": "33c88c1d2a88ba6a5ac18102bffd73a47c9742069b355324e44e8c788bb4b725",
+      "bytes": 1499,
+      "raw_sha256": "33c88c1d2a88ba6a5ac18102bffd73a47c9742069b355324e44e8c788bb4b725"
+    },
+    "runs/ff5-short-A/result.json": {
+      "sha256": "df50b29813f8b38fd96caddbf5f6ddc1131f65543a7661a25acb360a9ac61ffa",
+      "bytes": 510,
+      "raw_sha256": "df50b29813f8b38fd96caddbf5f6ddc1131f65543a7661a25acb360a9ac61ffa"
+    },
+    "runs/ff5-short-A/output.log.gz": {
+      "sha256": "473bea68ededeee74733aa56773d0ec105f4b4a50085164612a71e09c9792faa",
+      "bytes": 9268,
+      "raw_sha256": "90e0acdbb6cc3e609c9451b595eb7320e8b4445f79cf51845e9024e316cc82ea"
+    },
+    "runs/ff5-short-B/request.json": {
+      "sha256": "c8be539bcfa6484c128dfd441a6cd168d2ff36af22e23e1b9e58c4f3ef8c2927",
+      "bytes": 1499,
+      "raw_sha256": "c8be539bcfa6484c128dfd441a6cd168d2ff36af22e23e1b9e58c4f3ef8c2927"
+    },
+    "runs/ff5-short-B/result.json": {
+      "sha256": "b0d13d079fb1191eafa67d33c46b314bb239cfcee27fa3c3e99e208715685ecc",
+      "bytes": 510,
+      "raw_sha256": "b0d13d079fb1191eafa67d33c46b314bb239cfcee27fa3c3e99e208715685ecc"
+    },
+    "runs/ff5-short-B/output.log.gz": {
+      "sha256": "473bea68ededeee74733aa56773d0ec105f4b4a50085164612a71e09c9792faa",
+      "bytes": 9268,
+      "raw_sha256": "90e0acdbb6cc3e609c9451b595eb7320e8b4445f79cf51845e9024e316cc82ea"
+    },
+    "runs/fzero-A/request.json": {
+      "sha256": "a7a099e8efc64063aeaac527484f5b68c03358c47e377d259fd3ed0875b52f5c",
+      "bytes": 1442,
+      "raw_sha256": "a7a099e8efc64063aeaac527484f5b68c03358c47e377d259fd3ed0875b52f5c"
+    },
+    "runs/fzero-A/result.json": {
+      "sha256": "f88b8e11b6af26f07a5b4acc5b4864fa830ccd4bfbb8629ba6af0b36228e143e",
+      "bytes": 511,
+      "raw_sha256": "f88b8e11b6af26f07a5b4acc5b4864fa830ccd4bfbb8629ba6af0b36228e143e"
+    },
+    "runs/fzero-A/output.log.gz": {
+      "sha256": "7f5639f9c0149d2381391f58deacfe07c962a1271164e98ac0b3140a32f2ba25",
+      "bytes": 22331,
+      "raw_sha256": "77302b276392a5947911526cdbd6fe3d2b9b5e45fe05f6c96a8cbdca07325f72"
+    },
+    "runs/fzero-B/request.json": {
+      "sha256": "e2a6a3aad16cf1baa5d177c8c9ba8eae2bec9cf2eaa5840245d3ca26cf148d95",
+      "bytes": 1442,
+      "raw_sha256": "e2a6a3aad16cf1baa5d177c8c9ba8eae2bec9cf2eaa5840245d3ca26cf148d95"
+    },
+    "runs/fzero-B/result.json": {
+      "sha256": "e880efceff217b2d15df622a0f6523ac626ce7cc5df0ab6643d1254dadf11ab4",
+      "bytes": 511,
+      "raw_sha256": "e880efceff217b2d15df622a0f6523ac626ce7cc5df0ab6643d1254dadf11ab4"
+    },
+    "runs/fzero-B/output.log.gz": {
+      "sha256": "e1625b00fe18bffd77ab03e1d4c41d482663b34c41e62f59c7d70403238a51d0",
+      "bytes": 22329,
+      "raw_sha256": "e8d398a4e6e793143377fd24c51807ae9bdf8d32638a8c78fd4d55635248e92c"
+    },
+    "runs/kart-A/request.json": {
+      "sha256": "2dd734423d1bc099771a2d27a77dffc81c3b2b80d5182bf7a4f24d108321a8a4",
+      "bytes": 1479,
+      "raw_sha256": "2dd734423d1bc099771a2d27a77dffc81c3b2b80d5182bf7a4f24d108321a8a4"
+    },
+    "runs/kart-A/result.json": {
+      "sha256": "73464f19d8720c94bf4182e6bc537377f8e4133b7fbf022040df967f23e55a2d",
+      "bytes": 511,
+      "raw_sha256": "73464f19d8720c94bf4182e6bc537377f8e4133b7fbf022040df967f23e55a2d"
+    },
+    "runs/kart-A/output.log.gz": {
+      "sha256": "ac68f2aef1e8da59b40b2909506a016c3eb2adf456b830092941130a063b0ca1",
+      "bytes": 28738,
+      "raw_sha256": "2346311c2e6fc50d8f011173ef95d5ece80d44c11fd9a6f88529ccafd4c238a0"
+    },
+    "runs/kart-B/request.json": {
+      "sha256": "257cccd672882dd6dcb20607f859ad9545df252544e072bd1d59338a62aac832",
+      "bytes": 1479,
+      "raw_sha256": "257cccd672882dd6dcb20607f859ad9545df252544e072bd1d59338a62aac832"
+    },
+    "runs/kart-B/result.json": {
+      "sha256": "7228dd3bf3b71c5dc73d235c6892b11563393ecbb0e394d6c451101f4535f9ad",
+      "bytes": 511,
+      "raw_sha256": "7228dd3bf3b71c5dc73d235c6892b11563393ecbb0e394d6c451101f4535f9ad"
+    },
+    "runs/kart-B/output.log.gz": {
+      "sha256": "c5a845e50f3e7f07e9a979c903bb7be9e202dab81551c5713b842558d1080999",
+      "bytes": 28755,
+      "raw_sha256": "237e50d3f699d38f0276d88d89bff43cd94da8dca36171a3fb1c61c3025249b2"
+    },
+    "arms/m7-base/build.json": {
+      "sha256": "724f6a89f29d668b5da7d7c1eed409c7c7b0cfb31a50f8067532a260eb124c17",
+      "bytes": 1979,
+      "raw_sha256": "724f6a89f29d668b5da7d7c1eed409c7c7b0cfb31a50f8067532a260eb124c17"
+    },
+    "arms/m7-base/build.log.gz": {
+      "sha256": "1416bf10ac77be22b7cb05eb525efab42aa4bb608981b4cafce24e7b587829ca",
+      "bytes": 301,
+      "raw_sha256": "591b91d07999089ad6384b87fcfe1014d957f5dee6b0e61c272f412529c23405"
+    },
+    "arms/m7-base/rig_snes.elf.gz": {
+      "sha256": "edede2a4def093a7d2eda910191f12f6274f4091668539ee73969493056ac4c1",
+      "bytes": 366790,
+      "raw_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9"
+    },
+    "arms/m7-bulk/build.json": {
+      "sha256": "bae83464ba8bdf657f5613f3b5d35662d1d9e4f1a66951ae1ddf8e09450e35e1",
+      "bytes": 2016,
+      "raw_sha256": "bae83464ba8bdf657f5613f3b5d35662d1d9e4f1a66951ae1ddf8e09450e35e1"
+    },
+    "arms/m7-bulk/build.log.gz": {
+      "sha256": "248eeecbfa6deefdc21a17dc3c93013a8b9fe38ca4e8bc1d9798e4080ec8a09f",
+      "bytes": 302,
+      "raw_sha256": "41c88eafe64c50d22c33959d0c3d9ac04f84f55f208509e0546bc357fe1b7294"
+    },
+    "arms/m7-bulk/rig_snes.elf.gz": {
+      "sha256": "5d572dc58b9f02a8f1c3707be5b75af1154f68a9364aa7a5d110f8c9245bf118",
+      "bytes": 367126,
+      "raw_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b"
+    },
+    "arms/m7-short-base/build.json": {
+      "sha256": "15e2fd718e74c9fd3c8b1e8770bfe2fb896402166d088674b11ad61a712cf337",
+      "bytes": 1989,
+      "raw_sha256": "15e2fd718e74c9fd3c8b1e8770bfe2fb896402166d088674b11ad61a712cf337"
+    },
+    "arms/m7-short-base/build.log.gz": {
+      "sha256": "8b6fccfc7813d417cacdad29ff9818778841aeefcc9d315dc6c99598e1c8a802",
+      "bytes": 306,
+      "raw_sha256": "39b677e998786a1a28f87b18b79055b9f5016c24aeaac2c47388d9be6823da3b"
+    },
+    "arms/m7-short-base/rig_snes.elf.gz": {
+      "sha256": "bb817e9b618f944e138ca7a09ceb791b5fa8732a5255152726431f7d18e13b67",
+      "bytes": 366355,
+      "raw_sha256": "6588f121d1eced34c394c5f5e9a8a3b2991f5a7431c9996162b518ed6f48fb6b"
+    },
+    "arms/m7-short-bulk/build.json": {
+      "sha256": "ee852778184e33219ff4c3bce8aa3364c3a039d2b593fda0ee0a018ca03443a1",
+      "bytes": 2026,
+      "raw_sha256": "ee852778184e33219ff4c3bce8aa3364c3a039d2b593fda0ee0a018ca03443a1"
+    },
+    "arms/m7-short-bulk/build.log.gz": {
+      "sha256": "2086b9fef5946ec6323c544a0f91238ce80ad57290fc0ab531217c67ad9226b9",
+      "bytes": 305,
+      "raw_sha256": "0cfc000f1a7dc59374e80f25513d5bdbf412be07ac287cf9e1c303a6ab233496"
+    },
+    "arms/m7-short-bulk/rig_snes.elf.gz": {
+      "sha256": "a071941842e602502e21018ae81a87ca1c17ec77b963f78cfa0d7f34bedaa095",
+      "bytes": 366718,
+      "raw_sha256": "7ca976e573b63e07ac4211bac9f093c8687709639bcbf9116cd85cad1df76238"
+    },
+    "arms/m7-video-base/build.json": {
+      "sha256": "72aa7e7df3086c9ad4960c4e415b6c6d5505d358a7baa7828bb7b5a59b6a1e82",
+      "bytes": 2066,
+      "raw_sha256": "72aa7e7df3086c9ad4960c4e415b6c6d5505d358a7baa7828bb7b5a59b6a1e82"
+    },
+    "arms/m7-video-base/build.log.gz": {
+      "sha256": "b09eabe9597241ebdb4fe931f192970737996c810aa6a99ae4fcd8f23816282c",
+      "bytes": 304,
+      "raw_sha256": "c1219898d4ab8d4ad4cc135e0d5f18b4ca7da63e39d1c8ac179837b53146e358"
+    },
+    "arms/m7-video-base/rig_snes.elf.gz": {
+      "sha256": "a36e6640386d1c64feaa5b4a3bfe10cb695599d5374bba37d4708abe88448610",
+      "bytes": 367075,
+      "raw_sha256": "6ea5e17ccbce07e21f78a538d6ad70e7a5a9c9a969cc4a1ea410e0d9cac00c1a"
+    },
+    "arms/m7-video-bulk/build.json": {
+      "sha256": "1f998b04266d33bd8ed9ca915811ed0651c8a3a915f3eb1f741606a0faa06806",
+      "bytes": 2103,
+      "raw_sha256": "1f998b04266d33bd8ed9ca915811ed0651c8a3a915f3eb1f741606a0faa06806"
+    },
+    "arms/m7-video-bulk/build.log.gz": {
+      "sha256": "ab9485f29293696fa64f858f8f159d42c8baaa06e1a5181af080ee0ac205f679",
+      "bytes": 307,
+      "raw_sha256": "77362432218f96c6161a70a61190af2ba8cc5246cd0dc74bc94e9de5792ae58c"
+    },
+    "arms/m7-video-bulk/rig_snes.elf.gz": {
+      "sha256": "2240f4c45d6de53f5db6043845c2aeabdef16654188d990e1f46ac05a4259cd2",
+      "bytes": 367441,
+      "raw_sha256": "5d53c7e3fa98664854581d76cd1fdc53d5955a23427a28f5f9670956dcafada8"
+    },
+    "runs/metroid-A/request.json": {
+      "sha256": "6c191947df68fa4bcb43173414662f732570361d9ccd045aaaa9e90ec755c312",
+      "bytes": 1484,
+      "raw_sha256": "6c191947df68fa4bcb43173414662f732570361d9ccd045aaaa9e90ec755c312"
+    },
+    "runs/metroid-A/result.json": {
+      "sha256": "02b985cc477fde10b2c81af938e1421111b7d7ab21b8c40d2dff814f69a98849",
+      "bytes": 511,
+      "raw_sha256": "02b985cc477fde10b2c81af938e1421111b7d7ab21b8c40d2dff814f69a98849"
+    },
+    "runs/metroid-A/output.log.gz": {
+      "sha256": "f4062ecb7bcab1841627dcd6568718f4985b20b3fc8ba666cc75af000a1ba966",
+      "bytes": 23307,
+      "raw_sha256": "43e4a2c6d52d5fb6ba243b04cbb93f53c66d9442c8be8ed09772b807a71862fa"
+    },
+    "runs/metroid-B/request.json": {
+      "sha256": "d584158a10b5c6db9c7ac3c27340eb74e682c666f92a923d5440bd012182d58e",
+      "bytes": 1484,
+      "raw_sha256": "d584158a10b5c6db9c7ac3c27340eb74e682c666f92a923d5440bd012182d58e"
+    },
+    "runs/metroid-B/result.json": {
+      "sha256": "022654c413d8d53dcc323995a6b9d3a5424784c3059cc9063cdc473a15e1e59b",
+      "bytes": 511,
+      "raw_sha256": "022654c413d8d53dcc323995a6b9d3a5424784c3059cc9063cdc473a15e1e59b"
+    },
+    "runs/metroid-B/output.log.gz": {
+      "sha256": "f4062ecb7bcab1841627dcd6568718f4985b20b3fc8ba666cc75af000a1ba966",
+      "bytes": 23307,
+      "raw_sha256": "43e4a2c6d52d5fb6ba243b04cbb93f53c66d9442c8be8ed09772b807a71862fa"
+    },
+    "runs/pilotwings-A/request.json": {
+      "sha256": "22c1ea3f4df6aad62b0c15196dbd34f27df88b7c8213913d65b04907dfd51583",
+      "bytes": 1477,
+      "raw_sha256": "22c1ea3f4df6aad62b0c15196dbd34f27df88b7c8213913d65b04907dfd51583"
+    },
+    "runs/pilotwings-A/result.json": {
+      "sha256": "6a270a78f8fcaca4e525059183a94a0319abee52ed87a571e03dae58ef997ba5",
+      "bytes": 511,
+      "raw_sha256": "6a270a78f8fcaca4e525059183a94a0319abee52ed87a571e03dae58ef997ba5"
+    },
+    "runs/pilotwings-A/output.log.gz": {
+      "sha256": "dab20475bd93ae6579de1bf64bfc5312a60f114efd82e1c91120cabed2277473",
+      "bytes": 23943,
+      "raw_sha256": "af332c11ce12fac36830dc5d20a1b539874084dd62338d3d94306b92a3f24ae4"
+    },
+    "runs/pilotwings-B/request.json": {
+      "sha256": "b34e973cf2ddb6cb61aa4355bd2b964bfa6efae7bbd20e9d605a1e75b6859c41",
+      "bytes": 1477,
+      "raw_sha256": "b34e973cf2ddb6cb61aa4355bd2b964bfa6efae7bbd20e9d605a1e75b6859c41"
+    },
+    "runs/pilotwings-B/result.json": {
+      "sha256": "e6b25469851cffde4b4a5b143f3c55cfd898f6a6ea4e6e8d0b1a02c0d2c70438",
+      "bytes": 511,
+      "raw_sha256": "e6b25469851cffde4b4a5b143f3c55cfd898f6a6ea4e6e8d0b1a02c0d2c70438"
+    },
+    "runs/pilotwings-B/output.log.gz": {
+      "sha256": "dab20475bd93ae6579de1bf64bfc5312a60f114efd82e1c91120cabed2277473",
+      "bytes": 23943,
+      "raw_sha256": "af332c11ce12fac36830dc5d20a1b539874084dd62338d3d94306b92a3f24ae4"
+    },
+    "runs/smw-A/request.json": {
+      "sha256": "ae850fb5d582088091e87c6f56336943c4c2ad46f4d87f4bace964e85f0e9e00",
+      "bytes": 1477,
+      "raw_sha256": "ae850fb5d582088091e87c6f56336943c4c2ad46f4d87f4bace964e85f0e9e00"
+    },
+    "runs/smw-A/result.json": {
+      "sha256": "275486bce826304f4daa7a7d3286dd53db5f4e28da7ab0264f6df4323df2fd1e",
+      "bytes": 511,
+      "raw_sha256": "275486bce826304f4daa7a7d3286dd53db5f4e28da7ab0264f6df4323df2fd1e"
+    },
+    "runs/smw-A/output.log.gz": {
+      "sha256": "6b1104037e61a83990bb845c49bce1b5f750459be5d6f2e88d39a4e625753951",
+      "bytes": 27020,
+      "raw_sha256": "20d982e9db12c0b729f377417838170147ef6ad306e9cd39d4eb9e5486f0cabb"
+    },
+    "runs/smw-A-after/request.json": {
+      "sha256": "ff3418703951874258844bb234b604cef579ee3133a6848c844e7aa8e1007e37",
+      "bytes": 1615,
+      "raw_sha256": "ff3418703951874258844bb234b604cef579ee3133a6848c844e7aa8e1007e37"
+    },
+    "runs/smw-A-after/result.json": {
+      "sha256": "db751de142acefd66418d2749337e4653732df4b8ad79c732f9511ba14dd3f8a",
+      "bytes": 511,
+      "raw_sha256": "db751de142acefd66418d2749337e4653732df4b8ad79c732f9511ba14dd3f8a"
+    },
+    "runs/smw-A-after/output.log.gz": {
+      "sha256": "6b1104037e61a83990bb845c49bce1b5f750459be5d6f2e88d39a4e625753951",
+      "bytes": 27020,
+      "raw_sha256": "20d982e9db12c0b729f377417838170147ef6ad306e9cd39d4eb9e5486f0cabb"
+    },
+    "runs/smw-B/request.json": {
+      "sha256": "aa4468c8076bc3ba393f26fa086f52288752cfcbcecdda5e90b113dfb4ea324b",
+      "bytes": 1477,
+      "raw_sha256": "aa4468c8076bc3ba393f26fa086f52288752cfcbcecdda5e90b113dfb4ea324b"
+    },
+    "runs/smw-B/result.json": {
+      "sha256": "3ed7cbabdf788b8e174325dcb3d950e0a4151460cb242e8bed05fcfaad49e666",
+      "bytes": 511,
+      "raw_sha256": "3ed7cbabdf788b8e174325dcb3d950e0a4151460cb242e8bed05fcfaad49e666"
+    },
+    "runs/smw-B/output.log.gz": {
+      "sha256": "9eec2af3d92182c6c149df3582ecf56be0d78c3722245074db9a13a75b01946b",
+      "bytes": 27119,
+      "raw_sha256": "8482b14c66eed223379915b9feb3d674ec52521224da2ac47f4e7d06d081b4bd"
+    },
+    "runs/zelda-active-A/request.json": {
+      "sha256": "5280e0b58cf058e26383374cd0c06eccea591012b2a6e556a2047d43ef6dcffd",
+      "bytes": 1543,
+      "raw_sha256": "5280e0b58cf058e26383374cd0c06eccea591012b2a6e556a2047d43ef6dcffd"
+    },
+    "runs/zelda-active-A/result.json": {
+      "sha256": "05a685ff62dd51006849e16a89cbd6ed24e8aa7051afe0410d7ddf8ebfe34718",
+      "bytes": 510,
+      "raw_sha256": "05a685ff62dd51006849e16a89cbd6ed24e8aa7051afe0410d7ddf8ebfe34718"
+    },
+    "runs/zelda-active-A/output.log.gz": {
+      "sha256": "ac6203b466a599e84072fe9c96b2f53066a081412f21d32f5284c4179f290111",
+      "bytes": 24541,
+      "raw_sha256": "3e8a157d091c69a22c3539ad3ecf3ca0f2758fd6ffb8df3b5296ee1961d4d3ba"
+    },
+    "runs/zelda-active-B/request.json": {
+      "sha256": "7d28ad9dde2c7f26bdaf1ad94c7e3ea7483d5ec4430221cbac630cd919d6e2a0",
+      "bytes": 1543,
+      "raw_sha256": "7d28ad9dde2c7f26bdaf1ad94c7e3ea7483d5ec4430221cbac630cd919d6e2a0"
+    },
+    "runs/zelda-active-B/result.json": {
+      "sha256": "2f186ee990066475863aa6c68a227f03366a03b7080d33a3018ba3401355809e",
+      "bytes": 511,
+      "raw_sha256": "2f186ee990066475863aa6c68a227f03366a03b7080d33a3018ba3401355809e"
+    },
+    "runs/zelda-active-B/output.log.gz": {
+      "sha256": "c9c52c8f60a4ec644fb3c71f481c31281fa2198d16206c9c4d6b462515689a56",
+      "bytes": 24577,
+      "raw_sha256": "2f99073c9a2a247b680ce1e5c0bf25ed2cf98b33a58bc73fb1065d8b623fa6f3"
+    },
+    "runs/zelda-default-A/request.json": {
+      "sha256": "6d543606c29ec1c331a543aac759f437398b6d81fa3d74c7203fa1b57102e70b",
+      "bytes": 1547,
+      "raw_sha256": "6d543606c29ec1c331a543aac759f437398b6d81fa3d74c7203fa1b57102e70b"
+    },
+    "runs/zelda-default-A/result.json": {
+      "sha256": "7bbb1599c66fdc10619187e9ed4ff1cc5be6479a8a294bfd0658f4310ebff8b7",
+      "bytes": 511,
+      "raw_sha256": "7bbb1599c66fdc10619187e9ed4ff1cc5be6479a8a294bfd0658f4310ebff8b7"
+    },
+    "runs/zelda-default-A/output.log.gz": {
+      "sha256": "43fd452aace3dba13a959febc945fbc9860f3cc1c3d765796089a548d4a6ce48",
+      "bytes": 24514,
+      "raw_sha256": "b8bc6afd6fd7af8ad99d51cd7c961b435e1e9c44567dddc1e2c9b57fc5d01562"
+    },
+    "runs/zelda-default-A-after/request.json": {
+      "sha256": "fcf96d70ae7db92b21afa5da11a2719e9c7f7708876e16b7d1cff3e913391c3c",
+      "bytes": 1680,
+      "raw_sha256": "fcf96d70ae7db92b21afa5da11a2719e9c7f7708876e16b7d1cff3e913391c3c"
+    },
+    "runs/zelda-default-A-after/result.json": {
+      "sha256": "2a11c5f5f0ef32d7afc91e675a8d53302546149dd67304f44b428f31c970366c",
+      "bytes": 510,
+      "raw_sha256": "2a11c5f5f0ef32d7afc91e675a8d53302546149dd67304f44b428f31c970366c"
+    },
+    "runs/zelda-default-A-after/output.log.gz": {
+      "sha256": "43fd452aace3dba13a959febc945fbc9860f3cc1c3d765796089a548d4a6ce48",
+      "bytes": 24514,
+      "raw_sha256": "b8bc6afd6fd7af8ad99d51cd7c961b435e1e9c44567dddc1e2c9b57fc5d01562"
+    },
+    "runs/zelda-default-B/request.json": {
+      "sha256": "d1a5a682c3eccc2ebb79d68320d80be8fdc91f39ff9ed2a5f1d190fa6b8df5ef",
+      "bytes": 1547,
+      "raw_sha256": "d1a5a682c3eccc2ebb79d68320d80be8fdc91f39ff9ed2a5f1d190fa6b8df5ef"
+    },
+    "runs/zelda-default-B/result.json": {
+      "sha256": "82804ae826be54caa5e6940a21306dffe8f35e225254a199fe0c92eca80f0cde",
+      "bytes": 511,
+      "raw_sha256": "82804ae826be54caa5e6940a21306dffe8f35e225254a199fe0c92eca80f0cde"
+    },
+    "runs/zelda-default-B/output.log.gz": {
+      "sha256": "04127b1869691125f0a225affed9d19e6b1ff70f63b3989eb11a53c381c1c386",
+      "bytes": 24532,
+      "raw_sha256": "47d9dfb121f347304304bc8e6fe3f1690572f5004a6d41b0f5942356c762aebd"
+    },
+    "runs/zelda-tap-A/request.json": {
+      "sha256": "aa4aa3823415c72f2a9664ee5c91e31cdbf33fd86f3dda47bb9634903330bc51",
+      "bytes": 1537,
+      "raw_sha256": "aa4aa3823415c72f2a9664ee5c91e31cdbf33fd86f3dda47bb9634903330bc51"
+    },
+    "runs/zelda-tap-A/result.json": {
+      "sha256": "7862244d916329500370fbbff86c101cd089e0a0abc164ae811dc6656c613973",
+      "bytes": 511,
+      "raw_sha256": "7862244d916329500370fbbff86c101cd089e0a0abc164ae811dc6656c613973"
+    },
+    "runs/zelda-tap-A/output.log.gz": {
+      "sha256": "672982782c73001836aa55fc2523d072e9a1e3789f67af0d3dc0378dec85f49e",
+      "bytes": 24905,
+      "raw_sha256": "137153bd99697c6db3c9e6b039dedbf6647f4ad3e2f00a14f674bab2ff041247"
+    },
+    "runs/zelda-tap-B/request.json": {
+      "sha256": "dfb363fb9065c5062d4b6da23eff49dc0f7eaccaba78b3e041e8d0e2bec986ae",
+      "bytes": 1537,
+      "raw_sha256": "dfb363fb9065c5062d4b6da23eff49dc0f7eaccaba78b3e041e8d0e2bec986ae"
+    },
+    "runs/zelda-tap-B/result.json": {
+      "sha256": "91d624941c2d82ea7cf1fac0571ace7108cb138fccec01281cdaafacceb64059",
+      "bytes": 511,
+      "raw_sha256": "91d624941c2d82ea7cf1fac0571ace7108cb138fccec01281cdaafacceb64059"
+    },
+    "runs/zelda-tap-B/output.log.gz": {
+      "sha256": "5d56f09943323e09a46cdab035e3d7505c0ce9f319c58520210fe089c7e5f9af",
+      "bytes": 24964,
+      "raw_sha256": "7396166eb8258ba424d6fed047bdc1fc560b629e81af00fd309b5cc5a8e386da"
+    },
+    "runs/zelda-video-A/request.json": {
+      "sha256": "a0ddebd290902e2a673e2b1dafaf6a1f1224def24db5670945cdc97bb22c5521",
+      "bytes": 1553,
+      "raw_sha256": "a0ddebd290902e2a673e2b1dafaf6a1f1224def24db5670945cdc97bb22c5521"
+    },
+    "runs/zelda-video-A/result.json": {
+      "sha256": "a3488c55dd11444d329b54d86f1f756d7f1c7e07c83504250549b178f8e3c199",
+      "bytes": 511,
+      "raw_sha256": "a3488c55dd11444d329b54d86f1f756d7f1c7e07c83504250549b178f8e3c199"
+    },
+    "runs/zelda-video-A/output.log.gz": {
+      "sha256": "b361726899ee428e43c6b557af01fed098d2a86557e2e5ac6a4163d19e1992a2",
+      "bytes": 24551,
+      "raw_sha256": "80310da768d2a3297aad7afb00ae6d814a36c3998612f2bccc800b01bced0d30"
+    },
+    "runs/zelda-video-B/request.json": {
+      "sha256": "edfa7c1bd5fbceac7eb28f824e38dac3be616d29a9a8a989dfc31c601fdb691d",
+      "bytes": 1553,
+      "raw_sha256": "edfa7c1bd5fbceac7eb28f824e38dac3be616d29a9a8a989dfc31c601fdb691d"
+    },
+    "runs/zelda-video-B/result.json": {
+      "sha256": "d5712ea22fa5be8b89cce5de8c32c5700f8d3dc8c7087403ec50927632545851",
+      "bytes": 510,
+      "raw_sha256": "d5712ea22fa5be8b89cce5de8c32c5700f8d3dc8c7087403ec50927632545851"
+    },
+    "runs/zelda-video-B/output.log.gz": {
+      "sha256": "4d44782ebc95da36ddd572bf5d4e91d9aeec224fc617979d36bea13106da1895",
+      "bytes": 24591,
+      "raw_sha256": "b0b4a826bf05c91d018fce05eb9a249a3dff72f9edcdd3a29a8a9fbfb830c612"
+    },
+    "ff5-short-summary.json": {
+      "sha256": "687e8fce8077c9ec337ab38bee5d79d66249b2b61494e98e2f0d18d408485a65",
+      "bytes": 3430,
+      "raw_sha256": "687e8fce8077c9ec337ab38bee5d79d66249b2b61494e98e2f0d18d408485a65"
+    },
+    "dragonmagic-summary.json": {
+      "sha256": "a287bb42edcf3fbd81acbc4e8a4eeb5fbb9c176cb8968abcae898a581c6611ad",
+      "bytes": 3910,
+      "raw_sha256": "a287bb42edcf3fbd81acbc4e8a4eeb5fbb9c176cb8968abcae898a581c6611ad"
+    },
+    "kart-summary.json": {
+      "sha256": "639990c24e88126d91e341400cf54cde175aebc0c91e9f1c76c398d26cac2144",
+      "bytes": 3882,
+      "raw_sha256": "639990c24e88126d91e341400cf54cde175aebc0c91e9f1c76c398d26cac2144"
+    },
+    "zelda-tap-summary.json": {
+      "sha256": "101765c41fd398f9d4fb2a8ffd33b09cc1e3f6901175de67fa59d314cb780c3c",
+      "bytes": 3880,
+      "raw_sha256": "101765c41fd398f9d4fb2a8ffd33b09cc1e3f6901175de67fa59d314cb780c3c"
+    },
+    "zelda-default-summary.json": {
+      "sha256": "d535986e985de0f7936f8934f63b60175b2e4ead7f76e30c8ee70f10327fd626",
+      "bytes": 3877,
+      "raw_sha256": "d535986e985de0f7936f8934f63b60175b2e4ead7f76e30c8ee70f10327fd626"
+    },
+    "pilotwings-summary.json": {
+      "sha256": "7e9534314fd51cde1b5a1be30c54035c6b629d4d7bedf7eba7d0a5491b629980",
+      "bytes": 3856,
+      "raw_sha256": "7e9534314fd51cde1b5a1be30c54035c6b629d4d7bedf7eba7d0a5491b629980"
+    },
+    "metroid-summary.json": {
+      "sha256": "003ad97d3b9a940c8229357937ff0825dc6ce27948da5b0bc9c4377c5428d16c",
+      "bytes": 3853,
+      "raw_sha256": "003ad97d3b9a940c8229357937ff0825dc6ce27948da5b0bc9c4377c5428d16c"
+    },
+    "dkc-summary.json": {
+      "sha256": "3f2152f87d181f125ace8048a69893514c6b5f72c35a5da30d2f3ce1f03a5470",
+      "bytes": 3857,
+      "raw_sha256": "3f2152f87d181f125ace8048a69893514c6b5f72c35a5da30d2f3ce1f03a5470"
+    },
+    "smw-summary.json": {
+      "sha256": "9d0bdf2621d21b358509679b74fa59517f9b67b668b539c4c62d1b49d68ce6a0",
+      "bytes": 3921,
+      "raw_sha256": "9d0bdf2621d21b358509679b74fa59517f9b67b668b539c4c62d1b49d68ce6a0"
+    },
+    "fzero-summary.json": {
+      "sha256": "f750197337dfe2abccfb82e163be1f92ff2ee7cc82370c39d4ca78f27517d0c6",
+      "bytes": 3899,
+      "raw_sha256": "f750197337dfe2abccfb82e163be1f92ff2ee7cc82370c39d4ca78f27517d0c6"
+    },
+    "zelda-active-summary.json": {
+      "sha256": "7747b6a27d45b4d6d28beea5cf90c9c211b7126e2b095fa9ef61215ad65696ab",
+      "bytes": 3898,
+      "raw_sha256": "7747b6a27d45b4d6d28beea5cf90c9c211b7126e2b095fa9ef61215ad65696ab"
+    },
+    "zelda-video-summary.json": {
+      "sha256": "e9c360587a6c8f281fbeee65d08c955022f2e91c4c210d7020c69d90726c89cd",
+      "bytes": 3888,
+      "raw_sha256": "e9c360587a6c8f281fbeee65d08c955022f2e91c4c210d7020c69d90726c89cd"
+    },
+    "smw-drift.json": {
+      "sha256": "11ed4cd520e1ee07aa0393600e6d78e9ad451003b8b189d0996374d0d00a1607",
+      "bytes": 3861,
+      "raw_sha256": "11ed4cd520e1ee07aa0393600e6d78e9ad451003b8b189d0996374d0d00a1607"
+    },
+    "zelda-default-drift.json": {
+      "sha256": "b08342ceff7d33abc032915193e881d423f3023002861a5e8ac6987ef5ad3669",
+      "bytes": 3857,
+      "raw_sha256": "b08342ceff7d33abc032915193e881d423f3023002861a5e8ac6987ef5ad3669"
+    },
+    "audio-simulation.json": {
+      "sha256": "49c0b9b5c11f2d1b3202d08f8dd84fa77c29a5d4e600acf47d2f3ef685dc213d",
+      "bytes": 13215,
+      "raw_sha256": "49c0b9b5c11f2d1b3202d08f8dd84fa77c29a5d4e600acf47d2f3ef685dc213d"
+    },
+    "audio-stretch-test.log.gz": {
+      "sha256": "5d8b9d3ff392978b49347972585bcb0bd88696086cbc0922020c886718437fb2",
+      "bytes": 380,
+      "raw_sha256": "74824d89a7cc177720c130d81e553f23d367ce996152772705a052cd745e2a7f"
+    },
+    "evidence-tests.log.gz": {
+      "sha256": "5811ffd9675c41514141cf081ce6b86a4ee80c5aeb7995c93b8a920d29e54934",
+      "bytes": 54,
+      "raw_sha256": "5ec8a6eae611e34b47f595b41564d0cb2cabfd63d7fdfd1907c4adcaa8779e02"
+    },
+    "size.log.gz": {
+      "sha256": "1c0b38db9cbad47c3b008a645007540671aa31ff8c1bc00963e6f9e91777f22b",
+      "bytes": 222,
+      "raw_sha256": "31b60a4d10405ee0cbf558695ff27a2748db511ee2d6810124d5d362168c5cbc"
+    },
+    "span-size.log.gz": {
+      "sha256": "df73dd304891d83fbc84822b0fd6bfa3dc476f42c69d590d66671e2019b2ef99",
+      "bytes": 58,
+      "raw_sha256": "2bf2b2fdd4db3fa4d21cdd96c759e34fc1a23fb7f3b26d8872b220545607cf11"
+    },
+    "compiler.txt": {
+      "sha256": "5fbc0cad1227c261c9f76d5aef88bb73934fc4466200d4476917a3106101de89",
+      "bytes": 283,
+      "raw_sha256": "5fbc0cad1227c261c9f76d5aef88bb73934fc4466200d4476917a3106101de89",
+      "normalization": "trailing empty lines removed from static compiler version banner; original tool output retained in local build directory"
+    },
+    "host-compiler.txt": {
+      "sha256": "08c3293eda34d3a19af225dedfbfdd5faece4fafebd60d003868fc3f53eae6e0",
+      "bytes": 231,
+      "raw_sha256": "08c3293eda34d3a19af225dedfbfdd5faece4fafebd60d003868fc3f53eae6e0",
+      "normalization": "trailing empty lines removed from static compiler version banner; original tool output retained in local build directory"
+    },
+    "qemu.txt": {
+      "sha256": "d5e1ae8dd845009e27fe1cab4612650fd6a774c76bff3d06e929069de043f7f5",
+      "bytes": 134,
+      "raw_sha256": "d5e1ae8dd845009e27fe1cab4612650fd6a774c76bff3d06e929069de043f7f5"
+    },
+    "container-image.txt": {
+      "sha256": "db9c4d613352aa0f447a0d7ed951785154976212d0c71bccb0b83026f8045584",
+      "bytes": 72,
+      "raw_sha256": "db9c4d613352aa0f447a0d7ed951785154976212d0c71bccb0b83026f8045584"
+    },
+    "harness.patch.gz": {
+      "sha256": "3183e7d1a24d8728a3afff47b95a82af846d45f9e8eaac41aa50a1c94159febd",
+      "bytes": 10246,
+      "raw_sha256": "2eac2f7364308fb45d4afed33f91141c7bc3e9add672ca7dbb569703bacad841"
+    },
+    "core.patch.gz": {
+      "sha256": "b3da7d4324e98fd5d9cd518eeebb1af69cce3f7cd0d15a2d56a8be38c973f97c",
+      "bytes": 1148,
+      "raw_sha256": "cff94d170161df20f097e45140f16d696c6b60ecd5708cdff054ffd3d431d355"
+    }
+  }
+}

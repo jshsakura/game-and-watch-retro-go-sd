@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "rom_crc32": 217397301,
+    "rom_bytes": 524288,
+    "rom_sha256": "f1331e982e86362fe5c5b41279d3d676d54626db0b31f51dcb91a566c8808648",
+    "config_sha256": "f918314a0f340f3a216e8032e54914b9a99777ea2f77675722c03def7f8e4883",
+    "save_sha256": "d14a3c36040f0c1f2349851752ebfdef05a293cebd91b9ddfd69777442750062",
+    "save_payload_crc32": 3888663078,
+    "selector": "snes:zz_dragons_magic\n"
+  },
+  "sequence": [
+    "smoke",
+    "base-before",
+    "candidate",
+    "base-after",
+    "restore"
+  ],
+  "input": "no buttons",
+  "warmup": 120,
+  "window": 900,
+  "save_path": "/data/snes/zz_dragons_magic.smc-0.sav",
+  "profiler": false
+}

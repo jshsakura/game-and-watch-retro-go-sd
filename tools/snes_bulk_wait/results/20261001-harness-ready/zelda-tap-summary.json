@@ -1,0 +1,187 @@
+{
+  "correctness": "PASS",
+  "frames": 1200,
+  "statehash": "c28df398",
+  "audiohash": "3e654b67",
+  "base_insn": 4695503,
+  "candidate_insn": 4673475,
+  "reduction_percent": 0.4691,
+  "windows": [
+    {
+      "end_frame": 200,
+      "hashes_equal": true,
+      "base_insn": 3630549,
+      "candidate_insn": 3516607,
+      "reduction_percent": 3.1384
+    },
+    {
+      "end_frame": 400,
+      "hashes_equal": true,
+      "base_insn": 3704186,
+      "candidate_insn": 3685957,
+      "reduction_percent": 0.4921
+    },
+    {
+      "end_frame": 600,
+      "hashes_equal": true,
+      "base_insn": 4453792,
+      "candidate_insn": 4453792,
+      "reduction_percent": 0.0
+    },
+    {
+      "end_frame": 800,
+      "hashes_equal": true,
+      "base_insn": 5035909,
+      "candidate_insn": 5035906,
+      "reduction_percent": 0.0001
+    },
+    {
+      "end_frame": 1000,
+      "hashes_equal": true,
+      "base_insn": 6124394,
+      "candidate_insn": 6124394,
+      "reduction_percent": 0.0
+    },
+    {
+      "end_frame": 1200,
+      "hashes_equal": true,
+      "base_insn": 5224192,
+      "candidate_insn": 5224192,
+      "reduction_percent": 0.0
+    }
+  ],
+  "device_fps": "unmeasured",
+  "per_frame_output_equal": true,
+  "total_distribution": {
+    "base": {
+      "n": 1200,
+      "mean": 4695504.2,
+      "p50": 4499640,
+      "p90": 6611600,
+      "p95": 6779080,
+      "p99": 6943400,
+      "min": 2378560,
+      "max": 7095760
+    },
+    "candidate": {
+      "n": 1200,
+      "mean": 4673475.37,
+      "p50": 4499600,
+      "p90": 6611640,
+      "p95": 6779120,
+      "p99": 6943400,
+      "min": 1546520,
+      "max": 7095760
+    }
+  },
+  "total_reduction_percent": 0.4691,
+  "last_300_distribution": {
+    "base": {
+      "n": 300,
+      "mean": 5492413.87,
+      "p50": 5625960,
+      "p90": 6840200,
+      "p95": 6890960,
+      "p99": 6941320,
+      "min": 3246880,
+      "max": 7089640
+    },
+    "candidate": {
+      "n": 300,
+      "mean": 5492414.4,
+      "p50": 5625960,
+      "p90": 6840200,
+      "p95": 6891000,
+      "p99": 6941360,
+      "min": 3246880,
+      "max": 7089600
+    }
+  },
+  "baseline_heaviest_10": [
+    {
+      "frame": 870,
+      "base": 7095760,
+      "candidate": 7095760,
+      "reduction_percent": 0.0
+    },
+    {
+      "frame": 1050,
+      "base": 7089640,
+      "candidate": 7089600,
+      "reduction_percent": 0.0006
+    },
+    {
+      "frame": 900,
+      "base": 7080040,
+      "candidate": 7080040,
+      "reduction_percent": 0.0
+    },
+    {
+      "frame": 875,
+      "base": 7074520,
+      "candidate": 7074480,
+      "reduction_percent": 0.0006
+    },
+    {
+      "frame": 885,
+      "base": 7071840,
+      "candidate": 7071800,
+      "reduction_percent": 0.0006
+    },
+    {
+      "frame": 890,
+      "base": 7001520,
+      "candidate": 7001520,
+      "reduction_percent": 0.0
+    },
+    {
+      "frame": 860,
+      "base": 6990880,
+      "candidate": 6990880,
+      "reduction_percent": 0.0
+    },
+    {
+      "frame": 880,
+      "base": 6970960,
+      "candidate": 6970960,
+      "reduction_percent": 0.0
+    },
+    {
+      "frame": 895,
+      "base": 6956080,
+      "candidate": 6956080,
+      "reduction_percent": 0.0
+    },
+    {
+      "frame": 945,
+      "base": 6951920,
+      "candidate": 6951880,
+      "reduction_percent": 0.0006
+    }
+  ],
+  "regressed_frames_over_1pct": 0,
+  "serialized_state_equal": true,
+  "serialized_state": [
+    {
+      "bytes": 275497,
+      "hash": "71ecc2cbdb871214"
+    },
+    {
+      "bytes": 275497,
+      "hash": "71ecc2cbdb871214"
+    }
+  ],
+  "execution_records_valid": true,
+  "workload_identity_equal": true,
+  "pcm_equal": true,
+  "pcm": [
+    {
+      "bytes": 638400,
+      "sha256": "6f4b1d11b05631162bb1f33987f3c640dae50282ba59ec979041be759145a67b"
+    },
+    {
+      "bytes": 638400,
+      "sha256": "6f4b1d11b05631162bb1f33987f3c640dae50282ba59ec979041be759145a67b"
+    }
+  ]
+}

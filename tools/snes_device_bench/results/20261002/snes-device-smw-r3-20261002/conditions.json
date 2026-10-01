@@ -1,0 +1,24 @@
+{
+  "expected": {
+    "rom_crc32": 2979976329,
+    "rom_bytes": 524288,
+    "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+    "config_sha256": "f918314a0f340f3a216e8032e54914b9a99777ea2f77675722c03def7f8e4883",
+    "save_sha256": "ba65c20a09dbe04186cd9dcac073b6587d98c3fb9dd58d5d7638ae28e2abeab0",
+    "save_payload_crc32": 636344236,
+    "selector": "snes:\uc288\ud37c \ub9c8\ub9ac\uc624 \uc6d4\ub4dc (Super Mario World)\n"
+  },
+  "sequence": [
+    "smoke",
+    "base-before",
+    "candidate",
+    "base-after",
+    "restore"
+  ],
+  "input": "no buttons",
+  "warmup": 120,
+  "window": 900,
+  "save_path": "/data/snes/\uc288\ud37c \ub9c8\ub9ac\uc624 \uc6d4\ub4dc (Super Mario World).smc-0.sav",
+  "profiler": false,
+  "rerun_reason": "Fixed repetitions to quantify first-triplet baseline drift; aggregate all three triplets"
+}

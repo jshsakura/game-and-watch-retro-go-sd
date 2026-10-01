@@ -1,0 +1,32 @@
+{
+  "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-video-base/rig_snes.elf",
+  "elf_sha256": "6ea5e17ccbce07e21f78a538d6ad70e7a5a9c9a969cc4a1ea410e0d9cac00c1a",
+  "rom": "/home/pi/snes_survey_2k/smoke/\uc824\ub2e4\uc758 \uc804\uc124 - \uc2e0\ub4e4\uc758 \ud2b8\ub77c\uc774\ud3ec\uc2a4 (Legend of Zelda, The - A Link to the Past).smc",
+  "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+  "save": null,
+  "input": "none",
+  "frames": 1200,
+  "gate": "natural",
+  "workload": "cold boot; no warmup",
+  "case_config": true,
+  "audio_dump": true,
+  "profiling": "QEMU icount; no device cycles or FPS",
+  "timeout": 28.0,
+  "argv": [
+    "qemu-system-arm",
+    "-machine",
+    "mps2-an500",
+    "-nographic",
+    "-semihosting",
+    "-icount",
+    "shift=0,align=off,sleep=off",
+    "-kernel",
+    "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-video-base/rig_snes.elf",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-video-A/input.sfc,addr=0x60800000,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-video-A/length.bin,addr=0x607ffffc,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-video-A/config.bin,addr=0x607fff00,force-raw=on"
+  ]
+}

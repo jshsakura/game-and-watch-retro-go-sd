@@ -1,0 +1,17 @@
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-signalr.o): in function `_getpid_r':
+(.text._getpid_r+0x0): warning: _getpid is not implemented and will always fail
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-signalr.o): in function `_kill_r':
+(.text._kill_r+0xe): warning: _kill is not implemented and will always fail
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-signalr.o): note: the message above does not take linker garbage collection into account
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-linkr.o): in function `_link_r':
+(.text._link_r+0xe): warning: _link is not implemented and will always fail
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-signalr.o): note: the message above does not take linker garbage collection into account
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-linkr.o): note: the message above does not take linker garbage collection into account
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: warning: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/thumb/v7e-m+dp/hard/crtn.o: missing .note.GNU-stack section implies executable stack
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: warning: build/snes-device-pair/candidate.elf has a LOAD segment with RWX permissions
+OK  33 cores, no cross-overlay symbol aliases (4 empty dir(s) skipped: nes, snes-bulk-evidence, snes-device-pair, snes-harness-ready)
+logo-index-check: OK (63 blob logos aligned with bitmaps.h)
+resident-init-array: OK (1 boot ctor(s), none in overlay RAM)
+resident-logo-refs: OK (71 staged logos, no address baked into flash)
+A/B packaged; all baseline linked objects restored

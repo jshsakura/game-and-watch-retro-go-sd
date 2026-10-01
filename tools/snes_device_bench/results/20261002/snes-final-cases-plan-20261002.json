@@ -1,0 +1,9 @@
+{
+  "sequence": [
+    "SMW supported340 default adaptive renderer",
+    "Zelda supported340 every frame drawn"
+  ],
+  "stop_on_first_error": true,
+  "no_reset_retry": true,
+  "reason": "Confirm ordinary 60 FPS behavior and answer original Zelda question at matching supported clock"
+}

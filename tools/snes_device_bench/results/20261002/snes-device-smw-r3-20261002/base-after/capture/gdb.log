@@ -1,0 +1,6 @@
+0x08122152 in HAL_GetTick () at Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal.c:340
+340	  return uwTick;
+Hardware assisted breakpoint 1 at 0x81059c0: file Core/Src/porting/common.c, line 158.
+
+Breakpoint 1, common_emu_bench_complete () at Core/Src/porting/common.c:158
+158	    __asm__ volatile("nop" ::: "memory");

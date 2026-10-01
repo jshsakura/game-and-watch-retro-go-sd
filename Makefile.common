@@ -2147,6 +2147,14 @@ else
   SNES_SPIN_BAKE_DEF :=
 endif
 
+# Whole-lap folding passed differential gates and matched device A/B/A.
+# SMW: 60.13 drawn FPS in its saved scene at the supported 340 MHz setting.
+# See docs/SNES_DEVICE_RESULTS_2026-10-02.md. 0 remains the A/B revert switch.
+SNES_BAKE_BULK ?= 1
+ifeq ($(SNES_BAKE_BULK),1)
+  SNES_SPIN_BAKE_DEF += -DSNES_BAKE_BULK=1
+endif
+
 # Diagnostic: compile the bake in, install nothing. Prices the mechanism's
 # presence on a cart it can never help -- the question the gate exists to answer.
 # GNW_AUTOSAVE_FRAME=<n>: measurement-only. Boot the ROM, run n frames, write

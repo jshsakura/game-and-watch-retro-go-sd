@@ -1,0 +1,28 @@
+{
+  "status": "completed",
+  "comparison": {
+    "status": "descriptive_only",
+    "base_before": 57.915057915057915,
+    "candidate": 60.188590918210394,
+    "base_after": 57.915057915057915,
+    "base_mean": 57.915057915057915,
+    "gain_percent": 3.925633652109939,
+    "base_drift_percent": 0.0,
+    "drift_limit_percent": 0.5,
+    "drift_ok": true,
+    "guest_state_crc32_equal": true,
+    "endpoint_screen_equal": true,
+    "endpoint_pcm_equal": true,
+    "audio_underruns": [
+      428,
+      417,
+      417
+    ],
+    "limitations": [
+      "one fixed triplet; endpoint CRC32/screens/PCM are not full-stream hardware validation",
+      "timing includes finite observation hook and one forced drawn endpoint"
+    ]
+  },
+  "smoke_timer": "matched within max(100 ms, 1 percent)",
+  "original_restored": true
+}

@@ -1,0 +1,21 @@
+{
+  "expected": {
+    "rom_crc32": 2004528175,
+    "rom_bytes": 1048576,
+    "rom_sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+    "config_sha256": "f918314a0f340f3a216e8032e54914b9a99777ea2f77675722c03def7f8e4883",
+    "save_sha256": "e9bfd51953a3c0017a9d3c8392a322119ecd01dcb4a38182b1c84c0b3c6e1ab7"
+  },
+  "sequence": [
+    "smoke",
+    "base-before",
+    "candidate",
+    "base-after",
+    "restore"
+  ],
+  "input": "no buttons",
+  "warmup": 120,
+  "window": 900,
+  "save_path": "/data/snes/\uc824\ub2e4\uc758 \uc804\uc124 - \uc2e0\ub4e4\uc758 \ud2b8\ub77c\uc774\ud3ec\uc2a4 (Legend of Zelda, The - A Link to the Past).smc-0.sav",
+  "profiler": false
+}

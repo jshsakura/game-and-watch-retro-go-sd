@@ -1,0 +1,22 @@
+{
+  "exit_code": 0,
+  "elapsed_seconds": 21.481,
+  "completed": true,
+  "input_unchanged": true,
+  "binary_unchanged": true,
+  "frames": 1200,
+  "statehash": "3496ec07",
+  "audiohash": "6254040b",
+  "emu_insn_per_frame": 5420690,
+  "apu_insn_per_frame": 566952,
+  "case_verified": true,
+  "serialized_state": {
+    "bytes": 269477,
+    "hash": "02401979334eedc5"
+  },
+  "pcm": {
+    "bytes": 638400,
+    "sha256": "bdc09e9dcc0d2ca8b50cce74bf1f38268a0e6f5ccf91499c14a56056d05f89c2"
+  },
+  "pcm_complete": true
+}

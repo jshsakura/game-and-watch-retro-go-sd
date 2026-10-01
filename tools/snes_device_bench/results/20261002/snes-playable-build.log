@@ -1,0 +1,17 @@
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-signalr.o): in function `_getpid_r':
+(.text._getpid_r+0x0): warning: _getpid is not implemented and will always fail
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-signalr.o): note: the message above does not take linker garbage collection into account
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-signalr.o): in function `_kill_r':
+(.text._kill_r+0xe): warning: _kill is not implemented and will always fail
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-signalr.o): note: the message above does not take linker garbage collection into account
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-linkr.o): in function `_link_r':
+(.text._link_r+0xe): warning: _link is not implemented and will always fail
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/lib/thumb/v7e-m+dp/hard/libc_nano.a(libc_a-linkr.o): note: the message above does not take linker garbage collection into account
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: warning: /opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/thumb/v7e-m+dp/hard/crtn.o: missing .note.GNU-stack section implies executable stack
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+/opt/arm-gnu-toolchain/bin/../lib/gcc/arm-none-eabi/15.2.1/../../../../arm-none-eabi/bin/ld: warning: build/snes-playable-bulk-20261002/candidate.elf has a LOAD segment with RWX permissions
+OK  33 cores, no cross-overlay symbol aliases (20 empty dir(s) skipped: nes, snes-audio-validation, snes-bulk-evidence, snes-device-audio-pair, snes-device-dragons-20261002, snes-device-latest-backup-20261002, snes-device-latest-zelda-backup-20261002, snes-device-pair, snes-device-smw-20261002, snes-device-smw-340-alldraw-20261002, snes-device-smw-340-default-20261002, snes-device-smw-alldraw-20261002, snes-device-smw-packed-20261002, snes-device-smw-packed-current-20261002, snes-device-smw-r2-20261002, snes-device-smw-r3-20261002, snes-device-zelda-20261001, snes-device-zelda-340-alldraw-20261002, snes-harness-ready, snes-playable-bulk-20261002)
+logo-index-check: OK (63 blob logos aligned with bitmaps.h)
+resident-init-array: OK (1 boot ctor(s), none in overlay RAM)
+resident-logo-refs: OK (71 staged logos, no address baked into flash)
+Playable experiment pair built; no benchmark-stop symbols; baseline intermediates restored

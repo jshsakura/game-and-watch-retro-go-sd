@@ -1,0 +1,15 @@
+{
+  "sha256": {
+    "gw_retro_go.elf": "9be36f09db10fc5f97887eaccc06a527db66b26ba9c71530511f60d8a2ce83d5",
+    "gw_retro_go_intflash.bin": "42d0d5120d6226e453bd99a4accfd8d38548d7a51bf73d2fa3914921b9993f74",
+    "snes.bin": "e4031b5c8c42e19f528f0679758817bd7b33a9321c6d0cb13dc12c245202b717"
+  },
+  "bulk": 1,
+  "packed_picker": 0,
+  "device_hook": 0,
+  "profiler": false,
+  "clock": "existing default 312 MHz; choose supported CPU menu level 2 for 340 MHz",
+  "device_play_validation": "not performed for this hook-free relink; the matching instrumented bulk candidate reached 60.13 drawn FPS at 340 MHz",
+  "release": false,
+  "warning": "isolated old-base SNES experiment firmware/core pair, not a main/32X release; keep the pair together"
+}

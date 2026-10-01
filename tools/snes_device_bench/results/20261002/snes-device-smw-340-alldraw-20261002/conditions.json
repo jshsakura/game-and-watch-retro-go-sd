@@ -1,0 +1,27 @@
+{
+  "expected": {
+    "rom_crc32": 2979976329,
+    "rom_bytes": 524288,
+    "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+    "config_sha256": "7794017d0641cde9e8fb0f2c9ed52c8824be208fd7ea627986641a807a94ae1e",
+    "save_sha256": "ba65c20a09dbe04186cd9dcac073b6587d98c3fb9dd58d5d7638ae28e2abeab0",
+    "save_payload_crc32": 636344236,
+    "selector": "snes:\uc288\ud37c \ub9c8\ub9ac\uc624 \uc6d4\ub4dc (Super Mario World)\n",
+    "force_draw": 1,
+    "config_file": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-device-smw-340-alldraw-20261002/bench-CONFIG",
+    "cpu_oc": 2
+  },
+  "sequence": [
+    "smoke",
+    "base-before",
+    "candidate",
+    "base-after",
+    "restore"
+  ],
+  "input": "no buttons",
+  "warmup": 120,
+  "window": 900,
+  "save_path": "/data/snes/\uc288\ud37c \ub9c8\ub9ac\uc624 \uc6d4\ub4dc (Super Mario World).smc-0.sav",
+  "profiler": false,
+  "rerun_reason": "New supported clock condition: both arms 340 MHz; isolate bulk fold with all 900 frames drawn. Restore current firmware and original CONFIG."
+}

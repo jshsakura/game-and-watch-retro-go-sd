@@ -1,0 +1,187 @@
+{
+  "correctness": "PASS",
+  "frames": 1200,
+  "statehash": "80035229",
+  "audiohash": "5d178d4e",
+  "base_insn": 6810002,
+  "candidate_insn": 6811610,
+  "reduction_percent": -0.0236,
+  "windows": [
+    {
+      "end_frame": 200,
+      "hashes_equal": true,
+      "base_insn": 4980236,
+      "candidate_insn": 4981824,
+      "reduction_percent": -0.0319
+    },
+    {
+      "end_frame": 400,
+      "hashes_equal": true,
+      "base_insn": 7165171,
+      "candidate_insn": 7165172,
+      "reduction_percent": -0.0
+    },
+    {
+      "end_frame": 600,
+      "hashes_equal": true,
+      "base_insn": 7176139,
+      "candidate_insn": 7176139,
+      "reduction_percent": 0.0
+    },
+    {
+      "end_frame": 800,
+      "hashes_equal": true,
+      "base_insn": 7200385,
+      "candidate_insn": 7200383,
+      "reduction_percent": 0.0
+    },
+    {
+      "end_frame": 1000,
+      "hashes_equal": true,
+      "base_insn": 7187717,
+      "candidate_insn": 7187718,
+      "reduction_percent": -0.0
+    },
+    {
+      "end_frame": 1200,
+      "hashes_equal": true,
+      "base_insn": 7150363,
+      "candidate_insn": 7158419,
+      "reduction_percent": -0.1127
+    }
+  ],
+  "device_fps": "unmeasured",
+  "per_frame_output_equal": true,
+  "total_distribution": {
+    "base": {
+      "n": 1200,
+      "mean": 6810002.8,
+      "p50": 7155080,
+      "p90": 7267000,
+      "p95": 7287960,
+      "p99": 7302240,
+      "min": 2967280,
+      "max": 7313000
+    },
+    "candidate": {
+      "n": 1200,
+      "mean": 6811610.17,
+      "p50": 7155080,
+      "p90": 7267320,
+      "p95": 7287920,
+      "p99": 7302240,
+      "min": 2762320,
+      "max": 7313040
+    }
+  },
+  "total_reduction_percent": -0.0236,
+  "last_300_distribution": {
+    "base": {
+      "n": 300,
+      "mean": 7158740.67,
+      "p50": 7173960,
+      "p90": 7254960,
+      "p95": 7257440,
+      "p99": 7270080,
+      "min": 6975360,
+      "max": 7271560
+    },
+    "candidate": {
+      "n": 300,
+      "mean": 7164111.73,
+      "p50": 7186120,
+      "p90": 7255120,
+      "p95": 7257400,
+      "p99": 7270040,
+      "min": 6987880,
+      "max": 7271560
+    }
+  },
+  "baseline_heaviest_10": [
+    {
+      "frame": 565,
+      "base": 7313000,
+      "candidate": 7313040,
+      "reduction_percent": -0.0005
+    },
+    {
+      "frame": 567,
+      "base": 7312800,
+      "candidate": 7312840,
+      "reduction_percent": -0.0005
+    },
+    {
+      "frame": 566,
+      "base": 7311720,
+      "candidate": 7311680,
+      "reduction_percent": 0.0005
+    },
+    {
+      "frame": 533,
+      "base": 7309960,
+      "candidate": 7310000,
+      "reduction_percent": -0.0005
+    },
+    {
+      "frame": 577,
+      "base": 7307400,
+      "candidate": 7307360,
+      "reduction_percent": 0.0005
+    },
+    {
+      "frame": 532,
+      "base": 7306720,
+      "candidate": 7306680,
+      "reduction_percent": 0.0005
+    },
+    {
+      "frame": 531,
+      "base": 7304840,
+      "candidate": 7304840,
+      "reduction_percent": 0.0
+    },
+    {
+      "frame": 590,
+      "base": 7304680,
+      "candidate": 7304640,
+      "reduction_percent": 0.0005
+    },
+    {
+      "frame": 578,
+      "base": 7304640,
+      "candidate": 7304640,
+      "reduction_percent": 0.0
+    },
+    {
+      "frame": 705,
+      "base": 7303360,
+      "candidate": 7303400,
+      "reduction_percent": -0.0005
+    }
+  ],
+  "regressed_frames_over_1pct": 0,
+  "serialized_state_equal": true,
+  "serialized_state": [
+    {
+      "bytes": 269353,
+      "hash": "50b7f45498b2b3e2"
+    },
+    {
+      "bytes": 269353,
+      "hash": "50b7f45498b2b3e2"
+    }
+  ],
+  "execution_records_valid": true,
+  "workload_identity_equal": true,
+  "pcm_equal": true,
+  "pcm": [
+    {
+      "bytes": 638400,
+      "sha256": "4d1aef01c07134f9281ed0837b6e55f0b01f1b9db875b8ccd690e8ce5621be20"
+    },
+    {
+      "bytes": 638400,
+      "sha256": "4d1aef01c07134f9281ed0837b6e55f0b01f1b9db875b8ccd690e8ce5621be20"
+    }
+  ]
+}

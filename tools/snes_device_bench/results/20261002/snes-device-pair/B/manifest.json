@@ -1,0 +1,17 @@
+{
+  "warmup": 120,
+  "frames": 900,
+  "profiler": false,
+  "device_hook": 1,
+  "silent_completion_required": true,
+  "bulk": 1,
+  "sha256": {
+    "gw_retro_go.elf": "85bedd37eee2c7d750332b52ddf0a1130870f7b500a4778711fd82fc1676959a",
+    "gw_retro_go_intflash.bin": "132d55d8165bb8e8272cf4a2c0c265e7b7a039da587f43a974594ebd251489cd",
+    "snes.bin": "b4596bb941a08a5eabbbe5d4423f4c324edff0c25d97a6e54f218761846b870a"
+  },
+  "method": "canonical make-all A; B recompiles only spin_bake.c with SNES_BAKE_BULK=1; all other linked objects byte-identical",
+  "baseline_object_sha256": "4181037be18caa9eb3df404f2d759698cb524a51c8cf954edb678d8ccb3a48e9",
+  "candidate_object_sha256": "f729dea95111c0213f1cabfa56f68ee0ce13c06508a084c7ce8a7fa288836d06",
+  "timing": "HAL_GetTick at end of full paced iterations; final guest frame forced drawn in both arms"
+}

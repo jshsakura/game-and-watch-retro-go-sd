@@ -1,0 +1,19 @@
+{
+  "root_commit": "32d9cbf4b12aaad82eb067d746ae598ddf69ef78",
+  "branch": "perf/snes-60fps-span",
+  "sm_commit": "e33537c06618e88786f518221787a1e033ba303b",
+  "compiler": "arm-none-eabi-gcc 15.2.1",
+  "image": "sylverb/retro-go-sd-builder:v1.5",
+  "image_id": "sha256:948725b822603810687c2b0331d0105c30167f4cf8157b210fd452f20db94691",
+  "source": {
+    "build-flags.txt": "3f120fee44ad4e3625fc1e6e7388288d49576267aa51c171ffcc043706996621",
+    "snes_device_bench.h": "0f95cfb5bb9d3f59b4f639d103cb8b2cb7fd2911bbf3a0f1e813ed1553dfdfc9",
+    "candidate-build.log": "efe1d38b0b04d4fadad1d35dee69352d2d2f4d71e490f1fc26a4407ddb98706c",
+    "run_device.py": "a388559ec23937fc8f5ed7cac9047b34ae3b784827d0ae96b06d68fbaf72d99d",
+    "collect.py": "ecdc54d00b2eeb2225a1629819ce16705026dcde48e5bcde82902fdd7823a126",
+    "gnw_command.py": "d0eb9a61be7ec06c89322c1ff04f5d5cd9effbc5dda09156277457b829cc92bd",
+    "build_pair.py": "77896aa415dc121e4998829dcd63d8863d7bb5ac7e733cf8924e5629e2fc1377",
+    "root.diff": "57475bc3476038c19e801bf2e63bb7e409bdf4d1e6e5b487769e2777c4d74c1e",
+    "baseline-build.log": "e42107d5354e5a5f8cf35d991c6d2d2db8ae3d3eea84844a8761a2fc48e81c01"
+  }
+}

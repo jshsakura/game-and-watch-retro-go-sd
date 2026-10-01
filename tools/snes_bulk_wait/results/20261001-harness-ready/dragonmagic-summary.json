@@ -1,0 +1,187 @@
+{
+  "correctness": "PASS",
+  "frames": 1200,
+  "statehash": "a10c141d",
+  "audiohash": "ed6eda0c",
+  "base_insn": 3916652,
+  "candidate_insn": 2982846,
+  "reduction_percent": 23.8419,
+  "windows": [
+    {
+      "end_frame": 200,
+      "hashes_equal": true,
+      "base_insn": 3473133,
+      "candidate_insn": 2473417,
+      "reduction_percent": 28.7843
+    },
+    {
+      "end_frame": 400,
+      "hashes_equal": true,
+      "base_insn": 3923196,
+      "candidate_insn": 2870153,
+      "reduction_percent": 26.8415
+    },
+    {
+      "end_frame": 600,
+      "hashes_equal": true,
+      "base_insn": 3951409,
+      "candidate_insn": 3191496,
+      "reduction_percent": 19.2314
+    },
+    {
+      "end_frame": 800,
+      "hashes_equal": true,
+      "base_insn": 4114255,
+      "candidate_insn": 3059450,
+      "reduction_percent": 25.6378
+    },
+    {
+      "end_frame": 1000,
+      "hashes_equal": true,
+      "base_insn": 3950689,
+      "candidate_insn": 2895948,
+      "reduction_percent": 26.6976
+    },
+    {
+      "end_frame": 1200,
+      "hashes_equal": true,
+      "base_insn": 4087235,
+      "candidate_insn": 3406612,
+      "reduction_percent": 16.6524
+    }
+  ],
+  "device_fps": "unmeasured",
+  "per_frame_output_equal": true,
+  "total_distribution": {
+    "base": {
+      "n": 1200,
+      "mean": 3916653.4,
+      "p50": 3948720,
+      "p90": 4459680,
+      "p95": 4477520,
+      "p99": 4491120,
+      "min": 2701360,
+      "max": 6332320
+    },
+    "candidate": {
+      "n": 1200,
+      "mean": 2982847,
+      "p50": 2894360,
+      "p90": 3578840,
+      "p95": 3890240,
+      "p99": 4457360,
+      "min": 1644960,
+      "max": 6332360
+    }
+  },
+  "total_reduction_percent": 23.8419,
+  "last_300_distribution": {
+    "base": {
+      "n": 300,
+      "mean": 4041722.4,
+      "p50": 3951840,
+      "p90": 4477160,
+      "p95": 4486600,
+      "p99": 4491160,
+      "min": 3610000,
+      "max": 5656520
+    },
+    "candidate": {
+      "n": 300,
+      "mean": 3236392.67,
+      "p50": 2898200,
+      "p90": 3982600,
+      "p95": 3987440,
+      "p99": 4004600,
+      "min": 2890960,
+      "max": 5656560
+    }
+  },
+  "baseline_heaviest_10": [
+    {
+      "frame": 7,
+      "base": 6332320,
+      "candidate": 6332360,
+      "reduction_percent": -0.0006
+    },
+    {
+      "frame": 1192,
+      "base": 5656520,
+      "candidate": 5656560,
+      "reduction_percent": -0.0007
+    },
+    {
+      "frame": 548,
+      "base": 5468400,
+      "candidate": 5450960,
+      "reduction_percent": 0.3189
+    },
+    {
+      "frame": 583,
+      "base": 4877640,
+      "candidate": 4877600,
+      "reduction_percent": 0.0008
+    },
+    {
+      "frame": 561,
+      "base": 4781560,
+      "candidate": 4781560,
+      "reduction_percent": 0.0
+    },
+    {
+      "frame": 573,
+      "base": 4766360,
+      "candidate": 4766360,
+      "reduction_percent": 0.0
+    },
+    {
+      "frame": 622,
+      "base": 4494760,
+      "candidate": 3441480,
+      "reduction_percent": 23.4335
+    },
+    {
+      "frame": 625,
+      "base": 4492560,
+      "candidate": 3437840,
+      "reduction_percent": 23.477
+    },
+    {
+      "frame": 611,
+      "base": 4491200,
+      "candidate": 3437960,
+      "reduction_percent": 23.4512
+    },
+    {
+      "frame": 1092,
+      "base": 4491160,
+      "candidate": 3436560,
+      "reduction_percent": 23.4817
+    }
+  ],
+  "regressed_frames_over_1pct": 0,
+  "serialized_state_equal": true,
+  "serialized_state": [
+    {
+      "bytes": 267305,
+      "hash": "2b2fef6228fb9009"
+    },
+    {
+      "bytes": 267305,
+      "hash": "2b2fef6228fb9009"
+    }
+  ],
+  "execution_records_valid": true,
+  "workload_identity_equal": true,
+  "pcm_equal": true,
+  "pcm": [
+    {
+      "bytes": 638400,
+      "sha256": "5decf70f88838a3ad565deba4287a5e591ffd90801b09b0bf7bff4df618a60ac"
+    },
+    {
+      "bytes": 638400,
+      "sha256": "5decf70f88838a3ad565deba4287a5e591ffd90801b09b0bf7bff4df618a60ac"
+    }
+  ]
+}

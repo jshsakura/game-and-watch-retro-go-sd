@@ -1,0 +1,174 @@
+diff --git a/Core/Src/porting/common.c b/Core/Src/porting/common.c
+index c8c1be6e..2249a488 100644
+--- a/Core/Src/porting/common.c
++++ b/Core/Src/porting/common.c
+@@ -150,6 +150,14 @@ void common_emu_frame_loop_reset(void){
+ uint32_t g_common_drawn_frames;
+ uint32_t g_common_emu_frames;
+ 
++/* Resident completion markers: overlay addresses change during core loading. */
++__attribute__((noinline)) void common_emu_bench_begin(void) {
++    __asm__ volatile("nop" ::: "memory");
++}
++__attribute__((noinline)) void common_emu_bench_complete(void) {
++    __asm__ volatile("nop" ::: "memory");
++}
++
+ bool common_emu_frame_loop(void){
+     gw_crumb_heartbeat();
+     rg_app_desc_t *app = odroid_system_get_app();
+diff --git a/Core/Src/porting/snes/main_snes.c b/Core/Src/porting/snes/main_snes.c
+index 23bea4a1..857100fd 100644
+--- a/Core/Src/porting/snes/main_snes.c
++++ b/Core/Src/porting/snes/main_snes.c
+@@ -1084,6 +1084,10 @@ static bool snes_submenu_audio_mode(odroid_dialog_choice_t *option,
+   return event == ODROID_DIALOG_ENTER;
+ }
+ 
++#if SNES_DEVICE_BENCH
++#include "snes_device_bench.h"
++#endif
++
+ /* In ITCM with the engine it drives. This is the frame loop, and its inner part
+  * calls cpu_runOpcode and snes_cpuRead once per opcode -- both now in ITCM at
+  * 0x00000000 while this sits in the overlay at 0x24000000, past BL's +-16 MB, so
+@@ -1335,6 +1339,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+   common_emu_enable_dwt_cycles();   /* free-running; nothing in this loop clears it */
+ #endif
+ 
++#if SNES_DEVICE_BENCH
++  snes_device_bench_init();
++#endif
+   while (1) {
+ #ifdef SNES_DEVICE_PROFILE
+     /* ONE DWT base per iteration. Every SNES_PROF_MARK below is a CUMULATIVE
+@@ -1377,6 +1384,11 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+ #endif
+ 
+     bool drawFrame = common_emu_frame_loop();
++#if SNES_DEVICE_BENCH
++    /* One matching endpoint for the captured picture; count the real flip. */
++    if (snes_device_bench_result.completed + 1u ==
++        SNES_BENCH_WARMUP + SNES_BENCH_FRAMES) drawFrame = true;
++#endif
+     /* The benchmark counts EMULATED frames, and the overload guard draws only
+      * one in four -- so a change that makes skipped frames cheaper lets the
+      * guard draw more, which raises what the player sees while LOWERING the
+@@ -1390,6 +1402,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+     common_emu_input_loop_handle_turbo(&joystick);
+ 
+     snes->input1->currentState = read_snes_pad(&joystick);
++#if SNES_DEVICE_BENCH
++    snes_device_bench_result.input_or |= snes->input1->currentState;
++#endif
+     SNES_PROF_MARK(SNES_PROF_M_INPUT);
+ 
+     g_ppu_skip_render = !drawFrame;
+@@ -1419,6 +1434,11 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+      * before anything else touches the destination buffer. */
+     snes_pcm_submit();
+     SNES_PROF_MARK(SNES_PROF_M_PCM);
++#if SNES_DEVICE_BENCH
++    snes_device_bench_result.audio_calls++;
++    snes_device_bench_result.audio_samples += SNES_AUDIO_SAMPLES;
++    snes_device_bench_result.muted_calls += audio_mute != 0;
++#endif
+ 
+     if (drawFrame) {
+       present_frame_wait();
+@@ -1726,6 +1746,9 @@ void app_main_snes(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+       prof_wall_prev = wall_now;
+       prof_dma_prev  = dma_now;
+     }
++#endif
++#if SNES_DEVICE_BENCH
++    snes_device_bench_tick();
+ #endif
+   }
+ }
+diff --git a/Core/Src/porting/snes/snes_audio_stretch.c b/Core/Src/porting/snes/snes_audio_stretch.c
+index 156f05ce..bec0b900 100644
+--- a/Core/Src/porting/snes/snes_audio_stretch.c
++++ b/Core/Src/porting/snes/snes_audio_stretch.c
+@@ -57,6 +57,9 @@ _Static_assert((RING & RING_MASK) == 0u, "ring must be a power of two");
+ #define LOOP_MAX   RATE_SCALE(320u)
+ /* Insertions between autocorrelation searches. See the call site. */
+ #define PICK_EVERY 8u
++#ifndef SNES_STRETCH_PACKED_PICK
++#define SNES_STRETCH_PACKED_PICK 0
++#endif
+ _Static_assert(REPEAT <= TARGET, "a dropout may only loop primed history");
+ 
+ /* Sanity bound on the MEASURED ratio. Not a playback rate: it exists only to
+@@ -442,23 +445,56 @@ static uint16_t stretch_pick_period(void) {
+   const uint16_t win = 128u;                 /* samples compared per lag */
+   int64_t best_score = INT64_MIN;
+   uint16_t best_lag = REPEAT;
++#if SNES_STRETCH_PACKED_PICK
++  /* Only push writes ring, so the ISR cannot change these samples during the
++   * copy. Snapshot its read cursor once: all lags then describe the same
++   * window, even if a DMA interrupt advances rd during the search. Keep every
++   * other sample, exactly as the scalar picker does. The extra sample rounds
++   * the allocation up; the largest accessed index is (win-2+LOOP_MAX)/2. */
++  _Alignas(4) int16_t history[(128u + LOOP_MAX) / 2u];
++  const uint16_t cursor = rd;
++  for (uint16_t j = 0; j < (128u + LOOP_MAX) / 2u; j++)
++    history[j] = ring[(cursor - 1u - 2u*j) & RING_MASK];
++#if defined(TARGET_GNW)
++  /* The firmware builds with -mno-unaligned-access. Prepack both parities
++   * into aligned words so every inner-loop load remains a single LDR. */
++  uint32_t pairs[(128u + LOOP_MAX) / 2u - 1u];
++  for (uint16_t j = 0; j < (128u + LOOP_MAX) / 2u - 1u; j++)
++    pairs[j] = (uint16_t)history[j] | ((uint32_t)(uint16_t)history[j+1u] << 16);
++#endif
++#endif
+ 
+   /* Energy of the reference window, for the normalisation the score needs to
+    * mean anything. Without it a loud passage always "correlates" more than a
+    * quiet one and noise scores whatever its loudest lag happens to give. */
+   int64_t energy = 0;
+   for (uint16_t k = 0; k < win; k += 2u) {
++#if SNES_STRETCH_PACKED_PICK
++    int32_t a = history[k / 2u];
++#else
+     int32_t a = ring[(uint16_t)((rd - 1u - k) & RING_MASK)];
++#endif
+     energy += (int64_t)a * a;
+   }
+ 
+   for (uint16_t lag = LOOP_MIN; lag <= LOOP_MAX; lag += 2u) {
+     int64_t acc = 0;
++#if SNES_STRETCH_PACKED_PICK && defined(TARGET_GNW)
++    for (uint16_t k = 0; k < win / 2u; k += 2u) {
++      acc = (int64_t)__SMLALD(pairs[k], pairs[k + lag / 2u], (uint64_t)acc);
++    }
++#else
+     for (uint16_t k = 0; k < win; k += 2u) {
++#if SNES_STRETCH_PACKED_PICK
++      int32_t a = history[k / 2u];
++      int32_t b = history[(k + lag) / 2u];
++#else
+       int32_t a = ring[(uint16_t)((rd - 1u - k) & RING_MASK)];
+       int32_t b = ring[(uint16_t)((rd - 1u - k - lag) & RING_MASK)];
++#endif
+       acc += (int64_t)a * b;
+     }
++#endif
+     /* Normalise by lag so a long lag does not win merely by summing more
+      * energy -- it does not here (window is fixed), but keep the shorter loop
+      * when scores tie: shorter means the dropout reads as a stutter, longer
+diff --git a/Makefile.common b/Makefile.common
+index 779f5e6f..3a74dce3 100644
+--- a/Makefile.common
++++ b/Makefile.common
+@@ -1559,6 +1559,10 @@ endif
+ # be taken with nobody at the console. By index, not path -- the launcher's paths
+ # come from FatFs and a literal need not match them byte for byte. Diagnostic.
+ GNW_AUTOBOOT ?=
++SNES_DEVICE_BENCH ?= 0
++ifeq ($(SNES_DEVICE_BENCH),1)
++  C_DEFS += -DSNES_DEVICE_BENCH=1
++endif
+ ifneq ($(GNW_AUTOBOOT),)
+   C_DEFS += -DGNW_AUTOBOOT_INDEX=$(GNW_AUTOBOOT)
+ endif

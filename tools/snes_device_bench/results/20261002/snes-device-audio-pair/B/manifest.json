@@ -1,0 +1,16 @@
+{
+  "warmup": 120,
+  "frames": 900,
+  "profiler": false,
+  "device_hook": 1,
+  "bulk": 1,
+  "packed_picker": 1,
+  "silent_completion_required": true,
+  "sha256": {
+    "gw_retro_go.elf": "80971d0809dad7098e0cdb9bd52e55430b6eea4ad4813d9b57f82f605f6937cc",
+    "gw_retro_go_intflash.bin": "7c353f7b6554a8a5e82ce41ad16339b11b8bb11013be62124222943b0f11066a",
+    "snes.bin": "2dd2d41f2193a674bfaec4ffaa87b5639c3fbf404f94b9655e853727f18289fc"
+  },
+  "method": "bulk-on baseline; candidate changes only audio picker object; coherent cursor snapshot and SMLALD pairs",
+  "timing": "identical firmware completion hook"
+}
