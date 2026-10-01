@@ -1207,6 +1207,7 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
       gnw_md32x_bench_result.tear_guard = md32x_guard_enabled;
       SCB_CleanDCache();
       __DSB();
+      audio_stop_playing(); /* after timestamp, before completion breakpoint */
       common_emu_bench_complete();
       for (;;) { wdog_refresh(); __WFI(); }
     }

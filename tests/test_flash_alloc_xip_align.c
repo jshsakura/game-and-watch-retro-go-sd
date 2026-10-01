@@ -1,4 +1,4 @@
-/* A relocated XIP code blob must start on an I-cache way boundary.
+/* A relocated XIP code blob must start on a 64 KB boundary.
  *
  * Why it exists
  * -------------
@@ -15,6 +15,10 @@
  * link-time layout gave it. That is why a benchmark could not repeat itself
  * within 3%, and why the build a user gets could be the slow one.
  *
+ * A later build split again, 18.31 / 18.11 fps, exactly by address mod 32 KB.
+ * So the allocator now pins the phase at 64 KB, the large erase block, which
+ * covers both.
+ *
  * This compiles the REAL Core/Src/gw_flash_alloc.c on the fake flash.
  */
 #include <stdbool.h>
@@ -30,7 +34,7 @@
 
 #define FLASH_SIZE   (8u * 1024 * 1024)
 #define SECTOR       (4u * 1024)
-#define WAY          (8u * 1024)
+#define WAY          (64u * 1024)   /* pins the 8 KB and 32 KB phases */
 #define BLOB_SIZE    (70u * 1024)
 
 static int failures = 0;
@@ -60,7 +64,7 @@ static uint32_t phase(const uint8_t *p) { return (uint32_t)(uintptr_t)p % WAY; }
 
 int main(void)
 {
-    printf("=== flash cache: XIP code lands on an I-cache way boundary ===\n");
+    printf("=== flash cache: XIP code lands on a 64 KB boundary ===\n");
 
     write_pattern_file("one_sector.bin", SECTOR, 0x11);
     write_pattern_file("plain.bin", 2 * SECTOR, 0x33);   /* ends on a way boundary + 4 KB */
@@ -76,7 +80,7 @@ int main(void)
     uint32_t len = 0;
     uint8_t *data = store_file_in_flash("one_sector.bin", &len, false, NULL);
     ok(data != NULL, "a one-sector file caches");
-    ok(phase(data + SECTOR) == SECTOR, "the next free byte is 4 KB past a way boundary");
+    ok(phase(data + SECTOR) == SECTOR, "the next free byte is 4 KB past a boundary");
 
     /* 2. Plain data does not care about the I-cache and keeps packing by sector. */
     flash_alloc_forget_live_files();
@@ -85,7 +89,7 @@ int main(void)
     ok(plain != NULL && phase(plain) == SECTOR, "an unrelocated file still packs on 4 KB");
 
     /* 3. The code blob is relocated, so it is code: it skips to the next way
-     *    boundary rather than taking the slow phase it was handed. */
+     *    64 KB boundary rather than taking the phase it was handed. */
     flash_alloc_forget_live_files();
     uint32_t blob_len = 0;
     uint8_t *code = store_file_in_flash_relocate("blob.xip", &blob_len, false, NULL, no_relocation);
@@ -93,7 +97,7 @@ int main(void)
     if (code == NULL) { printf("\nFAILED\n"); return 1; }
     printf("       code blob at 0x%08X (phase 0x%04X)\n",
            (unsigned)(uintptr_t)code, (unsigned)phase(code));
-    ok(phase(code) == 0, "relocated code starts on an 8 KB boundary");
+    ok(phase(code) == 0, "relocated code starts on a 64 KB boundary");
 
     /* 4. And the next boot gets that same copy back as a hit. */
     flash_alloc_forget_live_files();

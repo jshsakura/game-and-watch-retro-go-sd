@@ -169,14 +169,16 @@ static bool live_overlaps(uint32_t start, uint32_t end, uint32_t *live_end_out)
 /* Where may this write go? The ring's own order, stepping over whatever a caller
  * is reading right now. False when there is no gap — a real answer, and better
  * than a hole in a file someone is using. */
-/* Code that runs from external flash (a relocated XIP blob) starts on an
- * I-cache way boundary: 16 KB, 2-way, so 8 KB. The erase sector is only 4 KB,
- * and with nothing more than that the blob's cache-set phase was whatever the
- * previous file left behind. The same 32X build then ran After Burner at
- * 14.45 or 13.95 fps depending on the boot (six device runs, 2026-10-01, split
- * exactly by address mod 8 KB). A way-aligned blob keeps the phase the linker
- * gave it, so a build is one speed. tests/test_flash_alloc_xip_align.c. */
-#define XIP_CODE_ALIGN (8u * 1024)
+/* Code that runs from external flash (a relocated XIP blob) starts on a
+ * 64 KB boundary. The erase sector is only 4 KB, and with nothing more than
+ * that the blob's address phase was whatever the previous file left behind,
+ * and the same build ran at two speeds depending on the boot. Measured twice
+ * on 2026-10-01 (After Burner, 32X): one build split 14.45 / 13.95 fps
+ * exactly by address mod 8 KB (one I-cache way: 16 KB, 2-way), a later one
+ * 18.31 / 18.11 exactly by address mod 32 KB. A 64 KB boundary (the large
+ * erase block) pins every such phase, so a build is one speed.
+ * tests/test_flash_alloc_xip_align.c. */
+#define XIP_CODE_ALIGN (64u * 1024)
 
 static bool find_write_slot(uint32_t start_pointer, uint32_t erase_size_total,
                             uint32_t align, uint32_t *out_pointer)

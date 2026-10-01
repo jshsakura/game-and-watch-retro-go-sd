@@ -854,11 +854,11 @@ fi
 
 ( cd "$FAC_DIR" && ./test_flash_alloc_cps1_pool ) || rc=1
 
-# Relocated XIP code must start on an I-cache way boundary (8 KB). The ring
+# Relocated XIP code must start on a 64 KB boundary. The ring
 # aligned to the 4 KB erase sector only, so the blob's cache-set phase depended
 # on what was cached before it, and one 32X build ran After Burner at 14.45 or
 # 13.95 fps by boot. RED against the allocator before the fix.
-echo "=== flash cache: XIP code lands on an I-cache way boundary ==="
+echo "=== flash cache: XIP code lands on a 64 KB boundary ==="
 FAX_DIR=/tmp/mtest/flash_alloc_xip_align
 rm -rf "$FAX_DIR"; mkdir -p "$FAX_DIR/saves"
 FAX_PREFIX_REV=cd893451         # the allocator as it was, 4 KB phase only

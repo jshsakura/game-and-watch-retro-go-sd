@@ -669,6 +669,34 @@ INCLUDE build/fceumm_mappers.ld
         function now, and it has to be named here: without this it lands in
         MD32X_CODE and the compositor runs out of external flash. */
      build/md32x/pico__32x__draw.o        (.text.FinalizeLine32xRGB555 .text.PicoDraw32xLayer .text.PicoDraw32xLayerMdOnly .text.gnw_line_pp)
+     /* The 68K's hot handlers and the memory helpers they all call, 4.6 KB.
+        The 68K runs in short slices between the SH-2s, so its code is always
+        cold in the I-cache, and out of OSPI each refill is ~224 core cycles:
+        After Burner spent ~600 cycles per 68K instruction (device PC sampling,
+        2026-10-01). These 53 sections cover 86.7% of the instructions it
+        executes (rig opcode histogram, frames 540-719, mapped through the
+        device's own jump table); a refill from AXI SRAM is a fraction of an
+        OSPI one. The room is what .gnw_xip_cold below gave back: map setup and
+        savestate pack/unpack, which never run inside a frame. Order is by
+        execution count, so if this list must shrink, cut from the end. */
+     build/md32x/cpu__gwenesis68k__m68kcpu.o (
+        .text.m68ki_read_imm_16 .text.m68ki_read_16 .text.m68ki_read_16.part.0 .text.m68ki_read_32
+        .text.m68ki_read_imm_32 .text.m68ki_write_16 .text.m68ki_write_32.part.0 .text.m68ki_write_8
+        .text.m68ki_read_8 .text.m68ki_write_32 .text.m68ki_get_ea_ix .text.m68k_op_move_16_al_i
+        .text.m68k_op_tst_16_di .text.m68k_op_bge_8 .text.m68k_op_bne_8 .text.m68k_op_tst_8_di
+        .text.m68k_op_lea_32_di .text.m68k_op_dbf_16 .text.m68k_op_movea_32_di .text.m68k_op_bpl_8
+        .text.m68k_op_bgt_8 .text.m68k_op_subq_16_aw .text.m68k_op_tst_8_ai .text.m68k_op_move_16_d_di
+        .text.m68k_op_move_8_d_di .text.m68k_op_move_16_di_i .text.m68k_op_move_16_di_di
+        .text.m68k_op_rts_32 .text.m68k_op_add_16_er_d .text.m68k_op_beq_8 .text.m68k_op_moveq_32
+        .text.m68k_op_move_8_di_di .text.m68k_op_move_16_di_ix .text.m68k_op_addq_16_d
+        .text.m68k_op_addq_16_di .text.m68k_op_move_32_di_pi .text.m68k_op_lea_32_al
+        .text.m68k_op_jsr_32_ai .text.m68k_op_move_8_d_pi .text.m68k_op_ori_16_tos
+        .text.m68k_op_move_16_di_d .text.m68k_op_move_16_frs_pd .text.m68k_op_move_16_tos_pi
+        .text.m68k_op_btst_8_s_di .text.m68k_op_bmi_16 .text.m68k_op_move_16_d_ix
+        .text.m68k_op_sub_16_re_di .text.m68k_op_or_8_re_ai .text.m68k_op_bset_8_s_di
+        .text.m68k_op_andi_8_ai .text.m68k_op_move_32_ai_d .text.m68k_op_move_8_di_ai
+        .text.m68k_op_move_32_di_ai
+     )
      build/md32x/*.o (.data .data*)
     . = ALIGN(4);
     _OVERLAY_MD32X_LOAD_END = .;
@@ -844,6 +872,9 @@ INCLUDE build/fceumm_mappers.ld
   .xip_md32x : {
     . = ALIGN(8);
     __xip_md32x_start__ = .;
+    /* GNW_XIP_COLD (pico/pico_int.h): code that never runs inside a frame.
+       The name cannot start with .text, or the RAM_EMU overlay claims it. */
+    build/md32x/*.o (.gnw_xip_cold)
     build/md32x/*.o (.text .text*)
   } > MD32X_CODE
 
