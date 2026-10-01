@@ -365,9 +365,17 @@ Two options live under `PAUSE → Options`, both off by default:
 A generic SNES core (LakeSnes) alongside the two native homebrew ports. It accepts
 `.sfc .smc .fig .swc` from `/roms/snes`.
 
-Speed is very title-dependent and is governed by audio pacing rather than raw emulation
-speed, so a "fps" number from one game predicts very little about another. Mega Man X2 sits
-around 52 fps; heavier scenes in other titles drop well below that.
+SNES is included as a supported system in this fork's `testbed-full-20261002-0140`
+release, with ROM launch, savestates and resume. This support statement applies to
+this fork; upstream maintains its own supported-system list. Compatibility and speed
+still depend on the game and scene.
+
+On 2026-10-02, Super Mario World reached **60.132 drawn fps** at CPU menu level 2
+(340 MHz), drawing all 900 measured frames in the tested saved scene with normal
+adaptive rendering. Zelda: A Link to the Past reached **57.245 fps** in its tested
+scene with every frame rendered at the same clock. These are scene measurements;
+they do not establish sustained 60 fps throughout either game. The existing default
+SNES clock is 312 MHz. [Hardware results and limits](docs/SNES_DEVICE_RESULTS_2026-10-02.md).
 
 Two special chips are implemented as **clean-room HLE**. HLE means the chip is not simulated
 gate by gate; the commands the game sends are recognised and answered with the same results.
