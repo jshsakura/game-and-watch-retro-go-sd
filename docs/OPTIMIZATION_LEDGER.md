@@ -99,8 +99,10 @@ These are the rules that stopped bad numbers from becoming shipped decisions.
 ## SNES
 
 Deepest-worked core in the tree, and the one most likely to be re-proposed to.
-Detail lives in [SNES_NEXT_SESSION.md](SNES_NEXT_SESSION.md) (state and open
-threads), [SNES_WAIT_LOOP_BAKE.md](SNES_WAIT_LOOP_BAKE.md) and
+Start with [SNES_CURRENT_STATUS.md](SNES_CURRENT_STATUS.md) (current defaults,
+scene-specific FPS and remaining review targets, reconciled 2026-10-01).
+Detail lives in [SNES_NEXT_SESSION.md](SNES_NEXT_SESSION.md) (experiment history
+and subsequent corrections), [SNES_WAIT_LOOP_BAKE.md](SNES_WAIT_LOOP_BAKE.md) and
 [SNES_ROM_SURVEY.md](SNES_ROM_SURVEY.md) (the last shipped lever and how it was
 verified across a library).
 
@@ -230,10 +232,13 @@ not.** Where HDMA does run (Suzuka 8 Hours: 1,374 two-dot stall steps a frame =
 0.77% of the dot clock) folding the stall is bit-identical and costs instructions
 — 4,536,365 → 4,546,225 per frame — and was reverted.
 
-**Still unmeasured** — one thing: the native ports' own frames. Super Metroid
-runs 56.2 fps on hardware with **no interpreter at all**, and nobody has profiled
-what that frame is. It is game C plus the PPU/APU emulation every ported game
-shares, so whatever is in there is shared.
+**Native ports — profiled since the original handoff.** Super Metroid's native
+port measured 60.70 emulated / 40.80 drawn fps in its first profile. PC samples
+charged `snes_handle_pos_stuff` 27.8% and `snes_run_line` 26.6%. The unnecessary
+armed-H-timer dot-loop fallback is now removed by default (`SNES_LINE_HIRQ=1`),
+with state identity checked; its device gain in a heavy scene remains
+unmeasured. These percentages belong to the native port: the generic SNES core
+uses `run_frame_events` / `run_dots`, not `snes_run_line`.
 
 **Two instrument defects found 2026-08-14 — check these before trusting an old
 number.** `run_snes_t2.sh` did not compile `dsp1_hle.c`, so `dsp1_alloc()` hit a
@@ -242,8 +247,10 @@ past rig numbers for those carts are void. And a `SNES_DEVICE_PROFILE=1` build
 cannot inline `run_one_opcode` (the DWT marks block it), so gcc emits an `.isra.0`
 clone into `.text` which the linker sweeps into `.overlay_snes` — PC samples
 charged ~14% of the frame to **a program the device does not run**, and Ledger B's
-"event scheduler" residue was inflated by the same amount. Take PC profiles on a
-shipping build.
+"event scheduler" residue was inflated by the same amount. Both defects were
+fixed: the rig includes DSP-1, and `run_one_opcode` explicitly names its ITCM
+section. Treat old residue percentages as instrument-dependent; take final
+performance comparisons with the profiler off.
 
 **Trap.** The audio-HLE gate compared 21 header bytes against `"SUPER MARIO WORLD  "`.
 The real internal title has no space (`SUPER MARIOWORLD`), and a 19-character literal

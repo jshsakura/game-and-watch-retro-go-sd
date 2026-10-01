@@ -1,5 +1,15 @@
 # SNES — where this stands, and what to aim at next
 
+**Current status, reconciled 2026-10-01:** read
+[SNES_CURRENT_STATUS.md](SNES_CURRENT_STATUS.md) first. This file preserves the
+experiment history, including conclusions later corrected below. Zelda's generic
+core has a recorded **51.03 drawn fps** A/B result and **52.65 drawn fps**
+default-build check in an early savestate scene; these are not an all-gameplay
+floor. The audio decision is settled (`SNES_STRETCH_FOLLOW=1`), the wait-loop bake
+and ROM fetch-page expansion are on, and the generic core uses linear DSP
+interpolation. The native-port scheduler figures do not describe the generic
+core's execution path.
+
 Rewritten 2026-08-11 and updated twice the same day: once after the layer loop
 was taken apart, once after the whole frame was priced and the audio defect
 diagnosed. Everything is measured on hardware unless it says otherwise: Zelda 3
