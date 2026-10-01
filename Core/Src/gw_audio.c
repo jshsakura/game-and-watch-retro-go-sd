@@ -25,8 +25,10 @@ static int                m_mask;
 static volatile int16_t   music_vol;
 static volatile uint8_t   music_owns;        // 1 = Music app controls the DMA buffer
 static volatile uint8_t   music_silent;      // 1 = output silence (paused / stopped)
-static volatile uint32_t  music_played;
-static volatile uint32_t  music_played_tick;
+// Keep the IRQ clock pair adjacent, saving resident flash address literals.
+static volatile struct { uint32_t samples, tick; } music_clock;
+#define music_played      music_clock.samples
+#define music_played_tick music_clock.tick
 
 void     music_attach(int16_t *ring, int size, volatile uint16_t *head, volatile uint16_t *tail)
 { m_ring = ring; m_mask = size - 1; m_head_p = head; m_tail_p = tail; }
