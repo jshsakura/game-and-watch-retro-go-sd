@@ -5195,14 +5195,16 @@
       "raw_sha256": "2bf2b2fdd4db3fa4d21cdd96c759e34fc1a23fb7f3b26d8872b220545607cf11"
     },
     "compiler.txt": {
-      "sha256": "e4dcd1105815a2a358a818f36f19420f150c8606d9aa8f83953dcd58f96f059b",
-      "bytes": 284,
-      "raw_sha256": "e4dcd1105815a2a358a818f36f19420f150c8606d9aa8f83953dcd58f96f059b"
+      "sha256": "5fbc0cad1227c261c9f76d5aef88bb73934fc4466200d4476917a3106101de89",
+      "bytes": 283,
+      "raw_sha256": "5fbc0cad1227c261c9f76d5aef88bb73934fc4466200d4476917a3106101de89",
+      "normalization": "trailing empty lines removed from static compiler version banner; original tool output retained in local build directory"
     },
     "host-compiler.txt": {
-      "sha256": "4dc9a4e32fd9e06d42fb307688c59d6d889f0ff90ce034cbefed21b0d451fd81",
-      "bytes": 232,
-      "raw_sha256": "4dc9a4e32fd9e06d42fb307688c59d6d889f0ff90ce034cbefed21b0d451fd81"
+      "sha256": "08c3293eda34d3a19af225dedfbfdd5faece4fafebd60d003868fc3f53eae6e0",
+      "bytes": 231,
+      "raw_sha256": "08c3293eda34d3a19af225dedfbfdd5faece4fafebd60d003868fc3f53eae6e0",
+      "normalization": "trailing empty lines removed from static compiler version banner; original tool output retained in local build directory"
     },
     "qemu.txt": {
       "sha256": "d5e1ae8dd845009e27fe1cab4612650fd6a774c76bff3d06e929069de043f7f5",
