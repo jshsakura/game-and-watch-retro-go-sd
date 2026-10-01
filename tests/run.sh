@@ -854,6 +854,34 @@ fi
 
 ( cd "$FAC_DIR" && ./test_flash_alloc_cps1_pool ) || rc=1
 
+# Relocated XIP code must start on an I-cache way boundary (8 KB). The ring
+# aligned to the 4 KB erase sector only, so the blob's cache-set phase depended
+# on what was cached before it, and one 32X build ran After Burner at 14.45 or
+# 13.95 fps by boot. RED against the allocator before the fix.
+echo "=== flash cache: XIP code lands on an I-cache way boundary ==="
+FAX_DIR=/tmp/mtest/flash_alloc_xip_align
+rm -rf "$FAX_DIR"; mkdir -p "$FAX_DIR/saves"
+FAX_PREFIX_REV=cd893451         # the allocator as it was, 4 KB phase only
+$CC -O1 -g -std=gnu11 -w $SAN -Itests/flash_alloc_stubs -ICore/Inc \
+    tests/test_flash_alloc_xip_align.c tests/flash_alloc_stubs/flash_stubs.c \
+    Core/Src/gw_flash_alloc.c -o "$FAX_DIR/test_flash_alloc_xip_align" \
+    || fail "compile test_flash_alloc_xip_align"
+if git cat-file -e "$FAX_PREFIX_REV:Core/Src/gw_flash_alloc.c" 2>/dev/null; then
+    git show "$FAX_PREFIX_REV:Core/Src/gw_flash_alloc.c" > "$FAX_DIR/prefix.c"
+    $CC -O1 -g -std=gnu11 -w $SAN -Itests/flash_alloc_stubs -ICore/Inc \
+        tests/test_flash_alloc_xip_align.c tests/flash_alloc_stubs/flash_stubs.c \
+        "$FAX_DIR/prefix.c" -o "$FAX_DIR/test_prefix" \
+        || fail "compile test_flash_alloc_xip_align against the pre-fix allocator"
+    if ( cd "$FAX_DIR" && ./test_prefix > /dev/null 2>&1 ); then
+        fail "XIP align RED check: the 4 KB-only allocator passed"
+    else
+        echo "OK  the 4 KB-only allocator fails it"
+    fi
+else
+    echo "SKIP no $FAX_PREFIX_REV in this clone (shallow?) - RED check not run"
+fi
+( cd "$FAX_DIR" && ./test_flash_alloc_xip_align ) || fail test_flash_alloc_xip_align
+
 # external/sm's dma_doDma drains a whole A->B channel per call instead of one
 # byte per dma_cycle() — a host-CPU win for VRAM/CGRAM/OAM uploads that must not
 # change what a DMA transfers. Link the REAL dma.c and compare its transfer

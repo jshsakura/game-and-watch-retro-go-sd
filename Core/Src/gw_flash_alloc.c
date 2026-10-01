@@ -169,8 +169,17 @@ static bool live_overlaps(uint32_t start, uint32_t end, uint32_t *live_end_out)
 /* Where may this write go? The ring's own order, stepping over whatever a caller
  * is reading right now. False when there is no gap — a real answer, and better
  * than a hole in a file someone is using. */
+/* Code that runs from external flash (a relocated XIP blob) starts on an
+ * I-cache way boundary: 16 KB, 2-way, so 8 KB. The erase sector is only 4 KB,
+ * and with nothing more than that the blob's cache-set phase was whatever the
+ * previous file left behind. The same 32X build then ran After Burner at
+ * 14.45 or 13.95 fps depending on the boot (six device runs, 2026-10-01, split
+ * exactly by address mod 8 KB). A way-aligned blob keeps the phase the linker
+ * gave it, so a build is one speed. tests/test_flash_alloc_xip_align.c. */
+#define XIP_CODE_ALIGN (8u * 1024)
+
 static bool find_write_slot(uint32_t start_pointer, uint32_t erase_size_total,
-                            uint32_t *out_pointer)
+                            uint32_t align, uint32_t *out_pointer)
 {
     const uint32_t base = get_extflash_base();
     const uint32_t limit = (uint32_t)&__EXTFLASH_BASE__ + OSPI_GetFlashSize();
@@ -181,15 +190,16 @@ static bool find_write_slot(uint32_t start_pointer, uint32_t erase_size_total,
 
     /* Each live file can push us forward once, and we can wrap once. */
     for (int attempt = 0; attempt < MAX_LIVE_FILES * 2 + 2; attempt++) {
+        p = (p + align - 1) & ~(align - 1);
         if (p < base || p + erase_size_total > limit)
-            p = base;                       /* wrap */
+            p = base;                       /* wrap (way-aligned already) */
 
         uint32_t live_end;
         if (!live_overlaps(p, p + erase_size_total, &live_end)) {
             *out_pointer = p;
             return true;
         }
-        p = align_to_next_block(live_end);
+        p = live_end;                       /* aligned at the top of the loop */
     }
     return false;
 }
@@ -214,7 +224,8 @@ static uint32_t get_reserved_extflash_size()
 
 static uint32_t get_extflash_base(void)
 {
-    return align_to_next_block(((uint32_t)&__EXTFLASH_BASE__) + get_reserved_extflash_size());
+    uint32_t base = ((uint32_t)&__EXTFLASH_BASE__) + get_reserved_extflash_size();
+    return (base + XIP_CODE_ALIGN - 1) & ~(XIP_CODE_ALIGN - 1);   /* any file may start here */
 }
 
 static void reset_metadata(uint32_t flash_write_base) {
@@ -371,7 +382,8 @@ static bool circular_flash_write(const char *file_path,
      * own copy and the merge kept this line, which then referenced nothing --
      * the only compile break the whole merge produced.) */
     uint32_t slot;
-    if (!find_write_slot(flash_write_pointer, erase_size_total, &slot))
+    if (!find_write_slot(flash_write_pointer, erase_size_total,
+                         relocate_cb ? XIP_CODE_ALIGN : block_size, &slot))
     {
         printf("flash_alloc: no room for %s (%lu bytes) clear of the files in use\n",
                file_path, (unsigned long)*data_size);
