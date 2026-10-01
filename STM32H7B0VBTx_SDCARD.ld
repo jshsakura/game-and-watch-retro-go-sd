@@ -654,6 +654,7 @@ INCLUDE build/fceumm_mappers.ld
      * + PWM. Everything else — the 68K interpreter (161K, its const dispatch
      * tables ride .rodata_md32x), Z80, VDP, cart, sound gen — starts in XIP
      * flash: iterate with the device, not by faith. */
+    build/md32x/cpu__sh2__mame__sh2pico.o (.text.control_native .text.chain_entry .text.control_rd32)
     build/md32x/cpu__sh2__sh2.o          (.text .text*)
     build/md32x/cpu__gwenesis68k__g68k_bus.o (.text .text*)
      build/md32x/pico__32x__memory.o      (.text .text*)
@@ -740,6 +741,19 @@ INCLUDE build/fceumm_mappers.ld
        data, so they ride the D-cache, and the hot opcode set is small enough
        to stay in it. It is the instruction fetch that misses. */
     build/md32x/cpu__cz80__cz80.o (.text.Cz80_Exec)
+    /* The 68K main loop and the SH-2 sync / event / IRQ-level path, 2.7 KB.
+       Device PC sampling (2026-10-01, After Burner, HLE build) put 8.5% of the
+       frame in m68k_run's one 256 B block and ~6% in these 32x.c functions,
+       all executing out of OSPI: the 68K runs only a few thousand
+       instructions a frame, but each one refilled an I-cache line. Same code,
+       new address; appended, not reordered. */
+    build/md32x/cpu__gwenesis68k__m68kcpu.o (.text.m68k_run)
+    build/md32x/pico__32x__32x.o (.text.p32x_run_events .text.run_sh2 .text.fillend_event
+                                  .text.Pico32xRenderSync .text.p32x_update_irls .text.p32x_update_irls.part.0
+                                  .text.p32x_sync_sh2s .text.p32x_sync_sh2s.part.0 .text.p32x_sync_other_sh2
+                                  .text.p32x_event_schedule .text.p32x_event_schedule_sh2 .text.p32x_schedule_hint
+                                  .text.p32x_trigger_irq .text.SekSyncM68k.constprop.0.isra.0
+                                  .text.do_timing_hacks_start.constprop.0 .text.do_timing_hacks_end.constprop.0)
     /* Nothing else earns a place here, and that was measured rather than
        assumed. chan_render is 3,260 B and 6.3% of the frame -- the largest
        single XIP consumer in the device census -- and moving it in read
@@ -782,6 +796,9 @@ INCLUDE build/fceumm_mappers.ld
        sections go to the FIRST output section that matches, and this one is
        listed before .overlay_md32x_itc_bss. */
     build/md32x/pico__draw.o (.bss.DefOutBuff)
+    /* HighLnSpr (7,680 B, per-line sprite lists, written once per line) leaves ITCM
+       so the SH-2 native routines (mixer, sprite blits, idle pass) can live there. */
+    build/md32x/pico__draw.o (.bss.HighLnSpr)
     EXCLUDE_FILE(*pico__sound__ym2612.o *pico__draw.o *pico__32x__memory.o
                  *pico__memory.o *cpu__cz80__cz80.o
                  *pico__z80if.o) build/md32x/*.o (.bss .bss*)

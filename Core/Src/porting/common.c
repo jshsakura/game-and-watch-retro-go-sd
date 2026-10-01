@@ -14,6 +14,19 @@
 #include "rg_alarm.h"   /* all-state alarm: in-place ring while a game runs */
 #include "gw_malloc.h"
 
+/* Referenced only by finite device measurement builds. --gc-sections drops
+ * this function from releases. Keep in resident flash for a hardware breakpoint;
+ * an overlay breakpoint would be overwritten by the boot-time overlay copy. */
+__attribute__((noinline)) void common_emu_bench_begin(void)
+{
+    __asm__ volatile("nop" ::: "memory");
+}
+
+__attribute__((noinline)) void common_emu_bench_complete(void)
+{
+    __asm__ volatile("nop" ::: "memory");
+}
+
 static void set_ingame_overlay(ingame_overlay_t type);
 
 /* Per-system automatic CPU boost. A core that needs more headroom than stock

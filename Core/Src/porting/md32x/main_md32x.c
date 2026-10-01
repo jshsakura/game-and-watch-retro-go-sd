@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "gw_lcd.h"
+#include "odroid_display.h"
 #include "gw_linker.h"
 #include "gw_buttons.h"
 #include "rom_manager.h"
@@ -40,6 +41,7 @@
 #include "main_md32x.h"
 #include "md32x_border_clear.h"
 #include "md32x_fullscreen.h"
+#include "md32x_device_bench.h"
 
 #include "pico/pico_types.h"   /* s8/s16/s32 — MUST precede pico.h */
 #include "pico/pico.h"
@@ -182,6 +184,9 @@ static short md32x_snd[MD32X_AUDIO_MAX];
 static void md32x_write_sound(int len) {
   len >>= 1;   /* picodrive passes BYTES (sound.c: curr_pos * 2 for mono) —
                 * NTSC only worked by accident through the min() clamp (audit) */
+#ifdef GNW_32X_DEVICE_BENCH_FRAMES
+  gnw_md32x_bench_audio(len > 0 ? (uint32_t)len : 0, common_emu_sound_loop_is_muted());
+#endif
   int16_t *dst = audio_get_active_buffer();
   uint16_t dst_len = audio_get_buffer_length();
   if (common_emu_sound_loop_is_muted()) return;
@@ -489,42 +494,39 @@ static void md32x_SleepWakeUp(void) {
   set_out_buffer();
 }
 
-/* Pause/menu repaint. The pause banner calls this through the pointer given
- * to common_emu_input_loop — a NULL there was the device's PC=0 Hardfault
- * (LR = odroid_overlay_sleep_pause_banner; the C64-era rule: a custom-loop
- * core MUST pass a non-NULL repaint). We can't cheaply re-render a picodrive
- * frame on demand, so copy the SHOWN frame into the active buffer and draw
- * the overlay on top.
- *
- * The overlay's _repaint() clears the active buffer, calls us, then lcd_swap()s.
- * After the first swap the DISPLAYED buffer holds the menu composite (game +
- * darken + dialog), not the pure game frame.  A naive "copy displayed into
- * active" would therefore smear the previous menu state onto every subsequent
- * repaint.  We freeze the game-frame pointer on the FIRST call (when the
- * displayed buffer is still the pure game frame) and keep copying from THAT
- * frozen buffer for the lifetime of this menu session.  The flag resets when
- * the main loop renders a fresh frame (md32x_repaint_reset). */
-static int md32x_repaint_first = 1;
+/* Repaint from paused VDP state. A buffer used as a frozen source becomes
+ * the active buffer after lcd_swap; menu darkening then changes that source
+ * and repeated repaints turn it black. Redrawing uses no guest CPU cycles. */
+void md32x_repaint_reset(void) { }
 
-void md32x_repaint_reset(void) { md32x_repaint_first = 1; }
+extern int32_t odroid_settings_DisplayScaling_get(void);
+static short md32x_fullscreen_enabled;
+static bool md32x_fullscreen_setting(void) {
+  int mode = odroid_settings_DisplayScaling_get();
+  return mode == ODROID_DISPLAY_SCALING_FULL || mode == ODROID_DISPLAY_SCALING_CUSTOM;
+}
 
 static void md32x_repaint(void) {
+  md32x_fullscreen_enabled = md32x_fullscreen_setting();
   md32x_border_clear_notify_menu_open();
-  uint16_t *active = lcd_get_active_buffer();
-  static uint16_t *frozen;
-  if (md32x_repaint_first) {
-    /* displayed (inactive) buffer still holds the pure game frame */
-    frozen = (active == (uint16_t *)framebuffer1)
-                 ? (uint16_t *)framebuffer2 : (uint16_t *)framebuffer1;
-    md32x_repaint_first = 0;
+  lcd_sleep_while_swap_pending();
+  lcd_clear_active_buffer();
+  set_out_buffer();
+  int old_skip = PicoIn.skipFrame;
+  unsigned int old_sync = Pico32x.sync_line;
+  PicoIn.skipFrame = 0;
+  PicoFrameDrawOnly();
+  if ((PicoIn.AHW & PAHW_32X) && Pico32xDrawMode != PDM32X_OFF) {
+    Pico32x.sync_line = 0;
+    if ((Pico32x.vdp_regs[0] & P32XV_Mx) && !(Pico.video.debug_p & PVD_KILL_32X))
+      PicoDraw32xLayer(md32x_content_top, md32x_content_lines, Pico.video.reg[7] & 0x3f);
+    else if (Pico32xDrawMode == PDM32X_BOTH)
+      PicoDraw32xLayerMdOnly(md32x_content_top, md32x_content_lines);
   }
-  /* After lcd_swap toggles the double buffer, frozen aliases the *same*
-   * physical FB as active.  A self-memcpy is a no-op (harmless) but we
-   * skip it to stay explicit.  The overlay _repaint no longer pre-clears
-   * the active buffer for NO_BG_DARKEN callers (us), so frozen is never
-   * wiped by lcd_clear_active_buffer — the original 92425edd bug. */
-  if (frozen && frozen != active)
-    memcpy(active, frozen, 320 * 240 * sizeof(uint16_t));
+  Pico32x.sync_line = old_sync;
+  PicoIn.skipFrame = old_skip;
+  if (md32x_fullscreen_enabled)
+    md32x_fullscreen_expand(lcd_get_active_buffer(), md32x_content_top, md32x_content_lines);
   common_ingame_overlay();
 }
 
@@ -659,11 +661,9 @@ extern void odroid_settings_commit(void);
 static short md32x_guard_enabled = 0;
 static char md32x_guard_str[2];
 
-/* Fullscreen borrows the per-app slot's disp_scaling field. 32X has no entry in
- * odroid_settings.c's per-app defaults table, so every existing /CONFIG already
- * carries 0 there -- exactly this option's default (off). Same trick, and same
- * reasoning, as the tear guard above: no struct growth, no version bump, no
- * user's settings reset. */
+/* Full is a shortcut for the shared Scaling FULL/OFF modes. Read that
+ * setting when rendering so the generic Scaling option applies immediately.
+ * OFF/FIT keep the native320x224 rectangle; FULL/CUSTOM stretch to320x240. */
 extern int32_t odroid_settings_DisplayScaling_get();
 extern void odroid_settings_DisplayScaling_set(int32_t value);
 static short md32x_fullscreen_enabled = 0;
@@ -685,9 +685,10 @@ static bool md32x_submenu_fullscreen(odroid_dialog_choice_t *option,
     odroid_dialog_event_t event, uint32_t repeat)
 {
   (void)repeat;
+  md32x_fullscreen_enabled = md32x_fullscreen_setting();
   if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
     md32x_fullscreen_enabled = md32x_fullscreen_enabled == 0 ? 1 : 0;
-    odroid_settings_DisplayScaling_set(md32x_fullscreen_enabled);
+    odroid_settings_DisplayScaling_set(md32x_fullscreen_enabled ? ODROID_DISPLAY_SCALING_FULL : ODROID_DISPLAY_SCALING_OFF);
     odroid_settings_commit();
   }
   if (md32x_fullscreen_enabled == 0) strcpy(option->value, curr_lang->s_Option_OFF);
@@ -825,7 +826,7 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   md32x_guard_enabled = odroid_settings_ScreenTearFix_get() != 0;
   if (md32x_guard_enabled) strcpy(md32x_guard_str, curr_lang->s_Option_ON);
   else strcpy(md32x_guard_str, curr_lang->s_Option_OFF);
-  md32x_fullscreen_enabled = odroid_settings_DisplayScaling_get() != 0;
+  md32x_fullscreen_enabled = md32x_fullscreen_setting();
   if (md32x_fullscreen_enabled) strcpy(md32x_fullscreen_str, curr_lang->s_Option_ON);
   else strcpy(md32x_fullscreen_str, curr_lang->s_Option_OFF);
   /* audio_start_playing happens AFTER the warm-up frame below, with the
@@ -1036,6 +1037,10 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
   else
     lcd_clear_buffers();
 
+#ifdef GNW_32X_DEVICE_BENCH_FRAMES
+  gnw_md32x_bench_init();
+#endif
+
   while (1) {
     wdog_refresh();
 
@@ -1112,6 +1117,10 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #endif
 
     bool drawFrame = common_emu_frame_loop();
+#ifdef GNW_32X_DEVICE_BENCH_FRAMES
+    /* Matched endpoint: both arms draw the final measured guest frame. */
+    if (gnw_md32x_bench_result.completed == GNW_32X_DEVICE_BENCH_WARMUP + GNW_32X_DEVICE_BENCH_FRAMES - 1) drawFrame = true;
+#endif
 
 #ifdef MD32X_DEVICE_PROFILE
     uint32_t t_pace = common_emu_get_dwt_cycles() - t_base;   /* after pace, before proc */
@@ -1119,6 +1128,7 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
     odroid_input_read_gamepad(&joystick);
     common_emu_input_loop(&joystick, options, &md32x_repaint);
+    md32x_fullscreen_enabled = md32x_fullscreen_setting();
     common_emu_input_loop_handle_turbo(&joystick);
 
     /* md32x_border_clear.h: fixes border-row flicker after closing the
@@ -1127,6 +1137,25 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     md32x_border_clear_tick(drawFrame);
 
     PicoIn.pad[0] = read_md_pad(&joystick);
+#ifdef GNW_32X_DEVICE_BENCH_FRAMES
+    PicoIn.pad[0] = gnw_md32x_bench_result.completed < 120 && (gnw_md32x_bench_result.completed % 12) < 6 ? 128 : 0;
+#endif
+#if defined(GNW_32X_DEVICE_BENCH_FRAMES) && defined(GNW_32X_DEVICE_BENCH_START_FRAME)
+    /* Optional fixed startup pulse, entirely before the measured window. */
+    if (gnw_md32x_bench_result.completed >= GNW_32X_DEVICE_BENCH_START_FRAME &&
+        gnw_md32x_bench_result.completed < GNW_32X_DEVICE_BENCH_START_FRAME + GNW_32X_DEVICE_BENCH_START_FRAMES)
+      PicoIn.pad[0] |= GNW_32X_DEVICE_BENCH_START_PAD;
+#endif
+#if defined(GNW_32X_DEVICE_BENCH_FRAMES) && defined(GNW_32X_DEVICE_BENCH_CONFIRM_FRAME)
+    if (gnw_md32x_bench_result.completed >= GNW_32X_DEVICE_BENCH_CONFIRM_FRAME &&
+        gnw_md32x_bench_result.completed < GNW_32X_DEVICE_BENCH_CONFIRM_FRAME + GNW_32X_DEVICE_BENCH_CONFIRM_FRAMES)
+      PicoIn.pad[0] |= GNW_32X_DEVICE_BENCH_CONFIRM_PAD;
+#endif
+#if defined(GNW_32X_DEVICE_BENCH_FRAMES) && defined(GNW_32X_DEVICE_BENCH_CONFIRM2_FRAME)
+    if (gnw_md32x_bench_result.completed >= GNW_32X_DEVICE_BENCH_CONFIRM2_FRAME &&
+        gnw_md32x_bench_result.completed < GNW_32X_DEVICE_BENCH_CONFIRM2_FRAME + GNW_32X_DEVICE_BENCH_CONFIRM_FRAMES)
+      PicoIn.pad[0] |= GNW_32X_DEVICE_BENCH_CONFIRM_PAD;
+#endif
 
     if (drawFrame) {
       if (md32x_guard_enabled) lcd_sleep_while_swap_pending();
@@ -1166,6 +1195,22 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 #endif
 
     common_emu_sound_sync(false);
+
+#ifdef GNW_32X_DEVICE_BENCH_FRAMES
+    if (gnw_md32x_bench_tick(drawFrame, PicoIn.pad[0])) {
+      /* All metadata/cache work is AFTER end_ms. The completion marker is
+       * resident flash: Cortex-M7 FPB cannot break at the AXI overlay address.
+       * The host waits for one GDB stop packet, never probes frame counters. */
+      gnw_md32x_bench_result.clock_hz = SystemCoreClock;
+      gnw_md32x_bench_result.framebuffer = (uint32_t)lcd_get_inactive_buffer();
+      gnw_md32x_bench_result.fullscreen = md32x_fullscreen_enabled;
+      gnw_md32x_bench_result.tear_guard = md32x_guard_enabled;
+      SCB_CleanDCache();
+      __DSB();
+      common_emu_bench_complete();
+      for (;;) { wdog_refresh(); __WFI(); }
+    }
+#endif
 
 #ifdef MD32X_DEVICE_PROFILE
     uint32_t t_audio = common_emu_get_dwt_cycles() - t_base;  /* after audio == loop_total */
