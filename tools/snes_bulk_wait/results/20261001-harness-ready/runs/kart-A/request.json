@@ -1,0 +1,32 @@
+{
+  "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+  "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+  "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/\uc288\ud37c \ub9c8\ub9ac\uc624 \uce74\ud2b8 (Super Mario Kart).smc",
+  "rom_sha256": "6765d798fd032f2ea52de6f812b6cdd0b1219b7006774fb22ae50a41e6912101",
+  "save": null,
+  "input": "none",
+  "frames": 1200,
+  "gate": "natural",
+  "workload": "cold boot; no warmup",
+  "case_config": true,
+  "audio_dump": true,
+  "profiling": "QEMU icount; no device cycles or FPS",
+  "timeout": 28.0,
+  "argv": [
+    "qemu-system-arm",
+    "-machine",
+    "mps2-an500",
+    "-nographic",
+    "-semihosting",
+    "-icount",
+    "shift=0,align=off,sleep=off",
+    "-kernel",
+    "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/kart-A/input.sfc,addr=0x60800000,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/kart-A/length.bin,addr=0x607ffffc,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/kart-A/config.bin,addr=0x607fff00,force-raw=on"
+  ]
+}

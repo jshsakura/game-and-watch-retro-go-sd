@@ -1,0 +1,32 @@
+{
+  "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+  "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+  "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/\ud30c\uc77c\ub7ff\uc719\uc988 (Pilotwings).smc",
+  "rom_sha256": "d1845de22c3c7f2606bda20e09c8f7a78f92f5cbbb6bfe01f96a1d1e84b30394",
+  "save": null,
+  "input": "none",
+  "frames": 1200,
+  "gate": "natural",
+  "workload": "cold boot; no warmup",
+  "case_config": true,
+  "audio_dump": true,
+  "profiling": "QEMU icount; no device cycles or FPS",
+  "timeout": 28.0,
+  "argv": [
+    "qemu-system-arm",
+    "-machine",
+    "mps2-an500",
+    "-nographic",
+    "-semihosting",
+    "-icount",
+    "shift=0,align=off,sleep=off",
+    "-kernel",
+    "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/pilotwings-B/input.sfc,addr=0x60800000,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/pilotwings-B/length.bin,addr=0x607ffffc,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/pilotwings-B/config.bin,addr=0x607fff00,force-raw=on"
+  ]
+}

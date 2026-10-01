@@ -1,0 +1,32 @@
+{
+  "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+  "elf_sha256": "b8af70f8441d76cf3dab7ff9ef8b66d54d1d7f1f60651525d70591994b21fd6b",
+  "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/\ub4dc\ub798\uace4\uc988 \ub9e4\uc9c1 (Dragon's Magic).smc",
+  "rom_sha256": "f1331e982e86362fe5c5b41279d3d676d54626db0b31f51dcb91a566c8808648",
+  "save": null,
+  "input": "none",
+  "frames": 1200,
+  "gate": "natural",
+  "workload": "cold boot; no warmup",
+  "case_config": true,
+  "audio_dump": true,
+  "profiling": "QEMU icount; no device cycles or FPS",
+  "timeout": 28.0,
+  "argv": [
+    "qemu-system-arm",
+    "-machine",
+    "mps2-an500",
+    "-nographic",
+    "-semihosting",
+    "-icount",
+    "shift=0,align=off,sleep=off",
+    "-kernel",
+    "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-bulk/rig_snes.elf",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dragonmagic-B/input.sfc,addr=0x60800000,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dragonmagic-B/length.bin,addr=0x607ffffc,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/dragonmagic-B/config.bin,addr=0x607fff00,force-raw=on"
+  ]
+}

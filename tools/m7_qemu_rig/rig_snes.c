@@ -42,6 +42,10 @@
  * (p99) that window averages hide. */
 static uint32_t g_frame_emu_ticks[RIG_FRAMES];
 static uint32_t g_frame_apu_ticks[RIG_FRAMES];
+static uint32_t g_frame_total_ticks[RIG_FRAMES];
+#ifdef RIG_FRAME_TRACE
+static uint32_t g_frame_fb_hash[RIG_FRAMES], g_frame_audio_hash[RIG_FRAMES];
+#endif
 static int cmp_u32(const void *a, const void *b) {
   uint32_t va = *(const uint32_t *)a, vb = *(const uint32_t *)b;
   return (va > vb) - (va < vb);
@@ -50,6 +54,7 @@ static void rig_print_percentiles(const char *label, uint32_t *arr, int n, uint3
   /* Sort a copy so the original temporal order survives if needed later. */
   static uint32_t sorted[RIG_FRAMES];
   int copy_n = n < RIG_FRAMES ? n : RIG_FRAMES;
+  if (copy_n <= 0) return;
   for (int i = 0; i < copy_n; i++) sorted[i] = arr[i];
   qsort(sorted, copy_n, sizeof(uint32_t), cmp_u32);
   uint32_t p_idx[] = {0, 1, 5, 10, 25, 50, 75, 90, 95, 99};
@@ -63,14 +68,7 @@ static void rig_print_percentiles(const char *label, uint32_t *arr, int n, uint3
   }
   uint64_t max_insn = (uint64_t)sorted[copy_n - 1] * ipt_x1000 / 1000;
   printf(" max=%lu", (unsigned long)max_insn);
-  uint64_t p50_i = (uint64_t)sorted[copy_n/2] * ipt_x1000 / 1000;
-  uint64_t p90_i = (uint64_t)sorted[(int)(90*copy_n/100)] * ipt_x1000 / 1000;
-  uint64_t p99_i = (uint64_t)sorted[(int)(99*copy_n/100)] * ipt_x1000 / 1000;
-  printf(" | fps@312M: p50=%.1f p90=%.1f p99=%.1f max=%.1f\n",
-         p50_i ? 312000000.0/p50_i : 0,
-         p90_i ? 312000000.0/p90_i : 0,
-         p99_i ? 312000000.0/p99_i : 0,
-         max_insn ? 312000000.0/max_insn : 0);
+  printf(" insn/frame (device FPS unmeasured)\n");
 }
 #endif
 
@@ -91,7 +89,6 @@ uint64_t g_cpu_ticks, g_spc_ticks, g_dsp_ticks, g_dsp_calls;
 static uint64_t g_active_voice_sum, g_echo_voice_sum, g_echo_write_frames;
 uint64_t g_dsp_channel_ticks, g_dsp_mix_ticks, g_dsp_echo_ticks;
 uint64_t g_dsp_noise_ticks, g_dsp_store_ticks;
-static uint64_t g_present_ticks;
 static uint64_t g_win_cpu_ticks;
 #define PROFILE_CPU(expr) ({ \
   uint32_t _ct = rig_timer_now(); \
@@ -102,6 +99,9 @@ static uint64_t g_win_cpu_ticks;
 })
 #else
 #define PROFILE_CPU(expr) (expr)
+#endif
+#if defined(RIG_DEVICE_VIDEO) || defined(RIG_COST_PROF)
+static uint64_t g_present_ticks;
 #endif
 #ifdef RIG_CALL_PROFILE
 uint64_t g_cpuRead_calls, g_cpuRead_slow, g_cpuRead_romhit, g_cpuRead_wram;
@@ -379,6 +379,34 @@ static uint64_t fnv1a(const void *data, size_t len) {
   return h;
 }
 
+#ifdef RIG_STATE_GATE
+/* The actual save stream covers CPU, SPC, DSP, DMA, PPU, cart and WRAM.
+ * Hash only after measurement: snes_saveload also invalidates caches. */
+typedef struct { uint64_t hash; size_t bytes; } RigStateHash;
+static void rig_hash_state(void *ctx, void *data, size_t n) {
+  RigStateHash *state = ctx;
+  const uint8_t *p = data;
+  state->bytes += n;
+  while (n--) { state->hash ^= *p++; state->hash *= 1099511628211ULL; }
+}
+#endif
+
+#ifdef RIG_CASE_CONFIG
+/* Runtime case selection, identical ELF per arm. Generic loader writes two
+ * words in unused PSRAM: magic, then bit0 force gate / bit1 input taps. */
+static uint32_t rig_case_flags(void) {
+  const volatile uint32_t *p = (const volatile uint32_t *)0x607fff00u;
+  return p[0] == 0x534e3630u ? p[1] : 0;
+}
+static uint16_t rig_case_pad(int frame) {
+  if (frame < 900)
+    return frame >= 40 && frame % 24 < 6 ? 0x0008 : 0;
+  int gp = frame - 900, step = gp % 90;
+  uint16_t pad = step < 60 ? (0x0080u >> ((gp / 90) % 4)) : 0;
+  return pad | (gp % 37 < 4 ? 0x0100 : 0);
+}
+#endif
+
 int main(void) {
 #ifdef RIG_ROM_LOADER
   /* The batch runner injects a ROM and its little-endian length directly into
@@ -438,12 +466,23 @@ int main(void) {
   snes->cart->rom = rom;
 #endif
   printf("[snes-qemu] rom len=%lu frames=%d\n", (unsigned long)rom_len, RIG_FRAMES);
+#ifdef RIG_CASE_CONFIG
+  uint32_t case_flags = rig_case_flags();
+  printf("[case] flags=%lu input=%s gate=%s\n", (unsigned long)case_flags,
+         case_flags & 2 ? "tap-v1" : "none", case_flags & 1 ? "forced" : "natural");
+#endif
 
   uint64_t run_hash = 1469598103934665603ULL;
   uint64_t audio_hash = 1469598103934665603ULL;   /* per-frame g_audio fold (audio-path gate) */
   uint64_t win_emu = 0, win_apu = 0, tot_emu = 0, tot_apu = 0;
 
   for (int frame = 0; frame < RIG_FRAMES; frame++) {
+#if defined(SNES_SPIN_BAKE) && defined(RIG_CASE_CONFIG)
+    if ((case_flags & 1) && g_bake.on) {
+      g_bake.pc_load = g_bake.pc_load_real;
+      g_bake.armed = true;
+    }
+#endif
 #if defined(SNES_SPIN_BAKE) && defined(RIG_BAKE_KEEP_ARMED)
     /* Diagnostic, identical in both arms: expose the span path throughout a
      * boot window that would otherwise park the recognizer after 180 frames.
@@ -506,6 +545,9 @@ int main(void) {
 #else
     snes->input1->currentState = 0;
 #endif
+#ifdef RIG_CASE_CONFIG
+    snes->input1->currentState = case_flags & 2 ? rig_case_pad(frame) : 0;
+#endif
 #ifdef RIG_DEVICE_VIDEO
 #ifdef RIG_DIRECT_VIDEO
     g_ppu_line_cb = NULL;
@@ -540,6 +582,7 @@ int main(void) {
       while (snes->apu->dsp->sampleOffset < 534) apu_cycle(snes->apu);
       dsp_getSamples(snes->apu->dsp, g_audio, 16000 / 60, 1);
     }
+    uint32_t t2 = rig_timer_now();
 #ifdef RIG_AUDIO_DUMP
     /* The frame's emulated samples, raw, in emitted order. This rig already
      * produces exactly what the device's snes_pcm_submit() hands the stretcher
@@ -549,12 +592,17 @@ int main(void) {
      * host (tools/snes_stretch_sim) and the result counted AND listened to. */
     rig_audio_dump(g_audio, sizeof(g_audio));
 #endif
-    uint32_t t2 = rig_timer_now();
     win_emu += (uint32_t)(t1 - t0);
     win_apu += (uint32_t)(t2 - ta);
 #ifdef RIG_FRAME_DIST
     g_frame_emu_ticks[frame] = (uint32_t)(t1 - t0);
     g_frame_apu_ticks[frame] = (uint32_t)(t2 - ta);
+    /* Present cost is included only in device-video rigs. Audio file I/O is
+     * deliberately outside both timers in the evidence runner. */
+    g_frame_total_ticks[frame] = (uint32_t)(t1 - t0) + (uint32_t)(t2 - ta);
+#ifdef RIG_DEVICE_VIDEO
+    g_frame_total_ticks[frame] += (uint32_t)(ta - tp);
+#endif
 #endif
 
 #ifdef RIG_DEVICE_VIDEO
@@ -584,6 +632,10 @@ int main(void) {
      * STATEHASH alone (fb+wram+cart) cannot detect an audio divergence. */
     uint64_t ah = fnv1a(g_audio, sizeof(g_audio));
     audio_hash = (audio_hash ^ ah) * 1099511628211ULL;
+#if defined(RIG_FRAME_DIST) && defined(RIG_FRAME_TRACE)
+    g_frame_fb_hash[frame] = (uint32_t)h;
+    g_frame_audio_hash[frame] = (uint32_t)ah;
+#endif
 
     if ((frame + 1) % RIG_WINDOW == 0) {
       uint64_t emu_i = win_emu * ipt_x1000 / 1000 / RIG_WINDOW;
@@ -790,14 +842,33 @@ int main(void) {
   printf("\n[dist] === per-frame distribution (insn/frame at ~%lu.%03lu insn/tick) ===\n",
          (unsigned long)(ipt_x1000/1000), (unsigned long)(ipt_x1000%1000));
   rig_print_percentiles("EMU all", g_frame_emu_ticks, RIG_FRAMES, ipt_x1000);
-  rig_print_percentiles("EMU 0-299", g_frame_emu_ticks, 300, ipt_x1000);
-  rig_print_percentiles("EMU 300-599", g_frame_emu_ticks + 300, 300, ipt_x1000);
-  rig_print_percentiles("EMU 600-899", g_frame_emu_ticks + 600, 300, ipt_x1000);
+  rig_print_percentiles("EMU 0-299", g_frame_emu_ticks, RIG_FRAMES < 300 ? RIG_FRAMES : 300, ipt_x1000);
+  if (RIG_FRAMES > 300)
+    rig_print_percentiles("EMU 300-599", g_frame_emu_ticks + 300, RIG_FRAMES < 600 ? RIG_FRAMES - 300 : 300, ipt_x1000);
+  if (RIG_FRAMES > 600)
+    rig_print_percentiles("EMU 600-899", g_frame_emu_ticks + 600, RIG_FRAMES < 900 ? RIG_FRAMES - 600 : 300, ipt_x1000);
   if (RIG_FRAMES > 900)
     rig_print_percentiles("EMU 900+", g_frame_emu_ticks + 900, RIG_FRAMES - 900, ipt_x1000);
   rig_print_percentiles("APU all", g_frame_apu_ticks, RIG_FRAMES, ipt_x1000);
   if (RIG_FRAMES > 900)
     rig_print_percentiles("APU 900+", g_frame_apu_ticks + 900, RIG_FRAMES - 900, ipt_x1000);
+  rig_print_percentiles("TOTAL all", g_frame_total_ticks, RIG_FRAMES, ipt_x1000);
+  if (RIG_FRAMES > 900)
+    rig_print_percentiles("TOTAL 900+", g_frame_total_ticks + 900, RIG_FRAMES - 900, ipt_x1000);
+#ifdef RIG_FRAME_TRACE
+  for (int f = 0; f < RIG_FRAMES; f++)
+    printf("[frame] %d emu=%lu apu=%lu total=%lu fb=%08lx audio=%08lx\n", f + 1,
+           (unsigned long)((uint64_t)g_frame_emu_ticks[f] * ipt_x1000 / 1000),
+           (unsigned long)((uint64_t)g_frame_apu_ticks[f] * ipt_x1000 / 1000),
+           (unsigned long)((uint64_t)g_frame_total_ticks[f] * ipt_x1000 / 1000),
+           (unsigned long)g_frame_fb_hash[f], (unsigned long)g_frame_audio_hash[f]);
+#endif
+#endif
+#ifdef RIG_STATE_GATE
+  RigStateHash state = {1469598103934665603ULL, 0};
+  snes_saveload(snes, rig_hash_state, &state);
+  printf("[state] bytes=%lu hash=%016llx\n", (unsigned long)state.bytes,
+         (unsigned long long)state.hash);
 #endif
 
   /* Outside every other #ifdef on purpose. The [spin] counters used to live

@@ -1,0 +1,212 @@
+[
+  {
+    "title": "zelda-default",
+    "simulated_emu_fps": 60,
+    "follow": true,
+    "clock": "fixed 60.15 Hz audio pulls; synthetic schedule, not drawn FPS",
+    "identical_wav": true,
+    "arms": [
+      {
+        "sha256": "283fe432848d5c106c83bbe9e680371e38838657ca3efde556a80d6e68dc401d",
+        "bytes": 638976,
+        "output": "in   1200 frames = 19.95 s emulated audio at 60.00 fps\nout  319466 samples = 19.97 s real time (1201 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 1.0001x  (playback step; 1.0 = in tune)\nsplices    0   in 1201 pulls (1201 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-60-A.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-A/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-60-A.wav",
+          "--fps",
+          "60",
+          "--follow"
+        ]
+      },
+      {
+        "sha256": "283fe432848d5c106c83bbe9e680371e38838657ca3efde556a80d6e68dc401d",
+        "bytes": 638976,
+        "output": "in   1200 frames = 19.95 s emulated audio at 60.00 fps\nout  319466 samples = 19.97 s real time (1201 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 1.0001x  (playback step; 1.0 = in tune)\nsplices    0   in 1201 pulls (1201 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-60-B.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-B/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-60-B.wav",
+          "--fps",
+          "60",
+          "--follow"
+        ]
+      }
+    ]
+  },
+  {
+    "title": "zelda-default",
+    "simulated_emu_fps": 61,
+    "follow": true,
+    "clock": "fixed 60.15 Hz audio pulls; synthetic schedule, not drawn FPS",
+    "identical_wav": true,
+    "arms": [
+      {
+        "sha256": "250fef9c850d19a3a6735d5bb705e33d400d84dc3c8b60a27140d5f24dd3065c",
+        "bytes": 628868,
+        "output": "in   1200 frames = 19.95 s emulated audio at 61.00 fps\nout  314412 samples = 19.65 s real time (1182 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 1.0100x  (playback step; 1.0 = in tune)\nsplices    0   in 1182 pulls (1182 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-61-A.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-A/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-61-A.wav",
+          "--fps",
+          "61",
+          "--follow"
+        ]
+      },
+      {
+        "sha256": "250fef9c850d19a3a6735d5bb705e33d400d84dc3c8b60a27140d5f24dd3065c",
+        "bytes": 628868,
+        "output": "in   1200 frames = 19.95 s emulated audio at 61.00 fps\nout  314412 samples = 19.65 s real time (1182 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 1.0100x  (playback step; 1.0 = in tune)\nsplices    0   in 1182 pulls (1182 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-61-B.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-B/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-61-B.wav",
+          "--fps",
+          "61",
+          "--follow"
+        ]
+      }
+    ]
+  },
+  {
+    "title": "zelda-default",
+    "simulated_emu_fps": 52.65,
+    "follow": true,
+    "clock": "fixed 60.15 Hz audio pulls; synthetic schedule, not drawn FPS",
+    "identical_wav": true,
+    "arms": [
+      {
+        "sha256": "6d2e5e0390ead04b04957234e570a94e75b9695d09e3fa685132c0daec9669fa",
+        "bytes": 728352,
+        "output": "in   1200 frames = 19.95 s emulated audio at 52.65 fps\nout  364154 samples = 22.76 s real time (1369 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 0.8810x  (playback step; 1.0 = in tune)\nsplices    0   in 1369 pulls (1369 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-52.65-A.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-A/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-52.65-A.wav",
+          "--fps",
+          "52.65",
+          "--follow"
+        ]
+      },
+      {
+        "sha256": "6d2e5e0390ead04b04957234e570a94e75b9695d09e3fa685132c0daec9669fa",
+        "bytes": 728352,
+        "output": "in   1200 frames = 19.95 s emulated audio at 52.65 fps\nout  364154 samples = 22.76 s real time (1369 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 0.8810x  (playback step; 1.0 = in tune)\nsplices    0   in 1369 pulls (1369 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-52.65-B.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-B/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/zelda-default-audio-52.65-B.wav",
+          "--fps",
+          "52.65",
+          "--follow"
+        ]
+      }
+    ]
+  },
+  {
+    "title": "smw",
+    "simulated_emu_fps": 60,
+    "follow": true,
+    "clock": "fixed 60.15 Hz audio pulls; synthetic schedule, not drawn FPS",
+    "identical_wav": true,
+    "arms": [
+      {
+        "sha256": "59a803635055e243e0f6bbe522ca5c5631a9819ccfa8f580319f1e29259940aa",
+        "bytes": 638976,
+        "output": "in   1200 frames = 19.95 s emulated audio at 60.00 fps\nout  319466 samples = 19.97 s real time (1201 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 1.0001x  (playback step; 1.0 = in tune)\nsplices    0   in 1201 pulls (1201 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-60-A.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-60-A.wav",
+          "--fps",
+          "60",
+          "--follow"
+        ]
+      },
+      {
+        "sha256": "59a803635055e243e0f6bbe522ca5c5631a9819ccfa8f580319f1e29259940aa",
+        "bytes": 638976,
+        "output": "in   1200 frames = 19.95 s emulated audio at 60.00 fps\nout  319466 samples = 19.97 s real time (1201 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 1.0001x  (playback step; 1.0 = in tune)\nsplices    0   in 1201 pulls (1201 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-60-B.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-B/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-60-B.wav",
+          "--fps",
+          "60",
+          "--follow"
+        ]
+      }
+    ]
+  },
+  {
+    "title": "smw",
+    "simulated_emu_fps": 61,
+    "follow": true,
+    "clock": "fixed 60.15 Hz audio pulls; synthetic schedule, not drawn FPS",
+    "identical_wav": true,
+    "arms": [
+      {
+        "sha256": "6a83ecf042a4f15b5a2cddba036935faa41e64aa4ae008cc12ad9c3794409434",
+        "bytes": 628868,
+        "output": "in   1200 frames = 19.95 s emulated audio at 61.00 fps\nout  314412 samples = 19.65 s real time (1182 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 1.0100x  (playback step; 1.0 = in tune)\nsplices    0   in 1182 pulls (1182 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-61-A.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-61-A.wav",
+          "--fps",
+          "61",
+          "--follow"
+        ]
+      },
+      {
+        "sha256": "6a83ecf042a4f15b5a2cddba036935faa41e64aa4ae008cc12ad9c3794409434",
+        "bytes": 628868,
+        "output": "in   1200 frames = 19.95 s emulated audio at 61.00 fps\nout  314412 samples = 19.65 s real time (1182 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 1.0100x  (playback step; 1.0 = in tune)\nsplices    0   in 1182 pulls (1182 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-61-B.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-B/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-61-B.wav",
+          "--fps",
+          "61",
+          "--follow"
+        ]
+      }
+    ]
+  },
+  {
+    "title": "smw",
+    "simulated_emu_fps": 52.65,
+    "follow": true,
+    "clock": "fixed 60.15 Hz audio pulls; synthetic schedule, not drawn FPS",
+    "identical_wav": true,
+    "arms": [
+      {
+        "sha256": "ed658a7568e29c7d32f8392d6e499ccfd42834f6e0e8f902978dd78343090ad1",
+        "bytes": 728352,
+        "output": "in   1200 frames = 19.95 s emulated audio at 52.65 fps\nout  364154 samples = 22.76 s real time (1369 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 0.8810x  (playback step; 1.0 = in tune)\nsplices    0   in 1369 pulls (1369 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-52.65-A.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-52.65-A.wav",
+          "--fps",
+          "52.65",
+          "--follow"
+        ]
+      },
+      {
+        "sha256": "ed658a7568e29c7d32f8392d6e499ccfd42834f6e0e8f902978dd78343090ad1",
+        "bytes": 728352,
+        "output": "in   1200 frames = 19.95 s emulated audio at 52.65 fps\nout  364154 samples = 22.76 s real time (1369 pulls)\nmode FOLLOW (gap-free, transposed)\nrate 0.8810x  (playback step; 1.0 = in tune)\nsplices    0   in 1369 pulls (1369 judged noise)\nunderruns  0\nwav        /home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-52.65-B.wav\n",
+        "argv": [
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/stretch-sim",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-B/audio.pcm",
+          "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-audio-52.65-B.wav",
+          "--fps",
+          "52.65",
+          "--follow"
+        ]
+      }
+    ]
+  }
+]

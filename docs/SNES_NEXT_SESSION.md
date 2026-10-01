@@ -1,10 +1,12 @@
 # SNES — where this stands, and what to aim at next
 
 **This worktree's current experiment, 2026-10-01:**
-[SNES_60FPS_SPAN_EXPERIMENT.md](SNES_60FPS_SPAN_EXPERIMENT.md) records the new
-whole-lap span fold, its differential and M7 gates, and the remaining device
-measurement. The candidate is default OFF. The 2.13% instruction saving under
-a forced-armed diagnostic is not a measured device FPS gain.
+[SNES_HARNESS_READY_2026-10-01.md](SNES_HARNESS_READY_2026-10-01.md) records the
+completed 9-game / 12-workload M7 comparison, 30,000 guest frames, full-state
+and PCM gates, retained binaries and the remaining device measurements.
+Default-gate instruction reductions are 10.86% for SMW and 23.84% for Dragon's
+Magic; Zelda is 0.44% with unchanged p99. Bulk folding stays default OFF.
+The device is assigned to the user's 32X work. No device FPS gain is claimed.
 
 Rewritten 2026-08-11 and updated twice the same day: once after the layer loop
 was taken apart, once after the whole frame was priced and the audio defect

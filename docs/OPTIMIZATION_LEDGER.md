@@ -98,6 +98,17 @@ These are the rules that stopped bad numbers from becoming shipped decisions.
 
 ## SNES
 
+**2026-10-01 isolated bulk-wait candidate:**
+[SNES_HARNESS_READY_2026-10-01.md](SNES_HARNESS_READY_2026-10-01.md) retains
+9-game / 12-workload M7 A/B evidence (26 completed runs, 30,000 frames).
+Default-gate instruction reductions: SMW 10.86%, Dragon's Magic 23.84%,
+Zelda 0.44%. Zelda's heavy-frame tail is unchanged. Full save-stream and
+per-frame video/audio gates pass; raw PCM is byte-identical. The FF5
+1200-frame timeout is excluded, and its separate 600-frame run has silent PCM.
+Bulk stays OFF by default; hardware FPS and firmware link remain unverified.
+The device is assigned to the user's 32X work. This is an open candidate,
+not a 60 FPS achievement or a reason to rerun the existing SWD-polling tools.
+
 Deepest-worked core in the tree, and the one most likely to be re-proposed to.
 Detail lives in [SNES_NEXT_SESSION.md](SNES_NEXT_SESSION.md) (state and open
 threads), [SNES_WAIT_LOOP_BAKE.md](SNES_WAIT_LOOP_BAKE.md) and

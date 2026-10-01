@@ -1,0 +1,33 @@
+{
+  "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+  "elf_sha256": "50f9e686f7e80610264bcb83c76240a52a0c4f60f3b8e8c6a0bcdb26e5c6cfc9",
+  "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/\uc288\ud37c \ub9c8\ub9ac\uc624 \uc6d4\ub4dc (Super Mario World).smc",
+  "rom_sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+  "save": null,
+  "input": "none",
+  "frames": 1200,
+  "gate": "natural",
+  "workload": "cold boot; no warmup",
+  "case_config": true,
+  "audio_dump": true,
+  "rerun_reason": "Intentional A-after measurement of the leading hardware candidate after the fixed multi-ROM matrix",
+  "profiling": "QEMU icount; no device cycles or FPS",
+  "timeout": 28.0,
+  "argv": [
+    "qemu-system-arm",
+    "-machine",
+    "mps2-an500",
+    "-nographic",
+    "-semihosting",
+    "-icount",
+    "shift=0,align=off,sleep=off",
+    "-kernel",
+    "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-base/rig_snes.elf",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A-after/input.sfc,addr=0x60800000,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A-after/length.bin,addr=0x607ffffc,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/smw-A-after/config.bin,addr=0x607fff00,force-raw=on"
+  ]
+}

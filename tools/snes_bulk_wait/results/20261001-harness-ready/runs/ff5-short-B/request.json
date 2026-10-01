@@ -1,0 +1,32 @@
+{
+  "elf": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-short-bulk/rig_snes.elf",
+  "elf_sha256": "7ca976e573b63e07ac4211bac9f093c8687709639bcbf9116cd85cad1df76238",
+  "rom": "/home/pi/app/ganda-rpi/data/library/public/roms/snes/\ud30c\uc774\ub110 \ud310\ud0c0\uc9c0 5 (Final Fantasy V).smc",
+  "rom_sha256": "c6858d5c02894a6cc71f4dd452c7f288b319d1952ca56fdb185b4bf5e26244a2",
+  "save": null,
+  "input": "none",
+  "frames": 600,
+  "gate": "natural",
+  "workload": "cold boot; no warmup",
+  "case_config": true,
+  "audio_dump": true,
+  "profiling": "QEMU icount; no device cycles or FPS",
+  "timeout": 28.0,
+  "argv": [
+    "qemu-system-arm",
+    "-machine",
+    "mps2-an500",
+    "-nographic",
+    "-semihosting",
+    "-icount",
+    "shift=0,align=off,sleep=off",
+    "-kernel",
+    "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/m7-short-bulk/rig_snes.elf",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-short-B/input.sfc,addr=0x60800000,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-short-B/length.bin,addr=0x607ffffc,force-raw=on",
+    "-device",
+    "loader,file=/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60/build/snes-harness-ready/ff5-short-B/config.bin,addr=0x607fff00,force-raw=on"
+  ]
+}

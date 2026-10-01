@@ -1,0 +1,21 @@
+{
+  "exit_code": 124,
+  "elapsed_seconds": 28.005,
+  "completed": false,
+  "input_unchanged": true,
+  "binary_unchanged": true,
+  "failure_tail": [
+    "w00600 emu=12804917 apu=755196 insn/frame fb=59365cfd audio=c68fddf3 lit=24022",
+    "",
+    "w00800 emu=12770372 apu=730674 insn/frame fb=2c9e7b69 audio=c68fddf3 lit=24022",
+    "",
+    "w01000 emu=12745383 apu=712526 insn/frame fb=b4e830e9 audio=c68fddf3 lit=24022",
+    ""
+  ],
+  "case_verified": true,
+  "pcm": {
+    "bytes": 585732,
+    "sha256": "9881c7c2a1d759c3f3d8c1bb3c9a80364586757fe58a0bcd13537b9645dbfb43"
+  },
+  "pcm_complete": false
+}

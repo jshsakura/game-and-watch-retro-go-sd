@@ -1,0 +1,42 @@
+{
+  "argv": [
+    "docker",
+    "run",
+    "--rm",
+    "--init",
+    "--network",
+    "none",
+    "--user",
+    "1000:1000",
+    "-v",
+    "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60:/opt/workdir",
+    "-e",
+    "RIG_BUILD_ONLY=1",
+    "-e",
+    "RIG_OUT=build/snes-harness-ready/m7-video-bulk",
+    "-e",
+    "RIG_EXTRA_DEF=-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\" -DSNES_BAKE_BULK=1 -DRIG_DEVICE_VIDEO -DRIG_DIRECT_VIDEO",
+    "sylverb/retro-go-sd-builder:v1.5",
+    "bash",
+    "tools/m7_qemu_rig/run_snes_t2.sh",
+    "build/snes-harness-ready/m7-video-bulk/empty-rom.smc",
+    "1200"
+  ],
+  "extra_defines": "-DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1 -DRIG_ROM_LOADER -DRIG_CASE_CONFIG -DRIG_FRAME_DIST -DRIG_FRAME_TRACE -DRIG_STATE_GATE -DRIG_AUDIO_DUMP -DRIG_AUDIO_PATH=\"audio.pcm\" -DSNES_BAKE_BULK=1 -DRIG_DEVICE_VIDEO -DRIG_DIRECT_VIDEO",
+  "bulk": true,
+  "device_video": true,
+  "frames": 1200,
+  "window": 200,
+  "elf_sha256": "5d53c7e3fa98664854581d76cd1fdc53d5955a23427a28f5f9670956dcafada8",
+  "elf_bytes": 866928,
+  "parent_commit": "dbc36be1912dcac818c35e7d9f4d261190fe907d",
+  "core_commit": "e33537c06618e88786f518221787a1e033ba303b",
+  "source_sha256": {
+    "tools/m7_qemu_rig/rig_snes.c": "66b6b6bc6274a43ac2e288463e1bd7c7294d173439d7e8e5571082f3b5e0fbdf",
+    "tools/m7_qemu_rig/run_snes_t2.sh": "ad1f7ee0b88b08be8bf907b3279731c3b1421872a163116a8c5929df3fd7f69b",
+    "external/sm/src/snes/spin_bake.c": "b16dba4f52365340dcac623b3899b8072133cb11ed198c260e1c7cc304764c89",
+    "external/sm/src/snes/spin_bake.h": "9dfadb3d4815a470a63134e8bfef2303fcb94f4905ca34c2d248a24fb29a360f"
+  },
+  "rom": "runtime loader; one-byte dummy section; no ROM linked",
+  "performance": "timer captures exclude PCM file I/O, hashes, trace printing and final save serialization"
+}
