@@ -122,6 +122,9 @@ static volatile uint16_t *g_isr_head, *g_isr_tail;
 static double   g_drain_accum;                 /* fractional samples owed */
 static uint64_t g_drain_last_us;
 static double   g_audio_hz = 48000.0 * (1.0 - (double)(AUDIO_PPM) / 1e6);
+static uint32_t g_music_played;
+static uint32_t g_music_tick;
+static bool g_music_owns, g_music_play;
 
 static void isr_audio_pump(void)
 {
@@ -130,10 +133,15 @@ static void isr_audio_pump(void)
     if (now <= g_drain_last_us) return;
     double dt_s = (double)(now - g_drain_last_us) / 1e6;
     g_drain_last_us = now;
+    if (!g_music_owns || !g_music_play) return;
     g_drain_accum += dt_s * g_audio_hz;
-    int owe = (int)g_drain_accum;
+    int owe = (int)(g_drain_accum / 1077) * 1077;  // real firmware DMA half-buffer quantum
     if (owe <= 0) return;
     g_drain_accum -= owe;
+    g_music_played += (uint32_t)owe;  // hardware counter includes silent underrun samples
+    // advance_clock can jump across callbacks during a blocking SD read.
+    // Keep the timestamp of the LAST callback, not the end of that read.
+    g_music_tick = (uint32_t)((now - (uint64_t)(g_drain_accum * 1e6 / g_audio_hz)) / 1000);
     int avail = ((int)*g_isr_head - (int)*g_isr_tail) & VR_MASK_RIG;   /* SAI cannot drain past head */
     if (owe > avail) owe = avail;
     *g_isr_tail = (uint16_t)((*g_isr_tail + owe) & VR_MASK_RIG);
@@ -162,8 +170,12 @@ void lcd_swap(void) { g_swaps++; g_last_trough = video_audio_ring_count(); }
 
 void music_attach(int16_t *ring, int size, volatile uint16_t *head, volatile uint16_t *tail)
 { (void)ring; (void)size; g_isr_head = head; g_isr_tail = tail; g_drain_last_us = g_virtual_us; g_drain_accum = 0; }
-void music_audio_enable(int on) { (void)on; }
-void music_audio_set(int vol, int play) { (void)vol; (void)play; }
+void music_audio_enable(int on) { isr_audio_pump(); g_music_owns = on != 0; }
+void music_audio_set(int vol, int play) { (void)vol; isr_audio_pump(); g_music_play = play != 0; }
+void music_audio_setpos(uint32_t samples) { g_music_played = samples; g_music_tick = (uint32_t)(g_virtual_us / 1000); }
+uint32_t music_audio_pos(void) { isr_audio_pump(); return g_music_played; }
+void music_audio_clock(uint32_t *samples, uint32_t *tick)
+{ isr_audio_pump(); *samples = g_music_played; *tick = g_music_tick; }
 void audio_start_playing(uint16_t length) { (void)length; }
 void audio_stop_playing(void) {}
 
@@ -350,7 +362,13 @@ extern int    __real_setvbuf(void *, char *, int, size_t);
 #define VF ((void *)&g_vf_open)                  /* our sentinel FILE* */
 
 void *__wrap_fopen(const char *path, const char *mode)
-{ (void)path; (void)mode; g_vf_pos = 0; g_vf_open = 1; return VF; }
+{
+    // Resume storage uses fgets()/rename(), which require a real FILE. Only
+    // the synthetic clip belongs to this wrapper; opening the resume file
+    // must also leave the clip cursor intact.
+    if (strcmp(path, "virtual.avi") != 0) return __real_fopen(path, mode);
+    g_vf_pos = 0; g_vf_open = 1; return VF;
+}
 
 int __wrap_fclose(void *f)
 { if (f != VF) return __real_fclose(f); g_vf_open = 0; return 0; }
@@ -501,5 +519,7 @@ int main(void)
            g_swaps, g_attempt, g_attempt - g_swaps);
     extern uint32_t g_video_audio_drops;
     printf("[video-qemu] valve_drops=%u samples\n", (unsigned)g_video_audio_drops);
+    printf("[video-qemu] elapsed_us=%llu audio_samples=%lu\n",
+           (unsigned long long)g_virtual_us, (unsigned long)g_music_played);
     return 0;
 }
