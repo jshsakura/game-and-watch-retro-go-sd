@@ -444,6 +444,15 @@ int main(void) {
   uint64_t win_emu = 0, win_apu = 0, tot_emu = 0, tot_apu = 0;
 
   for (int frame = 0; frame < RIG_FRAMES; frame++) {
+#if defined(SNES_SPIN_BAKE) && defined(RIG_BAKE_KEEP_ARMED)
+    /* Diagnostic, identical in both arms: expose the span path throughout a
+     * boot window that would otherwise park the recognizer after 180 frames.
+     * This is not the device's normal gate policy or a gameplay FPS result. */
+    if (g_bake.on) {
+      g_bake.pc_load = g_bake.pc_load_real;
+      g_bake.armed = true;
+    }
+#endif
 #ifdef RIG_INPUT_TAP
 #ifdef RIG_INPUT_SMK
     uint16_t pad = 0;

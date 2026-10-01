@@ -2147,6 +2147,12 @@ else
   SNES_SPIN_BAKE_DEF :=
 endif
 
+# Experimental whole-lap folding, separately switchable from the recognizer.
+SNES_BAKE_BULK ?= 0
+ifeq ($(SNES_BAKE_BULK),1)
+  SNES_SPIN_BAKE_DEF += -DSNES_BAKE_BULK=1
+endif
+
 # Diagnostic: compile the bake in, install nothing. Prices the mechanism's
 # presence on a cart it can never help -- the question the gate exists to answer.
 # GNW_AUTOSAVE_FRAME=<n>: measurement-only. Boot the ROM, run n frames, write

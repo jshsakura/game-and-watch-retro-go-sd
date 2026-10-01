@@ -1,5 +1,11 @@
 # SNES — where this stands, and what to aim at next
 
+**This worktree's current experiment, 2026-10-01:**
+[SNES_60FPS_SPAN_EXPERIMENT.md](SNES_60FPS_SPAN_EXPERIMENT.md) records the new
+whole-lap span fold, its differential and M7 gates, and the remaining device
+measurement. The candidate is default OFF. The 2.13% instruction saving under
+a forced-armed diagnostic is not a measured device FPS gain.
+
 Rewritten 2026-08-11 and updated twice the same day: once after the layer loop
 was taken apart, once after the whole frame was priced and the audio defect
 diagnosed. Everything is measured on hardware unless it says otherwise: Zelda 3

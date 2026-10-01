@@ -1,0 +1,90 @@
+{
+  "date": "2026-10-01",
+  "worktree": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60",
+  "branch": "perf/snes-60fps-span",
+  "firmware_base": "bd60143bb14feb1c3b049136dd7b23b1429c1109",
+  "core_base": "5b77015292343a11591e7244c2a926b24c41b090",
+  "core_candidate": "e33537c06618e88786f518221787a1e033ba303b",
+  "change_axis": "whole wait-loop laps within an event span",
+  "compiler": "arm-none-eabi-gcc 15.2.1 20251203 / Arm GNU Toolchain 15.2.Rel1",
+  "container": "sylverb/retro-go-sd-builder:v1.5",
+  "qemu": "10.0.13",
+  "arch": "-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16",
+  "optimization": "-O2 -g -ffunction-sections -fdata-sections -ffp-contract=off",
+  "c_defines": "-DNDEBUG -DTARGET_GNW -DGNW_SNES_CORE -DHEADLESS -DRIG_FRAMES=1200 -DRIG_WINDOW=200 -DSNES_THUMB2_CPU -DSPC_THUMB2_SPC -DSNES_SPIN_BAKE -DSNES_PPU_VIRGIN_Z=1 -DSNES_PPU_BLEND_LUT=1 -DSNES_PPU_OPAQUE_TILE=1 -DSNES_SKIP_SPRITE_EVAL_ON_SKIP=1",
+  "asm_defines": "-DSNES_T2_NO_ROMCACHE",
+  "candidate_extra": "-DSNES_BAKE_BULK=1",
+  "active_diagnostic_extra": "-DRIG_ROM_LOADER -DRIG_BAKE_KEEP_ARMED -DRIG_FRAME_DIST",
+  "workloads": {
+    "frames": 1200,
+    "warmup": 0,
+    "window": 200,
+    "input": "none",
+    "save": "none; cold boot",
+    "active_diagnostic": "same gate forced armed in both arms; not shipping policy",
+    "layout": "rig framebuffer; no firmware LCD scaling/present or audio stretcher"
+  },
+  "samples": {
+    "zelda_default": {
+      "A": 1,
+      "B": 1
+    },
+    "zelda_active": {
+      "A": 1,
+      "B": 1
+    },
+    "dkc_active": {
+      "A": 1,
+      "B": 1
+    }
+  },
+  "hardware": {
+    "run": false,
+    "clock": "unverified",
+    "scene_52fps_save": "not acquired",
+    "device_ownership": "not acquired"
+  },
+  "roms": [
+    {
+      "path": "/home/pi/snes_survey_2k/smoke/젤다의 전설 - 신들의 트라이포스 (Legend of Zelda, The - A Link to the Past).smc",
+      "sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+      "bytes": 1048576
+    },
+    {
+      "path": "/home/pi/snes_survey_2k/smoke/동키콩 컨트리 (Donkey Kong Country).smc",
+      "sha256": "628147468c3539283197f58f03b94df49758a332831857481ea9cc31645f0527",
+      "bytes": 4194304
+    }
+  ],
+  "source_sha256": {
+    "Makefile.common": "85122353f73239aaec7490009587d08433a6ef48c865ff671701cf502d035e9c",
+    "tests/test_snes_bake_bulk.c": "22a8cbe21a37b3c0c8cc20c3da0701e2d4ca7f05f38811bf25f44ea892e175a6",
+    "tests/test_snes_bake_bulk.sh": "ea78e6c871b94e34972063b257851e0c05b7d49b6866935f0865085ae08702cb",
+    "tools/snes_bulk_wait/run_case.py": "eb21f06f8b17b8eff74e400896bceb3900ffc440a0faccd5af692d5dd3e925b1",
+    "tools/snes_bulk_wait/compare.py": "511cea6759ac7c59e8c4543f01a688b4ad33500909df6c78b78d6d7312dd920f",
+    "tools/m7_qemu_rig/run_snes_t2.sh": "ad1f7ee0b88b08be8bf907b3279731c3b1421872a163116a8c5929df3fd7f69b",
+    "tools/m7_qemu_rig/rig_snes.c": "53dc1a332ce4c122d87d130f558fb641e571ae2e27e3bda59cc99bf0063ed49f",
+    "external/sm/src/snes/spin_bake.c": "b16dba4f52365340dcac623b3899b8072133cb11ed198c260e1c7cc304764c89",
+    "external/sm/src/snes/spin_bake.h": "9dfadb3d4815a470a63134e8bfef2303fcb94f4905ca34c2d248a24fb29a360f"
+  },
+  "binaries": {
+    "build/snes-bulk-evidence/m7-bulk/rig_snes.elf": "6acc63a9d099056880c23d203166a68fa2aa59cc7caae32e7cf89fcca2c0c634",
+    "build/snes-bulk-evidence/m7-active-base/rig_snes.elf": "6bef69fb003de22de5ec2422cc10a83c140c5bb1e4136a5157ef53096c94966d",
+    "build/snes-bulk-evidence/m7-active-bulk/rig_snes.elf": "6ae6d9aefeecc3f33089f461ff55469d6008451c3a5bda980311d88d189aff4f",
+    "build/snes-bulk-evidence/m7-base/rig_snes.elf": "36ba5832ef279709f97de7e2328f9fb57af99a89261470ebf089ee0ed109bb86"
+  },
+  "artifacts": {
+    "zelda-default-base.log": "51023d3ae67849f69faa20b8cf70f70ac7aeb1cdd4f367c05d02177a73919f21",
+    "zelda-default-bulk.log": "9fcc737dee4ea3f4ac8897f56f6d75b891615cab4c7076a5f96fd50cfc76339e",
+    "zelda-active-base.log": "7cb65d33803cf68f755ba79ed8cfc782d0e329e5a2071018da6fe4d5cf7a469f",
+    "zelda-active-bulk.log": "62ca8ef291d226097fef800d96542c98a24f723b3a40e72fff34c0116a001bce",
+    "dkc-base.log": "d6a94954717e69f2b64dc8a95f0bc76146c64467c5a7a71ceb119eeabdee583a",
+    "dkc-bulk.log": "d6a94954717e69f2b64dc8a95f0bc76146c64467c5a7a71ceb119eeabdee583a",
+    "zelda-default-summary.json": "449a6326f2438284b7f0506516163bc6ccdd43cc2b28811508a62f3fbe7d16a2",
+    "zelda-active-summary.json": "32daf81248445c4d98323d19643d1aa0b08b269e87173a21a0738b8e4b995d57",
+    "dkc-summary.json": "0ff9a5cc3c8ad0c7878e750a3490a899e0b428930835ee138069229595f30aed",
+    "core.patch.gz": "b3da7d4324e98fd5d9cd518eeebb1af69cce3f7cd0d15a2d56a8be38c973f97c",
+    "firmware.patch.gz": "0ae979d67d2e3316f3c1f18dca1d371b4f317c1af2588a634cbd96dc82d99932"
+  },
+  "verdict": "host and M7 window correctness PASS; instruction savings only; 60 drawn FPS unmeasured"
+}
