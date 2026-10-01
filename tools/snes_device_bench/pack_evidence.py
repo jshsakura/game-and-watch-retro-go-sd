@@ -10,7 +10,7 @@ for case in cases:
     src=Path('build')/case;dest=root/case;dest.mkdir()
     summary=json.loads((src/'result.json').read_text());assert summary['status']=='completed' and summary['original_restored']
     assert all(json.loads((src/'restore/readback.json').read_text()).values())
-    for name in ['result.json','comparison.json','conditions.json','smoke-reuse.json']: 
+    for name in ['result.json','comparison.json','conditions.json','smoke-reuse.json']:
         if (src/name).exists():copy(src/name,dest/name)
     copy(src/'restore/readback.json',dest/'restore/readback.json')
     for arm in ['smoke','base-before','candidate','base-after']:

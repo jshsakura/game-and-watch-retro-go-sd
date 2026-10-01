@@ -1,12 +1,12 @@
 # SNES — where this stands, and what to aim at next
 
-**This worktree's current experiment, 2026-10-01:**
-[SNES_HARNESS_READY_2026-10-01.md](SNES_HARNESS_READY_2026-10-01.md) records the
-completed 9-game / 12-workload M7 comparison, 30,000 guest frames, full-state
-and PCM gates, retained binaries and the remaining device measurements.
-Default-gate instruction reductions are 10.86% for SMW and 23.84% for Dragon's
-Magic; Zelda is 0.44% with unchanged p99. Bulk folding stays default OFF.
-The device is assigned to the user's 32X work. No device FPS gain is claimed.
+**Current result, 2026-10-02:** [SNES device results](SNES_DEVICE_RESULTS_2026-10-02.md)
+records the finished harness and hardware checks. SMW reached 60.13 drawn FPS
+in its saved scene at the supported 340 MHz setting; Zelda reached 57.24 FPS
+with every frame drawn in this window. Bulk wait folding is now ON by default.
+Audio behavior is unchanged. Older scene-specific Zelda 51.03 / 52.65 records
+and native-port corrections are retained in [SNES_CURRENT_STATUS.md](SNES_CURRENT_STATUS.md).
+The paragraphs below preserve experiment history and are superseded where noted.
 
 Rewritten 2026-08-11 and updated twice the same day: once after the layer loop
 was taken apart, once after the whole frame was priced and the audio defect
