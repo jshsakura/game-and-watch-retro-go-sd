@@ -57,11 +57,9 @@ static volatile uint16_t g_head, g_tail;
 
 static mp3dec_t  g_mp3;
 static int16_t   g_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
-/* mp3dec_decode_frame returns PER-CHANNEL sample counts (<=1152), so the mono
- * downmix needs only half of MAX_SAMPLES_PER_FRAME (which counts both
- * channels interleaved). The overlay BSS sits within bytes of its limit. */
-static int16_t   g_mono[MINIMP3_MAX_SAMPLES_PER_FRAME / 2];
-static int       g_frame_n;            // mono samples pending in g_mono
+/* Downmix stereo in place: destination i precedes the next unread pair 2*i.
+ * Pending mono samples are drained before the next decode overwrites g_pcm. */
+static int       g_frame_n;            // mono samples pending in g_pcm
 static uint32_t  g_phase, g_step;      // 16.16 resample index / step (trimmed)
 static uint32_t  g_step_base;          // ...and its untrimmed source-rate value
 static int       g_fill_ema;           // low-passed ring level the trim servos on
@@ -203,14 +201,14 @@ static int drain_pending(void)
 {
     while ((g_phase >> 16) < (uint32_t)g_frame_n) {
         const uint32_t i = g_phase >> 16;
-        const int32_t  a = (i == 0) ? g_prev : g_mono[i - 1];
-        const int32_t  b = g_mono[i];
+        const int32_t  a = (i == 0) ? g_prev : g_pcm[i - 1];
+        const int32_t  b = g_pcm[i];
         // (b - a) spans 17 bits, the fraction 16 -> the product needs 64 bits
         const int16_t  s = (int16_t)(a + (int32_t)(((int64_t)(b - a) * (g_phase & 0xFFFF)) >> 16));
         if (!ring_push(s)) return 0;        // ring full: resume here next call
         g_phase += g_step;
     }
-    if (g_frame_n > 0) g_prev = g_mono[g_frame_n - 1];   // only once the frame is spent
+    if (g_frame_n > 0) g_prev = g_pcm[g_frame_n - 1];   // only once the frame is spent
     g_phase -= (uint32_t)g_frame_n << 16;   // carry the fractional remainder
     g_frame_n = 0;
     return 1;
@@ -244,10 +242,7 @@ void video_audio_feed(const uint8_t *mp3, int len)
             g_has_audio = true;
             if (info.channels >= 2)
                 for (int i = 0; i < samples; i++)
-                    g_mono[i] = (int16_t)(((int)g_pcm[2 * i] + g_pcm[2 * i + 1]) / 2);
-            else
-                for (int i = 0; i < samples; i++)
-                    g_mono[i] = g_pcm[i];
+                    g_pcm[i] = (int16_t)(((int)g_pcm[2 * i] + g_pcm[2 * i + 1]) / 2);
             g_frame_n = samples;
             if (info.hz > 0) {
                 uint32_t base = ((uint32_t)info.hz << 16) / AUDIO_SAMPLE_RATE;
