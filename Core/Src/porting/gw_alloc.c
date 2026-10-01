@@ -8,6 +8,12 @@
 
 static char *heap_end = 0;
 
+/* Where _sbrk stops: the linker's _heap_end, unless a core lowered it before
+ * it allocated anything, to keep data of its own at the top of the DTCM heap
+ * (the 32X's memory maps, main_md32x.c). Never raised again: leaving a core
+ * resets the console. */
+char *gw_heap_ceiling = (char *)&_heap_end;
+
 /* Bytes handed out of the DTCM stdlib heap so far. Reported around the
  * logo-cache free at emulator_start so a device log says how much the
  * leak was actually worth on this card, instead of only telling us after
@@ -32,7 +38,7 @@ _sbrk (int incr)
     if (heap_end == 0)
         heap_end = (char *) &_heap_start;
 
-    if ((heap_end + incr) >= (char *)(&_heap_end)) {
+    if ((heap_end + incr) >= gw_heap_ceiling) {
         printf("HEAP OOM: need=%d used=%d/%d\n",
                incr, (int)(heap_end - (char *)&_heap_start),
                (int)((char *)&_heap_end - (char *)&_heap_start));

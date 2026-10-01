@@ -845,13 +845,32 @@ INCLUDE build/fceumm_mappers.ld
    * overlay, NOT a resident static, so nobody's itc_malloc shrinks. Zeroed by
    * main_md32x.c at load (the launcher's memset covers only the RAM_EMU
    * bss); the ASSERT guards the rest. */
+  /* The SH-2 and 68K memory maps, 14 KB of data the bus looks up on every
+     guest access. They lived in ITCM, which is only worth spending on CODE
+     now: DTCM serves data just as fast (zero wait state) and the 32X leaves
+     ~41 KB of the DTCM heap unused (sbrk peak 0x2000fc4c against a limit of
+     0x20019efc, After Burner, 2026-10-01). So they sit at the top of the
+     heap, at a fixed address, and app_main_md32x takes that range away from
+     malloc (gw_heap_reserve_top) and zeroes it before anything runs. Nothing
+     else may claim this range: the launcher's heap simply ends below it for
+     the rest of the boot. */
+  __MD32X_DTCM_RESERVE__ = 14K;
+  .overlay_md32x_dtcm_bss (((ORIGIN(DTCMRAM) + LENGTH(DTCMRAM) - __REMOTE_INPUT_RESERVE__
+                             - _Min_Stack_Size - _Stack_Redzone_Size) & ~15)
+                           - __MD32X_DTCM_RESERVE__) (NOLOAD) : {
+    __md32x_dtcm_bss_start__ = .;
+    build/md32x/pico__32x__memory.o   (.bss .bss*)
+    build/md32x/pico__memory.o        (.bss .bss*)
+    . = ALIGN(4);
+    __md32x_dtcm_bss_end__ = .;
+    ASSERT(__md32x_dtcm_bss_end__ - __md32x_dtcm_bss_start__ <= __MD32X_DTCM_RESERVE__,
+           "Error: MD32X DTCM data larger than its heap reserve");
+  }
   .overlay_md32x_itc_bss __md32x_itc_end__ (NOLOAD) : {
     . = ALIGN(8);
     __md32x_itc_bss_start__ = .;
     build/md32x/pico__sound__ym2612.o (.bss .bss*)
     build/md32x/pico__draw.o          (.bss .bss*)
-    build/md32x/pico__32x__memory.o   (.bss .bss*)
-    build/md32x/pico__memory.o        (.bss .bss*)
     build/md32x/cpu__cz80__cz80.o     (.bss .bss*)
     build/md32x/pico__z80if.o         (.bss .bss*)
     . = ALIGN(8);
@@ -2085,6 +2104,8 @@ INCLUDE build/fceumm_mappers.ld
                 - __REMOTE_INPUT_RESERVE__
                 - _Min_Stack_Size
                 - _Stack_Redzone_Size) & ~15;
+    ASSERT(__md32x_dtcm_bss_start__ >= _heap_start,
+           "Error: MD32X DTCM reserve reaches below the heap");
     ASSERT(_heap_start <= _heap_limit,
            "DTCM overflow: .data/.bss leave no room for stack");
 

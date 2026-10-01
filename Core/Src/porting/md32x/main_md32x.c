@@ -744,6 +744,23 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
     __DSB();
     __ISB();
   }
+  /* The SH-2 / 68K memory maps live at the top of the DTCM heap
+   * (.overlay_md32x_dtcm_bss, see the linker script). Take that range from
+   * malloc for the rest of the boot and zero it, before anything reads it --
+   * the launcher zeroes only the overlay's own RAM_EMU and ITCM BSS. */
+  {
+    extern uint8_t __md32x_dtcm_bss_start__[], __md32x_dtcm_bss_end__[];
+    extern char *gw_heap_ceiling;
+    extern size_t gw_heap_used(void);
+    if (&_heap_start + gw_heap_used() > __md32x_dtcm_bss_start__) {
+      odroid_overlay_alert("Not enough memory to start 32X - restart the console");
+      odroid_system_switch_app(0);
+      return;
+    }
+    gw_heap_ceiling = (char *)__md32x_dtcm_bss_start__;
+    memset(__md32x_dtcm_bss_start__, 0,
+           (size_t)(__md32x_dtcm_bss_end__ - __md32x_dtcm_bss_start__));
+  }
 
   odroid_gamepad_state_t joystick;
   odroid_dialog_choice_t options[] = {
