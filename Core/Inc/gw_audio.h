@@ -37,6 +37,7 @@ void     music_audio_enable(int on);          // 1 = Music app owns the DMA buff
 void     music_audio_set(int vol, int play);  // play=0 -> ISR outputs silence
 void     music_audio_setpos(uint32_t samples);
 uint32_t music_audio_pos(void);
+void     music_audio_clock(uint32_t *samples, uint32_t *tick); // coherent last-DMA sample/time pair
 
 // Emulator ISR-fed playback. Same pattern as music_fill: the ISR calls ONLY
 // core code (emu_fill below), which calls a pull function REGISTERED by the

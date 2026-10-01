@@ -14,6 +14,9 @@
 void     music_attach(int16_t *ring, int size, volatile uint16_t *head, volatile uint16_t *tail);
 void     music_audio_enable(int on);
 void     music_audio_set(int vol, int play);
+void     music_audio_setpos(uint32_t samples);
+uint32_t music_audio_pos(void);
+void     music_audio_clock(uint32_t *samples, uint32_t *tick);
 
 void audio_start_playing(uint16_t length);
 void audio_stop_playing(void);

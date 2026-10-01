@@ -39,48 +39,33 @@ callers, one dead, and the two live ones "prove" the decoder is fine. That shipp
 - Change anything in `hw_jpeg_decoder.c` and you must test **all three** callers. A cover
   rendering correctly says nothing about video.
 
-## Nothing synchronises the two clocks (this was the "it degrades after 4 minutes")
+## Playback follows the audio DMA clock
 
-The SAI ISR drains `video_audio.c`'s ring at the **audio PLL's real rate**. The demuxer fills it
-one AVI audio chunk per *displayed* video frame — i.e. at the rate `video_play.c` paces frames
-by **SysTick**. Different oscillators, different dividers: they do not agree, and the error only
-accumulates in one direction.
+At normal speed, after the first decoded MP3 samples, the presentation timeline
+uses `music_audio_clock()`: the actual SAI DMA sample count plus its IRQ tick.
+SysTick interpolates only between callbacks, bounded to one DMA half-buffer;
+each callback corrects the estimate. A coherent pair prevents an IRQ between
+the two reads from adding a spurious audio block. Volume zero still advances
+this clock, as does an underrun. Pause and emulator ownership do not.
 
-The ring is 4096 samples ≈ **85 ms**. A 0.3% mismatch fills it in under a minute; 0.05% takes
-several. And a full ring is not just an audio problem — it holds `video_audio_ring_free()` below
-`PF_AUDIO_HEADROOM`, so **the prefetch gate in `pf_step()` can never open again**. Every frame
-read becomes a blocking one, and playback goes from smooth to permanently stuttering. That is
-the whole shape of the user report: fine at first, progressively worse, worse still on a long
-clip, never recovers.
+Silent clips and 0.5x/2x playback use SysTick. A missing DMA callback for three
+half-buffers also falls back to SysTick. Transitions preserve monotonic time;
+start, seek, pause and speed changes re-anchor the frame schedule. Speed changes
+flush the MP3 reservoir and resampler phase so stale 1x audio is not replayed.
+The audio-clock API lives in the resident firmware: install matching firmware
+and SD cores together when updating this player.
 
-`trim_step()` closes the loop as a **PI servo**: it holds the ring near `VR_TARGET` by trimming
-the resample step within ±1% (17 cents — inaudible). Consuming input slightly faster emits fewer
-samples per MP3 frame and drains a filling ring. A pure-proportional trim needs a *standing* fill
-error to command a standing correction, so under sustained drift it plateaus **above** `VR_TARGET`
-— and a 1% mismatch demands the full ±1% deflection, only reachable with the ring already past the
-gate. The **integral term** (`TRIM_KI_DIV`, `g_fill_integ`) drives that steady-state error to zero,
-so the ring converges *on* `VR_TARGET`. Anti-windup pins the integrator at the authority edge, so
-it never winds past what the step can express and unwinds the instant the error reverses.
+The 4096-sample audio ring still uses the existing PI resampler trim within ±1%
+and its oldest-sample valve at 2560 samples. These bound buffering when source
+chunks or hardware timing differ. The valve is recovery, not proof that audio
+was preserved: `g_video_audio_drops` counts discarded samples. Reset the PI state,
+MP3 reservoir and resampler phase whenever the ring is flushed.
 
-Beyond ±1% mismatch the trim runs out of authority and cannot cancel the drift at all. So a
-**non-latching valve** backs it up: if `ring_count()` exceeds `VR_VALVE_CAP` (2560) the oldest
-sample is dropped, which **guarantees** the ring can never pin full and latch the prefetch gate
-shut. Inside authority the PI keeps the ring at target and the valve is dormant (only a ~13 ms
-startup blip); beyond it the valve sheds exactly the excess (~600 ms/min at a full 2% mismatch) —
-a tiny periodic audio drop instead of the progressive-stutter cliff. `g_video_audio_drops` counts it.
-
-**Rules:**
-- `VR_TARGET` must stay **below** `VR_SIZE - 1 - PF_AUDIO_HEADROOM` (1695 samples), or holding
-  the target would itself be what keeps the prefetcher off. These two constants are coupled;
-  move one and you must re-check the other.
-- `VR_VALVE_CAP` (2560) must stay low enough that a valve-pinned ring still drains below the 1695
-  gate within one frame (pinned trough ≈ cap − one chunk ≈ 895). Coupled to `PF_AUDIO_HEADROOM`
-  and `VR_SIZE` — re-check all three together.
-- Servo on a low-passed level, never the instantaneous one: the ring swings by a whole chunk
-  within one video frame, and servoing on that just modulates pitch at the frame rate.
-- Reset the servo (`g_fill_ema`, `g_step`, `g_fill_integ`) wherever the ring is flushed —
-  `video_audio_stop()`, which a seek goes through — or the empty ring reads as "starving" and the
-  trim slams.
+Prefetch headroom gates only audio payload work, rather than all AVI headers
+and video reads. A video chunk can therefore be prefetched with a full audio
+ring. An intervening audio chunk is retained as `pf_audio_left` until there is
+headroom; wait-time decoding consumes one 512-byte piece per step, while a
+forced fetch completes it. Audio remains in demux order.
 
 ## The clock, and the frame-size cliff
 
@@ -101,8 +86,41 @@ a failure marker (`slot = -1`) and never drawn. That is correct -- there is nowh
 to put it -- and on screen it is indistinguishable from SD or decode judder. The HUD
 now reads `sz=<last>/<max>k big=<count>`: the largest frame the clip contains and how
 many did not fit, both reset per clip. **Read `max=` before arguing about the slot
-size.** The encoder keeps peaks under the ceiling with VBV rate control, so `big=`
-should be 0; if it is not, the clip was made by something else.
+size.** The companion encoder uses VBV rate control to reduce peaks and explicit
+4:2:0 sampling to fit the JPEG workspace. VBV is not a hard per-frame guarantee;
+check `big=` for every clip regardless of where it was encoded.
+
+## Recovering from an expensive frame
+
+Dropping only the JPEG decode does not recover when SD reads dominate: the old
+loop first read every payload in full, then checked the presentation deadline.
+An overloaded clip could present its first two frames and spend the rest of
+playback reading frames it would immediately discard.
+
+`pf_fetch()` now passes the current presentation deadline to the forced
+`pf_step()` path. Completed queued frames are still delivered without a read.
+For an unbuffered frame whose deadline has passed, the payload (or the unread
+remainder of a partial prefetch) is discarded using `PF_DROPPED`; `avi_next()`
+seeks past it on the next call. Audio chunks are still fed in order. Start,
+seek, pause and speed changes re-anchor timing; an unanchored fetch has no
+discard deadline. Keep the signed tick comparison so timer wrap still works.
+
+`tests/test_video_play.c` checks unread payload bytes, slot release, audio
+ordering and timer wrap. `tests/test_video_timing.py` runs the existing rig
+natively with the real playback code: sustained read overload must recover,
+and six minutes of normal playback / 2% clock mismatch must keep presenting
+every frame. These are injected timing models, not STM32 speed measurements.
+
+An EMA of successful JPEG decode time skips frames unlikely to finish within
+one frame, enabled when decode cost exceeds half the frame budget. This avoids
+penalising cheap JPEGs on clips whose bottleneck is SD reading.
+
+The HUD now compares `rd`, `pf`, `jpg` with the frame budget, and distinguishes
+`late` deadline drops from `fail` rejected/oversized frames. `max` decode time
+resets per clip. A rising `late` count with high `rd` or `jpg` indicates missed
+deadlines; `big` identifies frames exceeding the slot capacity; `ring` exposes
+audio buffering. `aud`/`dmx` separate MP3 work from demux work, and `clk` shows
+whether presentation currently follows SAI or SysTick. None alone establishes the cause of a specific device report.
 
 ## Resume positions
 
@@ -127,22 +145,17 @@ not have -- the linker says `Error: MUSIC BSS overflow` and refuses. Same shape
 
 ## Verifying on device
 
-`g_show_debug` HUD: `rd=` (blocking read ms), `pf=` (read hidden in the pacing wait), `jpg=`
-(HW decode ms), `ring=` (servo error), and on the second line `sz=<last>/<max>k big=<count>`
-(frame sizes, and how many did not fit a slot).
+Enable the debug HUD and play a long clip. Compare `rd`, `pf`, `jpg`, `aud` and
+`dmx` with the frame budget. `clk=SAI` confirms audio timing is active; `clk=tick`
+is expected for silent clips and other speeds. `late` counts deadline recovery,
+`fail` decode/read failures, and `big` frames larger than the slot. The ring
+should remain bounded; reaching zero can indicate an underrun.
 
-**`ring=` is the regression test for the drift bug.** Play a clip for 5+ minutes: it must sit
-near 1200 the whole time. Climbing toward 4095 means the trim is not holding and the stutter is
-coming back; falling to 0 is an underrun. `rd=` staying near 0 (with the work showing up in
-`pf=`) means the prefetcher is alive — that is what the full ring used to destroy.
+`tests/test_video_timing.py` uses the real playback sources with injected SD,
+JPEG and DMA timing: normal playback, ±2% audio-clock error, sustained read
+overload and decode overload. It verifies presentation counts and elapsed
+media time. `tests/test_audio_dma_clock.c` exercises the resident audio driver's
+actual callback path. These checks do not measure STM32 peripheral speed.
 
-There is now a **QEMU Cortex-M7 rig** for the drift/latch specifically: `tools/m7_qemu_rig/rig_video.c`
-+ `run_video.sh` boot the *real* video source on an emulated M7 with two independent clocks (video
-SysTick vs an audio ISR at a settable ppm offset) and a synthetic AVI, printing a per-frame ledger
-(ring trough, gate reopen, `rd`/`pf`). It reproduces the slowdown deterministically —
-`run_video.sh <ppm> <frames>`: at ppm ≥ 10000 (=1%, the servo authority) the old code latches at a
-fixed *time* independent of clip length; the PI+valve code stays bounded and never latches. That is
-what proved the fix (RED→GREEN). What the rig does **not** model is absolute timing — the JPEG
-peripheral, the real SAI clock and SD read latency are injected models, not hardware — so device
-fps is still the device's call. Verify on hardware with a long clip; `ring=` must sit near 1200 the
-whole time.
+The existing Cortex-M7 rig can also run these sources under QEMU. Hardware
+verification must use an actual clip and record the HUD / device behaviour.

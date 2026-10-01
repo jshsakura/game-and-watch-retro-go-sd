@@ -70,6 +70,7 @@ static int16_t   g_prev;               // last sample of the PREVIOUS frame
 
 static uint8_t   g_in[VIN_MAX];        // leftover undecoded MP3 bytes
 static int       g_in_len;
+static bool      g_has_audio;
 
 static int ring_count(void) { return (g_head - g_tail) & VR_MASK; }
 
@@ -166,18 +167,24 @@ void video_audio_start(void)
     g_fill_ema = VR_TARGET;                                // start centred: no kick at t=0
     g_fill_integ = 0;                                      // integrator starts unwound
     g_in_len = 0;
+    g_has_audio = false;
+    g_video_audio_drops = 0;
     music_attach(g_ring, VR_SIZE, &g_head, &g_tail);        // ISR reads this ring
 }
 
 int video_audio_ring_count(void) { return ring_count(); }
 int video_audio_ring_free(void)  { return VR_SIZE - 1 - ring_count(); }
+bool video_audio_has_audio(void) { return g_has_audio; }
 
 void video_audio_stop(void)
 {
+    mp3dec_init(&g_mp3);                 // discard the old seek position's bit reservoir
     g_head = g_tail = 0;                 // drain -> silence (ISR reads an empty ring)
     g_frame_n = 0;
+    g_phase = 0;
     g_prev = 0;
     g_in_len = 0;
+    g_has_audio = false;
     g_fill_ema = VR_TARGET;              // a seek empties the ring; don't let the
     g_fill_integ = 0;                    // servo read that as "starving" and slam
     g_step = g_step_base;
@@ -234,6 +241,7 @@ void video_audio_feed(const uint8_t *mp3, int len)
         int samples = mp3dec_decode_frame(&g_mp3, g_in + pos, g_in_len - pos, g_pcm, &info);
         pos += info.frame_bytes;
         if (samples > 0) {
+            g_has_audio = true;
             if (info.channels >= 2)
                 for (int i = 0; i < samples; i++)
                     g_mono[i] = (int16_t)(((int)g_pcm[2 * i] + g_pcm[2 * i + 1]) / 2);

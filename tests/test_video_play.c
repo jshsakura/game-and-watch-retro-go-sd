@@ -66,6 +66,12 @@ void music_attach(int16_t *ring, int size, volatile uint16_t *head, volatile uin
 { (void)ring; (void)size; (void)head; (void)tail; }
 void music_audio_enable(int on) { (void)on; }
 void music_audio_set(int vol, int play) { (void)vol; (void)play; }
+static uint32_t s_audio_pos;
+static uint32_t s_audio_tick;
+void music_audio_setpos(uint32_t samples) { s_audio_pos = samples; }
+uint32_t music_audio_pos(void) { return s_audio_pos; }
+void music_audio_clock(uint32_t *samples, uint32_t *tick)
+{ *samples = s_audio_pos; *tick = s_audio_tick; }
 void audio_start_playing(uint16_t length) { (void)length; }
 void audio_stop_playing(void) {}
 
@@ -229,18 +235,19 @@ static void test_prefetch_then_fetch_no_blocking_read(void)
     /* Run the non-blocking prefetch step until it has nothing more to do
      * this "tick" -- exactly what the pacing-wait loop in video_play() does. */
     int guard = 0;
-    while (pf_step(&a, 1, false, &na, false) && guard++ < 100) {}
+    while (pf_step(&a, 1, false, &na, false, NULL) && guard++ < 100) {}
     CHECK(pf_n == PF_DEPTH, "prefetch queued PF_DEPTH frames ahead while idle");
     CHECK(na == 1, "the one interleaved audio chunk was consumed along the way");
 
     g_vdec_read_ms = 12345;      /* poison it; pf_fetch() must NOT touch this for a queued frame */
     pf_ent_t ent;
-    CHECK(pf_fetch(&a, &ent, 1, false, &na), "pf_fetch returns the queued frame 0");
+    uint32_t expired = s_fake_tick - 1;
+    CHECK(pf_fetch(&a, &ent, 1, false, &na, &expired), "pf_fetch returns the queued frame 0 even after its deadline");
     CHECK(g_vdec_read_ms == 0, "pf_fetch() resets read_ms and does NOT add a blocking read for a prefetched frame");
     CHECK(ent.slot >= 0, "frame 0 landed in a real slot");
     CHECK(video_slot(ent.slot)[0] == 0x50, "the slot holds frame 0's actual bytes (burst frame already in RAM)");
 
-    CHECK(pf_fetch(&a, &ent, 1, false, &na), "pf_fetch returns the queued frame 1");
+    CHECK(pf_fetch(&a, &ent, 1, false, &na, NULL), "pf_fetch returns the queued frame 1");
     CHECK(video_slot(ent.slot)[0] == 0x51, "frame 1's bytes are correct too");
 
     avi_close(&a);
@@ -263,7 +270,7 @@ static void test_rd_vs_pf_attribution(void)
     int na = 0;
 
     g_vdec_read_ms = 0; g_vdec_pf_ms = 0;
-    CHECK(pf_fetch(&a, &(pf_ent_t){0}, 1, false, &na), "pf_fetch with nothing queued forces a blocking read");
+    CHECK(pf_fetch(&a, &(pf_ent_t){0}, 1, false, &na, NULL), "pf_fetch with nothing queued forces a blocking read");
     CHECK(g_vdec_read_ms > 0, "a forced (consumer-starving) read is charged to rd= (g_vdec_read_ms)");
     CHECK(g_vdec_pf_ms == 0, "...and NOT to pf= (g_vdec_pf_ms)");
     avi_close(&a);
@@ -282,7 +289,7 @@ static void test_rd_vs_pf_attribution(void)
      * actually reads -- matching pf_step()'s own "continue the in-progress
      * frame" branch, which is what timestamps rd=/pf= in the first place. */
     int guard = 0;
-    while (g_vdec_pf_ms == 0 && guard++ < 5) pf_step(&a2, 1, false, &na, false);
+    while (g_vdec_pf_ms == 0 && guard++ < 5) pf_step(&a2, 1, false, &na, false, NULL);
     CHECK(g_vdec_pf_ms > 0, "a non-forced (pacing-wait) read is charged to pf= (g_vdec_pf_ms)");
     CHECK(g_vdec_read_ms == 0, "...and NOT to rd= (g_vdec_read_ms)");
 
@@ -300,7 +307,7 @@ static void test_rd_vs_pf_attribution(void)
  * -------------------------------------------------------------------------- */
 #define MP3_PATH "/tmp/mtest/video_audio_test.mp3"
 
-static void test_audio_ring_gate_closes_prefetch(void)
+static void test_audio_ring_gate_only_blocks_audio(void)
 {
     FILE *f = fopen(MP3_PATH, "rb");
     if (!f) {
@@ -338,20 +345,25 @@ static void test_audio_ring_gate_closes_prefetch(void)
     pf_reset();
     int na = 0;
 
+    CHECK(pf_step(&a, 1, false, &na, false, NULL), "full audio ring still permits the next video header");
+    CHECK(pf_step(&a, 1, false, &na, false, NULL), "full audio ring still permits video payload prefetch");
+    CHECK(pf_n == 1 && video_slot(pf_q[0].slot)[0] == 0x50, "video was prefetched with a full audio ring");
+    CHECK(pf_step(&a, 1, false, &na, false, NULL), "demux identifies and retains the blocked audio chunk");
+    CHECK(pf_audio_left == 6, "audio chunk is retained without losing its bytes");
     long movi_pos_before = a.movi_pos;
-    int  pf_n_before = pf_n;
+    int pf_n_before = pf_n;
     /* spd=1, not paused -- the exact condition pf_step() gates on. force
      * MUST be false: the gate explicitly does not apply to the
      * consumer-starving (force=true) path (see pf_step()'s own comment). */
-    bool progressed = pf_step(&a, 1, false, &na, false);
-    CHECK(!progressed, "pf_step() reports no progress while the audio ring is past the gate");
+    bool progressed = pf_step(&a, 1, false, &na, false, NULL);
+    CHECK(!progressed, "pf_step holds only the audio payload while the ring is past the gate");
     CHECK(a.movi_pos == movi_pos_before, "the demuxer's cursor did not move -- avi_next() was never called");
     CHECK(pf_n == pf_n_before, "no frame was queued either");
 
     avi_close(&a);
     unlink(path);
     free(mp3);
-    OK("pf_step()'s audio-ring gate holds the prefetcher still while the ring is past PF_AUDIO_HEADROOM");
+    OK("audio back-pressure preserves its chunk and does not block preceding video reads");
 }
 
 /* --------------------------------------------------------------------------
@@ -369,12 +381,93 @@ static void test_forced_step_ignores_the_gate(void)
 
     /* Ring state doesn't matter here -- don't even bother touching it, just
      * confirm force=true makes progress on a fresh demuxer regardless. */
-    bool progressed = pf_step(&a, 1, false, &na, true);
+    bool progressed = pf_step(&a, 1, false, &na, true, NULL);
     CHECK(progressed, "force=true makes progress even where the gate would otherwise hold");
 
     avi_close(&a);
     unlink(path);
     OK("force=true (consumer starving) bypasses the audio-ring gate, as documented");
+}
+
+/* A missed frame must cost a header/seek, not a full payload read. Checking
+ * chunk_read observes the real demuxer, so skipping only the JPEG decode fails
+ * this test. The next fetch must still consume interleaved audio and land on
+ * frame 1 with its original bytes. */
+static void test_late_fetch_skips_payload(bool partial, bool wrap)
+{
+    const char *path = build_clip();
+    avi_t a;
+    CHECK(avi_open(&a, path, NULL, 0), "open for late-frame recovery");
+    video_audio_start();
+    pf_reset();
+    int na = 0;
+    if (partial) {
+        CHECK(pf_step(&a, 1, false, &na, false, NULL), "start a partial prefetch");
+        CHECK(avi_read(&a, video_slot(pf_ip_slot), 8) == 8, "read the first eight bytes");
+        pf_ip_got = 8;
+    }
+
+    s_fake_tick = 100;
+    uint32_t deadline = wrap ? UINT32_MAX - 10 : 50;
+    pf_ent_t ent;
+    CHECK(pf_fetch(&a, &ent, 1, false, &na, &deadline), "late fetch still accounts for the frame");
+    CHECK(ent.slot == PF_DROPPED, "late frame is marked dropped, not decoded");
+    CHECK(a.chunk_read == (partial ? 8 : 0), "late video payload is not read any further");
+    CHECK(g_vdec_read_ms == 0, "discarding a late frame incurs no payload read time");
+    CHECK(pf_busy == 0 && pf_ip_want == -1, "discard frees the partial slot and read state");
+    CHECK(a.cur_frame == 1, "exactly one video frame was skipped");
+
+    deadline = s_fake_tick + 1000;
+    CHECK(pf_fetch(&a, &ent, 1, false, &na, &deadline), "fetch resumes with a future deadline");
+    CHECK(na == 1, "interleaved audio is still fed while catching up");
+    CHECK(ent.slot >= 0 && video_slot(ent.slot)[0] == 0x51, "next on-time video frame is intact");
+    CHECK(a.cur_frame == 2, "recovery preserves frame ordering");
+    if (ent.slot >= 0) pf_busy &= ~(1 << ent.slot);
+    avi_close(&a);
+    unlink(path);
+    free((void *)path);
+    OK(partial ? "late partial prefetch discards its unread remainder"
+               : wrap ? "late discard survives the millisecond-clock wrap"
+                      : "late fetch skips SD payload and preserves following audio/video");
+}
+
+static void test_audio_clock_timeline(void)
+{
+    play_clock_t c;
+    s_fake_tick = 1000; s_audio_pos = 0; s_audio_tick = 1000;
+    play_clock_reset(&c);
+    uint32_t start = play_clock_now(&c, true);
+    // Physical clock advanced 10% slower than wall time: the callback sample
+    // count, not elapsed SysTick, must determine the timeline.
+    s_fake_tick = 1100; s_audio_pos = 4320; s_audio_tick = 1100;
+    uint32_t now = play_clock_now(&c, true);
+    CHECK(now - start == 90, "video timeline follows audio samples despite clock mismatch");
+    s_fake_tick = 1110;
+    CHECK(play_clock_now(&c, true) - start == 100, "interpolation fills the time between DMA callbacks");
+    s_fake_tick = 1112; s_audio_pos = 4800; s_audio_tick = 1110;
+    CHECK(play_clock_now(&c, true) - start == 102, "interpolation uses IRQ time even after a delayed read");
+
+    // Stop DMA callbacks: fallback must make progress, not hang the wait.
+    s_fake_tick = 1200;
+    now = play_clock_now(&c, true);
+    CHECK(!c.audio, "stalled audio clock falls back to SysTick");
+    s_fake_tick = 1300;
+    CHECK(play_clock_now(&c, true) > now, "fallback keeps the movie progressing");
+
+    // Counter and wall tick wrap must not reverse the media clock.
+    s_fake_tick = UINT32_MAX - 30;
+    s_audio_tick = s_fake_tick; s_audio_pos = UINT32_MAX - 1000;
+    play_clock_reset(&c);
+    start = play_clock_now(&c, true);
+    s_fake_tick = 15; s_audio_tick = 15; s_audio_pos = 76;
+    CHECK(play_clock_now(&c, true) - start == 22, "audio counter and wall-clock wrap preserve elapsed time");
+    s_fake_tick = 100;
+    play_clock_reset(&c);
+    uint32_t start_tick = s_fake_tick;
+    start = play_clock_now(&c, false);
+    s_fake_tick = start_tick + 50;
+    CHECK(play_clock_now(&c, false) - start == 50, "silent/speed modes use wall time");
+    OK("audio-master timeline, interpolation, stall fallback and wrap");
 }
 
 int main(void)
@@ -385,8 +478,12 @@ int main(void)
     test_pf_reset();
     test_prefetch_then_fetch_no_blocking_read();
     test_rd_vs_pf_attribution();
-    test_audio_ring_gate_closes_prefetch();
+    test_audio_ring_gate_only_blocks_audio();
     test_forced_step_ignores_the_gate();
+    test_late_fetch_skips_payload(false, false);
+    test_late_fetch_skips_payload(true, false);
+    test_late_fetch_skips_payload(false, true);
+    test_audio_clock_timeline();
 
     video_decode_deinit();
 

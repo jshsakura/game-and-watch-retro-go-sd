@@ -291,6 +291,10 @@ fi
 [ -x /tmp/mtest/test_video_decode ] && { /tmp/mtest/test_video_decode || fail test_video_decode; }
 [ -x /tmp/mtest/test_video_audio ]  && { /tmp/mtest/test_video_audio  || fail test_video_audio; }
 [ -x /tmp/mtest/test_video_play ]   && { /tmp/mtest/test_video_play   || fail test_video_play; }
+python3 tests/test_video_timing.py || fail test_video_timing
+$CC -O2 -Wall -Wextra -std=gnu11 -Itests/video_stubs -ICore/Inc \
+    tests/test_audio_dma_clock.c -o /tmp/mtest/test_audio_dma_clock
+/tmp/mtest/test_audio_dma_clock || fail test_audio_dma_clock
 /tmp/mtest/test_clock_alarm || fail test_clock_alarm
 /tmp/mtest/test_clock_gif   || fail test_clock_gif
 /tmp/mtest/test_clock_more  || fail test_clock_more
