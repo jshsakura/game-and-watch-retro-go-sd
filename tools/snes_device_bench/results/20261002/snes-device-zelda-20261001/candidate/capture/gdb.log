@@ -1,0 +1,6 @@
+0x081219e6 in HAL_SPI_TransmitReceive (hspi=0x20001c28 <hspi1>, pTxData=pTxData@entry=0x2001f694 '\377' <repeats 200 times>..., pRxData=pRxData@entry=0x2001fcdc "", Size=<optimized out>, Timeout=<optimized out>, Timeout@entry=100) at Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_spi.c:1590
+1590	        if (__HAL_SPI_GET_FLAG(hspi, SPI_FLAG_RXP))
+Hardware assisted breakpoint 1 at 0x81059c0: file Core/Src/porting/common.c, line 158.
+
+Breakpoint 1, common_emu_bench_complete () at Core/Src/porting/common.c:158
+158	    __asm__ volatile("nop" ::: "memory");

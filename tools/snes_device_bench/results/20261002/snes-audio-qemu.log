@@ -1,0 +1,2 @@
+PASS 605 picker windows (wrap, silence, extremes, ramp, noise)
+QEMU instruction timer scalar=56914 packed=13538 (not hardware cycles)
