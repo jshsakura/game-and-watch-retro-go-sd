@@ -1,12 +1,11 @@
-# SNES — where this stands, and what to aim at next
+# SNES experiment history and current follow-up
 
-**Current result, 2026-10-02:** [SNES device results](SNES_DEVICE_RESULTS_2026-10-02.md)
-records the finished harness and hardware checks. SMW reached 60.13 drawn FPS
-in its saved scene at the supported 340 MHz setting; Zelda reached 57.24 FPS
-with every frame drawn in this window. Bulk wait folding is now ON by default.
-Audio behavior is unchanged. Older scene-specific Zelda 51.03 / 52.65 records
-and native-port corrections are retained in [SNES_CURRENT_STATUS.md](SNES_CURRENT_STATUS.md).
-The paragraphs below preserve experiment history and are superseded where noted.
+Current defaults and the released 60.132 FPS SMW saved-scene observation are in
+[SNES_CURRENT_STATUS.md](SNES_CURRENT_STATUS.md). The optimization series is complete;
+final-package device checks are in [#49](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/49).
+The historical audio decisions below do not enable a new audio candidate in the release.
+
+## Historical working record — August 2026
 
 Rewritten 2026-08-11 and updated twice the same day: once after the layer loop
 was taken apart, once after the whole frame was priced and the audio defect
@@ -14,7 +13,7 @@ diagnosed. Everything is measured on hardware unless it says otherwise: Zelda 3
 rain, resumed from a savestate so every arm starts in the same scene, 900
 deterministic frames for speed, 1800 for the audio counters.
 
-**One decision is open and needs a human ear** — see "The audible defect" below.
+**At the time of this historical record, one decision needed a human ear** — see "The audible defect" below. Current audio policy is unchanged.
 
 ## State
 

@@ -1,5 +1,9 @@
 # SNES Performance Optimization Campaign — Full Report
 
+> **Historical report:** runtime spin-skip and rc-SMW are not enabled in the current generic release.
+> Its 480 MHz clock annotations are not independently established here and must not be used as current device settings.
+> Current defaults and the measured 312/340 MHz windows are in [SNES_CURRENT_STATUS.md](SNES_CURRENT_STATUS.md).
+
 ## Summary
 
 This is a comprehensive record of the SNES 60fps optimization campaign on the

@@ -1,5 +1,9 @@
 # Sega 32X (picodrive) — closed for performance work
 
+> **Current release, 2026-10-02:** the later [32X series](32X_WORKLOG_20261001.md) is merged and published: After Burner 22.77 drawn FPS, Doom 30.423 FPS in their named device windows.
+> Blanket closure and old speed claims below describe historical builds and premises.
+> Use [release status](RELEASE_STATUS_2026-10-02.md) and [follow-up #49](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/49) for the remaining queue.
+
 > **2026-08-14: the verdict below stands on speed and is wrong about the
 > screen.** Everything in this file is *emulated* fps measured with the
 > profiler on, in a boot-anchored scene. Re-measured with the instruments the

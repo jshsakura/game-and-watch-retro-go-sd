@@ -1,5 +1,9 @@
 # 32X Performance Results — 측정 주도 최적화 결과
 
+> **Current release, 2026-10-02:** the later [32X series](32X_WORKLOG_20261001.md) is merged and published: After Burner 22.77 drawn FPS, Doom 30.423 FPS in their named device windows.
+> Blanket closure and old speed claims below describe historical builds and premises.
+> Use [release status](RELEASE_STATUS_2026-10-02.md) and [follow-up #49](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/49) for the remaining queue.
+
 > ## ⛔ 2026-07-27: 이 축은 닫혔습니다
 >
 > 32X는 **플레이 가능한 프레임레이트에 도달하지 못했고, 에뮬레이터 쪽에 남은

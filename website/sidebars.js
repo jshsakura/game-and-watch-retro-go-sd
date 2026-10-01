@@ -4,11 +4,12 @@
 const sidebars = {
   docsSidebar: [
     'intro',
+    'release-status',
     {
       type: 'category',
       label: 'Systems',
       collapsed: false,
-      items: ['systems', 'game-boy-advance', 'super-metroid'],
+      items: ['systems', 'game-boy-advance', 'super-nintendo', 'super-metroid', 'sega-32x', 'sega-cd'],
     },
     {
       type: 'category',

@@ -102,20 +102,22 @@ Latest hardware/release decision: [SNES_DEVICE_RESULTS_2026-10-02.md](SNES_DEVIC
 At 340 MHz, SMW delivered 60.13 drawn FPS (900/900 frames, zero measured dry samples);
 Zelda remained 57.24 FPS in this saved scene. Bulk folding is enabled; audio policy is unchanged.
 
-**2026-10-01 isolated bulk-wait candidate:**
+**Historical harness preparation, 2026-10-01 (completed on 2026-10-02):**
 [SNES_HARNESS_READY_2026-10-01.md](SNES_HARNESS_READY_2026-10-01.md) retains
 9-game / 12-workload M7 A/B evidence (26 completed runs, 30,000 frames).
 Default-gate instruction reductions: SMW 10.86%, Dragon's Magic 23.84%,
 Zelda 0.44%. Zelda's heavy-frame tail is unchanged. Full save-stream and
 per-frame video/audio gates pass; raw PCM is byte-identical. The FF5
 1200-frame timeout is excluded, and its separate 600-frame run has silent PCM.
-Bulk stays OFF by default; hardware FPS and firmware link remain unverified.
-The device is assigned to the user's 32X work. This is an open candidate,
-not a 60 FPS achievement or a reason to rerun the existing SWD-polling tools.
+At that preparation date, bulk was OFF and device/link checks were pending.
+Those checks subsequently completed: bulk is now ON and the integrated package
+passed local build/link gates. SMW reached 60.132 drawn FPS in the saved 340 MHz
+scene; Zelda remained below 60. Final-package installation is tracked in #49.
+Existing SWD-polling examples in historical logs are not the current execution procedure.
 
 Deepest-worked core in the tree, and the one most likely to be re-proposed to.
 Start with [SNES_CURRENT_STATUS.md](SNES_CURRENT_STATUS.md) (current defaults,
-scene-specific FPS and remaining review targets, reconciled 2026-10-01).
+scene-specific FPS and release follow-up, reconciled 2026-10-02).
 Detail lives in [SNES_NEXT_SESSION.md](SNES_NEXT_SESSION.md) (experiment history
 and subsequent corrections), [SNES_WAIT_LOOP_BAKE.md](SNES_WAIT_LOOP_BAKE.md) and
 [SNES_ROM_SURVEY.md](SNES_ROM_SURVEY.md) (the last shipped lever and how it was

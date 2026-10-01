@@ -39,6 +39,10 @@ Only savestates may differ between the two, so keep a backup.
 
 ## Install in one line
 
+The [2026-10-02 integrated release](./release-status.md) includes SNES ROM support,
+the latest 32X optimization series and the PicoDrive Sega CD port. The release
+status page separates measured scenes, completed checks and remaining verification.
+
 Flash the latest `retro-go_update.bin` from the
 [releases page](https://github.com/jshsakura/game-and-watch-retro-go-sd/releases) — it carries the
 matching SD payload (cores, homebrew overlays, BIOS logo) and installs it on first boot. The
@@ -63,5 +67,9 @@ Releases here are **test builds, not stable**.
 - [Supported systems](./systems.md) — everything this fork adds or enables
 - [Game Boy Advance](./game-boy-advance.md) — Pokémon at full speed
 - [Super Metroid](./super-metroid.md)
+- [Super Nintendo](./super-nintendo.md)
+- [Sega 32X](./sega-32x.md)
+- [Sega CD / Mega CD](./sega-cd.md)
+- [Release status](./release-status.md)
 - [Overclock & power](./overclock-and-power.md)
 - [Devlog](/devlog) — the development journal
