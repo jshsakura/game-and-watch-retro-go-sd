@@ -1611,6 +1611,9 @@ int main(void) {
     printf("[32x-qemu] done %d frames  avg host=%lu  min=%lu  max=%lu insn/frame  avg sh2=%llu\n",
            RIG_FRAMES, (unsigned long)(n > 0 ? tot / n : 0), (unsigned long)mn,
            (unsigned long)mx, (unsigned long long)(n > 0 ? sh2_tot / n : 0));
+    { extern unsigned int gnw_cmdidle_stat[3];
+      printf("[32x-cmdidle] structural=%u folds=%u iterations=%u\n",
+             gnw_cmdidle_stat[0], gnw_cmdidle_stat[1], gnw_cmdidle_stat[2]); }
     if (n_skip > 0 && n_drawn > 0)
         printf("[32x-qemu] skip3: drawn avg=%lu (n=%lu)  skipped avg=%lu (n=%lu)  skip/drawn=%lu%%\n",
                (unsigned long)(tot_drawn / n_drawn), (unsigned long)n_drawn,
