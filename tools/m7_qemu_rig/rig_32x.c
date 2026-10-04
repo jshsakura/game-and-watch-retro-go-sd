@@ -1213,6 +1213,9 @@ int main(void) {
 
     for (int f = 0; f < RIG_FRAMES; f++) {
         rig_frame_no = f;
+#ifdef PCM_SPAN_SHADOW_PROOF
+        if (f==8) { extern void pcm_span_synthetic_proof(void); pcm_span_synthetic_proof(); }
+#endif
 #ifdef RIG_STATE_LOAD
         /* Resume the device's scene. Everything before this frame is the cold
          * boot needed to bring the adapter up, so keep RIG_STATE_LOAD_AT at or
@@ -1833,6 +1836,10 @@ int main(void) {
      * reproduce the device failure". It had been reproducing it all along. A
      * checksum cannot read, so do not ask it whether the screen is good --
      * only whether it is still moving. */
+#if !defined(GNW_NO_PCM_SPAN) && !defined(GNW_SH2_NO_FASTLOOPS)
+    { extern unsigned pcm_span_stats[4];
+      printf("PCM_SPAN calls=%u forward=%u reverse=%u taken=%u\n",pcm_span_stats[0],pcm_span_stats[1],pcm_span_stats[2],pcm_span_stats[3]); }
+#endif
     int moving = (cks300 != cksend);
     int pass = nbend && moving && sh2_tot > 0;
     if (pass) {
