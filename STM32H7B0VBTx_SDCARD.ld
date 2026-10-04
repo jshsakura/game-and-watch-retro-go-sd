@@ -654,7 +654,7 @@ INCLUDE build/fceumm_mappers.ld
      * + PWM. Everything else — the 68K interpreter (161K, its const dispatch
      * tables ride .rodata_md32x), Z80, VDP, cart, sound gen — starts in XIP
      * flash: iterate with the device, not by faith. */
-    build/md32x/cpu__sh2__mame__sh2pico.o (.text.control_native .text.chain_entry .text.control_rd32)
+    build/md32x/cpu__sh2__mame__sh2pico.o (.text.control_native .text.chain_entry .text.control_rd32 .text.gnw_cmd_idle_fold)
     build/md32x/cpu__sh2__sh2.o          (.text .text*)
     build/md32x/cpu__gwenesis68k__g68k_bus.o (.text .text*)
      build/md32x/pico__32x__memory.o      (.text .text*)
