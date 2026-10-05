@@ -1,5 +1,9 @@
 # 32X 기기 측정 이력 (2026-07-26 ~ 07-27)
 
+> **Current release, 2026-10-02:** the later [32X series](32X_WORKLOG_20261001.md) is merged and published: After Burner 22.77 drawn FPS, Doom 30.423 FPS in their named device windows.
+> Blanket closure and old speed claims below describe historical builds and premises.
+> Use [release status](RELEASE_STATUS_2026-10-02.md) and [follow-up #49](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/49) for the remaining queue.
+
 이 문서는 **하루치 실험 전부의 기록**이다. 성공한 것보다 **실패한 것이 더 중요하다** —
 다음 사람이 같은 헛발을 안 차게 하는 게 목적이다.
 

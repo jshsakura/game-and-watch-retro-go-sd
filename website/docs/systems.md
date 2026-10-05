@@ -21,6 +21,9 @@ title: Supported systems
 | **game.com** | Tiger | 🧪 Lab | plays the library; 4-action pad mapped onto G&W buttons |
 | **Odyssey² / Videopac** | O2EM | 🧪 Lab (enabled) | raw-ROM path fixed; save/load/resume; multi-game cart select |
 | **Super Metroid** | snesrev/sm port | 🧪 Lab | native C reimplementation, 60 fps, savestates. [Details](./super-metroid.md) |
+| **Super Nintendo** | LakeSnes | 🧪 Lab | ROM launch, savestates and resume; SMW saved scene 60.132 drawn FPS at 340 MHz. Game/scene limits apply. [Details](./super-nintendo.md) |
+| **Sega 32X** | picodrive | 🧪 Lab | Below full speed; fixed windows: After Burner 22.77, Doom 30.423 drawn FPS at 340 MHz. [Details](./sega-32x.md) |
+| **Sega CD / Mega CD** | picodrive | 🧪 Lab | SD-card build; cue/bin, BRAM, savestates and resume. Final Fight CD intro about 60 drawn FPS. [Details](./sega-cd.md) |
 | Tamagotchi | TamaLib | Upstream (P2 🧪) | P1 upstream; P2 experimental in this fork |
 | NES, Game Boy / Color, Master System, Game Gear, Genesis, SG-1000 | fceumm / gnuboy / smsplusgx / gwenesis | Upstream | see upstream docs |
 | MSX 1/2/2+, Amstrad CPC6128 | blueMSX / caprice32 | Upstream | preview-quality; see upstream docs |
@@ -36,9 +39,15 @@ title: Supported systems
 | System | SD path | Files |
 | --- | --- | --- |
 | PC Engine CD | `/bios/pce/` | `syscard3.pce` (Super CD-ROM² System Card 3.0; `syscard3.bin` also accepted) |
+| Sega CD / Mega CD | `/bios/segacd/` | Matching 128 KiB regional BIOS: `bios_CD_U.bin`, `bios_CD_E.bin`, `bios_CD_J.bin` |
 | ZX Spectrum | `/bios/zxs/` | `48.rom` |
 | Commodore 64 | `/bios/c64/` | `kernal.bin`, `basic.bin`, `chargen.bin` |
 | Odyssey² / Videopac | `/bios/videopac/` | `o2rom.bin` |
 | game.com | `/bios/gamecom/` | `internal.bin`, `external.bin` |
 
-Atari Lynx, WonderSwan, Neo Geo Pocket, Virtual Boy and Game Boy Advance need no BIOS files.
+Atari Lynx, WonderSwan, Neo Geo Pocket, Virtual Boy, SNES and Sega 32X require no
+user-supplied BIOS. GBA includes a clean-room BIOS; an official 16 KiB
+`/bios/gba/gba_bios.bin` is optional for games that need it.
+
+The [README BIOS table](https://github.com/jshsakura/game-and-watch-retro-go-sd#bios-files--the-complete-list)
+includes upstream systems and exact filename requirements.

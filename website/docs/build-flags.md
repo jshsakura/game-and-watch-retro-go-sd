@@ -25,6 +25,13 @@ make release DOCKER=1 COVERFLOW=1 SHARED_HIBERNATE_SAVESTATE=1 DISABLE_SPLASH_SC
 | `GNW_TARGET` | mario | `mario` / `zelda` button mapping & default extflash size |
 | `INTFLASH_BANK` | 2 | which internal-flash bank to link into (dual-boot = 2) |
 | `SD_CARD` | 1 | SD-card variant (`0` = the all-in-flash build — different link script & feature set) |
+| `SNES_BAKE_BULK` | 1 | Validated complete-lap wait-loop folding in the generic SNES core |
+| `SNES_DEVICE_BENCH` | 0 | Completion-based SNES measurement hooks; excluded from the normal release |
+| `SNES_DEVICE_PROFILE` / `MD32X_DEVICE_PROFILE` | 0 / 0 | Device profiling; do not mix its numbers with release performance |
+
+The source-level `SNES_STRETCH_PACKED_PICK` audio experiment remains 0. These
+defaults do not select a different CPU menu setting: SNES's unselected setting
+remains 312 MHz, while the measured 60 FPS SMW scene used level 2 at 340 MHz.
 
 Run `make help` for the authoritative, current list. Note the lab apps (grid home, favorites,
 clock, media players) are always compiled in — they have no on/off flag.

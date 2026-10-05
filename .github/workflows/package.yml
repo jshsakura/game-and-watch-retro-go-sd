@@ -28,7 +28,7 @@ jobs:
       - name: Checkout repository with submodules
         uses: actions/checkout@v3
         with:
-          submodules: true
+          submodules: recursive  # picodrive nests emu2413; see release-package
 
       - name: Build test
         run: |
@@ -147,11 +147,13 @@ jobs:
 
     steps:
       # 1. Checkout the repository with submodules (full history + tags so the
-      #    release notes can diff this tag against the previous one)
+      #    release notes can diff this tag against the previous one).
+      #    `true` stops one level down; picodrive's emu2413 is a level below
+      #    that, and testbed-full-20261002-0140 failed on its missing header.
       - name: Checkout repository with submodules
         uses: actions/checkout@v3
         with:
-          submodules: true  # Clone submodules with --recurse-submodules
+          submodules: recursive
           fetch-depth: 0
           fetch-tags: true
 

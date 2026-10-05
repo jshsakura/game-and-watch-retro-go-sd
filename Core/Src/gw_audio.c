@@ -25,14 +25,27 @@ static int                m_mask;
 static volatile int16_t   music_vol;
 static volatile uint8_t   music_owns;        // 1 = Music app controls the DMA buffer
 static volatile uint8_t   music_silent;      // 1 = output silence (paused / stopped)
-static volatile uint32_t  music_played;
+// Keep the IRQ clock pair adjacent, saving resident flash address literals.
+static volatile struct { uint32_t samples, tick; } music_clock;
+#define music_played      music_clock.samples
+#define music_played_tick music_clock.tick
 
 void     music_attach(int16_t *ring, int size, volatile uint16_t *head, volatile uint16_t *tail)
 { m_ring = ring; m_mask = size - 1; m_head_p = head; m_tail_p = tail; }
 void     music_audio_enable(int on)          { music_owns = on ? 1 : 0; }
 void     music_audio_set(int vol, int play)  { music_vol = (int16_t)vol; music_silent = play ? 0 : 1; }
-void     music_audio_setpos(uint32_t p)      { music_played = p; }
+void     music_audio_setpos(uint32_t p)      { music_played_tick = HAL_GetTick(); music_played = p; }
 uint32_t music_audio_pos(void)               { return music_played; }
+void music_audio_clock(uint32_t *samples, uint32_t *tick)
+{
+    uint32_t before, after;
+    do {
+        before = music_played;
+        *tick = music_played_tick;
+        after = music_played;
+    } while (before != after); // an IRQ between the two loads: take its complete pair
+    *samples = after;
+}
 
 // --- Emulator ISR-fed playback (SNES stretcher) ----------------------------
 static emu_pull_fn_t g_emu_pull_fn = NULL;
@@ -66,6 +79,7 @@ static void music_fill(void)
         buf[i] = (int16_t)((s * vol) >> 8);
     }
     *m_tail_p = tail;
+    music_played_tick = HAL_GetTick();
     music_played += len;
 }
 

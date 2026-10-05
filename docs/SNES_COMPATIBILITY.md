@@ -1,5 +1,8 @@
 # SNES ROM compatibility — a ~2,500-title library sweep
 
+> **Historical survey:** this 2026-07-16 host/rig database is not the current device-support checklist.
+> SNES is now included in this fork's release; see [current defaults and limits](SNES_CURRENT_STATUS.md).
+
 *Generated from `tools/snes_db/snes_analysis.sqlite` on 2026-07-16. Source set
 `rpi5-2504`, 2,497 ROMs. All figures in this document come from SQL queries
 against that DB — see `tools/snes_db/load.py` for the schema. Numbers are

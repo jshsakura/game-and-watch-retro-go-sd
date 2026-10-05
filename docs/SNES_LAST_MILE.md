@@ -1,5 +1,9 @@
 # SNES Emulator Optimization — Last Mile Technical Research & Feasibility Study
 
+> **Historical research:** the baseline and hypotheses below describe earlier builds.
+> The latest SMW saved scene reached 60.132 drawn FPS at 340 MHz; Zelda remained 57.245 FPS with every frame rendered.
+> Use [current status](SNES_CURRENT_STATUS.md) and its linked evidence for release claims.
+
 ## 1. Executive Summary & Benchmark Baseline
 
 * **Target Device**: Nintendo Game & Watch (STM32H7B0, ARM Cortex-M7 @ 340 MHz, RAM_EMU 724 KiB with 94%–99.8% utilization, ITCM 64 KiB with ~400 bytes free).
@@ -158,7 +162,7 @@
 
 * **Are there any prior precedents for full 60 FPS SNES emulation on 200–400 MHz Cortex-M microcontrollers without external RAM?**
 * **Answer: 없다 (None)**.
-* **Technical Summary**: There is **no prior open-source precedent or published project** that achieves full 60 FPS SNES emulation (with cycle-accurate SPC700 audio and full PPU) on Cortex-M hardware without external RAM. The Game & Watch running this codebase at **53.8 FPS** is currently the highest-performing bare-metal Cortex-M SNES emulator in existence.
+* **Scope correction**: this research does not establish a ranking against other Cortex-M emulators. The scene measurements and their later corrections are the supported claims.
 
 ---
 

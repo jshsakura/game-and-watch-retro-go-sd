@@ -1,5 +1,9 @@
 # Sega 32X — where this stands, and what to aim at next
 
+> **Current release, 2026-10-02:** the later [32X series](32X_WORKLOG_20261001.md) is merged and published: After Burner 22.77 drawn FPS, Doom 30.423 FPS in their named device windows.
+> Blanket closure and old speed claims below describe historical builds and premises.
+> Use [release status](RELEASE_STATUS_2026-10-02.md) and [follow-up #49](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/49) for the remaining queue.
+
 > **Status, 2026-09-06: the performance campaign is closed and this file's title outlived
 > its queue.** Every axis is measured shut and the ledger is [32X_CLOSED.md](32X_CLOSED.md).
 > Read that first; this file is the working record of how it got there.

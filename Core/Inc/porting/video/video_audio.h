@@ -7,9 +7,11 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 
 void video_audio_start(void);                 // init + attach the ring to the ISR
 void video_audio_feed(const uint8_t *mp3, int len);   // decode + enqueue MP3 bytes
 int  video_audio_ring_count(void);            // queued 48 kHz samples (for back-pressure)
 int  video_audio_ring_free(void);             // free ring space (prefetch gate)
+bool video_audio_has_audio(void);             // a usable MP3 frame has been decoded
 void video_audio_stop(void);                  // silence the ring

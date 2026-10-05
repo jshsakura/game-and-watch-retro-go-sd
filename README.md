@@ -24,6 +24,10 @@ The integration branch is **`testbed`** (this repo's default) — release builds
 from it as `testbed-full-*` tags on the
 [releases page](https://github.com/jshsakura/game-and-watch-retro-go-sd/releases).
 
+The **2026-10-02 integrated release** includes SNES ROM support, the latest 32X
+optimizations and the PicoDrive Sega CD port. See the [release status and validation
+limits](docs/RELEASE_STATUS_2026-10-02.md) and [remaining issue index](docs/ISSUE_STATUS.md).
+
 > **This README documents only what this fork adds or changes.** Everything else — the
 > hardware mod, installation, controls, per-emulator notes for the stock systems, the FAQ
 > — lives in the [upstream README](https://github.com/sylverb/game-and-watch-retro-go-sd)
@@ -75,8 +79,9 @@ normal play rather than on a title screen.
 | **game.com** | Tiger | 🧪 Lab | plays the library; 4-action pad mapped onto G&W buttons |
 | **Odyssey² / Videopac** | O2EM | 🧪 Lab (enabled) | raw-ROM path fixed; save/load/resume; multi-game cart select |
 | **Super Metroid** | snesrev/sm port | 🧪 Lab | native C reimplementation, 60 fps, savestates. [Details](#super-metroid) |
-| **Super Nintendo** | LakeSnes | 🧪 Lab | `.sfc .smc .fig .swc`. Speed varies a lot by title; DSP-1 (Mario Kart) and Cx4 (Mega Man X2/X3) run through clean-room HLE. [Details](#super-nintendo) |
-| **Sega 32X** | picodrive | 🧪 Lab | ⚠️ **experimental and well under full speed.** Doom lands around 24 fps in gameplay. [Details](#sega-32x) |
+| **Super Nintendo** | LakeSnes | 🧪 Lab | ROM launch, savestates and resume included in this fork's release. SMW tested saved scene: 60.132 drawn FPS at 340 MHz; speed and compatibility vary. DSP-1 and Cx4 HLE. [Details](#super-nintendo) |
+| **Sega 32X** | picodrive | 🧪 Lab | Below full speed. Latest fixed device windows: After Burner 22.77, Doom 30.423 drawn FPS at 340 MHz. [Details](#sega-32x) |
+| **Sega CD / Mega CD** | picodrive | 🧪 Lab | SD-card builds; `.cue` + tracks, regional BIOS, BRAM, savestates and resume. Final Fight CD intro tested at about 60 drawn FPS. [Details](#sega-cd--mega-cd) |
 | Tamagotchi | TamaLib | Upstream (P2 🧪) | P1 upstream; P2 experimental in this fork |
 | NES, Game Boy / Color, Master System, Game Gear, Genesis, SG-1000 | fceumm / gnuboy / smsplusgx / gwenesis | Upstream | see upstream docs |
 | MSX 1/2/2+, Amstrad CPC6128 | blueMSX / caprice32 | Upstream | preview-quality; see upstream docs |
@@ -322,31 +327,21 @@ measurements. Real drain depends on backlight, core and workload.*
 The core is picodrive. It runs, it renders, and it is **not full speed**, so treat it as an
 experiment rather than a system you sit down to play.
 
-Doom is the title every shipped number comes from. It has two very different frame rates
-depending on what is on screen, and quoting one for the other is the single easiest way to be
-wrong about this core:
+The latest 2026-10-01 device series reached **22.77 drawn FPS in After Burner Complete**
+and **30.423 in Doom** at 340 MHz. After Burner used a fixed cold-boot/input sequence,
+warmup 540 and window 180; Doom used warmup 900 and window 600. The improvement came
+from SH-2 native paths, PWM interrupt HLE, 68K cache work and moving hot code out of XIP.
 
-| Scene | Frames per second | What it is | Why it differs |
-| --- | --- | --- | --- |
-| Attract demo | ~33 | What the console plays by itself at the title screen, and what a benchmark boots into by default | Fewer active enemies and a fixed camera path, so the SH-2 runs less code per frame |
-| Gameplay | ~24 | A controller in your hands | The number to judge the core by |
+These are named benchmark windows, not a whole-game frame-rate promise or a new manual
+playthrough of the final integrated package. Earlier Doom attract/gameplay figures describe
+different builds and windows. After Burner and Doom exercise different costs, so their
+results do not predict the rest of the library.
 
-Both are drawn-frame counts on real hardware at the shipped clocks (340 MHz core, 97 MHz
-external flash), not host-emulator estimates. Against the 60 fps the console runs at, the
-attract figure is about 55% of real time and gameplay about 40%.
-
-That is where a long optimisation campaign ended, and the remaining distance is arithmetic
-rather than effort. 60 fps needs a frame to fit in 5.2 M device cycles; one costs about
-24 M today. The master SH-2 alone is 68% of that, so zeroing every other chip in the machine
-removes 7.3 M against the 12.2 M that merely *doubling* the frame rate would need, and 60 fps
-is not the question. Going faster means abandoning interpretation for a recompiler, and a
-translation cache does not fit in the memory this MCU can execute from. The reasoning, with
-every measurement behind it, is in [docs/32X_CLOSED.md](docs/32X_CLOSED.md).
-
-What has **not** been measured is the 2D half of the library. Both titles ever benchmarked
-(Doom, and After Burner Complete at 8 fps) are SH-2 software 3D, the heaviest class there
-is. Titles that use the 32X mostly for colour and sprites (Knuckles' Chaotix, Mortal
-Kombat II, NBA Jam TE) were never timed, so "the core is too slow" is currently only proven for 3D.
+Screen hashes matched the comparison arms. The 32X device audio endpoint hash was read
+after audio stopped and contains zeros; audio correctness evidence is the rig's full-stream
+comparison. [Latest worklog](docs/32X_WORKLOG_20261001.md),
+[historical rejected paths](docs/32X_CLOSED.md), and
+[remaining final-package checks](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/49).
 
 Two options live under `PAUSE → Options`, both off by default:
 
@@ -394,6 +389,22 @@ rather than as trivia.
 
 The N-SPC sound HLE is present but **off by default and should stay off**: it breaks audio in
 38% of the titles that use that engine.
+
+### Sega CD / Mega CD
+
+PicoDrive Sega CD is included in the SD-card build. Put original `.cue` files and their
+referenced tracks under `/roms/segacd/`; CHD images require offline conversion to cue/bin.
+Supply the matching 128 KiB regional BIOS under `/bios/segacd/`: `bios_CD_U.bin`,
+`bios_CD_E.bin` or `bios_CD_J.bin`. The disc determines the region.
+
+The port provides BRAM, savestates, power-off resume, controls and scaling options.
+The tested Final Fight CD intro reached about 60 drawn FPS after ITCM placement at
+340 MHz. Other titles and scenes may differ. Full scaling, save/load, resume and menu
+colors were checked on the device; Off/Fit scaling still needs a visual check.
+
+The retired gwenesis-based implementation's RAM-limit record does not describe this
+PicoDrive port. Keep disc sector 0 intact: the earlier security-block patch corrupted
+Japanese boot code and was withdrawn. [Port worklog](docs/SEGACD_WORKLOG.md).
 
 ### PC Engine CD / TurboGrafx-CD
 

@@ -6,14 +6,14 @@
 2026-10-01. `perf/snes-60fps-span`에서 대기 루프 구간 계산 후보를 **9개 게임·12개 조건**으로
 검증했다. 완료 실행은 **26회·30,000 guest frames**다. 별도로 파판 5의 1200프레임 A 실행
 1회가 시간 제한에 걸렸고 실패 기록도 보존했다. 32X 작업 중인 실기는 사용하지 않았다.
-**60 drawn FPS 달성 여부는 아직 미측정**이다.
+**당시에는 60 drawn FPS 달성 여부가 미측정**이었다. 이후 실기 판정과 릴리즈는 상단 링크를 따른다.
 
 ## 비교 대상과 방법
 
 - 워크트리: `/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd-snes60`
 - 상위 기준: `dbc36be1`; 코어 후보: `e33537c06618e88786f518221787a1e033ba303b`
 - A: 기존 bake / `SNES_BAKE_BULK=0`; B: 같은 소스에 `SNES_BAKE_BULK=1`만 추가.
-- shipping 기본값은 계속 **0**. 구현 설명은 [첫 실험](SNES_60FPS_SPAN_EXPERIMENT.md)에 있다.
+- 당시 shipping 기본값은 **0**이었고, 2026-10-02 검증 후 **1**로 변경했다. 구현 설명은 [첫 실험](SNES_60FPS_SPAN_EXPERIMENT.md)에 있다.
 - 실제 기기와 같은 Thumb-2 65816 / SPC700, 기존 PPU 최적화, ASM ROMCACHE OFF.
 - Arm GNU 15.2.Rel1, `-O2`, Cortex-M7 hard-float; QEMU 10.0.13 / `mps2-an500` / icount.
 - 콜드 부팅, 워밍업 0, 입력 없음이 기본. 200프레임 창과 프레임별 명령 수를 보존했다.

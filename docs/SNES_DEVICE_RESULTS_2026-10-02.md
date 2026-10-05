@@ -1,5 +1,8 @@
 # SNES 실기 결과 및 릴리즈 반영 — 2026-10-02
 
+> **Released:** [integrated status](RELEASE_STATUS_2026-10-02.md), [completed SNES work #50](https://github.com/jshsakura/game-and-watch-retro-go-sd/issues/50).
+> Measurements below belong to the recorded A/B arms. Final-package installation remains in #49.
+
 최신 결론: **마리오 월드의 현재 slot 0 저장 장면에서 340MHz + 벌크 대기 루프가
 일반 adaptive 렌더로 60.132 drawn FPS를 달성했다.** 측정 900프레임 전부를 그렸고
 해당 구간의 음원 dry-sample counter 증가는 0이었다. 젤다는 같은 클록에서 전 프레임
