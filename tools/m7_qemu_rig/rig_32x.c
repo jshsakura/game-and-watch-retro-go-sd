@@ -1213,6 +1213,9 @@ int main(void) {
 
     for (int f = 0; f < RIG_FRAMES; f++) {
         rig_frame_no = f;
+#ifdef PCM_SPAN_SHADOW_PROOF
+        if (f==8) { extern void pcm_span_synthetic_proof(void); pcm_span_synthetic_proof(); }
+#endif
 #ifdef RIG_STATE_LOAD
         /* Resume the device's scene. Everything before this frame is the cold
          * boot needed to bring the adapter up, so keep RIG_STATE_LOAD_AT at or
@@ -1611,6 +1614,11 @@ int main(void) {
     printf("[32x-qemu] done %d frames  avg host=%lu  min=%lu  max=%lu insn/frame  avg sh2=%llu\n",
            RIG_FRAMES, (unsigned long)(n > 0 ? tot / n : 0), (unsigned long)mn,
            (unsigned long)mx, (unsigned long long)(n > 0 ? sh2_tot / n : 0));
+    { extern unsigned int gnw_copyw_stat[2];
+      printf("[32x-copyw] folds=%u words=%u\n", gnw_copyw_stat[0], gnw_copyw_stat[1]); }
+    { extern unsigned int gnw_cmdidle_stat[3];
+      printf("[32x-cmdidle] structural=%u folds=%u iterations=%u\n",
+             gnw_cmdidle_stat[0], gnw_cmdidle_stat[1], gnw_cmdidle_stat[2]); }
     if (n_skip > 0 && n_drawn > 0)
         printf("[32x-qemu] skip3: drawn avg=%lu (n=%lu)  skipped avg=%lu (n=%lu)  skip/drawn=%lu%%\n",
                (unsigned long)(tot_drawn / n_drawn), (unsigned long)n_drawn,
@@ -1828,6 +1836,10 @@ int main(void) {
      * reproduce the device failure". It had been reproducing it all along. A
      * checksum cannot read, so do not ask it whether the screen is good --
      * only whether it is still moving. */
+#if !defined(GNW_NO_PCM_SPAN) && !defined(GNW_SH2_NO_FASTLOOPS)
+    { extern unsigned pcm_span_stats[4];
+      printf("PCM_SPAN calls=%u forward=%u reverse=%u taken=%u\n",pcm_span_stats[0],pcm_span_stats[1],pcm_span_stats[2],pcm_span_stats[3]); }
+#endif
     int moving = (cks300 != cksend);
     int pass = nbend && moving && sh2_tot > 0;
     if (pass) {
