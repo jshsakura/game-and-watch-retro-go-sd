@@ -390,7 +390,8 @@ echo "=== gnw_line_pp: no unaligned 64-bit load on Cortex-M7 (Kolibri UsageFault
 # 4-byte aligned. A host build emits two plain loads and cannot see it, so this runs the
 # real draw.c on QEMU M7 with the device's compiler. Skipped (and says so) without
 # qemu or an arm-none-eabi-gcc / builder image; a hang or fault is a failure.
-tools/m7_qemu_rig/run_pp_align.sh; pp_rc=$?
+pp_rc=0
+tools/m7_qemu_rig/run_pp_align.sh || pp_rc=$?
 if [ "$pp_rc" -eq 77 ]; then echo "SKIPPED: pp_align needs qemu-system-arm and arm-none-eabi-gcc or the builder image"
 elif [ "$pp_rc" -ne 0 ]; then fail test_pp_align; fi
 
