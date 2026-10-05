@@ -39,7 +39,8 @@ jobs:
     # Host unit tests (tests/run.sh): clock alarm/cfg/editor state machines,
     # favorites file ops, rg_storage compiled BOTH ways (FatFs + FrogFS stubs),
     # GIF decode, firmware-update tar extractor, merge-hygiene logo guard.
-    # Cheap, no toolchain: plain gcc.
+    # Most checks use plain gcc; the 32X alignment regression runs real draw.c
+    # on Cortex-M7 QEMU with an ARM cross compiler.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -62,6 +63,11 @@ jobs:
         # how a gate becomes decoration. Same reasoning as the two above: named
         # explicitly, --depth 1, not "all submodules".
         run: git submodule update --init --depth 1 external/sm
+      - name: Fetch the picodrive submodule
+        # The Kolibri alignment gate compiles the real 32X draw.c.
+        run: git submodule update --init --depth 1 external/picodrive
+      - name: Install alignment and audio test tools
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi qemu-system-arm ffmpeg
       - name: Install Pillow (GIF fixture generator)
         run: pip3 install --quiet Pillow
       - name: Run host test suite
