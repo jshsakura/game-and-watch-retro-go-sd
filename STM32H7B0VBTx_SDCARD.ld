@@ -869,7 +869,7 @@ INCLUDE build/fceumm_mappers.ld
      malloc (gw_heap_reserve_top) and zeroes it before anything runs. Nothing
      else may claim this range: the launcher's heap simply ends below it for
      the rest of the boot. */
-  __MD32X_DTCM_RESERVE__ = 23K;
+  __MD32X_DTCM_RESERVE__ = 23K + 64;  /* +64: the picodrive loop patch and the PCM/Chaotix folds grow the 32X DTCM data to 23,600 B */
   .overlay_md32x_dtcm_bss (((ORIGIN(DTCMRAM) + LENGTH(DTCMRAM) - __REMOTE_INPUT_RESERVE__
                              - _Min_Stack_Size - _Stack_Redzone_Size) & ~15)
                            - __MD32X_DTCM_RESERVE__ - 256) (NOLOAD) : {  /* -256: the redzone MPU region rounds its base down to a 256 B boundary */
@@ -2090,7 +2090,13 @@ INCLUDE build/fceumm_mappers.ld
    * colours and savestate thumbnails were black. The implementation went to
    * the Sega CD overlay (segacd_lcd_clut.c); the resident part is the ops
    * dispatch, the palette dim branch and the RGB565 thumbnail branch,
-   * ~250 B, leaving 264 B. */
+   * ~250 B, leaving 264 B.
+   *
+   * Lowered 256 -> 224 on 2026-10-11: the canonical release links with 232 B.
+   * The shortfall is not from the picodrive loop patch (the link is 232 B with
+   * and without it, the 32X code is an overlay) and the 32X DTCM/Z80 move in
+   * #56 only touched NOLOAD sections, so it predates #56. Spending it is a
+   * deliberate choice: the next addition to internal flash must free room. */
   __intflash_headroom__ = ORIGIN(FLASH) + LENGTH(FLASH) - __flash_end__;
 
   /* Uninitialized data section */
@@ -2166,4 +2172,4 @@ INCLUDE build/fceumm_mappers.ld
  * script-level statement, not something that can sit between output section
  * descriptions -- see the comment at __intflash_headroom__ above for why the
  * budget is named at all. */
-ASSERT(__intflash_headroom__ >= 256, "Error: internal flash headroom below 256 B -- put diagnostics/probes in RCPROBE_CODE (cf. Core/Src/rc_probe.c), or lower this floor deliberately")
+ASSERT(__intflash_headroom__ >= 224, "Error: internal flash headroom below 256 B -- put diagnostics/probes in RCPROBE_CODE (cf. Core/Src/rc_probe.c), or lower this floor deliberately")
