@@ -58,7 +58,7 @@ index b706580b..278e415b 100644
  		RET(16)
  
 diff --git a/cpu/sh2/mame/sh2.c b/cpu/sh2/mame/sh2.c
-index d3dc164a..e310e050 100644
+index 727e1a9e..bae91e98 100644
 --- a/cpu/sh2/mame/sh2.c
 +++ b/cpu/sh2/mame/sh2.c
 @@ -111,6 +111,29 @@
@@ -329,7 +329,7 @@ index d3dc164a..e310e050 100644
  }
  
  INLINE void op0001(sh2_state *sh2, UINT16 opcode)
-@@ -2038,53 +2084,53 @@ INLINE void op0001(sh2_state *sh2, UINT16 opcode)
+@@ -2038,60 +2084,60 @@ INLINE void op0001(sh2_state *sh2, UINT16 opcode)
  	rlog(LRNM);
  }
  
@@ -352,7 +352,37 @@ index d3dc164a..e310e050 100644
 -	case 12: CMPSTR(sh2, Rm, Rn);	rlog(LRNM);			break;
 -	case 13: XTRCT(sh2, Rm, Rn); 	rlog(LRNM);			break;
 -	case 14: MULU(sh2, Rm, Rn);	rlog(LRNM); rlog1(SHR_MACL);	break;
--	case 15: MULS(sh2, Rm, Rn);	rlog(LRNM); rlog1(SHR_MACL);	break;
+-	case 15:
++INLINE int op0010(sh2_state *sh2, UINT32 opcode)
++{
++	GNW_SW16_BEGIN(o2, opcode & 15)
++	GNW_C16(o2, 0): MOVBS(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 1): MOVWS(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 2): MOVLS(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 3): ILLEGAL(sh2); rlog(0); GNW_B16(o2);
++	GNW_C16(o2, 4): MOVBM(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 5): MOVWM(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 6): GNW_H_0010_06(opcode); MOVLM(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 7): DIV0S(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 8): TST(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 9): AND(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 10): XOR(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 11): OR(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 12): CMPSTR(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 13): XTRCT(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o2);
++	GNW_C16(o2, 14): MULU(sh2, Rm, Rn); rlog(LRNM); rlog1(SHR_MACL); GNW_B16(o2);
++	GNW_C16(o2, 15): GNW_H_0010_0F(opcode);
+ #ifdef GNW_PCM_SPAN_HANDLER
+-        if (opcode==0x230f && sh2->pc==sh2->ppc+2 && pcm_span_native(sh2,sh2->ppc)) {
+-            sh2->icount++;
+-            break;
+-        }
++		if (opcode == 0x230f && sh2->pc == sh2->ppc + 2 && pcm_span_native(sh2, sh2->ppc)) {
++			sh2->icount++;	/* the native span charged its own cycles; gnw_tail takes one back */
++			GNW_B16(o2);
++		}
+ #endif
+-        MULS(sh2, Rm, Rn);	rlog(LRNM); rlog1(SHR_MACL);	break;
 -	}
 -}
 -
@@ -380,25 +410,7 @@ index d3dc164a..e310e050 100644
 -}
 -
 -INLINE void op0100(sh2_state *sh2, UINT16 opcode)
-+INLINE int op0010(sh2_state *sh2, UINT32 opcode)
-+{
-+	GNW_SW16_BEGIN(o2, opcode & 15)
-+	GNW_C16(o2, 0): MOVBS(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 1): MOVWS(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 2): MOVLS(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 3): ILLEGAL(sh2);		rlog(0);			GNW_B16(o2);
-+	GNW_C16(o2, 4): MOVBM(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 5): MOVWM(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 6): GNW_H_0010_06(opcode); MOVLM(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 7): DIV0S(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 8): TST(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 9): AND(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 10): XOR(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 11): OR(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 12): CMPSTR(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 13): XTRCT(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
-+	GNW_C16(o2, 14): MULU(sh2, Rm, Rn);	rlog(LRNM); rlog1(SHR_MACL);	GNW_B16(o2);
-+	GNW_C16(o2, 15): GNW_H_0010_0F(opcode); MULS(sh2, Rm, Rn);	rlog(LRNM); rlog1(SHR_MACL);	GNW_B16(o2);
++		MULS(sh2, Rm, Rn); rlog(LRNM); rlog1(SHR_MACL); GNW_B16(o2);
 +	GNW_SW16_END(o2)
 +	return 0;
 +}
@@ -406,31 +418,31 @@ index d3dc164a..e310e050 100644
 +INLINE int op0011(sh2_state *sh2, UINT32 opcode)
 +{
 +	GNW_SW16_BEGIN(o3, opcode & 15)
-+	GNW_C16(o3, 0): CMPEQ(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 1): ILLEGAL(sh2);		rlog(0);			GNW_B16(o3);
-+	GNW_C16(o3, 2): CMPHS(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 3): CMPGE(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 4): DIV1(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 5): DMULU(sh2, Rm, Rn); 	rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); GNW_B16(o3);
-+	GNW_C16(o3, 6): CMPHI(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 7): CMPGT(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 8): GNW_H_0011_08(opcode); SUB(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 9): ILLEGAL(sh2);		rlog(0);			GNW_B16(o3);
-+	GNW_C16(o3, 10): SUBC(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 11): SUBV(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 12): ADD(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 13): DMULS(sh2, Rm, Rn); 	rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); GNW_B16(o3);
-+	GNW_C16(o3, 14): ADDC(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
-+	GNW_C16(o3, 15): ADDV(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 0): CMPEQ(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 1): ILLEGAL(sh2); rlog(0); GNW_B16(o3);
++	GNW_C16(o3, 2): CMPHS(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 3): CMPGE(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 4): DIV1(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 5): DMULU(sh2, Rm, Rn); rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); GNW_B16(o3);
++	GNW_C16(o3, 6): CMPHI(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 7): CMPGT(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 8): GNW_H_0011_08(opcode); SUB(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 9): ILLEGAL(sh2); rlog(0); GNW_B16(o3);
++	GNW_C16(o3, 10): SUBC(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 11): SUBV(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 12): ADD(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 13): DMULS(sh2, Rm, Rn); rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); GNW_B16(o3);
++	GNW_C16(o3, 14): ADDC(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
++	GNW_C16(o3, 15): ADDV(sh2, Rm, Rn); rlog(LRNM); GNW_B16(o3);
 +	GNW_SW16_END(o3)
 +	return 0;
 +}
 +
-+INLINE int op0100(sh2_state *sh2, UINT16 opcode)
++INLINE int op0100(sh2_state *sh2, UINT32 opcode)
  {
  	switch (opcode & 0x3F)
  	{
-@@ -2099,7 +2145,7 @@ INLINE void op0100(sh2_state *sh2, UINT16 opcode)
+@@ -2106,7 +2152,7 @@ INLINE void op0100(sh2_state *sh2, UINT16 opcode)
  	case 0x08: SHLL2(sh2, Rn);	rlog(LRN);			break;
  	case 0x09: SHLR2(sh2, Rn);	rlog(LRN);			break;
  	case 0x0a: LDSMACH(sh2, Rn); 	rlog(LRN); rlog1(SHR_MACH);	break;
@@ -439,7 +451,7 @@ index d3dc164a..e310e050 100644
  	case 0x0c: ILLEGAL(sh2);	rlog(0);			break;
  	case 0x0d: ILLEGAL(sh2);	rlog(0);			break;
  	case 0x0e: LDCSR(sh2, Rn);	rlog(LRN);			break;
-@@ -2133,7 +2179,7 @@ INLINE void op0100(sh2_state *sh2, UINT16 opcode)
+@@ -2140,7 +2186,7 @@ INLINE void op0100(sh2_state *sh2, UINT16 opcode)
  	case 0x28: SHLL16(sh2, Rn);	rlog(LRN);			break;
  	case 0x29: SHLR16(sh2, Rn);	rlog(LRN);			break;
  	case 0x2a: LDSPR(sh2, Rn);	rlog(LRN); rlog1(SHR_PR);	break;
@@ -448,7 +460,7 @@ index d3dc164a..e310e050 100644
  	case 0x2c: ILLEGAL(sh2);	rlog(0);			break;
  	case 0x2d: ILLEGAL(sh2);	rlog(0);			break;
  	case 0x2e: LDCVBR(sh2, Rn);	rlog(LRN); rlog1(SHR_VBR);	break;
-@@ -2156,36 +2202,39 @@ INLINE void op0100(sh2_state *sh2, UINT16 opcode)
+@@ -2163,36 +2209,39 @@ INLINE void op0100(sh2_state *sh2, UINT16 opcode)
  	case 0x3e: ILLEGAL(sh2);	rlog(0);			break;
  	case 0x3f: MAC_W(sh2, Rm, Rn);	rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); break;
  	}
@@ -512,7 +524,7 @@ index d3dc164a..e310e050 100644
  }
  
  INLINE void op0111(sh2_state *sh2, UINT16 opcode)
-@@ -2194,27 +2243,27 @@ INLINE void op0111(sh2_state *sh2, UINT16 opcode)
+@@ -2201,27 +2250,27 @@ INLINE void op0111(sh2_state *sh2, UINT16 opcode)
  	rlog(LRN);
  }
  
@@ -560,7 +572,7 @@ index d3dc164a..e310e050 100644
  }
  
  
-@@ -2237,34 +2286,36 @@ INLINE void op1011(sh2_state *sh2, UINT16 opcode)
+@@ -2244,34 +2293,36 @@ INLINE void op1011(sh2_state *sh2, UINT16 opcode)
  	rlog1(SHR_PR);
  }
  
@@ -620,7 +632,7 @@ index d3dc164a..e310e050 100644
  
  INLINE void op1110(sh2_state *sh2, UINT16 opcode)
 diff --git a/cpu/sh2/mame/sh2pico.c b/cpu/sh2/mame/sh2pico.c
-index 87b32a90..9f04afb0 100644
+index 22b8391d..3a8fa8d2 100644
 --- a/cpu/sh2/mame/sh2pico.c
 +++ b/cpu/sh2/mame/sh2pico.c
 @@ -116,12 +116,12 @@ MAKE_WRITEFUNC(WL, p32x_sh2_write32)
@@ -638,10 +650,11 @@ index 87b32a90..9f04afb0 100644
    : h_ == gnw_fw_rom.region                                                  \
      ? CPU_BE2(*(UINT32 *)(gnw_fw_rom.base + (a_ & gnw_fw_rom.mask)))         \
      : p32x_sh2_read32(a_, sh2); })
-@@ -336,13 +336,113 @@ static unsigned int op_refs[0x10000];
- # define rlog2(...)
+@@ -341,13 +341,114 @@ static unsigned int op_refs[0x10000];
+ #define GNW_PCM_SPAN_HANDLER 1
+ static unsigned __attribute__((noinline,section(".gnw_xip_cold"))) pcm_span_native(SH2 *,unsigned);
  #endif
- 
++
 +/* ---- interpreter dispatch and hook macros (used by sh2.c's op functions) ---- */
 +/* A delay-slot instruction runs with this bit set above its 16 bits. Every
 + * native hook compares the whole opcode against a constant, so none can match
@@ -752,7 +765,7 @@ index 87b32a90..9f04afb0 100644
  #else
  #define RIG_SH2_TICK() ((void)0)
  #endif
-@@ -601,12 +701,33 @@ void gnw_sh2_pcwall_arm(unsigned int *block)
+@@ -606,12 +707,33 @@ void gnw_sh2_pcwall_arm(unsigned int *block)
   * IF YOU ADD A RUNTIME WRITER OF gnw_fw_rom, this breaks silently: a slice in
   * flight keeps fetching through the old base. End the run there, or turn the
   * hoist off. */
@@ -791,7 +804,7 @@ index 87b32a90..9f04afb0 100644
  
  #if defined(GNW_FW_NO_HOIST) || defined(GNW_FETCH_OLD_WINDOW) \
      || defined(MD32X_DEVICE_PROFILE)
-@@ -617,9 +738,9 @@ void gnw_sh2_pcwall_arm(unsigned int *block)
+@@ -622,9 +744,9 @@ void gnw_sh2_pcwall_arm(unsigned int *block)
  #define GNW_FETCH_SD_H(sh2, addr)    GNW_FETCH_SD(sh2, addr)
  #else
  #define GNW_FW_HOIST_DECL()                                                  \
@@ -804,7 +817,7 @@ index 87b32a90..9f04afb0 100644
  #define GNW_FETCH_H(sh2, addr, dst)                                          \
  	((dst) = GNW_FETCH_SD_W(sh2, addr, gnw_fw_r_, gnw_fw_m_, gnw_fw_b_))
  #define GNW_FETCH_SD_H(sh2, addr)                                            \
-@@ -903,7 +1024,7 @@ static unsigned int gnw_dl_reject[2][GNW_DL_REJ_SLOTS];
+@@ -1138,7 +1260,7 @@ static int __attribute__((noinline, section(".gnw_xip_cold"))) gnw_bcopy_fold(SH
  /* Fast-forward hook, entered only for a directly-fetched (non-delay-slot)
   * BF with negative displacement or BRA-to-self, with no irq test pending.
   * At entry: ppc = insn address, pc = ppc + 2, delay = 0, icount >= 1. */
@@ -813,7 +826,7 @@ index 87b32a90..9f04afb0 100644
  {
  	if (opcode == 0xaffe)	/* BRA $ */
  	{
-@@ -1484,13 +1605,13 @@ static void gnw_sh2_fastloop(SH2 *sh2, UINT32 opcode)
+@@ -1730,13 +1852,13 @@ static void gnw_sh2_fastloop(SH2 *sh2, UINT32 opcode)
   * restore the old shape for an A/B. */
  #if defined(GNW_SH2_FASTLOOPS) && !defined(GNW_FASTLOOP_GATE_IN_LOOP)
  #define GNW_FASTLOOP_GATE_8(sh2, opcode, direct) do {                        \
@@ -829,7 +842,7 @@ index 87b32a90..9f04afb0 100644
  	    && *GNW_DL_REJ_SLOT(sh2) != (sh2)->ppc                           \
  	    && !(sh2)->test_irq && gnw_sh2_fastloops)                        \
  		gnw_sh2_fastloop((sh2), (opcode));                           \
-@@ -1980,6 +2101,24 @@ NC_WRAP(7,pixel_native)
+@@ -2226,6 +2348,24 @@ NC_WRAP(7,pixel_native)
  NC_WRAP(8,lookup_native)
  NC_WRAP(9,pcm_tail_native)
  NC_WRAP(10,irq_native)
@@ -854,7 +867,7 @@ index 87b32a90..9f04afb0 100644
  static unsigned chain_native_impl(SH2 *s,unsigned pc){
    if(chain_proof_active)return 0;
    { unsigned m=mix_native(s,pc); if(m)return m; }
-@@ -2740,7 +2879,7 @@ static unsigned __attribute__((noinline)) irq_native_impl(SH2 *s,unsigned pc){
+@@ -2990,7 +3130,7 @@ static unsigned __attribute__((noinline)) irq_native_impl(SH2 *s,unsigned pc){
    AT(h+14);    s->r[0]=s->r[8];                                                       TAIL();
    AT(h+16);    s->ea=s->gbr+13*4; WL(s,s->ea,s->r[0]);                                TAIL();
    AT(h+18);    s->ea=s->pc+(b[9]&0xff)*2+2; s->r[0]=(UINT32)(INT32)(INT16)RW(s,s->ea); TAIL();
@@ -863,7 +876,7 @@ index 87b32a90..9f04afb0 100644
    AT(h+22);    s->ea=((s->pc+2)&~3u)+(b[11]&0xff)*4; s->r[1]=RL(s,s->ea);             TAIL();
    AT(h+24);    s->ea=s->r[1]+7; s->r[0]=(UINT32)(INT32)(INT16)(INT8)RB(s,s->ea);       TAIL();
    AT(h+26);    s->r[0]^=2;                                                            TAIL();
-@@ -2753,7 +2892,7 @@ static unsigned __attribute__((noinline)) irq_native_impl(SH2 *s,unsigned pc){
+@@ -3003,7 +3143,7 @@ static unsigned __attribute__((noinline)) irq_native_impl(SH2 *s,unsigned pc){
    AT(h+40);    s->r[0]=RL(s,s->r[15]); s->r[15]+=4;                                   TAIL();
    AT(h+42);    s->ea=s->r[15]; s->delay=s->pc; s->pc=RL(s,s->ea); s->r[15]+=4;
                 s->ea=s->r[15]; s->sr=RL(s,s->ea)&FLAGS; s->t_flag=s->sr&T; s->r[15]+=4;
@@ -872,7 +885,7 @@ index 87b32a90..9f04afb0 100644
    SLOT();                                                                             TAIL();
    irq_full++;
  out:
-@@ -2862,12 +3001,13 @@ void native_cost_report(void){ {extern unsigned long long rig_runsh2[2],rig_runs
+@@ -3112,12 +3252,13 @@ void native_cost_report(void){ {extern unsigned long long rig_runsh2[2],rig_runs
  #ifdef RIG_NATIVE_COST
  unsigned long long rig_slices[2],rig_slice_ticks[2],rig_slice_cycles[2];
  #endif
@@ -889,7 +902,7 @@ index 87b32a90..9f04afb0 100644
  #ifdef RIG_SH2_PC_HIST
  	int rig_is_delay = 0;
  #endif
-@@ -2882,7 +3022,27 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
+@@ -3132,7 +3273,27 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
  	GNW_PCWALL_ENTER(sh2);
  	GNW_SLICE_TICK(sh2);
  
@@ -918,7 +931,7 @@ index 87b32a90..9f04afb0 100644
  	{
  		RIG_OPCOST_T0(sh2);
  #ifdef RIG_MIX_DIAG
-@@ -2890,52 +3050,17 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
+@@ -3140,52 +3301,17 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
  		if (sh2->is_slave) { extern unsigned long long mix_slave_bucket[8],mix_budget_hist[8],mix_master_bucket[8],mix_pcbin[2][2048]; unsigned q=sh2->pc&0x3ffff; mix_slave_bucket[q<0x3c0&&q>=0x380?0:q<0x480&&q>=0x3c0?1:q>=0x7f4&&q<0x860?2:q<0x2000?3:4]++; }
  		else { extern unsigned long long mix_master_bucket[8]; unsigned q=sh2->pc&0x3ffff; mix_master_bucket[q>=0x67c0&&q<0x6868?0:q>=0x6868&&q<0x6960?1:q>=0x6960&&q<0x6a4c?2:q>=0x6a4c&&q<0x6b00?3:q>=0x6b00&&q<0xc000?4:q<0x2000?5:q<0x67c0?6:7]++; }
  #endif
@@ -972,7 +985,7 @@ index 87b32a90..9f04afb0 100644
  		RIG_SH2_TICK();
  		RIG_OPHIST_TICK(sh2, opcode);
  		GNW_SH2_INSN_TICK(sh2);
-@@ -2987,7 +3112,7 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
+@@ -3237,7 +3363,7 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
  		 * ran on every dispatched instruction ahead of the switch. */
  		if (((opcode >> 12) == 8 || (opcode >> 12) == 0xa)
  		    && (((opcode & 0xf980) == 0x8980) || opcode == 0xaffe)
@@ -981,7 +994,7 @@ index 87b32a90..9f04afb0 100644
  		    && !sh2->test_irq && gnw_sh2_fastloops)
  			gnw_sh2_fastloop(sh2, opcode);
  #endif
-@@ -3029,95 +3154,109 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
+@@ -3279,95 +3405,109 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
  		case 0xF: rig_skel_hit[0xF]++; break;
  		}
  #else
