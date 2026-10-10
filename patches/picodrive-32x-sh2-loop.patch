@@ -1,0 +1,1227 @@
+diff --git a/cpu/cz80/cz80.c b/cpu/cz80/cz80.c
+index ceb1d22e..94d5e9c7 100644
+--- a/cpu/cz80/cz80.c
++++ b/cpu/cz80/cz80.c
+@@ -71,7 +71,8 @@ static const UINT8 ALIGN_DATA cz80_bad_address[1 << CZ80_FETCH_SFT] =
+ 
+ static UINT8 ALIGN_DATA SZ[256];
+ static UINT8 ALIGN_DATA SZP[256];
+-static UINT8 ALIGN_DATA SZ_BIT[256];
++/* BIT handlers index only 0 or one set bit: SZP equals the old
++ * BIT-specific flags there. Share this table without extra hot-path work. */
+ static UINT8 ALIGN_DATA SZHV_inc[256];
+ static UINT8 ALIGN_DATA SZHV_dec[256];
+ #if CZ80_BIG_FLAGS_ARRAY
+@@ -126,9 +127,6 @@ void Cz80_Init(cz80_struc *CPU)
+ 		SZ[i] = i & (SF | YF | XF);
+ 		if (!i) SZ[i] |= ZF;
+ 
+-		SZ_BIT[i] = i & (SF | YF | XF);
+-		if (!i) SZ_BIT[i] |= ZF | PF;
+-
+ 		for (j = 0, p = 0; j < 8; j++) if (i & (1 << j)) p++;
+ 		SZP[i] = SZ[i];
+ 		if (!(p & 1)) SZP[i] |= PF;
+diff --git a/cpu/cz80/cz80_opCB.c b/cpu/cz80/cz80_opCB.c
+index deb493fe..b00048d5 100644
+--- a/cpu/cz80/cz80_opCB.c
++++ b/cpu/cz80/cz80_opCB.c
+@@ -282,7 +282,7 @@ switch (Opcode)
+ 	OPCB(0x7c): // BIT  7,H
+ 	OPCB(0x7d): // BIT  7,L
+ 	OPCB(0x7f): // BIT  7,A
+-		zF = (zF & CF) | HF | SZ_BIT[zR8(Opcode & 7) & (1 << ((Opcode >> 3) & 7))];
++		zF = (zF & CF) | HF | SZP[zR8(Opcode & 7) & (1 << ((Opcode >> 3) & 7))];
+ 		zF = (zF & ~(XF | YF)) | (zR8(Opcode & 7) & (XF | YF));
+ 		RET(8)
+ 
+@@ -295,7 +295,7 @@ switch (Opcode)
+ 	OPCB(0x76): // BIT  6,(HL)
+ 	OPCB(0x7e): // BIT  7,(HL)
+ 		src = READ_MEM8(zHL);
+-		zF = (zF & CF) | HF | SZ_BIT[src & (1 << ((Opcode >> 3) & 7))];
++		zF = (zF & CF) | HF | SZP[src & (1 << ((Opcode >> 3) & 7))];
+ 		zF = (zF & ~(XF | YF)) | (0xc0 & (XF | YF)); // TODO ZEXALL hack, need WZ...
+ 		RET(12)
+ 
+diff --git a/cpu/cz80/cz80_opXYCB.c b/cpu/cz80/cz80_opXYCB.c
+index b706580b..278e415b 100644
+--- a/cpu/cz80/cz80_opXYCB.c
++++ b/cpu/cz80/cz80_opXYCB.c
+@@ -293,7 +293,7 @@ switch (Opcode)
+ 	OPXYCB(0x7e):   // BIT  7,(Ix+d)
+ 		src = READ_MEM8(adr);
+ 		zF = (zF & CF) | HF |
+-			 (SZ_BIT[src & (1 << ((Opcode >> 3) & 7))] & ~(YF | XF)) |
++			 (SZP[src & (1 << ((Opcode >> 3) & 7))] & ~(YF | XF)) |
+ 			 ((adr >> 8) & (YF | XF));
+ 		RET(16)
+ 
+diff --git a/cpu/sh2/mame/sh2.c b/cpu/sh2/mame/sh2.c
+index d3dc164a..e310e050 100644
+--- a/cpu/sh2/mame/sh2.c
++++ b/cpu/sh2/mame/sh2.c
+@@ -111,6 +111,29 @@
+ #undef INLINE
+ #define INLINE static
+ 
++/* Interpreter hook points (defined by sh2pico.c before it includes this file;
++ * empty elsewhere). An op returns 0, or a GNW_R_* code the dispatch loop acts
++ * on: a native kernel consumed whole instructions, a delayed branch left a
++ * slot to run, an irq kernel finished, or a BF -6 countdown may be folded. */
++#ifndef GNW_R_BRANCH
++#define GNW_R_BRANCH 2
++#define GNW_H_0000_0D(op)
++#define GNW_H_0010_06(op)
++#define GNW_H_0010_0F(op)
++#define GNW_H_0011_08(op)
++#define GNW_H_0101(op)
++#define GNW_H_0110_06(op)
++#define GNW_H_0110_08(op)
++#define GNW_H_0110_0C(op)
++#define GNW_H_1101(op)
++#define GNW_H_GATE(op)
++#define GNW_H_FOLD(op)
++#define GNW_SW16_BEGIN(n, idx) switch (idx) {
++#define GNW_C16(n, k) case k
++#define GNW_B16(n) break
++#define GNW_SW16_END(n) }
++#endif
++
+ //CPU_DISASSEMBLE( sh2 );
+ 
+ #ifndef USE_SH2DRC
+@@ -898,7 +921,7 @@ INLINE void LDCSR(sh2_state *sh2, UINT32 m)
+ {
+ 	sh2->sr = sh2->r[m] & FLAGS;
+ 	sh2->t_flag = sh2->sr & T;
+-	sh2->test_irq = 1;
++	SH2_RAISE_IRQ_TEST(sh2);
+ }
+ 
+ /*  LDC     Rm,GBR */
+@@ -914,18 +937,18 @@ INLINE void LDCVBR(sh2_state *sh2, UINT32 m)
+ }
+ 
+ /*  LDC.L   @Rm+,SR */
+-INLINE void LDCMSR(sh2_state *sh2, UINT32 m)
++__attribute__((noinline)) INLINE void LDCMSR(sh2_state *sh2, UINT32 m)
+ {
+ 	sh2->ea = sh2->r[m];
+ 	sh2->sr = RL( sh2, sh2->ea ) & FLAGS;
+ 	sh2->t_flag = sh2->sr & T;
+ 	sh2->r[m] += 4;
+ 	sh2->icount -= 2;
+-	sh2->test_irq = 1;
++	SH2_RAISE_IRQ_TEST(sh2);
+ }
+ 
+ /*  LDC.L   @Rm+,GBR */
+-INLINE void LDCMGBR(sh2_state *sh2, UINT32 m)
++__attribute__((noinline)) INLINE void LDCMGBR(sh2_state *sh2, UINT32 m)
+ {
+ 	sh2->ea = sh2->r[m];
+ 	sh2->gbr = RL( sh2, sh2->ea );
+@@ -934,7 +957,7 @@ INLINE void LDCMGBR(sh2_state *sh2, UINT32 m)
+ }
+ 
+ /*  LDC.L   @Rm+,VBR */
+-INLINE void LDCMVBR(sh2_state *sh2, UINT32 m)
++__attribute__((noinline)) INLINE void LDCMVBR(sh2_state *sh2, UINT32 m)
+ {
+ 	sh2->ea = sh2->r[m];
+ 	sh2->vbr = RL( sh2, sh2->ea );
+@@ -961,7 +984,7 @@ INLINE void LDSPR(sh2_state *sh2, UINT32 m)
+ }
+ 
+ /*  LDS.L   @Rm+,MACH */
+-INLINE void LDSMMACH(sh2_state *sh2, UINT32 m)
++__attribute__((noinline)) INLINE void LDSMMACH(sh2_state *sh2, UINT32 m)
+ {
+ 	sh2->ea = sh2->r[m];
+ 	sh2->mach = RL( sh2, sh2->ea );
+@@ -969,7 +992,7 @@ INLINE void LDSMMACH(sh2_state *sh2, UINT32 m)
+ }
+ 
+ /*  LDS.L   @Rm+,MACL */
+-INLINE void LDSMMACL(sh2_state *sh2, UINT32 m)
++__attribute__((noinline)) INLINE void LDSMMACL(sh2_state *sh2, UINT32 m)
+ {
+ 	sh2->ea = sh2->r[m];
+ 	sh2->macl = RL( sh2, sh2->ea );
+@@ -977,7 +1000,7 @@ INLINE void LDSMMACL(sh2_state *sh2, UINT32 m)
+ }
+ 
+ /*  LDS.L   @Rm+,PR */
+-INLINE void LDSMPR(sh2_state *sh2, UINT32 m)
++__attribute__((noinline)) INLINE void LDSMPR(sh2_state *sh2, UINT32 m)
+ {
+ 	sh2->ea = sh2->r[m];
+ 	sh2->pr = RL( sh2, sh2->ea );
+@@ -1547,7 +1570,7 @@ INLINE void RTE(sh2_state *sh2)
+ 	sh2->t_flag = sh2->sr & T;
+ 	sh2->r[15] += 4;
+ 	sh2->icount -= 3;
+-	sh2->test_irq = 1;
++	SH2_RAISE_IRQ_TEST(sh2);
+ }
+ 
+ /*  RTS */
+@@ -1572,7 +1595,7 @@ INLINE void SHAL(sh2_state *sh2, UINT32 n)
+ }
+ 
+ /*  SHAR    Rn */
+-INLINE void SHAR(sh2_state *sh2, UINT32 n)
++__attribute__((noinline)) INLINE void SHAR(sh2_state *sh2, UINT32 n)
+ {
+ 	sh2->t_flag = (sh2->r[n] & T);
+ 	sh2->r[n] = (UINT32)((INT32)sh2->r[n] >> 1);
+@@ -1614,9 +1637,31 @@ INLINE void SHAR(sh2_state *sh2, UINT32 n)
+ 		UINT32 pc = sh2->pc;
+ 		int k = 0;
+ 
+-		while (sh2->icount > k + 1
+-		       && (UINT16)RW(sh2, pc + k * 2) == self)
+-			k++;
++		/* The run lives in ROM or SDRAM; resolve that region once and
++		 * compare the opcodes in place instead of a full RW() per
++		 * folded instruction.  Same bytes the RW() arms read; the tag is
++		 * re-checked per halfword so a run cannot leave its region. */
++		{
++			const UINT32 tag = pc & 0xdf000000;
++			const UINT8 *base = 0;
++			UINT32 mask = 0;
++
++			if (tag == gnw_fw_rom.region) {
++				base = gnw_fw_rom.base; mask = gnw_fw_rom.mask;
++			} else if (tag == 0x06000000) {
++				base = (const UINT8 *)sh2->p_sdram; mask = 0x3fffe;
++			}
++			if (base) {
++				while (sh2->icount > k + 1
++				       && ((pc + k * 2) & 0xdf000000) == tag
++				       && *(const UINT16 *)(base + ((pc + k * 2) & mask)) == self)
++					k++;
++			} else {
++				while (sh2->icount > k + 1
++				       && (UINT16)RW(sh2, pc + k * 2) == self)
++					k++;
++			}
++		}
+ 		if (k > 0) {
+ 			UINT32 v = sh2->r[n];
+ 			sh2->t_flag = ((v >> (k - 1)) & T);
+@@ -1710,7 +1755,7 @@ INLINE void STCVBR(sh2_state *sh2, UINT32 n)
+ }
+ 
+ /*  STC.L   SR,@-Rn */
+-INLINE void STCMSR(sh2_state *sh2, UINT32 n)
++__attribute__((noinline)) INLINE void STCMSR(sh2_state *sh2, UINT32 n)
+ {
+ 	sh2->r[n] -= 4;
+ 	sh2->ea = sh2->r[n];
+@@ -1719,7 +1764,7 @@ INLINE void STCMSR(sh2_state *sh2, UINT32 n)
+ }
+ 
+ /*  STC.L   GBR,@-Rn */
+-INLINE void STCMGBR(sh2_state *sh2, UINT32 n)
++__attribute__((noinline)) INLINE void STCMGBR(sh2_state *sh2, UINT32 n)
+ {
+ 	sh2->r[n] -= 4;
+ 	sh2->ea = sh2->r[n];
+@@ -1728,7 +1773,7 @@ INLINE void STCMGBR(sh2_state *sh2, UINT32 n)
+ }
+ 
+ /*  STC.L   VBR,@-Rn */
+-INLINE void STCMVBR(sh2_state *sh2, UINT32 n)
++__attribute__((noinline)) INLINE void STCMVBR(sh2_state *sh2, UINT32 n)
+ {
+ 	sh2->r[n] -= 4;
+ 	sh2->ea = sh2->r[n];
+@@ -1755,7 +1800,7 @@ INLINE void STSPR(sh2_state *sh2, UINT32 n)
+ }
+ 
+ /*  STS.L   MACH,@-Rn */
+-INLINE void STSMMACH(sh2_state *sh2, UINT32 n)
++__attribute__((noinline)) INLINE void STSMMACH(sh2_state *sh2, UINT32 n)
+ {
+ 	sh2->r[n] -= 4;
+ 	sh2->ea = sh2->r[n];
+@@ -1763,7 +1808,7 @@ INLINE void STSMMACH(sh2_state *sh2, UINT32 n)
+ }
+ 
+ /*  STS.L   MACL,@-Rn */
+-INLINE void STSMMACL(sh2_state *sh2, UINT32 n)
++__attribute__((noinline)) INLINE void STSMMACL(sh2_state *sh2, UINT32 n)
+ {
+ 	sh2->r[n] -= 4;
+ 	sh2->ea = sh2->r[n];
+@@ -1771,7 +1816,7 @@ INLINE void STSMMACL(sh2_state *sh2, UINT32 n)
+ }
+ 
+ /*  STS.L   PR,@-Rn */
+-INLINE void STSMPR(sh2_state *sh2, UINT32 n)
++__attribute__((noinline)) INLINE void STSMPR(sh2_state *sh2, UINT32 n)
+ {
+ 	sh2->r[n] -= 4;
+ 	sh2->ea = sh2->r[n];
+@@ -1852,7 +1897,7 @@ INLINE void SWAPW(sh2_state *sh2, UINT32 m, UINT32 n)
+ }
+ 
+ /*  TAS.B   @Rn */
+-INLINE void TAS(sh2_state *sh2, UINT32 n)
++__attribute__((noinline)) INLINE void TAS(sh2_state *sh2, UINT32 n)
+ {
+ 	UINT32 temp;
+ 	sh2->ea = sh2->r[n];
+@@ -1958,14 +2003,14 @@ INLINE void XTRCT(sh2_state *sh2, UINT32 m, UINT32 n)
+  *  OPCODE DISPATCHERS
+  *****************************************************************************/
+ 
+-INLINE void op0000(sh2_state *sh2, UINT16 opcode)
++INLINE int op0000(sh2_state *sh2, UINT32 opcode)
+ {
+ 	switch (opcode & 0x3F)
+ 	{
+ 	case 0x00: ILLEGAL(sh2);	rlog(0);			break;
+ 	case 0x01: ILLEGAL(sh2);	rlog(0);			break;
+ 	case 0x02: STCSR(sh2, Rn);	rlog(LRN); 			break;
+-	case 0x03: BSRF(sh2, Rn);	rlog(LRN); 			break;
++	case 0x03: BSRF(sh2, Rn);	rlog(LRN); 			return GNW_R_BRANCH;
+ 	case 0x04: MOVBS0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+ 	case 0x05: MOVWS0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+ 	case 0x06: MOVLS0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+@@ -1973,9 +2018,9 @@ INLINE void op0000(sh2_state *sh2, UINT16 opcode)
+ 	case 0x08: CLRT(sh2);		rlog(0);			break;
+ 	case 0x09: NOP();		rlog(0);			break;
+ 	case 0x0a: STSMACH(sh2, Rn); 	rlog(LRN);  rlog1(SHR_MACH); 	break;
+-	case 0x0b: RTS(sh2);		rlog(0);    rlog1(SHR_PR);	break;
++	case 0x0b: RTS(sh2);		rlog(0);    rlog1(SHR_PR);	return GNW_R_BRANCH;
+ 	case 0x0c: MOVBL0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+-	case 0x0d: MOVWL0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
++	case 0x0d: GNW_H_0000_0D(opcode); MOVWL0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+ 	case 0x0e: MOVLL0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+ 	case 0x0f: MAC_L(sh2, Rm, Rn);	rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); break;
+ 
+@@ -1999,7 +2044,7 @@ INLINE void op0000(sh2_state *sh2, UINT16 opcode)
+ 	case 0x20: ILLEGAL(sh2);	rlog(0);			break;
+ 	case 0x21: ILLEGAL(sh2);	rlog(0);			break;
+ 	case 0x22: STCVBR(sh2, Rn);	rlog(LRN);  rlog1(SHR_VBR);	break;
+-	case 0x23: BRAF(sh2, Rn);	rlog(LRN);			break;
++	case 0x23: BRAF(sh2, Rn);	rlog(LRN);			return GNW_R_BRANCH;
+ 	case 0x24: MOVBS0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+ 	case 0x25: MOVWS0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+ 	case 0x26: MOVLS0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+@@ -2007,7 +2052,7 @@ INLINE void op0000(sh2_state *sh2, UINT16 opcode)
+ 	case 0x28: CLRMAC(sh2);		rlog(0);    rlog2(SHR_MACL,SHR_MACH); break;
+ 	case 0x29: MOVT(sh2, Rn);	rlog(LRN);			break;
+ 	case 0x2a: STSPR(sh2, Rn);	rlog(LRN);  rlog1(SHR_PR);	break;
+-	case 0x2b: RTE(sh2);		rlog(0);			break;
++	case 0x2b: RTE(sh2);		rlog(0);			return GNW_R_BRANCH;
+ 	case 0x2c: MOVBL0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+ 	case 0x2d: MOVWL0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+ 	case 0x2e: MOVLL0(sh2, Rm, Rn);	rlog(LRNM); rlog1(0);		break;
+@@ -2030,6 +2075,7 @@ INLINE void op0000(sh2_state *sh2, UINT16 opcode)
+ 	case 0x3a: ILLEGAL(sh2);	rlog(0);			break;
+ 	case 0x3b: ILLEGAL(sh2);	rlog(0);			break;
+ 	}
++	return 0;
+ }
+ 
+ INLINE void op0001(sh2_state *sh2, UINT16 opcode)
+@@ -2038,53 +2084,53 @@ INLINE void op0001(sh2_state *sh2, UINT16 opcode)
+ 	rlog(LRNM);
+ }
+ 
+-INLINE void op0010(sh2_state *sh2, UINT16 opcode)
+-{
+-	switch (opcode & 15)
+-	{
+-	case  0: MOVBS(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  1: MOVWS(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  2: MOVLS(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  3: ILLEGAL(sh2);		rlog(0);			break;
+-	case  4: MOVBM(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  5: MOVWM(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  6: MOVLM(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  7: DIV0S(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  8: TST(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case  9: AND(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case 10: XOR(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case 11: OR(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case 12: CMPSTR(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case 13: XTRCT(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case 14: MULU(sh2, Rm, Rn);	rlog(LRNM); rlog1(SHR_MACL);	break;
+-	case 15: MULS(sh2, Rm, Rn);	rlog(LRNM); rlog1(SHR_MACL);	break;
+-	}
+-}
+-
+-INLINE void op0011(sh2_state *sh2, UINT16 opcode)
+-{
+-	switch (opcode & 15)
+-	{
+-	case  0: CMPEQ(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  1: ILLEGAL(sh2);		rlog(0);			break;
+-	case  2: CMPHS(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  3: CMPGE(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  4: DIV1(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case  5: DMULU(sh2, Rm, Rn); 	rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); break;
+-	case  6: CMPHI(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  7: CMPGT(sh2, Rm, Rn); 	rlog(LRNM);			break;
+-	case  8: SUB(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case  9: ILLEGAL(sh2);		rlog(0);			break;
+-	case 10: SUBC(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case 11: SUBV(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case 12: ADD(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case 13: DMULS(sh2, Rm, Rn); 	rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); break;
+-	case 14: ADDC(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	case 15: ADDV(sh2, Rm, Rn);	rlog(LRNM);			break;
+-	}
+-}
+-
+-INLINE void op0100(sh2_state *sh2, UINT16 opcode)
++INLINE int op0010(sh2_state *sh2, UINT32 opcode)
++{
++	GNW_SW16_BEGIN(o2, opcode & 15)
++	GNW_C16(o2, 0): MOVBS(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 1): MOVWS(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 2): MOVLS(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 3): ILLEGAL(sh2);		rlog(0);			GNW_B16(o2);
++	GNW_C16(o2, 4): MOVBM(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 5): MOVWM(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 6): GNW_H_0010_06(opcode); MOVLM(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 7): DIV0S(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 8): TST(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 9): AND(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 10): XOR(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 11): OR(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 12): CMPSTR(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 13): XTRCT(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o2);
++	GNW_C16(o2, 14): MULU(sh2, Rm, Rn);	rlog(LRNM); rlog1(SHR_MACL);	GNW_B16(o2);
++	GNW_C16(o2, 15): GNW_H_0010_0F(opcode); MULS(sh2, Rm, Rn);	rlog(LRNM); rlog1(SHR_MACL);	GNW_B16(o2);
++	GNW_SW16_END(o2)
++	return 0;
++}
++
++INLINE int op0011(sh2_state *sh2, UINT32 opcode)
++{
++	GNW_SW16_BEGIN(o3, opcode & 15)
++	GNW_C16(o3, 0): CMPEQ(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 1): ILLEGAL(sh2);		rlog(0);			GNW_B16(o3);
++	GNW_C16(o3, 2): CMPHS(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 3): CMPGE(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 4): DIV1(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 5): DMULU(sh2, Rm, Rn); 	rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); GNW_B16(o3);
++	GNW_C16(o3, 6): CMPHI(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 7): CMPGT(sh2, Rm, Rn); 	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 8): GNW_H_0011_08(opcode); SUB(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 9): ILLEGAL(sh2);		rlog(0);			GNW_B16(o3);
++	GNW_C16(o3, 10): SUBC(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 11): SUBV(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 12): ADD(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 13): DMULS(sh2, Rm, Rn); 	rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); GNW_B16(o3);
++	GNW_C16(o3, 14): ADDC(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
++	GNW_C16(o3, 15): ADDV(sh2, Rm, Rn);	rlog(LRNM);			GNW_B16(o3);
++	GNW_SW16_END(o3)
++	return 0;
++}
++
++INLINE int op0100(sh2_state *sh2, UINT16 opcode)
+ {
+ 	switch (opcode & 0x3F)
+ 	{
+@@ -2099,7 +2145,7 @@ INLINE void op0100(sh2_state *sh2, UINT16 opcode)
+ 	case 0x08: SHLL2(sh2, Rn);	rlog(LRN);			break;
+ 	case 0x09: SHLR2(sh2, Rn);	rlog(LRN);			break;
+ 	case 0x0a: LDSMACH(sh2, Rn); 	rlog(LRN); rlog1(SHR_MACH);	break;
+-	case 0x0b: JSR(sh2, Rn); 	rlog(LRN); rlog1(SHR_PR);	break;
++	case 0x0b: JSR(sh2, Rn); 	rlog(LRN); rlog1(SHR_PR);	return GNW_R_BRANCH;
+ 	case 0x0c: ILLEGAL(sh2);	rlog(0);			break;
+ 	case 0x0d: ILLEGAL(sh2);	rlog(0);			break;
+ 	case 0x0e: LDCSR(sh2, Rn);	rlog(LRN);			break;
+@@ -2133,7 +2179,7 @@ INLINE void op0100(sh2_state *sh2, UINT16 opcode)
+ 	case 0x28: SHLL16(sh2, Rn);	rlog(LRN);			break;
+ 	case 0x29: SHLR16(sh2, Rn);	rlog(LRN);			break;
+ 	case 0x2a: LDSPR(sh2, Rn);	rlog(LRN); rlog1(SHR_PR);	break;
+-	case 0x2b: JMP(sh2, Rn); 	rlog(LRN);			break;
++	case 0x2b: JMP(sh2, Rn); 	rlog(LRN);			return GNW_R_BRANCH;
+ 	case 0x2c: ILLEGAL(sh2);	rlog(0);			break;
+ 	case 0x2d: ILLEGAL(sh2);	rlog(0);			break;
+ 	case 0x2e: LDCVBR(sh2, Rn);	rlog(LRN); rlog1(SHR_VBR);	break;
+@@ -2156,36 +2202,39 @@ INLINE void op0100(sh2_state *sh2, UINT16 opcode)
+ 	case 0x3e: ILLEGAL(sh2);	rlog(0);			break;
+ 	case 0x3f: MAC_W(sh2, Rm, Rn);	rlog(LRNM); rlog2(SHR_MACL,SHR_MACH); break;
+ 	}
++	return 0;
+ }
+ 
+-INLINE void op0101(sh2_state *sh2, UINT16 opcode)
++INLINE int op0101(sh2_state *sh2, UINT32 opcode)
+ {
++	GNW_H_0101(opcode);
+ 	MOVLL4(sh2, Rm, opcode & 0x0f, Rn);
+ 	rlog(LRNM);
+-}
+-
+-INLINE void op0110(sh2_state *sh2, UINT16 opcode)
+-{
+-	switch (opcode & 15)
+-	{
+-	case  0: MOVBL(sh2, Rm, Rn); 				break;
+-	case  1: MOVWL(sh2, Rm, Rn); 				break;
+-	case  2: MOVLL(sh2, Rm, Rn); 				break;
+-	case  3: MOV(sh2, Rm, Rn);				break;
+-	case  4: MOVBP(sh2, Rm, Rn); 				break;
+-	case  5: MOVWP(sh2, Rm, Rn); 				break;
+-	case  6: MOVLP(sh2, Rm, Rn); 				break;
+-	case  7: NOT(sh2, Rm, Rn);				break;
+-	case  8: SWAPB(sh2, Rm, Rn); 				break;
+-	case  9: SWAPW(sh2, Rm, Rn); 				break;
+-	case 10: NEGC(sh2, Rm, Rn);				break;
+-	case 11: NEG(sh2, Rm, Rn);				break;
+-	case 12: EXTUB(sh2, Rm, Rn); 				break;
+-	case 13: EXTUW(sh2, Rm, Rn); 				break;
+-	case 14: EXTSB(sh2, Rm, Rn); 				break;
+-	case 15: EXTSW(sh2, Rm, Rn); 				break;
+-	}
++	return 0;
++}
++
++INLINE int op0110(sh2_state *sh2, UINT32 opcode)
++{
++	GNW_SW16_BEGIN(o6, opcode & 15)
++	GNW_C16(o6, 0): MOVBL(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 1): MOVWL(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 2): MOVLL(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 3): MOV(sh2, Rm, Rn);				GNW_B16(o6);
++	GNW_C16(o6, 4): MOVBP(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 5): MOVWP(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 6): GNW_H_0110_06(opcode); MOVLP(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 7): NOT(sh2, Rm, Rn);				GNW_B16(o6);
++	GNW_C16(o6, 8): GNW_H_0110_08(opcode); SWAPB(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 9): SWAPW(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 10): NEGC(sh2, Rm, Rn);				GNW_B16(o6);
++	GNW_C16(o6, 11): NEG(sh2, Rm, Rn);				GNW_B16(o6);
++	GNW_C16(o6, 12): GNW_H_0110_0C(opcode); EXTUB(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 13): EXTUW(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 14): EXTSB(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_C16(o6, 15): EXTSW(sh2, Rm, Rn); 				GNW_B16(o6);
++	GNW_SW16_END(o6)
+ 	rlog(LRNM);
++	return 0;
+ }
+ 
+ INLINE void op0111(sh2_state *sh2, UINT16 opcode)
+@@ -2194,27 +2243,27 @@ INLINE void op0111(sh2_state *sh2, UINT16 opcode)
+ 	rlog(LRN);
+ }
+ 
+-INLINE void op1000(sh2_state *sh2, UINT16 opcode)
++INLINE int op1000(sh2_state *sh2, UINT32 opcode)
+ {
+-	switch ( opcode  & (15<<8) )
+-	{
+-	case  0<< 8: MOVBS4(sh2, opcode & 0x0f, Rm);	rlog(LRM); rlog1(0);	break;
+-	case  1<< 8: MOVWS4(sh2, opcode & 0x0f, Rm);	rlog(LRM); rlog1(0);	break;
+-	case  2<< 8: ILLEGAL(sh2); 			rlog(0);		break;
+-	case  3<< 8: ILLEGAL(sh2); 			rlog(0);		break;
+-	case  4<< 8: MOVBL4(sh2, Rm, opcode & 0x0f);	rlog(LRM); rlog1(0);	break;
+-	case  5<< 8: MOVWL4(sh2, Rm, opcode & 0x0f);	rlog(LRM); rlog1(0);	break;
+-	case  6<< 8: ILLEGAL(sh2); 			rlog(0);		break;
+-	case  7<< 8: ILLEGAL(sh2); 			rlog(0);		break;
+-	case  8<< 8: CMPIM(sh2, opcode & 0xff);		rlog(0);   rlog1(0);	break;
+-	case  9<< 8: BT(sh2, opcode & 0xff); 		rlog(0);	break;
+-	case 10<< 8: ILLEGAL(sh2); 			rlog(0);	break;
+-	case 11<< 8: BF(sh2, opcode & 0xff); 		rlog(0);	break;
+-	case 12<< 8: ILLEGAL(sh2); 			rlog(0);	break;
+-	case 13<< 8: BTS(sh2, opcode & 0xff);		rlog(0);	break;
+-	case 14<< 8: ILLEGAL(sh2); 			rlog(0);	break;
+-	case 15<< 8: BFS(sh2, opcode & 0xff);		rlog(0);	break;
+-	}
++	GNW_SW16_BEGIN(o8, (opcode >> 8) & 15)
++	GNW_C16(o8, 0): MOVBS4(sh2, opcode & 0x0f, Rm);	rlog(LRM); rlog1(0);	GNW_B16(o8);
++	GNW_C16(o8, 1): MOVWS4(sh2, opcode & 0x0f, Rm);	rlog(LRM); rlog1(0);	GNW_B16(o8);
++	GNW_C16(o8, 2): ILLEGAL(sh2); 			rlog(0);		GNW_B16(o8);
++	GNW_C16(o8, 3): ILLEGAL(sh2); 			rlog(0);		GNW_B16(o8);
++	GNW_C16(o8, 4): MOVBL4(sh2, Rm, opcode & 0x0f);	rlog(LRM); rlog1(0);	GNW_B16(o8);
++	GNW_C16(o8, 5): MOVWL4(sh2, Rm, opcode & 0x0f);	rlog(LRM); rlog1(0);	GNW_B16(o8);
++	GNW_C16(o8, 6): ILLEGAL(sh2); 			rlog(0);		GNW_B16(o8);
++	GNW_C16(o8, 7): ILLEGAL(sh2); 			rlog(0);		GNW_B16(o8);
++	GNW_C16(o8, 8): CMPIM(sh2, opcode & 0xff);		rlog(0);   rlog1(0);	GNW_B16(o8);
++	GNW_C16(o8, 9): GNW_H_GATE(opcode); BT(sh2, opcode & 0xff); 		rlog(0);	GNW_B16(o8);
++	GNW_C16(o8, 10): ILLEGAL(sh2); 			rlog(0);	GNW_B16(o8);
++	GNW_C16(o8, 11): GNW_H_GATE(opcode); BF(sh2, opcode & 0xff); 		rlog(0);	GNW_H_FOLD(opcode); GNW_B16(o8);
++	GNW_C16(o8, 12): ILLEGAL(sh2); 			rlog(0);	GNW_B16(o8);
++	GNW_C16(o8, 13): GNW_H_GATE(opcode); BTS(sh2, opcode & 0xff);		rlog(0);	return GNW_R_BRANCH;
++	GNW_C16(o8, 14): ILLEGAL(sh2); 			rlog(0);	GNW_B16(o8);
++	GNW_C16(o8, 15): GNW_H_GATE(opcode); BFS(sh2, opcode & 0xff);		rlog(0);	return GNW_R_BRANCH;
++	GNW_SW16_END(o8)
++	return 0;
+ }
+ 
+ 
+@@ -2237,34 +2286,36 @@ INLINE void op1011(sh2_state *sh2, UINT16 opcode)
+ 	rlog1(SHR_PR);
+ }
+ 
+-INLINE void op1100(sh2_state *sh2, UINT16 opcode)
+-{
+-	switch (opcode & (15<<8))
+-	{
+-	case  0<<8: MOVBSG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	break;
+-	case  1<<8: MOVWSG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	break;
+-	case  2<<8: MOVLSG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	break;
+-	case  3<<8: TRAPA(sh2, opcode & 0xff);	rlog1(SHR_VBR);		break;
+-	case  4<<8: MOVBLG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	break;
+-	case  5<<8: MOVWLG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	break;
+-	case  6<<8: MOVLLG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	break;
+-	case  7<<8: MOVA(sh2, opcode & 0xff);	rlog1(0);		break;
+-	case  8<<8: TSTI(sh2, opcode & 0xff);	rlog1(0);		break;
+-	case  9<<8: ANDI(sh2, opcode & 0xff);	rlog1(0);		break;
+-	case 10<<8: XORI(sh2, opcode & 0xff);	rlog1(0);		break;
+-	case 11<<8: ORI(sh2, opcode & 0xff);	rlog1(0);		break;
+-	case 12<<8: TSTM(sh2, opcode & 0xff);	rlog2(0, SHR_GBR);	break;
+-	case 13<<8: ANDM(sh2, opcode & 0xff);	rlog2(0, SHR_GBR);	break;
+-	case 14<<8: XORM(sh2, opcode & 0xff);	rlog2(0, SHR_GBR);	break;
+-	case 15<<8: ORM(sh2, opcode & 0xff);	rlog2(0, SHR_GBR);	break;
+-	}
++INLINE int op1100(sh2_state *sh2, UINT16 opcode)
++{
++	GNW_SW16_BEGIN(oc, (opcode >> 8) & 15)
++	GNW_C16(oc, 0): MOVBSG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	GNW_B16(oc);
++	GNW_C16(oc, 1): MOVWSG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	GNW_B16(oc);
++	GNW_C16(oc, 2): MOVLSG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	GNW_B16(oc);
++	GNW_C16(oc, 3): TRAPA(sh2, opcode & 0xff);	rlog1(SHR_VBR);		GNW_B16(oc);
++	GNW_C16(oc, 4): MOVBLG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	GNW_B16(oc);
++	GNW_C16(oc, 5): MOVWLG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	GNW_B16(oc);
++	GNW_C16(oc, 6): MOVLLG(sh2, opcode & 0xff); rlog2(0, SHR_GBR);	GNW_B16(oc);
++	GNW_C16(oc, 7): MOVA(sh2, opcode & 0xff);	rlog1(0);		GNW_B16(oc);
++	GNW_C16(oc, 8): TSTI(sh2, opcode & 0xff);	rlog1(0);		GNW_B16(oc);
++	GNW_C16(oc, 9): ANDI(sh2, opcode & 0xff);	rlog1(0);		GNW_B16(oc);
++	GNW_C16(oc, 10): XORI(sh2, opcode & 0xff);	rlog1(0);		GNW_B16(oc);
++	GNW_C16(oc, 11): ORI(sh2, opcode & 0xff);	rlog1(0);		GNW_B16(oc);
++	GNW_C16(oc, 12): TSTM(sh2, opcode & 0xff);	rlog2(0, SHR_GBR);	GNW_B16(oc);
++	GNW_C16(oc, 13): ANDM(sh2, opcode & 0xff);	rlog2(0, SHR_GBR);	GNW_B16(oc);
++	GNW_C16(oc, 14): XORM(sh2, opcode & 0xff);	rlog2(0, SHR_GBR);	GNW_B16(oc);
++	GNW_C16(oc, 15): ORM(sh2, opcode & 0xff);	rlog2(0, SHR_GBR);	GNW_B16(oc);
++	GNW_SW16_END(oc)
+ 	rlog(0);
++	return 0;
+ }
+ 
+-INLINE void op1101(sh2_state *sh2, UINT16 opcode)
++INLINE int op1101(sh2_state *sh2, UINT32 opcode)
+ {
++	GNW_H_1101(opcode);
+ 	MOVLI(sh2, opcode & 0xff, Rn);
+ 	rlog(LRN);
++	return 0;
+ }
+ 
+ INLINE void op1110(sh2_state *sh2, UINT16 opcode)
+diff --git a/cpu/sh2/mame/sh2pico.c b/cpu/sh2/mame/sh2pico.c
+index 87b32a90..9f04afb0 100644
+--- a/cpu/sh2/mame/sh2pico.c
++++ b/cpu/sh2/mame/sh2pico.c
+@@ -116,12 +116,12 @@ MAKE_WRITEFUNC(WL, p32x_sh2_write32)
+   h_ == gnw_fw_rom.region                                                    \
+     ? (UINT32)*(INT16 *)(gnw_fw_rom.base + (a_ & gnw_fw_rom.mask))           \
+   : h_ == 0x06000000                                                         \
+-    ? (UINT32)*(UINT16 *)((UINT8 *)(sh2)->p_sdram + (a_ & 0x3fffe))          \
++    ? (UINT32)((UINT16 *)(sh2)->p_sdram)[(a_ >> 1) & 0x1ffff]                \
+     : p32x_sh2_read16(a_, sh2); })
+ #endif
+ #define RL(sh2, a) ({ UINT32 a_ = (a); UINT32 h_ = a_ & 0xdf000000;          \
+   h_ == 0x06000000                                                           \
+-    ? CPU_BE2(*(UINT32 *)((UINT8 *)(sh2)->p_sdram + (a_ & 0x3fffc)))         \
++    ? CPU_BE2(((UINT32 *)(sh2)->p_sdram)[(a_ >> 2) & 0xffff])                \
+   : h_ == gnw_fw_rom.region                                                  \
+     ? CPU_BE2(*(UINT32 *)(gnw_fw_rom.base + (a_ & gnw_fw_rom.mask)))         \
+     : p32x_sh2_read32(a_, sh2); })
+@@ -336,13 +336,113 @@ static unsigned int op_refs[0x10000];
+ # define rlog2(...)
+ #endif
+ 
++/* ---- interpreter dispatch and hook macros (used by sh2.c's op functions) ---- */
++/* A delay-slot instruction runs with this bit set above its 16 bits. Every
++ * native hook compares the whole opcode against a constant, so none can match
++ * a slot instruction; that is what the old per-instruction `gnw_direct` flag
++ * (a register set on every fetch) was for. */
++#define GNW_SLOT_BIT 0x10000u
++
++/* Return codes of an op function: 0 = nothing special. */
++#define GNW_R_NATIVE 1	/* a native kernel consumed whole instructions */
++#define GNW_R_BRANCH 2	/* a delayed branch ran: its slot is next */
++#define GNW_R_IRQ    3	/* the irq kernel finished: go to the irq tail */
++#define GNW_R_FOLD   4	/* BF -6: run the irq tail, then try the countdown fold */
++
++/* A 16-way dispatch on an index that is provably 0..15. GCC lowers such a
++ * switch to `subs #1; cmp #14; bhi; tbb/tbh` (or a compare tree) because it
++ * picks case 0 as the default of an otherwise exhaustive switch and keeps the
++ * range check for it: three to five instructions on every guest instruction.
++ * Jump through a 16-entry address table directly instead.
++ *
++ * Absolute addresses, not a tbh offset table: tbh offsets are unsigned and
++ * forward only, and gcc is free to duplicate a dispatch (the delay-slot path
++ * ends in a goto to it) or to place a case body above a copy of it. A
++ * backward target wraps silently, so tbh is not safe here. */
++#if defined(__thumb2__) && !defined(GNW_NO_JT16)
++#define GNW_JT16(idx, p)                                                      \
++	asm goto ("adr.w r12, 1f\n"                                           \
++	  "ldr.w pc, [r12, %0, lsl #2]\n"                                     \
++	  ".balign 4\n1:\n"                                                   \
++	  " .word %l1+1, %l2+1, %l3+1, %l4+1, %l5+1, %l6+1, %l7+1, %l8+1\n"  \
++	  " .word %l9+1, %l10+1, %l11+1, %l12+1, %l13+1, %l14+1, %l15+1, %l16+1\n" \
++	  : : "r"(idx) : "r12" :                                              \
++	  p##0, p##1, p##2, p##3, p##4, p##5, p##6, p##7,                     \
++	  p##8, p##9, p##10, p##11, p##12, p##13, p##14, p##15)
++#define GNW_SW16_BEGIN(n, idx) GNW_JT16(idx, n##_c); {
++#define GNW_C16(n, k) n##_c##k
++#define GNW_B16(n) goto n##_end
++#define GNW_SW16_END(n) } n##_end:;
++#define GNW_DISPATCH16_BEGIN(op) GNW_JT16(((op) >> 12) & 15, gnw_c); {
++#define GNW_DISPATCH16_END }
++#define GNW_CASE(n) gnw_c##n
++#define GNW_BREAK goto gnw_tail
++#else
++#define GNW_SW16_BEGIN(n, idx) switch (idx) {
++#define GNW_C16(n, k) case k
++#define GNW_B16(n) break
++#define GNW_SW16_END(n) }
++#define GNW_DISPATCH16_BEGIN(op) switch (((op) >> 12) & 15) {
++#define GNW_DISPATCH16_END }
++#define GNW_CASE(n) case n
++#define GNW_BREAK break
++#endif
++
++#if defined(GNW_32X_CORE) && !defined(DRC_SH2) && !defined(GNW_SH2_NO_FASTLOOPS)
++#define GNW_OPHOOKS 1
++/* Native-kernel hooks sit inside the op function for the one low-nibble case
++ * that can reach them, so an instruction that cannot be a hook trigger pays
++ * nothing (they used to be a compare chain ahead of the whole nibble). The
++ * helpers are defined with the kernels, further down. */
++#define GNW_HELPER static inline __attribute__((always_inline))
++struct SH2_;
++GNW_HELPER unsigned gnw_h_ctl(struct SH2_ *s, unsigned kind);
++GNW_HELPER unsigned gnw_h_lookup(struct SH2_ *s);
++GNW_HELPER unsigned gnw_h_irq(struct SH2_ *s);
++GNW_HELPER unsigned gnw_h_fill(struct SH2_ *s);
++GNW_HELPER unsigned gnw_h_blitb(struct SH2_ *s);
++GNW_HELPER unsigned gnw_h_pixel(struct SH2_ *s);
++GNW_HELPER unsigned gnw_h_chain(struct SH2_ *s);
++GNW_HELPER unsigned gnw_h_pcm(struct SH2_ *s);
++GNW_HELPER unsigned gnw_h_idle(struct SH2_ *s);
++GNW_HELPER unsigned gnw_h_blita(struct SH2_ *s);
++GNW_HELPER unsigned gnw_h_blitc(struct SH2_ *s);
++GNW_HELPER void gnw_h_gate(struct SH2_ *s, unsigned op);
++#ifdef GNW_BLIT_AC
++#define GNW_LOOKUP_CALL(s) (gnw_h_blita(s) || gnw_h_lookup(s))
++#define GNW_PIXEL_CALL(s)  (gnw_h_blitc(s) || gnw_h_pixel(s))
++#else
++#define GNW_LOOKUP_CALL(s) gnw_h_lookup(s)
++#define GNW_PIXEL_CALL(s)  gnw_h_pixel(s)
++#endif
++#define GNW_H_0000_0D(op) do { if ((op) == 0x010d && GNW_LOOKUP_CALL(sh2)) return GNW_R_NATIVE; } while (0)
++#define GNW_H_0010_06(op) do { if ((op) == 0x2f06 && gnw_h_irq(sh2)) return GNW_R_IRQ; } while (0)
++#define GNW_H_0010_0F(op) do { if ((op) == 0x201f && gnw_h_ctl(sh2, 0)) return GNW_R_NATIVE; } while (0)
++#define GNW_H_0011_08(op) do { if ((op) == 0x3d88 && gnw_h_ctl(sh2, 1)) return GNW_R_NATIVE; } while (0)
++#define GNW_H_0101(op) do { if (((op) & 0xf0f0) == 0x50e0) {                  \
++		if ((op) == 0x52e1 && gnw_h_ctl(sh2, 2)) return GNW_R_NATIVE;  \
++		if ((op) == 0x50e6 && gnw_h_chain(sh2)) return GNW_R_NATIVE; } } while (0)
++#define GNW_H_0110_06(op) do { if (((op) == 0x6316 || (op) == 0x6616) && gnw_h_fill(sh2)) return GNW_R_NATIVE; } while (0)
++#define GNW_H_0110_08(op) do { if ((op) == 0x6418 && gnw_h_blitb(sh2)) return GNW_R_NATIVE; } while (0)
++#define GNW_H_0110_0C(op) do { if ((op) == 0x612c && GNW_PIXEL_CALL(sh2)) return GNW_R_NATIVE; } while (0)
++#define GNW_H_1101(op) do { if ((op) == 0xd21c && gnw_h_pcm(sh2)) return GNW_R_NATIVE; \
++		if ((op) == 0xd834 && gnw_h_idle(sh2)) return GNW_R_NATIVE; } while (0)
++/* backward BT/BF/BT.S/BF.S (displacement sign bit), directly fetched only */
++#define GNW_H_GATE(op) do { if (((op) & 0x80) && (op) < GNW_SLOT_BIT) gnw_h_gate(sh2, (op)); } while (0)
++#define GNW_H_FOLD(op) do { if ((op) == 0x8bfa) return GNW_R_FOLD; } while (0)
++#endif
++
+ #include "sh2.c"
+ 
+ /* RIG_SH2_COUNT: executed-instruction counter for the QEMU M7 feasibility rig
+  * (tools/m7_qemu_rig). Never defined in device or libretro builds. */
+ #ifdef RIG_SH2_COUNT
+ unsigned long long g_sh2_insns;
++#ifdef RIG_NO_SH2_TICK
++#define RIG_SH2_TICK() ((void)0)
++#else
+ #define RIG_SH2_TICK() (g_sh2_insns++)
++#endif
+ #else
+ #define RIG_SH2_TICK() ((void)0)
+ #endif
+@@ -601,12 +701,33 @@ void gnw_sh2_pcwall_arm(unsigned int *block)
+  * IF YOU ADD A RUNTIME WRITER OF gnw_fw_rom, this breaks silently: a slice in
+  * flight keeps fetching through the old base. End the run there, or turn the
+  * hoist off. */
++/* Mutable fetch window (see comment above).  R_/M_/B_ start as the cart-ROM
++ * window and follow the code: a fetch that misses the current window
++ * re-points it at SDRAM (0x06/0x26), the SH-2 data array (0xC0000000,
++ * cache-as-RAM) or back at cart ROM, and the following fetches hit it with
++ * the same bounds-check + ldrh as before.  The miss path is cold (Chaotix's
++ * slave flips 06 <-> C0 about once per 80 fetches); the hit path is
++ * unchanged.  Each arm returns what the map lookup would for that address:
++ * SDRAM mask 0x3fffe, data array mask 0xffe.  The window is slice-local, so
++ * it needs no invalidation: the only writers of gnw_fw_rom cannot run inside
++ * a slice, and p_sdram / data_array never move after init. */
+ #define GNW_FETCH_SD_W(sh2, addr, R_, M_, B_)                                \
+-  (__builtin_expect(((addr) & 0xdf000000) == (R_), 1)                        \
+-     ? (UINT32)*(UINT16 *)((B_) + ((addr) & (M_)))                           \
+-   : (((addr) & 0xdf000000) == 0x06000000)                                   \
+-     ? (UINT32)*(UINT16 *)((UINT8 *)(sh2)->p_sdram + ((addr) & 0x3fffe))     \
+-     : (UINT32)(UINT16)RW(sh2, addr))
++  ({ UINT32 fa_ = (addr); UINT32 fv_;                                        \
++     if (__builtin_expect((fa_ & 0xdf000000) != (R_), 0)) {                  \
++       if ((fa_ & 0xdf000000) == 0x06000000) {                               \
++         (R_) = 0x06000000; (M_) = 0x3fffe; (B_) = (UINT8 *)(sh2)->p_sdram;  \
++       } else if ((fa_ & 0xdf000000) == 0xc0000000) {                        \
++         (R_) = 0xc0000000; (M_) = 0xffe; (B_) = (UINT8 *)(sh2)->data_array; \
++       } else if ((fa_ & 0xdf000000) == gnw_fw_rom.region) {                 \
++         (R_) = gnw_fw_rom.region; (M_) = gnw_fw_rom.mask;                   \
++         (B_) = gnw_fw_rom.base;                                             \
++       }                                                                     \
++     }                                                                       \
++     if (__builtin_expect((fa_ & 0xdf000000) == (R_), 1))                    \
++       fv_ = *(UINT16 *)((B_) + (fa_ & (M_)));                               \
++     else                                                                    \
++       fv_ = (UINT32)(UINT16)RW(sh2, fa_);                                   \
++     fv_; })
+ 
+ #if defined(GNW_FW_NO_HOIST) || defined(GNW_FETCH_OLD_WINDOW) \
+     || defined(MD32X_DEVICE_PROFILE)
+@@ -617,9 +738,9 @@ void gnw_sh2_pcwall_arm(unsigned int *block)
+ #define GNW_FETCH_SD_H(sh2, addr)    GNW_FETCH_SD(sh2, addr)
+ #else
+ #define GNW_FW_HOIST_DECL()                                                  \
+-	const unsigned int gnw_fw_r_ = gnw_fw_rom.region;                    \
+-	const unsigned int gnw_fw_m_ = gnw_fw_rom.mask;                      \
+-	unsigned char * const gnw_fw_b_ = gnw_fw_rom.base
++	unsigned int gnw_fw_r_ = gnw_fw_rom.region;                          \
++	unsigned int gnw_fw_m_ = gnw_fw_rom.mask;                            \
++	unsigned char *gnw_fw_b_ = gnw_fw_rom.base
+ #define GNW_FETCH_H(sh2, addr, dst)                                          \
+ 	((dst) = GNW_FETCH_SD_W(sh2, addr, gnw_fw_r_, gnw_fw_m_, gnw_fw_b_))
+ #define GNW_FETCH_SD_H(sh2, addr)                                            \
+@@ -903,7 +1024,7 @@ static unsigned int gnw_dl_reject[2][GNW_DL_REJ_SLOTS];
+ /* Fast-forward hook, entered only for a directly-fetched (non-delay-slot)
+  * BF with negative displacement or BRA-to-self, with no irq test pending.
+  * At entry: ppc = insn address, pc = ppc + 2, delay = 0, icount >= 1. */
+-static void gnw_sh2_fastloop(SH2 *sh2, UINT32 opcode)
++static void __attribute__((noinline)) gnw_sh2_fastloop(SH2 *sh2, UINT32 opcode)
+ {
+ 	if (opcode == 0xaffe)	/* BRA $ */
+ 	{
+@@ -1484,13 +1605,13 @@ static void gnw_sh2_fastloop(SH2 *sh2, UINT32 opcode)
+  * restore the old shape for an A/B. */
+ #if defined(GNW_SH2_FASTLOOPS) && !defined(GNW_FASTLOOP_GATE_IN_LOOP)
+ #define GNW_FASTLOOP_GATE_8(sh2, opcode, direct) do {                        \
+-	if (((opcode) & 0x0980) == 0x0980 && (direct)                        \
++	if (((opcode) & 0x0980) == 0x0980 && (opcode) < 0x10000u             \
+ 	    && *GNW_DL_REJ_SLOT(sh2) != (sh2)->ppc                           \
+ 	    && !(sh2)->test_irq && gnw_sh2_fastloops)                        \
+ 		gnw_sh2_fastloop((sh2), (opcode));                           \
+ } while (0)
+ #define GNW_FASTLOOP_GATE_A(sh2, opcode, direct) do {                        \
+-	if ((opcode) == 0xaffe && (direct)                                   \
++	if ((opcode) == 0xaffe                                               \
+ 	    && *GNW_DL_REJ_SLOT(sh2) != (sh2)->ppc                           \
+ 	    && !(sh2)->test_irq && gnw_sh2_fastloops)                        \
+ 		gnw_sh2_fastloop((sh2), (opcode));                           \
+@@ -1980,6 +2101,24 @@ NC_WRAP(7,pixel_native)
+ NC_WRAP(8,lookup_native)
+ NC_WRAP(9,pcm_tail_native)
+ NC_WRAP(10,irq_native)
++#ifdef GNW_OPHOOKS
++GNW_HELPER unsigned gnw_h_ctl(struct SH2_ *s, unsigned kind) { return control_native(s, s->ppc, kind); }
++GNW_HELPER unsigned gnw_h_lookup(struct SH2_ *s) { return lookup_native(s, s->ppc); }
++GNW_HELPER unsigned gnw_h_irq(struct SH2_ *s) { return irq_native(s, s->ppc); }
++GNW_HELPER unsigned gnw_h_fill(struct SH2_ *s) { return fill_native(s, s->ppc); }
++GNW_HELPER unsigned gnw_h_blitb(struct SH2_ *s) { return blitb_native(s, s->ppc); }
++GNW_HELPER unsigned gnw_h_pixel(struct SH2_ *s) { return pixel_native(s, s->ppc); }
++GNW_HELPER unsigned gnw_h_chain(struct SH2_ *s) { return chain_native(s, s->ppc); }
++GNW_HELPER unsigned gnw_h_pcm(struct SH2_ *s) { return pcm_tail_native(s, s->ppc); }
++GNW_HELPER unsigned gnw_h_idle(struct SH2_ *s) { return idle_native(s, s->ppc); }
++GNW_HELPER unsigned gnw_h_blita(struct SH2_ *s) { return blita_native(s, s->ppc); }
++GNW_HELPER unsigned gnw_h_blitc(struct SH2_ *s) { return blitc_native(s, s->ppc); }
++GNW_HELPER void gnw_h_gate(struct SH2_ *s, unsigned op)
++{
++	if (*GNW_DL_REJ_SLOT(s) != s->ppc && !s->test_irq && gnw_sh2_fastloops)
++		gnw_sh2_fastloop(s, op);
++}
++#endif
+ static unsigned chain_native_impl(SH2 *s,unsigned pc){
+   if(chain_proof_active)return 0;
+   { unsigned m=mix_native(s,pc); if(m)return m; }
+@@ -2740,7 +2879,7 @@ static unsigned __attribute__((noinline)) irq_native_impl(SH2 *s,unsigned pc){
+   AT(h+14);    s->r[0]=s->r[8];                                                       TAIL();
+   AT(h+16);    s->ea=s->gbr+13*4; WL(s,s->ea,s->r[0]);                                TAIL();
+   AT(h+18);    s->ea=s->pc+(b[9]&0xff)*2+2; s->r[0]=(UINT32)(INT32)(INT16)RW(s,s->ea); TAIL();
+-  AT(h+20);    s->sr=s->r[0]&FLAGS; s->t_flag=s->sr&T; s->test_irq=1;                 TAIL();
++  AT(h+20);    s->sr=s->r[0]&FLAGS; s->t_flag=s->sr&T; SH2_RAISE_IRQ_TEST(s);                 TAIL();
+   AT(h+22);    s->ea=((s->pc+2)&~3u)+(b[11]&0xff)*4; s->r[1]=RL(s,s->ea);             TAIL();
+   AT(h+24);    s->ea=s->r[1]+7; s->r[0]=(UINT32)(INT32)(INT16)(INT8)RB(s,s->ea);       TAIL();
+   AT(h+26);    s->r[0]^=2;                                                            TAIL();
+@@ -2753,7 +2892,7 @@ static unsigned __attribute__((noinline)) irq_native_impl(SH2 *s,unsigned pc){
+   AT(h+40);    s->r[0]=RL(s,s->r[15]); s->r[15]+=4;                                   TAIL();
+   AT(h+42);    s->ea=s->r[15]; s->delay=s->pc; s->pc=RL(s,s->ea); s->r[15]+=4;
+                s->ea=s->r[15]; s->sr=RL(s,s->ea)&FLAGS; s->t_flag=s->sr&T; s->r[15]+=4;
+-               s->icount-=3; s->test_irq=1;                                           TAIL();
++               s->icount-=3; SH2_RAISE_IRQ_TEST(s);                                           TAIL();
+   SLOT();                                                                             TAIL();
+   irq_full++;
+ out:
+@@ -2862,12 +3001,13 @@ void native_cost_report(void){ {extern unsigned long long rig_runsh2[2],rig_runs
+ #ifdef RIG_NATIVE_COST
+ unsigned long long rig_slices[2],rig_slice_ticks[2],rig_slice_cycles[2];
+ #endif
++/* Act on an op function's return code (see GNW_R_*). */
++#define GNW_OPRET(call) do { gnw_r = (call); if (__builtin_expect(gnw_r, 0)) goto gnw_op_ret; } while (0)
++
+ int sh2_execute_interpreter(SH2 *sh2, int cycles)
+ {
+ 	UINT32 opcode;
+-#ifdef GNW_SH2_FASTLOOPS
+-	UINT32 gnw_direct;
+-#endif
++	int gnw_r;
+ #ifdef RIG_SH2_PC_HIST
+ 	int rig_is_delay = 0;
+ #endif
+@@ -2882,7 +3022,27 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
+ 	GNW_PCWALL_ENTER(sh2);
+ 	GNW_SLICE_TICK(sh2);
+ 
+-	do
++	/* Loop stop limit: see SH2_ILIM in sh2.h. A pending interrupt from
++	 * between slices makes the first instruction's tail take the slow path,
++	 * exactly where the old per-instruction test_irq check serviced it. */
++	SH2_ILIM(sh2) = sh2->test_irq ? SH2_ILIM_STOP : 0;
++	if (sh2->delay)
++		goto gnw_fetch_slot;
++
++#define GNW_IRQ_SERVICE(sh2_) do {                                          \
++		if ((sh2_)->test_irq) {                                              \
++			int level_ = (sh2_)->pending_level;                          \
++			if (level_ > (((sh2_)->sr >> 4) & 0x0f)) {                   \
++				int vector_ = (sh2_)->irq_callback((sh2_), level_);  \
++				sh2_do_irq((sh2_), level_, vector_);                 \
++			}                                                            \
++			(sh2_)->test_irq = 0;                                        \
++		}                                                                    \
++		SH2_ILIM(sh2_) = 0;                                                  \
++	} while (0)
++
++gnw_top:
++	for (;;)
+ 	{
+ 		RIG_OPCOST_T0(sh2);
+ #ifdef RIG_MIX_DIAG
+@@ -2890,52 +3050,17 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
+ 		if (sh2->is_slave) { extern unsigned long long mix_slave_bucket[8],mix_budget_hist[8],mix_master_bucket[8],mix_pcbin[2][2048]; unsigned q=sh2->pc&0x3ffff; mix_slave_bucket[q<0x3c0&&q>=0x380?0:q<0x480&&q>=0x3c0?1:q>=0x7f4&&q<0x860?2:q<0x2000?3:4]++; }
+ 		else { extern unsigned long long mix_master_bucket[8]; unsigned q=sh2->pc&0x3ffff; mix_master_bucket[q>=0x67c0&&q<0x6868?0:q>=0x6868&&q<0x6960?1:q>=0x6960&&q<0x6a4c?2:q>=0x6a4c&&q<0x6b00?3:q>=0x6b00&&q<0xc000?4:q<0x2000?5:q<0x67c0?6:7]++; }
+ #endif
+-		if (sh2->delay)
+-		{
+-			sh2->ppc = sh2->delay;
+-			opcode = GNW_FETCH_SD_H(sh2, sh2->delay);
+-
+-			// TODO: more branch types
+-		if ((opcode >> 13) == 5) { // BRA/BSR
+-			sh2->sr = (sh2->sr & ~T) | sh2->t_flag;	/* reconcile lazy T */
+-			sh2->r[15] -= 4;
+-			WL(sh2, sh2->r[15], sh2->sr);
+-				sh2->r[15] -= 4;
+-				WL(sh2, sh2->r[15], sh2->pc);
+-				sh2->pc = RL(sh2, sh2->vbr + 6 * 4);
+-				sh2->icount -= 5;
+-				opcode = 9; // NOP
+-			}
+-
+-			/* `sh2->pc -= 2` here and `sh2->pc += 2` after the
+-			 * if/else cancelled exactly; the round trip is gone and
+-			 * pc is now advanced only where it actually advances.
+-			 * Clearing delay moved in here too -- the else arm is
+-			 * reached only when delay is already 0, so that store
+-			 * was writing a zero over a zero on every ordinary
+-			 * instruction. */
+-			sh2->delay = 0;
+-#ifdef GNW_SH2_FASTLOOPS
+-			gnw_direct = 0;
+-#endif
+-#ifdef RIG_SH2_PC_HIST
+-			rig_is_delay = 1;
+-#endif
+-		}
+-		else
+ 		{
+ 			UINT32 cur_pc = sh2->pc;
+ 			sh2->ppc = cur_pc;
+ 			GNW_FETCH_H(sh2, cur_pc, opcode);
+ 			sh2->pc = cur_pc + 2;
+-#ifdef GNW_SH2_FASTLOOPS
+-			gnw_direct = 1;
+-#endif
+ #ifdef RIG_SH2_PC_HIST
+ 			rig_is_delay = 0;
+ #endif
+ 		}
+ 
++gnw_dispatch:
+ 		RIG_SH2_TICK();
+ 		RIG_OPHIST_TICK(sh2, opcode);
+ 		GNW_SH2_INSN_TICK(sh2);
+@@ -2987,7 +3112,7 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
+ 		 * ran on every dispatched instruction ahead of the switch. */
+ 		if (((opcode >> 12) == 8 || (opcode >> 12) == 0xa)
+ 		    && (((opcode & 0xf980) == 0x8980) || opcode == 0xaffe)
+-		    && gnw_direct && *GNW_DL_REJ_SLOT(sh2) != sh2->ppc
++		    && *GNW_DL_REJ_SLOT(sh2) != sh2->ppc
+ 		    && !sh2->test_irq && gnw_sh2_fastloops)
+ 			gnw_sh2_fastloop(sh2, opcode);
+ #endif
+@@ -3029,95 +3154,109 @@ int sh2_execute_interpreter(SH2 *sh2, int cycles)
+ 		case 0xF: rig_skel_hit[0xF]++; break;
+ 		}
+ #else
+-		switch ((opcode >> 12) & 0xf)
+-		{
+-#ifdef GNW_BLIT_AC
+-		case 0x0: if(gnw_direct && opcode==0x010d && (blita_native(sh2,sh2->ppc) || lookup_native(sh2,sh2->ppc))) { RIG_OPCOST_T1(sh2,opcode);continue; } op0000(sh2,opcode);break;
+-#else
+-		case 0x0: if(gnw_direct && opcode==0x010d && lookup_native(sh2,sh2->ppc)) { RIG_OPCOST_T1(sh2,opcode);continue; } op0000(sh2,opcode);break;
+-#endif
+-		case 0x1: op0001(sh2, opcode); break;
+-		case 0x2: if(gnw_direct && opcode==0x201f && control_native(sh2,sh2->ppc,0)) { RIG_OPCOST_T1(sh2,opcode);continue; }
+-		          /* the native applies the loop tail itself after every instruction
+-		           * but the last; that one is this tail, so it must not be skipped */
+-		          if(gnw_direct && opcode==0x2f06 && irq_native(sh2,sh2->ppc)) goto gnw_irq_tail;
+-		          op0010(sh2,opcode);break;
+-		case 0x3: if(gnw_direct && opcode==0x3d88 && control_native(sh2,sh2->ppc,1)) { RIG_OPCOST_T1(sh2,opcode);continue; } op0011(sh2,opcode);break;
+-		case 0x4: op0100(sh2, opcode); break;
+-		case 0x5: if(gnw_direct && opcode==0x52e1 && control_native(sh2,sh2->ppc,2)) { RIG_OPCOST_T1(sh2,opcode);continue; } if(gnw_direct && opcode==0x50e6 && chain_native(sh2,sh2->ppc)) { RIG_OPCOST_T1(sh2,opcode);continue; } op0101(sh2,opcode);break;
+-#ifdef GNW_BLIT_AC
+-		case 0x6: if(gnw_direct && opcode==0x612c && (blitc_native(sh2,sh2->ppc) || pixel_native(sh2,sh2->ppc))) { RIG_OPCOST_T1(sh2,opcode);continue; }
+-#else
+-		case 0x6: if(gnw_direct && opcode==0x612c && pixel_native(sh2,sh2->ppc)) { RIG_OPCOST_T1(sh2,opcode);continue; }
+-#endif
+-		          if(gnw_direct && opcode==0x6418 && blitb_native(sh2,sh2->ppc)) { RIG_OPCOST_T1(sh2,opcode);continue; }
+-		          if(gnw_direct && (opcode==0x6316||opcode==0x6616) && fill_native(sh2,sh2->ppc)) { RIG_OPCOST_T1(sh2,opcode);continue; } op0110(sh2,opcode);break;
+-		case 0x7: op0111(sh2, opcode); break;
+-		case 0x8: GNW_FASTLOOP_GATE_8(sh2, opcode, gnw_direct);
+-		          op1000(sh2, opcode); break;
+-		case 0x9: op1001(sh2, opcode); break;
+-		case 0xA: GNW_FASTLOOP_GATE_A(sh2, opcode, gnw_direct);
+-		          op1010(sh2, opcode); break;
+-		case 0xB: op1011(sh2, opcode); break;
+-		case 0xC:
++		GNW_DISPATCH16_BEGIN(opcode)
++		GNW_CASE(0): GNW_OPRET(op0000(sh2, opcode)); GNW_BREAK;
++		GNW_CASE(1): op0001(sh2, opcode); GNW_BREAK;
++		GNW_CASE(2): GNW_OPRET(op0010(sh2, opcode)); GNW_BREAK;
++		GNW_CASE(3): GNW_OPRET(op0011(sh2, opcode)); GNW_BREAK;
++		GNW_CASE(4): GNW_OPRET(op0100(sh2, opcode)); GNW_BREAK;
++		GNW_CASE(5): GNW_OPRET(op0101(sh2, opcode)); GNW_BREAK;
++		GNW_CASE(6): GNW_OPRET(op0110(sh2, opcode)); GNW_BREAK;
++		GNW_CASE(7): op0111(sh2, opcode); GNW_BREAK;
++		GNW_CASE(8): GNW_OPRET(op1000(sh2, opcode)); GNW_BREAK;
++		GNW_CASE(9): op1001(sh2, opcode); GNW_BREAK;
++		GNW_CASE(10): GNW_FASTLOOP_GATE_A(sh2, opcode, 1);
++		          op1010(sh2, opcode); goto gnw_branch_tail;
++		GNW_CASE(11): op1011(sh2, opcode); goto gnw_branch_tail;
++		GNW_CASE(12):
+ #ifdef RIG_GBR_CENSUS
+ 			if ((opcode >> 8) == 0xc5)
+ 				rig_gbr_hist[(sh2)->is_slave & 1][((sh2)->gbr >> 24) & 0xff]++;
+ #endif
+-			op1100(sh2, opcode); break;
+-		case 0xD: if(gnw_direct && opcode==0xd21c && pcm_tail_native(sh2,sh2->ppc)) { RIG_OPCOST_T1(sh2,opcode);continue; }
+-		          if(gnw_direct && opcode==0xd834 && idle_native(sh2,sh2->ppc)) { RIG_OPCOST_T1(sh2,opcode);continue; } op1101(sh2,opcode);break;
+-		case 0xE: op1110(sh2, opcode); break;
+-		case 0xF: op1111(sh2, opcode); break;
+-		}
++			op1100(sh2, opcode); GNW_BREAK;
++		GNW_CASE(13): GNW_OPRET(op1101(sh2, opcode)); GNW_BREAK;
++		GNW_CASE(14): op1110(sh2, opcode); GNW_BREAK;
++		GNW_CASE(15): op1111(sh2, opcode); GNW_BREAK;
++		GNW_DISPATCH16_END
+ #endif
+ 
++
++gnw_tail:
+ 		sh2->icount--;
++gnw_tail_cond:
++		/* Fast exit test. icount > limit also stands in for the old
++		 * "test_irq pending" test (the raiser sets limit to INT_MAX) and
++		 * the delay test (branches leave through gnw_branch_tail, so no
++		 * delay is outstanding here). */
++		if (__builtin_expect(sh2->icount > SH2_ILIM(sh2), 1))
++			continue;
++		GNW_IRQ_SERVICE(sh2);
++		if (sh2->icount > 0)
++			continue;
++		break;
++	}
++	goto out;
++
++gnw_op_ret:
++	switch (gnw_r) {
++	case GNW_R_NATIVE: goto gnw_native_cont;
++	case GNW_R_BRANCH: goto gnw_branch_tail;
++	case GNW_R_IRQ:    goto gnw_irq_tail;
++	default:           goto gnw_fold_tail;
++	}
+ 
+ gnw_irq_tail:
+-		/* The !delay guard is dead on every workload we can measure: an IRQ
+-		 * taken with a delay slot outstanding never happens in 900 attract
+-		 * frames (fb checksums byte-identical with the guard dropped, rig
+-		 * arm A5b vs A0, 2026-08-19), and dropping it removes one load+cmp
+-		 * from the per-instruction tail. The check that remains below
+-		 * (pending_level vs sr mask) still gates the actual IRQ service. */
+-		/* RESTORED 2026-08-19. The `&& !sh2->delay` guard was dropped on the
+-		 * strength of "never happens in 900 attract frames". It is
+-		 * load-bearing, and the mechanism is exact rather than statistical.
+-		 *
+-		 * sh2_do_irq pushes sh2->pc and overwrites it with the vector. It
+-		 * neither reads nor clears sh2->delay. So when a delayed branch has
+-		 * just executed -- delay = slot address, pc = branch target -- and the
+-		 * IRQ is serviced here, the next iteration still sees delay set,
+-		 * executes the delay-slot instruction, and then does its `pc -= 2`.
+-		 * That `-= 2` is written for a pc holding the branch target; it now
+-		 * holds the interrupt handler's entry, so the handler starts two bytes
+-		 * short.
+-		 *
+-		 * Rare, silent and state-corrupting, in exchange for one load and one
+-		 * compare per instruction. Attract frames failing to reproduce it is
+-		 * not evidence of safety: attract and gameplay are demonstrably
+-		 * different programs here -- 188 unique guest PCs against 8,586 -- and
+-		 * gameplay carries far more interrupts and far more branches.
+-		 *
+-		 * The loop's own exit condition states the invariant this restores:
+-		 * while (icount > 0 || sh2->delay) -- "can't interrupt before delay".
+-		 * The other interpreter in this file (sh2_execute_interpreter_trace)
+-		 * never lost it; the two forms disagreed until now. */
+-		if (sh2->test_irq && !sh2->delay)
+-		{
+-			int level = sh2->pending_level;
+-			if (level > ((sh2->sr >> 4) & 0x0f))
+-			{
+-				int vector = sh2->irq_callback(sh2, level);
+-				sh2_do_irq(sh2, level, vector);
+-			}
+-			sh2->test_irq = 0;
++	if (sh2->delay)
++		goto gnw_fetch_slot;
++	goto gnw_tail_cond;
++
++gnw_native_cont:
++	/* a native consumed whole instructions and applied its own tail: only
++	 * the old loop condition remains */
++	if (sh2->delay)
++		goto gnw_fetch_slot;
++	if (sh2->icount > 0)
++		goto gnw_top;
++	goto out;
++
++gnw_fold_tail:
++	/* BF -6 (0x8bfa): irq service first, then the countdown fold, exactly as
++	 * the old tail ordered them */
++	sh2->icount--;
++	GNW_IRQ_SERVICE(sh2);
++	if(sh2->pc+8==sh2->ppc)countdown_fold(sh2);
++	if (sh2->icount > 0)
++		goto gnw_top;
++	goto out;
++
++gnw_branch_tail:
++	/* a delayed branch just executed: charge it, skip the irq test (it must
++	 * not interrupt before the slot) and run the slot unconditionally */
++	sh2->icount--;
++gnw_fetch_slot:
++	{
++		sh2->ppc = sh2->delay;
++		opcode = GNW_FETCH_SD_H(sh2, sh2->delay);
++
++		// TODO: more branch types
++		if ((opcode >> 13) == 5) { // BRA/BSR
++		sh2->sr = (sh2->sr & ~T) | sh2->t_flag;	/* reconcile lazy T */
++		sh2->r[15] -= 4;
++		WL(sh2, sh2->r[15], sh2->sr);
++			sh2->r[15] -= 4;
++			WL(sh2, sh2->r[15], sh2->pc);
++			sh2->pc = RL(sh2, sh2->vbr + 6 * 4);
++			sh2->icount -= 5;
++			opcode = 9; // NOP
+ 		}
+-		if(gnw_direct && opcode==0x8bfa && sh2->pc+8==sh2->ppc)countdown_fold(sh2);
+-		RIG_OPCOST_T1(sh2, opcode);
++
++		sh2->delay = 0;
++		opcode |= GNW_SLOT_BIT;
++#ifdef RIG_SH2_PC_HIST
++		rig_is_delay = 1;
++#endif
+ 	}
+-	while (sh2->icount > 0 || sh2->delay);	/* can't interrupt before delay */
++	goto gnw_dispatch;
+ 
+ out:
+ 	return sh2->icount;
+diff --git a/cpu/sh2/sh2.c b/cpu/sh2/sh2.c
+index f92e7f27..2bf622ad 100644
+--- a/cpu/sh2/sh2.c
++++ b/cpu/sh2/sh2.c
+@@ -90,7 +90,7 @@ int sh2_irl_irq(SH2 *sh2, int level, int nested_call)
+ 			sh2->m68krcycles_done += C_SH2_TO_M68K(sh2, 13);
+ 		}
+ 		else
+-			sh2->test_irq = 1;
++			SH2_RAISE_IRQ_TEST(sh2);
+ 	}
+ 	return taken;
+ }
+@@ -104,7 +104,7 @@ void sh2_internal_irq(SH2 *sh2, int level, int vector)
+ 	if (level > sh2->pending_level)
+ 		sh2->pending_level = level;
+ 
+-	sh2->test_irq = 1;
++	SH2_RAISE_IRQ_TEST(sh2);
+ 	sh2->state &= ~SH2_STATE_SLEEP;
+ }
+ 
+@@ -131,7 +131,7 @@ void sh2_unpack(SH2 *sh2, const unsigned char *buff)
+ 
+ 	sh2->pending_int_irq = p[0];
+ 	sh2->pending_int_vector = p[1];
+-	sh2->test_irq = 1;
++	SH2_RAISE_IRQ_TEST(sh2);
+ 	sh2->m68krcycles_done = p[2];
+ }
+ 
+diff --git a/cpu/sh2/sh2.h b/cpu/sh2/sh2.h
+index 2fdaca46..2b60a999 100644
+--- a/cpu/sh2/sh2.h
++++ b/cpu/sh2/sh2.h
+@@ -111,6 +111,20 @@ void sh2_unpack(SH2 *sh2, const unsigned char *buff);
+ int  sh2_execute_drc(SH2 *sh2c, int cycles);
+ int  sh2_execute_interpreter(SH2 *sh2c, int cycles);
+ 
++#ifndef DRC_SH2
++/* Interpreter loop stop limit. The dispatch loop continues while
++ * icount > SH2_ILIM(sh2). It is 0 normally; whoever raises test_irq also
++ * raises the limit so the loop leaves its fast path right after the current
++ * instruction (and its delay slot), where the pending interrupt is serviced.
++ * That replaces a test_irq load+branch on every instruction. irq_cycles is
++ * the DRC's field and unused by the interpreter. */
++#define SH2_ILIM(sh2) ((sh2)->irq_cycles)
++#define SH2_ILIM_STOP 0x7fffffff
++#define SH2_RAISE_IRQ_TEST(sh2) do { (sh2)->test_irq = 1; SH2_ILIM(sh2) = SH2_ILIM_STOP; } while (0)
++#else
++#define SH2_RAISE_IRQ_TEST(sh2) ((sh2)->test_irq = 1)
++#endif
++
+ #ifdef GNW_32X_CORE
+ /* runtime kill-switch for the GNW cycle-exact SH-2 fast-loop levers
+  * (DT/BF countdown fast-forward + BRA-self idle park, cpu/sh2/mame/sh2pico.c).

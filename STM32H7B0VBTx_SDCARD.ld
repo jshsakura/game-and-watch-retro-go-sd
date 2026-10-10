@@ -869,10 +869,10 @@ INCLUDE build/fceumm_mappers.ld
      malloc (gw_heap_reserve_top) and zeroes it before anything runs. Nothing
      else may claim this range: the launcher's heap simply ends below it for
      the rest of the boot. */
-  __MD32X_DTCM_RESERVE__ = 22K;
+  __MD32X_DTCM_RESERVE__ = 23K;
   .overlay_md32x_dtcm_bss (((ORIGIN(DTCMRAM) + LENGTH(DTCMRAM) - __REMOTE_INPUT_RESERVE__
                              - _Min_Stack_Size - _Stack_Redzone_Size) & ~15)
-                           - __MD32X_DTCM_RESERVE__) (NOLOAD) : {
+                           - __MD32X_DTCM_RESERVE__ - 256) (NOLOAD) : {  /* -256: the redzone MPU region rounds its base down to a 256 B boundary */
     __md32x_dtcm_bss_start__ = .;
     build/md32x/pico__32x__memory.o   (.bss .bss*)
     build/md32x/pico__memory.o        (.bss .bss*)
@@ -880,6 +880,11 @@ INCLUDE build/fceumm_mappers.ld
        data of the two objects whose hot code now fills the ITCM they left */
     build/md32x/pico__draw.o          (.bss .bss*)
     build/md32x/pico__sound__ym2612.o (.bss .bss*)
+    /* The Z80's flag tables, CZ80 context and bus maps (1,920 B). They are
+       read as data, so DTCM serves them as fast as ITCM did, and the bytes
+       they leave let the SH-2 fast loop (code) fit in the ITCM bank. */
+    build/md32x/cpu__cz80__cz80.o     (.bss .bss*)
+    build/md32x/pico__z80if.o         (.bss .bss*)
     . = ALIGN(4);
     __md32x_dtcm_bss_end__ = .;
     ASSERT(__md32x_dtcm_bss_end__ - __md32x_dtcm_bss_start__ <= __MD32X_DTCM_RESERVE__,
@@ -888,8 +893,6 @@ INCLUDE build/fceumm_mappers.ld
   .overlay_md32x_itc_bss __md32x_itc_end__ (NOLOAD) : {
     . = ALIGN(8);
     __md32x_itc_bss_start__ = .;
-    build/md32x/cpu__cz80__cz80.o     (.bss .bss*)
-    build/md32x/pico__z80if.o         (.bss .bss*)
     . = ALIGN(8);
     __md32x_itc_bss_end__ = .;
     ASSERT(ABSOLUTE(__md32x_itc_bss_end__) <= ORIGIN(ITCMRAM) + LENGTH(ITCMRAM),
