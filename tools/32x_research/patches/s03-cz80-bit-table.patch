@@ -1,0 +1,53 @@
+--- a/cpu/cz80/cz80.c
++++ b/cpu/cz80/cz80.c
+@@ -71,7 +71,8 @@
+ 
+ static UINT8 ALIGN_DATA SZ[256];
+ static UINT8 ALIGN_DATA SZP[256];
+-static UINT8 ALIGN_DATA SZ_BIT[256];
++/* BIT handlers index only 0 or one set bit: SZP equals the old
++ * BIT-specific flags there. Share this table without extra hot-path work. */
+ static UINT8 ALIGN_DATA SZHV_inc[256];
+ static UINT8 ALIGN_DATA SZHV_dec[256];
+ #if CZ80_BIG_FLAGS_ARRAY
+@@ -125,9 +126,6 @@
+ 	{
+ 		SZ[i] = i & (SF | YF | XF);
+ 		if (!i) SZ[i] |= ZF;
+-
+-		SZ_BIT[i] = i & (SF | YF | XF);
+-		if (!i) SZ_BIT[i] |= ZF | PF;
+ 
+ 		for (j = 0, p = 0; j < 8; j++) if (i & (1 << j)) p++;
+ 		SZP[i] = SZ[i];
+--- a/cpu/cz80/cz80_opCB.c
++++ b/cpu/cz80/cz80_opCB.c
+@@ -282,7 +282,7 @@
+ 	OPCB(0x7c): // BIT  7,H
+ 	OPCB(0x7d): // BIT  7,L
+ 	OPCB(0x7f): // BIT  7,A
+-		zF = (zF & CF) | HF | SZ_BIT[zR8(Opcode & 7) & (1 << ((Opcode >> 3) & 7))];
++		zF = (zF & CF) | HF | SZP[zR8(Opcode & 7) & (1 << ((Opcode >> 3) & 7))];
+ 		zF = (zF & ~(XF | YF)) | (zR8(Opcode & 7) & (XF | YF));
+ 		RET(8)
+ 
+@@ -295,7 +295,7 @@
+ 	OPCB(0x76): // BIT  6,(HL)
+ 	OPCB(0x7e): // BIT  7,(HL)
+ 		src = READ_MEM8(zHL);
+-		zF = (zF & CF) | HF | SZ_BIT[src & (1 << ((Opcode >> 3) & 7))];
++		zF = (zF & CF) | HF | SZP[src & (1 << ((Opcode >> 3) & 7))];
+ 		zF = (zF & ~(XF | YF)) | (0xc0 & (XF | YF)); // TODO ZEXALL hack, need WZ...
+ 		RET(12)
+ 
+--- a/cpu/cz80/cz80_opXYCB.c
++++ b/cpu/cz80/cz80_opXYCB.c
+@@ -293,7 +293,7 @@
+ 	OPXYCB(0x7e):   // BIT  7,(Ix+d)
+ 		src = READ_MEM8(adr);
+ 		zF = (zF & CF) | HF |
+-			 (SZ_BIT[src & (1 << ((Opcode >> 3) & 7))] & ~(YF | XF)) |
++			 (SZP[src & (1 << ((Opcode >> 3) & 7))] & ~(YF | XF)) |
+ 			 ((adr >> 8) & (YF | XF));
+ 		RET(16)
+ 

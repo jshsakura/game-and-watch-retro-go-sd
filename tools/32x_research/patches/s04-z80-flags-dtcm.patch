@@ -1,0 +1,10 @@
+--- a/STM32H7B0VBTx_SDCARD.ld
++++ b/STM32H7B0VBTx_SDCARD.ld
+@@ -880,6 +880,7 @@
+        data of the two objects whose hot code now fills the ITCM they left */
+     build/md32x/pico__draw.o          (.bss .bss*)
+     build/md32x/pico__sound__ym2612.o (.bss .bss*)
++    build/md32x/cpu__cz80__cz80.o     (.bss.SZ .bss.SZP .bss.SZHV_inc .bss.SZHV_dec)
+     . = ALIGN(4);
+     __md32x_dtcm_bss_end__ = .;
+     ASSERT(__md32x_dtcm_bss_end__ - __md32x_dtcm_bss_start__ <= __MD32X_DTCM_RESERVE__,
