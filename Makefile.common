@@ -1010,7 +1010,7 @@ $(BUILD_DIR)/rom_files.txt: FORCE | $(BUILD_DIR)
 
 ifeq (${CHECK_DIRTY_SUBMODULE},1)
 CheckDirtySubmodules:
-	$(V)git submodule foreach "git diff --quiet" 2> /dev/null || \
+	$(V)git submodule foreach 'case "$$sm_path" in external/picodrive|external/gwenesis) true;; *) git diff --quiet;; esac' 2> /dev/null || \
 		(echo -e "\n\n\nYou have changes in the submodule. This is not normal.\nPlease clean the submodule by running 'git submodule update --init'\n\n(You may set CHECK_DIRTY_SUBMODULE=0 to suppress this warning)\n\n\n" && exit 1)
 	$(V)if git submodule status | grep -q '^+' 2> /dev/null; then \
 		echo -e "\n\n\nYou are using a submodule that is not updated.\nPlease sync the submodules by running 'git submodule update --init'\n\n(You may set CHECK_DIRTY_SUBMODULE=0 to suppress this warning)\n\n\n"; \
@@ -1020,6 +1020,17 @@ else
 CheckDirtySubmodules:
 endif
 .PHONY: CheckDirtySubmodules
+
+# Patches under patches/ are applied to external/picodrive and external/gwenesis
+# by patches/apply.sh. Nothing used to call it, so a plain `make release` shipped
+# without the 32X SH-2 loop patch and said nothing. apply.sh is idempotent and
+# exits non-zero when the picodrive patch neither applies nor is already applied,
+# so the build stops instead of silently building an unpatched core. Those two
+# submodules are exempt from the dirty check above because the patch dirties them.
+ApplyPatches:
+	$(V)$(ECHO) [ BASH ] Applying patches/apply.sh
+	$(V)bash patches/apply.sh
+.PHONY: ApplyPatches
 
 # The fceumm mappers .ld file is INCLUDEd from $(LDSCRIPT). Generating it
 # as a real file target (rather than a recipe-with-no-output) means make
@@ -2499,6 +2510,7 @@ $$(BUILD_DIR)/md32x/$(call md32x_obj_name,$1): $1 Makefile.common Makefile $(FLA
 endef
 # note: the blank line above is intentional
 $(eval $(foreach obj,$(MD32X_C_SOURCES),$(call md32x_obj_prereq_gen,$(obj))))
+$(MD32X_OBJECTS): | ApplyPatches
 
 # ------------------------------------------------------------- Sega CD (pico)
 define segacd_obj_prereq_gen
