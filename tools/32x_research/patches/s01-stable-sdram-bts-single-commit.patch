@@ -1,0 +1,37 @@
+--- a/cpu/sh2/mame/sh2pico.c
++++ b/cpu/sh2/mame/sh2pico.c
+@@ -1364,6 +1364,26 @@
+ 			{
+ 				UINT32 mask_v = sh2->r[mask_reg];
+ 				UINT32 ref_v  = sh2->r[ref];
++#if !defined(GNW_NO_INLINE_DATA_READ)
++                /* Direct aligned SDRAM has no writer or callback inside
++                 * this helper. Calculate both possible comparisons locally
++                 * and commit dest/T/budget once, preserving early exit and
++                 * every complete five-cycle iteration within this slice. */
++                int remaining = sh2->icount;
++                if (remaining >= 5) {
++                    int t = ((sh2->r[dest] & mask_v) == ref_v);
++                    UINT32 raw = (UINT32)RL(sh2, pa);
++                    if (t && remaining >= 10) {
++                        t = ((raw & mask_v) == ref_v);
++                        if (t) remaining %= 5;
++                        else   remaining -= 10;
++                    }
++                    else remaining -= 5;
++                    sh2->r[dest] = raw;
++                    sh2->t_flag = t ? T : 0;
++                    sh2->icount = remaining;
++                }
++#else
+ 				while (sh2->icount >= 5) {
+ 					UINT32 masked = sh2->r[dest] & mask_v;	/* delay slot */
+ 					int t = (masked == ref_v);		/* head CMP/EQ */
+@@ -1373,6 +1393,7 @@
+ 					if (!t)
+ 						return;	/* real BT/S dispatches untaken */
+ 				}
++#endif
+ 				return;	/* slice exhausted: real BT/S re-branches */
+ 			}
+ 		}

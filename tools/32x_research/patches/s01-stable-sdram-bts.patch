@@ -1,0 +1,23 @@
+--- a/cpu/sh2/mame/sh2pico.c
++++ b/cpu/sh2/mame/sh2pico.c
+@@ -1372,6 +1372,20 @@
+ 					sh2->icount -= 5;
+ 					if (!t)
+ 						return;	/* real BT/S dispatches untaken */
++#if !defined(GNW_NO_INLINE_DATA_READ)
++                    /* RL above directly read an aligned SDRAM array slot.
++                     * No writer, CPU sync or event runs inside this helper.
++                     * The first comparison used the old dest. All remaining
++                     * comparisons use the same raw reload and fixed mask.
++                     * A false next comparison still consumes five cycles. */
++                    if (sh2->icount >= 5) {
++                        t = ((sh2->r[dest] & mask_v) == ref_v);
++                        sh2->t_flag = t ? T : 0;
++                        if (t) sh2->icount %= 5;
++                        else   sh2->icount -= 5;
++                    }
++                    return;
++#endif
+ 				}
+ 				return;	/* slice exhausted: real BT/S re-branches */
+ 			}

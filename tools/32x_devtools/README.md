@@ -3,7 +3,7 @@
 What the After Burner / Doom campaign (issue #48, `docs/32X_WORKLOG_20261001.md`) ran on the device.
 Session artifacts: paths are hardcoded to `build/32x-mixer-hle-20261001/`, and they import
 `tools/32x_device_bench/` (`run_arm.py`, `collect.py`, `compare.py`, `gnw_command.py`), which is
-**not committed on this branch** (it lives untracked in another session's checkout). Treat these as
+committed alongside them. `install_release.py` needs only `gnw_command.py` from it. Treat these as
 the record of the method, not as a ready-to-run suite.
 
 | File | What it does |
