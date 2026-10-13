@@ -13,14 +13,17 @@ done
 # skipped quietly: a silent skip once shipped a build with no patch in it.
 # `patch` rather than `git apply`: inside the docker build a git worktree's .git
 # file points outside the mounted tree, so git cannot see the repo there.
-PD_PATCH=$PWD/patches/picodrive-32x-sh2-loop.patch
 PD_DIR=external/picodrive
-if patch -d "$PD_DIR" -p1 --dry-run -s < "$PD_PATCH" >/dev/null 2>&1; then
-  patch -d "$PD_DIR" -p1 -s < "$PD_PATCH" && echo "applied: picodrive-32x-sh2-loop"
-elif patch -d "$PD_DIR" -p1 -R --dry-run -s < "$PD_PATCH" >/dev/null 2>&1; then
-  echo "already applied: picodrive-32x-sh2-loop"
-else
-  echo "ERROR: patches/picodrive-32x-sh2-loop.patch neither applies nor is already applied to $PD_DIR." >&2
-  echo "       The submodule pin moved or the tree is dirty. Rebase the patch before building." >&2
-  exit 1
-fi
+# Order matters: the md-defer patch is written against the sh2-loop result.
+for pd in picodrive-32x-sh2-loop picodrive-32x-md-defer; do
+  PD_PATCH=$PWD/patches/$pd.patch
+  if patch -d "$PD_DIR" -p1 --dry-run -s < "$PD_PATCH" >/dev/null 2>&1; then
+    patch -d "$PD_DIR" -p1 -s < "$PD_PATCH" && echo "applied: $pd"
+  elif patch -d "$PD_DIR" -p1 -R --dry-run -s < "$PD_PATCH" >/dev/null 2>&1; then
+    echo "already applied: $pd"
+  else
+    echo "ERROR: patches/$pd.patch neither applies nor is already applied to $PD_DIR." >&2
+    echo "       The submodule pin moved or the tree is dirty. Rebase the patch before building." >&2
+    exit 1
+  fi
+done

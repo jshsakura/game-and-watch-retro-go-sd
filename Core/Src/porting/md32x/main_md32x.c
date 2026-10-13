@@ -520,7 +520,7 @@ static void md32x_repaint(void) {
     Pico32x.sync_line = 0;
     if ((Pico32x.vdp_regs[0] & P32XV_Mx) && !(Pico.video.debug_p & PVD_KILL_32X))
       PicoDraw32xLayer(md32x_content_top, md32x_content_lines, Pico.video.reg[7] & 0x3f);
-    else if (Pico32xDrawMode == PDM32X_BOTH)
+    else if (Pico32xDrawMode == PDM32X_BOTH || gnw_md_defer)
       PicoDraw32xLayerMdOnly(md32x_content_top, md32x_content_lines);
   }
   Pico32x.sync_line = old_sync;
