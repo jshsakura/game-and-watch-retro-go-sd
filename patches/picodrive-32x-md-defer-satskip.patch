@@ -1,0 +1,20 @@
+diff --git a/pico/pico_int.h b/pico/pico_int.h
+index cd3d702b..d6ae7f0e 100644
+--- a/pico/pico_int.h
++++ b/pico/pico_int.h
+@@ -1083,9 +1083,14 @@ extern u32 SATaddr, SATmask;
+ static __inline void UpdateSAT(u32 a, u32 d)
+ {
+   unsigned num = (a^SATaddr) >> 3;
++  u16 *e = &((u16 *)&VdpSATCache[2*num])[(a&7) >> 1];
+ 
++  /* GNW: a SAT write of the value already cached changes nothing. Doom 32X
++   * rewrites its whole SAT with identical words every frame. */
++  if (*e == (u16)d)
++    return;
+   Pico.est.rendstatus |= PDRAW_DIRTY_SPRITES;
+-  ((u16 *)&VdpSATCache[2*num])[(a&7) >> 1] = d;
++  *e = d;
+ }
+ static __inline void VideoWriteVRAM(u32 a, u16 d)
+ {

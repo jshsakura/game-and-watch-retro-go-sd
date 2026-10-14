@@ -15,7 +15,7 @@ done
 # file points outside the mounted tree, so git cannot see the repo there.
 PD_DIR=external/picodrive
 # Order matters: the md-defer patch is written against the sh2-loop result.
-for pd in picodrive-32x-sh2-loop picodrive-32x-md-defer picodrive-32x-md-defer-palprio; do
+for pd in picodrive-32x-sh2-loop picodrive-32x-md-defer picodrive-32x-md-defer-palprio picodrive-32x-md-defer-satskip; do
   PD_PATCH=$PWD/patches/$pd.patch
   if patch -d "$PD_DIR" -p1 --dry-run -s < "$PD_PATCH" >/dev/null 2>&1; then
     patch -d "$PD_DIR" -p1 -s < "$PD_PATCH" && echo "applied: $pd"
