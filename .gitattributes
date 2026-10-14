@@ -2,3 +2,4 @@
 *.sh eol=lf
 patches/picodrive-32x-sh2-loop.patch -text
 patches/picodrive-32x-md-defer.patch -text
+patches/picodrive-32x-md-defer-palprio.patch -text
