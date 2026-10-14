@@ -1,0 +1,52 @@
+diff --git a/pico/videoport.c b/pico/videoport.c
+index db8dc844..397396c1 100644
+--- a/pico/videoport.c
++++ b/pico/videoport.c
+@@ -897,6 +897,28 @@ static inline int InHblank(int offs)
+   return SekCyclesDone() - Pico.t.m68c_line_start <= offs;
+ }
+ 
++/* GNW: a CRAM change with the MD layer deferred. The lines are kept as palette
++ * indices, so nothing has to be redrawn: bring the draw position up to the
++ * write, and let the 32X compositor take the lines before it under the old
++ * palette. Everything after the write is converted with the new one. */
++static void PicoVideoSyncPal(int skip)
++{
++  int lines = Pico.video.reg[1]&0x08 ? 240 : 224;
++  int last = Pico.m.scanline - (skip > 0);
++
++  if (!gnw_md_defer || PicoIn.skipFrame || (PicoIn.opt & POPT_ALT_RENDERER) ||
++      linedisabled >= 0 || lineenabled >= 0) {
++    PicoVideoSync(skip);
++    return;
++  }
++  if (last >= lines)
++    last = lines-1;
++  if (Pico.est.DrawScanline <= last)
++    PicoDrawSync(last, 0, 0);
++  Pico32xMdFlush();
++}
++
++
+ void PicoVideoSync(int skip)
+ {
+   struct VdpFIFO *vf = &VdpFIFO;
+@@ -968,7 +990,7 @@ PICO_INTERNAL_ASM void PicoVideoWrite(u32 a,unsigned short d)
+       // since the A/B tile row to be read depends on it. E.g. Skitchin, OD2
+       // in contrast, CRAM writes would have an immediate effect on the current
+       // pixel, so sync can be closer to start of actual image data
+-      PicoVideoSync(InHblank(pvid->type == 3 ? 103 : 30)); // cram in Toy Story
++      { if (pvid->type == 3) PicoVideoSyncPal(InHblank(103)); else PicoVideoSync(InHblank(30)); } // cram in Toy Story
+ 
+     if (!(PicoIn.opt&POPT_DIS_VDP_FIFO))
+     {
+@@ -1000,7 +1022,8 @@ PICO_INTERNAL_ASM void PicoVideoWrite(u32 a,unsigned short d)
+       CommandChange(pvid);
+       // Check for dma:
+       if (d & 0x80) {
+-        PicoVideoSync(InHblank(93));
++        if (pvid->type == 3) PicoVideoSyncPal(InHblank(93)); // CRAM, see there
++        else PicoVideoSync(InHblank(93));
+         CommandDma();
+       }
+     }
