@@ -1,0 +1,253 @@
+diff --git a/pico/32x/32x.c b/pico/32x/32x.c
+index e22535f5..197674e6 100644
+--- a/pico/32x/32x.c
++++ b/pico/32x/32x.c
+@@ -514,13 +514,40 @@ static void Pico32xRenderSync(int lines)
+       // we draw lines up to the sync point (not line-by-line)
+       PicoDraw32xLayer(offs, lines-Pico32x.sync_line, md_bg);
+     }
+-    else if (Pico32xDrawMode == PDM32X_BOTH)
++    else if (Pico32xDrawMode == PDM32X_BOTH || gnw_md_defer)
+       PicoDraw32xLayerMdOnly(offs, lines-Pico32x.sync_line);
+ 
+     pprof_end(draw);
+   }
+ }
+ 
++/* Composite the MD lines drawn so far (with the palette they were drawn
++ * under) before that palette is replaced, or before deferral is given up. */
++void Pico32xMdFlush(void)
++{
++  int line = Pico.est.DrawScanline;
++  void *dest;
++  int incr;
++
++  if (!gnw_md_defer || gnw_md_nof || Pico32x.sync_line >= line)
++    return;
++  dest = Pico.est.DrawLineDest;
++  incr = Pico.est.DrawLineDestIncr;
++  Pico32xRenderSync(line);
++  Pico.est.DrawLineDest = dest;
++  Pico.est.DrawLineDestIncr = incr;
++  Pico32x.sync_line = line;
++}
++
++void Pico32xMdAbort(void)
++{
++  if (!gnw_md_defer)
++    return;
++  Pico32xMdFlush();
++  gnw_md_defer = 0;
++  Pico.est.rendstatus |= PDRAW_SYNC_NEEDED;
++}
++
+ void Pico32xDrawSync(SH2 *sh2)
+ {
+ #if defined(RIG_PHASE_PROF) || defined(MD32X_DEVICE_PROFILE)
+@@ -939,7 +966,11 @@ void PicoFrame32x(void)
+ 
+   PicoFrameStart();
+   Pico32x.sync_line = 0;
+-  if (Pico32xDrawMode != PDM32X_BOTH)
++  /* Deferred MD layer: H40, no line callbacks. Everything else keeps the old
++   * rule that the MD layer is redrawn into the output buffer every frame. */
++  gnw_md_defer = Pico32xDrawMode == PDM32X_32X_ONLY && (Pico.video.reg[12] & 1) &&
++                 PicoScanBegin == NULL && PicoScan32xBegin == NULL;
++  if (Pico32xDrawMode != PDM32X_BOTH && !gnw_md_defer)
+     Pico.est.rendstatus |= PDRAW_SYNC_NEEDED;
+   PicoFrameHints();
+ 
+diff --git a/pico/32x/draw.c b/pico/32x/draw.c
+index a368fa66..7fc58b10 100644
+--- a/pico/32x/draw.c
++++ b/pico/32x/draw.c
+@@ -33,6 +33,8 @@
+ int (*PicoScan32xBegin)(unsigned int num);
+ int (*PicoScan32xEnd)(unsigned int num);
+ int Pico32xDrawMode;
++int gnw_md_defer;
++int gnw_md_nof;
+ 
+ void *DrawLineDestBase32x;
+ int DrawLineDestIncrement32x;
+@@ -272,7 +274,13 @@ static void gnw_line_pp(unsigned short *pd, unsigned char *p32x,
+           continue;
+         }
+         /* mixed-bg (not all bg): per-pixel with constant sv */
+-        while (run < i && *(unsigned char *)(MEM_BE2((uintptr_t)(p32x+run))) == b0) run++;
++        if (!((uintptr_t)(p32x) & 1)) {
++          u16 exp = (u16)(b0 | (b0 << 8));
++          while (run + 1 < i && *(u16 *)(p32x + run) == exp)
++            run += 2;
++          if (run < i && *(unsigned char *)(MEM_BE2((uintptr_t)(p32x+run))) == b0) run++;
++        } else
++          while (run < i && *(unsigned char *)(MEM_BE2((uintptr_t)(p32x+run))) == b0) run++;
+         for (n = 0; n < run; n++) {
+           if ((*pmd & 0x3f) == mdbg) *pd = sv;
+           else GNW_PP_MD_WRITE();
+@@ -634,6 +642,11 @@ void PicoDraw32xLayer(int offs, int lines, int md_bg)
+ 
+   if (Pico32xDrawMode == PDM32X_BOTH)
+     PicoDrawUpdateHighPal();
++  else if (gnw_md_defer) {
++    /* a palette change that nothing has redrawn for: the lines before it
++     * were already composited, the rest take the new palette */
++    gnw_md_nof = 1; PicoDrawUpdateHighPal(); gnw_md_nof = 0;
++  }
+ 
+   if ((Pico32x.vdp_regs[0] & P32XV_Mx) == 2)
+   {
+@@ -660,7 +673,7 @@ do_it:
+   // In 8bit modes MD+32X layers are merged together in 32X rendering, while in
+   // 16bit mode the MD layer is directly created in the target buffer and the
+   // 32X layer is overlaid onto that.
+-  if (Pico32xDrawMode == PDM32X_BOTH)
++  if (Pico32xDrawMode == PDM32X_BOTH || gnw_md_defer)
+     which_func = have_scan ? DO_LOOP_MD_SCAN : DO_LOOP_MD;
+   else if (!(Pico.video.reg[12] & 1)) // H32, mind 4 px offset
+     which_func = have_scan ? DO_LOOP_H32_SCAN : DO_LOOP_H32;
+@@ -685,10 +698,15 @@ void PicoDraw32xLayerMdOnly(int offs, int lines)
+   int plen = 320;
+   int l, p;
+ 
++  gnw_md_nof = gnw_md_defer;
+   PicoDrawUpdateHighPal();
++  gnw_md_nof = 0;
+ 
+   offs += Pico32x.sync_line;
+-  dst += Pico32x.sync_line * DrawLineDestIncrement32x;
++  /* DrawLineDestIncrement32x is in bytes (see PicoDraw32xLayer); advancing a
++   * u16 pointer by it doubled the stride and wrote past the output buffer
++   * whenever sync_line > 0 (After Burner), corrupting adjacent .bss state */
++  dst = (unsigned short *)((char *)dst + Pico32x.sync_line * DrawLineDestIncrement32x);
+ 
+   for (l = 0; l < lines; l++) {
+     if (have_scan) {
+@@ -734,8 +752,15 @@ void PicoDrawSetOutBuf32X(void *dest, int increment)
+   DrawLineDestBase32x = dest;
+   DrawLineDestIncrement32x = increment;
+   // in RGB555 mode this buffer is also used by the MD renderer
+-  if (Pico32xDrawMode != PDM32X_BOTH)
+-    PicoDrawSetOutBufMD(DrawLineDestBase32x, DrawLineDestIncrement32x);
++  if (Pico32xDrawMode != PDM32X_BOTH) {
++    if (Pico32xDrawMode == PDM32X_32X_ONLY && (Pico.video.reg[12] & 1) &&
++        PicoScanBegin == NULL && PicoScan32xBegin == NULL)
++      /* GNW: the MD layer lives in Draw2FB, a new target needs no redraw
++       * (PicoFrame32x forces one for the frames that do not defer). */
++      PicoDrawSetOutBufMD_keep(DrawLineDestBase32x, DrawLineDestIncrement32x);
++    else
++      PicoDrawSetOutBufMD(DrawLineDestBase32x, DrawLineDestIncrement32x);
++  }
+ }
+ 
+ // vim:shiftwidth=2:ts=2:expandtab
+diff --git a/pico/draw.c b/pico/draw.c
+index 17b2dfb4..3802e4aa 100644
+--- a/pico/draw.c
++++ b/pico/draw.c
+@@ -1548,6 +1548,11 @@ void FinalizeLine555(int sh, int line, struct PicoEState *est)
+   if (DrawLineDestIncrement == 0)
+     return;
+ 
++  if (gnw_md_defer && !(est->rendstatus & PDRAW_BGC_DMA)) {
++    PicoDrawUpdateHighPal(); // keep the palette in step with the drawn lines
++    return;
++  }
++
+   if (est->rendstatus & PDRAW_BGC_DMA)
+     return BgcDMA(est);
+ 
+@@ -2016,8 +2021,10 @@ void PicoDrawBgcDMA(u16 *base, u32 source, u32 mask, int dlen, int sl)
+     BgcDMAlen -= (len>>1)+xl;
+     BgcDMAoffs = 0;
+   }
+-  if (BgcDMAlen > 0)
++  if (BgcDMAlen > 0) {
++    Pico32xMdAbort(); // the DMA paints straight into the output buffer
+     est->rendstatus |= PDRAW_BGC_DMA;
++  }
+ }
+ 
+ // also works for fast renderer
+@@ -2026,6 +2033,7 @@ void PicoDrawUpdateHighPal(void)
+   struct PicoEState *est = &Pico.est;
+   if (est->Pico->m.dirtyPal) {
+     int sh = (est->Pico->video.reg[0xC] & 8) >> 3; // shadow/hilight?
++    Pico32xMdFlush(); // lines already drawn were drawn with the old palette
+     if ((*est->PicoOpt & POPT_ALT_RENDERER) | (est->rendstatus & PDRAW_SONIC_MODE))
+       sh = 0; // no s/h support
+ 
+@@ -2052,6 +2060,7 @@ void PicoDrawUpdateHighPal(void)
+ 
+ void PicoDrawSetOutFormat(pdso_t which, int use_32x_line_mode)
+ {
++  Pico32xMdAbort();
+   PicoDrawSetInternalBuf(NULL, 0);
+   PicoDrawSetOutBufMD(NULL, 0);
+   PicoDraw2SetOutBuf(NULL, 0);
+@@ -2079,6 +2088,15 @@ void PicoDrawSetOutFormat(pdso_t which, int use_32x_line_mode)
+   Pico.m.dirtyPal = 1;
+ }
+ 
++#ifndef NO_32X
++void PicoDrawSetOutBufMD_keep(void *dest, int increment)
++{
++  DrawLineDestBase = dest;
++  DrawLineDestIncrement = increment;
++  Pico.est.DrawLineDest = (char *)DrawLineDestBase + Pico.est.DrawScanline * increment;
++}
++#endif
++
+ void PicoDrawSetOutBufMD(void *dest, int increment)
+ {
+   if (FinalizeLine == FinalizeLine8bit && increment >= 328) {
+diff --git a/pico/pico_int.h b/pico/pico_int.h
+index 9d6f3eb6..cd3d702b 100644
+--- a/pico/pico_int.h
++++ b/pico/pico_int.h
+@@ -1238,6 +1238,7 @@ int p32x_sh2_memcpy(u32 dst, u32 src, int count, int size, SH2 *sh2);
+ // 32x/draw.c
+ void PicoDrawSetOutFormat32x(pdso_t which, int use_32x_line_mode);
+ void PicoDrawSetOutBuf32X(void *dest, int increment);
++void PicoDrawSetOutBufMD_keep(void *dest, int increment);
+ void FinalizeLine32xRGB555(int sh, int line, struct PicoEState *est);
+ void PicoDraw32xLayer(int offs, int lines, int mdbg);
+ void PicoDraw32xLayerMdOnly(int offs, int lines);
+@@ -1249,6 +1250,15 @@ enum {
+   PDM32X_BOTH,
+ };
+ extern int Pico32xDrawMode;
++/* GNW: deferred MD layer. While set, the MD line renderer leaves its 8-bit
++ * result in Draw2FB (HighCol) and the 32X compositor converts it through
++ * HighPal as it merges the 32X layer, so FinalizeLine555 does not write every
++ * line into the output buffer first and MD lines that did not change can be
++ * left alone from frame to frame. */
++extern int gnw_md_defer;
++extern int gnw_md_nof; /* palette rebuild inside the compositor: do not flush */
++void Pico32xMdFlush(void);
++void Pico32xMdAbort(void);
+ 
+ // 32x/pwm.c
+ unsigned int p32x_pwm_read16(u32 a, SH2 *sh2, unsigned int m68k_cycles);
+@@ -1293,6 +1303,9 @@ void REGPARM(3) sh2_peripheral_write32(u32 a, u32 d, SH2 *sh2);
+ #define FinalizeLine32xRGB555 NULL
+ #define p32x_pwm_update(...)
+ #define p32x_timers_recalc()
++#define gnw_md_defer 0
++#define Pico32xMdFlush() ((void)0)
++#define Pico32xMdAbort() ((void)0)
+ #endif
+ 
+ /* avoid dependency on newer glibc */
+diff --git a/pico/videoport.c b/pico/videoport.c
+index 09653144..db8dc844 100644
+--- a/pico/videoport.c
++++ b/pico/videoport.c
+@@ -1060,6 +1060,7 @@ PICO_INTERNAL_ASM void PicoVideoWrite(u32 a,unsigned short d)
+             // renderers should update their palettes if sh/hi mode is changed
+             if ((d^dold)&8) Pico.m.dirtyPal = 1;
+             if ((d^dold)&1) {
++              Pico32xMdAbort(); // H32/H40 changes how the line is laid out
+               PicoVideoFIFOMode(pvid->reg[1]&0x40, d & 1);
+               Pico.est.rendstatus |= PDRAW_DIRTY_SPRITES;
+             }

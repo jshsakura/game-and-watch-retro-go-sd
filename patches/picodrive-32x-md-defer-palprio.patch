@@ -1,0 +1,61 @@
+diff --git a/pico/32x/draw.c b/pico/32x/draw.c
+index 7fc58b10..e58dc5e9 100644
+--- a/pico/32x/draw.c
++++ b/pico/32x/draw.c
+@@ -35,6 +35,8 @@ int (*PicoScan32xEnd)(unsigned int num);
+ int Pico32xDrawMode;
+ int gnw_md_defer;
+ int gnw_md_nof;
++/* set when any 32X palette entry carries the priority bit, as of the last conversion */
++static int pal_has_prio = 1;
+ 
+ void *DrawLineDestBase32x;
+ int DrawLineDestIncrement32x;
+@@ -53,10 +55,14 @@ static void convert_pal555(int invert_prio)
+   if (invert_prio)
+     inv = 0x80008000;
+ 
++  u32 any = 0;
++
+   for (i = 0x100/2; i > 0; i--, ps++, pd++) {
+     u32 t = *ps ^ inv;
+     *pd = PXCONV(t);
++    any |= *pd;
+   }
++  pal_has_prio = (any & ((PXPRIO << 16) | PXPRIO)) != 0;
+ 
+   Pico32x.dirty_pal = 0;
+ }
+@@ -357,6 +363,32 @@ static void gnw_line_pp(unsigned short *pd, unsigned char *p32x,
+       }
+     }
+     /* non-background run: 32X pixel only if priority bit set */
++    if (!pal_has_prio && md_mode == GNW_PP_MD_PAL) {
++      /* no palette entry has the bit, so the MD layer wins the whole run
++       * and the 32X pixels need not even be looked at */
++      {
++        unsigned short *p0 = pd;
++        for (;;) {
++          if (i >= 4 && !((uintptr_t)pmd & 3)) {
++            /* four MD bytes, none of them the background */
++            u32 w = *(u32 *)pmd, x = (w & 0x3f3f3f3fu) ^ mdbg4;
++            if (!((x - 0x01010101u) & ~x & 0x80808080u)) {
++              pd[0] = palmd[w & 0xff];         pd[1] = palmd[(w >> 8) & 0xff];
++              pd[2] = palmd[(w >> 16) & 0xff]; pd[3] = palmd[w >> 24];
++              pd += 4; pmd += 4; i -= 4;
++              continue;
++            }
++          }
++          if (i > 0 && (*pmd & 0x3f) != mdbg) {
++            *pd++ = palmd[*pmd++]; i--;
++            continue;
++          }
++          break;
++        }
++        p32x += pd - p0;
++      }
++      continue;
++    }
+     for (; i > 0 && (*pmd & 0x3f) != mdbg; ) {
+       if (i >= 2 && (pmd[1] & 0x3f) != mdbg) {
+         if (!((uintptr_t)(p32x) & 1)) {
