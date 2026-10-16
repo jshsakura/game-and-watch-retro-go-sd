@@ -1,0 +1,40 @@
+diff --git a/pico/32x/memory.c b/pico/32x/memory.c
+index 37cc007c..87463881 100644
+--- a/pico/32x/memory.c
++++ b/pico/32x/memory.c
+@@ -830,12 +830,31 @@ static void p32x_vdp_write16(u32 a, u32 d, SH2 *sh2)
+   if (a == 8) { // fill data
+     u16 *dram = Pico32xMem->dram[(Pico32x.vdp_regs[0x0a/2] & P32XV_FS) ^ 1];
+     int len = Pico32x.vdp_regs[4 / 2] + 1;
+-    int len1 = len;
+     a = Pico32x.vdp_regs[6 / 2];
+-    while (len1--) {
+-      dram[a] = d;
+-      a = (a & 0xff00) | ((a + 1) & 0xff);
++    // GNW: linearized fill. The address wraps inside a 256-halfword
++    // line (high byte of a is kept, low byte wraps) and d is constant,
++    // so one linear pass over the rest of the line covers every later
++    // wrapped pass over the same line. This skips the per-halfword
++    // address step and repeated writes to the same cells.
++    {
++      u32 lo = a & 0xff;
++      u32 rem = 0x100 - lo;
++      u32 i;
++      if ((u32)len < rem) {
++        // no wrap
++        for (i = 0; i < (u32)len; i++)
++          dram[(a & 0xff00) | (lo + i)] = d;
++      } else {
++        // wrap: fill the rest of the line, then the remaining tail
++        // from the start of the line; extra full passes are idempotent
++        u32 m = (u32)len - rem;
++        for (i = lo; i < 0x100; i++)
++          dram[(a & 0xff00) | i] = d;
++        for (i = 0; i < (m & 0xff); i++)
++          dram[(a & 0xff00) | i] = d;
++      }
+     }
++    a = (a & 0xff00) | ((a + len) & 0xff);
+     Pico32x.vdp_regs[0x06 / 2] = a;
+     Pico32x.vdp_regs[0x08 / 2] = d;
+     if (sh2 != NULL && len > 8) {
