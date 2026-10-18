@@ -608,22 +608,33 @@ static bool Md32xCacheXipToFlash(void) {
  * the diag tail is the only slack left (same lever as 0725/0726 below). The
  * linker ASSERT is strict (<), so the shave must land END strictly below
  * __RAM_EMU_END__. Release keeps 768. */
-static char md32x_diag[632];
+#define MD32X_DIAG_SIZE 632
 #else
-static char md32x_diag[768];
+#define MD32X_DIAG_SIZE 768
 #endif
+/* (1016) array -> pointer: the MD32X overlay BSS again sits flush against
+ * __RAM_EMU_END__ once the bench-result object landed, so the diag tail moves
+ * to the runtime AHB pool via lazy ahb_malloc — the "fork-side pointer"
+ * remedy the linker script documents for tight overlay BSS (GBA fb pattern).
+ * Boot breadcrumbs still work (the pool is up before app_main_md32x); if the
+ * pool is exhausted we simply drop diagnostics and keep booting. */
+static char *md32x_diag;
 static uint16_t md32x_diag_len;
 static bool md32x_diag_sealed;   /* true once the main loop starts: no more writes */
 
 static void diag_log(const char *fmt, ...) {
   if (md32x_diag_sealed) return;
+  if (md32x_diag == NULL) {
+    md32x_diag = ahb_malloc(MD32X_DIAG_SIZE);
+    if (md32x_diag == NULL) return;
+  }
   va_list ap; va_start(ap, fmt);
   int n = vsnprintf(md32x_diag + md32x_diag_len,
-                    sizeof(md32x_diag) - md32x_diag_len, fmt, ap);
+                    MD32X_DIAG_SIZE - md32x_diag_len, fmt, ap);
   va_end(ap);
   if (n > 0) {
-    md32x_diag_len += (uint16_t)((n < (int)(sizeof(md32x_diag) - md32x_diag_len))
-                                 ? n : (int)(sizeof(md32x_diag) - md32x_diag_len) - 1);
+    md32x_diag_len += (uint16_t)((n < (int)(MD32X_DIAG_SIZE - md32x_diag_len))
+                                 ? n : (int)(MD32X_DIAG_SIZE - md32x_diag_len) - 1);
   }
   wdog_refresh();
   FILE *f = fopen(MD32X_DIAG_PATH, "wb");
