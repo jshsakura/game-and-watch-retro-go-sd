@@ -305,10 +305,15 @@ static void segacd_write_sound(int len)
  * sector arrives late, the PCM DMA half runs dry and replays stale samples.
  * Instead of idling through the pacing wait in common_emu_sound_sync, pull
  * the upcoming sectors there: the same SD traffic, moved off the audio path.
- * Single-bin images share one fd between the data and audio paths, so the
- * ring is invalidated whenever the shared pm_file is read or seeked by the
- * data path; reads are then served directly, which is byte-for-byte what
- * the unpatched code would have fetched. */
+ *
+ * The fd is always exactly `len` bytes AHEAD of the logical CD-DA position.
+ * Single-bin images share one fd between the data and audio paths, so any
+ * other access to the stream (pm_read / pm_seek, reported by the picodrive
+ * hook) first puts the fd back by `len` and drops the ring; the access then
+ * sees byte for byte what the unpatched code would have given it.
+ * pm_read_audio ends in pm_read on little-endian targets, so the ring's own
+ * reads would trip that hook: they run under segacd_cdda_own_read.
+ * Only uncompressed streams get a ring (a CHD stream keeps its own cursor). */
 #define SEGACD_CDDA_RING_SECTORS 4
 #define SEGACD_CDDA_SECTOR 2352
 
@@ -318,21 +323,35 @@ static struct {
   uint32_t len;
   int eof;
 } segacd_cdda;
+static int segacd_cdda_own_read;
+
+static int segacd_cdda_ring_read(void *buf, int bytes, pm_file *stream)
+{
+  segacd_cdda_own_read = 1;
+  int r = pm_read_audio(buf, bytes, stream);
+  segacd_cdda_own_read = 0;
+  return r;
+}
 
 /* picodrive hooks; the weak declarations live in the picodrive patch */
 void gnw_cdda_set_stream(pm_file *stream)
 {
-  segacd_cdda.stream = stream;
+  segacd_cdda.stream = (stream != NULL && stream->type == PMT_UNCOMPRESSED) ? stream : NULL;
   segacd_cdda.len = 0;
   segacd_cdda.eof = 0;
 }
 
 void gnw_cdda_stream_touched(pm_file *stream)
 {
-  if (stream != NULL && stream == segacd_cdda.stream) {
-    segacd_cdda.len = 0;
-    segacd_cdda.eof = 0;
+  if (segacd_cdda_own_read || stream == NULL || stream != segacd_cdda.stream)
+    return;
+  if (segacd_cdda.len != 0) {
+    segacd_cdda_own_read = 1;
+    pm_seek(stream, -(long)segacd_cdda.len, SEEK_CUR);
+    segacd_cdda_own_read = 0;
   }
+  segacd_cdda.len = 0;
+  segacd_cdda.eof = 0;
 }
 
 int gnw_cdda_read(void *buf, int bytes, pm_file *stream)
@@ -351,7 +370,7 @@ int gnw_cdda_read(void *buf, int bytes, pm_file *stream)
 
   /* Drained early: the fd sits exactly at the ring tail, so topping up
    * directly stays byte-exact with the unpatched sequential read. */
-  int r = pm_read_audio(dst + n, (int)(want - n), stream);
+  int r = segacd_cdda_ring_read(dst + n, (int)(want - n), stream);
   if (r <= 0) return (int)n;
   return (int)n + r;
 }
@@ -366,8 +385,8 @@ static void segacd_cdda_prefetch(void)
   uint32_t space = sizeof(segacd_cdda.buf) - segacd_cdda.len;
   uint32_t chunk = space / SEGACD_CDDA_SECTOR * SEGACD_CDDA_SECTOR;
   if (chunk != 0) {
-    int r = pm_read_audio(segacd_cdda.buf + segacd_cdda.len, (int)chunk,
-                          segacd_cdda.stream);
+    int r = segacd_cdda_ring_read(segacd_cdda.buf + segacd_cdda.len, (int)chunk,
+                                  segacd_cdda.stream);
     if (r > 0) segacd_cdda.len += r;
     if (r < (int)chunk) segacd_cdda.eof = 1; /* short read or error: stop */
     space -= chunk;
