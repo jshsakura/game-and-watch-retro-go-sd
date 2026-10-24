@@ -5,3 +5,4 @@ patches/picodrive-32x-md-defer.patch -text
 patches/picodrive-32x-md-defer-palprio.patch -text
 patches/picodrive-32x-md-defer-satskip.patch -text
 patches/picodrive-32x-md-defer-cramsync.patch -text
+patches/picodrive-32x-vdp-fill-linear.patch -text
