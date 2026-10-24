@@ -1,0 +1,78 @@
+diff --git a/pico/cart.c b/pico/cart.c
+index 8a11f0dd..61996961 100644
+--- a/pico/cart.c
++++ b/pico/cart.c
+@@ -11,6 +11,12 @@
+ #include "pico_int.h"
+ #include <cpu/debug.h>
+ 
++#ifdef GNW_MCD_BIOS_XIP
++/* GNW segacd: single-bin images share one fd between the data and CD-DA
++ * paths; the port uses this hook to invalidate its CD-DA prefetch ring. */
++void gnw_cdda_stream_touched(pm_file *stream) __attribute__((weak));
++#endif
++
+ #if defined(USE_LIBCHDR)
+ #include "libchdr/chd.h"
+ #include "libchdr/cdrom.h"
+@@ -403,6 +409,9 @@ static size_t _pm_read_chd(void *ptr, size_t bytes, pm_file *stream, int is_audi
+ 
+ size_t pm_read(void *ptr, size_t bytes, pm_file *stream)
+ {
++#ifdef GNW_MCD_BIOS_XIP
++  if (gnw_cdda_stream_touched != NULL) gnw_cdda_stream_touched(stream);
++#endif
+   int ret;
+ 
+   if (stream == NULL)
+@@ -547,6 +556,9 @@ size_t pm_read_audio(void *ptr, size_t bytes, pm_file *stream)
+ 
+ int pm_seek(pm_file *stream, long offset, int whence)
+ {
++#ifdef GNW_MCD_BIOS_XIP
++  if (gnw_cdda_stream_touched != NULL) gnw_cdda_stream_touched(stream);
++#endif
+   if (stream == NULL)
+     return -1;
+   else if (stream->type == PMT_UNCOMPRESSED)
+diff --git a/pico/sound/sound.c b/pico/sound/sound.c
+index d85b7d07..0418098d 100644
+--- a/pico/sound/sound.c
++++ b/pico/sound/sound.c
+@@ -431,6 +431,12 @@ PICO_INTERNAL void PsndDoPCM(int cyc_to)
+ 
+ #ifndef GNW_32X_CORE
+ // cdda
++#ifdef GNW_MCD_BIOS_XIP
++/* GNW segacd: CD-DA prefetch hooks; weak and NULL-checked so builds
++ * without the port side stay unchanged. */
++int gnw_cdda_read(void *buf, int bytes, pm_file *stream) __attribute__((weak));
++void gnw_cdda_set_stream(pm_file *stream) __attribute__((weak));
++#endif
+ static void cdda_raw_update(s32 *buffer, int length, int stereo)
+ {
+   int ret, cdda_bytes;
+@@ -448,7 +454,13 @@ static void cdda_raw_update(s32 *buffer, int length, int stereo)
+   while (Pico_mcd->m.cdda_lba_offset >= 2352/4)
+     Pico_mcd->m.cdda_lba_offset -= 2352/4;
+ 
++#ifdef GNW_MCD_BIOS_XIP
++  ret = gnw_cdda_read != NULL
++      ? gnw_cdda_read(cdda_out_buffer, cdda_bytes, Pico_mcd->cdda_stream)
++      : pm_read_audio(cdda_out_buffer, cdda_bytes, Pico_mcd->cdda_stream);
++#else
+   ret = pm_read_audio(cdda_out_buffer, cdda_bytes, Pico_mcd->cdda_stream);
++#endif
+   if (ret < cdda_bytes) {
+     memset((char *)cdda_out_buffer + ret, 0, cdda_bytes - ret);
+     Pico_mcd->cdda_stream = NULL;
+@@ -485,6 +497,9 @@ void cdda_start_play(int lba_base, int lba_offset, int lb_len)
+     // skip headers, assume it's 44kHz stereo uncompressed
+     pm_seek(Pico_mcd->cdda_stream, 44, SEEK_CUR);
+   }
++#ifdef GNW_MCD_BIOS_XIP
++  if (gnw_cdda_set_stream != NULL) gnw_cdda_set_stream(Pico_mcd->cdda_stream);
++#endif
+ }
+ #endif // !GNW_32X_CORE
+ 

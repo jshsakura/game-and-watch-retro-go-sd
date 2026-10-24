@@ -8,6 +8,7 @@
 #include "odroid_system.h"
 #include "odroid_overlay.h"
 #include "common.h"
+#include "gw_audio.h" /* dma_counter for the local pacing wait */
 #include "gw_lcd.h"
 #include "gw_linker.h"
 #include "gw_malloc.h"
@@ -296,6 +297,122 @@ static void segacd_write_sound(int len)
   for (uint16_t i = 0; i < n; i++)
     dst[i] = (int16_t)(((int32_t)segacd_snd[i] * factor) >> 8);
   for (uint16_t i = n; i < cap; i++) dst[i] = 0;
+}
+
+/* --- CD-DA SD prefetch (PCE-style) --------------------------------------
+ * PsndRender reads CD-DA sectors synchronously from the SD card inside
+ * PicoFrame (cdda_raw_update -> pm_read_audio -> fread). On a slow frame the
+ * sector arrives late, the PCM DMA half runs dry and replays stale samples.
+ * Instead of idling through the pacing wait in common_emu_sound_sync, pull
+ * the upcoming sectors there: the same SD traffic, moved off the audio path.
+ *
+ * The fd is always exactly `len` bytes AHEAD of the logical CD-DA position.
+ * Single-bin images share one fd between the data and audio paths, so any
+ * other access to the stream (pm_read / pm_seek, reported by the picodrive
+ * hook) first puts the fd back by `len` and drops the ring; the access then
+ * sees byte for byte what the unpatched code would have given it.
+ * pm_read_audio ends in pm_read on little-endian targets, so the ring's own
+ * reads would trip that hook: they run under segacd_cdda_own_read.
+ * Only uncompressed streams get a ring (a CHD stream keeps its own cursor). */
+#define SEGACD_CDDA_RING_SECTORS 4
+#define SEGACD_CDDA_SECTOR 2352
+
+static struct {
+  uint8_t buf[SEGACD_CDDA_RING_SECTORS * SEGACD_CDDA_SECTOR];
+  pm_file *stream;
+  uint32_t len;
+  int eof;
+} segacd_cdda;
+static int segacd_cdda_own_read;
+
+static int segacd_cdda_ring_read(void *buf, int bytes, pm_file *stream)
+{
+  segacd_cdda_own_read = 1;
+  int r = pm_read_audio(buf, bytes, stream);
+  segacd_cdda_own_read = 0;
+  return r;
+}
+
+/* picodrive hooks; the weak declarations live in the picodrive patch */
+void gnw_cdda_set_stream(pm_file *stream)
+{
+  segacd_cdda.stream = (stream != NULL && stream->type == PMT_UNCOMPRESSED) ? stream : NULL;
+  segacd_cdda.len = 0;
+  segacd_cdda.eof = 0;
+}
+
+void gnw_cdda_stream_touched(pm_file *stream)
+{
+  if (segacd_cdda_own_read || stream == NULL || stream != segacd_cdda.stream)
+    return;
+  if (segacd_cdda.len != 0) {
+    segacd_cdda_own_read = 1;
+    pm_seek(stream, -(long)segacd_cdda.len, SEEK_CUR);
+    segacd_cdda_own_read = 0;
+  }
+  segacd_cdda.len = 0;
+  segacd_cdda.eof = 0;
+}
+
+int gnw_cdda_read(void *buf, int bytes, pm_file *stream)
+{
+  uint8_t *dst = buf;
+  uint32_t want = (uint32_t)bytes;
+
+  if (stream == NULL || stream != segacd_cdda.stream)
+    return pm_read_audio(buf, bytes, stream);
+
+  uint32_t n = segacd_cdda.len < want ? segacd_cdda.len : want;
+  memcpy(dst, segacd_cdda.buf, n);
+  segacd_cdda.len -= n;
+  memmove(segacd_cdda.buf, segacd_cdda.buf + n, segacd_cdda.len);
+  if (n == want) return (int)n;
+
+  /* Drained early: the fd sits exactly at the ring tail, so topping up
+   * directly stays byte-exact with the unpatched sequential read. */
+  int r = segacd_cdda_ring_read(dst + n, (int)(want - n), stream);
+  if (r <= 0) return (int)n;
+  return (int)n + r;
+}
+
+static void segacd_cdda_prefetch(void)
+{
+  if (segacd_cdda.stream == NULL || segacd_cdda.eof ||
+      Pico_mcd == NULL || Pico_mcd->cdda_stream != segacd_cdda.stream) {
+    cpumon_sleep();
+    return;
+  }
+  uint32_t space = sizeof(segacd_cdda.buf) - segacd_cdda.len;
+  uint32_t chunk = space / SEGACD_CDDA_SECTOR * SEGACD_CDDA_SECTOR;
+  if (chunk != 0) {
+    int r = segacd_cdda_ring_read(segacd_cdda.buf + segacd_cdda.len, (int)chunk,
+                                  segacd_cdda.stream);
+    if (r > 0) segacd_cdda.len += r;
+    if (r < (int)chunk) segacd_cdda.eof = 1; /* short read or error: stop */
+    space -= chunk;
+  }
+  if (space > 0) cpumon_sleep(); /* ring mostly full: just pace */
+}
+
+/* common_emu_sound_sync(false) + CD-DA prefetch, mirroring the PCE core
+ * (pce_sound_sync_with_prefetch). The pacer wait until the SAI DMA frees
+ * the next audio half is dead CPU time; spend it pulling the upcoming
+ * CD-DA sectors from SD instead. Implemented here rather than through a
+ * wait hook in the resident common.c because the internal flash holding
+ * resident code is full to a 256 B headroom floor. dma_counter is the
+ * same hardware clock common_emu_sound_sync waits on, and the shared
+ * marker keeps pause/resume resets in sync with it. */
+static void segacd_sound_sync_with_prefetch(void)
+{
+  if (common_emu_state.skip_frames)
+    return; /* running behind: no wait, no extra SD work */
+  if (common_emu_sound_dma_marker == 0)
+    common_emu_sound_dma_marker = dma_counter;
+  for (uint8_t p = 0; p < common_emu_state.pause_frames + 1; p++) {
+    while (dma_counter == common_emu_sound_dma_marker)
+      segacd_cdda_prefetch();
+    common_emu_sound_dma_marker = dma_counter;
+  }
 }
 
 /* The Sega CD pad is the Genesis 6-button pad and shares APPID_MD's keymap
@@ -607,6 +724,6 @@ void app_main_segacd(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
       common_ingame_overlay();
       lcd_swap();
     }
-    common_emu_sound_sync(false);
+    segacd_sound_sync_with_prefetch();
   }
 }

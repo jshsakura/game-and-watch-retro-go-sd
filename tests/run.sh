@@ -723,6 +723,7 @@ bash tests/test_idle_timeout_wired.sh || fail tests/test_idle_timeout_wired.sh
 bash tests/test_apply_patches_wired.sh || fail tests/test_apply_patches_wired.sh
 bash tests/test_vdp_fill_linear.sh || fail tests/test_vdp_fill_linear.sh
 bash tests/test_segacd_wired.sh || fail tests/test_segacd_wired.sh
+bash tests/test_segacd_cdda_ring.sh || fail tests/test_segacd_cdda_ring.sh
 bash tests/test_xip_sentinels.sh || fail tests/test_xip_sentinels.sh
 
 echo "=== boot rescue: a bricked boot must end somewhere a person can act ==="
