@@ -1,0 +1,14 @@
+# worktree /home/pi/scratch/wt-32x-defer at 3d6e8c4f0cdf5a75231dc3712d406e1921062755 (perf/32x-md-defer-revival-20261012)
+diff --git a/Core/Src/porting/md32x/main_md32x.c b/Core/Src/porting/md32x/main_md32x.c
+index 9cd26fe8..1ed3a83a 100644
+--- a/Core/Src/porting/md32x/main_md32x.c
++++ b/Core/Src/porting/md32x/main_md32x.c
+@@ -520,7 +520,7 @@ static void md32x_repaint(void) {
+     Pico32x.sync_line = 0;
+     if ((Pico32x.vdp_regs[0] & P32XV_Mx) && !(Pico.video.debug_p & PVD_KILL_32X))
+       PicoDraw32xLayer(md32x_content_top, md32x_content_lines, Pico.video.reg[7] & 0x3f);
+-    else if (Pico32xDrawMode == PDM32X_BOTH)
++    else if (Pico32xDrawMode == PDM32X_BOTH || gnw_md_defer)
+       PicoDraw32xLayerMdOnly(md32x_content_top, md32x_content_lines);
+   }
+   Pico32x.sync_line = old_sync;

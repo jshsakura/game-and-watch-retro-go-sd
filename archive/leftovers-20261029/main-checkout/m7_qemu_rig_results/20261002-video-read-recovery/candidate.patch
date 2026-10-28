@@ -1,0 +1,380 @@
+diff --git a/Core/Src/porting/video/CLAUDE.md b/Core/Src/porting/video/CLAUDE.md
+index e4cc51a3..95106041 100644
+--- a/Core/Src/porting/video/CLAUDE.md
++++ b/Core/Src/porting/video/CLAUDE.md
+@@ -104,6 +104,33 @@ many did not fit, both reset per clip. **Read `max=` before arguing about the sl
+ size.** The encoder keeps peaks under the ceiling with VBV rate control, so `big=`
+ should be 0; if it is not, the clip was made by something else.
+ 
++## Recovering from an expensive frame
++
++Dropping only the JPEG decode does not recover when SD reads dominate: the old
++loop first read every payload in full, then checked the presentation deadline.
++An overloaded clip could present its first two frames and spend the rest of
++playback reading frames it would immediately discard.
++
++`pf_fetch()` now passes the current presentation deadline to the forced
++`pf_step()` path. Completed queued frames are still delivered without a read.
++For an unbuffered frame whose deadline has passed, the payload (or the unread
++remainder of a partial prefetch) is discarded using `PF_DROPPED`; `avi_next()`
++seeks past it on the next call. Audio chunks are still fed in order. Start,
++seek, pause and speed changes re-anchor timing; an unanchored fetch has no
++discard deadline. Keep the signed tick comparison so timer wrap still works.
++
++`tests/test_video_play.c` checks unread payload bytes, slot release, audio
++ordering and timer wrap. `tests/test_video_timing.py` runs the existing rig
++natively with the real playback code: sustained read overload must recover,
++and six minutes of normal playback / 2% clock mismatch must keep presenting
++every frame. These are injected timing models, not STM32 speed measurements.
++
++The HUD now compares `rd`, `pf`, `jpg` with the frame budget, and distinguishes
++`late` deadline drops from `fail` rejected/oversized frames. `max` decode time
++resets per clip. A rising `late` count with high `rd` or `jpg` indicates missed
++deadlines; `big` identifies frames exceeding the slot capacity; `ring` exposes
++audio buffering. None alone establishes the cause of a specific device report.
++
+ ## Resume positions
+ 
+ `video_resume.c` -- one line per clip in `/data/video_resume.txt`, read after
+diff --git a/Core/Src/porting/video/video_play.c b/Core/Src/porting/video/video_play.c
+index aaebdc68..04161bd9 100644
+--- a/Core/Src/porting/video/video_play.c
++++ b/Core/Src/porting/video/video_play.c
+@@ -80,7 +80,8 @@ static void feed_audio(avi_t *a, long sz)
+  * up BEFORE it starts crossing it. Reset per clip. */
+ static long g_vid_toobig = 0, g_vid_szmax = 0;
+ 
+-typedef struct { long sz; int slot; } pf_ent_t;   // slot < 0: unreadable/oversized frame
++#define PF_DROPPED (-2)                         // missed deadline, payload not needed
++typedef struct { long sz; int slot; } pf_ent_t;   // -1: unreadable/oversized frame
+ 
+ static pf_ent_t pf_q[PF_DEPTH];
+ static int      pf_n;
+@@ -114,10 +115,20 @@ static void pf_enqueue(long sz, int slot)
+ // Advance the prefetcher a little. force=false (pacing wait): bounded work per
+ // call, honours the audio-ring gate. force=true (consumer starving): big reads,
+ // no gate — this is exactly the old synchronous behaviour.
++// late_after is the consumer's presentation time. Once missed,
++// discard the video payload (including an unfinished prefetch); avi_next()
++// seeks past it on the next call. Audio chunks are still decoded in order.
+ // Returns false when there is nothing (more) to do right now.
+-static bool pf_step(avi_t *a, int spd, bool paused, int *na_seen, bool force)
++static bool pf_step(avi_t *a, int spd, bool paused, int *na_seen, bool force,
++                    const uint32_t *late_after)
+ {
+     if (pf_ip_want >= 0) {                       // continue the in-progress frame
++        if (late_after && (int32_t)(HAL_GetTick() - *late_after) > 0) {
++            pf_busy &= ~(1 << pf_ip_slot);
++            pf_enqueue(pf_ip_want, PF_DROPPED);
++            pf_ip_want = -1;
++            return true;
++        }
+         long left = pf_ip_want - pf_ip_got;
+         long take = (!force && left > PF_STEP) ? PF_STEP : left;
+         uint32_t t0 = HAL_GetTick();
+@@ -172,6 +183,10 @@ static bool pf_step(avi_t *a, int spd, bool paused, int *na_seen, bool force)
+         pf_enqueue(sz, -1);
+         return true;
+     }
++    if (late_after && (int32_t)(HAL_GetTick() - *late_after) > 0) {
++        pf_enqueue(sz, PF_DROPPED);
++        return true;
++    }
+ 
+     int slot = pf_slot_alloc();
+     if (slot < 0) return false;                  // shouldn't happen with pf_n < depth
+@@ -183,7 +198,8 @@ static bool pf_step(avi_t *a, int spd, bool paused, int *na_seen, bool force)
+ 
+ // Blocking: hand out the next video frame in display order (prefetched or read
+ // now), feeding interleaved audio chunks along the way. false = end of stream.
+-static bool pf_fetch(avi_t *a, pf_ent_t *out, int spd, bool paused, int *na_seen)
++static bool pf_fetch(avi_t *a, pf_ent_t *out, int spd, bool paused, int *na_seen,
++                     const uint32_t *late_after)
+ {
+     g_vdec_read_ms = 0;              // blocking read time for the frame we deliver
+     for (;;) {
+@@ -196,7 +212,7 @@ static bool pf_fetch(avi_t *a, pf_ent_t *out, int spd, bool paused, int *na_seen
+         }
+         if (pf_src_end)
+             return false;
+-        pf_step(a, spd, paused, na_seen, true);
++        pf_step(a, spd, paused, na_seen, true, late_after);
+     }
+ }
+ 
+@@ -383,7 +399,7 @@ static void build_diag(const avi_t *a, int nv, int na)
+ // away (pf= carries the read while rd= stays ~0 — the prefetch paying off).
+ static int g_vid_dms = 0, g_vid_dmax = 0, g_vid_fms = 0;
+ 
+-static void draw_hud(int dec_ok, int seen, int na)
++static void draw_hud(int dec_ok, int seen, int late, uint32_t frame_us)
+ {
+     // SD read path: S1 = HW SPI1 (Tim S.), O1 = soft-SPI bit-bang over OSPI (Yota9).
+     // Tells us whether a slow read is the HW-SPI clock or the bit-bang loop.
+@@ -394,29 +410,32 @@ static void draw_hud(int dec_ok, int seen, int na)
+     const char *sd = "--"; /* flash build: media streams from FrogFS, no SD path */
+ #endif
+     extern int g_vdec_read_ms, g_vdec_pf_ms, g_vdec_jpeg_ms;
+-    char l1[80], l2[48];
+-    /* dec/v is the whole story when it reads 14/272: nine frames in ten are being
+-     * REJECTED, not merely late. So the last rejection's reason belongs here, live,
+-     * next to the count — not only on the giving-up screen. */
+-    snprintf(l1, sizeof l1, "dec=%d v=%d rd=%dms jpg=%dms st=%d hal=%lu rej=%lu",
+-             dec_ok, seen, g_vdec_read_ms, g_vdec_jpeg_ms,
+-             g_vdec_st, (unsigned long)g_jpeg_hal, (unsigned long)g_jpeg_rej);
++    char l1[80], l2[80], l3[80];
++    // Compare read/decode costs with the clip's actual frame budget. Count
++    // deadline drops separately from rejected JPEGs: both used to look like
++    // dec/v falling, leaving heavy input indistinguishable from decode failure.
++    snprintf(l1, sizeof l1, "rd=%d pf=%d jpg=%d /%lums late=%d",
++             g_vdec_read_ms, g_vdec_pf_ms, g_vdec_jpeg_ms,
++             (unsigned long)(frame_us / 1000), late);
+     // ring= is the A/V clock trim's servo error: it must sit near VR_TARGET
+     // (~1200) for the whole clip. Climbing to 4095 is the drift that used to
+     // close the prefetch gate and turn playback to stutter; falling to 0 is an
+     // underrun. Either end means the trim is not holding.
+-    snprintf(l2, sizeof l2, "sz=%ld/%ldk big=%ld dmx=%d sd=%s ring=%d",
+-             g_vdec_sz, g_vid_szmax / 1024, g_vid_toobig, g_vid_dmax, sd,
++    snprintf(l2, sizeof l2, "sz=%ld/%ldk big=%ld ring=%d",
++             g_vdec_sz, g_vid_szmax / 1024, g_vid_toobig,
+              video_audio_ring_count());
++    snprintf(l3, sizeof l3, "dec=%d/%d fail=%d st=%d max=%d sd=%s",
++             dec_ok, seen, seen - dec_ok - late, g_vdec_st, g_vid_dmax, sd);
+     uint16_t *fb = lcd_get_active_buffer();
+     uint16_t accent = curr_colors->sel_c;
+-    for (int y = 0; y < 26; y++) {                       // translucent panel (video shows through)
++    for (int y = 0; y < 38; y++) {                       // translucent panel (video shows through)
+         uint16_t *row = fb + y * GW_LCD_WIDTH;
+         for (int x = 0; x < GW_LCD_WIDTH; x++) row[x] = vmix(row[x], 0x0000, 9);
+     }
+-    for (int x = 0; x < GW_LCD_WIDTH; x++) fb[26 * GW_LCD_WIDTH + x] = accent;   // accent edge
++    for (int x = 0; x < GW_LCD_WIDTH; x++) fb[38 * GW_LCD_WIDTH + x] = accent;   // accent edge
+     i18n_draw_text_line(3, 2,  GW_LCD_WIDTH - 6, l1, accent,               0, 1);
+     i18n_draw_text_line(3, 14, GW_LCD_WIDTH - 6, l2, curr_colors->main_c, 0, 1);
++    i18n_draw_text_line(3, 26, GW_LCD_WIDTH - 6, l3, curr_colors->main_c, 0, 1);
+ }
+ 
+ vid_result_t video_play(const char *path)
+@@ -433,6 +452,7 @@ vid_result_t video_play(const char *path)
+     }
+     int nv_seen = 0, na_seen = 0;
+     g_vid_toobig = 0; g_vid_szmax = 0;   /* per clip, not per session */
++    g_vid_dms = g_vid_dmax = g_vid_fms = 0;
+     s_diag[0] = '\0';                   // fresh diag for this clip
+ 
+     video_decode_init();                // power up the hardware JPEG codec
+@@ -459,7 +479,7 @@ vid_result_t video_play(const char *path)
+     music_audio_enable(1);
+     apply_audio(1, false);
+ 
+-    int  spd = 1, dec_ok = 0;
++    int  spd = 1, dec_ok = 0, late = 0;
+     bool decoded_any = false, stopped = false, paused = false;
+     bool anchored = false;              // re-anchor the schedule at the 1st frame after start/seek
+     uint32_t t0 = 0;                    // wall-clock anchor for exact-interval pacing
+@@ -470,7 +490,14 @@ vid_result_t video_play(const char *path)
+ 
+     pf_reset();
+     pf_ent_t ent;
+-    while (pf_fetch(&a, &ent, spd, paused, &na_seen)) {
++    for (;;) {
++        uint32_t fetch_us = (uint32_t)a.usec_per_frame * SPD_DEN[spd] / SPD_NUM[spd];
++        // A queued frame is cheap to deliver even when slightly late. An
++        // unbuffered one needs a full SD read: if its presentation time has
++        // already passed, skip that read to give the NEXT frame enough time.
++        uint32_t late_after = t0 + (uint32_t)((uint64_t)frame_idx * fetch_us / 1000ULL);
++        if (!pf_fetch(&a, &ent, spd, paused, &na_seen,
++                      anchored && !paused ? &late_after : NULL)) break;
+         wdog_refresh();
+         /* All-state alarm: resuming a desynced AVI mid-stream is risky, so on a
+          * due alarm ring in place then STOP cleanly back to the browser (the
+@@ -546,7 +573,6 @@ vid_result_t video_play(const char *path)
+         }
+ 
+         if (paused) {
+-            uint32_t pstart = HAL_GetTick();
+             while (paused) {
+                 wdog_refresh();
+                 odroid_input_read_gamepad(&joy);
+@@ -573,7 +599,9 @@ vid_result_t video_play(const char *path)
+         if (!anchored) { t0 = HAL_GetTick(); frame_idx = 0; anchored = true; }
+         uint32_t due = t0 + (uint32_t)((uint64_t)frame_idx * fr_us / 1000ULL);
+ 
+-        if ((int32_t)(HAL_GetTick() - due) > (int32_t)(fr_us / 1000)) {   // >1 frame late -> drop
++        if (ent.slot == PF_DROPPED ||
++            (int32_t)(HAL_GetTick() - due) > (int32_t)(fr_us / 1000)) {   // >1 frame late -> drop
++            late++;
+             frame_idx++;                                   // skip the decode; the clock catches up
+             if (ent.slot >= 0) pf_busy &= ~(1 << ent.slot);
+             continue;
+@@ -596,7 +624,7 @@ vid_result_t video_play(const char *path)
+         }
+         if ((int32_t)(HAL_GetTick() - osd_until) < 0) {
+             draw_osd(&a, spd, paused, -1, frame_ms);
+-            if (g_show_debug) draw_hud(dec_ok, nv_seen, na_seen);   // debug rides with the OSD
++            if (g_show_debug) draw_hud(dec_ok, nv_seen, late, fr_us);   // debug rides with the OSD
+         }
+         if ((int32_t)(HAL_GetTick() - vol_until) < 0)
+             draw_volume();
+@@ -610,7 +638,7 @@ vid_result_t video_play(const char *path)
+         g_vdec_pf_ms = 0;
+         while ((int32_t)(HAL_GetTick() - due) < 0) {
+             wdog_refresh();
+-            if (!pf_step(&a, spd, paused, &na_seen, false))
++            if (!pf_step(&a, spd, paused, &na_seen, false, NULL))
+                 HAL_Delay(1);
+         }
+         lcd_swap();
+diff --git a/tests/run.sh b/tests/run.sh
+index a9a7b84b..45fcb323 100755
+--- a/tests/run.sh
++++ b/tests/run.sh
+@@ -291,6 +291,7 @@ fi
+ [ -x /tmp/mtest/test_video_decode ] && { /tmp/mtest/test_video_decode || fail test_video_decode; }
+ [ -x /tmp/mtest/test_video_audio ]  && { /tmp/mtest/test_video_audio  || fail test_video_audio; }
+ [ -x /tmp/mtest/test_video_play ]   && { /tmp/mtest/test_video_play   || fail test_video_play; }
++python3 tests/test_video_timing.py || fail test_video_timing
+ /tmp/mtest/test_clock_alarm || fail test_clock_alarm
+ /tmp/mtest/test_clock_gif   || fail test_clock_gif
+ /tmp/mtest/test_clock_more  || fail test_clock_more
+diff --git a/tests/test_video_play.c b/tests/test_video_play.c
+index 2621d886..a96de22b 100644
+--- a/tests/test_video_play.c
++++ b/tests/test_video_play.c
+@@ -229,18 +229,19 @@ static void test_prefetch_then_fetch_no_blocking_read(void)
+     /* Run the non-blocking prefetch step until it has nothing more to do
+      * this "tick" -- exactly what the pacing-wait loop in video_play() does. */
+     int guard = 0;
+-    while (pf_step(&a, 1, false, &na, false) && guard++ < 100) {}
++    while (pf_step(&a, 1, false, &na, false, NULL) && guard++ < 100) {}
+     CHECK(pf_n == PF_DEPTH, "prefetch queued PF_DEPTH frames ahead while idle");
+     CHECK(na == 1, "the one interleaved audio chunk was consumed along the way");
+ 
+     g_vdec_read_ms = 12345;      /* poison it; pf_fetch() must NOT touch this for a queued frame */
+     pf_ent_t ent;
+-    CHECK(pf_fetch(&a, &ent, 1, false, &na), "pf_fetch returns the queued frame 0");
++    uint32_t expired = s_fake_tick - 1;
++    CHECK(pf_fetch(&a, &ent, 1, false, &na, &expired), "pf_fetch returns the queued frame 0 even after its deadline");
+     CHECK(g_vdec_read_ms == 0, "pf_fetch() resets read_ms and does NOT add a blocking read for a prefetched frame");
+     CHECK(ent.slot >= 0, "frame 0 landed in a real slot");
+     CHECK(video_slot(ent.slot)[0] == 0x50, "the slot holds frame 0's actual bytes (burst frame already in RAM)");
+ 
+-    CHECK(pf_fetch(&a, &ent, 1, false, &na), "pf_fetch returns the queued frame 1");
++    CHECK(pf_fetch(&a, &ent, 1, false, &na, NULL), "pf_fetch returns the queued frame 1");
+     CHECK(video_slot(ent.slot)[0] == 0x51, "frame 1's bytes are correct too");
+ 
+     avi_close(&a);
+@@ -263,7 +264,7 @@ static void test_rd_vs_pf_attribution(void)
+     int na = 0;
+ 
+     g_vdec_read_ms = 0; g_vdec_pf_ms = 0;
+-    CHECK(pf_fetch(&a, &(pf_ent_t){0}, 1, false, &na), "pf_fetch with nothing queued forces a blocking read");
++    CHECK(pf_fetch(&a, &(pf_ent_t){0}, 1, false, &na, NULL), "pf_fetch with nothing queued forces a blocking read");
+     CHECK(g_vdec_read_ms > 0, "a forced (consumer-starving) read is charged to rd= (g_vdec_read_ms)");
+     CHECK(g_vdec_pf_ms == 0, "...and NOT to pf= (g_vdec_pf_ms)");
+     avi_close(&a);
+@@ -282,7 +283,7 @@ static void test_rd_vs_pf_attribution(void)
+      * actually reads -- matching pf_step()'s own "continue the in-progress
+      * frame" branch, which is what timestamps rd=/pf= in the first place. */
+     int guard = 0;
+-    while (g_vdec_pf_ms == 0 && guard++ < 5) pf_step(&a2, 1, false, &na, false);
++    while (g_vdec_pf_ms == 0 && guard++ < 5) pf_step(&a2, 1, false, &na, false, NULL);
+     CHECK(g_vdec_pf_ms > 0, "a non-forced (pacing-wait) read is charged to pf= (g_vdec_pf_ms)");
+     CHECK(g_vdec_read_ms == 0, "...and NOT to rd= (g_vdec_read_ms)");
+ 
+@@ -343,7 +344,7 @@ static void test_audio_ring_gate_closes_prefetch(void)
+     /* spd=1, not paused -- the exact condition pf_step() gates on. force
+      * MUST be false: the gate explicitly does not apply to the
+      * consumer-starving (force=true) path (see pf_step()'s own comment). */
+-    bool progressed = pf_step(&a, 1, false, &na, false);
++    bool progressed = pf_step(&a, 1, false, &na, false, NULL);
+     CHECK(!progressed, "pf_step() reports no progress while the audio ring is past the gate");
+     CHECK(a.movi_pos == movi_pos_before, "the demuxer's cursor did not move -- avi_next() was never called");
+     CHECK(pf_n == pf_n_before, "no frame was queued either");
+@@ -369,7 +370,7 @@ static void test_forced_step_ignores_the_gate(void)
+ 
+     /* Ring state doesn't matter here -- don't even bother touching it, just
+      * confirm force=true makes progress on a fresh demuxer regardless. */
+-    bool progressed = pf_step(&a, 1, false, &na, true);
++    bool progressed = pf_step(&a, 1, false, &na, true, NULL);
+     CHECK(progressed, "force=true makes progress even where the gate would otherwise hold");
+ 
+     avi_close(&a);
+@@ -377,6 +378,48 @@ static void test_forced_step_ignores_the_gate(void)
+     OK("force=true (consumer starving) bypasses the audio-ring gate, as documented");
+ }
+ 
++/* A missed frame must cost a header/seek, not a full payload read. Checking
++ * chunk_read observes the real demuxer, so skipping only the JPEG decode fails
++ * this test. The next fetch must still consume interleaved audio and land on
++ * frame 1 with its original bytes. */
++static void test_late_fetch_skips_payload(bool partial, bool wrap)
++{
++    const char *path = build_clip();
++    avi_t a;
++    CHECK(avi_open(&a, path, NULL, 0), "open for late-frame recovery");
++    video_audio_start();
++    pf_reset();
++    int na = 0;
++    if (partial) {
++        CHECK(pf_step(&a, 1, false, &na, false, NULL), "start a partial prefetch");
++        CHECK(avi_read(&a, video_slot(pf_ip_slot), 8) == 8, "read the first eight bytes");
++        pf_ip_got = 8;
++    }
++
++    s_fake_tick = 100;
++    uint32_t deadline = wrap ? UINT32_MAX - 10 : 50;
++    pf_ent_t ent;
++    CHECK(pf_fetch(&a, &ent, 1, false, &na, &deadline), "late fetch still accounts for the frame");
++    CHECK(ent.slot == PF_DROPPED, "late frame is marked dropped, not decoded");
++    CHECK(a.chunk_read == (partial ? 8 : 0), "late video payload is not read any further");
++    CHECK(g_vdec_read_ms == 0, "discarding a late frame incurs no payload read time");
++    CHECK(pf_busy == 0 && pf_ip_want == -1, "discard frees the partial slot and read state");
++    CHECK(a.cur_frame == 1, "exactly one video frame was skipped");
++
++    deadline = s_fake_tick + 1000;
++    CHECK(pf_fetch(&a, &ent, 1, false, &na, &deadline), "fetch resumes with a future deadline");
++    CHECK(na == 1, "interleaved audio is still fed while catching up");
++    CHECK(ent.slot >= 0 && video_slot(ent.slot)[0] == 0x51, "next on-time video frame is intact");
++    CHECK(a.cur_frame == 2, "recovery preserves frame ordering");
++    if (ent.slot >= 0) pf_busy &= ~(1 << ent.slot);
++    avi_close(&a);
++    unlink(path);
++    free((void *)path);
++    OK(partial ? "late partial prefetch discards its unread remainder"
++               : wrap ? "late discard survives the millisecond-clock wrap"
++                      : "late fetch skips SD payload and preserves following audio/video");
++}
++
+ int main(void)
+ {
+     printf("== test_video_play ==\n");
+@@ -387,6 +430,9 @@ int main(void)
+     test_rd_vs_pf_attribution();
+     test_audio_ring_gate_closes_prefetch();
+     test_forced_step_ignores_the_gate();
++    test_late_fetch_skips_payload(false, false);
++    test_late_fetch_skips_payload(true, false);
++    test_late_fetch_skips_payload(false, true);
+ 
+     video_decode_deinit();
+ 
+diff --git a/tools/m7_qemu_rig/rig_video.c b/tools/m7_qemu_rig/rig_video.c
+index 1bf9e174..91df7f9e 100644
+--- a/tools/m7_qemu_rig/rig_video.c
++++ b/tools/m7_qemu_rig/rig_video.c
+@@ -350,7 +350,13 @@ extern int    __real_setvbuf(void *, char *, int, size_t);
+ #define VF ((void *)&g_vf_open)                  /* our sentinel FILE* */
+ 
+ void *__wrap_fopen(const char *path, const char *mode)
+-{ (void)path; (void)mode; g_vf_pos = 0; g_vf_open = 1; return VF; }
++{
++    // Resume storage uses fgets()/rename(), which require a real FILE. Only
++    // the synthetic clip belongs to this wrapper; opening the resume file
++    // must also leave the clip cursor intact.
++    if (strcmp(path, "virtual.avi") != 0) return __real_fopen(path, mode);
++    g_vf_pos = 0; g_vf_open = 1; return VF;
++}
+ 
+ int __wrap_fclose(void *f)
+ { if (f != VF) return __real_fclose(f); g_vf_open = 0; return 0; }

@@ -1,0 +1,81 @@
+{
+  "worktree": "/home/pi/app/jupyterLab/notebooks/game-and-watch-retro-go-sd",
+  "base_commit": "a8800ffecd925da41f15f1e9f0721bcce51fc057",
+  "compiler": "gcc (Debian 14.2.0-19) 14.2.0",
+  "execution": "Existing M7 video rig compiled natively; injected I/O/JPEG/audio timing; no device accessed",
+  "input": {
+    "kind": "synthetic AVI + generated 440Hz MP3",
+    "frames": 1000,
+    "usec_per_frame": 24000,
+    "base_frame_bytes": 8000,
+    "burst_frame_bytes": 56000,
+    "burst_every": 24,
+    "read_setup_us": 60,
+    "throughput_bytes_per_us": 0.2,
+    "decode_us": 2000,
+    "seek_setup_us": 30,
+    "audio_ppm": 0,
+    "input_replay": "no buttons",
+    "warmup_frames": 0,
+    "tone_sha256": "187baa0ef4cdfd97bfb803fce4278ae55227615f26d9dc220e3b4b5e3d97e943"
+  },
+  "source_sha256": {
+    "Core/Src/porting/video/video_play.c": "998d0a66cccd0ed0e6f465c2d17a2312a732131e8f615e4b56a7c9a5ca126d43",
+    "Core/Src/porting/video/avi.c": "b6d9325aa60cbb5e78ade72f9b85e3c276ffd4b5d6c86d2aeb6666d5731096e9",
+    "Core/Src/porting/video/video_decode.c": "022ca16be7cbdd8897afac2d932bcf8d2070fe9199f2e0e18bb61f8f4b95acec",
+    "Core/Src/porting/video/video_audio.c": "bd8760ac0a88d796f28669d4cf99051dc9c9f70ee02052fc4fb7ae7428a3383e",
+    "Core/Src/porting/video/video_resume.c": "e10e0fae419502d8ef23a5c304364e3f65e99551432425c5288f4d8f3b712857",
+    "Core/Src/porting/music/music_minimp3.c": "5a3e4fcc47c97b7d63e8398a99d41682d69fabb73045eec3741f588c13d0984c",
+    "tools/m7_qemu_rig/rig_video.c": "ff33c81c9d5dd6d2230d7156ee6280168871eb6fe382f6d40dc066535af84081"
+  },
+  "baseline_video_play_sha256": "88ff513f2047ded6520c7ca27df127ee26409ef262271d506b9446e995778ea4",
+  "arms": {
+    "before": {
+      "n": 1,
+      "presented": 2,
+      "attempts": 1000,
+      "drops": 998,
+      "mean_virtual_us_per_attempt": 52281.4,
+      "ledger_elapsed_virtual_seconds": 52.2814,
+      "completion_exit_code": 0
+    },
+    "after": {
+      "n": 1,
+      "presented": 166,
+      "attempts": 1000,
+      "drops": 834,
+      "mean_virtual_us_per_attempt": 24012.6,
+      "ledger_elapsed_virtual_seconds": 24.0126,
+      "completion_exit_code": 0
+    }
+  },
+  "virtual_elapsed_reduction_pct": 54.070472481609144,
+  "verification": {
+    "unit_tests": "AVI, decode, audio, prefetch/deadlines, resume passed",
+    "timing": "overload:166/1000; normal and 2% drift:15000/15000 over six virtual minutes",
+    "ARM_compile": "passed with canonical SD build flags",
+    "firmware_link": "incomplete: existing build lacks Sega CD and other object files; see arm-link.log",
+    "device": "not run"
+  },
+  "local_clip_analysis": {
+    "filename": "YENA (최예나) - 캐치 캐치 (트로트 버전).avi",
+    "sha256": "96d866d85c3f42a4f9af6a2412ed1cbce7839765b10fcfa8b983858f2af2d1f2",
+    "resolution": [
+      320,
+      240
+    ],
+    "fps": 20,
+    "mean_video_packet_bytes": 4011,
+    "p95_bytes": 4852,
+    "max_bytes": 5108,
+    "over_64k": 0,
+    "reported_problem_clip_identity": "not confirmed by user"
+  },
+  "limitations": [
+    "n=1 deterministic synthetic workload; no statistical significance claim",
+    "no baseline-after arm: drift unmeasured",
+    "native run is not ARM instruction/cycle timing",
+    "JPEG/SAI/SD models do not prove device picture/audio correctness or real FPS",
+    "standard gnw-ab-bench summarizer does not support video ledger format; values parsed directly from preserved completed logs"
+  ]
+}

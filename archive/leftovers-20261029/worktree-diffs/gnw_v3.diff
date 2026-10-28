@@ -1,0 +1,111 @@
+# worktree /home/pi/gnw_v3 at 9b6b99fcd5e5e522bdb7989885995b5cf0b064cd (HEAD)
+diff --git a/Core/Src/gw_lcd.c b/Core/Src/gw_lcd.c
+index 9809a7d2..0f37ca56 100644
+--- a/Core/Src/gw_lcd.c
++++ b/Core/Src/gw_lcd.c
+@@ -34,6 +34,10 @@ extern DAC_HandleTypeDef hdac2;
+ uint32_t active_framebuffer;
+ uint32_t frame_counter;
+ uint32_t last_frequency = 60;
++/* Race instrumentation (35Hz campaign): every time the swap-pending guard had
++ * to actually WAIT, the writer was about to overtake the scanout beam. Read via
++ * SWD + nm; reset per measurement window by the harness. */
++volatile uint32_t g_lcd_race_waits = 0;
+ 
+ #define HAL_DAC_ENABLED(__HANDLE__, __DAC_Channel__) \
+   (((__HANDLE__)->Instance->CR & (DAC_CR_EN1 << ((__DAC_Channel__) & 0x10UL))))
+@@ -202,6 +206,7 @@ bool lcd_sleep_while_swap_pending(void)
+   while (lcd_is_swap_pending())
+   {
+     pending = true;
++    g_lcd_race_waits++;
+     __WFI();
+   }
+ 
+@@ -628,7 +633,7 @@ void lcd_set_dithering(uint32_t enable) {
+     HAL_LTDC_DisableDither(ltdc);
+ }
+ 
+-/* set display refresh rate 50Hz or 60Hz  */
++/* set display refresh rate: 35 (32X panel-only), 50, 60, 72 or 75 Hz */
+ void lcd_set_refresh_rate(uint32_t frequency) {
+   uint32_t plln = 9, pllr = 24;
+   if (frequency == 60) {
+@@ -646,6 +651,13 @@ void lcd_set_refresh_rate(uint32_t frequency) {
+   else if (frequency == 75) {
+     plln = 15;
+     pllr = 32;
++  }
++  /* 35 Hz: pixel clock 3.5 MHz (PLL3 VCO 112 MHz), 32X-only panel rate.
++   * Beam slower than the MD32X writer -> swap-pending race window closes
++   * without the wait-for-latch guard's ~20% fps cost. */
++  else if (frequency == 35) {
++    plln = 7;
++    pllr = 32;
+   } else {
+     //  printf("wrong lcd refresh rate; 50Hz or 60Hz only\n");
+     //  assert(0);
+diff --git a/Core/Src/porting/md32x/main_md32x.c b/Core/Src/porting/md32x/main_md32x.c
+index 07855f5e..cdc3cc7d 100644
+--- a/Core/Src/porting/md32x/main_md32x.c
++++ b/Core/Src/porting/md32x/main_md32x.c
+@@ -234,7 +234,14 @@ static uint16_t read_md_pad(odroid_gamepad_state_t *j) {
+  * the expansion then declines, which is correct -- there is no bar to fill. */
+ static int md32x_content_top = 8, md32x_content_lines = 224;
+ 
++/* v6 race probe (user m6419/1.1 m6422): counts frames whose render target
++ * setup began while a swap was still pending — the old experiment's probe
++ * point, at most once per frame, independent of the guard (g_lcd_race_waits
++ * counts guard WFI entries and is meaningless with the guard OFF). */
++volatile uint32_t g_lcd_setout_pending = 0;
++
+ static void set_out_buffer(void) {
++  if (lcd_is_swap_pending()) g_lcd_setout_pending++;
+   PicoDrawSetOutBuf(lcd_get_active_buffer(), 320 * 2);
+ }
+ 
+@@ -768,7 +775,12 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+     common_emu_state.pause_after_frames = 0;
+   }
+   common_emu_state.frame_time_10us = (uint16_t)(100000 / MD32X_FPS + 0.5f);
++#ifdef MD32X_LCD_35HZ
++  /* Panel rate only; pacing and audio stay 60-based (MD32X_FPS). */
++  lcd_set_refresh_rate(35);
++#else
+   lcd_set_refresh_rate(MD32X_FPS);
++#endif
+ 
+   /* Dual-SH-2 interpreter is CPU-bound; take the scoped, non-persisted boost.
+    *
+@@ -995,7 +1007,12 @@ void app_main_md32x(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
+    * fast with 147 samples/frame silently dropped). gwenesis does the same. */
+   int md32x_fps = Pico.m.pal ? 50 : 60;
+   common_emu_state.frame_time_10us = (uint16_t)(100000 / md32x_fps);
++#ifdef MD32X_LCD_35HZ
++  /* Panel rate only; pacing and audio stay md32x_fps-based. */
++  lcd_set_refresh_rate(35);
++#else
+   lcd_set_refresh_rate(md32x_fps);
++#endif
+ 
+   PicoLoopPrepare();
+   PicoIn.sndOut = md32x_snd;
+diff --git a/Makefile b/Makefile
+index 2b3830b5..afafc8ac 100644
+--- a/Makefile
++++ b/Makefile
+@@ -65,6 +65,14 @@ ifeq ($(RC_PROBE),1)
+   C_DEFS += -DRC_PROBE=1
+ endif
+ 
++# 32X-only 35 Hz panel rate: beam slower than the writer, closes the
++# scanout race without the ~20% wait-for-latch guard cost. Panel only —
++# pacing and audio stay on the 60 Hz numbers. Enable with MD32X_LCD_35HZ=1.
++MD32X_LCD_35HZ ?= 0
++ifeq ($(MD32X_LCD_35HZ),1)
++  C_DEFS += -DMD32X_LCD_35HZ=1
++endif
++
+ # On-device SNES APU cost breakdown. Default OFF: the release build is
+ # byte-identical (no Python script runs, no -DSNES_LOAD_DIAG, apu.c and
+ # dsp.c compile from external/sm untouched). Enable with SNES_LOAD_DIAG=1
