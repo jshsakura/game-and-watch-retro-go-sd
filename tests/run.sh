@@ -505,6 +505,20 @@ $CC -O2 -Wall -Wextra -std=gnu11 -no-pie \
     tests/test_gw_malloc.c Core/Src/gw_malloc.c           -o /tmp/mtest/test_gw_malloc
 /tmp/mtest/test_gw_malloc || fail test_gw_malloc
 
+# The real gw_system.c and SM5xx cores under ASan: a piezo sample written past
+# gw_audio_buffer is a sanitizer abort here, and a PC=0 Hardfault on the device
+# (the next BSS words are the device_run/device_blit pointers).
+echo "=== gw_system.c: the piezo ring never writes past its end ==="
+if [ -f external/LCD-Game-Emulator/src/gw_sys/gw_system.c ]; then
+    $CC -O1 -g -std=gnu11 -fgnu89-inline -fsanitize=address -fno-omit-frame-pointer -w \
+        -Iexternal/LCD-Game-Emulator/src/gw_sys -Iexternal/LCD-Game-Emulator/src/cpus \
+        tests/test_gw_piezo_ring.c external/LCD-Game-Emulator/src/gw_sys/gw_system.c \
+        external/LCD-Game-Emulator/src/cpus/*.c            -o /tmp/mtest/test_gw_piezo_ring
+    /tmp/mtest/test_gw_piezo_ring || fail tests/test_gw_piezo_ring.c
+else
+    echo "SKIP  external/LCD-Game-Emulator is not checked out, so the piezo ring test was not built"
+fi
+
 echo "=== crc32.c: known-vector pins ==="
 $CC -O2 -Wall -Wextra -std=gnu11 -Itests/crc32_stubs -ICore/Inc/porting \
     tests/test_crc32.c Core/Src/porting/crc32.c            -o /tmp/mtest/test_crc32

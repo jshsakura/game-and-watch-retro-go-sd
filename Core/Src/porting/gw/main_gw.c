@@ -424,9 +424,14 @@ int app_main_gw(uint8_t load_state, int8_t save_slot)
     softkey_alarm_pressed = 0;
     softkey_duration = 0;
 
-    /*** Configure the emulated system */
-    gw_system_config();
-    printf("G&W configured\n");
+    /*** Configure the emulated system (sets device_run/start/reset/blit).
+     * A ROM for a CPU we do not emulate leaves them at their do-nothing
+     * defaults, so go back to the launcher rather than run a blank screen. */
+    if (!gw_system_config()) {
+        printf("G&W: unsupported CPU '%.8s'\n", gw_head.cpu_name);
+        odroid_system_switch_app(0);
+    }
+    printf("G&W configured (cpu=%.8s)\n", gw_head.cpu_name);
 
     /*** Start and Reset the emulated system */
     gw_system_start();
